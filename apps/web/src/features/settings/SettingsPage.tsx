@@ -1,26 +1,16 @@
-import type { EventStreamStatus } from '@elysian/contracts'
 import { useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { useGateway } from '../../adapters/GatewayProvider'
+import {
+  EVENT_STREAM_STATUS_SHORT_LABELS,
+  EVENT_STREAM_STATUS_TONES,
+} from '../../components/EventStreamBadge'
 import { PageHeader } from '../../components/PageHeader'
 import { Section } from '../../components/Section'
 import { StatusTag } from '../../components/StatusTag'
-import type { StatusTone } from '../../components/StatusTag'
 import { useTheme } from '../../app/theme/ThemeProvider'
 import { useEventStreamStore } from '../../stores/eventStreamStore'
 import type { Theme } from '../../app/theme/ThemeProvider'
-
-const STREAM_STATUS_LABELS: Record<EventStreamStatus, string> = {
-  connecting: '连接中',
-  live: '已连接',
-  degraded: '已降级为内存事件源',
-}
-
-const STREAM_STATUS_TONES: Record<EventStreamStatus, StatusTone> = {
-  connecting: 'neutral',
-  live: 'success',
-  degraded: 'warning',
-}
 
 const NOT_CONNECTED = [
   '真实 Kubernetes、SSH、云厂商与数据库：没有任何真实凭证或地址',
@@ -103,8 +93,8 @@ export function SettingsPage() {
         <p className="flex flex-wrap items-center gap-2 text-sm">
           <span className="text-xs text-fg-subtle">当前状态</span>
           <StatusTag
-            label={STREAM_STATUS_LABELS[streamStatus]}
-            tone={STREAM_STATUS_TONES[streamStatus]}
+            label={EVENT_STREAM_STATUS_SHORT_LABELS[streamStatus]}
+            tone={EVENT_STREAM_STATUS_TONES[streamStatus]}
           />
         </p>
         <p className="mt-1.5 max-w-prose text-xs text-fg-muted">

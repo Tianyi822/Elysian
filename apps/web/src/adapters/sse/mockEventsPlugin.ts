@@ -14,7 +14,8 @@ import { SSE_HEARTBEAT, formatSseFrame } from './parse'
 
 const TICK_MS = 2500
 const HEARTBEAT_MS = 15_000
-const REPLAY_LIMIT = 200
+/** 连上后先补发的帧数：避免界面空等一个 tick 才有内容。 */
+const REPLAY_BURST = 3
 
 export type PlannedEvent = {
   name: EventName
@@ -106,8 +107,8 @@ export function createEventsHandler() {
     }
 
     res.write(`retry: ${TICK_MS}\n\n`)
-    // 先补一小段续传，再立刻发一帧，避免界面空等一个 tick。
-    while (sent < REPLAY_LIMIT && sent < 1) sendNext()
+    // 断线续传时 sequence 从 Last-Event-ID 之后继续，因此补发的这几帧都是没投递过的。
+    while (sent < REPLAY_BURST) sendNext()
 
     const tick = setInterval(sendNext, TICK_MS)
     const heartbeat = setInterval(() => res.write(SSE_HEARTBEAT), HEARTBEAT_MS)
