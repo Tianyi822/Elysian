@@ -1,4 +1,5 @@
 import type {
+  AgentRun,
   ApprovalOutcome,
   ApprovalRequest,
   AuditRecord,
@@ -6,6 +7,7 @@ import type {
   EventStreamHandlers,
   Incident,
   IncidentListRow,
+  ModuleStatus,
   Skill,
   Unsubscribe,
 } from '@elysian/contracts'
@@ -17,6 +19,7 @@ import type {
   IncidentAdapter,
   IncidentListQuery,
   IncidentListResult,
+  RunAdapter,
   SkillAdapter,
 } from '../../contracts/adapters'
 import { toIncidentListRows } from './dataset'
@@ -129,6 +132,22 @@ export class MockAuditAdapter implements AuditAdapter {
 
   async list(): Promise<readonly AuditRecord[]> {
     return this.dataset().audit
+  }
+}
+
+export class MockRunAdapter implements RunAdapter {
+  constructor(private readonly dataset: () => MockDataset) {}
+
+  async list(): Promise<readonly AgentRun[]> {
+    return this.dataset().runs
+  }
+
+  async find(runId: string): Promise<AgentRun | undefined> {
+    return this.dataset().runs.find((run) => run.id === runId)
+  }
+
+  async listModuleStatuses(): Promise<readonly ModuleStatus[]> {
+    return this.dataset().moduleStatuses
   }
 }
 

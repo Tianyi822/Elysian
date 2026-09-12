@@ -23,11 +23,12 @@ function firstIncident(predicate: (incident: (typeof dataset.incidents)[number])
 }
 
 function gatewayFailingWith(message: string): ElysianGateway {
-  const base = createMockGateway()
+  const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+  // 显式实现接口：对类实例做对象展开会丢掉原型上的方法。
   return {
     ...base,
     incidents: {
-      ...base.incidents,
+      listRows: (query) => base.incidents.listRows(query),
       find: async () => {
         throw new Error(message)
       },

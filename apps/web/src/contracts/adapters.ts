@@ -1,4 +1,5 @@
 import type {
+  AgentRun,
   ApprovalOutcome,
   ApprovalRequest,
   AuditRecord,
@@ -6,6 +7,7 @@ import type {
   EventStreamHandlers,
   Incident,
   IncidentListRow,
+  ModuleStatus,
   Skill,
   Unsubscribe,
 } from '@elysian/contracts'
@@ -54,6 +56,13 @@ export interface AuditAdapter {
   list(): Promise<readonly AuditRecord[]>
 }
 
+export interface RunAdapter {
+  list(): Promise<readonly AgentRun[]>
+  find(runId: string): Promise<AgentRun | undefined>
+  /** 13 个职责模块各自的忙闲状态。 */
+  listModuleStatuses(): Promise<readonly ModuleStatus[]>
+}
+
 export interface EventsAdapter {
   subscribe(handlers: EventStreamHandlers): Unsubscribe
 }
@@ -61,6 +70,7 @@ export interface EventsAdapter {
 /** 页面注入的聚合入口。 */
 export interface ElysianGateway {
   incidents: IncidentAdapter
+  runs: RunAdapter
   skills: SkillAdapter
   approvals: ApprovalAdapter
   audit: AuditAdapter

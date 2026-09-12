@@ -5,6 +5,7 @@ import {
   MockApprovalAdapter,
   MockAuditAdapter,
   MockIncidentAdapter,
+  MockRunAdapter,
   MockSkillAdapter,
   createInMemoryEventsAdapter,
 } from './mockAdapters'
@@ -28,6 +29,7 @@ export function createMockGateway(
 
   return {
     incidents: new MockIncidentAdapter(read),
+    runs: new MockRunAdapter(read),
     skills: new MockSkillAdapter(read),
     approvals: new MockApprovalAdapter(read),
     audit: new MockAuditAdapter(read),
