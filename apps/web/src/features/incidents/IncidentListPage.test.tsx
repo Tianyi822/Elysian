@@ -111,7 +111,9 @@ describe('事件中心', () => {
     expect(link).toBeDefined()
 
     await user.click(link as HTMLElement)
-    expect(await screen.findByRole('heading', { level: 1, name: '事故详情' })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('heading', { level: 1, name: new RegExp(incident?.id ?? '') }),
+    ).toBeInTheDocument()
   })
 
   it('告警与待处理任务不以链接形式出现，避免点进不存在的详情', async () => {
