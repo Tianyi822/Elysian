@@ -590,6 +590,7 @@ export function createMockDataset(): MockDataset {
       approvals.push({
         id: action.approvalId,
         actionId: action.id,
+        actionTitle: action.title,
         status: status4,
         outcome,
         policy: action.riskLevel === 'critical' ? 'ask' : 'ask',

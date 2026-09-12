@@ -114,15 +114,30 @@ export class MockApprovalAdapter implements ApprovalAdapter {
     const current = index >= 0 ? dataset.approvals[index] : undefined
     if (!current) throw new Error(`审批请求不存在：${requestId}`)
 
+    const decidedAt = new Date().toISOString()
     const updated: ApprovalRequest = {
       ...current,
       status: decision.outcome === 'rejected' ? 'rejected' : 'approved',
       outcome: decision.outcome,
       decidedBy: '当前用户',
-      decidedAt: new Date().toISOString(),
+      decidedAt,
       note: decision.note,
     }
     ;(dataset.approvals as ApprovalRequest[])[index] = updated
+
+    // 审批决定必须留下审计痕迹：审计日志页刷新后就能看到这一条。
+    const decisionLabel = decision.outcome === 'rejected' ? '已拒绝' : '已批准'
+    ;(dataset.audit as AuditRecord[]).unshift({
+      id: `${requestId}-DECISION`,
+      at: decidedAt,
+      kind: 'approval',
+      actor: '当前用户',
+      subject: current.target,
+      summary: `审批决定：${decisionLabel} · ${current.actionTitle}`,
+      detail: `风险 ${current.riskLevel}；影响范围：${current.blastRadius}；决策结果 ${decision.outcome}`,
+      traceId: `approval-${requestId}`,
+    })
+
     return updated
   }
 }

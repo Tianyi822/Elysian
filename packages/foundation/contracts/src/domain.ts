@@ -183,6 +183,8 @@ export type Incident = {
 export type ApprovalRequest = {
   id: string
   actionId: string
+  /** 动作标题。审批队列要能直接读出被审批的是什么动作，不必回查事故。 */
+  actionTitle: string
   status: ApprovalStatus
   outcome?: ApprovalOutcome
   policy: ApprovalPolicy
