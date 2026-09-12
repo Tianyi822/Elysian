@@ -94,7 +94,8 @@ export function ApprovalQueuePage() {
     )
   }
 
-  if (status !== 'ready') {
+  if (status !== 'ready' && approvals.length === 0) {
+    // 首次加载完成前不渲染空态：否则会先闪一下「没有审批条目」，而那是假的。
     return (
       <>
         <PageHeader title="审批队列" description="待审批动作、影响范围与风险说明。" />
@@ -242,8 +243,13 @@ export function ApprovalQueuePage() {
               </DataCell>
               <DataCell>
                 {approval.outcome ? (
-                  <span className="text-xs text-fg-muted">
-                    {APPROVAL_OUTCOME_LABELS[approval.outcome]}
+                  <span className="flex flex-col gap-0.5">
+                    <span className="text-xs text-fg-muted">
+                      {APPROVAL_OUTCOME_LABELS[approval.outcome]}
+                    </span>
+                    {approval.note ? (
+                      <span className="text-xs text-fg-subtle">决定说明：{approval.note}</span>
+                    ) : null}
                   </span>
                 ) : (
                   <span className="text-fg-subtle">—</span>

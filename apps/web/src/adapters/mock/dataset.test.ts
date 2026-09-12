@@ -30,6 +30,18 @@ describe('确定性 mock 数据集', () => {
     expect(dataset.moduleStatuses).toHaveLength(13)
     expect(dataset.moduleStatuses.filter((module) => module.status === 'running')).toHaveLength(5)
     expect(dataset.moduleStatuses.filter((module) => module.activeRunId)).toHaveLength(5)
+
+    // 标为执行中的模块，必须真的有一次进行中或等待审批的运行，
+    // 不能因为「有过一次已成功的运行」就显示成还在干活。
+    for (const module of dataset.moduleStatuses.filter((item) => item.status === 'running')) {
+      const active = dataset.runs.filter(
+        (run) =>
+          run.moduleId === module.moduleId &&
+          (run.status === 'running' || run.status === 'waiting-approval'),
+      )
+      expect(active.length, `${module.moduleId} 标为执行中却没有活跃运行`).toBeGreaterThan(0)
+      expect(module.activeRunId).toBe(active[0]?.id)
+    }
   })
 
   it('审批覆盖四种队列状态', () => {

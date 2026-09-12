@@ -67,8 +67,27 @@ export interface EventsAdapter {
   subscribe(handlers: EventStreamHandlers): Unsubscribe
 }
 
+/** 页面级访问区域。权限只做到这一粒度，本阶段不实现更细的权限模型。 */
+export type PageArea =
+  | 'overview'
+  | 'incidents'
+  | 'runs'
+  | 'skills'
+  | 'approvals'
+  | 'audit'
+  | 'settings'
+
+/**
+ * 会话与权限占位。本期没有认证，mock 实现全部放行；
+ * 但界面上的「无权限」分支是真实存在的，接入认证后由这里决定。
+ */
+export interface SessionAdapter {
+  canView(area: PageArea): Promise<boolean>
+}
+
 /** 页面注入的聚合入口。 */
 export interface ElysianGateway {
+  session: SessionAdapter
   incidents: IncidentAdapter
   runs: RunAdapter
   skills: SkillAdapter

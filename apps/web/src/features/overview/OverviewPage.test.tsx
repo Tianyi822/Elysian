@@ -1,13 +1,12 @@
 import { SEVERITIES } from '@elysian/contracts'
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, beforeEach } from 'vitest'
-import { createMockDataset } from '../../adapters/mock/dataset'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { createMockDataset, toIncidentListRows } from '../../adapters/mock/dataset'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import type { ElysianGateway } from '../../contracts/adapters'
-import { useOverviewStore } from '../../stores/overviewStore'
+import { useOverviewStore, loadOverview } from '../../stores/overviewStore'
 import { renderApp } from '../../test/renderApp'
-import { loadOverview } from '../../stores/overviewStore'
 
 const dataset = createMockDataset()
 
@@ -33,29 +32,52 @@ describe('总览', () => {
     expect(screen.queryByText(/欢迎|立即开始|了解更多/)).not.toBeInTheDocument()
   })
 
-  it('展示四档严重等级的数量，且每档都能下钻到事件中心', async () => {
-    const expected = await expectedOverview()
-    renderApp('/')
-
-    await screen.findByRole('heading', { level: 2, name: '严重等级分布' })
-    const labels: Record<string, string> = { sev1: '致命', sev2: '严重', sev3: '一般', sev4: '提示' }
-    for (const severity of SEVERITIES) {
-      const link = screen.getByRole('link', { name: `查看${labels[severity]}的条目` })
-      expect(link).toHaveAttribute('href', `/incidents?severity=${severity}`)
+  it('事故数量与严重等级分布只统计事故，与事件中心总数分开说明', async () => {
+    // 期望值从数据集独立算出，不复用被测函数，避免断言与实现一起错。
+    const incidents = dataset.incidents
+    const totalRows = toIncidentListRows(dataset).length
+    const counts = {
+      sev1: incidents.filter((incident) => incident.severity === 'sev1').length,
+      sev2: incidents.filter((incident) => incident.severity === 'sev2').length,
+      sev3: incidents.filter((incident) => incident.severity === 'sev3').length,
+      sev4: incidents.filter((incident) => incident.severity === 'sev4').length,
     }
 
-    expect(screen.getByText(`共 ${expected.incidentTotal} 条`, { exact: false })).toBeInTheDocument()
+    renderApp('/')
+    await screen.findByRole('heading', { level: 2, name: '事故严重等级分布' })
+
+    const labels: Record<string, string> = { sev1: '致命', sev2: '严重', sev3: '一般', sev4: '提示' }
+    for (const severity of SEVERITIES) {
+      const item = screen.getByRole('link', { name: `查看${labels[severity]}的条目` }).closest('li')
+      expect(item).not.toBeNull()
+      expect(within(item as HTMLElement).getByText(String(counts[severity]))).toBeInTheDocument()
+    }
+
+    expect(
+      screen.getByText(
+        new RegExp(`事故共 ${incidents.length} 条；事件中心共 ${totalRows} 条`),
+      ),
+    ).toBeInTheDocument()
+    // 事故数必须小于事件中心总数，否则说明把告警与待处理任务也算成了事故
+    expect(incidents.length).toBeLessThan(totalRows)
   })
 
   it('展示 Agent 运行与待审批动作的数量', async () => {
-    const expected = await expectedOverview()
-    renderApp('/')
+    const runningRuns = dataset.runs.filter((run) => run.status === 'running').length
+    const waitingRuns = dataset.runs.filter((run) => run.status === 'waiting-approval').length
+    const pendingApprovals = dataset.approvals.filter(
+      (approval) => approval.status === 'pending',
+    ).length
 
-    await screen.findByRole('heading', { level: 2, name: '严重等级分布' })
+    renderApp('/')
+    await screen.findByRole('heading', { level: 2, name: '事故严重等级分布' })
+
     expect(
-      screen.getByText((_, element) => element?.textContent === `执行中 ${expected.runningRuns} 个模块 · 等待审批 ${expected.waitingRuns} 次运行`),
+      screen.getByText(
+        new RegExp(`执行中 ${runningRuns} 次运行 · 等待审批 ${waitingRuns} 次运行`),
+      ),
     ).toBeInTheDocument()
-    expect(screen.getByText(`${expected.pendingApprovals} 条`, { exact: false })).toBeInTheDocument()
+    expect(screen.getByText(new RegExp(`^${pendingApprovals} 条`))).toBeInTheDocument()
   })
 
   it('待审批动作给出最高风险等级，并下钻到对应筛选', async () => {
@@ -125,7 +147,7 @@ describe('总览', () => {
     }
 
     renderApp('/', { gateway })
-    await screen.findByRole('heading', { level: 2, name: '严重等级分布' })
+    await screen.findByRole('heading', { level: 2, name: '事故严重等级分布' })
 
     await user.click(screen.getByRole('button', { name: '刷新' }))
 

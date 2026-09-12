@@ -14,13 +14,16 @@ const ROUTES: ReadonlyArray<{ path: string; heading: string }> = [
 ]
 
 describe('路由表', () => {
-  it.each(ROUTES)('$path 渲染「$heading」', ({ path, heading }) => {
+  // 页面外面还包着访问闸门，首帧不渲染页头，因此断言必须等待。
+  it.each(ROUTES)('$path 渲染「$heading」', async ({ path, heading }) => {
     renderApp(path)
-    expect(screen.getByRole('heading', { level: 1, name: heading })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { level: 1, name: heading })).toBeInTheDocument()
   })
 
-  it('未匹配的地址进入未找到页面', () => {
+  it('未匹配的地址进入未找到页面', async () => {
     renderApp('/does-not-exist')
-    expect(screen.getByRole('heading', { level: 1, name: '未找到页面' })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('heading', { level: 1, name: '未找到页面' }),
+    ).toBeInTheDocument()
   })
 })

@@ -6,6 +6,7 @@ import {
   MockAuditAdapter,
   MockIncidentAdapter,
   MockRunAdapter,
+  MockSessionAdapter,
   MockSkillAdapter,
   createInMemoryEventsAdapter,
 } from './mockAdapters'
@@ -28,6 +29,7 @@ export function createMockGateway(
   const eventIntervalMs = options.eventIntervalMs ?? 3000
 
   return {
+    session: new MockSessionAdapter(),
     incidents: new MockIncidentAdapter(read),
     runs: new MockRunAdapter(read),
     skills: new MockSkillAdapter(read),

@@ -167,7 +167,8 @@ export function IncidentListPage() {
           description={errorMessage}
           onRetry={() => void load(gateway.incidents, query)}
         />
-      ) : status === 'loading' && rows.length === 0 ? (
+      ) : status !== 'ready' && rows.length === 0 ? (
+        // 首次加载完成前不渲染空态：否则会先闪一下「没有事件」，而那是假的。
         <LoadingState label="正在加载事件列表…" />
       ) : rows.length === 0 ? (
         <EmptyState

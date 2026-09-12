@@ -134,7 +134,8 @@ export function AuditLogPage() {
           description={errorMessage}
           onRetry={() => void load(gateway.audit)}
         />
-      ) : status === 'loading' && merged.length === 0 ? (
+      ) : status !== 'ready' && merged.length === 0 ? (
+        // 首次加载完成前不渲染空态：否则会先闪一下「没有审计记录」，而那是假的。
         <LoadingState label="正在加载审计记录…" />
       ) : filtered.length === 0 ? (
         <EmptyState

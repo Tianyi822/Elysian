@@ -593,7 +593,7 @@ export function createMockDataset(): MockDataset {
         actionTitle: action.title,
         status: status4,
         outcome,
-        policy: action.riskLevel === 'critical' ? 'ask' : 'ask',
+        policy: 'ask',
         riskLevel: action.riskLevel,
         target: action.target,
         parameters: action.parameters,
@@ -657,14 +657,39 @@ export function createMockDataset(): MockDataset {
   }))
 
   // 职责模块状态：本期只有五个模块有活跃运行，其余空闲。
+  // 活跃的前提是它确实有一次进行中（或等待审批）的运行，不能只看有没有运行记录——
+  // 否则一个「已成功」的运行会让模块看起来还在干活。
+  for (const moduleId of ACTIVE_MODULE_IDS) {
+    const moduleRuns = runs.filter((run) => run.moduleId === moduleId)
+    const hasActive = moduleRuns.some(
+      (run) => run.status === 'running' || run.status === 'waiting-approval',
+    )
+    const first = moduleRuns[0]
+    if (!hasActive && first) {
+      first.status = 'running'
+      first.endedAt = undefined
+    }
+  }
+
+  const isModuleActive = (moduleId: string) =>
+    runs.some(
+      (run) =>
+        run.moduleId === moduleId &&
+        (run.status === 'running' || run.status === 'waiting-approval'),
+    )
+
   const moduleStatuses: ModuleStatus[] = [
     ...ACTIVE_MODULE_IDS.map((moduleId) => {
-      const run = runs.find((candidate) => candidate.moduleId === moduleId)
+      const activeRun = runs.find(
+        (run) =>
+          run.moduleId === moduleId &&
+          (run.status === 'running' || run.status === 'waiting-approval'),
+      )
       return {
         moduleId,
-        status: run ? ('running' as const) : ('idle' as const),
-        activeRunId: run?.id,
-        incidentId: run?.incidentId,
+        status: isModuleActive(moduleId) ? ('running' as const) : ('idle' as const),
+        activeRunId: activeRun?.id,
+        incidentId: activeRun?.incidentId,
       }
     }),
     ...['resource-governance', 'automation-orchestration', 'fault-drill', 'recovery-engineering', 'root-cause-diagnosis', 'knowledge-presentation', 'change-governance', 'skill-management'].map(

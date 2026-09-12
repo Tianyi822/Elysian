@@ -129,6 +129,15 @@ describe('审批队列', () => {
     expect(within(row).getByText('一次性放行')).toBeInTheDocument()
   })
 
+  it('有决定说明的条目把说明也显示出来', async () => {
+    const withNote = dataset.approvals.find((approval) => approval.note)
+    expect(withNote).toBeDefined()
+
+    await renderQueue(`/approvals?focus=${withNote?.id}`)
+    const row = bodyRows()[0] as HTMLElement
+    expect(within(row).getByText(`决定说明：${withNote?.note}`)).toBeInTheDocument()
+  })
+
   it('审批决定会产生一条审计记录', async () => {
     const user = userEvent.setup()
     const gateway = createGateway()

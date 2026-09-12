@@ -93,7 +93,8 @@ export function SkillCatalogPage() {
     )
   }
 
-  if (status !== 'ready') {
+  if (status !== 'ready' && skills.length === 0) {
+    // 首次加载完成前不渲染空态：否则会先闪一下「没有技能」，而那是假的。
     return (
       <>
         <PageHeader title="技能目录" description="技能清单、manifest 声明与启停状态。" />

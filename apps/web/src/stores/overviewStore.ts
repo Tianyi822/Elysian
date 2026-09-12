@@ -12,10 +12,14 @@ export type ServiceHealth = {
 }
 
 export type OverviewData = {
+  /** 事故条数：只统计事故，不含告警与待处理任务。 */
   incidentTotal: number
+  /** 事件中心的总条数，含告警与待处理任务，用于说明两个数字的差别。 */
+  eventTotal: number
   severityCounts: Record<Severity, number>
   runningRuns: number
   waitingRuns: number
+  activeModules: number
   pendingApprovals: number
   highestPendingRisk?: RiskLevel
   serviceHealth: readonly ServiceHealth[]
@@ -35,12 +39,13 @@ export async function loadOverview(gateway: ElysianGateway): Promise<OverviewDat
 
   const incidents = incidentList.rows.filter((row) => row.kind === 'incident')
 
+  // 严重等级分布按事故统计：告警与待处理任务不是事故，混进来会让「事故严重等级」失真。
   const severityCounts = Object.fromEntries(SEVERITIES.map((severity) => [severity, 0])) as Record<
     Severity,
     number
   >
-  for (const row of incidentList.rows) {
-    severityCounts[row.severity] += 1
+  for (const incident of incidents) {
+    severityCounts[incident.severity] += 1
   }
 
   const byService = new Map<string, { openCount: number; worstSeverity?: Severity }>()
@@ -73,10 +78,12 @@ export async function loadOverview(gateway: ElysianGateway): Promise<OverviewDat
   }, undefined)
 
   return {
-    incidentTotal: incidentList.total,
+    incidentTotal: incidents.length,
+    eventTotal: incidentList.total,
     severityCounts,
-    runningRuns: moduleStatuses.filter((module) => module.status === 'running').length,
+    runningRuns: runs.filter((run) => run.status === 'running').length,
     waitingRuns: runs.filter((run) => run.status === 'waiting-approval').length,
+    activeModules: moduleStatuses.filter((module) => module.status === 'running').length,
     pendingApprovals: pending.length,
     ...(highestPendingRisk ? { highestPendingRisk } : {}),
     serviceHealth,

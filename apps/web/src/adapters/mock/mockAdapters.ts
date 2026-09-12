@@ -20,6 +20,7 @@ import type {
   IncidentListQuery,
   IncidentListResult,
   RunAdapter,
+  SessionAdapter,
   SkillAdapter,
 } from '../../contracts/adapters'
 import { toIncidentListRows } from './dataset'
@@ -127,7 +128,8 @@ export class MockApprovalAdapter implements ApprovalAdapter {
 
     // 审批决定必须留下审计痕迹：审计日志页刷新后就能看到这一条。
     const decisionLabel = decision.outcome === 'rejected' ? '已拒绝' : '已批准'
-    ;(dataset.audit as AuditRecord[]).unshift({
+    const auditRecords = dataset.audit as AuditRecord[]
+    auditRecords.unshift({
       id: `${requestId}-DECISION`,
       at: decidedAt,
       kind: 'approval',
@@ -137,6 +139,8 @@ export class MockApprovalAdapter implements ApprovalAdapter {
       detail: `风险 ${current.riskLevel}；影响范围：${current.blastRadius}；决策结果 ${decision.outcome}`,
       traceId: `approval-${requestId}`,
     })
+    // 审计列表约定按时间倒序，插入后重排，避免时钟与种子基准时间不一致时顺序错乱。
+    auditRecords.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))
 
     return updated
   }
@@ -147,6 +151,16 @@ export class MockAuditAdapter implements AuditAdapter {
 
   async list(): Promise<readonly AuditRecord[]> {
     return this.dataset().audit
+  }
+}
+
+/**
+ * 会话与权限的 mock 实现：演示环境全部放行。
+ * 让「无权限」分支真实存在但默认不触发——接入认证后换成真实实现即可，界面不用改。
+ */
+export class MockSessionAdapter implements SessionAdapter {
+  async canView(): Promise<boolean> {
+    return true
   }
 }
 

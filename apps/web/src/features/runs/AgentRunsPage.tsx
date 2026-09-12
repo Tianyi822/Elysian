@@ -127,7 +127,8 @@ export function AgentRunsPage() {
     )
   }
 
-  if (status !== 'ready') {
+  if (status !== 'ready' && runs.length === 0) {
+    // 已有数据时不退回加载态：否则刷新会把整张表卸载重建，界面闪一下，操作也会丢上下文。
     return (
       <>
         <PageHeader title="Agent 运行" description="按职责模块查看运行状态与事件时间线。" />

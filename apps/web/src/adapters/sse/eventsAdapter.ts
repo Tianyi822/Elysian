@@ -1,7 +1,13 @@
 import type { EventStreamHandlers, Unsubscribe } from '@elysian/contracts'
-import { EVENT_NAMES } from '@elysian/contracts'
+import { EVENT_MODES, EVENT_NAMES } from '@elysian/contracts'
 import type { EventsAdapter } from '../../contracts/adapters'
 import { parseElysianEvent } from './parse'
+
+/**
+ * 事件流只承载已发生的事实，也就是 emit 型事件。
+ * waterfall、serial、parallel 需要应答，属于双向通道的语义，本期不订阅。
+ */
+const STREAMED_EVENT_NAMES = EVENT_NAMES.filter((name) => EVENT_MODES[name] === 'emit')
 
 /**
  * 事件源的最小形状。只用到订阅、关闭与两个回调，
@@ -44,22 +50,18 @@ export function createSseEventsAdapter(
       const source = factory(url)
       handlers.onStatus('connecting')
 
-      const listeners = EVENT_NAMES.map((name) => {
-        const listener = (message: MessageEvent<string>) => {
+      for (const name of STREAMED_EVENT_NAMES) {
+        source.addEventListener(name, (message: MessageEvent<string>) => {
           const event = parseElysianEvent(message.data)
           if (event) handlers.onEvent(event)
-        }
-        source.addEventListener(name, listener)
-        return listener
-      })
+        })
+      }
 
       source.onopen = () => handlers.onStatus('live')
       source.onerror = () => handlers.onStatus('connecting')
 
       return () => {
         source.close()
-        // 事件源关闭后监听器一并失效，这里只作记录，便于排查。
-        void listeners
       }
     },
   }
@@ -120,7 +122,7 @@ export function createResilientEventsAdapter(options: {
         handlers.onStatus('connecting')
       }
 
-      const listeners = EVENT_NAMES.map((name) => {
+      const listeners = STREAMED_EVENT_NAMES.map((name) => {
         const listener = (message: MessageEvent<string>) => {
           const event = parseElysianEvent(message.data)
           if (event) handlers.onEvent(event)

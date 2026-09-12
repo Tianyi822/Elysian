@@ -88,8 +88,8 @@ export function OverviewPage() {
       />
 
       <Section
-        title="严重等级分布"
-        description="按事件中心里的全部条目统计，点击某一档可以直接下钻到对应筛选。"
+        title="事故严重等级分布"
+        description="只统计事故，不含告警与待处理任务；点击某一档可以直接下钻到事件中心对应筛选。"
       >
         <ul className="flex flex-wrap gap-x-6 gap-y-2">
           {SEVERITIES.map((severity) => (
@@ -107,8 +107,8 @@ export function OverviewPage() {
           ))}
         </ul>
         <p className="mt-2 text-xs text-fg-muted">
-          共 {data.incidentTotal} 条，
-          <Link className="text-accent underline" to="/incidents">
+          事故共 {data.incidentTotal} 条；事件中心共 {data.eventTotal} 条（含告警与待处理任务）。
+          <Link className="ml-1 text-accent underline" to="/incidents">
             打开事件中心
           </Link>
         </p>
@@ -118,7 +118,8 @@ export function OverviewPage() {
         <div>
           <h2 className="text-xs text-fg-subtle">Agent 运行</h2>
           <p className="text-sm">
-            执行中 {data.runningRuns} 个模块 · 等待审批 {data.waitingRuns} 次运行
+            执行中 {data.runningRuns} 次运行 · 等待审批 {data.waitingRuns} 次运行 ·{' '}
+            {data.activeModules} 个模块有活跃运行
           </p>
           <Link className="text-xs text-accent underline" to="/runs">
             查看 Agent 运行

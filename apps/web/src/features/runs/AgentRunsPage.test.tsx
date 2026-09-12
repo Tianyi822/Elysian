@@ -46,19 +46,28 @@ describe('Agent 运行', () => {
     expect(screen.getByText(/当前 5 个模块有活跃运行/)).toBeInTheDocument()
   })
 
-  it('模块行给出当前运行与关联事故，并可跳转查看', async () => {
+  it('模块行给出当前运行与关联事故，并可切换查看的那一次运行', async () => {
     const user = userEvent.setup()
-    const { router } = renderApp('/runs')
+    renderApp('/runs')
     const table = await screen.findByRole('table', { name: '职责模块' })
+    const rows = within(table).getAllByRole('row').slice(1)
 
-    const activeRow = within(table)
-      .getAllByRole('row')
-      .slice(1)
-      .find((row) => within(row).queryByRole('button', { name: '查看' }) !== null)
-    expect(activeRow).toBeDefined()
+    const currentHeading = screen.getByRole('heading', { level: 2, name: /^运行 RUN-/ })
+      .textContent
 
-    await user.click(within(activeRow as HTMLElement).getByRole('button', { name: '查看' }))
-    expect(router.state.location.search).toContain('run=RUN-')
+    // 挑一个「不是当前正在查看」的运行，这样切换才是可验证的
+    const targetRow = rows.find((row) => {
+      const code = within(row).queryByText(/^RUN-/)
+      return code !== null && !currentHeading?.includes(code.textContent ?? '')
+    })
+    expect(targetRow).toBeDefined()
+
+    const targetRunId = within(targetRow as HTMLElement).getByText(/^RUN-/).textContent ?? ''
+    await user.click(within(targetRow as HTMLElement).getByRole('button', { name: '查看' }))
+
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { level: 2, name: `运行 ${targetRunId}` })).toBeInTheDocument(),
+    )
   })
 
   it('默认展示一次运行的时间线：轮次、步骤、模型请求与工具调用', async () => {
