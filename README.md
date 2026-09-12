@@ -10,30 +10,34 @@ Elysian 是 Agent 辅助的运维工作台：把当前事故、Agent 的分析�
 
 ## 快速开始
 
-脚手架尚未落地，本阶段目前只有共识文档。落地后以下命令必须全部可用。
+脚手架尚未落地，本阶段目前只有设计文档。落地后以下命令必须全部可用。
 
 ```bash
 bun install
-bun run dev       # 启动开发服务器并显示工作台
+bun run dev       # 启动开发服务器与 mock 事件流端点，并显示工作台
 bun run build     # 构建
 bun run test      # Vitest 全量测试
 bun run preview   # 以 mock 事件流端点服务构建产物
 ```
 
-## 目录
+## 目录与版本库范围
+
+本仓库只跟踪 `README.md` 与 `.gitignore`，代码与设计文档都不在版本库里。
 
 ```text
-apps/web                        # 本期唯一实现的入口：React + Vite 工作台
-packages/foundation/contracts   # @elysian/contracts：跨端领域协议，唯一权威
-docs/adr/                       # 决策记录
-docs/source/                    # 起点文件（历史材料）
+README.md                       # 本文件，仓库唯一跟踪的文档
+.gitignore                      # 排除依赖、构建产物、编辑器与 Agent 目录、本地文档
+apps/web                        # 本期唯一实现的入口：React + Vite 工作台（待建）
+packages/foundation/contracts   # @elysian/contracts：跨端领域协议，唯一权威（待建）
+CONTEXT.md / AGENTS.md          # 本地共识文档，不入库
+docs/                           # 决策记录与起点文件，不入库
 ```
 
-其余目录（`apps/server`、`apps/worker`、`apps/cli`、`packages/harness/*`、`packages/skills/*`、`packages/capabilities/*`、`profiles/` 等）属目标结构，本阶段不建目录，理由与清单见 `docs/adr/0001-phase-one-scope-and-monorepo-skeleton.md`。
+其余目录（`apps/server`、`apps/worker`、`apps/cli`、`packages/harness/*`、`packages/skills/*`、`packages/capabilities/*`、`profiles/` 等）属目标结构，本阶段不建目录。
 
 ## 边界与红线
 
-以下摘要来自本地共识文档 `AGENTS.md`；因为该文档不入版本库，仓库内保留一份摘要，完整版以其为准。
+以下摘要来自本地共识文档 `AGENTS.md`。该文档与 `docs/` 都不入版本库，仓库内保留这份摘要，完整版以其为准。
 
 - 不接入真实 Kubernetes、SSH、云厂商或数据库凭证。
 - 不执行 Shell、任意 JavaScript 或用户提供的脚本。
@@ -43,11 +47,11 @@ docs/source/                    # 起点文件（历史材料）
 - 不 vendor Cordis 源码，不让框架运行时进入浏览器依赖图。
 - 界面状态一律「文字 + 颜色」，不依赖颜色单独表达；不做 Hero、巨型标题、装饰性渐变与卡片堆叠。
 
-## 文档入口
+## 本地文档
+
+设计文档有意留在本地工作区、不进版本库，需要时在开发机上查看。
 
 - `CONTEXT.md`：术语与领域的唯一权威，含枚举取值与中文标签表。
 - `AGENTS.md`：工程约定、目录与边界、契约层规则、mock 与数据层约定、验收标准。
 - `docs/adr/`：决策记录，记录「为什么」。
 - `docs/source/project-prompt.md`：项目起点提示词原文，历史材料，冲突时以共识文档为准。
-
-`CONTEXT.md` 与 `AGENTS.md` 是本地工作区的共识文档，按约定不入版本库（列在 `.gitignore`），因此新克隆的仓库里看不到它们；仓库内共享的部分是 `README.md` 与 `docs/`。

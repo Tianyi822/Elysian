@@ -1,18 +1,74 @@
 # 依赖与构建产物
 node_modules/
 dist/
+dist-ssr/
+build/
+out/
+.vite/
 *.tsbuildinfo
+coverage/
+.nyc_output/
 
-# 系统文件
-.DS_Store
+# 日志与缓存
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+bun-debug.log*
+.eslintcache
+.stylelintcache
+.cache/
+.turbo/
+.parcel-cache/
 
-# 本地共识文档：不入版本库，理由见 AGENTS.md「版本库与提交」。
-# 路径前加斜杠是有意的，只排除仓库根的两份，未来子树里的同名文档不受影响。
-/AGENTS.md
-/CONTEXT.md
-
-# 本地环境与日志
+# 本地环境与密钥
 .env
 .env.*
 !.env.example
-*.log
+*.local
+*.pem
+*.key
+
+# 系统文件
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# 编辑器与 IDE
+.vscode/
+.idea/
+.fleet/
+.zed/
+.trae/
+.hbuilderx/
+*.swp
+*.swo
+*~
+*.sublime-workspace
+*.sublime-project
+
+# AI Agent 工作目录
+.claude/
+.codex/
+.qoder/
+.zcode/
+.cursor/
+.windsurf/
+.continue/
+.aider*
+.gemini/
+.openhands/
+
+# 本地文档：不入版本库，理由见 AGENTS.md「版本库与提交」。
+# 根锚定只排除仓库根的同名文档，未来子树里的同名文档不受影响；
+# 大小写两种写法都列出，避免在不同大小写敏感度的文件系统上漏排除。
+/AGENTS.md
+/agents.md
+/CONTEXT.md
+/context.md
+/docs/
