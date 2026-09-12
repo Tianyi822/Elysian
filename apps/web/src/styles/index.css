@@ -1,0 +1,157 @@
+@import "tailwindcss";
+
+/*
+ * 语义令牌层。组件只使用语义令牌对应的工具类（bg-surface、text-fg-muted、
+ * border-sev1-line 等），不写 dark: 变体，两套主题由本文件一处控制。
+ * 深色是默认值，浅色由 html[data-theme="light"] 覆盖。
+ */
+@theme inline {
+  --color-bg: var(--t-bg);
+  --color-surface: var(--t-surface);
+  --color-surface-raised: var(--t-surface-raised);
+  --color-line: var(--t-line);
+  --color-fg: var(--t-fg);
+  --color-fg-muted: var(--t-fg-muted);
+  --color-fg-subtle: var(--t-fg-subtle);
+  --color-accent: var(--t-accent);
+  --color-success: var(--t-success);
+  --color-warning: var(--t-warning);
+  --color-danger: var(--t-danger);
+  --color-info: var(--t-info);
+  --color-focus: var(--t-focus);
+
+  --color-sev1: var(--t-sev1);
+  --color-sev1-fg: var(--t-sev1-fg);
+  --color-sev1-line: var(--t-sev1-line);
+  --color-sev2: var(--t-sev2);
+  --color-sev2-fg: var(--t-sev2-fg);
+  --color-sev2-line: var(--t-sev2-line);
+  --color-sev3: var(--t-sev3);
+  --color-sev3-fg: var(--t-sev3-fg);
+  --color-sev3-line: var(--t-sev3-line);
+  --color-sev4: var(--t-sev4);
+  --color-sev4-fg: var(--t-sev4-fg);
+  --color-sev4-line: var(--t-sev4-line);
+
+  --color-risk-low: var(--t-risk-low);
+  --color-risk-low-fg: var(--t-risk-low-fg);
+  --color-risk-low-line: var(--t-risk-low-line);
+  --color-risk-medium: var(--t-risk-medium);
+  --color-risk-medium-fg: var(--t-risk-medium-fg);
+  --color-risk-medium-line: var(--t-risk-medium-line);
+  --color-risk-high: var(--t-risk-high);
+  --color-risk-high-fg: var(--t-risk-high-fg);
+  --color-risk-high-line: var(--t-risk-high-line);
+  --color-risk-critical: var(--t-risk-critical);
+  --color-risk-critical-fg: var(--t-risk-critical-fg);
+  --color-risk-critical-line: var(--t-risk-critical-line);
+}
+
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --t-bg: #0b0f14;
+  --t-surface: #131a23;
+  --t-surface-raised: #1a2330;
+  --t-line: #28323f;
+  --t-fg: #e8eef5;
+  --t-fg-muted: #a3b1c2;
+  --t-fg-subtle: #7c8ea3;
+  --t-accent: #4c8dff;
+  --t-success: #3fb950;
+  --t-warning: #d29922;
+  --t-danger: #f85149;
+  --t-info: #58a6ff;
+  --t-focus: #4c8dff;
+
+  --t-sev1: #3d1518;
+  --t-sev1-fg: #ff8a80;
+  --t-sev1-line: #7d2b2f;
+  --t-sev2: #3a2410;
+  --t-sev2-fg: #f0a45e;
+  --t-sev2-line: #7a4a1e;
+  --t-sev3: #33290a;
+  --t-sev3-fg: #e3c04a;
+  --t-sev3-line: #6b5514;
+  --t-sev4: #1c242e;
+  --t-sev4-fg: #9fb0c0;
+  --t-sev4-line: #33404d;
+
+  --t-risk-low: #0f2a1a;
+  --t-risk-low-fg: #6fd48a;
+  --t-risk-low-line: #1f6b3a;
+  --t-risk-medium: #33290a;
+  --t-risk-medium-fg: #e3c04a;
+  --t-risk-medium-line: #6b5514;
+  --t-risk-high: #3a2410;
+  --t-risk-high-fg: #f0a45e;
+  --t-risk-high-line: #7a4a1e;
+  --t-risk-critical: #3d1518;
+  --t-risk-critical-fg: #ff8a80;
+  --t-risk-critical-line: #7d2b2f;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+
+  --t-bg: #ffffff;
+  --t-surface: #f6f8fa;
+  --t-surface-raised: #ffffff;
+  --t-line: #d0d7de;
+  --t-fg: #1f2328;
+  --t-fg-muted: #59636e;
+  --t-fg-subtle: #6e7781;
+  --t-accent: #0969da;
+  --t-success: #1a7f37;
+  --t-warning: #9a6700;
+  --t-danger: #cf222e;
+  --t-info: #0969da;
+  --t-focus: #0969da;
+
+  --t-sev1: #ffebe9;
+  --t-sev1-fg: #a40e26;
+  --t-sev1-line: #ff9a95;
+  --t-sev2: #fff1e5;
+  --t-sev2-fg: #8f3d00;
+  --t-sev2-line: #ffb77c;
+  --t-sev3: #fff8c5;
+  --t-sev3-fg: #6b4c00;
+  --t-sev3-line: #e0c34a;
+  --t-sev4: #f6f8fa;
+  --t-sev4-fg: #59636e;
+  --t-sev4-line: #d0d7de;
+
+  --t-risk-low: #dafbe1;
+  --t-risk-low-fg: #0f5323;
+  --t-risk-low-line: #9ad3ab;
+  --t-risk-medium: #fff8c5;
+  --t-risk-medium-fg: #6b4c00;
+  --t-risk-medium-line: #e0c34a;
+  --t-risk-high: #fff1e5;
+  --t-risk-high-fg: #8f3d00;
+  --t-risk-high-line: #ffb77c;
+  --t-risk-critical: #ffebe9;
+  --t-risk-critical-fg: #a40e26;
+  --t-risk-critical-line: #ff9a95;
+}
+
+html {
+  font-size: 14px;
+}
+
+body {
+  margin: 0;
+  background-color: var(--t-bg);
+  color: var(--t-fg);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--t-focus);
+  outline-offset: 2px;
+}

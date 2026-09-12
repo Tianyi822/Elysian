@@ -1,0 +1,20 @@
+{
+  "name": "elysian",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "packages/*/*"
+  ],
+  "scripts": {
+    "dev": "bun run --filter @elysian/web dev",
+    "build": "bun run --filter @elysian/web build",
+    "preview": "bun run --filter @elysian/web preview",
+    "test": "bun run --filter @elysian/web test",
+    "typecheck": "bun run --filter '*' typecheck"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  }
+}
