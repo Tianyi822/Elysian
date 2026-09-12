@@ -1,6 +1,8 @@
 import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
+import { createMockGateway } from '../../adapters/mock/gateway'
+import type { ElysianGateway } from '../../contracts/adapters'
 import { renderApp } from '../../test/renderApp'
 import { NAV_ITEMS } from '../navigation'
 
@@ -25,6 +27,27 @@ describe('应用外壳', () => {
   it('每个页面都常驻演示数据标识', () => {
     renderApp('/')
     expect(screen.getByText('演示数据·未连接真实基础设施')).toBeInTheDocument()
+  })
+
+  it('标识事件流状态：默认网关用内存事件源，显示已连接', async () => {
+    renderApp('/')
+    expect(await screen.findByText('实时事件流：已连接')).toBeInTheDocument()
+  })
+
+  it('事件源不可用时，标识明确写出已降级', async () => {
+    const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+    const degraded: ElysianGateway = {
+      ...base,
+      events: {
+        subscribe(handlers) {
+          handlers.onStatus('degraded')
+          return () => {}
+        },
+      },
+    }
+
+    renderApp('/', { gateway: degraded })
+    expect(await screen.findByText('实时事件流：已降级为内存事件源')).toBeInTheDocument()
   })
 
   it('主题切换在深色与浅色之间切换 html 标记', async () => {

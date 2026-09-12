@@ -17,6 +17,7 @@
     "skipLibCheck": true,
     "noEmit": true,
     "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
     "useDefineForClassFields": true
   }
 }

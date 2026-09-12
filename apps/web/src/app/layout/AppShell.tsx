@@ -1,8 +1,12 @@
+import { useEffect } from 'react'
+import * as Dialog from '@radix-ui/react-dialog'
 import { Menu, Moon, Sun, X } from 'lucide-react'
 import { useState } from 'react'
-import * as Dialog from '@radix-ui/react-dialog'
 import { Outlet } from 'react-router'
+import { useGateway } from '../../adapters/GatewayProvider'
+import { EventStreamBadge } from '../../components/EventStreamBadge'
 import { IconButton } from '../../components/IconButton'
+import { useEventStreamStore } from '../../stores/eventStreamStore'
 import { useTheme } from '../theme/ThemeProvider'
 import { MockDataBadge } from './MockDataBadge'
 import { Sidebar } from './Sidebar'
@@ -10,6 +14,16 @@ import { Sidebar } from './Sidebar'
 export function AppShell() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const { theme, toggleTheme } = useTheme()
+  const gateway = useGateway()
+  const connectEventStream = useEventStreamStore((state) => state.connect)
+
+  // 整个应用只订阅一次事件流，避免每个页面各开一条连接。
+  useEffect(() => {
+    connectEventStream(gateway.events)
+    return () => {
+      useEventStreamStore.getState().disconnect()
+    }
+  }, [gateway, connectEventStream])
 
   return (
     <div className="min-h-screen bg-bg text-fg">
@@ -50,7 +64,8 @@ export function AppShell() {
         <span className="text-sm font-semibold tracking-tight">Elysian</span>
         <span className="hidden text-xs text-fg-subtle sm:inline">运维工作台</span>
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+          <EventStreamBadge />
           <MockDataBadge />
           <IconButton
             label={theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'}

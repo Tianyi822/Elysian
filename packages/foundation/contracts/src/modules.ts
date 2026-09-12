@@ -1,4 +1,4 @@
-import type { RiskLevel } from './enums'
+import type { RiskLevel } from './enums.ts'
 
 /**
  * 职责模块：中性的职责名词单元。每个模块都有明确的输入、输出、工具范围与风险上限，

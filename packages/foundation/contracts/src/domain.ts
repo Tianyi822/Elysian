@@ -9,7 +9,7 @@ import type {
   RunStatus,
   Severity,
   TurnEndReason,
-} from './enums'
+} from './enums.ts'
 
 /*
  * 领域类型。标识一律用字符串，不使用自增数字：mock 与未来后端因此可以共用同一套类型，

@@ -1,4 +1,4 @@
-import type { AgentStatus, ApprovalOutcome, Severity } from './enums'
+import type { AgentStatus, ApprovalOutcome, Severity } from './enums.ts'
 
 /** 事件分发模式，与 Cordis 的 @mode 约定一致。 */
 export type EventMode = 'emit' | 'waterfall' | 'serial' | 'parallel'

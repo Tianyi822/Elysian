@@ -1,5 +1,5 @@
-import type { ApprovalOutcome } from './enums'
-import type { AgentRun, ApprovalRequest, AuditRecord, Incident, Skill } from './domain'
+import type { ApprovalOutcome } from './enums.ts'
+import type { AgentRun, ApprovalRequest, AuditRecord, Incident, Skill } from './domain.ts'
 
 /** 技能注册表：技能的发现、版本与启停状态。 */
 export interface SkillRegistry {
@@ -30,7 +30,7 @@ export interface RunSource {
   find(runId: string): Promise<AgentRun | undefined>
 }
 
-declare module './context' {
+declare module './context.ts' {
   interface Context {
     skills: SkillRegistry
     approvals: ApprovalSeam
