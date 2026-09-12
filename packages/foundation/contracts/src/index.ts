@@ -3,7 +3,12 @@
  *
  * 本包是浏览器侧与未来服务端共享的稳定协议层，必须保持零运行时依赖：
  * 不依赖 React、DOM 或任何运行时库，只放类型、枚举、纯常量表与纯函数。
- *
- * 领域类型、枚举与中文标签表、13 个职责模块词典由 02 号票补齐。
+ * 「零依赖」由 `apps/web/src/contracts/shared-contracts.test.ts` 守着。
  */
-export const CONTRACTS_PACKAGE = '@elysian/contracts' as const
+
+export * from './enums'
+export * from './domain'
+export * from './modules'
+export * from './events'
+export * from './context'
+export * from './context-services'
