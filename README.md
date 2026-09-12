@@ -4,36 +4,35 @@ Elysian 是 Agent 辅助的运维工作台：把当前事故、Agent 的分析�
 
 ## 当前阶段
 
-只实现 Web 侧、可本地运行的前端演示。没有生产后端，不连接真实 Kubernetes、SSH、云厂商或数据库，不调用真实模型，没有用户认证与多租户。
+Web 侧的第一阶段已经实现并可本地运行：总览、事件中心、事故详情、Agent 运行、技能目录、审批队列、审计日志、系统设置八个界面单元，数据全部来自本地 mock，没有任何生产后端。
 
-演示数据来自本地 mock。唯一的网络请求是同源的 mock 事件流端点 `GET /api/events`（SSE），用于固定实时刷新的传输形状，不涉及任何真实基础设施地址。界面固定位置常驻「演示数据·未连接真实基础设施」标识，危险动作一律标注为 mock 或待接入，不会呈现为已执行。
+不连接真实 Kubernetes、SSH、云厂商或数据库，不调用真实模型，没有用户认证与多租户，不实现生产级权限系统。唯一的网络请求是同源的 mock 事件流端点 `GET /api/events`（SSE），由 dev 与 preview 的 Vite 插件提供；端点不可用时界面自动降级到内存事件源并在页头标注。界面固定位置常驻「演示数据·未连接真实基础设施」标识，所有动作都停在「待接入真实执行」，不会呈现为已执行。
 
 ## 快速开始
 
-脚手架尚未落地，本阶段目前只有设计文档。落地后以下命令必须全部可用。
-
 ```bash
 bun install
-bun run dev       # 启动开发服务器与 mock 事件流端点，并显示工作台
-bun run build     # 构建
-bun run test      # Vitest 全量测试
-bun run preview   # 以 mock 事件流端点服务构建产物
+bun run dev        # 启动开发服务器与 mock 事件流端点，打开工作台
+bun run build      # 生产构建
+bun run preview    # 以 mock 事件流端点服务构建产物
+bun run test       # Vitest 全量测试
+bun run typecheck  # Web 应用与契约包的类型检查
 ```
 
 ## 目录与版本库范围
 
-本仓库只跟踪 `README.md` 与 `.gitignore`，代码与设计文档都不在版本库里。
+仓库跟踪 `README.md`、`.gitignore` 与全部代码；设计文档留在本地工作区，不入库。
 
 ```text
-README.md                       # 本文件，仓库唯一跟踪的文档
-.gitignore                      # 排除依赖、构建产物、编辑器与 Agent 目录、本地文档
-apps/web                        # 本期唯一实现的入口：React + Vite 工作台（待建）
-packages/foundation/contracts   # @elysian/contracts：跨端领域协议，唯一权威（待建）
+README.md                       # 本文件
+apps/web/                       # React + Vite 工作台：app/ features/ components/ stores/ adapters/ contracts/
+packages/foundation/contracts/  # @elysian/contracts：跨端领域协议，零运行时依赖
 CONTEXT.md / AGENTS.md          # 本地共识文档，不入库
-docs/                           # 决策记录与起点文件，不入库
+docs/                           # 决策记录与规格，不入库
+.scratch/                       # 票与规划材料，不入库
 ```
 
-其余目录（`apps/server`、`apps/worker`、`apps/cli`、`packages/harness/*`、`packages/skills/*`、`packages/capabilities/*`、`profiles/` 等）属目标结构，本阶段不建目录。
+目标结构里尚未实现的边界（`apps/server`、`apps/worker`、`apps/cli`、`packages/harness/*`、`packages/skills/*`、`packages/capabilities/*`、`packages/execution/*`、`packages/persistence`、`packages/integrations`、`packages/api`、`packages/bundles`、`profiles/`）只登记在本地文档里，本阶段不建目录。
 
 ## 边界与红线
 
@@ -54,4 +53,5 @@ docs/                           # 决策记录与起点文件，不入库
 - `CONTEXT.md`：术语与领域的唯一权威，含枚举取值与中文标签表。
 - `AGENTS.md`：工程约定、目录与边界、契约层规则、mock 与数据层约定、验收标准。
 - `docs/adr/`：决策记录，记录「为什么」。
-- `docs/source/project-prompt.md`：项目起点提示词原文，历史材料，冲突时以共识文档为准。
+- `docs/specs/2026-09-12-web-workbench-spec.md`：本阶段的规格。
+- `.scratch/web-workbench/issues/`：拆分后的 11 张票与验收标准。

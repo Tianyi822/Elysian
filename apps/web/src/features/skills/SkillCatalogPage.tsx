@@ -223,7 +223,7 @@ export function SkillCatalogPage() {
               </DataCell>
               <DataCell>
                 <StatusTag
-                  label={skill.enabled ? '已启用' : '已停用'}
+                  label={skill.enabled ? SKILL_STATE_LABELS.enabled : SKILL_STATE_LABELS.disabled}
                   tone={skill.enabled ? 'success' : 'neutral'}
                 />
               </DataCell>
@@ -297,7 +297,9 @@ export function SkillCatalogPage() {
                   <dt className="text-xs text-fg-subtle">启用状态</dt>
                   <dd>
                     <StatusTag
-                      label={detail.enabled ? '已启用' : '已停用'}
+                      label={
+                        detail.enabled ? SKILL_STATE_LABELS.enabled : SKILL_STATE_LABELS.disabled
+                      }
                       tone={detail.enabled ? 'success' : 'neutral'}
                     />
                   </dd>

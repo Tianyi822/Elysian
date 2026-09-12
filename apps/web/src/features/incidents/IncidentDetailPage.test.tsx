@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { createMockDataset } from '../../adapters/mock/dataset'
 import { createMockGateway } from '../../adapters/mock/gateway'
-import type { ElysianGateway } from '../../contracts/adapters'
+import type { ElysianGateway, IncidentAdapter } from '../../contracts/adapters'
 import { renderApp } from '../../test/renderApp'
 
 const dataset = createMockDataset()
@@ -136,6 +136,52 @@ describe('事故详情', () => {
     const hrefs = screen.getAllByRole('link').map((link) => link.getAttribute('href'))
     expect(hrefs).toContain(`/runs?focus=${incident.runId}`)
     expect(hrefs).toContain(`/approvals?focus=${action?.approvalId}`)
+  })
+
+  it('执行结果是成功或回滚时按各自状态呈现，并标明所属动作', async () => {
+    // 演示数据里不出现「已成功/已回滚」（红线：绝不呈现为已执行），
+    // 但界面必须真的能呈现这两种结果，因此这里注入一份带两种结果的详情来验证渲染路径。
+    const incident = firstIncident((candidate) => candidate.executionResults.length > 0)
+    const action = incident.actions[0]
+    expect(action).toBeDefined()
+    if (!action) return
+
+    const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+    const withResults = {
+      ...incident,
+      executionResults: [
+        {
+          id: `${incident.id}-X-rollback`,
+          actionId: action.id,
+          at: '2026-09-12T08:30:00.000Z',
+          status: 'rolled-back' as const,
+          summary: '演示用的回滚结果',
+        },
+        {
+          id: `${incident.id}-X-success`,
+          actionId: action.id,
+          at: '2026-09-12T08:31:00.000Z',
+          status: 'succeeded' as const,
+          summary: '演示用的成功结果',
+        },
+      ],
+    }
+    const incidents: IncidentAdapter = {
+      listRows: (query) => base.incidents.listRows(query),
+      find: async () => withResults,
+    }
+
+    renderApp(`/incidents/${incident.id}`, { gateway: { ...base, incidents } })
+    await screen.findByRole('heading', { level: 1, name: new RegExp(incident.id) })
+
+    const results = section('执行结果')
+    expect(within(results).getByText('已回滚')).toBeInTheDocument()
+    expect(within(results).getByText('执行成功')).toBeInTheDocument()
+    expect(within(results).getAllByText(`所属动作 ${action.id}`).length).toBeGreaterThan(0)
+
+    // 色调随状态走：成功用成功色，回滚用警告色，不是一律警告色。
+    expect(within(results).getByText('执行成功').className).toContain('text-success')
+    expect(within(results).getByText('已回滚').className).toContain('text-warning')
   })
 
   it('标识不存在时给出空状态而不是空白页', async () => {

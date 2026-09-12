@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useGateway } from '../adapters/GatewayProvider'
 import { PageHeader } from '../components/PageHeader'
-import { NoPermissionState } from '../components/states/StateViews'
+import { LoadingState, NoPermissionState } from '../components/states/StateViews'
 import type { PageArea } from '../contracts/adapters'
 
 /**
@@ -45,9 +45,9 @@ export function RequireArea({
     }
   }, [gateway, area])
 
-  // 校验期间不渲染任何页头：页面自己会渲染标题，这里再渲染一次会让标题节点在校验通过时被替换掉，
-  // 而且本地会话的判定是瞬时的，占位反而更容易看到闪一下。页面自身的加载状态已经承担了等待表达。
-  if (allowed === undefined) return null
+  // 校验期间只放加载态、不放页头：页面自己会渲染标题，
+  // 这里再渲染一次会让标题节点在校验通过时被替换掉，测试与读屏都会抓到已失效的节点。
+  if (allowed === undefined) return <LoadingState label="正在校验访问权限…" />
 
   if (!allowed) {
     return (

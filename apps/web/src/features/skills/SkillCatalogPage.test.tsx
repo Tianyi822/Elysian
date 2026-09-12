@@ -1,12 +1,24 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { createMockDataset } from '../../adapters/mock/dataset'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import type { ElysianGateway, SkillAdapter } from '../../contracts/adapters'
+import { useSkillCatalogStore } from '../../stores/skillCatalogStore'
 import { renderApp } from '../../test/renderApp'
 
 const dataset = createMockDataset()
+
+beforeEach(() => {
+  useSkillCatalogStore.setState({
+    status: 'idle',
+    skills: [],
+    errorMessage: undefined,
+    actionError: undefined,
+    lastToggleNote: undefined,
+    busySkillId: undefined,
+  })
+})
 const firstSkill = dataset.skills[0]
 
 function createGateway() {

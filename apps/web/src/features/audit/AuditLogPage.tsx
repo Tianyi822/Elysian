@@ -53,8 +53,10 @@ export function AuditLogPage() {
   }, [gateway, load])
 
   const merged = useMemo(() => {
+    // 实时记录直接排在最前，不参与时间排序：它们按定义就是「刚刚到达」，
+    // 而它们的时刻来自真实时钟，拿它去和种子基准时间比大小，在机器时钟落后时会排错位置。
     const live = recentEvents.map(projectEventToAuditRecord)
-    return [...live, ...records].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))
+    return [...live, ...records]
   }, [recentEvents, records])
 
   const filtered = useMemo(

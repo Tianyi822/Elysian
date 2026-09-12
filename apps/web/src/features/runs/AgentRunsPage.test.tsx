@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { createMockDataset } from '../../adapters/mock/dataset'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import type { ElysianGateway, RunAdapter } from '../../contracts/adapters'
+import { useAgentRunsStore } from '../../stores/agentRunsStore'
 import { useEventStreamStore } from '../../stores/eventStreamStore'
 import { renderApp } from '../../test/renderApp'
 
@@ -31,6 +32,8 @@ function gatewayWithControllableStream() {
 beforeEach(() => {
   useEventStreamStore.getState().disconnect()
   useEventStreamStore.setState({ status: 'connecting', recent: [], receivedCount: 0 })
+  // store 是模块级单例：逐条测试之间清空，避免上一条的数据掩盖这一条要验证的行为。
+  useAgentRunsStore.setState({ status: 'idle', runs: [], moduleStatuses: [], errorMessage: undefined })
 })
 
 describe('Agent 运行', () => {
@@ -104,27 +107,20 @@ describe('Agent 运行', () => {
     expect(hrefs.some((href) => href.startsWith('/skills?capability='))).toBe(true)
   })
 
-  it('失败运行显示错误信息与轮次结束原因', async () => {
-    const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
-    const failedRun = {
-      ...dataset.runs[0]!,
-      id: 'RUN-FAILED-1',
-      status: 'failed' as const,
-      waitingReason: undefined,
-      error: { message: '工具执行超时', endReason: 'error' as const },
-    }
-    // 注意：不能对类实例做对象展开，那会丢掉原型上的方法，这里显式实现整个接口。
-    const runs: RunAdapter = {
-      list: async () => [failedRun],
-      find: async (runId) => (runId === failedRun.id ? failedRun : undefined),
-      listModuleStatuses: async () => dataset.moduleStatuses,
-    }
+  it('失败运行显示错误信息与轮次结束原因，这些来自演示数据本身', async () => {
+    const failedRun = dataset.runs.find((run) => run.status === 'failed')
+    expect(failedRun, '演示数据里必须有一次失败的运行').toBeDefined()
+    expect(failedRun?.error).toBeDefined()
 
-    renderApp('/runs', { gateway: { ...base, runs } })
+    renderApp(`/runs?run=${failedRun?.id}`)
     await screen.findByRole('table', { name: '职责模块' })
 
-    expect(await screen.findByText(/运行失败：工具执行超时/)).toBeInTheDocument()
-    expect(screen.getByText(/错误/)).toBeInTheDocument()
+    // 错误信息与结束原因在同一条横幅里，一起断言，避免用 /错误/ 这种过宽的匹配。
+    expect(
+      await screen.findByText(
+        new RegExp(`运行失败：${failedRun?.error?.message ?? ''}（结束原因\\s*错误）`),
+      ),
+    ).toBeInTheDocument()
   })
 
   it('属于本次运行的实时事件会追加到时间线', async () => {
@@ -160,7 +156,6 @@ describe('Agent 运行', () => {
       find: async () => undefined,
       listModuleStatuses: async () => dataset.moduleStatuses,
     }
-
     renderApp('/runs', { gateway: { ...base, runs } })
 
     const alert = await screen.findByRole('alert')

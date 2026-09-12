@@ -38,10 +38,14 @@ export const useEventStreamStore = create<EventStreamState>((set) => ({
       },
       onEvent: (event) => {
         if (current !== generation) return
-        set((state) => ({
-          recent: [event, ...state.recent].slice(0, MAX_RECENT_EVENTS),
-          receivedCount: state.receivedCount + 1,
-        }))
+        set((state) => {
+          // 按事件标识去重：重新订阅会让事件源从头开始计数，不去重就会出现重复行与重复键。
+          if (state.recent.some((seen) => seen.id === event.id)) return state
+          return {
+            recent: [event, ...state.recent].slice(0, MAX_RECENT_EVENTS),
+            receivedCount: state.receivedCount + 1,
+          }
+        })
       },
     })
   },

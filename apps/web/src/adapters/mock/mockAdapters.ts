@@ -94,7 +94,7 @@ export class MockSkillAdapter implements SkillAdapter {
     const current = index >= 0 ? dataset.skills[index] : undefined
     if (!current) throw new Error(`技能不存在：${skillId}`)
     const updated: Skill = { ...current, enabled }
-    ;(dataset.skills as Skill[])[index] = updated
+    dataset.skills[index] = updated
     return updated
   }
 }
@@ -124,12 +124,11 @@ export class MockApprovalAdapter implements ApprovalAdapter {
       decidedAt,
       note: decision.note,
     }
-    ;(dataset.approvals as ApprovalRequest[])[index] = updated
+    dataset.approvals[index] = updated
 
     // 审批决定必须留下审计痕迹：审计日志页刷新后就能看到这一条。
     const decisionLabel = decision.outcome === 'rejected' ? '已拒绝' : '已批准'
-    const auditRecords = dataset.audit as AuditRecord[]
-    auditRecords.unshift({
+    dataset.audit.unshift({
       id: `${requestId}-DECISION`,
       at: decidedAt,
       kind: 'approval',
@@ -140,7 +139,7 @@ export class MockApprovalAdapter implements ApprovalAdapter {
       traceId: `approval-${requestId}`,
     })
     // 审计列表约定按时间倒序，插入后重排，避免时钟与种子基准时间不一致时顺序错乱。
-    auditRecords.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))
+    dataset.audit.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))
 
     return updated
   }
@@ -208,7 +207,12 @@ export function createInMemoryEventsAdapter(
             id: `mem-${counter}-agent`,
             name: 'agent/status',
             at: new Date().toISOString(),
-            payload: { moduleId: run.moduleId, status: 'running' },
+            payload: {
+              moduleId: run.moduleId,
+              // 与 mock 事件流端点保持同一套判定，避免同一个事件名在两处语义不同。
+              status:
+                run.status === 'running' || run.status === 'waiting-approval' ? 'running' : 'idle',
+            },
           })
         }
 

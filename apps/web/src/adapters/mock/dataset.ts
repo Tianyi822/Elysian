@@ -41,15 +41,20 @@ import {
 export const DATASET_SEED = 20_260_912
 export const DATASET_BASE_TIME = '2026-09-12T08:00:00.000Z'
 
+/**
+ * 演示数据集。字段是可变的：审批与技能启停会在运行期改写它，
+ * 适配层接口本身就承诺了这一点（`setEnabled`、`decide`），
+ * 因此这里不假装它是只读的，readonly 只体现在适配层返回给界面的那一侧。
+ */
 export type MockDataset = {
-  incidents: readonly Incident[]
-  alerts: readonly Alert[]
-  pendingTasks: readonly PendingTask[]
-  runs: readonly AgentRun[]
-  approvals: readonly ApprovalRequest[]
-  skills: readonly Skill[]
-  audit: readonly AuditRecord[]
-  moduleStatuses: readonly ModuleStatus[]
+  incidents: Incident[]
+  alerts: Alert[]
+  pendingTasks: PendingTask[]
+  runs: AgentRun[]
+  approvals: ApprovalRequest[]
+  skills: Skill[]
+  audit: AuditRecord[]
+  moduleStatuses: ModuleStatus[]
 }
 
 const SERVICES = [
@@ -83,6 +88,27 @@ const ACTIVE_MODULE_IDS = [
   'observability-analysis',
   'rapid-response',
 ] as const
+
+/** 本期没有活跃运行的八个模块。 */
+const IDLE_MODULE_IDS = [
+  'resource-governance',
+  'automation-orchestration',
+  'fault-drill',
+  'recovery-engineering',
+  'root-cause-diagnosis',
+  'knowledge-presentation',
+  'change-governance',
+  'skill-management',
+] as const
+
+/** 会产生进行中运行的事故状态。 */
+function isActiveIncidentStatus(status: IncidentStatus): boolean {
+  return status === 'analyzing' || status === 'awaiting-approval' || status === 'mitigating'
+}
+
+function activeModuleAt(index: number): string {
+  return ACTIVE_MODULE_IDS[index % ACTIVE_MODULE_IDS.length] ?? 'coordination'
+}
 
 const INCIDENT_TITLES = [
   '订单服务 P99 延迟突增，错误率同步上升',
@@ -375,6 +401,11 @@ export function createMockDataset(): MockDataset {
   const approvals: ApprovalRequest[] = []
   const audit: AuditRecord[] = []
 
+  // 前五个「会产生进行中运行」的事故各领一个不同的职责模块，
+  // 这样五个活跃模块必然各自有一次进行中的运行——不需要事后去改运行状态，
+  // 那会让运行状态与事故状态对不上。
+  let activeSlot = 0
+
   for (let index = 0; index < INCIDENT_COUNT; index += 1) {
     const incidentId = `INC-${2100 + index}`
     const service = pick(rnd, SERVICES)
@@ -382,7 +413,11 @@ export function createMockDataset(): MockDataset {
     const status = statusPlan[index] ?? 'open'
     const detectedAt = minutesBefore(DATASET_BASE_TIME, 12 + index * 37)
     const hasRun = status !== 'open' || rnd() > 0.5
-    const moduleId = hasRun ? pick(rnd, ACTIVE_MODULE_IDS) : undefined
+    const moduleId = hasRun
+      ? isActiveIncidentStatus(status)
+        ? activeModuleAt(activeSlot++)
+        : activeModuleAt(index)
+      : undefined
     const runId = hasRun ? `RUN-${1400 + index}` : undefined
 
     const evidence = buildEvidence(rnd, incidentId, service, detectedAt)
@@ -656,28 +691,73 @@ export function createMockDataset(): MockDataset {
     lastUsedAt: minutesBefore(DATASET_BASE_TIME, intBetween(rnd, 10, 2880)),
   }))
 
-  // 职责模块状态：本期只有五个模块有活跃运行，其余空闲。
-  // 活跃的前提是它确实有一次进行中（或等待审批）的运行，不能只看有没有运行记录——
-  // 否则一个「已成功」的运行会让模块看起来还在干活。
-  for (const moduleId of ACTIVE_MODULE_IDS) {
-    const moduleRuns = runs.filter((run) => run.moduleId === moduleId)
-    const hasActive = moduleRuns.some(
-      (run) => run.status === 'running' || run.status === 'waiting-approval',
-    )
-    const first = moduleRuns[0]
-    if (!hasActive && first) {
-      first.status = 'running'
-      first.endedAt = undefined
-    }
+  // 一次失败的运行：错误信息与轮次结束原因是 07 号票的验收内容，
+  // 必须能从演示数据里看到，而不是只能靠测试里手写的替身。
+  const failedHost = incidents.find((incident) => incident.runId === undefined)
+  if (failedHost) {
+    const failedRunId = 'RUN-1900'
+    const failedModuleId = IDLE_MODULE_IDS[0]
+    const failedAt = addMinutes(failedHost.detectedAt, 2)
+    const failedEndedAt = addMinutes(failedAt, 7)
+    failedHost.runId = failedRunId
+    runs.push({
+      id: failedRunId,
+      incidentId: failedHost.id,
+      moduleId: failedModuleId,
+      status: 'failed',
+      startedAt: failedAt,
+      endedAt: failedEndedAt,
+      error: { message: '只读查询超时：工具在超时窗口内未返回', endReason: 'error' },
+      turns: [
+        {
+          id: `${failedRunId}-T1`,
+          index: 1,
+          startedAt: failedAt,
+          endedAt: failedEndedAt,
+          endReason: 'error',
+          steps: [
+            {
+              id: `${failedRunId}-T1-S1`,
+              index: 1,
+              title: '收集症状指标',
+              at: failedAt,
+              modelRequests: [
+                {
+                  id: `${failedRunId}-T1-S1-M`,
+                  at: failedAt,
+                  model: 'demo-model',
+                  summary: '尝试读取指标并形成初步判断',
+                },
+              ],
+              toolCalls: [
+                {
+                  id: `${failedRunId}-T1-S1-C1`,
+                  name: 'metrics.query',
+                  at: failedAt,
+                  phase: 'execute',
+                  decision: 'allow',
+                  durationMs: 7000,
+                  summary: '只读查询超时，未返回结果',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    })
+    failedHost.timeline = [
+      ...failedHost.timeline,
+      {
+        id: `${failedHost.id}-T-fail`,
+        at: failedEndedAt,
+        kind: 'note',
+        actor: failedModuleId,
+        summary: 'Agent 运行失败：只读查询超时，已停止分析并等待人工接管',
+      },
+    ]
   }
 
-  const isModuleActive = (moduleId: string) =>
-    runs.some(
-      (run) =>
-        run.moduleId === moduleId &&
-        (run.status === 'running' || run.status === 'waiting-approval'),
-    )
-
+  // 职责模块状态由运行推导：有进行中或等待审批的运行才算活跃。
   const moduleStatuses: ModuleStatus[] = [
     ...ACTIVE_MODULE_IDS.map((moduleId) => {
       const activeRun = runs.find(
@@ -687,14 +767,12 @@ export function createMockDataset(): MockDataset {
       )
       return {
         moduleId,
-        status: isModuleActive(moduleId) ? ('running' as const) : ('idle' as const),
+        status: activeRun ? ('running' as const) : ('idle' as const),
         activeRunId: activeRun?.id,
         incidentId: activeRun?.incidentId,
       }
     }),
-    ...['resource-governance', 'automation-orchestration', 'fault-drill', 'recovery-engineering', 'root-cause-diagnosis', 'knowledge-presentation', 'change-governance', 'skill-management'].map(
-      (moduleId) => ({ moduleId, status: 'idle' as const }),
-    ),
+    ...IDLE_MODULE_IDS.map((moduleId) => ({ moduleId, status: 'idle' as const })),
   ]
 
   audit.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))

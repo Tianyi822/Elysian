@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { createMockDataset } from '../../adapters/mock/dataset'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import type { ElysianGateway } from '../../contracts/adapters'
+import { useAuditLogStore } from '../../stores/auditLogStore'
 import { useEventStreamStore } from '../../stores/eventStreamStore'
 import { matchesAuditQuery } from './query'
 import { renderApp } from '../../test/renderApp'
@@ -42,9 +43,10 @@ function gatewayWithControllableStream() {
 }
 
 beforeEach(() => {
-  // eventStreamStore 是模块级单例，逐条测试之间要清干净。
+  // eventStreamStore 与 auditLogStore 都是模块级单例，逐条测试之间要清干净。
   useEventStreamStore.getState().disconnect()
   useEventStreamStore.setState({ status: 'connecting', recent: [], receivedCount: 0 })
+  useAuditLogStore.setState({ status: 'idle', records: [], errorMessage: undefined })
 })
 
 describe('审计日志', () => {

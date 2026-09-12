@@ -1,8 +1,9 @@
 import { responsibilityModuleName } from '@elysian/contracts'
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, beforeEach } from 'vitest'
 import { createMockDataset, toIncidentListRows } from '../../adapters/mock/dataset'
+import { useIncidentListStore } from '../../stores/incidentListStore'
 import { renderApp } from '../../test/renderApp'
 
 /*
@@ -12,6 +13,17 @@ import { renderApp } from '../../test/renderApp'
 
 const dataset = createMockDataset()
 const allRows = toIncidentListRows(dataset)
+
+beforeEach(() => {
+  // store 是模块级单例：不清空的话，上一个测试留下的行会在新查询加载完成前先渲染出来。
+  useIncidentListStore.setState({
+    status: 'idle',
+    rows: [],
+    total: 0,
+    availableSources: [],
+    errorMessage: undefined,
+  })
+})
 
 function bodyRows(): HTMLElement[] {
   const table = screen.getByRole('table', { name: '事件列表' })

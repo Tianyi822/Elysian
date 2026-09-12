@@ -12,6 +12,7 @@ import { PageHeader } from '../../components/PageHeader'
 import { RiskTag } from '../../components/RiskTag'
 import { Section } from '../../components/Section'
 import { INCIDENT_STATUS_TONE, SeverityTag, StatusTag } from '../../components/StatusTag'
+import type { StatusTone } from '../../components/StatusTag'
 import { Timeline } from '../../components/Timeline'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
 import { formatDateTime } from '../../components/format'
@@ -34,6 +35,14 @@ const EXECUTION_STATUS_LABELS: Record<ExecutionResult['status'], string> = {
   succeeded: '执行成功',
   failed: '执行失败',
   'rolled-back': '已回滚',
+}
+
+/** 色调随执行状态走，不写死一个警告色：否则将来出现成功或回滚的结果会显示成同一种颜色。 */
+const EXECUTION_STATUS_TONES: Record<ExecutionResult['status'], StatusTone> = {
+  'awaiting-integration': 'warning',
+  succeeded: 'success',
+  failed: 'danger',
+  'rolled-back': 'warning',
 }
 
 const ACTION_COLUMNS = [
@@ -294,8 +303,12 @@ export function IncidentDetailPage() {
           <ul className="space-y-1">
             {incident.executionResults.map((result) => (
               <li key={result.id} className="flex flex-wrap items-baseline gap-2">
-                <StatusTag label={EXECUTION_STATUS_LABELS[result.status]} tone="warning" />
+                <StatusTag
+                  label={EXECUTION_STATUS_LABELS[result.status]}
+                  tone={EXECUTION_STATUS_TONES[result.status]}
+                />
                 <span className="text-sm">{result.summary}</span>
+                <span className="text-xs text-fg-subtle">所属动作 {result.actionId}</span>
                 <time className="text-xs tabular-nums text-fg-subtle">
                   {formatDateTime(result.at)}
                 </time>

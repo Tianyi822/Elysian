@@ -5,7 +5,8 @@ import { renderApp } from '../test/renderApp'
 const ROUTES: ReadonlyArray<{ path: string; heading: string }> = [
   { path: '/', heading: '总览' },
   { path: '/incidents', heading: '事件中心' },
-  { path: '/incidents/INC-2041', heading: '事故详情' },
+  // 事故详情用数据集里真实存在的标识，这样断言的是页面本身而不是外壳。
+  { path: '/incidents/INC-2100', heading: '事故详情' },
   { path: '/runs', heading: 'Agent 运行' },
   { path: '/skills', heading: '技能目录' },
   { path: '/approvals', heading: '审批队列' },

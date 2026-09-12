@@ -6,6 +6,12 @@ import type { ElysianEvent, EventName } from '@elysian/contracts'
  *
  * 这一层刻意不依赖 EventSource 也不依赖服务端：帧解析是纯函数，
  * 因此多行 data、注释帧心跳、retry、断线续传与乱序到达都能直接测。
+ *
+ * 当前运行时路径用的是浏览器原生 EventSource（它自己完成帧解析与断线重连），
+ * 所以 `SseFrameParser` 在日常请求里不会被调用。它的作用有两条：
+ * 一是把线上格式写成可执行的定义，供 mock 端点序列化、供测试断言；
+ * 二是一旦将来换成基于 fetch 的传输（原生事件源不可用，或需要自定义重连策略），
+ * 解析器就是现成的实现，不必重新对着规范写一遍。
  */
 
 export type SseFrame = {

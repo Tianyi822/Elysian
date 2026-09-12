@@ -1,4 +1,4 @@
-import type { ApprovalOutcome, ApprovalRequest, RiskLevel } from '@elysian/contracts'
+import type { ApprovalOutcome, ApprovalRequest } from '@elysian/contracts'
 import { create } from 'zustand'
 import type { ApprovalAdapter } from '../contracts/adapters'
 
@@ -57,6 +57,3 @@ export const useApprovalQueueStore = create<ApprovalQueueState>((set) => ({
     }
   },
 }))
-
-/** 风险由高到低，用于排序与展示。 */
-export const RISK_ORDER: readonly RiskLevel[] = ['critical', 'high', 'medium', 'low']

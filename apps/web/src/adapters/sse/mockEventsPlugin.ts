@@ -71,6 +71,13 @@ function readLastEventId(req: IncomingMessage): string | undefined {
   return url.searchParams.get('lastEventId') ?? undefined
 }
 
+/**
+ * 事件序列号在进程内全局递增，而不是每条连接各自从 1 开始。
+ * 否则客户端一旦重新订阅（或开第二个标签页），标识就会从头再来，
+ * 界面上就会出现重复事件；与真实事件总线的单调标识也更接近。
+ */
+let globalSequence = 0
+
 export function createEventsHandler() {
   return (req: IncomingMessage, res: ServerResponse): void => {
     if (req.method !== 'GET') {
@@ -88,15 +95,19 @@ export function createEventsHandler() {
     })
 
     const plan = buildEventPlan()
-    let sequence = sequenceFromLastEventId(readLastEventId(req))
+    // 客户端给了更靠后的续传标识时按它的来（补发它错过的事件）；
+    // 否则接在全局序列号之后，避免重复投递已经在别处投递过的标识。
+    const resumeFrom = sequenceFromLastEventId(readLastEventId(req))
+    let sequence = Math.max(resumeFrom, globalSequence)
     let sent = 0
 
     const sendNext = () => {
       if (plan.length === 0) return
-      const planned = plan[sequence % plan.length]
-      if (!planned) return
       sequence += 1
+      globalSequence = sequence
       sent += 1
+      const planned = plan[(sequence - 1) % plan.length]
+      if (!planned) return
       const event = {
         id: eventIdAt(sequence),
         name: planned.name,
@@ -107,7 +118,7 @@ export function createEventsHandler() {
     }
 
     res.write(`retry: ${TICK_MS}\n\n`)
-    // 断线续传时 sequence 从 Last-Event-ID 之后继续，因此补发的这几帧都是没投递过的。
+    // 连上后先补发几帧，避免界面空等一个 tick 才有内容。
     while (sent < REPLAY_BURST) sendNext()
 
     const tick = setInterval(sendNext, TICK_MS)

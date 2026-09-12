@@ -1,45 +1,8 @@
 import type { ElysianEvent, EventStreamHandlers, EventStreamStatus } from '@elysian/contracts'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { FakeEventSource } from '../../test/fakeEventSource'
 import type { EventsAdapter } from '../../contracts/adapters'
-import type { EventSourceLike } from './eventsAdapter'
 import { createResilientEventsAdapter, createSseEventsAdapter } from './eventsAdapter'
-
-class FakeEventSource implements EventSourceLike {
-  static instances: FakeEventSource[] = []
-
-  readonly listeners = new Map<string, Set<(event: MessageEvent<string>) => void>>()
-  onopen: ((event: Event) => void) | null = null
-  onerror: ((event: Event) => void) | null = null
-  closed = false
-
-  constructor(readonly url: string) {
-    FakeEventSource.instances.push(this)
-  }
-
-  addEventListener(type: string, listener: (event: MessageEvent<string>) => void): void {
-    const set = this.listeners.get(type) ?? new Set()
-    set.add(listener)
-    this.listeners.set(type, set)
-  }
-
-  close(): void {
-    this.closed = true
-  }
-
-  emitOpen(): void {
-    this.onopen?.(new Event('open'))
-  }
-
-  emitError(): void {
-    this.onerror?.(new Event('error'))
-  }
-
-  emit(name: string, data: string): void {
-    for (const listener of this.listeners.get(name) ?? []) {
-      listener({ data } as MessageEvent<string>)
-    }
-  }
-}
 
 function createStubAdapter() {
   const state = {
@@ -70,7 +33,7 @@ function envelope(id: string, name = 'agent/status'): string {
 
 describe('韧性事件流适配器', () => {
   beforeEach(() => {
-    FakeEventSource.instances = []
+    FakeEventSource.reset()
   })
 
   afterEach(() => {
@@ -92,19 +55,19 @@ describe('韧性事件流适配器', () => {
       onEvent: (event) => events.push(event),
     })
 
-    const source = FakeEventSource.instances[0]
+    const source = FakeEventSource.latest()
     expect(source).toBeDefined()
     expect(statuses).toEqual(['connecting'])
 
     source?.emitOpen()
     expect(statuses).toEqual(['connecting', 'live'])
 
-    source?.emit('agent/status', envelope('evt-1'))
+    source?.emitRaw('agent/status', envelope('evt-1'))
     expect(events).toHaveLength(1)
     expect(events[0]?.name).toBe('agent/status')
 
     // 内容不合法的帧被丢弃，不会把坏数据交给界面
-    source?.emit('agent/status', '不是 JSON')
+    source?.emitRaw('agent/status', '不是 JSON')
     expect(events).toHaveLength(1)
 
     unsubscribe()
@@ -128,7 +91,7 @@ describe('韧性事件流适配器', () => {
 
     expect(statuses).toEqual(['connecting', 'degraded'])
     expect(stub.state.subscribeCount).toBe(1)
-    expect(FakeEventSource.instances[0]?.closed).toBe(true)
+    expect(FakeEventSource.latest()?.closed).toBe(true)
   })
 
   it('连上之前报错立即降级，不空等探针窗口', () => {
@@ -143,7 +106,7 @@ describe('韧性事件流适配器', () => {
     })
     adapter.subscribe({ onStatus: (status) => statuses.push(status), onEvent: () => {} })
 
-    FakeEventSource.instances[0]?.emitError()
+    FakeEventSource.latest()?.emitError()
 
     expect(statuses).toEqual(['connecting', 'degraded'])
     expect(stub.state.subscribeCount).toBe(1)
@@ -161,7 +124,7 @@ describe('韧性事件流适配器', () => {
     })
     adapter.subscribe({ onStatus: (status) => statuses.push(status), onEvent: () => {} })
 
-    const source = FakeEventSource.instances[0]
+    const source = FakeEventSource.latest()
     source?.emitOpen()
     source?.emitError()
     vi.advanceTimersByTime(5000)

@@ -1,13 +1,25 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { createMockDataset } from '../../adapters/mock/dataset'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import type { ApprovalAdapter, ElysianGateway } from '../../contracts/adapters'
+import { useApprovalQueueStore } from '../../stores/approvalQueueStore'
 import { renderApp } from '../../test/renderApp'
 import { parseApprovalQuery, sortApprovals } from './query'
 
 const dataset = createMockDataset()
+
+beforeEach(() => {
+  useApprovalQueueStore.setState({
+    status: 'idle',
+    approvals: [],
+    errorMessage: undefined,
+    actionError: undefined,
+    lastDecisionNote: undefined,
+    busyApprovalId: undefined,
+  })
+})
 
 function createGateway() {
   return createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })

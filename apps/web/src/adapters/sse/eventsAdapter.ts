@@ -84,8 +84,13 @@ export function createResilientEventsAdapter(options: {
   return {
     subscribe(handlers: EventStreamHandlers): Unsubscribe {
       if (!factory) {
+        // 与探针超时那条路径一样：降级状态由本层上报，内存事件源自己的健康状态不能覆盖它。
+        const unsubscribeFallback = options.fallback().subscribe({
+          onEvent: handlers.onEvent,
+          onStatus: () => {},
+        })
         handlers.onStatus('degraded')
-        return options.fallback().subscribe(handlers)
+        return unsubscribeFallback
       }
 
       let degraded = false
@@ -100,8 +105,14 @@ export function createResilientEventsAdapter(options: {
         degraded = true
         if (timer !== undefined) clearTimeout(timer)
         source.close()
+
+        // 降级信号由本层负责：内存事件源会照常上报自己的连接中/已连接，
+        // 那会把「已降级」这一事实盖掉，页头就会在真正降级时显示「已连接」。
+        unsubscribeFallback = options.fallback().subscribe({
+          onEvent: handlers.onEvent,
+          onStatus: () => {},
+        })
         handlers.onStatus('degraded')
-        unsubscribeFallback = options.fallback().subscribe(handlers)
       }
 
       source.onopen = () => {
@@ -122,20 +133,18 @@ export function createResilientEventsAdapter(options: {
         handlers.onStatus('connecting')
       }
 
-      const listeners = STREAMED_EVENT_NAMES.map((name) => {
-        const listener = (message: MessageEvent<string>) => {
+      for (const name of STREAMED_EVENT_NAMES) {
+        source.addEventListener(name, (message: MessageEvent<string>) => {
           const event = parseElysianEvent(message.data)
           if (event) handlers.onEvent(event)
-        }
-        source.addEventListener(name, listener)
-        return listener
-      })
+        })
+      }
 
       const timer: ReturnType<typeof setTimeout> = setTimeout(fallbackToMemory, probeMs)
 
       return () => {
         if (timer !== undefined) clearTimeout(timer)
-        void listeners
+        // 监听器随事件源一起失效，不需要逐个摘除。
         source.close()
         unsubscribeFallback?.()
       }
