@@ -1,0 +1,18 @@
+# 依赖与构建产物
+node_modules/
+dist/
+*.tsbuildinfo
+
+# 系统文件
+.DS_Store
+
+# 本地共识文档：不入版本库，理由见 AGENTS.md「版本库与提交」。
+# 路径前加斜杠是有意的，只排除仓库根的两份，未来子树里的同名文档不受影响。
+/AGENTS.md
+/CONTEXT.md
+
+# 本地环境与日志
+.env
+.env.*
+!.env.example
+*.log
