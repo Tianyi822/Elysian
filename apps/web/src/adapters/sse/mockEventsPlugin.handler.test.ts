@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createEventsHandler, eventIdAt } from './mockEventsPlugin'
+import { createEventsHandler, eventIdAt, TICK_MS } from './mockEventsPlugin'
 
 /**
  * 端点处理器的行为测试。这里曾出过真实事故：
@@ -99,7 +99,7 @@ describe('事件流端点处理器', () => {
     ).toHaveLength(0)
 
     // 推进到本连接第 8 拍：第一次实时新事故诞生，且只有一次。
-    vi.advanceTimersByTime(2_500 * (8 - ticksSoFar()))
+    vi.advanceTimersByTime(TICK_MS * (8 - ticksSoFar()))
 
     expect(ticksSoFar()).toBe(8)
     expect(
@@ -109,7 +109,7 @@ describe('事件流端点处理器', () => {
     expect(createdFrame).toContain('INC-LIVE-1')
 
     // 再过 8 拍又诞生一次，序号递增。
-    vi.advanceTimersByTime(2_500 * 8)
+    vi.advanceTimersByTime(TICK_MS * 8)
     expect(
       parseFrames(written).names.filter((name) => name === 'incident/created'),
     ).toHaveLength(2)

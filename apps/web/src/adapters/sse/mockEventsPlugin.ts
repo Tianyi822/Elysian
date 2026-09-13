@@ -12,7 +12,7 @@ import { SSE_HEARTBEAT, formatSseFrame } from './parse'
  * 生产路径同形，未来换成真实网关即可，客户端不需要改。
  */
 
-const TICK_MS = 2500
+export const TICK_MS = 500
 const HEARTBEAT_MS = 15_000
 /** 连上后先补发的帧数：避免界面空等一个 tick 才有内容。 */
 const REPLAY_BURST = 3
@@ -58,10 +58,10 @@ export type ResourceSample = {
 }
 
 const WALK_BOUNDS = {
-  cpu: [20, 90, 6],
-  memory: [45, 92, 4],
-  networkIo: [60, 950, 120],
-  diskIo: [40, 520, 80],
+  cpu: [20, 90, 2],
+  memory: [45, 92, 1],
+  networkIo: [60, 950, 40],
+  diskIo: [40, 520, 30],
 } as const
 
 const LIVE_SEVERITY_ROLL: ReadonlyArray<readonly [string, number]> = [

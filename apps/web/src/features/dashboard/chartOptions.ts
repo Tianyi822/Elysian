@@ -64,6 +64,9 @@ export function buildResourceTrendOption(
 ): EChartsCoreOption {
   return {
     textStyle: { color: palette.text, fontSize: 12 },
+    // 过渡周期与事件心跳（500ms）一致、线性缓动：窗口滚动因此是无缝的连续运动。
+    animationDurationUpdate: 500,
+    animationEasingUpdate: 'linear',
     tooltip: {
       trigger: 'axis',
       backgroundColor: palette.surface,

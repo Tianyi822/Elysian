@@ -187,7 +187,7 @@ export function createInMemoryEventsAdapter(
   dataset: () => MockDataset,
   options: { intervalMs?: number } = {},
 ): EventsAdapter {
-  const intervalMs = options.intervalMs ?? 3000
+  const intervalMs = options.intervalMs ?? 500
 
   return {
     subscribe(handlers: EventStreamHandlers): Unsubscribe {
@@ -203,10 +203,10 @@ export function createInMemoryEventsAdapter(
       }
       const stepWalk = (): { cpu: number; memory: number; networkIo: number; diskIo: number } => {
         walk = {
-          cpu: Math.min(90, Math.max(20, walk.cpu + Math.round((Math.random() - 0.5) * 12))),
-          memory: Math.min(92, Math.max(45, walk.memory + Math.round((Math.random() - 0.5) * 8))),
-          networkIo: Math.min(950, Math.max(60, walk.networkIo + Math.round((Math.random() - 0.5) * 240))),
-          diskIo: Math.min(520, Math.max(40, walk.diskIo + Math.round((Math.random() - 0.5) * 160))),
+          cpu: Math.min(90, Math.max(20, walk.cpu + Math.round((Math.random() - 0.5) * 4))),
+          memory: Math.min(92, Math.max(45, walk.memory + Math.round((Math.random() - 0.5) * 2))),
+          networkIo: Math.min(950, Math.max(60, walk.networkIo + Math.round((Math.random() - 0.5) * 80))),
+          diskIo: Math.min(520, Math.max(40, walk.diskIo + Math.round((Math.random() - 0.5) * 60))),
         }
         return walk
       }

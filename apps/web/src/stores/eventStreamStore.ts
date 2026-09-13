@@ -51,6 +51,12 @@ export const useEventStreamStore = create<EventStreamState>((set) => ({
       },
       onEvent: (event) => {
         if (current !== generation) return
+        // 资源采样是图表的数据心跳（每拍一条），不是可读的活动记录，
+        // 进最近活动只会把列表刷成噪音；监听器（仪表盘）仍然照常收到。
+        if (event.name === 'resource/sample') {
+          for (const listener of listeners) listener(event)
+          return
+        }
         // 按事件标识去重：重新订阅会让事件源从头开始计数。去重之后的响铃才发给监听器，
         // 否则重放的旧事件会推高下游计数。
         const duplicate = useEventStreamStore
