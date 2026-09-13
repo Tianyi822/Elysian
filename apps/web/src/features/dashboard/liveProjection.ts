@@ -1,11 +1,11 @@
-import { AUDIT_KIND_LABELS, responsibilityModuleName, AGENT_STATUS_LABELS } from '@elysian/contracts'
+import { AGENT_STATUS_LABELS, AUDIT_KIND_LABELS, responsibilityModuleName } from '@elysian/contracts'
 import type { AuditKind, AuditRecord, ElysianEvent } from '@elysian/contracts'
 
 /**
- * 把事件流里的事件投影成一条审计记录，供审计日志实时增长。
+ * 把事件流里的事件投影成一条审计记录，供仪表盘的最近活动实时更新。
  *
  * 这是展示用的投影：真实实现里审计记录由服务端落库，事件只用来触发界面刷新。
- * 因此投影出来的记录会带上「实时」标记，来源也写明是事件流，不与数据集里的记录混为一谈。
+ * 投影出来的记录带「实时」来源标记，不与数据集里的记录混为一谈。
  */
 
 const KIND_BY_DOMAIN: Record<string, AuditKind> = {

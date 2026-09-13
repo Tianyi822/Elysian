@@ -15,34 +15,22 @@ function gatewayDenying(area: PageArea): ElysianGateway {
 }
 
 describe('页面级访问闸门', () => {
-  it('默认全部放行，页面正常渲染', async () => {
-    renderApp('/incidents')
-    expect(await screen.findByRole('table', { name: '事件列表' })).toBeInTheDocument()
+  it('默认全部放行，仪表盘正常渲染', async () => {
+    renderApp('/')
+    expect(await screen.findByRole('heading', { level: 1, name: '仪表盘' })).toBeInTheDocument()
     expect(screen.queryByText('无访问权限')).not.toBeInTheDocument()
   })
 
   it('无权限时给出明确的无权限状态，而不是空白页', async () => {
-    renderApp('/incidents', { gateway: gatewayDenying('incidents') })
+    renderApp('/', { gateway: gatewayDenying('dashboard') })
 
-    expect(await screen.findByText('无访问权限')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { level: 1, name: '事件中心' })).toBeInTheDocument()
-    expect(screen.queryByRole('table', { name: '事件列表' })).not.toBeInTheDocument()
-  })
-
-  it('只挡住无权限的那个区域，其他页面不受影响', async () => {
-    const gateway = gatewayDenying('audit')
-
-    const audit = renderApp('/audit', { gateway })
-    expect(await screen.findByText('无访问权限')).toBeInTheDocument()
-    audit.unmount()
-
-    renderApp('/skills', { gateway })
-    expect(await screen.findByRole('table', { name: '技能清单' })).toBeInTheDocument()
+    expect(await screen.findByText(/无权限查看/)).toBeInTheDocument()
+    expect(screen.queryByText('仪表盘区块由后续票交付')).not.toBeInTheDocument()
   })
 
   it('权限判定失败时按无权限处理，宁可挡住也不放行', async () => {
     const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
-    renderApp('/approvals', {
+    renderApp('/', {
       gateway: {
         ...base,
         session: {
@@ -53,6 +41,6 @@ describe('页面级访问闸门', () => {
       },
     })
 
-    expect(await screen.findByText('无访问权限')).toBeInTheDocument()
+    expect(await screen.findByText(/无权限查看/)).toBeInTheDocument()
   })
 })

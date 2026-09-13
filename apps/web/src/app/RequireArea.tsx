@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useGateway } from '../adapters/GatewayProvider'
-import { PageHeader } from '../components/PageHeader'
 import { LoadingState, NoPermissionState } from '../components/states/StateViews'
 import type { PageArea } from '../contracts/adapters'
 
@@ -15,12 +14,10 @@ import type { PageArea } from '../contracts/adapters'
 export function RequireArea({
   area,
   title,
-  description,
   children,
 }: {
   area: PageArea
   title: string
-  description?: string
   children: ReactNode
 }) {
   const gateway = useGateway()
@@ -51,12 +48,10 @@ export function RequireArea({
 
   if (!allowed) {
     return (
-      <>
-        <PageHeader title={title} description={description} />
-        <NoPermissionState
-          description={`当前账号没有查看「${title}」的权限。本阶段的权限只是接口占位，接入认证后由服务端判定。`}
-        />
-      </>
+      <NoPermissionState
+        title={`无权限查看「${title}」`}
+        description="当前账号没有查看这部分内容的权限。本阶段的权限只是接口占位，接入认证后由服务端判定。"
+      />
     )
   }
 

@@ -1,17 +1,15 @@
 import { Link } from 'react-router'
-import { PageHeader } from '../components/PageHeader'
 
 export function NotFoundPage() {
   return (
-    <>
-      <PageHeader title="未找到页面" description="地址与任何已知路由都不匹配。" />
-      <p className="text-sm text-fg-muted">
-        检查地址是否写错，或
-        <Link className="mx-1 text-accent underline" to="/">
-          回到总览
+    <div className="rounded border border-line bg-surface p-6 text-center">
+      <h1 className="text-base font-semibold">未找到页面</h1>
+      <p className="mt-1 text-sm text-fg-muted">地址与任何已知路由都不匹配。</p>
+      <p className="mt-2 text-sm">
+        <Link className="text-accent underline" to="/">
+          回到仪表盘
         </Link>
-        重新进入。
       </p>
-    </>
+    </div>
   )
 }

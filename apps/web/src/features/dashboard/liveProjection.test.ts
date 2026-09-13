@@ -84,14 +84,4 @@ describe('事件到审计记录的投影', () => {
     expect(record.summary.trim().length).toBeGreaterThan(0)
     expect(record.kind).toBe('event')
   })
-
-  it('详情保留原始负载，便于核对', () => {
-    const record = projectEventToAuditRecord({
-      id: 'evt-11',
-      name: 'incident/updated',
-      at: AT,
-      payload: { incidentId: 'INC-2100', status: 'mitigating' },
-    })
-    expect(JSON.parse(record.detail)).toEqual({ incidentId: 'INC-2100', status: 'mitigating' })
-  })
 })

@@ -1,5 +1,5 @@
 import { SEVERITY_LABELS } from '@elysian/contracts'
-import type { IncidentStatus, Severity } from '@elysian/contracts'
+import type { Severity } from '@elysian/contracts'
 
 /**
  * 严重等级与状态的视觉表达。两者都同时给出文字与颜色，不依赖颜色单独表达，
@@ -39,14 +39,4 @@ export function StatusTag({ label, tone = 'neutral' }: { label: string; tone?: S
       {label}
     </span>
   )
-}
-
-/** 事故状态到色调的映射，界面各处保持一致，避免同一状态在不同页面颜色不同。 */
-export const INCIDENT_STATUS_TONE: Record<IncidentStatus, StatusTone> = {
-  open: 'warning',
-  analyzing: 'info',
-  'awaiting-approval': 'warning',
-  mitigating: 'info',
-  resolved: 'success',
-  closed: 'neutral',
 }
