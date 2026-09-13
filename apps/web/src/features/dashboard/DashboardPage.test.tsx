@@ -1,11 +1,12 @@
 import { RESPONSIBILITY_MODULES, RISK_RANK, RISK_LEVEL_LABELS } from '@elysian/contracts'
-import { screen, waitFor, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockDataset } from '../../adapters/mock/dataset'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import type { ElysianGateway } from '../../contracts/adapters'
 import { useDashboardStore } from '../../stores/dashboardStore'
+import { useEventStreamStore } from '../../stores/eventStreamStore'
 import { renderApp } from '../../test/renderApp'
 
 const dataset = createMockDataset()
@@ -22,6 +23,8 @@ beforeEach(() => {
     auditRecords: undefined,
     errorMessage: undefined,
   })
+  useEventStreamStore.getState().disconnect()
+  useEventStreamStore.setState({ status: 'connecting', recent: [], receivedCount: 0 })
 })
 
 /** 期望值用测试里的朴素计算独立算出，不经过被测聚合函数。 */
@@ -224,5 +227,123 @@ describe('仪表盘筛选栏与图表', () => {
     release?.()
     await waitFor(() => expect(screen.queryByText('正在刷新…')).not.toBeInTheDocument())
     expect(screen.getByRole('button', { name: '刷新' })).toBeEnabled()
+  })
+})
+
+describe('仪表盘最近活动', () => {
+  it('显示最新 8 条审计记录，最新一条排在最前', async () => {
+    await renderReady()
+
+    const section = screen.getByLabelText('最近活动')
+    const items = within(section).getAllByRole('listitem')
+    expect(items).toHaveLength(8)
+
+    const newest = [...dataset.audit].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))[0]
+    expect(within(section).getByText(newest?.summary ?? '')).toBeInTheDocument()
+  })
+
+  it('事件流到达时最近活动置顶更新并标实时', async () => {
+    const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+    const gateway: ElysianGateway = {
+      ...base,
+      events: {
+        subscribe(handlers) {
+          handlers.onStatus('live')
+          return () => {}
+        },
+      },
+    }
+
+    renderApp('/', { gateway })
+    await screen.findByLabelText('最近活动')
+
+    act(() => {
+      useEventStreamStore.getState().connect({
+        subscribe(handlers) {
+          handlers.onStatus('live')
+          handlers.onEvent({
+            id: 'evt-live-9',
+            name: 'incident/updated',
+            at: '2026-09-12T23:59:00.000Z',
+            payload: { incidentId: 'INC-2100', status: 'mitigating' },
+          })
+          return () => {}
+        },
+      })
+    })
+
+    const section = screen.getByLabelText('最近活动')
+    const first = within(section).getAllByRole('listitem')[0]
+    expect(first).toBeDefined()
+    expect(within(first as HTMLElement).getByText(/事故 INC-2100 状态更新/)).toBeInTheDocument()
+    expect(within(first as HTMLElement).getByText('实时')).toBeInTheDocument()
+  })
+})
+
+describe('仪表盘快捷操作', () => {
+  it('主题切换动作生效并有反馈', async () => {
+    const user = userEvent.setup()
+    await renderReady()
+
+    expect(document.documentElement.dataset['theme']).toBe('dark')
+    await user.click(screen.getByRole('button', { name: /切换到浅色主题/ }))
+
+    expect(document.documentElement.dataset['theme']).toBe('light')
+    expect(await screen.findByText('已切换到浅色主题。')).toBeInTheDocument()
+  })
+
+  it('重置演示数据需要确认，取消不执行，确认后重置并刷新界面', async () => {
+    const user = userEvent.setup()
+    const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+    const reset = vi.fn(async () => {
+      await base.reset()
+    })
+
+    renderApp('/', { gateway: { ...base, reset } })
+    await screen.findByLabelText('最近活动')
+
+    await user.click(screen.getByRole('button', { name: /重置演示数据/ }))
+    const dialog = await screen.findByRole('dialog', { name: '确认重置演示数据？' })
+    expect(reset).not.toHaveBeenCalled()
+
+    await user.click(within(dialog).getByRole('button', { name: '取消' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(reset).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: /重置演示数据/ }))
+    await user.click(
+      within(await screen.findByRole('dialog', { name: '确认重置演示数据？' })).getByRole(
+        'button',
+        { name: '确认重置' },
+      ),
+    )
+
+    await waitFor(() => expect(reset).toHaveBeenCalledOnce())
+    expect(await screen.findByText('演示数据已重置回种子状态。')).toBeInTheDocument()
+  })
+
+  it('重新连接事件源动作触发重新订阅', async () => {
+    const user = userEvent.setup()
+    const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+    let subscribeCount = 0
+    const gateway: ElysianGateway = {
+      ...base,
+      events: {
+        subscribe(handlers) {
+          subscribeCount += 1
+          handlers.onStatus('live')
+          return () => {}
+        },
+      },
+    }
+
+    renderApp('/', { gateway })
+    await screen.findByLabelText('最近活动')
+    expect(subscribeCount).toBe(1)
+
+    await user.click(screen.getByRole('button', { name: /重新连接事件源/ }))
+
+    expect(subscribeCount).toBe(2)
+    expect(await screen.findByText(/已尝试重新连接事件源/)).toBeInTheDocument()
   })
 })

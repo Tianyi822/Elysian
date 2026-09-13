@@ -4,6 +4,7 @@ import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { useDashboardStore } from '../../stores/dashboardStore'
 import { ChartsSection } from './ChartsSection'
 import { FilterBar } from './FilterBar'
+import { QuickActionsSection, RecentActivitySection } from './QuickActions'
 import { ModuleCardsSection, StatCardsSection } from './StatCards'
 
 export function DashboardPage() {
@@ -13,6 +14,7 @@ export function DashboardPage() {
   const modules = useDashboardStore((state) => state.modules)
   const distribution = useDashboardStore((state) => state.distribution)
   const trend = useDashboardStore((state) => state.trend)
+  const auditRecords = useDashboardStore((state) => state.auditRecords)
   const range = useDashboardStore((state) => state.range)
   const refreshing = useDashboardStore((state) => state.refreshing)
   const errorMessage = useDashboardStore((state) => state.errorMessage)
@@ -24,7 +26,7 @@ export function DashboardPage() {
     void load(gateway)
   }, [gateway, load])
 
-  if (!stats || !modules || !distribution || !trend) {
+  if (!stats || !modules || !distribution || !trend || !auditRecords) {
     if (status === 'error') {
       return (
         <ErrorState
@@ -56,6 +58,11 @@ export function DashboardPage() {
         refreshing={refreshing}
       />
       <ChartsSection distribution={distribution} trend={trend} range={range} />
+
+      <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
+        <RecentActivitySection records={auditRecords} />
+        <QuickActionsSection />
+      </div>
     </>
   )
 }
