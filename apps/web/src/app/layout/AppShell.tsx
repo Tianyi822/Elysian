@@ -5,6 +5,7 @@ import { useState } from 'react'
 import { Outlet } from 'react-router'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { EventStreamBadge } from '../../components/EventStreamBadge'
+import { MemoryMonitorBadge } from '../../components/MemoryMonitorBadge'
 import { IconButton } from '../../components/IconButton'
 import { NotificationHost } from '../../components/NotificationHost'
 import { useEventStreamStore } from '../../stores/eventStreamStore'
@@ -105,6 +106,7 @@ export function AppShell() {
             </div>
 
             <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+              <MemoryMonitorBadge />
               <EventStreamBadge />
               <MockDataBadge />
               <UserChip />
