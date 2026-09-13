@@ -46,7 +46,8 @@ export function AppShell() {
           sidebarCollapsed ? 'w-16' : 'w-64'
         }`}
       >
-        <div className="flex min-h-14 items-center justify-between border-b border-line px-3 py-3">
+        {/* 固定 h-14：与右侧顶栏的 min-h-14 对齐，避免被折叠按钮撑高。 */}
+        <div className="flex h-14 items-center justify-between border-b border-line px-3">
           <span className={sidebarCollapsed ? 'sr-only' : 'text-base font-semibold tracking-tight'}>
             Elysian
           </span>
