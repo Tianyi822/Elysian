@@ -78,24 +78,16 @@ describe('枚举与中文标签表', () => {
 })
 
 const EXPECTED_MODULE_NAMES = [
-  '协调中心',
-  '事故指挥',
-  '安全审查',
-  '资源治理',
-  '自动化编排',
-  '故障演练',
-  '观测分析',
-  '快速响应',
-  '恢复工程',
-  '根因诊断',
-  '知识呈现',
-  '变更治理',
+  '指挥协调',
+  '应急处置',
+  '观测诊断',
+  '安全治理',
   '技能管理',
 ]
 
 describe('职责模块词典', () => {
-  it('恰好登记 13 个模块，名称与术语表一致', () => {
-    expect(contracts.RESPONSIBILITY_MODULES).toHaveLength(13)
+  it('恰好登记 5 个模块，名称与术语表一致', () => {
+    expect(contracts.RESPONSIBILITY_MODULES).toHaveLength(5)
     expect(contracts.RESPONSIBILITY_MODULES.map((module) => module.name)).toEqual(
       EXPECTED_MODULE_NAMES,
     )
@@ -118,8 +110,8 @@ describe('职责模块词典', () => {
   )
 
   it('按标识查名字，未知标识回落到标识本身', () => {
-    expect(contracts.responsibilityModuleName('incident-command')).toBe('事故指挥')
-    expect(contracts.findResponsibilityModule('observability-analysis')?.riskCeiling).toBe('low')
+    expect(contracts.responsibilityModuleName('command-coordination')).toBe('指挥协调')
+    expect(contracts.findResponsibilityModule('observability-diagnosis')?.riskCeiling).toBe('medium')
     expect(contracts.responsibilityModuleName('unknown-module')).toBe('unknown-module')
   })
 })

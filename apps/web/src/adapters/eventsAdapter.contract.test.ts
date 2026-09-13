@@ -24,7 +24,7 @@ const SAMPLE_ENVELOPE = {
   id: 'evt-1',
   name: 'agent/status',
   at: '2026-09-12T08:00:00.000Z',
-  payload: { moduleId: 'coordination', status: 'running' },
+  payload: { moduleId: 'command-coordination', status: 'running' },
 }
 
 function describeEventsAdapter(name: string, createHarness: () => Harness): void {

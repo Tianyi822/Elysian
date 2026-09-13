@@ -87,11 +87,12 @@ function ModuleRunStatus({ runStatus }: { runStatus: ModuleCard['runStatus'] }) 
 }
 
 export function ModuleCardsSection({ modules }: { modules: readonly ModuleCard[] }) {
+  const moduleCount = modules.length
   return (
     <section aria-label="按职责模块拆分" className="mb-6">
       <div className="mb-3 flex items-center justify-between border-b border-line pb-2">
         <h2 className="text-base font-semibold">按职责模块拆分</h2>
-        <span className="text-sm text-fg-muted">13 个模块</span>
+        <span className="text-sm text-fg-muted">{moduleCount} 个模块</span>
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">

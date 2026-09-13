@@ -25,11 +25,11 @@ describe('确定性 mock 数据集', () => {
     expect(statuses).toEqual([...INCIDENT_STATUSES].sort())
   })
 
-  it('职责模块状态覆盖 13 个模块，其中 5 个有活跃运行', () => {
+  it('职责模块状态覆盖 5 个模块，其中 3 个有活跃运行', () => {
     const dataset = createMockDataset()
-    expect(dataset.moduleStatuses).toHaveLength(13)
-    expect(dataset.moduleStatuses.filter((module) => module.status === 'running')).toHaveLength(5)
-    expect(dataset.moduleStatuses.filter((module) => module.activeRunId)).toHaveLength(5)
+    expect(dataset.moduleStatuses).toHaveLength(5)
+    expect(dataset.moduleStatuses.filter((module) => module.status === 'running')).toHaveLength(3)
+    expect(dataset.moduleStatuses.filter((module) => module.activeRunId)).toHaveLength(3)
 
     // 标为执行中的模块，必须真的有一次进行中或等待审批的运行，
     // 不能因为「有过一次已成功的运行」就显示成还在干活。

@@ -48,7 +48,7 @@ describe('仪表盘 store 的事件回灌', () => {
       id: 'evt-live-1',
       name: 'incident/created',
       at: '2026-09-12T23:59:00.000Z',
-      payload: { incidentId: 'INC-LIVE-1', severity: 'sev2', moduleId: 'incident-command' },
+      payload: { incidentId: 'INC-LIVE-1', severity: 'sev2', moduleId: 'command-coordination' },
     })
 
     const stats = useDashboardStore.getState().stats
@@ -57,7 +57,7 @@ describe('仪表盘 store 的事件回灌', () => {
 
     const card = useDashboardStore
       .getState()
-      .modules?.find((module) => module.moduleId === 'incident-command')
+      .modules?.find((module) => module.moduleId === 'command-coordination')
     expect(card?.activeIncidents).toBeGreaterThan(0)
   })
 

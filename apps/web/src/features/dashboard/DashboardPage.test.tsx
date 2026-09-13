@@ -124,13 +124,13 @@ describe('仪表盘指标卡', () => {
 })
 
 describe('仪表盘模块拆分卡', () => {
-  it('恰好 13 张，模块名用中文名且与词典顺序一致', async () => {
+  it('恰好 5 张，模块名用中文名且与词典顺序一致', async () => {
     await renderReady()
 
     const section = screen.getByLabelText('按职责模块拆分')
     const cards = within(section).getAllByRole('article')
-    expect(cards).toHaveLength(13)
-    expect(screen.getByText('13 个模块')).toBeInTheDocument()
+    expect(cards).toHaveLength(5)
+    expect(screen.getByText('5 个模块')).toBeInTheDocument()
     expect(
       cards.map((card) => within(card).getByRole('heading').textContent),
     ).toEqual(RESPONSIBILITY_MODULES.map((module) => module.name))
@@ -139,21 +139,38 @@ describe('仪表盘模块拆分卡', () => {
   it('活跃模块卡显示未归档事故数、运行状态与待审批数', async () => {
     await renderReady()
 
+    // 挑一个活跃运行状态为「执行中」的模块：状态由数据集推导，测试不硬编码哪个模块在跑。
+    const runningModuleId = dataset.moduleStatuses.find((module) => {
+      if (module.status !== 'running' || !module.activeRunId) return false
+      const run = dataset.runs.find((candidate) => candidate.id === module.activeRunId)
+      return run?.status === 'running'
+    })?.moduleId
+    expect(runningModuleId).toBeDefined()
+
+    const moduleName = RESPONSIBILITY_MODULES.find((module) => module.id === runningModuleId)?.name
     const section = screen.getByLabelText('按职责模块拆分')
-    const card = within(section).getByRole('article', { name: '事故指挥模块卡' })
+    const card = within(section).getByRole('article', { name: `${moduleName}模块卡` })
 
     // 朴素独立计算：未归档且归属该模块的事故数。
     const expectedActive = dataset.incidents.filter((incident) => {
       if (incident.status === 'resolved' || incident.status === 'closed') return false
       const run = dataset.runs.find((candidate) => candidate.id === incident.runId)
-      return run?.moduleId === 'incident-command'
+      return run?.moduleId === runningModuleId
     }).length
     const expectedPending = dataset.approvals.filter(
-      (approval) => approval.status === 'pending' && approval.requestedBy === 'incident-command',
+      (approval) => approval.status === 'pending' && approval.requestedBy === runningModuleId,
     ).length
 
-    expect(within(card).getByText(String(expectedActive))).toBeInTheDocument()
-    expect(within(card).getByText(String(expectedPending))).toBeInTheDocument()
+    // 数值用 dt/dd 配对取值：两个数字可能相同，不能靠文本唯一性。
+    const ddOf = (dtText: string) => {
+      const dt = Array.from(card.querySelectorAll('dt')).find(
+        (node) => node.textContent === dtText,
+      )
+      expect(dt).toBeDefined()
+      return dt?.nextElementSibling?.textContent
+    }
+    expect(ddOf('未归档事故')).toBe(String(expectedActive))
+    expect(ddOf('待审批')).toBe(String(expectedPending))
     expect(within(card).getByText('执行中')).toBeInTheDocument()
   })
 
@@ -161,7 +178,7 @@ describe('仪表盘模块拆分卡', () => {
     await renderReady()
 
     const section = screen.getByLabelText('按职责模块拆分')
-    const card = within(section).getByRole('article', { name: '故障演练模块卡' })
+    const card = within(section).getByRole('article', { name: '技能管理模块卡' })
     expect(within(card).getByText('空闲')).toBeInTheDocument()
     expect(within(card).getAllByText('0').length).toBeGreaterThan(0)
   })

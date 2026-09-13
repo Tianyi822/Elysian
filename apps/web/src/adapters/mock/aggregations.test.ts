@@ -16,9 +16,9 @@ const TODAY = '2026-09-12'
 
 /** 手工构造的小数据集：期望值全部手算，不经过被测函数。 */
 const rows: IncidentListRow[] = [
-  { id: 'INC-1', kind: 'incident', title: 'a', severity: 'sev1', status: 'open', source: 's', service: 'svc-a', at: T, moduleId: 'incident-command' },
-  { id: 'INC-2', kind: 'incident', title: 'b', severity: 'sev2', status: 'resolved', source: 's', service: 'svc-b', at: T, moduleId: 'coordination' },
-  { id: 'INC-3', kind: 'incident', title: 'c', severity: 'sev2', status: 'analyzing', source: 's', service: 'svc-a', at: T, moduleId: 'coordination' },
+  { id: 'INC-1', kind: 'incident', title: 'a', severity: 'sev1', status: 'open', source: 's', service: 'svc-a', at: T, moduleId: 'command-coordination' },
+  { id: 'INC-2', kind: 'incident', title: 'b', severity: 'sev2', status: 'resolved', source: 's', service: 'svc-b', at: T, moduleId: 'observability-diagnosis' },
+  { id: 'INC-3', kind: 'incident', title: 'c', severity: 'sev2', status: 'analyzing', source: 's', service: 'svc-a', at: T, moduleId: 'observability-diagnosis' },
   { id: 'ALT-1', kind: 'alert', title: 'd', severity: 'sev3', source: 's', service: 'svc-z', at: T },
   { id: 'TASK-1', kind: 'pending-task', title: 'e', severity: 'sev4', source: 's', service: 'svc-y', at: T },
 ]
@@ -26,7 +26,7 @@ const rows: IncidentListRow[] = [
 const runs: AgentRun[] = [
   {
     id: 'RUN-1',
-    moduleId: 'incident-command',
+    moduleId: 'command-coordination',
     status: 'running',
     startedAt: T,
     turns: [],
@@ -37,12 +37,12 @@ const approvals: ApprovalRequest[] = [
   {
     id: 'AP-1', actionId: 'ACT-1', actionTitle: '动作一', status: 'pending', policy: 'ask',
     riskLevel: 'critical', target: 't', parameters: {}, blastRadius: 'b',
-    requestedBy: 'incident-command', requestedAt: T, expiresAt: T,
+    requestedBy: 'command-coordination', requestedAt: T, expiresAt: T,
   },
   {
     id: 'AP-2', actionId: 'ACT-2', actionTitle: '动作二', status: 'approved', outcome: 'allowed-once', policy: 'ask',
     riskLevel: 'high', target: 't', parameters: {}, blastRadius: 'b',
-    requestedBy: 'incident-command', requestedAt: T, expiresAt: T,
+    requestedBy: 'command-coordination', requestedAt: T, expiresAt: T,
   },
 ]
 
@@ -99,42 +99,43 @@ describe('模块卡聚合（期望值手算）', () => {
     runs,
     approvals,
     moduleStatuses: [
-      { moduleId: 'incident-command', status: 'running', activeRunId: 'RUN-1' },
-      { moduleId: 'coordination', status: 'idle' },
+      { moduleId: 'command-coordination', status: 'running', activeRunId: 'RUN-1' },
+      { moduleId: 'observability-diagnosis', status: 'idle' },
     ],
   })
 
-  it('恰好 13 张，顺序与职责模块词典一致', () => {
+  it('恰好 5 张，顺序与职责模块词典一致', () => {
     expect(cards.map((card) => card.moduleId)).toEqual(
       RESPONSIBILITY_MODULES.map((module) => module.id),
     )
   })
 
-  it('事故指挥：1 条未归档事故、运行中、1 条待审批', () => {
-    const card = cards.find((entry) => entry.moduleId === 'incident-command')
+  it('指挥协调：1 条未归档事故、运行中、1 条待审批', () => {
+    const card = cards.find((entry) => entry.moduleId === 'command-coordination')
     expect(card).toEqual({
-      moduleId: 'incident-command',
+      moduleId: 'command-coordination',
       activeIncidents: 1,
       runStatus: 'running',
       pendingApprovals: 1,
     })
   })
 
-  it('协调中心：1 条未归档事故（分析中）、无活跃运行、无待审批', () => {
-    const card = cards.find((entry) => entry.moduleId === 'coordination')
+  it('观测诊断：1 条未归档事故（分析中）、无活跃运行、无待审批', () => {
+    const card = cards.find((entry) => entry.moduleId === 'observability-diagnosis')
     expect(card).toEqual({
-      moduleId: 'coordination',
+      moduleId: 'observability-diagnosis',
       activeIncidents: 1,
       runStatus: null,
       pendingApprovals: 0,
     })
   })
 
-  it('其余 11 个模块全为零', () => {
+  it('其余 3 个模块全为零', () => {
     const idle = cards.filter(
-      (card) => card.moduleId !== 'incident-command' && card.moduleId !== 'coordination',
+      (card) =>
+        card.moduleId !== 'command-coordination' && card.moduleId !== 'observability-diagnosis',
     )
-    expect(idle).toHaveLength(11)
+    expect(idle).toHaveLength(3)
     for (const card of idle) {
       expect(card).toEqual({
         moduleId: card.moduleId,

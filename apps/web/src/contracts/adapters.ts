@@ -57,7 +57,7 @@ export interface AuditAdapter {
 export interface RunAdapter {
   list(): Promise<readonly AgentRun[]>
   find(runId: string): Promise<AgentRun | undefined>
-  /** 13 个职责模块各自的忙闲状态。 */
+  /** 各职责模块的忙闲状态。 */
   listModuleStatuses(): Promise<readonly ModuleStatus[]>
 }
 

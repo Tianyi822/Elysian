@@ -82,26 +82,15 @@ const SOURCES = [
 
 const OWNERS = ['张岚', '李维', '陈默', '王沐', '赵行'] as const
 
-/** 本期在 mock 中有活跃运行的五个职责模块。 */
+/** 本期在 mock 中有活跃运行的三个职责模块（共 5 个模块，其余空闲）。 */
 const ACTIVE_MODULE_IDS = [
-  'coordination',
-  'incident-command',
-  'security-review',
-  'observability-analysis',
-  'rapid-response',
+  'command-coordination',
+  'emergency-response',
+  'observability-diagnosis',
 ] as const
 
-/** 本期没有活跃运行的八个模块。 */
-const IDLE_MODULE_IDS = [
-  'resource-governance',
-  'automation-orchestration',
-  'fault-drill',
-  'recovery-engineering',
-  'root-cause-diagnosis',
-  'knowledge-presentation',
-  'change-governance',
-  'skill-management',
-] as const
+/** 本期没有活跃运行的两个模块。 */
+const IDLE_MODULE_IDS = ['security-governance', 'skill-management'] as const
 
 /** 会产生进行中运行的事故状态。 */
 function isActiveIncidentStatus(status: IncidentStatus): boolean {
@@ -109,7 +98,7 @@ function isActiveIncidentStatus(status: IncidentStatus): boolean {
 }
 
 function activeModuleAt(index: number): string {
-  return ACTIVE_MODULE_IDS[index % ACTIVE_MODULE_IDS.length] ?? 'coordination'
+  return ACTIVE_MODULE_IDS[index % ACTIVE_MODULE_IDS.length] ?? 'command-coordination'
 }
 
 const INCIDENT_TITLES = [
@@ -635,7 +624,7 @@ export function createMockDataset(): MockDataset {
         target: action.target,
         parameters: action.parameters,
         blastRadius: action.blastRadius,
-        requestedBy: moduleId ?? 'incident-command',
+        requestedBy: moduleId ?? 'command-coordination',
         requestedAt,
         expiresAt: addMinutes(requestedAt, 30),
         decidedBy: status4 === 'pending' ? undefined : pick(rnd, OWNERS),
@@ -647,7 +636,7 @@ export function createMockDataset(): MockDataset {
         id: `${action.approvalId}-AUD`,
         at: requestedAt,
         kind: 'approval',
-        actor: moduleId ?? 'incident-command',
+        actor: moduleId ?? 'command-coordination',
         subject: action.approvalId,
         summary: `提交审批：${action.title}`,
         detail: `风险 ${action.riskLevel}，影响范围：${action.blastRadius}`,

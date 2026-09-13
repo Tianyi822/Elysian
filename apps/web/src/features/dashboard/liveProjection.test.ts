@@ -34,7 +34,7 @@ describe('事件到审计记录的投影', () => {
         id: 'evt-3',
         name: 'agent/status',
         at: AT,
-        payload: { moduleId: 'coordination', status: 'idle' },
+        payload: { moduleId: 'observability-diagnosis', status: 'idle' },
       }),
     ).toBe('decision')
 
@@ -53,9 +53,9 @@ describe('事件到审计记录的投影', () => {
       id: 'evt-1',
       name: 'agent/status',
       at: AT,
-      payload: { moduleId: 'incident-command', status: 'running' },
+      payload: { moduleId: 'command-coordination', status: 'running' },
     })
-    expect(summary).toContain('事故指挥')
+    expect(summary).toContain('指挥协调')
     expect(summary).toContain('执行中')
     expect(summary).not.toContain('incident-command')
   })
