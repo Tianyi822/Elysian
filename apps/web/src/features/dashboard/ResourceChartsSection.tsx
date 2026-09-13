@@ -1,7 +1,8 @@
 import { useMemo } from 'react'
-import { LineChart } from 'echarts/charts'
+import { BarChart, LineChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent } from 'echarts/components'
 import * as echarts from 'echarts/core'
+import type { EChartsCoreOption } from 'echarts/core'
 import { SVGRenderer } from 'echarts/renderers'
 import { useTheme } from '../../app/theme/ThemeProvider'
 import {
@@ -14,10 +15,16 @@ import type {
   DailyResourceMetrics,
   ResourceMetricKey,
 } from '../../adapters/mock/resourceMetrics'
-import { buildResourceTrendOption, readChartPalette } from './chartOptions'
+import {
+  buildDiskBarsOption,
+  buildLoadBarsOption,
+  buildResourceTrendOption,
+  readChartPalette,
+} from './chartOptions'
+import type { DiskUsage, SystemLoad } from '../../adapters/mock/resourceMetrics'
 import { useChart } from './useChart'
 
-echarts.use([LineChart, GridComponent, TooltipComponent, SVGRenderer])
+echarts.use([BarChart, LineChart, GridComponent, TooltipComponent, SVGRenderer])
 
 /** 百分比紧跟数值，吞吐量类单位用空格隔开。 */
 function formatValue(value: number, unit: string): string {
@@ -57,12 +64,36 @@ function ResourcePanel({
   )
 }
 
+function BarsPanel({
+  title,
+  option,
+  rebuildKey,
+}: {
+  title: string
+  option: EChartsCoreOption
+  rebuildKey: string
+}) {
+  const ref = useChart(() => option, rebuildKey)
+
+  return (
+    <article
+      aria-label={title}
+      className="rounded-xl border border-line bg-surface p-4 sm:col-span-2 lg:col-span-2"
+    >
+      <h2 className="text-sm font-semibold">{title}</h2>
+      <div ref={ref} className="mt-2 h-24 w-full" />
+    </article>
+  )
+}
+
 export function ResourceChartsSection({
   resources,
   range,
+  system,
 }: {
   resources: readonly DailyResourceMetrics[]
   range: TimeRange
+  system: { load: SystemLoad; disks: readonly DiskUsage[] }
 }) {
   const { theme } = useTheme()
   const days = useMemo(() => sliceResourceMetrics(resources, range), [resources, range])
@@ -75,6 +106,17 @@ export function ResourceChartsSection({
       {(Object.keys(RESOURCE_METRIC_LABELS) as ResourceMetricKey[]).map((metricKey) => (
         <ResourcePanel key={metricKey} metricKey={metricKey} days={days} theme={theme} />
       ))}
+
+      <BarsPanel
+        title="运行负载"
+        option={buildLoadBarsOption(system.load, readChartPalette(theme))}
+        rebuildKey={`load:${theme}:${JSON.stringify(system.load)}`}
+      />
+      <BarsPanel
+        title="磁盘占用"
+        option={buildDiskBarsOption(system.disks, readChartPalette(theme))}
+        rebuildKey={`disk:${theme}:${JSON.stringify(system.disks)}`}
+      />
     </section>
   )
 }

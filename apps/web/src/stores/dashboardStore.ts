@@ -4,10 +4,17 @@ import { aggregateStatCards, buildModuleCards } from '../adapters/mock/aggregati
 import type { ModuleCard, StatCards } from '../adapters/mock/aggregations'
 import { BASE_DATE } from '../adapters/mock/dataset'
 import {
+  INITIAL_DISKS,
+  INITIAL_LOAD,
   appendLiveResourceSample,
   getLiveResources,
 } from '../adapters/mock/resourceMetrics'
-import type { DailyResourceMetrics, TimeRange } from '../adapters/mock/resourceMetrics'
+import type {
+  DailyResourceMetrics,
+  DiskUsage,
+  SystemLoad,
+  TimeRange,
+} from '../adapters/mock/resourceMetrics'
 import type { ElysianGateway } from '../contracts/adapters'
 import { onStreamEvent } from './eventStreamStore'
 
@@ -18,6 +25,8 @@ export type DashboardState = {
   modules?: ModuleCard[]
   /** 完整 30 天单机资源序列；时间范围切换只做切片，实时采样会滚动追加。 */
   resources?: readonly DailyResourceMetrics[]
+  /** 系统负载与磁盘占用的最新采样，随事件心跳更新。 */
+  system?: { load: SystemLoad; disks: readonly DiskUsage[] }
   auditRecords?: readonly AuditRecord[]
   range: TimeRange
   errorMessage?: string
@@ -48,6 +57,7 @@ export async function loadDashboard(gateway: ElysianGateway) {
     stats: aggregateStatCards(input, BASE_DATE),
     modules: buildModuleCards({ incidentRows: incidentList.rows, runs, approvals, moduleStatuses }),
     resources: getLiveResources(),
+    system: { load: { ...INITIAL_LOAD }, disks: INITIAL_DISKS.map((disk) => ({ ...disk })) },
     auditRecords: audit,
   }
 }
@@ -86,7 +96,10 @@ function attachLiveEvents(): void {
 
     if (event.name === 'resource/sample') {
       appendLiveResourceSample(event.payload)
-      useDashboardStore.setState({ resources: [...getLiveResources()] })
+      useDashboardStore.setState({
+        resources: [...getLiveResources()],
+        system: { load: event.payload.load, disks: event.payload.disks },
+      })
     }
   })
 }

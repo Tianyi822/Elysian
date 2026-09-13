@@ -2,6 +2,13 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { EventName } from '@elysian/contracts'
 import type { Plugin } from 'vite'
 import { createMockDataset } from '../mock/dataset'
+import {
+  INITIAL_DISKS,
+  INITIAL_LOAD,
+  nextDisksWalk,
+  nextLoadWalk,
+} from '../mock/resourceMetrics'
+import type { DiskUsage, SystemLoad } from '../mock/resourceMetrics'
 import { SSE_HEARTBEAT, formatSseFrame } from './parse'
 
 /**
@@ -55,6 +62,8 @@ export type ResourceSample = {
   memory: number
   networkIo: number
   diskIo: number
+  load: SystemLoad
+  disks: DiskUsage[]
 }
 
 const WALK_BOUNDS = {
@@ -63,6 +72,7 @@ const WALK_BOUNDS = {
   networkIo: [60, 950, 40],
   diskIo: [40, 520, 30],
 } as const
+
 
 const LIVE_SEVERITY_ROLL: ReadonlyArray<readonly [string, number]> = [
   ['sev1', 0.1],
@@ -73,7 +83,7 @@ const LIVE_SEVERITY_ROLL: ReadonlyArray<readonly [string, number]> = [
 
 /** 资源采样随机游走：每拍在既有值附近小幅移动，保持在上限区间内。 */
 export function nextResourceSample(walk: ResourceSample): ResourceSample {
-  const step = (value: number, key: keyof ResourceSample): number => {
+  const step = (value: number, key: keyof typeof WALK_BOUNDS): number => {
     const [min, max, delta] = WALK_BOUNDS[key]
     const next = value + Math.round((Math.random() - 0.5) * 2 * delta)
     return Math.min(max as number, Math.max(min as number, next))
@@ -83,6 +93,20 @@ export function nextResourceSample(walk: ResourceSample): ResourceSample {
     memory: step(walk.memory, 'memory'),
     networkIo: step(walk.networkIo, 'networkIo'),
     diskIo: step(walk.diskIo, 'diskIo'),
+    load: nextLoadWalk(walk.load),
+    disks: nextDisksWalk(walk.disks),
+  }
+}
+
+/** 初始游走状态：负载取低位空闲值，磁盘占用取种子配置。 */
+export function initialResourceWalk(): ResourceSample {
+  return {
+    cpu: 55,
+    memory: 68,
+    networkIo: 380,
+    diskIo: 210,
+    load: { ...INITIAL_LOAD },
+    disks: INITIAL_DISKS.map((disk) => ({ ...disk })),
   }
 }
 
@@ -133,7 +157,7 @@ export function createEventsHandler() {
     // 每个连接独立推进拍数与实时事故序号；资源采样走随机游走。
     let tick = 0
     let liveIncidentIndex = 0
-    let walk: ResourceSample = { cpu: 55, memory: 68, networkIo: 380, diskIo: 210 }
+    let walk: ResourceSample = initialResourceWalk()
 
     if (req.method !== 'GET') {
       res.statusCode = 405

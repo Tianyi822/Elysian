@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createMockDataset } from '../mock/dataset'
 import {
   buildEventPlan,
+  initialResourceWalk,
   eventIdAt,
   maybeIncidentCreated,
   nextResourceSample,
@@ -63,7 +64,7 @@ describe('mock 事件流端点的纯逻辑', () => {
 
 describe('实时采样与新事故注入', () => {
   it('资源采样随机游走 200 拍都保持在区间内', () => {
-    let walk = { cpu: 55, memory: 68, networkIo: 380, diskIo: 210 }
+    let walk = initialResourceWalk()
     for (let index = 0; index < 200; index += 1) {
       walk = nextResourceSample(walk)
       expect(walk.cpu).toBeGreaterThanOrEqual(20)

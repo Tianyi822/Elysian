@@ -23,6 +23,12 @@ import type {
   SessionAdapter,
   SkillAdapter,
 } from '../../contracts/adapters'
+import {
+  INITIAL_DISKS,
+  INITIAL_LOAD,
+  nextDisksWalk,
+  nextLoadWalk,
+} from './resourceMetrics'
 import { toIncidentListRows } from './dataset'
 import type { MockDataset } from './dataset'
 
@@ -195,18 +201,22 @@ export function createInMemoryEventsAdapter(
 
       let counter = 0
       let cursor = 0
-      let walk: { cpu: number; memory: number; networkIo: number; diskIo: number } = {
+      let walk = {
         cpu: 55,
         memory: 68,
         networkIo: 380,
         diskIo: 210,
+        load: { ...INITIAL_LOAD },
+        disks: INITIAL_DISKS.map((disk) => ({ ...disk })),
       }
-      const stepWalk = (): { cpu: number; memory: number; networkIo: number; diskIo: number } => {
+      const stepWalk = (): typeof walk => {
         walk = {
           cpu: Math.min(90, Math.max(20, walk.cpu + Math.round((Math.random() - 0.5) * 4))),
           memory: Math.min(92, Math.max(45, walk.memory + Math.round((Math.random() - 0.5) * 2))),
           networkIo: Math.min(950, Math.max(60, walk.networkIo + Math.round((Math.random() - 0.5) * 80))),
           diskIo: Math.min(520, Math.max(40, walk.diskIo + Math.round((Math.random() - 0.5) * 60))),
+          load: nextLoadWalk(walk.load),
+          disks: nextDisksWalk(walk.disks),
         }
         return walk
       }

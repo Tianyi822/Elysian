@@ -72,7 +72,18 @@ describe('仪表盘 store 的事件回灌', () => {
       id: 'evt-live-2',
       name: 'resource/sample',
       at: '2026-09-12T23:59:00.000Z',
-      payload: { cpu: 66, memory: 77, networkIo: 300, diskIo: 200 },
+      payload: {
+        cpu: 66,
+        memory: 77,
+        networkIo: 300,
+        diskIo: 200,
+        load: { m1: 0.4, m5: 0.3, m15: 0.2 },
+        disks: [
+          { mount: '/', usagePct: 63 },
+          { mount: '/data', usagePct: 79 },
+          { mount: '/backup', usagePct: 42 },
+        ],
+      },
     })
 
     const resources = useDashboardStore.getState().resources
@@ -80,6 +91,10 @@ describe('仪表盘 store 的事件回灌', () => {
     const last = resources?.[resources.length - 1]
     expect(last?.cpu).toBe(66)
     expect(last?.memory).toBe(77)
+
+    const system = useDashboardStore.getState().system
+    expect(system?.load).toEqual({ m1: 0.4, m5: 0.3, m15: 0.2 })
+    expect(system?.disks.map((disk) => disk.usagePct)).toEqual([63, 79, 42])
   })
 
   it('事件回灌落进数据集：手动刷新重新聚合后总数一致', async () => {

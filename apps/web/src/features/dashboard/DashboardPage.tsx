@@ -14,6 +14,7 @@ export function DashboardPage() {
   const stats = useDashboardStore((state) => state.stats)
   const modules = useDashboardStore((state) => state.modules)
   const resources = useDashboardStore((state) => state.resources)
+  const system = useDashboardStore((state) => state.system)
   const auditRecords = useDashboardStore((state) => state.auditRecords)
   const range = useDashboardStore((state) => state.range)
   const refreshing = useDashboardStore((state) => state.refreshing)
@@ -26,7 +27,7 @@ export function DashboardPage() {
     void load(gateway)
   }, [gateway, load])
 
-  if (!stats || !modules || !resources || !auditRecords) {
+  if (!stats || !modules || !resources || !system || !auditRecords) {
     if (status === 'error') {
       return (
         <ErrorState
@@ -68,7 +69,7 @@ export function DashboardPage() {
           {errorMessage}
         </p>
       ) : null}
-      <ResourceChartsSection resources={resources} range={range} />
+      <ResourceChartsSection resources={resources} range={range} system={system} />
       <StatCardsSection stats={stats} />
       <ModuleCardsSection modules={modules} />
       <FilterBar

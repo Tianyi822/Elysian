@@ -45,7 +45,16 @@ export interface Events {
   /** @mode emit */
   'incident/updated': { incidentId: string; status?: string }
   /** @mode emit */
-  'resource/sample': { cpu: number; memory: number; networkIo: number; diskIo: number }
+  'resource/sample': {
+    cpu: number
+    memory: number
+    networkIo: number
+    diskIo: number
+    /** Linux load average 风格的运行负载（1/5/15 分钟均值）。 */
+    load: { m1: number; m5: number; m15: number }
+    /** 磁盘占用：按挂载点的使用率百分比。 */
+    disks: ReadonlyArray<{ mount: string; usagePct: number }>
+  }
 }
 
 export type EventName = keyof Events & string

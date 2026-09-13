@@ -80,6 +80,35 @@ export function sliceResourceMetrics(
  * 让资源卡与资源图表随事件流动起来。种子函数保持纯函数。
  */
 
+/** 系统负载（load average，1/5/15 分钟均值）与磁盘占用（按挂载点）的 mock 形状。 */
+export type SystemLoad = { m1: number; m5: number; m15: number }
+export type DiskUsage = { mount: string; usagePct: number }
+
+export const INITIAL_LOAD: SystemLoad = { m1: 0.16, m5: 0.09, m15: 0.05 }
+export const INITIAL_DISKS: DiskUsage[] = [
+  { mount: '/', usagePct: 62 },
+  { mount: '/data', usagePct: 78 },
+  { mount: '/backup', usagePct: 41 },
+]
+
+const clampValue = (value: number, min: number, max: number): number =>
+  Math.min(max, Math.max(min, value))
+
+/** 负载随机游走：1 分钟窗口动得最快，15 分钟几乎不动（贴近真实 load average 的惯性）。 */
+export function nextLoadWalk(load: SystemLoad): SystemLoad {
+  const drift = (value: number, delta: number): number =>
+    Math.round(clampValue(value + (Math.random() - 0.5) * 2 * delta, 0.02, 2.5) * 100) / 100
+  return { m1: drift(load.m1, 0.06), m5: drift(load.m5, 0.03), m15: drift(load.m15, 0.015) }
+}
+
+/** 磁盘占用随机游走：真实磁盘变化很慢，漂移压在 0.1% 量级。 */
+export function nextDisksWalk(disks: readonly DiskUsage[]): DiskUsage[] {
+  return disks.map((disk) => ({
+    ...disk,
+    usagePct: Math.round(clampValue(disk.usagePct + (Math.random() - 0.5) * 0.2, 5, 95) * 10) / 10,
+  }))
+}
+
 let liveResources: DailyResourceMetrics[] | undefined
 
 /** 当前生效的资源序列：有实时采样时返回实时序列，否则返回种子序列。 */
