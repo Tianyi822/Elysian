@@ -1,11 +1,12 @@
 import { useEffect } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Menu, X } from 'lucide-react'
+import { Menu, PanelLeftClose, PanelLeftOpen, X } from 'lucide-react'
 import { useState } from 'react'
 import { Outlet } from 'react-router'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { EventStreamBadge } from '../../components/EventStreamBadge'
 import { IconButton } from '../../components/IconButton'
+import { NotificationHost } from '../../components/NotificationHost'
 import { useEventStreamStore } from '../../stores/eventStreamStore'
 import { MockDataBadge } from './MockDataBadge'
 import { Sidebar } from './Sidebar'
@@ -26,6 +27,7 @@ function UserChip() {
 
 export function AppShell() {
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const gateway = useGateway()
   const connectEventStream = useEventStreamStore((state) => state.connect)
 
@@ -38,61 +40,83 @@ export function AppShell() {
   }, [gateway, connectEventStream])
 
   return (
-    <div className="min-h-screen bg-bg text-fg">
-      <header className="sticky top-0 z-30 border-b border-line bg-surface">
-        <div className="flex items-center gap-3 px-3 py-2">
-          <Dialog.Root open={drawerOpen} onOpenChange={setDrawerOpen}>
-            <Dialog.Trigger asChild>
-              <span className="md:hidden">
-                <IconButton label="打开主导航">
-                  <Menu aria-hidden size={16} />
-                </IconButton>
-              </span>
-            </Dialog.Trigger>
-            <Dialog.Portal>
-              <Dialog.Overlay className="fixed inset-0 z-40 bg-black/60" />
-              <Dialog.Content
-                aria-describedby={undefined}
-                className="fixed inset-y-0 left-0 z-50 w-60 border-r border-line bg-surface"
-              >
-                <div className="flex items-center justify-between border-b border-line px-3 py-2">
-                  <Dialog.Title className="text-sm font-medium">主导航</Dialog.Title>
-                  <Dialog.Close asChild>
-                    <span>
-                      <IconButton label="关闭主导航">
-                        <X aria-hidden size={16} />
-                      </IconButton>
-                    </span>
-                  </Dialog.Close>
-                </div>
-                <Sidebar onNavigate={() => setDrawerOpen(false)} />
-              </Dialog.Content>
-            </Dialog.Portal>
-          </Dialog.Root>
-
-          <span className="text-sm font-semibold tracking-tight">Elysian</span>
-          <span aria-hidden className="h-4 w-px bg-line" />
-
-          <div className="min-w-0">
-            <h1 className="text-sm font-semibold leading-tight">仪表盘</h1>
-            <p className="text-xs leading-tight text-fg-subtle">运维态势概览</p>
-          </div>
-
-          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-            <EventStreamBadge />
-            <MockDataBadge />
-            <UserChip />
-          </div>
+    <div className="flex h-dvh bg-bg text-fg">
+      <aside
+        className={`hidden shrink-0 flex-col border-r border-line bg-surface transition-[width] duration-200 md:flex ${
+          sidebarCollapsed ? 'w-16' : 'w-64'
+        }`}
+      >
+        <div className="flex min-h-14 items-center justify-between border-b border-line px-3 py-3">
+          <span className={sidebarCollapsed ? 'sr-only' : 'text-base font-semibold tracking-tight'}>
+            Elysian
+          </span>
+          <button
+            type="button"
+            onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+            aria-label={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
+            title={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
+            className="ml-auto inline-flex size-9 items-center justify-center rounded-lg text-fg-muted hover:bg-surface-raised hover:text-fg"
+          >
+            {sidebarCollapsed ? <PanelLeftOpen aria-hidden size={17} /> : <PanelLeftClose aria-hidden size={17} />}
+          </button>
         </div>
-      </header>
+        <div className="min-h-0 flex-1">
+          <Sidebar collapsed={sidebarCollapsed} />
+        </div>
+      </aside>
 
-      <div className="flex">
-        <aside className="hidden w-56 shrink-0 border-r border-line bg-surface md:block">
-          <Sidebar />
-        </aside>
-        <main className="min-w-0 flex-1 p-3 md:p-4">
-          <Outlet />
-        </main>
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="shrink-0 border-b border-line bg-surface">
+          <div className="flex min-h-14 items-center gap-4 px-4 py-3 md:px-6">
+            <Dialog.Root open={drawerOpen} onOpenChange={setDrawerOpen}>
+              <Dialog.Trigger asChild>
+                <span className="md:hidden">
+                  <IconButton label="打开主导航">
+                    <Menu aria-hidden size={16} />
+                  </IconButton>
+                </span>
+              </Dialog.Trigger>
+              <Dialog.Portal>
+                <Dialog.Overlay className="fixed inset-0 z-40 bg-black/60" />
+                <Dialog.Content
+                  aria-describedby={undefined}
+                  className="fixed inset-y-0 left-0 z-50 flex w-60 flex-col border-r border-line bg-surface"
+                >
+                  <div className="flex items-center justify-between border-b border-line px-3 py-2">
+                    <Dialog.Title className="text-base font-medium">主导航</Dialog.Title>
+                    <Dialog.Close asChild>
+                      <span>
+                        <IconButton label="关闭主导航">
+                          <X aria-hidden size={16} />
+                        </IconButton>
+                      </span>
+                    </Dialog.Close>
+                  </div>
+                  <div className="min-h-0 flex-1">
+                    <Sidebar onNavigate={() => setDrawerOpen(false)} />
+                  </div>
+                </Dialog.Content>
+              </Dialog.Portal>
+            </Dialog.Root>
+
+            <div className="min-w-0">
+              <h1 className="text-base font-semibold leading-tight">仪表盘</h1>
+            </div>
+
+            <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+              <EventStreamBadge />
+              <MockDataBadge />
+              <UserChip />
+            </div>
+          </div>
+        </header>
+
+        <div className="relative flex min-h-0 flex-1">
+          <main className="min-w-0 flex-1 overflow-y-auto p-4 md:p-6">
+            <Outlet />
+          </main>
+          <NotificationHost />
+        </div>
       </div>
     </div>
   )

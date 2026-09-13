@@ -276,7 +276,7 @@ describe('仪表盘最近活动', () => {
 })
 
 describe('仪表盘快捷操作', () => {
-  it('主题切换动作生效并有反馈', async () => {
+  it('主题切换动作生效并在右上角通知区给出反馈', async () => {
     const user = userEvent.setup()
     await renderReady()
 
@@ -284,7 +284,8 @@ describe('仪表盘快捷操作', () => {
     await user.click(screen.getByRole('button', { name: /切换到浅色主题/ }))
 
     expect(document.documentElement.dataset['theme']).toBe('light')
-    expect(await screen.findByText('已切换到浅色主题。')).toBeInTheDocument()
+    const notifications = await screen.findByLabelText('通知')
+    expect(within(notifications).getByRole('status')).toHaveTextContent('已切换到浅色主题。')
   })
 
   it('重置演示数据需要确认，取消不执行，确认后重置并刷新界面', async () => {
@@ -314,7 +315,34 @@ describe('仪表盘快捷操作', () => {
     )
 
     await waitFor(() => expect(reset).toHaveBeenCalledOnce())
-    expect(await screen.findByText('演示数据已重置回种子状态。')).toBeInTheDocument()
+    const notifications = await screen.findByLabelText('通知')
+    expect(within(notifications).getByRole('status')).toHaveTextContent('演示数据已重置回种子状态。')
+  })
+
+  it('重置失败留在对话框里，不冒出通知', async () => {
+    const user = userEvent.setup()
+    const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+    const gateway: ElysianGateway = {
+      ...base,
+      reset: async () => {
+        throw new Error('演示用的重置失败')
+      },
+    }
+
+    renderApp('/', { gateway })
+    await screen.findByLabelText('最近活动')
+
+    await user.click(screen.getByRole('button', { name: /重置演示数据/ }))
+    await user.click(
+      within(await screen.findByRole('dialog', { name: '确认重置演示数据？' })).getByRole(
+        'button',
+        { name: '确认重置' },
+      ),
+    )
+
+    const dialog = await screen.findByRole('dialog', { name: '确认重置演示数据？' })
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('演示用的重置失败')
+    expect(screen.queryByLabelText('通知')).not.toBeInTheDocument()
   })
 
   it('重新连接事件源动作触发重新订阅', async () => {
@@ -339,7 +367,8 @@ describe('仪表盘快捷操作', () => {
     await user.click(screen.getByRole('button', { name: /重新连接事件源/ }))
 
     expect(subscribeCount).toBe(2)
-    expect(await screen.findByText(/已尝试重新连接事件源/)).toBeInTheDocument()
+    const notifications = await screen.findByLabelText('通知')
+    expect(within(notifications).getByText(/已尝试重新连接事件源/)).toBeInTheDocument()
   })
 })
 

@@ -4,8 +4,9 @@ import { ErrorState, EmptyState, LoadingState } from '../../components/states/St
 import { useDashboardStore } from '../../stores/dashboardStore'
 import { ChartsSection } from './ChartsSection'
 import { FilterBar } from './FilterBar'
-import { QuickActionsSection, RecentActivitySection } from './QuickActions'
+import { RecentActivitySection } from './RecentActivity'
 import { ModuleCardsSection, StatCardsSection } from './StatCards'
+import type { ModuleCard, StatCards } from '../../adapters/mock/aggregations'
 
 export function DashboardPage() {
   const gateway = useGateway()
@@ -78,10 +79,43 @@ export function DashboardPage() {
       />
       <ChartsSection distribution={distribution} trend={trend} range={range} />
 
-      <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
+      <section aria-label="运营工作区" className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.45fr)_minmax(20rem,1fr)]">
         <RecentActivitySection records={auditRecords} />
-        <QuickActionsSection />
-      </div>
+        <OperationsOverview stats={stats} modules={modules} />
+      </section>
     </>
+  )
+}
+
+function OperationsOverview({
+  stats,
+  modules,
+}: {
+  stats: StatCards
+  modules: readonly ModuleCard[]
+}) {
+  const activeModules = modules.filter((module) => module.runStatus).length
+  const overview = [
+    ['实时事件流', '由页头状态标识提供连接状态'],
+    ['活跃职责模块', `${activeModules} / ${modules.length} 个模块正在处理`],
+    ['待审批动作', `${stats.pendingApprovals} 项动作等待决策`],
+    ['受影响服务', `${stats.affectedServices} 个服务处于关注范围`],
+  ] as const
+
+  return (
+    <section aria-label="运行概览" className="rounded-xl border border-line bg-surface p-4 md:p-5">
+      <div className="mb-3 border-b border-line pb-2">
+        <h2 className="text-base font-semibold">运行概览</h2>
+        <p className="mt-1 text-sm text-fg-muted">当前演示会话的关键工作状态</p>
+      </div>
+      <dl className="divide-y divide-line">
+        {overview.map(([label, value]) => (
+          <div key={label} className="flex items-center justify-between gap-4 py-3 first:pt-0 last:pb-0">
+            <dt className="text-sm text-fg-muted">{label}</dt>
+            <dd className="text-right text-sm font-medium text-fg">{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
   )
 }
