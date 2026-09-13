@@ -4,12 +4,20 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockDataset } from '../../adapters/mock/dataset'
 import { createMockGateway } from '../../adapters/mock/gateway'
+import {
+  createResourceMetrics,
+  RESOURCE_METRIC_LABELS,
+  RESOURCE_METRIC_UNITS,
+} from '../../adapters/mock/resourceMetrics'
+import type { ResourceMetricKey } from '../../adapters/mock/resourceMetrics'
 import type { ElysianGateway } from '../../contracts/adapters'
 import { useDashboardStore } from '../../stores/dashboardStore'
 import { useEventStreamStore } from '../../stores/eventStreamStore'
 import { renderApp } from '../../test/renderApp'
 
 const dataset = createMockDataset()
+
+const METRIC_KEYS: ResourceMetricKey[] = ['cpu', 'memory', 'networkIo', 'diskIo']
 
 beforeEach(() => {
   useDashboardStore.setState({
@@ -20,6 +28,7 @@ beforeEach(() => {
     modules: undefined,
     distribution: undefined,
     trend: undefined,
+    resources: undefined,
     auditRecords: undefined,
     errorMessage: undefined,
   })
@@ -369,6 +378,49 @@ describe('仪表盘快捷操作', () => {
     expect(subscribeCount).toBe(2)
     const notifications = await screen.findByLabelText('通知')
     expect(within(notifications).getByText(/已尝试重新连接事件源/)).toBeInTheDocument()
+  })
+})
+
+describe('仪表盘资源监控', () => {
+  const latest = createResourceMetrics()[createResourceMetrics().length - 1]!
+
+  it('四张资源卡渲染在关键指标之前，当前值取时序最后一天并带单位', async () => {
+    await renderReady()
+
+    const section = screen.getByLabelText('资源监控')
+    const statCards = screen.getByLabelText('关键指标')
+    expect(section.compareDocumentPosition(statCards) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+    for (const key of METRIC_KEYS) {
+      const card = within(section).getByRole('article', { name: RESOURCE_METRIC_LABELS[key] })
+      const unit = RESOURCE_METRIC_UNITS[key]
+      const text = unit === '%' ? `${latest[key]}%` : `${latest[key]} ${unit}`
+      expect(within(card).getByText(text)).toBeInTheDocument()
+    }
+
+    await waitFor(() => {
+      expect(section.querySelectorAll('svg').length).toBeGreaterThanOrEqual(4)
+    })
+  })
+
+  it('占用率 ≥80% 的当前值标警告色，其余用正文色；IO 吞吐不着色', async () => {
+    await renderReady()
+
+    const section = screen.getByLabelText('资源监控')
+    for (const key of ['cpu', 'memory'] as const) {
+      const card = within(section).getByRole('article', { name: RESOURCE_METRIC_LABELS[key] })
+      const value = within(card).getByText(`${latest[key]}%`)
+      if (latest[key] >= 80) {
+        expect(value).toHaveClass('text-warning')
+      } else {
+        expect(value).toHaveClass('text-fg')
+      }
+    }
+    for (const key of ['networkIo', 'diskIo'] as const) {
+      const card = within(section).getByRole('article', { name: RESOURCE_METRIC_LABELS[key] })
+      const value = within(card).getByText(`${latest[key]} MB/s`)
+      expect(value).toHaveClass('text-fg')
+    }
   })
 })
 

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { sliceTrend } from '../../adapters/mock/timeseries'
 import { createIncidentTrend } from '../../adapters/mock/timeseries'
-import { buildDistributionOption, buildTrendOption, readChartPalette } from './chartOptions'
+import { createResourceMetrics, sliceResourceMetrics } from '../../adapters/mock/resourceMetrics'
+import { buildDistributionOption, buildResourceTrendOption, buildTrendOption, readChartPalette } from './chartOptions'
 import type { ChartPalette } from './chartOptions'
 
 const PALETTE: ChartPalette = {
@@ -9,6 +10,8 @@ const PALETTE: ChartPalette = {
   text: '#tt',
   subtle: '#ss',
   axisLine: '#aa',
+  accent: '#kk',
+  surface: '#ff',
 }
 
 describe('严重等级分布 option', () => {
@@ -54,11 +57,47 @@ describe('事故趋势 option', () => {
   })
 })
 
+describe('资源迷你趋势 option', () => {
+  it('单系列数据与指标数值一一对应，线色来自 accent 令牌', () => {
+    const days = sliceResourceMetrics(createResourceMetrics(), '7d')
+    const option = buildResourceTrendOption(days, 'cpu', PALETTE)
+
+    const [series] = option.series as [
+      {
+        id: string
+        data: readonly number[]
+        itemStyle: { color: string }
+      },
+    ]
+    expect(series.id).toBe('resource-cpu')
+    expect(series.data).toEqual(days.map((day) => day.cpu))
+    expect(series.itemStyle.color).toBe(PALETTE.accent)
+  })
+
+  it('sparkline 不画坐标轴标签，悬浮由 tooltip 提供日期与数值', () => {
+    const days = sliceResourceMetrics(createResourceMetrics(), '7d')
+    const option = buildResourceTrendOption(days, 'memory', PALETTE)
+
+    const xAxis = option.xAxis as { show: boolean; data: readonly string[] }
+    const yAxis = option.yAxis as { show: boolean }
+    expect(xAxis.show).toBe(false)
+    expect(yAxis.show).toBe(false)
+    expect(xAxis.data).toEqual(days.map((day) => day.date))
+    expect((option.tooltip as { trigger: string }).trigger).toBe('axis')
+  })
+})
+
 describe('图表配色读取', () => {
   it('jsdom 解析不了 CSS 令牌时按主题回落，深浅两套不同', () => {
     const dark = readChartPalette('dark')
     const light = readChartPalette('light')
     expect(dark.sev.sev1).not.toBe(light.sev.sev1)
     expect(dark.text).not.toBe(light.text)
+  })
+
+  it('accent 令牌同样按主题读取', () => {
+    const dark = readChartPalette('dark')
+    const light = readChartPalette('light')
+    expect(dark.accent).not.toBe(light.accent)
   })
 })

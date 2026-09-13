@@ -6,6 +6,7 @@ import { ChartsSection } from './ChartsSection'
 import { FilterBar } from './FilterBar'
 import { RecentActivitySection } from './RecentActivity'
 import { ModuleCardsSection, StatCardsSection } from './StatCards'
+import { ResourceChartsSection } from './ResourceChartsSection'
 import type { ModuleCard, StatCards } from '../../adapters/mock/aggregations'
 
 export function DashboardPage() {
@@ -15,6 +16,7 @@ export function DashboardPage() {
   const modules = useDashboardStore((state) => state.modules)
   const distribution = useDashboardStore((state) => state.distribution)
   const trend = useDashboardStore((state) => state.trend)
+  const resources = useDashboardStore((state) => state.resources)
   const auditRecords = useDashboardStore((state) => state.auditRecords)
   const range = useDashboardStore((state) => state.range)
   const refreshing = useDashboardStore((state) => state.refreshing)
@@ -27,7 +29,7 @@ export function DashboardPage() {
     void load(gateway)
   }, [gateway, load])
 
-  if (!stats || !modules || !distribution || !trend || !auditRecords) {
+  if (!stats || !modules || !distribution || !trend || !resources || !auditRecords) {
     if (status === 'error') {
       return (
         <ErrorState
@@ -69,6 +71,7 @@ export function DashboardPage() {
           {errorMessage}
         </p>
       ) : null}
+      <ResourceChartsSection resources={resources} range={range} />
       <StatCardsSection stats={stats} />
       <ModuleCardsSection modules={modules} />
       <FilterBar

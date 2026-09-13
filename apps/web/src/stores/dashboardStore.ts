@@ -8,6 +8,8 @@ import {
 import type { ModuleCard, SeverityDistribution, StatCards } from '../adapters/mock/aggregations'
 import { BASE_DATE, createIncidentTrend } from '../adapters/mock/timeseries'
 import type { DailyIncidents, TimeRange } from '../adapters/mock/timeseries'
+import { createResourceMetrics } from '../adapters/mock/resourceMetrics'
+import type { DailyResourceMetrics } from '../adapters/mock/resourceMetrics'
 import type { ElysianGateway } from '../contracts/adapters'
 
 export type DashboardState = {
@@ -18,6 +20,8 @@ export type DashboardState = {
   distribution?: SeverityDistribution
   /** 完整 30 天序列；时间范围切换只做切片，不重新加载。 */
   trend?: readonly DailyIncidents[]
+  /** 完整 30 天单机资源序列；时间范围切换只做切片，不重新加载。 */
+  resources?: readonly DailyResourceMetrics[]
   auditRecords?: readonly AuditRecord[]
   range: TimeRange
   errorMessage?: string
@@ -49,6 +53,7 @@ export async function loadDashboard(gateway: ElysianGateway) {
     modules: buildModuleCards({ incidentRows: incidentList.rows, runs, approvals, moduleStatuses }),
     distribution: buildSeverityDistribution(incidentList.rows),
     trend: createIncidentTrend(),
+    resources: createResourceMetrics(),
     auditRecords: audit,
   }
 }
