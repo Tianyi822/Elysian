@@ -39,15 +39,18 @@ function NotificationItem({ notification }: { notification: AppNotification }) {
         // 角色放在内层，外层 li 保留列表语义。
         role={notification.tone === 'danger' ? 'alert' : 'status'}
         className={[
-          'flex items-start gap-2 rounded-lg border bg-surface p-2.5 shadow-lg',
+          'relative flex items-center gap-2 rounded-lg border bg-surface p-2.5 pr-9 shadow-lg',
           style.border,
         ].join(' ')}
       >
-        <Icon aria-hidden size={15} className={['mt-0.5 shrink-0', style.iconColor].join(' ')} />
+        <Icon aria-hidden size={15} className={['shrink-0', style.iconColor].join(' ')} />
         <span className="min-w-0 flex-1 text-xs text-fg">{notification.message}</span>
-        <IconButton label="关闭通知" onPress={() => dismiss(notification.id)}>
-          <X aria-hidden size={12} />
-        </IconButton>
+        {/* 关闭按钮钉死在卡片右上角，脱离 flex 流：内容把卡片撑高也不移动。 */}
+        <span className="absolute right-1.5 top-1.5">
+          <IconButton variant="ghost" label="关闭通知" onPress={() => dismiss(notification.id)}>
+            <X aria-hidden size={12} />
+          </IconButton>
+        </span>
       </div>
     </li>
   )

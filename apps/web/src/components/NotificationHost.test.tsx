@@ -59,6 +59,33 @@ describe('通知宿主', () => {
     expect(screen.getByText('留下的')).toBeInTheDocument()
   })
 
+  it('内容与图标垂直居中，关闭按钮用幽灵样式钉在右上角、不随内容撑高移动', () => {
+    useNotificationStore.getState().notify({ tone: 'success', message: '已切换到浅色主题。' })
+    renderHost()
+
+    const card = screen.getByRole('status')
+    expect(card).toHaveClass('relative')
+    expect(card).toHaveClass('items-center')
+
+    // 关闭按钮脱离 flex 流，由独立锚点钉在卡片右上角：内容再高也不改变它的位置。
+    const close = within(card).getByRole('button', { name: '关闭通知' })
+    const anchor = close.closest('span')
+    expect(anchor).not.toBeNull()
+    expect(anchor).toHaveClass('absolute')
+    expect(anchor).toHaveClass('right-1.5')
+    expect(anchor).toHaveClass('top-1.5')
+
+    // 幽灵样式：不带静态边框与底色，弱化为次要色，悬停才浮现可点击感。
+    expect(close).toHaveClass('text-fg-subtle')
+    expect(close.className).not.toMatch(/(?<!hover:)border-line/)
+    expect(close.className).not.toMatch(/(?<!hover:)bg-surface-raised/)
+    expect(close).toHaveClass('hover:bg-surface-raised')
+
+    // 图标不再用外边距微调对齐，垂直居中交给容器的 items-center。
+    const icon = card.querySelector('svg')
+    expect(icon?.classList.contains('mt-0.5')).toBe(false)
+  })
+
   it('到时自动消失，失败类留得更久', () => {
     vi.useFakeTimers()
     useNotificationStore.getState().notify({ tone: 'success', message: '成功提示' })
