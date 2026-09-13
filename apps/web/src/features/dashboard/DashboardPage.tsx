@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { ErrorState, LoadingState } from '../../components/states/StateViews'
+import { ErrorState, EmptyState, LoadingState } from '../../components/states/StateViews'
 import { useDashboardStore } from '../../stores/dashboardStore'
 import { ChartsSection } from './ChartsSection'
 import { FilterBar } from './FilterBar'
@@ -39,9 +39,28 @@ export function DashboardPage() {
     return <LoadingState label="正在加载仪表盘…" />
   }
 
+  if (stats.totalIncidents === 0 && auditRecords.length === 0) {
+    return (
+      <EmptyState
+        title="演示数据集为空"
+        description="没有可展示的事故与活动。可以刷新重试，或在快捷操作里重置演示数据。"
+        action={
+          <button
+            type="button"
+            onClick={() => void load(gateway)}
+            className="mt-1 rounded border border-line bg-surface-raised px-2 py-1 text-xs text-fg"
+          >
+            刷新
+          </button>
+        }
+      />
+    )
+  }
+
   return (
     <>
-      {status === 'error' && errorMessage ? (
+      {/* 刷新失败但已有内容时，横幅提示而不清空内容。 */}
+      {errorMessage ? (
         <p
           role="alert"
           className="mb-3 rounded border border-danger/40 bg-danger/10 px-2 py-1 text-xs text-danger"

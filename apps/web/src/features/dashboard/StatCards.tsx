@@ -61,7 +61,7 @@ export function StatCardsSection({ stats }: { stats: StatCards }) {
 
   return (
     <section aria-label="关键指标" className="mb-4">
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
         {cards.map((card) => (
           <StatCard
             key={card.label}

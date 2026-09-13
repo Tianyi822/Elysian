@@ -691,7 +691,7 @@ export function createMockDataset(): MockDataset {
     lastUsedAt: minutesBefore(DATASET_BASE_TIME, intBetween(rnd, 10, 2880)),
   }))
 
-  // 一次失败的运行：错误信息与轮次结束原因是 07 号票的验收内容，
+  // 一次失败的运行：错误信息与轮次结束原因是验收内容，
   // 必须能从演示数据里看到，而不是只能靠测试里手写的替身。
   const failedHost = incidents.find((incident) => incident.runId === undefined)
   if (failedHost) {

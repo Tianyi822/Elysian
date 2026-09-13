@@ -1,25 +1,11 @@
 import type { EventStreamStatus } from '@elysian/contracts'
 import { useEventStreamStore } from '../stores/eventStreamStore'
-import type { StatusTone } from './StatusTag'
 
-/** 事件流状态的文案与色调只在这里定义一份，设置页与页头标识共用。 */
+/** 事件流状态的文案与色调只在这里定义一份，页头标识与后续界面共用。 */
 export const EVENT_STREAM_STATUS_LABELS: Record<EventStreamStatus, string> = {
   connecting: '实时事件流：连接中',
   live: '实时事件流：已连接',
   degraded: '实时事件流：已降级为内存事件源',
-}
-
-/** 设置页用简短状态词，页头标识用整句，语义必须一致。 */
-export const EVENT_STREAM_STATUS_SHORT_LABELS: Record<EventStreamStatus, string> = {
-  connecting: '连接中',
-  live: '已连接',
-  degraded: '已降级为内存事件源',
-}
-
-export const EVENT_STREAM_STATUS_TONES: Record<EventStreamStatus, StatusTone> = {
-  connecting: 'neutral',
-  live: 'success',
-  degraded: 'warning',
 }
 
 const STATUS_TONE_CLASSES: Record<EventStreamStatus, string> = {

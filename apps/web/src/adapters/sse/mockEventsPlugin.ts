@@ -95,10 +95,10 @@ export function createEventsHandler() {
     })
 
     const plan = buildEventPlan()
-    // 客户端给了更靠后的续传标识时按它的来（补发它错过的事件）；
-    // 否则接在全局序列号之后，避免重复投递已经在别处投递过的标识。
+    // 客户端带续传标识时从它的后继继续（真实补发它错过的事件）；
+    // 全新连接接在全局序列之后，不重放历史。
     const resumeFrom = sequenceFromLastEventId(readLastEventId(req))
-    let sequence = Math.max(resumeFrom, globalSequence)
+    let sequence = resumeFrom > 0 ? resumeFrom : globalSequence
     let sent = 0
 
     const sendNext = () => {

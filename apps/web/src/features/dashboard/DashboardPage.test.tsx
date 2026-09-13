@@ -195,20 +195,16 @@ describe('仪表盘筛选栏与图表', () => {
     )
   })
 
-  it('刷新保留内容并给出正在刷新反馈，失败时保留内容并出横幅', async () => {
+  it('刷新期间有反馈且保留内容；刷新失败保留内容并出错误横幅', async () => {
     const user = userEvent.setup()
     const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
     let calls = 0
-    let release: (() => void) | undefined
-    const gate = new Promise<void>((resolve) => {
-      release = resolve
-    })
     const gateway: ElysianGateway = {
       ...base,
       incidents: {
         listRows: async (query) => {
           calls += 1
-          if (calls > 1) await gate
+          if (calls > 1) throw new Error('演示用的刷新失败')
           return base.incidents.listRows(query)
         },
         find: (incidentId) => base.incidents.find(incidentId),
@@ -220,12 +216,11 @@ describe('仪表盘筛选栏与图表', () => {
 
     await user.click(screen.getByRole('button', { name: '刷新' }))
 
-    expect(await screen.findByText('正在刷新…')).toBeInTheDocument()
-    // 刷新期间内容保留，不退回加载态。
+    // 失败的刷新：内容保留，错误横幅可见，刷新按钮恢复可用。
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('演示用的刷新失败')
     expect(screen.getByLabelText('事故总数指标卡')).toBeInTheDocument()
-
-    release?.()
-    await waitFor(() => expect(screen.queryByText('正在刷新…')).not.toBeInTheDocument())
+    expect(screen.queryByText('正在刷新…')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '刷新' })).toBeEnabled()
   })
 })
@@ -345,5 +340,47 @@ describe('仪表盘快捷操作', () => {
 
     expect(subscribeCount).toBe(2)
     expect(await screen.findByText(/已尝试重新连接事件源/)).toBeInTheDocument()
+  })
+})
+
+describe('仪表盘分布对照表与空态', () => {
+  it('分布面板带等级数量对照表，数值与数据集朴素聚合一致', async () => {
+    await renderReady()
+
+    const panel = screen.getByRole('article', { name: '严重等级分布' })
+    const labels = ['致命', '严重', '一般', '提示']
+    for (const label of labels) {
+      expect(within(panel).getByText(label)).toBeInTheDocument()
+    }
+
+    const counts = ['sev1', 'sev2', 'sev3', 'sev4'].map((key) =>
+      dataset.incidents.filter((incident) => incident.severity === key).length,
+    )
+    for (const count of counts) {
+      expect(within(panel).getByText(String(count))).toBeInTheDocument()
+    }
+  })
+
+  it('数据集为空时给出空态而不是一排零值', async () => {
+    const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+    const empty: ElysianGateway = {
+      ...base,
+      incidents: {
+        listRows: async () => ({ rows: [], total: 0, availableSources: [] }),
+        find: async () => undefined,
+      },
+      runs: {
+        list: async () => [],
+        find: async () => undefined,
+        listModuleStatuses: async () => dataset.moduleStatuses,
+      },
+      approvals: { list: async () => [], decide: async () => { throw new Error('空数据集不产生审批') } },
+      audit: { list: async () => [] },
+    }
+
+    renderApp('/', { gateway: empty })
+
+    expect(await screen.findByText('演示数据集为空')).toBeInTheDocument()
+    expect(screen.queryByLabelText('事故总数指标卡')).not.toBeInTheDocument()
   })
 })

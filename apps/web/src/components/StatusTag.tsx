@@ -1,28 +1,3 @@
-import { SEVERITY_LABELS } from '@elysian/contracts'
-import type { Severity } from '@elysian/contracts'
-
-/**
- * 严重等级与状态的视觉表达。两者都同时给出文字与颜色，不依赖颜色单独表达，
- * 颜色取自令牌层的四档严重等级令牌。
- */
-
-const SEVERITY_TONE: Record<Severity, string> = {
-  sev1: 'border-sev1-line bg-sev1 text-sev1-fg',
-  sev2: 'border-sev2-line bg-sev2 text-sev2-fg',
-  sev3: 'border-sev3-line bg-sev3 text-sev3-fg',
-  sev4: 'border-sev4-line bg-sev4 text-sev4-fg',
-}
-
-export function SeverityTag({ severity }: { severity: Severity }) {
-  return (
-    <span
-      className={`inline-flex items-center rounded border px-1.5 py-0.5 text-xs font-medium ${SEVERITY_TONE[severity]}`}
-    >
-      {SEVERITY_LABELS[severity]}
-    </span>
-  )
-}
-
 export type StatusTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger'
 
 const TONE_CLASSES: Record<StatusTone, string> = {
@@ -33,6 +8,10 @@ const TONE_CLASSES: Record<StatusTone, string> = {
   danger: 'border-danger/40 bg-danger/10 text-danger',
 }
 
+/**
+ * 状态标签。文字与颜色同时表达，不依赖颜色单独表达，
+ * 颜色取自令牌层的语义色调。
+ */
 export function StatusTag({ label, tone = 'neutral' }: { label: string; tone?: StatusTone }) {
   return (
     <span className={`inline-flex items-center rounded border px-1.5 py-0.5 text-xs ${TONE_CLASSES[tone]}`}>

@@ -3,7 +3,6 @@ import type {
   ApprovalOutcome,
   ApprovalRequest,
   AuditRecord,
-  ElysianEvent,
   EventStreamHandlers,
   Incident,
   IncidentListRow,
@@ -11,7 +10,6 @@ import type {
   Skill,
   Unsubscribe,
 } from '@elysian/contracts'
-
 /*
  * Web 侧适配接口。界面只依赖这些接口，不关心数据来自 mock、内存降级还是真实网关。
  * 这是整个前端唯一的测试接缝：页面测试在这里注入替代实现。
@@ -96,12 +94,4 @@ export interface ElysianGateway {
   events: EventsAdapter
   /** 把演示数据重置回种子状态。 */
   reset(): Promise<void>
-}
-
-/** 便于测试与类型收窄：判断一个事件是不是某个名字。 */
-export function isEventNamed<K extends ElysianEvent['name']>(
-  event: ElysianEvent,
-  name: K,
-): event is Extract<ElysianEvent, { name: K }> {
-  return event.name === name
 }
