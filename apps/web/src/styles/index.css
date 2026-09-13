@@ -110,16 +110,16 @@
   --t-focus: #0969da;
 
   --t-sev1: #ffebe9;
-  --t-sev1-fg: #a40e26;
+  --t-sev1-fg: #d6455d;
   --t-sev1-line: #ff9a95;
   --t-sev2: #fff1e5;
-  --t-sev2-fg: #8f3d00;
+  --t-sev2-fg: #d97706;
   --t-sev2-line: #ffb77c;
   --t-sev3: #fff8c5;
-  --t-sev3-fg: #6b4c00;
+  --t-sev3-fg: #b08900;
   --t-sev3-line: #e0c34a;
   --t-sev4: #f6f8fa;
-  --t-sev4-fg: #59636e;
+  --t-sev4-fg: #7b8794;
   --t-sev4-line: #d0d7de;
 
   --t-risk-low: #dafbe1;
@@ -137,7 +137,7 @@
 }
 
 html {
-  font-size: 14px;
+  font-size: 16px;
 }
 
 body {

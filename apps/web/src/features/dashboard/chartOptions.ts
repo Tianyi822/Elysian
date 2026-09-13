@@ -16,6 +16,8 @@ export type ChartPalette = {
   text: string
   subtle: string
   axisLine: string
+  /** 图表浮层表面色，供浅色主题避免继承 ECharts 默认深色浮层。 */
+  surface?: string
 }
 
 const DARK_FALLBACK: ChartPalette = {
@@ -23,13 +25,15 @@ const DARK_FALLBACK: ChartPalette = {
   text: '#e8eef5',
   subtle: '#7c8ea3',
   axisLine: '#28323f',
+  surface: '#131a23',
 }
 
 const LIGHT_FALLBACK: ChartPalette = {
-  sev: { sev1: '#a40e26', sev2: '#8f3d00', sev3: '#6b4c00', sev4: '#59636e' },
+  sev: { sev1: '#d6455d', sev2: '#d97706', sev3: '#b08900', sev4: '#7b8794' },
   text: '#1f2328',
   subtle: '#6e7781',
   axisLine: '#d0d7de',
+  surface: '#ffffff',
 }
 
 /** 按主题读取图表配色：优先取 CSS 语义令牌，取不到时用同值回落。 */
@@ -51,6 +55,7 @@ export function readChartPalette(theme: 'dark' | 'light'): ChartPalette {
     text: read('--t-fg', fallback.text),
     subtle: read('--t-fg-subtle', fallback.subtle),
     axisLine: read('--t-line', fallback.axisLine),
+    surface: read('--t-surface-raised', fallback.surface ?? fallback.axisLine),
   }
 }
 
@@ -59,7 +64,14 @@ export function buildDistributionOption(
   palette: ChartPalette,
 ): EChartsCoreOption {
   return {
-    tooltip: { trigger: 'item' },
+    textStyle: { color: palette.text, fontSize: 12 },
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: palette.surface,
+      borderColor: palette.axisLine,
+      borderWidth: 1,
+      textStyle: { color: palette.text, fontSize: 12 },
+    },
     legend: { show: false },
     series: [
       {
@@ -83,25 +95,39 @@ export function buildTrendOption(
   palette: ChartPalette,
 ): EChartsCoreOption {
   return {
-    tooltip: { trigger: 'axis' },
+    textStyle: { color: palette.text, fontSize: 12 },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: palette.surface,
+      borderColor: palette.axisLine,
+      borderWidth: 1,
+      textStyle: { color: palette.text, fontSize: 12 },
+      axisPointer: {
+        type: 'line',
+        lineStyle: { color: palette.subtle, width: 1 },
+      },
+    },
     legend: {
       top: 0,
-      textStyle: { color: palette.subtle, fontSize: 11 },
-      itemWidth: 12,
-      itemHeight: 8,
+      textStyle: { color: palette.subtle, fontSize: 12 },
+      itemWidth: 14,
+      itemHeight: 10,
+      itemGap: 16,
     },
-    grid: { left: 8, right: 8, top: 28, bottom: 0, containLabel: true },
+    grid: { left: 12, right: 12, top: 34, bottom: 8, containLabel: true },
     xAxis: {
       type: 'category',
       boundaryGap: false,
       data: days.map((day) => day.date.slice(5)),
       axisLine: { lineStyle: { color: palette.axisLine } },
-      axisLabel: { color: palette.subtle, fontSize: 10 },
+      axisTick: { show: false },
+      axisLabel: { color: palette.subtle, fontSize: 11, margin: 10 },
     },
     yAxis: {
       type: 'value',
       splitLine: { lineStyle: { color: palette.axisLine } },
-      axisLabel: { color: palette.subtle, fontSize: 10 },
+      axisLabel: { color: palette.subtle, fontSize: 11, margin: 10 },
+      axisTick: { show: false },
     },
     series: SEVERITIES.map((severity) => ({
       id: `trend-${severity}`,
@@ -111,7 +137,7 @@ export function buildTrendOption(
       showSymbol: false,
       data: days.map((day) => day[severity]),
       itemStyle: { color: palette.sev[severity] },
-      lineStyle: { color: palette.sev[severity], width: 1.5 },
+      lineStyle: { color: palette.sev[severity], width: 2 },
     })),
   }
 }

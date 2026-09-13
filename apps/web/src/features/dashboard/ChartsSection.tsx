@@ -96,11 +96,11 @@ function DistributionPanel({
   )
 
   return (
-    <article aria-label="严重等级分布" className="rounded-lg border border-line bg-surface p-3">
-      <h2 className="mb-1 text-sm font-semibold">严重等级分布</h2>
-      <div className="grid grid-cols-[1fr_auto] items-center gap-3">
-        <div ref={ref} className="h-56 w-full" />
-        <dl className="min-w-28 space-y-1 border-l border-line pl-3">
+    <article aria-label="严重等级分布" className="rounded-xl border border-line bg-surface p-4">
+      <h2 className="mb-3 text-base font-semibold">严重等级分布</h2>
+      <div className="grid grid-cols-[1fr_auto] items-center gap-5">
+        <div ref={ref} className="h-64 w-full" />
+        <dl className="min-w-32 space-y-2 border-l border-line pl-4">
           {severityTable(distribution, palette)}
         </dl>
       </div>
@@ -124,9 +124,9 @@ function TrendPanel({
   )
 
   return (
-    <article aria-label="事故趋势" className="rounded-lg border border-line bg-surface p-3">
-      <h2 className="mb-1 text-sm font-semibold">事故趋势</h2>
-      <div ref={ref} className="h-56 w-full" />
+    <article aria-label="事故趋势" className="rounded-xl border border-line bg-surface p-4">
+      <h2 className="mb-3 text-base font-semibold">事故趋势</h2>
+      <div ref={ref} className="h-64 w-full" />
     </article>
   )
 }
@@ -143,7 +143,7 @@ export function ChartsSection({
   const { theme } = useTheme()
 
   return (
-    <section aria-label="图表" className="mb-4 grid grid-cols-1 gap-2 lg:grid-cols-2">
+    <section aria-label="图表" className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
       <DistributionPanel distribution={distribution} theme={theme} />
       <TrendPanel trend={trend} range={range} theme={theme} />
     </section>

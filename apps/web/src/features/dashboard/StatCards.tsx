@@ -20,14 +20,14 @@ function StatCard({
   return (
     <article
       aria-label={`${label}指标卡`}
-      className="rounded-lg border border-line bg-surface p-3"
+      className="min-h-28 rounded-xl border border-line bg-surface p-4"
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs text-fg-subtle">{label}</span>
+        <span className="text-sm text-fg-subtle">{label}</span>
         <Icon aria-hidden size={15} className="text-fg-subtle" />
       </div>
-      <p className="mt-1 text-xl font-semibold tabular-nums leading-none">{value}</p>
-      {hint ? <p className="mt-1 text-xs text-fg-muted">{hint}</p> : null}
+      <p className="mt-2 text-2xl font-semibold tabular-nums leading-none">{value}</p>
+      {hint ? <p className="mt-2 text-sm text-fg-muted">{hint}</p> : null}
     </article>
   )
 }
@@ -60,8 +60,8 @@ export function StatCardsSection({ stats }: { stats: StatCards }) {
   ]
 
   return (
-    <section aria-label="关键指标" className="mb-4">
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+    <section aria-label="关键指标" className="mb-6">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {cards.map((card) => (
           <StatCard
             key={card.label}
@@ -88,31 +88,31 @@ function ModuleRunStatus({ runStatus }: { runStatus: ModuleCard['runStatus'] }) 
 
 export function ModuleCardsSection({ modules }: { modules: readonly ModuleCard[] }) {
   return (
-    <section aria-label="按职责模块拆分" className="mb-4">
-      <div className="mb-1.5 flex items-center justify-between border-b border-line pb-1">
-        <h2 className="text-sm font-semibold">按职责模块拆分</h2>
-        <span className="text-xs text-fg-muted">13 个模块</span>
+    <section aria-label="按职责模块拆分" className="mb-6">
+      <div className="mb-3 flex items-center justify-between border-b border-line pb-2">
+        <h2 className="text-base font-semibold">按职责模块拆分</h2>
+        <span className="text-sm text-fg-muted">13 个模块</span>
       </div>
 
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {modules.map((module) => (
           <article
             key={module.moduleId}
             aria-label={`${responsibilityModuleName(module.moduleId)}模块卡`}
-            className="rounded-lg border border-line bg-surface p-2.5"
+            className="min-h-24 rounded-xl border border-line bg-surface p-4"
           >
             <div className="flex items-center justify-between gap-2">
-              <h3 className="text-sm font-medium">{responsibilityModuleName(module.moduleId)}</h3>
+              <h3 className="text-base font-medium">{responsibilityModuleName(module.moduleId)}</h3>
               <ModuleRunStatus runStatus={module.runStatus} />
             </div>
-            <dl className="mt-1.5 flex gap-4 text-xs text-fg-muted">
+            <dl className="mt-3 flex gap-5 text-sm text-fg-muted">
               <div className="flex items-baseline gap-1">
                 <dt>未归档事故</dt>
-                <dd className="text-sm tabular-nums text-fg">{module.activeIncidents}</dd>
+                <dd className="text-base tabular-nums text-fg">{module.activeIncidents}</dd>
               </div>
               <div className="flex items-baseline gap-1">
                 <dt>待审批</dt>
-                <dd className="text-sm tabular-nums text-fg">{module.pendingApprovals}</dd>
+                <dd className="text-base tabular-nums text-fg">{module.pendingApprovals}</dd>
               </div>
             </dl>
           </article>
