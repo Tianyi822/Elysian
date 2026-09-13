@@ -2,7 +2,6 @@ import { useEffect } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { ErrorState, EmptyState, LoadingState } from '../../components/states/StateViews'
 import { useDashboardStore } from '../../stores/dashboardStore'
-import { ChartsSection } from './ChartsSection'
 import { FilterBar } from './FilterBar'
 import { RecentActivitySection } from './RecentActivity'
 import { ModuleCardsSection, StatCardsSection } from './StatCards'
@@ -14,8 +13,6 @@ export function DashboardPage() {
   const status = useDashboardStore((state) => state.status)
   const stats = useDashboardStore((state) => state.stats)
   const modules = useDashboardStore((state) => state.modules)
-  const distribution = useDashboardStore((state) => state.distribution)
-  const trend = useDashboardStore((state) => state.trend)
   const resources = useDashboardStore((state) => state.resources)
   const auditRecords = useDashboardStore((state) => state.auditRecords)
   const range = useDashboardStore((state) => state.range)
@@ -29,7 +26,7 @@ export function DashboardPage() {
     void load(gateway)
   }, [gateway, load])
 
-  if (!stats || !modules || !distribution || !trend || !resources || !auditRecords) {
+  if (!stats || !modules || !resources || !auditRecords) {
     if (status === 'error') {
       return (
         <ErrorState
@@ -80,8 +77,6 @@ export function DashboardPage() {
         onRefresh={() => void refresh(gateway)}
         refreshing={refreshing}
       />
-      <ChartsSection distribution={distribution} trend={trend} range={range} />
-
       <section aria-label="运营工作区" className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.45fr)_minmax(20rem,1fr)]">
         <RecentActivitySection records={auditRecords} />
         <OperationsOverview stats={stats} modules={modules} />

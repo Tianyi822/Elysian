@@ -1,9 +1,12 @@
-import { describe, expect, it } from 'vitest'
-import { BASE_DATE } from './timeseries'
+import { afterEach, describe, expect, it } from 'vitest'
+import { BASE_DATE } from './dataset'
 import {
+  appendLiveResourceSample,
   createResourceMetrics,
+  getLiveResources,
   RESOURCE_METRIC_LABELS,
   RESOURCE_METRIC_UNITS,
+  resetLiveResources,
   sliceResourceMetrics,
 } from './resourceMetrics'
 import type { ResourceMetricKey } from './resourceMetrics'
@@ -58,5 +61,41 @@ describe('资源指标中文标签与单位', () => {
       expect(RESOURCE_METRIC_LABELS[key].length).toBeGreaterThan(0)
       expect(RESOURCE_METRIC_UNITS[key].length).toBeGreaterThan(0)
     }
+  })
+})
+
+describe('资源指标实时叠加层', () => {
+  afterEach(() => {
+    resetLiveResources()
+  })
+
+  it('未叠加时实时序列就是种子序列', () => {
+    expect(getLiveResources()).toEqual(createResourceMetrics())
+  })
+
+  it('采样追加到序列尾并保持 30 个点滚动窗口', () => {
+    const sample = { cpu: 66, memory: 77, networkIo: 300, diskIo: 200 }
+    const appended = appendLiveResourceSample(sample)
+
+    expect(appended).toHaveLength(30)
+    const last = appended[appended.length - 1]
+    expect(last?.cpu).toBe(66)
+    expect(last?.memory).toBe(77)
+    expect(last?.networkIo).toBe(300)
+    expect(last?.diskIo).toBe(200)
+    // 日期接在原序列最后一天之后，保持连续
+    const beforeLast = appended[appended.length - 2]
+    expect(Date.parse(last?.date ?? '') - Date.parse(beforeLast?.date ?? '')).toBe(86_400_000)
+  })
+
+  it('连续采样滚动掉最老的一天，返回同一份序列引用', () => {
+    const before = getLiveResources()[0]
+    appendLiveResourceSample({ cpu: 50, memory: 50, networkIo: 100, diskIo: 100 })
+    appendLiveResourceSample({ cpu: 51, memory: 51, networkIo: 110, diskIo: 101 })
+
+    const after = getLiveResources()
+    expect(after).toHaveLength(30)
+    expect(after[0]?.cpu).not.toBe(before?.cpu)
+    expect(after[after.length - 1]?.cpu).toBe(51)
   })
 })

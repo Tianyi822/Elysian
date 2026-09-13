@@ -41,9 +41,11 @@ export interface Events {
   /** @mode emit */
   'session/event': { summary: string }
   /** @mode emit */
-  'incident/created': { incidentId: string; severity: Severity }
+  'incident/created': { incidentId: string; severity: Severity; moduleId?: string }
   /** @mode emit */
   'incident/updated': { incidentId: string; status?: string }
+  /** @mode emit */
+  'resource/sample': { cpu: number; memory: number; networkIo: number; diskIo: number }
 }
 
 export type EventName = keyof Events & string
@@ -64,6 +66,7 @@ export const EVENT_NAMES = [
   'session/event',
   'incident/created',
   'incident/updated',
+  'resource/sample',
 ] as const satisfies readonly EventName[]
 
 /** 每个事件的分发模式。`Record<EventName, EventMode>` 由类型系统保证不漏不重。 */
@@ -82,6 +85,7 @@ export const EVENT_MODES: Record<EventName, EventMode> = {
   'session/event': 'emit',
   'incident/created': 'emit',
   'incident/updated': 'emit',
+  'resource/sample': 'emit',
 }
 
 /**

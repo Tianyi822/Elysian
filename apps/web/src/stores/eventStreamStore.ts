@@ -22,6 +22,19 @@ let unsubscribe: Unsubscribe | undefined
  */
 let generation = 0
 
+/**
+ * 应用级事件监听器。事件流全应用只订阅一次（见 AppShell），
+ * 其他模块（例如仪表盘 store）通过这里拿到事件，不各自开连接。
+ */
+const listeners = new Set<(event: ElysianEvent) => void>()
+
+export function onStreamEvent(listener: (event: ElysianEvent) => void): Unsubscribe {
+  listeners.add(listener)
+  return () => {
+    listeners.delete(listener)
+  }
+}
+
 export const useEventStreamStore = create<EventStreamState>((set) => ({
   status: 'connecting',
   recent: [],
@@ -38,14 +51,17 @@ export const useEventStreamStore = create<EventStreamState>((set) => ({
       },
       onEvent: (event) => {
         if (current !== generation) return
-        set((state) => {
-          // 按事件标识去重：重新订阅会让事件源从头开始计数，不去重就会出现重复行与重复键。
-          if (state.recent.some((seen) => seen.id === event.id)) return state
-          return {
-            recent: [event, ...state.recent].slice(0, MAX_RECENT_EVENTS),
-            receivedCount: state.receivedCount + 1,
-          }
-        })
+        // 按事件标识去重：重新订阅会让事件源从头开始计数。去重之后的响铃才发给监听器，
+        // 否则重放的旧事件会推高下游计数。
+        const duplicate = useEventStreamStore
+          .getState()
+          .recent.some((seen) => seen.id === event.id)
+        if (duplicate) return
+        set((state) => ({
+          recent: [event, ...state.recent].slice(0, MAX_RECENT_EVENTS),
+          receivedCount: state.receivedCount + 1,
+        }))
+        for (const listener of listeners) listener(event)
       },
     })
   },

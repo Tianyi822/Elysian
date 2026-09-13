@@ -1,5 +1,6 @@
-import { TIME_RANGE_LABELS } from '../../adapters/mock/timeseries'
-import type { TimeRange } from '../../adapters/mock/timeseries'
+
+import { TIME_RANGE_LABELS } from '../../adapters/mock/resourceMetrics'
+import type { TimeRange } from '../../adapters/mock/resourceMetrics'
 
 const RANGES: readonly TimeRange[] = ['7d', '30d']
 

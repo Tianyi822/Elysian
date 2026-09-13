@@ -50,6 +50,56 @@ export function eventIdAt(sequence: number): string {
   return `evt-${sequence}`
 }
 
+export type ResourceSample = {
+  cpu: number
+  memory: number
+  networkIo: number
+  diskIo: number
+}
+
+const WALK_BOUNDS = {
+  cpu: [20, 90, 6],
+  memory: [45, 92, 4],
+  networkIo: [60, 950, 120],
+  diskIo: [40, 520, 80],
+} as const
+
+const LIVE_SEVERITY_ROLL: ReadonlyArray<readonly [string, number]> = [
+  ['sev1', 0.1],
+  ['sev2', 0.3],
+  ['sev3', 0.7],
+  ['sev4', 1.0],
+]
+
+/** 资源采样随机游走：每拍在既有值附近小幅移动，保持在上限区间内。 */
+export function nextResourceSample(walk: ResourceSample): ResourceSample {
+  const step = (value: number, key: keyof ResourceSample): number => {
+    const [min, max, delta] = WALK_BOUNDS[key]
+    const next = value + Math.round((Math.random() - 0.5) * 2 * delta)
+    return Math.min(max as number, Math.max(min as number, next))
+  }
+  return {
+    cpu: step(walk.cpu, 'cpu'),
+    memory: step(walk.memory, 'memory'),
+    networkIo: step(walk.networkIo, 'networkIo'),
+    diskIo: step(walk.diskIo, 'diskIo'),
+  }
+}
+
+/** 每 8 拍产生一次新事故；返回 undefined 表示这一拍不产生。 */
+export function maybeIncidentCreated(
+  tick: number,
+  liveIncidentIndex: number,
+): PlannedEvent | undefined {
+  if (tick % 8 !== 0) return undefined
+  const roll = Math.random()
+  const severity = LIVE_SEVERITY_ROLL.find(([, ceiling]) => roll < ceiling)?.[0] ?? 'sev4'
+  return {
+    name: 'incident/created',
+    payload: { incidentId: `INC-LIVE-${liveIncidentIndex + 1}`, severity },
+  }
+}
+
 /**
  * 从 Last-Event-ID 解析出续传起点。无法识别时从 0 开始，
  * 续传因此不会重发已经投递过的 id。
@@ -80,6 +130,11 @@ let globalSequence = 0
 
 export function createEventsHandler() {
   return (req: IncomingMessage, res: ServerResponse): void => {
+    // 每个连接独立推进拍数与实时事故序号；资源采样走随机游走。
+    let tick = 0
+    let liveIncidentIndex = 0
+    let walk: ResourceSample = { cpu: 55, memory: 68, networkIo: 380, diskIo: 210 }
+
     if (req.method !== 'GET') {
       res.statusCode = 405
       res.setHeader('allow', 'GET')
@@ -101,31 +156,46 @@ export function createEventsHandler() {
     let sequence = resumeFrom > 0 ? resumeFrom : globalSequence
     let sent = 0
 
-    const sendNext = () => {
-      if (plan.length === 0) return
+    const emit = (name: EventName, payload: unknown): void => {
       sequence += 1
       globalSequence = sequence
-      sent += 1
-      const planned = plan[(sequence - 1) % plan.length]
-      if (!planned) return
       const event = {
         id: eventIdAt(sequence),
-        name: planned.name,
+        name,
         at: new Date().toISOString(),
-        payload: planned.payload,
+        payload,
       }
       res.write(formatSseFrame({ id: event.id, event: event.name, data: event }))
+    }
+
+    // 一拍 = 一条计划内事件 + 一条资源采样；每 8 拍再产生一次新事故。
+    const sendNext = () => {
+      tick += 1
+      sent += 1
+      walk = nextResourceSample(walk)
+      emit('resource/sample', walk)
+
+      const live = maybeIncidentCreated(tick, liveIncidentIndex)
+      if (live) {
+        liveIncidentIndex += 1
+        emit(live.name, live.payload)
+      }
+
+      if (plan.length === 0) return
+      const planned = plan[(tick - 1) % plan.length]
+      if (!planned) return
+      emit(planned.name, planned.payload)
     }
 
     res.write(`retry: ${TICK_MS}\n\n`)
     // 连上后先补发几帧，避免界面空等一个 tick 才有内容。
     while (sent < REPLAY_BURST) sendNext()
 
-    const tick = setInterval(sendNext, TICK_MS)
+    const tickTimer = setInterval(sendNext, TICK_MS)
     const heartbeat = setInterval(() => res.write(SSE_HEARTBEAT), HEARTBEAT_MS)
 
     const cleanup = () => {
-      clearInterval(tick)
+      clearInterval(tickTimer)
       clearInterval(heartbeat)
       res.end()
     }

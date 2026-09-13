@@ -8,12 +8,12 @@ import {
   RESOURCE_METRIC_LABELS,
   RESOURCE_METRIC_UNITS,
   sliceResourceMetrics,
+  type TimeRange,
 } from '../../adapters/mock/resourceMetrics'
 import type {
   DailyResourceMetrics,
   ResourceMetricKey,
 } from '../../adapters/mock/resourceMetrics'
-import type { TimeRange } from '../../adapters/mock/timeseries'
 import { buildResourceTrendOption, readChartPalette } from './chartOptions'
 import { useChart } from './useChart'
 

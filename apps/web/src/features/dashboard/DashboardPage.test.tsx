@@ -26,8 +26,6 @@ beforeEach(() => {
     range: '7d',
     stats: undefined,
     modules: undefined,
-    distribution: undefined,
-    trend: undefined,
     resources: undefined,
     auditRecords: undefined,
     errorMessage: undefined,
@@ -169,18 +167,7 @@ describe('仪表盘模块拆分卡', () => {
   })
 })
 
-describe('仪表盘筛选栏与图表', () => {
-  it('两个图表区块挂载成功（SVG 渲染）', async () => {
-    await renderReady()
-
-    const charts = screen.getByLabelText('图表')
-    expect(within(charts).getByRole('article', { name: '严重等级分布' })).toBeInTheDocument()
-    expect(within(charts).getByRole('article', { name: '事故趋势' })).toBeInTheDocument()
-    await waitFor(() => {
-      expect(charts.querySelectorAll('svg').length).toBeGreaterThanOrEqual(2)
-    })
-  })
-
+describe('仪表盘筛选栏', () => {
   it('时间范围两档可切换，粒度固定按天', async () => {
     const user = userEvent.setup()
     await renderReady()
@@ -424,24 +411,7 @@ describe('仪表盘资源监控', () => {
   })
 })
 
-describe('仪表盘分布对照表与空态', () => {
-  it('分布面板带等级数量对照表，数值与数据集朴素聚合一致', async () => {
-    await renderReady()
-
-    const panel = screen.getByRole('article', { name: '严重等级分布' })
-    const labels = ['致命', '严重', '一般', '提示']
-    for (const label of labels) {
-      expect(within(panel).getByText(label)).toBeInTheDocument()
-    }
-
-    const counts = ['sev1', 'sev2', 'sev3', 'sev4'].map((key) =>
-      dataset.incidents.filter((incident) => incident.severity === key).length,
-    )
-    for (const count of counts) {
-      expect(within(panel).getByText(String(count))).toBeInTheDocument()
-    }
-  })
-
+describe('仪表盘空态', () => {
   it('数据集为空时给出空态而不是一排零值', async () => {
     const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
     const empty: ElysianGateway = {

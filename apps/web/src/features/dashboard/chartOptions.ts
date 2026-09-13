@@ -1,7 +1,4 @@
-import { SEVERITIES, SEVERITY_LABELS } from '@elysian/contracts'
-import type { Severity } from '@elysian/contracts'
 import type { EChartsCoreOption } from 'echarts/core'
-import type { DailyIncidents } from '../../adapters/mock/timeseries'
 import type { DailyResourceMetrics, ResourceMetricKey } from '../../adapters/mock/resourceMetrics'
 
 /**
@@ -13,7 +10,6 @@ import type { DailyResourceMetrics, ResourceMetricKey } from '../../adapters/moc
  */
 
 export type ChartPalette = {
-  sev: Record<Severity, string>
   text: string
   subtle: string
   axisLine: string
@@ -24,7 +20,6 @@ export type ChartPalette = {
 }
 
 const DARK_FALLBACK: ChartPalette = {
-  sev: { sev1: '#ff8a80', sev2: '#f0a45e', sev3: '#e3c04a', sev4: '#9fb0c0' },
   text: '#e8eef5',
   subtle: '#7c8ea3',
   axisLine: '#28323f',
@@ -33,7 +28,6 @@ const DARK_FALLBACK: ChartPalette = {
 }
 
 const LIGHT_FALLBACK: ChartPalette = {
-  sev: { sev1: '#d6455d', sev2: '#d97706', sev3: '#b08900', sev4: '#7b8794' },
   text: '#1f2328',
   subtle: '#6e7781',
   axisLine: '#d0d7de',
@@ -51,100 +45,11 @@ export function readChartPalette(theme: 'dark' | 'light'): ChartPalette {
     style.getPropertyValue(name).trim() || fallbackValue
 
   return {
-    sev: {
-      sev1: read('--t-sev1-fg', fallback.sev.sev1),
-      sev2: read('--t-sev2-fg', fallback.sev.sev2),
-      sev3: read('--t-sev3-fg', fallback.sev.sev3),
-      sev4: read('--t-sev4-fg', fallback.sev.sev4),
-    },
     text: read('--t-fg', fallback.text),
     subtle: read('--t-fg-subtle', fallback.subtle),
     axisLine: read('--t-line', fallback.axisLine),
     accent: read('--t-accent', fallback.accent),
     surface: read('--t-surface-raised', fallback.surface ?? fallback.axisLine),
-  }
-}
-
-export function buildDistributionOption(
-  distribution: Record<Severity, number>,
-  palette: ChartPalette,
-): EChartsCoreOption {
-  return {
-    textStyle: { color: palette.text, fontSize: 12 },
-    tooltip: {
-      trigger: 'item',
-      backgroundColor: palette.surface,
-      borderColor: palette.axisLine,
-      borderWidth: 1,
-      textStyle: { color: palette.text, fontSize: 12 },
-    },
-    legend: { show: false },
-    series: [
-      {
-        id: 'severity-distribution',
-        name: '严重等级分布',
-        type: 'pie',
-        radius: ['55%', '82%'],
-        label: { show: false },
-        data: SEVERITIES.map((severity) => ({
-          name: SEVERITY_LABELS[severity],
-          value: distribution[severity],
-          itemStyle: { color: palette.sev[severity] },
-        })),
-      },
-    ],
-  }
-}
-
-export function buildTrendOption(
-  days: readonly DailyIncidents[],
-  palette: ChartPalette,
-): EChartsCoreOption {
-  return {
-    textStyle: { color: palette.text, fontSize: 12 },
-    tooltip: {
-      trigger: 'axis',
-      backgroundColor: palette.surface,
-      borderColor: palette.axisLine,
-      borderWidth: 1,
-      textStyle: { color: palette.text, fontSize: 12 },
-      axisPointer: {
-        type: 'line',
-        lineStyle: { color: palette.subtle, width: 1 },
-      },
-    },
-    legend: {
-      top: 0,
-      textStyle: { color: palette.subtle, fontSize: 12 },
-      itemWidth: 14,
-      itemHeight: 10,
-      itemGap: 16,
-    },
-    grid: { left: 12, right: 12, top: 34, bottom: 8, containLabel: true },
-    xAxis: {
-      type: 'category',
-      boundaryGap: false,
-      data: days.map((day) => day.date.slice(5)),
-      axisLine: { lineStyle: { color: palette.axisLine } },
-      axisTick: { show: false },
-      axisLabel: { color: palette.subtle, fontSize: 11, margin: 10 },
-    },
-    yAxis: {
-      type: 'value',
-      splitLine: { lineStyle: { color: palette.axisLine } },
-      axisLabel: { color: palette.subtle, fontSize: 11, margin: 10 },
-      axisTick: { show: false },
-    },
-    series: SEVERITIES.map((severity) => ({
-      id: `trend-${severity}`,
-      name: SEVERITY_LABELS[severity],
-      type: 'line',
-      smooth: true,
-      showSymbol: false,
-      data: days.map((day) => day[severity]),
-      itemStyle: { color: palette.sev[severity] },
-      lineStyle: { color: palette.sev[severity], width: 2 },
-    })),
   }
 }
 

@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { createMockDataset } from '../mock/dataset'
-import { buildEventPlan, eventIdAt, sequenceFromLastEventId } from './mockEventsPlugin'
+import {
+  buildEventPlan,
+  eventIdAt,
+  maybeIncidentCreated,
+  nextResourceSample,
+  sequenceFromLastEventId,
+} from './mockEventsPlugin'
 
 describe('mock 事件流端点的纯逻辑', () => {
   it('事件序列引用数据集里真实存在的标识，界面拿到的事件对得上页面', () => {
@@ -52,5 +58,43 @@ describe('mock 事件流端点的纯逻辑', () => {
     const lastSeen = sequenceFromLastEventId('evt-7')
     // 服务端把 sequence 从 7 继续，于是下一帧 id 是 evt-8，已投递的 evt-1..evt-7 不会重发。
     expect(eventIdAt(lastSeen + 1)).toBe('evt-8')
+  })
+})
+
+describe('实时采样与新事故注入', () => {
+  it('资源采样随机游走 200 拍都保持在区间内', () => {
+    let walk = { cpu: 55, memory: 68, networkIo: 380, diskIo: 210 }
+    for (let index = 0; index < 200; index += 1) {
+      walk = nextResourceSample(walk)
+      expect(walk.cpu).toBeGreaterThanOrEqual(20)
+      expect(walk.cpu).toBeLessThanOrEqual(90)
+      expect(walk.memory).toBeGreaterThanOrEqual(45)
+      expect(walk.memory).toBeLessThanOrEqual(92)
+      expect(walk.networkIo).toBeGreaterThanOrEqual(60)
+      expect(walk.networkIo).toBeLessThanOrEqual(950)
+      expect(walk.diskIo).toBeGreaterThanOrEqual(40)
+      expect(walk.diskIo).toBeLessThanOrEqual(520)
+    }
+  })
+
+  it('每 8 拍产生一次新事故，序号递增，其余拍不产生', () => {
+    expect(maybeIncidentCreated(1, 0)).toBeUndefined()
+    expect(maybeIncidentCreated(7, 0)).toBeUndefined()
+
+    const first = maybeIncidentCreated(8, 0)
+    expect(first?.name).toBe('incident/created')
+    expect((first?.payload as { incidentId: string }).incidentId).toBe('INC-LIVE-1')
+
+    expect(maybeIncidentCreated(9, 1)).toBeUndefined()
+    const second = maybeIncidentCreated(16, 1)
+    expect((second?.payload as { incidentId: string }).incidentId).toBe('INC-LIVE-2')
+  })
+
+  it('新事故的严重等级都合法', () => {
+    for (let tick = 8; tick <= 80; tick += 8) {
+      const live = maybeIncidentCreated(tick, 0)
+      const severity = (live?.payload as { severity: string }).severity
+      expect(['sev1', 'sev2', 'sev3', 'sev4']).toContain(severity)
+    }
   })
 })

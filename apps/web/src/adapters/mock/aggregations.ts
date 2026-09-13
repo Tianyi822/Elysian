@@ -1,7 +1,6 @@
 import {
   RISK_RANK,
   RESPONSIBILITY_MODULES,
-  SEVERITIES,
 } from '@elysian/contracts'
 import type {
   AgentRun,
@@ -11,7 +10,6 @@ import type {
   ModuleStatus,
   RiskLevel,
   RunStatus,
-  Severity,
   Skill,
 } from '@elysian/contracts'
 
@@ -120,17 +118,3 @@ export function buildModuleCards(input: ModuleCardsInput): ModuleCard[] {
   })
 }
 
-export type SeverityDistribution = Record<Severity, number>
-
-/** 只统计事故条目，告警与待处理任务不计入。 */
-export function buildSeverityDistribution(
-  incidentRows: readonly IncidentListRow[],
-): SeverityDistribution {
-  const distribution = Object.fromEntries(
-    SEVERITIES.map((severity) => [severity, 0]),
-  ) as SeverityDistribution
-  for (const row of incidentRows.filter(isIncident)) {
-    distribution[row.severity] += 1
-  }
-  return distribution
-}

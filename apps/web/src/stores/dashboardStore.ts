@@ -1,26 +1,22 @@
-import type { AuditRecord } from '@elysian/contracts'
+import type { AuditRecord, Unsubscribe } from '@elysian/contracts'
 import { create } from 'zustand'
+import { aggregateStatCards, buildModuleCards } from '../adapters/mock/aggregations'
+import type { ModuleCard, StatCards } from '../adapters/mock/aggregations'
+import { BASE_DATE } from '../adapters/mock/dataset'
 import {
-  aggregateStatCards,
-  buildModuleCards,
-  buildSeverityDistribution,
-} from '../adapters/mock/aggregations'
-import type { ModuleCard, SeverityDistribution, StatCards } from '../adapters/mock/aggregations'
-import { BASE_DATE, createIncidentTrend } from '../adapters/mock/timeseries'
-import type { DailyIncidents, TimeRange } from '../adapters/mock/timeseries'
-import { createResourceMetrics } from '../adapters/mock/resourceMetrics'
-import type { DailyResourceMetrics } from '../adapters/mock/resourceMetrics'
+  appendLiveResourceSample,
+  getLiveResources,
+} from '../adapters/mock/resourceMetrics'
+import type { DailyResourceMetrics, TimeRange } from '../adapters/mock/resourceMetrics'
 import type { ElysianGateway } from '../contracts/adapters'
+import { onStreamEvent } from './eventStreamStore'
 
 export type DashboardState = {
   status: 'idle' | 'loading' | 'ready' | 'error'
   refreshing: boolean
   stats?: StatCards
   modules?: ModuleCard[]
-  distribution?: SeverityDistribution
-  /** 完整 30 天序列；时间范围切换只做切片，不重新加载。 */
-  trend?: readonly DailyIncidents[]
-  /** 完整 30 天单机资源序列；时间范围切换只做切片，不重新加载。 */
+  /** 完整 30 天单机资源序列；时间范围切换只做切片，实时采样会滚动追加。 */
   resources?: readonly DailyResourceMetrics[]
   auditRecords?: readonly AuditRecord[]
   range: TimeRange
@@ -51,11 +47,48 @@ export async function loadDashboard(gateway: ElysianGateway) {
   return {
     stats: aggregateStatCards(input, BASE_DATE),
     modules: buildModuleCards({ incidentRows: incidentList.rows, runs, approvals, moduleStatuses }),
-    distribution: buildSeverityDistribution(incidentList.rows),
-    trend: createIncidentTrend(),
-    resources: createResourceMetrics(),
+    resources: getLiveResources(),
     auditRecords: audit,
   }
+}
+
+/*
+ * 事件回灌：事件流是仪表盘的心跳。resource/sample 滚动追加资源序列，
+ * incident/created 增量更新指标卡与模块卡（数据集侧由 gateway 落库，刷新后一致）。
+ */
+let detachLive: Unsubscribe | undefined
+/** 已增量应用过的新事故标识：同一事故的重复事件（重连重放）不推高两次。 */
+const appliedLiveIncidents = new Set<string>()
+
+function attachLiveEvents(): void {
+  if (detachLive) return
+  detachLive = onStreamEvent((event) => {
+    const { status } = useDashboardStore.getState()
+    if (status !== 'ready') return
+
+    if (event.name === 'incident/created') {
+      if (appliedLiveIncidents.has(event.payload.incidentId)) return
+      appliedLiveIncidents.add(event.payload.incidentId)
+      useDashboardStore.setState((state) => ({
+        stats: state.stats && {
+          ...state.stats,
+          totalIncidents: state.stats.totalIncidents + 1,
+          openIncidents: state.stats.openIncidents + 1,
+        },
+        modules: state.modules?.map((module) =>
+          event.payload.moduleId && module.moduleId === event.payload.moduleId
+            ? { ...module, activeIncidents: module.activeIncidents + 1 }
+            : module,
+        ),
+      }))
+      return
+    }
+
+    if (event.name === 'resource/sample') {
+      appendLiveResourceSample(event.payload)
+      useDashboardStore.setState({ resources: [...getLiveResources()] })
+    }
+  })
 }
 
 export const useDashboardStore = create<DashboardState>((set) => ({
@@ -63,6 +96,8 @@ export const useDashboardStore = create<DashboardState>((set) => ({
   refreshing: false,
   range: '7d',
   async load(gateway) {
+    attachLiveEvents()
+    appliedLiveIncidents.clear()
     set({ status: 'loading', errorMessage: undefined })
     try {
       const data = await loadDashboard(gateway)

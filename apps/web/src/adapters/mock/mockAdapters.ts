@@ -195,11 +195,44 @@ export function createInMemoryEventsAdapter(
 
       let counter = 0
       let cursor = 0
+      let walk: { cpu: number; memory: number; networkIo: number; diskIo: number } = {
+        cpu: 55,
+        memory: 68,
+        networkIo: 380,
+        diskIo: 210,
+      }
+      const stepWalk = (): { cpu: number; memory: number; networkIo: number; diskIo: number } => {
+        walk = {
+          cpu: Math.min(90, Math.max(20, walk.cpu + Math.round((Math.random() - 0.5) * 12))),
+          memory: Math.min(92, Math.max(45, walk.memory + Math.round((Math.random() - 0.5) * 8))),
+          networkIo: Math.min(950, Math.max(60, walk.networkIo + Math.round((Math.random() - 0.5) * 240))),
+          diskIo: Math.min(520, Math.max(40, walk.diskIo + Math.round((Math.random() - 0.5) * 160))),
+        }
+        return walk
+      }
 
       const emitLater = () => {
         counter += 1
         const data = dataset()
         const events: ElysianEvent[] = []
+
+        // 每拍一条资源采样；每 4 拍诞生一次新事故，让图表持续可见地动。
+        events.push({
+          id: `mem-${counter}-resource`,
+          name: 'resource/sample',
+          at: new Date().toISOString(),
+          payload: stepWalk(),
+        })
+        if (counter % 4 === 0) {
+          const roll = Math.random()
+          const severity = roll < 0.1 ? 'sev1' : roll < 0.3 ? 'sev2' : roll < 0.7 ? 'sev3' : 'sev4'
+          events.push({
+            id: `mem-${counter}-new-incident`,
+            name: 'incident/created',
+            at: new Date().toISOString(),
+            payload: { incidentId: `INC-LIVE-${counter}`, severity },
+          })
+        }
 
         const run = data.runs[cursor % Math.max(1, data.runs.length)]
         if (run) {

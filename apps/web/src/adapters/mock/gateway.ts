@@ -11,6 +11,8 @@ import {
   createInMemoryEventsAdapter,
 } from './mockAdapters'
 import { createResilientEventsAdapter } from '../sse/eventsAdapter'
+import { applyIncidentCreated } from './dataset'
+import type { EventsAdapter } from '../../contracts/adapters'
 
 /**
  * 演示网关。事件流默认优先走同源 mock SSE 端点，连不上就降级到内存事件源，
@@ -35,15 +37,34 @@ export function createMockGateway(
     skills: new MockSkillAdapter(read),
     approvals: new MockApprovalAdapter(read),
     audit: new MockAuditAdapter(read),
-    events:
-      options.eventStream === 'memory'
-        ? createInMemoryEventsAdapter(read, { intervalMs: eventIntervalMs })
-        : createResilientEventsAdapter({
-            url: '/api/events',
-            fallback: () => createInMemoryEventsAdapter(read, { intervalMs: eventIntervalMs }),
-          }),
+    events: wrapLive(options.eventStream === 'memory'
+      ? createInMemoryEventsAdapter(read, { intervalMs: eventIntervalMs })
+      : createResilientEventsAdapter({
+          url: '/api/events',
+          fallback: () => createInMemoryEventsAdapter(read, { intervalMs: eventIntervalMs }),
+        }), read),
     async reset() {
       dataset = createMockDataset()
+    },
+  }
+}
+
+/**
+ * 事件回灌包装：新事故在转发给界面之前先落进共享数据集，
+ * 手动刷新重新聚合时与实时视图保持一致。
+ */
+function wrapLive(underlying: EventsAdapter, getDataset: () => MockDataset): EventsAdapter {
+  return {
+    subscribe(handlers) {
+      return underlying.subscribe({
+        onStatus: handlers.onStatus,
+        onEvent: (event) => {
+          if (event.name === 'incident/created') {
+            applyIncidentCreated(getDataset(), event.payload, event.at)
+          }
+          handlers.onEvent(event)
+        },
+      })
     },
   }
 }

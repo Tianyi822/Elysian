@@ -40,6 +40,8 @@ import {
  */
 export const DATASET_SEED = 20_260_912
 export const DATASET_BASE_TIME = '2026-09-12T08:00:00.000Z'
+/** 基准时刻的 ISO 日期。「今日」在演示数据里就是这个日期。 */
+export const BASE_DATE = DATASET_BASE_TIME.slice(0, 10)
 
 /**
  * 演示数据集。字段是可变的：审批与技能启停会在运行期改写它，
@@ -838,4 +840,56 @@ export function toIncidentListRows(dataset: MockDataset): IncidentListRow[] {
   }
 
   return rows
+}
+
+/**
+ * 事件回灌：把实时事件流里的新事故落进共享数据集，
+ * 手动刷新重新聚合时与实时视图保持一致。
+ * 新事故是最小合法形态（无运行、无动作），审计同步落一条记录。
+ */
+export function applyIncidentCreated(
+  dataset: MockDataset,
+  payload: { incidentId: string; severity: Severity; moduleId?: string },
+  at: string = new Date().toISOString(),
+): void {
+  if (dataset.incidents.some((incident) => incident.id === payload.incidentId)) return
+
+  const service = SERVICES[payload.incidentId.length % SERVICES.length] ?? 'order-service'
+  dataset.incidents.unshift({
+    id: payload.incidentId,
+    title: `实时上报：${service} 异常`,
+    severity: payload.severity,
+    status: 'open',
+    source: 'webhook',
+    service,
+    detectedAt: at,
+    updatedAt: at,
+    owner: '待认领',
+    timeline: [
+      {
+        id: `${payload.incidentId}-T-1`,
+        at,
+        kind: 'detected',
+        actor: '监控',
+        summary: '由实时事件流创建的事故',
+      },
+    ],
+    metrics: [],
+    evidence: [],
+    findings: [],
+    actions: [],
+    executionResults: [],
+  })
+
+  dataset.audit.unshift({
+    id: `${payload.incidentId}-AUD-LIVE`,
+    at,
+    kind: 'event',
+    actor: 'webhook',
+    subject: payload.incidentId,
+    summary: `事故创建：${service} ${payload.severity}`,
+    detail: '由实时事件流创建',
+    traceId: `trace-${payload.incidentId}`,
+  })
+  dataset.audit.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))
 }

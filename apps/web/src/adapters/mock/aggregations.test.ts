@@ -8,8 +8,8 @@ import type {
 import { RESPONSIBILITY_MODULES } from '@elysian/contracts'
 import { describe, expect, it } from 'vitest'
 import { createMockDataset } from './dataset'
-import { aggregateStatCards, buildModuleCards, buildSeverityDistribution } from './aggregations'
-import { BASE_DATE, createIncidentTrend, dailyTotal } from './timeseries'
+import { aggregateStatCards, buildModuleCards } from './aggregations'
+import { BASE_DATE } from './dataset'
 
 const T = '2026-09-12T07:00:00.000Z'
 const TODAY = '2026-09-12'
@@ -146,12 +146,6 @@ describe('模块卡聚合（期望值手算）', () => {
   })
 })
 
-describe('严重等级分布（期望值手算）', () => {
-  it('只统计事故：sev1 一条、sev2 两条、告警与任务不计入', () => {
-    expect(buildSeverityDistribution(rows)).toEqual({ sev1: 1, sev2: 2, sev3: 0, sev4: 0 })
-  })
-})
-
 describe('对真实演示数据集的健全性检查', () => {
   it('指标卡数值与数据集的朴素独立计算一致', () => {
     const dataset = createMockDataset()
@@ -189,12 +183,5 @@ describe('对真实演示数据集的健全性检查', () => {
     expect(stats.todayAuditEvents).toBe(
       dataset.audit.filter((record) => record.at.slice(0, 10) === BASE_DATE).length,
     )
-  })
-
-  it('趋势数据健康：每天有量、今日量与分布表可对上', () => {
-    const trend = createIncidentTrend()
-    const today = trend[trend.length - 1]
-    expect(today).toBeDefined()
-    expect(dailyTotal(today as NonNullable<typeof today>)).toBeGreaterThan(0)
   })
 })
