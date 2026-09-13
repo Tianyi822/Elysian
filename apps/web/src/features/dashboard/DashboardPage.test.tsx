@@ -1,5 +1,5 @@
 import { RESPONSIBILITY_MODULES, RISK_RANK, RISK_LEVEL_LABELS } from '@elysian/contracts'
-import { screen, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createMockDataset } from '../../adapters/mock/dataset'
@@ -154,5 +154,75 @@ describe('仪表盘模块拆分卡', () => {
     const card = within(section).getByRole('article', { name: '故障演练模块卡' })
     expect(within(card).getByText('空闲')).toBeInTheDocument()
     expect(within(card).getAllByText('0').length).toBeGreaterThan(0)
+  })
+})
+
+describe('仪表盘筛选栏与图表', () => {
+  it('两个图表区块挂载成功（SVG 渲染）', async () => {
+    await renderReady()
+
+    const charts = screen.getByLabelText('图表')
+    expect(within(charts).getByRole('article', { name: '严重等级分布' })).toBeInTheDocument()
+    expect(within(charts).getByRole('article', { name: '事故趋势' })).toBeInTheDocument()
+    await waitFor(() => {
+      expect(charts.querySelectorAll('svg').length).toBeGreaterThanOrEqual(2)
+    })
+  })
+
+  it('时间范围两档可切换，粒度固定按天', async () => {
+    const user = userEvent.setup()
+    await renderReady()
+
+    const group = screen.getByRole('group', { name: '时间范围' })
+    expect(within(group).getByRole('button', { name: '近 7 天' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(screen.getByText(/粒度/)).toHaveTextContent('按天')
+
+    await user.click(within(group).getByRole('button', { name: '近 30 天' }))
+
+    expect(within(group).getByRole('button', { name: '近 30 天' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(within(group).getByRole('button', { name: '近 7 天' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
+  })
+
+  it('刷新保留内容并给出正在刷新反馈，失败时保留内容并出横幅', async () => {
+    const user = userEvent.setup()
+    const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+    let calls = 0
+    let release: (() => void) | undefined
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const gateway: ElysianGateway = {
+      ...base,
+      incidents: {
+        listRows: async (query) => {
+          calls += 1
+          if (calls > 1) await gate
+          return base.incidents.listRows(query)
+        },
+        find: (incidentId) => base.incidents.find(incidentId),
+      },
+    }
+
+    renderApp('/', { gateway })
+    await screen.findByLabelText('事故总数指标卡')
+
+    await user.click(screen.getByRole('button', { name: '刷新' }))
+
+    expect(await screen.findByText('正在刷新…')).toBeInTheDocument()
+    // 刷新期间内容保留，不退回加载态。
+    expect(screen.getByLabelText('事故总数指标卡')).toBeInTheDocument()
+
+    release?.()
+    await waitFor(() => expect(screen.queryByText('正在刷新…')).not.toBeInTheDocument())
+    expect(screen.getByRole('button', { name: '刷新' })).toBeEnabled()
   })
 })

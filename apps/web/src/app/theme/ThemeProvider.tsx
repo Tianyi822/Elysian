@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { createContext, useCallback, useContext, useInsertionEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 
 export type Theme = 'dark' | 'light'
@@ -14,6 +14,9 @@ const ThemeContext = createContext<ThemeContextValue | null>(null)
 /**
  * 主题只改 html[data-theme]，所有颜色差异由语义令牌层承担，
  * 组件里因此不需要写 dark: 变体。
+ *
+ * 用 insertion effect 翻转属性是有意的：它先于全部被动 effect 执行，
+ * 依赖主题的子组件（例如图表读取配色）在自己的 effect 里读到的已经是新主题。
  */
 export function ThemeProvider({
   children,
@@ -24,7 +27,7 @@ export function ThemeProvider({
 }) {
   const [theme, setTheme] = useState<Theme>(initialTheme)
 
-  useEffect(() => {
+  useInsertionEffect(() => {
     document.documentElement.dataset['theme'] = theme
   }, [theme])
 

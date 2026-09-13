@@ -19,6 +19,7 @@
     "@radix-ui/react-select": "^2.3.7",
     "@radix-ui/react-tabs": "^1.1.21",
     "@radix-ui/react-tooltip": "^1.2.16",
+    "echarts": "^6.1.0",
     "lucide-react": "^1.45.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
