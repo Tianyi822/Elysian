@@ -104,3 +104,37 @@ export const INITIAL_CONTAINER_USAGE: Readonly<Record<string, { cpuPercent: numb
 
 /** 演示状态流动：事件层每 4 拍在这些容器上切换 restarting/running。 */
 export const DEMO_CYCLE_CONTAINER_IDS = ['ctr-metrics-agent'] as const
+
+export type ContainerUsage = { containerId: string; cpuPercent: number; memMb: number }
+
+function step(value: number, min: number, max: number, delta: number): number {
+  return Math.min(max, Math.max(min, value + Math.round((Math.random() - 0.5) * 2 * delta)))
+}
+
+/** 初始占用：全部运行中容器按种子表取值。 */
+export function initialContainerUsage(): ContainerUsage[] {
+  return CONTAINERS.filter((c) => c.status === 'running').map((c) => ({
+    containerId: c.id,
+    ...INITIAL_CONTAINER_USAGE[c.id]!,
+  }))
+}
+
+/** 每拍对运行中容器做资源随机游走；停止/重启中的容器不产生采样。 */
+export function walkContainerUsage(
+  prev: readonly ContainerUsage[],
+  containers: readonly Container[],
+): ContainerUsage[] {
+  return containers
+    .filter((c) => c.status === 'running')
+    .map((c) => {
+      const base =
+        prev.find((p) => p.containerId === c.id) ??
+        INITIAL_CONTAINER_USAGE[c.id] ??
+        { cpuPercent: 5, memMb: 256 }
+      return {
+        containerId: c.id,
+        cpuPercent: step(base.cpuPercent, 2, 95, 3),
+        memMb: step(base.memMb, 128, 4096, 64),
+      }
+    })
+}

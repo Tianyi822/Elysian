@@ -1,5 +1,5 @@
 import { DATASET_BASE_TIME, DATASET_SEED } from './dataset'
-import { createRandom, intBetween } from './seed'
+import { createRandom, intBetween } from './seed.ts'
 
 /**
  * 单机资源指标（CPU、内存、网络 IO、磁盘 IO）的确定性时序 mock。
