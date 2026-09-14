@@ -1,7 +1,7 @@
-import type { Container, ContainerAction, ContainerImage, ContainerStatus, Unsubscribe } from '@elysian/contracts'
+import type { Container, ContainerAction, ContainerImage, ContainerSample, ContainerStatus, Unsubscribe } from '@elysian/contracts'
 import { create } from 'zustand'
 import type { ElysianGateway } from '../contracts/adapters'
-import { onStreamEvent } from './eventStreamStore'
+import { onStreamEvent, useEventStreamStore } from './eventStreamStore'
 import { useNotificationStore } from './notificationStore'
 
 export type TerminalLine = { kind: 'banner' | 'input' | 'output'; text: string }
@@ -19,6 +19,15 @@ function pushHistory(history: readonly string[], command: string): readonly stri
   return history[history.length - 1] === command ? history : [...history, command]
 }
 
+/** 采样表以最近一拍为准：载荷未覆盖的容器显示 —。 */
+function applySamples(samples: readonly ContainerSample[]): void {
+  useContainersStore.setState({
+    samples: Object.fromEntries(
+      samples.map((sample) => [sample.containerId, { cpuPercent: sample.cpuPercent, memMb: sample.memMb }]),
+    ),
+  })
+}
+
 /*
  * 事件回灌：container/sample 更新采样表（以最近一拍为准，载荷未覆盖的容器显示 —），
  * container/updated 更新状态列并清掉该容器的忙碌标记。
@@ -29,14 +38,7 @@ function attachLiveEvents(): void {
   if (detachLive) return
   detachLive = onStreamEvent((event) => {
     if (event.name === 'container/sample') {
-      useContainersStore.setState({
-        samples: Object.fromEntries(
-          event.payload.samples.map((sample) => [
-            sample.containerId,
-            { cpuPercent: sample.cpuPercent, memMb: sample.memMb },
-          ]),
-        ),
-      })
+      applySamples(event.payload.samples)
       return
     }
     if (event.name === 'container/updated') {
@@ -49,6 +51,17 @@ function attachLiveEvents(): void {
       }))
     }
   })
+}
+
+/*
+ * 首屏不空等：页面挂载晚于事件流连接，事件源订阅即补发的那拍采样
+ * 发生在监听器注册之前，从最近事件里回放最新一拍 container/sample。
+ */
+function replayLatestSample(): void {
+  const latest = useEventStreamStore
+    .getState()
+    .recent.find((event) => event.name === 'container/sample')
+  if (latest?.name === 'container/sample') applySamples(latest.payload.samples)
 }
 
 const ACTION_MESSAGES: Record<ContainerAction, (name: string) => string> = {
@@ -98,6 +111,7 @@ export const useContainersStore = create<{
         gateway.containers.listImages(),
       ])
       set({ status: 'ready', containers, images })
+      replayLatestSample()
     } catch (error) {
       set({
         status: 'error',
