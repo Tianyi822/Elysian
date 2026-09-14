@@ -34,7 +34,7 @@ describe('模板外壳', () => {
     renderApp('/')
     expect(screen.getByText('Elysian')).toBeInTheDocument()
     expect(screen.getByRole('heading', { level: 1, name: '仪表盘' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '工具内存自检' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '平台内存占用' })).toBeInTheDocument()
     expect(screen.getByText('运维人员')).toBeInTheDocument()
   })
 

@@ -4,7 +4,7 @@ import { MemoryStick } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 /**
- * 工具内存自检：监控本页面（Elysian 自己）的 JS 堆占用，用于诊断与优化。
+ * 平台内存占用：监控本页面（Elysian 自己）的 JS 堆占用，用于诊断与优化。
  *
  * 数据来自 performance.memory，只有 Chromium 内核提供；其他浏览器如实显示
  * 「当前浏览器不支持」，不伪造数据。纯本地 API，不产生网络请求。
@@ -78,7 +78,7 @@ export function MemoryMonitorBadge() {
           <Popover.Trigger asChild>
             <button
               type="button"
-              aria-label="工具内存自检"
+              aria-label="平台内存占用"
               className={[
                 'inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-xs transition-colors',
                 supported
@@ -88,7 +88,9 @@ export function MemoryMonitorBadge() {
             >
               <MemoryStick aria-hidden size={13} />
               {sample ? (
-                <span className="tabular-nums">{formatMb(sample.usedMb)}</span>
+                <span className="tabular-nums">
+                  平台内存占用 {formatMb(sample.usedMb)}
+                </span>
               ) : (
                 <span>内存自检不可用</span>
               )}
@@ -101,7 +103,7 @@ export function MemoryMonitorBadge() {
             className="z-50 rounded border border-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg"
           >
             {supported
-              ? '本页 JS 堆占用，点击查看详情'
+              ? 'Elysian 页面自身的 JS 堆占用，用于平台自诊断，点击查看详情'
               : '当前浏览器不提供内存自检 API（仅 Chromium 内核支持）'}
             <Tooltip.Arrow className="fill-surface-raised" />
           </Tooltip.Content>
@@ -114,7 +116,7 @@ export function MemoryMonitorBadge() {
           sideOffset={6}
           className="z-50 w-64 rounded-lg border border-line bg-surface-raised p-3 text-xs shadow-lg"
         >
-          <p className="mb-2 border-b border-line pb-1.5 text-sm font-medium">工具内存自检</p>
+          <p className="mb-2 border-b border-line pb-1.5 text-sm font-medium">平台内存占用</p>
           {sample ? (
             <dl className="space-y-1.5">
               <div className="flex items-baseline justify-between gap-3">
@@ -136,7 +138,7 @@ export function MemoryMonitorBadge() {
             </p>
           )}
           <p className="mt-2 border-t border-line pt-1.5 text-fg-subtle">
-            每 5 秒采样一次，数据只来自本页面，用于工具自身的诊断与优化。
+            每 5 秒采样一次，数据只来自本页面，用于平台自身的诊断与优化。
           </p>
           <Popover.Arrow className="fill-surface-raised" />
         </Popover.Content>

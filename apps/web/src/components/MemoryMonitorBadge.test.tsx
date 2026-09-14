@@ -45,7 +45,7 @@ describe('内存自检图标', () => {
     stubMemory(undefined)
     renderApp('/')
 
-    const trigger = screen.getByRole('button', { name: '工具内存自检' })
+    const trigger = screen.getByRole('button', { name: '平台内存占用' })
     expect(trigger).toHaveTextContent('内存自检不可用')
 
     const user = userEvent.setup()
@@ -58,13 +58,13 @@ describe('内存自检图标', () => {
     stubMemory({ usedJSHeapSize: 50 * MB, totalJSHeapSize: 60 * MB, jsHeapSizeLimit: 4 * 1024 * MB })
     renderApp('/')
 
-    const trigger = screen.getByRole('button', { name: '工具内存自检' })
-    expect(within(trigger).getByText('50.0 MB')).toBeInTheDocument()
+    const trigger = screen.getByRole('button', { name: '平台内存占用' })
+    expect(within(trigger).getByText('平台内存占用 50.0 MB')).toBeInTheDocument()
 
     const user = userEvent.setup()
     await user.click(trigger)
 
-    const detail = await screen.findByText('工具内存自检')
+    const detail = await screen.findByText('平台内存占用')
     const popover = detail.closest('[data-radix-popper-content-wrapper]') ?? detail.parentElement
     expect(popover).not.toBeNull()
     expect(popover as HTMLElement).toHaveTextContent('已用堆')
@@ -78,13 +78,13 @@ describe('内存自检图标', () => {
     stubMemory({ usedJSHeapSize: 50 * MB, totalJSHeapSize: 60 * MB, jsHeapSizeLimit: 4 * 1024 * MB })
     renderApp('/')
 
-    expect(screen.getByRole('button', { name: '工具内存自检' })).toHaveTextContent('50.0 MB')
+    expect(screen.getByRole('button', { name: '平台内存占用' })).toHaveTextContent('50.0 MB')
 
     stubMemory({ usedJSHeapSize: 80 * MB, totalJSHeapSize: 90 * MB, jsHeapSizeLimit: 4 * 1024 * MB })
     act(() => {
       vi.advanceTimersByTime(5_000)
     })
 
-    expect(screen.getByRole('button', { name: '工具内存自检' })).toHaveTextContent('80.0 MB')
+    expect(screen.getByRole('button', { name: '平台内存占用' })).toHaveTextContent('80.0 MB')
   })
 })
