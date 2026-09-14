@@ -5,6 +5,12 @@
  * 测试因此不依赖当前时钟，也不依赖 Math.random。
  */
 
+/**
+ * 数据集基准时刻：所有演示时间都相对它推算，与当前时钟解耦。
+ * 定义在这个无依赖的叶子模块里，dataset 与各种子数据模块都能引用而不形成循环导入。
+ */
+export const DATASET_BASE_TIME = '2026-09-12T08:00:00.000Z'
+
 /** mulberry32：小而稳定的伪随机数发生器，同一 seed 必然得到同一序列。 */
 export function createRandom(seed: number): () => number {
   let state = seed >>> 0

@@ -135,6 +135,38 @@ describe('确定性 mock 数据集', () => {
   })
 })
 
+describe('容器与镜像种子数据', () => {
+  const dataset = createMockDataset()
+
+  it('8 个容器：6 运行、1 停止、1 重启中，id 唯一', () => {
+    const statuses = dataset.containers.map((c) => c.status)
+    expect(dataset.containers).toHaveLength(8)
+    expect(dataset.containers.map((c) => c.id)).toHaveLength(new Set(dataset.containers.map((c) => c.id)).size)
+    expect(statuses.filter((s) => s === 'running')).toHaveLength(6)
+    expect(statuses.filter((s) => s === 'stopped')).toHaveLength(1)
+    expect(statuses.filter((s) => s === 'restarting')).toHaveLength(1)
+  })
+
+  it('停止的容器没有 startedAt；端口映射含一条 udp', () => {
+    const stopped = dataset.containers.find((c) => c.status === 'stopped')
+    expect(stopped?.startedAt).toBeUndefined()
+    const udp = dataset.containers.flatMap((c) => c.ports).filter((p) => p.protocol === 'udp')
+    expect(udp).toHaveLength(1)
+  })
+
+  it('6 个镜像，恰好 1 个未被引用', () => {
+    expect(dataset.images).toHaveLength(6)
+    const usedIds = new Set(dataset.containers.map((c) => c.imageId))
+    const unused = dataset.images.filter((image) => !usedIds.has(image.id))
+    expect(unused.map((image) => image.name)).toEqual(['grafana/grafana'])
+  })
+
+  it('createMockDataset 返回独立副本，改写不影响种子', () => {
+    dataset.containers[0]!.status = 'stopped'
+    expect(createMockDataset().containers[0]!.status).toBe('running')
+  })
+})
+
 describe('确定性伪随机与时间工具', () => {
   it('同一 seed 产出同一序列', () => {
     const first = createRandom(42)

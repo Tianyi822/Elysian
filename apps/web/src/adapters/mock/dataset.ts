@@ -5,6 +5,8 @@ import type {
   ApprovalRequest,
   ApprovalStatus,
   AuditRecord,
+  Container,
+  ContainerImage,
   Evidence,
   ExecutionResult,
   Finding,
@@ -24,9 +26,11 @@ import type {
   ToolCall,
   Turn,
 } from '@elysian/contracts'
+import { CONTAINERS, CONTAINER_IMAGES } from './containersData'
 import {
   addMinutes,
   createRandom,
+  DATASET_BASE_TIME,
   intBetween,
   minutesBefore,
   pick,
@@ -39,7 +43,9 @@ import {
  * 所有随机都来自固定种子，因此两次构建的结果逐字段一致。
  */
 export const DATASET_SEED = 20_260_912
-export const DATASET_BASE_TIME = '2026-09-12T08:00:00.000Z'
+// 基准时刻的家在 seed.ts（容器种子模块同样引用它，放在本模块会形成循环导入）；
+// 这里转出口，既有从 './dataset' 导入的用法保持不变。
+export { DATASET_BASE_TIME }
 /** 基准时刻的 ISO 日期。「今日」在演示数据里就是这个日期。 */
 export const BASE_DATE = DATASET_BASE_TIME.slice(0, 10)
 
@@ -57,6 +63,8 @@ export type MockDataset = {
   skills: Skill[]
   audit: AuditRecord[]
   moduleStatuses: ModuleStatus[]
+  containers: Container[]
+  images: ContainerImage[]
 }
 
 const SERVICES = [
@@ -777,6 +785,13 @@ export function createMockDataset(): MockDataset {
     skills,
     audit,
     moduleStatuses,
+    containers: CONTAINERS.map((container) => ({
+      ...container,
+      ports: [...container.ports],
+      env: [...container.env],
+      volumes: [...container.volumes],
+    })),
+    images: CONTAINER_IMAGES.map((image) => ({ ...image })),
   }
 }
 
