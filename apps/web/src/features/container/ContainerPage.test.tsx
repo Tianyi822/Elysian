@@ -94,7 +94,7 @@ describe('容器页骨架', () => {
 })
 
 describe('容器卡片', () => {
-  it('卡片显示名称、ID 前 12 位、镜像、状态标签与端口映射', async () => {
+  it('卡片显示名称、ID 前 13 位、镜像、状态标签与端口映射', async () => {
     renderApp('/containers', { gateway: pageGateway() })
     const card = await screen.findByRole('listitem', { name: 'nginx-proxy' })
     expect(card.textContent).toContain('ctr-nginx-pro')
@@ -124,6 +124,6 @@ describe('容器卡片', () => {
     for (const name of ['终端', '停止', '重启']) {
       expect(within(restarting).getByRole('button', { name })).toBeDisabled()
     }
-    expect(restarting.textContent).toMatch(/运行 \d+ (天|小时|分钟)/)
+    expect(restarting.textContent).toMatch(/运行时长 \d+ (天|小时|分钟)/)
   })
 })

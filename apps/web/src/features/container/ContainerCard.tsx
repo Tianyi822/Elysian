@@ -33,7 +33,7 @@ export function ContainerCard({ container }: { container: Container }) {
     <article
       aria-label={container.name}
       className={`flex h-full flex-col rounded-xl border border-line bg-surface p-4 ${
-        container.status === 'stopped' ? 'opacity-75' : ''
+        container.status === 'stopped' ? 'border-dashed' : ''
       }`}
     >
       <div className="flex items-center gap-2">
@@ -67,7 +67,7 @@ export function ContainerCard({ container }: { container: Container }) {
       <p className="mt-2 text-xs tabular-nums text-fg">
         CPU {cpu} · 内存 {memory}
       </p>
-      <p className="mt-1 text-xs text-fg-muted">运行 {formatUptime(container.startedAt, new Date())}</p>
+      <p className="mt-1 text-xs text-fg-muted">运行时长 {formatUptime(container.startedAt, new Date())}</p>
 
       <div className="mt-auto flex flex-wrap items-center gap-2 pt-3">
         <button
