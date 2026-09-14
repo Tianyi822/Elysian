@@ -25,25 +25,32 @@ export function IconButton({
   children,
   tone = 'neutral',
   variant = 'solid',
+  tooltip = true,
 }: {
   label: string
   onPress?: () => void
   children: ReactNode
   tone?: 'neutral' | 'danger'
   variant?: 'solid' | 'ghost'
+  /** 视觉提示开关；aria-label 始终保留。按钮旁已有文字说明动作时可关掉。 */
+  tooltip?: boolean
 }) {
+  const button = (
+    <button
+      type="button"
+      aria-label={label}
+      onClick={onPress}
+      className={`inline-flex items-center justify-center rounded transition-colors ${STYLES[variant][tone]}`}
+    >
+      {children}
+    </button>
+  )
+
+  if (!tooltip) return button
+
   return (
     <Tooltip.Root>
-      <Tooltip.Trigger asChild>
-        <button
-          type="button"
-          aria-label={label}
-          onClick={onPress}
-          className={`inline-flex items-center justify-center rounded transition-colors ${STYLES[variant][tone]}`}
-        >
-          {children}
-        </button>
-      </Tooltip.Trigger>
+      <Tooltip.Trigger asChild>{button}</Tooltip.Trigger>
       <Tooltip.Portal>
         <Tooltip.Content
           sideOffset={6}

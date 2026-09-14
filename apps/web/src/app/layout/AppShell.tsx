@@ -85,16 +85,17 @@ export function AppShell() {
                 </span>
               </Dialog.Trigger>
               <Dialog.Portal>
-                <Dialog.Overlay className="fixed inset-0 z-40 bg-black/60" />
+                <Dialog.Overlay className="fixed inset-0 z-40 bg-black/60 motion-reduce:animate-none data-[state=open]:animate-drawer-overlay-in data-[state=closed]:animate-drawer-overlay-out" />
                 <Dialog.Content
                   aria-describedby={undefined}
-                  className="fixed inset-y-0 left-0 z-50 flex w-60 flex-col border-r border-line bg-surface"
+                  className="fixed inset-y-0 left-0 z-50 flex w-60 flex-col border-r border-line bg-surface shadow-xl will-change-transform motion-reduce:animate-none data-[state=open]:animate-drawer-panel-in data-[state=closed]:animate-drawer-panel-out"
                 >
                   <div className="flex items-center justify-between border-b border-line px-3 py-2">
                     <Dialog.Title className="text-base font-medium">主导航</Dialog.Title>
                     <Dialog.Close asChild>
                       <span>
-                        <IconButton label="关闭主导航">
+                        {/* 标题「主导航」已在旁边，悬停提示反而跟随焦点常驻，视觉提示关掉。 */}
+                        <IconButton label="关闭主导航" tooltip={false}>
                           <X aria-hidden size={16} />
                         </IconButton>
                       </span>
