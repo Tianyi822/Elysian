@@ -12,6 +12,7 @@ import {
   createInMemoryEventsAdapter,
 } from './mockAdapters'
 import { createResilientEventsAdapter } from '../sse/eventsAdapter'
+import { createContainerEventsLayer } from './containerEvents'
 import { applyIncidentCreated } from './dataset'
 import type { EventsAdapter } from '../../contracts/adapters'
 
@@ -30,6 +31,7 @@ export function createMockGateway(
   let dataset = createMockDataset()
   const read = () => dataset
   const eventIntervalMs = options.eventIntervalMs ?? 2000
+  const containerEvents = createContainerEventsLayer(read, { intervalMs: eventIntervalMs })
 
   return {
     session: new MockSessionAdapter(),
@@ -38,19 +40,27 @@ export function createMockGateway(
     skills: new MockSkillAdapter(read),
     approvals: new MockApprovalAdapter(read),
     audit: new MockAuditAdapter(read),
-    // 占位 hooks：动作先只改写共享数据集，事件层接线由后续任务替换。
     containers: new MockContainerAdapter(read, {
-      onAction: () => {},
-      scheduleRestart: () => {},
+      onAction: (containerId) => {
+        containerEvents.markControlled(containerId)
+        containerEvents.emitUpdated(containerId)
+      },
+      scheduleRestart: (containerId) => containerEvents.scheduleRestart(containerId),
     }),
-    events: wrapLive(options.eventStream === 'memory'
-      ? createInMemoryEventsAdapter(read, { intervalMs: eventIntervalMs })
-      : createResilientEventsAdapter({
-          url: '/api/events',
-          fallback: () => createInMemoryEventsAdapter(read, { intervalMs: eventIntervalMs }),
-        }), read),
+    events: wrapLive(
+      containerEvents.wrap(
+        options.eventStream === 'memory'
+          ? createInMemoryEventsAdapter(read, { intervalMs: eventIntervalMs })
+          : createResilientEventsAdapter({
+              url: '/api/events',
+              fallback: () => createInMemoryEventsAdapter(read, { intervalMs: eventIntervalMs }),
+            }),
+      ),
+      read,
+    ),
     async reset() {
       dataset = createMockDataset()
+      containerEvents.reset()
     },
   }
 }
