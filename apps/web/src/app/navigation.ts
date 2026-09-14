@@ -1,4 +1,4 @@
-import { LayoutDashboard } from 'lucide-react'
+import { Container, LayoutDashboard } from 'lucide-react'
 
 export type NavItem = {
   to: string
@@ -8,7 +8,8 @@ export type NavItem = {
   end?: boolean
 }
 
-/** 本阶段侧边栏只有仪表盘一项；后续界面按同一模板逐个回归（ADR-0007）。 */
+/** 侧边栏导航项；容器页本期只是空白占位，内容待后续设计落地。 */
 export const NAV_ITEMS: readonly NavItem[] = [
   { to: '/', label: '仪表盘', icon: LayoutDashboard, end: true },
+  { to: '/containers', label: '容器', icon: Container },
 ]

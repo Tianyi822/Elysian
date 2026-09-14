@@ -2,12 +2,13 @@ import { useEffect } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Menu, PanelLeftClose, PanelLeftOpen, X } from 'lucide-react'
 import { useState } from 'react'
-import { Outlet } from 'react-router'
+import { Outlet, useLocation } from 'react-router'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { MemoryMonitorBadge } from '../../components/MemoryMonitorBadge'
 import { IconButton } from '../../components/IconButton'
 import { NotificationHost } from '../../components/NotificationHost'
 import { useEventStreamStore } from '../../stores/eventStreamStore'
+import { NAV_ITEMS } from '../navigation'
 import { Sidebar } from './Sidebar'
 
 function UserChip() {
@@ -28,7 +29,14 @@ export function AppShell() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const gateway = useGateway()
+  const location = useLocation()
   const connectEventStream = useEventStreamStore((state) => state.connect)
+
+  // 顶栏标题跟随当前导航项；未匹配路由沿用仪表盘缺省，由未找到页面给出自己的标题。
+  const pageTitle =
+    NAV_ITEMS.find((item) =>
+      item.end ? location.pathname === item.to : location.pathname.startsWith(item.to),
+    )?.label ?? '仪表盘'
 
   // 整个应用只订阅一次事件流，避免每个页面各开一条连接。
   useEffect(() => {
@@ -100,7 +108,7 @@ export function AppShell() {
             </Dialog.Root>
 
             <div className="min-w-0">
-              <h1 className="text-base font-semibold leading-tight">仪表盘</h1>
+              <h1 className="text-base font-semibold leading-tight">{pageTitle}</h1>
             </div>
 
             <div className="ml-auto flex flex-wrap items-center justify-end gap-2">

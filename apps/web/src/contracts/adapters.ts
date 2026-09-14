@@ -68,6 +68,7 @@ export interface EventsAdapter {
 /** 页面级访问区域。权限只做到这一粒度，本阶段不实现更细的权限模型。 */
 export type PageArea =
   | 'dashboard'
+  | 'containers'
   | 'incidents'
   | 'runs'
   | 'skills'
