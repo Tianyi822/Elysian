@@ -1,7 +1,7 @@
 import type { Container, ContainerAction, ContainerImage, ContainerSample, ContainerStatus, Unsubscribe } from '@elysian/contracts'
 import { create } from 'zustand'
 import type { ElysianGateway } from '../contracts/adapters'
-import { onStreamEvent, useEventStreamStore } from './eventStreamStore'
+import { getLastContainerSample, onStreamEvent } from './eventStreamStore'
 import { useNotificationStore } from './notificationStore'
 
 export type TerminalLine = { kind: 'banner' | 'input' | 'output'; text: string }
@@ -55,12 +55,11 @@ function attachLiveEvents(): void {
 
 /*
  * 首屏不空等：页面挂载晚于事件流连接，事件源订阅即补发的那拍采样
- * 发生在监听器注册之前，从最近事件里回放最新一拍 container/sample。
+ * 发生在监听器注册之前，从事件流 store 的采样缓存回放最新一拍 container/sample
+ * （缓存不随重连清空，回放宁可旧一拍也不空屏）。
  */
 function replayLatestSample(): void {
-  const latest = useEventStreamStore
-    .getState()
-    .recent.find((event) => event.name === 'container/sample')
+  const latest = getLastContainerSample()
   if (latest?.name === 'container/sample') applySamples(latest.payload.samples)
 }
 

@@ -35,6 +35,17 @@ export function onStreamEvent(listener: (event: ElysianEvent) => void): Unsubscr
   }
 }
 
+/**
+ * 最近一拍容器采样的模块级缓存。容器页首屏挂载晚于事件流连接时，
+ * 从这里回放最新一拍 container/sample；重连/重订阅不清空——
+ * 宁可回放旧一拍也不空屏，下一拍马上覆盖。
+ */
+let lastContainerSample: ElysianEvent | undefined
+
+export function getLastContainerSample(): ElysianEvent | undefined {
+  return lastContainerSample
+}
+
 export const useEventStreamStore = create<EventStreamState>((set) => ({
   status: 'connecting',
   recent: [],
@@ -51,9 +62,16 @@ export const useEventStreamStore = create<EventStreamState>((set) => ({
       },
       onEvent: (event) => {
         if (current !== generation) return
-        // 资源采样是图表的数据心跳（每拍一条），不是可读的活动记录，
-        // 进最近活动只会把列表刷成噪音；监听器（仪表盘）仍然照常收到。
-        if (event.name === 'resource/sample') {
+        // 资源采样与容器事件（container/sample 每拍一条、container/updated 随状态变化）
+        // 同为页面的数据心跳与状态流，不是可读的活动记录，进最近活动只会把列表刷成噪音；
+        // 监听器（仪表盘、容器页）仍然照常收到；container/sample 另记一拍进模块缓存，
+        // 供容器页首屏回放（见 getLastContainerSample）。
+        if (
+          event.name === 'resource/sample' ||
+          event.name === 'container/sample' ||
+          event.name === 'container/updated'
+        ) {
+          if (event.name === 'container/sample') lastContainerSample = event
           for (const listener of listeners) listener(event)
           return
         }

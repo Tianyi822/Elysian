@@ -1,7 +1,7 @@
 import type { ElysianEvent, EventStreamHandlers } from '@elysian/contracts'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { EventsAdapter } from '../contracts/adapters'
-import { MAX_RECENT_EVENTS, useEventStreamStore } from './eventStreamStore'
+import { MAX_RECENT_EVENTS, onStreamEvent, useEventStreamStore } from './eventStreamStore'
 
 function createStubAdapter() {
   const state = {
@@ -70,6 +70,33 @@ describe('事件流 store', () => {
     const state = useEventStreamStore.getState()
     expect(state.recent).toHaveLength(MAX_RECENT_EVENTS)
     expect(state.receivedCount).toBe(MAX_RECENT_EVENTS + 5)
+  })
+
+  it('容器事件不进最近活动也不计数，但监听器照常收到', () => {
+    const stub = createStubAdapter()
+    useEventStreamStore.getState().connect(stub.adapter)
+    const seen: string[] = []
+    const unsubscribe = onStreamEvent((event) => seen.push(event.id))
+
+    stub.state.handlers?.onEvent(makeEvent('evt-real'))
+    stub.state.handlers?.onEvent({
+      id: 'evt-sample',
+      name: 'container/sample',
+      at: '2026-09-12T08:00:00.000Z',
+      payload: { samples: [{ containerId: 'ctr-nginx-proxy', cpuPercent: 12, memMb: 64 }] },
+    })
+    stub.state.handlers?.onEvent({
+      id: 'evt-updated',
+      name: 'container/updated',
+      at: '2026-09-12T08:00:00.000Z',
+      payload: { containerId: 'ctr-nginx-proxy', status: 'running' },
+    })
+
+    const state = useEventStreamStore.getState()
+    expect(state.recent.map((event) => event.id)).toEqual(['evt-real'])
+    expect(state.receivedCount).toBe(1)
+    expect(seen).toEqual(['evt-real', 'evt-sample', 'evt-updated'])
+    unsubscribe()
   })
 
   it('重复连接会先退订上一条订阅', () => {
