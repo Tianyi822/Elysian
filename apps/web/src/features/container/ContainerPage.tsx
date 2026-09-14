@@ -5,6 +5,7 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
 import { useContainersStore } from '../../stores/containersStore'
 import { ContainerCard } from './ContainerCard'
+import { ImageTable } from './ImageTable'
 
 const STATUS_FILTERS: ReadonlyArray<{ value: ContainerStatus | 'all'; label: string }> = [
   { value: 'all', label: '全部' },
@@ -20,7 +21,10 @@ export function ContainerPage() {
   const containers = useContainersStore((s) => s.containers)
   const statusFilter = useContainersStore((s) => s.statusFilter)
   const search = useContainersStore((s) => s.search)
+  const view = useContainersStore((s) => s.view)
+  const images = useContainersStore((s) => s.images)
   const load = useContainersStore((s) => s.load)
+  const setView = useContainersStore((s) => s.setView)
   const setStatusFilter = useContainersStore((s) => s.setStatusFilter)
   const setSearch = useContainersStore((s) => s.setSearch)
 
@@ -51,39 +55,67 @@ export function ContainerPage() {
   return (
     <div className="mb-6">
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <div role="group" aria-label="状态筛选" className="flex flex-wrap gap-1">
-          {STATUS_FILTERS.map((filter) => (
-            <button
-              key={filter.value}
-              type="button"
-              aria-pressed={statusFilter === filter.value}
-              onClick={() => setStatusFilter(filter.value)}
-              className={[
-                'rounded-lg border px-2.5 py-1 text-xs transition-colors',
-                statusFilter === filter.value
-                  ? 'border-accent/50 bg-accent/10 font-medium text-accent'
-                  : 'border-line bg-surface text-fg-muted hover:text-fg',
-              ].join(' ')}
-            >
-              {filter.label}
-            </button>
-          ))}
+        <div role="group" aria-label="视图切换" className="inline-flex overflow-hidden rounded-lg border border-line">
+          <button
+            type="button"
+            aria-pressed={view === 'grid'}
+            onClick={() => setView('grid')}
+            className={`px-3 py-1.5 text-xs transition-colors ${
+              view === 'grid' ? 'bg-surface-raised font-medium text-fg' : 'text-fg-muted hover:text-fg'
+            }`}
+          >
+            容器
+          </button>
+          <button
+            type="button"
+            aria-pressed={view === 'images'}
+            onClick={() => setView('images')}
+            className={`border-l border-line px-3 py-1.5 text-xs transition-colors ${
+              view === 'images' ? 'bg-surface-raised font-medium text-fg' : 'text-fg-muted hover:text-fg'
+            }`}
+          >
+            镜像
+          </button>
         </div>
-        <div className="ml-auto">
-          <label htmlFor="container-search" className="sr-only">
-            搜索容器名称
-          </label>
-          <input
-            id="container-search"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="搜索容器名称"
-            className="w-56 rounded-lg border border-line bg-surface px-3 py-1.5 text-sm text-fg placeholder:text-fg-subtle"
-          />
-        </div>
+        {view === 'grid' ? (
+          <>
+            <div role="group" aria-label="状态筛选" className="flex flex-wrap gap-1">
+              {STATUS_FILTERS.map((filter) => (
+                <button
+                  key={filter.value}
+                  type="button"
+                  aria-pressed={statusFilter === filter.value}
+                  onClick={() => setStatusFilter(filter.value)}
+                  className={[
+                    'rounded-lg border px-2.5 py-1 text-xs transition-colors',
+                    statusFilter === filter.value
+                      ? 'border-accent/50 bg-accent/10 font-medium text-accent'
+                      : 'border-line bg-surface text-fg-muted hover:text-fg',
+                  ].join(' ')}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+            <div className="ml-auto">
+              <label htmlFor="container-search" className="sr-only">
+                搜索容器名称
+              </label>
+              <input
+                id="container-search"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="搜索容器名称"
+                className="w-56 rounded-lg border border-line bg-surface px-3 py-1.5 text-sm text-fg placeholder:text-fg-subtle"
+              />
+            </div>
+          </>
+        ) : null}
       </div>
 
-      {filtered.length === 0 ? (
+      {view === 'images' ? (
+        <ImageTable images={images} containers={containers} />
+      ) : filtered.length === 0 ? (
         <EmptyState
           title={containers.length === 0 ? '还没有容器' : '没有匹配的容器'}
           description={

@@ -127,3 +127,34 @@ describe('容器卡片', () => {
     expect(restarting.textContent).toMatch(/运行时长 \d+ (天|小时|分钟)/)
   })
 })
+
+describe('镜像视图', () => {
+  it('切换到镜像视图显示 6 行镜像与引用数', async () => {
+    const user = userEvent.setup()
+    renderApp('/containers', { gateway: pageGateway() })
+    await screen.findByRole('list', { name: '容器列表' })
+
+    await user.click(screen.getByRole('button', { name: '镜像' }))
+    const table = await screen.findByRole('table', { name: '镜像列表' })
+    expect(within(table).getAllByRole('row')).toHaveLength(7) // 表头 + 6 行
+    expect(table.textContent).toContain('node:22-alpine')
+    expect(within(table).getByText('4')).toBeInTheDocument() // node 被引用 4 次
+    expect(table.textContent).toContain('2026-09-03') // grafana 拉取时间：基准 09-12 08:00 回推 216 小时
+
+    await user.click(screen.getByRole('button', { name: '容器' }))
+    expect(screen.getByRole('list', { name: '容器列表' })).toBeInTheDocument()
+  })
+  it('删除按钮全部禁用，tooltip 按是否被引用区分', async () => {
+    const user = userEvent.setup()
+    renderApp('/containers', { gateway: pageGateway() })
+    await screen.findByRole('list', { name: '容器列表' })
+    await user.click(screen.getByRole('button', { name: '镜像' }))
+    const table = await screen.findByRole('table', { name: '镜像列表' })
+
+    const buttons = within(table).getAllByRole('button', { name: '删除' })
+    expect(buttons).toHaveLength(6)
+    for (const button of buttons) expect(button).toBeDisabled()
+    expect(buttons.every((button) => button.hasAttribute('title'))).toBe(true)
+    expect(table.textContent).not.toContain('删除待接入真实执行') // title 不进 textContent，只查存在
+  })
+})
