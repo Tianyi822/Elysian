@@ -4,6 +4,7 @@ import type { MockDataset } from './dataset'
 import {
   MockApprovalAdapter,
   MockAuditAdapter,
+  MockContainerAdapter,
   MockIncidentAdapter,
   MockRunAdapter,
   MockSessionAdapter,
@@ -37,6 +38,11 @@ export function createMockGateway(
     skills: new MockSkillAdapter(read),
     approvals: new MockApprovalAdapter(read),
     audit: new MockAuditAdapter(read),
+    // 占位 hooks：动作先只改写共享数据集，事件层接线由后续任务替换。
+    containers: new MockContainerAdapter(read, {
+      onAction: () => {},
+      scheduleRestart: () => {},
+    }),
     events: wrapLive(options.eventStream === 'memory'
       ? createInMemoryEventsAdapter(read, { intervalMs: eventIntervalMs })
       : createResilientEventsAdapter({

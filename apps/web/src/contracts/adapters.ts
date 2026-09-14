@@ -3,6 +3,9 @@ import type {
   ApprovalOutcome,
   ApprovalRequest,
   AuditRecord,
+  Container,
+  ContainerAction,
+  ContainerImage,
   EventStreamHandlers,
   Incident,
   IncidentListRow,
@@ -65,6 +68,22 @@ export interface EventsAdapter {
   subscribe(handlers: EventStreamHandlers): Unsubscribe
 }
 
+/** 演示终端的命令结果；clear 为 true 时界面清空输出区。 */
+export type MockCommandResult = { lines: readonly string[]; clear?: boolean }
+
+/**
+ * 容器域适配接口。本期为 mock 实现：操作改写内存数据集，
+ * 状态变化经 container/updated 事件推回；未来换真实运行时 adapter，页面不改。
+ */
+export interface ContainerAdapter {
+  list(): Promise<readonly Container[]>
+  listImages(): Promise<readonly ContainerImage[]>
+  /** 演示终端：命令在本页 mock 内确定性求值，不执行真实 Shell。 */
+  execMockCommand(containerId: string, command: string): Promise<MockCommandResult>
+  /** 请求容器动作（启动/停止/重启，均为 mock）。 */
+  requestAction(containerId: string, action: ContainerAction): Promise<Container>
+}
+
 /** 页面级访问区域。权限只做到这一粒度，本阶段不实现更细的权限模型。 */
 export type PageArea =
   | 'dashboard'
@@ -93,6 +112,7 @@ export interface ElysianGateway {
   approvals: ApprovalAdapter
   audit: AuditAdapter
   events: EventsAdapter
+  containers: ContainerAdapter
   /** 把演示数据重置回种子状态。 */
   reset(): Promise<void>
 }

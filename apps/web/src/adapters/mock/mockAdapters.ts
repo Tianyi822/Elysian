@@ -3,6 +3,9 @@ import type {
   ApprovalOutcome,
   ApprovalRequest,
   AuditRecord,
+  Container,
+  ContainerAction,
+  ContainerImage,
   ElysianEvent,
   EventStreamHandlers,
   Incident,
@@ -15,6 +18,7 @@ import { SEVERITY_RANK } from '@elysian/contracts'
 import type {
   ApprovalAdapter,
   AuditAdapter,
+  ContainerAdapter,
   EventsAdapter,
   IncidentAdapter,
   IncidentListQuery,
@@ -23,6 +27,7 @@ import type {
   SessionAdapter,
   SkillAdapter,
 } from '../../contracts/adapters'
+import { execContainerCommand } from './containerTerminal'
 import {
   INITIAL_DISKS,
   INITIAL_LOAD,
@@ -182,6 +187,52 @@ export class MockRunAdapter implements RunAdapter {
 
   async listModuleStatuses(): Promise<readonly ModuleStatus[]> {
     return this.dataset().moduleStatuses
+  }
+}
+
+export class MockContainerAdapter implements ContainerAdapter {
+  constructor(
+    private readonly dataset: () => MockDataset,
+    private readonly hooks: {
+      onAction: (containerId: string) => void
+      scheduleRestart: (containerId: string) => void
+    },
+  ) {}
+
+  async list(): Promise<readonly Container[]> {
+    return [...this.dataset().containers]
+  }
+
+  async listImages(): Promise<readonly ContainerImage[]> {
+    return [...this.dataset().images]
+  }
+
+  async execMockCommand(
+    containerId: string,
+    command: string,
+  ): Promise<{ lines: readonly string[]; clear?: boolean }> {
+    const container = this.dataset().containers.find((c) => c.id === containerId)
+    if (!container) throw new Error('容器不存在，无法执行演示终端命令')
+    const image = this.dataset().images.find((i) => i.id === container.imageId)
+    if (!image) throw new Error('容器所用镜像不存在，无法执行演示终端命令')
+    return execContainerCommand(container, image, command)
+  }
+
+  async requestAction(containerId: string, action: ContainerAction): Promise<Container> {
+    const container = this.dataset().containers.find((c) => c.id === containerId)
+    if (!container) throw new Error('容器不存在，操作失败')
+    if (action === 'start') {
+      container.status = 'running'
+      container.startedAt = new Date().toISOString()
+    } else if (action === 'stop') {
+      container.status = 'stopped'
+      container.startedAt = undefined
+    } else {
+      container.status = 'restarting'
+      this.hooks.scheduleRestart(containerId)
+    }
+    this.hooks.onAction(containerId)
+    return { ...container }
   }
 }
 
