@@ -210,3 +210,12 @@ describe('容器域类型', () => {
     expect(contracts.RESTART_POLICY_LABELS['unless-stopped']).toBe('除非手动停止')
   })
 })
+
+describe('容器事件', () => {
+  it('container/sample 与 container/updated 已登记且均为 emit 模式', () => {
+    expect(contracts.EVENT_NAMES).toContain('container/sample')
+    expect(contracts.EVENT_NAMES).toContain('container/updated')
+    expect(contracts.EVENT_MODES['container/sample']).toBe('emit')
+    expect(contracts.EVENT_MODES['container/updated']).toBe('emit')
+  })
+})
