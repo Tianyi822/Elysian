@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react'
+import { fireEvent, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { Container, ContainerImage } from '@elysian/contracts'
@@ -14,12 +14,13 @@ import { renderApp } from '../../test/renderApp'
  * 只替换 containers 域——AppShell 挂载时就会订阅事件流，缺 events 会让整树崩溃。
  */
 function pageGateway(overrides: Partial<ElysianGateway['containers']> = {}): ElysianGateway {
+  const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
   return {
-    ...createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' }),
+    ...base,
     containers: {
       list: async () => [...CONTAINERS],
       listImages: async () => [...CONTAINER_IMAGES],
-      execMockCommand: async () => ({ lines: [] }),
+      execMockCommand: (id: string, command: string) => base.containers.execMockCommand(id, command),
       requestAction: async (id: string) => CONTAINERS.find((c) => c.id === id)!,
       ...overrides,
     },
@@ -189,5 +190,73 @@ describe('容器详情面板', () => {
 
     await user.keyboard('{Escape}')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+})
+
+describe('演示终端', () => {
+  async function openTerminalOf(name: string) {
+    const user = userEvent.setup()
+    renderApp('/containers', { gateway: pageGateway() })
+    const card = await screen.findByRole('listitem', { name })
+    await user.click(within(card).getByRole('button', { name: '终端' }))
+    const dialog = await screen.findByRole('dialog', { name: `${name} 终端` })
+    return { user, dialog }
+  }
+
+  it('打开即见 mock 标注与横幅，输入 help 得到可用命令，未知命令给中文提示', async () => {
+    const { user, dialog } = await openTerminalOf('nginx-proxy')
+    expect(dialog.textContent).toContain('演示终端 · 待接入真实执行')
+
+    const input = within(dialog).getByLabelText('命令输入')
+    await user.type(input, 'help{Enter}')
+    expect(await within(dialog).findByText(/可用命令/)).toBeInTheDocument()
+
+    await user.type(input, 'rm -rf /{Enter}')
+    expect(await within(dialog).findByText(/不在演示集内/)).toBeInTheDocument()
+  })
+
+  it('↑ 召回上一条历史命令，再次执行输出一致', async () => {
+    const { user, dialog } = await openTerminalOf('nginx-proxy')
+    const input = within(dialog).getByLabelText('命令输入')
+    await user.type(input, 'env{Enter}')
+    await user.type(input, '{ArrowUp}')
+    expect(input).toHaveValue('env')
+  })
+
+  it('Esc 与点击外部都不关闭；唯一关闭路径是关闭终端并确认', async () => {
+    const { user, dialog } = await openTerminalOf('nginx-proxy')
+
+    await user.keyboard('{Escape}')
+    expect(screen.getByRole('dialog', { name: 'nginx-proxy 终端' })).toBeInTheDocument()
+
+    // 点外部：点击面板之外的卡片区域。Radix 弹窗给外部子树加 aria-hidden（查询需 hidden），
+    // 且锁滚动样式给 body 设 pointer-events:none，userEvent 拒绝派发；改用 fireEvent 触发
+    // 同一 pointerdown，外部关闭判定仍走 Radix 的 document 级监听，拦截路径不变。
+    fireEvent.pointerDown(screen.getByRole('listitem', { name: 'redis-cache', hidden: true }))
+    expect(screen.getByRole('dialog', { name: 'nginx-proxy 终端' })).toBeInTheDocument()
+
+    await user.click(within(dialog).getByRole('button', { name: '关闭终端' }))
+    const confirm = await screen.findByRole('dialog', { name: '确认关闭终端？' })
+    expect(confirm.textContent).toContain('会话历史将不再保留')
+
+    await user.click(within(confirm).getByRole('button', { name: '继续使用' }))
+    expect(screen.getByRole('dialog', { name: 'nginx-proxy 终端' })).toBeInTheDocument()
+
+    await user.click(within(dialog).getByRole('button', { name: '关闭终端' }))
+    await user.click(await screen.findByRole('button', { name: '确认关闭' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('关闭后会话清空，重开只剩横幅', async () => {
+    const { user, dialog } = await openTerminalOf('nginx-proxy')
+    const input = within(dialog).getByLabelText('命令输入')
+    await user.type(input, 'env{Enter}')
+    await user.click(within(dialog).getByRole('button', { name: '关闭终端' }))
+    await user.click(await screen.findByRole('button', { name: '确认关闭' }))
+
+    const card = screen.getByRole('listitem', { name: 'nginx-proxy' })
+    await user.click(within(card).getByRole('button', { name: '终端' }))
+    const reopened = await screen.findByRole('dialog', { name: 'nginx-proxy 终端' })
+    expect(reopened.textContent).not.toContain('TZ=Asia/Shanghai')
   })
 })

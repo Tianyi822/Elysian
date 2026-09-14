@@ -7,6 +7,7 @@ import { useContainersStore } from '../../stores/containersStore'
 import { ContainerCard } from './ContainerCard'
 import { ContainerDetailSheet } from './ContainerDetailSheet'
 import { ImageTable } from './ImageTable'
+import { TerminalWindow } from './TerminalWindow'
 
 const STATUS_FILTERS: ReadonlyArray<{ value: ContainerStatus | 'all'; label: string }> = [
   { value: 'all', label: '全部' },
@@ -136,6 +137,7 @@ export function ContainerPage() {
       )}
 
       <ContainerDetailSheet />
+      <TerminalWindow />
     </div>
   )
 }
