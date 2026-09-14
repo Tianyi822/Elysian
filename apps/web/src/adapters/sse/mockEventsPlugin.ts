@@ -19,10 +19,11 @@ import { SSE_HEARTBEAT, formatSseFrame } from './parse'
  * 生产路径同形，未来换成真实网关即可，客户端不需要改。
  */
 
-export const TICK_MS = 500
+/** 演示采样节拍：留出足够时间观察一次完整的图表过渡。 */
+export const TICK_MS = 2000
 const HEARTBEAT_MS = 15_000
-/** 连上后先补发的帧数：避免界面空等一个 tick 才有内容。 */
-const REPLAY_BURST = 3
+/** 连上后先补发一拍，避免初始数据连续跳变。 */
+const REPLAY_BURST = 1
 
 export type PlannedEvent = {
   name: EventName

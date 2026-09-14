@@ -42,8 +42,13 @@ describe('资源趋势 option', () => {
     expect(series[0]?.data).toEqual(days.map((day) => day.cpu))
     expect(series[0]?.itemStyle.color).toBe(PALETTE.accent)
 
+    expect(option.animation).toBe(true)
+    expect(option.animationDurationUpdate).toBe(1600)
+    expect(option.animationEasingUpdate).toBe('linear')
+
     const xAxis = option.xAxis as { data: readonly string[] }
     expect(xAxis.data).toHaveLength(7)
+    expect(xAxis.data).toEqual(['0', '1', '2', '3', '4', '5', '6'])
   })
 
   it('各资源指标共用同一配色策略（强调色），互不依赖严重等级令牌', () => {

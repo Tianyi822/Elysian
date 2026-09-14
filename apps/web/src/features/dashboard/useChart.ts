@@ -26,7 +26,8 @@ export function useChart(buildOption: () => EChartsCoreOption, rebuildKey: strin
       typeof ResizeObserver === 'function' ? new ResizeObserver(() => chart.resize()) : undefined
     if (observer) observer.observe(containerRef.current)
 
-    chart.setOption(buildRef.current(), true)
+    // 保留默认 merge，让 ECharts 根据稳定的 series id 保留模型并对新旧数据做 diff。
+    chart.setOption(buildRef.current(), { notMerge: false, lazyUpdate: false })
 
     return () => {
       observer?.disconnect()
@@ -36,7 +37,7 @@ export function useChart(buildOption: () => EChartsCoreOption, rebuildKey: strin
   }, [])
 
   useEffect(() => {
-    chartRef.current?.setOption(buildRef.current(), true)
+    chartRef.current?.setOption(buildRef.current(), { notMerge: false, lazyUpdate: false })
   }, [rebuildKey])
 
   return containerRef

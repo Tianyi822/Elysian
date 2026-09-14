@@ -64,7 +64,8 @@ export function readChartPalette(theme: 'dark' | 'light'): ChartPalette {
 
 /**
  * 资源指标的 sparkline option：不画坐标轴，数值靠 tooltip 读取；
- * 日期走 category 轴提供，悬浮提示因此自带日期。
+ * X 轴使用稳定的槽位索引，避免滚动窗口更新时触发首点 remove/尾点 add 的 diff；
+ * 日期由轴标签格式化提供给 tooltip。
  */
 export function buildResourceTrendOption(
   days: readonly DailyResourceMetrics[],
@@ -73,8 +74,9 @@ export function buildResourceTrendOption(
 ): EChartsCoreOption {
   return {
     textStyle: { color: palette.text, fontSize: 12 },
-    // 过渡周期与事件心跳（500ms）一致、线性缓动：窗口滚动因此是无缝的连续运动。
-    animationDurationUpdate: 500,
+    // ECharts 官方的更新动画配置：动画在下一拍之前完成，避免频繁重启动画。
+    animation: true,
+    animationDurationUpdate: 1600,
     animationEasingUpdate: 'linear',
     tooltip: {
       trigger: 'axis',
@@ -88,7 +90,11 @@ export function buildResourceTrendOption(
       type: 'category',
       show: false,
       boundaryGap: false,
-      data: days.map((day) => day.date),
+      // 槽位保持不变，滚动时只更新数值，曲线会整体平滑移动而不会先清空左端。
+      data: days.map((_, index) => String(index)),
+      axisLabel: {
+        formatter: (value: string) => days[Number(value)]?.date ?? value,
+      },
     },
     yAxis: { type: 'value', show: false },
     series: [

@@ -193,7 +193,7 @@ export function createInMemoryEventsAdapter(
   dataset: () => MockDataset,
   options: { intervalMs?: number } = {},
 ): EventsAdapter {
-  const intervalMs = options.intervalMs ?? 500
+  const intervalMs = options.intervalMs ?? 2000
 
   return {
     subscribe(handlers: EventStreamHandlers): Unsubscribe {

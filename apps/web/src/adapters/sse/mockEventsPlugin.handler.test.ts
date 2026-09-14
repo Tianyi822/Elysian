@@ -93,7 +93,7 @@ describe('事件流端点处理器', () => {
     const ticksSoFar = () =>
       parseFrames(written).names.filter((name) => name === 'resource/sample').length
 
-    expect(ticksSoFar()).toBe(3)
+    expect(ticksSoFar()).toBe(1)
     expect(
       parseFrames(written).names.filter((name) => name === 'incident/created'),
     ).toHaveLength(0)

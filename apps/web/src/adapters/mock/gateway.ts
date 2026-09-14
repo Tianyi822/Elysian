@@ -28,7 +28,7 @@ export function createMockGateway(
 ): ElysianGateway {
   let dataset = createMockDataset()
   const read = () => dataset
-  const eventIntervalMs = options.eventIntervalMs ?? 3000
+  const eventIntervalMs = options.eventIntervalMs ?? 2000
 
   return {
     session: new MockSessionAdapter(),

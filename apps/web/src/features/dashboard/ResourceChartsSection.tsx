@@ -45,7 +45,7 @@ function ResourcePanel({
   const hot = (metricKey === 'cpu' || metricKey === 'memory') && (latest?.[metricKey] ?? 0) >= 80
   const ref = useChart(
     () => buildResourceTrendOption(days, metricKey, readChartPalette(theme)),
-    `${theme}:${metricKey}:${days.length}:${latest?.[metricKey] ?? ''}`,
+    `${theme}:${metricKey}:${days.length}:${latest?.date ?? ''}:${latest?.[metricKey] ?? ''}`,
   )
 
   return (
