@@ -1,4 +1,4 @@
-import { fireEvent, screen, within } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { Container, ContainerImage } from '@elysian/contracts'
@@ -258,5 +258,42 @@ describe('演示终端', () => {
     await user.click(within(card).getByRole('button', { name: '终端' }))
     const reopened = await screen.findByRole('dialog', { name: 'nginx-proxy 终端' })
     expect(reopened.textContent).not.toContain('TZ=Asia/Shanghai')
+  })
+})
+
+describe('容器操作联动', () => {
+  it('停止操作经事件流回流：卡片变已停止、终端禁用、右上角出现通知', async () => {
+    const user = userEvent.setup()
+    renderApp('/containers', {
+      gateway: createMockGateway({ eventStream: 'memory', eventIntervalMs: 50 }),
+    })
+    const card = await screen.findByRole('listitem', { name: 'nginx-proxy' })
+
+    await user.click(within(card).getByRole('button', { name: '停止' }))
+
+    const notifications = await screen.findByLabelText('通知')
+    expect(within(notifications).getByRole('status')).toHaveTextContent('容器 nginx-proxy 已停止')
+    const stopped = await screen.findByRole('listitem', { name: 'nginx-proxy' })
+    expect(stopped.textContent).toContain('已停止')
+    expect(within(stopped).getByRole('button', { name: '终端' })).toBeDisabled()
+    expect(within(stopped).getByRole('button', { name: '启动' })).toBeEnabled()
+  })
+
+  it('重启操作的通知带 mock 标注，且随后回到运行中', async () => {
+    const user = userEvent.setup()
+    renderApp('/containers', {
+      gateway: createMockGateway({ eventStream: 'memory', eventIntervalMs: 50 }),
+    })
+    const card = await screen.findByRole('listitem', { name: 'redis-cache' })
+
+    await user.click(within(card).getByRole('button', { name: '重启' }))
+
+    const notifications = await screen.findByLabelText('通知')
+    expect(within(notifications).getByRole('status')).toHaveTextContent(
+      '已请求重启 redis-cache（mock，待接入真实执行）',
+    )
+    await waitFor(() => {
+      expect(screen.getByRole('listitem', { name: 'redis-cache' }).textContent).toContain('运行中')
+    })
   })
 })
