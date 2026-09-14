@@ -5,6 +5,7 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
 import { useContainersStore } from '../../stores/containersStore'
 import { ContainerCard } from './ContainerCard'
+import { ContainerDetailSheet } from './ContainerDetailSheet'
 import { ImageTable } from './ImageTable'
 
 const STATUS_FILTERS: ReadonlyArray<{ value: ContainerStatus | 'all'; label: string }> = [
@@ -133,6 +134,8 @@ export function ContainerPage() {
           ))}
         </ul>
       )}
+
+      <ContainerDetailSheet />
     </div>
   )
 }

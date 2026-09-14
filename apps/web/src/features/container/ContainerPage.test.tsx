@@ -158,3 +158,36 @@ describe('镜像视图', () => {
     expect(table.textContent).not.toContain('删除待接入真实执行') // title 不进 textContent，只查存在
   })
 })
+
+describe('容器详情面板', () => {
+  it('点击详情打开右侧面板，分节展示完整配置', async () => {
+    const user = userEvent.setup()
+    renderApp('/containers', { gateway: pageGateway() })
+    const card = await screen.findByRole('listitem', { name: 'postgres-db' })
+
+    await user.click(within(card).getByRole('button', { name: '详情' }))
+    const dialog = await screen.findByRole('dialog', { name: 'postgres-db' })
+
+    expect(dialog.textContent).toContain('ctr-postgres-db')
+    expect(dialog.textContent).toContain('运行中')
+    expect(dialog.textContent).toContain('postgres:16.4')
+    expect(dialog.textContent).toContain('sha256:2c9e55f0b7a3')
+    expect(dialog.textContent).toContain('5432 → 15432/tcp')
+    expect(dialog.textContent).toContain('POSTGRES_DB=elysian')
+    expect(dialog.textContent).toContain('POSTGRES_USER=ops')
+    expect(dialog.textContent).toContain('/srv/elysian/data/pg → /var/lib/postgresql/data')
+    expect(dialog.textContent).toContain('除非手动停止')
+    expect(dialog.textContent).toContain('postgres -c shared_buffers=256MB')
+  })
+
+  it('Esc 关闭面板回到列表', async () => {
+    const user = userEvent.setup()
+    renderApp('/containers', { gateway: pageGateway() })
+    const card = await screen.findByRole('listitem', { name: 'redis-cache' })
+    await user.click(within(card).getByRole('button', { name: '详情' }))
+    expect(await screen.findByRole('dialog', { name: 'redis-cache' })).toBeInTheDocument()
+
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+})
