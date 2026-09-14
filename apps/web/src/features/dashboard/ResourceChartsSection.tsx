@@ -99,24 +99,24 @@ export function ResourceChartsSection({
   const days = useMemo(() => sliceResourceMetrics(resources, range), [resources, range])
 
   return (
-    <section
-      aria-label="资源监控"
-      className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
-    >
-      {(Object.keys(RESOURCE_METRIC_LABELS) as ResourceMetricKey[]).map((metricKey) => (
-        <ResourcePanel key={metricKey} metricKey={metricKey} days={days} theme={theme} />
-      ))}
+    <section aria-label="服务器状态" className="mb-6">
+      <h2 className="mb-3 text-sm font-semibold text-fg-muted">服务器状态</h2>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {(Object.keys(RESOURCE_METRIC_LABELS) as ResourceMetricKey[]).map((metricKey) => (
+          <ResourcePanel key={metricKey} metricKey={metricKey} days={days} theme={theme} />
+        ))}
 
-      <BarsPanel
-        title="运行负载"
-        option={buildLoadBarsOption(system.load, readChartPalette(theme))}
-        rebuildKey={`load:${theme}:${JSON.stringify(system.load)}`}
-      />
-      <BarsPanel
-        title="磁盘占用"
-        option={buildDiskBarsOption(system.disks, readChartPalette(theme))}
-        rebuildKey={`disk:${theme}:${JSON.stringify(system.disks)}`}
-      />
+        <BarsPanel
+          title="运行负载"
+          option={buildLoadBarsOption(system.load, readChartPalette(theme))}
+          rebuildKey={`load:${theme}:${JSON.stringify(system.load)}`}
+        />
+        <BarsPanel
+          title="磁盘占用"
+          option={buildDiskBarsOption(system.disks, readChartPalette(theme))}
+          rebuildKey={`disk:${theme}:${JSON.stringify(system.disks)}`}
+        />
+      </div>
     </section>
   )
 }

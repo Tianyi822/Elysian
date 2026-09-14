@@ -391,9 +391,10 @@ describe('仪表盘资源监控', () => {
   it('四张资源卡渲染在关键指标之前，当前值取时序最后一天并带单位', async () => {
     await renderReady()
 
-    const section = screen.getByLabelText('资源监控')
+    const section = screen.getByLabelText('服务器状态')
     const statCards = screen.getByLabelText('关键指标')
     expect(section.compareDocumentPosition(statCards) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(within(section).getByRole('heading', { name: '服务器状态' })).toBeInTheDocument()
 
     for (const key of METRIC_KEYS) {
       const card = within(section).getByRole('article', { name: RESOURCE_METRIC_LABELS[key] })
@@ -410,7 +411,7 @@ describe('仪表盘资源监控', () => {
   it('占用率 ≥80% 的当前值标警告色，其余用正文色；IO 吞吐不着色', async () => {
     await renderReady()
 
-    const section = screen.getByLabelText('资源监控')
+    const section = screen.getByLabelText('服务器状态')
     for (const key of ['cpu', 'memory'] as const) {
       const card = within(section).getByRole('article', { name: RESOURCE_METRIC_LABELS[key] })
       const value = within(card).getByText(`${latest[key]}%`)
