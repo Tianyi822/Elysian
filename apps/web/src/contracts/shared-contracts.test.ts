@@ -48,6 +48,12 @@ const ENUM_TABLES: ReadonlyArray<{
     labels: contracts.SANDBOX_MODE_LABELS,
   },
   { name: 'AuditKind', values: contracts.AUDIT_KINDS, labels: contracts.AUDIT_KIND_LABELS },
+  {
+    name: 'ContainerStatus',
+    values: contracts.CONTAINER_STATUSES,
+    labels: contracts.CONTAINER_STATUS_LABELS,
+  },
+  { name: 'RestartPolicy', values: contracts.RESTART_POLICIES, labels: contracts.RESTART_POLICY_LABELS },
 ]
 
 describe('枚举与中文标签表', () => {
@@ -193,5 +199,14 @@ describe('契约包零运行时依赖', () => {
         expect(source, `${file} ${why}`).not.toMatch(pattern)
       }
     }
+  })
+})
+
+describe('容器域类型', () => {
+  it('状态与策略枚举、类型、标签表一一对应', () => {
+    expect(contracts.CONTAINER_STATUSES).toEqual(['running', 'stopped', 'restarting'])
+    expect(contracts.CONTAINER_STATUS_LABELS.running).toBe('运行中')
+    expect(contracts.RESTART_POLICIES).toEqual(['no', 'always', 'on-failure', 'unless-stopped'])
+    expect(contracts.RESTART_POLICY_LABELS['unless-stopped']).toBe('除非手动停止')
   })
 })
