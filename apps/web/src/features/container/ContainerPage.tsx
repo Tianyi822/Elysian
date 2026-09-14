@@ -4,6 +4,7 @@ import { CONTAINER_STATUS_LABELS } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
 import { useContainersStore } from '../../stores/containersStore'
+import { ContainerCard } from './ContainerCard'
 
 const STATUS_FILTERS: ReadonlyArray<{ value: ContainerStatus | 'all'; label: string }> = [
   { value: 'all', label: '全部' },
@@ -94,12 +95,8 @@ export function ContainerPage() {
       ) : (
         <ul aria-label="容器列表" className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map((container) => (
-            <li
-              key={container.id}
-              aria-label={container.name}
-              className="rounded-xl border border-line bg-surface p-4"
-            >
-              {container.name}
+            <li key={container.id} aria-label={container.name} className="h-full">
+              <ContainerCard container={container} />
             </li>
           ))}
         </ul>

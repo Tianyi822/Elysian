@@ -92,3 +92,38 @@ describe('容器页骨架', () => {
     expect(await screen.findByText('还没有容器')).toBeInTheDocument()
   })
 })
+
+describe('容器卡片', () => {
+  it('卡片显示名称、ID 前 12 位、镜像、状态标签与端口映射', async () => {
+    renderApp('/containers', { gateway: pageGateway() })
+    const card = await screen.findByRole('listitem', { name: 'nginx-proxy' })
+    expect(card.textContent).toContain('ctr-nginx-pro')
+    expect(card.textContent).toContain('nginx:1.27-alpine')
+    expect(card.textContent).toContain('运行中')
+    expect(card.textContent).toContain('80 → 8080/tcp')
+    expect(card.textContent).toContain('443 → 8443/tcp')
+  })
+
+  it('运行中卡片有实时资源数值；停止的卡片资源显示 — 且终端禁用', async () => {
+    renderApp('/containers', { gateway: pageGateway() })
+    const running = await screen.findByRole('listitem', { name: 'nginx-proxy' })
+    expect(running.textContent).toMatch(/CPU \d+%/)
+    expect(running.textContent).toMatch(/内存 \d+ MB/)
+
+    const stopped = screen.getByRole('listitem', { name: 'backup-agent' })
+    expect(stopped.textContent).toContain('CPU —')
+    expect(stopped.textContent).toContain('内存 —')
+    expect(within(stopped).getByRole('button', { name: '终端' })).toBeDisabled()
+    expect(within(stopped).queryByRole('button', { name: '停止' })).not.toBeInTheDocument()
+    expect(within(stopped).getByRole('button', { name: '启动' })).toBeEnabled()
+  })
+
+  it('重启中的卡片操作全部禁用；卡片显示运行时长', async () => {
+    renderApp('/containers', { gateway: pageGateway() })
+    const restarting = await screen.findByRole('listitem', { name: 'metrics-agent' })
+    for (const name of ['终端', '停止', '重启']) {
+      expect(within(restarting).getByRole('button', { name })).toBeDisabled()
+    }
+    expect(restarting.textContent).toMatch(/运行 \d+ (天|小时|分钟)/)
+  })
+})
