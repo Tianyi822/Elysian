@@ -73,3 +73,6 @@ $RECYCLE.BIN/
 /context.md
 /docs/
 /.scratch/
+
+# superpowers 技能工作目录
+.superpowers/
