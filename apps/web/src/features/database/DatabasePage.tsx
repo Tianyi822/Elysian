@@ -88,7 +88,7 @@ export function DatabasePage() {
             description="数据库由容器承载：添加对应的数据库容器后，它的实例会出现在这里。"
           />
         ) : (
-          <ul aria-label={`${engine} 数据库列表`} className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <ul aria-label={`${engine} 数据库列表`} className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
             {filtered.map((database) => (
               <li key={database.id} className="h-full">
                 <DatabaseCard
@@ -129,7 +129,7 @@ function DatabaseCard({
   return (
     <article
       aria-label={`${database.engine} 数据库 ${database.name}`}
-      className="flex h-full flex-col gap-4 rounded-xl border border-line bg-surface p-4 md:p-5"
+      className="@container flex h-full flex-col gap-4 rounded-xl border border-line bg-surface p-4 md:p-5"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
@@ -149,7 +149,7 @@ function DatabaseCard({
         onClick={onJump}
         disabled={view.missingContainer}
         title={view.missingContainer ? '来源容器已不存在' : `打开容器 ${view.container?.name} 的详情`}
-        className="flex w-full items-center gap-2 rounded-lg bg-surface-raised px-3 py-2 text-left text-xs text-fg-muted transition-colors hover:bg-surface-raised/70 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex w-full flex-wrap items-center gap-2 rounded-lg bg-surface-raised px-3 py-2 text-left text-xs text-fg-muted transition-colors hover:bg-surface-raised/70 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
       >
         <Container aria-hidden size={14} className="shrink-0 text-fg-subtle" />
         <span className="shrink-0">来源容器</span>
@@ -157,16 +157,21 @@ function DatabaseCard({
           <span className="min-w-0 flex-1 truncate text-fg-subtle">来源容器已不存在</span>
         ) : (
           <>
-            <span className="min-w-0 flex-1 truncate text-fg">{view.container?.name}</span>
-            <span className="shrink-0 tabular-nums text-fg-subtle">
-              {view.imageLabel} · {view.uptimeLabel}
+            {/* 窄卡（三列布局）下行宽容不下镜像与时长：容器名保住最小宽度，镜像·时长与箭头作为整组换行右对齐；极窄卡隐藏时长只留镜像。 */}
+            <span className="min-w-16 flex-1 truncate text-fg">{view.container?.name}</span>
+            <span className="ml-auto flex shrink-0 items-center gap-2">
+              <span className="tabular-nums text-fg-subtle">
+                {view.imageLabel}
+                <span className="hidden @xs:inline"> · {view.uptimeLabel}</span>
+              </span>
+              <ChevronRight aria-hidden size={14} className="shrink-0 text-fg-subtle" />
             </span>
-            <ChevronRight aria-hidden size={14} className="shrink-0 text-fg-subtle" />
           </>
         )}
       </button>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      {/* 指标格随卡片实际宽度分栏：三列布局下卡片窄、指标竖排，宽卡才三格横排（容器查询而非视口断点）。 */}
+      <div className="grid grid-cols-1 gap-3 @lg:grid-cols-3">
         <UsageMetric
           icon={<Database aria-hidden size={14} />}
           label="容量"
