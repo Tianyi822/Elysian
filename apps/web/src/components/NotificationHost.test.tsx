@@ -2,6 +2,7 @@ import * as Tooltip from '@radix-ui/react-tooltip'
 import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { useContainersStore } from '../stores/containersStore'
 import { useNotificationStore } from '../stores/notificationStore'
 import { NotificationHost } from './NotificationHost'
 
@@ -15,6 +16,7 @@ function renderHost() {
 
 beforeEach(() => {
   useNotificationStore.getState().clear()
+  useContainersStore.setState({ detailContainerId: undefined })
 })
 
 afterEach(() => {
@@ -86,6 +88,28 @@ describe('通知宿主', () => {
     const icon = card.querySelector('svg')
     expect(icon?.classList.contains('mt-0.5')).toBe(true)
     expect(icon?.classList.contains('shrink-0')).toBe(true)
+  })
+
+  it('容器详情面板打开时通知区左移让位并带过渡，关闭后回到原位', () => {
+    useNotificationStore.getState().notify({ tone: 'info', message: '占位' })
+    renderHost()
+
+    const region = screen.getByLabelText('通知')
+    expect(region).toHaveClass('right-4')
+    expect(region).not.toHaveClass('lg:right-[calc(28rem+1rem)]')
+    // 让位靠 right 过渡呈现动画，motion-reduce 下关闭。
+    expect(region).toHaveClass('transition-[right]')
+    expect(region).toHaveClass('motion-reduce:transition-none')
+
+    act(() => {
+      useContainersStore.setState({ detailContainerId: 'ctr-nginx-proxy' })
+    })
+    expect(region).toHaveClass('lg:right-[calc(28rem+1rem)]')
+
+    act(() => {
+      useContainersStore.setState({ detailContainerId: undefined })
+    })
+    expect(region).not.toHaveClass('lg:right-[calc(28rem+1rem)]')
   })
 
   it('到时自动消失，失败类留得更久', () => {
