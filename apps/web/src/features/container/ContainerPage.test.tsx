@@ -145,6 +145,9 @@ describe('镜像视图', () => {
     expect(table.textContent).toContain('node:22-alpine')
     expect(within(table).getByText('4')).toBeInTheDocument() // node 被引用 4 次
     expect(table.textContent).toContain('2026-09-03') // grafana 拉取时间：基准 09-12 08:00 回推 216 小时
+    // 信息密度：名称行补摘要，未引用的镜像明说「未使用」而不是干巴巴的 0。
+    expect(table.textContent).toContain('sha256:5d2fa6b8c417')
+    expect(within(table).getByText('未使用')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '容器' }))
     expect(screen.getByRole('list', { name: '容器列表' })).toBeInTheDocument()
