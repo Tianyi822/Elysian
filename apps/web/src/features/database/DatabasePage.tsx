@@ -92,7 +92,7 @@ export function DatabasePage() {
               <li key={database.id} className="h-full">
                 <DatabaseCard
                   database={database}
-                  view={projectDatabaseCard(database, containerById, imageById, new Date())}
+                  view={projectDatabaseCard(database, containerById, imageById)}
                   onJump={() => {
                     useContainersStore.getState().openDetail(database.containerId)
                     useContainersStore.getState().setView('grid')
@@ -148,23 +148,20 @@ function DatabaseCard({
         onClick={onJump}
         disabled={view.missingContainer}
         title={view.missingContainer ? '来源容器已不存在' : `打开容器 ${view.container?.name} 的详情`}
-        className="flex w-full flex-wrap items-center gap-2 rounded-lg bg-surface-raised px-3 py-2 text-left text-xs text-fg-muted transition-colors hover:bg-surface-raised/70 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex w-full items-center gap-2 rounded-lg bg-surface-raised px-3 py-2 text-left text-xs text-fg-muted transition-colors hover:bg-surface-raised/70 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
       >
+        {/* 永远单行：卡片越窄依次让出「来源容器」标签（<@sm）与镜像名（<@xs），容器名始终保留并截断。 */}
         <Container aria-hidden size={14} className="shrink-0 text-fg-subtle" />
-        <span className="shrink-0">来源容器</span>
+        <span className="hidden shrink-0 @sm:inline">来源容器</span>
         {view.missingContainer ? (
           <span className="min-w-0 flex-1 truncate text-fg-subtle">来源容器已不存在</span>
         ) : (
           <>
-            {/* 窄卡（三列布局）下行宽容不下镜像与时长：容器名保住最小宽度，镜像·时长与箭头作为整组换行右对齐；极窄卡隐藏时长只留镜像。 */}
-            <span className="min-w-16 flex-1 truncate text-fg">{view.container?.name}</span>
-            <span className="ml-auto flex shrink-0 items-center gap-2">
-              <span className="tabular-nums text-fg-subtle">
-                {view.imageLabel}
-                <span className="hidden @xs:inline"> · {view.uptimeLabel}</span>
-              </span>
-              <ChevronRight aria-hidden size={14} className="shrink-0 text-fg-subtle" />
+            <span className="min-w-0 flex-1 truncate text-fg">{view.container?.name}</span>
+            <span className="hidden shrink-0 tabular-nums text-fg-subtle @xs:inline">
+              {view.imageLabel}
             </span>
+            <ChevronRight aria-hidden size={14} className="shrink-0 text-fg-subtle" />
           </>
         )}
       </button>
