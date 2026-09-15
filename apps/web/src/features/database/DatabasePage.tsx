@@ -136,23 +136,19 @@ function DatabaseCard({
       aria-label={`${database.engine} 数据库 ${database.name}`}
       className="@container flex h-full flex-col gap-3 rounded-xl border border-line bg-surface p-4 md:p-5"
     >
-      {/* 头部右侧上下两行：状态标签在上，更新时间贴在其下，不再独占脚注行。 */}
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
+      {/* 头部是两行网格：图标跨两行；第一行实例名对状态标签，第二行版本对更新时间——左右同行同基线，不再各自堆叠错位。 */}
+      <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1">
+        <div className="row-span-2 flex items-center">
           <DatabaseMark engine={database.engine} />
-          <div className="min-w-0">
-            <h3 className="truncate text-sm font-semibold">{database.name}</h3>
-            <p className="mt-0.5 truncate text-xs text-fg-muted">
-              {database.engine} · {database.version}
-            </p>
-          </div>
         </div>
-        <div className="flex shrink-0 flex-col items-end gap-1.5">
-          <StatusTag label={DATABASE_STATUS_LABELS[database.status]} tone={STATUS_TONE[database.status]} />
-          <time dateTime={database.updatedAt} className="whitespace-nowrap text-xs text-fg-subtle">
-            更新于 {formatDateTime(database.updatedAt)}
-          </time>
-        </div>
+        <h3 className="truncate text-sm font-semibold">{database.name}</h3>
+        <StatusTag label={DATABASE_STATUS_LABELS[database.status]} tone={STATUS_TONE[database.status]} />
+        <p className="truncate text-xs text-fg-muted">
+          {database.engine} · {database.version}
+        </p>
+        <time dateTime={database.updatedAt} className="whitespace-nowrap text-xs text-fg-subtle">
+          更新于 {formatDateTime(database.updatedAt)}
+        </time>
       </div>
 
       <button
