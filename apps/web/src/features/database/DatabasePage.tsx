@@ -11,6 +11,7 @@ import {
   MariaDBLogo,
   MemoryStick,
   MySQLLogo,
+  Plus,
   UserRound,
 } from '../../components/icons'
 import { CopyButton } from '../../components/CopyButton'
@@ -26,6 +27,7 @@ import { formatDateTime } from '../../components/format'
 import { projectDatabaseCard } from './projectDatabaseCard'
 import type { DatabaseCardView } from './projectDatabaseCard'
 import { SqlSessionWindow } from './SqlSessionWindow'
+import { DatabaseCreateDialog } from './DatabaseCreateDialog'
 
 const STATUS_TONE: Record<DatabaseStatus, StatusTone> = {
   running: 'success',
@@ -45,6 +47,7 @@ export function DatabasePage() {
   const errorMessage = useDatabaseStore((state) => state.errorMessage)
   const load = useDatabaseStore((state) => state.load)
   const openSession = useDatabaseStore((state) => state.openSession)
+  const openCreate = useDatabaseStore((state) => state.openCreate)
 
   useEffect(() => {
     void load(gateway)
@@ -76,7 +79,17 @@ export function DatabasePage() {
   return (
     <>
       <section aria-label="数据库实例" className="mb-6">
-        <h2 className="mb-4 text-base font-semibold">{engine} 实例</h2>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-base font-semibold">{engine} 实例</h2>
+          <button
+            type="button"
+            onClick={openCreate}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle"
+          >
+            <Plus aria-hidden size={13} />
+            添加数据库
+          </button>
+        </div>
 
         {filtered.length === 0 ? (
           <EmptyState
@@ -109,6 +122,7 @@ export function DatabasePage() {
         )}
       </section>
       <SqlSessionWindow />
+      <DatabaseCreateDialog />
     </>
   )
 }

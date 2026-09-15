@@ -7,6 +7,7 @@ import type {
   ContainerAction,
   ContainerCreateInput,
   ContainerImage,
+  DatabaseEngine,
   DatabaseInstance,
   EventStreamHandlers,
   Incident,
@@ -99,11 +100,28 @@ export type MockQueryResult =
   | { kind: 'text'; lines: readonly string[] }
   | { kind: 'clear' }
 
+/** 创建数据库的输入：表单收集后经 adapter 提交；是演示动作，不产生真实连接。 */
+export type DatabaseCreateInput = {
+  engine: DatabaseEngine
+  /** 新数据库的名称，同一引擎内唯一。 */
+  name: string
+  /** 字符集；仅 SQL 引擎有意义，其余引擎由实现忽略。 */
+  charset?: string
+  username: string
+  password: string
+  /** 访问权限的演示取值：仅本机、容器网络内、任意主机。 */
+  accessScope: 'localhost' | 'container-network' | 'any-host'
+  /** 承载新数据库的运行中容器。 */
+  containerId: string
+}
+
 /** 数据库区适配接口。本期为 mock 实现；未来换真实 adapter，页面不改。 */
 export interface DatabaseAdapter {
   list(): Promise<readonly DatabaseInstance[]>
   /** 演示会话：语句在本页 mock 内确定性求值，不执行任何真实 SQL。 */
   execMockQuery(databaseId: string, statement: string): Promise<MockQueryResult>
+  /** 创建数据库（演示）：追加内存数据集并返回新实例；同名同引擎视为已存在。 */
+  create(input: DatabaseCreateInput): Promise<DatabaseInstance>
 }
 
 /** 页面级访问区域。权限只做到这一粒度，本阶段不实现更细的权限模型。 */

@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { Container, ContainerImage, DatabaseEngine, DatabaseInstance } from '@elysian/contracts'
-import type { ElysianGateway } from '../contracts/adapters'
+import type { ElysianGateway, DatabaseCreateInput } from '../contracts/adapters'
 import { pushHistory, type TerminalLine } from '../components/terminal/terminalSession'
 import { formatResultTable } from '../features/database/formatResultTable'
 import { useNotificationStore } from './notificationStore'
@@ -29,6 +29,9 @@ export type DatabaseState = {
   errorMessage?: string
   /** 演示 SQL 会话；同一时刻最多一个，undefined 表示没有打开。 */
   session?: SqlSession
+  /** 添加数据库弹窗的开关与提交中标记。 */
+  createOpen: boolean
+  creating: boolean
   setEngine(engine: DatabaseEngine): void
   load(gateway: ElysianGateway): Promise<void>
   openSession(databaseId: string): void
@@ -36,8 +39,11 @@ export type DatabaseState = {
   submitStatement(gateway: ElysianGateway, line: string): Promise<void>
   /** 终端内核的旁路输出：补全候选列表走这里追加。 */
   appendSessionOutput(lines: readonly string[]): void
-  /** 终端内核的 Ctrl+L 清屏：与 clear 语句一样保留横幅。 */
+  /** 终端内核的 Ctrl+L 清屏：清空日志区，演示标注由窗口顶栏徽章常驻。 */
   clearSessionScreen(): void
+  openCreate(): void
+  closeCreate(): void
+  createDatabase(gateway: ElysianGateway, input: DatabaseCreateInput): Promise<void>
 }
 
 /** 数据库区的界面状态：类型筛选留在内存，数据由 adapter 提供。 */
@@ -48,6 +54,8 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   containers: [],
   images: [],
   session: undefined,
+  createOpen: false,
+  creating: false,
   setEngine: (engine) => set({ engine }),
   async load(gateway) {
     set({ status: 'loading', errorMessage: undefined })
@@ -122,5 +130,31 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     set((state) => ({
       session: state.session && { ...state.session, lines: [] },
     }))
+  },
+
+  openCreate() {
+    set({ createOpen: true })
+  },
+  closeCreate() {
+    set({ createOpen: false })
+  },
+
+  async createDatabase(gateway, input) {
+    set({ creating: true })
+    try {
+      const created = await gateway.databases.create(input)
+      useNotificationStore
+        .getState()
+        .notify({ tone: 'success', message: `数据库 ${created.name} 已创建（mock，待接入真实执行）` })
+      set((state) => ({
+        databases: [...state.databases, created],
+        createOpen: false,
+      }))
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : '未知错误'
+      useNotificationStore.getState().notify({ tone: 'danger', message: `创建数据库失败：${detail}` })
+    } finally {
+      set({ creating: false })
+    }
   },
 }))

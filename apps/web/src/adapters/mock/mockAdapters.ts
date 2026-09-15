@@ -22,6 +22,7 @@ import type {
   AuditAdapter,
   ContainerAdapter,
   DatabaseAdapter,
+  DatabaseCreateInput,
   EventsAdapter,
   IncidentAdapter,
   IncidentListQuery,
@@ -31,10 +32,10 @@ import type {
   SessionAdapter,
   SkillAdapter,
 } from '../../contracts/adapters'
-import { DATABASE_INSTANCES } from './databaseData'
+import { DATABASE_INSTANCES, addDatabaseInstance } from './databaseData'
 import { runMockQuery } from './databaseQuery'
 import { execContainerCommand } from './containerTerminal'
-import { mockImageArtifact } from './containersData'
+import { CONTAINERS, CONTAINER_IMAGES, mockImageArtifact } from './containersData'
 import { autoContainerName } from './containersData'
 import {
   INITIAL_DISKS,
@@ -316,6 +317,39 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
     const database = DATABASE_INSTANCES.find((item) => item.id === databaseId)
     if (!database) throw new Error(`未找到数据库实例 ${databaseId}`)
     return runMockQuery(database, statement)
+  }
+
+  async create(input: DatabaseCreateInput): Promise<DatabaseInstance> {
+    if (
+      DATABASE_INSTANCES.some((item) => item.engine === input.engine && item.name === input.name)
+    ) {
+      throw new Error(`数据库 ${input.name} 已存在`)
+    }
+    const container = CONTAINERS.find((item) => item.id === input.containerId)
+    if (!container) throw new Error(`未找到容器 ${input.containerId}`)
+    const image = CONTAINER_IMAGES.find((item) => item.id === container.imageId)
+    const instance: DatabaseInstance = {
+      id: `db-${container.name}-${input.name}`,
+      engine: input.engine,
+      name: input.name,
+      // 版本取承载容器镜像的标签：mariadb:10.11 上的库就是 10.11。
+      version: image?.tag ?? '0',
+      status: 'running',
+      containerId: container.id,
+      credentials: { username: input.username, password: input.password },
+      storage: { usedGb: 0.1, totalGb: 32 },
+      memory: { usedGb: 0.2, totalGb: 4 },
+      connections: { active: 1, max: 200 },
+      updatedAt: new Date().toISOString(),
+    }
+    addDatabaseInstance(instance)
+    return {
+      ...instance,
+      credentials: { ...instance.credentials },
+      storage: { ...instance.storage },
+      memory: { ...instance.memory },
+      connections: { ...instance.connections },
+    }
   }
 }
 

@@ -31,6 +31,8 @@ beforeEach(() => {
     images: [],
     errorMessage: undefined,
     session: undefined,
+    createOpen: false,
+    creating: false,
   })
   useContainersStore.setState({ view: 'grid', detailContainerId: undefined })
 })
@@ -40,8 +42,10 @@ function pageGateway(overrides: Partial<ElysianGateway['databases']> = {}): Elys
   return {
     ...base,
     databases: {
-      ...base.databases,
+      // 逐方法透传而不是展开实例：类方法在原型上，展开会丢掉。
       list: () => base.databases.list(),
+      execMockQuery: (id, statement) => base.databases.execMockQuery(id, statement),
+      create: (input) => base.databases.create(input),
       ...overrides,
     },
   }
@@ -178,5 +182,47 @@ describe('数据库页面', () => {
   it('adapter 返回空数据时显示空态', async () => {
     renderApp('/databases', { gateway: pageGateway({ list: async () => [] }) })
     expect(await screen.findByText('这台机器上没有 MariaDB 的数据库容器')).toBeInTheDocument()
+  })
+
+  it('添加数据库：弹窗带演示标注，填表创建后新卡片出现', async () => {
+    const user = userEvent.setup()
+    renderApp('/databases', { gateway: pageGateway() })
+    await screen.findByRole('list', { name: 'MariaDB 数据库列表' })
+
+    await user.click(screen.getByRole('button', { name: /添加数据库/ }))
+    const dialog = await screen.findByRole('dialog', { name: '添加MariaDB数据库' })
+    // 演示标注常驻弹窗顶栏。
+    expect(within(dialog).getByText('演示 · 待接入真实执行')).toBeInTheDocument()
+
+    // 必填校验：空表直接提交要能揭示行内错误。
+    await user.click(within(dialog).getByRole('button', { name: '创建' }))
+    expect(await within(dialog).findByText('请填写数据库名')).toBeInTheDocument()
+
+    await user.type(within(dialog).getByLabelText('数据库名'), 'orders_replica')
+    await user.type(within(dialog).getByLabelText('用户名'), 'ops')
+    await user.type(within(dialog).getByLabelText('密码'), 'demo-mariadb-aaaa')
+    await user.selectOptions(within(dialog).getByLabelText('添加到容器'), 'ctr-mariadb-primary')
+    await user.click(within(dialog).getByRole('button', { name: '创建' }))
+
+    // 创建成功：弹窗关闭、通知出现、新卡片入列。
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(await screen.findByText(/已创建/)).toBeInTheDocument()
+    expect(
+      await screen.findByRole('article', { name: 'MariaDB 数据库 orders_replica' }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('list', { name: 'MariaDB 数据库列表' })).toHaveTextContent(
+      'mariadb-primary',
+    )
+  })
+
+  it('添加数据库弹窗可以取消关闭', async () => {
+    const user = userEvent.setup()
+    renderApp('/databases', { gateway: pageGateway() })
+    await screen.findByRole('list', { name: 'MariaDB 数据库列表' })
+
+    await user.click(screen.getByRole('button', { name: /添加数据库/ }))
+    await user.click(await screen.findByRole('button', { name: '取消' }))
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 })

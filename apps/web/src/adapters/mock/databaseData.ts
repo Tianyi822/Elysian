@@ -5,7 +5,7 @@ import type { DatabaseInstance } from '@elysian/contracts'
  * 地址字段不存在——数据库监听在容器里，界面给不出域名或 IP。
  * 凭证是演示值，逐条写死、不随机生成。
  */
-export const DATABASE_INSTANCES: readonly DatabaseInstance[] = [
+const instances: DatabaseInstance[] = [
   {
     id: 'db-mariadb-primary',
     engine: 'MariaDB',
@@ -46,3 +46,11 @@ export const DATABASE_INSTANCES: readonly DatabaseInstance[] = [
     updatedAt: '2026-09-12T08:00:00.000Z',
   },
 ]
+
+/** 只读出口：读方拿到的形状不变，create 经 addDatabaseInstance 追加。 */
+export const DATABASE_INSTANCES: readonly DatabaseInstance[] = instances
+
+/** 创建数据库（演示）的落点：追加进内存数据集，刷新即重置。 */
+export function addDatabaseInstance(instance: DatabaseInstance): void {
+  instances.push(instance)
+}
