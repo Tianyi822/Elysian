@@ -158,6 +158,17 @@ body {
   --animate-drawer-overlay-out: fade-out 150ms ease-in;
   --animate-drawer-panel-in: drawer-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
   --animate-drawer-panel-out: drawer-out 160ms ease-in;
+  --animate-caret-blink: caret-blink 1s step-end infinite;
+
+  @keyframes caret-blink {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0;
+    }
+  }
 
   @keyframes fade-in {
     from {

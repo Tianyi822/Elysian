@@ -59,13 +59,14 @@ describe('通知宿主', () => {
     expect(screen.getByText('留下的')).toBeInTheDocument()
   })
 
-  it('内容与图标垂直居中，关闭按钮用幽灵样式钉在右上角、不随内容撑高移动', () => {
+  it('状态图标钉在左上、关闭按钮钉在右上，都不随内容撑高移动', () => {
     useNotificationStore.getState().notify({ tone: 'success', message: '已切换到浅色主题。' })
     renderHost()
 
     const card = screen.getByRole('status')
     expect(card).toHaveClass('relative')
-    expect(card).toHaveClass('items-center')
+    // 行对齐用 flex-start：消息换行把卡片撑高时，左侧图标留在顶部而不是漂到中间。
+    expect(card).toHaveClass('items-start')
 
     // 关闭按钮脱离 flex 流，由独立锚点钉在卡片右上角：内容再高也不改变它的位置。
     const close = within(card).getByRole('button', { name: '关闭通知' })
@@ -81,9 +82,10 @@ describe('通知宿主', () => {
     expect(close.className).not.toMatch(/(?<!hover:)bg-surface-raised/)
     expect(close).toHaveClass('hover:bg-surface-raised')
 
-    // 图标不再用外边距微调对齐，垂直居中交给容器的 items-center。
+    // 图标用 mt-0.5 与首行文字对齐（行盒 18px、图标 15px）。
     const icon = card.querySelector('svg')
-    expect(icon?.classList.contains('mt-0.5')).toBe(false)
+    expect(icon?.classList.contains('mt-0.5')).toBe(true)
+    expect(icon?.classList.contains('shrink-0')).toBe(true)
   })
 
   it('到时自动消失，失败类留得更久', () => {

@@ -90,6 +90,8 @@ export const useContainersStore = create<{
   openTerminal: (containerId: string) => void
   closeTerminal: () => void
   submitCommand: (gateway: ElysianGateway, command: string) => Promise<void>
+  appendTerminalOutput: (lines: readonly string[]) => void
+  clearTerminalScreen: () => void
   runAction: (gateway: ElysianGateway, containerId: string, action: ContainerAction) => Promise<void>
 }>((set, get) => ({
   status: 'idle',
@@ -182,6 +184,24 @@ export const useContainersStore = create<{
         },
       }))
     }
+  },
+
+  appendTerminalOutput(lines) {
+    set((state) => ({
+      terminal: state.terminal && {
+        ...state.terminal,
+        lines: [
+          ...state.terminal.lines,
+          ...lines.map((text): TerminalLine => ({ kind: 'output', text })),
+        ],
+      },
+    }))
+  },
+
+  clearTerminalScreen() {
+    set((state) => ({
+      terminal: state.terminal && { ...state.terminal, lines: [] },
+    }))
   },
 
   async runAction(gateway, containerId, action) {

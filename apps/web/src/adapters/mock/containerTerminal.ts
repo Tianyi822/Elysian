@@ -13,6 +13,73 @@ export type TerminalResult = { lines: readonly string[]; clear?: boolean }
 const HELP_LINE =
   '可用命令：help、ls、env、ps、cat /etc/os-release、uptime、df -h、top、clear'
 
+/** Tab 补全的词表：命令本身，以及带固定参数的命令的参数候选。 */
+export const TERMINAL_COMMANDS = [
+  'help',
+  'ls',
+  'env',
+  'ps',
+  'cat',
+  'uptime',
+  'df',
+  'top',
+  'clear',
+] as const
+
+const ARG_CANDIDATES: Record<string, readonly string[]> = {
+  cat: ['/etc/os-release'],
+  df: ['-h'],
+}
+
+export type CompletionResult = {
+  draft: string
+  cursor: number
+  /** 多个候选且无法再收敛时给出，由界面按 bash 的习惯列出行。 */
+  candidates?: readonly string[]
+}
+
+/** 光标所在词的前缀补全；无可补内容时原样返回。 */
+export function completeTerminalCommand(draft: string, cursor: number): CompletionResult {
+  const before = draft.slice(0, cursor)
+  const token = /(\S*)$/.exec(before)?.[0] ?? ''
+  const tokenStart = cursor - token.length
+  const previousWord = before
+    .slice(0, tokenStart)
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .pop()
+  const pool: readonly string[] = previousWord
+    ? (ARG_CANDIDATES[previousWord] ?? [])
+    : TERMINAL_COMMANDS
+  const matches = pool.filter((candidate) => candidate.startsWith(token))
+
+  if (matches.length === 0) return { draft, cursor }
+
+  if (matches.length === 1) {
+    const completed = `${matches[0]} `
+    return {
+      draft: before.slice(0, tokenStart) + completed + draft.slice(cursor),
+      cursor: tokenStart + completed.length,
+    }
+  }
+
+  const common = matches.reduce((acc, candidate) => {
+    let i = 0
+    while (i < acc.length && i < candidate.length && acc[i] === candidate[i]) i += 1
+    return acc.slice(0, i)
+  }, matches[0] ?? '')
+
+  if (common.length > token.length) {
+    return {
+      draft: before.slice(0, tokenStart) + common + draft.slice(cursor),
+      cursor: tokenStart + common.length,
+    }
+  }
+
+  return { draft, cursor, candidates: matches }
+}
+
 const DF_LINES = [
   'Filesystem      Size  Used Avail Use% Mounted on',
   '/dev/sda1        80G   38G   42G  47% /',

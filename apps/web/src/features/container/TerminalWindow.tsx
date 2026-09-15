@@ -1,11 +1,17 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { useEffect, useRef, useState } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
+import { completeTerminalCommand } from '../../adapters/mock/containerTerminal'
 import { useContainersStore } from '../../stores/containersStore'
 
 /**
  * 演示终端窗口：外部点击与 Esc 一律拦截，唯一关闭路径是
  * 「关闭终端」→ 确认对话框 →「确认关闭」。输出区用语义令牌配色。
+ *
+ * 形态是真终端：没有独立输入条，活动提示行（$ + 草稿 + 反色块光标）跟在日志末尾，
+ * 键入汇点是一枚 sr-only 的 input——可打印字符与退格由它原生编辑（输入法因此可用），
+ * Tab、方向键与 Ctrl 组合键在 keydown 里接管，光标位置经 onSelect 回读进模型。
  */
 
 function ConfirmCloseDialog({
@@ -61,27 +67,64 @@ export function TerminalWindow() {
     s.containers.find((candidate) => candidate.id === s.terminal?.containerId),
   )
   const submitCommand = useContainersStore((s) => s.submitCommand)
+  const appendTerminalOutput = useContainersStore((s) => s.appendTerminalOutput)
+  const clearTerminalScreen = useContainersStore((s) => s.clearTerminalScreen)
   const closeTerminal = useContainersStore((s) => s.closeTerminal)
 
   const [draft, setDraft] = useState('')
+  const [cursor, setCursor] = useState(0)
   const [historyIndex, setHistoryIndex] = useState<number | null>(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
   const logRef = useRef<HTMLDivElement>(null)
+  // 输入框在 Portal 的第二次提交才挂载，打开时的 effect 里 ref 还是 null；
+  // 挂载即聚焦才能赢过 Radix FocusScope 交给关闭按钮的首焦点。
+  const attachInput = (node: HTMLInputElement | null) => {
+    inputRef.current = node
+    node?.focus()
+  }
+  // 输入法组合态与「组合刚结束」的一次性标记：组合中的回车是确认候选而非发送。
+  // Safari 派发确认回车的 keydown 晚于 compositionend（isComposing 已为 false），
+  // 只能靠该标记吞掉这一枚；setTimeout(0) 复位保证之后的人工回车不受影响。
+  const composingRef = useRef(false)
+  const swallowEnterRef = useRef(false)
 
   useEffect(() => {
     if (terminal) {
       setDraft('')
+      setCursor(0)
       setHistoryIndex(null)
       setConfirmOpen(false)
-      inputRef.current?.focus()
     }
   }, [terminal?.containerId])
 
   useEffect(() => {
     // jsdom 未实现 Element.scrollTo，可选调用让测试环境降级为 no-op，浏览器行为不变。
     logRef.current?.scrollTo?.({ top: logRef.current.scrollHeight })
-  }, [terminal?.lines.length])
+  }, [terminal?.lines.length, draft])
+
+  // 程序改写草稿（历史召回、补全、Ctrl 组合键）后，把隐藏输入的光标摆回模型位置。
+  useEffect(() => {
+    const input = inputRef.current
+    if (input && document.activeElement === input) input.setSelectionRange(cursor, cursor)
+  }, [draft, cursor])
+
+  // Tab 只服务命令行：窗口内除输入框自身（Tab 用于补全）外，任何元素上的 Tab
+  // 都拦掉默认行为与冒泡，把焦点送回命令行，避免 Tab 选中终端里的其他网页组件。
+  useEffect(() => {
+    const onKeyDownCapture = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab') return
+      const content = contentRef.current
+      if (!content || !content.contains(event.target as Node | null)) return
+      if (document.activeElement === inputRef.current) return
+      event.preventDefault()
+      event.stopPropagation()
+      inputRef.current?.focus()
+    }
+    document.addEventListener('keydown', onKeyDownCapture, true)
+    return () => document.removeEventListener('keydown', onKeyDownCapture, true)
+  }, [])
 
   if (!terminal || !container) return null
 
@@ -89,20 +132,86 @@ export function TerminalWindow() {
     const history = terminal.history
     if (!history.length) return
     // 游标语义：history.length 表示「回到新输入」，0..length-1 指向历史条目。
-    const cursor = historyIndex ?? history.length
+    const position = historyIndex ?? history.length
     const next =
-      direction === -1
-        ? Math.max(0, cursor - 1)
-        : Math.min(history.length, cursor + 1)
+      direction === -1 ? Math.max(0, position - 1) : Math.min(history.length, position + 1)
+    const nextDraft = next === history.length ? '' : (history[next] ?? '')
     setHistoryIndex(next)
-    setDraft(next === history.length ? '' : (history[next] ?? ''))
+    setDraft(nextDraft)
+    setCursor(nextDraft.length)
   }
 
   const submit = () => {
     const command = draft
     setDraft('')
+    setCursor(0)
     setHistoryIndex(null)
     void submitCommand(gateway, command)
+  }
+
+  const complete = () => {
+    const result = completeTerminalCommand(draft, cursor)
+    // 无法再收敛时按 bash 的习惯把候选列出来，草稿不动。
+    if (result.candidates) {
+      appendTerminalOutput([result.candidates.join('  ')])
+      return
+    }
+    setDraft(result.draft)
+    setCursor(result.cursor)
+  }
+
+  const interrupt = () => {
+    appendTerminalOutput([`$ ${draft}^C`])
+    setDraft('')
+    setCursor(0)
+    setHistoryIndex(null)
+  }
+
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.nativeEvent.isComposing || composingRef.current) return // 组合中的键全部留给输入法
+    if (event.key === 'Enter') {
+      if (swallowEnterRef.current) {
+        swallowEnterRef.current = false
+        return
+      }
+      event.preventDefault()
+      submit()
+      return
+    }
+    if (event.key === 'Tab') {
+      event.preventDefault()
+      complete()
+      return
+    }
+    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      event.preventDefault()
+      recall(event.key === 'ArrowUp' ? -1 : 1)
+      return
+    }
+    if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+      const key = event.key.toLowerCase()
+      if (key === 'c') {
+        event.preventDefault()
+        interrupt()
+      } else if (key === 'l') {
+        event.preventDefault()
+        clearTerminalScreen()
+      } else if (key === 'u') {
+        event.preventDefault()
+        setDraft(draft.slice(cursor))
+        setCursor(0)
+      } else if (key === 'k') {
+        event.preventDefault()
+        setDraft(draft.slice(0, cursor))
+      } else if (key === 'a') {
+        event.preventDefault()
+        setCursor(0)
+      } else if (key === 'e') {
+        event.preventDefault()
+        setCursor(draft.length)
+      }
+    }
+    // 其余键（可打印字符、退格、←→、Home/End）交给隐藏输入原生编辑，光标经 onSelect 回读。
   }
 
   return (
@@ -110,11 +219,12 @@ export function TerminalWindow() {
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/70" />
         <Dialog.Content
+          ref={contentRef}
           aria-describedby={undefined}
           onEscapeKeyDown={(event) => event.preventDefault()}
           onPointerDownOutside={(event) => event.preventDefault()}
           onInteractOutside={(event) => event.preventDefault()}
-          className="fixed left-1/2 top-1/2 z-[55] flex h-[32rem] w-[min(48rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line bg-bg shadow-2xl"
+          className="fixed left-1/2 top-1/2 z-[55] flex h-[min(44rem,calc(100vh-3rem))] w-[min(72rem,calc(100vw-3rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line bg-bg shadow-2xl"
         >
           <Dialog.Title className="sr-only">{container.name} 终端</Dialog.Title>
           <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
@@ -133,11 +243,42 @@ export function TerminalWindow() {
             </button>
           </div>
 
+          <label htmlFor="terminal-input" className="sr-only">
+            命令输入
+          </label>
+          <input
+            id="terminal-input"
+            ref={attachInput}
+            value={draft}
+            onChange={(event) => {
+              setDraft(event.target.value)
+              setCursor(event.target.selectionStart ?? event.target.value.length)
+            }}
+            onSelect={(event) =>
+              setCursor(event.currentTarget.selectionStart ?? event.currentTarget.value.length)
+            }
+            onCompositionStart={() => {
+              composingRef.current = true
+            }}
+            onCompositionEnd={() => {
+              composingRef.current = false
+              swallowEnterRef.current = true
+              window.setTimeout(() => {
+                swallowEnterRef.current = false
+              }, 0)
+            }}
+            onKeyDown={onKeyDown}
+            autoComplete="off"
+            spellCheck={false}
+            className="sr-only"
+          />
+
           <div
             ref={logRef}
             role="log"
             aria-live="polite"
-            className="flex-1 overflow-y-auto px-4 py-3 font-mono text-xs leading-relaxed text-fg"
+            onClick={() => inputRef.current?.focus()}
+            className="flex-1 cursor-text overflow-y-auto px-4 py-3 font-mono text-xs leading-relaxed text-fg"
           >
             {terminal.lines.map((line, index) => (
               <p
@@ -153,34 +294,15 @@ export function TerminalWindow() {
                 {line.text}
               </p>
             ))}
-          </div>
-
-          <div className="flex items-center gap-2 border-t border-line px-4 py-2.5">
-            <label htmlFor="terminal-input" className="sr-only">
-              命令输入
-            </label>
-            <span aria-hidden className="font-mono text-xs text-success">
-              $
-            </span>
-            <input
-              id="terminal-input"
-              ref={inputRef}
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') submit()
-                else if (event.key === 'ArrowUp') {
-                  event.preventDefault()
-                  recall(-1)
-                } else if (event.key === 'ArrowDown') {
-                  event.preventDefault()
-                  recall(1)
-                }
-              }}
-              autoComplete="off"
-              spellCheck={false}
-              className="flex-1 bg-transparent font-mono text-xs text-fg outline-none"
-            />
+            {/* 活动提示行对读屏隐藏：草稿的值由上面那枚带 label 的输入承载，避免读两遍。 */}
+            <p aria-hidden="true" className="whitespace-pre-wrap break-all">
+              <span className="text-success">$ </span>
+              {draft.slice(0, cursor)}
+              <span className="bg-fg text-bg motion-safe:animate-caret-blink">
+                {draft.slice(cursor, cursor + 1) || ' '}
+              </span>
+              {draft.slice(cursor + 1)}
+            </p>
           </div>
         </Dialog.Content>
       </Dialog.Portal>

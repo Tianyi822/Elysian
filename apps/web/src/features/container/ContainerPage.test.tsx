@@ -211,6 +211,7 @@ describe('演示终端', () => {
     expect(dialog.textContent).toContain('演示终端 · 待接入真实执行')
 
     const input = within(dialog).getByLabelText('命令输入')
+    expect(document.activeElement).toBe(input)
     await user.type(input, 'help{Enter}')
     expect(await within(dialog).findByText(/可用命令/)).toBeInTheDocument()
 
@@ -222,6 +223,102 @@ describe('演示终端', () => {
     const { user, dialog } = await openTerminalOf('nginx-proxy')
     const input = within(dialog).getByLabelText('命令输入')
     await user.type(input, 'env{Enter}')
+    await user.type(input, '{ArrowUp}')
+    expect(input).toHaveValue('env')
+  })
+
+  it('Tab 补全命令：唯一前缀直接补齐，多候选列出候选行', async () => {
+    const { user, dialog } = await openTerminalOf('nginx-proxy')
+    const input = within(dialog).getByLabelText('命令输入')
+
+    // Tab 用 fireEvent 派发：userEvent 造出的 keydown 不可取消，它的 Tab 焦点行为
+    // 会无视 preventDefault 把焦点挪走；浏览器里的真实 keydown 是可取消的。
+    await user.type(input, 'hel')
+    fireEvent.keyDown(input, { key: 'Tab' })
+    expect(input).toHaveValue('help ')
+    await user.keyboard('{Enter}')
+    expect(await within(dialog).findByText(/可用命令/)).toBeInTheDocument()
+
+    await user.type(input, 'c')
+    fireEvent.keyDown(input, { key: 'Tab' })
+    expect(input).toHaveValue('c')
+    // 候选以两个空格分隔；断言用 \s+ 容忍 Testing Library 的空白归一化。
+    expect(await within(dialog).findByText(/cat\s+clear/)).toBeInTheDocument()
+  })
+
+  it('Ctrl+C 留下中断行，Ctrl+L 清屏但历史保留', async () => {
+    const { user, dialog } = await openTerminalOf('nginx-proxy')
+    const input = within(dialog).getByLabelText('命令输入')
+    await user.type(input, 'env{Enter}')
+    expect(await within(dialog).findByText('TZ=Asia/Shanghai')).toBeInTheDocument()
+
+    await user.type(input, 'ps')
+    await user.keyboard('{Control>}c{/Control}')
+    expect(within(dialog).getByText('$ ps^C')).toBeInTheDocument()
+    expect(input).toHaveValue('')
+
+    await user.keyboard('{Control>}l{/Control}')
+    expect(within(dialog).queryByText('TZ=Asia/Shanghai')).not.toBeInTheDocument()
+
+    await user.keyboard('{ArrowUp}')
+    expect(input).toHaveValue('env')
+  })
+
+  it('点击日志区把焦点交回命令输入', async () => {
+    const { user, dialog } = await openTerminalOf('nginx-proxy')
+    const input = within(dialog).getByLabelText('命令输入')
+
+    await user.click(within(dialog).getByRole('button', { name: '关闭终端' }))
+    await user.click(await screen.findByRole('button', { name: '继续使用' }))
+    expect(document.activeElement).not.toBe(input)
+
+    await user.click(within(dialog).getByRole('log'))
+    expect(document.activeElement).toBe(input)
+  })
+
+  it('终端内的 Tab 只服务命令行：从关闭按钮按 Tab 回到输入框', async () => {
+    const { dialog } = await openTerminalOf('nginx-proxy')
+    const input = within(dialog).getByLabelText('命令输入')
+    const close = within(dialog).getByRole('button', { name: '关闭终端' })
+
+    close.focus()
+    fireEvent.keyDown(close, { key: 'Tab' })
+    expect(document.activeElement).toBe(input)
+  })
+
+  it('输入法组合中的回车只确认候选不发送，随后的真实回车才发送', async () => {
+    const { user, dialog } = await openTerminalOf('nginx-proxy')
+    const input = within(dialog).getByLabelText('命令输入')
+
+    await user.type(input, 'env')
+    // 组合中的回车：确认候选/上屏原字符，绝不能当成发送。
+    fireEvent.compositionStart(input)
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(within(dialog).queryByText('TZ=Asia/Shanghai')).not.toBeInTheDocument()
+
+    // Safari 顺序：确认回车的 keydown 派发于 compositionend 之后，isComposing 已为 false，
+    // 仍需被吞掉一次。
+    fireEvent.compositionEnd(input)
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(within(dialog).queryByText('TZ=Asia/Shanghai')).not.toBeInTheDocument()
+    expect(input).toHaveValue('env')
+
+    // 用户随后真正按下回车才发送。
+    await user.type(input, '{Enter}')
+    expect(await within(dialog).findByText('TZ=Asia/Shanghai')).toBeInTheDocument()
+  })
+
+  it('输入法组合中的方向键用于选词，不召回历史命令', async () => {
+    const { user, dialog } = await openTerminalOf('nginx-proxy')
+    const input = within(dialog).getByLabelText('命令输入')
+    await user.type(input, 'env{Enter}')
+    expect(input).toHaveValue('')
+
+    fireEvent.compositionStart(input)
+    fireEvent.keyDown(input, { key: 'ArrowUp' })
+    expect(input).toHaveValue('')
+
+    fireEvent.compositionEnd(input)
     await user.type(input, '{ArrowUp}')
     expect(input).toHaveValue('env')
   })

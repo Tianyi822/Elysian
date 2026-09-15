@@ -40,11 +40,12 @@ function NotificationItem({ notification }: { notification: AppNotification }) {
         // 角色放在内层，外层 li 保留列表语义。
         role={notification.tone === 'danger' ? 'alert' : 'status'}
         className={[
-          'relative flex items-center gap-2 rounded-lg border bg-surface p-2.5 pr-9 shadow-lg',
+          'relative flex items-start gap-2 rounded-lg border bg-surface p-2.5 pr-9 shadow-lg',
           style.border,
         ].join(' ')}
       >
-        <Icon aria-hidden size={15} className={['shrink-0', style.iconColor].join(' ')} />
+        {/* 状态图标钉在左上，mt-0.5 让它与首行文字对齐；消息换行撑高卡片时不漂移。 */}
+        <Icon aria-hidden size={15} className={['mt-0.5 shrink-0', style.iconColor].join(' ')} />
         <span className="min-w-0 flex-1 text-xs text-fg">{notification.message}</span>
         {/* 关闭按钮钉死在卡片右上角，脱离 flex 流：内容把卡片撑高也不移动。 */}
         <span className="absolute right-1.5 top-1.5">
