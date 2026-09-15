@@ -1,7 +1,6 @@
-import { useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Menu, PanelLeftClose, PanelLeftOpen } from '../../components/icons'
-import { useState } from 'react'
 import { Outlet, useLocation, useMatches } from 'react-router'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { MemoryMonitorBadge } from '../../components/MemoryMonitorBadge'
@@ -10,6 +9,10 @@ import { NotificationHost } from '../../components/NotificationHost'
 import { useEventStreamStore } from '../../stores/eventStreamStore'
 import { NAV_ITEMS } from '../navigation'
 import type { RouteHandle } from '../router'
+import {
+  HeaderAccessoryWidthContext,
+  useHeaderAccessoryWidthMeasurement,
+} from './headerAccessoryWidth'
 import { Sidebar } from './Sidebar'
 
 function UserChip() {
@@ -29,6 +32,9 @@ function UserChip() {
 export function AppShell() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const headerRowRef = useRef<HTMLDivElement>(null)
+  const headerTitleRef = useRef<HTMLHeadingElement>(null)
+  const headerActionsRef = useRef<HTMLDivElement>(null)
   const gateway = useGateway()
   const location = useLocation()
   const matches = useMatches()
@@ -43,6 +49,13 @@ export function AppShell() {
   const HeaderAccessory = matches
     .map((match) => (match.handle as RouteHandle | undefined)?.headerAccessory)
     .find((accessory) => accessory !== undefined)
+
+  const accessoryWidth = useHeaderAccessoryWidthMeasurement({
+    row: headerRowRef,
+    title: headerTitleRef,
+    actions: headerActionsRef,
+    titleText: pageTitle,
+  })
 
   // 整个应用只订阅一次事件流，避免每个页面各开一条连接。
   useEffect(() => {
@@ -83,7 +96,7 @@ export function AppShell() {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="shrink-0 border-b border-line bg-surface">
-          <div className="flex min-h-14 items-center gap-4 px-4 py-3 md:px-6">
+          <div ref={headerRowRef} className="flex min-h-14 items-center gap-4 px-4 py-3 md:px-6">
             <Dialog.Root open={drawerOpen} onOpenChange={setDrawerOpen}>
               <Dialog.Trigger asChild>
                 <span className="md:hidden">
@@ -121,12 +134,19 @@ export function AppShell() {
             </Dialog.Root>
 
             <div className="min-w-0">
-              <h1 className="text-base font-semibold leading-tight">{pageTitle}</h1>
+              <h1 ref={headerTitleRef} className="truncate text-base font-semibold leading-tight">
+                {pageTitle}
+              </h1>
             </div>
 
-            {HeaderAccessory ? <HeaderAccessory /> : null}
+            <HeaderAccessoryWidthContext.Provider value={accessoryWidth}>
+              {HeaderAccessory ? <HeaderAccessory /> : null}
+            </HeaderAccessoryWidthContext.Provider>
 
-            <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+            <div
+              ref={headerActionsRef}
+              className="ml-auto flex shrink-0 flex-nowrap items-center justify-end gap-2"
+            >
               <MemoryMonitorBadge />
               <UserChip />
             </div>
