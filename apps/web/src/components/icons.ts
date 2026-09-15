@@ -20,6 +20,7 @@ export {
   Lock,
   MemoryStick,
   Menu,
+  Monitor,
   Moon,
   PanelLeftClose,
   PanelLeftOpen,

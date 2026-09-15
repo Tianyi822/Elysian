@@ -5,11 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Elysian 运维工作台</title>
     <script>
-      // 首屏主题跟随系统：在样式生效之前把主题属性落到 html 上，
-      // 否则浅色系统会先闪一下深色底。之后的切换由界面接管，不再回读系统偏好。
-      document.documentElement.dataset.theme = matchMedia('(prefers-color-scheme: light)').matches
-        ? 'light'
-        : 'dark'
+      // 首屏主题：先读本地存的界面偏好，没有或读不懂才按系统偏好，全部在样式生效之前
+      // 落到 html 上，避免闪一帧错的主题。格式与校验规则的唯一权威是
+      // src/app/theme/themePreferences.ts，这里只能内联同一份逻辑（模块脚本太晚）。
+      ;(() => {
+        let stored = null
+        try {
+          const parsed = JSON.parse(localStorage.getItem('elysian.ui-preferences') || '')
+          if (parsed && parsed.version === 1 && (parsed.theme === 'light' || parsed.theme === 'dark')) {
+            stored = parsed.theme
+          }
+        } catch {
+          // 坏掉的偏好当没有，回落到系统。
+        }
+        document.documentElement.dataset.theme =
+          stored ?? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+      })()
     </script>
   </head>
   <body>

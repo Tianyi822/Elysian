@@ -1,7 +1,10 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { Moon, RefreshCw, Sun, Zap } from '../../components/icons'
+import { Monitor, Moon, RefreshCw, Sun, Zap } from '../../components/icons'
+import type { IconComponent } from '../../components/icons'
+import type { ReactNode } from 'react'
 import { useState } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
+import { IconButton } from '../../components/IconButton'
 import { useDashboardStore } from '../../stores/dashboardStore'
 import { useEventStreamStore } from '../../stores/eventStreamStore'
 import { useNotificationStore } from '../../stores/notificationStore'
@@ -12,31 +15,37 @@ function ActionItem({
   icon: Icon,
   onClick,
   collapsed = false,
+  trailing = undefined,
 }: {
   label: string
-  icon: typeof Zap
+  icon: IconComponent
   onClick: () => void
   collapsed?: boolean
+  /** 行尾附加控件；折叠态改为竖排，保持侧边栏 2.5rem 的宽度节奏。 */
+  trailing?: ReactNode
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={[
-        'flex min-h-10 items-center gap-3 rounded-lg px-3 py-2 text-left text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg',
-        collapsed ? 'w-10 justify-center px-0' : 'w-full',
-      ].join(' ')}
-    >
-      <Icon aria-hidden size={17} className="shrink-0" />
-      <span className={collapsed ? 'sr-only' : 'min-w-0 truncate text-sm font-medium'}>{label}</span>
-    </button>
+    <div className={`flex items-center gap-1 ${collapsed ? 'flex-col' : 'w-full'}`}>
+      <button
+        type="button"
+        onClick={onClick}
+        className={[
+          'flex min-h-10 items-center gap-3 rounded-lg px-3 py-2 text-left text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg',
+          collapsed ? 'w-10 justify-center px-0' : 'min-w-0 flex-1',
+        ].join(' ')}
+      >
+        <Icon aria-hidden size={17} className="shrink-0" />
+        <span className={collapsed ? 'sr-only' : 'min-w-0 truncate text-sm font-medium'}>{label}</span>
+      </button>
+      {trailing}
+    </div>
   )
 }
 
 /** 侧边栏底部的快捷操作，桌面侧边栏与窄屏抽屉共用；反馈就地显示在动作列表上方。 */
 export function QuickActions({ collapsed = false }: { collapsed?: boolean }) {
   const gateway = useGateway()
-  const { theme, toggleTheme } = useTheme()
+  const { theme, followsSystem, toggleTheme, followSystemTheme } = useTheme()
   const load = useDashboardStore((state) => state.load)
   const refresh = useDashboardStore((state) => state.refresh)
   const notify = useNotificationStore((state) => state.notify)
@@ -75,6 +84,21 @@ export function QuickActions({ collapsed = false }: { collapsed?: boolean }) {
               message: theme === 'dark' ? '已切换到浅色主题。' : '已切换到深色主题。',
             })
           }}
+          trailing={
+            /* 存过手动偏好才出现行内图标：点它把主题决定权交回系统，不另占一条动作。 */
+            !followsSystem ? (
+              <IconButton
+                label="跟随系统主题"
+                variant="ghost"
+                onPress={() => {
+                  followSystemTheme()
+                  notify({ tone: 'success', message: '已改为跟随系统主题。' })
+                }}
+              >
+                <Monitor aria-hidden size={15} />
+              </IconButton>
+            ) : undefined
+          }
         />
         <ActionItem
           label="重置演示数据"

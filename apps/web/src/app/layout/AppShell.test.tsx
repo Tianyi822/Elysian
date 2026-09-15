@@ -1,6 +1,6 @@
 import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useEventStreamStore } from '../../stores/eventStreamStore'
 import { renderApp } from '../../test/renderApp'
 import { NAV_ITEMS } from '../navigation'
@@ -8,6 +8,9 @@ import { NAV_ITEMS } from '../navigation'
 beforeEach(() => {
   useEventStreamStore.getState().disconnect()
   useEventStreamStore.setState({ status: 'connecting', recent: [], receivedCount: 0 })
+  // 主题切换会写偏好存储：不清的话，前一条用例的选择会让后一条多出一个动作。
+  localStorage.clear()
+  delete document.documentElement.dataset['theme']
 })
 
 describe('模板外壳', () => {
@@ -59,6 +62,31 @@ describe('模板外壳', () => {
 
     const notifications = await screen.findByLabelText('通知')
     expect(within(notifications).getByRole('status')).toHaveTextContent('已切换到浅色主题。')
+  })
+
+  it('存过主题偏好后出现「跟随系统主题」动作，点它清掉偏好并回到系统档', async () => {
+    const user = userEvent.setup()
+    renderApp('/')
+    const section = screen.getByLabelText('快捷操作')
+    expect(within(section).queryByRole('button', { name: /跟随系统主题/ })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /切换到浅色主题/ }))
+    expect(localStorage.getItem('elysian.ui-preferences')).toContain('"theme":"light"')
+
+    // 跟随入口是主题项行内的图标按钮，不再是一条独立动作：与主题切换同处一个行容器。
+    const followButton = within(section).getByRole('button', { name: '跟随系统主题' })
+    const themeButton = within(section).getByRole('button', { name: /切换到(浅色|深色)主题/ })
+    expect(followButton.parentElement).toBe(themeButton.parentElement)
+    expect(within(followButton.parentElement as HTMLElement).getAllByRole('button')).toHaveLength(2)
+
+    // 系统档显式置为深色（jsdom 默认报浅色），否则断言看不出回落方向。
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: false, media: query }))
+    await user.click(within(section).getByRole('button', { name: /跟随系统主题/ }))
+
+    expect(localStorage.getItem('elysian.ui-preferences')).toBeNull()
+    expect(document.documentElement.dataset['theme']).toBe('dark')
+    expect(within(section).queryByRole('button', { name: /跟随系统主题/ })).not.toBeInTheDocument()
+    vi.unstubAllGlobals()
   })
 
   it('窄屏抽屉可以打开导航并关闭', async () => {
