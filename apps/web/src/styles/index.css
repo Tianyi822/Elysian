@@ -208,3 +208,12 @@ body {
   outline: 2px solid var(--t-focus);
   outline-offset: 2px;
 }
+
+/*
+ * 可点击元素统一手型光标。Tailwind v4 的 preflight 把 button/select 设回 default，
+ * 未分层规则的级联优先级高于分层预检，恰好整体覆盖；禁用态保持箭头以示不可操作。
+ */
+button:not(:disabled),
+select:not(:disabled) {
+  cursor: pointer;
+}

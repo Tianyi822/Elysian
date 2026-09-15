@@ -25,14 +25,21 @@ function ActionItem({
   trailing?: ReactNode
 }) {
   return (
-    <div className={`flex items-center gap-1 ${collapsed ? 'flex-col' : 'w-full'}`}>
+    /* 按钮外壳放在行容器上：主操作与行尾图标视觉上同属一枚控件，点击区域各自独立。 */
+    <div
+      className={[
+        'flex min-h-10 items-center gap-1 rounded-lg text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg',
+        collapsed ? 'w-10 flex-col px-1 py-1.5' : 'w-full py-2 pl-3 pr-1.5',
+      ].join(' ')}
+    >
       <button
         type="button"
         onClick={onClick}
-        className={[
-          'flex min-h-10 items-center gap-3 rounded-lg px-3 py-2 text-left text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg',
-          collapsed ? 'w-10 justify-center px-0' : 'min-w-0 flex-1',
-        ].join(' ')}
+        className={
+          collapsed
+            ? 'flex w-full flex-col items-center'
+            : 'flex min-w-0 flex-1 items-center gap-3 text-left'
+        }
       >
         <Icon aria-hidden size={17} className="shrink-0" />
         <span className={collapsed ? 'sr-only' : 'min-w-0 truncate text-sm font-medium'}>{label}</span>
