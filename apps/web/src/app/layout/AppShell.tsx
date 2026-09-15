@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Menu, PanelLeftClose, PanelLeftOpen, X } from '../../components/icons'
+import { Menu, PanelLeftClose, PanelLeftOpen } from '../../components/icons'
 import { useState } from 'react'
 import { Outlet, useLocation, useMatches } from 'react-router'
 import { useGateway } from '../../adapters/GatewayProvider'
@@ -106,7 +106,8 @@ export function AppShell() {
                         <span>
                           {/* 标题「主导航」已在旁边，悬停提示反而跟随焦点常驻，视觉提示关掉。 */}
                           <IconButton label="关闭主导航" tooltip={false}>
-                            <X aria-hidden size={16} />
+                            {/* 抽屉向左收起，用面板折叠图标比 X 更贴合动作语义。 */}
+                            <PanelLeftClose aria-hidden size={16} />
                           </IconButton>
                         </span>
                       </Dialog.Close>
