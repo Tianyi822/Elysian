@@ -183,6 +183,13 @@ describe('容器详情面板', () => {
     expect(dialog.textContent).toContain('/srv/elysian/data/pg → /var/lib/postgresql/data')
     expect(dialog.textContent).toContain('除非手动停止')
     expect(dialog.textContent).toContain('postgres -c shared_buffers=256MB')
+
+    // 七个分节各自成块：圆角描边卡片，节标题为三级标题。
+    const headings = within(dialog).getAllByRole('heading', { level: 3 })
+    expect(headings).toHaveLength(7)
+    for (const heading of headings) {
+      expect(heading.closest('section')).toHaveClass('rounded-xl', 'border', 'border-line')
+    }
   })
 
   it('Esc 关闭面板回到列表', async () => {
