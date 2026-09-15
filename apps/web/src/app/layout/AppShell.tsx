@@ -59,8 +59,8 @@ export function AppShell() {
           sidebarCollapsed ? 'w-16' : 'w-64'
         }`}
       >
-        {/* 固定 h-14：与右侧顶栏的 min-h-14 对齐，避免被折叠按钮撑高。 */}
-        <div className="flex h-14 items-center justify-between border-b border-line px-3">
+        {/* min-h-14 与顶栏同构：56px 内容行 + 边框画在外侧，总高一致不错位。 */}
+        <div className="flex min-h-14 items-center justify-between border-b border-line px-3">
           <span className={sidebarCollapsed ? 'sr-only' : 'text-base font-semibold tracking-tight'}>
             Elysian
           </span>
@@ -96,8 +96,8 @@ export function AppShell() {
                   aria-describedby={undefined}
                   className="fixed inset-y-0 left-0 z-50 flex w-60 flex-col border-r border-line bg-surface shadow-xl will-change-transform motion-reduce:animate-none data-[state=open]:animate-drawer-panel-in data-[state=closed]:animate-drawer-panel-out"
                 >
-                  {/* 固定 h-14：与顶栏 min-h-14 和桌面侧边栏 header 同高，三条横梁视觉齐平。 */}
-                  <div className="flex h-14 items-center justify-between border-b border-line px-3">
+                  {/* min-h-14：与顶栏和桌面侧边栏 header 同构同高（56px + 外侧边框）。 */}
+                  <div className="flex min-h-14 items-center justify-between border-b border-line px-3">
                     <Dialog.Title className="text-base font-medium">主导航</Dialog.Title>
                     <Dialog.Close asChild>
                       <span>
