@@ -59,20 +59,22 @@ export function AppShell() {
           sidebarCollapsed ? 'w-16' : 'w-64'
         }`}
       >
-        {/* min-h-14 与顶栏同构：56px 内容行 + 边框画在外侧，总高一致不错位。 */}
-        <div className="flex min-h-14 items-center justify-between border-b border-line px-3">
-          <span className={sidebarCollapsed ? 'sr-only' : 'text-base font-semibold tracking-tight'}>
-            Elysian
-          </span>
-          <button
-            type="button"
-            onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
-            aria-label={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
-            title={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
-            className="ml-auto inline-flex size-9 items-center justify-center rounded-lg text-fg-muted hover:bg-surface-raised hover:text-fg"
-          >
-            {sidebarCollapsed ? <PanelLeftOpen aria-hidden size={17} /> : <PanelLeftClose aria-hidden size={17} />}
-          </button>
+        {/* 与顶栏同构：边框挂父级、内容行 min-h-14 在内层，总高一致不错位。 */}
+        <div className="border-b border-line">
+          <div className="flex min-h-14 items-center justify-between px-3">
+            <span className={sidebarCollapsed ? 'sr-only' : 'text-base font-semibold tracking-tight'}>
+              Elysian
+            </span>
+            <button
+              type="button"
+              onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+              aria-label={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
+              title={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
+              className="ml-auto inline-flex size-9 items-center justify-center rounded-lg text-fg-muted hover:bg-surface-raised hover:text-fg"
+            >
+              {sidebarCollapsed ? <PanelLeftOpen aria-hidden size={17} /> : <PanelLeftClose aria-hidden size={17} />}
+            </button>
+          </div>
         </div>
         <div className="min-h-0 flex-1">
           <Sidebar collapsed={sidebarCollapsed} />
@@ -96,17 +98,19 @@ export function AppShell() {
                   aria-describedby={undefined}
                   className="fixed inset-y-0 left-0 z-50 flex w-60 flex-col border-r border-line bg-surface shadow-xl will-change-transform motion-reduce:animate-none data-[state=open]:animate-drawer-panel-in data-[state=closed]:animate-drawer-panel-out"
                 >
-                  {/* min-h-14：与顶栏和桌面侧边栏 header 同构同高（56px + 外侧边框）。 */}
-                  <div className="flex min-h-14 items-center justify-between border-b border-line px-3">
-                    <Dialog.Title className="text-base font-medium">主导航</Dialog.Title>
-                    <Dialog.Close asChild>
-                      <span>
-                        {/* 标题「主导航」已在旁边，悬停提示反而跟随焦点常驻，视觉提示关掉。 */}
-                        <IconButton label="关闭主导航" tooltip={false}>
-                          <X aria-hidden size={16} />
-                        </IconButton>
-                      </span>
-                    </Dialog.Close>
+                  {/* 与顶栏同构：边框挂父级、内容行 min-h-14 在内层。 */}
+                  <div className="border-b border-line">
+                    <div className="flex min-h-14 items-center justify-between px-3">
+                      <Dialog.Title className="text-base font-medium">主导航</Dialog.Title>
+                      <Dialog.Close asChild>
+                        <span>
+                          {/* 标题「主导航」已在旁边，悬停提示反而跟随焦点常驻，视觉提示关掉。 */}
+                          <IconButton label="关闭主导航" tooltip={false}>
+                            <X aria-hidden size={16} />
+                          </IconButton>
+                        </span>
+                      </Dialog.Close>
+                    </div>
                   </div>
                   <div className="min-h-0 flex-1">
                     <Sidebar onNavigate={() => setDrawerOpen(false)} />
