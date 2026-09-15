@@ -92,6 +92,7 @@ export const useContainersStore = create<{
   busyActions: readonly string[]
   createOpen: boolean
   creating: boolean
+  removingImageIds: readonly string[]
   load: (gateway: ElysianGateway) => Promise<void>
   setView: (view: 'grid' | 'images') => void
   setStatusFilter: (filter: ContainerStatus | 'all') => void
@@ -99,6 +100,7 @@ export const useContainersStore = create<{
   openCreate: () => void
   closeCreate: () => void
   createContainer: (gateway: ElysianGateway, input: ContainerCreateInput) => Promise<void>
+  removeImage: (gateway: ElysianGateway, imageId: string) => Promise<void>
   openDetail: (containerId: string) => void
   closeDetail: () => void
   openTerminal: (containerId: string) => void
@@ -116,7 +118,7 @@ export const useContainersStore = create<{
   statusFilter: 'all',
   search: '',
   busyActions: [],
-  createOpen: false, creating: false,
+  createOpen: false, creating: false, removingImageIds: [],
 
   async load(gateway) {
     attachLiveEvents()
@@ -179,6 +181,27 @@ export const useContainersStore = create<{
   },
   closeDetail() {
     set({ detailContainerId: undefined })
+  },
+
+  async removeImage(gateway, imageId) {
+    if (get().removingImageIds.includes(imageId)) return
+    const image = get().images.find((i) => i.id === imageId)
+    set((state) => ({ removingImageIds: [...state.removingImageIds, imageId] }))
+    try {
+      await gateway.containers.removeImage(imageId)
+      set((state) => ({
+        images: state.images.filter((candidate) => candidate.id !== imageId),
+        removingImageIds: state.removingImageIds.filter((id) => id !== imageId),
+      }))
+      useNotificationStore.getState().notify({
+        tone: 'success',
+        message: `镜像 ${image ? `${image.name}:${image.tag}` : imageId} 已删除（mock，待接入真实执行）`,
+      })
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : '未知错误'
+      set((state) => ({ removingImageIds: state.removingImageIds.filter((id) => id !== imageId) }))
+      useNotificationStore.getState().notify({ tone: 'danger', message: `删除镜像失败：${detail}` })
+    }
   },
 
   openTerminal(containerId) {

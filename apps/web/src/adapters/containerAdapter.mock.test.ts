@@ -45,4 +45,19 @@ describe('MockContainerAdapter', () => {
 
     await expect(adapter.execMockCommand('ctr-nope', 'help')).rejects.toThrow('容器不存在')
   })
+
+  it('removeImage 落实数据集：未引用镜像移除，被引用与不存在抛中文错误', async () => {
+    const dataset = createMockDataset()
+    const adapter = new MockContainerAdapter(() => dataset, {
+      onAction: vi.fn(),
+      scheduleRestart: vi.fn(),
+      onCreate: vi.fn(),
+    })
+
+    await expect(adapter.removeImage('img-grafana')).resolves.toBeUndefined()
+    expect(dataset.images.map((image) => image.id)).not.toContain('img-grafana')
+
+    await expect(adapter.removeImage('img-nginx')).rejects.toThrow('镜像仍被容器引用，删除失败')
+    await expect(adapter.removeImage('img-missing')).rejects.toThrow('镜像不存在，删除失败')
+  })
 })

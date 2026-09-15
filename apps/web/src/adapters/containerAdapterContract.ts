@@ -56,5 +56,22 @@ export function runContainerAdapterContract(make: () => ContainerAdapter): void 
         adapter.create({ imageId: 'img-not-exist', ports: [], env: [], volumes: [], restartPolicy: 'no' }),
       ).rejects.toThrow()
     })
+
+    it('removeImage 删除未被引用的镜像，listImages 不再返回', async () => {
+      const adapter = make()
+      const [containers, images] = await Promise.all([adapter.list(), adapter.listImages()])
+      const unused = images.find((image) => !containers.some((c) => c.imageId === image.id))
+      if (!unused) return // 数据集没有未引用镜像时跳过，不虚构前提
+      await adapter.removeImage(unused.id)
+      expect((await adapter.listImages()).map((image) => image.id)).not.toContain(unused.id)
+    })
+
+    it('removeImage 删除被引用镜像被拒绝', async () => {
+      const adapter = make()
+      const [containers, images] = await Promise.all([adapter.list(), adapter.listImages()])
+      const used = images.find((image) => containers.some((c) => c.imageId === image.id))
+      if (!used) return
+      await expect(adapter.removeImage(used.id)).rejects.toThrow()
+    })
   })
 }

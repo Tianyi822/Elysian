@@ -264,6 +264,16 @@ export class MockContainerAdapter implements ContainerAdapter {
     this.hooks.onCreate(container.id)
     return { ...container }
   }
+
+  async removeImage(imageId: string): Promise<void> {
+    const dataset = this.dataset()
+    const image = dataset.images.find((i) => i.id === imageId)
+    if (!image) throw new Error('镜像不存在，删除失败')
+    if (dataset.containers.some((c) => c.imageId === imageId)) {
+      throw new Error('镜像仍被容器引用，删除失败')
+    }
+    dataset.images = dataset.images.filter((i) => i.id !== imageId)
+  }
 }
 
 /**

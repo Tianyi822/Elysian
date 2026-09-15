@@ -14,6 +14,8 @@ function gatewayWith(overrides: Partial<ElysianGateway['containers']> = {}): Ely
       listImages: async () => [...CONTAINER_IMAGES],
       execMockCommand: async () => ({ lines: ['ok'] }),
       requestAction: async (id: string) => CONTAINERS.find((c) => c.id === id)!,
+      create: async () => CONTAINERS[0]!,
+      removeImage: async () => {},
       ...overrides,
     },
   } as unknown as ElysianGateway
@@ -26,7 +28,7 @@ beforeEach(() => {
   useContainersStore.setState({
     status: 'idle', errorMessage: undefined, containers: [], images: [], samples: {},
     view: 'grid', statusFilter: 'all', search: '', detailContainerId: undefined,
-    terminal: undefined, busyActions: [], createOpen: false, creating: false,
+    terminal: undefined, busyActions: [], createOpen: false, creating: false, removingImageIds: [],
   })
   useNotificationStore.setState({ notifications: [] })
   const adapter: EventsAdapter = {
@@ -193,5 +195,33 @@ describe('创建容器', () => {
     expect(useContainersStore.getState().containers).toHaveLength(9)
     emitToStore?.(event('container/created', { container: NEW_CONTAINER }))
     expect(useContainersStore.getState().containers).toHaveLength(9)
+  })
+})
+
+describe('删除镜像', () => {
+  it('removeImage 成功：镜像列表移除、忙碌复位、成功通知带 mock 标注', async () => {
+    await useContainersStore.getState().load(gatewayWith())
+    await useContainersStore.getState().removeImage(gatewayWith(), 'img-grafana')
+    const state = useContainersStore.getState()
+    expect(state.images.map((image) => image.id)).not.toContain('img-grafana')
+    expect(state.removingImageIds).toHaveLength(0)
+    expect(useNotificationStore.getState().notifications[0]?.message).toBe(
+      '镜像 grafana/grafana:11.3.0 已删除（mock，待接入真实执行）',
+    )
+  })
+
+  it('removeImage 失败：镜像保留、危险通知、忙碌复位', async () => {
+    await useContainersStore.getState().load(gatewayWith())
+    await useContainersStore.getState().removeImage(
+      gatewayWith({ removeImage: async () => { throw new Error('镜像仍被容器引用，删除失败') } }),
+      'img-nginx',
+    )
+    const state = useContainersStore.getState()
+    expect(state.images.map((image) => image.id)).toContain('img-nginx')
+    expect(state.removingImageIds).toHaveLength(0)
+    expect(useNotificationStore.getState().notifications[0]).toMatchObject({
+      tone: 'danger',
+      message: '删除镜像失败：镜像仍被容器引用，删除失败',
+    })
   })
 })

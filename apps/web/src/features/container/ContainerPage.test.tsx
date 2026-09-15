@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import type { Container, ContainerCreateInput, ContainerImage } from '@elysian/contracts'
 import type { ElysianGateway } from '../../contracts/adapters'
 import { createMockGateway } from '../../adapters/mock/gateway'
-import { CONTAINERS, CONTAINER_IMAGES } from '../../adapters/mock/containersData'
+import { CONTAINERS } from '../../adapters/mock/containersData'
 import { useContainersStore } from '../../stores/containersStore'
 import { renderApp } from '../../test/renderApp'
 
@@ -19,9 +19,11 @@ function pageGateway(overrides: Partial<ElysianGateway['containers']> = {}): Ely
     ...base,
     containers: {
       list: async () => [...CONTAINERS],
-      listImages: async () => [...CONTAINER_IMAGES],
+      // listImages 直通真实 mock 数据集：删除镜像要落实到数据集，读种子常量会绕过它。
+      listImages: () => base.containers.listImages(),
       execMockCommand: (id: string, command: string) => base.containers.execMockCommand(id, command),
       create: (input: ContainerCreateInput) => base.containers.create(input),
+      removeImage: (imageId: string) => base.containers.removeImage(imageId),
       requestAction: async (id: string) => CONTAINERS.find((c) => c.id === id)!,
       ...overrides,
     },
@@ -32,7 +34,7 @@ beforeEach(() => {
   useContainersStore.setState({
     status: 'idle', errorMessage: undefined, containers: [], images: [], samples: {},
     view: 'grid', statusFilter: 'all', search: '', detailContainerId: undefined,
-    terminal: undefined, busyActions: [], createOpen: false, creating: false,
+    terminal: undefined, busyActions: [], createOpen: false, creating: false, removingImageIds: [],
   })
 })
 
@@ -148,11 +150,13 @@ describe('镜像视图', () => {
     // 信息密度：名称行补摘要，未引用的镜像明说「未使用」而不是干巴巴的 0。
     expect(table.textContent).toContain('sha256:5d2fa6b8c417')
     expect(within(table).getByText('未使用')).toBeInTheDocument()
+    // 表头与正文同尺寸（text-sm），只靠颜色与字重区分层级。
+    expect(within(table).getByText('名称:标签')).toHaveClass('text-sm')
 
     await user.click(screen.getByRole('button', { name: '容器' }))
     expect(screen.getByRole('list', { name: '容器列表' })).toBeInTheDocument()
   })
-  it('删除按钮全部禁用，tooltip 按是否被引用区分', async () => {
+  it('删除按钮按引用区分：被引用禁用并说明，未引用可发起删除', async () => {
     const user = userEvent.setup()
     renderApp('/containers', { gateway: pageGateway() })
     await screen.findByRole('list', { name: '容器列表' })
@@ -161,9 +165,51 @@ describe('镜像视图', () => {
 
     const buttons = within(table).getAllByRole('button', { name: '删除' })
     expect(buttons).toHaveLength(6)
-    for (const button of buttons) expect(button).toBeDisabled()
-    expect(buttons.every((button) => button.hasAttribute('title'))).toBe(true)
-    expect(table.textContent).not.toContain('删除待接入真实执行') // title 不进 textContent，只查存在
+    for (const button of buttons) expect(button).toHaveAttribute('title')
+
+    const rows = within(table).getAllByRole('row')
+    const nodeRow = rows.find((row) => row.textContent?.includes('node:22-alpine'))!
+    const nodeDelete = within(nodeRow).getByRole('button', { name: '删除' })
+    expect(nodeDelete).toBeDisabled()
+    expect(nodeDelete).toHaveAttribute('title', expect.stringContaining('4 个容器'))
+
+    const grafanaRow = rows.find((row) => row.textContent?.includes('grafana/grafana'))!
+    expect(within(grafanaRow).getByRole('button', { name: '删除' })).toBeEnabled()
+  })
+
+  it('删除落实到 mock：确认后行消失、通知带 mock 标注、数据集不再返回该镜像', async () => {
+    const user = userEvent.setup()
+    const gateway = pageGateway()
+    renderApp('/containers', { gateway })
+    await screen.findByRole('list', { name: '容器列表' })
+    await user.click(screen.getByRole('button', { name: '镜像' }))
+    const table = await screen.findByRole('table', { name: '镜像列表' })
+
+    const rows = within(table).getAllByRole('row')
+    const grafanaRow = rows.find((row) => row.textContent?.includes('grafana/grafana'))!
+    await user.click(within(grafanaRow).getByRole('button', { name: '删除' }))
+
+    const confirm = await screen.findByRole('dialog', { name: /确认删除镜像/ })
+    expect(confirm.textContent).toContain('grafana/grafana:11.3.0')
+    await user.click(within(confirm).getByRole('button', { name: '取消' }))
+    expect(screen.queryByRole('dialog', { name: /确认删除镜像/ })).not.toBeInTheDocument()
+    expect(table.textContent).toContain('grafana/grafana')
+
+    await user.click(within(grafanaRow).getByRole('button', { name: '删除' }))
+    await user.click(
+      within(await screen.findByRole('dialog', { name: /确认删除镜像/ })).getByRole('button', {
+        name: '确认删除',
+      }),
+    )
+
+    await waitFor(() => expect(table.textContent).not.toContain('grafana/grafana'))
+    const notifications = await screen.findByLabelText('通知')
+    expect(within(notifications).getByRole('status')).toHaveTextContent(
+      '镜像 grafana/grafana:11.3.0 已删除（mock，待接入真实执行）',
+    )
+    // 数据落实到共享 mock 数据集：重新 listImages 也不再返回。
+    const images = await gateway.containers.listImages()
+    expect(images.map((image) => image.id)).not.toContain('img-grafana')
   })
 })
 

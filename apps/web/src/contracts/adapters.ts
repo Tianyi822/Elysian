@@ -85,6 +85,8 @@ export interface ContainerAdapter {
   requestAction(containerId: string, action: ContainerAction): Promise<Container>
   /** 创建容器（mock）：追加内存数据集并推 container/created。 */
   create(input: ContainerCreateInput): Promise<Container>
+  /** 删除镜像（mock）：仅允许删除未被引用的镜像，改写内存数据集。 */
+  removeImage(imageId: string): Promise<void>
 }
 
 /** 页面级访问区域。权限只做到这一粒度，本阶段不实现更细的权限模型。 */
