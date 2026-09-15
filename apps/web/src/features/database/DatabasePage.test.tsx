@@ -111,18 +111,14 @@ describe('数据库页面', () => {
     // 品牌标按引擎映射：MySQL 卡片挂 MySQL 标，不再借用 MariaDB 海豚标。
     expect(within(mysqlCard).getByLabelText('MySQL 图标')).toBeInTheDocument()
 
-    await user.click(within(screen.getByRole('banner')).getByRole('button', { name: 'MongoDB' }))
-    expect(await screen.findByText('这台机器上没有 MongoDB 的数据库容器')).toBeInTheDocument()
+    await user.click(within(screen.getByRole('banner')).getByRole('button', { name: 'SQLite' }))
+    expect(await screen.findByText('这台机器上没有 SQLite 的数据库容器')).toBeInTheDocument()
   })
 
   it('无品牌标的引擎回退通用图标，aria-label 仍以引擎命名', async () => {
     const user = userEvent.setup()
     renderApp('/databases', { gateway: pageGateway() })
     await screen.findByRole('list', { name: 'MariaDB 数据库列表' })
-
-    await user.click(within(screen.getByRole('banner')).getByRole('button', { name: 'PgSQL' }))
-    const pgCard = await screen.findByRole('article', { name: 'PgSQL 数据库 postgres-db' })
-    expect(within(pgCard).getByLabelText('PgSQL 图标')).toBeInTheDocument()
 
     await user.click(within(screen.getByRole('banner')).getByRole('button', { name: 'Redis' }))
     const redisCard = await screen.findByRole('article', { name: 'Redis 数据库 redis-cache' })

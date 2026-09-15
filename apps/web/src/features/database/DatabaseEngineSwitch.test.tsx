@@ -24,15 +24,13 @@ beforeEach(() => {
 })
 
 describe('数据库类型切换', () => {
-  it('按首字母升序平铺六个类型，不含 SQLServer', () => {
+  it('按首字母升序平铺四个类型，不含 SQLServer', () => {
     renderApp('/databases')
 
     const items = within(segmentGroup()).getAllByRole('button')
     expect(items.map((item) => item.textContent)).toEqual([
       'MariaDB',
-      'MongoDB',
       'MySQL',
-      'PgSQL',
       'Redis',
       'SQLite',
     ])

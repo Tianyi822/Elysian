@@ -27,13 +27,11 @@ const SQL_STATEMENTS = [
 export const ENGINE_STATEMENTS: Record<DatabaseEngine, readonly string[]> = {
   MariaDB: SQL_STATEMENTS,
   MySQL: SQL_STATEMENTS,
-  PgSQL: SQL_STATEMENTS,
   Redis: ['help', 'KEYS *', 'TYPE', 'GET', 'INFO clients', 'clear'],
-  MongoDB: [],
   SQLite: [],
 }
 
-const SQL_ENGINES: readonly DatabaseEngine[] = ['MariaDB', 'MySQL', 'PgSQL']
+const SQL_ENGINES: readonly DatabaseEngine[] = ['MariaDB', 'MySQL']
 
 const UNKNOWN_LINES = ['演示会话：该语句不在演示集内，输入 help 查看可用语句']
 

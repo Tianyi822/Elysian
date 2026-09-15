@@ -222,15 +222,15 @@ describe('容器事件', () => {
 })
 
 describe('数据库域词典', () => {
-  it('六个引擎按首字母升序，不含 SQLServer', () => {
+  it('四个引擎按首字母升序，暂未接入的 MongoDB 与 PgSQL 不在清单内', () => {
     expect([...DATABASE_ENGINES]).toEqual([
       'MariaDB',
-      'MongoDB',
       'MySQL',
-      'PgSQL',
       'Redis',
       'SQLite',
     ])
+    expect(DATABASE_ENGINES).not.toContain('MongoDB')
+    expect(DATABASE_ENGINES).not.toContain('PgSQL')
     expect(DATABASE_ENGINES).not.toContain('SQLServer')
   })
 

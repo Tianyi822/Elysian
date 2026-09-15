@@ -229,7 +229,7 @@ function DatabaseCard({
   )
 }
 
-/** 引擎标：MariaDB 与 MySQL 有官方 Logo，其余引擎（PgSQL、Redis 等）回退通用数据库图标加中性配色。 */
+/** 引擎标：MariaDB 与 MySQL 有官方 Logo，其余引擎（Redis 等）回退通用数据库图标加中性配色。 */
 function DatabaseMark({ engine }: { engine: DatabaseInstance['engine'] }) {
   const mark =
     engine === 'MariaDB'

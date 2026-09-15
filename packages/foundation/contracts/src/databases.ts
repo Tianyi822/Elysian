@@ -1,15 +1,14 @@
 /*
  * 数据库域类型与词典。数据库由本机容器承载，因此实例只记来源容器的 id，
- * 容器名、镜像与运行时长由容器数据集提供；凭证只作演示，真实凭证不下发到浏览器。
+ * 容器名与镜像由容器数据集提供；凭证只作演示，真实凭证不下发到浏览器。
+ * 引擎清单按需增长：暂未使用的引擎（MongoDB、PgSQL 等）等真正接入时再加回。
  */
 
-export type DatabaseEngine = 'MariaDB' | 'MongoDB' | 'MySQL' | 'PgSQL' | 'Redis' | 'SQLite'
+export type DatabaseEngine = 'MariaDB' | 'MySQL' | 'Redis' | 'SQLite'
 
 export const DATABASE_ENGINES = [
   'MariaDB',
-  'MongoDB',
   'MySQL',
-  'PgSQL',
   'Redis',
   'SQLite',
 ] as const satisfies readonly DatabaseEngine[]
