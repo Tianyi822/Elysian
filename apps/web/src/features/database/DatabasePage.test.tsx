@@ -39,6 +39,7 @@ function pageGateway(overrides: Partial<ElysianGateway['databases']> = {}): Elys
   return {
     ...base,
     databases: {
+      ...base.databases,
       list: () => base.databases.list(),
       ...overrides,
     },

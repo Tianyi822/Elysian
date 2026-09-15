@@ -26,11 +26,13 @@ import type {
   IncidentAdapter,
   IncidentListQuery,
   IncidentListResult,
+  MockQueryResult,
   RunAdapter,
   SessionAdapter,
   SkillAdapter,
 } from '../../contracts/adapters'
 import { DATABASE_INSTANCES } from './databaseData'
+import { runMockQuery } from './databaseQuery'
 import { execContainerCommand } from './containerTerminal'
 import { mockImageArtifact } from './containersData'
 import { autoContainerName } from './containersData'
@@ -308,6 +310,12 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
       memory: { ...database.memory },
       connections: { ...database.connections },
     }))
+  }
+
+  async execMockQuery(databaseId: string, statement: string): Promise<MockQueryResult> {
+    const database = DATABASE_INSTANCES.find((item) => item.id === databaseId)
+    if (!database) throw new Error(`未找到数据库实例 ${databaseId}`)
+    return runMockQuery(database, statement)
   }
 }
 

@@ -93,9 +93,17 @@ export interface ContainerAdapter {
   pullImage(input: { name: string; tag: string; registry?: string }): Promise<ContainerImage>
 }
 
+/** 演示会话的结果：结构化结果集、纯文本行，或清屏请求。 */
+export type MockQueryResult =
+  | { kind: 'table'; columns: readonly string[]; rows: readonly (readonly string[])[]; notice: string }
+  | { kind: 'text'; lines: readonly string[] }
+  | { kind: 'clear' }
+
 /** 数据库区适配接口。本期为 mock 实现；未来换真实 adapter，页面不改。 */
 export interface DatabaseAdapter {
   list(): Promise<readonly DatabaseInstance[]>
+  /** 演示会话：语句在本页 mock 内确定性求值，不执行任何真实 SQL。 */
+  execMockQuery(databaseId: string, statement: string): Promise<MockQueryResult>
 }
 
 /** 页面级访问区域。权限只做到这一粒度，本阶段不实现更细的权限模型。 */
