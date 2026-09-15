@@ -127,7 +127,7 @@ export function TerminalWindow() {
             <button
               type="button"
               onClick={() => setConfirmOpen(true)}
-              className="rounded border border-line px-2 py-1 text-xs text-fg-muted transition-colors hover:text-fg"
+              className="rounded-lg border border-line px-2 py-1 text-xs text-fg-muted transition-colors hover:text-fg"
             >
               关闭终端
             </button>

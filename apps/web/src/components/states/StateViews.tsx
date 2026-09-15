@@ -1,4 +1,4 @@
-import { Inbox, Loader2, Lock, TriangleAlert } from 'lucide-react'
+import { Inbox, Loader2, Lock, TriangleAlert } from '../icons'
 import type { ReactNode } from 'react'
 
 /**
@@ -59,7 +59,7 @@ export function ErrorState({
         <button
           type="button"
           onClick={onRetry}
-          className="mt-1 rounded border border-line bg-surface-raised px-2 py-1 text-xs text-fg"
+          className="mt-1 rounded-lg border border-line bg-surface-raised px-2 py-1 text-xs text-fg"
         >
           重试
         </button>

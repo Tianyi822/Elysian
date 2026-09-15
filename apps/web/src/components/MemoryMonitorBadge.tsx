@@ -1,6 +1,6 @@
 import * as Tooltip from '@radix-ui/react-tooltip'
 import * as Popover from '@radix-ui/react-popover'
-import { MemoryStick } from 'lucide-react'
+import { MemoryStick } from './icons'
 import { useEffect, useState } from 'react'
 
 /**

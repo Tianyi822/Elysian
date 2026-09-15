@@ -1,5 +1,5 @@
-import { CircleCheck, Info, TriangleAlert, X } from 'lucide-react'
-import type { LucideIcon } from 'lucide-react'
+import { CircleCheck, Info, TriangleAlert, X } from './icons'
+import type { IconComponent } from './icons'
 import { useEffect } from 'react'
 import type { AppNotification, NotificationTone } from '../stores/notificationStore'
 import { useNotificationStore } from '../stores/notificationStore'
@@ -12,12 +12,13 @@ const DISMISS_AFTER_MS: Record<NotificationTone, number> = {
   danger: 8000,
 }
 
-const TONE_STYLE: Record<NotificationTone, { border: string; icon: LucideIcon; iconColor: string }> =
-  {
-    success: { border: 'border-success/40', icon: CircleCheck, iconColor: 'text-success' },
-    info: { border: 'border-accent/40', icon: Info, iconColor: 'text-accent' },
-    danger: { border: 'border-danger/40', icon: TriangleAlert, iconColor: 'text-danger' },
-  }
+type ToneStyle = { border: string; icon: IconComponent; iconColor: string }
+
+const TONE_STYLE: Record<NotificationTone, ToneStyle> = {
+  success: { border: 'border-success/40', icon: CircleCheck, iconColor: 'text-success' },
+  info: { border: 'border-accent/40', icon: Info, iconColor: 'text-accent' },
+  danger: { border: 'border-danger/40', icon: TriangleAlert, iconColor: 'text-danger' },
+}
 
 function NotificationItem({ notification }: { notification: AppNotification }) {
   const dismiss = useNotificationStore((state) => state.dismiss)

@@ -1,6 +1,6 @@
 import { RUN_STATUS_LABELS, responsibilityModuleName } from '@elysian/contracts'
-import { Bot, Gauge, ScrollText, Server, ShieldCheck, Siren, Timer, Workflow } from 'lucide-react'
-import type { LucideIcon } from 'lucide-react'
+import { Bot, Gauge, ScrollText, Server, ShieldCheck, Siren, Timer, Workflow } from '../../components/icons'
+import type { IconComponent } from '../../components/icons'
 import type { ReactNode } from 'react'
 import { RiskTag } from '../../components/RiskTag'
 import { StatusTag } from '../../components/StatusTag'
@@ -15,7 +15,7 @@ function StatCard({
   label: string
   value: string
   hint?: ReactNode
-  icon: LucideIcon
+  icon: IconComponent
 }) {
   return (
     <article
@@ -37,7 +37,7 @@ export function StatCardsSection({ stats }: { stats: StatCards }) {
     label: string
     value: string
     hint?: ReactNode
-    icon: LucideIcon
+    icon: IconComponent
   }> = [
     { label: '事故总数', value: String(stats.totalIncidents), icon: Siren },
     { label: '待处理事故', value: String(stats.openIncidents), icon: Timer },

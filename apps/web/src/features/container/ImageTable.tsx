@@ -1,4 +1,4 @@
-import { Trash2 } from 'lucide-react'
+import { Trash2 } from '../../components/icons'
 import type { Container, ContainerImage } from '@elysian/contracts'
 import { imageUsageCount } from '../../adapters/mock/containerViews'
 

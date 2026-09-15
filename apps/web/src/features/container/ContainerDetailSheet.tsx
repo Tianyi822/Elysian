@@ -1,5 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { X } from 'lucide-react'
+import { X } from '../../components/icons'
 import type { ReactNode } from 'react'
 import { CONTAINER_STATUS_LABELS, RESTART_POLICY_LABELS } from '@elysian/contracts'
 import { IconButton } from '../../components/IconButton'

@@ -1,5 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { Moon, RefreshCw, Sun, Zap } from 'lucide-react'
+import { Moon, RefreshCw, Sun, Zap } from '../../components/icons'
 import { useState } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { useDashboardStore } from '../../stores/dashboardStore'
@@ -130,7 +130,7 @@ export function QuickActions({ collapsed = false }: { collapsed?: boolean }) {
               <Dialog.Close asChild>
                 <button
                   type="button"
-                  className="rounded border border-line px-2 py-1 text-xs text-fg-muted"
+                  className="rounded-lg border border-line px-2 py-1 text-xs text-fg-muted"
                 >
                   取消
                 </button>
@@ -139,7 +139,7 @@ export function QuickActions({ collapsed = false }: { collapsed?: boolean }) {
                 type="button"
                 disabled={resetting}
                 onClick={() => void handleReset()}
-                className="rounded border border-danger/50 px-2 py-1 text-xs text-danger disabled:opacity-50"
+                className="rounded-lg border border-danger/50 px-2 py-1 text-xs text-danger disabled:opacity-50"
               >
                 确认重置
               </button>
