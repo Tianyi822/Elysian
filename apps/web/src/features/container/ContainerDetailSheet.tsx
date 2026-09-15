@@ -1,5 +1,6 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { X } from '../../components/icons'
+import { useRef } from 'react'
 import type { ReactNode } from 'react'
 import { CONTAINER_STATUS_LABELS, RESTART_POLICY_LABELS } from '@elysian/contracts'
 import { IconButton } from '../../components/IconButton'
@@ -26,26 +27,29 @@ function Row({ label, value }: { label: string; value: ReactNode }) {
 
 /** 右侧滑出的配置面板：Esc 与点遮罩可关，同一时间只开一个。 */
 export function ContainerDetailSheet() {
-  const container = useContainersStore((s) => s.containers.find((c) => c.id === s.detailContainerId))
-  const image = useContainersStore((s) =>
-    s.images.find((candidate) => candidate.id === container?.imageId),
-  )
+  const selected = useContainersStore((s) => s.containers.find((c) => c.id === s.detailContainerId))
+  const image = useContainersStore((s) => s.images.find((candidate) => candidate.id === selected?.imageId))
   const closeDetail = useContainersStore((s) => s.closeDetail)
+  // 关闭瞬间选择已被清空，冻结最后一份容器给退出动画当内容，
+  // open 与「组件存活」解耦后 Radix 才有机会播完 data-state=closed 的动画。
+  const lastRef = useRef(selected)
+  if (selected) lastRef.current = selected
+  const container = selected ?? lastRef.current
 
   if (!container) return null
 
   return (
     <Dialog.Root
-      open
+      open={Boolean(selected)}
       onOpenChange={(open) => {
         if (!open) closeDetail()
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/60" />
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/60 motion-reduce:animate-none data-[state=open]:animate-drawer-overlay-in data-[state=closed]:animate-drawer-overlay-out" />
         <Dialog.Content
           aria-describedby={undefined}
-          className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col overflow-y-auto border-l border-line bg-surface p-5 shadow-xl"
+          className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col overflow-y-auto border-l border-line bg-surface p-5 shadow-xl will-change-transform motion-reduce:animate-none data-[state=open]:animate-sheet-panel-in data-[state=closed]:animate-sheet-panel-out"
         >
           <div className="mb-4 flex items-start justify-between gap-3">
             <div>
