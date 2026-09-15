@@ -150,3 +150,19 @@ export function autoContainerName(existing: readonly Container[], imageName: str
   }
   return name
 }
+
+/** 确定性伪随机：FNV-1a 32 位哈希，同一输入永远得到同一摘要、标识与体积。 */
+export function mockImageArtifact(name: string, tag: string): { id: string; digest: string; sizeMb: number } {
+  const input = `${name}:${tag}`
+  let hash = 0x811c9dc5
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i)
+    hash = Math.imul(hash, 0x01000193)
+  }
+  const word = (hash >>> 0).toString(16).padStart(8, '0')
+  return {
+    id: `img-${word}`,
+    digest: `sha256:${word}${word.slice(0, 4)}`,
+    sizeMb: 8 + ((hash >>> 0) % 448),
+  }
+}

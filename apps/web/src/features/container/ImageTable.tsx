@@ -1,5 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { Trash2 } from '../../components/icons'
+import { Loader2, Trash2 } from '../../components/icons'
 import { useState } from 'react'
 import type { Container, ContainerImage } from '@elysian/contracts'
 import { imageUsageCount } from '../../adapters/mock/containerViews'
@@ -22,6 +22,7 @@ export function ImageTable({
   const gateway = useGateway()
   const removingImageIds = useContainersStore((s) => s.removingImageIds)
   const removeImage = useContainersStore((s) => s.removeImage)
+  const pullingImage = useContainersStore((s) => s.pullingImage)
   const [pendingDelete, setPendingDelete] = useState<ContainerImage | null>(null)
 
   return (
@@ -103,6 +104,28 @@ export function ImageTable({
               </tr>
             )
           })}
+          {pullingImage ? (
+            <tr>
+              <td colSpan={5} className="px-4 py-3">
+                <div className="flex items-center gap-2 text-sm text-fg-muted">
+                  <Loader2 aria-hidden size={14} className="shrink-0 animate-spin text-accent" />
+                  <span className="shrink-0">
+                    <span className="font-medium text-fg">
+                      {pullingImage.name}:{pullingImage.tag}
+                    </span>{' '}
+                    拉取中…
+                  </span>
+                  {/* 不确定进度条：滑块来回扫，motion-reduce 下静止。 */}
+                  <span
+                    aria-hidden="true"
+                    className="relative h-1 flex-1 overflow-hidden rounded-full bg-surface-raised"
+                  >
+                    <span className="pull-progress absolute inset-y-0 left-0 w-1/3 rounded-full bg-accent/60 motion-reduce:animate-none" />
+                  </span>
+                </div>
+              </td>
+            </tr>
+          ) : null}
         </tbody>
       </table>
 

@@ -160,6 +160,7 @@ body {
   --animate-drawer-panel-out: drawer-out 160ms ease-in;
   --animate-sheet-panel-in: sheet-panel-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
   --animate-sheet-panel-out: sheet-panel-out 160ms ease-in;
+  --animate-pull-progress: pull-slide 1.2s ease-in-out infinite;
   --animate-caret-blink: caret-blink 1s step-end infinite;
 
   @keyframes caret-blink {
@@ -200,6 +201,14 @@ body {
   @keyframes sheet-panel-out {
     to {
       transform: translateX(100%);
+    }
+  }
+  @keyframes pull-slide {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(300%);
     }
   }
 }

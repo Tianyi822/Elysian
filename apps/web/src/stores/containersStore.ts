@@ -78,6 +78,9 @@ const ACTION_MESSAGES: Record<ContainerAction, (name: string) => string> = {
   restart: (name) => `已请求重启 ${name}（mock，待接入真实执行）`,
 }
 
+/** 拉取的模拟传输耗时；测试用假计时器推进。 */
+const PULL_DELAY_MS = 1500
+
 export const useContainersStore = create<{
   status: 'idle' | 'loading' | 'ready' | 'error'
   errorMessage?: string
@@ -93,6 +96,7 @@ export const useContainersStore = create<{
   createOpen: boolean
   creating: boolean
   removingImageIds: readonly string[]
+  pullingImage?: { name: string; tag: string }
   load: (gateway: ElysianGateway) => Promise<void>
   setView: (view: 'grid' | 'images') => void
   setStatusFilter: (filter: ContainerStatus | 'all') => void
@@ -101,6 +105,7 @@ export const useContainersStore = create<{
   closeCreate: () => void
   createContainer: (gateway: ElysianGateway, input: ContainerCreateInput) => Promise<void>
   removeImage: (gateway: ElysianGateway, imageId: string) => Promise<void>
+  pullImage: (gateway: ElysianGateway, input: { name: string; tag: string }) => Promise<void>
   openDetail: (containerId: string) => void
   closeDetail: () => void
   openTerminal: (containerId: string) => void
@@ -118,7 +123,7 @@ export const useContainersStore = create<{
   statusFilter: 'all',
   search: '',
   busyActions: [],
-  createOpen: false, creating: false, removingImageIds: [],
+  createOpen: false, creating: false, removingImageIds: [], pullingImage: undefined,
 
   async load(gateway) {
     attachLiveEvents()
@@ -201,6 +206,26 @@ export const useContainersStore = create<{
       const detail = error instanceof Error ? error.message : '未知错误'
       set((state) => ({ removingImageIds: state.removingImageIds.filter((id) => id !== imageId) }))
       useNotificationStore.getState().notify({ tone: 'danger', message: `删除镜像失败：${detail}` })
+    }
+  },
+
+  async pullImage(gateway, input) {
+    if (get().pullingImage) return
+    set({ pullingImage: { name: input.name, tag: input.tag } })
+    try {
+      // 模拟传输耗时后再落数据集；测试用假计时器推进这一段。
+      await new Promise((resolve) => setTimeout(resolve, PULL_DELAY_MS))
+      const image = await gateway.containers.pullImage(input)
+      useNotificationStore.getState().notify({
+        tone: 'success',
+        message: `镜像 ${image.name}:${image.tag} 已拉取（mock，待接入真实执行）`,
+      })
+      // 追加与清拉取中状态一次完成，避免界面闪现「新行 + 拉取中行并存」的中间帧。
+      set((state) => ({ images: [...state.images, image], pullingImage: undefined }))
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : '未知错误'
+      useNotificationStore.getState().notify({ tone: 'danger', message: `拉取镜像失败：${detail}` })
+      set({ pullingImage: undefined })
     }
   },
 

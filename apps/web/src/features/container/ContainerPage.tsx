@@ -1,5 +1,5 @@
-import { useEffect } from 'react'
-import { Search } from '../../components/icons'
+import { useEffect, useState } from 'react'
+import { Download, Search } from '../../components/icons'
 import type { ContainerStatus } from '@elysian/contracts'
 import { CONTAINER_STATUS_LABELS } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
@@ -8,6 +8,7 @@ import { useContainersStore } from '../../stores/containersStore'
 import { ContainerCard } from './ContainerCard'
 import { ContainerCreateDialog } from './ContainerCreateDialog'
 import { ContainerDetailSheet } from './ContainerDetailSheet'
+import { ImagePullDialog } from './ImagePullDialog'
 import { ImageTable } from './ImageTable'
 import { TerminalWindow } from './TerminalWindow'
 
@@ -31,6 +32,8 @@ export function ContainerPage() {
   const setStatusFilter = useContainersStore((s) => s.setStatusFilter)
   const setSearch = useContainersStore((s) => s.setSearch)
   const openCreate = useContainersStore((s) => s.openCreate)
+  // 拉取弹窗只在镜像视图用，开关留在页面本地即可，不入全局 store。
+  const [pullOpen, setPullOpen] = useState(false)
 
   useEffect(() => {
     void load(gateway)
@@ -105,7 +108,20 @@ export function ContainerPage() {
       ) : null}
 
       {view === 'images' ? (
-        <ImageTable images={images} containers={containers} />
+        <>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-surface px-4 py-3">
+            <p className="text-xs text-fg-muted">共 {images.length} 个镜像</p>
+            <button
+              type="button"
+              onClick={() => setPullOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle"
+            >
+              <Download aria-hidden size={14} />
+              拉取镜像
+            </button>
+          </div>
+          <ImageTable images={images} containers={containers} />
+        </>
       ) : filtered.length === 0 ? (
         <EmptyState
           title={containers.length === 0 ? '还没有容器' : '没有匹配的容器'}
@@ -126,6 +142,7 @@ export function ContainerPage() {
       )}
 
       <ContainerCreateDialog />
+      {pullOpen ? <ImagePullDialog onClose={() => setPullOpen(false)} /> : null}
       <ContainerDetailSheet />
       <TerminalWindow />
     </div>

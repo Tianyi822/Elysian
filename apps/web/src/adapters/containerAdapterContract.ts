@@ -73,5 +73,22 @@ export function runContainerAdapterContract(make: () => ContainerAdapter): void 
       if (!used) return
       await expect(adapter.removeImage(used.id)).rejects.toThrow()
     })
+
+    it('pullImage 追加新镜像，同名同标签重复拉取被拒绝', async () => {
+      const adapter = make()
+      const pulled = await adapter.pullImage({ name: 'pull-contract', tag: '1.0' })
+      expect(pulled.name).toBe('pull-contract')
+      expect(pulled.tag).toBe('1.0')
+      expect(pulled.digest).toMatch(/^sha256:[0-9a-f]{12}$/)
+      expect((await adapter.listImages()).map((image) => image.id)).toContain(pulled.id)
+      await expect(adapter.pullImage({ name: 'pull-contract', tag: '1.0' })).rejects.toThrow()
+    })
+
+    it('pullImage 对同一引用生成确定性的摘要与体积', async () => {
+      const first = await make().pullImage({ name: 'pull-det', tag: '2.0' })
+      const second = await make().pullImage({ name: 'pull-det', tag: '2.0' })
+      expect(first.digest).toBe(second.digest)
+      expect(first.sizeMb).toBe(second.sizeMb)
+    })
   })
 }

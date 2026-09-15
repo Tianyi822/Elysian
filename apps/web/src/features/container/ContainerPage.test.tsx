@@ -1,6 +1,6 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Container, ContainerCreateInput, ContainerImage } from '@elysian/contracts'
 import type { ElysianGateway } from '../../contracts/adapters'
 import { createMockGateway } from '../../adapters/mock/gateway'
@@ -24,6 +24,7 @@ function pageGateway(overrides: Partial<ElysianGateway['containers']> = {}): Ely
       execMockCommand: (id: string, command: string) => base.containers.execMockCommand(id, command),
       create: (input: ContainerCreateInput) => base.containers.create(input),
       removeImage: (imageId: string) => base.containers.removeImage(imageId),
+      pullImage: (input: { name: string; tag: string }) => base.containers.pullImage(input),
       requestAction: async (id: string) => CONTAINERS.find((c) => c.id === id)!,
       ...overrides,
     },
@@ -35,6 +36,7 @@ beforeEach(() => {
     status: 'idle', errorMessage: undefined, containers: [], images: [], samples: {},
     view: 'grid', statusFilter: 'all', search: '', detailContainerId: undefined,
     terminal: undefined, busyActions: [], createOpen: false, creating: false, removingImageIds: [],
+    pullingImage: undefined,
   })
 })
 
@@ -210,6 +212,65 @@ describe('镜像视图', () => {
     // 数据落实到共享 mock 数据集：重新 listImages 也不再返回。
     const images = await gateway.containers.listImages()
     expect(images.map((image) => image.id)).not.toContain('img-grafana')
+  })
+})
+
+describe('拉取镜像', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  async function openImagesView(gateway = pageGateway()) {
+    const user = userEvent.setup()
+    renderApp('/containers', { gateway })
+    await screen.findByRole('list', { name: '容器列表' })
+    await user.click(screen.getByRole('button', { name: '镜像' }))
+    return { user, table: await screen.findByRole('table', { name: '镜像列表' }) }
+  }
+
+  it('镜像视图有拉取入口，打开弹窗见演示徽章与引用输入', async () => {
+    const { user } = await openImagesView()
+    await user.click(screen.getByRole('button', { name: /拉取镜像/ }))
+    const dialog = await screen.findByRole('dialog', { name: '拉取镜像' })
+    expect(dialog.textContent).toContain('演示 · 待接入真实执行')
+    expect(within(dialog).getByLabelText('镜像引用')).toBeInTheDocument()
+  })
+
+  it('空引用禁用提交；已存在引用行内报错', async () => {
+    const { user, table } = await openImagesView()
+    await user.click(screen.getByRole('button', { name: /拉取镜像/ }))
+    const dialog = await screen.findByRole('dialog', { name: '拉取镜像' })
+    const input = within(dialog).getByLabelText('镜像引用')
+    const submit = within(dialog).getByRole('button', { name: '拉取' })
+    expect(submit).toBeDisabled()
+
+    await user.type(input, 'redis:7.4-alpine')
+    expect(await within(dialog).findByText('镜像已存在：redis:7.4-alpine')).toBeInTheDocument()
+    expect(submit).toBeDisabled()
+    expect(table.textContent).not.toContain('拉取中')
+  })
+
+  it('拉取全流程：提交后弹窗关、拉取中行出现，完成后入列并发 mock 通知', async () => {
+    const user = userEvent.setup()
+    renderApp('/containers', { gateway: pageGateway() })
+    await screen.findByRole('list', { name: '容器列表' })
+    await user.click(screen.getByRole('button', { name: '镜像' }))
+    const table = await screen.findByRole('table', { name: '镜像列表' })
+    await user.click(screen.getByRole('button', { name: /拉取镜像/ }))
+    const dialog = await screen.findByRole('dialog', { name: '拉取镜像' })
+    await user.type(within(dialog).getByLabelText('镜像引用'), 'redis:8-alpine')
+    await user.click(within(dialog).getByRole('button', { name: '拉取' }))
+
+    expect(screen.queryByRole('dialog', { name: '拉取镜像' })).not.toBeInTheDocument()
+    expect(table.textContent).toContain('拉取中')
+
+    // 真实等待 1.5s 模拟传输完成；时序由 store 的 PULL_DELAY_MS 决定。
+    await waitFor(() => expect(table.textContent).not.toContain('拉取中'), { timeout: 3000 })
+    expect(table.textContent).toContain('redis:8-alpine')
+    const notifications = await screen.findByLabelText('通知')
+    expect(within(notifications).getByRole('status')).toHaveTextContent(
+      '镜像 redis:8-alpine 已拉取（mock，待接入真实执行）',
+    )
   })
 })
 

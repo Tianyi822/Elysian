@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ElysianEvent } from '@elysian/contracts'
 import type { Container } from '@elysian/contracts'
 import type { ElysianGateway, EventsAdapter } from '../contracts/adapters'
@@ -16,6 +16,9 @@ function gatewayWith(overrides: Partial<ElysianGateway['containers']> = {}): Ely
       requestAction: async (id: string) => CONTAINERS.find((c) => c.id === id)!,
       create: async () => CONTAINERS[0]!,
       removeImage: async () => {},
+      pullImage: async ({ name, tag }: { name: string; tag: string }) => ({
+        id: 'img-pulled', name, tag, digest: 'sha256:abcd1234abcd', sizeMb: 42, pulledAt: '2026-09-12T08:00:00.000Z',
+      }),
       ...overrides,
     },
   } as unknown as ElysianGateway
@@ -29,6 +32,7 @@ beforeEach(() => {
     status: 'idle', errorMessage: undefined, containers: [], images: [], samples: {},
     view: 'grid', statusFilter: 'all', search: '', detailContainerId: undefined,
     terminal: undefined, busyActions: [], createOpen: false, creating: false, removingImageIds: [],
+    pullingImage: undefined,
   })
   useNotificationStore.setState({ notifications: [] })
   const adapter: EventsAdapter = {
@@ -222,6 +226,48 @@ describe('删除镜像', () => {
     expect(useNotificationStore.getState().notifications[0]).toMatchObject({
       tone: 'danger',
       message: '删除镜像失败：镜像仍被容器引用，删除失败',
+    })
+  })
+})
+
+describe('拉取镜像', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('pullImage 模拟耗时后追加镜像，成功通知带 mock 标注', async () => {
+    vi.useFakeTimers()
+    await useContainersStore.getState().load(gatewayWith())
+    const promise = useContainersStore.getState().pullImage(gatewayWith(), { name: 'redis', tag: '8-alpine' })
+    expect(useContainersStore.getState().pullingImage).toEqual({ name: 'redis', tag: '8-alpine' })
+
+    await vi.advanceTimersByTimeAsync(1500)
+    await promise
+
+    const state = useContainersStore.getState()
+    expect(state.images.map((image) => image.id)).toContain('img-pulled')
+    expect(state.pullingImage).toBeUndefined()
+    expect(useNotificationStore.getState().notifications[0]?.message).toBe(
+      '镜像 redis:8-alpine 已拉取（mock，待接入真实执行）',
+    )
+  })
+
+  it('pullImage 失败发危险通知并复位拉取中状态', async () => {
+    vi.useFakeTimers()
+    await useContainersStore.getState().load(gatewayWith())
+    const promise = useContainersStore.getState().pullImage(
+      gatewayWith({ pullImage: async () => { throw new Error('镜像已存在：redis:8-alpine') } }),
+      { name: 'redis', tag: '8-alpine' },
+    )
+    await vi.advanceTimersByTimeAsync(1500)
+    await promise
+
+    const state = useContainersStore.getState()
+    expect(state.images).toHaveLength(6)
+    expect(state.pullingImage).toBeUndefined()
+    expect(useNotificationStore.getState().notifications[0]).toMatchObject({
+      tone: 'danger',
+      message: '拉取镜像失败：镜像已存在：redis:8-alpine',
     })
   })
 })

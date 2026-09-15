@@ -29,6 +29,7 @@ import type {
   SkillAdapter,
 } from '../../contracts/adapters'
 import { execContainerCommand } from './containerTerminal'
+import { mockImageArtifact } from './containersData'
 import { autoContainerName } from './containersData'
 import {
   INITIAL_DISKS,
@@ -273,6 +274,24 @@ export class MockContainerAdapter implements ContainerAdapter {
       throw new Error('镜像仍被容器引用，删除失败')
     }
     dataset.images = dataset.images.filter((i) => i.id !== imageId)
+  }
+
+  async pullImage(input: { name: string; tag: string }): Promise<ContainerImage> {
+    const dataset = this.dataset()
+    if (dataset.images.some((i) => i.name === input.name && i.tag === input.tag)) {
+      throw new Error(`镜像已存在：${input.name}:${input.tag}`)
+    }
+    const { id, digest, sizeMb } = mockImageArtifact(input.name, input.tag)
+    const image: ContainerImage = {
+      id,
+      name: input.name,
+      tag: input.tag,
+      digest,
+      sizeMb,
+      pulledAt: new Date().toISOString(),
+    }
+    dataset.images.push(image)
+    return { ...image }
   }
 }
 

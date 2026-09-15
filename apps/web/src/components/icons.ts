@@ -12,6 +12,7 @@ export {
   ChevronDown,
   CircleCheck,
   Container,
+  Download,
   Gauge,
   Inbox,
   Info,
