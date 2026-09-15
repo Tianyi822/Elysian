@@ -1,13 +1,9 @@
 import { create } from 'zustand'
-import { DATABASE_ENGINES } from '@elysian/contracts'
 import type { Container, ContainerImage, DatabaseEngine, DatabaseInstance } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
 import { pushHistory, type TerminalLine } from '../components/terminal/terminalSession'
 import { formatResultTable } from '../features/database/formatResultTable'
 import { useNotificationStore } from './notificationStore'
-
-export { DATABASE_ENGINES }
-export type { DatabaseEngine }
 
 /** 演示 SQL 会话：只存在内存，关闭即清空（含历史，不伪装成持久会话）。 */
 export type SqlSession = {

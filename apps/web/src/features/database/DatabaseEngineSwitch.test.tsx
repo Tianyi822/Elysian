@@ -1,7 +1,8 @@
 import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { DATABASE_ENGINES, useDatabaseStore } from '../../stores/databaseStore'
+import { DATABASE_ENGINES } from '@elysian/contracts'
+import { useDatabaseStore } from '../../stores/databaseStore'
 import { renderApp } from '../../test/renderApp'
 
 /** 顶栏的平铺分段控件，与窄屏下拉在同一个 banner 内。 */

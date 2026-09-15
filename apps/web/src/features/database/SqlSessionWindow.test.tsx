@@ -2,9 +2,11 @@ import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { ElysianGateway } from '../../contracts/adapters'
+import { DATABASE_INSTANCES } from '../../adapters/mock/databaseData'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { useDatabaseStore } from '../../stores/databaseStore'
 import { renderApp } from '../../test/renderApp'
+import { completeSqlStatement } from './SqlSessionWindow'
 
 /**
  * 演示会话窗口的端到端行为：卡片「连接」开窗、语句经 mock 引擎求值、
@@ -150,5 +152,47 @@ describe('数据库演示会话窗口', () => {
     await waitFor(() => expect(dialog).toHaveTextContent('1 row in set'))
     expect(dialog).toHaveTextContent('connected_clients')
     expect(dialog).toHaveTextContent('| 34 |')
+  })
+})
+
+describe('SQL Tab 补全', () => {
+  const mariadb = DATABASE_INSTANCES.find((database) => database.id === 'db-mariadb-primary')!
+  const redis = DATABASE_INSTANCES.find((database) => database.id === 'db-redis-cache')!
+
+  it('行首唯一命中语句：补齐并补一个空格', () => {
+    expect(completeSqlStatement(mariadb, 'hel', 3)).toEqual({ draft: 'help ', cursor: 5 })
+  })
+
+  it('行首多命中收敛到最长公共前缀：SH 补成 SHOW（含空格）', () => {
+    // 'SHOW TABLES' 与 "SHOW STATUS LIKE 'Threads_connected'" 同时命中，
+    // 不可唯一补全，收敛到公共前缀 'SHOW '——末尾空格保留。
+    expect(completeSqlStatement(mariadb, 'SH', 2)).toEqual({ draft: 'SHOW ', cursor: 5 })
+  })
+
+  it('行中补目录表名：FROM 后的前缀补齐为表名并补空格', () => {
+    expect(completeSqlStatement(mariadb, 'SELECT * FROM us', 16)).toEqual({
+      draft: 'SELECT * FROM users ',
+      cursor: 20,
+    })
+  })
+
+  it('Redis 行中补键名', () => {
+    expect(completeSqlStatement(redis, 'GET s', 5)).toEqual({
+      draft: 'GET session:1001 ',
+      cursor: 17,
+    })
+  })
+
+  it('公共前缀不比草稿长时草稿不动，候选列成清单', () => {
+    // DESCRIBE 后按 Tab：users、orders、sessions 无公共前缀可收敛，全部列为候选。
+    const result = completeSqlStatement(mariadb, 'DESCRIBE ', 9)
+    expect(result.draft).toBe('DESCRIBE ')
+    expect(result.cursor).toBe(9)
+    expect(result.candidates).toEqual(['users', 'orders', 'sessions'])
+  })
+
+  it('没有命中时原样返回，不带候选', () => {
+    expect(completeSqlStatement(mariadb, 'DROP', 4)).toEqual({ draft: 'DROP', cursor: 4 })
+    expect(completeSqlStatement(mariadb, 'DROP', 4).candidates).toBeUndefined()
   })
 })

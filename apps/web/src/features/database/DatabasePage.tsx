@@ -51,6 +51,9 @@ export function DatabasePage() {
     void load(gateway)
   }, [gateway, load])
 
+  // 会话随页面卸载清空：离开数据库页即关闭演示会话，不跨页保留旧输出与历史。
+  useEffect(() => () => useDatabaseStore.getState().closeSession(), [])
+
   const containerById = useMemo(
     () => new Map(containers.map((container) => [container.id, container])),
     [containers],
@@ -221,18 +224,30 @@ function DatabaseCard({
   )
 }
 
+/** 引擎标：MariaDB 与 MySQL 有官方 Logo，其余引擎（PgSQL、Redis 等）回退通用数据库图标加中性配色。 */
 function DatabaseMark({ engine }: { engine: DatabaseInstance['engine'] }) {
-  const isMaria = engine === 'MariaDB'
+  const mark =
+    engine === 'MariaDB'
+      ? {
+          logo: <MariaDBLogo aria-hidden size={23} />,
+          frame: 'border-[#c86b38]/40 bg-[#c86b38]/10 text-[#d98752]',
+        }
+      : engine === 'MySQL'
+        ? {
+            logo: <MySQLLogo aria-hidden size={23} />,
+            frame: 'border-[#00758f]/40 bg-[#00758f]/10 text-[#2da6bd]',
+          }
+        : {
+            logo: <Database aria-hidden size={18} />,
+            frame: 'border-line bg-surface-raised text-fg-muted',
+          }
+
   return (
     <span
       aria-label={`${engine} 图标`}
-      className={`inline-flex size-10 shrink-0 items-center justify-center rounded-lg border text-xs font-bold ${
-        isMaria
-          ? 'border-[#c86b38]/40 bg-[#c86b38]/10 text-[#d98752]'
-          : 'border-[#00758f]/40 bg-[#00758f]/10 text-[#2da6bd]'
-      }`}
+      className={`inline-flex size-10 shrink-0 items-center justify-center rounded-lg border text-xs font-bold ${mark.frame}`}
     >
-      {isMaria ? <MariaDBLogo aria-hidden size={23} /> : <MySQLLogo aria-hidden size={23} />}
+      {mark.logo}
     </span>
   )
 }

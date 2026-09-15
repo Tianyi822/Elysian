@@ -27,6 +27,8 @@ export function createDatabaseAdapterContractTests(
         expect(database.containerId).toBeTruthy()
         expect(database.credentials.username).toBeTruthy()
         expect(database.credentials.password).toBeTruthy()
+        expect(database.storage.totalGb).toBeGreaterThan(0)
+        expect(database.memory.totalGb).toBeGreaterThan(0)
         expect(database.connections.active).toBeGreaterThanOrEqual(0)
         expect(database.connections.max).toBeGreaterThan(0)
         expect(Number.isNaN(Date.parse(database.updatedAt))).toBe(false)
