@@ -276,7 +276,8 @@ export class MockContainerAdapter implements ContainerAdapter {
     dataset.images = dataset.images.filter((i) => i.id !== imageId)
   }
 
-  async pullImage(input: { name: string; tag: string }): Promise<ContainerImage> {
+  async pullImage(input: { name: string; tag: string; registry?: string }): Promise<ContainerImage> {
+    // registry 只是界面记录的拉取源：mock 不区分来源，全部走同一份确定性数据。
     const dataset = this.dataset()
     if (dataset.images.some((i) => i.name === input.name && i.tag === input.tag)) {
       throw new Error(`镜像已存在：${input.name}:${input.tag}`)

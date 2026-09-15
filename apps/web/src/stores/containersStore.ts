@@ -96,7 +96,7 @@ export const useContainersStore = create<{
   createOpen: boolean
   creating: boolean
   removingImageIds: readonly string[]
-  pullingImage?: { name: string; tag: string }
+  pullingImage?: { name: string; tag: string; registry?: string }
   load: (gateway: ElysianGateway) => Promise<void>
   setView: (view: 'grid' | 'images') => void
   setStatusFilter: (filter: ContainerStatus | 'all') => void
@@ -105,7 +105,7 @@ export const useContainersStore = create<{
   closeCreate: () => void
   createContainer: (gateway: ElysianGateway, input: ContainerCreateInput) => Promise<void>
   removeImage: (gateway: ElysianGateway, imageId: string) => Promise<void>
-  pullImage: (gateway: ElysianGateway, input: { name: string; tag: string }) => Promise<void>
+  pullImage: (gateway: ElysianGateway, input: { name: string; tag: string; registry?: string }) => Promise<void>
   openDetail: (containerId: string) => void
   closeDetail: () => void
   openTerminal: (containerId: string) => void
@@ -211,7 +211,7 @@ export const useContainersStore = create<{
 
   async pullImage(gateway, input) {
     if (get().pullingImage) return
-    set({ pullingImage: { name: input.name, tag: input.tag } })
+    set({ pullingImage: { name: input.name, tag: input.tag, registry: input.registry } })
     try {
       // 模拟传输耗时后再落数据集；测试用假计时器推进这一段。
       await new Promise((resolve) => setTimeout(resolve, PULL_DELAY_MS))

@@ -5,6 +5,7 @@ import type { Container, ContainerImage } from '@elysian/contracts'
 import { imageUsageCount } from '../../adapters/mock/containerViews'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { useContainersStore } from '../../stores/containersStore'
+import { registryHost } from './imageReference'
 
 const TH = 'px-4 py-3 text-sm font-medium'
 
@@ -109,12 +110,12 @@ export function ImageTable({
               <td colSpan={5} className="px-4 py-3">
                 <div className="flex items-center gap-2 text-sm text-fg-muted">
                   <Loader2 aria-hidden size={14} className="shrink-0 animate-spin text-accent" />
-                  <span className="shrink-0">
-                    <span className="font-medium text-fg">
-                      {pullingImage.name}:{pullingImage.tag}
-                    </span>{' '}
-                    拉取中…
+                  <span className="shrink-0 font-mono text-fg">
+                    {/* 完整拉取路径：源主机名 + 引用，与弹窗预览同一形状。 */}
+                    {pullingImage.registry ? `${registryHost(pullingImage.registry)}/` : ''}
+                    {pullingImage.name}:{pullingImage.tag}
                   </span>
+                  <span className="shrink-0 text-xs">拉取中…</span>
                   {/* 不确定进度条：滑块来回扫，motion-reduce 下静止。 */}
                   <span
                     aria-hidden="true"

@@ -87,8 +87,8 @@ export interface ContainerAdapter {
   create(input: ContainerCreateInput): Promise<Container>
   /** 删除镜像（mock）：仅允许删除未被引用的镜像，改写内存数据集。 */
   removeImage(imageId: string): Promise<void>
-  /** 拉取镜像（mock）：确定性生成摘要与体积后追加内存数据集，同名同标签视为已存在。 */
-  pullImage(input: { name: string; tag: string }): Promise<ContainerImage>
+  /** 拉取镜像（mock）：确定性生成摘要与体积后追加内存数据集，同名同标签视为已存在；registry 仅记录拉取源，不产生真实数据流。 */
+  pullImage(input: { name: string; tag: string; registry?: string }): Promise<ContainerImage>
 }
 
 /** 页面级访问区域。权限只做到这一粒度，本阶段不实现更细的权限模型。 */

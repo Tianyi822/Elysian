@@ -228,12 +228,24 @@ describe('拉取镜像', () => {
     return { user, table: await screen.findByRole('table', { name: '镜像列表' }) }
   }
 
-  it('镜像视图有拉取入口，打开弹窗见演示徽章与引用输入', async () => {
+  it('镜像视图有拉取入口，打开弹窗见演示徽章、拉取源与引用输入', async () => {
     const { user } = await openImagesView()
     await user.click(screen.getByRole('button', { name: /拉取镜像/ }))
     const dialog = await screen.findByRole('dialog', { name: '拉取镜像' })
     expect(dialog.textContent).toContain('演示 · 待接入真实执行')
     expect(within(dialog).getByLabelText('镜像引用')).toBeInTheDocument()
+    // 拉取源不配置时默认官方地址。
+    expect(within(dialog).getByLabelText('拉取源')).toHaveValue('https://registry-1.docker.io')
+  })
+
+  it('选择自定义源后可输入地址，有效引用实时预览完整拉取路径', async () => {
+    const { user } = await openImagesView()
+    await user.click(screen.getByRole('button', { name: /拉取镜像/ }))
+    const dialog = await screen.findByRole('dialog', { name: '拉取镜像' })
+    await user.selectOptions(within(dialog).getByLabelText('拉取源'), 'custom')
+    await user.type(within(dialog).getByLabelText('自定义镜像源地址'), 'docker.1ms.run')
+    await user.type(within(dialog).getByLabelText('镜像引用'), 'redis:9')
+    expect(within(dialog).getByText('docker.1ms.run/redis:9')).toBeInTheDocument()
   })
 
   it('空引用禁用提交；已存在引用行内报错', async () => {
@@ -262,6 +274,7 @@ describe('拉取镜像', () => {
     await user.click(within(dialog).getByRole('button', { name: '拉取' }))
 
     expect(screen.queryByRole('dialog', { name: '拉取镜像' })).not.toBeInTheDocument()
+    expect(table.textContent).toContain('registry-1.docker.io/redis:8-alpine')
     expect(table.textContent).toContain('拉取中')
 
     // 真实等待 1.5s 模拟传输完成；时序由 store 的 PULL_DELAY_MS 决定。
