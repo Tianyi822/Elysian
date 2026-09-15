@@ -26,7 +26,7 @@ import type {
   ToolCall,
   Turn,
 } from '@elysian/contracts'
-import { CONTAINERS, CONTAINER_IMAGES } from './containersData'
+import { CONTAINERS, CONTAINER_IMAGES } from './containersData.ts'
 import {
   addMinutes,
   createRandom,
@@ -36,7 +36,7 @@ import {
   pick,
   pickWeighted,
   shuffle,
-} from './seed'
+} from './seed.ts'
 
 /**
  * 一份确定性的演示数据集。所有时间都相对下面这个基准时刻推算，

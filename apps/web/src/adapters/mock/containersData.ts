@@ -1,5 +1,5 @@
 import type { Container, ContainerImage } from '@elysian/contracts'
-import { DATASET_BASE_TIME } from './seed'
+import { DATASET_BASE_TIME } from './seed.ts'
 
 /** 相对基准时间回推 hours 小时的 ISO 时间。 */
 const before = (hours: number): string =>

@@ -1,4 +1,4 @@
-import { DATASET_BASE_TIME, DATASET_SEED } from './dataset'
+import { DATASET_BASE_TIME, DATASET_SEED } from './dataset.ts'
 import { createRandom, intBetween } from './seed.ts'
 
 /**

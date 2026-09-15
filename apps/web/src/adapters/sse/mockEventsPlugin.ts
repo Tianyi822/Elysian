@@ -1,15 +1,15 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { EventName } from '@elysian/contracts'
 import type { Plugin } from 'vite'
-import { createMockDataset } from '../mock/dataset'
+import { createMockDataset } from '../mock/dataset.ts'
 import {
   INITIAL_DISKS,
   INITIAL_LOAD,
   nextDisksWalk,
   nextLoadWalk,
-} from '../mock/resourceMetrics'
-import type { DiskUsage, SystemLoad } from '../mock/resourceMetrics'
-import { SSE_HEARTBEAT, formatSseFrame } from './parse'
+} from '../mock/resourceMetrics.ts'
+import type { DiskUsage, SystemLoad } from '../mock/resourceMetrics.ts'
+import { SSE_HEARTBEAT, formatSseFrame } from './parse.ts'
 
 /**
  * dev 与 preview 共用的 mock 事件流端点：GET /api/events。
