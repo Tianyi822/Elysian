@@ -76,10 +76,7 @@ export function DatabasePage() {
   return (
     <>
       <section aria-label="数据库实例" className="mb-6">
-        <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-          <h2 className="text-base font-semibold">{engine} 实例</h2>
-          <span className="text-xs tabular-nums text-fg-muted">{filtered.length} 个实例</span>
-        </div>
+        <h2 className="mb-4 text-base font-semibold">{engine} 实例</h2>
 
         {filtered.length === 0 ? (
           <EmptyState

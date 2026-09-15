@@ -131,7 +131,7 @@ describe('演示语句引擎的归一化与边界', () => {
     }
   })
 
-  it('目录覆盖全部四个实例，且引擎与实例一致', () => {
+  it('目录覆盖全部实例，且引擎与实例一致', () => {
     for (const database of DATABASE_INSTANCES) {
       const catalog = DATABASE_CATALOG[database.id]
       expect(catalog, database.id).toBeDefined()

@@ -65,9 +65,8 @@ describe('数据库页面', () => {
 
     // 地址行已删：卡片不再出现域名、IP 或端口字样。
     expect(card).not.toHaveTextContent(/\.demo|:\d{4}/)
-    // 副标题说明段已删，「N 个实例」计数保留。
-    expect(screen.queryByText(/数据来自本地演示集/)).not.toBeInTheDocument()
-    expect(screen.getByText('1 个实例')).toBeInTheDocument()
+    // 副标题说明段与「N 个实例」计数都已删，标题下直接是卡片。
+    expect(screen.queryByText(/个实例/)).not.toBeInTheDocument()
   })
 
   it('卡片不出现凭证明文，演示声明只在复制按钮的 tooltip 上', async () => {
