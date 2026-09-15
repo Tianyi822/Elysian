@@ -45,10 +45,10 @@ function NotificationItem({ notification }: { notification: AppNotification }) {
           style.border,
         ].join(' ')}
       >
-        {/* 字号与图标同为 15px；行盒 20px、半行距 2.5px，首行文字与图标精确对齐，
+        {/* 文字 14px、行盒 20px，图标 15px 配 3px 偏移与首行文字居中对齐，
             消息换行撑高卡片时图标留在首行不漂移。 */}
-        <Icon aria-hidden size={15} className={['mt-[2.5px] shrink-0', style.iconColor].join(' ')} />
-        <span className="min-w-0 flex-1 text-[15px] leading-5 text-fg">{notification.message}</span>
+        <Icon aria-hidden size={15} className={['mt-[3px] shrink-0', style.iconColor].join(' ')} />
+        <span className="min-w-0 flex-1 text-[14px] leading-5 text-fg">{notification.message}</span>
         {/* 关闭按钮钉死在卡片右上角，脱离 flex 流：内容把卡片撑高也不移动。 */}
         <span className="absolute right-1.5 top-1.5">
           <IconButton variant="ghost" label="关闭通知" onPress={() => dismiss(notification.id)}>

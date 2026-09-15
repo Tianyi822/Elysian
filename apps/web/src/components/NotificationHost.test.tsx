@@ -84,12 +84,12 @@ describe('通知宿主', () => {
     expect(close.className).not.toMatch(/(?<!hover:)bg-surface-raised/)
     expect(close).toHaveClass('hover:bg-surface-raised')
 
-    // 字号与图标同为 15px；行盒 20px、半行距 2.5px，首行文字与图标精确对齐。
+    // 文字 14px、行盒 20px，图标 15px 配 3px 偏移与首行居中对齐。
     const icon = card.querySelector('svg')
-    expect(icon?.classList.contains('mt-[2.5px]')).toBe(true)
+    expect(icon?.classList.contains('mt-[3px]')).toBe(true)
     expect(icon?.classList.contains('shrink-0')).toBe(true)
     const text = card.querySelector('span')
-    expect(text).toHaveClass('text-[15px]')
+    expect(text).toHaveClass('text-[14px]')
     expect(text).toHaveClass('leading-5')
   })
 
