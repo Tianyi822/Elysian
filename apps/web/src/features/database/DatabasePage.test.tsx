@@ -70,7 +70,7 @@ describe('数据库页面', () => {
     expect(screen.getByText('1 个实例')).toBeInTheDocument()
   })
 
-  it('卡片不出现凭证明文，动作行标注演示凭证', async () => {
+  it('卡片不出现凭证明文，演示声明只在复制按钮的 tooltip 上', async () => {
     renderApp('/databases', { gateway: pageGateway({ list: async () => [MARIADB] }) })
 
     const card = await screen.findByRole('article', { name: 'MariaDB 数据库 mariadb-test' })
@@ -78,7 +78,13 @@ describe('数据库页面', () => {
     expect(card).not.toHaveTextContent(MARIADB.credentials.username)
     expect(card).toHaveTextContent('复制用户名')
     expect(card).toHaveTextContent('复制密码')
-    expect(card).toHaveTextContent('演示凭证 · 不对应任何真实数据库')
+    // 卡片上不放常驻演示文案：声明收敛进 tooltip 与会话横幅。
+    expect(card).not.toHaveTextContent('演示凭证')
+    expect(card).not.toHaveTextContent('演示数值')
+    expect(within(card).getByRole('button', { name: '复制用户名' })).toHaveAttribute(
+      'title',
+      expect.stringContaining('不对应任何真实数据库'),
+    )
   })
 
   it('两个复制按钮把演示凭证的值写进剪贴板', async () => {

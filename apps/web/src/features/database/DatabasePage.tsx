@@ -11,7 +11,6 @@ import {
   MariaDBLogo,
   MemoryStick,
   MySQLLogo,
-  TriangleAlert,
   UserRound,
 } from '../../components/icons'
 import { CopyButton } from '../../components/CopyButton'
@@ -215,14 +214,9 @@ function DatabaseCard({
           <Cable aria-hidden size={13} />
           连接
         </button>
-        <span className="text-xs text-fg-subtle">演示凭证 · 不对应任何真实数据库</span>
       </div>
 
-      <div className="mt-auto flex items-center justify-between border-t border-line pt-3 text-xs text-fg-subtle">
-        <span className="inline-flex items-center gap-1.5">
-          {database.status === 'warning' ? <TriangleAlert aria-hidden size={13} /> : <Database aria-hidden size={13} />}
-          演示数值 · 待接入真实采集
-        </span>
+      <div className="mt-auto flex items-center justify-end border-t border-line pt-3 text-xs text-fg-subtle">
         <time dateTime={database.updatedAt}>更新于 {formatDateTime(database.updatedAt)}</time>
       </div>
     </article>
