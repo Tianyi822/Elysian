@@ -1,4 +1,4 @@
-import type { Container, ContainerAction, ContainerImage, ContainerSample, ContainerStatus, Unsubscribe } from '@elysian/contracts'
+import type { Container, ContainerAction, ContainerCreateInput, ContainerImage, ContainerSample, ContainerStatus, Unsubscribe } from '@elysian/contracts'
 import { create } from 'zustand'
 import type { ElysianGateway } from '../contracts/adapters'
 import { getLastContainerSample, onStreamEvent } from './eventStreamStore'
@@ -41,6 +41,15 @@ function attachLiveEvents(): void {
       applySamples(event.payload.samples)
       return
     }
+    if (event.name === 'container/created') {
+      const container = event.payload.container
+      useContainersStore.setState((state) => ({
+        containers: state.containers.some((c) => c.id === container.id)
+          ? state.containers
+          : [...state.containers, container],
+      }))
+      return
+    }
     if (event.name === 'container/updated') {
       const { containerId, status } = event.payload
       useContainersStore.setState((state) => ({
@@ -81,10 +90,15 @@ export const useContainersStore = create<{
   detailContainerId?: string
   terminal?: TerminalSession
   busyActions: readonly string[]
+  createOpen: boolean
+  creating: boolean
   load: (gateway: ElysianGateway) => Promise<void>
   setView: (view: 'grid' | 'images') => void
   setStatusFilter: (filter: ContainerStatus | 'all') => void
   setSearch: (value: string) => void
+  openCreate: () => void
+  closeCreate: () => void
+  createContainer: (gateway: ElysianGateway, input: ContainerCreateInput) => Promise<void>
   openDetail: (containerId: string) => void
   closeDetail: () => void
   openTerminal: (containerId: string) => void
@@ -102,6 +116,7 @@ export const useContainersStore = create<{
   statusFilter: 'all',
   search: '',
   busyActions: [],
+  createOpen: false, creating: false,
 
   async load(gateway) {
     attachLiveEvents()
@@ -130,6 +145,35 @@ export const useContainersStore = create<{
   setSearch(search) {
     set({ search })
   },
+  openCreate() {
+    set({ createOpen: true })
+  },
+  closeCreate() {
+    set({ createOpen: false })
+  },
+
+  async createContainer(gateway, input) {
+    set({ creating: true })
+    try {
+      const created = await gateway.containers.create(input)
+      useNotificationStore
+        .getState()
+        .notify({ tone: 'success', message: `容器 ${created.name} 已创建（mock，待接入真实执行）` })
+      set((state) => ({
+        // 事件回灌通常已追加过；按 id 去重，返回值只做兜底。
+        containers: state.containers.some((c) => c.id === created.id)
+          ? state.containers
+          : [...state.containers, created],
+        createOpen: false,
+      }))
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : '未知错误'
+      useNotificationStore.getState().notify({ tone: 'danger', message: `创建容器失败：${detail}` })
+    } finally {
+      set({ creating: false })
+    }
+  },
+
   openDetail(containerId) {
     set({ detailContainerId: containerId })
   },

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { ElysianEvent } from '@elysian/contracts'
+import type { Container } from '@elysian/contracts'
 import type { ElysianGateway, EventsAdapter } from '../contracts/adapters'
 import { useNotificationStore } from './notificationStore'
 import { useEventStreamStore } from './eventStreamStore'
@@ -25,7 +26,7 @@ beforeEach(() => {
   useContainersStore.setState({
     status: 'idle', errorMessage: undefined, containers: [], images: [], samples: {},
     view: 'grid', statusFilter: 'all', search: '', detailContainerId: undefined,
-    terminal: undefined, busyActions: [],
+    terminal: undefined, busyActions: [], createOpen: false, creating: false,
   })
   useNotificationStore.setState({ notifications: [] })
   const adapter: EventsAdapter = {
@@ -46,7 +47,8 @@ afterEach(() => {
 
 function event(name: 'container/sample', payload: Extract<ElysianEvent, { name: 'container/sample' }>['payload']): ElysianEvent
 function event(name: 'container/updated', payload: Extract<ElysianEvent, { name: 'container/updated' }>['payload']): ElysianEvent
-function event(name: 'container/sample' | 'container/updated', payload: unknown): ElysianEvent {
+function event(name: 'container/created', payload: Extract<ElysianEvent, { name: 'container/created' }>['payload']): ElysianEvent
+function event(name: 'container/sample' | 'container/updated' | 'container/created', payload: unknown): ElysianEvent {
   return { id: `t-${Math.random()}`, name, at: '2026-09-12T08:00:00.000Z', payload } as ElysianEvent
 }
 
@@ -135,5 +137,61 @@ describe('containersStore', () => {
     const state = useContainersStore.getState()
     expect(state.terminal).toBeUndefined()
     expect(state.detailContainerId).toBeUndefined()
+  })
+})
+
+describe('创建容器', () => {
+  const NEW_CONTAINER: Container = {
+    id: 'ctr-redis-echo', name: 'redis-echo', status: 'running', imageId: 'img-redis',
+    ports: [], createdAt: '2026-09-12T08:00:00.000Z', startedAt: '2026-09-12T08:00:00.000Z',
+    command: '', env: [], volumes: [], restartPolicy: 'no',
+  }
+
+  it('openCreate 与 closeCreate 控制弹窗开关', () => {
+    useContainersStore.getState().openCreate()
+    expect(useContainersStore.getState().createOpen).toBe(true)
+    useContainersStore.getState().closeCreate()
+    expect(useContainersStore.getState().createOpen).toBe(false)
+  })
+
+  it('createContainer 成功：列表追加、弹窗关闭、成功通知带 mock 标注', async () => {
+    await useContainersStore.getState().load(gatewayWith())
+    useContainersStore.getState().openCreate()
+    await useContainersStore.getState().createContainer(
+      gatewayWith({ create: async () => NEW_CONTAINER }),
+      { imageId: 'img-redis', ports: [], env: [], volumes: [], restartPolicy: 'no' },
+    )
+    const state = useContainersStore.getState()
+    expect(state.containers).toHaveLength(9)
+    expect(state.containers.find((c) => c.id === 'ctr-redis-echo')).toBeDefined()
+    expect(state.createOpen).toBe(false)
+    expect(state.creating).toBe(false)
+    expect(useNotificationStore.getState().notifications[0]?.message).toBe(
+      '容器 redis-echo 已创建（mock，待接入真实执行）',
+    )
+  })
+
+  it('createContainer 失败：弹窗保留、危险通知、creating 复位', async () => {
+    await useContainersStore.getState().load(gatewayWith())
+    useContainersStore.getState().openCreate()
+    await useContainersStore.getState().createContainer(
+      gatewayWith({ create: async () => { throw new Error('镜像不存在，无法创建容器') } }),
+      { imageId: 'img-missing', ports: [], env: [], volumes: [], restartPolicy: 'no' },
+    )
+    const state = useContainersStore.getState()
+    expect(state.createOpen).toBe(true)
+    expect(state.creating).toBe(false)
+    expect(useNotificationStore.getState().notifications[0]).toMatchObject({
+      tone: 'danger',
+      message: '创建容器失败：镜像不存在，无法创建容器',
+    })
+  })
+
+  it('container/created 事件把新容器追加进列表且按 id 去重', async () => {
+    await useContainersStore.getState().load(gatewayWith())
+    emitToStore?.(event('container/created', { container: NEW_CONTAINER }))
+    expect(useContainersStore.getState().containers).toHaveLength(9)
+    emitToStore?.(event('container/created', { container: NEW_CONTAINER }))
+    expect(useContainersStore.getState().containers).toHaveLength(9)
   })
 })
