@@ -3,7 +3,8 @@
 /*
  * 语义令牌层。组件只使用语义令牌对应的工具类（bg-surface、text-fg-muted、
  * border-sev1-line 等），不写 dark: 变体，两套主题由本文件一处控制。
- * 深色是默认值，浅色由 html[data-theme="light"] 覆盖。
+ * 首屏主题由 index.html 的启动脚本按系统偏好写入 html[data-theme]；
+ * 没有该属性时取深色值，浅色主题由 [data-theme="light"] 覆盖。
  */
 @theme inline {
   --color-bg: var(--t-bg);
