@@ -124,6 +124,30 @@ describe('容器卡片', () => {
     expect(within(stopped).getByRole('button', { name: '启动' })).toBeEnabled()
   })
 
+  it('停止与重启是危险操作：取消不执行，确认后才执行', async () => {
+    const user = userEvent.setup()
+    renderApp('/containers', { gateway: pageGateway() })
+    const card = await screen.findByRole('listitem', { name: 'nginx-proxy' })
+
+    await user.click(within(card).getByRole('button', { name: '停止' }))
+    const stopConfirm = await screen.findByRole('dialog', { name: '确认停止容器「nginx-proxy」？' })
+    expect(stopConfirm.textContent).toContain('服务会中断')
+    expect(stopConfirm.textContent).toContain('不会影响真实环境')
+    await user.click(within(stopConfirm).getByRole('button', { name: '取消' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(within(card).getByText('运行中')).toBeInTheDocument()
+
+    await user.click(within(card).getByRole('button', { name: '重启' }))
+    const restartConfirm = await screen.findByRole('dialog', { name: '确认重启容器「nginx-proxy」？' })
+    await user.click(within(restartConfirm).getByRole('button', { name: '取消' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    await user.click(within(card).getByRole('button', { name: '停止' }))
+    await user.click(await screen.findByRole('button', { name: '确认停止' }))
+    const notifications = await screen.findByLabelText('通知')
+    expect(within(notifications).getByRole('status')).toHaveTextContent('容器 nginx-proxy 已停止')
+  })
+
   it('重启中的卡片操作全部禁用；卡片显示运行时长', async () => {
     renderApp('/containers', { gateway: pageGateway() })
     const restarting = await screen.findByRole('listitem', { name: 'metrics-agent' })
@@ -503,6 +527,7 @@ describe('容器操作联动', () => {
     const card = await screen.findByRole('listitem', { name: 'nginx-proxy' })
 
     await user.click(within(card).getByRole('button', { name: '停止' }))
+    await user.click(await screen.findByRole('button', { name: '确认停止' }))
 
     const notifications = await screen.findByLabelText('通知')
     expect(within(notifications).getByRole('status')).toHaveTextContent('容器 nginx-proxy 已停止')
@@ -520,6 +545,7 @@ describe('容器操作联动', () => {
     const card = await screen.findByRole('listitem', { name: 'redis-cache' })
 
     await user.click(within(card).getByRole('button', { name: '重启' }))
+    await user.click(await screen.findByRole('button', { name: '确认重启' }))
 
     const notifications = await screen.findByLabelText('通知')
     expect(within(notifications).getByRole('status')).toHaveTextContent(

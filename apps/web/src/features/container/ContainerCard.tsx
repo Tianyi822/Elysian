@@ -1,4 +1,6 @@
+import * as Dialog from '@radix-ui/react-dialog'
 import { Info, Play, RotateCw, Square, Terminal as TerminalIcon } from '../../components/icons'
+import { useState } from 'react'
 import type { Container } from '@elysian/contracts'
 import { CONTAINER_STATUS_LABELS } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
@@ -16,6 +18,24 @@ const STATUS_TONE: Record<Container['status'], StatusTone> = {
 const ACTION_BUTTON =
   'inline-flex items-center gap-1 rounded-lg border border-line px-2 py-1 text-xs text-fg-muted transition-colors hover:text-fg disabled:cursor-not-allowed disabled:opacity-50'
 
+/** 危险操作的确认文案与按钮语义：停止是破坏性的用危险色，重启是扰动性的用警告色。 */
+const CONFIRM_COPY = {
+  stop: {
+    title: (name: string) => `确认停止容器「${name}」？`,
+    description: '停止后容器内的服务会中断，可再次启动恢复。操作作用于演示数据，不会影响真实环境。',
+    confirmLabel: '确认停止',
+    confirmClass:
+      'border-danger/50 bg-danger/10 text-danger hover:bg-danger/20',
+  },
+  restart: {
+    title: (name: string) => `确认重启容器「${name}」？`,
+    description: '重启期间服务会短暂不可用。操作作用于演示数据，不会影响真实环境。',
+    confirmLabel: '确认重启',
+    confirmClass:
+      'border-warning/50 bg-warning/10 text-warning hover:bg-warning/20',
+  },
+} as const
+
 export function ContainerCard({ container }: { container: Container }) {
   const gateway = useGateway()
   const sample = useContainersStore((s) => s.samples[container.id])
@@ -24,6 +44,7 @@ export function ContainerCard({ container }: { container: Container }) {
   const openDetail = useContainersStore((s) => s.openDetail)
   const openTerminal = useContainersStore((s) => s.openTerminal)
   const runAction = useContainersStore((s) => s.runAction)
+  const [confirmAction, setConfirmAction] = useState<'stop' | 'restart' | null>(null)
 
   const actionsDisabled = busy || container.status === 'restarting'
   const cpu = sample ? `${sample.cpuPercent}%` : '—'
@@ -134,7 +155,7 @@ export function ContainerCard({ container }: { container: Container }) {
             type="button"
             className={ACTION_BUTTON}
             disabled={actionsDisabled}
-            onClick={() => void runAction(gateway, container.id, 'stop')}
+            onClick={() => setConfirmAction('stop')}
           >
             <Square aria-hidden size={13} />
             停止
@@ -144,12 +165,54 @@ export function ContainerCard({ container }: { container: Container }) {
           type="button"
           className={ACTION_BUTTON}
           disabled={actionsDisabled || container.status === 'stopped'}
-          onClick={() => void runAction(gateway, container.id, 'restart')}
+          onClick={() => setConfirmAction('restart')}
         >
           <RotateCw aria-hidden size={13} />
           重启
         </button>
       </div>
+
+      {confirmAction ? (
+        <Dialog.Root
+          open
+          onOpenChange={(open) => {
+            if (!open) setConfirmAction(null)
+          }}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/60" />
+            <Dialog.Content
+              aria-describedby={undefined}
+              className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-surface-raised p-4 shadow-xl"
+            >
+              <Dialog.Title className="text-sm font-semibold">
+                {CONFIRM_COPY[confirmAction].title(container.name)}
+              </Dialog.Title>
+              <p className="mt-1.5 text-xs text-fg-muted">{CONFIRM_COPY[confirmAction].description}</p>
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmAction(null)}
+                  className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const action = confirmAction
+                    setConfirmAction(null)
+                    void runAction(gateway, container.id, action)
+                  }}
+                  className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${CONFIRM_COPY[confirmAction].confirmClass}`}
+                >
+                  {CONFIRM_COPY[confirmAction].confirmLabel}
+                </button>
+              </div>
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+      ) : null}
     </article>
   )
 }
