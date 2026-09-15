@@ -5,6 +5,7 @@ import {
   MockApprovalAdapter,
   MockAuditAdapter,
   MockContainerAdapter,
+  MockDatabaseAdapter,
   MockIncidentAdapter,
   MockRunAdapter,
   MockSessionAdapter,
@@ -48,6 +49,7 @@ export function createMockGateway(
       scheduleRestart: (containerId) => containerEvents.scheduleRestart(containerId),
       onCreate: (containerId) => containerEvents.emitCreated(containerId),
     }),
+    databases: new MockDatabaseAdapter(),
     events: wrapLive(
       containerEvents.wrap(
         options.eventStream === 'memory'

@@ -7,6 +7,7 @@ import type {
   ContainerAction,
   ContainerCreateInput,
   ContainerImage,
+  DatabaseInstance,
   EventStreamHandlers,
   Incident,
   IncidentListRow,
@@ -14,6 +15,7 @@ import type {
   Skill,
   Unsubscribe,
 } from '@elysian/contracts'
+
 /*
  * Web 侧适配接口。界面只依赖这些接口，不关心数据来自 mock、内存降级还是真实网关。
  * 这是整个前端唯一的测试接缝：页面测试在这里注入替代实现。
@@ -91,10 +93,16 @@ export interface ContainerAdapter {
   pullImage(input: { name: string; tag: string; registry?: string }): Promise<ContainerImage>
 }
 
+/** 数据库区适配接口。本期为 mock 实现；未来换真实 adapter，页面不改。 */
+export interface DatabaseAdapter {
+  list(): Promise<readonly DatabaseInstance[]>
+}
+
 /** 页面级访问区域。权限只做到这一粒度，本阶段不实现更细的权限模型。 */
 export type PageArea =
   | 'dashboard'
   | 'containers'
+  | 'databases'
   | 'incidents'
   | 'runs'
   | 'skills'
@@ -120,6 +128,7 @@ export interface ElysianGateway {
   audit: AuditAdapter
   events: EventsAdapter
   containers: ContainerAdapter
+  databases: DatabaseAdapter
   /** 把演示数据重置回种子状态。 */
   reset(): Promise<void>
 }

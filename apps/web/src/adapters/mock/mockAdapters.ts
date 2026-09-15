@@ -7,6 +7,7 @@ import type {
   ContainerAction,
   ContainerCreateInput,
   ContainerImage,
+  DatabaseInstance,
   ElysianEvent,
   EventStreamHandlers,
   Incident,
@@ -20,6 +21,7 @@ import type {
   ApprovalAdapter,
   AuditAdapter,
   ContainerAdapter,
+  DatabaseAdapter,
   EventsAdapter,
   IncidentAdapter,
   IncidentListQuery,
@@ -28,6 +30,7 @@ import type {
   SessionAdapter,
   SkillAdapter,
 } from '../../contracts/adapters'
+import { DATABASE_INSTANCES } from './databaseData'
 import { execContainerCommand } from './containerTerminal'
 import { mockImageArtifact } from './containersData'
 import { autoContainerName } from './containersData'
@@ -293,6 +296,17 @@ export class MockContainerAdapter implements ContainerAdapter {
     }
     dataset.images.push(image)
     return { ...image }
+  }
+}
+
+export class MockDatabaseAdapter implements DatabaseAdapter {
+  async list(): Promise<readonly DatabaseInstance[]> {
+    return DATABASE_INSTANCES.map((database) => ({
+      ...database,
+      storage: { ...database.storage },
+      memory: { ...database.memory },
+      connections: { ...database.connections },
+    }))
   }
 }
 
