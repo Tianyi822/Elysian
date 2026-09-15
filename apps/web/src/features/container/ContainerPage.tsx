@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { Plus, Search } from '../../components/icons'
+import { Search } from '../../components/icons'
 import type { ContainerStatus } from '@elysian/contracts'
 import { CONTAINER_STATUS_LABELS } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
@@ -97,9 +97,8 @@ export function ContainerPage() {
           <button
             type="button"
             onClick={() => openCreate()}
-            className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-accent/50 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/20"
+            className="ml-auto inline-flex items-center rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle"
           >
-            <Plus aria-hidden size={14} />
             创建容器
           </button>
         </div>

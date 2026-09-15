@@ -418,6 +418,16 @@ describe('创建容器', () => {
     expect(within(dialog).getByLabelText('容器端口')).toBeInTheDocument()
   })
 
+  it('点弹窗外部不关闭，已填配置保留', async () => {
+    const { user, dialog } = await openCreateForm()
+    await user.type(within(dialog).getByLabelText('容器名称'), 'keep-me')
+
+    // 同终端用例：外部子树被设为 aria-hidden（查询带 hidden），body 锁了 pointer-events，改用 fireEvent。
+    fireEvent.pointerDown(screen.getByRole('list', { name: '容器列表', hidden: true }))
+    expect(screen.getByRole('dialog', { name: '创建容器' })).toBeInTheDocument()
+    expect(within(dialog).getByLabelText('容器名称')).toHaveValue('keep-me')
+  })
+
   it('未选镜像提交显示行内错误，不产生新容器', async () => {
     const { user, dialog } = await openCreateForm()
     await user.click(within(dialog).getByRole('button', { name: '创建并运行' }))

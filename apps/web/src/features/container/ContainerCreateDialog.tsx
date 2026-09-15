@@ -69,6 +69,9 @@ export function ContainerCreateDialog() {
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60" />
         <Dialog.Content
           aria-describedby={undefined}
+          // 点外部一律不关：填好的配置不该因为一次误点丢掉。Esc 与「关闭」「取消」仍可退出。
+          onPointerDownOutside={(event) => event.preventDefault()}
+          onInteractOutside={(event) => event.preventDefault()}
           className="fixed left-1/2 top-1/2 z-[55] flex max-h-[min(40rem,calc(100vh-3rem))] w-[min(42rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line bg-bg shadow-2xl"
         >
           <Dialog.Title className="sr-only">创建容器</Dialog.Title>
@@ -150,198 +153,227 @@ export function ContainerCreateDialog() {
 
             {optionalOpen ? (
               <div id="create-optional" className="mt-3 space-y-4">
-                <section aria-label="端口映射">
-                  {draft.ports.map((row, index) => (
-                    <div key={index} className="mb-2 flex flex-wrap items-end gap-2">
-                      <div className="w-28">
-                        <label htmlFor={`create-port-container-${index}`} className="mb-1 block text-xs text-fg-muted">
-                          容器端口
-                        </label>
-                        <input
-                          id={`create-port-container-${index}`}
-                          inputMode="numeric"
-                          value={row.containerPort}
-                          onChange={(event) => updatePorts(index, { containerPort: event.target.value })}
-                          className={`${INPUT_CLASS} tabular-nums`}
-                        />
-                      </div>
-                      <div className="w-28">
-                        <label htmlFor={`create-port-host-${index}`} className="mb-1 block text-xs text-fg-muted">
-                          宿主端口
-                        </label>
-                        <input
-                          id={`create-port-host-${index}`}
-                          inputMode="numeric"
-                          value={row.hostPort}
-                          onChange={(event) => updatePorts(index, { hostPort: event.target.value })}
-                          className={`${INPUT_CLASS} tabular-nums`}
-                        />
-                      </div>
-                      <div className="w-24">
-                        <label htmlFor={`create-port-protocol-${index}`} className="mb-1 block text-xs text-fg-muted">
-                          协议
-                        </label>
-                        <select
-                          id={`create-port-protocol-${index}`}
-                          value={row.protocol}
-                          onChange={(event) =>
-                            updatePorts(index, { protocol: event.target.value as 'tcp' | 'udp' })
-                          }
-                          className={INPUT_CLASS}
-                        >
-                          <option value="tcp">tcp</option>
-                          <option value="udp">udp</option>
-                        </select>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => patch({ ports: draft.ports.filter((_, i) => i !== index) })}
-                        className={ROW_DELETE_BUTTON}
-                      >
-                        <Trash2 aria-hidden size={13} />
-                        删除
-                      </button>
-                      {showErrors && errors.ports[index] ? (
-                        <p className={`${FIELD_ERROR_CLASS} w-full`}>
-                          {[errors.ports[index]!.containerPort, errors.ports[index]!.hostPort]
-                            .filter(Boolean)
-                            .join('；')}
-                        </p>
-                      ) : null}
+                <section aria-label="端口映射" className="rounded-lg bg-surface p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-xs font-medium text-fg">端口映射</h3>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        patch({ ports: [...draft.ports, { containerPort: '', hostPort: '', protocol: 'tcp' }] })
+                      }
+                      className={ROW_ADD_BUTTON}
+                    >
+                      <Plus aria-hidden size={13} />
+                      添加端口映射
+                    </button>
+                  </div>
+                  {draft.ports.length ? (
+                    <div className="mt-2 space-y-2">
+                      {draft.ports.map((row, index) => (
+                        <div key={index} className="flex flex-wrap items-end gap-2">
+                          <div className="w-28">
+                            <label htmlFor={`create-port-container-${index}`} className="mb-1 block text-xs text-fg-muted">
+                              容器端口
+                            </label>
+                            <input
+                              id={`create-port-container-${index}`}
+                              inputMode="numeric"
+                              value={row.containerPort}
+                              onChange={(event) => updatePorts(index, { containerPort: event.target.value })}
+                              className={`${INPUT_CLASS} tabular-nums`}
+                            />
+                          </div>
+                          <div className="w-28">
+                            <label htmlFor={`create-port-host-${index}`} className="mb-1 block text-xs text-fg-muted">
+                              宿主端口
+                            </label>
+                            <input
+                              id={`create-port-host-${index}`}
+                              inputMode="numeric"
+                              value={row.hostPort}
+                              onChange={(event) => updatePorts(index, { hostPort: event.target.value })}
+                              className={`${INPUT_CLASS} tabular-nums`}
+                            />
+                          </div>
+                          <div className="w-24">
+                            <label htmlFor={`create-port-protocol-${index}`} className="mb-1 block text-xs text-fg-muted">
+                              协议
+                            </label>
+                            <select
+                              id={`create-port-protocol-${index}`}
+                              value={row.protocol}
+                              onChange={(event) =>
+                                updatePorts(index, { protocol: event.target.value as 'tcp' | 'udp' })
+                              }
+                              className={INPUT_CLASS}
+                            >
+                              <option value="tcp">tcp</option>
+                              <option value="udp">udp</option>
+                            </select>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => patch({ ports: draft.ports.filter((_, i) => i !== index) })}
+                            className={ROW_DELETE_BUTTON}
+                          >
+                            <Trash2 aria-hidden size={13} />
+                            删除
+                          </button>
+                          {showErrors && errors.ports[index] ? (
+                            <p className={`${FIELD_ERROR_CLASS} w-full`}>
+                              {[errors.ports[index]!.containerPort, errors.ports[index]!.hostPort]
+                                .filter(Boolean)
+                                .join('；')}
+                            </p>
+                          ) : null}
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() =>
-                      patch({ ports: [...draft.ports, { containerPort: '', hostPort: '', protocol: 'tcp' }] })
-                    }
-                    className={ROW_ADD_BUTTON}
-                  >
-                    <Plus aria-hidden size={13} />
-                    添加端口映射
-                  </button>
+                  ) : (
+                    <p className="mt-1.5 text-xs text-fg-subtle">
+                      不添加映射时，容器端口只在容器网络内可达。
+                    </p>
+                  )}
                 </section>
 
-                <section aria-label="环境变量">
-                  {draft.env.map((row, index) => (
-                    <div key={index} className="mb-2 flex flex-wrap items-end gap-2">
-                      <div className="w-40">
-                        <label htmlFor={`create-env-key-${index}`} className="mb-1 block text-xs text-fg-muted">
-                          变量名
-                        </label>
-                        <input
-                          id={`create-env-key-${index}`}
-                          value={row.key}
-                          onChange={(event) =>
-                            patch({ env: draft.env.map((r, i) => (i === index ? { ...r, key: event.target.value } : r)) })
-                          }
-                          autoComplete="off"
-                          className={INPUT_CLASS}
-                        />
-                      </div>
-                      <div className="flex-1 min-w-40">
-                        <label htmlFor={`create-env-value-${index}`} className="mb-1 block text-xs text-fg-muted">
-                          值
-                        </label>
-                        <input
-                          id={`create-env-value-${index}`}
-                          value={row.value}
-                          onChange={(event) =>
-                            patch({ env: draft.env.map((r, i) => (i === index ? { ...r, value: event.target.value } : r)) })
-                          }
-                          autoComplete="off"
-                          className={INPUT_CLASS}
-                        />
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => patch({ env: draft.env.filter((_, i) => i !== index) })}
-                        className={ROW_DELETE_BUTTON}
-                      >
-                        <Trash2 aria-hidden size={13} />
-                        删除
-                      </button>
-                      {showErrors && errors.env[index]?.key ? (
-                        <p className={`${FIELD_ERROR_CLASS} w-full`}>{errors.env[index]!.key}</p>
-                      ) : null}
+                <section aria-label="环境变量" className="rounded-lg bg-surface p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-xs font-medium text-fg">环境变量</h3>
+                    <button
+                      type="button"
+                      onClick={() => patch({ env: [...draft.env, { key: '', value: '' }] })}
+                      className={ROW_ADD_BUTTON}
+                    >
+                      <Plus aria-hidden size={13} />
+                      添加环境变量
+                    </button>
+                  </div>
+                  {draft.env.length ? (
+                    <div className="mt-2 space-y-2">
+                      {draft.env.map((row, index) => (
+                        <div key={index} className="flex flex-wrap items-end gap-2">
+                          <div className="w-40">
+                            <label htmlFor={`create-env-key-${index}`} className="mb-1 block text-xs text-fg-muted">
+                              变量名
+                            </label>
+                            <input
+                              id={`create-env-key-${index}`}
+                              value={row.key}
+                              onChange={(event) =>
+                                patch({ env: draft.env.map((r, i) => (i === index ? { ...r, key: event.target.value } : r)) })
+                              }
+                              autoComplete="off"
+                              className={INPUT_CLASS}
+                            />
+                          </div>
+                          <div className="flex-1 min-w-40">
+                            <label htmlFor={`create-env-value-${index}`} className="mb-1 block text-xs text-fg-muted">
+                              值
+                            </label>
+                            <input
+                              id={`create-env-value-${index}`}
+                              value={row.value}
+                              onChange={(event) =>
+                                patch({ env: draft.env.map((r, i) => (i === index ? { ...r, value: event.target.value } : r)) })
+                              }
+                              autoComplete="off"
+                              className={INPUT_CLASS}
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => patch({ env: draft.env.filter((_, i) => i !== index) })}
+                            className={ROW_DELETE_BUTTON}
+                          >
+                            <Trash2 aria-hidden size={13} />
+                            删除
+                          </button>
+                          {showErrors && errors.env[index]?.key ? (
+                            <p className={`${FIELD_ERROR_CLASS} w-full`}>{errors.env[index]!.key}</p>
+                          ) : null}
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => patch({ env: [...draft.env, { key: '', value: '' }] })}
-                    className={ROW_ADD_BUTTON}
-                  >
-                    <Plus aria-hidden size={13} />
-                    添加环境变量
-                  </button>
+                  ) : (
+                    <p className="mt-1.5 text-xs text-fg-subtle">不注入额外环境变量，沿用镜像自带取值。</p>
+                  )}
                 </section>
 
-                <section aria-label="卷挂载">
-                  {draft.volumes.map((row, index) => (
-                    <div key={index} className="mb-2 flex flex-wrap items-end gap-2">
-                      <div className="flex-1 min-w-48">
-                        <label htmlFor={`create-volume-host-${index}`} className="mb-1 block text-xs text-fg-muted">
-                          宿主机路径
-                        </label>
-                        <input
-                          id={`create-volume-host-${index}`}
-                          value={row.hostPath}
-                          onChange={(event) =>
-                            patch({
-                              volumes: draft.volumes.map((r, i) =>
-                                i === index ? { ...r, hostPath: event.target.value } : r,
-                              ),
-                            })
-                          }
-                          placeholder="/srv/elysian/data"
-                          autoComplete="off"
-                          className={INPUT_CLASS}
-                        />
-                      </div>
-                      <div className="flex-1 min-w-48">
-                        <label htmlFor={`create-volume-container-${index}`} className="mb-1 block text-xs text-fg-muted">
-                          容器路径
-                        </label>
-                        <input
-                          id={`create-volume-container-${index}`}
-                          value={row.containerPath}
-                          onChange={(event) =>
-                            patch({
-                              volumes: draft.volumes.map((r, i) =>
-                                i === index ? { ...r, containerPath: event.target.value } : r,
-                              ),
-                            })
-                          }
-                          placeholder="/data"
-                          autoComplete="off"
-                          className={INPUT_CLASS}
-                        />
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => patch({ volumes: draft.volumes.filter((_, i) => i !== index) })}
-                        className={ROW_DELETE_BUTTON}
-                      >
-                        <Trash2 aria-hidden size={13} />
-                        删除
-                      </button>
-                      {showErrors && errors.volumes[index] ? (
-                        <p className={`${FIELD_ERROR_CLASS} w-full`}>
-                          {[errors.volumes[index]!.hostPath, errors.volumes[index]!.containerPath]
-                            .filter(Boolean)
-                            .join('；')}
-                        </p>
-                      ) : null}
+                <section aria-label="卷挂载" className="rounded-lg bg-surface p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-xs font-medium text-fg">卷挂载</h3>
+                    <button
+                      type="button"
+                      onClick={() => patch({ volumes: [...draft.volumes, { hostPath: '', containerPath: '' }] })}
+                      className={ROW_ADD_BUTTON}
+                    >
+                      <Plus aria-hidden size={13} />
+                      添加卷挂载
+                    </button>
+                  </div>
+                  {draft.volumes.length ? (
+                    <div className="mt-2 space-y-2">
+                      {draft.volumes.map((row, index) => (
+                        <div key={index} className="flex flex-wrap items-end gap-2">
+                          <div className="flex-1 min-w-48">
+                            <label htmlFor={`create-volume-host-${index}`} className="mb-1 block text-xs text-fg-muted">
+                              宿主机路径
+                            </label>
+                            <input
+                              id={`create-volume-host-${index}`}
+                              value={row.hostPath}
+                              onChange={(event) =>
+                                patch({
+                                  volumes: draft.volumes.map((r, i) =>
+                                    i === index ? { ...r, hostPath: event.target.value } : r,
+                                  ),
+                                })
+                              }
+                              placeholder="/srv/elysian/data"
+                              autoComplete="off"
+                              className={INPUT_CLASS}
+                            />
+                          </div>
+                          <div className="flex-1 min-w-48">
+                            <label htmlFor={`create-volume-container-${index}`} className="mb-1 block text-xs text-fg-muted">
+                              容器路径
+                            </label>
+                            <input
+                              id={`create-volume-container-${index}`}
+                              value={row.containerPath}
+                              onChange={(event) =>
+                                patch({
+                                  volumes: draft.volumes.map((r, i) =>
+                                    i === index ? { ...r, containerPath: event.target.value } : r,
+                                  ),
+                                })
+                              }
+                              placeholder="/data"
+                              autoComplete="off"
+                              className={INPUT_CLASS}
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => patch({ volumes: draft.volumes.filter((_, i) => i !== index) })}
+                            className={ROW_DELETE_BUTTON}
+                          >
+                            <Trash2 aria-hidden size={13} />
+                            删除
+                          </button>
+                          {showErrors && errors.volumes[index] ? (
+                            <p className={`${FIELD_ERROR_CLASS} w-full`}>
+                              {[errors.volumes[index]!.hostPath, errors.volumes[index]!.containerPath]
+                                .filter(Boolean)
+                                .join('；')}
+                            </p>
+                          ) : null}
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => patch({ volumes: [...draft.volumes, { hostPath: '', containerPath: '' }] })}
-                    className={ROW_ADD_BUTTON}
-                  >
-                    <Plus aria-hidden size={13} />
-                    添加卷挂载
-                  </button>
+                  ) : (
+                    <p className="mt-1.5 text-xs text-fg-subtle">不挂载宿主机目录，数据随容器一起消失。</p>
+                  )}
                 </section>
 
                 <div className="grid gap-3 sm:grid-cols-2">
@@ -397,13 +429,9 @@ export function ContainerCreateDialog() {
                 type="button"
                 onClick={submit}
                 disabled={disabled}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-accent/50 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/20 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {creating ? (
-                  <Loader2 aria-hidden size={13} className="animate-spin" />
-                ) : (
-                  <Plus aria-hidden size={13} />
-                )}
+                {creating ? <Loader2 aria-hidden size={13} className="animate-spin" /> : null}
                 {creating ? '创建中…' : '创建并运行'}
               </button>
             </div>
