@@ -6,11 +6,14 @@ import {
   Container,
   Database,
   Gauge,
+  KeyRound,
   MariaDBLogo,
   MemoryStick,
   MySQLLogo,
   TriangleAlert,
+  UserRound,
 } from '../../components/icons'
+import { CopyButton } from '../../components/CopyButton'
 import { ErrorState, EmptyState, LoadingState } from '../../components/states/StateViews'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
@@ -29,7 +32,7 @@ const STATUS_TONE: Record<DatabaseStatus, StatusTone> = {
   stopped: 'danger',
 }
 
-/** 数据库区只呈现资源状态，不直接展示账号、密码等连接凭证。 */
+/** 数据库区呈现资源状态；演示凭证值不上屏，只提供一键复制动作。 */
 export function DatabasePage() {
   const gateway = useGateway()
   const navigate = useNavigate()
@@ -172,6 +175,22 @@ function DatabaseCard({
           warning={database.status === 'warning'}
           demo
         />
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3">
+        <CopyButton
+          label="复制用户名"
+          value={database.credentials.username}
+          tooltip="复制演示用户名 · 不对应任何真实数据库"
+          icon={<UserRound aria-hidden size={13} />}
+        />
+        <CopyButton
+          label="复制密码"
+          value={database.credentials.password}
+          tooltip="复制演示密码 · 不对应任何真实数据库"
+          icon={<KeyRound aria-hidden size={13} />}
+        />
+        <span className="ml-auto text-xs text-fg-subtle">演示凭证 · 不对应任何真实数据库</span>
       </div>
 
       <div className="mt-auto flex items-center justify-between border-t border-line pt-3 text-xs text-fg-subtle">
