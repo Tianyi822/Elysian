@@ -80,27 +80,19 @@ export function QuickActions({ collapsed = false }: { collapsed?: boolean }) {
   return (
     <section aria-label="快捷操作">
       <div className="flex flex-col gap-1">
+        {/* 主题变化本身就是可见反馈，不再发通知。 */}
         <ActionItem
           label={theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'}
           icon={theme === 'dark' ? Sun : Moon}
           collapsed={collapsed}
-          onClick={() => {
-            toggleTheme()
-            notify({
-              tone: 'success',
-              message: theme === 'dark' ? '已切换到浅色主题。' : '已切换到深色主题。',
-            })
-          }}
+          onClick={() => toggleTheme()}
           trailing={
             /* 存过手动偏好才出现行内图标：点它把主题决定权交回系统，不另占一条动作。 */
             !followsSystem ? (
               <IconButton
                 label="跟随系统主题"
                 variant="ghost"
-                onPress={() => {
-                  followSystemTheme()
-                  notify({ tone: 'success', message: '已改为跟随系统主题。' })
-                }}
+                onPress={() => followSystemTheme()}
               >
                 <Monitor aria-hidden size={15} />
               </IconButton>

@@ -51,7 +51,7 @@ describe('模板外壳', () => {
     expect(within(section).queryByRole('status')).not.toBeInTheDocument()
   })
 
-  it('侧边栏底部的主题快捷操作在深浅之间切换，反馈走页面右上角通知区', async () => {
+  it('主题快捷操作在深浅之间切换，主题变化本身即反馈，不再发通知', async () => {
     const user = userEvent.setup()
     renderApp('/')
 
@@ -60,8 +60,7 @@ describe('模板外壳', () => {
     expect(document.documentElement.dataset['theme']).toBe('light')
     expect(screen.getByRole('button', { name: /切换到深色主题/ })).toBeInTheDocument()
 
-    const notifications = await screen.findByLabelText('通知')
-    expect(within(notifications).getByRole('status')).toHaveTextContent('已切换到浅色主题。')
+    expect(screen.queryByLabelText('通知')).not.toBeInTheDocument()
   })
 
   it('存过主题偏好后出现「跟随系统主题」动作，点它清掉偏好并回到系统档', async () => {
