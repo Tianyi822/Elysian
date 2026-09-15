@@ -80,7 +80,7 @@ export function MemoryMonitorBadge() {
               type="button"
               aria-label="平台内存占用"
               className={[
-                'inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-xs transition-colors',
+                'inline-flex items-center gap-1.5 whitespace-nowrap rounded border px-2 py-0.5 text-xs transition-colors',
                 supported
                   ? 'border-line bg-surface text-fg-muted hover:text-fg'
                   : 'border-line bg-surface text-fg-subtle opacity-60',
@@ -88,9 +88,11 @@ export function MemoryMonitorBadge() {
             >
               <MemoryStick aria-hidden size={13} />
               {sample ? (
-                <span className="tabular-nums">
-                  平台内存占用 {formatMb(sample.usedMb)}
-                </span>
+                <>
+                  {/* 窄屏只留数值；名称由按钮的 aria-label 承载，读屏与用例查询都不受影响。 */}
+                  <span className="hidden sm:inline">平台内存占用 </span>
+                  <span className="tabular-nums">{formatMb(sample.usedMb)}</span>
+                </>
               ) : (
                 <span>内存自检不可用</span>
               )}

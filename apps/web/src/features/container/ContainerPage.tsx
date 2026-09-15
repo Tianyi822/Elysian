@@ -63,7 +63,7 @@ export function ContainerPage() {
     <div className="mb-6">
       {view === 'grid' ? (
         <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-line bg-surface px-4 py-3">
-          <div role="group" aria-label="状态筛选" className="flex flex-wrap gap-1">
+          <div role="group" aria-label="状态筛选" className="flex flex-wrap basis-full gap-1 lg:basis-auto">
             {STATUS_FILTERS.map((filter) => (
               <button
                 key={filter.value}
@@ -81,7 +81,8 @@ export function ContainerPage() {
               </button>
             ))}
           </div>
-          <div className="relative">
+          {/* 窄屏两行：筛选 chip 一行，搜索框与创建容器一行（搜索撑开）；lg 起回到一行三段。 */}
+          <div className="relative min-w-32 flex-1 lg:w-56 lg:flex-none">
             <Search
               aria-hidden="true"
               className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-fg-subtle"
@@ -94,7 +95,7 @@ export function ContainerPage() {
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="搜索容器名称"
-              className="w-56 max-w-full rounded-lg border border-line bg-surface-raised py-1.5 pl-8 pr-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle"
+              className="w-full rounded-lg border border-line bg-surface-raised py-1.5 pl-8 pr-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle"
             />
           </div>
           <button

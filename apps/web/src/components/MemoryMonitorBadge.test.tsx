@@ -1,4 +1,4 @@
-import { act, screen, within } from '@testing-library/react'
+import { act, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readHeapSample } from './MemoryMonitorBadge'
@@ -59,14 +59,17 @@ describe('内存自检图标', () => {
     renderApp('/')
 
     const trigger = screen.getByRole('button', { name: '平台内存占用' })
-    expect(within(trigger).getByText('平台内存占用 50.0 MB')).toBeInTheDocument()
+    // 名称与数值分在两个 span（窄屏只显数值），按元素查询会落空，改在按钮文本里断言。
+    expect(trigger).toHaveTextContent('平台内存占用 50.0 MB')
 
     const user = userEvent.setup()
     await user.click(trigger)
 
-    const detail = await screen.findByText('平台内存占用')
-    const popover = detail.closest('[data-radix-popper-content-wrapper]') ?? detail.parentElement
+    // 浮层标题与徽标里隐藏的文本同名，按「已用堆」定位浮层容器再断言内容。
+    const anchor = await screen.findByText('已用堆')
+    const popover = anchor.closest('[data-radix-popper-content-wrapper]')
     expect(popover).not.toBeNull()
+    expect(popover as HTMLElement).toHaveTextContent('平台内存占用')
     expect(popover as HTMLElement).toHaveTextContent('已用堆')
     expect(popover as HTMLElement).toHaveTextContent('50.0 MB')
     expect(popover as HTMLElement).toHaveTextContent('60.0 MB')

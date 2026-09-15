@@ -18,7 +18,7 @@ export function ContainerViewSwitch() {
         type="button"
         aria-pressed={view === 'grid'}
         onClick={() => setView('grid')}
-        className={`px-3 py-1.5 text-xs transition-colors ${
+        className={`whitespace-nowrap px-2 py-1.5 text-xs transition-colors sm:px-3 ${
           view === 'grid'
             ? 'bg-surface-raised font-medium text-fg'
             : 'text-fg-muted hover:bg-surface-raised hover:text-fg'
@@ -30,7 +30,7 @@ export function ContainerViewSwitch() {
         type="button"
         aria-pressed={view === 'images'}
         onClick={() => setView('images')}
-        className={`border-l border-line px-3 py-1.5 text-xs transition-colors ${
+        className={`whitespace-nowrap border-l border-line px-2 py-1.5 text-xs transition-colors sm:px-3 ${
           view === 'images'
             ? 'bg-surface-raised font-medium text-fg'
             : 'text-fg-muted hover:bg-surface-raised hover:text-fg'
