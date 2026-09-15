@@ -87,22 +87,28 @@ export function DatabasePage() {
             description="数据库由容器承载：添加对应的数据库容器后，它的实例会出现在这里。"
           />
         ) : (
-          <ul aria-label={`${engine} 数据库列表`} className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {filtered.map((database) => (
-              <li key={database.id} className="h-full">
-                <DatabaseCard
-                  database={database}
-                  view={projectDatabaseCard(database, containerById, imageById)}
-                  onJump={() => {
-                    useContainersStore.getState().openDetail(database.containerId)
-                    useContainersStore.getState().setView('grid')
-                    navigate('/containers')
-                  }}
-                  onConnect={() => openSession(database.id)}
-                />
-              </li>
-            ))}
-          </ul>
+          /* 列数量内容区的实测宽度（容器查询）而非视口：侧边栏收展改变可用宽度，卡片随之增减，不会出现「空间变大卡片反而变小」的倒挂。 */
+          <div className="@container">
+            <ul
+              aria-label={`${engine} 数据库列表`}
+              className="grid grid-cols-1 gap-4 @2xl:grid-cols-2 @5xl:grid-cols-3"
+            >
+              {filtered.map((database) => (
+                <li key={database.id} className="h-full">
+                  <DatabaseCard
+                    database={database}
+                    view={projectDatabaseCard(database, containerById, imageById)}
+                    onJump={() => {
+                      useContainersStore.getState().openDetail(database.containerId)
+                      useContainersStore.getState().setView('grid')
+                      navigate('/containers')
+                    }}
+                    onConnect={() => openSession(database.id)}
+                  />
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
       </section>
       <SqlSessionWindow />
@@ -136,7 +142,7 @@ function DatabaseCard({
           <DatabaseMark engine={database.engine} />
           <div className="min-w-0">
             <h3 className="truncate text-sm font-semibold">{database.name}</h3>
-            <p className="mt-0.5 text-xs text-fg-muted">
+            <p className="mt-0.5 truncate text-xs text-fg-muted">
               {database.engine} · {database.version}
             </p>
           </div>
