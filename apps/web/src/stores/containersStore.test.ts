@@ -95,7 +95,8 @@ describe('containersStore', () => {
 
     await useContainersStore.getState().submitCommand(gateway, 'env')
     let terminal = useContainersStore.getState().terminal!
-    expect(terminal.lines.map((l) => l.text)).toEqual(['演示终端 · 待接入真实执行', '$ env', 'line-1'])
+    // input 行只存裸命令：提示符由终端壳渲染时拼在行首。
+    expect(terminal.lines.map((l) => l.text)).toEqual(['演示终端 · 待接入真实执行', 'env', 'line-1'])
     expect(terminal.history).toEqual(['env'])
 
     await useContainersStore.getState().submitCommand(gateway, 'clear')

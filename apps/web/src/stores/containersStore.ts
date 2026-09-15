@@ -1,10 +1,9 @@
 import type { Container, ContainerAction, ContainerCreateInput, ContainerImage, ContainerSample, ContainerStatus, Unsubscribe } from '@elysian/contracts'
 import { create } from 'zustand'
 import type { ElysianGateway } from '../contracts/adapters'
+import { pushHistory, type TerminalLine } from '../components/terminal/terminalSession'
 import { getLastContainerSample, onStreamEvent } from './eventStreamStore'
 import { useNotificationStore } from './notificationStore'
-
-export type TerminalLine = { kind: 'banner' | 'input' | 'output'; text: string }
 
 type TerminalSession = {
   containerId: string
@@ -13,11 +12,6 @@ type TerminalSession = {
 }
 
 const TERMINAL_BANNER = '演示终端 · 待接入真实执行'
-
-/** 历史命令连续去重：连按同一条只记一次。 */
-function pushHistory(history: readonly string[], command: string): readonly string[] {
-  return history[history.length - 1] === command ? history : [...history, command]
-}
 
 /** 采样表以最近一拍为准：载荷未覆盖的容器显示 —。 */
 function applySamples(samples: readonly ContainerSample[]): void {
@@ -254,7 +248,8 @@ export const useContainersStore = create<{
       return
     }
 
-    set({ terminal: { ...session, lines: [...session.lines, { kind: 'input', text: `$ ${trimmed}` }] } })
+    // input 行只存裸命令：提示符由终端壳渲染时拼在行首（提示符只有一个家）。
+    set({ terminal: { ...session, lines: [...session.lines, { kind: 'input', text: trimmed }] } })
     try {
       const result = await gateway.containers.execMockCommand(session.containerId, trimmed)
       set((state) => ({

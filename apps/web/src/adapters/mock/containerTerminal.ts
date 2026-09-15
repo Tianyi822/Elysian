@@ -2,6 +2,7 @@ import type { Container, ContainerImage } from '@elysian/contracts'
 import { DATASET_BASE_TIME } from './dataset'
 import { INITIAL_CONTAINER_USAGE } from './containersData'
 import { formatUptime } from '../../components/format'
+import type { TerminalCompletion } from '../../components/terminal/terminalSession'
 
 /**
  * 演示终端的命令引擎：纯函数、确定性输出、与容器 mock 数据联动。
@@ -31,12 +32,8 @@ const ARG_CANDIDATES: Record<string, readonly string[]> = {
   df: ['-h'],
 }
 
-export type CompletionResult = {
-  draft: string
-  cursor: number
-  /** 多个候选且无法再收敛时给出，由界面按 bash 的习惯列出行。 */
-  candidates?: readonly string[]
-}
+/** 补全结果与终端内核共用同一形状；词表与提示符无关，任何提示符下通用。 */
+export type CompletionResult = TerminalCompletion
 
 /** 光标所在词的前缀补全；无可补内容时原样返回。 */
 export function completeTerminalCommand(draft: string, cursor: number): CompletionResult {
