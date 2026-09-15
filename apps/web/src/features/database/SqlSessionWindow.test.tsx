@@ -43,14 +43,15 @@ beforeEach(() => {
 })
 
 describe('数据库演示会话窗口', () => {
-  it('连接按钮打开会话：顶栏常驻演示标注与来源容器，提示符是实例名', async () => {
+  it('连接按钮打开会话：顶栏常驻演示标注，日志区不重复一行，提示符是实例名', async () => {
     const user = await openSession('MariaDB', 'MariaDB 数据库 mariadb-primary')
 
     const dialog = await screen.findByRole('dialog', { name: 'mariadb-primary SQL 会话' })
-    // 演示标注常驻两处：顶栏徽章与会话首行横幅。
-    expect(within(dialog).getAllByText('演示 SQL 会话 · 待接入真实执行')).toHaveLength(2)
-    // 主体 = 实例名 · 来源容器名。
-    expect(within(dialog).getByText('mariadb-primary · mariadb-primary')).toBeInTheDocument()
+    // 演示标注只在顶栏徽章一处；日志区从空开始，不与徽章重复。
+    expect(within(dialog).getAllByText('演示 SQL 会话 · 待接入真实执行')).toHaveLength(1)
+    // 主体 = 实例名；来源容器与实例同名时不重复一遍。
+    expect(within(dialog).getByText('mariadb-primary')).toBeInTheDocument()
+    expect(within(dialog).queryByText('mariadb-primary · mariadb-primary')).not.toBeInTheDocument()
 
     const input = within(dialog).getByLabelText('SQL 输入')
     await user.type(input, 'help{Enter}')
@@ -58,7 +59,7 @@ describe('数据库演示会话窗口', () => {
     expect(await within(dialog).findByText('mariadb-primary> help')).toBeInTheDocument()
   })
 
-  it('SHOW TABLES 的结果按表格排版，末尾给行数；clear 清屏但保留横幅', async () => {
+  it('SHOW TABLES 的结果按表格排版，末尾给行数；clear 清空日志、顶栏标注仍在', async () => {
     const user = await openSession('MariaDB', 'MariaDB 数据库 mariadb-primary')
     const input = await screen.findByLabelText('SQL 输入')
 
@@ -76,8 +77,8 @@ describe('数据库演示会话窗口', () => {
     await waitFor(() =>
       expect(within(dialog).queryByText('3 rows in set')).not.toBeInTheDocument(),
     )
-    // clear 截到横幅为止：横幅行仍在（徽章 + 首行各一份）。
-    expect(within(dialog).getAllByText('演示 SQL 会话 · 待接入真实执行')).toHaveLength(2)
+    // 日志清空，但演示标注仍由顶栏徽章常驻。
+    expect(within(dialog).getAllByText('演示 SQL 会话 · 待接入真实执行')).toHaveLength(1)
   })
 
   it('未知语句提示不在演示集内', async () => {

@@ -12,14 +12,8 @@ export type SqlSession = {
   history: readonly string[]
 }
 
-/** 会话首行横幅与窗口顶栏徽章共用同一份文案。 */
+/** 窗口顶栏徽章的常驻演示标注；日志区不再重复这一行。 */
 export const SESSION_BANNER = '演示 SQL 会话 · 待接入真实执行'
-
-/** clear 截到横幅行为止：横幅是常驻的演示标注，其余输出（含刚回显的语句行）全部清除。 */
-function keepBannerOnly(lines: readonly TerminalLine[]): readonly TerminalLine[] {
-  const bannerIndex = lines.findIndex((line) => line.kind === 'banner')
-  return bannerIndex === -1 ? [] : lines.slice(0, bannerIndex + 1)
-}
 
 function asOutput(lines: readonly string[]): readonly TerminalLine[] {
   return lines.map((text): TerminalLine => ({ kind: 'output', text }))
@@ -73,7 +67,8 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   },
 
   openSession(databaseId) {
-    set({ session: { databaseId, lines: [{ kind: 'banner', text: SESSION_BANNER }], history: [] } })
+    // 日志区从空开始：演示标注由窗口顶栏徽章常驻，不在日志里重复一行。
+    set({ session: { databaseId, lines: [], history: [] } })
   },
   closeSession() {
     set({ session: undefined })
@@ -94,7 +89,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
         if (!current || current.databaseId !== session.databaseId) return state
         let lines: readonly TerminalLine[]
         if (result.kind === 'clear') {
-          lines = keepBannerOnly(current.lines)
+          lines = []
         } else if (result.kind === 'table') {
           lines = [
             ...current.lines,
@@ -125,7 +120,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
 
   clearSessionScreen() {
     set((state) => ({
-      session: state.session && { ...state.session, lines: keepBannerOnly(state.session.lines) },
+      session: state.session && { ...state.session, lines: [] },
     }))
   },
 }))

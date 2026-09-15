@@ -9,7 +9,7 @@ import { SESSION_BANNER, useDatabaseStore } from '../../stores/databaseStore'
 /**
  * 数据库演示会话的薄壳：交互内核在 TerminalShell，这里只接数据库域的东西——
  * 会话状态来自 databaseStore，语句引擎走 mock 适配层，提示符为实例名，
- * 顶栏徽章与会话首行横幅都标注「演示 SQL 会话 · 待接入真实执行」。
+ * 演示标注由顶栏徽章常驻，日志区不重复一行。
  */
 
 /** Tab 补全的行中词表：演示目录里的表名（SQL）或键名（Redis）。 */
@@ -81,14 +81,18 @@ export function SqlSessionWindow() {
   const database = databases.find((candidate) => candidate.id === session?.databaseId)
   if (!session || !database) return null
 
-  // 容器缺失时主体只给实例名，不静默留空。
+  // 容器缺失或与实例同名（compose 命名的常态）时主体只给实例名，不重复一遍。
   const containerName = containers.find((c) => c.id === database.containerId)?.name
+  const subject =
+    containerName && containerName !== database.name
+      ? `${database.name} · ${containerName}`
+      : database.name
 
   return (
     <TerminalShell
       title={`${database.name} SQL 会话`}
       banner={SESSION_BANNER}
-      subject={containerName ? `${database.name} · ${containerName}` : database.name}
+      subject={subject}
       prompt={`${database.name}> `}
       sessionKey={session.databaseId}
       lines={session.lines}
