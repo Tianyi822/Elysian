@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
-import type { Container, ContainerImage } from '@elysian/contracts'
+import type { Container, ContainerCreateInput, ContainerImage } from '@elysian/contracts'
 import type { ElysianGateway } from '../../contracts/adapters'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { CONTAINERS, CONTAINER_IMAGES } from '../../adapters/mock/containersData'
@@ -21,6 +21,7 @@ function pageGateway(overrides: Partial<ElysianGateway['containers']> = {}): Ely
       list: async () => [...CONTAINERS],
       listImages: async () => [...CONTAINER_IMAGES],
       execMockCommand: (id: string, command: string) => base.containers.execMockCommand(id, command),
+      create: (input: ContainerCreateInput) => base.containers.create(input),
       requestAction: async (id: string) => CONTAINERS.find((c) => c.id === id)!,
       ...overrides,
     },

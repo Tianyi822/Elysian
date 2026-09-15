@@ -5,6 +5,7 @@ import type {
   AuditRecord,
   Container,
   ContainerAction,
+  ContainerCreateInput,
   ContainerImage,
   ElysianEvent,
   EventStreamHandlers,
@@ -28,6 +29,7 @@ import type {
   SkillAdapter,
 } from '../../contracts/adapters'
 import { execContainerCommand } from './containerTerminal'
+import { autoContainerName } from './containersData'
 import {
   INITIAL_DISKS,
   INITIAL_LOAD,
@@ -196,6 +198,7 @@ export class MockContainerAdapter implements ContainerAdapter {
     private readonly hooks: {
       onAction: (containerId: string) => void
       scheduleRestart: (containerId: string) => void
+      onCreate: (containerId: string) => void
     },
   ) {}
 
@@ -232,6 +235,33 @@ export class MockContainerAdapter implements ContainerAdapter {
       this.hooks.scheduleRestart(containerId)
     }
     this.hooks.onAction(containerId)
+    return { ...container }
+  }
+
+  async create(input: ContainerCreateInput): Promise<Container> {
+    const dataset = this.dataset()
+    const image = dataset.images.find((i) => i.id === input.imageId)
+    if (!image) throw new Error('镜像不存在，无法创建容器')
+    const name = input.name?.trim() || autoContainerName(dataset.containers, image.name)
+    if (dataset.containers.some((c) => c.name === name)) {
+      throw new Error(`容器名称已存在：${name}`)
+    }
+    const now = new Date().toISOString()
+    const container: Container = {
+      id: `ctr-${name}`,
+      name,
+      status: 'running',
+      imageId: input.imageId,
+      ports: input.ports.map((p) => ({ ...p })),
+      createdAt: now,
+      startedAt: now,
+      command: input.command?.trim() ?? '',
+      env: input.env.map((e) => ({ ...e })),
+      volumes: input.volumes.map((v) => ({ ...v })),
+      restartPolicy: input.restartPolicy,
+    }
+    dataset.containers.push(container)
+    this.hooks.onCreate(container.id)
     return { ...container }
   }
 }

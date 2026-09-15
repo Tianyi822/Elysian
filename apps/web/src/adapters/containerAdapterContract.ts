@@ -33,5 +33,28 @@ export function runContainerAdapterContract(make: () => ContainerAdapter): void 
       const adapter = make()
       await expect(adapter.requestAction('ctr-not-exist', 'stop')).rejects.toThrow()
     })
+
+    it('create 用已有镜像创建出运行中的容器，list 能读到', async () => {
+      const adapter = make()
+      const images = await adapter.listImages()
+      const created = await adapter.create({
+        imageId: images[0]!.id,
+        name: 'contract-create',
+        ports: [],
+        env: [],
+        volumes: [],
+        restartPolicy: 'no',
+      })
+      expect(created.status).toBe('running')
+      const names = (await adapter.list()).map((c) => c.name)
+      expect(names).toContain('contract-create')
+    })
+
+    it('create 用未知镜像创建被拒绝', async () => {
+      const adapter = make()
+      await expect(
+        adapter.create({ imageId: 'img-not-exist', ports: [], env: [], volumes: [], restartPolicy: 'no' }),
+      ).rejects.toThrow()
+    })
   })
 }

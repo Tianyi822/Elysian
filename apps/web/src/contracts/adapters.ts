@@ -5,6 +5,7 @@ import type {
   AuditRecord,
   Container,
   ContainerAction,
+  ContainerCreateInput,
   ContainerImage,
   EventStreamHandlers,
   Incident,
@@ -82,6 +83,8 @@ export interface ContainerAdapter {
   execMockCommand(containerId: string, command: string): Promise<MockCommandResult>
   /** 请求容器动作（启动/停止/重启，均为 mock）。 */
   requestAction(containerId: string, action: ContainerAction): Promise<Container>
+  /** 创建容器（mock）：追加内存数据集并推 container/created。 */
+  create(input: ContainerCreateInput): Promise<Container>
 }
 
 /** 页面级访问区域。权限只做到这一粒度，本阶段不实现更细的权限模型。 */

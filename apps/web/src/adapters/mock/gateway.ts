@@ -46,6 +46,7 @@ export function createMockGateway(
         containerEvents.emitUpdated(containerId)
       },
       scheduleRestart: (containerId) => containerEvents.scheduleRestart(containerId),
+      onCreate: (containerId) => containerEvents.emitCreated(containerId),
     }),
     events: wrapLive(
       containerEvents.wrap(

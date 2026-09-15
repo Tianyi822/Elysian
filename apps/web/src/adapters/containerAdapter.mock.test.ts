@@ -4,9 +4,12 @@ import { MockContainerAdapter } from './mock/mockAdapters'
 import { runContainerAdapterContract } from './containerAdapterContract'
 
 function makeAdapter() {
-  return new MockContainerAdapter(() => createMockDataset(), {
+  // 单一数据集实例：create 之后的 list 必须读回写入，getter 每次新建数据集会丢写。
+  const dataset = createMockDataset()
+  return new MockContainerAdapter(() => dataset, {
     onAction: vi.fn(),
     scheduleRestart: vi.fn(),
+    onCreate: vi.fn(),
   })
 }
 
@@ -17,7 +20,7 @@ describe('MockContainerAdapter', () => {
     const dataset = createMockDataset()
     const onAction = vi.fn()
     const scheduleRestart = vi.fn()
-    const adapter = new MockContainerAdapter(() => dataset, { onAction, scheduleRestart })
+    const adapter = new MockContainerAdapter(() => dataset, { onAction, scheduleRestart, onCreate: vi.fn() })
 
     const stopped = await adapter.requestAction('ctr-backup-agent', 'start')
     expect(stopped.status).toBe('running')
@@ -34,6 +37,7 @@ describe('MockContainerAdapter', () => {
     const adapter = new MockContainerAdapter(() => dataset, {
       onAction: vi.fn(),
       scheduleRestart: vi.fn(),
+      onCreate: vi.fn(),
     })
 
     const result = await adapter.execMockCommand('ctr-nginx-proxy', 'env')

@@ -51,6 +51,18 @@ export function createContainerEventsLayer(
     })
   }
 
+  const emitCreated = (containerId: string): void => {
+    const container = containerOf(containerId)
+    if (!container) return
+    seq += 1
+    emit({
+      id: `ctr-evt-${seq}`,
+      name: 'container/created',
+      at: new Date().toISOString(),
+      payload: { container: { ...container } },
+    })
+  }
+
   const emitSample = (): void => {
     seq += 1
     emit({
@@ -93,6 +105,8 @@ export function createContainerEventsLayer(
   return {
     /** 容器操作生效后立即推状态事件。 */
     emitUpdated,
+    /** 创建生效后立即推全量容器事件。 */
+    emitCreated,
     /** 人工接管后退出演示循环。 */
     markControlled: (id: string) => controlled.add(id),
     /** 重启在下一拍完成。 */
