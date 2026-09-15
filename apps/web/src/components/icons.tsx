@@ -10,6 +10,7 @@ export type IconComponent = LucideIcon
 
 export {
   Bot,
+  Cable,
   Check,
   ChevronDown,
   ChevronRight,

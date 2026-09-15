@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router'
 import {
+  Cable,
   ChevronRight,
   Container,
   Database,
@@ -25,6 +26,7 @@ import { useContainersStore } from '../../stores/containersStore'
 import { formatDateTime } from '../../components/format'
 import { projectDatabaseCard } from './projectDatabaseCard'
 import type { DatabaseCardView } from './projectDatabaseCard'
+import { SqlSessionWindow } from './SqlSessionWindow'
 
 const STATUS_TONE: Record<DatabaseStatus, StatusTone> = {
   running: 'success',
@@ -43,6 +45,7 @@ export function DatabasePage() {
   const images = useDatabaseStore((state) => state.images)
   const errorMessage = useDatabaseStore((state) => state.errorMessage)
   const load = useDatabaseStore((state) => state.load)
+  const openSession = useDatabaseStore((state) => state.openSession)
 
   useEffect(() => {
     void load(gateway)
@@ -69,35 +72,39 @@ export function DatabasePage() {
   const filtered = databases.filter((database) => database.engine === engine)
 
   return (
-    <section aria-label="数据库实例" className="mb-6">
-      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-        <h2 className="text-base font-semibold">{engine} 实例</h2>
-        <span className="text-xs tabular-nums text-fg-muted">{filtered.length} 个实例</span>
-      </div>
+    <>
+      <section aria-label="数据库实例" className="mb-6">
+        <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+          <h2 className="text-base font-semibold">{engine} 实例</h2>
+          <span className="text-xs tabular-nums text-fg-muted">{filtered.length} 个实例</span>
+        </div>
 
-      {filtered.length === 0 ? (
-        <EmptyState
-          title={`这台机器上没有 ${engine} 的数据库容器`}
-          description="数据库由容器承载：添加对应的数据库容器后，它的实例会出现在这里。"
-        />
-      ) : (
-        <ul aria-label={`${engine} 数据库列表`} className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-          {filtered.map((database) => (
-            <li key={database.id} className="h-full">
-              <DatabaseCard
-                database={database}
-                view={projectDatabaseCard(database, containerById, imageById, new Date())}
-                onJump={() => {
-                  useContainersStore.getState().openDetail(database.containerId)
-                  useContainersStore.getState().setView('grid')
-                  navigate('/containers')
-                }}
-              />
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
+        {filtered.length === 0 ? (
+          <EmptyState
+            title={`这台机器上没有 ${engine} 的数据库容器`}
+            description="数据库由容器承载：添加对应的数据库容器后，它的实例会出现在这里。"
+          />
+        ) : (
+          <ul aria-label={`${engine} 数据库列表`} className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            {filtered.map((database) => (
+              <li key={database.id} className="h-full">
+                <DatabaseCard
+                  database={database}
+                  view={projectDatabaseCard(database, containerById, imageById, new Date())}
+                  onJump={() => {
+                    useContainersStore.getState().openDetail(database.containerId)
+                    useContainersStore.getState().setView('grid')
+                    navigate('/containers')
+                  }}
+                  onConnect={() => openSession(database.id)}
+                />
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+      <SqlSessionWindow />
+    </>
   )
 }
 
@@ -105,10 +112,12 @@ function DatabaseCard({
   database,
   view,
   onJump,
+  onConnect,
 }: {
   database: DatabaseInstance
   view: DatabaseCardView
   onJump(): void
+  onConnect(): void
 }) {
   const storagePercent = percent(database.storage.usedGb, database.storage.totalGb)
   const memoryPercent = percent(database.memory.usedGb, database.memory.totalGb)
@@ -190,7 +199,15 @@ function DatabaseCard({
           tooltip="复制演示密码 · 不对应任何真实数据库"
           icon={<KeyRound aria-hidden size={13} />}
         />
-        <span className="ml-auto text-xs text-fg-subtle">演示凭证 · 不对应任何真实数据库</span>
+        <button
+          type="button"
+          onClick={onConnect}
+          className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle"
+        >
+          <Cable aria-hidden size={13} />
+          连接
+        </button>
+        <span className="text-xs text-fg-subtle">演示凭证 · 不对应任何真实数据库</span>
       </div>
 
       <div className="mt-auto flex items-center justify-between border-t border-line pt-3 text-xs text-fg-subtle">
