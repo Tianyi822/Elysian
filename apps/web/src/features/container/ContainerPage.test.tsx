@@ -228,21 +228,23 @@ describe('拉取镜像', () => {
     return { user, table: await screen.findByRole('table', { name: '镜像列表' }) }
   }
 
-  it('镜像视图有拉取入口，打开弹窗见演示徽章、拉取源与引用输入', async () => {
+  it('镜像视图有拉取入口，打开弹窗见演示徽章、源地址与引用输入', async () => {
     const { user } = await openImagesView()
     await user.click(screen.getByRole('button', { name: /拉取镜像/ }))
     const dialog = await screen.findByRole('dialog', { name: '拉取镜像' })
     expect(dialog.textContent).toContain('演示 · 待接入真实执行')
     expect(within(dialog).getByLabelText('镜像引用')).toBeInTheDocument()
-    // 拉取源不配置时默认官方地址。
-    expect(within(dialog).getByLabelText('拉取源')).toHaveValue('https://registry-1.docker.io')
+    // 源地址留空即默认官方：预览直接显示官方主机名。
+    const address = within(dialog).getByLabelText('自定义镜像源地址')
+    expect(address).toHaveValue('')
+    await user.type(within(dialog).getByLabelText('镜像引用'), 'redis:9')
+    expect(within(dialog).getByText('registry-1.docker.io/redis:9')).toBeInTheDocument()
   })
 
-  it('选择自定义源后可输入地址，有效引用实时预览完整拉取路径', async () => {
+  it('填写自定义源后预览显示完整拉取路径', async () => {
     const { user } = await openImagesView()
     await user.click(screen.getByRole('button', { name: /拉取镜像/ }))
     const dialog = await screen.findByRole('dialog', { name: '拉取镜像' })
-    await user.selectOptions(within(dialog).getByLabelText('拉取源'), 'custom')
     await user.type(within(dialog).getByLabelText('自定义镜像源地址'), 'docker.1ms.run')
     await user.type(within(dialog).getByLabelText('镜像引用'), 'redis:9')
     expect(within(dialog).getByText('docker.1ms.run/redis:9')).toBeInTheDocument()

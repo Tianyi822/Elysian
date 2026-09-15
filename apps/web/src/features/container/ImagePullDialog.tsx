@@ -4,9 +4,7 @@ import { useState } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { useContainersStore } from '../../stores/containersStore'
 import {
-  CUSTOM_IMAGE_REGISTRY,
   DEFAULT_IMAGE_REGISTRY,
-  IMAGE_REGISTRY_PRESETS,
   parseImageReference,
   registryHost,
   validateRegistryUrl,
@@ -29,13 +27,12 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
   const pullingImage = useContainersStore((s) => s.pullingImage)
   const pullImage = useContainersStore((s) => s.pullImage)
 
-  const [preset, setPreset] = useState(DEFAULT_IMAGE_REGISTRY)
-  const [customRegistry, setCustomRegistry] = useState('')
+  const [registryAddress, setRegistryAddress] = useState('')
   const [reference, setReference] = useState('')
 
-  const isCustom = preset === CUSTOM_IMAGE_REGISTRY
-  const registry = isCustom ? customRegistry.trim() : preset
-  const registryError = isCustom && customRegistry.trim() ? validateRegistryUrl(customRegistry) : undefined
+  // 留空即默认官方地址；非空才校验格式。
+  const registry = registryAddress.trim() || DEFAULT_IMAGE_REGISTRY
+  const registryError = registryAddress.trim() ? validateRegistryUrl(registryAddress) : undefined
 
   const parsed = parseImageReference(reference)
   const duplicate =
@@ -88,46 +85,26 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
 
           <div className="flex-1 overflow-y-auto px-5 py-4">
             <label htmlFor="pull-registry" className={FIELD_LABEL_CLASS}>
-              拉取源
+              自定义镜像源地址
             </label>
-            <select
+            <input
               id="pull-registry"
-              value={preset}
-              onChange={(event) => setPreset(event.target.value)}
-              className={INPUT_CLASS}
-            >
-              {IMAGE_REGISTRY_PRESETS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <p className="mt-1.5 text-xs text-fg-subtle">
-              不配置即从官方地址拉取；地址仅作记录，可随时换回。
-            </p>
-
-            {isCustom ? (
-              <div className="mt-3">
-                <label htmlFor="pull-registry-custom" className={FIELD_LABEL_CLASS}>
-                  自定义镜像源地址
-                </label>
-                <input
-                  id="pull-registry-custom"
-                  value={customRegistry}
-                  onChange={(event) => setCustomRegistry(event.target.value)}
-                  placeholder="例如 docker.m.daocloud.io"
-                  autoComplete="off"
-                  spellCheck={false}
-                  aria-describedby={registryError ? 'pull-registry-custom-error' : undefined}
-                  className={`${INPUT_CLASS} font-mono`}
-                />
-                {registryError ? (
-                  <p className={FIELD_ERROR_CLASS} id="pull-registry-custom-error">
-                    {registryError}
-                  </p>
-                ) : null}
-              </div>
+              value={registryAddress}
+              onChange={(event) => setRegistryAddress(event.target.value)}
+              placeholder="留空使用官方地址 registry-1.docker.io"
+              autoComplete="off"
+              spellCheck={false}
+              aria-describedby={registryError ? 'pull-registry-error' : undefined}
+              className={`${INPUT_CLASS} font-mono`}
+            />
+            {registryError ? (
+              <p className={FIELD_ERROR_CLASS} id="pull-registry-error">
+                {registryError}
+              </p>
             ) : null}
+            <p className="mt-1.5 text-xs text-fg-subtle">
+              未填写时从官方 Docker Hub 地址拉取；地址仅作记录，不产生真实数据流。
+            </p>
 
             <div className="mt-4">
               <label htmlFor="pull-reference" className={FIELD_LABEL_CLASS}>

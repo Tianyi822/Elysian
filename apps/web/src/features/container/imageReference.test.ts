@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  CUSTOM_IMAGE_REGISTRY,
   DEFAULT_IMAGE_REGISTRY,
-  IMAGE_REGISTRY_PRESETS,
   parseImageReference,
   registryHost,
   validateRegistryUrl,
@@ -48,16 +46,12 @@ describe('镜像引用解析', () => {
 })
 
 describe('拉取源', () => {
-  it('预设清单以官方地址打头，自定义是哨兵值', () => {
-    expect(IMAGE_REGISTRY_PRESETS[0]).toEqual({
-      value: 'https://registry-1.docker.io',
-      label: 'Docker Hub 官方',
-    })
-    expect(IMAGE_REGISTRY_PRESETS.some((preset) => preset.value === CUSTOM_IMAGE_REGISTRY)).toBe(true)
+  it('默认官方地址是 Docker Hub', () => {
     expect(DEFAULT_IMAGE_REGISTRY).toBe('https://registry-1.docker.io')
   })
 
-  it('自定义地址校验：主机名或 URL，协议可选，路径不接受', () => {
+  it('自定义地址校验：留空合法（回落官方），非空须主机名或 URL', () => {
+    expect(validateRegistryUrl('')).toBeUndefined()
     expect(validateRegistryUrl('docker.m.daocloud.io')).toBeUndefined()
     expect(validateRegistryUrl('https://mirror.local:5000')).toBeUndefined()
     expect(validateRegistryUrl('https://mirror.local:5000/')).toContain('主机名')
