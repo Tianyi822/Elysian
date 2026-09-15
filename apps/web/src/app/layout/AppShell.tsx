@@ -1,14 +1,15 @@
 import { useEffect } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Menu, PanelLeftClose, PanelLeftOpen, X } from 'lucide-react'
+import { Menu, PanelLeftClose, PanelLeftOpen, X } from '../../components/icons'
 import { useState } from 'react'
-import { Outlet, useLocation } from 'react-router'
+import { Outlet, useLocation, useMatches } from 'react-router'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { MemoryMonitorBadge } from '../../components/MemoryMonitorBadge'
 import { IconButton } from '../../components/IconButton'
 import { NotificationHost } from '../../components/NotificationHost'
 import { useEventStreamStore } from '../../stores/eventStreamStore'
 import { NAV_ITEMS } from '../navigation'
+import type { RouteHandle } from '../router'
 import { Sidebar } from './Sidebar'
 
 function UserChip() {
@@ -30,6 +31,7 @@ export function AppShell() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const gateway = useGateway()
   const location = useLocation()
+  const matches = useMatches()
   const connectEventStream = useEventStreamStore((state) => state.connect)
 
   // 顶栏标题跟随当前导航项；未匹配路由沿用仪表盘缺省，由未找到页面给出自己的标题。
@@ -37,6 +39,10 @@ export function AppShell() {
     NAV_ITEMS.find((item) =>
       item.end ? location.pathname === item.to : location.pathname.startsWith(item.to),
     )?.label ?? '仪表盘'
+
+  const HeaderAccessory = matches
+    .map((match) => (match.handle as RouteHandle | undefined)?.headerAccessory)
+    .find((accessory) => accessory !== undefined)
 
   // 整个应用只订阅一次事件流，避免每个页面各开一条连接。
   useEffect(() => {
@@ -111,6 +117,8 @@ export function AppShell() {
             <div className="min-w-0">
               <h1 className="text-base font-semibold leading-tight">{pageTitle}</h1>
             </div>
+
+            {HeaderAccessory ? <HeaderAccessory /> : null}
 
             <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
               <MemoryMonitorBadge />

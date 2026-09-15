@@ -11,23 +11,23 @@ beforeEach(() => {
 })
 
 describe('模板外壳', () => {
-  it('侧边栏包含仪表盘与容器两项', () => {
+  it('侧边栏包含仪表盘与 Docker 两项', () => {
     renderApp('/')
     const nav = screen.getByRole('navigation', { name: '主导航' })
     const links = within(nav).getAllByRole('link')
     expect(links).toHaveLength(NAV_ITEMS.length)
-    expect(links.map((link) => link.textContent)).toEqual(['仪表盘', '容器'])
+    expect(links.map((link) => link.textContent)).toEqual(['仪表盘', 'Docker'])
     expect(links[0]).toHaveAttribute('aria-current', 'page')
   })
 
-  it('点击容器入口切换到容器空白页，顶栏标题跟随变化', async () => {
+  it('点击 Docker 入口切换到容器页，顶栏标题跟随变化', async () => {
     const user = userEvent.setup()
     renderApp('/')
 
-    await user.click(screen.getByRole('link', { name: '容器' }))
+    await user.click(screen.getByRole('link', { name: 'Docker' }))
 
-    expect(await screen.findByRole('heading', { level: 1, name: '容器' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: '容器' })).toHaveAttribute('aria-current', 'page')
+    expect(await screen.findByRole('heading', { level: 1, name: 'Docker' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Docker' })).toHaveAttribute('aria-current', 'page')
   })
 
   it('顶栏含品牌、标题、内存自检与用户占位', async () => {

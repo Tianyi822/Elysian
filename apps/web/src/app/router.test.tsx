@@ -8,9 +8,9 @@ describe('路由表', () => {
     expect(await screen.findByRole('heading', { level: 1, name: '仪表盘' })).toBeInTheDocument()
   })
 
-  it('/containers 渲染容器空白页', async () => {
+  it('/containers 渲染 Docker 区', async () => {
     renderApp('/containers')
-    expect(await screen.findByRole('heading', { level: 1, name: '容器' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { level: 1, name: 'Docker' })).toBeInTheDocument()
   })
 
   it('未匹配的地址进入未找到页面', async () => {

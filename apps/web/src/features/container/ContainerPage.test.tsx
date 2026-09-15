@@ -134,6 +134,9 @@ describe('镜像视图', () => {
     const user = userEvent.setup()
     renderApp('/containers', { gateway: pageGateway() })
     await screen.findByRole('list', { name: '容器列表' })
+    expect(
+      within(screen.getByRole('banner')).getByRole('group', { name: '视图切换' }),
+    ).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '镜像' }))
     const table = await screen.findByRole('table', { name: '镜像列表' })
