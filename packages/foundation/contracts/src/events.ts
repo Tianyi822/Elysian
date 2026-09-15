@@ -1,4 +1,4 @@
-import type { ContainerStatus } from './containers.ts'
+import type { Container, ContainerStatus } from './containers.ts'
 import type { AgentStatus, ApprovalOutcome, Severity } from './enums.ts'
 
 /** 事件分发模式，与 Cordis 的 @mode 约定一致。 */
@@ -63,6 +63,8 @@ export interface Events {
   }
   /** @mode emit */
   'container/updated': { containerId: string; status: ContainerStatus }
+  /** @mode emit */
+  'container/created': { container: Container }
 }
 
 export type EventName = keyof Events & string
@@ -86,6 +88,7 @@ export const EVENT_NAMES = [
   'resource/sample',
   'container/sample',
   'container/updated',
+  'container/created',
 ] as const satisfies readonly EventName[]
 
 /** 每个事件的分发模式。`Record<EventName, EventMode>` 由类型系统保证不漏不重。 */
@@ -107,6 +110,7 @@ export const EVENT_MODES: Record<EventName, EventMode> = {
   'resource/sample': 'emit',
   'container/sample': 'emit',
   'container/updated': 'emit',
+  'container/created': 'emit',
 }
 
 /**

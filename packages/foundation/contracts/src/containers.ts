@@ -83,5 +83,17 @@ export type ContainerSample = {
   memMb: number
 }
 
+/** 创建容器的输入：界面表单收集后经 adapter 提交；name 留空由实现按镜像名生成唯一名。 */
+export type ContainerCreateInput = {
+  name?: string
+  imageId: string
+  ports: readonly PortMapping[]
+  env: readonly EnvPair[]
+  volumes: readonly VolumeMount[]
+  /** 启动命令；留空表示沿用镜像默认入口。 */
+  command?: string
+  restartPolicy: RestartPolicy
+}
+
 /** 容器动作：启动、停止、重启。本期均为 mock。 */
 export type ContainerAction = 'start' | 'stop' | 'restart'
