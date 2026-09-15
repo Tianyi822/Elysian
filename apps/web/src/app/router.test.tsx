@@ -13,6 +13,11 @@ describe('路由表', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Docker' })).toBeInTheDocument()
   })
 
+  it('/databases 渲染数据库区', async () => {
+    renderApp('/databases')
+    expect(await screen.findByRole('heading', { level: 1, name: '数据库' })).toBeInTheDocument()
+  })
+
   it('未匹配的地址进入未找到页面', async () => {
     renderApp('/does-not-exist')
     expect(

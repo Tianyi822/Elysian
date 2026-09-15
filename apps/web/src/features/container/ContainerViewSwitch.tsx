@@ -12,7 +12,7 @@ export function ContainerViewSwitch() {
     <div
       role="group"
       aria-label="视图切换"
-      className="inline-flex overflow-hidden rounded-lg border border-line"
+      className="inline-flex shrink-0 overflow-hidden rounded-lg border border-line"
     >
       <button
         type="button"

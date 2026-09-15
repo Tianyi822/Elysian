@@ -4,6 +4,8 @@ import type { ComponentType } from 'react'
 import { ContainerPage } from '../features/container/ContainerPage'
 import { ContainerViewSwitch } from '../features/container/ContainerViewSwitch'
 import { DashboardPage } from '../features/dashboard/DashboardPage'
+import { DatabaseEngineSwitch } from '../features/database/DatabaseEngineSwitch'
+import { DatabasePage } from '../features/database/DatabasePage'
 import { AppShell } from './layout/AppShell'
 import { NotFoundPage } from './NotFoundPage'
 import { RequireArea } from './RequireArea'
@@ -36,6 +38,15 @@ export const routes: RouteObject[] = [
         element: (
           <RequireArea area="containers" title="Docker">
             <ContainerPage />
+          </RequireArea>
+        ),
+      },
+      {
+        path: 'databases',
+        handle: { headerAccessory: DatabaseEngineSwitch } satisfies RouteHandle,
+        element: (
+          <RequireArea area="databases" title="数据库">
+            <DatabasePage />
           </RequireArea>
         ),
       },

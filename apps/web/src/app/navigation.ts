@@ -1,4 +1,4 @@
-import { Container, LayoutDashboard } from '../components/icons'
+import { Container, Database, LayoutDashboard } from '../components/icons'
 import type { IconComponent } from '../components/icons'
 
 export type NavItem = {
@@ -13,4 +13,5 @@ export type NavItem = {
 export const NAV_ITEMS: readonly NavItem[] = [
   { to: '/', label: '仪表盘', icon: LayoutDashboard, end: true },
   { to: '/containers', label: 'Docker', icon: Container },
+  { to: '/databases', label: '数据库', icon: Database },
 ]
