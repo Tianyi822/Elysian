@@ -128,8 +128,9 @@ function DatabaseCard({
   return (
     <article
       aria-label={`${database.engine} 数据库 ${database.name}`}
-      className="@container flex h-full flex-col gap-4 rounded-xl border border-line bg-surface p-4 md:p-5"
+      className="@container flex h-full flex-col gap-3 rounded-xl border border-line bg-surface p-4 md:p-5"
     >
+      {/* 头部右侧上下两行：状态标签在上，更新时间贴在其下，不再独占脚注行。 */}
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <DatabaseMark engine={database.engine} />
@@ -140,7 +141,12 @@ function DatabaseCard({
             </p>
           </div>
         </div>
-        <StatusTag label={DATABASE_STATUS_LABELS[database.status]} tone={STATUS_TONE[database.status]} />
+        <div className="flex shrink-0 flex-col items-end gap-1.5">
+          <StatusTag label={DATABASE_STATUS_LABELS[database.status]} tone={STATUS_TONE[database.status]} />
+          <time dateTime={database.updatedAt} className="whitespace-nowrap text-xs text-fg-subtle">
+            更新于 {formatDateTime(database.updatedAt)}
+          </time>
+        </div>
       </div>
 
       <button
@@ -167,7 +173,7 @@ function DatabaseCard({
       </button>
 
       {/* 指标格随卡片实际宽度分栏：三列布局下卡片窄、指标竖排，宽卡才三格横排（容器查询而非视口断点）。 */}
-      <div className="grid grid-cols-1 gap-3 @lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-2.5 @lg:grid-cols-3">
         <UsageMetric
           icon={<Database aria-hidden size={14} />}
           label="容量"
@@ -190,7 +196,8 @@ function DatabaseCard({
         />
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3">
+      {/* 动作行沉底：卡片因同列内容高度不齐被拉伸时，操作区贴住卡底。 */}
+      <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-line pt-3">
         <CopyButton
           label="复制用户名"
           value={database.credentials.username}
@@ -211,10 +218,6 @@ function DatabaseCard({
           <Cable aria-hidden size={13} />
           连接
         </button>
-      </div>
-
-      <div className="mt-auto flex items-center justify-end border-t border-line pt-3 text-xs text-fg-subtle">
-        <time dateTime={database.updatedAt}>更新于 {formatDateTime(database.updatedAt)}</time>
       </div>
     </article>
   )
