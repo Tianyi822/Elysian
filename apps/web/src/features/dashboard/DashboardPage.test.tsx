@@ -289,7 +289,7 @@ describe('仪表盘最近活动', () => {
 })
 
 describe('仪表盘快捷操作', () => {
-  it('主题切换动作生效并在右上角通知区给出反馈', async () => {
+  it('主题切换动作生效，主题变化本身即反馈，不再发通知', async () => {
     const user = userEvent.setup()
     await renderReady()
 
@@ -297,8 +297,7 @@ describe('仪表盘快捷操作', () => {
     await user.click(screen.getByRole('button', { name: /切换到浅色主题/ }))
 
     expect(document.documentElement.dataset['theme']).toBe('light')
-    const notifications = await screen.findByLabelText('通知')
-    expect(within(notifications).getByRole('status')).toHaveTextContent('已切换到浅色主题。')
+    expect(screen.queryByLabelText('通知')).not.toBeInTheDocument()
   })
 
   it('重置演示数据需要确认，取消不执行，确认后重置并刷新界面', async () => {
