@@ -1,11 +1,12 @@
 import { useEffect } from 'react'
-import { Search } from '../../components/icons'
+import { Plus, Search } from '../../components/icons'
 import type { ContainerStatus } from '@elysian/contracts'
 import { CONTAINER_STATUS_LABELS } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
 import { useContainersStore } from '../../stores/containersStore'
 import { ContainerCard } from './ContainerCard'
+import { ContainerCreateDialog } from './ContainerCreateDialog'
 import { ContainerDetailSheet } from './ContainerDetailSheet'
 import { ImageTable } from './ImageTable'
 import { TerminalWindow } from './TerminalWindow'
@@ -29,6 +30,7 @@ export function ContainerPage() {
   const load = useContainersStore((s) => s.load)
   const setStatusFilter = useContainersStore((s) => s.setStatusFilter)
   const setSearch = useContainersStore((s) => s.setSearch)
+  const openCreate = useContainersStore((s) => s.openCreate)
 
   useEffect(() => {
     void load(gateway)
@@ -92,6 +94,14 @@ export function ContainerPage() {
               className="w-56 max-w-full rounded-lg border border-line bg-surface-raised py-1.5 pl-8 pr-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle"
             />
           </div>
+          <button
+            type="button"
+            onClick={() => openCreate()}
+            className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-accent/50 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/20"
+          >
+            <Plus aria-hidden size={14} />
+            创建容器
+          </button>
         </div>
       ) : null}
 
@@ -116,6 +126,7 @@ export function ContainerPage() {
         </ul>
       )}
 
+      <ContainerCreateDialog />
       <ContainerDetailSheet />
       <TerminalWindow />
     </div>

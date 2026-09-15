@@ -32,7 +32,7 @@ beforeEach(() => {
   useContainersStore.setState({
     status: 'idle', errorMessage: undefined, containers: [], images: [], samples: {},
     view: 'grid', statusFilter: 'all', search: '', detailContainerId: undefined,
-    terminal: undefined, busyActions: [],
+    terminal: undefined, busyActions: [], createOpen: false, creating: false,
   })
 })
 
@@ -396,5 +396,74 @@ describe('容器操作联动', () => {
     await waitFor(() => {
       expect(screen.getByRole('listitem', { name: 'redis-cache' }).textContent).toContain('运行中')
     })
+  })
+})
+
+describe('创建容器', () => {
+  async function openCreateForm(gateway = pageGateway()) {
+    const user = userEvent.setup()
+    renderApp('/containers', { gateway })
+    await screen.findByRole('list', { name: '容器列表' })
+    await user.click(screen.getByRole('button', { name: '创建容器' }))
+    const dialog = await screen.findByRole('dialog', { name: '创建容器' })
+    return { user, dialog }
+  }
+
+  it('打开表单见 mock 徽章；可选设置默认收起，展开后可加端口行', async () => {
+    const { user, dialog } = await openCreateForm()
+    expect(dialog.textContent).toContain('演示 · 待接入真实执行')
+    expect(within(dialog).queryByLabelText('容器端口')).not.toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: /可选设置/ }))
+    await user.click(within(dialog).getByRole('button', { name: '添加端口映射' }))
+    expect(within(dialog).getByLabelText('容器端口')).toBeInTheDocument()
+  })
+
+  it('未选镜像提交显示行内错误，不产生新容器', async () => {
+    const { user, dialog } = await openCreateForm()
+    await user.click(within(dialog).getByRole('button', { name: '创建并运行' }))
+    expect(await within(dialog).findByText('请选择镜像')).toBeInTheDocument()
+    // 弹窗打开时 Radix 会把应用子树设为 aria-hidden，按本文件终端用例的既有写法带 hidden 查询。
+    expect(screen.getAllByRole('listitem', { hidden: true })).toHaveLength(8)
+  })
+
+  it('宿主端口与现有容器冲突显示行内错误', async () => {
+    const { user, dialog } = await openCreateForm()
+    await user.selectOptions(within(dialog).getByLabelText('镜像'), 'img-redis')
+    await user.click(within(dialog).getByRole('button', { name: /可选设置/ }))
+    await user.click(within(dialog).getByRole('button', { name: '添加端口映射' }))
+    await user.type(within(dialog).getByLabelText('容器端口'), '6379')
+    await user.type(within(dialog).getByLabelText('宿主端口'), '8080')
+    await user.click(within(dialog).getByRole('button', { name: '创建并运行' }))
+    expect(await within(dialog).findByText('宿主端口已被占用')).toBeInTheDocument()
+  })
+
+  it('创建成功：新卡片出现、通知带 mock 标注、弹窗关闭', async () => {
+    const { user, dialog } = await openCreateForm(
+      createMockGateway({ eventStream: 'memory', eventIntervalMs: 60_000 }),
+    )
+    await user.selectOptions(within(dialog).getByLabelText('镜像'), 'img-redis')
+    await user.type(within(dialog).getByLabelText('容器名称'), 'redis-echo')
+    await user.click(within(dialog).getByRole('button', { name: /可选设置/ }))
+    await user.click(within(dialog).getByRole('button', { name: '添加环境变量' }))
+    await user.type(within(dialog).getByLabelText('变量名'), 'TZ')
+    await user.type(within(dialog).getByLabelText('值'), 'Asia/Shanghai')
+    await user.click(within(dialog).getByRole('button', { name: '创建并运行' }))
+
+    const card = await screen.findByRole('listitem', { name: 'redis-echo' })
+    expect(within(card).getByText('redis:7.4-alpine')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: '创建容器' })).not.toBeInTheDocument()
+    const notifications = await screen.findByLabelText('通知')
+    expect(within(notifications).getByRole('status')).toHaveTextContent(
+      '容器 redis-echo 已创建（mock，待接入真实执行）',
+    )
+  })
+
+  it('名称留空时按镜像自动命名', async () => {
+    const { user, dialog } = await openCreateForm(
+      createMockGateway({ eventStream: 'memory', eventIntervalMs: 60_000 }),
+    )
+    await user.selectOptions(within(dialog).getByLabelText('镜像'), 'img-alpine')
+    await user.click(within(dialog).getByRole('button', { name: '创建并运行' }))
+    expect(await screen.findByRole('listitem', { name: 'alpine' })).toBeInTheDocument()
   })
 })
