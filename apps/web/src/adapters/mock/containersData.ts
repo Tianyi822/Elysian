@@ -12,6 +12,8 @@ export const CONTAINER_IMAGES: readonly ContainerImage[] = [
   { id: 'img-node', name: 'node', tag: '22-alpine', digest: 'sha256:3f0b76cc9d21', sizeMb: 180, pulledAt: before(240) },
   { id: 'img-alpine', name: 'alpine', tag: '3.20', digest: 'sha256:4a1c88f3e0b9', sizeMb: 8, pulledAt: before(480) },
   { id: 'img-grafana', name: 'grafana/grafana', tag: '11.3.0', digest: 'sha256:5d2fa6b8c417', sizeMb: 398, pulledAt: before(216) },
+  { id: 'img-mariadb', name: 'mariadb', tag: '10.11', digest: 'sha256:6b4e12aa90f3', sizeMb: 396, pulledAt: before(168) },
+  { id: 'img-mysql', name: 'mysql', tag: '8.4', digest: 'sha256:7c5a30dd41b8', sizeMb: 612, pulledAt: before(168) },
 ]
 
 export const CONTAINERS: readonly Container[] = [
@@ -89,6 +91,24 @@ export const CONTAINERS: readonly Container[] = [
     volumes: [{ hostPath: '/srv/elysian/conf/metrics', containerPath: '/etc/metrics' }],
     restartPolicy: 'always',
   },
+  {
+    id: 'ctr-mariadb-primary', name: 'mariadb-primary', status: 'running', imageId: 'img-mariadb',
+    ports: [{ containerPort: 3306, hostPort: 13306, protocol: 'tcp' }],
+    createdAt: before(720), startedAt: before(294),
+    command: 'mariadbd --character-set-server=utf8mb4',
+    env: [{ key: 'MARIADB_DATABASE', value: 'elysian' }],
+    volumes: [{ hostPath: '/srv/elysian/data/mariadb', containerPath: '/var/lib/mysql' }],
+    restartPolicy: 'always',
+  },
+  {
+    id: 'ctr-mysql-orders', name: 'mysql-orders', status: 'running', imageId: 'img-mysql',
+    ports: [{ containerPort: 3306, hostPort: 13307, protocol: 'tcp' }],
+    createdAt: before(432), startedAt: before(211),
+    command: 'mysqld --default-authentication-plugin=caching_sha2_password',
+    env: [{ key: 'MYSQL_DATABASE', value: 'orders' }],
+    volumes: [{ hostPath: '/srv/elysian/data/mysql', containerPath: '/var/lib/mysql' }],
+    restartPolicy: 'always',
+  },
 ]
 
 /** 运行中容器的初始资源占用（cpuPercent / memMb）。 */
@@ -100,6 +120,8 @@ export const INITIAL_CONTAINER_USAGE: Readonly<Record<string, { cpuPercent: numb
   'ctr-elysian-worker': { cpuPercent: 15, memMb: 780 },
   'ctr-log-shipper': { cpuPercent: 4, memMb: 180 },
   'ctr-metrics-agent': { cpuPercent: 6, memMb: 240 },
+  'ctr-mariadb-primary': { cpuPercent: 17, memMb: 3277 },
+  'ctr-mysql-orders': { cpuPercent: 26, memMb: 4710 },
 }
 
 /** 演示状态流动：事件层每 4 拍在这些容器上切换 restarting/running。 */

@@ -1,39 +1,61 @@
 import type { DatabaseInstance } from '@elysian/contracts'
 
 /**
- * 数据库资源卡片的确定性演示数据。地址只用于界面展示，不对应真实基础设施。
- * 数值保留一位小数，便于卡片在不同屏幕宽度下保持稳定高度。
+ * 数据库资源卡片的确定性演示数据。数据库由容器承载，因此这里只记来源容器的 id；
+ * 地址字段不存在——数据库监听在容器里，界面给不出域名或 IP。
+ * 凭证是演示值，逐条写死、不随机生成。
  */
 export const DATABASE_INSTANCES: readonly DatabaseInstance[] = [
   {
     id: 'db-mariadb-primary',
     engine: 'MariaDB',
     name: 'mariadb-primary',
-    host: 'mariadb-primary.demo',
-    port: 3306,
     version: '10.11.8',
     status: 'running',
-    statusLabel: '运行中',
+    containerId: 'ctr-mariadb-primary',
+    credentials: { username: 'ops', password: 'demo-mariadb-7f2c' },
     storage: { usedGb: 128.4, totalGb: 256 },
     memory: { usedGb: 3.2, totalGb: 8 },
     connections: { active: 86, max: 200 },
-    uptime: '12 天 6 小时',
     updatedAt: '2026-09-12T08:00:00.000Z',
   },
   {
     id: 'db-mysql-orders',
     engine: 'MySQL',
     name: 'mysql-orders',
-    host: 'mysql-orders.demo',
-    port: 3306,
     version: '8.4.2',
     status: 'warning',
-    statusLabel: '连接偏高',
+    containerId: 'ctr-mysql-orders',
+    credentials: { username: 'ops', password: 'demo-mysql-3b91' },
     storage: { usedGb: 74.8, totalGb: 128 },
     memory: { usedGb: 4.6, totalGb: 8 },
     connections: { active: 142, max: 200 },
-    uptime: '8 天 19 小时',
+    updatedAt: '2026-09-12T08:00:00.000Z',
+  },
+  {
+    id: 'db-postgres-db',
+    engine: 'PgSQL',
+    name: 'postgres-db',
+    version: '16.4',
+    status: 'running',
+    containerId: 'ctr-postgres-db',
+    credentials: { username: 'ops', password: 'demo-pgsql-2c57' },
+    storage: { usedGb: 41.2, totalGb: 128 },
+    memory: { usedGb: 1.8, totalGb: 4 },
+    connections: { active: 23, max: 100 },
+    updatedAt: '2026-09-12T08:00:00.000Z',
+  },
+  {
+    id: 'db-redis-cache',
+    engine: 'Redis',
+    name: 'redis-cache',
+    version: '7.4',
+    status: 'running',
+    containerId: 'ctr-redis-cache',
+    credentials: { username: 'default', password: 'demo-redis-9a40' },
+    storage: { usedGb: 2.4, totalGb: 16 },
+    memory: { usedGb: 0.6, totalGb: 2 },
+    connections: { active: 34, max: 512 },
     updatedAt: '2026-09-12T08:00:00.000Z',
   },
 ]
-

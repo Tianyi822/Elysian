@@ -1,21 +1,27 @@
 import type { ReactNode } from 'react'
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
+import { useNavigate } from 'react-router'
 import {
+  ChevronRight,
+  Container,
   Database,
   Gauge,
   MariaDBLogo,
   MemoryStick,
   MySQLLogo,
-  Server,
   TriangleAlert,
 } from '../../components/icons'
 import { ErrorState, EmptyState, LoadingState } from '../../components/states/StateViews'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 import { useGateway } from '../../adapters/GatewayProvider'
+import { DATABASE_STATUS_LABELS } from '@elysian/contracts'
 import type { DatabaseInstance, DatabaseStatus } from '@elysian/contracts'
 import { useDatabaseStore } from '../../stores/databaseStore'
+import { useContainersStore } from '../../stores/containersStore'
 import { formatDateTime } from '../../components/format'
+import { projectDatabaseCard } from './projectDatabaseCard'
+import type { DatabaseCardView } from './projectDatabaseCard'
 
 const STATUS_TONE: Record<DatabaseStatus, StatusTone> = {
   running: 'success',
@@ -23,18 +29,27 @@ const STATUS_TONE: Record<DatabaseStatus, StatusTone> = {
   stopped: 'danger',
 }
 
-/** 数据库区只呈现资源状态，不包含账号、密码等连接凭证。 */
+/** 数据库区只呈现资源状态，不直接展示账号、密码等连接凭证。 */
 export function DatabasePage() {
   const gateway = useGateway()
+  const navigate = useNavigate()
   const status = useDatabaseStore((state) => state.status)
   const engine = useDatabaseStore((state) => state.engine)
   const databases = useDatabaseStore((state) => state.databases)
+  const containers = useDatabaseStore((state) => state.containers)
+  const images = useDatabaseStore((state) => state.images)
   const errorMessage = useDatabaseStore((state) => state.errorMessage)
   const load = useDatabaseStore((state) => state.load)
 
   useEffect(() => {
     void load(gateway)
   }, [gateway, load])
+
+  const containerById = useMemo(
+    () => new Map(containers.map((container) => [container.id, container])),
+    [containers],
+  )
+  const imageById = useMemo(() => new Map(images.map((image) => [image.id, image])), [images])
 
   if (status === 'error') {
     return (
@@ -53,25 +68,28 @@ export function DatabasePage() {
   return (
     <section aria-label="数据库实例" className="mb-6">
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="text-base font-semibold">{engine} 实例</h2>
-          <p className="mt-1 text-sm text-fg-muted">
-            展示容量、内存与连接使用情况，数据来自本地演示集。
-          </p>
-        </div>
+        <h2 className="text-base font-semibold">{engine} 实例</h2>
         <span className="text-xs tabular-nums text-fg-muted">{filtered.length} 个实例</span>
       </div>
 
       {filtered.length === 0 ? (
         <EmptyState
-          title={`暂未接入 ${engine}`}
-          description="当前演示集只提供 MariaDB 与 MySQL 的数据库卡片。"
+          title={`这台机器上没有 ${engine} 的数据库容器`}
+          description="数据库由容器承载：添加对应的数据库容器后，它的实例会出现在这里。"
         />
       ) : (
         <ul aria-label={`${engine} 数据库列表`} className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           {filtered.map((database) => (
             <li key={database.id} className="h-full">
-              <DatabaseCard database={database} />
+              <DatabaseCard
+                database={database}
+                view={projectDatabaseCard(database, containerById, imageById, new Date())}
+                onJump={() => {
+                  useContainersStore.getState().openDetail(database.containerId)
+                  useContainersStore.getState().setView('grid')
+                  navigate('/containers')
+                }}
+              />
             </li>
           ))}
         </ul>
@@ -80,7 +98,15 @@ export function DatabasePage() {
   )
 }
 
-function DatabaseCard({ database }: { database: DatabaseInstance }) {
+function DatabaseCard({
+  database,
+  view,
+  onJump,
+}: {
+  database: DatabaseInstance
+  view: DatabaseCardView
+  onJump(): void
+}) {
   const storagePercent = percent(database.storage.usedGb, database.storage.totalGb)
   const memoryPercent = percent(database.memory.usedGb, database.memory.totalGb)
   const connectionPercent = percent(database.connections.active, database.connections.max)
@@ -100,16 +126,30 @@ function DatabaseCard({ database }: { database: DatabaseInstance }) {
             </p>
           </div>
         </div>
-        <StatusTag label={database.statusLabel} tone={STATUS_TONE[database.status]} />
+        <StatusTag label={DATABASE_STATUS_LABELS[database.status]} tone={STATUS_TONE[database.status]} />
       </div>
 
-      <div className="flex items-center gap-2 rounded-lg bg-surface-raised px-3 py-2 text-xs text-fg-muted">
-        <Server aria-hidden size={14} className="shrink-0 text-fg-subtle" />
-        <code className="min-w-0 truncate text-fg" title={`${database.host}:${database.port}`}>
-          {database.host}:{database.port}
-        </code>
-        <span className="ml-auto shrink-0 text-fg-subtle">运行 {database.uptime}</span>
-      </div>
+      <button
+        type="button"
+        onClick={onJump}
+        disabled={view.missingContainer}
+        title={view.missingContainer ? '来源容器已不存在' : `打开容器 ${view.container?.name} 的详情`}
+        className="flex w-full items-center gap-2 rounded-lg bg-surface-raised px-3 py-2 text-left text-xs text-fg-muted transition-colors hover:bg-surface-raised/70 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <Container aria-hidden size={14} className="shrink-0 text-fg-subtle" />
+        <span className="shrink-0">来源容器</span>
+        {view.missingContainer ? (
+          <span className="min-w-0 flex-1 truncate text-fg-subtle">来源容器已不存在</span>
+        ) : (
+          <>
+            <span className="min-w-0 flex-1 truncate text-fg">{view.container?.name}</span>
+            <span className="shrink-0 tabular-nums text-fg-subtle">
+              {view.imageLabel} · {view.uptimeLabel}
+            </span>
+            <ChevronRight aria-hidden size={14} className="shrink-0 text-fg-subtle" />
+          </>
+        )}
+      </button>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <UsageMetric
@@ -130,13 +170,14 @@ function DatabaseCard({ database }: { database: DatabaseInstance }) {
           value={`${database.connections.active} / ${database.connections.max}`}
           percent={connectionPercent}
           warning={database.status === 'warning'}
+          demo
         />
       </div>
 
       <div className="mt-auto flex items-center justify-between border-t border-line pt-3 text-xs text-fg-subtle">
         <span className="inline-flex items-center gap-1.5">
           {database.status === 'warning' ? <TriangleAlert aria-hidden size={13} /> : <Database aria-hidden size={13} />}
-          状态采样正常
+          演示数值 · 待接入真实采集
         </span>
         <time dateTime={database.updatedAt}>更新于 {formatDateTime(database.updatedAt)}</time>
       </div>
@@ -166,12 +207,15 @@ function UsageMetric({
   value,
   percent,
   warning = false,
+  demo = false,
 }: {
   icon: ReactNode
   label: string
   value: string
   percent: number
   warning?: boolean
+  /** 连接数补演示标注：条形 tooltip 明说数值待接入真实采集。 */
+  demo?: boolean
 }) {
   return (
     <div className="rounded-lg bg-surface-raised px-3 py-2.5">
@@ -183,7 +227,7 @@ function UsageMetric({
       <div
         aria-hidden
         className="mt-2 h-1.5 overflow-hidden rounded-full bg-line"
-        title={`${label}已使用 ${percent}%`}
+        title={`${label}已使用 ${percent}%${demo ? '（演示数值 · 待接入真实采集）' : ''}`}
       >
         <div
           className={`h-full rounded-full ${warning ? 'bg-warning' : 'bg-info'}`}

@@ -1,7 +1,7 @@
 import type { Container, ContainerImage } from '@elysian/contracts'
 import { DATASET_BASE_TIME } from './dataset'
 import { INITIAL_CONTAINER_USAGE } from './containersData'
-import { formatUptime } from './containerViews'
+import { formatUptime } from '../../components/format'
 
 /**
  * 演示终端的命令引擎：纯函数、确定性输出、与容器 mock 数据联动。

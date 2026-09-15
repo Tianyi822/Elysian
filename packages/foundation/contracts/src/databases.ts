@@ -38,14 +38,14 @@ export type DatabaseInstance = {
   id: string
   engine: DatabaseEngine
   name: string
-  host: string
-  port: number
   version: string
   status: DatabaseStatus
-  statusLabel: string
+  /** 承载这个数据库的容器；卡片上的容器名、镜像与运行时长都按它现取。 */
+  containerId: string
+  /** 演示凭证：界面不显示值，只提供一键复制。 */
+  credentials: DemoCredentials
   storage: { usedGb: number; totalGb: number }
   memory: { usedGb: number; totalGb: number }
   connections: { active: number; max: number }
-  uptime: string
   updatedAt: string
 }

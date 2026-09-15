@@ -6,7 +6,7 @@ import { CONTAINER_STATUS_LABELS } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
-import { formatUptime } from '../../adapters/mock/containerViews'
+import { formatUptime } from '../../components/format'
 import { useContainersStore } from '../../stores/containersStore'
 
 const STATUS_TONE: Record<Container['status'], StatusTone> = {

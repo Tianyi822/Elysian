@@ -138,11 +138,11 @@ describe('确定性 mock 数据集', () => {
 describe('容器与镜像种子数据', () => {
   const dataset = createMockDataset()
 
-  it('8 个容器：6 运行、1 停止、1 重启中，id 唯一', () => {
+  it('10 个容器：8 运行、1 停止、1 重启中，id 唯一', () => {
     const statuses = dataset.containers.map((c) => c.status)
-    expect(dataset.containers).toHaveLength(8)
+    expect(dataset.containers).toHaveLength(10)
     expect(dataset.containers.map((c) => c.id)).toHaveLength(new Set(dataset.containers.map((c) => c.id)).size)
-    expect(statuses.filter((s) => s === 'running')).toHaveLength(6)
+    expect(statuses.filter((s) => s === 'running')).toHaveLength(8)
     expect(statuses.filter((s) => s === 'stopped')).toHaveLength(1)
     expect(statuses.filter((s) => s === 'restarting')).toHaveLength(1)
   })
@@ -154,8 +154,8 @@ describe('容器与镜像种子数据', () => {
     expect(udp).toHaveLength(1)
   })
 
-  it('6 个镜像，恰好 1 个未被引用', () => {
-    expect(dataset.images).toHaveLength(6)
+  it('8 个镜像，恰好 1 个未被引用', () => {
+    expect(dataset.images).toHaveLength(8)
     const usedIds = new Set(dataset.containers.map((c) => c.imageId))
     const unused = dataset.images.filter((image) => !usedIds.has(image.id))
     expect(unused.map((image) => image.name)).toEqual(['grafana/grafana'])

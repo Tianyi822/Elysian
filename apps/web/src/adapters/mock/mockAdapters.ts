@@ -303,6 +303,7 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
   async list(): Promise<readonly DatabaseInstance[]> {
     return DATABASE_INSTANCES.map((database) => ({
       ...database,
+      credentials: { ...database.credentials },
       storage: { ...database.storage },
       memory: { ...database.memory },
       connections: { ...database.connections },

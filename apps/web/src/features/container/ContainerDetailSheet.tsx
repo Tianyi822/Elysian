@@ -7,7 +7,7 @@ import type { Container } from '@elysian/contracts'
 import { IconButton } from '../../components/IconButton'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
-import { formatUptime } from '../../adapters/mock/containerViews'
+import { formatUptime } from '../../components/format'
 import { useContainersStore } from '../../stores/containersStore'
 
 /* 与容器卡片同一套状态配色：状态一律「文字 + 颜色」表达。 */

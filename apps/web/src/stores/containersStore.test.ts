@@ -64,8 +64,8 @@ describe('containersStore', () => {
     await useContainersStore.getState().load(gateway)
     const state = useContainersStore.getState()
     expect(state.status).toBe('ready')
-    expect(state.containers).toHaveLength(8)
-    expect(state.images).toHaveLength(6)
+    expect(state.containers).toHaveLength(10)
+    expect(state.images).toHaveLength(8)
   })
 
   it('load 失败进入 error 且带中文信息', async () => {
@@ -168,7 +168,7 @@ describe('创建容器', () => {
       { imageId: 'img-redis', ports: [], env: [], volumes: [], restartPolicy: 'no' },
     )
     const state = useContainersStore.getState()
-    expect(state.containers).toHaveLength(9)
+    expect(state.containers).toHaveLength(11)
     expect(state.containers.find((c) => c.id === 'ctr-redis-echo')).toBeDefined()
     expect(state.createOpen).toBe(false)
     expect(state.creating).toBe(false)
@@ -196,9 +196,9 @@ describe('创建容器', () => {
   it('container/created 事件把新容器追加进列表且按 id 去重', async () => {
     await useContainersStore.getState().load(gatewayWith())
     emitToStore?.(event('container/created', { container: NEW_CONTAINER }))
-    expect(useContainersStore.getState().containers).toHaveLength(9)
+    expect(useContainersStore.getState().containers).toHaveLength(11)
     emitToStore?.(event('container/created', { container: NEW_CONTAINER }))
-    expect(useContainersStore.getState().containers).toHaveLength(9)
+    expect(useContainersStore.getState().containers).toHaveLength(11)
   })
 })
 
@@ -263,7 +263,7 @@ describe('拉取镜像', () => {
     await promise
 
     const state = useContainersStore.getState()
-    expect(state.images).toHaveLength(6)
+    expect(state.images).toHaveLength(8)
     expect(state.pullingImage).toBeUndefined()
     expect(useNotificationStore.getState().notifications[0]).toMatchObject({
       tone: 'danger',

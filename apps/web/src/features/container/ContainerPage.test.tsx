@@ -41,10 +41,10 @@ beforeEach(() => {
 })
 
 describe('容器页骨架', () => {
-  it('进入页面渲染全部 8 个容器', async () => {
+  it('进入页面渲染全部 10 个容器', async () => {
     renderApp('/containers', { gateway: pageGateway() })
     const list = await screen.findByRole('list', { name: '容器列表' })
-    expect(within(list).getAllByRole('listitem')).toHaveLength(8)
+    expect(within(list).getAllByRole('listitem')).toHaveLength(10)
   })
 
   it('状态筛选只保留所选状态的容器', async () => {
@@ -159,7 +159,7 @@ describe('容器卡片', () => {
 })
 
 describe('镜像视图', () => {
-  it('切换到镜像视图显示 6 行镜像与引用数', async () => {
+  it('切换到镜像视图显示 8 行镜像与引用数', async () => {
     const user = userEvent.setup()
     renderApp('/containers', { gateway: pageGateway() })
     await screen.findByRole('list', { name: '容器列表' })
@@ -169,7 +169,7 @@ describe('镜像视图', () => {
 
     await user.click(screen.getByRole('button', { name: '镜像' }))
     const table = await screen.findByRole('table', { name: '镜像列表' })
-    expect(within(table).getAllByRole('row')).toHaveLength(7) // 表头 + 6 行
+    expect(within(table).getAllByRole('row')).toHaveLength(9) // 表头 + 8 行
     expect(table.textContent).toContain('node:22-alpine')
     expect(within(table).getByText('4')).toBeInTheDocument() // node 被引用 4 次
     expect(table.textContent).toContain('2026-09-03') // grafana 拉取时间：基准 09-12 08:00 回推 216 小时
@@ -190,7 +190,7 @@ describe('镜像视图', () => {
     const table = await screen.findByRole('table', { name: '镜像列表' })
 
     const buttons = within(table).getAllByRole('button', { name: '删除' })
-    expect(buttons).toHaveLength(6)
+    expect(buttons).toHaveLength(8)
     for (const button of buttons) expect(button).toHaveAttribute('title')
 
     const rows = within(table).getAllByRole('row')
@@ -591,7 +591,7 @@ describe('创建容器', () => {
     await user.click(within(dialog).getByRole('button', { name: '创建并运行' }))
     expect(await within(dialog).findByText('请选择镜像')).toBeInTheDocument()
     // 弹窗打开时 Radix 会把应用子树设为 aria-hidden，按本文件终端用例的既有写法带 hidden 查询。
-    expect(screen.getAllByRole('listitem', { hidden: true })).toHaveLength(8)
+    expect(screen.getAllByRole('listitem', { hidden: true })).toHaveLength(10)
   })
 
   it('宿主端口与现有容器冲突显示行内错误', async () => {

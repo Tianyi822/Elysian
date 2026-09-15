@@ -3,7 +3,6 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import * as contracts from '@elysian/contracts'
 import { DATABASE_ENGINES, DATABASE_STATUS_LABELS, DATABASE_STATUSES } from '@elysian/contracts'
-import { DATABASE_INSTANCES } from '../adapters/mock/databaseData'
 
 /*
  * 契约包的契约测试：枚举与标签表一一对应、职责模块词典完整、事件模式齐备，
@@ -235,11 +234,8 @@ describe('数据库域词典', () => {
     expect(DATABASE_ENGINES).not.toContain('SQLServer')
   })
 
-  it('状态取值与中文标签一一对应，且与演示数据的标签一致', () => {
+  it('状态取值与中文标签一一对应', () => {
     expect([...DATABASE_STATUSES]).toEqual(['running', 'warning', 'stopped'])
     expect(Object.keys(DATABASE_STATUS_LABELS).sort()).toEqual([...DATABASE_STATUSES].sort())
-    for (const database of DATABASE_INSTANCES) {
-      expect(DATABASE_STATUS_LABELS[database.status]).toBe(database.statusLabel)
-    }
   })
 })

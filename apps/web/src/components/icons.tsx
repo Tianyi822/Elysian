@@ -12,6 +12,7 @@ export {
   Bot,
   Check,
   ChevronDown,
+  ChevronRight,
   CircleCheck,
   Container,
   Database,
