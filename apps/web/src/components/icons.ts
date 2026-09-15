@@ -9,6 +9,7 @@ export type IconComponent = LucideIcon
 
 export {
   Bot,
+  ChevronDown,
   CircleCheck,
   Container,
   Gauge,
@@ -23,6 +24,7 @@ export {
   PanelLeftClose,
   PanelLeftOpen,
   Play,
+  Plus,
   RefreshCw,
   RotateCw,
   ScrollText,
