@@ -96,7 +96,8 @@ export function AppShell() {
                   aria-describedby={undefined}
                   className="fixed inset-y-0 left-0 z-50 flex w-60 flex-col border-r border-line bg-surface shadow-xl will-change-transform motion-reduce:animate-none data-[state=open]:animate-drawer-panel-in data-[state=closed]:animate-drawer-panel-out"
                 >
-                  <div className="flex items-center justify-between border-b border-line px-3 py-2">
+                  {/* 固定 h-14：与顶栏 min-h-14 和桌面侧边栏 header 同高，三条横梁视觉齐平。 */}
+                  <div className="flex h-14 items-center justify-between border-b border-line px-3">
                     <Dialog.Title className="text-base font-medium">主导航</Dialog.Title>
                     <Dialog.Close asChild>
                       <span>
