@@ -90,6 +90,11 @@ const ENUM_TABLES: ReadonlyArray<{
     values: contracts.SSH_PASSWORD_STRENGTHS,
     labels: contracts.SSH_PASSWORD_STRENGTH_LABELS,
   },
+  {
+    name: 'SshLoginResult',
+    values: contracts.SSH_LOGIN_RESULTS,
+    labels: contracts.SSH_LOGIN_RESULT_LABELS,
+  },
 ]
 
 describe('枚举与中文标签表', () => {

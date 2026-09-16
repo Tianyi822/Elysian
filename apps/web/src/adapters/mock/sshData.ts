@@ -2,6 +2,7 @@ import type {
   SshAuthSettings,
   SshKeyMaterial,
   SshLoginKey,
+  SshLoginRecord,
   SshLoginStats,
   SshOverview,
   SshPasswordResetResult,
@@ -83,12 +84,66 @@ const SEED_AUTH_SETTINGS: SshAuthSettings = {
   port: SEED_SSH_PORT,
 }
 
-/** 登录密钥种子：四把按用途命名的密钥，材料由名称确定性派生。 */
+/** 登录密钥种子：前四把按用途手写，其余补齐到两页——表格每页 20 条，分页才不是摆设。 */
+const HAND_WRITTEN_KEYS: readonly { name: string; createdAt: string }[] = [
+  { name: '部署机', createdAt: '2025-06-10T21:56:30' },
+  { name: 'CI 发布', createdAt: '2025-05-23T21:57:47' },
+  { name: '个人笔记本', createdAt: '2025-04-02T09:12:04' },
+  { name: '异地备份', createdAt: '2025-02-11T11:05:51' },
+]
+
+/** 补齐用的临时密钥：时间在最早那把之前按固定间隔往前推，材料仍由名称确定性派生。 */
+const TEMPORARY_KEY_COUNT = 18
+
 export const SEED_LOGIN_KEYS: readonly SshLoginKey[] = [
-  { id: 'key-部署机', name: '部署机', ...mockKeyMaterial('部署机', '2025-06-10T21:56:30') },
-  { id: 'key-CI 发布', name: 'CI 发布', ...mockKeyMaterial('CI 发布', '2025-05-23T21:57:47') },
-  { id: 'key-个人笔记本', name: '个人笔记本', ...mockKeyMaterial('个人笔记本', '2025-04-02T09:12:04') },
-  { id: 'key-异地备份', name: '异地备份', ...mockKeyMaterial('异地备份', '2025-02-11T11:05:51') },
+  ...HAND_WRITTEN_KEYS.map(({ name, createdAt }) => ({ id: `key-${name}`, name, ...mockKeyMaterial(name, createdAt) })),
+  ...Array.from({ length: TEMPORARY_KEY_COUNT }, (_, index) => {
+    const step = index + 1
+    const name = `临时密钥 ${`${step}`.padStart(2, '0')}`
+    const createdAt = new Date(
+      Date.parse('2025-02-11T11:05:51+08:00') - step * 26 * 60 * 60_000,
+    ).toISOString()
+    return { id: `key-${name}`, name, ...mockKeyMaterial(name, createdAt) }
+  }),
+]
+
+/*
+ * 登录记录种子：前六条按样例手写（来源地址与时间取自真实运维样例，末尾一条是失败记录——
+ * 状态列有两种取值，只摆成功记录会让那一列没有意义），其余按固定间隔往前推，补齐到两页。
+ * 时间写全带时区的 ISO，格式化按固定时区渲染，测试因此在任何机器上都得到同一串结果。
+ */
+const HAND_WRITTEN_RECORDS: readonly Omit<SshLoginRecord, 'id'>[] = [
+  { ip: '1.204.32.143', port: 16999, at: '2026-09-07T14:10:53+08:00', user: 'root', result: 'succeeded' },
+  { ip: '114.139.238.201', port: 18569, at: '2025-05-24T23:38:30+08:00', user: 'root', result: 'succeeded' },
+  { ip: '114.139.238.201', port: 21257, at: '2025-05-24T20:48:08+08:00', user: 'root', result: 'succeeded' },
+  { ip: '127.0.0.1', port: 43462, at: '2025-05-24T19:28:45+08:00', user: 'root', result: 'succeeded' },
+  { ip: '114.139.238.201', port: 17964, at: '2025-05-24T18:56:30+08:00', user: 'root', result: 'succeeded' },
+  { ip: '45.155.205.233', port: 51422, at: '2025-05-24T03:12:07+08:00', user: 'root', result: 'failed' },
+]
+
+/** 补齐记录用的来源地址池：真实爆破扫描的常见来源形态，轮换出现。 */
+const LOGIN_SOURCE_IPS = ['114.139.238.201', '45.155.205.233', '1.204.32.143', '127.0.0.1']
+
+const EXTRA_RECORD_COUNT = 20
+
+export const SEED_LOGIN_RECORDS: readonly SshLoginRecord[] = [
+  ...HAND_WRITTEN_RECORDS.map((record, index) => ({ id: `login-${index + 1}`, ...record })),
+  ...Array.from({ length: EXTRA_RECORD_COUNT }, (_, index) => {
+    const step = index + 1
+    // 从最早那条手写记录继续往前推，整张表因此始终是时间倒序。
+    const at = new Date(
+      Date.parse('2025-05-24T03:12:07+08:00') - step * 37 * 60_000,
+    ).toISOString()
+    return {
+      id: `login-${HAND_WRITTEN_RECORDS.length + step}`,
+      ip: LOGIN_SOURCE_IPS[step % LOGIN_SOURCE_IPS.length] ?? '127.0.0.1',
+      port: 40000 + step * 137,
+      at,
+      user: 'root',
+      // 每七条掺一次失败尝试：连续成功的日志不真实，也不便于核对状态列。
+      result: step % 7 === 0 ? 'failed' : 'succeeded',
+    } satisfies SshLoginRecord
+  }),
 ]
 
 let overview: SshOverview
@@ -150,6 +205,10 @@ export function resetSshRootPassword(password: string, resetAt: string): SshPass
 
 export function getSshLoginKeys(): readonly SshLoginKey[] {
   return keys.map((key) => ({ ...key }))
+}
+
+export function getSshLoginRecords(): readonly SshLoginRecord[] {
+  return SEED_LOGIN_RECORDS.map((record) => ({ ...record }))
 }
 
 export function findSshLoginKeyByName(name: string): SshLoginKey | undefined {

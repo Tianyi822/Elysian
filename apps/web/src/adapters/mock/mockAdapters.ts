@@ -22,6 +22,7 @@ import type {
   SshAuthMethods,
   SshAuthSettings,
   SshLoginKey,
+  SshLoginRecord,
   SshOverview,
   SshPasswordResetResult,
   SshRootAuth,
@@ -66,6 +67,7 @@ import {
   findSshLoginKeyByName,
   getSshAuthSettings,
   getSshLoginKeys,
+  getSshLoginRecords,
   getSshOverview,
   getSshRootAuth,
   removeSshLoginKey,
@@ -437,6 +439,10 @@ export class MockSshAdapter implements SshAdapter {
 
   async listKeys(): Promise<readonly SshLoginKey[]> {
     return getSshLoginKeys()
+  }
+
+  async listLoginRecords(): Promise<readonly SshLoginRecord[]> {
+    return getSshLoginRecords()
   }
 
   async createKey(input: { name: string }): Promise<SshLoginKey> {

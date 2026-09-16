@@ -3,6 +3,7 @@ import type { SshAdapter } from '../../contracts/adapters'
 import { MockSshAdapter } from './mockAdapters'
 import {
   SEED_LOGIN_KEYS,
+  SEED_LOGIN_RECORDS,
   SEED_SSH_PORT,
   SEED_SSH_STATS,
   mockKeyMaterial,
@@ -130,5 +131,16 @@ describe('SSH mock adapter', () => {
 
     expect((await ssh.listKeys()).map((key) => key.id)).not.toContain(target.id)
     await expect(ssh.removeKey('key-不存在')).rejects.toThrow('未找到登录密钥 key-不存在')
+  })
+
+  it('登录记录：按时间倒序给出，含来源地址、客户端端口、账号与结果', async () => {
+    const records = await ssh.listLoginRecords()
+
+    expect(records).toEqual(SEED_LOGIN_RECORDS)
+    const times = records.map((record) => new Date(record.at).getTime())
+    expect([...times].sort((a, b) => b - a)).toEqual(times)
+    expect(records[0]).toMatchObject({ ip: '1.204.32.143', port: 16999, user: 'root', result: 'succeeded' })
+    // 成功与失败两种结果都在种子里，状态列因此不是摆设
+    expect(records.some((record) => record.result === 'failed')).toBe(true)
   })
 })

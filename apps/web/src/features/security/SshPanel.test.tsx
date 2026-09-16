@@ -1,8 +1,9 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { SEED_SSH_PORT } from '../../adapters/mock/sshData'
+import { SEED_LOGIN_RECORDS, SEED_SSH_PORT } from '../../adapters/mock/sshData'
 import { useNotificationStore } from '../../stores/notificationStore'
+import { SSH_PAGE_SIZE } from '../../stores/sshStore'
 import { renderApp } from '../../test/renderApp'
 import { openSshTab, resetSshPanel, securityTab, sshSessions } from '../../test/sshPanel'
 
@@ -17,7 +18,7 @@ beforeEach(() => {
 })
 
 describe('SSH 管理页签', () => {
-  it('切到页签后渲染四张分区卡，中屏起两列、行内等高', async () => {
+  it('切到页签后渲染四张分区卡：设置卡等高，两张表各自取高度', async () => {
     await openSshTab()
 
     const service = screen.getByRole('region', { name: 'SSH 服务' })
@@ -28,11 +29,17 @@ describe('SSH 管理页签', () => {
       expect(card).toBeInTheDocument()
     }
 
-    // 等高来自网格列的默认拉伸：卡片不写 items-start，同一行的两张卡因此同高对齐。
-    const grid = service.parentElement
-    expect(grid).toHaveClass('md:grid-cols-2')
-    expect(grid).not.toHaveClass('items-start')
-    expect(grid?.contains(keys)).toBe(true)
+    // 第一行：网格默认拉伸，两张设置卡同高对齐。
+    const settingRow = service.parentElement
+    expect(settingRow).toHaveClass('md:grid-cols-2')
+    expect(settingRow).not.toHaveClass('items-start')
+    expect(settingRow?.contains(root)).toBe(true)
+
+    // 第二行：items-start 让两张表各自按内容取高度，不互相拉平。
+    const tableRow = keys.parentElement
+    expect(tableRow).toHaveClass('md:grid-cols-2', 'items-start')
+    expect(tableRow?.contains(records)).toBe(true)
+    expect(settingRow).not.toBe(tableRow)
 
     // 卡内按区域划分，每区自带小标题。
     for (const name of ['服务状态', '监听端口', '登录方式']) {
@@ -43,13 +50,72 @@ describe('SSH 管理页签', () => {
     }
   })
 
-  it('登录记录占位卡标明未实现，不假装有数据', async () => {
-    await openSshTab()
+  it('登录记录卡按时间倒序列出来源、端口、结果与账号，每页 20 条', async () => {
+    const user = await openSshTab()
 
     const records = screen.getByRole('region', { name: 'SSH 登录记录' })
-    expect(within(records).getByText('待实现：SSH 登录记录')).toBeInTheDocument()
-    expect(within(records).getByText(/本期未实现/)).toBeInTheDocument()
-    expect(within(records).queryByRole('table')).not.toBeInTheDocument()
+    const table = within(records).getByRole('table')
+    expect(within(table).getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual([
+      'IP 地址',
+      '登录时间',
+      '端口',
+      '状态',
+      '用户',
+    ])
+
+    const rows = within(table).getAllByRole('row').slice(1)
+    expect(rows).toHaveLength(SSH_PAGE_SIZE)
+    // 最新一条在最前：时间精确到秒，来源地址、客户端端口与账号都在同一行
+    expect(rows[0]?.textContent).toContain('1.204.32.143')
+    expect(rows[0]?.textContent).toContain('2026-09-07 14:10:53')
+    expect(rows[0]?.textContent).toContain('16999')
+    expect(rows[0]?.textContent).toContain('成功')
+    expect(rows[0]?.textContent).toContain('root')
+    // 失败记录用危险色调，状态不靠颜色单独表达
+    const failed = rows.filter((row) => row.textContent?.includes('失败'))
+    expect(failed.length).toBeGreaterThan(0)
+    expect(within(failed[0] as HTMLElement).getByText('失败')).toHaveClass('text-danger')
+    expect(
+      within(records).getByText(
+        `共 ${SEED_LOGIN_RECORDS.length} 条登录记录 · 每页 ${SSH_PAGE_SIZE} 条`,
+      ),
+    ).toBeInTheDocument()
+
+    // 首列钉住、其余列横向滚动：窄屏下靠它把来源地址留在视线里
+    expect(rows[0]?.children[0]).toHaveClass('sticky', 'left-0')
+    expect(rows[0]).toHaveClass('group')
+    expect(within(records).getByRole('region', { name: 'SSH 登录记录表' })).toHaveAttribute(
+      'tabindex',
+      '0',
+    )
+
+    // 翻页：第二页是剩下的记录
+    await user.click(within(records).getByRole('button', { name: '下一页' }))
+    expect(within(table).getAllByRole('row').slice(1)).toHaveLength(
+      SEED_LOGIN_RECORDS.length - SSH_PAGE_SIZE,
+    )
+    expect(within(records).getByRole('button', { name: '2' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    )
+  })
+
+  it('没有登录记录时给空态，而不是一张空表', async () => {
+    const { gateway } = sshSessions({ listLoginRecords: async () => [] })
+    await openSshTab(gateway)
+
+    const records = screen.getByRole('region', { name: 'SSH 登录记录' })
+    expect(within(records).getByText('还没有登录记录')).toBeInTheDocument()
+    expect(
+      within(records).getByText(`共 0 条登录记录 · 每页 ${SSH_PAGE_SIZE} 条`),
+    ).toBeInTheDocument()
+    // 只剩表头与承载空态的那一行，没有数据行；翻页按钮也都不可用
+    const table = within(records).getByRole('table')
+    const rows = within(table).getAllByRole('row')
+    expect(rows).toHaveLength(2)
+    expect(rows[1]?.textContent).toContain('还没有登录记录')
+    expect(within(records).getByRole('button', { name: '上一页' })).toBeDisabled()
+    expect(within(records).getByRole('button', { name: '下一页' })).toBeDisabled()
   })
 
   it('种子数据上屏：服务运行中、端口 73、密码登录关闭、密钥登录开启', async () => {

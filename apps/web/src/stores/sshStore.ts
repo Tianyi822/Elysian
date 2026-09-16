@@ -3,6 +3,7 @@ import type {
   SshAuthSettings,
   SshKeyMaterial,
   SshLoginKey,
+  SshLoginRecord,
   SshOverview,
   SshRootAuth,
   SshRootLoginPolicy,
@@ -15,6 +16,9 @@ import { useNotificationStore } from './notificationStore'
 /** SSH 管理页签的状态：服务概况、登录方式与端口、Root 凭据、登录密钥，以及各分区自己的忙碌态。 */
 type SshStatus = 'idle' | 'loading' | 'ready' | 'error'
 
+/** 两张表每页条数：密钥与登录记录同一口径，与防火墙端口规则表一致。 */
+export const SSH_PAGE_SIZE = 20
+
 type SshState = {
   status: SshStatus
   errorMessage: string | undefined
@@ -22,6 +26,8 @@ type SshState = {
   settings: SshAuthSettings | undefined
   rootAuth: SshRootAuth | undefined
   keys: readonly SshLoginKey[]
+  /** 登录记录：只读，登录事实由服务端给出，界面不产生也不修改它。 */
+  loginRecords: readonly SshLoginRecord[]
   /** 端口输入框的草稿。存字符串而不是数字，用户才能把输入清空、也才能输入到一半。 */
   portDraft: string
   portError: string | undefined
@@ -29,6 +35,9 @@ type SshState = {
   passwordDraft: string
   /** 密钥搜索词：按名称、指纹与私钥内容匹配。 */
   keySearch: string
+  /** 两张表各自的页码；删到最后一页空了会被界面收回到有效页。 */
+  keyPage: number
+  recordPage: number
   createKeyOpen: boolean
   /** 待确认删除的密钥。 */
   removeKeyTarget: SshLoginKey | undefined
@@ -53,6 +62,8 @@ type SshState = {
   setPasswordDraft: (value: string) => void
   resetPassword: (gateway: ElysianGateway) => Promise<void>
   setKeySearch: (search: string) => void
+  setKeyPage: (page: number) => void
+  setRecordPage: (page: number) => void
   openCreateKey: () => void
   closeCreateKey: () => void
   createKey: (gateway: ElysianGateway, input: { name: string }) => Promise<boolean>
@@ -74,10 +85,13 @@ export const useSshStore = create<SshState>((set, get) => ({
   settings: undefined,
   rootAuth: undefined,
   keys: [],
+  loginRecords: [],
   portDraft: '',
   portError: undefined,
   passwordDraft: '',
   keySearch: '',
+  keyPage: 1,
+  recordPage: 1,
   createKeyOpen: false,
   removeKeyTarget: undefined,
   viewKey: undefined,
@@ -93,13 +107,22 @@ export const useSshStore = create<SshState>((set, get) => ({
     if (get().status === 'loading') return
     set({ status: 'loading', errorMessage: undefined })
     try {
-      const [overview, settings, rootAuth, keys] = await Promise.all([
+      const [overview, settings, rootAuth, keys, loginRecords] = await Promise.all([
         gateway.ssh.overview(),
         gateway.ssh.settings(),
         gateway.ssh.rootAuth(),
         gateway.ssh.listKeys(),
+        gateway.ssh.listLoginRecords(),
       ])
-      set({ status: 'ready', overview, settings, rootAuth, keys, portDraft: `${settings.port}` })
+      set({
+        status: 'ready',
+        overview,
+        settings,
+        rootAuth,
+        keys,
+        loginRecords,
+        portDraft: `${settings.port}`,
+      })
     } catch (error) {
       set({ status: 'error', errorMessage: error instanceof Error ? error.message : 'SSH 数据加载失败' })
     }
@@ -212,7 +235,16 @@ export const useSshStore = create<SshState>((set, get) => ({
   },
 
   setKeySearch(search) {
-    set({ keySearch: search })
+    // 换了搜索词就回到第一页：结果集变了，停在第 3 页会落到空页上。
+    set({ keySearch: search, keyPage: 1 })
+  },
+
+  setKeyPage(page) {
+    set({ keyPage: page })
+  },
+
+  setRecordPage(page) {
+    set({ recordPage: page })
   },
 
   openCreateKey() {

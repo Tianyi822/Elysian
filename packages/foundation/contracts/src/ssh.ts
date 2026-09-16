@@ -48,6 +48,36 @@ export const SSH_LOGIN_WINDOW_LABELS: Record<SshLoginWindow, string> = {
   last7Days: '近 7 天',
 }
 
+/** 一次登录的结果。 */
+export type SshLoginResult = 'succeeded' | 'failed'
+
+export const SSH_LOGIN_RESULTS = [
+  'succeeded',
+  'failed',
+] as const satisfies readonly SshLoginResult[]
+
+export const SSH_LOGIN_RESULT_LABELS: Record<SshLoginResult, string> = {
+  succeeded: '成功',
+  failed: '失败',
+}
+
+/**
+ * 一条 SSH 登录记录：谁、从哪个地址的哪个端口、什么时候、结果如何。
+ * 端口是客户端的源端口，不是服务端的监听端口——排查爆破时先看来源地址与端口，再看账号。
+ */
+export type SshLoginRecord = {
+  id: string
+  /** 来源 IP。 */
+  ip: string
+  /** 客户端源端口。 */
+  port: number
+  /** 登录时间（ISO）。 */
+  at: string
+  /** 登录使用的账号。 */
+  user: string
+  result: SshLoginResult
+}
+
 /** 服务概况：开关、状态、上次启停时间与登录统计。 */
 export type SshOverview = {
   enabled: boolean

@@ -22,6 +22,7 @@ import type {
   SshAuthMethods,
   SshAuthSettings,
   SshLoginKey,
+  SshLoginRecord,
   SshOverview,
   SshPasswordResetResult,
   SshRootAuth,
@@ -196,6 +197,8 @@ export interface SshAdapter {
   resetRootPassword(password: string): Promise<SshPasswordResetResult>
   /** 登录密钥列表（演示）：可自定义名称、多条并存的登录密钥，与主机 root 密钥分开管理。 */
   listKeys(): Promise<readonly SshLoginKey[]>
+  /** 登录记录（演示）：按时间倒序的登录事实，含来源地址、客户端端口、账号与结果。 */
+  listLoginRecords(): Promise<readonly SshLoginRecord[]>
   /** 创建登录密钥（演示）：名称去空白后校验，名称重复即拒绝。 */
   createKey(input: { name: string }): Promise<SshLoginKey>
   /** 删除登录密钥（演示）：只改内存数据集，不触碰任何真实授权文件。 */

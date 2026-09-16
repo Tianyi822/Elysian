@@ -14,6 +14,26 @@ export function formatDateTime(iso: string): string {
   return DATE_TIME_FORMATTER.format(new Date(iso))
 }
 
+/**
+ * 精确到秒、带年份的登录时间，形态与 sshd 日志一致（`2026-09-07 14:10:53`）。
+ * 用的是连字符形态的固定写法：登录记录按时间排查时需要秒与年份，
+ * 而 zh-CN 在年月日之间用斜杠，跟日志里的时间对不上。
+ */
+const LOGIN_TIME_FORMATTER = new Intl.DateTimeFormat('sv-SE', {
+  timeZone: 'Asia/Shanghai',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: false,
+})
+
+export function formatLoginTime(iso: string): string {
+  return LOGIN_TIME_FORMATTER.format(new Date(iso))
+}
+
 /** 运行时长：3 天 1 小时 / 2 小时 / 40 分钟；未启动为 —。 */
 export function formatUptime(startedAt: string | undefined, now: Date): string {
   if (!startedAt) return '—'

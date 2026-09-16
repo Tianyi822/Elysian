@@ -3,8 +3,8 @@ import type { SshLoginKey } from '@elysian/contracts'
 import { IconButton } from '../../components/IconButton'
 import { formatDateTime } from '../../components/format'
 import { KeyRound, Search, Trash2 } from '../../components/icons'
-import { useSshStore } from '../../stores/sshStore'
-import { ACTION_CLASS, CONTROL_HEIGHT_CLASS, Section } from './sshCardParts'
+import { useSshStore, SSH_PAGE_SIZE } from '../../stores/sshStore'
+import { ACTION_CLASS, CONTROL_HEIGHT_CLASS, Section, TablePager } from './sshCardParts'
 import { filterSshKeys } from './sshKeySearch'
 
 /**
@@ -15,10 +15,17 @@ import { filterSshKeys } from './sshKeySearch'
 export function SshKeyCard() {
   const keys = useSshStore((s) => s.keys)
   const search = useSshStore((s) => s.keySearch)
+  const page = useSshStore((s) => s.keyPage)
   const setKeySearch = useSshStore((s) => s.setKeySearch)
+  const setKeyPage = useSshStore((s) => s.setKeyPage)
   const openCreateKey = useSshStore((s) => s.openCreateKey)
   const searchInputId = useId()
   const filtered = useMemo(() => filterSshKeys(search, keys), [search, keys])
+
+  // 删到最后一页空了就把页码收回有效范围，不额外写一份状态。
+  const pageCount = Math.max(1, Math.ceil(filtered.length / SSH_PAGE_SIZE))
+  const safePage = Math.min(page, pageCount)
+  const pageRows = filtered.slice((safePage - 1) * SSH_PAGE_SIZE, safePage * SSH_PAGE_SIZE)
 
   return (
     <Section title="SSH 密钥">
@@ -45,7 +52,7 @@ export function SshKeyCard() {
       </div>
 
       {/* 表格直接坐在卡面上：行悬停按交互词汇表向上步进一级表面，因此不再套一层浮起底。 */}
-      <div className="grow overflow-x-auto">
+      <div className="grow min-w-0 overflow-x-auto">
         <table className="w-full table-fixed border-separate border-spacing-0 text-left text-sm">
           {/* 操作列只占两枚按钮的宽度（2×24px 加间距），名称与创建时间平分剩下的空间——
               固定布局下不写宽度的列平均分摊余量，因此两列天然等宽。
@@ -78,17 +85,22 @@ export function SshKeyCard() {
                 </td>
               </tr>
             ) : (
-              filtered.map((key) => <KeyRow key={key.id} sshKey={key} />)
+              pageRows.map((key) => <KeyRow key={key.id} sshKey={key} />)
             )}
           </tbody>
         </table>
       </div>
 
-      <p className="text-xs tabular-nums text-fg-muted">
-        {search.trim()
-          ? `匹配 ${filtered.length} 把 · 共 ${keys.length} 把`
-          : `共 ${keys.length} 把密钥`}
-      </p>
+      <TablePager
+        label="密钥分页"
+        summary={
+          search.trim() ? `匹配 ${filtered.length} 把 · 共 ${keys.length} 把` : `共 ${keys.length} 把密钥`
+        }
+        page={safePage}
+        pageCount={pageCount}
+        pageSize={SSH_PAGE_SIZE}
+        onPageChange={setKeyPage}
+      />
     </Section>
   )
 }
