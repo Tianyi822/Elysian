@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
+  chmodMockEntry,
   compressMockEntry,
   copyMockEntry,
   listMockDirectory,
@@ -93,6 +94,52 @@ describe('压缩', () => {
   it('同级已有同名压缩包即报错', () => {
     compressMockEntry('/var/log/auth.log')
     expect(() => compressMockEntry('/var/log/auth.log')).toThrow('同名压缩包已存在')
+  })
+})
+
+describe('改权限', () => {
+  it('只改目标条目的权限与所有者', () => {
+    chmodMockEntry('/etc/hostname', { mode: '600', owner: 'deploy', recursive: false })
+
+    const entry = listMockDirectory('/etc').find((item) => item.name === 'hostname')
+    expect(entry?.mode).toBe('600')
+    expect(entry?.owner).toBe('deploy')
+    // 同级条目不受影响。
+    expect(listMockDirectory('/etc').find((item) => item.name === 'hosts')?.mode).toBe('644')
+  })
+
+  it('勾了应用到子目录就深度改到全部后代', () => {
+    chmodMockEntry('/etc/nginx', { mode: '750', owner: 'monitor', recursive: true })
+
+    expect(listMockDirectory('/etc').find((item) => item.name === 'nginx')?.mode).toBe('750')
+    expect(listMockDirectory('/etc/nginx').every((item) => item.mode === '750')).toBe(true)
+    expect(listMockDirectory('/etc/nginx').every((item) => item.owner === 'monitor')).toBe(true)
+    expect(listMockDirectory('/etc/nginx/conf.d').every((item) => item.mode === '750')).toBe(true)
+  })
+
+  it('递归只作用于目标子树，同级与祖先不动', () => {
+    chmodMockEntry('/etc/nginx', { mode: '700', owner: 'root', recursive: true })
+    expect(listMockDirectory('/etc').find((item) => item.name === 'ssh')?.mode).toBe('755')
+    expect(listMockDirectory('/').find((item) => item.name === 'etc')?.mode).toBe('755')
+  })
+
+  it('文件上勾递归、模式非法、所有者为空都报错', () => {
+    expect(() =>
+      chmodMockEntry('/etc/hosts', { mode: '600', owner: 'root', recursive: true }),
+    ).toThrow('只有目录可以连同子目录一起改权限')
+    expect(() =>
+      chmodMockEntry('/etc/hosts', { mode: '88', owner: 'root', recursive: false }),
+    ).toThrow('无效的权限位')
+    expect(() =>
+      chmodMockEntry('/etc/hosts', { mode: '600', owner: '  ', recursive: false }),
+    ).toThrow('所有者不能为空')
+  })
+
+  it('权限变更能被重置演示数据还原', () => {
+    chmodMockEntry('/etc/nginx', { mode: '700', owner: 'monitor', recursive: true })
+    resetFilesData()
+    expect(listMockDirectory('/etc').find((item) => item.name === 'nginx')?.mode).toBe('755')
+    expect(listMockDirectory('/etc/nginx')[0]?.owner).toBe('root')
   })
 })
 

@@ -2,11 +2,15 @@ import { fireEvent, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createMockGateway } from '../../adapters/mock/gateway'
+import { resetFilesData } from '../../adapters/mock/filesData'
 import { MockFilesAdapter } from '../../adapters/mock/mockAdapters'
 import { renderApp } from '../../test/renderApp'
 import { useFilesStore } from '../../stores/filesStore'
 
 beforeEach(() => {
+  // 变更类用例会改共享的 mock 目录树：每条用例都从种子重来，否则前一条留下的
+  // 副本与压缩包会串进后一条的行查询。
+  resetFilesData()
   useFilesStore.setState({
     status: 'idle',
     path: '/',
@@ -132,6 +136,7 @@ describe('文件管理页', () => {
       moveEntry: () => new Promise(() => {}),
       renameEntry: () => new Promise(() => {}),
       compressEntry: () => new Promise(() => {}),
+      chmod: () => new Promise(() => {}),
     }
     renderApp('/files', { gateway })
 
@@ -164,6 +169,7 @@ describe('文件管理页', () => {
       moveEntry: (src, dest) => mockFiles.moveEntry(src, dest),
       renameEntry: (path, newName) => mockFiles.renameEntry(path, newName),
       compressEntry: (path) => mockFiles.compressEntry(path),
+      chmod: (path, input) => mockFiles.chmod(path, input),
     }
     renderApp('/files', { gateway })
     const region = await screen.findByRole('region', { name: '文件列表' })
@@ -190,6 +196,7 @@ describe('文件管理页', () => {
       moveEntry: (src, dest) => mockFiles.moveEntry(src, dest),
       renameEntry: (path, newName) => mockFiles.renameEntry(path, newName),
       compressEntry: (path) => mockFiles.compressEntry(path),
+      chmod: (path, input) => mockFiles.chmod(path, input),
     }
     renderApp('/files', { gateway })
     let region = await screen.findByRole('region', { name: '文件列表' })
@@ -221,6 +228,7 @@ describe('文件管理页', () => {
       moveEntry: (src, dest) => mockFiles.moveEntry(src, dest),
       renameEntry: (path, newName) => mockFiles.renameEntry(path, newName),
       compressEntry: (path) => mockFiles.compressEntry(path),
+      chmod: (path, input) => mockFiles.chmod(path, input),
     }
     renderApp('/files', { gateway })
     const region = await screen.findByRole('region', { name: '文件列表' })
@@ -329,5 +337,74 @@ describe('文件管理页', () => {
     expect(archiveRow).toBeInTheDocument()
     expect(within(archiveRow).getByText('214.4 KB')).toBeInTheDocument()
     expect(screen.getByLabelText('通知')).toHaveTextContent('已压缩为 auth.log.tar.gz')
+  })
+
+  it('权限对话框：勾选即时改写模式值，模式值也即时回写勾选', async () => {
+    const user = userEvent.setup()
+    renderApp('/files')
+    const region = await screen.findByRole('region', { name: '文件列表' })
+
+    fireEvent.contextMenu(rowOf(region, '^etc '))
+    await user.click(await screen.findByRole('menuitem', { name: '权限' }))
+
+    const modeInput = await screen.findByRole('textbox', { name: '权限位' })
+    expect(modeInput).toHaveValue('755')
+
+    // 755 的用户组本来就只读与执行：勾上写入即 775。
+    await user.click(screen.getByRole('checkbox', { name: '用户组写入' }))
+    expect(modeInput).toHaveValue('775')
+
+    // 反向：模式值改写勾选。
+    await user.clear(modeInput)
+    await user.type(modeInput, '700')
+    expect(screen.getByRole('checkbox', { name: '所有者读取' })).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: '用户组读取' })).not.toBeChecked()
+    expect(screen.getByRole('checkbox', { name: '公共执行' })).not.toBeChecked()
+  })
+
+  it('权限应用后行内权限与所有者更新，勾了子目录就连同后代一起改', async () => {
+    const user = userEvent.setup()
+    renderApp('/files')
+    let region = await screen.findByRole('region', { name: '文件列表' })
+
+    fireEvent.contextMenu(rowOf(region, '^etc '))
+    await user.click(await screen.findByRole('menuitem', { name: '权限' }))
+    const modeInput = await screen.findByRole('textbox', { name: '权限位' })
+    await user.clear(modeInput)
+    await user.type(modeInput, '750')
+    await user.click(screen.getByRole('checkbox', { name: '应用到子目录' }))
+    await user.click(screen.getByRole('button', { name: '应用' }))
+
+    region = await screen.findByRole('region', { name: '文件列表' })
+    expect(within(rowOf(region, '^etc ')).getByText('750/root')).toBeInTheDocument()
+    expect(screen.getByLabelText('通知')).toHaveTextContent('已把权限改为 750、所有者改为 root（含子目录）')
+
+    // 进 /etc 看后代：ssh 目录也被改成 750，而 /var 这类同级不受影响。
+    await user.dblClick(rowOf(region, '^etc '))
+    const etcRegion = await screen.findByRole('region', { name: '文件列表' })
+    expect(within(rowOf(etcRegion, '^ssh ')).getByText('750/root')).toBeInTheDocument()
+  })
+
+  it('权限对话框：非法模式值行内报错，不落数据；文件条目没有「应用到子目录」', async () => {
+    const user = userEvent.setup()
+    renderApp('/files/var/log')
+    const region = await screen.findByRole('region', { name: '文件列表' })
+
+    fireEvent.contextMenu(rowOf(region, 'auth.log'))
+    await user.click(await screen.findByRole('menuitem', { name: '权限' }))
+
+    const modeInput = await screen.findByRole('textbox', { name: '权限位' })
+    expect(modeInput).toHaveValue('640')
+    // 文件没有子目录：开关不出现。
+    expect(screen.queryByRole('checkbox', { name: '应用到子目录' })).not.toBeInTheDocument()
+
+    await user.clear(modeInput)
+    await user.type(modeInput, '64')
+    await user.click(screen.getByRole('button', { name: '应用' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('权限位要写三位八进制数字，例如 755')
+
+    // 未落盘：关掉对话框后行内权限仍是原值。
+    await user.click(screen.getByRole('button', { name: '取消' }))
+    expect(within(rowOf(region, 'auth.log')).getByText('640/root')).toBeInTheDocument()
   })
 })

@@ -106,6 +106,16 @@ const ENUM_TABLES: ReadonlyArray<{
     labels: contracts.HOST_USER_LOGIN_METHOD_LABELS,
   },
   { name: 'FileKind', values: contracts.FILE_KINDS, labels: contracts.FILE_KIND_LABELS },
+  {
+    name: 'FilePermissionClass',
+    values: contracts.FILE_PERMISSION_CLASSES,
+    labels: contracts.FILE_PERMISSION_CLASS_LABELS,
+  },
+  {
+    name: 'FilePermissionAction',
+    values: contracts.FILE_PERMISSION_ACTIONS,
+    labels: contracts.FILE_PERMISSION_ACTION_LABELS,
+  },
 ]
 
 describe('枚举与中文标签表', () => {
@@ -343,6 +353,49 @@ describe('文件域词典', () => {
     expect(contracts.isValidFileName('.')).toBe(false)
     expect(contracts.isValidFileName('..')).toBe(false)
     expect(contracts.isValidFileName('x'.repeat(256))).toBe(false)
+  })
+
+  it('权限位判据只接受三位八进制', () => {
+    expect(contracts.isValidFileMode('755')).toBe(true)
+    expect(contracts.isValidFileMode('000')).toBe(true)
+    expect(contracts.isValidFileMode('777')).toBe(true)
+    expect(contracts.isValidFileMode('')).toBe(false)
+    expect(contracts.isValidFileMode('75')).toBe(false)
+    expect(contracts.isValidFileMode('0755')).toBe(false)
+    expect(contracts.isValidFileMode('888')).toBe(false)
+    expect(contracts.isValidFileMode('75x')).toBe(false)
+  })
+
+  it('权限开关与三位八进制互转，往返一致', () => {
+    const permission = contracts.modeToPermission('755')
+    expect(permission.owner).toEqual({ read: true, write: true, execute: true })
+    expect(permission.group).toEqual({ read: true, write: false, execute: true })
+    expect(permission.public).toEqual({ read: true, write: false, execute: true })
+    expect(contracts.permissionToMode(permission)).toBe('755')
+
+    expect(contracts.permissionToMode(contracts.modeToPermission('600'))).toBe('600')
+    expect(contracts.permissionToMode(contracts.modeToPermission('000'))).toBe('000')
+    // 逐位独立：'600' 只有所有者可读写、无执行，'700' 用户组整位为空，'755' 公共位无写入。
+    expect(contracts.modeToPermission('600').owner.execute).toBe(false)
+    expect(contracts.modeToPermission('600').owner.write).toBe(true)
+    expect(contracts.modeToPermission('700').group.read).toBe(false)
+    expect(contracts.modeToPermission('755').public.write).toBe(false)
+    expect(contracts.modeToPermission('755').public.execute).toBe(true)
+  })
+
+  it('权限模式非法时按全不授予返回，不抛错', () => {
+    const permission = contracts.modeToPermission('abc')
+    for (const permissionClass of contracts.FILE_PERMISSION_CLASSES) {
+      for (const action of contracts.FILE_PERMISSION_ACTIONS) {
+        expect(permission[permissionClass][action]).toBe(false)
+      }
+    }
+  })
+
+  it('权限类别与动作按位权顺序排列，与 chmod 一致', () => {
+    expect([...contracts.FILE_PERMISSION_CLASSES]).toEqual(['owner', 'group', 'public'])
+    expect([...contracts.FILE_PERMISSION_ACTIONS]).toEqual(['read', 'write', 'execute'])
+    expect(contracts.permissionToMode(contracts.modeToPermission('421'))).toBe('421')
   })
 })
 

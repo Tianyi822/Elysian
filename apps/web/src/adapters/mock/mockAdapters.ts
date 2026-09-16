@@ -41,6 +41,7 @@ import type {
   DatabaseCreateInput,
   EventsAdapter,
   FilesAdapter,
+  FilePermissionInput,
   FirewallAdapter,
   IncidentAdapter,
   IncidentListQuery,
@@ -93,6 +94,7 @@ import {
 import { runMockQuery } from './databaseQuery'
 import { execContainerCommand } from './containerTerminal'
 import {
+  chmodMockEntry,
   compressMockEntry,
   copyMockEntry,
   listMockDirectory,
@@ -274,6 +276,10 @@ export class MockFilesAdapter implements FilesAdapter {
 
   async compressEntry(path: string): Promise<FileEntry> {
     return compressMockEntry(path)
+  }
+
+  async chmod(path: string, input: FilePermissionInput): Promise<void> {
+    chmodMockEntry(path, input)
   }
 }
 

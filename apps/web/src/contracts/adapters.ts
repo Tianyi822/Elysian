@@ -261,6 +261,16 @@ export interface FilesAdapter {
   renameEntry(path: string, newName: string): Promise<FileEntry>
   /** 把一个条目压缩成同级的「名称.tar.gz」（演示），返回新条目；同级已有同名压缩包时报错。 */
   compressEntry(path: string): Promise<FileEntry>
+  /** 改一个条目的权限与所有者（演示）；recursive 为真时连同全部后代一起改。 */
+  chmod(path: string, input: FilePermissionInput): Promise<void>
+}
+
+/** 权限变更（演示）：模式为三位八进制，所有者为系统账号名。 */
+export type FilePermissionInput = {
+  mode: string
+  owner: string
+  /** 只对目录有意义：连同全部后代一起改。 */
+  recursive: boolean
 }
 
 /**

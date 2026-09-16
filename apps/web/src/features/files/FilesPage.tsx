@@ -11,6 +11,7 @@ import { joinFilesPath, normalizeFilesPath, parentFilesPath } from './filesPath'
 import { formatEntrySize, orderFileEntries } from './filesListing'
 import { FileRowMenu } from './FileRowMenu'
 import { RenameDialog } from './RenameDialog'
+import { PermissionDialog } from './PermissionDialog'
 
 /** 「上一级」等主要按钮的通用样式：中性描边，动作写进文字。 */
 const TOOLBAR_ACTION_CLASS =
@@ -107,6 +108,7 @@ function FileTable({
   const ordered = useMemo(() => orderFileEntries(entries), [entries])
   const [selectedName, setSelectedName] = useState<string | null>(null)
   const [renaming, setRenaming] = useState<{ entry: FileEntry; path: string } | null>(null)
+  const [permitting, setPermitting] = useState<{ entry: FileEntry; path: string } | null>(null)
   const rowRefs = useRef(new Map<string, HTMLTableRowElement>())
 
   const moveSelection = (fromName: string, delta: number) => {
@@ -158,6 +160,9 @@ function FileTable({
                 entry={entry}
                 entryPath={entryPath}
                 onRename={(renameEntry, renamePath) => setRenaming({ entry: renameEntry, path: renamePath })}
+                onPermission={(permissionEntry, permissionPath) =>
+                  setPermitting({ entry: permissionEntry, path: permissionPath })
+                }
               >
                 <tr
                   ref={(element) => {
@@ -224,6 +229,13 @@ function FileTable({
       </table>
       {renaming ? (
         <RenameDialog entry={renaming.entry} entryPath={renaming.path} onClose={() => setRenaming(null)} />
+      ) : null}
+      {permitting ? (
+        <PermissionDialog
+          entry={permitting.entry}
+          entryPath={permitting.path}
+          onClose={() => setPermitting(null)}
+        />
       ) : null}
     </div>
   )

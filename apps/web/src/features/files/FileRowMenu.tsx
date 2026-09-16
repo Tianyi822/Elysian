@@ -5,7 +5,7 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { useFilesStore } from '../../stores/filesStore'
 
 /**
- * 表格行的右键菜单：复制、粘贴、移动、重命名、压缩，对齐系统文件管理器的操作面。
+ * 表格行的右键菜单：复制、粘贴、移动、重命名、权限、压缩，对齐系统文件管理器的操作面。
  *
  * 复制与移动只是把条目暂存进内存剪贴板（intent 区分），粘贴才落数据；
  * 粘贴项只在目录行出现——粘进那个目录，粘进当前目录走工具栏按钮。
@@ -15,11 +15,13 @@ export function FileRowMenu({
   entry,
   entryPath,
   onRename,
+  onPermission,
   children,
 }: {
   entry: FileEntry
   entryPath: string
   onRename(entry: FileEntry, entryPath: string): void
+  onPermission(entry: FileEntry, entryPath: string): void
   children: ReactNode
 }) {
   const gateway = useGateway()
@@ -46,6 +48,7 @@ export function FileRowMenu({
           <MenuItem onSelect={() => moveToClipboard(entryPath)}>移动</MenuItem>
           <ContextMenu.Separator className="my-1 h-px bg-line" />
           <MenuItem onSelect={() => onRename(entry, entryPath)}>重命名</MenuItem>
+          <MenuItem onSelect={() => onPermission(entry, entryPath)}>权限</MenuItem>
           <MenuItem onSelect={() => void compress(gateway, entryPath)}>压缩</MenuItem>
         </ContextMenu.Content>
       </ContextMenu.Portal>

@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { FileEntry } from '@elysian/contracts'
-import type { ElysianGateway } from '../contracts/adapters'
+import type { ElysianGateway, FilePermissionInput } from '../contracts/adapters'
 import { useNotificationStore } from './notificationStore'
 
 /** 剪贴板里暂存的条目与意图：copy 粘贴出副本，move 粘贴后源条目移除。 */
@@ -30,6 +30,8 @@ export type FilesState = {
   /** 重命名：名称校验与重名错误抛给调用方（对话框行内展示），成功后刷新并通知。 */
   rename(gateway: ElysianGateway, path: string, newName: string): Promise<void>
   compress(gateway: ElysianGateway, path: string): Promise<void>
+  /** 应用权限与所有者：非法模式与空所有者的错误抛给调用方（对话框行内展示）。 */
+  applyPermission(gateway: ElysianGateway, path: string, input: FilePermissionInput): Promise<void>
 }
 
 /**
@@ -130,6 +132,13 @@ export const useFilesStore = create<FilesState>((set, get) => {
       } finally {
         await reload(gateway)
       }
+    },
+    async applyPermission(gateway, path, input) {
+      await gateway.files.chmod(path, input)
+      await reload(gateway)
+      notify(
+        `已把权限改为 ${input.mode}、所有者改为 ${input.owner}${input.recursive ? '（含子目录）' : ''}（mock，待接入真实执行）`,
+      )
     },
   }
 })

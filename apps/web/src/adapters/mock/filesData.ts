@@ -1,5 +1,5 @@
 import type { FileEntry } from '@elysian/contracts'
-import { isValidFileName } from '@elysian/contracts'
+import { isValidFileName, isValidFileMode } from '@elysian/contracts'
 
 /*
  * 文件管理演示数据集：一台运维主机的目录树手工种子，修改时间相对固定基准日生成，
@@ -305,4 +305,27 @@ export function compressMockEntry(path: string): FileEntry {
   }
   parent.children[archiveName] = archive
   return toEntry(archiveName, archive)
+}
+
+/** 改一个条目的权限与所有者（演示）；recursive 为真时连同全部后代一起改。 */
+export function chmodMockEntry(
+  path: string,
+  input: { mode: string; owner: string; recursive: boolean },
+): void {
+  if (path === '/') throw new Error('根目录不能改权限')
+  if (!isValidFileMode(input.mode)) throw new Error(`无效的权限位：${input.mode}`)
+  const owner = input.owner.trim()
+  if (!owner) throw new Error('所有者不能为空')
+  if (input.recursive && findNode(path).kind !== 'directory') {
+    throw new Error('只有目录可以连同子目录一起改权限')
+  }
+
+  const apply = (node: MockNode): void => {
+    node.mode = input.mode
+    node.owner = owner
+    if (node.kind === 'directory' && input.recursive) {
+      for (const child of Object.values(node.children)) apply(child)
+    }
+  }
+  apply(findNode(path))
 }
