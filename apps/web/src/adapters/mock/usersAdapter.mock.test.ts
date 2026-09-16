@@ -1,26 +1,37 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { UserAdapter } from '../../contracts/adapters'
-import { MockUserAdapter } from './mockAdapters'
+import { MockSshAdapter, MockUserAdapter } from './mockAdapters'
+import { SEED_LOGIN_KEYS, resetSshData } from './sshData'
 import { SEED_HOST_USERS, resetHostUsers } from './usersData'
 
 /*
- * 主机账号 mock adapter 的行为：种子账号、创建、修改与删除。
- * 演示数据集是模块级内存状态，每个用例前推回种子，用例之间互不影响。
+ * 主机账号 mock adapter 的行为：种子账号、创建、修改、删除与账号和密钥之间的联动。
+ * 演示数据集是模块级内存状态，每个用例前把两份数据集都推回种子，用例之间互不影响。
  */
 
 let users: UserAdapter
 
 beforeEach(() => {
   resetHostUsers()
+  resetSshData()
   users = new MockUserAdapter()
 })
 
 describe('主机账号 mock adapter', () => {
-  it('种子：五个账号，按创建时间倒序，管理员与禁止登录各有一例', async () => {
+  it('种子：八个账号，按创建时间倒序，管理员与禁止登录各有一例', async () => {
     const list = await users.list()
 
     expect(list).toHaveLength(SEED_HOST_USERS.length)
-    expect(list.map((user) => user.name)).toEqual(['lisi', 'wangwu', 'zhangsan', 'ops', 'backup'])
+    expect(list.map((user) => user.name)).toEqual([
+      'deploy',
+      'monitor',
+      'lisi',
+      'wangwu',
+      'zhangsan',
+      'ops',
+      'backup',
+      'audit',
+    ])
     const createdAt = list.map((user) => new Date(user.createdAt).getTime())
     expect([...createdAt].sort((a, b) => b - a)).toEqual(createdAt)
     expect(list.find((user) => user.name === 'ops')?.isAdmin).toBe(true)
@@ -92,6 +103,18 @@ describe('主机账号 mock adapter', () => {
 
     expect((await users.list()).map((user) => user.id)).not.toContain(target.id)
     await expect(users.remove('user-不存在')).rejects.toThrow('未找到主机账号 user-不存在')
+  })
+
+  it('删除账号：以它授权的密钥一并失效，不留没有主人的密钥', async () => {
+    const ssh = new MockSshAdapter()
+    const owned = (await ssh.listKeys()).filter((key) => key.userId === 'user-ops')
+    expect(owned.length).toBeGreaterThan(0)
+
+    await users.remove('user-ops')
+
+    const remaining = await ssh.listKeys()
+    expect(remaining.some((key) => key.userId === 'user-ops')).toBe(false)
+    expect(remaining).toHaveLength(SEED_LOGIN_KEYS.length - owned.length)
   })
 
   it('取回的是副本：改它不会写回数据集', async () => {

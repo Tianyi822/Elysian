@@ -111,14 +111,24 @@ describe('SSH mock adapter', () => {
     }
   })
 
-  it('创建密钥：名称去空白后入列，空名与重名被拒，同名同刻生成同一份材料', async () => {
-    const created = await ssh.createKey({ name: '  运维笔记本  ' })
-    expect(created.name).toBe('运维笔记本')
+  it('创建密钥：名称去空白后入列，空名、重名与不存在的归属账号都被拒', async () => {
+    const created = await ssh.createKey({ name: '  运维笔记本  ', userId: 'user-wangwu' })
+    expect(created).toMatchObject({ name: '运维笔记本', userId: 'user-wangwu' })
     expect((await ssh.listKeys()).map((key) => key.name)).toContain('运维笔记本')
 
-    await expect(ssh.createKey({ name: '运维笔记本' })).rejects.toThrow('密钥名称已存在：运维笔记本')
-    await expect(ssh.createKey({ name: '   ' })).rejects.toThrow('密钥名称需为 1-32 个字符')
-    await expect(ssh.createKey({ name: 'x'.repeat(33) })).rejects.toThrow('密钥名称需为 1-32 个字符')
+    await expect(ssh.createKey({ name: '运维笔记本', userId: 'user-wangwu' })).rejects.toThrow(
+      '密钥名称已存在：运维笔记本',
+    )
+    await expect(ssh.createKey({ name: '   ', userId: 'user-wangwu' })).rejects.toThrow(
+      '密钥名称需为 1-32 个字符',
+    )
+    await expect(ssh.createKey({ name: 'x'.repeat(33), userId: 'user-wangwu' })).rejects.toThrow(
+      '密钥名称需为 1-32 个字符',
+    )
+    // 归属账号必须真实存在：没有账号可归属的密钥等于没人能用
+    await expect(ssh.createKey({ name: '无主密钥', userId: 'user-不存在' })).rejects.toThrow(
+      '归属账号不存在：user-不存在',
+    )
 
     const again = mockKeyMaterial('运维笔记本', created.createdAt)
     expect(again.fingerprint).toBe(created.fingerprint)

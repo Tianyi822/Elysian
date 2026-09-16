@@ -24,8 +24,8 @@ export function HostUserRemoveDialog() {
             确认删除账号「{removeTarget.name}」？
           </Dialog.Title>
           <p className="mt-1.5 text-xs text-fg-muted">
-            删除后这个账号的主组一并移除，以它身份运行的任务与它持有的文件需要另行处理，已经用它的密钥也登不进来。
-            这一步不会触碰任何真实系统账号。
+            删除后这个账号的主组一并移除，以它授权的 SSH 密钥也会失效（与连同家目录删掉 authorized_keys 一致）；
+            以它身份运行的任务与它持有的文件需要另行处理。这一步不会触碰任何真实系统账号。
           </p>
           <div className="mt-4 flex justify-end gap-2">
             <button

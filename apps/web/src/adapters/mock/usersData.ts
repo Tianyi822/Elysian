@@ -9,6 +9,24 @@ import { isValidHostUserName } from '@elysian/contracts'
 
 export const SEED_HOST_USERS: readonly HostUser[] = [
   {
+    id: 'user-deploy',
+    name: 'deploy',
+    isAdmin: true,
+    loginMethod: 'key',
+    status: 'active',
+    note: '发布流程自动化使用',
+    createdAt: '2025-06-20T10:12:00+08:00',
+  },
+  {
+    id: 'user-monitor',
+    name: 'monitor',
+    isAdmin: false,
+    loginMethod: 'key',
+    status: 'active',
+    note: '抓取指标与告警脚本',
+    createdAt: '2025-05-05T09:30:00+08:00',
+  },
+  {
     id: 'user-lisi',
     name: 'lisi',
     isAdmin: false,
@@ -54,6 +72,16 @@ export const SEED_HOST_USERS: readonly HostUser[] = [
     note: '只跑备份脚本，不允许登录',
     createdAt: '2024-12-20T17:33:52+08:00',
   },
+  {
+    id: 'user-audit',
+    name: 'audit',
+    isAdmin: false,
+    // 登录方式仍是密钥，但账号已停用——拦住它的是状态，不是认证方式。
+    loginMethod: 'key',
+    status: 'disabled',
+    note: '外部审计账号，已停用',
+    createdAt: '2024-10-15T16:40:00+08:00',
+  },
 ]
 
 let users: HostUser[] = SEED_HOST_USERS.map((user) => ({ ...user }))
@@ -69,6 +97,10 @@ export function getHostUsers(): readonly HostUser[] {
 
 export function findHostUserByName(name: string): HostUser | undefined {
   return users.find((user) => user.name === name)
+}
+
+export function findHostUserById(userId: string): HostUser | undefined {
+  return users.find((user) => user.id === userId)
 }
 
 /** 新账号插到最前：列表按创建时间倒序，刚建的账号就该在第一条。 */

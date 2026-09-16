@@ -1,9 +1,11 @@
-import { useId, useMemo } from 'react'
+import { useEffect, useId, useMemo } from 'react'
 import type { SshLoginKey } from '@elysian/contracts'
+import { useGateway } from '../../adapters/GatewayProvider'
 import { IconButton } from '../../components/IconButton'
 import { formatDateTime } from '../../components/format'
 import { KeyRound, Search, Trash2 } from '../../components/icons'
-import { useSshStore, SSH_PAGE_SIZE } from '../../stores/sshStore'
+import { SSH_PAGE_SIZE, useSshStore } from '../../stores/sshStore'
+import { useUsersStore } from '../../stores/usersStore'
 import { ACTION_CLASS, CONTROL_HEIGHT_CLASS, Section, TablePager } from './sshCardParts'
 import { filterSshKeys } from './sshKeySearch'
 
@@ -13,14 +15,33 @@ import { filterSshKeys } from './sshKeySearch'
  * 表格只列名称、创建时间与操作，密钥材料在行内的「查看密钥」弹窗里给。
  */
 export function SshKeyCard() {
+  const gateway = useGateway()
   const keys = useSshStore((s) => s.keys)
   const search = useSshStore((s) => s.keySearch)
   const page = useSshStore((s) => s.keyPage)
   const setKeySearch = useSshStore((s) => s.setKeySearch)
   const setKeyPage = useSshStore((s) => s.setKeyPage)
   const openCreateKey = useSshStore((s) => s.openCreateKey)
+  const users = useUsersStore((s) => s.users)
+  const usersStatus = useUsersStore((s) => s.status)
+  const loadUsers = useUsersStore((s) => s.load)
   const searchInputId = useId()
-  const filtered = useMemo(() => filterSshKeys(search, keys), [search, keys])
+
+  // 归属账号名按 userId 现取：账号数据集才是账号名的家，这里不存冗余字段。
+  const ownerNameOf = useMemo(() => {
+    const names = new Map(users.map((user) => [user.id, user.name]))
+    return (userId: string) => names.get(userId) ?? '账号已删除'
+  }, [users])
+
+  // 账号被删掉后它的密钥也不在了，但直接打开本页签时账号还没加载过，这里补一次。
+  useEffect(() => {
+    if (usersStatus === 'idle') void loadUsers(gateway)
+  }, [gateway, loadUsers, usersStatus])
+
+  const filtered = useMemo(
+    () => filterSshKeys(search, keys, ownerNameOf),
+    [search, keys, ownerNameOf],
+  )
 
   // 删到最后一页空了就把页码收回有效范围，不额外写一份状态。
   const pageCount = Math.max(1, Math.ceil(filtered.length / SSH_PAGE_SIZE))
@@ -42,7 +63,7 @@ export function SshKeyCard() {
             id={searchInputId}
             value={search}
             onChange={(event) => setKeySearch(event.target.value)}
-            placeholder="搜索名称、指纹或私钥"
+            placeholder="搜索名称、账号、指纹或私钥"
             className={`w-full ${CONTROL_HEIGHT_CLASS} rounded-lg border border-line bg-surface-raised pl-8 pr-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle`}
           />
         </div>
@@ -54,21 +75,23 @@ export function SshKeyCard() {
       {/* 表格直接坐在卡面上：行悬停按交互词汇表向上步进一级表面，因此不再套一层浮起底。 */}
       <div className="grow min-w-0 overflow-x-auto">
         <table className="w-full table-fixed border-separate border-spacing-0 text-left text-sm">
-          {/* 操作列只占两枚按钮的宽度（2×24px 加间距），名称与创建时间平分剩下的空间——
-              固定布局下不写宽度的列平均分摊余量，因此两列天然等宽。
-              操作列不写宽度会跟着一起膨胀，两枚按钮被推到远端，表头也没法跟它们对齐。 */}
+          {/* 归属账号是这张表的分组线索（谁手里有哪把钥匙），因此紧跟在名称之后。
+              操作列定宽，只占两枚按钮的宽度；名称列钉住，窄屏下它始终在视线里。 */}
           <colgroup>
-            <col />
-            <col />
+            <col className="w-[30%]" />
+            <col className="w-[24%]" />
+            <col className="w-[32%]" />
             <col className="w-14" />
           </colgroup>
           <thead>
             <tr>
-              {['名称', '创建时间', '操作'].map((label) => (
+              {['名称', '归属账号', '创建时间', '操作'].map((label, index) => (
                 <th
                   key={label}
                   scope="col"
-                  className="border-b border-line pb-2 text-xs font-medium text-fg-muted"
+                  className={`border-b border-line pb-2 text-xs font-medium text-fg-muted ${
+                    index === 0 ? 'sticky left-0 z-20 border-r bg-surface' : 'pl-3'
+                  }`}
                 >
                   {label}
                 </th>
@@ -78,14 +101,16 @@ export function SshKeyCard() {
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={3} className="border-b border-line py-8 text-center text-sm text-fg-muted">
+                <td colSpan={4} className="border-b border-line py-8 text-center text-sm text-fg-muted">
                   {keys.length === 0
                     ? '还没有密钥，点右上角「创建 SSH 密钥」新建一把'
                     : '没有匹配的密钥，换个关键词或粘一整份私钥试试'}
                 </td>
               </tr>
             ) : (
-              pageRows.map((key) => <KeyRow key={key.id} sshKey={key} />)
+              pageRows.map((key) => (
+                <KeyRow key={key.id} sshKey={key} ownerName={ownerNameOf(key.userId)} />
+              ))
             )}
           </tbody>
         </table>
@@ -105,19 +130,25 @@ export function SshKeyCard() {
   )
 }
 
-function KeyRow({ sshKey }: { sshKey: SshLoginKey }) {
+function KeyRow({ sshKey, ownerName }: { sshKey: SshLoginKey; ownerName: string }) {
   const openKeyView = useSshStore((s) => s.openKeyView)
   const openRemoveKey = useSshStore((s) => s.openRemoveKey)
 
   return (
-    <tr className="transition-colors hover:bg-surface-raised">
-      {/* 名称超长截断显示：完整名称在悬停提示里，密钥全文在「查看密钥」弹窗里。 */}
-      <td className="border-b border-line py-2.5 pr-3">
+    <tr className="group transition-colors hover:bg-surface-raised">
+      {/* 名称超长截断显示：完整名称在悬停提示里，密钥全文在「查看密钥」弹窗里。
+          名称列钉在左边并带不透明底，窄屏横向滚动时后面的列不会从它下面透出来。 */}
+      <td className="sticky left-0 z-10 whitespace-nowrap border-b border-r border-line bg-surface py-2.5 pr-3 group-hover:bg-surface-raised">
         <span className="block truncate text-fg" title={sshKey.name}>
           {sshKey.name}
         </span>
       </td>
-      <td className="border-b border-line py-2.5 tabular-nums text-fg-muted">
+      <td className="border-b border-line py-2.5 pl-3 text-fg-muted">
+        <span className="block truncate" title={ownerName}>
+          {ownerName}
+        </span>
+      </td>
+      <td className="border-b border-line py-2.5 pl-3 tabular-nums text-fg-muted">
         {formatDateTime(sshKey.createdAt)}
       </td>
       <td className="border-b border-line py-2.5">

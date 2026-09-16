@@ -141,11 +141,14 @@ export type SshRootKey = SshKeyMaterial
 
 /**
  * 登录密钥：用户自建、可自定义名称的密钥对，多条并存，用于登录本机。
- * 它与 Root 密钥分开管理——Root 密钥是主机自带的、按账号看的；登录密钥是按人/按用途命名的。
+ * 它与 Root 密钥分开管理——Root 密钥是主机自带的、按账号看的；登录密钥按人/按用途命名的。
+ * 每把密钥归属一个主机账号：公钥写进那个账号的 authorized_keys，界面按 userId 去账号数据集现取账号名。
  */
 export type SshLoginKey = SshKeyMaterial & {
   id: string
   name: string
+  /** 归属账号的 id；账号被删除时它的密钥一并失效。 */
+  userId: string
 }
 
 export const SSH_KEY_NAME_MAX_LENGTH = 32

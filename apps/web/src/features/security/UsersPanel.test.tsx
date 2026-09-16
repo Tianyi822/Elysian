@@ -46,18 +46,21 @@ describe('用户管理页签', () => {
     const rows = userRows()
     expect(rows).toHaveLength(SEED_HOST_USERS.length)
     expect(rows.map((row) => row.children[0]?.textContent)).toEqual([
+      'deploy',
+      'monitor',
       'lisi',
       'wangwu',
       'zhangsan',
       'ops',
       'backup',
+      'audit',
     ])
     // 权限组：主组与用户名同名，管理员另加标记
-    expect(rows[1]?.children[1]?.textContent).toContain('wangwu')
-    expect(rows[3]?.children[1]?.textContent).toContain('管理员')
+    expect(rows[3]?.children[1]?.textContent).toContain('wangwu')
+    expect(rows[5]?.children[1]?.textContent).toContain('管理员')
     // 状态不靠颜色单独表达；备注为空显示 —
-    expect(within(rows[2] as HTMLElement).getByText('已停用')).toBeInTheDocument()
-    expect(rows[0]?.children[4]?.textContent).toBe('—')
+    expect(within(rows[4] as HTMLElement).getByText('已停用')).toBeInTheDocument()
+    expect(rows[2]?.children[4]?.textContent).toBe('—')
     expect(
       screen.getByText(`共 ${SEED_HOST_USERS.length} 个主机账号`),
     ).toBeInTheDocument()

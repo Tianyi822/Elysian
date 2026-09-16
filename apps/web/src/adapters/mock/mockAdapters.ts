@@ -66,6 +66,7 @@ import {
 } from './firewallData'
 import {
   addHostUser,
+  findHostUserById,
   findHostUserByName,
   getHostUsers,
   removeHostUser,
@@ -81,6 +82,7 @@ import {
   getSshOverview,
   getSshRootAuth,
   removeSshLoginKey,
+  removeSshLoginKeysByUser,
   resetSshRootPassword,
   saveSshAuthSettings,
   saveSshRootLoginPolicy,
@@ -458,12 +460,14 @@ export class MockSshAdapter implements SshAdapter {
     return getSshLoginRecords()
   }
 
-  async createKey(input: { name: string }): Promise<SshLoginKey> {
+  async createKey(input: { name: string; userId: string }): Promise<SshLoginKey> {
     // 判据与表单共用同一函数：界面挡住一次，这里再挡一次，绕过界面也写不进演示数据集。
     const name = input.name.trim()
     if (!isValidSshKeyName(name)) throw new Error(`密钥名称需为 1-${SSH_KEY_NAME_MAX_LENGTH} 个字符`)
     if (findSshLoginKeyByName(name)) throw new Error(`密钥名称已存在：${name}`)
-    return addSshLoginKey(name, new Date().toISOString())
+    const owner = findHostUserById(input.userId)
+    if (!owner) throw new Error(`归属账号不存在：${input.userId}`)
+    return addSshLoginKey(name, owner.id, new Date().toISOString())
   }
 
   async removeKey(keyId: string): Promise<void> {
@@ -491,6 +495,8 @@ export class MockUserAdapter implements UserAdapter {
   }
 
   async remove(userId: string): Promise<void> {
+    // 账号没了，授权它的密钥也就登不进去，一并从演示数据集里移除。
+    removeSshLoginKeysByUser(userId)
     removeHostUser(userId)
   }
 

@@ -85,25 +85,38 @@ const SEED_AUTH_SETTINGS: SshAuthSettings = {
 }
 
 /** 登录密钥种子：前四把按用途手写，其余补齐到两页——表格每页 20 条，分页才不是摆设。 */
-const HAND_WRITTEN_KEYS: readonly { name: string; createdAt: string }[] = [
-  { name: '部署机', createdAt: '2025-06-10T21:56:30' },
-  { name: 'CI 发布', createdAt: '2025-05-23T21:57:47' },
-  { name: '个人笔记本', createdAt: '2025-04-02T09:12:04' },
-  { name: '异地备份', createdAt: '2025-02-11T11:05:51' },
+const HAND_WRITTEN_KEYS: readonly { name: string; userId: string; createdAt: string }[] = [
+  { name: '部署机', userId: 'user-wangwu', createdAt: '2025-06-10T21:56:30' },
+  { name: 'CI 发布', userId: 'user-ops', createdAt: '2025-05-23T21:57:47' },
+  { name: '个人笔记本', userId: 'user-lisi', createdAt: '2025-04-02T09:12:04' },
+  { name: '异地备份', userId: 'user-backup', createdAt: '2025-02-11T11:05:51' },
 ]
 
 /** 补齐用的临时密钥：时间在最早那把之前按固定间隔往前推，材料仍由名称确定性派生。 */
 const TEMPORARY_KEY_COUNT = 18
 
+/** 临时密钥轮流归属几个常用账号，列表里因此能看到不同账号下的密钥。 */
+const TEMPORARY_KEY_OWNERS = ['user-wangwu', 'user-ops', 'user-lisi']
+
 export const SEED_LOGIN_KEYS: readonly SshLoginKey[] = [
-  ...HAND_WRITTEN_KEYS.map(({ name, createdAt }) => ({ id: `key-${name}`, name, ...mockKeyMaterial(name, createdAt) })),
+  ...HAND_WRITTEN_KEYS.map(({ name, userId, createdAt }) => ({
+    id: `key-${name}`,
+    name,
+    userId,
+    ...mockKeyMaterial(name, createdAt),
+  })),
   ...Array.from({ length: TEMPORARY_KEY_COUNT }, (_, index) => {
     const step = index + 1
     const name = `临时密钥 ${`${step}`.padStart(2, '0')}`
     const createdAt = new Date(
       Date.parse('2025-02-11T11:05:51+08:00') - step * 26 * 60 * 60_000,
     ).toISOString()
-    return { id: `key-${name}`, name, ...mockKeyMaterial(name, createdAt) }
+    return {
+      id: `key-${name}`,
+      name,
+      userId: TEMPORARY_KEY_OWNERS[index % TEMPORARY_KEY_OWNERS.length] ?? 'user-wangwu',
+      ...mockKeyMaterial(name, createdAt),
+    }
   }),
 ]
 
@@ -216,8 +229,13 @@ export function findSshLoginKeyByName(name: string): SshLoginKey | undefined {
 }
 
 /** 新增登录密钥：材料按名称确定性派生，同一名称总是得到同一份材料。 */
-export function addSshLoginKey(name: string, createdAt: string): SshLoginKey {
-  const key: SshLoginKey = { id: `key-${name}`, name, ...mockKeyMaterial(name, createdAt) }
+export function addSshLoginKey(name: string, userId: string, createdAt: string): SshLoginKey {
+  const key: SshLoginKey = {
+    id: `key-${name}`,
+    name,
+    userId,
+    ...mockKeyMaterial(name, createdAt),
+  }
   keys = [...keys, key]
   return { ...key }
 }
@@ -226,4 +244,14 @@ export function removeSshLoginKey(keyId: string): void {
   const existing = keys.find((key) => key.id === keyId)
   if (!existing) throw new Error(`未找到登录密钥 ${keyId}`)
   keys = keys.filter((key) => key.id !== keyId)
+}
+
+/**
+ * 账号被删除时，它的密钥一并失效：真实系统里 `userdel -r` 连同家目录里的 authorized_keys 一起删掉，
+ * 授权没了、私钥也就登不进来。
+ */
+export function removeSshLoginKeysByUser(userId: string): number {
+  const before = keys.length
+  keys = keys.filter((key) => key.userId !== userId)
+  return before - keys.length
 }

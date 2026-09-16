@@ -97,7 +97,7 @@ export function HostUserDialog() {
 
           <div className="flex flex-col gap-4 overflow-y-auto px-4 py-4">
             <div>
-              <label htmlFor="host-user-name" className="mb-1 block text-xs font-medium text-fg-muted">
+              <label htmlFor="host-user-name" className="mb-2 block text-xs font-medium text-fg-muted">
                 用户名 <span className="text-danger">*</span>
               </label>
               <input
@@ -184,7 +184,7 @@ export function HostUserDialog() {
             </div>
 
             <div>
-              <label htmlFor="host-user-note" className="mb-1 block text-xs font-medium text-fg-muted">
+              <label htmlFor="host-user-note" className="mb-2 block text-xs font-medium text-fg-muted">
                 备注
               </label>
               <input

@@ -2,7 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { SEED_LOGIN_KEYS } from '../../adapters/mock/sshData'
 import { SSH_PAGE_SIZE, useSshStore } from '../../stores/sshStore'
-import { openSshTab, resetSshPanel, sshSessions } from '../../test/sshPanel'
+import { openSshTab, resetSshPanel, sshSessions, userSessions } from '../../test/sshPanel'
 
 /**
  * SSH 密钥表的端到端行为：种子列表、按名称与完整私钥搜索、创建、删除、查看密钥。
@@ -18,7 +18,7 @@ function keyCard(): HTMLElement {
 }
 
 /** 表格的数据行（去掉表头）。 */
-function keyRows(): HTMLElement[] {
+function userRows(): HTMLElement[] {
   const table = within(keyCard()).getByRole('table')
   return within(table).getAllByRole('row').slice(1)
 }
@@ -32,7 +32,7 @@ describe('SSH 密钥表', () => {
   it('首页列出 20 把密钥，翻页看剩余两把', async () => {
     const user = await openSshTab()
 
-    expect(keyRows()).toHaveLength(SSH_PAGE_SIZE)
+    expect(userRows()).toHaveLength(SSH_PAGE_SIZE)
     expect(
       within(keyCard()).getByText(
         `共 ${SEED_LOGIN_KEYS.length} 把密钥 · 每页 ${SSH_PAGE_SIZE} 条`,
@@ -41,13 +41,13 @@ describe('SSH 密钥表', () => {
     expect(pagerButton('上一页')).toBeDisabled()
 
     await user.click(pagerButton('下一页'))
-    expect(keyRows()).toHaveLength(SEED_LOGIN_KEYS.length - SSH_PAGE_SIZE)
+    expect(userRows()).toHaveLength(SEED_LOGIN_KEYS.length - SSH_PAGE_SIZE)
     expect(pagerButton('2')).toHaveAttribute('aria-current', 'page')
     expect(pagerButton('下一页')).toBeDisabled()
 
     await user.click(pagerButton('上一页'))
-    expect(keyRows()).toHaveLength(SSH_PAGE_SIZE)
-    expect(keyRows()[0]?.textContent).toContain('部署机')
+    expect(userRows()).toHaveLength(SSH_PAGE_SIZE)
+    expect(userRows()[0]?.textContent).toContain('部署机')
   })
 
   it('搜索会回到第一页：换关键词后不会停在空页上', async () => {
@@ -61,7 +61,7 @@ describe('SSH 密钥表', () => {
     const temporaryKeys = SEED_LOGIN_KEYS.filter((key) => key.name.includes('临时密钥')).length
     expect(useSshStore.getState().keyPage).toBe(1)
     expect(pagerButton('1')).toHaveAttribute('aria-current', 'page')
-    expect(keyRows()).toHaveLength(temporaryKeys)
+    expect(userRows()).toHaveLength(temporaryKeys)
     expect(pagerButton('下一页')).toBeDisabled()
   })
 
@@ -71,8 +71,8 @@ describe('SSH 密钥表', () => {
 
     // 名称片段
     await user.type(input, '发布')
-    expect(keyRows()).toHaveLength(1)
-    expect(keyRows()[0]?.textContent).toContain('CI 发布')
+    expect(userRows()).toHaveLength(1)
+    expect(userRows()[0]?.textContent).toContain('CI 发布')
     expect(
       within(keyCard()).getByText(
         `匹配 1 把 · 共 ${SEED_LOGIN_KEYS.length} 把 · 每页 ${SSH_PAGE_SIZE} 条`,
@@ -84,37 +84,44 @@ describe('SSH 密钥表', () => {
     await user.clear(input)
     await user.click(input)
     await user.paste(deployKey?.privateKey ?? '')
-    expect(keyRows()).toHaveLength(1)
-    expect(keyRows()[0]?.textContent).toContain('部署机')
+    expect(userRows()).toHaveLength(1)
+    expect(userRows()[0]?.textContent).toContain('部署机')
 
     // 粘指纹
     await user.clear(input)
     await user.type(input, SEED_LOGIN_KEYS[2]?.fingerprint ?? '')
-    expect(keyRows()).toHaveLength(1)
-    expect(keyRows()[0]?.textContent).toContain('个人笔记本')
+    expect(userRows()).toHaveLength(1)
+    expect(userRows()[0]?.textContent).toContain('个人笔记本')
 
     // 搜不到时给空态，而不是留一张空表
     await user.clear(input)
     await user.type(input, '不存在的一把密钥')
-    expect(keyRows()).toHaveLength(1)
+    expect(userRows()).toHaveLength(1)
     expect(
       within(keyCard()).getByText('没有匹配的密钥，换个关键词或粘一整份私钥试试'),
     ).toBeInTheDocument()
   })
 
-  it('创建密钥：空名称与重名就地报错，成功后入表并发 mock 通知', async () => {
+  it('创建密钥：先选归属账号再填名称，名称校验就地报错，成功后入表并发 mock 通知', async () => {
     const user = await openSshTab()
 
     await user.click(within(keyCard()).getByRole('button', { name: '创建 SSH 密钥' }))
     const dialog = await screen.findByRole('dialog', { name: '创建 SSH 密钥' })
     expect(dialog.textContent).toContain('演示 · 待接入真实执行')
+    expect(dialog.textContent).toContain('公钥会写进这个账号的 authorized_keys')
 
-    // 空名称：行内报错，不发请求（弹窗打开期间页面被设为不可见，因此直接看 store）
+    // 归属账号是必填的第一项：没选就不往下走
     await user.click(within(dialog).getByRole('button', { name: '创建密钥' }))
-    expect(within(dialog).getByText('密钥名称需为 1-32 个字符')).toBeInTheDocument()
+    expect(within(dialog).getByText('请选择归属账号')).toBeInTheDocument()
     expect(useSshStore.getState().keys).toHaveLength(SEED_LOGIN_KEYS.length)
 
-    // 与已有名称重复：同样就地报错
+    await user.click(within(dialog).getByRole('combobox', { name: '归属账号' }))
+    await user.click(await screen.findByRole('option', { name: 'wangwu' }))
+
+    // 空名称与重名同样就地报错，都不发请求
+    await user.click(within(dialog).getByRole('button', { name: '创建密钥' }))
+    expect(within(dialog).getByText('密钥名称需为 1-32 个字符')).toBeInTheDocument()
+
     await user.type(within(dialog).getByLabelText(/密钥名称/), '部署机')
     await user.click(within(dialog).getByRole('button', { name: '创建密钥' }))
     expect(within(dialog).getByText('密钥名称已存在：部署机')).toBeInTheDocument()
@@ -135,11 +142,28 @@ describe('SSH 密钥表', () => {
     ).toBeInTheDocument()
     await user.click(pagerButton('下一页'))
     expect(keyCard().textContent).toContain('运维笔记本')
+    // 归属账号落到行里：这把密钥记在 wangwu 名下
+    const created = userRows().find((row) => row.textContent?.includes('运维笔记本'))
+    expect(created?.textContent).toContain('wangwu')
 
     const notifications = await screen.findByLabelText('通知')
     expect(within(notifications).getByRole('status')).toHaveTextContent(
       'SSH 密钥「运维笔记本」已创建（mock，待接入真实执行）',
     )
+  })
+
+  it('账号列表为空时，归属账号下拉给出说明，而不是一个看不见的空盒', async () => {
+    const { gateway } = userSessions({ list: async () => [] })
+    const user = await openSshTab(gateway)
+
+    await user.click(within(keyCard()).getByRole('button', { name: '创建 SSH 密钥' }))
+    const dialog = await screen.findByRole('dialog', { name: '创建 SSH 密钥' })
+    await user.click(within(dialog).getByRole('combobox', { name: '归属账号' }))
+
+    expect(
+      await screen.findByText('还没有可选的账号，先去「用户管理」创建一个'),
+    ).toBeInTheDocument()
+    expect(screen.queryAllByRole('option')).toHaveLength(0)
   })
 
   it('删除密钥：确认弹窗里取消不动数据，确认后行消失并发通知', async () => {
@@ -159,7 +183,7 @@ describe('SSH 密钥表', () => {
 
     await waitFor(() => expect(useSshStore.getState().keys).toHaveLength(SEED_LOGIN_KEYS.length - 1))
     // 少了一把，第二页的第一把补进首页，首页仍是 20 行
-    expect(keyRows()).toHaveLength(SSH_PAGE_SIZE)
+    expect(userRows()).toHaveLength(SSH_PAGE_SIZE)
     expect(keyCard().textContent).not.toContain('部署机')
 
     const notifications = await screen.findByLabelText('通知')
@@ -190,6 +214,7 @@ describe('SSH 密钥表', () => {
         {
           id: 'key-只有一把',
           name: '只有一把',
+          userId: 'user-wangwu',
           algorithm: 'ssh-ed25519 256',
           fingerprint: 'SHA256:onlyone',
           createdAt: '2026-01-02T03:04:05',
@@ -200,7 +225,7 @@ describe('SSH 密钥表', () => {
     })
     await openSshTab(gateway)
 
-    expect(keyRows()).toHaveLength(1)
+    expect(userRows()).toHaveLength(1)
     expect(within(keyCard()).getByText(`共 1 把密钥 · 每页 ${SSH_PAGE_SIZE} 条`)).toBeInTheDocument()
     expect(pagerButton('下一页')).toBeDisabled()
   })

@@ -201,8 +201,8 @@ export interface SshAdapter {
   listKeys(): Promise<readonly SshLoginKey[]>
   /** 登录记录（演示）：按时间倒序的登录事实，含来源地址、客户端端口、账号与结果。 */
   listLoginRecords(): Promise<readonly SshLoginRecord[]>
-  /** 创建登录密钥（演示）：名称去空白后校验，名称重复即拒绝。 */
-  createKey(input: { name: string }): Promise<SshLoginKey>
+  /** 创建登录密钥（演示）：名称去空白后校验，名称重复、归属账号不存在都拒绝。 */
+  createKey(input: { name: string; userId: string }): Promise<SshLoginKey>
   /** 删除登录密钥（演示）：只改内存数据集，不触碰任何真实授权文件。 */
   removeKey(keyId: string): Promise<void>
 }
