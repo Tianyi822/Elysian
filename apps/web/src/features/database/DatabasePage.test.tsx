@@ -77,12 +77,12 @@ describe('数据库页面', () => {
     const card = await screen.findByRole('article', { name: 'MariaDB 数据库 mariadb-test' })
     expect(card).not.toHaveTextContent(MARIADB.credentials.password)
     expect(card).not.toHaveTextContent(MARIADB.credentials.username)
-    expect(card).toHaveTextContent('复制用户名')
-    expect(card).toHaveTextContent('复制密码')
+    expect(card).toHaveTextContent('用户名')
+    expect(card).toHaveTextContent('密码')
     // 卡片上不放常驻演示文案：声明收敛进 tooltip 与会话横幅。
     expect(card).not.toHaveTextContent('演示凭证')
     expect(card).not.toHaveTextContent('演示数值')
-    expect(within(card).getByRole('button', { name: '复制用户名' })).toHaveAttribute(
+    expect(within(card).getByRole('button', { name: '用户名' })).toHaveAttribute(
       'title',
       expect.stringContaining('不对应任何真实数据库'),
     )
@@ -93,10 +93,10 @@ describe('数据库页面', () => {
     renderApp('/databases', { gateway: pageGateway({ list: async () => [MARIADB] }) })
     const card = await screen.findByRole('article', { name: 'MariaDB 数据库 mariadb-test' })
 
-    await user.click(within(card).getByRole('button', { name: '复制用户名' }))
+    await user.click(within(card).getByRole('button', { name: '用户名' }))
     await expect(navigator.clipboard.readText()).resolves.toBe(MARIADB.credentials.username)
 
-    await user.click(within(card).getByRole('button', { name: '复制密码' }))
+    await user.click(within(card).getByRole('button', { name: '密码' }))
     await expect(navigator.clipboard.readText()).resolves.toBe(MARIADB.credentials.password)
   })
 

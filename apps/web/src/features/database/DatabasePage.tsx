@@ -223,13 +223,13 @@ function DatabaseCard({
       {/* 动作行沉底：卡片因同列内容高度不齐被拉伸时，操作区贴住卡底。 */}
       <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-line pt-3">
         <CopyButton
-          label="复制用户名"
+          label="用户名"
           value={database.credentials.username}
           tooltip="复制演示用户名 · 不对应任何真实数据库"
           icon={<UserRound aria-hidden size={13} />}
         />
         <CopyButton
-          label="复制密码"
+          label="密码"
           value={database.credentials.password}
           tooltip="复制演示密码 · 不对应任何真实数据库"
           icon={<KeyRound aria-hidden size={13} />}
