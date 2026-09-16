@@ -39,6 +39,12 @@ describe('文件管理页', () => {
       within(etcRow).getByRole('button', { name: '计算 etc 的目录大小' }),
     ).toBeInTheDocument()
     expect(etcRow.lastElementChild).not.toHaveClass('text-right')
+
+    // 名称列钉在左边陪滚，其余列横向滚动；列宽从 38% 缩到 32%。
+    const headerRow = within(region).getAllByRole('row')[0]
+    expect(headerRow?.children[0]).toHaveClass('sticky', 'left-0')
+    expect(region.querySelector('colgroup')?.children[0]).toHaveClass('w-[32%]')
+    expect(etcRow.children[0]).toHaveClass('sticky', 'left-0')
   })
 
   it('权限/所有者列按条目呈现真实主机惯例的取值', async () => {

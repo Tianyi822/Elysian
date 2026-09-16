@@ -123,22 +123,24 @@ function FileTable({
       aria-label="文件列表"
       className="overflow-x-auto rounded-xl border border-line bg-surface"
     >
-      {/* 46rem 是五列都不挤的下限：低于它整表横向滚动，长文件名交给截断。 */}
+      {/* 46rem 是五列都不挤的下限：低于它整表横向滚动，名称列钉在左边陪滚。 */}
       <table className="w-full min-w-[46rem] table-fixed border-separate border-spacing-0 text-left text-sm">
         <colgroup>
-          <col className="w-[38%]" />
+          <col className="w-[32%]" />
+          <col className="w-[22%]" />
+          <col className="w-[12%]" />
           <col className="w-[20%]" />
-          <col className="w-[12%]" />
-          <col className="w-[18%]" />
-          <col className="w-[12%]" />
+          <col className="w-[14%]" />
         </colgroup>
         <thead>
           <tr>
-            {['名称', '修改时间', '类型', '权限/所有者', '大小'].map((label) => (
+            {['名称', '修改时间', '类型', '权限/所有者', '大小'].map((label, index) => (
               <th
                 key={label}
                 scope="col"
-                className="border-b border-line bg-surface px-3 py-2.5 text-xs font-medium text-fg-muted"
+                className={`border-b border-line bg-surface px-3 py-2.5 text-xs font-medium text-fg-muted ${
+                  index === 0 ? 'sticky left-0 z-20 border-r' : ''
+                }`}
               >
                 {label}
               </th>
@@ -178,11 +180,15 @@ function FileTable({
                     }
                   }}
                   title={openable ? '双击打开目录' : undefined}
-                  className={`whitespace-nowrap transition-colors hover:bg-surface-raised ${
+                  className={`group whitespace-nowrap transition-colors hover:bg-surface-raised ${
                     selected ? 'bg-surface-raised' : ''
                   } ${openable ? 'cursor-pointer' : ''}`}
                 >
-                  <td className="border-b border-line px-3 py-2.5">
+                  <td
+                    className={`sticky left-0 z-10 border-b border-r border-line px-3 py-2.5 font-medium group-hover:bg-surface-raised ${
+                      selected ? 'bg-surface-raised' : 'bg-surface'
+                    }`}
+                  >
                     <span className="flex min-w-0 items-center gap-2">
                       {openable ? (
                         <Folder aria-hidden size={15} className="shrink-0 text-fg-subtle" />
