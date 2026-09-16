@@ -20,6 +20,7 @@ export {
   Database,
   Download,
   File,
+  FolderTree,
   Gauge,
   Inbox,
   Info,

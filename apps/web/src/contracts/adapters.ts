@@ -229,6 +229,7 @@ export type PageArea =
   | 'dashboard'
   | 'security'
   | 'containers'  | 'databases'
+  | 'files'
   | 'incidents'
   | 'runs'
   | 'skills'

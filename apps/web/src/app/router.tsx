@@ -6,6 +6,7 @@ import { ContainerViewSwitch } from '../features/container/ContainerViewSwitch'
 import { DashboardPage } from '../features/dashboard/DashboardPage'
 import { DatabaseEngineSwitch } from '../features/database/DatabaseEngineSwitch'
 import { DatabasePage } from '../features/database/DatabasePage'
+import { FilesPage } from '../features/files/FilesPage'
 import { SecurityPage } from '../features/security/SecurityPage'
 import { SecurityTabSwitch } from '../features/security/SecurityTabSwitch'
 import { AppShell } from './layout/AppShell'
@@ -69,6 +70,14 @@ export const routes: RouteObject[] = [
         element: (
           <RequireArea area="databases" title="数据库">
             <DatabasePage />
+          </RequireArea>
+        ),
+      },
+      {
+        path: 'files',
+        element: (
+          <RequireArea area="files" title="文件管理">
+            <FilesPage />
           </RequireArea>
         ),
       },

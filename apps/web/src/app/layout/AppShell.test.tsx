@@ -14,12 +14,18 @@ beforeEach(() => {
 })
 
 describe('模板外壳', () => {
-  it('侧边栏包含仪表盘、安全、Docker 与数据库四项', () => {
+  it('侧边栏包含仪表盘、安全、Docker、数据库与文件管理五项', () => {
     renderApp('/')
     const nav = screen.getByRole('navigation', { name: '主导航' })
     const links = within(nav).getAllByRole('link')
     expect(links).toHaveLength(NAV_ITEMS.length)
-    expect(links.map((link) => link.textContent)).toEqual(['仪表盘', '安全', 'Docker', '数据库'])
+    expect(links.map((link) => link.textContent)).toEqual([
+      '仪表盘',
+      '安全',
+      'Docker',
+      '数据库',
+      '文件管理',
+    ])
     expect(links[0]).toHaveAttribute('aria-current', 'page')
   })
 

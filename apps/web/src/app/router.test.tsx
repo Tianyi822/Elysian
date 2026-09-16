@@ -18,6 +18,12 @@ describe('路由表', () => {
     expect(await screen.findByRole('group', { name: '数据库类型' })).toBeInTheDocument()
   })
 
+  it('/files 渲染文件管理页', async () => {
+    renderApp('/files')
+    expect(await screen.findByRole('heading', { level: 1, name: '文件管理' })).toBeInTheDocument()
+    expect(await screen.findByRole('region', { name: '文件管理' })).toBeInTheDocument()
+  })
+
   it('未匹配的地址进入未找到页面', async () => {
     renderApp('/does-not-exist')
     expect(
