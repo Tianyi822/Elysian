@@ -4,6 +4,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import {
   Cable,
   ChevronRight,
+  Check,
   Container,
   Database,
   Gauge,
@@ -17,7 +18,7 @@ import {
   Trash2,
   UserRound,
 } from '../../components/icons'
-import { CopyButton } from '../../components/CopyButton'
+import { CopyButton, useClipboardCopy } from '../../components/CopyButton'
 import { ErrorState, EmptyState, LoadingState } from '../../components/states/StateViews'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
@@ -166,6 +167,7 @@ function DatabaseCard({
   onRemove(databaseId: string): void
 }) {
   const [confirmRemove, setConfirmRemove] = useState(false)
+  const { copied: pathCopied, copy: copyFilePath } = useClipboardCopy()
 
   return (
     <article
@@ -188,17 +190,27 @@ function DatabaseCard({
       </div>
 
       {view.kind === 'file' ? (
-        /* 文件型：来源就是一个本地 .db 文件，没有容器详情可跳，因此是静态行而不是按钮。 */
-        <div className="flex w-full items-center gap-2 rounded-lg bg-surface-raised px-3 py-2 text-xs text-fg-muted">
-          <File aria-hidden size={14} className="shrink-0 text-fg-subtle" />
-          <span className="hidden shrink-0 @sm:inline">数据库文件</span>
+        /* 文件型：来源是一个本地 .db 文件，没有容器详情可看；点击把路径复制走。 */
+        <button
+          type="button"
+          onClick={() => void copyFilePath(view.filePath)}
+          title="点击复制文件路径"
+          aria-label={`复制数据库文件路径 ${view.filePath}`}
+          className="flex w-full items-center gap-2 rounded-lg bg-surface-raised px-3 py-2 text-left text-xs text-fg-muted transition-colors hover:bg-surface-raised/70 hover:text-fg"
+        >
+          {pathCopied ? (
+            <Check aria-hidden size={14} className="shrink-0 text-success" />
+          ) : (
+            <File aria-hidden size={14} className="shrink-0 text-fg-subtle" />
+          )}
+          <span className="hidden shrink-0 @sm:inline">{pathCopied ? '已复制' : '数据库文件'}</span>
           <span className="min-w-0 flex-1 truncate font-mono text-fg" title={view.filePath}>
             {view.filePath}
           </span>
           <span className="hidden shrink-0 tabular-nums text-fg-subtle @xs:inline">
             {formatFileSize(view.fileSizeMb)}
           </span>
-        </div>
+        </button>
       ) : (
         <button
           type="button"
@@ -273,6 +285,7 @@ function DatabaseCard({
 
       {/* 动作行沉底：卡片因同列内容高度不齐被拉伸时，操作区贴住卡底。 */}
       <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-line pt-3">
+        {/* SQLite 没有账号体系：不摆一对复制不了任何东西的按钮，也不占位说明。 */}
         {database.credentials ? (
           <>
             <CopyButton
@@ -288,10 +301,7 @@ function DatabaseCard({
               icon={<KeyRound aria-hidden size={13} />}
             />
           </>
-        ) : (
-          /* SQLite 没有账号体系：不摆一对复制不了任何东西的按钮，如实说明。 */
-          <span className="text-xs text-fg-subtle">本地文件数据库 · 无账号</span>
-        )}
+        ) : null}
         <div className="ml-auto flex shrink-0 items-center gap-2">
           <button
             type="button"

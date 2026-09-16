@@ -118,7 +118,7 @@ describe('数据库页面', () => {
     expect(sqliteCard).toHaveTextContent('数据库文件')
     expect(sqliteCard).toHaveTextContent('/srv/elysian/data/sqlite/elysian-notes.db')
     expect(sqliteCard).toHaveTextContent('4.2 MB')
-    expect(sqliteCard).toHaveTextContent('本地文件数据库 · 无账号')
+    expect(sqliteCard).not.toHaveTextContent('无账号')
     expect(sqliteCard).not.toHaveTextContent('连接数')
     expect(within(sqliteCard).queryByRole('button', { name: '用户名' })).not.toBeInTheDocument()
     expect(within(sqliteCard).getByRole('button', { name: '连接' })).toBeInTheDocument()
@@ -274,7 +274,7 @@ describe('数据库页面', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     const created = await screen.findByRole('article', { name: 'SQLite 数据库 orders-backup' })
     expect(created).toHaveTextContent('/srv/elysian/data/sqlite/orders-backup.db')
-    expect(created).toHaveTextContent('本地文件数据库 · 无账号')
+    expect(created).not.toHaveTextContent('无账号')
   })
 
   it('添加 SQLite：直接在本机新建时校验落点目录，建出 0 字节空库', async () => {
@@ -304,6 +304,25 @@ describe('数据库页面', () => {
     expect(created).toHaveTextContent('/srv/elysian/data/sqlite/notes_local.db')
     // 新建的空库是 0 字节，显示为 KB 而不是「0.0 MB」。
     expect(created).toHaveTextContent('0 KB')
+  })
+
+  it('点击文件路径行把路径复制到剪贴板，并给出已复制反馈', async () => {
+    const user = userEvent.setup()
+    renderApp('/databases', { gateway: pageGateway() })
+    await screen.findByRole('list', { name: 'MariaDB 数据库列表' })
+    await user.click(within(screen.getByRole('banner')).getByRole('button', { name: 'SQLite' }))
+
+    const card = await screen.findByRole('article', { name: 'SQLite 数据库 elysian-notes' })
+    const row = within(card).getByRole('button', { name: /复制数据库文件路径/ })
+
+    await user.click(row)
+
+    await expect(navigator.clipboard.readText()).resolves.toBe(
+      '/srv/elysian/data/sqlite/elysian-notes.db',
+    )
+    // 反馈与复制按钮同款：短暂显示「已复制」，行里的路径不消失。
+    expect(await within(card).findByText('已复制')).toBeInTheDocument()
+    expect(card).toHaveTextContent('/srv/elysian/data/sqlite/elysian-notes.db')
   })
 
   it('删除数据库需要确认：取消不删，确认后卡片消失且通知带 mock 标注', async () => {

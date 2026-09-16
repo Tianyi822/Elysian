@@ -6,6 +6,37 @@ import { useNotificationStore } from '../stores/notificationStore'
 /** 复制成功后的反馈时长（毫秒）。 */
 const FEEDBACK_MS = 1_500
 
+function notifyCopyFailed(error: unknown): void {
+  useNotificationStore.getState().notify({
+    tone: 'danger',
+    message: `复制失败：浏览器拒绝了剪贴板访问（${error instanceof Error ? error.message : '未知原因'}）`,
+  })
+}
+
+/**
+ * 复制到剪贴板并给出短暂反馈的共用逻辑：`copied` 是反馈窗口是否打开。
+ * 连点时清掉上一个定时器重新计时；失败走通知，不静默；卸载时清定时器。
+ */
+export function useClipboardCopy(): { copied: boolean; copy(value: string): Promise<void> } {
+  const [copied, setCopied] = useState(false)
+  const timerRef = useRef<number | undefined>(undefined)
+
+  useEffect(() => () => window.clearTimeout(timerRef.current), [])
+
+  const copy = async (value: string) => {
+    try {
+      await navigator.clipboard.writeText(value)
+      window.clearTimeout(timerRef.current)
+      setCopied(true)
+      timerRef.current = window.setTimeout(() => setCopied(false), FEEDBACK_MS)
+    } catch (error) {
+      notifyCopyFailed(error)
+    }
+  }
+
+  return { copied, copy }
+}
+
 /**
  * 复制按钮：把值写进剪贴板，成功后按钮文案短暂变成「已复制」。
  * 值本身不上屏，tooltip 说明复制的是什么；剪贴板被拒时走通知，不静默失败。
@@ -21,28 +52,12 @@ export function CopyButton({
   tooltip: string
   icon?: ReactNode
 }) {
-  const [copied, setCopied] = useState(false)
-  const timerRef = useRef<number | undefined>(undefined)
-
-  useEffect(() => () => window.clearTimeout(timerRef.current), [])
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(value)
-      setCopied(true)
-      timerRef.current = window.setTimeout(() => setCopied(false), FEEDBACK_MS)
-    } catch (error) {
-      useNotificationStore.getState().notify({
-        tone: 'danger',
-        message: `复制失败：浏览器拒绝了剪贴板访问（${error instanceof Error ? error.message : '未知原因'}）`,
-      })
-    }
-  }
+  const { copied, copy } = useClipboardCopy()
 
   return (
     <button
       type="button"
-      onClick={() => void copy()}
+      onClick={() => void copy(value)}
       title={tooltip}
       className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-line px-2 py-1.5 text-xs text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg"
     >
