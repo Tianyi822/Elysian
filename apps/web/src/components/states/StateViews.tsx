@@ -42,10 +42,13 @@ export function ErrorState({
   title = '加载失败',
   description,
   onRetry,
+  action,
 }: {
   title?: string
   description?: string
   onRetry?: () => void
+  /** 自定义恢复动作，提供时取代默认的重试按钮——有些错误重试没有意义（如路径不存在）。 */
+  action?: ReactNode
 }) {
   return (
     <div
@@ -55,15 +58,19 @@ export function ErrorState({
       <TriangleAlert aria-hidden size={20} className="text-danger" />
       <p className="text-sm font-medium">{title}</p>
       {description ? <p className="max-w-prose text-xs text-fg-muted">{description}</p> : null}
-      {onRetry ? (
-        <button
-          type="button"
-          onClick={onRetry}
-          className="mt-1 rounded-lg border border-line bg-surface-raised px-2 py-1 text-xs text-fg"
-        >
-          重试
-        </button>
-      ) : null}
+      {action
+        ? action
+        : onRetry
+          ? (
+              <button
+                type="button"
+                onClick={onRetry}
+                className="mt-1 rounded-lg border border-line bg-surface-raised px-2 py-1 text-xs text-fg"
+              >
+                重试
+              </button>
+            )
+          : null}
     </div>
   )
 }

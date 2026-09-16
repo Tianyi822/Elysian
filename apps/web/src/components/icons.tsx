@@ -9,6 +9,7 @@ import type { SVGProps } from 'react'
 export type IconComponent = LucideIcon
 
 export {
+  ArrowUpFromLine,
   Bot,
   Cable,
   Check,
@@ -20,6 +21,7 @@ export {
   Database,
   Download,
   File,
+  Folder,
   FolderTree,
   Gauge,
   Inbox,

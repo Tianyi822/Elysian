@@ -18,10 +18,15 @@ describe('路由表', () => {
     expect(await screen.findByRole('group', { name: '数据库类型' })).toBeInTheDocument()
   })
 
-  it('/files 渲染文件管理页', async () => {
+  it('/files 渲染文件管理页，当前目录（根）占据标题位', async () => {
     renderApp('/files')
-    expect(await screen.findByRole('heading', { level: 1, name: '文件管理' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { level: 1, name: '/' })).toBeInTheDocument()
     expect(await screen.findByRole('region', { name: '文件管理' })).toBeInTheDocument()
+  })
+
+  it('/files/var/log 深链直达子目录，路径标题随地址变化', async () => {
+    renderApp('/files/var/log')
+    expect(await screen.findByRole('heading', { level: 1, name: '/var/log' })).toBeInTheDocument()
   })
 
   it('未匹配的地址进入未找到页面', async () => {

@@ -105,6 +105,7 @@ const ENUM_TABLES: ReadonlyArray<{
     values: contracts.HOST_USER_LOGIN_METHODS,
     labels: contracts.HOST_USER_LOGIN_METHOD_LABELS,
   },
+  { name: 'FileKind', values: contracts.FILE_KINDS, labels: contracts.FILE_KIND_LABELS },
 ]
 
 describe('枚举与中文标签表', () => {
@@ -322,6 +323,26 @@ describe('SSH 域词典', () => {
     expect(contracts.isValidSshKeyName('x'.repeat(32))).toBe(true)
     expect(contracts.isValidSshKeyName('   ')).toBe(false)
     expect(contracts.isValidSshKeyName('x'.repeat(33))).toBe(false)
+  })
+})
+
+describe('文件域词典', () => {
+  it('条目种类是文件夹与文件两值，标签齐备', () => {
+    expect([...contracts.FILE_KINDS]).toEqual(['directory', 'file'])
+    expect(contracts.FILE_KIND_LABELS.directory).toBe('文件夹')
+    expect(contracts.FILE_KIND_LABELS.file).toBe('文件')
+  })
+
+  it('文件名判据：非空、不含斜杠、不是 . 或 ..，最长 255', () => {
+    expect(contracts.FILE_NAME_MAX_LENGTH).toBe(255)
+    expect(contracts.isValidFileName('deploy.sh')).toBe(true)
+    expect(contracts.isValidFileName('  配置文件  ')).toBe(true)
+    expect(contracts.isValidFileName('')).toBe(false)
+    expect(contracts.isValidFileName('   ')).toBe(false)
+    expect(contracts.isValidFileName('a/b')).toBe(false)
+    expect(contracts.isValidFileName('.')).toBe(false)
+    expect(contracts.isValidFileName('..')).toBe(false)
+    expect(contracts.isValidFileName('x'.repeat(256))).toBe(false)
   })
 })
 

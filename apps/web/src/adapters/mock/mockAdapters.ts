@@ -10,6 +10,7 @@ import type {
   DatabaseInstance,
   ElysianEvent,
   EventStreamHandlers,
+  FileEntry,
   FirewallImportResult,
   FirewallRule,
   FirewallRuleInput,
@@ -39,6 +40,7 @@ import type {
   DatabaseAdapter,
   DatabaseCreateInput,
   EventsAdapter,
+  FilesAdapter,
   FirewallAdapter,
   IncidentAdapter,
   IncidentListQuery,
@@ -90,6 +92,14 @@ import {
 } from './sshData'
 import { runMockQuery } from './databaseQuery'
 import { execContainerCommand } from './containerTerminal'
+import {
+  compressMockEntry,
+  copyMockEntry,
+  listMockDirectory,
+  measureMockDirectory,
+  moveMockEntry,
+  renameMockEntry,
+} from './filesData'
 import { CONTAINERS, CONTAINER_IMAGES, mockImageArtifact } from './containersData'
 import { autoContainerName } from './containersData'
 import {
@@ -237,6 +247,38 @@ export class MockSessionAdapter implements SessionAdapter {
     return true
   }
 }
+
+/** 文件目录的 mock 实现：读手工种子的目录树；列举与统计只读，四个变更动作只改内存数据。 */
+export class MockFilesAdapter implements FilesAdapter {
+  async list(dirPath: string): Promise<readonly FileEntry[]> {
+    return listMockDirectory(dirPath)
+  }
+
+  async size(dirPath: string): Promise<number> {
+    // 目录大小统计模拟真实 du 的耗时：给界面的等待状态留一个可见的窗口。
+    await new Promise((resolve) => setTimeout(resolve, FILES_SIZE_DELAY_MS))
+    return measureMockDirectory(dirPath)
+  }
+
+  async copyEntry(srcPath: string, destDirPath: string): Promise<FileEntry> {
+    return copyMockEntry(srcPath, destDirPath)
+  }
+
+  async moveEntry(srcPath: string, destDirPath: string): Promise<FileEntry> {
+    return moveMockEntry(srcPath, destDirPath)
+  }
+
+  async renameEntry(path: string, newName: string): Promise<FileEntry> {
+    return renameMockEntry(path, newName)
+  }
+
+  async compressEntry(path: string): Promise<FileEntry> {
+    return compressMockEntry(path)
+  }
+}
+
+/** 演示目录大小统计的固定耗时；测试想控制节奏时注入自己的 FilesAdapter。 */
+const FILES_SIZE_DELAY_MS = 400
 
 export class MockRunAdapter implements RunAdapter {
   constructor(private readonly dataset: () => MockDataset) {}

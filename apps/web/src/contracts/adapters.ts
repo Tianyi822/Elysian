@@ -10,6 +10,7 @@ import type {
   DatabaseEngine,
   DatabaseInstance,
   EventStreamHandlers,
+  FileEntry,
   FirewallImportResult,
   FirewallRule,
   FirewallRuleInput,
@@ -238,6 +239,31 @@ export type PageArea =
   | 'settings'
 
 /**
+ * 文件目录的读取接缝，形状对齐未来的目录列举服务。本期只有只读列举与目录大小统计；
+ * 上传、删除等系统级变更等执行层接入后再扩展。
+ */
+export interface FilesAdapter {
+  /**
+   * 列出一个目录的直接子项（演示）。路径须为归一化后的绝对路径；
+   * 不承诺任何顺序，排序由界面决定；目录不存在时抛出中文错误。
+   */
+  list(dirPath: string): Promise<readonly FileEntry[]>
+  /**
+   * 递归统计一个目录的总大小（字节，演示）。目录大小不在列举里给出——
+   * 累计求和代价大，由界面按需触发；真实实现可能明显耗时，界面须有等待状态。
+   */
+  size(dirPath: string): Promise<number>
+  /** 复制一个条目到目标目录（演示）。目标重名时自动加「 副本」后缀，返回新条目。 */
+  copyEntry(srcPath: string, destDirPath: string): Promise<FileEntry>
+  /** 移动一个条目到目标目录（演示）。目标与源所在目录相同、或把目录移进它自己内部时报错。 */
+  moveEntry(srcPath: string, destDirPath: string): Promise<FileEntry>
+  /** 重命名一个条目（演示）。名称非法或与同级条目重名时报错，返回重命名后的条目。 */
+  renameEntry(path: string, newName: string): Promise<FileEntry>
+  /** 把一个条目压缩成同级的「名称.tar.gz」（演示），返回新条目；同级已有同名压缩包时报错。 */
+  compressEntry(path: string): Promise<FileEntry>
+}
+
+/**
  * 会话与权限占位。本期没有认证，mock 实现全部放行；
  * 但界面上的「无权限」分支是真实存在的，接入认证后由这里决定。
  */
@@ -259,6 +285,7 @@ export interface ElysianGateway {
   firewall: FirewallAdapter
   ssh: SshAdapter
   users: UserAdapter
+  files: FilesAdapter
   /** 把演示数据重置回种子状态。 */
   reset(): Promise<void>
 }

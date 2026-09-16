@@ -7,6 +7,7 @@ import { DashboardPage } from '../features/dashboard/DashboardPage'
 import { DatabaseEngineSwitch } from '../features/database/DatabaseEngineSwitch'
 import { DatabasePage } from '../features/database/DatabasePage'
 import { FilesPage } from '../features/files/FilesPage'
+import { FilesPathTitle } from '../features/files/FilesPathTitle'
 import { SecurityPage } from '../features/security/SecurityPage'
 import { SecurityTabSwitch } from '../features/security/SecurityTabSwitch'
 import { AppShell } from './layout/AppShell'
@@ -74,7 +75,11 @@ export const routes: RouteObject[] = [
         ),
       },
       {
-        path: 'files',
+        path: 'files/*',
+        handle: {
+          headerAccessory: FilesPathTitle,
+          hideHeaderTitle: true,
+        } satisfies RouteHandle,
         element: (
           <RequireArea area="files" title="文件管理">
             <FilesPage />
