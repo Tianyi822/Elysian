@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react'
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router'
 import * as Dialog from '@radix-ui/react-dialog'
 import {
   Cable,
@@ -30,6 +29,7 @@ import { projectDatabaseCard } from './projectDatabaseCard'
 import type { DatabaseCardView } from './projectDatabaseCard'
 import { SqlSessionWindow } from './SqlSessionWindow'
 import { DatabaseCreateDialog } from './DatabaseCreateDialog'
+import { ContainerDetailSheet } from '../container/ContainerDetailSheet'
 
 const STATUS_TONE: Record<DatabaseStatus, StatusTone> = {
   running: 'success',
@@ -40,7 +40,6 @@ const STATUS_TONE: Record<DatabaseStatus, StatusTone> = {
 /** 数据库区呈现资源状态；演示凭证值不上屏，只提供一键复制动作。 */
 export function DatabasePage() {
   const gateway = useGateway()
-  const navigate = useNavigate()
   const status = useDatabaseStore((state) => state.status)
   const engine = useDatabaseStore((state) => state.engine)
   const databases = useDatabaseStore((state) => state.databases)
@@ -65,6 +64,23 @@ export function DatabasePage() {
     [containers],
   )
   const imageById = useMemo(() => new Map(images.map((image) => [image.id, image])), [images])
+
+  // 来源容器行在当前页就地打开详情侧边栏，不跳容器页：容器页数据可能还没加载过，
+  // 把这一只容器与它的镜像补进容器 store（与容器数据集同源同形），详情面板据此渲染。
+  const openContainerDetail = (containerId: string) => {
+    const container = containerById.get(containerId)
+    if (!container) return
+    const image = imageById.get(container.imageId)
+    useContainersStore.setState((state) => ({
+      containers: state.containers.some((c) => c.id === containerId)
+        ? state.containers
+        : [...state.containers, container],
+      images: !image || state.images.some((i) => i.id === image.id)
+        ? state.images
+        : [...state.images, image],
+      detailContainerId: containerId,
+    }))
+  }
 
   if (status === 'error') {
     return (
@@ -108,20 +124,16 @@ export function DatabasePage() {
               className="grid grid-cols-1 gap-4 @2xl:grid-cols-2 @5xl:grid-cols-3"
             >
               {filtered.map((database) => (
-              <li key={database.id} className="h-full">
-                <DatabaseCard
-                  database={database}
-                  view={projectDatabaseCard(database, containerById, imageById)}
-                  removing={removingDatabaseIds.includes(database.id)}
-                  onJump={() => {
-                    useContainersStore.getState().openDetail(database.containerId)
-                    useContainersStore.getState().setView('grid')
-                    navigate('/containers')
-                  }}
-                  onConnect={() => openSession(database.id)}
-                  onRemove={(databaseId) => void removeDatabase(gateway, databaseId)}
-                />
-              </li>
+                <li key={database.id} className="h-full">
+                  <DatabaseCard
+                    database={database}
+                    view={projectDatabaseCard(database, containerById, imageById)}
+                    removing={removingDatabaseIds.includes(database.id)}
+                    onJump={() => openContainerDetail(database.containerId)}
+                    onConnect={() => openSession(database.id)}
+                    onRemove={(databaseId) => void removeDatabase(gateway, databaseId)}
+                  />
+                </li>
               ))}
             </ul>
           </div>
@@ -129,6 +141,7 @@ export function DatabasePage() {
       </section>
       <SqlSessionWindow />
       <DatabaseCreateDialog />
+      <ContainerDetailSheet />
     </>
   )
 }

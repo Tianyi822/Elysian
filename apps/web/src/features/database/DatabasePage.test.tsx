@@ -148,14 +148,15 @@ describe('数据库页面', () => {
     })
   })
 
-  it('点击来源容器行跳到容器页并打开对应详情面板', async () => {
+  it('点击来源容器行在当前页打开详情侧边栏，不跳转路由', async () => {
     const user = userEvent.setup()
     const { router } = renderApp('/databases', { gateway: pageGateway() })
     const list = await screen.findByRole('list', { name: 'MariaDB 数据库列表' })
 
     await user.click(within(list).getByRole('button', { name: /来源容器/ }))
 
-    expect(router.state.location.pathname).toBe('/containers')
+    // 不离开数据库页：路由原封不动，详情侧边栏就地打开。
+    expect(router.state.location.pathname).toBe('/databases')
     expect(await screen.findByRole('dialog', { name: 'mariadb-primary' })).toBeInTheDocument()
   })
 
