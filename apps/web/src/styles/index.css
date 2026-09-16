@@ -213,6 +213,16 @@ body {
   }
 }
 
+/*
+ * 焦点环只由项目画一圈。
+ * 浏览器对文本控件会自己再画一圈系统级的聚焦环（auto 描边），与下面的项目焦点环叠成两圈——
+ * 视觉上像「选中效果」而不是焦点。先关掉默认的，再由 :focus-visible 统一给环：
+ * 键盘聚焦与文本控件点击聚焦都会命中 :focus-visible，因此点击输入框仍看得到环。
+ */
+:focus {
+  outline: none;
+}
+
 :focus-visible {
   outline: 2px solid var(--t-focus);
   outline-offset: 2px;
