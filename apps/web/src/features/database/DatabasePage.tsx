@@ -193,7 +193,7 @@ function DatabaseCard({
         /* 文件型：来源是一个本地 .db 文件，没有容器详情可看；点击把路径复制走。 */
         <button
           type="button"
-          onClick={() => void copyFilePath(view.filePath)}
+          onClick={() => void copyFilePath(view.filePath, '文件路径')}
           title="点击复制文件路径"
           aria-label={`复制数据库文件路径 ${view.filePath}`}
           className="flex w-full items-center gap-2 rounded-lg bg-surface-raised px-3 py-2 text-left text-xs text-fg-muted transition-colors hover:bg-surface-raised/70 hover:text-fg"

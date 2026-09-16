@@ -6,6 +6,7 @@ import type { ElysianGateway } from '../../contracts/adapters'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { useContainersStore } from '../../stores/containersStore'
 import { useDatabaseStore } from '../../stores/databaseStore'
+import { useNotificationStore } from '../../stores/notificationStore'
 import { renderApp } from '../../test/renderApp'
 
 const MARIADB: DatabaseInstance = {
@@ -320,9 +321,13 @@ describe('数据库页面', () => {
     await expect(navigator.clipboard.readText()).resolves.toBe(
       '/srv/elysian/data/sqlite/elysian-notes.db',
     )
-    // 反馈与复制按钮同款：短暂显示「已复制」，行里的路径不消失。
+    // 反馈与复制按钮同款：行内短暂显示「已复制」，路径不消失，并另发一条成功通知。
     expect(await within(card).findByText('已复制')).toBeInTheDocument()
     expect(card).toHaveTextContent('/srv/elysian/data/sqlite/elysian-notes.db')
+    expect(useNotificationStore.getState().notifications[0]).toMatchObject({
+      tone: 'success',
+      message: '已复制文件路径',
+    })
   })
 
   it('删除数据库需要确认：取消不删，确认后卡片消失且通知带 mock 标注', async () => {

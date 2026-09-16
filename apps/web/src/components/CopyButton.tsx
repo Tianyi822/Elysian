@@ -14,21 +14,27 @@ function notifyCopyFailed(error: unknown): void {
 }
 
 /**
- * 复制到剪贴板并给出短暂反馈的共用逻辑：`copied` 是反馈窗口是否打开。
- * 连点时清掉上一个定时器重新计时；失败走通知，不静默；卸载时清定时器。
+ * 复制到剪贴板并给出反馈的共用逻辑：
+ * - `copied` 是行内反馈窗口（按钮短暂显示「已复制」）；
+ * - 同时发一条右上角成功通知，因为行内反馈在窄卡上可能只剩一枚勾，说不清复制了什么；
+ * - 连点时清掉上一个定时器重新计时；失败走通知，不静默；卸载时清定时器。
  */
-export function useClipboardCopy(): { copied: boolean; copy(value: string): Promise<void> } {
+export function useClipboardCopy(): {
+  copied: boolean
+  copy(value: string, label: string): Promise<void>
+} {
   const [copied, setCopied] = useState(false)
   const timerRef = useRef<number | undefined>(undefined)
 
   useEffect(() => () => window.clearTimeout(timerRef.current), [])
 
-  const copy = async (value: string) => {
+  const copy = async (value: string, label: string) => {
     try {
       await navigator.clipboard.writeText(value)
       window.clearTimeout(timerRef.current)
       setCopied(true)
       timerRef.current = window.setTimeout(() => setCopied(false), FEEDBACK_MS)
+      useNotificationStore.getState().notify({ tone: 'success', message: `已复制${label}` })
     } catch (error) {
       notifyCopyFailed(error)
     }
@@ -57,7 +63,7 @@ export function CopyButton({
   return (
     <button
       type="button"
-      onClick={() => void copy(value)}
+      onClick={() => void copy(value, label)}
       title={tooltip}
       className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-line px-2 py-1.5 text-xs text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg"
     >
