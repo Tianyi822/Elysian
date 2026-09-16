@@ -32,6 +32,8 @@ export type DatabaseState = {
   /** 添加数据库弹窗的开关与提交中标记。 */
   createOpen: boolean
   creating: boolean
+  /** 正在执行删除的数据库 id：卡片动作行据此禁用。 */
+  removingDatabaseIds: readonly string[]
   setEngine(engine: DatabaseEngine): void
   load(gateway: ElysianGateway): Promise<void>
   openSession(databaseId: string): void
@@ -44,6 +46,7 @@ export type DatabaseState = {
   openCreate(): void
   closeCreate(): void
   createDatabase(gateway: ElysianGateway, input: DatabaseCreateInput): Promise<void>
+  removeDatabase(gateway: ElysianGateway, databaseId: string): Promise<void>
 }
 
 /** 数据库区的界面状态：类型筛选留在内存，数据由 adapter 提供。 */
@@ -56,6 +59,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   session: undefined,
   createOpen: false,
   creating: false,
+  removingDatabaseIds: [],
   setEngine: (engine) => set({ engine }),
   async load(gateway) {
     set({ status: 'loading', errorMessage: undefined })
@@ -155,6 +159,31 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       useNotificationStore.getState().notify({ tone: 'danger', message: `创建数据库失败：${detail}` })
     } finally {
       set({ creating: false })
+    }
+  },
+
+  async removeDatabase(gateway, databaseId) {
+    const database = get().databases.find((item) => item.id === databaseId)
+    if (!database) return
+    if (get().removingDatabaseIds.includes(databaseId)) return
+    set((state) => ({ removingDatabaseIds: [...state.removingDatabaseIds, databaseId] }))
+    try {
+      await gateway.databases.remove(databaseId)
+      useNotificationStore
+        .getState()
+        .notify({ tone: 'success', message: `数据库 ${database.name} 已删除（mock，待接入真实执行）` })
+      set((state) => ({
+        databases: state.databases.filter((item) => item.id !== databaseId),
+        // 删掉的库若还开着会话，一并关闭。
+        session: state.session?.databaseId === databaseId ? undefined : state.session,
+        removingDatabaseIds: state.removingDatabaseIds.filter((id) => id !== databaseId),
+      }))
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : '未知错误'
+      useNotificationStore.getState().notify({ tone: 'danger', message: `删除数据库失败：${detail}` })
+      set((state) => ({
+        removingDatabaseIds: state.removingDatabaseIds.filter((id) => id !== databaseId),
+      }))
     }
   },
 }))

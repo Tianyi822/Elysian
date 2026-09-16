@@ -32,7 +32,7 @@ import type {
   SessionAdapter,
   SkillAdapter,
 } from '../../contracts/adapters'
-import { DATABASE_INSTANCES, addDatabaseInstance } from './databaseData'
+import { DATABASE_INSTANCES, addDatabaseInstance, removeDatabaseInstance } from './databaseData'
 import { runMockQuery } from './databaseQuery'
 import { execContainerCommand } from './containerTerminal'
 import { CONTAINERS, CONTAINER_IMAGES, mockImageArtifact } from './containersData'
@@ -350,6 +350,12 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
       memory: { ...instance.memory },
       connections: { ...instance.connections },
     }
+  }
+
+  async remove(databaseId: string): Promise<void> {
+    const database = DATABASE_INSTANCES.find((item) => item.id === databaseId)
+    if (!database) throw new Error(`未找到数据库实例 ${databaseId}`)
+    removeDatabaseInstance(databaseId)
   }
 }
 

@@ -39,16 +39,14 @@ beforeEach(() => {
 
 function pageGateway(overrides: Partial<ElysianGateway['databases']> = {}): ElysianGateway {
   const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
-  return {
-    ...base,
-    databases: {
-      // 逐方法透传而不是展开实例：类方法在原型上，展开会丢掉。
-      list: () => base.databases.list(),
-      execMockQuery: (id, statement) => base.databases.execMockQuery(id, statement),
-      create: (input) => base.databases.create(input),
-      ...overrides,
-    },
+  const databases: ElysianGateway['databases'] = {
+    // 逐方法透传而不是展开实例：类方法在原型上，展开会丢掉。
+    list: () => base.databases.list(),
+    execMockQuery: (id, statement) => base.databases.execMockQuery(id, statement),
+    create: (input) => base.databases.create(input),
+    remove: (databaseId) => base.databases.remove(databaseId),
   }
+  return { ...base, databases: Object.assign(databases, overrides) }
 }
 
 describe('数据库页面', () => {
@@ -184,7 +182,7 @@ describe('数据库页面', () => {
     expect(await screen.findByText('这台机器上没有 MariaDB 的数据库容器')).toBeInTheDocument()
   })
 
-  it('添加数据库：弹窗带演示标注，填表创建后新卡片出现', async () => {
+  it('添加数据库：弹窗带演示标注，下拉自绘，填表创建后新卡片出现', async () => {
     const user = userEvent.setup()
     renderApp('/databases', { gateway: pageGateway() })
     await screen.findByRole('list', { name: 'MariaDB 数据库列表' })
@@ -201,7 +199,17 @@ describe('数据库页面', () => {
     await user.type(within(dialog).getByLabelText('数据库名'), 'orders_replica')
     await user.type(within(dialog).getByLabelText('用户名'), 'ops')
     await user.type(within(dialog).getByLabelText('密码'), 'demo-mariadb-aaaa')
-    await user.selectOptions(within(dialog).getByLabelText('添加到容器'), 'ctr-mariadb-primary')
+
+    // 下拉全部自绘：点触发器出 listbox，选项是 option，不用原生 select。
+    await user.click(within(dialog).getByLabelText('字符集'))
+    await user.click(await screen.findByRole('option', { name: 'utf8mb3' }))
+
+    await user.click(within(dialog).getByLabelText('访问权限'))
+    await user.click(await screen.findByRole('option', { name: '容器网络内' }))
+
+    await user.click(within(dialog).getByLabelText('添加到容器'))
+    await user.click(await screen.findByRole('option', { name: /mariadb-primary（mariadb:10.11）/ }))
+
     await user.click(within(dialog).getByRole('button', { name: '创建' }))
 
     // 创建成功：弹窗关闭、通知出现、新卡片入列。
@@ -210,9 +218,6 @@ describe('数据库页面', () => {
     expect(
       await screen.findByRole('article', { name: 'MariaDB 数据库 orders_replica' }),
     ).toBeInTheDocument()
-    expect(screen.getByRole('list', { name: 'MariaDB 数据库列表' })).toHaveTextContent(
-      'mariadb-primary',
-    )
   })
 
   it('添加数据库弹窗可以取消关闭', async () => {
@@ -224,5 +229,29 @@ describe('数据库页面', () => {
     await user.click(await screen.findByRole('button', { name: '取消' }))
 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('删除数据库需要确认：取消不删，确认后卡片消失且通知带 mock 标注', async () => {
+    const user = userEvent.setup()
+    renderApp('/databases', { gateway: pageGateway() })
+    const list = await screen.findByRole('list', { name: 'MariaDB 数据库列表' })
+    const card = within(list).getByRole('article', { name: 'MariaDB 数据库 mariadb-primary' })
+
+    // 取消路径：确认弹窗出现，取消后卡片仍在。
+    await user.click(within(card).getByRole('button', { name: '删除' }))
+    const confirm = await screen.findByRole('dialog', { name: /确认删除数据库/ })
+    await user.click(within(confirm).getByRole('button', { name: '取消' }))
+    expect(screen.queryByRole('dialog', { name: /确认删除数据库/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('article', { name: 'MariaDB 数据库 mariadb-primary' })).toBeInTheDocument()
+
+    // 确认路径：卡片移除，通知带 mock 标注。
+    await user.click(within(card).getByRole('button', { name: '删除' }))
+    const confirmAgain = await screen.findByRole('dialog', { name: /确认删除数据库/ })
+    await user.click(within(confirmAgain).getByRole('button', { name: '确认删除' }))
+
+    await waitFor(() =>
+      expect(screen.queryByRole('article', { name: 'MariaDB 数据库 mariadb-primary' })).not.toBeInTheDocument(),
+    )
+    expect(await screen.findByText(/已删除（mock，待接入真实执行）/)).toBeInTheDocument()
   })
 })

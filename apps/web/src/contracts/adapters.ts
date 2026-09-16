@@ -122,6 +122,8 @@ export interface DatabaseAdapter {
   execMockQuery(databaseId: string, statement: string): Promise<MockQueryResult>
   /** 创建数据库（演示）：追加内存数据集并返回新实例；同名同引擎视为已存在。 */
   create(input: DatabaseCreateInput): Promise<DatabaseInstance>
+  /** 删除数据库（演示）：只改内存数据集，不触碰任何真实数据库。 */
+  remove(databaseId: string): Promise<void>
 }
 
 /** 页面级访问区域。权限只做到这一粒度，本阶段不实现更细的权限模型。 */

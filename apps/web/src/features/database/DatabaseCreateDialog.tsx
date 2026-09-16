@@ -1,6 +1,7 @@
 import * as Dialog from '@radix-ui/react-dialog'
+import * as Select from '@radix-ui/react-select'
 import { useEffect, useState } from 'react'
-import { Loader2, RefreshCw, X } from '../../components/icons'
+import { Check, ChevronDown, Loader2, RefreshCw, X } from '../../components/icons'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { useDatabaseStore } from '../../stores/databaseStore'
 import {
@@ -25,6 +26,73 @@ import type { DatabaseAccessScope } from './databaseCreateForm'
 const INPUT_CLASS =
   'w-full rounded-lg border border-line bg-surface-raised px-2.5 py-1.5 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle'
 const FIELD_ERROR_CLASS = 'mt-1 text-xs text-danger'
+
+/**
+ * 自绘下拉字段：Radix Select 渲染全部界面（不呼出操作系统原生下拉），
+ * 语义仍是 listbox，键盘方向键与首字母跳转由 Radix 接管。
+ */
+function FormSelect({
+  id,
+  label,
+  value,
+  placeholder,
+  options,
+  onChange,
+  required = false,
+  error,
+}: {
+  id: string
+  label: string
+  value: string
+  placeholder: string
+  options: ReadonlyArray<{ value: string; label: string }>
+  onChange(value: string): void
+  required?: boolean
+  error?: string
+}) {
+  return (
+    <div>
+      <div className="mb-1 flex items-center gap-1 text-xs font-medium text-fg-muted">
+        <label id={`${id}-label`}>{label}</label>
+        {required ? <span className="text-danger">*</span> : null}
+      </div>
+      <Select.Root value={value || undefined} onValueChange={onChange}>
+        <Select.Trigger
+          aria-labelledby={`${id}-label`}
+          className={`${INPUT_CLASS} flex items-center justify-between gap-2 data-[placeholder]:text-fg-subtle`}
+        >
+          <Select.Value placeholder={placeholder} />
+          <Select.Icon>
+            <ChevronDown aria-hidden size={14} className="shrink-0 text-fg-subtle" />
+          </Select.Icon>
+        </Select.Trigger>
+        <Select.Portal>
+          <Select.Content
+            position="popper"
+            sideOffset={4}
+            className="z-[60] max-h-64 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-lg border border-line bg-surface p-1 text-xs shadow-lg"
+          >
+            <Select.Viewport>
+              {options.map((option) => (
+                <Select.Item
+                  key={option.value}
+                  value={option.value}
+                  className="flex cursor-default select-none items-center gap-2 rounded px-2 py-1.5 outline-none text-fg-muted data-[highlighted]:bg-surface-raised data-[highlighted]:text-fg data-[state=checked]:font-medium data-[state=checked]:text-fg"
+                >
+                  <Select.ItemText>{option.label}</Select.ItemText>
+                  <Select.ItemIndicator className="ml-auto inline-flex w-3.5 text-fg">
+                    <Check aria-hidden size={13} />
+                  </Select.ItemIndicator>
+                </Select.Item>
+              ))}
+            </Select.Viewport>
+          </Select.Content>
+        </Select.Portal>
+      </Select.Root>
+      {error ? <p className={FIELD_ERROR_CLASS}>{error}</p> : null}
+    </div>
+  )
+}
 
 export function DatabaseCreateDialog() {
   const gateway = useGateway()
@@ -119,21 +187,14 @@ export function DatabaseCreateDialog() {
                 ) : null}
               </div>
               {engine === 'MariaDB' || engine === 'MySQL' ? (
-                <div>
-                  {fieldLabel('db-create-charset', '字符集')}
-                  <select
-                    id="db-create-charset"
-                    value={draft.charset}
-                    onChange={(event) => patch({ charset: event.target.value })}
-                    className={INPUT_CLASS}
-                  >
-                    {DATABASE_CHARSET_OPTIONS.map((charset) => (
-                      <option key={charset} value={charset}>
-                        {charset}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <FormSelect
+                  id="db-create-charset"
+                  label="字符集"
+                  value={draft.charset}
+                  placeholder="选择字符集"
+                  options={DATABASE_CHARSET_OPTIONS.map((charset) => ({ value: charset, label: charset }))}
+                  onChange={(charset) => patch({ charset })}
+                />
               ) : null}
             </div>
 
@@ -183,57 +244,48 @@ export function DatabaseCreateDialog() {
             </div>
 
             <div className="mt-3">
-              {fieldLabel('db-create-scope', '访问权限')}
-              <select
+              <FormSelect
                 id="db-create-scope"
+                label="访问权限"
                 value={draft.accessScope}
-                onChange={(event) =>
-                  patch({ accessScope: event.target.value as DatabaseAccessScope })
-                }
-                className={INPUT_CLASS}
-              >
-                {DATABASE_ACCESS_SCOPES.map((scope) => (
-                  <option key={scope} value={scope}>
-                    {DATABASE_ACCESS_SCOPE_LABELS[scope]}
-                  </option>
-                ))}
-              </select>
+                placeholder="选择访问权限"
+                options={DATABASE_ACCESS_SCOPES.map((scope) => ({
+                  value: scope,
+                  label: DATABASE_ACCESS_SCOPE_LABELS[scope],
+                }))}
+                onChange={(accessScope) => patch({ accessScope: accessScope as DatabaseAccessScope })}
+              />
               <p className="mt-1 text-xs text-fg-subtle">
                 演示取值：真实实现由服务端把它落到账号的来源主机限制上。
               </p>
             </div>
 
             <div className="mt-3">
-              {fieldLabel('db-create-container', '添加到容器', true)}
+              <FormSelect
+                id="db-create-container"
+                label="添加到容器"
+                value={draft.containerId}
+                placeholder="选择运行中的容器"
+                required
+                error={showErrors ? errors.containerId : undefined}
+                options={candidates.map((container) => {
+                  const image = images.find((item) => item.id === container.imageId)
+                  return {
+                    value: container.id,
+                    label: `${container.name}（${image ? `${image.name}:${image.tag}` : '未知镜像'}）`,
+                  }
+                })}
+                onChange={(containerId) => patch({ containerId })}
+              />
               {candidates.length ? (
-                <select
-                  id="db-create-container"
-                  value={draft.containerId}
-                  onChange={(event) => patch({ containerId: event.target.value })}
-                  aria-describedby={showErrors && errors.containerId ? 'db-create-container-error' : undefined}
-                  className={INPUT_CLASS}
-                >
-                  <option value="">选择运行中的容器</option>
-                  {candidates.map((container) => {
-                    const image = images.find((item) => item.id === container.imageId)
-                    return (
-                      <option key={container.id} value={container.id}>
-                        {container.name}（{image ? `${image.name}:${image.tag}` : '未知镜像'}）
-                      </option>
-                    )
-                  })}
-                </select>
+                <p className="mt-1.5 text-xs text-fg-subtle">
+                  只列出运行中、且镜像与 {engine} 匹配的容器：数据库由容器承载，不落在容器里的数据库不存在。
+                </p>
               ) : (
-                <p className="rounded-lg bg-surface-raised px-3 py-2 text-xs text-fg-muted">
+                <p className="mt-1.5 rounded-lg bg-surface-raised px-3 py-2 text-xs text-fg-muted">
                   没有正在运行的 {engine} 容器可承载新数据库；先到容器页启动一个。
                 </p>
               )}
-              {showErrors && errors.containerId ? (
-                <p className={FIELD_ERROR_CLASS} id="db-create-container-error">{errors.containerId}</p>
-              ) : null}
-              <p className="mt-1.5 text-xs text-fg-subtle">
-                只列出运行中、且镜像与 {engine} 匹配的容器：数据库由容器承载，不落在容器里的数据库不存在。
-              </p>
             </div>
           </div>
 

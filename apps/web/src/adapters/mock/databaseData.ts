@@ -54,3 +54,9 @@ export const DATABASE_INSTANCES: readonly DatabaseInstance[] = instances
 export function addDatabaseInstance(instance: DatabaseInstance): void {
   instances.push(instance)
 }
+
+/** 删除数据库（演示）的落点：只移除内存数据集里的这一条。 */
+export function removeDatabaseInstance(databaseId: string): void {
+  const index = instances.findIndex((instance) => instance.id === databaseId)
+  if (index !== -1) instances.splice(index, 1)
+}

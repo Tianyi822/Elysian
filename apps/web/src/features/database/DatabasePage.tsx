@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
+import * as Dialog from '@radix-ui/react-dialog'
 import {
   Cable,
   ChevronRight,
@@ -12,6 +13,7 @@ import {
   MemoryStick,
   MySQLLogo,
   Plus,
+  Trash2,
   UserRound,
 } from '../../components/icons'
 import { CopyButton } from '../../components/CopyButton'
@@ -48,6 +50,8 @@ export function DatabasePage() {
   const load = useDatabaseStore((state) => state.load)
   const openSession = useDatabaseStore((state) => state.openSession)
   const openCreate = useDatabaseStore((state) => state.openCreate)
+  const removingDatabaseIds = useDatabaseStore((state) => state.removingDatabaseIds)
+  const removeDatabase = useDatabaseStore((state) => state.removeDatabase)
 
   useEffect(() => {
     void load(gateway)
@@ -104,18 +108,20 @@ export function DatabasePage() {
               className="grid grid-cols-1 gap-4 @2xl:grid-cols-2 @5xl:grid-cols-3"
             >
               {filtered.map((database) => (
-                <li key={database.id} className="h-full">
-                  <DatabaseCard
-                    database={database}
-                    view={projectDatabaseCard(database, containerById, imageById)}
-                    onJump={() => {
-                      useContainersStore.getState().openDetail(database.containerId)
-                      useContainersStore.getState().setView('grid')
-                      navigate('/containers')
-                    }}
-                    onConnect={() => openSession(database.id)}
-                  />
-                </li>
+              <li key={database.id} className="h-full">
+                <DatabaseCard
+                  database={database}
+                  view={projectDatabaseCard(database, containerById, imageById)}
+                  removing={removingDatabaseIds.includes(database.id)}
+                  onJump={() => {
+                    useContainersStore.getState().openDetail(database.containerId)
+                    useContainersStore.getState().setView('grid')
+                    navigate('/containers')
+                  }}
+                  onConnect={() => openSession(database.id)}
+                  onRemove={(databaseId) => void removeDatabase(gateway, databaseId)}
+                />
+              </li>
               ))}
             </ul>
           </div>
@@ -130,14 +136,19 @@ export function DatabasePage() {
 function DatabaseCard({
   database,
   view,
+  removing,
   onJump,
   onConnect,
+  onRemove,
 }: {
   database: DatabaseInstance
   view: DatabaseCardView
+  removing: boolean
   onJump(): void
   onConnect(): void
+  onRemove(databaseId: string): void
 }) {
+  const [confirmRemove, setConfirmRemove] = useState(false)
   const storagePercent = percent(database.storage.usedGb, database.storage.totalGb)
   const memoryPercent = percent(database.memory.usedGb, database.memory.totalGb)
   const connectionPercent = percent(database.connections.active, database.connections.max)
@@ -223,15 +234,70 @@ function DatabaseCard({
           tooltip="复制演示密码 · 不对应任何真实数据库"
           icon={<KeyRound aria-hidden size={13} />}
         />
-        <button
-          type="button"
-          onClick={onConnect}
-          className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle"
-        >
-          <Cable aria-hidden size={13} />
-          连接
-        </button>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setConfirmRemove(true)}
+            disabled={removing}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-danger/40 px-3 py-1.5 text-xs text-danger transition-colors hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Trash2 aria-hidden size={13} />
+            删除
+          </button>
+          <button
+            type="button"
+            onClick={onConnect}
+            disabled={removing}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Cable aria-hidden size={13} />
+            连接
+          </button>
+        </div>
       </div>
+
+      {confirmRemove ? (
+        <Dialog.Root
+          open
+          onOpenChange={(next) => {
+            if (!next) setConfirmRemove(false)
+          }}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/60" />
+            <Dialog.Content
+              aria-describedby={undefined}
+              className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-surface-raised p-4 shadow-xl"
+            >
+              <Dialog.Title className="text-sm font-semibold">
+                确认删除数据库「{database.name}」？
+              </Dialog.Title>
+              <p className="mt-1.5 text-xs text-fg-muted">
+                删除只作用于演示数据：卡片与它的演示会话一并移除，刷新页面即恢复，不会触碰任何真实数据库。
+              </p>
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmRemove(false)}
+                  className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfirmRemove(false)
+                    onRemove(database.id)
+                  }}
+                  className="rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-medium text-danger transition-colors hover:bg-danger/20"
+                >
+                  确认删除
+                </button>
+              </div>
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+      ) : null}
     </article>
   )
 }
