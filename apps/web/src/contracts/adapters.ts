@@ -19,6 +19,13 @@ import type {
   IncidentListRow,
   ModuleStatus,
   Skill,
+  SshAuthMethods,
+  SshAuthSettings,
+  SshLoginKey,
+  SshOverview,
+  SshPasswordResetResult,
+  SshRootAuth,
+  SshRootLoginPolicy,
   Unsubscribe,
 } from '@elysian/contracts'
 
@@ -167,6 +174,34 @@ export interface FirewallAdapter {
   syncFromSystem(): Promise<{ total: number }>
 }
 
+/**
+ * SSH 区适配接口。本期为 mock 实现：改动只落内存数据集；
+ * 真实的 SSH 变更（启停服务、改端口与认证方式、换 Root 凭据）涉及系统级操作，
+ * 由未来执行层筛选与执行，页面不改。
+ */
+export interface SshAdapter {
+  /** 服务概况：开关、状态、上次启停时间与登录统计。 */
+  overview(): Promise<SshOverview>
+  settings(): Promise<SshAuthSettings>
+  rootAuth(): Promise<SshRootAuth>
+  /** 启停本机 SSH 服务（演示）：只改内存状态，不触碰任何真实主机。 */
+  setServiceEnabled(enabled: boolean): Promise<SshOverview>
+  /** 保存登录方式开关（演示）。 */
+  setAuthMethods(methods: SshAuthMethods): Promise<SshAuthSettings>
+  /** 保存监听端口（演示）：非法端口直接拒绝。 */
+  setPort(port: number): Promise<SshAuthSettings>
+  /** 保存 Root 登录策略（演示）。 */
+  saveRootLoginPolicy(policy: SshRootLoginPolicy): Promise<SshRootAuth>
+  /** 重置 Root 密码（演示）：弱密码在 mock 侧即被拒绝，不产生任何真实变更。 */
+  resetRootPassword(password: string): Promise<SshPasswordResetResult>
+  /** 登录密钥列表（演示）：可自定义名称、多条并存的登录密钥，与主机 root 密钥分开管理。 */
+  listKeys(): Promise<readonly SshLoginKey[]>
+  /** 创建登录密钥（演示）：名称去空白后校验，名称重复即拒绝。 */
+  createKey(input: { name: string }): Promise<SshLoginKey>
+  /** 删除登录密钥（演示）：只改内存数据集，不触碰任何真实授权文件。 */
+  removeKey(keyId: string): Promise<void>
+}
+
 /** 页面级访问区域。权限只做到这一粒度，本阶段不实现更细的权限模型。 */
 export type PageArea =
   | 'dashboard'
@@ -199,6 +234,7 @@ export interface ElysianGateway {
   containers: ContainerAdapter
   databases: DatabaseAdapter
   firewall: FirewallAdapter
+  ssh: SshAdapter
   /** 把演示数据重置回种子状态。 */
   reset(): Promise<void>
 }

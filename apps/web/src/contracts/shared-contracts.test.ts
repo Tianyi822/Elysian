@@ -70,6 +70,26 @@ const ENUM_TABLES: ReadonlyArray<{
     values: contracts.FIREWALL_DIRECTIONS,
     labels: contracts.FIREWALL_DIRECTION_LABELS,
   },
+  {
+    name: 'SshServiceStatus',
+    values: contracts.SSH_SERVICE_STATUSES,
+    labels: contracts.SSH_SERVICE_STATUS_LABELS,
+  },
+  {
+    name: 'SshLoginWindow',
+    values: contracts.SSH_LOGIN_WINDOWS,
+    labels: contracts.SSH_LOGIN_WINDOW_LABELS,
+  },
+  {
+    name: 'SshRootLoginPolicy',
+    values: contracts.SSH_ROOT_LOGIN_POLICIES,
+    labels: contracts.SSH_ROOT_LOGIN_POLICY_LABELS,
+  },
+  {
+    name: 'SshPasswordStrength',
+    values: contracts.SSH_PASSWORD_STRENGTHS,
+    labels: contracts.SSH_PASSWORD_STRENGTH_LABELS,
+  },
 ]
 
 describe('枚举与中文标签表', () => {
@@ -252,5 +272,56 @@ describe('数据库域词典', () => {
   it('状态取值与中文标签一一对应', () => {
     expect([...DATABASE_STATUSES]).toEqual(['running', 'warning', 'stopped'])
     expect(Object.keys(DATABASE_STATUS_LABELS).sort()).toEqual([...DATABASE_STATUSES].sort())
+  })
+})
+
+describe('SSH 域词典', () => {
+  it('Root 登录策略沿用 sshd_config 的 PermitRootLogin，四档齐备且文案不带技术符号', () => {
+    expect([...contracts.SSH_ROOT_LOGIN_POLICIES]).toEqual([
+      'no',
+      'prohibit-password',
+      'forced-commands-only',
+      'yes',
+    ])
+    expect(contracts.SSH_ROOT_LOGIN_POLICY_LABELS['prohibit-password']).toBe('只能密钥登录')
+    expect(contracts.SSH_ROOT_LOGIN_POLICY_LABELS['forced-commands-only']).toBe('仅允许指定命令')
+  })
+
+  it('统计窗口按今日、昨日、近 7 天的顺序排列', () => {
+    expect([...contracts.SSH_LOGIN_WINDOWS]).toEqual(['today', 'yesterday', 'last7Days'])
+  })
+
+  it('端口判据只接受 1-65535 的整数，默认端口为 22', () => {
+    expect(contracts.SSH_DEFAULT_PORT).toBe(22)
+    expect(contracts.isValidSshPort(1)).toBe(true)
+    expect(contracts.isValidSshPort(65535)).toBe(true)
+    expect(contracts.isValidSshPort(0)).toBe(false)
+    expect(contracts.isValidSshPort(65536)).toBe(false)
+    expect(contracts.isValidSshPort(22.5)).toBe(false)
+  })
+
+  it('密钥名称判据：去空白后非空且不超上限', () => {
+    expect(contracts.SSH_KEY_NAME_MAX_LENGTH).toBe(32)
+    expect(contracts.isValidSshKeyName('部署机')).toBe(true)
+    expect(contracts.isValidSshKeyName('  CI 发布  ')).toBe(true)
+    expect(contracts.isValidSshKeyName('x'.repeat(32))).toBe(true)
+    expect(contracts.isValidSshKeyName('   ')).toBe(false)
+    expect(contracts.isValidSshKeyName('x'.repeat(33))).toBe(false)
+  })
+
+  // 判定的两条尺子是长度与字符类别：八位起、两类起才算中，十二位且三类起才算强。
+  const PASSWORD_CASES = [
+    ['12345678', 'weak', '八位但只有一类'],
+    ['abcdefgh', 'weak', '八位纯小写'],
+    ['Abc1', 'weak', '过短'],
+    ['', 'weak', '空密码'],
+    ['Abcdefg1', 'medium', '八位三类'],
+    ['Abcdefghij1', 'medium', '十一位三类'],
+    ['Abcdefghij1!', 'strong', '十二位四类'],
+    ['正确密码Abc123456', 'strong', '中文加三类字符'],
+  ]
+
+  it.each(PASSWORD_CASES)('弱密码判定：%s 判为 %s（%s）', (password, expected, why) => {
+    expect(contracts.evaluateSshPasswordStrength(password), why).toBe(expected)
   })
 })

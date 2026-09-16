@@ -19,9 +19,16 @@ import type {
   IncidentListRow,
   ModuleStatus,
   Skill,
+  SshAuthMethods,
+  SshAuthSettings,
+  SshLoginKey,
+  SshOverview,
+  SshPasswordResetResult,
+  SshRootAuth,
+  SshRootLoginPolicy,
   Unsubscribe,
 } from '@elysian/contracts'
-import { SEVERITY_RANK } from '@elysian/contracts'
+import { SEVERITY_RANK, SSH_KEY_NAME_MAX_LENGTH, isValidSshKeyName, isValidSshPort } from '@elysian/contracts'
 import type {
   ApprovalAdapter,
   AuditAdapter,
@@ -37,6 +44,7 @@ import type {
   RunAdapter,
   SessionAdapter,
   SkillAdapter,
+  SshAdapter,
 } from '../../contracts/adapters'
 import { DATABASE_INSTANCES, SQLITE_VERSION, addDatabaseInstance, removeDatabaseInstance } from './databaseData'
 import {
@@ -53,6 +61,19 @@ import {
   updateFirewallRule,
 } from './firewallData'
 import { registerSqliteCatalog } from './databaseCatalog'
+import {
+  addSshLoginKey,
+  findSshLoginKeyByName,
+  getSshAuthSettings,
+  getSshLoginKeys,
+  getSshOverview,
+  getSshRootAuth,
+  removeSshLoginKey,
+  resetSshRootPassword,
+  saveSshAuthSettings,
+  saveSshRootLoginPolicy,
+  setSshServiceEnabled,
+} from './sshData'
 import { runMockQuery } from './databaseQuery'
 import { execContainerCommand } from './containerTerminal'
 import { CONTAINERS, CONTAINER_IMAGES, mockImageArtifact } from './containersData'
@@ -376,6 +397,58 @@ export class MockFirewallAdapter implements FirewallAdapter {
     // 模拟读取操作系统防火墙的耗时；演示里规则集与「系统」天然一致，只回读总数。
     await new Promise((resolve) => setTimeout(resolve, SYNC_DELAY_MS))
     return { total: getFirewallRules().length }
+  }
+}
+
+export class MockSshAdapter implements SshAdapter {
+  async overview(): Promise<SshOverview> {
+    return getSshOverview()
+  }
+
+  async settings(): Promise<SshAuthSettings> {
+    return getSshAuthSettings()
+  }
+
+  async rootAuth(): Promise<SshRootAuth> {
+    return getSshRootAuth()
+  }
+
+  async setServiceEnabled(enabled: boolean): Promise<SshOverview> {
+    return setSshServiceEnabled(enabled, new Date().toISOString())
+  }
+
+  async setAuthMethods(methods: SshAuthMethods): Promise<SshAuthSettings> {
+    return saveSshAuthSettings({ ...getSshAuthSettings(), ...methods })
+  }
+
+  async setPort(port: number): Promise<SshAuthSettings> {
+    // 判据与表单共用同一函数：界面挡住一次，这里再挡一次，绕过界面也写不进演示数据集。
+    if (!isValidSshPort(port)) throw new Error('SSH 端口需为 1-65535 的整数')
+    return saveSshAuthSettings({ ...getSshAuthSettings(), port })
+  }
+
+  async saveRootLoginPolicy(policy: SshRootLoginPolicy): Promise<SshRootAuth> {
+    return saveSshRootLoginPolicy(policy)
+  }
+
+  async resetRootPassword(password: string): Promise<SshPasswordResetResult> {
+    return resetSshRootPassword(password, new Date().toISOString())
+  }
+
+  async listKeys(): Promise<readonly SshLoginKey[]> {
+    return getSshLoginKeys()
+  }
+
+  async createKey(input: { name: string }): Promise<SshLoginKey> {
+    // 判据与表单共用同一函数：界面挡住一次，这里再挡一次，绕过界面也写不进演示数据集。
+    const name = input.name.trim()
+    if (!isValidSshKeyName(name)) throw new Error(`密钥名称需为 1-${SSH_KEY_NAME_MAX_LENGTH} 个字符`)
+    if (findSshLoginKeyByName(name)) throw new Error(`密钥名称已存在：${name}`)
+    return addSshLoginKey(name, new Date().toISOString())
+  }
+
+  async removeKey(keyId: string): Promise<void> {
+    removeSshLoginKey(keyId)
   }
 }
 
