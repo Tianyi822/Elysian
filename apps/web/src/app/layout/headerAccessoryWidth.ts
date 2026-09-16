@@ -21,16 +21,20 @@ export function useHeaderAccessoryWidth(): number {
 /**
  * 量出元素自身的固有宽度。元素须自带 `w-max`：否则量到的是它被挤压后的盒宽，
  * 挤得越紧数越小，折叠判断会跟着失真。
+ *
+ * enabled 为 false 时不启动测量（宽度保持 0）：目标元素挂在带加载态提前返回的
+ * 分支下时，首帧 ref 还是 null，等分支就绪再以 enabled 翻转触发测量。
  */
-export function useIntrinsicWidth(ref: RefObject<HTMLElement | null>): number {
+export function useIntrinsicWidth(ref: RefObject<HTMLElement | null>, enabled = true): number {
   const [width, setWidth] = useState(0)
 
   useLayoutEffect(() => {
+    if (!enabled) return
     const element = ref.current
     if (!element) return
 
     return observeSize([element], () => setWidth(element.getBoundingClientRect().width))
-  }, [ref])
+  }, [ref, enabled])
 
   return width
 }
@@ -38,7 +42,7 @@ export function useIntrinsicWidth(ref: RefObject<HTMLElement | null>): number {
 type HeaderRowRefs = {
   /** 顶栏那一行。 */
   row: RefObject<HTMLElement | null>
-  /** 行内标题：量它截断容器的滚动宽度，即标题不被挤压时所需的宽度。 */
+  /** 行内标题：量它截断容器的滚动宽度，即标题不被挤压时所需的宽度。页签式标题的页面不渲染标题，量 0。 */
   title: RefObject<HTMLElement | null>
   /** 右侧功能簇：内存自检与用户占位。 */
   actions: RefObject<HTMLElement | null>
@@ -59,7 +63,7 @@ export function useHeaderAccessoryWidthMeasurement({
     const rowElement = row.current
     const titleElement = title.current
     const actionsElement = actions.current
-    if (!rowElement || !titleElement || !actionsElement) return
+    if (!rowElement || !actionsElement) return
 
     const measure = () => {
       const style = getComputedStyle(rowElement)
@@ -67,13 +71,15 @@ export function useHeaderAccessoryWidthMeasurement({
         rowElement.clientWidth - toPixels(style.paddingLeft) - toPixels(style.paddingRight)
       setWidth(
         content -
-          titleElement.scrollWidth -
+          (titleElement?.scrollWidth ?? 0) -
           actionsElement.getBoundingClientRect().width -
           toPixels(style.columnGap) * 2,
       )
     }
 
-    return observeSize([rowElement, titleElement, actionsElement], measure)
+    const observed = [rowElement, actionsElement]
+    if (titleElement) observed.push(titleElement)
+    return observeSize(observed, measure)
   }, [row, title, actions, titleText])
 
   return width

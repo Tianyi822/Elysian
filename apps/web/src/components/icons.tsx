@@ -33,6 +33,7 @@ export {
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
+  Pencil,
   Play,
   Plus,
   RefreshCw,

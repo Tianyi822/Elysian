@@ -10,6 +10,11 @@ import type {
   DatabaseInstance,
   ElysianEvent,
   EventStreamHandlers,
+  FirewallImportResult,
+  FirewallRule,
+  FirewallRuleInput,
+  FirewallScanProtection,
+  FirewallToggles,
   Incident,
   IncidentListRow,
   ModuleStatus,
@@ -24,6 +29,7 @@ import type {
   DatabaseAdapter,
   DatabaseCreateInput,
   EventsAdapter,
+  FirewallAdapter,
   IncidentAdapter,
   IncidentListQuery,
   IncidentListResult,
@@ -33,6 +39,19 @@ import type {
   SkillAdapter,
 } from '../../contracts/adapters'
 import { DATABASE_INSTANCES, SQLITE_VERSION, addDatabaseInstance, removeDatabaseInstance } from './databaseData'
+import {
+  addFirewallRule,
+  findDuplicateFirewallRule,
+  getFirewallRules,
+  getFirewallToggles,
+  getScanProtection,
+  importFirewallRules,
+  removeFirewallRule,
+  setFirewallToggles,
+  setScanProtection,
+  unblockScanIp,
+  updateFirewallRule,
+} from './firewallData'
 import { registerSqliteCatalog } from './databaseCatalog'
 import { runMockQuery } from './databaseQuery'
 import { execContainerCommand } from './containerTerminal'
@@ -300,6 +319,63 @@ export class MockContainerAdapter implements ContainerAdapter {
     }
     dataset.images.push(image)
     return { ...image }
+  }
+}
+
+/** 同步规则的模拟耗时：留出一拍让「同步中」的忙碌态可见。 */
+const SYNC_DELAY_MS = 800
+
+export class MockFirewallAdapter implements FirewallAdapter {
+  async list(): Promise<readonly FirewallRule[]> {
+    return getFirewallRules()
+  }
+
+  async toggles(): Promise<FirewallToggles> {
+    return getFirewallToggles()
+  }
+
+  async setToggles(next: FirewallToggles): Promise<FirewallToggles> {
+    return setFirewallToggles(next)
+  }
+
+  async create(input: FirewallRuleInput): Promise<FirewallRule> {
+    if (findDuplicateFirewallRule(input)) {
+      throw new Error(`端口规则已存在：${input.protocol} ${input.port}（${input.family}）`)
+    }
+    return addFirewallRule(input, new Date().toISOString())
+  }
+
+  async update(ruleId: string, input: FirewallRuleInput): Promise<FirewallRule> {
+    if (findDuplicateFirewallRule(input, ruleId)) {
+      throw new Error(`端口规则已存在：${input.protocol} ${input.port}（${input.family}）`)
+    }
+    return updateFirewallRule(ruleId, input, new Date().toISOString())
+  }
+
+  async remove(ruleId: string): Promise<void> {
+    removeFirewallRule(ruleId)
+  }
+
+  async importRules(inputs: readonly FirewallRuleInput[]): Promise<FirewallImportResult> {
+    return importFirewallRules(inputs, new Date().toISOString())
+  }
+
+  async scanProtection(): Promise<FirewallScanProtection> {
+    return getScanProtection()
+  }
+
+  async setScanProtection(enabled: boolean): Promise<FirewallScanProtection> {
+    return setScanProtection(enabled)
+  }
+
+  async unblockIp(ip: string): Promise<FirewallScanProtection> {
+    return unblockScanIp(ip)
+  }
+
+  async syncFromSystem(): Promise<{ total: number }> {
+    // 模拟读取操作系统防火墙的耗时；演示里规则集与「系统」天然一致，只回读总数。
+    await new Promise((resolve) => setTimeout(resolve, SYNC_DELAY_MS))
+    return { total: getFirewallRules().length }
   }
 }
 

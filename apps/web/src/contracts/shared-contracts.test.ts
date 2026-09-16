@@ -55,6 +55,21 @@ const ENUM_TABLES: ReadonlyArray<{
     labels: contracts.CONTAINER_STATUS_LABELS,
   },
   { name: 'RestartPolicy', values: contracts.RESTART_POLICIES, labels: contracts.RESTART_POLICY_LABELS },
+  {
+    name: 'FirewallRuleStatus',
+    values: contracts.FIREWALL_RULE_STATUSES,
+    labels: contracts.FIREWALL_RULE_STATUS_LABELS,
+  },
+  {
+    name: 'FirewallPolicy',
+    values: contracts.FIREWALL_POLICIES,
+    labels: contracts.FIREWALL_POLICY_LABELS,
+  },
+  {
+    name: 'FirewallDirection',
+    values: contracts.FIREWALL_DIRECTIONS,
+    labels: contracts.FIREWALL_DIRECTION_LABELS,
+  },
 ]
 
 describe('枚举与中文标签表', () => {

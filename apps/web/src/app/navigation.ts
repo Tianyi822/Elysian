@@ -1,4 +1,4 @@
-import { Container, Database, LayoutDashboard } from '../components/icons'
+import { Container, Database, LayoutDashboard, ShieldCheck } from '../components/icons'
 import type { IconComponent } from '../components/icons'
 
 export type NavItem = {
@@ -12,6 +12,7 @@ export type NavItem = {
 /** 侧边栏导航项；显示名取产品命名，路由路径保持领域词。 */
 export const NAV_ITEMS: readonly NavItem[] = [
   { to: '/', label: '仪表盘', icon: LayoutDashboard, end: true },
+  { to: '/security', label: '安全', icon: ShieldCheck },
   { to: '/containers', label: 'Docker', icon: Container },
   { to: '/databases', label: '数据库', icon: Database },
 ]

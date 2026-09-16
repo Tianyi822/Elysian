@@ -6,13 +6,17 @@ import { ContainerViewSwitch } from '../features/container/ContainerViewSwitch'
 import { DashboardPage } from '../features/dashboard/DashboardPage'
 import { DatabaseEngineSwitch } from '../features/database/DatabaseEngineSwitch'
 import { DatabasePage } from '../features/database/DatabasePage'
+import { SecurityPage } from '../features/security/SecurityPage'
+import { SecurityTabSwitch } from '../features/security/SecurityTabSwitch'
 import { AppShell } from './layout/AppShell'
 import { NotFoundPage } from './NotFoundPage'
 import { RequireArea } from './RequireArea'
 
-/** 路由级外壳插槽：页面经 handle 向顶栏标题旁贡献控件，外壳不硬编码具体页面。 */
+/** 路由级外壳插槽：页面经 handle 向顶栏贡献控件与标题行为，外壳不硬编码具体页面。 */
 export type RouteHandle = {
   headerAccessory?: ComponentType
+  /** 页面自带页签式标题时置 true：顶栏不再渲染可视标题，页签占据标题位。 */
+  hideHeaderTitle?: boolean
 }
 
 /**
@@ -33,8 +37,23 @@ export const routes: RouteObject[] = [
         ),
       },
       {
+        path: 'security',
+        handle: {
+          headerAccessory: SecurityTabSwitch,
+          hideHeaderTitle: true,
+        } satisfies RouteHandle,
+        element: (
+          <RequireArea area="security" title="安全">
+            <SecurityPage />
+          </RequireArea>
+        ),
+      },
+      {
         path: 'containers',
-        handle: { headerAccessory: ContainerViewSwitch } satisfies RouteHandle,
+        handle: {
+          headerAccessory: ContainerViewSwitch,
+          hideHeaderTitle: true,
+        } satisfies RouteHandle,
         element: (
           <RequireArea area="containers" title="Docker">
             <ContainerPage />
@@ -43,7 +62,10 @@ export const routes: RouteObject[] = [
       },
       {
         path: 'databases',
-        handle: { headerAccessory: DatabaseEngineSwitch } satisfies RouteHandle,
+        handle: {
+          headerAccessory: DatabaseEngineSwitch,
+          hideHeaderTitle: true,
+        } satisfies RouteHandle,
         element: (
           <RequireArea area="databases" title="数据库">
             <DatabasePage />

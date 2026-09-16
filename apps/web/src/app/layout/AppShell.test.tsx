@@ -14,32 +14,34 @@ beforeEach(() => {
 })
 
 describe('模板外壳', () => {
-  it('侧边栏包含仪表盘、Docker 与数据库三项', () => {
+  it('侧边栏包含仪表盘、安全、Docker 与数据库四项', () => {
     renderApp('/')
     const nav = screen.getByRole('navigation', { name: '主导航' })
     const links = within(nav).getAllByRole('link')
     expect(links).toHaveLength(NAV_ITEMS.length)
-    expect(links.map((link) => link.textContent)).toEqual(['仪表盘', 'Docker', '数据库'])
+    expect(links.map((link) => link.textContent)).toEqual(['仪表盘', '安全', 'Docker', '数据库'])
     expect(links[0]).toHaveAttribute('aria-current', 'page')
   })
 
-  it('点击 Docker 入口切换到容器页，顶栏标题跟随变化', async () => {
+  it('点击 Docker 入口切换到容器页，页签占据标题位', async () => {
     const user = userEvent.setup()
     renderApp('/')
 
     await user.click(screen.getByRole('link', { name: 'Docker' }))
 
-    expect(await screen.findByRole('heading', { level: 1, name: 'Docker' })).toBeInTheDocument()
+    expect(await screen.findByRole('group', { name: '视图切换' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Docker' })).toHaveAttribute('aria-current', 'page')
   })
 
-  it('点击数据库入口进入数据库卡片页，顶栏标题跟随变化', async () => {
+  it('点击数据库入口进入数据库卡片页，页签占据标题位', async () => {
     const user = userEvent.setup()
     renderApp('/')
 
     await user.click(screen.getByRole('link', { name: '数据库' }))
 
-    expect(await screen.findByRole('heading', { level: 1, name: '数据库' })).toBeInTheDocument()
+    expect(await screen.findByRole('group', { name: '数据库类型' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: '数据库' })).toHaveAttribute('aria-current', 'page')
     expect(await screen.findByRole('region', { name: '数据库实例' })).toBeInTheDocument()
   })

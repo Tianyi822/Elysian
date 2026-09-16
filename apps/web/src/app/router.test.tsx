@@ -10,12 +10,12 @@ describe('路由表', () => {
 
   it('/containers 渲染 Docker 区', async () => {
     renderApp('/containers')
-    expect(await screen.findByRole('heading', { level: 1, name: 'Docker' })).toBeInTheDocument()
+    expect(await screen.findByRole('group', { name: '视图切换' })).toBeInTheDocument()
   })
 
   it('/databases 渲染数据库区', async () => {
     renderApp('/databases')
-    expect(await screen.findByRole('heading', { level: 1, name: '数据库' })).toBeInTheDocument()
+    expect(await screen.findByRole('group', { name: '数据库类型' })).toBeInTheDocument()
   })
 
   it('未匹配的地址进入未找到页面', async () => {

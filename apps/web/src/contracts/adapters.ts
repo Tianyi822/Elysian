@@ -10,6 +10,11 @@ import type {
   DatabaseEngine,
   DatabaseInstance,
   EventStreamHandlers,
+  FirewallImportResult,
+  FirewallRule,
+  FirewallRuleInput,
+  FirewallScanProtection,
+  FirewallToggles,
   Incident,
   IncidentListRow,
   ModuleStatus,
@@ -143,11 +148,30 @@ export interface DatabaseAdapter {
   remove(databaseId: string): Promise<void>
 }
 
+/** 防火墙区适配接口。本期为 mock 实现；真实防火墙动作由未来执行层筛选，页面不改。 */
+export interface FirewallAdapter {
+  list(): Promise<readonly FirewallRule[]>
+  toggles(): Promise<FirewallToggles>
+  /** 切换防火墙总开关或禁 ping（演示）：只改内存状态，不触碰任何真实防火墙。 */
+  setToggles(toggles: FirewallToggles): Promise<FirewallToggles>
+  create(input: FirewallRuleInput): Promise<FirewallRule>
+  update(ruleId: string, input: FirewallRuleInput): Promise<FirewallRule>
+  remove(ruleId: string): Promise<void>
+  /** 批量导入：去重后落进演示数据集，返回新增列表与跳过数量。 */
+  importRules(inputs: readonly FirewallRuleInput[]): Promise<FirewallImportResult>
+  /** 端口防扫描状态：开关、统计与当前封锁列表。 */
+  scanProtection(): Promise<FirewallScanProtection>
+  setScanProtection(enabled: boolean): Promise<FirewallScanProtection>
+  unblockIp(ip: string): Promise<FirewallScanProtection>
+  /** 从承载本面板的操作系统同步防火墙规则（演示）：返回同步后的规则总数。 */
+  syncFromSystem(): Promise<{ total: number }>
+}
+
 /** 页面级访问区域。权限只做到这一粒度，本阶段不实现更细的权限模型。 */
 export type PageArea =
   | 'dashboard'
-  | 'containers'
-  | 'databases'
+  | 'security'
+  | 'containers'  | 'databases'
   | 'incidents'
   | 'runs'
   | 'skills'
@@ -174,6 +198,7 @@ export interface ElysianGateway {
   events: EventsAdapter
   containers: ContainerAdapter
   databases: DatabaseAdapter
+  firewall: FirewallAdapter
   /** 把演示数据重置回种子状态。 */
   reset(): Promise<void>
 }

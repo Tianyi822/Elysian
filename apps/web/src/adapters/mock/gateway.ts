@@ -6,6 +6,7 @@ import {
   MockAuditAdapter,
   MockContainerAdapter,
   MockDatabaseAdapter,
+  MockFirewallAdapter,
   MockIncidentAdapter,
   MockRunAdapter,
   MockSessionAdapter,
@@ -50,6 +51,7 @@ export function createMockGateway(
       onCreate: (containerId) => containerEvents.emitCreated(containerId),
     }),
     databases: new MockDatabaseAdapter(),
+    firewall: new MockFirewallAdapter(),
     events: wrapLive(
       containerEvents.wrap(
         options.eventStream === 'memory'

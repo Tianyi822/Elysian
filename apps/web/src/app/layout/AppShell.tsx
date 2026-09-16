@@ -41,6 +41,10 @@ export function AppShell() {
   const connectEventStream = useEventStreamStore((state) => state.connect)
 
   // 顶栏标题跟随当前导航项；未匹配路由沿用仪表盘缺省，由未找到页面给出自己的标题。
+  // 页签式标题的页面（安全、Docker、数据库）经路由 handle 声明藏掉可视标题，页签占据标题位。
+  const hideHeaderTitle = matches.some(
+    (match) => (match.handle as RouteHandle | undefined)?.hideHeaderTitle,
+  )
   const pageTitle =
     NAV_ITEMS.find((item) =>
       item.end ? location.pathname === item.to : location.pathname.startsWith(item.to),
@@ -133,11 +137,13 @@ export function AppShell() {
               </Dialog.Portal>
             </Dialog.Root>
 
-            <div className="min-w-0">
-              <h1 ref={headerTitleRef} className="truncate text-base font-semibold leading-tight">
-                {pageTitle}
-              </h1>
-            </div>
+            {hideHeaderTitle ? null : (
+              <div className="min-w-0">
+                <h1 ref={headerTitleRef} className="truncate text-base font-semibold leading-tight">
+                  {pageTitle}
+                </h1>
+              </div>
+            )}
 
             <HeaderAccessoryWidthContext.Provider value={accessoryWidth}>
               {HeaderAccessory ? <HeaderAccessory /> : null}

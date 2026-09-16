@@ -7,8 +7,14 @@ import type { ReactNode } from 'react'
  *
  * solid：带边框与浅底的标准按钮；ghost：无边框无底色的弱化按钮，
  * 用于浮层卡片内的关闭等次要动作，悬停才浮现可点击感。
+ * danger-hover：ghost 专属，平时与 neutral 完全同色，悬停才转危险色——
+ * 删除这类破坏性动作要克制，危险感留给悬停时刻，不常驻。
  */
-const STYLES: Record<'solid' | 'ghost', Record<'neutral' | 'danger', string>> = {
+
+type Tone = 'neutral' | 'danger' | 'danger-hover'
+type Variant = 'solid' | 'ghost'
+
+const STYLES: Record<Variant, Record<Exclude<Tone, 'danger-hover'>, string>> = {
   solid: {
     neutral: 'size-7 border border-line bg-surface-raised text-fg-muted hover:text-fg',
     danger: 'size-7 border border-line bg-surface-raised text-danger hover:border-danger/50 hover:bg-danger/10',
@@ -17,6 +23,16 @@ const STYLES: Record<'solid' | 'ghost', Record<'neutral' | 'danger', string>> = 
     neutral: 'size-6 text-fg-subtle hover:bg-surface-raised hover:text-fg',
     danger: 'size-6 text-danger hover:bg-danger/10',
   },
+}
+
+const GHOST_DANGER_HOVER = 'size-6 text-fg-subtle hover:bg-danger/10 hover:text-danger'
+
+function styleFor(variant: Variant, tone: Tone): string {
+  if (tone === 'danger-hover') {
+    // solid 不提供 hover-only-danger 形态，传了这个组合按 danger 处理。
+    return variant === 'ghost' ? GHOST_DANGER_HOVER : STYLES.solid.danger
+  }
+  return STYLES[variant][tone]
 }
 
 export function IconButton({
@@ -30,8 +46,8 @@ export function IconButton({
   label: string
   onPress?: () => void
   children: ReactNode
-  tone?: 'neutral' | 'danger'
-  variant?: 'solid' | 'ghost'
+  tone?: Tone
+  variant?: Variant
   /** 视觉提示开关；aria-label 始终保留。按钮旁已有文字说明动作时可关掉。 */
   tooltip?: boolean
 }) {
@@ -40,7 +56,7 @@ export function IconButton({
       type="button"
       aria-label={label}
       onClick={onPress}
-      className={`inline-flex items-center justify-center rounded transition-colors ${STYLES[variant][tone]}`}
+      className={`inline-flex items-center justify-center rounded transition-colors ${styleFor(variant, tone)}`}
     >
       {children}
     </button>
