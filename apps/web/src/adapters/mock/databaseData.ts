@@ -1,5 +1,8 @@
 import type { DatabaseInstance } from '@elysian/contracts'
 
+/** 演示用的 SQLite 版本（引擎版本随库文件格式走，与宿主版本无关）。 */
+export const SQLITE_VERSION = '3.46.1'
+
 /**
  * 数据库资源卡片的确定性演示数据。数据库由容器承载，因此这里只记来源容器的 id；
  * 地址字段不存在——数据库监听在容器里，界面给不出域名或 IP。
@@ -43,6 +46,19 @@ const instances: DatabaseInstance[] = [
     storage: { usedGb: 2.4, totalGb: 16 },
     memory: { usedGb: 0.6, totalGb: 2 },
     connections: { active: 34, max: 512 },
+    updatedAt: '2026-09-12T08:00:00.000Z',
+  },
+  {
+    // 文件型：SQLite 就是一个本地 .db 文件，没有容器、没有账号、没有连接上限。
+    id: 'db-sqlite-notes',
+    engine: 'SQLite',
+    name: 'elysian-notes',
+    version: SQLITE_VERSION,
+    status: 'running',
+    filePath: '/srv/elysian/data/sqlite/elysian-notes.db',
+    fileSizeMb: 4.2,
+    tableCount: 3,
+    lastWrittenAt: '2026-09-11T15:20:00.000Z',
     updatedAt: '2026-09-12T08:00:00.000Z',
   },
 ]

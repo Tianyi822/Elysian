@@ -30,7 +30,30 @@ describe('演示语句引擎', () => {
 
     expect(result.kind).toBe('table')
     if (result.kind !== 'table') return
-    expect(result.rows[0]?.[1]).toBe(String(mariadb.connections.active))
+    expect(result.rows[0]?.[1]).toBe(String(mariadb.connections?.active))
+  })
+
+  it('SQLite 只认自己的方言：SHOW 系列在 SQLite 里不存在，如实说明', () => {
+    const sqlite = DATABASE_INSTANCES.find((item) => item.engine === 'SQLite')
+    if (!sqlite) throw new Error('演示集里应有 SQLite 实例')
+
+    // SQLite 的表清单要查 sqlite_master，没有 SHOW TABLES 这个语句。
+    const showTables = runMockQuery(sqlite, 'SHOW TABLES')
+    expect(showTables.kind).toBe('text')
+    if (showTables.kind !== 'text') return
+    expect(showTables.lines[0]).toContain('该语句不在演示集内')
+
+    const listing = runMockQuery(sqlite, "SELECT name FROM sqlite_master WHERE type='table'")
+    expect(listing.kind).toBe('table')
+    if (listing.kind !== 'table') return
+    expect(listing.columns).toEqual(['name'])
+    expect(listing.rows.map((row) => row[0])).toContain('notes')
+
+    const version = runMockQuery(sqlite, 'SELECT sqlite_version()')
+    expect(version.kind).toBe('table')
+    if (version.kind !== 'table') return
+    // 版本与卡片同源：同一个事实，两处显示一致。
+    expect(version.rows[0]?.[0]).toBe(sqlite.version)
   })
 
   it('Redis 走键空间命令，不认 SQL 语句', () => {

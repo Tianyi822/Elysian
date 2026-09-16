@@ -32,7 +32,8 @@ import type {
   SessionAdapter,
   SkillAdapter,
 } from '../../contracts/adapters'
-import { DATABASE_INSTANCES, addDatabaseInstance, removeDatabaseInstance } from './databaseData'
+import { DATABASE_INSTANCES, SQLITE_VERSION, addDatabaseInstance, removeDatabaseInstance } from './databaseData'
+import { registerSqliteCatalog } from './databaseCatalog'
 import { runMockQuery } from './databaseQuery'
 import { execContainerCommand } from './containerTerminal'
 import { CONTAINERS, CONTAINER_IMAGES, mockImageArtifact } from './containersData'
@@ -304,12 +305,13 @@ export class MockContainerAdapter implements ContainerAdapter {
 
 export class MockDatabaseAdapter implements DatabaseAdapter {
   async list(): Promise<readonly DatabaseInstance[]> {
+    // 只有存在的分组才拷贝：文件型实例没有凭证、使用量与连接数。
     return DATABASE_INSTANCES.map((database) => ({
       ...database,
-      credentials: { ...database.credentials },
-      storage: { ...database.storage },
-      memory: { ...database.memory },
-      connections: { ...database.connections },
+      ...(database.credentials ? { credentials: { ...database.credentials } } : {}),
+      ...(database.storage ? { storage: { ...database.storage } } : {}),
+      ...(database.memory ? { memory: { ...database.memory } } : {}),
+      ...(database.connections ? { connections: { ...database.connections } } : {}),
     }))
   }
 
@@ -325,6 +327,27 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
     ) {
       throw new Error(`数据库 ${input.name} 已存在`)
     }
+
+    if (input.kind === 'file') {
+      // 文件型（SQLite）：实例即一个本地 .db 文件。新建的空库没有表；
+      // 上传的既有文件在演示里读不到内容，也按空库登记（不编造它的表结构）。
+      const instance: DatabaseInstance = {
+        id: `db-sqlite-${input.name}`,
+        engine: input.engine,
+        name: input.name,
+        version: SQLITE_VERSION,
+        status: 'running',
+        filePath: input.filePath,
+        fileSizeMb: input.fileSizeMb,
+        tableCount: 0,
+        lastWrittenAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }
+      addDatabaseInstance(instance)
+      registerSqliteCatalog(instance.id)
+      return { ...instance }
+    }
+
     const container = CONTAINERS.find((item) => item.id === input.containerId)
     if (!container) throw new Error(`未找到容器 ${input.containerId}`)
     const image = CONTAINER_IMAGES.find((item) => item.id === container.imageId)
@@ -343,13 +366,7 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
       updatedAt: new Date().toISOString(),
     }
     addDatabaseInstance(instance)
-    return {
-      ...instance,
-      credentials: { ...instance.credentials },
-      storage: { ...instance.storage },
-      memory: { ...instance.memory },
-      connections: { ...instance.connections },
-    }
+    return { ...instance }
   }
 
   async remove(databaseId: string): Promise<void> {

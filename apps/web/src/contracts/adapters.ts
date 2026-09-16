@@ -100,20 +100,37 @@ export type MockQueryResult =
   | { kind: 'text'; lines: readonly string[] }
   | { kind: 'clear' }
 
-/** 创建数据库的输入：表单收集后经 adapter 提交；是演示动作，不产生真实连接。 */
-export type DatabaseCreateInput = {
+/**
+ * 创建数据库的输入：表单收集后经 adapter 提交；是演示动作，不产生真实连接。
+ * 分两支——服务型由容器承载、要账号与访问权限；文件型（SQLite）只是一个本地文件，
+ * 没有容器也没有账号，只记路径、大小与来源。
+ */
+export type DatabaseCreateContainerInput = {
+  kind: 'container'
   engine: DatabaseEngine
-  /** 新数据库的名称，同一引擎内唯一。 */
   name: string
-  /** 字符集；仅 SQL 引擎有意义，其余引擎由实现忽略。 */
+  /** 字符集；仅 MariaDB/MySQL 有意义。 */
   charset?: string
   username: string
   password: string
-  /** 访问权限的演示取值：仅本机、容器网络内、任意主机。 */
   accessScope: 'localhost' | 'container-network' | 'any-host'
-  /** 承载新数据库的运行中容器。 */
   containerId: string
 }
+
+export type DatabaseCreateFileInput = {
+  kind: 'file'
+  engine: DatabaseEngine
+  /** 数据库名，取文件名去掉扩展名。 */
+  name: string
+  /** 文件绝对路径。 */
+  filePath: string
+  /** 文件大小（MB）。 */
+  fileSizeMb: number
+  /** `uploaded` 是上传/选择的既有文件，`created` 是本机新建的空库。 */
+  origin: 'uploaded' | 'created'
+}
+
+export type DatabaseCreateInput = DatabaseCreateContainerInput | DatabaseCreateFileInput
 
 /** 数据库区适配接口。本期为 mock 实现；未来换真实 adapter，页面不改。 */
 export interface DatabaseAdapter {

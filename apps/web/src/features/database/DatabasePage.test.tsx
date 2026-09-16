@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { DatabaseInstance } from '@elysian/contracts'
@@ -75,8 +75,8 @@ describe('数据库页面', () => {
     renderApp('/databases', { gateway: pageGateway({ list: async () => [MARIADB] }) })
 
     const card = await screen.findByRole('article', { name: 'MariaDB 数据库 mariadb-test' })
-    expect(card).not.toHaveTextContent(MARIADB.credentials.password)
-    expect(card).not.toHaveTextContent(MARIADB.credentials.username)
+    expect(card).not.toHaveTextContent(MARIADB.credentials!.password)
+    expect(card).not.toHaveTextContent(MARIADB.credentials!.username)
     expect(card).toHaveTextContent('用户名')
     expect(card).toHaveTextContent('密码')
     // 卡片上不放常驻演示文案：声明收敛进 tooltip 与会话横幅。
@@ -94,13 +94,13 @@ describe('数据库页面', () => {
     const card = await screen.findByRole('article', { name: 'MariaDB 数据库 mariadb-test' })
 
     await user.click(within(card).getByRole('button', { name: '用户名' }))
-    await expect(navigator.clipboard.readText()).resolves.toBe(MARIADB.credentials.username)
+    await expect(navigator.clipboard.readText()).resolves.toBe(MARIADB.credentials!.username)
 
     await user.click(within(card).getByRole('button', { name: '密码' }))
-    await expect(navigator.clipboard.readText()).resolves.toBe(MARIADB.credentials.password)
+    await expect(navigator.clipboard.readText()).resolves.toBe(MARIADB.credentials!.password)
   })
 
-  it('切换到 MySQL 后展示 MySQL 卡片，切换到无实例类型显示空态', async () => {
+  it('切换到 MySQL 展示 MySQL 卡片；切到 SQLite 显示本地文件形态', async () => {
     const user = userEvent.setup()
     renderApp('/databases', { gateway: pageGateway() })
     await screen.findByRole('list', { name: 'MariaDB 数据库列表' })
@@ -112,8 +112,16 @@ describe('数据库页面', () => {
     // 品牌标按引擎映射：MySQL 卡片挂 MySQL 标，不再借用 MariaDB 海豚标。
     expect(within(mysqlCard).getByLabelText('MySQL 图标')).toBeInTheDocument()
 
+    // SQLite 是本地单文件数据库：显示文件路径与大小，没有账号、没有来源容器、也没有连接数。
     await user.click(within(screen.getByRole('banner')).getByRole('button', { name: 'SQLite' }))
-    expect(await screen.findByText('这台机器上没有 SQLite 的数据库容器')).toBeInTheDocument()
+    const sqliteCard = await screen.findByRole('article', { name: 'SQLite 数据库 elysian-notes' })
+    expect(sqliteCard).toHaveTextContent('数据库文件')
+    expect(sqliteCard).toHaveTextContent('/srv/elysian/data/sqlite/elysian-notes.db')
+    expect(sqliteCard).toHaveTextContent('4.2 MB')
+    expect(sqliteCard).toHaveTextContent('本地文件数据库 · 无账号')
+    expect(sqliteCard).not.toHaveTextContent('连接数')
+    expect(within(sqliteCard).queryByRole('button', { name: '用户名' })).not.toBeInTheDocument()
+    expect(within(sqliteCard).getByRole('button', { name: '连接' })).toBeInTheDocument()
   })
 
   it('无品牌标的引擎回退通用图标，aria-label 仍以引擎命名', async () => {
@@ -230,6 +238,72 @@ describe('数据库页面', () => {
     await user.click(await screen.findByRole('button', { name: '取消' }))
 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('添加 SQLite：表单没有账号与容器，拖拽文件后按文件名建库', async () => {
+    const user = userEvent.setup()
+    renderApp('/databases', { gateway: pageGateway() })
+    await screen.findByRole('list', { name: 'MariaDB 数据库列表' })
+    await user.click(within(screen.getByRole('banner')).getByRole('button', { name: 'SQLite' }))
+    await screen.findByRole('article', { name: 'SQLite 数据库 elysian-notes' })
+
+    await user.click(screen.getByRole('button', { name: /添加数据库/ }))
+    const dialog = await screen.findByRole('dialog', { name: '添加SQLite数据库' })
+
+    // SQLite 没有账号体系，也没有承载容器：这两组字段在弹窗里不存在。
+    expect(within(dialog).queryByLabelText('用户名')).not.toBeInTheDocument()
+    expect(within(dialog).queryByLabelText('密码')).not.toBeInTheDocument()
+    expect(within(dialog).queryByLabelText('添加到容器')).not.toBeInTheDocument()
+    expect(within(dialog).queryByLabelText('访问权限')).not.toBeInTheDocument()
+
+    // 拖拽上传：把文件拖进拖拽区，表单读取名称与大小（不读内容）。
+    const dropped = new File([new Uint8Array(2 * 1024 * 1024)], 'orders-backup.db', {
+      type: 'application/vnd.sqlite3',
+    })
+    fireEvent.drop(within(dialog).getByText('把 SQLite 数据库文件拖到这里'), {
+      dataTransfer: { files: [dropped] },
+    })
+
+    expect(await within(dialog).findByText('orders-backup.db')).toBeInTheDocument()
+    expect(within(dialog).getByText('2 MB')).toBeInTheDocument()
+    // 数据库名跟文件名走。
+    expect(within(dialog).getByLabelText(/数据库名/)).toHaveValue('orders-backup')
+
+    await user.click(within(dialog).getByRole('button', { name: '创建' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    const created = await screen.findByRole('article', { name: 'SQLite 数据库 orders-backup' })
+    expect(created).toHaveTextContent('/srv/elysian/data/sqlite/orders-backup.db')
+    expect(created).toHaveTextContent('本地文件数据库 · 无账号')
+  })
+
+  it('添加 SQLite：直接在本机新建时校验落点目录，建出 0 字节空库', async () => {
+    const user = userEvent.setup()
+    renderApp('/databases', { gateway: pageGateway() })
+    await screen.findByRole('list', { name: 'MariaDB 数据库列表' })
+    await user.click(within(screen.getByRole('banner')).getByRole('button', { name: 'SQLite' }))
+    await screen.findByRole('article', { name: 'SQLite 数据库 elysian-notes' })
+
+    await user.click(screen.getByRole('button', { name: /添加数据库/ }))
+    const dialog = await screen.findByRole('dialog', { name: '添加SQLite数据库' })
+
+    await user.click(within(dialog).getByRole('button', { name: '直接在本机新建' }))
+    await user.type(within(dialog).getByLabelText(/数据库名/), 'notes_local')
+    await user.clear(within(dialog).getByLabelText('落点目录'))
+    await user.type(within(dialog).getByLabelText('落点目录'), 'data/sqlite')
+    await user.click(within(dialog).getByRole('button', { name: '创建' }))
+
+    expect(await within(dialog).findByText(/绝对路径/)).toBeInTheDocument()
+
+    await user.clear(within(dialog).getByLabelText('落点目录'))
+    await user.type(within(dialog).getByLabelText('落点目录'), '/srv/elysian/data/sqlite')
+    await user.click(within(dialog).getByRole('button', { name: '创建' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    const created = await screen.findByRole('article', { name: 'SQLite 数据库 notes_local' })
+    expect(created).toHaveTextContent('/srv/elysian/data/sqlite/notes_local.db')
+    // 新建的空库是 0 字节，显示为 KB 而不是「0.0 MB」。
+    expect(created).toHaveTextContent('0 KB')
   })
 
   it('删除数据库需要确认：取消不删，确认后卡片消失且通知带 mock 标注', async () => {

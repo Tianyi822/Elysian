@@ -11,7 +11,9 @@ import {
   MariaDBLogo,
   MemoryStick,
   MySQLLogo,
+  File,
   Plus,
+  Timer,
   Trash2,
   UserRound,
 } from '../../components/icons'
@@ -129,7 +131,9 @@ export function DatabasePage() {
                     database={database}
                     view={projectDatabaseCard(database, containerById, imageById)}
                     removing={removingDatabaseIds.includes(database.id)}
-                    onJump={() => openContainerDetail(database.containerId)}
+                    onJump={() => {
+                      if (database.containerId) openContainerDetail(database.containerId)
+                    }}
                     onConnect={() => openSession(database.id)}
                     onRemove={(databaseId) => void removeDatabase(gateway, databaseId)}
                   />
@@ -162,9 +166,6 @@ function DatabaseCard({
   onRemove(databaseId: string): void
 }) {
   const [confirmRemove, setConfirmRemove] = useState(false)
-  const storagePercent = percent(database.storage.usedGb, database.storage.totalGb)
-  const memoryPercent = percent(database.memory.usedGb, database.memory.totalGb)
-  const connectionPercent = percent(database.connections.active, database.connections.max)
 
   return (
     <article
@@ -186,67 +187,111 @@ function DatabaseCard({
         </time>
       </div>
 
-      <button
-        type="button"
-        onClick={onJump}
-        disabled={view.missingContainer}
-        title={view.missingContainer ? '来源容器已不存在' : `打开容器 ${view.container?.name} 的详情`}
-        className="flex w-full items-center gap-2 rounded-lg bg-surface-raised px-3 py-2 text-left text-xs text-fg-muted transition-colors hover:bg-surface-raised/70 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {/* 永远单行：卡片越窄依次让出「来源容器」标签（<@sm）与镜像名（<@xs），容器名始终保留并截断。 */}
-        <Container aria-hidden size={14} className="shrink-0 text-fg-subtle" />
-        <span className="hidden shrink-0 @sm:inline">来源容器</span>
-        {view.missingContainer ? (
-          <span className="min-w-0 flex-1 truncate text-fg-subtle">来源容器已不存在</span>
-        ) : (
-          <>
-            <span className="min-w-0 flex-1 truncate text-fg">{view.container?.name}</span>
-            <span className="hidden shrink-0 tabular-nums text-fg-subtle @xs:inline">
-              {view.imageLabel}
-            </span>
-            <ChevronRight aria-hidden size={14} className="shrink-0 text-fg-subtle" />
-          </>
-        )}
-      </button>
+      {view.kind === 'file' ? (
+        /* 文件型：来源就是一个本地 .db 文件，没有容器详情可跳，因此是静态行而不是按钮。 */
+        <div className="flex w-full items-center gap-2 rounded-lg bg-surface-raised px-3 py-2 text-xs text-fg-muted">
+          <File aria-hidden size={14} className="shrink-0 text-fg-subtle" />
+          <span className="hidden shrink-0 @sm:inline">数据库文件</span>
+          <span className="min-w-0 flex-1 truncate font-mono text-fg" title={view.filePath}>
+            {view.filePath}
+          </span>
+          <span className="hidden shrink-0 tabular-nums text-fg-subtle @xs:inline">
+            {formatFileSize(view.fileSizeMb)}
+          </span>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={onJump}
+          disabled={view.missingContainer}
+          title={view.missingContainer ? '来源容器已不存在' : `打开容器 ${view.container?.name} 的详情`}
+          className="flex w-full items-center gap-2 rounded-lg bg-surface-raised px-3 py-2 text-left text-xs text-fg-muted transition-colors hover:bg-surface-raised/70 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {/* 永远单行：卡片越窄依次让出「来源容器」标签（<@sm）与镜像名（<@xs），容器名始终保留并截断。 */}
+          <Container aria-hidden size={14} className="shrink-0 text-fg-subtle" />
+          <span className="hidden shrink-0 @sm:inline">来源容器</span>
+          {view.missingContainer ? (
+            <span className="min-w-0 flex-1 truncate text-fg-subtle">来源容器已不存在</span>
+          ) : (
+            <>
+              <span className="min-w-0 flex-1 truncate text-fg">{view.container?.name}</span>
+              <span className="hidden shrink-0 tabular-nums text-fg-subtle @xs:inline">
+                {view.imageLabel}
+              </span>
+              <ChevronRight aria-hidden size={14} className="shrink-0 text-fg-subtle" />
+            </>
+          )}
+        </button>
+      )}
 
       {/* 指标格随卡片实际宽度分栏：三列布局下卡片窄、指标竖排，宽卡才三格横排（容器查询而非视口断点）。 */}
       <div className="grid grid-cols-1 gap-2.5 @lg:grid-cols-3">
-        <UsageMetric
-          icon={<Database aria-hidden size={14} />}
-          label="容量"
-          value={`${database.storage.usedGb.toFixed(1)} / ${database.storage.totalGb} GB`}
-          percent={storagePercent}
-        />
-        <UsageMetric
-          icon={<MemoryStick aria-hidden size={14} />}
-          label="内存占用"
-          value={`${database.memory.usedGb.toFixed(1)} / ${database.memory.totalGb} GB`}
-          percent={memoryPercent}
-        />
-        <UsageMetric
-          icon={<Gauge aria-hidden size={14} />}
-          label="连接数"
-          value={`${database.connections.active} / ${database.connections.max}`}
-          percent={connectionPercent}
-          warning={database.status === 'warning'}
-          demo
-        />
+        {view.kind === 'file' ? (
+          <>
+            {/* 文件型只有事实，没有配额：三格都是静态值，不画占比条。 */}
+            <FileStat
+              icon={<File aria-hidden size={14} />}
+              label="文件大小"
+              value={formatFileSize(view.fileSizeMb)}
+            />
+            <FileStat
+              icon={<Database aria-hidden size={14} />}
+              label="表数量"
+              value={String(database.tableCount ?? 0)}
+            />
+            <FileStat
+              icon={<Timer aria-hidden size={14} />}
+              label="最后写入"
+              value={database.lastWrittenAt ? formatDateTime(database.lastWrittenAt) : '—'}
+            />
+          </>
+        ) : (
+          <>
+            <UsageMetric
+              icon={<Database aria-hidden size={14} />}
+              label="容量"
+              value={`${database.storage?.usedGb.toFixed(1)} / ${database.storage?.totalGb} GB`}
+              percent={percent(database.storage?.usedGb ?? 0, database.storage?.totalGb ?? 0)}
+            />
+            <UsageMetric
+              icon={<MemoryStick aria-hidden size={14} />}
+              label="内存占用"
+              value={`${database.memory?.usedGb.toFixed(1)} / ${database.memory?.totalGb} GB`}
+              percent={percent(database.memory?.usedGb ?? 0, database.memory?.totalGb ?? 0)}
+            />
+            <UsageMetric
+              icon={<Gauge aria-hidden size={14} />}
+              label="连接数"
+              value={`${database.connections?.active} / ${database.connections?.max}`}
+              percent={percent(database.connections?.active ?? 0, database.connections?.max ?? 0)}
+              warning={database.status === 'warning'}
+              demo
+            />
+          </>
+        )}
       </div>
 
       {/* 动作行沉底：卡片因同列内容高度不齐被拉伸时，操作区贴住卡底。 */}
       <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-line pt-3">
-        <CopyButton
-          label="用户名"
-          value={database.credentials.username}
-          tooltip="复制演示用户名 · 不对应任何真实数据库"
-          icon={<UserRound aria-hidden size={13} />}
-        />
-        <CopyButton
-          label="密码"
-          value={database.credentials.password}
-          tooltip="复制演示密码 · 不对应任何真实数据库"
-          icon={<KeyRound aria-hidden size={13} />}
-        />
+        {database.credentials ? (
+          <>
+            <CopyButton
+              label="用户名"
+              value={database.credentials.username}
+              tooltip="复制演示用户名 · 不对应任何真实数据库"
+              icon={<UserRound aria-hidden size={13} />}
+            />
+            <CopyButton
+              label="密码"
+              value={database.credentials.password}
+              tooltip="复制演示密码 · 不对应任何真实数据库"
+              icon={<KeyRound aria-hidden size={13} />}
+            />
+          </>
+        ) : (
+          /* SQLite 没有账号体系：不摆一对复制不了任何东西的按钮，如实说明。 */
+          <span className="text-xs text-fg-subtle">本地文件数据库 · 无账号</span>
+        )}
         <div className="ml-auto flex shrink-0 items-center gap-2">
           <button
             type="button"
@@ -341,6 +386,25 @@ function DatabaseMark({ engine }: { engine: DatabaseInstance['engine'] }) {
       {mark.logo}
     </span>
   )
+}
+
+/** 静态指标格：文件型数据库只有事实、没有配额，因此不画占比条。 */
+function FileStat({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
+  return (
+    <div className="rounded-lg bg-surface-raised px-3 py-2.5">
+      <div className="flex items-center gap-1.5 text-xs text-fg-subtle">
+        {icon}
+        <span>{label}</span>
+      </div>
+      <p className="mt-1 text-sm font-medium tabular-nums text-fg">{value}</p>
+    </div>
+  )
+}
+
+/** 文件大小：小于 1MB 用 KB，其余用 MB，避免「0.0 MB」这种读不出信息的显示。 */
+function formatFileSize(sizeMb: number): string {
+  if (sizeMb < 0.1) return `${Math.round(sizeMb * 1024)} KB`
+  return `${sizeMb.toFixed(1)} MB`
 }
 
 function UsageMetric({

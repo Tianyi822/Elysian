@@ -14,7 +14,7 @@ export function createDatabaseAdapterContractTests(
   make: () => DatabaseAdapter,
 ): void {
   describe(`DatabaseAdapter 契约：${name}`, () => {
-    it('list 返回非空且标识唯一，字段完整（含 containerId 与 credentials）', async () => {
+    it('list 返回非空且标识唯一；两种来源各带自己的字段', async () => {
       const databases = await make().list()
       expect(databases.length).toBeGreaterThan(0)
       expect(new Set(databases.map((database) => database.id)).size).toBe(databases.length)
@@ -24,14 +24,24 @@ export function createDatabaseAdapterContractTests(
         expect(database.engine).toBeTruthy()
         expect(database.name).toBeTruthy()
         expect(database.version).toBeTruthy()
-        expect(database.containerId).toBeTruthy()
-        expect(database.credentials.username).toBeTruthy()
-        expect(database.credentials.password).toBeTruthy()
-        expect(database.storage.totalGb).toBeGreaterThan(0)
-        expect(database.memory.totalGb).toBeGreaterThan(0)
-        expect(database.connections.active).toBeGreaterThanOrEqual(0)
-        expect(database.connections.max).toBeGreaterThan(0)
         expect(Number.isNaN(Date.parse(database.updatedAt))).toBe(false)
+
+        // 文件型（SQLite）：一个有路径的本地文件，没有容器、没有账号、没有连接上限。
+        if (database.filePath) {
+          expect(database.containerId).toBeUndefined()
+          expect(database.credentials).toBeUndefined()
+          expect(database.connections).toBeUndefined()
+          expect(database.fileSizeMb).toBeGreaterThanOrEqual(0)
+          continue
+        }
+
+        // 服务型：由容器承载，带演示凭证与三项使用量。
+        expect(database.containerId).toBeTruthy()
+        expect(database.credentials?.username).toBeTruthy()
+        expect(database.credentials?.password).toBeTruthy()
+        expect(database.storage?.totalGb).toBeGreaterThan(0)
+        expect(database.memory?.totalGb).toBeGreaterThan(0)
+        expect(database.connections?.max).toBeGreaterThan(0)
       }
     })
 

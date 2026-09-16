@@ -1,21 +1,31 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Select from '@radix-ui/react-select'
-import { useEffect, useState } from 'react'
-import { Check, ChevronDown, Loader2, RefreshCw, X } from '../../components/icons'
+import { useEffect, useRef, useState } from 'react'
+import type { DragEvent } from 'react'
+import { Check, ChevronDown, File, Loader2, RefreshCw, Upload, X } from '../../components/icons'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { useDatabaseStore } from '../../stores/databaseStore'
 import {
   DATABASE_ACCESS_SCOPES,
   DATABASE_ACCESS_SCOPE_LABELS,
   DATABASE_CHARSET_OPTIONS,
+  SQLITE_FILE_SUFFIX,
+  bytesToMb,
   containersForEngine,
+  databaseNameFromFile,
   emptyDraft,
   generateDemoPassword,
   hasDatabaseCreateErrors,
+  sqliteFilePath,
   toDatabaseCreateInput,
   validateDatabaseCreateDraft,
 } from './databaseCreateForm'
-import type { DatabaseAccessScope } from './databaseCreateForm'
+import type {
+  DatabaseAccessScope,
+  DatabaseCreateDraft,
+  DatabaseCreateFormErrors,
+  SqliteFileSource,
+} from './databaseCreateForm'
 
 /**
  * 添加数据库弹窗：字段为名称、字符集（仅 SQL 引擎）、用户名、密码（可随机生成）、
@@ -27,6 +37,145 @@ const INPUT_CLASS =
   'w-full rounded-lg border border-line bg-surface-raised px-2.5 py-1.5 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle'
 const FIELD_ERROR_CLASS = 'mt-1 text-xs text-danger'
 
+/**
+ * SQLite 的数据库文件来源：拖拽上传、选择本地文件、直接在本机新建。
+ * 拖拽与「选择本地文件」对表单是同一件事（拿到一个既有文件），只是两个入口；
+ * 文件只在浏览器本地读取名称与大小，不上传、不解析内容。
+ */
+function SqliteFileField({
+  draft,
+  errors,
+  showErrors,
+  onPickFile,
+  onPatch,
+}: {
+  draft: DatabaseCreateDraft
+  errors: DatabaseCreateFormErrors
+  showErrors: boolean
+  onPickFile(file: File): void
+  onPatch(part: Partial<DatabaseCreateDraft>): void
+}) {
+  const [dragging, setDragging] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const onDrop = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    setDragging(false)
+    const file = event.dataTransfer.files[0]
+    if (file) onPickFile(file)
+  }
+
+  return (
+    <div className="mt-3">
+      <div className="mb-1 flex items-center gap-1 text-xs font-medium text-fg-muted">
+        <span id="db-create-source-label">文件来源</span>
+        <span className="text-danger">*</span>
+      </div>
+      <div
+        role="group"
+        aria-labelledby="db-create-source-label"
+        className="inline-flex overflow-hidden rounded-lg border border-line"
+      >
+        {(['upload', 'create'] as const).map((source: SqliteFileSource, index) => (
+          <button
+            key={source}
+            type="button"
+            aria-pressed={draft.fileSource === source}
+            onClick={() => onPatch({ fileSource: source })}
+            className={`whitespace-nowrap px-3 py-1.5 text-xs transition-colors ${
+              index > 0 ? 'border-l border-line' : ''
+            } ${
+              draft.fileSource === source
+                ? 'bg-surface-raised font-medium text-fg'
+                : 'text-fg-muted hover:bg-surface-raised hover:text-fg'
+            }`}
+          >
+            {source === 'upload' ? '拖拽或选择本地文件' : '直接在本机新建'}
+          </button>
+        ))}
+      </div>
+
+      {draft.fileSource === 'upload' ? (
+        <>
+          <div
+            onDragOver={(event) => {
+              event.preventDefault()
+              setDragging(true)
+            }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={onDrop}
+            className={`mt-2 flex flex-col items-center gap-1 rounded-xl border border-dashed px-4 py-5 text-center transition-colors ${
+              dragging ? 'border-accent bg-accent/5' : 'border-line bg-surface'
+            }`}
+          >
+            <Upload aria-hidden size={18} className="text-fg-subtle" />
+            {draft.fileName ? (
+              <>
+                <p className="flex items-center gap-1.5 font-mono text-xs text-fg">
+                  <File aria-hidden size={13} className="text-fg-subtle" />
+                  {draft.fileName}
+                </p>
+                <p className="text-xs text-fg-subtle">
+                  {draft.fileSizeMb === undefined ? '大小未知' : `${draft.fileSizeMb} MB`}
+                </p>
+              </>
+            ) : (
+              <p className="text-xs text-fg-muted">把 SQLite 数据库文件拖到这里</p>
+            )}
+            <label
+              htmlFor="db-create-file"
+              className="mt-1 inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg"
+            >
+              选择本地文件
+            </label>
+            <input
+              id="db-create-file"
+              ref={inputRef}
+              type="file"
+              accept={`.db,${SQLITE_FILE_SUFFIX},application/vnd.sqlite3,application/x-sqlite3`}
+              className="sr-only"
+              onChange={(event) => {
+                const file = event.target.files?.[0]
+                if (file) onPickFile(file)
+              }}
+            />
+            <p className="text-xs text-fg-subtle">
+              文件只在本地读取名称与大小，不上传内容；接入真实执行后由服务端落盘。
+            </p>
+          </div>
+          {showErrors && errors.file ? <p className={FIELD_ERROR_CLASS}>{errors.file}</p> : null}
+        </>
+      ) : (
+        <>
+          <div className="mt-2">
+            <div className="mb-1 flex items-center gap-1 text-xs font-medium text-fg-muted">
+              <label htmlFor="db-create-directory">落点目录</label>
+              <span className="text-danger">*</span>
+            </div>
+            <input
+              id="db-create-directory"
+              value={draft.directory}
+              onChange={(event) => onPatch({ directory: event.target.value })}
+              autoComplete="off"
+              spellCheck={false}
+              className={`${INPUT_CLASS} font-mono`}
+            />
+            {showErrors && errors.directory ? (
+              <p className={FIELD_ERROR_CLASS}>{errors.directory}</p>
+            ) : null}
+          </div>
+          <p className="mt-1.5 text-xs text-fg-subtle">
+            SQLite 是嵌入式单文件数据库：新建时得到一个空的 {SQLITE_FILE_SUFFIX} 文件，没有容器、也没有账号。
+          </p>
+        </>
+      )}
+
+      <p className="mt-2 rounded-lg bg-surface-raised px-3 py-2 font-mono text-xs text-fg-muted">
+        {draft.name.trim() ? sqliteFilePath(draft) : `落点：${draft.directory}/${'{数据库名}'}${SQLITE_FILE_SUFFIX}`}
+      </p>
+    </div>
+  )
+}
 /**
  * 自绘下拉字段：Radix Select 渲染全部界面（不呼出操作系统原生下拉），
  * 语义仍是 listbox，键盘方向键与首字母跳转由 Radix 接管。
@@ -171,12 +320,12 @@ export function DatabaseCreateDialog() {
           <div className="flex-1 overflow-y-auto px-4 py-4">
             <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_9rem]">
               <div>
-                {fieldLabel('db-create-name', '数据库名', true)}
+                {fieldLabel('db-create-name', engine === 'SQLite' ? '数据库名（取自文件名）' : '数据库名', true)}
                 <input
                   id="db-create-name"
                   value={draft.name}
                   onChange={(event) => patch({ name: event.target.value })}
-                  placeholder="例如 orders_replica"
+                  placeholder={engine === 'SQLite' ? '例如 elysian-notes' : '例如 orders_replica'}
                   autoComplete="off"
                   spellCheck={false}
                   aria-describedby={showErrors && errors.name ? 'db-create-name-error' : undefined}
@@ -198,7 +347,26 @@ export function DatabaseCreateDialog() {
               ) : null}
             </div>
 
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            {engine === 'SQLite' ? (
+              <SqliteFileField
+                draft={draft}
+                errors={errors}
+                showErrors={showErrors}
+                onPatch={patch}
+                onPickFile={(file) =>
+                  patch({
+                    fileName: file.name,
+                    fileSizeMb: bytesToMb(file.size),
+                    // 数据库名跟着文件名走；用户改过就不覆盖（仅在为空或等于上一个文件名时同步）。
+                    ...(draft.name.trim() && draft.name !== databaseNameFromFile(draft.fileName)
+                      ? {}
+                      : { name: databaseNameFromFile(file.name) }),
+                  })
+                }
+              />
+            ) : (
+              <>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <div>
                 {fieldLabel('db-create-username', '用户名', true)}
                 <input
@@ -287,6 +455,8 @@ export function DatabaseCreateDialog() {
                 </p>
               )}
             </div>
+              </>
+            )}
           </div>
 
           <div className="flex items-center justify-between gap-2 border-t border-line px-4 py-3">

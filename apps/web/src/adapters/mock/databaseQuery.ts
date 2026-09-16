@@ -23,12 +23,27 @@ const SQL_STATEMENTS = [
   'clear',
 ] as const
 
+/**
+ * SQLite 的语句集：SQLite 的 SQL 方言里没有 SHOW 系列——
+ * 表清单查 sqlite_master，文件事实查 PRAGMA，版本查 sqlite_version()。
+ */
+const SQLITE_STATEMENTS = [
+  'help',
+  "SELECT name FROM sqlite_master WHERE type='table'",
+  'PRAGMA page_size',
+  'PRAGMA journal_mode',
+  'SELECT sqlite_version()',
+  'SELECT * FROM',
+  'SELECT COUNT(*) FROM',
+  'clear',
+] as const
+
 /** 各引擎可用的语句，供 help 与 Tab 补全共用一处。 */
 export const ENGINE_STATEMENTS: Record<DatabaseEngine, readonly string[]> = {
   MariaDB: SQL_STATEMENTS,
   MySQL: SQL_STATEMENTS,
   Redis: ['help', 'KEYS *', 'TYPE', 'GET', 'INFO clients', 'clear'],
-  SQLite: [],
+  SQLite: SQLITE_STATEMENTS,
 }
 
 const SQL_ENGINES: readonly DatabaseEngine[] = ['MariaDB', 'MySQL']
@@ -79,7 +94,7 @@ function runSqlQuery(database: DatabaseInstance, statement: string): MockQueryRe
     return {
       kind: 'table',
       columns: ['Variable_name', 'Value'],
-      rows: [['Threads_connected', String(database.connections.active)] as const],
+      rows: [['Threads_connected', String(database.connections?.active)] as const],
       notice: rowsInSet(1),
     }
   }
@@ -120,7 +135,7 @@ function runRedisQuery(database: DatabaseInstance, statement: string): MockQuery
     return {
       kind: 'table',
       columns: ['Variable_name', 'Value'],
-      rows: [['connected_clients', String(database.connections.active)] as const],
+      rows: [['connected_clients', String(database.connections?.active)] as const],
       notice: rowsInSet(1),
     }
   }
@@ -146,6 +161,66 @@ function runRedisQuery(database: DatabaseInstance, statement: string): MockQuery
   return { kind: 'text', lines: UNKNOWN_LINES }
 }
 
+/**
+ * SQLite 分支：只认 SQLite 自己的语句形态。
+ * 版本、页大小、journal 模式都取自实例与文件事实，不编造。
+ */
+function runSqliteQuery(database: DatabaseInstance, statement: string): MockQueryResult {
+  const catalog = catalogOf(database)
+
+  if (/^select\s+name\s+from\s+sqlite_master\s+where\s+type\s*=\s*'table'$/i.test(statement)) {
+    const rows = catalog.tables.map((table) => [table.name] as const)
+    return { kind: 'table', columns: ['name'], rows, notice: rowsInSet(rows.length) }
+  }
+
+  if (/^pragma\s+page_size$/i.test(statement)) {
+    // 4096 是 SQLite 的默认页大小；演示文件按默认值登记。
+    return { kind: 'table', columns: ['page_size'], rows: [['4096']], notice: rowsInSet(1) }
+  }
+
+  if (/^pragma\s+journal_mode$/i.test(statement)) {
+    return { kind: 'table', columns: ['journal_mode'], rows: [['wal']], notice: rowsInSet(1) }
+  }
+
+  if (/^select\s+sqlite_version\(\)$/i.test(statement)) {
+    // 版本与卡片上显示的同一个值（同一个事实只有一个家）。
+    return {
+      kind: 'table',
+      columns: ['sqlite_version()'],
+      rows: [[database.version]],
+      notice: rowsInSet(1),
+    }
+  }
+
+  const select = /^select\s+\*\s+from\s+(\S+)(?:\s+limit\s+(\d+))?$/i.exec(statement)
+  if (select) {
+    const table = findTable(catalog, select[1]!)
+    if (!table) return missingTable(select[1]!)
+    const limit = select[2] ? Number(select[2]) : table.rows.length
+    const rows = table.rows.slice(0, limit)
+    return {
+      kind: 'table',
+      columns: table.columns,
+      rows,
+      notice: rowsInSet(rows.length),
+    }
+  }
+
+  const count = /^select\s+count\(\*\)\s+from\s+(\S+)$/i.exec(statement)
+  if (count) {
+    const table = findTable(catalog, count[1]!)
+    if (!table) return missingTable(count[1]!)
+    return {
+      kind: 'table',
+      columns: ['count(*)'],
+      rows: [[String(table.rows.length)]],
+      notice: rowsInSet(1),
+    }
+  }
+
+  return { kind: 'text', lines: UNKNOWN_LINES }
+}
+
 /** 在演示目录上求值一条语句；不执行任何真实 SQL 或 Redis 命令。 */
 export function runMockQuery(database: DatabaseInstance, statement: string): MockQueryResult {
   const collapsed = statement.trim().replace(/\s+/g, ' ')
@@ -162,6 +237,7 @@ export function runMockQuery(database: DatabaseInstance, statement: string): Moc
   }
 
   if (database.engine === 'Redis') return runRedisQuery(database, normalized)
+  if (database.engine === 'SQLite') return runSqliteQuery(database, normalized)
   if (SQL_ENGINES.includes(database.engine)) return runSqlQuery(database, normalized)
   return { kind: 'text', lines: UNKNOWN_LINES }
 }

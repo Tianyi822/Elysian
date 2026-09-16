@@ -48,4 +48,21 @@ export const DATABASE_CATALOG: Record<string, DatabaseCatalog> = {
       { name: 'rate:api', type: 'string', value: '148' },
     ],
   },
+  'db-sqlite-notes': {
+    engine: 'SQLite',
+    tables: [
+      { name: 'notes', columns: ['id', 'title', 'body'], rows: [['1', '巡检记录', '磁盘余量偏低，已清理旧日志'], ['2', '变更备忘', '把连接池上限从 100 提到 200'], ['3', '待办', '给审计表加索引']] },
+      { name: 'tags', columns: ['id', 'note_id', 'name'], rows: [['1', '1', '巡检'], ['2', '2', '变更'], ['3', '3', '待办']] },
+      { name: 'attachments', columns: ['id', 'note_id', 'path'], rows: [['1', '1', '/srv/elysian/data/attachments/disk.png']] },
+    ],
+    keys: [],
+  },
+}
+
+/**
+ * 新建或上传的 SQLite 库登记一份空目录：新建的空库本来就没有表，
+ * 上传的既有文件在演示里读不到内容，因此不编造它的表结构（SHOW TABLES 给 Empty set）。
+ */
+export function registerSqliteCatalog(databaseId: string): void {
+  DATABASE_CATALOG[databaseId] = { engine: 'SQLite', tables: [], keys: [] }
 }
