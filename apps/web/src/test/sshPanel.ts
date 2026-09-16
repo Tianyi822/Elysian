@@ -2,9 +2,11 @@ import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createMockGateway } from '../adapters/mock/gateway'
 import { resetSshData } from '../adapters/mock/sshData'
+import { resetHostUsers } from '../adapters/mock/usersData'
 import type { ElysianGateway } from '../contracts/adapters'
 import { useNotificationStore } from '../stores/notificationStore'
 import { useSshStore } from '../stores/sshStore'
+import { useUsersStore } from '../stores/usersStore'
 import { renderApp } from './renderApp'
 
 /**
@@ -43,8 +45,22 @@ export const INITIAL_SSH_STATE = {
 /** 演示数据集是模块级内存状态：每个用例前推回种子，并清掉上一轮的 store 与通知。 */
 export function resetSshPanel(): void {
   resetSshData()
+  resetHostUsers()
   useSshStore.setState(INITIAL_SSH_STATE)
+  useUsersStore.setState(INITIAL_USERS_STATE)
   useNotificationStore.getState().clear()
+}
+
+export const INITIAL_USERS_STATE = {
+  status: 'idle' as const,
+  errorMessage: undefined,
+  users: [],
+  search: '',
+  syncing: false,
+  dialogUser: undefined,
+  removeTarget: undefined,
+  saving: false,
+  removingUserIds: [],
 }
 
 /** 适配器方法在原型上，展开会丢；显式委托再叠加覆盖项。同时把基础实现交回给用例。 */
@@ -72,17 +88,40 @@ export function sshSessions(overrides: Partial<ElysianGateway['ssh']> = {}) {
   return { gateway, ssh }
 }
 
+/** 主机账号适配器的委托替身：委托清单同样是穷举的。 */
+export function userSessions(overrides: Partial<ElysianGateway['users']> = {}) {
+  const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+  const users = base.users
+  const gateway: ElysianGateway = {
+    ...base,
+    users: {
+      list: () => users.list(),
+      create: (input) => users.create(input),
+      update: (userId, input) => users.update(userId, input),
+      remove: (userId) => users.remove(userId),
+      syncFromSystem: () => users.syncFromSystem(),
+      ...overrides,
+    },
+  }
+  return { gateway, users }
+}
+
 /** 顶栏上的安全页签按钮。 */
 export function securityTab(name: string): HTMLElement {
   const group = within(screen.getByRole('banner')).getByRole('group', { name: '安全页签' })
   return within(group).getByRole('button', { name })
 }
 
-/** 打开安全页并切到 SSH 管理页签，等到卡片就绪。 */
-export async function openSshTab(gateway: ElysianGateway = sshSessions().gateway) {
+/** 打开安全页并切到指定页签，等到面板就绪。默认切到 SSH 管理。 */
+export async function openSshTab(
+  gateway: ElysianGateway = sshSessions().gateway,
+  tabLabel = 'SSH 管理',
+) {
   const user = userEvent.setup()
   renderApp('/security', { gateway })
-  await user.click(securityTab('SSH 管理'))
-  await screen.findByRole('region', { name: 'SSH 服务' })
+  await user.click(securityTab(tabLabel))
+  await screen.findByRole('region', {
+    name: tabLabel === 'SSH 管理' ? 'SSH 服务' : '主机账号表',
+  })
   return user
 }

@@ -1,4 +1,3 @@
-import * as Switch from '@radix-ui/react-switch'
 import { useEffect, useId } from 'react'
 import {
   SSH_DEFAULT_PORT,
@@ -17,7 +16,7 @@ import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { formatDateTime, formatLoginTime } from '../../components/format'
 import { RefreshCw, TriangleAlert } from '../../components/icons'
 import { SSH_PAGE_SIZE, useSshStore } from '../../stores/sshStore'
-import { ACTION_CLASS, INPUT_CLASS, Region, SECONDARY_ACTION_CLASS, Section, TablePager } from './sshCardParts'
+import { ACTION_CLASS, INPUT_CLASS, Region, SECONDARY_ACTION_CLASS, Section, SwitchToggle, TablePager } from './sshCardParts'
 import { SshKeyCard } from './SshKeyCard'
 import { SshKeyCreateDialog } from './SshKeyCreateDialog'
 import { SshKeyDialog } from './SshKeyDialog'
@@ -56,15 +55,12 @@ function SwitchRow({
       }`}
     >
       {label}
-      <Switch.Root
+      <SwitchToggle
+        label={label}
         checked={checked}
         disabled={disabled}
         onCheckedChange={onCheckedChange}
-        aria-label={label}
-        className="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border border-line bg-surface-raised transition-colors data-[state=checked]:border-accent data-[state=checked]:bg-accent"
-      >
-        <Switch.Thumb className="ml-0.5 block size-3.5 rounded-full bg-fg-muted transition-transform data-[state=checked]:translate-x-4 data-[state=checked]:bg-white" />
-      </Switch.Root>
+      />
     </label>
   )
 }

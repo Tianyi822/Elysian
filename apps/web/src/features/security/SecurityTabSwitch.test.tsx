@@ -20,11 +20,11 @@ beforeEach(() => {
 })
 
 describe('安全页签切换', () => {
-  it('平铺两个页签，默认选中系统防火墙', () => {
+  it('平铺三个页签，默认选中系统防火墙', () => {
     renderApp('/security')
 
     const items = within(segmentGroup()).getAllByRole('button')
-    expect(items.map((item) => item.textContent)).toEqual(['系统防火墙', 'SSH 管理'])
+    expect(items.map((item) => item.textContent)).toEqual(['系统防火墙', 'SSH 管理', '用户管理'])
     expect(items[0]).toHaveAttribute('aria-pressed', 'true')
   })
 
@@ -57,5 +57,16 @@ describe('安全页签切换', () => {
       within(segmentGroup()).getByRole('button', { name: '系统防火墙' }),
     ).toHaveAttribute('aria-pressed', 'false')
     expect(useSecurityStore.getState().tab).toBe('ssh')
+  })
+
+  it('切到用户管理页签：内容区换成该页签的面板，不再显示防火墙', async () => {
+    const user = userEvent.setup()
+    renderApp('/security')
+
+    await user.click(within(segmentGroup()).getByRole('button', { name: '用户管理' }))
+
+    expect(useSecurityStore.getState().tab).toBe('users')
+    expect(await screen.findByRole('region', { name: '主机账号表' })).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: '端口规则表' })).not.toBeInTheDocument()
   })
 })

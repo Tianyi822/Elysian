@@ -15,6 +15,8 @@ import type {
   FirewallRuleInput,
   FirewallScanProtection,
   FirewallToggles,
+  HostUser,
+  HostUserInput,
   Incident,
   IncidentListRow,
   ModuleStatus,
@@ -29,7 +31,7 @@ import type {
   SshRootLoginPolicy,
   Unsubscribe,
 } from '@elysian/contracts'
-import { SEVERITY_RANK, SSH_KEY_NAME_MAX_LENGTH, isValidSshKeyName, isValidSshPort } from '@elysian/contracts'
+import { SEVERITY_RANK, SSH_KEY_NAME_MAX_LENGTH, isValidHostUserName, isValidSshKeyName, isValidSshPort } from '@elysian/contracts'
 import type {
   ApprovalAdapter,
   AuditAdapter,
@@ -46,6 +48,7 @@ import type {
   SessionAdapter,
   SkillAdapter,
   SshAdapter,
+  UserAdapter,
 } from '../../contracts/adapters'
 import { DATABASE_INSTANCES, SQLITE_VERSION, addDatabaseInstance, removeDatabaseInstance } from './databaseData'
 import {
@@ -61,6 +64,13 @@ import {
   unblockScanIp,
   updateFirewallRule,
 } from './firewallData'
+import {
+  addHostUser,
+  findHostUserByName,
+  getHostUsers,
+  removeHostUser,
+  updateHostUser,
+} from './usersData'
 import { registerSqliteCatalog } from './databaseCatalog'
 import {
   addSshLoginKey,
@@ -348,6 +358,9 @@ export class MockContainerAdapter implements ContainerAdapter {
 /** 同步规则的模拟耗时：留出一拍让「同步中」的忙碌态可见。 */
 const SYNC_DELAY_MS = 800
 
+/** 同步账号用同一个节奏，两个页签的忙碌态观感一致。 */
+const HOST_USER_SYNC_DELAY_MS = SYNC_DELAY_MS
+
 export class MockFirewallAdapter implements FirewallAdapter {
   async list(): Promise<readonly FirewallRule[]> {
     return getFirewallRules()
@@ -455,6 +468,36 @@ export class MockSshAdapter implements SshAdapter {
 
   async removeKey(keyId: string): Promise<void> {
     removeSshLoginKey(keyId)
+  }
+}
+
+export class MockUserAdapter implements UserAdapter {
+  async list(): Promise<readonly HostUser[]> {
+    return getHostUsers()
+  }
+
+  async create(input: { name: string } & HostUserInput): Promise<HostUser> {
+    // 判据与表单共用同一函数：界面挡住一次，这里再挡一次，绕过界面也写不进演示数据集。
+    if (!isValidHostUserName(input.name)) {
+      throw new Error('用户名只能用小写字母、数字、下划线与连字符，且由字母或下划线开头')
+    }
+    if (findHostUserByName(input.name)) throw new Error(`用户名已存在：${input.name}`)
+    const { name, ...rest } = input
+    return addHostUser(name, rest, new Date().toISOString())
+  }
+
+  async update(userId: string, input: HostUserInput): Promise<HostUser> {
+    return updateHostUser(userId, input)
+  }
+
+  async remove(userId: string): Promise<void> {
+    removeHostUser(userId)
+  }
+
+  async syncFromSystem(): Promise<{ total: number }> {
+    // 模拟读取系统账号的耗时；演示里账号集与「系统」天然一致，只回读总数。
+    await new Promise((resolve) => setTimeout(resolve, HOST_USER_SYNC_DELAY_MS))
+    return { total: getHostUsers().length }
   }
 }
 

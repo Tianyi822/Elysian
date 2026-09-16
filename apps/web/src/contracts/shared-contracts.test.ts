@@ -95,6 +95,16 @@ const ENUM_TABLES: ReadonlyArray<{
     values: contracts.SSH_LOGIN_RESULTS,
     labels: contracts.SSH_LOGIN_RESULT_LABELS,
   },
+  {
+    name: 'HostUserStatus',
+    values: contracts.HOST_USER_STATUSES,
+    labels: contracts.HOST_USER_STATUS_LABELS,
+  },
+  {
+    name: 'HostUserLoginMethod',
+    values: contracts.HOST_USER_LOGIN_METHODS,
+    labels: contracts.HOST_USER_LOGIN_METHOD_LABELS,
+  },
 ]
 
 describe('枚举与中文标签表', () => {
@@ -312,6 +322,32 @@ describe('SSH 域词典', () => {
     expect(contracts.isValidSshKeyName('x'.repeat(32))).toBe(true)
     expect(contracts.isValidSshKeyName('   ')).toBe(false)
     expect(contracts.isValidSshKeyName('x'.repeat(33))).toBe(false)
+  })
+})
+
+describe('主机账号域词典', () => {
+  it('账号状态与登录方式是两套独立枚举，取值与中文标签一一对应', () => {
+    expect([...contracts.HOST_USER_STATUSES]).toEqual(['active', 'disabled'])
+    expect(contracts.HOST_USER_STATUS_LABELS.disabled).toBe('已停用')
+    expect([...contracts.HOST_USER_LOGIN_METHODS]).toEqual([
+      'password',
+      'key',
+      'password-or-key',
+      'none',
+    ])
+    expect(contracts.HOST_USER_LOGIN_METHOD_LABELS.none).toBe('禁止登录')
+  })
+
+  it('用户名判据沿用 Linux 取名习惯：小写字母或下划线开头，最长 32 位', () => {
+    expect(contracts.isValidHostUserName('wangwu')).toBe(true)
+    expect(contracts.isValidHostUserName('deploy_bot-01')).toBe(true)
+    expect(contracts.isValidHostUserName('_svc')).toBe(true)
+    expect(contracts.isValidHostUserName('Wangwu')).toBe(false)
+    expect(contracts.isValidHostUserName('1ops')).toBe(false)
+    expect(contracts.isValidHostUserName('wang wu')).toBe(false)
+    expect(contracts.isValidHostUserName('wangwu!')).toBe(false)
+    expect(contracts.isValidHostUserName('')).toBe(false)
+    expect(contracts.isValidHostUserName('x'.repeat(33))).toBe(false)
   })
 
   // 判定的两条尺子是长度与字符类别：八位起、两类起才算中，十二位且三类起才算强。

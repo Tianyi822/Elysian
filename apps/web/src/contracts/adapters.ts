@@ -15,6 +15,8 @@ import type {
   FirewallRuleInput,
   FirewallScanProtection,
   FirewallToggles,
+  HostUser,
+  HostUserInput,
   Incident,
   IncidentListRow,
   ModuleStatus,
@@ -205,6 +207,23 @@ export interface SshAdapter {
   removeKey(keyId: string): Promise<void>
 }
 
+/**
+ * 主机账号适配接口。本期为 mock 实现：账号改动只落内存数据集；
+ * 真实的账号增删改由未来执行层筛选与执行，页面不改。
+ */
+export interface UserAdapter {
+  /** 主机账号列表（演示）：这台机器上的系统账号，按创建时间倒序。 */
+  list(): Promise<readonly HostUser[]>
+  /** 创建账号（演示）：用户名按 Linux 取名规则校验，重名即拒绝。 */
+  create(input: { name: string } & HostUserInput): Promise<HostUser>
+  /** 修改账号（演示）：只改认证方式、状态、管理员归属与备注，用户名不动。 */
+  update(userId: string, input: HostUserInput): Promise<HostUser>
+  /** 删除账号（演示）：只改内存数据集，不触碰任何真实系统账号。 */
+  remove(userId: string): Promise<void>
+  /** 从承载本页签的操作系统重新读取账号列表（演示）：返回同步后的账号总数。 */
+  syncFromSystem(): Promise<{ total: number }>
+}
+
 /** 页面级访问区域。权限只做到这一粒度，本阶段不实现更细的权限模型。 */
 export type PageArea =
   | 'dashboard'
@@ -238,6 +257,7 @@ export interface ElysianGateway {
   databases: DatabaseAdapter
   firewall: FirewallAdapter
   ssh: SshAdapter
+  users: UserAdapter
   /** 把演示数据重置回种子状态。 */
   reset(): Promise<void>
 }
