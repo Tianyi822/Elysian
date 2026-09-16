@@ -161,23 +161,8 @@ describe('创建容器', () => {
     expect(useContainersStore.getState().createOpen).toBe(false)
   })
 
-  it('createContainer 成功：列表追加、弹窗关闭、成功通知带 mock 标注', async () => {
-    await useContainersStore.getState().load(gatewayWith())
-    useContainersStore.getState().openCreate()
-    await useContainersStore.getState().createContainer(
-      gatewayWith({ create: async () => NEW_CONTAINER }),
-      { imageId: 'img-redis', ports: [], env: [], volumes: [], restartPolicy: 'no' },
-    )
-    const state = useContainersStore.getState()
-    expect(state.containers).toHaveLength(11)
-    expect(state.containers.find((c) => c.id === 'ctr-redis-echo')).toBeDefined()
-    expect(state.createOpen).toBe(false)
-    expect(state.creating).toBe(false)
-    expect(useNotificationStore.getState().notifications[0]?.message).toBe(
-      '容器 redis-echo 已创建（mock，待接入真实执行）',
-    )
-  })
-
+  // 成功路径（列表追加、通知、弹窗关闭）由 ContainerPage.test 的表单流程端到端覆盖，
+  // store 层只留页面测不到的失败分支与事件回灌。
   it('createContainer 失败：弹窗保留、危险通知、creating 复位', async () => {
     await useContainersStore.getState().load(gatewayWith())
     useContainersStore.getState().openCreate()
@@ -204,17 +189,7 @@ describe('创建容器', () => {
 })
 
 describe('删除镜像', () => {
-  it('removeImage 成功：镜像列表移除、忙碌复位、成功通知带 mock 标注', async () => {
-    await useContainersStore.getState().load(gatewayWith())
-    await useContainersStore.getState().removeImage(gatewayWith(), 'img-grafana')
-    const state = useContainersStore.getState()
-    expect(state.images.map((image) => image.id)).not.toContain('img-grafana')
-    expect(state.removingImageIds).toHaveLength(0)
-    expect(useNotificationStore.getState().notifications[0]?.message).toBe(
-      '镜像 grafana/grafana:11.3.0 已删除（mock，待接入真实执行）',
-    )
-  })
-
+  // 成功路径由 ContainerPage.test 的删除流程端到端覆盖，这里只测失败分支。
   it('removeImage 失败：镜像保留、危险通知、忙碌复位', async () => {
     await useContainersStore.getState().load(gatewayWith())
     await useContainersStore.getState().removeImage(
@@ -236,23 +211,7 @@ describe('拉取镜像', () => {
     vi.useRealTimers()
   })
 
-  it('pullImage 模拟耗时后追加镜像，成功通知带 mock 标注', async () => {
-    vi.useFakeTimers()
-    await useContainersStore.getState().load(gatewayWith())
-    const promise = useContainersStore.getState().pullImage(gatewayWith(), { name: 'redis', tag: '8-alpine' })
-    expect(useContainersStore.getState().pullingImage).toEqual({ name: 'redis', tag: '8-alpine' })
-
-    await vi.advanceTimersByTimeAsync(1500)
-    await promise
-
-    const state = useContainersStore.getState()
-    expect(state.images.map((image) => image.id)).toContain('img-pulled')
-    expect(state.pullingImage).toBeUndefined()
-    expect(useNotificationStore.getState().notifications[0]?.message).toBe(
-      '镜像 redis:8-alpine 已拉取（mock，待接入真实执行）',
-    )
-  })
-
+  // 成功路径由 ContainerPage.test 的拉取全流程端到端覆盖，这里只测失败分支。
   it('pullImage 失败发危险通知并复位拉取中状态', async () => {
     vi.useFakeTimers()
     await useContainersStore.getState().load(gatewayWith())

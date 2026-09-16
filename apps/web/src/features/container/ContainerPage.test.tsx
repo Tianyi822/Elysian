@@ -354,6 +354,9 @@ describe('容器详情面板', () => {
 })
 
 describe('演示终端', () => {
+  // 只测页面接线：开窗、mock 标注、IME 与会话清理。
+  // 历史召回、Tab 补全、Esc/外部不关闭等内核行为在 TerminalShell.test，
+  // 命令输出与补全规则在 containerTerminal.test，不在这里重复。
   async function openTerminalOf(name: string) {
     const user = userEvent.setup()
     renderApp('/containers', { gateway: pageGateway() })
@@ -374,33 +377,6 @@ describe('演示终端', () => {
 
     await user.type(input, 'rm -rf /{Enter}')
     expect(await within(dialog).findByText(/不在演示集内/)).toBeInTheDocument()
-  })
-
-  it('↑ 召回上一条历史命令，再次执行输出一致', async () => {
-    const { user, dialog } = await openTerminalOf('nginx-proxy')
-    const input = within(dialog).getByLabelText('命令输入')
-    await user.type(input, 'env{Enter}')
-    await user.type(input, '{ArrowUp}')
-    expect(input).toHaveValue('env')
-  })
-
-  it('Tab 补全命令：唯一前缀直接补齐，多候选列出候选行', async () => {
-    const { user, dialog } = await openTerminalOf('nginx-proxy')
-    const input = within(dialog).getByLabelText('命令输入')
-
-    // Tab 用 fireEvent 派发：userEvent 造出的 keydown 不可取消，它的 Tab 焦点行为
-    // 会无视 preventDefault 把焦点挪走；浏览器里的真实 keydown 是可取消的。
-    await user.type(input, 'hel')
-    fireEvent.keyDown(input, { key: 'Tab' })
-    expect(input).toHaveValue('help ')
-    await user.keyboard('{Enter}')
-    expect(await within(dialog).findByText(/可用命令/)).toBeInTheDocument()
-
-    await user.type(input, 'c')
-    fireEvent.keyDown(input, { key: 'Tab' })
-    expect(input).toHaveValue('c')
-    // 候选以两个空格分隔；断言用 \s+ 容忍 Testing Library 的空白归一化。
-    expect(await within(dialog).findByText(/cat\s+clear/)).toBeInTheDocument()
   })
 
   it('Ctrl+C 留下中断行，Ctrl+L 清屏但历史保留', async () => {
@@ -443,7 +419,7 @@ describe('演示终端', () => {
     expect(document.activeElement).toBe(input)
   })
 
-  it('输入法组合中的回车只确认候选不发送，随后的真实回车才发送', async () => {
+  it('输入法组合中的回车与方向键只服务候选词，不发送也不召回历史', async () => {
     const { user, dialog } = await openTerminalOf('nginx-proxy')
     const input = within(dialog).getByLabelText('命令输入')
 
@@ -460,48 +436,14 @@ describe('演示终端', () => {
     expect(within(dialog).queryByText('TZ=Asia/Shanghai')).not.toBeInTheDocument()
     expect(input).toHaveValue('env')
 
-    // 用户随后真正按下回车才发送。
+    // 用户随后真正按下回车才发送；发送后组合中的方向键用于选词，不召回历史。
     await user.type(input, '{Enter}')
     expect(await within(dialog).findByText('TZ=Asia/Shanghai')).toBeInTheDocument()
-  })
-
-  it('输入法组合中的方向键用于选词，不召回历史命令', async () => {
-    const { user, dialog } = await openTerminalOf('nginx-proxy')
-    const input = within(dialog).getByLabelText('命令输入')
-    await user.type(input, 'env{Enter}')
-    expect(input).toHaveValue('')
-
+    await user.type(input, 'ps')
     fireEvent.compositionStart(input)
     fireEvent.keyDown(input, { key: 'ArrowUp' })
-    expect(input).toHaveValue('')
-
+    expect(input).toHaveValue('ps')
     fireEvent.compositionEnd(input)
-    await user.type(input, '{ArrowUp}')
-    expect(input).toHaveValue('env')
-  })
-
-  it('Esc 与点击外部都不关闭；唯一关闭路径是关闭终端并确认', async () => {
-    const { user, dialog } = await openTerminalOf('nginx-proxy')
-
-    await user.keyboard('{Escape}')
-    expect(screen.getByRole('dialog', { name: 'nginx-proxy 终端' })).toBeInTheDocument()
-
-    // 点外部：点击面板之外的卡片区域。Radix 弹窗给外部子树加 aria-hidden（查询需 hidden），
-    // 且锁滚动样式给 body 设 pointer-events:none，userEvent 拒绝派发；改用 fireEvent 触发
-    // 同一 pointerdown，外部关闭判定仍走 Radix 的 document 级监听，拦截路径不变。
-    fireEvent.pointerDown(screen.getByRole('listitem', { name: 'redis-cache', hidden: true }))
-    expect(screen.getByRole('dialog', { name: 'nginx-proxy 终端' })).toBeInTheDocument()
-
-    await user.click(within(dialog).getByRole('button', { name: '关闭终端' }))
-    const confirm = await screen.findByRole('dialog', { name: '确认关闭终端？' })
-    expect(confirm.textContent).toContain('会话历史将不再保留')
-
-    await user.click(within(confirm).getByRole('button', { name: '继续使用' }))
-    expect(screen.getByRole('dialog', { name: 'nginx-proxy 终端' })).toBeInTheDocument()
-
-    await user.click(within(dialog).getByRole('button', { name: '关闭终端' }))
-    await user.click(await screen.findByRole('button', { name: '确认关闭' }))
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
   it('关闭后会话清空，重开只剩横幅', async () => {

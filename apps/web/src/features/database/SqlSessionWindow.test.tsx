@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { ElysianGateway } from '../../contracts/adapters'
@@ -81,41 +81,14 @@ describe('数据库演示会话窗口', () => {
     expect(within(dialog).getAllByText('演示 SQL 会话 · 待接入真实执行')).toHaveLength(1)
   })
 
-  it('未知语句提示不在演示集内', async () => {
-    const user = await openSession('MariaDB', 'MariaDB 数据库 mariadb-primary')
-    const input = await screen.findByLabelText('SQL 输入')
-
-    await user.type(input, 'DROP TABLE users{Enter}')
-
-    const dialog = screen.getByRole('dialog', { name: 'mariadb-primary SQL 会话' })
-    expect(
-      await within(dialog).findByText('演示会话：该语句不在演示集内，输入 help 查看可用语句'),
-    ).toBeInTheDocument()
-    expect(within(dialog).getByText('mariadb-primary> DROP TABLE users')).toBeInTheDocument()
-  })
-
-  it('↑ 召回上一条语句；外部点击与 Esc 都不关闭，关闭要走确认，历史随会话清空', async () => {
+  it('关闭要走确认，历史随会话清空：重开后 ↑ 不召回上一轮的语句', async () => {
     const user = await openSession('MariaDB', 'MariaDB 数据库 mariadb-primary')
     const input = await screen.findByLabelText('SQL 输入')
     const dialog = screen.getByRole('dialog', { name: 'mariadb-primary SQL 会话' })
 
     await user.type(input, 'SHOW TABLES{Enter}')
     await within(dialog).findByText('3 rows in set')
-    await user.type(input, 'DESCRIBE users{Enter}')
-    await within(dialog).findByText('mariadb-primary> DESCRIBE users')
 
-    await user.type(input, '{ArrowUp}')
-    expect(input).toHaveValue('DESCRIBE users')
-    await user.type(input, '{ArrowUp}')
-    expect(input).toHaveValue('SHOW TABLES')
-
-    // 外部点击与 Esc 都不关闭终端。
-    await user.keyboard('{Escape}')
-    expect(screen.getByRole('dialog', { name: 'mariadb-primary SQL 会话' })).toBeInTheDocument()
-    fireEvent.pointerDown(document.body)
-    expect(screen.getByRole('dialog', { name: 'mariadb-primary SQL 会话' })).toBeInTheDocument()
-
-    // 关闭必须走确认：取消保留，确认才关。
     await user.click(within(dialog).getByRole('button', { name: '关闭会话' }))
     const confirm = await screen.findByRole('dialog', { name: '确认关闭会话？' })
     expect(confirm.textContent).toContain('未执行的语句将丢失')
@@ -128,7 +101,6 @@ describe('数据库演示会话窗口', () => {
       screen.queryByRole('dialog', { name: 'mariadb-primary SQL 会话' }),
     ).not.toBeInTheDocument()
 
-    // 历史随会话清空：重开后 ↑ 不召回上一轮的语句。
     const card = screen.getByRole('article', { name: 'MariaDB 数据库 mariadb-primary' })
     await user.click(within(card).getByRole('button', { name: '连接' }))
     const freshInput = await screen.findByLabelText('SQL 输入')
