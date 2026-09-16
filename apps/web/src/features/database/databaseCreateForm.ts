@@ -15,9 +15,9 @@ export const DATABASE_ACCESS_SCOPES = [
 ] as const satisfies readonly DatabaseAccessScope[]
 
 export const DATABASE_ACCESS_SCOPE_LABELS: Record<DatabaseAccessScope, string> = {
-  localhost: '仅本机（localhost）',
+  localhost: '仅本机',
   'container-network': '容器网络内',
-  'any-host': '任意主机（%）',
+  'any-host': '任意主机',
 }
 
 /** 字符集候选；只对 SQL 引擎展示，其余引擎不收集该字段。 */
