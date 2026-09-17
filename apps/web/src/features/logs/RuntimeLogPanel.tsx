@@ -73,7 +73,7 @@ function LogView({
       ref={ref}
       role="log"
       aria-label="平台运行日志"
-      className={`overflow-y-auto rounded-xl border border-line bg-surface px-4 py-3 font-mono text-xs leading-relaxed ${className ?? ''}`}
+      className={`overflow-y-auto rounded-xl border border-line bg-surface px-4 py-3 font-mono text-sm leading-relaxed ${className ?? ''}`}
     >
       {lines.length === 0 ? (
         <p className="text-fg-muted">没有匹配的日志行</p>
