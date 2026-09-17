@@ -38,6 +38,11 @@ describe('路由表', () => {
     ])
   })
 
+  it('/terminals 渲染终端区', async () => {
+    renderApp('/terminals')
+    expect(await screen.findByRole('heading', { level: 1, name: '终端' })).toBeInTheDocument()
+  })
+
   it('未匹配的地址进入未找到页面', async () => {
     renderApp('/does-not-exist')
     expect(

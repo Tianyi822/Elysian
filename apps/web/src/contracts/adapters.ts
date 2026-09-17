@@ -246,6 +246,7 @@ export type PageArea =
   | 'containers'  | 'databases'
   | 'files'
   | 'logs'
+  | 'terminals'
   | 'incidents'
   | 'runs'
   | 'skills'

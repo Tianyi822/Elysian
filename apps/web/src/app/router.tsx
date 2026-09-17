@@ -12,6 +12,7 @@ import { LogsPage } from '../features/logs/LogsPage'
 import { LogsTabSwitch } from '../features/logs/LogsTabSwitch'
 import { SecurityPage } from '../features/security/SecurityPage'
 import { SecurityTabSwitch } from '../features/security/SecurityTabSwitch'
+import { TerminalPage } from '../features/terminal/TerminalPage'
 import { AppShell } from './layout/AppShell'
 import { NotFoundPage } from './NotFoundPage'
 import { RequireArea } from './RequireArea'
@@ -97,6 +98,14 @@ export const routes: RouteObject[] = [
         element: (
           <RequireArea area="logs" title="平台日志">
             <LogsPage />
+          </RequireArea>
+        ),
+      },
+      {
+        path: 'terminals',
+        element: (
+          <RequireArea area="terminals" title="终端">
+            <TerminalPage />
           </RequireArea>
         ),
       },
