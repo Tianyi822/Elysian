@@ -95,7 +95,7 @@ export const routes: RouteObject[] = [
           hideHeaderTitle: true,
         } satisfies RouteHandle,
         element: (
-          <RequireArea area="logs" title="日志">
+          <RequireArea area="logs" title="平台日志">
             <LogsPage />
           </RequireArea>
         ),
