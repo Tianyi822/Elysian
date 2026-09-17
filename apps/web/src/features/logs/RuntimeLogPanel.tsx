@@ -125,7 +125,7 @@ export function RuntimeLogPanel() {
   }
 
   return (
-    <div>
+    <div className="flex h-full flex-col">
       <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-surface px-4 py-3">
         <div className="relative w-64 max-w-full">
           <Search
@@ -152,7 +152,8 @@ export function RuntimeLogPanel() {
         </span>
       </div>
 
-      <LogView lines={visibleLines} follow={follow} className="h-[calc(100dvh-16rem)] min-h-72" />
+      {/* 日志视图吃掉工具栏以下的全部剩余高度，随视口伸缩；min-h 兜底极矮视口，超出时外层滚动。 */}
+      <LogView lines={visibleLines} follow={follow} className="min-h-72 flex-1" />
 
       <Dialog.Root open={fullscreen} onOpenChange={setFullscreen}>
         <Dialog.Portal>
