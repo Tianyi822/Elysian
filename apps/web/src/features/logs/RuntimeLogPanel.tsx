@@ -7,7 +7,8 @@ import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { useRuntimeLogStore } from '../../stores/runtimeLogStore'
 
 /**
- * 平台运行日志面板：黑底等宽的只读日志视图（终端惯例，双主题固定深色）。
+ * 平台运行日志面板：等宽字体的只读日志视图，底色与文字走语义令牌、随主题切换，
+ * 对比度由令牌层保证（浅色主题浅底深字、深色主题深底浅字）。
  * 工具栏提供刷新日志、滑动日志（自动滚底）开关、日志大小与按行过滤的搜索；
  * 全屏展示用 Radix Dialog 铺满视口，与内嵌视图共用同一个 LogView。
  * 参照产品里的「请求反馈」入口不保留（营销客服元素）。
@@ -42,12 +43,12 @@ function ToolButton({
   )
 }
 
-/** 按行内级别标记着色：ERROR 红、WARNING 黄、DEBUG 弱化，其余默认浅色。 */
+/** 按行内级别标记着色（语义令牌，两主题下均满足对比度红线）：ERROR 危险色、WARNING 警告色、DEBUG 次要文字，其余正文色。 */
 export function logLineToneClass(line: string): string {
-  if (line.includes('[ERROR]')) return 'text-red-400'
-  if (line.includes('[WARNING]')) return 'text-amber-300'
-  if (line.includes('[DEBUG]')) return 'text-neutral-400'
-  return 'text-neutral-200'
+  if (line.includes('[ERROR]')) return 'text-danger'
+  if (line.includes('[WARNING]')) return 'text-warning'
+  if (line.includes('[DEBUG]')) return 'text-fg-muted'
+  return 'text-fg'
 }
 
 /** 日志行视图：内嵌与全屏共用；follow 为真时内容变化后滚到底部。 */
@@ -72,10 +73,10 @@ function LogView({
       ref={ref}
       role="log"
       aria-label="平台运行日志"
-      className={`overflow-y-auto rounded-xl border border-neutral-800 bg-neutral-950 px-4 py-3 font-mono text-xs leading-relaxed ${className ?? ''}`}
+      className={`overflow-y-auto rounded-xl border border-line bg-surface px-4 py-3 font-mono text-xs leading-relaxed ${className ?? ''}`}
     >
       {lines.length === 0 ? (
-        <p className="text-neutral-400">没有匹配的日志行</p>
+        <p className="text-fg-muted">没有匹配的日志行</p>
       ) : (
         lines.map((line, index) => (
           <p key={index} className={`whitespace-pre-wrap break-all ${logLineToneClass(line)}`}>
@@ -161,14 +162,14 @@ export function RuntimeLogPanel() {
           <Dialog.Overlay className="fixed inset-0 z-50 bg-black/70" />
           <Dialog.Content
             aria-describedby={undefined}
-            className="fixed inset-0 z-[55] flex flex-col gap-3 bg-neutral-950 p-4"
+            className="fixed inset-0 z-[55] flex flex-col gap-3 bg-bg p-4"
           >
             <div className="flex items-center justify-between">
-              <Dialog.Title className="text-sm font-medium text-neutral-200">平台运行日志（全屏）</Dialog.Title>
+              <Dialog.Title className="text-sm font-medium text-fg">平台运行日志（全屏）</Dialog.Title>
               <Dialog.Close asChild>
                 <button
                   type="button"
-                  className="rounded-lg border border-neutral-700 px-2 py-1 text-xs text-neutral-300 transition-colors hover:text-white"
+                  className="rounded-lg border border-line px-2 py-1 text-xs text-fg-muted transition-colors hover:text-fg"
                 >
                   退出全屏
                 </button>

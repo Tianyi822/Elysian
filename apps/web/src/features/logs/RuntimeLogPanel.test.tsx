@@ -8,6 +8,7 @@ import { formatByteSize } from '../../components/format'
 import { useLogsStore } from '../../stores/logsStore'
 import { useRuntimeLogStore } from '../../stores/runtimeLogStore'
 import { renderApp } from '../../test/renderApp'
+import { logLineToneClass } from './RuntimeLogPanel'
 
 /**
  * 平台运行日志面板：默认页签，renderApp('/logs') 直达。
@@ -38,6 +39,15 @@ function linesContaining(keyword: string): number {
     .content.split('\n')
     .filter((line) => line.includes(keyword)).length
 }
+
+describe('日志行着色', () => {
+  it('按级别映射语义令牌：两主题下对比度都由令牌保证', () => {
+    expect(logLineToneClass('x [ERROR] 连接失败')).toBe('text-danger')
+    expect(logLineToneClass('x [WARNING] 检测到慢查询')).toBe('text-warning')
+    expect(logLineToneClass('x [DEBUG] 轮询公告列表')).toBe('text-fg-muted')
+    expect(logLineToneClass('x [INFO] 采集完成')).toBe('text-fg')
+  })
+})
 
 describe('平台运行日志面板', () => {
   it('加载后渲染整份日志，并展示日志大小', async () => {
