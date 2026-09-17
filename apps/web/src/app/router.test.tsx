@@ -33,8 +33,8 @@ describe('路由表', () => {
     renderApp('/logs')
     const group = await screen.findByRole('group', { name: '日志页签' })
     expect(within(group).getAllByRole('button').map((button) => button.textContent)).toEqual([
-      '平台运行日志',
-      '平台登录日志',
+      '运行日志',
+      '登录日志',
     ])
   })
 

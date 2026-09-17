@@ -28,7 +28,7 @@ beforeEach(() => {
 async function openLoginTab() {
   const user = userEvent.setup()
   await screen.findByRole('group', { name: '日志页签' })
-  await user.click(within(screen.getByRole('banner')).getByRole('button', { name: '平台登录日志' }))
+  await user.click(within(screen.getByRole('banner')).getByRole('button', { name: '登录日志' }))
 }
 
 describe('平台登录日志面板', () => {
