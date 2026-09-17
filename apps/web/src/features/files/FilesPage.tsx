@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { FILE_KIND_LABELS } from '@elysian/contracts'
-import type { FileEntry } from '@elysian/contracts'
+import type { FileEntry, FileSearchResult } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { formatDateTime } from '../../components/format'
-import { ArrowUpFromLine, File, Folder, Loader2 } from '../../components/icons'
+import { ArrowUpFromLine, File, Folder, Loader2, Search } from '../../components/icons'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
 import { useFilesStore } from '../../stores/filesStore'
 import { joinFilesPath, normalizeFilesPath, parentFilesPath } from './filesPath'
@@ -17,10 +17,14 @@ import { PermissionDialog } from './PermissionDialog'
 const TOOLBAR_ACTION_CLASS =
   'inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
 
+/** 重命名与权限对话框的挂起状态：两张表（目录列表与搜索结果）共用同一份。 */
+type DialogTarget = { entry: FileEntry; path: string } | null
+
 /**
  * 文件管理页：目录内容以系统文件管理器的详细列表呈现。
  * 当前目录的真源是路由（files/*），进入与返回都走导航；行内单击选中、双击进入目录，
  * 键盘等价（上下箭头移动、回车进入）始终可用——双击不能是唯一入口。
+ * 搜索框输入即全树检索：结果可能来自任何目录，双击目录进入、文件跳到所在目录。
  */
 export function FilesPage() {
   const gateway = useGateway()
@@ -31,17 +35,40 @@ export function FilesPage() {
   const entries = useFilesStore((s) => s.entries)
   const errorMessage = useFilesStore((s) => s.errorMessage)
   const clipboard = useFilesStore((s) => s.clipboard)
+  const searchKeyword = useFilesStore((s) => s.searchKeyword)
+  const searchResults = useFilesStore((s) => s.searchResults)
+  const searching = useFilesStore((s) => s.searching)
   const load = useFilesStore((s) => s.load)
   const paste = useFilesStore((s) => s.paste)
+  const search = useFilesStore((s) => s.search)
+  const clearSearch = useFilesStore((s) => s.clearSearch)
+
+  const [renaming, setRenaming] = useState<DialogTarget>(null)
+  const [permitting, setPermitting] = useState<DialogTarget>(null)
+
+  // FileRowMenu 的回调签名是 (entry, entryPath)，转成对话框挂起状态。
+  const openRename = (entry: FileEntry, entryPath: string) => setRenaming({ entry, path: entryPath })
+  const openPermission = (entry: FileEntry, entryPath: string) =>
+    setPermitting({ entry, path: entryPath })
 
   useEffect(() => {
     void load(gateway, path)
   }, [gateway, load, path])
 
   // 根目录落在 /files 本身，避免 /files/ 的尾巴被拼进路径。
-  const go = (next: string) => navigate(next === '/' ? '/files' : `/files${next}`)
+  // 导航即离开搜索态：进入某个结果或上一级后，回到目录列表。
+  const go = (next: string) => {
+    clearSearch()
+    navigate(next === '/' ? '/files' : `/files${next}`)
+  }
 
-  const directoryCount = entries.filter((entry) => entry.kind === 'directory').length
+  // 从搜索结果里发起的重命名/压缩会改动条目本身：关闭对话框时按当前关键词重跑搜索，结果不再陈旧。
+  const closeDialog = (setter: (target: DialogTarget) => void) => {
+    setter(null)
+    if (searchKeyword.trim()) void search(gateway, searchKeyword)
+  }
+
+  const isSearching = searchKeyword.trim().length > 0
 
   return (
     <section aria-label="文件管理">
@@ -67,32 +94,104 @@ export function FilesPage() {
             </button>
           ) : null}
         </div>
-        {status === 'ready' ? (
-          <p className="text-xs tabular-nums text-fg-muted">
-            共 {directoryCount} 个文件夹 · {entries.length - directoryCount} 个文件
-          </p>
-        ) : null}
+        {status === 'ready' ? <FilesSearchBox onSearch={(keyword) => void search(gateway, keyword)} /> : null}
       </div>
 
-      {status === 'loading' || status === 'idle' ? (
-        <LoadingState label="正在读取目录内容…" />
-      ) : status === 'error' ? (
-        <ErrorState
-          title="目录读取失败"
-          description={errorMessage}
-          action={
-            <button type="button" onClick={() => go('/')} className={TOOLBAR_ACTION_CLASS}>
-              返回根目录
-            </button>
-          }
-        />
-      ) : entries.length === 0 ? (
-        <EmptyState title="此目录为空" description="这个目录下没有任何文件或子目录。" />
+      {isSearching ? (
+        searching ? (
+          <LoadingState label="正在搜索…" />
+        ) : searchResults.length === 0 ? (
+          <EmptyState
+            title="没有匹配的文件或目录"
+            description={`没有名称或路径包含「${searchKeyword.trim()}」的条目，换个关键词试试。`}
+          />
+        ) : (
+          <SearchResultsTable
+            key={searchKeyword}
+            results={searchResults}
+            onOpen={go}
+            onRename={openRename}
+            onPermission={openPermission}
+          />
+        )
       ) : (
-        /* 换目录即换表：选中态随目录清空，不把上一个目录的选中行带进新目录。 */
-        <FileTable key={path} entries={entries} path={path} onOpen={go} />
+        <>
+          {status === 'loading' || status === 'idle' ? (
+            <LoadingState label="正在读取目录内容…" />
+          ) : status === 'error' ? (
+            <ErrorState
+              title="目录读取失败"
+              description={errorMessage}
+              action={
+                <button type="button" onClick={() => go('/')} className={TOOLBAR_ACTION_CLASS}>
+                  返回根目录
+                </button>
+              }
+            />
+          ) : entries.length === 0 ? (
+            <EmptyState title="此目录为空" description="这个目录下没有任何文件或子目录。" />
+          ) : (
+            /* 换目录即换表：选中态随目录清空，不把上一个目录的选中行带进新目录。 */
+            <FileTable
+              key={path}
+              entries={entries}
+              path={path}
+              onOpen={go}
+              onRename={openRename}
+              onPermission={openPermission}
+            />
+          )}
+        </>
       )}
+
+      {renaming ? (
+        <RenameDialog
+          entry={renaming.entry}
+          entryPath={renaming.path}
+          onClose={() => closeDialog(setRenaming)}
+        />
+      ) : null}
+      {permitting ? (
+        <PermissionDialog
+          entry={permitting.entry}
+          entryPath={permitting.path}
+          onClose={() => closeDialog(setPermitting)}
+        />
+      ) : null}
     </section>
+  )
+}
+
+/** 搜索框：占原计数位置；输入即全树检索，清空即回到目录列表。 */
+function FilesSearchBox({ onSearch }: { onSearch(keyword: string): void }) {
+  const keyword = useFilesStore((s) => s.searchKeyword)
+  const resultCount = useFilesStore((s) => s.searchResults.length)
+  const searching = useFilesStore((s) => s.searching)
+  const inputId = useId()
+
+  return (
+    <div className="flex items-center gap-3">
+      {keyword.trim() && !searching ? (
+        <p className="text-xs tabular-nums text-fg-muted">{resultCount} 个匹配</p>
+      ) : null}
+      <div className="relative w-full sm:w-64">
+        <Search
+          aria-hidden
+          className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-fg-subtle"
+        />
+        <label htmlFor={inputId} className="sr-only">
+          搜索文件或目录
+        </label>
+        <input
+          id={inputId}
+          type="search"
+          value={keyword}
+          onChange={(event) => onSearch(event.target.value)}
+          placeholder="搜索文件或目录"
+          className="h-[34px] w-full rounded-lg border border-line bg-surface-raised pl-8 pr-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle"
+        />
+      </div>
+    </div>
   )
 }
 
@@ -100,15 +199,17 @@ function FileTable({
   entries,
   path,
   onOpen,
+  onRename,
+  onPermission,
 }: {
   entries: readonly FileEntry[]
   path: string
   onOpen(path: string): void
+  onRename(entry: FileEntry, entryPath: string): void
+  onPermission(entry: FileEntry, entryPath: string): void
 }) {
   const ordered = useMemo(() => orderFileEntries(entries), [entries])
   const [selectedName, setSelectedName] = useState<string | null>(null)
-  const [renaming, setRenaming] = useState<{ entry: FileEntry; path: string } | null>(null)
-  const [permitting, setPermitting] = useState<{ entry: FileEntry; path: string } | null>(null)
   const rowRefs = useRef(new Map<string, HTMLTableRowElement>())
 
   const moveSelection = (fromName: string, delta: number) => {
@@ -159,10 +260,8 @@ function FileTable({
                 key={entry.name}
                 entry={entry}
                 entryPath={entryPath}
-                onRename={(renameEntry, renamePath) => setRenaming({ entry: renameEntry, path: renamePath })}
-                onPermission={(permissionEntry, permissionPath) =>
-                  setPermitting({ entry: permissionEntry, path: permissionPath })
-                }
+                onRename={onRename}
+                onPermission={onPermission}
               >
                 <tr
                   ref={(element) => {
@@ -227,16 +326,119 @@ function FileTable({
           })}
         </tbody>
       </table>
-      {renaming ? (
-        <RenameDialog entry={renaming.entry} entryPath={renaming.path} onClose={() => setRenaming(null)} />
-      ) : null}
-      {permitting ? (
-        <PermissionDialog
-          entry={permitting.entry}
-          entryPath={permitting.path}
-          onClose={() => setPermitting(null)}
-        />
-      ) : null}
+    </div>
+  )
+}
+
+/**
+ * 搜索结果表：全树匹配，结果可能来自任何目录，因此「所在位置」取代修改时间与权限列。
+ * 双击目录进入该目录，双击文件跳到其父目录；右键菜单携带真实路径，操作照常可用。
+ */
+function SearchResultsTable({
+  results,
+  onOpen,
+  onRename,
+  onPermission,
+}: {
+  results: readonly FileSearchResult[]
+  onOpen(path: string): void
+  onRename(entry: FileEntry, entryPath: string): void
+  onPermission(entry: FileEntry, entryPath: string): void
+}) {
+  const [selectedPath, setSelectedPath] = useState<string | null>(null)
+
+  const open = (result: FileSearchResult) =>
+    onOpen(result.kind === 'directory' ? result.path : parentFilesPath(result.path))
+
+  return (
+    <div
+      role="region"
+      aria-label="搜索结果"
+      className="overflow-x-auto rounded-xl border border-line bg-surface"
+    >
+      <table className="w-full min-w-[42rem] table-fixed border-separate border-spacing-0 text-left text-sm">
+        <colgroup>
+          <col className="w-[30%]" />
+          <col className="w-[42%]" />
+          <col className="w-[12%]" />
+          <col className="w-[16%]" />
+        </colgroup>
+        <thead>
+          <tr>
+            {['名称', '所在位置', '类型', '大小'].map((label, index) => (
+              <th
+                key={label}
+                scope="col"
+                className={`border-b border-line bg-surface px-3 py-2.5 text-xs font-medium text-fg-muted ${
+                  index === 0 ? 'sticky left-0 z-20 border-r' : ''
+                }`}
+              >
+                {label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {results.map((result) => {
+            const selected = selectedPath === result.path
+            return (
+              <FileRowMenu
+                key={result.path}
+                entry={result}
+                entryPath={result.path}
+                onRename={onRename}
+                onPermission={onPermission}
+              >
+                <tr
+                  tabIndex={0}
+                  aria-selected={selected}
+                  onClick={() => setSelectedPath(result.path)}
+                  onDoubleClick={() => open(result)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') open(result)
+                  }}
+                  title={result.kind === 'directory' ? '双击进入目录' : '双击转到所在目录'}
+                  className={`group cursor-pointer whitespace-nowrap transition-colors hover:bg-surface-raised ${
+                    selected ? 'bg-surface-raised' : ''
+                  }`}
+                >
+                  <td
+                    className={`sticky left-0 z-10 border-b border-r border-line px-3 py-2.5 font-medium group-hover:bg-surface-raised ${
+                      selected ? 'bg-surface-raised' : 'bg-surface'
+                    }`}
+                  >
+                    <span className="flex min-w-0 items-center gap-2">
+                      {result.kind === 'directory' ? (
+                        <Folder aria-hidden size={15} className="shrink-0 text-fg-subtle" />
+                      ) : (
+                        <File aria-hidden size={15} className="shrink-0 text-fg-subtle" />
+                      )}
+                      <span className="truncate font-medium text-fg" title={result.name}>
+                        {result.name}
+                      </span>
+                    </span>
+                  </td>
+                  <td className="border-b border-line px-3 py-2.5">
+                    <span className="block truncate font-mono text-xs text-fg-muted" title={result.path}>
+                      {parentFilesPath(result.path)}
+                    </span>
+                  </td>
+                  <td className="border-b border-line px-3 py-2.5 text-fg-muted">
+                    {FILE_KIND_LABELS[result.kind]}
+                  </td>
+                  <td className="border-b border-line px-3 py-2.5 tabular-nums text-fg-muted">
+                    {result.kind === 'file' && result.sizeBytes !== undefined ? (
+                      formatEntrySize(result.sizeBytes)
+                    ) : (
+                      <DirectorySizeCell dirPath={result.path} name={result.name} />
+                    )}
+                  </td>
+                </tr>
+              </FileRowMenu>
+            )
+          })}
+        </tbody>
+      </table>
     </div>
   )
 }

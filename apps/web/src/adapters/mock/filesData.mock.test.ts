@@ -8,6 +8,7 @@ import {
   moveMockEntry,
   renameMockEntry,
   resetFilesData,
+  searchMockFiles,
 } from './filesData'
 
 beforeEach(() => {
@@ -140,6 +141,33 @@ describe('改权限', () => {
     resetFilesData()
     expect(listMockDirectory('/etc').find((item) => item.name === 'nginx')?.mode).toBe('755')
     expect(listMockDirectory('/etc/nginx')[0]?.owner).toBe('root')
+  })
+})
+
+describe('全树搜索', () => {
+  it('名称与路径都参与匹配，结果携带绝对路径', () => {
+    const paths = searchMockFiles('nginx').map((hit) => hit.path)
+    expect(paths).toContain('/etc/nginx')
+    expect(paths).toContain('/etc/nginx/nginx.conf')
+    expect(paths).toContain('/var/log/nginx/access.log')
+    // 深层文件因路径含 nginx 而命中，字段照常携带
+    const access = searchMockFiles('nginx').find((hit) => hit.path === '/var/log/nginx/access.log')
+    expect(access?.sizeBytes).toBe(8_241_067)
+    expect(access?.kind).toBe('file')
+  })
+
+  it('空关键词返回空数组，由界面决定回到目录列表', () => {
+    expect(searchMockFiles('')).toEqual([])
+    expect(searchMockFiles('   ')).toEqual([])
+  })
+
+  it('大小写与多余空格照常命中', () => {
+    const paths = searchMockFiles('  Auth.Log ').map((hit) => hit.path)
+    expect(paths).toContain('/var/log/auth.log')
+  })
+
+  it('无命中返回空数组', () => {
+    expect(searchMockFiles('zzz')).toEqual([])
   })
 })
 

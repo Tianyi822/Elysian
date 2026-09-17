@@ -11,6 +11,7 @@ import type {
   ElysianEvent,
   EventStreamHandlers,
   FileEntry,
+  FileSearchResult,
   FirewallImportResult,
   FirewallRule,
   FirewallRuleInput,
@@ -101,6 +102,7 @@ import {
   measureMockDirectory,
   moveMockEntry,
   renameMockEntry,
+  searchMockFiles,
 } from './filesData'
 import { CONTAINERS, CONTAINER_IMAGES, mockImageArtifact } from './containersData'
 import { autoContainerName } from './containersData'
@@ -280,6 +282,10 @@ export class MockFilesAdapter implements FilesAdapter {
 
   async chmod(path: string, input: FilePermissionInput): Promise<void> {
     chmodMockEntry(path, input)
+  }
+
+  async search(keyword: string): Promise<readonly FileSearchResult[]> {
+    return searchMockFiles(keyword)
   }
 }
 

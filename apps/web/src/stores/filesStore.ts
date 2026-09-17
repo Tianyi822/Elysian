@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { FileEntry } from '@elysian/contracts'
+import type { FileEntry, FileSearchResult } from '@elysian/contracts'
 import type { ElysianGateway, FilePermissionInput } from '../contracts/adapters'
 import { useNotificationStore } from './notificationStore'
 
@@ -21,6 +21,10 @@ export type FilesState = {
   computingPaths: readonly string[]
   /** 文件剪贴板：只存内存，粘贴一次即清空，刷新即回空。 */
   clipboard?: FilesClipboard
+  /** 搜索关键词；空串表示未在搜索，界面呈现当前目录列表。 */
+  searchKeyword: string
+  searchResults: readonly FileSearchResult[]
+  searching: boolean
   load(gateway: ElysianGateway, path: string): Promise<void>
   computeSize(gateway: ElysianGateway, path: string): Promise<void>
   copyToClipboard(path: string): void
@@ -32,6 +36,10 @@ export type FilesState = {
   compress(gateway: ElysianGateway, path: string): Promise<void>
   /** 应用权限与所有者：非法模式与空所有者的错误抛给调用方（对话框行内展示）。 */
   applyPermission(gateway: ElysianGateway, path: string, input: FilePermissionInput): Promise<void>
+  /** 全树搜索：空关键词即清空结果回到目录列表；连续输入按次序号丢弃过期结果。 */
+  search(gateway: ElysianGateway, keyword: string): Promise<void>
+  /** 清空搜索：导航离开搜索态（进入某个结果、上一级等）时调用。 */
+  clearSearch(): void
 }
 
 /**
@@ -41,6 +49,7 @@ export type FilesState = {
  */
 export const useFilesStore = create<FilesState>((set, get) => {
   let loadSequence = 0
+  let searchSequence = 0
 
   const reload = async (gateway: ElysianGateway) => {
     await get().load(gateway, get().path)
@@ -57,6 +66,9 @@ export const useFilesStore = create<FilesState>((set, get) => {
     sizes: {},
     computingPaths: [],
     clipboard: undefined,
+    searchKeyword: '',
+    searchResults: [],
+    searching: false,
     async load(gateway, path) {
       const sequence = ++loadSequence
       set({ status: 'loading', path, errorMessage: undefined })
@@ -139,6 +151,28 @@ export const useFilesStore = create<FilesState>((set, get) => {
       notify(
         `已把权限改为 ${input.mode}、所有者改为 ${input.owner}${input.recursive ? '（含子目录）' : ''}（mock，待接入真实执行）`,
       )
+    },
+    async search(gateway, keyword) {
+      const sequence = ++searchSequence
+      set({ searchKeyword: keyword })
+      if (!keyword.trim()) {
+        if (sequence !== searchSequence) return
+        set({ searchResults: [], searching: false })
+        return
+      }
+      set({ searching: true })
+      try {
+        const results = await gateway.files.search(keyword)
+        if (sequence !== searchSequence) return
+        set({ searchResults: results, searching: false })
+      } catch (error) {
+        if (sequence !== searchSequence) return
+        set({ searchResults: [], searching: false })
+        notify(`搜索失败：${error instanceof Error ? error.message : '未知错误'}`, 'danger')
+      }
+    },
+    clearSearch() {
+      set({ searchKeyword: '', searchResults: [], searching: false })
     },
   }
 })

@@ -18,6 +18,9 @@ beforeEach(() => {
     sizes: {},
     computingPaths: [],
     clipboard: undefined,
+    searchKeyword: '',
+    searchResults: [],
+    searching: false,
     errorMessage: undefined,
   })
 })
@@ -137,13 +140,14 @@ describe('文件管理页', () => {
       renameEntry: () => new Promise(() => {}),
       compressEntry: () => new Promise(() => {}),
       chmod: () => new Promise(() => {}),
+      search: () => new Promise(() => {}),
     }
     renderApp('/files', { gateway })
 
     expect(await screen.findByText('正在读取目录内容…')).toBeInTheDocument()
   })
 
-  it('文件行显示格式化的大小，目录条目计数与列表一致', async () => {
+  it('文件行显示格式化的大小', async () => {
     renderApp('/files/var/log/nginx')
     const region = await screen.findByRole('region', { name: '文件列表' })
 
@@ -151,7 +155,6 @@ describe('文件管理页', () => {
     expect(within(accessRow).getByText('7.9 MB')).toBeInTheDocument()
     expect(within(accessRow).getByText('文件')).toBeInTheDocument()
     expect(within(accessRow).getByText('644/root')).toBeInTheDocument()
-    expect(screen.getByText('共 0 个文件夹 · 2 个文件')).toBeInTheDocument()
   })
 
   it('目录大小点「计算」后才求和，等待中显示计算中，结果按路径缓存', async () => {
@@ -170,6 +173,7 @@ describe('文件管理页', () => {
       renameEntry: (path, newName) => mockFiles.renameEntry(path, newName),
       compressEntry: (path) => mockFiles.compressEntry(path),
       chmod: (path, input) => mockFiles.chmod(path, input),
+      search: (keyword) => mockFiles.search(keyword),
     }
     renderApp('/files', { gateway })
     const region = await screen.findByRole('region', { name: '文件列表' })
@@ -197,6 +201,7 @@ describe('文件管理页', () => {
       renameEntry: (path, newName) => mockFiles.renameEntry(path, newName),
       compressEntry: (path) => mockFiles.compressEntry(path),
       chmod: (path, input) => mockFiles.chmod(path, input),
+      search: (keyword) => mockFiles.search(keyword),
     }
     renderApp('/files', { gateway })
     let region = await screen.findByRole('region', { name: '文件列表' })
@@ -229,6 +234,7 @@ describe('文件管理页', () => {
       renameEntry: (path, newName) => mockFiles.renameEntry(path, newName),
       compressEntry: (path) => mockFiles.compressEntry(path),
       chmod: (path, input) => mockFiles.chmod(path, input),
+      search: (keyword) => mockFiles.search(keyword),
     }
     renderApp('/files', { gateway })
     const region = await screen.findByRole('region', { name: '文件列表' })
@@ -406,5 +412,62 @@ describe('文件管理页', () => {
     // 未落盘：关掉对话框后行内权限仍是原值。
     await user.click(screen.getByRole('button', { name: '取消' }))
     expect(within(rowOf(region, 'auth.log')).getByText('640/root')).toBeInTheDocument()
+  })
+
+  it('计数文本移除，搜索框输入即全树检索并给出匹配数', async () => {
+    const user = userEvent.setup()
+    renderApp('/files')
+    await screen.findByRole('region', { name: '文件列表' })
+    expect(screen.queryByText(/共 \d+ 个文件夹/)).not.toBeInTheDocument()
+
+    const input = screen.getByRole('searchbox', { name: '搜索文件或目录' })
+    await user.type(input, 'nginx')
+
+    const region = await screen.findByRole('region', { name: '搜索结果' })
+    // 两个目录都叫 nginx，位置列随行各异；access.log 因路径命中
+    expect(within(region).getAllByRole('cell', { name: 'nginx' }).length).toBe(2)
+    expect(
+      within(region).getAllByRole('cell', { name: '/var/log/nginx' }).length,
+    ).toBeGreaterThanOrEqual(2)
+    expect(within(region).getByRole('row', { name: /access\.log/ })).toBeInTheDocument()
+    expect(screen.getByText(/个匹配/)).toBeInTheDocument()
+  })
+
+  it('双击搜索结果里的目录进入该目录，并清空搜索回到目录列表', async () => {
+    const user = userEvent.setup()
+    renderApp('/files')
+    const input = await screen.findByRole('searchbox', { name: '搜索文件或目录' })
+    await user.type(input, 'grub')
+    const region = await screen.findByRole('region', { name: '搜索结果' })
+
+    // 行名以目录名锚定：子文件 grub.cfg 的路径也含关键词，但行名以 grub.cfg 开头不会撞
+    await user.dblClick(within(region).getByRole('row', { name: /^grub / }))
+
+    expect(await screen.findByRole('heading', { level: 1, name: '/boot/grub' })).toBeInTheDocument()
+    expect(screen.getByRole('searchbox', { name: '搜索文件或目录' })).toHaveValue('')
+    expect(await screen.findByRole('region', { name: '文件列表' })).toBeInTheDocument()
+  })
+
+  it('文件结果回车跳到所在目录', async () => {
+    const user = userEvent.setup()
+    renderApp('/files')
+    const input = await screen.findByRole('searchbox', { name: '搜索文件或目录' })
+    await user.type(input, 'auth.log')
+    const region = await screen.findByRole('region', { name: '搜索结果' })
+
+    await user.type(within(region).getByRole('row', { name: /auth\.log/ }), '{Enter}')
+
+    expect(await screen.findByRole('heading', { level: 1, name: '/var/log' })).toBeInTheDocument()
+  })
+
+  it('搜索无匹配显示空状态', async () => {
+    const user = userEvent.setup()
+    renderApp('/files')
+    const input = await screen.findByRole('searchbox', { name: '搜索文件或目录' })
+
+    await user.type(input, 'zzz')
+
+    expect(await screen.findByText('没有匹配的文件或目录')).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: '搜索结果' })).not.toBeInTheDocument()
   })
 })

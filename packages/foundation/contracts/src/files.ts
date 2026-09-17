@@ -92,6 +92,29 @@ export function isValidFileMode(mode: string): boolean {
   return /^[0-7]{3}$/.test(mode)
 }
 
+/*
+ * 文件搜索：名称与所在路径两处参与匹配，比对口径与安全区搜索一致
+ * ——去掉全部空白并统一小写后做子串包含，大小写与多空格都照常命中。
+ */
+
+/** 搜索归一化：去全部空白、统一小写。 */
+export function normalizeFileSearch(text: string): string {
+  return text.replace(/\s+/g, '').toLowerCase()
+}
+
+/** 名称或所在路径任一命中即命中；空关键词视为命中，是否发起搜索由调用方决定。 */
+export function matchesFilePath(keyword: string, name: string, path: string): boolean {
+  const needle = normalizeFileSearch(keyword)
+  if (!needle) return true
+  return [name, path].some((field) => normalizeFileSearch(field).includes(needle))
+}
+
+/** 一条搜索结果：条目本身的全量字段外加它在树中的绝对路径。 */
+export type FileSearchResult = FileEntry & {
+  /** 条目的绝对路径（如 /var/log/nginx/access.log）。 */
+  path: string
+}
+
 /** 权限开关转三位八进制：按类顺序取位，缺省按未授予处理。 */
 export function permissionToMode(permission: FilePermission): string {
   return FILE_PERMISSION_CLASSES.map((permissionClass) => {

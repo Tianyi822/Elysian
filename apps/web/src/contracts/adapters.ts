@@ -11,6 +11,7 @@ import type {
   DatabaseInstance,
   EventStreamHandlers,
   FileEntry,
+  FileSearchResult,
   FirewallImportResult,
   FirewallRule,
   FirewallRuleInput,
@@ -263,6 +264,12 @@ export interface FilesAdapter {
   compressEntry(path: string): Promise<FileEntry>
   /** 改一个条目的权限与所有者（演示）；recursive 为真时连同全部后代一起改。 */
   chmod(path: string, input: FilePermissionInput): Promise<void>
+  /**
+   * 按关键词在全树范围搜索目录与文件（演示）。名称与所在路径参与匹配，
+   * 口径由契约的 matchesFilePath 定义；空关键词返回空数组。
+   * 本期是内存遍历，未来由服务端索引提供同形结果。
+   */
+  search(keyword: string): Promise<readonly FileSearchResult[]>
 }
 
 /** 权限变更（演示）：模式为三位八进制，所有者为系统账号名。 */

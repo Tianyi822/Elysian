@@ -1,5 +1,5 @@
-import type { FileEntry } from '@elysian/contracts'
-import { isValidFileName, isValidFileMode } from '@elysian/contracts'
+import type { FileEntry, FileSearchResult } from '@elysian/contracts'
+import { isValidFileName, isValidFileMode, matchesFilePath, normalizeFileSearch } from '@elysian/contracts'
 
 /*
  * 文件管理演示数据集：一台运维主机的目录树手工种子，修改时间相对固定基准日生成，
@@ -328,4 +328,21 @@ export function chmodMockEntry(
     }
   }
   apply(findNode(path))
+}
+
+/** 按关键词深度优先搜索全树（演示）：名称与所在路径任一命中即返回该条目；空关键词返回空。 */
+export function searchMockFiles(keyword: string): readonly FileSearchResult[] {
+  if (!normalizeFileSearch(keyword)) return []
+  const results: FileSearchResult[] = []
+  const walk = (path: string, node: MockDirectoryNode): void => {
+    for (const [name, child] of Object.entries(node.children)) {
+      const childPath = path === '/' ? `/${name}` : `${path}/${name}`
+      if (matchesFilePath(keyword, name, childPath)) {
+        results.push({ ...toEntry(name, child), path: childPath })
+      }
+      if (child.kind === 'directory') walk(childPath, child)
+    }
+  }
+  walk('/', FILE_TREE)
+  return results
 }

@@ -397,6 +397,14 @@ describe('文件域词典', () => {
     expect([...contracts.FILE_PERMISSION_ACTIONS]).toEqual(['read', 'write', 'execute'])
     expect(contracts.permissionToMode(contracts.modeToPermission('421'))).toBe('421')
   })
+
+  it('文件搜索口径：去空白统一小写后子串包含，名称与路径任一命中', () => {
+    expect(contracts.matchesFilePath('NGINX', 'nginx', '/etc/nginx')).toBe(true)
+    expect(contracts.matchesFilePath('var/log', 'auth.log', '/var/log/auth.log')).toBe(true)
+    expect(contracts.matchesFilePath('auth', 'hosts', '/etc/hosts')).toBe(false)
+    expect(contracts.matchesFilePath('a  b', 'a b.conf', '/opt')).toBe(true)
+    expect(contracts.matchesFilePath('', 'hosts', '/etc/hosts')).toBe(true)
+  })
 })
 
 describe('主机账号域词典', () => {
