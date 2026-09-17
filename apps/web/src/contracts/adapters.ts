@@ -21,7 +21,9 @@ import type {
   HostUserInput,
   Incident,
   IncidentListRow,
+  LoginLogEntry,
   ModuleStatus,
+  RuntimeLogSnapshot,
   Skill,
   SshAuthMethods,
   SshAuthSettings,
@@ -180,6 +182,17 @@ export interface FirewallAdapter {
 }
 
 /**
+ * 日志接缝：平台运行日志与平台登录日志的只读读取。
+ * 本期 mock 读内存种子；真实实现由采集服务提供同形数据，界面不改。
+ */
+export interface LogsAdapter {
+  /** 读取整份平台运行日志（演示），含字节大小。 */
+  runtimeLog(): Promise<RuntimeLogSnapshot>
+  /** 读取平台登录日志（演示），按时间倒序返回。 */
+  loginLogs(): Promise<readonly LoginLogEntry[]>
+}
+
+/**
  * SSH 区适配接口。本期为 mock 实现：改动只落内存数据集；
  * 真实的 SSH 变更（启停服务、改端口与认证方式、换 Root 凭据）涉及系统级操作，
  * 由未来执行层筛选与执行，页面不改。
@@ -304,6 +317,7 @@ export interface ElysianGateway {
   ssh: SshAdapter
   users: UserAdapter
   files: FilesAdapter
+  logs: LogsAdapter
   /** 把演示数据重置回种子状态。 */
   reset(): Promise<void>
 }

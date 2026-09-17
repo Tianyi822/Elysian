@@ -9,6 +9,7 @@ import {
   MockFilesAdapter,
   MockFirewallAdapter,
   MockIncidentAdapter,
+  MockLogsAdapter,
   MockRunAdapter,
   MockSessionAdapter,
   MockSkillAdapter,
@@ -61,6 +62,7 @@ export function createMockGateway(
     ssh: new MockSshAdapter(),
     users: new MockUserAdapter(),
     files: new MockFilesAdapter(),
+    logs: new MockLogsAdapter(),
     events: wrapLive(
       containerEvents.wrap(
         options.eventStream === 'memory'

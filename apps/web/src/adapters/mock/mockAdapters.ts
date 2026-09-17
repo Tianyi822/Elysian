@@ -21,7 +21,9 @@ import type {
   HostUserInput,
   Incident,
   IncidentListRow,
+  LoginLogEntry,
   ModuleStatus,
+  RuntimeLogSnapshot,
   Skill,
   SshAuthMethods,
   SshAuthSettings,
@@ -47,6 +49,7 @@ import type {
   IncidentAdapter,
   IncidentListQuery,
   IncidentListResult,
+  LogsAdapter,
   MockQueryResult,
   RunAdapter,
   SessionAdapter,
@@ -104,6 +107,7 @@ import {
   renameMockEntry,
   searchMockFiles,
 } from './filesData'
+import { getLoginLogs, getRuntimeLog } from './logsData'
 import { CONTAINERS, CONTAINER_IMAGES, mockImageArtifact } from './containersData'
 import { autoContainerName } from './containersData'
 import {
@@ -286,6 +290,17 @@ export class MockFilesAdapter implements FilesAdapter {
 
   async search(keyword: string): Promise<readonly FileSearchResult[]> {
     return searchMockFiles(keyword)
+  }
+}
+
+/** 日志的 mock 实现：读手工种子的登录记录与固定模板生成的运行日志；只读，无变更动作。 */
+export class MockLogsAdapter implements LogsAdapter {
+  async runtimeLog(): Promise<RuntimeLogSnapshot> {
+    return getRuntimeLog()
+  }
+
+  async loginLogs(): Promise<readonly LoginLogEntry[]> {
+    return getLoginLogs()
   }
 }
 
