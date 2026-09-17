@@ -29,6 +29,11 @@ describe('路由表', () => {
     expect(await screen.findByRole('heading', { level: 1, name: '/var/log' })).toBeInTheDocument()
   })
 
+  it('/logs 渲染日志区', async () => {
+    renderApp('/logs')
+    expect(await screen.findByRole('heading', { level: 1, name: '日志' })).toBeInTheDocument()
+  })
+
   it('未匹配的地址进入未找到页面', async () => {
     renderApp('/does-not-exist')
     expect(

@@ -232,6 +232,7 @@ export type PageArea =
   | 'security'
   | 'containers'  | 'databases'
   | 'files'
+  | 'logs'
   | 'incidents'
   | 'runs'
   | 'skills'

@@ -8,6 +8,7 @@ import { DatabaseEngineSwitch } from '../features/database/DatabaseEngineSwitch'
 import { DatabasePage } from '../features/database/DatabasePage'
 import { FilesPage } from '../features/files/FilesPage'
 import { FilesPathTitle } from '../features/files/FilesPathTitle'
+import { LogsPage } from '../features/logs/LogsPage'
 import { SecurityPage } from '../features/security/SecurityPage'
 import { SecurityTabSwitch } from '../features/security/SecurityTabSwitch'
 import { AppShell } from './layout/AppShell'
@@ -83,6 +84,14 @@ export const routes: RouteObject[] = [
         element: (
           <RequireArea area="files" title="文件管理">
             <FilesPage />
+          </RequireArea>
+        ),
+      },
+      {
+        path: 'logs',
+        element: (
+          <RequireArea area="logs" title="日志">
+            <LogsPage />
           </RequireArea>
         ),
       },
