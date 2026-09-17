@@ -26,7 +26,7 @@ export const SEED_LOGIN_LOGS: readonly LoginLogEntry[] = [
   { id: 'login-08', ip: '114.135.25.46', location: '电信 中国 贵州 遵义', userAgent: edgeUa(140), status: 'failure', time: '2025-09-22T11:15:33' },
   { id: 'login-09', ip: '114.138.157.44', location: '电信 中国 贵州 黔南', userAgent: edgeUa(140), status: 'success', time: '2025-09-14T21:43:53' },
   { id: 'login-10', ip: '114.139.238.150', location: '电信 中国 贵州 黔南', userAgent: edgeUa(138), status: 'success', time: '2025-07-25T17:42:33' },
-  // 以下为演示补充：换平台与浏览器的失败登录，补齐界面两种取值的呈现。
+  // 以下为演示补充：换平台与浏览器的登录记录，补齐失败结果与 Safari 呈现。
   { id: 'login-11', ip: '223.104.63.77', location: '中国移动 中国 贵州 贵阳', userAgent: UA_CHROME_WIN, status: 'failure', time: '2025-06-18T09:20:17' },
   { id: 'login-12', ip: '117.135.169.20', location: '中国移动 中国 上海 上海', userAgent: UA_SAFARI_MAC, status: 'success', time: '2025-05-02T22:05:41' },
 ]
