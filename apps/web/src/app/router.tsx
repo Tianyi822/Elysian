@@ -9,6 +9,7 @@ import { DatabasePage } from '../features/database/DatabasePage'
 import { FilesPage } from '../features/files/FilesPage'
 import { FilesPathTitle } from '../features/files/FilesPathTitle'
 import { LogsPage } from '../features/logs/LogsPage'
+import { LogsTabSwitch } from '../features/logs/LogsTabSwitch'
 import { SecurityPage } from '../features/security/SecurityPage'
 import { SecurityTabSwitch } from '../features/security/SecurityTabSwitch'
 import { AppShell } from './layout/AppShell'
@@ -89,6 +90,10 @@ export const routes: RouteObject[] = [
       },
       {
         path: 'logs',
+        handle: {
+          headerAccessory: LogsTabSwitch,
+          hideHeaderTitle: true,
+        } satisfies RouteHandle,
         element: (
           <RequireArea area="logs" title="日志">
             <LogsPage />

@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react'
+import { screen, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { renderApp } from '../test/renderApp'
 
@@ -29,9 +29,13 @@ describe('路由表', () => {
     expect(await screen.findByRole('heading', { level: 1, name: '/var/log' })).toBeInTheDocument()
   })
 
-  it('/logs 渲染日志区', async () => {
+  it('/logs 渲染日志区，顶栏出现日志页签', async () => {
     renderApp('/logs')
-    expect(await screen.findByRole('heading', { level: 1, name: '日志' })).toBeInTheDocument()
+    const group = await screen.findByRole('group', { name: '日志页签' })
+    expect(within(group).getAllByRole('button').map((button) => button.textContent)).toEqual([
+      '平台运行日志',
+      '平台登录日志',
+    ])
   })
 
   it('未匹配的地址进入未找到页面', async () => {
