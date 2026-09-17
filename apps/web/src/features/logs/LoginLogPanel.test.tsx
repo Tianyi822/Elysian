@@ -18,6 +18,8 @@ const INITIAL_STATE = {
   status: 'idle' as const,
   errorMessage: undefined,
   entries: [],
+  statusFilter: 'all' as const,
+  search: '',
 }
 
 beforeEach(() => {
@@ -29,6 +31,21 @@ async function openLoginTab() {
   const user = userEvent.setup()
   await screen.findByRole('group', { name: '日志页签' })
   await user.click(within(screen.getByRole('banner')).getByRole('button', { name: '登录日志' }))
+}
+
+/** 状态筛选按钮（在顶栏下方的筛选组里，避免与表格内的状态标签同名混淆）。 */
+function statusFilterButton(name: string) {
+  return within(screen.getByRole('group', { name: '登录状态筛选' })).getByRole('button', { name })
+}
+
+/** 表格数据行。 */
+function loginRows(table: HTMLElement): HTMLElement[] {
+  return within(table).getAllByRole('row').slice(1)
+}
+
+/** 按断言口径从种子推导数量，不硬编码。 */
+function seedCount(predicate: (entry: (typeof SEED_LOGIN_LOGS)[number]) => boolean): number {
+  return SEED_LOGIN_LOGS.filter(predicate).length
 }
 
 describe('平台登录日志面板', () => {
@@ -97,5 +114,54 @@ describe('平台登录日志面板', () => {
     await openLoginTab()
 
     expect(await screen.findByText('还没有登录日志')).toBeInTheDocument()
+  })
+
+  it('状态筛选：只显示所选结果的记录，全部恢复全量', async () => {
+    const user = userEvent.setup()
+    renderApp('/logs')
+    await openLoginTab()
+    const table = within(await screen.findByRole('region', { name: '登录日志表' })).getByRole('table')
+
+    await user.click(statusFilterButton('登录失败'))
+    const failureCount = seedCount((entry) => entry.status === 'failure')
+    expect(failureCount).toBeGreaterThan(0)
+    expect(loginRows(table)).toHaveLength(failureCount)
+    expect(within(table).getAllByText('登录失败')).toHaveLength(failureCount)
+    expect(within(table).queryByText('登录成功')).not.toBeInTheDocument()
+    expect(statusFilterButton('登录失败')).toHaveAttribute('aria-pressed', 'true')
+
+    await user.click(statusFilterButton('全部'))
+    expect(loginRows(table)).toHaveLength(SEED_LOGIN_LOGS.length)
+    expect(statusFilterButton('全部')).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('搜索按 IP 与用户代理匹配，可与状态筛选叠加', async () => {
+    const user = userEvent.setup()
+    renderApp('/logs')
+    await openLoginTab()
+    const table = within(await screen.findByRole('region', { name: '登录日志表' })).getByRole('table')
+    const searchBox = screen.getByLabelText('搜索登录日志')
+
+    await user.type(searchBox, '114.135')
+    expect(loginRows(table)).toHaveLength(seedCount((entry) => entry.ip.includes('114.135')))
+
+    await user.clear(searchBox)
+    await user.type(searchBox, 'Safari')
+    expect(loginRows(table)).toHaveLength(seedCount((entry) => entry.userAgent.includes('Safari')))
+
+    await user.click(statusFilterButton('登录失败'))
+    expect(loginRows(table)).toHaveLength(
+      seedCount((entry) => entry.userAgent.includes('Safari') && entry.status === 'failure'),
+    )
+  })
+
+  it('筛选与搜索无匹配时给出表内空提示', async () => {
+    const user = userEvent.setup()
+    renderApp('/logs')
+    await openLoginTab()
+    const table = within(await screen.findByRole('region', { name: '登录日志表' })).getByRole('table')
+
+    await user.type(screen.getByLabelText('搜索登录日志'), '绝不存在的关键字')
+    expect(within(table).getByText('没有匹配的登录记录，换个关键词或清空筛选')).toBeInTheDocument()
   })
 })
