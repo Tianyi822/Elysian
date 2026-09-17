@@ -126,12 +126,7 @@ export function RuntimeLogPanel() {
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-surface px-4 py-3">
-        <ToolButton label={refreshing ? '刷新中…' : '刷新日志'} disabled={refreshing} onClick={() => void load(gateway)} />
-        <ToolButton label="滑动日志" pressed={follow} onClick={() => setFollow(!follow)} />
-        <span className="text-xs text-fg-muted">
-          日志大小：<span className="tabular-nums text-fg">{formatByteSize(snapshot.sizeBytes)}</span>
-        </span>
-        <div className="relative ml-auto w-64 max-w-full">
+        <div className="relative w-64 max-w-full">
           <Search
             aria-hidden
             className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-fg-subtle"
@@ -147,6 +142,11 @@ export function RuntimeLogPanel() {
             className="w-full rounded-lg border border-line bg-surface-raised py-1.5 pl-8 pr-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle"
           />
         </div>
+        <ToolButton label={refreshing ? '刷新中…' : '刷新日志'} disabled={refreshing} onClick={() => void load(gateway)} />
+        <ToolButton label="滑动日志" pressed={follow} onClick={() => setFollow(!follow)} />
+        <span className="text-xs text-fg-muted">
+          日志大小：<span className="tabular-nums text-fg">{formatByteSize(snapshot.sizeBytes)}</span>
+        </span>
       </div>
 
       <LogView lines={visibleLines} follow={follow} className="h-[calc(100dvh-16rem)] min-h-72" />
