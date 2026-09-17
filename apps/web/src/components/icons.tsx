@@ -24,6 +24,7 @@ export {
   Folder,
   FolderTree,
   Gauge,
+  Globe,
   Inbox,
   Info,
   KeyRound,

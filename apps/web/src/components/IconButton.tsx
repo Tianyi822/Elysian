@@ -42,6 +42,7 @@ export function IconButton({
   tone = 'neutral',
   variant = 'solid',
   tooltip = true,
+  disabled = false,
 }: {
   label: string
   onPress?: () => void
@@ -50,13 +51,16 @@ export function IconButton({
   variant?: Variant
   /** 视觉提示开关；aria-label 始终保留。按钮旁已有文字说明动作时可关掉。 */
   tooltip?: boolean
+  /** 忙碌中的动作禁用按钮；tooltip 与 aria-label 保持可及。 */
+  disabled?: boolean
 }) {
   const button = (
     <button
       type="button"
       aria-label={label}
       onClick={onPress}
-      className={`inline-flex items-center justify-center rounded transition-colors ${styleFor(variant, tone)}`}
+      disabled={disabled}
+      className={`inline-flex items-center justify-center rounded transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${styleFor(variant, tone)}`}
     >
       {children}
     </button>

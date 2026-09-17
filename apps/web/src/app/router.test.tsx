@@ -51,6 +51,13 @@ describe('路由表', () => {
     expect(screen.getByRole('button', { name: '打开主导航' })).toBeInTheDocument()
   })
 
+  it('/websites 渲染网站区，顶栏不再有页签', async () => {
+    renderApp('/websites')
+    expect(await screen.findByRole('heading', { level: 1, name: '网站' })).toBeInTheDocument()
+    // 类型改在创建时选择，顶栏页签已随五页签表格一起删除；面板内容由面板自己的测试覆盖。
+    expect(screen.queryByRole('group', { name: '网站页签' })).not.toBeInTheDocument()
+  })
+
   it('未匹配的地址进入未找到页面', async () => {
     renderApp('/does-not-exist')
     expect(

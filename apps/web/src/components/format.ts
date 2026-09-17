@@ -14,6 +14,18 @@ export function formatDateTime(iso: string): string {
   return DATE_TIME_FORMATTER.format(new Date(iso))
 }
 
+/** 只到日的日期（`2026-12-20`），用于到期时间这类不含时刻的字段。 */
+const DATE_FORMATTER = new Intl.DateTimeFormat('sv-SE', {
+  timeZone: 'Asia/Shanghai',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+})
+
+export function formatDate(iso: string): string {
+  return DATE_FORMATTER.format(new Date(iso))
+}
+
 /**
  * 精确到秒、带年份的登录时间，形态与 sshd 日志一致（`2026-09-07 14:10:53`）。
  * 用的是连字符形态的固定写法：登录记录按时间排查时需要秒与年份，
