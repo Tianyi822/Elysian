@@ -22,6 +22,8 @@ export type RouteHandle = {
   headerAccessory?: ComponentType
   /** 页面自带页签式标题时置 true：顶栏不再渲染可视标题，页签占据标题位。 */
   hideHeaderTitle?: boolean
+  /** 全屏型页面（如终端）置 true：整条顶栏不渲染，页面吃掉顶栏以下全部高度。 */
+  hideHeader?: boolean
 }
 
 /**
@@ -103,6 +105,9 @@ export const routes: RouteObject[] = [
       },
       {
         path: 'terminals',
+        handle: {
+          hideHeader: true,
+        } satisfies RouteHandle,
         element: (
           <RequireArea area="terminals" title="终端">
             <TerminalPage />

@@ -42,6 +42,8 @@ export function AppShell() {
 
   // 顶栏标题跟随当前导航项；未匹配路由沿用仪表盘缺省，由未找到页面给出自己的标题。
   // 页签式标题的页面（安全、Docker、数据库）经路由 handle 声明藏掉可视标题，页签占据标题位。
+  // 全屏型页面（终端）经 handle 声明整条顶栏都不渲染。
+  const hideHeader = matches.some((match) => (match.handle as RouteHandle | undefined)?.hideHeader)
   const hideHeaderTitle = matches.some(
     (match) => (match.handle as RouteHandle | undefined)?.hideHeaderTitle,
   )
@@ -99,65 +101,78 @@ export function AppShell() {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="shrink-0 border-b border-line bg-surface">
-          <div ref={headerRowRef} className="flex min-h-14 items-center gap-4 px-4 py-3 md:px-6">
-            <Dialog.Root open={drawerOpen} onOpenChange={setDrawerOpen}>
-              <Dialog.Trigger asChild>
-                <span className="md:hidden">
-                  <IconButton label="打开主导航">
-                    <Menu aria-hidden size={16} />
-                  </IconButton>
-                </span>
-              </Dialog.Trigger>
-              <Dialog.Portal>
-                <Dialog.Overlay className="fixed inset-0 z-40 bg-black/60 motion-reduce:animate-none data-[state=open]:animate-drawer-overlay-in data-[state=closed]:animate-drawer-overlay-out" />
-                <Dialog.Content
-                  aria-describedby={undefined}
-                  className="fixed inset-y-0 left-0 z-50 flex w-60 flex-col border-r border-line bg-surface shadow-xl will-change-transform motion-reduce:animate-none data-[state=open]:animate-drawer-panel-in data-[state=closed]:animate-drawer-panel-out"
+        <Dialog.Root open={drawerOpen} onOpenChange={setDrawerOpen}>
+          {/* 全屏型页面（终端）整条顶栏都不渲染；窄屏下仍需一条回到主导航的路，
+              抽屉触发器因此浮在左上角，等终端界面自带导航后再随设计收敛。 */}
+          {hideHeader ? (
+            <Dialog.Trigger asChild>
+              <span className="fixed left-3 top-3 z-30 md:hidden">
+                <IconButton label="打开主导航">
+                  <Menu aria-hidden size={16} />
+                </IconButton>
+              </span>
+            </Dialog.Trigger>
+          ) : (
+            <header className="shrink-0 border-b border-line bg-surface">
+              <div ref={headerRowRef} className="flex min-h-14 items-center gap-4 px-4 py-3 md:px-6">
+                <Dialog.Trigger asChild>
+                  <span className="md:hidden">
+                    <IconButton label="打开主导航">
+                      <Menu aria-hidden size={16} />
+                    </IconButton>
+                  </span>
+                </Dialog.Trigger>
+
+                {hideHeaderTitle ? null : (
+                  <div className="min-w-0">
+                    <h1 ref={headerTitleRef} className="truncate text-base font-semibold leading-tight">
+                      {pageTitle}
+                    </h1>
+                  </div>
+                )}
+
+                <HeaderAccessoryWidthContext.Provider value={accessoryWidth}>
+                  {HeaderAccessory ? <HeaderAccessory /> : null}
+                </HeaderAccessoryWidthContext.Provider>
+
+                <div
+                  ref={headerActionsRef}
+                  className="ml-auto flex shrink-0 flex-nowrap items-center justify-end gap-2"
                 >
-                  {/* 与顶栏同构：边框挂父级、内容行 min-h-14 在内层。 */}
-                  <div className="border-b border-line">
-                    <div className="flex min-h-14 items-center justify-between px-3">
-                      <Dialog.Title className="text-base font-medium">主导航</Dialog.Title>
-                      <Dialog.Close asChild>
-                        <span>
-                          {/* 标题「主导航」已在旁边，悬停提示反而跟随焦点常驻，视觉提示关掉。 */}
-                          <IconButton label="关闭主导航" tooltip={false}>
-                            {/* 抽屉向左收起，用面板折叠图标比 X 更贴合动作语义。 */}
-                            <PanelLeftClose aria-hidden size={16} />
-                          </IconButton>
-                        </span>
-                      </Dialog.Close>
-                    </div>
-                  </div>
-                  <div className="min-h-0 flex-1">
-                    <Sidebar onNavigate={() => setDrawerOpen(false)} />
-                  </div>
-                </Dialog.Content>
-              </Dialog.Portal>
-            </Dialog.Root>
-
-            {hideHeaderTitle ? null : (
-              <div className="min-w-0">
-                <h1 ref={headerTitleRef} className="truncate text-base font-semibold leading-tight">
-                  {pageTitle}
-                </h1>
+                  <MemoryMonitorBadge />
+                  <UserChip />
+                </div>
               </div>
-            )}
+            </header>
+          )}
 
-            <HeaderAccessoryWidthContext.Provider value={accessoryWidth}>
-              {HeaderAccessory ? <HeaderAccessory /> : null}
-            </HeaderAccessoryWidthContext.Provider>
-
-            <div
-              ref={headerActionsRef}
-              className="ml-auto flex shrink-0 flex-nowrap items-center justify-end gap-2"
+          <Dialog.Portal>
+            <Dialog.Overlay className="fixed inset-0 z-40 bg-black/60 motion-reduce:animate-none data-[state=open]:animate-drawer-overlay-in data-[state=closed]:animate-drawer-overlay-out" />
+            <Dialog.Content
+              aria-describedby={undefined}
+              className="fixed inset-y-0 left-0 z-50 flex w-60 flex-col border-r border-line bg-surface shadow-xl will-change-transform motion-reduce:animate-none data-[state=open]:animate-drawer-panel-in data-[state=closed]:animate-drawer-panel-out"
             >
-              <MemoryMonitorBadge />
-              <UserChip />
-            </div>
-          </div>
-        </header>
+              {/* 与顶栏同构：边框挂父级、内容行 min-h-14 在内层。 */}
+              <div className="border-b border-line">
+                <div className="flex min-h-14 items-center justify-between px-3">
+                  <Dialog.Title className="text-base font-medium">主导航</Dialog.Title>
+                  <Dialog.Close asChild>
+                    <span>
+                      {/* 标题「主导航」已在旁边，悬停提示反而跟随焦点常驻，视觉提示关掉。 */}
+                      <IconButton label="关闭主导航" tooltip={false}>
+                        {/* 抽屉向左收起，用面板折叠图标比 X 更贴合动作语义。 */}
+                        <PanelLeftClose aria-hidden size={16} />
+                      </IconButton>
+                    </span>
+                  </Dialog.Close>
+                </div>
+              </div>
+              <div className="min-h-0 flex-1">
+                <Sidebar onNavigate={() => setDrawerOpen(false)} />
+              </div>
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
 
         <div className="relative flex min-h-0 flex-1">
           <main className="min-w-0 flex-1 overflow-y-auto p-4 md:p-6">
