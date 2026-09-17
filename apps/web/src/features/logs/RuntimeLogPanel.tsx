@@ -145,17 +145,14 @@ export function RuntimeLogPanel() {
         </div>
         <ToolButton label={refreshing ? '刷新中…' : '刷新日志'} disabled={refreshing} onClick={() => void load(gateway)} />
         <ToolButton label="滑动日志" pressed={follow} onClick={() => setFollow(!follow)} />
+        {/* 文案固定「全屏展示」，避免与弹窗内的「退出全屏」按钮重名；开合靠 pressed 高亮表达。 */}
+        <ToolButton label="全屏展示" pressed={fullscreen} onClick={() => setFullscreen(!fullscreen)} />
         <span className="text-xs text-fg-muted">
           日志大小：<span className="tabular-nums text-fg">{formatByteSize(snapshot.sizeBytes)}</span>
         </span>
       </div>
 
       <LogView lines={visibleLines} follow={follow} className="h-[calc(100dvh-16rem)] min-h-72" />
-
-      <div className="mt-3 flex justify-end">
-        {/* 文案固定「全屏展示」，避免与弹窗内的「退出全屏」按钮重名；开合靠 pressed 高亮表达。 */}
-        <ToolButton label="全屏展示" pressed={fullscreen} onClick={() => setFullscreen(!fullscreen)} />
-      </div>
 
       <Dialog.Root open={fullscreen} onOpenChange={setFullscreen}>
         <Dialog.Portal>
