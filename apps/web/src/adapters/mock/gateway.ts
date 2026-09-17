@@ -15,6 +15,7 @@ import {
   MockSkillAdapter,
   MockSshAdapter,
   MockUserAdapter,
+  MockWebsitesAdapter,
   createInMemoryEventsAdapter,
 } from './mockAdapters'
 import { createResilientEventsAdapter } from '../sse/eventsAdapter'
@@ -23,6 +24,7 @@ import { applyIncidentCreated } from './dataset'
 import { resetSshData } from './sshData'
 import { resetFilesData } from './filesData'
 import { resetHostUsers } from './usersData'
+import { resetWebsitesData } from './websitesData'
 import { MockTerminalAdapter } from './terminalAdapter'
 import type { EventsAdapter } from '../../contracts/adapters'
 
@@ -66,6 +68,7 @@ export function createMockGateway(
     files: new MockFilesAdapter(),
     logs: new MockLogsAdapter(),
     terminals,
+    websites: new MockWebsitesAdapter(),
     events: wrapLive(
       containerEvents.wrap(
         options.eventStream === 'memory'
@@ -83,6 +86,7 @@ export function createMockGateway(
       resetSshData()
       resetFilesData()
       resetHostUsers()
+      resetWebsitesData()
       terminals.reset()
     },
   }

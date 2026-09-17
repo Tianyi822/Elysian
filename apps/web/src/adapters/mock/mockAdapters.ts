@@ -34,6 +34,10 @@ import type {
   SshRootAuth,
   SshRootLoginPolicy,
   Unsubscribe,
+  WebsiteProject,
+  WebsiteProjectCreateInput,
+  WebsiteProjectKind,
+  WebsiteProjectUpdateInput,
 } from '@elysian/contracts'
 import { SEVERITY_RANK, SSH_KEY_NAME_MAX_LENGTH, isValidHostUserName, isValidSshKeyName, isValidSshPort } from '@elysian/contracts'
 import type {
@@ -56,6 +60,7 @@ import type {
   SkillAdapter,
   SshAdapter,
   UserAdapter,
+  WebsitesAdapter,
 } from '../../contracts/adapters'
 import { DATABASE_INSTANCES, SQLITE_VERSION, addDatabaseInstance, removeDatabaseInstance } from './databaseData'
 import {
@@ -108,6 +113,14 @@ import {
   searchMockFiles,
 } from './filesData'
 import { getLoginLogs, getRuntimeLog } from './logsData'
+import {
+  addWebsiteProject,
+  getWebsiteLogs,
+  getWebsiteProjects,
+  removeWebsiteProject,
+  setWebsiteProjectRunning,
+  updateWebsiteProject,
+} from './websitesData'
 import { CONTAINERS, CONTAINER_IMAGES, mockImageArtifact } from './containersData'
 import { autoContainerName } from './containersData'
 import {
@@ -646,6 +659,32 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
     const database = DATABASE_INSTANCES.find((item) => item.id === databaseId)
     if (!database) throw new Error(`未找到数据库实例 ${databaseId}`)
     removeDatabaseInstance(databaseId)
+  }
+}
+
+export class MockWebsitesAdapter implements WebsitesAdapter {
+  async list(): Promise<readonly WebsiteProject[]> {
+    return getWebsiteProjects()
+  }
+
+  async create(kind: WebsiteProjectKind, input: WebsiteProjectCreateInput): Promise<WebsiteProject> {
+    return addWebsiteProject(kind, input)
+  }
+
+  async update(projectId: string, input: WebsiteProjectUpdateInput): Promise<WebsiteProject> {
+    return updateWebsiteProject(projectId, input)
+  }
+
+  async remove(projectId: string): Promise<void> {
+    removeWebsiteProject(projectId)
+  }
+
+  async setRunning(projectId: string, running: boolean): Promise<WebsiteProject> {
+    return setWebsiteProjectRunning(projectId, running)
+  }
+
+  async logs(projectId: string): Promise<readonly string[]> {
+    return getWebsiteLogs(projectId)
   }
 }
 
