@@ -34,6 +34,10 @@ import type {
   SshRootAuth,
   SshRootLoginPolicy,
   Unsubscribe,
+  WebsiteProject,
+  WebsiteProjectCreateInput,
+  WebsiteProjectKind,
+  WebsiteProjectUpdateInput,
 } from '@elysian/contracts'
 
 /*
@@ -263,6 +267,25 @@ export interface UserAdapter {
   syncFromSystem(): Promise<{ total: number }>
 }
 
+/**
+ * 网站部署适配接口。本期为 mock 实现：项目改动只落内存数据集；
+ * 真实的项目启停、删除由未来执行层筛选与执行，页面不改。
+ */
+export interface WebsitesAdapter {
+  /** 全部项目（演示）：五种运行时类型共用一份列表，卡片上以标签区分。 */
+  list(): Promise<readonly WebsiteProject[]>
+  /** 新建项目（演示）：新建即已停止、无证书；同类型同名拒绝。 */
+  create(kind: WebsiteProjectKind, input: WebsiteProjectCreateInput): Promise<WebsiteProject>
+  /** 修改项目（演示）：设置弹窗只改备注与到期时间。 */
+  update(projectId: string, input: WebsiteProjectUpdateInput): Promise<WebsiteProject>
+  /** 删除项目（演示）：只改内存数据集，不触碰任何真实站点。 */
+  remove(projectId: string): Promise<void>
+  /** 启动或停止项目（演示）：Java/Node 启动后补进程号，停止后清空。 */
+  setRunning(projectId: string, running: boolean): Promise<WebsiteProject>
+  /** 项目运行日志（演示）：确定性模板行，详情抽屉按需拉取。 */
+  logs(projectId: string): Promise<readonly string[]>
+}
+
 /** 页面级访问区域。权限只做到这一粒度，本阶段不实现更细的权限模型。 */
 export type PageArea =
   | 'dashboard'
@@ -271,6 +294,7 @@ export type PageArea =
   | 'files'
   | 'logs'
   | 'terminals'
+  | 'websites'
   | 'incidents'
   | 'runs'
   | 'skills'
@@ -344,6 +368,7 @@ export interface ElysianGateway {
   files: FilesAdapter
   logs: LogsAdapter
   terminals: TerminalAdapter
+  websites: WebsitesAdapter
   /** 把演示数据重置回种子状态。 */
   reset(): Promise<void>
 }

@@ -106,6 +106,26 @@ const ENUM_TABLES: ReadonlyArray<{
     values: contracts.HOST_USER_LOGIN_METHODS,
     labels: contracts.HOST_USER_LOGIN_METHOD_LABELS,
   },
+  {
+    name: 'WebsiteProjectKind',
+    values: contracts.WEBSITE_PROJECT_KINDS,
+    labels: contracts.WEBSITE_PROJECT_KIND_LABELS,
+  },
+  {
+    name: 'WebsiteRunState',
+    values: contracts.WEBSITE_RUN_STATES,
+    labels: contracts.WEBSITE_RUN_STATE_LABELS,
+  },
+  {
+    name: 'WebsiteCertState',
+    values: contracts.WEBSITE_CERT_STATES,
+    labels: contracts.WEBSITE_CERT_STATE_LABELS,
+  },
+  {
+    name: 'WebsiteCategory',
+    values: contracts.WEBSITE_CATEGORIES,
+    labels: contracts.WEBSITE_CATEGORY_LABELS,
+  },
   { name: 'FileKind', values: contracts.FILE_KINDS, labels: contracts.FILE_KIND_LABELS },
   {
     name: 'FilePermissionClass',
@@ -455,5 +475,54 @@ describe('日志域词典', () => {
     expect(contracts.LOGIN_LOG_STATUSES).toEqual(['success', 'failure'])
     expect(contracts.LOGIN_LOG_STATUS_LABELS.success).toBe('登录成功')
     expect(contracts.LOGIN_LOG_STATUS_LABELS.failure).toBe('登录失败')
+  })
+})
+
+describe('网站域词典', () => {
+  it('项目类型恰为五种：Java、Node、Go、Python、HTML，PHP 与反代理不登记', () => {
+    expect([...contracts.WEBSITE_PROJECT_KINDS]).toEqual(['java', 'node', 'go', 'python', 'html'])
+    expect(contracts.WEBSITE_PROJECT_KINDS).not.toContain('php')
+    expect(contracts.WEBSITE_PROJECT_KIND_LABELS.java).toBe('Java项目')
+    expect(contracts.WEBSITE_PROJECT_KIND_LABELS.node).toBe('Node项目')
+    expect(contracts.WEBSITE_PROJECT_KIND_LABELS.go).toBe('Go项目')
+    expect(contracts.WEBSITE_PROJECT_KIND_LABELS.python).toBe('Python项目')
+    expect(contracts.WEBSITE_PROJECT_KIND_LABELS.html).toBe('HTML项目')
+  })
+
+  it('运行状态是运行中与已停止两值', () => {
+    expect([...contracts.WEBSITE_RUN_STATES]).toEqual(['running', 'stopped'])
+    expect(contracts.WEBSITE_RUN_STATE_LABELS.running).toBe('运行中')
+    expect(contracts.WEBSITE_RUN_STATE_LABELS.stopped).toBe('已停止')
+  })
+
+  it('SSL 证书状态是已部署、已过期、未部署三值', () => {
+    expect([...contracts.WEBSITE_CERT_STATES]).toEqual(['deployed', 'expired', 'none'])
+    expect(contracts.WEBSITE_CERT_STATE_LABELS.deployed).toBe('已部署')
+    expect(contracts.WEBSITE_CERT_STATE_LABELS.expired).toBe('已过期')
+    expect(contracts.WEBSITE_CERT_STATE_LABELS.none).toBe('未部署')
+  })
+
+  it('分类是生产、测试、开发三档，全部分类只是界面的不过滤态，不入枚举', () => {
+    expect([...contracts.WEBSITE_CATEGORIES]).toEqual(['production', 'testing', 'development'])
+    expect(contracts.WEBSITE_CATEGORY_LABELS.production).toBe('生产环境')
+    expect(contracts.WEBSITE_CATEGORY_LABELS.testing).toBe('测试环境')
+    expect(contracts.WEBSITE_CATEGORY_LABELS.development).toBe('开发环境')
+  })
+
+  it('端口需要与否由项目类型决定：Java 与 Node 要端口，其余不要', () => {
+    expect(contracts.websiteProjectUsesPort('java')).toBe(true)
+    expect(contracts.websiteProjectUsesPort('node')).toBe(true)
+    expect(contracts.websiteProjectUsesPort('go')).toBe(false)
+    expect(contracts.websiteProjectUsesPort('python')).toBe(false)
+    expect(contracts.websiteProjectUsesPort('html')).toBe(false)
+  })
+
+  it('网站项目名判据：去空白后非空，最长 64 字符', () => {
+    expect(contracts.WEBSITE_PROJECT_NAME_MAX_LENGTH).toBe(64)
+    expect(contracts.isValidWebsiteProjectName('订单中心-api')).toBe(true)
+    expect(contracts.isValidWebsiteProjectName('  blog  ')).toBe(true)
+    expect(contracts.isValidWebsiteProjectName('   ')).toBe(false)
+    expect(contracts.isValidWebsiteProjectName('x'.repeat(64))).toBe(true)
+    expect(contracts.isValidWebsiteProjectName('x'.repeat(65))).toBe(false)
   })
 })
