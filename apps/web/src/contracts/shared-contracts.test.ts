@@ -70,6 +70,7 @@ const ENUM_TABLES: ReadonlyArray<{
     values: contracts.FIREWALL_DIRECTIONS,
     labels: contracts.FIREWALL_DIRECTION_LABELS,
   },
+  { name: 'LoginLogStatus', values: contracts.LOGIN_LOG_STATUSES, labels: contracts.LOGIN_LOG_STATUS_LABELS },
   {
     name: 'SshServiceStatus',
     values: contracts.SSH_SERVICE_STATUSES,
@@ -446,5 +447,13 @@ describe('主机账号域词典', () => {
 
   it.each(PASSWORD_CASES)('弱密码判定：%s 判为 %s（%s）', (password, expected, why) => {
     expect(contracts.evaluateSshPasswordStrength(password), why).toBe(expected)
+  })
+})
+
+describe('日志域词典', () => {
+  it('登录状态枚举与标签一一对应', () => {
+    expect(contracts.LOGIN_LOG_STATUSES).toEqual(['success', 'failure'])
+    expect(contracts.LOGIN_LOG_STATUS_LABELS.success).toBe('登录成功')
+    expect(contracts.LOGIN_LOG_STATUS_LABELS.failure).toBe('登录失败')
   })
 })
