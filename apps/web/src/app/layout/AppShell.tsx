@@ -44,6 +44,7 @@ export function AppShell() {
   // 页签式标题的页面（安全、Docker、数据库）经路由 handle 声明藏掉可视标题，页签占据标题位。
   // 全屏型页面（终端）经 handle 声明整条顶栏都不渲染。
   const hideHeader = matches.some((match) => (match.handle as RouteHandle | undefined)?.hideHeader)
+  const flushMain = matches.some((match) => (match.handle as RouteHandle | undefined)?.flushMain)
   const hideHeaderTitle = matches.some(
     (match) => (match.handle as RouteHandle | undefined)?.hideHeaderTitle,
   )
@@ -175,7 +176,13 @@ export function AppShell() {
         </Dialog.Root>
 
         <div className="relative flex min-h-0 flex-1">
-          <main className="min-w-0 flex-1 overflow-y-auto p-4 md:p-6">
+          <main
+            className={
+              flushMain
+                ? 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden'
+                : 'min-w-0 flex-1 overflow-y-auto p-4 md:p-6'
+            }
+          >
             <Outlet />
           </main>
           <NotificationHost />

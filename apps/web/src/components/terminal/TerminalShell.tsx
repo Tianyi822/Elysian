@@ -1,18 +1,13 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { useEffect, useRef, useState } from 'react'
-import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { recallHistory, type TerminalCompletion, type TerminalLine } from './terminalSession'
+import { useRef, useState } from 'react'
+import { TerminalViewport } from './TerminalViewport'
+import type { TerminalCompletion, TerminalLine } from './terminalSession'
 
 /**
- * 终端交互内核：外部点击与 Esc 一律拦截，唯一关闭路径是
+ * 终端交互内核的弹窗壳：外部点击与 Esc 一律拦截，唯一关闭路径是
  * 关闭按钮 → 确认对话框 → 确认关闭。输出区用语义令牌配色。
  *
- * 形态是真终端：没有独立输入条，活动提示行（提示符 + 草稿 + 反色块光标）跟在日志末尾，
- * 键入汇点是一枚 sr-only 的 input——可打印字符与退格由它原生编辑（输入法因此可用），
- * Tab、方向键与 Ctrl 组合键在 keydown 里接管，光标位置经 onSelect 回读进模型。
- *
- * 领域差异全部经 props 注入：标注、主体、提示符、命令引擎、补全引擎与关闭文案；
- * input 行只存裸语句，提示符由本组件渲染时拼在行首（提示符只有一个家）。
+ * 交互内核在 TerminalViewport；领域差异全部经 props 注入。
  */
 
 export type TerminalShellProps = {
@@ -44,14 +39,20 @@ export type TerminalShellProps = {
   }
 }
 
-function ConfirmCloseDialog({
+export function ConfirmCloseDialog({
   open,
-  labels,
+  title,
+  description,
+  cancelLabel,
+  acceptLabel,
   onCancel,
   onConfirm,
 }: {
   open: boolean
-  labels: TerminalShellProps['labels']
+  title: string
+  description: string
+  cancelLabel: string
+  acceptLabel: string
   onCancel: () => void
   onConfirm: () => void
 }) {
@@ -68,22 +69,22 @@ function ConfirmCloseDialog({
           aria-describedby={undefined}
           className="fixed left-1/2 top-1/2 z-[61] w-80 -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-surface-raised p-4 shadow-xl"
         >
-          <Dialog.Title className="text-sm font-semibold">{labels.confirmTitle}</Dialog.Title>
-          <p className="mt-1.5 text-xs text-fg-muted">{labels.confirmDescription}</p>
+          <Dialog.Title className="text-sm font-semibold">{title}</Dialog.Title>
+          <p className="mt-1.5 text-xs text-fg-muted">{description}</p>
           <div className="mt-4 flex justify-end gap-2">
             <button
               type="button"
               onClick={onCancel}
               className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted hover:text-fg"
             >
-              {labels.confirmCancel}
+              {cancelLabel}
             </button>
             <button
               type="button"
               onClick={onConfirm}
               className="rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-medium text-danger"
             >
-              {labels.confirmAccept}
+              {acceptLabel}
             </button>
           </div>
         </Dialog.Content>
@@ -107,139 +108,8 @@ export function TerminalShell({
   onClose,
   labels,
 }: TerminalShellProps) {
-  const [draft, setDraft] = useState('')
-  const [cursor, setCursor] = useState(0)
-  const [historyIndex, setHistoryIndex] = useState<number | null>(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
-  const logRef = useRef<HTMLDivElement>(null)
-  // 输入框在 Portal 的第二次提交才挂载，打开时的 effect 里 ref 还是 null；
-  // 挂载即聚焦才能赢过 Radix FocusScope 交给关闭按钮的首焦点。
-  const attachInput = (node: HTMLInputElement | null) => {
-    inputRef.current = node
-    node?.focus()
-  }
-  // 输入法组合态与「组合刚结束」的一次性标记：组合中的回车是确认候选而非发送。
-  // Safari 派发确认回车的 keydown 晚于 compositionend（isComposing 已为 false），
-  // 只能靠该标记吞掉这一枚；setTimeout(0) 复位保证之后的人工回车不受影响。
-  const composingRef = useRef(false)
-  const swallowEnterRef = useRef(false)
-
-  useEffect(() => {
-    setDraft('')
-    setCursor(0)
-    setHistoryIndex(null)
-    setConfirmOpen(false)
-  }, [sessionKey])
-
-  useEffect(() => {
-    // jsdom 未实现 Element.scrollTo，可选调用让测试环境降级为 no-op，浏览器行为不变。
-    logRef.current?.scrollTo?.({ top: logRef.current.scrollHeight })
-  }, [lines.length, draft])
-
-  // 程序改写草稿（历史召回、补全、Ctrl 组合键）后，把隐藏输入的光标摆回模型位置。
-  useEffect(() => {
-    const input = inputRef.current
-    if (input && document.activeElement === input) input.setSelectionRange(cursor, cursor)
-  }, [draft, cursor])
-
-  // Tab 只服务命令行：窗口内除输入框自身（Tab 用于补全）外，任何元素上的 Tab
-  // 都拦掉默认行为与冒泡，把焦点送回命令行，避免 Tab 选中终端里的其他网页组件。
-  useEffect(() => {
-    const onKeyDownCapture = (event: KeyboardEvent) => {
-      if (event.key !== 'Tab') return
-      const content = contentRef.current
-      if (!content || !content.contains(event.target as Node | null)) return
-      if (document.activeElement === inputRef.current) return
-      event.preventDefault()
-      event.stopPropagation()
-      inputRef.current?.focus()
-    }
-    document.addEventListener('keydown', onKeyDownCapture, true)
-    return () => document.removeEventListener('keydown', onKeyDownCapture, true)
-  }, [])
-
-  const recall = (direction: -1 | 1) => {
-    if (!history.length) return
-    const { draft: nextDraft, index: next } = recallHistory(history, historyIndex, direction)
-    setHistoryIndex(next)
-    setDraft(nextDraft)
-    setCursor(nextDraft.length)
-  }
-
-  const submit = () => {
-    const command = draft
-    setDraft('')
-    setCursor(0)
-    setHistoryIndex(null)
-    onSubmit(command)
-  }
-
-  const runCompletion = () => {
-    const result = complete(draft, cursor)
-    // 无法再收敛时按 bash 的习惯把候选列出来，草稿不动。
-    if (result.candidates) {
-      onAppendOutput([result.candidates.join('  ')])
-      return
-    }
-    setDraft(result.draft)
-    setCursor(result.cursor)
-  }
-
-  const interrupt = () => {
-    onAppendOutput([`${prompt}${draft}^C`])
-    setDraft('')
-    setCursor(0)
-    setHistoryIndex(null)
-  }
-
-  const onKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
-    if (event.nativeEvent.isComposing || composingRef.current) return // 组合中的键全部留给输入法
-    if (event.key === 'Enter') {
-      if (swallowEnterRef.current) {
-        swallowEnterRef.current = false
-        return
-      }
-      event.preventDefault()
-      submit()
-      return
-    }
-    if (event.key === 'Tab') {
-      event.preventDefault()
-      runCompletion()
-      return
-    }
-    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
-      event.preventDefault()
-      recall(event.key === 'ArrowUp' ? -1 : 1)
-      return
-    }
-    if ((event.ctrlKey || event.metaKey) && !event.altKey) {
-      const key = event.key.toLowerCase()
-      if (key === 'c') {
-        event.preventDefault()
-        interrupt()
-      } else if (key === 'l') {
-        event.preventDefault()
-        onClear()
-      } else if (key === 'u') {
-        event.preventDefault()
-        setDraft(draft.slice(cursor))
-        setCursor(0)
-      } else if (key === 'k') {
-        event.preventDefault()
-        setDraft(draft.slice(0, cursor))
-      } else if (key === 'a') {
-        event.preventDefault()
-        setCursor(0)
-      } else if (key === 'e') {
-        event.preventDefault()
-        setCursor(draft.length)
-      }
-    }
-    // 其余键（可打印字符、退格、←→、Home/End）交给隐藏输入原生编辑，光标经 onSelect 回读。
-  }
 
   return (
     <Dialog.Root open onOpenChange={() => {/* 外部来源全部忽略，只能走关闭确认 */}}>
@@ -270,74 +140,27 @@ export function TerminalShell({
             </button>
           </div>
 
-          <label htmlFor="terminal-input" className="sr-only">
-            {labels.input}
-          </label>
-          <input
-            id="terminal-input"
-            ref={attachInput}
-            value={draft}
-            onChange={(event) => {
-              setDraft(event.target.value)
-              setCursor(event.target.selectionStart ?? event.target.value.length)
-            }}
-            onSelect={(event) =>
-              setCursor(event.currentTarget.selectionStart ?? event.currentTarget.value.length)
-            }
-            onCompositionStart={() => {
-              composingRef.current = true
-            }}
-            onCompositionEnd={() => {
-              composingRef.current = false
-              swallowEnterRef.current = true
-              window.setTimeout(() => {
-                swallowEnterRef.current = false
-              }, 0)
-            }}
-            onKeyDown={onKeyDown}
-            autoComplete="off"
-            spellCheck={false}
-            className="sr-only"
+          <TerminalViewport
+            prompt={prompt}
+            sessionKey={sessionKey}
+            lines={lines}
+            history={history}
+            onSubmit={onSubmit}
+            complete={complete}
+            onAppendOutput={onAppendOutput}
+            onClear={onClear}
+            inputLabel={labels.input}
+            trapRootRef={contentRef}
           />
-
-          <div
-            ref={logRef}
-            role="log"
-            aria-live="polite"
-            onClick={() => inputRef.current?.focus()}
-            className="flex-1 cursor-text overflow-y-auto px-4 py-3 font-mono text-xs leading-relaxed text-fg"
-          >
-            {lines.map((line, index) => (
-              <p
-                key={index}
-                className={
-                  line.kind === 'input'
-                    ? 'text-accent'
-                    : line.kind === 'banner'
-                      ? 'text-warning'
-                      : undefined
-                }
-              >
-                {/* 提示符只有一个家：input 行只存裸语句，渲染时在同一 <p> 里拼在行首。 */}
-                {line.kind === 'input' ? `${prompt}${line.text}` : line.text}
-              </p>
-            ))}
-            {/* 活动提示行对读屏隐藏：草稿的值由上面那枚带 label 的输入承载，避免读两遍。 */}
-            <p aria-hidden="true" className="whitespace-pre-wrap break-all">
-              <span className="text-success">{prompt}</span>
-              {draft.slice(0, cursor)}
-              <span className="bg-fg text-bg motion-safe:animate-caret-blink">
-                {draft.slice(cursor, cursor + 1) || ' '}
-              </span>
-              {draft.slice(cursor + 1)}
-            </p>
-          </div>
         </Dialog.Content>
       </Dialog.Portal>
 
       <ConfirmCloseDialog
         open={confirmOpen}
-        labels={labels}
+        title={labels.confirmTitle}
+        description={labels.confirmDescription}
+        cancelLabel={labels.confirmCancel}
+        acceptLabel={labels.confirmAccept}
         onCancel={() => setConfirmOpen(false)}
         onConfirm={() => {
           setConfirmOpen(false)

@@ -23,6 +23,7 @@ import { applyIncidentCreated } from './dataset'
 import { resetSshData } from './sshData'
 import { resetFilesData } from './filesData'
 import { resetHostUsers } from './usersData'
+import { MockTerminalAdapter } from './terminalAdapter'
 import type { EventsAdapter } from '../../contracts/adapters'
 
 /**
@@ -41,6 +42,7 @@ export function createMockGateway(
   const read = () => dataset
   const eventIntervalMs = options.eventIntervalMs ?? 2000
   const containerEvents = createContainerEventsLayer(read, { intervalMs: eventIntervalMs })
+  const terminals = new MockTerminalAdapter()
 
   return {
     session: new MockSessionAdapter(),
@@ -63,6 +65,7 @@ export function createMockGateway(
     users: new MockUserAdapter(),
     files: new MockFilesAdapter(),
     logs: new MockLogsAdapter(),
+    terminals,
     events: wrapLive(
       containerEvents.wrap(
         options.eventStream === 'memory'
@@ -80,6 +83,7 @@ export function createMockGateway(
       resetSshData()
       resetFilesData()
       resetHostUsers()
+      terminals.reset()
     },
   }
 }

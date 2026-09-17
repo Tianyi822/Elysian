@@ -95,6 +95,30 @@ export interface EventsAdapter {
 export type MockCommandResult = { lines: readonly string[]; clear?: boolean }
 
 /**
+ * 本机 Web 终端会话的身份。connect 之后界面用这些字段画标签与提示符；
+ * 真实 PTY 接入后形状不变，只换 adapter 实现。
+ */
+export type HostTerminalSessionInfo = {
+  id: string
+  user: string
+  hostLabel: string
+  prompt: string
+}
+
+/**
+ * 本机终端适配接口。本期为 mock：connect 开一条内存会话，命令在本页确定性求值，
+ * 不执行真实 Shell；未来换 WebSocket/PTY adapter，页面不改。
+ */
+export interface TerminalAdapter {
+  /** 连上本机（演示）：固定用户 ops、主机名 elysian-demo。 */
+  connect(): Promise<HostTerminalSessionInfo>
+  /** 演示终端：命令在本页 mock 内确定性求值，不执行真实 Shell。 */
+  execMockCommand(sessionId: string, command: string): Promise<MockCommandResult>
+  /** 断开一条会话（演示）：之后再 exec 必须失败。 */
+  disconnect(sessionId: string): Promise<void>
+}
+
+/**
  * 容器域适配接口。本期为 mock 实现：操作改写内存数据集，
  * 状态变化经 container/updated 事件推回；未来换真实运行时 adapter，页面不改。
  */
@@ -319,6 +343,7 @@ export interface ElysianGateway {
   users: UserAdapter
   files: FilesAdapter
   logs: LogsAdapter
+  terminals: TerminalAdapter
   /** 把演示数据重置回种子状态。 */
   reset(): Promise<void>
 }

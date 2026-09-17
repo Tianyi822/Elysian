@@ -1,6 +1,11 @@
-import { screen, waitFor, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { screen, within } from '@testing-library/react'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { renderApp } from '../test/renderApp'
+import { useTerminalsStore } from '../stores/terminalsStore'
+
+beforeEach(() => {
+  useTerminalsStore.getState().resetLocal()
+})
 
 describe('路由表', () => {
   it('/ 渲染仪表盘', async () => {
@@ -41,8 +46,7 @@ describe('路由表', () => {
   it('/terminals 渲染终端区：整条顶栏不渲染，窄屏仍留有打开主导航的入口', async () => {
     renderApp('/terminals')
     expect(await screen.findByRole('link', { name: '终端' })).toHaveAttribute('aria-current', 'page')
-    // 空白占位页没有可断言的内容：以访问闸门退出加载态作为路由已就绪的信号。
-    await waitFor(() => expect(screen.queryByText('正在校验访问权限…')).not.toBeInTheDocument())
+    expect(await screen.findByRole('tablist', { name: '终端会话' })).toBeInTheDocument()
     expect(screen.queryByRole('banner')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '打开主导航' })).toBeInTheDocument()
   })

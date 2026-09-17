@@ -8,6 +8,7 @@ import { IconButton } from '../../components/IconButton'
 import { useDashboardStore } from '../../stores/dashboardStore'
 import { useEventStreamStore } from '../../stores/eventStreamStore'
 import { useNotificationStore } from '../../stores/notificationStore'
+import { useTerminalsStore } from '../../stores/terminalsStore'
 import { useTheme } from '../theme/ThemeProvider'
 
 function ActionItem({
@@ -66,6 +67,7 @@ export function QuickActions({ collapsed = false }: { collapsed?: boolean }) {
     setResetError(undefined)
     try {
       await gateway.reset()
+      useTerminalsStore.getState().resetLocal()
       await load(gateway)
       setConfirmOpen(false)
       notify({ tone: 'success', message: '演示数据已重置回种子状态。' })

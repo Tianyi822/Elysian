@@ -24,6 +24,8 @@ export type RouteHandle = {
   hideHeaderTitle?: boolean
   /** 全屏型页面（如终端）置 true：整条顶栏不渲染，页面吃掉顶栏以下全部高度。 */
   hideHeader?: boolean
+  /** 主区去掉内边距并禁止外层滚动，让全屏页自己吃高度。 */
+  flushMain?: boolean
 }
 
 /**
@@ -107,6 +109,7 @@ export const routes: RouteObject[] = [
         path: 'terminals',
         handle: {
           hideHeader: true,
+          flushMain: true,
         } satisfies RouteHandle,
         element: (
           <RequireArea area="terminals" title="终端">

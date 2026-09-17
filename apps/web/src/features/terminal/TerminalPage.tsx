@@ -1,7 +1,125 @@
+import { useEffect, useState } from 'react'
+import { useGateway } from '../../adapters/GatewayProvider'
+import { completeHostTerminalCommand } from '../../adapters/mock/hostTerminal'
+import { ConfirmCloseDialog } from '../../components/terminal/TerminalShell'
+import { TerminalViewport } from '../../components/terminal/TerminalViewport'
+import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
+import { useTerminalsStore } from '../../stores/terminalsStore'
+import { TerminalTabBar } from './TerminalTabBar'
+
 /**
- * 终端区页面：本阶段先落空白页占位，页面标题由外壳按导航项渲染；
- * 界面落地前不加载任何适配数据。
+ * 本机多标签演示终端：进页自动开一条会话，命令走 mock 适配层，不执行真实 Shell。
+ * 关闭走确认框；全部关掉后是空状态。
  */
 export function TerminalPage() {
-  return <div />
+  const gateway = useGateway()
+  const sessions = useTerminalsStore((state) => state.sessions)
+  const activeId = useTerminalsStore((state) => state.activeId)
+  const opening = useTerminalsStore((state) => state.opening)
+  const hasUserDismissed = useTerminalsStore((state) => state.hasUserDismissed)
+  const seedGeneration = useTerminalsStore((state) => state.seedGeneration)
+  const openSession = useTerminalsStore((state) => state.openSession)
+  const selectSession = useTerminalsStore((state) => state.selectSession)
+  const closeSession = useTerminalsStore((state) => state.closeSession)
+  const reconnect = useTerminalsStore((state) => state.reconnect)
+  const submitCommand = useTerminalsStore((state) => state.submitCommand)
+  const appendOutput = useTerminalsStore((state) => state.appendOutput)
+  const clearScreen = useTerminalsStore((state) => state.clearScreen)
+  const [closingId, setClosingId] = useState<string | undefined>(undefined)
+
+  useEffect(() => {
+    if (hasUserDismissed || sessions.length > 0 || opening) return
+    void openSession(gateway)
+  }, [gateway, hasUserDismissed, sessions.length, opening, seedGeneration, openSession])
+
+  const active = sessions.find((session) => session.id === activeId)
+  const closing = sessions.find((session) => session.id === closingId)
+
+  if (sessions.length === 0) {
+    if (hasUserDismissed) {
+      return (
+        <div className="flex h-full items-center justify-center p-4">
+          <EmptyState
+            title="还没有终端会话"
+            description="新建一条本机演示终端。命令在浏览器内求值，待接入真实执行。"
+            action={
+              <button
+                type="button"
+                onClick={() => void openSession(gateway)}
+                className="mt-1 rounded-lg border border-line bg-surface-raised px-2 py-1 text-xs text-fg"
+              >
+                新建终端
+              </button>
+            }
+          />
+        </div>
+      )
+    }
+    return <LoadingState label="正在连接本机终端…" />
+  }
+
+  return (
+    <section aria-label="终端" className="flex h-full min-h-0 flex-col bg-bg">
+      <TerminalTabBar
+        sessions={sessions}
+        activeId={activeId}
+        opening={opening}
+        onSelect={selectSession}
+        onClose={setClosingId}
+        onCreate={() => void openSession(gateway)}
+      />
+
+      {active?.status === 'connecting' ? (
+        <div className="flex flex-1 items-center justify-center p-4">
+          <LoadingState label="正在连接本机终端…" />
+        </div>
+      ) : null}
+
+      {active?.status === 'error' ? (
+        <div className="flex flex-1 items-center justify-center p-4">
+          <ErrorState
+            title="本机终端连接失败"
+            description={active.errorMessage}
+            onRetry={() => void reconnect(gateway, active.id)}
+          />
+        </div>
+      ) : null}
+
+      {active?.status === 'connected' ? (
+        <div
+          id={`terminal-panel-${active.id}`}
+          role="tabpanel"
+          aria-labelledby={`terminal-tab-${active.id}`}
+          className="flex min-h-0 flex-1 flex-col"
+        >
+          <TerminalViewport
+            prompt={active.prompt}
+            sessionKey={active.id}
+            lines={active.lines}
+            history={active.history}
+            onSubmit={(command) => void submitCommand(gateway, command)}
+            complete={completeHostTerminalCommand}
+            onAppendOutput={appendOutput}
+            onClear={clearScreen}
+            inputLabel="命令输入"
+          />
+        </div>
+      ) : null}
+
+      <ConfirmCloseDialog
+        open={Boolean(closing)}
+        title="确认关闭终端？"
+        description="会话历史将不再保留。"
+        cancelLabel="继续使用"
+        acceptLabel="确认关闭"
+        onCancel={() => setClosingId(undefined)}
+        onConfirm={() => {
+          if (!closing) return
+          const id = closing.id
+          setClosingId(undefined)
+          void closeSession(gateway, id)
+        }}
+      />
+    </section>
+  )
 }
