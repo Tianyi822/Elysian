@@ -46,7 +46,7 @@ function ToolButton({
 export function logLineToneClass(line: string): string {
   if (line.includes('[ERROR]')) return 'text-red-400'
   if (line.includes('[WARNING]')) return 'text-amber-300'
-  if (line.includes('[DEBUG]')) return 'text-neutral-500'
+  if (line.includes('[DEBUG]')) return 'text-neutral-400'
   return 'text-neutral-200'
 }
 
@@ -75,7 +75,7 @@ function LogView({
       className={`overflow-y-auto rounded-xl border border-neutral-800 bg-neutral-950 px-4 py-3 font-mono text-xs leading-relaxed ${className ?? ''}`}
     >
       {lines.length === 0 ? (
-        <p className="text-neutral-500">没有匹配的日志行</p>
+        <p className="text-neutral-400">没有匹配的日志行</p>
       ) : (
         lines.map((line, index) => (
           <p key={index} className={`whitespace-pre-wrap break-all ${logLineToneClass(line)}`}>
