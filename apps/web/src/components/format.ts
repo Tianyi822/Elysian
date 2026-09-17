@@ -44,3 +44,9 @@ export function formatUptime(startedAt: string | undefined, now: Date): string {
   if (hours > 0) return `${hours} 小时`
   return `${minutes} 分钟`
 }
+
+/** 日志体积：字节格式化成 KB/MB，保留两位小数，形态与参照产品的「13.41 KB」一致。 */
+export function formatByteSize(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`
+}
