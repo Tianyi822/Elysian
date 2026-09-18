@@ -3,11 +3,17 @@ import { BASE_DATE } from './dataset'
 import {
   appendLiveResourceSample,
   createResourceMetrics,
+  DEFAULT_TIME_RANGE,
   getLiveResources,
   RESOURCE_METRIC_LABELS,
   RESOURCE_METRIC_UNITS,
   resetLiveResources,
   sliceResourceMetrics,
+  TIME_RANGE_LABELS,
+  TIME_RANGES,
+  timeRangeDurationMs,
+  timeRangeGranularity,
+  timeRangeGranularityLabel,
 } from './resourceMetrics'
 import type { ResourceMetricKey } from './resourceMetrics'
 
@@ -44,11 +50,31 @@ describe('资源指标时序 mock', () => {
     expect(createResourceMetrics()).toEqual(metrics)
   })
 
-  it('按时间范围切片：近 7 天取最后 7 天，近 30 天取全量', () => {
+  it('按时间范围切片：近 7 天取最后 7 天', () => {
     const week = sliceResourceMetrics(metrics, '7d')
     expect(week).toHaveLength(7)
     expect(week).toEqual(metrics.slice(-7))
-    expect(sliceResourceMetrics(metrics, '30d')).toEqual(metrics)
+  })
+})
+
+describe('TimeRange', () => {
+  it('默认与枚举完整', () => {
+    expect(DEFAULT_TIME_RANGE).toBe('5m')
+    expect([...TIME_RANGES]).toEqual(['5m', '10m', '30m', '1h', '5h', '10h', '7d'])
+    expect(TIME_RANGE_LABELS['5m']).toBe('近 5 分钟')
+    expect(TIME_RANGE_LABELS['7d']).toBe('近 7 天')
+    expect(TIME_RANGE_LABELS).not.toHaveProperty('30d')
+  })
+
+  it('窗长与粒度', () => {
+    expect(timeRangeDurationMs('5m')).toBe(5 * 60_000)
+    expect(timeRangeDurationMs('1h')).toBe(3_600_000)
+    expect(timeRangeDurationMs('7d')).toBe(7 * 86_400_000)
+    expect(timeRangeGranularity('5m')).toBe('3s')
+    expect(timeRangeGranularity('1h')).toBe('3s')
+    expect(timeRangeGranularity('5h')).toBe('1m')
+    expect(timeRangeGranularityLabel('10m')).toBe('按 3 秒')
+    expect(timeRangeGranularityLabel('7d')).toBe('按 1 分钟')
   })
 })
 

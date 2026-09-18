@@ -13,11 +13,64 @@ export type ResourceMetricKey = 'cpu' | 'memory' | 'networkIo' | 'diskIo'
 /** 资源序列与事故时序共用 30 天窗口。 */
 export const TREND_DAYS = 30
 
-export type TimeRange = '7d' | '30d'
+export type TimeRange = '5m' | '10m' | '30m' | '1h' | '5h' | '10h' | '7d'
+
+export const TIME_RANGES: readonly TimeRange[] = [
+  '5m',
+  '10m',
+  '30m',
+  '1h',
+  '5h',
+  '10h',
+  '7d',
+]
 
 export const TIME_RANGE_LABELS: Record<TimeRange, string> = {
+  '5m': '近 5 分钟',
+  '10m': '近 10 分钟',
+  '30m': '近 30 分钟',
+  '1h': '近 1 小时',
+  '5h': '近 5 小时',
+  '10h': '近 10 小时',
   '7d': '近 7 天',
-  '30d': '近 30 天',
+}
+
+export const DEFAULT_TIME_RANGE: TimeRange = '5m'
+
+const MS_PER_MINUTE = 60_000
+const MS_PER_HOUR = 3_600_000
+const MS_PER_DAY = 86_400_000
+
+/** 时间范围对应的回看窗长（毫秒）。 */
+export function timeRangeDurationMs(range: TimeRange): number {
+  switch (range) {
+    case '5m':
+      return 5 * MS_PER_MINUTE
+    case '10m':
+      return 10 * MS_PER_MINUTE
+    case '30m':
+      return 30 * MS_PER_MINUTE
+    case '1h':
+      return MS_PER_HOUR
+    case '5h':
+      return 5 * MS_PER_HOUR
+    case '10h':
+      return 10 * MS_PER_HOUR
+    case '7d':
+      return 7 * MS_PER_DAY
+  }
+}
+
+export type ResourceGranularity = '3s' | '1m'
+
+/** 时间范围对应的采样粒度：窗长不超过 1 小时按 3 秒，否则按 1 分钟。 */
+export function timeRangeGranularity(range: TimeRange): ResourceGranularity {
+  return timeRangeDurationMs(range) <= MS_PER_HOUR ? '3s' : '1m'
+}
+
+/** 采样粒度的中文展示文案。 */
+export function timeRangeGranularityLabel(range: TimeRange): string {
+  return timeRangeGranularity(range) === '3s' ? '按 3 秒' : '按 1 分钟'
 }
 
 export type DailyResourceMetrics = {
@@ -66,12 +119,15 @@ export function createResourceMetrics(): DailyResourceMetrics[] {
   return days
 }
 
-/** 按时间范围取最近 N 天，返回仍按时间正序排列的切片。 */
+/**
+ * 按时间范围取最近 N 天，返回仍按时间正序排列的切片。
+ * @deprecated 仍按「天」切片；窗长与粒度切片由后续任务替换。
+ */
 export function sliceResourceMetrics(
   metrics: readonly DailyResourceMetrics[],
   range: TimeRange,
 ): DailyResourceMetrics[] {
-  const count = range === '7d' ? 7 : 30
+  const count = range === '7d' ? 7 : 1
   return metrics.slice(-count)
 }
 
