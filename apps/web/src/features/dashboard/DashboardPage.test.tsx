@@ -86,7 +86,7 @@ describe('仪表盘筛选栏', () => {
       'aria-pressed',
       'true',
     )
-    expect(screen.getByText(/粒度/)).toHaveTextContent('按天')
+    expect(screen.getByText(/粒度/)).toHaveTextContent('按 3 秒')
 
     await user.click(within(group).getByRole('button', { name: '近 7 天' }))
 
@@ -98,6 +98,8 @@ describe('仪表盘筛选栏', () => {
       'aria-pressed',
       'false',
     )
+    expect(screen.getByText(/粒度/)).toHaveTextContent('按 1 分钟')
+    expect(screen.getByRole('button', { name: '回到预设' })).toBeInTheDocument()
   })
 
   it('刷新期间有反馈且保留内容；刷新失败保留内容并出错误横幅', async () => {

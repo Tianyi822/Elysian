@@ -1,8 +1,8 @@
 import type { EChartsCoreOption } from 'echarts/core'
 import {
   RESOURCE_METRIC_UNITS,
-  type DailyResourceMetrics,
   type ResourceMetricKey,
+  type ResourceSamplePoint,
 } from '../../adapters/mock/resourceMetrics'
 
 /**
@@ -67,12 +67,10 @@ export function readChartPalette(theme: 'dark' | 'light'): ChartPalette {
 }
 
 /**
- * 资源指标趋势 option：显示横纵坐标；
- * X 轴使用稳定的槽位索引，避免滚动窗口更新时触发首点 remove/尾点 add 的 diff；
- * 日期由轴标签格式化为 MM-DD。
+ * 资源指标趋势 option：毫秒时间戳横轴，支持 dataZoom 在当前预设内深入缩放。
  */
 export function buildResourceTrendOption(
-  days: readonly DailyResourceMetrics[],
+  points: readonly ResourceSamplePoint[],
   key: ResourceMetricKey,
   palette: ChartPalette,
 ): EChartsCoreOption {
@@ -81,9 +79,8 @@ export function buildResourceTrendOption(
 
   return {
     textStyle: { color: palette.text, fontSize: 12 },
-    // ECharts 官方的更新动画配置：动画在下一拍之前完成，避免频繁重启动画。
     animation: true,
-    animationDurationUpdate: 1600,
+    animationDurationUpdate: 300,
     animationEasingUpdate: 'linear',
     tooltip: {
       trigger: 'axis',
@@ -92,23 +89,18 @@ export function buildResourceTrendOption(
       borderWidth: 1,
       textStyle: { color: palette.text, fontSize: 12 },
     },
-    grid: { left: 12, right: 16, top: 28, bottom: 8, containLabel: true },
+    grid: { left: 12, right: 16, top: 28, bottom: 32, containLabel: true },
+    dataZoom: [{ type: 'inside' }, { type: 'slider', height: 18 }],
     xAxis: {
-      type: 'category',
+      type: 'time',
       show: true,
       boundaryGap: false,
-      // 槽位保持不变，滚动时只更新数值，曲线会整体平滑移动而不会先清空左端。
-      data: days.map((_, index) => String(index)),
       axisLine: { show: true, lineStyle: { color: palette.axisLine } },
       axisTick: { show: false },
       axisLabel: {
         color: palette.subtle,
         fontSize: 11,
         hideOverlap: true,
-        formatter: (value: string) => {
-          const date = days[Number(value)]?.date
-          return date ? date.slice(5) : value
-        },
       },
     },
     yAxis: {
@@ -128,7 +120,7 @@ export function buildResourceTrendOption(
         type: 'line',
         smooth: true,
         showSymbol: false,
-        data: days.map((day) => day[key]),
+        data: points.map((point) => [point.ts, point[key]] as [number, number]),
         itemStyle: { color: palette.accent },
         lineStyle: { color: palette.accent, width: 1.5 },
         areaStyle: { color: palette.accent, opacity: 0.12 },

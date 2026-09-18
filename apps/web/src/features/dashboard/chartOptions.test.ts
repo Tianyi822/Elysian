@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createResourceMetrics, sliceResourceMetrics } from '../../adapters/mock/resourceMetrics'
+import type { ResourceSamplePoint } from '../../adapters/mock/resourceMetrics'
 import {
   buildDiskBarsOption,
   buildLoadBarsOption,
@@ -18,6 +18,16 @@ const PALETTE: ChartPalette = {
   surface: '#sf',
 }
 
+function makePoints(count: number, baseTs = 1_700_000_000_000): ResourceSamplePoint[] {
+  return Array.from({ length: count }, (_, index) => ({
+    ts: baseTs + index * 3_000,
+    cpu: 50 + index,
+    memory: 60 + index,
+    networkIo: 100,
+    diskIo: 80,
+  }))
+}
+
 describe('图表配色读取', () => {
   it('jsdom 解析不了 CSS 令牌时按主题回落，深浅两套不同', () => {
     const dark = readChartPalette('dark')
@@ -28,36 +38,34 @@ describe('图表配色读取', () => {
 })
 
 describe('资源趋势 option', () => {
-  it('单系列，数据点数与天数一致，颜色取强调色', () => {
-    const days = sliceResourceMetrics(createResourceMetrics(), '7d')
-    const option = buildResourceTrendOption(days, 'cpu', PALETTE)
+  it('单系列，数据点数与采样点一致，颜色取强调色', () => {
+    const points = makePoints(7)
+    const option = buildResourceTrendOption(points, 'cpu', PALETTE)
 
     const series = option.series as ReadonlyArray<{
       id: string
-      data: readonly number[]
+      data: readonly [number, number][]
       itemStyle: { color: string }
     }>
     expect(series).toHaveLength(1)
     expect(series[0]?.id).toBe('resource-cpu')
-    expect(series[0]?.data).toEqual(days.map((day) => day.cpu))
+    expect(series[0]?.data).toEqual(points.map((point) => [point.ts, point.cpu]))
     expect(series[0]?.itemStyle.color).toBe(PALETTE.accent)
 
     expect(option.animation).toBe(true)
-    expect(option.animationDurationUpdate).toBe(1600)
+    expect(option.animationDurationUpdate).toBeLessThanOrEqual(300)
     expect(option.animationEasingUpdate).toBe('linear')
-
-    const xAxis = option.xAxis as { data: readonly string[]; show: boolean }
-    expect(xAxis.data).toHaveLength(7)
-    expect(xAxis.data).toEqual(['0', '1', '2', '3', '4', '5', '6'])
+    expect(option.dataZoom).toBeTruthy()
   })
 
-  it('横纵坐标轴可见：X 轴按日期标签、Y 轴带单位并显示刻度', () => {
-    const days = sliceResourceMetrics(createResourceMetrics(), '7d')
-    const option = buildResourceTrendOption(days, 'cpu', PALETTE)
+  it('横纵坐标轴可见：X 轴为时间轴、Y 轴带单位并显示刻度', () => {
+    const points = makePoints(7)
+    const option = buildResourceTrendOption(points, 'cpu', PALETTE)
 
     const xAxis = option.xAxis as {
+      type: string
       show: boolean
-      axisLabel: { formatter: (value: string) => string; color: string }
+      axisLabel: { color: string }
       axisLine: { show: boolean }
     }
     const yAxis = option.yAxis as {
@@ -68,10 +76,10 @@ describe('资源趋势 option', () => {
       splitLine: { show: boolean }
     }
 
+    expect(xAxis.type).toBe('time')
     expect(xAxis.show).toBe(true)
     expect(xAxis.axisLine.show).toBe(true)
-    expect(xAxis.axisLabel.formatter('0')).toBe(days[0]!.date.slice(5))
-    expect(xAxis.axisLabel.formatter('6')).toBe(days[6]!.date.slice(5))
+    expect(xAxis.axisLabel.color).toBe(PALETTE.subtle)
 
     expect(yAxis.show).toBe(true)
     expect(yAxis.name).toBe('%')
@@ -80,20 +88,26 @@ describe('资源趋势 option', () => {
   })
 
   it('吞吐类指标 Y 轴单位为 MB/s 且不锁 100 上限', () => {
-    const days = sliceResourceMetrics(createResourceMetrics(), '7d')
-    const option = buildResourceTrendOption(days, 'networkIo', PALETTE)
+    const points = makePoints(3)
+    const option = buildResourceTrendOption(points, 'networkIo', PALETTE)
     const yAxis = option.yAxis as { name: string; max?: number }
     expect(yAxis.name).toBe('MB/s')
     expect(yAxis.max).toBeUndefined()
   })
 
   it('各资源指标共用同一配色策略（强调色），互不依赖严重等级令牌', () => {
-    const days = createResourceMetrics()
+    const points = makePoints(5)
     for (const key of ['memory', 'networkIo', 'diskIo'] as const) {
-      const option = buildResourceTrendOption(days, key, PALETTE)
+      const option = buildResourceTrendOption(points, key, PALETTE)
       const series = option.series as ReadonlyArray<{ id: string }>
       expect(series[0]?.id).toBe(`resource-${key}`)
     }
+  })
+
+  it('启用 inside 与 slider 两类 dataZoom', () => {
+    const option = buildResourceTrendOption(makePoints(2), 'cpu', PALETTE)
+    const zoom = option.dataZoom as ReadonlyArray<{ type: string }>
+    expect(zoom.map((entry) => entry.type)).toEqual(['inside', 'slider'])
   })
 })
 

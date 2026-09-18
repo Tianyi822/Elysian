@@ -1,5 +1,9 @@
 
-import { TIME_RANGE_LABELS, TIME_RANGES } from '../../adapters/mock/resourceMetrics'
+import {
+  TIME_RANGE_LABELS,
+  TIME_RANGES,
+  timeRangeGranularityLabel,
+} from '../../adapters/mock/resourceMetrics'
 import type { TimeRange } from '../../adapters/mock/resourceMetrics'
 
 const RANGES = TIME_RANGES
@@ -8,11 +12,13 @@ export function FilterBar({
   range,
   onRangeChange,
   onRefresh,
+  onResetZoom,
   refreshing,
 }: {
   range: TimeRange
   onRangeChange: (range: TimeRange) => void
   onRefresh: () => void
+  onResetZoom: () => void
   refreshing: boolean
 }) {
   return (
@@ -49,6 +55,13 @@ export function FilterBar({
         >
           刷新
         </button>
+        <button
+          type="button"
+          onClick={onResetZoom}
+          className="rounded border border-line bg-surface-raised px-3 py-1.5 text-sm text-fg"
+        >
+          回到预设
+        </button>
         {refreshing ? (
           <span role="status" className="text-sm text-fg-muted">
             正在刷新…
@@ -56,7 +69,7 @@ export function FilterBar({
         ) : null}
 
         <span className="ml-auto text-sm text-fg-subtle">
-          粒度：<span className="text-fg-muted">按天</span>
+          粒度：<span className="text-fg-muted">{timeRangeGranularityLabel(range)}</span>
         </span>
       </div>
     </section>

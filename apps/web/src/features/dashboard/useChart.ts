@@ -11,7 +11,11 @@ import type { ChartPalette } from './chartOptions'
  * 主题属性由 ThemeProvider 的 insertion effect 翻转，先于全部被动 effect，
  * 因此读取到的一定是新主题——在渲染期读取会滞后一次切换，这是评审发现的真实浏览器缺陷。
  */
-export function useChart(buildOption: () => EChartsCoreOption, rebuildKey: string) {
+export function useChart(
+  buildOption: () => EChartsCoreOption,
+  rebuildKey: string,
+  resetZoomSignal?: number,
+) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<echarts.ECharts | undefined>(undefined)
   const buildRef = useRef(buildOption)
@@ -39,6 +43,15 @@ export function useChart(buildOption: () => EChartsCoreOption, rebuildKey: strin
   useEffect(() => {
     chartRef.current?.setOption(buildRef.current(), { notMerge: false, lazyUpdate: false })
   }, [rebuildKey])
+
+  useEffect(() => {
+    if (resetZoomSignal === undefined || resetZoomSignal === 0) return
+    chartRef.current?.dispatchAction({
+      type: 'dataZoom',
+      start: 0,
+      end: 100,
+    })
+  }, [resetZoomSignal])
 
   return containerRef
 }

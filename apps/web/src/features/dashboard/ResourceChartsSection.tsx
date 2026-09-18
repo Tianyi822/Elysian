@@ -1,6 +1,5 @@
-import { useMemo } from 'react'
 import { BarChart, LineChart } from 'echarts/charts'
-import { GridComponent, TooltipComponent } from 'echarts/components'
+import { DataZoomComponent, GridComponent, TooltipComponent } from 'echarts/components'
 import * as echarts from 'echarts/core'
 import type { EChartsCoreOption } from 'echarts/core'
 import { SVGRenderer } from 'echarts/renderers'
@@ -8,23 +7,19 @@ import { useTheme } from '../../app/theme/ThemeProvider'
 import {
   RESOURCE_METRIC_LABELS,
   RESOURCE_METRIC_UNITS,
-  sliceResourceMetrics,
-  type TimeRange,
+  type ResourceMetricKey,
+  type ResourceSamplePoint,
 } from '../../adapters/mock/resourceMetrics'
-import type {
-  DailyResourceMetrics,
-  ResourceMetricKey,
-} from '../../adapters/mock/resourceMetrics'
+import type { DiskUsage, SystemLoad } from '../../adapters/mock/resourceMetrics'
 import {
   buildDiskBarsOption,
   buildLoadBarsOption,
   buildResourceTrendOption,
   readChartPalette,
 } from './chartOptions'
-import type { DiskUsage, SystemLoad } from '../../adapters/mock/resourceMetrics'
 import { useChart } from './useChart'
 
-echarts.use([BarChart, LineChart, GridComponent, TooltipComponent, SVGRenderer])
+echarts.use([BarChart, LineChart, GridComponent, TooltipComponent, DataZoomComponent, SVGRenderer])
 
 /** 百分比紧跟数值，吞吐量类单位用空格隔开。 */
 function formatValue(value: number, unit: string): string {
@@ -33,19 +28,22 @@ function formatValue(value: number, unit: string): string {
 
 function ResourcePanel({
   metricKey,
-  days,
+  points,
   theme,
+  resetZoomSignal,
 }: {
   metricKey: ResourceMetricKey
-  days: readonly DailyResourceMetrics[]
+  points: readonly ResourceSamplePoint[]
   theme: 'dark' | 'light'
+  resetZoomSignal: number
 }) {
-  const latest = days[days.length - 1]
+  const latest = points[points.length - 1]
   const unit = RESOURCE_METRIC_UNITS[metricKey]
   const hot = (metricKey === 'cpu' || metricKey === 'memory') && (latest?.[metricKey] ?? 0) >= 80
   const ref = useChart(
-    () => buildResourceTrendOption(days, metricKey, readChartPalette(theme)),
-    `${theme}:${metricKey}:${days.length}:${latest?.date ?? ''}:${latest?.[metricKey] ?? ''}`,
+    () => buildResourceTrendOption(points, metricKey, readChartPalette(theme)),
+    `${theme}:${metricKey}:${points.length}:${latest?.ts ?? ''}:${latest?.[metricKey] ?? ''}`,
+    resetZoomSignal,
   )
 
   return (
@@ -88,22 +86,27 @@ function BarsPanel({
 
 export function ResourceChartsSection({
   resources,
-  range,
   system,
+  resetZoomSignal,
 }: {
-  resources: readonly DailyResourceMetrics[]
-  range: TimeRange
+  resources: readonly ResourceSamplePoint[]
   system: { load: SystemLoad; disks: readonly DiskUsage[] }
+  resetZoomSignal: number
 }) {
   const { theme } = useTheme()
-  const days = useMemo(() => sliceResourceMetrics(resources, range), [resources, range])
 
   return (
     <section aria-label="服务器状态" className="mb-6">
       <h2 className="mb-3 text-sm font-semibold text-fg-muted">服务器状态</h2>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         {(Object.keys(RESOURCE_METRIC_LABELS) as ResourceMetricKey[]).map((metricKey) => (
-          <ResourcePanel key={metricKey} metricKey={metricKey} days={days} theme={theme} />
+          <ResourcePanel
+            key={metricKey}
+            metricKey={metricKey}
+            points={resources}
+            theme={theme}
+            resetZoomSignal={resetZoomSignal}
+          />
         ))}
 
         <BarsPanel
