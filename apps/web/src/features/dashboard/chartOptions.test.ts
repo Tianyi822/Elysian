@@ -46,9 +46,45 @@ describe('资源趋势 option', () => {
     expect(option.animationDurationUpdate).toBe(1600)
     expect(option.animationEasingUpdate).toBe('linear')
 
-    const xAxis = option.xAxis as { data: readonly string[] }
+    const xAxis = option.xAxis as { data: readonly string[]; show: boolean }
     expect(xAxis.data).toHaveLength(7)
     expect(xAxis.data).toEqual(['0', '1', '2', '3', '4', '5', '6'])
+  })
+
+  it('横纵坐标轴可见：X 轴按日期标签、Y 轴带单位并显示刻度', () => {
+    const days = sliceResourceMetrics(createResourceMetrics(), '7d')
+    const option = buildResourceTrendOption(days, 'cpu', PALETTE)
+
+    const xAxis = option.xAxis as {
+      show: boolean
+      axisLabel: { formatter: (value: string) => string; color: string }
+      axisLine: { show: boolean }
+    }
+    const yAxis = option.yAxis as {
+      show: boolean
+      name: string
+      max?: number
+      axisLabel: { color: string }
+      splitLine: { show: boolean }
+    }
+
+    expect(xAxis.show).toBe(true)
+    expect(xAxis.axisLine.show).toBe(true)
+    expect(xAxis.axisLabel.formatter('0')).toBe(days[0]!.date.slice(5))
+    expect(xAxis.axisLabel.formatter('6')).toBe(days[6]!.date.slice(5))
+
+    expect(yAxis.show).toBe(true)
+    expect(yAxis.name).toBe('%')
+    expect(yAxis.max).toBe(100)
+    expect(yAxis.splitLine.show).toBe(true)
+  })
+
+  it('吞吐类指标 Y 轴单位为 MB/s 且不锁 100 上限', () => {
+    const days = sliceResourceMetrics(createResourceMetrics(), '7d')
+    const option = buildResourceTrendOption(days, 'networkIo', PALETTE)
+    const yAxis = option.yAxis as { name: string; max?: number }
+    expect(yAxis.name).toBe('MB/s')
+    expect(yAxis.max).toBeUndefined()
   })
 
   it('各资源指标共用同一配色策略（强调色），互不依赖严重等级令牌', () => {

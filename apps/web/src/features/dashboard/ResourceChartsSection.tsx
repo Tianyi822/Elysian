@@ -51,7 +51,7 @@ function ResourcePanel({
   return (
     <article
       aria-label={RESOURCE_METRIC_LABELS[metricKey]}
-      className="rounded-xl border border-line bg-surface p-4"
+      className="rounded-xl border border-line bg-surface p-4 md:p-5"
     >
       <h2 className="text-sm font-semibold">{RESOURCE_METRIC_LABELS[metricKey]}</h2>
       <p
@@ -59,7 +59,7 @@ function ResourcePanel({
       >
         {latest ? formatValue(latest[metricKey], unit) : '—'}
       </p>
-      <div ref={ref} className="mt-3 h-20 w-full" />
+      <div ref={ref} className="mt-4 h-52 w-full sm:h-56" />
     </article>
   )
 }
@@ -78,10 +78,10 @@ function BarsPanel({
   return (
     <article
       aria-label={title}
-      className="rounded-xl border border-line bg-surface p-4 sm:col-span-2 lg:col-span-2"
+      className="rounded-xl border border-line bg-surface p-4 md:p-5"
     >
       <h2 className="text-sm font-semibold">{title}</h2>
-      <div ref={ref} className="mt-2 h-24 w-full" />
+      <div ref={ref} className="mt-4 h-40 w-full sm:h-44" />
     </article>
   )
 }
@@ -101,7 +101,7 @@ export function ResourceChartsSection({
   return (
     <section aria-label="服务器状态" className="mb-6">
       <h2 className="mb-3 text-sm font-semibold text-fg-muted">服务器状态</h2>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         {(Object.keys(RESOURCE_METRIC_LABELS) as ResourceMetricKey[]).map((metricKey) => (
           <ResourcePanel key={metricKey} metricKey={metricKey} days={days} theme={theme} />
         ))}

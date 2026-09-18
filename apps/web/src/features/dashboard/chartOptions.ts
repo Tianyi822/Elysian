@@ -1,5 +1,9 @@
 import type { EChartsCoreOption } from 'echarts/core'
-import type { DailyResourceMetrics, ResourceMetricKey } from '../../adapters/mock/resourceMetrics'
+import {
+  RESOURCE_METRIC_UNITS,
+  type DailyResourceMetrics,
+  type ResourceMetricKey,
+} from '../../adapters/mock/resourceMetrics'
 
 /**
  * 图表配置的组装纯函数与配色读取。
@@ -13,7 +17,7 @@ export type ChartPalette = {
   text: string
   subtle: string
   axisLine: string
-  /** 强调色，供单系列迷你趋势图使用。 */
+  /** 强调色，供资源趋势图使用。 */
   accent: string
   /** 警告与危险色，供磁盘占用阈值着色。 */
   warning: string
@@ -63,15 +67,18 @@ export function readChartPalette(theme: 'dark' | 'light'): ChartPalette {
 }
 
 /**
- * 资源指标的 sparkline option：不画坐标轴，数值靠 tooltip 读取；
+ * 资源指标趋势 option：显示横纵坐标；
  * X 轴使用稳定的槽位索引，避免滚动窗口更新时触发首点 remove/尾点 add 的 diff；
- * 日期由轴标签格式化提供给 tooltip。
+ * 日期由轴标签格式化为 MM-DD。
  */
 export function buildResourceTrendOption(
   days: readonly DailyResourceMetrics[],
   key: ResourceMetricKey,
   palette: ChartPalette,
 ): EChartsCoreOption {
+  const unit = RESOURCE_METRIC_UNITS[key]
+  const percentScale = unit === '%'
+
   return {
     textStyle: { color: palette.text, fontSize: 12 },
     // ECharts 官方的更新动画配置：动画在下一拍之前完成，避免频繁重启动画。
@@ -85,18 +92,36 @@ export function buildResourceTrendOption(
       borderWidth: 1,
       textStyle: { color: palette.text, fontSize: 12 },
     },
-    grid: { left: 8, right: 8, top: 8, bottom: 0 },
+    grid: { left: 12, right: 16, top: 28, bottom: 8, containLabel: true },
     xAxis: {
       type: 'category',
-      show: false,
+      show: true,
       boundaryGap: false,
       // 槽位保持不变，滚动时只更新数值，曲线会整体平滑移动而不会先清空左端。
       data: days.map((_, index) => String(index)),
+      axisLine: { show: true, lineStyle: { color: palette.axisLine } },
+      axisTick: { show: false },
       axisLabel: {
-        formatter: (value: string) => days[Number(value)]?.date ?? value,
+        color: palette.subtle,
+        fontSize: 11,
+        hideOverlap: true,
+        formatter: (value: string) => {
+          const date = days[Number(value)]?.date
+          return date ? date.slice(5) : value
+        },
       },
     },
-    yAxis: { type: 'value', show: false },
+    yAxis: {
+      type: 'value',
+      show: true,
+      name: unit,
+      nameTextStyle: { color: palette.subtle, fontSize: 11, padding: [0, 0, 0, 4] },
+      ...(percentScale ? { max: 100, min: 0 } : {}),
+      axisLine: { show: true, lineStyle: { color: palette.axisLine } },
+      axisTick: { show: false },
+      axisLabel: { color: palette.subtle, fontSize: 11 },
+      splitLine: { show: true, lineStyle: { color: palette.axisLine, type: 'dashed' } },
+    },
     series: [
       {
         id: `resource-${key}`,
