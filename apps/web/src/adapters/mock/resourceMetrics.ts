@@ -13,25 +13,21 @@ export type ResourceMetricKey = 'cpu' | 'memory' | 'networkIo' | 'diskIo'
 /** 资源序列与事故时序共用 30 天窗口。 */
 export const TREND_DAYS = 30
 
-export type TimeRange = '5m' | '10m' | '30m' | '1h' | '5h' | '10h' | '7d'
+export type TimeRange = '5m' | '30m' | '1h' | '5h' | '7d'
 
 export const TIME_RANGES: readonly TimeRange[] = [
   '5m',
-  '10m',
   '30m',
   '1h',
   '5h',
-  '10h',
   '7d',
 ]
 
 export const TIME_RANGE_LABELS: Record<TimeRange, string> = {
   '5m': '近 5 分钟',
-  '10m': '近 10 分钟',
   '30m': '近 30 分钟',
   '1h': '近 1 小时',
   '5h': '近 5 小时',
-  '10h': '近 10 小时',
   '7d': '近 7 天',
 }
 
@@ -46,31 +42,27 @@ export function timeRangeDurationMs(range: TimeRange): number {
   switch (range) {
     case '5m':
       return 5 * MS_PER_MINUTE
-    case '10m':
-      return 10 * MS_PER_MINUTE
     case '30m':
       return 30 * MS_PER_MINUTE
     case '1h':
       return MS_PER_HOUR
     case '5h':
       return 5 * MS_PER_HOUR
-    case '10h':
-      return 10 * MS_PER_HOUR
     case '7d':
       return 7 * MS_PER_DAY
   }
 }
 
-export type ResourceGranularity = '3s' | '1m'
+export type ResourceGranularity = '5s' | '1m'
 
-/** 时间范围对应的采样粒度：窗长不超过 1 小时按 3 秒，否则按 1 分钟。 */
+/** 时间范围对应的采样粒度：窗长不超过 1 小时按 5 秒，否则按 1 分钟。 */
 export function timeRangeGranularity(range: TimeRange): ResourceGranularity {
-  return timeRangeDurationMs(range) <= MS_PER_HOUR ? '3s' : '1m'
+  return timeRangeDurationMs(range) <= MS_PER_HOUR ? '5s' : '1m'
 }
 
 /** 采样粒度的中文展示文案。 */
 export function timeRangeGranularityLabel(range: TimeRange): string {
-  return timeRangeGranularity(range) === '3s' ? '按 3 秒' : '按 1 分钟'
+  return timeRangeGranularity(range) === '5s' ? '按 5 秒' : '按 1 分钟'
 }
 
 /** 资源采样点：毫秒时间戳为横轴。 */
@@ -159,7 +151,7 @@ export function listMockHistory(range: TimeRange, nowMs: number): ResourceSample
   const windowStart = nowMs - timeRangeDurationMs(range)
   const inWindow = (p: ResourceSamplePoint) => p.ts >= windowStart && p.ts <= nowMs
 
-  if (granularity === '3s') {
+  if (granularity === '5s') {
     return rawPoints.filter(inWindow)
   }
 
@@ -199,7 +191,7 @@ export function resetMockHistory(): void {
 export function seedMockHistoryIfEmpty(nowMs: number): void {
   if (rawPoints.length > 0 || minutePoints.length > 0) return
   const latest = createResourceMetrics().at(-1)!
-  const step = 3_000
+  const step = 5_000
   const count = Math.floor(timeRangeDurationMs('5m') / step) + 1
   for (let i = 0; i < count; i += 1) {
     appendMockSample(

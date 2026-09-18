@@ -1,5 +1,5 @@
 import { BarChart, LineChart } from 'echarts/charts'
-import { DataZoomComponent, GridComponent, TooltipComponent } from 'echarts/components'
+import { BrushComponent, DataZoomComponent, GridComponent, TooltipComponent } from 'echarts/components'
 import * as echarts from 'echarts/core'
 import type { EChartsCoreOption } from 'echarts/core'
 import { SVGRenderer } from 'echarts/renderers'
@@ -17,47 +17,58 @@ import {
   buildResourceTrendOption,
   readChartPalette,
 } from './chartOptions'
+import { formatResourceMetricValue } from './formatMetricDisplay'
 import { useChart } from './useChart'
 
-echarts.use([BarChart, LineChart, GridComponent, TooltipComponent, DataZoomComponent, SVGRenderer])
-
-/** 百分比紧跟数值，吞吐量类单位用空格隔开。 */
-function formatValue(value: number, unit: string): string {
-  return unit === '%' ? `${value}%` : `${value} ${unit}`
-}
+echarts.use([
+  BarChart,
+  LineChart,
+  GridComponent,
+  TooltipComponent,
+  DataZoomComponent,
+  BrushComponent,
+  SVGRenderer,
+])
 
 function ResourcePanel({
   metricKey,
   points,
   theme,
-  resetZoomSignal,
 }: {
   metricKey: ResourceMetricKey
   points: readonly ResourceSamplePoint[]
   theme: 'dark' | 'light'
-  resetZoomSignal: number
 }) {
   const latest = points[points.length - 1]
   const unit = RESOURCE_METRIC_UNITS[metricKey]
   const hot = (metricKey === 'cpu' || metricKey === 'memory') && (latest?.[metricKey] ?? 0) >= 80
-  const ref = useChart(
+  const { containerRef, isZoomed, resetZoom } = useChart(
     () => buildResourceTrendOption(points, metricKey, readChartPalette(theme)),
     `${theme}:${metricKey}:${points.length}:${latest?.ts ?? ''}:${latest?.[metricKey] ?? ''}`,
-    resetZoomSignal,
+    { enableBrush: true },
   )
 
   return (
     <article
       aria-label={RESOURCE_METRIC_LABELS[metricKey]}
-      className="rounded-xl border border-line bg-surface p-4 md:p-5"
+      className="relative min-w-0 rounded-xl border border-line bg-surface p-4 md:p-5"
     >
-      <h2 className="text-sm font-semibold">{RESOURCE_METRIC_LABELS[metricKey]}</h2>
+      <h2 className="text-sm font-semibold leading-5">{RESOURCE_METRIC_LABELS[metricKey]}</h2>
+      {isZoomed ? (
+        <button
+          type="button"
+          onClick={resetZoom}
+          className="absolute right-4 top-4 z-10 rounded border border-line bg-surface-raised px-2 text-xs leading-5 text-fg md:right-5 md:top-5"
+        >
+          复位
+        </button>
+      ) : null}
       <p
         className={`mt-2 text-2xl font-semibold tabular-nums leading-none ${hot ? 'text-warning' : 'text-fg'}`}
       >
-        {latest ? formatValue(latest[metricKey], unit) : '—'}
+        {latest ? formatResourceMetricValue(latest[metricKey], unit) : '—'}
       </p>
-      <div ref={ref} className="mt-4 h-52 w-full sm:h-56" />
+      <div ref={containerRef} className="mt-4 h-52 w-full min-w-0 cursor-crosshair sm:h-56" />
     </article>
   )
 }
@@ -71,7 +82,7 @@ function BarsPanel({
   option: EChartsCoreOption
   rebuildKey: string
 }) {
-  const ref = useChart(() => option, rebuildKey)
+  const { containerRef } = useChart(() => option, rebuildKey)
 
   return (
     <article
@@ -79,7 +90,7 @@ function BarsPanel({
       className="rounded-xl border border-line bg-surface p-4 md:p-5"
     >
       <h2 className="text-sm font-semibold">{title}</h2>
-      <div ref={ref} className="mt-4 h-40 w-full sm:h-44" />
+      <div ref={containerRef} className="mt-4 h-40 w-full sm:h-44" />
     </article>
   )
 }
@@ -99,11 +110,9 @@ function BarsPlaceholder({ title }: { title: string }) {
 export function ResourceChartsSection({
   resources,
   system,
-  resetZoomSignal,
 }: {
   resources: readonly ResourceSamplePoint[]
   system?: { load: SystemLoad; disks: readonly DiskUsage[] }
-  resetZoomSignal: number
 }) {
   const { theme } = useTheme()
 
@@ -117,7 +126,6 @@ export function ResourceChartsSection({
             metricKey={metricKey}
             points={resources}
             theme={theme}
-            resetZoomSignal={resetZoomSignal}
           />
         ))}
 

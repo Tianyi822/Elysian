@@ -168,7 +168,7 @@ function createMetricsStore(db: Database): MetricsStore {
       const windowStart = nowMs - timeRangeDurationMs(range)
       const inWindow = (p: ResourceSamplePoint) => p.ts >= windowStart && p.ts <= nowMs
 
-      if (granularity === '3s') {
+      if (granularity === '5s') {
         return (selectRawInWindow.all(windowStart, nowMs) as SampleRow[]).map(rowToPoint)
       }
 

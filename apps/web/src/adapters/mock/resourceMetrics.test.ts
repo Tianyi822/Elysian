@@ -65,24 +65,24 @@ describe('ResourceSamplePoint 分层历史', () => {
     resetMockHistory()
   })
 
-  it('短窗返回 3s 点，长窗返回 1m 点', () => {
+  it('短窗返回 5s 点，长窗返回 1m 点', () => {
     resetMockHistory()
     const t0 = 1_700_000_000_000
     for (let i = 0; i < 40; i += 1) {
       appendMockSample({
-        ts: t0 + i * 3_000,
+        ts: t0 + i * 5_000,
         cpu: 10 + i,
         memory: 50,
         networkIo: 100,
         diskIo: 80,
       })
     }
-    const short = listMockHistory('5m', t0 + 39 * 3_000)
+    const short = listMockHistory('5m', t0 + 39 * 5_000)
     expect(short.length).toBeGreaterThan(0)
     expect(
       short.every(
         (p, idx, arr) =>
-          idx === 0 || p.ts - arr[idx - 1]!.ts === 3_000 || p.ts >= arr[idx - 1]!.ts,
+          idx === 0 || p.ts - arr[idx - 1]!.ts === 5_000 || p.ts >= arr[idx - 1]!.ts,
       ),
     ).toBe(true)
 
@@ -105,9 +105,11 @@ describe('ResourceSamplePoint 分层历史', () => {
 describe('TimeRange', () => {
   it('默认与枚举完整', () => {
     expect(DEFAULT_TIME_RANGE).toBe('5m')
-    expect([...TIME_RANGES]).toEqual(['5m', '10m', '30m', '1h', '5h', '10h', '7d'])
+    expect([...TIME_RANGES]).toEqual(['5m', '30m', '1h', '5h', '7d'])
     expect(TIME_RANGE_LABELS['5m']).toBe('近 5 分钟')
     expect(TIME_RANGE_LABELS['7d']).toBe('近 7 天')
+    expect(TIME_RANGE_LABELS).not.toHaveProperty('10m')
+    expect(TIME_RANGE_LABELS).not.toHaveProperty('10h')
     expect(TIME_RANGE_LABELS).not.toHaveProperty('30d')
   })
 
@@ -115,10 +117,10 @@ describe('TimeRange', () => {
     expect(timeRangeDurationMs('5m')).toBe(5 * 60_000)
     expect(timeRangeDurationMs('1h')).toBe(3_600_000)
     expect(timeRangeDurationMs('7d')).toBe(7 * 86_400_000)
-    expect(timeRangeGranularity('5m')).toBe('3s')
-    expect(timeRangeGranularity('1h')).toBe('3s')
+    expect(timeRangeGranularity('5m')).toBe('5s')
+    expect(timeRangeGranularity('1h')).toBe('5s')
     expect(timeRangeGranularity('5h')).toBe('1m')
-    expect(timeRangeGranularityLabel('10m')).toBe('按 3 秒')
+    expect(timeRangeGranularityLabel('30m')).toBe('按 5 秒')
     expect(timeRangeGranularityLabel('7d')).toBe('按 1 分钟')
   })
 })

@@ -4,6 +4,7 @@ import {
   type ResourceMetricKey,
   type ResourceSamplePoint,
 } from '../../adapters/mock/resourceMetrics'
+import { mbpsToUnit, pickThroughputUnit } from './formatMetricDisplay'
 
 /**
  * 图表配置的组装纯函数与配色读取。
@@ -67,19 +68,32 @@ export function readChartPalette(theme: 'dark' | 'light'): ChartPalette {
 }
 
 /**
- * 资源指标趋势 option：毫秒时间戳横轴，支持 dataZoom 在当前预设内深入缩放。
+ * 资源指标趋势 option：时间轴；图内横向框选（brush）+ inside 平移/滚轮。
+ * 吞吐类按窗口峰值换算纵轴单位。更新动画只做水平滑动，不做从 0 弹起。
  */
 export function buildResourceTrendOption(
   points: readonly ResourceSamplePoint[],
   key: ResourceMetricKey,
   palette: ChartPalette,
 ): EChartsCoreOption {
-  const unit = RESOURCE_METRIC_UNITS[key]
-  const percentScale = unit === '%'
+  const storedUnit = RESOURCE_METRIC_UNITS[key]
+  const percentScale = storedUnit === '%'
+  const throughput = storedUnit === 'MB/s'
+  const throughputUnit = throughput
+    ? pickThroughputUnit(points.map((point) => point[key]))
+    : undefined
+  const axisUnit = throughputUnit ?? storedUnit
+  const seriesData = points.map((point) => {
+    const raw = point[key]
+    const value = throughputUnit ? mbpsToUnit(raw, throughputUnit) : raw
+    return [point.ts, value] as [number, number]
+  })
 
   return {
     textStyle: { color: palette.text, fontSize: 12 },
+    // 首帧不要从 0 弹起；更新用线性时长，配合稳定 series.id 做滑动感。
     animation: true,
+    animationDuration: 0,
     animationDurationUpdate: 300,
     animationEasingUpdate: 'linear',
     tooltip: {
@@ -88,13 +102,57 @@ export function buildResourceTrendOption(
       borderColor: palette.axisLine,
       borderWidth: 1,
       textStyle: { color: palette.text, fontSize: 12 },
+      valueFormatter: (value: unknown) => {
+        const numeric = typeof value === 'number' ? value : Number(value)
+        if (!Number.isFinite(numeric)) return '—'
+        if (percentScale) return `${numeric}%`
+        if (throughput) {
+          const rounded =
+            Math.abs(numeric) >= 100
+              ? String(Math.round(numeric))
+              : Math.abs(numeric) >= 10
+                ? numeric.toFixed(1)
+                : numeric.toFixed(2)
+          return `${rounded} ${axisUnit}`
+        }
+        return String(numeric)
+      },
     },
-    grid: { left: 12, right: 16, top: 28, bottom: 32, containLabel: true },
-    dataZoom: [{ type: 'inside' }, { type: 'slider', height: 18 }],
+    grid: { left: 12, right: 16, top: 28, bottom: 8, containLabel: true },
+    brush: {
+      toolbox: [],
+      xAxisIndex: 0,
+      brushLink: 'all',
+      brushType: 'lineX',
+      brushMode: 'single',
+      transformable: false,
+      throttleType: 'debounce',
+      throttleDelay: 50,
+      removeOnClick: false,
+      brushStyle: {
+        borderWidth: 1,
+        color: 'rgba(76, 141, 255, 0.16)',
+        borderColor: palette.accent,
+      },
+      outOfBrush: { colorAlpha: 0.35 },
+    },
+    dataZoom: [
+      {
+        type: 'inside',
+        filterMode: 'none',
+        zoomOnMouseWheel: true,
+        // 框选占用拖动手势；平移改用 Shift + 滚轮。
+        moveOnMouseMove: false,
+        moveOnMouseWheel: 'shift',
+        preventDefaultMouseMove: true,
+      },
+    ],
     xAxis: {
       type: 'time',
       show: true,
       boundaryGap: false,
+      min: 'dataMin',
+      max: 'dataMax',
       axisLine: { show: true, lineStyle: { color: palette.axisLine } },
       axisTick: { show: false },
       axisLabel: {
@@ -106,7 +164,7 @@ export function buildResourceTrendOption(
     yAxis: {
       type: 'value',
       show: true,
-      name: unit,
+      name: axisUnit,
       nameTextStyle: { color: palette.subtle, fontSize: 11, padding: [0, 0, 0, 4] },
       ...(percentScale ? { max: 100, min: 0 } : {}),
       axisLine: { show: true, lineStyle: { color: palette.axisLine } },
@@ -120,7 +178,9 @@ export function buildResourceTrendOption(
         type: 'line',
         smooth: true,
         showSymbol: false,
-        data: points.map((point) => [point.ts, point[key]] as [number, number]),
+        // 禁止点位从 0 插值；靠横轴 dataMin/dataMax 变化产生平移。
+        animation: false,
+        data: seriesData,
         itemStyle: { color: palette.accent },
         lineStyle: { color: palette.accent, width: 1.5 },
         areaStyle: { color: palette.accent, opacity: 0.12 },

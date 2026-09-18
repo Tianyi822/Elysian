@@ -232,7 +232,7 @@ describe('仪表盘 store 的事件回灌', () => {
     const gateway = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
     const seed = [
       { ts: 1_700_000_000_000, cpu: 11, memory: 22, networkIo: 33, diskIo: 44 },
-      { ts: 1_700_000_003_000, cpu: 12, memory: 23, networkIo: 34, diskIo: 45 },
+      { ts: 1_700_000_005_000, cpu: 12, memory: 23, networkIo: 34, diskIo: 45 },
     ]
     vi.spyOn(gateway.resources, 'list').mockResolvedValue(seed)
 
@@ -242,7 +242,7 @@ describe('仪表盘 store 的事件回灌', () => {
     emit({
       id: 'evt-live-merge',
       name: 'resource/sample',
-      at: new Date(1_700_000_006_000).toISOString(),
+      at: new Date(1_700_000_010_000).toISOString(),
       payload: { ...samplePayload, cpu: 55 },
     })
 

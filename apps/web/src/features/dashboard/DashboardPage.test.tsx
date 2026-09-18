@@ -12,6 +12,7 @@ import type { ElysianGateway } from '../../contracts/adapters'
 import { useDashboardStore } from '../../stores/dashboardStore'
 import { useEventStreamStore } from '../../stores/eventStreamStore'
 import { renderApp } from '../../test/renderApp'
+import { formatResourceMetricValue } from './formatMetricDisplay'
 
 const METRIC_KEYS: ResourceMetricKey[] = ['cpu', 'memory', 'networkIo', 'diskIo']
 
@@ -92,7 +93,9 @@ describe('仪表盘筛选栏', () => {
       'aria-pressed',
       'true',
     )
-    expect(screen.getByText(/粒度/)).toHaveTextContent('按 3 秒')
+    expect(screen.queryByText(/粒度/)).not.toBeInTheDocument()
+    expect(within(group).queryByRole('button', { name: '近 10 分钟' })).not.toBeInTheDocument()
+    expect(within(group).queryByRole('button', { name: '近 10 小时' })).not.toBeInTheDocument()
 
     await user.click(within(group).getByRole('button', { name: '近 7 天' }))
 
@@ -104,8 +107,7 @@ describe('仪表盘筛选栏', () => {
       'aria-pressed',
       'false',
     )
-    expect(screen.getByText(/粒度/)).toHaveTextContent('按 1 分钟')
-    expect(screen.getByRole('button', { name: '回到预设' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '复位' })).not.toBeInTheDocument()
   })
 
   it('刷新期间有反馈且保留内容；刷新失败保留内容并出错误横幅', async () => {
@@ -245,8 +247,9 @@ describe('仪表盘资源监控', () => {
     for (const key of METRIC_KEYS) {
       const card = within(section).getByRole('article', { name: RESOURCE_METRIC_LABELS[key] })
       const unit = RESOURCE_METRIC_UNITS[key]
-      const text = unit === '%' ? `${latest[key]}%` : `${latest[key]} ${unit}`
-      expect(within(card).getByText(text)).toBeInTheDocument()
+      expect(
+        within(card).getByText(formatResourceMetricValue(latest[key], unit)),
+      ).toBeInTheDocument()
     }
 
     await waitFor(() => {
@@ -269,7 +272,7 @@ describe('仪表盘资源监控', () => {
     }
     for (const key of ['networkIo', 'diskIo'] as const) {
       const card = within(section).getByRole('article', { name: RESOURCE_METRIC_LABELS[key] })
-      const value = within(card).getByText(`${latest[key]} MB/s`)
+      const value = within(card).getByText(formatResourceMetricValue(latest[key], 'MB/s'))
       expect(value).toHaveClass('text-fg')
     }
   })

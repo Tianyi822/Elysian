@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { ErrorState, EmptyState, LoadingState } from '../../components/states/StateViews'
 import { useDashboardStore } from '../../stores/dashboardStore'
@@ -16,7 +16,6 @@ export function DashboardPage() {
   const load = useDashboardStore((state) => state.load)
   const refresh = useDashboardStore((state) => state.refresh)
   const setRange = useDashboardStore((state) => state.setRange)
-  const [resetZoomSignal, setResetZoomSignal] = useState(0)
 
   useEffect(() => {
     void load(gateway)
@@ -67,14 +66,9 @@ export function DashboardPage() {
         range={range}
         onRangeChange={setRange}
         onRefresh={() => void refresh(gateway)}
-        onResetZoom={() => setResetZoomSignal((count) => count + 1)}
         refreshing={refreshing}
       />
-      <ResourceChartsSection
-        resources={resources}
-        system={system}
-        resetZoomSignal={resetZoomSignal}
-      />
+      <ResourceChartsSection resources={resources} system={system} />
     </>
   )
 }

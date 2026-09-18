@@ -1,25 +1,51 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import * as echarts from 'echarts/core'
 import type { EChartsCoreOption } from 'echarts/core'
 import { readChartPalette } from './chartOptions'
 import type { ChartPalette } from './chartOptions'
 
+function readZoomed(chart: echarts.ECharts): boolean {
+  const option = chart.getOption() as {
+    dataZoom?: ReadonlyArray<{ start?: number; end?: number }>
+  }
+  const zoom = option.dataZoom?.[0]
+  if (!zoom) return false
+  const start = zoom.start ?? 0
+  const end = zoom.end ?? 100
+  return start > 0.5 || end < 99.5
+}
+
 /**
- * 图表实例管理只有一个关注点：挂载（SVG 渲染器、随容器缩放）、随 rebuildKey 更新、卸载释放。
- *
- * option 在被动 effect 里经 buildOption 现做现用，配色在那一刻读取语义令牌：
- * 主题属性由 ThemeProvider 的 insertion effect 翻转，先于全部被动 effect，
- * 因此读取到的一定是新主题——在渲染期读取会滞后一次切换，这是评审发现的真实浏览器缺陷。
+ * 图表实例：首屏完整 option；后续只补丁 series/yAxis，避免 dataZoom 被冲掉、数值从 0 重播。
+ * 可选 Brush（lineX）框选后转成 dataZoom；缩放后由调用方展示复位。
  */
 export function useChart(
   buildOption: () => EChartsCoreOption,
   rebuildKey: string,
-  resetZoomSignal?: number,
+  options: { enableBrush?: boolean } = {},
 ) {
+  const { enableBrush = false } = options
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<echarts.ECharts | undefined>(undefined)
   const buildRef = useRef(buildOption)
   buildRef.current = buildOption
+  const readyRef = useRef(false)
+  const [isZoomed, setIsZoomed] = useState(false)
+
+  const resetZoom = useCallback(() => {
+    const chart = chartRef.current
+    if (!chart) return
+    chart.dispatchAction({ type: 'dataZoom', start: 0, end: 100 })
+    if (enableBrush) {
+      chart.dispatchAction({ type: 'brush', areas: [] })
+      chart.dispatchAction({
+        type: 'takeGlobalCursor',
+        key: 'brush',
+        brushOption: { brushType: 'lineX', brushMode: 'single' },
+      })
+    }
+    setIsZoomed(false)
+  }, [enableBrush])
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -30,30 +56,70 @@ export function useChart(
       typeof ResizeObserver === 'function' ? new ResizeObserver(() => chart.resize()) : undefined
     if (observer) observer.observe(containerRef.current)
 
-    // 保留默认 merge，让 ECharts 根据稳定的 series id 保留模型并对新旧数据做 diff。
     chart.setOption(buildRef.current(), { notMerge: false, lazyUpdate: false })
+    if (enableBrush) {
+      chart.dispatchAction({
+        type: 'takeGlobalCursor',
+        key: 'brush',
+        brushOption: { brushType: 'lineX', brushMode: 'single' },
+      })
+    }
+    readyRef.current = true
+    setIsZoomed(false)
+
+    const syncZoomed = () => setIsZoomed(readZoomed(chart))
+
+    const onBrushEnd = (...args: unknown[]) => {
+      if (!enableBrush) return
+      const params = args[0] as { areas?: ReadonlyArray<{ coordRange?: [number, number] }> }
+      const range = params.areas?.[0]?.coordRange
+      if (!range || range.length < 2) return
+      const [startValue, endValue] = range[0] <= range[1] ? range : [range[1], range[0]]
+      if (startValue === endValue) return
+      chart.dispatchAction({
+        type: 'dataZoom',
+        startValue,
+        endValue,
+      })
+      chart.dispatchAction({ type: 'brush', areas: [] })
+      chart.dispatchAction({
+        type: 'takeGlobalCursor',
+        key: 'brush',
+        brushOption: { brushType: 'lineX', brushMode: 'single' },
+      })
+      syncZoomed()
+    }
+
+    const onDataZoom = () => syncZoomed()
+
+    if (enableBrush) chart.on('brushEnd', onBrushEnd)
+    chart.on('datazoom', onDataZoom)
 
     return () => {
+      if (enableBrush) chart.off('brushEnd', onBrushEnd)
+      chart.off('datazoom', onDataZoom)
       observer?.disconnect()
       chart.dispose()
       chartRef.current = undefined
+      readyRef.current = false
     }
-  }, [])
+  }, [enableBrush])
 
   useEffect(() => {
-    chartRef.current?.setOption(buildRef.current(), { notMerge: false, lazyUpdate: false })
+    const chart = chartRef.current
+    if (!chart || !readyRef.current) return
+    const next = buildRef.current()
+    chart.setOption(
+      {
+        series: next.series,
+        yAxis: next.yAxis,
+        tooltip: next.tooltip,
+      },
+      { notMerge: false, lazyUpdate: false },
+    )
   }, [rebuildKey])
 
-  useEffect(() => {
-    if (resetZoomSignal === undefined || resetZoomSignal === 0) return
-    chartRef.current?.dispatchAction({
-      type: 'dataZoom',
-      start: 0,
-      end: 100,
-    })
-  }, [resetZoomSignal])
-
-  return containerRef
+  return { containerRef, isZoomed, resetZoom }
 }
 
 /** 图表配色随主题收敛：effect 在属性翻转之后读取令牌，随后一次渲染刷新图例色点。 */

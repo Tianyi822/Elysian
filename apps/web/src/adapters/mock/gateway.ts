@@ -44,7 +44,7 @@ export function createMockGateway(
 ): ElysianGateway {
   let dataset = createMockDataset()
   const read = () => dataset
-  const eventIntervalMs = options.eventIntervalMs ?? 3000
+  const eventIntervalMs = options.eventIntervalMs ?? 5000
   const containerEvents = createContainerEventsLayer(read, { intervalMs: eventIntervalMs })
   const terminals = new MockTerminalAdapter()
   const resources =

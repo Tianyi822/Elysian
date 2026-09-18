@@ -87,11 +87,11 @@ describe('资源趋势 option', () => {
     expect(yAxis.splitLine.show).toBe(true)
   })
 
-  it('吞吐类指标 Y 轴单位为 MB/s 且不锁 100 上限', () => {
-    const points = makePoints(3)
+  it('吞吐类指标按峰值换算纵轴单位，且不锁 100 上限', () => {
+    const points = makePoints(3).map((point) => ({ ...point, networkIo: 0.05 }))
     const option = buildResourceTrendOption(points, 'networkIo', PALETTE)
     const yAxis = option.yAxis as { name: string; max?: number }
-    expect(yAxis.name).toBe('MB/s')
+    expect(yAxis.name).toBe('KB/s')
     expect(yAxis.max).toBeUndefined()
   })
 
@@ -104,10 +104,19 @@ describe('资源趋势 option', () => {
     }
   })
 
-  it('启用 inside 与 slider 两类 dataZoom', () => {
+  it('启用 inside dataZoom 与横向 brush 框选', () => {
     const option = buildResourceTrendOption(makePoints(2), 'cpu', PALETTE)
     const zoom = option.dataZoom as ReadonlyArray<{ type: string }>
-    expect(zoom.map((entry) => entry.type)).toEqual(['inside', 'slider'])
+    expect(zoom.map((entry) => entry.type)).toEqual(['inside'])
+    expect(option.brush).toEqual(
+      expect.objectContaining({
+        brushType: 'lineX',
+        xAxisIndex: 0,
+      }),
+    )
+    expect(option.animationDuration).toBe(0)
+    const series = option.series as ReadonlyArray<{ animation?: boolean }>
+    expect(series[0]?.animation).toBe(false)
   })
 })
 

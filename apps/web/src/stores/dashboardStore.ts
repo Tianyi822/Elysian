@@ -19,7 +19,7 @@ import type { ElysianGateway } from '../contracts/adapters'
 import { onStreamEvent } from './eventStreamStore'
 
 /** 同一 SSE 节拍内重复到达时合并为一点，避免图表重复柱。 */
-const SAMPLE_MERGE_DEDUPE_MS = 2500
+const SAMPLE_MERGE_DEDUPE_MS = 4500
 
 /** 将最新采样并入当前时间窗序列（设计：SSE 最新点并入当前窗，不重拉 mock 全量）。 */
 export function mergeResourceSampleIntoWindow(

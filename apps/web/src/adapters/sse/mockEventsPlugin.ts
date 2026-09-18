@@ -25,7 +25,7 @@ import { SSE_HEARTBEAT, formatSseFrame } from './parse.ts'
  */
 
 /** 资源采样与 SSE retry 节拍（与仪表盘约定一致）。 */
-export const TICK_MS = 3000
+export const TICK_MS = 5000
 const HEARTBEAT_MS = 15_000
 /** 连上后先补发一拍，避免初始数据连续跳变。 */
 const REPLAY_BURST = 1

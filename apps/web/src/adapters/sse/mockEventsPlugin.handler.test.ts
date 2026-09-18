@@ -144,6 +144,6 @@ describe('事件流端点处理器', () => {
   })
 
   it('采样节拍为 3 秒', () => {
-    expect(TICK_MS).toBe(3000)
+    expect(TICK_MS).toBe(5000)
   })
 })

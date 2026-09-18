@@ -352,14 +352,7 @@ export interface SessionAdapter {
 }
 
 /** 资源历史查询的时间窗（与仪表盘 FilterBar 选项对齐）。 */
-export type ResourceHistoryTimeRange =
-  | '5m'
-  | '10m'
-  | '30m'
-  | '1h'
-  | '5h'
-  | '10h'
-  | '7d'
+export type ResourceHistoryTimeRange = '5m' | '30m' | '1h' | '5h' | '7d'
 
 /** 资源采样点：毫秒时间戳为横轴。 */
 export type ResourceSamplePoint = {

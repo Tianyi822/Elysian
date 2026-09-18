@@ -39,13 +39,13 @@ describe('MetricsStore 内存库', () => {
     store = openMemoryMetricsStore()
     const t0 = 1_700_000_000_000
     for (let i = 0; i < 5; i += 1) {
-      store.insertRaw(sample(t0 + i * 3_000, 10 + i))
+      store.insertRaw(sample(t0 + i * 5_000, 10 + i))
     }
-    const now = t0 + 4 * 3_000
+    const now = t0 + 4 * 5_000
     const points = store.query('5m', now)
     expect(points).toHaveLength(5)
     expect(points.map((p) => p.cpu)).toEqual([10, 11, 12, 13, 14])
-    expect(timeRangeGranularity('5m')).toBe('3s')
+    expect(timeRangeGranularity('5m')).toBe('5s')
   })
 
   it('rollupMinuteIfNeeded 将已完成分钟写入 samples_1m，长窗 query 读 1m', () => {
@@ -53,8 +53,8 @@ describe('MetricsStore 内存库', () => {
     const minute0 = 1_700_000_000_000
     const minute0Aligned = Math.floor(minute0 / MS_PER_MINUTE) * MS_PER_MINUTE
     store.insertRaw(sample(minute0Aligned, 10))
-    store.insertRaw(sample(minute0Aligned + 3_000, 20))
-    store.insertRaw(sample(minute0Aligned + 6_000, 30))
+    store.insertRaw(sample(minute0Aligned + 5_000, 20))
+    store.insertRaw(sample(minute0Aligned + 10_000, 30))
     const nextMinute = minute0Aligned + MS_PER_MINUTE
     store.insertRaw(sample(nextMinute, 40))
     store.rollupMinuteIfNeeded(nextMinute + 1)
