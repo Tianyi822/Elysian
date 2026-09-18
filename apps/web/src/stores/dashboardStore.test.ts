@@ -3,9 +3,10 @@ import { act } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockDataset } from '../adapters/mock/dataset'
 import { createMockGateway } from '../adapters/mock/gateway'
+import * as resourceMetrics from '../adapters/mock/resourceMetrics'
 import { resetMockHistory } from '../adapters/mock/resourceMetrics'
 import { onStreamEvent, useEventStreamStore } from './eventStreamStore'
-import { useDashboardStore } from './dashboardStore'
+import { mergeResourceSampleIntoWindow, useDashboardStore } from './dashboardStore'
 
 const dataset = createMockDataset()
 
@@ -50,6 +51,32 @@ const samplePayload = {
 }
 
 beforeEach(resetStores)
+
+describe('mergeResourceSampleIntoWindow', () => {
+  it('裁剪窗外点并追加最新采样', () => {
+    const t0 = 1_700_000_000_000
+    const merged = mergeResourceSampleIntoWindow(
+      [
+        { ts: t0 - 6 * 60_000, cpu: 1, memory: 1, networkIo: 1, diskIo: 1 },
+        { ts: t0 - 60_000, cpu: 2, memory: 2, networkIo: 2, diskIo: 2 },
+      ],
+      '5m',
+      { ts: t0, cpu: 99, memory: 88, networkIo: 77, diskIo: 66 },
+    )
+    expect(merged.map((p) => p.cpu)).toEqual([2, 99])
+  })
+
+  it('过近时间戳替换末点而非重复', () => {
+    const t0 = 1_700_000_000_000
+    const merged = mergeResourceSampleIntoWindow(
+      [{ ts: t0 - 1_000, cpu: 10, memory: 10, networkIo: 10, diskIo: 10 }],
+      '5m',
+      { ts: t0, cpu: 20, memory: 20, networkIo: 20, diskIo: 20 },
+    )
+    expect(merged).toHaveLength(1)
+    expect(merged[0]?.cpu).toBe(20)
+  })
+})
 
 describe('仪表盘 store 资源窗与引用稳定', () => {
   it('默认 range 为 5m', () => {
@@ -146,6 +173,31 @@ describe('仪表盘 store 的事件回灌', () => {
     const system = useDashboardStore.getState().system
     expect(system?.load).toEqual({ m1: 0.4, m5: 0.3, m15: 0.2 })
     expect(system?.disks.map((disk) => disk.usagePct)).toEqual([63, 79, 42])
+  })
+
+  it('resource/sample 合并趋势序列，不用 listMockHistory 整窗覆盖', async () => {
+    const listMockHistorySpy = vi.spyOn(resourceMetrics, 'listMockHistory')
+    const gateway = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+    const seed = [
+      { ts: 1_700_000_000_000, cpu: 11, memory: 22, networkIo: 33, diskIo: 44 },
+      { ts: 1_700_000_003_000, cpu: 12, memory: 23, networkIo: 34, diskIo: 45 },
+    ]
+    vi.spyOn(gateway.resources, 'list').mockResolvedValue(seed)
+
+    await useDashboardStore.getState().load(gateway)
+    listMockHistorySpy.mockClear()
+
+    emit({
+      id: 'evt-live-merge',
+      name: 'resource/sample',
+      at: new Date(1_700_000_006_000).toISOString(),
+      payload: { ...samplePayload, cpu: 55 },
+    })
+
+    expect(listMockHistorySpy).not.toHaveBeenCalled()
+    const resources = useDashboardStore.getState().resources
+    expect(resources?.map((p) => p.cpu)).toEqual([11, 12, 55])
+    listMockHistorySpy.mockRestore()
   })
 
   it('事件回灌落进数据集：手动刷新重新聚合后总数一致', async () => {

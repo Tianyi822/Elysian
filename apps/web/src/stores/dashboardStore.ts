@@ -3,12 +3,13 @@ import { create } from 'zustand'
 import { aggregateStatCards, buildModuleCards } from '../adapters/mock/aggregations'
 import type { ModuleCard, StatCards } from '../adapters/mock/aggregations'
 import { BASE_DATE } from '../adapters/mock/dataset'
+import { MockResourceHistoryAdapter } from '../adapters/mock/resourceHistoryAdapter'
 import {
   DEFAULT_TIME_RANGE,
   INITIAL_DISKS,
   INITIAL_LOAD,
   appendMockSample,
-  listMockHistory,
+  timeRangeDurationMs,
 } from '../adapters/mock/resourceMetrics'
 import type {
   DiskUsage,
@@ -18,6 +19,24 @@ import type {
 } from '../adapters/mock/resourceMetrics'
 import type { ElysianGateway } from '../contracts/adapters'
 import { onStreamEvent } from './eventStreamStore'
+
+/** 同一 SSE 节拍内重复到达时合并为一点，避免图表重复柱。 */
+const SAMPLE_MERGE_DEDUPE_MS = 2500
+
+/** 将最新采样并入当前时间窗序列（设计：SSE 最新点并入当前窗，不重拉 mock 全量）。 */
+export function mergeResourceSampleIntoWindow(
+  resources: readonly ResourceSamplePoint[] | undefined,
+  range: TimeRange,
+  point: ResourceSamplePoint,
+): ResourceSamplePoint[] {
+  const cutoff = point.ts - timeRangeDurationMs(range)
+  const inWindow = (resources ?? []).filter((p) => p.ts >= cutoff && p.ts <= point.ts)
+  const last = inWindow.at(-1)
+  if (last && point.ts - last.ts < SAMPLE_MERGE_DEDUPE_MS) {
+    return [...inWindow.slice(0, -1), point]
+  }
+  return [...inWindow, point]
+}
 
 export function sameSystemSnapshot(
   a: { load: SystemLoad; disks: readonly DiskUsage[] },
@@ -79,13 +98,15 @@ export async function loadDashboard(gateway: ElysianGateway, range: TimeRange) {
 }
 
 /*
- * 事件回灌：事件流是仪表盘的心跳。resource/sample 写入分层缓冲并刷新当前窗序列，
+ * 事件回灌：事件流是仪表盘的心跳。resource/sample 将最新点并入当前窗序列，
  * incident/created 增量更新指标卡与模块卡（数据集侧由 gateway 落库，刷新后一致）。
  */
 let detachLive: Unsubscribe | undefined
 /** 已增量应用过的新事故标识：同一事故的重复事件（重连重放）不推高两次。 */
 const appliedLiveIncidents = new Set<string>()
 let boundGateway: ElysianGateway | undefined
+/** 内存 mock 历史缓冲需与 SSE 同步；HTTP/SQLite 路径只合并界面序列。 */
+let syncSamplesToMockBuffer = false
 
 async function reloadResources(gateway: ElysianGateway, range: TimeRange): Promise<void> {
   const resources = await gateway.resources.list(range)
@@ -120,9 +141,12 @@ function attachLiveEvents(): void {
       const ts = Date.parse(event.at)
       const atMs = Number.isFinite(ts) ? ts : Date.now()
       const { cpu, memory, networkIo, diskIo, load, disks } = event.payload
-      appendMockSample({ ts: atMs, cpu, memory, networkIo, diskIo }, atMs)
+      const point: ResourceSamplePoint = { ts: atMs, cpu, memory, networkIo, diskIo }
+      if (syncSamplesToMockBuffer) {
+        appendMockSample(point, atMs)
+      }
       useDashboardStore.setState((state) => {
-        const resources = listMockHistory(state.range, atMs)
+        const resources = mergeResourceSampleIntoWindow(state.resources, state.range, point)
         const nextSystem = { load, disks }
         return {
           resources,
@@ -143,6 +167,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   async load(gateway) {
     attachLiveEvents()
     boundGateway = gateway
+    syncSamplesToMockBuffer = gateway.resources instanceof MockResourceHistoryAdapter
     appliedLiveIncidents.clear()
     const range = get().range
     set({ status: 'loading', errorMessage: undefined })
@@ -158,6 +183,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   },
   async refresh(gateway) {
     boundGateway = gateway
+    syncSamplesToMockBuffer = gateway.resources instanceof MockResourceHistoryAdapter
     const range = get().range
     set({ refreshing: true, errorMessage: undefined })
     try {
