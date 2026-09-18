@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import {
   createResourceMetrics,
-  getLiveResources,
   RESOURCE_METRIC_LABELS,
   RESOURCE_METRIC_UNITS,
 } from '../../adapters/mock/resourceMetrics'
@@ -13,7 +12,6 @@ import type { ElysianGateway } from '../../contracts/adapters'
 import { useDashboardStore } from '../../stores/dashboardStore'
 import { useEventStreamStore } from '../../stores/eventStreamStore'
 import { renderApp } from '../../test/renderApp'
-import * as resourceMetrics from '../../adapters/mock/resourceMetrics'
 
 const METRIC_KEYS: ResourceMetricKey[] = ['cpu', 'memory', 'networkIo', 'diskIo']
 
@@ -21,7 +19,7 @@ beforeEach(() => {
   useDashboardStore.setState({
     status: 'idle',
     refreshing: false,
-    range: '7d',
+    range: '5m',
     stats: undefined,
     modules: undefined,
     resources: undefined,
@@ -79,24 +77,24 @@ describe('仪表盘布局', () => {
 })
 
 describe('仪表盘筛选栏', () => {
-  it('时间范围两档可切换，粒度固定按天', async () => {
+  it('时间范围可切换，默认近 5 分钟', async () => {
     const user = userEvent.setup()
     await renderReady()
 
     const group = screen.getByRole('group', { name: '时间范围' })
-    expect(within(group).getByRole('button', { name: '近 7 天' })).toHaveAttribute(
+    expect(within(group).getByRole('button', { name: '近 5 分钟' })).toHaveAttribute(
       'aria-pressed',
       'true',
     )
     expect(screen.getByText(/粒度/)).toHaveTextContent('按天')
 
-    await user.click(within(group).getByRole('button', { name: '近 30 天' }))
+    await user.click(within(group).getByRole('button', { name: '近 7 天' }))
 
-    expect(within(group).getByRole('button', { name: '近 30 天' })).toHaveAttribute(
+    expect(within(group).getByRole('button', { name: '近 7 天' })).toHaveAttribute(
       'aria-pressed',
       'true',
     )
-    expect(within(group).getByRole('button', { name: '近 7 天' })).toHaveAttribute(
+    expect(within(group).getByRole('button', { name: '近 5 分钟' })).toHaveAttribute(
       'aria-pressed',
       'false',
     )
@@ -278,12 +276,17 @@ describe('仪表盘资源监控', () => {
 
 describe('仪表盘空态', () => {
   it('资源序列为空时给出空态而不是空白图区', async () => {
-    vi.spyOn(resourceMetrics, 'getLiveResources').mockReturnValue([])
+    const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+    const gateway: ElysianGateway = {
+      ...base,
+      resources: {
+        list: async () => [],
+      },
+    }
 
-    renderApp('/')
+    renderApp('/', { gateway })
 
     expect(await screen.findByText('演示数据集为空')).toBeInTheDocument()
     expect(screen.queryByLabelText('服务器状态')).not.toBeInTheDocument()
-    expect(getLiveResources()).toEqual([])
   })
 })

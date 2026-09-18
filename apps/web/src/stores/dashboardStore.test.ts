@@ -3,18 +3,20 @@ import { act } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockDataset } from '../adapters/mock/dataset'
 import { createMockGateway } from '../adapters/mock/gateway'
+import { resetMockHistory } from '../adapters/mock/resourceMetrics'
 import { onStreamEvent, useEventStreamStore } from './eventStreamStore'
 import { useDashboardStore } from './dashboardStore'
 
 const dataset = createMockDataset()
 
 function resetStores() {
+  resetMockHistory()
   useEventStreamStore.getState().disconnect()
   useEventStreamStore.setState({ status: 'connecting', recent: [], receivedCount: 0 })
   useDashboardStore.setState({
     status: 'idle',
     refreshing: false,
-    range: '7d',
+    range: '5m',
     stats: undefined,
     modules: undefined,
     resources: undefined,
@@ -34,7 +36,67 @@ function emit(event: ElysianEvent): void {
   })
 }
 
+const samplePayload = {
+  cpu: 66,
+  memory: 77,
+  networkIo: 300,
+  diskIo: 200,
+  load: { m1: 0.4, m5: 0.3, m15: 0.2 },
+  disks: [
+    { mount: '/', usagePct: 63 },
+    { mount: '/data', usagePct: 79 },
+    { mount: '/backup', usagePct: 42 },
+  ],
+}
+
 beforeEach(resetStores)
+
+describe('仪表盘 store 资源窗与引用稳定', () => {
+  it('默认 range 为 5m', () => {
+    expect(useDashboardStore.getState().range).toBe('5m')
+  })
+
+  it('相同 load/disks 不更换 system 引用', async () => {
+    const gateway = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+    await useDashboardStore.getState().load(gateway)
+
+    const t0 = Date.now()
+    emit({
+      id: 'evt-live-sys-1',
+      name: 'resource/sample',
+      at: new Date(t0).toISOString(),
+      payload: samplePayload,
+    })
+    const first = useDashboardStore.getState().system
+
+    emit({
+      id: 'evt-live-sys-2',
+      name: 'resource/sample',
+      at: new Date(t0 + 3_000).toISOString(),
+      payload: {
+        ...samplePayload,
+        cpu: 70,
+        memory: 80,
+      },
+    })
+    const second = useDashboardStore.getState().system
+
+    expect(second).toBe(first)
+    expect(useDashboardStore.getState().resources?.at(-1)?.cpu).toBe(70)
+  })
+
+  it('setRange 会按新窗重新 list', async () => {
+    const gateway = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+    const listSpy = vi.spyOn(gateway.resources, 'list')
+    await useDashboardStore.getState().load(gateway)
+    const callsAfterLoad = listSpy.mock.calls.length
+
+    useDashboardStore.getState().setRange('7d')
+    await vi.waitFor(() => expect(listSpy.mock.calls.length).toBeGreaterThan(callsAfterLoad))
+    expect(listSpy.mock.calls.at(-1)?.[0]).toBe('7d')
+    expect(useDashboardStore.getState().range).toBe('7d')
+  })
+})
 
 describe('仪表盘 store 的事件回灌', () => {
   it('incident/created 让事故总数与待处理数各加一，模块卡活跃数联动', async () => {
@@ -61,33 +123,22 @@ describe('仪表盘 store 的事件回灌', () => {
     expect(card?.activeIncidents).toBeGreaterThan(0)
   })
 
-  it('resource/sample 滚动追加资源序列并保持 30 个点', async () => {
+  it('resource/sample 追加当前窗资源点并更新 system', async () => {
     const gateway = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
     await useDashboardStore.getState().load(gateway)
 
     const before = useDashboardStore.getState().resources?.length ?? 0
-    expect(before).toBe(30)
+    expect(before).toBeGreaterThan(0)
 
     emit({
       id: 'evt-live-2',
       name: 'resource/sample',
-      at: '2026-09-12T23:59:00.000Z',
-      payload: {
-        cpu: 66,
-        memory: 77,
-        networkIo: 300,
-        diskIo: 200,
-        load: { m1: 0.4, m5: 0.3, m15: 0.2 },
-        disks: [
-          { mount: '/', usagePct: 63 },
-          { mount: '/data', usagePct: 79 },
-          { mount: '/backup', usagePct: 42 },
-        ],
-      },
+      at: new Date().toISOString(),
+      payload: samplePayload,
     })
 
     const resources = useDashboardStore.getState().resources
-    expect(resources).toHaveLength(30)
+    expect(resources?.length).toBeGreaterThanOrEqual(before)
     const last = resources?.[resources.length - 1]
     expect(last?.cpu).toBe(66)
     expect(last?.memory).toBe(77)
@@ -99,7 +150,6 @@ describe('仪表盘 store 的事件回灌', () => {
 
   it('事件回灌落进数据集：手动刷新重新聚合后总数一致', async () => {
     vi.useFakeTimers()
-    // 走真实的包装适配器：内存事件源每 30ms 一拍，第 4 拍诞生新事故。
     const gateway = createMockGateway({ eventIntervalMs: 30, eventStream: 'memory' })
     await useDashboardStore.getState().load(gateway)
 
@@ -131,7 +181,6 @@ describe('仪表盘 store 的事件回灌', () => {
       payload: { incidentId: 'INC-LIVE-DUP', severity: 'sev3' },
     }
 
-    // 两次 connect 是模拟断线重连；事件 id 相同，数据集去重 + 界面去重都不该重复计数。
     emit(event)
     const afterFirst = useDashboardStore.getState().stats?.totalIncidents ?? 0
 
@@ -146,7 +195,6 @@ describe('仪表盘 store 的事件回灌', () => {
     const gateway = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
     await useDashboardStore.getState().load(gateway)
 
-    // 触发一次退订（间接验证注册表行为）：注册一个立刻退订的监听器，再发事件它不应被调用。
     let called = 0
     const unsubscribe = onStreamEvent(() => {
       called += 1

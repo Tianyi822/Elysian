@@ -1,8 +1,8 @@
 
-import { TIME_RANGE_LABELS } from '../../adapters/mock/resourceMetrics'
+import { TIME_RANGE_LABELS, TIME_RANGES } from '../../adapters/mock/resourceMetrics'
 import type { TimeRange } from '../../adapters/mock/resourceMetrics'
 
-const RANGES: readonly TimeRange[] = ['7d', '30d']
+const RANGES = TIME_RANGES
 
 export function FilterBar({
   range,

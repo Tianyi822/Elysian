@@ -195,6 +195,26 @@ export function resetMockHistory(): void {
   openMinuteBucket = null
 }
 
+/** 演示首屏：缓冲为空时用种子序列最近一天指标灌满近 5 分钟 raw 点。 */
+export function seedMockHistoryIfEmpty(nowMs: number): void {
+  if (rawPoints.length > 0 || minutePoints.length > 0) return
+  const latest = createResourceMetrics().at(-1)!
+  const step = 3_000
+  const count = Math.floor(timeRangeDurationMs('5m') / step) + 1
+  for (let i = 0; i < count; i += 1) {
+    appendMockSample(
+      {
+        ts: nowMs - (count - 1 - i) * step,
+        cpu: latest.cpu,
+        memory: latest.memory,
+        networkIo: latest.networkIo,
+        diskIo: latest.diskIo,
+      },
+      nowMs,
+    )
+  }
+}
+
 export type DailyResourceMetrics = {
   /** ISO 日期（YYYY-MM-DD）。 */
   date: string

@@ -1,9 +1,23 @@
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
+import type { DailyResourceMetrics } from '../../adapters/mock/resourceMetrics'
 import { ErrorState, EmptyState, LoadingState } from '../../components/states/StateViews'
 import { useDashboardStore } from '../../stores/dashboardStore'
 import { FilterBar } from './FilterBar'
 import { ResourceChartsSection } from './ResourceChartsSection'
+
+/** 图表层仍按日序列消费；任务 5 会改为直接用时序点横轴。 */
+function samplePointsToDailyMetrics(
+  points: readonly { ts: number; cpu: number; memory: number; networkIo: number; diskIo: number }[],
+): DailyResourceMetrics[] {
+  return points.map((point) => ({
+    date: new Date(point.ts).toISOString().slice(0, 10),
+    cpu: point.cpu,
+    memory: point.memory,
+    networkIo: point.networkIo,
+    diskIo: point.diskIo,
+  }))
+}
 
 export function DashboardPage() {
   const gateway = useGateway()
@@ -16,6 +30,10 @@ export function DashboardPage() {
   const load = useDashboardStore((state) => state.load)
   const refresh = useDashboardStore((state) => state.refresh)
   const setRange = useDashboardStore((state) => state.setRange)
+  const chartResources = useMemo(
+    () => (resources ? samplePointsToDailyMetrics(resources) : undefined),
+    [resources],
+  )
 
   useEffect(() => {
     void load(gateway)
@@ -68,7 +86,7 @@ export function DashboardPage() {
         onRefresh={() => void refresh(gateway)}
         refreshing={refreshing}
       />
-      <ResourceChartsSection resources={resources} range={range} system={system} />
+      <ResourceChartsSection resources={chartResources ?? []} range={range} system={system} />
     </>
   )
 }
