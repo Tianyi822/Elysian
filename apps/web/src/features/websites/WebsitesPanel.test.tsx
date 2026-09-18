@@ -71,17 +71,18 @@ beforeEach(() => {
 })
 
 describe('卡片网格', () => {
-  it('加载后 17 张卡片就位，类型标签与运行状态呈现', async () => {
+  it('加载后 17 张卡片就位，运行状态与环境格呈现', async () => {
     const list = await openWebsites()
 
     expect(cards(list)).toHaveLength(17)
     const java = cardByName(list, '订单中心-api')
-    expect(within(java).getAllByText('Java项目').length).toBeGreaterThan(0)
     expect(within(java).getByText('运行中')).toBeInTheDocument()
     expect(within(java).getByText('生产环境')).toBeInTheDocument()
+    expect(within(java).getByText('Java 17')).toBeInTheDocument()
+    expect(within(java).queryByText('Java项目')).not.toBeInTheDocument()
   })
 
-  it('卡片按类型呈现专属信息：Java 有端口与 PID，HTML 有端口无版本，Go 有运行时版本', async () => {
+  it('卡片按类型呈现专属信息：Java 有端口与 PID，HTML 有端口与 HTML 短名，Go 有运行时版本', async () => {
     const list = await openWebsites()
 
     const java = cardByName(list, '订单中心-api')
@@ -90,12 +91,12 @@ describe('卡片网格', () => {
 
     const html = cardByName(list, 'company-portal')
     expect(within(html).getByText('端口')).toBeInTheDocument()
-    expect(within(html).queryByText('运行时版本')).not.toBeInTheDocument()
+    expect(within(html).getByText('HTML')).toBeInTheDocument()
     expect(within(html).queryByText('到期时间')).not.toBeInTheDocument()
 
     const go = cardByName(list, 'log-collector')
     expect(within(go).getByText('运行时版本')).toBeInTheDocument()
-    expect(within(go).getByText('1.22.4')).toBeInTheDocument()
+    expect(within(go).getByText('Go 1.22.4')).toBeInTheDocument()
   })
 
   it('搜索按名称与备注匹配，分类筛选叠加生效', async () => {
@@ -160,7 +161,8 @@ describe('建站', () => {
     await user.click(screen.getByRole('button', { name: '添加项目' }))
     const dialog = await screen.findByRole('dialog', { name: '添加项目' })
     expect(within(dialog).getByRole('textbox', { name: /端口/ })).toBeInTheDocument()
-    expect(within(dialog).getByLabelText(/运行时版本/)).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: /运行时版本/ })).toBeInTheDocument()
+    expect(within(dialog).queryByRole('combobox')).not.toBeInTheDocument()
 
     await user.type(
       within(dialog).getByLabelText(/Git 地址/),
@@ -169,7 +171,7 @@ describe('建站', () => {
     expect(within(dialog).getByLabelText(/项目名称/)).toHaveValue('static-home')
 
     await user.click(within(dialog).getByRole('button', { name: 'HTML项目' }))
-    expect(within(dialog).queryByLabelText(/运行时版本/)).not.toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: /运行时版本/ })).not.toBeInTheDocument()
     expect(within(dialog).getByRole('textbox', { name: /端口/ })).toBeInTheDocument()
 
     await user.click(within(dialog).getByRole('button', { name: '添加项目' }))

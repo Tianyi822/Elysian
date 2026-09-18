@@ -13,6 +13,7 @@ import type { WebsiteProjectKind, WebsiteRuntimeKind } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { Minus, Plus, X } from '../../components/icons'
 import { useWebsitesStore } from '../../stores/websitesStore'
+import { SelectDropdown } from './SelectDropdown'
 
 /**
  * 添加项目弹窗：类型、Git 地址（可贴链接自动带出名称）、名称、运行时版本（非 HTML）、
@@ -227,21 +228,23 @@ export function WebsitesCreateDialog() {
 
             {usesRuntime ? (
               <div>
-                <label htmlFor="website-create-runtime" className="mb-1 block text-xs font-medium text-fg-muted">
+                <p className="mb-1 text-xs font-medium text-fg-muted">
                   运行时版本 <span className="text-danger">*</span>
-                </label>
-                <select
-                  id="website-create-runtime"
-                  value={runtimeVersion ?? ''}
-                  onChange={(event) => setRuntimeVersion(event.target.value || null)}
-                  className={INPUT_CLASS}
-                >
-                  {WEBSITE_RUNTIME_VERSIONS[kind as WebsiteRuntimeKind].map((version) => (
-                    <option key={version} value={version}>
-                      {version}
-                    </option>
-                  ))}
-                </select>
+                </p>
+                <SelectDropdown
+                  ariaLabel="运行时版本"
+                  fullWidth
+                  items={WEBSITE_RUNTIME_VERSIONS[kind as WebsiteRuntimeKind].map((version) => ({
+                    value: version,
+                    label: version,
+                  }))}
+                  value={runtimeVersion ?? undefined}
+                  onSelect={(next) => {
+                    setRuntimeVersion(next)
+                    setVersionError(undefined)
+                  }}
+                  fallbackLabel="请选择版本"
+                />
                 {versionError ? <p className="mt-1 text-xs text-danger">{versionError}</p> : null}
               </div>
             ) : null}

@@ -61,15 +61,15 @@ function renderCard(
 }
 
 describe('WebsitesCard', () => {
-  it('呈现名称、类型标签、分类标签与运行状态标签', () => {
+  it('呈现名称与运行状态标签，不在标题下挂类型与环境标签', () => {
     const { card } = renderCard(makeProject())
     expect(within(card).getByRole('heading', { name: '订单服务' })).toBeInTheDocument()
-    expect(within(card).getByText('Java项目')).toBeInTheDocument()
-    expect(within(card).getByText('生产环境')).toBeInTheDocument()
     expect(within(card).getByText('运行中')).toHaveClass('text-success')
+    // 类型写入运行时版本格，环境单独成格，不再用 StatusTag。
+    expect(within(card).queryByText('Java项目')).not.toBeInTheDocument()
   })
 
-  it('java 项目显示端口（等宽数字）、PID 与运行时版本；不显示到期时间', () => {
+  it('java 项目显示端口、PID、环境与「Java 17」运行时版本；不显示到期时间', () => {
     const { card } = renderCard(makeProject())
     const portCell = within(card).getByText('端口').closest('p')
     expect(portCell).not.toBeNull()
@@ -77,12 +77,14 @@ describe('WebsitesCard', () => {
     const pidCell = within(card).getByText('PID').closest('p')
     expect(pidCell).not.toBeNull()
     expect(within(pidCell as HTMLElement).getByText('30241')).toBeInTheDocument()
+    expect(within(card).getByText('环境')).toBeInTheDocument()
+    expect(within(card).getByText('生产环境')).toBeInTheDocument()
     expect(within(card).getByText('运行时版本')).toBeInTheDocument()
-    expect(within(card).getByText('17')).toBeInTheDocument()
+    expect(within(card).getByText('Java 17')).toBeInTheDocument()
     expect(within(card).queryByText('到期时间')).not.toBeInTheDocument()
   })
 
-  it('node 项目显示运行时版本', () => {
+  it('node 项目运行时版本格写作 Node 加版本号', () => {
     const { card } = renderCard(
       makeProject({
         id: 'site-gateway',
@@ -97,10 +99,10 @@ describe('WebsitesCard', () => {
     )
     const versionCell = within(card).getByText('运行时版本').closest('p')
     expect(versionCell).not.toBeNull()
-    expect(within(versionCell as HTMLElement).getByText('20.11.1')).toBeInTheDocument()
+    expect(within(versionCell as HTMLElement).getByText('Node 20.11.1')).toBeInTheDocument()
   })
 
-  it('html 项目有端口、无 PID 与版本行', () => {
+  it('html 项目有端口与 HTML 运行时短名，无 PID', () => {
     const { card } = renderCard(
       makeProject({
         id: 'site-portal',
@@ -116,7 +118,7 @@ describe('WebsitesCard', () => {
     expect(within(card).getByText('端口')).toBeInTheDocument()
     expect(within(card).getByText('8088')).toBeInTheDocument()
     expect(within(card).queryByText('PID')).not.toBeInTheDocument()
-    expect(within(card).queryByText('运行时版本')).not.toBeInTheDocument()
+    expect(within(card).getByText('HTML')).toBeInTheDocument()
   })
 
   it('已停止的项目保留端口、隐藏 PID，状态标签转中性色', async () => {

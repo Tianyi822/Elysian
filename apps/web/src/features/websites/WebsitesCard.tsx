@@ -1,9 +1,8 @@
 import type { JSX } from 'react'
 import { Link } from 'react-router'
-import type { WebsiteProject } from '@elysian/contracts'
+import type { WebsiteProject, WebsiteProjectKind } from '@elysian/contracts'
 import {
   WEBSITE_CATEGORY_LABELS,
-  WEBSITE_PROJECT_KIND_LABELS,
   WEBSITE_RUN_STATE_LABELS,
 } from '@elysian/contracts'
 import { Pencil, Play, Square, Trash2 } from '../../components/icons'
@@ -12,14 +11,23 @@ import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 
 /*
- * 网站项目卡片：与容器区同款的网格单卡。
- * 纯展示组件，数据与回调全部由 props 注入，网格布局由面板负责。
+ * 网站项目卡片：瀑布列表里的单卡，高度随内容伸缩。
+ * 纯展示组件，数据与回调全部由 props 注入，列布局由面板负责。
  * 卡片整体点击打开详情；内部的链接与按钮都要阻断冒泡，避免误触发。
  */
 
 const RUN_TONE: Record<WebsiteProject['runState'], StatusTone> = {
   running: 'success',
   stopped: 'neutral',
+}
+
+/** 运行时短名：写入「运行时版本」格，不再单独用类型标签。 */
+const RUNTIME_SHORT: Record<WebsiteProjectKind, string> = {
+  java: 'Java',
+  node: 'Node',
+  go: 'Go',
+  python: 'Python',
+  html: 'HTML',
 }
 
 const ACTION_BUTTON =
@@ -35,6 +43,12 @@ function MetaCell({ label, value, numeric = false }: { label: string; value: str
       </span>
     </p>
   )
+}
+
+/** 运行时版本格文案：有版本时「Java 17」，HTML 等无版本时只写短名。 */
+function runtimeVersionLabel(project: WebsiteProject): string {
+  const short = RUNTIME_SHORT[project.kind]
+  return project.runtimeVersion ? `${short} ${project.runtimeVersion}` : short
 }
 
 export function WebsitesCard({
@@ -58,29 +72,22 @@ export function WebsitesCard({
     <article
       aria-label={project.name}
       onClick={onOpenDetail}
-      className="flex h-full cursor-pointer flex-col gap-2 rounded-xl border border-line bg-surface p-4"
+      className="flex cursor-pointer flex-col gap-2 rounded-xl border border-line bg-surface p-4"
     >
       {/* 不用 header 元素：测试工具链将其一律算作 banner 角色，会与顶栏 banner 冲突。 */}
-      <div className="min-w-0">
-        <div className="flex items-center gap-2">
-          <h3 className="min-w-0 flex-1 truncate text-sm font-semibold" title={project.name}>
-            {project.name}
-          </h3>
-          <StatusTag label={WEBSITE_RUN_STATE_LABELS[project.runState]} tone={RUN_TONE[project.runState]} />
-        </div>
-        <div className="mt-1 flex flex-wrap gap-1">
-          <StatusTag label={WEBSITE_PROJECT_KIND_LABELS[project.kind]} />
-          <StatusTag label={WEBSITE_CATEGORY_LABELS[project.category]} />
-        </div>
+      <div className="flex min-w-0 items-center gap-2">
+        <h3 className="min-w-0 flex-1 truncate text-sm font-semibold" title={project.name}>
+          {project.name}
+        </h3>
+        <StatusTag label={WEBSITE_RUN_STATE_LABELS[project.runState]} tone={RUN_TONE[project.runState]} />
       </div>
 
-      {/* 元信息：端口全类型必有；运行时版本仅语言类；PID 仅运行中且有进程号。 */}
+      {/* 元信息：端口、环境、运行时（含类型短名）；PID 仅运行中且有进程号。 */}
       <div className="grid grid-cols-2 gap-2">
         <MetaCell label="端口" value={String(project.port)} numeric />
+        <MetaCell label="环境" value={WEBSITE_CATEGORY_LABELS[project.category]} />
         {running && project.pid !== null ? <MetaCell label="PID" value={String(project.pid)} numeric /> : null}
-        {project.runtimeVersion !== null ? (
-          <MetaCell label="运行时版本" value={project.runtimeVersion} />
-        ) : null}
+        <MetaCell label="运行时版本" value={runtimeVersionLabel(project)} />
       </div>
 
       <p className="rounded-lg bg-surface-raised px-3 py-2">
