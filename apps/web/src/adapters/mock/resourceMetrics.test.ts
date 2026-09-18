@@ -2,12 +2,15 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { BASE_DATE } from './dataset'
 import {
   appendLiveResourceSample,
+  appendMockSample,
   createResourceMetrics,
   DEFAULT_TIME_RANGE,
   getLiveResources,
+  listMockHistory,
   RESOURCE_METRIC_LABELS,
   RESOURCE_METRIC_UNITS,
   resetLiveResources,
+  resetMockHistory,
   sliceResourceMetrics,
   TIME_RANGE_LABELS,
   TIME_RANGES,
@@ -54,6 +57,48 @@ describe('资源指标时序 mock', () => {
     const week = sliceResourceMetrics(metrics, '7d')
     expect(week).toHaveLength(7)
     expect(week).toEqual(metrics.slice(-7))
+  })
+})
+
+describe('ResourceSamplePoint 分层历史', () => {
+  afterEach(() => {
+    resetMockHistory()
+  })
+
+  it('短窗返回 3s 点，长窗返回 1m 点', () => {
+    resetMockHistory()
+    const t0 = 1_700_000_000_000
+    for (let i = 0; i < 40; i += 1) {
+      appendMockSample({
+        ts: t0 + i * 3_000,
+        cpu: 10 + i,
+        memory: 50,
+        networkIo: 100,
+        diskIo: 80,
+      })
+    }
+    const short = listMockHistory('5m', t0 + 39 * 3_000)
+    expect(short.length).toBeGreaterThan(0)
+    expect(
+      short.every(
+        (p, idx, arr) =>
+          idx === 0 || p.ts - arr[idx - 1]!.ts === 3_000 || p.ts >= arr[idx - 1]!.ts,
+      ),
+    ).toBe(true)
+
+    resetMockHistory()
+    for (let m = 0; m < 120; m += 1) {
+      appendMockSample({
+        ts: t0 + m * 60_000,
+        cpu: m % 50,
+        memory: 40,
+        networkIo: 10,
+        diskIo: 10,
+      })
+    }
+    const long = listMockHistory('5h', t0 + 119 * 60_000)
+    expect(long.length).toBeGreaterThan(0)
+    expect(timeRangeGranularity('5h')).toBe('1m')
   })
 })
 

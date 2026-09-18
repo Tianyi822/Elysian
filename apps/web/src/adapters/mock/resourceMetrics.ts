@@ -73,6 +73,128 @@ export function timeRangeGranularityLabel(range: TimeRange): string {
   return timeRangeGranularity(range) === '3s' ? '按 3 秒' : '按 1 分钟'
 }
 
+/** 资源采样点：毫秒时间戳为横轴。 */
+export type ResourceSamplePoint = {
+  ts: number
+  cpu: number
+  memory: number
+  networkIo: number
+  diskIo: number
+}
+
+const RAW_RETENTION_MS = MS_PER_HOUR
+const MINUTE_RETENTION_MS = 7 * MS_PER_DAY
+
+let rawPoints: ResourceSamplePoint[] = []
+let minutePoints: ResourceSamplePoint[] = []
+
+type MinuteBucket = {
+  minuteStart: number
+  count: number
+  cpu: number
+  memory: number
+  networkIo: number
+  diskIo: number
+}
+
+let openMinuteBucket: MinuteBucket | null = null
+
+function minuteStartMs(ts: number): number {
+  return Math.floor(ts / MS_PER_MINUTE) * MS_PER_MINUTE
+}
+
+function flushOpenMinuteBucket(): void {
+  if (!openMinuteBucket || openMinuteBucket.count === 0) return
+  const { minuteStart, count, cpu, memory, networkIo, diskIo } = openMinuteBucket
+  minutePoints.push({
+    ts: minuteStart,
+    cpu: cpu / count,
+    memory: memory / count,
+    networkIo: networkIo / count,
+    diskIo: diskIo / count,
+  })
+  openMinuteBucket = null
+}
+
+function absorbIntoMinuteBucket(point: ResourceSamplePoint): void {
+  const start = minuteStartMs(point.ts)
+  if (openMinuteBucket && openMinuteBucket.minuteStart !== start) {
+    flushOpenMinuteBucket()
+  }
+  if (!openMinuteBucket) {
+    openMinuteBucket = {
+      minuteStart: start,
+      count: 0,
+      cpu: 0,
+      memory: 0,
+      networkIo: 0,
+      diskIo: 0,
+    }
+  }
+  openMinuteBucket.count += 1
+  openMinuteBucket.cpu += point.cpu
+  openMinuteBucket.memory += point.memory
+  openMinuteBucket.networkIo += point.networkIo
+  openMinuteBucket.diskIo += point.diskIo
+}
+
+function evictMockHistory(refMs: number): void {
+  const rawCutoff = refMs - RAW_RETENTION_MS
+  const minuteCutoff = refMs - MINUTE_RETENTION_MS
+  rawPoints = rawPoints.filter((p) => p.ts >= rawCutoff)
+  minutePoints = minutePoints.filter((p) => p.ts >= minuteCutoff)
+}
+
+/** 写入 raw 环；跨分钟边界时聚合成 1m 点；淘汰超龄数据。 */
+export function appendMockSample(point: ResourceSamplePoint, nowMs?: number): void {
+  const refMs = nowMs ?? point.ts
+  absorbIntoMinuteBucket(point)
+  rawPoints.push(point)
+  evictMockHistory(refMs)
+}
+
+/** 从内存缓冲取 `[nowMs - duration, nowMs]` 内的点。 */
+export function listMockHistory(range: TimeRange, nowMs: number): ResourceSamplePoint[] {
+  const granularity = timeRangeGranularity(range)
+  const windowStart = nowMs - timeRangeDurationMs(range)
+  const inWindow = (p: ResourceSamplePoint) => p.ts >= windowStart && p.ts <= nowMs
+
+  if (granularity === '3s') {
+    return rawPoints.filter(inWindow)
+  }
+
+  const fromMinute = minutePoints.filter(inWindow)
+  if (fromMinute.length > 0) return fromMinute
+
+  // 长窗尚无 1m 聚合时，用 raw 按分钟降采样兜底
+  const byMinute = new Map<number, ResourceSamplePoint[]>()
+  for (const p of rawPoints.filter(inWindow)) {
+    const key = minuteStartMs(p.ts)
+    const list = byMinute.get(key) ?? []
+    list.push(p)
+    byMinute.set(key, list)
+  }
+  return [...byMinute.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([ts, points]) => {
+      const n = points.length
+      return {
+        ts,
+        cpu: points.reduce((s, x) => s + x.cpu, 0) / n,
+        memory: points.reduce((s, x) => s + x.memory, 0) / n,
+        networkIo: points.reduce((s, x) => s + x.networkIo, 0) / n,
+        diskIo: points.reduce((s, x) => s + x.diskIo, 0) / n,
+      }
+    })
+}
+
+/** 测试辅助：清空分层历史缓冲。 */
+export function resetMockHistory(): void {
+  rawPoints = []
+  minutePoints = []
+  openMinuteBucket = null
+}
+
 export type DailyResourceMetrics = {
   /** ISO 日期（YYYY-MM-DD）。 */
   date: string
@@ -132,8 +254,8 @@ export function sliceResourceMetrics(
 }
 
 /*
- * 实时叠加层：事件流的采样回灌到序列尾部并滚动掉最老的一天，
- * 让资源卡与资源图表随事件流动起来。种子函数保持纯函数。
+ * 按天种子序列与实时叠加层（旧路径）：仪表盘主路径已迁至 ResourceSamplePoint；
+ * 事件流与其它测试仍可能引用 appendLiveResourceSample，保留至后续任务切换。
  */
 
 /** 系统负载（load average，1/5/15 分钟均值）与磁盘占用（按挂载点）的 mock 形状。 */
