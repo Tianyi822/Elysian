@@ -21,39 +21,28 @@ export function createWebsitesAdapterContractTests(
 
       for (const project of projects) {
         expect(project.name.trim().length).toBeGreaterThan(0)
-        expect(project.rootDir.startsWith('/')).toBe(true)
+        expect(project.rootDir.startsWith('/www/wwwroot/')).toBe(true)
+        expect(project.port).toBeGreaterThanOrEqual(1)
+        expect(project.port).toBeLessThanOrEqual(65535)
 
-        // PID 与端口只有 Java 与 Node 才有；Node 才有运行时版本；Go 没有到期时间。
-        if (project.kind === 'java' || project.kind === 'node') {
-          expect(project.port).not.toBeNull()
-        } else {
-          expect(project.port).toBeNull()
-          expect(project.pid).toBeNull()
-        }
-        if (project.kind === 'node') {
-          expect(project.runtimeVersion).toBeTruthy()
-        } else {
+        if (project.kind === 'html') {
           expect(project.runtimeVersion).toBeNull()
+          expect(project.pid).toBeNull()
+          expect(project.deployCommand).toBeNull()
+        } else {
+          expect(project.runtimeVersion).toBeTruthy()
+          expect(project.deployCommand).not.toBeNull()
         }
-        if (project.kind === 'go') {
-          expect(project.expiryAt).toBeNull()
-        }
-        // 运行中的 Java/Node 项目必有进程号；已停止的没有。
-        if (project.runState === 'running' && (project.kind === 'java' || project.kind === 'node')) {
+        if (project.runState === 'running' && project.kind !== 'html') {
           expect(project.pid).not.toBeNull()
         }
         if (project.runState === 'stopped') {
           expect(project.pid).toBeNull()
         }
-        // 流量统计存在且非负；部署命令与类型互斥：HTML 静态站为 null，其余类型必有。
         expect(project.traffic).toBeTruthy()
         expect(project.traffic.todayMb).toBeGreaterThanOrEqual(0)
         expect(project.traffic.totalGb).toBeGreaterThanOrEqual(0)
-        if (project.kind === 'html') {
-          expect(project.deployCommand).toBeNull()
-        } else {
-          expect(project.deployCommand).not.toBeNull()
-        }
+        expect(project.gitUrl === null || project.gitUrl.length > 0).toBe(true)
       }
     })
 
@@ -64,9 +53,15 @@ export function createWebsitesAdapterContractTests(
       }
     })
 
-    it('create 新建即已停止、无证书；根目录缺省由名称推导；同名同类型拒绝', async () => {
+    it('create 新建即已停止、无证书；根目录固定前缀；端口与版本落库；同名同类型拒绝', async () => {
       const adapter = make()
-      const created = await adapter.create('python', { name: '报表服务', note: '演示新建' })
+      const created = await adapter.create('python', {
+        name: '报表服务',
+        port: 8010,
+        runtimeVersion: '3.11.9',
+        note: '演示新建',
+        gitUrl: 'https://github.com/acme/report.git',
+      })
 
       expect(created.kind).toBe('python')
       expect(created.name).toBe('报表服务')
@@ -74,48 +69,74 @@ export function createWebsitesAdapterContractTests(
       expect(created.pid).toBeNull()
       expect(created.cert).toBe('none')
       expect(created.rootDir).toBe('/www/wwwroot/报表服务')
-      expect(created.port).toBeNull()
-      // 新建项目流量从零计起；非 HTML 类型的部署命令按类型给缺省。
+      expect(created.port).toBe(8010)
+      expect(created.runtimeVersion).toBe('3.11.9')
+      expect(created.gitUrl).toBe('https://github.com/acme/report.git')
       expect(created.traffic).toEqual({ todayMb: 0, totalGb: 0 })
       expect(created.deployCommand).not.toBeNull()
 
-      const again = adapter.create('python', { name: '报表服务' })
+      const again = adapter.create('python', {
+        name: '报表服务',
+        port: 8011,
+        runtimeVersion: '3.11.9',
+      })
       await expect(again).rejects.toThrow('已存在')
 
-      // 不同类型同名不冲突：项目与隔离目录天然按类型分开。
-      await expect(adapter.create('go', { name: '报表服务' })).resolves.toBeTruthy()
+      await expect(
+        adapter.create('go', { name: '报表服务', port: 9010, runtimeVersion: '1.22.4' }),
+      ).resolves.toBeTruthy()
     })
 
-    it('create 只有 Java 与 Node 接受端口，其余类型端口被忽略', async () => {
+    it('create 所有类型都接受端口；HTML 忽略运行时版本且无部署命令', async () => {
       const adapter = make()
-      const java = await adapter.create('java', { name: 'port-check-java', port: 18080 })
+      const java = await adapter.create('java', {
+        name: 'port-check-java',
+        port: 18080,
+        runtimeVersion: '17',
+      })
       expect(java.port).toBe(18080)
+      expect(java.runtimeVersion).toBe('17')
 
-      const html = await adapter.create('html', { name: 'port-check-html', port: 18081 })
-      expect(html.port).toBeNull()
-      // HTML 静态站没有部署命令，由 Web 服务直接托管。
+      const html = await adapter.create('html', {
+        name: 'port-check-html',
+        port: 18081,
+        runtimeVersion: '17',
+      })
+      expect(html.port).toBe(18081)
+      expect(html.runtimeVersion).toBeNull()
       expect(html.deployCommand).toBeNull()
     })
 
-    it('setRunning 启停改运行状态：Java/Node 启动后补进程号，停止后清空', async () => {
+    it('create 缺少端口或非 HTML 缺少版本时拒绝', async () => {
       const adapter = make()
-      const created = await adapter.create('node', { name: 'start-check', port: 3210 })
+      await expect(
+        adapter.create('node', { name: 'no-port', port: 0 as unknown as number, runtimeVersion: '20.11.1' }),
+      ).rejects.toThrow('端口')
+      await expect(
+        adapter.create('go', { name: 'no-version', port: 9105 }),
+      ).rejects.toThrow('运行时版本')
+    })
+
+    it('setRunning 启停改运行状态：非 HTML 启动后补进程号，停止后清空', async () => {
+      const adapter = make()
+      const created = await adapter.create('node', {
+        name: 'start-check',
+        port: 3210,
+        runtimeVersion: '20.11.1',
+      })
 
       const running = await adapter.setRunning(created.id, true)
       expect(running.runState).toBe('running')
       expect(running.pid).not.toBeNull()
-
-      const stopped = await adapter.setRunning(created.id, true)
-      expect(stopped.runState).toBe('running')
 
       const off = await adapter.setRunning(created.id, false)
       expect(off.runState).toBe('stopped')
       expect(off.pid).toBeNull()
     })
 
-    it('setRunning 对不存在或非端口类型的 PID 语义稳定：HTML 启动后仍无 PID', async () => {
+    it('setRunning 对 HTML 启动后仍无 PID；未知标识报错', async () => {
       const adapter = make()
-      const created = await adapter.create('html', { name: '静态主页' })
+      const created = await adapter.create('html', { name: '静态主页', port: 8088 })
       const running = await adapter.setRunning(created.id, true)
       expect(running.runState).toBe('running')
       expect(running.pid).toBeNull()
@@ -136,7 +157,11 @@ export function createWebsitesAdapterContractTests(
 
     it('remove 把项目从列表移除，未知标识报错', async () => {
       const adapter = make()
-      const created = await adapter.create('java', { name: 'remove-check', port: 18082 })
+      const created = await adapter.create('java', {
+        name: 'remove-check',
+        port: 18082,
+        runtimeVersion: '17',
+      })
       expect((await adapter.list()).some((project) => project.id === created.id)).toBe(true)
 
       await adapter.remove(created.id)

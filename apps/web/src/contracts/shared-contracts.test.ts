@@ -509,12 +509,47 @@ describe('网站域词典', () => {
     expect(contracts.WEBSITE_CATEGORY_LABELS.development).toBe('开发环境')
   })
 
-  it('端口需要与否由项目类型决定：Java 与 Node 要端口，其余不要', () => {
+  it('所有项目类型都配置端口', () => {
     expect(contracts.websiteProjectUsesPort('java')).toBe(true)
     expect(contracts.websiteProjectUsesPort('node')).toBe(true)
-    expect(contracts.websiteProjectUsesPort('go')).toBe(false)
-    expect(contracts.websiteProjectUsesPort('python')).toBe(false)
-    expect(contracts.websiteProjectUsesPort('html')).toBe(false)
+    expect(contracts.websiteProjectUsesPort('go')).toBe(true)
+    expect(contracts.websiteProjectUsesPort('python')).toBe(true)
+    expect(contracts.websiteProjectUsesPort('html')).toBe(true)
+  })
+
+  it('运行时版本：四种语言需要，HTML 不需要；各语言有 mock 版本目录', () => {
+    expect(contracts.websiteProjectUsesRuntime('java')).toBe(true)
+    expect(contracts.websiteProjectUsesRuntime('html')).toBe(false)
+    expect(contracts.WEBSITE_RUNTIME_VERSIONS.java).toContain('17')
+    expect(contracts.WEBSITE_RUNTIME_VERSIONS.node).toContain('20.11.1')
+    expect(contracts.WEBSITE_RUNTIME_VERSIONS.go.length).toBeGreaterThan(0)
+    expect(contracts.WEBSITE_RUNTIME_VERSIONS.python.length).toBeGreaterThan(0)
+  })
+
+  it('根目录由固定前缀与项目名推导', () => {
+    expect(contracts.WEBSITE_ROOT_BASE).toBe('/www/wwwroot')
+    expect(contracts.websiteProjectRootDir('订单中心-api')).toBe('/www/wwwroot/订单中心-api')
+  })
+
+  it('从 Git URL 解析仓库名；非法地址返回 null', () => {
+    expect(contracts.parseProjectNameFromGitUrl('https://github.com/acme/order-api.git')).toBe(
+      'order-api',
+    )
+    expect(contracts.parseProjectNameFromGitUrl('https://gitee.com/acme/user-web')).toBe('user-web')
+    expect(contracts.parseProjectNameFromGitUrl('git@github.com:acme/webhook-gateway.git')).toBe(
+      'webhook-gateway',
+    )
+    expect(contracts.parseProjectNameFromGitUrl('not-a-url')).toBeNull()
+    expect(contracts.parseProjectNameFromGitUrl('')).toBeNull()
+  })
+
+  it('端口判据：1–65535 的整数', () => {
+    expect(contracts.isValidWebsitePort(8080)).toBe(true)
+    expect(contracts.isValidWebsitePort(1)).toBe(true)
+    expect(contracts.isValidWebsitePort(65535)).toBe(true)
+    expect(contracts.isValidWebsitePort(0)).toBe(false)
+    expect(contracts.isValidWebsitePort(65536)).toBe(false)
+    expect(contracts.isValidWebsitePort(80.5)).toBe(false)
   })
 
   it('网站项目名判据：去空白后非空，最长 64 字符', () => {

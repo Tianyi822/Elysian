@@ -3,22 +3,80 @@ import { useState } from 'react'
 import {
   WEBSITE_PROJECT_KINDS,
   WEBSITE_PROJECT_KIND_LABELS,
+  WEBSITE_RUNTIME_VERSIONS,
+  isValidWebsitePort,
   isValidWebsiteProjectName,
-  websiteProjectUsesPort,
+  parseProjectNameFromGitUrl,
+  websiteProjectUsesRuntime,
 } from '@elysian/contracts'
-import type { WebsiteProjectKind } from '@elysian/contracts'
+import type { WebsiteProjectKind, WebsiteRuntimeKind } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { X } from '../../components/icons'
+import { Minus, Plus, X } from '../../components/icons'
 import { useWebsitesStore } from '../../stores/websitesStore'
 
 /**
- * 添加项目弹窗：类型（五种运行时，分段选择）、名称、根目录（按名称自动带出、可改）、
- * 端口（仅 Java 与 Node 显示）、备注。新建即已停止、无证书：运行状态与证书不由表单决定，
- * 由演示引擎按需演进。提交失败（如同名项目已存在）保留弹窗，错误经通知条呈现。
+ * 添加项目弹窗：类型、Git 地址（可贴链接自动带出名称）、名称、运行时版本（非 HTML）、
+ * 端口（自定义加减，全类型必填）、备注。根目录固定由名称推导，创建表单不暴露。
+ * 提交失败保留弹窗，错误经通知条呈现。本期 Git 只存地址，不真拉代码。
  */
 
 const INPUT_CLASS =
   'w-full rounded-lg border border-line bg-surface-raised px-2.5 py-1.5 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle'
+
+const DEFAULT_PORT = 8080
+
+function defaultRuntimeVersion(kind: WebsiteProjectKind): string | null {
+  if (!websiteProjectUsesRuntime(kind)) return null
+  return WEBSITE_RUNTIME_VERSIONS[kind as WebsiteRuntimeKind][0] ?? null
+}
+
+/** 自定义端口控件：文本输入 + 加减按钮，不使用浏览器 type=number 的系统步进。 */
+function PortStepper({
+  id,
+  value,
+  onChange,
+}: {
+  id: string
+  value: number
+  onChange: (next: number) => void
+}) {
+  const clamp = (next: number) => Math.min(65535, Math.max(1, next))
+  return (
+    <div className="flex items-stretch gap-1.5">
+      <button
+        type="button"
+        aria-label="端口减一"
+        onClick={() => onChange(clamp(value - 1))}
+        className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-line bg-surface-raised text-fg-muted transition-colors hover:border-fg-subtle hover:text-fg"
+      >
+        <Minus aria-hidden size={14} />
+      </button>
+      <input
+        id={id}
+        inputMode="numeric"
+        autoComplete="off"
+        value={value}
+        onChange={(event) => {
+          const raw = event.target.value.replace(/\D/g, '')
+          if (!raw) {
+            onChange(1)
+            return
+          }
+          onChange(clamp(Number(raw)))
+        }}
+        className={`${INPUT_CLASS} text-center tabular-nums`}
+      />
+      <button
+        type="button"
+        aria-label="端口加一"
+        onClick={() => onChange(clamp(value + 1))}
+        className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-line bg-surface-raised text-fg-muted transition-colors hover:border-fg-subtle hover:text-fg"
+      >
+        <Plus aria-hidden size={14} />
+      </button>
+    </div>
+  )
+}
 
 export function WebsitesCreateDialog() {
   const gateway = useGateway()
@@ -27,16 +85,35 @@ export function WebsitesCreateDialog() {
   const createProject = useWebsitesStore((s) => s.createProject)
 
   const [kind, setKind] = useState<WebsiteProjectKind>('java')
+  const [gitUrl, setGitUrl] = useState('')
   const [name, setName] = useState('')
-  const [rootDir, setRootDir] = useState('')
-  // 用户改过根目录后就不再自动带出：自动值只为省事，不能盖掉人工输入。
-  const [rootDirTouched, setRootDirTouched] = useState(false)
-  const [port, setPort] = useState('')
+  /** 最近一次由 Git URL 自动带出的名称；名称仍等于它时，换 URL 可继续覆盖。 */
+  const [autoName, setAutoName] = useState<string | null>(null)
+  const [runtimeVersion, setRuntimeVersion] = useState<string | null>(() => defaultRuntimeVersion('java'))
+  const [port, setPort] = useState(DEFAULT_PORT)
   const [note, setNote] = useState('')
   const [nameError, setNameError] = useState<string | undefined>(undefined)
   const [portError, setPortError] = useState<string | undefined>(undefined)
+  const [versionError, setVersionError] = useState<string | undefined>(undefined)
 
-  const usesPort = websiteProjectUsesPort(kind)
+  const usesRuntime = websiteProjectUsesRuntime(kind)
+
+  const applyKind = (next: WebsiteProjectKind) => {
+    setKind(next)
+    setRuntimeVersion(defaultRuntimeVersion(next))
+    setVersionError(undefined)
+  }
+
+  const applyGitUrl = (next: string) => {
+    setGitUrl(next)
+    const parsed = parseProjectNameFromGitUrl(next)
+    if (!parsed) return
+    if (!name.trim() || name === autoName) {
+      setName(parsed)
+      setAutoName(parsed)
+      setNameError(undefined)
+    }
+  }
 
   const submit = () => {
     const trimmedName = name.trim()
@@ -45,20 +122,21 @@ export function WebsitesCreateDialog() {
       return
     }
     setNameError(undefined)
-    let nextPort: number | undefined
-    if (usesPort && port.trim()) {
-      const parsed = Number(port)
-      if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
-        setPortError('端口需为 1-65535 的整数')
-        return
-      }
-      setPortError(undefined)
-      nextPort = parsed
+    if (!isValidWebsitePort(port)) {
+      setPortError('端口需为 1-65535 的整数')
+      return
     }
+    setPortError(undefined)
+    if (usesRuntime && !runtimeVersion) {
+      setVersionError('请选择运行时版本')
+      return
+    }
+    setVersionError(undefined)
     void createProject(gateway, kind, {
       name: trimmedName,
-      rootDir: rootDir.trim() || undefined,
-      port: nextPort,
+      port,
+      runtimeVersion: usesRuntime ? runtimeVersion : null,
+      gitUrl: gitUrl.trim() || null,
       note: note.trim() || null,
     })
   }
@@ -69,7 +147,6 @@ export function WebsitesCreateDialog() {
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60" />
         <Dialog.Content
           aria-describedby={undefined}
-          // 点外部一律不关：填好的配置不该因为一次误点丢掉。Esc 与「取消」仍可退出。
           onPointerDownOutside={(event) => event.preventDefault()}
           onInteractOutside={(event) => event.preventDefault()}
           className="fixed left-1/2 top-1/2 z-[55] flex max-h-[min(40rem,calc(100vh-3rem))] w-[min(30rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line bg-bg shadow-2xl"
@@ -96,17 +173,13 @@ export function WebsitesCreateDialog() {
           <div className="flex flex-col gap-4 overflow-y-auto px-4 py-4">
             <div>
               <p className="mb-1 text-xs font-medium text-fg-muted">类型</p>
-              <div
-                role="group"
-                aria-label="项目类型"
-                className="flex flex-wrap gap-1.5"
-              >
+              <div role="group" aria-label="项目类型" className="flex flex-wrap gap-1.5">
                 {WEBSITE_PROJECT_KINDS.map((option) => (
                   <button
                     key={option}
                     type="button"
                     aria-pressed={option === kind}
-                    onClick={() => setKind(option)}
+                    onClick={() => applyKind(option)}
                     className={`rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
                       option === kind
                         ? 'border-accent/50 bg-accent/10 font-medium text-accent'
@@ -120,6 +193,22 @@ export function WebsitesCreateDialog() {
             </div>
 
             <div>
+              <label htmlFor="website-create-git" className="mb-1 block text-xs font-medium text-fg-muted">
+                Git 地址
+              </label>
+              <input
+                id="website-create-git"
+                value={gitUrl}
+                onChange={(event) => applyGitUrl(event.target.value)}
+                placeholder="如 https://github.com/org/repo.git"
+                className={INPUT_CLASS}
+              />
+              <p className="mt-1 text-xs text-fg-subtle">
+                演示：只记录地址，代码将落到固定目录（详情页可见），不触碰真实仓库。
+              </p>
+            </div>
+
+            <div>
               <label htmlFor="website-create-name" className="mb-1 block text-xs font-medium text-fg-muted">
                 项目名称 <span className="text-danger">*</span>
               </label>
@@ -127,9 +216,8 @@ export function WebsitesCreateDialog() {
                 id="website-create-name"
                 value={name}
                 onChange={(event) => {
-                  const next = event.target.value
-                  setName(next)
-                  if (!rootDirTouched) setRootDir(`/www/wwwroot/${next.trim()}`)
+                  setName(event.target.value)
+                  setAutoName(null)
                 }}
                 placeholder="如 订单中心-api"
                 className={INPUT_CLASS}
@@ -137,40 +225,34 @@ export function WebsitesCreateDialog() {
               {nameError ? <p className="mt-1 text-xs text-danger">{nameError}</p> : null}
             </div>
 
-            <div>
-              <label htmlFor="website-create-rootdir" className="mb-1 block text-xs font-medium text-fg-muted">
-                根目录
-              </label>
-              <input
-                id="website-create-rootdir"
-                value={rootDir}
-                onChange={(event) => {
-                  setRootDirTouched(true)
-                  setRootDir(event.target.value)
-                }}
-                placeholder="/www/wwwroot/项目名称"
-                className={INPUT_CLASS}
-              />
-            </div>
-
-            {usesPort ? (
+            {usesRuntime ? (
               <div>
-                <label htmlFor="website-create-port" className="mb-1 block text-xs font-medium text-fg-muted">
-                  端口
+                <label htmlFor="website-create-runtime" className="mb-1 block text-xs font-medium text-fg-muted">
+                  运行时版本 <span className="text-danger">*</span>
                 </label>
-                <input
-                  id="website-create-port"
-                  type="number"
-                  min={1}
-                  max={65535}
-                  value={port}
-                  onChange={(event) => setPort(event.target.value)}
-                  placeholder="如 8080"
-                  className={`${INPUT_CLASS} tabular-nums`}
-                />
-                {portError ? <p className="mt-1 text-xs text-danger">{portError}</p> : null}
+                <select
+                  id="website-create-runtime"
+                  value={runtimeVersion ?? ''}
+                  onChange={(event) => setRuntimeVersion(event.target.value || null)}
+                  className={INPUT_CLASS}
+                >
+                  {WEBSITE_RUNTIME_VERSIONS[kind as WebsiteRuntimeKind].map((version) => (
+                    <option key={version} value={version}>
+                      {version}
+                    </option>
+                  ))}
+                </select>
+                {versionError ? <p className="mt-1 text-xs text-danger">{versionError}</p> : null}
               </div>
             ) : null}
+
+            <div>
+              <label htmlFor="website-create-port" className="mb-1 block text-xs font-medium text-fg-muted">
+                端口 <span className="text-danger">*</span>
+              </label>
+              <PortStepper id="website-create-port" value={port} onChange={setPort} />
+              {portError ? <p className="mt-1 text-xs text-danger">{portError}</p> : null}
+            </div>
 
             <div>
               <label htmlFor="website-create-note" className="mb-1 block text-xs font-medium text-fg-muted">

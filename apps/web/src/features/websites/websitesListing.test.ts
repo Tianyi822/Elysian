@@ -13,8 +13,8 @@ function project(overrides: Partial<WebsiteProject>): WebsiteProject {
     kind: 'java',
     name: 'app',
     pid: null,
-    port: null,
-    runtimeVersion: null,
+    port: 8080,
+    runtimeVersion: '17',
     rootDir: '/www/wwwroot/app',
     runState: 'stopped',
     expiryAt: null,
@@ -22,6 +22,7 @@ function project(overrides: Partial<WebsiteProject>): WebsiteProject {
     cert: 'none',
     category: 'production',
     deployCommand: null,
+    gitUrl: null,
     traffic: { todayMb: 0, totalGb: 0 },
     ...overrides,
   }

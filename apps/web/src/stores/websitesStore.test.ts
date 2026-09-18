@@ -20,8 +20,8 @@ function project(overrides: Partial<WebsiteProject>): WebsiteProject {
     kind: 'java',
     name: 'app',
     pid: null,
-    port: null,
-    runtimeVersion: null,
+    port: 8080,
+    runtimeVersion: '17',
     rootDir: '/www/wwwroot/app',
     runState: 'stopped',
     expiryAt: null,
@@ -29,6 +29,7 @@ function project(overrides: Partial<WebsiteProject>): WebsiteProject {
     cert: 'none',
     category: 'production',
     deployCommand: null,
+    gitUrl: null,
     traffic: { todayMb: 0, totalGb: 0 },
     ...overrides,
   }
@@ -53,6 +54,7 @@ const FIXTURES: readonly WebsiteProject[] = [
     kind: 'node',
     name: 'marketing-site',
     runtimeVersion: '20.11.1',
+    port: 3000,
     note: '官网与落地页',
     category: 'testing',
     rootDir: '/www/wwwroot/marketing-site',
@@ -61,6 +63,8 @@ const FIXTURES: readonly WebsiteProject[] = [
     id: 'web-html-portal',
     kind: 'html',
     name: 'company-portal',
+    runtimeVersion: null,
+    port: 8088,
     note: '静态门户',
     category: 'development',
     rootDir: '/www/wwwroot/company-portal',
@@ -70,6 +74,8 @@ const FIXTURES: readonly WebsiteProject[] = [
     kind: 'go',
     name: 'backup-agent',
     pid: 4410,
+    port: 9100,
+    runtimeVersion: '1.22.4',
     runState: 'running',
     category: 'production',
     deployCommand: './backup-agent -c etc/agent.toml',
@@ -82,7 +88,14 @@ function gatewayWith(overrides: Partial<ElysianGateway['websites']> = {}): Elysi
     websites: {
       list: async () => [...FIXTURES],
       create: async (kind: WebsiteProjectKind, input: WebsiteProjectCreateInput) =>
-        project({ id: `web-${kind}-new`, kind, name: input.name }),
+        project({
+          id: `web-${kind}-new`,
+          kind,
+          name: input.name,
+          port: input.port,
+          runtimeVersion: kind === 'html' ? null : (input.runtimeVersion ?? '17'),
+          gitUrl: input.gitUrl ?? null,
+        }),
       update: async (projectId: string, input: WebsiteProjectUpdateInput) => {
         const target = FIXTURES.find((item) => item.id === projectId)!
         return { ...target, note: input.note ?? target.note, expiryAt: input.expiryAt ?? target.expiryAt }
@@ -105,9 +118,6 @@ beforeEach(() => {
     projects: [],
     search: '',
     category: 'all',
-    selectedIds: [],
-    batchAction: undefined,
-    batchRunning: false,
     refreshing: false,
     saving: false,
     createDialogOpen: false,
@@ -163,28 +173,13 @@ describe('加载与刷新', () => {
   })
 })
 
-describe('筛选与选择', () => {
+describe('筛选', () => {
   it('setSearch 与 setCategory 只改筛选字段', () => {
     useWebsitesStore.getState().setSearch('订单')
     useWebsitesStore.getState().setCategory('testing')
     const state = useWebsitesStore.getState()
     expect(state.search).toBe('订单')
     expect(state.category).toBe('testing')
-  })
-
-  it('toggleSelectAllVisible 全选后再点一次取消', () => {
-    useWebsitesStore.getState().toggleSelectAllVisible(['web-java-api', 'web-go-agent'])
-    expect(useWebsitesStore.getState().selectedIds).toEqual(['web-java-api', 'web-go-agent'])
-    useWebsitesStore.getState().toggleSelectAllVisible(['web-java-api', 'web-go-agent'])
-    expect(useWebsitesStore.getState().selectedIds).toEqual([])
-  })
-
-  it('全选保留可见集之外已勾选的行，再点取消只清可见集', () => {
-    useWebsitesStore.getState().toggleSelected('web-html-portal')
-    useWebsitesStore.getState().toggleSelectAllVisible(['web-java-api'])
-    expect(useWebsitesStore.getState().selectedIds).toEqual(['web-html-portal', 'web-java-api'])
-    useWebsitesStore.getState().toggleSelectAllVisible(['web-java-api'])
-    expect(useWebsitesStore.getState().selectedIds).toEqual(['web-html-portal'])
   })
 })
 
@@ -198,16 +193,30 @@ describe('新建项目', () => {
 
   it('createProject 把表单选择的类型传给 adapter，成功后追加列表并通知', async () => {
     const create = vi.fn(async (kind: WebsiteProjectKind, input: WebsiteProjectCreateInput) =>
-      project({ id: 'web-node-new', kind, name: input.name }),
+      project({
+        id: 'web-node-new',
+        kind,
+        name: input.name,
+        port: input.port,
+        runtimeVersion: input.runtimeVersion ?? null,
+      }),
     )
     const gateway = gatewayWith({ create })
     await useWebsitesStore.getState().load(gateway)
     useWebsitesStore.getState().openCreate()
 
-    const ok = await useWebsitesStore.getState().createProject(gateway, 'node', { name: '新站点', port: 3000 })
+    const ok = await useWebsitesStore.getState().createProject(gateway, 'node', {
+      name: '新站点',
+      port: 3000,
+      runtimeVersion: '20.11.1',
+    })
 
     expect(ok).toBe(true)
-    expect(create).toHaveBeenCalledWith('node', { name: '新站点', port: 3000 })
+    expect(create).toHaveBeenCalledWith('node', {
+      name: '新站点',
+      port: 3000,
+      runtimeVersion: '20.11.1',
+    })
     const state = useWebsitesStore.getState()
     expect(state.projects.map((item) => item.id)).toContain('web-node-new')
     expect(state.createDialogOpen).toBe(false)
@@ -224,7 +233,7 @@ describe('新建项目', () => {
     const ok = await useWebsitesStore.getState().createProject(
       gatewayWith({ create: async () => { throw new Error('同名项目已存在') } }),
       'node',
-      { name: 'marketing-site' },
+      { name: 'marketing-site', port: 3000, runtimeVersion: '20.11.1' },
     )
     const state = useWebsitesStore.getState()
     expect(ok).toBe(false)
@@ -276,7 +285,7 @@ describe('设置与删除', () => {
   })
 })
 
-describe('启停与批量', () => {
+describe('启停', () => {
   it('setRunning 乐观更新先行，确认后发通知并清忙碌', async () => {
     let confirm!: (value: WebsiteProject) => void
     const gateway = gatewayWith({
@@ -316,32 +325,6 @@ describe('启停与批量', () => {
     expect(useNotificationStore.getState().notifications[0]).toMatchObject({
       tone: 'danger',
       message: '执行层未接入',
-    })
-  })
-
-  it('runBatch 批量停止：逐项调用启停、重拉列表、清空选择与批量动作并通知', async () => {
-    const setRunning = vi.fn(async (projectId: string) => {
-      const target = FIXTURES.find((item) => item.id === projectId)!
-      return { ...target, runState: 'stopped' as const, pid: null }
-    })
-    const gateway = gatewayWith({ setRunning })
-    await useWebsitesStore.getState().load(gateway)
-    useWebsitesStore.getState().toggleSelected('web-java-api')
-    useWebsitesStore.getState().toggleSelected('web-go-agent')
-    useWebsitesStore.getState().setBatchAction('stop')
-
-    await useWebsitesStore.getState().runBatch(gateway)
-
-    expect(setRunning).toHaveBeenCalledWith('web-java-api', false)
-    expect(setRunning).toHaveBeenCalledWith('web-go-agent', false)
-    const state = useWebsitesStore.getState()
-    expect(state.selectedIds).toEqual([])
-    expect(state.batchAction).toBeUndefined()
-    expect(state.batchRunning).toBe(false)
-    expect(state.projects).toHaveLength(4)
-    expect(useNotificationStore.getState().notifications[0]).toMatchObject({
-      tone: 'success',
-      message: '批量停止完成：2 个项目（mock，待接入真实执行）',
     })
   })
 })

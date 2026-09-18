@@ -21,7 +21,7 @@ const javaRunning: WebsiteProject = {
   name: '订单中心-api',
   pid: 23180,
   port: 8080,
-  runtimeVersion: null,
+  runtimeVersion: '17',
   rootDir: '/www/wwwroot/order-api',
   runState: 'running',
   expiryAt: '2026-12-20',
@@ -29,6 +29,7 @@ const javaRunning: WebsiteProject = {
   cert: 'deployed',
   category: 'production',
   deployCommand: 'java -jar order-api.jar --server.port=8080',
+  gitUrl: 'https://github.com/acme/order-api.git',
   traffic: { todayMb: 864, totalGb: 218.4 },
 }
 
@@ -54,6 +55,7 @@ const nodeProject: WebsiteProject = {
   cert: 'expired',
   category: 'production',
   deployCommand: 'node dist/main.js',
+  gitUrl: null,
   traffic: { todayMb: 731, totalGb: 164.9 },
 }
 
@@ -61,9 +63,9 @@ const goProject: WebsiteProject = {
   id: 'website-go-log-collector',
   kind: 'go',
   name: 'log-collector',
-  pid: null,
-  port: null,
-  runtimeVersion: null,
+  pid: 24001,
+  port: 9100,
+  runtimeVersion: '1.22.4',
   rootDir: '/www/wwwroot/log-collector',
   runState: 'running',
   expiryAt: null,
@@ -71,6 +73,7 @@ const goProject: WebsiteProject = {
   cert: 'deployed',
   category: 'production',
   deployCommand: './log-collector --config /etc/log-collector.yaml',
+  gitUrl: 'https://github.com/acme/log-collector.git',
   traffic: { todayMb: 1284, totalGb: 402.6 },
 }
 
@@ -79,7 +82,7 @@ const htmlProject: WebsiteProject = {
   kind: 'html',
   name: 'company-portal',
   pid: null,
-  port: null,
+  port: 8088,
   runtimeVersion: null,
   rootDir: '/www/wwwroot/company-portal',
   runState: 'running',
@@ -88,6 +91,7 @@ const htmlProject: WebsiteProject = {
   cert: 'none',
   category: 'production',
   deployCommand: null,
+  gitUrl: null,
   traffic: { todayMb: 264, totalGb: 58.2 },
 }
 
@@ -118,30 +122,38 @@ describe('网站详情抽屉', () => {
     expect(container.innerHTML).toBe('')
   })
 
-  it('头部呈现名称、运行状态、类型与分类标签和演示徽标', () => {
+  it('头部呈现名称、运行状态与演示徽标；类型与分类只在基本信息出现一次', () => {
     openDetail(javaRunning)
     renderSheet()
     expect(screen.getByText('订单中心-api')).toBeInTheDocument()
-    // 运行状态、类型与分类在头部标签与基本信息行各出现一次。
-    expect(screen.getAllByText('运行中').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('Java项目').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('生产环境').length).toBeGreaterThan(0)
+    expect(screen.getByText('运行中')).toBeInTheDocument()
     expect(screen.getByText('演示 · 待接入真实执行')).toBeInTheDocument()
+    expect(screen.getAllByText('Java项目')).toHaveLength(1)
+    expect(screen.getAllByText('生产环境')).toHaveLength(1)
   })
 
-  it('java 项目基本信息完整：PID 与端口有值、到期时间格式化、根目录是文件页链接', () => {
+  it('运行快览呈现 PID、端口与流量；基本信息含到期、备注、Git 与根目录链接，不含重复的运行态/PID/端口', () => {
     openDetail(javaRunning)
     renderSheet()
+    expect(screen.getByRole('region', { name: '运行快览' })).toBeInTheDocument()
     expect(screen.getByText('23180')).toBeInTheDocument()
     expect(screen.getByText('8080')).toBeInTheDocument()
+    expect(screen.getByText('864 MB')).toBeInTheDocument()
+    expect(screen.getByText('218.4 GB')).toBeInTheDocument()
     expect(screen.getByText('2026-12-20')).toBeInTheDocument()
     expect(screen.getByText('商城核心下单链路')).toBeInTheDocument()
+    expect(screen.getByText('https://github.com/acme/order-api.git')).toBeInTheDocument()
     const link = screen.getByRole('link', { name: '/www/wwwroot/order-api' })
     expect(link.getAttribute('href')).toBe('/files/www/wwwroot/order-api')
-    expect(screen.queryByText('Node版本')).not.toBeInTheDocument()
+    expect(screen.getByText('运行时版本')).toBeInTheDocument()
+    // 基本信息节不再重复这些行。
+    const basic = screen.getByRole('region', { name: '基本信息' })
+    expect(basic).not.toHaveTextContent('PID')
+    expect(basic).not.toHaveTextContent('端口')
+    expect(basic).not.toHaveTextContent('运行状态')
   })
 
-  it('已停止项目 PID 显示 —；html 项目没有 PID 与端口行，部署命令区显示 Nginx 托管说明', () => {
+  it('已停止项目快览 PID 显示 —；html 项目快览有端口无 PID；部署命令区显示 Nginx 托管说明', () => {
     openDetail(javaStopped)
     const stopped = renderSheet()
     expect(screen.getByText('—')).toBeInTheDocument()
@@ -149,8 +161,10 @@ describe('网站详情抽屉', () => {
 
     openDetail(htmlProject)
     renderSheet()
+    expect(screen.getByRole('region', { name: '运行快览' })).toBeInTheDocument()
     expect(screen.queryByText('PID')).not.toBeInTheDocument()
-    expect(screen.queryByText('端口')).not.toBeInTheDocument()
+    expect(screen.getByText('8088')).toBeInTheDocument()
+    expect(screen.getByText('264 MB')).toBeInTheDocument()
     expect(screen.getByText('静态站点由 Nginx 直接托管，无部署命令')).toBeInTheDocument()
   })
 
@@ -174,10 +188,10 @@ describe('网站详情抽屉', () => {
     }
   })
 
-  it('node 项目呈现 Node版本行', () => {
+  it('node 项目呈现运行时版本行', () => {
     openDetail(nodeProject)
     renderSheet()
-    expect(screen.getByText('Node版本')).toBeInTheDocument()
+    expect(screen.getByText('运行时版本')).toBeInTheDocument()
     expect(screen.getByText('20.11.1')).toBeInTheDocument()
   })
 
@@ -188,7 +202,7 @@ describe('网站详情抽屉', () => {
     expect(screen.getByRole('button', { name: '部署命令' })).toBeInTheDocument()
   })
 
-  it('今日流量低于 1024 MB 按 MB 展示', () => {
+  it('今日流量低于 1024 MB 按 MB 展示；累计按 GB', () => {
     openDetail(javaRunning)
     renderSheet()
     expect(screen.getByText('864 MB')).toBeInTheDocument()

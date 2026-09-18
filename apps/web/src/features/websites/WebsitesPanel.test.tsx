@@ -10,7 +10,7 @@ import { renderApp } from '../../test/renderApp'
 
 /**
  * 网站面板（卡片网格）的端到端行为：过滤、详情抽屉、建站（带类型选择）、
- * 启停/设置/删除、批量操作与四态。数据走默认 mock 数据集（17 个种子项目）。
+ * 启停/设置/删除与四态。数据走默认 mock 数据集（17 个种子项目）。
  */
 
 function sessionGateway(overrides: Partial<ElysianGateway['websites']> = {}): ElysianGateway {
@@ -58,9 +58,6 @@ beforeEach(() => {
     projects: [],
     search: '',
     category: 'all',
-    selectedIds: [],
-    batchAction: undefined,
-    batchRunning: false,
     refreshing: false,
     saving: false,
     createDialogOpen: false,
@@ -84,7 +81,7 @@ describe('卡片网格', () => {
     expect(within(java).getByText('生产环境')).toBeInTheDocument()
   })
 
-  it('卡片按类型呈现专属信息：Java 有端口与 PID，HTML 没有，Go 显示长期有效', async () => {
+  it('卡片按类型呈现专属信息：Java 有端口与 PID，HTML 有端口无版本，Go 有运行时版本', async () => {
     const list = await openWebsites()
 
     const java = cardByName(list, '订单中心-api')
@@ -92,10 +89,13 @@ describe('卡片网格', () => {
     expect(within(java).getByText('23180')).toBeInTheDocument()
 
     const html = cardByName(list, 'company-portal')
-    expect(within(html).queryByText('端口')).not.toBeInTheDocument()
+    expect(within(html).getByText('端口')).toBeInTheDocument()
+    expect(within(html).queryByText('运行时版本')).not.toBeInTheDocument()
+    expect(within(html).queryByText('到期时间')).not.toBeInTheDocument()
 
     const go = cardByName(list, 'log-collector')
-    expect(within(go).getByText('长期有效')).toBeInTheDocument()
+    expect(within(go).getByText('运行时版本')).toBeInTheDocument()
+    expect(within(go).getByText('1.22.4')).toBeInTheDocument()
   })
 
   it('搜索按名称与备注匹配，分类筛选叠加生效', async () => {
@@ -153,23 +153,30 @@ describe('详情抽屉', () => {
 })
 
 describe('建站', () => {
-  it('类型在弹窗内选择：默认 Java 有端口字段，切到 HTML 后消失，创建后新卡片出现', async () => {
+  it('类型在弹窗内选择：默认 Java 有端口与版本；切到 HTML 后版本消失、端口仍在；贴 Git URL 自动带出名称', async () => {
     const user = userEvent.setup()
     const list = await openWebsites()
 
     await user.click(screen.getByRole('button', { name: '添加项目' }))
     const dialog = await screen.findByRole('dialog', { name: '添加项目' })
-    expect(within(dialog).getByLabelText(/端口/)).toBeInTheDocument()
+    expect(within(dialog).getByRole('textbox', { name: /端口/ })).toBeInTheDocument()
+    expect(within(dialog).getByLabelText(/运行时版本/)).toBeInTheDocument()
+
+    await user.type(
+      within(dialog).getByLabelText(/Git 地址/),
+      'https://github.com/acme/static-home.git',
+    )
+    expect(within(dialog).getByLabelText(/项目名称/)).toHaveValue('static-home')
 
     await user.click(within(dialog).getByRole('button', { name: 'HTML项目' }))
-    expect(within(dialog).queryByLabelText(/端口/)).not.toBeInTheDocument()
+    expect(within(dialog).queryByLabelText(/运行时版本/)).not.toBeInTheDocument()
+    expect(within(dialog).getByRole('textbox', { name: /端口/ })).toBeInTheDocument()
 
-    await user.type(within(dialog).getByLabelText(/项目名称/), '静态主页')
     await user.click(within(dialog).getByRole('button', { name: '添加项目' }))
 
     expect(screen.queryByRole('dialog', { name: '添加项目' })).not.toBeInTheDocument()
-    expect(await within(list).findByRole('article', { name: /静态主页/ })).toBeInTheDocument()
-    expect(lastNotification()).toBe('项目 静态主页 已添加（mock，待接入真实执行）')
+    expect(await within(list).findByRole('article', { name: /static-home/ })).toBeInTheDocument()
+    expect(lastNotification()).toBe('项目 static-home 已添加（mock，待接入真实执行）')
   })
 })
 
@@ -234,25 +241,6 @@ describe('卡片动作', () => {
       expect(screen.queryByRole('article', { name: '订单中心-api' })).not.toBeInTheDocument(),
     )
     expect(lastNotification()).toContain('已删除（mock，待接入真实执行）')
-  })
-})
-
-describe('批量操作', () => {
-  it('勾选两张卡片批量停止，完成后通知并清空选择', async () => {
-    const user = userEvent.setup()
-    const list = await openWebsites()
-
-    const targets = cards(list).slice(0, 2)
-    for (const card of targets) {
-      await user.click(within(card).getByRole('checkbox'))
-    }
-
-    await user.click(screen.getByRole('button', { name: '批量操作：请选择批量操作' }))
-    await user.click(screen.getByRole('menuitemradio', { name: '批量停止' }))
-    await user.click(screen.getByRole('button', { name: '批量操作' }))
-
-    expect(lastNotification()).toBe('批量停止完成：2 个项目（mock，待接入真实执行）')
-    expect(useWebsitesStore.getState().selectedIds).toEqual([])
   })
 })
 

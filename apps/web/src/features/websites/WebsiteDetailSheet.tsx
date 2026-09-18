@@ -7,7 +7,6 @@ import {
   WEBSITE_CERT_STATE_LABELS,
   WEBSITE_PROJECT_KIND_LABELS,
   WEBSITE_RUN_STATE_LABELS,
-  websiteProjectUsesPort,
 } from '@elysian/contracts'
 import type { WebsiteProject } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
@@ -36,25 +35,43 @@ function formatTodayTraffic(mb: number): string {
   return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`
 }
 
-/** 分节卡片：与容器抽屉的内部信息块同一视觉语言（圆角描边、抬升底色）；action 放节标题右侧的次要控件。 */
-function Section({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
+/** 分节卡片：圆角描边抬升底色；action 放节标题右侧的次要控件。 */
+function Section({
+  title,
+  action,
+  children,
+}: {
+  title: string
+  action?: ReactNode
+  children: ReactNode
+}) {
   return (
-    <section className="rounded-xl border border-line bg-surface-raised px-3 py-2.5">
+    <section aria-label={title} className="rounded-xl border border-line bg-surface-raised px-4 py-3.5">
       <div className="flex items-center justify-between gap-2">
-        <h3 className="text-xs font-medium text-fg-muted">{title}</h3>
+        <h3 className="text-sm font-medium text-fg">{title}</h3>
         {action}
       </div>
-      <div className="mt-2 space-y-1.5">{children}</div>
+      <div className="mt-3">{children}</div>
     </section>
   )
 }
 
-/** 键值行：标签列定宽，值列右对齐，同节内各行的值从同一条线开始。 */
+/** 键值行：标签弱化、值左对齐，便于窄栏扫描。 */
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="grid grid-cols-[4.5rem_1fr] items-baseline gap-3">
+    <div className="grid grid-cols-[5rem_1fr] items-baseline gap-x-4 gap-y-1 py-1.5">
       <dt className="text-xs text-fg-muted">{label}</dt>
-      <dd className="flex min-w-0 items-baseline justify-end gap-1 text-sm text-fg">{children}</dd>
+      <dd className="min-w-0 text-sm text-fg">{children}</dd>
+    </div>
+  )
+}
+
+/** 运行快览里的单个指标格。 */
+function Metric({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="rounded-lg border border-line bg-surface px-3 py-2.5">
+      <div className="text-xs text-fg-muted">{label}</div>
+      <div className="mt-1 text-sm font-medium tabular-nums text-fg">{children}</div>
     </div>
   )
 }
@@ -75,6 +92,8 @@ export function WebsiteDetailSheet() {
 
   if (!project) return null
 
+  const showPid = project.kind !== 'html'
+
   return (
     <Dialog.Root
       open={Boolean(detailTarget)}
@@ -86,24 +105,22 @@ export function WebsiteDetailSheet() {
         <Dialog.Overlay className="fixed inset-0 z-40 bg-black/60 motion-reduce:animate-none data-[state=open]:animate-drawer-overlay-in data-[state=closed]:animate-drawer-overlay-out" />
         <Dialog.Content
           aria-describedby={undefined}
-          className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col overflow-y-auto border-l border-line bg-surface p-5 shadow-xl will-change-transform motion-reduce:animate-none data-[state=open]:animate-sheet-panel-in data-[state=closed]:animate-sheet-panel-out"
+          className="fixed inset-y-0 right-0 z-50 flex w-full max-w-xl flex-col overflow-y-auto border-l border-line bg-surface p-6 shadow-xl will-change-transform motion-reduce:animate-none data-[state=open]:animate-sheet-panel-in data-[state=closed]:animate-sheet-panel-out"
         >
-          <div className="flex items-start justify-between gap-3">
+          <header className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <Dialog.Title className="text-base font-semibold">{project.name}</Dialog.Title>
+                <Dialog.Title className="text-lg font-semibold tracking-tight">{project.name}</Dialog.Title>
                 <StatusTag
                   label={WEBSITE_RUN_STATE_LABELS[project.runState]}
                   tone={RUN_STATE_TONE[project.runState]}
                 />
               </div>
-              <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
-                <span className="rounded bg-warning/15 px-1.5 py-0.5 font-medium text-warning">
+              <p className="mt-2">
+                <span className="rounded bg-warning/15 px-1.5 py-0.5 text-xs font-medium text-warning">
                   演示 · 待接入真实执行
                 </span>
-                <StatusTag label={WEBSITE_PROJECT_KIND_LABELS[project.kind]} />
-                <StatusTag label={WEBSITE_CATEGORY_LABELS[project.category]} />
-              </div>
+              </p>
             </div>
             <Dialog.Close asChild>
               <span>
@@ -113,26 +130,30 @@ export function WebsiteDetailSheet() {
                 </IconButton>
               </span>
             </Dialog.Close>
-          </div>
+          </header>
 
-          <div className="mt-4 space-y-3">
+          <div className="mt-5 space-y-4">
+            <section aria-label="运行快览">
+              <div
+                className={
+                  showPid
+                    ? 'grid grid-cols-2 gap-2.5 sm:grid-cols-4'
+                    : 'grid grid-cols-2 gap-2.5 sm:grid-cols-3'
+                }
+              >
+                {showPid ? <Metric label="PID">{project.pid ?? '—'}</Metric> : null}
+                <Metric label="端口">{project.port}</Metric>
+                <Metric label="今日流量">{formatTodayTraffic(project.traffic.todayMb)}</Metric>
+                <Metric label="累计流量">{project.traffic.totalGb} GB</Metric>
+              </div>
+            </section>
+
             <Section title="基本信息">
-              <dl className="space-y-1.5">
+              <dl className="divide-y divide-line">
                 <Row label="类型">{WEBSITE_PROJECT_KIND_LABELS[project.kind]}</Row>
                 <Row label="分类">{WEBSITE_CATEGORY_LABELS[project.category]}</Row>
-                <Row label="运行状态">{WEBSITE_RUN_STATE_LABELS[project.runState]}</Row>
-                {websiteProjectUsesPort(project.kind) && (
-                  <>
-                    <Row label="PID">
-                      <span className="tabular-nums">{project.pid ?? '—'}</span>
-                    </Row>
-                    <Row label="端口">
-                      <span className="tabular-nums">{project.port ?? '—'}</span>
-                    </Row>
-                  </>
-                )}
                 {project.runtimeVersion !== null && (
-                  <Row label="Node版本">
+                  <Row label="运行时版本">
                     <span className="tabular-nums">{project.runtimeVersion}</span>
                   </Row>
                 )}
@@ -143,6 +164,13 @@ export function WebsiteDetailSheet() {
                   >
                     {project.rootDir}
                   </Link>
+                </Row>
+                <Row label="Git 地址">
+                  {project.gitUrl ? (
+                    <span className="break-all font-mono text-xs">{project.gitUrl}</span>
+                  ) : (
+                    '—'
+                  )}
                 </Row>
                 <Row label="到期时间">
                   {project.expiryAt ? (
@@ -176,23 +204,12 @@ export function WebsiteDetailSheet() {
               }
             >
               {project.deployCommand ? (
-                <code className="block break-all rounded border border-line bg-surface px-2 py-1.5 font-mono text-xs text-fg">
+                <code className="block break-all rounded-lg border border-line bg-surface px-3 py-2.5 font-mono text-xs leading-5 text-fg">
                   {project.deployCommand}
                 </code>
               ) : (
                 <p className="text-sm text-fg-muted">静态站点由 Nginx 直接托管，无部署命令</p>
               )}
-            </Section>
-
-            <Section title="流量">
-              <dl className="space-y-1.5">
-                <Row label="今日流量">
-                  <span className="tabular-nums">{formatTodayTraffic(project.traffic.todayMb)}</span>
-                </Row>
-                <Row label="累计流量">
-                  <span className="tabular-nums">{project.traffic.totalGb} GB</span>
-                </Row>
-              </dl>
             </Section>
 
             <Section
@@ -217,7 +234,7 @@ export function WebsiteDetailSheet() {
                   正在加载运行日志…
                 </p>
               ) : detailLogs && detailLogs.length > 0 ? (
-                <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap break-all rounded border border-line bg-surface px-2 py-1.5 font-mono text-xs leading-5 text-fg">
+                <pre className="max-h-80 overflow-y-auto whitespace-pre-wrap break-all rounded-lg border border-line bg-surface px-3 py-2.5 font-mono text-xs leading-5 text-fg">
                   {detailLogs.map((line, index) => (
                     <span key={`${index}-${line}`} className="block">
                       {line || '\u00A0'}

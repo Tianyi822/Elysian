@@ -33,6 +33,7 @@ export {
   Lock,
   MemoryStick,
   Menu,
+  Minus,
   Monitor,
   Moon,
   PanelLeftClose,

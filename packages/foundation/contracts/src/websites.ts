@@ -65,6 +65,25 @@ export const WEBSITE_CATEGORY_LABELS: Record<WebsiteCategory, string> = {
   development: '开发环境',
 }
 
+/** 需要选择运行时版本的项目类型（HTML 静态站无运行时版本）。 */
+export type WebsiteRuntimeKind = Exclude<WebsiteProjectKind, 'html'>
+
+/**
+ * 各语言可选运行时版本（演示 mock）：后期接真实开发环境配置时，
+ * 只换这份目录的数据源，表单与卡片仍读同一形状。
+ */
+export const WEBSITE_RUNTIME_VERSIONS: Record<WebsiteRuntimeKind, readonly string[]> = {
+  java: ['11', '17', '21'],
+  node: ['18.19.1', '20.11.1', '22.4.0'],
+  go: ['1.21.5', '1.22.4', '1.23.1'],
+  python: ['3.10.14', '3.11.9', '3.12.4'],
+}
+
+/** 代码落地的固定根前缀：创建时不可改，详情页只读展示完整路径。 */
+export const WEBSITE_ROOT_BASE = '/www/wwwroot'
+
+export const WEBSITE_PROJECT_NAME_MAX_LENGTH = 64
+
 /** 项目流量统计（演示数据）：今日流量与累计流量。 */
 export type WebsiteTraffic = {
   todayMb: number
@@ -76,16 +95,16 @@ export type WebsiteProject = {
   kind: WebsiteProjectKind
   /** 项目名称，卡片首行的显示主体。 */
   name: string
-  /** 运行进程号：Java 与 Node 展示该信息，已停止的进程没有 PID，为 null。 */
+  /** 运行进程号：非 HTML 类型运行中有 PID，已停止或 HTML 为 null。 */
   pid: number | null
-  /** 服务端口：只有 Java 与 Node 有端口概念，其余类型为 null。 */
-  port: number | null
-  /** 运行时版本：Node 展示该信息（如 20.11.1），其余类型为 null。 */
+  /** 服务端口：所有类型必有。 */
+  port: number
+  /** 运行时版本：Java/Node/Go/Python 有值，HTML 为 null。 */
   runtimeVersion: string | null
-  /** 项目根目录（绝对路径）。 */
+  /** 项目根目录（绝对路径），由固定前缀与项目名推导，不可在创建表单改。 */
   rootDir: string
   runState: WebsiteRunState
-  /** 到期时间（ISO）：Go 项目没有到期概念，为 null。 */
+  /** 到期时间（ISO）；演示字段，创建表单不填。 */
   expiryAt: string | null
   /** 备注为空时界面显示 —。 */
   note: string | null
@@ -94,17 +113,21 @@ export type WebsiteProject = {
   category: WebsiteCategory
   /** 部署命令：启动该项目所执行的命令；HTML 静态站由 Web 服务直接托管，为 null。 */
   deployCommand: string | null
+  /** Git 仓库地址：演示字段，本期只存地址不真拉代码。 */
+  gitUrl: string | null
   /** 流量统计（演示数据）。 */
   traffic: WebsiteTraffic
 }
 
-/** 新建项目的输入。运行状态、PID 与证书不由表单决定：新建即已停止、无证书，由演示引擎按需演进。 */
+/** 新建项目的输入。根目录由服务端按固定前缀推导；新建即已停止、无证书。 */
 export type WebsiteProjectCreateInput = {
   name: string
-  /** 根目录缺省由名称推导（/www/wwwroot/<名称>）。 */
-  rootDir?: string
-  /** 端口仅 Java 与 Node 接受，其余类型传入也会被忽略。 */
-  port?: number
+  /** 端口必填，1–65535。 */
+  port: number
+  /** 运行时版本：非 HTML 类型必填；HTML 传入会被忽略。 */
+  runtimeVersion?: string | null
+  /** Git 仓库地址；空串按未配置处理。 */
+  gitUrl?: string | null
   note?: string | null
 }
 
@@ -115,15 +138,47 @@ export type WebsiteProjectUpdateInput = {
   expiryAt?: string | null
 }
 
-/** 端口是否为该项目类型的必备概念，供工具栏与建站表单共用同一把尺子。 */
-export function websiteProjectUsesPort(kind: WebsiteProjectKind): boolean {
-  return kind === 'java' || kind === 'node'
+/** 所有项目类型都配置端口。 */
+export function websiteProjectUsesPort(_kind: WebsiteProjectKind): boolean {
+  return true
 }
 
-export const WEBSITE_PROJECT_NAME_MAX_LENGTH = 64
+/** 是否需要选择运行时版本：HTML 静态站没有。 */
+export function websiteProjectUsesRuntime(kind: WebsiteProjectKind): boolean {
+  return kind !== 'html'
+}
+
+/** 由项目名推导固定根目录。 */
+export function websiteProjectRootDir(name: string): string {
+  return `${WEBSITE_ROOT_BASE}/${name.trim()}`
+}
+
+/**
+ * 从 Git 地址解析仓库名作项目名候选。
+ * 支持 https://…/org/repo(.git) 与 git@host:org/repo(.git)；解析失败返回 null。
+ * 不依赖 DOM URL：契约包保持无运行时 DOM 依赖。
+ */
+export function parseProjectNameFromGitUrl(url: string): string | null {
+  const trimmed = url.trim()
+  if (!trimmed) return null
+  const withoutGit = trimmed.replace(/\.git$/i, '')
+  const sshMatch = /^git@[^:]+:(.+)$/i.exec(withoutGit)
+  const httpsMatch = /^https?:\/\/[^/]+\/(.+)$/i.exec(withoutGit)
+  const path = sshMatch?.[1] ?? httpsMatch?.[1]
+  if (!path) return null
+  const segments = path.split('/').filter(Boolean)
+  const last = segments.at(-1)
+  if (!last) return null
+  return last.slice(0, WEBSITE_PROJECT_NAME_MAX_LENGTH)
+}
 
 /** 项目名判据：去空白后非空且不超上限。 */
 export function isValidWebsiteProjectName(name: string): boolean {
   const trimmed = name.trim()
   return trimmed.length > 0 && trimmed.length <= WEBSITE_PROJECT_NAME_MAX_LENGTH
+}
+
+/** 端口判据：1–65535 的整数。 */
+export function isValidWebsitePort(port: number): boolean {
+  return Number.isInteger(port) && port >= 1 && port <= 65535
 }

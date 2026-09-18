@@ -8,9 +8,6 @@ import { create } from 'zustand'
 import type { ElysianGateway } from '../contracts/adapters'
 import { useNotificationStore } from './notificationStore'
 
-/** 批量操作取值：启停即逐项调用启停，删除逐项删除。 */
-export type WebsiteBatchAction = 'start' | 'stop' | 'remove'
-
 type WebsitesStatus = 'idle' | 'loading' | 'ready' | 'error'
 
 type WebsitesState = {
@@ -21,9 +18,6 @@ type WebsitesState = {
   search: string
   /** 「全部分类」筛选：all 表示不过滤。 */
   category: WebsiteCategory | 'all'
-  selectedIds: readonly string[]
-  batchAction: WebsiteBatchAction | undefined
-  batchRunning: boolean
   /** 刷新走静默重载：不闪整页加载态，只锁刷新按钮一拍。 */
   refreshing: boolean
   saving: boolean
@@ -39,10 +33,6 @@ type WebsitesState = {
   refresh: (gateway: ElysianGateway) => Promise<void>
   setSearch: (search: string) => void
   setCategory: (category: WebsiteCategory | 'all') => void
-  toggleSelected: (projectId: string) => void
-  /** 全选只作用于当前筛选下的可见行，由面板传入可见标识集合。 */
-  toggleSelectAllVisible: (visibleIds: readonly string[]) => void
-  setBatchAction: (action: WebsiteBatchAction | undefined) => void
   openCreate: () => void
   closeCreate: () => void
   /** 类型由表单选择后传进来：单列表不再按页签隐含类型。 */
@@ -62,7 +52,6 @@ type WebsitesState = {
   closeRemove: () => void
   removeProject: (gateway: ElysianGateway, project: WebsiteProject) => Promise<void>
   setRunning: (gateway: ElysianGateway, project: WebsiteProject, running: boolean) => Promise<void>
-  runBatch: (gateway: ElysianGateway) => Promise<void>
   openDetail: (gateway: ElysianGateway, project: WebsiteProject) => Promise<void>
   closeDetail: () => void
   /** 详情抽屉的刷新按钮：目标项目仍在屏上时重新拉取日志。 */
@@ -100,9 +89,6 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
     projects: [],
     search: '',
     category: 'all',
-    selectedIds: [],
-    batchAction: undefined,
-    batchRunning: false,
     refreshing: false,
     saving: false,
     createDialogOpen: false,
@@ -144,29 +130,6 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
 
     setCategory(category) {
       set({ category })
-    },
-
-    toggleSelected(projectId) {
-      const selected = get().selectedIds
-      set({
-        selectedIds: selected.includes(projectId)
-          ? selected.filter((id) => id !== projectId)
-          : [...selected, projectId],
-      })
-    },
-
-    toggleSelectAllVisible(visibleIds) {
-      const selected = get().selectedIds
-      const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.includes(id))
-      set({
-        selectedIds: allSelected
-          ? selected.filter((id) => !visibleIds.includes(id))
-          : [...new Set([...selected, ...visibleIds])],
-      })
-    },
-
-    setBatchAction(batchAction) {
-      set({ batchAction })
     },
 
     openCreate() {
@@ -234,7 +197,6 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
         await gateway.websites.remove(project.id)
         set((state) => ({
           projects: state.projects.filter((item) => item.id !== project.id),
-          selectedIds: state.selectedIds.filter((id) => id !== project.id),
           removeTarget: undefined,
           busyProjectIds: state.busyProjectIds.filter((id) => id !== project.id),
         }))
@@ -271,40 +233,6 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
           busyProjectIds: state.busyProjectIds.filter((id) => id !== project.id),
         }))
         notify(errorMessageOf(error, '操作失败'), 'danger')
-      }
-    },
-
-    async runBatch(gateway) {
-      const { batchAction, selectedIds, projects, batchRunning } = get()
-      if (!batchAction || selectedIds.length === 0 || batchRunning) return
-      set({ batchRunning: true })
-      const targets = projects.filter((project) => selectedIds.includes(project.id))
-      const verb = batchAction === 'start' ? '启动' : batchAction === 'stop' ? '停止' : '删除'
-      try {
-        for (const project of targets) {
-          if (batchAction === 'remove') {
-            await gateway.websites.remove(project.id)
-          } else {
-            await gateway.websites.setRunning(project.id, batchAction === 'start')
-          }
-        }
-        const refreshed = await gateway.websites.list()
-        set({
-          projects: refreshed,
-          selectedIds: [],
-          batchAction: undefined,
-        })
-        notify(`批量${verb}完成：${targets.length} 个项目（mock，待接入真实执行）`)
-      } catch (error) {
-        // 中途失败时前半批可能已生效：重拉列表让界面与数据集保持一致，不留下半真半假的视图。
-        try {
-          set({ projects: await gateway.websites.list() })
-        } catch {
-          // 重拉也失败就只报原始错误，界面保持批量前状态。
-        }
-        notify(errorMessageOf(error, `批量${verb}失败`), 'danger')
-      } finally {
-        set({ batchRunning: false })
       }
     },
 

@@ -6,7 +6,6 @@ import { IconButton } from '../../components/IconButton'
 import { Check, ChevronDown, RefreshCw, Search } from '../../components/icons'
 import { EmptyState } from '../../components/states/StateViews'
 import { useWebsitesStore } from '../../stores/websitesStore'
-import type { WebsiteBatchAction } from '../../stores/websitesStore'
 import { WebsiteDetailSheet } from './WebsiteDetailSheet'
 import { WebsitesCard } from './WebsitesCard'
 import { WebsitesCreateDialog } from './WebsitesCreateDialog'
@@ -16,17 +15,11 @@ import { filterWebsiteProjects } from './websitesListing'
 
 /**
  * 网站项目面板：工具栏（添加项目 + 分类/搜索/刷新）、Docker 区同款卡片网格、
- * 批量操作条与详情抽屉。五种运行时类型共用一张列表，类型在创建时选择、
+ * 详情抽屉。五种运行时类型共用一张列表，类型在创建时选择、
  * 在卡片与详情抽屉上以标签呈现。
  *
  * 网格不随屏幕收窄挤压：窄屏退化为单列，卡片内部自有截断，不出现横向滚动。
  */
-
-const BATCH_ACTIONS: readonly { value: WebsiteBatchAction; label: string }[] = [
-  { value: 'start', label: '批量启动' },
-  { value: 'stop', label: '批量停止' },
-  { value: 'remove', label: '批量删除' },
-]
 
 const TOOL_BUTTON_CLASS =
   'inline-flex items-center rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
@@ -41,7 +34,7 @@ function SelectDropdown<T extends string>({
 }: {
   ariaLabel: string
   items: readonly { value: T; label: string }[]
-  /** undefined 表示尚未选择（如批量操作），触发器显示 fallbackLabel。 */
+  /** undefined 表示尚未选择，触发器显示 fallbackLabel。 */
   value: T | undefined
   onSelect: (value: T) => void
   /** 值不在候选项里时触发器显示的占位文案。 */
@@ -93,9 +86,6 @@ export function WebsitesPanel() {
   const projects = useWebsitesStore((s) => s.projects)
   const search = useWebsitesStore((s) => s.search)
   const category = useWebsitesStore((s) => s.category)
-  const selectedIds = useWebsitesStore((s) => s.selectedIds)
-  const batchAction = useWebsitesStore((s) => s.batchAction)
-  const batchRunning = useWebsitesStore((s) => s.batchRunning)
   const refreshing = useWebsitesStore((s) => s.refreshing)
   const createDialogOpen = useWebsitesStore((s) => s.createDialogOpen)
   // 渲染期要用的状态必须走订阅选择器：getState() 读到的是不触发重渲染的瞬时值，
@@ -104,15 +94,10 @@ export function WebsitesPanel() {
   const settingsTarget = useWebsitesStore((s) => s.settingsTarget)
   const setSearch = useWebsitesStore((s) => s.setSearch)
   const setCategory = useWebsitesStore((s) => s.setCategory)
-  const toggleSelectAllVisible = useWebsitesStore((s) => s.toggleSelectAllVisible)
-  const setBatchAction = useWebsitesStore((s) => s.setBatchAction)
   const openCreate = useWebsitesStore((s) => s.openCreate)
   const refresh = useWebsitesStore((s) => s.refresh)
-  const runBatch = useWebsitesStore((s) => s.runBatch)
 
   const filtered = filterWebsiteProjects(projects, { category, search })
-  const allSelected = filtered.length > 0 && filtered.every((row) => selectedIds.includes(row.id))
-  const batchReady = batchAction !== undefined && selectedIds.length > 0 && !batchRunning
 
   return (
     <div>
@@ -179,9 +164,7 @@ export function WebsitesPanel() {
             <li key={project.id}>
               <WebsitesCard
                 project={project}
-                selected={selectedIds.includes(project.id)}
-                busy={busyIds.includes(project.id) || batchRunning}
-                onToggleSelected={() => useWebsitesStore.getState().toggleSelected(project.id)}
+                busy={busyIds.includes(project.id)}
                 onOpenDetail={() => useWebsitesStore.getState().openDetail(gateway, project)}
                 onToggleRunning={() =>
                   void useWebsitesStore
@@ -197,28 +180,6 @@ export function WebsitesPanel() {
       )}
 
       <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-fg-muted">
-        <input
-          type="checkbox"
-          aria-label="全选"
-          checked={allSelected}
-          onChange={() => toggleSelectAllVisible(filtered.map((row) => row.id))}
-          className="size-3.5 cursor-pointer accent-accent"
-        />
-        <SelectDropdown
-          ariaLabel="批量操作"
-          items={BATCH_ACTIONS}
-          value={batchAction}
-          onSelect={setBatchAction}
-          fallbackLabel="请选择批量操作"
-        />
-        <button
-          type="button"
-          disabled={!batchReady}
-          onClick={() => void runBatch(gateway)}
-          className={TOOL_BUTTON_CLASS}
-        >
-          {batchRunning ? '批量操作中…' : '批量操作'}
-        </button>
         <span className="ml-auto tabular-nums">共 {projects.length} 个项目</span>
       </div>
 
