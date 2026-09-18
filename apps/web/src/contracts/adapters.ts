@@ -351,6 +351,30 @@ export interface SessionAdapter {
   canView(area: PageArea): Promise<boolean>
 }
 
+/** 资源历史查询的时间窗（与仪表盘 FilterBar 选项对齐）。 */
+export type ResourceHistoryTimeRange =
+  | '5m'
+  | '10m'
+  | '30m'
+  | '1h'
+  | '5h'
+  | '10h'
+  | '7d'
+
+/** 资源采样点：毫秒时间戳为横轴。 */
+export type ResourceSamplePoint = {
+  ts: number
+  cpu: number
+  memory: number
+  networkIo: number
+  diskIo: number
+}
+
+/** 按时间窗读取资源指标历史（演示内存缓冲，未来同源持久化）。 */
+export interface ResourceHistoryAdapter {
+  list(range: ResourceHistoryTimeRange): Promise<readonly ResourceSamplePoint[]>
+}
+
 /** 页面注入的聚合入口。 */
 export interface ElysianGateway {
   session: SessionAdapter
@@ -369,6 +393,7 @@ export interface ElysianGateway {
   logs: LogsAdapter
   terminals: TerminalAdapter
   websites: WebsitesAdapter
+  resources: ResourceHistoryAdapter
   /** 把演示数据重置回种子状态。 */
   reset(): Promise<void>
 }

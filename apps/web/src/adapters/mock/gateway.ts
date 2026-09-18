@@ -26,6 +26,7 @@ import { resetFilesData } from './filesData'
 import { resetHostUsers } from './usersData'
 import { resetWebsitesData } from './websitesData'
 import { MockTerminalAdapter } from './terminalAdapter'
+import { MockResourceHistoryAdapter } from './resourceHistoryAdapter'
 import type { EventsAdapter } from '../../contracts/adapters'
 
 /**
@@ -42,7 +43,7 @@ export function createMockGateway(
 ): ElysianGateway {
   let dataset = createMockDataset()
   const read = () => dataset
-  const eventIntervalMs = options.eventIntervalMs ?? 2000
+  const eventIntervalMs = options.eventIntervalMs ?? 3000
   const containerEvents = createContainerEventsLayer(read, { intervalMs: eventIntervalMs })
   const terminals = new MockTerminalAdapter()
 
@@ -69,6 +70,7 @@ export function createMockGateway(
     logs: new MockLogsAdapter(),
     terminals,
     websites: new MockWebsitesAdapter(),
+    resources: new MockResourceHistoryAdapter(),
     events: wrapLive(
       containerEvents.wrap(
         options.eventStream === 'memory'
