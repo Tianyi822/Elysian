@@ -5,6 +5,9 @@ import { elysianEventsVitePlugin } from './src/adapters/sse/mockEventsPlugin.vit
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), elysianEventsVitePlugin()],
+  define: {
+    'import.meta.env.ELSYIAN_DOCKER': JSON.stringify(process.env.ELSYIAN_DOCKER ?? ''),
+  },
   server: {
     port: 5173,
     host: true,

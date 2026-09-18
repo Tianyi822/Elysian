@@ -50,6 +50,12 @@ describe('仪表盘布局', () => {
     expect(screen.queryByLabelText('事故总数指标卡')).not.toBeInTheDocument()
   })
 
+  it('非 Docker 时在筛选栏标明演示数据', async () => {
+    await renderReady()
+    const filterBar = screen.getByLabelText('筛选栏')
+    expect(within(filterBar).getByRole('status')).toHaveTextContent('演示数据')
+  })
+
   it('加载失败给出错误态与重试，重试成功后服务器状态出现', async () => {
     const user = userEvent.setup()
     const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })

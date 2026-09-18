@@ -5,6 +5,9 @@ import {
   timeRangeGranularityLabel,
 } from '../../adapters/mock/resourceMetrics'
 import type { TimeRange } from '../../adapters/mock/resourceMetrics'
+import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
+
+export const DEMO_DATA_STATUS_LABEL = '演示数据'
 
 const RANGES = TIME_RANGES
 
@@ -27,6 +30,11 @@ export function FilterBar({
       className="mb-6 rounded-xl border border-line bg-surface px-4 py-3"
     >
       <div className="flex flex-wrap items-center gap-4">
+        {!isDockerRuntime() ? (
+          <span role="status" className="text-sm text-fg-muted">
+            {DEMO_DATA_STATUS_LABEL}
+          </span>
+        ) : null}
         <span className="text-sm text-fg-subtle">时间范围</span>
         <div role="group" aria-label="时间范围" className="flex overflow-hidden rounded border border-line">
           {RANGES.map((candidate) => (
