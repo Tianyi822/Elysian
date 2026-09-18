@@ -85,10 +85,10 @@ export function ContainerCreateDialog() {
             <button
               type="button"
               onClick={closeCreate}
-              className="rounded-lg border border-line px-2 py-1 text-xs text-fg-muted transition-colors hover:text-fg"
+              aria-label="关闭弹窗"
+              className="inline-flex size-7 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg"
             >
-              <X aria-hidden size={13} className="mr-1 inline align-[-2px]" />
-              关闭
+              <X aria-hidden size={15} />
             </button>
           </div>
 
