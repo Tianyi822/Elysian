@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ResourceSamplePoint } from '../../adapters/mock/resourceMetrics'
 import {
-  buildDiskBarsOption,
+  buildDiskRingOption,
   buildLoadBarsOption,
   buildResourceTrendOption,
   readChartPalette,
@@ -24,7 +24,11 @@ function makePoints(count: number, baseTs = 1_700_000_000_000): ResourceSamplePo
     cpu: 50 + index,
     memory: 60 + index,
     networkIo: 100,
+    networkRx: 100,
+    networkTx: 0,
     diskIo: 80,
+    diskRead: 80,
+    diskWrite: 0,
   }))
 }
 
@@ -88,20 +92,36 @@ describe('资源趋势 option', () => {
   })
 
   it('吞吐类指标按峰值换算纵轴单位，且不锁 100 上限', () => {
-    const points = makePoints(3).map((point) => ({ ...point, networkIo: 0.05 }))
+    const points = makePoints(3).map((point) => ({
+      ...point,
+      networkIo: 0.05,
+      networkRx: 0.03,
+      networkTx: 0.02,
+    }))
     const option = buildResourceTrendOption(points, 'networkIo', PALETTE)
     const yAxis = option.yAxis as { name: string; max?: number }
     expect(yAxis.name).toBe('KB/s')
     expect(yAxis.max).toBeUndefined()
   })
 
-  it('各资源指标共用同一配色策略（强调色），互不依赖严重等级令牌', () => {
+  it('网络与磁盘为双折线（上下行 / 读写），其余仍为单系列', () => {
     const points = makePoints(5)
-    for (const key of ['memory', 'networkIo', 'diskIo'] as const) {
-      const option = buildResourceTrendOption(points, key, PALETTE)
-      const series = option.series as ReadonlyArray<{ id: string }>
-      expect(series[0]?.id).toBe(`resource-${key}`)
-    }
+    const memory = buildResourceTrendOption(points, 'memory', PALETTE)
+    expect((memory.series as ReadonlyArray<{ id: string }>).map((s) => s.id)).toEqual([
+      'resource-memory',
+    ])
+
+    const network = buildResourceTrendOption(points, 'networkIo', PALETTE)
+    expect((network.series as ReadonlyArray<{ id: string; name: string }>).map((s) => s.name)).toEqual([
+      '下行',
+      '上行',
+    ])
+    expect(network.legend).toEqual(
+      expect.objectContaining({ data: ['下行', '上行'] }),
+    )
+
+    const disk = buildResourceTrendOption(points, 'diskIo', PALETTE)
+    expect((disk.series as ReadonlyArray<{ name: string }>).map((s) => s.name)).toEqual(['读', '写'])
   })
 
   it('启用 inside dataZoom 与横向 brush 框选', () => {
@@ -141,40 +161,51 @@ describe('运行负载条形图 option', () => {
   })
 })
 
-describe('磁盘占用条形图 option', () => {
-  it('每个挂载点一条，类目顺序自下而上反转', () => {
+describe('磁盘占用环图 option', () => {
+  it('环图含全部挂载点，图例只列已用容量最高的 5 项', () => {
     const disks = [
-      { mount: '/', usagePct: 62 },
-      { mount: '/data', usagePct: 78 },
-      { mount: '/backup', usagePct: 41 },
+      { mount: '/', usagePct: 10, usedKb: 100, sizeKb: 1000 },
+      { mount: '/a', usagePct: 20, usedKb: 200, sizeKb: 1000 },
+      { mount: '/b', usagePct: 30, usedKb: 300, sizeKb: 1000 },
+      { mount: '/c', usagePct: 40, usedKb: 400, sizeKb: 1000 },
+      { mount: '/d', usagePct: 50, usedKb: 500, sizeKb: 1000 },
+      { mount: '/e', usagePct: 60, usedKb: 600, sizeKb: 1000 },
+      { mount: '/f', usagePct: 5, usedKb: 50, sizeKb: 1000 },
     ]
-    const option = buildDiskBarsOption(disks, PALETTE)
-
-    const yAxis = option.yAxis as { data: readonly string[] }
-    expect(yAxis.data).toEqual(['/backup', '/data', '/'])
-
+    const option = buildDiskRingOption(disks, PALETTE)
     const series = option.series as ReadonlyArray<{
       id: string
-      data: ReadonlyArray<{ value: number }>
+      type: string
+      center: [string, string]
+      data: ReadonlyArray<{ name: string; value: number }>
     }>
-    expect(series[0]?.data.map((entry) => entry.value)).toEqual([41, 78, 62])
+    expect(series[0]?.id).toBe('disk-ring')
+    expect(series[0]?.type).toBe('pie')
+    expect(series[0]?.center[0]).toBe('24%')
+    expect(series[0]?.data.map((entry) => entry.name)).toEqual(disks.map((disk) => disk.mount))
+    expect(series[0]?.data.map((entry) => entry.value)).toEqual(disks.map((disk) => disk.usedKb))
+
+    const legend = option.legend as { data: readonly string[]; selectedMode: boolean; left: string }
+    expect(legend.selectedMode).toBe(false)
+    expect(legend.left).toBe('46%')
+    expect(legend.data).toEqual(['/e', '/d', '/c', '/b', '/a'])
   })
 
-  it('阈值着色沿用 df 惯例：≥80 警告、≥90 危险、其余强调色', () => {
+  it('阈值着色：≥80 警告、≥90 危险', () => {
     const disks = [
-      { mount: '/', usagePct: 62 },
-      { mount: '/data', usagePct: 85 },
-      { mount: '/backup', usagePct: 91 },
+      { mount: '/', usagePct: 62, usedKb: 620, sizeKb: 1000 },
+      { mount: '/data', usagePct: 85, usedKb: 850, sizeKb: 1000 },
+      { mount: '/backup', usagePct: 91, usedKb: 910, sizeKb: 1000 },
     ]
-    const option = buildDiskBarsOption(disks, PALETTE)
+    const option = buildDiskRingOption(disks, PALETTE)
     const series = option.series as ReadonlyArray<{
-      data: ReadonlyArray<{ itemStyle: { color: string } }>
+      data: ReadonlyArray<{ name: string; itemStyle: { color: string } }>
     }>
-    // builder 反转入栈：数组顺序是 backup(91 危险)、data(85 警告)、/(62 强调)
-    expect(series[0]?.data.map((entry) => entry.itemStyle.color)).toEqual([
-      PALETTE.danger,
-      PALETTE.warning,
-      PALETTE.accent,
-    ])
+    const byMount = Object.fromEntries(
+      series[0]!.data.map((entry) => [entry.name, entry.itemStyle.color]),
+    )
+    expect(byMount['/']).toBe(PALETTE.accent)
+    expect(byMount['/data']).toBe(PALETTE.warning)
+    expect(byMount['/backup']).toBe(PALETTE.danger)
   })
 })

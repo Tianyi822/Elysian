@@ -4,8 +4,8 @@ import { parseResourceHistoryResponse } from './resourceHistoryAdapter'
 describe('parseResourceHistoryResponse', () => {
   it('接受升序采样点数组', () => {
     const points = parseResourceHistoryResponse([
-      { ts: 1, cpu: 10, memory: 20, networkIo: 30, diskIo: 40 },
-      { ts: 2, cpu: 11, memory: 21, networkIo: 31, diskIo: 41 },
+      { ts: 1, cpu: 10, memory: 20, networkIo: 30, networkRx: 30, networkTx: 0, diskIo: 40 , diskRead: 40 , diskWrite: 0 },
+      { ts: 2, cpu: 11, memory: 21, networkIo: 31, networkRx: 31, networkTx: 0, diskIo: 41 , diskRead: 41 , diskWrite: 0 },
     ])
     expect(points).toHaveLength(2)
   })

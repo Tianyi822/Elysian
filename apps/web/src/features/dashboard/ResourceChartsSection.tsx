@@ -1,5 +1,11 @@
-import { BarChart, LineChart } from 'echarts/charts'
-import { BrushComponent, DataZoomComponent, GridComponent, TooltipComponent } from 'echarts/components'
+import { BarChart, LineChart, PieChart } from 'echarts/charts'
+import {
+  BrushComponent,
+  DataZoomComponent,
+  GridComponent,
+  LegendComponent,
+  TooltipComponent,
+} from 'echarts/components'
 import * as echarts from 'echarts/core'
 import type { EChartsCoreOption } from 'echarts/core'
 import { SVGRenderer } from 'echarts/renderers'
@@ -12,7 +18,7 @@ import {
 } from '../../adapters/mock/resourceMetrics'
 import type { DiskUsage, SystemLoad } from '../../adapters/mock/resourceMetrics'
 import {
-  buildDiskBarsOption,
+  buildDiskRingOption,
   buildLoadBarsOption,
   buildResourceTrendOption,
   readChartPalette,
@@ -23,8 +29,10 @@ import { useChart } from './useChart'
 echarts.use([
   BarChart,
   LineChart,
+  PieChart,
   GridComponent,
   TooltipComponent,
+  LegendComponent,
   DataZoomComponent,
   BrushComponent,
   SVGRenderer,
@@ -75,14 +83,14 @@ function ResourcePanel({
 
 function BarsPanel({
   title,
-  option,
+  buildOption,
   rebuildKey,
 }: {
   title: string
-  option: EChartsCoreOption
+  buildOption: () => EChartsCoreOption
   rebuildKey: string
 }) {
-  const { containerRef } = useChart(() => option, rebuildKey)
+  const { containerRef } = useChart(buildOption, rebuildKey)
 
   return (
     <article
@@ -132,7 +140,7 @@ export function ResourceChartsSection({
         {system ? (
           <BarsPanel
             title="运行负载"
-            option={buildLoadBarsOption(system.load, readChartPalette(theme))}
+            buildOption={() => buildLoadBarsOption(system.load, readChartPalette(theme))}
             rebuildKey={`load:${theme}:${JSON.stringify(system.load)}`}
           />
         ) : (
@@ -141,7 +149,7 @@ export function ResourceChartsSection({
         {system ? (
           <BarsPanel
             title="磁盘占用"
-            option={buildDiskBarsOption(system.disks, readChartPalette(theme))}
+            buildOption={() => buildDiskRingOption(system.disks, readChartPalette(theme))}
             rebuildKey={`disk:${theme}:${JSON.stringify(system.disks)}`}
           />
         ) : (

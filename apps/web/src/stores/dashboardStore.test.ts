@@ -43,12 +43,16 @@ const samplePayload = {
   cpu: 66,
   memory: 77,
   networkIo: 300,
+  networkRx: 300,
+  networkTx: 0,
   diskIo: 200,
+  diskRead: 200,
+  diskWrite: 0,
   load: { m1: 0.4, m5: 0.3, m15: 0.2 },
   disks: [
-    { mount: '/', usagePct: 63 },
-    { mount: '/data', usagePct: 79 },
-    { mount: '/backup', usagePct: 42 },
+    { mount: '/', usagePct: 63, usedKb: 630_000, sizeKb: 1_000_000 },
+    { mount: '/data', usagePct: 79, usedKb: 1_580_000, sizeKb: 2_000_000 },
+    { mount: '/backup', usagePct: 42, usedKb: 2_100_000, sizeKb: 5_000_000 },
   ],
 }
 
@@ -59,11 +63,11 @@ describe('mergeResourceSampleIntoWindow', () => {
     const t0 = 1_700_000_000_000
     const merged = mergeResourceSampleIntoWindow(
       [
-        { ts: t0 - 6 * 60_000, cpu: 1, memory: 1, networkIo: 1, diskIo: 1 },
-        { ts: t0 - 60_000, cpu: 2, memory: 2, networkIo: 2, diskIo: 2 },
+        { ts: t0 - 6 * 60_000, cpu: 1, memory: 1, networkIo: 1, networkRx: 1, networkTx: 0, diskIo: 1 , diskRead: 1 , diskWrite: 0 },
+        { ts: t0 - 60_000, cpu: 2, memory: 2, networkIo: 2, networkRx: 2, networkTx: 0, diskIo: 2 , diskRead: 2 , diskWrite: 0 },
       ],
       '5m',
-      { ts: t0, cpu: 99, memory: 88, networkIo: 77, diskIo: 66 },
+      { ts: t0, cpu: 99, memory: 88, networkIo: 77, networkRx: 77, networkTx: 0, diskIo: 66 , diskRead: 66 , diskWrite: 0 },
     )
     expect(merged.map((p) => p.cpu)).toEqual([2, 99])
   })
@@ -71,9 +75,9 @@ describe('mergeResourceSampleIntoWindow', () => {
   it('过近时间戳替换末点而非重复', () => {
     const t0 = 1_700_000_000_000
     const merged = mergeResourceSampleIntoWindow(
-      [{ ts: t0 - 1_000, cpu: 10, memory: 10, networkIo: 10, diskIo: 10 }],
+      [{ ts: t0 - 1_000, cpu: 10, memory: 10, networkIo: 10, networkRx: 10, networkTx: 0, diskIo: 10 , diskRead: 10 , diskWrite: 0 }],
       '5m',
-      { ts: t0, cpu: 20, memory: 20, networkIo: 20, diskIo: 20 },
+      { ts: t0, cpu: 20, memory: 20, networkIo: 20, networkRx: 20, networkTx: 0, diskIo: 20 , diskRead: 20 , diskWrite: 0 },
     )
     expect(merged).toHaveLength(1)
     expect(merged[0]?.cpu).toBe(20)
@@ -106,8 +110,8 @@ describe('仪表盘 store 资源窗与引用稳定', () => {
         ...samplePayload,
         load: { m1: 1.1, m5: 0.9, m15: 0.7 },
         disks: [
-          { mount: '/var', usagePct: 11 },
-          { mount: '/srv', usagePct: 22 },
+          { mount: '/var', usagePct: 11, usedKb: 11_000, sizeKb: 100_000 },
+          { mount: '/srv', usagePct: 22, usedKb: 22_000, sizeKb: 100_000 },
         ],
       },
     })
@@ -231,8 +235,8 @@ describe('仪表盘 store 的事件回灌', () => {
     const listMockHistorySpy = vi.spyOn(resourceMetrics, 'listMockHistory')
     const gateway = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
     const seed = [
-      { ts: 1_700_000_000_000, cpu: 11, memory: 22, networkIo: 33, diskIo: 44 },
-      { ts: 1_700_000_005_000, cpu: 12, memory: 23, networkIo: 34, diskIo: 45 },
+      { ts: 1_700_000_000_000, cpu: 11, memory: 22, networkIo: 33, networkRx: 33, networkTx: 0, diskIo: 44 , diskRead: 44 , diskWrite: 0 },
+      { ts: 1_700_000_005_000, cpu: 12, memory: 23, networkIo: 34, networkRx: 34, networkTx: 0, diskIo: 45 , diskRead: 45 , diskWrite: 0 },
     ]
     vi.spyOn(gateway.resources, 'list').mockResolvedValue(seed)
 

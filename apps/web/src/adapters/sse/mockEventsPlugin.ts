@@ -67,7 +67,11 @@ export type ResourceSample = {
   cpu: number
   memory: number
   networkIo: number
+  networkRx: number
+  networkTx: number
   diskIo: number
+  diskRead: number
+  diskWrite: number
   load: SystemLoad
   disks: DiskUsage[]
 }
@@ -75,8 +79,10 @@ export type ResourceSample = {
 const WALK_BOUNDS = {
   cpu: [20, 90, 2],
   memory: [45, 92, 1],
-  networkIo: [60, 950, 40],
-  diskIo: [40, 520, 30],
+  networkRx: [30, 550, 25],
+  networkTx: [20, 450, 20],
+  diskRead: [20, 320, 18],
+  diskWrite: [15, 280, 15],
 } as const
 
 const LIVE_SEVERITY_ROLL: ReadonlyArray<readonly [string, number]> = [
@@ -93,11 +99,19 @@ export function nextResourceSample(walk: ResourceSample): ResourceSample {
     const next = value + Math.round((Math.random() - 0.5) * 2 * delta)
     return Math.min(max as number, Math.max(min as number, next))
   }
+  const networkRx = step(walk.networkRx, 'networkRx')
+  const networkTx = step(walk.networkTx, 'networkTx')
+  const diskRead = step(walk.diskRead, 'diskRead')
+  const diskWrite = step(walk.diskWrite, 'diskWrite')
   return {
     cpu: step(walk.cpu, 'cpu'),
     memory: step(walk.memory, 'memory'),
-    networkIo: step(walk.networkIo, 'networkIo'),
-    diskIo: step(walk.diskIo, 'diskIo'),
+    networkRx,
+    networkTx,
+    networkIo: networkRx + networkTx,
+    diskRead,
+    diskWrite,
+    diskIo: diskRead + diskWrite,
     load: nextLoadWalk(walk.load),
     disks: nextDisksWalk(walk.disks),
   }
@@ -108,7 +122,11 @@ export function initialResourceWalk(): ResourceSample {
   return {
     cpu: 55,
     memory: 68,
+    networkRx: 220,
+    networkTx: 160,
     networkIo: 380,
+    diskRead: 130,
+    diskWrite: 80,
     diskIo: 210,
     load: { ...INITIAL_LOAD },
     disks: INITIAL_DISKS.map((disk) => ({ ...disk })),
@@ -287,7 +305,11 @@ export function createEventsHandler(deps: EventsHandlerDeps = {}) {
           cpu: sample.cpu,
           memory: sample.memory,
           networkIo: sample.networkIo,
+          networkRx: sample.networkRx,
+          networkTx: sample.networkTx,
           diskIo: sample.diskIo,
+          diskRead: sample.diskRead,
+          diskWrite: sample.diskWrite,
         })
         store.rollupMinuteIfNeeded(tsMs)
         store.prune(tsMs)

@@ -41,8 +41,8 @@ function readSystemTheme(): Theme {
  * 手动选择写进界面偏好存储，下次打开由启动脚本先读它、读不到才问系统；
  * 「跟随系统」清掉这份偏好，把决定权交回系统。
  *
- * 用 insertion effect 翻转属性是有意的：它先于全部被动 effect 执行，
- * 依赖主题的子组件（例如图表读取配色）在自己的 effect 里读到的已经是新主题。
+ * data-theme 在渲染期同步写入，并在 insertion effect 再确认一次：
+ * 子树在 render 或 effect 里读 computed style（如图表配色）都能拿到新主题。
  */
 export function ThemeProvider({
   children,
@@ -57,6 +57,12 @@ export function ThemeProvider({
   const [followsSystem, setFollowsSystem] = useState(
     () => readStoredTheme(preferenceStorage) === null,
   )
+
+  // 渲染期同步翻转，子树若在 render 里读 computed style（如图表配色）也能拿到新主题。
+  // insertion effect 再写一次，覆盖并发/严格模式边界。
+  if (typeof document !== 'undefined') {
+    document.documentElement.dataset['theme'] = theme
+  }
 
   useInsertionEffect(() => {
     document.documentElement.dataset['theme'] = theme

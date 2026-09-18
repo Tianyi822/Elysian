@@ -70,8 +70,18 @@ export type ResourceSamplePoint = {
   ts: number
   cpu: number
   memory: number
+  /** 网络合计吞吐（MB/s）= networkRx + networkTx。 */
   networkIo: number
+  /** 网络下行（接收，MB/s）。 */
+  networkRx: number
+  /** 网络上行（发送，MB/s）。 */
+  networkTx: number
+  /** 磁盘合计吞吐（MB/s）= diskRead + diskWrite。 */
   diskIo: number
+  /** 磁盘读（MB/s）。 */
+  diskRead: number
+  /** 磁盘写（MB/s）。 */
+  diskWrite: number
 }
 
 const RAW_RETENTION_MS = MS_PER_HOUR
@@ -86,7 +96,11 @@ type MinuteBucket = {
   cpu: number
   memory: number
   networkIo: number
+  networkRx: number
+  networkTx: number
   diskIo: number
+  diskRead: number
+  diskWrite: number
 }
 
 let openMinuteBucket: MinuteBucket | null = null
@@ -95,15 +109,40 @@ function minuteStartMs(ts: number): number {
   return Math.floor(ts / MS_PER_MINUTE) * MS_PER_MINUTE
 }
 
+function averagePoint(
+  ts: number,
+  points: readonly ResourceSamplePoint[],
+): ResourceSamplePoint {
+  const n = points.length
+  const sum = (pick: (p: ResourceSamplePoint) => number) =>
+    points.reduce((s, p) => s + pick(p), 0) / n
+  return {
+    ts,
+    cpu: sum((p) => p.cpu),
+    memory: sum((p) => p.memory),
+    networkIo: sum((p) => p.networkIo),
+    networkRx: sum((p) => p.networkRx),
+    networkTx: sum((p) => p.networkTx),
+    diskIo: sum((p) => p.diskIo),
+    diskRead: sum((p) => p.diskRead),
+    diskWrite: sum((p) => p.diskWrite),
+  }
+}
+
 function flushOpenMinuteBucket(): void {
   if (!openMinuteBucket || openMinuteBucket.count === 0) return
-  const { minuteStart, count, cpu, memory, networkIo, diskIo } = openMinuteBucket
+  const { minuteStart, count, cpu, memory, networkIo, networkRx, networkTx, diskIo, diskRead, diskWrite } =
+    openMinuteBucket
   minutePoints.push({
     ts: minuteStart,
     cpu: cpu / count,
     memory: memory / count,
     networkIo: networkIo / count,
+    networkRx: networkRx / count,
+    networkTx: networkTx / count,
     diskIo: diskIo / count,
+    diskRead: diskRead / count,
+    diskWrite: diskWrite / count,
   })
   openMinuteBucket = null
 }
@@ -120,14 +159,22 @@ function absorbIntoMinuteBucket(point: ResourceSamplePoint): void {
       cpu: 0,
       memory: 0,
       networkIo: 0,
+      networkRx: 0,
+      networkTx: 0,
       diskIo: 0,
+      diskRead: 0,
+      diskWrite: 0,
     }
   }
   openMinuteBucket.count += 1
   openMinuteBucket.cpu += point.cpu
   openMinuteBucket.memory += point.memory
   openMinuteBucket.networkIo += point.networkIo
+  openMinuteBucket.networkRx += point.networkRx
+  openMinuteBucket.networkTx += point.networkTx
   openMinuteBucket.diskIo += point.diskIo
+  openMinuteBucket.diskRead += point.diskRead
+  openMinuteBucket.diskWrite += point.diskWrite
 }
 
 function evictMockHistory(refMs: number): void {
@@ -168,16 +215,7 @@ export function listMockHistory(range: TimeRange, nowMs: number): ResourceSample
   }
   return [...byMinute.entries()]
     .sort(([a], [b]) => a - b)
-    .map(([ts, points]) => {
-      const n = points.length
-      return {
-        ts,
-        cpu: points.reduce((s, x) => s + x.cpu, 0) / n,
-        memory: points.reduce((s, x) => s + x.memory, 0) / n,
-        networkIo: points.reduce((s, x) => s + x.networkIo, 0) / n,
-        diskIo: points.reduce((s, x) => s + x.diskIo, 0) / n,
-      }
-    })
+    .map(([ts, points]) => averagePoint(ts, points))
 }
 
 /** 测试辅助：清空分层历史缓冲。 */
@@ -187,10 +225,19 @@ export function resetMockHistory(): void {
   openMinuteBucket = null
 }
 
+/** 把合计吞吐拆成双向（演示/种子用）；真实采样走差分。 */
+export function splitThroughput(total: number, primaryShare = 0.55): { primary: number; secondary: number } {
+  const primary = Math.round(total * primaryShare * 100) / 100
+  const secondary = Math.round((total - primary) * 100) / 100
+  return { primary, secondary }
+}
+
 /** 演示首屏：缓冲为空时用种子序列最近一天指标灌满近 5 分钟 raw 点。 */
 export function seedMockHistoryIfEmpty(nowMs: number): void {
   if (rawPoints.length > 0 || minutePoints.length > 0) return
   const latest = createResourceMetrics().at(-1)!
+  const net = splitThroughput(latest.networkIo, 0.58)
+  const disk = splitThroughput(latest.diskIo, 0.62)
   const step = 5_000
   const count = Math.floor(timeRangeDurationMs('5m') / step) + 1
   for (let i = 0; i < count; i += 1) {
@@ -200,7 +247,11 @@ export function seedMockHistoryIfEmpty(nowMs: number): void {
         cpu: latest.cpu,
         memory: latest.memory,
         networkIo: latest.networkIo,
+        networkRx: net.primary,
+        networkTx: net.secondary,
         diskIo: latest.diskIo,
+        diskRead: disk.primary,
+        diskWrite: disk.secondary,
       },
       nowMs,
     )
@@ -272,13 +323,20 @@ export function sliceResourceMetrics(
 
 /** 系统负载（load average，1/5/15 分钟均值）与磁盘占用（按挂载点）的 mock 形状。 */
 export type SystemLoad = { m1: number; m5: number; m15: number }
-export type DiskUsage = { mount: string; usagePct: number }
+export type DiskUsage = {
+  mount: string
+  usagePct: number
+  /** 已用容量（KiB，与 df -k 一致）。 */
+  usedKb: number
+  /** 总容量（KiB，与 df -k 一致）。 */
+  sizeKb: number
+}
 
 export const INITIAL_LOAD: SystemLoad = { m1: 0.16, m5: 0.09, m15: 0.05 }
 export const INITIAL_DISKS: DiskUsage[] = [
-  { mount: '/', usagePct: 62 },
-  { mount: '/data', usagePct: 78 },
-  { mount: '/backup', usagePct: 41 },
+  { mount: '/', usagePct: 62, usedKb: 620_000, sizeKb: 1_000_000 },
+  { mount: '/data', usagePct: 78, usedKb: 1_560_000, sizeKb: 2_000_000 },
+  { mount: '/backup', usagePct: 41, usedKb: 2_050_000, sizeKb: 5_000_000 },
 ]
 
 const clampValue = (value: number, min: number, max: number): number =>
@@ -293,10 +351,15 @@ export function nextLoadWalk(load: SystemLoad): SystemLoad {
 
 /** 磁盘占用随机游走：真实磁盘变化很慢，漂移压在 0.1% 量级。 */
 export function nextDisksWalk(disks: readonly DiskUsage[]): DiskUsage[] {
-  return disks.map((disk) => ({
-    ...disk,
-    usagePct: Math.round(clampValue(disk.usagePct + (Math.random() - 0.5) * 0.2, 5, 95) * 10) / 10,
-  }))
+  return disks.map((disk) => {
+    const usagePct =
+      Math.round(clampValue(disk.usagePct + (Math.random() - 0.5) * 0.2, 5, 95) * 10) / 10
+    return {
+      ...disk,
+      usagePct,
+      usedKb: Math.round((disk.sizeKb * usagePct) / 100),
+    }
+  })
 }
 
 let liveResources: DailyResourceMetrics[] | undefined

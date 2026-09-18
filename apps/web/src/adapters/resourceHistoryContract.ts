@@ -17,7 +17,11 @@ export function runResourceHistoryContract(adapter: ResourceHistoryAdapter): voi
             cpu: expect.any(Number),
             memory: expect.any(Number),
             networkIo: expect.any(Number),
+            networkRx: expect.any(Number),
+            networkTx: expect.any(Number),
             diskIo: expect.any(Number),
+            diskRead: expect.any(Number),
+            diskWrite: expect.any(Number),
           }),
         )
       }

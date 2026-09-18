@@ -22,16 +22,31 @@ CREATE TABLE IF NOT EXISTS samples_raw (
   cpu REAL NOT NULL,
   memory REAL NOT NULL,
   network_io REAL NOT NULL,
-  disk_io REAL NOT NULL
+  network_rx REAL NOT NULL DEFAULT 0,
+  network_tx REAL NOT NULL DEFAULT 0,
+  disk_io REAL NOT NULL,
+  disk_read REAL NOT NULL DEFAULT 0,
+  disk_write REAL NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS samples_1m (
   ts INTEGER PRIMARY KEY,
   cpu REAL NOT NULL,
   memory REAL NOT NULL,
   network_io REAL NOT NULL,
-  disk_io REAL NOT NULL
+  network_rx REAL NOT NULL DEFAULT 0,
+  network_tx REAL NOT NULL DEFAULT 0,
+  disk_io REAL NOT NULL,
+  disk_read REAL NOT NULL DEFAULT 0,
+  disk_write REAL NOT NULL DEFAULT 0
 );
 `
+
+const DIRECTIONAL_COLUMNS = [
+  'network_rx',
+  'network_tx',
+  'disk_read',
+  'disk_write',
+] as const
 
 export type MetricsStore = {
   insertRaw(point: ResourceSamplePoint): void
@@ -47,7 +62,11 @@ type MinuteBucket = {
   cpu: number
   memory: number
   networkIo: number
+  networkRx: number
+  networkTx: number
   diskIo: number
+  diskRead: number
+  diskWrite: number
 }
 
 function minuteStartMs(ts: number): number {
@@ -59,46 +78,78 @@ type SampleRow = {
   cpu: number
   memory: number
   network_io: number
+  network_rx: number
+  network_tx: number
   disk_io: number
+  disk_read: number
+  disk_write: number
 }
 
 function rowToPoint(row: SampleRow): ResourceSamplePoint {
+  const networkRx = row.network_rx ?? 0
+  const networkTx = row.network_tx ?? 0
+  const diskRead = row.disk_read ?? 0
+  const diskWrite = row.disk_write ?? 0
   return {
     ts: row.ts,
     cpu: row.cpu,
     memory: row.memory,
     networkIo: row.network_io,
+    networkRx,
+    networkTx,
     diskIo: row.disk_io,
+    diskRead,
+    diskWrite,
+  }
+}
+
+function ensureDirectionalColumns(db: Database): void {
+  for (const table of ['samples_raw', 'samples_1m'] as const) {
+    const columns = new Set(
+      (db.prepare(`PRAGMA table_info(${table})`).all() as ReadonlyArray<{ name: string }>).map(
+        (row) => row.name,
+      ),
+    )
+    for (const column of DIRECTIONAL_COLUMNS) {
+      if (!columns.has(column)) {
+        db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} REAL NOT NULL DEFAULT 0`)
+      }
+    }
   }
 }
 
 function createMetricsStore(db: Database): MetricsStore {
   db.exec(SCHEMA)
+  ensureDirectionalColumns(db)
 
   let openMinuteBucket: MinuteBucket | null = null
 
   const insertMinuteStmt = db.prepare(`
-    INSERT OR REPLACE INTO samples_1m (ts, cpu, memory, network_io, disk_io)
-    VALUES ($ts, $cpu, $memory, $network_io, $disk_io)
+    INSERT OR REPLACE INTO samples_1m
+      (ts, cpu, memory, network_io, network_rx, network_tx, disk_io, disk_read, disk_write)
+    VALUES
+      ($ts, $cpu, $memory, $network_io, $network_rx, $network_tx, $disk_io, $disk_read, $disk_write)
   `)
 
   const insertRawStmt = db.prepare(`
-    INSERT OR REPLACE INTO samples_raw (ts, cpu, memory, network_io, disk_io)
-    VALUES ($ts, $cpu, $memory, $network_io, $disk_io)
+    INSERT OR REPLACE INTO samples_raw
+      (ts, cpu, memory, network_io, network_rx, network_tx, disk_io, disk_read, disk_write)
+    VALUES
+      ($ts, $cpu, $memory, $network_io, $network_rx, $network_tx, $disk_io, $disk_read, $disk_write)
   `)
 
   const deleteRawBefore = db.prepare('DELETE FROM samples_raw WHERE ts < ?')
   const deleteMinuteBefore = db.prepare('DELETE FROM samples_1m WHERE ts < ?')
 
   const selectRawInWindow = db.prepare(`
-    SELECT ts, cpu, memory, network_io, disk_io
+    SELECT ts, cpu, memory, network_io, network_rx, network_tx, disk_io, disk_read, disk_write
     FROM samples_raw
     WHERE ts >= ? AND ts <= ?
     ORDER BY ts ASC
   `)
 
   const selectMinuteInWindow = db.prepare(`
-    SELECT ts, cpu, memory, network_io, disk_io
+    SELECT ts, cpu, memory, network_io, network_rx, network_tx, disk_io, disk_read, disk_write
     FROM samples_1m
     WHERE ts >= ? AND ts <= ?
     ORDER BY ts ASC
@@ -106,13 +157,18 @@ function createMetricsStore(db: Database): MetricsStore {
 
   function flushOpenMinuteBucket(): void {
     if (!openMinuteBucket || openMinuteBucket.count === 0) return
-    const { minuteStart, count, cpu, memory, networkIo, diskIo } = openMinuteBucket
+    const { minuteStart, count, cpu, memory, networkIo, networkRx, networkTx, diskIo, diskRead, diskWrite } =
+      openMinuteBucket
     insertMinuteStmt.run({
       $ts: minuteStart,
       $cpu: cpu / count,
       $memory: memory / count,
       $network_io: networkIo / count,
+      $network_rx: networkRx / count,
+      $network_tx: networkTx / count,
       $disk_io: diskIo / count,
+      $disk_read: diskRead / count,
+      $disk_write: diskWrite / count,
     })
     openMinuteBucket = null
   }
@@ -129,14 +185,22 @@ function createMetricsStore(db: Database): MetricsStore {
         cpu: 0,
         memory: 0,
         networkIo: 0,
+        networkRx: 0,
+        networkTx: 0,
         diskIo: 0,
+        diskRead: 0,
+        diskWrite: 0,
       }
     }
     openMinuteBucket.count += 1
     openMinuteBucket.cpu += point.cpu
     openMinuteBucket.memory += point.memory
     openMinuteBucket.networkIo += point.networkIo
+    openMinuteBucket.networkRx += point.networkRx
+    openMinuteBucket.networkTx += point.networkTx
     openMinuteBucket.diskIo += point.diskIo
+    openMinuteBucket.diskRead += point.diskRead
+    openMinuteBucket.diskWrite += point.diskWrite
   }
 
   return {
@@ -147,7 +211,11 @@ function createMetricsStore(db: Database): MetricsStore {
         $cpu: point.cpu,
         $memory: point.memory,
         $network_io: point.networkIo,
+        $network_rx: point.networkRx,
+        $network_tx: point.networkTx,
         $disk_io: point.diskIo,
+        $disk_read: point.diskRead,
+        $disk_write: point.diskWrite,
       })
     },
 
@@ -172,35 +240,36 @@ function createMetricsStore(db: Database): MetricsStore {
         return (selectRawInWindow.all(windowStart, nowMs) as SampleRow[]).map(rowToPoint)
       }
 
-      const fromMinute = (selectMinuteInWindow.all(windowStart, nowMs) as SampleRow[]).map(
-        rowToPoint,
-      )
+      const fromMinute = (selectMinuteInWindow.all(windowStart, nowMs) as SampleRow[]).map(rowToPoint)
       if (fromMinute.length > 0) return fromMinute
 
-      const rawInWindow = (selectRawInWindow.all(windowStart, nowMs) as SampleRow[]).map(rowToPoint)
+      const raw = (selectRawInWindow.all(windowStart, nowMs) as SampleRow[]).map(rowToPoint)
       const byMinute = new Map<number, ResourceSamplePoint[]>()
-      for (const p of rawInWindow) {
+      for (const p of raw.filter(inWindow)) {
         const key = minuteStartMs(p.ts)
         const list = byMinute.get(key) ?? []
         list.push(p)
         byMinute.set(key, list)
       }
       const downsampled: ResourceSamplePoint[] = []
-      for (const [minuteTs, points] of [...byMinute.entries()].sort((a, b) => a[0] - b[0])) {
+      for (const [ts, points] of [...byMinute.entries()].sort(([a], [b]) => a - b)) {
         const n = points.length
         downsampled.push({
-          ts: minuteTs,
+          ts,
           cpu: points.reduce((s, p) => s + p.cpu, 0) / n,
           memory: points.reduce((s, p) => s + p.memory, 0) / n,
           networkIo: points.reduce((s, p) => s + p.networkIo, 0) / n,
+          networkRx: points.reduce((s, p) => s + p.networkRx, 0) / n,
+          networkTx: points.reduce((s, p) => s + p.networkTx, 0) / n,
           diskIo: points.reduce((s, p) => s + p.diskIo, 0) / n,
+          diskRead: points.reduce((s, p) => s + p.diskRead, 0) / n,
+          diskWrite: points.reduce((s, p) => s + p.diskWrite, 0) / n,
         })
       }
       return downsampled.filter(inWindow)
     },
 
     close() {
-      flushOpenMinuteBucket()
       db.close()
     },
   }

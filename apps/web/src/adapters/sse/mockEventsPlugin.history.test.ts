@@ -81,7 +81,7 @@ describe('GET /api/resources/history 处理器', () => {
   it('Docker 模式从 store 查询', () => {
     const nowMs = 1_700_000_000_000
     const points: ResourceSamplePoint[] = [
-      { ts: nowMs - 3_000, cpu: 5, memory: 6, networkIo: 7, diskIo: 8 },
+      { ts: nowMs - 3_000, cpu: 5, memory: 6, networkIo: 7, networkRx: 7, networkTx: 0, diskIo: 8 , diskRead: 8 , diskWrite: 0 },
     ]
     const handler = createResourceHistoryHandler({
       docker: true,

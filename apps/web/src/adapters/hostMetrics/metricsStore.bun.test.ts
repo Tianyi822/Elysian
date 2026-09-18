@@ -11,7 +11,17 @@ const MS_PER_HOUR = 3_600_000
 const MS_PER_DAY = 86_400_000
 
 function sample(ts: number, cpu = 10): ResourceSamplePoint {
-  return { ts, cpu, memory: 50, networkIo: 100, diskIo: 80 }
+  return {
+    ts,
+    cpu,
+    memory: 50,
+    networkIo: 100,
+    networkRx: 58,
+    networkTx: 42,
+    diskIo: 80,
+    diskRead: 50,
+    diskWrite: 30,
+  }
 }
 
 describe('isDockerEnv', () => {

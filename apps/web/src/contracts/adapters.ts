@@ -360,7 +360,11 @@ export type ResourceSamplePoint = {
   cpu: number
   memory: number
   networkIo: number
+  networkRx: number
+  networkTx: number
   diskIo: number
+  diskRead: number
+  diskWrite: number
 }
 
 /** 按时间窗读取资源指标历史（演示内存缓冲，未来同源持久化）。 */

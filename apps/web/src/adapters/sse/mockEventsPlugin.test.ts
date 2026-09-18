@@ -71,10 +71,12 @@ describe('实时采样与新事故注入', () => {
       expect(walk.cpu).toBeLessThanOrEqual(90)
       expect(walk.memory).toBeGreaterThanOrEqual(45)
       expect(walk.memory).toBeLessThanOrEqual(92)
-      expect(walk.networkIo).toBeGreaterThanOrEqual(60)
-      expect(walk.networkIo).toBeLessThanOrEqual(950)
-      expect(walk.diskIo).toBeGreaterThanOrEqual(40)
-      expect(walk.diskIo).toBeLessThanOrEqual(520)
+      expect(walk.networkIo).toBeGreaterThanOrEqual(50)
+      expect(walk.networkIo).toBeLessThanOrEqual(1000)
+      expect(walk.diskIo).toBeGreaterThanOrEqual(35)
+      expect(walk.diskIo).toBeLessThanOrEqual(600)
+      expect(walk.networkRx + walk.networkTx).toBe(walk.networkIo)
+      expect(walk.diskRead + walk.diskWrite).toBe(walk.diskIo)
     }
   })
 

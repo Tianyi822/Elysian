@@ -707,17 +707,29 @@ export function createInMemoryEventsAdapter(
       let walk = {
         cpu: 55,
         memory: 68,
+        networkRx: 220,
+        networkTx: 160,
         networkIo: 380,
+        diskRead: 130,
+        diskWrite: 80,
         diskIo: 210,
         load: { ...INITIAL_LOAD },
         disks: INITIAL_DISKS.map((disk) => ({ ...disk })),
       }
       const stepWalk = (): typeof walk => {
+        const networkRx = Math.min(550, Math.max(30, walk.networkRx + Math.round((Math.random() - 0.5) * 50)))
+        const networkTx = Math.min(450, Math.max(20, walk.networkTx + Math.round((Math.random() - 0.5) * 40)))
+        const diskRead = Math.min(320, Math.max(20, walk.diskRead + Math.round((Math.random() - 0.5) * 36)))
+        const diskWrite = Math.min(280, Math.max(15, walk.diskWrite + Math.round((Math.random() - 0.5) * 30)))
         walk = {
           cpu: Math.min(90, Math.max(20, walk.cpu + Math.round((Math.random() - 0.5) * 4))),
           memory: Math.min(92, Math.max(45, walk.memory + Math.round((Math.random() - 0.5) * 2))),
-          networkIo: Math.min(950, Math.max(60, walk.networkIo + Math.round((Math.random() - 0.5) * 80))),
-          diskIo: Math.min(520, Math.max(40, walk.diskIo + Math.round((Math.random() - 0.5) * 60))),
+          networkRx,
+          networkTx,
+          networkIo: networkRx + networkTx,
+          diskRead,
+          diskWrite,
+          diskIo: diskRead + diskWrite,
           load: nextLoadWalk(walk.load),
           disks: nextDisksWalk(walk.disks),
         }

@@ -39,12 +39,11 @@ describe('parseMeminfo', () => {
 })
 
 describe('parseDf', () => {
-  it('解析 df -P -k 输出为挂载点与占用率', () => {
+  it('解析 df -P -k 输出，跳过 tmpfs 等伪文件系统', () => {
     expect(parseDf(fixture('df.txt'))).toEqual([
-      { mount: '/', usagePct: 62 },
-      { mount: '/data', usagePct: 78 },
-      { mount: '/backup', usagePct: 41 },
-      { mount: '/dev/shm', usagePct: 0 },
+      { mount: '/', usagePct: 62, usedKb: 620000, sizeKb: 1000000 },
+      { mount: '/data', usagePct: 78, usedKb: 1560000, sizeKb: 2000000 },
+      { mount: '/backup', usagePct: 41, usedKb: 2050000, sizeKb: 5000000 },
     ])
   })
 })
@@ -86,13 +85,16 @@ describe('readHostSample', () => {
       cpu: 0,
       memory: 60,
       networkIo: 0,
+      networkRx: 0,
+      networkTx: 0,
       diskIo: 0,
+      diskRead: 0,
+      diskWrite: 0,
       load: { m1: 0.52, m5: 0.58, m15: 0.59 },
       disks: [
-        { mount: '/', usagePct: 62 },
-        { mount: '/data', usagePct: 78 },
-        { mount: '/backup', usagePct: 41 },
-        { mount: '/dev/shm', usagePct: 0 },
+        { mount: '/', usagePct: 62, usedKb: 620000, sizeKb: 1000000 },
+        { mount: '/data', usagePct: 78, usedKb: 1560000, sizeKb: 2000000 },
+        { mount: '/backup', usagePct: 41, usedKb: 2050000, sizeKb: 5000000 },
       ],
     })
     expect(result.nextPrev.stat).toBe(fixture('stat-next.txt'))
@@ -119,7 +121,9 @@ describe('readHostSample', () => {
     expect(result.sample.cpu).toBe(50)
     expect(result.sample.memory).toBe(60)
     expect(result.sample.networkIo).toBeCloseTo(1, 5)
+    expect(result.sample.networkRx + result.sample.networkTx).toBeCloseTo(result.sample.networkIo, 5)
     expect(result.sample.diskIo).toBeCloseTo(1, 5)
+    expect(result.sample.diskRead + result.sample.diskWrite).toBeCloseTo(result.sample.diskIo, 5)
     expect(result.sample.load.m1).toBe(0.52)
     nowSpy.mockRestore()
   })

@@ -109,14 +109,21 @@ export function useChart(
     const chart = chartRef.current
     if (!chart || !readyRef.current) return
     const next = buildRef.current()
-    chart.setOption(
-      {
-        series: next.series,
-        yAxis: next.yAxis,
-        tooltip: next.tooltip,
-      },
-      { notMerge: false, lazyUpdate: false },
-    )
+    const patch: EChartsCoreOption = {
+      series: next.series,
+      yAxis: next.yAxis,
+      xAxis: next.xAxis,
+      tooltip: next.tooltip,
+      textStyle: next.textStyle,
+    }
+    if (next.legend !== undefined) patch.legend = next.legend
+    if (next.grid !== undefined) patch.grid = next.grid
+    // replaceMerge 系列与图例，避免主题切换后标签/图例色被旧样式合并残留。
+    chart.setOption(patch, {
+      notMerge: false,
+      lazyUpdate: false,
+      replaceMerge: ['series', 'legend'],
+    })
   }, [rebuildKey])
 
   return { containerRef, isZoomed, resetZoom }

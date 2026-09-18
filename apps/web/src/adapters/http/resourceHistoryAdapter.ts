@@ -12,7 +12,11 @@ function isSamplePoint(value: unknown): value is ResourceSamplePoint {
     typeof row.cpu === 'number' &&
     typeof row.memory === 'number' &&
     typeof row.networkIo === 'number' &&
-    typeof row.diskIo === 'number'
+    typeof row.networkRx === 'number' &&
+    typeof row.networkTx === 'number' &&
+    typeof row.diskIo === 'number' &&
+    typeof row.diskRead === 'number' &&
+    typeof row.diskWrite === 'number'
   )
 }
 

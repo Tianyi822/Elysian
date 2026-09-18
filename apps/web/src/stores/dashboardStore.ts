@@ -45,7 +45,13 @@ export function sameSystemSnapshot(
     a.load.m5 === b.load.m5 &&
     a.load.m15 === b.load.m15 &&
     a.disks.length === b.disks.length &&
-    a.disks.every((d, i) => d.mount === b.disks[i]?.mount && d.usagePct === b.disks[i]?.usagePct)
+    a.disks.every(
+      (d, i) =>
+        d.mount === b.disks[i]?.mount &&
+        d.usagePct === b.disks[i]?.usagePct &&
+        d.usedKb === b.disks[i]?.usedKb &&
+        d.sizeKb === b.disks[i]?.sizeKb,
+    )
   )
 }
 
@@ -144,8 +150,19 @@ function attachLiveEvents(): void {
     if (event.name === 'resource/sample') {
       const ts = Date.parse(event.at)
       const atMs = Number.isFinite(ts) ? ts : Date.now()
-      const { cpu, memory, networkIo, diskIo, load, disks } = event.payload
-      const point: ResourceSamplePoint = { ts: atMs, cpu, memory, networkIo, diskIo }
+      const { cpu, memory, networkIo, networkRx, networkTx, diskIo, diskRead, diskWrite, load, disks } =
+        event.payload
+      const point: ResourceSamplePoint = {
+        ts: atMs,
+        cpu,
+        memory,
+        networkIo,
+        networkRx,
+        networkTx,
+        diskIo,
+        diskRead,
+        diskWrite,
+      }
       if (syncSamplesToMockBuffer) {
         appendMockSample(point, atMs)
       }

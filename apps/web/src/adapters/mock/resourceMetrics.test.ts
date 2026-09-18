@@ -74,7 +74,11 @@ describe('ResourceSamplePoint 分层历史', () => {
         cpu: 10 + i,
         memory: 50,
         networkIo: 100,
+        networkRx: 100,
+        networkTx: 0,
         diskIo: 80,
+        diskRead: 80,
+        diskWrite: 0,
       })
     }
     const short = listMockHistory('5m', t0 + 39 * 5_000)
@@ -93,7 +97,11 @@ describe('ResourceSamplePoint 分层历史', () => {
         cpu: m % 50,
         memory: 40,
         networkIo: 10,
+        networkRx: 10,
+        networkTx: 0,
         diskIo: 10,
+        diskRead: 10,
+        diskWrite: 0,
       })
     }
     const long = listMockHistory('5h', t0 + 119 * 60_000)

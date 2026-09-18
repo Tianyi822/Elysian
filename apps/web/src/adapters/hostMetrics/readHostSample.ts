@@ -13,7 +13,11 @@ export type HostSample = {
   cpu: number
   memory: number
   networkIo: number
+  networkRx: number
+  networkTx: number
   diskIo: number
+  diskRead: number
+  diskWrite: number
   load: SystemLoad
   disks: DiskUsage[]
 }
@@ -71,6 +75,28 @@ export function parseMeminfo(text: string): number {
   return Math.round(usedPct)
 }
 
+const DF_NOISE_FILESYSTEMS = new Set([
+  'tmpfs',
+  'devtmpfs',
+  'proc',
+  'sysfs',
+  'cgroup',
+  'cgroup2',
+  'squashfs',
+  'ramfs',
+  'devpts',
+  'mqueue',
+])
+
+/** 排除伪文件系统与 /dev|/proc|/sys|/run 下挂载；每个挂载点的占用率相对自身容量，互不嵌套。 */
+export function isNoiseDfMount(filesystem: string, mount: string): boolean {
+  const fs = filesystem.toLowerCase()
+  if (DF_NOISE_FILESYSTEMS.has(fs)) return true
+  if (mount === '/dev' || mount.startsWith('/dev/')) return true
+  if (mount.startsWith('/proc') || mount.startsWith('/sys') || mount.startsWith('/run')) return true
+  return false
+}
+
 export function parseDf(text: string): DiskUsage[] {
   const lines = text.trim().split('\n')
   const disks: DiskUsage[] = []
@@ -83,15 +109,26 @@ export function parseDf(text: string): DiskUsage[] {
     if (parts.length < 6) {
       continue
     }
+    const filesystem = parts[0] ?? ''
+    const sizeKb = Number.parseInt(parts[parts.length - 5] ?? '', 10)
+    const usedKb = Number.parseInt(parts[parts.length - 4] ?? '', 10)
     const capacity = parts[parts.length - 2] ?? ''
     const mount = parts[parts.length - 1] ?? ''
     const pctMatch = /^(\d+)%$/.exec(capacity)
     if (!pctMatch || !mount.startsWith('/')) {
       continue
     }
+    if (!Number.isFinite(sizeKb) || !Number.isFinite(usedKb) || sizeKb <= 0) {
+      continue
+    }
+    if (isNoiseDfMount(filesystem, mount)) {
+      continue
+    }
     disks.push({
       mount,
       usagePct: Number.parseInt(pctMatch[1] ?? '', 10),
+      usedKb,
+      sizeKb,
     })
   }
 
@@ -137,8 +174,9 @@ export function cpuUsagePercent(prevStat: string, nextStat: string): number {
   return Math.round(Math.min(100, Math.max(0, usage)))
 }
 
-function sumNetworkBytes(text: string): number {
-  let total = 0
+function sumNetworkBytesByDirection(text: string): { rx: number; tx: number } {
+  let rx = 0
+  let tx = 0
   for (const line of text.split('\n')) {
     const match = /^\s*([\w.-]+):\s*(\d+)/.exec(line)
     if (!match) {
@@ -149,17 +187,17 @@ function sumNetworkBytes(text: string): number {
       continue
     }
     const parts = line.trim().split(/\s+/)
-    const rx = Number.parseInt(parts[1] ?? '0', 10)
-    const tx = Number.parseInt(parts[9] ?? '0', 10)
-    if (!Number.isNaN(rx) && !Number.isNaN(tx)) {
-      total += rx + tx
-    }
+    const rxBytes = Number.parseInt(parts[1] ?? '0', 10)
+    const txBytes = Number.parseInt(parts[9] ?? '0', 10)
+    if (!Number.isNaN(rxBytes)) rx += rxBytes
+    if (!Number.isNaN(txBytes)) tx += txBytes
   }
-  return total
+  return { rx, tx }
 }
 
-function sumDiskSectors(text: string): number {
-  let total = 0
+function sumDiskSectorsByDirection(text: string): { read: number; write: number } {
+  let read = 0
+  let write = 0
   for (const line of text.split('\n')) {
     const trimmed = line.trim()
     if (!trimmed) {
@@ -175,34 +213,51 @@ function sumDiskSectors(text: string): number {
     }
     const sectorsRead = Number.parseInt(parts[5] ?? '0', 10)
     const sectorsWritten = Number.parseInt(parts[9] ?? '0', 10)
-    if (!Number.isNaN(sectorsRead) && !Number.isNaN(sectorsWritten)) {
-      total += sectorsRead + sectorsWritten
-    }
+    if (!Number.isNaN(sectorsRead)) read += sectorsRead
+    if (!Number.isNaN(sectorsWritten)) write += sectorsWritten
   }
-  return total
+  return { read, write }
 }
 
+function bytesDeltaToMbps(deltaBytes: number, elapsedMs: number): number {
+  if (elapsedMs <= 0 || deltaBytes <= 0) return 0
+  return ((deltaBytes / elapsedMs) * 1000) / BYTES_PER_MB
+}
+
+export function networkIoMbps(
+  prev: string,
+  next: string,
+  elapsedMs: number,
+): { rx: number; tx: number; total: number } {
+  const before = sumNetworkBytesByDirection(prev)
+  const after = sumNetworkBytesByDirection(next)
+  const rx = bytesDeltaToMbps(after.rx - before.rx, elapsedMs)
+  const tx = bytesDeltaToMbps(after.tx - before.tx, elapsedMs)
+  return { rx, tx, total: rx + tx }
+}
+
+export function diskIoMbps(
+  prev: string,
+  next: string,
+  elapsedMs: number,
+): { read: number; write: number; total: number } {
+  const before = sumDiskSectorsByDirection(prev)
+  const after = sumDiskSectorsByDirection(next)
+  const read = bytesDeltaToMbps((after.read - before.read) * BYTES_PER_SECTOR, elapsedMs)
+  const write = bytesDeltaToMbps((after.write - before.write) * BYTES_PER_SECTOR, elapsedMs)
+  return { read, write, total: read + write }
+}
+
+/** @deprecated 使用 networkIoMbps / diskIoMbps；保留合计兼容旧断言。 */
 export function ioMbps(
   prev: string,
   next: string,
   kind: 'net' | 'disk',
   elapsedMs: number,
 ): number {
-  if (elapsedMs <= 0) {
-    return 0
-  }
-
-  const delta =
-    kind === 'net'
-      ? sumNetworkBytes(next) - sumNetworkBytes(prev)
-      : (sumDiskSectors(next) - sumDiskSectors(prev)) * BYTES_PER_SECTOR
-
-  if (delta <= 0) {
-    return 0
-  }
-
-  const bytesPerSecond = (delta / elapsedMs) * 1000
-  return bytesPerSecond / BYTES_PER_MB
+  return kind === 'net'
+    ? networkIoMbps(prev, next, elapsedMs).total
+    : diskIoMbps(prev, next, elapsedMs).total
 }
 
 export async function readHostSample(deps: {
@@ -222,20 +277,27 @@ export async function readHostSample(deps: {
   const now = Date.now()
   const elapsedMs = deps.prev ? Math.max(1, now - deps.prev.at) : 0
 
+  const network =
+    deps.prev && elapsedMs > 0
+      ? networkIoMbps(deps.prev.net, netText, elapsedMs)
+      : { rx: 0, tx: 0, total: 0 }
+  const disk =
+    deps.prev && elapsedMs > 0
+      ? diskIoMbps(deps.prev.disk, diskText, elapsedMs)
+      : { read: 0, write: 0, total: 0 }
+
   const sample: HostSample = {
     cpu:
       deps.prev && elapsedMs > 0
         ? cpuUsagePercent(deps.prev.stat, statText)
         : 0,
     memory: parseMeminfo(meminfoText),
-    networkIo:
-      deps.prev && elapsedMs > 0
-        ? ioMbps(deps.prev.net, netText, 'net', elapsedMs)
-        : 0,
-    diskIo:
-      deps.prev && elapsedMs > 0
-        ? ioMbps(deps.prev.disk, diskText, 'disk', elapsedMs)
-        : 0,
+    networkIo: network.total,
+    networkRx: network.rx,
+    networkTx: network.tx,
+    diskIo: disk.total,
+    diskRead: disk.read,
+    diskWrite: disk.write,
     load: parseLoadavg(loadavgText),
     disks: parseDf(dfText),
   }
