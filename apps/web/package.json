@@ -6,7 +6,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview --port 4173",
-    "test": "vitest run",
+    "test": "vitest run && bun test src/adapters/hostMetrics/metricsStore.bun.test.ts",
+    "test:bun": "bun test src/adapters/hostMetrics",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
