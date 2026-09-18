@@ -1,0 +1,23 @@
+# 方案 A：宿主机编辑，容器内跑 dev。
+# 改业务代码不必重建镜像；仅 Dockerfile.dev 变更时再 docker compose build。
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - "5173:5173"
+    environment:
+      ELSYIAN_DOCKER: "1"
+    volumes:
+      - .:/app
+      # 依赖留在容器 volume，避免 Mac/Linux 原生二进制互相覆盖。
+      - elysian_node_modules:/app/node_modules
+      - elysian_web_node_modules:/app/apps/web/node_modules
+      - elysian_contracts_node_modules:/app/packages/foundation/contracts/node_modules
+    command: sh -c "bun install && bun run dev"
+
+volumes:
+  elysian_node_modules:
+  elysian_web_node_modules:
+  elysian_contracts_node_modules:

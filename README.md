@@ -19,6 +19,17 @@ bun run test       # Vitest 全量测试
 bun run typecheck  # Web 应用与契约包的类型检查
 ```
 
+### Docker 开发（宿主机编辑，容器内跑）
+
+源码通过挂载同步到 Ubuntu 容器；改代码走 Vite 热更新，不必每次重建镜像。依赖装在容器 volume 里，不会覆盖宿主机的 `node_modules`。
+
+```bash
+docker compose up          # 前台启动，浏览器打开 http://localhost:5173
+docker compose up -d       # 后台
+docker compose down        # 停掉
+docker compose build       # 仅当 Dockerfile.dev 变更时
+```
+
 ## 目录与版本库范围
 
 仓库跟踪 `README.md`、`.gitignore` 与全部代码；设计文档留在本地工作区，不入库。

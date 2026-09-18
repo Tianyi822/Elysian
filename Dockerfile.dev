@@ -1,0 +1,18 @@
+# 开发用镜像：宿主机编辑源码，容器内跑 Bun + Vite。
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates curl unzip \
+  && rm -rf /var/lib/apt/lists/* \
+  && curl -fsSL https://bun.sh/install | bash
+
+ENV BUN_INSTALL=/root/.bun
+ENV PATH="${BUN_INSTALL}/bin:${PATH}"
+
+WORKDIR /app
+
+EXPOSE 5173
+
+CMD ["bun", "run", "dev"]
