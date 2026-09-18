@@ -22,7 +22,7 @@ export function DashboardPage() {
     void load(gateway)
   }, [gateway, load])
 
-  if (!resources || !system) {
+  if (!resources) {
     if (status === 'error') {
       return (
         <ErrorState

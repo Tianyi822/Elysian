@@ -84,13 +84,25 @@ function BarsPanel({
   )
 }
 
+function BarsPlaceholder({ title }: { title: string }) {
+  return (
+    <article
+      aria-label={title}
+      className="rounded-xl border border-line bg-surface p-4 md:p-5"
+    >
+      <h2 className="text-sm font-semibold">{title}</h2>
+      <p className="mt-4 text-sm text-fg-muted">等待资源采样…</p>
+    </article>
+  )
+}
+
 export function ResourceChartsSection({
   resources,
   system,
   resetZoomSignal,
 }: {
   resources: readonly ResourceSamplePoint[]
-  system: { load: SystemLoad; disks: readonly DiskUsage[] }
+  system?: { load: SystemLoad; disks: readonly DiskUsage[] }
   resetZoomSignal: number
 }) {
   const { theme } = useTheme()
@@ -109,16 +121,24 @@ export function ResourceChartsSection({
           />
         ))}
 
-        <BarsPanel
-          title="运行负载"
-          option={buildLoadBarsOption(system.load, readChartPalette(theme))}
-          rebuildKey={`load:${theme}:${JSON.stringify(system.load)}`}
-        />
-        <BarsPanel
-          title="磁盘占用"
-          option={buildDiskBarsOption(system.disks, readChartPalette(theme))}
-          rebuildKey={`disk:${theme}:${JSON.stringify(system.disks)}`}
-        />
+        {system ? (
+          <BarsPanel
+            title="运行负载"
+            option={buildLoadBarsOption(system.load, readChartPalette(theme))}
+            rebuildKey={`load:${theme}:${JSON.stringify(system.load)}`}
+          />
+        ) : (
+          <BarsPlaceholder title="运行负载" />
+        )}
+        {system ? (
+          <BarsPanel
+            title="磁盘占用"
+            option={buildDiskBarsOption(system.disks, readChartPalette(theme))}
+            rebuildKey={`disk:${theme}:${JSON.stringify(system.disks)}`}
+          />
+        ) : (
+          <BarsPlaceholder title="磁盘占用" />
+        )}
       </div>
     </section>
   )

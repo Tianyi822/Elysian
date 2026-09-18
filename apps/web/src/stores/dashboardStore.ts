@@ -6,8 +6,6 @@ import { BASE_DATE } from '../adapters/mock/dataset'
 import { MockResourceHistoryAdapter } from '../adapters/mock/resourceHistoryAdapter'
 import {
   DEFAULT_TIME_RANGE,
-  INITIAL_DISKS,
-  INITIAL_LOAD,
   appendMockSample,
   timeRangeDurationMs,
 } from '../adapters/mock/resourceMetrics'
@@ -92,7 +90,6 @@ export async function loadDashboard(gateway: ElysianGateway, range: TimeRange) {
     stats: aggregateStatCards(input, BASE_DATE),
     modules: buildModuleCards({ incidentRows: incidentList.rows, runs, approvals, moduleStatuses }),
     resources,
-    system: { load: { ...INITIAL_LOAD }, disks: INITIAL_DISKS.map((disk) => ({ ...disk })) },
     auditRecords: audit,
   }
 }
@@ -109,8 +106,15 @@ let boundGateway: ElysianGateway | undefined
 let syncSamplesToMockBuffer = false
 
 async function reloadResources(gateway: ElysianGateway, range: TimeRange): Promise<void> {
-  const resources = await gateway.resources.list(range)
-  useDashboardStore.setState({ resources })
+  try {
+    const resources = await gateway.resources.list(range)
+    useDashboardStore.setState({ resources, errorMessage: undefined })
+  } catch (error) {
+    useDashboardStore.setState({
+      errorMessage:
+        error instanceof Error ? error.message : '切换时间范围后读取资源数据失败',
+    })
+  }
 }
 
 function attachLiveEvents(): void {
@@ -173,7 +177,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     set({ status: 'loading', errorMessage: undefined })
     try {
       const data = await loadDashboard(gateway, range)
-      set({ status: 'ready', ...data })
+      set((state) => ({ status: 'ready', ...data, system: state.system }))
     } catch (error) {
       set({
         status: 'error',
@@ -188,7 +192,12 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     set({ refreshing: true, errorMessage: undefined })
     try {
       const data = await loadDashboard(gateway, range)
-      set({ status: 'ready', ...data, refreshing: false })
+      set((state) => ({
+        status: 'ready',
+        ...data,
+        system: state.system,
+        refreshing: false,
+      }))
     } catch (error) {
       set({
         refreshing: false,

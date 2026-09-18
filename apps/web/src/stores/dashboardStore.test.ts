@@ -6,6 +6,7 @@ import { createMockGateway } from '../adapters/mock/gateway'
 import * as resourceMetrics from '../adapters/mock/resourceMetrics'
 import { resetMockHistory } from '../adapters/mock/resourceMetrics'
 import { onStreamEvent, useEventStreamStore } from './eventStreamStore'
+import { INITIAL_DISKS } from '../adapters/mock/resourceMetrics'
 import { mergeResourceSampleIntoWindow, useDashboardStore } from './dashboardStore'
 
 const dataset = createMockDataset()
@@ -21,6 +22,7 @@ function resetStores() {
     stats: undefined,
     modules: undefined,
     resources: undefined,
+    system: undefined,
     auditRecords: undefined,
     errorMessage: undefined,
   })
@@ -81,6 +83,55 @@ describe('mergeResourceSampleIntoWindow', () => {
 describe('仪表盘 store 资源窗与引用稳定', () => {
   it('默认 range 为 5m', () => {
     expect(useDashboardStore.getState().range).toBe('5m')
+  })
+
+  it('load 后不把 mock 初始挂载写入 system', async () => {
+    const gateway = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+    await useDashboardStore.getState().load(gateway)
+
+    const system = useDashboardStore.getState().system
+    expect(system).toBeUndefined()
+    expect(INITIAL_DISKS.map((disk) => disk.mount)).toEqual(['/', '/data', '/backup'])
+  })
+
+  it('resource/sample 后 refresh 仍保留采样中的负载与磁盘', async () => {
+    const gateway = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+    await useDashboardStore.getState().load(gateway)
+
+    emit({
+      id: 'evt-refresh-preserve',
+      name: 'resource/sample',
+      at: new Date().toISOString(),
+      payload: {
+        ...samplePayload,
+        load: { m1: 1.1, m5: 0.9, m15: 0.7 },
+        disks: [
+          { mount: '/var', usagePct: 11 },
+          { mount: '/srv', usagePct: 22 },
+        ],
+      },
+    })
+
+    await useDashboardStore.getState().refresh(gateway)
+
+    const system = useDashboardStore.getState().system
+    expect(system?.load).toEqual({ m1: 1.1, m5: 0.9, m15: 0.7 })
+    expect(system?.disks.map((disk) => disk.mount)).toEqual(['/var', '/srv'])
+  })
+
+  it('setRange 拉取失败时保留图表并设置错误信息', async () => {
+    const gateway = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+    await useDashboardStore.getState().load(gateway)
+    const before = useDashboardStore.getState().resources
+
+    vi.spyOn(gateway.resources, 'list').mockRejectedValueOnce(new Error('演示用的范围切换失败'))
+    useDashboardStore.getState().setRange('7d')
+
+    await vi.waitFor(() =>
+      expect(useDashboardStore.getState().errorMessage).toBe('演示用的范围切换失败'),
+    )
+    expect(useDashboardStore.getState().resources).toBe(before)
+    expect(useDashboardStore.getState().range).toBe('7d')
   })
 
   it('相同 load/disks 不更换 system 引用', async () => {
