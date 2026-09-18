@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   PROC_DISKSTATS,
   PROC_LOADAVG,
@@ -102,8 +102,8 @@ describe('readHostSample', () => {
   })
 
   it('有 prev 时按时间差计算 CPU 与 IO 吞吐', async () => {
-    const elapsedMs = 1000
-    const prevAt = Date.now() - elapsedMs
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(2_000)
+    const prevAt = 1_000
 
     const result = await readHostSample({
       readFile: async (path) => files[path] ?? '',
@@ -121,5 +121,10 @@ describe('readHostSample', () => {
     expect(result.sample.networkIo).toBeCloseTo(1, 5)
     expect(result.sample.diskIo).toBeCloseTo(1, 5)
     expect(result.sample.load.m1).toBe(0.52)
+    nowSpy.mockRestore()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
 })

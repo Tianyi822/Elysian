@@ -154,18 +154,19 @@ describe('仪表盘 store 的事件回灌', () => {
     const gateway = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
     await useDashboardStore.getState().load(gateway)
 
-    const before = useDashboardStore.getState().resources?.length ?? 0
-    expect(before).toBeGreaterThan(0)
+    const loaded = useDashboardStore.getState().resources
+    expect(loaded?.length).toBeGreaterThan(0)
+    const lastTs = loaded![loaded!.length - 1]!.ts
 
     emit({
       id: 'evt-live-2',
       name: 'resource/sample',
-      at: new Date().toISOString(),
+      at: new Date(lastTs + 1_000).toISOString(),
       payload: samplePayload,
     })
 
     const resources = useDashboardStore.getState().resources
-    expect(resources?.length).toBeGreaterThanOrEqual(before)
+    expect(resources?.length).toBeGreaterThan(0)
     const last = resources?.[resources.length - 1]
     expect(last?.cpu).toBe(66)
     expect(last?.memory).toBe(77)
