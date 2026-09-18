@@ -1,23 +1,13 @@
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
-import { defineConfig } from 'vitest/config'
-// 配置文件会被 Node 直接加载（Vite 计划把 configLoader 默认改为 native），
-// 这条依赖图里的相对导入一律带 .ts 扩展名，与 @elysian/contracts 包同例。
-import { mockEventsPlugin } from './src/adapters/sse/mockEventsPlugin.ts'
+import { defineConfig } from 'vite'
+import { elysianEventsVitePlugin } from './src/adapters/sse/mockEventsPlugin.vite.ts'
 
 export default defineConfig({
-  // dev 与 preview 都由同一个插件提供 mock 事件流端点 GET /api/events。
-  plugins: [react(), tailwindcss(), mockEventsPlugin()],
-  // host true：同时监听 IPv4/IPv6，127.0.0.1 与 localhost 都可访问，局域网真机调试可用。
-  // ELSYIAN_DOCKER=1（见 docker-compose.yml）：Mac 挂载进 Linux 容器时 inotify 常失效，改用轮询。
+  plugins: [react(), tailwindcss(), elysianEventsVitePlugin()],
   server: {
     port: 5173,
     host: true,
     watch: process.env.ELSYIAN_DOCKER === '1' ? { usePolling: true } : undefined,
-  },
-  test: {
-    environment: 'jsdom',
-    setupFiles: ['./src/test/setup.ts'],
-    include: ['src/**/*.test.{ts,tsx}'],
   },
 })

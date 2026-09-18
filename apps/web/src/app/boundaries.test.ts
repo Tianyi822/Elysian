@@ -13,7 +13,14 @@ import { describe, expect, it } from 'vitest'
 const WEB_SRC = join(process.cwd(), 'src')
 
 /** 这些文件跑在 Node 里（Vite 开发服务器与预览服务器），不是浏览器代码。 */
-const NODE_SIDE_ALLOWLIST = ['adapters/sse/mockEventsPlugin.ts']
+const NODE_SIDE_ALLOWLIST = [
+  'adapters/sse/mockEventsPlugin.ts',
+  'adapters/sse/mockEventsPlugin.node.ts',
+  'adapters/sse/mockEventsPlugin.vite.ts',
+  'adapters/hostMetrics/metricsStore.ts',
+  'adapters/hostMetrics/readHostSample.ts',
+  'adapters/hostMetrics/isDockerEnv.ts',
+]
 
 function listSourceFiles(dir: string): string[] {
   return readdirSync(dir, { recursive: true, withFileTypes: true })

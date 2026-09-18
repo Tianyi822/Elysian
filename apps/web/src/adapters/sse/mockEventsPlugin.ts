@@ -1,14 +1,19 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { EventName } from '@elysian/contracts'
-import type { Plugin } from 'vite'
 import { createMockDataset } from '../mock/dataset.ts'
 import {
   INITIAL_DISKS,
   INITIAL_LOAD,
+  listMockHistory,
   nextDisksWalk,
   nextLoadWalk,
+  seedMockHistoryIfEmpty,
+  TIME_RANGES,
+  type ResourceSamplePoint,
+  type TimeRange,
 } from '../mock/resourceMetrics.ts'
 import type { DiskUsage, SystemLoad } from '../mock/resourceMetrics.ts'
+import type { HostSamplePrev } from '../hostMetrics/readHostSample.ts'
 import { SSE_HEARTBEAT, formatSseFrame } from './parse.ts'
 
 /**
@@ -19,8 +24,8 @@ import { SSE_HEARTBEAT, formatSseFrame } from './parse.ts'
  * 生产路径同形，未来换成真实网关即可，客户端不需要改。
  */
 
-/** 演示采样节拍：留出足够时间观察一次完整的图表过渡。 */
-export const TICK_MS = 2000
+/** 资源采样与 SSE retry 节拍（与仪表盘约定一致）。 */
+export const TICK_MS = 3000
 const HEARTBEAT_MS = 15_000
 /** 连上后先补发一拍，避免初始数据连续跳变。 */
 const REPLAY_BURST = 1
@@ -73,7 +78,6 @@ const WALK_BOUNDS = {
   networkIo: [60, 950, 40],
   diskIo: [40, 520, 30],
 } as const
-
 
 const LIVE_SEVERITY_ROLL: ReadonlyArray<readonly [string, number]> = [
   ['sev1', 0.1],
@@ -153,12 +157,81 @@ function readLastEventId(req: IncomingMessage): string | undefined {
  */
 let globalSequence = 0
 
-export function createEventsHandler() {
+export type HistoryHandlerStore = {
+  query(range: TimeRange, nowMs: number): ResourceSamplePoint[]
+}
+
+export type MetricsTickStore = HistoryHandlerStore & {
+  insertRaw(point: ResourceSamplePoint): void
+  rollupMinuteIfNeeded(nowMs: number): void
+  prune(nowMs: number): void
+}
+
+export type ResourceHistoryHandlerDeps = {
+  docker: boolean
+  store?: HistoryHandlerStore
+  nowMs?: () => number
+}
+
+/** 校验 history 查询参数 range，合法则返回 TimeRange。 */
+export function parseHistoryRangeParam(raw: string | null | undefined): TimeRange | undefined {
+  if (!raw) return undefined
+  return (TIME_RANGES as readonly string[]).includes(raw) ? (raw as TimeRange) : undefined
+}
+
+export function createResourceHistoryHandler(deps: ResourceHistoryHandlerDeps) {
+  const nowMs = deps.nowMs ?? (() => Date.now())
+
   return (req: IncomingMessage, res: ServerResponse): void => {
-    // 每个连接独立推进拍数与实时事故序号；资源采样走随机游走。
+    if (req.method !== 'GET') {
+      res.statusCode = 405
+      res.setHeader('allow', 'GET')
+      res.end()
+      return
+    }
+
+    const url = new URL(req.url ?? '/api/resources/history', 'http://localhost')
+    const range = parseHistoryRangeParam(url.searchParams.get('range'))
+    if (!range) {
+      res.statusCode = 400
+      res.setHeader('content-type', 'application/json; charset=utf-8')
+      res.end(JSON.stringify({ error: '无效的时间范围' }))
+      return
+    }
+
+    const at = nowMs()
+    let points
+    if (deps.docker && deps.store) {
+      points = deps.store.query(range, at)
+    } else {
+      seedMockHistoryIfEmpty(at)
+      points = listMockHistory(range, at)
+    }
+
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+    res.end(JSON.stringify(points))
+  }
+}
+
+export type EventsHandlerDeps = {
+  docker?: boolean
+  /** Docker 下本机采样；返回下一拍所需的 prev。 */
+  readSample?: (
+    prev?: HostSamplePrev,
+  ) => Promise<{ sample: ResourceSample; nextPrev: HostSamplePrev } | null>
+  store?: MetricsTickStore
+}
+
+export function createEventsHandler(deps: EventsHandlerDeps = {}) {
+  const docker = deps.docker === true
+
+  return (req: IncomingMessage, res: ServerResponse): void => {
+    // 每个连接独立推进拍数与实时事故序号；资源采样走随机游走或本机采样。
     let tick = 0
     let liveIncidentIndex = 0
     let walk: ResourceSample = initialResourceWalk()
+    let hostPrev: HostSamplePrev | undefined
+    let sampleInFlight = false
 
     if (req.method !== 'GET') {
       res.statusCode = 405
@@ -193,13 +266,7 @@ export function createEventsHandler() {
       res.write(formatSseFrame({ id: event.id, event: event.name, data: event }))
     }
 
-    // 一拍 = 一条计划内事件 + 一条资源采样；每 8 拍再产生一次新事故。
-    const sendNext = () => {
-      tick += 1
-      sent += 1
-      walk = nextResourceSample(walk)
-      emit('resource/sample', walk)
-
+    const emitPlannedAndLive = (): void => {
       const live = maybeIncidentCreated(tick, liveIncidentIndex)
       if (live) {
         liveIncidentIndex += 1
@@ -210,6 +277,51 @@ export function createEventsHandler() {
       const planned = plan[(tick - 1) % plan.length]
       if (!planned) return
       emit(planned.name, planned.payload)
+    }
+
+    const persistAndEmitSample = (sample: ResourceSample, tsMs: number): void => {
+      const store = deps.store
+      if (store) {
+        store.insertRaw({
+          ts: tsMs,
+          cpu: sample.cpu,
+          memory: sample.memory,
+          networkIo: sample.networkIo,
+          diskIo: sample.diskIo,
+        })
+        store.rollupMinuteIfNeeded(tsMs)
+        store.prune(tsMs)
+      }
+      emit('resource/sample', sample)
+      emitPlannedAndLive()
+    }
+
+    // 一拍 = 一条资源采样 + 计划内事件；每 8 拍再产生一次新事故。
+    const sendNext = () => {
+      tick += 1
+      sent += 1
+
+      if (docker) {
+        if (sampleInFlight || !deps.readSample) return
+        sampleInFlight = true
+        deps
+          .readSample(hostPrev)
+          .then((result) => {
+            if (!result) return
+            hostPrev = result.nextPrev
+            persistAndEmitSample(result.sample, Date.now())
+          })
+          .catch(() => {
+            // 该拍跳过：读 /proc 失败时不拖垮 SSE 连接。
+          })
+          .finally(() => {
+            sampleInFlight = false
+          })
+        return
+      }
+
+      walk = nextResourceSample(walk)
+      persistAndEmitSample(walk, Date.now())
     }
 
     res.write(`retry: ${TICK_MS}\n\n`)
@@ -226,18 +338,5 @@ export function createEventsHandler() {
     }
     req.on('close', cleanup)
     res.on('close', cleanup)
-  }
-}
-
-export function mockEventsPlugin(): Plugin {
-  const handler = createEventsHandler()
-  return {
-    name: 'elysian-mock-events',
-    configureServer(server) {
-      server.middlewares.use('/api/events', handler)
-    },
-    configurePreviewServer(server) {
-      server.middlewares.use('/api/events', handler)
-    },
   }
 }

@@ -142,4 +142,8 @@ describe('事件流端点处理器', () => {
   it('事件标识可解析回序号（续传协议的一致性）', () => {
     expect(eventIdAt(42)).toBe('evt-42')
   })
+
+  it('采样节拍为 3 秒', () => {
+    expect(TICK_MS).toBe(3000)
+  })
 })

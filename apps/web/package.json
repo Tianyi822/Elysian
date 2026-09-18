@@ -6,9 +6,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview --port 4173",
-    "test": "vitest run && bun test src/adapters/hostMetrics/metricsStore.bun.test.ts",
+    "test": "vitest run --config vitest.config.ts && bun test src/adapters/hostMetrics/metricsStore.bun.test.ts",
     "test:bun": "bun test src/adapters/hostMetrics",
-    "test:watch": "vitest",
+    "test:watch": "vitest --config vitest.config.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
