@@ -1,5 +1,5 @@
 import type { ApprovalOutcome } from './enums.ts'
-import type { AgentRun, ApprovalRequest, AuditRecord, Incident, Skill } from './domain.ts'
+import type { AgentRun, ApprovalRequest, AuditRecord, Incident, Skill } from '../dashboard/domain.ts'
 
 /** 技能注册表：技能的发现、版本与启停状态。 */
 export interface SkillRegistry {
