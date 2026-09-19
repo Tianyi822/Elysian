@@ -1,7 +1,10 @@
 import type {
+  FirewallForwardRule,
   FirewallImportResult,
+  FirewallIpRule,
   FirewallRule,
   FirewallRuleInput,
+  FirewallScanConfig,
   FirewallScanProtection,
   FirewallToggles,
 } from '@elysian/contracts'
@@ -25,29 +28,34 @@ function asObject(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>
 }
 
-/** 校验 GET / 响应：开关与规则数组。 */
-export function parseFirewallOverviewResponse(body: unknown): FirewallOverview {
-  const row = asObject(body)
-  const togglesRow = asObject(row.toggles)
+function parsePolicy(value: unknown): FirewallToggles['defaultIncoming'] {
+  return value === 'allow' ? 'allow' : value === 'limit' ? 'limit' : 'deny'
+}
+
+function parseTogglesRow(togglesRow: Record<string, unknown>): FirewallToggles {
   if (typeof togglesRow.firewallEnabled !== 'boolean' || typeof togglesRow.pingBlocked !== 'boolean') {
     throw new Error('防火墙开关响应无效')
   }
-  if (!Array.isArray(row.rules)) {
-    throw new Error('防火墙规则响应无效：应为数组')
-  }
   return {
-    toggles: { firewallEnabled: togglesRow.firewallEnabled, pingBlocked: togglesRow.pingBlocked },
-    rules: row.rules as readonly FirewallRule[],
+    firewallEnabled: togglesRow.firewallEnabled,
+    pingBlocked: togglesRow.pingBlocked,
+    defaultIncoming: parsePolicy(togglesRow.defaultIncoming),
+    defaultOutgoing: parsePolicy(togglesRow.defaultOutgoing),
   }
 }
 
-function parseTogglesResponse(body: unknown): FirewallToggles {
+/** 校验 GET / 响应：开关与规则数组。 */
+export function parseFirewallOverviewResponse(body: unknown): FirewallOverview {
   const row = asObject(body)
-  const togglesRow = asObject(row.toggles)
-  if (typeof togglesRow.firewallEnabled !== 'boolean' || typeof togglesRow.pingBlocked !== 'boolean') {
-    throw new Error('防火墙开关响应无效')
+  const toggles = parseTogglesRow(asObject(row.toggles))
+  if (!Array.isArray(row.rules)) {
+    throw new Error('防火墙规则响应无效：应为数组')
   }
-  return { firewallEnabled: togglesRow.firewallEnabled, pingBlocked: togglesRow.pingBlocked }
+  return { toggles, rules: row.rules as readonly FirewallRule[] }
+}
+
+function parseTogglesResponse(body: unknown): FirewallToggles {
+  return parseTogglesRow(asObject(asObject(body).toggles))
 }
 
 function parseRuleResponse(body: unknown): FirewallRule {
@@ -142,6 +150,58 @@ export function createHttpFirewallAdapter(baseUrl = '/api/security/firewall'): F
       } satisfies FirewallImportResult
     },
 
+    async listIpRules() {
+      const body = await requestJson(`${baseUrl}/ip-rules`)
+      const rules = asObject(body).rules
+      return (Array.isArray(rules) ? rules : []) as unknown as readonly FirewallIpRule[]
+    },
+
+    async createIpRule(input) {
+      return asObject(asObject(await requestJson(`${baseUrl}/ip-rules`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+      })).rule) as unknown as FirewallIpRule
+    },
+
+    async updateIpRule(ruleId, input) {
+      return asObject(asObject(await requestJson(`${baseUrl}/ip-rules/${encodeURIComponent(ruleId)}`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+      })).rule) as unknown as FirewallIpRule
+    },
+
+    async removeIpRule(ruleId) {
+      await requestJson(`${baseUrl}/ip-rules/${encodeURIComponent(ruleId)}`, { method: 'DELETE' })
+    },
+
+    async listForwards() {
+      const body = await requestJson(`${baseUrl}/forwards`)
+      const rules = asObject(body).rules
+      return (Array.isArray(rules) ? rules : []) as unknown as readonly FirewallForwardRule[]
+    },
+
+    async createForward(input) {
+      return asObject(asObject(await requestJson(`${baseUrl}/forwards`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+      })).rule) as unknown as FirewallForwardRule
+    },
+
+    async updateForward(ruleId, input) {
+      return asObject(asObject(await requestJson(`${baseUrl}/forwards/${encodeURIComponent(ruleId)}`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+      })).rule) as unknown as FirewallForwardRule
+    },
+
+    async removeForward(ruleId) {
+      await requestJson(`${baseUrl}/forwards/${encodeURIComponent(ruleId)}`, { method: 'DELETE' })
+    },
+
     async scanProtection() {
       return parseScanResponse(await requestJson(`${baseUrl}/scan`))
     },
@@ -152,6 +212,16 @@ export function createHttpFirewallAdapter(baseUrl = '/api/security/firewall'): F
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ enabled }),
+        }),
+      )
+    },
+
+    async setScanConfig(config: FirewallScanConfig) {
+      return parseScanResponse(
+        await requestJson(`${baseUrl}/scan/config`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(config),
         }),
       )
     },

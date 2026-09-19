@@ -12,9 +12,14 @@ import type {
   EventStreamHandlers,
   FileEntry,
   FileSearchResult,
+  FirewallForwardInput,
+  FirewallForwardRule,
   FirewallImportResult,
+  FirewallIpRule,
+  FirewallIpRuleInput,
   FirewallRule,
   FirewallRuleInput,
+  FirewallScanConfig,
   FirewallScanProtection,
   FirewallToggles,
   HostUser,
@@ -64,16 +69,27 @@ import type {
 } from '../../contracts/adapters'
 import { DATABASE_INSTANCES, SQLITE_VERSION, addDatabaseInstance, removeDatabaseInstance } from './databaseData'
 import {
+  addFirewallForward,
+  addFirewallIpRule,
   addFirewallRule,
+  findDuplicateForward,
   findDuplicateFirewallRule,
+  findDuplicateIpRule,
+  getFirewallForwards,
+  getFirewallIpRules,
   getFirewallRules,
   getFirewallToggles,
   getScanProtection,
   importFirewallRules,
+  removeFirewallForward,
+  removeFirewallIpRule,
   removeFirewallRule,
   setFirewallToggles,
+  setScanConfigFirewall,
   setScanProtection,
   unblockScanIp,
+  updateFirewallForward,
+  updateFirewallIpRule,
   updateFirewallRule,
 } from './firewallData'
 import {
@@ -480,12 +496,60 @@ export class MockFirewallAdapter implements FirewallAdapter {
     return importFirewallRules(inputs, new Date().toISOString())
   }
 
+  async listIpRules(): Promise<readonly FirewallIpRule[]> {
+    return getFirewallIpRules()
+  }
+
+  async createIpRule(input: FirewallIpRuleInput): Promise<FirewallIpRule> {
+    if (findDuplicateIpRule(input)) {
+      throw new Error(`IP 规则已存在：${input.source.trim()}`)
+    }
+    return addFirewallIpRule(input, new Date().toISOString())
+  }
+
+  async updateIpRule(ruleId: string, input: FirewallIpRuleInput): Promise<FirewallIpRule> {
+    if (findDuplicateIpRule(input, ruleId)) {
+      throw new Error(`IP 规则已存在：${input.source.trim()}`)
+    }
+    return updateFirewallIpRule(ruleId, input, new Date().toISOString())
+  }
+
+  async removeIpRule(ruleId: string): Promise<void> {
+    removeFirewallIpRule(ruleId)
+  }
+
+  async listForwards(): Promise<readonly FirewallForwardRule[]> {
+    return getFirewallForwards()
+  }
+
+  async createForward(input: FirewallForwardInput): Promise<FirewallForwardRule> {
+    if (findDuplicateForward(input)) {
+      throw new Error(`端口转发已存在：${input.protocol} ${input.port}`)
+    }
+    return addFirewallForward(input, new Date().toISOString())
+  }
+
+  async updateForward(ruleId: string, input: FirewallForwardInput): Promise<FirewallForwardRule> {
+    if (findDuplicateForward(input, ruleId)) {
+      throw new Error(`端口转发已存在：${input.protocol} ${input.port}`)
+    }
+    return updateFirewallForward(ruleId, input, new Date().toISOString())
+  }
+
+  async removeForward(ruleId: string): Promise<void> {
+    removeFirewallForward(ruleId)
+  }
+
   async scanProtection(): Promise<FirewallScanProtection> {
     return getScanProtection()
   }
 
   async setScanProtection(enabled: boolean): Promise<FirewallScanProtection> {
     return setScanProtection(enabled)
+  }
+
+  async setScanConfig(config: FirewallScanConfig): Promise<FirewallScanProtection> {
+    return setScanConfigFirewall(config)
   }
 
   async unblockIp(ip: string): Promise<FirewallScanProtection> {
@@ -495,7 +559,9 @@ export class MockFirewallAdapter implements FirewallAdapter {
   async syncFromSystem(): Promise<{ total: number }> {
     // 模拟读取操作系统防火墙的耗时；演示里规则集与「系统」天然一致，只回读总数。
     await new Promise((resolve) => setTimeout(resolve, SYNC_DELAY_MS))
-    return { total: getFirewallRules().length }
+    return {
+      total: getFirewallRules().length + getFirewallIpRules().length + getFirewallForwards().length,
+    }
   }
 }
 

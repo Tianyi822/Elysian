@@ -22,6 +22,7 @@ import { createResilientEventsAdapter } from '../sse/eventsAdapter'
 import { createContainerEventsLayer } from './containerEvents'
 import { applyIncidentCreated } from './dataset'
 import { resetSshData } from './sshData'
+import { resetFirewallData } from './firewallData'
 import { resetFilesData } from './filesData'
 import { resetHostUsers } from './usersData'
 import { resetWebsitesData } from './websitesData'
@@ -99,6 +100,7 @@ export function createMockGateway(
       dataset = createMockDataset()
       containerEvents.reset()
       resetSshData()
+      resetFirewallData()
       resetFilesData()
       resetHostUsers()
       resetWebsitesData()

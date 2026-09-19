@@ -3,12 +3,18 @@ import { parseFirewallOverviewResponse } from './firewallHttpAdapter'
 
 describe('parseFirewallOverviewResponse', () => {
   const valid = {
-    toggles: { firewallEnabled: true, pingBlocked: false },
+    toggles: {
+      firewallEnabled: true,
+      pingBlocked: false,
+      defaultIncoming: 'deny',
+      defaultOutgoing: 'allow',
+    },
     rules: [
       {
         id: 'ufw-allow-in-tcp-8080-any.ipv4',
         protocol: 'tcp',
         port: 8080,
+        portTo: null,
         family: 'ipv4',
         status: 'unused',
         policy: 'allow',
@@ -20,9 +26,14 @@ describe('parseFirewallOverviewResponse', () => {
     ],
   }
 
-  it('接受开关与规则数组', () => {
+  it('接受开关（含默认策略）与规则数组', () => {
     const overview = parseFirewallOverviewResponse(valid)
-    expect(overview.toggles).toEqual({ firewallEnabled: true, pingBlocked: false })
+    expect(overview.toggles).toEqual({
+      firewallEnabled: true,
+      pingBlocked: false,
+      defaultIncoming: 'deny',
+      defaultOutgoing: 'allow',
+    })
     expect(overview.rules).toHaveLength(1)
   })
 

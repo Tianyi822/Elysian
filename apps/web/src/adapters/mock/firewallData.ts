@@ -1,53 +1,76 @@
 import type {
+  FirewallForwardInput,
+  FirewallForwardRule,
   FirewallImportResult,
+  FirewallIpRule,
+  FirewallIpRuleInput,
   FirewallRule,
   FirewallRuleInput,
+  FirewallScanConfig,
   FirewallScanProtection,
   FirewallToggles,
 } from '@elysian/contracts'
-import { FIREWALL_ADDRESS_FAMILIES } from '@elysian/contracts'
+import { DEFAULT_SCAN_CONFIG, FIREWALL_ADDRESS_FAMILIES } from '@elysian/contracts'
 
 /*
  * 防火墙演示数据集。种子行手工固定（时间取自真实样例），确定性可复现；
  * 会话内的增删改落在这份内存数据上，刷新回到种子状态。
- * v4/v6 两行成对登记；「时间 —」的行 updatedAt 为 null，表示本会话没有变更过。
+ * v4/v6 两行成对登记；「时间 —」的行 updatedAt 为 null，表示没有变更记录。
  */
 
 /** 种子规则导出给导入/导出的测试当夹具。 */
 export const SEED_RULES: readonly FirewallRule[] = [
-  { id: 'fw-2234-ipv4', protocol: 'tcp', port: 2234, family: 'ipv4', status: 'unused', policy: 'allow', direction: 'inbound', source: '所有IP', note: '博客后端', updatedAt: '2025-07-06T23:35:56' },
-  { id: 'fw-2234-ipv6', protocol: 'tcp', port: 2234, family: 'ipv6', status: 'unused', policy: 'allow', direction: 'inbound', source: '所有IP', note: '博客后端', updatedAt: '2025-07-06T23:35:56' },
-  { id: 'fw-2233-ipv4', protocol: 'tcp', port: 2233, family: 'ipv4', status: 'unused', policy: 'allow', direction: 'inbound', source: '所有IP', note: null, updatedAt: '2025-06-30T14:18:55' },
-  { id: 'fw-2233-ipv6', protocol: 'tcp', port: 2233, family: 'ipv6', status: 'unused', policy: 'allow', direction: 'inbound', source: '所有IP', note: null, updatedAt: '2025-06-30T14:18:55' },
-  { id: 'fw-40223-ipv4', protocol: 'tcp', port: 40223, family: 'ipv4', status: 'normal', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'frps', updatedAt: '2025-06-10T22:26:46' },
-  { id: 'fw-40223-ipv6', protocol: 'tcp', port: 40223, family: 'ipv6', status: 'normal', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'frps', updatedAt: '2025-06-10T22:26:46' },
-  { id: 'fw-26755-ipv4', protocol: 'tcp', port: 26755, family: 'ipv4', status: 'normal', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'frps', updatedAt: '2025-06-10T22:26:36' },
-  { id: 'fw-26755-ipv6', protocol: 'tcp', port: 26755, family: 'ipv6', status: 'normal', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'frps', updatedAt: '2025-06-10T22:26:36' },
-  { id: 'fw-12443-ipv4', protocol: 'tcp', port: 12443, family: 'ipv4', status: 'normal', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'derper', updatedAt: '2025-06-10T21:56:43' },
-  { id: 'fw-12443-ipv6', protocol: 'tcp', port: 12443, family: 'ipv6', status: 'normal', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'derper', updatedAt: '2025-06-10T21:56:43' },
-  { id: 'fw-12080-ipv4', protocol: 'tcp', port: 12080, family: 'ipv4', status: 'normal', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'derper', updatedAt: '2025-06-10T21:56:30' },
-  { id: 'fw-12080-ipv6', protocol: 'tcp', port: 12080, family: 'ipv6', status: 'normal', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'derper', updatedAt: '2025-06-10T21:56:30' },
-  { id: 'fw-3478-ipv4', protocol: 'tcp', port: 3478, family: 'ipv4', status: 'unused', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'derper', updatedAt: '2025-06-10T21:56:12' },
-  { id: 'fw-3478-ipv6', protocol: 'tcp', port: 3478, family: 'ipv6', status: 'unused', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'derper', updatedAt: '2025-06-10T21:56:12' },
-  { id: 'fw-21-ipv4', protocol: 'tcp', port: 21, family: 'ipv4', status: 'unused', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'FTP协议默认端口', updatedAt: '2025-05-23T21:57:47' },
-  { id: 'fw-21-ipv6', protocol: 'tcp', port: 21, family: 'ipv6', status: 'unused', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'FTP协议默认端口', updatedAt: '2025-05-23T21:57:47' },
-  { id: 'fw-22633-ipv4', protocol: 'tcp', port: 22633, family: 'ipv4', status: 'normal', policy: 'allow', direction: 'inbound', source: '所有IP', note: null, updatedAt: null },
-  { id: 'fw-73-ipv4', protocol: 'tcp', port: 73, family: 'ipv4', status: 'normal', policy: 'allow', direction: 'inbound', source: '所有IP', note: null, updatedAt: null },
-  { id: 'fw-22633-ipv6', protocol: 'tcp', port: 22633, family: 'ipv6', status: 'normal', policy: 'allow', direction: 'inbound', source: '所有IP', note: null, updatedAt: null },
-  { id: 'fw-73-ipv6', protocol: 'tcp', port: 73, family: 'ipv6', status: 'normal', policy: 'allow', direction: 'inbound', source: '所有IP', note: null, updatedAt: null },
-  // 以下为演示补充：udp 与拒绝策略在真实防火墙里同样常见，补齐界面两种取值的呈现。
-  { id: 'fw-53-ipv4', protocol: 'udp', port: 53, family: 'ipv4', status: 'normal', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'DNS 解析', updatedAt: '2025-04-02T09:12:04' },
-  { id: 'fw-53-ipv6', protocol: 'udp', port: 53, family: 'ipv6', status: 'normal', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'DNS 解析', updatedAt: '2025-04-02T09:12:04' },
-  { id: 'fw-23-ipv4', protocol: 'tcp', port: 23, family: 'ipv4', status: 'unused', policy: 'deny', direction: 'inbound', source: '所有IP', note: 'Telnet 默认拒绝', updatedAt: '2025-03-18T17:40:29' },
-  { id: 'fw-51820-ipv4', protocol: 'udp', port: 51820, family: 'ipv4', status: 'unused', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'WireGuard', updatedAt: '2025-02-11T11:05:51' },
-  { id: 'fw-80-ipv4', protocol: 'tcp', port: 80, family: 'ipv4', status: 'normal', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'Web 服务', updatedAt: '2025-01-26T08:47:15' },
-  { id: 'fw-6379-ipv4', protocol: 'tcp', port: 6379, family: 'ipv4', status: 'normal', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'Redis', updatedAt: '2025-01-26T08:46:58' },
-  { id: 'fw-1194-ipv4', protocol: 'udp', port: 1194, family: 'ipv4', status: 'unused', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'OpenVPN', updatedAt: '2024-12-09T15:22:33' },
+  { id: 'fw-2234-ipv4', protocol: 'tcp', port: 2234, portTo: null, family: 'ipv4', status: 'unused', policy: 'allow', direction: 'inbound', source: '所有IP', note: '博客后端', updatedAt: '2025-07-06T23:35:56' },
+  { id: 'fw-2234-ipv6', protocol: 'tcp', port: 2234, portTo: null, family: 'ipv6', status: 'unused', policy: 'allow', direction: 'inbound', source: '所有IP', note: '博客后端', updatedAt: '2025-07-06T23:35:56' },
+  { id: 'fw-2233-ipv4', protocol: 'tcp', port: 2233, portTo: null, family: 'ipv4', status: 'unused', policy: 'allow', direction: 'inbound', source: '所有IP', note: null, updatedAt: '2025-06-30T14:18:55' },
+  { id: 'fw-2233-ipv6', protocol: 'tcp', port: 2233, portTo: null, family: 'ipv6', status: 'unused', policy: 'allow', direction: 'inbound', source: '所有IP', note: null, updatedAt: '2025-06-30T14:18:55' },
+  { id: 'fw-40223-ipv4', protocol: 'tcp', port: 40223, portTo: null, family: 'ipv4', status: 'normal', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'frps', updatedAt: '2025-06-10T22:26:46' },
+  { id: 'fw-40223-ipv6', protocol: 'tcp', port: 40223, portTo: null, family: 'ipv6', status: 'normal', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'frps', updatedAt: '2025-06-10T22:26:46' },
+  { id: 'fw-26755-ipv4', protocol: 'tcp', port: 26755, portTo: null, family: 'ipv4', status: 'normal', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'frps', updatedAt: '2025-06-10T22:26:36' },
+  { id: 'fw-26755-ipv6', protocol: 'tcp', port: 26755, portTo: null, family: 'ipv6', status: 'normal', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'frps', updatedAt: '2025-06-10T22:26:36' },
+  { id: 'fw-12443-ipv4', protocol: 'tcp', port: 12443, portTo: null, family: 'ipv4', status: 'normal', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'derper', updatedAt: '2025-06-10T21:56:43' },
+  { id: 'fw-12443-ipv6', protocol: 'tcp', port: 12443, portTo: null, family: 'ipv6', status: 'normal', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'derper', updatedAt: '2025-06-10T21:56:43' },
+  { id: 'fw-12080-ipv4', protocol: 'tcp', port: 12080, portTo: null, family: 'ipv4', status: 'normal', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'derper', updatedAt: '2025-06-10T21:56:30' },
+  { id: 'fw-12080-ipv6', protocol: 'tcp', port: 12080, portTo: null, family: 'ipv6', status: 'normal', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'derper', updatedAt: '2025-06-10T21:56:30' },
+  { id: 'fw-3478-ipv4', protocol: 'tcp', port: 3478, portTo: null, family: 'ipv4', status: 'unused', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'derper', updatedAt: '2025-06-10T21:56:12' },
+  { id: 'fw-3478-ipv6', protocol: 'tcp', port: 3478, portTo: null, family: 'ipv6', status: 'unused', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'derper', updatedAt: '2025-06-10T21:56:12' },
+  { id: 'fw-21-ipv4', protocol: 'tcp', port: 21, portTo: null, family: 'ipv4', status: 'unused', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'FTP协议默认端口', updatedAt: '2025-05-23T21:57:47' },
+  { id: 'fw-21-ipv6', protocol: 'tcp', port: 21, portTo: null, family: 'ipv6', status: 'unused', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'FTP协议默认端口', updatedAt: '2025-05-23T21:57:47' },
+  { id: 'fw-22633-ipv4', protocol: 'tcp', port: 22633, portTo: null, family: 'ipv4', status: 'normal', policy: 'allow', direction: 'inbound', source: '所有IP', note: null, updatedAt: null },
+  { id: 'fw-73-ipv4', protocol: 'tcp', port: 73, portTo: null, family: 'ipv4', status: 'normal', policy: 'allow', direction: 'inbound', source: '所有IP', note: null, updatedAt: null },
+  { id: 'fw-22633-ipv6', protocol: 'tcp', port: 22633, portTo: null, family: 'ipv6', status: 'normal', policy: 'allow', direction: 'inbound', source: '所有IP', note: null, updatedAt: null },
+  { id: 'fw-73-ipv6', protocol: 'tcp', port: 73, portTo: null, family: 'ipv6', status: 'normal', policy: 'allow', direction: 'inbound', source: '所有IP', note: null, updatedAt: null },
+  // 以下为演示补充：udp、拒绝、限连与端口段在真实防火墙里同样常见，补齐界面取值的呈现。
+  { id: 'fw-53-ipv4', protocol: 'udp', port: 53, portTo: null, family: 'ipv4', status: 'normal', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'DNS 解析', updatedAt: '2025-04-02T09:12:04' },
+  { id: 'fw-53-ipv6', protocol: 'udp', port: 53, portTo: null, family: 'ipv6', status: 'normal', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'DNS 解析', updatedAt: '2025-04-02T09:12:04' },
+  { id: 'fw-23-ipv4', protocol: 'tcp', port: 23, portTo: null, family: 'ipv4', status: 'unused', policy: 'deny', direction: 'inbound', source: '所有IP', note: 'Telnet 默认拒绝', updatedAt: '2025-03-18T17:40:29' },
+  { id: 'fw-2222-ipv4', protocol: 'tcp', port: 2222, portTo: null, family: 'ipv4', status: 'normal', policy: 'limit', direction: 'inbound', source: '所有IP', note: 'SSH 限连（防暴破）', updatedAt: '2025-02-27T10:22:18' },
+  { id: 'fw-2222-ipv6', protocol: 'tcp', port: 2222, portTo: null, family: 'ipv6', status: 'normal', policy: 'limit', direction: 'inbound', source: '所有IP', note: 'SSH 限连（防暴破）', updatedAt: '2025-02-27T10:22:18' },
+  { id: 'fw-60000-ipv4', protocol: 'tcp', port: 60000, portTo: 60009, family: 'ipv4', status: 'unused', policy: 'allow', direction: 'inbound', source: '所有IP', note: '被动 FTP 数据段', updatedAt: '2025-02-14T08:30:00' },
+  { id: 'fw-51820-ipv4', protocol: 'udp', port: 51820, portTo: null, family: 'ipv4', status: 'unused', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'WireGuard', updatedAt: '2025-02-11T11:05:51' },
+  { id: 'fw-80-ipv4', protocol: 'tcp', port: 80, portTo: null, family: 'ipv4', status: 'normal', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'Web 服务', updatedAt: '2025-01-26T08:47:15' },
+  { id: 'fw-6379-ipv4', protocol: 'tcp', port: 6379, portTo: null, family: 'ipv4', status: 'normal', policy: 'allow', direction: 'inbound', source: '192.168.1.0/24', note: 'Redis（内网段）', updatedAt: '2025-01-26T08:46:58' },
+  { id: 'fw-1194-ipv4', protocol: 'udp', port: 1194, portTo: null, family: 'ipv4', status: 'unused', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'OpenVPN', updatedAt: '2024-12-09T15:22:33' },
+]
+
+/** IP 规则种子：纯来源封禁，无端口。 */
+export const SEED_IP_RULES: readonly FirewallIpRule[] = [
+  { id: 'fwip-45.148.10.0/24', source: '45.148.10.0/24', family: 'ipv4', policy: 'deny', note: '恶意扫描段', updatedAt: '2025-06-02T03:12:44' },
+  { id: 'fwip-185.220.101.7', source: '185.220.101.7', family: 'ipv4', policy: 'deny', note: 'Tor 出口', updatedAt: '2025-04-19T19:55:02' },
+  { id: 'fwip-fd00::/8', source: 'fd00::/8', family: 'ipv6', policy: 'allow', note: '内网 v6 段放行', updatedAt: null },
+]
+
+/** 端口转发种子：外部端口 DNAT 到内网服务。 */
+export const SEED_FORWARDS: readonly FirewallForwardRule[] = [
+  { id: 'fwd-tcp-8080-10.0.0.5-80', protocol: 'tcp', port: 8080, portTo: null, targetHost: '10.0.0.5', targetPort: 80, note: '博客内网上游', updatedAt: '2025-05-11T09:40:12' },
+  { id: 'fwd-udp-53-10.0.0.53-53', protocol: 'udp', port: 53, portTo: null, targetHost: '10.0.0.53', targetPort: 53, note: '内网 DNS', updatedAt: null },
 ]
 
 const SEED_TOGGLES: FirewallToggles = {
   firewallEnabled: true,
   pingBlocked: true,
+  defaultIncoming: 'deny',
+  defaultOutgoing: 'allow',
 }
 
 /*
@@ -56,6 +79,7 @@ const SEED_TOGGLES: FirewallToggles = {
  */
 const SEED_SCAN: FirewallScanProtection = {
   enabled: true,
+  config: { ...DEFAULT_SCAN_CONFIG, ports: [...DEFAULT_SCAN_CONFIG.ports] },
   stats: {
     totalBlockedIps: 340,
     totalFailedConnections: 168694,
@@ -66,11 +90,28 @@ const SEED_SCAN: FirewallScanProtection = {
 }
 
 let rules: FirewallRule[] = SEED_RULES.map((rule) => ({ ...rule }))
+let ipRules: FirewallIpRule[] = SEED_IP_RULES.map((rule) => ({ ...rule }))
+let forwards: FirewallForwardRule[] = SEED_FORWARDS.map((rule) => ({ ...rule }))
 let toggles: FirewallToggles = { ...SEED_TOGGLES }
 let scan: FirewallScanProtection = {
   enabled: SEED_SCAN.enabled,
+  config: SEED_SCAN.config,
   stats: { ...SEED_SCAN.stats },
   blocked: SEED_SCAN.blocked.map((entry) => ({ ...entry })),
+}
+
+/** 重置演示数据（网关 reset 用）。 */
+export function resetFirewallData(): void {
+  rules = SEED_RULES.map((rule) => ({ ...rule }))
+  ipRules = SEED_IP_RULES.map((rule) => ({ ...rule }))
+  forwards = SEED_FORWARDS.map((rule) => ({ ...rule }))
+  toggles = { ...SEED_TOGGLES }
+  scan = {
+    enabled: SEED_SCAN.enabled,
+    config: SEED_SCAN.config,
+    stats: { ...SEED_SCAN.stats },
+    blocked: SEED_SCAN.blocked.map((entry) => ({ ...entry })),
+  }
 }
 
 export function getFirewallRules(): readonly FirewallRule[] {
@@ -107,6 +148,7 @@ export function addFirewallRule(input: FirewallRuleInput, updatedAt: string): Fi
     direction: 'inbound',
     updatedAt,
     ...input,
+    portTo: input.portTo ?? null,
   }
   rules = [...rules, rule]
   return { ...rule }
@@ -119,7 +161,7 @@ export function updateFirewallRule(
 ): FirewallRule {
   const existing = rules.find((rule) => rule.id === ruleId)
   if (!existing) throw new Error(`未找到端口规则 ${ruleId}`)
-  const next: FirewallRule = { ...existing, ...input, updatedAt }
+  const next: FirewallRule = { ...existing, ...input, portTo: input.portTo ?? null, updatedAt }
   rules = rules.map((rule) => (rule.id === ruleId ? next : rule))
   return { ...next }
 }
@@ -151,9 +193,83 @@ export function importFirewallRules(
   return { added: added.map((rule) => ({ ...rule })), skipped }
 }
 
+export function getFirewallIpRules(): readonly FirewallIpRule[] {
+  return ipRules.map((rule) => ({ ...rule }))
+}
+
+export function findDuplicateIpRule(input: FirewallIpRuleInput, exceptRuleId?: string): FirewallIpRule | undefined {
+  return ipRules.find((rule) => rule.id !== exceptRuleId && rule.source === input.source.trim())
+}
+
+export function addFirewallIpRule(input: FirewallIpRuleInput, updatedAt: string): FirewallIpRule {
+  const source = input.source.trim()
+  const rule: FirewallIpRule = {
+    id: `fwip-${source}`,
+    source,
+    family: source.includes(':') ? 'ipv6' : 'ipv4',
+    policy: input.policy,
+    note: input.note,
+    updatedAt,
+  }
+  ipRules = [...ipRules, rule]
+  return { ...rule }
+}
+
+export function updateFirewallIpRule(ruleId: string, input: FirewallIpRuleInput, updatedAt: string): FirewallIpRule {
+  const existing = ipRules.find((rule) => rule.id === ruleId)
+  if (!existing) throw new Error(`未找到 IP 规则 ${ruleId}`)
+  const next: FirewallIpRule = { ...existing, ...input, source: input.source.trim(), updatedAt }
+  ipRules = ipRules.map((rule) => (rule.id === ruleId ? next : rule))
+  return { ...next }
+}
+
+export function removeFirewallIpRule(ruleId: string): void {
+  const existing = ipRules.find((rule) => rule.id === ruleId)
+  if (!existing) throw new Error(`未找到 IP 规则 ${ruleId}`)
+  ipRules = ipRules.filter((rule) => rule.id !== ruleId)
+}
+
+export function getFirewallForwards(): readonly FirewallForwardRule[] {
+  return forwards.map((rule) => ({ ...rule }))
+}
+
+export function findDuplicateForward(input: FirewallForwardInput, exceptRuleId?: string): FirewallForwardRule | undefined {
+  return forwards.find((rule) => rule.id !== exceptRuleId && rule.protocol === input.protocol && rule.port === input.port)
+}
+
+export function addFirewallForward(input: FirewallForwardInput, updatedAt: string): FirewallForwardRule {
+  const rule: FirewallForwardRule = {
+    id: `fwd-${input.protocol}-${input.port}-${encodeURIComponent(input.targetHost)}-${input.targetPort}`,
+    protocol: input.protocol,
+    port: input.port,
+    portTo: input.portTo ?? null,
+    targetHost: input.targetHost,
+    targetPort: input.targetPort,
+    note: input.note,
+    updatedAt,
+  }
+  forwards = [...forwards, rule]
+  return { ...rule }
+}
+
+export function updateFirewallForward(ruleId: string, input: FirewallForwardInput, updatedAt: string): FirewallForwardRule {
+  const existing = forwards.find((rule) => rule.id === ruleId)
+  if (!existing) throw new Error(`未找到端口转发 ${ruleId}`)
+  const next: FirewallForwardRule = { ...existing, ...input, portTo: input.portTo ?? null, updatedAt }
+  forwards = forwards.map((rule) => (rule.id === ruleId ? next : rule))
+  return { ...next }
+}
+
+export function removeFirewallForward(ruleId: string): void {
+  const existing = forwards.find((rule) => rule.id === ruleId)
+  if (!existing) throw new Error(`未找到端口转发 ${ruleId}`)
+  forwards = forwards.filter((rule) => rule.id !== ruleId)
+}
+
 export function getScanProtection(): FirewallScanProtection {
   return {
     enabled: scan.enabled,
+    config: { ...scan.config, ports: [...scan.config.ports] },
     stats: { ...scan.stats },
     blocked: scan.blocked.map((entry) => ({ ...entry })),
   }
@@ -161,6 +277,11 @@ export function getScanProtection(): FirewallScanProtection {
 
 export function setScanProtection(enabled: boolean): FirewallScanProtection {
   scan = { ...scan, enabled }
+  return getScanProtection()
+}
+
+export function setScanConfigFirewall(config: FirewallScanConfig): FirewallScanProtection {
+  scan = { ...scan, config: { ...config, ports: [...config.ports] } }
   return getScanProtection()
 }
 
