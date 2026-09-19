@@ -2,6 +2,7 @@ import { createContext, useContext, useMemo } from 'react'
 import type { ReactNode } from 'react'
 import type { ElysianGateway } from '../contracts/adapters'
 import { createMockGateway } from './mock/gateway'
+import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
 
 const GatewayContext = createContext<ElysianGateway | null>(null)
 
@@ -16,7 +17,15 @@ export function GatewayProvider({
   children: ReactNode
   gateway?: ElysianGateway
 }) {
-  const value = useMemo(() => gateway ?? createMockGateway(), [gateway])
+  const value = useMemo(
+    () =>
+      gateway ??
+      createMockGateway({
+        // 防火墙端点只在容器内的 dev/preview 中间件挂载；宿主机本地开发走内存演示。
+        firewall: isDockerRuntime() ? 'http' : 'mock',
+      }),
+    [gateway],
+  )
   return <GatewayContext.Provider value={value}>{children}</GatewayContext.Provider>
 }
 

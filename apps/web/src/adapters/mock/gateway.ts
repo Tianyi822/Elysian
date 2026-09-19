@@ -28,19 +28,25 @@ import { resetWebsitesData } from './websitesData'
 import { MockTerminalAdapter } from './terminalAdapter'
 import { MockResourceHistoryAdapter } from './resourceHistoryAdapter'
 import { createHttpResourceHistoryAdapter } from '../http/resourceHistoryAdapter'
+import { createHttpFirewallAdapter } from '../http/firewallHttpAdapter'
 import type { EventsAdapter } from '../../contracts/adapters'
 
 /**
  * 演示网关。事件流默认优先走同源 mock SSE 端点，连不上就降级到内存事件源，
  * 降级状态会出现在页头的标识上。
  *
- * 两个选项都是为了让测试可控：
+ * 三个选项都是为了让测试可控：
  * - `eventIntervalMs` 只影响内存降级实现的节奏，测试里调大以避免定时器插入断言；
  * - `eventStream: 'memory'` 直接使用内存事件源，不创建真实 EventSource，
- *   这样测试既不依赖服务端进程，也不会产生指向不存在端点的连接。
+ *   这样测试既不依赖服务端进程，也不会产生指向不存在端点的连接；
+ * - `firewall: 'http'` 在 Docker 运行时接通容器内 ufw 的真实端点，缺省仍是内存演示。
  */
 export function createMockGateway(
-  options: { eventIntervalMs?: number; eventStream?: 'auto' | 'memory' } = {},
+  options: {
+    eventIntervalMs?: number
+    eventStream?: 'auto' | 'memory'
+    firewall?: 'mock' | 'http'
+  } = {},
 ): ElysianGateway {
   let dataset = createMockDataset()
   const read = () => dataset
@@ -51,6 +57,8 @@ export function createMockGateway(
     options.eventStream === 'memory'
       ? new MockResourceHistoryAdapter()
       : createHttpResourceHistoryAdapter()
+  const firewall =
+    options.firewall === 'http' ? createHttpFirewallAdapter() : new MockFirewallAdapter()
 
   return {
     session: new MockSessionAdapter(),
@@ -68,7 +76,7 @@ export function createMockGateway(
       onCreate: (containerId) => containerEvents.emitCreated(containerId),
     }),
     databases: new MockDatabaseAdapter(),
-    firewall: new MockFirewallAdapter(),
+    firewall,
     ssh: new MockSshAdapter(),
     users: new MockUserAdapter(),
     files: new MockFilesAdapter(),
