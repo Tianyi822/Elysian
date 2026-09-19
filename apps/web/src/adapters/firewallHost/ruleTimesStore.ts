@@ -1,0 +1,46 @@
+import { Database } from 'bun:sqlite'
+
+/** 生产 compose 挂载的防火墙规则时间账本（与 metrics.sqlite 同卷）。 */
+export const FIREWALL_SQLITE_PATH = '/var/lib/elysian/firewall.sqlite'
+
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS rule_touches (
+  canonical_id TEXT PRIMARY KEY,
+  updated_at TEXT NOT NULL
+);
+`
+
+export type FirewallRuleTimes = {
+  get(canonicalId: string): string | undefined
+  set(canonicalId: string, updatedAt: string): void
+  remove(canonicalId: string): void
+  close(): void
+}
+
+/** 打开（或创建）规则时间账本；Docker 下持久化在命名卷，非 Docker 不会走到这里。 */
+export function openRuleTimesStore(path: string): FirewallRuleTimes {
+  const db = new Database(path)
+  db.exec(SCHEMA)
+
+  const select = db.prepare('SELECT updated_at FROM rule_touches WHERE canonical_id = ?')
+  const upsert = db.prepare(
+    'INSERT INTO rule_touches (canonical_id, updated_at) VALUES (?, ?) ON CONFLICT(canonical_id) DO UPDATE SET updated_at = excluded.updated_at',
+  )
+  const drop = db.prepare('DELETE FROM rule_touches WHERE canonical_id = ?')
+
+  return {
+    get(canonicalId) {
+      const row = select.all(canonicalId)[0] as { updated_at?: unknown } | undefined
+      return typeof row?.updated_at === 'string' ? row.updated_at : undefined
+    },
+    set(canonicalId, updatedAt) {
+      upsert.run(canonicalId, updatedAt)
+    },
+    remove(canonicalId) {
+      drop.run(canonicalId)
+    },
+    close() {
+      db.close()
+    },
+  }
+}
