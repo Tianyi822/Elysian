@@ -22,10 +22,12 @@ import { FirewallRuleDialog } from './FirewallRuleDialog'
 import { FirewallRuleRemoveDialog } from './FirewallRuleRemoveDialog'
 import { FirewallScanDialog } from './FirewallScanDialog'
 import { parseFirewallRulesJson } from './firewallRuleIO'
+import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 
 /**
  * 系统防火墙面板：开关、统计、端口规则表格。
- * 数据全部来自防火墙 adapter（本期 mock），动作只改内存数据并留 mock 标注。
+ * 数据来自防火墙 adapter：Docker 运行时由 HTTP adapter 真实执行容器内 ufw，
+ * 宿主机本地开发是内存演示（带「演示数据」标识）；动作完成提示按运行时如实描述。
  *
  * 表格不随屏幕收窄折叠：容器横向滚动、表格定宽、端口列 sticky 钉在第一列，
  * 其余列在窄屏下滚出视口而不是换行或挤压。
@@ -72,7 +74,7 @@ function ToggleRow({
   )
 }
 
-/** 参照样式里的工具按钮：可用的实体动作（导入走本地文件、防扫描/同步走演示引擎）。 */
+/** 参照样式里的工具按钮：可用的实体动作（导入走本地文件、防扫描在两种运行时下都是演示数据）。 */
 function ToolButton({
   label,
   onClick,
@@ -177,6 +179,12 @@ export function FirewallPanel() {
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-3 rounded-xl border border-line bg-surface px-4 py-3">
+        {/* 防火墙动作只在容器内真实执行 ufw；宿主机本地开发是内存演示，明示出来。 */}
+        {!isDockerRuntime() ? (
+          <span role="status" className="text-sm text-fg-muted">
+            演示数据
+          </span>
+        ) : null}
         <ToggleRow
           label="防火墙开关"
           checked={toggles.firewallEnabled}
@@ -212,7 +220,7 @@ export function FirewallPanel() {
           }
         >
           <ToolButton label="添加端口规则" onClick={() => openCreate()} />
-        {/* 导入：读用户在本地选择的 JSON 文件（FileReader 本地解析，不经网络），逐条校验后入演示集。 */}
+        {/* 导入：读用户在本地选择的 JSON 文件（FileReader 本地解析，不经网络），逐条校验后交 adapter 落库。 */}
         <ToolButton label="导入规则" onClick={() => importInputRef.current?.click()} />
         <input
           ref={importInputRef}
@@ -279,7 +287,7 @@ export function FirewallPanel() {
         <div ref={searchProbeRef} className="w-56" />
       </div>
 
-      <div role="region" aria-label="端口规则表" className="overflow-x-auto rounded-xl border border-line bg-surface">
+      <div role="region" aria-label="端口规则表" className="hover-scrollbar overflow-x-auto rounded-xl border border-line bg-surface">
         <table className="w-full min-w-[1040px] table-fixed border-separate border-spacing-0 text-left text-sm">
           {/* 每列都给显式宽度：没有指定宽度的那一列会独吞宽屏多出来的空间（备注曾因此被撑到 878px）。
               全部指定后，多出的空间按比例分摊到每一列。端口列要放得下最长的「40223 (ipv6)」（88px）；

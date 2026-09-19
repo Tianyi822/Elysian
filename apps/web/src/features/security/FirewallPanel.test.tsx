@@ -205,6 +205,45 @@ describe('防火墙面板', () => {
     ).toHaveTextContent('端口防扫描已关闭')
   })
 
+  it('防扫描封锁列表：IP 搜索框只收 IP 格式字符并模糊过滤', async () => {
+    const user = userEvent.setup()
+    const blockedScan = {
+      enabled: true,
+      stats: {
+        totalBlockedIps: 2,
+        totalFailedConnections: 9,
+        currentBlockedIps: 2,
+        currentFailedConnections: 9,
+      },
+      blocked: [
+        { ip: '172.22.0.3', blockedAt: '2026-09-19T01:04:46.179Z' },
+        { ip: '198.51.100.7', blockedAt: '2026-09-19T01:05:00.000Z' },
+      ],
+    }
+    await openFirewallPage(
+      sessionGateway({ scanProtection: async () => blockedScan }),
+    )
+
+    await user.click(screen.getByRole('button', { name: '端口防扫描' }))
+    const dialog = await screen.findByRole('dialog', { name: '端口防扫描' })
+    expect(within(dialog).getAllByText('解封')).toHaveLength(2)
+
+    const input = within(dialog).getByLabelText('搜索 IP')
+    // 非法字符被剥掉，只留数字与点号；按子串模糊过滤
+    await user.type(input, 'abc22.0x')
+    expect(input).toHaveValue('22.0')
+    expect(within(dialog).getByText('172.22.0.3')).toBeInTheDocument()
+    expect(within(dialog).queryByText('198.51.100.7')).not.toBeInTheDocument()
+
+    // 清空搜索回到全量
+    await user.clear(input)
+    expect(within(dialog).getAllByText('解封')).toHaveLength(2)
+
+    // 无匹配给中文空态
+    await user.type(input, '99.')
+    expect(within(dialog).getByText('没有匹配的 IP，换个关键字试试')).toBeInTheDocument()
+  })
+
   it('导入规则：本地 JSON 文件解析入集，坏文件报危险通知', async () => {
     const user = userEvent.setup()
     await openFirewallPage()

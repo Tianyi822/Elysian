@@ -12,6 +12,7 @@ import type {
   FirewallProtocol,
 } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
+import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { X } from '../../components/icons'
 import { useFirewallStore } from '../../stores/firewallStore'
 
@@ -86,10 +87,11 @@ export function FirewallRuleDialog() {
           port: `${editing.port}`,
           family: editing.family,
           policy: editing.policy,
-          source: editing.source,
+          // 「所有IP」不是要编辑的内容：留空即代表全部来源。
+          source: editing.source === '所有IP' ? '' : editing.source,
           note: editing.note ?? '',
         }
-      : { protocol: 'tcp', port: '', family: 'ipv4', policy: 'allow', source: '所有IP', note: '' },
+      : { protocol: 'tcp', port: '', family: 'ipv4', policy: 'allow', source: '', note: '' },
   )
   const [portError, setPortError] = useState<string | undefined>(undefined)
 
@@ -127,9 +129,12 @@ export function FirewallRuleDialog() {
           <Dialog.Title className="sr-only">{isNew ? '添加端口规则' : '修改端口规则'}</Dialog.Title>
           <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
             <div className="flex items-center gap-2 text-xs">
-              <span className="rounded bg-warning/15 px-1.5 py-0.5 font-medium text-warning">
-                演示 · 待接入真实执行
-              </span>
+              {/* 真实执行时不加任何标注——动作就是动作；演示态保留提示。 */}
+              {!isDockerRuntime() ? (
+                <span className="rounded bg-warning/15 px-1.5 py-0.5 font-medium text-warning">
+                  演示 · 待接入真实执行
+                </span>
+              ) : null}
               <span className="text-sm font-medium text-fg">
                 {isNew ? '添加端口规则' : `修改端口规则 ${editing?.protocol} ${editing?.port}`}
               </span>
@@ -204,7 +209,7 @@ export function FirewallRuleDialog() {
                 id="firewall-rule-source"
                 value={draft.source}
                 onChange={(event) => setDraft((current) => ({ ...current, source: event.target.value }))}
-                placeholder="所有IP"
+                placeholder="不填默认任意来源"
                 className={INPUT_CLASS}
               />
             </div>
@@ -223,9 +228,12 @@ export function FirewallRuleDialog() {
             </div>
           </div>
 
+          {/* ml-auto 保证按钮组恒靠右：演示态左侧有说明文字、真实态没有，布局都不变。 */}
           <div className="flex items-center justify-between gap-2 border-t border-line px-4 py-2.5">
-            <p className="text-xs text-fg-subtle">只改演示内存，不触碰真实防火墙。</p>
-            <div className="flex gap-2">
+            {!isDockerRuntime() ? (
+              <p className="text-xs text-fg-subtle">只改演示内存，不触碰真实防火墙。</p>
+            ) : null}
+            <div className="ml-auto flex gap-2">
               <button
                 type="button"
                 onClick={() => closeDialog()}
