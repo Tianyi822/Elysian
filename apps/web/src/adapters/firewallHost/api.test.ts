@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
+import { DEFAULT_SCAN_CONFIG } from '@elysian/contracts'
 import { createFirewallApiHandler, type FirewallApiDeps } from './api'
 import type { FirewallAdapter } from '../../contracts/adapters'
-import type { FirewallRule, FirewallRuleInput, FirewallToggles } from '@elysian/contracts'
+import type { FirewallForwardRule, FirewallIpRule, FirewallRule, FirewallRuleInput, FirewallScanProtection, FirewallToggles } from '@elysian/contracts'
 
 /*
  * 防火墙端点 handler 的行为测试：fake service 不执行任何真实命令。
@@ -13,6 +14,7 @@ const SAMPLE_RULE: FirewallRule = {
   id: 'ufw-allow-in-tcp-8080-any.ipv4',
   protocol: 'tcp',
   port: 8080,
+  portTo: null,
   family: 'ipv4',
   status: 'unused',
   policy: 'allow',
@@ -22,30 +24,63 @@ const SAMPLE_RULE: FirewallRule = {
   updatedAt: null,
 }
 
+const SAMPLE_IP_RULE: FirewallIpRule = {
+  id: 'ufwip-deny-from-203.0.113.9.ipv4',
+  source: '203.0.113.9',
+  family: 'ipv4',
+  policy: 'deny',
+  note: null,
+  updatedAt: null,
+}
+
+const SAMPLE_FORWARD: FirewallForwardRule = {
+  id: 'fwd-tcp-8080-10.0.0.5-80',
+  protocol: 'tcp',
+  port: 8080,
+  portTo: null,
+  targetHost: '10.0.0.5',
+  targetPort: 80,
+  note: null,
+  updatedAt: null,
+}
+
+const SAMPLE_TOGGLES: FirewallToggles = {
+  firewallEnabled: false,
+  pingBlocked: false,
+  defaultIncoming: 'deny',
+  defaultOutgoing: 'allow',
+}
+
+function scanFixture(enabled = true): FirewallScanProtection {
+  return {
+    enabled,
+    config: { ...DEFAULT_SCAN_CONFIG, ports: [...DEFAULT_SCAN_CONFIG.ports] },
+    stats: { totalBlockedIps: 0, totalFailedConnections: 0, currentBlockedIps: 0, currentFailedConnections: 0 },
+    blocked: [],
+  }
+}
+
 function createFakeService(overrides: Partial<FirewallAdapter> = {}): FirewallAdapter {
   return {
     list: async () => [SAMPLE_RULE],
-    toggles: async () => ({ firewallEnabled: false, pingBlocked: false }),
+    toggles: async () => ({ ...SAMPLE_TOGGLES }),
     setToggles: async (toggles) => toggles,
     create: async () => SAMPLE_RULE,
     update: async () => SAMPLE_RULE,
     remove: async () => undefined,
     importRules: async () => ({ added: [SAMPLE_RULE], skipped: 0 }),
-    scanProtection: async () => ({
-      enabled: true,
-      stats: { totalBlockedIps: 0, totalFailedConnections: 0, currentBlockedIps: 0, currentFailedConnections: 0 },
-      blocked: [],
-    }),
-    setScanProtection: async (enabled) => ({
-      enabled,
-      stats: { totalBlockedIps: 0, totalFailedConnections: 0, currentBlockedIps: 0, currentFailedConnections: 0 },
-      blocked: [],
-    }),
-    unblockIp: async () => ({
-      enabled: true,
-      stats: { totalBlockedIps: 0, totalFailedConnections: 0, currentBlockedIps: 0, currentFailedConnections: 0 },
-      blocked: [],
-    }),
+    listIpRules: async () => [SAMPLE_IP_RULE],
+    createIpRule: async () => SAMPLE_IP_RULE,
+    updateIpRule: async () => SAMPLE_IP_RULE,
+    removeIpRule: async () => undefined,
+    listForwards: async () => [SAMPLE_FORWARD],
+    createForward: async () => SAMPLE_FORWARD,
+    updateForward: async () => SAMPLE_FORWARD,
+    removeForward: async () => undefined,
+    scanProtection: async () => scanFixture(),
+    setScanProtection: async (enabled) => scanFixture(enabled),
+    setScanConfig: async (config) => ({ ...scanFixture(), config }),
+    unblockIp: async () => scanFixture(),
     syncFromSystem: async () => ({ total: 2 }),
     ...overrides,
   }
@@ -85,19 +120,19 @@ describe('createFirewallApiHandler', () => {
     expect(body).toEqual({ error: '真实防火墙仅在 Docker 容器内可用' })
   })
 
-  it('GET / 返回开关与规则全量', async () => {
+  it('GET / 返回开关（含默认策略）与规则全量', async () => {
     const { statusCode, body } = await readResponse(
       createFirewallApiHandler(AVAILABLE),
       await fakeReq('GET', '/'),
     )
     expect(statusCode).toBe(200)
     expect(body).toEqual({
-      toggles: { firewallEnabled: false, pingBlocked: false },
+      toggles: SAMPLE_TOGGLES,
       rules: [SAMPLE_RULE],
     })
   })
 
-  it('PUT /toggles 传递开关值', async () => {
+  it('PUT /toggles 传递开关值（默认策略由 service 回读）', async () => {
     const setToggles = async (toggles: FirewallToggles) => toggles
     const service = createFakeService({ setToggles })
     const handler = createFirewallApiHandler({ available: true, service })
@@ -107,10 +142,12 @@ describe('createFirewallApiHandler', () => {
       await fakeReq('PUT', '/toggles', { firewallEnabled: true, pingBlocked: true }),
     )
     expect(statusCode).toBe(200)
-    expect(body).toEqual({ toggles: { firewallEnabled: true, pingBlocked: true } })
+    expect(body).toEqual({
+      toggles: { firewallEnabled: true, pingBlocked: true, defaultIncoming: 'deny', defaultOutgoing: 'allow' },
+    })
   })
 
-  it('POST /rules 创建规则', async () => {
+  it('POST /rules 创建规则（端口段透传）', async () => {
     const calls: unknown[] = []
     const service = createFakeService({
       create: async (input) => {
@@ -122,10 +159,10 @@ describe('createFirewallApiHandler', () => {
 
     const { statusCode } = await readResponse(
       handler,
-      await fakeReq('POST', '/rules', { protocol: 'tcp', port: 8080, source: '所有IP' }),
+      await fakeReq('POST', '/rules', { protocol: 'tcp', port: 1000, portTo: 2000, policy: 'limit', source: '所有IP' }),
     )
     expect(statusCode).toBe(200)
-    expect(calls[0]).toMatchObject({ protocol: 'tcp', port: 8080, source: '所有IP' })
+    expect(calls[0]).toMatchObject({ protocol: 'tcp', port: 1000, portTo: 2000, policy: 'limit', source: '所有IP' })
   })
 
   it('DELETE /rules/:id 解码规则标识', async () => {
@@ -166,18 +203,14 @@ describe('createFirewallApiHandler', () => {
       scanProtection: async () => {
         calls.push('read')
         return {
-          enabled: true,
+          ...scanFixture(),
           stats: { totalBlockedIps: 1, totalFailedConnections: 9, currentBlockedIps: 1, currentFailedConnections: 9 },
           blocked: [{ ip: '203.0.113.9', blockedAt: '2026-09-19T00:00:00.000Z' }],
         }
       },
       setScanProtection: async (enabled) => {
         calls.push(enabled)
-        return {
-          enabled,
-          stats: { totalBlockedIps: 0, totalFailedConnections: 0, currentBlockedIps: 0, currentFailedConnections: 0 },
-          blocked: [],
-        }
+        return scanFixture(enabled)
       },
     })
     const handler = createFirewallApiHandler({ available: true, service })
@@ -190,6 +223,105 @@ describe('createFirewallApiHandler', () => {
     expect(toggled.statusCode).toBe(200)
     expect((toggled.body as { enabled: boolean }).enabled).toBe(false)
     expect(calls).toEqual(['read', false])
+  })
+
+  it('PUT /scan/config 传递防扫描配置', async () => {
+    const configs: unknown[] = []
+    const service = createFakeService({
+      setScanConfig: async (config) => {
+        configs.push(config)
+        return { ...scanFixture(), config }
+      },
+    })
+    const handler = createFirewallApiHandler({ available: true, service })
+
+    const { statusCode, body } = await readResponse(
+      handler,
+      await fakeReq('PUT', '/scan/config', { ports: [22, 8080], windowSeconds: 120, hitCount: 5, banSeconds: 1800 }),
+    )
+    expect(statusCode).toBe(200)
+    expect(configs[0]).toEqual({ ports: [22, 8080], windowSeconds: 120, hitCount: 5, banSeconds: 1800 })
+    expect((body as { config: { hitCount: number } }).config.hitCount).toBe(5)
+  })
+
+  it('IP 规则端点：列表、创建、修改、删除', async () => {
+    const calls: string[] = []
+    const service = createFakeService({
+      listIpRules: async () => {
+        calls.push('list')
+        return [SAMPLE_IP_RULE]
+      },
+      createIpRule: async (input) => {
+        calls.push(`create:${input.source}`)
+        return SAMPLE_IP_RULE
+      },
+      updateIpRule: async (ruleId, input) => {
+        calls.push(`update:${ruleId}:${input.policy}`)
+        return SAMPLE_IP_RULE
+      },
+      removeIpRule: async (ruleId) => {
+        calls.push(`remove:${ruleId}`)
+      },
+    })
+    const handler = createFirewallApiHandler({ available: true, service })
+
+    const list = await readResponse(handler, await fakeReq('GET', '/ip-rules'))
+    expect(list.statusCode).toBe(200)
+    expect(list.body).toEqual({ rules: [SAMPLE_IP_RULE] })
+
+    await readResponse(handler, await fakeReq('POST', '/ip-rules', { policy: 'deny', source: '203.0.113.9' }))
+    await readResponse(
+      handler,
+      await fakeReq('PUT', `/ip-rules/${encodeURIComponent(SAMPLE_IP_RULE.id)}`, { policy: 'allow', source: '203.0.113.9' }),
+    )
+    await readResponse(handler, await fakeReq('DELETE', `/ip-rules/${encodeURIComponent(SAMPLE_IP_RULE.id)}`))
+    expect(calls).toEqual([
+      'list',
+      'create:203.0.113.9',
+      `update:${SAMPLE_IP_RULE.id}:allow`,
+      `remove:${SAMPLE_IP_RULE.id}`,
+    ])
+  })
+
+  it('端口转发端点：列表、创建、修改、删除', async () => {
+    const calls: string[] = []
+    const service = createFakeService({
+      listForwards: async () => {
+        calls.push('list')
+        return [SAMPLE_FORWARD]
+      },
+      createForward: async (input) => {
+        calls.push(`create:${input.port}->${input.targetHost}:${input.targetPort}`)
+        return SAMPLE_FORWARD
+      },
+      updateForward: async (ruleId) => {
+        calls.push(`update:${ruleId}`)
+        return SAMPLE_FORWARD
+      },
+      removeForward: async (ruleId) => {
+        calls.push(`remove:${ruleId}`)
+      },
+    })
+    const handler = createFirewallApiHandler({ available: true, service })
+
+    const list = await readResponse(handler, await fakeReq('GET', '/forwards'))
+    expect(list.body).toEqual({ rules: [SAMPLE_FORWARD] })
+
+    await readResponse(
+      handler,
+      await fakeReq('POST', '/forwards', { protocol: 'tcp', port: 8080, targetHost: '10.0.0.5', targetPort: 80 }),
+    )
+    await readResponse(
+      handler,
+      await fakeReq('PUT', `/forwards/${encodeURIComponent(SAMPLE_FORWARD.id)}`, {
+        protocol: 'tcp',
+        port: 8080,
+        targetHost: '10.0.0.5',
+        targetPort: 80,
+      }),
+    )
+    await readResponse(handler, await fakeReq('DELETE', `/forwards/${encodeURIComponent(SAMPLE_FORWARD.id)}`))
+    expect(calls).toEqual(['list', 'create:8080->10.0.0.5:80', `update:${SAMPLE_FORWARD.id}`, `remove:${SAMPLE_FORWARD.id}`])
   })
 
   it('业务失败以中文错误返回 500', async () => {

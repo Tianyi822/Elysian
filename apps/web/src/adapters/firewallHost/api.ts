@@ -1,5 +1,11 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import type { FirewallRuleInput, FirewallToggles } from '@elysian/contracts'
+import type {
+  FirewallForwardInput,
+  FirewallIpRuleInput,
+  FirewallRuleInput,
+  FirewallScanConfig,
+  FirewallToggles,
+} from '@elysian/contracts'
 import type { FirewallAdapter } from '../../contracts/adapters'
 
 /*
@@ -104,7 +110,57 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: FirewallA
       return
     }
 
-    // 防扫描：与规则同源的真实实现（内核 xt_recent 封锁 + iptables 计数）。
+    // IP 规则（纯来源封禁）。
+    if (method === 'GET' && path === '/ip-rules') {
+      sendJson(res, 200, { rules: await service.listIpRules() })
+      return
+    }
+    if (method === 'POST' && path === '/ip-rules') {
+      const input = parseIpRuleInput(await readJsonBody(req))
+      sendJson(res, 200, { rule: await service.createIpRule(input) })
+      return
+    }
+    const ipRuleMatch = /^\/ip-rules\/([^/]+)$/.exec(path)
+    if (ipRuleMatch) {
+      const ruleId = decodeURIComponent(ipRuleMatch[1] ?? '')
+      if (method === 'PUT') {
+        const input = parseIpRuleInput(await readJsonBody(req))
+        sendJson(res, 200, { rule: await service.updateIpRule(ruleId, input) })
+        return
+      }
+      if (method === 'DELETE') {
+        await service.removeIpRule(ruleId)
+        sendJson(res, 200, { ok: true })
+        return
+      }
+    }
+
+    // 端口转发（DNAT）。
+    if (method === 'GET' && path === '/forwards') {
+      sendJson(res, 200, { rules: await service.listForwards() })
+      return
+    }
+    if (method === 'POST' && path === '/forwards') {
+      const input = parseForwardInput(await readJsonBody(req))
+      sendJson(res, 200, { rule: await service.createForward(input) })
+      return
+    }
+    const forwardMatch = /^\/forwards\/([^/]+)$/.exec(path)
+    if (forwardMatch) {
+      const ruleId = decodeURIComponent(forwardMatch[1] ?? '')
+      if (method === 'PUT') {
+        const input = parseForwardInput(await readJsonBody(req))
+        sendJson(res, 200, { rule: await service.updateForward(ruleId, input) })
+        return
+      }
+      if (method === 'DELETE') {
+        await service.removeForward(ruleId)
+        sendJson(res, 200, { ok: true })
+        return
+      }
+    }
+
+    // 防扫描：与规则同源的真实实现（内核 xt_recent 双名单 jail + iptables 计数）。
     if (method === 'GET' && path === '/scan') {
       sendJson(res, 200, await service.scanProtection())
       return
@@ -114,6 +170,10 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: FirewallA
       const enabled = (body as { enabled?: unknown }).enabled
       if (typeof enabled !== 'boolean') throw new Error('开关值无效')
       sendJson(res, 200, await service.setScanProtection(enabled))
+      return
+    }
+    if (method === 'PUT' && path === '/scan/config') {
+      sendJson(res, 200, await service.setScanConfig(parseScanConfigBody(await readJsonBody(req))))
       return
     }
     if (method === 'POST' && path === '/scan/unblock') {
@@ -137,7 +197,13 @@ function parseToggles(body: unknown): FirewallToggles {
   if (typeof row.firewallEnabled !== 'boolean' || typeof row.pingBlocked !== 'boolean') {
     throw new Error('开关请求体缺少布尔字段')
   }
-  return { firewallEnabled: row.firewallEnabled, pingBlocked: row.pingBlocked }
+  // 默认策略是系统侧只读事实：请求里的取值不采信，service 回读真实状态。
+  return {
+    firewallEnabled: row.firewallEnabled,
+    pingBlocked: row.pingBlocked,
+    defaultIncoming: 'deny',
+    defaultOutgoing: 'allow',
+  }
 }
 
 /** 宽进：结构校验交给 service（specFromInput 的中文报错），这里只保证形状可传递。 */
@@ -147,11 +213,51 @@ function parseRuleInput(body: unknown): FirewallRuleInput {
   return {
     protocol: row.protocol === 'udp' ? 'udp' : 'tcp',
     port: Number(row.port),
+    portTo: row.portTo === undefined || row.portTo === null ? undefined : Number(row.portTo),
     family: row.family === 'ipv6' ? 'ipv6' : 'ipv4',
-    policy: row.policy === 'deny' ? 'deny' : 'allow',
+    policy: parsePolicy(row.policy),
     direction: row.direction === 'outbound' ? 'outbound' : 'inbound',
     source: typeof row.source === 'string' ? row.source : '',
     note: typeof row.note === 'string' ? row.note : null,
+  }
+}
+
+function parsePolicy(value: unknown): 'allow' | 'deny' | 'limit' {
+  return value === 'deny' ? 'deny' : value === 'limit' ? 'limit' : 'allow'
+}
+
+function parseIpRuleInput(body: unknown): FirewallIpRuleInput {
+  if (!body || typeof body !== 'object') throw new Error('IP 规则请求体无效')
+  const row = body as Record<string, unknown>
+  return {
+    policy: parsePolicy(row.policy),
+    source: typeof row.source === 'string' ? row.source : '',
+    note: typeof row.note === 'string' ? row.note : null,
+  }
+}
+
+function parseForwardInput(body: unknown): FirewallForwardInput {
+  if (!body || typeof body !== 'object') throw new Error('转发请求体无效')
+  const row = body as Record<string, unknown>
+  return {
+    protocol: row.protocol === 'udp' ? 'udp' : 'tcp',
+    port: Number(row.port),
+    portTo: row.portTo === undefined || row.portTo === null ? undefined : Number(row.portTo),
+    targetHost: typeof row.targetHost === 'string' ? row.targetHost : '',
+    targetPort: Number(row.targetPort),
+    note: typeof row.note === 'string' ? row.note : null,
+  }
+}
+
+function parseScanConfigBody(body: unknown): FirewallScanConfig {
+  if (!body || typeof body !== 'object') throw new Error('防扫描配置请求体无效')
+  const row = body as Record<string, unknown>
+  const ports = Array.isArray(row.ports) ? row.ports.map(Number) : []
+  return {
+    ports,
+    windowSeconds: Number(row.windowSeconds),
+    hitCount: Number(row.hitCount),
+    banSeconds: Number(row.banSeconds),
   }
 }
 
