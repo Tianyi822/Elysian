@@ -190,22 +190,22 @@ export interface DatabaseAdapter {
   remove(databaseId: string): Promise<void>
 }
 
-/** 防火墙区适配接口。本期为 mock 实现；真实防火墙动作由未来执行层筛选，页面不改。 */
+/** 防火墙区适配接口。演示态由 mock 实现；Docker 运行时由 HTTP adapter 接通容器内 ufw，页面不改。 */
 export interface FirewallAdapter {
   list(): Promise<readonly FirewallRule[]>
   toggles(): Promise<FirewallToggles>
-  /** 切换防火墙总开关或禁 ping（演示）：只改内存状态，不触碰任何真实防火墙。 */
+  /** 切换防火墙总开关或禁 ping：演示态只改内存；Docker 真实态执行 ufw enable/disable 与 before.rules 切换。 */
   setToggles(toggles: FirewallToggles): Promise<FirewallToggles>
   create(input: FirewallRuleInput): Promise<FirewallRule>
   update(ruleId: string, input: FirewallRuleInput): Promise<FirewallRule>
   remove(ruleId: string): Promise<void>
-  /** 批量导入：去重后落进演示数据集，返回新增列表与跳过数量。 */
+  /** 批量导入：去重后落进数据集，返回新增列表与跳过数量。 */
   importRules(inputs: readonly FirewallRuleInput[]): Promise<FirewallImportResult>
-  /** 端口防扫描状态：开关、统计与当前封锁列表。 */
+  /** 端口防扫描状态：开关、统计与当前封锁列表（真实实现基于内核 xt_recent）。 */
   scanProtection(): Promise<FirewallScanProtection>
   setScanProtection(enabled: boolean): Promise<FirewallScanProtection>
   unblockIp(ip: string): Promise<FirewallScanProtection>
-  /** 从承载本面板的操作系统同步防火墙规则（演示）：返回同步后的规则总数。 */
+  /** 从承载本面板的操作系统同步防火墙规则：返回同步后的规则总数。 */
   syncFromSystem(): Promise<{ total: number }>
 }
 
