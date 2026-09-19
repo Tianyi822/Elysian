@@ -9,6 +9,9 @@ services:
       - "5173:5173"
     environment:
       ELSYIAN_DOCKER: "1"
+    # 防火墙面板真实执行 ufw/iptables，需要网络管理能力。
+    cap_add:
+      - NET_ADMIN
     volumes:
       - .:/app
       - elysian_metrics:/var/lib/elysian
