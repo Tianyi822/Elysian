@@ -247,3 +247,39 @@ button:not(:disabled),
 select:not(:disabled) {
   cursor: pointer;
 }
+
+/*
+ * 悬停才显形的滚动条：轨道空间常驻、显隐只切换滑块颜色，容器高度因此恒定不跳。
+ * WebKit 一侧用 ::-webkit-scrollbar 保留轨道（有溢出时固定占位），Firefox 一侧
+ * 用 scrollbar-width: thin 固定占位；两侧都由透明滑块表达「静默」，悬停/聚焦时显形。
+ */
+.hover-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.hover-scrollbar:hover,
+.hover-scrollbar:focus-within {
+  scrollbar-color: var(--color-fg-subtle) transparent;
+}
+
+.hover-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.hover-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.hover-scrollbar::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background-color: transparent;
+  background-clip: padding-box;
+}
+
+.hover-scrollbar:hover::-webkit-scrollbar-thumb,
+.hover-scrollbar:focus-within::-webkit-scrollbar-thumb {
+  background-color: var(--color-fg-subtle);
+}
