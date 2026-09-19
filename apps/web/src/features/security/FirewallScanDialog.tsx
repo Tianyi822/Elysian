@@ -1,29 +1,65 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Switch from '@radix-ui/react-switch'
-import { useState } from 'react'
-import { SCAN_HIT_COUNT, SCAN_MONITOR_PORTS, SCAN_WINDOW_SECONDS } from '@elysian/contracts'
+import { useEffect, useState } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { LoadingState } from '../../components/states/StateViews'
 import { formatDateTime } from '../../components/format'
 import { Search, X } from '../../components/icons'
 import { useFirewallStore } from '../../stores/firewallStore'
+import { FIREWALL_INPUT_CLASS } from './firewallFormParts'
+
+/** 弹窗打开期间的轮询节奏：新封锁的 IP 由此进入通知。 */
+const SCAN_POLL_MS = 5000
 
 /**
- * 端口防扫描弹窗：开关、四项统计与当前封锁的 IP 列表（每行可解封）。
- * Docker 运行时为真实实现（内核 xt_recent 封锁 + iptables 计数），
- * 宿主机本地开发是演示样例：历史累计很大、当前封锁为空。
+ * 端口防扫描弹窗：开关、可编辑配置（端口/窗口/阈值/封禁时长）、四项统计与当前封锁的 IP 列表。
+ * Docker 运行时为真实实现（内核 xt_recent 双名单 jail + iptables 计数），
+ * 宿主机本地开发是演示样例。列表带 IP 模糊搜索；打开期间轮询刷新并通知新封锁。
  */
+
+type ConfigDraft = {
+  ports: string
+  windowSeconds: string
+  hitCount: string
+  banSeconds: string
+}
+
+function draftFromConfig(config: { ports: readonly number[]; windowSeconds: number; hitCount: number; banSeconds: number }): ConfigDraft {
+  return {
+    ports: config.ports.join(','),
+    windowSeconds: `${config.windowSeconds}`,
+    hitCount: `${config.hitCount}`,
+    banSeconds: `${config.banSeconds}`,
+  }
+}
+
 export function FirewallScanDialog() {
   const gateway = useGateway()
   const status = useFirewallStore((s) => s.scanStatus)
   const scan = useFirewallStore((s) => s.scanProtection)
   const closeScan = useFirewallStore((s) => s.closeScan)
+  const refreshScan = useFirewallStore((s) => s.refreshScan)
   const toggleScanProtection = useFirewallStore((s) => s.toggleScanProtection)
+  const setScanConfig = useFirewallStore((s) => s.setScanConfig)
   const unblockIp = useFirewallStore((s) => s.unblockIp)
+  const [ipSearch, setIpSearch] = useState('')
+  const [draft, setDraft] = useState<ConfigDraft>(() => draftFromConfig(scan.config))
+  const [configError, setConfigError] = useState<string | undefined>(undefined)
+
+  // 打开期间轮询：真实封锁由内核异步发生，界面借此跟进并通知新封锁的 IP。
+  useEffect(() => {
+    const timer = setInterval(() => void refreshScan(gateway), SCAN_POLL_MS)
+    return () => clearInterval(timer)
+  }, [gateway, refreshScan])
+
+  // 配置弹层跟随最新数据重置：只有未编辑过的草稿才跟随，正在编辑的不被轮询覆盖。
+  const [dirty, setDirty] = useState(false)
+  useEffect(() => {
+    if (!dirty) setDraft(draftFromConfig(scan.config))
+  }, [scan.config, dirty])
 
   const stats = scan?.stats
-  const [ipSearch, setIpSearch] = useState('')
 
   // 搜索框只接受 IP 地址格式字符（数字与点号，IPv4 最长 15 位）；匹配按子串模糊过滤。
   const onIpSearchChange = (value: string) => {
@@ -32,13 +68,42 @@ export function FirewallScanDialog() {
   const keyword = ipSearch.trim()
   const visibleBlocked = (scan?.blocked ?? []).filter((entry) => entry.ip.includes(keyword))
 
+  const submitConfig = () => {
+    const ports = draft.ports
+      .split(/[，,]/)
+      .map((part) => Number.parseInt(part.trim(), 10))
+      .filter((port) => Number.isFinite(port))
+    const windowSeconds = Number(draft.windowSeconds)
+    const hitCount = Number(draft.hitCount)
+    const banSeconds = Number(draft.banSeconds)
+    if (ports.length === 0 || ports.some((port) => port < 1 || port > 65535)) {
+      setConfigError('监控端口需为逗号分隔的 1–65535 端口列表')
+      return
+    }
+    if (!Number.isInteger(windowSeconds) || windowSeconds < 10 || windowSeconds > 3600) {
+      setConfigError('判定窗口需为 10–3600 秒')
+      return
+    }
+    if (!Number.isInteger(hitCount) || hitCount < 3 || hitCount > 1000) {
+      setConfigError('阈值需为 3–1000 次')
+      return
+    }
+    if (!Number.isInteger(banSeconds) || banSeconds < 60 || banSeconds > 86400) {
+      setConfigError('封禁时长需为 60–86400 秒')
+      return
+    }
+    setConfigError(undefined)
+    setDirty(false)
+    void setScanConfig(gateway, { ports, windowSeconds, hitCount, banSeconds })
+  }
+
   return (
     <Dialog.Root open onOpenChange={(next) => { if (!next) closeScan() }}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60" />
         <Dialog.Content
           aria-describedby={undefined}
-          className="fixed left-1/2 top-1/2 z-[55] flex max-h-[min(40rem,calc(100vh-3rem))] w-[min(38rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line bg-bg shadow-2xl"
+          className="fixed left-1/2 top-1/2 z-[55] flex max-h-[min(44rem,calc(100vh-3rem))] w-[min(38rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line bg-bg shadow-2xl"
         >
           <Dialog.Title className="sr-only">端口防扫描</Dialog.Title>
           <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
@@ -74,11 +139,86 @@ export function FirewallScanDialog() {
                 <Switch.Thumb className="ml-0.5 block size-3.5 rounded-full bg-fg-muted transition-transform data-[state=checked]:translate-x-4 data-[state=checked]:bg-white" />
               </Switch.Root>
             </label>
-            {/* 防扫描的真实判定口径：哪些端口被监控、多久内多少次新连接触发封锁。 */}
-            <p className="-mt-2 text-xs text-fg-subtle">
-              监控端口 {SCAN_MONITOR_PORTS.split(',').join(' · ')}：{SCAN_WINDOW_SECONDS}{' '}
-              秒内新连接超过 {SCAN_HIT_COUNT} 次即封锁该 IP，解除开关后自动恢复放行。
-            </p>
+
+            {/* 判定口径可配置并持久化在规则文本里；只有防扫描开启时可保存。 */}
+            <div className="rounded-lg border border-line bg-surface px-3 py-3">
+              <p className="mb-2 text-xs font-medium text-fg-muted">判定口径</p>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div className="col-span-2">
+                  <label htmlFor="scan-config-ports" className="mb-1 block text-xs text-fg-muted">
+                    监控端口（逗号分隔）
+                  </label>
+                  <input
+                    id="scan-config-ports"
+                    value={draft.ports}
+                    onChange={(event) => {
+                      setDirty(true)
+                      setDraft((current) => ({ ...current, ports: event.target.value }))
+                    }}
+                    className={FIREWALL_INPUT_CLASS}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="scan-config-window" className="mb-1 block text-xs text-fg-muted">
+                    窗口（秒）
+                  </label>
+                  <input
+                    id="scan-config-window"
+                    value={draft.windowSeconds}
+                    onChange={(event) => {
+                      setDirty(true)
+                      setDraft((current) => ({ ...current, windowSeconds: event.target.value }))
+                    }}
+                    inputMode="numeric"
+                    className={FIREWALL_INPUT_CLASS}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="scan-config-hit" className="mb-1 block text-xs text-fg-muted">
+                    阈值（次）
+                  </label>
+                  <input
+                    id="scan-config-hit"
+                    value={draft.hitCount}
+                    onChange={(event) => {
+                      setDirty(true)
+                      setDraft((current) => ({ ...current, hitCount: event.target.value }))
+                    }}
+                    inputMode="numeric"
+                    className={FIREWALL_INPUT_CLASS}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="scan-config-ban" className="mb-1 block text-xs text-fg-muted">
+                    封禁时长（秒）
+                  </label>
+                  <input
+                    id="scan-config-ban"
+                    value={draft.banSeconds}
+                    onChange={(event) => {
+                      setDirty(true)
+                      setDraft((current) => ({ ...current, banSeconds: event.target.value }))
+                    }}
+                    inputMode="numeric"
+                    className={FIREWALL_INPUT_CLASS}
+                  />
+                </div>
+              </div>
+              {configError ? <p className="mt-2 text-xs text-danger">{configError}</p> : null}
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <p className="text-xs text-fg-subtle">
+                  窗口内新连接超过阈值即封锁该 IP {Math.round((scan?.config.banSeconds ?? 0) / 60)} 分钟。
+                </p>
+                <button
+                  type="button"
+                  onClick={submitConfig}
+                  disabled={!scan?.enabled}
+                  className="shrink-0 rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:opacity-50"
+                >
+                  保存配置
+                </button>
+              </div>
+            </div>
 
             {status === 'loading' || status === 'idle' || !scan ? (
               <LoadingState label="正在加载防扫描数据…" />

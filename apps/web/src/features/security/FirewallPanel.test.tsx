@@ -3,13 +3,16 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ElysianGateway } from '../../contracts/adapters'
 import { createMockGateway } from '../../adapters/mock/gateway'
+import { SEED_FORWARDS, SEED_IP_RULES, SEED_RULES } from '../../adapters/mock/firewallData'
 import { useFirewallStore, FIREWALL_PAGE_SIZE } from '../../stores/firewallStore'
 import { renderApp } from '../../test/renderApp'
 
 /**
- * 防火墙面板的端到端行为：分页、搜索、开关、增删改与四状态。
- * 数据走默认 mock 数据集（27 条种子规则），不另造假数据。
+ * 防火墙面板的端到端行为：分页、搜索、开关、三类规则视图与增删改。
+ * 数据走默认 mock 数据集（种子规则），计数断言直接取种子长度，避免抄数字走样。
  */
+
+const SEED_RULE_COUNT = SEED_RULES.length
 
 function sessionGateway(overrides: Partial<ElysianGateway['firewall']> = {}): ElysianGateway {
   const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
@@ -25,8 +28,17 @@ function sessionGateway(overrides: Partial<ElysianGateway['firewall']> = {}): El
       update: (ruleId, input) => firewall.update(ruleId, input),
       remove: (ruleId) => firewall.remove(ruleId),
       importRules: (inputs) => firewall.importRules(inputs),
+      listIpRules: () => firewall.listIpRules(),
+      createIpRule: (input) => firewall.createIpRule(input),
+      updateIpRule: (ruleId, input) => firewall.updateIpRule(ruleId, input),
+      removeIpRule: (ruleId) => firewall.removeIpRule(ruleId),
+      listForwards: () => firewall.listForwards(),
+      createForward: (input) => firewall.createForward(input),
+      updateForward: (ruleId, input) => firewall.updateForward(ruleId, input),
+      removeForward: (ruleId) => firewall.removeForward(ruleId),
       scanProtection: () => firewall.scanProtection(),
       setScanProtection: (enabled) => firewall.setScanProtection(enabled),
+      setScanConfig: (config) => firewall.setScanConfig(config),
       unblockIp: (ip) => firewall.unblockIp(ip),
       syncFromSystem: () => firewall.syncFromSystem(),
       ...overrides,
@@ -45,14 +57,24 @@ beforeEach(() => {
     status: 'idle',
     errorMessage: undefined,
     rules: [],
-    toggles: { firewallEnabled: true, pingBlocked: true },
+    ipRules: [],
+    forwards: [],
+    view: 'port',
+    toggles: { firewallEnabled: true, pingBlocked: true, defaultIncoming: 'deny', defaultOutgoing: 'allow' },
     search: '',
     page: 1,
     dialogRule: undefined,
+    dialogIpRule: undefined,
+    dialogForward: undefined,
     removeTarget: undefined,
     scanDialogOpen: false,
     scanStatus: 'idle',
-    scanProtection: undefined,
+    scanProtection: {
+      enabled: false,
+      config: { ports: [], windowSeconds: 60, hitCount: 8, banSeconds: 3600 },
+      stats: { totalBlockedIps: 0, totalFailedConnections: 0, currentBlockedIps: 0, currentFailedConnections: 0 },
+      blocked: [],
+    },
     exportDialogOpen: false,
     syncing: false,
     saving: false,
@@ -61,17 +83,18 @@ beforeEach(() => {
 })
 
 describe('防火墙面板', () => {
-  it('种子 27 条规则跨两页：首页 20 行，下一页看剩余，共 N 条随搜索变化', async () => {
+  it('种子规则跨两页：首页 20 行，下一页看剩余，共 N 条随搜索变化', async () => {
     const user = userEvent.setup()
     await openFirewallPage()
 
-    expect(screen.getByText(/共 27 条/)).toBeInTheDocument()
+    expect(screen.getByText(new RegExp(`共 ${SEED_RULE_COUNT} 条`))).toBeInTheDocument()
     const table = screen.getByRole('region', { name: '端口规则表' })
     expect(within(table).getAllByRole('row')).toHaveLength(FIREWALL_PAGE_SIZE + 1) // 表头 + 20 行
     expect(screen.getByRole('button', { name: '下一页' })).toBeEnabled()
 
     await user.click(screen.getByRole('button', { name: '下一页' }))
-    expect(within(table).getAllByRole('row')).toHaveLength(8) // 表头 + 7 行
+    // 表头 + 剩余行数
+    expect(within(table).getAllByRole('row')).toHaveLength(SEED_RULE_COUNT - FIREWALL_PAGE_SIZE + 1)
     expect(screen.getByRole('button', { name: '上一页' })).toBeEnabled()
     // 页码与当前位置：第二页标记 aria-current。
     expect(screen.getByRole('button', { name: '2' })).toHaveAttribute('aria-current', 'page')
@@ -117,7 +140,7 @@ describe('防火墙面板', () => {
 
     // 空端口提交给行内错误，不发请求。label 文本带必填星号，用正则匹配。
     await user.click(within(dialog).getByRole('button', { name: '添加规则' }))
-    expect(within(dialog).getByText('端口需为 1-65535 的整数')).toBeInTheDocument()
+    expect(within(dialog).getByText(/端口需为 1-65535 的整数/)).toBeInTheDocument()
 
     await user.type(within(dialog).getByLabelText(/端口/), '8443')
     await user.type(within(dialog).getByLabelText('备注'), '演示入口')
@@ -159,7 +182,7 @@ describe('防火墙面板', () => {
     await user.click(within(confirm).getByRole('button', { name: '取消' }))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     // 添加用例先运行过，种子之外多了一条 8443。
-    expect(screen.getByText(/共 28 条/)).toBeInTheDocument()
+    expect(screen.getByText(new RegExp(`共 ${SEED_RULE_COUNT + 1} 条`))).toBeInTheDocument()
 
     await user.click(within(row).getByRole('button', { name: '删除' }))
     await user.click(
@@ -168,7 +191,7 @@ describe('防火墙面板', () => {
         { name: '确认删除' },
       ),
     )
-    await waitFor(() => expect(screen.getByText(/共 27 条/)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText(new RegExp(`共 ${SEED_RULE_COUNT} 条`))).toBeInTheDocument())
     const notifications = await screen.findByLabelText('通知')
     expect(within(notifications).getByRole('status')).toHaveTextContent(
       '端口规则 tcp 2234 已删除（mock，待接入真实执行）',
@@ -209,6 +232,7 @@ describe('防火墙面板', () => {
     const user = userEvent.setup()
     const blockedScan = {
       enabled: true,
+      config: { ports: [22, 23, 3306], windowSeconds: 60, hitCount: 8, banSeconds: 3600 },
       stats: {
         totalBlockedIps: 2,
         totalFailedConnections: 9,
@@ -255,7 +279,7 @@ describe('防火墙面板', () => {
     await user.upload(input, new File(['{ not json'], 'bad.json', { type: 'application/json' }))
     let notifications = await screen.findByLabelText('通知')
     expect(within(notifications).getByRole('alert')).toHaveTextContent('导入失败：不是有效的规则 JSON')
-    expect(screen.getByText(/共 27 条/)).toBeInTheDocument()
+    expect(screen.getByText(new RegExp(`共 ${SEED_RULE_COUNT} 条`))).toBeInTheDocument()
 
     // 好文件：1 条新增 + 1 条与现有数据重复跳过（8443 是此前添加用例建出的）。
     const payload = {
@@ -321,7 +345,6 @@ describe('防火墙面板', () => {
 
   it('同步规则：忙碌一拍后报从操作系统同步的 mock 通知', async () => {
     await openFirewallPage()
-    const total = Number(screen.getByText(/共 \d+ 条/).textContent?.match(/\d+/)?.[0])
     const button = screen.getByRole('button', { name: '同步规则' })
 
     // 先渲染加载完再开假定时器：waitFor 依赖真实定时器，提前开会卡住页面等待。
@@ -331,9 +354,15 @@ describe('防火墙面板', () => {
       expect(screen.getByRole('button', { name: '同步中…' })).toBeDisabled()
 
       await vi.advanceTimersByTimeAsync(800)
+      // 同步后重拉三类列表，通知里的总数取界面统计条的三个计数之和。
+      // 计数从统计条自身的文本读（容器里的第一个数字是端口规则的，不能用）。
+      const chipCount = (label: string) =>
+        Number(screen.getByText(`${label}：`).textContent?.match(/(\d+)/)?.[1] ?? '0')
+      const expected = chipCount('端口规则') + chipCount('IP 规则') + chipCount('端口转发')
+
       const notifications = screen.getByLabelText('通知')
       expect(within(notifications).getByRole('status')).toHaveTextContent(
-        `已从操作系统同步端口规则，当前共 ${total} 条（mock，待接入真实执行）`,
+        `已从操作系统同步防火墙规则，当前共 ${expected} 条（mock，待接入真实执行）`,
       )
       expect(screen.getByRole('button', { name: '同步规则' })).toBeEnabled()
     } finally {
@@ -406,5 +435,63 @@ describe('防火墙面板', () => {
     fail = false
     await user.click(screen.getByRole('button', { name: '重试' }))
     expect(await screen.findByText('还没有端口规则')).toBeInTheDocument()
+  })
+
+  it('IP 规则视图：统计与表格呈现种子数据，可新增一条', async () => {
+    const user = userEvent.setup()
+    await openFirewallPage()
+
+    // 统计条按视图呈现三类计数
+    expect(screen.getByText('IP 规则：').parentElement).toHaveTextContent(`${SEED_IP_RULES.length}`)
+
+    await user.click(screen.getByRole('button', { name: 'IP 规则' }))
+    const region = await screen.findByRole('region', { name: 'IP 规则表' })
+    expect(within(region).getByText('185.220.101.7')).toBeInTheDocument()
+    // IP 视图不带导入/导出（那两条只服务端口规则）
+    expect(screen.queryByRole('button', { name: '导入规则' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '添加 IP 规则' }))
+    const dialog = await screen.findByRole('dialog', { name: '添加 IP 规则' })
+    // 来源必填：直接提交给行内错误
+    await user.click(within(dialog).getByRole('button', { name: '添加规则' }))
+    expect(within(dialog).getByText(/来源必填/)).toBeInTheDocument()
+
+    await user.type(within(dialog).getByLabelText(/来源/), '198.51.100.0/24')
+    await user.type(within(dialog).getByLabelText('备注'), '压力测试段')
+    await user.click(within(dialog).getByRole('button', { name: '添加规则' }))
+
+    await waitFor(() => expect(within(region).getByText('198.51.100.0/24')).toBeInTheDocument())
+    const notifications = await screen.findByLabelText('通知')
+    expect(within(notifications).getByRole('status')).toHaveTextContent(
+      'IP 规则 198.51.100.0/24 已添加（mock，待接入真实执行）',
+    )
+  })
+
+  it('端口转发视图：表格呈现种子转发，可新增一条并校验目标地址', async () => {
+    const user = userEvent.setup()
+    await openFirewallPage()
+
+    await user.click(screen.getByRole('button', { name: '端口转发' }))
+    const region = await screen.findByRole('region', { name: '端口转发表' })
+    expect(within(region).getByText(`${SEED_FORWARDS[0]!.targetHost}:${SEED_FORWARDS[0]!.targetPort}`)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '添加端口转发' }))
+    const dialog = await screen.findByRole('dialog', { name: '添加端口转发' })
+
+    await user.type(within(dialog).getByLabelText(/外部端口/), '9090')
+    await user.type(within(dialog).getByLabelText(/目标地址/), 'not-an-ip')
+    await user.type(within(dialog).getByLabelText(/目标端口/), '80')
+    await user.click(within(dialog).getByRole('button', { name: '添加转发' }))
+    expect(within(dialog).getByText('目标地址需为 IPv4（如 10.0.0.5）')).toBeInTheDocument()
+
+    await user.clear(within(dialog).getByLabelText(/目标地址/))
+    await user.type(within(dialog).getByLabelText(/目标地址/), '10.0.0.20')
+    await user.click(within(dialog).getByRole('button', { name: '添加转发' }))
+
+    await waitFor(() => expect(within(region).getByText('10.0.0.20:80')).toBeInTheDocument())
+    const notifications = await screen.findByLabelText('通知')
+    expect(within(notifications).getByRole('status')).toHaveTextContent(
+      '端口转发 tcp 9090 → 10.0.0.20:80 已添加（mock，待接入真实执行）',
+    )
   })
 })
