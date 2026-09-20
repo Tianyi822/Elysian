@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
 import type { Connect } from 'vite'
-import { createSecurityUsersMiddleware, resolveUsersAvailability } from './api.node'
+import { createSecurityUsersMiddleware, resolveUsersAvailability, runGetentViaExecFile, type ExecFileLike } from './api.node'
 import type { UsersHostDeps } from './usersService'
 
 /*
@@ -74,6 +74,40 @@ async function fakeReq(method: string, url: string, body?: unknown): Promise<Inc
     },
   }) as unknown as IncomingMessage
 }
+
+describe('runGetentViaExecFile 的退出码语义（容器联调回归：getent 查无此键以退出码 2 结束）', () => {
+  /** 造一个 reject 出 execFile 形状错误的 fake exec：code 为退出码，stderr 为命令 stderr。 */
+  function execRejectingWith(code: number | string, stderr = ''): ExecFileLike {
+    return async () => {
+      throw Object.assign(new Error(`Command failed: getent passwd ghost`), { code, stderr })
+    }
+  }
+
+  it('退出码 2（所查键不存在）归一为空输出：创建查重与删除回读按「无此账号」继续，不再恒失败', async () => {
+    await expect(runGetentViaExecFile(execRejectingWith(2), ['passwd', 'ghost'])).resolves.toBe('')
+  })
+
+  it('其余退出码仍是执行失败，错误信息带 stderr 详情', async () => {
+    await expect(runGetentViaExecFile(execRejectingWith(1, 'Unknown database'), ['bogus'])).rejects.toThrow(
+      'Unknown database',
+    )
+  })
+
+  it('无 stderr 详情时回退到错误消息本身，不混入未归一的原样信息', async () => {
+    await expect(runGetentViaExecFile(execRejectingWith(3, ''), ['shadow'])).rejects.toThrow(
+      'Command failed: getent passwd ghost',
+    )
+  })
+
+  it('退出码为字符串（信号终止等）不归一为空输出，照常抛错', async () => {
+    await expect(runGetentViaExecFile(execRejectingWith('ENOENT', ''), ['passwd'])).rejects.toThrow()
+  })
+
+  it('命令成功时原样返回 stdout', async () => {
+    const exec: ExecFileLike = async () => ({ stdout: 'ubuntu:x:1000:1000::/home/ubuntu:/bin/bash\n', stderr: '' })
+    await expect(runGetentViaExecFile(exec, ['passwd', 'ubuntu'])).resolves.toContain('ubuntu:x:1000')
+  })
+})
 
 describe('resolveUsersAvailability', () => {
   it('两项条件同时满足才可用：环境声明 Docker 编排 + /.dockerenv 证明真的在容器内', () => {

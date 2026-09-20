@@ -41,7 +41,11 @@ export const NOLOGIN_SHELL = '/sbin/nologin'
 export const LOGIN_SHELL = '/bin/bash'
 
 export type UsersHostDeps = {
-  /** 执行 getent（`getent passwd`、`getent shadow`、`getent group sudo` 等），返回 stdout。 */
+  /**
+   * 执行 getent（`getent passwd`、`getent shadow`、`getent group sudo` 等），返回 stdout。
+   * 查无结果（真实 getent 以退出码 2 结束）由适配层归一为空输出——见 api.node 的
+   * runGetentViaExecFile，服务层据此把空输出当「无此账号」处理。
+   */
   runGetent(args: readonly string[]): Promise<string>
   runUseradd(args: readonly string[]): Promise<string>
   runUsermod(args: readonly string[]): Promise<string>

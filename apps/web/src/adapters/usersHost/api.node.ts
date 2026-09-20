@@ -31,15 +31,41 @@ export type SecurityUsersMiddlewareOptions = {
   deps?: UsersHostDeps
 }
 
+/** execFile 的最小形状：runGetentViaExecFile 注入 fake exec 用，宿主机不执行任何命令。 */
+export type ExecFileLike = (file: string, args: string[]) => Promise<{ stdout: string; stderr: string }>
+
+/** 子进程失败 → 中文错误：优先带 stderr 详情，没有时回退错误消息本身；命令上下文由服务层拼装。 */
+function commandFailure(error: unknown): Error {
+  const detail =
+    error && typeof error === 'object' && 'stderr' in error
+      ? String((error as { stderr?: unknown }).stderr ?? '').trim()
+      : ''
+  return new Error(detail || (error instanceof Error ? error.message : String(error)))
+}
+
+/**
+ * getent 的退出码语义适配：`getent passwd <不存在账号>` 以退出码 2 结束且无输出
+ * （getent(1)：2 = 所查键在数据库中不存在）——这是「查无结果」的正常语义，
+ * 归一为空输出让上层按「无此账号」处理；其余退出码（如 1 的库不存在）才是执行失败。
+ * 服务层的查重、保护边界与删除回读都依赖这一点，缺了它创建链路恒失败。
+ */
+export function runGetentViaExecFile(exec: ExecFileLike, args: readonly string[]): Promise<string> {
+  return exec('getent', [...args]).then(
+    ({ stdout }) => stdout,
+    (error: unknown) => {
+      if (error && typeof error === 'object' && 'code' in error && (error as { code?: unknown }).code === 2) {
+        return ''
+      }
+      throw commandFailure(error)
+    },
+  )
+}
+
 function execToStdout(file: string, args: readonly string[]): Promise<string> {
   return execFileAsync(file, [...args]).then(
     ({ stdout }) => stdout,
     (error: unknown) => {
-      const detail =
-        error && typeof error === 'object' && 'stderr' in error
-          ? String((error as { stderr?: unknown }).stderr ?? '').trim()
-          : ''
-      throw new Error(detail || (error instanceof Error ? error.message : String(error)))
+      throw commandFailure(error)
     },
   )
 }
@@ -65,7 +91,7 @@ function runChpasswdViaStdin(input: string): Promise<string> {
 
 function createHostDeps(): UsersHostDeps {
   return {
-    runGetent: (args) => execToStdout('getent', args),
+    runGetent: (args) => runGetentViaExecFile(execFileAsync, args),
     runUseradd: (args) => execToStdout('useradd', args),
     runUsermod: (args) => execToStdout('usermod', args),
     runUserdel: (args) => execToStdout('userdel', args),
