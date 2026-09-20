@@ -7,7 +7,15 @@ import type {
   FirewallToggles,
 } from '@elysian/contracts'
 import type { FirewallAdapter } from '../../contracts/adapters'
-import { EndpointGuardError, isSameOrigin, readJsonBody, sendError, sendJson } from '../endpointGuard/guard'
+import {
+  EndpointGuardError,
+  InvalidRequestError,
+  invalidRequest,
+  isSameOrigin,
+  readJsonBody,
+  sendError,
+  sendJson,
+} from '../endpointGuard/guard'
 
 /*
  * 防火墙真实端点：/api/security/firewall/*（dev/preview 的 Node 中间件，仅容器内可用）。
@@ -24,8 +32,8 @@ export type FirewallApiDeps = {
 export function createFirewallApiHandler(deps: FirewallApiDeps) {
   return (req: IncomingMessage, res: ServerResponse): void => {
     handle(req, res, deps).catch((error: unknown) => {
-      // handler 同步交给 connect，异步错误自己兜底成 500。
-      sendError(res, 500, error)
+      // handler 同步交给 connect，异步错误自己兜底成 500；带状态码的请求被拒同样按它返回 4xx。
+      sendError(res, error instanceof EndpointGuardError || error instanceof InvalidRequestError ? error.status : 500, error)
     })
   }
 }
@@ -151,7 +159,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: FirewallA
     if (method === 'POST' && path === '/scan/toggle') {
       const body = await readJsonBody(req)
       const enabled = (body as { enabled?: unknown }).enabled
-      if (typeof enabled !== 'boolean') throw new Error('开关值无效')
+      if (typeof enabled !== 'boolean') throw invalidRequest('开关值无效')
       sendJson(res, 200, await service.setScanProtection(enabled))
       return
     }
@@ -162,23 +170,27 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: FirewallA
     if (method === 'POST' && path === '/scan/unblock') {
       const body = await readJsonBody(req)
       const ip = (body as { ip?: unknown }).ip
-      if (typeof ip !== 'string' || !ip.trim()) throw new Error('IP 无效')
+      if (typeof ip !== 'string' || !ip.trim()) throw invalidRequest('IP 无效')
       sendJson(res, 200, await service.unblockIp(ip.trim()))
       return
     }
 
     sendJson(res, 404, { error: `未知防火墙端点：${method} ${path}` })
   } catch (error) {
-    // 业务性失败（重复规则、ufw 报错）带中文消息返回给界面呈现；守卫错误按自带状态码返回。
-    sendError(res, error instanceof EndpointGuardError ? error.status : 500, error)
+    // 三类失败分开：守卫原语（403/413/415）与请求被拒（校验不通过、策略禁区、前置状态不满足）
+    // 都自带状态码，按它返回 4xx；其余（ufw 执行失败、内核数据不可读等系统侧问题）才是 500。
+    // 中文消息原样带给界面呈现。
+    const status =
+      error instanceof EndpointGuardError || error instanceof InvalidRequestError ? error.status : 500
+    sendError(res, status, error)
   }
 }
 
 function parseToggles(body: unknown): FirewallToggles {
-  if (!body || typeof body !== 'object') throw new Error('开关请求体无效')
+  if (!body || typeof body !== 'object') throw invalidRequest('开关请求体无效')
   const row = body as Record<string, unknown>
   if (typeof row.firewallEnabled !== 'boolean' || typeof row.pingBlocked !== 'boolean') {
-    throw new Error('开关请求体缺少布尔字段')
+    throw invalidRequest('开关请求体缺少布尔字段')
   }
   // 默认策略是系统侧只读事实：请求里的取值不采信，service 回读真实状态。
   return {
@@ -191,7 +203,7 @@ function parseToggles(body: unknown): FirewallToggles {
 
 /** 宽进：结构校验交给 service（specFromInput 的中文报错），这里只保证形状可传递。 */
 function parseRuleInput(body: unknown): FirewallRuleInput {
-  if (!body || typeof body !== 'object') throw new Error('规则请求体无效')
+  if (!body || typeof body !== 'object') throw invalidRequest('规则请求体无效')
   const row = body as Record<string, unknown>
   return {
     protocol: row.protocol === 'udp' ? 'udp' : 'tcp',
@@ -210,7 +222,7 @@ function parsePolicy(value: unknown): 'allow' | 'deny' | 'limit' {
 }
 
 function parseIpRuleInput(body: unknown): FirewallIpRuleInput {
-  if (!body || typeof body !== 'object') throw new Error('IP 规则请求体无效')
+  if (!body || typeof body !== 'object') throw invalidRequest('IP 规则请求体无效')
   const row = body as Record<string, unknown>
   return {
     policy: parsePolicy(row.policy),
@@ -220,7 +232,7 @@ function parseIpRuleInput(body: unknown): FirewallIpRuleInput {
 }
 
 function parseForwardInput(body: unknown): FirewallForwardInput {
-  if (!body || typeof body !== 'object') throw new Error('转发请求体无效')
+  if (!body || typeof body !== 'object') throw invalidRequest('转发请求体无效')
   const row = body as Record<string, unknown>
   return {
     protocol: row.protocol === 'udp' ? 'udp' : 'tcp',
@@ -233,7 +245,7 @@ function parseForwardInput(body: unknown): FirewallForwardInput {
 }
 
 function parseScanConfigBody(body: unknown): FirewallScanConfig {
-  if (!body || typeof body !== 'object') throw new Error('防扫描配置请求体无效')
+  if (!body || typeof body !== 'object') throw invalidRequest('防扫描配置请求体无效')
   const row = body as Record<string, unknown>
   const ports = Array.isArray(row.ports) ? row.ports.map(Number) : []
   return {
@@ -245,8 +257,8 @@ function parseScanConfigBody(body: unknown): FirewallScanConfig {
 }
 
 function parseRuleInputList(body: unknown): readonly FirewallRuleInput[] {
-  if (!body || typeof body !== 'object') throw new Error('导入请求体无效')
+  if (!body || typeof body !== 'object') throw invalidRequest('导入请求体无效')
   const rules = (body as { rules?: unknown }).rules
-  if (!Array.isArray(rules)) throw new Error('导入请求体缺少规则数组')
+  if (!Array.isArray(rules)) throw invalidRequest('导入请求体缺少规则数组')
   return rules.map(parseRuleInput)
 }

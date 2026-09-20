@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { promisify } from 'node:util'
 import type { ServerResponse } from 'node:http'
@@ -13,6 +13,7 @@ import {
   type FirewallHostDeps,
 } from './firewallService'
 import { FIREWALL_SQLITE_PATH, openRuleTimesStore } from './ruleTimesStore'
+import { writeHostFile } from './hostFiles.node.ts'
 import { createFirewallApiHandler } from './api'
 
 const execFileAsync = promisify(execFile)
@@ -20,6 +21,7 @@ const execFileAsync = promisify(execFile)
 /*
  * 真实防火墙中间件的 Node 侧接线。硬边界：只有 ELSYIAN_DOCKER=1 且当前进程
  * 真的运行在容器内（/.dockerenv 存在）才可用；否则一律 503，绝不落到宿主机执行。
+ * 落盘方式（原子写、内核接口直写）在 hostFiles 里，由 Vitest 单独覆盖。
  */
 
 function execToStdout(file: string, args: readonly string[]): Promise<string> {
@@ -42,7 +44,7 @@ function createHostDeps(): FirewallHostDeps {
     runIptables: (args) => execToStdout('iptables', args),
     runIp6tables: (args) => execToStdout('ip6tables', args),
     readText: (path) => readFile(path, 'utf8'),
-    writeText: (path, content) => writeFile(path, content, 'utf8'),
+    writeText: (path, content) => writeHostFile(path, content),
     async exists(path) {
       return existsSync(path)
     },

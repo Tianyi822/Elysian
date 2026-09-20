@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
 import { DEFAULT_SCAN_CONFIG } from '@elysian/contracts'
+import { InvalidRequestError, invalidRequest } from '../endpointGuard/guard'
 import { createFirewallApiHandler, type FirewallApiDeps } from './api'
+import { createFirewallService, type FirewallHostDeps } from './firewallService'
 import type { FirewallAdapter } from '../../contracts/adapters'
 import type { FirewallForwardRule, FirewallIpRule, FirewallRule, FirewallRuleInput, FirewallScanProtection, FirewallToggles } from '@elysian/contracts'
 
@@ -336,10 +338,38 @@ describe('createFirewallApiHandler', () => {
     expect(calls).toEqual(['list', 'create:8080->10.0.0.5:80', `update:${SAMPLE_FORWARD.id}`, `remove:${SAMPLE_FORWARD.id}`])
   })
 
-  it('业务失败以中文错误返回 500', async () => {
+  it('请求被拒（校验不通过 / 前置状态不满足）按自带状态码返回 4xx，中文原因原样带回', async () => {
+    const service = createFakeService({
+      createForward: async () => {
+        throw invalidRequest('面板端口不允许配置转发：外部端口段覆盖 5173（工作台自身的访问通道）')
+      },
+      setScanConfig: async () => {
+        throw new InvalidRequestError(409, '防扫描未启用：先开启开关再调整配置')
+      },
+    })
+    const handler = createFirewallApiHandler({ available: true, service })
+
+    const forward = await readResponse(
+      handler,
+      await fakeReq('POST', '/forwards', { protocol: 'tcp', port: 5173, targetHost: '10.0.0.5', targetPort: 8080 }),
+    )
+    expect(forward.statusCode).toBe(400)
+    expect(forward.body).toEqual({
+      error: '面板端口不允许配置转发：外部端口段覆盖 5173（工作台自身的访问通道）',
+    })
+
+    const scan = await readResponse(
+      handler,
+      await fakeReq('PUT', '/scan/config', { ports: [22], windowSeconds: 60, hitCount: 8, banSeconds: 3600 }),
+    )
+    expect(scan.statusCode).toBe(409)
+    expect(scan.body).toEqual({ error: '防扫描未启用：先开启开关再调整配置' })
+  })
+
+  it('系统侧失败（ufw 执行失败等）仍以中文错误返回 500', async () => {
     const service = createFakeService({
       create: async () => {
-        throw new Error('端口规则已存在：tcp 8080（ipv4）')
+        throw new Error('ufw 执行失败（allow 8080/tcp）：ERROR: problem running ufw init')
       },
     })
     const handler = createFirewallApiHandler({ available: true, service })
@@ -349,7 +379,7 @@ describe('createFirewallApiHandler', () => {
       await fakeReq('POST', '/rules', { protocol: 'tcp', port: 8080, source: '所有IP' }),
     )
     expect(statusCode).toBe(500)
-    expect(body).toEqual({ error: '端口规则已存在：tcp 8080（ipv4）' })
+    expect(body).toEqual({ error: 'ufw 执行失败（allow 8080/tcp）：ERROR: problem running ufw init' })
   })
 
   it('未知端点返回 404', async () => {
@@ -360,7 +390,7 @@ describe('createFirewallApiHandler', () => {
     expect(statusCode).toBe(404)
   })
 
-  it('请求体不是 JSON 返回 500 带中文错误', async () => {
+  it('请求体不是 JSON 返回 400 带中文错误', async () => {
     const handler = createFirewallApiHandler(AVAILABLE)
     const stream = Readable.from([Buffer.from('not-json', 'utf8')])
     const req = Object.assign(stream, {
@@ -373,7 +403,8 @@ describe('createFirewallApiHandler', () => {
         'content-length': '8',
       },
     }) as unknown as IncomingMessage
-    const { body } = await readResponse(handler, req)
+    const { statusCode, body } = await readResponse(handler, req)
+    expect(statusCode).toBe(400)
     expect((body as { error: string }).error).toBe('请求体不是有效 JSON')
   })
 
@@ -483,5 +514,74 @@ describe('createFirewallApiHandler', () => {
     }) as unknown as IncomingMessage
     const relaxed = await readResponse(handler, req)
     expect(relaxed.statusCode).toBe(200)
+  })
+})
+
+/*
+ * 端点接真实 service（非替身）时的状态码回归：容器里被拒的请求必须是 4xx，
+ * 而不是把「请求写错了」报成 500 服务端故障。deps 全部替身，不执行任何真实命令；
+ * 这些拒绝都发生在读系统之前，替身实现只用于满足类型与记录「有没有被动过」。
+ */
+describe('createFirewallApiHandler + 真实 service 的状态码', () => {
+  const writes: string[] = []
+  const deps: FirewallHostDeps = {
+    runUfw: async (args) => {
+      throw new Error(`测试里不应执行 ufw：${args.join(' ')}`)
+    },
+    runSs: async () => '',
+    runIptables: async () => '',
+    runIp6tables: async () => '',
+    // 无防扫描段的普通规则文件：读状态据此回报「防扫描未启用」。
+    readText: async () => '# before.rules\n*filter\n:ufw-before-input - [0:0]\nCOMMIT\n',
+    writeText: async (path) => {
+      writes.push(path)
+    },
+    exists: async () => false,
+    nowIso: () => '2026-09-19T00:00:00.000Z',
+  }
+  const handler = createFirewallApiHandler({ available: true, service: createFirewallService(deps) })
+
+  it('POST /forwards 命中面板端口：400 + 中文原因，不落盘', async () => {
+    writes.length = 0
+    const { statusCode, body } = await readResponse(
+      handler,
+      await fakeReq('POST', '/forwards', { protocol: 'tcp', port: 5173, targetHost: '10.0.0.5', targetPort: 8080 }),
+    )
+    expect(statusCode).toBe(400)
+    expect(body).toEqual({
+      error: '面板端口不允许配置转发：外部端口段覆盖 5173（工作台自身的访问通道）',
+    })
+    expect(writes).toEqual([])
+  })
+
+  it('POST /forwards 目标地址是网段：400 + 中文原因', async () => {
+    writes.length = 0
+    const { statusCode, body } = await readResponse(
+      handler,
+      await fakeReq('POST', '/forwards', { protocol: 'tcp', port: 9090, targetHost: '10.0.0.0/24', targetPort: 8080 }),
+    )
+    expect(statusCode).toBe(400)
+    expect(body).toEqual({ error: '目标地址无效：10.0.0.0/24（应为单个 IPv4 地址，不含网段）' })
+    expect(writes).toEqual([])
+  })
+
+  it('PUT /scan/config 防扫描未启用：409（前置状态不满足，不是请求体错误）', async () => {
+    const { statusCode, body } = await readResponse(
+      handler,
+      await fakeReq('PUT', '/scan/config', { ports: [22], windowSeconds: 60, hitCount: 8, banSeconds: 3600 }),
+    )
+    expect(statusCode).toBe(409)
+    expect(body).toEqual({ error: '防扫描未启用：先开启开关再调整配置' })
+  })
+
+  it('PUT /scan/config 含面板端口：400，且校验先于开关状态（未启用也按面板端口拒绝）', async () => {
+    writes.length = 0
+    const { statusCode, body } = await readResponse(
+      handler,
+      await fakeReq('PUT', '/scan/config', { ports: [22, 5173], windowSeconds: 60, hitCount: 8, banSeconds: 3600 }),
+    )
+    expect(statusCode).toBe(400)
+    expect(body).toEqual({ error: '面板端口不允许加入防扫描监控：5173 是工作台自身的访问通道' })
+    expect(writes).toEqual([])
   })
 })

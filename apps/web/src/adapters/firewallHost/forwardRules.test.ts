@@ -3,6 +3,7 @@ import {
   FORWARD_COMMENT_PREFIX,
   forwardCommentOf,
   forwardIdOf,
+  forwardPortsOverlap,
   forwardRowFromSpec,
   natRuleArgsOf,
   noteFromForwardComment,
@@ -11,7 +12,9 @@ import {
   parseOurNatRuleNumbers,
   setForwardSection,
   specFromForwardInput,
+  type ForwardSpec,
 } from './forwardRules'
+import { PANEL_PORT } from './panelPort'
 
 const BASE_RULES = `*filter
 :ufw-before-input - [0:0]
@@ -135,6 +138,28 @@ describe('specFromForwardInput', () => {
     expect(() => specFromForwardInput({ ...base, note: '外层"引号' })).toThrow('备注不能包含双引号')
   })
 
+  it('目标地址拒绝 CIDR 网段：iptables-restore 只接受单个 IPv4，写出 10.0.0.0/24 这类目标是装载失败的坏规则', () => {
+    expect(() => specFromForwardInput({ ...base, targetHost: '10.0.0.0/24' })).toThrow('目标地址无效')
+    expect(() => specFromForwardInput({ ...base, targetHost: '10.0.0.5/32' })).toThrow('目标地址无效')
+    expect(specFromForwardInput({ ...base, targetHost: '10.0.0.5' })).toMatchObject({ targetHost: '10.0.0.5' })
+  })
+
+  it('外部端口等于面板端口被拒绝：DNAT 会把工作台自身的流量劫走，绕过保底放行', () => {
+    expect(() => specFromForwardInput({ ...base, port: PANEL_PORT })).toThrow('面板端口不允许配置转发')
+  })
+
+  it('外部端口段覆盖面板端口被拒绝（区间含端点）', () => {
+    expect(() => specFromForwardInput({ ...base, port: 1000, portTo: 6000 })).toThrow('面板端口不允许配置转发')
+    expect(() => specFromForwardInput({ ...base, port: 1, portTo: PANEL_PORT })).toThrow('面板端口不允许配置转发')
+    expect(() => specFromForwardInput({ ...base, port: PANEL_PORT, portTo: 6000 })).toThrow('面板端口不允许配置转发')
+    expect(() => specFromForwardInput({ ...base, protocol: 'udp', port: 1000, portTo: PANEL_PORT })).toThrow('面板端口不允许配置转发')
+  })
+
+  it('不覆盖面板端口的端口段正常通过', () => {
+    expect(specFromForwardInput({ ...base, port: 5000, portTo: PANEL_PORT - 1 })).toMatchObject({ port: `5000:${PANEL_PORT - 1}` })
+    expect(specFromForwardInput({ ...base, port: PANEL_PORT + 1, portTo: 6000 })).toMatchObject({ port: `${PANEL_PORT + 1}:6000` })
+  })
+
   it('备注含换行或回车被拒绝，正常备注不受影响', () => {
     // 换行会把 before.rules 里的一行规则断成两行，iptables-restore 随之解析失败
     expect(() => specFromForwardInput({ ...base, note: '第一行\n第二行' })).toThrow('备注不能包含换行')
@@ -150,5 +175,22 @@ describe('forwardRowFromSpec', () => {
       '2026-09-19T08:00:00.000Z',
     )
     expect(row).toMatchObject({ port: 1000, portTo: 2000, targetHost: '10.0.0.5', targetPort: 80, updatedAt: '2026-09-19T08:00:00.000Z' })
+  })
+})
+
+describe('forwardPortsOverlap', () => {
+  const spec = (port: string): ForwardSpec => ({ protocol: 'tcp', port, targetHost: '10.0.0.5', targetPort: 80, note: null })
+
+  it('同协议下端口区间相交即冲突：单端口落入区间、区间交叠、端点重叠', () => {
+    expect(forwardPortsOverlap(spec('1000:2000'), spec('1500'))).toBe(true)
+    expect(forwardPortsOverlap(spec('1000:2000'), spec('2000:3000'))).toBe(true)
+    expect(forwardPortsOverlap(spec('1500'), spec('1000:2000'))).toBe(true)
+    expect(forwardPortsOverlap(spec('8080'), spec('8080'))).toBe(true)
+  })
+
+  it('区间不相交或协议不同都不冲突', () => {
+    expect(forwardPortsOverlap(spec('1000:2000'), spec('2001:3000'))).toBe(false)
+    expect(forwardPortsOverlap(spec('8080'), spec('9090'))).toBe(false)
+    expect(forwardPortsOverlap({ ...spec('8080'), protocol: 'udp' }, spec('8080'))).toBe(false)
   })
 })

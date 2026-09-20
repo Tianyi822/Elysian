@@ -11,6 +11,7 @@ import {
   setScanSection,
   validateUnblockIp,
 } from './scanRules'
+import { PANEL_PORT } from './panelPort'
 
 const BASE_RULES = `*filter
 :ufw-before-input - [0:0]
@@ -67,6 +68,17 @@ describe('setScanSection', () => {
   it('端口超过内核 multiport 上限时拒绝', () => {
     const ports = Array.from({ length: 16 }, (_, i) => 10000 + i)
     expect(() => setScanSection(BASE_RULES, true, { ...DEFAULT_SCAN_CONFIG, ports })).toThrow('最多 15 个端口')
+  })
+
+  it('监控端口包含面板端口时拒绝：DROP 挂在保底放行之前，会把面板客户端 IP 封进黑名单', () => {
+    expect(() => setScanSection(BASE_RULES, true, { ...DEFAULT_SCAN_CONFIG, ports: [22, PANEL_PORT] })).toThrow(
+      '面板端口不允许加入防扫描监控',
+    )
+    expect(() => setScanSection(BASE_RULES, true, { ...DEFAULT_SCAN_CONFIG, ports: [PANEL_PORT] })).toThrow(
+      '面板端口不允许加入防扫描监控',
+    )
+    // 不含面板端口的配置不受影响
+    expect(() => setScanSection(BASE_RULES, true, { ...DEFAULT_SCAN_CONFIG, ports: [22, 23] })).not.toThrow()
   })
 
   it('恰好 15 个端口可正常生成规则段', () => {

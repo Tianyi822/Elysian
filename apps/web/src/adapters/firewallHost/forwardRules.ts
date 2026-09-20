@@ -1,6 +1,8 @@
 import type { FirewallForwardInput, FirewallForwardRule } from '@elysian/contracts'
+import { invalidRequest } from '../endpointGuard/guard'
 import { assertNoteSafe } from './noteValidation'
 import { isValidFirewallAddress } from './parseUfw'
+import { PANEL_PORT, coversPanelPort } from './panelPort'
 
 /*
  * 端口转发：ufw 官方支持的姿势是在 /etc/ufw/before.rules 顶部维护 *nat 表的 PREROUTING DNAT 规则。
@@ -245,27 +247,36 @@ export function parseOurNatRuleNumbers(listing: string): readonly number[] {
   return numbers.sort((a, b) => a - b)
 }
 
-/** 校验转发输入并映射为规范；不合法抛中文错误。 */
+/**
+ * 校验转发输入并映射为规范；不合法抛中文错误。
+ * 这些失败都源于请求体本身（端口、协议、目标地址、策略禁区），因此抛 invalidRequest：
+ * 端点按 400 返回，「我发的东西不对」不会被呈现成服务端故障。
+ */
 export function specFromForwardInput(input: FirewallForwardInput): ForwardSpec {
   if (!Number.isInteger(input.port) || input.port < 1 || input.port > 65535) {
-    throw new Error(`外部端口无效：${input.port}（应为 1–65535 的整数）`)
+    throw invalidRequest(`外部端口无效：${input.port}（应为 1–65535 的整数）`)
   }
   if (input.portTo !== undefined) {
     if (!Number.isInteger(input.portTo) || input.portTo < 1 || input.portTo > 65535) {
-      throw new Error(`外部端口段结束无效：${input.portTo}（应为 1–65535 的整数）`)
+      throw invalidRequest(`外部端口段结束无效：${input.portTo}（应为 1–65535 的整数）`)
     }
     if (input.portTo < input.port) {
-      throw new Error(`端口段无效：结束端口 ${input.portTo} 小于起始端口 ${input.port}`)
+      throw invalidRequest(`端口段无效：结束端口 ${input.portTo} 小于起始端口 ${input.port}`)
     }
   }
   if (input.protocol !== 'tcp' && input.protocol !== 'udp') {
-    throw new Error(`协议无效：${String(input.protocol)}`)
+    throw invalidRequest(`协议无效：${String(input.protocol)}`)
   }
-  if (!isValidFirewallAddress(input.targetHost) || input.targetHost.includes(':')) {
-    throw new Error(`目标地址无效：${input.targetHost}（应为合法 IPv4 地址）`)
+  // DNAT 劫走面板端口的入站流量会绕过保底放行，把工作台自己锁在外面。
+  if (coversPanelPort(input.port, input.portTo)) {
+    throw invalidRequest(`面板端口不允许配置转发：外部端口段覆盖 ${PANEL_PORT}（工作台自身的访问通道）`)
+  }
+  // --to-destination 只接受单个 IPv4 地址：带 / 的网段会写出 iptables-restore 装载失败的坏规则。
+  if (!isValidFirewallAddress(input.targetHost) || input.targetHost.includes(':') || input.targetHost.includes('/')) {
+    throw invalidRequest(`目标地址无效：${input.targetHost}（应为单个 IPv4 地址，不含网段）`)
   }
   if (!Number.isInteger(input.targetPort) || input.targetPort < 1 || input.targetPort > 65535) {
-    throw new Error(`目标端口无效：${input.targetPort}（应为 1–65535 的整数）`)
+    throw invalidRequest(`目标端口无效：${input.targetPort}（应为 1–65535 的整数）`)
   }
   // 备注以双引号包进规则文本：换行/回车/控制字符与双引号都会写坏 before.rules
   assertNoteSafe(input.note, 'forward')
@@ -276,6 +287,21 @@ export function specFromForwardInput(input: FirewallForwardInput): ForwardSpec {
     targetPort: input.targetPort,
     note: input.note?.trim() || null,
   }
+}
+
+/** 转发的外部端口区间（含端点）；单端口即起点到自身。 */
+export function forwardPortRangeOf(spec: ForwardSpec): { start: number; end: number } {
+  const start = Number.parseInt(spec.port.split(':')[0] ?? '0', 10)
+  const endText = spec.port.split(':')[1]
+  return { start, end: endText === undefined ? start : Number.parseInt(endText, 10) }
+}
+
+/** 同协议下两条转发的外部端口区间是否重叠（含端点重叠）。 */
+export function forwardPortsOverlap(a: ForwardSpec, b: ForwardSpec): boolean {
+  if (a.protocol !== b.protocol) return false
+  const x = forwardPortRangeOf(a)
+  const y = forwardPortRangeOf(b)
+  return x.start <= y.end && y.start <= x.end
 }
 
 /** 转发规范展开为界面行。 */

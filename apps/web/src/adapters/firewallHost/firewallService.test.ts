@@ -1,19 +1,31 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_SCAN_CONFIG } from '@elysian/contracts'
 import {
+  FIREWALL_LIMITS,
   PANEL_PORT,
+  backupPathOf,
   createFirewallService,
   restoreIfNeeded,
   type FirewallHostDeps,
 } from './firewallService'
+import { InvalidRequestError } from '../endpointGuard/guard'
 import { canonicalId, ipCanonicalId } from './parseUfw'
-import { SCAN_BANNED6_RECENT_PATH, SCAN_BANNED_RECENT_PATH, SCAN_TABLES, parseScanSection } from './scanRules'
-import { IP_FORWARD_PATH, forwardCommentOf, noteFromForwardComment, parseForwardSection } from './forwardRules'
+import { parsePingBlocked } from './pingRules'
+import { SCAN_BANNED6_RECENT_PATH, SCAN_BANNED_RECENT_PATH, SCAN_TABLES, parseScanSection, setScanSection } from './scanRules'
+import { IP_FORWARD_PATH, forwardCommentOf, noteFromForwardComment, parseForwardSection, setForwardSection } from './forwardRules'
 
 /*
  * 用 fake 依赖模拟容器内 ufw/iptables 的行为：命令只记录进调用账本并按规则变化内部状态，
  * 编排逻辑（保底规则、先建后删、禁 ping、防扫描、转发段、时间账本）据此断言。
  */
+
+/** 取异步失败的抛出值：断言错误的类型与状态码（请求被拒 4xx / 系统失败 500）。 */
+function caught(run: Promise<unknown>): Promise<unknown> {
+  return run.then(
+    () => null,
+    (error: unknown) => error,
+  )
+}
 
 function createFakeDeps(seed: {
   active?: boolean
@@ -68,6 +80,8 @@ function createFakeDeps(seed: {
     return `${state} 0 0 *:${port} *:*`.replace(state, `${proto} ${state}`)
   }).join('\n') + '\n'
   const fileWrites: Array<{ path: string; content: string }> = []
+  /** 规则文件之外的落盘内容（备份文件等），按路径记录。 */
+  const extraFiles = new Map<string, string>()
 
   const iptablesList = (counter: number, names: string[]) => [
     `Chain ufw-before-input (1 references)`,
@@ -196,10 +210,13 @@ function createFakeDeps(seed: {
           return ''
         }
       }
+      // 与真实内核一致：ufw 停用时 ufw-* 链不存在，查询 filter 链报错（nat 表内建链始终存在）。
+      if (!active) throw new Error('iptables: No chain/target/match by that name.')
       return iptablesList(dropCounterV4, [SCAN_TABLES.v4.banned, SCAN_TABLES.v4.track])
     },
     async runIp6tables(args) {
       ufwCalls.push([`ip6tables:${args.join(' ')}`])
+      if (!active) throw new Error('ip6tables: No chain/target/match by that name.')
       return iptablesList(dropCounterV6, [
         SCAN_TABLES.v6.banned,
         SCAN_TABLES.v6.track,
@@ -222,6 +239,7 @@ function createFakeDeps(seed: {
         return recentListV6
       }
       if (path === IP_FORWARD_PATH) return ipForward
+      if (extraFiles.has(path)) return extraFiles.get(path)!
       throw new Error(`fake 未实现的读取：${path}`)
     },
     async writeText(path, content) {
@@ -250,10 +268,12 @@ function createFakeDeps(seed: {
           .filter((line) => line && !line.startsWith(`src=${target} `))
           .join('\n')
       }
+      extraFiles.set(path, content)
     },
     async exists(path) {
       if (path === SCAN_BANNED_RECENT_PATH) return recentExistsV4
       if (path === SCAN_BANNED6_RECENT_PATH) return recentExistsV6
+      if (extraFiles.has(path)) return true
       return true
     },
     nowIso: () => '2026-09-19T08:00:00.000Z',
@@ -275,6 +295,10 @@ function createFakeDeps(seed: {
     getBeforeRulesV6: () => beforeRulesV6,
     getForward: () => ipForward,
     getNatRules: () => natRules.map((rule) => ({ ...rule })),
+    getFile: (path: string) => extraFiles.get(path),
+    setFile: (path: string, content: string) => {
+      extraFiles.set(path, content)
+    },
     setRecent: (value: string, family: 'v4' | 'v6' = 'v4') => {
       if (family === 'v4') {
         recentListV4 = value
@@ -382,6 +406,35 @@ describe('createFirewallService create', () => {
     await service.create({ ...ALLOW_INPUT, port: 1000, portTo: 2000, direction: 'outbound', policy: 'limit' })
     expect(fake.ufwCalls[2]).toEqual(['limit', 'out', '1000:2000/tcp', 'comment', 'Web'])
   })
+
+  it('端口规则累计上限 200 条：超限拒绝且不执行写命令', async () => {
+    const rules = Array.from({ length: FIREWALL_LIMITS.userRules }, (_, i) => `allow ${20000 + i}/tcp`)
+    const fake = createFakeDeps({ rules })
+    const service = createFirewallService(fake.deps)
+
+    await expect(service.create(ALLOW_INPUT)).rejects.toThrow(`端口规则已达上限（最多 ${FIREWALL_LIMITS.userRules} 条）`)
+    expect(fake.ufwCalls.filter((args) => ['allow', 'deny', 'limit', 'delete'].includes(args[0] ?? ''))).toHaveLength(0)
+  })
+
+  it('导入按去重后的真实新增数预估总量：将超上限整批拒绝，恰好在上限内可导入', async () => {
+    const full = Array.from({ length: FIREWALL_LIMITS.userRules }, (_, i) => `allow ${20000 + i}/tcp`)
+    const fake = createFakeDeps({ rules: full })
+    const service = createFirewallService(fake.deps)
+
+    // 两条输入批内去重后只新增 1 条：200 + 1 超限，整批拒绝
+    await expect(
+      service.importRules([{ ...ALLOW_INPUT, port: 3306, note: null }, { ...ALLOW_INPUT, port: 3306 }]),
+    ).rejects.toThrow(`端口规则数将超出上限（最多 ${FIREWALL_LIMITS.userRules} 条）`)
+    expect(fake.ufwCalls.filter((args) => ['allow', 'deny', 'limit', 'delete'].includes(args[0] ?? ''))).toHaveLength(0)
+
+    // 199 + 1 恰好到上限：允许导入
+    const nearlyFull = Array.from({ length: FIREWALL_LIMITS.userRules - 1 }, (_, i) => `allow ${20000 + i}/tcp`)
+    const fake2 = createFakeDeps({ rules: nearlyFull })
+    const service2 = createFirewallService(fake2.deps)
+    const result = await service2.importRules([{ ...ALLOW_INPUT, port: 3306, note: 'MySQL' }])
+    expect(result.added).toHaveLength(1)
+    expect(result.skipped).toBe(0)
+  })
 })
 
 describe('createFirewallService remove', () => {
@@ -465,6 +518,51 @@ describe('createFirewallService importRules', () => {
     expect(result.added[0]).toMatchObject({ port: 3306, note: 'MySQL' })
     expect(result.skipped).toBe(2)
   })
+
+  it('整批先校验：任何一条非法则整批拒绝并报出第几条，合法条目也不执行', async () => {
+    const fake = createFakeDeps()
+    const service = createFirewallService(fake.deps)
+
+    await expect(
+      service.importRules([
+        ALLOW_INPUT,
+        { ...ALLOW_INPUT, port: 0 },
+        { ...ALLOW_INPUT, port: 9090, note: null },
+      ]),
+    ).rejects.toThrow('第 2 条规则无效')
+    expect(fake.ufwCalls.filter((args) => ['allow', 'deny', 'limit', 'delete'].includes(args[0] ?? ''))).toHaveLength(0)
+  })
+
+  it('执行阶段中途失败：报出第几条与已写入条数，界面据此同步真实状态', async () => {
+    const fake = createFakeDeps()
+    const originalRunUfw = fake.deps.runUfw
+    let writes = 0
+    fake.deps.runUfw = async (args) => {
+      if (['allow', 'deny', 'limit'].includes(args[0] ?? '')) {
+        writes += 1
+        if (writes === 2) throw new Error('ERROR: 规则写入失败')
+      }
+      return originalRunUfw(args)
+    }
+    const service = createFirewallService(fake.deps)
+
+    const error = await service
+      .importRules([
+        { ...ALLOW_INPUT, port: 8080 },
+        { ...ALLOW_INPUT, port: 9090, note: null },
+        { ...ALLOW_INPUT, port: 9091, note: null },
+      ])
+      .then(
+        () => null,
+        (caught: unknown) => caught,
+      )
+    expect(error).toBeInstanceOf(Error)
+    const message = (error as Error).message
+    expect(message).toContain('第 2 条规则写入失败')
+    expect(message).toContain('此前 1 条已写入防火墙')
+    // 消息里的条数与防火墙里的真实状态一致：第 1 条确实已写入，重新同步即可看到
+    expect(fake.getAdded()).toEqual([`allow 8080/tcp comment 'Web'`])
+  })
 })
 
 describe('createFirewallService IP 规则', () => {
@@ -484,6 +582,17 @@ describe('createFirewallService IP 规则', () => {
     await expect(service.createIpRule({ policy: 'deny', source: '203.0.113.9', note: null })).rejects.toThrow('IP 规则已存在')
     const v6 = await service.createIpRule({ policy: 'allow', source: 'fd00::/8', note: null })
     expect(v6.family).toBe('ipv6')
+  })
+
+  it('IP 规则累计上限 200 条：超限拒绝且不执行写命令', async () => {
+    const rules = Array.from({ length: FIREWALL_LIMITS.ipRules }, (_, i) => `deny from 198.18.0.${i}`)
+    const fake = createFakeDeps({ rules })
+    const service = createFirewallService(fake.deps)
+
+    await expect(service.createIpRule({ policy: 'deny', source: '203.0.113.9', note: null })).rejects.toThrow(
+      `IP 规则已达上限（最多 ${FIREWALL_LIMITS.ipRules} 条）`,
+    )
+    expect(fake.ufwCalls.filter((args) => ['allow', 'deny', 'limit', 'delete'].includes(args[0] ?? ''))).toHaveLength(0)
   })
 
   it('修改与删除按指纹操作', async () => {
@@ -543,7 +652,7 @@ describe('createFirewallService 端口转发', () => {
     ])
   })
 
-  it('外部端口冲突报中文错误；目标地址非法报中文错误', async () => {
+  it('外部端口冲突报中文错误；目标地址非法按请求被拒（400）报中文错误', async () => {
     const fake = createFakeDeps()
     const service = createFirewallService(fake.deps)
     await service.createForward({ protocol: 'tcp', port: 8080, targetHost: '10.0.0.5', targetPort: 80, note: null })
@@ -554,6 +663,86 @@ describe('createFirewallService 端口转发', () => {
     await expect(
       service.createForward({ protocol: 'tcp', port: 9090, targetHost: 'fd00::1', targetPort: 80, note: null }),
     ).rejects.toThrow('目标地址无效')
+
+    // 目标是 CIDR 网段同样拒绝：会写出 iptables-restore 装载失败的坏规则。
+    // 这是请求体本身的问题，端点据此返回 400（不是 500），也不动内核。
+    const natBefore = fake.getNatRules().length
+    const denied = await caught(
+      service.createForward({ protocol: 'tcp', port: 9090, targetHost: '10.0.0.0/24', targetPort: 80, note: null }),
+    )
+    expect(denied).toBeInstanceOf(InvalidRequestError)
+    expect((denied as InvalidRequestError).status).toBe(400)
+    expect((denied as Error).message).toBe('目标地址无效：10.0.0.0/24（应为单个 IPv4 地址，不含网段）')
+    expect(fake.getNatRules()).toHaveLength(natBefore)
+  })
+
+  it('冲突检测按端口区间重叠判断：区间存在时单端口与相交区间都判冲突', async () => {
+    const fake = createFakeDeps()
+    const service = createFirewallService(fake.deps)
+    await service.createForward({ protocol: 'tcp', port: 1000, portTo: 2000, targetHost: '10.0.0.5', targetPort: 80, note: null })
+
+    // 单端口落入既有区间：后建者会静默失效，判冲突
+    await expect(
+      service.createForward({ protocol: 'tcp', port: 1500, targetHost: '10.0.0.9', targetPort: 81, note: null }),
+    ).rejects.toThrow('端口转发已存在')
+    // 区间端点重叠
+    await expect(
+      service.createForward({ protocol: 'tcp', port: 2000, portTo: 3000, targetHost: '10.0.0.9', targetPort: 81, note: null }),
+    ).rejects.toThrow('端口转发已存在')
+    // 协议不同或区间不相交：允许
+    await service.createForward({ protocol: 'udp', port: 1500, targetHost: '10.0.0.9', targetPort: 81, note: null })
+    await service.createForward({ protocol: 'tcp', port: 2001, portTo: 3000, targetHost: '10.0.0.9', targetPort: 81, note: null })
+    expect(parseForwardSection(fake.getBeforeRules())).toHaveLength(3)
+  })
+
+  it('面板端口不允许配置转发：单端口与覆盖区间都在服务端被拒（400），不写文件不动内核', async () => {
+    const fake = createFakeDeps()
+    const service = createFirewallService(fake.deps)
+
+    const denied = await caught(
+      service.createForward({ protocol: 'tcp', port: PANEL_PORT, targetHost: '10.0.0.5', targetPort: 8080, note: null }),
+    )
+    expect(denied).toBeInstanceOf(InvalidRequestError)
+    expect((denied as InvalidRequestError).status).toBe(400)
+    expect((denied as Error).message).toBe(
+      `面板端口不允许配置转发：外部端口段覆盖 ${PANEL_PORT}（工作台自身的访问通道）`,
+    )
+
+    await expect(
+      service.createForward({ protocol: 'tcp', port: 1000, portTo: 6000, targetHost: '10.0.0.5', targetPort: 80, note: null }),
+    ).rejects.toThrow('面板端口不允许配置转发')
+    await expect(
+      service.createForward({ protocol: 'tcp', port: 1000, portTo: 6000, targetHost: '10.0.0.5', targetPort: 80, note: null }),
+    ).rejects.toThrow('面板端口不允许配置转发')
+    expect(fake.fileWrites.filter((write) => write.path === '/etc/ufw/before.rules')).toHaveLength(0)
+    expect(fake.getNatRules()).toHaveLength(0)
+  })
+
+  it('更新转发到覆盖面板端口的区间同样被拒', async () => {
+    const fake = createFakeDeps()
+    const service = createFirewallService(fake.deps)
+    const rule = await service.createForward({ protocol: 'tcp', port: 8080, targetHost: '10.0.0.5', targetPort: 80, note: null })
+
+    await expect(
+      service.updateForward(rule.id, { protocol: 'tcp', port: 5000, portTo: 6000, targetHost: '10.0.0.5', targetPort: 80, note: null }),
+    ).rejects.toThrow('面板端口不允许配置转发')
+  })
+
+  it('端口转发累计上限 32 条：超限拒绝且段与内核都不变', async () => {
+    const specs = Array.from({ length: FIREWALL_LIMITS.forwards }, (_, i) => ({
+      protocol: 'tcp' as const,
+      port: String(20000 + i),
+      targetHost: '10.0.0.5',
+      targetPort: 80,
+      note: null,
+    }))
+    const fake = createFakeDeps({ beforeRules: setForwardSection(createFakeDeps().getBeforeRules(), specs) })
+    const service = createFirewallService(fake.deps)
+
+    await expect(
+      service.createForward({ protocol: 'tcp', port: 30000, targetHost: '10.0.0.5', targetPort: 80, note: null }),
+    ).rejects.toThrow(`端口转发已达上限（最多 ${FIREWALL_LIMITS.forwards} 条）`)
+    expect(parseForwardSection(fake.getBeforeRules())).toHaveLength(FIREWALL_LIMITS.forwards)
   })
 
   it('删除最后一条转发时清空段与内核规则', async () => {
@@ -598,7 +787,7 @@ describe('createFirewallService 端口转发', () => {
     expect(fake.isActive()).toBe(true)
   })
 
-  it('enable 后防火墙未激活时报中文错误（规则文件损坏会让 ufw 停在停用态）', async () => {
+  it('enable 后防火墙未激活时报中文错误并说明现状与恢复方式（备份恢复重试仍失败）', async () => {
     const fake = createFakeDeps({ active: true })
     const deps = { ...fake.deps }
     const original = deps.runUfw
@@ -611,7 +800,15 @@ describe('createFirewallService 端口转发', () => {
     }
     const service = createFirewallService(deps)
 
-    await expect(service.setScanProtection(true)).rejects.toThrow('规则重载后防火墙未处于激活状态')
+    const error = await service.setScanProtection(true).then(
+      () => null,
+      (caught: unknown) => caught,
+    )
+    expect(error).toBeInstanceOf(Error)
+    const message = (error as Error).message
+    expect(message).toContain('规则重载后防火墙未处于激活状态')
+    expect(message).toContain('备份')
+    expect(message).toContain('ufw enable')
   })
 })
 
@@ -740,13 +937,147 @@ describe('createFirewallService 防扫描', () => {
     expect(written?.content).toContain('--seconds 1800')
   })
 
-  it('配置越界与未开启时保存都报中文错误', async () => {
+  it('配置越界按请求被拒（400），未开启保存按前置状态不满足（409），中文错误各自明确', async () => {
     const fake = createFakeDeps({ active: true })
     const service = createFirewallService(fake.deps)
 
-    await expect(service.setScanConfig({ ...DEFAULT_SCAN_CONFIG })).rejects.toThrow('防扫描未启用')
+    // 未开启：配置本身没被质疑，只是开关没开 → 409，界面据此提示先开开关而不是「请求写错了」
+    const disabled = await caught(service.setScanConfig({ ...DEFAULT_SCAN_CONFIG }))
+    expect(disabled).toBeInstanceOf(InvalidRequestError)
+    expect((disabled as InvalidRequestError).status).toBe(409)
+    expect((disabled as Error).message).toBe('防扫描未启用：先开启开关再调整配置')
+
     await service.setScanProtection(true)
-    await expect(service.setScanConfig({ ...DEFAULT_SCAN_CONFIG, hitCount: 1 })).rejects.toThrow('阈值无效')
+    const invalid = await caught(service.setScanConfig({ ...DEFAULT_SCAN_CONFIG, hitCount: 1 }))
+    expect(invalid).toBeInstanceOf(InvalidRequestError)
+    expect((invalid as InvalidRequestError).status).toBe(400)
+    expect((invalid as Error).message).toContain('阈值无效')
+  })
+
+  it('监控端口包含面板端口时保存被拒绝（400）：DROP 先于保底放行，会封掉面板客户端且解封端点不可达', async () => {
+    const fake = createFakeDeps({ active: true })
+    const service = createFirewallService(fake.deps)
+    await service.setScanProtection(true)
+
+    const denied = await caught(service.setScanConfig({ ...DEFAULT_SCAN_CONFIG, ports: [22, PANEL_PORT] }))
+    expect(denied).toBeInstanceOf(InvalidRequestError)
+    expect((denied as InvalidRequestError).status).toBe(400)
+    expect((denied as Error).message).toBe(
+      `面板端口不允许加入防扫描监控：${PANEL_PORT} 是工作台自身的访问通道`,
+    )
+    // 配置未被写入：段里的端口仍是默认值
+    expect(parseScanSection(fake.getBeforeRules()).config.ports).toEqual([...DEFAULT_SCAN_CONFIG.ports])
+  })
+
+  it('停用态提交含面板端口的配置：先按请求体拒绝（400），不是「未启用」的 409', async () => {
+    const fake = createFakeDeps({ active: false })
+    const service = createFirewallService(fake.deps)
+
+    // 校验是纯函数、先于开关状态：面板端口这条保底判据在停用态同样拦得住
+    const denied = await caught(service.setScanConfig({ ...DEFAULT_SCAN_CONFIG, ports: [22, PANEL_PORT] }))
+    expect(denied).toBeInstanceOf(InvalidRequestError)
+    expect((denied as InvalidRequestError).status).toBe(400)
+    expect((denied as Error).message).toContain('面板端口不允许加入防扫描监控')
+    // 拒绝不落盘：文件里没有扫描段
+    expect(parseScanSection(fake.getBeforeRules()).enabled).toBe(false)
+  })
+
+  it('停用态读防扫描不查 iptables：规则段在文件里也只回报配置与空统计，读路径不 500', async () => {
+    // fake 的 iptables 在停用态模拟 ufw 链不存在（对齐真实内核）：一旦被查询就抛错
+    const scanEnabledBefore = setScanSection(createFakeDeps().getBeforeRules(), true)
+    const fake = createFakeDeps({ active: false, beforeRules: scanEnabledBefore })
+    const service = createFirewallService(fake.deps)
+
+    const scan = await service.scanProtection()
+    expect(scan.enabled).toBe(true)
+    expect(scan.stats).toEqual({ totalBlockedIps: 0, totalFailedConnections: 0, currentBlockedIps: 0, currentFailedConnections: 0 })
+    expect(scan.blocked).toEqual([])
+    expect(fake.ufwCalls.some((args) => args[0]?.startsWith('iptables:') || args[0]?.startsWith('ip6tables:'))).toBe(false)
+  })
+
+  it('停用态开启防扫描仍写文件、不 reload，读取回报空统计（防火墙启用后生效）', async () => {
+    const fake = createFakeDeps({ active: false })
+    const service = createFirewallService(fake.deps)
+
+    const scan = await service.setScanProtection(true)
+    expect(parseScanSection(fake.getBeforeRules()).enabled).toBe(true)
+    expect(fake.ufwCalls.some((args) => args[0] === '--force' && args[1] === 'enable')).toBe(false)
+    expect(scan.enabled).toBe(true)
+    expect(scan.stats.currentBlockedIps).toBe(0)
+    expect(scan.stats.currentFailedConnections).toBe(0)
+  })
+
+  it('写规则文件前先把当前内容备份到 .elysian 后缀文件', async () => {
+    const fake = createFakeDeps({ active: false })
+    const service = createFirewallService(fake.deps)
+    const originalV4 = fake.getBeforeRules()
+    const originalV6 = fake.getBeforeRulesV6()
+
+    await service.setScanProtection(true)
+    expect(fake.getFile(backupPathOf('/etc/ufw/before.rules'))).toBe(originalV4)
+    expect(fake.getFile(backupPathOf('/etc/ufw/before6.rules'))).toBe(originalV6)
+    const backupWrite = fake.fileWrites.find((write) => write.path === backupPathOf('/etc/ufw/before.rules'))
+    expect(backupWrite?.content).toBe(originalV4)
+  })
+
+  it('enable 拉不起防火墙时先用备份恢复规则文件再重试：恢复成功按失败报出，本次变更已回滚', async () => {
+    const fake = createFakeDeps({ active: true })
+    const originalRunUfw = fake.deps.runUfw
+    fake.deps.runUfw = async (args) => {
+      if (args[0] === '--force' && args[1] === 'enable' && fake.getBeforeRules().includes(SCAN_TABLES.v4.track)) {
+        // 模拟坏规则文件：enable 没有把防火墙拉起来；恢复到备份（无扫描段）后可正常拉起
+        return ''
+      }
+      return originalRunUfw(args)
+    }
+    const service = createFirewallService(fake.deps)
+
+    const error = await service.setScanProtection(true).then(
+      () => null,
+      (caught: unknown) => caught,
+    )
+    // 恢复成功不等于本次变更成功：防火墙此刻跑的是恢复后的旧规则，必须按失败报出。
+    expect(error).toBeInstanceOf(Error)
+    const message = (error as Error).message
+    expect(message).toContain('规则重载未生效')
+    expect(message).toContain('已被回滚')
+    expect(message).toContain('备份')
+
+    expect(fake.isActive()).toBe(true)
+    // 坏写入已回滚到备份内容：文件里的防扫描段被移除，读取如实回报停用
+    expect(parseScanSection(fake.getBeforeRules()).enabled).toBe(false)
+    expect((await service.scanProtection()).enabled).toBe(false)
+  })
+
+  it('禁 ping 变更遇上恢复回滚时同样按失败抛出，界面不会把旧规则说成已生效', async () => {
+    const fake = createFakeDeps({ active: true })
+    const originalRunUfw = fake.deps.runUfw
+    fake.deps.runUfw = async (args) => {
+      // 只在「已写入禁 ping 的新规则文件」上失败：恢复到备份（未禁 ping）后可拉起
+      if (args[0] === '--force' && args[1] === 'enable' && parsePingBlocked(fake.getBeforeRules())) {
+        return ''
+      }
+      return originalRunUfw(args)
+    }
+    const service = createFirewallService(fake.deps)
+    const before = fake.getBeforeRules()
+
+    const error = await service
+      .setToggles({
+        firewallEnabled: true,
+        pingBlocked: true,
+        defaultIncoming: 'deny',
+        defaultOutgoing: 'allow',
+      })
+      .then(
+        () => null,
+        (caught: unknown) => caught,
+      )
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).toContain('已被回滚')
+    // 文件回到备份内容：禁 ping 的改动没有留在生效规则里
+    expect(fake.getBeforeRules()).toBe(before)
+    expect((await service.toggles()).pingBlocked).toBe(false)
   })
 
   it('启用后从 v4/v6 recent 名单与 DROP 计数器汇总真实统计', async () => {
@@ -811,6 +1142,53 @@ describe('createFirewallService 防扫描', () => {
   })
 })
 
+describe('createFirewallService 规则文件串行队列', () => {
+  it('并发变更排队执行：防扫描开启与转发创建互不覆盖，两段都留在文件里', async () => {
+    const fake = createFakeDeps({ active: false })
+    const originalWriteText = fake.deps.writeText
+    fake.deps.writeText = async (path, content) => {
+      if (path === '/etc/ufw/before.rules') {
+        // 把落盘推迟一个宏任务放大交错窗口：没有互斥时，两个操作都在改动前的
+        // 原文上计算新内容，后落盘者会整段覆盖掉先落盘者的变更
+        await new Promise((resolve) => setTimeout(resolve, 1))
+      }
+      return originalWriteText(path, content)
+    }
+    const service = createFirewallService(fake.deps)
+
+    await Promise.all([
+      service.setScanProtection(true),
+      service.createForward({ protocol: 'tcp', port: 8080, targetHost: '10.0.0.5', targetPort: 80, note: null }),
+    ])
+
+    const text = fake.getBeforeRules()
+    expect(parseScanSection(text).enabled).toBe(true)
+    expect(parseForwardSection(text)).toHaveLength(1)
+  })
+
+  it('并发改禁 ping 与删除转发同样排队：双方变更都不丢失', async () => {
+    const fake = createFakeDeps({ active: true })
+    const originalWriteText = fake.deps.writeText
+    fake.deps.writeText = async (path, content) => {
+      if (path === '/etc/ufw/before.rules') {
+        await new Promise((resolve) => setTimeout(resolve, 1))
+      }
+      return originalWriteText(path, content)
+    }
+    const service = createFirewallService(fake.deps)
+    const rule = await service.createForward({ protocol: 'tcp', port: 8080, targetHost: '10.0.0.5', targetPort: 80, note: null })
+
+    await Promise.all([
+      service.setToggles({ firewallEnabled: true, pingBlocked: true, defaultIncoming: 'deny', defaultOutgoing: 'allow' }),
+      service.removeForward(rule.id),
+    ])
+
+    const text = fake.getBeforeRules()
+    expect(text).toContain('--icmp-type echo-request -j DROP')
+    expect(parseForwardSection(text)).toHaveLength(0)
+  })
+})
+
 describe('createFirewallService syncFromSystem', () => {
   it('返回端口/IP/转发三类规则行总数', async () => {
     const fake = createFakeDeps({ rules: ['allow 22/tcp', 'deny from 203.0.113.9'] })
@@ -844,5 +1222,27 @@ describe('restoreIfNeeded', () => {
     }
     await restoreIfNeeded(missingConf.deps)
     expect(missingConf.ufwCalls).toHaveLength(0)
+  })
+
+  it('启动装载失败时用备份恢复规则文件后再试一次', async () => {
+    const corrupted = ['# 损坏的规则文件', '*filter', '-A 坏行'].join('\n')
+    const clean = createFakeDeps().getBeforeRules()
+    const fake = createFakeDeps({ active: false, ufwConf: 'ENABLED=yes\n', beforeRules: corrupted })
+    fake.setFile(backupPathOf('/etc/ufw/before.rules'), clean)
+    let enableCalls = 0
+    const original = fake.deps.runUfw
+    fake.deps.runUfw = async (args) => {
+      if (args[0] === '--force' && args[1] === 'enable') {
+        enableCalls += 1
+        // 第一次 enable 因坏规则文件失败；恢复后第二次成功
+        if (enableCalls === 1) throw new Error('ERROR: problem running ufw init')
+      }
+      return original(args)
+    }
+
+    await restoreIfNeeded(fake.deps)
+    expect(enableCalls).toBe(2)
+    expect(fake.getBeforeRules()).toBe(clean)
+    expect(fake.isActive()).toBe(true)
   })
 })

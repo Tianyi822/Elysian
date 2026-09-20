@@ -1,5 +1,7 @@
 import { DEFAULT_SCAN_CONFIG, type FirewallScanConfig } from '@elysian/contracts'
+import { invalidRequest } from '../endpointGuard/guard'
 import { isValidFirewallAddress } from './parseUfw'
+import { PANEL_PORT } from './panelPort'
 
 /*
  * 端口防扫描的规则段与内核数据解析。机制是内核 xt_recent 的双名单 jail：
@@ -25,21 +27,31 @@ export const SCAN_TABLES = {
 export const SCAN_BANNED_RECENT_PATH = `/proc/net/xt_recent/${SCAN_TABLES.v4.banned}`
 export const SCAN_BANNED6_RECENT_PATH = `/proc/net/xt_recent/${SCAN_TABLES.v6.banned}`
 
-function validateConfig(config: FirewallScanConfig): FirewallScanConfig {
+/**
+ * 校验防扫描配置；不合法抛中文错误。这些都是请求体本身的问题，抛 invalidRequest 让端点按 400
+ * 返回。判据是纯函数、不依赖开关状态，因此调用方可以先校验请求再判前置状态：面板端口这条
+ * 保底判据在「防扫描未启用」时同样拦得住。
+ */
+export function validateScanConfig(config: FirewallScanConfig): FirewallScanConfig {
   if (config.ports.length === 0 || config.ports.some((port) => !Number.isInteger(port) || port < 1 || port > 65535)) {
-    throw new Error('监控端口无效：应为 1–65535 的端口列表')
+    throw invalidRequest('监控端口无效：应为 1–65535 的端口列表')
+  }
+  // DROP 规则挂在 ufw-before-input 链里，先于保底放行匹配：监控面板端口会把面板
+  // 客户端 IP 封进黑名单，且封禁后连解封端点本身都不可达。
+  if (config.ports.includes(PANEL_PORT)) {
+    throw invalidRequest(`面板端口不允许加入防扫描监控：${PANEL_PORT} 是工作台自身的访问通道`)
   }
   if (config.ports.length > 15) {
-    throw new Error(`监控端口过多：${config.ports.length} 个（最多 15 个端口，内核 multiport 匹配上限）`)
+    throw invalidRequest(`监控端口过多：${config.ports.length} 个（最多 15 个端口，内核 multiport 匹配上限）`)
   }
   if (!Number.isInteger(config.windowSeconds) || config.windowSeconds < 10 || config.windowSeconds > 3600) {
-    throw new Error(`判定窗口无效：${config.windowSeconds}（应为 10–3600 秒）`)
+    throw invalidRequest(`判定窗口无效：${config.windowSeconds}（应为 10–3600 秒）`)
   }
   if (!Number.isInteger(config.hitCount) || config.hitCount < 3 || config.hitCount > 1000) {
-    throw new Error(`阈值无效：${config.hitCount}（应为 3–1000 次）`)
+    throw invalidRequest(`阈值无效：${config.hitCount}（应为 3–1000 次）`)
   }
   if (!Number.isInteger(config.banSeconds) || config.banSeconds < 60 || config.banSeconds > 86400) {
-    throw new Error(`封禁时长无效：${config.banSeconds}（应为 60–86400 秒）`)
+    throw invalidRequest(`封禁时长无效：${config.banSeconds}（应为 60–86400 秒）`)
   }
   return { ...config, ports: [...config.ports].sort((a, b) => a - b) }
 }
@@ -56,7 +68,7 @@ function sectionLines(config: FirewallScanConfig, family: 'v4' | 'v6'): readonly
 
 /** 完整的规则段文本（含首尾标记注释）。 */
 export function scanSectionLines(config: FirewallScanConfig = DEFAULT_SCAN_CONFIG): readonly string[] {
-  const valid = validateConfig(config)
+  const valid = validateScanConfig(config)
   return [SCAN_MARKER, ...sectionLines(valid, 'v4'), SCAN_MARKER]
 }
 
@@ -96,7 +108,7 @@ export function setScanSection(
   const withoutSection = removeScanSection(beforeRules)
   if (!enabled) return withoutSection
 
-  const valid = validateConfig(config)
+  const valid = validateScanConfig(config)
   const lines = withoutSection.split('\n')
   const commitIndex = findFilterCommitIndex(lines)
   if (commitIndex === -1) {

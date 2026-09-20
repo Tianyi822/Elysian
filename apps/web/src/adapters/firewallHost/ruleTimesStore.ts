@@ -1,6 +1,14 @@
 import { Database } from 'bun:sqlite'
 
-/** 生产 compose 挂载的防火墙规则时间账本（与 metrics.sqlite 同卷）。 */
+/*
+ * 生产 compose 挂载的防火墙规则时间账本（与 metrics.sqlite 同卷）。
+ *
+ * 账本语义：时间按规范指纹（canonical id）记录，而指纹只含「规则是什么」
+ * （动作/方向/协议/端口/来源），不含「何时创建」。面板外删除后重建同规格的
+ * 规则，指纹不变，读到的仍是旧时间；ufw 本身也不提供规则创建时刻的查询。
+ * 可靠区分外部重建需要轮询内核规则变更或对账快照 diff，属于新机制，本层不引入，
+ * 因此这份账本对「同指纹规则的重建」不提供时间可靠性保证。
+ */
 export const FIREWALL_SQLITE_PATH = '/var/lib/elysian/firewall.sqlite'
 
 const SCHEMA = `
