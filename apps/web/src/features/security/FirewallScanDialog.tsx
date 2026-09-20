@@ -12,6 +12,13 @@ import { FIREWALL_INPUT_CLASS } from './firewallFormParts'
 /** 弹窗打开期间的轮询节奏：新封锁的 IP 由此进入通知。 */
 const SCAN_POLL_MS = 5000
 
+/*
+ * 面板端口（与服务端 adapters/firewallHost/panelPort 的 PANEL_PORT 同值）：
+ * 把它加进监控会把正常访问面板的连接也计入封禁判据，人先被锁在外面。
+ * 客户端与服务端同规则拒绝，两侧文案一致。
+ */
+const PANEL_PORT = 5173
+
 /**
  * 端口防扫描弹窗：开关、可编辑配置（端口/窗口/阈值/封禁时长）、四项统计与当前封锁的 IP 列表。
  * Docker 运行时为真实实现（内核 xt_recent 双名单 jail + iptables 计数），
@@ -78,6 +85,10 @@ export function FirewallScanDialog() {
     const banSeconds = Number(draft.banSeconds)
     if (ports.length === 0 || ports.some((port) => port < 1 || port > 65535)) {
       setConfigError('监控端口需为逗号分隔的 1–65535 端口列表')
+      return
+    }
+    if (ports.includes(PANEL_PORT)) {
+      setConfigError('面板端口不允许加入防扫描监控')
       return
     }
     if (!Number.isInteger(windowSeconds) || windowSeconds < 10 || windowSeconds > 3600) {

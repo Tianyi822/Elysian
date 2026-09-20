@@ -23,7 +23,7 @@ import { FirewallIpRuleDialog } from './FirewallIpRuleDialog'
 import { FirewallRuleDialog } from './FirewallRuleDialog'
 import { FirewallRuleRemoveDialog } from './FirewallRuleRemoveDialog'
 import { FirewallScanDialog } from './FirewallScanDialog'
-import { parseFirewallRulesJson } from './firewallRuleIO'
+import { formatFirewallImportProblems, parseFirewallRulesJson } from './firewallRuleIO'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 
 /**
@@ -61,17 +61,23 @@ function StatChip({ label, count, pending = false }: { label: string; count: num
 function ToggleRow({
   label,
   checked,
+  disabled = false,
   onCheckedChange,
 }: {
   label: string
   checked: boolean
+  /** 切换进行中：开关禁用，点击不再落到 store 的忙碌分支上（那是无反馈的吞掉）。 */
+  disabled?: boolean
   onCheckedChange: (checked: boolean) => void
 }) {
   return (
-    <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-fg">
+    <label
+      className={`inline-flex items-center gap-2 text-sm text-fg ${disabled ? 'opacity-50' : 'cursor-pointer'}`}
+    >
       {label}
       <Switch.Root
         checked={checked}
+        disabled={disabled}
         onCheckedChange={onCheckedChange}
         aria-label={label}
         className="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border border-line bg-surface-raised transition-colors data-[state=checked]:border-accent data-[state=checked]:bg-accent"
@@ -169,6 +175,7 @@ export function FirewallPanel() {
   const scanDialogOpen = useFirewallStore((s) => s.scanDialogOpen)
   const exportDialogOpen = useFirewallStore((s) => s.exportDialogOpen)
   const syncing = useFirewallStore((s) => s.syncing)
+  const toggling = useFirewallStore((s) => s.toggling)
   const load = useFirewallStore((s) => s.load)
   const setView = useFirewallStore((s) => s.setView)
   const setSearch = useFirewallStore((s) => s.setSearch)
@@ -264,12 +271,14 @@ export function FirewallPanel() {
         <ToggleRow
           label="防火墙开关"
           checked={toggles.firewallEnabled}
+          disabled={toggling}
           onCheckedChange={(checked) => void toggle(gateway, { ...toggles, firewallEnabled: checked })}
         />
         <span aria-hidden className="hidden h-5 w-px bg-line sm:block" />
         <ToggleRow
           label="禁ping"
           checked={toggles.pingBlocked}
+          disabled={toggling}
           onCheckedChange={(checked) => void toggle(gateway, { ...toggles, pingBlocked: checked })}
         />
         <span aria-hidden className="hidden h-5 w-px bg-line sm:block" />
@@ -332,6 +341,23 @@ export function FirewallPanel() {
                         tone: 'danger',
                         message: '导入失败：不是有效的规则 JSON',
                       })
+                      return
+                    }
+                    // 被拒条目逐条标出（第几条、为什么），不静默丢弃；合法条目照常导入。
+                    if (parsed.invalid > 0) {
+                      useNotificationStore.getState().notify({
+                        tone: 'danger',
+                        message: `导入：${parsed.invalid} 条被拒（${formatFirewallImportProblems(parsed.problems)}）`,
+                      })
+                    }
+                    if (parsed.rules.length === 0) {
+                      // 一条合法条目都没有时不发导入请求，避免「导入完成：没有新增」把被拒说成没事发生。
+                      if (parsed.invalid === 0) {
+                        useNotificationStore.getState().notify({
+                          tone: 'info',
+                          message: '导入：文件里没有规则条目',
+                        })
+                      }
                       return
                     }
                     await importRules(gateway, parsed.rules)

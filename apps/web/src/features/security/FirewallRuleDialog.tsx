@@ -19,6 +19,7 @@ import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { X } from '../../components/icons'
 import { useFirewallStore } from '../../stores/firewallStore'
 import { FIREWALL_INPUT_CLASS, SegmentedControl, parsePortInput } from './firewallFormParts'
+import { firewallRuleNoteProblem } from './firewallRuleIO'
 
 /**
  * 添加/修改端口规则弹窗：协议、地址族、策略、方向用分段按钮，端口（单值或冒号段）、来源、备注用输入框。
@@ -61,6 +62,8 @@ export function FirewallRuleDialog() {
 
   if (dialogRule === undefined) return null
   const isNew = dialogRule === 'new'
+  // 备注错误随输入即时推导（判据与服务端 ufw 场景一致），提交前用它把保存拦下。
+  const noteError = firewallRuleNoteProblem(draft.note)
 
   const submit = () => {
     const parsed = parsePortInput(draft.port)
@@ -69,6 +72,8 @@ export function FirewallRuleDialog() {
       return
     }
     setPortError(undefined)
+    // 备注禁区前置拦截：提示已在输入框下常显，这里只挡保存，不发请求。
+    if (noteError) return
     void saveRule(gateway, {
       protocol: draft.protocol,
       port: parsed.port,
@@ -196,8 +201,10 @@ export function FirewallRuleDialog() {
                 value={draft.note}
                 onChange={(event) => setDraft((current) => ({ ...current, note: event.target.value }))}
                 placeholder="选填"
+                aria-invalid={noteError ? true : undefined}
                 className={FIREWALL_INPUT_CLASS}
               />
+              {noteError ? <p className="mt-1 text-xs text-danger">{noteError}</p> : null}
             </div>
           </div>
 

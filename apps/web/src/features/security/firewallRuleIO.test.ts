@@ -4,6 +4,7 @@ import {
   buildExportFilename,
   buildExportPayload,
   filterRulesByDirection,
+  formatFirewallImportProblems,
   parseFirewallRulesJson,
 } from './firewallRuleIO'
 
@@ -48,6 +49,65 @@ describe('防火墙规则导入解析', () => {
       source: '所有IP',
       note: null,
     })
+  })
+
+  it('备注含单引号或控制字符的条目整批先拒收，逐条标出原因，合法条目照常进导入集', () => {
+    const result = parseFirewallRulesJson(
+      JSON.stringify([
+        { protocol: 'tcp', port: 8443, family: 'ipv4', policy: 'allow', note: '演示入口' },
+        { protocol: 'tcp', port: 8444, family: 'ipv4', policy: 'allow', note: "演示'入口" },
+        { protocol: 'tcp', port: 8445, family: 'ipv4', policy: 'allow', note: '演示\n入口' },
+        { protocol: 'tcp', port: 8446, family: 'ipv4', policy: 'allow', note: '演示\u0007入口' },
+      ]),
+    )!
+    // 判据与服务端 ufw 场景一致：这些条目不再放行到服务端循环里抛错
+    expect(result.rules).toHaveLength(1)
+    expect(result.rules[0]).toMatchObject({ port: 8443, note: '演示入口' })
+    expect(result.invalid).toBe(3)
+    // 逐条标出：序号是条目在文件里的位置（从 1 计），原因与服务端同一句中文错误
+    expect(result.problems).toEqual([
+      { index: 2, reason: '备注不能包含单引号' },
+      { index: 3, reason: '备注不能包含换行或控制字符' },
+      { index: 4, reason: '备注不能包含换行或控制字符' },
+    ])
+  })
+
+  it('结构不合法的条目同样逐条标出，不拖垮整批', () => {
+    const result = parseFirewallRulesJson(
+      JSON.stringify([
+        '不是对象',
+        { protocol: 'tcp', port: 70000, family: 'ipv4', policy: 'allow' },
+        { protocol: 'tcp', port: 8443, family: 'ipv4', policy: 'allow' },
+      ]),
+    )!
+    expect(result.rules).toHaveLength(1)
+    expect(result.invalid).toBe(2)
+    expect(result.problems).toEqual([
+      { index: 1, reason: '条目不是 JSON 对象' },
+      { index: 2, reason: '协议、端口、地址族、策略或方向不合法' },
+    ])
+  })
+
+  it('备注为空或不填仍放行（空备注归一为 null）', () => {
+    const result = parseFirewallRulesJson(
+      JSON.stringify([
+        { protocol: 'tcp', port: 8443, family: 'ipv4', policy: 'allow' },
+        { protocol: 'tcp', port: 8444, family: 'ipv4', policy: 'allow', note: '   ' },
+      ]),
+    )!
+    expect(result.rules).toHaveLength(2)
+    expect(result.rules.map((rule) => rule.note)).toEqual([null, null])
+    expect(result.problems).toEqual([])
+  })
+
+  it('被拒条目拼成界面原样呈现的清单：逐条给出序号与原因', () => {
+    expect(
+      formatFirewallImportProblems([
+        { index: 2, reason: '备注不能包含单引号' },
+        { index: 5, reason: '协议、端口、地址族、策略或方向不合法' },
+      ]),
+    ).toBe('第 2 条：备注不能包含单引号；第 5 条：协议、端口、地址族、策略或方向不合法')
+    expect(formatFirewallImportProblems([])).toBe('')
   })
 
   it('不是 JSON 或结构不对返回 null，交给界面报错', () => {

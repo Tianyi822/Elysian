@@ -22,6 +22,21 @@ function methodIncludesPassword(method: HostUserLoginMethod): boolean {
   return method === 'password' || method === 'password-or-key'
 }
 
+/*
+ * 备注禁区与服务端（adapters/usersHost/usersService 的 assertNoteSafe）同一判据、同一句中文错误：
+ * 逗号是 GECOS 的字段分隔符，控制字符写不进 usermod 的参数。输入时就地提示，
+ * 不等提交后才被服务端拒绝；系统侧遗留的含逗号备注也因此打开即可见、就地修好再保存。
+ */
+const UNSAFE_NOTE_CHARS = /[\u0000-\u001f\u007f\u2028\u2029]/
+
+/** 账号备注不合法时返回与服务端一致的中文错误，合法返回 undefined。 */
+function noteProblem(note: string): string | undefined {
+  if (!note) return undefined
+  if (UNSAFE_NOTE_CHARS.test(note)) return '备注不能包含换行或控制字符'
+  if (note.includes(',')) return '备注不能包含逗号（GECOS 里逗号用于分字段）'
+  return undefined
+}
+
 /**
  * 新建 / 修改主机账号的弹窗。
  * 用户名只在新建时可填——Linux 里改名等于新建再迁移，首版不做；主组跟随用户名，与系统默认行为一致。
@@ -54,6 +69,8 @@ export function HostUserDialog() {
   const userName = editing ? editing.name : name.trim()
   const passwordUsable = methodIncludesPassword(loginMethod)
   const passwordStrength = password ? evaluateSshPasswordStrength(password) : undefined
+  // 备注错误随输入即时推导（打开弹窗带入的历史坏值同样立即可见），提交前用它把保存拦下。
+  const noteError = noteProblem(note)
   // 底部说明按运行时如实：演示态声明只改演示数据集；真实态说明动作落在容器内的系统账号上。
   const footerNote = !isDockerRuntime()
     ? '只改演示数据集。'
@@ -81,6 +98,8 @@ export function HostUserDialog() {
       return
     }
     setPasswordError(undefined)
+    // 备注禁区前置拦截：提示已在输入框下常显，这里只挡保存，不发请求。
+    if (noteError) return
     void saveUser(gateway, {
       loginMethod,
       status,
@@ -266,8 +285,10 @@ export function HostUserDialog() {
                 value={note}
                 onChange={(event) => setNote(event.target.value)}
                 placeholder="选填，说明这个账号的用途"
+                aria-invalid={noteError ? true : undefined}
                 className={`${INPUT_CLASS} w-full`}
               />
+              {noteError ? <p className="mt-1 text-xs text-danger">{noteError}</p> : null}
             </div>
           </div>
 

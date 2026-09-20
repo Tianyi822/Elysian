@@ -78,6 +78,7 @@ beforeEach(() => {
     exportDialogOpen: false,
     syncing: false,
     saving: false,
+    toggling: false,
     removingRuleIds: [],
   })
 })
@@ -127,6 +128,38 @@ describe('防火墙面板', () => {
     const notifications = await screen.findByLabelText('通知')
     expect(within(notifications).getByRole('status')).toHaveTextContent(
       '禁 ping 已关闭（mock，待接入真实执行）',
+    )
+  })
+
+  it('开关切换进行中两个开关都禁用：忙碌里的点击不会得到无反馈的忽略', async () => {
+    const user = userEvent.setup()
+    let release: (() => void) | undefined
+    const inflight = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    await openFirewallPage(
+      sessionGateway({
+        setToggles: async (next) => {
+          await inflight
+          return next
+        },
+      }),
+    )
+
+    const ping = screen.getByRole('switch', { name: '禁ping' })
+    // 数据集在同文件用例间共享，开关的初值按当场读到的算，通知文案才不会抄成一个方向。
+    const wasChecked = ping.getAttribute('aria-checked') === 'true'
+    await user.click(ping)
+
+    // 请求在飞：两个开关都随 store 的 toggling 禁用，点击落不到被忽略的分支上。
+    expect(ping).toBeDisabled()
+    expect(screen.getByRole('switch', { name: '防火墙开关' })).toBeDisabled()
+
+    release?.()
+    await waitFor(() => expect(screen.getByRole('switch', { name: '禁ping' })).toBeEnabled())
+    // 那一次点击确实到了 adapter（不是被忙碌分支吞掉），并且切换完成后开关恢复可用。
+    expect(within(await screen.findByLabelText('通知')).getByRole('status')).toHaveTextContent(
+      `禁 ping 已${wasChecked ? '关闭' : '开启'}（mock，待接入真实执行）`,
     )
   })
 
@@ -321,6 +354,39 @@ describe('防火墙面板', () => {
     await user.type(screen.getByLabelText('搜索端口、来源或备注'), '9090')
     expect(await screen.findByText(/共 1 条/)).toBeInTheDocument()
     expect(screen.getByRole('region', { name: '端口规则表' }).textContent).toContain('演示导入')
+  })
+
+  it('导入：被拒条目逐条标出（第几条、为什么），合法条目照常导入', async () => {
+    const user = userEvent.setup()
+    await openFirewallPage()
+
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement
+    const payload = {
+      kind: 'elysian-firewall-rules',
+      rules: [
+        { protocol: 'tcp', port: 9091, family: 'ipv4', policy: 'allow', source: '所有IP', note: '合法行' },
+        { protocol: 'tcp', port: 9092, family: 'ipv4', policy: 'allow', source: '所有IP', note: "坏'备注" },
+        { protocol: 'udp', port: 70000, family: 'ipv4', policy: 'allow', source: '所有IP', note: null },
+      ],
+    }
+    await user.upload(
+      input,
+      new File([JSON.stringify(payload)], 'mixed.json', { type: 'application/json' }),
+    )
+
+    // 被拒的两条逐条给出序号与原因，不静默丢弃
+    const notifications = await screen.findByLabelText('通知')
+    const rejected = within(notifications).getByRole('alert')
+    expect(rejected).toHaveTextContent('导入：2 条被拒')
+    expect(rejected).toHaveTextContent('第 2 条：备注不能包含单引号')
+    expect(rejected).toHaveTextContent('第 3 条：协议、端口、地址族、策略或方向不合法')
+
+    // 合法的那条照常导入
+    await waitFor(() =>
+      expect(within(notifications).getByRole('status')).toHaveTextContent('导入完成：新增 1 条'),
+    )
+    await user.type(screen.getByLabelText('搜索端口、来源或备注'), '9091')
+    expect(screen.getByRole('region', { name: '端口规则表' }).textContent).toContain('合法行')
   })
 
   it('导出规则：选方向后生成包含对应规则数的本地下载', async () => {
