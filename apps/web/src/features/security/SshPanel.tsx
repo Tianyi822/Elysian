@@ -5,17 +5,16 @@ import {
   SSH_LOGIN_RESULT_LABELS,
   SSH_LOGIN_WINDOWS,
   SSH_LOGIN_WINDOW_LABELS,
-  SSH_PASSWORD_STRENGTH_LABELS,
   evaluateSshPasswordStrength,
 } from '@elysian/contracts'
-import type { SshLoginStats, SshPasswordStrength, SshRootLoginPolicy } from '@elysian/contracts'
+import type { SshLoginStats, SshRootLoginPolicy } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { IconButton } from '../../components/IconButton'
 import { StatusTag } from '../../components/StatusTag'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { formatDateTime, formatLoginTime } from '../../components/format'
-import { RefreshCw, Eye, EyeOff } from '../../components/icons'
+import { RefreshCw } from '../../components/icons'
 import { SSH_PAGE_SIZE, useSshStore } from '../../stores/sshStore'
 import { ACTION_CLASS, INPUT_CLASS, Region, SECONDARY_ACTION_CLASS, Section, SwitchToggle, TablePager } from './sshCardParts'
 import { SshKeyCard } from './SshKeyCard'
@@ -23,6 +22,7 @@ import { SshKeyCreateDialog } from './SshKeyCreateDialog'
 import { SshKeyDialog } from './SshKeyDialog'
 import { SshKeyRemoveDialog } from './SshKeyRemoveDialog'
 import { SshKeyRevealDialog } from './SshKeyRevealDialog'
+import { PasswordStrengthBar, PasswordVisibilityButton, passwordInputClass } from './passwordFieldParts'
 import { randomSshPort, randomStrongPassword } from './sshRandom'
 
 /**
@@ -36,22 +36,9 @@ import { randomSshPort, randomStrongPassword } from './sshRandom'
  */
 
 /**
- * 密码强度的三段彩条与联动配色：红黄绿各一段，按等级逐段点亮，输入框描边与等级字取当前等级的颜色。
- * 聚焦态同样由强度色接管（描边加深为同色光环，替换浏览器默认的蓝色聚焦效果）；
- * 空输入不设强度，仍走默认聚焦——键盘焦点始终可见。
+ * 密码强度的三段彩条与联动配色抽到 passwordFieldParts，与用户管理的账号密码共用同一套；
+ * 这里只保留各卡自己的排布。空输入不设强度，仍走默认聚焦——键盘焦点始终可见。
  */
-const STRENGTH_CLASSES: Record<SshPasswordStrength, string> = {
-  weak: 'text-danger',
-  medium: 'text-warning',
-  strong: 'text-success',
-}
-const STRENGTH_BORDER: Record<SshPasswordStrength, string> = {
-  weak: 'border-danger focus:border-danger focus:outline-none focus:ring-2 focus:ring-danger/40',
-  medium: 'border-warning focus:border-warning focus:outline-none focus:ring-2 focus:ring-warning/40',
-  strong: 'border-success focus:border-success focus:outline-none focus:ring-2 focus:ring-success/40',
-}
-const STRENGTH_LEVEL: Record<SshPasswordStrength, number> = { weak: 1, medium: 2, strong: 3 }
-const STRENGTH_SEGMENTS = ['bg-danger', 'bg-warning', 'bg-success'] as const
 
 function SwitchRow({
   label,
@@ -480,20 +467,12 @@ function RootCard() {
                 value={passwordDraft}
                 onChange={(event) => setPasswordDraft(event.target.value)}
                 placeholder="请输入新密码"
-                className={`h-[34px] w-full rounded-lg border bg-surface-raised px-2.5 pr-9 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle ${
-                  strength ? STRENGTH_BORDER[strength] : 'border-line'
-                }`}
+                className={passwordInputClass(strength)}
               />
-              <button
-                type="button"
-                onClick={() => setPasswordVisible((visible) => !visible)}
-                aria-label={passwordVisible ? '隐藏密码' : '显示密码'}
-                title={passwordVisible ? '隐藏密码' : '显示密码'}
-                className="absolute top-1/2 right-1.5 -translate-y-1/2 rounded-lg p-1.5 text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg"
-              >
-                {/* 图标表达当前状态：掩码闭眼、明文睁眼；按钮名与 tooltip 保持动作语义。 */}
-                {passwordVisible ? <Eye aria-hidden size={14} /> : <EyeOff aria-hidden size={14} />}
-              </button>
+              <PasswordVisibilityButton
+                visible={passwordVisible}
+                onToggle={setPasswordVisible}
+              />
             </div>
             <IconButton
               label="随机生成强密码"
@@ -513,28 +492,8 @@ function RootCard() {
           </div>
           {strength ? (
             /* 强度内联在输入框正下：三段彩条（红黄绿逐段点亮）+ 条旁等级字，不单独占一行说明。 */
-            <div className="mt-2 flex items-center gap-2">
-              <div
-                role="meter"
-                aria-label={`密码强度：${SSH_PASSWORD_STRENGTH_LABELS[strength]}`}
-                aria-valuenow={STRENGTH_LEVEL[strength]}
-                aria-valuemin={1}
-                aria-valuemax={3}
-                aria-valuetext={SSH_PASSWORD_STRENGTH_LABELS[strength]}
-                className="flex h-1.5 flex-1 gap-1"
-              >
-                {STRENGTH_SEGMENTS.map((segmentClass, index) => (
-                  <span
-                    key={segmentClass}
-                    className={`h-full flex-1 rounded-full ${
-                      index < STRENGTH_LEVEL[strength] ? segmentClass : 'bg-line'
-                    }`}
-                  />
-                ))}
-              </div>
-              <span className={`text-xs ${STRENGTH_CLASSES[strength]}`}>
-                {SSH_PASSWORD_STRENGTH_LABELS[strength]}
-              </span>
+            <div className="mt-2">
+              <PasswordStrengthBar strength={strength} />
             </div>
           ) : null}
           <p className="mt-2 text-xs text-fg-subtle">

@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
+import type { HostUserInput } from '@elysian/contracts'
 import { SEED_HOST_USERS } from '../../adapters/mock/usersData'
 import { useUsersStore } from '../../stores/usersStore'
 import { renderApp } from '../../test/renderApp'
@@ -163,6 +164,106 @@ describe('用户管理页签', () => {
     expect(within(notifications).getByRole('status')).toHaveTextContent(
       '账号 backup 已改为「密码或密钥」· 已停用（mock，待接入真实执行）',
     )
+  })
+
+  it('创建用户：登录方式含密码时密码字段出现，留空就地拦截；强度彩条与明暗切换和 Root 密码同款，password 随创建透传', async () => {
+    const creates: ({ name: string } & HostUserInput)[] = []
+    const { gateway, users: base } = userSessions({
+      create: (input) => {
+        creates.push(input)
+        return base.create(input)
+      },
+    })
+    const user = await openUsersTab(gateway)
+
+    await user.click(screen.getByRole('button', { name: '创建用户' }))
+    const dialog = await screen.findByRole('dialog', { name: '创建用户' })
+
+    // 默认登录方式「密钥」：密码字段不出现
+    expect(within(dialog).queryByLabelText(/初始密码/)).not.toBeInTheDocument()
+
+    // 用户名先填好，再切到「密码」：字段出现且必填；留空提交被就地拦下，不发任何请求
+    await user.type(within(dialog).getByLabelText(/用户名/), 'chenyi')
+    await user.click(within(dialog).getByRole('button', { name: '密码' }))
+    const input = within(dialog).getByLabelText(/初始密码/)
+    await user.click(within(dialog).getByRole('button', { name: '创建用户' }))
+    expect(within(dialog).getByText('登录方式含密码时必须填写初始密码')).toBeInTheDocument()
+    expect(creates).toHaveLength(0)
+    expect(useUsersStore.getState().users).toHaveLength(SEED_HOST_USERS.length)
+
+    // 明暗切换：默认掩码，点眼睛变明文再点回；图标表达当前状态（掩码闭眼、明文睁眼）
+    expect(input).toHaveAttribute('type', 'password')
+    await user.click(within(dialog).getByRole('button', { name: '显示密码' }))
+    expect(input).toHaveAttribute('type', 'text')
+    await user.click(within(dialog).getByRole('button', { name: '隐藏密码' }))
+    expect(input).toHaveAttribute('type', 'password')
+
+    // 强度走三段彩条并联动输入框描边——客户端只是预览，服务端复验是权威
+    await user.type(input, 'abcdefgh')
+    expect(within(dialog).getByRole('meter', { name: '密码强度：弱' })).toHaveAttribute('aria-valuenow', '1')
+    expect(input.className).toContain('border-danger')
+    await user.clear(input)
+    await user.type(input, 'Elysian#2026Root')
+    expect(within(dialog).getByRole('meter', { name: '密码强度：强' })).toHaveAttribute('aria-valuenow', '3')
+    expect(input.className).toContain('border-success')
+
+    await user.click(within(dialog).getByRole('button', { name: '创建用户' }))
+
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: '创建用户' })).not.toBeInTheDocument(),
+    )
+    expect(creates).toHaveLength(1)
+    expect(creates[0]).toMatchObject({ name: 'chenyi', password: 'Elysian#2026Root' })
+    expect(userRows()[0]?.children[0]?.textContent).toBe('chenyi')
+  })
+
+  it('修改账号：编辑时密码留空即不发送该字段，填了才随保存透传；不含密码的登录方式不带密码', async () => {
+    const updates: { userId: string; input: HostUserInput }[] = []
+    const { gateway, users: base } = userSessions({
+      update: (userId, input) => {
+        updates.push({ userId, input })
+        return base.update(userId, input)
+      },
+    })
+    const user = await openUsersTab(gateway)
+
+    // backup 种子是「禁止登录」：切到「密钥」密码字段仍不出现，保存不带 password 键
+    await user.click(within(usersPanel()).getByRole('button', { name: '修改 backup' }))
+    let dialog = await screen.findByRole('dialog', { name: '修改账号 backup' })
+    await user.click(within(dialog).getByRole('button', { name: '密钥' }))
+    expect(within(dialog).queryByLabelText(/新密码/)).not.toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: '保存修改' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: '修改账号 backup' })).not.toBeInTheDocument(),
+    )
+    expect(updates[0]).toMatchObject({ userId: 'user-backup' })
+    expect('password' in updates[0]!.input).toBe(false)
+
+    // 切到「密码或密钥」：字段出现但不带必填标记，占位说明留空即不改；留空保存仍不带该字段
+    await user.click(within(usersPanel()).getByRole('button', { name: '修改 backup' }))
+    dialog = await screen.findByRole('dialog', { name: '修改账号 backup' })
+    await user.click(within(dialog).getByRole('button', { name: '密码或密钥' }))
+    const input = within(dialog).getByLabelText('新密码')
+    expect(input).toHaveAttribute('placeholder', '留空表示不修改当前密码')
+    await user.click(within(dialog).getByRole('button', { name: '保存修改' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: '修改账号 backup' })).not.toBeInTheDocument(),
+    )
+    expect(updates[1]).toMatchObject({ userId: 'user-backup' })
+    expect('password' in updates[1]!.input).toBe(false)
+
+    // 再改一次：填了新密码，password 随保存请求透传
+    await user.click(within(usersPanel()).getByRole('button', { name: '修改 backup' }))
+    dialog = await screen.findByRole('dialog', { name: '修改账号 backup' })
+    await user.type(within(dialog).getByLabelText(/新密码/), 'Elysian#2026Root')
+    await user.click(within(dialog).getByRole('button', { name: '保存修改' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: '修改账号 backup' })).not.toBeInTheDocument(),
+    )
+    expect(updates[2]).toMatchObject({
+      userId: 'user-backup',
+      input: { password: 'Elysian#2026Root' },
+    })
   })
 
   it('删除账号：确认弹窗里取消不动数据，确认后行消失并发通知', async () => {

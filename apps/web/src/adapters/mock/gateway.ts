@@ -31,6 +31,7 @@ import { MockResourceHistoryAdapter } from './resourceHistoryAdapter'
 import { createHttpResourceHistoryAdapter } from '../http/resourceHistoryAdapter'
 import { createHttpFirewallAdapter } from '../http/firewallHttpAdapter'
 import { createHttpSshAdapter } from '../http/sshHttpAdapter'
+import { createHttpUsersAdapter } from '../http/usersHttpAdapter'
 import type { EventsAdapter } from '../../contracts/adapters'
 
 /**
@@ -42,7 +43,8 @@ import type { EventsAdapter } from '../../contracts/adapters'
  * - `eventStream: 'memory'` 直接使用内存事件源，不创建真实 EventSource，
  *   这样测试既不依赖服务端进程，也不会产生指向不存在端点的连接；
  * - `firewall: 'http'` 在 Docker 运行时接通容器内 ufw 的真实端点，缺省仍是内存演示；
- * - `ssh: 'http'` 在 Docker 运行时接通容器内 sshd 的真实端点，缺省仍是内存演示。
+ * - `ssh: 'http'` 在 Docker 运行时接通容器内 sshd 的真实端点，缺省仍是内存演示；
+ * - `users: 'http'` 在 Docker 运行时接通容器内系统账号的真实端点，缺省仍是内存演示。
  */
 export function createMockGateway(
   options: {
@@ -50,6 +52,7 @@ export function createMockGateway(
     eventStream?: 'auto' | 'memory'
     firewall?: 'mock' | 'http'
     ssh?: 'mock' | 'http'
+    users?: 'mock' | 'http'
   } = {},
 ): ElysianGateway {
   let dataset = createMockDataset()
@@ -64,6 +67,7 @@ export function createMockGateway(
   const firewall =
     options.firewall === 'http' ? createHttpFirewallAdapter() : new MockFirewallAdapter()
   const ssh = options.ssh === 'http' ? createHttpSshAdapter() : new MockSshAdapter()
+  const users = options.users === 'http' ? createHttpUsersAdapter() : new MockUserAdapter()
 
   return {
     session: new MockSessionAdapter(),
@@ -83,7 +87,7 @@ export function createMockGateway(
     databases: new MockDatabaseAdapter(),
     firewall,
     ssh,
-    users: new MockUserAdapter(),
+    users,
     files: new MockFilesAdapter(),
     logs: new MockLogsAdapter(),
     terminals,

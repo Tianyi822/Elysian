@@ -6,18 +6,27 @@ import {
   HOST_USER_NAME_MAX_LENGTH,
   HOST_USER_STATUSES,
   HOST_USER_STATUS_LABELS,
+  evaluateSshPasswordStrength,
   isValidHostUserName,
 } from '@elysian/contracts'
 import type { HostUserLoginMethod, HostUserStatus } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { X } from '../../components/icons'
 import { useUsersStore } from '../../stores/usersStore'
+import { PasswordStrengthBar, PasswordVisibilityButton, passwordInputClass } from './passwordFieldParts'
 import { ACTION_CLASS, INPUT_CLASS, SwitchToggle } from './sshCardParts'
+
+/** 登录方式是否包含密码路径：只有这两种才需要（才允许）设置密码。 */
+function methodIncludesPassword(method: HostUserLoginMethod): boolean {
+  return method === 'password' || method === 'password-or-key'
+}
 
 /**
  * 新建 / 修改主机账号的弹窗。
  * 用户名只在新建时可填——Linux 里改名等于新建再迁移，首版不做；主组跟随用户名，与系统默认行为一致。
  * 用户名与重名在界面层先校验一次，adapter 侧用同一判据再挡一次。
+ * 登录方式含密码时补密码输入：创建必填初始密码，编辑留空表示不修改当前密码；
+ * 客户端强度彩条只是预览，服务端复验是权威（弱密码拒绝，失败走 danger 通知）。
  */
 export function HostUserDialog() {
   const gateway = useGateway()
@@ -35,10 +44,15 @@ export function HostUserDialog() {
   const [status, setStatus] = useState<HostUserStatus>(editing?.status ?? 'active')
   const [isAdmin, setIsAdmin] = useState(editing?.isAdmin ?? false)
   const [note, setNote] = useState(editing?.note ?? '')
+  const [password, setPassword] = useState('')
+  const [passwordVisible, setPasswordVisible] = useState(false)
+  const [passwordError, setPasswordError] = useState<string | undefined>(undefined)
 
   if (dialogUser === undefined) return null
 
   const userName = editing ? editing.name : name.trim()
+  const passwordUsable = methodIncludesPassword(loginMethod)
+  const passwordStrength = password ? evaluateSshPasswordStrength(password) : undefined
 
   const submit = () => {
     if (!editing) {
@@ -54,11 +68,19 @@ export function HostUserDialog() {
       }
       setNameError(undefined)
     }
+    // 创建时登录方式含密码则初始密码必填（与服务端同一句中文错误）；编辑留空表示不修改。
+    if (!editing && passwordUsable && !password) {
+      setPasswordError('登录方式含密码时必须填写初始密码')
+      return
+    }
+    setPasswordError(undefined)
     void saveUser(gateway, {
       loginMethod,
       status,
       isAdmin,
       note: note.trim() || null,
+      // 空串转 undefined：键不随请求发出，服务端据此判定「本次不动密码」。
+      ...(passwordUsable && password ? { password } : {}),
       ...(editing ? {} : { name: userName }),
     })
   }
@@ -158,6 +180,48 @@ export function HostUserDialog() {
                 ))}
               </div>
             </div>
+
+            {passwordUsable ? (
+              <div>
+                <label
+                  htmlFor="host-user-password"
+                  className="mb-2 block text-xs font-medium text-fg-muted"
+                >
+                  {editing ? '新密码' : '初始密码'}
+                  {!editing ? <span className="text-danger"> *</span> : null}
+                </label>
+                <div className="relative">
+                  <input
+                    id="host-user-password"
+                    type={passwordVisible ? 'text' : 'password'}
+                    autoComplete="new-password"
+                    value={password}
+                    onChange={(event) => {
+                      setPassword(event.target.value)
+                      setPasswordError(undefined)
+                    }}
+                    placeholder={editing ? '留空表示不修改当前密码' : '请输入密码'}
+                    className={passwordInputClass(passwordStrength)}
+                  />
+                  <PasswordVisibilityButton
+                    visible={passwordVisible}
+                    onToggle={setPasswordVisible}
+                  />
+                </div>
+                {passwordStrength ? (
+                  <div className="mt-2">
+                    <PasswordStrengthBar strength={passwordStrength} />
+                  </div>
+                ) : null}
+                {passwordError ? (
+                  <p className="mt-1 text-xs text-danger">{passwordError}</p>
+                ) : null}
+                <p className="mt-2 text-xs text-fg-subtle">
+                  强度彩条只是预览，保存时服务端会按同一判据复验
+                  {editing ? '；留空则不修改当前密码。' : '。'}
+                </p>
+              </div>
+            ) : null}
 
             <div>
               <p className="mb-1 text-xs font-medium text-fg-muted">账号状态</p>

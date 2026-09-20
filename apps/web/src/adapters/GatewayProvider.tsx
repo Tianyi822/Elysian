@@ -21,9 +21,10 @@ export function GatewayProvider({
     () =>
       gateway ??
       createMockGateway({
-        // 防火墙与 SSH 端点只在容器内的 dev/preview 中间件挂载；宿主机本地开发走内存演示。
+        // 防火墙、SSH 与主机账号端点只在容器内的 dev/preview 中间件挂载；宿主机本地开发走内存演示。
         firewall: isDockerRuntime() ? 'http' : 'mock',
         ssh: isDockerRuntime() ? 'http' : 'mock',
+        users: isDockerRuntime() ? 'http' : 'mock',
       }),
     [gateway],
   )

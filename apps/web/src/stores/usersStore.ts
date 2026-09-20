@@ -109,6 +109,8 @@ export const useUsersStore = create<UsersState>((set, get) => ({
           status: input.status,
           isAdmin: input.isAdmin,
           note: input.note,
+          // 密码透传：弹窗只在填了新密码时带该字段，留空（undefined）即本次不动密码。
+          ...(input.password !== undefined ? { password: input.password } : {}),
         })
         set((state) => ({
           users: state.users.map((user) => (user.id === updated.id ? updated : user)),
