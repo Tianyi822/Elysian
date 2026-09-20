@@ -11,6 +11,7 @@ import {
 } from '@elysian/contracts'
 import type { HostUserLoginMethod, HostUserStatus } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
+import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { X } from '../../components/icons'
 import { useUsersStore } from '../../stores/usersStore'
 import { PasswordStrengthBar, PasswordVisibilityButton, passwordInputClass } from './passwordFieldParts'
@@ -53,6 +54,12 @@ export function HostUserDialog() {
   const userName = editing ? editing.name : name.trim()
   const passwordUsable = methodIncludesPassword(loginMethod)
   const passwordStrength = password ? evaluateSshPasswordStrength(password) : undefined
+  // 底部说明按运行时如实：演示态声明只改演示数据集；真实态说明动作落在容器内的系统账号上。
+  const footerNote = !isDockerRuntime()
+    ? '只改演示数据集。'
+    : editing
+      ? '改动落在容器内的系统账号上。'
+      : '账号建在容器系统里，主组与用户名同名。'
 
   const submit = () => {
     if (!editing) {
@@ -99,9 +106,12 @@ export function HostUserDialog() {
           <Dialog.Title className="sr-only">{editing ? `修改账号 ${editing.name}` : '创建用户'}</Dialog.Title>
           <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
             <div className="flex items-center gap-2">
-              <span className="rounded bg-warning/15 px-1.5 py-0.5 text-xs font-medium text-warning">
-                演示 · 待接入真实执行
-              </span>
+              {/* 真实执行时不加任何标注——动作就是动作；演示态保留提示。 */}
+              {!isDockerRuntime() ? (
+                <span className="rounded bg-warning/15 px-1.5 py-0.5 text-xs font-medium text-warning">
+                  演示 · 待接入真实执行
+                </span>
+              ) : null}
               <span className="text-sm font-medium text-fg">
                 {editing ? `修改账号 ${editing.name}` : '创建用户'}
               </span>
@@ -262,7 +272,7 @@ export function HostUserDialog() {
           </div>
 
           <div className="flex items-center justify-between gap-2 border-t border-line px-4 py-2.5">
-            <p className="text-xs text-fg-subtle">只改演示数据集。</p>
+            <p className="text-xs text-fg-subtle">{footerNote}</p>
             <div className="flex gap-2">
               <button
                 type="button"

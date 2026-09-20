@@ -1,8 +1,9 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { useGateway } from '../../adapters/GatewayProvider'
+import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useUsersStore } from '../../stores/usersStore'
 
-/** 删除主机账号的确认弹窗：取消不删，确认后从演示数据集移除并留 mock 标注。 */
+/** 删除主机账号的确认弹窗：取消不删，确认后按运行时从演示数据集或系统账号移除。 */
 export function HostUserRemoveDialog() {
   const gateway = useGateway()
   const removeTarget = useUsersStore((s) => s.removeTarget)
@@ -11,6 +12,12 @@ export function HostUserRemoveDialog() {
   const removeUser = useUsersStore((s) => s.removeUser)
 
   if (!removeTarget) return null
+
+  // 说明按运行时如实：真实执行 userdel（不带 -r），主目录与它持有的文件保留在磁盘上；
+  // 演示态声明只动演示数据集，不碰任何真实系统账号。
+  const description = isDockerRuntime()
+    ? '真实执行 userdel（不带 -r）：主目录与它持有的文件保留在磁盘上；主组一并移除，以它授权的 SSH 密钥随账号一起失效；以它身份运行的任务需要另行处理。'
+    : '将从演示数据集中移除该账号：主组一并移除，以它授权的 SSH 密钥也会失效。这一步不会触碰任何真实系统账号。'
 
   return (
     <Dialog.Root open onOpenChange={(open) => { if (!open) closeRemove() }}>
@@ -23,10 +30,7 @@ export function HostUserRemoveDialog() {
           <Dialog.Title className="text-sm font-semibold">
             确认删除账号「{removeTarget.name}」？
           </Dialog.Title>
-          <p className="mt-1.5 text-xs text-fg-muted">
-            删除后这个账号的主组一并移除，以它授权的 SSH 密钥也会失效（与连同家目录删掉 authorized_keys 一致）；
-            以它身份运行的任务与它持有的文件需要另行处理。这一步不会触碰任何真实系统账号。
-          </p>
+          <p className="mt-1.5 text-xs text-fg-muted">{description}</p>
           <div className="mt-4 flex justify-end gap-2">
             <button
               type="button"

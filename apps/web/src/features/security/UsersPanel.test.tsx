@@ -34,6 +34,10 @@ describe('用户管理页签', () => {
   it('按创建时间倒序列出种子账号：用户名、权限组、登录方式、状态与备注', async () => {
     await openUsersTab()
 
+    // 测试跑在宿主机演示态（非 Docker）：工具栏明示「演示数据」，与防火墙/SSH 面板同一标识。
+    const demoBadge = screen.getByText('演示数据')
+    expect(demoBadge.closest('[role="status"]')).not.toBeNull()
+
     const table = within(usersPanel()).getByRole('table')
     expect(within(table).getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual([
       '用户名',
@@ -111,6 +115,8 @@ describe('用户管理页签', () => {
     await user.click(screen.getByRole('button', { name: '创建用户' }))
     const dialog = await screen.findByRole('dialog', { name: '创建用户' })
     expect(dialog.textContent).toContain('演示 · 待接入真实执行')
+    // 演示态底部说明如实声明只改演示数据集
+    expect(within(dialog).getByText('只改演示数据集。')).toBeInTheDocument()
 
     // 大写字母不合 Linux 取名规则；重名同样就地报错，都不发请求
     await user.type(within(dialog).getByLabelText(/用户名/), 'ChenYi')
@@ -271,6 +277,8 @@ describe('用户管理页签', () => {
 
     await user.click(within(usersPanel()).getByRole('button', { name: '删除 zhangsan' }))
     const dialog = await screen.findByRole('dialog', { name: '确认删除账号「zhangsan」？' })
+    // 演示态确认文案如实声明只动演示数据集，不碰真实系统账号
+    expect(within(dialog).getByText(/这一步不会触碰任何真实系统账号/)).toBeInTheDocument()
     await user.click(within(dialog).getByRole('button', { name: '取消' }))
     expect(userRows()).toHaveLength(SEED_HOST_USERS.length)
 

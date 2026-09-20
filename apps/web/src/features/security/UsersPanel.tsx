@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo } from 'react'
 import type { HostUser } from '@elysian/contracts'
 import { HOST_USER_LOGIN_METHOD_LABELS, HOST_USER_STATUS_LABELS } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
+import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { IconButton } from '../../components/IconButton'
 import { StatusTag } from '../../components/StatusTag'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
@@ -16,6 +17,8 @@ import { filterHostUsers } from './hostUserSearch'
  * 用户管理面板：工具栏加主机账号表格，没有卡片标题——工具行第一眼就说明这一页是干什么的。
  * 权限与分组沿用 Linux 的模型——主组与用户名同名，管理员组用一个标记表达，不另造枚举分组。
  * root 不在这里，它的登录策略在 SSH 管理页签的 Root 设置里。
+ * 数据来自用户 adapter：Docker 运行时由 HTTP adapter 真实执行容器内 useradd/usermod/userdel，
+ * 宿主机本地开发是内存演示（工具栏带「演示数据」标识）；动作完成提示按运行时如实描述。
  */
 export function UsersPanel() {
   const gateway = useGateway()
@@ -53,6 +56,12 @@ export function UsersPanel() {
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-surface px-4 py-3">
+        {/* 用户动作只在容器内真实执行 useradd/usermod/userdel；宿主机本地开发是内存演示，明示出来。 */}
+        {!isDockerRuntime() ? (
+          <span role="status" className="text-sm text-fg-muted">
+            演示数据
+          </span>
+        ) : null}
         <button type="button" onClick={() => openCreate()} className={ACTION_CLASS}>
           创建用户
         </button>

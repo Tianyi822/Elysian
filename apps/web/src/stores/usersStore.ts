@@ -2,6 +2,7 @@ import type { HostUser, HostUserInput } from '@elysian/contracts'
 import { HOST_USER_LOGIN_METHOD_LABELS, HOST_USER_STATUS_LABELS } from '@elysian/contracts'
 import { create } from 'zustand'
 import type { ElysianGateway } from '../contracts/adapters'
+import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
 import { useNotificationStore } from './notificationStore'
 
 /** 用户管理页签的状态：主机账号列表与两个弹窗。 */
@@ -35,6 +36,13 @@ type UsersState = {
 function notify(message: string, tone: 'success' | 'danger' = 'success'): void {
   useNotificationStore.getState().notify({ message, tone })
 }
+
+/**
+ * 动作完成提示的演示标注：Docker 运行时动作已真实执行 useradd/usermod/userdel/gpasswd/chpasswd，
+ * 不再带标注；宿主机本地开发（内存演示）保留。括号形态追加在句子末尾，只用这一个来源。
+ */
+const MOCK_NOTE = isDockerRuntime() ? '' : 'mock，待接入真实执行'
+const MOCK_SUFFIX = MOCK_NOTE ? `（${MOCK_NOTE}）` : ''
 
 export const useUsersStore = create<UsersState>((set, get) => ({
   status: 'idle',
@@ -70,7 +78,7 @@ export const useUsersStore = create<UsersState>((set, get) => ({
       const { total } = await gateway.users.syncFromSystem()
       const users = await gateway.users.list()
       set({ users, syncing: false })
-      notify(`已从系统同步账号，当前共 ${total} 个（mock，待接入真实执行）`)
+      notify(`已从系统同步账号，当前共 ${total} 个${MOCK_SUFFIX}`)
     } catch (error) {
       set({ syncing: false })
       notify(error instanceof Error ? `同步失败：${error.message}` : '同步失败', 'danger')
@@ -102,7 +110,7 @@ export const useUsersStore = create<UsersState>((set, get) => ({
         }
         const created = await gateway.users.create({ ...input, name: input.name })
         set((state) => ({ users: [created, ...state.users], dialogUser: undefined, saving: false }))
-        notify(`账号 ${created.name} 已创建（mock，待接入真实执行）`)
+        notify(`账号 ${created.name} 已创建${MOCK_SUFFIX}`)
       } else {
         const updated = await gateway.users.update(editing.id, {
           loginMethod: input.loginMethod,
@@ -118,7 +126,7 @@ export const useUsersStore = create<UsersState>((set, get) => ({
           saving: false,
         }))
         notify(
-          `账号 ${updated.name} 已改为「${HOST_USER_LOGIN_METHOD_LABELS[updated.loginMethod]}」· ${HOST_USER_STATUS_LABELS[updated.status]}（mock，待接入真实执行）`,
+          `账号 ${updated.name} 已改为「${HOST_USER_LOGIN_METHOD_LABELS[updated.loginMethod]}」· ${HOST_USER_STATUS_LABELS[updated.status]}${MOCK_SUFFIX}`,
         )
       }
       return true
@@ -147,7 +155,7 @@ export const useUsersStore = create<UsersState>((set, get) => ({
         users: state.users.filter((user) => user.id !== userId),
         removingUserIds: state.removingUserIds.filter((id) => id !== userId),
       }))
-      notify(`账号 ${target.name} 已删除（mock，待接入真实执行）`)
+      notify(`账号 ${target.name} 已删除${MOCK_SUFFIX}`)
     } catch (error) {
       set((state) => ({
         removingUserIds: state.removingUserIds.filter((id) => id !== userId),
