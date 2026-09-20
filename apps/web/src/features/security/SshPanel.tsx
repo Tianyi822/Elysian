@@ -5,7 +5,6 @@ import {
   SSH_LOGIN_WINDOWS,
   SSH_LOGIN_WINDOW_LABELS,
   SSH_PASSWORD_STRENGTH_LABELS,
-  SSH_ROOT_LOGIN_POLICY_LABELS,
   evaluateSshPasswordStrength,
 } from '@elysian/contracts'
 import type { SshLoginStats, SshPasswordStrength, SshRootLoginPolicy } from '@elysian/contracts'
@@ -379,25 +378,38 @@ function LoginStatsRegion({ stats, enabled }: { stats: SshLoginStats; enabled: b
 }
 
 /**
- * 面板提供的 Root 登录策略档位：不含 forced-commands-only——该档只认授权文件里带
- * command= 限制的密钥，面板不管理这类密钥，不作为选项提供；契约保留该值，
- * 外部配置设成它时 rootAuth 仍如实带回，由下方提示表解释并收起密码与密钥区。
+ * Root 登录的收起提示：按策略与全局登录方式组合出原因。
+ * 面板只写 yes/no 两档；prohibit-password 与 forced-commands-only 是外部配置（含演示种子）才有的值，
+ * 读到时如实解释，重新开关一次「允许 Root 登录」即回到面板可写的两档。
  */
-const ROOT_LOGIN_POLICY_OPTIONS: readonly SshRootLoginPolicy[] = ['no', 'prohibit-password', 'yes']
-
-/** Root 密码与密钥区只在对应登录方式可用的策略档出现；收起时给一句话说明原因。 */
-const ROOT_POLICY_HIDDEN_HINTS: Record<SshRootLoginPolicy, string | null> = {
-  yes: null,
-  'prohibit-password': '当前策略只允许密钥登录：Root 密码设置已隐藏，Root 凭据走下方密钥。',
-  'forced-commands-only':
-    '仅允许指定命令：Root 只能用授权文件中带 command= 限制的密钥执行固定命令（常用于备份脚本等自动化场景），密码登录同样被禁用；面板生成的普通密钥无法用于这一档，密码与密钥设置已隐藏。',
-  no: 'Root 登录已完全禁止：Root 密码与 Root 密钥设置已隐藏。',
+function rootHiddenHints(
+  policy: SshRootLoginPolicy,
+  settings: { passwordAuthEnabled: boolean; keyAuthEnabled: boolean },
+): string[] {
+  if (policy === 'no') return ['Root 登录已禁止：Root 密码与 Root 密钥设置已隐藏。']
+  const hints: string[] = []
+  if (policy === 'forced-commands-only') {
+    hints.push(
+      '仅允许指定命令：Root 只能用授权文件中带 command= 限制的密钥执行固定命令（常用于备份脚本等自动化场景）；面板生成的普通密钥无法用于此配置，密码与密钥设置已隐藏。',
+    )
+  }
+  if (policy === 'prohibit-password') {
+    hints.push(
+      '当前配置仅允许 Root 以密钥登录：Root 密码设置已隐藏。重新开关一次「允许 Root 登录」可按全局登录方式重设。',
+    )
+  }
+  if (!settings.keyAuthEnabled) hints.push('全局密钥登录已关闭：Root 密钥设置已隐藏。')
+  if (policy === 'yes' && !settings.passwordAuthEnabled) {
+    hints.push('全局密码登录已关闭：Root 密码设置已隐藏。')
+  }
+  return hints
 }
 
-/** Root 设置卡：登录策略、Root 密码、Root 密钥三个区域。 */
+/** Root 设置卡：Root 登录开关、Root 密码、Root 密钥三个区域；登录方式由全局开关唯一决定。 */
 function RootCard() {
   const gateway = useGateway()
   const rootAuth = useSshStore((s) => s.rootAuth)
+  const settings = useSshStore((s) => s.settings)
   const passwordDraft = useSshStore((s) => s.passwordDraft)
   const resetting = useSshStore((s) => s.resettingPassword)
   const savingPolicy = useSshStore((s) => s.savingPolicy)
@@ -409,39 +421,32 @@ function RootCard() {
   const openKeyView = useSshStore((s) => s.openKeyView)
   const passwordInputId = useId()
 
-  if (!rootAuth) return null
+  if (!rootAuth || !settings) return null
   const strength = passwordDraft ? evaluateSshPasswordStrength(passwordDraft) : undefined
   const rootKey = rootAuth.key
-  // 密码区只进「允许密码登录」档；密钥区不进「禁止登录」与「仅允许指定命令」——
-  // 后者只认授权文件里带 command= 限制的密钥，面板生成的普通密钥登录不进去，展示出来会误导。
-  const passwordUsable = rootAuth.policy === 'yes'
-  const panelKeyUsable = rootAuth.policy === 'yes' || rootAuth.policy === 'prohibit-password'
-  const hiddenHint = ROOT_POLICY_HIDDEN_HINTS[rootAuth.policy]
+  // 密码区要策略为 yes 且全局密码登录开；密钥区要非禁止档且全局密钥登录开——
+  // 登录方式唯一由 SSH 服务卡的全局开关决定，这里只决定 root 这个账号可不可登。
+  const rootAllowed = rootAuth.policy !== 'no'
+  const passwordUsable = rootAuth.policy === 'yes' && settings.passwordAuthEnabled
+  const panelKeyUsable =
+    rootAuth.policy !== 'no' && rootAuth.policy !== 'forced-commands-only' && settings.keyAuthEnabled
+  const hiddenHints = rootHiddenHints(rootAuth.policy, settings)
 
   return (
     <Section title="Root 设置">
-      <Region title="Root 登录策略">
-        {/* 三档两列排布（末行单列）：长文案在窄卡里横排会挤成一团，两列既省高度也便于横向比较。 */}
-        <div role="group" aria-label="Root 登录策略" className="grid grid-cols-2 gap-2">
-          {ROOT_LOGIN_POLICY_OPTIONS.map((policy) => (
-            <button
-              key={policy}
-              type="button"
-              aria-pressed={rootAuth.policy === policy}
-              disabled={savingPolicy}
-              onClick={() => void setLoginPolicy(gateway, policy)}
-              className={`rounded-lg border px-2.5 py-2 text-left text-xs transition-colors disabled:opacity-50 ${
-                rootAuth.policy === policy
-                  ? 'border-accent/50 bg-accent/10 font-medium text-accent'
-                  : 'border-line text-fg-muted hover:border-fg-subtle hover:text-fg'
-              }`}
-            >
-              {SSH_ROOT_LOGIN_POLICY_LABELS[policy]}
-            </button>
-          ))}
-        </div>
+      <Region title="Root 登录">
+        <SwitchRow
+          label="允许 Root 登录"
+          checked={rootAllowed}
+          disabled={savingPolicy}
+          onCheckedChange={(checked) => void setLoginPolicy(gateway, checked ? 'yes' : 'no')}
+        />
         <p className="mt-3 text-xs text-fg-subtle">推荐使用密钥登录并关闭密码登录，安全性更高。</p>
-        {hiddenHint ? <p className="mt-1.5 text-xs text-fg-subtle">{hiddenHint}</p> : null}
+        {hiddenHints.map((hint) => (
+          <p key={hint} className="mt-1.5 text-xs text-fg-subtle">
+            {hint}
+          </p>
+        ))}
       </Region>
 
       {passwordUsable ? (

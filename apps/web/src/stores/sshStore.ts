@@ -8,7 +8,7 @@ import type {
   SshRootAuth,
   SshRootLoginPolicy,
 } from '@elysian/contracts'
-import { SSH_PASSWORD_STRENGTH_LABELS, SSH_ROOT_LOGIN_POLICY_LABELS, isValidSshPort } from '@elysian/contracts'
+import { SSH_PASSWORD_STRENGTH_LABELS, isValidSshPort } from '@elysian/contracts'
 import { create } from 'zustand'
 import type { ElysianGateway, SshKeyAccount } from '../contracts/adapters'
 import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
@@ -227,7 +227,7 @@ export const useSshStore = create<SshState>((set, get) => ({
     try {
       const confirmed = await gateway.ssh.saveRootLoginPolicy(policy)
       set({ rootAuth: confirmed, savingPolicy: false })
-      notify(`Root 登录策略已改为「${SSH_ROOT_LOGIN_POLICY_LABELS[policy]}」${MOCK_SUFFIX}`)
+      notify(`Root 登录已${policy === 'no' ? '禁止' : '允许'}${MOCK_SUFFIX}`)
     } catch (error) {
       set({ rootAuth: previous, savingPolicy: false })
       notify(error instanceof Error ? `保存失败：${error.message}` : '保存失败', 'danger')
