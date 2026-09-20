@@ -217,26 +217,30 @@ body {
  * 焦点环只由项目画一圈。
  * 浏览器对文本控件会自己再画一圈系统级的聚焦环（auto 描边），与下面的项目焦点环叠成两圈——
  * 视觉上像「选中效果」而不是焦点。先关掉默认的，再由 :focus-visible 统一给环。
+ * 三条规则放在 base 层：压浏览器默认样式只需 base；未分层的裸规则会连 utilities 层一起压住，
+ * 组件就无法用 focus:border-* / focus:outline-* 覆盖出自己的聚焦色（如密码强度红黄绿）。
  */
-:focus {
-  outline: none;
-}
+@layer base {
+  :focus {
+    outline: none;
+  }
 
-:focus-visible {
-  outline: 2px solid var(--t-focus);
-  outline-offset: 2px;
-}
+  :focus-visible {
+    outline: 2px solid var(--t-focus);
+    outline-offset: 2px;
+  }
 
-/*
- * 文本输入类控件是「点进去打字」的：点击聚焦同样命中 :focus-visible，
- * 若也画外环，看起来就是一圈系统级的蓝框。聚焦改由边框变色表达，外环不再出现；
- * 键盘可达性不受影响——边框变色即焦点指示，且输入光标就在框内。
- */
-input:focus-visible,
-textarea:focus-visible,
-select:focus-visible {
-  outline: none;
-  border-color: var(--t-focus);
+  /*
+   * 文本输入类控件是「点进去打字」的：点击聚焦同样命中 :focus-visible，
+   * 若也画外环，看起来就是一圈系统级的蓝框。聚焦改由边框变色表达，外环不再出现；
+   * 键盘可达性不受影响——边框变色即焦点指示，且输入光标就在框内。
+   */
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    outline: none;
+    border-color: var(--t-focus);
+  }
 }
 
 /*
