@@ -1,8 +1,17 @@
 import { describe, expect, it } from 'vitest'
+import { EventEmitter } from 'node:events'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
 import type { Connect } from 'vite'
-import { createSecurityUsersMiddleware, resolveUsersAvailability, runGetentViaExecFile, type ExecFileLike } from './api.node'
+import {
+  createSecurityUsersMiddleware,
+  resolveUsersAvailability,
+  runChpasswdViaStdin,
+  runGetentViaExecFile,
+  type ChpasswdChildLike,
+  type ExecFileLike,
+  type SpawnChpasswdLike,
+} from './api.node'
 import type { UsersHostDeps } from './usersService'
 
 /*
@@ -106,6 +115,115 @@ describe('runGetentViaExecFile 的退出码语义（容器联调回归：getent 
   it('命令成功时原样返回 stdout', async () => {
     const exec: ExecFileLike = async () => ({ stdout: 'ubuntu:x:1000:1000::/home/ubuntu:/bin/bash\n', stderr: '' })
     await expect(runGetentViaExecFile(exec, ['passwd', 'ubuntu'])).resolves.toContain('ubuntu:x:1000')
+  })
+})
+
+describe('runChpasswdViaStdin 的 stdin 流错误（chpasswd 早退）', () => {
+  /**
+   * 最小 fake 子进程，模拟「在读 stdin 前退出」的真实管道语义：进程退出后写端再写入，
+   * 错误以 EPIPE 异步送达（真实流不在 write 调用栈里同步抛错）；close 事件也晚于写入
+   * 才到（真实子进程退出至少跨一个事件循环）。
+   */
+  function createExitedBeforeReadingStdinChild(exitCode = 1): { spawn: SpawnChpasswdLike; writes: string[] } {
+    const writes: string[] = []
+    const stdin = Object.assign(new EventEmitter(), {
+      write(chunk: string) {
+        writes.push(chunk)
+        queueMicrotask(() => {
+          stdin.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }))
+        })
+        return true
+      },
+      end() {},
+    })
+    const child: ChpasswdChildLike = {
+      stdin,
+      stdout: new EventEmitter(),
+      stderr: new EventEmitter(),
+      on(event, listener) {
+        if (event === 'close') setTimeout(() => listener(exitCode), 0)
+        return child
+      },
+    }
+    return { spawn: () => child, writes }
+  }
+
+  it('chpasswd 在读 stdin 前退出：stdin 的 EPIPE 纳入 reject，而不是未处理异常崩掉进程', async () => {
+    const { spawn, writes } = createExitedBeforeReadingStdinChild()
+    await expect(runChpasswdViaStdin(spawn, 'ubuntu:Elysian#2026Strong')).rejects.toThrow('EPIPE')
+    // 凭据确实写进了 stdin：写入本身完成，错误在其后异步送达。
+    expect(writes).toEqual(['ubuntu:Elysian#2026Strong'])
+  })
+
+  it('正常路径：凭据写进 stdin 并 end，退出码 0 resolve 空输出', async () => {
+    const writes: string[] = []
+    let ended = false
+    const child: ChpasswdChildLike = {
+      stdin: Object.assign(new EventEmitter(), {
+        write(chunk: string) {
+          writes.push(chunk)
+          return true
+        },
+        end() {
+          ended = true
+        },
+      }),
+      stdout: new EventEmitter(),
+      stderr: new EventEmitter(),
+      on(event, listener) {
+        if (event === 'close') queueMicrotask(() => listener(0))
+        return child
+      },
+    }
+    await expect(runChpasswdViaStdin(() => child, 'ubuntu:Elysian#2026Strong')).resolves.toBe('')
+    expect(writes).toEqual(['ubuntu:Elysian#2026Strong'])
+    expect(ended).toBe(true)
+  })
+
+  it('退出码非零且有 stderr：错误信息带 stderr 详情；无 stderr 时回退退出码文案', async () => {
+    const stderrPipe = new EventEmitter()
+    const stderrChild: ChpasswdChildLike = {
+      stdin: Object.assign(new EventEmitter(), { write: () => true, end: () => undefined }),
+      stdout: new EventEmitter(),
+      stderr: stderrPipe,
+      on(event, listener) {
+        if (event === 'close') queueMicrotask(() => listener(1))
+        return stderrChild
+      },
+    }
+    const pendingStderr = runChpasswdViaStdin(() => stderrChild, 'ubuntu:Elysian#2026Strong')
+    stderrPipe.emit('data', Buffer.from('chpasswd: 密码强度不足\n'))
+    await expect(pendingStderr).rejects.toThrow('密码强度不足')
+
+    // 静默失败（无 stderr）：兜底文案交给退出码描述。
+    const child: ChpasswdChildLike = {
+      stdin: Object.assign(new EventEmitter(), { write: () => true, end: () => undefined }),
+      stdout: new EventEmitter(),
+      stderr: new EventEmitter(),
+      on(event, listener) {
+        if (event === 'close') queueMicrotask(() => listener(1))
+        return child
+      },
+    }
+    await expect(runChpasswdViaStdin(() => child, 'ubuntu:x')).rejects.toThrow('chpasswd 退出码 1')
+  })
+
+  it('子进程本身 spawn 失败（如 ENOENT）：error 事件纳入同一 reject 路径', async () => {
+    const child: ChpasswdChildLike = {
+      stdin: Object.assign(new EventEmitter(), { write: () => true, end: () => undefined }),
+      stdout: new EventEmitter(),
+      stderr: new EventEmitter(),
+      on(event, listener) {
+        if (event === 'error') queueMicrotask(() => listener(new Error('spawn chpasswd ENOENT')))
+        return child
+      },
+    }
+    await expect(runChpasswdViaStdin(() => child, 'ubuntu:x')).rejects.toThrow('ENOENT')
+  })
+
+  it('标准管道未建立（stdio 非 pipe 配置）：中文 reject，不触碰任何流', async () => {
+    const child: ChpasswdChildLike = { stdin: null, stdout: null, stderr: null, on: () => undefined }
+    await expect(runChpasswdViaStdin(() => child, 'ubuntu:x')).rejects.toThrow('标准管道未建立')
   })
 })
 

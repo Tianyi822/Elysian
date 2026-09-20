@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { HOST_USER_LOGIN_METHODS, HOST_USER_STATUSES, type HostUserLoginMethod, type HostUserStatus } from '@elysian/contracts'
 import type { UserAdapter } from '../../contracts/adapters'
-import { EndpointGuardError, isSameOrigin, readJsonBody, sendError, sendJson } from '../endpointGuard/guard'
+import { EndpointGuardError, InvalidRequestError, invalidRequest, isSameOrigin, readJsonBody, sendError, sendJson } from '../endpointGuard/guard'
 
 /*
  * 用户管理真实端点：/api/security/users/*（dev/preview 的 Node 中间件，仅容器内可用）。
@@ -29,15 +29,15 @@ export function createUsersApiHandler(deps: UsersApiDeps) {
 function parseUserInput(row: Record<string, unknown>): { loginMethod: HostUserLoginMethod; status: HostUserStatus; isAdmin: boolean; note: string | null; password?: string | null } {
   const { loginMethod, status, isAdmin, note, password } = row
   if (typeof loginMethod !== 'string' || !HOST_USER_LOGIN_METHODS.includes(loginMethod as HostUserLoginMethod)) {
-    throw new Error(`无效的登录方式：${String(loginMethod)}`)
+    throw invalidRequest(`无效的登录方式：${String(loginMethod)}`)
   }
   if (typeof status !== 'string' || !HOST_USER_STATUSES.includes(status as HostUserStatus)) {
-    throw new Error(`无效的账号状态：${String(status)}`)
+    throw invalidRequest(`无效的账号状态：${String(status)}`)
   }
-  if (typeof isAdmin !== 'boolean') throw new Error('管理员归属需为布尔值')
-  if (note !== null && typeof note !== 'string') throw new Error('备注需为字符串或 null')
+  if (typeof isAdmin !== 'boolean') throw invalidRequest('管理员归属需为布尔值')
+  if (note !== null && typeof note !== 'string') throw invalidRequest('备注需为字符串或 null')
   if (password !== undefined && password !== null && typeof password !== 'string') {
-    throw new Error('密码需为字符串')
+    throw invalidRequest('密码需为字符串')
   }
   return {
     loginMethod: loginMethod as HostUserLoginMethod,
@@ -73,7 +73,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: UsersApiD
     if (method === 'POST' && (path === '/' || path === '')) {
       const body = await readJsonBody(req)
       const row = body as Record<string, unknown>
-      if (typeof row.name !== 'string' || !row.name) throw new Error('用户名请求体无效')
+      if (typeof row.name !== 'string' || !row.name) throw invalidRequest('用户名请求体无效')
       sendJson(res, 200, { user: await service.create({ name: row.name, ...parseUserInput(row) }) })
       return
     }
@@ -98,7 +98,9 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: UsersApiD
 
     sendJson(res, 404, { error: `未知用户管理端点：${method} ${path}` })
   } catch (error) {
-    // 业务性失败（弱密码、保护边界、账号不存在）带中文消息返回给界面呈现；守卫错误按自带状态码返回。
-    sendError(res, error instanceof EndpointGuardError ? error.status : 500, error)
+    // 业务性失败分两类：请求本身不合法（弱密码、保护边界、账号不存在等）抛 InvalidRequestError
+    // 按 400 返回；系统侧失败（chpasswd 执行失败、删除未生效等）才是 500。中文消息原样带给界面。
+    const status = error instanceof EndpointGuardError || error instanceof InvalidRequestError ? error.status : 500
+    sendError(res, status, error)
   }
 }

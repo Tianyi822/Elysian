@@ -413,8 +413,10 @@ describe('createUsersService 修改', () => {
     expect(host.shadow.get('pwuser')!.hash.startsWith('!')).toBe(true)
   })
 
-  it('管理员降级：gpasswd -d 移出 sudo 组', async () => {
+  it('管理员降级：gpasswd -d 移出 sudo 组（组内还有其他成员时才放行）', async () => {
     const host = createSeededHost()
+    // 组内补第二个成员：降级不再触到最后一个 sudo 成员防呆。
+    host.groups.get('sudo')!.add('elysian')
     const service = createUsersService(host.deps)
     const updated = await service.update('ubuntu', {
       loginMethod: 'password',
@@ -523,6 +525,8 @@ describe('createUsersService 保护边界与注入拒绝', () => {
 describe('createUsersService 删除', () => {
   it('userdel 不带 -r（主目录保留），删除后回读确认', async () => {
     const host = createSeededHost()
+    // 组内补第二个成员：删除管理员不再触到最后一个 sudo 成员防呆。
+    host.groups.get('sudo')!.add('elysian')
     const service = createUsersService(host.deps)
     await service.remove('ubuntu')
 
@@ -535,6 +539,61 @@ describe('createUsersService 删除', () => {
     expect((await service.syncFromSystem()).total).toBe(1)
     // 再删同一个账号：系统里已没有，如实拒绝。
     await expect(service.remove('ubuntu')).rejects.toThrow('未找到系统账号：ubuntu')
+  })
+})
+
+describe('createUsersService 最后一个 sudo 成员防呆', () => {
+  it('降级仅剩的 sudo 成员：中文拒绝，零写命令（连备注等无关变更也不执行）', async () => {
+    const host = createSeededHost()
+    const service = createUsersService(host.deps)
+    await expect(
+      service.update('ubuntu', {
+        loginMethod: 'password',
+        status: 'active',
+        isAdmin: false,
+        note: '顺手改备注也会被拦',
+      }),
+    ).rejects.toThrow('sudo 组最后一个成员')
+    expect(writeCommands(host)).toEqual([])
+  })
+
+  it('删除仅剩的 sudo 成员：中文拒绝，零写命令，账号原样还在', async () => {
+    const host = createSeededHost()
+    const service = createUsersService(host.deps)
+    await expect(service.remove('ubuntu')).rejects.toThrow('sudo 组最后一个成员')
+    expect(writeCommands(host)).toEqual([])
+    expect((await service.list()).map((user) => user.name)).toEqual(['elysian', 'ubuntu'])
+  })
+
+  it('组内还有第二个成员：降级与删除都放行，防呆不误伤', async () => {
+    const host = createSeededHost()
+    host.groups.get('sudo')!.add('elysian')
+    const service = createUsersService(host.deps)
+    const updated = await service.update('ubuntu', {
+      loginMethod: 'password',
+      status: 'active',
+      isAdmin: false,
+      note: 'Ubuntu User',
+    })
+    expect(updated.isAdmin).toBe(false)
+    await service.remove('ubuntu')
+    expect((await service.list()).map((user) => user.name)).toEqual(['elysian'])
+  })
+
+  it('非 sudo 成员的普通账号：降级不产生 gpasswd、删除照常放行（防呆只拦 sudo 组成员）', async () => {
+    const host = createSeededHost()
+    const service = createUsersService(host.deps)
+    // elysian 本就不在 sudo 组：明确请求降级也不会被拦，且无成员变化就不执行 gpasswd。
+    const updated = await service.update('elysian', {
+      loginMethod: 'key',
+      status: 'active',
+      isAdmin: false,
+      note: null,
+    })
+    expect(updated.isAdmin).toBe(false)
+    expect(host.commands.filter((entry) => entry.command === 'gpasswd')).toEqual([])
+    await service.remove('elysian')
+    expect(host.commands).toContainEqual({ command: 'userdel', args: ['elysian'] })
   })
 })
 

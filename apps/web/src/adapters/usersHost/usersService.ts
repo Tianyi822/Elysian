@@ -2,6 +2,7 @@ import type { HostUser, HostUserInput } from '@elysian/contracts'
 import { evaluateSshPasswordStrength, isValidHostUserName } from '@elysian/contracts'
 import type { UserAdapter } from '../../contracts/adapters'
 import { hasUnsafeControlChars } from '../firewallHost/noteValidation'
+import { invalidRequest } from '../endpointGuard/guard'
 import { authorizedKeysPath } from '../sshHost/authorizedKeys'
 import {
   MANAGED_UID_MAX,
@@ -31,6 +32,8 @@ import {
  *   控制字符判据并额外拒逗号（GECOS 里逗号用于分字段）。
  * - 保护边界：目标账号服务端反查，root 与 uid 越出 1000-60000 的账号即使被伪造请求
  *   点名也拒绝，且不执行任何写命令。
+ * - 最后一个 sudo 成员防呆：降级或删除前解析 getent group sudo 的当前成员，目标是
+ *   仅剩成员时拒绝——绝不让容器里清空全部可提权账号。
  * - 每次写操作完成后回读该账号（passwd/shadow/group/authorized_keys 重新推导），
  *   绝不返回未经回读的乐观值。
  */
@@ -77,21 +80,21 @@ export function createUsersService(deps: UsersHostDeps): UserAdapter {
   /** 备注双侧判据：控制字符对照防火墙标准，逗号是 GECOS 的字段分隔符。 */
   function assertNoteSafe(note: string | null): void {
     if (note && hasUnsafeControlChars(note)) {
-      throw new Error('备注不能包含换行或控制字符')
+      throw invalidRequest('备注不能包含换行或控制字符')
     }
     if (note && note.includes(',')) {
-      throw new Error('备注不能包含逗号（GECOS 里逗号用于分字段）')
+      throw invalidRequest('备注不能包含逗号（GECOS 里逗号用于分字段）')
     }
   }
 
   /** 密码双侧判据：换行/控制字符拒绝（chpasswd 按行解析），强度弱拒绝。 */
   function assertPasswordSafe(password: string): void {
     if (hasUnsafeControlChars(password)) {
-      throw new Error('密码不能包含换行或控制字符')
+      throw invalidRequest('密码不能包含换行或控制字符')
     }
     const strength = evaluateSshPasswordStrength(password)
     if (strength === 'weak') {
-      throw new Error('密码强度不足：判定为弱密码，请加长密码并混合大小写字母、数字与符号')
+      throw invalidRequest('密码强度不足：判定为弱密码，请加长密码并混合大小写字母、数字与符号')
     }
   }
 
@@ -103,13 +106,13 @@ export function createUsersService(deps: UsersHostDeps): UserAdapter {
     const password = input.password
     if (password !== undefined && password !== null && password !== '') {
       if (!methodIncludesPassword(input.loginMethod)) {
-        throw new Error('登录方式不含密码时不能设置密码')
+        throw invalidRequest('登录方式不含密码时不能设置密码')
       }
       assertPasswordSafe(password)
       return password
     }
     if (options.required && methodIncludesPassword(input.loginMethod)) {
-      throw new Error('登录方式含密码时必须填写初始密码')
+      throw invalidRequest('登录方式含密码时必须填写初始密码')
     }
     return null
   }
@@ -151,7 +154,7 @@ export function createUsersService(deps: UsersHostDeps): UserAdapter {
   /** 回读单个账号并推导成视图模型；读不到时抛中文错误。 */
   async function readUser(name: string): Promise<HostUser> {
     const entry = await findPasswd(name)
-    if (!entry) throw new Error(`未找到系统账号：${name}`)
+    if (!entry) throw invalidRequest(`未找到系统账号：${name}`)
     const [shadow, sudo] = await Promise.all([shadowOf(name), sudoMembers()])
     return deriveHostUser({
       passwd: entry,
@@ -168,11 +171,22 @@ export function createUsersService(deps: UsersHostDeps): UserAdapter {
    */
   async function manageablePasswd(userId: string): Promise<PasswdRecord> {
     const entry = await findPasswd(userId)
-    if (!entry) throw new Error(`未找到系统账号：${userId}`)
+    if (!entry) throw invalidRequest(`未找到系统账号：${userId}`)
     if (entry.name === 'root' || entry.uid < MANAGED_UID_MIN || entry.uid > MANAGED_UID_MAX) {
-      throw new Error(`拒绝操作系统账号：${userId}（仅管理 uid ${MANAGED_UID_MIN}-${MANAGED_UID_MAX} 的账号）`)
+      throw invalidRequest(`拒绝操作系统账号：${userId}（仅管理 uid ${MANAGED_UID_MIN}-${MANAGED_UID_MAX} 的账号）`)
     }
     return entry
+  }
+
+  /**
+   * 最后一个 sudo 成员防呆：降级或删除仅剩的管理员会让容器内再无任何可提权账号，
+   * 面板自己也会被锁在门外——解析自 getent group sudo 的当前成员，目标是仅剩成员
+   * 时直接拒绝，且不执行任何写命令。
+   */
+  function assertNotLastSudoMember(name: string, sudo: ReadonlySet<string>, action: string): void {
+    if (sudo.has(name) && sudo.size <= 1) {
+      throw invalidRequest(`拒绝${action} ${name}：它是 sudo 组最后一个成员，操作后容器内将没有任何可提权账号`)
+    }
   }
 
   return {
@@ -204,10 +218,10 @@ export function createUsersService(deps: UsersHostDeps): UserAdapter {
     async create(input: { name: string } & HostUserInput): Promise<HostUser> {
       // 用户名判据与表单共用同一函数：界面挡一次，这里再挡一次，绕过界面也建不出账号。
       if (!isValidHostUserName(input.name)) {
-        throw new Error('用户名只能用小写字母、数字、下划线与连字符，且由字母或下划线开头')
+        throw invalidRequest('用户名只能用小写字母、数字、下划线与连字符，且由字母或下划线开头')
       }
       if (await findPasswd(input.name)) {
-        throw new Error(`用户名已存在：${input.name}`)
+        throw invalidRequest(`用户名已存在：${input.name}`)
       }
       assertNoteSafe(input.note)
       // 创建时登录方式含密码则初始密码必填；密码绝不进命令行，只走 chpasswd 的 stdin。
@@ -258,13 +272,17 @@ export function createUsersService(deps: UsersHostDeps): UserAdapter {
       const [shadow, sudo] = await Promise.all([shadowOf(entry.name), sudoMembers()])
       const currentNote = noteOfGecos(entry.gecos)
       const currentIsAdmin = sudo.has(entry.name)
+      // 降级仅剩的管理员先于一切写命令拒绝：不让备注、shell 等无关变更先落盘。
+      if (!input.isAdmin && currentIsAdmin) {
+        assertNotLastSudoMember(entry.name, sudo, '降级')
+      }
 
       // 恢复密码登录的红线：密码已锁定（! 前缀）且未提供新密码时拒绝保存——
       // 没有明文就解不开锁，绝不假装恢复；要启用密码登录必须换新密码。
       if (methodIncludesPassword(input.loginMethod) && password === null) {
         const hash = shadow?.passwordHash ?? ''
         if (isHashLocked(hash)) {
-          throw new Error('当前密码已锁定，请填写新密码后再启用密码登录')
+          throw invalidRequest('当前密码已锁定，请填写新密码后再启用密码登录')
         }
       }
 
@@ -326,6 +344,7 @@ export function createUsersService(deps: UsersHostDeps): UserAdapter {
 
     async remove(userId: string): Promise<void> {
       const entry = await manageablePasswd(userId)
+      assertNotLastSudoMember(entry.name, await sudoMembers(), '删除')
       // 绝不带 -r：主目录保留，数据不随账号一起销毁（删除弹窗文案注明）。
       const args = [entry.name] as const
       await deps.runUserdel(args).catch((error: unknown) => {

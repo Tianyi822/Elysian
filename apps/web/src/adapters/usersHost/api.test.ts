@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
 import type { HostUser } from '@elysian/contracts'
 import { createUsersApiHandler, type UsersApiDeps } from './api'
+import { invalidRequest } from '../endpointGuard/guard'
 import type { UserAdapter } from '../../contracts/adapters'
 
 /*
@@ -151,10 +152,10 @@ describe('createUsersApiHandler', () => {
     expect(removed).toEqual(['ubuntu'])
   })
 
-  it('形状不对的请求体以中文错误返回 500', async () => {
+  it('形状不对的请求体以中文错误返回 400', async () => {
     const handler = createUsersApiHandler(AVAILABLE)
     const noName = await readResponse(handler, await fakeReq('POST', '/', { loginMethod: 'key', status: 'active', isAdmin: false, note: null }))
-    expect(noName.statusCode).toBe(500)
+    expect(noName.statusCode).toBe(400)
     expect((noName.body as { error: string }).error).toBe('用户名请求体无效')
 
     const badMethod = await readResponse(handler, await fakeReq('POST', '/', { name: 'x', loginMethod: '随便', status: 'active', isAdmin: false, note: null }))
@@ -173,19 +174,29 @@ describe('createUsersApiHandler', () => {
     expect((badPassword.body as { error: string }).error).toBe('密码需为字符串')
   })
 
-  it('业务失败以中文错误返回 500', async () => {
-    const service = createFakeService({
+  it('请求被拒（校验不通过）按 400 返回，系统侧失败才是 500', async () => {
+    const rejected = createFakeService({
       update: async () => {
-        throw new Error('当前密码已锁定，请填写新密码后再启用密码登录')
+        throw invalidRequest('当前密码已锁定，请填写新密码后再启用密码登录')
       },
     })
-    const handler = createUsersApiHandler({ available: true, service })
-    const { statusCode, body } = await readResponse(
-      handler,
+    const rejectedHandler = createUsersApiHandler({ available: true, service: rejected })
+    const rejectedResponse = await readResponse(
+      rejectedHandler,
       await fakeReq('PUT', '/ubuntu', { loginMethod: 'password', status: 'active', isAdmin: false, note: null }),
     )
-    expect(statusCode).toBe(500)
-    expect(body).toEqual({ error: '当前密码已锁定，请填写新密码后再启用密码登录' })
+    expect(rejectedResponse.statusCode).toBe(400)
+    expect(rejectedResponse.body).toEqual({ error: '当前密码已锁定，请填写新密码后再启用密码登录' })
+
+    const broken = createFakeService({
+      remove: async () => {
+        throw new Error('删除未生效：系统里仍存在账号 ubuntu')
+      },
+    })
+    const brokenHandler = createUsersApiHandler({ available: true, service: broken })
+    const brokenResponse = await readResponse(brokenHandler, await fakeReq('DELETE', '/ubuntu'))
+    expect(brokenResponse.statusCode).toBe(500)
+    expect(brokenResponse.body).toEqual({ error: '删除未生效：系统里仍存在账号 ubuntu' })
   })
 
   it('未知端点返回 404', async () => {
