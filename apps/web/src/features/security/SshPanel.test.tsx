@@ -241,7 +241,7 @@ describe('SSH 管理页签', () => {
     expect(input).toHaveValue('2222')
   })
 
-  it('Root 登录策略四档可选，选中态随点击移动', async () => {
+  it('Root 登录策略三档可选，选中态随点击移动', async () => {
     const user = await openSshTab()
     const root = screen.getByRole('region', { name: 'Root 设置' })
 
@@ -289,13 +289,24 @@ describe('SSH 管理页签', () => {
     expect(within(root()).queryByLabelText('Root 密码')).not.toBeInTheDocument()
     expect(within(root()).getByText(/Root 登录已完全禁止/)).toBeInTheDocument()
 
-    // 仅允许指定命令：两区收起，说明这一档只认带 command= 限制的密钥。
-    await user.click(within(root()).getByRole('button', { name: '仅允许指定命令' }))
-    await waitFor(() =>
-      expect(within(root()).queryByLabelText('Root 密码')).not.toBeInTheDocument(),
-    )
-    expect(within(root()).queryByRole('button', { name: '重新生成' })).not.toBeInTheDocument()
-    expect(within(root()).getByText(/command=/)).toBeInTheDocument()
+    // 面板不提供「仅允许指定命令」档：选项不存在（契约保留该值用于如实读取外部配置）。
+    expect(within(root()).queryByRole('button', { name: '仅允许指定命令' })).not.toBeInTheDocument()
+  })
+
+  it('外部配置的 forced-commands-only 仍如实呈现：无选中项并给该档说明', async () => {
+    const { gateway } = sshSessions({
+      rootAuth: async () => ({ policy: 'forced-commands-only', key: null, passwordResetAt: null }),
+    })
+    await openSshTab(gateway)
+    const root = screen.getByRole('region', { name: 'Root 设置' })
+
+    for (const name of ['禁止 Root 登录', '只能密钥登录', '允许密码登录']) {
+      expect(within(root).getByRole('button', { name })).toHaveAttribute('aria-pressed', 'false')
+    }
+    expect(within(root).queryByRole('button', { name: '仅允许指定命令' })).not.toBeInTheDocument()
+    expect(within(root).getByText(/command=/)).toBeInTheDocument()
+    expect(within(root).queryByText('Root 密码')).not.toBeInTheDocument()
+    expect(within(root).queryByRole('button', { name: '重新生成' })).not.toBeInTheDocument()
   })
 
   it('Root 密码：弱密码被拒且不留重置时间，达标密码通过并留下可见变化', async () => {

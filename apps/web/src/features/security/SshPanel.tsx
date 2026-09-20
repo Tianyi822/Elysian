@@ -5,7 +5,6 @@ import {
   SSH_LOGIN_WINDOWS,
   SSH_LOGIN_WINDOW_LABELS,
   SSH_PASSWORD_STRENGTH_LABELS,
-  SSH_ROOT_LOGIN_POLICIES,
   SSH_ROOT_LOGIN_POLICY_LABELS,
   evaluateSshPasswordStrength,
 } from '@elysian/contracts'
@@ -378,6 +377,13 @@ function LoginStatsRegion({ stats, enabled }: { stats: SshLoginStats; enabled: b
   )
 }
 
+/**
+ * 面板提供的 Root 登录策略档位：不含 forced-commands-only——该档只认授权文件里带
+ * command= 限制的密钥，面板不管理这类密钥，不作为选项提供；契约保留该值，
+ * 外部配置设成它时 rootAuth 仍如实带回，由下方提示表解释并收起密码与密钥区。
+ */
+const ROOT_LOGIN_POLICY_OPTIONS: readonly SshRootLoginPolicy[] = ['no', 'prohibit-password', 'yes']
+
 /** Root 密码与密钥区只在对应登录方式可用的策略档出现；收起时给一句话说明原因。 */
 const ROOT_POLICY_HIDDEN_HINTS: Record<SshRootLoginPolicy, string | null> = {
   yes: null,
@@ -414,9 +420,9 @@ function RootCard() {
   return (
     <Section title="Root 设置">
       <Region title="Root 登录策略">
-        {/* 四档平铺成两列：长文案在窄卡里横排会挤成一团，两列既省高度也便于横向比较。 */}
+        {/* 三档两列排布（末行单列）：长文案在窄卡里横排会挤成一团，两列既省高度也便于横向比较。 */}
         <div role="group" aria-label="Root 登录策略" className="grid grid-cols-2 gap-2">
-          {SSH_ROOT_LOGIN_POLICIES.map((policy) => (
+          {ROOT_LOGIN_POLICY_OPTIONS.map((policy) => (
             <button
               key={policy}
               type="button"
