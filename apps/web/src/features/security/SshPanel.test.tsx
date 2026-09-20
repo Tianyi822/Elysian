@@ -171,7 +171,8 @@ describe('SSH 管理页签', () => {
     await openSshTab()
 
     const service = screen.getByRole('region', { name: 'SSH 服务' })
-    expect(within(service).getByText('运行中')).toBeInTheDocument()
+    // 状态徽标已随开关去重：开关位置即状态，不再并排文字徽标复述。
+    expect(within(service).queryByText('运行中')).not.toBeInTheDocument()
     expect(within(service).getByRole('switch', { name: 'SSH 服务' })).toBeChecked()
     expect(within(service).getByLabelText('监听端口')).toHaveValue(`${SEED_SSH_PORT}`)
     expect(within(service).getByText('上次变更：—')).toBeInTheDocument()
@@ -185,7 +186,7 @@ describe('SSH 管理页签', () => {
 
     await user.click(within(service).getByRole('switch', { name: 'SSH 服务' }))
 
-    expect(within(service).getByText('已停止')).toBeInTheDocument()
+    expect(within(service).queryByText('已停止')).not.toBeInTheDocument()
     expect(within(service).getByRole('switch', { name: 'SSH 服务' })).not.toBeChecked()
 
     const notifications = await screen.findByLabelText('通知')
@@ -194,7 +195,7 @@ describe('SSH 管理页签', () => {
     )
 
     await user.click(within(service).getByRole('switch', { name: 'SSH 服务' }))
-    expect(within(service).getByText('运行中')).toBeInTheDocument()
+    expect(within(service).getByRole('switch', { name: 'SSH 服务' })).toBeChecked()
   })
 
   it('登录方式开关即改状态并发 mock 通知', async () => {

@@ -7,7 +7,6 @@ import {
   SSH_PASSWORD_STRENGTH_LABELS,
   SSH_ROOT_LOGIN_POLICIES,
   SSH_ROOT_LOGIN_POLICY_LABELS,
-  SSH_SERVICE_STATUS_LABELS,
   evaluateSshPasswordStrength,
 } from '@elysian/contracts'
 import type { SshLoginStats, SshPasswordStrength, SshRootLoginPolicy } from '@elysian/contracts'
@@ -254,18 +253,13 @@ function ServiceCard() {
   return (
     <Section title="SSH 服务">
       <Region title="服务状态">
-        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-          <SwitchRow
-            label="SSH 服务"
-            checked={enabled}
-            disabled={toggling}
-            onCheckedChange={(checked) => void setServiceEnabled(gateway, checked)}
-          />
-          <StatusTag
-            label={SSH_SERVICE_STATUS_LABELS[overview.status]}
-            tone={enabled ? 'success' : 'neutral'}
-          />
-        </div>
+        {/* 开关位置即服务状态，不再并排文字徽标复述（契约 status 字段仍由接口提供）。 */}
+        <SwitchRow
+          label="SSH 服务"
+          checked={enabled}
+          disabled={toggling}
+          onCheckedChange={(checked) => void setServiceEnabled(gateway, checked)}
+        />
         <p className="mt-3 text-xs tabular-nums text-fg-subtle">
           上次变更：{overview.changedAt ? formatDateTime(overview.changedAt) : '—'}
         </p>
