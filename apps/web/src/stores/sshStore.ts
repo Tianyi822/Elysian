@@ -61,8 +61,9 @@ type SshState = {
   /**
    * 一次性私钥弹窗：创建登录密钥或生成 Root 密钥成功后打开，材料直接来自那一次响应；
    * 关闭即清空——私钥只在创建/生成那一次可见，之后任何入口都不再返回它。
+   * account 是归属账号名，下载文件名以它开头（root 固定为 'root'，登录密钥按 userId 解析）。
    */
-  revealKey: { title: string; material: SshKeyMaterial } | undefined
+  revealKey: { title: string; account: string; material: SshKeyMaterial } | undefined
   togglingService: boolean
   savingAuth: boolean
   savingPort: boolean
@@ -270,7 +271,9 @@ export const useSshStore = create<SshState>((set, get) => ({
           ...result,
           key: result.key ? materialWithoutPrivateKey(result.key) : null,
         },
-        revealKey: result.key ? { title: 'Root 密钥已生成', material: result.key } : undefined,
+        revealKey: result.key
+          ? { title: 'Root 密钥已生成', account: 'root', material: result.key }
+          : undefined,
         generatingRootKey: false,
       })
       notify(`Root 密钥已${hadKey ? '重新生成' : '生成'}${MOCK_SUFFIX}`)
@@ -326,7 +329,12 @@ export const useSshStore = create<SshState>((set, get) => ({
         keys: [...state.keys, materialWithoutPrivateKey(created)],
         createKeyOpen: false,
         creatingKey: false,
-        revealKey: { title: `新密钥「${created.name}」的私钥`, material: created },
+        revealKey: {
+          title: `新密钥「${created.name}」的私钥`,
+          account:
+            state.keyAccounts.find((entry) => entry.id === created.userId)?.name ?? created.userId,
+          material: created,
+        },
       }))
       notify(`SSH 密钥「${created.name}」已创建${MOCK_SUFFIX}`)
       return true

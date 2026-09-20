@@ -376,6 +376,8 @@ describe('SSH 管理页签', () => {
     expect(within(dialog).getByText('私钥仅此次可见')).toBeInTheDocument()
     expect(within(dialog).getByText(/BEGIN OPENSSH PRIVATE KEY/)).toBeInTheDocument()
     expect(within(dialog).getByRole('button', { name: '下载私钥' })).toBeInTheDocument()
+    // 下载文件名以归属账号开头：root 的密钥就是 root-ssh-key-<日期>.pem。
+    expect(within(dialog).getByText(/root-ssh-key-\d{8}\.pem/)).toBeInTheDocument()
 
     // 卡片上的指纹已换成新材料；入档的 rootAuth 不带私钥。
     await waitFor(() =>

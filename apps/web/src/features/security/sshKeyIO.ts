@@ -6,10 +6,10 @@ import type { SshKeyMaterial } from '@elysian/contracts'
  * 宿主机本地开发导出的是演示材料，不对应任何真实主机。Root 密钥与登录密钥共用这两个函数。
  */
 
-/** 导出文件名：elysian-ssh-key-<yyyymmdd>.pem。 */
-export function buildKeyFilename(exportedAt: string): string {
+/** 导出文件名：<账号名>-ssh-key-<yyyymmdd>.pem——以归属账号开头，不用平台名。 */
+export function buildKeyFilename(account: string, exportedAt: string): string {
   const day = exportedAt.slice(0, 10).replaceAll('-', '')
-  return `elysian-ssh-key-${day}.pem`
+  return `${account}-ssh-key-${day}.pem`
 }
 
 /** 生成本地下载（Blob 加临时链接），不经过网络。 */

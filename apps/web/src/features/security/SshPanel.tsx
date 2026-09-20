@@ -128,6 +128,7 @@ export function SshPanel() {
       {revealKey ? (
         <SshKeyRevealDialog
           title={revealKey.title}
+          account={revealKey.account}
           material={revealKey.material}
           onClose={closeRevealKey}
         />
