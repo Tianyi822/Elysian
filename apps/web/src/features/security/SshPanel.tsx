@@ -34,16 +34,20 @@ import { randomSshPort, randomStrongPassword } from './sshRandom'
  * 私钥一律只在创建/生成成功后的一次性弹窗里展示，查看弹窗只给公钥、指纹与元信息。
  */
 
-/** 密码强度的三段彩条与联动配色：红黄绿各一段，按等级逐段点亮，输入框描边与等级字取当前等级的颜色。 */
+/**
+ * 密码强度的三段彩条与联动配色：红黄绿各一段，按等级逐段点亮，输入框描边与等级字取当前等级的颜色。
+ * 聚焦态同样由强度色接管（描边加深为同色光环，替换浏览器默认的蓝色聚焦效果）；
+ * 空输入不设强度，仍走默认聚焦——键盘焦点始终可见。
+ */
 const STRENGTH_CLASSES: Record<SshPasswordStrength, string> = {
   weak: 'text-danger',
   medium: 'text-warning',
   strong: 'text-success',
 }
 const STRENGTH_BORDER: Record<SshPasswordStrength, string> = {
-  weak: 'border-danger',
-  medium: 'border-warning',
-  strong: 'border-success',
+  weak: 'border-danger focus:border-danger focus:outline-none focus:ring-2 focus:ring-danger/40',
+  medium: 'border-warning focus:border-warning focus:outline-none focus:ring-2 focus:ring-warning/40',
+  strong: 'border-success focus:border-success focus:outline-none focus:ring-2 focus:ring-success/40',
 }
 const STRENGTH_LEVEL: Record<SshPasswordStrength, number> = { weak: 1, medium: 2, strong: 3 }
 const STRENGTH_SEGMENTS = ['bg-danger', 'bg-warning', 'bg-success'] as const

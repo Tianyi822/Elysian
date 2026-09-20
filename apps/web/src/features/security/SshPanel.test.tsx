@@ -345,9 +345,12 @@ describe('SSH 管理页签', () => {
 
     await user.type(input, 'abcdefgh')
     // 强度不再单独一行文字：三段彩条 + 条旁等级字，输入框描边同色联动。
+    // 聚焦态也由强度色接管（描边+同色光环），空输入仍走浏览器默认聚焦效果。
     expect(within(root).getByRole('meter', { name: '密码强度：弱' })).toHaveAttribute('aria-valuenow', '1')
     expect(within(root).getByText('弱')).toBeInTheDocument()
     expect(input.className).toContain('border-danger')
+    expect(input.className).toContain('focus:border-danger')
+    expect(input.className).toContain('focus:ring-danger')
     expect(within(root).queryByText('强度：弱')).not.toBeInTheDocument()
 
     await user.click(within(root).getByRole('button', { name: '重置密码' }))
@@ -360,6 +363,7 @@ describe('SSH 管理页签', () => {
     await user.type(input, 'Elysian2026')
     expect(within(root).getByRole('meter', { name: '密码强度：中' })).toHaveAttribute('aria-valuenow', '2')
     expect(input.className).toContain('border-warning')
+    expect(input.className).toContain('focus:ring-warning')
 
     await user.clear(input)
     await user.type(input, 'Elysian#2026Root')
