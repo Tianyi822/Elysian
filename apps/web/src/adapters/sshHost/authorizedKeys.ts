@@ -89,6 +89,21 @@ export function removeKeyLine(text: string, keyLine: string): string {
   return lines.join('\n')
 }
 
+/**
+ * 替换文件里的第一条公钥行（Root 密钥卡只管理 root authorized_keys 的首行，其余行原样保留）；
+ * 文件里还没有任何公钥行时，整份文件只剩新行。
+ */
+export function replaceFirstKeyLine(text: string, keyLine: string): string {
+  const lines = text.split('\n')
+  const index = lines.findIndex((line) => {
+    const trimmed = line.trim()
+    return trimmed.length > 0 && !trimmed.startsWith('#')
+  })
+  if (index < 0) return `${keyLine}\n`
+  lines[index] = keyLine
+  return lines.join('\n')
+}
+
 /** FNV-1a 32 位：给公钥行派生稳定 id 的确定性哈希（非安全用途，只求跨读取稳定）。 */
 function fnv1a(text: string): string {
   let hash = 0x811c9dc5

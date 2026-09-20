@@ -316,6 +316,46 @@ describe('createSshService Root 凭据', () => {
     })
     expect(auth.key?.privateKey).toBeUndefined()
   })
+
+  it('createRootKey：新公钥替换 root 授权文件首行、外来行保留，私钥一次性返回且不落盘', async () => {
+    const host = createFakeHost({ sshdConfig: BASE_CONFIG })
+    host.files.set('/root/.ssh/authorized_keys', 'ssh-ed25519 AAAAroot旧 root@legacy\nssh-ed25519 AAAA外来 foreign@example\n')
+    const service = createSshService(host.deps)
+
+    const generated = await service.createRootKey()
+    expect(generated.policy).toBe('prohibit-password')
+    expect(generated.key).toMatchObject({ algorithm: 'ssh-ed25519 256' })
+    expect(generated.key?.fingerprint).toMatch(/^SHA256:/)
+    expect(generated.key?.privateKey).toContain('-----BEGIN OPENSSH PRIVATE KEY-----')
+    expect(generated.key?.publicKey).toContain('elysian-root')
+
+    // 首行被新公钥替换，外来公钥行原样保留；权限收紧与登录密钥同规。
+    const text = host.files.get('/root/.ssh/authorized_keys') ?? ''
+    expect(text).toBe(`${generated.key?.publicKey}\nssh-ed25519 AAAA外来 foreign@example\n`)
+    expect(host.modes.get('/root/.ssh')).toBe(0o700)
+    expect(host.modes.get('/root/.ssh/authorized_keys')).toBe(0o600)
+
+    // 私钥不持久化：账本里没有任何写盘内容含私钥；临时密钥文件已删。
+    for (const write of host.writes) {
+      expect(write.content).not.toContain('PRIVATE KEY')
+    }
+    const removedPrivate = host.removed.filter((path) => !path.includes('verify-'))
+    expect(removedPrivate).toHaveLength(2)
+
+    // 之后的 rootAuth 只剩公钥与指纹；rootAuth 的首行即新公钥。
+    const after = await service.rootAuth()
+    expect(after.key?.publicKey).toBe(generated.key?.publicKey)
+    expect(after.key?.privateKey).toBeUndefined()
+  })
+
+  it('createRootKey：authorized_keys 不存在时创建只含新公钥的文件', async () => {
+    const host = createFakeHost({ sshdConfig: BASE_CONFIG })
+    const service = createSshService(host.deps)
+
+    const generated = await service.createRootKey()
+    expect(host.files.get('/root/.ssh/authorized_keys')).toBe(`${generated.key?.publicKey}\n`)
+    expect(generated.key?.privateKey).toContain('-----BEGIN OPENSSH PRIVATE KEY-----')
+  })
 })
 
 describe('createSshService 密钥管理', () => {

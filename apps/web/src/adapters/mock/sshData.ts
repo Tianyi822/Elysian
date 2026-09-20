@@ -66,6 +66,13 @@ export function mockKeyMaterial(name: string, createdAt: string): SshKeyMaterial
   }
 }
 
+/** 列表与查看用途的材料副本：省略私钥（契约语义——私钥只在创建/生成响应里一次性携带）。 */
+function withoutPrivateKey<T extends SshKeyMaterial>(material: T): T {
+  const clone = { ...material }
+  delete clone.privateKey
+  return clone
+}
+
 /** 主机 root 账号那一把密钥；与用户自建的登录密钥分开管理。 */
 const DEMO_ROOT_KEY = mockKeyMaterial('root', '2025-05-23T21:57:47')
 
@@ -163,6 +170,8 @@ let overview: SshOverview
 let settings: SshAuthSettings
 let rootAuth: SshRootAuth
 let keys: SshLoginKey[]
+/** Root 密钥的生成序号：重新生成的材料按它派生，指纹随之变化；推回种子即归零。 */
+let rootKeyGeneration = 0
 
 /** 把演示数据推回种子状态。演示数据只在内存里，「重置演示数据」与测试隔离都经这里。 */
 export function resetSshData(): void {
@@ -175,6 +184,7 @@ export function resetSshData(): void {
   settings = { ...SEED_AUTH_SETTINGS }
   rootAuth = { policy: SEED_SSH_ROOT_POLICY, key: { ...DEMO_ROOT_KEY }, passwordResetAt: null }
   keys = SEED_LOGIN_KEYS.map((key) => ({ ...key }))
+  rootKeyGeneration = 0
 }
 
 resetSshData()
@@ -199,7 +209,16 @@ export function saveSshAuthSettings(next: SshAuthSettings): SshAuthSettings {
 
 export function getSshRootAuth(): SshRootAuth {
   // mock 种子里 Root 密钥始终存在；真实实现里 authorized_keys 为空时 key 为 null。
-  return rootAuth.key === null ? rootAuth : { ...rootAuth, key: { ...rootAuth.key } }
+  // 取回的是不带私钥的副本：私钥只在生成响应里一次性携带。
+  return rootAuth.key === null ? rootAuth : { ...rootAuth, key: withoutPrivateKey(rootAuth.key) }
+}
+
+/** 生成（或重新生成）Root 密钥：材料按生成序号派生，重新生成得到不同指纹；私钥仅随本次返回。 */
+export function generateSshRootKey(createdAt: string): SshRootAuth {
+  rootKeyGeneration += 1
+  const material = mockKeyMaterial(`root@${createdAt}#${rootKeyGeneration}`, createdAt)
+  rootAuth = { ...rootAuth, key: material }
+  return { ...rootAuth, key: { ...material } }
 }
 
 export function saveSshRootLoginPolicy(policy: SshRootLoginPolicy): SshRootAuth {
@@ -218,7 +237,8 @@ export function resetSshRootPassword(password: string, resetAt: string): SshPass
 }
 
 export function getSshLoginKeys(): readonly SshLoginKey[] {
-  return keys.map((key) => ({ ...key }))
+  // 列表不带私钥（契约语义）；创建响应携带的那一份只进一次性展示弹窗。
+  return keys.map((key) => withoutPrivateKey(key))
 }
 
 export function getSshLoginRecords(): readonly SshLoginRecord[] {
@@ -229,7 +249,7 @@ export function findSshLoginKeyByName(name: string): SshLoginKey | undefined {
   return keys.find((key) => key.name === name)
 }
 
-/** 新增登录密钥：材料按名称确定性派生，同一名称总是得到同一份材料。 */
+/** 新增登录密钥：材料按名称确定性派生，同一名称总是得到同一份材料；返回值带私钥（创建响应一次性携带）。 */
 export function addSshLoginKey(name: string, userId: string, createdAt: string): SshLoginKey {
   const key: SshLoginKey = {
     id: `key-${name}`,

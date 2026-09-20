@@ -301,6 +301,16 @@ export function createHttpSshAdapter(baseUrl = '/api/security/ssh'): SshAdapter 
       )
     },
 
+    async createRootKey() {
+      return parseSshRootAuthResponse(
+        await requestJson(`${baseUrl}/root-key`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({}),
+        }),
+      )
+    },
+
     async listKeys() {
       return parseSshKeyListResponse(await requestJson(`${baseUrl}/keys`))
     },

@@ -56,6 +56,16 @@ function createFakeService(overrides: Partial<SshAdapter> = {}): SshAdapter {
     listLoginRecords: async () => SAMPLE_RECORDS,
     keyAccounts: async () => SAMPLE_ACCOUNTS,
     createKey: async () => ({ ...SAMPLE_KEY, privateKey: '-----BEGIN OPENSSH PRIVATE KEY-----\n占位\n-----END OPENSSH PRIVATE KEY-----' }),
+    createRootKey: async () => ({
+      ...SAMPLE_ROOT_AUTH,
+      key: {
+        algorithm: 'ssh-ed25519 256',
+        fingerprint: 'SHA256:rootkey',
+        createdAt: '2026-09-18T12:00:00.000Z',
+        publicKey: 'ssh-ed25519 AAAAroot elysian-root',
+        privateKey: '-----BEGIN OPENSSH PRIVATE KEY-----\nroot 占位\n-----END OPENSSH PRIVATE KEY-----',
+      },
+    }),
     removeKey: async () => undefined,
     ...overrides,
   }
@@ -104,9 +114,10 @@ describe('createSshApiHandler', () => {
     for (const [method, url] of [
       ['GET', '/overview'],
       ['PUT', '/port'],
+      ['POST', '/root-key'],
       ['DELETE', '/keys/sshkey-0000abcd'],
     ] as const) {
-      const { statusCode, body } = await readResponse(handler, await fakeReq(method, url, method === 'PUT' ? { port: 22 } : undefined))
+      const { statusCode, body } = await readResponse(handler, await fakeReq(method, url, method === 'PUT' ? { port: 22 } : method === 'POST' ? {} : undefined))
       expect(statusCode).toBe(503)
       expect(body).toEqual({ error: '真实 SSH 管理仅在 Docker 容器内可用' })
     }
@@ -187,6 +198,42 @@ describe('createSshApiHandler', () => {
     const created = await readResponse(handler, await fakeReq('POST', '/keys', { name: '部署机', userId: 'ops' }))
     expect(created.statusCode).toBe(200)
     expect((created.body as { key: SshLoginKey }).key.privateKey).toContain('BEGIN OPENSSH PRIVATE KEY')
+  })
+
+  it('POST /root-key 生成 Root 密钥，响应一次性携带私钥', async () => {
+    let calls = 0
+    const service = createFakeService({
+      createRootKey: async () => {
+        calls += 1
+        return {
+          ...SAMPLE_ROOT_AUTH,
+          key: {
+            algorithm: 'ssh-ed25519 256',
+            fingerprint: 'SHA256:rootkey',
+            createdAt: '2026-09-18T12:00:00.000Z',
+            publicKey: 'ssh-ed25519 AAAAroot elysian-root',
+            privateKey: '-----BEGIN OPENSSH PRIVATE KEY-----\nroot 占位\n-----END OPENSSH PRIVATE KEY-----',
+          },
+        }
+      },
+    })
+    const handler = createSshApiHandler({ available: true, service })
+
+    const { statusCode, body } = await readResponse(handler, await fakeReq('POST', '/root-key', {}))
+    expect(statusCode).toBe(200)
+    expect(calls).toBe(1)
+    expect((body as SshRootAuth).key?.privateKey).toContain('BEGIN OPENSSH PRIVATE KEY')
+
+    // 空请求体被守卫拦下（读体走同一套 Content-Type 与非空校验）。
+    const emptyStream = Readable.from([])
+    const emptyReq = Object.assign(emptyStream, {
+      method: 'POST',
+      url: '/root-key',
+      headers: { host: 'localhost:5173', origin: 'http://localhost:5173', 'content-type': 'application/json', 'content-length': '0' },
+    }) as unknown as IncomingMessage
+    const empty = await readResponse(handler, emptyReq)
+    expect(empty.statusCode).toBe(500)
+    expect((empty.body as { error: string }).error).toBe('请求体不能为空')
   })
 
   it('POST /keys 与 DELETE /keys/:id 传递名称、账号与解码后的 id', async () => {

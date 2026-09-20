@@ -10,6 +10,7 @@ import {
   parseKeygenFingerprint,
   parseKeyLines,
   removeKeyLine,
+  replaceFirstKeyLine,
   sshDirPath,
 } from './authorizedKeys'
 
@@ -68,6 +69,19 @@ describe('authorized_keys 行级操作', () => {
     const text = `${KEY_OPS}\n${KEY_CI}\n`
     expect(removeKeyLine(text, KEY_OPS)).toBe(`${KEY_CI}\n`)
     expect(removeKeyLine(text, 'ssh-ed25519 对不上')).toBe(text)
+  })
+
+  it('替换首条公钥行：其余行与注释行原样保留；还没有公钥行时整文件只剩新行', () => {
+    const NEW_ROOT = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIROOT新 root@elysian'
+    // 有旧公钥：首行被替换，第二把外来公钥保留。
+    expect(replaceFirstKeyLine(`${KEY_OPS}\n${KEY_CI}\n`, NEW_ROOT)).toBe(`${NEW_ROOT}\n${KEY_CI}\n`)
+    // 注释与空行不算公钥行：替换发生在第一条真正的公钥上。
+    expect(replaceFirstKeyLine(`# 手工维护\n\n${KEY_OPS}\n`, NEW_ROOT)).toBe(
+      `# 手工维护\n\n${NEW_ROOT}\n`,
+    )
+    // 没有任何公钥行（含纯注释文件）：整文件只剩新行。
+    expect(replaceFirstKeyLine('', NEW_ROOT)).toBe(`${NEW_ROOT}\n`)
+    expect(replaceFirstKeyLine('# 只有注释\n', NEW_ROOT)).toBe(`${NEW_ROOT}\n`)
   })
 
   it('公钥行的 id 跨读取稳定且对内容敏感', () => {

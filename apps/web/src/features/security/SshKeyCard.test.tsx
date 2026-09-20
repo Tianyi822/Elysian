@@ -65,7 +65,7 @@ describe('SSH 密钥表', () => {
     expect(pagerButton('下一页')).toBeDisabled()
   })
 
-  it('搜索：名称片段、完整私钥、指纹都能准确定位到那一行', async () => {
+  it('搜索：名称片段、指纹能准确定位到那一行；私钥不再参与匹配', async () => {
     const user = await openSshTab()
     const input = within(keyCard()).getByLabelText('搜索密钥')
 
@@ -79,13 +79,13 @@ describe('SSH 密钥表', () => {
       ),
     ).toBeInTheDocument()
 
-    // 粘一整份私钥（跨多行）：只命中它自己
+    // 粘一整份种子私钥：列表数据不带私钥（私钥只在创建那一次出现过），因此搜不到
     const deployKey = SEED_LOGIN_KEYS[0]
     await user.clear(input)
     await user.click(input)
     await user.paste(deployKey?.privateKey ?? '')
     expect(userRows()).toHaveLength(1)
-    expect(userRows()[0]?.textContent).toContain('部署机')
+    expect(within(keyCard()).getByText('没有匹配的密钥，换个关键词试试')).toBeInTheDocument()
 
     // 粘指纹
     await user.clear(input)
@@ -98,7 +98,7 @@ describe('SSH 密钥表', () => {
     await user.type(input, '不存在的一把密钥')
     expect(userRows()).toHaveLength(1)
     expect(
-      within(keyCard()).getByText('没有匹配的密钥，换个关键词或粘一整份私钥试试'),
+      within(keyCard()).getByText('没有匹配的密钥，换个关键词试试'),
     ).toBeInTheDocument()
   })
 
@@ -133,6 +133,19 @@ describe('SSH 密钥表', () => {
     await waitFor(() =>
       expect(screen.queryByRole('dialog', { name: '创建 SSH 密钥' })).not.toBeInTheDocument(),
     )
+
+    // 创建成功后私钥只在一次性弹窗里展示这一次：有关闭即清空的提示与下载入口。
+    const reveal = await screen.findByRole('dialog', { name: '新密钥「运维笔记本」的私钥' })
+    expect(within(reveal).getByText('私钥仅此次可见')).toBeInTheDocument()
+    expect(within(reveal).getByText(/BEGIN OPENSSH PRIVATE KEY/)).toBeInTheDocument()
+    expect(within(reveal).getByRole('button', { name: '下载私钥' })).toBeInTheDocument()
+    await user.click(within(reveal).getByRole('button', { name: '关闭弹窗' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: '新密钥「运维笔记本」的私钥' })).not.toBeInTheDocument(),
+    )
+    // 关闭后入列的条目不带私钥：列表与查看都取不到它。
+    expect(useSshStore.getState().keys.at(-1)?.privateKey).toBeUndefined()
+
     // 新密钥排在最后一把之后，因此在第二页；总数与摘要立刻反映出来
     expect(useSshStore.getState().keys).toHaveLength(SEED_LOGIN_KEYS.length + 1)
     expect(
@@ -190,7 +203,7 @@ describe('SSH 密钥表', () => {
     )
   })
 
-  it('查看密钥：行内入口给出那一把的指纹与私钥全文', async () => {
+  it('查看密钥：行内入口给出那一把的指纹与公钥全文，不出现私钥', async () => {
     const user = await openSshTab()
 
     await user.click(within(keyCard()).getByRole('button', { name: '查看密钥 CI 发布' }))
@@ -198,12 +211,13 @@ describe('SSH 密钥表', () => {
     const dialog = await screen.findByRole('dialog', { name: '查看密钥 · CI 发布' })
     expect(dialog.textContent).toContain('演示密钥 · 不对应任何真实主机')
     expect(dialog.textContent).toContain(SEED_LOGIN_KEYS[1]?.fingerprint ?? '指纹缺失')
-    expect(within(dialog).getByText(/BEGIN OPENSSH PRIVATE KEY/)).toBeInTheDocument()
-    expect(within(dialog).getByRole('button', { name: '复制密钥' })).toBeInTheDocument()
-    // 公钥留在本机、不上屏：弹窗里既没有它的正文，也没有复制它的入口
-    expect(dialog.textContent).not.toContain(SEED_LOGIN_KEYS[1]?.publicKey ?? '永远不该出现')
-    expect(within(dialog).queryByRole('button', { name: '复制公钥' })).not.toBeInTheDocument()
-    expect(dialog.textContent).toContain('公钥在创建时已保存在本机授权文件里')
+    expect(dialog.textContent).toContain('公钥内容')
+    expect(dialog.textContent).toContain(SEED_LOGIN_KEYS[1]?.publicKey ?? '公钥缺失')
+    expect(within(dialog).getByRole('button', { name: '公钥' })).toBeInTheDocument()
+    // 私钥不在查看弹窗里：既没有它的正文，也没有下载它的入口
+    expect(within(dialog).queryByText(/BEGIN OPENSSH PRIVATE KEY/)).not.toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: '下载私钥' })).not.toBeInTheDocument()
+    expect(dialog.textContent).toContain('私钥只在创建/生成的那一次展示过，这里不再提供')
   })
 
   it('密钥表的数据来自 adapter：换一份列表就换一份表格', async () => {

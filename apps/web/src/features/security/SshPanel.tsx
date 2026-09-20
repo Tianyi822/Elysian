@@ -24,7 +24,7 @@ import { SshKeyCard } from './SshKeyCard'
 import { SshKeyCreateDialog } from './SshKeyCreateDialog'
 import { SshKeyDialog } from './SshKeyDialog'
 import { SshKeyRemoveDialog } from './SshKeyRemoveDialog'
-import { buildKeyFilename, downloadPrivateKey } from './sshKeyIO'
+import { SshKeyRevealDialog } from './SshKeyRevealDialog'
 import { randomSshPort, randomStrongPassword } from './sshRandom'
 
 /**
@@ -32,7 +32,8 @@ import { randomSshPort, randomStrongPassword } from './sshRandom'
  * 第一行是设置卡——SSH 服务（启停、登录统计、端口、登录方式）与 Root 设置（登录策略、密码、密钥）；
  * 第二行是列表卡——SSH 密钥（搜索、创建、表格）与 SSH 登录记录。
  * 数据来自 SSH adapter：Docker 运行时由 HTTP adapter 真实操作容器内 sshd，
- * 宿主机本地开发是内存演示；动作完成提示按运行时如实描述。
+ * 宿主机本地开发是内存演示（工具栏带「演示数据」标识）；动作完成提示按运行时如实描述。
+ * 私钥一律只在创建/生成成功后的一次性弹窗里展示，查看弹窗只给公钥、指纹与元信息。
  */
 
 const STRENGTH_CLASSES: Record<SshPasswordStrength, string> = {
@@ -76,6 +77,8 @@ export function SshPanel() {
   const createKeyOpen = useSshStore((s) => s.createKeyOpen)
   const viewKey = useSshStore((s) => s.viewKey)
   const closeKeyView = useSshStore((s) => s.closeKeyView)
+  const revealKey = useSshStore((s) => s.revealKey)
+  const closeRevealKey = useSshStore((s) => s.closeRevealKey)
   const load = useSshStore((s) => s.load)
 
   useEffect(() => {
@@ -101,6 +104,15 @@ export function SshPanel() {
       {/* 分两行两块网格：第一行两张设置卡等高对齐（区域会平分卡片剩余高度）；
           第二行两张表的行数、工具行与分页条各不相同，各自取内容高度即可，不必凑成一样高。 */}
       <div className="flex flex-col gap-4">
+        {/* SSH 动作只在容器内真实执行；宿主机本地开发是内存演示，与防火墙面板同一标识明示出来。 */}
+        {!isDockerRuntime() ? (
+          <div
+            role="status"
+            className="flex items-center rounded-xl border border-line bg-surface px-4 py-2.5 text-sm text-fg-muted"
+          >
+            演示数据
+          </div>
+        ) : null}
         <div className="grid gap-4 md:grid-cols-2">
           <ServiceCard />
           <RootCard />
@@ -114,6 +126,13 @@ export function SshPanel() {
       <SshKeyRemoveDialog />
       {viewKey ? (
         <SshKeyDialog title={viewKey.title} material={viewKey.material} onClose={closeKeyView} />
+      ) : null}
+      {revealKey ? (
+        <SshKeyRevealDialog
+          title={revealKey.title}
+          material={revealKey.material}
+          onClose={closeRevealKey}
+        />
       ) : null}
     </>
   )
@@ -377,14 +396,17 @@ function RootCard() {
   const passwordDraft = useSshStore((s) => s.passwordDraft)
   const resetting = useSshStore((s) => s.resettingPassword)
   const savingPolicy = useSshStore((s) => s.savingPolicy)
+  const generatingRootKey = useSshStore((s) => s.generatingRootKey)
   const setLoginPolicy = useSshStore((s) => s.setLoginPolicy)
   const setPasswordDraft = useSshStore((s) => s.setPasswordDraft)
   const resetPassword = useSshStore((s) => s.resetPassword)
+  const createRootKey = useSshStore((s) => s.createRootKey)
   const openKeyView = useSshStore((s) => s.openKeyView)
   const passwordInputId = useId()
 
   if (!rootAuth) return null
   const strength = passwordDraft ? evaluateSshPasswordStrength(passwordDraft) : undefined
+  const rootKey = rootAuth.key
 
   return (
     <Section title="Root 设置">
@@ -460,45 +482,54 @@ function RootCard() {
       <Region title="Root 密钥">
         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
           <div className="flex items-center gap-2">
-            {rootAuth.key ? (
-              <>
-                <button
-                  type="button"
-                  onClick={() => openKeyView('查看 Root 密钥', rootAuth.key!)}
-                  className={ACTION_CLASS}
-                >
-                  查看密钥
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    downloadPrivateKey(buildKeyFilename(new Date().toISOString()), rootAuth.key!)
-                  }
-                  className={SECONDARY_ACTION_CLASS}
-                >
-                  下载
-                </button>
-              </>
+            {/* 生成/重新生成同一动作：已存在时按一次，新公钥替换旧公钥，私钥只在随后的弹窗里出现一次。 */}
+            <button
+              type="button"
+              onClick={() => void createRootKey(gateway)}
+              disabled={generatingRootKey}
+              className={ACTION_CLASS}
+            >
+              {rootKey ? '重新生成' : '生成密钥'}
+            </button>
+            {rootKey ? (
+              <button
+                type="button"
+                onClick={() => openKeyView('查看 Root 密钥', rootKey)}
+                className={SECONDARY_ACTION_CLASS}
+              >
+                查看密钥
+              </button>
             ) : null}
           </div>
-          <p className="text-xs text-fg-subtle">演示密钥 · 不对应任何真实主机</p>
+          <p className="text-xs text-fg-subtle">
+            {isDockerRuntime()
+              ? '重新生成会替换 root 授权文件首行的公钥，旧私钥随之作废。'
+              : '演示密钥 · 不对应任何真实主机'}
+          </p>
         </div>
-        {/* 密钥的三项元数据按标签取值两列排：窄卡里指纹必然截断，全文在弹窗里给。 */}
-        {rootAuth.key ? (
+        {/* 密钥的元数据与公钥按标签取值两列排：公钥单行很长，卡内截断、全文在弹窗里给。 */}
+        {rootKey ? (
           <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-xs">
             <dt className="text-fg-muted">算法</dt>
-            <dd className="truncate text-fg">{rootAuth.key.algorithm}</dd>
+            <dd className="truncate text-fg">{rootKey.algorithm}</dd>
             <dt className="text-fg-muted">指纹</dt>
-            <dd className="truncate font-mono text-fg" title={rootAuth.key.fingerprint}>
-              {rootAuth.key.fingerprint}
+            <dd className="truncate font-mono text-fg" title={rootKey.fingerprint}>
+              {rootKey.fingerprint}
             </dd>
             <dt className="text-fg-muted">生成于</dt>
-            <dd className="tabular-nums text-fg">{formatDateTime(rootAuth.key.createdAt)}</dd>
+            <dd className="tabular-nums text-fg">{formatDateTime(rootKey.createdAt)}</dd>
+            <dt className="text-fg-muted">公钥</dt>
+            <dd className="truncate font-mono text-fg" title={rootKey.publicKey}>
+              {rootKey.publicKey}
+            </dd>
           </dl>
         ) : (
           /* root 的 authorized_keys 为空：如实呈现尚未生成，不编造密钥材料。 */
           <p className="mt-3 text-xs text-fg-subtle">尚未生成：root 账号的授权文件里还没有任何公钥。</p>
         )}
+        <p className="mt-2 text-xs text-fg-subtle">
+          生成后私钥只在弹窗里展示这一次，请当场下载保存。
+        </p>
       </Region>
     </Section>
   )

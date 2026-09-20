@@ -105,6 +105,7 @@ import { registerSqliteCatalog } from './databaseCatalog'
 import {
   addSshLoginKey,
   findSshLoginKeyByName,
+  generateSshRootKey,
   getSshAuthSettings,
   getSshLoginKeys,
   getSshLoginRecords,
@@ -599,6 +600,11 @@ export class MockSshAdapter implements SshAdapter {
 
   async resetRootPassword(password: string): Promise<SshPasswordResetResult> {
     return resetSshRootPassword(password, new Date().toISOString())
+  }
+
+  async createRootKey(): Promise<SshRootAuth> {
+    // 私钥仅随本次响应携带（生成序号进派生种子，重新生成得到不同指纹）。
+    return generateSshRootKey(new Date().toISOString())
   }
 
   async listKeys(): Promise<readonly SshLoginKey[]> {

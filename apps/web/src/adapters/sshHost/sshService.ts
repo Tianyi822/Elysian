@@ -33,6 +33,7 @@ import {
   parseKeygenFingerprint,
   parseKeyLines,
   removeKeyLine,
+  replaceFirstKeyLine,
   sshDirPath,
   type PasswdEntry,
 } from './authorizedKeys'
@@ -47,7 +48,7 @@ import {
  *   `sshd -t` 预检失败立即回滚原配置——不重现「写坏配置导致服务停用」。
  * - authorized_keys 行级编辑：公钥行经 ssh-keygen -lf 验证后追加/删除，.ssh 0700、文件 0600。
  * - Root 密码只走 chpasswd 的 stdin，不进命令行参数。
- * - 私钥只在创建响应里一次性带出：生成后立即读出并删除临时密钥文件，之后无处可取。
+ * - 私钥只在创建/生成响应里一次性带出：生成后立即读出并删除临时密钥文件，之后无处可取。
  */
 
 export const DEFAULT_SSH_PATHS = {
@@ -356,6 +357,47 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
       })
       passwordResetAt = deps.nowIso()
       return { auth: await this.rootAuth(), strength }
+    },
+
+    async createRootKey(): Promise<SshRootAuth> {
+      const root = await entryOf('root')
+      await ensureDir(paths.keygenWorkspace)
+      tempSeq += 1
+      const keyPath = `${paths.keygenWorkspace}/elysian-root-key-${tempSeq}`
+      await deps
+        .runSshKeygen(['-t', 'ed25519', '-C', `${KEY_COMMENT_PREFIX}root`, '-N', '', '-f', keyPath])
+        .catch((error: unknown) => {
+          throw commandError('ssh-keygen', ['-t', 'ed25519', '-C', `${KEY_COMMENT_PREFIX}root`, '-N', '', '-f', keyPath], error)
+        })
+      // 与登录密钥同一纪律：私钥读进内存后立即删除临时文件，此后只在本次响应里。
+      let privateKey: string
+      let publicKey: string
+      try {
+        privateKey = await deps.readText(keyPath)
+        publicKey = (await deps.readText(`${keyPath}.pub`)).trim()
+      } finally {
+        await deps.remove(keyPath).catch(() => undefined)
+        await deps.remove(`${keyPath}.pub`).catch(() => undefined)
+      }
+
+      const fingerprint = await verifyPublicKey(publicKey)
+      // Root 密钥卡只管理首行：替换第一条公钥行，外来公钥行原样保留；旧私钥随之作废。
+      const original = await authorizedKeysText(root)
+      await writeAuthorizedKeys(root, original, replaceFirstKeyLine(original ?? '', publicKey))
+      const createdAt = deps.nowIso()
+      keyFirstSeenAt.set(keyLineId(publicKey), createdAt)
+      return {
+        policy: policyOf(await readConfigText()),
+        key: {
+          algorithm: algorithmLabelOf(fingerprint),
+          fingerprint: fingerprint.fingerprint,
+          createdAt,
+          publicKey,
+          // 私钥仅随生成响应一次性携带：rootAuth 与列表都不再返回。
+          privateKey,
+        },
+        passwordResetAt,
+      }
     },
 
     async listKeys(): Promise<readonly SshLoginKey[]> {

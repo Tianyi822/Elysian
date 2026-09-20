@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { SEED_LOGIN_RECORDS, SEED_SSH_PORT, SEED_SSH_STATS } from '../../adapters/mock/sshData'
 import { useNotificationStore } from '../../stores/notificationStore'
-import { SSH_PAGE_SIZE } from '../../stores/sshStore'
+import { SSH_PAGE_SIZE, useSshStore } from '../../stores/sshStore'
 import { renderApp } from '../../test/renderApp'
 import { openSshTab, resetSshPanel, securityTab, sshSessions } from '../../test/sshPanel'
 
@@ -20,6 +20,10 @@ beforeEach(() => {
 describe('SSH 管理页签', () => {
   it('切到页签后渲染四张分区卡：设置卡等高，两张表各自取高度', async () => {
     await openSshTab()
+
+    // 测试跑在宿主机演示态（非 Docker）：工具栏明示「演示数据」，与防火墙面板同一标识。
+    const demoBadge = screen.getByText('演示数据')
+    expect(demoBadge.closest('[role="status"]')).not.toBeNull()
 
     const service = screen.getByRole('region', { name: 'SSH 服务' })
     const root = screen.getByRole('region', { name: 'Root 设置' })
@@ -289,7 +293,7 @@ describe('SSH 管理页签', () => {
     )
   })
 
-  it('查看密钥：弹窗给出指纹、算法与演示私钥全文，关闭后回到卡片', async () => {
+  it('查看 Root 密钥：弹窗给出指纹、算法与公钥全文，不出现私钥，关闭后回到卡片', async () => {
     const user = await openSshTab()
     const root = screen.getByRole('region', { name: 'Root 设置' })
 
@@ -299,13 +303,69 @@ describe('SSH 管理页签', () => {
     expect(dialog.textContent).toContain('演示密钥 · 不对应任何真实主机')
     expect(dialog.textContent).toContain('ssh-ed25519 256')
     expect(dialog.textContent).toContain('SHA256:')
-    expect(within(dialog).getByText(/BEGIN OPENSSH PRIVATE KEY/)).toBeInTheDocument()
-    expect(within(dialog).getByRole('button', { name: '复制密钥' })).toBeInTheDocument()
-    expect(within(dialog).getByRole('button', { name: '下载私钥' })).toBeInTheDocument()
+    expect(dialog.textContent).toContain('公钥内容')
+    expect(within(dialog).getByRole('button', { name: '公钥' })).toBeInTheDocument()
+    // 私钥不在查看弹窗里：既没有它的正文，也没有下载它的入口。
+    expect(within(dialog).queryByText(/BEGIN OPENSSH PRIVATE KEY/)).not.toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: '下载私钥' })).not.toBeInTheDocument()
+    expect(dialog.textContent).toContain('私钥只在创建/生成的那一次展示过')
 
     await user.click(within(dialog).getByRole('button', { name: '关闭弹窗' }))
     await waitFor(() =>
       expect(screen.queryByRole('dialog', { name: '查看 Root 密钥' })).not.toBeInTheDocument(),
+    )
+  })
+
+  it('重新生成 Root 密钥：私钥只在一次性弹窗里出现，关闭后无法再取', async () => {
+    const user = await openSshTab()
+    const root = screen.getByRole('region', { name: 'Root 设置' })
+    const fingerprintBefore = useSshStore.getState().rootAuth?.key?.fingerprint
+
+    // 种子里 Root 密钥已存在：按钮文案是「重新生成」。
+    await user.click(within(root).getByRole('button', { name: '重新生成' }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Root 密钥已生成' })
+    expect(within(dialog).getByText('私钥仅此次可见')).toBeInTheDocument()
+    expect(within(dialog).getByText(/BEGIN OPENSSH PRIVATE KEY/)).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: '下载私钥' })).toBeInTheDocument()
+
+    // 卡片上的指纹已换成新材料；入档的 rootAuth 不带私钥。
+    await waitFor(() =>
+      expect(useSshStore.getState().rootAuth?.key?.fingerprint).not.toBe(fingerprintBefore),
+    )
+    expect(useSshStore.getState().rootAuth?.key?.privateKey).toBeUndefined()
+
+    // 关闭即清空：一次性私钥从内存状态里消失。
+    await user.click(within(dialog).getByRole('button', { name: '关闭弹窗' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Root 密钥已生成' })).not.toBeInTheDocument(),
+    )
+    expect(useSshStore.getState().revealKey).toBeUndefined()
+
+    const notifications = await screen.findByLabelText('通知')
+    expect(within(notifications).getByRole('status')).toHaveTextContent(
+      'Root 密钥已重新生成（mock，待接入真实执行）',
+    )
+  })
+
+  it('Root 密钥未生成时给空态说明与「生成密钥」入口，不编造材料', async () => {
+    const { gateway } = sshSessions({
+      rootAuth: async () => ({ policy: 'prohibit-password', key: null, passwordResetAt: null }),
+    })
+    const user = await openSshTab(gateway)
+    const root = screen.getByRole('region', { name: 'Root 设置' })
+
+    expect(within(root).getByText('尚未生成：root 账号的授权文件里还没有任何公钥。')).toBeInTheDocument()
+    expect(within(root).queryByRole('button', { name: '重新生成' })).not.toBeInTheDocument()
+
+    await user.click(within(root).getByRole('button', { name: '生成密钥' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Root 密钥已生成' })
+    expect(within(dialog).getByText(/BEGIN OPENSSH PRIVATE KEY/)).toBeInTheDocument()
+    // 通知断言读 store（与 Root 密码用例同款）：渲染提交的时序不影响判定。
+    await waitFor(() =>
+      expect(useNotificationStore.getState().notifications.map((item) => item.message)).toContain(
+        'Root 密钥已生成（mock，待接入真实执行）',
+      ),
     )
   })
 

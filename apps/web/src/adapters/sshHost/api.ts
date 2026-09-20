@@ -5,7 +5,7 @@ import { EndpointGuardError, isSameOrigin, readJsonBody, sendError, sendJson } f
 
 /*
  * SSH 真实端点：/api/security/ssh/*（dev/preview 的 Node 中间件，仅容器内可用）。
- * 服务启停、sshd_config 补丁、Root 密码与登录密钥都走真实 sshd/ssh-keygen/chpasswd；
+ * 服务启停、sshd_config 补丁、Root 密码、Root 密钥与登录密钥都走真实 sshd/ssh-keygen/chpasswd；
  * 非 Docker 环境浏览器侧走内存 mock，端点本身不挂载。handler 依赖全部注入，
  * 测试用 fake service 驱动，不执行任何真实命令。
  */
@@ -105,6 +105,13 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: SshApiDep
       const password = (body as { password?: unknown }).password
       if (typeof password !== 'string' || !password) throw new Error('密码请求体无效')
       sendJson(res, 200, await service.resetRootPassword(password))
+      return
+    }
+
+    // 生成（或重新生成）Root 密钥：没有要校验的输入，读体只为走同一套守卫（同源、Content-Type、体积上限）。
+    if (method === 'POST' && path === '/root-key') {
+      await readJsonBody(req)
+      sendJson(res, 200, await service.createRootKey())
       return
     }
 

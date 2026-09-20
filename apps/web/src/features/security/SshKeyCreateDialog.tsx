@@ -3,17 +3,19 @@ import * as Select from '@radix-ui/react-select'
 import { useId, useState } from 'react'
 import { SSH_KEY_NAME_MAX_LENGTH, isValidSshKeyName } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
+import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { Check, ChevronDown, X } from '../../components/icons'
 import { useSshStore } from '../../stores/sshStore'
 import { ACTION_CLASS } from './sshCardParts'
 
 /**
- * 创建 SSH 密钥弹窗：选归属账号、起一个名称，其余由演示引擎生成。
+ * 创建 SSH 密钥弹窗：选归属账号、起一个名称，密钥对由 adapter 生成。
  *
  * 密钥不是孤立的——公钥要写进某个账号的 authorized_keys，所以归属账号是必填的第一项，
  * 弹窗底部用一块说明把「创建后会怎样」讲清楚，避免只填完两个字段还不知道发生了什么。
  * 账号清单来自 SSH store 的 keyAccounts（面板加载时一并取回）：mock 下是账号数据集的种子，
  * Docker 运行时是 getent 读到的真实系统账号，弹窗本身不感知数据来自哪里。
+ * 创建成功后由一次性私钥弹窗展示私钥（见 SshKeyRevealDialog），这里不出现密钥材料。
  */
 export function SshKeyCreateDialog() {
   const gateway = useGateway()
@@ -63,9 +65,12 @@ export function SshKeyCreateDialog() {
           <Dialog.Title className="sr-only">创建 SSH 密钥</Dialog.Title>
           <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
             <div className="flex items-center gap-2">
-              <span className="rounded bg-warning/15 px-1.5 py-0.5 text-xs font-medium text-warning">
-                演示 · 待接入真实执行
-              </span>
+              {/* 真实执行时不加任何标注——动作就是动作；演示态保留提示。 */}
+              {!isDockerRuntime() ? (
+                <span className="rounded bg-warning/15 px-1.5 py-0.5 text-xs font-medium text-warning">
+                  演示 · 待接入真实执行
+                </span>
+              ) : null}
               <span className="text-sm font-medium text-fg">创建 SSH 密钥</span>
             </div>
             <Dialog.Close asChild>
@@ -160,17 +165,21 @@ export function SshKeyCreateDialog() {
               <p className="mb-1.5 text-xs font-medium text-fg-muted">创建后</p>
               <ul className="flex flex-col gap-1 text-xs text-fg-muted">
                 <li>公钥记到所选账号名下，密钥列表里按账号能查到这把密钥。</li>
-                <li>私钥可在列表行内随时查看与下载，删除密钥即撤销这次授权。</li>
+                <li>私钥只在创建完成后展示这一次，请当场下载保存；关闭弹窗后无法再取回。</li>
+                <li>删除密钥即撤销这次授权，公钥会从账号的授权文件里移除。</li>
               </ul>
               <p className="mt-2 text-xs text-fg-subtle">
-                密钥材料是演示数据，由演示引擎按名称生成，不对应任何真实主机。
+                {isDockerRuntime()
+                  ? '密钥对由容器内 ssh-keygen 真实生成，公钥写入所选账号的授权文件。'
+                  : '密钥材料是演示数据，由演示引擎按名称生成，不对应任何真实主机。'}
               </p>
             </div>
           </div>
 
           <div className="flex items-center justify-between gap-2 border-t border-line px-4 py-2.5">
-            <p className="text-xs text-fg-subtle">只改演示数据集。</p>
-            <div className="flex gap-2">
+            {/* ml-auto 保证按钮组恒靠右：演示态左侧有说明文字、真实态没有，布局都不变。 */}
+            {!isDockerRuntime() ? <p className="text-xs text-fg-subtle">只改演示数据集。</p> : null}
+            <div className="ml-auto flex gap-2">
               <button
                 type="button"
                 onClick={() => closeCreateKey()}

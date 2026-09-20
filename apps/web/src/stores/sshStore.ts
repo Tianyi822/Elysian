@@ -55,14 +55,20 @@ type SshState = {
   removeKeyTarget: SshLoginKey | undefined
   /**
    * 查看密钥弹窗。标题与材料由调用方给定，Root 密钥与登录密钥共用同一个弹窗，
-   * 因此这里存的是「要看哪一份」，而不是「要不要打开」。
+   * 因此这里存的是「要看哪一份」，而不是「要不要打开」。查看只给公钥、指纹与元信息。
    */
   viewKey: { title: string; material: SshKeyMaterial } | undefined
+  /**
+   * 一次性私钥弹窗：创建登录密钥或生成 Root 密钥成功后打开，材料直接来自那一次响应；
+   * 关闭即清空——私钥只在创建/生成那一次可见，之后任何入口都不再返回它。
+   */
+  revealKey: { title: string; material: SshKeyMaterial } | undefined
   togglingService: boolean
   savingAuth: boolean
   savingPort: boolean
   savingPolicy: boolean
   resettingPassword: boolean
+  generatingRootKey: boolean
   creatingKey: boolean
   removingKeyIds: readonly string[]
   load: (gateway: ElysianGateway) => Promise<void>
@@ -73,6 +79,7 @@ type SshState = {
   setLoginPolicy: (gateway: ElysianGateway, policy: SshRootLoginPolicy) => Promise<void>
   setPasswordDraft: (value: string) => void
   resetPassword: (gateway: ElysianGateway) => Promise<void>
+  createRootKey: (gateway: ElysianGateway) => Promise<void>
   setKeySearch: (search: string) => void
   setKeyPage: (page: number) => void
   setRecordPage: (page: number) => void
@@ -84,10 +91,18 @@ type SshState = {
   removeKey: (gateway: ElysianGateway, keyId: string) => Promise<void>
   openKeyView: (title: string, material: SshKeyMaterial) => void
   closeKeyView: () => void
+  closeRevealKey: () => void
 }
 
 function notify(message: string, tone: 'success' | 'info' | 'danger' = 'success'): void {
   useNotificationStore.getState().notify({ message, tone })
+}
+
+/** 入档与查看弹窗的材料不带私钥：私钥只保留在一次性弹窗的那份材料里，列表与查看一律取不到它。 */
+function materialWithoutPrivateKey<T extends SshKeyMaterial>(material: T): T {
+  const clone = { ...material }
+  delete clone.privateKey
+  return clone
 }
 
 export const useSshStore = create<SshState>((set, get) => ({
@@ -108,11 +123,13 @@ export const useSshStore = create<SshState>((set, get) => ({
   createKeyOpen: false,
   removeKeyTarget: undefined,
   viewKey: undefined,
+  revealKey: undefined,
   togglingService: false,
   savingAuth: false,
   savingPort: false,
   savingPolicy: false,
   resettingPassword: false,
+  generatingRootKey: false,
   creatingKey: false,
   removingKeyIds: [],
 
@@ -143,7 +160,7 @@ export const useSshStore = create<SshState>((set, get) => ({
     }
   },
 
-  // 乐观更新：开关先翻再等 mock 确认，失败回滚并报危险通知。
+  // 乐观更新：开关先翻再等 adapter 确认，失败回滚并报危险通知。
   async setServiceEnabled(gateway, enabled) {
     const previous = get().overview
     if (!previous || get().togglingService) return
@@ -220,7 +237,7 @@ export const useSshStore = create<SshState>((set, get) => ({
     set({ passwordDraft: value })
   },
 
-  // 空输入不发请求；判定为弱密码由 mock 侧拒绝，消息直接来自那一次判定。
+  // 空输入不发请求；判定为弱密码由服务侧拒绝（mock 与容器内 chpasswd 前的复验同一次判定），消息直接来自那一次判定。
   async resetPassword(gateway) {
     const password = get().passwordDraft
     if (!password) {
@@ -241,12 +258,40 @@ export const useSshStore = create<SshState>((set, get) => ({
     }
   },
 
+  // 生成（或重新生成）Root 密钥：私钥只进一次性弹窗，入档的 rootAuth 不带它。
+  async createRootKey(gateway) {
+    const hadKey = get().rootAuth?.key != null
+    if (get().generatingRootKey) return
+    set({ generatingRootKey: true })
+    try {
+      const result = await gateway.ssh.createRootKey()
+      set({
+        rootAuth: {
+          ...result,
+          key: result.key ? materialWithoutPrivateKey(result.key) : null,
+        },
+        revealKey: result.key ? { title: 'Root 密钥已生成', material: result.key } : undefined,
+        generatingRootKey: false,
+      })
+      notify(`Root 密钥已${hadKey ? '重新生成' : '生成'}${MOCK_SUFFIX}`)
+    } catch (error) {
+      set({ generatingRootKey: false })
+      notify(error instanceof Error ? `生成失败：${error.message}` : '生成失败', 'danger')
+    }
+  },
+
   openKeyView(title, material) {
-    set({ viewKey: { title, material } })
+    // 查看入口只给公钥、指纹与元信息：即便上游材料带了私钥，这里也不让它进查看弹窗。
+    set({ viewKey: { title, material: materialWithoutPrivateKey(material) } })
   },
 
   closeKeyView() {
     set({ viewKey: undefined })
+  },
+
+  closeRevealKey() {
+    // 关闭即清空：一次性私钥从内存状态里消失，此后没有任何入口能再取回它。
+    set({ revealKey: undefined })
   },
 
   setKeySearch(search) {
@@ -277,9 +322,11 @@ export const useSshStore = create<SshState>((set, get) => ({
     try {
       const created = await gateway.ssh.createKey(input)
       set((state) => ({
-        keys: [...state.keys, created],
+        // 入列的条目不带私钥；那一份只进一次性弹窗，关闭即清空。
+        keys: [...state.keys, materialWithoutPrivateKey(created)],
         createKeyOpen: false,
         creatingKey: false,
+        revealKey: { title: `新密钥「${created.name}」的私钥`, material: created },
       }))
       notify(`SSH 密钥「${created.name}」已创建${MOCK_SUFFIX}`)
       return true

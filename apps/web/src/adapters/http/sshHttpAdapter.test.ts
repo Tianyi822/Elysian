@@ -93,6 +93,23 @@ describe('parseSshRootAuthResponse', () => {
     expect(withoutKey).toEqual({ policy: 'no', key: null, passwordResetAt: '2026-01-02T03:04:05Z' })
   })
 
+  it('生成响应经同一解析器放行，私钥在此时一次性携带', () => {
+    const generated = parseSshRootAuthResponse({
+      policy: 'prohibit-password',
+      key: {
+        algorithm: 'ssh-ed25519 256',
+        fingerprint: 'SHA256:abc',
+        createdAt: '2026-01-02T03:04:05Z',
+        publicKey: 'ssh-ed25519 AAAA elysian-root',
+        privateKey: '-----BEGIN OPENSSH PRIVATE KEY-----\n占位\n-----END OPENSSH PRIVATE KEY-----',
+      },
+      passwordResetAt: null,
+    })
+    expect(generated.key?.privateKey).toContain('BEGIN OPENSSH PRIVATE KEY')
+    // 同一解析器对查看响应（无私钥）也放行：字段可缺省。
+    expect(parseSshRootAuthResponse({ ...generated, key: { ...generated.key!, privateKey: undefined } }).key?.privateKey).toBeUndefined()
+  })
+
   it('坏策略、坏时间或缺字段时抛中文错误', () => {
     expect(() => parseSshRootAuthResponse({ policy: 'maybe', key: null, passwordResetAt: null })).toThrow(
       'SSH Root 登录策略响应无效',

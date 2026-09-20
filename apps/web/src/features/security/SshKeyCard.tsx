@@ -9,8 +9,9 @@ import { filterSshKeys } from './sshKeySearch'
 
 /**
  * SSH 密钥卡：搜索、创建入口与密钥表格。
- * 搜索按名称、指纹与私钥内容匹配（判据见 sshKeySearch.ts），粘一整份私钥能准确定位到那一行。
- * 表格只列名称、归属账号、创建时间与操作，密钥材料在行内的「查看密钥」弹窗里给。
+ * 搜索按名称、指纹与归属账号匹配（判据见 sshKeySearch.ts）；私钥不在列表数据里，
+ * 因此也不参与匹配——它只在创建后的一次性弹窗里出现过。
+ * 表格只列名称、归属账号、创建时间与操作，公钥全文在行内的「查看密钥」弹窗里给。
  */
 export function SshKeyCard() {
   const keys = useSshStore((s) => s.keys)
@@ -54,7 +55,7 @@ export function SshKeyCard() {
             id={searchInputId}
             value={search}
             onChange={(event) => setKeySearch(event.target.value)}
-            placeholder="搜索名称、账号、指纹或私钥"
+            placeholder="搜索名称、账号或指纹"
             className={`w-full ${CONTROL_HEIGHT_CLASS} rounded-lg border border-line bg-surface-raised pl-8 pr-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle`}
           />
         </div>
@@ -95,7 +96,7 @@ export function SshKeyCard() {
                 <td colSpan={4} className="border-b border-line py-8 text-center text-sm text-fg-muted">
                   {keys.length === 0
                     ? '还没有密钥，点右上角「创建 SSH 密钥」新建一把'
-                    : '没有匹配的密钥，换个关键词或粘一整份私钥试试'}
+                    : '没有匹配的密钥，换个关键词试试'}
                 </td>
               </tr>
             ) : (

@@ -239,9 +239,8 @@ export interface LogsAdapter {
 }
 
 /**
- * SSH 区适配接口。本期为 mock 实现：改动只落内存数据集；
- * 真实的 SSH 变更（启停服务、改端口与认证方式、换 Root 凭据）涉及系统级操作，
- * 由未来执行层筛选与执行，页面不改。
+ * SSH 区适配接口。演示态由 mock 实现；Docker 运行时由 HTTP adapter 接通容器内 sshd，
+ * 真实执行全部经服务端编排（sshd_config 补丁、chpasswd、ssh-keygen），页面不改。
  */
 /**
  * 密钥可归属的主机账号（轻量清单）。真实实现来自 getent passwd 的真实系统账号
@@ -275,6 +274,11 @@ export interface SshAdapter {
   saveRootLoginPolicy(policy: SshRootLoginPolicy): Promise<SshRootAuth>
   /** 重置 Root 密码：服务端复验强度（弱密码拒绝）；真实实现经 chpasswd 的 stdin 下发，密码不进命令行。 */
   resetRootPassword(password: string): Promise<SshPasswordResetResult>
+  /**
+   * 生成（或重新生成）Root 密钥：真实实现 ssh-keygen 生成 ed25519 密钥对，
+   * 新公钥替换 root authorized_keys 的首行（其余行保留），私钥仅随本次响应一次性返回、不落盘。
+   */
+  createRootKey(): Promise<SshRootAuth>
   /** 登录密钥列表：真实实现汇总各账号 authorized_keys，按 ssh-keygen 指纹呈现；不返回私钥。 */
   listKeys(): Promise<readonly SshLoginKey[]>
   /** 登录记录：按时间倒序的登录事实，含来源地址、客户端端口、账号与结果。 */

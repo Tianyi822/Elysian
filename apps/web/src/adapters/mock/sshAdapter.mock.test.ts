@@ -85,7 +85,26 @@ describe('SSH mock adapter', () => {
     const { key } = await ssh.rootAuth()
     expect(key!.fingerprint.startsWith('SHA256:')).toBe(true)
     expect(key!.algorithm).toBe('ssh-ed25519 256')
-    expect(key!.privateKey!.startsWith('-----BEGIN OPENSSH PRIVATE KEY-----')).toBe(true)
+    // 查看入口不带私钥：契约语义是私钥只在生成响应里一次性携带。
+    expect(key!.privateKey).toBeUndefined()
+  })
+
+  it('生成 Root 密钥：响应一次性携带私钥，之后再取回只剩公钥与指纹；重新生成换一份材料', async () => {
+    const before = await ssh.rootAuth()
+
+    const generated = await ssh.createRootKey()
+    expect(generated.key!.privateKey).toContain('-----BEGIN OPENSSH PRIVATE KEY-----')
+    expect(generated.key!.fingerprint).not.toBe(before.key!.fingerprint)
+
+    const after = await ssh.rootAuth()
+    expect(after.key!.privateKey).toBeUndefined()
+    expect(after.key!.fingerprint).toBe(generated.key!.fingerprint)
+    expect(after.key!.publicKey).toBe(generated.key!.publicKey)
+
+    // 重新生成：生成序号进派生种子，指纹随之变化。
+    const regenerated = await ssh.createRootKey()
+    expect(regenerated.key!.fingerprint).not.toBe(generated.key!.fingerprint)
+    expect(regenerated.key!.privateKey).toContain('-----BEGIN OPENSSH PRIVATE KEY-----')
   })
 
   it('取回的是副本：改它不会写回数据集', async () => {
@@ -103,14 +122,15 @@ describe('SSH mock adapter', () => {
     expect((await ssh.listKeys())[0]!.name).toBe(SEED_LOGIN_KEYS[0]!.name)
   })
 
-  it('登录密钥种子四把，材料按名称确定性派生', async () => {
+  it('登录密钥种子四把，材料按名称确定性派生；列表一律不带私钥', async () => {
     const keys = await ssh.listKeys()
     expect(keys.map((key) => key.name)).toEqual(SEED_LOGIN_KEYS.map((key) => key.name))
 
     for (const key of keys) {
       expect(key.fingerprint.startsWith('SHA256:')).toBe(true)
       expect(key.publicKey).toContain(key.name)
-      expect(key.privateKey!.startsWith('-----BEGIN OPENSSH PRIVATE KEY-----')).toBe(true)
+      // 契约语义：列表与查看不返回私钥，私钥只在创建响应里一次性携带。
+      expect(key.privateKey).toBeUndefined()
     }
   })
 
@@ -126,7 +146,11 @@ describe('SSH mock adapter', () => {
   it('创建密钥：名称去空白后入列，空名、重名与不存在的归属账号都被拒', async () => {
     const created = await ssh.createKey({ name: '  运维笔记本  ', userId: 'user-wangwu' })
     expect(created).toMatchObject({ name: '运维笔记本', userId: 'user-wangwu' })
-    expect((await ssh.listKeys()).map((key) => key.name)).toContain('运维笔记本')
+    // 创建响应一次性携带私钥；随后的列表里同一把密钥不再有私钥。
+    expect(created.privateKey).toContain('-----BEGIN OPENSSH PRIVATE KEY-----')
+    const listed = await ssh.listKeys()
+    expect(listed.map((key) => key.name)).toContain('运维笔记本')
+    expect(listed.find((key) => key.name === '运维笔记本')!.privateKey).toBeUndefined()
 
     await expect(ssh.createKey({ name: '运维笔记本', userId: 'user-wangwu' })).rejects.toThrow(
       '密钥名称已存在：运维笔记本',
