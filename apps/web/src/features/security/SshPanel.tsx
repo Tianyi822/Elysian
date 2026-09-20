@@ -304,27 +304,22 @@ function ServiceCard() {
       </Region>
 
       <Region title="登录方式">
+        {/* 开关标签已说明含义，不再各配一行同义描述。 */}
         <div className="flex flex-col gap-4">
-          <div>
-            <SwitchRow
-              label="密码登录"
-              checked={settings.passwordAuthEnabled}
-              disabled={savingAuth}
-              onCheckedChange={(checked) =>
-                void setAuthMethod(gateway, { passwordAuthEnabled: checked })
-              }
-            />
-            <p className="mt-2 text-xs text-fg-muted">允许使用密码进行 SSH 登录</p>
-          </div>
-          <div>
-            <SwitchRow
-              label="密钥登录"
-              checked={settings.keyAuthEnabled}
-              disabled={savingAuth}
-              onCheckedChange={(checked) => void setAuthMethod(gateway, { keyAuthEnabled: checked })}
-            />
-            <p className="mt-2 text-xs text-fg-muted">允许使用密钥进行 SSH 登录</p>
-          </div>
+          <SwitchRow
+            label="密码登录"
+            checked={settings.passwordAuthEnabled}
+            disabled={savingAuth}
+            onCheckedChange={(checked) =>
+              void setAuthMethod(gateway, { passwordAuthEnabled: checked })
+            }
+          />
+          <SwitchRow
+            label="密钥登录"
+            checked={settings.keyAuthEnabled}
+            disabled={savingAuth}
+            onCheckedChange={(checked) => void setAuthMethod(gateway, { keyAuthEnabled: checked })}
+          />
         </div>
       </Region>
     </Section>
