@@ -118,6 +118,8 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
   const keyFirstSeenAt = new Map<string, string>()
   /** Root 密码上次重置时间：chpasswd 不留可读记录，只有会话记忆。 */
   let passwordResetAt: string | null = null
+  /** 服务上次启停时间：sshd 自身不记录启停，只有会话记忆；进程重启后回到 null（界面显示 —）。 */
+  let lastToggleAt: string | null = null
   /** 密钥生成与指纹验证的临时文件序号：避免并发请求互踩。 */
   let tempSeq = 0
   /**
@@ -415,13 +417,13 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
   return {
     async overview(): Promise<SshOverview> {
       // enabled 与 status 都映射 sshd 是否在跑（pidfile 探测）；
-      // changedAt 无可靠来源（pidfile 不带可读时间戳），恒为 null，界面显示 —。
+      // changedAt 只反映本会话内的启停（契约：本会话内没改过时为 null，界面显示 —）。
       const running = await serviceRunning()
       const stats = summarizeSshLog(await loginRecords(), deps.nowIso())
       return {
         enabled: running,
         status: running ? 'running' : 'stopped',
-        changedAt: null,
+        changedAt: lastToggleAt,
         stats,
       }
     },
@@ -457,6 +459,7 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
         const detail = error instanceof Error ? error.message : String(error)
         throw new Error(`${enabled ? '启动' : '停止'} sshd 失败：${detail}`)
       })
+      lastToggleAt = deps.nowIso()
       return this.overview()
     },
 

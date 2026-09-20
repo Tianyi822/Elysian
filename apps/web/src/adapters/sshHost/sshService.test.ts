@@ -360,6 +360,15 @@ describe('createSshService 服务与登录统计', () => {
     expect(host.commands.filter((entry) => entry.command === 'service')).toEqual([])
   })
 
+  it('changedAt 反映本会话内的启停：未改过为 null，启停成功后取基准时间', async () => {
+    const service = createSshService(createFakeHost({ pidFile: true }).deps)
+    expect((await service.overview()).changedAt).toBeNull()
+    await service.setServiceEnabled(false)
+    expect((await service.overview()).changedAt).toBe(NOW)
+    await service.setServiceEnabled(true)
+    expect((await service.overview()).changedAt).toBe(NOW)
+  })
+
   it('listLoginRecords 按时间倒序返回', async () => {
     const service = createSshService(createFakeHost({ sshdLog: LOG }).deps)
     const records = await service.listLoginRecords()
