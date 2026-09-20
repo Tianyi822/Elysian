@@ -79,6 +79,7 @@ export function sshSessions(overrides: Partial<ElysianGateway['ssh']> = {}) {
       saveRootLoginPolicy: (policy) => ssh.saveRootLoginPolicy(policy),
       resetRootPassword: (password) => ssh.resetRootPassword(password),
       listKeys: () => ssh.listKeys(),
+      keyAccounts: () => ssh.keyAccounts(),
       listLoginRecords: () => ssh.listLoginRecords(),
       createKey: (input) => ssh.createKey(input),
       removeKey: (keyId) => ssh.removeKey(keyId),

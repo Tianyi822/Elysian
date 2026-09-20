@@ -243,28 +243,50 @@ export interface LogsAdapter {
  * 真实的 SSH 变更（启停服务、改端口与认证方式、换 Root 凭据）涉及系统级操作，
  * 由未来执行层筛选与执行，页面不改。
  */
+/**
+ * 密钥可归属的主机账号（轻量清单）。真实实现来自 getent passwd 的真实系统账号
+ * （有登录 shell、uid≥1000，root 不列——Root 密钥由 Root 密钥卡单独管理）；
+ * mock 实现来自账号数据集。创建密钥时把所选账号的 id 回传给 createKey。
+ */
+export type SshKeyAccount = {
+  /** 账号标识：真实实现即系统账号名（登录名），mock 实现为账号数据集 id。 */
+  id: string
+  /** 展示名：真实实现为登录名，mock 实现为账号昵称。 */
+  name: string
+}
+
 export interface SshAdapter {
-  /** 服务概况：开关、状态、上次启停时间与登录统计。 */
+  /**
+   * 服务概况。真实实现：enabled 与 status 都映射 sshd 是否在跑（以 pidfile 探测），
+   * changedAt 无可靠来源恒为 null；登录统计按今日/昨日/近 7 天三个窗口从登录日志汇总。
+   */
   overview(): Promise<SshOverview>
+  /** 登录方式与监听端口：真实实现读 /etc/ssh/sshd_config，缺省指令按 sshd 默认值呈现。 */
   settings(): Promise<SshAuthSettings>
+  /** Root 登录策略与 Root 凭据：策略读配置，密钥材料取 root authorized_keys 首行（无则 null）。 */
   rootAuth(): Promise<SshRootAuth>
-  /** 启停本机 SSH 服务（演示）：只改内存状态，不触碰任何真实主机。 */
+  /** 启停本机 SSH 服务：真实实现执行 service ssh start|stop。 */
   setServiceEnabled(enabled: boolean): Promise<SshOverview>
-  /** 保存登录方式开关（演示）。 */
+  /** 保存登录方式开关：真实实现补丁 sshd_config、sshd -t 预检通过后重启 sshd。 */
   setAuthMethods(methods: SshAuthMethods): Promise<SshAuthSettings>
-  /** 保存监听端口（演示）：非法端口直接拒绝。 */
+  /** 保存监听端口：非法端口直接拒绝；真实实现走补丁 → 预检 → 重启，失败回滚配置。 */
   setPort(port: number): Promise<SshAuthSettings>
-  /** 保存 Root 登录策略（演示）。 */
+  /** 保存 Root 登录策略：取值限契约枚举；落盘流程同登录方式开关。 */
   saveRootLoginPolicy(policy: SshRootLoginPolicy): Promise<SshRootAuth>
-  /** 重置 Root 密码（演示）：弱密码在 mock 侧即被拒绝，不产生任何真实变更。 */
+  /** 重置 Root 密码：服务端复验强度（弱密码拒绝）；真实实现经 chpasswd 的 stdin 下发，密码不进命令行。 */
   resetRootPassword(password: string): Promise<SshPasswordResetResult>
-  /** 登录密钥列表（演示）：可自定义名称、多条并存的登录密钥，与主机 root 密钥分开管理。 */
+  /** 登录密钥列表：真实实现汇总各账号 authorized_keys，按 ssh-keygen 指纹呈现；不返回私钥。 */
   listKeys(): Promise<readonly SshLoginKey[]>
-  /** 登录记录（演示）：按时间倒序的登录事实，含来源地址、客户端端口、账号与结果。 */
+  /** 登录记录：按时间倒序的登录事实，含来源地址、客户端端口、账号与结果。 */
   listLoginRecords(): Promise<readonly SshLoginRecord[]>
-  /** 创建登录密钥（演示）：名称去空白后校验，名称重复、归属账号不存在都拒绝。 */
+  /** 密钥可归属的主机账号清单（见 SshKeyAccount）。 */
+  keyAccounts(): Promise<readonly SshKeyAccount[]>
+  /**
+   * 创建登录密钥：名称去空白后校验并拒绝换行/控制字符；真实实现生成 ed25519 密钥对，
+   * 公钥经验证后追加目标账号 authorized_keys，私钥仅随本次响应一次性返回、不落盘。
+   */
   createKey(input: { name: string; userId: string }): Promise<SshLoginKey>
-  /** 删除登录密钥（演示）：只改内存数据集，不触碰任何真实授权文件。 */
+  /** 删除登录密钥：真实实现按公钥行从 authorized_keys 移除，写前备份。 */
   removeKey(keyId: string): Promise<void>
 }
 

@@ -400,36 +400,45 @@ function RootCard() {
       <Region title="Root 密钥">
         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => openKeyView('查看 Root 密钥', rootAuth.key)}
-              className={ACTION_CLASS}
-            >
-              查看密钥
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                downloadPrivateKey(buildKeyFilename(new Date().toISOString()), rootAuth.key)
-              }
-              className={SECONDARY_ACTION_CLASS}
-            >
-              下载
-            </button>
+            {rootAuth.key ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => openKeyView('查看 Root 密钥', rootAuth.key!)}
+                  className={ACTION_CLASS}
+                >
+                  查看密钥
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    downloadPrivateKey(buildKeyFilename(new Date().toISOString()), rootAuth.key!)
+                  }
+                  className={SECONDARY_ACTION_CLASS}
+                >
+                  下载
+                </button>
+              </>
+            ) : null}
           </div>
           <p className="text-xs text-fg-subtle">演示密钥 · 不对应任何真实主机</p>
         </div>
         {/* 密钥的三项元数据按标签取值两列排：窄卡里指纹必然截断，全文在弹窗里给。 */}
-        <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-xs">
-          <dt className="text-fg-muted">算法</dt>
-          <dd className="truncate text-fg">{rootAuth.key.algorithm}</dd>
-          <dt className="text-fg-muted">指纹</dt>
-          <dd className="truncate font-mono text-fg" title={rootAuth.key.fingerprint}>
-            {rootAuth.key.fingerprint}
-          </dd>
-          <dt className="text-fg-muted">生成于</dt>
-          <dd className="tabular-nums text-fg">{formatDateTime(rootAuth.key.createdAt)}</dd>
-        </dl>
+        {rootAuth.key ? (
+          <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-xs">
+            <dt className="text-fg-muted">算法</dt>
+            <dd className="truncate text-fg">{rootAuth.key.algorithm}</dd>
+            <dt className="text-fg-muted">指纹</dt>
+            <dd className="truncate font-mono text-fg" title={rootAuth.key.fingerprint}>
+              {rootAuth.key.fingerprint}
+            </dd>
+            <dt className="text-fg-muted">生成于</dt>
+            <dd className="tabular-nums text-fg">{formatDateTime(rootAuth.key.createdAt)}</dd>
+          </dl>
+        ) : (
+          /* root 的 authorized_keys 为空：如实呈现尚未生成，不编造密钥材料。 */
+          <p className="mt-3 text-xs text-fg-subtle">尚未生成：root 账号的授权文件里还没有任何公钥。</p>
+        )}
       </Region>
     </Section>
   )

@@ -74,7 +74,7 @@ export function SshKeyDialog({
           <div className="flex items-center justify-between gap-2 border-t border-line px-4 py-2.5">
             <p className="text-xs text-fg-subtle">密钥材料只存在于演示数据里。</p>
             <div className="flex items-center gap-2">
-              <CopyButton label="复制密钥" value={material.privateKey} tooltip="复制演示私钥全文" />
+              <CopyButton label="复制密钥" value={material.privateKey ?? ''} tooltip="复制演示私钥全文" />
               <button
                 type="button"
                 onClick={() =>

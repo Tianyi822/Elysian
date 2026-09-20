@@ -64,6 +64,7 @@ import type {
   SessionAdapter,
   SkillAdapter,
   SshAdapter,
+  SshKeyAccount,
   UserAdapter,
   WebsitesAdapter,
 } from '../../contracts/adapters'
@@ -602,6 +603,11 @@ export class MockSshAdapter implements SshAdapter {
 
   async listKeys(): Promise<readonly SshLoginKey[]> {
     return getSshLoginKeys()
+  }
+
+  async keyAccounts(): Promise<readonly SshKeyAccount[]> {
+    // mock 侧的归属清单就是账号数据集：id 回传给 createKey，与真实实现回传登录名同形。
+    return getHostUsers().map((user) => ({ id: user.id, name: user.name }))
   }
 
   async listLoginRecords(): Promise<readonly SshLoginRecord[]> {

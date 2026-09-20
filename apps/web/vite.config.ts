@@ -3,9 +3,10 @@ import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'vite'
 import { elysianEventsVitePlugin } from './src/adapters/sse/mockEventsPlugin.vite.ts'
 import { elysianSecurityVitePlugin } from './src/adapters/firewallHost/firewallApi.vite.ts'
+import { elysianSshVitePlugin } from './src/adapters/sshHost/sshApi.vite.ts'
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), elysianEventsVitePlugin(), elysianSecurityVitePlugin()],
+  plugins: [react(), tailwindcss(), elysianEventsVitePlugin(), elysianSecurityVitePlugin(), elysianSshVitePlugin()],
   define: {
     'import.meta.env.ELSYIAN_DOCKER': JSON.stringify(process.env.ELSYIAN_DOCKER ?? ''),
   },

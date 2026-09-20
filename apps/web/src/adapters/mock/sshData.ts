@@ -198,7 +198,8 @@ export function saveSshAuthSettings(next: SshAuthSettings): SshAuthSettings {
 }
 
 export function getSshRootAuth(): SshRootAuth {
-  return { ...rootAuth, key: { ...rootAuth.key } }
+  // mock 种子里 Root 密钥始终存在；真实实现里 authorized_keys 为空时 key 为 null。
+  return rootAuth.key === null ? rootAuth : { ...rootAuth, key: { ...rootAuth.key } }
 }
 
 export function saveSshRootLoginPolicy(policy: SshRootLoginPolicy): SshRootAuth {

@@ -13,7 +13,7 @@ export function buildKeyFilename(exportedAt: string): string {
 
 /** 生成本地下载（Blob 加临时链接），不经过网络。 */
 export function downloadPrivateKey(filename: string, material: SshKeyMaterial): void {
-  const blob = new Blob([`${material.privateKey}\n`], { type: 'application/x-pem-file' })
+  const blob = new Blob([`${material.privateKey ?? ''}\n`], { type: 'application/x-pem-file' })
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
   anchor.href = url

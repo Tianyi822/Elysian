@@ -9,12 +9,17 @@
 /** 控制字符（C0 与 DEL）加 Unicode 行终止符（U+2028/U+2029）：后者虽非 \n，按行切分时同样断行。 */
 const UNSAFE_NOTE_CHARS = /[\u0000-\u001f\u007f\u2028\u2029]/
 
+/** 是否含换行或控制字符：规则备注与 SSH 密钥名称共用同一条禁区判据（会进命令参数或按行落盘的自由文本都从这里过）。 */
+export function hasUnsafeControlChars(text: string): boolean {
+  return UNSAFE_NOTE_CHARS.test(text)
+}
+
 export type NoteScene = 'forward' | 'ufw'
 
 /** 校验备注可安全写进对应场景；不合法抛中文错误，空备注直接放行。 */
 export function assertNoteSafe(note: string | null, scene: NoteScene): void {
   if (!note) return
-  if (UNSAFE_NOTE_CHARS.test(note)) {
+  if (hasUnsafeControlChars(note)) {
     throw new Error('备注不能包含换行或控制字符')
   }
   if (scene === 'forward' && note.includes('"')) {

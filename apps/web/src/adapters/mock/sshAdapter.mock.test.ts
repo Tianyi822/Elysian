@@ -81,9 +81,9 @@ describe('SSH mock adapter', () => {
     expect((await ssh.rootAuth()).policy).toBe('no')
 
     const { key } = await ssh.rootAuth()
-    expect(key.fingerprint.startsWith('SHA256:')).toBe(true)
-    expect(key.algorithm).toBe('ssh-ed25519 256')
-    expect(key.privateKey.startsWith('-----BEGIN OPENSSH PRIVATE KEY-----')).toBe(true)
+    expect(key!.fingerprint.startsWith('SHA256:')).toBe(true)
+    expect(key!.algorithm).toBe('ssh-ed25519 256')
+    expect(key!.privateKey!.startsWith('-----BEGIN OPENSSH PRIVATE KEY-----')).toBe(true)
   })
 
   it('取回的是副本：改它不会写回数据集', async () => {
@@ -92,8 +92,9 @@ describe('SSH mock adapter', () => {
     expect((await ssh.overview()).stats.today.succeeded).toBe(SEED_SSH_STATS.today.succeeded)
 
     const rootAuth = await ssh.rootAuth()
-    rootAuth.key.fingerprint = 'SHA256:被改过了'
-    expect((await ssh.rootAuth()).key.fingerprint).not.toBe('SHA256:被改过了')
+    // mock 种子里 Root 密钥始终存在；这里断言取回的是副本，改它不会写回数据集。
+    rootAuth.key!.fingerprint = 'SHA256:被改过了'
+    expect((await ssh.rootAuth()).key!.fingerprint).not.toBe('SHA256:被改过了')
 
     const keys = await ssh.listKeys()
     keys[0]!.name = '被改过了'
@@ -107,7 +108,7 @@ describe('SSH mock adapter', () => {
     for (const key of keys) {
       expect(key.fingerprint.startsWith('SHA256:')).toBe(true)
       expect(key.publicKey).toContain(key.name)
-      expect(key.privateKey.startsWith('-----BEGIN OPENSSH PRIVATE KEY-----')).toBe(true)
+      expect(key.privateKey!.startsWith('-----BEGIN OPENSSH PRIVATE KEY-----')).toBe(true)
     }
   })
 

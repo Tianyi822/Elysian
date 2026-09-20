@@ -122,7 +122,7 @@ export const SSH_ROOT_LOGIN_POLICY_LABELS: Record<SshRootLoginPolicy, string> = 
   yes: '允许密码登录',
 }
 
-/** 一份密钥材料的公共部分：算法、指纹、生成时间与演示材料。 */
+/** 一份密钥材料的公共部分：算法、指纹、生成时间与公钥文本。 */
 export type SshKeyMaterial = {
   /** 密钥类型与长度，如 ssh-ed25519 256。 */
   algorithm: string
@@ -132,8 +132,11 @@ export type SshKeyMaterial = {
   createdAt: string
   /** 单行公钥文本：创建时随密钥落在本机授权文件里，界面不展示也不提供复制。 */
   publicKey: string
-  /** 演示私钥材料；真实私钥不下发到浏览器。 */
-  privateKey: string
+  /**
+   * 私钥文本：仅在创建响应里一次性携带，列表与查看不返回——真实私钥只此一次下发，之后不再可取。
+   * mock 演示侧始终携带演示材料；依赖本字段的代码必须容忍 undefined。
+   */
+  privateKey?: string
 }
 
 /** Root 密钥：主机 root 账号那一把。 */
@@ -161,7 +164,11 @@ export function isValidSshKeyName(name: string): boolean {
 
 export type SshRootAuth = {
   policy: SshRootLoginPolicy
-  key: SshRootKey
+  /**
+   * Root 的授权密钥材料，取自 root 账号 authorized_keys 的第一行；
+   * 那里没有任何公钥时为 null，表示尚未生成，界面显示「尚未生成」而不是编造材料。
+   */
+  key: SshRootKey | null
   /** 上次重置 Root 密码的时间（ISO）；本会话内没重置过时为 null，界面显示 —。 */
   passwordResetAt: string | null
 }

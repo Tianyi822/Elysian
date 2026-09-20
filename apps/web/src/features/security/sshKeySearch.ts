@@ -20,7 +20,8 @@ export function matchesSshKey(
 ): boolean {
   const needle = normalizeKeySearch(keyword)
   if (!needle) return true
-  return [key.name, key.fingerprint, key.privateKey, ownerName].some((field) =>
+  // 私钥只在创建响应携带，列表里的密钥没有私钥可匹配：按空串参与比对即自然跳过。
+  return [key.name, key.fingerprint, key.privateKey ?? '', ownerName].some((field) =>
     normalizeKeySearch(field).includes(needle),
   )
 }
