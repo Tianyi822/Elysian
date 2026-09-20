@@ -3,6 +3,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
 import type { SshLoginKey, SshLoginRecord, SshOverview, SshPasswordResetResult, SshRootAuth } from '@elysian/contracts'
 import { createSshApiHandler, type SshApiDeps } from './api'
+import { invalidRequest } from '../endpointGuard/guard'
+import type { SshListKeysReport } from './sshService'
 import type { SshAdapter, SshKeyAccount } from '../../contracts/adapters'
 
 /*
@@ -39,7 +41,12 @@ const SAMPLE_RECORDS: readonly SshLoginRecord[] = [
   { id: 'login-1', ip: '1.2.3.4', port: 111, at: '2026-09-18T11:00:00.000Z', user: 'root', result: 'failed' },
 ]
 
-function createFakeService(overrides: Partial<SshAdapter> = {}): SshAdapter {
+/** 与真实接线同形的服务句柄：SshAdapter 契约之外附带密钥列表的脏行报告。 */
+type FakeSshService = SshAdapter & {
+  listKeysWithReport(): Promise<SshListKeysReport>
+}
+
+function createFakeService(overrides: Partial<FakeSshService> = {}): FakeSshService {
   return {
     overview: async () => ({ ...SAMPLE_OVERVIEW, stats: { ...SAMPLE_OVERVIEW.stats } }),
     settings: async () => ({ passwordAuthEnabled: false, keyAuthEnabled: true, port: 73 }),
@@ -53,6 +60,7 @@ function createFakeService(overrides: Partial<SshAdapter> = {}): SshAdapter {
       strength: 'strong',
     }),
     listKeys: async () => [SAMPLE_KEY],
+    listKeysWithReport: async () => ({ keys: [SAMPLE_KEY], ignoredInvalidLines: 0 }),
     listLoginRecords: async () => SAMPLE_RECORDS,
     keyAccounts: async () => SAMPLE_ACCOUNTS,
     createKey: async () => ({ ...SAMPLE_KEY, privateKey: '-----BEGIN OPENSSH PRIVATE KEY-----\n占位\n-----END OPENSSH PRIVATE KEY-----' }),
@@ -136,7 +144,7 @@ describe('createSshApiHandler', () => {
     expect(rootAuth.body).toEqual(SAMPLE_ROOT_AUTH)
 
     const keys = await readResponse(handler, await fakeReq('GET', '/keys'))
-    expect(keys.body).toEqual({ keys: [SAMPLE_KEY] })
+    expect(keys.body).toEqual({ keys: [SAMPLE_KEY], ignoredInvalidLines: 0 })
 
     const accounts = await readResponse(handler, await fakeReq('GET', '/key-accounts'))
     expect(accounts.body).toEqual({ accounts: SAMPLE_ACCOUNTS })
@@ -178,6 +186,16 @@ describe('createSshApiHandler', () => {
       ['port', 2202],
       ['policy', 'no'],
     ])
+  })
+
+  it('GET /keys 响应附带忽略的无效行数：authorized_keys 有脏行时列表仍可用', async () => {
+    const service = createFakeService({
+      listKeysWithReport: async () => ({ keys: [], ignoredInvalidLines: 2 }),
+    })
+    const handler = createSshApiHandler({ available: true, service })
+    const { statusCode, body } = await readResponse(handler, await fakeReq('GET', '/keys'))
+    expect(statusCode).toBe(200)
+    expect(body).toEqual({ keys: [], ignoredInvalidLines: 2 })
   })
 
   it('POST /root-password 透传密码，创建响应携带一次性私钥', async () => {
@@ -232,7 +250,7 @@ describe('createSshApiHandler', () => {
       headers: { host: 'localhost:5173', origin: 'http://localhost:5173', 'content-type': 'application/json', 'content-length': '0' },
     }) as unknown as IncomingMessage
     const empty = await readResponse(handler, emptyReq)
-    expect(empty.statusCode).toBe(500)
+    expect(empty.statusCode).toBe(400)
     expect((empty.body as { error: string }).error).toBe('请求体不能为空')
   })
 
@@ -254,10 +272,10 @@ describe('createSshApiHandler', () => {
     expect(calls).toEqual([['create', { name: '部署机', userId: 'ops' }], ['remove', 'sshkey-0000abcd']])
   })
 
-  it('形状不对的请求体以中文错误返回 500', async () => {
+  it('形状不对的请求体以中文错误返回 400', async () => {
     const handler = createSshApiHandler(AVAILABLE)
     const enabled = await readResponse(handler, await fakeReq('PUT', '/service-enabled', { enabled: '是' }))
-    expect(enabled.statusCode).toBe(500)
+    expect(enabled.statusCode).toBe(400)
     expect((enabled.body as { error: string }).error).toBe('开关值无效')
 
     const methods = await readResponse(handler, await fakeReq('PUT', '/auth-methods', { passwordAuthEnabled: true }))
@@ -270,16 +288,26 @@ describe('createSshApiHandler', () => {
     expect((key.body as { error: string }).error).toBe('密钥请求体无效')
   })
 
-  it('业务失败以中文错误返回 500', async () => {
-    const service = createFakeService({
+  it('请求被拒（校验不通过）按 400 返回，系统侧失败才是 500', async () => {
+    const rejected = createFakeService({
       setPort: async () => {
-        throw new Error('sshd 配置预检未通过，已回滚原配置：Bad 配置取值')
+        throw invalidRequest('sshd 配置预检未通过，已回滚原配置：Bad 配置取值')
       },
     })
-    const handler = createSshApiHandler({ available: true, service })
-    const { statusCode, body } = await readResponse(handler, await fakeReq('PUT', '/port', { port: 70000 }))
-    expect(statusCode).toBe(500)
-    expect(body).toEqual({ error: 'sshd 配置预检未通过，已回滚原配置：Bad 配置取值' })
+    const rejectedHandler = createSshApiHandler({ available: true, service: rejected })
+    const rejectedResponse = await readResponse(rejectedHandler, await fakeReq('PUT', '/port', { port: 70000 }))
+    expect(rejectedResponse.statusCode).toBe(400)
+    expect(rejectedResponse.body).toEqual({ error: 'sshd 配置预检未通过，已回滚原配置：Bad 配置取值' })
+
+    const broken = createFakeService({
+      setServiceEnabled: async () => {
+        throw new Error('启动 sshd 失败：ssh-keygen 不存在')
+      },
+    })
+    const brokenHandler = createSshApiHandler({ available: true, service: broken })
+    const brokenResponse = await readResponse(brokenHandler, await fakeReq('PUT', '/service-enabled', { enabled: true }))
+    expect(brokenResponse.statusCode).toBe(500)
+    expect(brokenResponse.body).toEqual({ error: '启动 sshd 失败：ssh-keygen 不存在' })
   })
 
   it('未知端点返回 404', async () => {

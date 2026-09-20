@@ -32,6 +32,17 @@ export function stripConfigComment(line: string): string {
   return match ? line.slice(0, match.index) : line
 }
 
+/**
+ * sshd_config(5)：关键词与取值之间可用「可选空白 + 恰一个 = + 可选空白」分隔，
+ * 与空白分隔等价（`Port=22`、`Port = 22` 同 `Port 22`）。解析前把行内第一处
+ * 「= 及其紧邻空白」归一为单个空白即可覆盖该写法；面板只读四个白名单指令，
+ * 它们的取值都不含 =，后续取值不受影响。
+ */
+export function normalizeEqualsSeparator(line: string): string {
+  const match = /\s*=\s*/.exec(line)
+  return match ? `${line.slice(0, match.index)} ${line.slice(match.index + match[0].length)}` : line
+}
+
 /** 解析全文的全局段指令。 */
 export function parseSshdConfig(text: string): SshdDirectives {
   const directives: SshdDirectives = {
@@ -49,7 +60,7 @@ export function parseSshdConfig(text: string): SshdDirectives {
   let inMatchBlock = false
 
   for (const rawLine of text.split('\n')) {
-    const line = stripConfigComment(rawLine).trim()
+    const line = normalizeEqualsSeparator(stripConfigComment(rawLine).trim())
     if (!line) continue
     const tokens = line.split(/\s+/)
     const keyword = (tokens[0] ?? '').toLowerCase()
@@ -81,9 +92,13 @@ export function parseSshdConfig(text: string): SshdDirectives {
         else directives.pubkeyAuthentication = parsed
         break
       }
-      case 'PermitRootLogin':
-        directives.permitRootLogin = value.toLowerCase()
+      case 'PermitRootLogin': {
+        // without-password 是 prohibit-password 的废弃别名（sshd_config(5)）：
+        // 归一后交付，调用方的枚举匹配不再被别名打破。
+        const normalized = value.toLowerCase()
+        directives.permitRootLogin = normalized === 'without-password' ? 'prohibit-password' : normalized
         break
+      }
     }
   }
 

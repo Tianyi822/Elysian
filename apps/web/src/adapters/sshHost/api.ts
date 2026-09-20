@@ -1,7 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { SSH_ROOT_LOGIN_POLICIES, type SshRootLoginPolicy } from '@elysian/contracts'
 import type { SshAdapter } from '../../contracts/adapters'
-import { EndpointGuardError, isSameOrigin, readJsonBody, sendError, sendJson } from '../endpointGuard/guard'
+import { EndpointGuardError, InvalidRequestError, invalidRequest, isSameOrigin, readJsonBody, sendError, sendJson } from '../endpointGuard/guard'
+import type { SshListKeysReport } from './sshService'
 
 /*
  * SSH 真实端点：/api/security/ssh/*（dev/preview 的 Node 中间件，仅容器内可用）。
@@ -13,7 +14,13 @@ import { EndpointGuardError, isSameOrigin, readJsonBody, sendError, sendJson } f
 export type SshApiDeps = {
   /** false 时一切请求 503：不在容器内的强制保护（见 api.node 的 /.dockerenv 校验）。 */
   available: boolean
-  service?: SshAdapter
+  /**
+   * 面板服务：真实接线来自 createSshService，除 SshAdapter 契约外还附带密钥列表
+   * 的脏行报告（ignoredInvalidLines 随 GET /keys 响应带出，界面暂不渲染）。
+   */
+  service?: SshAdapter & {
+    listKeysWithReport(): Promise<SshListKeysReport>
+  }
 }
 
 export function createSshApiHandler(deps: SshApiDeps) {
@@ -60,7 +67,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: SshApiDep
     if (method === 'PUT' && path === '/service-enabled') {
       const body = await readJsonBody(req)
       const enabled = (body as { enabled?: unknown }).enabled
-      if (typeof enabled !== 'boolean') throw new Error('开关值无效')
+      if (typeof enabled !== 'boolean') throw invalidRequest('开关值无效')
       sendJson(res, 200, await service.setServiceEnabled(enabled))
       return
     }
@@ -69,7 +76,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: SshApiDep
       const body = await readJsonBody(req)
       const row = body as Record<string, unknown>
       if (typeof row.passwordAuthEnabled !== 'boolean' || typeof row.keyAuthEnabled !== 'boolean') {
-        throw new Error('登录方式开关需为布尔值')
+        throw invalidRequest('登录方式开关需为布尔值')
       }
       sendJson(
         res,
@@ -85,7 +92,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: SshApiDep
     if (method === 'PUT' && path === '/port') {
       const body = await readJsonBody(req)
       const port = Number((body as { port?: unknown }).port)
-      if (!Number.isFinite(port)) throw new Error('端口请求体无效')
+      if (!Number.isFinite(port)) throw invalidRequest('端口请求体无效')
       sendJson(res, 200, await service.setPort(port))
       return
     }
@@ -94,7 +101,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: SshApiDep
       const body = await readJsonBody(req)
       const policy = (body as { policy?: unknown }).policy
       if (typeof policy !== 'string' || !SSH_ROOT_LOGIN_POLICIES.includes(policy as SshRootLoginPolicy)) {
-        throw new Error(`无效的 Root 登录策略：${String(policy)}`)
+        throw invalidRequest(`无效的 Root 登录策略：${String(policy)}`)
       }
       sendJson(res, 200, await service.saveRootLoginPolicy(policy as SshRootLoginPolicy))
       return
@@ -103,7 +110,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: SshApiDep
     if (method === 'POST' && path === '/root-password') {
       const body = await readJsonBody(req)
       const password = (body as { password?: unknown }).password
-      if (typeof password !== 'string' || !password) throw new Error('密码请求体无效')
+      if (typeof password !== 'string' || !password) throw invalidRequest('密码请求体无效')
       sendJson(res, 200, await service.resetRootPassword(password))
       return
     }
@@ -116,7 +123,8 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: SshApiDep
     }
 
     if (method === 'GET' && path === '/keys') {
-      sendJson(res, 200, { keys: await service.listKeys() })
+      const report = await service.listKeysWithReport()
+      sendJson(res, 200, { keys: report.keys, ignoredInvalidLines: report.ignoredInvalidLines })
       return
     }
 
@@ -129,7 +137,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: SshApiDep
       const body = await readJsonBody(req)
       const row = body as Record<string, unknown>
       if (typeof row.name !== 'string' || typeof row.userId !== 'string') {
-        throw new Error('密钥请求体无效')
+        throw invalidRequest('密钥请求体无效')
       }
       sendJson(res, 200, { key: await service.createKey({ name: row.name, userId: row.userId }) })
       return
@@ -149,7 +157,9 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: SshApiDep
 
     sendJson(res, 404, { error: `未知 SSH 端点：${method} ${path}` })
   } catch (error) {
-    // 业务性失败（弱密码、预检回滚、账号不存在）带中文消息返回给界面呈现；守卫错误按自带状态码返回。
-    sendError(res, error instanceof EndpointGuardError ? error.status : 500, error)
+    // 业务性失败分两类：请求本身不合法（弱密码、端口非法、账号不存在等）抛 InvalidRequestError
+    // 按 400 返回；系统侧失败（chpasswd 执行失败、服务未收敛等）才是 500。中文消息原样带给界面。
+    const status = error instanceof EndpointGuardError || error instanceof InvalidRequestError ? error.status : 500
+    sendError(res, status, error)
   }
 }

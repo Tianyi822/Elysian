@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest'
+import { readFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
+import { fileURLToPath } from 'node:url'
 import type { Connect } from 'vite'
-import { createSecuritySshMiddleware, resolveSshAvailability } from './api.node'
+import {
+  createSecuritySshMiddleware,
+  readTextTailFromFile,
+  resolveSshAvailability,
+  resolveVerifiedSshdPid,
+  type SshdPidProbe,
+} from './api.node'
 import type { SshHostDeps } from './sshService'
 
 /*
@@ -29,6 +37,7 @@ function createThrowingDeps(): SshHostDeps {
     runGetent: fail('getent'),
     delay: fail('delay'),
     readText: fail('readText'),
+    readTextTail: fail('readTextTail'),
     readDir: async () => [],
     writeText: fail('writeText'),
     exists: async () => false,
@@ -84,6 +93,56 @@ describe('resolveSshAvailability', () => {
     expect(resolveSshAvailability({ ELSYIAN_DOCKER: '1' }, false)).toBe(false)
     expect(resolveSshAvailability({ ELSYIAN_DOCKER: '0' }, true)).toBe(false)
     expect(resolveSshAvailability({}, true)).toBe(false)
+  })
+})
+
+describe('resolveVerifiedSshdPid（停止/重载信号的 pid 身份核实）', () => {
+  /** pidfile 内容与 /proc/<pid>/comm 内容的组合注入；comm 为 null 表示读不到。 */
+  function probeOf(pidFile: string | null, comm: string | null): SshdPidProbe {
+    return {
+      readPidFile: async () => pidFile,
+      readProcComm: async () => comm,
+    }
+  }
+
+  it('pidfile 可解析且 /proc/<pid>/comm 是 sshd 才返回 pid（核实过身份才允许发信号）', async () => {
+    expect(await resolveVerifiedSshdPid(probeOf('123\n', 'sshd\n'))).toBe(123)
+    expect(await resolveVerifiedSshdPid(probeOf('123', 'sshd'))).toBe(123)
+  })
+
+  it('comm 不是 sshd（pid 被无关进程复用）或读不到（进程已退）都返回 null', async () => {
+    expect(await resolveVerifiedSshdPid(probeOf('123\n', 'bash\n'))).toBeNull()
+    expect(await resolveVerifiedSshdPid(probeOf('123\n', 'cron\n'))).toBeNull()
+    expect(await resolveVerifiedSshdPid(probeOf('123\n', null))).toBeNull()
+  })
+
+  it('pidfile 读不到（未在跑）或内容非法时返回 null', async () => {
+    expect(await resolveVerifiedSshdPid(probeOf(null, 'sshd\n'))).toBeNull()
+    expect(await resolveVerifiedSshdPid(probeOf('', 'sshd\n'))).toBeNull()
+    expect(await resolveVerifiedSshdPid(probeOf('not-a-pid\n', 'sshd\n'))).toBeNull()
+  })
+})
+
+describe('readTextTailFromFile（登录日志按字节取尾的真实语义）', () => {
+  /** 只读夹具：拿本测试文件自身当样本（数 KB，够跨过小预算），不写任何宿主文件。 */
+  const SAMPLE = fileURLToPath(import.meta.url)
+
+  it('预算不小于文件大小时返回全文，不丢首行', async () => {
+    const whole = await readFile(SAMPLE, 'utf8')
+    const text = await readTextTailFromFile(SAMPLE, Buffer.byteLength(whole) + 1)
+    expect(text).toBe(whole)
+  })
+
+  it('预算小于文件大小时只返回尾部：丢弃不完整首行，且结果仍是全文的后缀', async () => {
+    const whole = await readFile(SAMPLE, 'utf8')
+    const text = await readTextTailFromFile(SAMPLE, 300)
+    // 截尾发生在读取层：结果不超过预算，也严格短于全文。
+    expect(Buffer.byteLength(text)).toBeLessThanOrEqual(300)
+    expect(text.length).toBeLessThan(whole.length)
+    expect(text.length).toBeGreaterThan(0)
+    // 从行中截断的余烬被丢弃：返回文本起于整行边界，且是全文的后缀（只丢不完整首行）。
+    expect(whole.charAt(whole.length - text.length - 1)).toBe('\n')
+    expect(whole.endsWith(text)).toBe(true)
   })
 })
 

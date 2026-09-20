@@ -106,6 +106,30 @@ describe('patchSshdConfig', () => {
     ])
   })
 
+  it('指令的等号写法同样被识别为已有取值：整行替换，旧 Port 不留行继续监听', () => {
+    // 漏识别时面板会追加一行新 Port 并保留 Port=22：Port 是累积监听指令，
+    // sshd 会同时监听新旧端口，而面板只显示新端口。
+    const next = patchSshdConfig('Port=22\nPasswordAuthentication=yes\n', {
+      Port: '2202',
+      PasswordAuthentication: 'no',
+    })
+    expect(next.split('\n')).toEqual(['Port 2202', 'PasswordAuthentication no', ''])
+  })
+
+  it('Include 的等号写法同样识别：面板行仍插到 Include 之前', () => {
+    // sshd_config(5)：关键词与取值可用「可选空白 + 恰一个 = + 可选空白」分隔。
+    // 漏识别时插入点落到文件尾，面板行会被 drop-in 按 first-obtained 遮蔽。
+    const text = ['Include=/etc/ssh/sshd_config.d/*.conf', '#Port 22', ''].join('\n')
+    const next = patchSshdConfig(text, { Port: '2202' })
+    expect(next.split('\n')).toEqual(['Port 2202', 'Include=/etc/ssh/sshd_config.d/*.conf', '#Port 22', ''])
+  })
+
+  it('Match 的等号写法同样识别：面板行插到块前，块内 Port 行不被注释', () => {
+    const text = ['Port 22', 'Match=User deploy', '  Port 2222'].join('\n')
+    const next = patchSshdConfig(text, { Port: '2202' })
+    expect(next.split('\n')).toEqual(['Port 2202', 'Match=User deploy', '  Port 2222'])
+  })
+
   it('Include 之后的未注释 Port 行同样被替换或注释（累积指令不受取值顺序保护）', () => {
     const text = ['Include /etc/ssh/sshd_config.d/*.conf', 'Port 22', 'Port 23', ''].join('\n')
     const next = patchSshdConfig(text, { Port: '2202' })

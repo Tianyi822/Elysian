@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
-import { readFile, readdir, writeFile, rename, chmod, chown, mkdir, rm } from 'node:fs/promises'
+import { readFile, readdir, writeFile, rename, chmod, chown, mkdir, open, rm } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import type { ServerResponse } from 'node:http'
 import type { Connect } from 'vite'
@@ -43,19 +43,61 @@ function execToStdout(file: string, args: readonly string[]): Promise<string> {
   )
 }
 
-/** 读 pidfile 里的 sshd 主进程号；读不到（未在跑）返回 null。 */
-async function sshdPid(): Promise<number | null> {
-  let text: string
-  try {
-    text = await readFile(DEFAULT_SSH_PATHS.sshdPidFile, 'utf8')
-  } catch {
-    return null
-  }
-  const pid = Number.parseInt(text.trim(), 10)
-  return Number.isInteger(pid) ? pid : null
+/** pidfile 与进程身份核实的注入面：测试用内存实现驱动，不在宿主机读真实路径。 */
+export type SshdPidProbe = {
+  /** pidfile 全文；读不到（未在跑）返回 null。 */
+  readPidFile(): Promise<string | null>
+  /** /proc/<pid>/comm 的内容；读不到返回 null。 */
+  readProcComm(pid: number): Promise<string | null>
 }
 
-/** 向 sshd 主进程发信号；pid 不在时静默返回（调用方决定这是幂等还是无需重载）。 */
+/**
+ * 解析并核实 sshd 主进程 pid：pidfile 读不出、pid 非法，或 /proc/<pid>/comm 不是
+ * sshd（进程已退出、pid 被无关进程复用）都返回 null——信号只发给核实过身份的
+ * sshd，杜绝按陈旧 pidfile 误杀无关进程。
+ */
+export async function resolveVerifiedSshdPid(probe: SshdPidProbe): Promise<number | null> {
+  const text = await probe.readPidFile()
+  if (text === null) return null
+  const pid = Number.parseInt(text.trim(), 10)
+  if (!Number.isInteger(pid)) return null
+  const comm = await probe.readProcComm(pid)
+  return comm !== null && comm.trim() === 'sshd' ? pid : null
+}
+
+/** 容器内真实探针：pidfile 与 /proc/<pid>/comm 都按只读探测，读不到返回 null。 */
+function createPidProbe(): SshdPidProbe {
+  return {
+    readPidFile: () => readFile(DEFAULT_SSH_PATHS.sshdPidFile, 'utf8').catch(() => null),
+    readProcComm: (pid) => readFile(`/proc/${pid}/comm`, 'utf8').catch(() => null),
+  }
+}
+
+/**
+ * 只读文件末段（最多 maxBytes 字节）：登录日志按尾读取，大文件不整读进堆。
+ * 从文件中部起读（发生截断）时丢弃不完整的首行——截断可能恰好落在一条完整
+ * 消息的中间，不丢会凭空多出一条无时间戳的记录。独立导出以便对真实文件语义做测试。
+ */
+export async function readTextTailFromFile(path: string, maxBytes: number): Promise<string> {
+  const handle = await open(path, 'r')
+  try {
+    const { size } = await handle.stat()
+    const start = Math.max(0, size - maxBytes)
+    const length = size - start
+    const buffer = Buffer.alloc(length)
+    await handle.read(buffer, 0, length, start)
+    let text = buffer.toString('utf8')
+    if (start > 0) {
+      const firstNewline = text.indexOf('\n')
+      text = firstNewline < 0 ? '' : text.slice(firstNewline + 1)
+    }
+    return text
+  } finally {
+    await handle.close()
+  }
+}
+
+/** 向核实过身份的 sshd 主进程发信号；pid 不在时静默返回（调用方决定这是幂等还是无需重载）。 */
 function signalSshd(pid: number, signal: 'SIGTERM' | 'SIGHUP'): void {
   try {
     process.kill(pid, signal)
@@ -93,12 +135,15 @@ function createHostDeps(): SshHostDeps {
       await execToStdout('/usr/sbin/sshd', ['-E', DEFAULT_SSH_PATHS.sshdLog])
     },
     async stopSshd() {
-      const pid = await sshdPid()
+      // pid 复用防线：TERM 只发给核实过身份（/proc/<pid>/comm 为 sshd）的进程；
+      // pidfile 陈旧或 pid 被复用时按未在跑处理，幂等成功。
+      const pid = await resolveVerifiedSshdPid(createPidProbe())
       if (pid === null) return
       signalSshd(pid, 'SIGTERM')
     },
     async reloadSshd() {
-      const pid = await sshdPid()
+      // SIGHUP 同样只发核实过身份的进程；pid 不在时静默返回（无需重载）。
+      const pid = await resolveVerifiedSshdPid(createPidProbe())
       if (pid === null) return
       // SIGHUP：sshd 重读配置并 re-exec 自身，-E 等启动参数原样保留。
       signalSshd(pid, 'SIGHUP')
@@ -107,6 +152,7 @@ function createHostDeps(): SshHostDeps {
     runGetent: (args) => execToStdout('getent', args),
     delay: (ms) => new Promise((resolve) => { setTimeout(resolve, ms) }),
     readText: (path) => readFile(path, 'utf8'),
+    readTextTail: readTextTailFromFile,
     // 目录不存在（未建 sshd_config.d）时按空处理：Include 通配展开据此得到零个文件。
     readDir: (path) => readdir(path).catch(() => []),
     writeText: (path, content) => writeFile(path, content, 'utf8'),

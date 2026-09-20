@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { createSshService, type SshHostDeps } from './sshService'
+import { SSH_LOG_TAIL_BYTES, createSshService, type SshHostDeps } from './sshService'
 
 /*
  * SSH 服务编排的行为测试：全部系统访问走有状态 fake（内存文件与命令账本），
@@ -12,6 +12,10 @@ const PATHS = {
   sshdPidFile: '/virtual/run/sshd.pid',
   keygenWorkspace: '/virtual/tmp/elysian-ssh-keygen',
 }
+
+/** fake pidfile 里的主进程号：/proc/<pid>/comm 的身份核实以此定位。 */
+const SSHD_PID = 123
+const SSHD_PROC_COMM = `/proc/${SSHD_PID}/comm`
 
 /** 本地时构造基准时间：登录统计的窗口断言与机器时区无关。 */
 const NOW = new Date(2026, 8, 18, 12, 0, 0).toISOString()
@@ -45,9 +49,11 @@ type FakeHost = {
   removed: string[]
   renamed: { from: string; to: string }[]
   writes: { path: string; content: string }[]
+  reads: string[]
+  tailReads: { path: string; maxBytes: number }[]
   commands: { command: string; args: readonly string[] }[]
   chpasswdInputs: string[]
-  failSshdTest: () => void
+  failSshdTest: (value?: boolean) => void
 }
 
 function createFakeHost(
@@ -56,8 +62,12 @@ function createFakeHost(
     sshdLog?: string
     passwd?: string
     pidFile?: boolean
+    /** pidfile 在但 /proc/<pid>/comm 的内容：模拟 pid 被无关进程复用（默认 'sshd\n'）。 */
+    pidFileComm?: string
     /** 启停后 pidfile 何时收敛：立即（默认）｜下一次 delay 调用时（模拟 TERM 后异步退出）｜永不（超时路径）。 */
     pidFileSettle?: 'on-signal' | 'after-delay' | 'never'
+    /** SIGHUP 重载后 sshd 是否退出（模拟端口被占用等只在真实监听时暴露的致命问题）。 */
+    reloadKillsSshd?: boolean
   } = {},
 ): FakeHost {
   const files = new Map<string, string>()
@@ -67,6 +77,8 @@ function createFakeHost(
   const removed: string[] = []
   const renamed: { from: string; to: string }[] = []
   const writes: { path: string; content: string }[] = []
+  const reads: string[] = []
+  const tailReads: { path: string; maxBytes: number }[] = []
   const commands: { command: string; args: readonly string[] }[] = []
   const chpasswdInputs: string[] = []
   let sshdTestFails = false
@@ -77,7 +89,11 @@ function createFakeHost(
 
   if (options.sshdConfig !== undefined) files.set(PATHS.sshdConfig, options.sshdConfig)
   if (options.sshdLog !== undefined) files.set(PATHS.sshdLog, options.sshdLog)
-  if (options.pidFile) files.set(PATHS.sshdPidFile, '123\n')
+  if (options.pidFile) {
+    files.set(PATHS.sshdPidFile, `${SSHD_PID}\n`)
+    // 对齐真实容器形态：pidfile 在即有 /proc/<pid>/comm 可读，默认身份是 sshd。
+    files.set(SSHD_PROC_COMM, options.pidFileComm ?? 'sshd\n')
+  }
 
   function fingerprintLineOf(keyLine: string): string {
     const fields = keyLine.trim().split(/\s+/)
@@ -112,22 +128,39 @@ function createFakeHost(
     },
     async startSshd() {
       if (pidFileSettle === 'after-delay') pendingSettle = 'add'
-      else if (pidFileSettle === 'on-signal') files.set(PATHS.sshdPidFile, '123\n')
+      else if (pidFileSettle === 'on-signal') {
+        files.set(PATHS.sshdPidFile, `${SSHD_PID}\n`)
+        files.set(SSHD_PROC_COMM, 'sshd\n')
+      }
       serviceSignals.push('start')
     },
     async stopSshd() {
       if (pidFileSettle === 'after-delay') pendingSettle = 'remove'
-      else if (pidFileSettle === 'on-signal') files.delete(PATHS.sshdPidFile)
+      else if (pidFileSettle === 'on-signal') {
+        files.delete(PATHS.sshdPidFile)
+        files.delete(SSHD_PROC_COMM)
+      }
       serviceSignals.push('stop')
     },
     async delay() {
-      if (pendingSettle === 'add') files.set(PATHS.sshdPidFile, '123\n')
-      if (pendingSettle === 'remove') files.delete(PATHS.sshdPidFile)
+      if (pendingSettle === 'add') {
+        files.set(PATHS.sshdPidFile, `${SSHD_PID}\n`)
+        files.set(SSHD_PROC_COMM, 'sshd\n')
+      }
+      if (pendingSettle === 'remove') {
+        files.delete(PATHS.sshdPidFile)
+        files.delete(SSHD_PROC_COMM)
+      }
       pendingSettle = null
     },
     async reloadSshd() {
       if (!files.has(PATHS.sshdPidFile)) return
       serviceSignals.push('reload')
+      if (options.reloadKillsSshd) {
+        // 对齐真实语义：SIGHUP 触发 re-exec，绑定失败（如端口被占用）在重启后才暴露，
+        // pidfile 晚一拍才消失——存活复查必须轮询而不是只看一眼。
+        pendingSettle = 'remove'
+      }
     },
     async runChpasswd(input) {
       chpasswdInputs.push(input)
@@ -145,7 +178,19 @@ function createFakeHost(
     async readText(path) {
       const content = files.get(path)
       if (content === undefined) throw new Error(`ENOENT: ${path}`)
+      reads.push(path)
       return content
+    },
+    async readTextTail(path, maxBytes) {
+      // 对齐真实实现语义：按字节取尾，发生截断时丢弃不完整的首行。
+      const content = files.get(path)
+      if (content === undefined) throw new Error(`ENOENT: ${path}`)
+      tailReads.push({ path, maxBytes })
+      const bytes = Buffer.from(content, 'utf8')
+      if (bytes.length <= maxBytes) return content
+      const text = bytes.subarray(bytes.length - maxBytes).toString('utf8')
+      const firstNewline = text.indexOf('\n')
+      return firstNewline < 0 ? '' : text.slice(firstNewline + 1)
     },
     async readDir(path) {
       // fake 不区分目录与文件：列出路径下的直接子项名，目录本身不存在即空。
@@ -187,7 +232,23 @@ function createFakeHost(
     paths: PATHS,
   }
 
-  return { deps, files, modes, owners, serviceSignals, removed, renamed, writes, commands, chpasswdInputs, failSshdTest: () => { sshdTestFails = true } }
+  return {
+    deps,
+    files,
+    modes,
+    owners,
+    serviceSignals,
+    removed,
+    renamed,
+    writes,
+    reads,
+    tailReads,
+    commands,
+    chpasswdInputs,
+    failSshdTest: (value = true) => {
+      sshdTestFails = value
+    },
+  }
 }
 
 const OPS_AUTHORIZED_KEYS = '/home/ops/.ssh/authorized_keys'
@@ -230,6 +291,65 @@ describe('createSshService 配置读写', () => {
     expect(host.files.get(PATHS.sshdConfig)).toBe(BASE_CONFIG)
     expect(host.files.get(`${PATHS.sshdConfig}.bak`)).toBe(BASE_CONFIG)
     expect(host.serviceSignals).toEqual([])
+    // 回滚同样走原子写（f31）：tmp + rename 顶替，不走原地覆写；补丁与回滚各一次。
+    expect(host.renamed.filter((entry) => entry.to === PATHS.sshdConfig)).toHaveLength(2)
+  })
+
+  it('重载后复查存活：SIGHUP 后 sshd 退出（如端口被占用）则回滚原文并报中文错误', async () => {
+    const host = createFakeHost({ sshdConfig: BASE_CONFIG, pidFile: true, reloadKillsSshd: true })
+    const service = createSshService(host.deps)
+
+    const failure = await service.setPort(2202).then(
+      () => null,
+      (error: unknown) => error,
+    )
+    expect(failure).toBeInstanceOf(Error)
+    const message = (failure as Error).message
+    // 错误说明改了什么、为何回滚：改动的指令与取值、回滚动作、服务现状。
+    expect(message).toContain('重载后 sshd 进程退出')
+    expect(message).toContain('Port=2202')
+    expect(message).toContain('已回滚为原配置')
+    // 原文完整回到磁盘；回滚也是原子写。
+    expect(host.files.get(PATHS.sshdConfig)).toBe(BASE_CONFIG)
+    expect(host.renamed.filter((entry) => entry.to === PATHS.sshdConfig)).toHaveLength(2)
+    // 服务已死要如实呈现：面板开关回到停止位，而不是报成功。
+    expect((await service.overview()).status).toBe('stopped')
+  })
+
+  it('重载后存活复查通过：正常路径不受轮询影响，配置与重载都完成', async () => {
+    const host = createFakeHost({ sshdConfig: BASE_CONFIG, pidFile: true })
+    const service = createSshService(host.deps)
+    const settings = await service.setPort(2202)
+    expect(settings.port).toBe(2202)
+    expect(host.files.get(PATHS.sshdConfig)).toContain('Port 2202')
+    expect(host.serviceSignals).toEqual(['reload'])
+    expect((await service.overview()).status).toBe('running')
+  })
+
+  it('并发配置补丁排队落盘：端口与认证开关都生效，不发生后写以旧原文覆写', async () => {
+    const host = createFakeHost({ sshdConfig: BASE_CONFIG })
+    const service = createSshService(host.deps)
+
+    // 两个补丁同时发起：若各自拿着旧原文计算，后写者会静默抹掉先写者的改动。
+    await Promise.all([
+      service.setPort(2202),
+      service.setAuthMethods({ passwordAuthEnabled: true, keyAuthEnabled: false }),
+    ])
+    const text = host.files.get(PATHS.sshdConfig) ?? ''
+    expect(text).toContain('Port 2202')
+    expect(text).toContain('PasswordAuthentication yes')
+    expect(text).toContain('PubkeyAuthentication no')
+    expect(await service.settings()).toEqual({ port: 2202, passwordAuthEnabled: true, keyAuthEnabled: false })
+  })
+
+  it('配置写队列中的失败不阻塞后续配置变更', async () => {
+    const host = createFakeHost({ sshdConfig: BASE_CONFIG })
+    const service = createSshService(host.deps)
+
+    host.failSshdTest()
+    await expect(service.setPort(2202)).rejects.toThrow('已回滚原配置')
+    host.failSshdTest(false)
+    await expect(service.setPort(2303)).resolves.toMatchObject({ port: 2303 })
   })
 
   it('服务未在跑时只写配置不重载', async () => {
@@ -301,6 +421,15 @@ describe('createSshService Include 语义', () => {
     expect((await service.settings()).port).toBe(2468)
   })
 
+  it('Include 的等号写法同样展开：面板读到的仍是 drop-in 生效值', async () => {
+    // sshd_config(5)：关键词与取值可用「可选空白 + 恰一个 = + 可选空白」分隔。
+    // 漏展开时面板按主文件缺省呈现，显示值可与 sshd 实效相反。
+    const host = createFakeHost({ sshdConfig: `Include=${SSH_CONFIG_DIR}/main.conf\n` })
+    host.files.set(`${SSH_CONFIG_DIR}/main.conf`, 'Port 2468\nPasswordAuthentication no\n')
+    const service = createSshService(host.deps)
+    expect(await service.settings()).toEqual({ port: 2468, passwordAuthEnabled: false, keyAuthEnabled: true })
+  })
+
   it('setPort 的面板行插到 Include 之前：不被 drop-in 遮蔽，回读即生效值', async () => {
     const host = createFakeHost({ sshdConfig: STOCK_CONFIG })
     host.files.set(DROPIN('10-hardening.conf'), 'Port 2222\n')
@@ -368,6 +497,50 @@ describe('createSshService 服务与登录统计', () => {
       yesterday: { succeeded: 0, failed: 0 },
       last7Days: { succeeded: 0, failed: 0 },
     })
+  })
+
+  it('服务探测核实进程身份：pidfile 在但 /proc/<pid>/comm 不是 sshd（pid 被复用）视为未运行', async () => {
+    const host = createFakeHost({ pidFile: true, pidFileComm: 'bash\n' })
+    const service = createSshService(host.deps)
+    const overview = await service.overview()
+    expect(overview.enabled).toBe(false)
+    expect(overview.status).toBe('stopped')
+  })
+
+  it('pidfile 残留但 comm 读不到（进程已退）或内容非法时同样视为未运行', async () => {
+    const stale = createFakeHost({ pidFile: true })
+    stale.files.delete(SSHD_PROC_COMM)
+    expect((await createSshService(stale.deps).overview()).status).toBe('stopped')
+
+    const garbage = createFakeHost({ pidFile: true })
+    garbage.files.set(PATHS.sshdPidFile, 'not-a-pid\n')
+    expect((await createSshService(garbage.deps).overview()).status).toBe('stopped')
+  })
+
+  it('配置补丁只在核实身份为运行中时才重载：pid 被复用时只写配置不发信号', async () => {
+    const host = createFakeHost({ sshdConfig: BASE_CONFIG, pidFile: true, pidFileComm: 'bash\n' })
+    const service = createSshService(host.deps)
+    await service.setPort(2202)
+    expect(host.files.get(PATHS.sshdConfig)).toContain('Port 2202')
+    expect(host.serviceSignals).toEqual([])
+  })
+
+  it('登录日志只读尾部：超字节预算的旧段不整读进内存，截断出的不完整首行被丢弃', async () => {
+    const recent = [
+      'Sep 18 10:00:00 elysian sshd[1]: Accepted publickey for ops from 1.1.1.1 port 111 ssh2',
+      'Sep 18 11:00:00 elysian sshd[2]: Failed password for root from 5.6.7.8 port 222 ssh2',
+    ].join('\n')
+    // 旧段是一整行超预算的填充：尾部读取从行中截断，不完整首行必须被丢弃，
+    // 否则截断余烬可能恰好拼成一条无时间戳的假记录。
+    const filler = `${'x'.repeat(SSH_LOG_TAIL_BYTES + 4096)}\n`
+    const host = createFakeHost({ sshdLog: `${filler}${recent}\n` })
+    const service = createSshService(host.deps)
+
+    const records = await service.listLoginRecords()
+    expect(records.map((record) => record.user)).toEqual(['root', 'ops'])
+    // 只走尾部读取：整读（readText）不触达日志文件。
+    expect(host.reads).not.toContain(PATHS.sshdLog)
+    expect(host.tailReads).toEqual([{ path: PATHS.sshdLog, maxBytes: SSH_LOG_TAIL_BYTES }])
   })
 
   it('setServiceEnabled 走面板自管原语：start 带 -E 的启动与 pidfile 停止', async () => {
@@ -485,6 +658,22 @@ describe('createSshService Root 凭据', () => {
     expect(auth.policy).toBe('prohibit-password')
     expect(auth.key).toBeNull()
     expect(auth.passwordResetAt).toBeNull()
+  })
+
+  it('rootAuth：PermitRootLogin 用废弃别名 without-password 时归一为 prohibit-password，不再报错', async () => {
+    const service = createSshService(createFakeHost({ sshdConfig: 'PermitRootLogin without-password\n' }).deps)
+    expect((await service.rootAuth()).policy).toBe('prohibit-password')
+  })
+
+  it('rootAuth：authorized_keys 首行无法验证时跳到首个可验证行；全部无效时 key 为 null', async () => {
+    const host = createFakeHost({ sshdConfig: 'PermitRootLogin prohibit-password\n' })
+    host.files.set('/root/.ssh/authorized_keys', '坏行没有算法段\nssh-ed25519 AAAAroot占位 root@legacy\n')
+    const service = createSshService(host.deps)
+    const auth = await service.rootAuth()
+    expect(auth.key?.publicKey).toBe('ssh-ed25519 AAAAroot占位 root@legacy')
+
+    host.files.set('/root/.ssh/authorized_keys', '只剩脏行\n')
+    expect((await service.rootAuth()).key).toBeNull()
   })
 
   it('rootAuth：有公钥时给出材料且不带私钥', async () => {
@@ -686,6 +875,28 @@ describe('createSshService 密钥管理', () => {
     expect(text).toContain(second.publicKey)
     const names = (await service.listKeys()).map((key) => key.name)
     expect(names).toEqual(expect.arrayContaining(['部署机', '跳板机']))
+  })
+
+  it('authorized_keys 有无法验证的脏行：列表跳过并计数，不整体报错；密钥创建不受连累', async () => {
+    const host = createFakeHost({ sshdConfig: BASE_CONFIG })
+    const foreign = 'ssh-ed25519 AAAA外来占位 old-laptop'
+    // 畸形行对齐真实语义：ssh-keygen -lf 对它失败（fake 同样按形状拒绝）。
+    host.files.set(OPS_AUTHORIZED_KEYS, `这行不是公钥\n${foreign}\n又一行坏的\n`)
+    const service = createSshService(host.deps)
+
+    const report = await service.listKeysWithReport()
+    expect(report.keys.map((key) => key.publicKey)).toEqual([foreign])
+    expect(report.ignoredInvalidLines).toBe(2)
+    // 契约方法不变：listKeys 仍只返回数组，脏行不把整个面板拖进错误态。
+    expect((await service.listKeys()).map((key) => key.publicKey)).toEqual([foreign])
+
+    // 创建入口照常可用：新公钥正常落盘，脏行计数维持。
+    const created = await service.createKey({ name: '新机', userId: 'ops' })
+    const after = await service.listKeysWithReport()
+    expect(after.ignoredInvalidLines).toBe(2)
+    expect(after.keys.map((key) => key.publicKey)).toContain(created.publicKey)
+    const text = host.files.get(OPS_AUTHORIZED_KEYS) ?? ''
+    expect(text).toContain('这行不是公钥')
   })
 
   it('互斥队列中的失败不阻塞后续密钥操作', async () => {

@@ -17,8 +17,9 @@ import {
   isValidSshPort,
 } from '@elysian/contracts'
 import type { SshAdapter } from '../../contracts/adapters'
+import { invalidRequest } from '../endpointGuard/guard'
 import { hasUnsafeControlChars } from '../firewallHost/noteValidation'
-import { parseSshdConfig, stripConfigComment, type SshdDirectiveName } from './parseSshdConfig'
+import { normalizeEqualsSeparator, parseSshdConfig, stripConfigComment, type SshdDirectiveName } from './parseSshdConfig'
 import { patchSshdConfig } from './patchSshdConfig'
 import { parseSshLog, summarizeSshLog } from './parseSshLog'
 import {
@@ -47,13 +48,17 @@ import {
  * - 所有命令经注入的 execFile 数组传参执行，绝不拼 shell 字符串；密钥名称与 Root 密码
  *   都拒绝换行与控制字符（密码按行进 chpasswd 的 stdin，含换行会越界改掉其他账号）。
  * - sshd_config 只补丁四个白名单指令，写前备份、临时文件加 rename 原子落盘，
- *   `sshd -t` 预检失败立即回滚原配置——不重现「写坏配置导致服务停用」。
+ *   `sshd -t` 预检失败立即回滚原配置——回滚同样走原子写；补丁全程进串行队列，
+ *   并发请求排队落盘，后写不覆盖先写。重载（SIGHUP）后短轮询复查服务存活，
+ *   进程退出（如端口被占用）立即用原文原子回滚并如实报错。
  *   补丁与读取都对齐 Include 语义：面板行插到 Include 之前保证 first-obtained 生效，
  *   读取时展开 sshd_config.d 后按 sshd 取值顺序呈现生效值；Port 为累积监听指令，
  *   替换首个 Port 行的同时注释掉其余未注释 Port 行。
+ * - 服务在跑与否以 pidfile 加进程身份双核实：读 /proc/<pid>/comm 确认是 sshd 才算，
+ *   pid 被无关进程复用时按未运行处理，停止信号只发给核实过身份的进程。
  * - authorized_keys 行级编辑：公钥行经 ssh-keygen -lf 验证后追加/删除，.ssh 0700、文件 0600；
  *   行 id 含账号维度，同一公钥装多账号时按 id 删除只撤销目标账号；全部读-改-写进互斥队列，
- *   并发请求排队落盘，后写不覆盖前写。
+ *   并发请求排队落盘，后写不覆盖前写。列表对无法验证的脏行只跳过并计数，不整体报错。
  * - Root 密码只走 chpasswd 的 stdin，不进命令行参数。
  * - 私钥只在创建/生成响应里一次性带出：生成后立即读出并删除临时密钥文件，之后无处可取。
  */
@@ -65,6 +70,12 @@ export const DEFAULT_SSH_PATHS = {
   /** ssh-keygen 的工作目录：密钥对在这里生成、验完即删，不进任何用户主目录。 */
   keygenWorkspace: '/tmp/elysian-ssh-keygen',
 }
+
+/**
+ * 登录日志按字节取尾的预算：远大于 2000 行常规行宽的总量（SSH_LOG_TAIL_LINES 上限），
+ * 超预算的旧段不再读进内存——截尾发生在读取层而不是整读之后。
+ */
+export const SSH_LOG_TAIL_BYTES = 512 * 1024
 
 export type SshHostDeps = {
   /** 执行 ssh-keygen 子命令，返回 stdout；失败抛错（含 stderr）。 */
@@ -91,6 +102,11 @@ export type SshHostDeps = {
   /** 轮询等待一步（毫秒）：启停后等 sshd 状态收敛用；测试注入即时实现。 */
   delay(ms: number): Promise<void>
   readText(path: string): Promise<string>
+  /**
+   * 只读文件末段（最多 maxBytes 字节）：登录日志按尾读取，大文件不整读进堆；
+   * 从文件中部起读（发生截断）时，返回文本已丢弃不完整的首行。
+   */
+  readTextTail(path: string, maxBytes: number): Promise<string>
   /** 列目录下的直接子项名（Include 通配展开用）；目录不存在时返回空数组。 */
   readDir(path: string): Promise<string[]>
   writeText(path: string, content: string): Promise<void>
@@ -114,7 +130,20 @@ export type SshHostDeps = {
 /** 面板创建的密钥注释前缀：authorized_keys 里据此识别归属面板管理的名称。 */
 const KEY_COMMENT_PREFIX = 'elysian-'
 
-export function createSshService(deps: SshHostDeps): SshAdapter {
+/**
+ * 登录密钥列表的附带报告：authorized_keys 里无法验证的脏行只跳过并计数。
+ * 计数随 HTTP 响应带出（契约先留接口，界面暂不渲染），列表本身永不因单行失败整体失败。
+ */
+export type SshListKeysReport = {
+  keys: readonly SshLoginKey[]
+  /** 各账号 authorized_keys 里被跳过的无效行数合计。 */
+  ignoredInvalidLines: number
+}
+
+export function createSshService(deps: SshHostDeps): SshAdapter & {
+  /** 列表附带脏行计数（GET /keys 响应带出）；SshAdapter 契约方法保持不变。 */
+  listKeysWithReport(): Promise<SshListKeysReport>
+} {
   const paths = deps.paths ?? DEFAULT_SSH_PATHS
   /** 公钥行 id → 本次会话首次观察到的时间：authorized_keys 无时间戳，创建时间是会话记忆。 */
   const keyFirstSeenAt = new Map<string, string>()
@@ -139,6 +168,21 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
     return run
   }
 
+  /**
+   * sshd_config 读-改-写的互斥队列：并发的配置补丁排队执行，每次补丁都基于最新
+   * 落盘原文计算——两个请求各拿旧原文覆写会让先落盘的改动静默丢失且双方都报成功
+   * （与 authorized_keys 的互斥队列同一纪律）。
+   */
+  let configWriteTail: Promise<unknown> = Promise.resolve()
+  function serializeConfigWrite<T>(critical: () => Promise<T>): Promise<T> {
+    const run = configWriteTail.then(critical, critical)
+    configWriteTail = run.then(
+      () => undefined,
+      () => undefined,
+    )
+    return run
+  }
+
   function commandError(command: string, args: readonly string[], error: unknown): Error {
     const detail = error instanceof Error ? error.message : String(error)
     return new Error(`${command} 执行失败（${[command, ...args].join(' ')}）：${detail}`)
@@ -149,8 +193,23 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
   }
 
   async function serviceRunning(): Promise<boolean> {
-    // sshd daemonize 时写 pidfile（/run/sshd.pid）；pidfile 在即视为在跑。
-    return deps.exists(paths.sshdPidFile)
+    // pidfile 存在只是线索：pid 可能已被无关进程复用。读 /proc/<pid>/comm 核实身份
+    // 后才算在跑；pidfile 读不出、pid 非法或 comm 读不到（进程已退）都按未运行处理。
+    let pidText: string
+    try {
+      pidText = await deps.readText(paths.sshdPidFile)
+    } catch {
+      return false
+    }
+    const pid = Number.parseInt(pidText.trim(), 10)
+    if (!Number.isInteger(pid)) return false
+    let comm: string
+    try {
+      comm = await deps.readText(`/proc/${pid}/comm`)
+    } catch {
+      return false
+    }
+    return comm.trim() === 'sshd'
   }
 
   /**
@@ -164,6 +223,20 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
       await deps.delay(100)
     }
     return (await serviceRunning()) === running
+  }
+
+  /**
+   * SIGHUP 重载后确认 sshd 存活：重载触发 re-exec 重读配置，端口被占用这类只在
+   * 真实监听时暴露的致命问题会让进程直接退出并清掉 pidfile。短轮询一个窗口，
+   * 期间任何一次探测发现不在跑即判定死亡，交由调用方回滚原文。
+   */
+  async function serviceAliveAfterReload(): Promise<boolean> {
+    const attempts = 10
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      if (!(await serviceRunning())) return false
+      await deps.delay(100)
+    }
+    return serviceRunning()
   }
 
   async function readConfigText(): Promise<string> {
@@ -221,13 +294,14 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
   /**
    * 展开 Include 后的全量配置文本：Include 行按 sshd 语义原位替换为所引文件内容，
    * 解析顺序（first-obtained）与真实 sshd 一致，面板由此读到生效值而不是主文件值。
-   * 递归深度设上限，防止 drop-in 互相 Include 成环时读挂面板。
+   * Include 的 Keyword=Value 等号写法与空白写法等价（sshd_config(5)），关键词识别前
+   * 先行归一；递归深度设上限，防止 drop-in 互相 Include 成环时读挂面板。
    */
   async function expandIncludes(text: string, depth: number): Promise<string> {
     if (depth >= 16) return ''
     const out: string[] = []
     for (const rawLine of text.split('\n')) {
-      const line = stripConfigComment(rawLine).trim()
+      const line = normalizeEqualsSeparator(stripConfigComment(rawLine).trim())
       const keyword = line.split(/\s+/)[0]?.toLowerCase() ?? ''
       if (line && keyword === 'include') {
         for (const pattern of line.split(/\s+/).slice(1)) {
@@ -276,34 +350,51 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
 
   /**
    * 白名单补丁的完整落盘流程：补丁 → 备份 → 原子写 → `sshd -t` 预检 →（在跑时）SIGHUP 重载。
-   * 预检失败立即回滚原配置并抛中文错误；未改动时直接返回，不产生任何写与重载。
+   * 全程进串行队列：并发的补丁排队执行，后写者基于最新原文计算，不静默丢掉先写者的改动。
+   * 预检失败立即用原文原子回滚并抛中文错误；重载后复查服务存活，进程退出（如端口被
+   * 占用）同样原子回滚并如实报错；未改动时直接返回，不产生任何写与重载。
    * 重载用 SIGHUP 而不是 service restart：sshd re-exec 时保留原启动参数（含 -E 日志路径），
    * restart 出的 sshd 会丢 -E，面板日志源随之冻结。
    */
   async function patchAndApply(patch: Partial<Record<SshdDirectiveName, string>>): Promise<void> {
-    const original = await readConfigText()
-    const next = patchSshdConfig(original, patch)
-    if (next === original) return
+    return serializeConfigWrite(async () => {
+      const original = await readConfigText()
+      const next = patchSshdConfig(original, patch)
+      if (next === original) return
 
-    await writeAtomic(paths.sshdConfig, original, next)
-    try {
-      await deps.runSshd(['-t', '-f', paths.sshdConfig]).catch((error: unknown) => {
-        throw commandError('sshd', ['-t', '-f', paths.sshdConfig], error)
-      })
-    } catch (error) {
-      await deps.writeText(paths.sshdConfig, original)
-      const detail = error instanceof Error ? error.message : String(error)
-      throw new Error(`sshd 配置预检未通过，已回滚原配置：${detail}`)
-    }
-
-    if (await serviceRunning()) {
+      await writeAtomic(paths.sshdConfig, original, next)
       try {
-        await deps.reloadSshd()
+        await deps.runSshd(['-t', '-f', paths.sshdConfig]).catch((error: unknown) => {
+          throw commandError('sshd', ['-t', '-f', paths.sshdConfig], error)
+        })
       } catch (error) {
+        // 回滚同样走原子写（.bak 已是原文，不再重复备份）：目标路径任何时刻都是完整文件。
+        await writeAtomic(paths.sshdConfig, null, original)
         const detail = error instanceof Error ? error.message : String(error)
-        throw new Error(`配置已写入并通过预检，但重载 sshd 失败：${detail}`)
+        // 预检不通过说明请求写入的取值 sshd 不接受：按请求被拒（400）返回，而不是服务端故障。
+        throw invalidRequest(`sshd 配置预检未通过，已回滚原配置：${detail}`)
       }
-    }
+
+      if (await serviceRunning()) {
+        try {
+          await deps.reloadSshd()
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error)
+          throw new Error(`配置已写入并通过预检，但重载 sshd 失败：${detail}`)
+        }
+        if (!(await serviceAliveAfterReload())) {
+          // 新取值通过语法预检但进程没能活下来：用原文原子回滚并如实报错——
+          // 不能让面板报成功而服务已死。
+          await writeAtomic(paths.sshdConfig, null, original)
+          const changed = Object.entries(patch)
+            .map(([name, value]) => `${name}=${value}`)
+            .join('、')
+          throw new Error(
+            `配置已写入并通过预检，但重载后 sshd 进程退出（本次修改：${changed}）。已回滚为原配置，服务现在处于停止状态需手动重新启用；新取值可能只在真实监听时暴露问题（如端口已被占用），请排查后重试`,
+          )
+        }
+      }
+    })
   }
 
   /** 无时间戳的日志行（sshd -E 裸行）→ 本次会话首次观察到的时间。 */
@@ -321,7 +412,9 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
 
   async function loginRecords(): Promise<readonly SshLoginRecord[]> {
     if (!(await deps.exists(paths.sshdLog))) return []
-    const parsed = parseSshLog(await deps.readText(paths.sshdLog), deps.nowIso())
+    // 只读尾部：超预算的旧段不进内存（截尾在读取层完成），截断出的不完整首行由 readTextTail 丢弃。
+    const text = await deps.readTextTail(paths.sshdLog, SSH_LOG_TAIL_BYTES)
+    const parsed = parseSshLog(text, deps.nowIso())
     return parsed.map((line, index) => ({
       id: `login-${index + 1}`,
       ip: line.ip,
@@ -351,7 +444,7 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
       throw commandError('getent', ['passwd', name], error)
     })
     const entry = parseGetentPasswd(output)[0]
-    if (!entry) throw new Error(`未找到系统账号：${name}`)
+    if (!entry) throw invalidRequest(`未找到系统账号：${name}`)
     return entry
   }
 
@@ -408,12 +501,20 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
     return comment || '未命名'
   }
 
-  async function keysOfAccount(entry: PasswdEntry): Promise<readonly SshLoginKey[]> {
+  /** 单账号的密钥清单附带报告：无法验证的 authorized_keys 行只跳过并计数，不抛错。 */
+  async function keysOfAccount(entry: PasswdEntry): Promise<SshListKeysReport> {
     const text = await authorizedKeysText(entry)
-    if (text === null) return []
+    if (text === null) return { keys: [], ignoredInvalidLines: 0 }
     const keys: SshLoginKey[] = []
+    let ignoredInvalidLines = 0
     for (const line of parseKeyLines(text)) {
-      const fingerprint = await verifyPublicKey(line)
+      // 一条脏行（如手工粘坏的外来公钥）不该拖垮整个列表，也不该连累密钥创建入口：
+      // 验证失败的行跳过并计数，计数随列表报告带出。
+      const fingerprint = await verifyPublicKey(line).catch(() => null)
+      if (!fingerprint) {
+        ignoredInvalidLines += 1
+        continue
+      }
       // id 含账号维度：同一公钥行装进多个账号时 id 各不相同，删除不会误删别的账号的同款行。
       const id = authorizedKeyId(entry.name, line)
       keys.push({
@@ -426,7 +527,7 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
         publicKey: line,
       })
     }
-    return keys
+    return { keys, ignoredInvalidLines }
   }
 
   return {
@@ -451,20 +552,23 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
       const policy = policyOf(await readEffectiveConfigText())
       const root = await entryOf('root')
       const text = await authorizedKeysText(root)
-      const firstLine = text === null ? undefined : parseKeyLines(text)[0]
-      // root 的密钥卡取 authorized_keys 首行；没有公钥时如实为 null（尚未生成）。
-      if (!firstLine) return { policy, key: null, passwordResetAt }
-      const fingerprint = await verifyPublicKey(firstLine)
-      return {
-        policy,
-        key: {
-          algorithm: algorithmLabelOf(fingerprint),
-          fingerprint: fingerprint.fingerprint,
-          createdAt: firstSeenAt(keyLineId(firstLine)),
-          publicKey: firstLine,
-        },
-        passwordResetAt,
+      // Root 密钥卡取首个能通过验证的公钥行（sshd 本就忽略无法解析的行）：
+      // authorized_keys 里有脏行时面板不整体报错；没有任何可验证行时如实为 null（尚未生成）。
+      for (const line of text === null ? [] : parseKeyLines(text)) {
+        const fingerprint = await verifyPublicKey(line).catch(() => null)
+        if (!fingerprint) continue
+        return {
+          policy,
+          key: {
+            algorithm: algorithmLabelOf(fingerprint),
+            fingerprint: fingerprint.fingerprint,
+            createdAt: firstSeenAt(keyLineId(line)),
+            publicKey: line,
+          },
+          passwordResetAt,
+        }
       }
+      return { policy, key: null, passwordResetAt }
     },
 
     async setServiceEnabled(enabled: boolean): Promise<SshOverview> {
@@ -491,14 +595,14 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
 
     async setPort(port: number): Promise<SshAuthSettings> {
       // 判据与表单共用同一函数：界面挡一次，这里再挡一次，绕过界面也写不进配置。
-      if (!isValidSshPort(port)) throw new Error('SSH 端口需为 1-65535 的整数')
+      if (!isValidSshPort(port)) throw invalidRequest('SSH 端口需为 1-65535 的整数')
       await patchAndApply({ Port: `${port}` })
       return settingsOf(await readEffectiveConfigText())
     },
 
     async saveRootLoginPolicy(policy: SshRootLoginPolicy): Promise<SshRootAuth> {
       if (!SSH_ROOT_LOGIN_POLICIES.includes(policy)) {
-        throw new Error(`无效的 Root 登录策略：${policy}`)
+        throw invalidRequest(`无效的 Root 登录策略：${policy}`)
       }
       await patchAndApply({ PermitRootLogin: policy })
       return this.rootAuth()
@@ -508,12 +612,12 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
       // chpasswd 按行解析「账号:密码」：密码含换行会变成额外的改密行（越界改掉其他账号），
       // 控制字符一律拒绝——与密钥名称共用同一条禁区判据。
       if (hasUnsafeControlChars(password)) {
-        throw new Error('密码不能包含换行或控制字符')
+        throw invalidRequest('密码不能包含换行或控制字符')
       }
       // 服务端复验强度：界面挡一次不算数，绕过界面也改不了真实密码。
       const strength = evaluateSshPasswordStrength(password)
       if (strength === 'weak') {
-        throw new Error('密码强度不足：判定为弱密码，请加长密码并混合大小写字母、数字与符号')
+        throw invalidRequest('密码强度不足：判定为弱密码，请加长密码并混合大小写字母、数字与符号')
       }
       await deps.runChpasswd(`root:${password}`).catch((error: unknown) => {
         // 错误信息只描述命令本身：密码绝不进命令行，也不进任何日志与报错。
@@ -567,13 +671,20 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
       }
     },
 
-    async listKeys(): Promise<readonly SshLoginKey[]> {
+    async listKeysWithReport(): Promise<SshListKeysReport> {
       const accounts = await keyAccountEntries()
       const keys: SshLoginKey[] = []
+      let ignoredInvalidLines = 0
       for (const entry of accounts) {
-        keys.push(...(await keysOfAccount(entry)))
+        const report = await keysOfAccount(entry)
+        keys.push(...report.keys)
+        ignoredInvalidLines += report.ignoredInvalidLines
       }
-      return keys
+      return { keys, ignoredInvalidLines }
+    },
+
+    async listKeys(): Promise<readonly SshLoginKey[]> {
+      return (await this.listKeysWithReport()).keys
     },
 
     async listLoginRecords(): Promise<readonly SshLoginRecord[]> {
@@ -592,10 +703,10 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
     async createKey(input: { name: string; userId: string }): Promise<SshLoginKey> {
       const name = input.name.trim()
       if (!isValidSshKeyName(name)) {
-        throw new Error(`密钥名称需为 1-${SSH_KEY_NAME_MAX_LENGTH} 个字符`)
+        throw invalidRequest(`密钥名称需为 1-${SSH_KEY_NAME_MAX_LENGTH} 个字符`)
       }
       if (hasUnsafeControlChars(input.name)) {
-        throw new Error('密钥名称不能包含换行或控制字符')
+        throw invalidRequest('密钥名称不能包含换行或控制字符')
       }
 
       /**
@@ -607,11 +718,11 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
         // 归属账号必须是白名单里的真实系统账号：客户端只传账号名，路径全部由服务端推导。
         const accounts = await keyAccountEntries()
         const account = accounts.find((entry) => entry.name === input.userId)
-        if (!account) throw new Error(`归属账号不存在：${input.userId}`)
+        if (!account) throw invalidRequest(`归属账号不存在：${input.userId}`)
 
         const existing = await this.listKeys()
         if (existing.some((key) => key.name === name)) {
-          throw new Error(`密钥名称已存在：${name}`)
+          throw invalidRequest(`密钥名称已存在：${name}`)
         }
 
         await ensureDir(paths.keygenWorkspace)
@@ -667,7 +778,7 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
           await writeAuthorizedKeys(entry, text, removeKeyLine(text, target))
           return
         }
-        throw new Error(`未找到登录密钥 ${keyId}`)
+        throw invalidRequest(`未找到登录密钥 ${keyId}`)
       })
     },
   }

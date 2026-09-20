@@ -12,9 +12,11 @@
  *   改由插到 Include 之前的面板行接管生效；
  * - Port 替换首个未注释行的同时，把全局段内其余未注释 Port 行注释掉——留存行会让
  *   sshd 继续监听旧端口（drop-in 里的 Port 无法从主文件撤销，属面板能力边界）。
+ * 关键词识别前先按 sshd_config(5) 把行内第一处 = 归一为空白分隔：Include、Match 的
+ * 等号写法与空白写法等价，漏识别会让插入点或全局段边界判错。
  */
 
-import { SSHD_DIRECTIVE_NAMES, stripConfigComment, type SshdDirectiveName } from './parseSshdConfig'
+import { SSHD_DIRECTIVE_NAMES, normalizeEqualsSeparator, stripConfigComment, type SshdDirectiveName } from './parseSshdConfig'
 
 /** 补丁取值：指令名（规范大小写）→ 单个取值词。 */
 export type SshdConfigPatch = Partial<Record<SshdDirectiveName, string>>
@@ -32,7 +34,7 @@ export function patchSshdConfig(text: string, patch: SshdConfigPatch): string {
   let firstIncludeIndex = lines.length
   let firstMatchIndex = lines.length
   for (let index = 0; index < lines.length; index += 1) {
-    const line = stripConfigComment(lines[index] ?? '').trim()
+    const line = normalizeEqualsSeparator(stripConfigComment(lines[index] ?? '').trim())
     if (!line) continue
     const keyword = line.split(/\s+/)[0]?.toLowerCase() ?? ''
     if (keyword === 'include' && firstIncludeIndex === lines.length) firstIncludeIndex = index
@@ -47,7 +49,7 @@ export function patchSshdConfig(text: string, patch: SshdConfigPatch): string {
 
   let portReplaced = false
   for (let index = 0; index < firstMatchIndex; index += 1) {
-    const line = stripConfigComment(lines[index] ?? '').trim()
+    const line = normalizeEqualsSeparator(stripConfigComment(lines[index] ?? '').trim())
     if (!line) continue
     const keyword = line.split(/\s+/)[0]?.toLowerCase() ?? ''
 

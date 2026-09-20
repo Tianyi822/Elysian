@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseSshdConfig, stripConfigComment } from './parseSshdConfig'
+import { normalizeEqualsSeparator, parseSshdConfig, stripConfigComment } from './parseSshdConfig'
 
 /*
  * sshd_config 解析器的夹具用例：注释、行内注释、大小写、多次出现、Match 块。
@@ -92,6 +92,39 @@ describe('parseSshdConfig', () => {
     const directives = parseSshdConfig('Port 73\r\nPasswordAuthentication no\r\n')
     expect(directives.port).toBe(73)
     expect(directives.passwordAuthentication).toBe(false)
+  })
+
+  it('Keyword=Value 等价写法同样解析：行内第一个 = 与空白分隔等价，关键词大小写不敏感', () => {
+    // sshd_config(5)：关键词与取值可用「可选空白 + 恰一个 = + 可选空白」分隔。
+    // 漏掉这一形态时面板显示值可与 sshd 实效相反（如 `PasswordAuthentication=no` 被当作缺省 yes）。
+    const directives = parseSshdConfig('Port=2202\nPasswordAuthentication = no\npermitrootlogin=yes\n')
+    expect(directives).toEqual({
+      port: 2202,
+      passwordAuthentication: false,
+      pubkeyAuthentication: null,
+      permitRootLogin: 'yes',
+    })
+  })
+
+  it('PermitRootLogin 的废弃别名 without-password 归一为 prohibit-password', () => {
+    // sshd_config(5)：without-password 是 prohibit-password 的废弃别名；
+    // 不归一会让 rootAuth 的枚举匹配失败、整个面板 500。
+    expect(parseSshdConfig('PermitRootLogin without-password\n').permitRootLogin).toBe('prohibit-password')
+    expect(parseSshdConfig('PermitRootLogin WITHOUT-PASSWORD\n').permitRootLogin).toBe('prohibit-password')
+    expect(parseSshdConfig('PermitRootLogin forced-commands-only\n').permitRootLogin).toBe('forced-commands-only')
+  })
+})
+
+describe('normalizeEqualsSeparator', () => {
+  it('行内第一处「= 及其紧邻空白」归一为单个空白；没有 = 时原样返回', () => {
+    expect(normalizeEqualsSeparator('Port=22')).toBe('Port 22')
+    expect(normalizeEqualsSeparator('Port = 22')).toBe('Port 22')
+    expect(normalizeEqualsSeparator('Port 22')).toBe('Port 22')
+  })
+
+  it('注释剥离发生在 = 归一之前，注释里的 = 不参与', () => {
+    expect(parseSshdConfig('#Port=2222\nPort 22\n').port).toBe(22)
+    expect(parseSshdConfig('Port 22 # 备注=值\n').port).toBe(22)
   })
 })
 
