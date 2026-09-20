@@ -35,6 +35,7 @@ export const INITIAL_SSH_STATE = {
   removeKeyTarget: undefined,
   viewKey: undefined,
   revealKey: undefined,
+  passwordResetNotice: false,
   togglingService: false,
   savingAuth: false,
   savingPort: false,

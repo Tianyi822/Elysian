@@ -1,4 +1,5 @@
-import { useEffect, useId } from 'react'
+import { useEffect, useId, useState } from 'react'
+import * as Dialog from '@radix-ui/react-dialog'
 import {
   SSH_DEFAULT_PORT,
   SSH_LOGIN_RESULT_LABELS,
@@ -14,7 +15,7 @@ import { IconButton } from '../../components/IconButton'
 import { StatusTag } from '../../components/StatusTag'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { formatDateTime, formatLoginTime } from '../../components/format'
-import { RefreshCw, TriangleAlert } from '../../components/icons'
+import { RefreshCw, Eye, EyeOff } from '../../components/icons'
 import { SSH_PAGE_SIZE, useSshStore } from '../../stores/sshStore'
 import { ACTION_CLASS, INPUT_CLASS, Region, SECONDARY_ACTION_CLASS, Section, SwitchToggle, TablePager } from './sshCardParts'
 import { SshKeyCard } from './SshKeyCard'
@@ -33,11 +34,19 @@ import { randomSshPort, randomStrongPassword } from './sshRandom'
  * 私钥一律只在创建/生成成功后的一次性弹窗里展示，查看弹窗只给公钥、指纹与元信息。
  */
 
+/** 密码强度的三段彩条与联动配色：红黄绿各一段，按等级逐段点亮，输入框描边与等级字取当前等级的颜色。 */
 const STRENGTH_CLASSES: Record<SshPasswordStrength, string> = {
   weak: 'text-danger',
   medium: 'text-warning',
   strong: 'text-success',
 }
+const STRENGTH_BORDER: Record<SshPasswordStrength, string> = {
+  weak: 'border-danger',
+  medium: 'border-warning',
+  strong: 'border-success',
+}
+const STRENGTH_LEVEL: Record<SshPasswordStrength, number> = { weak: 1, medium: 2, strong: 3 }
+const STRENGTH_SEGMENTS = ['bg-danger', 'bg-warning', 'bg-success'] as const
 
 function SwitchRow({
   label,
@@ -76,6 +85,8 @@ export function SshPanel() {
   const closeKeyView = useSshStore((s) => s.closeKeyView)
   const revealKey = useSshStore((s) => s.revealKey)
   const closeRevealKey = useSshStore((s) => s.closeRevealKey)
+  const passwordResetNotice = useSshStore((s) => s.passwordResetNotice)
+  const closePasswordResetNotice = useSshStore((s) => s.closePasswordResetNotice)
   const load = useSshStore((s) => s.load)
 
   useEffect(() => {
@@ -132,6 +143,7 @@ export function SshPanel() {
           onClose={closeRevealKey}
         />
       ) : null}
+      {passwordResetNotice ? <PasswordResetNoticeDialog onClose={closePasswordResetNotice} /> : null}
     </>
   )
 }
@@ -420,6 +432,7 @@ function RootCard() {
   const createRootKey = useSshStore((s) => s.createRootKey)
   const openKeyView = useSshStore((s) => s.openKeyView)
   const passwordInputId = useId()
+  const [passwordVisible, setPasswordVisible] = useState(false)
 
   if (!rootAuth || !settings) return null
   const strength = passwordDraft ? evaluateSshPasswordStrength(passwordDraft) : undefined
@@ -451,50 +464,78 @@ function RootCard() {
 
       {passwordUsable ? (
         <Region title="Root 密码" labelFor={passwordInputId}>
-        <div className="flex items-center gap-2">
-          <input
-            id={passwordInputId}
-            type="password"
-            autoComplete="new-password"
-            value={passwordDraft}
-            onChange={(event) => setPasswordDraft(event.target.value)}
-            placeholder="请输入新密码"
-            className={INPUT_CLASS}
-          />
-          <IconButton
-            label="随机生成强密码"
-            variant="ghost"
-            onPress={() => setPasswordDraft(randomStrongPassword())}
-          >
-            <RefreshCw aria-hidden size={14} />
-          </IconButton>
-          <button
-            type="button"
-            onClick={() => void resetPassword(gateway)}
-            disabled={resetting}
-            className={ACTION_CLASS}
-          >
-            重置密码
-          </button>
-        </div>
-        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
+          <div className="flex items-center gap-2">
+            <div className="relative min-w-0 flex-1">
+              <input
+                id={passwordInputId}
+                type={passwordVisible ? 'text' : 'password'}
+                autoComplete="new-password"
+                value={passwordDraft}
+                onChange={(event) => setPasswordDraft(event.target.value)}
+                placeholder="请输入新密码"
+                className={`h-[34px] w-full rounded-lg border bg-surface-raised px-2.5 pr-9 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle ${
+                  strength ? STRENGTH_BORDER[strength] : 'border-line'
+                }`}
+              />
+              <button
+                type="button"
+                onClick={() => setPasswordVisible((visible) => !visible)}
+                aria-label={passwordVisible ? '隐藏密码' : '显示密码'}
+                title={passwordVisible ? '隐藏密码' : '显示密码'}
+                className="absolute top-1/2 right-1.5 -translate-y-1/2 rounded-lg p-1.5 text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg"
+              >
+                {passwordVisible ? <EyeOff aria-hidden size={14} /> : <Eye aria-hidden size={14} />}
+              </button>
+            </div>
+            <IconButton
+              label="随机生成强密码"
+              variant="ghost"
+              onPress={() => setPasswordDraft(randomStrongPassword())}
+            >
+              <RefreshCw aria-hidden size={14} />
+            </IconButton>
+            <button
+              type="button"
+              onClick={() => void resetPassword(gateway)}
+              disabled={resetting}
+              className={ACTION_CLASS}
+            >
+              重置密码
+            </button>
+          </div>
           {strength ? (
-            <span className={STRENGTH_CLASSES[strength]}>
-              强度：{SSH_PASSWORD_STRENGTH_LABELS[strength]}
-            </span>
+            /* 强度内联在输入框正下：三段彩条（红黄绿逐段点亮）+ 条旁等级字，不单独占一行说明。 */
+            <div className="mt-2 flex items-center gap-2">
+              <div
+                role="meter"
+                aria-label={`密码强度：${SSH_PASSWORD_STRENGTH_LABELS[strength]}`}
+                aria-valuenow={STRENGTH_LEVEL[strength]}
+                aria-valuemin={1}
+                aria-valuemax={3}
+                aria-valuetext={SSH_PASSWORD_STRENGTH_LABELS[strength]}
+                className="flex h-1.5 flex-1 gap-1"
+              >
+                {STRENGTH_SEGMENTS.map((segmentClass, index) => (
+                  <span
+                    key={segmentClass}
+                    className={`h-full flex-1 rounded-full ${
+                      index < STRENGTH_LEVEL[strength] ? segmentClass : 'bg-line'
+                    }`}
+                  />
+                ))}
+              </div>
+              <span className={`text-xs ${STRENGTH_CLASSES[strength]}`}>
+                {SSH_PASSWORD_STRENGTH_LABELS[strength]}
+              </span>
+            </div>
           ) : null}
-          <span className="inline-flex items-center gap-1 rounded border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-warning">
-            <TriangleAlert aria-hidden size={12} />
-            修改密码会进行弱密码检测
-          </span>
-        </div>
-        <p className="mt-2 text-xs text-fg-subtle">
-          建议使用复杂度高的密码；修改后请及时保存，刷新页面会清空密码框。
-        </p>
-        <p className="mt-2 text-xs tabular-nums text-fg-subtle">
-          上次重置：{rootAuth.passwordResetAt ? formatDateTime(rootAuth.passwordResetAt) : '—'}
-        </p>
-      </Region>
+          <p className="mt-2 text-xs text-fg-subtle">
+            建议使用复杂度高的密码；修改后请及时保存，刷新页面会清空密码框。
+          </p>
+          <p className="mt-2 text-xs tabular-nums text-fg-subtle">
+            上次重置：{rootAuth.passwordResetAt ? formatDateTime(rootAuth.passwordResetAt) : '—'}
+          </p>
+        </Region>
       ) : null}
 
       {panelKeyUsable ? (
@@ -552,5 +593,31 @@ function RootCard() {
       </Region>
       ) : null}
     </Section>
+  )
+}
+
+/**
+ * Root 密码重置成功的提醒弹窗：改密影响的是下一次 SSH 登录，值得比一条通知更强的停顿，
+ * 用户确认「知道了」后关闭。
+ */
+function PasswordResetNoticeDialog({ onClose }: { onClose: () => void }) {
+  return (
+    <Dialog.Root open onOpenChange={(next) => { if (!next) onClose() }}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60" />
+        <Dialog.Content
+          aria-describedby={undefined}
+          className="fixed left-1/2 top-1/2 z-[55] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-bg p-4 shadow-2xl"
+        >
+          <Dialog.Title className="text-sm font-medium text-fg">Root 密码已重置</Dialog.Title>
+          <p className="mt-2 text-xs text-fg-muted">下一次 SSH 登录需要使用新密码。</p>
+          <div className="mt-4 flex justify-end">
+            <button type="button" onClick={onClose} className={ACTION_CLASS}>
+              知道了
+            </button>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   )
 }

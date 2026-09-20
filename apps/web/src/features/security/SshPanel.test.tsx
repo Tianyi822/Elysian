@@ -319,7 +319,7 @@ describe('SSH 管理页签', () => {
     expect(within(root).queryByRole('button', { name: '重新生成' })).not.toBeInTheDocument()
   })
 
-  it('Root 密码：弱密码被拒且不留重置时间，达标密码通过并留下可见变化', async () => {
+  it('Root 密码：明暗可切换，强度走三级彩条并联动输入框描边，弱密码被拒、达标后弹窗提醒新密码', async () => {
     const user = await openSshTab()
     const root = screen.getByRole('region', { name: 'Root 设置' })
 
@@ -334,11 +334,21 @@ describe('SSH 管理页签', () => {
     await user.click(within(root).getByRole('switch', { name: '允许 Root 登录' }))
     const input = await within(root).findByLabelText('Root 密码')
 
+    // 明暗切换：默认掩码，点眼睛变明文，再点回去。
+    expect(input).toHaveAttribute('type', 'password')
+    await user.click(within(root).getByRole('button', { name: '显示密码' }))
+    expect(input).toHaveAttribute('type', 'text')
+    await user.click(within(root).getByRole('button', { name: '隐藏密码' }))
+    expect(input).toHaveAttribute('type', 'password')
+
     expect(within(root).getByText('上次重置：—')).toBeInTheDocument()
 
     await user.type(input, 'abcdefgh')
-    // 即时强度反馈与提交时的判定同源，用户提交前就能看见。
-    expect(within(root).getByText('强度：弱')).toBeInTheDocument()
+    // 强度不再单独一行文字：三段彩条 + 条旁等级字，输入框描边同色联动。
+    expect(within(root).getByRole('meter', { name: '密码强度：弱' })).toHaveAttribute('aria-valuenow', '1')
+    expect(within(root).getByText('弱')).toBeInTheDocument()
+    expect(input.className).toContain('border-danger')
+    expect(within(root).queryByText('强度：弱')).not.toBeInTheDocument()
 
     await user.click(within(root).getByRole('button', { name: '重置密码' }))
     const notifications = await screen.findByLabelText('通知')
@@ -347,14 +357,25 @@ describe('SSH 管理页签', () => {
     expect(input).toHaveValue('abcdefgh')
 
     await user.clear(input)
+    await user.type(input, 'Elysian2026')
+    expect(within(root).getByRole('meter', { name: '密码强度：中' })).toHaveAttribute('aria-valuenow', '2')
+    expect(input.className).toContain('border-warning')
+
+    await user.clear(input)
     await user.type(input, 'Elysian#2026Root')
-    expect(within(root).getByText('强度：强')).toBeInTheDocument()
+    expect(within(root).getByRole('meter', { name: '密码强度：强' })).toHaveAttribute('aria-valuenow', '3')
+    expect(input.className).toContain('border-success')
     await user.click(within(root).getByRole('button', { name: '重置密码' }))
 
     await waitFor(() => expect(input).toHaveValue(''))
     expect(within(root).queryByText('上次重置：—')).not.toBeInTheDocument()
-    expect(useNotificationStore.getState().notifications.map((item) => item.message)).toContain(
-      'Root 密码已重置（强度：强；mock，待接入真实执行）',
+
+    // 重置成功改为弹窗提醒：下一次 SSH 登录用新密码；知道了关闭。
+    const notice = await screen.findByRole('dialog', { name: 'Root 密码已重置' })
+    expect(notice.textContent).toContain('下一次 SSH 登录需要使用新密码')
+    await user.click(within(notice).getByRole('button', { name: '知道了' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Root 密码已重置' })).not.toBeInTheDocument(),
     )
   })
 

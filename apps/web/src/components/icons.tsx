@@ -20,6 +20,8 @@ export {
   Copy,
   Database,
   Download,
+  Eye,
+  EyeOff,
   File,
   Folder,
   FolderTree,

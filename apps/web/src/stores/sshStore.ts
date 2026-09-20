@@ -8,7 +8,7 @@ import type {
   SshRootAuth,
   SshRootLoginPolicy,
 } from '@elysian/contracts'
-import { SSH_PASSWORD_STRENGTH_LABELS, isValidSshPort } from '@elysian/contracts'
+import { isValidSshPort } from '@elysian/contracts'
 import { create } from 'zustand'
 import type { ElysianGateway, SshKeyAccount } from '../contracts/adapters'
 import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
@@ -22,12 +22,10 @@ export const SSH_PAGE_SIZE = 20
 
 /**
  * 动作完成提示的演示标注：Docker 运行时动作已真实执行 sshd/chpasswd/ssh-keygen，
- * 不再带标注；宿主机本地开发（内存演示）保留。括号形态用于追加在句子末尾，
- * 分号形态用于嵌进已有的括号里（Root 密码重置），两种只用这一个来源。
+ * 不再带标注；宿主机本地开发（内存演示）保留。括号形态追加在句子末尾，只用这一个来源。
  */
 const MOCK_NOTE = isDockerRuntime() ? '' : 'mock，待接入真实执行'
 const MOCK_SUFFIX = MOCK_NOTE ? `（${MOCK_NOTE}）` : ''
-const MOCK_INLINE_NOTE = MOCK_NOTE ? `；${MOCK_NOTE}` : ''
 
 type SshState = {
   status: SshStatus
@@ -64,6 +62,8 @@ type SshState = {
    * account 是归属账号名，下载文件名以它开头（root 固定为 'root'，登录密钥按 userId 解析）。
    */
   revealKey: { title: string; account: string; material: SshKeyMaterial } | undefined
+  /** Root 密码重置成功后的提醒弹窗：下一次 SSH 登录需要使用新密码。 */
+  passwordResetNotice: boolean
   togglingService: boolean
   savingAuth: boolean
   savingPort: boolean
@@ -93,6 +93,7 @@ type SshState = {
   openKeyView: (title: string, material: SshKeyMaterial) => void
   closeKeyView: () => void
   closeRevealKey: () => void
+  closePasswordResetNotice: () => void
 }
 
 function notify(message: string, tone: 'success' | 'info' | 'danger' = 'success'): void {
@@ -125,6 +126,7 @@ export const useSshStore = create<SshState>((set, get) => ({
   removeKeyTarget: undefined,
   viewKey: undefined,
   revealKey: undefined,
+  passwordResetNotice: false,
   togglingService: false,
   savingAuth: false,
   savingPort: false,
@@ -249,14 +251,16 @@ export const useSshStore = create<SshState>((set, get) => ({
     set({ resettingPassword: true })
     try {
       const result = await gateway.ssh.resetRootPassword(password)
-      set({ rootAuth: result.auth, passwordDraft: '', resettingPassword: false })
-      notify(
-        `Root 密码已重置（强度：${SSH_PASSWORD_STRENGTH_LABELS[result.strength]}${MOCK_INLINE_NOTE}）`,
-      )
+      // 成功改走弹窗提醒（下一次 SSH 登录用新密码），不再叠一条通知。
+      set({ rootAuth: result.auth, passwordDraft: '', resettingPassword: false, passwordResetNotice: true })
     } catch (error) {
       set({ resettingPassword: false })
       notify(error instanceof Error ? `重置失败：${error.message}` : '重置失败', 'danger')
     }
+  },
+
+  closePasswordResetNotice() {
+    set({ passwordResetNotice: false })
   },
 
   // 生成（或重新生成）Root 密钥：私钥只进一次性弹窗，入档的 rootAuth 不带它。
