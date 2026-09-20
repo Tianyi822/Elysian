@@ -49,9 +49,10 @@ describe('SSH 管理页签', () => {
     for (const name of ['服务状态', '登录统计', '监听端口', '登录方式']) {
       expect(within(service).getByText(name), name).toBeInTheDocument()
     }
-    for (const name of ['Root 登录策略', 'Root 密码', 'Root 密钥']) {
-      expect(within(root).getByText(name), name).toBeInTheDocument()
-    }
+    // Root 设置卡按策略收拢：种子默认「只能密钥登录」，密码区收起、密钥区在。
+    expect(within(root).getByText('Root 登录策略')).toBeInTheDocument()
+    expect(within(root).getByText('Root 密钥')).toBeInTheDocument()
+    expect(within(root).queryByText('Root 密码')).not.toBeInTheDocument()
   })
 
   it('登录记录卡按时间倒序列出来源、端口、结果与账号，每页 20 条', async () => {
@@ -264,10 +265,45 @@ describe('SSH 管理页签', () => {
     )
   })
 
+  it('Root 设置随登录策略收拢：密码区与密钥区按策略显隐并给出一句话说明', async () => {
+    const user = await openSshTab()
+    const root = () => screen.getByRole('region', { name: 'Root 设置' })
+
+    // 种子默认「只能密钥登录」：密钥区在，密码区收起。
+    expect(within(root()).getByRole('button', { name: '重新生成' })).toBeInTheDocument()
+    expect(within(root()).queryByLabelText('Root 密码')).not.toBeInTheDocument()
+    expect(within(root()).getByText(/Root 密码设置已隐藏/)).toBeInTheDocument()
+
+    // 允许密码登录：两区都在，无收起说明。
+    await user.click(within(root()).getByRole('button', { name: '允许密码登录' }))
+    expect(await within(root()).findByLabelText('Root 密码')).toBeInTheDocument()
+    expect(within(root()).getByRole('button', { name: '重新生成' })).toBeInTheDocument()
+    expect(within(root()).queryByText(/设置已隐藏/)).not.toBeInTheDocument()
+
+    // 禁止 Root 登录：两区都收起。
+    await user.click(within(root()).getByRole('button', { name: '禁止 Root 登录' }))
+    await waitFor(() =>
+      expect(within(root()).queryByRole('button', { name: '重新生成' })).not.toBeInTheDocument(),
+    )
+    expect(within(root()).queryByLabelText('Root 密码')).not.toBeInTheDocument()
+    expect(within(root()).getByText(/Root 登录已完全禁止/)).toBeInTheDocument()
+
+    // 仅允许指定命令：两区收起，说明这一档只认带 command= 限制的密钥。
+    await user.click(within(root()).getByRole('button', { name: '仅允许指定命令' }))
+    await waitFor(() =>
+      expect(within(root()).queryByLabelText('Root 密码')).not.toBeInTheDocument(),
+    )
+    expect(within(root()).queryByRole('button', { name: '重新生成' })).not.toBeInTheDocument()
+    expect(within(root()).getByText(/command=/)).toBeInTheDocument()
+  })
+
   it('Root 密码：弱密码被拒且不留重置时间，达标密码通过并留下可见变化', async () => {
     const user = await openSshTab()
     const root = screen.getByRole('region', { name: 'Root 设置' })
-    const input = within(root).getByLabelText('Root 密码')
+
+    // 密码区只在「允许密码登录」一档出现：先真实切换策略，再操作表单。
+    await user.click(within(root).getByRole('button', { name: '允许密码登录' }))
+    const input = await within(root).findByLabelText('Root 密码')
 
     expect(within(root).getByText('上次重置：—')).toBeInTheDocument()
 

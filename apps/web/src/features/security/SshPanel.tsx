@@ -10,7 +10,7 @@ import {
   SSH_SERVICE_STATUS_LABELS,
   evaluateSshPasswordStrength,
 } from '@elysian/contracts'
-import type { SshLoginStats, SshPasswordStrength } from '@elysian/contracts'
+import type { SshLoginStats, SshPasswordStrength, SshRootLoginPolicy } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { IconButton } from '../../components/IconButton'
@@ -389,6 +389,15 @@ function LoginStatsRegion({ stats, enabled }: { stats: SshLoginStats; enabled: b
   )
 }
 
+/** Root 密码与密钥区只在对应登录方式可用的策略档出现；收起时给一句话说明原因。 */
+const ROOT_POLICY_HIDDEN_HINTS: Record<SshRootLoginPolicy, string | null> = {
+  yes: null,
+  'prohibit-password': '当前策略只允许密钥登录：Root 密码设置已隐藏，Root 凭据走下方密钥。',
+  'forced-commands-only':
+    '仅允许指定命令：Root 只能用授权文件中带 command= 限制的密钥执行固定命令（常用于备份脚本等自动化场景），密码登录同样被禁用；面板生成的普通密钥无法用于这一档，密码与密钥设置已隐藏。',
+  no: 'Root 登录已完全禁止：Root 密码与 Root 密钥设置已隐藏。',
+}
+
 /** Root 设置卡：登录策略、Root 密码、Root 密钥三个区域。 */
 function RootCard() {
   const gateway = useGateway()
@@ -407,6 +416,11 @@ function RootCard() {
   if (!rootAuth) return null
   const strength = passwordDraft ? evaluateSshPasswordStrength(passwordDraft) : undefined
   const rootKey = rootAuth.key
+  // 密码区只进「允许密码登录」档；密钥区不进「禁止登录」与「仅允许指定命令」——
+  // 后者只认授权文件里带 command= 限制的密钥，面板生成的普通密钥登录不进去，展示出来会误导。
+  const passwordUsable = rootAuth.policy === 'yes'
+  const panelKeyUsable = rootAuth.policy === 'yes' || rootAuth.policy === 'prohibit-password'
+  const hiddenHint = ROOT_POLICY_HIDDEN_HINTS[rootAuth.policy]
 
   return (
     <Section title="Root 设置">
@@ -431,9 +445,11 @@ function RootCard() {
           ))}
         </div>
         <p className="mt-3 text-xs text-fg-subtle">推荐使用密钥登录并关闭密码登录，安全性更高。</p>
+        {hiddenHint ? <p className="mt-1.5 text-xs text-fg-subtle">{hiddenHint}</p> : null}
       </Region>
 
-      <Region title="Root 密码" labelFor={passwordInputId}>
+      {passwordUsable ? (
+        <Region title="Root 密码" labelFor={passwordInputId}>
         <div className="flex items-center gap-2">
           <input
             id={passwordInputId}
@@ -478,8 +494,10 @@ function RootCard() {
           上次重置：{rootAuth.passwordResetAt ? formatDateTime(rootAuth.passwordResetAt) : '—'}
         </p>
       </Region>
+      ) : null}
 
-      <Region title="Root 密钥">
+      {panelKeyUsable ? (
+        <Region title="Root 密钥">
         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
           <div className="flex items-center gap-2">
             {/* 生成/重新生成同一动作：已存在时按一次，新公钥替换旧公钥，私钥只在随后的弹窗里出现一次。 */}
@@ -531,6 +549,7 @@ function RootCard() {
           生成后私钥只在弹窗里展示这一次，请当场下载保存。
         </p>
       </Region>
+      ) : null}
     </Section>
   )
 }
