@@ -3,7 +3,7 @@ import { patchSshdConfig } from './patchSshdConfig'
 
 /*
  * sshd_config 补丁器的夹具用例：只动白名单指令行，其余行逐字保留；
- * 追加必须落在全局段内（Match 块之前）。
+ * 追加必须落在全局段内且先于任何 Include 与 Match（Port 的累积语义单独覆盖）。
  */
 
 const BASE = ['# 全局段', 'Port 22', 'X11Forwarding yes', 'PermitRootLogin yes'].join('\n')
@@ -19,9 +19,14 @@ describe('patchSshdConfig', () => {
     expect(next.split('\n')).toEqual(['PasswordAuthentication no', ''])
   })
 
-  it('同一指令多次出现只替换首个生效行，后续行原样保留', () => {
-    const next = patchSshdConfig('Port 22\nPort 23\n', { Port: '2202' })
-    expect(next.split('\n')).toEqual(['Port 2202', 'Port 23', ''])
+  it('Port 为累积监听指令：首个替换，其余未注释 Port 行注释掉，旧端口不再监听', () => {
+    const next = patchSshdConfig('Port 22\nPort 23\nPort 24\n', { Port: '2202' })
+    expect(next.split('\n')).toEqual(['Port 2202', '#Port 23', '#Port 24', ''])
+  })
+
+  it('非 Port 指令多次出现只替换首个生效行，后续行原样保留', () => {
+    const next = patchSshdConfig('PermitRootLogin no\nPermitRootLogin yes\n', { PermitRootLogin: 'yes' })
+    expect(next.split('\n')).toEqual(['PermitRootLogin yes', 'PermitRootLogin yes', ''])
   })
 
   it('缺省指令追加到文件尾并保留结尾换行', () => {
@@ -64,5 +69,46 @@ describe('patchSshdConfig', () => {
   it('空补丁输出与输入逐字相同（白名单外零改动）', () => {
     const text = 'Port 22\nInclude /etc/ssh/sshd_config.d/*.conf\n# 备注\n'
     expect(patchSshdConfig(text, {})).toBe(text)
+  })
+
+  it('追加行插到 Include 之前：first-obtained 语义下不被 sshd_config.d 遮蔽', () => {
+    const text = ['# Ubuntu 出厂形态', 'Include /etc/ssh/sshd_config.d/*.conf', '#Port 22', ''].join('\n')
+    const next = patchSshdConfig(text, { Port: '2202' })
+    expect(next.split('\n')).toEqual([
+      '# Ubuntu 出厂形态',
+      'Port 2202',
+      'Include /etc/ssh/sshd_config.d/*.conf',
+      '#Port 22',
+      '',
+    ])
+  })
+
+  it('Include 之后的同指令行不作替换目标，面板行插到 Include 之前接管生效', () => {
+    const text = ['Include /etc/ssh/sshd_config.d/*.conf', 'PasswordAuthentication yes', ''].join('\n')
+    const next = patchSshdConfig(text, { PasswordAuthentication: 'no' })
+    expect(next.split('\n')).toEqual([
+      'PasswordAuthentication no',
+      'Include /etc/ssh/sshd_config.d/*.conf',
+      'PasswordAuthentication yes',
+      '',
+    ])
+  })
+
+  it('Include 与 Match 并存时插入点取更早者；Include 之前的已有指令仍整行替换', () => {
+    const text = ['Port 22', 'Include /etc/ssh/sshd_config.d/*.conf', 'Match User deploy', '  PermitRootLogin yes'].join('\n')
+    const next = patchSshdConfig(text, { PermitRootLogin: 'no' })
+    expect(next.split('\n')).toEqual([
+      'Port 22',
+      'PermitRootLogin no',
+      'Include /etc/ssh/sshd_config.d/*.conf',
+      'Match User deploy',
+      '  PermitRootLogin yes',
+    ])
+  })
+
+  it('Include 之后的未注释 Port 行同样被替换或注释（累积指令不受取值顺序保护）', () => {
+    const text = ['Include /etc/ssh/sshd_config.d/*.conf', 'Port 22', 'Port 23', ''].join('\n')
+    const next = patchSshdConfig(text, { Port: '2202' })
+    expect(next.split('\n')).toEqual(['Include /etc/ssh/sshd_config.d/*.conf', 'Port 2202', '#Port 23', ''])
   })
 })

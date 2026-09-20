@@ -18,12 +18,13 @@ import {
 } from '@elysian/contracts'
 import type { SshAdapter } from '../../contracts/adapters'
 import { hasUnsafeControlChars } from '../firewallHost/noteValidation'
-import { parseSshdConfig, type SshdDirectiveName } from './parseSshdConfig'
+import { parseSshdConfig, stripConfigComment, type SshdDirectiveName } from './parseSshdConfig'
 import { patchSshdConfig } from './patchSshdConfig'
 import { parseSshLog, summarizeSshLog } from './parseSshLog'
 import {
   algorithmLabelOf,
   appendKeyLine,
+  authorizedKeyId,
   authorizedKeysPath,
   isKeyAccount,
   keyCommentOf,
@@ -43,10 +44,16 @@ import {
  * 全部系统访问经 deps 注入，编排逻辑在 Vitest 里用有状态 fake（内存文件与命令账本）驱动。
  *
  * 安全红线：
- * - 所有命令经注入的 execFile 数组传参执行，绝不拼 shell 字符串；密钥名称拒绝换行与控制字符。
+ * - 所有命令经注入的 execFile 数组传参执行，绝不拼 shell 字符串；密钥名称与 Root 密码
+ *   都拒绝换行与控制字符（密码按行进 chpasswd 的 stdin，含换行会越界改掉其他账号）。
  * - sshd_config 只补丁四个白名单指令，写前备份、临时文件加 rename 原子落盘，
  *   `sshd -t` 预检失败立即回滚原配置——不重现「写坏配置导致服务停用」。
- * - authorized_keys 行级编辑：公钥行经 ssh-keygen -lf 验证后追加/删除，.ssh 0700、文件 0600。
+ *   补丁与读取都对齐 Include 语义：面板行插到 Include 之前保证 first-obtained 生效，
+ *   读取时展开 sshd_config.d 后按 sshd 取值顺序呈现生效值；Port 为累积监听指令，
+ *   替换首个 Port 行的同时注释掉其余未注释 Port 行。
+ * - authorized_keys 行级编辑：公钥行经 ssh-keygen -lf 验证后追加/删除，.ssh 0700、文件 0600；
+ *   行 id 含账号维度，同一公钥装多账号时按 id 删除只撤销目标账号；全部读-改-写进互斥队列，
+ *   并发请求排队落盘，后写不覆盖前写。
  * - Root 密码只走 chpasswd 的 stdin，不进命令行参数。
  * - 私钥只在创建/生成响应里一次性带出：生成后立即读出并删除临时密钥文件，之后无处可取。
  */
@@ -82,6 +89,8 @@ export type SshHostDeps = {
   /** 执行 getent（如 `getent passwd`、`getent root`），返回 stdout。 */
   runGetent(args: readonly string[]): Promise<string>
   readText(path: string): Promise<string>
+  /** 列目录下的直接子项名（Include 通配展开用）；目录不存在时返回空数组。 */
+  readDir(path: string): Promise<string[]>
   writeText(path: string, content: string): Promise<void>
   exists(path: string): Promise<boolean>
   /** 原子写的最后一步：临时文件改名顶替目标文件。 */
@@ -111,6 +120,20 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
   let passwordResetAt: string | null = null
   /** 密钥生成与指纹验证的临时文件序号：避免并发请求互踩。 */
   let tempSeq = 0
+  /**
+   * authorized_keys 读-改-写的互斥队列：并发的创建/删除/重生成排队执行，
+   * 每次变更都基于最新落盘内容计算，杜绝「两个请求读同一份原文、后写覆盖前写」
+   * 静默丢掉已生成公钥行的情况。
+   */
+  let keysWriteTail: Promise<unknown> = Promise.resolve()
+  function serializeKeysWrite<T>(critical: () => Promise<T>): Promise<T> {
+    const run = keysWriteTail.then(critical, critical)
+    keysWriteTail = run.then(
+      () => undefined,
+      () => undefined,
+    )
+    return run
+  }
 
   function commandError(command: string, args: readonly string[], error: unknown): Error {
     const detail = error instanceof Error ? error.message : String(error)
@@ -133,6 +156,76 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
       const detail = error instanceof Error ? error.message : String(error)
       throw new Error(`无法读取 sshd 配置（${paths.sshdConfig}）：${detail}`)
     }
+  }
+
+  /** Include 通配符（`*` 与 `?`，仅单段内匹配）→ 正则。 */
+  function globToRegExp(pattern: string): RegExp {
+    const source = pattern
+      .split('')
+      .map((ch) => {
+        if (ch === '*') return '[^/]*'
+        if (ch === '?') return '[^/]'
+        return ch.replace(/[\\^$.+|()[\]{}]/g, '\\$&')
+      })
+      .join('')
+    return new RegExp(`^${source}$`)
+  }
+
+  /**
+   * 展开单个 Include 路径：相对路径以主配置所在目录为基准，含通配符时列目录按字典序
+   * （sshd_config(5)：Include 按词法序处理）逐个读取；文件缺失或不可读按无内容处理。
+   */
+  async function expandIncludePattern(rawPattern: string, depth: number): Promise<string> {
+    const configDir = paths.sshdConfig.slice(0, paths.sshdConfig.lastIndexOf('/'))
+    const absolute = rawPattern.startsWith('/') ? rawPattern : `${configDir}/${rawPattern}`
+    let candidates: string[]
+    if (/[*?]/.test(absolute)) {
+      const slash = absolute.lastIndexOf('/')
+      const dir = absolute.slice(0, slash)
+      const pattern = absolute.slice(slash + 1)
+      const regex = globToRegExp(pattern)
+      candidates = (await deps.readDir(dir))
+        .filter((name) => regex.test(name))
+        .sort()
+        .map((name) => `${dir}/${name}`)
+    } else {
+      candidates = [absolute]
+    }
+    const parts: string[] = []
+    for (const candidate of candidates) {
+      if (!(await deps.exists(candidate))) continue
+      const content = await deps.readText(candidate).catch(() => null)
+      if (content === null) continue
+      parts.push(await expandIncludes(content, depth + 1))
+    }
+    return parts.join('\n')
+  }
+
+  /**
+   * 展开 Include 后的全量配置文本：Include 行按 sshd 语义原位替换为所引文件内容，
+   * 解析顺序（first-obtained）与真实 sshd 一致，面板由此读到生效值而不是主文件值。
+   * 递归深度设上限，防止 drop-in 互相 Include 成环时读挂面板。
+   */
+  async function expandIncludes(text: string, depth: number): Promise<string> {
+    if (depth >= 16) return ''
+    const out: string[] = []
+    for (const rawLine of text.split('\n')) {
+      const line = stripConfigComment(rawLine).trim()
+      const keyword = line.split(/\s+/)[0]?.toLowerCase() ?? ''
+      if (line && keyword === 'include') {
+        for (const pattern of line.split(/\s+/).slice(1)) {
+          out.push(await expandIncludePattern(pattern, depth))
+        }
+        continue
+      }
+      out.push(rawLine)
+    }
+    return out.join('\n')
+  }
+
+  /** 读取展开 Include 后的 sshd 配置文本：settings 与 Root 策略都以生效值为准。 */
+  async function readEffectiveConfigText(): Promise<string> {
+    return expandIncludes(await readConfigText(), 0)
   }
 
   /** 备份 + 临时文件 + rename 的原子写：任何时刻目标路径上要么是旧全文要么是新全文。 */
@@ -304,13 +397,15 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
     const keys: SshLoginKey[] = []
     for (const line of parseKeyLines(text)) {
       const fingerprint = await verifyPublicKey(line)
+      // id 含账号维度：同一公钥行装进多个账号时 id 各不相同，删除不会误删别的账号的同款行。
+      const id = authorizedKeyId(entry.name, line)
       keys.push({
-        id: keyLineId(line),
+        id,
         name: keyNameOf(line),
         userId: entry.name,
         algorithm: algorithmLabelOf(fingerprint),
         fingerprint: fingerprint.fingerprint,
-        createdAt: firstSeenAt(keyLineId(line)),
+        createdAt: firstSeenAt(id),
         publicKey: line,
       })
     }
@@ -332,11 +427,11 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
     },
 
     async settings(): Promise<SshAuthSettings> {
-      return settingsOf(await readConfigText())
+      return settingsOf(await readEffectiveConfigText())
     },
 
     async rootAuth(): Promise<SshRootAuth> {
-      const policy = policyOf(await readConfigText())
+      const policy = policyOf(await readEffectiveConfigText())
       const root = await entryOf('root')
       const text = await authorizedKeysText(root)
       const firstLine = text === null ? undefined : parseKeyLines(text)[0]
@@ -370,14 +465,14 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
         PasswordAuthentication: methods.passwordAuthEnabled ? 'yes' : 'no',
         PubkeyAuthentication: methods.keyAuthEnabled ? 'yes' : 'no',
       })
-      return settingsOf(await readConfigText())
+      return settingsOf(await readEffectiveConfigText())
     },
 
     async setPort(port: number): Promise<SshAuthSettings> {
       // 判据与表单共用同一函数：界面挡一次，这里再挡一次，绕过界面也写不进配置。
       if (!isValidSshPort(port)) throw new Error('SSH 端口需为 1-65535 的整数')
       await patchAndApply({ Port: `${port}` })
-      return settingsOf(await readConfigText())
+      return settingsOf(await readEffectiveConfigText())
     },
 
     async saveRootLoginPolicy(policy: SshRootLoginPolicy): Promise<SshRootAuth> {
@@ -389,6 +484,11 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
     },
 
     async resetRootPassword(password: string): Promise<SshPasswordResetResult> {
+      // chpasswd 按行解析「账号:密码」：密码含换行会变成额外的改密行（越界改掉其他账号），
+      // 控制字符一律拒绝——与密钥名称共用同一条禁区判据。
+      if (hasUnsafeControlChars(password)) {
+        throw new Error('密码不能包含换行或控制字符')
+      }
       // 服务端复验强度：界面挡一次不算数，绕过界面也改不了真实密码。
       const strength = evaluateSshPasswordStrength(password)
       if (strength === 'weak') {
@@ -425,12 +525,15 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
 
       const fingerprint = await verifyPublicKey(publicKey)
       // Root 密钥卡只管理首行：替换第一条公钥行，外来公钥行原样保留；旧私钥随之作废。
-      const original = await authorizedKeysText(root)
-      await writeAuthorizedKeys(root, original, replaceFirstKeyLine(original ?? '', publicKey))
+      // 读-改-写进互斥队列：与其他密钥变更并发时保持完整，后写不覆盖前写。
+      await serializeKeysWrite(async () => {
+        const original = await authorizedKeysText(root)
+        await writeAuthorizedKeys(root, original, replaceFirstKeyLine(original ?? '', publicKey))
+      })
       const createdAt = deps.nowIso()
       keyFirstSeenAt.set(keyLineId(publicKey), createdAt)
       return {
-        policy: policyOf(await readConfigText()),
+        policy: policyOf(await readEffectiveConfigText()),
         key: {
           algorithm: algorithmLabelOf(fingerprint),
           fingerprint: fingerprint.fingerprint,
@@ -473,63 +576,78 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
       if (hasUnsafeControlChars(input.name)) {
         throw new Error('密钥名称不能包含换行或控制字符')
       }
-      // 归属账号必须是白名单里的真实系统账号：客户端只传账号名，路径全部由服务端推导。
-      const accounts = await keyAccountEntries()
-      const account = accounts.find((entry) => entry.name === input.userId)
-      if (!account) throw new Error(`归属账号不存在：${input.userId}`)
 
-      const existing = await this.listKeys()
-      if (existing.some((key) => key.name === name)) {
-        throw new Error(`密钥名称已存在：${name}`)
-      }
+      /**
+       * 查重、生成与落盘整体进互斥队列：并发请求排队执行，每次追加都基于最新
+       * authorized_keys 计算，不会出现两个请求读同一份原文、后写覆盖前写而丢掉
+       * 先返回那把密钥的公钥行（其私钥只在创建响应里一次性带出，丢了无处可取）。
+       */
+      return serializeKeysWrite(async () => {
+        // 归属账号必须是白名单里的真实系统账号：客户端只传账号名，路径全部由服务端推导。
+        const accounts = await keyAccountEntries()
+        const account = accounts.find((entry) => entry.name === input.userId)
+        if (!account) throw new Error(`归属账号不存在：${input.userId}`)
 
-      await ensureDir(paths.keygenWorkspace)
-      tempSeq += 1
-      const keyPath = `${paths.keygenWorkspace}/elysian-key-${tempSeq}`
-      await deps
-        .runSshKeygen(['-t', 'ed25519', '-C', `${KEY_COMMENT_PREFIX}${name}`, '-N', '', '-f', keyPath])
-        .catch((error: unknown) => {
-          throw commandError('ssh-keygen', ['-t', 'ed25519', '-N', '', '-f', keyPath], error)
-        })
-      // 私钥读进内存后立即删除临时文件；此后私钥只在本次响应里，任何地方都不再落盘。
-      let privateKey: string
-      let publicKey: string
-      try {
-        privateKey = await deps.readText(keyPath)
-        publicKey = (await deps.readText(`${keyPath}.pub`)).trim()
-      } finally {
-        await deps.remove(keyPath).catch(() => undefined)
-        await deps.remove(`${keyPath}.pub`).catch(() => undefined)
-      }
+        const existing = await this.listKeys()
+        if (existing.some((key) => key.name === name)) {
+          throw new Error(`密钥名称已存在：${name}`)
+        }
 
-      const fingerprint = await verifyPublicKey(publicKey)
-      const original = await authorizedKeysText(account)
-      await writeAuthorizedKeys(account, original, appendKeyLine(original ?? '', publicKey))
+        await ensureDir(paths.keygenWorkspace)
+        tempSeq += 1
+        const keyPath = `${paths.keygenWorkspace}/elysian-key-${tempSeq}`
+        await deps
+          .runSshKeygen(['-t', 'ed25519', '-C', `${KEY_COMMENT_PREFIX}${name}`, '-N', '', '-f', keyPath])
+          .catch((error: unknown) => {
+            throw commandError('ssh-keygen', ['-t', 'ed25519', '-N', '', '-f', keyPath], error)
+          })
+        // 私钥读进内存后立即删除临时文件；此后私钥只在本次响应里，任何地方都不再落盘。
+        let privateKey: string
+        let publicKey: string
+        try {
+          privateKey = await deps.readText(keyPath)
+          publicKey = (await deps.readText(`${keyPath}.pub`)).trim()
+        } finally {
+          await deps.remove(keyPath).catch(() => undefined)
+          await deps.remove(`${keyPath}.pub`).catch(() => undefined)
+        }
 
-      return {
-        id: keyLineId(publicKey),
-        name,
-        userId: account.name,
-        algorithm: algorithmLabelOf(fingerprint),
-        fingerprint: fingerprint.fingerprint,
-        createdAt: deps.nowIso(),
-        publicKey,
-        // 私钥仅随创建响应一次性携带：列表与查看都不再返回。
-        privateKey,
-      }
+        const fingerprint = await verifyPublicKey(publicKey)
+        const original = await authorizedKeysText(account)
+        await writeAuthorizedKeys(account, original, appendKeyLine(original ?? '', publicKey))
+
+        const id = authorizedKeyId(account.name, publicKey)
+        const createdAt = deps.nowIso()
+        keyFirstSeenAt.set(id, createdAt)
+        return {
+          id,
+          name,
+          userId: account.name,
+          algorithm: algorithmLabelOf(fingerprint),
+          fingerprint: fingerprint.fingerprint,
+          createdAt,
+          publicKey,
+          // 私钥仅随创建响应一次性携带：列表与查看都不再返回。
+          privateKey,
+        }
+      })
     },
 
     async removeKey(keyId: string): Promise<void> {
-      const accounts = await keyAccountEntries()
-      for (const entry of accounts) {
-        const text = await authorizedKeysText(entry)
-        if (text === null) continue
-        const target = parseKeyLines(text).find((line) => keyLineId(line) === keyId)
-        if (!target) continue
-        await writeAuthorizedKeys(entry, text, removeKeyLine(text, target))
-        return
-      }
-      throw new Error(`未找到登录密钥 ${keyId}`)
+      // 进互斥队列：与创建并发时同样保持读-改-写完整。
+      return serializeKeysWrite(async () => {
+        const accounts = await keyAccountEntries()
+        for (const entry of accounts) {
+          const text = await authorizedKeysText(entry)
+          if (text === null) continue
+          // id 含账号维度：只撤销目标账号里的那一行，其他账号的同款公钥不受影响。
+          const target = parseKeyLines(text).find((line) => authorizedKeyId(entry.name, line) === keyId)
+          if (!target) continue
+          await writeAuthorizedKeys(entry, text, removeKeyLine(text, target))
+          return
+        }
+        throw new Error(`未找到登录密钥 ${keyId}`)
+      })
     },
   }
 }

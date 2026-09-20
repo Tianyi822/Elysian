@@ -2,8 +2,10 @@
  * /etc/ssh/sshd_config 的只读解析器：只提取面板要动的四个指令（Port、
  * PasswordAuthentication、PubkeyAuthentication、PermitRootLogin），其余行不解释。
  * 语义对齐 sshd_config(5)：井号起始的行是注释；指令名大小写不敏感；同一指令
- * 多次出现时首个取值生效（first-obtained value）；Match 块内的指令只对匹配的
- * 连接生效，不属于全局配置，解析时整块跳过。
+ * 多次出现时首个取值生效（first-obtained value，Port 是例外——多次出现为累积监听，
+ * 解析仍取首个用于面板显示，补丁侧负责消掉多余 Port 行）；Match 块内的指令只对
+ * 匹配的连接生效，不属于全局配置，解析时整块跳过。Include 的展开发生在调用方
+ * （文本先行按 sshd 语义拼接），本解析器只看单份文本。
  */
 
 /** 面板允许读写的四个指令名，写法用 sshd_config 的规范大小写。 */

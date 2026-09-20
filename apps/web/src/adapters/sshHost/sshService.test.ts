@@ -125,6 +125,15 @@ function createFakeHost(options: { sshdConfig?: string; sshdLog?: string; passwd
       if (content === undefined) throw new Error(`ENOENT: ${path}`)
       return content
     },
+    async readDir(path) {
+      // fake 不区分目录与文件：列出路径下的直接子项名，目录本身不存在即空。
+      const prefix = path.endsWith('/') ? path : `${path}/`
+      const names = new Set<string>()
+      for (const key of files.keys()) {
+        if (key.startsWith(prefix)) names.add(key.slice(prefix.length).split('/')[0] ?? '')
+      }
+      return [...names]
+    },
     async writeText(path, content) {
       files.set(path, content)
       writes.push({ path, content })
@@ -236,6 +245,71 @@ describe('createSshService 配置读写', () => {
     expect(host.files.get(PATHS.sshdConfig)).toContain('PermitRootLogin no')
     await expect(service.saveRootLoginPolicy('随便' as never)).rejects.toThrow('无效的 Root 登录策略')
   })
+
+  it('setPort 注释掉多余的未注释 Port 行（Port 为累积监听指令，旧端口不再监听）', async () => {
+    const host = createFakeHost({ sshdConfig: 'Port 22\nPort 23\nPasswordAuthentication yes\n' })
+    const service = createSshService(host.deps)
+    const settings = await service.setPort(2202)
+    expect(settings.port).toBe(2202)
+    expect(host.files.get(PATHS.sshdConfig)).toBe('Port 2202\n#Port 23\nPasswordAuthentication yes\n')
+  })
+})
+
+describe('createSshService Include 语义', () => {
+  /** 主配置所在目录：相对路径的 Include 以它为基准（对齐 sshd 的 /etc/ssh 基准）。 */
+  const SSH_CONFIG_DIR = '/virtual/etc/ssh'
+  const DROPIN = (name: string) => `${SSH_CONFIG_DIR}/sshd_config.d/${name}`
+  /** 容器里 Debian 系出厂的常见形态：Include 在前、指令多被注释。 */
+  const STOCK_CONFIG = ['Include sshd_config.d/*.conf', '#Port 22', '#PasswordAuthentication yes'].join('\n')
+
+  it('settings 展开 Include 读生效值：drop-in 取值按字典序先到先得，优先于主文件缺省', async () => {
+    const host = createFakeHost({ sshdConfig: STOCK_CONFIG })
+    host.files.set(DROPIN('10-hardening.conf'), 'Port 2222\nPasswordAuthentication no\n')
+    host.files.set(DROPIN('20-later.conf'), 'Port 3333\n')
+    const service = createSshService(host.deps)
+    expect(await service.settings()).toEqual({ passwordAuthEnabled: false, keyAuthEnabled: true, port: 2222 })
+  })
+
+  it('绝对路径与无通配的 Include 同样展开；目录不存在时按零个文件处理', async () => {
+    const host = createFakeHost({
+      sshdConfig: `Include ${SSH_CONFIG_DIR}/main.conf\nInclude sshd_config.d/*.conf\n`,
+    })
+    host.files.set(`${SSH_CONFIG_DIR}/main.conf`, 'Port 2468\n')
+    const service = createSshService(host.deps)
+    expect((await service.settings()).port).toBe(2468)
+  })
+
+  it('setPort 的面板行插到 Include 之前：不被 drop-in 遮蔽，回读即生效值', async () => {
+    const host = createFakeHost({ sshdConfig: STOCK_CONFIG })
+    host.files.set(DROPIN('10-hardening.conf'), 'Port 2222\n')
+    const service = createSshService(host.deps)
+
+    const settings = await service.setPort(2202)
+    expect(settings.port).toBe(2202)
+    const text = host.files.get(PATHS.sshdConfig) ?? ''
+    expect(text.indexOf('Port 2202')).toBeLessThan(text.indexOf('Include'))
+    // 主文件只有面板写入的一个未注释 Port 行（#Port 22 是注释，不算）。
+    expect(text.split('\n').filter((line) => /^Port\s/.test(line))).toEqual(['Port 2202'])
+    // 补丁只写主文件：drop-in 原样不动。
+    expect(host.files.get(DROPIN('10-hardening.conf'))).toBe('Port 2222\n')
+  })
+
+  it('setAuthMethods 的面板行同样先于 Include 取得取值，压过 drop-in 的同名指令', async () => {
+    const host = createFakeHost({ sshdConfig: STOCK_CONFIG })
+    host.files.set(DROPIN('50-auth.conf'), 'PasswordAuthentication yes\nPubkeyAuthentication no\n')
+    const service = createSshService(host.deps)
+    const settings = await service.setAuthMethods({ passwordAuthEnabled: false, keyAuthEnabled: true })
+    expect(settings).toEqual({ passwordAuthEnabled: false, keyAuthEnabled: true, port: 22 })
+  })
+
+  it('rootAuth 的策略读生效值；保存后的面板行接管 drop-in', async () => {
+    const host = createFakeHost({ sshdConfig: STOCK_CONFIG })
+    host.files.set(DROPIN('60-cloud.conf'), 'Port 2222\nPermitRootLogin yes\n')
+    const service = createSshService(host.deps)
+    expect((await service.rootAuth()).policy).toBe('yes')
+    const after = await service.saveRootLoginPolicy('no')
+    expect(after.policy).toBe('no')
+  })
 })
 
 describe('createSshService 服务与登录统计', () => {
@@ -338,6 +412,20 @@ describe('createSshService Root 凭据', () => {
       expect(entry.args.join(' ')).not.toContain('Elysian#2026Root')
     }
     expect((await service.rootAuth()).passwordResetAt).toBe(NOW)
+  })
+
+  it('resetRootPassword：含换行或控制字符的密码拒绝且不触达 chpasswd', async () => {
+    const host = createFakeHost({ sshdConfig: BASE_CONFIG })
+    const service = createSshService(host.deps)
+
+    // 强度达标但夹带第二行改密记录：chpasswd 按行解析「账号:密码」，
+    // 若原样写进 stdin 会越界改掉 attacker 的密码。
+    await expect(service.resetRootPassword('Elysian#2026\nattacker:P@ssw0rd123')).rejects.toThrow(
+      '密码不能包含换行或控制字符',
+    )
+    await expect(service.resetRootPassword('Elysian#2026\rRoot')).rejects.toThrow('密码不能包含换行或控制字符')
+    await expect(service.resetRootPassword('Elysian#2026\u0000')).rejects.toThrow('密码不能包含换行或控制字符')
+    expect(host.chpasswdInputs).toEqual([])
   })
 
   it('rootAuth：authorized_keys 为空时 key 为 null（尚未生成）', async () => {
@@ -508,5 +596,53 @@ describe('createSshService 密钥管理', () => {
     expect(keys[0]).toMatchObject({ name: 'old-laptop', userId: 'ops', publicKey: foreign })
     await service.removeKey(keys[0]!.id)
     expect((host.files.get(OPS_AUTHORIZED_KEYS) ?? '').trim()).toBe('')
+  })
+
+  it('同一公钥行装在多个账号：id 含账号维度，按 id 删除只撤销目标账号', async () => {
+    const host = createFakeHost({
+      sshdConfig: BASE_CONFIG,
+      passwd: `${DEFAULT_PASSWD}\ndev:x:1001:1001::/home/dev:/bin/bash`,
+    })
+    const foreign = 'ssh-ed25519 AAAA外来占位 old-laptop'
+    host.files.set(OPS_AUTHORIZED_KEYS, `${foreign}\n`)
+    host.files.set('/home/dev/.ssh/authorized_keys', `${foreign}\n`)
+    const service = createSshService(host.deps)
+
+    const keys = await service.listKeys()
+    expect(keys).toHaveLength(2)
+    // 同一行内容在两个账号下 id 必须不同，DELETE 按 id 才能各删各的。
+    expect(new Set(keys.map((key) => key.id)).size).toBe(2)
+    const devKey = keys.find((key) => key.userId === 'dev')
+    if (!devKey) throw new Error('测试前提失败：dev 账号未列出密钥')
+
+    await service.removeKey(devKey.id)
+    expect((host.files.get('/home/dev/.ssh/authorized_keys') ?? '').trim()).toBe('')
+    // 无辜账号的同款公钥保留，授权未被误删。
+    expect((host.files.get(OPS_AUTHORIZED_KEYS) ?? '').trim()).toBe(foreign)
+  })
+
+  it('并发 createKey 排队落盘：两把密钥都留在 authorized_keys，不发生后写覆盖前写', async () => {
+    const host = createFakeHost({ sshdConfig: BASE_CONFIG })
+    const service = createSshService(host.deps)
+
+    const [first, second] = await Promise.all([
+      service.createKey({ name: '部署机', userId: 'ops' }),
+      service.createKey({ name: '跳板机', userId: 'ops' }),
+    ])
+    // 私钥只在创建响应里一次性带出：丢掉任何一条公钥行都意味着那把私钥永久作废。
+    const text = host.files.get(OPS_AUTHORIZED_KEYS) ?? ''
+    expect(text).toContain(first.publicKey)
+    expect(text).toContain(second.publicKey)
+    const names = (await service.listKeys()).map((key) => key.name)
+    expect(names).toEqual(expect.arrayContaining(['部署机', '跳板机']))
+  })
+
+  it('互斥队列中的失败不阻塞后续密钥操作', async () => {
+    const host = createFakeHost({ sshdConfig: BASE_CONFIG })
+    const service = createSshService(host.deps)
+
+    await service.createKey({ name: '同名', userId: 'ops' })
+    await expect(service.createKey({ name: '同名', userId: 'ops' })).rejects.toThrow('密钥名称已存在')
+    await expect(service.createKey({ name: '另一把', userId: 'ops' })).resolves.toMatchObject({ name: '另一把' })
   })
 })

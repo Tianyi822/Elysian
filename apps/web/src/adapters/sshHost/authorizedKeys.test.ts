@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   algorithmLabelOf,
   appendKeyLine,
+  authorizedKeyId,
   authorizedKeysPath,
   keyCommentOf,
   keyLineId,
@@ -88,6 +89,12 @@ describe('authorized_keys 行级操作', () => {
     expect(keyLineId(KEY_OPS)).toBe(keyLineId(KEY_OPS))
     expect(keyLineId(KEY_OPS)).not.toBe(keyLineId(KEY_CI))
     expect(keyLineId(KEY_OPS)).toMatch(/^sshkey-[0-9a-f]{8}$/)
+  })
+
+  it('账号维度的授权行 id：同账号同内容稳定，同一公钥行跨账号 id 不同', () => {
+    expect(authorizedKeyId('ops', KEY_OPS)).toBe(authorizedKeyId('ops', KEY_OPS))
+    expect(authorizedKeyId('ops', KEY_OPS)).not.toBe(authorizedKeyId('dev', KEY_OPS))
+    expect(authorizedKeyId('ops', KEY_OPS)).toMatch(/^sshkey-[0-9a-f]{8}$/)
   })
 
   it('注释段作为密钥名的来源', () => {

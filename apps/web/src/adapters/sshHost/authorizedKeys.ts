@@ -121,6 +121,14 @@ export function keyLineId(keyLine: string): string {
   return `sshkey-${fnv1a(keyLine.trim())}`
 }
 
+/**
+ * 账号维度的授权行 id：账号名参与哈希，同一公钥行装进多个账号时 id 各不相同。
+ * 删除按 id 反查只会撤销目标账号的那一行，不会误删其他账号的同款公钥。
+ */
+export function authorizedKeyId(account: string, keyLine: string): string {
+  return `sshkey-${fnv1a(`${account}\n${keyLine.trim()}`)}`
+}
+
 /** 公钥行的注释段（第三段起）：面板用它当密钥名，本面板创建的行注释形如 elysian-<名称>。 */
 export function keyCommentOf(keyLine: string): string {
   const fields = keyLine.trim().split(/\s+/)
