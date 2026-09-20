@@ -64,8 +64,19 @@ export type SshHostDeps = {
   runSshKeygen(args: readonly string[]): Promise<string>
   /** 执行 sshd（如 `sshd -t` 配置预检），返回 stdout。 */
   runSshd(args: readonly string[]): Promise<string>
-  /** 执行 service ssh <action>，返回 stdout。 */
-  runService(action: 'start' | 'stop' | 'restart'): Promise<string>
+  /**
+   * 以容器既定参数启动 sshd（daemonize，自行写 pidfile）：`sshd -E <日志路径>`。
+   * 不走 service ssh start——容器里 /etc/default/ssh 的 SSHD_OPTS 为空，
+   * 那样启动出的 sshd 不写 /var/log/sshd.log，面板日志源随之冻结。
+   */
+  startSshd(): Promise<void>
+  /** 停止 sshd：向 pidfile 里的主进程发 SIGTERM；没有 pidfile 时幂等成功。 */
+  stopSshd(): Promise<void>
+  /**
+   * 让在跑的 sshd 重读配置：向主进程发 SIGHUP（re-exec 保留原启动参数，含 -E）。
+   * 不走 service ssh restart，理由同 startSshd——restart 出的 sshd 会丢 -E。
+   */
+  reloadSshd(): Promise<void>
   /** 执行 chpasswd，凭据经 stdin 传入（`账号:密码`），绝不进命令行。 */
   runChpasswd(input: string): Promise<string>
   /** 执行 getent（如 `getent passwd`、`getent root`），返回 stdout。 */
@@ -77,6 +88,11 @@ export type SshHostDeps = {
   rename(from: string, to: string): Promise<void>
   /** 收紧权限用：.ssh 0700、authorized_keys 0600。 */
   chmod(path: string, mode: number): Promise<void>
+  /**
+   * 属主一并落到账号名下：dev 容器以 root 运行，root 属主的 authorized_keys
+   * 会被 sshd 以目标用户 euid 读取失败（公钥登录 Permission denied）。
+   */
+  chown(path: string, uid: number, gid: number): Promise<void>
   mkdir(path: string): Promise<void>
   /** 删除文件（密钥生成后的清理）。 */
   remove(path: string): Promise<void>
@@ -106,7 +122,7 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
   }
 
   async function serviceRunning(): Promise<boolean> {
-    // sshd 由 service 启动时写 pidfile；pidfile 在即视为在跑。
+    // sshd daemonize 时写 pidfile（/run/sshd.pid）；pidfile 在即视为在跑。
     return deps.exists(paths.sshdPidFile)
   }
 
@@ -149,8 +165,10 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
   }
 
   /**
-   * 白名单补丁的完整落盘流程：补丁 → 备份 → 原子写 → `sshd -t` 预检 →（在跑时）重启。
-   * 预检失败立即回滚原配置并抛中文错误；未改动时直接返回，不产生任何写与重启。
+   * 白名单补丁的完整落盘流程：补丁 → 备份 → 原子写 → `sshd -t` 预检 →（在跑时）SIGHUP 重载。
+   * 预检失败立即回滚原配置并抛中文错误；未改动时直接返回，不产生任何写与重载。
+   * 重载用 SIGHUP 而不是 service restart：sshd re-exec 时保留原启动参数（含 -E 日志路径），
+   * restart 出的 sshd 会丢 -E，面板日志源随之冻结。
    */
   async function patchAndApply(patch: Partial<Record<SshdDirectiveName, string>>): Promise<void> {
     const original = await readConfigText()
@@ -170,17 +188,38 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
 
     if (await serviceRunning()) {
       try {
-        await deps.runService('restart')
+        await deps.reloadSshd()
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error)
-        throw new Error(`配置已写入并通过预检，但重启 sshd 失败：${detail}`)
+        throw new Error(`配置已写入并通过预检，但重载 sshd 失败：${detail}`)
       }
     }
   }
 
+  /** 无时间戳的日志行（sshd -E 裸行）→ 本次会话首次观察到的时间。 */
+  const loginLineFirstSeenAt = new Map<string, string>()
+
+  function loginLineAt(line: { source: string; at: string | null }): string {
+    if (line.at !== null) return line.at
+    let at = loginLineFirstSeenAt.get(line.source)
+    if (!at) {
+      at = deps.nowIso()
+      loginLineFirstSeenAt.set(line.source, at)
+    }
+    return at
+  }
+
   async function loginRecords(): Promise<readonly SshLoginRecord[]> {
     if (!(await deps.exists(paths.sshdLog))) return []
-    return parseSshLog(await deps.readText(paths.sshdLog), deps.nowIso())
+    const parsed = parseSshLog(await deps.readText(paths.sshdLog), deps.nowIso())
+    return parsed.map((line, index) => ({
+      id: `login-${index + 1}`,
+      ip: line.ip,
+      port: line.port,
+      at: loginLineAt(line),
+      user: line.user,
+      result: line.result,
+    }))
   }
 
   async function passwdEntries(): Promise<readonly PasswdEntry[]> {
@@ -231,14 +270,16 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
     }
   }
 
-  /** authorized_keys 的原子写与权限收紧：目录 0700、文件 0600，写前备份。 */
+  /** authorized_keys 的原子写、权限收紧与属主落位：目录 0700、文件 0600，均 chown 到账号名下，写前备份。 */
   async function writeAuthorizedKeys(entry: PasswdEntry, original: string | null, next: string): Promise<void> {
     const dir = sshDirPath(entry.home)
     await ensureDir(dir)
     await deps.chmod(dir, 0o700)
+    await deps.chown(dir, entry.uid, entry.gid)
     const target = authorizedKeysPath(entry.home)
     await writeAtomic(target, original, next)
     await deps.chmod(target, 0o600)
+    await deps.chown(target, entry.uid, entry.gid)
   }
 
   function firstSeenAt(lineId: string): string {
@@ -315,9 +356,11 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
     },
 
     async setServiceEnabled(enabled: boolean): Promise<SshOverview> {
-      const action = enabled ? 'start' : 'stop'
-      await deps.runService(action).catch((error: unknown) => {
-        throw commandError('service', ['ssh', action], error)
+      // 启停自管：start 带 -E 保证日志源不丢，stop 对 pidfile 发 TERM；都不依赖 service 命令。
+      const action = enabled ? 'startSshd' : 'stopSshd'
+      await deps[action]().catch((error: unknown) => {
+        const detail = error instanceof Error ? error.message : String(error)
+        throw new Error(`${enabled ? '启动' : '停止'} sshd 失败：${detail}`)
       })
       return this.overview()
     },

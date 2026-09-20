@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
-import { readFile, writeFile, rename, chmod, mkdir, rm } from 'node:fs/promises'
+import { readFile, writeFile, rename, chmod, chown, mkdir, rm } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import type { ServerResponse } from 'node:http'
 import type { Connect } from 'vite'
@@ -28,6 +28,28 @@ function execToStdout(file: string, args: readonly string[]): Promise<string> {
   )
 }
 
+/** 读 pidfile 里的 sshd 主进程号；读不到（未在跑）返回 null。 */
+async function sshdPid(): Promise<number | null> {
+  let text: string
+  try {
+    text = await readFile(DEFAULT_SSH_PATHS.sshdPidFile, 'utf8')
+  } catch {
+    return null
+  }
+  const pid = Number.parseInt(text.trim(), 10)
+  return Number.isInteger(pid) ? pid : null
+}
+
+/** 向 sshd 主进程发信号；pid 不在时静默返回（调用方决定这是幂等还是无需重载）。 */
+function signalSshd(pid: number, signal: 'SIGTERM' | 'SIGHUP'): void {
+  try {
+    process.kill(pid, signal)
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new Error(`向 sshd（pid ${pid}）发送 ${signal} 失败：${detail}`)
+  }
+}
+
 /** chpasswd 凭据只走 stdin：spawn 后把 `账号:密码` 写进标准输入，密码不进命令行。 */
 function runChpasswdViaStdin(input: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -51,7 +73,21 @@ function createHostDeps(): SshHostDeps {
   return {
     runSshKeygen: (args) => execToStdout('ssh-keygen', args),
     runSshd: (args) => execToStdout('/usr/sbin/sshd', args),
-    runService: (action) => execToStdout('service', ['ssh', action]),
+    async startSshd() {
+      // 带 -E 启动：sshd 自行 daemonize 并写 pidfile，日志持续落到面板读取的文件。
+      await execToStdout('/usr/sbin/sshd', ['-E', DEFAULT_SSH_PATHS.sshdLog])
+    },
+    async stopSshd() {
+      const pid = await sshdPid()
+      if (pid === null) return
+      signalSshd(pid, 'SIGTERM')
+    },
+    async reloadSshd() {
+      const pid = await sshdPid()
+      if (pid === null) return
+      // SIGHUP：sshd 重读配置并 re-exec 自身，-E 等启动参数原样保留。
+      signalSshd(pid, 'SIGHUP')
+    },
     runChpasswd: runChpasswdViaStdin,
     runGetent: (args) => execToStdout('getent', args),
     readText: (path) => readFile(path, 'utf8'),
@@ -61,6 +97,7 @@ function createHostDeps(): SshHostDeps {
     },
     rename: (from, to) => rename(from, to),
     chmod: (path, mode) => chmod(path, mode),
+    chown: (path, uid, gid) => chown(path, uid, gid),
     // fs 的 mkdir 会返回创建的首个目录路径，这里只关心完成与否。
     async mkdir(path) {
       await mkdir(path, { recursive: true })

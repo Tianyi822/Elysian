@@ -36,7 +36,7 @@ describe('getent passwd 解析与账号清单', () => {
   it('逐行解析，无法辨认的行跳过', () => {
     const entries = parseGetentPasswd(PASSWD_FIXTURE)
     expect(entries.map((entry) => entry.name)).toEqual(['root', 'daemon', 'ops', 'deploy', 'svc', 'nobody'])
-    expect(entries[2]).toEqual({ name: 'ops', uid: 1000, home: '/home/ops', shell: '/bin/bash' })
+    expect(entries[2]).toEqual({ name: 'ops', uid: 1000, gid: 1000, home: '/home/ops', shell: '/bin/bash' })
   })
 
   it('密钥归属账号：uid≥1000 且有登录 shell，root 与系统账号都不列', () => {

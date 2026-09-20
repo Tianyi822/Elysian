@@ -39,6 +39,9 @@ type FakeHost = {
   deps: SshHostDeps
   files: Map<string, string>
   modes: Map<string, number>
+  owners: Map<string, { uid: number; gid: number }>
+  /** sshd 生命周期原语账本：start / stop / reload。 */
+  serviceSignals: string[]
   removed: string[]
   renamed: { from: string; to: string }[]
   writes: { path: string; content: string }[]
@@ -50,6 +53,8 @@ type FakeHost = {
 function createFakeHost(options: { sshdConfig?: string; sshdLog?: string; passwd?: string; pidFile?: boolean } = {}): FakeHost {
   const files = new Map<string, string>()
   const modes = new Map<string, number>()
+  const owners = new Map<string, { uid: number; gid: number }>()
+  const serviceSignals: string[] = []
   const removed: string[] = []
   const renamed: { from: string; to: string }[] = []
   const writes: { path: string; content: string }[] = []
@@ -93,9 +98,16 @@ function createFakeHost(options: { sshdConfig?: string; sshdLog?: string; passwd
       if (sshdTestFails) throw new Error('/etc/ssh/sshd_config 行 1: Bad 配置取值')
       return ''
     },
-    async runService(action) {
-      commands.push({ command: 'service', args: ['ssh', action] })
-      return ''
+    async startSshd() {
+      serviceSignals.push('start')
+    },
+    async stopSshd() {
+      if (!files.has(PATHS.sshdPidFile)) return
+      serviceSignals.push('stop')
+    },
+    async reloadSshd() {
+      if (!files.has(PATHS.sshdPidFile)) return
+      serviceSignals.push('reload')
     },
     async runChpasswd(input) {
       chpasswdInputs.push(input)
@@ -130,6 +142,9 @@ function createFakeHost(options: { sshdConfig?: string; sshdLog?: string; passwd
     async chmod(path, mode) {
       modes.set(path, mode)
     },
+    async chown(path, uid, gid) {
+      owners.set(path, { uid, gid })
+    },
     async mkdir() {
       // fake 不区分目录与文件：exists 由 files 决定，目录创建只记账。
     },
@@ -141,7 +156,7 @@ function createFakeHost(options: { sshdConfig?: string; sshdLog?: string; passwd
     paths: PATHS,
   }
 
-  return { deps, files, modes, removed, renamed, writes, commands, chpasswdInputs, failSshdTest: () => { sshdTestFails = true } }
+  return { deps, files, modes, owners, serviceSignals, removed, renamed, writes, commands, chpasswdInputs, failSshdTest: () => { sshdTestFails = true } }
 }
 
 const OPS_AUTHORIZED_KEYS = '/home/ops/.ssh/authorized_keys'
@@ -157,7 +172,7 @@ describe('createSshService 配置读写', () => {
     expect(await service.settings()).toEqual({ passwordAuthEnabled: false, keyAuthEnabled: true, port: 73 })
   })
 
-  it('setPort：补丁、备份、原子写、sshd -t 预检、在跑时重启', async () => {
+  it('setPort：补丁、备份、原子写、sshd -t 预检、在跑时 SIGHUP 重载（不走 service restart）', async () => {
     const host = createFakeHost({ sshdConfig: BASE_CONFIG, pidFile: true })
     const service = createSshService(host.deps)
 
@@ -169,12 +184,13 @@ describe('createSshService 配置读写', () => {
     expect(host.files.get(`${PATHS.sshdConfig}.bak`)).toBe(BASE_CONFIG)
     // 原子写：临时文件 rename 顶替，而不是原地覆写。
     expect(host.renamed).toContainEqual({ from: `${PATHS.sshdConfig}.elysian-tmp`, to: PATHS.sshdConfig })
-    // 预检与重启都被调用。
+    // 预检与重载都被调用；重载是 SIGHUP 信号，不是 service 命令。
     expect(host.commands).toContainEqual({ command: 'sshd', args: ['-t', '-f', PATHS.sshdConfig] })
-    expect(host.commands).toContainEqual({ command: 'service', args: ['ssh', 'restart'] })
+    expect(host.serviceSignals).toEqual(['reload'])
+    expect(host.commands.filter((entry) => entry.command === 'service')).toEqual([])
   })
 
-  it('sshd -t 预检失败：回滚原配置并报中文错误，不重启', async () => {
+  it('sshd -t 预检失败：回滚原配置并报中文错误，不重载', async () => {
     const host = createFakeHost({ sshdConfig: BASE_CONFIG, pidFile: true })
     host.failSshdTest()
     const service = createSshService(host.deps)
@@ -182,15 +198,15 @@ describe('createSshService 配置读写', () => {
     await expect(service.setPort(2202)).rejects.toThrow('已回滚原配置')
     expect(host.files.get(PATHS.sshdConfig)).toBe(BASE_CONFIG)
     expect(host.files.get(`${PATHS.sshdConfig}.bak`)).toBe(BASE_CONFIG)
-    expect(host.commands).not.toContainEqual({ command: 'service', args: ['ssh', 'restart'] })
+    expect(host.serviceSignals).toEqual([])
   })
 
-  it('服务未在跑时只写配置不重启', async () => {
+  it('服务未在跑时只写配置不重载', async () => {
     const host = createFakeHost({ sshdConfig: BASE_CONFIG })
     const service = createSshService(host.deps)
     await service.setPort(2202)
     expect(host.commands).toContainEqual({ command: 'sshd', args: ['-t', '-f', PATHS.sshdConfig] })
-    expect(host.commands.filter((entry) => entry.command === 'service')).toEqual([])
+    expect(host.serviceSignals).toEqual([])
   })
 
   it('setAuthMethods 同时补丁两条认证指令', async () => {
@@ -258,15 +274,14 @@ describe('createSshService 服务与登录统计', () => {
     })
   })
 
-  it('setServiceEnabled 执行 service ssh start|stop', async () => {
-    const host = createFakeHost()
+  it('setServiceEnabled 走面板自管原语：start 带 -E 的启动与 pidfile 停止', async () => {
+    const host = createFakeHost({ pidFile: true })
     const service = createSshService(host.deps)
     await service.setServiceEnabled(true)
     await service.setServiceEnabled(false)
-    expect(host.commands.filter((entry) => entry.command === 'service')).toEqual([
-      { command: 'service', args: ['ssh', 'start'] },
-      { command: 'service', args: ['ssh', 'stop'] },
-    ])
+    expect(host.serviceSignals).toEqual(['start', 'stop'])
+    // 不再依赖 service 命令：它的 SSHD_OPTS 为空，restart/start 会丢 -E 日志参数。
+    expect(host.commands.filter((entry) => entry.command === 'service')).toEqual([])
   })
 
   it('listLoginRecords 按时间倒序返回', async () => {
@@ -275,6 +290,35 @@ describe('createSshService 服务与登录统计', () => {
     expect(records.map((record) => record.user)).toEqual(['root', 'root', 'ops', 'ops'])
     const times = records.map((record) => Date.parse(record.at))
     expect([...times].sort((a, b) => b - a)).toEqual(times)
+  })
+
+  /**
+   * 容器实际形态的回归：`sshd -E /var/log/sshd.log` 直写的裸行（无 syslog 前缀）
+   * 也必须进入登录记录——否则从容器启动起记录恒为空，统计恒为零。
+   */
+  it('sshd -E 裸行日志同样产出登录记录，无时间戳行的 at 取首次观察时间且跨读取稳定', async () => {
+    const host = createFakeHost({
+      pidFile: true,
+      sshdLog: [
+        'Server listening on 0.0.0.0 port 73.',
+        'Accepted publickey for elysian from ::1 port 41234 ssh2: ED25519 SHA256:abcd',
+        'Failed password for invalid user admin from 203.0.113.9 port 41236 ssh2',
+      ].join('\n'),
+    })
+    const service = createSshService(host.deps)
+
+    const first = await service.listLoginRecords()
+    expect(first).toHaveLength(2)
+    expect(first[0]).toMatchObject({ user: 'admin', ip: '203.0.113.9', port: 41236, result: 'failed' })
+    expect(first[1]).toMatchObject({ user: 'elysian', ip: '::1', port: 41234, result: 'succeeded' })
+
+    // at 稳定：同一条裸行的登录时间不随再次读取漂移，历史记录不会全部涌进今日窗口。
+    const second = await service.listLoginRecords()
+    expect(second.map((record) => record.at)).toEqual(first.map((record) => record.at))
+
+    // 统计随裸行增长：今日成功 1、失败 1。
+    const overview = await service.overview()
+    expect(overview.stats.today).toEqual({ succeeded: 1, failed: 1 })
   })
 })
 
@@ -329,11 +373,13 @@ describe('createSshService Root 凭据', () => {
     expect(generated.key?.privateKey).toContain('-----BEGIN OPENSSH PRIVATE KEY-----')
     expect(generated.key?.publicKey).toContain('elysian-root')
 
-    // 首行被新公钥替换，外来公钥行原样保留；权限收紧与登录密钥同规。
+    // 首行被新公钥替换，外来公钥行原样保留；权限收紧与属主落位和登录密钥同规。
     const text = host.files.get('/root/.ssh/authorized_keys') ?? ''
     expect(text).toBe(`${generated.key?.publicKey}\nssh-ed25519 AAAA外来 foreign@example\n`)
     expect(host.modes.get('/root/.ssh')).toBe(0o700)
     expect(host.modes.get('/root/.ssh/authorized_keys')).toBe(0o600)
+    expect(host.owners.get('/root/.ssh')).toEqual({ uid: 0, gid: 0 })
+    expect(host.owners.get('/root/.ssh/authorized_keys')).toEqual({ uid: 0, gid: 0 })
 
     // 私钥不持久化：账本里没有任何写盘内容含私钥；临时密钥文件已删。
     for (const write of host.writes) {
@@ -387,6 +433,11 @@ describe('createSshService 密钥管理', () => {
     // 权限收紧：.ssh 0700、authorized_keys 0600。
     expect(host.modes.get('/home/ops/.ssh')).toBe(0o700)
     expect(host.modes.get(OPS_AUTHORIZED_KEYS)).toBe(0o600)
+
+    // 属主落位：dev 容器以 root 运行，root 属主的 authorized_keys 会被 sshd
+    // 以目标用户 euid 读取失败（公钥登录 Permission denied），必须 chown 到账号名下。
+    expect(host.owners.get('/home/ops/.ssh')).toEqual({ uid: 1000, gid: 1000 })
+    expect(host.owners.get(OPS_AUTHORIZED_KEYS)).toEqual({ uid: 1000, gid: 1000 })
 
     // 私钥不持久化：账本里没有任何写盘内容含私钥；临时密钥文件已删。
     for (const write of host.writes) {

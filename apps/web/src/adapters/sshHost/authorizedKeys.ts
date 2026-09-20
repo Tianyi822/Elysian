@@ -11,18 +11,20 @@ import type { SshKeyAccount } from '../../contracts/adapters'
 export type PasswdEntry = {
   name: string
   uid: number
+  gid: number
   home: string
   shell: string
 }
 
-/** 解析单行；字段不足或 uid 非数字时返回 null。 */
+/** 解析单行；字段不足或 uid/gid 非数字时返回 null。 */
 export function parsePasswdLine(line: string): PasswdEntry | null {
   const fields = line.trim().split(':')
   if (fields.length < 7) return null
-  const [name, , uidText, , , home, shell] = fields
+  const [name, , uidText, gidText, , home, shell] = fields
   const uid = Number.parseInt(uidText ?? '', 10)
-  if (!name || !home || !shell || !Number.isInteger(uid)) return null
-  return { name, uid, home, shell }
+  const gid = Number.parseInt(gidText ?? '', 10)
+  if (!name || !home || !shell || !Number.isInteger(uid) || !Number.isInteger(gid)) return null
+  return { name, uid, gid, home, shell }
 }
 
 /** 解析 getent passwd 的多行输出，跳过无法辨认的行。 */
