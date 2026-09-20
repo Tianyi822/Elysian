@@ -54,6 +54,8 @@ type FirewallState = {
   /** 同步规则的忙碌态。 */
   syncing: boolean
   saving: boolean
+  /** 开关切换的忙碌态：进行中忽略后续切换，防止两笔 in-flight 交错把界面拉离系统真实状态。 */
+  toggling: boolean
   removingRuleIds: readonly string[]
   load: (gateway: ElysianGateway) => Promise<void>
   setView: (view: FirewallView) => void
@@ -114,9 +116,11 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
   exportDialogOpen: false,
   syncing: false,
   saving: false,
+  toggling: false,
   removingRuleIds: [],
 
   async load(gateway) {
+    if (get().status === 'loading') return
     set({ status: 'loading' })
     try {
       const [toggles, rules, ipRules, forwards] = await Promise.all([
@@ -147,20 +151,21 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
     set({ page })
   },
 
-  // 乐观更新：开关先翻再等 adapter 确认，失败回滚并报危险通知。
+  // 乐观更新：开关先翻再等 adapter 确认，失败回滚并报危险通知；忙碌中忽略后续切换。
   async toggle(gateway, next) {
     const previous = get().toggles
-    set({ toggles: next })
+    if (get().toggling) return
+    set({ toggling: true, toggles: next })
     try {
       const confirmed = await gateway.firewall.setToggles(next)
-      set({ toggles: confirmed })
+      set({ toggles: confirmed, toggling: false })
       notify(
         next.firewallEnabled !== previous.firewallEnabled
           ? `防火墙已${next.firewallEnabled ? '开启' : '关闭'}${REAL_ACTION_LABEL}`
           : `禁 ping 已${next.pingBlocked ? '开启' : '关闭'}${REAL_ACTION_LABEL}`,
       )
     } catch (error) {
-      set({ toggles: previous })
+      set({ toggles: previous, toggling: false })
       notify(error instanceof Error ? `切换失败：${error.message}` : '切换失败', 'danger')
     }
   },

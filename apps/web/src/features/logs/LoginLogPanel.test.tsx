@@ -155,6 +155,13 @@ describe('平台登录日志面板', () => {
     )
   })
 
+  it('数据源在任何运行时都是种子数据：筛选栏常驻「演示数据」标注', async () => {
+    renderApp('/logs')
+    await openLoginTab()
+    await screen.findByRole('region', { name: '登录日志表' })
+    expect(screen.getByRole('status')).toHaveTextContent('演示数据')
+  })
+
   it('筛选与搜索无匹配时给出表内空提示', async () => {
     const user = userEvent.setup()
     renderApp('/logs')

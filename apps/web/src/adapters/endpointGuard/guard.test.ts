@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
-import { EndpointGuardError, isSameOrigin, readJsonBody, sendError, sendJson } from './guard'
+import { ALLOWED_HOSTNAMES, EndpointGuardError, isSameOrigin, readJsonBody, sendError, sendJson } from './guard'
 
 /*
  * 端点守卫的单元测试：直接驱动守卫函数，不经任何端点 handler，不执行任何真实命令。
@@ -60,6 +60,28 @@ describe('isSameOrigin', () => {
 
   it('Origin 不是合法 URL 视为不匹配', () => {
     expect(isSameOrigin(fakeReq('PUT', { host: 'localhost:5173', origin: 'not-a-url' }))).toBe(false)
+  })
+
+  it('Host 允许名单集中定义且只含本机地址', () => {
+    expect(ALLOWED_HOSTNAMES).toEqual(['127.0.0.1', 'localhost', '[::1]'])
+  })
+
+  it('本机地址（含 IPv6 与大小写归一）的写请求放行', () => {
+    expect(isSameOrigin(fakeReq('PUT', { host: 'localhost:5173', origin: 'http://localhost:5173' }))).toBe(true)
+    expect(isSameOrigin(fakeReq('PUT', { host: 'LOCALHOST:5173', origin: 'http://LOCALHOST:5173' }))).toBe(true)
+    expect(isSameOrigin(fakeReq('PUT', { host: '127.0.0.1:5173', origin: 'http://127.0.0.1:5173' }))).toBe(true)
+    expect(isSameOrigin(fakeReq('PUT', { host: '[::1]:5173', origin: 'http://[::1]:5173' }))).toBe(true)
+  })
+
+  it('Origin 与 Host 一致但不在允许名单：DNS rebinding 域名也拒绝', () => {
+    // 攻击者让 rebinding 域名先后解析到本机与攻击机，Origin 与 Host 都是它自己也过不了名单。
+    expect(isSameOrigin(fakeReq('PUT', { host: 'evil.example:5173', origin: 'http://evil.example:5173' }))).toBe(false)
+    expect(isSameOrigin(fakeReq('PUT', { host: '127.0.0.1.evil.example', origin: 'http://127.0.0.1.evil.example' }))).toBe(false)
+    expect(isSameOrigin(fakeReq('PUT', { host: 'localhost.evil.example:5173', origin: 'http://localhost.evil.example:5173' }))).toBe(false)
+  })
+
+  it('Host 头畸形到解析不出 hostname 时拒绝', () => {
+    expect(isSameOrigin(fakeReq('PUT', { host: 'http://localhost:5173', origin: 'http://localhost:5173' }))).toBe(false)
   })
 })
 

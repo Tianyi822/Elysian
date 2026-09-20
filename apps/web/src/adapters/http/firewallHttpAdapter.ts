@@ -8,6 +8,13 @@ import type {
   FirewallScanProtection,
   FirewallToggles,
 } from '@elysian/contracts'
+import {
+  FIREWALL_ADDRESS_FAMILIES,
+  FIREWALL_DIRECTIONS,
+  FIREWALL_POLICIES,
+  FIREWALL_PROTOCOLS,
+  FIREWALL_RULE_STATUSES,
+} from '@elysian/contracts'
 import type { FirewallAdapter } from '../../contracts/adapters'
 
 /*
@@ -45,26 +52,160 @@ function parseTogglesRow(togglesRow: Record<string, unknown>): FirewallToggles {
   }
 }
 
-/** 校验 GET / 响应：开关与规则数组。 */
+/** 校验 GET / 响应：开关与规则数组（数组内逐条校验，形状漂移不整批进 store）。 */
 export function parseFirewallOverviewResponse(body: unknown): FirewallOverview {
   const row = asObject(body)
   const toggles = parseTogglesRow(asObject(row.toggles))
   if (!Array.isArray(row.rules)) {
     throw new Error('防火墙规则响应无效：应为数组')
   }
-  return { toggles, rules: row.rules as readonly FirewallRule[] }
+  return { toggles, rules: row.rules.map((rule) => parseFirewallRule(rule)) }
 }
 
 function parseTogglesResponse(body: unknown): FirewallToggles {
   return parseTogglesRow(asObject(asObject(body).toggles))
 }
 
-function parseRuleResponse(body: unknown): FirewallRule {
-  return asObject(asObject(body).rule) as unknown as FirewallRule
+/** 枚举字段校验：取值必须落在契约常量表里，漂移即拒。 */
+function isEnumValue<T extends string>(values: readonly T[], value: unknown): value is T {
+  return typeof value === 'string' && (values as readonly string[]).includes(value)
 }
 
-function parseScanResponse(body: unknown): FirewallScanProtection {
-  return body as FirewallScanProtection
+/** 可空字符串字段：允许 string 或 null，其它类型即拒。 */
+function isNullableString(value: unknown): value is string | null {
+  return typeof value === 'string' || value === null
+}
+
+/** 端口规则逐字段校验。 */
+export function parseFirewallRule(value: unknown): FirewallRule {
+  const row = asObject(value)
+  if (
+    typeof row.id !== 'string' ||
+    !isEnumValue(FIREWALL_PROTOCOLS, row.protocol) ||
+    typeof row.port !== 'number' ||
+    (typeof row.portTo !== 'number' && row.portTo !== null) ||
+    !isEnumValue(FIREWALL_ADDRESS_FAMILIES, row.family) ||
+    !isEnumValue(FIREWALL_RULE_STATUSES, row.status) ||
+    !isEnumValue(FIREWALL_POLICIES, row.policy) ||
+    !isEnumValue(FIREWALL_DIRECTIONS, row.direction) ||
+    typeof row.source !== 'string' ||
+    !isNullableString(row.note) ||
+    !isNullableString(row.updatedAt)
+  ) {
+    throw new Error('防火墙端口规则响应无效')
+  }
+  return row as unknown as FirewallRule
+}
+
+/** IP 规则逐字段校验。 */
+export function parseFirewallIpRule(value: unknown): FirewallIpRule {
+  const row = asObject(value)
+  if (
+    typeof row.id !== 'string' ||
+    typeof row.source !== 'string' ||
+    !isEnumValue(FIREWALL_ADDRESS_FAMILIES, row.family) ||
+    !isEnumValue(FIREWALL_POLICIES, row.policy) ||
+    !isNullableString(row.note) ||
+    !isNullableString(row.updatedAt)
+  ) {
+    throw new Error('防火墙 IP 规则响应无效')
+  }
+  return row as unknown as FirewallIpRule
+}
+
+/** 端口转发逐字段校验。 */
+export function parseFirewallForwardRule(value: unknown): FirewallForwardRule {
+  const row = asObject(value)
+  if (
+    typeof row.id !== 'string' ||
+    !isEnumValue(FIREWALL_PROTOCOLS, row.protocol) ||
+    typeof row.port !== 'number' ||
+    (typeof row.portTo !== 'number' && row.portTo !== null) ||
+    typeof row.targetHost !== 'string' ||
+    typeof row.targetPort !== 'number' ||
+    !isNullableString(row.note) ||
+    !isNullableString(row.updatedAt)
+  ) {
+    throw new Error('防火墙端口转发响应无效')
+  }
+  return row as unknown as FirewallForwardRule
+}
+
+/** 校验 POST/PUT /rules 响应：单条端口规则。 */
+export function parseRuleResponse(body: unknown): FirewallRule {
+  return parseFirewallRule(asObject(asObject(body).rule))
+}
+
+/** 校验 POST/PUT /ip-rules 响应：单条 IP 规则。 */
+export function parseIpRuleResponse(body: unknown): FirewallIpRule {
+  return parseFirewallIpRule(asObject(asObject(body).rule))
+}
+
+/** 校验 POST/PUT /forwards 响应：单条端口转发。 */
+export function parseForwardResponse(body: unknown): FirewallForwardRule {
+  return parseFirewallForwardRule(asObject(asObject(body).rule))
+}
+
+/** 校验 GET /ip-rules 响应：规则数组。 */
+export function parseIpRulesResponse(body: unknown): readonly FirewallIpRule[] {
+  const rules = asObject(body).rules
+  if (!Array.isArray(rules)) {
+    throw new Error('防火墙 IP 规则列表响应无效：应为数组')
+  }
+  return rules.map((rule) => parseFirewallIpRule(rule))
+}
+
+/** 校验 GET /forwards 响应：转发数组。 */
+export function parseForwardRulesResponse(body: unknown): readonly FirewallForwardRule[] {
+  const rules = asObject(body).rules
+  if (!Array.isArray(rules)) {
+    throw new Error('防火墙端口转发列表响应无效：应为数组')
+  }
+  return rules.map((rule) => parseFirewallForwardRule(rule))
+}
+
+/** 校验 GET /scan 及防扫描写动作的响应：开关、配置、统计与封锁名单逐字段核对。 */
+export function parseScanResponse(body: unknown): FirewallScanProtection {
+  const row = asObject(body)
+  if (typeof row.enabled !== 'boolean') {
+    throw new Error('防火墙防扫描开关响应无效')
+  }
+  const configRow = asObject(row.config)
+  if (
+    !Array.isArray(configRow.ports) ||
+    configRow.ports.some((port) => typeof port !== 'number') ||
+    typeof configRow.windowSeconds !== 'number' ||
+    typeof configRow.hitCount !== 'number' ||
+    typeof configRow.banSeconds !== 'number'
+  ) {
+    throw new Error('防火墙防扫描配置响应无效')
+  }
+  const config = configRow as unknown as FirewallScanConfig
+  const statsRow = asObject(row.stats)
+  if (
+    typeof statsRow.totalBlockedIps !== 'number' ||
+    typeof statsRow.totalFailedConnections !== 'number' ||
+    typeof statsRow.currentBlockedIps !== 'number' ||
+    typeof statsRow.currentFailedConnections !== 'number'
+  ) {
+    throw new Error('防火墙防扫描统计响应无效')
+  }
+  if (!Array.isArray(row.blocked)) {
+    throw new Error('防火墙防扫描封锁列表响应无效：应为数组')
+  }
+  const blocked = row.blocked.map((entry) => {
+    const item = asObject(entry)
+    if (typeof item.ip !== 'string' || typeof item.blockedAt !== 'string') {
+      throw new Error('防火墙防扫描封锁条目响应无效')
+    }
+    return { ip: item.ip, blockedAt: item.blockedAt }
+  })
+  return {
+    enabled: row.enabled,
+    config,
+    stats: statsRow as unknown as FirewallScanProtection['stats'],
+    blocked,
+  }
 }
 
 async function requestJson(baseUrl: string, init?: RequestInit): Promise<unknown> {
@@ -145,32 +286,37 @@ export function createHttpFirewallAdapter(baseUrl = '/api/security/firewall'): F
         body: JSON.stringify({ rules: inputs }),
       })
       const row = asObject(body)
+      if (!Array.isArray(row.added)) {
+        throw new Error('防火墙导入结果响应无效：应为数组')
+      }
       return {
-        added: (Array.isArray(row.added) ? row.added : []) as unknown as readonly FirewallRule[],
+        added: row.added.map((rule) => parseFirewallRule(rule)),
         skipped: typeof row.skipped === 'number' ? row.skipped : 0,
       } satisfies FirewallImportResult
     },
 
     async listIpRules() {
-      const body = await requestJson(`${baseUrl}/ip-rules`)
-      const rules = asObject(body).rules
-      return (Array.isArray(rules) ? rules : []) as unknown as readonly FirewallIpRule[]
+      return parseIpRulesResponse(await requestJson(`${baseUrl}/ip-rules`))
     },
 
     async createIpRule(input) {
-      return asObject(asObject(await requestJson(`${baseUrl}/ip-rules`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(input),
-      })).rule) as unknown as FirewallIpRule
+      return parseIpRuleResponse(
+        await requestJson(`${baseUrl}/ip-rules`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(input),
+        }),
+      )
     },
 
     async updateIpRule(ruleId, input) {
-      return asObject(asObject(await requestJson(`${baseUrl}/ip-rules/${encodeURIComponent(ruleId)}`, {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(input),
-      })).rule) as unknown as FirewallIpRule
+      return parseIpRuleResponse(
+        await requestJson(`${baseUrl}/ip-rules/${encodeURIComponent(ruleId)}`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(input),
+        }),
+      )
     },
 
     async removeIpRule(ruleId) {
@@ -178,25 +324,27 @@ export function createHttpFirewallAdapter(baseUrl = '/api/security/firewall'): F
     },
 
     async listForwards() {
-      const body = await requestJson(`${baseUrl}/forwards`)
-      const rules = asObject(body).rules
-      return (Array.isArray(rules) ? rules : []) as unknown as readonly FirewallForwardRule[]
+      return parseForwardRulesResponse(await requestJson(`${baseUrl}/forwards`))
     },
 
     async createForward(input) {
-      return asObject(asObject(await requestJson(`${baseUrl}/forwards`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(input),
-      })).rule) as unknown as FirewallForwardRule
+      return parseForwardResponse(
+        await requestJson(`${baseUrl}/forwards`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(input),
+        }),
+      )
     },
 
     async updateForward(ruleId, input) {
-      return asObject(asObject(await requestJson(`${baseUrl}/forwards/${encodeURIComponent(ruleId)}`, {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(input),
-      })).rule) as unknown as FirewallForwardRule
+      return parseForwardResponse(
+        await requestJson(`${baseUrl}/forwards/${encodeURIComponent(ruleId)}`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(input),
+        }),
+      )
     },
 
     async removeForward(ruleId) {

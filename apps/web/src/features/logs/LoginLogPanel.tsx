@@ -73,6 +73,10 @@ export function LoginLogPanel() {
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-surface px-4 py-3">
+        {/* 登录日志在任何运行时都读内存种子数据（不像安全区按运行时分流），标注无条件展示。 */}
+        <span role="status" className="text-sm text-fg-muted">
+          演示数据
+        </span>
         <div role="group" aria-label="登录状态筛选" className="flex items-center gap-2">
           {STATUS_FILTERS.map(({ value, label }) => (
             <button

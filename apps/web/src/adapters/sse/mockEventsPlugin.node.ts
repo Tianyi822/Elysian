@@ -15,13 +15,26 @@ import { createEventsHandler, createResourceHistoryHandler } from './mockEventsP
 
 const execFileAsync = promisify(execFile)
 
-async function readHostSampleFromProc(prev?: HostSamplePrev) {
+/**
+ * df 采样参数：-k 输出纯数字的 KiB 容量列、-P 固定 POSIX 单行格式，与 readHostSample
+ * 里 parseDf 按纯数字列解析的约定一致（-h 的人类可读列如 59G 会被截成 59，差约 6 个数量级）。
+ */
+export const DF_ARGS = ['-k', '-P'] as const
+
+async function execDfReal(): Promise<string> {
+  const { stdout } = await execFileAsync('df', [...DF_ARGS])
+  return stdout
+}
+
+/** /proc 与 df 的采样入口；df 与 /proc 读取均可注入，测试用固定文本还原真实格式。 */
+export async function readHostSampleFromProc(
+  prev?: HostSamplePrev,
+  execDf: () => Promise<string> = execDfReal,
+  readFileFn: (path: string) => Promise<string> = (path) => readFile(path, 'utf8'),
+) {
   return readHostSample({
-    readFile: (path) => readFile(path, 'utf8'),
-    execDf: async () => {
-      const { stdout } = await execFileAsync('df', ['-h', '-P'])
-      return stdout
-    },
+    readFile: readFileFn,
+    execDf,
     prev,
   })
 }
