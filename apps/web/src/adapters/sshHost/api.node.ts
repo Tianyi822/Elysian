@@ -105,6 +105,7 @@ function createHostDeps(): SshHostDeps {
     },
     runChpasswd: runChpasswdViaStdin,
     runGetent: (args) => execToStdout('getent', args),
+    delay: (ms) => new Promise((resolve) => { setTimeout(resolve, ms) }),
     readText: (path) => readFile(path, 'utf8'),
     // 目录不存在（未建 sshd_config.d）时按空处理：Include 通配展开据此得到零个文件。
     readDir: (path) => readdir(path).catch(() => []),

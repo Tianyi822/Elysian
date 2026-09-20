@@ -88,6 +88,8 @@ export type SshHostDeps = {
   runChpasswd(input: string): Promise<string>
   /** 执行 getent（如 `getent passwd`、`getent passwd root`），返回 stdout。 */
   runGetent(args: readonly string[]): Promise<string>
+  /** 轮询等待一步（毫秒）：启停后等 sshd 状态收敛用；测试注入即时实现。 */
+  delay(ms: number): Promise<void>
   readText(path: string): Promise<string>
   /** 列目录下的直接子项名（Include 通配展开用）；目录不存在时返回空数组。 */
   readDir(path: string): Promise<string[]>
@@ -149,6 +151,19 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
   async function serviceRunning(): Promise<boolean> {
     // sshd daemonize 时写 pidfile（/run/sshd.pid）；pidfile 在即视为在跑。
     return deps.exists(paths.sshdPidFile)
+  }
+
+  /**
+   * 启停后轮询 pidfile 直至到达目标态：TERM 与守护进程化都异步生效，
+   * 立即回查会带回过期运行态，面板的开关会被拉回旧值。预算内未收敛返回 false，由调用方如实报错。
+   */
+  async function waitForServiceState(running: boolean): Promise<boolean> {
+    const attempts = 50
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      if ((await serviceRunning()) === running) return true
+      await deps.delay(100)
+    }
+    return (await serviceRunning()) === running
   }
 
   async function readConfigText(): Promise<string> {
@@ -459,6 +474,9 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
         const detail = error instanceof Error ? error.message : String(error)
         throw new Error(`${enabled ? '启动' : '停止'} sshd 失败：${detail}`)
       })
+      if (!(await waitForServiceState(enabled))) {
+        throw new Error(`${enabled ? '启动' : '停止'} sshd 未生效：服务状态未在预期时间内收敛，请稍后刷新查看实际状态`)
+      }
       lastToggleAt = deps.nowIso()
       return this.overview()
     },

@@ -27,6 +27,7 @@ function createThrowingDeps(): SshHostDeps {
     reloadSshd: fail('reloadSshd'),
     runChpasswd: fail('chpasswd'),
     runGetent: fail('getent'),
+    delay: fail('delay'),
     readText: fail('readText'),
     readDir: async () => [],
     writeText: fail('writeText'),

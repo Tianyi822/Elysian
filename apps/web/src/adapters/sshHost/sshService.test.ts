@@ -50,7 +50,16 @@ type FakeHost = {
   failSshdTest: () => void
 }
 
-function createFakeHost(options: { sshdConfig?: string; sshdLog?: string; passwd?: string; pidFile?: boolean } = {}): FakeHost {
+function createFakeHost(
+  options: {
+    sshdConfig?: string
+    sshdLog?: string
+    passwd?: string
+    pidFile?: boolean
+    /** 启停后 pidfile 何时收敛：立即（默认）｜下一次 delay 调用时（模拟 TERM 后异步退出）｜永不（超时路径）。 */
+    pidFileSettle?: 'on-signal' | 'after-delay' | 'never'
+  } = {},
+): FakeHost {
   const files = new Map<string, string>()
   const modes = new Map<string, number>()
   const owners = new Map<string, { uid: number; gid: number }>()
@@ -62,6 +71,9 @@ function createFakeHost(options: { sshdConfig?: string; sshdLog?: string; passwd
   const chpasswdInputs: string[] = []
   let sshdTestFails = false
   const passwd = options.passwd ?? DEFAULT_PASSWD
+  const pidFileSettle = options.pidFileSettle ?? 'on-signal'
+  /** after-delay 模式下挂起的收敛动作：真实 sshd 收到 TERM 后异步退出、pidfile 晚一拍才消失。 */
+  let pendingSettle: 'add' | 'remove' | null = null
 
   if (options.sshdConfig !== undefined) files.set(PATHS.sshdConfig, options.sshdConfig)
   if (options.sshdLog !== undefined) files.set(PATHS.sshdLog, options.sshdLog)
@@ -99,11 +111,19 @@ function createFakeHost(options: { sshdConfig?: string; sshdLog?: string; passwd
       return ''
     },
     async startSshd() {
+      if (pidFileSettle === 'after-delay') pendingSettle = 'add'
+      else if (pidFileSettle === 'on-signal') files.set(PATHS.sshdPidFile, '123\n')
       serviceSignals.push('start')
     },
     async stopSshd() {
-      if (!files.has(PATHS.sshdPidFile)) return
+      if (pidFileSettle === 'after-delay') pendingSettle = 'remove'
+      else if (pidFileSettle === 'on-signal') files.delete(PATHS.sshdPidFile)
       serviceSignals.push('stop')
+    },
+    async delay() {
+      if (pendingSettle === 'add') files.set(PATHS.sshdPidFile, '123\n')
+      if (pendingSettle === 'remove') files.delete(PATHS.sshdPidFile)
+      pendingSettle = null
     },
     async reloadSshd() {
       if (!files.has(PATHS.sshdPidFile)) return
@@ -367,6 +387,26 @@ describe('createSshService 服务与登录统计', () => {
     expect((await service.overview()).changedAt).toBe(NOW)
     await service.setServiceEnabled(true)
     expect((await service.overview()).changedAt).toBe(NOW)
+  })
+
+  it('停用等 pidfile 收敛再回包：TERM 后 sshd 异步退出也不会把开关留在打开位', async () => {
+    const service = createSshService(createFakeHost({ pidFile: true, pidFileSettle: 'after-delay' }).deps)
+    const overview = await service.setServiceEnabled(false)
+    expect(overview.enabled).toBe(false)
+    expect(overview.status).toBe('stopped')
+  })
+
+  it('启用同样等 pidfile 出现再回包，避免响应带回过期的停用态', async () => {
+    const service = createSshService(createFakeHost({ pidFileSettle: 'after-delay' }).deps)
+    const overview = await service.setServiceEnabled(true)
+    expect(overview.enabled).toBe(true)
+    expect(overview.status).toBe('running')
+  })
+
+  it('状态迟迟不收敛时报中文错误，且不记启停时间', async () => {
+    const service = createSshService(createFakeHost({ pidFile: true, pidFileSettle: 'never' }).deps)
+    await expect(service.setServiceEnabled(false)).rejects.toThrow('停止 sshd 未生效')
+    expect((await service.overview()).changedAt).toBeNull()
   })
 
   it('listLoginRecords 按时间倒序返回', async () => {
