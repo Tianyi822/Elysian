@@ -139,8 +139,8 @@ describe('SSH 密钥表', () => {
     expect(within(reveal).getByText('私钥仅此次可见')).toBeInTheDocument()
     expect(within(reveal).getByText(/BEGIN OPENSSH PRIVATE KEY/)).toBeInTheDocument()
     expect(within(reveal).getByRole('button', { name: '下载私钥' })).toBeInTheDocument()
-    // 下载文件名以归属账号开头（本例选了 wangwu），不用平台名。
-    expect(within(reveal).getByText(/wangwu-ssh-key-\d{8}\.pem/)).toBeInTheDocument()
+    // 下载文件名以归属账号开头但不显示在界面上（wangwu-ssh-key-<日期>.pem，下载时生效）。
+    expect(within(reveal).queryByText(/wangwu-ssh-key-\d{8}\.pem/)).not.toBeInTheDocument()
     await user.click(within(reveal).getByRole('button', { name: '关闭弹窗' }))
     await waitFor(() =>
       expect(screen.queryByRole('dialog', { name: '新密钥「运维笔记本」的私钥' })).not.toBeInTheDocument(),

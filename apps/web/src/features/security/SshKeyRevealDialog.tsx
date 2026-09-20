@@ -13,13 +13,17 @@ import { buildKeyFilename, downloadPrivateKey } from './sshKeyIO'
  */
 export function SshKeyRevealDialog({
   title,
+  account,
   material,
   onClose,
 }: {
   title: string
+  /** 归属账号名：下载文件名以它开头（root-ssh-key-…/账号名-ssh-key-…）。 */
+  account: string
   material: SshKeyMaterial
   onClose: () => void
 }) {
+  const filename = buildKeyFilename(account, new Date().toISOString())
   return (
     <Dialog.Root open onOpenChange={(next) => { if (!next) onClose() }}>
       <Dialog.Portal>
@@ -85,9 +89,7 @@ export function SshKeyRevealDialog({
               <CopyButton label="私钥" value={material.privateKey ?? ''} tooltip="复制私钥全文" />
               <button
                 type="button"
-                onClick={() =>
-                  downloadPrivateKey(buildKeyFilename(new Date().toISOString()), material)
-                }
+                onClick={() => downloadPrivateKey(filename, material)}
                 className="rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle"
               >
                 下载私钥
