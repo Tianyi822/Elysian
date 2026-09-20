@@ -115,9 +115,11 @@ function createFakeHost(options: { sshdConfig?: string; sshdLog?: string; passwd
     },
     async runGetent(args) {
       commands.push({ command: 'getent', args })
-      const key = args[0] ?? ''
-      if (key === 'passwd') return `${passwd}\n`
-      const line = passwd.split('\n').find((candidate) => candidate.startsWith(`${key}:`))
+      // 对齐真 getent 语义：首参是数据库名而非账号名——`getent root` 在真实环境报 Unknown database。
+      const [database, name] = args
+      if (database !== 'passwd') throw new Error(`Unknown database: ${database ?? ''}`)
+      if (name === undefined) return `${passwd}\n`
+      const line = passwd.split('\n').find((candidate) => candidate.startsWith(`${name}:`))
       return line ? `${line}\n` : ''
     },
     async readText(path) {

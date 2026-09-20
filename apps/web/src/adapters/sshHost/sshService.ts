@@ -86,7 +86,7 @@ export type SshHostDeps = {
   reloadSshd(): Promise<void>
   /** 执行 chpasswd，凭据经 stdin 传入（`账号:密码`），绝不进命令行。 */
   runChpasswd(input: string): Promise<string>
-  /** 执行 getent（如 `getent passwd`、`getent root`），返回 stdout。 */
+  /** 执行 getent（如 `getent passwd`、`getent passwd root`），返回 stdout。 */
   runGetent(args: readonly string[]): Promise<string>
   readText(path: string): Promise<string>
   /** 列目录下的直接子项名（Include 通配展开用）；目录不存在时返回空数组。 */
@@ -330,8 +330,8 @@ export function createSshService(deps: SshHostDeps): SshAdapter {
 
   /** 单个账号的 passwd 条目：主目录只从 getent 推导，绝不接受客户端传路径。 */
   async function entryOf(name: string): Promise<PasswdEntry> {
-    const output = await deps.runGetent([name]).catch((error: unknown) => {
-      throw commandError('getent', [name], error)
+    const output = await deps.runGetent(['passwd', name]).catch((error: unknown) => {
+      throw commandError('getent', ['passwd', name], error)
     })
     const entry = parseGetentPasswd(output)[0]
     if (!entry) throw new Error(`未找到系统账号：${name}`)
