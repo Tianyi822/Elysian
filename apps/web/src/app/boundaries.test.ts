@@ -23,6 +23,7 @@ const NODE_SIDE_ALLOWLIST = [
   'adapters/firewallHost/api.ts',
   'adapters/firewallHost/api.node.ts',
   'adapters/firewallHost/firewallApi.vite.ts',
+  'adapters/endpointGuard/guard.ts',
 ]
 
 function listSourceFiles(dir: string): string[] {
