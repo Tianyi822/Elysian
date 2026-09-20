@@ -334,11 +334,15 @@ describe('SSH 管理页签', () => {
     await user.click(within(root).getByRole('switch', { name: '允许 Root 登录' }))
     const input = await within(root).findByLabelText('Root 密码')
 
-    // 明暗切换：默认掩码，点眼睛变明文，再点回去。
+    // 明暗切换：默认掩码，点眼睛变明文，再点回去。图标表达当前状态：掩码闭眼、明文睁眼。
     expect(input).toHaveAttribute('type', 'password')
-    await user.click(within(root).getByRole('button', { name: '显示密码' }))
+    const eyeButton = within(root).getByRole('button', { name: '显示密码' })
+    expect(eyeButton.querySelector('.lucide-eye-off')).not.toBeNull()
+    await user.click(eyeButton)
     expect(input).toHaveAttribute('type', 'text')
-    await user.click(within(root).getByRole('button', { name: '隐藏密码' }))
+    const hideButton = within(root).getByRole('button', { name: '隐藏密码' })
+    expect(hideButton.querySelector('.lucide-eye')).not.toBeNull()
+    await user.click(hideButton)
     expect(input).toHaveAttribute('type', 'password')
 
     expect(within(root).getByText('上次重置：—')).toBeInTheDocument()

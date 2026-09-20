@@ -488,7 +488,8 @@ function RootCard() {
                 title={passwordVisible ? '隐藏密码' : '显示密码'}
                 className="absolute top-1/2 right-1.5 -translate-y-1/2 rounded-lg p-1.5 text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg"
               >
-                {passwordVisible ? <EyeOff aria-hidden size={14} /> : <Eye aria-hidden size={14} />}
+                {/* 图标表达当前状态：掩码闭眼、明文睁眼；按钮名与 tooltip 保持动作语义。 */}
+                {passwordVisible ? <Eye aria-hidden size={14} /> : <EyeOff aria-hidden size={14} />}
               </button>
             </div>
             <IconButton
