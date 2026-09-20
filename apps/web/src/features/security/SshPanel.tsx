@@ -26,9 +26,10 @@ import { SshKeyRevealDialog } from './SshKeyRevealDialog'
 import { randomSshPort, randomStrongPassword } from './sshRandom'
 
 /**
- * SSH 管理面板：四张卡排成两行，行内等高。
- * 第一行是设置卡——SSH 服务（启停、登录统计、端口、登录方式）与 Root 设置（登录策略、密码、密钥）；
- * 第二行是列表卡——SSH 密钥（搜索、创建、表格）与 SSH 登录记录。
+ * SSH 管理面板：四张卡排成两列瀑布，高度随内容，不互相拉平。
+ * 左列是 SSH 服务（启停、登录统计、端口、登录方式）叠 SSH 密钥表；
+ * 右列是 Root 设置（登录策略、密码、密钥）叠 SSH 登录记录。
+ * 视觉位置仍是「上设置、下列表」：Root 卡收起时登录记录上移填空，不在卡内留白。
  * 数据来自 SSH adapter：Docker 运行时由 HTTP adapter 真实操作容器内 sshd，
  * 宿主机本地开发是内存演示（工具栏带「演示数据」标识）；动作完成提示按运行时如实描述。
  * 私钥一律只在创建/生成成功后的一次性弹窗里展示，查看弹窗只给公钥、指纹与元信息。
@@ -113,8 +114,8 @@ export function SshPanel() {
 
   return (
     <>
-      {/* 分两行两块网格：第一行两张设置卡等高对齐（区域会平分卡片剩余高度）；
-          第二行两张表的行数、工具行与分页条各不相同，各自取内容高度即可，不必凑成一样高。 */}
+      {/* 两列瀑布：列各自按内容堆叠。Root 卡收起密码/密钥区时变矮，登录记录跟着上移，
+          而不是被左列 SSH 服务卡拉成等高后在卡内留下一块空区域。 */}
       <div className="flex flex-col gap-4">
         {/* SSH 动作只在容器内真实执行；宿主机本地开发是内存演示，与防火墙面板同一标识明示出来。 */}
         {!isDockerRuntime() ? (
@@ -125,13 +126,15 @@ export function SshPanel() {
             演示数据
           </div>
         ) : null}
-        <div className="grid gap-4 md:grid-cols-2">
-          <ServiceCard />
-          <RootCard />
-        </div>
         <div className="grid items-start gap-4 md:grid-cols-2">
-          <SshKeyCard />
-          <SshLoginRecordsCard />
+          <div className="flex min-w-0 flex-col gap-4">
+            <ServiceCard />
+            <SshKeyCard />
+          </div>
+          <div className="flex min-w-0 flex-col gap-4">
+            <RootCard />
+            <SshLoginRecordsCard />
+          </div>
         </div>
       </div>
       {createKeyOpen ? <SshKeyCreateDialog /> : null}
@@ -170,7 +173,7 @@ function SshLoginRecordsCard() {
         // 只读表格内部没有可聚焦的控件，因此这个滚动容器自己必须可聚焦：
         // 否则窄屏下键盘用户没有任何办法把后面的列滚出来。
         tabIndex={0}
-        className="grow min-w-0 overflow-x-auto"
+        className="min-w-0 overflow-x-auto"
       >
         {/* 最小宽度加首列钉住：窄屏下整表横向滚动，来源地址始终留在左边，其余列滚出来看。
             32rem 是五列都不折行的下限，再小就在宽桌上也冒出用不上的横向滚动条。 */}

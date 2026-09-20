@@ -65,7 +65,7 @@ export function SshKeyCard() {
       </div>
 
       {/* 表格直接坐在卡面上：行悬停按交互词汇表向上步进一级表面，因此不再套一层浮起底。 */}
-      <div className="grow min-w-0 overflow-x-auto">
+      <div className="min-w-0 overflow-x-auto">
         <table className="w-full table-fixed border-separate border-spacing-0 text-left text-sm">
           {/* 归属账号是这张表的分组线索（谁手里有哪把钥匙），因此紧跟在名称之后。
               操作列定宽，只占两枚按钮的宽度；名称列钉住，窄屏下它始终在视线里。 */}

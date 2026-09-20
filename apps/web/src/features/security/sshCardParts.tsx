@@ -123,8 +123,8 @@ export function Section({ title, children }: { title: string; children: ReactNod
       <h2 id={titleId} className="text-sm font-medium text-fg">
         {title}
       </h2>
-      {/* 区域容器吃掉卡片剩下的高度，再由各区域按内容高度平分（见 Region 的 grow）。 */}
-      <div className="mt-4 flex min-w-0 flex-1 flex-col gap-4">{children}</div>
+      {/* 区域按内容取高度：瀑布列里矮卡不该被邻列撑开，区内也不平分剩余空白。 */}
+      <div className="mt-4 flex min-w-0 flex-col gap-4">{children}</div>
     </section>
   )
 }
@@ -144,7 +144,7 @@ export function Region({
 }) {
   const titleClass = 'text-xs font-medium text-fg-muted'
   return (
-    <div className="flex grow flex-col rounded-lg bg-surface-raised px-4 py-4">
+    <div className="flex flex-col rounded-lg bg-surface-raised px-4 py-4">
       {labelFor ? (
         <label htmlFor={labelFor} className={titleClass}>
           {title}

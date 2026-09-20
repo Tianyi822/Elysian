@@ -18,7 +18,7 @@ beforeEach(() => {
 })
 
 describe('SSH 管理页签', () => {
-  it('切到页签后渲染四张分区卡：设置卡等高，两张表各自取高度', async () => {
+  it('切到页签后渲染四张分区卡：两列瀑布，卡片随内容取高度', async () => {
     await openSshTab()
 
     // 测试跑在宿主机演示态（非 Docker）：工具栏明示「演示数据」，与防火墙面板同一标识。
@@ -33,17 +33,12 @@ describe('SSH 管理页签', () => {
       expect(card).toBeInTheDocument()
     }
 
-    // 第一行：网格默认拉伸，两张设置卡同高对齐。
-    const settingRow = service.parentElement
-    expect(settingRow).toHaveClass('md:grid-cols-2')
-    expect(settingRow).not.toHaveClass('items-start')
-    expect(settingRow?.contains(root)).toBe(true)
-
-    // 第二行：items-start 让两张表各自按内容取高度，不互相拉平。
-    const tableRow = keys.parentElement
-    expect(tableRow).toHaveClass('md:grid-cols-2', 'items-start')
-    expect(tableRow?.contains(records)).toBe(true)
-    expect(settingRow).not.toBe(tableRow)
+    // 两列瀑布：左列服务→密钥、右列 Root→登录记录；列独立堆叠，矮卡不被邻列拉高。
+    const masonry = service.parentElement?.parentElement
+    expect(masonry).toHaveClass('md:grid-cols-2', 'items-start')
+    expect(service.parentElement).toContainElement(keys)
+    expect(root.parentElement).toContainElement(records)
+    expect(service.parentElement).not.toBe(root.parentElement)
 
     // 卡内按区域划分，每区自带小标题。
     for (const name of ['服务状态', '登录统计', '监听端口', '登录方式']) {
