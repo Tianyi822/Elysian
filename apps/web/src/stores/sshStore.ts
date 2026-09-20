@@ -1,4 +1,6 @@
 import type {
+  FirewallRule,
+  FirewallToggles,
   SshAuthMethods,
   SshAuthSettings,
   SshKeyMaterial,
@@ -8,7 +10,7 @@ import type {
   SshRootAuth,
   SshRootLoginPolicy,
 } from '@elysian/contracts'
-import { isValidSshPort } from '@elysian/contracts'
+import { FIREWALL_POLICY_LABELS, isValidSshPort } from '@elysian/contracts'
 import { create } from 'zustand'
 import type { ElysianGateway, SshKeyAccount } from '../contracts/adapters'
 import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
@@ -41,6 +43,11 @@ type SshState = {
   /** 端口输入框的草稿。存字符串而不是数字，用户才能把输入清空、也才能输入到一半。 */
   portDraft: string
   portError: string | undefined
+  /**
+   * 待确认的监听端口：界面层校验通过后停在这里，确认对话据它渲染后果文案，
+   * 确认前不动 sshd、也不动防火墙。undefined 表示没有待确认的端口。
+   */
+  pendingPort: number | undefined
   /** Root 密码草稿；重置成功后清空。密码本身不上屏，也不进任何持久化。 */
   passwordDraft: string
   /** 密钥搜索词：按名称、指纹与私钥内容匹配。 */
@@ -76,7 +83,9 @@ type SshState = {
   setServiceEnabled: (gateway: ElysianGateway, enabled: boolean) => Promise<void>
   setAuthMethod: (gateway: ElysianGateway, patch: Partial<SshAuthMethods>) => Promise<void>
   setPortDraft: (value: string) => void
-  savePort: (gateway: ElysianGateway) => Promise<void>
+  requestPortSave: () => void
+  cancelPortSave: () => void
+  confirmPortSave: (gateway: ElysianGateway) => Promise<void>
   setLoginPolicy: (gateway: ElysianGateway, policy: SshRootLoginPolicy) => Promise<void>
   setPasswordDraft: (value: string) => void
   resetPassword: (gateway: ElysianGateway) => Promise<void>
@@ -107,6 +116,70 @@ function materialWithoutPrivateKey<T extends SshKeyMaterial>(material: T): T {
   return clone
 }
 
+/** 联动补出的规则在这里署名：防火墙页里一眼看出这条是谁加的，不是手敲的。 */
+const SSH_PORT_LINK_NOTE = 'SSH 端口联动放行'
+
+/**
+ * 改端口后的防火墙联动：防火墙启用时给新端口补一条 tcp 入站放行，否则 sshd 在新端口上照旧被挡在外面。
+ * 旧端口的规则保留不动——面板不替用户删规则，需要时到防火墙页自行清理。
+ * 复用防火墙 adapter（gateway.firewall），SSH 服务侧不感知防火墙，方向只从编排层指向它。
+ * 结果只经通知如实报出：端口本身已经保存成功，联动失败不回滚它，而是给出手动放行的指引。
+ * 读防火墙状态（toggles/list）与写放行规则一样属于联动的一部分，同样在这里收尾——
+ * 任何一步失败都只报联动失败，绝不冒用「保存失败」把已经成功的端口说成没保存。
+ */
+async function linkSshPortToFirewall(gateway: ElysianGateway, port: number): Promise<void> {
+  let toggles: FirewallToggles
+  let rules: readonly FirewallRule[]
+  try {
+    toggles = await gateway.firewall.toggles()
+    rules = toggles.firewallEnabled ? await gateway.firewall.list() : []
+  } catch (error) {
+    notify(
+      `端口已改为 ${port}，但防火墙联动检查失败：${
+        error instanceof Error ? error.message : '未知原因'
+      }。请到防火墙页确认 ${port}/tcp 已放行，否则 SSH 无法连接`,
+      'danger',
+    )
+    return
+  }
+  if (!toggles.firewallEnabled) {
+    notify('防火墙当前未启用：新端口未联动放行，启用防火墙前请自行确认放行', 'info')
+    return
+  }
+  // 只看与新端口同协议同地址族的入站规则：端口段（portTo）与出站规则管不到新端口。
+  const existing = rules.find(
+    (rule) => rule.protocol === 'tcp' && rule.port === port && rule.portTo === null && rule.family === 'ipv4',
+  )
+  if (existing) {
+    notify(
+      existing.policy === 'deny'
+        ? `端口已改为 ${port}，但防火墙上该端口已有拒绝规则，未添加放行：请先到防火墙页处理，否则 SSH 无法连接`
+        : `防火墙已有 ${port}/tcp 的${FIREWALL_POLICY_LABELS[existing.policy]}规则，无需重复添加`,
+      existing.policy === 'deny' ? 'danger' : 'success',
+    )
+    return
+  }
+  try {
+    await gateway.firewall.create({
+      protocol: 'tcp',
+      port,
+      family: 'ipv4',
+      policy: 'allow',
+      direction: 'inbound',
+      source: '所有IP',
+      note: SSH_PORT_LINK_NOTE,
+    })
+    notify(`已为新端口 ${port} 添加防火墙 tcp 放行规则${MOCK_SUFFIX}`)
+  } catch (error) {
+    notify(
+      `端口已改为 ${port}，但防火墙放行失败：${
+        error instanceof Error ? error.message : '未知原因'
+      }。请到防火墙页手动放行，否则 SSH 无法连接`,
+      'danger',
+    )
+  }
+}
+
 export const useSshStore = create<SshState>((set, get) => ({
   status: 'idle',
   errorMessage: undefined,
@@ -118,6 +191,7 @@ export const useSshStore = create<SshState>((set, get) => ({
   keyAccounts: [],
   portDraft: '',
   portError: undefined,
+  pendingPort: undefined,
   passwordDraft: '',
   keySearch: '',
   keyPage: 1,
@@ -157,6 +231,8 @@ export const useSshStore = create<SshState>((set, get) => ({
         loginRecords,
         keyAccounts,
         portDraft: `${settings.port}`,
+        // 重新拉数据即丢弃未确认的端口草稿：界面上摆着的确认对话不该跨过一次重新加载。
+        pendingPort: undefined,
       })
     } catch (error) {
       set({ status: 'error', errorMessage: error instanceof Error ? error.message : 'SSH 数据加载失败' })
@@ -203,23 +279,46 @@ export const useSshStore = create<SshState>((set, get) => ({
     set({ portDraft: value, portError: undefined })
   },
 
-  // 非法端口在界面层就挡下，不发请求；合法才交给 adapter，那里用同一判据再挡一次。
-  async savePort(gateway) {
+  // 非法端口在界面层就挡下，不发请求；合法才停下来等确认，adapter 那里用同一判据再挡一次。
+  requestPortSave() {
     const draft = get().portDraft.trim()
-    if (!isValidSshPort(Number(draft))) {
+    const next = Number(draft)
+    if (!isValidSshPort(next)) {
       set({ portError: '端口需为 1-65535 的整数' })
       return
     }
-    if (get().savingPort) return
+    set({ portError: undefined, pendingPort: next })
+  },
+
+  cancelPortSave() {
+    set({ pendingPort: undefined })
+  },
+
+  // 确认后才落袋：先改 sshd，再按防火墙当前状态决定放不放行新端口。
+  async confirmPortSave(gateway) {
+    const next = get().pendingPort
+    if (next === undefined || get().savingPort) return
     set({ savingPort: true })
+    let savedPort: number
     try {
-      const confirmed = await gateway.ssh.setPort(Number(draft))
-      set({ settings: confirmed, portDraft: `${confirmed.port}`, savingPort: false })
+      const confirmed = await gateway.ssh.setPort(next)
+      savedPort = confirmed.port
+      set({
+        settings: confirmed,
+        portDraft: `${confirmed.port}`,
+        savingPort: false,
+        pendingPort: undefined,
+      })
       notify(`SSH 端口已改为 ${confirmed.port}${MOCK_SUFFIX}`)
     } catch (error) {
+      // 端口没改成：保留确认对话让用户能重试，原因走通知。
       set({ savingPort: false })
       notify(error instanceof Error ? `保存失败：${error.message}` : '保存失败', 'danger')
+      return
     }
+    // 联动放在端口保存的 try 之外：它自己的失败已在内部报成「联动失败」，
+    // 不会走到上面的 catch 把已经成功的端口报成「保存失败」。
+    await linkSshPortToFirewall(gateway, savedPort)
   },
 
   async setLoginPolicy(gateway, policy) {

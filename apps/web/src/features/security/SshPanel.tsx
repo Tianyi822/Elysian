@@ -14,7 +14,7 @@ import { IconButton } from '../../components/IconButton'
 import { StatusTag } from '../../components/StatusTag'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { formatDateTime, formatLoginTime } from '../../components/format'
-import { RefreshCw } from '../../components/icons'
+import { RefreshCw, TriangleAlert } from '../../components/icons'
 import { SSH_PAGE_SIZE, useSshStore } from '../../stores/sshStore'
 import { ACTION_CLASS, INPUT_CLASS, Region, SECONDARY_ACTION_CLASS, Section, SwitchToggle, TablePager } from './sshCardParts'
 import { SshKeyCard } from './SshKeyCard'
@@ -126,6 +126,7 @@ export function SshPanel() {
       </div>
       {createKeyOpen ? <SshKeyCreateDialog /> : null}
       <SshKeyRemoveDialog />
+      <SshPortConfirmDialog />
       {viewKey ? (
         <SshKeyDialog title={viewKey.title} material={viewKey.material} onClose={closeKeyView} />
       ) : null}
@@ -249,7 +250,7 @@ function ServiceCard() {
   const setServiceEnabled = useSshStore((s) => s.setServiceEnabled)
   const setAuthMethod = useSshStore((s) => s.setAuthMethod)
   const setPortDraft = useSshStore((s) => s.setPortDraft)
-  const savePort = useSshStore((s) => s.savePort)
+  const requestPortSave = useSshStore((s) => s.requestPortSave)
   const portInputId = useId()
 
   if (!overview || !settings) return null
@@ -296,7 +297,7 @@ function ServiceCard() {
           </IconButton>
           <button
             type="button"
-            onClick={() => void savePort(gateway)}
+            onClick={() => requestPortSave()}
             disabled={savingPort}
             className={ACTION_CLASS}
           >
@@ -328,6 +329,108 @@ function ServiceCard() {
         </div>
       </Region>
     </Section>
+  )
+}
+
+/** 改端口确认对话里的一条后果：warning 用来单独标出会断掉既有用法的情形。 */
+export type SshPortConsequence = { tone: 'info' | 'warning'; text: string }
+
+/**
+ * 改端口的后果文案：任何运行时都讲清端口切换与防火墙联动两件事；
+ * Docker 运行时再追加一条——容器内 sshd 离开 22 之后，宿主机的 2222→22 端口映射不再指向 sshd，
+ * 从宿主机侧联调会直接连不上容器。抽成与运行时无关的纯函数，面板只负责渲染。
+ */
+export function sshPortConfirmConsequences(
+  port: number,
+  docker: boolean,
+): readonly SshPortConsequence[] {
+  const consequences: SshPortConsequence[] = [
+    {
+      tone: 'info',
+      text: '保存后 sshd 只在改后的端口接受连接：既有连接不断，新连接必须指向新端口。',
+    },
+    {
+      tone: 'info',
+      text: '防火墙处于启用状态时会为新端口自动补一条 tcp 放行规则；旧端口的规则保留不动，需要时请到防火墙页自行清理。',
+    },
+  ]
+  if (docker && port !== SSH_DEFAULT_PORT) {
+    consequences.push({
+      tone: 'warning',
+      text: '容器内的 SSH 不再监听 22，宿主机 2222→22 的端口映射将失效，从宿主机侧连不进容器；联调需保持 22。',
+    })
+  }
+  return consequences
+}
+
+/**
+ * 改端口的确认对话：端口一旦改掉，旧端口不再接受连接，防火墙那边还要放行新端口，
+ * 这两件事先说清再落袋——确认前不发任何请求。Esc 与「取消」都可退出，退出时端口保持原值。
+ * 保存失败也不关窗：让用户能直接重试，原因由通知给出。
+ */
+function SshPortConfirmDialog() {
+  const gateway = useGateway()
+  const pendingPort = useSshStore((s) => s.pendingPort)
+  const currentPort = useSshStore((s) => s.settings?.port)
+  const savingPort = useSshStore((s) => s.savingPort)
+  const confirmPortSave = useSshStore((s) => s.confirmPortSave)
+  const cancelPortSave = useSshStore((s) => s.cancelPortSave)
+
+  if (pendingPort === undefined || currentPort === undefined) return null
+  const consequences = sshPortConfirmConsequences(pendingPort, isDockerRuntime())
+
+  return (
+    <Dialog.Root open onOpenChange={(next) => { if (!next) cancelPortSave() }}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/60" />
+        <Dialog.Content
+          aria-describedby={undefined}
+          className="fixed left-1/2 top-1/2 z-[61] w-[min(26rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-surface-raised p-4 shadow-xl"
+        >
+          <Dialog.Title className="text-sm font-semibold">确认修改 SSH 监听端口</Dialog.Title>
+          <p className="mt-1.5 text-xs text-fg-muted">
+            将要保存的端口：
+            {currentPort === pendingPort
+              ? `保持 ${pendingPort} 不变`
+              : `从 ${currentPort} 改为 ${pendingPort}`}
+            。
+          </p>
+          <ul className="mt-3 flex flex-col gap-1.5">
+            {consequences.map((item) => (
+              /* 警示带图标：只靠颜色不足以表达「这一条会断掉既有用法」。 */
+              <li
+                key={item.text}
+                className={`flex items-start gap-1.5 text-xs ${
+                  item.tone === 'warning' ? 'text-warning' : 'text-fg-muted'
+                }`}
+              >
+                {item.tone === 'warning' ? (
+                  <TriangleAlert aria-hidden size={13} className="mt-[2px] shrink-0" />
+                ) : null}
+                <span>{item.text}</span>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-4 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => cancelPortSave()}
+              className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              disabled={savingPort}
+              onClick={() => void confirmPortSave(gateway)}
+              className={ACTION_CLASS}
+            >
+              确认保存
+            </button>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   )
 }
 

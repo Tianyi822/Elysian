@@ -1,11 +1,15 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
+import type { FirewallRule, FirewallRuleInput, FirewallToggles } from '@elysian/contracts'
 import { SEED_LOGIN_RECORDS, SEED_SSH_PORT, SEED_SSH_STATS } from '../../adapters/mock/sshData'
+import { resetFirewallData } from '../../adapters/mock/firewallData'
+import type { ElysianGateway } from '../../contracts/adapters'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { SSH_PAGE_SIZE, useSshStore } from '../../stores/sshStore'
 import { renderApp } from '../../test/renderApp'
 import { openSshTab, resetSshPanel, securityTab, sshSessions } from '../../test/sshPanel'
+import { sshPortConfirmConsequences } from './SshPanel'
 
 /**
  * SSH 管理页签的端到端行为：四张分区卡、四状态、开关与保存、弱密码检测、密钥弹窗。
@@ -15,7 +19,43 @@ import { openSshTab, resetSshPanel, securityTab, sshSessions } from '../../test/
 
 beforeEach(() => {
   resetSshPanel()
+  // 改端口会联动写防火墙规则：演示数据集是模块级内存状态，这里一并推回种子。
+  resetFirewallData()
 })
+
+/** 在 SSH 替身网关上再叠防火墙覆盖项：委托清单与防火墙面板测试同款穷举，方法在原型上不能展开。 */
+function withFirewallOverrides(
+  gateway: ElysianGateway,
+  overrides: Partial<ElysianGateway['firewall']>,
+): ElysianGateway {
+  const firewall = gateway.firewall
+  return {
+    ...gateway,
+    firewall: {
+      list: () => firewall.list(),
+      toggles: () => firewall.toggles(),
+      setToggles: (next) => firewall.setToggles(next),
+      create: (input) => firewall.create(input),
+      update: (ruleId, input) => firewall.update(ruleId, input),
+      remove: (ruleId) => firewall.remove(ruleId),
+      importRules: (inputs) => firewall.importRules(inputs),
+      listIpRules: () => firewall.listIpRules(),
+      createIpRule: (input) => firewall.createIpRule(input),
+      updateIpRule: (ruleId, input) => firewall.updateIpRule(ruleId, input),
+      removeIpRule: (ruleId) => firewall.removeIpRule(ruleId),
+      listForwards: () => firewall.listForwards(),
+      createForward: (input) => firewall.createForward(input),
+      updateForward: (ruleId, input) => firewall.updateForward(ruleId, input),
+      removeForward: (ruleId) => firewall.removeForward(ruleId),
+      scanProtection: () => firewall.scanProtection(),
+      setScanProtection: (enabled) => firewall.setScanProtection(enabled),
+      setScanConfig: (config) => firewall.setScanConfig(config),
+      unblockIp: (ip) => firewall.unblockIp(ip),
+      syncFromSystem: () => firewall.syncFromSystem(),
+      ...overrides,
+    },
+  }
+}
 
 describe('SSH 管理页签', () => {
   it('切到页签后渲染四张分区卡：两列瀑布，卡片随内容取高度', async () => {
@@ -206,7 +246,7 @@ describe('SSH 管理页签', () => {
     )
   })
 
-  it('端口非法就在界面层挡下不发请求；合法端口保存后通知并更新卡片上的端口', async () => {
+  it('端口非法就在界面层挡下不发请求；合法端口先经确认对话，确认后保存并通知', async () => {
     const savedPorts: number[] = []
     const { gateway } = sshSessions({
       setPort: async (port) => {
@@ -223,17 +263,269 @@ describe('SSH 管理页签', () => {
     await user.click(within(service).getByRole('button', { name: '保存端口' }))
     expect(within(service).getByText('端口需为 1-65535 的整数')).toBeInTheDocument()
     expect(savedPorts).toEqual([])
+    expect(screen.queryByRole('dialog', { name: '确认修改 SSH 监听端口' })).not.toBeInTheDocument()
 
     await user.clear(input)
     await user.type(input, '2222')
     await user.click(within(service).getByRole('button', { name: '保存端口' }))
 
+    // 确认对话先出现，讲清后果；没确认前不发请求。
+    const confirm = screen.getByRole('dialog', { name: '确认修改 SSH 监听端口' })
+    expect(confirm.textContent).toContain('从 73 改为 2222')
+    expect(confirm.textContent).toContain('tcp 放行规则')
+    // 测试跑在宿主机演示态（非 Docker）：不出现宿主 2222 映射的警示。
+    expect(confirm.textContent).not.toContain('宿主机 2222')
+    expect(savedPorts).toEqual([])
+
+    await user.click(within(confirm).getByRole('button', { name: '确认保存' }))
+
     await waitFor(() => expect(savedPorts).toEqual([2222]))
     const notifications = await screen.findByLabelText('通知')
-    expect(within(notifications).getByRole('status')).toHaveTextContent(
-      'SSH 端口已改为 2222（mock，待接入真实执行）',
-    )
+    // 端口变更与防火墙联动各留一条通知（种子 2222 已有限连规则），这里认端口变更那条。
+    expect(
+      within(notifications).getByText('SSH 端口已改为 2222（mock，待接入真实执行）'),
+    ).toBeInTheDocument()
     expect(input).toHaveValue('2222')
+  })
+
+  it('确认对话里取消保存：不发请求，端口保持原值', async () => {
+    const savedPorts: number[] = []
+    const { gateway } = sshSessions({
+      setPort: async (port) => {
+        savedPorts.push(port)
+        return { passwordAuthEnabled: false, keyAuthEnabled: true, port }
+      },
+    })
+    const user = await openSshTab(gateway)
+    const service = screen.getByRole('region', { name: 'SSH 服务' })
+    const input = within(service).getByLabelText('监听端口')
+
+    await user.clear(input)
+    await user.type(input, '2260')
+    await user.click(within(service).getByRole('button', { name: '保存端口' }))
+    await user.click(within(screen.getByRole('dialog', { name: '确认修改 SSH 监听端口' })).getByRole('button', { name: '取消' }))
+
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: '确认修改 SSH 监听端口' })).not.toBeInTheDocument(),
+    )
+    expect(savedPorts).toEqual([])
+    expect(input).toHaveValue('2260')
+  })
+
+  it('随机端口填进输入框后同样要经确认对话，不会绕过拦截直接保存', async () => {
+    const savedPorts: number[] = []
+    const { gateway } = sshSessions({
+      setPort: async (port) => {
+        savedPorts.push(port)
+        return { passwordAuthEnabled: false, keyAuthEnabled: true, port }
+      },
+    })
+    const user = await openSshTab(gateway)
+    const service = screen.getByRole('region', { name: 'SSH 服务' })
+    const input = within(service).getByLabelText('监听端口')
+
+    await user.click(within(service).getByRole('button', { name: '随机端口' }))
+    const randomPort = (input as HTMLInputElement).value
+    await user.click(within(service).getByRole('button', { name: '保存端口' }))
+
+    const confirm = screen.getByRole('dialog', { name: '确认修改 SSH 监听端口' })
+    expect(confirm.textContent).toContain(`从 73 改为 ${randomPort}`)
+    expect(savedPorts).toEqual([])
+    await user.click(within(confirm).getByRole('button', { name: '取消' }))
+    expect(savedPorts).toEqual([])
+  })
+
+  it('确认保存后防火墙已启用则联动放行新端口；同端口已有规则则不重复添加', async () => {
+    const createdRules: FirewallRuleInput[] = []
+    const session = sshSessions({
+      setPort: async (port) => ({ passwordAuthEnabled: false, keyAuthEnabled: true, port }),
+    })
+    const gateway = withFirewallOverrides(session.gateway, {
+      create: async (input) => {
+        createdRules.push(input)
+        return {
+          id: `fw-${input.protocol}-${input.port}-${input.family}`,
+          protocol: input.protocol,
+          port: input.port,
+          portTo: null,
+          family: input.family,
+          status: 'unused',
+          policy: input.policy,
+          direction: 'inbound',
+          source: input.source,
+          note: input.note,
+          updatedAt: null,
+        } satisfies FirewallRule
+      },
+    })
+    const user = await openSshTab(gateway)
+    const service = screen.getByRole('region', { name: 'SSH 服务' })
+    const input = within(service).getByLabelText('监听端口')
+
+    // 新端口没有覆盖它的规则：自动补一条 tcp 放行，来源所有 IP、带联动备注。
+    await user.clear(input)
+    await user.type(input, '2260')
+    await user.click(within(service).getByRole('button', { name: '保存端口' }))
+    await user.click(within(screen.getByRole('dialog', { name: '确认修改 SSH 监听端口' })).getByRole('button', { name: '确认保存' }))
+
+    await waitFor(() => expect(createdRules).toHaveLength(1))
+    expect(createdRules[0]).toEqual({
+      protocol: 'tcp',
+      port: 2260,
+      family: 'ipv4',
+      policy: 'allow',
+      direction: 'inbound',
+      source: '所有IP',
+      note: 'SSH 端口联动放行',
+    } satisfies FirewallRuleInput)
+    await waitFor(() =>
+      expect(useNotificationStore.getState().notifications.map((item) => item.message)).toContain(
+        '已为新端口 2260 添加防火墙 tcp 放行规则（mock，待接入真实执行）',
+      ),
+    )
+
+    // 种子里 2222 已有限连规则（limit 即限速的放行）：不重复创建，如实提示。
+    await user.clear(input)
+    await user.type(input, '2222')
+    await user.click(within(service).getByRole('button', { name: '保存端口' }))
+    await user.click(within(screen.getByRole('dialog', { name: '确认修改 SSH 监听端口' })).getByRole('button', { name: '确认保存' }))
+
+    await waitFor(() =>
+      expect(useNotificationStore.getState().notifications.map((item) => item.message)).toContain(
+        '防火墙已有 2222/tcp 的限连规则，无需重复添加',
+      ),
+    )
+    expect(createdRules).toHaveLength(1)
+  })
+
+  it('防火墙未启用时只提示不联动，不发任何规则请求', async () => {
+    const createdRules: FirewallRuleInput[] = []
+    const session = sshSessions({
+      setPort: async (port) => ({ passwordAuthEnabled: false, keyAuthEnabled: true, port }),
+    })
+    const gateway = withFirewallOverrides(session.gateway, {
+      toggles: async () =>
+        ({ firewallEnabled: false, pingBlocked: true, defaultIncoming: null, defaultOutgoing: null }) satisfies FirewallToggles,
+      create: async (input) => {
+        createdRules.push(input)
+        throw new Error('不应该走到创建规则')
+      },
+    })
+    const user = await openSshTab(gateway)
+    const service = screen.getByRole('region', { name: 'SSH 服务' })
+    const input = within(service).getByLabelText('监听端口')
+
+    await user.clear(input)
+    await user.type(input, '2260')
+    await user.click(within(service).getByRole('button', { name: '保存端口' }))
+    await user.click(within(screen.getByRole('dialog', { name: '确认修改 SSH 监听端口' })).getByRole('button', { name: '确认保存' }))
+
+    await waitFor(() =>
+      expect(useNotificationStore.getState().notifications.map((item) => item.message)).toContain(
+        '防火墙当前未启用：新端口未联动放行，启用防火墙前请自行确认放行',
+      ),
+    )
+    expect(createdRules).toEqual([])
+  })
+
+  it('端口已有拒绝规则时不覆盖创建，明确报出锁死风险', async () => {
+    const denySession = sshSessions({
+      setPort: async (port) => ({ passwordAuthEnabled: false, keyAuthEnabled: true, port }),
+    })
+    const denyGateway = withFirewallOverrides(denySession.gateway, {
+      list: async () => [
+        {
+          id: 'fw-2260-ipv4',
+          protocol: 'tcp',
+          port: 2260,
+          portTo: null,
+          family: 'ipv4',
+          status: 'unused',
+          policy: 'deny',
+          direction: 'inbound',
+          source: '所有IP',
+          note: null,
+          updatedAt: null,
+        } satisfies FirewallRule,
+      ],
+    })
+    const user = await openSshTab(denyGateway)
+    const service = screen.getByRole('region', { name: 'SSH 服务' })
+    const input = within(service).getByLabelText('监听端口')
+
+    await user.clear(input)
+    await user.type(input, '2260')
+    await user.click(within(service).getByRole('button', { name: '保存端口' }))
+    await user.click(within(screen.getByRole('dialog', { name: '确认修改 SSH 监听端口' })).getByRole('button', { name: '确认保存' }))
+
+    await waitFor(() =>
+      expect(useNotificationStore.getState().notifications.map((item) => item.message)).toContain(
+        '端口已改为 2260，但防火墙上该端口已有拒绝规则，未添加放行：请先到防火墙页处理，否则 SSH 无法连接',
+      ),
+    )
+  })
+
+  it('联动放行失败不回滚端口，给出手动放行指引', async () => {
+    const failSession = sshSessions({
+      setPort: async (port) => ({ passwordAuthEnabled: false, keyAuthEnabled: true, port }),
+    })
+    const failGateway = withFirewallOverrides(failSession.gateway, {
+      create: async () => {
+        throw new Error('演示用的放行失败')
+      },
+    })
+    const user = await openSshTab(failGateway)
+    const service = screen.getByRole('region', { name: 'SSH 服务' })
+    const input = within(service).getByLabelText('监听端口')
+
+    await user.clear(input)
+    await user.type(input, '2261')
+    await user.click(within(service).getByRole('button', { name: '保存端口' }))
+    await user.click(within(screen.getByRole('dialog', { name: '确认修改 SSH 监听端口' })).getByRole('button', { name: '确认保存' }))
+
+    await waitFor(() =>
+      expect(useNotificationStore.getState().notifications.map((item) => item.message)).toContain(
+        '端口已改为 2261，但防火墙放行失败：演示用的放行失败。请到防火墙页手动放行，否则 SSH 无法连接',
+      ),
+    )
+    // 端口保存本身成功了：失败的是联动，不回滚端口。
+    expect(input).toHaveValue('2261')
+  })
+
+  it('防火墙状态读不出来也只报联动失败：不把已经保存成功的端口报成「保存失败」', async () => {
+    const failSession = sshSessions({
+      setPort: async (port) => ({ passwordAuthEnabled: false, keyAuthEnabled: true, port }),
+    })
+    const failGateway = withFirewallOverrides(failSession.gateway, {
+      toggles: async () => {
+        throw new Error('防火墙读接口 503')
+      },
+    })
+    const user = await openSshTab(failGateway)
+    const service = screen.getByRole('region', { name: 'SSH 服务' })
+    const input = within(service).getByLabelText('监听端口')
+
+    await user.clear(input)
+    await user.type(input, '2263')
+    await user.click(within(service).getByRole('button', { name: '保存端口' }))
+    await user.click(
+      within(screen.getByRole('dialog', { name: '确认修改 SSH 监听端口' })).getByRole('button', {
+        name: '确认保存',
+      }),
+    )
+
+    // 联动读失败有自己的说法与指引；端口已改成功这一事实照旧报出。
+    await waitFor(() =>
+      expect(useNotificationStore.getState().notifications.map((item) => item.message)).toContain(
+        '端口已改为 2263，但防火墙联动检查失败：防火墙读接口 503。请到防火墙页确认 2263/tcp 已放行，否则 SSH 无法连接',
+      ),
+    )
+    const messages = useNotificationStore.getState().notifications.map((item) => item.message)
+    expect(messages).toContain('SSH 端口已改为 2263（mock，待接入真实执行）')
+    expect(messages.some((message) => message.startsWith('保存失败'))).toBe(false)
+    // 端口确实保存成功：确认对话已关、输入框落在新端口上。
+    expect(screen.queryByRole('dialog', { name: '确认修改 SSH 监听端口' })).not.toBeInTheDocument()
+    expect(input).toHaveValue('2263')
   })
 
   it('Root 登录开关：关写 no 收起两区，开写 yes 按全局登录方式呈现，各留通知', async () => {
@@ -439,6 +731,31 @@ describe('SSH 管理页签', () => {
     )
   })
 
+  it('一次性私钥弹窗点外部不关闭：误触不会把仅此一次的私钥丢掉', async () => {
+    const user = await openSshTab()
+    const root = screen.getByRole('region', { name: 'Root 设置' })
+
+    await user.click(within(root).getByRole('button', { name: '重新生成' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Root 密钥已生成' })
+    expect(within(dialog).getByText(/BEGIN OPENSSH PRIVATE KEY/)).toBeInTheDocument()
+
+    // 遮罩与内容之外的一次误触（点在 body 上）不该关掉它，私钥仍在弹窗里。
+    // Radix 的「点外部」判定在 pointerdown 之后等一次 click 才落定，所以按真实误触的顺序两步都走：
+    // 没有守卫时第二步就会关掉弹窗，仅此一次的私钥随之清空。
+    fireEvent.pointerDown(document.body)
+    fireEvent.click(document.body)
+    expect(screen.getByRole('dialog', { name: 'Root 密钥已生成' })).toBeInTheDocument()
+    expect(within(dialog).getByText(/BEGIN OPENSSH PRIVATE KEY/)).toBeInTheDocument()
+    expect(useSshStore.getState().revealKey).toBeDefined()
+
+    // 显式关闭仍然可用：守卫只拦误触，不拦主动动作。
+    await user.click(within(dialog).getByRole('button', { name: '关闭弹窗' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Root 密钥已生成' })).not.toBeInTheDocument(),
+    )
+    expect(useSshStore.getState().revealKey).toBeUndefined()
+  })
+
   it('Root 密钥未生成时给空态说明与「生成密钥」入口，不编造材料', async () => {
     const { gateway } = sshSessions({
       rootAuth: async () => ({ policy: 'prohibit-password', key: null, passwordResetAt: null }),
@@ -488,5 +805,31 @@ describe('SSH 管理页签', () => {
 
     await user.click(within(alert).getByRole('button', { name: '重试' }))
     expect(await screen.findByRole('region', { name: 'SSH 服务' })).toBeInTheDocument()
+  })
+})
+
+describe('改端口确认对话的后果文案', () => {
+  it('任何运行时都讲清端口切换与防火墙联动两条后果', () => {
+    for (const docker of [false, true]) {
+      const consequences = sshPortConfirmConsequences(2222, docker)
+      const text = consequences.map((item) => item.text).join('\n')
+      expect(text).toContain('只在改后的端口接受连接')
+      expect(text).toContain('tcp 放行规则')
+      expect(text).toContain('旧端口的规则保留不动')
+    }
+  })
+
+  it('Docker 运行时目标端口非 22 追加宿主机 2222 映射失效的警示', () => {
+    const consequences = sshPortConfirmConsequences(2222, true)
+    const warning = consequences.find((item) => item.tone === 'warning')
+    expect(warning?.text).toContain('宿主机 2222')
+    expect(warning?.text).toContain('将失效')
+    expect(warning?.text).toContain('联调需保持 22')
+  })
+
+  it('Docker 运行时保持 22 不触发映射警示；宿主机演示态任何端口都不触发', () => {
+    expect(sshPortConfirmConsequences(22, true).some((item) => item.text.includes('宿主机 2222'))).toBe(false)
+    expect(sshPortConfirmConsequences(2222, false).some((item) => item.text.includes('宿主机 2222'))).toBe(false)
+    expect(sshPortConfirmConsequences(2222, false)).toHaveLength(2)
   })
 })

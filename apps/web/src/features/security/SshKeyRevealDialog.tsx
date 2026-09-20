@@ -30,6 +30,9 @@ export function SshKeyRevealDialog({
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60" />
         <Dialog.Content
           aria-describedby={undefined}
+          // 点外部一律不关：仅此一次可见的私钥不该因为一次误点丢掉。Esc 与「关闭」仍可退出。
+          onPointerDownOutside={(event) => event.preventDefault()}
+          onInteractOutside={(event) => event.preventDefault()}
           className="fixed left-1/2 top-1/2 z-[55] flex max-h-[min(38rem,calc(100vh-3rem))] w-[min(34rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line bg-bg shadow-2xl"
         >
           <Dialog.Title className="sr-only">{title}</Dialog.Title>
