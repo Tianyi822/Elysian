@@ -8,6 +8,8 @@ services:
     ports:
       # 只发布到宿主回环：dev 服务与防火墙端点不带鉴权，不能暴露给局域网。
       - "127.0.0.1:5173:5173"
+      # 容器内 sshd 供 SSH 面板联调取登录日志，同样只绑宿主回环，绝不裸绑局域网。
+      - "127.0.0.1:2222:22"
     environment:
       ELSYIAN_DOCKER: "1"
     # 防火墙面板真实执行 ufw/iptables，需要网络管理能力。
@@ -20,7 +22,9 @@ services:
       - elysian_node_modules:/app/node_modules
       - elysian_web_node_modules:/app/apps/web/node_modules
       - elysian_contracts_node_modules:/app/packages/foundation/contracts/node_modules
-    command: sh -c "bun install && bun run dev"
+    # 先起容器内 sshd：建权限分离目录 /run/sshd，日志写 /var/log/sshd.log（SSH 面板数据源），
+    # 启动失败只影响 SSH 联调、不阻断 dev server，然后照常安装依赖并启动 dev。
+    command: sh -c "mkdir -p /run/sshd && (/usr/sbin/sshd -E /var/log/sshd.log || true) && bun install && bun run dev"
 
 volumes:
   elysian_metrics:
