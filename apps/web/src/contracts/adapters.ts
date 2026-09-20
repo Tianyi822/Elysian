@@ -295,19 +295,29 @@ export interface SshAdapter {
 }
 
 /**
- * 主机账号适配接口。本期为 mock 实现：账号改动只落内存数据集；
- * 真实的账号增删改由未来执行层筛选与执行，页面不改。
+ * 主机账号适配接口。mock 实现落内存数据集；Docker 运行时由 HTTP adapter 接通容器内
+ * useradd/usermod/userdel/gpasswd/chpasswd 的真实执行（经 /api/security/users 端点），页面不改。
  */
 export interface UserAdapter {
-  /** 主机账号列表（演示）：这台机器上的系统账号，按创建时间倒序。 */
+  /**
+   * 主机账号列表。id 即用户名（Linux 账号名就是它的唯一标识）；真实实现只含
+   * uid 1000-60000 的系统账号——root 不在其中（它的登录策略在 SSH 页 Root 设置里单独管），
+   * nobody 等高 uid 保留账号同样不在。mock 按创建时间倒序，真实实现按名字升序返回。
+   */
   list(): Promise<readonly HostUser[]>
-  /** 创建账号（演示）：用户名按 Linux 取名规则校验，重名即拒绝。 */
+  /**
+   * 创建账号：用户名按 Linux 取名规则校验且系统不存在（getent passwd 反查为空）；
+   * 登录方式含密码时 password 必填，密码只经 chpasswd 的 stdin 下发、绝不进命令行。
+   */
   create(input: { name: string } & HostUserInput): Promise<HostUser>
-  /** 修改账号（演示）：只改认证方式、状态、管理员归属与备注，用户名不动。 */
+  /**
+   * 修改账号：只改认证方式、状态、管理员归属与备注，用户名不动（id 即用户名）；
+   * 服务端按 id 反查系统账号，反查不到或 uid 越出 1000-60000 一律拒绝。
+   */
   update(userId: string, input: HostUserInput): Promise<HostUser>
-  /** 删除账号（演示）：只改内存数据集，不触碰任何真实系统账号。 */
+  /** 删除账号：真实实现执行 userdel 且不带 -r（主目录保留，删除弹窗文案注明）。 */
   remove(userId: string): Promise<void>
-  /** 从承载本页签的操作系统重新读取账号列表（演示）：返回同步后的账号总数。 */
+  /** 从承载本页签的操作系统重新读取账号列表：真实实现即重读 getent，返回同步后的账号总数。 */
   syncFromSystem(): Promise<{ total: number }>
 }
 

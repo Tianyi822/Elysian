@@ -47,16 +47,27 @@ export type HostUser = {
   status: HostUserStatus
   /** 备注为空时界面显示 —。 */
   note: string | null
-  /** 创建时间（ISO）。 */
-  createdAt: string
+  /**
+   * 创建时间（ISO）。/etc/passwd 不记录账号创建时间，容器 overlayfs 的 btime 不可靠，
+   * 因此真实实现恒为 null（界面显示 —，排序时 null 靠后按名字）；mock 保持种子值。
+   */
+  createdAt: string | null
 }
 
-/** 新建或修改账号的输入。用户名只在创建时确定：Linux 里改名等于新建再迁移，首版不做。 */
+/**
+ * 新建或修改账号的输入。用户名只在创建时确定：Linux 里改名等于新建再迁移，首版不做。
+ * password 绝不进命令行，只经 chpasswd 的 stdin 下发。
+ */
 export type HostUserInput = {
   loginMethod: HostUserLoginMethod
   status: HostUserStatus
   isAdmin: boolean
   note: string | null
+  /**
+   * 初始或新密码：登录方式含密码时创建必填；更新时留空或 undefined 表示不修改当前密码。
+   * mock 侧不消费该字段，行为不变。
+   */
+  password?: string | null
 }
 
 export const HOST_USER_NAME_MAX_LENGTH = 32

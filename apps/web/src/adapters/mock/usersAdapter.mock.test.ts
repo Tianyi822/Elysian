@@ -32,7 +32,8 @@ describe('主机账号 mock adapter', () => {
       'backup',
       'audit',
     ])
-    const createdAt = list.map((user) => new Date(user.createdAt).getTime())
+    // mock 保持种子值：createdAt 全部非 null；真实实现才恒为 null（契约允许两者共存）。
+    const createdAt = list.map((user) => (user.createdAt === null ? Number.NEGATIVE_INFINITY : new Date(user.createdAt).getTime()))
     expect([...createdAt].sort((a, b) => b - a)).toEqual(createdAt)
     expect(list.find((user) => user.name === 'ops')?.isAdmin).toBe(true)
     // 账号正常但禁止登录：与「账号已停用」是两回事

@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest'
-import { cleanup } from '@testing-library/react'
+import { cleanup, configure } from '@testing-library/react'
 import { afterEach } from 'vitest'
 import { useNotificationStore } from '../stores/notificationStore'
 
@@ -7,6 +7,10 @@ import { useNotificationStore } from '../stores/notificationStore'
  * Radix 的浮层组件依赖几个 jsdom 未实现的浏览器 API，缺了会在打开浮层时报错。
  * 只补最小的空实现，不做行为模拟。
  */
+
+// Testing Library 的 findBy/waitFor 默认只等 1s：共享宿主机高负载时，mock 即时返回
+// 的首屏渲染也可能超预算被误判为「找不到元素」。放宽到 5s 只影响等待上限，不影响断言。
+configure({ asyncUtilTimeout: 5_000 })
 
 if (!('matchMedia' in window)) {
   Object.defineProperty(window, 'matchMedia', {

@@ -26,6 +26,9 @@ const NODE_SIDE_ALLOWLIST = [
   'adapters/sshHost/api.ts',
   'adapters/sshHost/api.node.ts',
   'adapters/sshHost/sshApi.vite.ts',
+  'adapters/usersHost/api.ts',
+  'adapters/usersHost/api.node.ts',
+  'adapters/usersHost/usersApi.vite.ts',
   'adapters/endpointGuard/guard.ts',
 ]
 

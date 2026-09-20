@@ -646,12 +646,15 @@ export class MockUserAdapter implements UserAdapter {
       throw new Error('用户名只能用小写字母、数字、下划线与连字符，且由字母或下划线开头')
     }
     if (findHostUserByName(input.name)) throw new Error(`用户名已存在：${input.name}`)
-    const { name, ...rest } = input
+    // mock 不消费 password：真实实现的 chpasswd 路径在演示态不存在，字段在这里丢弃、不落数据集。
+    const { name, password: _password, ...rest } = input
     return addHostUser(name, rest, new Date().toISOString())
   }
 
   async update(userId: string, input: HostUserInput): Promise<HostUser> {
-    return updateHostUser(userId, input)
+    // 同上：password 只属于真实实现，mock 保持行为不变。
+    const { password: _password, ...rest } = input
+    return updateHostUser(userId, rest)
   }
 
   async remove(userId: string): Promise<void> {
