@@ -2,14 +2,17 @@ import { useEffect, useId } from 'react'
 import {
   SSH_DEFAULT_PORT,
   SSH_LOGIN_RESULT_LABELS,
+  SSH_LOGIN_WINDOWS,
+  SSH_LOGIN_WINDOW_LABELS,
   SSH_PASSWORD_STRENGTH_LABELS,
   SSH_ROOT_LOGIN_POLICIES,
   SSH_ROOT_LOGIN_POLICY_LABELS,
   SSH_SERVICE_STATUS_LABELS,
   evaluateSshPasswordStrength,
 } from '@elysian/contracts'
-import type { SshPasswordStrength } from '@elysian/contracts'
+import type { SshLoginStats, SshPasswordStrength } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
+import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { IconButton } from '../../components/IconButton'
 import { StatusTag } from '../../components/StatusTag'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
@@ -26,9 +29,10 @@ import { randomSshPort, randomStrongPassword } from './sshRandom'
 
 /**
  * SSH 管理面板：四张卡排成两行，行内等高。
- * 第一行是设置卡——SSH 服务（启停、端口、登录方式）与 Root 设置（登录策略、密码、密钥）；
- * 第二行是列表卡——SSH 密钥（搜索、创建、表格）与 SSH 登录记录（占位，待实现）。
- * 数据全部来自 SSH adapter（本期 mock），动作只改内存数据并留 mock 标注。
+ * 第一行是设置卡——SSH 服务（启停、登录统计、端口、登录方式）与 Root 设置（登录策略、密码、密钥）；
+ * 第二行是列表卡——SSH 密钥（搜索、创建、表格）与 SSH 登录记录。
+ * 数据来自 SSH adapter：Docker 运行时由 HTTP adapter 真实操作容器内 sshd，
+ * 宿主机本地开发是内存演示；动作完成提示按运行时如实描述。
  */
 
 const STRENGTH_CLASSES: Record<SshPasswordStrength, string> = {
@@ -247,9 +251,13 @@ function ServiceCard() {
           上次变更：{overview.changedAt ? formatDateTime(overview.changedAt) : '—'}
         </p>
         <p className="mt-2 text-xs text-fg-subtle">
-          停用后本机不再接受 SSH 连接；动作只改演示内存，不触碰任何真实主机。
+          {isDockerRuntime()
+            ? '停用后本机不再接受 SSH 连接；动作在容器内真实执行。'
+            : '停用后本机不再接受 SSH 连接；动作只改演示内存，不触碰任何真实主机。'}
         </p>
       </Region>
+
+      <LoginStatsRegion stats={overview.stats} enabled={enabled} />
 
       <Region title="监听端口" labelFor={portInputId}>
         <div className="flex items-center gap-2">
@@ -307,6 +315,58 @@ function ServiceCard() {
         </div>
       </Region>
     </Section>
+  )
+}
+
+/**
+ * 登录统计区域：今日、昨日与近 7 天三个窗口的成功与失败计数，窗口与结果的文案都取契约标签表。
+ * 契约约定服务未启用时界面不给统计——没有服务就没有登录记录，空态说明代替零值统计。
+ */
+function LoginStatsRegion({ stats, enabled }: { stats: SshLoginStats; enabled: boolean }) {
+  return (
+    <Region title="登录统计">
+      {enabled ? (
+        <table className="w-full table-fixed border-separate border-spacing-0 text-left text-sm">
+          {/* 定宽三列：窗口名、成功、失败；计数用等宽数字，翻动时列宽不跳。 */}
+          <colgroup>
+            <col className="w-[40%]" />
+            <col className="w-[30%]" />
+            <col className="w-[30%]" />
+          </colgroup>
+          <thead>
+            <tr>
+              {['时间窗口', SSH_LOGIN_RESULT_LABELS.succeeded, SSH_LOGIN_RESULT_LABELS.failed].map((label, index) => (
+                <th
+                  key={label}
+                  scope="col"
+                  className={`border-b border-line pb-2 text-xs font-medium text-fg-muted ${index === 0 ? '' : 'pl-3'}`}
+                >
+                  {label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {SSH_LOGIN_WINDOWS.map((window) => (
+              <tr key={window}>
+                <th scope="row" className="border-b border-line py-2 text-xs font-medium text-fg-muted">
+                  {SSH_LOGIN_WINDOW_LABELS[window]}
+                </th>
+                <td className="border-b border-line py-2 pl-3 tabular-nums text-fg">
+                  {stats[window].succeeded}
+                </td>
+                {/* 失败计数带危险色：爆破尝试是这块的重点信号，文字与颜色一起表达。 */}
+                <td className="border-b border-line py-2 pl-3 tabular-nums text-danger">
+                  {stats[window].failed}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <p className="text-xs text-fg-subtle">SSH 服务未启用，没有登录记录可统计。</p>
+      )}
+    </Region>
   )
 }
 

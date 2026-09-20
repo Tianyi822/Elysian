@@ -10,7 +10,8 @@ import type {
 } from '@elysian/contracts'
 import { SSH_PASSWORD_STRENGTH_LABELS, SSH_ROOT_LOGIN_POLICY_LABELS, isValidSshPort } from '@elysian/contracts'
 import { create } from 'zustand'
-import type { ElysianGateway } from '../contracts/adapters'
+import type { ElysianGateway, SshKeyAccount } from '../contracts/adapters'
+import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
 import { useNotificationStore } from './notificationStore'
 
 /** SSH 管理页签的状态：服务概况、登录方式与端口、Root 凭据、登录密钥，以及各分区自己的忙碌态。 */
@@ -18,6 +19,15 @@ type SshStatus = 'idle' | 'loading' | 'ready' | 'error'
 
 /** 两张表每页条数：密钥与登录记录同一口径，与防火墙端口规则表一致。 */
 export const SSH_PAGE_SIZE = 20
+
+/**
+ * 动作完成提示的演示标注：Docker 运行时动作已真实执行 sshd/chpasswd/ssh-keygen，
+ * 不再带标注；宿主机本地开发（内存演示）保留。括号形态用于追加在句子末尾，
+ * 分号形态用于嵌进已有的括号里（Root 密码重置），两种只用这一个来源。
+ */
+const MOCK_NOTE = isDockerRuntime() ? '' : 'mock，待接入真实执行'
+const MOCK_SUFFIX = MOCK_NOTE ? `（${MOCK_NOTE}）` : ''
+const MOCK_INLINE_NOTE = MOCK_NOTE ? `；${MOCK_NOTE}` : ''
 
 type SshState = {
   status: SshStatus
@@ -28,6 +38,8 @@ type SshState = {
   keys: readonly SshLoginKey[]
   /** 登录记录：只读，登录事实由服务端给出，界面不产生也不修改它。 */
   loginRecords: readonly SshLoginRecord[]
+  /** 密钥可归属的账号清单：mock 来自账号数据集，Docker 运行时来自 getent 的真实系统账号。 */
+  keyAccounts: readonly SshKeyAccount[]
   /** 端口输入框的草稿。存字符串而不是数字，用户才能把输入清空、也才能输入到一半。 */
   portDraft: string
   portError: string | undefined
@@ -86,6 +98,7 @@ export const useSshStore = create<SshState>((set, get) => ({
   rootAuth: undefined,
   keys: [],
   loginRecords: [],
+  keyAccounts: [],
   portDraft: '',
   portError: undefined,
   passwordDraft: '',
@@ -107,12 +120,13 @@ export const useSshStore = create<SshState>((set, get) => ({
     if (get().status === 'loading') return
     set({ status: 'loading', errorMessage: undefined })
     try {
-      const [overview, settings, rootAuth, keys, loginRecords] = await Promise.all([
+      const [overview, settings, rootAuth, keys, loginRecords, keyAccounts] = await Promise.all([
         gateway.ssh.overview(),
         gateway.ssh.settings(),
         gateway.ssh.rootAuth(),
         gateway.ssh.listKeys(),
         gateway.ssh.listLoginRecords(),
+        gateway.ssh.keyAccounts(),
       ])
       set({
         status: 'ready',
@@ -121,6 +135,7 @@ export const useSshStore = create<SshState>((set, get) => ({
         rootAuth,
         keys,
         loginRecords,
+        keyAccounts,
         portDraft: `${settings.port}`,
       })
     } catch (error) {
@@ -139,7 +154,7 @@ export const useSshStore = create<SshState>((set, get) => ({
     try {
       const confirmed = await gateway.ssh.setServiceEnabled(enabled)
       set({ overview: confirmed, togglingService: false })
-      notify(`SSH 服务已${enabled ? '启用' : '停用'}（mock，待接入真实执行）`)
+      notify(`SSH 服务已${enabled ? '启用' : '停用'}${MOCK_SUFFIX}`)
     } catch (error) {
       set({ overview: previous, togglingService: false })
       notify(error instanceof Error ? `切换失败：${error.message}` : '切换失败', 'danger')
@@ -157,7 +172,7 @@ export const useSshStore = create<SshState>((set, get) => ({
         patch.passwordAuthEnabled !== undefined
           ? `SSH 密码登录已${confirmed.passwordAuthEnabled ? '开启' : '关闭'}`
           : `SSH 密钥登录已${confirmed.keyAuthEnabled ? '开启' : '关闭'}`
-      notify(`${label}（mock，待接入真实执行）`)
+      notify(`${label}${MOCK_SUFFIX}`)
     } catch (error) {
       set({ settings: previous, savingAuth: false })
       notify(error instanceof Error ? `保存失败：${error.message}` : '保存失败', 'danger')
@@ -180,7 +195,7 @@ export const useSshStore = create<SshState>((set, get) => ({
     try {
       const confirmed = await gateway.ssh.setPort(Number(draft))
       set({ settings: confirmed, portDraft: `${confirmed.port}`, savingPort: false })
-      notify(`SSH 端口已改为 ${confirmed.port}（mock，待接入真实执行）`)
+      notify(`SSH 端口已改为 ${confirmed.port}${MOCK_SUFFIX}`)
     } catch (error) {
       set({ savingPort: false })
       notify(error instanceof Error ? `保存失败：${error.message}` : '保存失败', 'danger')
@@ -194,7 +209,7 @@ export const useSshStore = create<SshState>((set, get) => ({
     try {
       const confirmed = await gateway.ssh.saveRootLoginPolicy(policy)
       set({ rootAuth: confirmed, savingPolicy: false })
-      notify(`Root 登录策略已改为「${SSH_ROOT_LOGIN_POLICY_LABELS[policy]}」（mock，待接入真实执行）`)
+      notify(`Root 登录策略已改为「${SSH_ROOT_LOGIN_POLICY_LABELS[policy]}」${MOCK_SUFFIX}`)
     } catch (error) {
       set({ rootAuth: previous, savingPolicy: false })
       notify(error instanceof Error ? `保存失败：${error.message}` : '保存失败', 'danger')
@@ -218,7 +233,7 @@ export const useSshStore = create<SshState>((set, get) => ({
       const result = await gateway.ssh.resetRootPassword(password)
       set({ rootAuth: result.auth, passwordDraft: '', resettingPassword: false })
       notify(
-        `Root 密码已重置（强度：${SSH_PASSWORD_STRENGTH_LABELS[result.strength]}；mock，待接入真实执行）`,
+        `Root 密码已重置（强度：${SSH_PASSWORD_STRENGTH_LABELS[result.strength]}${MOCK_INLINE_NOTE}）`,
       )
     } catch (error) {
       set({ resettingPassword: false })
@@ -266,7 +281,7 @@ export const useSshStore = create<SshState>((set, get) => ({
         createKeyOpen: false,
         creatingKey: false,
       }))
-      notify(`SSH 密钥「${created.name}」已创建（mock，待接入真实执行）`)
+      notify(`SSH 密钥「${created.name}」已创建${MOCK_SUFFIX}`)
       return true
     } catch (error) {
       set({ creatingKey: false })
@@ -293,7 +308,7 @@ export const useSshStore = create<SshState>((set, get) => ({
         keys: state.keys.filter((key) => key.id !== keyId),
         removingKeyIds: state.removingKeyIds.filter((id) => id !== keyId),
       }))
-      notify(`SSH 密钥「${target.name}」已删除（mock，待接入真实执行）`)
+      notify(`SSH 密钥「${target.name}」已删除${MOCK_SUFFIX}`)
     } catch (error) {
       set((state) => ({
         removingKeyIds: state.removingKeyIds.filter((id) => id !== keyId),

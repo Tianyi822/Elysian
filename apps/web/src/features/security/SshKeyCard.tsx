@@ -1,42 +1,33 @@
-import { useEffect, useId, useMemo } from 'react'
+import { useId, useMemo } from 'react'
 import type { SshLoginKey } from '@elysian/contracts'
-import { useGateway } from '../../adapters/GatewayProvider'
 import { IconButton } from '../../components/IconButton'
 import { formatDateTime } from '../../components/format'
 import { KeyRound, Search, Trash2 } from '../../components/icons'
 import { SSH_PAGE_SIZE, useSshStore } from '../../stores/sshStore'
-import { useUsersStore } from '../../stores/usersStore'
 import { ACTION_CLASS, CONTROL_HEIGHT_CLASS, Section, TablePager } from './sshCardParts'
 import { filterSshKeys } from './sshKeySearch'
 
 /**
  * SSH 密钥卡：搜索、创建入口与密钥表格。
  * 搜索按名称、指纹与私钥内容匹配（判据见 sshKeySearch.ts），粘一整份私钥能准确定位到那一行。
- * 表格只列名称、创建时间与操作，密钥材料在行内的「查看密钥」弹窗里给。
+ * 表格只列名称、归属账号、创建时间与操作，密钥材料在行内的「查看密钥」弹窗里给。
  */
 export function SshKeyCard() {
-  const gateway = useGateway()
   const keys = useSshStore((s) => s.keys)
+  const keyAccounts = useSshStore((s) => s.keyAccounts)
   const search = useSshStore((s) => s.keySearch)
   const page = useSshStore((s) => s.keyPage)
   const setKeySearch = useSshStore((s) => s.setKeySearch)
   const setKeyPage = useSshStore((s) => s.setKeyPage)
   const openCreateKey = useSshStore((s) => s.openCreateKey)
-  const users = useUsersStore((s) => s.users)
-  const usersStatus = useUsersStore((s) => s.status)
-  const loadUsers = useUsersStore((s) => s.load)
   const searchInputId = useId()
 
-  // 归属账号名按 userId 现取：账号数据集才是账号名的家，这里不存冗余字段。
+  // 归属账号名按 userId 现取：keyAccounts 是账号清单的家（mock 为账号数据集、Docker 为 getent），
+  // 与创建弹窗的下拉同源，这里不存冗余字段。
   const ownerNameOf = useMemo(() => {
-    const names = new Map(users.map((user) => [user.id, user.name]))
+    const names = new Map(keyAccounts.map((account) => [account.id, account.name]))
     return (userId: string) => names.get(userId) ?? '账号已删除'
-  }, [users])
-
-  // 账号被删掉后它的密钥也不在了，但直接打开本页签时账号还没加载过，这里补一次。
-  useEffect(() => {
-    if (usersStatus === 'idle') void loadUsers(gateway)
-  }, [gateway, loadUsers, usersStatus])
+  }, [keyAccounts])
 
   const filtered = useMemo(
     () => filterSshKeys(search, keys, ownerNameOf),

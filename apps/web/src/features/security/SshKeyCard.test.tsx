@@ -2,7 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { SEED_LOGIN_KEYS } from '../../adapters/mock/sshData'
 import { SSH_PAGE_SIZE, useSshStore } from '../../stores/sshStore'
-import { openSshTab, resetSshPanel, sshSessions, userSessions } from '../../test/sshPanel'
+import { openSshTab, resetSshPanel, sshSessions } from '../../test/sshPanel'
 
 /**
  * SSH 密钥表的端到端行为：种子列表、按名称与完整私钥搜索、创建、删除、查看密钥。
@@ -152,17 +152,15 @@ describe('SSH 密钥表', () => {
     )
   })
 
-  it('账号列表为空时，归属账号下拉给出说明，而不是一个看不见的空盒', async () => {
-    const { gateway } = userSessions({ list: async () => [] })
+  it('账号清单为空时，归属账号下拉给出说明，而不是一个看不见的空盒', async () => {
+    const { gateway } = sshSessions({ keyAccounts: async () => [] })
     const user = await openSshTab(gateway)
 
     await user.click(within(keyCard()).getByRole('button', { name: '创建 SSH 密钥' }))
     const dialog = await screen.findByRole('dialog', { name: '创建 SSH 密钥' })
     await user.click(within(dialog).getByRole('combobox', { name: '归属账号' }))
 
-    expect(
-      await screen.findByText('还没有可选的账号，先去「用户管理」创建一个'),
-    ).toBeInTheDocument()
+    expect(await screen.findByText('还没有可选的账号，先创建一个可登录的主机账号')).toBeInTheDocument()
     expect(screen.queryAllByRole('option')).toHaveLength(0)
   })
 

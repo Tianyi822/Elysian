@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { SshAdapter } from '../../contracts/adapters'
 import { MockSshAdapter } from './mockAdapters'
+import { resetHostUsers, SEED_HOST_USERS } from './usersData'
 import {
   SEED_LOGIN_KEYS,
   SEED_LOGIN_RECORDS,
@@ -19,6 +20,7 @@ let ssh: SshAdapter
 
 beforeEach(() => {
   resetSshData()
+  resetHostUsers()
   ssh = new MockSshAdapter()
 })
 
@@ -110,6 +112,15 @@ describe('SSH mock adapter', () => {
       expect(key.publicKey).toContain(key.name)
       expect(key.privateKey!.startsWith('-----BEGIN OPENSSH PRIVATE KEY-----')).toBe(true)
     }
+  })
+
+  it('keyAccounts 回退账号数据集的种子账号，与真实实现同形（id 加展示名）', async () => {
+    const accounts = await ssh.keyAccounts()
+    expect(accounts).toEqual(SEED_HOST_USERS.map((user) => ({ id: user.id, name: user.name })))
+    expect(accounts).toContainEqual({ id: 'user-wangwu', name: 'wangwu' })
+    // id 就是 createKey 的归属账号：清单里的账号都能创建到
+    const created = await ssh.createKey({ name: '按清单归属', userId: accounts[0]!.id })
+    expect(created.userId).toBe(accounts[0]!.id)
   })
 
   it('创建密钥：名称去空白后入列，空名、重名与不存在的归属账号都被拒', async () => {

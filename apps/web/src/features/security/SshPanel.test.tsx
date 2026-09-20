@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { SEED_LOGIN_RECORDS, SEED_SSH_PORT } from '../../adapters/mock/sshData'
+import { SEED_LOGIN_RECORDS, SEED_SSH_PORT, SEED_SSH_STATS } from '../../adapters/mock/sshData'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { SSH_PAGE_SIZE } from '../../stores/sshStore'
 import { renderApp } from '../../test/renderApp'
@@ -42,7 +42,7 @@ describe('SSH 管理页签', () => {
     expect(settingRow).not.toBe(tableRow)
 
     // 卡内按区域划分，每区自带小标题。
-    for (const name of ['服务状态', '监听端口', '登录方式']) {
+    for (const name of ['服务状态', '登录统计', '监听端口', '登录方式']) {
       expect(within(service).getByText(name), name).toBeInTheDocument()
     }
     for (const name of ['Root 登录策略', 'Root 密码', 'Root 密钥']) {
@@ -116,6 +116,50 @@ describe('SSH 管理页签', () => {
     expect(rows[1]?.textContent).toContain('还没有登录记录')
     expect(within(records).getByRole('button', { name: '上一页' })).toBeDisabled()
     expect(within(records).getByRole('button', { name: '下一页' })).toBeDisabled()
+  })
+
+  it('登录统计：三个窗口的成功与失败计数上屏，数据与 overview.stats 一致', async () => {
+    await openSshTab()
+
+    const service = screen.getByRole('region', { name: 'SSH 服务' })
+    const stats = within(service).getByText('登录统计').parentElement
+    expect(stats).toBeInTheDocument()
+
+    const table = within(stats as HTMLElement).getByRole('table')
+    // 表头三列：窗口、成功、失败（列名取契约标签表）
+    expect(within(table).getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual([
+      '时间窗口',
+      '成功',
+      '失败',
+    ])
+    // 三行窗口按契约 SSH_LOGIN_WINDOWS 的顺序渲染，计数用等宽数字
+    const rows = within(table).getAllByRole('row').slice(1)
+    expect(rows).toHaveLength(3)
+    expect(rows[0]).toHaveTextContent('今日')
+    expect(rows[0]).toHaveTextContent(`${SEED_SSH_STATS.today.succeeded}`)
+    expect(rows[0]).toHaveTextContent(`${SEED_SSH_STATS.today.failed}`)
+    expect(rows[1]).toHaveTextContent('昨日')
+    expect(rows[1]).toHaveTextContent(`${SEED_SSH_STATS.yesterday.succeeded}`)
+    expect(rows[1]).toHaveTextContent(`${SEED_SSH_STATS.yesterday.failed}`)
+    expect(rows[2]).toHaveTextContent('近 7 天')
+    expect(rows[2]).toHaveTextContent(`${SEED_SSH_STATS.last7Days.succeeded}`)
+    expect(rows[2]).toHaveTextContent(`${SEED_SSH_STATS.last7Days.failed}`)
+    // 失败计数带危险色，成功计数不带：文字与颜色一起区分两种结果
+    expect(within(rows[0] as HTMLElement).getAllByRole('cell')[1]).toHaveClass('text-danger')
+    expect(within(rows[0] as HTMLElement).getAllByRole('cell')[0]).not.toHaveClass('text-danger')
+  })
+
+  it('服务未启用时登录统计给空态说明，不渲染零值统计', async () => {
+    const { gateway } = sshSessions({
+      overview: async () => ({ enabled: false, status: 'stopped', changedAt: null, stats: SEED_SSH_STATS }),
+    })
+    await openSshTab(gateway)
+
+    const service = screen.getByRole('region', { name: 'SSH 服务' })
+    expect(within(service).getByText('SSH 服务未启用，没有登录记录可统计。')).toBeInTheDocument()
+    // 契约约定：没有服务就没有登录记录，界面不给零值统计
+    expect(within(service).queryByText('今日')).not.toBeInTheDocument()
+    expect(within(service).queryByText('近 7 天')).not.toBeInTheDocument()
   })
 
   it('种子数据上屏：服务运行中、端口 73、密码登录关闭、密钥登录开启', async () => {

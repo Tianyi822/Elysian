@@ -24,6 +24,7 @@ export const INITIAL_SSH_STATE = {
   rootAuth: undefined,
   keys: [],
   loginRecords: [],
+  keyAccounts: [],
   portDraft: '',
   portError: undefined,
   passwordDraft: '',

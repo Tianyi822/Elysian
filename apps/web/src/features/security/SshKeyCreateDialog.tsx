@@ -1,11 +1,10 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Select from '@radix-ui/react-select'
-import { useEffect, useId, useState } from 'react'
+import { useId, useState } from 'react'
 import { SSH_KEY_NAME_MAX_LENGTH, isValidSshKeyName } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { Check, ChevronDown, X } from '../../components/icons'
 import { useSshStore } from '../../stores/sshStore'
-import { useUsersStore } from '../../stores/usersStore'
 import { ACTION_CLASS } from './sshCardParts'
 
 /**
@@ -13,17 +12,16 @@ import { ACTION_CLASS } from './sshCardParts'
  *
  * 密钥不是孤立的——公钥要写进某个账号的 authorized_keys，所以归属账号是必填的第一项，
  * 弹窗底部用一块说明把「创建后会怎样」讲清楚，避免只填完两个字段还不知道发生了什么。
- * 账号列表从账号 store 现取（账号名的家在那里），打开时若还没加载就顺手加载一次。
+ * 账号清单来自 SSH store 的 keyAccounts（面板加载时一并取回）：mock 下是账号数据集的种子，
+ * Docker 运行时是 getent 读到的真实系统账号，弹窗本身不感知数据来自哪里。
  */
 export function SshKeyCreateDialog() {
   const gateway = useGateway()
   const keys = useSshStore((s) => s.keys)
+  const keyAccounts = useSshStore((s) => s.keyAccounts)
   const creating = useSshStore((s) => s.creatingKey)
   const closeCreateKey = useSshStore((s) => s.closeCreateKey)
   const createKey = useSshStore((s) => s.createKey)
-  const users = useUsersStore((s) => s.users)
-  const usersStatus = useUsersStore((s) => s.status)
-  const loadUsers = useUsersStore((s) => s.load)
   const [name, setName] = useState('')
   const [userId, setUserId] = useState('')
   const [nameError, setNameError] = useState<string | undefined>(undefined)
@@ -31,13 +29,9 @@ export function SshKeyCreateDialog() {
   const nameInputId = useId()
   const ownerLabelId = useId()
 
-  useEffect(() => {
-    if (usersStatus === 'idle') void loadUsers(gateway)
-  }, [gateway, loadUsers, usersStatus])
-
   const submit = () => {
     const trimmed = name.trim()
-    const owner = users.find((user) => user.id === userId)
+    const owner = keyAccounts.find((account) => account.id === userId)
     if (!owner) {
       setOwnerError('请选择归属账号')
       return
@@ -109,25 +103,21 @@ export function SshKeyCreateDialog() {
                     // 取决于 DOM 顺序与堆叠上下文，对话框面板是不透明的，被盖住就等于点了没反应。
                     className="z-[70] max-h-64 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-lg border border-line bg-surface p-1 text-xs shadow-lg"
                   >
-                    {users.length === 0 ? (
-                      // 账号没加载出来时，弹层会是一个看不见的空盒——点开毫无反馈，等于坏掉。
-                      // 这里按加载状态给出明确的一行说明，至少让这一次点击有结果。
+                    {keyAccounts.length === 0 ? (
+                      // 账号清单为空时，弹层会是一个看不见的空盒——点开毫无反馈，等于坏掉。
+                      // 这里给出明确的一行说明，至少让这一次点击有结果。
                       <p className="px-2 py-1.5 text-xs text-fg-muted">
-                        {usersStatus === 'loading' || usersStatus === 'idle'
-                          ? '正在加载账号…'
-                          : usersStatus === 'error'
-                            ? '账号列表加载失败，关掉弹窗重开再试'
-                            : '还没有可选的账号，先去「用户管理」创建一个'}
+                        还没有可选的账号，先创建一个可登录的主机账号
                       </p>
                     ) : (
                       <Select.Viewport>
-                        {users.map((user) => (
+                        {keyAccounts.map((account) => (
                           <Select.Item
-                            key={user.id}
-                            value={user.id}
+                            key={account.id}
+                            value={account.id}
                             className="flex cursor-default select-none items-center gap-2 rounded px-2 py-1.5 text-fg-muted outline-none data-[highlighted]:bg-surface-raised data-[highlighted]:text-fg data-[state=checked]:font-medium data-[state=checked]:text-fg"
                           >
-                            <Select.ItemText>{user.name}</Select.ItemText>
+                            <Select.ItemText>{account.name}</Select.ItemText>
                             <Select.ItemIndicator className="ml-auto inline-flex w-3.5 text-fg">
                               <Check aria-hidden size={13} />
                             </Select.ItemIndicator>
