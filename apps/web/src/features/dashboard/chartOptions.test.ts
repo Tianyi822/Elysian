@@ -48,12 +48,15 @@ describe('资源趋势 option', () => {
 
     const series = option.series as ReadonlyArray<{
       id: string
-      data: readonly [number, number][]
+      data: ReadonlyArray<{ id: string; value: [number, number] }>
       itemStyle: { color: string }
     }>
     expect(series).toHaveLength(1)
     expect(series[0]?.id).toBe('resource-cpu')
-    expect(series[0]?.data).toEqual(points.map((point) => [point.ts, point.cpu]))
+    // 每个点把时间戳当作 id：滚动窗里同一个采样点保持身份，折线才会左移而不是重新入场
+    expect(series[0]?.data).toEqual(
+      points.map((point) => ({ id: String(point.ts), value: [point.ts, point.cpu] })),
+    )
     expect(series[0]?.itemStyle.color).toBe(PALETTE.accent)
 
     expect(option.animation).toBe(true)
@@ -134,9 +137,17 @@ describe('资源趋势 option', () => {
         xAxisIndex: 0,
       }),
     )
-    expect(option.animationDuration).toBe(0)
+  })
+
+  it('折线随滚动窗左移：首屏不入场、更新按线性缓动平移，系列不再关动画', () => {
+    const option = buildResourceTrendOption(makePoints(60), 'cpu', PALETTE)
     const series = option.series as ReadonlyArray<{ animation?: boolean }>
-    expect(series[0]?.animation).toBe(false)
+
+    expect(option.animationDuration).toBe(0)
+    expect(series[0]?.animation).toBeUndefined()
+    expect(option.animationDurationUpdate).toBeGreaterThan(0)
+    expect(option.animationDurationUpdate).toBeLessThanOrEqual(300)
+    expect(option.animationEasingUpdate).toBe('linear')
   })
 })
 
@@ -155,9 +166,67 @@ describe('运行负载条形图 option', () => {
     expect(series[0]?.data.map((entry) => entry.value)).toEqual([0.02, 0.08, 0.4])
   })
 
-  it('数值轴上限固定为 2.5，与 load average 的演示区间一致', () => {
-    const option = buildLoadBarsOption({ m1: 2.4, m5: 0.1, m15: 0.05 }, PALETTE)
-    expect((option.xAxis as { max: number }).max).toBe(2.5)
+  it('演示区间下量程停在 2.5，真实 loadavg 越界时量程上浮', () => {
+    const demo = buildLoadBarsOption({ m1: 2.4, m5: 0.1, m15: 0.05 }, PALETTE)
+    expect((demo.xAxis as { max: number }).max).toBe(2.5)
+
+    // 多核宿主上 load 常年过 2.5：钉死上限会把轨道顶满、刻度说谎。
+    const busy = buildLoadBarsOption({ m1: 6.8, m5: 5.2, m15: 3.1 }, PALETTE)
+    expect((busy.xAxis as { max: number }).max).toBe(7)
+  })
+
+  it('轨道常显，低读数时读起来是刻度而非空白', () => {
+    const option = buildLoadBarsOption({ m1: 0.15, m5: 0.14, m15: 0.32 }, PALETTE)
+    const series = option.series as ReadonlyArray<{
+      showBackground: boolean
+      barWidth: number
+      backgroundStyle: { borderRadius: number }
+      data: ReadonlyArray<{ itemStyle: { borderRadius: number } }>
+    }>
+    expect(series[0]?.showBackground).toBe(true)
+    expect(series[0]?.backgroundStyle.borderRadius).toBe((series[0]?.barWidth ?? 0) / 2)
+    expect(series[0]?.data[0]?.itemStyle.borderRadius).toBe((series[0]?.barWidth ?? 0) / 2)
+  })
+
+  it('轨道铺满整行，读数固定在标签列', () => {
+    const load = { m1: 0.16, m5: 0.13, m15: 0.1 }
+    const narrow = buildLoadBarsOption(load, PALETTE, { width: 340, height: 176 })
+    const wide = buildLoadBarsOption(load, PALETTE, { width: 1200, height: 300 })
+    const labelOf = (option: ReturnType<typeof buildLoadBarsOption>) =>
+      option.yAxis as {
+        axisLabel: {
+          formatter: (label: string, index: number) => string
+          rich: { name: { fontSize: number }; value: { fontSize: number; width: number } }
+        }
+      }
+
+    // 右侧只留一条边距：宽卡片不再空出一片，轨道本身就是到上限的刻度。
+    expect((wide.grid as { right: number }).right).toBeLessThan(40)
+    // 类目轴自下而上：'1 分钟' 落在最后一个位置。
+    expect(labelOf(wide).axisLabel.formatter('1 分钟', 2)).toBe('{name|1 分钟} {value|0.16}')
+    expect(labelOf(wide).axisLabel.formatter('15 分钟', 0)).toBe('{name|15 分钟} {value|0.10}')
+    expect(labelOf(wide).axisLabel.rich.value.fontSize).toBeGreaterThan(
+      labelOf(narrow).axisLabel.rich.value.fontSize,
+    )
+    const barWidthOf = (option: ReturnType<typeof buildLoadBarsOption>) =>
+      (option.series as ReadonlyArray<{ barWidth: number }>)[0]!.barWidth
+    expect(barWidthOf(wide)).toBeGreaterThan(barWidthOf(narrow))
+  })
+
+  it('读数列宽随最宽读数算，多位数不会把右对齐挤坏', () => {
+    const small = buildLoadBarsOption({ m1: 0.16, m5: 0.13, m15: 0.1 }, PALETTE, {
+      width: 1200,
+      height: 300,
+    })
+    const large = buildLoadBarsOption({ m1: 1024.5, m5: 0.13, m15: 0.1 }, PALETTE, {
+      width: 1200,
+      height: 300,
+    })
+    const columnOf = (option: ReturnType<typeof buildLoadBarsOption>) =>
+      (option.yAxis as { axisLabel: { rich: { value: { width: number } } } }).axisLabel.rich.value
+        .width
+
+    expect(columnOf(large)).toBeGreaterThan(columnOf(small))
   })
 })
 
@@ -176,19 +245,90 @@ describe('磁盘占用环图 option', () => {
     const series = option.series as ReadonlyArray<{
       id: string
       type: string
-      center: [string, string]
+      center: [number, string]
       data: ReadonlyArray<{ name: string; value: number }>
     }>
     expect(series[0]?.id).toBe('disk-ring')
     expect(series[0]?.type).toBe('pie')
-    expect(series[0]?.center[0]).toBe('24%')
     expect(series[0]?.data.map((entry) => entry.name)).toEqual(disks.map((disk) => disk.mount))
     expect(series[0]?.data.map((entry) => entry.value)).toEqual(disks.map((disk) => disk.usedKb))
 
-    const legend = option.legend as { data: readonly string[]; selectedMode: boolean; left: string }
+    const legend = option.legend as { data: readonly string[]; selectedMode: boolean }
     expect(legend.selectedMode).toBe(false)
-    expect(legend.left).toBe('46%')
     expect(legend.data).toEqual(['/e', '/d', '/c', '/b', '/a'])
+  })
+
+  it('环与图例按像素紧邻成组：间隙不随卡片变宽而放大', () => {
+    const disks = [
+      { mount: '/', usagePct: 62, usedKb: 620_000, sizeKb: 1_000_000 },
+      { mount: '/data', usagePct: 78, usedKb: 1_560_000, sizeKb: 2_000_000 },
+    ]
+    const geometry = (option: ReturnType<typeof buildDiskRingOption>) => {
+      const series = option.series as ReadonlyArray<{
+        center: [number, string]
+        radius: [number, number]
+      }>
+      const legend = option.legend as { left: number }
+      const [inner, outer] = series[0]!.radius
+      return {
+        gap: legend.left - (series[0]!.center[0] + outer),
+        ringLeft: series[0]!.center[0] - outer,
+        hole: outer - inner,
+      }
+    }
+    const narrow = geometry(buildDiskRingOption(disks, PALETTE, { width: 340, height: 176 }))
+    const wide = geometry(buildDiskRingOption(disks, PALETTE, { width: 1200, height: 300 }))
+
+    expect(wide.gap).toBe(narrow.gap)
+    // 窄卡整组仍贴左缘，宽卡整组居中：留白分到两侧，而不是全堆在右边。
+    expect(narrow.ringLeft).toBeLessThan(60)
+    expect(wide.ringLeft).toBeGreaterThan(narrow.ringLeft * 3)
+    // 环随卡片长高而变大，不是钉死在小尺寸。
+    expect(wide.hole).toBeGreaterThan(narrow.hole)
+  })
+
+  it('长挂载点先吃掉图例的宽度预算，环为此让位而不是把图例挤出容器', () => {
+    const geometry = (option: ReturnType<typeof buildDiskRingOption>) => {
+      const series = option.series as ReadonlyArray<{ radius: [number, number] }>
+      const legend = option.legend as {
+        left: number
+        textStyle: { rich: { label: { overflow?: string; width?: number } } }
+      }
+      return {
+        radius: series[0]!.radius[1],
+        legendLeft: legend.left,
+        labelStyle: legend.textStyle.rich.label,
+      }
+    }
+    const size = { width: 264, height: 160 }
+    const short = geometry(
+      buildDiskRingOption([{ mount: '/', usagePct: 62, usedKb: 620, sizeKb: 1000 }], PALETTE, size),
+    )
+    const long = geometry(
+      buildDiskRingOption(
+        [{ mount: '/var/lib/elysian', usagePct: 62, usedKb: 620, sizeKb: 1000 }],
+        PALETTE,
+        size,
+      ),
+    )
+
+    expect(long.radius).toBeLessThan(short.radius)
+    expect(long.legendLeft).toBeLessThan(short.legendLeft)
+    // 预算兜底仍放不下时退成省略号，而不是被容器右缘切一半。
+    expect(long.labelStyle.overflow).toBe('truncate')
+    expect(long.labelStyle.width).toBeGreaterThan(0)
+    expect(long.legendLeft + (long.labelStyle.width ?? 0)).toBeLessThanOrEqual(size.width)
+  })
+
+  it('图例右侧够宽才补容量明细，窄卡只留挂载点与占用率', () => {
+    const disks = [{ mount: '/backup', usagePct: 41, usedKb: 2_050_000, sizeKb: 5_000_000 }]
+    const narrowLegend = buildDiskRingOption(disks, PALETTE, { width: 340, height: 176 })
+      .legend as { formatter: (name: string) => string }
+    const wideLegend = buildDiskRingOption(disks, PALETTE, { width: 1200, height: 300 })
+      .legend as { formatter: (name: string) => string }
+
+    expect(narrowLegend.formatter('/backup')).toBe('{label|/backup  41%}')
+    expect(wideLegend.formatter('/backup')).toContain('2.0 GB / 4.8 GB')
   })
 
   it('阈值着色：≥80 警告、≥90 危险', () => {

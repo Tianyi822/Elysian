@@ -2,7 +2,18 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import * as echarts from 'echarts/core'
 import type { EChartsCoreOption } from 'echarts/core'
 import { readChartPalette } from './chartOptions'
-import type { ChartPalette } from './chartOptions'
+import type { ChartPalette, ChartSize } from './chartOptions'
+
+function readSize(el: HTMLElement | null): ChartSize {
+  if (!el) return { width: 0, height: 0 }
+  const rect = el.getBoundingClientRect()
+  // 取整：容器宽是小数时，拖拽窗口会让每一帧都算作「尺寸变了」，八张图跟着每帧重排。
+  return { width: Math.round(rect.width), height: Math.round(rect.height) }
+}
+
+function sameSize(a: ChartSize, b: ChartSize): boolean {
+  return a.width === b.width && a.height === b.height
+}
 
 function readZoomed(chart: echarts.ECharts): boolean {
   const option = chart.getOption() as {
@@ -17,10 +28,12 @@ function readZoomed(chart: echarts.ECharts): boolean {
 
 /**
  * 图表实例：首屏完整 option；后续只补丁 series/yAxis，避免 dataZoom 被冲掉、数值从 0 重播。
+ * 更新一律按 id 合并、不用 replaceMerge：系列保留身份，ECharts 才会把新数据当成同一系列的
+ * 更新让折线整体左移一格；图例保留身份，用户点掉的系列才不会在下一拍被放回来。
  * 可选 Brush（lineX）框选后转成 dataZoom；缩放后由调用方展示复位。
  */
 export function useChart(
-  buildOption: () => EChartsCoreOption,
+  buildOption: (size: ChartSize) => EChartsCoreOption,
   rebuildKey: string,
   options: { enableBrush?: boolean } = {},
 ) {
@@ -31,6 +44,7 @@ export function useChart(
   buildRef.current = buildOption
   const readyRef = useRef(false)
   const [isZoomed, setIsZoomed] = useState(false)
+  const [size, setSize] = useState<ChartSize>({ width: 0, height: 0 })
 
   const resetZoom = useCallback(() => {
     const chart = chartRef.current
@@ -49,14 +63,22 @@ export function useChart(
 
   useEffect(() => {
     if (!containerRef.current) return
+    const initialSize = readSize(containerRef.current)
+    setSize(initialSize)
     const chart = echarts.init(containerRef.current, undefined, { renderer: 'svg' })
     chartRef.current = chart
 
     const observer =
-      typeof ResizeObserver === 'function' ? new ResizeObserver(() => chart.resize()) : undefined
+      typeof ResizeObserver === 'function'
+        ? new ResizeObserver(() => {
+            chart.resize()
+            const next = readSize(containerRef.current)
+            setSize((prev) => (sameSize(prev, next) ? prev : next))
+          })
+        : undefined
     if (observer) observer.observe(containerRef.current)
 
-    chart.setOption(buildRef.current(), { notMerge: false, lazyUpdate: false })
+    chart.setOption(buildRef.current(initialSize), { notMerge: false, lazyUpdate: false })
     if (enableBrush) {
       chart.dispatchAction({
         type: 'takeGlobalCursor',
@@ -108,7 +130,7 @@ export function useChart(
   useEffect(() => {
     const chart = chartRef.current
     if (!chart || !readyRef.current) return
-    const next = buildRef.current()
+    const next = buildRef.current(size)
     const patch: EChartsCoreOption = {
       series: next.series,
       yAxis: next.yAxis,
@@ -118,13 +140,12 @@ export function useChart(
     }
     if (next.legend !== undefined) patch.legend = next.legend
     if (next.grid !== undefined) patch.grid = next.grid
-    // replaceMerge 系列与图例，避免主题切换后标签/图例色被旧样式合并残留。
-    chart.setOption(patch, {
-      notMerge: false,
-      lazyUpdate: false,
-      replaceMerge: ['series', 'legend'],
-    })
-  }, [rebuildKey])
+    if (next.brush !== undefined) patch.brush = next.brush
+    // 一律按 id 合并，不用 replaceMerge：replaceMerge 会重建组件——图例重建后
+    // selected 被清空，用户点掉的系列下一拍全部回来。配色（含框选框色）随补丁一起换。
+    // 代价是系列不会被整体替换：今天的系列 id 固定，删系列需要另走重建路径。
+    chart.setOption(patch, { notMerge: false, lazyUpdate: false })
+  }, [rebuildKey, size])
 
   return { containerRef, isZoomed, resetZoom }
 }

@@ -1,14 +1,4 @@
-import { BarChart, LineChart, PieChart } from 'echarts/charts'
-import {
-  BrushComponent,
-  DataZoomComponent,
-  GridComponent,
-  LegendComponent,
-  TooltipComponent,
-} from 'echarts/components'
-import * as echarts from 'echarts/core'
 import type { EChartsCoreOption } from 'echarts/core'
-import { SVGRenderer } from 'echarts/renderers'
 import { useTheme } from '../../app/theme/ThemeProvider'
 import {
   RESOURCE_METRIC_LABELS,
@@ -17,26 +7,16 @@ import {
   type ResourceSamplePoint,
 } from '../../adapters/mock/resourceMetrics'
 import type { DiskUsage, SystemLoad } from '../../adapters/mock/resourceMetrics'
+import './chartComponents'
 import {
   buildDiskRingOption,
   buildLoadBarsOption,
   buildResourceTrendOption,
   readChartPalette,
 } from './chartOptions'
+import type { ChartSize } from './chartOptions'
 import { formatResourceMetricValue } from './formatMetricDisplay'
 import { useChart } from './useChart'
-
-echarts.use([
-  BarChart,
-  LineChart,
-  PieChart,
-  GridComponent,
-  TooltipComponent,
-  LegendComponent,
-  DataZoomComponent,
-  BrushComponent,
-  SVGRenderer,
-])
 
 function ResourcePanel({
   metricKey,
@@ -87,7 +67,7 @@ function BarsPanel({
   rebuildKey,
 }: {
   title: string
-  buildOption: () => EChartsCoreOption
+  buildOption: (size: ChartSize) => EChartsCoreOption
   rebuildKey: string
 }) {
   const { containerRef } = useChart(buildOption, rebuildKey)
@@ -95,10 +75,11 @@ function BarsPanel({
   return (
     <article
       aria-label={title}
-      className="rounded-xl border border-line bg-surface p-4 md:p-5"
+      className="flex min-w-0 flex-col rounded-xl border border-line bg-surface p-4 md:p-5"
     >
       <h2 className="text-sm font-semibold">{title}</h2>
-      <div ref={containerRef} className="mt-4 h-40 w-full sm:h-44" />
+      {/* 图吃满卡片剩余高度：与趋势卡同排时被拉高，小图跟着变大而不是缩在顶部。 */}
+      <div ref={containerRef} className="mt-4 min-h-40 w-full flex-1" />
     </article>
   )
 }
@@ -107,7 +88,7 @@ function BarsPlaceholder({ title }: { title: string }) {
   return (
     <article
       aria-label={title}
-      className="rounded-xl border border-line bg-surface p-4 md:p-5"
+      className="flex min-w-0 flex-col rounded-xl border border-line bg-surface p-4 md:p-5"
     >
       <h2 className="text-sm font-semibold">{title}</h2>
       <p className="mt-4 text-sm text-fg-muted">等待资源采样…</p>
@@ -125,9 +106,12 @@ export function ResourceChartsSection({
   const { theme } = useTheme()
 
   return (
-    <section aria-label="服务器状态" className="mb-6">
+    <section aria-label="服务器状态" className="@container mb-6">
       <h2 className="mb-3 text-sm font-semibold text-fg-muted">服务器状态</h2>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      {/* 列数取内容区实测宽度而非视口：侧边栏收展改变可用宽度，卡片随之增减。
+          两列要求单卡至少 ~280px，否则趋势图的横轴标签和负载轨道都会挤到不可读；
+          宽屏加到三列把单卡宽度压回可读比例，负载条与磁盘环不再被拉成横幅。 */}
+      <div className="grid grid-cols-1 gap-4 @xl:grid-cols-2 @7xl:grid-cols-3">
         {(Object.keys(RESOURCE_METRIC_LABELS) as ResourceMetricKey[]).map((metricKey) => (
           <ResourcePanel
             key={metricKey}
@@ -140,7 +124,7 @@ export function ResourceChartsSection({
         {system ? (
           <BarsPanel
             title="运行负载"
-            buildOption={() => buildLoadBarsOption(system.load, readChartPalette(theme))}
+            buildOption={(size) => buildLoadBarsOption(system.load, readChartPalette(theme), size)}
             rebuildKey={`load:${theme}:${JSON.stringify(system.load)}`}
           />
         ) : (
@@ -149,7 +133,7 @@ export function ResourceChartsSection({
         {system ? (
           <BarsPanel
             title="磁盘占用"
-            buildOption={() => buildDiskRingOption(system.disks, readChartPalette(theme))}
+            buildOption={(size) => buildDiskRingOption(system.disks, readChartPalette(theme), size)}
             rebuildKey={`disk:${theme}:${JSON.stringify(system.disks)}`}
           />
         ) : (
