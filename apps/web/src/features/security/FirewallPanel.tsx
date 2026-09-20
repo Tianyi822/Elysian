@@ -97,7 +97,7 @@ function ToolButton({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="inline-flex items-center rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:opacity-50"
+      className="inline-flex items-center whitespace-nowrap rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:opacity-50"
     >
       {label}
     </button>
@@ -118,7 +118,13 @@ function ViewSwitch({
     { value: 'forward', label: '端口转发' },
   ]
   return (
-    <div role="group" aria-label="规则类型" className="inline-flex overflow-hidden rounded-lg border border-line">
+    <div
+      role="group"
+      aria-label="规则类型"
+      // shrink-0 是必需的：overflow 非 visible 的 flex 项自动最小尺寸为 0，
+      // 空间不够时整组会被压窄，里面的标签有 whitespace-nowrap 反而被裁切。
+      className="inline-flex shrink-0 overflow-hidden rounded-lg border border-line"
+    >
       {options.map((option, index) => (
         <button
           key={option.value}
@@ -267,9 +273,12 @@ export function FirewallPanel() {
           onCheckedChange={(checked) => void toggle(gateway, { ...toggles, pingBlocked: checked })}
         />
         <span aria-hidden className="hidden h-5 w-px bg-line sm:block" />
-        {/* 默认策略只读呈现：改默认策略是系统级变更，由系统侧配置承担。 */}
+        {/* 默认策略只读呈现：改默认策略是系统级变更，由系统侧配置承担。
+            ufw 未激活时整段不打印 Default 行，此时如实标注未知，不替系统编一个策略出来。 */}
         <span className="text-xs text-fg-muted" title="ufw Default 策略">
-          默认策略：入站{FIREWALL_POLICY_LABELS[toggles.defaultIncoming]} · 出站{FIREWALL_POLICY_LABELS[toggles.defaultOutgoing]}
+          {toggles.defaultIncoming === null || toggles.defaultOutgoing === null
+            ? '默认策略：未知（防火墙未激活）'
+            : `默认策略：入站${FIREWALL_POLICY_LABELS[toggles.defaultIncoming]} · 出站${FIREWALL_POLICY_LABELS[toggles.defaultOutgoing]}`}
         </span>
       </div>
 
@@ -359,10 +368,12 @@ export function FirewallPanel() {
         </div>
       </div>
 
-      {/* 固有宽度探针：脱离布局、量出按钮行与搜索框各自需要多宽，供折行判断使用。
+      {/* 固有宽度探针：脱离布局、量出「左区整组」与搜索框各自需要多宽，供折行判断使用。
+          左区必须与真实行同构（视图切换 + 按钮），漏掉任何一项都会让预算偏小、误判放得下。
           invisible（含 aria-hidden + pointer-events-none）使探针不参与无障碍树与交互。 */}
       <div aria-hidden className="pointer-events-none invisible absolute top-0 left-0">
         <div ref={probeRef} className="flex w-max gap-2">
+          <ViewSwitch view={view} onChange={() => {}} />
           {toolbarButtons.map((label) => (
             <ToolButton key={label} label={label} />
           ))}

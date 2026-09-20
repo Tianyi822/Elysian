@@ -134,6 +134,13 @@ describe('specFromForwardInput', () => {
     // comment 用双引号包住，备注里的双引号会破坏规则文本
     expect(() => specFromForwardInput({ ...base, note: '外层"引号' })).toThrow('备注不能包含双引号')
   })
+
+  it('备注含换行或回车被拒绝，正常备注不受影响', () => {
+    // 换行会把 before.rules 里的一行规则断成两行，iptables-restore 随之解析失败
+    expect(() => specFromForwardInput({ ...base, note: '第一行\n第二行' })).toThrow('备注不能包含换行')
+    expect(() => specFromForwardInput({ ...base, note: '第一行\r第二行' })).toThrow('备注不能包含换行')
+    expect(specFromForwardInput({ ...base, note: '博客上游 8080' })).toMatchObject({ note: '博客上游 8080' })
+  })
 })
 
 describe('forwardRowFromSpec', () => {

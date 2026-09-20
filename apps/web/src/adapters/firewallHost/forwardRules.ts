@@ -1,4 +1,5 @@
 import type { FirewallForwardInput, FirewallForwardRule } from '@elysian/contracts'
+import { assertNoteSafe } from './noteValidation'
 import { isValidFirewallAddress } from './parseUfw'
 
 /*
@@ -266,10 +267,8 @@ export function specFromForwardInput(input: FirewallForwardInput): ForwardSpec {
   if (!Number.isInteger(input.targetPort) || input.targetPort < 1 || input.targetPort > 65535) {
     throw new Error(`目标端口无效：${input.targetPort}（应为 1–65535 的整数）`)
   }
-  if (input.note && input.note.includes('"')) {
-    // comment 以双引号包进规则文本，备注里的双引号会破坏规则
-    throw new Error('备注不能包含双引号')
-  }
+  // 备注以双引号包进规则文本：换行/回车/控制字符与双引号都会写坏 before.rules
+  assertNoteSafe(input.note, 'forward')
   return {
     protocol: input.protocol,
     port: input.portTo !== undefined ? `${input.port}:${input.portTo}` : String(input.port),

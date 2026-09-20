@@ -30,9 +30,47 @@ function sendError(res: ServerResponse, status: number, error: unknown): void {
   sendJson(res, status, { error: message })
 }
 
+/** 请求体上限：64 KiB。规则与配置都远小于它，超限一律 413，防大包拖垮解析与内存。 */
+const MAX_JSON_BODY_BYTES = 64 * 1024
+
+/** 带状态码的错误：端点守卫（同源、Content-Type、体积上限）失败时抛出，handle 按 status 映射响应。 */
+class EndpointGuardError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message)
+  }
+}
+
+/** 同源校验：写请求必须带 Origin 且其 host 与 Host 头一致（大小写归一，解析失败视为不匹配）；GET/HEAD 无副作用不校验。 */
+function isSameOrigin(req: IncomingMessage): boolean {
+  const method = (req.method ?? 'GET').toUpperCase()
+  if (method === 'GET' || method === 'HEAD') return true
+  const origin = req.headers.origin
+  const host = req.headers.host
+  if (!origin || !host) return false
+  try {
+    return new URL(origin).host.toLowerCase() === host.toLowerCase()
+  } catch {
+    return false
+  }
+}
+
 async function readJsonBody(req: IncomingMessage): Promise<unknown> {
+  const contentType = (req.headers['content-type'] ?? '').toLowerCase()
+  if (!contentType.startsWith('application/json')) {
+    throw new EndpointGuardError(415, 'Content-Type 必须为 application/json')
+  }
+  // 先按申报的 content-length 直接拒；实读再累计字节数，防谎报长度绕过。
+  const declaredLength = Number(req.headers['content-length'])
+  if (declaredLength > MAX_JSON_BODY_BYTES) {
+    throw new EndpointGuardError(413, '请求体过大')
+  }
   const chunks: Buffer[] = []
+  let receivedBytes = 0
   for await (const chunk of req) {
+    receivedBytes += (chunk as Buffer).length
+    if (receivedBytes > MAX_JSON_BODY_BYTES) {
+      throw new EndpointGuardError(413, '请求体过大')
+    }
     chunks.push(chunk as Buffer)
   }
   const text = Buffer.concat(chunks).toString('utf8')
@@ -62,6 +100,12 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: FirewallA
     return
   }
   const service = deps.service
+
+  // 同源守卫先于读体：跨源写请求在解析任何请求体之前就被拒绝。
+  if (!isSameOrigin(req)) {
+    sendJson(res, 403, { error: '请求来源不允许' })
+    return
+  }
 
   try {
     if (method === 'GET' && (path === '/' || path === '')) {
@@ -186,8 +230,8 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: FirewallA
 
     sendJson(res, 404, { error: `未知防火墙端点：${method} ${path}` })
   } catch (error) {
-    // 业务性失败（重复规则、ufw 报错）带中文消息返回给界面呈现。
-    sendError(res, 500, error)
+    // 业务性失败（重复规则、ufw 报错）带中文消息返回给界面呈现；守卫错误按自带状态码返回。
+    sendError(res, error instanceof EndpointGuardError ? error.status : 500, error)
   }
 }
 
@@ -201,8 +245,8 @@ function parseToggles(body: unknown): FirewallToggles {
   return {
     firewallEnabled: row.firewallEnabled,
     pingBlocked: row.pingBlocked,
-    defaultIncoming: 'deny',
-    defaultOutgoing: 'allow',
+    defaultIncoming: null,
+    defaultOutgoing: null,
   }
 }
 

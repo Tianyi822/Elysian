@@ -29,6 +29,7 @@ function asObject(value: unknown): Record<string, unknown> {
 }
 
 function parsePolicy(value: unknown): FirewallToggles['defaultIncoming'] {
+  if (value === null || value === undefined) return null
   return value === 'allow' ? 'allow' : value === 'limit' ? 'limit' : 'deny'
 }
 

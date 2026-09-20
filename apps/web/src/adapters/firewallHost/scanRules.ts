@@ -29,6 +29,9 @@ function validateConfig(config: FirewallScanConfig): FirewallScanConfig {
   if (config.ports.length === 0 || config.ports.some((port) => !Number.isInteger(port) || port < 1 || port > 65535)) {
     throw new Error('监控端口无效：应为 1–65535 的端口列表')
   }
+  if (config.ports.length > 15) {
+    throw new Error(`监控端口过多：${config.ports.length} 个（最多 15 个端口，内核 multiport 匹配上限）`)
+  }
   if (!Number.isInteger(config.windowSeconds) || config.windowSeconds < 10 || config.windowSeconds > 3600) {
     throw new Error(`判定窗口无效：${config.windowSeconds}（应为 10–3600 秒）`)
   }

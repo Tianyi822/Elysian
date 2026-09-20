@@ -66,16 +66,19 @@ describe('parseStatusVerbose', () => {
   it('识别激活状态并解析默认策略', () => {
     const status = parseStatusVerbose('Status: active\nLogging: on (low)\nDefault: deny (incoming), allow (outgoing), disabled (routed)\n')
     expect(status).toEqual({ active: true, defaultIncoming: 'deny', defaultOutgoing: 'allow' })
-    expect(parseStatusVerbose('Status: inactive\nDefault: allow (incoming), deny (outgoing), disabled (routed)\n')).toEqual({
+  })
+
+  it('未激活时真实 ufw 只有 Status 一行，默认策略读作未知而不是报错', () => {
+    expect(parseStatusVerbose('Status: inactive\n')).toEqual({
       active: false,
-      defaultIncoming: 'allow',
-      defaultOutgoing: 'deny',
+      defaultIncoming: null,
+      defaultOutgoing: null,
     })
   })
 
-  it('缺少 Status 或 Default 行时报中文错误', () => {
+  it('缺少 Status 行才是输出无效', () => {
     expect(() => parseStatusVerbose('Default: deny (incoming), allow (outgoing)\n')).toThrow('缺少 Status 行')
-    expect(() => parseStatusVerbose('Status: active\n')).toThrow('缺少 Default 行')
+    expect(() => parseStatusVerbose('')).toThrow('缺少 Status 行')
   })
 })
 
@@ -143,6 +146,22 @@ describe('specFromInput 与 specToArgs 往返', () => {
     expect(() => specFromInput({ ...base, source: "evil'; rm -rf /" })).toThrow('来源无效')
     expect(() => specFromInput({ ...base, note: "it's" })).toThrow('备注不能包含单引号')
   })
+
+  it('备注含换行或回车被拒绝，正常备注不受影响', () => {
+    const base = {
+      protocol: 'tcp' as const,
+      port: 80,
+      family: 'ipv4' as const,
+      policy: 'allow' as const,
+      direction: 'inbound' as const,
+      source: SOURCE_ALL_IPS,
+      note: null,
+    }
+    // 换行写进规则后回读解析失败，规则会从面板消失
+    expect(() => specFromInput({ ...base, note: '第一行\n第二行' })).toThrow('备注不能包含换行')
+    expect(() => specFromInput({ ...base, note: '第一行\r第二行' })).toThrow('备注不能包含换行')
+    expect(specFromInput({ ...base, note: 'Web 服务器' })).toMatchObject({ port: '80', from: 'any' })
+  })
 })
 
 describe('ipSpecFromInput', () => {
@@ -158,6 +177,14 @@ describe('ipSpecFromInput', () => {
     expect(() => ipSpecFromInput({ policy: 'deny', source: SOURCE_ALL_IPS, note: null })).toThrow('来源无效')
     expect(() => ipSpecFromInput({ policy: 'deny', source: 'example.com', note: null })).toThrow('来源无效')
     expect(() => ipSpecFromInput({ policy: 'weird' as 'deny', source: '1.2.3.4', note: null })).toThrow('策略无效')
+  })
+
+  it('备注含单引号、换行或回车被拒绝，正常备注不受影响', () => {
+    expect(() => ipSpecFromInput({ policy: 'deny', source: '203.0.113.9', note: "it's" })).toThrow('备注不能包含单引号')
+    // 换行写进规则后回读解析失败，规则会从面板消失
+    expect(() => ipSpecFromInput({ policy: 'deny', source: '203.0.113.9', note: '第一行\n第二行' })).toThrow('备注不能包含换行')
+    expect(() => ipSpecFromInput({ policy: 'deny', source: '203.0.113.9', note: '第一行\r第二行' })).toThrow('备注不能包含换行')
+    expect(ipSpecFromInput({ policy: 'deny', source: '203.0.113.9', note: '扫描源' })).toMatchObject({ from: '203.0.113.9' })
   })
 })
 

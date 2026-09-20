@@ -64,6 +64,17 @@ describe('setScanSection', () => {
     expect(() => setScanSection(BASE_RULES, true, { ...DEFAULT_SCAN_CONFIG, ports: [] })).toThrow('监控端口无效')
   })
 
+  it('端口超过内核 multiport 上限时拒绝', () => {
+    const ports = Array.from({ length: 16 }, (_, i) => 10000 + i)
+    expect(() => setScanSection(BASE_RULES, true, { ...DEFAULT_SCAN_CONFIG, ports })).toThrow('最多 15 个端口')
+  })
+
+  it('恰好 15 个端口可正常生成规则段', () => {
+    const ports = Array.from({ length: 15 }, (_, i) => 10000 + i)
+    const enabled = setScanSection(BASE_RULES, true, { ...DEFAULT_SCAN_CONFIG, ports })
+    expect(enabled).toContain(`--dports ${ports.join(',')}`)
+  })
+
   it('没有 COMMIT 行时报中文错误', () => {
     expect(() => setScanSection('-A foo\n', true)).toThrow('before.rules 格式无效')
   })

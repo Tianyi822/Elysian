@@ -122,10 +122,10 @@ export type FirewallForwardInput = {
 export type FirewallToggles = {
   firewallEnabled: boolean
   pingBlocked: boolean
-  /** 入站默认策略（ufw Default incoming）。 */
-  defaultIncoming: FirewallPolicy
-  /** 出站默认策略（ufw Default outgoing）。 */
-  defaultOutgoing: FirewallPolicy
+  /** 入站默认策略（ufw Default incoming）；ufw 未激活时不打印 Default 行，取值为 null。 */
+  defaultIncoming: FirewallPolicy | null
+  /** 出站默认策略（ufw Default outgoing）；ufw 未激活时不打印 Default 行，取值为 null。 */
+  defaultOutgoing: FirewallPolicy | null
 }
 
 /** 新建或修改端口规则的输入。状态不由表单决定：真实态按监听套接字派生，演示态新建即未使用；

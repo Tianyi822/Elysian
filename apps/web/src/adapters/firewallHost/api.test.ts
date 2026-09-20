@@ -107,7 +107,18 @@ async function readResponse(handler: (req: IncomingMessage, res: ServerResponse)
 async function fakeReq(method: string, url: string, body?: unknown): Promise<IncomingMessage> {
   const payload = body === undefined ? '' : JSON.stringify(body)
   const stream = Readable.from(payload ? [Buffer.from(payload, 'utf8')] : [])
-  return Object.assign(stream, { method, url }) as unknown as IncomingMessage
+  return Object.assign(stream, {
+    method,
+    url,
+    headers: {
+      // 同源合法头：Origin 与 Host 一致；带体请求声明 JSON 与真实长度。
+      host: 'localhost:5173',
+      origin: 'http://localhost:5173',
+      ...(payload
+        ? { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(payload, 'utf8')) }
+        : {}),
+    },
+  }) as unknown as IncomingMessage
 }
 
 const AVAILABLE: FirewallApiDeps = { available: true, service: createFakeService() }
@@ -142,8 +153,9 @@ describe('createFirewallApiHandler', () => {
       await fakeReq('PUT', '/toggles', { firewallEnabled: true, pingBlocked: true }),
     )
     expect(statusCode).toBe(200)
+    // 请求里带来的默认策略不采信：端点只转发两个布尔开关，策略留空由 service 回读真实态。
     expect(body).toEqual({
-      toggles: { firewallEnabled: true, pingBlocked: true, defaultIncoming: 'deny', defaultOutgoing: 'allow' },
+      toggles: { firewallEnabled: true, pingBlocked: true, defaultIncoming: null, defaultOutgoing: null },
     })
   })
 
@@ -351,7 +363,16 @@ describe('createFirewallApiHandler', () => {
   it('请求体不是 JSON 返回 500 带中文错误', async () => {
     const handler = createFirewallApiHandler(AVAILABLE)
     const stream = Readable.from([Buffer.from('not-json', 'utf8')])
-    const req = Object.assign(stream, { method: 'PUT', url: '/toggles' }) as unknown as IncomingMessage
+    const req = Object.assign(stream, {
+      method: 'PUT',
+      url: '/toggles',
+      headers: {
+        host: 'localhost:5173',
+        origin: 'http://localhost:5173',
+        'content-type': 'application/json',
+        'content-length': '8',
+      },
+    }) as unknown as IncomingMessage
     const { body } = await readResponse(handler, req)
     expect((body as { error: string }).error).toBe('请求体不是有效 JSON')
   })
@@ -368,5 +389,99 @@ describe('createFirewallApiHandler', () => {
 
     await readResponse(handler, await fakeReq('POST', '/rules', {}))
     expect(calls[0]).toMatchObject({ protocol: 'tcp', source: '' })
+  })
+
+  it('跨源 PUT 在读体之前返回 403', async () => {
+    const calls: unknown[] = []
+    const service = createFakeService({
+      setToggles: async (toggles) => {
+        calls.push(toggles)
+        return toggles
+      },
+    })
+    const handler = createFirewallApiHandler({ available: true, service })
+    // 请求体故意不是合法 JSON：若守卫晚于读体，这里会变成 500 的解析错误而非 403。
+    const stream = Readable.from([Buffer.from('not-json', 'utf8')])
+    const req = Object.assign(stream, {
+      method: 'PUT',
+      url: '/toggles',
+      headers: { host: 'localhost:5173', origin: 'http://evil.example', 'content-type': 'application/json' },
+    }) as unknown as IncomingMessage
+
+    const { statusCode, body } = await readResponse(handler, req)
+    expect(statusCode).toBe(403)
+    expect(body).toEqual({ error: '请求来源不允许' })
+    expect(calls).toEqual([])
+  })
+
+  it('text/plain 的写请求返回 415', async () => {
+    const handler = createFirewallApiHandler(AVAILABLE)
+    const stream = Readable.from([Buffer.from('{}', 'utf8')])
+    const req = Object.assign(stream, {
+      method: 'POST',
+      url: '/rules',
+      headers: { host: 'localhost:5173', origin: 'http://localhost:5173', 'content-type': 'text/plain' },
+    }) as unknown as IncomingMessage
+
+    const { statusCode, body } = await readResponse(handler, req)
+    expect(statusCode).toBe(415)
+    expect(body).toEqual({ error: 'Content-Type 必须为 application/json' })
+  })
+
+  it('请求体超过 64 KiB 返回 413（申报与实读都拦）', async () => {
+    const handler = createFirewallApiHandler(AVAILABLE)
+
+    // 申报即超限：不看流直接拒。
+    const declared = Object.assign(Readable.from([]), {
+      method: 'POST',
+      url: '/rules',
+      headers: {
+        host: 'localhost:5173',
+        origin: 'http://localhost:5173',
+        'content-type': 'application/json',
+        'content-length': String(64 * 1024 + 1),
+      },
+    }) as unknown as IncomingMessage
+    const declaredRes = await readResponse(handler, declared)
+    expect(declaredRes.statusCode).toBe(413)
+
+    // 谎报 content-length：实读累计字节数兜底。体本身是合法 JSON，只有体积守卫能拒。
+    const oversized = `{"note":"${'a'.repeat(64 * 1024)}"}`
+    const lied = Object.assign(Readable.from([Buffer.from(oversized, 'utf8')]), {
+      method: 'POST',
+      url: '/rules',
+      headers: {
+        host: 'localhost:5173',
+        origin: 'http://localhost:5173',
+        'content-type': 'application/json',
+        'content-length': '2',
+      },
+    }) as unknown as IncomingMessage
+    const liedRes = await readResponse(handler, lied)
+    expect(liedRes.statusCode).toBe(413)
+    expect(liedRes.body).toEqual({ error: '请求体过大' })
+  })
+
+  it('同源 application/json 写请求正常通过守卫', async () => {
+    const handler = createFirewallApiHandler(AVAILABLE)
+    const { statusCode } = await readResponse(
+      handler,
+      await fakeReq('PUT', '/toggles', { firewallEnabled: true, pingBlocked: false }),
+    )
+    expect(statusCode).toBe(200)
+
+    // 大小写归一：Host 大小写不同仍视为同源；带 charset 的 Content-Type 前缀匹配放行。
+    const stream = Readable.from([Buffer.from('{"enabled":false}', 'utf8')])
+    const req = Object.assign(stream, {
+      method: 'POST',
+      url: '/scan/toggle',
+      headers: {
+        host: 'LOCALHOST:5173',
+        origin: 'http://localhost:5173',
+        'content-type': 'application/json; charset=utf-8',
+      },
+    }) as unknown as IncomingMessage
+    const relaxed = await readResponse(handler, req)
+    expect(relaxed.statusCode).toBe(200)
   })
 })

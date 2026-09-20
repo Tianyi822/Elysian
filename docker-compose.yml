@@ -6,7 +6,8 @@ services:
       context: .
       dockerfile: Dockerfile.dev
     ports:
-      - "5173:5173"
+      # 只发布到宿主回环：dev 服务与防火墙端点不带鉴权，不能暴露给局域网。
+      - "127.0.0.1:5173:5173"
     environment:
       ELSYIAN_DOCKER: "1"
     # 防火墙面板真实执行 ufw/iptables，需要网络管理能力。

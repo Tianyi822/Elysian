@@ -198,6 +198,23 @@ describe('防火墙面板', () => {
     )
   })
 
+  it('宽度探针把视图切换一起量进去：漏算 tab 组会把工具栏挤成换行与裁切', async () => {
+    await openFirewallPage()
+
+    // 行内一份、隐藏探针一份。探针里少一份，就说明同行判据的宽度预算漏算了 tab 组，
+    // 于是判成「放得下」而实际放不下，按钮标签被压成两行、tab 组被 overflow 裁掉。
+    const groups = screen.getAllByRole('group', { name: '规则类型', hidden: true })
+    expect(groups).toHaveLength(2)
+  })
+
+  it('工具按钮与视图切换不参与收缩：换行只发生在按钮之间，不在标签内部', async () => {
+    await openFirewallPage()
+
+    const add = screen.getByRole('button', { name: '添加端口规则' })
+    expect(add.className).toContain('whitespace-nowrap')
+    expect(screen.getByRole('group', { name: '规则类型' }).className).toContain('shrink-0')
+  })
+
   it('四个工具按钮都可用：防扫描弹窗按样例呈现统计与空列表', async () => {
     const user = userEvent.setup()
     await openFirewallPage()

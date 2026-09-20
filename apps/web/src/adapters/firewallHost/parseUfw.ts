@@ -8,6 +8,7 @@ import type {
   FirewallRuleInput,
 } from '@elysian/contracts'
 import { FIREWALL_PROTOCOLS } from '@elysian/contracts'
+import { assertNoteSafe } from './noteValidation'
 
 /*
  * ufw 命令输出与规则规范形态的纯解析。形状全部取自容器内 ufw 0.36.2 的真实输出：
@@ -208,20 +209,23 @@ export function parseShowAddedLine(line: string): ParsedUfwLine | null {
   return { kind: 'port', spec: { action, direction, port, proto, from }, comment }
 }
 
-/** `ufw status verbose` → 激活状态与默认策略（`Default: deny (incoming), allow (outgoing)`）。 */
+/**
+ * `ufw status verbose` → 激活状态与默认策略（`Default: deny (incoming), allow (outgoing)`）。
+ * 只有 `Status:` 行是必需的：ufw 未激活时整个输出就只有 `Status: inactive` 一行，
+ * 不打印 Logging/Default——此时默认策略是「未知」，不能替系统编一个策略出来。
+ */
 export function parseStatusVerbose(stdout: string): {
   active: boolean
-  defaultIncoming: FirewallPolicy
-  defaultOutgoing: FirewallPolicy
+  defaultIncoming: FirewallPolicy | null
+  defaultOutgoing: FirewallPolicy | null
 } {
   const statusMatch = /^Status:\s*(\S+)/m.exec(stdout)
   if (!statusMatch) throw new Error('ufw status 输出无效：缺少 Status 行')
   const defaultMatch = /^Default:\s*(\S+)\s+\(incoming\),\s*(\S+)\s+\(outgoing\)/m.exec(stdout)
-  if (!defaultMatch) throw new Error('ufw status 输出无效：缺少 Default 行')
   return {
     active: statusMatch[1] === 'active',
-    defaultIncoming: policyOf(defaultMatch[1] as UfwAction),
-    defaultOutgoing: policyOf(defaultMatch[2] as UfwAction),
+    defaultIncoming: defaultMatch ? policyOf(defaultMatch[1] as UfwAction) : null,
+    defaultOutgoing: defaultMatch ? policyOf(defaultMatch[2] as UfwAction) : null,
   }
 }
 
@@ -272,9 +276,8 @@ export function specFromInput(input: FirewallRuleInput): UfwRuleSpec {
   if (source !== SOURCE_ALL_IPS && !isValidFirewallAddress(source)) {
     throw new Error(`来源无效：${source}（应为「${SOURCE_ALL_IPS}」或合法 IP/网段）`)
   }
-  if (input.note && input.note.includes("'")) {
-    throw new Error('备注不能包含单引号')
-  }
+  // 备注以单引号包进 ufw comment 参数：换行/回车/控制字符与单引号都会写坏规则
+  assertNoteSafe(input.note, 'ufw')
   return {
     action: input.policy,
     direction: input.direction === 'outbound' ? 'out' : 'in',
@@ -293,9 +296,8 @@ export function ipSpecFromInput(input: FirewallIpRuleInput): UfwIpSpec {
   if (!isValidFirewallAddress(source) || source === 'any') {
     throw new Error(`来源无效：${source}（应为合法 IP 或网段）`)
   }
-  if (input.note && input.note.includes("'")) {
-    throw new Error('备注不能包含单引号')
-  }
+  // 备注同样写进 ufw comment 参数，与端口规则共用一套备注校验
+  assertNoteSafe(input.note, 'ufw')
   return { action: input.policy, direction: 'in', from: source }
 }
 

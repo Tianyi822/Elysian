@@ -84,7 +84,10 @@ function createFakeDeps(seed: {
       ufwCalls.push([...args])
       const [verb, ...rest] = args
       if (verb === 'status') {
-        return `Status: ${active ? 'active' : 'inactive'}\nDefault: deny (incoming), allow (outgoing), disabled (routed)\n`
+        // 真实 ufw 只在激活时才打印 Logging/Default 行，未激活时输出只有 Status 一行。
+        return active
+          ? 'Status: active\nLogging: on (low)\nDefault: deny (incoming), allow (outgoing), disabled (routed)\n'
+          : 'Status: inactive\n'
       }
       if (verb === 'show') return `Added user rules:\n${added.map((line) => `ufw ${line}`).join('\n') || '(None)'}`
       if (verb === '--force' && rest[0] === 'enable') {
@@ -423,6 +426,29 @@ describe('createFirewallService update', () => {
     expect(fake.ufwCalls[3]).toEqual(['allow', '8080/tcp', 'comment', '新备注'])
     expect(rule.note).toBe('新备注')
   })
+
+  it('面板端口保底规则改成 deny 被拒绝，不执行任何写命令', async () => {
+    const fake = createFakeDeps({ rules: [`allow ${PANEL_PORT}/tcp comment 'Elysian 面板'`] })
+    const service = createFirewallService(fake.deps)
+    const panelId = `${canonicalId({ action: 'allow', direction: 'in', proto: 'tcp', port: String(PANEL_PORT), from: 'any' })}.ipv4`
+
+    await expect(
+      service.update(panelId, { ...ALLOW_INPUT, port: PANEL_PORT, policy: 'deny', note: null }),
+    ).rejects.toThrow('面板端口规则不允许变更')
+    expect(fake.ufwCalls.filter((args) => ['allow', 'deny', 'limit', 'delete'].includes(args[0] ?? ''))).toHaveLength(0)
+    expect(fake.getAdded()).toEqual([`allow ${PANEL_PORT}/tcp comment 'Elysian 面板'`])
+  })
+
+  it('面板保底规则等价规范的原地更新（只改备注）仍放行', async () => {
+    const fake = createFakeDeps({ rules: [`allow ${PANEL_PORT}/tcp comment 'Elysian 面板'`] })
+    const service = createFirewallService(fake.deps)
+    const panelId = `${canonicalId({ action: 'allow', direction: 'in', proto: 'tcp', port: String(PANEL_PORT), from: 'any' })}.ipv4`
+
+    const rule = await service.update(panelId, { ...ALLOW_INPUT, port: PANEL_PORT, note: '面板保底' })
+    expect(fake.ufwCalls[2]).toEqual(['delete', 'allow', `${PANEL_PORT}/tcp`])
+    expect(fake.ufwCalls[3]).toEqual(['allow', `${PANEL_PORT}/tcp`, 'comment', '面板保底'])
+    expect(rule.note).toBe('面板保底')
+  })
 })
 
 describe('createFirewallService importRules', () => {
@@ -605,6 +631,36 @@ describe('createFirewallService setToggles', () => {
     expect(enableIndex).toBeGreaterThan(-1)
     expect(fake.ufwCalls[enableIndex! - 1]).toEqual(['allow', `${PANEL_PORT}/tcp`, 'comment', 'Elysian 面板'])
     expect(fake.isActive()).toBe(true)
+  })
+
+  it('关闭后回读不再报错：ufw 未激活时不打印 Default 行，默认策略读作未知', async () => {
+    const fake = createFakeDeps({
+      active: true,
+      rules: [`allow ${PANEL_PORT}/tcp comment 'Elysian 面板'`],
+    })
+    const service = createFirewallService(fake.deps)
+
+    const toggles = await service.setToggles({
+      firewallEnabled: false,
+      pingBlocked: false,
+      defaultIncoming: 'deny',
+      defaultOutgoing: 'allow',
+    })
+
+    expect(toggles.firewallEnabled).toBe(false)
+    expect(toggles.defaultIncoming).toBeNull()
+    expect(toggles.defaultOutgoing).toBeNull()
+  })
+
+  it('未激活时 toggles() 也能读：面板加载不该因缺 Default 行而失败', async () => {
+    const fake = createFakeDeps()
+    const service = createFirewallService(fake.deps)
+
+    await expect(service.toggles()).resolves.toMatchObject({
+      firewallEnabled: false,
+      defaultIncoming: null,
+      defaultOutgoing: null,
+    })
   })
 
   it('启用时保底规则已存在则不重复添加', async () => {

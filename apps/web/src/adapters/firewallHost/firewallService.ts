@@ -105,8 +105,9 @@ export type FirewallHostDeps = {
 
 type HostState = {
   active: boolean
-  defaultIncoming: 'allow' | 'deny' | 'limit'
-  defaultOutgoing: 'allow' | 'deny' | 'limit'
+  /** ufw 未激活时不打印 Default 行，此时为 null。 */
+  defaultIncoming: 'allow' | 'deny' | 'limit' | null
+  defaultOutgoing: 'allow' | 'deny' | 'limit' | null
   ipv6Enabled: boolean
   pingBlocked: boolean
   lines: readonly (PortUfwLine | IpUfwLine)[]
@@ -477,11 +478,15 @@ export function createFirewallService(deps: FirewallHostDeps): FirewallAdapter {
       if (!existing) throw new Error(`未找到端口规则 ${ruleId}（可能已在系统侧变更，请先同步）`)
 
       const spec = specFromInput(input)
+      const nextCanonical = canonicalId(spec)
+      // 面板保底规则只放行等价规范的原地更新（如只改备注）；改成 deny、换端口或换来源都会把工作台锁在防火墙外。
+      if (oldCanonical === PANEL_CANONICAL && nextCanonical !== PANEL_CANONICAL) {
+        throw new Error('面板端口规则不允许变更：它是保证工作台可访问的保底规则')
+      }
       const duplicate = findDuplicate(state, input, oldCanonical)
       if (duplicate) {
         throw new Error(`端口规则已存在：${input.protocol} ${input.port}（${input.family}）`)
       }
-      const nextCanonical = canonicalId(spec)
 
       if (nextCanonical === oldCanonical) {
         // 只改备注：先删后建（同规范规则 ufw 不允许并存）。
