@@ -599,7 +599,15 @@ function RootCard() {
       </Region>
 
       {passwordUsable ? (
-        <Region title="Root 密码" labelFor={passwordInputId}>
+        <Region
+          title="Root 密码"
+          labelFor={passwordInputId}
+          aside={
+            <p className="shrink-0 text-xs tabular-nums text-fg-subtle">
+              上次重置：{rootAuth.passwordResetAt ? formatDateTime(rootAuth.passwordResetAt) : '—'}
+            </p>
+          }
+        >
           <div className="flex items-center gap-2">
             <div className="relative min-w-0 flex-1">
               <input
@@ -640,9 +648,6 @@ function RootCard() {
           ) : null}
           <p className="mt-2 text-xs text-fg-subtle">
             建议使用复杂度高的密码；修改后请及时保存，刷新页面会清空密码框。
-          </p>
-          <p className="mt-2 text-xs tabular-nums text-fg-subtle">
-            上次重置：{rootAuth.passwordResetAt ? formatDateTime(rootAuth.passwordResetAt) : '—'}
           </p>
         </Region>
       ) : null}

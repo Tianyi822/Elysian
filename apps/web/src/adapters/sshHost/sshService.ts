@@ -74,6 +74,8 @@ export const DEFAULT_SSH_PATHS = {
    * 进程重启与页面刷新后仍能读到；不是浏览器 localStorage。
    */
   changedAtStamp: '/var/lib/elysian/ssh-changed-at',
+  /** Root 密码上次重置时间戳：chpasswd 不留可读记录，同样由面板落在命名卷上。 */
+  passwordResetAtStamp: '/var/lib/elysian/ssh-root-password-reset-at',
 }
 
 /**
@@ -152,8 +154,6 @@ export function createSshService(deps: SshHostDeps): SshAdapter & {
   const paths = deps.paths ?? DEFAULT_SSH_PATHS
   /** 公钥行 id → 本次会话首次观察到的时间：authorized_keys 无时间戳，创建时间是会话记忆。 */
   const keyFirstSeenAt = new Map<string, string>()
-  /** Root 密码上次重置时间：chpasswd 不留可读记录，只有会话记忆。 */
-  let passwordResetAt: string | null = null
   /** 密钥生成与指纹验证的临时文件序号：避免并发请求互踩。 */
   let tempSeq = 0
   /**
@@ -195,21 +195,24 @@ export function createSshService(deps: SshHostDeps): SshAdapter & {
     if (!(await deps.exists(path))) await deps.mkdir(path)
   }
 
-  async function readChangedAt(): Promise<string | null> {
-    if (!(await deps.exists(paths.changedAtStamp))) return null
+  /**
+   * 时间戳文件的读写：sshd 自身不记录的事实（启停、Root 密码重置）由面板自己落盘，
+   * 写在命名卷 `/var/lib/elysian` 上，进程重启与页面刷新后仍能读到；不是浏览器 localStorage。
+   */
+  async function readStamp(path: string): Promise<string | null> {
+    if (!(await deps.exists(path))) return null
     try {
-      const text = (await deps.readText(paths.changedAtStamp)).trim()
+      const text = (await deps.readText(path)).trim()
       return text || null
     } catch {
       return null
     }
   }
 
-  async function writeChangedAt(iso: string): Promise<void> {
-    const stamp = paths.changedAtStamp
-    const slash = stamp.lastIndexOf('/')
-    if (slash > 0) await ensureDir(stamp.slice(0, slash))
-    await deps.writeText(stamp, iso)
+  async function writeStamp(path: string, iso: string): Promise<void> {
+    const slash = path.lastIndexOf('/')
+    if (slash > 0) await ensureDir(path.slice(0, slash))
+    await deps.writeText(path, iso)
   }
 
   async function serviceRunning(): Promise<boolean> {
@@ -559,7 +562,7 @@ export function createSshService(deps: SshHostDeps): SshAdapter & {
       return {
         enabled: running,
         status: running ? 'running' : 'stopped',
-        changedAt: await readChangedAt(),
+        changedAt: await readStamp(paths.changedAtStamp),
         stats,
       }
     },
@@ -572,6 +575,8 @@ export function createSshService(deps: SshHostDeps): SshAdapter & {
       const policy = policyOf(await readEffectiveConfigText())
       const root = await entryOf('root')
       const text = await authorizedKeysText(root)
+      // 密码重置时间读宿主时间戳文件：chpasswd 不留可读记录，进程重启后仍能读到。
+      const passwordResetAt = await readStamp(paths.passwordResetAtStamp)
       // Root 密钥卡取首个能通过验证的公钥行（sshd 本就忽略无法解析的行）：
       // authorized_keys 里有脏行时面板不整体报错；没有任何可验证行时如实为 null（尚未生成）。
       for (const line of text === null ? [] : parseKeyLines(text)) {
@@ -601,7 +606,7 @@ export function createSshService(deps: SshHostDeps): SshAdapter & {
       if (!(await waitForServiceState(enabled))) {
         throw new Error(`${enabled ? '启动' : '停止'} sshd 未生效：服务状态未在预期时间内收敛，请稍后刷新查看实际状态`)
       }
-      await writeChangedAt(deps.nowIso())
+      await writeStamp(paths.changedAtStamp, deps.nowIso())
       return this.overview()
     },
 
@@ -643,7 +648,7 @@ export function createSshService(deps: SshHostDeps): SshAdapter & {
         // 错误信息只描述命令本身：密码绝不进命令行，也不进任何日志与报错。
         throw new Error(`chpasswd 执行失败：${error instanceof Error ? error.message : String(error)}`)
       })
-      passwordResetAt = deps.nowIso()
+      await writeStamp(paths.passwordResetAtStamp, deps.nowIso())
       return { auth: await this.rootAuth(), strength }
     },
 
@@ -687,7 +692,7 @@ export function createSshService(deps: SshHostDeps): SshAdapter & {
           // 私钥仅随生成响应一次性携带：rootAuth 与列表都不再返回。
           privateKey,
         },
-        passwordResetAt,
+        passwordResetAt: await readStamp(paths.passwordResetAtStamp),
       }
     },
 

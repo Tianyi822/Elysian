@@ -169,7 +169,7 @@ export type SshRootAuth = {
    * 那里没有任何公钥时为 null，表示尚未生成，界面显示「尚未生成」而不是编造材料。
    */
   key: SshRootKey | null
-  /** 上次重置 Root 密码的时间（ISO）；本会话内没重置过时为 null，界面显示 —。 */
+  /** 上次重置 Root 密码的时间（ISO）；从未由面板重置过时为 null，界面显示 —。 */
   passwordResetAt: string | null
 }
 

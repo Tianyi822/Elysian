@@ -745,8 +745,7 @@ describe('SSH 管理页签', () => {
 
     expect(within(root).getByText('上次重置：—')).toBeInTheDocument()
 
-    await user.type(input, 'abcdefgh')
-    // 强度不再单独一行文字：三段彩条 + 条旁等级字，输入框描边同色联动。
+    await user.type(input, 'abcdefgh')    // 强度不再单独一行文字：三段彩条 + 条旁等级字，输入框描边同色联动。
     // 聚焦态也由强度色接管（描边+同色光环），空输入仍走浏览器默认聚焦效果。
     expect(within(root).getByRole('meter', { name: '密码强度：弱' })).toHaveAttribute('aria-valuenow', '1')
     expect(within(root).getByText('弱')).toBeInTheDocument()
@@ -783,6 +782,25 @@ describe('SSH 管理页签', () => {
     await waitFor(() =>
       expect(screen.queryByRole('dialog', { name: 'Root 密码已重置' })).not.toBeInTheDocument(),
     )
+  })
+
+  it('上次重置在 Root 密码标题行右侧，与服务状态的上次变更同一形态', async () => {
+    const { gateway } = sshSessions({
+      settings: async () => ({ port: 22, passwordAuthEnabled: true, keyAuthEnabled: true }),
+      rootAuth: async () => ({
+        policy: 'yes',
+        key: null,
+        passwordResetAt: '2026-09-21T04:00:00.000Z',
+      }),
+    })
+    await openSshTab(gateway)
+    const root = screen.getByRole('region', { name: 'Root 设置' })
+
+    // 与「服务状态」的上次变更同款：Region 标题行右侧 aside，不占密码表单下方的行。
+    const lastReset = within(root).getByText(/^上次重置：/)
+    expect(lastReset).toHaveTextContent('上次重置：09/21 12:00')
+    const titleRow = within(root).getByText('Root 密码').parentElement
+    expect(titleRow).toContainElement(lastReset)
   })
 
   it('查看 Root 密钥：弹窗给出指纹、算法与公钥全文，不出现私钥，关闭后回到卡片', async () => {

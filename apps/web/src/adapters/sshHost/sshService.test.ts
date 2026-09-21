@@ -12,6 +12,7 @@ const PATHS = {
   sshdPidFile: '/virtual/run/sshd.pid',
   keygenWorkspace: '/virtual/tmp/elysian-ssh-keygen',
   changedAtStamp: '/virtual/var/lib/elysian/ssh-changed-at',
+  passwordResetAtStamp: '/virtual/var/lib/elysian/ssh-root-password-reset-at',
 }
 
 /** fake pidfile 里的主进程号：/proc/<pid>/comm 的身份核实以此定位。 */
@@ -643,6 +644,20 @@ describe('createSshService Root 凭据', () => {
       expect(entry.args.join(' ')).not.toContain('Elysian#2026Root')
     }
     expect((await service.rootAuth()).passwordResetAt).toBe(NOW)
+  })
+
+  it('passwordResetAt 写入宿主时间戳：重置成功后新实例仍能读到', async () => {
+    const host = createFakeHost({ sshdConfig: BASE_CONFIG })
+    const service = createSshService(host.deps)
+    expect((await service.rootAuth()).passwordResetAt).toBeNull()
+
+    await service.resetRootPassword('Elysian#2026Root')
+    expect((await service.rootAuth()).passwordResetAt).toBe(NOW)
+    expect(host.files.get(PATHS.passwordResetAtStamp)).toBe(NOW)
+
+    // chpasswd 不留可读记录：时间只能由面板自己落盘（命名卷），进程重启后仍能读到。
+    const reopened = createSshService(host.deps)
+    expect((await reopened.rootAuth()).passwordResetAt).toBe(NOW)
   })
 
   it('resetRootPassword：含换行或控制字符的密码拒绝且不触达 chpasswd', async () => {
