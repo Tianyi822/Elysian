@@ -367,6 +367,17 @@ export function createUsersService(deps: UsersHostDeps): UserAdapter {
       if (await findPasswd(entry.name)) {
         throw new Error(`删除未生效：系统里仍存在账号 ${entry.name}`)
       }
+
+      // 凭据不是用户数据，必须随账号销毁：userdel 不动主目录，残留的 authorized_keys
+      // （含面板写入的 .bak）会在同名重建时被新账号继承——useradd 复用释放的 uid，
+      // 属主恰好吻合，旧私钥即可直接登录新账号。
+      const keysPath = authorizedKeysPath(entry.home)
+      for (const path of [keysPath, `${keysPath}.bak`]) {
+        if (!(await deps.exists(path))) continue
+        await deps.remove(path).catch((error: unknown) => {
+          throw commandError('unlink', [path], error)
+        })
+      }
     },
 
     async syncFromSystem(): Promise<{ total: number }> {

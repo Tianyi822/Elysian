@@ -629,6 +629,40 @@ describe('createUsersService 删除', () => {
     // 再删同一个账号：系统里已没有，如实拒绝。
     await expect(service.remove('ubuntu')).rejects.toThrow('未找到系统账号：ubuntu')
   })
+
+  it('删除账号必须同时清掉遗留凭据：authorized_keys 与 .bak 都消失，主目录其他数据保留', async () => {
+    const host = createSeededHost()
+    const service = createUsersService(host.deps)
+    // elysian 种子自带 authorized_keys；再补一份面板写入的 .bak 与主目录里的普通数据文件。
+    host.files.set('/home/elysian/.ssh/authorized_keys.bak', 'ssh-ed25519 AAAA旧公钥 elysian-root\n')
+    host.files.set('/home/elysian/.bashrc', 'export EDITOR=vim\n')
+
+    await service.remove('elysian')
+
+    // 凭据不随主目录一起保留：同名重建账号时 useradd 会复用释放的 uid，
+    // 残留的 authorized_keys 属主恰好吻合，旧私钥就能直接登录新账号——凭据必须删。
+    expect(host.files.has('/home/elysian/.ssh/authorized_keys')).toBe(false)
+    expect(host.files.has('/home/elysian/.ssh/authorized_keys.bak')).toBe(false)
+    expect(host.commands).toContainEqual({ command: 'unlink', args: ['/home/elysian/.ssh/authorized_keys'] })
+    expect(host.commands).toContainEqual({
+      command: 'unlink',
+      args: ['/home/elysian/.ssh/authorized_keys.bak'],
+    })
+    // 主目录与普通数据按既定约定保留（绝不带 -r）。
+    expect(host.files.has('/home/elysian/.bashrc')).toBe(true)
+  })
+
+  it('删除从未有过密钥的账号：无凭据文件可删，不执行多余动作', async () => {
+    const host = createSeededHost()
+    // 组内补第二个成员：ubuntu 是管理员，删除前先满足防呆。
+    host.groups.get('sudo')!.add('elysian')
+    host.files.delete('/home/elysian/.ssh/authorized_keys')
+    const service = createUsersService(host.deps)
+
+    await service.remove('ubuntu')
+
+    expect(host.commands.filter((entry) => entry.command === 'unlink')).toEqual([])
+  })
 })
 
 describe('createUsersService 最后一个 sudo 成员防呆', () => {
