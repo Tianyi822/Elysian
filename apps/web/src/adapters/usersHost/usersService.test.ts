@@ -183,6 +183,11 @@ function createFakeHost(seed: {
     async exists(path) {
       return files.has(path)
     },
+    async remove(path) {
+      commands.push({ command: 'unlink', args: [path] })
+      if (!files.has(path)) throw new Error(`ENOENT: ${path}`)
+      files.delete(path)
+    },
     nowIso: () => NOW,
   }
 
@@ -452,6 +457,49 @@ describe('createUsersService 修改', () => {
     await expect(
       service.update('staruser', { loginMethod: 'password', status: 'active', isAdmin: false, note: null }),
     ).rejects.toThrow('请填写新密码后再启用密码登录')
+  })
+
+  it('切到仅密码：移除该账号的 authorized_keys，旧密钥不能再登，回读如实为 password', async () => {
+    const host = createSeededHost()
+    const service = createUsersService(host.deps)
+    // 种子里 elysian 有可用密钥：切「仅密码」必须把密钥路径真正关掉，
+    // 留着的公钥行仍能登录，「仅密码」就成了假状态。
+    const updated = await service.update('elysian', {
+      loginMethod: 'password',
+      status: 'active',
+      isAdmin: false,
+      note: null,
+      password: 'Elysian#2026Strong',
+    })
+
+    expect(host.files.has('/home/elysian/.ssh/authorized_keys')).toBe(false)
+    expect(host.commands).toContainEqual({ command: 'unlink', args: ['/home/elysian/.ssh/authorized_keys'] })
+    expect(updated.loginMethod).toBe('password')
+  })
+
+  it('切到密码或密钥（password-or-key）：密钥文件保留不动', async () => {
+    const host = createSeededHost()
+    const service = createUsersService(host.deps)
+
+    await service.update('elysian', {
+      loginMethod: 'password-or-key',
+      status: 'active',
+      isAdmin: false,
+      note: null,
+      password: 'Elysian#2026Strong',
+    })
+
+    expect(host.files.has('/home/elysian/.ssh/authorized_keys')).toBe(true)
+    expect(host.commands.filter((entry) => entry.command === 'unlink')).toEqual([])
+  })
+
+  it('切到仅密码但账号本无密钥文件：不执行删除动作', async () => {
+    const host = createSeededHost()
+    const service = createUsersService(host.deps)
+
+    await service.update('ubuntu', { loginMethod: 'password', status: 'active', isAdmin: true, note: 'Ubuntu User' })
+
+    expect(host.commands.filter((entry) => entry.command === 'unlink')).toEqual([])
   })
 
   it('管理员降级：gpasswd -d 移出 sudo 组（组内还有其他成员时才放行）', async () => {

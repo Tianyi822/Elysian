@@ -58,6 +58,8 @@ export type UsersHostDeps = {
   runChpasswd(input: string): Promise<string>
   readText(path: string): Promise<string>
   exists(path: string): Promise<boolean>
+  /** 删除文件（移除 authorized_keys 用）；目录与权限错误原样抛出。 */
+  remove(path: string): Promise<void>
   nowIso(): string
 }
 
@@ -323,6 +325,18 @@ export function createUsersService(deps: UsersHostDeps): UserAdapter {
         await deps.runUsermod(args).catch((error: unknown) => {
           throw commandError('usermod', args, error)
         })
+      }
+
+      // 登录方式不含密钥（仅密码）：把该账号的 authorized_keys 真正移除——留着的公钥行
+      // 仍能登录，面板呈现的「仅密码」就是假状态。与密码侧的 -p '*' 对称。
+      // none 由 nologin shell 挡住一切登录，不动密钥文件。
+      if (input.loginMethod === 'password') {
+        const keysPath = authorizedKeysPath(entry.home)
+        if (await deps.exists(keysPath)) {
+          await deps.remove(keysPath).catch((error: unknown) => {
+            throw commandError('unlink', [keysPath], error)
+          })
+        }
       }
 
       // 状态：停用即设过期日并锁密码（账号过期挡一切登录）；恢复只清过期日（-e ''）。

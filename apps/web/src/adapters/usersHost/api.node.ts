@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
+import { readFile, unlink } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import type { ServerResponse } from 'node:http'
 import type { Connect } from 'vite'
@@ -142,6 +142,7 @@ function createHostDeps(): UsersHostDeps {
     async exists(path) {
       return existsSync(path)
     },
+    remove: (path) => unlink(path),
     nowIso: () => new Date().toISOString(),
   }
 }
