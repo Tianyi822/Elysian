@@ -1,93 +1,85 @@
-import { act, screen } from '@testing-library/react'
+import { act, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { readHeapSample } from './MemoryMonitorBadge'
 import { renderApp } from '../test/renderApp'
 
-const MB = 1024 * 1024
-
-type MemoryPerformance = {
-  memory?: { usedJSHeapSize: number; totalJSHeapSize: number; jsHeapSizeLimit: number }
-}
-
-function stubMemory(memory: Partial<NonNullable<MemoryPerformance['memory']>> | undefined): void {
-  if (memory === undefined) {
-    delete (performance as MemoryPerformance).memory
-    return
-  }
-  ;(performance as MemoryPerformance).memory = {
-    usedJSHeapSize: 0,
-    totalJSHeapSize: 0,
-    jsHeapSizeLimit: 0,
-    ...memory,
-  }
+function stubFetch(body: unknown, status = 200): void {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (!url.includes('/api/platform/memory')) {
+        return new Response('not found', { status: 404 })
+      }
+      if (status !== 200) {
+        return new Response('error', { status })
+      }
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }),
+  )
 }
 
 afterEach(() => {
-  stubMemory(undefined)
+  vi.unstubAllGlobals()
   vi.useRealTimers()
 })
 
-describe('readHeapSample', () => {
-  it('没有 performance.memory 时返回 undefined', () => {
-    stubMemory(undefined)
-    expect(readHeapSample()).toBeUndefined()
-  })
-
-  it('字节数换算为 MB', () => {
-    stubMemory({ usedJSHeapSize: 50 * MB, totalJSHeapSize: 60 * MB, jsHeapSizeLimit: 4 * 1024 * MB })
-    expect(readHeapSample()).toEqual({ usedMb: 50, totalMb: 60, limitMb: 4096 })
-  })
-})
-
 describe('内存自检图标', () => {
-  it('浏览器不支持时如实说明，不伪造数据', async () => {
-    stubMemory(undefined)
+  it('采集失败时如实说明，不伪造数据', async () => {
+    stubFetch({}, 503)
     renderApp('/')
 
-    const trigger = screen.getByRole('button', { name: '平台内存占用' })
-    expect(trigger).toHaveTextContent('内存自检不可用')
+    const trigger = await screen.findByRole('button', { name: '平台内存占用' })
+    await waitFor(() => expect(trigger).toHaveTextContent('采集失败'))
 
     const user = userEvent.setup()
     await user.click(trigger)
-    const popover = await screen.findByText(/当前浏览器不提供 performance\.memory/)
-    expect(popover).toBeInTheDocument()
+    expect(await screen.findByText(/无法读取本机进程内存/)).toBeInTheDocument()
   })
 
-  it('支持时显示当前占用，点开详情含三项堆数值', async () => {
-    stubMemory({ usedJSHeapSize: 50 * MB, totalJSHeapSize: 60 * MB, jsHeapSizeLimit: 4 * 1024 * MB })
+  it('采集成功时显示常驻占用，点开详情含三项进程数值', async () => {
+    stubFetch({ rssMb: 80, heapUsedMb: 40, heapTotalMb: 50 })
     renderApp('/')
 
-    const trigger = screen.getByRole('button', { name: '平台内存占用' })
-    // 名称与数值分在两个 span（窄屏只显数值），按元素查询会落空，改在按钮文本里断言。
-    expect(trigger).toHaveTextContent('平台内存占用 50.0 MB')
+    const trigger = await screen.findByRole('button', { name: '平台内存占用' })
+    await waitFor(() => expect(trigger).toHaveTextContent('平台内存占用 80.0 MB'))
 
     const user = userEvent.setup()
     await user.click(trigger)
 
-    // 浮层标题与徽标里隐藏的文本同名，按「已用堆」定位浮层容器再断言内容。
-    const anchor = await screen.findByText('已用堆')
+    const anchor = await screen.findByText('常驻内存')
     const popover = anchor.closest('[data-radix-popper-content-wrapper]')
     expect(popover).not.toBeNull()
     expect(popover as HTMLElement).toHaveTextContent('平台内存占用')
-    expect(popover as HTMLElement).toHaveTextContent('已用堆')
+    expect(popover as HTMLElement).toHaveTextContent('80.0 MB')
+    expect(popover as HTMLElement).toHaveTextContent('堆已用')
+    expect(popover as HTMLElement).toHaveTextContent('40.0 MB')
+    expect(popover as HTMLElement).toHaveTextContent('堆已分配')
     expect(popover as HTMLElement).toHaveTextContent('50.0 MB')
-    expect(popover as HTMLElement).toHaveTextContent('60.0 MB')
-    expect(popover as HTMLElement).toHaveTextContent('4096.0 MB')
   })
 
   it('按采样间隔周期刷新数值', async () => {
     vi.useFakeTimers()
-    stubMemory({ usedJSHeapSize: 50 * MB, totalJSHeapSize: 60 * MB, jsHeapSizeLimit: 4 * 1024 * MB })
+    let rssMb = 80
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ rssMb, heapUsedMb: 40, heapTotalMb: 50 }))),
+    )
+
     renderApp('/')
-
-    expect(screen.getByRole('button', { name: '平台内存占用' })).toHaveTextContent('50.0 MB')
-
-    stubMemory({ usedJSHeapSize: 80 * MB, totalJSHeapSize: 90 * MB, jsHeapSizeLimit: 4 * 1024 * MB })
-    act(() => {
-      vi.advanceTimersByTime(5_000)
+    await act(async () => {
+      await Promise.resolve()
     })
-
     expect(screen.getByRole('button', { name: '平台内存占用' })).toHaveTextContent('80.0 MB')
+
+    rssMb = 120
+    await act(async () => {
+      vi.advanceTimersByTime(5_000)
+      await Promise.resolve()
+    })
+    expect(screen.getByRole('button', { name: '平台内存占用' })).toHaveTextContent('120.0 MB')
   })
 })

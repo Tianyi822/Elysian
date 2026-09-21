@@ -30,6 +30,9 @@ const NODE_SIDE_ALLOWLIST = [
   'adapters/usersHost/api.ts',
   'adapters/usersHost/api.node.ts',
   'adapters/usersHost/usersApi.vite.ts',
+  'adapters/platformMemory/api.ts',
+  'adapters/platformMemory/api.node.ts',
+  'adapters/platformMemory/platformMemory.vite.ts',
   'adapters/endpointGuard/guard.ts',
 ]
 

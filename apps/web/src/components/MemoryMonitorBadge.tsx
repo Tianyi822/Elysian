@@ -2,61 +2,49 @@ import * as Tooltip from '@radix-ui/react-tooltip'
 import * as Popover from '@radix-ui/react-popover'
 import { MemoryStick } from './icons'
 import { useEffect, useState } from 'react'
+import { fetchPlatformMemory } from '../adapters/http/platformMemoryAdapter'
+import type { PlatformMemorySample } from '../adapters/platformMemory/types'
 
 /**
- * 平台内存占用：监控本页面（Elysian 自己）的 JS 堆占用，用于诊断与优化。
+ * 平台内存占用：监控 Elysian 进程自身的常驻内存，用于诊断与优化。
  *
- * 数据来自 performance.memory，只有 Chromium 内核提供；其他浏览器如实显示
- * 「当前浏览器不支持」，不伪造数据。纯本地 API，不产生网络请求。
+ * 数据由本机 GET /api/platform/memory 采集 process.memoryUsage，不是浏览器 JS 堆。
+ * 采不到时如实显示失败，不伪造数字。
  */
 
-export type HeapSample = {
-  /** 已用堆（MB）。 */
-  usedMb: number
-  /** 已为页面分配的堆（MB）。 */
-  totalMb: number
-  /** 堆上限（MB）。 */
-  limitMb: number
-}
-
-type PerformanceMemory = {
-  usedJSHeapSize: number
-  totalJSHeapSize: number
-  jsHeapSizeLimit: number
-}
-
-const BYTES_PER_MB = 1024 * 1024
 export const SAMPLE_INTERVAL_MS = 5_000
 
-/** 读取本页 JS 堆占用；API 不存在（非 Chromium）时返回 undefined。 */
-export function readHeapSample(): HeapSample | undefined {
-  const memory = (performance as { memory?: PerformanceMemory }).memory
-  if (
-    !memory ||
-    typeof memory.usedJSHeapSize !== 'number' ||
-    typeof memory.totalJSHeapSize !== 'number' ||
-    typeof memory.jsHeapSizeLimit !== 'number'
-  ) {
-    return undefined
-  }
-  return {
-    usedMb: memory.usedJSHeapSize / BYTES_PER_MB,
-    totalMb: memory.totalJSHeapSize / BYTES_PER_MB,
-    limitMb: memory.jsHeapSizeLimit / BYTES_PER_MB,
-  }
-}
+type MemoryView =
+  | { status: 'loading' }
+  | { status: 'ready'; sample: PlatformMemorySample }
+  | { status: 'error' }
 
-/** 周期采样本页堆占用；不支持的环境里 sample 恒为 undefined。 */
-export function useHeapSample(intervalMs = SAMPLE_INTERVAL_MS): HeapSample | undefined {
-  const [sample, setSample] = useState<HeapSample | undefined>(() => readHeapSample())
+/** 周期读取服务端进程内存；失败时保持 error，不把旧值伪装成当前事实。 */
+export function usePlatformMemory(
+  intervalMs = SAMPLE_INTERVAL_MS,
+  read: () => Promise<PlatformMemorySample> = fetchPlatformMemory,
+): MemoryView {
+  const [view, setView] = useState<MemoryView>({ status: 'loading' })
 
   useEffect(() => {
-    const tick = () => setSample(readHeapSample())
-    const timer = setInterval(tick, intervalMs)
-    return () => clearInterval(timer)
-  }, [intervalMs])
+    let cancelled = false
+    const tick = async () => {
+      try {
+        const sample = await read()
+        if (!cancelled) setView({ status: 'ready', sample })
+      } catch {
+        if (!cancelled) setView({ status: 'error' })
+      }
+    }
+    void tick()
+    const timer = setInterval(() => void tick(), intervalMs)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [intervalMs, read])
 
-  return sample
+  return view
 }
 
 function formatMb(valueMb: number): string {
@@ -64,12 +52,11 @@ function formatMb(valueMb: number): string {
 }
 
 /**
- * 顶栏内存自检图标：图标与当前占用值常驻，悬停有说明，点击展开三项堆详情。
- * 不支持的环境里图标置灰并说明原因。
+ * 顶栏内存自检：图标与常驻占用常驻，悬停有说明，点击展开 RSS 与堆详情。
  */
 export function MemoryMonitorBadge() {
-  const sample = useHeapSample()
-  const supported = sample !== undefined
+  const view = usePlatformMemory()
+  const ready = view.status === 'ready'
 
   return (
     <Popover.Root>
@@ -81,20 +68,21 @@ export function MemoryMonitorBadge() {
               aria-label="平台内存占用"
               className={[
                 'inline-flex items-center gap-1.5 whitespace-nowrap rounded border px-2 py-0.5 text-xs transition-colors',
-                supported
+                ready
                   ? 'border-line bg-surface text-fg-muted hover:text-fg'
                   : 'border-line bg-surface text-fg-subtle opacity-60',
               ].join(' ')}
             >
               <MemoryStick aria-hidden size={13} />
-              {sample ? (
+              {view.status === 'ready' ? (
                 <>
-                  {/* 窄屏只留数值；名称由按钮的 aria-label 承载，读屏与用例查询都不受影响。 */}
                   <span className="hidden sm:inline">平台内存占用 </span>
-                  <span className="tabular-nums">{formatMb(sample.usedMb)}</span>
+                  <span className="tabular-nums">{formatMb(view.sample.rssMb)}</span>
                 </>
+              ) : view.status === 'loading' ? (
+                <span>采集中</span>
               ) : (
-                <span>内存自检不可用</span>
+                <span>采集失败</span>
               )}
             </button>
           </Popover.Trigger>
@@ -104,9 +92,11 @@ export function MemoryMonitorBadge() {
             sideOffset={6}
             className="z-50 rounded border border-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg"
           >
-            {supported
-              ? 'Elysian 页面自身的 JS 堆占用，用于平台自诊断，点击查看详情'
-              : '当前浏览器不提供内存自检 API（仅 Chromium 内核支持）'}
+            {view.status === 'ready'
+              ? 'Elysian 进程常驻内存，由服务端采集，点击查看详情'
+              : view.status === 'loading'
+                ? '正在从本机端点读取进程内存'
+                : '本机端点读取失败，稍后会再试'}
             <Tooltip.Arrow className="fill-surface-raised" />
           </Tooltip.Content>
         </Tooltip.Portal>
@@ -119,28 +109,28 @@ export function MemoryMonitorBadge() {
           className="z-50 w-64 rounded-lg border border-line bg-surface-raised p-3 text-xs shadow-lg"
         >
           <p className="mb-2 border-b border-line pb-1.5 text-sm font-medium">平台内存占用</p>
-          {sample ? (
+          {view.status === 'ready' ? (
             <dl className="space-y-1.5">
               <div className="flex items-baseline justify-between gap-3">
-                <dt className="text-fg-muted">已用堆</dt>
-                <dd className="tabular-nums text-fg">{formatMb(sample.usedMb)}</dd>
+                <dt className="text-fg-muted">常驻内存</dt>
+                <dd className="tabular-nums text-fg">{formatMb(view.sample.rssMb)}</dd>
               </div>
               <div className="flex items-baseline justify-between gap-3">
-                <dt className="text-fg-muted">已分配堆</dt>
-                <dd className="tabular-nums text-fg">{formatMb(sample.totalMb)}</dd>
+                <dt className="text-fg-muted">堆已用</dt>
+                <dd className="tabular-nums text-fg">{formatMb(view.sample.heapUsedMb)}</dd>
               </div>
               <div className="flex items-baseline justify-between gap-3">
-                <dt className="text-fg-muted">堆上限</dt>
-                <dd className="tabular-nums text-fg">{formatMb(sample.limitMb)}</dd>
+                <dt className="text-fg-muted">堆已分配</dt>
+                <dd className="tabular-nums text-fg">{formatMb(view.sample.heapTotalMb)}</dd>
               </div>
             </dl>
           ) : (
             <p className="text-fg-muted">
-              当前浏览器不提供 performance.memory，无法自检内存。改用 Chromium 内核浏览器可查看。
+              {view.status === 'loading' ? '正在采集进程内存…' : '无法读取本机进程内存，请确认开发服务器仍在运行。'}
             </p>
           )}
           <p className="mt-2 border-t border-line pt-1.5 text-fg-subtle">
-            每 5 秒采样一次，数据只来自本页面，用于平台自身的诊断与优化。
+            每 5 秒向本机端点采样一次，数字来自 Elysian 进程自身，不是浏览器页面堆。
           </p>
           <Popover.Arrow className="fill-surface-raised" />
         </Popover.Content>
