@@ -22,12 +22,18 @@ services:
       - elysian_node_modules:/app/node_modules
       - elysian_web_node_modules:/app/apps/web/node_modules
       - elysian_contracts_node_modules:/app/packages/foundation/contracts/node_modules
-    # 先起容器内 sshd：建权限分离目录 /run/sshd，日志写 /var/log/sshd.log（SSH 面板数据源），
-    # 启动失败只影响 SSH 联调、不阻断 dev server，然后照常安装依赖并启动 dev。
-    command: sh -c "mkdir -p /run/sshd && (/usr/sbin/sshd -E /var/log/sshd.log || true) && bun install && bun run dev"
+      # sshd 主机密钥持久化：镜像构建期的 ssh-keygen -A 每次重建镜像都会换一套新钥，
+      # 宿主机 known_hosts 随即报 REMOTE HOST IDENTIFICATION HAS CHANGED；首次启动把
+      # 镜像里的密钥种进卷，之后 /etc/ssh/ssh_host_* 一律是指向卷的符号链接，身份不再变。
+      - elysian_ssh_host_keys:/etc/ssh/host-keys
+    # 先起容器内 sshd：主机密钥种进卷并落到默认路径（见上），建权限分离目录 /run/sshd，
+    # 日志写 /var/log/sshd.log（SSH 面板数据源），启动失败只影响 SSH 联调、不阻断 dev server，
+    # 然后照常安装依赖并启动 dev。
+    command: sh -c "mkdir -p /etc/ssh/host-keys && if [ ! -e /etc/ssh/host-keys/ssh_host_ed25519_key ]; then cp -a /etc/ssh/ssh_host_* /etc/ssh/host-keys/; fi && ln -sfn /etc/ssh/host-keys/* /etc/ssh/ && mkdir -p /run/sshd && (/usr/sbin/sshd -E /var/log/sshd.log || true) && bun install && bun run dev"
 
 volumes:
   elysian_metrics:
   elysian_node_modules:
   elysian_web_node_modules:
   elysian_contracts_node_modules:
+  elysian_ssh_host_keys:
