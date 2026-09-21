@@ -7,7 +7,7 @@
  * 这些都是请求内容不合法：抛 invalidRequest 让端点按 400 返回，不报成 500 服务端故障。
  */
 
-import { invalidRequest } from '../endpointGuard/guard'
+import { invalidRequest } from './errors.ts'
 
 /** 控制字符（C0 与 DEL）加 Unicode 行终止符（U+2028/U+2029）：后者虽非 \n，按行切分时同样断行。 */
 const UNSAFE_NOTE_CHARS = /[\u0000-\u001f\u007f\u2028\u2029]/

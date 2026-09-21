@@ -1,4 +1,4 @@
-import type { SshKeyAccount } from '../../contracts/adapters'
+import type { SshKeyAccount } from '@elysian/contracts'
 
 /*
  * authorized_keys 的定位与行级编辑：路径只从服务端的 getent passwd 推导，

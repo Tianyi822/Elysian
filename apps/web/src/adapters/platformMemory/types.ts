@@ -1,26 +1,11 @@
 /**
- * 平台内存采样：Elysian 进程自身的常驻集与 V8/JavaScriptCore 堆。
- * 数字单位是 MB，由服务端 process.memoryUsage 换算；浏览器只消费这份 JSON。
+ * 平台内存采样：类型与换算来自 @elysian/contracts（server 产样本、浏览器消费同一形状），
+ * 这里 re-export 保持既有导入路径不变；本文件只保留浏览器侧的响应校验。
  */
-export type PlatformMemorySample = {
-  rssMb: number
-  heapUsedMb: number
-  heapTotalMb: number
-}
+import type { PlatformMemorySample } from '@elysian/contracts'
 
-const BYTES_PER_MB = 1024 * 1024
-
-export function sampleFromUsage(usage: {
-  rss: number
-  heapUsed: number
-  heapTotal: number
-}): PlatformMemorySample {
-  return {
-    rssMb: usage.rss / BYTES_PER_MB,
-    heapUsedMb: usage.heapUsed / BYTES_PER_MB,
-    heapTotalMb: usage.heapTotal / BYTES_PER_MB,
-  }
-}
+export type { PlatformMemorySample }
+export { sampleFromUsage } from '@elysian/contracts'
 
 function isNonNegativeFinite(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0

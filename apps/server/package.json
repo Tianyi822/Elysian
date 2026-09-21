@@ -1,0 +1,19 @@
+{
+  "name": "@elysian/server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --config vitest.config.ts && bun test src/firewall/ruleTimesStore.bun.test.ts"
+  },
+  "dependencies": {
+    "@elysian/contracts": "workspace:*",
+    "hono": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.0"
+  }
+}
