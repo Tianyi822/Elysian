@@ -753,8 +753,8 @@ describe('SSH 管理页签', () => {
     expect(within(dialog).getByText('私钥仅此次可见')).toBeInTheDocument()
     expect(within(dialog).getByText(/BEGIN OPENSSH PRIVATE KEY/)).toBeInTheDocument()
     expect(within(dialog).getByRole('button', { name: '下载私钥' })).toBeInTheDocument()
-    // 下载文件名以归属账号开头但不显示在界面上（root-ssh-key-<日期>.pem，下载时生效）。
-    expect(within(dialog).queryByText(/root-ssh-key-\d{8}\.pem/)).not.toBeInTheDocument()
+    // 下载文件名以归属账号开头；它随 chmod 补救命令一并显示（root-ssh-key-<日期>.pem，可直接复制执行）。
+    expect(within(dialog).getByText(/chmod 600 root-ssh-key-\d{8}\.pem/)).toBeInTheDocument()
 
     // 卡片上的指纹已换成新材料；入档的 rootAuth 不带私钥。
     await waitFor(() =>
@@ -782,6 +782,8 @@ describe('SSH 管理页签', () => {
     await user.click(within(root).getByRole('button', { name: '重新生成' }))
     const dialog = await screen.findByRole('dialog', { name: 'Root 密钥已生成' })
     expect(within(dialog).getByText(/BEGIN OPENSSH PRIVATE KEY/)).toBeInTheDocument()
+    // 下载文件权限开放的坑直接给补救命令：不带 chmod 提示时用户会被 ssh 客户端静默回退到密码登录。
+    expect(within(dialog).getByText(/chmod 600 root-ssh-key-/)).toBeInTheDocument()
 
     // 遮罩与内容之外的一次误触（点在 body 上）不该关掉它，私钥仍在弹窗里。
     // Radix 的「点外部」判定在 pointerdown 之后等一次 click 才落定，所以按真实误触的顺序两步都走：

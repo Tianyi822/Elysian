@@ -83,6 +83,13 @@ export function SshKeyRevealDialog({
             <p className="mt-2 text-xs text-warning">
               关闭弹窗后私钥无法再次查看，也不会再下发：请先下载或复制保存到安全的位置。
             </p>
+            {/* 浏览器下载无法控制文件权限（默认开放），ssh 客户端会拒绝权限开放的私钥并回退问密码——
+                这是真实联调中反复踩中的坑，把补救命令直接给到用户。 */}
+            <p className="mt-1.5 text-xs text-fg-muted">
+              下载的私钥文件权限是开放的，ssh 客户端会拒绝使用：连接前请先在终端执行
+              <code className="mx-1 rounded bg-surface-raised px-1.5 py-0.5 font-mono">chmod 600 {filename}</code>
+              再用 -i 指定它。
+            </p>
           </div>
 
           <div className="flex items-center justify-between gap-2 border-t border-line px-4 py-2.5">
