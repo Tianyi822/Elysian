@@ -66,11 +66,6 @@ function methodIncludesPassword(method: HostUserInput['loginMethod']): boolean {
   return method === 'password' || method === 'password-or-key'
 }
 
-/** 密码是否处于锁定：裸 `!` 或 `!` 前缀（usermod -L 的产物）。 */
-function isHashLocked(passwordHash: string): boolean {
-  return passwordHash === '!' || passwordHash.startsWith('!')
-}
-
 export function createUsersService(deps: UsersHostDeps): UserAdapter {
   function commandError(command: string, args: readonly string[], error: unknown): Error {
     const detail = error instanceof Error ? error.message : String(error)
@@ -232,6 +227,9 @@ export function createUsersService(deps: UsersHostDeps): UserAdapter {
         '-m',
         '-s',
         input.loginMethod === 'none' ? NOLOGIN_SHELL : LOGIN_SHELL,
+        // 无密码创建用 -p '*'（无可用密码、不锁账号）：不带 -p 的 shadow 是裸 '!'，
+        // sshd(UsePAM) 对锁定账号连公钥认证都拒绝——「只能密钥登录」的账号第一次用密钥就会被打回密码提示。
+        ...(password === null ? (['-p', '*'] as const) : []),
         // 备注为空时省 -c：GECOS 留空，回读推导为 null。
         ...(input.note ? (['-c', input.note] as const) : []),
         name,
@@ -277,12 +275,12 @@ export function createUsersService(deps: UsersHostDeps): UserAdapter {
         assertNotLastSudoMember(entry.name, sudo, '降级')
       }
 
-      // 恢复密码登录的红线：密码已锁定（! 前缀）且未提供新密码时拒绝保存——
-      // 没有明文就解不开锁，绝不假装恢复；要启用密码登录必须换新密码。
+      // 恢复密码登录的红线：当前没有可用密码（'!' 锁定或 '*' 占位）且未提供新密码时拒绝保存——
+      // 这两种占位都没有明文可解，绝不假装恢复；要启用密码登录必须换新密码。
       if (methodIncludesPassword(input.loginMethod) && password === null) {
         const hash = shadow?.passwordHash ?? ''
-        if (isHashLocked(hash)) {
-          throw invalidRequest('当前密码已锁定，请填写新密码后再启用密码登录')
+        if (!passwordUsable(hash)) {
+          throw invalidRequest('当前未设置可用密码，请填写新密码后再启用密码登录')
         }
       }
 
@@ -316,11 +314,12 @@ export function createUsersService(deps: UsersHostDeps): UserAdapter {
         })
       }
 
-      // 登录方式从含密码改为不含密码：锁掉密码路径（usermod -L），旧密码随即作废。
+      // 登录方式从含密码改为不含密码：旧密码作废用 -p '*'，而不是 -L——
+      // -L 在哈希前加 '!' 会锁定整个账号，sshd(UsePAM) 对锁定账号连公钥认证都拒绝。
       const currentMethodIncludesPassword =
         shadow !== null && !isNoLoginShell(entry.shell) && passwordUsable(shadow.passwordHash)
       if (currentMethodIncludesPassword && !methodIncludesPassword(input.loginMethod)) {
-        const args = ['-L', entry.name] as const
+        const args = ['-p', '*', entry.name] as const
         await deps.runUsermod(args).catch((error: unknown) => {
           throw commandError('usermod', args, error)
         })

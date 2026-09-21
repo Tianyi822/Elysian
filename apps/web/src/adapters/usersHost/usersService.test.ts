@@ -98,7 +98,7 @@ function createFakeHost(seed: {
     },
     async runUseradd(args) {
       commands.push({ command: 'useradd', args })
-      const { options, positional } = parseOptions(args, { '-m': 'flag', '-s': 'value', '-c': 'value' }, 'useradd')
+      const { options, positional } = parseOptions(args, { '-m': 'flag', '-s': 'value', '-c': 'value', '-p': 'value' }, 'useradd')
       const name = positional[0]
       if (positional.length !== 1 || !name) throw new Error('useradd: 未指定用户名')
       // 真实 useradd 拒绝不符合命名规则的用户名。
@@ -113,13 +113,13 @@ function createFakeHost(seed: {
         home: `/home/${name}`,
         shell: typeof options['-s'] === 'string' ? options['-s'] : '/bin/sh',
       })
-      // 真实 useradd 建出的账号没有可用密码：shadow 里是锁定占位。
-      shadow.set(name, { hash: '!', expireDays: '' })
+      // 真实 useradd：不带 -p 时 shadow 是锁定占位 '!'；带 -p 则字面落入给定值。
+      shadow.set(name, { hash: typeof options['-p'] === 'string' ? options['-p'] : '!', expireDays: '' })
       return ''
     },
     async runUsermod(args) {
       commands.push({ command: 'usermod', args })
-      const { options, positional } = parseOptions(args, { '-c': 'value', '-s': 'value', '-e': 'value', '-L': 'flag' }, 'usermod')
+      const { options, positional } = parseOptions(args, { '-c': 'value', '-s': 'value', '-e': 'value', '-L': 'flag', '-p': 'value' }, 'usermod')
       const name = positional[0]
       if (positional.length !== 1 || !name) throw new Error('usermod: 未指定用户名')
       const row = passwd.get(name)
@@ -128,6 +128,7 @@ function createFakeHost(seed: {
       if (typeof options['-c'] === 'string') row.gecos = options['-c']
       if (typeof options['-s'] === 'string') row.shell = options['-s']
       if (typeof options['-e'] === 'string') shadowRow.expireDays = options['-e']
+      if (typeof options['-p'] === 'string') shadowRow.hash = options['-p']
       if (options['-L'] === true) shadowRow.hash = shadowRow.hash.startsWith('!') ? shadowRow.hash : `!${shadowRow.hash}`
       shadow.set(name, shadowRow)
       return ''
@@ -299,7 +300,10 @@ describe('createUsersService 创建', () => {
       note: null,
     })
 
-    expect(host.commands).toContainEqual({ command: 'useradd', args: ['-m', '-s', '/sbin/nologin', 'backup'] })
+    expect(host.commands).toContainEqual({
+      command: 'useradd',
+      args: ['-m', '-s', '/sbin/nologin', '-p', '*', 'backup'],
+    })
     expect(host.commands).toContainEqual({ command: 'usermod', args: ['-e', '1', '-L', 'backup'] })
     expect(host.chpasswdInputs).toEqual([])
     expect(host.commands.filter((entry) => entry.command === 'gpasswd')).toEqual([])
@@ -317,7 +321,13 @@ describe('createUsersService 创建', () => {
       isAdmin: false,
       note: null,
     })
-    expect(host.commands).toContainEqual({ command: 'useradd', args: ['-m', '-s', '/bin/bash', 'deploy'] })
+    // 无密码创建带 -p '*'：无可用密码但不锁账号——sshd(UsePAM) 会拒绝锁定账号的公钥认证，
+    // 裸 '!' 会让「只能密钥登录」的账号第一次用密钥就被打回密码提示。
+    expect(host.commands).toContainEqual({
+      command: 'useradd',
+      args: ['-m', '-s', '/bin/bash', '-p', '*', 'deploy'],
+    })
+    expect(host.shadow.get('deploy')!.hash).toBe('*')
     expect(created.loginMethod).toBe('none')
   })
 
@@ -386,7 +396,7 @@ describe('createUsersService 修改', () => {
     })
   })
 
-  it('登录方式改为 none：shell 换 /sbin/nologin；从含密码改为不含密码追加 usermod -L', async () => {
+  it('登录方式改为 none：shell 换 /sbin/nologin；从含密码改为不含密码作废旧密码但不锁账号', async () => {
     const host = createSeededHost()
     const service = createUsersService(host.deps)
     await service.create({
@@ -406,11 +416,42 @@ describe('createUsersService 修改', () => {
     })
 
     expect(host.commands).toContainEqual({ command: 'usermod', args: ['-s', '/sbin/nologin', 'pwuser'] })
-    expect(host.commands).toContainEqual({ command: 'usermod', args: ['-L', 'pwuser'] })
+    // 旧密码作废用 -p '*' 而不是 -L：-L 会在哈希前加 '!' 锁定整个账号，
+    // sshd(UsePAM) 对锁定账号连公钥认证都拒绝。
+    expect(host.commands).toContainEqual({ command: 'usermod', args: ['-p', '*', 'pwuser'] })
+    expect(host.commands.filter((entry) => entry.command === 'usermod' && entry.args.includes('-L'))).toEqual([])
     // shell 为 nologin 后登录方式恒为 none。
     expect(updated.loginMethod).toBe('none')
-    // 密码字段已被锁定：哈希带 ! 前缀。
-    expect(host.shadow.get('pwuser')!.hash.startsWith('!')).toBe(true)
+    // 密码字段是不可用占位 '*'：无密码可登，但账号未被锁定。
+    expect(host.shadow.get('pwuser')!.hash).toBe('*')
+  })
+
+  it('登录方式从密码改为密钥：同样置 * 作废旧密码，密钥路径不被账号锁定挡住', async () => {
+    const host = createSeededHost()
+    const service = createUsersService(host.deps)
+    await service.create({
+      name: 'tokuser',
+      loginMethod: 'password',
+      status: 'active',
+      isAdmin: false,
+      note: null,
+      password: 'Elysian#2026Strong',
+    })
+
+    await service.update('tokuser', { loginMethod: 'key', status: 'active', isAdmin: false, note: null })
+
+    expect(host.commands).toContainEqual({ command: 'usermod', args: ['-p', '*', 'tokuser'] })
+    expect(host.shadow.get('tokuser')!.hash).toBe('*')
+  })
+
+  it('密码占位为 * 时切回密码登录：同样要求填新密码，没有明文可解', async () => {
+    const host = createSeededHost()
+    const service = createUsersService(host.deps)
+    await service.create({ name: 'staruser', loginMethod: 'key', status: 'active', isAdmin: false, note: null })
+
+    await expect(
+      service.update('staruser', { loginMethod: 'password', status: 'active', isAdmin: false, note: null }),
+    ).rejects.toThrow('请填写新密码后再启用密码登录')
   })
 
   it('管理员降级：gpasswd -d 移出 sudo 组（组内还有其他成员时才放行）', async () => {
@@ -454,7 +495,7 @@ describe('createUsersService 修改', () => {
     // 恢复必须换新密码（当前密码已被 -L 锁定）。
     await expect(
       service.update('tmpuser', { loginMethod: 'password', status: 'active', isAdmin: false, note: null }),
-    ).rejects.toThrow('当前密码已锁定，请填写新密码后再启用密码登录')
+    ).rejects.toThrow('请填写新密码后再启用密码登录')
 
     const active = await service.update('tmpuser', {
       loginMethod: 'password',
