@@ -1,4 +1,5 @@
 import type {
+  SshAdapter,
   SshAuthMethods,
   SshAuthSettings,
   SshLoginKey,
@@ -16,12 +17,11 @@ import {
   isValidSshKeyName,
   isValidSshPort,
 } from '@elysian/contracts'
-import type { SshAdapter } from '../../contracts/adapters'
-import { invalidRequest } from '../endpointGuard/guard'
-import { hasUnsafeControlChars } from '../firewallHost/noteValidation'
-import { normalizeEqualsSeparator, parseSshdConfig, stripConfigComment, type SshdDirectiveName } from './parseSshdConfig'
-import { patchSshdConfig } from './patchSshdConfig'
-import { parseSshLog, summarizeSshLog } from './parseSshLog'
+import { invalidRequest } from '../shared/errors.ts'
+import { hasUnsafeControlChars } from '../shared/noteValidation.ts'
+import { normalizeEqualsSeparator, parseSshdConfig, stripConfigComment, type SshdDirectiveName } from './parseSshdConfig.ts'
+import { patchSshdConfig } from './patchSshdConfig.ts'
+import { parseSshLog, summarizeSshLog } from './parseSshLog.ts'
 import {
   algorithmLabelOf,
   appendKeyLine,
@@ -38,7 +38,7 @@ import {
   replaceFirstKeyLine,
   sshDirPath,
   type PasswdEntry,
-} from './authorizedKeys'
+} from '../shared/authorizedKeys.ts'
 
 /*
  * SSH 面板的服务编排：把界面动作翻译成容器内 sshd / ssh-keygen / chpasswd 的真实执行。

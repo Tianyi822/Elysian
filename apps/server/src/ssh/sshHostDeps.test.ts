@@ -1,21 +1,19 @@
 import { describe, expect, it } from 'vitest'
 import { readFile } from 'node:fs/promises'
-import type { IncomingMessage, ServerResponse } from 'node:http'
-import { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
-import type { Connect } from 'vite'
 import {
-  createSecuritySshMiddleware,
+  createSshHostDeps,
   readTextTailFromFile,
   resolveSshAvailability,
   resolveVerifiedSshdPid,
   type SshdPidProbe,
-} from './api.node'
+} from './sshHostDeps'
 import type { SshHostDeps } from './sshService'
+import { createSshApp } from './sshRoutes'
 
 /*
  * 容器硬边界的测试锚定：可用性的推导（ELYSIAN_DOCKER=1 且 /.dockerenv 存在）与
- * 中间件接线在这里钉住——改坏判定会让用例变红，而不是静默漏到宿主机执行真实命令。
+ * 装配接线在这里钉住——改坏判定会让用例变红，而不是静默漏到宿主机执行真实命令。
  * 全部用注入的环境与 fake deps 驱动，不依赖宿主机状态、不执行任何真实命令、不建目录。
  */
 
@@ -50,41 +48,10 @@ function createThrowingDeps(): SshHostDeps {
   }
 }
 
-async function readResponse(
-  middleware: Connect.NextHandleFunction,
-  req: IncomingMessage,
-): Promise<{ statusCode: number; body: unknown }> {
-  let statusCode = 0
-  let body = ''
-  const res = {
-    writeHead(status: number) {
-      statusCode = status
-    },
-    end(text?: string) {
-      body = text ?? ''
-    },
-    setHeader() {},
-  } as unknown as ServerResponse
-  middleware(req, res, () => undefined)
-  // 中间件内部异步：让微任务队列跑完再读响应。
-  await new Promise((resolve) => setTimeout(resolve, 0))
-  return { statusCode, body: JSON.parse(body) as unknown }
-}
-
-async function fakeReq(method: string, url: string, body?: unknown): Promise<IncomingMessage> {
-  const payload = body === undefined ? '' : JSON.stringify(body)
-  const stream = Readable.from(payload ? [Buffer.from(payload, 'utf8')] : [])
-  return Object.assign(stream, {
-    method,
-    url,
-    headers: {
-      host: 'localhost:5173',
-      origin: 'http://localhost:5173',
-      ...(payload
-        ? { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(payload, 'utf8')) }
-        : {}),
-    },
-  }) as unknown as IncomingMessage
+/** 按装配产物直接挂路由并请求：硬边界用例经真实守卫链走到 503/200 分支。 */
+async function requestOverview(deps: ReturnType<typeof createSshHostDeps>): Promise<{ statusCode: number; body: unknown }> {
+  const res = await createSshApp(deps).request('/overview')
+  return { statusCode: res.status, body: await res.json() }
 }
 
 describe('resolveSshAvailability', () => {
@@ -146,40 +113,44 @@ describe('readTextTailFromFile（登录日志按字节取尾的真实语义）',
   })
 })
 
-describe('createSecuritySshMiddleware 硬边界', () => {
-  it('环境未声明 Docker（即使 /.dockerenv 存在，如在容器里手动起 dev）：一律 503，不触达真实命令', async () => {
-    const middleware = createSecuritySshMiddleware({ env: {}, dockerenvExists: true, deps: createThrowingDeps() })
+describe('createSshHostDeps 硬边界', () => {
+  it('环境未声明 Docker（即使 /.dockerenv 存在，如在容器里手动起 server）：装配不可用，路由一律 503，不触达真实命令', async () => {
+    const deps = createSshHostDeps({ env: {}, dockerenvExists: true, deps: createThrowingDeps() })
+    expect(deps.available).toBe(false)
+    const app = createSshApp(deps)
     for (const [method, url] of [
       ['GET', '/overview'],
       ['PUT', '/port'],
       ['POST', '/root-password'],
       ['DELETE', '/keys/sshkey-0000abcd'],
     ] as const) {
-      const req = await fakeReq(method, url, method === 'PUT' ? { port: 22 } : method === 'POST' ? { password: 'Elysian#2026Root' } : undefined)
-      const { statusCode, body } = await readResponse(middleware, req)
-      expect(statusCode).toBe(503)
-      expect(body).toEqual({ error: '真实 SSH 管理仅在 Docker 容器内可用' })
+      const res = await app.request(url, { method })
+      expect(res.status).toBe(503)
+      expect(await res.json()).toEqual({ error: '真实 SSH 管理仅在 Docker 容器内可用' })
     }
   })
 
-  it('声明了 Docker 但进程不在容器内（/.dockerenv 缺失，宿主机 dev/preview）：一律 503', async () => {
-    const middleware = createSecuritySshMiddleware({
+  it('声明了 Docker 但进程不在容器内（/.dockerenv 缺失，宿主机运行）：装配不可用，路由 503', async () => {
+    const deps = createSshHostDeps({
       env: { ELSYIAN_DOCKER: '1' },
       dockerenvExists: false,
       deps: createThrowingDeps(),
     })
-    const { statusCode, body } = await readResponse(middleware, await fakeReq('GET', '/overview'))
+    expect(deps.available).toBe(false)
+    const { statusCode, body } = await requestOverview(deps)
     expect(statusCode).toBe(503)
     expect(body).toEqual({ error: '真实 SSH 管理仅在 Docker 容器内可用' })
   })
 
-  it('两项条件满足时挂真实 handler：请求经同源守卫到达 service（注入 fake deps，宿主机零副作用）', async () => {
-    const middleware = createSecuritySshMiddleware({
+  it('两项条件满足时装配真实服务：请求经同源守卫到达 service（注入 fake deps，宿主机零副作用）', async () => {
+    const deps = createSshHostDeps({
       env: { ELSYIAN_DOCKER: '1' },
       dockerenvExists: true,
       deps: createThrowingDeps(),
     })
-    const { statusCode, body } = await readResponse(middleware, await fakeReq('GET', '/overview'))
+    expect(deps.available).toBe(true)
+    expect(deps.service).toBeDefined()
+    const { statusCode, body } = await requestOverview(deps)
     expect(statusCode).toBe(200)
     expect(body).toMatchObject({ enabled: false, status: 'stopped' })
   })
