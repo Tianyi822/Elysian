@@ -2,6 +2,7 @@ import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { renderApp } from '../../test/renderApp'
+import { resolveViewTab, readStoredViewTab, writeStoredViewTab } from '../../app/theme/themePreferences'
 import { useSecurityStore } from '../../stores/securityStore'
 
 /**
@@ -57,6 +58,7 @@ describe('安全页签切换', () => {
       within(segmentGroup()).getByRole('button', { name: '系统防火墙' }),
     ).toHaveAttribute('aria-pressed', 'false')
     expect(useSecurityStore.getState().tab).toBe('ssh')
+    expect(readStoredViewTab(window.localStorage, 'security')).toBe('ssh')
   })
 
   it('切到用户管理页签：内容区换成该页签的面板，不再显示防火墙', async () => {
@@ -68,5 +70,23 @@ describe('安全页签切换', () => {
     expect(useSecurityStore.getState().tab).toBe('users')
     expect(await screen.findByRole('region', { name: '主机账号表' })).toBeInTheDocument()
     expect(screen.queryByRole('region', { name: '端口规则表' })).not.toBeInTheDocument()
+  })
+
+  it('刷新后仍选中上次的页签', () => {
+    writeStoredViewTab(window.localStorage, 'security', 'ssh')
+    useSecurityStore.setState({
+      tab: resolveViewTab(window.localStorage, 'security', ['firewall', 'ssh', 'users'] as const, 'firewall'),
+    })
+
+    renderApp('/security')
+
+    expect(within(segmentGroup()).getByRole('button', { name: 'SSH 管理' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(within(segmentGroup()).getByRole('button', { name: '系统防火墙' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
   })
 })

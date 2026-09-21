@@ -5,6 +5,7 @@ import { createMockGateway } from '../../adapters/mock/gateway'
 import { SEED_LOGIN_LOGS } from '../../adapters/mock/logsData'
 import type { ElysianGateway } from '../../contracts/adapters'
 import { formatLoginTime } from '../../components/format'
+import { resolveViewTab, writeStoredViewTab } from '../../app/theme/themePreferences'
 import { useLoginLogStore } from '../../stores/loginLogStore'
 import { useLogsStore } from '../../stores/logsStore'
 import { renderApp } from '../../test/renderApp'
@@ -170,5 +171,19 @@ describe('平台登录日志面板', () => {
 
     await user.type(screen.getByLabelText('搜索登录日志'), '绝不存在的关键字')
     expect(within(table).getByText('没有匹配的登录记录，换个关键词或清空筛选')).toBeInTheDocument()
+  })
+
+  it('刷新后仍停在上次的日志页签', async () => {
+    writeStoredViewTab(window.localStorage, 'logs', 'login')
+    useLogsStore.setState({
+      tab: resolveViewTab(window.localStorage, 'logs', ['runtime', 'login'] as const, 'runtime'),
+    })
+
+    renderApp('/logs')
+
+    expect(await screen.findByRole('region', { name: '登录日志表' })).toBeInTheDocument()
+    expect(
+      within(screen.getByRole('banner')).getByRole('button', { name: '登录日志' }),
+    ).toHaveAttribute('aria-pressed', 'true')
   })
 })

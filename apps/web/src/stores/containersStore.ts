@@ -1,5 +1,6 @@
 import type { Container, ContainerAction, ContainerCreateInput, ContainerImage, ContainerSample, ContainerStatus, Unsubscribe } from '@elysian/contracts'
 import { create } from 'zustand'
+import { resolveViewTab, writeStoredViewTab } from '../app/theme/themePreferences'
 import type { ElysianGateway } from '../contracts/adapters'
 import { pushHistory, type TerminalLine } from '../components/terminal/terminalSession'
 import { getLastContainerSample, onStreamEvent } from './eventStreamStore'
@@ -113,7 +114,7 @@ export const useContainersStore = create<{
   containers: [],
   images: [],
   samples: {},
-  view: 'grid',
+  view: resolveViewTab(window.localStorage, 'containers', ['grid', 'images'] as const, 'grid'),
   statusFilter: 'all',
   search: '',
   busyActions: [],
@@ -138,6 +139,7 @@ export const useContainersStore = create<{
   },
 
   setView(view) {
+    writeStoredViewTab(window.localStorage, 'containers', view)
     set({ view })
   },
   setStatusFilter(statusFilter) {

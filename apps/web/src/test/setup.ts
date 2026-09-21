@@ -1,7 +1,12 @@
 import '@testing-library/jest-dom/vitest'
 import { cleanup, configure } from '@testing-library/react'
 import { afterEach } from 'vitest'
+import { UI_PREFERENCES_KEY } from '../app/theme/themePreferences'
+import { useContainersStore } from '../stores/containersStore'
+import { useDatabaseStore } from '../stores/databaseStore'
+import { useLogsStore } from '../stores/logsStore'
 import { useNotificationStore } from '../stores/notificationStore'
+import { useSecurityStore } from '../stores/securityStore'
 
 /*
  * Radix 的浮层组件依赖几个 jsdom 未实现的浏览器 API，缺了会在打开浮层时报错。
@@ -66,4 +71,10 @@ afterEach(() => {
   cleanup()
   // 通知是全局单例状态：不清空的话，上一条用例留下的提示会出现在下一条用例的界面里。
   useNotificationStore.getState().clear()
+  // 顶栏页签写进界面偏好：用例之间清掉，避免选中态串到下一条。
+  localStorage.removeItem(UI_PREFERENCES_KEY)
+  useSecurityStore.setState({ tab: 'firewall' })
+  useLogsStore.setState({ tab: 'runtime' })
+  useDatabaseStore.setState({ engine: 'MariaDB' })
+  useContainersStore.setState({ view: 'grid' })
 })

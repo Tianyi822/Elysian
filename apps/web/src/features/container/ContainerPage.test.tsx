@@ -5,6 +5,7 @@ import type { Container, ContainerCreateInput, ContainerImage } from '@elysian/c
 import type { ElysianGateway } from '../../contracts/adapters'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { CONTAINERS } from '../../adapters/mock/containersData'
+import { resolveViewTab, writeStoredViewTab } from '../../app/theme/themePreferences'
 import { useContainersStore } from '../../stores/containersStore'
 import { renderApp } from '../../test/renderApp'
 
@@ -182,6 +183,21 @@ describe('镜像视图', () => {
     await user.click(screen.getByRole('button', { name: '容器' }))
     expect(screen.getByRole('list', { name: '容器列表' })).toBeInTheDocument()
   })
+
+  it('刷新后仍停在上次的视图', async () => {
+    writeStoredViewTab(window.localStorage, 'containers', 'images')
+    useContainersStore.setState({
+      view: resolveViewTab(window.localStorage, 'containers', ['grid', 'images'] as const, 'grid'),
+    })
+
+    renderApp('/containers', { gateway: pageGateway() })
+
+    expect(await screen.findByRole('table', { name: '镜像列表' })).toBeInTheDocument()
+    expect(
+      within(screen.getByRole('banner')).getByRole('button', { name: '镜像' }),
+    ).toHaveAttribute('aria-pressed', 'true')
+  })
+
   it('删除按钮按引用区分：被引用禁用并说明，未引用可发起删除', async () => {
     const user = userEvent.setup()
     renderApp('/containers', { gateway: pageGateway() })

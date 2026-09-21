@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { resolveViewTab, writeStoredViewTab } from '../app/theme/themePreferences'
 
 /** 日志区页签取值。 */
 export type LogsTab = 'runtime' | 'login'
@@ -9,11 +10,16 @@ export const LOGS_TABS: readonly { value: LogsTab; label: string }[] = [
   { value: 'login', label: '登录日志' },
 ]
 
-/** 日志区页签状态：视图状态不进 URL，与安全区页签同一约定。 */
+const LOGS_TAB_VALUES = LOGS_TABS.map(({ value }) => value)
+
+/** 日志区页签状态：视图状态不进 URL，选中写入界面偏好，刷新后仍停在上次页签。 */
 export const useLogsStore = create<{
   tab: LogsTab
   setTab: (tab: LogsTab) => void
 }>((set) => ({
-  tab: 'runtime',
-  setTab: (tab) => set({ tab }),
+  tab: resolveViewTab(window.localStorage, 'logs', LOGS_TAB_VALUES, 'runtime'),
+  setTab: (tab) => {
+    writeStoredViewTab(window.localStorage, 'logs', tab)
+    set({ tab })
+  },
 }))

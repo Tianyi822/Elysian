@@ -2,6 +2,7 @@ import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { DATABASE_ENGINES } from '@elysian/contracts'
+import { resolveViewTab, writeStoredViewTab } from '../../app/theme/themePreferences'
 import { useDatabaseStore } from '../../stores/databaseStore'
 import { renderApp } from '../../test/renderApp'
 
@@ -53,6 +54,24 @@ describe('数据库类型切换', () => {
       'false',
     )
     expect(useDatabaseStore.getState().engine).toBe('Redis')
+  })
+
+  it('刷新后仍选中上次的类型', () => {
+    writeStoredViewTab(window.localStorage, 'database', 'SQLite')
+    useDatabaseStore.setState({
+      engine: resolveViewTab(window.localStorage, 'database', DATABASE_ENGINES, 'MariaDB'),
+    })
+
+    renderApp('/databases')
+
+    expect(within(segmentGroup()).getByRole('button', { name: 'SQLite' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(within(segmentGroup()).getByRole('button', { name: 'MariaDB' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
   })
 
   it('窄屏下拉由界面自绘：展开可选，选中后收起并更新当前项', async () => {

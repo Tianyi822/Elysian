@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { readStoredViewTab } from '../app/theme/themePreferences'
 import { LOGS_TABS, useLogsStore } from './logsStore'
 
 describe('日志区页签状态', () => {
@@ -13,5 +14,10 @@ describe('日志区页签状态', () => {
     expect(useLogsStore.getState().tab).toBe('runtime')
     useLogsStore.getState().setTab('login')
     expect(useLogsStore.getState().tab).toBe('login')
+  })
+
+  it('setTab 把选中写入界面偏好', () => {
+    useLogsStore.getState().setTab('login')
+    expect(readStoredViewTab(window.localStorage, 'logs')).toBe('login')
   })
 })
