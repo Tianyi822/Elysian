@@ -15,7 +15,8 @@ import { evaluateSshPasswordStrength } from '@elysian/contracts'
  * SSH 演示数据集：本机 SSH 服务的开关与状态、登录统计、登录方式与监听端口、Root 登录策略与演示密钥，
  * 以及可自定义名称的登录密钥列表。
  * 种子值手工固定（统计与端口取真实运维样例的量级），确定性可复现；
- * 会话内的改动落在这份内存数据上，刷新回到种子状态。
+ * changedAt 种子为 null，启停经 setSshServiceEnabled 写入同一份模块内存。
+ * Docker 运行时 changedAt 落在宿主 `/var/lib/elysian/ssh-changed-at`，不经浏览器存储。
  */
 
 /** 种子统计：今日即参照产品的量级，昨日与近 7 天按同一比例铺开。 */

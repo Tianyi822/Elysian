@@ -69,6 +69,11 @@ export const DEFAULT_SSH_PATHS = {
   sshdPidFile: '/run/sshd.pid',
   /** ssh-keygen 的工作目录：密钥对在这里生成、验完即删，不进任何用户主目录。 */
   keygenWorkspace: '/tmp/elysian-ssh-keygen',
+  /**
+   * 上次启停时间戳：sshd 自身不记启停，写在命名卷 `/var/lib/elysian` 上，
+   * 进程重启与页面刷新后仍能读到；不是浏览器 localStorage。
+   */
+  changedAtStamp: '/var/lib/elysian/ssh-changed-at',
 }
 
 /**
@@ -149,8 +154,6 @@ export function createSshService(deps: SshHostDeps): SshAdapter & {
   const keyFirstSeenAt = new Map<string, string>()
   /** Root 密码上次重置时间：chpasswd 不留可读记录，只有会话记忆。 */
   let passwordResetAt: string | null = null
-  /** 服务上次启停时间：sshd 自身不记录启停，只有会话记忆；进程重启后回到 null（界面显示 —）。 */
-  let lastToggleAt: string | null = null
   /** 密钥生成与指纹验证的临时文件序号：避免并发请求互踩。 */
   let tempSeq = 0
   /**
@@ -190,6 +193,23 @@ export function createSshService(deps: SshHostDeps): SshAdapter & {
 
   async function ensureDir(path: string): Promise<void> {
     if (!(await deps.exists(path))) await deps.mkdir(path)
+  }
+
+  async function readChangedAt(): Promise<string | null> {
+    if (!(await deps.exists(paths.changedAtStamp))) return null
+    try {
+      const text = (await deps.readText(paths.changedAtStamp)).trim()
+      return text || null
+    } catch {
+      return null
+    }
+  }
+
+  async function writeChangedAt(iso: string): Promise<void> {
+    const stamp = paths.changedAtStamp
+    const slash = stamp.lastIndexOf('/')
+    if (slash > 0) await ensureDir(stamp.slice(0, slash))
+    await deps.writeText(stamp, iso)
   }
 
   async function serviceRunning(): Promise<boolean> {
@@ -533,13 +553,13 @@ export function createSshService(deps: SshHostDeps): SshAdapter & {
   return {
     async overview(): Promise<SshOverview> {
       // enabled 与 status 都映射 sshd 是否在跑（pidfile 探测）；
-      // changedAt 只反映本会话内的启停（契约：本会话内没改过时为 null，界面显示 —）。
+      // changedAt 取宿主时间戳文件：从未由面板启停过为 null（界面显示 —）。
       const running = await serviceRunning()
       const stats = summarizeSshLog(await loginRecords(), deps.nowIso())
       return {
         enabled: running,
         status: running ? 'running' : 'stopped',
-        changedAt: lastToggleAt,
+        changedAt: await readChangedAt(),
         stats,
       }
     },
@@ -581,7 +601,7 @@ export function createSshService(deps: SshHostDeps): SshAdapter & {
       if (!(await waitForServiceState(enabled))) {
         throw new Error(`${enabled ? '启动' : '停止'} sshd 未生效：服务状态未在预期时间内收敛，请稍后刷新查看实际状态`)
       }
-      lastToggleAt = deps.nowIso()
+      await writeChangedAt(deps.nowIso())
       return this.overview()
     },
 

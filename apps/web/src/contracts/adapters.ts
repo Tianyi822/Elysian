@@ -257,7 +257,8 @@ export type SshKeyAccount = {
 export interface SshAdapter {
   /**
    * 服务概况。真实实现：enabled 与 status 都映射 sshd 是否在跑（以 pidfile 探测），
-   * changedAt 无可靠来源恒为 null；登录统计按今日/昨日/近 7 天三个窗口从登录日志汇总。
+   * changedAt 读宿主时间戳 `/var/lib/elysian/ssh-changed-at`（从未启停为 null）；
+   * 登录统计按今日/昨日/近 7 天三个窗口从登录日志汇总。
    */
   overview(): Promise<SshOverview>
   /** 登录方式与监听端口：真实实现读 /etc/ssh/sshd_config，缺省指令按 sshd 默认值呈现。 */

@@ -82,7 +82,7 @@ export type SshLoginRecord = {
 export type SshOverview = {
   enabled: boolean
   status: SshServiceStatus
-  /** 上次启停时间（ISO）；本会话内没改过时为 null，界面显示 —。 */
+  /** 上次启停时间（ISO）；从未由面板启停过时为 null，界面显示 —。 */
   changedAt: string | null
   stats: SshLoginStats
 }

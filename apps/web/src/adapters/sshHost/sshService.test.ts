@@ -11,6 +11,7 @@ const PATHS = {
   sshdLog: '/virtual/var/log/sshd.log',
   sshdPidFile: '/virtual/run/sshd.pid',
   keygenWorkspace: '/virtual/tmp/elysian-ssh-keygen',
+  changedAtStamp: '/virtual/var/lib/elysian/ssh-changed-at',
 }
 
 /** fake pidfile 里的主进程号：/proc/<pid>/comm 的身份核实以此定位。 */
@@ -553,13 +554,19 @@ describe('createSshService 服务与登录统计', () => {
     expect(host.commands.filter((entry) => entry.command === 'service')).toEqual([])
   })
 
-  it('changedAt 反映本会话内的启停：未改过为 null，启停成功后取基准时间', async () => {
-    const service = createSshService(createFakeHost({ pidFile: true }).deps)
+  it('changedAt 写入宿主时间戳：未改过为 null，启停成功后新实例仍能读到', async () => {
+    const host = createFakeHost({ pidFile: true })
+    const service = createSshService(host.deps)
     expect((await service.overview()).changedAt).toBeNull()
     await service.setServiceEnabled(false)
     expect((await service.overview()).changedAt).toBe(NOW)
-    await service.setServiceEnabled(true)
-    expect((await service.overview()).changedAt).toBe(NOW)
+    expect(host.files.get(PATHS.changedAtStamp)).toBe(NOW)
+
+    const reopened = createSshService(host.deps)
+    expect((await reopened.overview()).changedAt).toBe(NOW)
+    await reopened.setServiceEnabled(true)
+    expect((await reopened.overview()).changedAt).toBe(NOW)
+    expect(host.files.get(PATHS.changedAtStamp)).toBe(NOW)
   })
 
   it('停用等 pidfile 收敛再回包：TERM 后 sshd 异步退出也不会把开关留在打开位', async () => {
