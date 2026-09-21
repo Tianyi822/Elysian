@@ -66,9 +66,10 @@ type SshState = {
   /**
    * 一次性私钥弹窗：创建登录密钥或生成 Root 密钥成功后打开，材料直接来自那一次响应；
    * 关闭即清空——私钥只在创建/生成那一次可见，之后任何入口都不再返回它。
-   * account 是归属账号名，下载文件名以它开头（root 固定为 'root'，登录密钥按 userId 解析）。
+   * account 是归属账号名，下载文件名以它开头（root 固定为 'root'，登录密钥按 userId 解析）；
+   * keyName 是登录密钥创建时填写的名称，进下载文件名紧随账号名（root 密钥没有名称输入）。
    */
-  revealKey: { title: string; account: string; material: SshKeyMaterial } | undefined
+  revealKey: { title: string; account: string; keyName?: string; material: SshKeyMaterial } | undefined
   /** Root 密码重置成功后的提醒弹窗：下一次 SSH 登录需要使用新密码。 */
   passwordResetNotice: boolean
   togglingService: boolean
@@ -436,6 +437,7 @@ export const useSshStore = create<SshState>((set, get) => ({
           title: `新密钥「${created.name}」的私钥`,
           account:
             state.keyAccounts.find((entry) => entry.id === created.userId)?.name ?? created.userId,
+          keyName: created.name,
           material: created,
         },
       }))

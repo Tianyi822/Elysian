@@ -14,16 +14,19 @@ import { buildKeyFilename, downloadPrivateKey } from './sshKeyIO'
 export function SshKeyRevealDialog({
   title,
   account,
+  keyName,
   material,
   onClose,
 }: {
   title: string
-  /** 归属账号名：下载文件名以它开头（root-ssh-key-…/账号名-ssh-key-…）。 */
+  /** 归属账号名：下载文件名以它开头。 */
   account: string
+  /** 登录密钥创建时填写的名称：进下载文件名紧随账号名；root 密钥不传。 */
+  keyName?: string
   material: SshKeyMaterial
   onClose: () => void
 }) {
-  const filename = buildKeyFilename(account, new Date().toISOString())
+  const filename = buildKeyFilename(account, new Date().toISOString(), keyName)
   return (
     <Dialog.Root open onOpenChange={(next) => { if (!next) onClose() }}>
       <Dialog.Portal>
