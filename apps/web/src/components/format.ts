@@ -46,6 +46,14 @@ export function formatLoginTime(iso: string): string {
   return LOGIN_TIME_FORMATTER.format(new Date(iso))
 }
 
+/**
+ * 登录来源的显示文案：回环地址（sshd 视角的本机自连，如容器内联调产生的 ::1/127.0.0.1）
+ * 统一显示「本机」，原始地址留在悬停提示里；其余地址原样呈现，不虚构来源。
+ */
+export function formatLoginIp(ip: string): string {
+  return ip === '::1' || ip === '127.0.0.1' ? '本机' : ip
+}
+
 /** 运行时长：3 天 1 小时 / 2 小时 / 40 分钟；未启动为 —。 */
 export function formatUptime(startedAt: string | undefined, now: Date): string {
   if (!startedAt) return '—'

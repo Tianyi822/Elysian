@@ -13,7 +13,7 @@ import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { IconButton } from '../../components/IconButton'
 import { StatusTag } from '../../components/StatusTag'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
-import { formatDateTime, formatLoginTime } from '../../components/format'
+import { formatDateTime, formatLoginIp, formatLoginTime } from '../../components/format'
 import { RefreshCw, TriangleAlert } from '../../components/icons'
 import { SSH_PAGE_SIZE, useSshStore } from '../../stores/sshStore'
 import { ACTION_CLASS, INPUT_CLASS, Region, SECONDARY_ACTION_CLASS, Section, SwitchToggle, TablePager } from './sshCardParts'
@@ -200,12 +200,18 @@ function SshLoginRecordsCard() {
                 </td>
               </tr>
             ) : (
-              pageRows.map((record) => (
+              pageRows.map((record) => {
+                // 回环来源（容器内自连）显示「本机」，原始地址放悬停提示：列里不再出现裸 ::1。
+                const ipLabel = formatLoginIp(record.ip)
+                return (
                 <tr key={record.id} className="group transition-colors hover:bg-surface-raised">
                   {/* 钉住的列要自带不透明底，否则滚动时后面的内容会从它下面透出来；
                       行悬停时它也跟着步进一级，颜色与整行一致。 */}
-                  <td className="sticky left-0 z-10 whitespace-nowrap border-b border-r border-line bg-surface py-2.5 pr-3 tabular-nums text-fg group-hover:bg-surface-raised">
-                    {record.ip}
+                  <td
+                    title={ipLabel === record.ip ? undefined : record.ip}
+                    className="sticky left-0 z-10 whitespace-nowrap border-b border-r border-line bg-surface py-2.5 pr-3 tabular-nums text-fg group-hover:bg-surface-raised"
+                  >
+                    {ipLabel}
                   </td>
                   <td className="border-b border-line py-2.5 pl-3 tabular-nums text-fg-muted">
                     {formatLoginTime(record.at)}
@@ -219,7 +225,8 @@ function SshLoginRecordsCard() {
                   </td>
                   <td className="border-b border-line py-2.5 pl-3 text-fg-muted">{record.user}</td>
                 </tr>
-              ))
+                )
+              })
             )}
           </tbody>
         </table>
@@ -504,7 +511,9 @@ function rootHiddenHints(
   }
   if (policy === 'prohibit-password') {
     hints.push(
-      '当前配置仅允许 Root 以密钥登录：Root 密码设置已隐藏。重新开关一次「允许 Root 登录」可按全局登录方式重设。',
+      settings.passwordAuthEnabled
+        ? '当前配置仅允许 Root 以密钥登录：Root 密码设置已隐藏。'
+        : '当前配置仅允许 Root 以密钥登录：Root 密码设置已隐藏。重新开关一次「允许 Root 登录」可按全局登录方式重设。',
     )
   }
   if (!settings.keyAuthEnabled) hints.push('全局密钥登录已关闭：Root 密钥设置已隐藏。')
@@ -557,6 +566,18 @@ function RootCard() {
             {hint}
           </p>
         ))}
+        {/* 外部档 prohibit-password 且全局密码已开：重设只差一步，按钮直接到位，
+            不再要求用户「先关再开」开关仪式。 */}
+        {rootAuth.policy === 'prohibit-password' && settings.passwordAuthEnabled ? (
+          <button
+            type="button"
+            onClick={() => void setLoginPolicy(gateway, 'yes')}
+            disabled={savingPolicy}
+            className={`${SECONDARY_ACTION_CLASS} mt-3`}
+          >
+            按全局登录方式重设
+          </button>
+        ) : null}
       </Region>
 
       {passwordUsable ? (

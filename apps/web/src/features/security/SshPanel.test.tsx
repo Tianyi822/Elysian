@@ -147,6 +147,25 @@ describe('SSH 管理页签', () => {
     )
   })
 
+  it('回环来源显示为本机，悬停提示保留原始地址', async () => {
+    const { gateway } = sshSessions({
+      listLoginRecords: async () => [
+        { id: 'login-loop', ip: '::1', port: 40001, at: '2026-09-21T04:00:00.000Z', user: 'root', result: 'succeeded' },
+        { id: 'login-v4loop', ip: '127.0.0.1', port: 40002, at: '2026-09-21T03:00:00.000Z', user: 'elysian', result: 'failed' },
+        { id: 'login-remote', ip: '203.0.113.9', port: 40003, at: '2026-09-21T02:00:00.000Z', user: 'root', result: 'succeeded' },
+      ],
+    })
+    await openSshTab(gateway)
+
+    const table = within(screen.getByRole('region', { name: 'SSH 登录记录' })).getByRole('table')
+    const loopCells = within(table).getAllByText('本机')
+    expect(loopCells).toHaveLength(2)
+    expect(loopCells[0]).toHaveAttribute('title', '::1')
+    expect(loopCells[1]).toHaveAttribute('title', '127.0.0.1')
+    // 非回环地址原样呈现，不被归一改写。
+    expect(within(table).getByText('203.0.113.9')).not.toHaveAttribute('title')
+  })
+
   it('没有登录记录时给空态，而不是一张空表', async () => {
     const { gateway } = sshSessions({ listLoginRecords: async () => [] })
     await openSshTab(gateway)
@@ -598,6 +617,24 @@ describe('SSH 管理页签', () => {
     for (const name of ['禁止 Root 登录', '只能密钥登录', '允许密码登录']) {
       expect(within(root()).queryByRole('button', { name })).not.toBeInTheDocument()
     }
+  })
+
+  it('外部档 prohibit-password 下打开全局密码登录：密码区收起但给一键重设，不需要开关两次', async () => {
+    const user = await openSshTab()
+    const root = () => screen.getByRole('region', { name: 'Root 设置' })
+    const service = () => screen.getByRole('region', { name: 'SSH 服务' })
+
+    // 种子策略是外部档 prohibit-password（开关显示为开）。用户只打开全局密码登录：
+    // sshd 层面 root 密码登录仍被该策略挡着，密码区如实收起，但出现一步到位的重设入口。
+    await user.click(within(service()).getByRole('switch', { name: '密码登录' }))
+    await waitFor(() => expect(within(root()).queryByLabelText('Root 密码')).not.toBeInTheDocument())
+    expect(within(root()).getByText(/仅允许 Root 以密钥登录/)).toBeInTheDocument()
+    const reset = await within(root()).findByRole('button', { name: '按全局登录方式重设' })
+
+    // 一键重设写 PermitRootLogin yes：密码区随之出现，不再要求「先关再开」的开关仪式。
+    await user.click(reset)
+    expect(await within(root()).findByLabelText('Root 密码')).toBeInTheDocument()
+    expect(useSshStore.getState().rootAuth?.policy).toBe('yes')
   })
 
   it('外部配置的 forced-commands-only 仍如实呈现：开关开、无密码密钥区并给该配置说明', async () => {
