@@ -27,7 +27,7 @@ import { randomSshPort, randomStrongPassword } from './sshRandom'
 
 /**
  * SSH 管理面板：四张卡排成两列瀑布，高度随内容，不互相拉平。
- * 左列是两张设置卡：SSH 服务（启停、登录统计、端口、登录方式）与 Root 设置（登录策略、密码、密钥）；
+ * 左列是两张设置卡：SSH 服务（启停与登录方式、登录统计、端口）与 Root 设置（登录策略、密码、密钥）；
  * 右列是两张数据卡：SSH 密钥表与 SSH 登录记录表。
  * 窄屏单列时 DOM 顺序即视觉顺序：服务 → Root → 密钥 → 记录，设置挨着设置、数据挨着数据。
  * 数据来自 SSH adapter：Docker 运行时由 HTTP adapter 真实操作容器内 sshd，
@@ -44,20 +44,28 @@ function SwitchRow({
   label,
   checked,
   disabled = false,
+  layout = 'inline',
   onCheckedChange,
 }: {
   label: string
   checked: boolean
   disabled?: boolean
+  /**
+   * inline：始终左文右开关（Root 等单行区）。
+   * responsive：容器够宽时横排，窄时上文字下开关——服务状态三列共用，避免挤叠。
+   */
+  layout?: 'inline' | 'responsive'
   onCheckedChange: (checked: boolean) => void
 }) {
   return (
     <label
-      className={`inline-flex items-center gap-2 text-sm text-fg ${
-        disabled ? 'opacity-50' : 'cursor-pointer'
-      }`}
+      className={`inline-flex shrink-0 text-sm text-fg ${
+        layout === 'responsive'
+          ? 'flex-col items-center gap-1.5 @md:flex-row @md:gap-2 @md:whitespace-nowrap'
+          : 'items-center gap-2 whitespace-nowrap'
+      } ${disabled ? 'opacity-50' : 'cursor-pointer'}`}
     >
-      {label}
+      <span>{label}</span>
       <SwitchToggle
         label={label}
         checked={checked}
@@ -245,7 +253,7 @@ function SshLoginRecordsCard() {
   )
 }
 
-/** SSH 服务卡：服务启停、监听端口、登录方式三个区域。 */
+/** SSH 服务卡：服务启停与登录方式、监听端口两个设置区，外加登录统计。 */
 function ServiceCard() {
   const gateway = useGateway()
   const overview = useSshStore((s) => s.overview)
@@ -266,22 +274,48 @@ function ServiceCard() {
 
   return (
     <Section title="SSH 服务">
-      <Region title="服务状态">
-        {/* 开关位置即服务状态，不再并排文字徽标复述（契约 status 字段仍由接口提供）。 */}
-        <SwitchRow
-          label="SSH 服务"
-          checked={enabled}
-          disabled={toggling}
-          onCheckedChange={(checked) => void setServiceEnabled(gateway, checked)}
-        />
-        <p className="mt-3 text-xs tabular-nums text-fg-subtle">
-          上次变更：{overview.changedAt ? formatDateTime(overview.changedAt) : '—'}
-        </p>
-        <p className="mt-2 text-xs text-fg-subtle">
-          {isDockerRuntime()
-            ? '停用后本机不再接受 SSH 连接；动作在容器内真实执行。'
-            : '停用后本机不再接受 SSH 连接；动作只改演示内存，不触碰任何真实主机。'}
-        </p>
+      <Region
+        title="服务状态"
+        aside={
+          <p className="shrink-0 text-xs tabular-nums text-fg-subtle">
+            上次变更：{overview.changedAt ? formatDateTime(overview.changedAt) : '—'}
+          </p>
+        }
+      >
+        {/* 三列均分、竖线隔开；容器够宽时左文右开关，窄时上文字下开关。 */}
+        <div role="group" aria-label="服务开关" className="@container flex items-stretch">
+          <div className="flex flex-1 items-center justify-center px-1">
+            <SwitchRow
+              label="SSH 服务"
+              layout="responsive"
+              checked={enabled}
+              disabled={toggling}
+              onCheckedChange={(checked) => void setServiceEnabled(gateway, checked)}
+            />
+          </div>
+          <span aria-hidden data-separator="switch" className="w-px shrink-0 self-stretch bg-line" />
+          <div className="flex flex-1 items-center justify-center px-1">
+            <SwitchRow
+              label="密码登录"
+              layout="responsive"
+              checked={settings.passwordAuthEnabled}
+              disabled={savingAuth}
+              onCheckedChange={(checked) =>
+                void setAuthMethod(gateway, { passwordAuthEnabled: checked })
+              }
+            />
+          </div>
+          <span aria-hidden data-separator="switch" className="w-px shrink-0 self-stretch bg-line" />
+          <div className="flex flex-1 items-center justify-center px-1">
+            <SwitchRow
+              label="密钥登录"
+              layout="responsive"
+              checked={settings.keyAuthEnabled}
+              disabled={savingAuth}
+              onCheckedChange={(checked) => void setAuthMethod(gateway, { keyAuthEnabled: checked })}
+            />
+          </div>
+        </div>
       </Region>
 
       <LoginStatsRegion stats={overview.stats} enabled={enabled} />
@@ -315,26 +349,6 @@ function ServiceCard() {
         <p className={`mt-3 text-xs ${portError ? 'text-danger' : 'text-fg-subtle'}`}>
           {portError ?? '当前 SSH 协议所使用的端口，默认为 22。'}
         </p>
-      </Region>
-
-      <Region title="登录方式">
-        {/* 两个开关并排一行放得下：标签已说明含义，不再各配一行同义描述，也不纵向占位。 */}
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-          <SwitchRow
-            label="密码登录"
-            checked={settings.passwordAuthEnabled}
-            disabled={savingAuth}
-            onCheckedChange={(checked) =>
-              void setAuthMethod(gateway, { passwordAuthEnabled: checked })
-            }
-          />
-          <SwitchRow
-            label="密钥登录"
-            checked={settings.keyAuthEnabled}
-            disabled={savingAuth}
-            onCheckedChange={(checked) => void setAuthMethod(gateway, { keyAuthEnabled: checked })}
-          />
-        </div>
       </Region>
     </Section>
   )
@@ -450,8 +464,8 @@ function LoginStatsRegion({ stats, enabled }: { stats: SshLoginStats; enabled: b
   return (
     <Region title="登录统计">
       {enabled ? (
-        <table className="w-full table-fixed border-separate border-spacing-0 text-left text-sm">
-          {/* 定宽三列：窗口名、成功、失败；计数用等宽数字，翻动时列宽不跳。 */}
+        <table className="w-full table-fixed border-separate border-spacing-0 text-center text-sm">
+          {/* 定宽三列：窗口名、成功、失败；表头与单元格全部居中，计数用等宽数字，翻动时列宽不跳。 */}
           <colgroup>
             <col className="w-[40%]" />
             <col className="w-[30%]" />
@@ -459,11 +473,11 @@ function LoginStatsRegion({ stats, enabled }: { stats: SshLoginStats; enabled: b
           </colgroup>
           <thead>
             <tr>
-              {['时间窗口', SSH_LOGIN_RESULT_LABELS.succeeded, SSH_LOGIN_RESULT_LABELS.failed].map((label, index) => (
+              {['时间窗口', SSH_LOGIN_RESULT_LABELS.succeeded, SSH_LOGIN_RESULT_LABELS.failed].map((label) => (
                 <th
                   key={label}
                   scope="col"
-                  className={`border-b border-line pb-2 text-xs font-medium text-fg-muted ${index === 0 ? '' : 'pl-3'}`}
+                  className="border-b border-line pb-2 text-center text-xs font-medium text-fg-muted"
                 >
                   {label}
                 </th>
@@ -473,14 +487,17 @@ function LoginStatsRegion({ stats, enabled }: { stats: SshLoginStats; enabled: b
           <tbody>
             {SSH_LOGIN_WINDOWS.map((window) => (
               <tr key={window}>
-                <th scope="row" className="border-b border-line py-2 text-xs font-medium text-fg-muted">
+                <th
+                  scope="row"
+                  className="border-b border-line py-2 text-center text-xs font-medium text-fg-muted"
+                >
                   {SSH_LOGIN_WINDOW_LABELS[window]}
                 </th>
-                <td className="border-b border-line py-2 pl-3 tabular-nums text-fg">
+                <td className="border-b border-line py-2 text-center tabular-nums text-fg">
                   {stats[window].succeeded}
                 </td>
                 {/* 失败计数带危险色：爆破尝试是这块的重点信号，文字与颜色一起表达。 */}
-                <td className="border-b border-line py-2 pl-3 tabular-nums text-danger">
+                <td className="border-b border-line py-2 text-center tabular-nums text-danger">
                   {stats[window].failed}
                 </td>
               </tr>

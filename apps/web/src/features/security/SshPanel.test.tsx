@@ -8,7 +8,7 @@ import type { ElysianGateway } from '../../contracts/adapters'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { SSH_PAGE_SIZE, useSshStore } from '../../stores/sshStore'
 import { renderApp } from '../../test/renderApp'
-import { openSshTab, resetSshPanel, securityTab, sshSessions } from '../../test/sshPanel'
+import { INITIAL_SSH_STATE, openSshTab, resetSshPanel, securityTab, sshSessions } from '../../test/sshPanel'
 import { sshPortConfirmConsequences } from './SshPanel'
 
 /**
@@ -81,16 +81,42 @@ describe('SSH 管理页签', () => {
     expect(keys.parentElement).toContainElement(records)
     expect(service.parentElement).not.toBe(keys.parentElement)
 
-    // 卡内按区域划分，每区自带小标题。
-    for (const name of ['服务状态', '登录统计', '监听端口', '登录方式']) {
+    // 卡内按区域划分：服务启停与登录方式合在「服务状态」，不再单开登录方式区。
+    for (const name of ['服务状态', '登录统计', '监听端口']) {
       expect(within(service).getByText(name), name).toBeInTheDocument()
     }
-    // 登录方式的两个开关并排一行，不再纵向占位。
+    expect(within(service).queryByText('登录方式')).not.toBeInTheDocument()
+    expect(within(service).queryByText(/动作在容器内真实执行/)).not.toBeInTheDocument()
+    expect(within(service).queryByText(/动作只改演示内存/)).not.toBeInTheDocument()
+    expect(within(service).queryByText(/停用后本机不再接受 SSH 连接/)).not.toBeInTheDocument()
+
+    // 三个开关同一行、竖线分隔，避免纵向占位把区域撑高。
     const passwordAuth = within(service).getByRole('switch', { name: '密码登录' })
     const keyAuth = within(service).getByRole('switch', { name: '密钥登录' })
-    const authRow = passwordAuth.closest('label')?.parentElement
-    expect(authRow).toHaveClass('flex-wrap', 'items-center')
-    expect(keyAuth.closest('label')?.parentElement).toBe(authRow)
+    const serviceSwitch = within(service).getByRole('switch', { name: 'SSH 服务' })
+    const switchGroup = within(service).getByRole('group', { name: '服务开关' })
+    expect(switchGroup).toContainElement(passwordAuth)
+    expect(switchGroup).toContainElement(keyAuth)
+    expect(switchGroup).toContainElement(serviceSwitch)
+    expect(switchGroup).toHaveClass('flex')
+    expect(switchGroup.querySelectorAll('[data-separator="switch"]').length).toBe(2)
+    expect(passwordAuth.closest('label')).not.toHaveClass('justify-between')
+    // 窄容器上文字下开关，宽容器（@md）左文右开关。
+    expect(passwordAuth.closest('label')).toHaveClass('inline-flex', 'flex-col', '@md:flex-row')
+    expect(switchGroup).toHaveClass('@container')
+    // 均分单元格不得 min-w-0：否则窄卡下 justify-center 会从两侧裁掉「密码」「密钥」。
+    expect(passwordAuth.closest('label')?.parentElement).not.toHaveClass('min-w-0')
+    expect(keyAuth.closest('label')?.parentElement).not.toHaveClass('min-w-0')
+    expect(serviceSwitch.closest('label')?.parentElement).not.toHaveClass('min-w-0')
+    // 「上次变更」与「服务状态」同一行右对齐，不占开关下方的额外高度。
+    const serviceTitle = within(service).getByText('服务状态')
+    const lastChanged = within(service).getByText(/^上次变更：/)
+    const titleRow = serviceTitle.parentElement
+    expect(titleRow).toContainElement(lastChanged)
+    expect(titleRow).toHaveClass('justify-between')
+    expect(titleRow).not.toHaveClass('flex-col')
+    expect(titleRow?.querySelector('[role="group"]')).toBeNull()
+    expect(switchGroup.parentElement?.textContent).not.toMatch(/上次变更/)
     // Root 设置卡：登录策略收敛为一个开关，密码/密钥区按策略与全局登录方式联动。
     expect(within(root).getByText('Root 登录')).toBeInTheDocument()
     expect(within(root).getByText('Root 密钥')).toBeInTheDocument()
@@ -210,9 +236,21 @@ describe('SSH 管理页签', () => {
     expect(rows[2]).toHaveTextContent('近 7 天')
     expect(rows[2]).toHaveTextContent(`${SEED_SSH_STATS.last7Days.succeeded}`)
     expect(rows[2]).toHaveTextContent(`${SEED_SSH_STATS.last7Days.failed}`)
+    // 表头与单元格全部居中：时间窗口、成功、失败三列扫视对齐，不偏左。
+    expect(table).toHaveClass('text-center')
+    for (const header of within(table).getAllByRole('columnheader')) {
+      expect(header).toHaveClass('text-center')
+    }
+    const today = rows[0] as HTMLElement
+    expect(within(today).getByRole('rowheader')).toHaveClass('text-center')
+    const todayCells = within(today).getAllByRole('cell')
+    expect(todayCells).toHaveLength(2)
+    for (const cell of todayCells) {
+      expect(cell).toHaveClass('text-center')
+    }
     // 失败计数带危险色，成功计数不带：文字与颜色一起区分两种结果
-    expect(within(rows[0] as HTMLElement).getAllByRole('cell')[1]).toHaveClass('text-danger')
-    expect(within(rows[0] as HTMLElement).getAllByRole('cell')[0]).not.toHaveClass('text-danger')
+    expect(todayCells[1]).toHaveClass('text-danger')
+    expect(todayCells[0]).not.toHaveClass('text-danger')
   })
 
   it('服务未启用时登录统计给空态说明，不渲染零值统计', async () => {
@@ -236,9 +274,38 @@ describe('SSH 管理页签', () => {
     expect(within(service).queryByText('运行中')).not.toBeInTheDocument()
     expect(within(service).getByRole('switch', { name: 'SSH 服务' })).toBeChecked()
     expect(within(service).getByLabelText('监听端口')).toHaveValue(`${SEED_SSH_PORT}`)
-    expect(within(service).getByText('上次变更：—')).toBeInTheDocument()
+    const seedChanged = within(service).getByText('上次变更：—')
+    const seedTitleRow = within(service).getByText('服务状态').parentElement
+    expect(seedTitleRow).toContainElement(seedChanged)
+    expect(seedTitleRow).toHaveClass('justify-between')
+    expect(seedTitleRow).not.toHaveClass('flex-col')
     expect(within(service).getByRole('switch', { name: '密码登录' })).not.toBeChecked()
     expect(within(service).getByRole('switch', { name: '密钥登录' })).toBeChecked()
+  })
+
+  it('启停写入上次变更：mock 写路径保留，重新加载仍在标题行右侧', async () => {
+    const { gateway } = sshSessions()
+    const user = await openSshTab(gateway)
+    const service = () => screen.getByRole('region', { name: 'SSH 服务' })
+
+    await user.click(within(service()).getByRole('switch', { name: 'SSH 服务' }))
+
+    const changed = await within(service()).findByText(/^上次变更：/)
+    expect(changed).not.toHaveTextContent('上次变更：—')
+    const titleRow = within(service()).getByText('服务状态').parentElement
+    expect(titleRow).toContainElement(changed)
+    expect(titleRow).toHaveClass('justify-between')
+    const stamped = changed.textContent
+
+    // 模拟刷新：丢掉界面 store，不推回 mock 种子——adapter 写路径上的运维事实应仍在。
+    useSshStore.setState(INITIAL_SSH_STATE)
+    await useSshStore.getState().load(gateway)
+
+    const reloaded = await within(service()).findByText(/^上次变更：/)
+    expect(reloaded).toHaveTextContent(stamped ?? '')
+    const reloadedRow = within(service()).getByText('服务状态').parentElement
+    expect(reloadedRow).toContainElement(reloaded)
+    expect(reloadedRow).toHaveClass('justify-between')
   })
 
   it('停用服务：状态转已停止并留下 mock 通知，重新启用后恢复', async () => {

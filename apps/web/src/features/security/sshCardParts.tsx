@@ -136,23 +136,34 @@ export function Section({ title, children }: { title: string; children: ReactNod
 export function Region({
   title,
   labelFor,
+  aside,
   children,
 }: {
   title?: string
   labelFor?: string
+  /** 标题行右侧附属信息（如「上次变更」），与标题同一行、不占内容区高度。 */
+  aside?: ReactNode
   children: ReactNode
 }) {
   const titleClass = 'text-xs font-medium text-fg-muted'
+  const heading = labelFor ? (
+    <label htmlFor={labelFor} className={titleClass}>
+      {title}
+    </label>
+  ) : title ? (
+    <p className={titleClass}>{title}</p>
+  ) : null
   return (
     <div className="flex flex-col rounded-lg bg-surface-raised px-4 py-4">
-      {labelFor ? (
-        <label htmlFor={labelFor} className={titleClass}>
-          {title}
-        </label>
-      ) : title ? (
-        <p className={titleClass}>{title}</p>
-      ) : null}
-      <div className={title ? 'mt-3' : ''}>{children}</div>
+      {aside ? (
+        <div className="flex items-center justify-between gap-3">
+          {heading}
+          {aside}
+        </div>
+      ) : (
+        heading
+      )}
+      <div className={heading || aside ? 'mt-3' : ''}>{children}</div>
     </div>
   )
 }
