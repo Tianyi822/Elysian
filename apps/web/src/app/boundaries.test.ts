@@ -20,20 +20,6 @@ const NODE_SIDE_ALLOWLIST = [
   'adapters/hostMetrics/metricsStore.ts',
   'adapters/hostMetrics/readHostSample.ts',
   'adapters/hostMetrics/isDockerEnv.ts',
-  'adapters/firewallHost/api.ts',
-  'adapters/firewallHost/api.node.ts',
-  'adapters/firewallHost/hostFiles.node.ts',
-  'adapters/firewallHost/firewallApi.vite.ts',
-  'adapters/sshHost/api.ts',
-  'adapters/sshHost/api.node.ts',
-  'adapters/sshHost/sshApi.vite.ts',
-  'adapters/usersHost/api.ts',
-  'adapters/usersHost/api.node.ts',
-  'adapters/usersHost/usersApi.vite.ts',
-  'adapters/platformMemory/api.ts',
-  'adapters/platformMemory/api.node.ts',
-  'adapters/platformMemory/platformMemory.vite.ts',
-  'adapters/endpointGuard/guard.ts',
 ]
 
 function listSourceFiles(dir: string): string[] {

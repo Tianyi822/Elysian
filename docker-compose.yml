@@ -27,9 +27,12 @@ services:
       # 镜像里的密钥种进卷，之后 /etc/ssh/ssh_host_* 一律是指向卷的符号链接，身份不再变。
       - elysian_ssh_host_keys:/etc/ssh/host-keys
     # 先起容器内 sshd：主机密钥种进卷并落到默认路径（见上），建权限分离目录 /run/sshd，
-    # 日志写 /var/log/sshd.log（SSH 面板数据源），启动失败只影响 SSH 联调、不阻断 dev server，
-    # 然后照常安装依赖并启动 dev。
-    command: sh -c "mkdir -p /etc/ssh/host-keys && if [ ! -e /etc/ssh/host-keys/ssh_host_ed25519_key ]; then cp -a /etc/ssh/ssh_host_* /etc/ssh/host-keys/; fi && ln -sfn /etc/ssh/host-keys/* /etc/ssh/ && mkdir -p /run/sshd && (/usr/sbin/sshd -E /var/log/sshd.log || true) && bun install && bun run dev"
+    # 日志写 /var/log/sshd.log（SSH 面板数据源），启动失败只影响 SSH 联调、不阻断 dev server；
+    # 然后安装依赖，在同一 sh -c 进程组后台起 API server（bun run --filter @elysian/server dev，
+    # 监听容器内 127.0.0.1:8080，vite 经 server.proxy 转发 /api/security 与 /api/platform 到这里，
+    # 8080 不发布到宿主），server 启动失败只影响安全端点与内存徽标、不阻断 dev（与 sshd 同策略），
+    # 最后照常启动 dev。
+    command: sh -c "mkdir -p /etc/ssh/host-keys && if [ ! -e /etc/ssh/host-keys/ssh_host_ed25519_key ]; then cp -a /etc/ssh/ssh_host_* /etc/ssh/host-keys/; fi && ln -sfn /etc/ssh/host-keys/* /etc/ssh/ && mkdir -p /run/sshd && (/usr/sbin/sshd -E /var/log/sshd.log || true) && bun install && (bun run --filter @elysian/server dev &) && bun run dev"
 
 volumes:
   elysian_metrics:

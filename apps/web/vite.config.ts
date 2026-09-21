@@ -1,22 +1,14 @@
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'vite'
-import { ALLOWED_HOSTNAMES } from './src/adapters/endpointGuard/guard.ts'
+import { ALLOWED_HOSTNAMES } from '../server/src/shared/allowedHostnames.ts'
 import { elysianEventsVitePlugin } from './src/adapters/sse/mockEventsPlugin.vite.ts'
-import { elysianSecurityVitePlugin } from './src/adapters/firewallHost/firewallApi.vite.ts'
-import { elysianSshVitePlugin } from './src/adapters/sshHost/sshApi.vite.ts'
-import { elysianUsersVitePlugin } from './src/adapters/usersHost/usersApi.vite.ts'
-import { elysianPlatformMemoryVitePlugin } from './src/adapters/platformMemory/platformMemory.vite.ts'
 
 export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
     elysianEventsVitePlugin(),
-    elysianSecurityVitePlugin(),
-    elysianSshVitePlugin(),
-    elysianUsersVitePlugin(),
-    elysianPlatformMemoryVitePlugin(),
   ],
   define: {
     'import.meta.env.ELSYIAN_DOCKER': JSON.stringify(process.env.ELSYIAN_DOCKER ?? ''),
@@ -26,8 +18,24 @@ export default defineConfig({
     // 本地原生 dev 只监听 localhost：工作台与无鉴权端点不暴露给局域网；容器编排（ELSYIAN_DOCKER=1）
     // 需要绑 0.0.0.0 才能被宿主机经端口映射访问（compose 只发布到宿主回环）。
     host: process.env.ELSYIAN_DOCKER === '1' ? true : undefined,
-    // Host 校验与端点守卫共用同一份名单：防 DNS rebinding 是本项目的显式决定，不依赖平台默认。
+    // Host 校验与 server 端守卫共用同一份名单：防 DNS rebinding 是本项目的显式决定，不依赖平台默认。
     allowedHosts: [...ALLOWED_HOSTNAMES],
     watch: process.env.ELSYIAN_DOCKER === '1' ? { usePolling: true } : undefined,
+    // 防火墙/SSH/用户管理与平台内存端点由 @elysian/server（127.0.0.1:8080）承载，dev 经代理同源转发；
+    // 必须用对象形式且不设 changeOrigin——vite 对字符串简写强制包一层 changeOrigin:true（改写 Host 头，
+    // 转发后的 Origin 与 Host 不一致，server 同源守卫将 403 拒掉全部写请求），对象形式才保持原 Host 头。
+    // /api/events 与 /api/resources/history 的 SSE 事件流仍由本进程的 elysianEventsVitePlugin 提供，不经代理。
+    proxy: {
+      '/api/security': { target: 'http://127.0.0.1:8080' },
+      '/api/platform': { target: 'http://127.0.0.1:8080' },
+    },
+  },
+  preview: {
+    // preview 同款代理：安全与平台内存端点已不在本进程挂载，不补则 preview 下这些路径全部失效；
+    // 同样必须用对象形式保持原 Host 头（理由见 server.proxy 注释）。
+    proxy: {
+      '/api/security': { target: 'http://127.0.0.1:8080' },
+      '/api/platform': { target: 'http://127.0.0.1:8080' },
+    },
   },
 })

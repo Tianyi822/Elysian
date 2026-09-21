@@ -12,33 +12,16 @@ import type {
   EventStreamHandlers,
   FileEntry,
   FileSearchResult,
-  FirewallImportResult,
-  FirewallIpRule,
-  FirewallIpRuleInput,
-  FirewallForwardRule,
-  FirewallForwardInput,
-  FirewallRule,
-  FirewallRuleInput,
-  FirewallScanConfig,
-  FirewallScanProtection,
-  FirewallToggles,
-  HostUser,
-  HostUserInput,
+  FirewallAdapter,
   Incident,
   IncidentListRow,
   LoginLogEntry,
   ModuleStatus,
   RuntimeLogSnapshot,
   Skill,
-  SshAuthMethods,
-  SshAuthSettings,
-  SshLoginKey,
-  SshLoginRecord,
-  SshOverview,
-  SshPasswordResetResult,
-  SshRootAuth,
-  SshRootLoginPolicy,
+  SshAdapter,
   Unsubscribe,
+  UserAdapter,
   WebsiteProject,
   WebsiteProjectCreateInput,
   WebsiteProjectKind,
@@ -195,37 +178,11 @@ export interface DatabaseAdapter {
   remove(databaseId: string): Promise<void>
 }
 
-/** 防火墙区适配接口。演示态由 mock 实现；Docker 运行时由 HTTP adapter 接通容器内 ufw，页面不改。 */
-export interface FirewallAdapter {
-  list(): Promise<readonly FirewallRule[]>
-  toggles(): Promise<FirewallToggles>
-  /** 切换防火墙总开关或禁 ping：演示态只改内存；Docker 真实态执行 ufw enable/disable 与 before.rules 切换。 */
-  setToggles(toggles: FirewallToggles): Promise<FirewallToggles>
-  create(input: FirewallRuleInput): Promise<FirewallRule>
-  update(ruleId: string, input: FirewallRuleInput): Promise<FirewallRule>
-  remove(ruleId: string): Promise<void>
-  /** 批量导入：去重后落进数据集，返回新增列表与跳过数量。 */
-  importRules(inputs: readonly FirewallRuleInput[]): Promise<FirewallImportResult>
-  /** IP 规则（纯来源封禁，无端口）：真实态对应 `ufw allow/deny from <来源>`。 */
-  listIpRules(): Promise<readonly FirewallIpRule[]>
-  createIpRule(input: FirewallIpRuleInput): Promise<FirewallIpRule>
-  updateIpRule(ruleId: string, input: FirewallIpRuleInput): Promise<FirewallIpRule>
-  removeIpRule(ruleId: string): Promise<void>
-  /** 端口转发（DNAT）：真实态写入 before.rules 的 *nat 标记段。 */
-  listForwards(): Promise<readonly FirewallForwardRule[]>
-  createForward(input: FirewallForwardInput): Promise<FirewallForwardRule>
-  updateForward(ruleId: string, input: FirewallForwardInput): Promise<FirewallForwardRule>
-  removeForward(ruleId: string): Promise<void>
-  /** 端口防扫描状态：开关、配置、统计与当前封锁列表（真实实现基于内核 xt_recent 双名单 jail）。 */
-  scanProtection(): Promise<FirewallScanProtection>
-  setScanProtection(enabled: boolean): Promise<FirewallScanProtection>
-  /** 更新防扫描配置（监控端口、窗口、阈值、封禁时长）；真实态改写规则文本并 reload。 */
-  setScanConfig(config: FirewallScanConfig): Promise<FirewallScanProtection>
-  /** 解封封锁名单中的 IP。 */
-  unblockIp(ip: string): Promise<FirewallScanProtection>
-  /** 从承载本面板的操作系统同步防火墙规则：返回同步后的规则总数。 */
-  syncFromSystem(): Promise<{ total: number }>
-}
+/**
+ * 防火墙区适配接口。已上提 @elysian/contracts（security/firewall.ts）——server 侧服务层
+ * 与 web 侧 adapter 共用同一接口定义，这里 re-export 保持所有消费方 import 路径不变。
+ */
+export type { FirewallAdapter } from '@elysian/contracts'
 
 /**
  * 日志接缝：平台运行日志与平台登录日志的只读读取。
@@ -239,88 +196,22 @@ export interface LogsAdapter {
 }
 
 /**
- * SSH 区适配接口。演示态由 mock 实现；Docker 运行时由 HTTP adapter 接通容器内 sshd，
- * 真实执行全部经服务端编排（sshd_config 补丁、chpasswd、ssh-keygen），页面不改。
+ * 密钥可归属的主机账号（轻量清单）。定义已上提 @elysian/contracts（security/ssh.ts），
+ * 这里 re-export 保持消费方 import 路径不变；语义见契约侧 JSDoc。
  */
-/**
- * 密钥可归属的主机账号（轻量清单）。真实实现来自 getent passwd 的真实系统账号
- * （有登录 shell、uid≥1000，root 不列——Root 密钥由 Root 密钥卡单独管理）；
- * mock 实现来自账号数据集。创建密钥时把所选账号的 id 回传给 createKey。
- */
-export type SshKeyAccount = {
-  /** 账号标识：真实实现即系统账号名（登录名），mock 实现为账号数据集 id。 */
-  id: string
-  /** 展示名：真实实现为登录名，mock 实现为账号昵称。 */
-  name: string
-}
-
-export interface SshAdapter {
-  /**
-   * 服务概况。真实实现：enabled 与 status 都映射 sshd 是否在跑（以 pidfile 探测），
-   * changedAt 读宿主时间戳 `/var/lib/elysian/ssh-changed-at`（从未启停为 null）；
-   * 登录统计按今日/昨日/近 7 天三个窗口从登录日志汇总。
-   */
-  overview(): Promise<SshOverview>
-  /** 登录方式与监听端口：真实实现读 /etc/ssh/sshd_config，缺省指令按 sshd 默认值呈现。 */
-  settings(): Promise<SshAuthSettings>
-  /** Root 登录策略与 Root 凭据：策略读配置，密钥材料取 root authorized_keys 首行（无则 null）。 */
-  rootAuth(): Promise<SshRootAuth>
-  /** 启停本机 SSH 服务：真实实现执行 service ssh start|stop。 */
-  setServiceEnabled(enabled: boolean): Promise<SshOverview>
-  /** 保存登录方式开关：真实实现补丁 sshd_config、sshd -t 预检通过后重启 sshd。 */
-  setAuthMethods(methods: SshAuthMethods): Promise<SshAuthSettings>
-  /** 保存监听端口：非法端口直接拒绝；真实实现走补丁 → 预检 → 重启，失败回滚配置。 */
-  setPort(port: number): Promise<SshAuthSettings>
-  /** 保存 Root 登录策略：取值限契约枚举；落盘流程同登录方式开关。 */
-  saveRootLoginPolicy(policy: SshRootLoginPolicy): Promise<SshRootAuth>
-  /** 重置 Root 密码：服务端复验强度（弱密码拒绝）；真实实现经 chpasswd 的 stdin 下发，密码不进命令行。 */
-  resetRootPassword(password: string): Promise<SshPasswordResetResult>
-  /**
-   * 生成（或重新生成）Root 密钥：真实实现 ssh-keygen 生成 ed25519 密钥对，
-   * 新公钥替换 root authorized_keys 的首行（其余行保留），私钥仅随本次响应一次性返回、不落盘。
-   */
-  createRootKey(): Promise<SshRootAuth>
-  /** 登录密钥列表：真实实现汇总各账号 authorized_keys，按 ssh-keygen 指纹呈现；不返回私钥。 */
-  listKeys(): Promise<readonly SshLoginKey[]>
-  /** 登录记录：按时间倒序的登录事实，含来源地址、客户端端口、账号与结果。 */
-  listLoginRecords(): Promise<readonly SshLoginRecord[]>
-  /** 密钥可归属的主机账号清单（见 SshKeyAccount）。 */
-  keyAccounts(): Promise<readonly SshKeyAccount[]>
-  /**
-   * 创建登录密钥：名称去空白后校验并拒绝换行/控制字符；真实实现生成 ed25519 密钥对，
-   * 公钥经验证后追加目标账号 authorized_keys，私钥仅随本次响应一次性返回、不落盘。
-   */
-  createKey(input: { name: string; userId: string }): Promise<SshLoginKey>
-  /** 删除登录密钥：真实实现按公钥行从 authorized_keys 移除，写前备份。 */
-  removeKey(keyId: string): Promise<void>
-}
+export type { SshKeyAccount } from '@elysian/contracts'
 
 /**
- * 主机账号适配接口。mock 实现落内存数据集；Docker 运行时由 HTTP adapter 接通容器内
- * useradd/usermod/userdel/gpasswd/chpasswd 的真实执行（经 /api/security/users 端点），页面不改。
+ * SSH 区适配接口。已上提 @elysian/contracts（security/ssh.ts）——server 侧服务层
+ * 与 web 侧 adapter 共用同一接口定义，这里 re-export 保持所有消费方 import 路径不变。
  */
-export interface UserAdapter {
-  /**
-   * 主机账号列表。id 即用户名（Linux 账号名就是它的唯一标识）；真实实现只含
-   * uid 1000-60000 的系统账号——root 不在其中（它的登录策略在 SSH 页 Root 设置里单独管），
-   * nobody 等高 uid 保留账号同样不在。mock 按创建时间倒序，真实实现按名字升序返回。
-   */
-  list(): Promise<readonly HostUser[]>
-  /**
-   * 创建账号：用户名按 Linux 取名规则校验且系统不存在（getent passwd 反查为空）；
-   * 登录方式含密码时 password 必填，密码只经 chpasswd 的 stdin 下发、绝不进命令行。
-   */
-  create(input: { name: string } & HostUserInput): Promise<HostUser>
-  /**
-   * 修改账号：只改认证方式、状态、管理员归属与备注，用户名不动（id 即用户名）；
-   * 服务端按 id 反查系统账号，反查不到或 uid 越出 1000-60000 一律拒绝。
-   */
-  update(userId: string, input: HostUserInput): Promise<HostUser>
-  /** 删除账号：真实实现执行 userdel 且不带 -r（主目录保留，删除弹窗文案注明）。 */
-  remove(userId: string): Promise<void>
-  /** 从承载本页签的操作系统重新读取账号列表：真实实现即重读 getent，返回同步后的账号总数。 */
-  syncFromSystem(): Promise<{ total: number }>
-}
+export type { SshAdapter } from '@elysian/contracts'
+
+/**
+ * 主机账号适配接口。已上提 @elysian/contracts（security/users.ts）——server 侧服务层
+ * 与 web 侧 adapter 共用同一接口定义，这里 re-export 保持所有消费方 import 路径不变。
+ */
+export type { UserAdapter } from '@elysian/contracts'
 
 /**
  * 网站部署适配接口。本期为 mock 实现：项目改动只落内存数据集；
