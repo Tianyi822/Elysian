@@ -27,9 +27,9 @@ import { randomSshPort, randomStrongPassword } from './sshRandom'
 
 /**
  * SSH 管理面板：四张卡排成两列瀑布，高度随内容，不互相拉平。
- * 左列是 SSH 服务（启停、登录统计、端口、登录方式）叠 SSH 密钥表；
- * 右列是 Root 设置（登录策略、密码、密钥）叠 SSH 登录记录。
- * 视觉位置仍是「上设置、下列表」：Root 卡收起时登录记录上移填空，不在卡内留白。
+ * 左列是两张设置卡：SSH 服务（启停、登录统计、端口、登录方式）与 Root 设置（登录策略、密码、密钥）；
+ * 右列是两张数据卡：SSH 密钥表与 SSH 登录记录表。
+ * 窄屏单列时 DOM 顺序即视觉顺序：服务 → Root → 密钥 → 记录，设置挨着设置、数据挨着数据。
  * 数据来自 SSH adapter：Docker 运行时由 HTTP adapter 真实操作容器内 sshd，
  * 宿主机本地开发是内存演示（工具栏带「演示数据」标识）；动作完成提示按运行时如实描述。
  * 私钥一律只在创建/生成成功后的一次性弹窗里展示，查看弹窗只给公钥、指纹与元信息。
@@ -101,8 +101,8 @@ export function SshPanel() {
 
   return (
     <>
-      {/* 两列瀑布：列各自按内容堆叠。Root 卡收起密码/密钥区时变矮，登录记录跟着上移，
-          而不是被左列 SSH 服务卡拉成等高后在卡内留下一块空区域。 */}
+      {/* 两列瀑布：左设置右数据，列各自按内容堆叠、矮卡不被邻列拉平；
+          Root 卡的密码/密钥区收起时左列自然变矮，不把数据表拉出卡内空白。 */}
       <div className="flex flex-col gap-4">
         {/* SSH 动作只在容器内真实执行；宿主机本地开发是内存演示，与防火墙面板同一标识明示出来。 */}
         {!isDockerRuntime() ? (
@@ -116,10 +116,10 @@ export function SshPanel() {
         <div className="grid items-start gap-4 md:grid-cols-2">
           <div className="flex min-w-0 flex-col gap-4">
             <ServiceCard />
-            <SshKeyCard />
+            <RootCard />
           </div>
           <div className="flex min-w-0 flex-col gap-4">
-            <RootCard />
+            <SshKeyCard />
             <SshLoginRecordsCard />
           </div>
         </div>
@@ -310,8 +310,8 @@ function ServiceCard() {
       </Region>
 
       <Region title="登录方式">
-        {/* 开关标签已说明含义，不再各配一行同义描述。 */}
-        <div className="flex flex-col gap-4">
+        {/* 两个开关并排一行放得下：标签已说明含义，不再各配一行同义描述，也不纵向占位。 */}
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
           <SwitchRow
             label="密码登录"
             checked={settings.passwordAuthEnabled}

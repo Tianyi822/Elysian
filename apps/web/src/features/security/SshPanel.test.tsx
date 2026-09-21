@@ -73,17 +73,24 @@ describe('SSH 管理页签', () => {
       expect(card).toBeInTheDocument()
     }
 
-    // 两列瀑布：左列服务→密钥、右列 Root→登录记录；列独立堆叠，矮卡不被邻列拉高。
+    // 两列瀑布：左列设置（服务→Root）、右列数据（密钥→登录记录）；列独立堆叠，矮卡不被邻列拉高。
+    // 窄屏单列时 DOM 顺序即视觉顺序：服务 → Root → 密钥 → 记录。
     const masonry = service.parentElement?.parentElement
     expect(masonry).toHaveClass('md:grid-cols-2', 'items-start')
-    expect(service.parentElement).toContainElement(keys)
-    expect(root.parentElement).toContainElement(records)
-    expect(service.parentElement).not.toBe(root.parentElement)
+    expect(service.parentElement).toContainElement(root)
+    expect(keys.parentElement).toContainElement(records)
+    expect(service.parentElement).not.toBe(keys.parentElement)
 
     // 卡内按区域划分，每区自带小标题。
     for (const name of ['服务状态', '登录统计', '监听端口', '登录方式']) {
       expect(within(service).getByText(name), name).toBeInTheDocument()
     }
+    // 登录方式的两个开关并排一行，不再纵向占位。
+    const passwordAuth = within(service).getByRole('switch', { name: '密码登录' })
+    const keyAuth = within(service).getByRole('switch', { name: '密钥登录' })
+    const authRow = passwordAuth.closest('label')?.parentElement
+    expect(authRow).toHaveClass('flex-wrap', 'items-center')
+    expect(keyAuth.closest('label')?.parentElement).toBe(authRow)
     // Root 设置卡：登录策略收敛为一个开关，密码/密钥区按策略与全局登录方式联动。
     expect(within(root).getByText('Root 登录')).toBeInTheDocument()
     expect(within(root).getByText('Root 密钥')).toBeInTheDocument()
