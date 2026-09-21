@@ -1,9 +1,8 @@
-import type { HostUser, HostUserInput } from '@elysian/contracts'
+import type { HostUser, HostUserInput, UserAdapter } from '@elysian/contracts'
 import { evaluateSshPasswordStrength, isValidHostUserName } from '@elysian/contracts'
-import type { UserAdapter } from '../../contracts/adapters'
-import { hasUnsafeControlChars } from '../firewallHost/noteValidation'
-import { invalidRequest } from '../endpointGuard/guard'
-import { authorizedKeysPath } from '../sshHost/authorizedKeys'
+import { invalidRequest } from '../shared/errors.ts'
+import { authorizedKeysPath } from '../shared/authorizedKeys.ts'
+import { hasUnsafeControlChars } from '../shared/noteValidation.ts'
 import {
   MANAGED_UID_MAX,
   MANAGED_UID_MIN,

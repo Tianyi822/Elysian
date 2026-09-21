@@ -2,27 +2,25 @@ import { execFile, spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { readFile, unlink } from 'node:fs/promises'
 import { promisify } from 'node:util'
-import type { ServerResponse } from 'node:http'
-import type { Connect } from 'vite'
-import { isDockerEnv } from '../hostMetrics/isDockerEnv.ts'
+import { resolveAvailability } from '../shared/availability.ts'
+import type { UsersAppDeps } from './usersRoutes.ts'
 import { createUsersService, type UsersHostDeps } from './usersService'
-import { createUsersApiHandler } from './api'
 
 const execFileAsync = promisify(execFile)
 
 /*
- * 真实用户管理中间件的 Node 侧接线。硬边界：只有 ELSYIAN_DOCKER=1 且当前进程
- * 真的运行在容器内（/.dockerenv 存在）才可用；否则一律 503，绝不落到宿主机执行——
- * 宿主机上绝不执行 useradd/usermod/userdel/gpasswd/chpasswd 这类系统修改命令。
- * 判定逻辑收在 resolveUsersAvailability 纯函数里，测试据此锚定硬边界，不依赖宿主机状态。
+ * 真实用户管理的 Node 侧接线（getent/useradd/usermod/userdel/gpasswd/chpasswd）。
+ * 硬边界：只有 ELSYIAN_DOCKER=1 且当前进程真的运行在容器内（/.dockerenv 存在）才可用；
+ * 否则产出的装配 available=false，路由整片 503，绝不落到宿主机执行——宿主机上绝不执行
+ * useradd/usermod/userdel/gpasswd/chpasswd 这类系统修改命令。判定逻辑归一在
+ * shared/availability 的 resolveAvailability 里（安全三片同一判据），测试据此锚定硬边界，
+ * 不依赖宿主机状态。
  */
 
-/** 容器硬边界的判定：环境变量声明 Docker 编排，且 /.dockerenv 证明进程真的在容器内。 */
-export function resolveUsersAvailability(env: NodeJS.ProcessEnv, dockerenvExists: boolean): boolean {
-  return isDockerEnv(env) && dockerenvExists
-}
+/** 容器硬边界的判定：环境变量声明 Docker 编排，且 /.dockerenv 证明进程真的在容器内（shared/availability 的 re-export，签名与语义不变）。 */
+export { resolveAvailability as resolveUsersAvailability } from '../shared/availability.ts'
 
-export type SecurityUsersMiddlewareOptions = {
+export type UsersHostDepsOptions = {
   /** 注入环境变量：缺省用 process.env。 */
   env?: NodeJS.ProcessEnv
   /** 注入 /.dockerenv 探测结果：缺省真实探测宿主机文件系统（只读探测）。 */
@@ -104,7 +102,7 @@ function spawnChpasswdPipe(command: string, args: readonly string[]): ChpasswdCh
 /**
  * chpasswd 凭据只走 stdin：spawn 后把 `账号:密码` 写进标准输入，密码不进命令行。
  * stdin 挂 error 监听：chpasswd 在读 stdin 前退出时，后续写入以 EPIPE 报错——
- * 不接住这个流错误，它会成为未处理异常直接打崩 dev server。
+ * 不接住这个流错误，它会成为未处理异常直接打崩 server 进程。
  */
 export function runChpasswdViaStdin(spawnChpasswd: SpawnChpasswdLike, input: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -147,20 +145,19 @@ function createHostDeps(): UsersHostDeps {
   }
 }
 
-/** 挂载到 /api/security/users 的 connect 中间件。 */
-export function createSecurityUsersMiddleware(
-  options: SecurityUsersMiddlewareOptions = {},
-): Connect.NextHandleFunction {
-  const available = resolveUsersAvailability(
+/** 用户管理路由的装配入参（形状定义在 usersRoutes，接线层产出同形对象）。 */
+export type { UsersAppDeps } from './usersRoutes.ts'
+
+/** 用户管理片的真实装配：探测容器边界并产出 { available, service } 交给路由工厂挂载。 */
+export function createUsersHostDeps(options: UsersHostDepsOptions = {}): UsersAppDeps {
+  const available = resolveAvailability(
     options.env ?? process.env,
     options.dockerenvExists ?? existsSync('/.dockerenv'),
   )
   if (!available) {
-    return createUsersApiHandler({ available: false })
+    return { available: false }
   }
 
   // 注入了 deps 即测试路径：不在宿主机执行任何命令。
-  const service = createUsersService(options.deps ?? createHostDeps())
-  const handler = createUsersApiHandler({ available: true, service })
-  return (req, res: ServerResponse) => handler(req, res)
+  return { available: true, service: createUsersService(options.deps ?? createHostDeps()) }
 }

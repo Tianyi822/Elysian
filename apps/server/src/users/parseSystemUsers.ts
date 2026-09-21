@@ -1,5 +1,5 @@
 import type { HostUser, HostUserLoginMethod, HostUserStatus } from '@elysian/contracts'
-import { parseKeyLines } from '../sshHost/authorizedKeys'
+import { parseKeyLines } from '../shared/authorizedKeys.ts'
 
 /*
  * 系统账号状态的纯推导：passwd / shadow / group（getent 输出）到 HostUser 视图模型的映射。
