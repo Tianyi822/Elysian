@@ -13,7 +13,7 @@ import { FIREWALL_INPUT_CLASS } from './firewallFormParts'
 const SCAN_POLL_MS = 5000
 
 /*
- * 面板端口（与服务端 adapters/firewallHost/panelPort 的 PANEL_PORT 同值）：
+ * 面板端口（与服务端 apps/server/src/firewall/panelPort.ts 的 PANEL_PORT 同值）：
  * 把它加进监控会把正常访问面板的连接也计入封禁判据，人先被锁在外面。
  * 客户端与服务端同规则拒绝，两侧文案一致。
  */

@@ -204,3 +204,38 @@ export type FirewallImportResult = {
   added: readonly FirewallRule[]
   skipped: number
 }
+
+/**
+ * 防火墙区适配接口。演示态由 mock 实现；Docker 运行时由 HTTP adapter 接通容器内 ufw，
+ * server 侧服务层与 web 侧 adapter 共用这一接口定义，页面不改。
+ */
+export interface FirewallAdapter {
+  list(): Promise<readonly FirewallRule[]>
+  toggles(): Promise<FirewallToggles>
+  /** 切换防火墙总开关或禁 ping：演示态只改内存；Docker 真实态执行 ufw enable/disable 与 before.rules 切换。 */
+  setToggles(toggles: FirewallToggles): Promise<FirewallToggles>
+  create(input: FirewallRuleInput): Promise<FirewallRule>
+  update(ruleId: string, input: FirewallRuleInput): Promise<FirewallRule>
+  remove(ruleId: string): Promise<void>
+  /** 批量导入：去重后落进数据集，返回新增列表与跳过数量。 */
+  importRules(inputs: readonly FirewallRuleInput[]): Promise<FirewallImportResult>
+  /** IP 规则（纯来源封禁，无端口）：真实态对应 `ufw allow/deny from <来源>`。 */
+  listIpRules(): Promise<readonly FirewallIpRule[]>
+  createIpRule(input: FirewallIpRuleInput): Promise<FirewallIpRule>
+  updateIpRule(ruleId: string, input: FirewallIpRuleInput): Promise<FirewallIpRule>
+  removeIpRule(ruleId: string): Promise<void>
+  /** 端口转发（DNAT）：真实态写入 before.rules 的 *nat 标记段。 */
+  listForwards(): Promise<readonly FirewallForwardRule[]>
+  createForward(input: FirewallForwardInput): Promise<FirewallForwardRule>
+  updateForward(ruleId: string, input: FirewallForwardInput): Promise<FirewallForwardRule>
+  removeForward(ruleId: string): Promise<void>
+  /** 端口防扫描状态：开关、配置、统计与当前封锁列表（真实实现基于内核 xt_recent 双名单 jail）。 */
+  scanProtection(): Promise<FirewallScanProtection>
+  setScanProtection(enabled: boolean): Promise<FirewallScanProtection>
+  /** 更新防扫描配置（监控端口、窗口、阈值、封禁时长）；真实态改写规则文本并 reload。 */
+  setScanConfig(config: FirewallScanConfig): Promise<FirewallScanProtection>
+  /** 解封封锁名单中的 IP。 */
+  unblockIp(ip: string): Promise<FirewallScanProtection>
+  /** 从承载本面板的操作系统同步防火墙规则：返回同步后的规则总数。 */
+  syncFromSystem(): Promise<{ total: number }>
+}

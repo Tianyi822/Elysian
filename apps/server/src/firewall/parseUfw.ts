@@ -8,8 +8,8 @@ import type {
   FirewallRuleInput,
 } from '@elysian/contracts'
 import { FIREWALL_PROTOCOLS } from '@elysian/contracts'
-import { invalidRequest } from '../endpointGuard/guard'
-import { assertNoteSafe } from './noteValidation'
+import { invalidRequest } from '../shared/errors.ts'
+import { assertNoteSafe } from '../shared/noteValidation.ts'
 
 /*
  * ufw 命令输出与规则规范形态的纯解析。形状全部取自容器内 ufw 0.36.2 的真实输出：

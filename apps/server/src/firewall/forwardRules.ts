@@ -1,6 +1,6 @@
 import type { FirewallForwardInput, FirewallForwardRule } from '@elysian/contracts'
-import { invalidRequest } from '../endpointGuard/guard'
-import { assertNoteSafe } from './noteValidation'
+import { invalidRequest } from '../shared/errors.ts'
+import { assertNoteSafe } from '../shared/noteValidation.ts'
 import { isValidFirewallAddress } from './parseUfw'
 import { PANEL_PORT, coversPanelPort } from './panelPort'
 

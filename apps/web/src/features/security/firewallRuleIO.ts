@@ -97,7 +97,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /*
- * 备注禁区与服务端 ufw 场景（adapters/firewallHost/noteValidation 的 assertNoteSafe）同一判据：
+ * 备注禁区与服务端 ufw 场景（apps/server/src/shared/noteValidation.ts 的 assertNoteSafe）同一判据：
  * 控制字符会写坏按行解析的规则回读，单引号会截断 ufw 的 comment 参数。导入与表单都在
  * 浏览器侧先挡一次，坏备注不进服务端循环；文案与服务端抛出的中文错误逐字一致。
  */

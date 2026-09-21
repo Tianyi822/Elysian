@@ -1,5 +1,5 @@
 import { DEFAULT_SCAN_CONFIG, type FirewallScanConfig } from '@elysian/contracts'
-import { invalidRequest } from '../endpointGuard/guard'
+import { invalidRequest } from '../shared/errors.ts'
 import { isValidFirewallAddress } from './parseUfw'
 import { PANEL_PORT } from './panelPort'
 

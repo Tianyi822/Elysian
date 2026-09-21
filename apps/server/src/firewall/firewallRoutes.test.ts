@@ -1,15 +1,22 @@
 import { describe, expect, it } from 'vitest'
-import type { IncomingMessage, ServerResponse } from 'node:http'
-import { Readable } from 'node:stream'
+import { Hono } from 'hono'
 import { DEFAULT_SCAN_CONFIG } from '@elysian/contracts'
-import { InvalidRequestError, invalidRequest } from '../endpointGuard/guard'
-import { createFirewallApiHandler, type FirewallApiDeps } from './api'
-import { createFirewallService, type FirewallHostDeps } from './firewallService'
-import type { FirewallAdapter } from '../../contracts/adapters'
-import type { FirewallForwardRule, FirewallIpRule, FirewallRule, FirewallRuleInput, FirewallScanProtection, FirewallToggles } from '@elysian/contracts'
+import type {
+  FirewallAdapter,
+  FirewallForwardRule,
+  FirewallIpRule,
+  FirewallRule,
+  FirewallRuleInput,
+  FirewallScanProtection,
+  FirewallToggles,
+} from '@elysian/contracts'
+import { InvalidRequestError, endpointErrorHandler, invalidRequest } from '../middleware/guard.ts'
+import { createFirewallApp, FIREWALL_MOUNT, type FirewallAppDeps } from './firewallRoutes.ts'
+import { createFirewallService, type FirewallHostDeps } from './firewallService.ts'
 
 /*
- * 防火墙端点 handler 的行为测试：fake service 不执行任何真实命令。
+ * 防火墙路由的行为测试：挂载到与 app.ts 同构的父应用（strict:false + 统一错误映射），
+ * 用 app.request(new Request(...)) 驱动；fake service 不执行任何真实命令。
  */
 
 const SAMPLE_RULE: FirewallRule = {
@@ -88,58 +95,57 @@ function createFakeService(overrides: Partial<FirewallAdapter> = {}): FirewallAd
   }
 }
 
-async function readResponse(handler: (req: IncomingMessage, res: ServerResponse) => void, req: IncomingMessage) {
-  let statusCode = 0
-  let body = ''
-  const res = {
-    writeHead(status: number) {
-      statusCode = status
-    },
-    end(text?: string) {
-      body = text ?? ''
-    },
-    setHeader() {},
-  } as unknown as ServerResponse
-  handler(req, res)
-  // handler 内部异步：让微任务队列跑完再读响应。
-  await new Promise((resolve) => setTimeout(resolve, 0))
-  return { statusCode, body: JSON.parse(body) as unknown }
+/** 与 app.ts 同构的父应用：strict:false（尾斜杠适配）+ endpointErrorHandler 统一错误映射。 */
+function mountApp(deps: FirewallAppDeps): Hono {
+  const parent = new Hono({ strict: false })
+  parent.onError(endpointErrorHandler)
+  parent.route(FIREWALL_MOUNT, createFirewallApp(deps))
+  return parent
 }
 
-async function fakeReq(method: string, url: string, body?: unknown): Promise<IncomingMessage> {
-  const payload = body === undefined ? '' : JSON.stringify(body)
-  const stream = Readable.from(payload ? [Buffer.from(payload, 'utf8')] : [])
-  return Object.assign(stream, {
+const ORIGIN = 'http://localhost:5173'
+
+/**
+ * 构造发往挂载后端点的 Request：默认同源合法头（Origin 与 Host 一致）；
+ * 带体请求显式声明 JSON 与真实长度，与浏览器 adapter 的真实请求形一致。
+ */
+function requestOf(
+  method: string,
+  path: string,
+  init: { body?: string; headers?: Record<string, string> } = {},
+): Request {
+  return new Request(`${ORIGIN}${FIREWALL_MOUNT}${path}`, {
     method,
-    url,
-    headers: {
-      // 同源合法头：Origin 与 Host 一致；带体请求声明 JSON 与真实长度。
-      host: 'localhost:5173',
-      origin: 'http://localhost:5173',
-      ...(payload
-        ? { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(payload, 'utf8')) }
-        : {}),
-    },
-  }) as unknown as IncomingMessage
+    headers: { host: 'localhost:5173', origin: ORIGIN, ...init.headers },
+    ...(init.body === undefined ? {} : { body: init.body }),
+  })
 }
 
-const AVAILABLE: FirewallApiDeps = { available: true, service: createFakeService() }
+function jsonRequest(method: string, path: string, body?: unknown): Request {
+  const payload = JSON.stringify(body)
+  return requestOf(method, path, {
+    body: payload,
+    headers: { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(payload, 'utf8')) },
+  })
+}
 
-describe('createFirewallApiHandler', () => {
-  it('不可用时一律 503（容器边界保护）', async () => {
-    const handler = createFirewallApiHandler({ available: false })
-    const { statusCode, body } = await readResponse(handler, await fakeReq('GET', '/'))
-    expect(statusCode).toBe(503)
-    expect(body).toEqual({ error: '真实防火墙仅在 Docker 容器内可用' })
+const AVAILABLE: FirewallAppDeps = { available: true, service: createFakeService() }
+
+describe('createFirewallApp', () => {
+  it('不可用时一律 503（容器边界保护，含未知路径）', async () => {
+    const app = mountApp({ available: false })
+    const root = await app.request(requestOf('GET', ''))
+    expect(root.status).toBe(503)
+    expect(await root.json()).toEqual({ error: '真实防火墙仅在 Docker 容器内可用' })
+
+    const unknown = await app.request(requestOf('POST', '/nope/deeper', { body: '{}', headers: { 'content-type': 'application/json' } }))
+    expect(unknown.status).toBe(503)
   })
 
-  it('GET / 返回开关（含默认策略）与规则全量', async () => {
-    const { statusCode, body } = await readResponse(
-      createFirewallApiHandler(AVAILABLE),
-      await fakeReq('GET', '/'),
-    )
-    expect(statusCode).toBe(200)
-    expect(body).toEqual({
+  it('GET 挂载根（无尾斜杠形）返回开关（含默认策略）与规则全量', async () => {
+    const res = await mountApp(AVAILABLE).request(requestOf('GET', ''))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({
       toggles: SAMPLE_TOGGLES,
       rules: [SAMPLE_RULE],
     })
@@ -148,15 +154,12 @@ describe('createFirewallApiHandler', () => {
   it('PUT /toggles 传递开关值（默认策略由 service 回读）', async () => {
     const setToggles = async (toggles: FirewallToggles) => toggles
     const service = createFakeService({ setToggles })
-    const handler = createFirewallApiHandler({ available: true, service })
+    const app = mountApp({ available: true, service })
 
-    const { statusCode, body } = await readResponse(
-      handler,
-      await fakeReq('PUT', '/toggles', { firewallEnabled: true, pingBlocked: true }),
-    )
-    expect(statusCode).toBe(200)
+    const res = await app.request(jsonRequest('PUT', '/toggles', { firewallEnabled: true, pingBlocked: true }))
+    expect(res.status).toBe(200)
     // 请求里带来的默认策略不采信：端点只转发两个布尔开关，策略留空由 service 回读真实态。
-    expect(body).toEqual({
+    expect(await res.json()).toEqual({
       toggles: { firewallEnabled: true, pingBlocked: true, defaultIncoming: null, defaultOutgoing: null },
     })
   })
@@ -169,13 +172,12 @@ describe('createFirewallApiHandler', () => {
         return SAMPLE_RULE
       },
     })
-    const handler = createFirewallApiHandler({ available: true, service })
+    const app = mountApp({ available: true, service })
 
-    const { statusCode } = await readResponse(
-      handler,
-      await fakeReq('POST', '/rules', { protocol: 'tcp', port: 1000, portTo: 2000, policy: 'limit', source: '所有IP' }),
+    const res = await app.request(
+      jsonRequest('POST', '/rules', { protocol: 'tcp', port: 1000, portTo: 2000, policy: 'limit', source: '所有IP' }),
     )
-    expect(statusCode).toBe(200)
+    expect(res.status).toBe(200)
     expect(calls[0]).toMatchObject({ protocol: 'tcp', port: 1000, portTo: 2000, policy: 'limit', source: '所有IP' })
   })
 
@@ -186,29 +188,26 @@ describe('createFirewallApiHandler', () => {
         removed.push(ruleId)
       },
     })
-    const handler = createFirewallApiHandler({ available: true, service })
+    const app = mountApp({ available: true, service })
 
     const encoded = encodeURIComponent('ufw-allow-in-tcp-8080-any.ipv4')
-    const { statusCode } = await readResponse(handler, await fakeReq('DELETE', `/rules/${encoded}`))
-    expect(statusCode).toBe(200)
+    const res = await app.request(requestOf('DELETE', `/rules/${encoded}`))
+    expect(res.status).toBe(200)
     expect(removed).toEqual(['ufw-allow-in-tcp-8080-any.ipv4'])
   })
 
   it('POST /rules/import 转发批量导入', async () => {
     const service = createFakeService()
-    const handler = createFirewallApiHandler({ available: true, service })
+    const app = mountApp({ available: true, service })
 
-    const { statusCode, body } = await readResponse(
-      handler,
-      await fakeReq('POST', '/rules/import', { rules: [{ protocol: 'tcp', port: 3306 }] }),
-    )
-    expect(statusCode).toBe(200)
-    expect(body).toEqual({ added: [SAMPLE_RULE], skipped: 0 })
+    const res = await app.request(jsonRequest('POST', '/rules/import', { rules: [{ protocol: 'tcp', port: 3306 }] }))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ added: [SAMPLE_RULE], skipped: 0 })
   })
 
   it('POST /sync 返回同步总数', async () => {
-    const { body } = await readResponse(createFirewallApiHandler(AVAILABLE), await fakeReq('POST', '/sync'))
-    expect(body).toEqual({ total: 2 })
+    const res = await mountApp(AVAILABLE).request(requestOf('POST', '/sync'))
+    expect(await res.json()).toEqual({ total: 2 })
   })
 
   it('GET /scan 与 POST /scan/toggle 走真实 service', async () => {
@@ -227,15 +226,15 @@ describe('createFirewallApiHandler', () => {
         return scanFixture(enabled)
       },
     })
-    const handler = createFirewallApiHandler({ available: true, service })
+    const app = mountApp({ available: true, service })
 
-    const read = await readResponse(handler, await fakeReq('GET', '/scan'))
-    expect(read.statusCode).toBe(200)
-    expect((read.body as { stats: { totalBlockedIps: number } }).stats.totalBlockedIps).toBe(1)
+    const read = await app.request(requestOf('GET', '/scan'))
+    expect(read.status).toBe(200)
+    expect(((await read.json()) as { stats: { totalBlockedIps: number } }).stats.totalBlockedIps).toBe(1)
 
-    const toggled = await readResponse(handler, await fakeReq('POST', '/scan/toggle', { enabled: false }))
-    expect(toggled.statusCode).toBe(200)
-    expect((toggled.body as { enabled: boolean }).enabled).toBe(false)
+    const toggled = await app.request(jsonRequest('POST', '/scan/toggle', { enabled: false }))
+    expect(toggled.status).toBe(200)
+    expect(((await toggled.json()) as { enabled: boolean }).enabled).toBe(false)
     expect(calls).toEqual(['read', false])
   })
 
@@ -247,15 +246,14 @@ describe('createFirewallApiHandler', () => {
         return { ...scanFixture(), config }
       },
     })
-    const handler = createFirewallApiHandler({ available: true, service })
+    const app = mountApp({ available: true, service })
 
-    const { statusCode, body } = await readResponse(
-      handler,
-      await fakeReq('PUT', '/scan/config', { ports: [22, 8080], windowSeconds: 120, hitCount: 5, banSeconds: 1800 }),
+    const res = await app.request(
+      jsonRequest('PUT', '/scan/config', { ports: [22, 8080], windowSeconds: 120, hitCount: 5, banSeconds: 1800 }),
     )
-    expect(statusCode).toBe(200)
+    expect(res.status).toBe(200)
     expect(configs[0]).toEqual({ ports: [22, 8080], windowSeconds: 120, hitCount: 5, banSeconds: 1800 })
-    expect((body as { config: { hitCount: number } }).config.hitCount).toBe(5)
+    expect(((await res.json()) as { config: { hitCount: number } }).config.hitCount).toBe(5)
   })
 
   it('IP 规则端点：列表、创建、修改、删除', async () => {
@@ -277,18 +275,17 @@ describe('createFirewallApiHandler', () => {
         calls.push(`remove:${ruleId}`)
       },
     })
-    const handler = createFirewallApiHandler({ available: true, service })
+    const app = mountApp({ available: true, service })
 
-    const list = await readResponse(handler, await fakeReq('GET', '/ip-rules'))
-    expect(list.statusCode).toBe(200)
-    expect(list.body).toEqual({ rules: [SAMPLE_IP_RULE] })
+    const list = await app.request(requestOf('GET', '/ip-rules'))
+    expect(list.status).toBe(200)
+    expect(await list.json()).toEqual({ rules: [SAMPLE_IP_RULE] })
 
-    await readResponse(handler, await fakeReq('POST', '/ip-rules', { policy: 'deny', source: '203.0.113.9' }))
-    await readResponse(
-      handler,
-      await fakeReq('PUT', `/ip-rules/${encodeURIComponent(SAMPLE_IP_RULE.id)}`, { policy: 'allow', source: '203.0.113.9' }),
+    await app.request(jsonRequest('POST', '/ip-rules', { policy: 'deny', source: '203.0.113.9' }))
+    await app.request(
+      jsonRequest('PUT', `/ip-rules/${encodeURIComponent(SAMPLE_IP_RULE.id)}`, { policy: 'allow', source: '203.0.113.9' }),
     )
-    await readResponse(handler, await fakeReq('DELETE', `/ip-rules/${encodeURIComponent(SAMPLE_IP_RULE.id)}`))
+    await app.request(requestOf('DELETE', `/ip-rules/${encodeURIComponent(SAMPLE_IP_RULE.id)}`))
     expect(calls).toEqual([
       'list',
       'create:203.0.113.9',
@@ -316,25 +313,23 @@ describe('createFirewallApiHandler', () => {
         calls.push(`remove:${ruleId}`)
       },
     })
-    const handler = createFirewallApiHandler({ available: true, service })
+    const app = mountApp({ available: true, service })
 
-    const list = await readResponse(handler, await fakeReq('GET', '/forwards'))
-    expect(list.body).toEqual({ rules: [SAMPLE_FORWARD] })
+    const list = await app.request(requestOf('GET', '/forwards'))
+    expect(await list.json()).toEqual({ rules: [SAMPLE_FORWARD] })
 
-    await readResponse(
-      handler,
-      await fakeReq('POST', '/forwards', { protocol: 'tcp', port: 8080, targetHost: '10.0.0.5', targetPort: 80 }),
+    await app.request(
+      jsonRequest('POST', '/forwards', { protocol: 'tcp', port: 8080, targetHost: '10.0.0.5', targetPort: 80 }),
     )
-    await readResponse(
-      handler,
-      await fakeReq('PUT', `/forwards/${encodeURIComponent(SAMPLE_FORWARD.id)}`, {
+    await app.request(
+      jsonRequest('PUT', `/forwards/${encodeURIComponent(SAMPLE_FORWARD.id)}`, {
         protocol: 'tcp',
         port: 8080,
         targetHost: '10.0.0.5',
         targetPort: 80,
       }),
     )
-    await readResponse(handler, await fakeReq('DELETE', `/forwards/${encodeURIComponent(SAMPLE_FORWARD.id)}`))
+    await app.request(requestOf('DELETE', `/forwards/${encodeURIComponent(SAMPLE_FORWARD.id)}`))
     expect(calls).toEqual(['list', 'create:8080->10.0.0.5:80', `update:${SAMPLE_FORWARD.id}`, `remove:${SAMPLE_FORWARD.id}`])
   })
 
@@ -347,23 +342,21 @@ describe('createFirewallApiHandler', () => {
         throw new InvalidRequestError(409, '防扫描未启用：先开启开关再调整配置')
       },
     })
-    const handler = createFirewallApiHandler({ available: true, service })
+    const app = mountApp({ available: true, service })
 
-    const forward = await readResponse(
-      handler,
-      await fakeReq('POST', '/forwards', { protocol: 'tcp', port: 5173, targetHost: '10.0.0.5', targetPort: 8080 }),
+    const forward = await app.request(
+      jsonRequest('POST', '/forwards', { protocol: 'tcp', port: 5173, targetHost: '10.0.0.5', targetPort: 8080 }),
     )
-    expect(forward.statusCode).toBe(400)
-    expect(forward.body).toEqual({
+    expect(forward.status).toBe(400)
+    expect(await forward.json()).toEqual({
       error: '面板端口不允许配置转发：外部端口段覆盖 5173（工作台自身的访问通道）',
     })
 
-    const scan = await readResponse(
-      handler,
-      await fakeReq('PUT', '/scan/config', { ports: [22], windowSeconds: 60, hitCount: 8, banSeconds: 3600 }),
+    const scan = await app.request(
+      jsonRequest('PUT', '/scan/config', { ports: [22], windowSeconds: 60, hitCount: 8, banSeconds: 3600 }),
     )
-    expect(scan.statusCode).toBe(409)
-    expect(scan.body).toEqual({ error: '防扫描未启用：先开启开关再调整配置' })
+    expect(scan.status).toBe(409)
+    expect(await scan.json()).toEqual({ error: '防扫描未启用：先开启开关再调整配置' })
   })
 
   it('系统侧失败（ufw 执行失败等）仍以中文错误返回 500', async () => {
@@ -372,40 +365,25 @@ describe('createFirewallApiHandler', () => {
         throw new Error('ufw 执行失败（allow 8080/tcp）：ERROR: problem running ufw init')
       },
     })
-    const handler = createFirewallApiHandler({ available: true, service })
+    const app = mountApp({ available: true, service })
 
-    const { statusCode, body } = await readResponse(
-      handler,
-      await fakeReq('POST', '/rules', { protocol: 'tcp', port: 8080, source: '所有IP' }),
-    )
-    expect(statusCode).toBe(500)
-    expect(body).toEqual({ error: 'ufw 执行失败（allow 8080/tcp）：ERROR: problem running ufw init' })
+    const res = await app.request(jsonRequest('POST', '/rules', { protocol: 'tcp', port: 8080, source: '所有IP' }))
+    expect(res.status).toBe(500)
+    expect(await res.json()).toEqual({ error: 'ufw 执行失败（allow 8080/tcp）：ERROR: problem running ufw init' })
   })
 
-  it('未知端点返回 404', async () => {
-    const { statusCode } = await readResponse(
-      createFirewallApiHandler(AVAILABLE),
-      await fakeReq('GET', '/nowhere'),
-    )
-    expect(statusCode).toBe(404)
+  it('未知端点返回 404，文案剥挂载前缀后与相对路径逐字一致', async () => {
+    const res = await mountApp(AVAILABLE).request(requestOf('GET', '/nowhere'))
+    expect(res.status).toBe(404)
+    expect(await res.json()).toEqual({ error: '未知防火墙端点：GET /nowhere' })
   })
 
   it('请求体不是 JSON 返回 400 带中文错误', async () => {
-    const handler = createFirewallApiHandler(AVAILABLE)
-    const stream = Readable.from([Buffer.from('not-json', 'utf8')])
-    const req = Object.assign(stream, {
-      method: 'PUT',
-      url: '/toggles',
-      headers: {
-        host: 'localhost:5173',
-        origin: 'http://localhost:5173',
-        'content-type': 'application/json',
-        'content-length': '8',
-      },
-    }) as unknown as IncomingMessage
-    const { statusCode, body } = await readResponse(handler, req)
-    expect(statusCode).toBe(400)
-    expect((body as { error: string }).error).toBe('请求体不是有效 JSON')
+    const res = await mountApp(AVAILABLE).request(
+      requestOf('PUT', '/toggles', { body: 'not-json', headers: { 'content-type': 'application/json', 'content-length': '8' } }),
+    )
+    expect(res.status).toBe(400)
+    expect(((await res.json()) as { error: string }).error).toBe('请求体不是有效 JSON')
   })
 
   it('规则输入缺形状时按缺省转发给 service 校验', async () => {
@@ -416,9 +394,9 @@ describe('createFirewallApiHandler', () => {
         throw new Error('端口无效：NaN（应为 1–65535 的整数）')
       },
     })
-    const handler = createFirewallApiHandler({ available: true, service })
+    const app = mountApp({ available: true, service })
 
-    await readResponse(handler, await fakeReq('POST', '/rules', {}))
+    await app.request(jsonRequest('POST', '/rules', {}))
     expect(calls[0]).toMatchObject({ protocol: 'tcp', source: '' })
   })
 
@@ -430,99 +408,73 @@ describe('createFirewallApiHandler', () => {
         return toggles
       },
     })
-    const handler = createFirewallApiHandler({ available: true, service })
+    const app = mountApp({ available: true, service })
     // 请求体故意不是合法 JSON：若守卫晚于读体，这里会变成 500 的解析错误而非 403。
-    const stream = Readable.from([Buffer.from('not-json', 'utf8')])
-    const req = Object.assign(stream, {
-      method: 'PUT',
-      url: '/toggles',
-      headers: { host: 'localhost:5173', origin: 'http://evil.example', 'content-type': 'application/json' },
-    }) as unknown as IncomingMessage
-
-    const { statusCode, body } = await readResponse(handler, req)
-    expect(statusCode).toBe(403)
-    expect(body).toEqual({ error: '请求来源不允许' })
+    const res = await app.request(
+      requestOf('PUT', '/toggles', {
+        body: 'not-json',
+        headers: { origin: 'http://evil.example', 'content-type': 'application/json' },
+      }),
+    )
+    expect(res.status).toBe(403)
+    expect(await res.json()).toEqual({ error: '请求来源不允许' })
     expect(calls).toEqual([])
   })
 
   it('text/plain 的写请求返回 415', async () => {
-    const handler = createFirewallApiHandler(AVAILABLE)
-    const stream = Readable.from([Buffer.from('{}', 'utf8')])
-    const req = Object.assign(stream, {
-      method: 'POST',
-      url: '/rules',
-      headers: { host: 'localhost:5173', origin: 'http://localhost:5173', 'content-type': 'text/plain' },
-    }) as unknown as IncomingMessage
-
-    const { statusCode, body } = await readResponse(handler, req)
-    expect(statusCode).toBe(415)
-    expect(body).toEqual({ error: 'Content-Type 必须为 application/json' })
+    const res = await mountApp(AVAILABLE).request(
+      requestOf('POST', '/rules', { body: '{}', headers: { 'content-type': 'text/plain' } }),
+    )
+    expect(res.status).toBe(415)
+    expect(await res.json()).toEqual({ error: 'Content-Type 必须为 application/json' })
   })
 
   it('请求体超过 64 KiB 返回 413（申报与实读都拦）', async () => {
-    const handler = createFirewallApiHandler(AVAILABLE)
+    const app = mountApp(AVAILABLE)
 
     // 申报即超限：不看流直接拒。
-    const declared = Object.assign(Readable.from([]), {
-      method: 'POST',
-      url: '/rules',
-      headers: {
-        host: 'localhost:5173',
-        origin: 'http://localhost:5173',
-        'content-type': 'application/json',
-        'content-length': String(64 * 1024 + 1),
-      },
-    }) as unknown as IncomingMessage
-    const declaredRes = await readResponse(handler, declared)
-    expect(declaredRes.statusCode).toBe(413)
+    const declared = await app.request(
+      requestOf('POST', '/rules', {
+        body: '{}',
+        headers: { 'content-type': 'application/json', 'content-length': String(64 * 1024 + 1) },
+      }),
+    )
+    expect(declared.status).toBe(413)
 
     // 谎报 content-length：实读累计字节数兜底。体本身是合法 JSON，只有体积守卫能拒。
     const oversized = `{"note":"${'a'.repeat(64 * 1024)}"}`
-    const lied = Object.assign(Readable.from([Buffer.from(oversized, 'utf8')]), {
-      method: 'POST',
-      url: '/rules',
-      headers: {
-        host: 'localhost:5173',
-        origin: 'http://localhost:5173',
-        'content-type': 'application/json',
-        'content-length': '2',
-      },
-    }) as unknown as IncomingMessage
-    const liedRes = await readResponse(handler, lied)
-    expect(liedRes.statusCode).toBe(413)
-    expect(liedRes.body).toEqual({ error: '请求体过大' })
+    const lied = await app.request(
+      requestOf('POST', '/rules', {
+        body: oversized,
+        headers: { 'content-type': 'application/json', 'content-length': '2' },
+      }),
+    )
+    expect(lied.status).toBe(413)
+    expect(await lied.json()).toEqual({ error: '请求体过大' })
   })
 
   it('同源 application/json 写请求正常通过守卫', async () => {
-    const handler = createFirewallApiHandler(AVAILABLE)
-    const { statusCode } = await readResponse(
-      handler,
-      await fakeReq('PUT', '/toggles', { firewallEnabled: true, pingBlocked: false }),
-    )
-    expect(statusCode).toBe(200)
+    const app = mountApp(AVAILABLE)
+    const ok = await app.request(jsonRequest('PUT', '/toggles', { firewallEnabled: true, pingBlocked: false }))
+    expect(ok.status).toBe(200)
 
     // 大小写归一：Host 大小写不同仍视为同源；带 charset 的 Content-Type 前缀匹配放行。
-    const stream = Readable.from([Buffer.from('{"enabled":false}', 'utf8')])
-    const req = Object.assign(stream, {
-      method: 'POST',
-      url: '/scan/toggle',
-      headers: {
-        host: 'LOCALHOST:5173',
-        origin: 'http://localhost:5173',
-        'content-type': 'application/json; charset=utf-8',
-      },
-    }) as unknown as IncomingMessage
-    const relaxed = await readResponse(handler, req)
-    expect(relaxed.statusCode).toBe(200)
+    const relaxed = await app.request(
+      requestOf('POST', '/scan/toggle', {
+        body: '{"enabled":false}',
+        headers: { host: 'LOCALHOST:5173', 'content-type': 'application/json; charset=utf-8' },
+      }),
+    )
+    expect(relaxed.status).toBe(200)
   })
 })
 
 /*
- * 端点接真实 service（非替身）时的状态码回归：容器里被拒的请求必须是 4xx，
+ * 路由接真实 service（非替身）时的状态码回归：容器里被拒的请求必须是 4xx，
  * 而不是把「请求写错了」报成 500 服务端故障。deps 全部替身，不执行任何真实命令；
  * 这些拒绝都发生在读系统之前，替身实现只用于满足类型与记录「有没有被动过」。
  */
-describe('createFirewallApiHandler + 真实 service 的状态码', () => {
+describe('createFirewallApp + 真实 service 的状态码', () => {
   const writes: string[] = []
   const deps: FirewallHostDeps = {
     runUfw: async (args) => {
@@ -539,16 +491,15 @@ describe('createFirewallApiHandler + 真实 service 的状态码', () => {
     exists: async () => false,
     nowIso: () => '2026-09-19T00:00:00.000Z',
   }
-  const handler = createFirewallApiHandler({ available: true, service: createFirewallService(deps) })
+  const app = mountApp({ available: true, service: createFirewallService(deps) })
 
   it('POST /forwards 命中面板端口：400 + 中文原因，不落盘', async () => {
     writes.length = 0
-    const { statusCode, body } = await readResponse(
-      handler,
-      await fakeReq('POST', '/forwards', { protocol: 'tcp', port: 5173, targetHost: '10.0.0.5', targetPort: 8080 }),
+    const res = await app.request(
+      jsonRequest('POST', '/forwards', { protocol: 'tcp', port: 5173, targetHost: '10.0.0.5', targetPort: 8080 }),
     )
-    expect(statusCode).toBe(400)
-    expect(body).toEqual({
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({
       error: '面板端口不允许配置转发：外部端口段覆盖 5173（工作台自身的访问通道）',
     })
     expect(writes).toEqual([])
@@ -556,32 +507,29 @@ describe('createFirewallApiHandler + 真实 service 的状态码', () => {
 
   it('POST /forwards 目标地址是网段：400 + 中文原因', async () => {
     writes.length = 0
-    const { statusCode, body } = await readResponse(
-      handler,
-      await fakeReq('POST', '/forwards', { protocol: 'tcp', port: 9090, targetHost: '10.0.0.0/24', targetPort: 8080 }),
+    const res = await app.request(
+      jsonRequest('POST', '/forwards', { protocol: 'tcp', port: 9090, targetHost: '10.0.0.0/24', targetPort: 8080 }),
     )
-    expect(statusCode).toBe(400)
-    expect(body).toEqual({ error: '目标地址无效：10.0.0.0/24（应为单个 IPv4 地址，不含网段）' })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: '目标地址无效：10.0.0.0/24（应为单个 IPv4 地址，不含网段）' })
     expect(writes).toEqual([])
   })
 
   it('PUT /scan/config 防扫描未启用：409（前置状态不满足，不是请求体错误）', async () => {
-    const { statusCode, body } = await readResponse(
-      handler,
-      await fakeReq('PUT', '/scan/config', { ports: [22], windowSeconds: 60, hitCount: 8, banSeconds: 3600 }),
+    const res = await app.request(
+      jsonRequest('PUT', '/scan/config', { ports: [22], windowSeconds: 60, hitCount: 8, banSeconds: 3600 }),
     )
-    expect(statusCode).toBe(409)
-    expect(body).toEqual({ error: '防扫描未启用：先开启开关再调整配置' })
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({ error: '防扫描未启用：先开启开关再调整配置' })
   })
 
   it('PUT /scan/config 含面板端口：400，且校验先于开关状态（未启用也按面板端口拒绝）', async () => {
     writes.length = 0
-    const { statusCode, body } = await readResponse(
-      handler,
-      await fakeReq('PUT', '/scan/config', { ports: [22, 5173], windowSeconds: 60, hitCount: 8, banSeconds: 3600 }),
+    const res = await app.request(
+      jsonRequest('PUT', '/scan/config', { ports: [22, 5173], windowSeconds: 60, hitCount: 8, banSeconds: 3600 }),
     )
-    expect(statusCode).toBe(400)
-    expect(body).toEqual({ error: '面板端口不允许加入防扫描监控：5173 是工作台自身的访问通道' })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: '面板端口不允许加入防扫描监控：5173 是工作台自身的访问通道' })
     expect(writes).toEqual([])
   })
 })

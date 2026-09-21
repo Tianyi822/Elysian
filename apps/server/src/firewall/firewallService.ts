@@ -1,4 +1,5 @@
 import type {
+  FirewallAdapter,
   FirewallForwardRule,
   FirewallIpRule,
   FirewallRule,
@@ -7,8 +8,7 @@ import type {
   FirewallScanProtection,
   FirewallToggles,
 } from '@elysian/contracts'
-import type { FirewallAdapter } from '../../contracts/adapters'
-import { InvalidRequestError } from '../endpointGuard/guard'
+import { InvalidRequestError } from '../shared/errors.ts'
 import {
   canonicalId,
   displayPortOf,

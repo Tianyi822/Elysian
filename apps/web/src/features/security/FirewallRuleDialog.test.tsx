@@ -9,7 +9,7 @@ import { renderApp } from '../../test/renderApp'
 
 /**
  * 端口规则弹窗的备注前置校验：单引号会截断 ufw 的 comment 参数、控制字符写坏规则回读，
- * 判据与文案与服务端（adapters/firewallHost/noteValidation 的 ufw 场景）一致，
+ * 判据与文案与服务端（apps/server/src/shared/noteValidation.ts 的 ufw 场景）一致，
  * 输入时就提示，而不是提交后才被服务端拒绝。
  */
 

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { atomicWriteText, isKernelInterfacePath, writeHostFile } from './hostFiles.node'
+import { atomicWriteText, isKernelInterfacePath, writeHostFile } from './hostFiles'
 
 /*
  * 规则文件落盘的原子性测试：真实写临时目录与文件（不碰系统路径），

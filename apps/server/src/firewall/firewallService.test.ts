@@ -8,7 +8,7 @@ import {
   restoreIfNeeded,
   type FirewallHostDeps,
 } from './firewallService'
-import { InvalidRequestError } from '../endpointGuard/guard'
+import { InvalidRequestError } from '../shared/errors.ts'
 import { canonicalId, ipCanonicalId } from './parseUfw'
 import { parsePingBlocked } from './pingRules'
 import { SCAN_BANNED6_RECENT_PATH, SCAN_BANNED_RECENT_PATH, SCAN_TABLES, parseScanSection, setScanSection } from './scanRules'
