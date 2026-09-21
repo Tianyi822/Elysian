@@ -399,6 +399,20 @@ describe('createFirewallService create', () => {
     expect(fake.ufwCalls.filter((args) => ['allow', 'deny', 'limit', 'delete'].includes(args[0] ?? ''))).toHaveLength(0)
   })
 
+  it('重复判定按请求被拒（409）抛出，且不把输入的地址族说成已存在的规则', async () => {
+    const fake = createFakeDeps({ rules: ['allow 22/tcp'] })
+    const service = createFirewallService(fake.deps)
+
+    const error = await service
+      .create({ ...ALLOW_INPUT, port: 22, family: 'ipv6' })
+      .catch((thrown: unknown) => thrown)
+    expect(error).toBeInstanceOf(InvalidRequestError)
+    expect((error as InvalidRequestError).status).toBe(409)
+    // ufw 的端口规则对 IPv4/IPv6 一条覆盖两端：报错讲清语义，而不是宣称存在一条看不见的 ipv6 规则。
+    expect((error as Error).message).not.toContain('（ipv6）')
+    expect((error as Error).message).toContain('IPv4 与 IPv6 由同一条规则覆盖')
+  })
+
   it('端口段与出站方向透传到 ufw 参数', async () => {
     const fake = createFakeDeps()
     const service = createFirewallService(fake.deps)

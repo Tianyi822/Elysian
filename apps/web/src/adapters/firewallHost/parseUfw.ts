@@ -8,6 +8,7 @@ import type {
   FirewallRuleInput,
 } from '@elysian/contracts'
 import { FIREWALL_PROTOCOLS } from '@elysian/contracts'
+import { invalidRequest } from '../endpointGuard/guard'
 import { assertNoteSafe } from './noteValidation'
 
 /*
@@ -256,25 +257,25 @@ export const SOURCE_ALL_IPS = '所有IP'
 /** 校验界面输入并映射为 ufw 规范；不合法抛中文错误，不进 shell。 */
 export function specFromInput(input: FirewallRuleInput): UfwRuleSpec {
   if (!Number.isInteger(input.port) || input.port < 1 || input.port > 65535) {
-    throw new Error(`端口无效：${input.port}（应为 1–65535 的整数）`)
+    throw invalidRequest(`端口无效：${input.port}（应为 1–65535 的整数）`)
   }
   if (input.portTo !== undefined) {
     if (!Number.isInteger(input.portTo) || input.portTo < 1 || input.portTo > 65535) {
-      throw new Error(`端口段结束无效：${input.portTo}（应为 1–65535 的整数）`)
+      throw invalidRequest(`端口段结束无效：${input.portTo}（应为 1–65535 的整数）`)
     }
     if (input.portTo < input.port) {
-      throw new Error(`端口段无效：结束端口 ${input.portTo} 小于起始端口 ${input.port}`)
+      throw invalidRequest(`端口段无效：结束端口 ${input.portTo} 小于起始端口 ${input.port}`)
     }
   }
   if (!isFirewallProtocol(input.protocol)) {
-    throw new Error(`协议无效：${String(input.protocol)}`)
+    throw invalidRequest(`协议无效：${String(input.protocol)}`)
   }
   if (!['allow', 'deny', 'limit'].includes(input.policy)) {
-    throw new Error(`策略无效：${String(input.policy)}`)
+    throw invalidRequest(`策略无效：${String(input.policy)}`)
   }
   const source = input.source.trim()
   if (source !== SOURCE_ALL_IPS && !isValidFirewallAddress(source)) {
-    throw new Error(`来源无效：${source}（应为「${SOURCE_ALL_IPS}」或合法 IP/网段）`)
+    throw invalidRequest(`来源无效：${source}（应为「${SOURCE_ALL_IPS}」或合法 IP/网段）`)
   }
   // 备注以单引号包进 ufw comment 参数：换行/回车/控制字符与单引号都会写坏规则
   assertNoteSafe(input.note, 'ufw')
@@ -290,11 +291,11 @@ export function specFromInput(input: FirewallRuleInput): UfwRuleSpec {
 /** IP 规则输入校验：来源必须是具体地址或网段，不允许「所有IP」（那是拒绝/放行全量流量，语义由默认策略承担）。 */
 export function ipSpecFromInput(input: FirewallIpRuleInput): UfwIpSpec {
   if (!['allow', 'deny', 'limit'].includes(input.policy)) {
-    throw new Error(`策略无效：${String(input.policy)}`)
+    throw invalidRequest(`策略无效：${String(input.policy)}`)
   }
   const source = input.source.trim()
   if (!isValidFirewallAddress(source) || source === 'any') {
-    throw new Error(`来源无效：${source}（应为合法 IP 或网段）`)
+    throw invalidRequest(`来源无效：${source}（应为合法 IP 或网段）`)
   }
   // 备注同样写进 ufw comment 参数，与端口规则共用一套备注校验
   assertNoteSafe(input.note, 'ufw')

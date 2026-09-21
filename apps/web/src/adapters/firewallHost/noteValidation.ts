@@ -4,7 +4,10 @@
  *   断成两行，iptables-restore 解析失败、防火墙停用；ufw 备注含换行则写入后回读解析失败、规则从面板消失。
  * - 引号按落点拒绝：转发场景 comment 由双引号包裹（iptables-restore 只认双引号），拒双引号；
  *   ufw 场景 comment 由单引号包裹（`ufw ... comment '...'`），拒单引号。
+ * 这些都是请求内容不合法：抛 invalidRequest 让端点按 400 返回，不报成 500 服务端故障。
  */
+
+import { invalidRequest } from '../endpointGuard/guard'
 
 /** 控制字符（C0 与 DEL）加 Unicode 行终止符（U+2028/U+2029）：后者虽非 \n，按行切分时同样断行。 */
 const UNSAFE_NOTE_CHARS = /[\u0000-\u001f\u007f\u2028\u2029]/
@@ -20,14 +23,14 @@ export type NoteScene = 'forward' | 'ufw'
 export function assertNoteSafe(note: string | null, scene: NoteScene): void {
   if (!note) return
   if (hasUnsafeControlChars(note)) {
-    throw new Error('备注不能包含换行或控制字符')
+    throw invalidRequest('备注不能包含换行或控制字符')
   }
   if (scene === 'forward' && note.includes('"')) {
     // comment 以双引号包进规则文本，备注里的双引号会破坏规则
-    throw new Error('备注不能包含双引号')
+    throw invalidRequest('备注不能包含双引号')
   }
   if (scene === 'ufw' && note.includes("'")) {
     // ufw comment 参数以单引号包裹，备注里的单引号会被截断
-    throw new Error('备注不能包含单引号')
+    throw invalidRequest('备注不能包含单引号')
   }
 }

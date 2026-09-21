@@ -557,7 +557,12 @@ export function createFirewallService(deps: FirewallHostDeps): FirewallAdapter {
       const state = await readState()
       const duplicate = findDuplicate(state, input)
       if (duplicate) {
-        throw new Error(`端口规则已存在：${input.protocol} ${input.port}（${input.family}）`)
+        // ufw 的端口规则一条就覆盖 IPv4/IPv6 两端：判重不看输入的地址族，
+        // 报错讲清这条语义，避免让用户以为存在一条列表里看不见的 ipv6 规则。
+        throw new InvalidRequestError(
+          409,
+          `端口规则已存在：${input.protocol} ${input.port}（IPv4 与 IPv6 由同一条规则覆盖，不能按地址族重复添加）`,
+        )
       }
       if (portLines(state).length >= FIREWALL_LIMITS.userRules) {
         throw new Error(`端口规则已达上限（最多 ${FIREWALL_LIMITS.userRules} 条）：请先删除不再需要的规则`)
@@ -583,7 +588,10 @@ export function createFirewallService(deps: FirewallHostDeps): FirewallAdapter {
       }
       const duplicate = findDuplicate(state, input, oldCanonical)
       if (duplicate) {
-        throw new Error(`端口规则已存在：${input.protocol} ${input.port}（${input.family}）`)
+        throw new InvalidRequestError(
+          409,
+          `端口规则已存在：${input.protocol} ${input.port}（IPv4 与 IPv6 由同一条规则覆盖，不能按地址族重复添加）`,
+        )
       }
 
       if (nextCanonical === oldCanonical) {
@@ -678,7 +686,7 @@ export function createFirewallService(deps: FirewallHostDeps): FirewallAdapter {
       const state = await readState()
       const duplicate = ipLines(state).find((line) => ipCanonicalId(line.spec) === ipCanonicalId(spec))
       if (duplicate) {
-        throw new Error(`IP 规则已存在：${input.source}`)
+        throw new InvalidRequestError(409, `IP 规则已存在：${input.source}`)
       }
       if (ipLines(state).length >= FIREWALL_LIMITS.ipRules) {
         throw new Error(`IP 规则已达上限（最多 ${FIREWALL_LIMITS.ipRules} 条）：请先删除不再需要的规则`)
@@ -698,7 +706,7 @@ export function createFirewallService(deps: FirewallHostDeps): FirewallAdapter {
 
       const spec = ipSpecFromInput(input)
       if (ipLines(state).some((line) => ipCanonicalId(line.spec) === ipCanonicalId(spec) && ipCanonicalId(line.spec) !== oldCanonical)) {
-        throw new Error(`IP 规则已存在：${input.source}`)
+        throw new InvalidRequestError(409, `IP 规则已存在：${input.source}`)
       }
       // ufw 无原地修改：先建新、再删旧；新旧行相同（只改备注）时退化为先删后建。
       if (ipCanonicalId(spec) === oldCanonical) {
@@ -733,7 +741,7 @@ export function createFirewallService(deps: FirewallHostDeps): FirewallAdapter {
         }
         const conflict = existing.find((candidate) => forwardPortsOverlap(candidate, spec))
         if (conflict) {
-          throw new Error(`端口转发已存在：${spec.protocol} ${spec.port} 与既有转发 ${conflict.protocol} ${conflict.port} 的端口区间重叠`)
+          throw new InvalidRequestError(409, `端口转发已存在：${spec.protocol} ${spec.port} 与既有转发 ${conflict.protocol} ${conflict.port} 的端口区间重叠`)
         }
         await writeForwards([...existing, spec])
         touch(forwardIdOf(spec))
@@ -756,7 +764,7 @@ export function createFirewallService(deps: FirewallHostDeps): FirewallAdapter {
           (candidate) => forwardIdOf(candidate) !== oldId && forwardPortsOverlap(candidate, spec),
         )
         if (conflict) {
-          throw new Error(`端口转发已存在：${spec.protocol} ${spec.port} 与既有转发 ${conflict.protocol} ${conflict.port} 的端口区间重叠`)
+          throw new InvalidRequestError(409, `端口转发已存在：${spec.protocol} ${spec.port} 与既有转发 ${conflict.protocol} ${conflict.port} 的端口区间重叠`)
         }
         // 段整体重写：新旧替换一次完成，无中间态。
         await writeForwards([...existing.filter((candidate) => forwardIdOf(candidate) !== oldId), spec])

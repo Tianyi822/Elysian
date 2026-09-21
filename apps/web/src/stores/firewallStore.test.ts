@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { FirewallToggles } from '@elysian/contracts'
+import type { FirewallRule, FirewallToggles } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
 import { useFirewallStore } from './firewallStore'
 import { useNotificationStore } from './notificationStore'
@@ -102,5 +102,75 @@ describe('加载去重', () => {
     await firstLoad
     expect(useFirewallStore.getState().status).toBe('ready')
     expect(useFirewallStore.getState().toggles.firewallEnabled).toBe(false)
+  })
+})
+
+const RULE_V4 = {
+  id: 'ufw-allow-in-tcp-22-any.ipv4',
+  protocol: 'tcp',
+  port: 22,
+  portTo: null,
+  family: 'ipv4',
+  status: 'normal',
+  policy: 'allow',
+  direction: 'inbound',
+  source: '所有IP',
+  note: null,
+  updatedAt: null,
+} as const
+
+/* 同一条 ufw 规则在系统里是 v4/v6 两行：create 的响应只带回首行，重拉才能看到双生行。 */
+const RULE_V6 = { ...RULE_V4, id: 'ufw-allow-in-tcp-22-any.ipv6', family: 'ipv6' } as const
+
+describe('变更后与系统重拉同步', () => {
+  it('保存端口规则后重拉列表：v4/v6 双生行都出现，而不是只追加响应里的首行', async () => {
+    const list = vi.fn(async () => [RULE_V4, RULE_V6])
+    const gateway = gatewayWith({
+      list: list as unknown as () => Promise<readonly FirewallRule[]>,
+      create: async () => RULE_V4,
+    })
+
+    useFirewallStore.setState({ dialogRule: 'new' })
+    const saved = await useFirewallStore.getState().saveRule(gateway, {
+      protocol: 'tcp',
+      port: 22,
+      family: 'ipv4',
+      policy: 'allow',
+      direction: 'inbound',
+      source: '',
+      note: null,
+    })
+
+    expect(saved).toBe(true)
+    const rules = useFirewallStore.getState().rules
+    expect(rules.map((rule) => rule.id)).toEqual(['ufw-allow-in-tcp-22-any.ipv4', 'ufw-allow-in-tcp-22-any.ipv6'])
+  })
+
+  it('删除规则后重拉列表：删除的规范连同 v4/v6 双生行一起消失', async () => {
+    const list = vi.fn(async () => [])
+    const gateway = gatewayWith({
+      list: list as unknown as () => Promise<readonly FirewallRule[]>,
+      remove: async () => undefined,
+    })
+    useFirewallStore.setState({ rules: [RULE_V4, RULE_V6] })
+
+    await useFirewallStore.getState().removeRule(gateway, 'port', RULE_V4.id)
+
+    expect(useFirewallStore.getState().rules).toEqual([])
+  })
+
+  it('导入完成后重拉列表：以系统返回的完整列表为准', async () => {
+    const list = vi.fn(async () => [RULE_V4, RULE_V6])
+    const gateway = gatewayWith({
+      list: list as unknown as () => Promise<readonly FirewallRule[]>,
+      importRules: async () => ({ added: [RULE_V4], skipped: 0 }),
+    })
+
+    await useFirewallStore.getState().importRules(gateway, [])
+
+    expect(useFirewallStore.getState().rules.map((rule) => rule.id)).toEqual([
+      'ufw-allow-in-tcp-22-any.ipv4',
+      'ufw-allow-in-tcp-22-any.ipv6',
+    ])
   })
 })

@@ -58,6 +58,8 @@ type FirewallState = {
   toggling: boolean
   removingRuleIds: readonly string[]
   load: (gateway: ElysianGateway) => Promise<void>
+  /** 变更成功后的静默重拉：不动 status，面板不闪加载态。 */
+  refreshLists: (gateway: ElysianGateway) => Promise<void>
   setView: (view: FirewallView) => void
   setSearch: (search: string) => void
   setPage: (page: number) => void
@@ -143,6 +145,23 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
     set({ view, search: '', page: 1 })
   },
 
+  // ufw 一条端口规则在系统里是 v4/v6 两行，而 create/update 的响应只带回首行；
+  // 局部追加/替换会让列表落后于系统（看不见的行又让判重报错显得无中生有）。
+  // 变更成功后以系统为唯一事实重拉；失败只报通知，列表保持原样。
+  async refreshLists(gateway) {
+    try {
+      const [toggles, rules, ipRules, forwards] = await Promise.all([
+        gateway.firewall.toggles(),
+        gateway.firewall.list(),
+        gateway.firewall.listIpRules(),
+        gateway.firewall.listForwards(),
+      ])
+      set({ toggles, rules, ipRules, forwards })
+    } catch (error) {
+      notify(error instanceof Error ? `列表同步失败：${error.message}` : '列表同步失败', 'danger')
+    }
+  },
+
   setSearch(search) {
     set({ search, page: 1 })
   },
@@ -213,17 +232,15 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
     try {
       if (editing === 'new') {
         const created = await gateway.firewall.create(input)
-        set((state) => ({ rules: [...state.rules, created], dialogRule: undefined, saving: false }))
+        set({ dialogRule: undefined, saving: false })
         notify(`端口规则 ${created.protocol} ${created.port}${created.portTo ? `:${created.portTo}` : ''} 已添加${REAL_ACTION_LABEL}`)
       } else {
         const updated = await gateway.firewall.update(editing.id, input)
-        set((state) => ({
-          rules: state.rules.map((rule) => (rule.id === updated.id ? updated : rule)),
-          dialogRule: undefined,
-          saving: false,
-        }))
+        set({ dialogRule: undefined, saving: false })
         notify(`端口规则 ${updated.protocol} ${updated.port}${updated.portTo ? `:${updated.portTo}` : ''} 已修改${REAL_ACTION_LABEL}`)
       }
+      // 列表以重拉为准：v4/v6 双生行与时间戳只有系统说得清。
+      await get().refreshLists(gateway)
       return true
     } catch (error) {
       set({ saving: false })
@@ -239,17 +256,14 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
     try {
       if (editing === 'new') {
         const created = await gateway.firewall.createIpRule(input)
-        set((state) => ({ ipRules: [...state.ipRules, created], dialogIpRule: undefined, saving: false }))
+        set({ dialogIpRule: undefined, saving: false })
         notify(`IP 规则 ${created.source} 已添加${REAL_ACTION_LABEL}`)
       } else {
         const updated = await gateway.firewall.updateIpRule(editing.id, input)
-        set((state) => ({
-          ipRules: state.ipRules.map((rule) => (rule.id === updated.id ? updated : rule)),
-          dialogIpRule: undefined,
-          saving: false,
-        }))
+        set({ dialogIpRule: undefined, saving: false })
         notify(`IP 规则 ${updated.source} 已修改${REAL_ACTION_LABEL}`)
       }
+      await get().refreshLists(gateway)
       return true
     } catch (error) {
       set({ saving: false })
@@ -265,17 +279,14 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
     try {
       if (editing === 'new') {
         const created = await gateway.firewall.createForward(input)
-        set((state) => ({ forwards: [...state.forwards, created], dialogForward: undefined, saving: false }))
+        set({ dialogForward: undefined, saving: false })
         notify(`端口转发 ${created.protocol} ${created.port} → ${created.targetHost}:${created.targetPort} 已添加${REAL_ACTION_LABEL}`)
       } else {
         const updated = await gateway.firewall.updateForward(editing.id, input)
-        set((state) => ({
-          forwards: state.forwards.map((rule) => (rule.id === updated.id ? updated : rule)),
-          dialogForward: undefined,
-          saving: false,
-        }))
+        set({ dialogForward: undefined, saving: false })
         notify(`端口转发 ${updated.protocol} ${updated.port} → ${updated.targetHost}:${updated.targetPort} 已修改${REAL_ACTION_LABEL}`)
       }
+      await get().refreshLists(gateway)
       return true
     } catch (error) {
       set({ saving: false })
@@ -307,24 +318,15 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
     try {
       if (kind === 'port') {
         await gateway.firewall.remove(ruleId)
-        set((current) => ({
-          rules: current.rules.filter((rule) => rule.id !== ruleId),
-          removingRuleIds: current.removingRuleIds.filter((id) => id !== ruleId),
-        }))
       } else if (kind === 'ip') {
         await gateway.firewall.removeIpRule(ruleId)
-        set((current) => ({
-          ipRules: current.ipRules.filter((rule) => rule.id !== ruleId),
-          removingRuleIds: current.removingRuleIds.filter((id) => id !== ruleId),
-        }))
       } else {
         await gateway.firewall.removeForward(ruleId)
-        set((current) => ({
-          forwards: current.forwards.filter((rule) => rule.id !== ruleId),
-          removingRuleIds: current.removingRuleIds.filter((id) => id !== ruleId),
-        }))
       }
+      set((current) => ({ removingRuleIds: current.removingRuleIds.filter((id) => id !== ruleId) }))
       notify(`${label} 已删除${REAL_ACTION_LABEL}`)
+      // 删除同样按规范成对移除 v4/v6 双生行，重拉才能反映完整后果。
+      await get().refreshLists(gateway)
     } catch (error) {
       set((current) => ({
         removingRuleIds: current.removingRuleIds.filter((id) => id !== ruleId),
@@ -336,7 +338,6 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
   async importRules(gateway, inputs) {
     try {
       const result = await gateway.firewall.importRules(inputs)
-      set((state) => ({ rules: [...state.rules, ...result.added] }))
       const parts = [`新增 ${result.added.length} 条`]
       if (result.skipped > 0) parts.push(`跳过重复 ${result.skipped} 条`)
       notify(
@@ -344,6 +345,8 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
           ? `导入完成：${parts.join('，')}${REAL_ACTION_LABEL}`
           : `导入完成：没有新增${result.skipped > 0 ? `，跳过重复 ${result.skipped} 条` : ''}`,
       )
+      // 导入是逐条执行的真实命令，重拉把已落地条目如实带回列表。
+      await get().refreshLists(gateway)
       return result
     } catch (error) {
       notify(error instanceof Error ? `导入失败：${error.message}` : '导入失败', 'danger')
