@@ -4,7 +4,7 @@
 
 ## 一、定位与边界
 
-apps/server 是容器内本机回环服务:Bun.serve 挂 Hono 应用,监听 `127.0.0.1:8080`,承载防火墙、SSH、主机用户三片真实主机端点与平台内存端点。浏览器不直连它,全部流量经 vite(5173)的 `server.proxy` 转发;8080 不发布宿主端口,`Dockerfile.dev` 的 EXPOSE 也不必加(它是元数据,且该端口永不映射出容器)。
+apps/server 是容器内本机回环服务:Bun.serve 挂 Hono 应用,监听 `127.0.0.1:48101`,承载防火墙、SSH、主机用户三片真实主机端点与平台内存端点。浏览器不直连它,全部流量经 vite(5173)的 `server.proxy` 转发;8080 不发布宿主端口,`Dockerfile.dev` 的 EXPOSE 也不必加(它是元数据,且该端口永不映射出容器)。
 
 本期迁入:安全三片(firewall / ssh / users)的路由、服务、解析、真实接线,以及 platformMemory 路由。本期不迁:`/api/events` SSE 事件流与 `/api/resources/history`——两者与 vite 的 mock 插件(`../web/src/adapters/sse/mockEventsPlugin.node.ts:7-13` 引 hostMetrics 的 bun:sqlite metricsStore 与 /proc 采样)同插件同生命周期,事件内容必须与页面同一份确定性数据集,迁走须先把 mock 数据层抽成共享包,超出本期「服务层零行为改动迁移」范围。后续迁移时:mock 数据集与 hostMetrics 抽到共享包后,SSE 在 Bun.serve 上以 Hono streamSSE 或原生 ReadableStream 承载,帧格式与 Last-Event-ID 重放语义不变;`/api/resources/history` 与 `/api/events` 必须一起迁,届时 vite 代理前缀扩到 `/api/resources`;server 重启后进程内重放窗口归零,客户端 EventSource 自动重连补拍,行为等价于 dev server 重启,需在测试里锚定。
 
@@ -16,7 +16,7 @@ apps/server 是容器内本机回环服务:Bun.serve 挂 Hono 应用,监听 `127
 
 `vitest.config.ts`:node 环境(非 jsdom),不加载任何 vite 插件,`test.exclude` 排除 `src/**/*.bun.test.ts`。
 
-`src/index.ts`:读装配结果,`Bun.serve({ port: 8080, hostname: '127.0.0.1', fetch: app.fetch })`;`src/app.ts`:构造父 Hono 应用并挂载四片子应用(见第六节)。
+`src/index.ts`:读装配结果,`Bun.serve({ port: SERVER_PORT, hostname: '127.0.0.1', fetch: app.fetch })`;`src/app.ts`:构造父 Hono 应用并挂载四片子应用(见第六节)。
 
 ## 三、终版文件树
 
@@ -27,7 +27,7 @@ apps/server/
 ├── tsconfig.json
 ├── vitest.config.ts
 └── src/
-    ├── index.ts               # Bun.serve 挂 app,127.0.0.1:8080
+    ├── index.ts               # Bun.serve 挂 app,127.0.0.1:48101
     ├── app.ts                 # 父 Hono(strict:false)装配 + 四片挂载
     ├── bun-sqlite.d.ts        # server 新增副本;web 侧 hostMetrics 那份保留
     ├── middleware/
@@ -79,15 +79,15 @@ apps/server/
 
 **D3 未知端点 404 用子应用 `all('*')` 兜底,禁用 `notFound` 钩子。** 实测:挂载后子应用的 `notFound` 钩子根本不被调用——未知路径返回的是**父应用默认 404,`text/plain` 的 `404 Not Found`**,三片的中文 JSON 404 会静默丢失。`sub.all('*', handler)` 兜底可接住任意方法与深度,且实测 `c.req.path` 是**含挂载前缀的全路径**(如 `/api/security/firewall/nope/deeper`)。剥前缀的实现:每片路由文件导出自己的 `MOUNT_PATH` 常量(如 `'/api/security/firewall'`),app.ts 用同一常量挂载(单一事实),兜底 handler 里 `c.req.path.slice(MOUNT_PATH.length) || '/'` 得到相对路径,再拼 `未知防火墙端点:${method} ${path}`——`path` 必须是剥前缀后的相对路径,与现文案逐字一致(对照 `../web/src/adapters/firewallHost/api.ts:178`、`sshHost/api.ts:158`、`usersHost/api.ts:99`)。
 
-**D4 vite 代理不得设 `changeOrigin`。** vite 的 `server.proxy` 把 `/api/security` 与 `/api/platform` 转发到 `http://127.0.0.1:8080` 时,`changeOrigin` 保持默认 `false`:转发后 Host 头仍是浏览器的 `localhost:5173`,与 Origin 一致,同源守卫放行。若设 `true`,Host 被改写为 `127.0.0.1:8080`,与 Origin 不一致,server 侧同源守卫将 403 拒掉全部写请求。`preview.proxy` 同款配置(见 D8)。
+**D4 vite 代理不得设 `changeOrigin`。** vite 的 `server.proxy` 把 `/api/security` 与 `/api/platform` 转发到 `http://127.0.0.1:48101` 时,`changeOrigin` 保持默认 `false`:转发后 Host 头仍是浏览器的 `localhost:48100`,与 Origin 一致,同源守卫放行。若设 `true`,Host 被改写为 `127.0.0.1:48101`,与 Origin 不一致,server 侧同源守卫将 403 拒掉全部写请求。`preview.proxy` 同款配置(见 D8)。
 
-**D5 根 dev 双进程,compose command 一字不动。** 仓库根 `package.json` 的 `dev` 改为后台起 server 再前台起 web,推荐形:`sh -c 'trap "kill 0" EXIT; bun run --filter @elysian/server dev & bun run --filter @elysian/web dev'`(`kill 0` 在前台进程退出时清理同进程组的 server;实现时验证 Ctrl-C 行为,若仍有残留以 `lsof -ti:8080 | xargs kill` 清理并在验收注明)。`docker-compose.yml` 的 command **不改**——它末端执行的 `bun run dev`(docker-compose.yml:32)就是根 dev 脚本,root dev 改为双进程后容器自动双进程;若同时在 compose command 里追加 server 启动,会与 root dev 双起,第二个进程 8080 端口占用失败。server 启动失败只影响安全端点、不阻断 dev,与 sshd 同策略;8080 仅容器内回环,不新增 ports 发布。
+**D5 根 dev 双进程,compose command 一字不动。** 仓库根 `package.json` 的 `dev` 改为后台起 server 再前台起 web,推荐形:`sh -c 'trap "kill 0" EXIT; bun run --filter @elysian/server dev & bun run --filter @elysian/web dev'`(`kill 0` 在前台进程退出时清理同进程组的 server;实现时验证 Ctrl-C 行为,若仍有残留以 `lsof -ti:48101 | xargs kill` 清理并在验收注明)。`docker-compose.yml` 的 command **不改**——它末端执行的 `bun run dev`(docker-compose.yml:32)就是根 dev 脚本,root dev 改为双进程后容器自动双进程;若同时在 compose command 里追加 server 启动,会与 root dev 双起,第二个进程 8080 端口占用失败。server 启动失败只影响安全端点、不阻断 dev,与 sshd 同策略;8080 仅容器内回环,不新增 ports 发布。
 
 **D6 本地单起 web 的代价写进验收。** 本地 `bun run dev` 经 D5 双进程;若绕过根脚本只起 web,`/api/platform/memory` 代理连接失败,内存徽标进 error 态(原先采 vite 进程内存恒可用)。这不是回归,是监控对象变化的自然结果。
 
 **D7 内存徽标的监控对象语义变化要落在注释里。** 监控对象从 vite dev 进程变为 apps/server 进程(Bun.serve 的 `process.memoryUsage`)。`../web/src/components/MemoryMonitorBadge.tsx` 现有注释自称监控 dev server 进程,web 收尾时同步改写为「apps/server 进程」;迁移说明同样写清。
 
-**D8 preview 配套成套改。** 采纳 `preview.proxy` 就必须同时让根 `preview` 双进程(同 D5 形:`sh -c 'trap "kill 0" EXIT; bun run --filter @elysian/server dev & bun run --filter @elysian/web preview'`);否则单独 `bun run preview` 时代理目标 127.0.0.1:8080 无人监听,`/api/platform/memory` 与安全端点照样失效。web 的 `preview` 在 4173 端口(`../web/package.json:8`),preview.proxy 转发前缀与目标同 server.proxy。
+**D8 preview 配套成套改。** 采纳 `preview.proxy` 就必须同时让根 `preview` 双进程(同 D5 形:`sh -c 'trap "kill 0" EXIT; bun run --filter @elysian/server dev & bun run --filter @elysian/web preview'`);否则单独 `bun run preview` 时代理目标 127.0.0.1:48101 无人监听,`/api/platform/memory` 与安全端点照样失效。web 的 `preview` 在 4173 端口（preview 自带，不经 compose 发布）(`../web/package.json:8`),preview.proxy 转发前缀与目标同 server.proxy。
 
 **D9 `parsePasswdLine` / `parseGetentPasswd` 同名导出保持两文件独立。** `shared/authorizedKeys.ts`(源 sshHost,导出 `PasswdRecord` 语义)与 `users/parseSystemUsers.ts`(源 usersHost,导出 `PasswdEntry` 语义)各自含同名导出但语义不同,**不得合并为单模块**;git mv 各自落位,`parseSystemUsers` 的 `parseKeyLines` import 指向 `shared/authorizedKeys`。
 
@@ -160,7 +160,7 @@ MOUNT 常量从各路由文件导出、app.ts 引用,与 D3 的剥前缀同源�
 
 全部完成前 `bun run test` 与 `bun run typecheck`(web)不得转绿后又被后续步骤弄红。
 
-1. `vite.config.ts`:删除四个被迁插件的 import 与挂载(`firewallApi.vite.ts`、`sshApi.vite.ts`、`usersApi.vite.ts`、`platformMemory.vite.ts`),保留 `elysianEventsVitePlugin`;`ALLOWED_HOSTNAMES` 导入改 `'../server/src/shared/allowedHostnames.ts'`(该常量文件删除前就先切,防挂空引用);`server.proxy` 增 `'/api/security'` 与 `'/api/platform'` → `http://127.0.0.1:8080`(不设 changeOrigin,D4);`preview.proxy` 同款(D8)。
+1. `vite.config.ts`:删除四个被迁插件的 import 与挂载(`firewallApi.vite.ts`、`sshApi.vite.ts`、`usersApi.vite.ts`、`platformMemory.vite.ts`),保留 `elysianEventsVitePlugin`;`ALLOWED_HOSTNAMES` 导入改 `'../server/src/shared/allowedHostnames.ts'`(该常量文件删除前就先切,防挂空引用);`server.proxy` 增 `'/api/security'` 与 `'/api/platform'` → `http://127.0.0.1:48101`(不设 changeOrigin,D4);`preview.proxy` 同款(D8)。
 2. `git rm -r ../web/src/adapters/firewallHost/`、`sshHost/`、`usersHost/` 三目录;`git rm` platformMemory 四文件(`api.ts`、`api.test.ts`、`api.node.ts`、`platformMemory.vite.ts`),保留 `types.ts` 与 `types.test.ts`(改 re-export,#2)。
 3. `git rm -r ../web/src/adapters/endpointGuard/`(**guard.ts + guard.test.ts 全目录**;guard.ts:1 import node:http,残留而白名单已收缩则 boundaries.test 立即失败)。
 4. `../web/src/app/boundaries.test.ts`:`NODE_SIDE_ALLOWLIST` 收缩为 6 条——`adapters/sse/mockEventsPlugin.ts`、`adapters/sse/mockEventsPlugin.node.ts`、`adapters/sse/mockEventsPlugin.vite.ts`、`adapters/hostMetrics/metricsStore.ts`、`adapters/hostMetrics/readHostSample.ts`、`adapters/hostMetrics/isDockerEnv.ts`。

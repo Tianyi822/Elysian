@@ -1,14 +1,14 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
-import type { FirewallScanConfig } from '@elysian/contracts'
+import { PANEL_PORT, type FirewallScanConfig } from '@elysian/contracts'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import type { ElysianGateway } from '../../contracts/adapters'
 import { useFirewallStore } from '../../stores/firewallStore'
 import { renderApp } from '../../test/renderApp'
 
 /**
- * 端口防扫描弹窗的监控端口前置校验：面板端口（5173）加进监控会把正常访问面板的
+ * 端口防扫描弹窗的监控端口前置校验：面板端口加进监控会把正常访问面板的
  * 连接也计入封禁判据，客户端与服务端同规则拒绝，两侧文案一致。
  */
 
@@ -78,7 +78,7 @@ function scanSessionGateway(calls: FirewallScanConfig[]): ElysianGateway {
 }
 
 describe('端口防扫描监控端口校验', () => {
-  it('监控端口含 5173：提示面板端口不允许加入并拦下保存，不发请求；换掉后可保存', async () => {
+  it('监控端口含面板端口：提示面板端口不允许加入并拦下保存，不发请求；换掉后可保存', async () => {
     const calls: FirewallScanConfig[] = []
     const gateway = scanSessionGateway(calls)
     renderApp('/security', { gateway })
@@ -90,7 +90,7 @@ describe('端口防扫描监控端口校验', () => {
     const portsInput = within(dialog).getByLabelText('监控端口（逗号分隔）')
 
     await user.clear(portsInput)
-    await user.type(portsInput, '22,5173')
+    await user.type(portsInput, `22,${PANEL_PORT}`)
     await user.click(within(dialog).getByRole('button', { name: '保存配置' }))
 
     // 客户端先拦：文案与服务端同规则同句，请求根本不出门

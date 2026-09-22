@@ -1,5 +1,6 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Switch from '@radix-ui/react-switch'
+import { PANEL_PORT } from '@elysian/contracts'
 import { useEffect, useState } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
@@ -13,12 +14,10 @@ import { FIREWALL_INPUT_CLASS } from './firewallFormParts'
 const SCAN_POLL_MS = 5000
 
 /*
- * 面板端口（与服务端 apps/server/src/firewall/panelPort.ts 的 PANEL_PORT 同值）：
+ * 面板端口（唯一权威在 @elysian/contracts 的 PANEL_PORT，服务端守卫同一常量）：
  * 把它加进监控会把正常访问面板的连接也计入封禁判据，人先被锁在外面。
  * 客户端与服务端同规则拒绝，两侧文案一致。
  */
-const PANEL_PORT = 5173
-
 /**
  * 端口防扫描弹窗：开关、可编辑配置（端口/窗口/阈值/封禁时长）、四项统计与当前封锁的 IP 列表。
  * Docker 运行时为真实实现（内核 xt_recent 双名单 jail + iptables 计数），

@@ -18,7 +18,7 @@ ENV PATH="${BUN_INSTALL}/bin:${PATH}"
 
 WORKDIR /app
 
-# 5173 是 dev server；22 是 compose command 里按需启动的 sshd（端口映射见 docker-compose.yml）。
-EXPOSE 5173 22
+# 48100 是面板 dev server（与契约 PANEL_PORT 同值）；22 是 compose command 里按需启动的 sshd（端口映射见 docker-compose.yml）。
+EXPOSE 48100 22
 
 CMD ["bun", "run", "dev"]

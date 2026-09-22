@@ -5,6 +5,13 @@
  * 规则分三类：端口规则（协议+端口）、IP 规则（纯来源封禁，无端口）、端口转发（DNAT）。
  */
 
+/**
+ * 面板对外端口：工作台自身的访问通道，防火墙规则配置的禁区（转发 DNAT、防扫描
+ * 监控都必须拒绝它），启用防火墙时自动补的保底放行规则也是它。此值是唯一权威：
+ * apps/web/vite.config.ts 的 server.port 与 docker-compose.yml 的端口发布必须同值。
+ */
+export const PANEL_PORT = 48100
+
 export type FirewallProtocol = 'tcp' | 'udp'
 
 export const FIREWALL_PROTOCOLS = [
