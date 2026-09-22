@@ -37,7 +37,7 @@ export function LogsTabSwitch() {
         <HeaderTabs items={LOGS_TABS} value={tab} onSelect={setTab} groupLabel="日志页签" />
       </div>
 
-      <DropdownMenu.Root>
+      <DropdownMenu.Root modal={false}>
         <DropdownMenu.Trigger asChild>
           <button
             type="button"

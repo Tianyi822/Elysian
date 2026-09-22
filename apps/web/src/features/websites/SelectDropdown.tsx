@@ -25,7 +25,7 @@ export function SelectDropdown<T extends string>({
 }) {
   const label = (value !== undefined && items.find((item) => item.value === value)?.label) || fallbackLabel || value || ''
   return (
-    <DropdownMenu.Root>
+    <DropdownMenu.Root modal={false}>
       <DropdownMenu.Trigger asChild>
         <button
           type="button"

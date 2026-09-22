@@ -16,6 +16,7 @@ import type { SecurityTab } from '../../stores/securityStore'
  *
  * 两种形态都常驻 DOM、只切显示，测量与查询因此都不受当前形态影响。
  * 菜单由本文件自绘，不用原生 select，因此不会呼出操作系统的下拉控件，键盘与取值都留在界面内。
+ * 浮层不锁页面滚动：默认的模态锁会按滚动条宽度给 body 加 margin，窄屏上会把整页挤窄。
  */
 export function SecurityTabSwitch() {
   const tab = useSecurityStore((s) => s.tab)
@@ -43,7 +44,7 @@ export function SecurityTabSwitch() {
         <HeaderTabs items={SECURITY_TABS} value={tab} onSelect={setTab} groupLabel="安全页签" />
       </div>
 
-      <DropdownMenu.Root>
+      <DropdownMenu.Root modal={false}>
         <DropdownMenu.Trigger asChild>
           <button
             type="button"

@@ -396,8 +396,10 @@ export function FirewallPanel() {
 
       {/* 固有宽度探针：脱离布局、量出「左区整组」与搜索框各自需要多宽，供折行判断使用。
           左区必须与真实行同构（视图切换 + 按钮），漏掉任何一项都会让预算偏小、误判放得下。
+          外壳收成 0×0 并裁切：这行自然宽度比窄屏更宽，若参与文档滚动宽度，
+          打开顶栏折叠菜单时滚动条补偿会按这份超出把整页挤窄。
           invisible（含 aria-hidden + pointer-events-none）使探针不参与无障碍树与交互。 */}
-      <div aria-hidden className="pointer-events-none invisible absolute top-0 left-0">
+      <div aria-hidden className="pointer-events-none invisible absolute top-0 left-0 h-0 w-0 overflow-hidden">
         <div ref={probeRef} className="flex w-max gap-2">
           <ViewSwitch view={view} onChange={() => {}} />
           {toolbarButtons.map((label) => (

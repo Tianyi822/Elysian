@@ -52,7 +52,7 @@ export function DatabaseEngineSwitch() {
         <HeaderTabs items={ENGINE_TABS} value={engine} onSelect={setEngine} groupLabel="数据库类型" />
       </div>
 
-      <DropdownMenu.Root>
+      <DropdownMenu.Root modal={false}>
         <DropdownMenu.Trigger asChild>
           <button
             type="button"

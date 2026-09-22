@@ -112,7 +112,7 @@ export function TerminalTabBar({
           expanded ? 'hidden' : 'flex'
         } min-w-0 flex-1 items-center gap-1 overflow-hidden`}
       >
-        <DropdownMenu.Root>
+        <DropdownMenu.Root modal={false}>
           <DropdownMenu.Trigger asChild>
             <button
               type="button"
