@@ -18,6 +18,7 @@ import {
   isValidSshPort,
 } from '@elysian/contracts'
 import { invalidRequest } from '../shared/errors.ts'
+import { ELYSIAN_PATHS } from '../shared/elysianPaths.ts'
 import { hasUnsafeControlChars } from '../shared/noteValidation.ts'
 import { normalizeEqualsSeparator, parseSshdConfig, stripConfigComment, type SshdDirectiveName } from './parseSshdConfig.ts'
 import { patchSshdConfig } from './patchSshdConfig.ts'
@@ -65,17 +66,17 @@ import {
 
 export const DEFAULT_SSH_PATHS = {
   sshdConfig: '/etc/ssh/sshd_config',
-  sshdLog: '/var/log/sshd.log',
+  sshdLog: ELYSIAN_PATHS.sshdLog,
   sshdPidFile: '/run/sshd.pid',
   /** ssh-keygen 的工作目录：密钥对在这里生成、验完即删，不进任何用户主目录。 */
-  keygenWorkspace: '/tmp/elysian-ssh-keygen',
+  keygenWorkspace: ELYSIAN_PATHS.keygenWorkspace,
   /**
-   * 上次启停时间戳：sshd 自身不记启停，写在命名卷 `/var/lib/elysian` 上，
+   * 上次启停时间戳：sshd 自身不记启停，落在部署机器的 `~/.Elysian/state`（容器内经符号链接到持久卷），
    * 进程重启与页面刷新后仍能读到；不是浏览器 localStorage。
    */
-  changedAtStamp: '/var/lib/elysian/ssh-changed-at',
+  changedAtStamp: ELYSIAN_PATHS.sshChangedAt,
   /** Root 密码上次重置时间戳：chpasswd 不留可读记录，同样由面板落在命名卷上。 */
-  passwordResetAtStamp: '/var/lib/elysian/ssh-root-password-reset-at',
+  passwordResetAtStamp: ELYSIAN_PATHS.sshRootPasswordResetAt,
 }
 
 /**
@@ -92,7 +93,7 @@ export type SshHostDeps = {
   /**
    * 以容器既定参数启动 sshd（daemonize，自行写 pidfile）：`sshd -E <日志路径>`。
    * 不走 service ssh start——容器里 /etc/default/ssh 的 SSHD_OPTS 为空，
-   * 那样启动出的 sshd 不写 /var/log/sshd.log，面板日志源随之冻结。
+   * 那样启动出的 sshd 不写 ~/.Elysian/logs/sshd.log，面板日志源随之冻结。
    */
   startSshd(): Promise<void>
   /** 停止 sshd：向 pidfile 里的主进程发 SIGTERM；没有 pidfile 时幂等成功。 */
@@ -197,7 +198,7 @@ export function createSshService(deps: SshHostDeps): SshAdapter & {
 
   /**
    * 时间戳文件的读写：sshd 自身不记录的事实（启停、Root 密码重置）由面板自己落盘，
-   * 写在命名卷 `/var/lib/elysian` 上，进程重启与页面刷新后仍能读到；不是浏览器 localStorage。
+   * 落在部署机器的 `~/.Elysian/state`（容器内经符号链接到持久卷），进程重启与页面刷新后仍能读到；不是浏览器 localStorage。
    */
   async function readStamp(path: string): Promise<string | null> {
     if (!(await deps.exists(path))) return null

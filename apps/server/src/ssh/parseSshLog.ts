@@ -1,14 +1,14 @@
 import type { SshLoginRecord, SshLoginResult, SshLoginStats, SshLoginCounts } from '@elysian/contracts'
 
 /*
- * /var/log/sshd.log 的解析器：只认三类登录事实行——Accepted publickey、
+ * `~/.Elysian/logs/sshd.log` 的解析器：只认三类登录事实行——Accepted publickey、
  * Accepted password、Failed password，其余行（会话开关、子系统、压缩日志等）跳过。
  *
  * 两种行形态都吃：
  * - syslog 守护转发的行带 `Sep 20 08:12:04 host sshd[123]:` 前缀，时间戳（无年份）
  *   按注入的基准时间补全（月份大于基准月份视为跨年，取上一年）。
- * - 容器以 `sshd -E /var/log/sshd.log` 直写的行没有任何前缀（裸消息文本）。
- *   已在容器内核实（2026-09-20 读 /var/log/sshd.log）：sshd -E 的行确实不带任何
+ * - 容器以 `sshd -E ~/.Elysian/logs/sshd.log` 直写的行没有任何前缀（裸消息文本）。
+ *   已在容器内核实（2026-09-20 读当时的 /var/log/sshd.log）：sshd -E 的行确实不带任何
  *   时间戳，无时间可解析。语义与限制：at 置 null，由调用方用「行 → 首次观察到的
  *   时间」稳定化，同一进程会话内跨读取不漂移；不能每次读取都打上当前时刻——
  *   那会把历史失败记录全部漂进今日窗口。会话记忆随面板进程重启清空：重启后

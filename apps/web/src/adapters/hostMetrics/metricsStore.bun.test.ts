@@ -33,8 +33,8 @@ describe('isDockerEnv', () => {
 })
 
 describe('METRICS_SQLITE_PATH', () => {
-  it('默认库路径为 /var/lib/elysian/metrics.sqlite', () => {
-    expect(METRICS_SQLITE_PATH).toBe('/var/lib/elysian/metrics.sqlite')
+  it('默认库路径在 ~/.Elysian/data 下，随运行用户主目录解析', () => {
+    expect(METRICS_SQLITE_PATH.endsWith('/.Elysian/data/metrics.sqlite')).toBe(true)
   })
 })
 

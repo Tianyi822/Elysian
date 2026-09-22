@@ -1,7 +1,8 @@
 import { Database } from 'bun:sqlite'
+import { ELYSIAN_PATHS } from '../shared/elysianPaths.ts'
 
 /*
- * 生产 compose 挂载的防火墙规则时间账本（与 metrics.sqlite 同卷）。
+ * 防火墙规则时间账本：落在部署机器 ~/.Elysian/data 下（与 metrics.sqlite 同目录）。
  *
  * 账本语义：时间按规范指纹（canonical id）记录，而指纹只含「规则是什么」
  * （动作/方向/协议/端口/来源），不含「何时创建」。面板外删除后重建同规格的
@@ -9,7 +10,7 @@ import { Database } from 'bun:sqlite'
  * 可靠区分外部重建需要轮询内核规则变更或对账快照 diff，属于新机制，本层不引入，
  * 因此这份账本对「同指纹规则的重建」不提供时间可靠性保证。
  */
-export const FIREWALL_SQLITE_PATH = '/var/lib/elysian/firewall.sqlite'
+export const FIREWALL_SQLITE_PATH = ELYSIAN_PATHS.firewallSqlite
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS rule_touches (

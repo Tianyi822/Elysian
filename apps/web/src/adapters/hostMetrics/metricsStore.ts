@@ -1,4 +1,6 @@
 import { Database } from 'bun:sqlite'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import {
   timeRangeDurationMs,
   timeRangeGranularity,
@@ -6,8 +8,12 @@ import {
   type TimeRange,
 } from '../mock/resourceMetrics.ts'
 
-/** 生产 compose 挂载的指标库路径（卷配置见后续任务）。 */
-export const METRICS_SQLITE_PATH = '/var/lib/elysian/metrics.sqlite'
+/**
+ * 指标库路径：部署机器 ~/.Elysian/data/ 下（容器内 ~/.Elysian 经符号链接到持久卷）。
+ * 路径约定与 apps/server/src/shared/elysianPaths.ts 是同一套布局；hostMetrics 属
+ * web 侧 Node 模块、不能引 server 包，这里自行按同一规则拼接。
+ */
+export const METRICS_SQLITE_PATH = join(homedir(), '.Elysian', 'data', 'metrics.sqlite')
 
 const MS_PER_MINUTE = 60_000
 const MS_PER_HOUR = 3_600_000

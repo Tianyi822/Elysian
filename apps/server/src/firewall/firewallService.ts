@@ -9,6 +9,8 @@ import type {
   FirewallToggles,
 } from '@elysian/contracts'
 import { InvalidRequestError } from '../shared/errors.ts'
+import { join } from 'node:path'
+import { ELYSIAN_BACKUPS_DIR } from '../shared/elysianPaths.ts'
 import {
   canonicalId,
   displayPortOf,
@@ -113,12 +115,16 @@ function serializeRulesWrite<T>(critical: () => Promise<T>): Promise<T> {
   return run
 }
 
-/** 规则文件的后缀备份：每次写之前把当前内容存到同目录这份文件，坏写入可回滚。 */
+/** 规则文件的备份后缀：文件名保留原名，便于与目标对应。 */
 const RULES_BACKUP_SUFFIX = '.elysian'
 
-/** 规则文件的备份路径（含后缀）。 */
+/**
+ * 规则文件的备份路径：应用侧备份统一收进 ~/.Elysian/backups/（按原文件名加后缀），
+ * 不再散落在 /etc/ufw 旁——系统目录里只留 ufw 自己的东西；坏写入仍按这份备份回滚。
+ */
 export function backupPathOf(path: string): string {
-  return `${path}${RULES_BACKUP_SUFFIX}`
+  const name = path.slice(path.lastIndexOf('/') + 1)
+  return join(ELYSIAN_BACKUPS_DIR, `${name}${RULES_BACKUP_SUFFIX}`)
 }
 
 /** 写规则文件前先备份当前内容，再落新内容；文件尚不存在时跳过备份。 */

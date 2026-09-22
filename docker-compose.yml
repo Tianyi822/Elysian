@@ -17,22 +17,26 @@ services:
       - NET_ADMIN
     volumes:
       - .:/app
+      # 面板自管数据统一放部署机的 ~/.Elysian（分类：data 库 / logs 日志 / state 时间戳 /
+      # backups 备份 / tmp 工作区 / config 预留）。卷不能直接挂 /root（会吞掉 /root/.bun
+      # 导致 bun 消失），因此挂 /var/lib/elysian 并由 command 建立 /root/.Elysian 符号链接。
       - elysian_metrics:/var/lib/elysian
       # 依赖留在容器 volume，避免 Mac/Linux 原生二进制互相覆盖。
       - elysian_node_modules:/app/node_modules
       - elysian_web_node_modules:/app/apps/web/node_modules
       - elysian_contracts_node_modules:/app/packages/foundation/contracts/node_modules
-      # sshd 主机密钥持久化：镜像构建期的 ssh-keygen -A 每次重建镜像都会换一套新钥，
-      # 宿主机 known_hosts 随即报 REMOTE HOST IDENTIFICATION HAS CHANGED；首次启动把
-      # 镜像里的密钥种进卷，之后 /etc/ssh/ssh_host_* 一律是指向卷的符号链接，身份不再变。
-      - elysian_ssh_host_keys:/etc/ssh/host-keys
-    # 先起容器内 sshd：主机密钥种进卷并落到默认路径（见上），建权限分离目录 /run/sshd，
-    # 日志写 /var/log/sshd.log（SSH 面板数据源），启动失败只影响 SSH 联调、不阻断 dev server；
-    # 然后安装依赖，在同一 sh -c 进程组后台起 API server（bun run --filter @elysian/server dev，
-    # 监听容器内 127.0.0.1:8080，vite 经 server.proxy 转发 /api/security 与 /api/platform 到这里，
-    # 8080 不发布到宿主），server 启动失败只影响安全端点与内存徽标、不阻断 dev（与 sshd 同策略），
-    # 最后照常启动 dev。
-    command: sh -c "mkdir -p /etc/ssh/host-keys && if [ ! -e /etc/ssh/host-keys/ssh_host_ed25519_key ]; then cp -a /etc/ssh/ssh_host_* /etc/ssh/host-keys/; fi && ln -sfn /etc/ssh/host-keys/* /etc/ssh/ && mkdir -p /run/sshd && (/usr/sbin/sshd -E /var/log/sshd.log || true) && bun install && (bun run --filter @elysian/server dev &) && bun run dev"
+      # sshd 主机密钥：嵌套挂在数据卷的 ssh/host-keys 下。镜像构建期的 ssh-keygen -A
+      # 每次重建镜像都会换一套新钥，宿主机 known_hosts 随即报 REMOTE HOST IDENTIFICATION
+      # HAS CHANGED；首次启动把镜像里的密钥种进卷，之后 /etc/ssh/ssh_host_* 一律是
+      # 指向卷的符号链接，身份不再变。
+      - elysian_ssh_host_keys:/var/lib/elysian/ssh/host-keys
+    # 先备好 ~/.Elysian 的分类目录与符号链接、种主机密钥并落到默认路径，再起容器内
+    # sshd：日志写 ~/.Elysian/logs/sshd.log（SSH 面板数据源），启动失败只影响 SSH 联调、
+    # 不阻断 dev server；然后安装依赖，在同一 sh -c 进程组后台起 API server
+    # （bun run --filter @elysian/server dev，监听容器内 127.0.0.1:8080，vite 经
+    # server.proxy 转发 /api/security 与 /api/platform 到这里，8080 不发布到宿主），
+    # server 启动失败只影响安全端点与内存徽标、不阻断 dev（与 sshd 同策略），最后照常启动 dev。
+    command: sh -c "mkdir -p /var/lib/elysian/data /var/lib/elysian/logs /var/lib/elysian/state /var/lib/elysian/backups /var/lib/elysian/tmp /var/lib/elysian/config && ln -sfn /var/lib/elysian /root/.Elysian && if [ ! -e /root/.Elysian/ssh/host-keys/ssh_host_ed25519_key ]; then cp -a /etc/ssh/ssh_host_* /root/.Elysian/ssh/host-keys/; fi && ln -sfn /root/.Elysian/ssh/host-keys/* /etc/ssh/ && mkdir -p /run/sshd && (/usr/sbin/sshd -E /root/.Elysian/logs/sshd.log || true) && bun install && (bun run --filter @elysian/server dev &) && bun run dev"
 
 volumes:
   elysian_metrics:
