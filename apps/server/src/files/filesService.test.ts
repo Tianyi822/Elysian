@@ -379,6 +379,16 @@ function createService(host: FakeFilesHost = createFakeFilesHost()) {
   return { host, service: createFilesService(host.deps) }
 }
 
+/**
+ * 造一个 /root/.ssh 空缺的宿主：父目录 /root 放行、派生出的名字恰好补齐禁区路径的场景，
+ * 只在这条禁区路径空缺时可构造（它已存在时 deriveUniqueName 会换成副本名）。
+ */
+function createHostWithoutRootSsh(): FakeFilesHost {
+  const root = seedContainerTree()
+  root.children!.get('root')!.children!.delete('.ssh')
+  return createFakeFilesHost(root)
+}
+
 /** 写命令账本（不含 getent 只读反查）：断言「零命令」时用它。 */
 function writeCommands(host: FakeFilesHost): readonly { command: string; args: readonly string[] }[] {
   return host.commands.filter((entry) => entry.command !== 'getent')
@@ -601,6 +611,15 @@ describe('copyEntry', () => {
     expect(writeCommands(host)).toEqual([])
   })
 
+  it('派生目标完整路径落写禁区：源名恰好补齐禁区路径时拒绝且零命令', async () => {
+    const host = createHostWithoutRootSsh()
+    const { service } = createService(host)
+    // 目标目录 /root 放行，但派生出的 /root/.ssh 正是禁区路径本身——不许在保护区内造条目
+    await expect(service.copyEntry('/home/deploy/.ssh', '/root')).rejects.toThrow('拒绝操作受保护路径：/root/.ssh')
+    expect(writeCommands(host)).toEqual([])
+    expect(host.nodeAt('/root/.ssh')).toBe(null)
+  })
+
   it('预检超预算拒绝且零命令', async () => {
     const { host, service } = createService(createHugeHost())
     await expect(service.copyEntry('/big', '/tmp')).rejects.toThrow(`目录规模超出操作上限（${WALK_MAX_NODES} 个条目）`)
@@ -713,6 +732,14 @@ describe('moveEntry', () => {
     await expect(service.moveEntry('/root/keys-link', '/tmp')).rejects.toThrow('拒绝操作受保护路径：/root/.ssh')
     expect(writeCommands(host)).toEqual([])
   })
+
+  it('派生目标完整路径落写禁区：源名恰好补齐禁区路径时拒绝且零命令', async () => {
+    const host = createHostWithoutRootSsh()
+    const { service } = createService(host)
+    await expect(service.moveEntry('/home/deploy/.ssh', '/root')).rejects.toThrow('拒绝操作受保护路径：/root/.ssh')
+    expect(writeCommands(host)).toEqual([])
+    expect(host.nodeAt('/root/.ssh')).toBe(null)
+  })
 })
 
 describe('renameEntry', () => {
@@ -760,6 +787,15 @@ describe('renameEntry', () => {
     const { host, service } = createService()
     await expect(service.renameEntry('/root/.ssh/authorized_keys', 'x')).rejects.toThrow('拒绝操作受保护路径：/root/.ssh/authorized_keys')
     expect(host.renames).toEqual([])
+  })
+
+  it('目标名恰好补齐禁区路径时拒绝且零重命名', async () => {
+    const host = createHostWithoutRootSsh()
+    const { service } = createService(host)
+    host.nodeAt('/root')!.children!.set('old.name', file(10))
+    await expect(service.renameEntry('/root/old.name', '.ssh')).rejects.toThrow('拒绝操作受保护路径：/root/.ssh')
+    expect(host.renames).toEqual([])
+    expect(host.nodeAt('/root/.ssh')).toBe(null)
   })
 })
 

@@ -236,6 +236,18 @@ export function createFilesService(deps: FilesHostDeps) {
     }
   }
 
+  /**
+   * 派生落点的窄版禁区：只做字符串前缀判定，不做 realpath 复核。派生出的目标名是本次
+   * 操作即将创建的最终组件——它若已被抢注为符号链接，rename(2) 只替换链接本身、不跟随，
+   * 按占用法则换名即可（那正是抢注用例断言的语义）；而父目录的 realpath 复核已由各入口
+   * 的完整判定覆盖。这里挡的是「名字恰好补齐一条禁区路径」——在保护区内造出新条目。
+   */
+  function assertNotForbiddenTargetPath(target: string): void {
+    if (matchPathPrefix(target, forbiddenPrefixes) !== null) {
+      throw invalidRequest(`拒绝操作受保护路径：${target}`)
+    }
+  }
+
   /** 复制源的窄版禁区：只拦虚拟 FS 前缀（cp -a /proc 会真的遍历伪文件）。 */
   async function assertNotVirtualSource(path: string): Promise<void> {
     if (matchPathPrefix(path, VIRTUAL_FS_PREFIXES) !== null) {
@@ -419,6 +431,9 @@ export function createFilesService(deps: FilesHostDeps) {
       if (srcIsDirectory) await assertDestNotInsideSource(src, destDir, '复制')
       await assertNotForbiddenWrite(destDir)
       const newName = await deriveUniqueName(destDir, leafNameOf(src))
+      // 目标目录放行不代表派生出的目标名放行：源名恰好补齐一条禁区路径时（往 /root 落一个
+      // 名为 .ssh 的条目），条目的完整路径已进保护区，与其余判据一样先于任何命令拒绝。
+      assertNotForbiddenTargetPath(childPathOf(destDir, newName))
       if (srcIsDirectory) await precheckSourceTree(src, '复制')
       const stagingDir = await createStagingDir(destDir)
       try {
@@ -452,6 +467,8 @@ export function createFilesService(deps: FilesHostDeps) {
       if (srcStats.isDirectory()) await assertDestNotInsideSource(src, destDir, '移动')
       const newName = await deriveUniqueName(destDir, leafNameOf(src))
       const destChild = childPathOf(destDir, newName)
+      // 同复制：目标目录放行不代表派生出的目标名放行（源名恰好补齐一条禁区路径）。
+      assertNotForbiddenTargetPath(destChild)
       const args = ['-T', src, destChild] as const
       await deps.runMv(args).catch((error: unknown) => {
         throw commandError('mv', args, error)
@@ -480,6 +497,8 @@ export function createFilesService(deps: FilesHostDeps) {
       if (siblings.has(trimmed)) throw invalidRequest(`同名条目已存在：${trimmed}`)
       await assertNotForbiddenWrite(normalized)
       const target = childPathOf(parent, trimmed)
+      // 目标名可能恰好补齐一条禁区路径（父目录放行、名字补齐），按同一道判定拒绝。
+      assertNotForbiddenTargetPath(target)
       await deps.renamePath(normalized, target).catch((error: unknown) => {
         throw new Error(`重命名失败（${normalized} → ${target}）：${error instanceof Error ? error.message : String(error)}`)
       })
@@ -498,6 +517,9 @@ export function createFilesService(deps: FilesHostDeps) {
       const archivePath = childPathOf(parent, archiveName)
       if (await nameExists(archivePath)) throw invalidRequest(`同名压缩包已存在：${archiveName}`)
       await assertNotForbiddenWrite(normalized)
+      // 产物名恒为 `<名>.tar.gz`，今天不可能等于清单里的任何前缀；仍过同一道判定，
+      // 让「派生落点全部先于命令过写禁区判定」这条规律完整可审，清单扩张时不留缺口。
+      assertNotForbiddenTargetPath(archivePath)
       if (stats.isDirectory()) await precheckSourceTree(normalized, '压缩')
       const stagingDir = await createStagingDir(parent)
       try {
