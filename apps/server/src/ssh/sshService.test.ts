@@ -44,6 +44,8 @@ function fakeDigest(source: string): string {
 type FakeHost = {
   deps: SshHostDeps
   files: Map<string, string>
+  /** 预置符号链接（链接路径 → 目标路径，模拟 ~/.ssh → /etc 这类篡改）：exists 视为存在、lstat 判定为链接、readText 跟随一跳。 */
+  symlinks: Map<string, string>
   modes: Map<string, number>
   owners: Map<string, { uid: number; gid: number }>
   /** sshd 生命周期原语账本：start / stop / reload。 */
@@ -73,6 +75,7 @@ function createFakeHost(
   } = {},
 ): FakeHost {
   const files = new Map<string, string>()
+  const symlinks = new Map<string, string>()
   const modes = new Map<string, number>()
   const owners = new Map<string, { uid: number; gid: number }>()
   const serviceSignals: string[] = []
@@ -178,7 +181,8 @@ function createFakeHost(
       return line ? `${line}\n` : ''
     },
     async readText(path) {
-      const content = files.get(path)
+      // 对齐真实语义：读路径时跟随符号链接一跳，读到链接目标的内容。
+      const content = files.get(symlinks.get(path) ?? path)
       if (content === undefined) throw new Error(`ENOENT: ${path}`)
       reads.push(path)
       return content
@@ -208,7 +212,14 @@ function createFakeHost(
       writes.push({ path, content })
     },
     async exists(path) {
-      return files.has(path)
+      // 对齐真实语义：符号链接本身也是一个「存在」的目录项。
+      return files.has(path) || symlinks.has(path)
+    },
+    async lstat(path) {
+      // 不跟随符号链接的窄化探测：链接本身判定 true；普通文件判定 false；不存在抛错。
+      if (symlinks.has(path)) return { isSymbolicLink: true }
+      if (files.has(path)) return { isSymbolicLink: false }
+      throw new Error(`ENOENT: ${path}`)
     },
     async rename(from, to) {
       const content = files.get(from)
@@ -237,6 +248,7 @@ function createFakeHost(
   return {
     deps,
     files,
+    symlinks,
     modes,
     owners,
     serviceSignals,
@@ -928,5 +940,77 @@ describe('createSshService 密钥管理', () => {
     await service.createKey({ name: '同名', userId: 'ops' })
     await expect(service.createKey({ name: '同名', userId: 'ops' })).rejects.toThrow('密钥名称已存在')
     await expect(service.createKey({ name: '另一把', userId: 'ops' })).resolves.toMatchObject({ name: '另一把' })
+  })
+})
+
+describe('createSshService 符号链接防线', () => {
+  it('createKey：.ssh 目录被预置符号链接时拒绝写入，目录权限与文件写盘都不发生', async () => {
+    const host = createFakeHost({ sshdConfig: BASE_CONFIG })
+    host.symlinks.set('/home/ops/.ssh', '/virtual/etc')
+    const service = createSshService(host.deps)
+
+    await expect(service.createKey({ name: '部署机', userId: 'ops' })).rejects.toThrow('符号链接')
+    // 防线必须先于一切权限动作：chmod/chown 不可以经链接作用到链接目标上。
+    expect(host.modes.has('/home/ops/.ssh')).toBe(false)
+    expect(host.owners.has('/home/ops/.ssh')).toBe(false)
+    expect(host.writes.map((write) => write.path)).not.toContain(OPS_AUTHORIZED_KEYS)
+  })
+
+  it('createKey：authorized_keys 本身被预置符号链接时拒绝写入', async () => {
+    const host = createFakeHost({ sshdConfig: BASE_CONFIG })
+    // 对齐真实语义：读原文会跟随链接读到目标内容，防线在写盘前拒绝。
+    host.files.set('/virtual/tmp/victim', 'victim')
+    host.symlinks.set(OPS_AUTHORIZED_KEYS, '/virtual/tmp/victim')
+    const service = createSshService(host.deps)
+
+    await expect(service.createKey({ name: '部署机', userId: 'ops' })).rejects.toThrow('符号链接')
+    expect(host.writes.map((write) => write.path)).not.toContain(OPS_AUTHORIZED_KEYS)
+    expect(host.files.get('/virtual/tmp/victim')).toBe('victim')
+  })
+
+  it('createKey：.bak 备份被预置符号链接时拒绝，备份不写穿到链接目标', async () => {
+    const host = createFakeHost({ sshdConfig: BASE_CONFIG })
+    const service = createSshService(host.deps)
+    await service.createKey({ name: '第一把', userId: 'ops' })
+    host.symlinks.set(`${OPS_AUTHORIZED_KEYS}.bak`, '/virtual/tmp/victim')
+
+    await expect(service.createKey({ name: '第二把', userId: 'ops' })).rejects.toThrow('符号链接')
+    expect(host.writes.map((write) => write.path)).not.toContain(`${OPS_AUTHORIZED_KEYS}.bak`)
+  })
+
+  it('createKey：原子写临时文件被预置符号链接时拒绝', async () => {
+    const host = createFakeHost({ sshdConfig: BASE_CONFIG })
+    host.symlinks.set(`${OPS_AUTHORIZED_KEYS}.elysian-tmp`, '/virtual/tmp/victim')
+    const service = createSshService(host.deps)
+
+    await expect(service.createKey({ name: '部署机', userId: 'ops' })).rejects.toThrow('符号链接')
+    expect(host.writes.map((write) => write.path)).not.toContain(`${OPS_AUTHORIZED_KEYS}.elysian-tmp`)
+  })
+
+  it('removeKey：.ssh 目录被预置符号链接时同样拒绝，不发生权限与写盘', async () => {
+    const host = createFakeHost({ sshdConfig: BASE_CONFIG })
+    const service = createSshService(host.deps)
+    const created = await service.createKey({ name: '部署机', userId: 'ops' })
+    host.symlinks.set('/home/ops/.ssh', '/virtual/etc')
+    // 首次创建合法落盘的权限动作之后，防线下不应再有任何新写盘或权限动作。
+    const writesBefore = host.writes.length
+    const modesBefore = host.modes.size
+    const ownersBefore = host.owners.size
+
+    await expect(service.removeKey(created.id)).rejects.toThrow('符号链接')
+    expect(host.writes.length).toBe(writesBefore)
+    expect(host.modes.size).toBe(modesBefore)
+    expect(host.owners.size).toBe(ownersBefore)
+    expect((host.files.get(OPS_AUTHORIZED_KEYS) ?? '').trim()).not.toBe('')
+  })
+
+  it('setPort：sshd_config 的备份被预置符号链接时拒绝补丁，配置原样不动', async () => {
+    const host = createFakeHost({ sshdConfig: BASE_CONFIG })
+    host.symlinks.set(`${PATHS.sshdConfig}.bak`, '/virtual/tmp/victim')
+    const service = createSshService(host.deps)
+
+    await expect(service.setPort(2222)).rejects.toThrow('符号链接')
+    expect(host.files.get(PATHS.sshdConfig)).toBe(BASE_CONFIG)
+    expect(host.writes.map((write) => write.path)).not.toContain(`${PATHS.sshdConfig}.bak`)
   })
 })

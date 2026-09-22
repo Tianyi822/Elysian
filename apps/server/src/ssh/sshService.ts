@@ -60,6 +60,10 @@ import {
  * - authorized_keys 行级编辑：公钥行经 ssh-keygen -lf 验证后追加/删除，.ssh 0700、文件 0600；
  *   行 id 含账号维度，同一公钥装多账号时按 id 删除只撤销目标账号；全部读-改-写进互斥队列，
  *   并发请求排队落盘，后写不覆盖前写。列表对无法验证的脏行只跳过并计数，不整体报错。
+ * - 符号链接防线：.ssh、authorized_keys 与原子写的 .bak/.elysian-tmp 在任何权限与写盘
+ *   动作之前 lstat 拒绝符号链接；接线层的写文件与 chmod/chown 一律 O_NOFOLLOW 作用于
+ *   句柄——root 的动作永不跟随链接落到链接目标，杜绝「预置 ~/.ssh → /etc 后借面板
+ *   chmod/chown 提权、借备份写穿透任意 root 文件」。
  * - Root 密码只走 chpasswd 的 stdin，不进命令行参数。
  * - 私钥只在创建/生成响应里一次性带出：生成后立即读出并删除临时密钥文件，之后无处可取。
  */
@@ -117,15 +121,25 @@ export type SshHostDeps = {
   readTextTail(path: string, maxBytes: number): Promise<string>
   /** 列目录下的直接子项名（Include 通配展开用）；目录不存在时返回空数组。 */
   readDir(path: string): Promise<string[]>
+  /**
+   * 写文件：真实接线不跟随最终组件的符号链接（O_NOFOLLOW），链接占位即失败；
+   * 中间组件（如 ~/.Elysian 指向持久卷）不受影响。
+   */
   writeText(path: string, content: string): Promise<void>
   exists(path: string): Promise<boolean>
+  /**
+   * 不跟随符号链接的元数据探测（真实实现是 fs.lstat 的窄化）：给写入前的符号链接
+   * 防线用——面板以 root 写账号主目录，路径最终组件被预置符号链接时必须先拒后写。
+   */
+  lstat(path: string): Promise<{ isSymbolicLink: boolean }>
   /** 原子写的最后一步：临时文件改名顶替目标文件。 */
   rename(from: string, to: string): Promise<void>
-  /** 收紧权限用：.ssh 0700、authorized_keys 0600。 */
+  /** 收紧权限用：.ssh 0700、authorized_keys 0600；真实接线不跟随符号链接（句柄式 fchmod）。 */
   chmod(path: string, mode: number): Promise<void>
   /**
    * 属主一并落到账号名下：dev 容器以 root 运行，root 属主的 authorized_keys
-   * 会被 sshd 以目标用户 euid 读取失败（公钥登录 Permission denied）。
+   * 会被 sshd 以目标用户 euid 读取失败（公钥登录 Permission denied）；
+   * 真实接线不跟随符号链接（句柄式 fchown）。
    */
   chown(path: string, uid: number, gid: number): Promise<void>
   mkdir(path: string): Promise<void>
@@ -194,6 +208,27 @@ export function createSshService(deps: SshHostDeps): SshAdapter & {
 
   async function ensureDir(path: string): Promise<void> {
     if (!(await deps.exists(path))) await deps.mkdir(path)
+  }
+
+  /**
+   * 写入前的符号链接防线：面板以 root 写账号主目录与系统配置，路径最终组件被预置
+   * 符号链接（如 ~/.ssh → /etc）会让后续 chmod/chown 与备份写以 root 跟随作用到
+   * 链接目标（chown 到攻击者名下即可改 /etc/passwd 提权）。lstat 不跟随符号链接：
+   * 路径不存在视为无链可跟；是符号链接即拒绝本次写入，请人工检查路径是否被篡改。
+   */
+  async function refuseSymlink(path: string, label: string): Promise<void> {
+    let stats: { isSymbolicLink: boolean }
+    try {
+      stats = await deps.lstat(path)
+    } catch {
+      // 路径不存在即无可跟随；探测失败同样放行，由接线层 O_NOFOLLOW 的写入兜底。
+      return
+    }
+    if (stats.isSymbolicLink) {
+      throw invalidRequest(
+        `安全检查未通过：${label}（${path}）是符号链接，已拒绝写入。面板不跟随符号链接写系统文件，请人工检查该路径是否被篡改`,
+      )
+    }
   }
 
   /**
@@ -345,10 +380,12 @@ export function createSshService(deps: SshHostDeps): SshAdapter & {
 
   /** 备份 + 临时文件 + rename 的原子写：任何时刻目标路径上要么是旧全文要么是新全文。 */
   async function writeAtomic(target: string, original: string | null, next: string): Promise<void> {
+    const tmp = `${target}.elysian-tmp`
+    await refuseSymlink(tmp, '原子写的临时文件')
     if (original !== null) {
+      await refuseSymlink(`${target}.bak`, '写前备份')
       await deps.writeText(`${target}.bak`, original)
     }
-    const tmp = `${target}.elysian-tmp`
     await deps.writeText(tmp, next)
     await deps.rename(tmp, target)
   }
@@ -500,10 +537,14 @@ export function createSshService(deps: SshHostDeps): SshAdapter & {
   /** authorized_keys 的原子写、权限收紧与属主落位：目录 0700、文件 0600，均 chown 到账号名下，写前备份。 */
   async function writeAuthorizedKeys(entry: PasswdEntry, original: string | null, next: string): Promise<void> {
     const dir = sshDirPath(entry.home)
+    const target = authorizedKeysPath(entry.home)
+    // 符号链接防线先于一切权限与写盘动作：目录或文件被预置符号链接时，后续 chmod/chown
+    // 会以 root 跟随作用到链接目标（如 ~/.ssh → /etc 后即可借面板改 /etc/passwd 提权）。
+    await refuseSymlink(dir, '账号的 .ssh 目录')
+    await refuseSymlink(target, 'authorized_keys 文件')
     await ensureDir(dir)
     await deps.chmod(dir, 0o700)
     await deps.chown(dir, entry.uid, entry.gid)
-    const target = authorizedKeysPath(entry.home)
     await writeAtomic(target, original, next)
     await deps.chmod(target, 0o600)
     await deps.chown(target, entry.uid, entry.gid)

@@ -1,9 +1,10 @@
 import { execFile, spawn } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
-import { readFile, readdir, writeFile, rename, chmod, chown, mkdir, open, rm } from 'node:fs/promises'
+import { readFile, readdir, rename, mkdir, open, rm } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import type { SshAdapter } from '@elysian/contracts'
 import { DEFAULT_SSH_PATHS, createSshService, type SshHostDeps, type SshListKeysReport } from './sshService.ts'
+import { chmodNoFollow, chownNoFollow, isSymbolicLink, writeTextNoFollow } from '../shared/noFollowFs.ts'
 
 const execFileAsync = promisify(execFile)
 
@@ -192,13 +193,16 @@ function createHostDeps(): SshHostDeps {
     readTextTail: readTextTailFromFile,
     // 目录不存在（未建 sshd_config.d）时按空处理：Include 通配展开据此得到零个文件。
     readDir: (path) => readdir(path).catch(() => []),
-    writeText: (path, content) => writeFile(path, content, 'utf8'),
+    // 写文件与权限动作全部走 O_NOFOLLOW 原语：root 的动作永不跟随最终组件的符号链接，
+    // 预置 ~/.ssh → /etc 这类篡改会让操作直接失败，而不是作用到链接目标上。
+    writeText: (path, content) => writeTextNoFollow(path, content),
     async exists(path) {
       return existsSync(path)
     },
     rename: (from, to) => rename(from, to),
-    chmod: (path, mode) => chmod(path, mode),
-    chown: (path, uid, gid) => chown(path, uid, gid),
+    chmod: (path, mode) => chmodNoFollow(path, mode),
+    chown: (path, uid, gid) => chownNoFollow(path, uid, gid),
+    lstat: async (path) => ({ isSymbolicLink: await isSymbolicLink(path) }),
     // fs 的 mkdir 会返回创建的首个目录路径，这里只关心完成与否。
     async mkdir(path) {
       await mkdir(path, { recursive: true })

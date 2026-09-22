@@ -39,6 +39,9 @@ function createThrowingDeps(): SshHostDeps {
     readDir: async () => [],
     writeText: fail('writeText'),
     exists: async () => false,
+    lstat: async () => {
+      throw new Error('测试内不得探测真实路径：lstat')
+    },
     rename: fail('rename'),
     chmod: fail('chmod'),
     chown: fail('chown'),
