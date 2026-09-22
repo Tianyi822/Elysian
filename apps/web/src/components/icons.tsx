@@ -27,6 +27,7 @@ export {
   FolderTree,
   Gauge,
   Globe,
+  GripVertical,
   Inbox,
   Info,
   KeyRound,
@@ -60,7 +61,6 @@ export {
   UserRound,
   Workflow,
   X,
-  Zap,
 } from 'lucide-react'
 
 /** 数据库品牌图标。路径来自产品提供的官方 Logo，只在图标出口维护。 */

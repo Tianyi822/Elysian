@@ -1,13 +1,13 @@
 import type { Theme } from './ThemeProvider'
 
 /**
- * 界面偏好的本地存储格式：主题与顶栏分组页签选中态。
+ * 界面偏好的本地存储格式：主题、顶栏分组页签选中态与主导航顺序。
  *
  * 存的是带版本号的结构化数据而不是裸字符串：格式以后要加字段时，读的一侧按 version
  * 判断即可，不必把旧数据当成脏数据丢掉。读的时候逐项校验，认不出来一律返回 null，
  * 由调用方回落到默认值——坏掉的偏好不该让界面打不开。
  *
- * 各字段彼此独立：清掉主题（跟随系统）不得丢掉页签，改页签也不得丢掉主题。
+ * 各字段彼此独立：清掉主题（跟随系统）不得丢掉页签或导航顺序，改其中一项也不得丢掉其余。
  */
 export const VIEW_TAB_KEYS = ['security', 'logs', 'database', 'containers'] as const
 
@@ -18,6 +18,8 @@ export type UiPreferences = {
   theme?: Theme
   savedAt: string
   tabs?: Partial<Record<ViewTabKey, string>>
+  /** 主导航路径顺序。不认识的路径在读取侧合并时丢掉，缺的项按默认顺序补上。 */
+  nav?: string[]
 }
 
 export const UI_PREFERENCES_KEY = 'elysian.ui-preferences'
@@ -27,6 +29,12 @@ export type PreferenceStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeIte
 
 function isViewTabKey(value: string): value is ViewTabKey {
   return (VIEW_TAB_KEYS as readonly string[]).includes(value)
+}
+
+function parseNav(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const paths = value.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
+  return paths.length > 0 ? paths : undefined
 }
 
 function parseTabs(value: unknown): Partial<Record<ViewTabKey, string>> | undefined {
@@ -56,12 +64,14 @@ function parsePreferences(storage: PreferenceStorage): UiPreferences | null {
   const theme = record.theme === 'light' || record.theme === 'dark' ? record.theme : undefined
   const savedAt = typeof record.savedAt === 'string' ? record.savedAt : ''
   const tabs = parseTabs(record.tabs)
+  const nav = parseNav(record.nav)
 
   return {
     version: 1,
     ...(theme ? { theme } : {}),
     savedAt,
     ...(tabs ? { tabs } : {}),
+    ...(nav ? { nav } : {}),
   }
 }
 
@@ -84,19 +94,21 @@ export function writeStoredTheme(
     theme,
     savedAt,
     ...(current?.tabs ? { tabs: current.tabs } : {}),
+    ...(current?.nav ? { nav: current.nav } : {}),
   })
 }
 
 export function clearStoredTheme(storage: PreferenceStorage): void {
   const current = parsePreferences(storage)
-  if (!current?.tabs) {
+  if (!current?.tabs && !current?.nav) {
     storage.removeItem(UI_PREFERENCES_KEY)
     return
   }
   writePreferences(storage, {
     version: 1,
     savedAt: current.savedAt,
-    tabs: current.tabs,
+    ...(current.tabs ? { tabs: current.tabs } : {}),
+    ...(current.nav ? { nav: current.nav } : {}),
   })
 }
 
@@ -117,6 +129,31 @@ export function writeStoredViewTab(
     ...(current?.theme ? { theme: current.theme } : {}),
     savedAt,
     tabs: { ...current?.tabs, [key]: value },
+    ...(current?.nav ? { nav: current.nav } : {}),
+  })
+}
+
+export function readStoredNavOrder(storage: PreferenceStorage): string[] | null {
+  return parsePreferences(storage)?.nav ?? null
+}
+
+export function writeStoredNavOrder(
+  storage: PreferenceStorage,
+  order: readonly string[],
+  savedAt = new Date().toISOString(),
+): void {
+  const current = parsePreferences(storage)
+  const nav = order.filter((entry) => entry.length > 0)
+  if (nav.length === 0 && !current?.theme && !current?.tabs) {
+    storage.removeItem(UI_PREFERENCES_KEY)
+    return
+  }
+  writePreferences(storage, {
+    version: 1,
+    ...(current?.theme ? { theme: current.theme } : {}),
+    savedAt,
+    ...(current?.tabs ? { tabs: current.tabs } : {}),
+    ...(nav.length > 0 ? { nav: [...nav] } : {}),
   })
 }
 

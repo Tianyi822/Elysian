@@ -1,9 +1,11 @@
-import { screen, within } from '@testing-library/react'
+import { fireEvent, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useEventStreamStore } from '../../stores/eventStreamStore'
 import { renderApp } from '../../test/renderApp'
 import { NAV_ITEMS } from '../navigation'
+import { moveItem } from '../navigationOrder'
+import { writeStoredNavOrder } from '../theme/themePreferences'
 
 beforeEach(() => {
   useEventStreamStore.getState().disconnect()
@@ -55,21 +57,23 @@ describe('模板外壳', () => {
     expect(await screen.findByRole('region', { name: '数据库实例' })).toBeInTheDocument()
   })
 
-  it('顶栏含品牌、标题、内存自检与用户占位', async () => {
+  it('顶栏含品牌、标题与内存自检，不含运维人员', async () => {
     renderApp('/')
+    const header = screen.getByRole('banner')
     expect(screen.getByText('Elysian')).toBeInTheDocument()
     expect(screen.getByRole('heading', { level: 1, name: '仪表盘' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '平台内存占用' })).toBeInTheDocument()
-    expect(screen.getByText('运维人员')).toBeInTheDocument()
+    expect(within(header).getByRole('button', { name: '平台内存占用' })).toBeInTheDocument()
+    expect(within(header).queryByText('运维人员')).not.toBeInTheDocument()
   })
 
-  it('侧边栏底部快捷操作包含四个动作，反馈不出现在侧边栏里', () => {
+  it('侧边栏底部只保留切换主题，其下显示运维人员', () => {
     renderApp('/')
     const section = screen.getByLabelText('快捷操作')
     expect(within(section).getByRole('button', { name: /切换到浅色主题/ })).toBeInTheDocument()
-    expect(within(section).getByRole('button', { name: /重置演示数据/ })).toBeInTheDocument()
-    expect(within(section).getByRole('button', { name: /重新连接事件源/ })).toBeInTheDocument()
-    expect(within(section).getByRole('button', { name: /刷新仪表盘/ })).toBeInTheDocument()
+    expect(within(section).getByText('运维人员')).toBeInTheDocument()
+    expect(within(section).queryByRole('button', { name: /重置演示数据/ })).not.toBeInTheDocument()
+    expect(within(section).queryByRole('button', { name: /重新连接事件源/ })).not.toBeInTheDocument()
+    expect(within(section).queryByRole('button', { name: /刷新仪表盘/ })).not.toBeInTheDocument()
     expect(within(section).queryByRole('status')).not.toBeInTheDocument()
   })
 
@@ -122,6 +126,128 @@ describe('模板外壳', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
+  it('拖拽手柄默认隐藏，指针离开该项后不再显示', async () => {
+    const user = userEvent.setup()
+    renderApp('/')
+    const nav = screen.getByRole('navigation', { name: '主导航' })
+    const handles = within(nav).getAllByRole('button', { name: /拖拽排序：/ })
+    expect(handles).toHaveLength(NAV_ITEMS.length)
+    for (const handle of handles) {
+      expect(handle.parentElement).toHaveClass('opacity-0')
+    }
+
+    const logs = within(nav).getByRole('link', { name: '平台日志' })
+    await user.hover(logs)
+    expect(within(nav).getByRole('button', { name: '拖拽排序：平台日志' }).parentElement).toHaveClass(
+      'opacity-100',
+    )
+    expect(within(nav).getByRole('button', { name: '拖拽排序：仪表盘' }).parentElement).toHaveClass(
+      'opacity-0',
+    )
+
+    await user.unhover(logs)
+    expect(within(nav).getByRole('button', { name: '拖拽排序：平台日志' }).parentElement).toHaveClass(
+      'opacity-0',
+    )
+    expect(within(nav).getByRole('button', { name: '拖拽排序：平台日志' }).parentElement).not.toHaveClass(
+      'opacity-100',
+    )
+  })
+
+  it('拖拽时其余项按身位让开，松手后顺序写入本地并在重新进入后保持', () => {
+    const { unmount } = renderApp('/')
+    const nav = screen.getByRole('navigation', { name: '主导航' })
+    const restore = installNavRects()
+    const handle = within(nav).getByRole('button', { name: '拖拽排序：仪表盘' })
+
+    try {
+      fireEvent.pointerDown(handle, { button: 0, pointerId: 1, clientY: 20 })
+      fireEvent.pointerMove(window, { pointerId: 1, clientY: 120 })
+
+      const shifted = nav.querySelector<HTMLElement>('[data-nav-item="/security"]')
+      const dragged = nav.querySelector<HTMLElement>('[data-nav-item="/"]')
+      expect(shifted?.style.transform).toBe('translateY(-44px)')
+      expect(shifted?.className).toContain('transition-transform')
+      expect(dragged?.style.transform).toBe('translateY(100px)')
+      expect(dragged?.className).not.toContain('transition-transform')
+
+      fireEvent.pointerUp(window, { pointerId: 1, clientY: 120 })
+    } finally {
+      restore()
+    }
+
+    const expected = moveItem(
+      NAV_ITEMS.map((item) => item.to),
+      0,
+      2,
+    )
+    expect(within(nav).getAllByRole('link').map((link) => link.textContent)).toEqual(
+      expected.map((path) => NAV_ITEMS.find((item) => item.to === path)?.label),
+    )
+    expect(JSON.parse(localStorage.getItem('elysian.ui-preferences') ?? '{}').nav).toEqual(expected)
+
+    unmount()
+    renderApp('/')
+    expect(
+      within(screen.getByRole('navigation', { name: '主导航' }))
+        .getAllByRole('link')
+        .map((link) => link.textContent),
+    ).toEqual(expected.map((path) => NAV_ITEMS.find((item) => item.to === path)?.label))
+  })
+
+  it('方向键可以调整导航顺序，焦点留在同一项上', async () => {
+    const user = userEvent.setup()
+    renderApp('/')
+    const nav = screen.getByRole('navigation', { name: '主导航' })
+    const handle = within(nav).getByRole('button', { name: '拖拽排序：安全' })
+    handle.focus()
+    await user.keyboard('{ArrowDown}')
+
+    expect(document.activeElement).toHaveAccessibleName('拖拽排序：安全')
+    expect(within(nav).getAllByRole('link').map((link) => link.textContent)?.[2]).toBe('安全')
+  })
+
+  it('已存的导航顺序在侧边栏里生效，收起后不再显示拖拽手柄', async () => {
+    const user = userEvent.setup()
+    writeStoredNavOrder(
+      localStorage,
+      ['/websites', '/', '/security', '/containers', '/databases', '/files', '/logs', '/terminals'],
+      '2026-09-22T00:00:00.000Z',
+    )
+    renderApp('/')
+    const nav = screen.getByRole('navigation', { name: '主导航' })
+    expect(within(nav).getAllByRole('link')[0]).toHaveTextContent('网站')
+
+    await user.click(screen.getByRole('button', { name: '收起侧边栏' }))
+    expect(screen.queryByRole('button', { name: /拖拽排序：/ })).not.toBeInTheDocument()
+  })
+
+  it('抽屉里的拖拽与侧边栏共用同一份顺序', async () => {
+    const user = userEvent.setup()
+    renderApp('/')
+    await user.click(screen.getByRole('button', { name: '打开主导航' }))
+    const drawer = screen.getByRole('dialog', { name: '主导航' })
+    const restore = installNavRects()
+    try {
+      fireEvent.pointerDown(within(drawer).getByRole('button', { name: '拖拽排序：仪表盘' }), {
+        button: 0,
+        pointerId: 1,
+        clientY: 20,
+      })
+      fireEvent.pointerMove(window, { pointerId: 1, clientY: 120 })
+      fireEvent.pointerUp(window, { pointerId: 1, clientY: 120 })
+    } finally {
+      restore()
+    }
+
+    await user.click(screen.getByRole('button', { name: '关闭主导航' }))
+    const labels = within(screen.getByRole('navigation', { name: '主导航' }))
+      .getAllByRole('link')
+      .map((link) => link.textContent)
+    expect(labels[0]).toBe('安全')
+    expect(labels[2]).toBe('仪表盘')
+  })
+
   it('桌面侧边栏可以收起并展开', async () => {
     const user = userEvent.setup()
     renderApp('/')
@@ -134,3 +260,29 @@ describe('模板外壳', () => {
     expect(screen.getByRole('button', { name: '收起侧边栏' })).toBeInTheDocument()
   })
 })
+
+/** jsdom 没有布局，拖拽槽位按固定行高模拟：每项 40px，间距并进 44px 的步长。 */
+function installNavRects() {
+  const original = HTMLElement.prototype.getBoundingClientRect
+  HTMLElement.prototype.getBoundingClientRect = function () {
+    const index = this.getAttribute('data-nav-index')
+    if (index === null) return original.call(this)
+    const top = Number(index) * 44
+    return {
+      x: 0,
+      y: top,
+      top,
+      left: 0,
+      right: 231,
+      bottom: top + 40,
+      width: 231,
+      height: 40,
+      toJSON() {
+        return {}
+      },
+    } as DOMRect
+  }
+  return () => {
+    HTMLElement.prototype.getBoundingClientRect = original
+  }
+}

@@ -38,7 +38,7 @@ export function DashboardPage() {
     return (
       <EmptyState
         title="演示数据集为空"
-        description="没有可展示的资源采样。可以刷新重试，或在快捷操作里重置演示数据。"
+        description="没有可展示的资源采样。可以刷新重试。"
         action={
           <button
             type="button"

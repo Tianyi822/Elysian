@@ -15,20 +15,6 @@ import {
 } from './headerAccessoryWidth'
 import { Sidebar } from './Sidebar'
 
-function UserChip() {
-  return (
-    <span className="hidden items-center gap-1.5 sm:inline-flex">
-      <span
-        aria-hidden
-        className="inline-flex size-6 items-center justify-center rounded-full bg-accent/20 text-xs font-medium text-accent"
-      >
-        运
-      </span>
-      <span className="text-xs text-fg-muted">运维人员</span>
-    </span>
-  )
-}
-
 export function AppShell() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -141,7 +127,6 @@ export function AppShell() {
                   className="ml-auto flex shrink-0 flex-nowrap items-center justify-end gap-2"
                 >
                   <MemoryMonitorBadge />
-                  <UserChip />
                 </div>
               </div>
             </header>

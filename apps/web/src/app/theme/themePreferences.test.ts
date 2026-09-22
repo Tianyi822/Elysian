@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   UI_PREFERENCES_KEY,
   clearStoredTheme,
+  readStoredNavOrder,
   readStoredTheme,
   readStoredViewTab,
   resolveViewTab,
+  writeStoredNavOrder,
   writeStoredTheme,
   writeStoredViewTab,
 } from './themePreferences'
@@ -104,6 +106,49 @@ describe('页签偏好存储', () => {
         'security',
       ),
     ).toBeNull()
+  })
+
+  it('导航顺序与主题、页签共存；改其中一项不会丢掉其余', () => {
+    const storage = fakeStorage()
+    writeStoredTheme(storage, 'dark', '2026-09-15T00:00:00.000Z')
+    writeStoredViewTab(storage, 'security', 'ssh', '2026-09-21T00:00:00.000Z')
+    writeStoredNavOrder(storage, ['/files', '/security', '/'], '2026-09-21T03:00:00.000Z')
+
+    expect(readStoredTheme(storage)).toBe('dark')
+    expect(readStoredViewTab(storage, 'security')).toBe('ssh')
+    expect(readStoredNavOrder(storage)).toEqual(['/files', '/security', '/'])
+
+    writeStoredTheme(storage, 'light', '2026-09-21T04:00:00.000Z')
+    expect(readStoredNavOrder(storage)).toEqual(['/files', '/security', '/'])
+    expect(readStoredViewTab(storage, 'security')).toBe('ssh')
+  })
+
+  it('跟随系统只清主题，已存导航顺序仍在；只剩导航顺序时也不整份删掉', () => {
+    const storage = fakeStorage()
+    writeStoredTheme(storage, 'light', '2026-09-15T00:00:00.000Z')
+    writeStoredNavOrder(storage, ['/websites', '/'], '2026-09-21T03:00:00.000Z')
+    clearStoredTheme(storage)
+
+    expect(readStoredTheme(storage)).toBeNull()
+    expect(readStoredNavOrder(storage)).toEqual(['/websites', '/'])
+
+    const navOnly = fakeStorage()
+    writeStoredNavOrder(navOnly, ['/logs'], '2026-09-21T03:00:00.000Z')
+    clearStoredTheme(navOnly)
+    expect(readStoredNavOrder(navOnly)).toEqual(['/logs'])
+  })
+
+  it('导航顺序不是字符串数组、版本不认识或还没存过时读到 null', () => {
+    expect(readStoredNavOrder(fakeStorage())).toBeNull()
+    expect(
+      readStoredNavOrder(fakeStorage({ [UI_PREFERENCES_KEY]: '{"version":2,"nav":["/"]}' })),
+    ).toBeNull()
+    expect(
+      readStoredNavOrder(fakeStorage({ [UI_PREFERENCES_KEY]: '{"version":1,"nav":"/"}' })),
+    ).toBeNull()
+    expect(
+      readStoredNavOrder(fakeStorage({ [UI_PREFERENCES_KEY]: '{"version":1,"nav":["/",1]}' })),
+    ).toEqual(['/'])
   })
 
   it('resolveViewTab 只接受允许清单里的取值，否则回落默认', () => {

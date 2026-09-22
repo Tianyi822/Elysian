@@ -128,7 +128,7 @@ export function ContainerPage() {
           title={containers.length === 0 ? '还没有容器' : '没有匹配的容器'}
           description={
             containers.length === 0
-              ? '当前演示数据集没有容器。可以刷新重试，或在快捷操作里重置演示数据。'
+              ? '当前演示数据集没有容器。可以刷新重试。'
               : '换个筛选条件或清空搜索词再试。'
           }
         />

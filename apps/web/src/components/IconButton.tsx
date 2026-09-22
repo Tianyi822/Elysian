@@ -1,5 +1,5 @@
 import * as Tooltip from '@radix-ui/react-tooltip'
-import type { ReactNode } from 'react'
+import type { FocusEventHandler, KeyboardEventHandler, PointerEventHandler, ReactNode } from 'react'
 
 /**
  * 图标按钮。图标按钮必须带 tooltip，这是项目红线，所以统一从这个组件出，
@@ -43,6 +43,11 @@ export function IconButton({
   variant = 'solid',
   tooltip = true,
   disabled = false,
+  className,
+  onPointerDown,
+  onKeyDown,
+  onFocus,
+  onBlur,
 }: {
   label: string
   onPress?: () => void
@@ -53,14 +58,23 @@ export function IconButton({
   tooltip?: boolean
   /** 忙碌中的动作禁用按钮；tooltip 与 aria-label 保持可及。 */
   disabled?: boolean
+  className?: string
+  onPointerDown?: PointerEventHandler<HTMLButtonElement>
+  onKeyDown?: KeyboardEventHandler<HTMLButtonElement>
+  onFocus?: FocusEventHandler<HTMLButtonElement>
+  onBlur?: FocusEventHandler<HTMLButtonElement>
 }) {
   const button = (
     <button
       type="button"
       aria-label={label}
       onClick={onPress}
+      onPointerDown={onPointerDown}
+      onKeyDown={onKeyDown}
+      onFocus={onFocus}
+      onBlur={onBlur}
       disabled={disabled}
-      className={`inline-flex items-center justify-center rounded transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${styleFor(variant, tone)}`}
+      className={`inline-flex items-center justify-center rounded transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${styleFor(variant, tone)} ${className ?? ''}`}
     >
       {children}
     </button>
