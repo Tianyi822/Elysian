@@ -467,7 +467,7 @@ describe('文件管理页', () => {
 
     await user.type(input, 'zzz')
 
-    expect(await screen.findByText('没有匹配的文件或目录')).toBeInTheDocument()
+    expect(await screen.findByText('没有找到匹配的条目')).toBeInTheDocument()
     expect(screen.queryByRole('region', { name: '搜索结果' })).not.toBeInTheDocument()
   })
 })

@@ -102,8 +102,8 @@ export function FilesPage() {
           <LoadingState label="正在搜索…" />
         ) : searchResults.length === 0 ? (
           <EmptyState
-            title="没有匹配的文件或目录"
-            description={`没有名称或路径包含「${searchKeyword.trim()}」的条目，换个关键词试试。`}
+            title="没有找到匹配的条目"
+            description={`可搜索的范围内没有名称或路径包含「${searchKeyword.trim()}」的条目，换个关键词试试。`}
           />
         ) : (
           <SearchResultsTable

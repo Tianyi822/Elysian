@@ -8,6 +8,7 @@ import {
   FILE_PERMISSION_CLASSES,
   FILE_PERMISSION_CLASS_LABELS,
   isValidFileMode,
+  isValidHostUserName,
   modeToPermission,
   permissionToMode,
 } from '@elysian/contracts'
@@ -57,22 +58,25 @@ export function PermissionDialog({
   const applyPermission = useFilesStore((s) => s.applyPermission)
   const [mode, setMode] = useState(entry.mode)
   const [modeText, setModeText] = useState(entry.mode)
-  const [owner, setOwner] = useState(entry.owner)
+  const [owner, setOwner] = useState(isValidHostUserName(entry.owner) ? entry.owner : 'root')
   const [recursive, setRecursive] = useState(false)
   const [ownerNames, setOwnerNames] = useState<readonly string[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string>()
 
   const isDirectory = entry.kind === 'directory'
+  // 解析不出账号名的属主（uid 数字串，挂载卷/overlay 文件常见）：改属主要过主机账号判据，
+  // 这样的值必然被拒，不进候选也不作默认值——默认回落 root，实际属主仍显示在列表里。
+  const currentOwnerSelectable = isValidHostUserName(entry.owner)
 
   // 换条目就重置表单：对话框复用同一份组件状态。
   useEffect(() => {
     setMode(entry.mode)
     setModeText(entry.mode)
-    setOwner(entry.owner)
+    setOwner(currentOwnerSelectable ? entry.owner : 'root')
     setRecursive(false)
     setErrorMessage(undefined)
-  }, [entry.mode, entry.owner, entryPath])
+  }, [entry.mode, entry.owner, entryPath, currentOwnerSelectable])
 
   // 所有者候选：root 打头，其余系统账号按名称排序；当前所有者必在候选里，即使它已不在账号表中。
   useEffect(() => {
@@ -92,9 +96,10 @@ export function PermissionDialog({
   }, [gateway])
 
   const ownerOptions = useMemo(() => {
-    const names = new Set(['root', entry.owner, ...ownerNames])
+    // 候选只收主机账号名（root 打头、系统账号排序）；当前属主解析不出名字时（uid 数字串）不进候选。
+    const names = new Set(['root', ...ownerNames, ...(currentOwnerSelectable ? [entry.owner] : [])])
     return [...names].sort((a, b) => (a === 'root' ? -1 : b === 'root' ? 1 : a.localeCompare(b)))
-  }, [ownerNames, entry.owner])
+  }, [ownerNames, entry.owner, currentOwnerSelectable])
 
   const permission = modeToPermission(mode)
   // 每列表头显示的位值：与下面那列勾选同源，勾选一变位值就变。
