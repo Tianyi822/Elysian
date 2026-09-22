@@ -4,7 +4,7 @@
 
 ## 一、定位与边界
 
-apps/server 是容器内本机回环服务:Bun.serve 挂 Hono 应用,监听 `127.0.0.1:48101`,承载防火墙、SSH、主机用户三片真实主机端点与平台内存端点。浏览器不直连它,全部流量经 vite(5173)的 `server.proxy` 转发;8080 不发布宿主端口,`Dockerfile.dev` 的 EXPOSE 也不必加(它是元数据,且该端口永不映射出容器)。
+apps/server 是容器内本机回环服务:Bun.serve 挂 Hono 应用,监听 `127.0.0.1:48101`,承载防火墙、SSH、主机用户、文件管理四片真实主机端点与平台内存端点。浏览器不直连它,全部流量经 vite(5173)的 `server.proxy` 转发;8080 不发布宿主端口,`Dockerfile.dev` 的 EXPOSE 也不必加(它是元数据,且该端口永不映射出容器)。
 
 本期迁入:安全三片(firewall / ssh / users)的路由、服务、解析、真实接线,以及 platformMemory 路由。本期不迁:`/api/events` SSE 事件流与 `/api/resources/history`——两者与 vite 的 mock 插件(`../web/src/adapters/sse/mockEventsPlugin.node.ts:7-13` 引 hostMetrics 的 bun:sqlite metricsStore 与 /proc 采样)同插件同生命周期,事件内容必须与页面同一份确定性数据集,迁走须先把 mock 数据层抽成共享包,超出本期「服务层零行为改动迁移」范围。后续迁移时:mock 数据集与 hostMetrics 抽到共享包后,SSE 在 Bun.serve 上以 Hono streamSSE 或原生 ReadableStream 承载,帧格式与 Last-Event-ID 重放语义不变;`/api/resources/history` 与 `/api/events` 必须一起迁,届时 vite 代理前缀扩到 `/api/resources`;server 重启后进程内重放窗口归零,客户端 EventSource 自动重连补拍,行为等价于 dev server 重启,需在测试里锚定。
 
@@ -16,7 +16,7 @@ apps/server 是容器内本机回环服务:Bun.serve 挂 Hono 应用,监听 `127
 
 `vitest.config.ts`:node 环境(非 jsdom),不加载任何 vite 插件,`test.exclude` 排除 `src/**/*.bun.test.ts`。
 
-`src/index.ts`:读装配结果,`Bun.serve({ port: SERVER_PORT, hostname: '127.0.0.1', fetch: app.fetch })`;`src/app.ts`:构造父 Hono 应用并挂载四片子应用(见第六节)。
+`src/index.ts`:读装配结果,`Bun.serve({ port: SERVER_PORT, hostname: '127.0.0.1', fetch: app.fetch })`;`src/app.ts`:构造父 Hono 应用并挂载五片子应用(见第六节)。
 
 ## 三、终版文件树
 
@@ -28,7 +28,7 @@ apps/server/
 ├── vitest.config.ts
 └── src/
     ├── index.ts               # Bun.serve 挂 app,127.0.0.1:48101
-    ├── app.ts                 # 父 Hono(strict:false)装配 + 四片挂载
+    ├── app.ts                 # 父 Hono(strict:false)装配 + 五片挂载
     ├── bun-sqlite.d.ts        # server 新增副本;web 侧 hostMetrics 那份保留
     ├── middleware/
     │   ├── guard.ts           # 同源守卫中间件 + readJsonBody(Request) + sendJson/sendError
@@ -36,7 +36,7 @@ apps/server/
     ├── shared/
     │   ├── allowedHostnames.ts   # 纯常量,零依赖;vite.config 相对导入同一份
     │   ├── errors.ts             # EndpointGuardError / InvalidRequestError / invalidRequest
-    │   ├── availability.ts       # resolveAvailability(env, dockerenvExists) 三片统一判据
+    │   ├── availability.ts       # resolveAvailability(env, dockerenvExists) 四片统一判据
     │   ├── isDockerEnv.ts        # server 副本,与 web 侧互指注释;不进契约包
     │   ├── noteValidation.ts     # 备注与控制字符校验(三片共享)
     │   ├── authorizedKeys.ts     # authorized_keys 行级编辑 + passwd 解析
@@ -65,6 +65,12 @@ apps/server/
     │   ├── parseSystemUsers.ts / .test.ts
     │   ├── usersHostDeps.ts / .test.ts          # 测试由 api.node.test.ts 改名随迁
     │   └── usersRoutes.ts / .test.ts            # Hono 重写
+    ├── files/                                    # 文件管理片(新实现,非安全区迁移;方案见 docs/specs/2026-09-22-file-manager-real-implementation.md)
+    │   ├── filesPaths.ts / .test.ts             # 纯路径判据:归一化、`..`/`.`/控制字符拒绝、写禁区清单
+    │   ├── fileTreeWalk.ts / .test.ts           # 受限遍历原语:lstat 不跟随、深度/节点上限、剪枝/报告
+    │   ├── filesService.ts / .test.ts           # 八动作编排,mock 语义逐字对齐,全部宿主访问经注入 deps
+    │   ├── filesHostDeps.ts / .test.ts          # 真实接线:cp/mv/tar execFile 数组传参 + fs 原语 + noFollowFs
+    │   └── filesRoutes.ts / .test.ts            # /api/files 路由,守卫链与安全区三片同构
     └── platformMemory/
         └── platformMemoryRoutes.ts / .test.ts   # Hono 重写
 ```
