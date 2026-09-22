@@ -149,15 +149,15 @@ describe('specFromForwardInput', () => {
   })
 
   it('外部端口段覆盖面板端口被拒绝（区间含端点）', () => {
-    expect(() => specFromForwardInput({ ...base, port: 1000, portTo: 6000 })).toThrow('面板端口不允许配置转发')
+    expect(() => specFromForwardInput({ ...base, port: 1000, portTo: PANEL_PORT + 1 })).toThrow('面板端口不允许配置转发')
     expect(() => specFromForwardInput({ ...base, port: 1, portTo: PANEL_PORT })).toThrow('面板端口不允许配置转发')
-    expect(() => specFromForwardInput({ ...base, port: PANEL_PORT, portTo: 6000 })).toThrow('面板端口不允许配置转发')
+    expect(() => specFromForwardInput({ ...base, port: PANEL_PORT, portTo: PANEL_PORT + 1 })).toThrow('面板端口不允许配置转发')
     expect(() => specFromForwardInput({ ...base, protocol: 'udp', port: 1000, portTo: PANEL_PORT })).toThrow('面板端口不允许配置转发')
   })
 
   it('不覆盖面板端口的端口段正常通过', () => {
     expect(specFromForwardInput({ ...base, port: 5000, portTo: PANEL_PORT - 1 })).toMatchObject({ port: `5000:${PANEL_PORT - 1}` })
-    expect(specFromForwardInput({ ...base, port: PANEL_PORT + 1, portTo: 6000 })).toMatchObject({ port: `${PANEL_PORT + 1}:6000` })
+    expect(specFromForwardInput({ ...base, port: PANEL_PORT + 1, portTo: PANEL_PORT + 2 })).toMatchObject({ port: `${PANEL_PORT + 1}:${PANEL_PORT + 2}` })
   })
 
   it('备注含换行或回车被拒绝，正常备注不受影响', () => {

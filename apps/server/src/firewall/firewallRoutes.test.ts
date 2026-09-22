@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Hono } from 'hono'
-import { DEFAULT_SCAN_CONFIG } from '@elysian/contracts'
+import { DEFAULT_SCAN_CONFIG, PANEL_PORT } from '@elysian/contracts'
 import type {
   FirewallAdapter,
   FirewallForwardRule,
@@ -336,7 +336,7 @@ describe('createFirewallApp', () => {
   it('请求被拒（校验不通过 / 前置状态不满足）按自带状态码返回 4xx，中文原因原样带回', async () => {
     const service = createFakeService({
       createForward: async () => {
-        throw invalidRequest('面板端口不允许配置转发：外部端口段覆盖 5173（工作台自身的访问通道）')
+        throw invalidRequest(`面板端口不允许配置转发：外部端口段覆盖 ${PANEL_PORT}（工作台自身的访问通道）`)
       },
       setScanConfig: async () => {
         throw new InvalidRequestError(409, '防扫描未启用：先开启开关再调整配置')
@@ -345,11 +345,11 @@ describe('createFirewallApp', () => {
     const app = mountApp({ available: true, service })
 
     const forward = await app.request(
-      jsonRequest('POST', '/forwards', { protocol: 'tcp', port: 5173, targetHost: '10.0.0.5', targetPort: 8080 }),
+      jsonRequest('POST', '/forwards', { protocol: 'tcp', port: PANEL_PORT, targetHost: '10.0.0.5', targetPort: 8080 }),
     )
     expect(forward.status).toBe(400)
     expect(await forward.json()).toEqual({
-      error: '面板端口不允许配置转发：外部端口段覆盖 5173（工作台自身的访问通道）',
+      error: `面板端口不允许配置转发：外部端口段覆盖 ${PANEL_PORT}（工作台自身的访问通道）`,
     })
 
     const scan = await app.request(
@@ -496,11 +496,11 @@ describe('createFirewallApp + 真实 service 的状态码', () => {
   it('POST /forwards 命中面板端口：400 + 中文原因，不落盘', async () => {
     writes.length = 0
     const res = await app.request(
-      jsonRequest('POST', '/forwards', { protocol: 'tcp', port: 5173, targetHost: '10.0.0.5', targetPort: 8080 }),
+      jsonRequest('POST', '/forwards', { protocol: 'tcp', port: PANEL_PORT, targetHost: '10.0.0.5', targetPort: 8080 }),
     )
     expect(res.status).toBe(400)
     expect(await res.json()).toEqual({
-      error: '面板端口不允许配置转发：外部端口段覆盖 5173（工作台自身的访问通道）',
+      error: `面板端口不允许配置转发：外部端口段覆盖 ${PANEL_PORT}（工作台自身的访问通道）`,
     })
     expect(writes).toEqual([])
   })
@@ -526,10 +526,10 @@ describe('createFirewallApp + 真实 service 的状态码', () => {
   it('PUT /scan/config 含面板端口：400，且校验先于开关状态（未启用也按面板端口拒绝）', async () => {
     writes.length = 0
     const res = await app.request(
-      jsonRequest('PUT', '/scan/config', { ports: [22, 5173], windowSeconds: 60, hitCount: 8, banSeconds: 3600 }),
+      jsonRequest('PUT', '/scan/config', { ports: [22, PANEL_PORT], windowSeconds: 60, hitCount: 8, banSeconds: 3600 }),
     )
     expect(res.status).toBe(400)
-    expect(await res.json()).toEqual({ error: '面板端口不允许加入防扫描监控：5173 是工作台自身的访问通道' })
+    expect(await res.json()).toEqual({ error: `面板端口不允许加入防扫描监控：${PANEL_PORT} 是工作台自身的访问通道` })
     expect(writes).toEqual([])
   })
 })

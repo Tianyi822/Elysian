@@ -74,7 +74,7 @@ function createFakeDeps(seed: {
   }> = []
   const defaultUfw = seed.ipv6 ?? 'IPV6=yes'
   const ufwConf = seed.ufwConf ?? 'ENABLED=no\n'
-  const ssOut = (seed.listeners ?? ['tcp:5173']).map((key) => {
+  const ssOut = (seed.listeners ?? [`tcp:${PANEL_PORT}`]).map((key) => {
     const [proto, port] = key.split(':')
     const state = proto === 'udp' ? 'UNCONN' : 'LISTEN'
     return `${state} 0 0 *:${port} *:*`.replace(state, `${proto} ${state}`)
@@ -330,7 +330,7 @@ describe('createFirewallService list', () => {
     const fake = createFakeDeps({
       active: true,
       rules: ['allow 22/tcp', `allow ${PANEL_PORT}/tcp comment 'Elysian 面板'`],
-      listeners: ['tcp:5173'],
+      listeners: [`tcp:${PANEL_PORT}`],
     })
     const service = createFirewallService(fake.deps)
 
@@ -723,10 +723,10 @@ describe('createFirewallService 端口转发', () => {
     )
 
     await expect(
-      service.createForward({ protocol: 'tcp', port: 1000, portTo: 6000, targetHost: '10.0.0.5', targetPort: 80, note: null }),
+      service.createForward({ protocol: 'tcp', port: 1000, portTo: PANEL_PORT + 1, targetHost: '10.0.0.5', targetPort: 80, note: null }),
     ).rejects.toThrow('面板端口不允许配置转发')
     await expect(
-      service.createForward({ protocol: 'tcp', port: 1000, portTo: 6000, targetHost: '10.0.0.5', targetPort: 80, note: null }),
+      service.createForward({ protocol: 'tcp', port: 1000, portTo: PANEL_PORT + 1, targetHost: '10.0.0.5', targetPort: 80, note: null }),
     ).rejects.toThrow('面板端口不允许配置转发')
     expect(fake.fileWrites.filter((write) => write.path === '/etc/ufw/before.rules')).toHaveLength(0)
     expect(fake.getNatRules()).toHaveLength(0)
@@ -738,7 +738,7 @@ describe('createFirewallService 端口转发', () => {
     const rule = await service.createForward({ protocol: 'tcp', port: 8080, targetHost: '10.0.0.5', targetPort: 80, note: null })
 
     await expect(
-      service.updateForward(rule.id, { protocol: 'tcp', port: 5000, portTo: 6000, targetHost: '10.0.0.5', targetPort: 80, note: null }),
+      service.updateForward(rule.id, { protocol: 'tcp', port: 5000, portTo: PANEL_PORT + 1, targetHost: '10.0.0.5', targetPort: 80, note: null }),
     ).rejects.toThrow('面板端口不允许配置转发')
   })
 
