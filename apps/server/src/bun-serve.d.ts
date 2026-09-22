@@ -3,6 +3,9 @@ declare module 'bun' {
   export function serve(options: {
     hostname?: string
     port?: number
-    fetch: (request: Request) => Response | Promise<Response>
+    /** 第二参数是 Bun server 实例：hono/bun 的 upgradeWebSocket 从这里取实例完成升级。 */
+    fetch: (request: Request, server?: object) => Response | Promise<Response>
+    /** WebSocket 连接事件处理器（hono/bun 的 websocket handler）。 */
+    websocket?: unknown
   }): { hostname: string; port: number }
 }

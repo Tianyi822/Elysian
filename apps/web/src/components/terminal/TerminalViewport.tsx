@@ -22,6 +22,11 @@ export type TerminalViewportProps = {
   complete: (draft: string, cursor: number) => TerminalCompletion
   onAppendOutput: (lines: readonly string[]) => void
   onClear: () => void
+  /**
+   * Ctrl+C 的领域侧通道（本机真实终端发 interrupt 帧到 PTY）。
+   * 可选：不传则只有本地 ^C 外观，行为逐字节不变（容器终端与 SQL 会话弹窗不传）。
+   */
+  onInterrupt?: () => void
   inputLabel: string
   /** 缺省挂载即聚焦；弹窗壳依赖它赢过 Radix FocusScope。 */
   autoFocus?: boolean
@@ -42,6 +47,7 @@ export function TerminalViewport({
   complete,
   onAppendOutput,
   onClear,
+  onInterrupt,
   inputLabel,
   autoFocus = true,
   className,
@@ -125,6 +131,7 @@ export function TerminalViewport({
     setDraft('')
     setCursor(0)
     setHistoryIndex(null)
+    onInterrupt?.()
   }
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {

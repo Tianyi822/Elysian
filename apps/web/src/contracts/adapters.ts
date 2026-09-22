@@ -27,6 +27,7 @@ import type {
   WebsiteProjectKind,
   WebsiteProjectUpdateInput,
 } from '@elysian/contracts'
+import type { TerminalCompletion } from '../components/terminal/terminalSession'
 
 /*
  * Web 侧适配接口。界面只依赖这些接口，不关心数据来自 mock、内存降级还是真实网关。
@@ -83,7 +84,7 @@ export interface EventsAdapter {
   subscribe(handlers: EventStreamHandlers): Unsubscribe
 }
 
-/** 演示终端的命令结果；clear 为 true 时界面清空输出区。 */
+/** 演示命令引擎的结果（容器终端与数据库 SQL 会话仍在用）；clear 为 true 时界面清空输出区。 */
 export type MockCommandResult = { lines: readonly string[]; clear?: boolean }
 
 /**
@@ -97,16 +98,36 @@ export type HostTerminalSessionInfo = {
   prompt: string
 }
 
+/** 本机终端的下行帧：输出行、新提示符（命令结束信号）、截断标记与会话退出。 */
+export type HostTerminalFrame =
+  | { type: 'output'; lines: readonly string[] }
+  | { type: 'prompt'; prompt: string }
+  | { type: 'truncated'; droppedBytes: number }
+  | { type: 'exit'; exitCode: number }
+
+/** 连接关闭信息：WebSocket 关闭码与 reason（协议口径见终端实现规格「关闭码」一节）。 */
+export type HostTerminalCloseInfo = { code: number; reason: string }
+
+/** 本机终端的流式回调：帧按会话路由，关闭事件带关闭码。 */
+export type HostTerminalHandlers = {
+  onFrame: (sessionId: string, frame: HostTerminalFrame) => void
+  onClose: (sessionId: string, info: HostTerminalCloseInfo) => void
+}
+
 /**
- * 本机终端适配接口。本期为 mock：connect 开一条内存会话，命令在本页确定性求值，
- * 不执行真实 Shell；未来换 WebSocket/PTY adapter，页面不改。
+ * 本机终端适配接口（流式）：mock 在内存确定性求值，真实实现经 WebSocket 接
+ * 容器内 PTY；两者对同一套契约断言跑（terminalAdapterContract）。
  */
 export interface TerminalAdapter {
-  /** 连上本机（演示）：固定用户 ops、主机名 elysian-demo。 */
-  connect(): Promise<HostTerminalSessionInfo>
-  /** 演示终端：命令在本页 mock 内确定性求值，不执行真实 Shell。 */
-  execMockCommand(sessionId: string, command: string): Promise<MockCommandResult>
-  /** 断开一条会话（演示）：之后再 exec 必须失败。 */
+  /** 连上本机并注册流式回调；resolve 即 ready（mock 立即，真实在 ready 帧后）。 */
+  connect(handlers: HostTerminalHandlers): Promise<HostTerminalSessionInfo>
+  /** 送一行命令（不带换行）；会话不存在或已断开抛中文错误。 */
+  sendInput(sessionId: string, line: string): Promise<void>
+  /** 发送 Ctrl+C（\x03）到 PTY；mock 无进程可打断，为本地 no-op。 */
+  interrupt(sessionId: string): Promise<void>
+  /** 同步补全：mock 用固定词表，真实用 ready/prompt 帧推送的补全上下文缓存。 */
+  complete(sessionId: string, draft: string, cursor: number): TerminalCompletion
+  /** 断开会话；之后再 sendInput/interrupt 必须失败。 */
   disconnect(sessionId: string): Promise<void>
 }
 

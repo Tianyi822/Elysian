@@ -1,4 +1,4 @@
-import type { TerminalCompletion } from '../../components/terminal/terminalSession'
+import { completeWithPools, type TerminalCompletion } from '../../components/terminal/terminalSession'
 import type { MockCommandResult } from '../../contracts/adapters'
 
 /**
@@ -48,46 +48,24 @@ const UPTIME_LINE = 'up 42 days,  4:18,  1 user,  load average: 0.12 0.18 0.21'
 
 const ID_LINE = `uid=1000(${HOST_USER}) gid=1000(${HOST_USER}) groups=1000(${HOST_USER}),27(sudo)`
 
-/** 光标所在词的前缀补全；无可补内容时原样返回。 */
+/**
+ * 光标所在词的前缀补全；无可补内容时原样返回。
+ * 收敛算法在 terminalSession 的 completeWithPools（与真实 WS 适配器共用），
+ * 这里只决定词表：首词用命令集，行中词按前一命令查参数候选。
+ */
 export function completeHostTerminalCommand(draft: string, cursor: number): TerminalCompletion {
   const before = draft.slice(0, cursor)
-  const token = /(\S*)$/.exec(before)?.[0] ?? ''
-  const tokenStart = cursor - token.length
+  const tokenStart = cursor - ((/(\S*)$/.exec(before)?.[0] ?? '').length)
   const previousWord = before
     .slice(0, tokenStart)
     .trim()
     .split(/\s+/)
     .filter(Boolean)
     .pop()
-  const pool: readonly string[] = previousWord
-    ? (ARG_CANDIDATES[previousWord] ?? [])
-    : HOST_TERMINAL_COMMANDS
-  const matches = pool.filter((candidate) => candidate.startsWith(token))
-
-  if (matches.length === 0) return { draft, cursor }
-
-  if (matches.length === 1) {
-    const completed = `${matches[0]} `
-    return {
-      draft: before.slice(0, tokenStart) + completed + draft.slice(cursor),
-      cursor: tokenStart + completed.length,
-    }
-  }
-
-  const common = matches.reduce((acc, candidate) => {
-    let i = 0
-    while (i < acc.length && i < candidate.length && acc[i] === candidate[i]) i += 1
-    return acc.slice(0, i)
-  }, matches[0] ?? '')
-
-  if (common.length > token.length) {
-    return {
-      draft: before.slice(0, tokenStart) + common + draft.slice(cursor),
-      cursor: tokenStart + common.length,
-    }
-  }
-
-  return { draft, cursor, candidates: matches }
+  return completeWithPools(draft, cursor, {
+    commands: HOST_TERMINAL_COMMANDS,
+    words: previousWord ? (ARG_CANDIDATES[previousWord] ?? []) : [],
+  })
 }
 
 export function execHostCommand(command: string): HostCommandResult {

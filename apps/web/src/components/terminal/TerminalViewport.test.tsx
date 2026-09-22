@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { pushHistory, type TerminalLine } from './terminalSession'
 import { TerminalViewport } from './TerminalViewport'
 
@@ -75,4 +75,53 @@ describe('终端嵌入视口', () => {
     expect(await screen.findByText('$ whoami')).toBeInTheDocument()
     expect(screen.getByText('执行：whoami')).toBeInTheDocument()
   })
+
+  it('Ctrl+C 落本地 ^C 外观并调 onInterrupt；不传 onInterrupt 时只有本地外观', async () => {
+    const user = userEvent.setup()
+    const onInterrupt = vi.fn()
+    const hooked = render(<InterruptHarness onInterrupt={onInterrupt} label="挂接中断的输入" />)
+
+    await user.type(screen.getByLabelText('挂接中断的输入'), 'sleep{Control>}c{/Control}')
+    expect(screen.getByRole('log')).toHaveTextContent('$ sleep^C')
+    expect(onInterrupt).toHaveBeenCalledTimes(1)
+    // 草稿清空：中断后的下一次输入从空行开始。
+    await user.type(screen.getByLabelText('挂接中断的输入'), 'x')
+    expect(screen.getByRole('log')).toHaveTextContent('$ x')
+    hooked.unmount()
+
+    render(<InterruptHarness label="未挂接中断的输入" />)
+    await user.type(screen.getByLabelText('未挂接中断的输入'), 'top{Control>}c{/Control}')
+    expect(screen.getByRole('log')).toHaveTextContent('$ top^C')
+    expect(onInterrupt).toHaveBeenCalledTimes(1)
+  })
 })
+
+/** Ctrl+C 用例的 harness：把 onAppendOutput 的行真正收集进日志（^C 外观经它落屏）。 */
+function InterruptHarness({
+  onInterrupt,
+  label,
+}: {
+  onInterrupt?: () => void
+  label: string
+}) {
+  const [lines, setLines] = useState<readonly TerminalLine[]>([])
+  return (
+    <TerminalViewport
+      prompt="$ "
+      sessionKey="s"
+      lines={lines}
+      history={[]}
+      onSubmit={() => {}}
+      complete={(draft, cursor) => ({ draft, cursor })}
+      onAppendOutput={(appended) =>
+        setLines((prev) => [
+          ...prev,
+          ...appended.map((text): TerminalLine => ({ kind: 'output', text })),
+        ])
+      }
+      onClear={() => setLines([])}
+      onInterrupt={onInterrupt}
+      inputLabel={label}
+    />
+  )
+}

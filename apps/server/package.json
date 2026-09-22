@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "bun --watch src/index.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run --config vitest.config.ts && bun test src/firewall/ruleTimesStore.bun.test.ts"
+    "test": "vitest run --config vitest.config.ts && bun test src/firewall/ruleTimesStore.bun.test.ts src/terminals/terminalsWiring.bun.test.ts"
   },
   "dependencies": {
     "@elysian/contracts": "workspace:*",

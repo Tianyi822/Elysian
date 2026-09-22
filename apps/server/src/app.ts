@@ -7,6 +7,8 @@ import { endpointErrorHandler } from './middleware/guard.ts'
 import { createPlatformMemoryApp } from './platformMemory/platformMemoryRoutes.ts'
 import { SSH_MOUNT, createSshApp } from './ssh/sshRoutes.ts'
 import { createSshHostDeps } from './ssh/sshHostDeps.ts'
+import { TERMINAL_MOUNT, createTerminalsApp } from './terminals/terminalsRoutes.ts'
+import { createTerminalsHostDeps } from './terminals/terminalsHostDeps.ts'
 import { USERS_MOUNT, createUsersApp } from './users/usersRoutes.ts'
 import { createUsersHostDeps } from './users/usersHostDeps.ts'
 
@@ -16,7 +18,9 @@ import { createUsersHostDeps } from './users/usersHostDeps.ts'
  * - /api/platform/memory：平台内存采样，无容器边界、无同源守卫（与 vite 端点时代一致）；
  * - /api/security/*：安全区三片（防火墙/SSH/用户管理），同源守卫由各片路由在可用性
  *   判定之后自行挂载——顺序 503 → 403 与各片既有行为逐字一致，app 层不代挂；
- * - /api/files：文件管理片，守卫链与安全区三片同构。
+ * - /api/files：文件管理片，守卫链与安全区三片同构；
+ * - /api/terminals：终端片（/ws WebSocket 升级 + /status），守卫链同构，升级前同源
+ *   校验由 /ws 路由在 upgradeWebSocket 之前前置短路（见 terminalsRoutes）。
  * 错误映射统一走 endpointErrorHandler：带状态码的错误按自带 status 回 4xx，系统侧一律 500。
  */
 export async function createApp(): Promise<Hono> {
@@ -32,5 +36,8 @@ export async function createApp(): Promise<Hono> {
   app.route(SSH_MOUNT, createSshApp(createSshHostDeps()))
   app.route(USERS_MOUNT, createUsersApp(createUsersHostDeps()))
   app.route(FILES_MOUNT, createFilesApp(createFilesHostDeps()))
+  // 终端接线是 async：Bun.spawn（script 管道）只在容器分支动态加载，vitest 的 node
+  // 运行时不进 'bun' 模块图（与防火墙片动态加载 bun:sqlite 同一纪律）。
+  app.route(TERMINAL_MOUNT, createTerminalsApp(await createTerminalsHostDeps()))
   return app
 }

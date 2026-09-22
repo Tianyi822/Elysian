@@ -4,19 +4,19 @@
 
 ## 一、定位与边界
 
-apps/server 是容器内本机回环服务:Bun.serve 挂 Hono 应用,监听 `127.0.0.1:48101`,承载防火墙、SSH、主机用户、文件管理四片真实主机端点与平台内存端点。浏览器不直连它,全部流量经 vite(5173)的 `server.proxy` 转发;8080 不发布宿主端口,`Dockerfile.dev` 的 EXPOSE 也不必加(它是元数据,且该端口永不映射出容器)。
+apps/server 是容器内本机回环服务:Bun.serve 挂 Hono 应用,监听 `127.0.0.1:48101`,承载防火墙、SSH、主机用户、文件管理四片真实主机端点、终端 WebSocket 端点与平台内存端点。浏览器不直连它,全部流量经 vite(5173)的 `server.proxy` 转发(终端键加 `ws: true` 代理升级请求);8080 不发布宿主端口,`Dockerfile.dev` 的 EXPOSE 也不必加(它是元数据,且该端口永不映射出容器)。
 
 本期迁入:安全三片(firewall / ssh / users)的路由、服务、解析、真实接线,以及 platformMemory 路由。本期不迁:`/api/events` SSE 事件流与 `/api/resources/history`——两者与 vite 的 mock 插件(`../web/src/adapters/sse/mockEventsPlugin.node.ts:7-13` 引 hostMetrics 的 bun:sqlite metricsStore 与 /proc 采样)同插件同生命周期,事件内容必须与页面同一份确定性数据集,迁走须先把 mock 数据层抽成共享包,超出本期「服务层零行为改动迁移」范围。后续迁移时:mock 数据集与 hostMetrics 抽到共享包后,SSE 在 Bun.serve 上以 Hono streamSSE 或原生 ReadableStream 承载,帧格式与 Last-Event-ID 重放语义不变;`/api/resources/history` 与 `/api/events` 必须一起迁,届时 vite 代理前缀扩到 `/api/resources`;server 重启后进程内重放窗口归零,客户端 EventSource 自动重连补拍,行为等价于 dev server 重启,需在测试里锚定。
 
 ## 二、进程与包形态
 
-`package.json`:`name` 为 `@elysian/server`,`type: module`;scripts 三条——`dev` 用 `bun --watch src/index.ts`,`typecheck` 用 `tsc --noEmit -p tsconfig.json`,`test` 用 `vitest run --config vitest.config.ts && bun test src/firewall/ruleTimesStore.bun.test.ts`(照抄 `../web/package.json:9` 的模式:vitest 排除 `*.bun.test.ts`,bun test 显式点名,防 bun test 把 vitest 用例一并抓走导致失败)。dependencies 只有 `@elysian/contracts: workspace:*` 与 `hono`(锁定 `^4.13.8`,与实测版本同系);devDependencies 对齐 web 现有版本:`typescript`、`vitest`、`@types/node`。
+`package.json`:`name` 为 `@elysian/server`,`type: module`;scripts 三条——`dev` 用 `bun --watch src/index.ts`,`typecheck` 用 `tsc --noEmit -p tsconfig.json`,`test` 用 `vitest run --config vitest.config.ts && bun test src/firewall/ruleTimesStore.bun.test.ts src/terminals/terminalsWiring.bun.test.ts`(照抄 `../web/package.json:9` 的模式:vitest 排除 `*.bun.test.ts`,bun test 显式点名,防 bun test 把 vitest 用例一并抓走导致失败;终端冒烟整文件 `describe.skipIf(!IN_DOCKER)`,宿主机零执行)。dependencies 只有 `@elysian/contracts: workspace:*` 与 `hono`(锁定 `^4.13.8`,与实测版本同系,hono/bun 子路径导出自带 WebSocket 适配器,零新依赖);devDependencies 对齐 web 现有版本:`typescript`、`vitest`、`@types/node`。
 
 `tsconfig.json`:extends 仓库 `../../tsconfig.base.json`(strict、noUncheckedIndexedAccess 全继承),`include` 为 `["src", "vitest.config.ts"]`,`exclude` 为 `["src/**/*.bun.test.ts"]`,`compilerOptions.types` 取 `["node"]`。`src/bun-sqlite.d.ts` 是 server 侧**新增副本**(平移 `../web/src/adapters/hostMetrics/bun-sqlite.d.ts` 的内容,供 tsc 解析 `bun:sqlite`);web 侧那份**原样保留**——SSE 插件仍引 `hostMetrics/metricsStore.ts`(bun:sqlite),web 的 bun:sqlite 依赖没有消失。因此 web 的 `tsconfig.json`、`vite.build.config.ts`、`vitest.config.ts` 三个文件**都不改**,其中「不加载含 bun:sqlite 的 dev 中间件插件」类注释继续成立(vite dev 插件链仍加载 `mockEventsPlugin.node.ts`),不得改写成「web 已无 bun:sqlite」的表述。
 
 `vitest.config.ts`:node 环境(非 jsdom),不加载任何 vite 插件,`test.exclude` 排除 `src/**/*.bun.test.ts`。
 
-`src/index.ts`:读装配结果,`Bun.serve({ port: SERVER_PORT, hostname: '127.0.0.1', fetch: app.fetch })`;`src/app.ts`:构造父 Hono 应用并挂载五片子应用(见第六节)。
+`src/index.ts`:读装配结果,`Bun.serve({ port: SERVER_PORT, hostname: '127.0.0.1', fetch: (request, server) => app.fetch(request, server), websocket: bunWebSocket.websocket })`——fetch 第二参数(Bun server 实例)必须传给 app.fetch(hono/bun 的 upgradeWebSocket 从它取实例完成升级,丢弃会让 `/api/terminals/ws` 升级抛 TypeError);websocket 字段与路由侧 upgradeWebSocket 必须同源(`src/terminals/bunWebSocket.ts` 的进程级唯一实例);`src/app.ts`:async 构造父 Hono 应用并挂载六片子应用(见第六节)。`src/bun-spawn.d.ts` 是 `import('bun').spawn` 的最小类型桩(terminalsHostDeps 的容器分支动态加载用),`src/bun-serve.d.ts` 的 serve 选项补 fetch 第二参与 `websocket?` 字段。
 
 ## 三、终版文件树
 
@@ -71,6 +71,15 @@ apps/server/
     │   ├── filesService.ts / .test.ts           # 八动作编排,mock 语义逐字对齐,全部宿主访问经注入 deps
     │   ├── filesHostDeps.ts / .test.ts          # 真实接线:cp/mv/tar execFile 数组传参 + fs 原语 + noFollowFs
     │   └── filesRoutes.ts / .test.ts            # /api/files 路由,守卫链与安全区三片同构
+    ├── terminals/                                # 终端片(新实现;方案与定稿见 docs/specs/2026-09-22-terminal-real-implementation.md)
+    │   ├── bunWebSocket.ts                      # hono/bun 的 createBunWebSocket() 进程级唯一实例
+    │   ├── terminalFrames.ts / .test.ts         # 客户端帧解析与校验纯函数(白名单/大小/形状)
+    │   ├── terminalStream.ts / .test.ts         # 字节流→行模型:流式解码/ANSI 剥离/哨兵/单轮预算
+    │   ├── terminalsService.ts / .test.ts       # 会话编排:并发/空闲/启动行/节流/补全/截断/退出(fake 驱动)
+    │   ├── terminalConnection.ts / .test.ts     # WS 连接胶水:fake WsConn 直驱,发送水位背压
+    │   ├── terminalsHostDeps.ts / .test.ts      # 真实接线:async 工厂,Bun.spawn script 仅容器分支动态加载
+    │   ├── terminalsRoutes.ts / .test.ts        # /api/terminals 路由:升级前置同源短路 + /status
+    │   └── terminalsWiring.bun.test.ts          # bun test 点名的容器内真实冒烟(宿主机 skipIf 跳过)
     └── platformMemory/
         └── platformMemoryRoutes.ts / .test.ts   # Hono 重写
 ```
@@ -103,6 +112,12 @@ apps/server/
 
 **D12 平台内存端点无容器边界、无同源守卫。** GET `/api/platform/memory` 返回 `sampleFromUsage(process.memoryUsage())`(契约上提项),非 GET 一律 405 `{ error: '只允许 GET' }`。现实现即无容器判定与同源校验(`../web/src/adapters/platformMemory/api.ts:17-23`),保持。
 
+**D13 WS 升级的同源校验比 REST 更严,拒绝必须前置短路。** `/api/terminals/ws` 是 Upgrade 请求(GET),`sameOriginGuard` 对 GET/HEAD 放行拦不到,路由在调用 `upgradeWebSocket` **之前**以普通 handler 前置短路执行更严校验:必须带 Origin、Origin 的 host(小写归一)与 Host 头一致、Host 的 hostname ∈ `ALLOWED_HOSTNAMES`,任一不满足 403 `{ error: '请求来源不允许' }`(Origin 缺失即拒,比 REST 的 GET 放行更严)。**禁止**在 `upgradeWebSocket` 回调内 `return` Response 表达拒绝——实测(容器内 hono@4.13.8)该 Response 被 `defineWebSocketHelper` 当事件对象吞掉,恶意 Origin 的连接照常升级打开(假满足)。前置短路同时让 503/403 成为普通路由响应,vitest 的 `app.request` 可直接断言;负向握手三形态(无 Origin/Origin 与 Host 不一致/Host 不在名单)由 `src/terminals/terminalsWiring.bun.test.ts` 在容器内以真升级锚定。
+
+**D14 `'bun'` 模块与 hono/bun 入口不进 vitest 的 node 运行时模块图。** Bun.spawn 只在 `terminalsHostDeps.ts` 的容器分支动态 `import 'bun'`(`createTerminalsHostDeps` 是 async 工厂,`app.ts` 以 await 挂载,与防火墙片动态加载 bun:sqlite 同一纪律);`bunWebSocket.ts`(其 hono/bun 入口的 ssg.js 顶层代码引用全局 Bun)只能在 `/ws` handler 同源校验通过后动态加载。`createBunWebSocket()` 每进程恰好一次:ESM 模块缓存保留该性质,`index.ts`(serve 的 websocket 字段)静态引用同一实例,路由侧与入口侧不许各自再调。会话清理纪律:断开/空闲/内部失败一律 SIGKILL script 进程并等待退出码(pty master 死亡的 SIGHUP 级联,实测零孤儿),`dispose` 在 await kill 之前同步释放并发槽位(新连接不被未完成的 kill 卡住)。
+
+**D15 serve 与 vite 代理的 WebSocket 接线。** `index.ts` 的 `serve` 必须:fetch 签名 `(request, server) => app.fetch(request, server)`(hono/bun 的升级从第二参数取 Bun server 实例,丢弃它升级抛 TypeError),且带 `websocket: bunWebSocket.websocket` 字段(与路由侧 upgradeWebSocket 同源,见 D14)。`../web/vite.config.ts` 的 dev 与 preview 代理 `/api/terminals` 键必须 `ws: true`(HTTP 代理不转发 Upgrade)且不设 `changeOrigin`(D4 同理),由 `../web/src/adapters/http/proxyTable.test.ts` 锚死。终端片输出侧的四道闸(单轮 256 KiB 预算、50ms/4 KiB 合帧节流、发送缓冲水位 1 MiB、保序队列深度 256)与帧协议的唯一权威是 `docs/specs/2026-09-22-terminal-real-implementation.md` 的「端点契约」。
+
 ## 五、守卫链:顺序与文案(逐字)
 
 安全三片的守卫链顺序固定,中文文案逐字保留(对照 `../web/src/adapters/endpointGuard/guard.ts:84-105` 与三片 api.ts 的实际顺序):
@@ -112,6 +127,8 @@ apps/server/
 3. **读体守卫**(路由 handler 内调用 `readJsonBody(c.req.raw)`):415 `Content-Type 必须为 application/json` → 413 `请求体过大`(申报 content-length 与流式实读字节数双拦,上限 64 KiB;必须保持 for-await 流式累计读取、实读超限即拒,**不得**改成一次性 `arrayBuffer`/`text()` 再判)→ 400 `请求体不能为空` / `请求体不是有效 JSON`。
 4. **未知端点 404**:`未知防火墙端点:METHOD path` / `未知 SSH 端点:METHOD path` / `未知用户管理端点:METHOD path`,path 为剥挂载前缀后的相对路径(D3)。
 
+文件管理片与终端片的守卫链与上述同构(503 → 403 → 端点 → 404,文案同款格式);终端片的 `/ws` 是 Upgrade 请求,同源校验不走中间件、由路由在 `upgradeWebSocket` 之前前置短路执行更严口径(D13),无读体守卫。
+
 错误基线:`EndpointGuardError` / `InvalidRequestError` 按自带 status 返回 4xx,其余系统侧错误一律 500;响应体统一 `{ error: message }`(Error.message 或 String(error)),content-type `application/json; charset=utf-8`,中文消息原样带给界面。sendJson/sendError 用 `c.json` / `c.body` 实现同一形状。
 
 路由层保持薄:只做路由分发、守卫调用、请求体解析(现 api.ts 内的 `parseToggles`、`parseRuleInput`、`parsePolicy`、`parseIpRuleInput`、`parseForwardInput`、`parseScanConfigBody`、`parseRuleInputList`、`parseUserInput` 等函数**原样搬入各路由文件**)与 service 调用;业务校验留在 service 层,零行为改动。
@@ -120,14 +137,19 @@ apps/server/
 
 ```ts
 // 形状示意(实现以此为准)
-const app = new Hono({ strict: false })  // D1:users 根路径的带/无尾斜杠双形式都必须命中
-app.route(FIREWALL_MOUNT, createFirewallApp(firewallDeps))   // '/api/security/firewall'
-app.route(SSH_MOUNT, createSshApp(sshDeps))                   // '/api/security/ssh'
-app.route(USERS_MOUNT, createUsersApp(usersDeps))             // '/api/security/users'
-app.route(PLATFORM_MOUNT, createPlatformMemoryApp())          // '/api/platform'
+export async function createApp(): Promise<Hono> {
+  const app = new Hono({ strict: false })  // D1:users 根路径的带/无尾斜杠双形式都必须命中
+  app.route(FIREWALL_MOUNT, createFirewallApp(await resolveFirewallDeps()))   // '/api/security/firewall',D14:async 接线
+  app.route(SSH_MOUNT, createSshApp(createSshHostDeps()))                     // '/api/security/ssh'
+  app.route(USERS_MOUNT, createUsersApp(createUsersHostDeps()))               // '/api/security/users'
+  app.route(FILES_MOUNT, createFilesApp(createFilesHostDeps()))               // '/api/files'
+  app.route(TERMINAL_MOUNT, createTerminalsApp(await createTerminalsHostDeps())) // '/api/terminals',D13/D14
+  app.route(PLATFORM_MOUNT, createPlatformMemoryApp())                        // '/api/platform'
+  return app
+}
 ```
 
-MOUNT 常量从各路由文件导出、app.ts 引用,与 D3 的剥前缀同源。子应用工厂签名:`createFirewallApp(deps: { available: boolean, service?: FirewallService })` 等——`available: false` 时返回全方法 503 分支(含未知路径);`service` 可注入 fake(路由测试用),缺省由 app.ts 从 hostDeps 装配提供(上示 `firewallDeps` 即 `{ available, service }` 形)。每片子应用内部结构同构:`use('*', 同源中间件)` → 具名路由(handler 内 `readJsonBody`)→ `all('*', 剥前缀 404 兜底)`。
+`createApp` 是 async 工厂:防火墙与终端的接线依赖运行时探测(bun:sqlite 账本、Bun.spawn),只在容器分支动态加载(D14),`index.ts` 以 `await createApp()` 装配。MOUNT 常量从各路由文件导出、app.ts 引用,与 D3 的剥前缀同源(平台内存无导出常量,按字面量 `/api/platform` 挂载)。子应用工厂签名:`createFirewallApp(deps: { available: boolean, service?: FirewallService })` 等——`available: false` 时返回全方法 503 分支(含未知路径);`service` 可注入 fake(路由测试用),缺省由 app.ts 从 hostDeps 装配提供。每片子应用内部结构同构:`use('*', 同源中间件)` → 具名路由(handler 内 `readJsonBody`)→ `all('*', 剥前缀 404 兜底)`;终端片的 `/ws` 路由以升级前置同源短路替代同源中间件覆盖(D13),无读体。
 
 ## 七、迁移映射总表
 
@@ -180,7 +202,7 @@ MOUNT 常量从各路由文件导出、app.ts 引用,与 D3 的剥前缀同源�
 
 ## 十、测试纪律
 
-`guard.test.ts` 随迁并全绿(基线 19 用例,2026-09-22 以 `bun run vitest run --config vitest.config.ts src/adapters/endpointGuard/guard.test.ts` 在 web 侧实测通过)。服务与解析模块测试 git mv 随迁、只改 import 不改断言——**迁移期间服务测试断言不得随迁移改写**,行为漂移会伪装成测试适配;本次只允许改 import 路径与测试驱动方式(req/res 桩 → app.request)。路由测试由各 api.test.ts 改写为 Hono `app.request` 驱动、fake service 注入、不执行任何真实命令;守卫链各状态(503/403/415/413/400/404/405)与中文文案逐字断言;users 根以带尾斜杠形为主用例、防火墙根以无尾斜杠形为用例(D1)。server 的 test 脚本 = vitest run + bun test 显式点名 `src/firewall/ruleTimesStore.bun.test.ts`,vitest.config 排除 `*.bun.test.ts`(第二节)。web 删除已迁端点测试后 `bun run test` 全绿;boundaries.test 白名单收缩后仍守住浏览器侧零 node: 依赖。新写文件的路由测试对挂载后行为(strict:false 双形式、all('*') 404 兜底剥前缀)必须有用例锚定。
+`guard.test.ts` 随迁并全绿(基线 19 用例,2026-09-22 以 `bun run vitest run --config vitest.config.ts src/adapters/endpointGuard/guard.test.ts` 在 web 侧实测通过)。服务与解析模块测试 git mv 随迁、只改 import 不改断言——**迁移期间服务测试断言不得随迁移改写**,行为漂移会伪装成测试适配;本次只允许改 import 路径与测试驱动方式(req/res 桩 → app.request)。路由测试由各 api.test.ts 改写为 Hono `app.request` 驱动、fake service 注入、不执行任何真实命令;守卫链各状态(503/403/415/413/400/404/405)与中文文案逐字断言;users 根以带尾斜杠形为主用例、防火墙根以无尾斜杠形为用例(D1)。server 的 test 脚本 = vitest run + bun test 显式点名 `src/firewall/ruleTimesStore.bun.test.ts src/terminals/terminalsWiring.bun.test.ts`,vitest.config 排除 `*.bun.test.ts`(第二节)。web 删除已迁端点测试后 `bun run test` 全绿;boundaries.test 白名单收缩后仍守住浏览器侧零 node: 依赖。新写文件的路由测试对挂载后行为(strict:false 双形式、all('*') 404 兜底剥前缀)必须有用例锚定。终端片的业务测试全部 fake 驱动(fake `PtyProcess`、fake `WsConn`、fake 时钟,`src/terminals/` 六个 vitest 文件),不 spawn 真进程、不 import hono/bun 与 'bun'(D14);真升级、真 PTY 与负向握手只在 `terminalsWiring.bun.test.ts` 以 bun test 于容器内执行,宿主机 `describe.skipIf(!IN_DOCKER)` 整组跳过——一切 spawn PTY 的动作只发生在容器内。
 
 ## 十一、迁移顺序(依赖链)
 

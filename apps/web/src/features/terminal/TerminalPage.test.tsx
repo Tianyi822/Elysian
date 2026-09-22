@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createMockGateway } from '../../adapters/mock/gateway'
 import { useTerminalsStore } from '../../stores/terminalsStore'
 import { renderApp } from '../../test/renderApp'
 
@@ -137,5 +138,30 @@ describe('终端页', () => {
 
     await user.click(screen.getByRole('menuitemradio', { name: 'ops@elysian-demo 1' }))
     expect(await screen.findByText('ops@elysian-demo:~$ hostname')).toBeInTheDocument()
+  })
+
+  it('Ctrl+C 经 gateway 的 interrupt 接缝发出并落本地 ^C 外观', async () => {
+    const user = userEvent.setup()
+    const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+    const interrupt = vi.fn(async () => {})
+    // 类实例不能靠展开覆盖（方法在原型上）：逐字段显式装配。
+    const gateway = {
+      ...base,
+      terminals: {
+        connect: (handlers: Parameters<typeof base.terminals.connect>[0]) =>
+          base.terminals.connect(handlers),
+        sendInput: (id: string, line: string) => base.terminals.sendInput(id, line),
+        interrupt,
+        complete: (id: string, draft: string, cursor: number) =>
+          base.terminals.complete(id, draft, cursor),
+        disconnect: (id: string) => base.terminals.disconnect(id),
+      },
+    }
+    renderApp('/terminals', { gateway })
+
+    const input = await screen.findByLabelText('命令输入')
+    await user.type(input, 'sleep 30{Control>}c{/Control}')
+    expect(screen.getByRole('log')).toHaveTextContent('ops@elysian-demo:~$ sleep 30^C')
+    await waitFor(() => expect(interrupt).toHaveBeenCalledTimes(1))
   })
 })

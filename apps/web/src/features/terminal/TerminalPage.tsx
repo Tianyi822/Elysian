@@ -1,14 +1,17 @@
 import { useEffect, useState } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { completeHostTerminalCommand } from '../../adapters/mock/hostTerminal'
 import { ConfirmCloseDialog } from '../../components/terminal/TerminalShell'
 import { TerminalViewport } from '../../components/terminal/TerminalViewport'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
-import { useTerminalsStore } from '../../stores/terminalsStore'
+import {
+  hostTerminalEmptyDescription,
+  useTerminalsStore,
+} from '../../stores/terminalsStore'
 import { TerminalTabBar } from './TerminalTabBar'
 
 /**
- * 本机多标签演示终端：进页自动开一条会话，命令走 mock 适配层，不执行真实 Shell。
+ * 本机多标签终端：进页自动开一条会话，命令经终端适配层送出——mock 运行时在
+ * 浏览器内确定性求值，Docker 运行时经 WebSocket 接容器内真实 Shell。
  * 关闭走确认框；全部关掉后是空状态。
  */
 export function TerminalPage() {
@@ -23,6 +26,7 @@ export function TerminalPage() {
   const closeSession = useTerminalsStore((state) => state.closeSession)
   const reconnect = useTerminalsStore((state) => state.reconnect)
   const submitCommand = useTerminalsStore((state) => state.submitCommand)
+  const interruptCommand = useTerminalsStore((state) => state.interruptCommand)
   const appendOutput = useTerminalsStore((state) => state.appendOutput)
   const clearScreen = useTerminalsStore((state) => state.clearScreen)
   const [closingId, setClosingId] = useState<string | undefined>(undefined)
@@ -41,7 +45,7 @@ export function TerminalPage() {
         <div className="flex h-full items-center justify-center p-4">
           <EmptyState
             title="还没有终端会话"
-            description="新建一条本机演示终端。命令在浏览器内求值，待接入真实执行。"
+            description={hostTerminalEmptyDescription()}
             action={
               <button
                 type="button"
@@ -98,9 +102,10 @@ export function TerminalPage() {
             lines={active.lines}
             history={active.history}
             onSubmit={(command) => void submitCommand(gateway, command)}
-            complete={completeHostTerminalCommand}
+            complete={(draft, cursor) => gateway.terminals.complete(active.id, draft, cursor)}
             onAppendOutput={appendOutput}
             onClear={clearScreen}
+            onInterrupt={() => void interruptCommand(gateway)}
             inputLabel="命令输入"
           />
         </div>

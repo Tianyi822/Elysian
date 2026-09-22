@@ -67,4 +67,18 @@ describe('createApp 组装', () => {
       expect(await res.json()).toEqual({ error })
     }
   })
+
+  it('终端片挂真实接线：非容器环境整片 503（含 /ws 与 /status），文案与容器边界一致', async () => {
+    const app = await createApp()
+    const expects: readonly [string, string][] = [
+      ['/api/terminals/status', '真实终端仅在 Docker 容器内可用'],
+      ['/api/terminals/ws', '真实终端仅在 Docker 容器内可用'],
+      ['/api/terminals/nowhere', '真实终端仅在 Docker 容器内可用'],
+    ]
+    for (const [path, error] of expects) {
+      const res = await app.request(path)
+      expect(res.status).toBe(503)
+      expect(await res.json()).toEqual({ error })
+    }
+  })
 })

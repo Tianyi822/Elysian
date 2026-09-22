@@ -1,9 +1,10 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { useLayoutEffect, useRef, useState } from 'react'
+import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useIntrinsicWidth } from '../../app/layout/headerAccessoryWidth'
 import { IconButton } from '../../components/IconButton'
 import { Check, ChevronDown, Plus, X } from '../../components/icons'
-import { HOST_TERMINAL_BANNER, tabLabel, type HostTerminalSession } from '../../stores/terminalsStore'
+import { hostTerminalBanner, tabLabel, type HostTerminalSession } from '../../stores/terminalsStore'
 
 const STATUS_TEXT: Record<HostTerminalSession['status'], string | undefined> = {
   connecting: '连接中',
@@ -168,8 +169,14 @@ export function TerminalTabBar({
       </div>
 
       <div ref={trailingRef} className="flex shrink-0 items-center gap-2 pl-2">
-        <span className="hidden rounded bg-warning/15 px-1.5 py-0.5 text-xs font-medium text-warning sm:inline">
-          {HOST_TERMINAL_BANNER}
+        <span
+          className={
+            isDockerRuntime()
+              ? 'hidden rounded border border-line px-1.5 py-0.5 text-xs font-medium text-fg-muted sm:inline'
+              : 'hidden rounded bg-warning/15 px-1.5 py-0.5 text-xs font-medium text-warning sm:inline'
+          }
+        >
+          {hostTerminalBanner()}
         </span>
         <IconButton label="新建终端" onPress={onCreate} variant="ghost">
           <Plus aria-hidden size={17} className={opening ? 'opacity-50' : undefined} />
