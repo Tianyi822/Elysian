@@ -369,7 +369,6 @@ function createFakeFilesHost(root: FakeNode = seedContainerTree()): FakeFilesHos
       node.gid = gid
     },
     homeDir: () => '/root',
-    nowIso: () => '2026-09-22T08:00:00.000Z',
   }
 
   return { deps, commands, chmodCalls, chownCalls, renames, nodeAt: (path, followFinal = true) => resolve(path, followFinal) }
@@ -485,6 +484,19 @@ describe('list', () => {
     expect(entries.find((entry) => entry.name === 'current')).toMatchObject({ kind: 'file', sizeBytes: '/var/log/nothere'.length })
   })
 
+  it('链接环条目回退 lstat 按链接自身呈现，一个环不炸整个列举', async () => {
+    const root = seedContainerTree()
+    root.children!.get('work')!.children!.set('self-loop', link('/work/self-loop'))
+    const { service } = createService(createFakeFilesHost(root))
+    // 修复前：stat 跟随环抛 ELOOP（英文）原样冒出，整个 /work 列举失败
+    const entries = await service.list('/work')
+    expect(entries.find((entry) => entry.name === 'self-loop')).toMatchObject({
+      kind: 'file',
+      sizeBytes: '/work/self-loop'.length,
+    })
+    expect(entries.find((entry) => entry.name === 'report.txt')).toMatchObject({ kind: 'file' })
+  })
+
   it('目录不存在与路径是文件同文案；路径先归一化', async () => {
     const { service } = createService()
     await expect(service.list('/nope')).rejects.toThrow('目录不存在：/nope')
@@ -519,9 +531,28 @@ describe('size', () => {
     await expect(service.size('/nope')).rejects.toThrow('目录不存在：/nope')
   })
 
+  it('起点是链接环：中文上下文报错，不冒英文 ELOOP', async () => {
+    const root = seedContainerTree()
+    root.children!.get('work')!.children!.set('self-loop', link('/work/self-loop'))
+    const { service } = createService(createFakeFilesHost(root))
+    // 修复前：stat 跟随环抛 ELOOP（英文）原样冒成 500
+    await expect(service.size('/work/self-loop')).rejects.toThrow('读取路径状态失败（/work/self-loop）')
+  })
+
   it('超预算如实报错：目录规模超出统计上限', async () => {
     const { service } = createService(createHugeHost())
     await expect(service.size('/big')).rejects.toThrow(`目录规模超出统计上限（${WALK_MAX_NODES} 个条目），请缩小统计范围`)
+  })
+
+  it('指向虚拟 FS 的符号链接别名做起点：与直指 /proc 同样拒绝，不静默遍历伪文件', async () => {
+    const root = seedContainerTree()
+    root.children!.get('tmp')!.children!.set('proc-alias', link('/proc'))
+    const { service } = createService(createFakeFilesHost(root))
+    await expect(service.size('/tmp/proc-alias')).rejects.toThrow('拒绝操作系统虚拟目录：/tmp/proc-alias')
+    // 文件别名（指向 /proc 内的伪文件）同样不许：口径按 realpath 判，不看条目种类。
+    root.children!.get('tmp')!.children!.set('cpuinfo-alias', link('/proc/cpuinfo'))
+    const { service: fileAlias } = createService(createFakeFilesHost(root))
+    await expect(fileAlias.size('/tmp/cpuinfo-alias')).rejects.toThrow('拒绝操作系统虚拟目录：/tmp/cpuinfo-alias')
   })
 })
 
@@ -745,7 +776,7 @@ describe('moveEntry', () => {
 describe('renameEntry', () => {
   it('非法名称逐字对齐 mock（原样入参进文案）；根目录与父目录、条目不存在依次检查', async () => {
     const { host, service } = createService()
-    for (const bad of ['', ' ', 'a/b', '.', '..']) {
+    for (const bad of ['', ' ', 'a/b', '.', '..', 'fo\no']) {
       await expect(service.renameEntry('/var/www/index.html', bad)).rejects.toThrow(`无效的名称：${bad}`)
     }
     await expect(service.renameEntry('/', 'x')).rejects.toThrow('根目录不能重命名')

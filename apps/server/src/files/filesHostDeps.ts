@@ -69,7 +69,6 @@ function createHostDeps(): FilesHostDeps {
     chmodNoFollow,
     chownNoFollow,
     homeDir: () => homedir(),
-    nowIso: () => new Date().toISOString(),
   }
 }
 

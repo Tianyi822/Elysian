@@ -70,9 +70,18 @@ describe('重命名', () => {
     expect(() => renameMockEntry('/etc/hostname', 'hosts')).toThrow('同名条目已存在')
   })
 
-  it('非法名称报错', () => {
+  it('非法名称报错（含控制字符：与真实实现同判据，落盘前拦下）', () => {
     expect(() => renameMockEntry('/etc/hostname', 'a/b')).toThrow('无效的名称')
     expect(() => renameMockEntry('/etc/hostname', '  ')).toThrow('无效的名称')
+    expect(() => renameMockEntry('/etc/hostname', 'ho\nst')).toThrow('无效的名称')
+  })
+
+  it('把目录复制进它自己内部（含相等）报错：与真实实现同语义', () => {
+    expect(() => copyMockEntry('/etc', '/etc/nginx')).toThrow('不能把目录复制到它自己内部')
+    expect(() => copyMockEntry('/etc', '/etc')).toThrow('不能把目录复制到它自己内部')
+    // 文件源不受限；目录复制到无关目录照常成功
+    expect(copyMockEntry('/etc/hostname', '/tmp').name).toBe('hostname')
+    expect(copyMockEntry('/etc/nginx', '/tmp').kind).toBe('directory')
   })
 
   it('名字没变时原样返回，不报重名', () => {

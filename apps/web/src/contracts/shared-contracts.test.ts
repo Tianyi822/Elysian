@@ -364,7 +364,7 @@ describe('文件域词典', () => {
     expect(contracts.FILE_KIND_LABELS.file).toBe('文件')
   })
 
-  it('文件名判据：非空、不含斜杠、不是 . 或 ..，最长 255', () => {
+  it('文件名判据：非空、不含斜杠、不是 . 或 ..，最长 255，不含控制字符', () => {
     expect(contracts.FILE_NAME_MAX_LENGTH).toBe(255)
     expect(contracts.isValidFileName('deploy.sh')).toBe(true)
     expect(contracts.isValidFileName('  配置文件  ')).toBe(true)
@@ -374,6 +374,12 @@ describe('文件域词典', () => {
     expect(contracts.isValidFileName('.')).toBe(false)
     expect(contracts.isValidFileName('..')).toBe(false)
     expect(contracts.isValidFileName('x'.repeat(256))).toBe(false)
+    // 控制字符（含换行、制表、DEL 与 C1 区）逐类拒绝：含换行的名字一旦落盘，面板内不可再操作
+    expect(contracts.isValidFileName('fo\no')).toBe(false)
+    expect(contracts.isValidFileName('fo\to')).toBe(false)
+    expect(contracts.isValidFileName('fo\u0000o')).toBe(false)
+    expect(contracts.isValidFileName('fo\u007Fo')).toBe(false)
+    expect(contracts.isValidFileName('fo\u009Fo')).toBe(false)
   })
 
   it('权限位判据只接受三位八进制', () => {

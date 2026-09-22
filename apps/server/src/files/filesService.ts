@@ -111,7 +111,6 @@ export type FilesHostDeps = TreeWalkDeps & {
   chownNoFollow(path: string, uid: number, gid: number): Promise<void>
   /** 写禁区与剪枝清单的 `/root` 前缀来源（真实接线传 os.homedir()，测试注入 /root）。 */
   homeDir(): string
-  nowIso(): string
 }
 
 /** 规模上限的中文文案前缀：统计（size）与操作（复制/压缩/chmod 收集）两个语境。 */
@@ -136,6 +135,17 @@ function isMissingPathError(error: unknown): boolean {
   return code === 'ENOENT' || code === 'ENOTDIR'
 }
 
+/** 符号链接环（ELOOP）：跟随语义的 stat/realpath 在环上抛它，lstat 不跟随、不受影响。 */
+function isLinkLoopError(error: unknown): boolean {
+  return errorCode(error) === 'ELOOP'
+}
+
+/** 非缺失类 fs 错误的中文上下文包装：errno 细节保留在冒号后，绝不裸冒英文 500。 */
+function fsErrorInChinese(context: string, error: unknown): Error {
+  const detail = error instanceof Error ? error.message : String(error)
+  return new Error(`${context}：${detail}`)
+}
+
 export function createFilesService(deps: FilesHostDeps) {
   /** 写禁区与 search 剪枝清单在装配时按注入的 homeDir 建好，操作内不再重复解析。 */
   const forbiddenPrefixes = forbiddenWritePrefixes(deps.homeDir())
@@ -145,11 +155,11 @@ export function createFilesService(deps: FilesHostDeps) {
     return invalidRequest(`目录不存在：${path}`)
   }
 
-  /** stat 一个必须存在的路径；不存在或中间组件不是目录统一报「目录不存在：<原文>」。 */
+  /** stat 一个必须存在的路径；不存在或中间组件不是目录统一报「目录不存在：<原文>」，其余错误带中文上下文上抛。 */
   async function statExisting(path: string, label: string): Promise<Stats> {
     return deps.stat(path).catch((error: unknown) => {
       if (isMissingPathError(error)) throw directoryMissing(label)
-      throw error
+      throw fsErrorInChinese(`读取路径状态失败（${label}）`, error)
     })
   }
 
@@ -221,7 +231,7 @@ export function createFilesService(deps: FilesHostDeps) {
       return await deps.realpath(path)
     } catch (error) {
       if (isMissingPathError(error)) return null
-      throw error
+      throw fsErrorInChinese(`解析真实路径失败（${path}）`, error)
     }
   }
 
@@ -367,25 +377,26 @@ export function createFilesService(deps: FilesHostDeps) {
    * 链接被复制到别处）回退 lstat 按链接自身呈现而不是报读取失败；条目确实消失才报错。
    */
   async function readEntry(path: string, name: string, uidNames: ReadonlyMap<number, string>): Promise<FileEntry> {
-    const stats = await statListedEntry(path).catch((error: unknown) => {
-      throw new Error(`读取条目状态失败（${path}）：${error instanceof Error ? error.message : String(error)}`)
-    })
+    // 错误消息由 statListedEntry 统一产出（中文上下文），这里不再包一层。
+    const stats = await statListedEntry(path)
     if (stats === null) throw new Error(`读取条目状态失败（${path}）：条目已消失`)
     return entryOf(name, stats, uidNames)
   }
 
-  /** 列举的单个条目 stat：断链符号链接回退 lstat 按文件呈现（契约「按其指向呈现」的降级），列举瞬间消失则跳过。 */
+  /** 列举的单个条目 stat：「按指向呈现」不可得（断链 ENOENT/ENOTDIR、链接环 ELOOP）回退 lstat 按链接自身呈现——一个环不炸整个列举；列举瞬间消失返回 null，其余错误带中文上下文上抛。 */
   async function statListedEntry(path: string): Promise<Stats | null> {
     try {
       return await deps.stat(path)
     } catch (error) {
-      if (!isMissingPathError(error)) throw error
+      if (!isMissingPathError(error) && !isLinkLoopError(error)) {
+        throw fsErrorInChinese(`读取条目状态失败（${path}）`, error)
+      }
     }
     try {
       return await deps.lstat(path)
     } catch (error) {
       if (isMissingPathError(error)) return null
-      throw error
+      throw fsErrorInChinese(`读取条目状态失败（${path}）`, error)
     }
   }
 
@@ -410,6 +421,9 @@ export function createFilesService(deps: FilesHostDeps) {
     async size(nodePath: string): Promise<number> {
       const normalized = normalizeServerFilePath(nodePath)
       const stats = await statExisting(normalized, nodePath)
+      // 别名起点（符号链接指向 /proc 等）与直指同样拒绝：遍历起点不经前缀剪枝，
+      // 别名的子项路径不匹配虚拟前缀，会真实遍历伪文件内容。
+      await assertNotVirtualSource(normalized)
       if (!stats.isDirectory()) return stats.size
       try {
         return await sumDescendantSizes(deps, normalized)

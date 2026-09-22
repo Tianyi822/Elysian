@@ -72,7 +72,6 @@ function createListOnlyDeps(): FilesHostDeps {
     chmodNoFollow: fail('chmodNoFollow'),
     chownNoFollow: fail('chownNoFollow'),
     homeDir: () => '/root',
-    nowIso: () => '2026-09-22T08:00:00.000Z',
   }
 }
 

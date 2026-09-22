@@ -31,14 +31,19 @@ export type FileEntry = {
 /** 文件名长度上限，沿用常见文件系统的 255 字节约束。 */
 export const FILE_NAME_MAX_LENGTH = 255
 
+/** 文件名里一律拒绝的字符：NUL 与全部 C0/C1 控制字符（含换行、制表、DEL 与 U+0080-U+009F）。 */
+const UNSAFE_FILE_NAME_CHARS = /[\u0000-\u001F\u007F-\u009F]/
+
 /**
- * 新条目名称判据：去首尾空白后非空、不含斜杠、不是 `.` 或 `..`。
+ * 新条目名称判据：去首尾空白后非空、不含斜杠与控制字符、不是 `.` 或 `..`。
+ * 控制字符在判据层拦下：这类名字一旦落盘，按路径判据（同样拒绝控制字符）在面板内不可再操作。
  * 重命名与粘贴前先过这一关，重名与否由数据层判定。
  */
 export function isValidFileName(name: string): boolean {
   const trimmed = name.trim()
   if (trimmed.length === 0 || trimmed.length > FILE_NAME_MAX_LENGTH) return false
   if (trimmed === '.' || trimmed === '..') return false
+  if (UNSAFE_FILE_NAME_CHARS.test(trimmed)) return false
   return !trimmed.includes('/')
 }
 

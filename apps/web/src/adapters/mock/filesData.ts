@@ -247,11 +247,17 @@ function measureMockNode(node: MockNode): number {
   return Object.values(node.children).reduce((sum, child) => sum + measureMockNode(child), 0)
 }
 
-/** 复制一个条目到目标目录（演示）：深拷贝整棵子树，目标重名自动加后缀。 */
+/** 复制一个条目到目标目录（演示）：深拷贝整棵子树，目标重名自动加后缀；目录源不许复制进它自己内部。 */
 export function copyMockEntry(srcPath: string, destDirPath: string): FileEntry {
   if (srcPath === '/') throw new Error('根目录不能复制')
   const src = findNode(srcPath)
   const dest = findDirectory(destDirPath)
+  if (
+    src.kind === 'directory' &&
+    (destDirPath === srcPath || destDirPath.startsWith(`${srcPath}/`))
+  ) {
+    throw new Error('不能把目录复制到它自己内部')
+  }
   const destName = uniqueName(dest, leafName(srcPath))
   dest.children[destName] = cloneNode(src)
   return toEntry(destName, dest.children[destName])
