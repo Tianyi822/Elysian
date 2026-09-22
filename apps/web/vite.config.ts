@@ -28,21 +28,23 @@ export default defineConfig({
     // Host 校验与 server 端守卫共用同一份名单：防 DNS rebinding 是本项目的显式决定，不依赖平台默认。
     allowedHosts: [...ALLOWED_HOSTNAMES],
     watch: process.env.ELSYIAN_DOCKER === '1' ? { usePolling: true } : undefined,
-    // 防火墙/SSH/用户管理与平台内存端点由 @elysian/server 承载（仅容器内回环），dev 经代理同源转发；
+    // 防火墙/SSH/用户管理/文件管理与平台内存端点由 @elysian/server 承载（仅容器内回环），dev 经代理同源转发；
     // 必须用对象形式且不设 changeOrigin——vite 对字符串简写强制包一层 changeOrigin:true（改写 Host 头，
     // 转发后的 Origin 与 Host 不一致，server 同源守卫将 403 拒掉全部写请求），对象形式才保持原 Host 头。
     // /api/events 与 /api/resources/history 的 SSE 事件流仍由本进程的 elysianEventsVitePlugin 提供，不经代理。
     proxy: {
       '/api/security': { target: serverTarget },
       '/api/platform': { target: serverTarget },
+      '/api/files': { target: serverTarget },
     },
   },
   preview: {
-    // preview 同款代理：安全与平台内存端点已不在本进程挂载，不补则 preview 下这些路径全部失效；
+    // preview 同款代理：安全、文件管理与平台内存端点已不在本进程挂载，不补则 preview 下这些路径全部失效；
     // 同样必须用对象形式保持原 Host 头（理由见 server.proxy 注释）。
     proxy: {
       '/api/security': { target: serverTarget },
       '/api/platform': { target: serverTarget },
+      '/api/files': { target: serverTarget },
     },
   },
 })

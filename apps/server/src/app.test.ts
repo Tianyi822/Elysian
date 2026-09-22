@@ -53,4 +53,18 @@ describe('createApp 组装', () => {
       expect(await res.json()).toEqual({ error })
     }
   })
+
+  it('文件管理片挂真实接线：非容器环境整片 503（含未知路径），文案与容器边界一致', async () => {
+    const app = await createApp()
+    const expects: readonly [string, string][] = [
+      ['/api/files/entries?path=%2Fvar%2Flog', '真实文件管理仅在 Docker 容器内可用'],
+      ['/api/files/search?keyword=log', '真实文件管理仅在 Docker 容器内可用'],
+      ['/api/files/nowhere', '真实文件管理仅在 Docker 容器内可用'],
+    ]
+    for (const [path, error] of expects) {
+      const res = await app.request(path)
+      expect(res.status).toBe(503)
+      expect(await res.json()).toEqual({ error })
+    }
+  })
 })

@@ -1,7 +1,16 @@
 import { create } from 'zustand'
 import type { FileEntry, FileSearchResult } from '@elysian/contracts'
 import type { ElysianGateway, FilePermissionInput } from '../contracts/adapters'
+import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
 import { useNotificationStore } from './notificationStore'
+
+/**
+ * 动作完成提示的演示标注：Docker 运行时动作已真实执行（cp/mv/tar/chmod 落到容器内
+ * 文件系统），不再带标注；宿主机本地开发（内存演示）保留。括号形态追加在句子末尾，
+ * 只用这一个来源。
+ */
+const MOCK_NOTE = isDockerRuntime() ? '' : 'mock，待接入真实执行'
+const MOCK_SUFFIX = MOCK_NOTE ? `（${MOCK_NOTE}）` : ''
 
 /** 剪贴板里暂存的条目与意图：copy 粘贴出副本，move 粘贴后源条目移除。 */
 export type FilesClipboard = {
@@ -102,11 +111,11 @@ export const useFilesStore = create<FilesState>((set, get) => {
     },
     copyToClipboard(path) {
       set({ clipboard: { path, intent: 'copy' } })
-      notify('已复制，去目标目录后点「粘贴」即生成副本（mock，待接入真实执行）')
+      notify(`已复制，去目标目录后点「粘贴」即生成副本${MOCK_SUFFIX}`)
     },
     moveToClipboard(path) {
       set({ clipboard: { path, intent: 'move' } })
-      notify('已就绪移动，去目标目录后点「粘贴」即移过去（mock，待接入真实执行）')
+      notify(`已就绪移动，去目标目录后点「粘贴」即移过去${MOCK_SUFFIX}`)
     },
     clearClipboard() {
       set({ clipboard: undefined })
@@ -118,10 +127,10 @@ export const useFilesStore = create<FilesState>((set, get) => {
       try {
         if (clipboard.intent === 'copy') {
           const created = await gateway.files.copyEntry(clipboard.path, destDirPath)
-          notify(`已复制为 ${created.name}（mock，待接入真实执行）`)
+          notify(`已复制为 ${created.name}${MOCK_SUFFIX}`)
         } else {
           const moved = await gateway.files.moveEntry(clipboard.path, destDirPath)
-          notify(`已移动为 ${moved.name}（mock，待接入真实执行）`)
+          notify(`已移动为 ${moved.name}${MOCK_SUFFIX}`)
         }
         set({ clipboard: undefined })
       } catch (error) {
@@ -133,12 +142,12 @@ export const useFilesStore = create<FilesState>((set, get) => {
     async rename(gateway, path, newName) {
       const renamed = await gateway.files.renameEntry(path, newName)
       await reload(gateway)
-      notify(`已重命名为 ${renamed.name}（mock，待接入真实执行）`)
+      notify(`已重命名为 ${renamed.name}${MOCK_SUFFIX}`)
     },
     async compress(gateway, path) {
       try {
         const archive = await gateway.files.compressEntry(path)
-        notify(`已压缩为 ${archive.name}（mock，待接入真实执行）`)
+        notify(`已压缩为 ${archive.name}${MOCK_SUFFIX}`)
       } catch (error) {
         notify(`压缩失败：${error instanceof Error ? error.message : '未知错误'}`, 'danger')
       } finally {
@@ -149,7 +158,7 @@ export const useFilesStore = create<FilesState>((set, get) => {
       await gateway.files.chmod(path, input)
       await reload(gateway)
       notify(
-        `已把权限改为 ${input.mode}、所有者改为 ${input.owner}${input.recursive ? '（含子目录）' : ''}（mock，待接入真实执行）`,
+        `已把权限改为 ${input.mode}、所有者改为 ${input.owner}${input.recursive ? '（含子目录）' : ''}${MOCK_SUFFIX}`,
       )
     },
     async search(gateway, keyword) {

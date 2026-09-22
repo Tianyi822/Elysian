@@ -1,4 +1,6 @@
 import { Hono } from 'hono'
+import { FILES_MOUNT, createFilesApp } from './files/filesRoutes.ts'
+import { createFilesHostDeps } from './files/filesHostDeps.ts'
 import { FIREWALL_MOUNT, createFirewallApp } from './firewall/firewallRoutes.ts'
 import { resolveFirewallDeps } from './firewall/firewallHostDeps.ts'
 import { endpointErrorHandler } from './middleware/guard.ts'
@@ -13,7 +15,8 @@ import { createUsersHostDeps } from './users/usersHostDeps.ts'
  * - /api/health：存活检查，无守卫；
  * - /api/platform/memory：平台内存采样，无容器边界、无同源守卫（与 vite 端点时代一致）；
  * - /api/security/*：安全区三片（防火墙/SSH/用户管理），同源守卫由各片路由在可用性
- *   判定之后自行挂载——顺序 503 → 403 与各片既有行为逐字一致，app 层不代挂。
+ *   判定之后自行挂载——顺序 503 → 403 与各片既有行为逐字一致，app 层不代挂；
+ * - /api/files：文件管理片，守卫链与安全区三片同构。
  * 错误映射统一走 endpointErrorHandler：带状态码的错误按自带 status 回 4xx，系统侧一律 500。
  */
 export async function createApp(): Promise<Hono> {
@@ -28,5 +31,6 @@ export async function createApp(): Promise<Hono> {
   app.route(FIREWALL_MOUNT, createFirewallApp(await resolveFirewallDeps()))
   app.route(SSH_MOUNT, createSshApp(createSshHostDeps()))
   app.route(USERS_MOUNT, createUsersApp(createUsersHostDeps()))
+  app.route(FILES_MOUNT, createFilesApp(createFilesHostDeps()))
   return app
 }
