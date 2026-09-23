@@ -17,6 +17,8 @@ export const ELYSIAN_HOME = join(homedir(), '.Elysian')
 export const ELYSIAN_DATA_DIR = join(ELYSIAN_HOME, 'data')
 /** 日志：面板托管的 sshd 定向日志。 */
 export const ELYSIAN_LOGS_DIR = join(ELYSIAN_HOME, 'logs')
+/** 平台日志根：面板自己写、自己管的运行日志与操作日志（不含 sshd.log）。 */
+export const ELYSIAN_PLATFORM_LOGS_DIR = join(ELYSIAN_LOGS_DIR, 'platform')
 /** 状态：面板自己记录的事实时间戳（启停、密码重置）。 */
 export const ELYSIAN_STATE_DIR = join(ELYSIAN_HOME, 'state')
 /** 备份：写系统文件前的应用侧备份（如 before.rules）。 */
@@ -32,6 +34,9 @@ export const ELYSIAN_PATHS = {
   metricsSqlite: join(ELYSIAN_DATA_DIR, 'metrics.sqlite'),
   firewallSqlite: join(ELYSIAN_DATA_DIR, 'firewall.sqlite'),
   sshdLog: join(ELYSIAN_LOGS_DIR, 'sshd.log'),
+  platformLogsDir: ELYSIAN_PLATFORM_LOGS_DIR,
+  runtimeLogsDir: join(ELYSIAN_PLATFORM_LOGS_DIR, 'runtime'),
+  operationLogsDir: join(ELYSIAN_PLATFORM_LOGS_DIR, 'operation'),
   sshChangedAt: join(ELYSIAN_STATE_DIR, 'ssh-changed-at'),
   sshRootPasswordResetAt: join(ELYSIAN_STATE_DIR, 'ssh-root-password-reset-at'),
   keygenWorkspace: join(ELYSIAN_TMP_DIR, 'ssh-keygen'),

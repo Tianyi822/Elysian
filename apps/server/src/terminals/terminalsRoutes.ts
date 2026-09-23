@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { ALLOWED_HOSTNAMES, endpointErrorHandler, sameOriginGuard, sendJson } from '../middleware/guard.ts'
+import { recordPanelOperation, type OperationAuditLogs } from '../logs/operationAudit.ts'
 import { createTerminalWsEvents } from './terminalConnection.ts'
 import type { TerminalsService } from './terminalsService.ts'
 
@@ -14,6 +15,9 @@ import type { TerminalsService } from './terminalsService.ts'
  * 的 return——实测（容器内 hono@4.13.8）该 Response 会被 defineWebSocketHelper 当
  * 事件对象吞掉、连接照常升级打开（假满足）。前置短路同时让 503/403 成为普通路由
  * 响应，vitest 的 app.request 可直接断言。
+ *
+ * 打开会话是系统级操作，但 WS 升级不经写端点、采集中间件包不到，因此在同源校验通过
+ * 之后、升级之前显式记一条操作日志（deps.logs 可选，不传即不记，既有测试零改动）。
  */
 
 /** 挂载路径：app.ts 用同一常量挂载，404 兜底也用它剥前缀——单一事实，两处不漂移。 */
@@ -23,6 +27,12 @@ export const TERMINAL_MOUNT = '/api/terminals'
 export type TerminalsAppDeps = {
   available: boolean
   service?: TerminalsService
+  /**
+   * 日志服务的显式调用口（可选）：终端会话不经 HTTP 写端点，采集中间件包不到它，
+   * 因此在这里显式记一条。不传即跳过记录，终端片既有测试与既有行为不变。
+   * 命令级别的记录**不做**：终端命令既不经 HTTP、也可能含敏感内容，留给治理期。
+   */
+  logs?: OperationAuditLogs
 }
 
 /**
@@ -71,6 +81,20 @@ export function createTerminalsApp(deps: TerminalsAppDeps): Hono {
     // 前置校验必须在 upgradeWebSocket 之前短路返回普通 Response（见文件头注释）。
     if (!isSameOriginUpgrade(c.req.raw)) {
       return sendJson(403, { error: '请求来源不允许' })
+    }
+    // 会话是系统级操作，但它是 WS 升级（不经写端点、采集中间件包不到），因此在同源校验
+    // 通过之后、升级之前显式记一条：打开本机终端会话。升级被 Bun 实例接走之后没有 HTTP
+    // 响应可挂，记录必须发生在此之前。
+    if (deps.logs) {
+      await recordPanelOperation(deps.logs, {
+        category: 'terminals',
+        action: '打开本机终端会话',
+        target: null,
+        result: 'success',
+        method: 'GET',
+        path: `${TERMINAL_MOUNT}/ws`,
+        httpStatus: 200,
+      })
     }
     // hono/bun 的入口模块在加载期引用 Bun 全局（其 ssg.js 顶层代码），vitest 的 node
     // 运行时进不了它的模块图——合法升级路径才动态加载 bunWebSocket（ESM 模块缓存

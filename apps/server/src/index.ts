@@ -1,5 +1,6 @@
 import { serve } from 'bun'
 import { createApp } from './app.ts'
+import { createLogsHostDeps } from './logs/logsHostDeps.ts'
 import { SERVER_PORT } from './shared/ports.ts'
 import { bunWebSocket } from './terminals/bunWebSocket.ts'
 
@@ -8,8 +9,14 @@ import { bunWebSocket } from './terminals/bunWebSocket.ts'
  * （127.0.0.1，端口见 shared/ports.ts 的唯一权威）。开发形态下 vite 经
  * server.proxy 把 /api/security 与 /api/platform 转发到这里，浏览器始终
  * 走同源 vite 访问；本端口不发布宿主端口、不监听 0.0.0.0，局域网不可达。
+ *
+ * 日志接线在这里构造并交给 createApp：装配本身不碰文件系统，目录创建、巡检定
+ * 时器都发生在第一次写入之后。启动行**写在 index.ts 而不是 createApp 里**，
+ * 正是为了让测试调用 createApp() 时不产生任何文件系统副作用（启动行是唯一必须
+ * 由装配层写的一条记录，其余由采集中间件与各调用点自己写）。
  */
-const app = await createApp()
+const logs = createLogsHostDeps()
+const app = await createApp({ logs: logs.service })
 
 serve({
   hostname: '127.0.0.1',
@@ -22,4 +29,7 @@ serve({
   websocket: bunWebSocket.websocket,
 })
 
+// 终端上的可读性保留：监听确认行照旧打在 stdout（运行日志文件是它的存档，不是它的替代）。
 console.log(`Elysian server 已监听 http://127.0.0.1:${SERVER_PORT}`)
+
+await logs.service.log('info', 'server.lifecycle', `Elysian 服务已启动：http://127.0.0.1:${SERVER_PORT}`)

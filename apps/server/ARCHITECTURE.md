@@ -16,7 +16,7 @@ apps/server 是容器内本机回环服务:Bun.serve 挂 Hono 应用,监听 `127
 
 `vitest.config.ts`:node 环境(非 jsdom),不加载任何 vite 插件,`test.exclude` 排除 `src/**/*.bun.test.ts`。
 
-`src/index.ts`:读装配结果,`Bun.serve({ port: SERVER_PORT, hostname: '127.0.0.1', fetch: (request, server) => app.fetch(request, server), websocket: bunWebSocket.websocket })`——fetch 第二参数(Bun server 实例)必须传给 app.fetch(hono/bun 的 upgradeWebSocket 从它取实例完成升级,丢弃会让 `/api/terminals/ws` 升级抛 TypeError);websocket 字段与路由侧 upgradeWebSocket 必须同源(`src/terminals/bunWebSocket.ts` 的进程级唯一实例);`src/app.ts`:async 构造父 Hono 应用并挂载六片子应用(见第六节)。`src/bun-spawn.d.ts` 是 `import('bun').spawn` 的最小类型桩(terminalsHostDeps 的容器分支动态加载用),`src/bun-serve.d.ts` 的 serve 选项补 fetch 第二参与 `websocket?` 字段。
+`src/index.ts`:读装配结果,`Bun.serve({ port: SERVER_PORT, hostname: '127.0.0.1', fetch: (request, server) => app.fetch(request, server), websocket: bunWebSocket.websocket })`——fetch 第二参数(Bun server 实例)必须传给 app.fetch(hono/bun 的 upgradeWebSocket 从它取实例完成升级,丢弃会让 `/api/terminals/ws` 升级抛 TypeError);websocket 字段与路由侧 upgradeWebSocket 必须同源(`src/terminals/bunWebSocket.ts` 的进程级唯一实例);`src/app.ts`:async 构造父 Hono 应用,注册操作日志采集中间件后挂载六片子应用(见第六节);启动行(运行日志 `server.lifecycle`)写在 `src/index.ts` 的 `serve(...)` 之后,让 `createApp()` 本身零文件系统副作用(D18)。`src/bun-spawn.d.ts` 是 `import('bun').spawn` 的最小类型桩(terminalsHostDeps 的容器分支动态加载用),`src/bun-serve.d.ts` 的 serve 选项补 fetch 第二参与 `websocket?` 字段。
 
 ## 三、终版文件树
 
@@ -28,7 +28,7 @@ apps/server/
 ├── vitest.config.ts
 └── src/
     ├── index.ts               # Bun.serve 挂 app,127.0.0.1:48101
-    ├── app.ts                 # 父 Hono(strict:false)装配 + 五片挂载
+    ├── app.ts                 # 父 Hono(strict:false)装配 + 采集中间件 + 六片挂载
     ├── bun-sqlite.d.ts        # server 新增副本;web 侧 hostMetrics 那份保留
     ├── middleware/
     │   ├── guard.ts           # 同源守卫中间件 + readJsonBody(Request) + sendJson/sendError
@@ -80,8 +80,19 @@ apps/server/
     │   ├── terminalsHostDeps.ts / .test.ts      # 真实接线:async 工厂,Bun.spawn script 仅容器分支动态加载
     │   ├── terminalsRoutes.ts / .test.ts        # /api/terminals 路由:升级前置同源短路 + /status
     │   └── terminalsWiring.bun.test.ts          # bun test 点名的容器内真实冒烟(宿主机 skipIf 跳过)
-    └── platformMemory/
-        └── platformMemoryRoutes.ts / .test.ts   # Hono 重写
+    ├── platformMemory/
+    │   └── platformMemoryRoutes.ts / .test.ts   # Hono 重写
+    └── logs/                                    # 平台日志片(新实现;方案见 docs/specs/2026-09-23-logs-real-spec.md)
+        ├── logsPaths.ts / .test.ts              # 类别目录与分片文件名构造/解析(纯,`_2` 后缀不破坏字典序)
+        ├── logRecords.ts / .test.ts             # 记录形状、单行化与截断、序列化、逐行解析(全纯)
+        ├── logWriter.ts / .test.ts              # 活动片管理、串行队列、判分片与封盘、崩溃恢复(adoptOrCreate)
+        ├── logReader.ts / .test.ts              # 分片拼回一条升序流:内存有界、坏行/坏文件跳过、按 id 去重
+        ├── logRetention.ts / .test.ts           # 巡检四步(清 tmp → 压缩 → 按时间删 → 按预算删)与存储统计聚合
+        ├── logsService.ts / .test.ts            # 编排:列表、清空、写运行日志与操作日志、巡检(类别维护锁在此层)
+        ├── logsHostDeps.ts / .test.ts           # 真实接线:fs 原语、node:zlib 流式 gzip、时钟、读行器
+        ├── logsRoutes.ts / .test.ts             # /api/logs 路由:两个读端点(no-store)+ 契约常量推导的清空端点
+        ├── operationDescriptors.ts / .test.ts   # 端点描述符表 + 路径参数还原(纯)+ 漂移守卫
+        └── operationAudit.ts / .test.ts         # app 层采集中间件:命中描述符才记录、状态映射、白名单摘要
 ```
 
 ## 四、硬性实现决定(不得偏离)
@@ -118,6 +129,12 @@ apps/server/
 
 **D15 serve 与 vite 代理的 WebSocket 接线。** `index.ts` 的 `serve` 必须:fetch 签名 `(request, server) => app.fetch(request, server)`(hono/bun 的升级从第二参数取 Bun server 实例,丢弃它升级抛 TypeError),且带 `websocket: bunWebSocket.websocket` 字段(与路由侧 upgradeWebSocket 同源,见 D14)。`../web/vite.config.ts` 的 dev 与 preview 代理 `/api/terminals` 键必须 `ws: true`(HTTP 代理不转发 Upgrade)且不设 `changeOrigin`(D4 同理),由 `../web/src/adapters/http/proxyTable.test.ts` 锚死。终端片输出侧的四道闸(单轮 256 KiB 预算、50ms/4 KiB 合帧节流、发送缓冲水位 1 MiB、保序队列深度 256)与帧协议的唯一权威是 `docs/specs/2026-09-22-terminal-real-implementation.md` 的「端点契约」。
 
+**D16 日志片没有容器边界。** 日志片只读写 `~/.Elysian/logs/platform/{runtime,operation}` 下面板自有的目录(路径出口 `shared/elysianPaths.ts`),不执行系统命令、不碰系统文件、不需要 root 能力,因此宿主机本地开发与容器内是同一套实现:路由 deps **没有 `available`**,守卫链**没有 503 段**,`createLogsApp` 直接拿到 service 就挂载。后来者不要照着防火墙/SSH/用户/文件四片抄一个 `available` 与 503 分支出来;`../web/vite.config.ts` 的 `/api/logs` 代理与其余片同款(不设 `changeOrigin`,D4)。清空是破坏性动作,但它的守卫由既有同源守卫(非 GET/HEAD 必须带 Origin 且与 Host 一致、Host 在允许名单)承担,**不引入自造的 CSRF token 或二次确认令牌**——方案已定稿写死这一条。
+
+**D17 操作日志的采集点在 app 层中间件,不在各片 handler。** `operationAudit.ts` 的 `createOperationAudit(logs)` 以 `app.use('/api/*', ...)` 注册在**所有 `app.route` 之前**(中间件按注册顺序包住其后的路由),因此任何一片的任何写端点都被包住,各片 handler 里没有「记日志」的调用,也就没有「忘了记」的位置。路由定位必须用 `hono/route` 的 `matchedRoutes(c)`,**不得**用 `routePath(c)`:实测(hono 4.13.8)被同源守卫短路的跨源写请求里 `routePath(c)` 是通配 `PUT /api/security/ssh/*`,拿着它查描述符表必然未命中,越权尝试就不会进审计;`matchedRoutes(c)` 此时仍含具体路由(且它在 `await next()` **之前**就已可用)。只有声明了 `summarize` 的描述符才会被读取请求体(clone 发生在 `next()` 之前),密码类端点因此结构性地不可能泄漏到日志。新增写端点若忘记在 `operationDescriptors.ts` 登记,`operationDescriptors.test.ts` 的漂移守卫立刻变红。终端会话不经 HTTP 写端点(`/ws` 是 WS 升级),由路由在同源校验通过之后、升级之前显式调 `recordPanelOperation` 记一条(`terminalsRoutes.ts` 的 deps 增加可选 `logs`,不传即跳过)。
+
+**D18 常规 5xx 的运行日志由采集中间件按响状态码记,父 `onError` 只是兜底。** 实测(hono 4.13.8)各子应用都注册了自己的 `onError`——`sshRoutes.ts`、`usersRoutes.ts`、`filesRoutes.ts`、`terminalsRoutes.ts`——子应用抛错时子应用计数 1、父计数 0,`next()` 不抛且 `c.res.status` 已是最终状态码。因此 `app.onError` 上的「请求处理失败」包装只覆盖「错误在父层或中间件里被抛出」这一路(例外:防火墙片与日志片没有自己的 `onError`,它们的 500 走父层);常规 5xx 由采集器在 `next()` 之后按 `c.res.status >= 500` 记一条运行日志 error。整片 503 不记(服务根本不可用、动作没发生,宿主机本地开发下会刷屏)。另外,运行日志的启动行写在 `index.ts` 而不是 `createApp` 里:装配期零副作用(不建目录、不写日志、不起定时器),任何调用 `createApp()` 的测试因此不会碰开发者真实的 `~/.Elysian/logs`。
+
 ## 五、守卫链:顺序与文案(逐字)
 
 安全三片的守卫链顺序固定,中文文案逐字保留(对照 `../web/src/adapters/endpointGuard/guard.ts:84-105` 与三片 api.ts 的实际顺序):
@@ -127,7 +144,7 @@ apps/server/
 3. **读体守卫**(路由 handler 内调用 `readJsonBody(c.req.raw)`):415 `Content-Type 必须为 application/json` → 413 `请求体过大`(申报 content-length 与流式实读字节数双拦,上限 64 KiB;必须保持 for-await 流式累计读取、实读超限即拒,**不得**改成一次性 `arrayBuffer`/`text()` 再判)→ 400 `请求体不能为空` / `请求体不是有效 JSON`。
 4. **未知端点 404**:`未知防火墙端点:METHOD path` / `未知 SSH 端点:METHOD path` / `未知用户管理端点:METHOD path`,path 为剥挂载前缀后的相对路径(D3)。
 
-文件管理片与终端片的守卫链与上述同构(503 → 403 → 端点 → 404,文案同款格式);终端片的 `/ws` 是 Upgrade 请求,同源校验不走中间件、由路由在 `upgradeWebSocket` 之前前置短路执行更严口径(D13),无读体守卫。
+文件管理片与终端片的守卫链与上述同构(503 → 403 → 端点 → 404,文案同款格式);终端片的 `/ws` 是 Upgrade 请求,同源校验不走中间件、由路由在 `upgradeWebSocket` 之前前置短路执行更严口径(D13),无读体守卫。日志片只有 403 → 读体(仅清空端点)→ 端点 → 404 四段,没有 503 段(D16),两个读端点显式带 `cache-control: no-store`,404 文案为 `未知日志端点:METHOD path`(path 为剥 `/api/logs` 前缀后的相对路径)。
 
 错误基线:`EndpointGuardError` / `InvalidRequestError` 按自带 status 返回 4xx,其余系统侧错误一律 500;响应体统一 `{ error: message }`(Error.message 或 String(error)),content-type `application/json; charset=utf-8`,中文消息原样带给界面。sendJson/sendError 用 `c.json` / `c.body` 实现同一形状。
 
@@ -137,19 +154,23 @@ apps/server/
 
 ```ts
 // 形状示意(实现以此为准)
-export async function createApp(): Promise<Hono> {
+export async function createApp(overrides: AppDepsOverrides = {}): Promise<Hono> {
   const app = new Hono({ strict: false })  // D1:users 根路径的带/无尾斜杠双形式都必须命中
-  app.route(FIREWALL_MOUNT, createFirewallApp(await resolveFirewallDeps()))   // '/api/security/firewall',D14:async 接线
-  app.route(SSH_MOUNT, createSshApp(createSshHostDeps()))                     // '/api/security/ssh'
-  app.route(USERS_MOUNT, createUsersApp(createUsersHostDeps()))               // '/api/security/users'
-  app.route(FILES_MOUNT, createFilesApp(createFilesHostDeps()))               // '/api/files'
-  app.route(TERMINAL_MOUNT, createTerminalsApp(await createTerminalsHostDeps())) // '/api/terminals',D13/D14
+  const logs = overrides.logs ?? createLogsHostDeps().service   // 构造期零副作用(不建目录、不写、不起定时器)
+  app.onError((error, c) => { ... logs.log('error', 'server.http', `请求处理失败:...`) ; return endpointErrorHandler(error, c) })  // D18:兜底
+  app.use('/api/*', createOperationAudit(logs))               // D17:必须在所有 app.route 之前
+  app.route(FIREWALL_MOUNT, createFirewallApp(overrides.firewall ?? await resolveFirewallDeps()))   // '/api/security/firewall',D14:async 接线
+  app.route(SSH_MOUNT, createSshApp(overrides.ssh ?? createSshHostDeps()))                     // '/api/security/ssh'
+  app.route(USERS_MOUNT, createUsersApp(overrides.users ?? createUsersHostDeps()))               // '/api/security/users'
+  app.route(FILES_MOUNT, createFilesApp(overrides.files ?? createFilesHostDeps()))               // '/api/files'
+  app.route(TERMINAL_MOUNT, createTerminalsApp({ ...terminals, logs: terminals.logs ?? logs })) // '/api/terminals',D13/D14/D17
   app.route(PLATFORM_MOUNT, createPlatformMemoryApp())                        // '/api/platform'
+  app.route(LOGS_MOUNT, createLogsApp({ service: logs }))                     // '/api/logs',D16:无 503 段
   return app
 }
 ```
 
-`createApp` 是 async 工厂:防火墙与终端的接线依赖运行时探测(bun:sqlite 账本、Bun.spawn),只在容器分支动态加载(D14),`index.ts` 以 `await createApp()` 装配。MOUNT 常量从各路由文件导出、app.ts 引用,与 D3 的剥前缀同源(平台内存无导出常量,按字面量 `/api/platform` 挂载)。子应用工厂签名:`createFirewallApp(deps: { available: boolean, service?: FirewallService })` 等——`available: false` 时返回全方法 503 分支(含未知路径);`service` 可注入 fake(路由测试用),缺省由 app.ts 从 hostDeps 装配提供。每片子应用内部结构同构:`use('*', 同源中间件)` → 具名路由(handler 内 `readJsonBody`)→ `all('*', 剥前缀 404 兜底)`;终端片的 `/ws` 路由以升级前置同源短路替代同源中间件覆盖(D13),无读体。
+`createApp` 是 async 工厂:防火墙与终端的接线依赖运行时探测(bun:sqlite 账本、Bun.spawn),只在容器分支动态加载(D14),`index.ts` 以 `await createApp()` 装配——它先构造日志接线(`createLogsHostDeps()`,此步不碰文件系统),把同一个 `service` 同时交给采集中间件、终端片与日志片,`serve(...)` 之后才写启动行(D18)。覆盖参数 `AppDepsOverrides` 全部可选:不传时行为与从前逐字一致;需要注入 fake 的测试(app 组装、漂移守卫)靠它,四个片的漂移守卫测试即用 `available: true` + 最小 service 形状拿到完整路由表。MOUNT 常量从各路由文件导出、app.ts 引用,与 D3 的剥前缀同源(平台内存无导出常量,按字面量 `/api/platform` 挂载)。子应用工厂签名:`createFirewallApp(deps: { available: boolean, service?: FirewallService })` 等——`available: false` 时返回全方法 503 分支(含未知路径);`service` 可注入 fake(路由测试用),缺省由 app.ts 从 hostDeps 装配提供(日志片没有 `available`,见 D16)。每片子应用内部结构同构:`use('*', 同源中间件)` → 具名路由(handler 内 `readJsonBody`)→ `all('*', 剥前缀 404 兜底)`;终端片的 `/ws` 路由以升级前置同源短路替代同源中间件覆盖(D13),无读体;日志片的读端点显式带 `cache-control: no-store`,清空端点由 `LOG_CLEARABLE_CATEGORIES` 推导(D16)。
 
 ## 七、迁移映射总表
 
@@ -202,7 +223,7 @@ export async function createApp(): Promise<Hono> {
 
 ## 十、测试纪律
 
-`guard.test.ts` 随迁并全绿(基线 19 用例,2026-09-22 以 `bun run vitest run --config vitest.config.ts src/adapters/endpointGuard/guard.test.ts` 在 web 侧实测通过)。服务与解析模块测试 git mv 随迁、只改 import 不改断言——**迁移期间服务测试断言不得随迁移改写**,行为漂移会伪装成测试适配;本次只允许改 import 路径与测试驱动方式(req/res 桩 → app.request)。路由测试由各 api.test.ts 改写为 Hono `app.request` 驱动、fake service 注入、不执行任何真实命令;守卫链各状态(503/403/415/413/400/404/405)与中文文案逐字断言;users 根以带尾斜杠形为主用例、防火墙根以无尾斜杠形为用例(D1)。server 的 test 脚本 = vitest run + bun test 显式点名 `src/firewall/ruleTimesStore.bun.test.ts src/terminals/terminalsWiring.bun.test.ts`,vitest.config 排除 `*.bun.test.ts`(第二节)。web 删除已迁端点测试后 `bun run test` 全绿;boundaries.test 白名单收缩后仍守住浏览器侧零 node: 依赖。新写文件的路由测试对挂载后行为(strict:false 双形式、all('*') 404 兜底剥前缀)必须有用例锚定。终端片的业务测试全部 fake 驱动(fake `PtyProcess`、fake `WsConn`、fake 时钟,`src/terminals/` 六个 vitest 文件),不 spawn 真进程、不 import hono/bun 与 'bun'(D14);真升级、真 PTY 与负向握手只在 `terminalsWiring.bun.test.ts` 以 bun test 于容器内执行,宿主机 `describe.skipIf(!IN_DOCKER)` 整组跳过——一切 spawn PTY 的动作只发生在容器内。
+`guard.test.ts` 随迁并全绿(基线 19 用例,2026-09-22 以 `bun run vitest run --config vitest.config.ts src/adapters/endpointGuard/guard.test.ts` 在 web 侧实测通过)。服务与解析模块测试 git mv 随迁、只改 import 不改断言——**迁移期间服务测试断言不得随迁移改写**,行为漂移会伪装成测试适配;本次只允许改 import 路径与测试驱动方式(req/res 桩 → app.request)。路由测试由各 api.test.ts 改写为 Hono `app.request` 驱动、fake service 注入、不执行任何真实命令;守卫链各状态(503/403/415/413/400/404/405)与中文文案逐字断言;users 根以带尾斜杠形为主用例、防火墙根以无尾斜杠形为用例(D1)。server 的 test 脚本 = vitest run + bun test 显式点名 `src/firewall/ruleTimesStore.bun.test.ts src/terminals/terminalsWiring.bun.test.ts`,vitest.config 排除 `*.bun.test.ts`(第二节)。web 删除已迁端点测试后 `bun run test` 全绿;boundaries.test 白名单收缩后仍守住浏览器侧零 node: 依赖。新写文件的路由测试对挂载后行为(strict:false 双形式、all('*') 404 兜底剥前缀)必须有用例锚定。终端片的业务测试全部 fake 驱动(fake `PtyProcess`、fake `WsConn`、fake 时钟,`src/terminals/` 六个 vitest 文件),不 spawn 真进程、不 import hono/bun 与 'bun'(D14);真升级、真 PTY 与负向握手只在 `terminalsWiring.bun.test.ts` 以 bun test 于容器内执行,宿主机 `describe.skipIf(!IN_DOCKER)` 整组跳过——一切 spawn PTY 的动作只发生在容器内。日志片的测试遵守两条额外纪律:①**`app.test.ts` 里的日志用例一律注入 fake `LogsService`**(走 `createApp` 的覆盖参数),默认接线读的是开发者真实的 `~/.Elysian/logs/platform`,本机跑过面板后目录就不再为空,「空目录 → 空列表」的断言会红(测试不 hermetic),因此那里也不用真实接线做任何写请求;日志片自己的读写往返、清空与真实压缩在 `logsHostDeps.test.ts` 里对注入的临时根(`mkdtemp`)执行;②`operationDescriptors.test.ts` 的漂移守卫用**完整装配**(各片 `available: true` + 最小 service 形状)取 `app.routes`,断言每个写端点都已登记、每个 `ALL` 路由都只读(非 GET 走 405)、表里每个键都还在路由表里——新增写端点忘记登记者立刻变红。
 
 ## 十一、迁移顺序(依赖链)
 
