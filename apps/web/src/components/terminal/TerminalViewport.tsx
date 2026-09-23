@@ -6,6 +6,10 @@ import {
   type TerminalCompletion,
   type TerminalLine,
 } from './terminalSession'
+import {
+  TERMINAL_FONT_SIZE_DEFAULT,
+  TERMINAL_FONT_SIZE_WHEEL_STEP,
+} from './terminalFontSize'
 import { TerminalText } from './TerminalText'
 
 /**
@@ -39,6 +43,13 @@ export type TerminalViewportProps = {
    */
   onInterrupt?: () => void
   inputLabel: string
+  /** 日志区字号（px），由页面持有；缺省为终端基准字号。 */
+  fontSize?: number
+  /**
+   * Ctrl/Cmd + 滚轮的字号缩放通道（正值放大、负值缩小）。
+   * 可选：不传则滚轮保持原生滚动，弹窗里的终端不受影响。
+   */
+  onFontZoom?: (deltaPx: number) => void
   /** 缺省挂载即聚焦；弹窗壳依赖它赢过 Radix FocusScope。 */
   autoFocus?: boolean
   className?: string
@@ -60,6 +71,8 @@ export function TerminalViewport({
   onClear,
   onInterrupt,
   inputLabel,
+  fontSize = TERMINAL_FONT_SIZE_DEFAULT,
+  onFontZoom,
   autoFocus = true,
   className,
   trapRootRef,
@@ -96,6 +109,23 @@ export function TerminalViewport({
     const input = inputRef.current
     if (input && document.activeElement === input) input.setSelectionRange(cursor, cursor)
   }, [draft, cursor])
+
+  /**
+   * Ctrl/Cmd + 滚轮缩放字号。监听器只能自己挂：React 的 onWheel 在根上是 passive 的，
+   * 里面 preventDefault 无效，浏览器会把它当成页面缩放。触控板的捏合手势也走 ctrlKey，
+   * 因此同一通道顺带覆盖双指缩放。
+   */
+  useEffect(() => {
+    const log = logRef.current
+    if (!log || !onFontZoom) return
+    const onWheel = (event: WheelEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return
+      event.preventDefault()
+      onFontZoom((event.deltaY < 0 ? 1 : -1) * TERMINAL_FONT_SIZE_WHEEL_STEP)
+    }
+    log.addEventListener('wheel', onWheel, { passive: false })
+    return () => log.removeEventListener('wheel', onWheel)
+  }, [onFontZoom])
 
   useEffect(() => {
     const onKeyDownCapture = (event: KeyboardEvent) => {
@@ -249,7 +279,8 @@ export function TerminalViewport({
         aria-live="polite"
         onClick={() => inputRef.current?.focus()}
         onMouseUp={copyLogSelection}
-        className="flex-1 cursor-text overflow-y-auto whitespace-pre-wrap break-all px-4 py-3 font-mono text-xs leading-relaxed text-fg"
+        style={{ fontSize }}
+        className="flex-1 cursor-text overflow-y-auto whitespace-pre-wrap break-all px-4 py-3 font-mono leading-relaxed text-fg"
       >
         {lines.map((line, index) => (
           <p

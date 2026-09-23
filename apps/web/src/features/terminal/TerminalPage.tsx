@@ -1,6 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { ConfirmCloseDialog } from '../../components/terminal/TerminalShell'
+import {
+  clampTerminalFontSize,
+  TERMINAL_FONT_SIZE_DEFAULT,
+} from '../../components/terminal/terminalFontSize'
 import { TerminalViewport } from '../../components/terminal/TerminalViewport'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
 import {
@@ -12,7 +16,7 @@ import { TerminalTabBar } from './TerminalTabBar'
 /**
  * 本机多标签终端：进页自动开一条会话，命令经终端适配层送出——mock 运行时在
  * 浏览器内确定性求值，Docker 运行时经 WebSocket 接容器内真实 Shell。
- * 关闭走确认框；全部关掉后是空状态。
+ * 关闭走确认框；全部关掉后是空状态。字号是页面级视图偏好，按钮与 Ctrl/Cmd+滚轮共用一份。
  */
 export function TerminalPage() {
   const gateway = useGateway()
@@ -30,6 +34,12 @@ export function TerminalPage() {
   const appendOutput = useTerminalsStore((state) => state.appendOutput)
   const clearScreen = useTerminalsStore((state) => state.clearScreen)
   const [closingId, setClosingId] = useState<string | undefined>(undefined)
+  const [fontSize, setFontSize] = useState(TERMINAL_FONT_SIZE_DEFAULT)
+  const zoomFont = useCallback(
+    (deltaPx: number) =>
+      setFontSize((prev) => clampTerminalFontSize(prev + deltaPx)),
+    [],
+  )
 
   useEffect(() => {
     if (hasUserDismissed || sessions.length > 0 || opening) return
@@ -68,6 +78,8 @@ export function TerminalPage() {
         sessions={sessions}
         activeId={activeId}
         opening={opening}
+        fontSize={fontSize}
+        onFontZoom={zoomFont}
         onSelect={selectSession}
         onClose={setClosingId}
         onCreate={() => void openSession(gateway)}
@@ -107,6 +119,8 @@ export function TerminalPage() {
             onClear={clearScreen}
             onInterrupt={() => void interruptCommand(gateway)}
             inputLabel="命令输入"
+            fontSize={fontSize}
+            onFontZoom={zoomFont}
           />
         </div>
       ) : null}

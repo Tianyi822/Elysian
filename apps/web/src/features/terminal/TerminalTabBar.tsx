@@ -3,7 +3,12 @@ import { useLayoutEffect, useRef, useState } from 'react'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useIntrinsicWidth } from '../../app/layout/headerAccessoryWidth'
 import { IconButton } from '../../components/IconButton'
-import { Check, ChevronDown, Plus, X } from '../../components/icons'
+import { Check, ChevronDown, Plus, X, ZoomIn, ZoomOut } from '../../components/icons'
+import {
+  TERMINAL_FONT_SIZE_MAX,
+  TERMINAL_FONT_SIZE_MIN,
+  TERMINAL_FONT_SIZE_STEP,
+} from '../../components/terminal/terminalFontSize'
 import { hostTerminalBanner, tabLabel, type HostTerminalSession } from '../../stores/terminalsStore'
 
 const STATUS_TEXT: Record<HostTerminalSession['status'], string | undefined> = {
@@ -27,6 +32,8 @@ export function TerminalTabBar({
   sessions,
   activeId,
   opening,
+  fontSize,
+  onFontZoom,
   onSelect,
   onClose,
   onCreate,
@@ -34,6 +41,9 @@ export function TerminalTabBar({
   sessions: readonly HostTerminalSession[]
   activeId?: string
   opening: boolean
+  /** 终端字号（px）：触到边界即禁用对应方向的按钮，缩放幅度由本栏决定。 */
+  fontSize: number
+  onFontZoom: (deltaPx: number) => void
   onSelect: (id: string) => void
   onClose: (id: string) => void
   onCreate: () => void
@@ -169,18 +179,36 @@ export function TerminalTabBar({
       </div>
 
       <div ref={trailingRef} className="flex shrink-0 items-center gap-2 pl-2">
-        <span
-          className={
-            isDockerRuntime()
-              ? 'hidden rounded border border-line px-1.5 py-0.5 text-xs font-medium text-fg-muted sm:inline'
-              : 'hidden rounded bg-warning/15 px-1.5 py-0.5 text-xs font-medium text-warning sm:inline'
-          }
+        {isDockerRuntime() ? null : (
+          <span className="hidden rounded bg-warning/15 px-1.5 py-0.5 text-xs font-medium text-warning sm:inline">
+            {hostTerminalBanner()}
+          </span>
+        )}
+        <IconButton
+          label="缩小终端字体"
+          variant="ghost"
+          disabled={fontSize <= TERMINAL_FONT_SIZE_MIN}
+          onPress={() => onFontZoom(-TERMINAL_FONT_SIZE_STEP)}
         >
-          {hostTerminalBanner()}
-        </span>
-        <IconButton label="新建终端" onPress={onCreate} variant="ghost">
-          <Plus aria-hidden size={17} className={opening ? 'opacity-50' : undefined} />
+          <ZoomOut aria-hidden size={16} />
         </IconButton>
+        <IconButton
+          label="放大终端字体"
+          variant="ghost"
+          disabled={fontSize >= TERMINAL_FONT_SIZE_MAX}
+          onPress={() => onFontZoom(TERMINAL_FONT_SIZE_STEP)}
+        >
+          <ZoomIn aria-hidden size={16} />
+        </IconButton>
+        <button
+          type="button"
+          onClick={onCreate}
+          disabled={opening}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface-raised px-2.5 py-1 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <Plus aria-hidden size={15} />
+          新建终端
+        </button>
       </div>
     </div>
   )

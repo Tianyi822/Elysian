@@ -190,4 +190,42 @@ describe('终端页', () => {
     expect(screen.getByRole('log')).toHaveTextContent('ops@elysian-demo:~$ sleep 30^C')
     await waitFor(() => expect(interrupt).toHaveBeenCalledTimes(1))
   })
+
+  it('放大与缩小终端字体按像素改字号，触到边界即禁用', async () => {
+    const user = userEvent.setup()
+    renderApp('/terminals')
+    await screen.findByLabelText('命令输入')
+
+    const zoomOut = screen.getByRole('button', { name: '缩小终端字体' })
+    const zoomIn = screen.getByRole('button', { name: '放大终端字体' })
+    expect(screen.getByRole('log')).toHaveStyle({ fontSize: '12px' })
+
+    await user.click(zoomIn)
+    expect(screen.getByRole('log')).toHaveStyle({ fontSize: '14px' })
+
+    for (let step = 0; step < 8; step += 1) await user.click(zoomIn)
+    expect(screen.getByRole('log')).toHaveStyle({ fontSize: '24px' })
+    expect(zoomIn).toBeDisabled()
+
+    for (let step = 0; step < 8; step += 1) await user.click(zoomOut)
+    expect(screen.getByRole('log')).toHaveStyle({ fontSize: '10px' })
+    expect(zoomOut).toBeDisabled()
+  })
+
+  it('Ctrl+滚轮经页面把字号无级缩放，滚轮本身不再滚日志', async () => {
+    renderApp('/terminals')
+    await screen.findByLabelText('命令输入')
+    const log = screen.getByRole('log')
+
+    const wheel = (deltaY: number, key: 'ctrlKey' | 'metaKey') => {
+      const event = new WheelEvent('wheel', { deltaY, [key]: true, bubbles: true, cancelable: true })
+      log.dispatchEvent(event)
+      return event.defaultPrevented
+    }
+
+    expect(wheel(-120, 'ctrlKey')).toBe(true)
+    await waitFor(() => expect(log).toHaveStyle({ fontSize: '13px' }))
+    expect(wheel(120, 'metaKey')).toBe(true)
+    await waitFor(() => expect(log).toHaveStyle({ fontSize: '12px' }))
+  })
 })

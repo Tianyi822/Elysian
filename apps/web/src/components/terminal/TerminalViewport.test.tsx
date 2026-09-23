@@ -68,6 +68,19 @@ describe('终端嵌入视口', () => {
     expect(second.id).not.toBe('terminal-input')
   })
 
+  it('未接字号缩放通道时滚轮不接管，弹窗终端保持原生滚动', () => {
+    render(<ViewportHarness />)
+    const log = screen.getByRole('log')
+    const event = new WheelEvent('wheel', {
+      deltaY: -120,
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    })
+    log.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(false)
+  })
+
   it('已提交输入行保留提交时的提示符，活动行使用当前提示符', () => {
     render(
       <TerminalViewport

@@ -61,6 +61,8 @@ export {
   UserRound,
   Workflow,
   X,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react'
 
 /** 数据库品牌图标。路径来自产品提供的官方 Logo，只在图标出口维护。 */
