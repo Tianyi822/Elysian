@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  renderTerminalLine,
   TERMINAL_PENDING_MAX_CHARS,
   TERMINAL_TURN_OUTPUT_BUDGET_BYTES,
   TerminalStreamAssembler,
@@ -8,9 +9,57 @@ import {
 /*
  * 行模型汇编器的行为锚定：\r\n 与 lone \r、ANSI（CSI/OSC/单字符 ESC）剥离、UTF-8
  * 分块边界（多字节字符跨 chunk）、PWD 哨兵提取与流中移除、READY 前丢弃、单轮预算
- * 触顶与丢弃计数、控制字符剥离（\t 保留）、无换行积压硬上限（丢弃态与边界信号）、
- * 哨兵的输入门控（伪造哨兵剥离）。
+ * 触顶与丢弃计数、控制字符剥离与制表位展开、无换行积压硬上限（丢弃态与边界信号）、
+ * 哨兵的输入门控（伪造哨兵剥离），以及按终端语义落行（覆盖写、退格、行内擦除、宽字符）。
  */
+
+describe('renderTerminalLine', () => {
+  it('ls -l 一类用空格补位的对齐输出原样保留', () => {
+    const line = 'drwxr-xr-x  22 root root  704 Sep 22 17:27 app'
+    expect(renderTerminalLine(`${line}\r`)).toBe(line)
+  })
+
+  it('制表位从行首起算，宽字符占两格', () => {
+    expect(renderTerminalLine('ab\tc')).toBe(`ab${' '.repeat(6)}c`)
+    expect(renderTerminalLine('中文\tx')).toBe(`中文${' '.repeat(4)}x`)
+    expect(renderTerminalLine('\t\tx')).toBe(`${' '.repeat(16)}x`)
+  })
+
+  it('回车后覆盖写：短帧只覆盖前缀，与终端一致', () => {
+    expect(renderTerminalLine('Downloading 10%\r100%')).toBe('100%loading 10%')
+    expect(renderTerminalLine('  1%\r 50%\r100%\r')).toBe('100%')
+  })
+
+  it('回车配合 CSI K 擦到行尾：进度条只剩最终文本', () => {
+    expect(renderTerminalLine('Downloading 10%\r\x1b[KDone')).toBe('Done')
+    expect(renderTerminalLine('abc\x1b[2K\rxy')).toBe('xy')
+    expect(renderTerminalLine('abcdef\x1b[3D\x1b[1K')).toBe('    ef')
+  })
+
+  it('退格叠印还原成单字：man 页的加粗与下划线', () => {
+    expect(renderTerminalLine('N\bNA\bAM\bME\bE')).toBe('NAME')
+    expect(renderTerminalLine('_\bl_\bs')).toBe('ls')
+  })
+
+  it('CSI C/D/G 横移光标，缺口以空格补位', () => {
+    expect(renderTerminalLine('a\x1b[3Cb')).toBe('a   b')
+    expect(renderTerminalLine('abcd\x1b[2Dx')).toBe('abxd')
+    expect(renderTerminalLine('abc\x1b[10Gx')).toBe('abc      x')
+  })
+
+  it('覆盖宽字符的半格时另一半清成空格，不留半个字', () => {
+    expect(renderTerminalLine('中\rx')).toBe('x ')
+    expect(renderTerminalLine('a中\x1b[2Gb')).toBe('ab ')
+  })
+
+  it('组合附加符挂在前一个字符上，不占列', () => {
+    expect(renderTerminalLine('e\u0301\tx')).toBe(`e\u0301${' '.repeat(7)}x`)
+  })
+
+  it('颜色、光标上下移与清屏类转义剥离，文本保留', () => {
+    expect(renderTerminalLine('\x1b[1;34mdir\x1b[0m  \x1b[?25lfile\x1b[H\x1b[2J')).toBe('dir  file')
+  })
+})
 
 const READY = '\x01READY\x02'
 
@@ -50,9 +99,9 @@ describe('TerminalStreamAssembler', () => {
     ])
   })
 
-  it('不带 \\n 的进度重绘合并为去掉 \\r 的长行', () => {
+  it('不带 \\n 的进度重绘按回车覆盖语义只留最终一帧', () => {
     const events = eventsOf(`${READY}\r\n10%\r`, '99%\r\n')
-    expect(events).toEqual([{ kind: 'ready' }, { kind: 'lines', lines: ['10%99%'] }])
+    expect(events).toEqual([{ kind: 'ready' }, { kind: 'lines', lines: ['99%'] }])
   })
 
   it('CSI 与 OSC 转义序列剥离', () => {
@@ -69,9 +118,9 @@ describe('TerminalStreamAssembler', () => {
     expect(events.slice(1)).toEqual([{ kind: 'lines', lines: ['line'] }])
   })
 
-  it('控制字符剥离但 \\t 保留（对齐语义）', () => {
+  it('控制字符剥离，\\t 按 8 列制表位展开为空格', () => {
     const events = eventsOf(`${READY}\r\na\tb\x00c\x7f\r\n`)
-    expect(events.slice(1)).toEqual([{ kind: 'lines', lines: ['a\tbc'] }])
+    expect(events.slice(1)).toEqual([{ kind: 'lines', lines: [`a${' '.repeat(7)}bc`] }])
   })
 
   it('多字节 UTF-8 字符跨 chunk 边界不撕裂', () => {

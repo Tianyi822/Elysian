@@ -182,6 +182,16 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
+describe('buildPtyEnv', () => {
+  it('分页器一律指向 cat：行模式会话里 git log、systemctl status、man 直接整页输出', () => {
+    const env = buildPtyEnv('/root')
+    expect(env.PAGER).toBe('cat')
+    expect(env.GIT_PAGER).toBe('cat')
+    expect(env.SYSTEMD_PAGER).toBe('cat')
+    expect(env.MANPAGER).toBe('cat')
+  })
+})
+
 describe('createTerminalsService 会话生命周期', () => {
   it('启动：spawn 用 env 白名单与 HOME cwd，写启动行并 flush', async () => {
     const f = createFixture()

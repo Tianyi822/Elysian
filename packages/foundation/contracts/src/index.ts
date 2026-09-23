@@ -27,6 +27,7 @@ export * from './container/containers.ts'
 export * from './database/databases.ts'
 export * from './files/files.ts'
 export * from './logs/logs.ts'
+export * from './terminal/grid.ts'
 export * from './websites/websites.ts'
 // 安全区
 export * from './security/firewall.ts'

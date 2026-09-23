@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { TERMINAL_COLS, TERMINAL_ROWS } from '@elysian/contracts'
 import type { TerminalClientFrame } from './terminalFrames.ts'
 import { TerminalStreamAssembler, type TerminalStreamEvent } from './terminalStream.ts'
 
@@ -9,10 +10,6 @@ import { TerminalStreamAssembler, type TerminalStreamEvent } from './terminalStr
  * 全部经 TerminalsHostDeps 注入，Vitest 用 fake PtyProcess 与 fake 时钟驱动，不
  * spawn 任何真进程。协议口径的唯一权威是方案的「端点契约」与「服务层设计」。
  */
-
-/** 终端栅格：启动行 stty 固定尺寸（script 管道无 TIOCSWINSZ 通道，不做动态窗口）。 */
-export const TERMINAL_COLS = 100
-export const TERMINAL_ROWS = 30
 
 /** 并发会话上限：第 6 条连接在升级后被以 1008 拒绝（不建 PTY）。 */
 export const TERMINAL_MAX_SESSIONS = 5
@@ -126,6 +123,8 @@ function tildePath(path: string, homeDir: string): string {
 /**
  * PTY 环境白名单：只透传驯化所需的最小集合，server 进程其余 env（含未来可能的
  * 凭据）绝不进终端。PATH 是固定串（含 ~/.bun/bin）。
+ * 分页器一律指向 cat：会话是行模式、没有全屏能力，less 一类分页器在这里只会停在
+ * 「terminal is not fully functional」与翻页提示上，git log、systemctl status、man 因此直接整页输出。
  */
 export function buildPtyEnv(homeDir: string): Record<string, string> {
   return {
@@ -133,6 +132,10 @@ export function buildPtyEnv(homeDir: string): Record<string, string> {
     PATH: `${homeDir}/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
     TERM: 'dumb',
     LANG: 'C.UTF-8',
+    PAGER: 'cat',
+    GIT_PAGER: 'cat',
+    SYSTEMD_PAGER: 'cat',
+    MANPAGER: 'cat',
     PS1: '',
     PROMPT_COMMAND: 'printf "\\x01PWD:%s\\x02\\n" "$PWD"',
   }

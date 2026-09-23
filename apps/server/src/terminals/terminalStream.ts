@@ -1,7 +1,10 @@
+import { TERMINAL_TAB_WIDTH, terminalCharWidth } from '@elysian/contracts'
+
 /*
  * 终端字节流 → 行模型的纯汇编器（无 IO、无定时器）：流式 UTF-8 解码、按 \n 切行
- * 保留不完整行、剥 \r 与全部 ANSI 转义（CSI/OSC/单字符 ESC）、剥 \x07/\x08 等控制
- * 字符（\t 保留）、\x01…\x02 哨兵提取（READY / PWD）。READY 哨兵（原始字节
+ * 保留不完整行、每行按终端语义落成文本（见 renderTerminalLine：\r 回行首覆盖写、
+ * \b 左移、\t 展开到制表位、CSI K/C/D/G 行内擦除与横移，其余 ANSI 转义与控制字符
+ * 剥离）、\x01…\x02 哨兵提取（READY / PWD）。READY 哨兵（原始字节
  * \x01READY\x02）之前的一切输出（bash 初始提示符、启动行回显里的字面 \x01 文本）
  * 全部丢弃。单命令轮输出预算在发出 prompt 事件时重置，被丢字节数随 prompt 事件
  * 上报。无换行的积压设硬上限（等于单轮预算）：超限立即结扎丢弃并记账，预算的执行
@@ -35,14 +38,17 @@ const PWD_SENTINEL = /\x01PWD:([^\x02]*)\x02/g
 /** PWD 哨兵的起始前缀：超长行丢弃态下唯一保留识别的边界信号（命令结束信号）。 */
 const PWD_SENTINEL_PREFIX = '\x01PWD:'
 
-/** CSI 转义序列（光标/颜色/擦除）：参数列 + 中间列 + 终结字节。 */
-const ANSI_CSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g
-/** OSC 转义序列（窗口标题等）：以 BEL 或 ST 结束。 */
-const ANSI_OSC = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g
-/** 其余单字符 ESC 序列（ESC M、ESC 7 一类）。 */
-const ANSI_ESC_CHAR = /\x1b[@-Z\\-_]/g
-/** 控制字符：剥 \r、\x07、\x08 与其余 C0/DEL；保留 \t（对齐仍有意义）。 */
-const CONTROL_CHARS = /[\x00-\x08\x0b-\x1f\x7f]/g
+/**
+ * 行内 token：OSC 转义（窗口标题等，以 BEL 或 ST 结束）、CSI 转义（参数列 + 中间列 +
+ * 终结字节，捕获参数与终结字节）、其余单字符 ESC 序列（ESC M、ESC 7 一类），以及单个码点。
+ */
+const LINE_TOKEN = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[([0-?]*)[ -/]*([@-~])|\x1b[@-Z\\-_]|[\s\S]/gu
+
+/** 无操作语义的控制字符（C0 与 DEL）：直接丢弃。\r、\b、\t 在落行时单独处理。 */
+const DROPPED_CONTROL = /[\x00-\x07\x0a-\x1f\x7f]/
+
+/** 行缓冲里宽字符次格的占位：首格放字符本身，拼接时次格不产出文本。 */
+const WIDE_TAIL = ''
 
 const utf8Encoder = new TextEncoder()
 
@@ -59,9 +65,81 @@ function pwdPrefixCarry(text: string): string {
   return ''
 }
 
-/** 行内容清理：先剥 OSC/CSI/单字符 ESC，再剥控制字符（哨兵已在调用方先行提取）。 */
-function cleanTerminalLine(text: string): string {
-  return text.replace(ANSI_OSC, '').replace(ANSI_CSI, '').replace(ANSI_ESC_CHAR, '').replace(CONTROL_CHARS, '')
+/** 覆盖宽字符的任一半格时另一半一并清成空格：与终端一致，不留半个字。 */
+function clearCell(cells: string[], index: number): void {
+  if (index >= cells.length) return
+  if (cells[index] === WIDE_TAIL && index > 0) cells[index - 1] = ' '
+  if (cells[index + 1] === WIDE_TAIL) cells[index + 1] = ' '
+  cells[index] = ' '
+}
+
+function csiCount(params: string): number {
+  const count = Number.parseInt(params, 10)
+  return Number.isNaN(count) || count < 1 ? 1 : count
+}
+
+/**
+ * 按终端语义把一行（已解码、已提取哨兵）落成文本：光标在行缓冲里移动，\r 回行首后
+ * 覆盖写（进度条只留最终一帧），\b 左移一格（man 页的叠印加粗与下划线还原成单字），
+ * \t 跳到下一个制表位并以空格补位，CSI K 擦除行内、CSI C/D/G 横移光标；宽字符占两格。
+ * 其余转义（颜色、光标上下移、清屏）与控制字符丢弃。
+ */
+export function renderTerminalLine(raw: string): string {
+  const cells: string[] = []
+  let col = 0
+  for (const match of raw.matchAll(LINE_TOKEN)) {
+    const token = match[0]
+    const final = match[2]
+    if (final !== undefined) {
+      const params = match[1] ?? ''
+      if (final === 'K') {
+        const mode = params === '' ? 0 : Number(params)
+        if (mode === 0) {
+          if (cells[col] === WIDE_TAIL && col > 0) cells[col - 1] = ' '
+          if (col < cells.length) cells.length = col
+        } else if (mode === 1) {
+          for (let index = 0; index <= col; index += 1) clearCell(cells, index)
+        } else if (mode === 2) {
+          cells.length = 0
+        }
+      } else if (final === 'C') {
+        col += csiCount(params)
+      } else if (final === 'D') {
+        col = Math.max(0, col - csiCount(params))
+      } else if (final === 'G') {
+        col = csiCount(params) - 1
+      }
+      continue
+    }
+    if (token.startsWith('\x1b') && token.length > 1) continue
+    if (token === '\r') {
+      col = 0
+      continue
+    }
+    if (token === '\b') {
+      col = Math.max(0, col - 1)
+      continue
+    }
+    if (token === '\t') {
+      col = (Math.floor(col / TERMINAL_TAB_WIDTH) + 1) * TERMINAL_TAB_WIDTH
+      continue
+    }
+    if (DROPPED_CONTROL.test(token)) continue
+
+    const width = terminalCharWidth(token)
+    if (width === 0) {
+      let target = col - 1
+      if (cells[target] === WIDE_TAIL) target -= 1
+      if (target >= 0 && target < cells.length) cells[target] += token
+      continue
+    }
+    while (cells.length < col) cells.push(' ')
+    for (let index = col; index < col + width; index += 1) clearCell(cells, index)
+    cells[col] = token
+    if (width === 2) cells[col + 1] = WIDE_TAIL
+    col += width
+  }
+  return cells.join('')
 }
 
 export class TerminalStreamAssembler {
@@ -214,7 +292,7 @@ export class TerminalStreamAssembler {
     }
     rest += rawLine.slice(last)
 
-    const cleaned = cleanTerminalLine(rest)
+    const cleaned = renderTerminalLine(rest)
     // 哨兵行清空后是控制元数据，不再产出空输出行；无哨兵的空行是真实空行，保留。
     if (!(cleaned === '' && cwds.length > 0)) {
       const bytes = utf8ByteLength(cleaned)
