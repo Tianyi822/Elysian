@@ -13,7 +13,7 @@ import type { WebsiteProjectKind, WebsiteRuntimeKind } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { Minus, Plus, X } from '../../components/icons'
 import { useWebsitesStore } from '../../stores/websitesStore'
-import { SelectDropdown } from './SelectDropdown'
+import { SelectDropdown } from '../../components/SelectDropdown'
 
 /**
  * 添加项目弹窗：类型、Git 地址（可贴链接自动带出名称）、名称、运行时版本（非 HTML）、
