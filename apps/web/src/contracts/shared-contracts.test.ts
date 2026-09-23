@@ -567,3 +567,26 @@ describe('网站域词典', () => {
     expect(contracts.isValidWebsiteProjectName('x'.repeat(65))).toBe(false)
   })
 })
+
+describe('契约：终端栅格', () => {
+  it('栅格 100×30，制表位每 8 列', () => {
+    expect(contracts.TERMINAL_COLS).toBe(100)
+    expect(contracts.TERMINAL_ROWS).toBe(30)
+    expect(contracts.TERMINAL_TAB_WIDTH).toBe(8)
+  })
+
+  it('半角 1 格，中文、全角标点、韩文与 emoji 2 格，组合附加符与零宽字符 0 格', () => {
+    for (const char of ['a', '~', '│', '├', 'é', '·']) expect(contracts.terminalCharWidth(char)).toBe(1)
+    for (const char of ['中', '，', '：', '、', 'Ａ', '한', 'あ', '✅', '🚀', '𠀀']) {
+      expect(contracts.terminalCharWidth(char)).toBe(2)
+    }
+    for (const char of ['\u0301', '\u200b', '\u200d', '\ufe0f']) expect(contracts.terminalCharWidth(char)).toBe(0)
+  })
+
+  it('文本宽度按码点累加', () => {
+    expect(contracts.terminalTextWidth('')).toBe(0)
+    expect(contracts.terminalTextWidth('ls -al')).toBe(6)
+    expect(contracts.terminalTextWidth('巡检记录 ok')).toBe(11)
+    expect(contracts.terminalTextWidth('e\u0301')).toBe(1)
+  })
+})

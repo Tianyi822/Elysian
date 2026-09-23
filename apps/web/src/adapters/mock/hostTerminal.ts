@@ -1,4 +1,8 @@
-import { completeWithPools, type TerminalCompletion } from '../../components/terminal/terminalSession'
+import {
+  completeWithPools,
+  formatTerminalColumns,
+  type TerminalCompletion,
+} from '../../components/terminal/terminalSession'
 import type { MockCommandResult } from '../../contracts/adapters'
 
 /**
@@ -79,7 +83,7 @@ export function execHostCommand(command: string): HostCommandResult {
     case 'pwd':
       return { lines: [`/home/${HOST_USER}`] }
     case 'ls':
-      return { lines: [...LS_ENTRIES] }
+      return { lines: formatTerminalColumns(LS_ENTRIES) }
     case 'id':
       return { lines: [ID_LINE] }
     case 'uname -a':

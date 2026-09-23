@@ -31,6 +31,32 @@ describe('终端页', () => {
     expect(screen.getByRole('log')).toHaveTextContent('ops@elysian-demo:~$')
   })
 
+  it('提示符随目录变化后，已提交的命令行仍保留提交时的提示符', async () => {
+    const user = userEvent.setup()
+    const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+    const gateway = {
+      ...base,
+      terminals: {
+        connect: (handlers: Parameters<typeof base.terminals.connect>[0]) =>
+          base.terminals.connect(handlers),
+        sendInput: async (id: string, line: string) => {
+          await base.terminals.sendInput(id, line)
+          useTerminalsStore.getState().applyFrame(id, { type: 'prompt', prompt: 'ops@elysian-demo:/$ ' })
+        },
+        interrupt: (id: string) => base.terminals.interrupt(id),
+        complete: (id: string, draft: string, cursor: number) =>
+          base.terminals.complete(id, draft, cursor),
+        disconnect: (id: string) => base.terminals.disconnect(id),
+      },
+    }
+    renderApp('/terminals', { gateway })
+    const input = await screen.findByLabelText('命令输入')
+    await user.type(input, 'pwd{Enter}')
+    expect(await screen.findByText('ops@elysian-demo:~$ pwd')).toBeInTheDocument()
+    expect(screen.getByRole('log')).toHaveTextContent('ops@elysian-demo:/$')
+    expect(screen.queryByText('ops@elysian-demo:/$ pwd')).not.toBeInTheDocument()
+  })
+
   it('回车执行 whoami，日志回显提示符与输出', async () => {
     const user = userEvent.setup()
     renderApp('/terminals')

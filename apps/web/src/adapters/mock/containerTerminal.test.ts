@@ -20,6 +20,13 @@ describe('演示终端命令引擎', () => {
     expect(execContainerCommand(worker, nginxImage, 'ls').lines[0]).toContain('空')
   })
 
+  it('ps 表头与数据列右对齐到同一列', () => {
+    const [header, row] = execContainerCommand(nginx, nginxImage, 'ps').lines
+    expect(header).toBe('    PID CMD')
+    expect(row).toBe(`      1 ${nginx.command}`)
+    expect(header!.indexOf('CMD')).toBe(row!.indexOf(nginx.command))
+  })
+
   it('cat /etc/os-release 反映镜像名称与标签', () => {
     const lines = execContainerCommand(nginx, nginxImage, 'cat /etc/os-release').lines.join('\n')
     expect(lines).toContain('NAME="nginx"')

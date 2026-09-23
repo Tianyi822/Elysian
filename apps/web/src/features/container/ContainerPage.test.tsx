@@ -389,10 +389,11 @@ describe('演示终端', () => {
     const input = within(dialog).getByLabelText('命令输入')
     expect(document.activeElement).toBe(input)
     await user.type(input, 'help{Enter}')
-    expect(await within(dialog).findByText(/可用命令/)).toBeInTheDocument()
+    const log = within(dialog).getByRole('log')
+    await waitFor(() => expect(log).toHaveTextContent('可用命令'))
 
     await user.type(input, 'rm -rf /{Enter}')
-    expect(await within(dialog).findByText(/不在演示集内/)).toBeInTheDocument()
+    await waitFor(() => expect(log).toHaveTextContent('不在演示集内'))
   })
 
   it('Ctrl+C 留下中断行，Ctrl+L 清屏但历史保留', async () => {

@@ -82,7 +82,7 @@ describe('终端交互内核', () => {
     await user.type(input, 'demo one{Enter}')
 
     expect(await screen.findByText('sql> demo one')).toBeInTheDocument()
-    expect(screen.getByText('执行：demo one')).toBeInTheDocument()
+    expect(screen.getByRole('log')).toHaveTextContent('执行：demo one')
   })
 
   it('↑ 召回上一条历史，↓ 回到新输入', async () => {

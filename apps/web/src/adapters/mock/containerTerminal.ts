@@ -2,7 +2,7 @@ import type { Container, ContainerImage } from '@elysian/contracts'
 import { DATASET_BASE_TIME } from './dataset'
 import { INITIAL_CONTAINER_USAGE } from './containersData'
 import { formatUptime } from '../../components/format'
-import type { TerminalCompletion } from '../../components/terminal/terminalSession'
+import { formatTerminalColumns, type TerminalCompletion } from '../../components/terminal/terminalSession'
 
 /**
  * 演示终端的命令引擎：纯函数、确定性输出、与容器 mock 数据联动。
@@ -94,7 +94,7 @@ export function execContainerCommand(
     case 'ls':
       return {
         lines: container.volumes.length
-          ? container.volumes.map((v) => v.containerPath)
+          ? formatTerminalColumns(container.volumes.map((v) => v.containerPath))
           : ['(空)'],
       }
     case 'env':
@@ -104,7 +104,7 @@ export function execContainerCommand(
           : ['(无环境变量)'],
       }
     case 'ps':
-      return { lines: ['PID  CMD', `   1  ${container.command}`] }
+      return { lines: [`${'PID'.padStart(7)} CMD`, `${'1'.padStart(7)} ${container.command}`] }
     case 'cat /etc/os-release':
       return {
         lines: [

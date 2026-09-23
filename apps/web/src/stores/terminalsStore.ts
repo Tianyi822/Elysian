@@ -248,12 +248,14 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => ({
     }
 
     // 回显与历史在提交时落定（流式模型没有同步的「执行成功」回执）；输出由 output 帧异步追加。
+    // 提示符快照取提交当时的值：随后的 prompt 帧只更新活动行，不改写已落日志的命令。
+    const submittedPrompt = session.prompt
     set((state) => ({
       sessions: state.sessions.map((candidate) =>
         candidate.id === session.id
           ? {
               ...candidate,
-              lines: [...candidate.lines, { kind: 'input', text: trimmed }],
+              lines: [...candidate.lines, { kind: 'input', text: trimmed, prompt: submittedPrompt }],
               history: pushHistory(candidate.history, trimmed),
             }
           : candidate,

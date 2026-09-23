@@ -1,6 +1,12 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, RefObject } from 'react'
-import { recallHistory, type TerminalCompletion, type TerminalLine } from './terminalSession'
+import {
+  formatTerminalColumns,
+  recallHistory,
+  type TerminalCompletion,
+  type TerminalLine,
+} from './terminalSession'
+import { TerminalText } from './TerminalText'
 
 /**
  * 终端交互内核的嵌入视口：没有弹窗壳，给页面内会话与弹窗壳共用。
@@ -9,7 +15,10 @@ import { recallHistory, type TerminalCompletion, type TerminalLine } from './ter
  * 键入汇点是一枚 sr-only 的 input——可打印字符与退格由它原生编辑（输入法因此可用），
  * Tab、方向键与 Ctrl 组合键在 keydown 里接管，光标位置经 onSelect 回读进模型。
  *
- * input 行只存裸语句，提示符由本组件渲染时拼在行首（提示符只有一个家）。
+ * input 行存裸语句。行上带提交时的提示符快照时用快照，否则用当前提示符拼在行首。
+ * 活动行始终用当前提示符。提示符随工作目录变化时，已提交的行保持提交当时的样子。
+ * 日志按终端栅格排版：保留连续空白（ls -l、SQL 结果表靠空格补位对齐）、宽字符固定两格、
+ * 空行保留一行高，Tab 候选按 ls -C 的方式分栏列出。
  * 输入 id 用 useId 生成，同页多会话不会撞到写死的 terminal-input。
  */
 
@@ -119,7 +128,7 @@ export function TerminalViewport({
   const runCompletion = () => {
     const result = complete(draft, cursor)
     if (result.candidates) {
-      onAppendOutput([result.candidates.join('  ')])
+      onAppendOutput(formatTerminalColumns(result.candidates))
       return
     }
     setDraft(result.draft)
@@ -217,29 +226,32 @@ export function TerminalViewport({
         role="log"
         aria-live="polite"
         onClick={() => inputRef.current?.focus()}
-        className="flex-1 cursor-text overflow-y-auto px-4 py-3 font-mono text-xs leading-relaxed text-fg"
+        className="flex-1 cursor-text overflow-y-auto whitespace-pre-wrap break-all px-4 py-3 font-mono text-xs leading-relaxed text-fg"
       >
         {lines.map((line, index) => (
           <p
             key={index}
-            className={
-              line.kind === 'input'
-                ? 'text-accent'
-                : line.kind === 'banner'
-                  ? 'text-warning'
-                  : undefined
-            }
+            className={[
+              'min-h-[1lh]',
+              line.kind === 'input' ? 'text-accent' : line.kind === 'banner' ? 'text-warning' : undefined,
+            ]
+              .filter(Boolean)
+              .join(' ')}
           >
-            {line.kind === 'input' ? `${prompt}${line.text}` : line.text}
+            <TerminalText
+              text={line.kind === 'input' ? `${line.prompt ?? prompt}${line.text}` : line.text}
+            />
           </p>
         ))}
-        <p aria-hidden="true" className="whitespace-pre-wrap break-all">
-          <span className="text-success">{prompt}</span>
-          {draft.slice(0, cursor)}
-          <span className="bg-fg text-bg motion-safe:animate-caret-blink">
-            {draft.slice(cursor, cursor + 1) || ' '}
+        <p aria-hidden="true">
+          <span className="text-success">
+            <TerminalText text={prompt} />
           </span>
-          {draft.slice(cursor + 1)}
+          <TerminalText text={draft.slice(0, cursor)} />
+          <span className="bg-fg text-bg motion-safe:animate-caret-blink">
+            <TerminalText text={draft.slice(cursor, cursor + 1) || ' '} />
+          </span>
+          <TerminalText text={draft.slice(cursor + 1)} />
         </p>
       </div>
     </div>

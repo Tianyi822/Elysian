@@ -17,7 +17,7 @@ export type TerminalShellProps = {
   banner: string
   /** 顶栏的主体名称（会话面向的对象，如服务名、连接名）。 */
   subject: string
-  /** 提示符：input 行渲染时拼在行首，行文本本身不带。 */
+  /** 当前提示符：活动行用它；已提交的 input 行若自带快照则不被它覆盖。 */
   prompt: string
   /** 会话标识：变化时重置草稿与历史游标。 */
   sessionKey: string

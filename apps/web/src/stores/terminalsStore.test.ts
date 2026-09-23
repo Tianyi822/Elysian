@@ -136,6 +136,20 @@ describe('terminalsStore 流式帧与关闭映射', () => {
     expect(second.lines).toEqual([])
   })
 
+  it('submitCommand 把提交时的提示符冻在输入行上，随后的 prompt 帧不改写它', async () => {
+    const gateway = gatewayWith({
+      sendInput: async () => {
+        const id = useTerminalsStore.getState().activeId!
+        useTerminalsStore.getState().applyFrame(id, { type: 'prompt', prompt: 'ops@elysian-demo:/$ ' })
+      },
+    })
+    await useTerminalsStore.getState().openSession(gateway)
+    await useTerminalsStore.getState().submitCommand(gateway, 'cd /')
+    const session = useTerminalsStore.getState().sessions[0]!
+    expect(session.prompt).toBe('ops@elysian-demo:/$ ')
+    expect(session.lines[0]).toEqual({ kind: 'input', text: 'cd /', prompt: 'ops@elysian-demo:~$ ' })
+  })
+
   it('prompt 帧更新该会话提示符', async () => {
     const gateway = gatewayWith()
     await useTerminalsStore.getState().openSession(gateway)

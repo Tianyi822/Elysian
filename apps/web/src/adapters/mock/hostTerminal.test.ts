@@ -21,10 +21,8 @@ describe('本机演示终端命令引擎', () => {
     expect(execHostCommand('id').lines[0]).toContain(`(${HOST_USER})`)
   })
 
-  it('ls 列出家目录条目', () => {
-    const listed = execHostCommand('ls').lines.join(' ')
-    expect(listed).toContain('Documents')
-    expect(listed).toContain('.ssh')
+  it('ls 列出家目录条目，按终端习惯横排分栏', () => {
+    expect(execHostCommand('ls').lines).toEqual(['.ssh  Documents  Downloads'])
   })
 
   it('uname -a、df -h、uptime 给出确定性主机快照', () => {
