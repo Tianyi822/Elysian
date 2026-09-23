@@ -65,8 +65,7 @@ export function formatUptime(startedAt: string | undefined, now: Date): string {
   return `${minutes} 分钟`
 }
 
-/** 日志体积：字节格式化成 KB/MB，保留两位小数，形态与参照产品的「13.41 KB」一致。 */
-export function formatByteSize(bytes: number): string {
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`
-}
+/*
+ * 日志体积不在这里格式化：唯一口径是契约的 formatLogBytes（工具栏「日志大小」、
+ * 清空确认与保留说明三处共用）。留两套写法会让同一屏出现 13.39 KB 与 13.40 KB。
+ */

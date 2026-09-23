@@ -85,6 +85,8 @@ describe('平台登录日志面板', () => {
       ...base,
       logs: {
         runtimeLog: () => base.logs.runtimeLog(),
+        operationLogs: () => base.logs.operationLogs(),
+        clearLogs: (category) => base.logs.clearLogs(category),
         loginLogs: () => {
           calls += 1
           if (calls === 1) throw new Error('演示用的读取失败')
@@ -108,6 +110,8 @@ describe('平台登录日志面板', () => {
       ...base,
       logs: {
         runtimeLog: () => base.logs.runtimeLog(),
+        operationLogs: () => base.logs.operationLogs(),
+        clearLogs: (category) => base.logs.clearLogs(category),
         loginLogs: async () => [],
       },
     }

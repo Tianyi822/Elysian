@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatByteSize, formatLoginIp, formatLoginTime, formatUptime } from './format'
+import { formatLoginIp, formatLoginTime, formatUptime } from './format'
 
 describe('通用格式化', () => {
   it('运行时长按天/小时/分钟分档，未启动显示 —', () => {
@@ -20,13 +20,5 @@ describe('通用格式化', () => {
     expect(formatLoginIp('127.0.0.1')).toBe('本机')
     expect(formatLoginIp('1.204.32.143')).toBe('1.204.32.143')
     expect(formatLoginIp('172.22.0.1')).toBe('172.22.0.1')
-  })
-})
-
-describe('formatByteSize', () => {
-  it('字节格式化为 KB/MB，保留两位小数', () => {
-    expect(formatByteSize(0)).toBe('0.00 KB')
-    expect(formatByteSize(13_713)).toBe('13.39 KB')
-    expect(formatByteSize(1_572_864)).toBe('1.50 MB')
   })
 })

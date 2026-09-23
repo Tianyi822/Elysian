@@ -1,17 +1,31 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
+import { LOG_ENTRY_FETCH_LIMIT, formatLogBytes, logRetentionText } from '@elysian/contracts'
+import type { PlatformLogLevel, RuntimeLogEntry } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { formatByteSize } from '../../components/format'
+import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
+import { formatLoginTime } from '../../components/format'
 import { Search } from '../../components/icons'
-import { ErrorState, LoadingState } from '../../components/states/StateViews'
+import { StatusTag } from '../../components/StatusTag'
+import type { StatusTone } from '../../components/StatusTag'
+import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
 import { useRuntimeLogStore } from '../../stores/runtimeLogStore'
+import { ClearLogsDialog } from './ClearLogsDialog'
+import { LogMessageCell } from './LogMessageCell'
+import { LogTable } from './LogTable'
+import type { LogColumn } from './LogTable'
 
 /**
- * 平台运行日志面板：等宽字体的只读日志视图，底色与文字走语义令牌、随主题切换，
- * 对比度由令牌层保证（浅色主题浅底深字、深色主题深底浅字）。
- * 工具栏提供刷新日志、滑动日志（自动滚底）开关、日志大小与按行过滤的搜索；
- * 全屏展示用 Radix Dialog 铺满视口，与内嵌视图共用同一个 LogView。
- * 参照产品里的「请求反馈」入口不保留（营销客服元素）。
+ * 平台运行日志面板：日期时间｜等级｜日志信息三列固定宽度表格（超出省略、点击展开悬浮窗），
+ * 条目按时间倒序（新 → 旧），最新一条在最上，与操作日志同一口径。
+ * 工具栏三块为搜索、视图操作（刷新日志 / 全屏展示）与日志大小 + 清空日志
+ * （破坏性动作走二次确认），窄屏按块各占一行。
+ *
+ * 列宽取值见 LogTable.tsx 顶部的算式：两列的时间与等级是固定字符数内容，单元格用等宽字体
+ * 加 tabular-nums，所以列宽是「字符数 × 字宽 + 内距」算出来的，不是估的。
+ *
+ * 数据为空（历史上一行都没写过）时用 EmptyState 顶替表格；搜索无命中只是表格里的一行提示，
+ * 因为那时数据仍在、清掉关键词就能看见。
  */
 
 /** 工具按钮：与防火墙面板同款的中性描边小按钮；给 pressed 时按开关形态高亮。 */
@@ -43,91 +57,131 @@ function ToolButton({
   )
 }
 
-/** 按行内级别标记着色（语义令牌，两主题下均满足对比度红线）：ERROR 危险色、WARNING 警告色、DEBUG 次要文字，其余正文色。 */
-export function logLineToneClass(line: string): string {
-  if (line.includes('[ERROR]')) return 'text-danger'
-  if (line.includes('[WARNING]')) return 'text-warning'
-  if (line.includes('[DEBUG]')) return 'text-fg-muted'
-  return 'text-fg'
+/** 等级 → 语义色调：等级列用 StatusTag 呈现（文字 + 颜色同时表达，不只靠颜色）；文字用原英文等级值，不译成中文。 */
+export function levelTone(level: PlatformLogLevel): StatusTone {
+  if (level === 'error') return 'danger'
+  if (level === 'warning') return 'warning'
+  if (level === 'info') return 'info'
+  return 'neutral'
 }
 
-/** 日志行视图：内嵌与全屏共用；follow 为真时内容变化后滚到底部。 */
-function LogView({
-  lines,
-  follow,
-  className,
-}: {
-  lines: readonly string[]
-  follow: boolean
-  className?: string
-}) {
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    // jsdom 未实现 Element.scrollTo，可选调用让测试环境降级为 no-op，浏览器行为不变。
-    if (follow) ref.current?.scrollTo?.({ top: ref.current.scrollHeight })
-  }, [follow, lines])
-
+/**
+ * 搜索口径：匹配 message 与 source，大小写不敏感（时间与等级在表里各有自己的列，
+ * 塞进关键词匹配只会让「搜一个日期就出满屏」这种意外发生）；空关键词不过滤。
+ */
+export function matchesRuntimeSearch(entry: RuntimeLogEntry, keyword: string): boolean {
+  if (!keyword) return true
+  const needle = keyword.toLowerCase()
   return (
-    <div
-      ref={ref}
-      role="log"
-      aria-label="平台运行日志"
-      className={`overflow-y-auto rounded-xl border border-line bg-surface px-4 py-3 font-mono text-sm leading-relaxed ${className ?? ''}`}
-    >
-      {lines.length === 0 ? (
-        <p className="text-fg-muted">没有匹配的日志行</p>
-      ) : (
-        lines.map((line, index) => (
-          <p key={index} className={`whitespace-pre-wrap break-all ${logLineToneClass(line)}`}>
-            {line}
-          </p>
-        ))
-      )}
-    </div>
+    entry.message.toLowerCase().includes(needle) || entry.source.toLowerCase().includes(needle)
   )
 }
+
+/**
+ * 表格最小宽度类：值由 LogTable 的列宽算式算得（176 + 96 + 560 = 832），
+ * Tailwind 只认字面类名，算式与字面量的一致性由测试锁住。
+ */
+const TABLE_MIN_WIDTH_CLASS = 'min-w-[832px]'
+
+/** 三列：前两列固定宽度，日志信息列吃掉剩余（并有 560px 的最小宽度兜底）。 */
+const RUNTIME_LOG_COLUMNS: readonly LogColumn<RuntimeLogEntry>[] = [
+  {
+    label: '日期时间',
+    widthClass: 'w-44',
+    cell: (entry) => (
+      // 固定 19 字符 + 等宽字体 + tabular-nums：字符宽度统一，时间列因此不会随内容抖动。
+      <td className="border-b border-line px-3 py-2.5 font-mono text-xs tabular-nums text-fg-muted">
+        {formatLoginTime(entry.at)}
+      </td>
+    ),
+  },
+  {
+    label: '等级',
+    widthClass: 'w-24',
+    cell: (entry) => (
+      <td className="border-b border-line px-3 py-2.5">
+        <StatusTag label={entry.level} tone={levelTone(entry.level)} />
+      </td>
+    ),
+  },
+  {
+    label: '日志信息',
+    cell: (entry) => (
+      <LogMessageCell
+        text={entry.message}
+        details={
+          <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-fg-muted">
+            <div className="flex gap-1.5">
+              <dt>时间</dt>
+              <dd className="font-mono tabular-nums">{formatLoginTime(entry.at)}</dd>
+            </div>
+            <div className="flex gap-1.5">
+              <dt>等级</dt>
+              <dd className="font-mono">{entry.level}</dd>
+            </div>
+            <div className="flex gap-1.5">
+              <dt>来源</dt>
+              <dd className="font-mono">{entry.source}</dd>
+            </div>
+          </dl>
+        }
+      />
+    ),
+  },
+]
 
 export function RuntimeLogPanel() {
   const gateway = useGateway()
   const status = useRuntimeLogStore((s) => s.status)
   const errorMessage = useRuntimeLogStore((s) => s.errorMessage)
-  const snapshot = useRuntimeLogStore((s) => s.snapshot)
+  const entries = useRuntimeLogStore((s) => s.entries)
+  const truncated = useRuntimeLogStore((s) => s.truncated)
+  const skippedLines = useRuntimeLogStore((s) => s.skippedLines)
+  const skippedFiles = useRuntimeLogStore((s) => s.skippedFiles)
+  const storage = useRuntimeLogStore((s) => s.storage)
   const search = useRuntimeLogStore((s) => s.search)
-  const follow = useRuntimeLogStore((s) => s.follow)
   const fullscreen = useRuntimeLogStore((s) => s.fullscreen)
   const refreshing = useRuntimeLogStore((s) => s.refreshing)
   const load = useRuntimeLogStore((s) => s.load)
   const setSearch = useRuntimeLogStore((s) => s.setSearch)
-  const setFollow = useRuntimeLogStore((s) => s.setFollow)
   const setFullscreen = useRuntimeLogStore((s) => s.setFullscreen)
+  const openClear = useRuntimeLogStore((s) => s.openClear)
 
   useEffect(() => {
     void load(gateway)
   }, [gateway, load])
 
-  const lines = useMemo(
-    () => (snapshot ? snapshot.content.split('\n').filter((line) => line.length > 0) : []),
-    [snapshot],
-  )
   const keyword = search.trim()
-  const visibleLines = useMemo(
-    () => (keyword ? lines.filter((line) => line.includes(keyword)) : lines),
-    [lines, keyword],
+  const visibleEntries = useMemo(
+    () => entries.filter((entry) => matchesRuntimeSearch(entry, keyword)),
+    [entries, keyword],
   )
 
   if (status === 'loading' || status === 'idle') {
     return <LoadingState label="正在加载运行日志…" />
   }
 
-  if (status === 'error' || !snapshot) {
+  if (status === 'error' || !storage) {
     return <ErrorState title="运行日志加载失败" description={errorMessage} onRetry={() => void load(gateway)} />
   }
 
+  // 计数文案与操作日志面板共用一套口径；正常都是 0，非 0 才提示。
+  const notices: string[] = []
+  if (truncated) notices.push(`仅显示最近 ${LOG_ENTRY_FETCH_LIMIT} 条`)
+  if (skippedLines > 0) notices.push(`有 ${skippedLines} 行无法解析，已跳过`)
+  if (skippedFiles > 0) notices.push(`有 ${skippedFiles} 个日志文件读取失败，已跳过`)
+
+  const emptyMessage =
+    entries.length === 0 ? '还没有运行日志' : '没有匹配的运行日志，换个关键词或清空搜索'
+
   return (
-    <div className="flex h-full flex-col">
-      <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-surface px-4 py-3">
-        <div className="relative w-64 max-w-full">
+    <div className="flex h-full flex-col gap-3">
+      {/*
+        工具栏三块：搜索 / 视图操作 / 日志大小与清空。窄屏（md 以下）一块一行，
+        md 起回到一行三段、最后一块靠右——自由折行会把清空按钮孤零零甩到第二行。
+      */}
+      <div className="flex flex-col gap-2 rounded-xl border border-line bg-surface px-4 py-3 md:flex-row md:items-center">
+        <div className="relative w-full md:w-64">
           <Search
             aria-hidden
             className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-fg-subtle"
@@ -143,17 +197,56 @@ export function RuntimeLogPanel() {
             className="w-full rounded-lg border border-line bg-surface-raised py-1.5 pl-8 pr-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle"
           />
         </div>
-        <ToolButton label={refreshing ? '刷新中…' : '刷新日志'} disabled={refreshing} onClick={() => void load(gateway)} />
-        <ToolButton label="滑动日志" pressed={follow} onClick={() => setFollow(!follow)} />
-        {/* 文案固定「全屏展示」，避免与弹窗内的「退出全屏」按钮重名；开合靠 pressed 高亮表达。 */}
-        <ToolButton label="全屏展示" pressed={fullscreen} onClick={() => setFullscreen(!fullscreen)} />
-        <span className="text-xs text-fg-muted">
-          日志大小：<span className="tabular-nums text-fg">{formatByteSize(snapshot.sizeBytes)}</span>
-        </span>
+        <div role="group" aria-label="日志视图操作" className="flex flex-wrap items-center gap-2">
+          <ToolButton label={refreshing ? '刷新中…' : '刷新日志'} disabled={refreshing} onClick={() => void load(gateway)} />
+          {/* 文案固定「全屏展示」，避免与弹窗内的「退出全屏」按钮重名；开合靠 pressed 高亮表达。 */}
+          <ToolButton label="全屏展示" pressed={fullscreen} onClick={() => setFullscreen(!fullscreen)} />
+        </div>
+        <div className="flex items-center justify-between gap-2 md:ml-auto">
+          <span className="text-xs text-fg-muted">
+            日志大小：<span className="tabular-nums text-fg">{formatLogBytes(storage.totalBytes)}</span>
+          </span>
+          {/* 危险感只在确认弹窗里呈现：工具栏按钮与其它按钮同款中性描边。 */}
+          <ToolButton label="清空日志" onClick={() => openClear('runtime')} />
+        </div>
       </div>
 
-      {/* 日志视图吃掉工具栏以下的全部剩余高度，随视口伸缩；min-h 兜底极矮视口，超出时外层滚动。 */}
-      <LogView lines={visibleLines} follow={follow} className="min-h-72 flex-1" />
+      {/* 关于数据来源与保留口径的事实说明，与控件分开：演示态、保留策略、截断与坏行计数同处一行。 */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-fg-subtle">
+        {/* 宿主机本地开发读的是内存演示种子（真实日志由服务端的日志片提供），明示出来。 */}
+        {isDockerRuntime() ? null : (
+          <span role="status" className="text-sm text-fg-muted">
+            演示数据
+          </span>
+        )}
+        <span>{logRetentionText('runtime')}</span>
+        {notices.length > 0 ? <span className="text-fg-muted">{notices.join('；')}</span> : null}
+      </div>
+
+      {storage.failedWrites > 0 ? (
+        <p
+          role="alert"
+          className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning"
+        >
+          {`有 ${storage.failedWrites} 条运行日志未能写入磁盘（服务端写盘失败）。`}
+        </p>
+      ) : null}
+
+      {entries.length === 0 ? (
+        <EmptyState
+          title="还没有运行日志"
+          description="服务启动、请求失败与保留巡检都会写进这里，先跑起来再回来看。"
+        />
+      ) : (
+        <LogTable
+          label="运行日志表"
+          minWidthClass={TABLE_MIN_WIDTH_CLASS}
+          columns={RUNTIME_LOG_COLUMNS}
+          rows={visibleEntries}
+          rowKey={(entry) => entry.id}
+          emptyMessage={emptyMessage}
+        />
+      )}
 
       <Dialog.Root open={fullscreen} onOpenChange={setFullscreen}>
         <Dialog.Portal>
@@ -173,10 +266,21 @@ export function RuntimeLogPanel() {
                 </button>
               </Dialog.Close>
             </div>
-            <LogView lines={visibleLines} follow={follow} className="min-h-0 flex-1" />
+            {/* 全屏容器里不给 min-h：矮视口下表格自己滚动，不撑破弹窗。 */}
+            <LogTable
+              label="运行日志表"
+              minWidthClass={TABLE_MIN_WIDTH_CLASS}
+              columns={RUNTIME_LOG_COLUMNS}
+              rows={visibleEntries}
+              rowKey={(entry) => entry.id}
+              emptyMessage={emptyMessage}
+              regionClassName="min-h-0 flex-1 overflow-auto rounded-xl border border-line bg-surface hover-scrollbar"
+            />
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
+
+      <ClearLogsDialog />
     </div>
   )
 }

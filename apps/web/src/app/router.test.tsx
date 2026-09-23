@@ -34,12 +34,13 @@ describe('路由表', () => {
     expect(await screen.findByRole('heading', { level: 1, name: '/var/log' })).toBeInTheDocument()
   })
 
-  it('/logs 渲染日志区，顶栏出现日志页签', async () => {
+  it('/logs 渲染日志区，顶栏出现三类日志的页签', async () => {
     renderApp('/logs')
     const group = await screen.findByRole('group', { name: '日志页签' })
     expect(within(group).getAllByRole('button').map((button) => button.textContent)).toEqual([
       '运行日志',
       '登录日志',
+      '操作日志',
     ])
   })
 

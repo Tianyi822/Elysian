@@ -34,6 +34,7 @@ export {
   LayoutDashboard,
   Loader2,
   Lock,
+  Maximize2,
   MemoryStick,
   Menu,
   Minus,
