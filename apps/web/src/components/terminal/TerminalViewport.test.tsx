@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
@@ -187,17 +187,81 @@ describe('终端嵌入视口', () => {
     expect(screen.getByRole('log')).toHaveTextContent('$ top^C')
     expect(onInterrupt).toHaveBeenCalledTimes(1)
   })
+
+  it('Cmd+C 是复制不是中断：日志区有选区时写剪贴板，草稿与日志不动', async () => {
+    const user = userEvent.setup()
+    const onInterrupt = vi.fn()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    stubClipboard(writeText)
+    render(
+      <InterruptHarness onInterrupt={onInterrupt} label="复制输入" lines={[{ kind: 'output', text: 'copy-target-123' }]} />,
+    )
+
+    selectWithinLog('copy-target-123')
+    await user.type(screen.getByLabelText('复制输入'), 'draf')
+    // 用 fireEvent 直发按键：user-event 自带 cmd/ctrl+c 的剪贴板拦截，会污染断言。
+    fireEvent.keyDown(screen.getByLabelText('复制输入'), { key: 'c', metaKey: true })
+    expect(writeText).toHaveBeenCalledWith('copy-target-123')
+    expect(onInterrupt).not.toHaveBeenCalled()
+    expect(screen.getByRole('log')).not.toHaveTextContent('^C')
+  })
+
+  it('Cmd+C 无选区时既不中断也不写剪贴板', async () => {
+    const user = userEvent.setup()
+    const onInterrupt = vi.fn()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    stubClipboard(writeText)
+    render(<InterruptHarness onInterrupt={onInterrupt} label="复制输入" />)
+
+    await user.type(screen.getByLabelText('复制输入'), 'abc')
+    fireEvent.keyDown(screen.getByLabelText('复制输入'), { key: 'c', metaKey: true })
+    expect(writeText).not.toHaveBeenCalled()
+    expect(onInterrupt).not.toHaveBeenCalled()
+    expect(screen.getByRole('log')).not.toHaveTextContent('^C')
+  })
+
+  it('选中即复制：日志内 mouseup 时非空选区写入剪贴板', () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    stubClipboard(writeText)
+    render(<InterruptHarness label="选中输入" lines={[{ kind: 'output', text: 'select-on-mouseup-42' }]} />)
+
+    selectWithinLog('select-on-mouseup-42')
+    fireEvent.mouseUp(screen.getByRole('log'))
+    expect(writeText).toHaveBeenCalledWith('select-on-mouseup-42')
+  })
+
+  it('mouseup 时选区为空或不落在日志内不写剪贴板', () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    stubClipboard(writeText)
+    render(
+      <>
+        <p>log 外的文本 outside-text</p>
+        <InterruptHarness label="选中输入" lines={[{ kind: 'output', text: 'inside-text' }]} />
+      </>,
+    )
+
+    // 选区落在日志外
+    selectTextInNode(screen.getByText(/log 外的文本/).firstChild!, 'outside-text')
+    fireEvent.mouseUp(screen.getByRole('log'))
+    // 日志内的空选区（collapsed）
+    const log = screen.getByRole('log')
+    window.getSelection()?.removeAllRanges()
+    fireEvent.mouseUp(log)
+    expect(writeText).not.toHaveBeenCalled()
+  })
 })
 
 /** Ctrl+C 用例的 harness：把 onAppendOutput 的行真正收集进日志（^C 外观经它落屏）。 */
 function InterruptHarness({
   onInterrupt,
   label,
+  lines: initialLines,
 }: {
   onInterrupt?: () => void
   label: string
+  lines?: readonly TerminalLine[]
 }) {
-  const [lines, setLines] = useState<readonly TerminalLine[]>([])
+  const [lines, setLines] = useState<readonly TerminalLine[]>(initialLines ?? [])
   return (
     <TerminalViewport
       prompt="$ "
@@ -217,4 +281,38 @@ function InterruptHarness({
       inputLabel={label}
     />
   )
+}
+
+/** jsdom 里给 navigator 装剪贴板桩；每个用例自备新的 writeText。 */
+function stubClipboard(writeText: ReturnType<typeof vi.fn>) {
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+}
+
+/** 在日志内找到含目标文本（纯 ASCII，TerminalText 不会拆分）的文本节点并选中它。 */
+function selectWithinLog(text: string) {
+  const log = screen.getByRole('log')
+  const walker = document.createTreeWalker(log, NodeFilter.SHOW_TEXT)
+  let node: Node | null = null
+  while ((node = walker.nextNode()) !== null) {
+    const content = node.textContent ?? ''
+    const start = content.indexOf(text)
+    if (start !== -1) {
+      selectTextInNode(node, text)
+      return
+    }
+  }
+  throw new Error(`日志内未找到目标文本：${text}`)
+}
+
+/** 在指定文本节点上建立精确选区。 */
+function selectTextInNode(node: Node, text: string) {
+  const content = node.textContent ?? ''
+  const start = content.indexOf(text)
+  if (start === -1) throw new Error(`节点内未找到目标文本：${text}`)
+  const range = document.createRange()
+  range.setStart(node, start)
+  range.setEnd(node, start + text.length)
+  const selection = window.getSelection()
+  selection?.removeAllRanges()
+  selection?.addRange(range)
 }

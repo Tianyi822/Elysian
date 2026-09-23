@@ -17,6 +17,8 @@ import { TerminalText } from './TerminalText'
  *
  * input 行存裸语句。行上带提交时的提示符快照时用快照，否则用当前提示符拼在行首。
  * 活动行始终用当前提示符。提示符随工作目录变化时，已提交的行保持提交当时的样子。
+ * 复制口径：Ctrl+C 恒为中断，Cmd+C 恒为复制（macOS 习惯，原生 Cmd+C 会复制到
+ * input 的不可见选区上，所以复制由内核接管）；选中即复制，mouseup 收尾时写入剪贴板。
  * 日志按终端栅格排版：保留连续空白（ls -l、SQL 结果表靠空格补位对齐）、宽字符固定两格、
  * 空行保留一行高，Tab 候选按 ls -C 的方式分栏列出。
  * 输入 id 用 useId 生成，同页多会话不会撞到写死的 terminal-input。
@@ -143,6 +145,23 @@ export function TerminalViewport({
     onInterrupt?.()
   }
 
+  /**
+   * 复制必须在这里接管：键入焦点在 sr-only input 上，原生 Cmd+C 复制的是 input
+   * 里的（不可见的）选区而不是日志区高亮。Ctrl+C 恒为中断，Cmd+C 恒为复制
+   * （macOS 习惯）；选区两端都落在日志内才复制，写失败静默降级。
+   */
+  const copyLogSelection = () => {
+    const selection = window.getSelection()
+    const log = logRef.current
+    if (!selection || selection.isCollapsed || !log) return
+    const anchor = selection.anchorNode
+    const focus = selection.focusNode
+    if (!anchor || !focus || !log.contains(anchor) || !log.contains(focus)) return
+    const text = selection.toString()
+    if (!text) return
+    void navigator.clipboard?.writeText(text).catch(() => {})
+  }
+
   const onKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.nativeEvent.isComposing || composingRef.current) return
     if (event.key === 'Enter') {
@@ -166,7 +185,10 @@ export function TerminalViewport({
     }
     if ((event.ctrlKey || event.metaKey) && !event.altKey) {
       const key = event.key.toLowerCase()
-      if (key === 'c') {
+      if (key === 'c' && event.metaKey && !event.ctrlKey) {
+        event.preventDefault()
+        copyLogSelection()
+      } else if (key === 'c') {
         event.preventDefault()
         interrupt()
       } else if (key === 'l') {
@@ -226,6 +248,7 @@ export function TerminalViewport({
         role="log"
         aria-live="polite"
         onClick={() => inputRef.current?.focus()}
+        onMouseUp={copyLogSelection}
         className="flex-1 cursor-text overflow-y-auto whitespace-pre-wrap break-all px-4 py-3 font-mono text-xs leading-relaxed text-fg"
       >
         {lines.map((line, index) => (
