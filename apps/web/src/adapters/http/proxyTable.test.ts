@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { FILES_MOUNT } from '../../../../server/src/files/filesRoutes.ts'
 import { FIREWALL_MOUNT } from '../../../../server/src/firewall/firewallRoutes.ts'
+import { LOGS_MOUNT } from '../../../../server/src/logs/logsRoutes.ts'
 import { SERVER_PORT } from '../../../../server/src/shared/ports.ts'
 import { SSH_MOUNT } from '../../../../server/src/ssh/sshRoutes.ts'
 import { USERS_MOUNT } from '../../../../server/src/users/usersRoutes.ts'
@@ -14,12 +15,13 @@ import config from '../../../vite.config'
  * 端点路径取 server 侧的挂载常量，新增切片忘记补代理时本用例立刻红。
  */
 
-/** 浏览器经 HTTP adapter 直连的端点：安全三片、文件管理、终端 WebSocket 与平台内存。 */
+/** 浏览器经 HTTP adapter 直连的端点：安全三片、文件管理、平台日志、终端 WebSocket 与平台内存。 */
 const HTTP_ENDPOINTS: readonly { label: string; path: string }[] = [
   { label: '防火墙', path: `${FIREWALL_MOUNT}/rules` },
   { label: 'SSH', path: `${SSH_MOUNT}/overview` },
   { label: '主机用户', path: `${USERS_MOUNT}/list` },
   { label: '文件管理', path: `${FILES_MOUNT}/entries` },
+  { label: '日志', path: `${LOGS_MOUNT}/runtime` },
   // 平台内存的挂载见 apps/server/src/app.ts:29（无导出常量，按字面量锚定）。
   { label: '平台内存', path: '/api/platform/memory' },
   // 终端 WS 端点按协议字面量锚定（server 侧 TERMINAL_MOUNT = /api/terminals 定义在 terminalsRoutes.ts，

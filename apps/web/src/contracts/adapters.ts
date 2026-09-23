@@ -16,8 +16,11 @@ import type {
   Incident,
   IncidentListRow,
   LoginLogEntry,
+  LogClearReport,
   ModuleStatus,
-  RuntimeLogSnapshot,
+  OperationLogListReport,
+  PlatformLogCategory,
+  RuntimeLogListReport,
   Skill,
   SshAdapter,
   Unsubscribe,
@@ -206,14 +209,22 @@ export interface DatabaseAdapter {
 export type { FirewallAdapter } from '@elysian/contracts'
 
 /**
- * 日志接缝：平台运行日志与平台登录日志的只读读取。
- * 本期 mock 读内存种子；真实实现由采集服务提供同形数据，界面不改。
+ * 日志接缝：平台运行日志、操作日志与登录日志的读取，加一个按类别的清空。
+ * 运行与操作两类在容器内走真实 HTTP（服务端写 `~/.Elysian/logs/platform/`，界面读同一份文件）；
+ * 登录日志本期仍是内存演示。两种实现跑同一套契约断言（logsAdapterContract）。
  */
 export interface LogsAdapter {
-  /** 读取整份平台运行日志（演示），含字节大小。 */
-  runtimeLog(): Promise<RuntimeLogSnapshot>
+  /** 读取平台运行日志（时间倒序，最新在最上，含截断与存储统计）。 */
+  runtimeLog(): Promise<RuntimeLogListReport>
   /** 读取平台登录日志（演示），按时间倒序返回。 */
   loginLogs(): Promise<readonly LoginLogEntry[]>
+  /** 读取平台操作日志（时间倒序，含截断与存储统计）。 */
+  operationLogs(): Promise<OperationLogListReport>
+  /**
+   * 清空一个类别的日志，返回已删除的事实（不可恢复）。
+   * 清空动作本身会留下一条留痕：该类别最多剩一条记录，且必须是本次清空的留痕。
+   */
+  clearLogs(category: PlatformLogCategory): Promise<LogClearReport>
 }
 
 /**

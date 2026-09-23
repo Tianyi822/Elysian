@@ -25,7 +25,9 @@ import { resetSshData } from './sshData'
 import { resetFirewallData } from './firewallData'
 import { resetFilesData } from './filesData'
 import { resetHostUsers } from './usersData'
+import { resetLogsData } from './logsData'
 import { resetWebsitesData } from './websitesData'
+import { createHttpLogsAdapter } from '../http/logsHttpAdapter'
 import { MockTerminalAdapter } from './terminalAdapter'
 import { MockResourceHistoryAdapter } from './resourceHistoryAdapter'
 import { createHttpResourceHistoryAdapter } from '../http/resourceHistoryAdapter'
@@ -48,6 +50,8 @@ import type { EventsAdapter, TerminalAdapter } from '../../contracts/adapters'
  * - `ssh: 'http'` 在 Docker 运行时接通容器内 sshd 的真实端点，缺省仍是内存演示；
  * - `users: 'http'` 在 Docker 运行时接通容器内系统账号的真实端点，缺省仍是内存演示；
  * - `files: 'http'` 在 Docker 运行时接通容器内文件管理的真实端点，缺省仍是内存演示；
+ * - `logs: 'http'` 在 Docker 运行时接通容器内平台日志的真实端点（运行与操作两类），
+ *   登录日志没有真实端点，**两种取值下都读内存演示**；
  * - `terminals: 'ws'` 在 Docker 运行时经 WebSocket 接容器内真实 PTY，缺省仍是内存演示。
  */
 export function createMockGateway(
@@ -58,6 +62,7 @@ export function createMockGateway(
     ssh?: 'mock' | 'http'
     users?: 'mock' | 'http'
     files?: 'mock' | 'http'
+    logs?: 'mock' | 'http'
     terminals?: 'mock' | 'ws'
   } = {},
 ): ElysianGateway {
@@ -76,6 +81,9 @@ export function createMockGateway(
   const ssh = options.ssh === 'http' ? createHttpSshAdapter() : new MockSshAdapter()
   const users = options.users === 'http' ? createHttpUsersAdapter() : new MockUserAdapter()
   const files = options.files === 'http' ? createHttpFilesAdapter() : new MockFilesAdapter()
+  // 日志：运行与操作两类在容器内走真实端点；登录日志没有真实端点（面板还没有登录功能），
+  // 两种取值下都读内存演示——判定见 logsHttpAdapter 的 loginLogs。
+  const logs = options.logs === 'http' ? createHttpLogsAdapter() : new MockLogsAdapter()
 
   return {
     session: new MockSessionAdapter(),
@@ -97,7 +105,7 @@ export function createMockGateway(
     ssh,
     users,
     files,
-    logs: new MockLogsAdapter(),
+    logs,
     terminals,
     websites: new MockWebsitesAdapter(),
     resources,
@@ -119,6 +127,7 @@ export function createMockGateway(
       resetFirewallData()
       resetFilesData()
       resetHostUsers()
+      resetLogsData()
       resetWebsitesData()
       terminals.reset()
     },

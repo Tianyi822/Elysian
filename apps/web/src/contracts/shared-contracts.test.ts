@@ -72,6 +72,26 @@ const ENUM_TABLES: ReadonlyArray<{
   },
   { name: 'LoginLogStatus', values: contracts.LOGIN_LOG_STATUSES, labels: contracts.LOGIN_LOG_STATUS_LABELS },
   {
+    name: 'PlatformLogCategory',
+    values: contracts.PLATFORM_LOG_CATEGORIES,
+    labels: contracts.PLATFORM_LOG_CATEGORY_LABELS,
+  },
+  {
+    name: 'PlatformLogLevel',
+    values: contracts.PLATFORM_LOG_LEVELS,
+    labels: contracts.PLATFORM_LOG_LEVEL_LABELS,
+  },
+  {
+    name: 'OperationLogCategory',
+    values: contracts.OPERATION_LOG_CATEGORIES,
+    labels: contracts.OPERATION_LOG_CATEGORY_LABELS,
+  },
+  {
+    name: 'OperationLogOutcome',
+    values: contracts.OPERATION_LOG_OUTCOMES,
+    labels: contracts.OPERATION_LOG_OUTCOME_LABELS,
+  },
+  {
     name: 'SshServiceStatus',
     values: contracts.SSH_SERVICE_STATUSES,
     labels: contracts.SSH_SERVICE_STATUS_LABELS,
@@ -481,6 +501,67 @@ describe('日志域词典', () => {
     expect(contracts.LOGIN_LOG_STATUSES).toEqual(['success', 'failure'])
     expect(contracts.LOGIN_LOG_STATUS_LABELS.success).toBe('登录成功')
     expect(contracts.LOGIN_LOG_STATUS_LABELS.failure).toBe('登录失败')
+  })
+
+  it('平台日志只有运行与操作两类：登录日志不落盘，不在其中', () => {
+    expect([...contracts.PLATFORM_LOG_CATEGORIES]).toEqual(['runtime', 'operation'])
+    expect(contracts.PLATFORM_LOG_CATEGORY_LABELS.runtime).toBe('运行日志')
+    expect(contracts.PLATFORM_LOG_CATEGORY_LABELS.operation).toBe('操作日志')
+  })
+
+  it('等级排序权重覆盖全部等级且严格递增', () => {
+    expect(Object.keys(contracts.PLATFORM_LOG_LEVEL_RANK).sort()).toEqual(
+      [...contracts.PLATFORM_LOG_LEVELS].sort(),
+    )
+    const ranks = contracts.PLATFORM_LOG_LEVELS.map(
+      (level) => contracts.PLATFORM_LOG_LEVEL_RANK[level],
+    )
+    expect(ranks).toEqual([...ranks].sort((a, b) => a - b))
+    expect(new Set(ranks).size).toBe(ranks.length)
+  })
+
+  it('保留策略：两个类别都有正的天数与字节上限，运行窗口短于操作', () => {
+    for (const category of contracts.PLATFORM_LOG_CATEGORIES) {
+      const policy = contracts.LOG_RETENTION_POLICIES[category]
+      expect(policy.retentionDays).toBeGreaterThan(0)
+      expect(policy.maxTotalBytes).toBeGreaterThan(0)
+    }
+    expect(contracts.LOG_RETENTION_POLICIES.runtime.retentionDays).toBe(7)
+    expect(contracts.LOG_RETENTION_POLICIES.operation.retentionDays).toBe(30)
+  })
+
+  it('可清空的类别是平台日志类别的子集：登录日志不在清空入口里', () => {
+    for (const category of contracts.LOG_CLEARABLE_CATEGORIES) {
+      expect(contracts.PLATFORM_LOG_CATEGORIES).toContain(category)
+    }
+    expect(contracts.LOG_CLEARABLE_CATEGORIES).toEqual(['runtime', 'operation'])
+  })
+
+  it('保留策略说明含窗口与走 formatLogBytes 的上限值', () => {
+    expect(contracts.logRetentionText('runtime')).toContain('7 天')
+    expect(contracts.logRetentionText('runtime')).toContain('256.00 MB')
+    expect(contracts.logRetentionText('operation')).toContain('30 天')
+    expect(contracts.logRetentionText('operation')).toContain('64.00 MB')
+  })
+
+  // 取整规则钉成可判定的边界用例：进位看的是**显示值**（1023.999 KB 显示成 1024.00 时也要进到 MB）。
+  it.each([
+    [0, '0.00 KB'],
+    [1023, '1.00 KB'],
+    [13_713, '13.39 KB'],
+    [1_048_000, '1023.44 KB'],
+    [1_048_575, '1.00 MB'],
+    [1_048_576, '1.00 MB'],
+    [1_073_741_823, '1.00 GB'],
+    [1_073_741_824, '1.00 GB'],
+    [2_147_483_648, '2.00 GB'],
+  ])('日志体积文案：%i 字节显示为 %s', (bytes, expected) => {
+    expect(contracts.formatLogBytes(bytes)).toBe(expected)
+  })
+
+  it('单次读取上限取最近的 1000 条，分片阈值是 8 MiB', () => {
+    expect(contracts.LOG_ENTRY_FETCH_LIMIT).toBe(1000)
+    expect(contracts.LOG_SHARD_MAX_BYTES).toBe(8 * 1024 * 1024)
   })
 })
 
