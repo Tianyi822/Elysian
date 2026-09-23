@@ -236,6 +236,53 @@ export function parseIpv6Enabled(defaultUfw: string): boolean {
   return match?.[1] !== 'no'
 }
 
+export type UfwStatusRow = {
+  /** To 列原文（如 '48100/tcp'）。 */
+  to: string
+  action: UfwAction
+  direction: 'in' | 'out'
+  /** From 列原文（'Anywhere' 表示全部来源）。 */
+  from: string
+  /** To 列带 (v6) 后缀即 v6 行；无后缀行只可能来自 IPv4 规则账本。 */
+  v6: boolean
+}
+
+/**
+ * 解析 `ufw status [verbose]` 的规则表（`--` 分隔线之后每行一条）。
+ * 与 `show added`（两本账本合并、无地址族信息）不同，status 的行是内核实际装载的
+ * 规则：无 `(v6)` 后缀的行只在 IPv4 账本有对应规则时出现——保底判定以此为准。
+ * 读不懂的行（FWD、非常规形态）跳过，不返回。
+ */
+export function parseStatusRows(stdout: string): readonly UfwStatusRow[] {
+  const lines = stdout.split('\n')
+  const separatorIndex = lines.findIndex((line) => line.trimStart().startsWith('--'))
+  if (separatorIndex === -1) return []
+  const rows: UfwStatusRow[] = []
+  for (const rawLine of lines.slice(separatorIndex + 1)) {
+    const line = rawLine.trim()
+    if (!line) continue
+    const match = /^(\S+)(?:\s+\(v6\))?\s+([A-Z]+)(?:\s+(IN|OUT))?\s+(\S+)/.exec(line)
+    if (!match) continue
+    const action = match[2]?.toLowerCase()
+    const directionWord = match[3]
+    // FWD 等方向与读不懂的动作行没有界面对应物，跳过。
+    if (!action || !isUfwAction(action)) continue
+    if (directionWord === undefined) {
+      // 无方向词的形态里，From 位置是全大写词且其后还有内容，说明是 FWD 这类不认识的方向行。
+      const rest = line.slice(match[0].length).trim()
+      if (/^[A-Z]+$/.test(match[4] ?? '') && rest.length > 0) continue
+    }
+    rows.push({
+      to: match[1] ?? '',
+      action,
+      direction: directionWord === 'OUT' ? 'out' : 'in',
+      from: match[4] ?? '',
+      v6: /\(v6\)/.test(match[0]),
+    })
+  }
+  return rows
+}
+
 /** 规范指纹还原成 ufw 删除参数（comment 不参与规则身份）。 */
 export function specToArgs(spec: UfwRuleSpec): readonly string[] {
   const args: string[] = [spec.action]

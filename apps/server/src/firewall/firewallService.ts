@@ -22,6 +22,7 @@ import {
   parseIpv6Enabled,
   parseRuleId,
   parseShowAdded,
+  parseStatusRows,
   parseStatusVerbose,
   ruleRowsFromSpec,
   specFromInput,
@@ -30,6 +31,7 @@ import {
   type PortUfwLine,
   type RuleRowContext,
   type UfwRuleSpec,
+  type UfwStatusRow,
 } from './parseUfw'
 import { parseSsListening } from './parseSockets'
 import { parsePingBlocked, setPingBlocked } from './pingRules'
@@ -65,7 +67,8 @@ import type { FirewallRuleTimes } from './ruleTimesStore'
  * 防火墙面板的服务编排：把界面动作翻译成容器内 ufw 的真实命令。
  * 全部系统访问经 deps 注入，编排逻辑在 Vitest 里用 fake 依赖驱动。
  *
- * 防锁死保底：面板端口（5173/tcp）在启用防火墙前自动放行，且不允许经面板删除；
+ * 防锁死保底：面板端口在启用防火墙前确保放行（判定以 ufw status 的 IPv4 放行为准，
+ * 见 ensurePanelRule），且不允许经面板删除；
  * 容器没有 systemd，ufw.conf 记 ENABLED=yes 时由 restoreIfNeeded 在 dev server
  * 启动时重新装载，等价真实服务器的 ufw.service 开机自启。
  *
@@ -183,15 +186,34 @@ type HostState = {
   beforeRules: string
 }
 
-/** 面板端口保底规则若不存在则补上（带备注「Elysian 面板」）。 */
+/**
+ * 面板端口保底：激活态以 `ufw status` 的 IPv4 放行行为准——`show added` 合并双栈账本，
+ * 看不出「只剩 v6 半条」的残缺（v4 账本丢失时 Docker 端口映射的 IPv4 流量会被默认拒绝丢包）。
+ * 行缺失或未激活无法核验时幂等补写（ufw 对已有半边自会跳过），补写后激活态仍无 IPv4 行则抛错：
+ * 保底必须可验证，静默失败等于把面板锁死。
+ */
 export async function ensurePanelRule(deps: FirewallHostDeps): Promise<void> {
-  const stdout = await deps.runUfw(['show', 'added'])
-  const exists = parseShowAdded(stdout).some(
-    (line) => line.kind === 'port' && canonicalId(line.spec) === PANEL_CANONICAL,
-  )
-  if (!exists) {
-    await deps.runUfw(['allow', `${PANEL_PORT}/tcp`, 'comment', 'Elysian 面板'])
+  const before = await deps.runUfw(['status', 'verbose'])
+  if (parseStatusVerbose(before).active && hasPanelAllowRow(parseStatusRows(before))) return
+  await deps.runUfw(['allow', `${PANEL_PORT}/tcp`, 'comment', 'Elysian 面板'])
+  const after = await deps.runUfw(['status', 'verbose'])
+  if (parseStatusVerbose(after).active && !hasPanelAllowRow(parseStatusRows(after))) {
+    throw new Error(
+      `面板端口保底规则未生效：ufw allow ${PANEL_PORT}/tcp 执行后 status 仍无 IPv4 放行行，请检查 /etc/ufw/user.rules`,
+    )
   }
+}
+
+/** status 规则表里存在面板端口的 IPv4 入站放行行（来源不限）。 */
+function hasPanelAllowRow(rows: readonly UfwStatusRow[]): boolean {
+  return rows.some(
+    (row) =>
+      !row.v6 &&
+      row.action === 'allow' &&
+      row.direction === 'in' &&
+      row.to === `${PANEL_PORT}/tcp` &&
+      row.from === 'Anywhere',
+  )
 }
 
 export function createFirewallService(deps: FirewallHostDeps): FirewallAdapter {

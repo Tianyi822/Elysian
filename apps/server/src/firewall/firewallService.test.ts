@@ -5,11 +5,12 @@ import {
   PANEL_PORT,
   backupPathOf,
   createFirewallService,
+  ensurePanelRule,
   restoreIfNeeded,
   type FirewallHostDeps,
 } from './firewallService'
 import { InvalidRequestError } from '../shared/errors.ts'
-import { canonicalId, ipCanonicalId } from './parseUfw'
+import { canonicalId, ipCanonicalId, parseShowAddedLine } from './parseUfw'
 import { parsePingBlocked } from './pingRules'
 import { SCAN_BANNED6_RECENT_PATH, SCAN_BANNED_RECENT_PATH, SCAN_TABLES, parseScanSection, setScanSection } from './scanRules'
 import { IP_FORWARD_PATH, forwardCommentOf, noteFromForwardComment, parseForwardSection, setForwardSection } from './forwardRules'
@@ -27,19 +28,50 @@ function caught(run: Promise<unknown>): Promise<unknown> {
   )
 }
 
+/** 规则账本行 → status 规则表行；读不懂的行不渲染（真实 status 只显示装载成功的规则）。 */
+function renderStatusRows(lines: readonly string[], v6: boolean): string[] {
+  const rows: string[] = []
+  for (const line of lines) {
+    const parsed = parseShowAddedLine(`ufw ${line}`)
+    if (!parsed) continue
+    const comment = parsed.comment ? `   # ${parsed.comment}` : ''
+    const v6Suffix = v6 ? ' (v6)' : ''
+    const action = parsed.spec.action.toUpperCase()
+    if (parsed.kind === 'ip') {
+      rows.push(`${parsed.spec.from}${v6Suffix}  ${action} IN  Anywhere${v6Suffix}${comment}`)
+      continue
+    }
+    const protoPort = `${parsed.spec.port}/${parsed.spec.proto}`
+    if (parsed.spec.direction === 'out') {
+      rows.push(`Anywhere${v6Suffix}  ${action} OUT  ${protoPort}${comment}`)
+      continue
+    }
+    const from = parsed.spec.from === 'any' ? 'Anywhere' : parsed.spec.from
+    rows.push(`${protoPort}${v6Suffix}  ${action} IN  ${from}${v6Suffix}${comment}`)
+  }
+  return rows
+}
+
 function createFakeDeps(seed: {
   active?: boolean
   ipv6?: string
   ufwConf?: string
   listeners?: string[]
   rules?: string[]
+  /** IPv4 账本初始内容，默认与 rules 相同；传 [] 模拟「v4 账本丢失、只剩 v6 半条」的事故形态。 */
+  v4Rules?: string[]
+  /** 模拟 allow 执行后 IPv4 账本仍不落规则（保底不可自愈的故障形态）。 */
+  v4Stuck?: boolean
   beforeRules?: string
   /** 关闭「enable 重放 nat 段」的模拟。 */
   reapplyNatOnEnable?: boolean
 } = {}) {
   const ufwCalls: string[][] = []
   let active = seed.active ?? false
-  let added = seed.rules ?? []
+  // 真实 ufw 的规则账本按地址族分两本（user.rules / user6.rules）；rules 默认两本同源。
+  const seededRules = seed.rules ?? []
+  let bookV4 = seed.v4Rules === undefined ? [...seededRules] : [...seed.v4Rules]
+  let bookV6 = [...seededRules]
   let beforeRulesV4 = seed.beforeRules ?? [
     '# before.rules',
     '*filter',
@@ -98,12 +130,23 @@ function createFakeDeps(seed: {
       ufwCalls.push([...args])
       const [verb, ...rest] = args
       if (verb === 'status') {
-        // 真实 ufw 只在激活时才打印 Logging/Default 行，未激活时输出只有 Status 一行。
-        return active
-          ? 'Status: active\nLogging: on (low)\nDefault: deny (incoming), allow (outgoing), disabled (routed)\n'
-          : 'Status: inactive\n'
+        // 真实 ufw 只在激活时才打印 Logging/Default 行与规则表，未激活时输出只有 Status 一行。
+        if (!active) return 'Status: inactive\n'
+        return [
+          'Status: active',
+          'Logging: on (low)',
+          'Default: deny (incoming), allow (outgoing), disabled (routed)',
+          '',
+          'To                         Action      From',
+          '--                         ------      ----',
+          ...renderStatusRows(bookV4, false),
+          ...renderStatusRows(bookV6, true),
+        ].join('\n')
       }
-      if (verb === 'show') return `Added user rules:\n${added.map((line) => `ufw ${line}`).join('\n') || '(None)'}`
+      if (verb === 'show') {
+        const merged = [...new Set([...bookV4, ...bookV6])]
+        return `Added user rules:\n${merged.map((line) => `ufw ${line}`).join('\n') || '(None)'}`
+      }
       if (verb === '--force' && rest[0] === 'enable') {
         // 与真实 ufw 一致：只有完整的 enable 会重放 before.rules（reload 不会）。
         active = true
@@ -154,18 +197,23 @@ function createFakeDeps(seed: {
         return ''
       }
       if (verb === 'allow' || verb === 'deny' || verb === 'limit') {
-        // 与真实 ufw 一致：comment 以带引号的字面量进入 show added 输出。
+        // 与真实 ufw 一致：comment 以带引号的字面量进入 show added 输出；
+        // 已存在的半边按地址族跳过（Skipping adding existing rule）。
         const commentIndex = args.indexOf('comment')
         const specPart = (commentIndex === -1 ? args : args.slice(0, commentIndex)).join(' ')
         const comment = commentIndex === -1 ? null : args.slice(commentIndex + 1).join(' ')
-        added.push(comment ? `${specPart} comment '${comment}'` : specPart)
+        const line = comment ? `${specPart} comment '${comment}'` : specPart
+        if (!seed.v4Stuck && !bookV4.includes(line)) bookV4.push(line)
+        if (!bookV6.includes(line)) bookV6.push(line)
         return 'Rules updated'
       }
       if (verb === 'delete') {
         const spec = args.slice(1).join(' ')
-        const before = added.length
-        added = added.filter((line) => line !== spec && !line.startsWith(`${spec} comment `))
-        if (added.length === before) throw new Error(`ERROR: 找不到规则 (${spec})`)
+        const keep = (line: string) => line !== spec && !line.startsWith(`${spec} comment `)
+        const before = bookV4.length + bookV6.length
+        bookV4 = bookV4.filter(keep)
+        bookV6 = bookV6.filter(keep)
+        if (bookV4.length + bookV6.length === before) throw new Error(`ERROR: 找不到规则 (${spec})`)
         return 'Rules updated'
       }
       throw new Error(`fake ufw 未实现的命令：${args.join(' ')}`)
@@ -289,7 +337,9 @@ function createFakeDeps(seed: {
     deps,
     ufwCalls,
     fileWrites,
-    getAdded: () => [...added],
+    getAdded: () => [...new Set([...bookV4, ...bookV6])],
+    getV4Rules: () => [...bookV4],
+    getV6Rules: () => [...bookV6],
     isActive: () => active,
     getBeforeRules: () => beforeRulesV4,
     getBeforeRulesV6: () => beforeRulesV6,
@@ -840,7 +890,9 @@ describe('createFirewallService setToggles', () => {
     expect(toggles.firewallEnabled).toBe(true)
     const enableIndex = fake.ufwCalls.findIndex((args) => args[0] === '--force')
     expect(enableIndex).toBeGreaterThan(-1)
-    expect(fake.ufwCalls[enableIndex! - 1]).toEqual(['allow', `${PANEL_PORT}/tcp`, 'comment', 'Elysian 面板'])
+    const allowIndex = fake.ufwCalls.findIndex((args) => args[0] === 'allow')
+    expect(allowIndex).toBeGreaterThan(-1)
+    expect(enableIndex).toBeGreaterThan(allowIndex)
     expect(fake.isActive()).toBe(true)
   })
 
@@ -874,12 +926,12 @@ describe('createFirewallService setToggles', () => {
     })
   })
 
-  it('启用时保底规则已存在则不重复添加', async () => {
+  it('启用时保底规则已在双栈也幂等补写一次（未激活无法按行核验，ufw 自会跳过已有半边）', async () => {
     const fake = createFakeDeps({ rules: [`allow ${PANEL_PORT}/tcp comment 'Elysian 面板'`] })
     const service = createFirewallService(fake.deps)
 
     await service.setToggles({ firewallEnabled: true, pingBlocked: false, defaultIncoming: 'deny', defaultOutgoing: 'allow' })
-    expect(fake.ufwCalls.filter((args) => args[0] === 'allow')).toHaveLength(0)
+    expect(fake.ufwCalls.filter((args) => args[0] === 'allow')).toHaveLength(1)
   })
 
   it('禁 ping 改写 v4/v6 before.rules 并经完整重启生效', async () => {
@@ -1214,6 +1266,45 @@ describe('createFirewallService syncFromSystem', () => {
   })
 })
 
+describe('ensurePanelRule 保底（地址族）', () => {
+  it('事故形态自愈：激活态只剩 v6 半条时幂等补写 IPv4 账本', async () => {
+    const fake = createFakeDeps({
+      active: true,
+      rules: [`allow ${PANEL_PORT}/tcp comment 'Elysian 面板'`],
+      v4Rules: [],
+    })
+
+    await expect(ensurePanelRule(fake.deps)).resolves.toBeUndefined()
+    expect(fake.getV4Rules()).toContain(`allow ${PANEL_PORT}/tcp comment 'Elysian 面板'`)
+    expect(fake.getV6Rules()).toHaveLength(1)
+  })
+
+  it('激活态且 IPv4 放行行在：不执行任何写命令', async () => {
+    const fake = createFakeDeps({
+      active: true,
+      rules: [`allow ${PANEL_PORT}/tcp comment 'Elysian 面板'`],
+    })
+
+    await ensurePanelRule(fake.deps)
+    expect(fake.ufwCalls.filter((args) => args[0] === 'allow')).toHaveLength(0)
+  })
+
+  it('未激活时无法按行核验：幂等补写恰好一次，不抛错', async () => {
+    const fake = createFakeDeps({ rules: [`allow ${PANEL_PORT}/tcp comment 'Elysian 面板'`] })
+
+    await expect(ensurePanelRule(fake.deps)).resolves.toBeUndefined()
+    expect(fake.ufwCalls.filter((args) => args[0] === 'allow')).toHaveLength(1)
+  })
+
+  it('补写后激活态仍无 IPv4 放行行：抛中文错误（保底必须可验证）', async () => {
+    const fake = createFakeDeps({ active: true, v4Rules: [], v4Stuck: true })
+
+    const error = await caught(ensurePanelRule(fake.deps))
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).toContain('面板端口保底规则未生效')
+  })
+})
+
 describe('restoreIfNeeded', () => {
   it('ufw.conf 记 ENABLED=yes 时补保底规则并装载', async () => {
     const fake = createFakeDeps({ ufwConf: 'ENABLED=yes\nLOGLEVEL=low\n' })
@@ -1221,7 +1312,21 @@ describe('restoreIfNeeded', () => {
     await restoreIfNeeded(fake.deps)
     const enableIndex = fake.ufwCalls.findIndex((args) => args[0] === '--force')
     expect(enableIndex).toBeGreaterThan(-1)
-    expect(fake.ufwCalls[enableIndex! - 1]).toEqual(['allow', `${PANEL_PORT}/tcp`, 'comment', 'Elysian 面板'])
+    const allowIndex = fake.ufwCalls.findIndex((args) => args[0] === 'allow')
+    expect(allowIndex).toBeGreaterThan(-1)
+    expect(enableIndex).toBeGreaterThan(allowIndex)
+  })
+
+  it('账本只剩 v6 半条时启动装载前补全 IPv4（面板不被锁死）', async () => {
+    const fake = createFakeDeps({
+      ufwConf: 'ENABLED=yes\n',
+      rules: [`allow ${PANEL_PORT}/tcp comment 'Elysian 面板'`],
+      v4Rules: [],
+    })
+
+    await restoreIfNeeded(fake.deps)
+    expect(fake.getV4Rules()).toContain(`allow ${PANEL_PORT}/tcp comment 'Elysian 面板'`)
+    expect(fake.isActive()).toBe(true)
   })
 
   it('ENABLED=no 与配置缺失时不动作', async () => {

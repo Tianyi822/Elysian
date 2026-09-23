@@ -11,6 +11,7 @@ import {
   parseIpv6Enabled,
   parseRuleId,
   parseShowAdded,
+  parseStatusRows,
   parseStatusVerbose,
   portToOf,
   ruleRowsFromSpec,
@@ -302,5 +303,68 @@ describe('parseRuleId / parseIpRuleId', () => {
     expect(parseRuleId('fw-80-ipv4')).toBeNull()
     expect(parseRuleId('ufw-allow-tcp-22-any')).toBeNull()
     expect(parseIpRuleId('fwip-x')).toBeNull()
+  })
+})
+
+describe('parseStatusRows', () => {
+  // 夹具取自容器内 ufw 0.36.2 的真实输出（2026-09-23 事故现场与修复后各一份）。
+  it('解析规则表并按 To 列的 (v6) 后缀区分地址族', () => {
+    const stdout = [
+      'Status: active',
+      'Logging: on (low)',
+      'Default: deny (incoming), allow (outgoing), deny (routed)',
+      'New profiles: skip',
+      '',
+      'To                         Action      From',
+      '--                         ------      ----',
+      '22/tcp                     ALLOW IN    Anywhere                   # ssh',
+      '48100/tcp                  ALLOW IN    Anywhere                   # Elysian 面板',
+      '22/tcp (v6)                ALLOW IN    Anywhere (v6)              # ssh',
+      '48100/tcp (v6)             ALLOW IN    Anywhere (v6)              # Elysian 面板',
+    ].join('\n')
+    expect(parseStatusRows(stdout)).toEqual([
+      { to: '22/tcp', action: 'allow', direction: 'in', from: 'Anywhere', v6: false },
+      { to: '48100/tcp', action: 'allow', direction: 'in', from: 'Anywhere', v6: false },
+      { to: '22/tcp', action: 'allow', direction: 'in', from: 'Anywhere', v6: true },
+      { to: '48100/tcp', action: 'allow', direction: 'in', from: 'Anywhere', v6: true },
+    ])
+  })
+
+  it('事故形态：只剩 (v6) 行时能看出 IPv4 放行缺失', () => {
+    const stdout = [
+      'Status: active',
+      'Logging: on (low)',
+      'Default: deny (incoming), allow (outgoing), deny (routed)',
+      'New profiles: skip',
+      '',
+      'To                         Action      From',
+      '--                         ------      ----',
+      '22/tcp (v6)                ALLOW IN    Anywhere (v6)              # ssh',
+      '48100/tcp (v6)             ALLOW IN    Anywhere (v6)              # Elysian 面板',
+    ].join('\n')
+    const rows = parseStatusRows(stdout)
+    expect(rows).toHaveLength(2)
+    expect(rows.every((row) => row.v6)).toBe(true)
+  })
+
+  it('未激活输出（无表格）返回空数组', () => {
+    expect(parseStatusRows('Status: inactive\n')).toEqual([])
+  })
+
+  it('非 verbose 形态（动作列无方向）同样解析，读不懂的行跳过', () => {
+    const stdout = [
+      'Status: active',
+      '',
+      'To                         Action      From',
+      '--                         ------      ----',
+      '22/tcp                     ALLOW       Anywhere',
+      '23/tcp                     DENY        Anywhere',
+      'Anywhere                   ALLOW FWD   192.168.1.5',
+      '垃圾桶行不解析',
+    ].join('\n')
+    expect(parseStatusRows(stdout)).toEqual([
+      { to: '22/tcp', action: 'allow', direction: 'in', from: 'Anywhere', v6: false },
+      { to: '23/tcp', action: 'deny', direction: 'in', from: 'Anywhere', v6: false },
+    ])
   })
 })
