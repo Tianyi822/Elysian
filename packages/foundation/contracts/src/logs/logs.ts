@@ -1,7 +1,6 @@
 /*
- * 日志域类型与词典。本期只做平台运行日志与平台登录日志的演示呈现：
- * 真实日志属于主机与服务的事实，由未来接入的采集层提供，
- * 这里的类型只描述界面需要呈现的事实。
+ * 登录日志的类型与词典。登录日志本期仍是 mock（面板还没有登录功能），形状保持演示态。
+ * 平台真的落盘的两类日志——运行日志与操作日志——在 ./platformLogs.ts，不在这里。
  */
 
 export type LoginLogStatus = 'success' | 'failure'
@@ -27,12 +26,4 @@ export type LoginLogEntry = {
   status: LoginLogStatus
   /** 登录时间（ISO，不带时区偏移，与仓库其他种子时间同一写法）。 */
   time: string
-}
-
-/** 平台运行日志快照：整份日志文本与它的 UTF-8 字节大小。 */
-export type RuntimeLogSnapshot = {
-  /** 日志原文，按 \n 分行，行内自带时间戳与级别标记。 */
-  content: string
-  /** 字节大小，界面据此展示「日志大小」。 */
-  sizeBytes: number
 }
