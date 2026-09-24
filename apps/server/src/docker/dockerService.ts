@@ -1,4 +1,5 @@
 import type { Container, ContainerImage } from '@elysian/contracts'
+import { InvalidRequestError } from '../shared/errors.ts'
 import type { DockerTransport } from './dockerTransport.ts'
 import { mapContainer, mapImage } from './dockerMappers.ts'
 
@@ -8,11 +9,24 @@ const INSPECT_CONCURRENCY = 8
 const LIST_TIMEOUT_MS = 10_000
 const JSON_MAX_BYTES = 32 * 1024 * 1024
 const LIST_TIMEOUT_MESSAGE = 'Docker 列表请求超时'
+const ACTION_TIMEOUT_MS = 30_000
+const ACTION_BUSY_MESSAGE = '该容器正在执行其他操作'
+const ACTION_PAUSED_MESSAGE = '容器已暂停，面板暂不支持恢复'
+const ACTION_SELF_MESSAGE = '不能对面板所在的容器执行该操作'
+const CONTAINER_NOT_FOUND_MESSAGE = '容器不存在'
 
 export type DockerReadService = {
   listContainers(): Promise<readonly Container[]>
   listImages(): Promise<readonly ContainerImage[]>
   policy(): Promise<{ mountRoot: string; reservedPorts: readonly number[] }>
+  action(id: string, action: 'start' | 'stop' | 'restart'): Promise<Container>
+}
+
+export type DockerServiceOptions = {
+  mountRoot: string
+  reservedPorts: readonly number[]
+  selfContainerId?: string | null
+  onRestarting?: (containerId: string) => void | Promise<void>
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -74,6 +88,58 @@ function createListDeadline(timeoutMs: number): ListDeadline {
       })
     },
   }
+}
+
+function isPausedInspect(inspect: unknown): boolean {
+  if (!isRecord(inspect)) {
+    return false
+  }
+  const state = inspect.State
+  if (!isRecord(state) || typeof state.Status !== 'string') {
+    return false
+  }
+  return state.Status === 'paused'
+}
+
+function isSelfContainerTarget(id: string, selfContainerId: string | null | undefined): boolean {
+  if (selfContainerId === null || selfContainerId === undefined || selfContainerId.length === 0) {
+    return false
+  }
+  if (id === selfContainerId) {
+    return true
+  }
+  return selfContainerId.startsWith(id)
+}
+
+async function dockerRequest(
+  transport: DockerTransport,
+  input: { method: string; path: string; timeoutMs: number },
+): Promise<{ status: number; json: unknown }> {
+  return transport.request({
+    method: input.method,
+    path: input.path,
+    timeoutMs: input.timeoutMs,
+    maxBytes: JSON_MAX_BYTES,
+  })
+}
+
+async function inspectContainer(
+  transport: DockerTransport,
+  id: string,
+  timeoutMs: number,
+): Promise<unknown> {
+  const response = await dockerRequest(transport, {
+    method: 'GET',
+    path: `${API_PREFIX}/containers/${encodeEngineId(id)}/json`,
+    timeoutMs,
+  })
+  if (response.status === 404) {
+    throw new InvalidRequestError(404, CONTAINER_NOT_FOUND_MESSAGE)
+  }
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`获取容器详情失败（HTTP ${response.status}）`)
+  }
+  return response.json
 }
 
 async function dockerGet(
@@ -152,10 +218,70 @@ async function listWithInspect<TSummary, TResult>(
   })())
 }
 
+const actionLocks = new Map<string, Promise<void>>()
+
 export function createDockerReadService(
   transport: DockerTransport,
-  options: { mountRoot: string; reservedPorts: readonly number[] },
+  options: DockerServiceOptions,
 ): DockerReadService {
+  const selfContainerId = options.selfContainerId ?? null
+
+  async function runAction(id: string, action: 'start' | 'stop' | 'restart'): Promise<Container> {
+    if (actionLocks.has(id)) {
+      throw new InvalidRequestError(409, ACTION_BUSY_MESSAGE)
+    }
+
+    let releaseLock!: () => void
+    const lock = new Promise<void>((resolve) => {
+      releaseLock = resolve
+    })
+    actionLocks.set(id, lock)
+
+    try {
+      if (
+        (action === 'stop' || action === 'restart') &&
+        isSelfContainerTarget(id, selfContainerId)
+      ) {
+        throw new InvalidRequestError(400, ACTION_SELF_MESSAGE)
+      }
+
+      const preInspect = await inspectContainer(transport, id, ACTION_TIMEOUT_MS)
+      if (isPausedInspect(preInspect)) {
+        throw new InvalidRequestError(409, ACTION_PAUSED_MESSAGE)
+      }
+
+      if (action === 'restart') {
+        await options.onRestarting?.(id)
+      }
+
+      const actionPath =
+        action === 'stop'
+          ? `${API_PREFIX}/containers/${encodeEngineId(id)}/stop?t=10`
+          : `${API_PREFIX}/containers/${encodeEngineId(id)}/${action}`
+      const actionResponse = await dockerRequest(transport, {
+        method: 'POST',
+        path: actionPath,
+        timeoutMs: ACTION_TIMEOUT_MS,
+      })
+      if (actionResponse.status === 404) {
+        throw new InvalidRequestError(404, CONTAINER_NOT_FOUND_MESSAGE)
+      }
+      if (
+        actionResponse.status !== 200 &&
+        actionResponse.status !== 204 &&
+        actionResponse.status !== 304
+      ) {
+        throw new Error(`容器${action}失败（HTTP ${actionResponse.status}）`)
+      }
+
+      const postInspect = await inspectContainer(transport, id, ACTION_TIMEOUT_MS)
+      return mapContainer(postInspect)
+    } finally {
+      actionLocks.delete(id)
+      releaseLock()
+    }
+  }
+
   return {
     async listContainers() {
       return listWithInspect(
@@ -177,6 +303,9 @@ export function createDockerReadService(
     },
     async policy() {
       return { mountRoot: options.mountRoot, reservedPorts: options.reservedPorts }
+    },
+    action(id, action) {
+      return runAction(id, action)
     },
   }
 }

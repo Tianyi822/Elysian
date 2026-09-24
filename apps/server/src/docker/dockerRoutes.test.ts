@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Hono } from 'hono'
 import type { Container, ContainerImage } from '@elysian/contracts'
+import { InvalidRequestError } from '../shared/errors'
 import { DOCKER_MOUNT, createDockerApp, type DockerAppDeps, type DockerReadService } from './dockerRoutes'
 
 const SAMPLE_CONTAINER: Container = {
@@ -32,6 +33,11 @@ function createFakeService(overrides: Partial<DockerReadService> = {}): DockerRe
     policy: async () => ({
       mountRoot: '/srv',
       reservedPorts: [22, 48100, 48101],
+    }),
+    action: async (id, action) => ({
+      ...SAMPLE_CONTAINER,
+      id,
+      status: action === 'stop' ? 'stopped' : 'running',
     }),
     ...overrides,
   }
@@ -122,5 +128,49 @@ describe('createDockerApp', () => {
     const res = await app.request(req('GET', '/api/docker/nope'))
     expect(res.status).toBe(404)
     expect(await res.json()).toEqual({ error: '未知容器管理端点：GET /nope' })
+  })
+
+  it('POST /containers/:id/start|stop|restart 返回 200 与容器对象', async () => {
+    const action = vi.fn(async (id: string, kind: 'start' | 'stop' | 'restart') => ({
+      ...SAMPLE_CONTAINER,
+      id,
+      status: kind === 'stop' ? 'stopped' : 'running',
+    }))
+    const app = mountedApp({
+      ...READY,
+      service: createFakeService({ action }),
+    })
+
+    for (const kind of ['start', 'stop', 'restart'] as const) {
+      const res = await app.request(req('POST', `/api/docker/containers/${SAMPLE_CONTAINER.id}/${kind}`))
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({
+        ...SAMPLE_CONTAINER,
+        id: SAMPLE_CONTAINER.id,
+        status: kind === 'stop' ? 'stopped' : 'running',
+      })
+      expect(action).toHaveBeenCalledWith(SAMPLE_CONTAINER.id, kind)
+    }
+  })
+
+  it('非法容器 id 返回 400', async () => {
+    const app = mountedApp(READY)
+    const res = await app.request(req('POST', '/api/docker/containers/bad%2Fid/start'))
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: '容器 ID 格式无效' })
+  })
+
+  it('service 抛出容器不存在时路由返回 404', async () => {
+    const app = mountedApp({
+      ...READY,
+      service: createFakeService({
+        action: async () => {
+          throw new InvalidRequestError(404, '容器不存在')
+        },
+      }),
+    })
+    const res = await app.request(req('POST', `/api/docker/containers/${SAMPLE_CONTAINER.id}/start`))
+    expect(res.status).toBe(404)
+    expect(await res.json()).toEqual({ error: '容器不存在' })
   })
 })

@@ -1,6 +1,8 @@
 import { Hono } from 'hono'
-import { endpointErrorHandler, sameOriginGuard, sendJson } from '../middleware/guard.ts'
+import { endpointErrorHandler, invalidRequest, sameOriginGuard, sendJson } from '../middleware/guard.ts'
 import type { DockerReadService } from './dockerService.ts'
+
+const CONTAINER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/
 
 /** 挂载路径：app.ts 用同一常量挂载，404 兜底也用它剥前缀——单一事实，两处不漂移。 */
 export const DOCKER_MOUNT = '/api/docker'
@@ -37,6 +39,21 @@ export function createDockerApp(deps: DockerAppDeps): Hono {
   app.get('/containers', async () => sendJson(200, { containers: await service.listContainers() }))
   app.get('/images', async () => sendJson(200, { images: await service.listImages() }))
   app.get('/policy', async () => sendJson(200, await service.policy()))
+
+  async function postContainerAction(
+    id: string,
+    action: 'start' | 'stop' | 'restart',
+  ): Promise<Response> {
+    if (!CONTAINER_ID_PATTERN.test(id)) {
+      throw invalidRequest('容器 ID 格式无效')
+    }
+    const container = await service.action(id, action)
+    return sendJson(200, container)
+  }
+
+  app.post('/containers/:id/start', (c) => postContainerAction(c.req.param('id'), 'start'))
+  app.post('/containers/:id/stop', (c) => postContainerAction(c.req.param('id'), 'stop'))
+  app.post('/containers/:id/restart', (c) => postContainerAction(c.req.param('id'), 'restart'))
 
   app.all('*', (c) => {
     const path = c.req.path.slice(DOCKER_MOUNT.length) || '/'
