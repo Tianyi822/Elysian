@@ -44,8 +44,9 @@ for (const [network, prefix] of PRIVATE_IPV6_RANGES) {
 function normalizeIpForCheck(ip: string): string {
   const trimmed = ip.trim()
   const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(trimmed)
-  if (mapped && isIP(mapped[1]) === 4) {
-    return mapped[1]
+  const ipv4 = mapped?.[1]
+  if (ipv4 !== undefined && isIP(ipv4) === 4) {
+    return ipv4
   }
   return trimmed
 }

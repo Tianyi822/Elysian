@@ -384,6 +384,23 @@ export const OPERATION_DESCRIPTORS: Readonly<Record<string, OperationDescriptor>
       return id === null ? null : `容器 ${id}`
     },
   },
+  [`POST ${DOCKER_MOUNT}/images/pull`]: {
+    category: 'containers',
+    action: '拉取镜像',
+    summarize: ({ body }) => {
+      const name = text(body, 'name')
+      const tag = text(body, 'tag')
+      return name === null || tag === null ? null : `${name}:${tag}`
+    },
+  },
+  [`DELETE ${DOCKER_MOUNT}/images/:id`]: {
+    category: 'containers',
+    action: '删除镜像',
+    target: ({ params }) => {
+      const id = param(params, 'id')
+      return id === null ? null : `镜像 ${id}`
+    },
+  },
 
   // 日志管理：清空是写端点，因此清空动作本身也留痕（「想抹掉痕迹」只会留下「抹掉痕迹」这条痕迹）。
   [`POST ${LOGS_MOUNT}/runtime/clear`]: {

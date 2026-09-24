@@ -1,8 +1,11 @@
 import type { Container, ContainerImage } from '@elysian/contracts'
-import { InvalidRequestError } from '../shared/errors.ts'
+import { parseImageReference } from '@elysian/contracts'
+import { InvalidRequestError, invalidRequest } from '../shared/errors.ts'
 import type { DockerTransport } from './dockerTransport.ts'
 import { buildCreateSpec } from './createSpec.ts'
 import { mapContainer, mapImage } from './dockerMappers.ts'
+import { readPullProgress } from './dockerStreams.ts'
+import { validateRegistry, type RegistryResolver } from './registryPolicy.ts'
 
 const API_PREFIX = '/v1.41'
 const LIST_MAX = 500
@@ -11,7 +14,15 @@ const LIST_TIMEOUT_MS = 10_000
 const JSON_MAX_BYTES = 32 * 1024 * 1024
 const LIST_TIMEOUT_MESSAGE = 'Docker 列表请求超时'
 const ACTION_TIMEOUT_MS = 30_000
+const PULL_TIMEOUT_MS = 15 * 60 * 1000
+const PULL_PROGRESS_MAX_BYTES = 64 * 1024 * 1024
+const REGISTRY_RESOLVE_TIMEOUT_MS = 3_000
 const ACTION_BUSY_MESSAGE = '该容器正在执行其他操作'
+const PULL_BUSY_MESSAGE = '已有镜像正在拉取'
+const PULL_AUTH_MESSAGE = '不支持私有仓库认证'
+const REGISTRY_REFERENCE_CONFLICT_MESSAGE = '镜像源与引用中的仓库地址请只填一处'
+const IMAGE_IN_USE_MESSAGE = '镜像仍被容器引用，删除失败'
+const IMAGE_NOT_FOUND_MESSAGE = '镜像不存在，删除失败'
 const ACTION_PAUSED_MESSAGE = '容器已暂停，面板暂不支持恢复'
 const ACTION_SELF_MESSAGE = '不能对面板所在的容器执行该操作'
 const CONTAINER_NOT_FOUND_MESSAGE = '容器不存在'
@@ -22,6 +33,8 @@ export type DockerReadService = {
   policy(): Promise<{ mountRoot: string; reservedPorts: readonly number[] }>
   action(id: string, action: 'start' | 'stop' | 'restart'): Promise<Container>
   create(body: unknown): Promise<Container>
+  pull(body: unknown, signal: AbortSignal): Promise<ContainerImage>
+  removeImage(id: string): Promise<void>
 }
 
 export type DockerServiceOptions = {
@@ -31,6 +44,7 @@ export type DockerServiceOptions = {
   onRestarting?: (containerId: string) => void | Promise<void>
   mkdir: (path: string, mode: number) => Promise<void>
   realpath: (path: string) => Promise<string>
+  resolveRegistry?: RegistryResolver
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -226,10 +240,16 @@ async function listWithInspect<TSummary, TResult>(
 const actionLocks = new Map<string, Promise<void>>()
 
 let createTail: Promise<unknown> = Promise.resolve()
+let pullInFlight = false
 
 /** 测试专用：清空创建串行队列，避免用例间泄漏未完成的 create。 */
 export function resetDockerCreateQueue(): void {
   createTail = Promise.resolve()
+}
+
+/** 测试专用：复位拉取单飞锁。 */
+export function resetDockerPullLock(): void {
+  pullInFlight = false
 }
 
 function serializeCreate<T>(critical: () => Promise<T>): Promise<T> {
@@ -255,11 +275,197 @@ function requireCreateId(json: unknown): string {
   return json.Id
 }
 
+function normalizeImageId(id: string): string {
+  return id.startsWith('sha256:') ? id.slice('sha256:'.length) : id
+}
+
+function embeddedRegistryHost(imageName: string): string | null {
+  const firstSegment = imageName.split('/')[0] ?? imageName
+  if (
+    firstSegment === 'localhost' ||
+    firstSegment.includes('.') ||
+    firstSegment.includes(':')
+  ) {
+    return firstSegment
+  }
+  return null
+}
+
+function buildRegistryFromImage(registryHost: string, name: string, tag: string): string {
+  const imagePath = name.includes('/') ? name : `library/${name}`
+  return `${registryHost}/${imagePath}:${tag}`
+}
+
+async function resolveWithTimeout(
+  resolve: RegistryResolver,
+  hostname: string,
+  timeoutMs: number,
+): Promise<readonly string[]> {
+  return new Promise<readonly string[]>((resolveAddresses, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error('镜像源无法解析为公网地址'))
+    }, timeoutMs)
+    resolve(hostname)
+      .then((addresses) => {
+        clearTimeout(timer)
+        resolveAddresses(addresses)
+      })
+      .catch(() => {
+        clearTimeout(timer)
+        reject(new Error('镜像源无法解析为公网地址'))
+      })
+  })
+}
+
+function wrapRegistryResolver(resolve: RegistryResolver): RegistryResolver {
+  return (hostname) => resolveWithTimeout(resolve, hostname, REGISTRY_RESOLVE_TIMEOUT_MS)
+}
+
+async function assertRegistryAllowed(raw: string, resolve: RegistryResolver): Promise<string> {
+  try {
+    return await validateRegistry(raw, wrapRegistryResolver(resolve))
+  } catch (error) {
+    if (error instanceof Error) {
+      throw invalidRequest(error.message)
+    }
+    throw invalidRequest('镜像源主机名不合法')
+  }
+}
+
+function parsePullBody(body: unknown): { name: string; tag: string; registry?: string } {
+  if (!isRecord(body)) {
+    throw invalidRequest('请求体必须是 JSON 对象')
+  }
+  if (body.auth !== undefined || body.password !== undefined) {
+    throw invalidRequest(PULL_AUTH_MESSAGE)
+  }
+  const nameRaw = body.name
+  const tagRaw = body.tag
+  if (typeof nameRaw !== 'string' || typeof tagRaw !== 'string') {
+    throw invalidRequest('请提供镜像名称与标签')
+  }
+  const parsed = parseImageReference(`${nameRaw.trim()}:${tagRaw.trim()}`)
+  if (!parsed.ok) {
+    throw invalidRequest(parsed.error)
+  }
+  const registry =
+    body.registry === undefined
+      ? undefined
+      : typeof body.registry === 'string'
+        ? body.registry.trim()
+        : null
+  if (registry === null) {
+    throw invalidRequest('镜像源格式无效')
+  }
+  if (registry !== undefined && registry.length === 0) {
+    throw invalidRequest('镜像源不能为空')
+  }
+  return { ...parsed.reference, registry }
+}
+
+async function imageExistsByTag(
+  transport: DockerTransport,
+  name: string,
+  tag: string,
+): Promise<boolean> {
+  const images = await listWithInspect(
+    transport,
+    `${API_PREFIX}/images/json`,
+    (id) => `${API_PREFIX}/images/${encodeEngineId(id)}/json`,
+    '镜像',
+    (summary, inspect) => mapImage(summary, inspect),
+  )
+  return images.some((image) => image.name === name && image.tag === tag)
+}
+
+async function inspectImageById(transport: DockerTransport, id: string): Promise<unknown> {
+  const engineId = id.includes(':') ? id : normalizeImageId(id)
+  const response = await dockerRequest(transport, {
+    method: 'GET',
+    path: `${API_PREFIX}/images/${encodeEngineId(engineId)}/json`,
+    timeoutMs: ACTION_TIMEOUT_MS,
+  })
+  if (response.status === 404) {
+    throw new InvalidRequestError(404, IMAGE_NOT_FOUND_MESSAGE)
+  }
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`获取镜像详情失败（HTTP ${response.status}）`)
+  }
+  return response.json
+}
+
+async function deleteImageRef(
+  transport: DockerTransport,
+  ref: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const response = await dockerRequest(transport, {
+    method: 'DELETE',
+    path: `${API_PREFIX}/images/${encodeEngineId(ref)}?force=false`,
+    timeoutMs: ACTION_TIMEOUT_MS,
+  })
+  if (response.status === 200 || response.status === 204) {
+    return { ok: true }
+  }
+  return {
+    ok: false,
+    message: engineErrorMessage(response.json, `HTTP ${response.status}`),
+  }
+}
+
+async function tagImageRef(
+  transport: DockerTransport,
+  sourceRef: string,
+  repo: string,
+  tag: string,
+): Promise<void> {
+  const response = await dockerRequest(transport, {
+    method: 'POST',
+    path: `${API_PREFIX}/images/${encodeEngineId(sourceRef)}/tag?repo=${encodeURIComponent(repo)}&tag=${encodeURIComponent(tag)}`,
+    timeoutMs: ACTION_TIMEOUT_MS,
+  })
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(
+      `镜像打标签失败（HTTP ${response.status}）：${engineErrorMessage(response.json, '未知错误')}`,
+    )
+  }
+}
+
+async function countContainerImageReferences(
+  transport: DockerTransport,
+  imageId: string,
+): Promise<number> {
+  const response = await dockerRequest(transport, {
+    method: 'GET',
+    path: `${API_PREFIX}/containers/json?all=1`,
+    timeoutMs: ACTION_TIMEOUT_MS,
+  })
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`获取容器列表失败（HTTP ${response.status}）`)
+  }
+  if (!Array.isArray(response.json)) {
+    throw new Error('容器列表格式无效')
+  }
+  const target = normalizeImageId(imageId)
+  let count = 0
+  for (const summary of response.json) {
+    if (!isRecord(summary) || typeof summary.Image !== 'string') continue
+    if (normalizeImageId(summary.Image) === target) {
+      count += 1
+    }
+  }
+  return count
+}
+
 export function createDockerReadService(
   transport: DockerTransport,
   options: DockerServiceOptions,
 ): DockerReadService {
   const selfContainerId = options.selfContainerId ?? null
+  const resolveRegistry =
+    options.resolveRegistry ??
+    (async () => {
+      throw new Error('镜像源无法解析为公网地址')
+    })
 
   async function runAction(id: string, action: 'start' | 'stop' | 'restart'): Promise<Container> {
     if (actionLocks.has(id)) {
@@ -428,6 +634,119 @@ export function createDockerReadService(
         const inspect = await inspectContainer(transport, containerId, ACTION_TIMEOUT_MS)
         return mapContainer(inspect)
       })
+    },
+    async pull(body, signal) {
+      if (pullInFlight) {
+        throw new InvalidRequestError(409, PULL_BUSY_MESSAGE)
+      }
+      pullInFlight = true
+      try {
+        const input = parsePullBody(body)
+        const embeddedHost = embeddedRegistryHost(input.name)
+        if (embeddedHost !== null && input.registry !== undefined) {
+          throw invalidRequest(REGISTRY_REFERENCE_CONFLICT_MESSAGE)
+        }
+
+        if (await imageExistsByTag(transport, input.name, input.tag)) {
+          throw invalidRequest(`镜像已存在：${input.name}:${input.tag}`)
+        }
+
+        let fromImage = `${input.name}:${input.tag}`
+        let registryPullRef: string | null = null
+
+        if (input.registry !== undefined) {
+          const registryHost = await assertRegistryAllowed(input.registry, resolveRegistry)
+          fromImage = buildRegistryFromImage(registryHost, input.name, input.tag)
+          registryPullRef = fromImage
+        } else if (embeddedHost !== null) {
+          await assertRegistryAllowed(embeddedHost, resolveRegistry)
+        }
+
+        const pullCreate = transport.pullCreate
+        if (!pullCreate) {
+          throw new Error('Docker 传输层不支持镜像拉取')
+        }
+
+        const pullPath = `${API_PREFIX}/images/create?fromImage=${encodeURIComponent(fromImage)}`
+        const pullResponse = await pullCreate({
+          path: pullPath,
+          timeoutMs: PULL_TIMEOUT_MS,
+          maxBytes: PULL_PROGRESS_MAX_BYTES,
+          signal,
+        })
+        if (pullResponse.status !== 200) {
+          throw new Error(`拉取镜像失败（HTTP ${pullResponse.status}）`)
+        }
+        const progress = readPullProgress(pullResponse.chunks)
+        if (!progress.ok) {
+          throw invalidRequest(progress.error)
+        }
+
+        if (registryPullRef !== null) {
+          await tagImageRef(transport, registryPullRef, input.name, input.tag)
+          const untag = await deleteImageRef(transport, registryPullRef)
+          if (!untag.ok) {
+            throw invalidRequest(`拉取后清理镜像源标签失败：${untag.message}`)
+          }
+        }
+
+        const images = await listWithInspect(
+          transport,
+          `${API_PREFIX}/images/json`,
+          (id) => `${API_PREFIX}/images/${encodeEngineId(id)}/json`,
+          '镜像',
+          (summary, inspect) => mapImage(summary, inspect),
+        )
+        const pulled = images.find((image) => image.name === input.name && image.tag === input.tag)
+        if (!pulled) {
+          throw new Error('拉取完成但未找到本地镜像')
+        }
+        return pulled
+      } finally {
+        pullInFlight = false
+      }
+    },
+    async removeImage(id) {
+      const normalizedId = normalizeImageId(id.trim())
+      if (normalizedId.length === 0) {
+        throw invalidRequest('镜像 ID 不能为空')
+      }
+
+      const refs = await countContainerImageReferences(transport, normalizedId)
+      if (refs > 0) {
+        throw new InvalidRequestError(409, IMAGE_IN_USE_MESSAGE)
+      }
+
+      const inspect = await inspectImageById(transport, normalizedId)
+      const repoTagsRaw = isRecord(inspect) ? inspect.RepoTags : undefined
+      const repoTags: string[] = []
+      if (Array.isArray(repoTagsRaw)) {
+        for (const tag of repoTagsRaw) {
+          if (typeof tag === 'string' && tag.length > 0) {
+            repoTags.push(tag)
+          }
+        }
+      }
+
+      if (repoTags.length === 0) {
+        const result = await deleteImageRef(transport, normalizedId)
+        if (!result.ok) {
+          throw invalidRequest(`删除镜像失败：${result.message}`)
+        }
+        return
+      }
+
+      const sorted = [...repoTags].sort((a, b) => a.localeCompare(b))
+      const removed: string[] = []
+      for (const tag of sorted) {
+        const result = await deleteImageRef(transport, tag)
+        if (!result.ok) {
+          const removedHint =
+            removed.length > 0 ? `已移除 ${removed[0]}，` : ''
+          throw invalidRequest(`${removedHint}删除 ${tag} 失败：${result.message}`)
+        }
+        removed.push(tag)
+      }
     },
   }
 }

@@ -1,3 +1,4 @@
+import { lookup } from 'node:dns/promises'
 import { existsSync, readFileSync } from 'node:fs'
 import { mkdir, realpath } from 'node:fs/promises'
 import { PANEL_PORT } from '@elysian/contracts'
@@ -22,6 +23,13 @@ export type DockerHostDepsOptions = {
 }
 
 export type { DockerAppDeps } from './dockerRoutes.ts'
+
+function createRegistryResolver() {
+  return async (hostname: string) => {
+    const results = await lookup(hostname, { all: true, verbatim: true })
+    return results.map((entry) => entry.address)
+  }
+}
 
 function resolveMountRoot(env: NodeJS.ProcessEnv): string {
   const value = env.ELYSIAN_DOCKER_MOUNT_ROOT
@@ -115,6 +123,7 @@ export async function createDockerHostDeps(options: DockerHostDepsOptions = {}):
       await mkdir(path, { mode })
     },
     realpath: (path) => realpath(path),
+    resolveRegistry: createRegistryResolver(),
   })
 
   return { available: true, socketReady: true, service, eventsHub }

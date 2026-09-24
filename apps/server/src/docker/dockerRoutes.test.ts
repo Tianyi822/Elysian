@@ -47,6 +47,8 @@ function createFakeService(overrides: Partial<DockerReadService> = {}): DockerRe
       status: action === 'stop' ? 'stopped' : 'running',
     }),
     create: async () => SAMPLE_CONTAINER,
+    pull: async () => SAMPLE_IMAGE,
+    removeImage: async () => undefined,
     ...overrides,
   }
 }
@@ -245,6 +247,35 @@ describe('createDockerApp', () => {
     const blocked = await app.request(req('GET', '/api/docker/events'))
     expect(blocked.status).toBe(503)
     expect(await blocked.json()).toEqual({ error: '实时连接数已达上限' })
+  })
+
+  it('POST /images/pull 返回 200 并把 AbortSignal 传给 service', async () => {
+    const pull = vi.fn(async (_body: unknown, signal: AbortSignal) => {
+      expect(signal).toBeInstanceOf(AbortSignal)
+      return SAMPLE_IMAGE
+    })
+    const app = mountedApp({
+      ...READY,
+      service: createFakeService({ pull }),
+    })
+    const res = await app.request(
+      req('POST', '/api/docker/images/pull', { name: 'nginx', tag: '1.27' }),
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual(SAMPLE_IMAGE)
+    expect(pull).toHaveBeenCalledOnce()
+  })
+
+  it('DELETE /images/:id 返回 204 且无响应体', async () => {
+    const removeImage = vi.fn(async () => undefined)
+    const app = mountedApp({
+      ...READY,
+      service: createFakeService({ removeImage }),
+    })
+    const res = await app.request(req('DELETE', `/api/docker/images/${SAMPLE_IMAGE.id}`))
+    expect(res.status).toBe(204)
+    expect(res.body).toBeNull()
+    expect(removeImage).toHaveBeenCalledWith(SAMPLE_IMAGE.id)
   })
 
   it('hub 上报 connecting 时 SSE 写入 status connecting 注释帧', async () => {

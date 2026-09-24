@@ -141,6 +141,15 @@ function createFakeDockerService(overrides: Partial<DockerReadService> = {}): Do
     policy: async () => ({ mountRoot: '/srv', reservedPorts: [22] }),
     action: async (id) => ({ ...SAMPLE_CONTAINER, id }),
     create: async () => SAMPLE_CONTAINER,
+    pull: async () => ({
+      id: 'img-1',
+      name: 'nginx',
+      tag: '1.27',
+      digest: 'sha256:abcd',
+      sizeMb: 1,
+      pulledAt: '2024-05-01T08:00:00.000000000Z',
+    }),
+    removeImage: async () => undefined,
     ...overrides,
   }
 }

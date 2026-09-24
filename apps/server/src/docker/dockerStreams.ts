@@ -53,7 +53,7 @@ export function readPullProgress(chunks: readonly Uint8Array[]): PullProgressRes
 
 function concatUint8Arrays(parts: readonly Uint8Array[]): Uint8Array {
   if (parts.length === 0) return new Uint8Array(0)
-  if (parts.length === 1) return parts[0]
+  if (parts.length === 1) return parts[0]!
   const total = parts.reduce((sum, part) => sum + part.length, 0)
   const out = new Uint8Array(total)
   let offset = 0

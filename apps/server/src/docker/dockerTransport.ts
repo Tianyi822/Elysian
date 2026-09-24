@@ -8,6 +8,12 @@ export type DockerTransport = {
     timeoutMs: number
     maxBytes: number
   }): Promise<{ status: number; json: unknown }>
+  pullCreate?(input: {
+    path: string
+    timeoutMs: number
+    maxBytes: number
+    signal?: AbortSignal
+  }): Promise<{ status: number; chunks: readonly Uint8Array[] }>
   openStream?(input: {
     method: string
     path: string
@@ -119,6 +125,78 @@ function requestOverSocket(
   })
 }
 
+function pullCreateOverSocket(
+  socketPath: string,
+  input: {
+    path: string
+    timeoutMs: number
+    maxBytes: number
+    signal?: AbortSignal
+  },
+): Promise<{ status: number; chunks: readonly Uint8Array[] }> {
+  return new Promise((resolve, reject) => {
+    const chunks: Uint8Array[] = []
+    let total = 0
+    let settled = false
+
+    const fail = (error: Error) => {
+      if (settled) return
+      settled = true
+      reject(error)
+    }
+
+    const req = http.request(
+      {
+        socketPath,
+        hostname: 'localhost',
+        method: 'POST',
+        path: input.path,
+      },
+      (res) => {
+        res.on('data', (chunk: Buffer) => {
+          total += chunk.length
+          if (total > input.maxBytes) {
+            req.destroy()
+            fail(new Error('拉取进度过大'))
+            return
+          }
+          chunks.push(new Uint8Array(chunk))
+        })
+        res.on('end', () => {
+          if (settled) return
+          settled = true
+          resolve({ status: res.statusCode ?? 0, chunks })
+        })
+        res.on('error', (err) => fail(err instanceof Error ? err : new Error(String(err))))
+      },
+    )
+
+    req.setTimeout(input.timeoutMs, () => {
+      req.destroy()
+      fail(new Error('Docker 请求超时'))
+    })
+    req.on('error', (err) => fail(err instanceof Error ? err : new Error(String(err))))
+
+    if (input.signal) {
+      if (input.signal.aborted) {
+        req.destroy()
+        fail(new Error('拉取已取消'))
+        return
+      }
+      input.signal.addEventListener(
+        'abort',
+        () => {
+          req.destroy()
+          fail(new Error('拉取已取消'))
+        },
+        { once: true },
+      )
+    }
+
+    req.end()
+  })
+}
+
 function openStreamOverSocket(
   socketPath: string,
   input: {
@@ -179,18 +257,37 @@ function openStreamOverSocket(
   }
 }
 
+const PULL_PROGRESS_MAX_BYTES = 64 * 1024 * 1024
+
 export function createDockerTransport(options: {
   socketPath: string
   requestImpl?: DockerTransport['request']
+  pullCreateImpl?: NonNullable<DockerTransport['pullCreate']>
   openStreamImpl?: NonNullable<DockerTransport['openStream']>
 }): DockerTransport {
   const request =
     options.requestImpl ??
     ((input) => requestOverSocket(options.socketPath, input))
+  const pullCreate =
+    options.pullCreateImpl ??
+    (options.requestImpl
+      ? undefined
+      : (input) =>
+          pullCreateOverSocket(options.socketPath, {
+            ...input,
+            maxBytes: input.maxBytes ?? PULL_PROGRESS_MAX_BYTES,
+          }))
   const openStream =
     options.openStreamImpl ??
     (options.requestImpl
       ? undefined
       : (input) => openStreamOverSocket(options.socketPath, input))
-  return openStream === undefined ? { request } : { request, openStream }
+  const transport: DockerTransport = { request }
+  if (pullCreate !== undefined) {
+    transport.pullCreate = pullCreate
+  }
+  if (openStream !== undefined) {
+    transport.openStream = openStream
+  }
+  return transport
 }

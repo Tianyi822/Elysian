@@ -1,6 +1,10 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DockerTransport } from './dockerTransport'
-import { createDockerReadService, resetDockerCreateQueue } from './dockerService'
+import {
+  createDockerReadService,
+  resetDockerCreateQueue,
+  resetDockerPullLock,
+} from './dockerService'
 import { resolveSelfContainerId } from './selfContainer'
 import { buildCreateSpec } from './createSpec'
 
@@ -23,13 +27,14 @@ function baseContainerInspect(overrides: Record<string, unknown> = {}) {
   }
 }
 
-function baseImageInspect() {
+function baseImageInspect(overrides: Record<string, unknown> = {}) {
   return {
     Id: IMAGE_ID,
     RepoTags: ['myapp:1.0'],
     RepoDigests: ['myapp@sha256:digestvalue'],
     Size: 1_500_000,
     Created: '2024-05-01T08:00:00.000000000Z',
+    ...overrides,
   }
 }
 
@@ -38,10 +43,25 @@ function createRecordingTransport(
     status: number
     json: unknown
   },
+  pullHandler?: (
+    input: { path: string },
+  ) =>
+    | { status: number; chunks: readonly Uint8Array[] }
+    | Promise<{ status: number; chunks: readonly Uint8Array[] }>,
 ): DockerTransport {
-  return {
-    request: vi.fn(async (input) => handler(input)),
+  const transport: DockerTransport = {
+    request: vi.fn(async (input) => handler({ method: input.method, path: input.path, body: input.body })),
   }
+  if (pullHandler) {
+    transport.pullCreate = vi.fn(async (input) => await pullHandler(input))
+  }
+  return transport
+}
+
+const encoder = new TextEncoder()
+
+function pullChunksFromLines(lines: readonly string[]): readonly Uint8Array[] {
+  return lines.map((line) => encoder.encode(`${line}\n`))
 }
 
 const CREATE_IMAGE_HEX = 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890'
@@ -541,5 +561,272 @@ describe('createDockerReadService.create', () => {
     await service.create(body)
     expect(mkdir).toHaveBeenCalledWith('/srv/elysian/new', 0o755)
     expect(mkdir).toHaveBeenCalledWith('/srv/elysian/new/nested', 0o755)
+  })
+})
+
+describe('createDockerReadService.pull', () => {
+  beforeEach(() => {
+    vi.useRealTimers()
+  })
+
+  afterEach(() => {
+    resetDockerPullLock()
+  })
+
+  const resolvePublic = async () => ['1.2.3.4'] as const
+
+  function nginxImageListJson() {
+    return {
+      status: 200,
+      json: [{ Id: IMAGE_ID, RepoTags: ['nginx:1.27'] }],
+    }
+  }
+
+  it('已有 nginx:1.27 时不调用 pullCreate', async () => {
+    const transport = createRecordingTransport(({ method, path }) => {
+      if (method === 'GET' && path === '/v1.41/images/json') return nginxImageListJson()
+      if (method === 'GET' && /^\/v1\.41\/images\/[^/]+\/json$/.test(path)) {
+        return {
+          status: 200,
+          json: {
+            Id: IMAGE_ID,
+            RepoTags: ['nginx:1.27'],
+            RepoDigests: ['nginx@sha256:digestvalue'],
+            Size: 1_500_000,
+            Created: '2024-05-01T08:00:00.000000000Z',
+          },
+        }
+      }
+      throw new Error(`未录制的请求：${method} ${path}`)
+    })
+    const service = createDockerReadService(transport, {
+      ...createDeps(),
+      resolveRegistry: resolvePublic,
+    })
+    await expect(
+      service.pull({ name: 'nginx', tag: '1.27' }, new AbortController().signal),
+    ).rejects.toMatchObject({
+      status: 400,
+      message: '镜像已存在：nginx:1.27',
+    })
+    expect(transport.pullCreate).toBeUndefined()
+  })
+
+  it('自定义镜像源时 fromImage、打标签与删除镜像源标签', async () => {
+    const calls: string[] = []
+    let imageListCalls = 0
+    const newImageId = 'sha256:1111111111111111111111111111111111111111111111111111111111111111'
+    const transport = createRecordingTransport(
+      ({ method, path }) => {
+        calls.push(`${method} ${path}`)
+        if (method === 'GET' && path === '/v1.41/images/json') {
+          imageListCalls += 1
+          if (imageListCalls === 1) {
+            return { status: 200, json: [] }
+          }
+          return { status: 200, json: [{ Id: newImageId }] }
+        }
+        if (method === 'GET' && /^\/v1\.41\/images\/[^/]+\/json$/.test(path)) {
+          return {
+            status: 200,
+            json: {
+              Id: newImageId,
+              RepoTags: ['nginx:1.27'],
+              RepoDigests: ['nginx@sha256:digestvalue'],
+              Size: 1_500_000,
+              Created: '2024-05-01T08:00:00.000000000Z',
+            },
+          }
+        }
+        if (method === 'POST' && path.includes('/tag?')) {
+          return { status: 201, json: null }
+        }
+        if (method === 'DELETE' && path.includes('mirror.example')) {
+          return { status: 200, json: null }
+        }
+        throw new Error(`未录制的请求：${method} ${path}`)
+      },
+      ({ path }) => {
+        calls.push(`PULL ${path}`)
+        expect(path).toBe(
+          `/v1.41/images/create?fromImage=${encodeURIComponent('mirror.example/library/nginx:1.27')}`,
+        )
+        return { status: 200, chunks: pullChunksFromLines(['{"status":"Download complete"}']) }
+      },
+    )
+    const service = createDockerReadService(transport, {
+      ...createDeps(),
+      resolveRegistry: resolvePublic,
+    })
+    const image = await service.pull(
+      { name: 'nginx', tag: '1.27', registry: 'https://mirror.example' },
+      new AbortController().signal,
+    )
+    expect(image.name).toBe('nginx')
+    expect(image.tag).toBe('1.27')
+    expect(calls.some((entry) => entry.includes('/tag?repo=nginx&tag=1.27'))).toBe(true)
+    expect(calls.some((entry) => entry.startsWith('DELETE') && entry.includes('mirror.example'))).toBe(
+      true,
+    )
+  })
+
+  it('进度行含 error 时失败且消息含 denied', async () => {
+    const transport = createRecordingTransport(
+      ({ method, path }) => {
+        if (method === 'GET' && path === '/v1.41/images/json') return { status: 200, json: [] }
+        throw new Error(`未录制的请求：${method} ${path}`)
+      },
+      () => ({
+        status: 200,
+        chunks: pullChunksFromLines(['{"error":"denied"}']),
+      }),
+    )
+    const service = createDockerReadService(transport, {
+      ...createDeps(),
+      resolveRegistry: resolvePublic,
+    })
+    await expect(
+      service.pull({ name: 'nginx', tag: '1.27' }, new AbortController().signal),
+    ).rejects.toMatchObject({ status: 400, message: 'denied' })
+  })
+
+  it('第二个 pull 在第一个未完成时 409', async () => {
+    let releasePull!: () => void
+    const transport = createRecordingTransport(({ method, path }) => {
+      if (method === 'GET' && path === '/v1.41/images/json') {
+        return { status: 200, json: [] }
+      }
+      throw new Error(`未录制的请求：${method} ${path}`)
+    })
+    transport.pullCreate = vi.fn(
+      (): Promise<{ status: number; chunks: readonly Uint8Array[] }> =>
+        new Promise((resolve) => {
+          releasePull = () => resolve({ status: 200, chunks: pullChunksFromLines([]) })
+        }),
+    )
+    const service = createDockerReadService(transport, {
+      ...createDeps(),
+      resolveRegistry: resolvePublic,
+    })
+    const first = service.pull({ name: 'nginx', tag: '1.27' }, new AbortController().signal)
+    await vi.waitFor(() => {
+      expect(transport.pullCreate).toHaveBeenCalled()
+    })
+    await expect(
+      service.pull({ name: 'redis', tag: '7' }, new AbortController().signal),
+    ).rejects.toMatchObject({ status: 409, message: '已有镜像正在拉取' })
+    releasePull()
+    await first.catch(() => undefined)
+  })
+
+  it('body 含 auth 为 400 不支持私有仓库认证', async () => {
+    const transport = createRecordingTransport(() => ({ status: 200, json: null }))
+    const service = createDockerReadService(transport, {
+      ...createDeps(),
+      resolveRegistry: resolvePublic,
+    })
+    await expect(
+      service.pull({ name: 'nginx', tag: '1', auth: {} }, new AbortController().signal),
+    ).rejects.toMatchObject({ status: 400, message: '不支持私有仓库认证' })
+  })
+
+  it('内嵌仓库 evil.internal 且未填 registry 时拒绝', async () => {
+    const transport = createRecordingTransport(({ method, path }) => {
+      if (method === 'GET' && path === '/v1.41/images/json') return { status: 200, json: [] }
+      throw new Error(`未录制的请求：${method} ${path}`)
+    })
+    const service = createDockerReadService(transport, {
+      ...createDeps(),
+      resolveRegistry: resolvePublic,
+    })
+    await expect(
+      service.pull({ name: 'evil.internal/nginx', tag: '1' }, new AbortController().signal),
+    ).rejects.toMatchObject({ status: 400 })
+    expect(transport.pullCreate).toBeUndefined()
+  })
+
+  it('同时填 registry 与 mirror.example/nginx 为 400', async () => {
+    const transport = createRecordingTransport(() => ({ status: 200, json: null }))
+    const service = createDockerReadService(transport, {
+      ...createDeps(),
+      resolveRegistry: resolvePublic,
+    })
+    await expect(
+      service.pull(
+        { name: 'mirror.example/nginx', tag: '1', registry: 'https://mirror.example' },
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({
+      status: 400,
+      message: '镜像源与引用中的仓库地址请只填一处',
+    })
+  })
+})
+
+describe('createDockerReadService.removeImage', () => {
+  const imageHex = 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890'
+  const imageId = imageHex
+
+  it('容器仍引用镜像时 409', async () => {
+    const transport = createRecordingTransport(({ path }) => {
+      if (path === '/v1.41/containers/json?all=1') {
+        return {
+          status: 200,
+          json: [{ Id: CONTAINER_ID, Image: `sha256:${imageHex}` }],
+        }
+      }
+      throw new Error(`未录制的路径：${path}`)
+    })
+    const service = createDockerReadService(transport, createDeps())
+    await expect(service.removeImage(imageId)).rejects.toMatchObject({
+      status: 409,
+      message: '镜像仍被容器引用，删除失败',
+    })
+  })
+
+  it('两个 RepoTags 都 DELETE；第二个失败时消息含第一个标签名', async () => {
+    const tagA = 'myapp:1.0'
+    const tagB = 'myapp:2.0'
+    const transport = createRecordingTransport(({ method, path }) => {
+      if (path === '/v1.41/containers/json?all=1') {
+        return { status: 200, json: [] }
+      }
+      if (method === 'GET' && path === `/v1.41/images/${encodeURIComponent(imageId)}/json`) {
+        return {
+          status: 200,
+          json: { Id: `sha256:${imageHex}`, RepoTags: [tagB, tagA] },
+        }
+      }
+      if (method === 'DELETE' && path.includes(encodeURIComponent(tagA))) {
+        return { status: 200, json: null }
+      }
+      if (method === 'DELETE' && path.includes(encodeURIComponent(tagB))) {
+        return { status: 409, json: { message: 'conflict' } }
+      }
+      throw new Error(`未录制的请求：${method} ${path}`)
+    })
+    const service = createDockerReadService(transport, createDeps())
+    await expect(service.removeImage(imageId)).rejects.toMatchObject({ status: 400 })
+    await expect(service.removeImage(imageId)).rejects.toThrow(tagA)
+  })
+
+  it('无 RepoTags 时按 ID 删除', async () => {
+    const calls: string[] = []
+    const transport = createRecordingTransport(({ method, path }) => {
+      calls.push(`${method} ${path}`)
+      if (path === '/v1.41/containers/json?all=1') {
+        return { status: 200, json: [] }
+      }
+      if (method === 'GET' && path === `/v1.41/images/${encodeURIComponent(imageId)}/json`) {
+        return { status: 200, json: { Id: `sha256:${imageHex}`, RepoTags: [] } }
+      }
+      if (method === 'DELETE' && path.includes(imageId)) {
+        return { status: 204, json: null }
+      }
+      throw new Error(`未录制的请求：${method} ${path}`)
+    })
+    const service = createDockerReadService(transport, createDeps())
+    await service.removeImage(imageId)
+    expect(calls.some((entry) => entry.startsWith(`DELETE /v1.41/images/${imageId}`))).toBe(true)
   })
 })

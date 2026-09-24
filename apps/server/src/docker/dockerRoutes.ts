@@ -148,6 +148,21 @@ export function createDockerApp(deps: DockerAppDeps): Hono {
   app.post('/containers/:id/stop', (c) => postContainerAction(c.req.param('id'), 'stop'))
   app.post('/containers/:id/restart', (c) => postContainerAction(c.req.param('id'), 'restart'))
 
+  app.post('/images/pull', async (c) => {
+    const body = await readJsonBody(c.req.raw)
+    const image = await service.pull(body, c.req.raw.signal)
+    return sendJson(200, image)
+  })
+
+  app.delete('/images/:id', async (c) => {
+    const id = c.req.param('id')
+    if (!CONTAINER_ID_PATTERN.test(id)) {
+      throw invalidRequest('镜像 ID 格式无效')
+    }
+    await service.removeImage(id)
+    return new Response(null, { status: 204 })
+  })
+
   app.all('*', (c) => {
     const path = c.req.path.slice(DOCKER_MOUNT.length) || '/'
     return sendJson(404, { error: `未知容器管理端点：${c.req.method} ${path}` })
