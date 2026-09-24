@@ -9,6 +9,7 @@ import { FIREWALL_MOUNT } from '../firewall/firewallRoutes.ts'
 import { FILES_MOUNT } from '../files/filesRoutes.ts'
 import { SSH_MOUNT } from '../ssh/sshRoutes.ts'
 import { USERS_MOUNT } from '../users/usersRoutes.ts'
+import { DOCKER_MOUNT } from '../docker/dockerRoutes.ts'
 import { LOGS_MOUNT } from './logsRoutes.ts'
 
 /*
@@ -343,6 +344,32 @@ export const OPERATION_DESCRIPTORS: Readonly<Record<string, OperationDescriptor>
       const owner = text(body, 'owner')
       if (path === null || mode === null || owner === null) return null
       return `${path} ${mode} ${owner}${body?.['recursive'] === true ? '（递归）' : ''}`
+    },
+  },
+
+  // 容器管理
+  [`POST ${DOCKER_MOUNT}/containers/:id/start`]: {
+    category: 'containers',
+    action: '启动容器',
+    target: ({ params }) => {
+      const id = param(params, 'id')
+      return id === null ? null : `容器 ${id}`
+    },
+  },
+  [`POST ${DOCKER_MOUNT}/containers/:id/stop`]: {
+    category: 'containers',
+    action: '停止容器',
+    target: ({ params }) => {
+      const id = param(params, 'id')
+      return id === null ? null : `容器 ${id}`
+    },
+  },
+  [`POST ${DOCKER_MOUNT}/containers/:id/restart`]: {
+    category: 'containers',
+    action: '重启容器',
+    target: ({ params }) => {
+      const id = param(params, 'id')
+      return id === null ? null : `容器 ${id}`
     },
   },
 
