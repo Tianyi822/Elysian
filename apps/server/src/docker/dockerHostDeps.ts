@@ -1,8 +1,9 @@
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { PANEL_PORT } from '@elysian/contracts'
 import { resolveAvailability } from '../shared/availability.ts'
 import { SERVER_PORT } from '../shared/ports.ts'
 import { assertEngineApi, createDockerTransport, type DockerTransport } from './dockerTransport.ts'
+import { createDockerEventsHub } from './dockerEventsHub.ts'
 import { createDockerReadService } from './dockerService.ts'
 import type { DockerAppDeps } from './dockerRoutes.ts'
 
@@ -31,6 +32,16 @@ function resolveSocketPath(env: NodeJS.ProcessEnv): string {
 
 const RESERVED_PORTS: readonly number[] = [22, PANEL_PORT, SERVER_PORT]
 
+function readCgroupText(): string {
+  try {
+    const boot = readFileSync('/proc/1/cgroup', 'utf8')
+    const self = readFileSync('/proc/self/cgroup', 'utf8')
+    return `${boot}\n${self}`
+  } catch {
+    return ''
+  }
+}
+
 /** 容器管理片的真实装配：探测边界、socket 与 API 版本，产出路由工厂入参。 */
 export async function createDockerHostDeps(options: DockerHostDepsOptions = {}): Promise<DockerAppDeps> {
   const env = options.env ?? process.env
@@ -49,9 +60,23 @@ export async function createDockerHostDeps(options: DockerHostDepsOptions = {}):
     return { available: true, socketReady: false }
   }
 
+  const eventsHub = createDockerEventsHub({
+    transport,
+    now: () => Date.now(),
+    schedule: (fn, ms) => {
+      const timer = setTimeout(fn, ms)
+      return () => clearTimeout(timer)
+    },
+    readCgroup: readCgroupText,
+  })
+
   const service = createDockerReadService(transport, {
     mountRoot,
     reservedPorts: RESERVED_PORTS,
+    onRestarting: (containerId) => {
+      eventsHub.notifyRestarting(containerId)
+    },
   })
-  return { available: true, socketReady: true, service }
+
+  return { available: true, socketReady: true, service, eventsHub }
 }

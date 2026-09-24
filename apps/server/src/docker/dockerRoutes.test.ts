@@ -2,7 +2,13 @@ import { describe, expect, it, vi } from 'vitest'
 import { Hono } from 'hono'
 import type { Container, ContainerImage } from '@elysian/contracts'
 import { InvalidRequestError } from '../shared/errors'
-import { DOCKER_MOUNT, createDockerApp, type DockerAppDeps, type DockerReadService } from './dockerRoutes'
+import {
+  DOCKER_MOUNT,
+  createDockerApp,
+  type DockerAppDeps,
+  type DockerEventsHub,
+  type DockerReadService,
+} from './dockerRoutes'
 
 const SAMPLE_CONTAINER: Container = {
   id: 'a1b2c3d4e5f6',
@@ -73,6 +79,22 @@ const READY: DockerAppDeps = {
   available: true,
   socketReady: true,
   service: createFakeService(),
+}
+
+function createFakeHub(): DockerEventsHub {
+  let count = 0
+  return {
+    subscribe() {
+      count += 1
+      if (count > 8) {
+        throw new Error('实时连接数已达上限')
+      }
+      return () => {
+        count -= 1
+      }
+    },
+    notifyRestarting: vi.fn(),
+  }
 }
 
 describe('createDockerApp', () => {
@@ -172,5 +194,20 @@ describe('createDockerApp', () => {
     const res = await app.request(req('POST', `/api/docker/containers/${SAMPLE_CONTAINER.id}/start`))
     expect(res.status).toBe(404)
     expect(await res.json()).toEqual({ error: '容器不存在' })
+  })
+
+  it('GET /events 第 9 路连接返回 503', async () => {
+    const app = mountedApp({
+      ...READY,
+      eventsHub: createFakeHub(),
+    })
+    for (let i = 0; i < 8; i += 1) {
+      const res = await app.request(req('GET', '/api/docker/events'))
+      expect(res.status).toBe(200)
+      await res.body?.cancel()
+    }
+    const blocked = await app.request(req('GET', '/api/docker/events'))
+    expect(blocked.status).toBe(503)
+    expect(await blocked.json()).toEqual({ error: '实时连接数已达上限' })
   })
 })

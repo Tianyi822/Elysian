@@ -1,19 +1,25 @@
 import { Hono } from 'hono'
+import { stream } from 'hono/streaming'
 import { endpointErrorHandler, invalidRequest, sameOriginGuard, sendJson } from '../middleware/guard.ts'
 import type { DockerReadService } from './dockerService.ts'
+import type { DockerEventsHub } from './dockerEventsHub.ts'
 
 const CONTAINER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/
+const SSE_RETRY_MS = 3_000
+const SSE_HEARTBEAT_MS = 15_000
 
 /** 挂载路径：app.ts 用同一常量挂载，404 兜底也用它剥前缀——单一事实，两处不漂移。 */
 export const DOCKER_MOUNT = '/api/docker'
 
 export type { DockerReadService } from './dockerService.ts'
+export type { DockerEventsHub } from './dockerEventsHub.ts'
 
 /** 路由装配入参：两段 503（容器外 / socket 未就绪）与只读 service 注入。 */
 export type DockerAppDeps = {
   available: boolean
   socketReady: boolean
   service?: DockerReadService
+  eventsHub?: DockerEventsHub
 }
 
 /** 容器管理子应用工厂：app.ts 挂到 DOCKER_MOUNT；测试直接 request 驱动。 */
@@ -32,6 +38,7 @@ export function createDockerApp(deps: DockerAppDeps): Hono {
   }
 
   const service = deps.service
+  const eventsHub = deps.eventsHub
 
   app.use('*', sameOriginGuard())
 
@@ -39,6 +46,66 @@ export function createDockerApp(deps: DockerAppDeps): Hono {
   app.get('/containers', async () => sendJson(200, { containers: await service.listContainers() }))
   app.get('/images', async () => sendJson(200, { images: await service.listImages() }))
   app.get('/policy', async () => sendJson(200, await service.policy()))
+
+  if (eventsHub) {
+    app.get('/events', (c) => {
+      const lastEventId = c.req.header('last-event-id')
+      type HubFrame = { event: string; id: string; data: string }
+      const pending: HubFrame[] = []
+      let writeFrame: ((frame: HubFrame) => void) | undefined
+      let unsubscribe: () => void
+
+      try {
+        unsubscribe = eventsHub.subscribe({
+          lastEventId,
+          onEvent: (frame) => {
+            if (writeFrame) {
+              writeFrame(frame)
+            } else {
+              pending.push(frame)
+            }
+          },
+          onStatus: () => {},
+        })
+      } catch (error) {
+        if (error instanceof Error && error.message === '实时连接数已达上限') {
+          return sendJson(503, { error: error.message })
+        }
+        throw error
+      }
+
+      c.header('Content-Type', 'text/event-stream; charset=utf-8')
+      c.header('Cache-Control', 'no-cache, no-transform')
+
+      return stream(c, async (sseStream) => {
+        await sseStream.write(`retry: ${SSE_RETRY_MS}\n\n`)
+        writeFrame = (frame) => {
+          void sseStream.write(
+            `event: ${frame.event}\nid: ${frame.id}\ndata: ${frame.data}\n\n`,
+          )
+        }
+        for (const frame of pending) {
+          writeFrame(frame)
+        }
+        pending.length = 0
+
+        const heartbeat = setInterval(() => {
+          void sseStream.write(': keep-alive\n\n')
+        }, SSE_HEARTBEAT_MS)
+
+        await new Promise<void>((resolve) => {
+          if (c.req.raw.signal.aborted) {
+            resolve()
+            return
+          }
+          c.req.raw.signal.addEventListener('abort', () => resolve(), { once: true })
+        })
+
+        clearInterval(heartbeat)
+        unsubscribe()
+      })
+    })
+  }
 
   async function postContainerAction(
     id: string,

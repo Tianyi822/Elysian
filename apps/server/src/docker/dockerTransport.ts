@@ -8,6 +8,13 @@ export type DockerTransport = {
     timeoutMs: number
     maxBytes: number
   }): Promise<{ status: number; json: unknown }>
+  openStream?(input: {
+    method: string
+    path: string
+    onLine: (line: string) => void
+    onError: (error: Error) => void
+    onClose: () => void
+  }): () => void
 }
 
 const MIN_API_MAJOR = 1
@@ -112,12 +119,78 @@ function requestOverSocket(
   })
 }
 
+function openStreamOverSocket(
+  socketPath: string,
+  input: {
+    method: string
+    path: string
+    onLine: (line: string) => void
+    onError: (error: Error) => void
+    onClose: () => void
+  },
+): () => void {
+  let buffer = ''
+  let closed = false
+
+  const req = http.request(
+    {
+      socketPath,
+      hostname: 'localhost',
+      method: input.method,
+      path: input.path,
+    },
+    (res) => {
+      res.on('data', (chunk: Buffer) => {
+        if (closed) return
+        buffer += chunk.toString('utf8')
+        for (;;) {
+          const newline = buffer.indexOf('\n')
+          if (newline === -1) break
+          let line = buffer.slice(0, newline)
+          buffer = buffer.slice(newline + 1)
+          if (line.endsWith('\r')) line = line.slice(0, -1)
+          if (line.length > 0) input.onLine(line)
+        }
+      })
+      res.on('end', () => {
+        if (closed) return
+        if (buffer.length > 0) {
+          const tail = buffer.endsWith('\r') ? buffer.slice(0, -1) : buffer
+          if (tail.length > 0) input.onLine(tail)
+          buffer = ''
+        }
+        input.onClose()
+      })
+      res.on('error', (err) => {
+        if (closed) return
+        input.onError(err instanceof Error ? err : new Error(String(err)))
+      })
+    },
+  )
+  req.on('error', (err) => {
+    if (closed) return
+    input.onError(err instanceof Error ? err : new Error(String(err)))
+  })
+  req.end()
+
+  return () => {
+    closed = true
+    req.destroy()
+  }
+}
+
 export function createDockerTransport(options: {
   socketPath: string
   requestImpl?: DockerTransport['request']
+  openStreamImpl?: NonNullable<DockerTransport['openStream']>
 }): DockerTransport {
   const request =
     options.requestImpl ??
     ((input) => requestOverSocket(options.socketPath, input))
-  return { request }
+  const openStream =
+    options.openStreamImpl ??
+    (options.requestImpl
+      ? undefined
+      : (input) => openStreamOverSocket(options.socketPath, input))
+  return openStream === undefined ? { request } : { request, openStream }
 }
