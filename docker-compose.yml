@@ -30,13 +30,25 @@ services:
       # HAS CHANGED；首次启动把镜像里的密钥种进卷，之后 /etc/ssh/ssh_host_* 一律是
       # 指向卷的符号链接，身份不再变。
       - elysian_ssh_host_keys:/var/lib/elysian/ssh/host-keys
+      # dind 在共享卷上暴露 docker.sock；web 经符号链接挂到 /var/run/docker.sock。
+      - elysian_docker_sock:/run/elysian-docker
+      # 与 dind 同卷，供后续容器片与宿主机路径对齐。
+      - elysian_srv:/srv
     # 先备好 ~/.Elysian 的分类目录与符号链接、种主机密钥并落到默认路径，再起容器内
     # sshd：日志写 ~/.Elysian/logs/sshd.log（SSH 面板数据源），启动失败只影响 SSH 联调、
     # 不阻断 dev server；然后安装依赖，在同一 sh -c 进程组后台起 API server
     # （bun run --filter @elysian/server dev，监听容器内回环（shared/ports.ts 的 SERVER_PORT），vite 经
     # server.proxy 转发 /api/security、/api/files 与 /api/platform 到这里，该端口不发布到宿主），
     # server 启动失败只影响安全、文件管理与内存徽标端点、不阻断 dev（与 sshd 同策略），最后照常启动 dev。
-    command: sh -c "mkdir -p /var/lib/elysian/data /var/lib/elysian/logs /var/lib/elysian/state /var/lib/elysian/backups /var/lib/elysian/tmp /var/lib/elysian/config && ln -sfn /var/lib/elysian /root/.Elysian && if [ ! -e /root/.Elysian/ssh/host-keys/ssh_host_ed25519_key ]; then cp -a /etc/ssh/ssh_host_* /root/.Elysian/ssh/host-keys/; fi && ln -sfn /root/.Elysian/ssh/host-keys/* /etc/ssh/ && mkdir -p /run/sshd && (/usr/sbin/sshd -E /root/.Elysian/logs/sshd.log || true) && bun install && (bun run --filter @elysian/server dev &) && bun run dev"
+    command: sh -c "mkdir -p /var/lib/elysian/data /var/lib/elysian/logs /var/lib/elysian/state /var/lib/elysian/backups /var/lib/elysian/tmp /var/lib/elysian/config && ln -sfn /var/lib/elysian /root/.Elysian && if [ ! -e /root/.Elysian/ssh/host-keys/ssh_host_ed25519_key ]; then cp -a /etc/ssh/ssh_host_* /root/.Elysian/ssh/host-keys/; fi && ln -sfn /root/.Elysian/ssh/host-keys/* /etc/ssh/ && mkdir -p /run/sshd && (/usr/sbin/sshd -E /root/.Elysian/logs/sshd.log || true) && ln -sfn /run/elysian-docker/docker.sock /var/run/docker.sock && bun install && (bun run --filter @elysian/server dev &) && bun run dev"
+
+  dind:
+    image: docker:dind
+    privileged: true
+    network_mode: service:web
+    volumes:
+      - elysian_docker_sock:/var/run
+      - elysian_srv:/srv
 
 volumes:
   elysian_metrics:
@@ -44,3 +56,5 @@ volumes:
   elysian_web_node_modules:
   elysian_contracts_node_modules:
   elysian_ssh_host_keys:
+  elysian_docker_sock:
+  elysian_srv:
