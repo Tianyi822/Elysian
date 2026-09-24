@@ -253,6 +253,28 @@ describe('containersStore', () => {
     expect(notifications[notifications.length - 1]?.message).toContain('演示环境不支持')
   })
 
+  it('打开另一容器终端时先断开已连接的上一会话', async () => {
+    let sessionSeq = 0
+    const disconnected: string[] = []
+    const gateway = gatewayWith({
+      connectTerminal: async () => {
+        sessionSeq += 1
+        return { id: `sess-${sessionSeq}`, user: 'demo', hostLabel: 'ctr', prompt: '$ ' }
+      },
+      disconnectTerminal: async (sessionId: string) => {
+        disconnected.push(sessionId)
+      },
+    })
+    await useContainersStore.getState().load(gateway)
+    await useContainersStore.getState().openTerminal(gateway, 'ctr-nginx-proxy')
+    expect(useContainersStore.getState().terminal?.sessionId).toBe('sess-1')
+
+    await useContainersStore.getState().openTerminal(gateway, 'ctr-backup-agent')
+    expect(disconnected).toEqual(['sess-1'])
+    expect(useContainersStore.getState().terminal?.containerId).toBe('ctr-backup-agent')
+    expect(useContainersStore.getState().terminal?.sessionId).toBe('sess-2')
+  })
+
   it('closeTerminal 清空会话；closeDetail 清空详情', async () => {
     const gateway = gatewayWith()
     await useContainersStore.getState().load(gateway)

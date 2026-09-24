@@ -335,6 +335,15 @@ export const useContainersStore = create<{
   },
 
   async openTerminal(gateway, containerId) {
+    const previous = get().terminal
+    if (previous?.status === 'connected') {
+      try {
+        await gateway.containers.disconnectTerminal(previous.sessionId)
+      } catch {
+        // 旧会话断开失败仍继续打开新容器终端，不吞掉用户点击。
+      }
+    }
+
     const pendingId = nextPendingTerminalId()
     set({
       terminal: {
