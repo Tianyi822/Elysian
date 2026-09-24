@@ -2,6 +2,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { X } from '../../components/icons'
 import { useState } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
+import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useContainersStore } from '../../stores/containersStore'
 import {
   DEFAULT_IMAGE_REGISTRY,
@@ -26,6 +27,8 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
   const images = useContainersStore((s) => s.images)
   const pullingImage = useContainersStore((s) => s.pullingImage)
   const pullImage = useContainersStore((s) => s.pullImage)
+
+  const docker = isDockerRuntime()
 
   const [registryAddress, setRegistryAddress] = useState('')
   const [reference, setReference] = useState('')
@@ -68,9 +71,11 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
           <Dialog.Title className="sr-only">拉取镜像</Dialog.Title>
           <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-3">
             <div className="flex items-center gap-2">
-              <span className="rounded bg-warning/15 px-1.5 py-0.5 text-xs font-medium text-warning">
-                演示 · 待接入真实执行
-              </span>
+              {!docker ? (
+                <span className="rounded bg-warning/15 px-1.5 py-0.5 text-xs font-medium text-warning">
+                  演示 · 待接入真实执行
+                </span>
+              ) : null}
               <span className="text-sm font-semibold text-fg">拉取镜像</span>
             </div>
             <button
@@ -136,7 +141,11 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
           </div>
 
           <div className="flex items-center justify-between gap-3 border-t border-line px-5 py-3">
-            <p className="text-xs text-fg-subtle">拉取由演示数据模拟，不访问真实镜像仓库。</p>
+            <p className="text-xs text-fg-subtle">
+              {docker
+                ? '从镜像仓库拉取，只支持公开镜像。'
+                : '拉取由演示数据模拟，不访问真实镜像仓库。'}
+            </p>
             <div className="flex shrink-0 gap-2">
               <button
                 type="button"

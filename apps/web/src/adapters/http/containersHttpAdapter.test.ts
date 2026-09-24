@@ -339,8 +339,39 @@ describe('createHttpContainersAdapter', () => {
 
   it('未接入的方法统一抛固定中文', async () => {
     const adapter = createHttpContainersAdapter()
-    await expect(adapter.removeImage('x')).rejects.toThrow('容器管理的该操作尚未接入')
-    await expect(adapter.pullImage({ name: 'a', tag: 'b' })).rejects.toThrow('容器管理的该操作尚未接入')
     await expect(adapter.execMockCommand('x', 'help')).rejects.toThrow('容器管理的该操作尚未接入')
+  })
+
+  it('pullImage() POST /images/pull 并解析返回镜像', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(baseImage))
+    vi.stubGlobal('fetch', fetchMock)
+    const adapter = createHttpContainersAdapter()
+    const image = await adapter.pullImage({ name: 'nginx', tag: '1.27', registry: 'docker.1ms.run' })
+    expect(fetchMock).toHaveBeenCalledWith('/api/docker/images/pull', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'nginx', tag: '1.27', registry: 'docker.1ms.run' }),
+    })
+    expect(image).toEqual(baseImage)
+    vi.unstubAllGlobals()
+  })
+
+  it('removeImage() DELETE /images/:id，204 不解析 JSON', async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const adapter = createHttpContainersAdapter()
+    await expect(adapter.removeImage('sha256:abc/def')).resolves.toBeUndefined()
+    expect(fetchMock).toHaveBeenCalledWith('/api/docker/images/sha256%3Aabc%2Fdef', {
+      method: 'DELETE',
+    })
+    vi.unstubAllGlobals()
+  })
+
+  it('removeImage() HTTP 409 时抛响应体 error', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ error: '镜像仍被容器使用' }, 409))
+    vi.stubGlobal('fetch', fetchMock)
+    const adapter = createHttpContainersAdapter()
+    await expect(adapter.removeImage('img-x')).rejects.toThrow('镜像仍被容器使用')
+    vi.unstubAllGlobals()
   })
 })

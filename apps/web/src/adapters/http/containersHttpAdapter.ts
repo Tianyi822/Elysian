@@ -421,6 +421,17 @@ export function parseContainerPolicyResponse(body: unknown): ContainerHostPolicy
   return { mountRoot: row.mountRoot, reservedPorts }
 }
 
+async function readErrorDetail(response: Response): Promise<string | null> {
+  return response
+    .json()
+    .then((body) =>
+      body && typeof body === 'object' && 'error' in body
+        ? String((body as { error: unknown }).error)
+        : null,
+    )
+    .catch(() => null)
+}
+
 async function requestJson(url: string, init?: RequestInit): Promise<unknown> {
   let response: Response
   try {
@@ -429,20 +440,26 @@ async function requestJson(url: string, init?: RequestInit): Promise<unknown> {
     throw new Error('容器管理请求网络失败')
   }
   if (!response.ok) {
-    const detail = await response
-      .json()
-      .then((body) =>
-        body && typeof body === 'object' && 'error' in body
-          ? String((body as { error: unknown }).error)
-          : null,
-      )
-      .catch(() => null)
+    const detail = await readErrorDetail(response)
     throw new Error(detail ?? `容器管理请求失败：HTTP ${response.status}`)
   }
   try {
     return await response.json()
   } catch {
     throw new Error('容器管理响应不是有效 JSON')
+  }
+}
+
+async function requestNoContent(url: string, init?: RequestInit): Promise<void> {
+  let response: Response
+  try {
+    response = await fetch(url, init)
+  } catch {
+    throw new Error('容器管理请求网络失败')
+  }
+  if (!response.ok) {
+    const detail = await readErrorDetail(response)
+    throw new Error(detail ?? `容器管理请求失败：HTTP ${response.status}`)
   }
 }
 
@@ -488,8 +505,21 @@ export function createHttpContainersAdapter(
         }),
       )
     },
-    removeImage: NOT_CONNECTED,
-    pullImage: NOT_CONNECTED,
+    async removeImage(imageId) {
+      await requestNoContent(`${baseUrl}/images/${encodeURIComponent(imageId)}`, {
+        method: 'DELETE',
+      })
+    },
+
+    async pullImage(input) {
+      return parseContainerImage(
+        await requestJson(`${baseUrl}/images/pull`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(input),
+        }),
+      )
+    },
     watchLive,
   }
 }

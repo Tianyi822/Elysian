@@ -291,6 +291,22 @@ describe('删除镜像', () => {
       message: '删除镜像失败：镜像仍被容器引用，删除失败',
     })
   })
+
+  it('removeImage 失败后刷新 listImages', async () => {
+    const listImages = vi.fn(async () => [...CONTAINER_IMAGES].slice(0, 3))
+    await useContainersStore.getState().load(gatewayWith({ listImages }))
+    await useContainersStore.getState().removeImage(
+      gatewayWith({
+        listImages,
+        removeImage: async () => {
+          throw new Error('冲突')
+        },
+      }),
+      'img-nginx',
+    )
+    expect(listImages).toHaveBeenCalledTimes(2)
+    expect(useContainersStore.getState().images).toHaveLength(3)
+  })
 })
 
 describe('拉取镜像', () => {

@@ -4,6 +4,7 @@ import { useState } from 'react'
 import type { Container, ContainerImage } from '@elysian/contracts'
 import { imageUsageCount } from '../../adapters/mock/containerViews'
 import { useGateway } from '../../adapters/GatewayProvider'
+import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useContainersStore } from '../../stores/containersStore'
 import { registryHost } from './imageReference'
 
@@ -25,6 +26,8 @@ export function ImageTable({
   const removeImage = useContainersStore((s) => s.removeImage)
   const pullingImage = useContainersStore((s) => s.pullingImage)
   const [pendingDelete, setPendingDelete] = useState<ContainerImage | null>(null)
+
+  const docker = isDockerRuntime()
 
   return (
     <section aria-label="镜像列表" className="overflow-x-auto rounded-xl border border-line bg-surface">
@@ -155,9 +158,25 @@ export function ImageTable({
             <Dialog.Title className="text-sm font-semibold">
               确认删除镜像「{pendingDelete?.name}:{pendingDelete?.tag}」？
             </Dialog.Title>
-            <p className="mt-1.5 text-xs text-fg-muted">
-              将从演示数据集中移除该镜像，正在运行的容器不受影响。这一步不会触碰任何真实环境。
-            </p>
+            {docker ? (
+              <>
+                <p className="mt-1.5 text-xs text-fg-muted">
+                  将移除该镜像的全部标签。正在使用它的容器会阻止删除。
+                </p>
+                {pendingDelete ? (
+                  <ul className="mt-2 space-y-0.5 font-mono text-xs text-fg-muted">
+                    <li>{`${pendingDelete.name}:${pendingDelete.tag}`}</li>
+                    {pendingDelete.otherTags?.map((tag) => (
+                      <li key={tag}>{tag}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </>
+            ) : (
+              <p className="mt-1.5 text-xs text-fg-muted">
+                将从演示数据集中移除该镜像，正在运行的容器不受影响。这一步不会触碰任何真实环境。
+              </p>
+            )}
             <div className="mt-4 flex justify-end gap-2">
               <button
                 type="button"
