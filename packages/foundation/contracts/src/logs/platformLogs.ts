@@ -56,7 +56,13 @@ export type RuntimeLogEntry = {
 }
 
 /** 操作日志：操作分类。安全区按面板分区、数据库按「按钮间接操作数据库」的语义单列。 */
-export type OperationLogCategory = 'security' | 'files' | 'database' | 'terminals' | 'logs'
+export type OperationLogCategory =
+  | 'security'
+  | 'files'
+  | 'database'
+  | 'terminals'
+  | 'logs'
+  | 'containers'
 
 export const OPERATION_LOG_CATEGORIES = [
   'security',
@@ -64,6 +70,7 @@ export const OPERATION_LOG_CATEGORIES = [
   'database',
   'terminals',
   'logs',
+  'containers',
 ] as const satisfies readonly OperationLogCategory[]
 
 export const OPERATION_LOG_CATEGORY_LABELS: Record<OperationLogCategory, string> = {
@@ -72,6 +79,7 @@ export const OPERATION_LOG_CATEGORY_LABELS: Record<OperationLogCategory, string>
   database: '数据库',
   terminals: '终端会话',
   logs: '日志管理',
+  containers: '容器管理',
 }
 
 export type OperationLogOutcome = 'success' | 'failure'
