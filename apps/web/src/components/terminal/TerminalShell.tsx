@@ -29,6 +29,8 @@ export type TerminalShellProps = {
   onAppendOutput: (lines: readonly string[]) => void
   onClear: () => void
   onClose: () => void
+  /** Ctrl+C 的领域侧通道；不传时仅本地 ^C 外观（如 SQL 弹窗）。 */
+  onInterrupt?: () => void
   labels: {
     input: string
     close: string
@@ -106,6 +108,7 @@ export function TerminalShell({
   onAppendOutput,
   onClear,
   onClose,
+  onInterrupt,
   labels,
 }: TerminalShellProps) {
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -149,6 +152,7 @@ export function TerminalShell({
             complete={complete}
             onAppendOutput={onAppendOutput}
             onClear={onClear}
+            onInterrupt={onInterrupt}
             inputLabel={labels.input}
             trapRootRef={contentRef}
           />

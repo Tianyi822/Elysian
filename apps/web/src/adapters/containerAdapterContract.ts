@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { ContainerAdapter } from '../contracts/adapters'
+import type { ContainerAdapter, HostTerminalFrame, HostTerminalHandlers } from '../contracts/adapters'
 
 /** 只依赖 adapter 接口本身，不依赖任何 mock 细节。 */
 export function runContainerAdapterContract(make: () => ContainerAdapter): void {
@@ -13,11 +13,22 @@ export function runContainerAdapterContract(make: () => ContainerAdapter): void 
       expect(new Set(images.map((i) => i.id)).size).toBe(images.length)
     })
 
-    it('execMockCommand 的 help 返回可用命令说明', async () => {
+    it('connectTerminal 后 sendTerminalInput help 收到含可用命令的 output 帧', async () => {
       const adapter = make()
       const containers = await adapter.list()
-      const result = await adapter.execMockCommand(containers[0]!.id, 'help')
-      expect(result.lines.join(' ')).toContain('可用命令')
+      const frames: HostTerminalFrame[] = []
+      const handlers: HostTerminalHandlers = {
+        onFrame: (_sessionId, frame) => {
+          frames.push(frame)
+        },
+        onClose: () => {},
+      }
+      const info = await adapter.connectTerminal(containers[0]!.id, handlers)
+      await adapter.sendTerminalInput(info.id, 'help')
+      const output = frames.find((frame) => frame.type === 'output')
+      expect(output && output.type === 'output' ? output.lines.join(' ') : '').toContain('可用命令')
+      await adapter.disconnectTerminal(info.id)
+      await expect(adapter.sendTerminalInput(info.id, 'help')).rejects.toThrow('终端会话不存在')
     })
 
     it('对已停止容器执行 start 后返回运行中', async () => {

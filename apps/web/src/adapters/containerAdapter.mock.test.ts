@@ -32,7 +32,7 @@ describe('MockContainerAdapter', () => {
     expect(scheduleRestart).toHaveBeenCalledWith('ctr-nginx-proxy')
   })
 
-  it('execMockCommand 输出与数据集联动；容器不存在抛中文错误', async () => {
+  it('sendTerminalInput 输出与数据集联动；容器不存在在连接时抛中文错误', async () => {
     const dataset = createMockDataset()
     const adapter = new MockContainerAdapter(() => dataset, {
       onAction: vi.fn(),
@@ -40,10 +40,19 @@ describe('MockContainerAdapter', () => {
       onCreate: vi.fn(),
     })
 
-    const result = await adapter.execMockCommand('ctr-nginx-proxy', 'env')
-    expect(result.lines).toEqual(['TZ=Asia/Shanghai'])
+    const frames: { lines: readonly string[] }[] = []
+    const info = await adapter.connectTerminal('ctr-nginx-proxy', {
+      onFrame: (_sessionId, frame) => {
+        if (frame.type === 'output') frames.push(frame)
+      },
+      onClose: () => {},
+    })
+    await adapter.sendTerminalInput(info.id, 'env')
+    expect(frames[0]?.lines).toEqual(['TZ=Asia/Shanghai'])
 
-    await expect(adapter.execMockCommand('ctr-nope', 'help')).rejects.toThrow('容器不存在')
+    await expect(adapter.connectTerminal('ctr-nope', { onFrame: () => {}, onClose: () => {} })).rejects.toThrow(
+      '容器不存在',
+    )
   })
 
   it('removeImage 落实数据集：未引用镜像移除，被引用与不存在抛中文错误', async () => {

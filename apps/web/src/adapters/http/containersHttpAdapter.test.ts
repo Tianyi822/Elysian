@@ -337,11 +337,6 @@ describe('createHttpContainersAdapter', () => {
     vi.unstubAllGlobals()
   })
 
-  it('未接入的方法统一抛固定中文', async () => {
-    const adapter = createHttpContainersAdapter()
-    await expect(adapter.execMockCommand('x', 'help')).rejects.toThrow('容器管理的该操作尚未接入')
-  })
-
   it('pullImage() POST /images/pull 并解析返回镜像', async () => {
     const fetchMock = vi.fn(async () => jsonResponse(baseImage))
     vi.stubGlobal('fetch', fetchMock)

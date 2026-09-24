@@ -1,17 +1,43 @@
 import type { Container, ContainerAction, ContainerCreateInput, ContainerImage, ContainerSample, ContainerStatus, Unsubscribe } from '@elysian/contracts'
 import { create } from 'zustand'
 import { resolveViewTab, writeStoredViewTab } from '../app/theme/themePreferences'
-import type { ElysianGateway } from '../contracts/adapters'
-import { pushHistory, type TerminalLine } from '../components/terminal/terminalSession'
+import type {
+  ElysianGateway,
+  HostTerminalCloseInfo,
+  HostTerminalFrame,
+  HostTerminalHandlers,
+} from '../contracts/adapters'
+import {
+  hostTerminalCloseMessage,
+  pushHistory,
+  type TerminalLine,
+} from '../components/terminal/terminalSession'
 import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
 import { containerActionSuccessMessage } from '../features/container/containerCopy'
 import { getLastContainerSample, onStreamEvent } from './eventStreamStore'
 import { useNotificationStore } from './notificationStore'
 
+type ContainerTerminalStatus = 'connecting' | 'connected' | 'error'
+
 type TerminalSession = {
   containerId: string
+  sessionId: string
+  prompt: string
+  status: ContainerTerminalStatus
   lines: readonly TerminalLine[]
   history: readonly string[]
+}
+
+let pendingTerminalSeq = 1
+
+function nextPendingTerminalId(): string {
+  const id = `pending-ctr-term-${pendingTerminalSeq}`
+  pendingTerminalSeq += 1
+  return id
+}
+
+function asOutputLines(lines: readonly string[]): readonly TerminalLine[] {
+  return lines.map((text): TerminalLine => ({ kind: 'output', text }))
 }
 
 const TERMINAL_BANNER = '演示终端 · 待接入真实执行'
@@ -89,8 +115,14 @@ function attachLiveEvents(): void {
           samples,
           detailContainerId:
             state.detailContainerId === containerId ? undefined : state.detailContainerId,
-          terminal:
-            state.terminal?.containerId === containerId ? undefined : state.terminal,
+          terminal: (() => {
+            if (state.terminal?.containerId !== containerId) return state.terminal
+            const session = state.terminal
+            if (session.status === 'connected' && activeGateway) {
+              void activeGateway.containers.disconnectTerminal(session.sessionId).catch(() => {})
+            }
+            return undefined
+          })(),
           busyActions: state.busyActions.filter((key) => !key.startsWith(`${containerId}:`)),
         }
       })
@@ -144,9 +176,12 @@ export const useContainersStore = create<{
   pullImage: (gateway: ElysianGateway, input: { name: string; tag: string; registry?: string }) => Promise<void>
   openDetail: (containerId: string) => void
   closeDetail: () => void
-  openTerminal: (containerId: string) => void
-  closeTerminal: () => void
+  openTerminal: (gateway: ElysianGateway, containerId: string) => Promise<void>
+  closeTerminal: (gateway: ElysianGateway) => Promise<void>
   submitCommand: (gateway: ElysianGateway, command: string) => Promise<void>
+  interruptTerminal: (gateway: ElysianGateway) => Promise<void>
+  applyTerminalFrame: (sessionId: string, frame: HostTerminalFrame) => void
+  handleTerminalClose: (sessionId: string, info: HostTerminalCloseInfo) => void
   appendTerminalOutput: (lines: readonly string[]) => void
   clearTerminalScreen: () => void
   runAction: (gateway: ElysianGateway, containerId: string, action: ContainerAction) => Promise<void>
@@ -299,19 +334,62 @@ export const useContainersStore = create<{
     }
   },
 
-  openTerminal(containerId) {
+  async openTerminal(gateway, containerId) {
+    const pendingId = nextPendingTerminalId()
     set({
-      terminal: { containerId, lines: [{ kind: 'banner', text: TERMINAL_BANNER }], history: [] },
+      terminal: {
+        containerId,
+        sessionId: pendingId,
+        prompt: '$ ',
+        status: 'connecting',
+        lines: [{ kind: 'banner', text: TERMINAL_BANNER }],
+        history: [],
+      },
     })
+    try {
+      const info = await gateway.containers.connectTerminal(containerId, containerTerminalHandlers)
+      set((state) => {
+        if (!state.terminal || state.terminal.containerId !== containerId) return {}
+        return {
+          terminal: {
+            ...state.terminal,
+            sessionId: info.id,
+            prompt: info.prompt,
+            status: 'connected',
+          },
+        }
+      })
+    } catch (error) {
+      const text = error instanceof Error ? error.message : '连接容器终端失败'
+      set((state) => ({
+        terminal:
+          state.terminal && state.terminal.containerId === containerId
+            ? {
+                ...state.terminal,
+                status: 'error',
+                lines: [...state.terminal.lines, { kind: 'output', text }],
+              }
+            : state.terminal,
+      }))
+    }
   },
-  closeTerminal() {
+
+  async closeTerminal(gateway) {
+    const session = get().terminal
+    if (session?.status === 'connected') {
+      try {
+        await gateway.containers.disconnectTerminal(session.sessionId)
+      } catch {
+        // 适配层已无此会话时界面仍要关掉窗口。
+      }
+    }
     set({ terminal: undefined })
   },
 
   async submitCommand(gateway, command) {
     const session = get().terminal
     const trimmed = command.trim()
-    if (!session || !trimmed) return
+    if (!session || session.status !== 'connected' || !trimmed) return
 
     if (trimmed === 'clear') {
       set({
@@ -324,20 +402,16 @@ export const useContainersStore = create<{
       return
     }
 
-    // input 行只存裸命令：提示符由终端壳渲染时拼在行首（提示符只有一个家）。
-    set({ terminal: { ...session, lines: [...session.lines, { kind: 'input', text: trimmed }] } })
+    const submittedPrompt = session.prompt
+    set({
+      terminal: {
+        ...session,
+        lines: [...session.lines, { kind: 'input', text: trimmed, prompt: submittedPrompt }],
+        history: pushHistory(session.history, trimmed),
+      },
+    })
     try {
-      const result = await gateway.containers.execMockCommand(session.containerId, trimmed)
-      set((state) => ({
-        terminal: state.terminal && {
-          ...state.terminal,
-          lines: [
-            ...state.terminal.lines,
-            ...result.lines.map((text): TerminalLine => ({ kind: 'output', text })),
-          ],
-          history: pushHistory(state.terminal.history, trimmed),
-        },
-      }))
+      await gateway.containers.sendTerminalInput(session.sessionId, trimmed)
     } catch (error) {
       const text = error instanceof Error ? error.message : '命令执行失败'
       set((state) => ({
@@ -347,6 +421,77 @@ export const useContainersStore = create<{
         },
       }))
     }
+  },
+
+  async interruptTerminal(gateway) {
+    const session = get().terminal
+    if (!session || session.status !== 'connected') return
+    try {
+      await gateway.containers.interruptTerminal(session.sessionId)
+    } catch {
+      // 会话已断开时错误态由关闭路径接管。
+    }
+  },
+
+  applyTerminalFrame(sessionId, frame) {
+    set((state) => {
+      const session = state.terminal
+      if (!session || session.sessionId !== sessionId) return {}
+      switch (frame.type) {
+        case 'output':
+          return {
+            terminal: {
+              ...session,
+              lines: [...session.lines, ...asOutputLines(frame.lines)],
+            },
+          }
+        case 'prompt':
+          return { terminal: { ...session, prompt: frame.prompt } }
+        case 'truncated':
+          return {
+            terminal: {
+              ...session,
+              lines: [
+                ...session.lines,
+                {
+                  kind: 'output',
+                  text: `输出超出单轮上限，已丢弃 ${frame.droppedBytes} 字节`,
+                },
+              ],
+            },
+          }
+        case 'exit':
+          return {
+            terminal: {
+              ...session,
+              status: 'error',
+              lines: [
+                ...session.lines,
+                { kind: 'output', text: `会话已退出（退出码 ${frame.exitCode}）` },
+              ],
+            },
+          }
+        default:
+          return {}
+      }
+    })
+  },
+
+  handleTerminalClose(sessionId, info) {
+    set((state) => {
+      const session = state.terminal
+      if (!session || session.sessionId !== sessionId || session.status === 'error') return {}
+      return {
+        terminal: {
+          ...session,
+          status: 'error',
+          lines: [
+            ...session.lines,
+            { kind: 'output', text: hostTerminalCloseMessage(info.code, info.reason) },
+          ],
+        },
+      }
+    })
   },
 
   appendTerminalOutput(lines) {
@@ -387,3 +532,12 @@ export const useContainersStore = create<{
     }
   },
 }))
+
+const containerTerminalHandlers: HostTerminalHandlers = {
+  onFrame: (sessionId, frame) => {
+    useContainersStore.getState().applyTerminalFrame(sessionId, frame)
+  },
+  onClose: (sessionId, info) => {
+    useContainersStore.getState().handleTerminalClose(sessionId, info)
+  },
+}

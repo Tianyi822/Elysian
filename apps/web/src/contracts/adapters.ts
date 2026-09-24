@@ -149,8 +149,15 @@ export interface ContainerAdapter {
   listImages(): Promise<readonly ContainerImage[]>
   /** Docker 运行时读取挂载根与保留端口；mock 返回演示策略。 */
   createPolicy(): Promise<ContainerHostPolicy>
-  /** 演示终端：命令在本页 mock 内确定性求值，不执行真实 Shell。 */
-  execMockCommand(containerId: string, command: string): Promise<MockCommandResult>
+  /** 打开容器终端流式会话；mock 在内存求值，Docker 运行时经 WebSocket 接 exec PTY。 */
+  connectTerminal(
+    containerId: string,
+    handlers: HostTerminalHandlers,
+  ): Promise<HostTerminalSessionInfo>
+  sendTerminalInput(sessionId: string, line: string): Promise<void>
+  interruptTerminal(sessionId: string): Promise<void>
+  completeTerminal(sessionId: string, draft: string, cursor: number): TerminalCompletion
+  disconnectTerminal(sessionId: string): Promise<void>
   /** 请求容器动作（启动/停止/重启，均为 mock）。 */
   requestAction(containerId: string, action: ContainerAction): Promise<Container>
   /** 创建容器（mock）：追加内存数据集并推 container/created。 */

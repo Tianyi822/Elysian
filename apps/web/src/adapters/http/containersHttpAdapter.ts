@@ -12,6 +12,7 @@ import type {
 import { CONTAINER_STATUSES, RESTART_POLICIES } from '@elysian/contracts'
 import type { Unsubscribe } from '@elysian/contracts'
 import type { ContainerAdapter, ContainerHostPolicy } from '../../contracts/adapters'
+import { createContainerTerminalWsAdapter } from './containerTerminalWsAdapter'
 import type { EventSourceFactory, EventSourceLike } from '../sse/eventsAdapter'
 import { parseElysianEvent, SseFrameParser } from '../sse/parse'
 
@@ -244,10 +245,6 @@ export function createContainerWatchLive(
   }
 }
 
-const NOT_CONNECTED = async (): Promise<never> => {
-  throw new Error('容器管理的该操作尚未接入')
-}
-
 function asObject(value: unknown, message: string): Record<string, unknown> {
   if (!value || typeof value !== 'object') {
     throw new Error(message)
@@ -469,6 +466,7 @@ export function createHttpContainersAdapter(
   options: { createEventSource?: EventSourceFactory } = {},
 ): ContainerAdapter {
   const watchLive = createContainerWatchLive({ baseUrl, ...options })
+  const terminal = createContainerTerminalWsAdapter()
   return {
     async list() {
       return parseContainerListResponse(await requestJson(`${baseUrl}/containers`))
@@ -482,7 +480,11 @@ export function createHttpContainersAdapter(
       return parseContainerPolicyResponse(await requestJson(`${baseUrl}/policy`))
     },
 
-    execMockCommand: NOT_CONNECTED,
+    connectTerminal: terminal.connectTerminal,
+    sendTerminalInput: terminal.sendTerminalInput,
+    interruptTerminal: terminal.interruptTerminal,
+    completeTerminal: terminal.completeTerminal,
+    disconnectTerminal: terminal.disconnectTerminal,
 
     async requestAction(containerId, action: ContainerAction) {
       return parseContainer(

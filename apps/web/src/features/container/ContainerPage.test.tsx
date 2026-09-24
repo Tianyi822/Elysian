@@ -23,7 +23,12 @@ function pageGateway(overrides: Partial<ElysianGateway['containers']> = {}): Ely
       // listImages 直通真实 mock 数据集：删除镜像要落实到数据集，读种子常量会绕过它。
       listImages: () => base.containers.listImages(),
       createPolicy: () => base.containers.createPolicy(),
-      execMockCommand: (id: string, command: string) => base.containers.execMockCommand(id, command),
+      connectTerminal: (id, handlers) => base.containers.connectTerminal(id, handlers),
+      sendTerminalInput: (sessionId, line) => base.containers.sendTerminalInput(sessionId, line),
+      interruptTerminal: (sessionId) => base.containers.interruptTerminal(sessionId),
+      completeTerminal: (sessionId, draft, cursor) =>
+        base.containers.completeTerminal(sessionId, draft, cursor),
+      disconnectTerminal: (sessionId) => base.containers.disconnectTerminal(sessionId),
       create: (input: ContainerCreateInput) => base.containers.create(input),
       removeImage: (imageId: string) => base.containers.removeImage(imageId),
       pullImage: (input: { name: string; tag: string }) => base.containers.pullImage(input),

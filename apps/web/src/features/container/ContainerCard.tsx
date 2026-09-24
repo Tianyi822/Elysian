@@ -155,7 +155,7 @@ export function ContainerCard({ container }: { container: Container }) {
           className={ACTION_BUTTON}
           disabled={container.status !== 'running'}
           title={pausedBlocked ? pausedTitle : undefined}
-          onClick={() => openTerminal(container.id)}
+          onClick={() => void openTerminal(gateway, container.id)}
         >
           <TerminalIcon aria-hidden size={13} />
           终端

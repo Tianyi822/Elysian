@@ -67,6 +67,8 @@ import type {
   ApprovalAdapter,
   AuditAdapter,
   ContainerAdapter,
+  HostTerminalHandlers,
+  HostTerminalSessionInfo,
   DatabaseAdapter,
   DatabaseCreateInput,
   EventsAdapter,
@@ -137,7 +139,7 @@ import {
   setSshServiceEnabled,
 } from './sshData'
 import { runMockQuery } from './databaseQuery'
-import { execContainerCommand } from './containerTerminal'
+import { completeTerminalCommand, execContainerCommand } from './containerTerminal'
 import {
   chmodMockEntry,
   compressMockEntry,
@@ -494,7 +496,15 @@ export class MockRunAdapter implements RunAdapter {
   }
 }
 
+type MockContainerTerminalSession = {
+  containerId: string
+  handlers: HostTerminalHandlers
+}
+
 export class MockContainerAdapter implements ContainerAdapter {
+  private nextTerminalId = 1
+  private readonly terminalSessions = new Map<string, MockContainerTerminalSession>()
+
   constructor(
     private readonly dataset: () => MockDataset,
     private readonly hooks: {
@@ -516,15 +526,49 @@ export class MockContainerAdapter implements ContainerAdapter {
     return { mountRoot: '/srv/elysian', reservedPorts: [48100] }
   }
 
-  async execMockCommand(
+  async connectTerminal(
     containerId: string,
-    command: string,
-  ): Promise<{ lines: readonly string[]; clear?: boolean }> {
+    handlers: HostTerminalHandlers,
+  ): Promise<HostTerminalSessionInfo> {
     const container = this.dataset().containers.find((c) => c.id === containerId)
+    if (!container) throw new Error('容器不存在，无法执行演示终端命令')
+    const id = `ctr-term-${this.nextTerminalId}`
+    this.nextTerminalId += 1
+    this.terminalSessions.set(id, { containerId, handlers })
+    return { id, user: 'demo', hostLabel: container.name, prompt: '$ ' }
+  }
+
+  async sendTerminalInput(sessionId: string, line: string): Promise<void> {
+    const session = this.requireTerminalSession(sessionId)
+    const container = this.dataset().containers.find((c) => c.id === session.containerId)
     if (!container) throw new Error('容器不存在，无法执行演示终端命令')
     const image = this.dataset().images.find((i) => i.id === container.imageId)
     if (!image) throw new Error('容器所用镜像不存在，无法执行演示终端命令')
-    return execContainerCommand(container, image, command)
+    const { lines } = execContainerCommand(container, image, line)
+    if (lines.length > 0) {
+      session.handlers.onFrame(sessionId, { type: 'output', lines })
+    }
+  }
+
+  async interruptTerminal(sessionId: string): Promise<void> {
+    this.requireTerminalSession(sessionId)
+  }
+
+  completeTerminal(sessionId: string, draft: string, cursor: number) {
+    if (!this.terminalSessions.has(sessionId)) return { draft, cursor }
+    return completeTerminalCommand(draft, cursor)
+  }
+
+  async disconnectTerminal(sessionId: string): Promise<void> {
+    if (!this.terminalSessions.delete(sessionId)) {
+      throw new Error(`终端会话不存在 ${sessionId}`)
+    }
+  }
+
+  private requireTerminalSession(sessionId: string): MockContainerTerminalSession {
+    const session = this.terminalSessions.get(sessionId)
+    if (!session) throw new Error(`终端会话不存在 ${sessionId}`)
+    return session
   }
 
   async requestAction(containerId: string, action: ContainerAction): Promise<Container> {

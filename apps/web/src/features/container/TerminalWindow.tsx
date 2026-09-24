@@ -1,11 +1,16 @@
 import { useGateway } from '../../adapters/GatewayProvider'
 import { completeTerminalCommand } from '../../adapters/mock/containerTerminal'
+import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { TerminalShell } from '../../components/terminal/TerminalShell'
+import type { TerminalCompletion } from '../../components/terminal/terminalSession'
 import { useContainersStore } from '../../stores/containersStore'
+
+const MOCK_BANNER = '演示终端 · 待接入真实执行'
+const DOCKER_BANNER = '容器终端'
 
 /**
  * 容器终端的薄壳：交互内核在 TerminalShell，这里只把容器域的东西接上去——
- * 会话状态来自 containersStore，命令引擎走 mock 适配层，提示符固定 `$ `。
+ * 会话状态来自 containersStore，命令经容器 adapter 流式下发，提示符由会话帧更新。
  */
 export function TerminalWindow() {
   const gateway = useGateway()
@@ -14,26 +19,35 @@ export function TerminalWindow() {
     s.containers.find((candidate) => candidate.id === s.terminal?.containerId),
   )
   const submitCommand = useContainersStore((s) => s.submitCommand)
+  const interruptTerminal = useContainersStore((s) => s.interruptTerminal)
   const appendTerminalOutput = useContainersStore((s) => s.appendTerminalOutput)
   const clearTerminalScreen = useContainersStore((s) => s.clearTerminalScreen)
   const closeTerminal = useContainersStore((s) => s.closeTerminal)
 
   if (!terminal || !container) return null
 
+  const complete = (draft: string, cursor: number): TerminalCompletion => {
+    if (terminal.status === 'connected') {
+      return gateway.containers.completeTerminal(terminal.sessionId, draft, cursor)
+    }
+    return completeTerminalCommand(draft, cursor)
+  }
+
   return (
     <TerminalShell
       title={`${container.name} 终端`}
-      banner="演示终端 · 待接入真实执行"
+      banner={isDockerRuntime() ? DOCKER_BANNER : MOCK_BANNER}
       subject={container.name}
-      prompt="$ "
-      sessionKey={terminal.containerId}
+      prompt={terminal.prompt}
+      sessionKey={terminal.sessionId}
       lines={terminal.lines}
       history={terminal.history}
       onSubmit={(command) => void submitCommand(gateway, command)}
-      complete={completeTerminalCommand}
+      complete={complete}
       onAppendOutput={appendTerminalOutput}
       onClear={clearTerminalScreen}
-      onClose={closeTerminal}
+      onClose={() => void closeTerminal(gateway)}
+      onInterrupt={() => void interruptTerminal(gateway)}
       labels={{
         input: '命令输入',
         close: '关闭终端',

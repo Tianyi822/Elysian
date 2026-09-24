@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ElysianEvent } from '@elysian/contracts'
 import type { Container } from '@elysian/contracts'
-import type { ElysianGateway, EventsAdapter } from '../contracts/adapters'
+import type { ElysianGateway, EventsAdapter, HostTerminalHandlers } from '../contracts/adapters'
 import { useNotificationStore } from './notificationStore'
 import { useEventStreamStore } from './eventStreamStore'
 import {
@@ -13,12 +13,25 @@ import { useContainersStore } from './containersStore'
 import { CONTAINERS, CONTAINER_IMAGES } from '../adapters/mock/containersData'
 
 function gatewayWith(overrides: Partial<ElysianGateway['containers']> = {}): ElysianGateway {
+  let terminalHandlers: HostTerminalHandlers | undefined
   return {
     containers: {
       list: async () => [...CONTAINERS],
       listImages: async () => [...CONTAINER_IMAGES],
       createPolicy: async () => ({ mountRoot: '/srv/elysian', reservedPorts: [48100] }),
-      execMockCommand: async () => ({ lines: ['ok'] }),
+      connectTerminal: async (
+        _containerId: string,
+        handlers: HostTerminalHandlers,
+      ) => {
+        terminalHandlers = handlers
+        return { id: 'sess-test', user: 'demo', hostLabel: 'ctr', prompt: '$ ' }
+      },
+      sendTerminalInput: async () => {
+        terminalHandlers?.onFrame('sess-test', { type: 'output', lines: ['ok'] })
+      },
+      interruptTerminal: async () => {},
+      completeTerminal: (_sessionId: string, draft: string, cursor: number) => ({ draft, cursor }),
+      disconnectTerminal: async () => {},
       requestAction: async (id: string) => CONTAINERS.find((c) => c.id === id)!,
       create: async () => CONTAINERS[0]!,
       removeImage: async () => {},
@@ -118,7 +131,14 @@ describe('containersStore', () => {
     useContainersStore.setState({
       samples: { 'ctr-nginx-proxy': { cpuPercent: 1, memMb: 2 } },
       detailContainerId: 'ctr-nginx-proxy',
-      terminal: { containerId: 'ctr-nginx-proxy', lines: [], history: [] },
+      terminal: {
+        containerId: 'ctr-nginx-proxy',
+        sessionId: 'sess-test',
+        prompt: '$ ',
+        status: 'connected',
+        lines: [],
+        history: [],
+      },
     })
     emitToStore?.(event('container/removed', { containerId: 'ctr-nginx-proxy' }))
     const state = useContainersStore.getState()
@@ -176,9 +196,20 @@ describe('containersStore', () => {
   })
 
   it('submitCommand 回显、追加输出、记录历史并支持清屏', async () => {
-    const gateway = gatewayWith({ execMockCommand: async (_id, command) => command === 'clear' ? { lines: [], clear: true } : { lines: ['line-1'] } })
+    let handlers: HostTerminalHandlers | undefined
+    const gateway = gatewayWith({
+      connectTerminal: async (_id, h) => {
+        handlers = h
+        return { id: 'sess-1', user: 'demo', hostLabel: 'ctr', prompt: '$ ' }
+      },
+      sendTerminalInput: async (_sessionId, command) => {
+        if (command !== 'clear') {
+          handlers?.onFrame('sess-1', { type: 'output', lines: ['line-1'] })
+        }
+      },
+    })
     await useContainersStore.getState().load(gateway)
-    useContainersStore.getState().openTerminal('ctr-nginx-proxy')
+    await useContainersStore.getState().openTerminal(gateway, 'ctr-nginx-proxy')
 
     await useContainersStore.getState().submitCommand(gateway, 'env')
     let terminal = useContainersStore.getState().terminal!
@@ -195,7 +226,7 @@ describe('containersStore', () => {
   it('submitCommand 对空命令不动作，历史连续去重', async () => {
     const gateway = gatewayWith()
     await useContainersStore.getState().load(gateway)
-    useContainersStore.getState().openTerminal('ctr-nginx-proxy')
+    await useContainersStore.getState().openTerminal(gateway, 'ctr-nginx-proxy')
     await useContainersStore.getState().submitCommand(gateway, '   ')
     expect(useContainersStore.getState().terminal?.lines).toHaveLength(1) // 仅横幅
 
@@ -223,10 +254,11 @@ describe('containersStore', () => {
   })
 
   it('closeTerminal 清空会话；closeDetail 清空详情', async () => {
-    await useContainersStore.getState().load(gatewayWith())
-    useContainersStore.getState().openTerminal('ctr-nginx-proxy')
+    const gateway = gatewayWith()
+    await useContainersStore.getState().load(gateway)
+    await useContainersStore.getState().openTerminal(gateway, 'ctr-nginx-proxy')
     useContainersStore.getState().openDetail('ctr-nginx-proxy')
-    useContainersStore.getState().closeTerminal()
+    await useContainersStore.getState().closeTerminal(gateway)
     useContainersStore.getState().closeDetail()
     const state = useContainersStore.getState()
     expect(state.terminal).toBeUndefined()
