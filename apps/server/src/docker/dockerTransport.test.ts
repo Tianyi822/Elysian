@@ -1,4 +1,20 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+const pullHttpMocks = vi.hoisted(() => {
+  const destroy = vi.fn()
+  const request = vi.fn((_opts: unknown, _cb?: unknown) => ({
+    destroy,
+    setTimeout: vi.fn(),
+    on: vi.fn(),
+    end: vi.fn(),
+  }))
+  return { destroy, request }
+})
+
+vi.mock('node:http', () => ({
+  request: pullHttpMocks.request,
+}))
+
 import {
   assertEngineApi,
   createDockerTransport,
@@ -25,6 +41,30 @@ describe('createDockerTransport', () => {
     expect(requestImpl).toHaveBeenCalledOnce()
     expect(requestImpl).toHaveBeenCalledWith(input)
     expect(result).toEqual({ status: 200, json: { ApiVersion: '1.41' } })
+  })
+})
+
+describe('pullCreate', () => {
+  afterEach(() => {
+    pullHttpMocks.destroy.mockClear()
+    pullHttpMocks.request.mockClear()
+  })
+
+  it('AbortSignal 中止时销毁 Engine 请求并拒绝拉取', async () => {
+    const transport = createDockerTransport({ socketPath: '/var/run/docker.sock' })
+    const controller = new AbortController()
+    const promise = transport.pullCreate!({
+      path: '/v1.41/images/create?fromImage=nginx%3Alatest',
+      timeoutMs: 60_000,
+      maxBytes: 1024,
+      signal: controller.signal,
+    })
+
+    controller.abort()
+
+    await expect(promise).rejects.toThrow('拉取已取消')
+    expect(pullHttpMocks.destroy).toHaveBeenCalled()
+    expect(pullHttpMocks.request).toHaveBeenCalled()
   })
 })
 
