@@ -88,6 +88,7 @@ export async function createApp(overrides: AppDepsOverrides = {}): Promise<Hono>
   const terminals = overrides.terminals ?? (await createTerminalsHostDeps())
   app.route(TERMINAL_MOUNT, createTerminalsApp({ ...terminals, logs: terminals.logs ?? logs }))
   app.route(LOGS_MOUNT, createLogsApp({ service: logs }))
-  app.route(DOCKER_MOUNT, createDockerApp(overrides.docker ?? (await createDockerHostDeps())))
+  const docker = overrides.docker ?? (await createDockerHostDeps())
+  app.route(DOCKER_MOUNT, createDockerApp({ ...docker, logs: docker.logs ?? logs }))
   return app
 }

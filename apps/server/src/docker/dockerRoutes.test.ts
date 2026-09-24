@@ -386,6 +386,30 @@ describe('createDockerApp', () => {
       expect(await res.json()).toEqual({ upgraded: true })
       expect(upgrade).toHaveBeenCalledOnce()
     })
+
+    it('通过前置检查且提供 logs 时记录打开容器终端', async () => {
+      const recordOperation = vi.fn(async () => undefined)
+      const log = vi.fn(async () => undefined)
+      const app = mountedApp({
+        ...TERMINAL_READY,
+        logs: { recordOperation, log },
+        upgradeWebSocket: () => sendJson(200, { upgraded: true }),
+      })
+      const res = await app.request(req('GET', terminalPath))
+      expect(res.status).toBe(200)
+      expect(recordOperation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          category: 'containers',
+          action: '打开容器终端',
+          target: `容器 ${SAMPLE_CONTAINER.id}`,
+          result: 'success',
+          method: 'GET',
+          path: `${DOCKER_MOUNT}/containers/${SAMPLE_CONTAINER.id}/terminal`,
+          httpStatus: 200,
+        }),
+      )
+      expect(log).toHaveBeenCalledWith('info', 'logs.operation', '操作：打开容器终端（成功）')
+    })
   })
 
   it('hub 上报 connecting 时 SSE 写入 status connecting 注释帧', async () => {

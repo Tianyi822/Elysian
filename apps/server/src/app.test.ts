@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { LogStorageStats, PlatformLogCategory } from '@elysian/contracts'
 import { createApp } from './app'
+import { DOCKER_MOUNT } from './docker/dockerRoutes.ts'
+import type { DockerExecSessions } from './docker/dockerExecSessions.ts'
+import type { DockerTransport } from './docker/dockerTransport.ts'
 import { LOGS_MOUNT } from './logs/logsRoutes'
 import type { LogsService } from './logs/logsService'
+import { sendJson } from './middleware/guard.ts'
 
 /*
  * app 组装冒烟测试：锚定挂载点与健康检查的可达性。三片安全路由全部装配真实接线：
@@ -217,5 +221,89 @@ describe('createApp 组装', () => {
       path: '/api/terminals/ws',
     })
     expect(logs.runtimeLogs).toContain('操作：打开本机终端会话（成功）')
+  })
+
+  it('容器片拿到同一个日志服务：容器终端升级前记录打开容器终端', async () => {
+    const logs = createFakeLogs()
+    const transport: DockerTransport = {
+      request: async () => ({
+        status: 200,
+        json: { Id: 'a1b2c3d4e5f6', State: { Status: 'running' } },
+      }),
+    }
+    const dockerExecSessions: DockerExecSessions = {
+      createWsEvents: () => ({
+        onOpen: () => undefined,
+        onMessage: () => undefined,
+        onClose: () => undefined,
+      }),
+      activeCount: () => 0,
+    }
+    const app = await createApp({
+      logs: logs.service,
+      docker: {
+        available: true,
+        socketReady: true,
+        service: {
+          listContainers: async () => [],
+          listImages: async () => [],
+          policy: async () => ({ mountRoot: '/srv', reservedPorts: [22] }),
+          action: async (id) => ({
+            id,
+            name: 'c',
+            status: 'running',
+            imageId: 'i',
+            ports: [],
+            createdAt: '',
+            command: '',
+            env: [],
+            volumes: [],
+            restartPolicy: 'no',
+          }),
+          create: async () => ({
+            id: 'a1b2c3d4e5f6',
+            name: 'c',
+            status: 'running',
+            imageId: 'i',
+            ports: [],
+            createdAt: '',
+            command: '',
+            env: [],
+            volumes: [],
+            restartPolicy: 'no',
+          }),
+          pull: async () => ({
+            id: 'i',
+            name: 'n',
+            tag: 't',
+            digest: 'd',
+            sizeMb: 1,
+            pulledAt: null,
+          }),
+          removeImage: async () => undefined,
+        },
+        transport,
+        dockerExecSessions,
+        upgradeWebSocket: () => sendJson(200, { ok: true }),
+      },
+    })
+
+    const res = await app.request(
+      new Request(`http://localhost:5173${DOCKER_MOUNT}/containers/a1b2c3d4e5f6/terminal`, {
+        headers: { host: 'localhost:5173', origin: 'http://localhost:5173' },
+      }),
+    )
+    expect(res.status).toBe(200)
+
+    expect(logs.operationRecords).toHaveLength(1)
+    expect(logs.operationRecords[0]).toMatchObject({
+      category: 'containers',
+      action: '打开容器终端',
+      target: '容器 a1b2c3d4e5f6',
+      result: 'success',
+      method: 'GET',
+      path: `${DOCKER_MOUNT}/containers/a1b2c3d4e5f6/terminal`,
+    })
+    expect(logs.runtimeLogs).toContain('操作：打开容器终端（成功）')
   })
 })
