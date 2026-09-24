@@ -169,6 +169,36 @@ describe('数据库页面', () => {
     expect(await screen.findByRole('dialog', { name: 'mariadb-primary' })).toBeInTheDocument()
   })
 
+  it('来源容器不在列表时卡片显示缺失态且不可打开详情', async () => {
+    const user = userEvent.setup()
+    const orphan: DatabaseInstance = {
+      ...MARIADB,
+      id: 'orphan-mariadb',
+      name: 'orphan-db',
+      containerId: 'ctr-not-in-list',
+    }
+    const base = pageGateway({ list: async () => [orphan] })
+    const gateway: ElysianGateway = {
+      ...base,
+      containers: {
+        ...base.containers,
+        list: async () => [],
+        listImages: async () => [],
+      },
+    }
+    renderApp('/databases', { gateway })
+
+    const card = await screen.findByRole('article', { name: 'MariaDB 数据库 orphan-db' })
+    expect(card).toHaveTextContent('来源容器已不存在')
+    expect(card).not.toHaveTextContent('mariadb-primary')
+
+    const row = within(card).getByRole('button', { name: /来源容器已不存在/ })
+    expect(row).toBeDisabled()
+    await user.click(row)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(useContainersStore.getState().detailContainerId).toBeUndefined()
+  })
+
   it('adapter 读取失败显示错误态，重试成功后恢复卡片', async () => {
     const user = userEvent.setup()
     let failed = true
