@@ -26,7 +26,10 @@ const PRIVATE_IPV6_RANGES: ReadonlyArray<[string, number]> = [
   ['::ffff:0:0', 96],
   ['fe80::', 10],
   ['fc00::', 7],
+  ['ff00::', 8],
 ]
+
+const DISALLOWED_HOST_SUFFIXES = ['.local', '.internal', '.lan', '.home.arpa'] as const
 
 const privateIpv4BlockList = new BlockList()
 for (const [network, prefix] of PRIVATE_IPV4_RANGES) {
@@ -74,12 +77,24 @@ function splitHostPort(hostWithOptionalPort: string): { hostname: string; displa
   return { hostname: hostWithOptionalPort, display: hostWithOptionalPort }
 }
 
+function hostnameLabelCount(hostname: string): number {
+  return hostname.split('.').filter((label) => label.length > 0).length
+}
+
+function hasDisallowedHostnameSuffix(hostname: string): boolean {
+  const lower = hostname.toLowerCase()
+  return DISALLOWED_HOST_SUFFIXES.some((suffix) => lower.endsWith(suffix))
+}
+
 function assertResolvableHostname(hostname: string): void {
   if (isIP(hostname) !== 0) {
     throw new Error(DISALLOWED_HOST)
   }
   const lower = hostname.toLowerCase()
-  if (lower === 'localhost' || lower === 'registry' || lower.endsWith('.local')) {
+  if (lower === 'localhost' || hostnameLabelCount(hostname) < 2) {
+    throw new Error(DISALLOWED_HOST)
+  }
+  if (hasDisallowedHostnameSuffix(hostname)) {
     throw new Error(DISALLOWED_HOST)
   }
 }

@@ -14,9 +14,18 @@ describe('validateRegistry', () => {
     await expect(validateRegistry('http://example.com', PUBLIC_RESOLVE)).rejects.toThrow()
   })
 
-  it('拒绝字面 IP、本机名、内网后缀与 Docker 内置 registry 主机名', async () => {
+  it('拒绝字面 IP、本机名、单标签主机名与保留后缀', async () => {
     const resolve = vi.fn(PUBLIC_RESOLVE)
-    for (const raw of ['10.0.0.1', 'localhost', 'registry', 'foo.local']) {
+    for (const raw of [
+      '10.0.0.1',
+      'localhost',
+      'registry',
+      'mirror',
+      'foo.local',
+      'svc.internal',
+      'nas.lan',
+      'router.home.arpa',
+    ]) {
       await expect(validateRegistry(raw, resolve)).rejects.toThrow()
     }
     expect(resolve).not.toHaveBeenCalled()
@@ -55,11 +64,12 @@ describe('isPublicAddress', () => {
     expect(isPublicAddress('1.2.3.4')).toBe(true)
   })
 
-  it('内网、回环与 CGNAT 为假', () => {
+  it('内网、回环、CGNAT 与组播为假', () => {
     expect(isPublicAddress('10.1.2.3')).toBe(false)
     expect(isPublicAddress('127.0.0.1')).toBe(false)
     expect(isPublicAddress('100.64.0.1')).toBe(false)
     expect(isPublicAddress('::ffff:192.168.0.1')).toBe(false)
     expect(isPublicAddress('fd00::1')).toBe(false)
+    expect(isPublicAddress('ff02::1')).toBe(false)
   })
 })
