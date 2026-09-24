@@ -3,18 +3,20 @@
  * 操作（启动/停止/重启）全部为 mock，接口形状为未来接真实运行时预留。
  */
 
-export type ContainerStatus = 'running' | 'stopped' | 'restarting'
+export type ContainerStatus = 'running' | 'stopped' | 'restarting' | 'paused'
 
 export const CONTAINER_STATUSES = [
   'running',
   'stopped',
   'restarting',
+  'paused',
 ] as const satisfies readonly ContainerStatus[]
 
 export const CONTAINER_STATUS_LABELS: Record<ContainerStatus, string> = {
   running: '运行中',
   stopped: '已停止',
   restarting: '重启中',
+  paused: '已暂停',
 }
 
 export type RestartPolicy = 'no' | 'always' | 'on-failure' | 'unless-stopped'
@@ -40,18 +42,24 @@ export type PortMapping = {
   containerPort: number
   hostPort: number
   protocol: PortProtocol
+  hostIp?: string
 }
 
-export type EnvPair = { key: string; value: string }
+export type EnvPair = { key: string; value: string | null }
 
 /** 绑定挂载：宿主机路径 → 容器内路径。 */
-export type VolumeMount = { hostPath: string; containerPath: string }
+export type VolumeMount = {
+  hostPath: string
+  containerPath: string
+  kind?: 'bind' | 'volume' | 'tmpfs'
+}
 
 export type Container = {
   id: string
   name: string
   status: ContainerStatus
   imageId: string
+  imageRef?: string
   ports: readonly PortMapping[]
   /** 创建时间（ISO，相对数据集基准时间）。 */
   createdAt: string
@@ -70,8 +78,9 @@ export type ContainerImage = {
   digest: string
   /** 镜像大小（MB）。 */
   sizeMb: number
-  /** 拉取时间（ISO）。 */
-  pulledAt: string
+  /** 拉取时间（ISO）；未拉取或未知时为 null。 */
+  pulledAt: string | null
+  otherTags?: readonly string[]
 }
 
 /** 容器资源采样的单项（事件 container/sample 的载荷成员）。 */

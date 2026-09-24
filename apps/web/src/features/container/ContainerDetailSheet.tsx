@@ -15,6 +15,7 @@ const STATUS_TONE: Record<Container['status'], StatusTone> = {
   running: 'success',
   stopped: 'neutral',
   restarting: 'warning',
+  paused: 'neutral',
 }
 
 /** 分节卡片：与容器卡片的内部信息块同一视觉语言（圆角描边、抬升底色）。 */

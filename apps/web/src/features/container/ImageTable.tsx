@@ -71,7 +71,9 @@ export function ImageTable({
                   </div>
                 </td>
                 <td className="px-4 py-3 text-right tabular-nums">{image.sizeMb} MB</td>
-                <td className="px-4 py-3 tabular-nums text-fg-muted">{image.pulledAt.slice(0, 10)}</td>
+                <td className="px-4 py-3 tabular-nums text-fg-muted">
+                  {image.pulledAt ? image.pulledAt.slice(0, 10) : '—'}
+                </td>
                 <td className="px-4 py-3 text-right">
                   {usage > 0 ? (
                     <span

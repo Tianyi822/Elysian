@@ -13,6 +13,7 @@ const STATUS_TONE: Record<Container['status'], StatusTone> = {
   running: 'success',
   stopped: 'neutral',
   restarting: 'warning',
+  paused: 'neutral',
 }
 
 const ACTION_BUTTON =

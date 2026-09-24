@@ -307,8 +307,9 @@ describe('契约包零运行时依赖', () => {
 
 describe('容器域类型', () => {
   it('状态与策略枚举、类型、标签表一一对应', () => {
-    expect(contracts.CONTAINER_STATUSES).toEqual(['running', 'stopped', 'restarting'])
+    expect(contracts.CONTAINER_STATUSES).toEqual(['running', 'stopped', 'restarting', 'paused'])
     expect(contracts.CONTAINER_STATUS_LABELS.running).toBe('运行中')
+    expect(contracts.CONTAINER_STATUS_LABELS.paused).toBe('已暂停')
     expect(contracts.RESTART_POLICIES).toEqual(['no', 'always', 'on-failure', 'unless-stopped'])
     expect(contracts.RESTART_POLICY_LABELS['unless-stopped']).toBe('除非手动停止')
   })
