@@ -48,11 +48,34 @@ function defaultEventSourceFactory(): EventSourceFactory | undefined {
   }
 }
 
+const FETCH_SSE_INITIAL_BACKOFF_MS = 1_000
+const FETCH_SSE_MAX_BACKOFF_MS = 30_000
+
+function delayMs(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'))
+      return
+    }
+    const timer = setTimeout(() => resolve(), ms)
+    signal.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer)
+        reject(new DOMException('Aborted', 'AbortError'))
+      },
+      { once: true },
+    )
+  })
+}
+
 function createFetchContainerEventSource(url: string): ContainerEventSourceLike {
   const listeners = new Map<string, Set<(event: MessageEvent<string>) => void>>()
   const connectingHandlers = new Set<() => void>()
-  const abort = new AbortController()
   let closed = false
+  let lastEventId: string | undefined
+  let backoffMs = FETCH_SSE_INITIAL_BACKOFF_MS
+  let streamAbort: AbortController | null = null
 
   const source: ContainerEventSourceLike = {
     onopen: null,
@@ -64,7 +87,7 @@ function createFetchContainerEventSource(url: string): ContainerEventSourceLike 
     },
     close() {
       closed = true
-      abort.abort()
+      streamAbort?.abort()
       listeners.clear()
       connectingHandlers.clear()
       source.onopen = null
@@ -79,50 +102,88 @@ function createFetchContainerEventSource(url: string): ContainerEventSourceLike 
   }
 
   void (async () => {
-    try {
-      const response = await fetch(url, { signal: abort.signal })
-      if (!response.ok || !response.body) {
-        source.onerror?.(new Event('error'))
-        return
-      }
-      source.onopen?.(new Event('open'))
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      const parser = new SseFrameParser()
+    while (!closed) {
+      streamAbort = new AbortController()
+      const signal = streamAbort.signal
+      let streamHadOpened = false
+      try {
+        const result = await (async (): Promise<'complete' | 'failed'> => {
+          const headers: Record<string, string> = {}
+          if (lastEventId !== undefined) {
+            headers['Last-Event-ID'] = lastEventId
+          }
+          const response = await fetch(url, {
+            signal,
+            ...(Object.keys(headers).length > 0 ? { headers } : {}),
+          })
+          if (!response.ok || !response.body) {
+            return 'failed'
+          }
+          source.onopen?.(new Event('open'))
+          streamHadOpened = true
+          backoffMs = FETCH_SSE_INITIAL_BACKOFF_MS
 
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
+          const reader = response.body.getReader()
+          const decoder = new TextDecoder()
+          let buffer = ''
+          const parser = new SseFrameParser()
 
-        for (;;) {
-          const match = /\r\n|\n|\r/.exec(buffer)
-          if (!match) break
-          const line = buffer.slice(0, match.index)
-          buffer = buffer.slice(match.index + match[0].length)
+          for (;;) {
+            const { done, value } = await reader.read()
+            if (done) break
+            buffer += decoder.decode(value, { stream: true })
 
-          if (isConnectingStatusComment(line)) {
-            for (const handler of connectingHandlers) {
-              handler()
+            for (;;) {
+              const match = /\r\n|\n|\r/.exec(buffer)
+              if (!match) break
+              const line = buffer.slice(0, match.index)
+              buffer = buffer.slice(match.index + match[0].length)
+
+              if (isConnectingStatusComment(line)) {
+                for (const handler of connectingHandlers) {
+                  handler()
+                }
+                continue
+              }
+
+              for (const frame of parser.push(`${line}\n`)) {
+                if (parser.lastEventId !== undefined) {
+                  lastEventId = parser.lastEventId
+                }
+                for (const listener of listeners.get(frame.event) ?? []) {
+                  listener({ data: frame.data } as MessageEvent<string>)
+                }
+              }
             }
-            continue
           }
 
-          for (const frame of parser.push(`${line}\n`)) {
-            for (const listener of listeners.get(frame.event) ?? []) {
-              listener({ data: frame.data } as MessageEvent<string>)
-            }
+          if (parser.lastEventId !== undefined) {
+            lastEventId = parser.lastEventId
           }
+          return 'complete'
+        })()
+
+        if (closed) break
+        if (result === 'failed' || result === 'complete') {
+          source.onerror?.(new Event('error'))
+        }
+      } catch (error) {
+        if (closed || (error instanceof DOMException && error.name === 'AbortError')) {
+          break
+        }
+        if (streamHadOpened) {
+          source.onerror?.(new Event('error'))
         }
       }
-      if (!closed) {
-        source.onerror?.(new Event('error'))
+
+      if (closed) break
+
+      try {
+        await delayMs(backoffMs, signal)
+      } catch {
+        break
       }
-    } catch {
-      if (!closed) {
-        source.onerror?.(new Event('error'))
-      }
+      backoffMs = Math.min(backoffMs * 2, FETCH_SSE_MAX_BACKOFF_MS)
     }
   })()
 

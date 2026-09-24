@@ -186,6 +186,111 @@ describe('createHttpContainersAdapter', () => {
     expect(statuses).toEqual(['connecting'])
   })
 
+  it('fetch 事件源断流后带 Last-Event-ID 重连，并在退避期间上报 connecting', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    class NativeEventSourceWithoutConnectingHandler {
+      constructor(_url: string) {}
+    }
+    vi.stubGlobal('EventSource', NativeEventSourceWithoutConnectingHandler)
+
+    const envelope = JSON.stringify({
+      id: 'evt-1',
+      name: 'container/sample',
+      at: '2026-09-12T08:00:00.000Z',
+      payload: { samples: [] },
+    })
+    const firstChunk =
+      `id: hub-42\n` +
+      `event: container/sample\n` +
+      `data: ${envelope}\n\n`
+
+    let fetchCalls = 0
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      fetchCalls += 1
+      if (fetchCalls === 1) {
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode(firstChunk))
+              controller.close()
+            },
+          }),
+          { status: 200 },
+        )
+      }
+      const headers = init?.headers
+      const lastEventId =
+        headers instanceof Headers
+          ? headers.get('Last-Event-ID')
+          : (headers as Record<string, string> | undefined)?.['Last-Event-ID']
+      expect(lastEventId).toBe('hub-42')
+      return new Response(
+        new ReadableStream({
+          start() {
+            // 保持连接，避免测试触发进一步重连
+          },
+        }),
+        { status: 200 },
+      )
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const statuses: Array<'live' | 'connecting'> = []
+    const watchLive = createContainerWatchLive()
+    const unsubscribe = watchLive({
+      onStatus: (status) => statuses.push(status),
+      onEvent: () => {},
+    })
+
+    await vi.waitFor(() => {
+      expect(statuses).toContain('live')
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(statuses).toEqual(['connecting', 'live', 'connecting'])
+
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(statuses).toEqual(['connecting', 'live', 'connecting', 'live'])
+
+    unsubscribe()
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('fetch 事件源解析 : status connecting 注释', async () => {
+    class NativeEventSourceWithoutConnectingHandler {
+      constructor(_url: string) {}
+    }
+    vi.stubGlobal('EventSource', NativeEventSourceWithoutConnectingHandler)
+
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(': status connecting\n\n'))
+          },
+        }),
+        { status: 200 },
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const statuses: Array<'live' | 'connecting'> = []
+    const watchLive = createContainerWatchLive()
+    const unsubscribe = watchLive({ onStatus: (status) => statuses.push(status), onEvent: () => {} })
+
+    await vi.waitFor(() => {
+      expect(statuses).toEqual(['connecting', 'live', 'connecting'])
+    })
+
+    unsubscribe()
+    vi.unstubAllGlobals()
+  })
+
   it('requestAction() POST /api/docker/containers/:id/:action 并解析容器', async () => {
     const running = { ...baseContainer, status: 'running' as const }
     const fetchMock = vi.fn(async () => jsonResponse(running))
