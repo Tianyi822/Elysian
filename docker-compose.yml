@@ -11,7 +11,7 @@ services:
       # 容器内 sshd 供 SSH 面板联调取登录日志，同样只绑宿主回环，绝不裸绑局域网。
       - "127.0.0.1:2222:22"
     environment:
-      ELSYIAN_DOCKER: "1"
+      ELYSIAN_DOCKER: "1"
     # 防火墙面板真实执行 ufw/iptables，需要网络管理能力。
     cap_add:
       - NET_ADMIN

@@ -2,7 +2,7 @@ import { isDockerEnv } from './isDockerEnv.ts'
 
 /*
  * 容器可用性判据，防火墙/SSH/用户管理/文件管理四片共享：环境变量声明 Docker 编排
- * （ELSIYAN_DOCKER=1）且 /.dockerenv 证明进程真的在容器内，两者缺一不可。
+ * （ELYSIAN_DOCKER=1）且 /.dockerenv 证明进程真的在容器内，两者缺一不可。
  * 判据只此一份，各片接线统一调用，不许各自复制——改坏任何一片的边界都会在这里被钉住。
  */
 

@@ -13,7 +13,7 @@ const execFileAsync = promisify(execFile)
 
 /*
  * 真实文件管理的 Node 侧接线（cp/mv/tar + fs 原语 + getent）。
- * 硬边界：只有 ELSYIAN_DOCKER=1 且当前进程真的运行在容器内（/.dockerenv 存在）才可用；
+ * 硬边界：只有 ELYSIAN_DOCKER=1 且当前进程真的运行在容器内（/.dockerenv 存在）才可用；
  * 否则产出的装配 available=false，路由整片 503，绝不落到宿主机执行——宿主机上绝不
  * 执行 cp/mv/tar/chmod/chown，也绝不 readdir 宿主文件系统。判定逻辑归一在
  * shared/availability 的 resolveAvailability 里（安全四片同一判据），测试据此锚定

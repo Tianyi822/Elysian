@@ -4,7 +4,7 @@
  * web 侧那份服务 SSE mock 插件，这里服务安全三片的容器边界，两处互指、不合并。
  */
 
-/** 是否运行在 Docker 编排环境（由 compose 注入 ELSYIAN_DOCKER=1）。 */
+/** 是否运行在 Docker 编排环境（由 compose 注入 ELYSIAN_DOCKER=1）。 */
 export function isDockerEnv(env?: NodeJS.ProcessEnv): boolean {
-  return (env ?? process.env).ELSYIAN_DOCKER === '1'
+  return (env ?? process.env).ELYSIAN_DOCKER === '1'
 }

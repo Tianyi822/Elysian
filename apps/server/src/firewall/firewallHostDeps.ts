@@ -16,7 +16,7 @@ import { writeHostFile } from './hostFiles.ts'
 const execFileAsync = promisify(execFile)
 
 /*
- * 真实防火墙服务层的 Node 侧接线（server 进程内）。硬边界：只有 ELSYIAN_DOCKER=1
+ * 真实防火墙服务层的 Node 侧接线（server 进程内）。硬边界：只有 ELYSIAN_DOCKER=1
  * 且当前进程真的运行在容器内（/.dockerenv 存在）才可用；否则路由整片 503，
  * 绝不落到宿主机执行。落盘方式（原子写、内核接口直写）在 hostFiles，由 Vitest 单独覆盖。
  */

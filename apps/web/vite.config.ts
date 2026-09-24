@@ -16,18 +16,18 @@ export default defineConfig({
     elysianEventsVitePlugin(),
   ],
   define: {
-    'import.meta.env.ELSYIAN_DOCKER': JSON.stringify(process.env.ELSYIAN_DOCKER ?? ''),
+    'import.meta.env.ELYSIAN_DOCKER': JSON.stringify(process.env.ELYSIAN_DOCKER ?? ''),
   },
   server: {
     // 面板端口取契约的 PANEL_PORT（唯一权威，compose 端口发布同值）：
     // 它同时是防火墙规则配置的禁区与保底放行端口，三处必须一起变。
     port: PANEL_PORT,
-    // 本地原生 dev 只监听 localhost：工作台与无鉴权端点不暴露给局域网；容器编排（ELSYIAN_DOCKER=1）
+    // 本地原生 dev 只监听 localhost：工作台与无鉴权端点不暴露给局域网；容器编排（ELYSIAN_DOCKER=1）
     // 需要绑 0.0.0.0 才能被宿主机经端口映射访问（compose 只发布到宿主回环）。
-    host: process.env.ELSYIAN_DOCKER === '1' ? true : undefined,
+    host: process.env.ELYSIAN_DOCKER === '1' ? true : undefined,
     // Host 校验与 server 端守卫共用同一份名单：防 DNS rebinding 是本项目的显式决定，不依赖平台默认。
     allowedHosts: [...ALLOWED_HOSTNAMES],
-    watch: process.env.ELSYIAN_DOCKER === '1' ? { usePolling: true } : undefined,
+    watch: process.env.ELYSIAN_DOCKER === '1' ? { usePolling: true } : undefined,
     // 防火墙/SSH/用户管理/文件管理/平台日志、终端 WebSocket 与平台内存端点由 @elysian/server 承载（仅容器内回环），dev 经代理同源转发；
     // 必须用对象形式且不设 changeOrigin——vite 对字符串简写强制包一层 changeOrigin:true（改写 Host 头，
     // 转发后的 Origin 与 Host 不一致，server 同源守卫将 403 拒掉全部写请求），对象形式才保持原 Host 头。

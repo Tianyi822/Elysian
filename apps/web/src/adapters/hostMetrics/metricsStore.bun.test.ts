@@ -25,9 +25,9 @@ function sample(ts: number, cpu = 10): ResourceSamplePoint {
 }
 
 describe('isDockerEnv', () => {
-  it('ELSYIAN_DOCKER=1 时为 true', () => {
-    expect(isDockerEnv({ ELSYIAN_DOCKER: '1' })).toBe(true)
-    expect(isDockerEnv({ ELSYIAN_DOCKER: '0' })).toBe(false)
+  it('ELYSIAN_DOCKER=1 时为 true', () => {
+    expect(isDockerEnv({ ELYSIAN_DOCKER: '1' })).toBe(true)
+    expect(isDockerEnv({ ELYSIAN_DOCKER: '0' })).toBe(false)
     expect(isDockerEnv({})).toBe(false)
   })
 })

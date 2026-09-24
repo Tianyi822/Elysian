@@ -14,7 +14,7 @@ import { createUsersApp } from './usersRoutes'
 import type { UsersHostDeps } from './usersService'
 
 /*
- * 容器硬边界的测试锚定：可用性的推导（ELSYIAN_DOCKER=1 且 /.dockerenv 存在）与
+ * 容器硬边界的测试锚定：可用性的推导（ELYSIAN_DOCKER=1 且 /.dockerenv 存在）与
  * 接线装配在这里钉住——改坏判定会让用例变红，而不是静默漏到宿主机执行
  * useradd/usermod/userdel/gpasswd/chpasswd 这类系统修改命令。
  * 全部用注入的环境与 fake deps 驱动，不依赖宿主机状态、不执行任何真实命令。
@@ -221,9 +221,9 @@ describe('runChpasswdViaStdin 的 stdin 流错误（chpasswd 早退）', () => {
 
 describe('resolveUsersAvailability', () => {
   it('两项条件同时满足才可用：环境声明 Docker 编排 + /.dockerenv 证明真的在容器内', () => {
-    expect(resolveUsersAvailability({ ELSYIAN_DOCKER: '1' }, true)).toBe(true)
-    expect(resolveUsersAvailability({ ELSYIAN_DOCKER: '1' }, false)).toBe(false)
-    expect(resolveUsersAvailability({ ELSYIAN_DOCKER: '0' }, true)).toBe(false)
+    expect(resolveUsersAvailability({ ELYSIAN_DOCKER: '1' }, true)).toBe(true)
+    expect(resolveUsersAvailability({ ELYSIAN_DOCKER: '1' }, false)).toBe(false)
+    expect(resolveUsersAvailability({ ELYSIAN_DOCKER: '0' }, true)).toBe(false)
     expect(resolveUsersAvailability({}, true)).toBe(false)
   })
 })
@@ -254,7 +254,7 @@ describe('createUsersHostDeps 硬边界', () => {
 
   it('声明了 Docker 但进程不在容器内（/.dockerenv 缺失，宿主机 dev/preview）：一律 503', async () => {
     const app = appFrom({
-      env: { ELSYIAN_DOCKER: '1' },
+      env: { ELYSIAN_DOCKER: '1' },
       dockerenvExists: false,
       deps: createListOnlyDeps(),
     })
@@ -265,7 +265,7 @@ describe('createUsersHostDeps 硬边界', () => {
 
   it('两项条件满足时挂真实 handler：请求经同源守卫到达 service（注入 fake deps，宿主机零副作用）', async () => {
     const app = appFrom({
-      env: { ELSYIAN_DOCKER: '1' },
+      env: { ELYSIAN_DOCKER: '1' },
       dockerenvExists: true,
       deps: createListOnlyDeps(),
     })

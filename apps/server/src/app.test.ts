@@ -6,7 +6,7 @@ import type { LogsService } from './logs/logsService'
 
 /*
  * app 组装冒烟测试：锚定挂载点与健康检查的可达性。三片安全路由全部装配真实接线：
- * 非容器环境（测试进程无 ELSYIAN_DOCKER 且无 /.dockerenv）下整片 503，
+ * 非容器环境（测试进程无 ELYSIAN_DOCKER 且无 /.dockerenv）下整片 503，
  * 这里锚定挂载形态与容器边界文案。
  *
  * 日志片与容器边界无关（读写面板自有的 ~/.Elysian 目录），因此它的用例**注入 fake

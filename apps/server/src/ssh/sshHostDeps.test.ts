@@ -59,9 +59,9 @@ async function requestOverview(deps: ReturnType<typeof createSshHostDeps>): Prom
 
 describe('resolveSshAvailability', () => {
   it('两项条件同时满足才可用：环境声明 Docker 编排 + /.dockerenv 证明真的在容器内', () => {
-    expect(resolveSshAvailability({ ELSYIAN_DOCKER: '1' }, true)).toBe(true)
-    expect(resolveSshAvailability({ ELSYIAN_DOCKER: '1' }, false)).toBe(false)
-    expect(resolveSshAvailability({ ELSYIAN_DOCKER: '0' }, true)).toBe(false)
+    expect(resolveSshAvailability({ ELYSIAN_DOCKER: '1' }, true)).toBe(true)
+    expect(resolveSshAvailability({ ELYSIAN_DOCKER: '1' }, false)).toBe(false)
+    expect(resolveSshAvailability({ ELYSIAN_DOCKER: '0' }, true)).toBe(false)
     expect(resolveSshAvailability({}, true)).toBe(false)
   })
 })
@@ -135,7 +135,7 @@ describe('createSshHostDeps 硬边界', () => {
 
   it('声明了 Docker 但进程不在容器内（/.dockerenv 缺失，宿主机运行）：装配不可用，路由 503', async () => {
     const deps = createSshHostDeps({
-      env: { ELSYIAN_DOCKER: '1' },
+      env: { ELYSIAN_DOCKER: '1' },
       dockerenvExists: false,
       deps: createThrowingDeps(),
     })
@@ -147,7 +147,7 @@ describe('createSshHostDeps 硬边界', () => {
 
   it('两项条件满足时装配真实服务：请求经同源守卫到达 service（注入 fake deps，宿主机零副作用）', async () => {
     const deps = createSshHostDeps({
-      env: { ELSYIAN_DOCKER: '1' },
+      env: { ELYSIAN_DOCKER: '1' },
       dockerenvExists: true,
       deps: createThrowingDeps(),
     })

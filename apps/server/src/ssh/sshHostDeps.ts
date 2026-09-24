@@ -10,7 +10,7 @@ const execFileAsync = promisify(execFile)
 
 /*
  * 真实 SSH 管理的 Node 侧接线（sshd/ssh-keygen/chpasswd/getent）。硬边界：只有
- * ELSYIAN_DOCKER=1 且当前进程真的运行在容器内（/.dockerenv 存在）才可用；否则产出的
+ * ELYSIAN_DOCKER=1 且当前进程真的运行在容器内（/.dockerenv 存在）才可用；否则产出的
  * 装配 available=false，路由整片 503，绝不落到宿主机执行——宿主机上绝不执行 sshd
  * 启停、sshd_config 补丁与 chpasswd 改密这类系统修改动作。判定逻辑归一在
  * shared/availability 的 resolveAvailability 里（安全三片同一判据），测试据此锚定

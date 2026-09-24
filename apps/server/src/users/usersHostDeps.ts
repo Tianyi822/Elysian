@@ -10,7 +10,7 @@ const execFileAsync = promisify(execFile)
 
 /*
  * 真实用户管理的 Node 侧接线（getent/useradd/usermod/userdel/gpasswd/chpasswd）。
- * 硬边界：只有 ELSYIAN_DOCKER=1 且当前进程真的运行在容器内（/.dockerenv 存在）才可用；
+ * 硬边界：只有 ELYSIAN_DOCKER=1 且当前进程真的运行在容器内（/.dockerenv 存在）才可用；
  * 否则产出的装配 available=false，路由整片 503，绝不落到宿主机执行——宿主机上绝不执行
  * useradd/usermod/userdel/gpasswd/chpasswd 这类系统修改命令。判定逻辑归一在
  * shared/availability 的 resolveAvailability 里（安全三片同一判据），测试据此锚定硬边界，

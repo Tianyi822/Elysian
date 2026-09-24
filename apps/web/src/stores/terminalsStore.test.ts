@@ -223,7 +223,7 @@ describe('terminalsStore 流式帧与关闭映射', () => {
 
 describe('按运行时口径的文案', () => {
   it('mock 运行时保留演示标注与演示空态说明', () => {
-    // vitest 环境未注入 ELSYIAN_DOCKER，isDockerRuntime() 为 false。
+    // vitest 环境未注入 ELYSIAN_DOCKER，isDockerRuntime() 为 false。
     expect(hostTerminalBanner()).toBe('演示终端 · 待接入真实执行')
     expect(hostTerminalEmptyDescription()).toContain('待接入真实执行')
   })

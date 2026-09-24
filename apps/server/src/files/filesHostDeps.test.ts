@@ -5,7 +5,7 @@ import { createFilesHostDeps, resolveFilesAvailability, type FilesHostDepsOption
 import type { FilesHostDeps } from './filesService'
 
 /*
- * 容器硬边界的测试锚定：可用性的推导（ELSIYAN_DOCKER=1 且 /.dockerenv 存在）与
+ * 容器硬边界的测试锚定：可用性的推导（ELYSIAN_DOCKER=1 且 /.dockerenv 存在）与
  * 接线装配在这里钉住——改坏判定会让用例变红，而不是静默漏到宿主机执行
  * cp/mv/tar/chmod/chown 或 readdir 宿主文件系统。全部用注入的环境与 fake deps
  * 驱动，不依赖宿主机状态、不执行任何真实命令。
@@ -98,9 +98,9 @@ function fakeReq(method: string, url: string, body?: unknown): Request {
 
 describe('resolveFilesAvailability', () => {
   it('两项条件同时满足才可用：环境声明 Docker 编排 + /.dockerenv 证明真的在容器内', () => {
-    expect(resolveFilesAvailability({ ELSYIAN_DOCKER: '1' }, true)).toBe(true)
-    expect(resolveFilesAvailability({ ELSYIAN_DOCKER: '1' }, false)).toBe(false)
-    expect(resolveFilesAvailability({ ELSYIAN_DOCKER: '0' }, true)).toBe(false)
+    expect(resolveFilesAvailability({ ELYSIAN_DOCKER: '1' }, true)).toBe(true)
+    expect(resolveFilesAvailability({ ELYSIAN_DOCKER: '1' }, false)).toBe(false)
+    expect(resolveFilesAvailability({ ELYSIAN_DOCKER: '0' }, true)).toBe(false)
     expect(resolveFilesAvailability({}, true)).toBe(false)
   })
 })
@@ -124,7 +124,7 @@ describe('createFilesHostDeps 硬边界', () => {
 
   it('声明了 Docker 但进程不在容器内（/.dockerenv 缺失，宿主机 dev/preview）：一律 503', async () => {
     const app = appFrom({
-      env: { ELSYIAN_DOCKER: '1' },
+      env: { ELYSIAN_DOCKER: '1' },
       dockerenvExists: false,
       deps: createListOnlyDeps(),
     })
@@ -135,7 +135,7 @@ describe('createFilesHostDeps 硬边界', () => {
 
   it('两项条件满足时挂真实 service：读请求经守卫到达注入的 fake deps，宿主机零副作用', async () => {
     const app = appFrom({
-      env: { ELSYIAN_DOCKER: '1' },
+      env: { ELYSIAN_DOCKER: '1' },
       dockerenvExists: true,
       deps: createListOnlyDeps(),
     })
@@ -152,7 +152,7 @@ describe('createFilesHostDeps 硬边界', () => {
 
   it('真实 service 的路径判据经 HTTP 生效：`.` 段路径被 400 拒绝（中文文案带原样入参）', async () => {
     const app = appFrom({
-      env: { ELSYIAN_DOCKER: '1' },
+      env: { ELYSIAN_DOCKER: '1' },
       dockerenvExists: true,
       deps: createListOnlyDeps(),
     })
@@ -163,7 +163,7 @@ describe('createFilesHostDeps 硬边界', () => {
 
   it('注入的 fake deps 不触碰真实文件系统：写命令被调用即抛错（硬边界回归锚）', async () => {
     const app = appFrom({
-      env: { ELSYIAN_DOCKER: '1' },
+      env: { ELYSIAN_DOCKER: '1' },
       dockerenvExists: true,
       deps: createListOnlyDeps(),
     })

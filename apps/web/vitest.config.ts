@@ -6,7 +6,7 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   define: {
-    'import.meta.env.ELSYIAN_DOCKER': JSON.stringify(process.env.ELSYIAN_DOCKER ?? ''),
+    'import.meta.env.ELYSIAN_DOCKER': JSON.stringify(process.env.ELYSIAN_DOCKER ?? ''),
   },
   test: {
     environment: 'jsdom',

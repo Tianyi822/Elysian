@@ -12,7 +12,7 @@ const execFileAsync = promisify(execFile)
 /*
  * 终端片的真实接线（容器内）：Bun.spawn 以 script(util-linux) 管道驱动真实 bash、
  * env 白名单、SIGKILL 清理、readdir 文件表与 compgen 命令表（进程级缓存）。
- * 硬边界：只有 ELSIYAN_DOCKER=1 且当前进程真的运行在容器内（/.dockerenv 存在）才
+ * 硬边界：只有 ELYSIAN_DOCKER=1 且当前进程真的运行在容器内（/.dockerenv 存在）才
  * 可用；否则产出的装配 available=false，路由整片 503，宿主机上绝不 spawn PTY。
  * Bun.spawn 只在容器分支动态 import（'bun' 模块不进 vitest 的 node 运行时模块图，
  * 与防火墙片动态加载 bun:sqlite 同一纪律）。
