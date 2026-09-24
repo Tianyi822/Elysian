@@ -14,7 +14,13 @@ import {
  * 端口在草稿里存字符串（输入中允许未完成态），提交时 toCreateInput 再转数字。
  */
 
-export type PortDraftRow = { containerPort: string; hostPort: string; protocol: PortProtocol }
+export type PortDraftRow = {
+  containerPort: string
+  hostPort: string
+  protocol: PortProtocol
+  /** 勾选后绑定 0.0.0.0（对外可达）；缺省只绑回环。 */
+  public: boolean
+}
 export type EnvDraftRow = { key: string; value: string }
 export type VolumeDraftRow = { hostPath: string; containerPath: string }
 
@@ -51,7 +57,41 @@ export type CreateFormErrors = {
 }
 
 const NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/
+const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
 const PORT_PATTERN = /^(?:[1-9]\d{0,3}|[1-5]\d{4}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-5])$/
+
+export function draftPortHostIp(row: Pick<PortDraftRow, 'public'>): string {
+  return row.public ? '0.0.0.0' : '127.0.0.1'
+}
+
+export function effectivePortHostIp(hostIp?: string): string {
+  if (hostIp === undefined || hostIp === '') return '127.0.0.1'
+  return hostIp
+}
+
+export function hostPortBindingsOverlap(a: string, b: string): boolean {
+  return a === b || a === '0.0.0.0' || b === '0.0.0.0'
+}
+
+function draftRowsPortConflict(a: PortDraftRow, b: PortDraftRow): boolean {
+  if (!PORT_PATTERN.test(a.hostPort) || !PORT_PATTERN.test(b.hostPort)) return false
+  if (Number(a.hostPort) !== Number(b.hostPort) || a.protocol !== b.protocol) return false
+  return hostPortBindingsOverlap(draftPortHostIp(a), draftPortHostIp(b))
+}
+
+function existingPortConflicts(row: PortDraftRow, existing: readonly Container[]): boolean {
+  if (!PORT_PATTERN.test(row.hostPort)) return false
+  const hostPort = Number(row.hostPort)
+  const hostIp = draftPortHostIp(row)
+  return existing.some((container) =>
+    container.ports.some(
+      (port) =>
+        port.hostPort === hostPort &&
+        port.protocol === row.protocol &&
+        hostPortBindingsOverlap(hostIp, effectivePortHostIp(port.hostIp)),
+    ),
+  )
+}
 
 export function validateCreateDraft(
   draft: ContainerCreateDraft,
@@ -70,15 +110,7 @@ export function validateCreateDraft(
     }
   }
 
-  const usedHostPorts = new Set(existing.flatMap((c) => c.ports.map((p) => p.hostPort)))
-  const formHostPortCounts = new Map<number, number>()
-  for (const row of draft.ports) {
-    if (PORT_PATTERN.test(row.hostPort)) {
-      const port = Number(row.hostPort)
-      formHostPortCounts.set(port, (formHostPortCounts.get(port) ?? 0) + 1)
-    }
-  }
-  errors.ports = draft.ports.map((row) => {
+  errors.ports = draft.ports.map((row, index) => {
     if (!row.containerPort && !row.hostPort) return undefined
     const rowErrors: { containerPort?: string; hostPort?: string } = {}
     if (!PORT_PATTERN.test(row.containerPort)) {
@@ -87,8 +119,8 @@ export function validateCreateDraft(
     if (!PORT_PATTERN.test(row.hostPort)) {
       rowErrors.hostPort = '宿主端口须为 1-65535 的整数'
     } else {
-      const hostPort = Number(row.hostPort)
-      if ((formHostPortCounts.get(hostPort) ?? 0) > 1 || usedHostPorts.has(hostPort)) {
+      const dupInForm = draft.ports.some((other, otherIndex) => otherIndex !== index && draftRowsPortConflict(row, other))
+      if (dupInForm || existingPortConflicts(row, existing)) {
         rowErrors.hostPort = '宿主端口已被占用'
       }
     }
@@ -99,6 +131,7 @@ export function validateCreateDraft(
   errors.env = draft.env.map((row) => {
     if (!row.key && !row.value) return undefined
     if (!row.key) return { key: '变量名不能为空' }
+    if (!ENV_KEY_PATTERN.test(row.key)) return { key: '环境变量名无效' }
     if (seenEnvKeys.has(row.key)) return { key: '变量名重复' }
     seenEnvKeys.add(row.key)
     return undefined
@@ -147,6 +180,7 @@ export function toCreateInput(draft: ContainerCreateDraft): ContainerCreateInput
       containerPort: Number(row.containerPort),
       hostPort: Number(row.hostPort),
       protocol: row.protocol,
+      hostIp: draftPortHostIp(row),
     }))
   const env: EnvPair[] = draft.env
     .filter((row) => row.key)

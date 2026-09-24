@@ -211,7 +211,12 @@ export const useContainersStore = create<{
       const created = await gateway.containers.create(input)
       useNotificationStore
         .getState()
-        .notify({ tone: 'success', message: `容器 ${created.name} 已创建（mock，待接入真实执行）` })
+        .notify({
+          tone: 'success',
+          message: isDockerRuntime()
+            ? `容器 ${created.name} 已创建`
+            : `容器 ${created.name} 已创建（mock，待接入真实执行）`,
+        })
       set((state) => ({
         // 事件回灌通常已追加过；按 id 去重，返回值只做兜底。
         containers: state.containers.some((c) => c.id === created.id)

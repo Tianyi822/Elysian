@@ -1,3 +1,7 @@
+import {
+  effectivePortHostIp,
+  hostPortBindingsOverlap,
+} from '../../features/container/containerCreateForm'
 import type {
   AgentRun,
   ApprovalOutcome,
@@ -547,6 +551,30 @@ export class MockContainerAdapter implements ContainerAdapter {
     const name = input.name?.trim() || autoContainerName(dataset.containers, image.name)
     if (dataset.containers.some((c) => c.name === name)) {
       throw new Error(`容器名称已存在：${name}`)
+    }
+    const policy = await this.createPolicy()
+    for (const port of input.ports) {
+      if (policy.reservedPorts.includes(port.hostPort)) {
+        throw new Error(`宿主端口为面板保留：${port.hostPort}`)
+      }
+      const hostIp = effectivePortHostIp(port.hostIp)
+      const conflicts = (entry: { hostPort: number; protocol: string; hostIp?: string }) =>
+        entry.hostPort === port.hostPort &&
+        entry.protocol === port.protocol &&
+        hostPortBindingsOverlap(hostIp, effectivePortHostIp(entry.hostIp))
+      if (dataset.containers.some((container) => container.ports.some(conflicts))) {
+        throw new Error('宿主端口已被占用')
+      }
+      const dupInInput = input.ports.some(
+        (other) =>
+          other !== port &&
+          other.hostPort === port.hostPort &&
+          other.protocol === port.protocol &&
+          hostPortBindingsOverlap(hostIp, effectivePortHostIp(other.hostIp)),
+      )
+      if (dupInInput) {
+        throw new Error('宿主端口已被占用')
+      }
     }
     const now = new Date().toISOString()
     const container: Container = {

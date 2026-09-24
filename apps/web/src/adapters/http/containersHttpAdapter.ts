@@ -1,6 +1,7 @@
 import type {
   Container,
   ContainerAction,
+  ContainerCreateInput,
   ContainerImage,
   ContainerStatus,
   EnvPair,
@@ -478,7 +479,15 @@ export function createHttpContainersAdapter(
       )
     },
 
-    create: NOT_CONNECTED,
+    async create(input: ContainerCreateInput) {
+      return parseContainer(
+        await requestJson(`${baseUrl}/containers`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(input),
+        }),
+      )
+    },
     removeImage: NOT_CONNECTED,
     pullImage: NOT_CONNECTED,
     watchLive,

@@ -305,11 +305,40 @@ describe('createHttpContainersAdapter', () => {
     vi.unstubAllGlobals()
   })
 
+  it('create() POST /api/docker/containers 并解析 201 容器对象', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(baseContainer, 201))
+    vi.stubGlobal('fetch', fetchMock)
+    const adapter = createHttpContainersAdapter()
+    const input = {
+      imageId: 'deadbeef',
+      name: 'test-container',
+      ports: [{ containerPort: 80, hostPort: 8080, protocol: 'tcp' as const, hostIp: '127.0.0.1' }],
+      env: [],
+      volumes: [],
+      restartPolicy: 'no' as const,
+    }
+    const container = await adapter.create(input)
+    expect(fetchMock).toHaveBeenCalledWith('/api/docker/containers', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    })
+    expect(container).toEqual(baseContainer)
+    vi.unstubAllGlobals()
+  })
+
+  it('create() HTTP 非 2xx 时抛响应体里的 error 字符串', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ error: '挂载路径不允许' }, 400))
+    vi.stubGlobal('fetch', fetchMock)
+    const adapter = createHttpContainersAdapter()
+    await expect(
+      adapter.create({ imageId: 'x', ports: [], env: [], volumes: [], restartPolicy: 'no' }),
+    ).rejects.toThrow('挂载路径不允许')
+    vi.unstubAllGlobals()
+  })
+
   it('未接入的方法统一抛固定中文', async () => {
     const adapter = createHttpContainersAdapter()
-    await expect(adapter.create({ imageId: 'x', ports: [], env: [], volumes: [], restartPolicy: 'no' })).rejects.toThrow(
-      '容器管理的该操作尚未接入',
-    )
     await expect(adapter.removeImage('x')).rejects.toThrow('容器管理的该操作尚未接入')
     await expect(adapter.pullImage({ name: 'a', tag: 'b' })).rejects.toThrow('容器管理的该操作尚未接入')
     await expect(adapter.execMockCommand('x', 'help')).rejects.toThrow('容器管理的该操作尚未接入')

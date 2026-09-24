@@ -56,6 +56,28 @@ describe('mock 容器创建', () => {
     await expect(adapter.create({ ...INPUT, imageId: 'img-missing' })).rejects.toThrow('镜像不存在，无法创建容器')
   })
 
+  it('tcp 与 udp 共用宿主端口可创建；与现有 tcp 冲突则拒绝', async () => {
+    const { adapter } = setup()
+    await expect(
+      adapter.create({
+        ...INPUT,
+        name: 'dual-proto',
+        ports: [
+          { containerPort: 1, hostPort: 29999, protocol: 'tcp' },
+          { containerPort: 2, hostPort: 29999, protocol: 'udp' },
+        ],
+      }),
+    ).resolves.toMatchObject({ name: 'dual-proto' })
+
+    await expect(
+      adapter.create({
+        ...INPUT,
+        name: 'tcp-clash',
+        ports: [{ containerPort: 80, hostPort: 8080, protocol: 'tcp', hostIp: '127.0.0.1' }],
+      }),
+    ).rejects.toThrow('宿主端口已被占用')
+  })
+
   it('onCreate 经事件层推 container/created，载荷带完整容器', async () => {
     const { received, adapter } = setup()
     await adapter.create({

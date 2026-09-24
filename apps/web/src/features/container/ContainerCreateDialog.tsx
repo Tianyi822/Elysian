@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { RESTART_POLICIES, RESTART_POLICY_LABELS } from '@elysian/contracts'
 import { ChevronDown, Loader2, Plus, Trash2, X } from '../../components/icons'
 import { useGateway } from '../../adapters/GatewayProvider'
+import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useContainersStore } from '../../stores/containersStore'
 import {
   emptyDraft,
@@ -38,14 +39,21 @@ export function ContainerCreateDialog() {
   const [draft, setDraft] = useState<ContainerCreateDraft>(emptyDraft)
   const [optionalOpen, setOptionalOpen] = useState(false)
   const [showErrors, setShowErrors] = useState(false)
+  const [volumeHostPlaceholder, setVolumeHostPlaceholder] = useState('/srv/data')
+
+  const docker = isDockerRuntime()
 
   useEffect(() => {
     if (open) {
       setDraft(emptyDraft())
       setOptionalOpen(false)
       setShowErrors(false)
+      void gateway.containers
+        .createPolicy()
+        .then((policy) => setVolumeHostPlaceholder(`${policy.mountRoot}/data`))
+        .catch(() => setVolumeHostPlaceholder('/srv/data'))
     }
-  }, [open])
+  }, [open, gateway])
 
   if (!open) return null
 
@@ -77,9 +85,11 @@ export function ContainerCreateDialog() {
           <Dialog.Title className="sr-only">创建容器</Dialog.Title>
           <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
             <div className="flex items-center gap-2 text-xs">
-              <span className="rounded bg-warning/15 px-1.5 py-0.5 font-medium text-warning">
-                演示 · 待接入真实执行
-              </span>
+              {docker ? null : (
+                <span className="rounded bg-warning/15 px-1.5 py-0.5 font-medium text-warning">
+                  演示 · 待接入真实执行
+                </span>
+              )}
               <span className="text-sm font-medium text-fg">创建容器</span>
             </div>
             <button
@@ -159,7 +169,12 @@ export function ContainerCreateDialog() {
                     <button
                       type="button"
                       onClick={() =>
-                        patch({ ports: [...draft.ports, { containerPort: '', hostPort: '', protocol: 'tcp' }] })
+                        patch({
+                          ports: [
+                            ...draft.ports,
+                            { containerPort: '', hostPort: '', protocol: 'tcp', public: false },
+                          ],
+                        })
                       }
                       className={ROW_ADD_BUTTON}
                     >
@@ -210,6 +225,24 @@ export function ContainerCreateDialog() {
                               <option value="tcp">tcp</option>
                               <option value="udp">udp</option>
                             </select>
+                          </div>
+                          <div className="flex min-w-36 flex-col justify-end pb-1.5">
+                            <label
+                              htmlFor={`create-port-public-${index}`}
+                              className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-fg-muted"
+                            >
+                              <input
+                                id={`create-port-public-${index}`}
+                                type="checkbox"
+                                checked={row.public}
+                                onChange={(event) => updatePorts(index, { public: event.target.checked })}
+                                className="size-3.5 rounded border border-line"
+                              />
+                              对外开放
+                            </label>
+                            {row.public ? (
+                              <p className="mt-1 text-xs text-warning">该端口不受防火墙规则约束</p>
+                            ) : null}
                           </div>
                           <button
                             type="button"
@@ -329,7 +362,7 @@ export function ContainerCreateDialog() {
                                   ),
                                 })
                               }
-                              placeholder="/srv/elysian/data"
+                              placeholder={volumeHostPlaceholder}
                               autoComplete="off"
                               className={INPUT_CLASS}
                             />
@@ -420,7 +453,9 @@ export function ContainerCreateDialog() {
           </div>
 
           <div className="flex items-center justify-between gap-2 border-t border-line px-4 py-3">
-            <p className="text-xs text-fg-subtle">创建后立即运行；所有数据仅存在于演示内存。</p>
+            <p className="text-xs text-fg-subtle">
+              {docker ? '创建后立即启动。' : '创建后立即运行；所有数据仅存在于演示内存。'}
+            </p>
             <div className="flex justify-end gap-2">
               <button
                 type="button"
