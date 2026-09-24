@@ -1,0 +1,123 @@
+import * as http from 'node:http'
+
+export type DockerTransport = {
+  request(input: {
+    method: string
+    path: string
+    body?: unknown
+    timeoutMs: number
+    maxBytes: number
+  }): Promise<{ status: number; json: unknown }>
+}
+
+const MIN_API_MAJOR = 1
+const MIN_API_MINOR = 41
+
+function parseApiVersion(version: string): { major: number; minor: number } {
+  const [majorPart, minorPart] = version.split('.')
+  const major = Number(majorPart)
+  const minor = Number(minorPart ?? '0')
+  if (!Number.isFinite(major) || !Number.isFinite(minor)) {
+    return { major: 0, minor: 0 }
+  }
+  return { major, minor }
+}
+
+function isApiVersionSupported(apiVersion: string): boolean {
+  const { major, minor } = parseApiVersion(apiVersion)
+  if (major > MIN_API_MAJOR) return true
+  if (major < MIN_API_MAJOR) return false
+  return minor >= MIN_API_MINOR
+}
+
+export async function assertEngineApi(transport: DockerTransport): Promise<void> {
+  const { json } = await transport.request({
+    method: 'GET',
+    path: '/version',
+    timeoutMs: 3000,
+    maxBytes: 1_048_576,
+  })
+  const apiVersion =
+    json !== null && typeof json === 'object' && 'ApiVersion' in json
+      ? (json as { ApiVersion: unknown }).ApiVersion
+      : undefined
+  if (typeof apiVersion !== 'string' || !isApiVersionSupported(apiVersion)) {
+    throw new Error('Docker Engine API 版本过低，需要 1.41 及以上')
+  }
+}
+
+function requestOverSocket(
+  socketPath: string,
+  input: {
+    method: string
+    path: string
+    body?: unknown
+    timeoutMs: number
+    maxBytes: number
+  },
+): Promise<{ status: number; json: unknown }> {
+  return new Promise((resolve, reject) => {
+    const bodyPayload =
+      input.body === undefined ? undefined : JSON.stringify(input.body)
+    const req = http.request(
+      {
+        socketPath,
+        hostname: 'localhost',
+        method: input.method,
+        path: input.path,
+        headers:
+          bodyPayload === undefined
+            ? undefined
+            : {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(bodyPayload),
+              },
+      },
+      (res) => {
+        const chunks: Buffer[] = []
+        let total = 0
+        res.on('data', (chunk: Buffer) => {
+          total += chunk.length
+          if (total > input.maxBytes) {
+            req.destroy()
+            reject(new Error('Docker 响应过大'))
+            return
+          }
+          chunks.push(chunk)
+        })
+        res.on('end', () => {
+          const raw = Buffer.concat(chunks).toString('utf8')
+          if (raw.length === 0) {
+            resolve({ status: res.statusCode ?? 0, json: null })
+            return
+          }
+          try {
+            resolve({ status: res.statusCode ?? 0, json: JSON.parse(raw) })
+          } catch {
+            reject(new Error('Docker 响应不是有效 JSON'))
+          }
+        })
+        res.on('error', (err) => reject(err))
+      },
+    )
+    req.setTimeout(input.timeoutMs, () => {
+      req.destroy()
+      reject(new Error('Docker 请求超时'))
+    })
+    req.on('error', (err) => reject(err))
+    if (bodyPayload !== undefined) {
+      req.write(bodyPayload)
+    }
+    req.end()
+  })
+}
+
+export function createDockerTransport(options: {
+  socketPath: string
+  requestImpl?: DockerTransport['request']
+}): DockerTransport {
+  const request =
+    options.requestImpl ??
+    ((input) => requestOverSocket(options.socketPath, input))
+  return { request }
+}
