@@ -7,6 +7,7 @@ const LIST_MAX = 500
 const INSPECT_CONCURRENCY = 8
 const LIST_TIMEOUT_MS = 10_000
 const JSON_MAX_BYTES = 32 * 1024 * 1024
+const LIST_TIMEOUT_MESSAGE = 'Docker 列表请求超时'
 
 export type DockerReadService = {
   listContainers(): Promise<readonly Container[]>
@@ -35,11 +36,59 @@ function encodeEngineId(id: string): string {
   return encodeURIComponent(id)
 }
 
-async function dockerGet(transport: DockerTransport, path: string): Promise<{ status: number; json: unknown }> {
+type ListDeadline = {
+  remainingMs(): number
+  race<T>(promise: Promise<T>): Promise<T>
+}
+
+function createListDeadline(timeoutMs: number): ListDeadline {
+  const deadlineAt = Date.now() + timeoutMs
+  return {
+    remainingMs: () => Math.max(0, deadlineAt - Date.now()),
+    race<T>(promise: Promise<T>): Promise<T> {
+      const left = deadlineAt - Date.now()
+      if (left <= 0) {
+        return Promise.reject(new Error(LIST_TIMEOUT_MESSAGE))
+      }
+      return new Promise<T>((resolve, reject) => {
+        let settled = false
+        const timer = setTimeout(() => {
+          if (settled) return
+          settled = true
+          reject(new Error(LIST_TIMEOUT_MESSAGE))
+        }, left)
+        promise.then(
+          (value) => {
+            if (settled) return
+            settled = true
+            clearTimeout(timer)
+            resolve(value)
+          },
+          (error: unknown) => {
+            if (settled) return
+            settled = true
+            clearTimeout(timer)
+            reject(error)
+          },
+        )
+      })
+    },
+  }
+}
+
+async function dockerGet(
+  transport: DockerTransport,
+  path: string,
+  deadline: ListDeadline,
+): Promise<{ status: number; json: unknown }> {
+  const timeoutMs = deadline.remainingMs()
+  if (timeoutMs <= 0) {
+    throw new Error(LIST_TIMEOUT_MESSAGE)
+  }
   return transport.request({
     method: 'GET',
     path,
-    timeoutMs: LIST_TIMEOUT_MS,
+    timeoutMs,
     maxBytes: JSON_MAX_BYTES,
   })
 }
@@ -47,38 +96,29 @@ async function dockerGet(transport: DockerTransport, path: string): Promise<{ st
 async function mapWithConcurrency<T, R>(
   items: readonly T[],
   concurrency: number,
-  timeoutMs: number,
   fn: (item: T, index: number) => Promise<R>,
 ): Promise<R[]> {
   if (items.length === 0) {
     return []
   }
 
-  const timeout = new Promise<never>((_, reject) => {
-    setTimeout(() => reject(new Error('Docker 列表请求超时')), timeoutMs)
-  })
+  const results: R[] = new Array(items.length)
+  let nextIndex = 0
 
-  const work = async (): Promise<R[]> => {
-    const results: R[] = new Array(items.length)
-    let nextIndex = 0
-
-    async function worker(): Promise<void> {
-      while (true) {
-        const index = nextIndex
-        nextIndex += 1
-        if (index >= items.length) {
-          return
-        }
-        results[index] = await fn(items[index]!, index)
+  async function worker(): Promise<void> {
+    while (true) {
+      const index = nextIndex
+      nextIndex += 1
+      if (index >= items.length) {
+        return
       }
+      results[index] = await fn(items[index]!, index)
     }
-
-    const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => worker())
-    await Promise.all(workers)
-    return results
   }
 
-  return Promise.race([work(), timeout])
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => worker())
+  await Promise.all(workers)
+  return results
 }
 
 async function listWithInspect<TSummary, TResult>(
@@ -88,24 +128,28 @@ async function listWithInspect<TSummary, TResult>(
   label: string,
   mapItem: (summary: TSummary, inspect: unknown) => TResult,
 ): Promise<readonly TResult[]> {
-  const listResponse = await dockerGet(transport, listPath)
-  if (listResponse.status < 200 || listResponse.status >= 300) {
-    throw new Error(`获取${label}列表失败（HTTP ${listResponse.status}）`)
-  }
-  if (!Array.isArray(listResponse.json)) {
-    throw new Error(`${label}列表格式无效`)
-  }
-  const summaries = listResponse.json as TSummary[]
-  assertListLimit(summaries.length, label)
+  const deadline = createListDeadline(LIST_TIMEOUT_MS)
 
-  return mapWithConcurrency(summaries, INSPECT_CONCURRENCY, LIST_TIMEOUT_MS, async (summary) => {
-    const id = requireId(summary, label)
-    const inspectResponse = await dockerGet(transport, inspectPath(id))
-    if (inspectResponse.status < 200 || inspectResponse.status >= 300) {
-      throw new Error(`获取${label}详情失败（HTTP ${inspectResponse.status}）`)
+  return deadline.race((async () => {
+    const listResponse = await dockerGet(transport, listPath, deadline)
+    if (listResponse.status < 200 || listResponse.status >= 300) {
+      throw new Error(`获取${label}列表失败（HTTP ${listResponse.status}）`)
     }
-    return mapItem(summary, inspectResponse.json)
-  })
+    if (!Array.isArray(listResponse.json)) {
+      throw new Error(`${label}列表格式无效`)
+    }
+    const summaries = listResponse.json as TSummary[]
+    assertListLimit(summaries.length, label)
+
+    return mapWithConcurrency(summaries, INSPECT_CONCURRENCY, async (summary) => {
+      const id = requireId(summary, label)
+      const inspectResponse = await dockerGet(transport, inspectPath(id), deadline)
+      if (inspectResponse.status < 200 || inspectResponse.status >= 300) {
+        throw new Error(`获取${label}详情失败（HTTP ${inspectResponse.status}）`)
+      }
+      return mapItem(summary, inspectResponse.json)
+    })
+  })())
 }
 
 export function createDockerReadService(

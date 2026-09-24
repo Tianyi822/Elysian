@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DockerTransport } from './dockerTransport'
 import { createDockerReadService } from './dockerService'
 
@@ -44,6 +44,10 @@ describe('createDockerReadService', () => {
     mountRoot: '/srv',
     reservedPorts: [22, 48100, 48101] as const,
   }
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
 
   it('listContainers 列表后逐个 inspect 并映射', async () => {
     const transport = createRecordingTransport(({ path }) => {
@@ -109,6 +113,32 @@ describe('createDockerReadService', () => {
     const service = createDockerReadService(transport, policyOptions)
     await expect(service.listContainers()).rejects.toThrow()
     expect(transport.request).toHaveBeenCalled()
+  })
+
+  it('列表 GET 与 inspect 共用整次 10 秒预算（不会在两阶段各计 10 秒）', async () => {
+    vi.useFakeTimers()
+    const transport: DockerTransport = {
+      request: vi.fn(async (input) => {
+        if (input.path === '/v1.41/containers/json?all=1') {
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, 9_000)
+          })
+          return { status: 200, json: [{ Id: CONTAINER_ID }] }
+        }
+        if (input.path === `/v1.41/containers/${CONTAINER_ID}/json`) {
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, 2_000)
+          })
+          return { status: 200, json: baseContainerInspect() }
+        }
+        throw new Error(`未录制的路径：${input.path}`)
+      }),
+    }
+    const service = createDockerReadService(transport, policyOptions)
+    const promise = service.listContainers()
+    const rejection = expect(promise).rejects.toThrow('Docker 列表请求超时')
+    await vi.advanceTimersByTimeAsync(15_000)
+    await rejection
   })
 
   it('policy() 返回传入的 mountRoot 与 reservedPorts', async () => {
