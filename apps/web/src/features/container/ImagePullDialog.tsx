@@ -14,7 +14,7 @@ import {
 /**
  * 拉取镜像弹窗：拉取源 + 镜像引用两个输入，格式与查重行内提示，
  * 有效引用实时预览完整拉取路径。提交后弹窗立即关闭，拉取中行与
- * 完成通知在镜像列表里呈现；拉取源只被记录，不产生真实数据流。
+ * 完成通知在镜像列表里呈现；Docker 运行时为真实拉取，演示模式只作记录。
  */
 
 const INPUT_CLASS =
@@ -108,7 +108,9 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
               </p>
             ) : null}
             <p className="mt-1.5 text-xs text-fg-subtle">
-              未填写时从官方 Docker Hub 地址拉取；地址仅作记录，不产生真实数据流。
+              {docker
+                ? '未填写时从官方 Docker Hub 拉取；只支持公开镜像与公网镜像源'
+                : '未填写时从官方 Docker Hub 地址拉取；地址仅作记录，不产生真实数据流。'}
             </p>
 
             <div className="mt-4">

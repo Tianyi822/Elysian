@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { DOCKER_MOUNT } from '../../../../server/src/docker/dockerRoutes.ts'
-import { FILES_MOUNT } from '../../../../server/src/files/filesRoutes.ts'
-import { FIREWALL_MOUNT } from '../../../../server/src/firewall/firewallRoutes.ts'
-import { LOGS_MOUNT } from '../../../../server/src/logs/logsRoutes.ts'
+import {
+  DOCKER_MOUNT,
+  FILES_MOUNT,
+  FIREWALL_MOUNT,
+  LOGS_MOUNT,
+  SSH_MOUNT,
+  TERMINAL_MOUNT,
+  USERS_MOUNT,
+} from '../../../../server/src/shared/apiMounts.ts'
 import { SERVER_PORT } from '../../../../server/src/shared/ports.ts'
-import { SSH_MOUNT } from '../../../../server/src/ssh/sshRoutes.ts'
-import { USERS_MOUNT } from '../../../../server/src/users/usersRoutes.ts'
 import config from '../../../vite.config'
 
 /*
@@ -16,7 +19,7 @@ import config from '../../../vite.config'
  * 端点路径取 server 侧的挂载常量，新增切片忘记补代理时本用例立刻红。
  */
 
-/** 浏览器经 HTTP adapter 直连的端点：安全三片、文件管理、平台日志、终端 WebSocket 与平台内存。 */
+/** 浏览器经 HTTP adapter 直连的端点：安全三片、文件管理、容器、平台日志、终端 WebSocket 与平台内存。 */
 const HTTP_ENDPOINTS: readonly { label: string; path: string }[] = [
   { label: '防火墙', path: `${FIREWALL_MOUNT}/rules` },
   { label: 'SSH', path: `${SSH_MOUNT}/overview` },
@@ -24,15 +27,13 @@ const HTTP_ENDPOINTS: readonly { label: string; path: string }[] = [
   { label: '文件管理', path: `${FILES_MOUNT}/entries` },
   { label: '容器', path: `${DOCKER_MOUNT}/containers` },
   { label: '日志', path: `${LOGS_MOUNT}/runtime` },
-  // 平台内存的挂载见 apps/server/src/app.ts:29（无导出常量，按字面量锚定）。
+  // 平台内存的挂载见 apps/server/src/app.ts:87（无导出常量，按字面量锚定）。
   { label: '平台内存', path: '/api/platform/memory' },
-  // 终端 WS 端点按协议字面量锚定（server 侧 TERMINAL_MOUNT = /api/terminals 定义在 terminalsRoutes.ts，
-  // 该片落地后如常量导出可改为引用；路径由端点契约钉死，不会漂移）。
-  { label: '终端', path: '/api/terminals/ws' },
+  { label: '终端', path: `${TERMINAL_MOUNT}/ws` },
 ]
 
 /** 需要 WebSocket 代理（ws: true）的键：终端与容器管理。 */
-const WS_PROXY_KEYS: readonly string[] = ['/api/terminals', '/api/docker']
+const WS_PROXY_KEYS: readonly string[] = [TERMINAL_MOUNT, DOCKER_MOUNT]
 
 /** 由本进程 elysianEventsVitePlugin 承载、绝不进代理表的端点。 */
 const PLUGIN_ENDPOINTS: readonly string[] = ['/api/events', '/api/resources/history']

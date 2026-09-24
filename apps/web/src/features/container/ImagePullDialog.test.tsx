@@ -26,11 +26,15 @@ beforeEach(() => {
 })
 
 describe('ImagePullDialog', () => {
-  it('Docker 运行时无演示徽章、页脚为公开镜像说明', () => {
+  it('Docker 运行时无演示徽章、中部提示与页脚都是真实拉取说明', () => {
     vi.mocked(isDockerRuntime).mockReturnValue(true)
     renderDialog()
     const dialog = screen.getByRole('dialog', { name: '拉取镜像' })
     expect(dialog.textContent).not.toContain('演示 · 待接入真实执行')
+    expect(
+      within(dialog).getByText('未填写时从官方 Docker Hub 拉取；只支持公开镜像与公网镜像源'),
+    ).toBeInTheDocument()
+    expect(dialog.textContent).not.toContain('地址仅作记录')
     expect(within(dialog).getByText('从镜像仓库拉取，只支持公开镜像。')).toBeInTheDocument()
   })
 
@@ -38,6 +42,9 @@ describe('ImagePullDialog', () => {
     renderDialog()
     const dialog = screen.getByRole('dialog', { name: '拉取镜像' })
     expect(dialog.textContent).toContain('演示 · 待接入真实执行')
+    expect(
+      within(dialog).getByText('未填写时从官方 Docker Hub 地址拉取；地址仅作记录，不产生真实数据流。'),
+    ).toBeInTheDocument()
     expect(within(dialog).getByText('拉取由演示数据模拟，不访问真实镜像仓库。')).toBeInTheDocument()
   })
 })
