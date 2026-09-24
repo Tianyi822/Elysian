@@ -51,7 +51,7 @@ describe('容器事件包装层', () => {
     layer.markControlled('ctr-nginx-proxy')
     layer.emitUpdated('ctr-nginx-proxy')
     const updated = received.find((e) => e.name === 'container/updated')
-    expect(updated?.payload).toEqual({ containerId: 'ctr-nginx-proxy', status: 'stopped' })
+    expect(updated?.payload).toEqual({ containerId: 'ctr-nginx-proxy', status: 'stopped', startedAt: null })
   })
 
   it('scheduleRestart 一拍后回到运行中', () => {

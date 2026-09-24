@@ -83,7 +83,7 @@ describe('containersStore', () => {
     emitToStore?.(event('container/sample', { samples: [{ containerId: 'ctr-nginx-proxy', cpuPercent: 42, memMb: 300 }] }))
     expect(useContainersStore.getState().samples['ctr-nginx-proxy']).toEqual({ cpuPercent: 42, memMb: 300 })
 
-    emitToStore?.(event('container/updated', { containerId: 'ctr-nginx-proxy', status: 'stopped' }))
+    emitToStore?.(event('container/updated', { containerId: 'ctr-nginx-proxy', status: 'stopped', startedAt: null }))
     const state = useContainersStore.getState()
     expect(state.containers.find((c) => c.id === 'ctr-nginx-proxy')?.status).toBe('stopped')
     expect(state.busyActions).toHaveLength(0)

@@ -1,9 +1,4 @@
-import type {
-  ContainerStatus,
-  ElysianEvent,
-  EventStreamHandlers,
-  Unsubscribe,
-} from '@elysian/contracts'
+import type { ElysianEvent, EventStreamHandlers, Unsubscribe } from '@elysian/contracts'
 import type { EventsAdapter } from '../../contracts/adapters'
 import {
   DEMO_CYCLE_CONTAINER_IDS,
@@ -40,14 +35,16 @@ export function createContainerEventsLayer(
   const containerOf = (id: string) => dataset().containers.find((c) => c.id === id)
 
   const emitUpdated = (containerId: string): void => {
-    const status: ContainerStatus | undefined = containerOf(containerId)?.status
-    if (!status) return
+    const container = containerOf(containerId)
+    if (!container) return
+    const { status } = container
+    const startedAt = status === 'stopped' ? null : container.startedAt ?? null
     seq += 1
     emit({
       id: `ctr-evt-${seq}`,
       name: 'container/updated',
       at: new Date().toISOString(),
-      payload: { containerId, status },
+      payload: { containerId, status, startedAt },
     })
   }
 

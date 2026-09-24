@@ -89,7 +89,7 @@ describe('事件流 store', () => {
       id: 'evt-updated',
       name: 'container/updated',
       at: '2026-09-12T08:00:00.000Z',
-      payload: { containerId: 'ctr-nginx-proxy', status: 'running' },
+      payload: { containerId: 'ctr-nginx-proxy', status: 'running', startedAt: '2026-09-12T08:00:00.000Z' },
     })
 
     const state = useEventStreamStore.getState()

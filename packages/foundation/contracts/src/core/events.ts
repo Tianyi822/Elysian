@@ -66,7 +66,11 @@ export interface Events {
     samples: ReadonlyArray<{ containerId: string; cpuPercent: number; memMb: number }>
   }
   /** @mode emit */
-  'container/updated': { containerId: string; status: ContainerStatus }
+  'container/updated': { containerId: string; status: ContainerStatus; startedAt: string | null }
+  /** @mode emit */
+  'container/removed': { containerId: string }
+  /** @mode emit */
+  'container/resync': Record<string, never>
   /** @mode emit */
   'container/created': { container: Container }
 }
@@ -92,6 +96,8 @@ export const EVENT_NAMES = [
   'resource/sample',
   'container/sample',
   'container/updated',
+  'container/removed',
+  'container/resync',
   'container/created',
 ] as const satisfies readonly EventName[]
 
@@ -114,6 +120,8 @@ export const EVENT_MODES: Record<EventName, EventMode> = {
   'resource/sample': 'emit',
   'container/sample': 'emit',
   'container/updated': 'emit',
+  'container/removed': 'emit',
+  'container/resync': 'emit',
   'container/created': 'emit',
 }
 
