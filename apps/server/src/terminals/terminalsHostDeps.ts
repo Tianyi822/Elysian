@@ -12,6 +12,8 @@ import {
   type TerminalsHostDeps,
 } from './terminalsService.ts'
 
+export type { PtyProcess } from './terminalsService.ts'
+
 const execFileAsync = promisify(execFile)
 
 /*
