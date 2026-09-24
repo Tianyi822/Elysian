@@ -87,6 +87,11 @@ export type TerminalsHostDeps = {
   spawnPtyShell(opts: { env: Record<string, string>; cwd: string }): PtyProcess
   listDir(path: string): Promise<readonly string[]>
   listCommands(): Promise<readonly string[]>
+  /**
+   * 会话收尾钩子（可选）：dispose 杀掉 PTY 后调用，参数是 READY 哨兵捕获的 shell
+   * pid（未见哨兵时为 null）；容器 exec 装配用它跑断开清理脚本。
+   */
+  disposeShell?: (shellPid: string | null) => void | Promise<void>
   now(): number
 }
 
@@ -177,6 +182,8 @@ class TerminalSessionImpl implements TerminalSession {
   private cleaned = false
   private streamEnded = false
   private readySent = false
+  /** READY 哨兵捕获的容器内 shell pid（本机启动行不带 pid，保持 null）。 */
+  private shellPid: string | null = null
   private heldFrames: TerminalServerFrame[] = []
   private lastFlushAt = 0
   private readyResolve: (() => void) | null = null
@@ -310,10 +317,18 @@ class TerminalSessionImpl implements TerminalSession {
         // kill 幂等；对已退出进程的重复 kill 忽略，不外泄。
       }
     }
+    this.runDisposeHook()
     if (cause === 'idle-timeout') {
       this.releaseHeld()
       this.events.close(4000, '终端会话空闲超时')
     }
+  }
+
+  /** 会话收尾钩子：容器 exec 的 shell 进程不随 hijack 断开退出，按捕获的 pid 追加清理。 */
+  private runDisposeHook(): void {
+    const hook = this.deps.disposeShell
+    if (hook === undefined || this.shellPid === null) return
+    void Promise.resolve(hook(this.shellPid)).catch(() => undefined)
   }
 
   private async pump(proc: PtyProcess): Promise<void> {
@@ -350,6 +365,7 @@ class TerminalSessionImpl implements TerminalSession {
 
   private handleStreamEvent(event: TerminalStreamEvent): void {
     if (event.kind === 'ready') {
+      this.shellPid = event.pid
       this.resolveReady()
       return
     }

@@ -1,5 +1,6 @@
 import { InvalidRequestError } from '../shared/errors.ts'
 import type { DockerTransport } from './dockerTransport.ts'
+import { isSelfContainerInspect } from './selfContainer.ts'
 
 const API_PREFIX = '/v1.41'
 const INSPECT_TIMEOUT_MS = 10_000
@@ -13,16 +14,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function encodeEngineId(id: string): string {
   return encodeURIComponent(id)
-}
-
-function isSelfContainerTarget(id: string, selfContainerId: string | null | undefined): boolean {
-  if (selfContainerId === null || selfContainerId === undefined || selfContainerId.length === 0) {
-    return false
-  }
-  if (id === selfContainerId) {
-    return true
-  }
-  return selfContainerId.startsWith(id)
 }
 
 function containerRunningStatus(inspect: unknown): string | null {
@@ -54,11 +45,12 @@ export async function assertContainerTerminalAllowed(
   id: string,
   selfContainerId: string | null | undefined,
 ): Promise<void> {
-  if (isSelfContainerTarget(id, selfContainerId)) {
+  const inspect = await inspectContainer(transport, id)
+  // 自我保护以 inspect 解析出的完整 Id 为准：容器名、前缀等寻址形态解析后都归一到
+  // 同一 Id，按名寻址不再绕过守卫。
+  if (isSelfContainerInspect(inspect, selfContainerId)) {
     throw new InvalidRequestError(400, ACTION_SELF_MESSAGE)
   }
-
-  const inspect = await inspectContainer(transport, id)
   const status = containerRunningStatus(inspect)
   if (status !== 'running') {
     throw new InvalidRequestError(409, TERMINAL_NOT_RUNNING_MESSAGE)

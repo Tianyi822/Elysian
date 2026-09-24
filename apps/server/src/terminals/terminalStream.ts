@@ -4,9 +4,10 @@ import { TERMINAL_TAB_WIDTH, terminalCharWidth } from '@elysian/contracts'
  * 终端字节流 → 行模型的纯汇编器（无 IO、无定时器）：流式 UTF-8 解码、按 \n 切行
  * 保留不完整行、每行按终端语义落成文本（见 renderTerminalLine：\r 回行首覆盖写、
  * \b 左移、\t 展开到制表位、CSI K/C/D/G 行内擦除与横移，其余 ANSI 转义与控制字符
- * 剥离）、\x01…\x02 哨兵提取（READY / PWD）。READY 哨兵（原始字节
- * \x01READY\x02）之前的一切输出（bash 初始提示符、启动行回显里的字面 \x01 文本）
- * 全部丢弃。单命令轮输出预算在发出 prompt 事件时重置，被丢字节数随 prompt 事件
+ * 剥离）、\x01…\x02 哨兵提取（READY / PWD）。READY 哨兵（原始字节 \x01READY\x02，
+ * 容器 exec 启动行产出的是带 pid 的 \x01READY:<pid>\x02，两种形态都接受）之前的
+ * 一切输出（bash 初始提示符、启动行回显里的字面 \x01 文本）全部丢弃。单命令轮输出
+ * 预算在发出 prompt 事件时重置，被丢字节数随 prompt 事件
  * 上报。无换行的积压设硬上限（等于单轮预算）：超限立即结扎丢弃并记账，预算的执行
  * 不依赖换行到达（防 cat /dev/zero 类无换行洪流打爆内存）；丢弃态只保留行终止与
  * PWD 哨兵两类边界信号。PWD 哨兵只在跟过真实输入（noteInput）后才被当作命令结束
@@ -23,14 +24,24 @@ export const TERMINAL_TURN_OUTPUT_BUDGET_BYTES = 256 * 1024
  */
 export const TERMINAL_PENDING_MAX_CHARS = TERMINAL_TURN_OUTPUT_BUDGET_BYTES
 
-/** 汇编器事件：ready（READY 哨兵已见）、lines（完整输出行）、prompt（命令结束 + cwd）。 */
+/** 汇编器事件：ready（READY 哨兵已见，pid 取自容器 exec 的 \x01READY:<pid>\x02）、
+ * lines（完整输出行）、prompt（命令结束 + cwd）。 */
 export type TerminalStreamEvent =
-  | { readonly kind: 'ready' }
+  | { readonly kind: 'ready'; readonly pid: string | null }
   | { readonly kind: 'lines'; readonly lines: readonly string[] }
   | { readonly kind: 'prompt'; readonly cwd: string; readonly droppedBytes: number }
 
-/** READY 哨兵的原始字节序列：启动行 printf 产出的真实 \x01/\x02 控制字节。 */
-const READY_SENTINEL = '\x01READY\x02'
+/**
+ * READY 哨兵的匹配形态：本机启动行的 \x01READY\x02 与容器 exec 启动行 printf 产出
+ * 的 \x01READY:<pid>\x02（pid 是容器内 shell 进程号，断开清理的目标），二者都接受。
+ */
+const READY_SENTINEL_PATTERN = /\x01READY(?::([0-9]{1,10}))?\x02/
+
+/**
+ * READY 之前 pending 保留的尾部上界：哨兵最长形态是 \x01READY: + 10 位数字 + \x02
+ * 共 18 字符，跨块分裂时任一真前缀都不超过 17 字符，保留 17 字符的尾部不漏识别。
+ */
+const READY_CARRY_CHARS = 17
 
 /** PWD 哨兵：PROMPT_COMMAND 在每个提示符处流出的 \x01PWD:<cwd>\x02。 */
 const PWD_SENTINEL = /\x01PWD:([^\x02]*)\x02/g
@@ -215,18 +226,18 @@ export class TerminalStreamAssembler {
 
   private drain(): void {
     if (!this.seenReady) {
-      const idx = this.pending.indexOf(READY_SENTINEL)
-      if (idx === -1) {
+      const match = this.pending.match(READY_SENTINEL_PATTERN)
+      if (match === null || match.index === undefined) {
         // READY 之前的一切字节丢弃；只保留可能是跨块哨兵前缀的尾部。
-        const carry = Math.min(this.pending.length, READY_SENTINEL.length - 1)
+        const carry = Math.min(this.pending.length, READY_CARRY_CHARS)
         this.pending = carry > 0 ? this.pending.slice(-carry) : ''
         return
       }
-      this.pending = this.pending.slice(idx + READY_SENTINEL.length)
+      this.pending = this.pending.slice(match.index + match[0].length)
       this.seenReady = true
       this.promptArmed = true // 启动行是服务端写入的第一次输入：其后的首提示符哨兵有效。
       this.skipToNewline = true
-      this.events = [...this.events, { kind: 'ready' }]
+      this.events = [...this.events, { kind: 'ready', pid: match[1] ?? null }]
     }
     if (this.skipToNewline) {
       // READY 哨兵自带行终止符（printf '\n'）：连同其后的行尾一并消费，不产空行。

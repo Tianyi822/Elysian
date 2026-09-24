@@ -150,6 +150,7 @@ function createFakeDockerService(overrides: Partial<DockerReadService> = {}): Do
       pulledAt: '2024-05-01T08:00:00.000000000Z',
     }),
     removeImage: async () => undefined,
+    removeContainer: async () => undefined,
     ...overrides,
   }
 }

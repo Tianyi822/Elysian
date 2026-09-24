@@ -517,3 +517,30 @@ describe('createTerminalsService 会话生命周期', () => {
     for (const session of sessions.slice(1)) await session.dispose('client-close')
   })
 })
+
+describe('disposeShell 收尾钩子', () => {
+  it('dispose 把 READY 哨兵捕获的 pid 交给 disposeShell（容器 exec 断开清理的目标）', async () => {
+    const disposedPids: Array<string | null> = []
+    const f = createFixture({
+      disposeShell: (shellPid) => {
+        disposedPids.push(shellPid)
+      },
+    })
+    f.pty.pushText('\x01READY:4194304\x02\r\n')
+    await waitFor(() => f.frames.some((frame) => frame.type === 'ready'))
+    await f.session.dispose('client-close')
+    expect(disposedPids).toEqual(['4194304'])
+  })
+
+  it('未见 READY 哨兵时 dispose 不调用钩子', async () => {
+    const disposedPids: Array<string | null> = []
+    const f = createFixture({
+      disposeShell: (shellPid) => {
+        disposedPids.push(shellPid)
+      },
+    })
+    f.pty.pushText('noise\r\n')
+    await f.session.dispose('client-close')
+    expect(disposedPids).toEqual([])
+  })
+})

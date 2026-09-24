@@ -385,6 +385,14 @@ export const OPERATION_DESCRIPTORS: Readonly<Record<string, OperationDescriptor>
       return id === null ? null : `容器 ${id}`
     },
   },
+  [`DELETE ${DOCKER_MOUNT}/containers/:id`]: {
+    category: 'containers',
+    action: '删除容器',
+    target: ({ params }) => {
+      const id = param(params, 'id')
+      return id === null ? null : `容器 ${id}`
+    },
+  },
   [`POST ${DOCKER_MOUNT}/images/pull`]: {
     category: 'containers',
     action: '拉取镜像',

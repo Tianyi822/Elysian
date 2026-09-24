@@ -75,25 +75,48 @@ function eventsOf(...chunks: readonly string[]): ReturnType<TerminalStreamAssemb
 describe('TerminalStreamAssembler', () => {
   it('READY 之前的字节全部丢弃，READY 之后才产出事件', () => {
     const events = eventsOf(`bash-5.2# 噪音\r\n${READY}\r\n`, 'hello\r\n')
-    expect(events[0]).toEqual({ kind: 'ready' })
+    expect(events[0]).toEqual({ kind: 'ready', pid: null })
     expect(events.slice(1)).toEqual([{ kind: 'lines', lines: ['hello'] }])
   })
 
   it('READY 哨兵跨 chunk 分裂时仍能识别（尾部前缀保留）', () => {
     const events = eventsOf('noise\x01RE', 'ADY\x02\r\nout\r\n')
-    expect(events).toEqual([{ kind: 'ready' }, { kind: 'lines', lines: ['out'] }])
+    expect(events).toEqual([{ kind: 'ready', pid: null }, { kind: 'lines', lines: ['out'] }])
+  })
+
+  it('容器 exec 启动行的带 pid 哨兵产出 ready 事件并携带 pid', () => {
+    const events = eventsOf('noise\r\n\x01READY:4194304\x02\r\nout\r\n')
+    expect(events).toEqual([
+      { kind: 'ready', pid: '4194304' },
+      { kind: 'lines', lines: ['out'] },
+    ])
+  })
+
+  it('带 pid 哨兵跨 chunk 分裂时仍能识别（pid 任意位切断）', () => {
+    const events = eventsOf('noise\x01READY:12', '34\x02\r\nout\r\n')
+    expect(events).toEqual([{ kind: 'ready', pid: '1234' }, { kind: 'lines', lines: ['out'] }])
+  })
+
+  it('READY 之前的超长垃圾不淹没跨块分裂的带 pid 哨兵', () => {
+    const events = eventsOf(`x${'弃'.repeat(60)}`, 'y\x01READY:9\x02\r\nout\r\n')
+    expect(events).toEqual([{ kind: 'ready', pid: '9' }, { kind: 'lines', lines: ['out'] }])
+  })
+
+  it('不带终止字节的半截哨兵保持丢弃态，不产出 ready', () => {
+    const events = eventsOf('noise\x01READY:123')
+    expect(events).toEqual([])
   })
 
   it('启动行回显里的字面 \\x01 文本不冒充 READY 哨兵', () => {
     const events = eventsOf("printf '\\x01READY\\x02\\n'\r\n", `${READY}\r\nreal\r\n`)
-    expect(events[0]).toEqual({ kind: 'ready' })
+    expect(events[0]).toEqual({ kind: 'ready', pid: null })
     expect(events).toContainEqual({ kind: 'lines', lines: ['real'] })
   })
 
   it('\\r\\n 切行剥行尾 \\r；lone \\r 行内去除', () => {
     const events = eventsOf(`${READY}\r\na\r\n`, 'pro\x07gress\x08\r\n')
     expect(events).toEqual([
-      { kind: 'ready' },
+      { kind: 'ready', pid: null },
       { kind: 'lines', lines: ['a'] },
       { kind: 'lines', lines: ['progress'] },
     ])
@@ -101,7 +124,7 @@ describe('TerminalStreamAssembler', () => {
 
   it('不带 \\n 的进度重绘按回车覆盖语义只留最终一帧', () => {
     const events = eventsOf(`${READY}\r\n10%\r`, '99%\r\n')
-    expect(events).toEqual([{ kind: 'ready' }, { kind: 'lines', lines: ['99%'] }])
+    expect(events).toEqual([{ kind: 'ready', pid: null }, { kind: 'lines', lines: ['99%'] }])
   })
 
   it('CSI 与 OSC 转义序列剥离', () => {
@@ -127,7 +150,7 @@ describe('TerminalStreamAssembler', () => {
     const bytes = new TextEncoder().encode(`${READY}\r\n中文`)
     const assembler = new TerminalStreamAssembler()
     const first = assembler.push(bytes.slice(0, bytes.length - 2))
-    expect(first).toEqual([{ kind: 'ready' }])
+    expect(first).toEqual([{ kind: 'ready', pid: null }])
     const second = [...assembler.push(bytes.slice(bytes.length - 2)), ...assembler.finish()]
     expect(second).toEqual([{ kind: 'lines', lines: ['中文'] }])
   })
@@ -135,7 +158,7 @@ describe('TerminalStreamAssembler', () => {
   it('PWD 哨兵提取为 prompt 事件并从流中移除；输出行先于 prompt 事件', () => {
     const events = eventsOf(`${READY}\r\nresult\r\n\x01PWD:/tmp\x02\r\n`)
     expect(events).toEqual([
-      { kind: 'ready' },
+      { kind: 'ready', pid: null },
       { kind: 'lines', lines: ['result'] },
       { kind: 'prompt', cwd: '/tmp', droppedBytes: 0 },
     ])
@@ -144,7 +167,7 @@ describe('TerminalStreamAssembler', () => {
   it('哨兵与输出同行时哨兵剥离、其余文本保留为输出行', () => {
     const events = eventsOf(`${READY}\r\nout\x01PWD:/var\x02tail\r\n`)
     expect(events).toEqual([
-      { kind: 'ready' },
+      { kind: 'ready', pid: null },
       { kind: 'lines', lines: ['outtail'] },
       { kind: 'prompt', cwd: '/var', droppedBytes: 0 },
     ])
@@ -153,7 +176,7 @@ describe('TerminalStreamAssembler', () => {
   it('纯哨兵行不产空输出行，真实空行保留', () => {
     const events = eventsOf(`${READY}\r\n\x01PWD:/root\x02\r\n\r\n`)
     expect(events).toEqual([
-      { kind: 'ready' },
+      { kind: 'ready', pid: null },
       { kind: 'prompt', cwd: '/root', droppedBytes: 0 },
       { kind: 'lines', lines: [''] },
     ])
@@ -232,7 +255,7 @@ describe('TerminalStreamAssembler', () => {
       new TextEncoder().encode(`${READY}\r\n\x01PWD:/a\x02\nout\n\x01PWD:/b\x02\n\x01PWD:/c\x02\n`),
     )
     expect(events).toEqual([
-      { kind: 'ready' },
+      { kind: 'ready', pid: null },
       { kind: 'prompt', cwd: '/a', droppedBytes: 0 },
       { kind: 'lines', lines: ['out'] },
     ])
