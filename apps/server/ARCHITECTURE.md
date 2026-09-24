@@ -4,7 +4,7 @@
 
 ## 一、定位与边界
 
-apps/server 是容器内本机回环服务:Bun.serve 挂 Hono 应用,监听 `127.0.0.1:48101`,承载防火墙、SSH、主机用户、文件管理四片真实主机端点、终端 WebSocket 端点与平台内存端点。浏览器不直连它,全部流量经 vite(5173)的 `server.proxy` 转发(终端键加 `ws: true` 代理升级请求);8080 不发布宿主端口,`Dockerfile.dev` 的 EXPOSE 也不必加(它是元数据,且该端口永不映射出容器)。
+apps/server 是容器内本机回环服务:Bun.serve 挂 Hono 应用,监听 `127.0.0.1:48101`,承载防火墙、SSH、主机用户、文件管理四片真实主机端点、终端 WebSocket 端点、容器管理片(`/api/docker`,含 SSE 与容器终端 WebSocket 升级)与平台内存端点。浏览器不直连它,全部流量经 vite(5173)的 `server.proxy` 转发(`/api/terminals` 与 `/api/docker` 键设 `ws: true` 代理升级请求);8080 不发布宿主端口,`Dockerfile.dev` 的 EXPOSE 也不必加(它是元数据,且该端口永不映射出容器)。
 
 本期迁入:安全三片(firewall / ssh / users)的路由、服务、解析、真实接线,以及 platformMemory 路由。本期不迁:`/api/events` SSE 事件流与 `/api/resources/history`——两者与 vite 的 mock 插件(`../web/src/adapters/sse/mockEventsPlugin.node.ts:7-13` 引 hostMetrics 的 bun:sqlite metricsStore 与 /proc 采样)同插件同生命周期,事件内容必须与页面同一份确定性数据集,迁走须先把 mock 数据层抽成共享包,超出本期「服务层零行为改动迁移」范围。后续迁移时:mock 数据集与 hostMetrics 抽到共享包后,SSE 在 Bun.serve 上以 Hono streamSSE 或原生 ReadableStream 承载,帧格式与 Last-Event-ID 重放语义不变;`/api/resources/history` 与 `/api/events` 必须一起迁,届时 vite 代理前缀扩到 `/api/resources`;server 重启后进程内重放窗口归零,客户端 EventSource 自动重连补拍,行为等价于 dev server 重启,需在测试里锚定。
 
@@ -28,7 +28,7 @@ apps/server/
 ├── vitest.config.ts
 └── src/
     ├── index.ts               # Bun.serve 挂 app,127.0.0.1:48101
-    ├── app.ts                 # 父 Hono(strict:false)装配 + 采集中间件 + 六片挂载
+    ├── app.ts                 # 父 Hono(strict:false)装配 + 采集中间件 + 七片挂载(含 docker)
     ├── bun-sqlite.d.ts        # server 新增副本;web 侧 hostMetrics 那份保留
     ├── middleware/
     │   ├── guard.ts           # 同源守卫中间件 + readJsonBody(Request) + sendJson/sendError
@@ -82,6 +82,22 @@ apps/server/
     │   └── terminalsWiring.bun.test.ts          # bun test 点名的容器内真实冒烟(宿主机 skipIf 跳过)
     ├── platformMemory/
     │   └── platformMemoryRoutes.ts / .test.ts   # Hono 重写
+    ├── docker/                                  # 容器管理片(真实 Engine API;方案见 docs/specs/2026-09-24-docker-real-implementation.md)
+    │   ├── dockerRoutes.ts / .test.ts           # /api/docker 路由:REST、SSE /events、终端 WS 升级
+    │   ├── dockerHostDeps.ts / .test.ts          # socket 探测、API 版本与装配 available/ready
+    │   ├── dockerService.ts / .test.ts          # 列表/inspect、启停重启、创建回滚、镜像拉取与删除
+    │   ├── dockerTransport.ts / .test.ts        # 自写 Engine API 客户端(/v1.41/)
+    │   ├── dockerMappers.ts / .test.ts          # Engine JSON ↔ 契约视图模型
+    │   ├── createSpec.ts / .test.ts             # 创建请求白名单与校验
+    │   ├── registryPolicy.ts / .test.ts         # 镜像源 DNS/域名策略
+    │   ├── dockerEventsHub.ts / .test.ts        # Docker /events + 采样定时器、SSE 帧与 resync
+    │   ├── dockerStreams.ts / .test.ts          # 拉取与多路复用流解析
+    │   ├── dockerStats.ts / .test.ts            # cgroup 采样映射
+    │   ├── dockerExec.ts / .test.ts             # exec 会话与终端字节泵
+    │   ├── dockerExecRunner.ts                  # exec 启动与 I/O 泵
+    │   ├── dockerExecSessions.ts                # 会话表与并发上限
+    │   ├── dockerTerminalGuard.ts               # 容器终端升级前五项检查(同源/整片 503 由路由前置)
+    │   └── selfContainer.ts / .test.ts          # 识别面板自身容器,拒绝自伤动作
     └── logs/                                    # 平台日志片(新实现;方案见 docs/specs/2026-09-23-logs-real-spec.md)
         ├── logsPaths.ts / .test.ts              # 类别目录与分片文件名构造/解析(纯,`_2` 后缀不破坏字典序)
         ├── logRecords.ts / .test.ts             # 记录形状、单行化与截断、序列化、逐行解析(全纯)
@@ -127,7 +143,7 @@ apps/server/
 
 **D14 `'bun'` 模块与 hono/bun 入口不进 vitest 的 node 运行时模块图。** Bun.spawn 只在 `terminalsHostDeps.ts` 的容器分支动态 `import 'bun'`(`createTerminalsHostDeps` 是 async 工厂,`app.ts` 以 await 挂载,与防火墙片动态加载 bun:sqlite 同一纪律);`bunWebSocket.ts`(其 hono/bun 入口的 ssg.js 顶层代码引用全局 Bun)只能在 `/ws` handler 同源校验通过后动态加载。`createBunWebSocket()` 每进程恰好一次:ESM 模块缓存保留该性质,`index.ts`(serve 的 websocket 字段)静态引用同一实例,路由侧与入口侧不许各自再调。会话清理纪律:断开/空闲/内部失败一律 SIGKILL script 进程并等待退出码(pty master 死亡的 SIGHUP 级联,实测零孤儿),`dispose` 在 await kill 之前同步释放并发槽位(新连接不被未完成的 kill 卡住)。
 
-**D15 serve 与 vite 代理的 WebSocket 接线。** `index.ts` 的 `serve` 必须:fetch 签名 `(request, server) => app.fetch(request, server)`(hono/bun 的升级从第二参数取 Bun server 实例,丢弃它升级抛 TypeError),且带 `websocket: bunWebSocket.websocket` 字段(与路由侧 upgradeWebSocket 同源,见 D14)。`../web/vite.config.ts` 的 dev 与 preview 代理 `/api/terminals` 键必须 `ws: true`(HTTP 代理不转发 Upgrade)且不设 `changeOrigin`(D4 同理),由 `../web/src/adapters/http/proxyTable.test.ts` 锚死。终端片输出侧的四道闸(单轮 256 KiB 预算、50ms/4 KiB 合帧节流、发送缓冲水位 1 MiB、保序队列深度 256)与帧协议的唯一权威是 `docs/specs/2026-09-22-terminal-real-implementation.md` 的「端点契约」。
+**D15 serve 与 vite 代理的 WebSocket 接线。** `index.ts` 的 `serve` 必须:fetch 签名 `(request, server) => app.fetch(request, server)`(hono/bun 的升级从第二参数取 Bun server 实例,丢弃它升级抛 TypeError),且带 `websocket: bunWebSocket.websocket` 字段(与路由侧 upgradeWebSocket 同源,见 D14)。`../web/vite.config.ts` 的 dev 与 preview 代理键 `/api/terminals` 与 `/api/docker` 必须 `ws: true`(HTTP 代理不转发 Upgrade)且不设 `changeOrigin`(D4 同理),由 `../web/src/adapters/http/proxyTable.test.ts` 锚死。终端片与容器终端输出侧的四道闸(单轮 256 KiB 预算、50ms/4 KiB 合帧节流、发送缓冲水位 1 MiB、保序队列深度 256)与帧协议的唯一权威是 `docs/specs/2026-09-22-terminal-real-implementation.md` 的「端点契约」。
 
 **D16 日志片没有容器边界。** 日志片只读写 `~/.Elysian/logs/platform/{runtime,operation}` 下面板自有的目录(路径出口 `shared/elysianPaths.ts`),不执行系统命令、不碰系统文件、不需要 root 能力,因此宿主机本地开发与容器内是同一套实现:路由 deps **没有 `available`**,守卫链**没有 503 段**,`createLogsApp` 直接拿到 service 就挂载。后来者不要照着防火墙/SSH/用户/文件四片抄一个 `available` 与 503 分支出来;`../web/vite.config.ts` 的 `/api/logs` 代理与其余片同款(不设 `changeOrigin`,D4)。清空是破坏性动作,但它的守卫由既有同源守卫(非 GET/HEAD 必须带 Origin 且与 Host 一致、Host 在允许名单)承担,**不引入自造的 CSRF token 或二次确认令牌**——方案已定稿写死这一条。
 
@@ -144,7 +160,7 @@ apps/server/
 3. **读体守卫**(路由 handler 内调用 `readJsonBody(c.req.raw)`):415 `Content-Type 必须为 application/json` → 413 `请求体过大`(申报 content-length 与流式实读字节数双拦,上限 64 KiB;必须保持 for-await 流式累计读取、实读超限即拒,**不得**改成一次性 `arrayBuffer`/`text()` 再判)→ 400 `请求体不能为空` / `请求体不是有效 JSON`。
 4. **未知端点 404**:`未知防火墙端点:METHOD path` / `未知 SSH 端点:METHOD path` / `未知用户管理端点:METHOD path`,path 为剥挂载前缀后的相对路径(D3)。
 
-文件管理片与终端片的守卫链与上述同构(503 → 403 → 端点 → 404,文案同款格式);终端片的 `/ws` 是 Upgrade 请求,同源校验不走中间件、由路由在 `upgradeWebSocket` 之前前置短路执行更严口径(D13),无读体守卫。日志片只有 403 → 读体(仅清空端点)→ 端点 → 404 四段,没有 503 段(D16),两个读端点显式带 `cache-control: no-store`,404 文案为 `未知日志端点:METHOD path`(path 为剥 `/api/logs` 前缀后的相对路径)。
+文件管理片、终端片与容器管理片的守卫链与上述同构(503 → 403 → 端点 → 404,文案同款格式);终端片的 `/ws` 与容器片的 `/containers/:id/terminal` 是 Upgrade 请求,同源校验不走中间件、由路由在 `upgradeWebSocket` 之前前置短路执行更严口径(D13),无读体守卫。容器管理片挂载 `DOCKER_MOUNT = '/api/docker'`,可用性 503 两段文案逐字:`真实容器管理仅在 Docker 容器内可用`( `resolveAvailability` 为假,判据与防火墙/SSH/用户/文件/终端共用 `shared/availability.ts`)与 `Docker 服务未就绪`(在容器内但 socket 未连上或 Engine API 版本不足);未知路径 404 `未知容器管理端点:METHOD path`。日志片只有 403 → 读体(仅清空端点)→ 端点 → 404 四段,没有 503 段(D16),两个读端点显式带 `cache-control: no-store`,404 文案为 `未知日志端点:METHOD path`(path 为剥 `/api/logs` 前缀后的相对路径)。
 
 错误基线:`EndpointGuardError` / `InvalidRequestError` 按自带 status 返回 4xx,其余系统侧错误一律 500;响应体统一 `{ error: message }`(Error.message 或 String(error)),content-type `application/json; charset=utf-8`,中文消息原样带给界面。sendJson/sendError 用 `c.json` / `c.body` 实现同一形状。
 
@@ -159,13 +175,15 @@ export async function createApp(overrides: AppDepsOverrides = {}): Promise<Hono>
   const logs = overrides.logs ?? createLogsHostDeps().service   // 构造期零副作用(不建目录、不写、不起定时器)
   app.onError((error, c) => { ... logs.log('error', 'server.http', `请求处理失败:...`) ; return endpointErrorHandler(error, c) })  // D18:兜底
   app.use('/api/*', createOperationAudit(logs))               // D17:必须在所有 app.route 之前
+  app.route('/api/platform', createPlatformMemoryApp())       // D12:无容器边界
   app.route(FIREWALL_MOUNT, createFirewallApp(overrides.firewall ?? await resolveFirewallDeps()))   // '/api/security/firewall',D14:async 接线
   app.route(SSH_MOUNT, createSshApp(overrides.ssh ?? createSshHostDeps()))                     // '/api/security/ssh'
   app.route(USERS_MOUNT, createUsersApp(overrides.users ?? createUsersHostDeps()))               // '/api/security/users'
   app.route(FILES_MOUNT, createFilesApp(overrides.files ?? createFilesHostDeps()))               // '/api/files'
   app.route(TERMINAL_MOUNT, createTerminalsApp({ ...terminals, logs: terminals.logs ?? logs })) // '/api/terminals',D13/D14/D17
-  app.route(PLATFORM_MOUNT, createPlatformMemoryApp())                        // '/api/platform'
   app.route(LOGS_MOUNT, createLogsApp({ service: logs }))                     // '/api/logs',D16:无 503 段
+  const docker = overrides.docker ?? (await createDockerHostDeps())
+  app.route(DOCKER_MOUNT, createDockerApp({ ...docker, logs: docker.logs ?? logs })) // '/api/docker',SSE + 终端 WS
   return app
 }
 ```
