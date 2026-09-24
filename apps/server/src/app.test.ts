@@ -126,6 +126,13 @@ describe('createApp 组装', () => {
     }
   })
 
+  it('容器管理片挂真实接线：非容器环境整片 503，文案与容器边界一致', async () => {
+    const app = await createApp()
+    const res = await app.request('/api/docker/containers')
+    expect(res.status).toBe(503)
+    expect(await res.json()).toEqual({ error: '真实容器管理仅在 Docker 容器内可用' })
+  })
+
   it('文件管理片挂真实接线：非容器环境整片 503（含未知路径），文案与容器边界一致', async () => {
     const app = await createApp()
     const expects: readonly [string, string][] = [

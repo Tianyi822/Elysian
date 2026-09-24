@@ -15,6 +15,8 @@ import { TERMINAL_MOUNT, createTerminalsApp, type TerminalsAppDeps } from './ter
 import { createTerminalsHostDeps } from './terminals/terminalsHostDeps.ts'
 import { USERS_MOUNT, createUsersApp, type UsersAppDeps } from './users/usersRoutes.ts'
 import { createUsersHostDeps } from './users/usersHostDeps.ts'
+import { DOCKER_MOUNT, createDockerApp, type DockerAppDeps } from './docker/dockerRoutes.ts'
+import { createDockerHostDeps } from './docker/dockerHostDeps.ts'
 
 /*
  * 组装 Elysian server 的 Hono 应用。挂载结构：
@@ -44,6 +46,8 @@ export type AppDepsOverrides = {
   terminals?: TerminalsAppDeps
   /** 日志服务：缺省构造真实接线（构造期零副作用，测试与漂移守卫注入 fake）。 */
   logs?: LogsService
+  /** 容器管理片：缺省走真实接线（async 探测 socket 与 API 版本）。 */
+  docker?: DockerAppDeps
 }
 
 /**
@@ -84,5 +88,6 @@ export async function createApp(overrides: AppDepsOverrides = {}): Promise<Hono>
   const terminals = overrides.terminals ?? (await createTerminalsHostDeps())
   app.route(TERMINAL_MOUNT, createTerminalsApp({ ...terminals, logs: terminals.logs ?? logs }))
   app.route(LOGS_MOUNT, createLogsApp({ service: logs }))
+  app.route(DOCKER_MOUNT, createDockerApp(overrides.docker ?? (await createDockerHostDeps())))
   return app
 }
