@@ -160,7 +160,7 @@ import {
   updateWebsiteProject,
 } from './websitesData'
 import { CONTAINERS, CONTAINER_IMAGES, mockImageArtifact } from './containersData'
-import { autoContainerName } from './containersData'
+import { autoContainerName } from '@elysian/contracts'
 import {
   INITIAL_DISKS,
   INITIAL_LOAD,

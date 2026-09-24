@@ -106,3 +106,18 @@ export type ContainerCreateInput = {
 
 /** 容器动作：启动、停止、重启。本期均为 mock。 */
 export type ContainerAction = 'start' | 'stop' | 'restart'
+
+/** 自动容器名：镜像名中的 / 换成 -，再追加不冲突的最小序号（从 2 起）。 */
+export function autoContainerName(
+  existing: readonly { name: string }[],
+  imageName: string,
+): string {
+  const base = imageName.replaceAll('/', '-')
+  let seq = 2
+  let name = base
+  while (existing.some((container) => container.name === name)) {
+    name = `${base}-${seq}`
+    seq += 1
+  }
+  return name
+}

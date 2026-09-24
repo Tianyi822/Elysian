@@ -161,17 +161,7 @@ export function walkContainerUsage(
     })
 }
 
-/** 自动容器名：镜像名中的 / 换成 -，再追加不冲突的最小序号（从 2 起）。 */
-export function autoContainerName(existing: readonly Container[], imageName: string): string {
-  const base = imageName.replaceAll('/', '-')
-  let seq = 2
-  let name = base
-  while (existing.some((container) => container.name === name)) {
-    name = `${base}-${seq}`
-    seq += 1
-  }
-  return name
-}
+export { autoContainerName } from '@elysian/contracts'
 
 /** 确定性伪随机：FNV-1a 32 位哈希，同一输入永远得到同一摘要、标识与体积。 */
 export function mockImageArtifact(name: string, tag: string): { id: string; digest: string; sizeMb: number } {

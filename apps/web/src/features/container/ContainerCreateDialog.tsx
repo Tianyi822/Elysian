@@ -388,8 +388,12 @@ export function ContainerCreateDialog() {
                       placeholder="例如 redis-server --appendonly yes"
                       autoComplete="off"
                       spellCheck={false}
+                      aria-describedby={showErrors && errors.command ? 'create-command-error' : undefined}
                       className={`${INPUT_CLASS} font-mono`}
                     />
+                    {showErrors && errors.command ? (
+                      <p className={FIELD_ERROR_CLASS} id="create-command-error">{errors.command}</p>
+                    ) : null}
                   </div>
                   <div>
                     <label htmlFor="create-restart" className="mb-1 block text-xs font-medium text-fg-muted">

@@ -1,11 +1,12 @@
-import type {
-  Container,
-  ContainerCreateInput,
-  EnvPair,
-  PortMapping,
-  PortProtocol,
-  RestartPolicy,
-  VolumeMount,
+import {
+  parseShellWords,
+  type Container,
+  type ContainerCreateInput,
+  type EnvPair,
+  type PortMapping,
+  type PortProtocol,
+  type RestartPolicy,
+  type VolumeMount,
 } from '@elysian/contracts'
 
 /**
@@ -43,6 +44,7 @@ export function emptyDraft(): ContainerCreateDraft {
 export type CreateFormErrors = {
   imageId?: string
   name?: string
+  command?: string
   ports: ReadonlyArray<{ containerPort?: string; hostPort?: string } | undefined>
   env: ReadonlyArray<{ key?: string } | undefined>
   volumes: ReadonlyArray<{ hostPath?: string; containerPath?: string } | undefined>
@@ -102,6 +104,12 @@ export function validateCreateDraft(
     return undefined
   })
 
+  const command = draft.command.trim()
+  if (command) {
+    const parsed = parseShellWords(command)
+    if (!parsed.ok) errors.command = parsed.error
+  }
+
   const seenContainerPaths = new Set<string>()
   errors.volumes = draft.volumes.map((row) => {
     if (!row.hostPath && !row.containerPath) return undefined
@@ -124,6 +132,7 @@ export function hasCreateErrors(errors: CreateFormErrors): boolean {
   return Boolean(
     errors.imageId ||
       errors.name ||
+      errors.command ||
       errors.ports.some(Boolean) ||
       errors.env.some(Boolean) ||
       errors.volumes.some(Boolean),

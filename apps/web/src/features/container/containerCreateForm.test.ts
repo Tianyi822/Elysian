@@ -73,6 +73,20 @@ describe('创建表单校验', () => {
     expect(dup.ports[1]?.hostPort).toBe('宿主端口已被占用')
   })
 
+  it('启动命令分词失败时报错，空白或仅空白不报错', () => {
+    const base = { ...emptyDraft(), imageId: 'img-redis' }
+    const bad = validateCreateDraft({ ...base, command: '"unclosed' }, CONTAINERS)
+    expect(bad.command).toContain('引号')
+    expect(hasCreateErrors(bad)).toBe(true)
+
+    const ok = validateCreateDraft({ ...base, command: 'redis-server --appendonly yes' }, CONTAINERS)
+    expect(ok.command).toBeUndefined()
+    expect(hasCreateErrors(ok)).toBe(false)
+
+    const blank = validateCreateDraft({ ...base, command: '  \t  ' }, CONTAINERS)
+    expect(blank.command).toBeUndefined()
+  })
+
   it('环境变量空 KEY、重复 KEY 与卷空路径、重复容器路径报错', () => {
     const base = { ...emptyDraft(), imageId: 'img-redis' }
     expect(validateCreateDraft({ ...base, env: [{ key: '', value: 'x' }] }, CONTAINERS).env[0]?.key).toBe('变量名不能为空')
