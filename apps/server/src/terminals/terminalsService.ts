@@ -38,6 +38,21 @@ export const TERMINAL_COMPLETION_FILES_MAX = 512
  */
 export const TERMINAL_STARTUP_LINE = `stty cols ${TERMINAL_COLS} rows ${TERMINAL_ROWS} -echo; set +H; printf '\\x01READY\\x02\\n'\n`
 
+/** Shell 驯化规格：PTY 环境增量与启动行，本机与容器终端各自传入。 */
+export type ShellSessionSpec = {
+  env: Readonly<Record<string, string>>
+  startupLine: string
+}
+
+/** 本机（容器内 host bash）终端沿用的 shell 规格，供装配层与测试默认对齐。 */
+export const HOST_SHELL_SESSION_SPEC: ShellSessionSpec = {
+  env: {
+    PS1: '',
+    PROMPT_COMMAND: 'printf "\\x01PWD:%s\\x02\\n" "$PWD"',
+  },
+  startupLine: TERMINAL_STARTUP_LINE,
+}
+
 const utf8Encoder = new TextEncoder()
 
 function utf8ByteLength(text: string): number {
@@ -125,8 +140,9 @@ function tildePath(path: string, homeDir: string): string {
  * 凭据）绝不进终端。PATH 是固定串（含 ~/.bun/bin）。
  * 分页器一律指向 cat：会话是行模式、没有全屏能力，less 一类分页器在这里只会停在
  * 「terminal is not fully functional」与翻页提示上，git log、systemctl status、man 因此直接整页输出。
+ * shell 规格里的 PS1/PROMPT 等在 spawn 时与 {@link buildPtyEnvBase} 合并，不写入本函数。
  */
-export function buildPtyEnv(homeDir: string): Record<string, string> {
+export function buildPtyEnvBase(homeDir: string): Record<string, string> {
   return {
     HOME: homeDir,
     PATH: `${homeDir}/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
@@ -136,9 +152,12 @@ export function buildPtyEnv(homeDir: string): Record<string, string> {
     GIT_PAGER: 'cat',
     SYSTEMD_PAGER: 'cat',
     MANPAGER: 'cat',
-    PS1: '',
-    PROMPT_COMMAND: 'printf "\\x01PWD:%s\\x02\\n" "$PWD"',
   }
+}
+
+/** 本机 host 会话的完整 spawn env（白名单 + {@link HOST_SHELL_SESSION_SPEC}），测试与断言锚点。 */
+export function buildPtyEnv(homeDir: string): Record<string, string> {
+  return { ...buildPtyEnvBase(homeDir), ...HOST_SHELL_SESSION_SPEC.env }
 }
 
 type Timer = ReturnType<typeof setTimeout>
@@ -168,6 +187,7 @@ class TerminalSessionImpl implements TerminalSession {
   constructor(
     readonly id: string,
     private readonly deps: TerminalsHostDeps,
+    private readonly shell: ShellSessionSpec,
     private readonly events: TerminalSessionEvents,
     private readonly onEnded: (id: string) => void,
   ) {
@@ -179,7 +199,10 @@ class TerminalSessionImpl implements TerminalSession {
   async start(): Promise<void> {
     try {
       this.identity = this.deps.identity()
-      this.proc = this.deps.spawnPtyShell({ env: buildPtyEnv(this.identity.homeDir), cwd: this.identity.homeDir })
+      this.proc = this.deps.spawnPtyShell({
+        env: { ...buildPtyEnvBase(this.identity.homeDir), ...this.shell.env },
+        cwd: this.identity.homeDir,
+      })
     } catch (error) {
       this.events.close(1011, `终端进程启动失败：${errorText(error)}`)
       this.resolveReady()
@@ -189,7 +212,7 @@ class TerminalSessionImpl implements TerminalSession {
     const proc = this.proc
     this.armIdle()
     try {
-      proc.write(TERMINAL_STARTUP_LINE)
+      proc.write(this.shell.startupLine)
       proc.flush()
     } catch {
       // 启动行写入失败：按退出路径收尾（pump 观察到流结束）。
@@ -448,13 +471,16 @@ class TerminalSessionImpl implements TerminalSession {
 }
 
 /** 会话管理器工厂：并发上限与活跃会话账本在此，会话结束（退出或清理）即出账。 */
-export function createTerminalsService(deps: TerminalsHostDeps): TerminalsService {
+export function createTerminalsService(
+  deps: TerminalsHostDeps,
+  shell: ShellSessionSpec = HOST_SHELL_SESSION_SPEC,
+): TerminalsService {
   const sessions = new Map<string, TerminalSessionImpl>()
   return {
     tryOpen(events) {
       if (sessions.size >= TERMINAL_MAX_SESSIONS) return null
       const id = randomUUID()
-      const session = new TerminalSessionImpl(id, deps, events, (endedId) => {
+      const session = new TerminalSessionImpl(id, deps, shell, events, (endedId) => {
         sessions.delete(endedId)
       })
       sessions.set(id, session)

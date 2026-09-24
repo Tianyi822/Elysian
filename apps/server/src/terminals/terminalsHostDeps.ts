@@ -5,7 +5,12 @@ import { homedir, hostname, userInfo } from 'node:os'
 import { promisify } from 'node:util'
 import { resolveAvailability } from '../shared/availability.ts'
 import type { TerminalsAppDeps } from './terminalsRoutes.ts'
-import { createTerminalsService, type PtyProcess, type TerminalsHostDeps } from './terminalsService.ts'
+import {
+  createTerminalsService,
+  HOST_SHELL_SESSION_SPEC,
+  type PtyProcess,
+  type TerminalsHostDeps,
+} from './terminalsService.ts'
 
 const execFileAsync = promisify(execFile)
 
@@ -120,8 +125,11 @@ export async function createTerminalsHostDeps(options: TerminalsHostDepsOptions 
     return { available: false }
   }
   if (options.deps) {
-    return { available: true, service: createTerminalsService(options.deps) }
+    return { available: true, service: createTerminalsService(options.deps, HOST_SHELL_SESSION_SPEC) }
   }
   const { spawn } = await import('bun')
-  return { available: true, service: createTerminalsService(createRealHostDeps(spawn)) }
+  return {
+    available: true,
+    service: createTerminalsService(createRealHostDeps(spawn), HOST_SHELL_SESSION_SPEC),
+  }
 }
