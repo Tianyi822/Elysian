@@ -175,9 +175,22 @@ describe('createHttpContainersAdapter', () => {
     expect(statuses).toEqual(['connecting'])
   })
 
+  it('requestAction() POST /api/docker/containers/:id/:action 并解析容器', async () => {
+    const running = { ...baseContainer, status: 'running' as const }
+    const fetchMock = vi.fn(async () => jsonResponse(running))
+    vi.stubGlobal('fetch', fetchMock)
+    const adapter = createHttpContainersAdapter()
+    const container = await adapter.requestAction('a1b2c3d4e5f6', 'start')
+    expect(fetchMock).toHaveBeenCalledWith('/api/docker/containers/a1b2c3d4e5f6/start', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+    })
+    expect(container).toEqual(running)
+    vi.unstubAllGlobals()
+  })
+
   it('未接入的方法统一抛固定中文', async () => {
     const adapter = createHttpContainersAdapter()
-    await expect(adapter.requestAction('x', 'stop')).rejects.toThrow('容器管理的该操作尚未接入')
     await expect(adapter.create({ imageId: 'x', ports: [], env: [], volumes: [], restartPolicy: 'no' })).rejects.toThrow(
       '容器管理的该操作尚未接入',
     )

@@ -1,5 +1,6 @@
 import type {
   Container,
+  ContainerAction,
   ContainerImage,
   ContainerStatus,
   EnvPair,
@@ -290,7 +291,19 @@ export function createHttpContainersAdapter(
     },
 
     execMockCommand: NOT_CONNECTED,
-    requestAction: NOT_CONNECTED,
+
+    async requestAction(containerId, action: ContainerAction) {
+      return parseContainer(
+        await requestJson(
+          `${baseUrl}/containers/${encodeURIComponent(containerId)}/${action}`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+          },
+        ),
+      )
+    },
+
     create: NOT_CONNECTED,
     removeImage: NOT_CONNECTED,
     pullImage: NOT_CONNECTED,
