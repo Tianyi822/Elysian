@@ -47,6 +47,17 @@ describe('mapContainer', () => {
     expect(mapContainer(baseContainerInspect({ State: { Status: 'dead' } })).status).toBe(
       'stopped',
     )
+    expect(mapContainer(baseContainerInspect({ State: { Status: 'created' } })).status).toBe(
+      'stopped',
+    )
+    expect(mapContainer(baseContainerInspect({ State: { Status: 'removing' } })).status).toBe(
+      'stopped',
+    )
+  })
+
+  it('形状无效时抛出以「容器详情格式无效」开头的错误', () => {
+    expect(() => mapContainer(null)).toThrow(/^容器详情格式无效/)
+    expect(() => mapContainer(baseContainerInspect({ Id: 42 }))).toThrow(/^容器详情格式无效/)
   })
 
   it('HostConfig.PortBindings 合并 0.0.0.0 与 ::，并跳过空 HostPort', () => {
@@ -176,5 +187,12 @@ describe('mapImage', () => {
     const mapped = mapImage({ Id: inspect.Id }, inspect)
     expect(mapped.sizeMb).toBe(2)
     expect(mapped.pulledAt).toBeNull()
+  })
+
+  it('形状无效时抛出以「镜像详情格式无效」开头的错误', () => {
+    expect(() => mapImage(null, baseImageInspect())).toThrow(/^镜像详情格式无效/)
+    expect(() => mapImage({ Id: baseImageInspect().Id }, { Id: baseImageInspect().Id })).toThrow(
+      /^镜像详情格式无效/,
+    )
   })
 })
