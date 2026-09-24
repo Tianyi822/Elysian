@@ -2,7 +2,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { Info, Play, RotateCw, Square, Terminal as TerminalIcon } from '../../components/icons'
 import { useState } from 'react'
 import type { Container } from '@elysian/contracts'
-import { CONTAINER_STATUS_LABELS } from '@elysian/contracts'
+import { CONTAINER_STATUS_LABELS, classifyPortBind } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
@@ -13,7 +13,15 @@ const STATUS_TONE: Record<Container['status'], StatusTone> = {
   running: 'success',
   stopped: 'neutral',
   restarting: 'warning',
-  paused: 'neutral',
+  paused: 'warning',
+}
+
+function portBindLabel(hostIp: string | undefined): string | null {
+  const kind = classifyPortBind(hostIp)
+  if (kind === 'local') return '仅本机'
+  if (kind === 'public') return '对外'
+  if (kind === 'address') return hostIp ?? null
+  return null
 }
 
 const ACTION_BUTTON =
@@ -47,7 +55,9 @@ export function ContainerCard({ container }: { container: Container }) {
   const runAction = useContainersStore((s) => s.runAction)
   const [confirmAction, setConfirmAction] = useState<'stop' | 'restart' | null>(null)
 
-  const actionsDisabled = busy || container.status === 'restarting'
+  const pausedBlocked = container.status === 'paused'
+  const pausedTitle = '容器已暂停，面板暂不支持恢复'
+  const actionsDisabled = busy || container.status === 'restarting' || pausedBlocked
   const cpu = sample ? `${sample.cpuPercent}%` : '—'
   const memory = sample ? `${sample.memMb} MB` : '—'
 
@@ -77,7 +87,10 @@ export function ContainerCard({ container }: { container: Container }) {
 
       <div className="rounded-lg bg-surface-raised px-3 py-2 text-xs text-fg-muted">
         <p>
-          镜像 <span className="text-fg">{image ? `${image.name}:${image.tag}` : container.imageId}</span>
+          镜像{' '}
+          <span className="text-fg">
+            {image ? `${image.name}:${image.tag}` : (container.imageRef ?? container.imageId)}
+          </span>
         </p>
       </div>
 
@@ -86,7 +99,9 @@ export function ContainerCard({ container }: { container: Container }) {
         {container.ports.length ? (
           /* 用 span 而不是嵌套 ul：嵌套的 listitem 会被外层「容器列表」的角色查询一并抓到。 */
           <div className="mt-1.5 flex flex-wrap gap-1">
-            {container.ports.map((port) => (
+            {container.ports.map((port) => {
+              const bindLabel = portBindLabel(port.hostIp)
+              return (
               <span
                 key={`${port.containerPort}-${port.hostPort}-${port.protocol}`}
                 className="inline-flex items-stretch overflow-hidden rounded border border-line bg-surface text-xs tabular-nums"
@@ -102,8 +117,11 @@ export function ContainerCard({ container }: { container: Container }) {
                 <span className="border-l border-line px-1.5 py-1 uppercase tracking-wide text-fg-subtle">
                   /{port.protocol}
                 </span>
+                {bindLabel ? (
+                  <span className="border-l border-line px-1.5 py-1 text-fg-muted">{bindLabel}</span>
+                ) : null}
               </span>
-            ))}
+            )})}
           </div>
         ) : (
           <p className="mt-1.5">无</p>
@@ -132,6 +150,7 @@ export function ContainerCard({ container }: { container: Container }) {
           type="button"
           className={ACTION_BUTTON}
           disabled={container.status !== 'running'}
+          title={pausedBlocked ? pausedTitle : undefined}
           onClick={() => openTerminal(container.id)}
         >
           <TerminalIcon aria-hidden size={13} />
@@ -146,6 +165,7 @@ export function ContainerCard({ container }: { container: Container }) {
             type="button"
             className={ACTION_BUTTON}
             disabled={actionsDisabled}
+            title={pausedBlocked ? pausedTitle : undefined}
             onClick={() => void runAction(gateway, container.id, 'start')}
           >
             <Play aria-hidden size={13} />
@@ -156,6 +176,7 @@ export function ContainerCard({ container }: { container: Container }) {
             type="button"
             className={ACTION_BUTTON}
             disabled={actionsDisabled}
+            title={pausedBlocked ? pausedTitle : undefined}
             onClick={() => setConfirmAction('stop')}
           >
             <Square aria-hidden size={13} />
@@ -166,6 +187,7 @@ export function ContainerCard({ container }: { container: Container }) {
           type="button"
           className={ACTION_BUTTON}
           disabled={actionsDisabled || container.status === 'stopped'}
+          title={pausedBlocked ? pausedTitle : undefined}
           onClick={() => setConfirmAction('restart')}
         >
           <RotateCw aria-hidden size={13} />

@@ -3,6 +3,7 @@ import { Download, Search } from '../../components/icons'
 import type { ContainerStatus } from '@elysian/contracts'
 import { CONTAINER_STATUS_LABELS } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
+import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
 import { useContainersStore } from '../../stores/containersStore'
 import { ContainerCard } from './ContainerCard'
@@ -17,6 +18,7 @@ const STATUS_FILTERS: ReadonlyArray<{ value: ContainerStatus | 'all'; label: str
   { value: 'running', label: CONTAINER_STATUS_LABELS.running },
   { value: 'stopped', label: CONTAINER_STATUS_LABELS.stopped },
   { value: 'restarting', label: CONTAINER_STATUS_LABELS.restarting },
+  { value: 'paused', label: CONTAINER_STATUS_LABELS.paused },
 ]
 
 export function ContainerPage() {
@@ -128,7 +130,9 @@ export function ContainerPage() {
           title={containers.length === 0 ? '还没有容器' : '没有匹配的容器'}
           description={
             containers.length === 0
-              ? '当前演示数据集没有容器。可以刷新重试。'
+              ? isDockerRuntime()
+                ? '这台机器上还没有容器。'
+                : '当前演示数据集没有容器。可以刷新重试。'
               : '换个筛选条件或清空搜索词再试。'
           }
         />

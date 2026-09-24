@@ -15,7 +15,7 @@ const STATUS_TONE: Record<Container['status'], StatusTone> = {
   running: 'success',
   stopped: 'neutral',
   restarting: 'warning',
-  paused: 'neutral',
+  paused: 'warning',
 }
 
 /** 分节卡片：与容器卡片的内部信息块同一视觉语言（圆角描边、抬升底色）。 */
@@ -157,7 +157,7 @@ export function ContainerDetailSheet() {
                       <span aria-hidden="true" className="text-fg-subtle">
                         =
                       </span>
-                      <span className="text-fg">{pair.value}</span>
+                      <span className="text-fg">{pair.value === null ? '已隐藏' : pair.value}</span>
                     </span>
                   ))}
                 </div>

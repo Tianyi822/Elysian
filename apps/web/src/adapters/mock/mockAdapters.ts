@@ -508,6 +508,10 @@ export class MockContainerAdapter implements ContainerAdapter {
     return [...this.dataset().images]
   }
 
+  async createPolicy(): Promise<{ mountRoot: string; reservedPorts: readonly number[] }> {
+    return { mountRoot: '/srv/elysian', reservedPorts: [48100] }
+  }
+
   async execMockCommand(
     containerId: string,
     command: string,

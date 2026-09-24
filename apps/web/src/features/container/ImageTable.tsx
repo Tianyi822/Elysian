@@ -62,6 +62,14 @@ export function ImageTable({
                   <div className="truncate">
                     <span className="font-medium">{image.name}</span>
                     <span className="text-fg-muted">:{image.tag}</span>
+                    {image.otherTags && image.otherTags.length > 0 ? (
+                      <span
+                        className="ml-2 text-xs text-fg-muted"
+                        title={image.otherTags.join('、')}
+                      >
+                        另有 {image.otherTags.length} 个标签
+                      </span>
+                    ) : null}
                   </div>
                   <div
                     className="truncate font-mono text-xs text-fg-subtle"

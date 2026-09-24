@@ -12,6 +12,7 @@ function gatewayWith(overrides: Partial<ElysianGateway['containers']> = {}): Ely
     containers: {
       list: async () => [...CONTAINERS],
       listImages: async () => [...CONTAINER_IMAGES],
+      createPolicy: async () => ({ mountRoot: '/srv/elysian', reservedPorts: [48100] }),
       execMockCommand: async () => ({ lines: ['ok'] }),
       requestAction: async (id: string) => CONTAINERS.find((c) => c.id === id)!,
       create: async () => CONTAINERS[0]!,
