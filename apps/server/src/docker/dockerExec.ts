@@ -145,6 +145,67 @@ function createEchoFilteredStdout(
   }
 }
 
+/** 异步打开 PTY 后再暴露 write/stdout（probe 与 exec 创建在会话 start 阶段完成）。 */
+export function createLazyExecPty(open: () => Promise<PtyProcess>): PtyProcess {
+  let inner: PtyProcess | null = null
+  let openError: Error | null = null
+  let openPromise: Promise<PtyProcess> | null = null
+  let resolveExited: (code: number) => void = () => {}
+  const exited = new Promise<number>((resolve) => {
+    resolveExited = resolve
+  })
+
+  const ensure = (): Promise<PtyProcess> => {
+    if (inner) return Promise.resolve(inner)
+    if (openError) return Promise.reject(openError)
+    openPromise ??= open()
+      .then((pty) => {
+        inner = pty
+        void pty.exited.then((code) => {
+          resolveExited(code)
+        })
+        return pty
+      })
+      .catch((error) => {
+        openError = error instanceof Error ? error : new Error(String(error))
+        resolveExited(1)
+        throw openError
+      })
+    return openPromise
+  }
+
+  const stdout: AsyncIterable<Uint8Array> = {
+    async *[Symbol.asyncIterator]() {
+      const pty = await ensure()
+      yield* pty.stdout
+    },
+  }
+
+  return {
+    write(text: string) {
+      void ensure()
+        .then((pty) => pty.write(text))
+        .catch(() => undefined)
+    },
+    flush() {
+      void ensure()
+        .then((pty) => pty.flush())
+        .catch(() => undefined)
+    },
+    stdout,
+    kill: async () => {
+      if (!inner) {
+        resolveExited(0)
+        return 0
+      }
+      const code = await inner.kill()
+      resolveExited(code)
+      return code
+    },
+    exited,
+  }
+}
+
 /** 把 Docker exec 劫持连接包装成与会话层一致的 PtyProcess。 */
 export function createExecPty(exec: ExecRunner, spec: ShellSessionSpec): PtyProcess {
   const session = exec.run(shellCommandFor(spec), true)

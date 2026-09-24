@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Hono } from 'hono'
+import type { Context } from 'hono'
 import type { Container, ContainerImage } from '@elysian/contracts'
 import { InvalidRequestError } from '../shared/errors'
+import { sendJson } from '../middleware/guard.ts'
+import type { TerminalWsEvents } from '../terminals/terminalConnection.ts'
+import type { DockerTransport } from './dockerTransport.ts'
+import { TERMINAL_NOT_RUNNING_MESSAGE } from './dockerTerminalGuard.ts'
+import type { DockerExecSessions } from './dockerExecSessions.ts'
 import {
   DOCKER_MOUNT,
   SSE_STATUS_CONNECTING,
@@ -77,6 +83,44 @@ function mountedApp(deps: DockerAppDeps): Hono {
   const parent = new Hono({ strict: false })
   parent.route(DOCKER_MOUNT, createDockerApp(deps))
   return parent
+}
+
+function createFakeTransport(
+  handler: (input: { method: string; path: string }) => { status: number; json: unknown },
+): DockerTransport {
+  return {
+    request: async (input) => handler(input),
+  }
+}
+
+function baseContainerInspect(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    Id: SAMPLE_CONTAINER.id,
+    State: { Status: 'running' },
+    ...overrides,
+  }
+}
+
+function createFakeDockerExecSessions(): DockerExecSessions {
+  return {
+    createWsEvents: () => ({
+      onOpen: vi.fn(),
+      onMessage: vi.fn(),
+      onClose: vi.fn(),
+    }),
+    activeCount: () => 0,
+  }
+}
+
+const TERMINAL_READY: DockerAppDeps = {
+  available: true,
+  socketReady: true,
+  service: createFakeService(),
+  transport: createFakeTransport(() => ({
+    status: 200,
+    json: baseContainerInspect(),
+  })),
+  dockerExecSessions: createFakeDockerExecSessions(),
 }
 
 const READY: DockerAppDeps = {
@@ -276,6 +320,72 @@ describe('createDockerApp', () => {
     expect(res.status).toBe(204)
     expect(res.body).toBeNull()
     expect(removeImage).toHaveBeenCalledWith(SAMPLE_IMAGE.id)
+  })
+
+  describe('GET /containers/:id/terminal 升级前五项检查', () => {
+    const terminalPath = `/api/docker/containers/${SAMPLE_CONTAINER.id}/terminal`
+
+    it('整片不可用时 503', async () => {
+      const app = mountedApp({ available: false, socketReady: false })
+      const res = await app.request(req('GET', terminalPath))
+      expect(res.status).toBe(503)
+    })
+
+    it('无 Origin 时 403', async () => {
+      const app = mountedApp(TERMINAL_READY)
+      const res = await app.request(
+        req('GET', terminalPath, undefined, { origin: '' }),
+      )
+      expect(res.status).toBe(403)
+      expect(await res.json()).toEqual({ error: '请求来源不允许' })
+    })
+
+    it('容器不存在时 404', async () => {
+      const app = mountedApp({
+        ...TERMINAL_READY,
+        transport: createFakeTransport(() => ({ status: 404, json: { message: 'not found' } })),
+      })
+      const res = await app.request(req('GET', terminalPath))
+      expect(res.status).toBe(404)
+      expect(await res.json()).toEqual({ error: '容器不存在' })
+    })
+
+    it('paused 容器 409', async () => {
+      const app = mountedApp({
+        ...TERMINAL_READY,
+        transport: createFakeTransport(() => ({
+          status: 200,
+          json: baseContainerInspect({ State: { Status: 'paused' } }),
+        })),
+      })
+      const res = await app.request(req('GET', terminalPath))
+      expect(res.status).toBe(409)
+      expect(await res.json()).toEqual({ error: TERMINAL_NOT_RUNNING_MESSAGE })
+    })
+
+    it('自身容器 400', async () => {
+      const app = mountedApp({
+        ...TERMINAL_READY,
+        selfContainerId: SAMPLE_CONTAINER.id,
+      })
+      const res = await app.request(req('GET', terminalPath))
+      expect(res.status).toBe(400)
+      expect(await res.json()).toEqual({ error: '不能对面板所在的容器执行该操作' })
+    })
+
+    it('通过前置检查后调用注入的 upgrade', async () => {
+      const upgrade = vi.fn((_c: Context, _events: TerminalWsEvents) =>
+        sendJson(200, { upgraded: true }),
+      )
+      const app = mountedApp({
+        ...TERMINAL_READY,
+        upgradeWebSocket: upgrade,
+      })
+      const res = await app.request(req('GET', terminalPath))
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({ upgraded: true })
+      expect(upgrade).toHaveBeenCalledOnce()
+    })
   })
 
   it('hub 上报 connecting 时 SSE 写入 status connecting 注释帧', async () => {

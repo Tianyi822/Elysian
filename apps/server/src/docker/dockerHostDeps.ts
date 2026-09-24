@@ -8,6 +8,8 @@ import { assertEngineApi, createDockerTransport, type DockerTransport } from './
 import { createDockerEventsHub } from './dockerEventsHub.ts'
 import { createDockerReadService } from './dockerService.ts'
 import { resolveSelfContainerId } from './selfContainer.ts'
+import { createDockerExecSessions } from './dockerExecSessions.ts'
+import { createContainerExecRunner } from './dockerExecRunner.ts'
 import type { DockerAppDeps } from './dockerRoutes.ts'
 
 /*
@@ -126,5 +128,25 @@ export async function createDockerHostDeps(options: DockerHostDepsOptions = {}):
     resolveRegistry: createRegistryResolver(),
   })
 
-  return { available: true, socketReady: true, service, eventsHub }
+  const socketPath = resolveSocketPath(env)
+  const dockerExecSessions = createDockerExecSessions({
+    createExecRunner: (containerId) => createContainerExecRunner(socketPath, containerId),
+    identityForContainer: (containerId) => ({
+      user: 'root',
+      hostLabel: containerId.slice(0, 13),
+      homeDir: '/',
+    }),
+    listDir: async () => [],
+    listCommands: async () => [],
+  })
+
+  return {
+    available: true,
+    socketReady: true,
+    service,
+    eventsHub,
+    transport,
+    selfContainerId,
+    dockerExecSessions,
+  }
 }

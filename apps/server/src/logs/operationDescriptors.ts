@@ -347,7 +347,8 @@ export const OPERATION_DESCRIPTORS: Readonly<Record<string, OperationDescriptor>
     },
   },
 
-  // 容器管理
+  // 容器管理（GET /containers/:id/terminal 为 WebSocket 升级，不经写端点采集；
+  // 打开会话在 dockerRoutes 升级前显式 recordPanelOperation，与终端片 /ws 同构）
   [`POST ${DOCKER_MOUNT}/containers`]: {
     category: 'containers',
     action: '创建容器',

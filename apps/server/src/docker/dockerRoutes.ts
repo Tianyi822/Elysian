@@ -1,6 +1,20 @@
+import type { Context } from 'hono'
 import { Hono } from 'hono'
 import { stream } from 'hono/streaming'
-import { endpointErrorHandler, invalidRequest, readJsonBody, sameOriginGuard, sendJson } from '../middleware/guard.ts'
+import {
+  ALLOWED_HOSTNAMES,
+  endpointErrorHandler,
+  InvalidRequestError,
+  invalidRequest,
+  readJsonBody,
+  sameOriginGuard,
+  sendJson,
+} from '../middleware/guard.ts'
+import type { OperationAuditLogs } from '../logs/operationAudit.ts'
+import type { TerminalWsEvents } from '../terminals/terminalConnection.ts'
+import type { DockerTransport } from './dockerTransport.ts'
+import { assertContainerTerminalAllowed } from './dockerTerminalGuard.ts'
+import type { DockerExecSessions } from './dockerExecSessions.ts'
 import type { DockerReadService } from './dockerService.ts'
 import type { DockerEventsHub } from './dockerEventsHub.ts'
 
@@ -16,12 +30,41 @@ export const DOCKER_MOUNT = '/api/docker'
 export type { DockerReadService } from './dockerService.ts'
 export type { DockerEventsHub } from './dockerEventsHub.ts'
 
+/** WS 升级专用同源校验（与终端片 /ws 逐字同口径）。 */
+function isSameOriginUpgrade(req: Request): boolean {
+  const origin = req.headers.get('origin')
+  const host = req.headers.get('host')
+  if (!origin || !host) return false
+  try {
+    if (new URL(origin).host.toLowerCase() !== host.toLowerCase()) return false
+  } catch {
+    return false
+  }
+  try {
+    const hostname = new URL(`http://${host}`).hostname.toLowerCase()
+    return ALLOWED_HOSTNAMES.includes(hostname)
+  } catch {
+    return false
+  }
+}
+
+export type DockerWebSocketUpgrade = (
+  c: Context,
+  events: TerminalWsEvents,
+) => Response | Promise<Response>
+
 /** 路由装配入参：两段 503（容器外 / socket 未就绪）与只读 service 注入。 */
 export type DockerAppDeps = {
   available: boolean
   socketReady: boolean
   service?: DockerReadService
   eventsHub?: DockerEventsHub
+  transport?: DockerTransport
+  selfContainerId?: string | null
+  dockerExecSessions?: DockerExecSessions
+  logs?: OperationAuditLogs
+  /** 测试注入：合法升级路径替换 bunWebSocket.upgradeWebSocket。 */
+  upgradeWebSocket?: DockerWebSocketUpgrade
 }
 
 /** 容器管理子应用工厂：app.ts 挂到 DOCKER_MOUNT；测试直接 request 驱动。 */
@@ -161,6 +204,54 @@ export function createDockerApp(deps: DockerAppDeps): Hono {
     }
     await service.removeImage(id)
     return new Response(null, { status: 204 })
+  })
+
+  const transport = deps.transport
+  const dockerExecSessions = deps.dockerExecSessions
+
+  app.get('/containers/:id/terminal', async (c) => {
+    if (!isSameOriginUpgrade(c.req.raw)) {
+      return sendJson(403, { error: '请求来源不允许' })
+    }
+
+    const id = c.req.param('id')
+    if (!CONTAINER_ID_PATTERN.test(id)) {
+      throw invalidRequest('容器 ID 格式无效')
+    }
+
+    if (!transport || !dockerExecSessions) {
+      return sendJson(503, { error: 'Docker 服务未就绪' })
+    }
+
+    try {
+      await assertContainerTerminalAllowed(transport, id, deps.selfContainerId ?? null)
+    } catch (error) {
+      if (error instanceof InvalidRequestError) {
+        return sendJson(error.status, { error: error.message })
+      }
+      throw error
+    }
+
+    if (deps.logs) {
+      const { recordPanelOperation } = await import('../logs/operationAudit.ts')
+      await recordPanelOperation(deps.logs, {
+        category: 'containers',
+        action: '打开容器终端',
+        target: `容器 ${id}`,
+        result: 'success',
+        method: 'GET',
+        path: `${DOCKER_MOUNT}/containers/${id}/terminal`,
+        httpStatus: 200,
+      })
+    }
+
+    const wsEvents = dockerExecSessions.createWsEvents(id)
+    const upgrade = deps.upgradeWebSocket
+    if (upgrade) {
+      return upgrade(c, wsEvents)
+    }
+    const { bunWebSocket } = await import('../terminals/bunWebSocket.ts')
+    return bunWebSocket.upgradeWebSocket(c, wsEvents)
   })
 
   app.all('*', (c) => {
