@@ -16,7 +16,7 @@ apps/server 是容器内本机回环服务:Bun.serve 挂 Hono 应用,监听 `127
 
 `vitest.config.ts`:node 环境(非 jsdom),不加载任何 vite 插件,`test.exclude` 排除 `src/**/*.bun.test.ts`。
 
-`src/index.ts`:读装配结果,`Bun.serve({ port: SERVER_PORT, hostname: '127.0.0.1', fetch: (request, server) => app.fetch(request, server), websocket: bunWebSocket.websocket })`——fetch 第二参数(Bun server 实例)必须传给 app.fetch(hono/bun 的 upgradeWebSocket 从它取实例完成升级,丢弃会让 `/api/terminals/ws` 升级抛 TypeError);websocket 字段与路由侧 upgradeWebSocket 必须同源(`src/terminals/bunWebSocket.ts` 的进程级唯一实例);`src/app.ts`:async 构造父 Hono 应用,注册操作日志采集中间件后挂载六片子应用(见第六节);启动行(运行日志 `server.lifecycle`)写在 `src/index.ts` 的 `serve(...)` 之后,让 `createApp()` 本身零文件系统副作用(D18)。`src/bun-spawn.d.ts` 是 `import('bun').spawn` 的最小类型桩(terminalsHostDeps 的容器分支动态加载用),`src/bun-serve.d.ts` 的 serve 选项补 fetch 第二参与 `websocket?` 字段。
+`src/index.ts`:读装配结果,`Bun.serve({ port: SERVER_PORT, hostname: '127.0.0.1', fetch: (request, server) => app.fetch(request, server), websocket: bunWebSocket.websocket })`——fetch 第二参数(Bun server 实例)必须传给 app.fetch(hono/bun 的 upgradeWebSocket 从它取实例完成升级,丢弃会让 `/api/terminals/ws` 升级抛 TypeError);websocket 字段与路由侧 upgradeWebSocket 必须同源(`src/terminals/bunWebSocket.ts` 的进程级唯一实例);`src/app.ts`:async 构造父 Hono 应用,注册操作日志采集中间件后挂载七片子应用(含容器管理 docker 片,见第六节);启动行(运行日志 `server.lifecycle`)写在 `src/index.ts` 的 `serve(...)` 之后,让 `createApp()` 本身零文件系统副作用(D18)。`src/bun-spawn.d.ts` 是 `import('bun').spawn` 的最小类型桩(terminalsHostDeps 的容器分支动态加载用),`src/bun-serve.d.ts` 的 serve 选项补 fetch 第二参与 `websocket?` 字段。
 
 ## 三、终版文件树
 
