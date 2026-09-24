@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { LOG_CLEARABLE_CATEGORIES, type PlatformLogCategory } from '@elysian/contracts'
 import { endpointErrorHandler, readJsonBody, sameOriginGuard, sendJson } from '../middleware/guard.ts'
 import type { LogsService } from './logsService.ts'
+import { LOGS_MOUNT } from '../shared/apiMounts.ts'
 
 /*
  * 平台日志路由（/api/logs/*）：只做守卫链、路由分发与 service 透传。
@@ -21,8 +22,8 @@ import type { LogsService } from './logsService.ts'
  * 请求体里的 category 不参与路由决策（路径即类别），越界的类别名自然落到 404 兜底。
  */
 
-/** 挂载路径：app.ts 用同一常量挂载，404 兜底与操作日志描述符表都用它——单一事实，三处不漂移。 */
-export const LOGS_MOUNT = '/api/logs'
+/** 挂载路径：定义在 shared/apiMounts.ts，此处 re-export 保持既有 import 路径。 */
+export { LOGS_MOUNT }
 
 /** 路由装配入参：**无 available**（本片无容器边界，见文件头）。 */
 export type LogsAppDeps = {

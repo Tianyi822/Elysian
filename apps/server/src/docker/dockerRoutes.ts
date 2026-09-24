@@ -11,6 +11,7 @@ import {
   sendJson,
 } from '../middleware/guard.ts'
 import type { OperationAuditLogs } from '../logs/operationAudit.ts'
+import { DOCKER_MOUNT } from '../shared/apiMounts.ts'
 import type { TerminalWsEvents } from '../terminals/terminalConnection.ts'
 import type { DockerTransport } from './dockerTransport.ts'
 import { assertContainerTerminalAllowed } from './dockerTerminalGuard.ts'
@@ -24,8 +25,8 @@ const SSE_HEARTBEAT_MS = 15_000
 /** SSE 注释帧：Engine 事件流断开而 HTTP 仍开着时通知浏览器进入 connecting（与 web adapter 约定一致）。 */
 export const SSE_STATUS_CONNECTING = ': status connecting\n\n'
 
-/** 挂载路径：app.ts 用同一常量挂载，404 兜底也用它剥前缀——单一事实，两处不漂移。 */
-export const DOCKER_MOUNT = '/api/docker'
+/** 挂载路径：定义在 shared/apiMounts.ts，此处 re-export 保持既有 import 路径。 */
+export { DOCKER_MOUNT }
 
 export type { DockerReadService } from './dockerService.ts'
 export type { DockerEventsHub } from './dockerEventsHub.ts'
@@ -57,6 +58,8 @@ export type DockerWebSocketUpgrade = (
 export type DockerAppDeps = {
   available: boolean
   socketReady: boolean
+  /** socket 未就绪的具体原因（API 版本过低、socket 连接失败），并入 503 文案。 */
+  socketUnavailableReason?: string
   service?: DockerReadService
   eventsHub?: DockerEventsHub
   transport?: DockerTransport
@@ -78,7 +81,8 @@ export function createDockerApp(deps: DockerAppDeps): Hono {
   }
 
   if (!deps.socketReady || !deps.service) {
-    app.all('*', () => sendJson(503, { error: 'Docker 服务未就绪' }))
+    const reason = deps.socketUnavailableReason ?? '无法连接 Docker socket'
+    app.all('*', () => sendJson(503, { error: `Docker 服务未就绪：${reason}` }))
     return app
   }
 
@@ -190,6 +194,15 @@ export function createDockerApp(deps: DockerAppDeps): Hono {
   app.post('/containers/:id/start', (c) => postContainerAction(c.req.param('id'), 'start'))
   app.post('/containers/:id/stop', (c) => postContainerAction(c.req.param('id'), 'stop'))
   app.post('/containers/:id/restart', (c) => postContainerAction(c.req.param('id'), 'restart'))
+
+  app.delete('/containers/:id', async (c) => {
+    const id = c.req.param('id')
+    if (!CONTAINER_ID_PATTERN.test(id)) {
+      throw invalidRequest('容器 ID 格式无效')
+    }
+    await service.removeContainer(id)
+    return new Response(null, { status: 204 })
+  })
 
   app.post('/images/pull', async (c) => {
     const body = await readJsonBody(c.req.raw)

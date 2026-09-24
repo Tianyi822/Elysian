@@ -8,6 +8,7 @@ import type {
   FirewallToggles,
 } from '@elysian/contracts'
 import { invalidRequest, readJsonBody, sameOriginGuard, sendJson } from '../middleware/guard.ts'
+import { FIREWALL_MOUNT } from '../shared/apiMounts.ts'
 
 /*
  * 防火墙真实路由：/api/security/firewall/*（apps/server 的 Hono 子应用，仅容器内可用）。
@@ -16,8 +17,8 @@ import { invalidRequest, readJsonBody, sameOriginGuard, sendJson } from '../midd
  * handler 依赖全部注入，测试用 fake service 经 app.request 驱动，不执行任何真实命令。
  */
 
-/** 挂载前缀：app.ts 用同一常量挂载，404 兜底据此剥前缀得到相对路径（单一事实）。 */
-export const FIREWALL_MOUNT = '/api/security/firewall'
+/** 挂载前缀：定义在 shared/apiMounts.ts，此处 re-export 保持既有 import 路径。 */
+export { FIREWALL_MOUNT }
 
 export type FirewallAppDeps = {
   /** false 时一切请求 503：不在容器内的强制保护（见 firewallHostDeps 的 /.dockerenv 校验）。 */

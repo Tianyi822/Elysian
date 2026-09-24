@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { SSH_ROOT_LOGIN_POLICIES, type SshRootLoginPolicy, type SshAdapter } from '@elysian/contracts'
 import { endpointErrorHandler, invalidRequest, readJsonBody, sameOriginGuard, sendJson } from '../middleware/guard.ts'
 import type { SshListKeysReport } from './sshService.ts'
+import { SSH_MOUNT } from '../shared/apiMounts.ts'
 
 /*
  * SSH 真实端点：/api/security/ssh/*（Hono 子应用，仅容器内可用）。
@@ -11,8 +12,8 @@ import type { SshListKeysReport } from './sshService.ts'
  * 不执行任何真实命令。
  */
 
-/** 本片在主应用上的挂载前缀：404 文案里的路径剥离它，保持与子路径路由一致的相对写法。 */
-export const SSH_MOUNT = '/api/security/ssh'
+/** 本片在主应用上的挂载前缀：定义在 shared/apiMounts.ts，此处 re-export 保持既有 import 路径。 */
+export { SSH_MOUNT }
 
 export type SshApiDeps = {
   /** false 时一切请求 503：不在容器内的强制保护（见 sshHostDeps 的容器边界判定）。 */

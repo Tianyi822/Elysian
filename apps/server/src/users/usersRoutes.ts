@@ -7,6 +7,7 @@ import {
   type UserAdapter,
 } from '@elysian/contracts'
 import { endpointErrorHandler, invalidRequest, readJsonBody, sameOriginGuard, sendJson } from '../middleware/guard.ts'
+import { USERS_MOUNT } from '../shared/apiMounts.ts'
 
 /*
  * 用户管理路由（/api/security/users/*）：只做路由分发、守卫调用、请求体解析与 service
@@ -17,8 +18,8 @@ import { endpointErrorHandler, invalidRequest, readJsonBody, sameOriginGuard, se
  * 未知路径 404「未知用户管理端点：METHOD path」。
  */
 
-/** 挂载路径：app.ts 用同一常量挂载，404 兜底也用它剥前缀——单一事实，两处不漂移。 */
-export const USERS_MOUNT = '/api/security/users'
+/** 挂载路径：定义在 shared/apiMounts.ts，此处 re-export 保持既有 import 路径。 */
+export { USERS_MOUNT }
 
 /** 路由装配入参：available=false 时整片 503；service 缺失同样 503（有可用性没服务也不许答）。 */
 export type UsersAppDeps = {

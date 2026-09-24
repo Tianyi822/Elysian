@@ -1,22 +1,31 @@
 import { Hono } from 'hono'
-import { FILES_MOUNT, createFilesApp, type FilesAppDeps } from './files/filesRoutes.ts'
+import { createFilesApp, type FilesAppDeps } from './files/filesRoutes.ts'
 import { createFilesHostDeps } from './files/filesHostDeps.ts'
-import { FIREWALL_MOUNT, createFirewallApp, type FirewallAppDeps } from './firewall/firewallRoutes.ts'
+import { createFirewallApp, type FirewallAppDeps } from './firewall/firewallRoutes.ts'
 import { resolveFirewallDeps } from './firewall/firewallHostDeps.ts'
 import { createLogsHostDeps } from './logs/logsHostDeps.ts'
 import { createOperationAudit } from './logs/operationAudit.ts'
-import { LOGS_MOUNT, createLogsApp } from './logs/logsRoutes.ts'
+import { createLogsApp } from './logs/logsRoutes.ts'
 import type { LogsService } from './logs/logsService.ts'
 import { endpointErrorHandler } from './middleware/guard.ts'
 import { createPlatformMemoryApp } from './platformMemory/platformMemoryRoutes.ts'
-import { SSH_MOUNT, createSshApp, type SshApiDeps } from './ssh/sshRoutes.ts'
+import { createSshApp, type SshApiDeps } from './ssh/sshRoutes.ts'
 import { createSshHostDeps } from './ssh/sshHostDeps.ts'
-import { TERMINAL_MOUNT, createTerminalsApp, type TerminalsAppDeps } from './terminals/terminalsRoutes.ts'
+import { createTerminalsApp, type TerminalsAppDeps } from './terminals/terminalsRoutes.ts'
 import { createTerminalsHostDeps } from './terminals/terminalsHostDeps.ts'
-import { USERS_MOUNT, createUsersApp, type UsersAppDeps } from './users/usersRoutes.ts'
+import { createUsersApp, type UsersAppDeps } from './users/usersRoutes.ts'
 import { createUsersHostDeps } from './users/usersHostDeps.ts'
-import { DOCKER_MOUNT, createDockerApp, type DockerAppDeps } from './docker/dockerRoutes.ts'
+import { createDockerApp, type DockerAppDeps } from './docker/dockerRoutes.ts'
 import { createDockerHostDeps } from './docker/dockerHostDeps.ts'
+import {
+  DOCKER_MOUNT,
+  FILES_MOUNT,
+  FIREWALL_MOUNT,
+  LOGS_MOUNT,
+  SSH_MOUNT,
+  TERMINAL_MOUNT,
+  USERS_MOUNT,
+} from './shared/apiMounts.ts'
 
 /*
  * 组装 Elysian server 的 Hono 应用。挂载结构：

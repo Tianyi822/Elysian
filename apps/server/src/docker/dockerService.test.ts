@@ -317,6 +317,56 @@ describe('createDockerReadService.action', () => {
     })
   })
 
+  it('自容器按容器名寻址同样 400：inspect 解析出完整 Id 后拒绝，引擎动作不发生', async () => {
+    const fullId = 'a'.repeat(64)
+    const name = 'elysian-web-1'
+    const selfId = resolveSelfContainerId(`0::/docker/${fullId}`, [fullId])
+    expect(selfId).toBe(fullId)
+
+    const transport = createRecordingTransport(({ method, path }) => {
+      if (method === 'GET' && path === `/v1.41/containers/${encodeURIComponent(name)}/json`) {
+        return {
+          status: 200,
+          json: baseContainerInspect({ Id: fullId, Name: `/${name}` }),
+        }
+      }
+      // POST 分支不录制：守卫若被绕过而直达引擎，本测试直接失败。
+      throw new Error(`未录制的请求：${method} ${path}`)
+    })
+    const service = createDockerReadService(transport, {
+      ...policyOptions,
+      selfContainerId: selfId,
+    })
+
+    await expect(service.action(name, 'stop')).rejects.toMatchObject({
+      status: 400,
+      message: '不能对面板所在的容器执行该操作',
+    })
+    await expect(service.action(name, 'restart')).rejects.toMatchObject({
+      status: 400,
+      message: '不能对面板所在的容器执行该操作',
+    })
+  })
+
+  it('自容器按 12 位前缀寻址同样 400', async () => {
+    const fullId = 'a'.repeat(64)
+    const prefix = fullId.slice(0, 12)
+    const transport = createRecordingTransport(({ method, path }) => {
+      if (method === 'GET' && path === `/v1.41/containers/${encodeURIComponent(prefix)}/json`) {
+        return { status: 200, json: baseContainerInspect({ Id: fullId }) }
+      }
+      throw new Error(`未录制的请求：${method} ${path}`)
+    })
+    const service = createDockerReadService(transport, {
+      ...policyOptions,
+      selfContainerId: fullId,
+    })
+    await expect(service.action(prefix, 'stop')).rejects.toMatchObject({
+      status: 400,
+      message: '不能对面板所在的容器执行该操作',
+    })
+  })
+
   it('restart 在调用 Engine 之前调用 onRestarting', async () => {
     const order: string[] = []
     const onRestarting = vi.fn((containerId: string) => {
@@ -763,19 +813,156 @@ describe('createDockerReadService.pull', () => {
   })
 })
 
+describe('createDockerReadService.removeContainer', () => {
+  const policyOptions = createDeps()
+
+  it('自容器按容器名删除同样 400：inspect 解析出完整 Id 后拒绝，DELETE 不发生', async () => {
+    const fullId = 'b'.repeat(64)
+    const name = 'elysian-web-1'
+    const transport = createRecordingTransport(({ method, path }) => {
+      if (method === 'GET' && path === `/v1.41/containers/${encodeURIComponent(name)}/json`) {
+        return {
+          status: 200,
+          json: baseContainerInspect({ Id: fullId, Name: `/${name}` }),
+        }
+      }
+      throw new Error(`未录制的请求：${method} ${path}`)
+    })
+    const service = createDockerReadService(transport, {
+      ...policyOptions,
+      selfContainerId: fullId,
+    })
+    await expect(service.removeContainer(name)).rejects.toMatchObject({
+      status: 400,
+      message: '不能对面板所在的容器执行该操作',
+    })
+  })
+
+  it('容器不存在 404 中文', async () => {
+    const transport = createRecordingTransport(({ method, path }) => {
+      if (method === 'GET' && path === `/v1.41/containers/${encodeURIComponent(CONTAINER_ID)}/json`) {
+        return { status: 404, json: { message: 'No such container' } }
+      }
+      throw new Error(`未录制的请求：${method} ${path}`)
+    })
+    const service = createDockerReadService(transport, policyOptions)
+    await expect(service.removeContainer(CONTAINER_ID)).rejects.toMatchObject({
+      status: 404,
+      message: '容器不存在',
+    })
+  })
+
+  it('运行中容器删除被拒 409，DELETE 不带 force', async () => {
+    const transport = createRecordingTransport(({ method, path }) => {
+      if (method === 'GET' && path === `/v1.41/containers/${encodeURIComponent(CONTAINER_ID)}/json`) {
+        return { status: 200, json: baseContainerInspect() }
+      }
+      if (method === 'DELETE' && path === `/v1.41/containers/${CONTAINER_ID}`) {
+        return { status: 409, json: { message: 'You cannot remove a running container' } }
+      }
+      throw new Error(`未录制的请求：${method} ${path}`)
+    })
+    const service = createDockerReadService(transport, policyOptions)
+    await expect(service.removeContainer(CONTAINER_ID)).rejects.toMatchObject({
+      status: 409,
+      message: '容器正在运行，请先停止再删除',
+    })
+  })
+
+  it('删除成功：DELETE 用 inspect 解析出的完整 Id 发起，204 接受', async () => {
+    const fullId = 'c'.repeat(64)
+    const calls: Array<{ method: string; path: string }> = []
+    const transport = createRecordingTransport(({ method, path }) => {
+      calls.push({ method, path })
+      if (method === 'GET' && path === `/v1.41/containers/${encodeURIComponent(CONTAINER_ID)}/json`) {
+        return { status: 200, json: baseContainerInspect({ Id: fullId }) }
+      }
+      if (method === 'DELETE' && path === `/v1.41/containers/${fullId}`) {
+        return { status: 204, json: null }
+      }
+      throw new Error(`未录制的请求：${method} ${path}`)
+    })
+    const service = createDockerReadService(transport, policyOptions)
+    await expect(service.removeContainer(CONTAINER_ID)).resolves.toBeUndefined()
+    expect(calls.some((c) => c.method === 'DELETE' && c.path.endsWith(fullId))).toBe(true)
+  })
+
+  it('同一 id 的 action 未完成时删除 409', async () => {
+    let releaseStart!: () => void
+    const transport: DockerTransport = {
+      request: vi.fn(async (input) => {
+        if (input.method === 'GET' && input.path.endsWith('/json')) {
+          return { status: 200, json: baseContainerInspect() }
+        }
+        if (input.method === 'POST' && input.path.endsWith('/start')) {
+          await new Promise<void>((resolve) => {
+            releaseStart = resolve
+          })
+          return { status: 204, json: null }
+        }
+        throw new Error(`未录制的请求：${input.method} ${input.path}`)
+      }),
+    }
+    const service = createDockerReadService(transport, policyOptions)
+    const first = service.action(CONTAINER_ID, 'start')
+    await Promise.resolve()
+    await expect(service.removeContainer(CONTAINER_ID)).rejects.toMatchObject({
+      status: 409,
+      message: '该容器正在执行其他操作',
+    })
+    releaseStart()
+    await first
+  })
+})
+
 describe('createDockerReadService.removeImage', () => {
   const imageHex = 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890'
   const imageId = imageHex
 
-  it('容器仍引用镜像时 409', async () => {
-    const transport = createRecordingTransport(({ path }) => {
+  it('容器仍引用镜像时 409（摘要为 sha256 形，标签被删后的形态）', async () => {
+    const transport = createRecordingTransport(({ method, path }) => {
       if (path === '/v1.41/containers/json?all=1') {
         return {
           status: 200,
           json: [{ Id: CONTAINER_ID, Image: `sha256:${imageHex}` }],
         }
       }
+      if (method === 'GET' && path === `/v1.41/containers/${encodeURIComponent(CONTAINER_ID)}/json`) {
+        return {
+          status: 200,
+          json: baseContainerInspect({ Image: `sha256:${imageHex}` }),
+        }
+      }
       throw new Error(`未录制的路径：${path}`)
+    })
+    const service = createDockerReadService(transport, createDeps())
+    await expect(service.removeImage(imageId)).rejects.toMatchObject({
+      status: 409,
+      message: '镜像仍被容器引用，删除失败',
+    })
+  })
+
+  it('容器摘要 Image 为引用名（真实引擎形态）时仍判为被引用并 409', async () => {
+    const transport = createRecordingTransport(({ method, path }) => {
+      if (path === '/v1.41/containers/json?all=1') {
+        return { status: 200, json: [{ Id: CONTAINER_ID, Image: 'busybox:1.37' }] }
+      }
+      if (method === 'GET' && path === `/v1.41/containers/${encodeURIComponent(CONTAINER_ID)}/json`) {
+        return {
+          status: 200,
+          json: baseContainerInspect({
+            Image: `sha256:${imageHex}`,
+            Config: { Image: 'busybox:1.37', Env: [] as string[] },
+          }),
+        }
+      }
+      if (method === 'GET' && path === `/v1.41/images/${encodeURIComponent(imageId)}/json`) {
+        return { status: 200, json: { Id: `sha256:${imageHex}`, RepoTags: ['busybox:1.37'] } }
+      }
+      if (method === 'DELETE') {
+        return { status: 409, json: { message: 'image is being used' } }
+      }
+      throw new Error(`未录制的请求：${method} ${path}`)
     })
     const service = createDockerReadService(transport, createDeps())
     await expect(service.removeImage(imageId)).rejects.toMatchObject({

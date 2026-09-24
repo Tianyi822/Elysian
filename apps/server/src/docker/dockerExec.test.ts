@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
+import { execFileSync } from 'node:child_process'
 import {
   cleanupScriptPid,
   createExecPty,
+  DOCKER_EXEC_CLEANUP_SCRIPT,
+  DOCKER_EXEC_ECHO_LINE_MAX_CHARS,
   dockerShellProbeCommand,
   DOCKER_SHELL_PROBE_SCRIPT,
   type ExecRunner,
@@ -74,6 +77,19 @@ describe('shellSpecFor', () => {
     const spec = shellSpecFor('sh', false)
     expect(spec.env.PS1).toContain('$PWD')
   })
+
+  it('两个分支的启动行都以八进制 printf 产出带 pid 的 READY 哨兵（sh 无 stty 也不例外）', () => {
+    const printfSegment = "printf '\\001READY:%s\\002\\n' $$"
+    expect(shellSpecFor('bash', true).startupLine).toContain(printfSegment)
+    expect(shellSpecFor('sh', true).startupLine).toContain(printfSegment)
+    expect(shellSpecFor('sh', false).startupLine).toContain(printfSegment)
+  })
+
+  it('sh 规格的 PS1 内嵌真实控制字节，PWD 哨兵不依赖 shell 转义解析', () => {
+    const spec = shellSpecFor('sh', false)
+    expect(spec.env.PS1).toBe('$ \x01PWD:$PWD\x02 ')
+    expect(spec.env.PS1).not.toContain('\\x01')
+  })
 })
 
 describe('cleanupScriptPid', () => {
@@ -87,6 +103,36 @@ describe('cleanupScriptPid', () => {
 
   it('非法 pid 抛错', () => {
     expect(() => cleanupScriptPid('12;rm')).toThrow()
+  })
+})
+
+describe('DOCKER_EXEC_CLEANUP_SCRIPT', () => {
+  it('脚本是合法的 /bin/sh 脚本', () => {
+    expect(() => execFileSync('/bin/sh', ['-n'], { input: DOCKER_EXEC_CLEANUP_SCRIPT })).not.toThrow()
+  })
+
+  it('先快照 ppid 匹配的子进程，再对 kids 与 target 两轮发信号', () => {
+    const script = DOCKER_EXEC_CLEANUP_SCRIPT
+    const snapshotIndex = script.indexOf('for statf in /proc/[0-9]*/stat')
+    const matchIndex = script.indexOf('[ "$ppid" = "$target" ]')
+    const roundsIndex = script.indexOf('for pass in 1 2')
+    expect(snapshotIndex).toBeGreaterThanOrEqual(0)
+    expect(matchIndex).toBeGreaterThan(snapshotIndex)
+    expect(roundsIndex).toBeGreaterThan(matchIndex)
+    expect(script.indexOf('kill -HUP')).toBeGreaterThan(roundsIndex)
+    expect(script.indexOf('kill -KILL')).toBeGreaterThan(script.indexOf('kill -HUP'))
+    expect(script).toContain('for p in $kids $target')
+  })
+
+  it('两轮信号之间等待一秒让 HUP 生效，KILL 兜底', () => {
+    const script = DOCKER_EXEC_CLEANUP_SCRIPT
+    const hupIndex = script.indexOf('kill -HUP')
+    const killIndex = script.indexOf('kill -KILL')
+    const sleepIndex = script.indexOf('sleep 1')
+    // sleep 在循环体尾部：第一轮（HUP）末尾停一秒，第二轮才发 KILL。
+    expect(hupIndex).toBeLessThan(killIndex)
+    expect(killIndex).toBeLessThan(sleepIndex)
+    expect(sleepIndex).toBeLessThan(script.length)
   })
 })
 
@@ -153,5 +199,56 @@ describe('createExecPty', () => {
     await pump
 
     expect(collected).toEqual(['hi'])
+  })
+
+  it('无换行的超长输出按块透传，不等待换行也不丢字节', async () => {
+    const spec = shellSpecFor('sh', false)
+    expect(spec.startupLine).not.toContain('stty')
+    const oversized = 'a'.repeat(DOCKER_EXEC_ECHO_LINE_MAX_CHARS + 1)
+    const exec: ExecRunner = {
+      run() {
+        return {
+          write: () => {},
+          stdout: (async function* () {
+            yield new TextEncoder().encode(oversized)
+            yield new TextEncoder().encode('END\n')
+          })(),
+          close: () => {},
+        }
+      },
+    }
+
+    const pty = createExecPty(exec, spec)
+    const chunks: string[] = []
+    const decoder = new TextDecoder()
+    for await (const chunk of pty.stdout) {
+      chunks.push(decoder.decode(chunk, { stream: true }))
+    }
+
+    // 超长无换行块在下一块到达前先透传，不与后续行合并进同一次产出。
+    expect(chunks[0]).toBe(oversized)
+    expect(chunks.at(-1)).toBe('END\n')
+  })
+
+  it('向 ExecRunner.run 第三参传 spec.env，命令取 shellCommandFor 结果', () => {
+    const spec = shellSpecFor('bash', true)
+    const runs: Array<{ cmd: readonly string[]; tty: boolean; env?: Readonly<Record<string, string>> }> = []
+    const exec: ExecRunner = {
+      run(cmd, tty, env) {
+        runs.push({ cmd, tty, env })
+        return {
+          write: () => {},
+          stdout: (async function* () {})(),
+          close: () => {},
+        }
+      },
+    }
+
+    createExecPty(exec, spec)
+
+    expect(runs).toHaveLength(1)
+    expect(runs[0]?.tty).toBe(true)
+    expect(runs[0]?.env).toEqual(spec.env)
+    expect(runs[0]?.cmd).toEqual(['/bin/bash', '--noediting'])
   })
 })

@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import type { FileEntry, FileSearchResult } from '@elysian/contracts'
 import { endpointErrorHandler, readJsonBody, sameOriginGuard, sendJson } from '../middleware/guard.ts'
 import { invalidRequest } from '../shared/errors.ts'
+import { FILES_MOUNT } from '../shared/apiMounts.ts'
 import type { FilePermissionInput } from './filesService.ts'
 
 /*
@@ -17,8 +18,8 @@ import type { FilePermissionInput } from './filesService.ts'
  * 前端契约绝不发送裸 `+`）；POST 的路径只随 JSON body 走，无编码问题。
  */
 
-/** 挂载路径：app.ts 用同一常量挂载，404 兜底也用它剥前缀——单一事实，两处不漂移。 */
-export const FILES_MOUNT = '/api/files'
+/** 挂载路径：定义在 shared/apiMounts.ts，此处 re-export 保持既有 import 路径。 */
+export { FILES_MOUNT }
 
 /**
  * 文件管理服务的调用形状：与 web 侧 contracts 的 FilesAdapter（apps/web/src/contracts/

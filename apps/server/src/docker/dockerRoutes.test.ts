@@ -55,6 +55,7 @@ function createFakeService(overrides: Partial<DockerReadService> = {}): DockerRe
     create: async () => SAMPLE_CONTAINER,
     pull: async () => SAMPLE_IMAGE,
     removeImage: async () => undefined,
+    removeContainer: async () => undefined,
     ...overrides,
   }
 }
@@ -109,6 +110,7 @@ function createFakeDockerExecSessions(): DockerExecSessions {
       onClose: vi.fn(),
     }),
     activeCount: () => 0,
+    managedCount: () => 0,
   }
 }
 
@@ -168,11 +170,24 @@ describe('createDockerApp', () => {
     }
   })
 
-  it('在容器内但 socket 未就绪时 503', async () => {
+  it('在容器内但 socket 未就绪时 503，error 携带具体原因', async () => {
+    const app = mountedApp({
+      available: true,
+      socketReady: false,
+      socketUnavailableReason: 'Docker Engine API 版本过低，需要 1.41 及以上',
+    })
+    const res = await app.request(req('GET', '/api/docker/containers'))
+    expect(res.status).toBe(503)
+    const body = (await res.json()) as { error: string }
+    expect(body.error).toContain('Docker 服务未就绪')
+    expect(body.error).toContain('Docker Engine API 版本过低')
+  })
+
+  it('socket 未就绪且无具体原因时回落到默认连接失败文案', async () => {
     const app = mountedApp({ available: true, socketReady: false })
     const res = await app.request(req('GET', '/api/docker/containers'))
     expect(res.status).toBe(503)
-    expect(await res.json()).toEqual({ error: 'Docker 服务未就绪' })
+    expect(await res.json()).toEqual({ error: 'Docker 服务未就绪：无法连接 Docker socket' })
   })
 
   it('可用时 GET /status 为 200', async () => {
@@ -320,6 +335,29 @@ describe('createDockerApp', () => {
     expect(res.status).toBe(204)
     expect(res.body).toBeNull()
     expect(removeImage).toHaveBeenCalledWith(SAMPLE_IMAGE.id)
+  })
+
+  it('DELETE /containers/:id 调用 removeContainer 并返回 204', async () => {
+    const removeContainer = vi.fn(async () => undefined)
+    const app = mountedApp({
+      ...READY,
+      service: createFakeService({ removeContainer }),
+    })
+    const res = await app.request(req('DELETE', `/api/docker/containers/${SAMPLE_CONTAINER.id}`))
+    expect(res.status).toBe(204)
+    expect(removeContainer).toHaveBeenCalledWith(SAMPLE_CONTAINER.id)
+  })
+
+  it('DELETE /containers/:id 的 id 格式无效时 400', async () => {
+    const removeContainer = vi.fn(async () => undefined)
+    const app = mountedApp({
+      ...READY,
+      service: createFakeService({ removeContainer }),
+    })
+    const res = await app.request(req('DELETE', '/api/docker/containers/坏 id'))
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: '容器 ID 格式无效' })
+    expect(removeContainer).not.toHaveBeenCalled()
   })
 
   describe('GET /containers/:id/terminal 升级前五项检查', () => {

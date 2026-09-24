@@ -3,6 +3,7 @@ import { ALLOWED_HOSTNAMES, endpointErrorHandler, sameOriginGuard, sendJson } fr
 import { recordPanelOperation, type OperationAuditLogs } from '../logs/operationAudit.ts'
 import { createTerminalWsEvents } from './terminalConnection.ts'
 import type { TerminalsService } from './terminalsService.ts'
+import { TERMINAL_MOUNT } from '../shared/apiMounts.ts'
 
 /*
  * 终端路由（/api/terminals/*）：只做守卫链与升级委托，会话编排全部在服务层。
@@ -20,8 +21,8 @@ import type { TerminalsService } from './terminalsService.ts'
  * 之后、升级之前显式记一条操作日志（deps.logs 可选，不传即不记，既有测试零改动）。
  */
 
-/** 挂载路径：app.ts 用同一常量挂载，404 兜底也用它剥前缀——单一事实，两处不漂移。 */
-export const TERMINAL_MOUNT = '/api/terminals'
+/** 挂载路径：定义在 shared/apiMounts.ts，此处 re-export 保持既有 import 路径。 */
+export { TERMINAL_MOUNT }
 
 /** 路由装配入参：available=false 时整片 503；service 缺失同样 503（有可用性没服务也不许答）。 */
 export type TerminalsAppDeps = {

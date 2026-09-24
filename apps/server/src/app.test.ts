@@ -238,6 +238,7 @@ describe('createApp 组装', () => {
         onClose: () => undefined,
       }),
       activeCount: () => 0,
+      managedCount: () => 0,
     }
     const app = await createApp({
       logs: logs.service,
@@ -281,6 +282,7 @@ describe('createApp 组装', () => {
             pulledAt: null,
           }),
           removeImage: async () => undefined,
+          removeContainer: async () => undefined,
         },
         transport,
         dockerExecSessions,

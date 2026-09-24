@@ -1,6 +1,7 @@
 import { lookup } from 'node:dns/promises'
 import { existsSync, readFileSync } from 'node:fs'
 import { mkdir, realpath } from 'node:fs/promises'
+import { hostname } from 'node:os'
 import { PANEL_PORT } from '@elysian/contracts'
 import { resolveAvailability } from '../shared/availability.ts'
 import { SERVER_PORT } from '../shared/ports.ts'
@@ -22,6 +23,8 @@ export type DockerHostDepsOptions = {
   dockerenvExists?: boolean
   transport?: DockerTransport
   readCgroup?: () => string
+  /** 测试注入：默认读 os.hostname()，供 hostname 通道识别面板自身容器。 */
+  readHostname?: () => string
 }
 
 export type { DockerAppDeps } from './dockerRoutes.ts'
@@ -96,14 +99,22 @@ export async function createDockerHostDeps(options: DockerHostDepsOptions = {}):
 
   try {
     await assertEngineApi(transport)
-  } catch {
-    return { available: true, socketReady: false }
+  } catch (error) {
+    return {
+      available: true,
+      socketReady: false,
+      socketUnavailableReason:
+        error instanceof Error && error.message.length > 0
+          ? error.message
+          : 'Docker socket 连接失败',
+    }
   }
 
   const readCgroup = options.readCgroup ?? readCgroupText
+  const readHostname = options.readHostname ?? (() => hostname())
   const cgroupText = readCgroup()
   const containerIds = await listContainerIds(transport)
-  const selfContainerId = resolveSelfContainerId(cgroupText, containerIds)
+  const selfContainerId = resolveSelfContainerId(cgroupText, containerIds, readHostname())
 
   const eventsHub = createDockerEventsHub({
     transport,

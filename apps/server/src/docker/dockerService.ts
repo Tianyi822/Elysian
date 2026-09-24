@@ -6,6 +6,7 @@ import { buildCreateSpec } from './createSpec.ts'
 import { mapContainer, mapImage } from './dockerMappers.ts'
 import { readPullProgress } from './dockerStreams.ts'
 import { validateRegistry, type RegistryResolver } from './registryPolicy.ts'
+import { isSelfContainerInspect } from './selfContainer.ts'
 
 const API_PREFIX = '/v1.41'
 const LIST_MAX = 500
@@ -26,6 +27,7 @@ const IMAGE_NOT_FOUND_MESSAGE = '镜像不存在，删除失败'
 const ACTION_PAUSED_MESSAGE = '容器已暂停，面板暂不支持恢复'
 const ACTION_SELF_MESSAGE = '不能对面板所在的容器执行该操作'
 const CONTAINER_NOT_FOUND_MESSAGE = '容器不存在'
+const CONTAINER_RUNNING_REMOVE_MESSAGE = '容器正在运行，请先停止再删除'
 
 export type DockerReadService = {
   listContainers(): Promise<readonly Container[]>
@@ -34,6 +36,7 @@ export type DockerReadService = {
   action(id: string, action: 'start' | 'stop' | 'restart'): Promise<Container>
   create(body: unknown): Promise<Container>
   pull(body: unknown, signal: AbortSignal): Promise<ContainerImage>
+  removeContainer(id: string): Promise<void>
   removeImage(id: string): Promise<void>
 }
 
@@ -117,16 +120,6 @@ function isPausedInspect(inspect: unknown): boolean {
     return false
   }
   return state.Status === 'paused'
-}
-
-function isSelfContainerTarget(id: string, selfContainerId: string | null | undefined): boolean {
-  if (selfContainerId === null || selfContainerId === undefined || selfContainerId.length === 0) {
-    return false
-  }
-  if (id === selfContainerId) {
-    return true
-  }
-  return selfContainerId.startsWith(id)
 }
 
 async function dockerRequest(
@@ -430,6 +423,12 @@ async function tagImageRef(
   }
 }
 
+/**
+ * 统计引用目标镜像的容器数。真实引擎的 /containers/json 摘要里 Image 是引用名
+ * （如 `busybox:1.37`），只有标签被删后才呈 sha256 形——直接拿它跟 64 位镜像 ID
+ * 比对必然漏判，引擎侧的 409 保护会被降级成删除失败的 400。因此逐容器 inspect，
+ * 以详情里 Image 字段（容器实际运行镜像的完整 ID）为准。
+ */
 async function countContainerImageReferences(
   transport: DockerTransport,
   imageId: string,
@@ -445,11 +444,26 @@ async function countContainerImageReferences(
   if (!Array.isArray(response.json)) {
     throw new Error('容器列表格式无效')
   }
-  const target = normalizeImageId(imageId)
-  let count = 0
+  const ids: string[] = []
   for (const summary of response.json) {
-    if (!isRecord(summary) || typeof summary.Image !== 'string') continue
-    if (normalizeImageId(summary.Image) === target) {
+    ids.push(requireId(summary, '容器'))
+  }
+  const target = normalizeImageId(imageId)
+  const inspects = await mapWithConcurrency(ids, INSPECT_CONCURRENCY, async (id) => {
+    try {
+      return await inspectContainer(transport, id, ACTION_TIMEOUT_MS)
+    } catch (error) {
+      // 列表与详情之间容器被移除：它不可能再引用镜像，跳过而不是让删除失败。
+      if (error instanceof InvalidRequestError && error.status === 404) {
+        return null
+      }
+      throw error
+    }
+  })
+  let count = 0
+  for (const inspect of inspects) {
+    if (!isRecord(inspect) || typeof inspect.Image !== 'string') continue
+    if (normalizeImageId(inspect.Image) === target) {
       count += 1
     }
   }
@@ -479,14 +493,15 @@ export function createDockerReadService(
     actionLocks.set(id, lock)
 
     try {
+      // 自我保护以 inspect 解析出的完整 Id 为准：容器名、前缀等寻址形态解析后
+      // 都归一到同一 Id，按名寻址不再绕过守卫。
+      const preInspect = await inspectContainer(transport, id, ACTION_TIMEOUT_MS)
       if (
         (action === 'stop' || action === 'restart') &&
-        isSelfContainerTarget(id, selfContainerId)
+        isSelfContainerInspect(preInspect, selfContainerId)
       ) {
         throw new InvalidRequestError(400, ACTION_SELF_MESSAGE)
       }
-
-      const preInspect = await inspectContainer(transport, id, ACTION_TIMEOUT_MS)
       if (isPausedInspect(preInspect)) {
         throw new InvalidRequestError(409, ACTION_PAUSED_MESSAGE)
       }
@@ -523,6 +538,46 @@ export function createDockerReadService(
     }
   }
 
+  /** 删除容器：inspect 解析后先过自我保护，不带 force——引擎对运行中容器返回 409。 */
+  async function runRemove(id: string): Promise<void> {
+    if (actionLocks.has(id)) {
+      throw new InvalidRequestError(409, ACTION_BUSY_MESSAGE)
+    }
+
+    let releaseLock!: () => void
+    const lock = new Promise<void>((resolve) => {
+      releaseLock = resolve
+    })
+    actionLocks.set(id, lock)
+
+    try {
+      const inspect = await inspectContainer(transport, id, ACTION_TIMEOUT_MS)
+      if (isSelfContainerInspect(inspect, selfContainerId)) {
+        throw new InvalidRequestError(400, ACTION_SELF_MESSAGE)
+      }
+      const targetId = requireId(inspect, '容器')
+      const response = await dockerRequest(transport, {
+        method: 'DELETE',
+        path: `${API_PREFIX}/containers/${encodeEngineId(targetId)}`,
+        timeoutMs: ACTION_TIMEOUT_MS,
+      })
+      if (response.status === 404) {
+        throw new InvalidRequestError(404, CONTAINER_NOT_FOUND_MESSAGE)
+      }
+      if (response.status === 409) {
+        throw new InvalidRequestError(409, CONTAINER_RUNNING_REMOVE_MESSAGE)
+      }
+      if (response.status !== 200 && response.status !== 204) {
+        throw new Error(
+          `容器删除失败（HTTP ${response.status}）：${engineErrorMessage(response.json, '未知错误')}`,
+        )
+      }
+    } finally {
+      actionLocks.delete(id)
+      releaseLock()
+    }
+  }
+
   return {
     async listContainers() {
       return listWithInspect(
@@ -547,6 +602,9 @@ export function createDockerReadService(
     },
     action(id, action) {
       return runAction(id, action)
+    },
+    removeContainer(id) {
+      return runRemove(id)
     },
     create(body) {
       return serializeCreate(async () => {
