@@ -1,6 +1,7 @@
 import type { Container, ContainerImage } from '@elysian/contracts'
 import { InvalidRequestError } from '../shared/errors.ts'
 import type { DockerTransport } from './dockerTransport.ts'
+import { buildCreateSpec } from './createSpec.ts'
 import { mapContainer, mapImage } from './dockerMappers.ts'
 
 const API_PREFIX = '/v1.41'
@@ -20,6 +21,7 @@ export type DockerReadService = {
   listImages(): Promise<readonly ContainerImage[]>
   policy(): Promise<{ mountRoot: string; reservedPorts: readonly number[] }>
   action(id: string, action: 'start' | 'stop' | 'restart'): Promise<Container>
+  create(body: unknown): Promise<Container>
 }
 
 export type DockerServiceOptions = {
@@ -27,6 +29,8 @@ export type DockerServiceOptions = {
   reservedPorts: readonly number[]
   selfContainerId?: string | null
   onRestarting?: (containerId: string) => void | Promise<void>
+  mkdir: (path: string, mode: number) => Promise<void>
+  realpath: (path: string) => Promise<string>
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -113,11 +117,12 @@ function isSelfContainerTarget(id: string, selfContainerId: string | null | unde
 
 async function dockerRequest(
   transport: DockerTransport,
-  input: { method: string; path: string; timeoutMs: number },
+  input: { method: string; path: string; timeoutMs: number; body?: unknown },
 ): Promise<{ status: number; json: unknown }> {
   return transport.request({
     method: input.method,
     path: input.path,
+    body: input.body,
     timeoutMs: input.timeoutMs,
     maxBytes: JSON_MAX_BYTES,
   })
@@ -220,6 +225,36 @@ async function listWithInspect<TSummary, TResult>(
 
 const actionLocks = new Map<string, Promise<void>>()
 
+let createTail: Promise<unknown> = Promise.resolve()
+
+/** 测试专用：清空创建串行队列，避免用例间泄漏未完成的 create。 */
+export function resetDockerCreateQueue(): void {
+  createTail = Promise.resolve()
+}
+
+function serializeCreate<T>(critical: () => Promise<T>): Promise<T> {
+  const run = createTail.then(critical, critical)
+  createTail = run.then(
+    () => undefined,
+    () => undefined,
+  )
+  return run
+}
+
+function engineErrorMessage(json: unknown, fallback: string): string {
+  if (isRecord(json) && typeof json.message === 'string' && json.message.length > 0) {
+    return json.message
+  }
+  return fallback
+}
+
+function requireCreateId(json: unknown): string {
+  if (!isRecord(json) || typeof json.Id !== 'string' || json.Id.length === 0) {
+    throw new Error('创建容器响应缺少 Id')
+  }
+  return json.Id
+}
+
 export function createDockerReadService(
   transport: DockerTransport,
   options: DockerServiceOptions,
@@ -306,6 +341,93 @@ export function createDockerReadService(
     },
     action(id, action) {
       return runAction(id, action)
+    },
+    create(body) {
+      return serializeCreate(async () => {
+        const [containers, images] = await Promise.all([
+          listWithInspect(
+            transport,
+            `${API_PREFIX}/containers/json?all=1`,
+            (id) => `${API_PREFIX}/containers/${encodeEngineId(id)}/json`,
+            '容器',
+            (_summary, inspect) => mapContainer(inspect),
+          ),
+          listWithInspect(
+            transport,
+            `${API_PREFIX}/images/json`,
+            (id) => `${API_PREFIX}/images/${encodeEngineId(id)}/json`,
+            '镜像',
+            (summary, inspect) => mapImage(summary, inspect),
+          ),
+        ])
+
+        const spec = await buildCreateSpec({
+          body,
+          images: images.map((image) => ({ id: image.id, name: image.name })),
+          containers: containers.map((container) => ({
+            name: container.name,
+            ports: container.ports.map((port) => ({
+              hostPort: port.hostPort,
+              protocol: port.protocol,
+              ...(port.hostIp !== undefined ? { hostIp: port.hostIp } : {}),
+            })),
+          })),
+          mountRoot: options.mountRoot,
+          reservedPorts: options.reservedPorts,
+          realpath: options.realpath,
+        })
+
+        for (const dir of spec.mkdirPaths) {
+          await options.mkdir(dir, 0o755)
+        }
+
+        const createResponse = await dockerRequest(transport, {
+          method: 'POST',
+          path: `${API_PREFIX}/containers/create?name=${encodeURIComponent(spec.name)}`,
+          body: spec.createBody,
+          timeoutMs: ACTION_TIMEOUT_MS,
+        })
+        if (createResponse.status < 200 || createResponse.status >= 300) {
+          throw new Error(
+            `创建容器失败（HTTP ${createResponse.status}）：${engineErrorMessage(createResponse.json, '未知错误')}`,
+          )
+        }
+
+        const containerId = requireCreateId(createResponse.json)
+
+        const startResponse = await dockerRequest(transport, {
+          method: 'POST',
+          path: `${API_PREFIX}/containers/${encodeEngineId(containerId)}/start`,
+          timeoutMs: ACTION_TIMEOUT_MS,
+        })
+        if (
+          startResponse.status !== 200 &&
+          startResponse.status !== 204 &&
+          startResponse.status !== 304
+        ) {
+          const reason = engineErrorMessage(
+            startResponse.json,
+            `HTTP ${startResponse.status}`,
+          )
+          const deleteResponse = await dockerRequest(transport, {
+            method: 'DELETE',
+            path: `${API_PREFIX}/containers/${encodeEngineId(containerId)}`,
+            timeoutMs: ACTION_TIMEOUT_MS,
+          })
+          const deleted =
+            deleteResponse.status === 200 ||
+            deleteResponse.status === 204 ||
+            deleteResponse.status === 404
+          let message = `容器启动失败，已撤销创建：${reason}`
+          if (!deleted) {
+            message += `且撤销失败，容器 ID 为 ${containerId}`
+          }
+          throw new InvalidRequestError(400, message)
+        }
+
+        const inspect = await inspectContainer(transport, containerId, ACTION_TIMEOUT_MS)
+        return mapContainer(inspect)
+      })
     },
   }
 }

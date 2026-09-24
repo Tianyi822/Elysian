@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { stream } from 'hono/streaming'
-import { endpointErrorHandler, invalidRequest, sameOriginGuard, sendJson } from '../middleware/guard.ts'
+import { endpointErrorHandler, invalidRequest, readJsonBody, sameOriginGuard, sendJson } from '../middleware/guard.ts'
 import type { DockerReadService } from './dockerService.ts'
 import type { DockerEventsHub } from './dockerEventsHub.ts'
 
@@ -137,6 +137,12 @@ export function createDockerApp(deps: DockerAppDeps): Hono {
     const container = await service.action(id, action)
     return sendJson(200, container)
   }
+
+  app.post('/containers', async (c) => {
+    const body = await readJsonBody(c.req.raw)
+    const container = await service.create(body)
+    return sendJson(201, container)
+  })
 
   app.post('/containers/:id/start', (c) => postContainerAction(c.req.param('id'), 'start'))
   app.post('/containers/:id/stop', (c) => postContainerAction(c.req.param('id'), 'stop'))

@@ -46,6 +46,7 @@ function createFakeService(overrides: Partial<DockerReadService> = {}): DockerRe
       id,
       status: action === 'stop' ? 'stopped' : 'running',
     }),
+    create: async () => SAMPLE_CONTAINER,
     ...overrides,
   }
 }
@@ -150,13 +151,34 @@ describe('createDockerApp', () => {
     })
   })
 
-  it('跨源 POST /containers 先 403 后 404', async () => {
+  it('跨源 POST /containers 先 403', async () => {
     const app = createDockerApp(READY)
     const res = await app.request(
       req('POST', '/containers', { name: 'x' }, { origin: 'http://evil.example' }),
     )
     expect(res.status).toBe(403)
     expect(await res.json()).toEqual({ error: '请求来源不允许' })
+  })
+
+  it('POST /containers 返回 201 与容器对象', async () => {
+    const create = vi.fn(async () => ({ ...SAMPLE_CONTAINER, name: 'redis-echo' }))
+    const app = mountedApp({
+      ...READY,
+      service: createFakeService({ create }),
+    })
+    const res = await app.request(
+      req('POST', '/api/docker/containers', {
+        imageId: 'abcdef',
+        name: 'redis-echo',
+        ports: [],
+        env: [],
+        volumes: [],
+        restartPolicy: 'no',
+      }),
+    )
+    expect(res.status).toBe(201)
+    expect(await res.json()).toEqual({ ...SAMPLE_CONTAINER, name: 'redis-echo' })
+    expect(create).toHaveBeenCalledOnce()
   })
 
   it('未知 GET 为 404，文案剥挂载前缀', async () => {

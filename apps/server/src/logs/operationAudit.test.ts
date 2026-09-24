@@ -13,6 +13,7 @@ import type {
 import { endpointErrorHandler } from '../middleware/guard.ts'
 import { SSH_MOUNT, createSshApp, type SshApiDeps } from '../ssh/sshRoutes.ts'
 import { USERS_MOUNT, createUsersApp } from '../users/usersRoutes.ts'
+import { DOCKER_MOUNT, createDockerApp, type DockerReadService } from '../docker/dockerRoutes.ts'
 import { LOGS_MOUNT } from './logsRoutes.ts'
 import {
   OPERATION_SUMMARY_BODY_MAX_BYTES,
@@ -120,12 +121,47 @@ function createFakeUserService(overrides: Partial<UserAdapter> = {}): UserAdapte
 }
 
 /** 与 app.ts 同构的父应用：采集中间件在最前，之后才是各片路由。 */
-function auditApp(logs: OperationAuditLogs, options: { ssh?: SshApiDeps; users?: UserAdapter } = {}): Hono {
+const SAMPLE_CONTAINER = {
+  id: 'a1b2c3d4e5f6',
+  name: 'redis-echo',
+  status: 'running' as const,
+  imageId: 'deadbeef',
+  ports: [],
+  createdAt: '2024-06-01T10:00:00.000000000Z',
+  command: 'redis-server',
+  env: [],
+  volumes: [],
+  restartPolicy: 'no' as const,
+}
+
+function createFakeDockerService(overrides: Partial<DockerReadService> = {}): DockerReadService {
+  return {
+    listContainers: async () => [],
+    listImages: async () => [],
+    policy: async () => ({ mountRoot: '/srv', reservedPorts: [22] }),
+    action: async (id) => ({ ...SAMPLE_CONTAINER, id }),
+    create: async () => SAMPLE_CONTAINER,
+    ...overrides,
+  }
+}
+
+function auditApp(
+  logs: OperationAuditLogs,
+  options: { ssh?: SshApiDeps; users?: UserAdapter; docker?: DockerReadService } = {},
+): Hono {
   const app = new Hono({ strict: false })
   app.onError(endpointErrorHandler)
   app.use('/api/*', createOperationAudit(logs))
   app.route(SSH_MOUNT, createSshApp(options.ssh ?? { available: true, service: createFakeSshService() }))
   app.route(USERS_MOUNT, createUsersApp({ available: true, service: options.users ?? createFakeUserService() }))
+  app.route(
+    DOCKER_MOUNT,
+    createDockerApp({
+      available: true,
+      socketReady: true,
+      service: options.docker ?? createFakeDockerService(),
+    }),
+  )
   return app
 }
 
@@ -431,6 +467,31 @@ describe('createOperationAudit', () => {
     })
     const res = await auditApp(logs).request(jsonRequest('PUT', `${SSH_MOUNT}/port`, { port: 2222 }))
     expect(res.status).toBe(200)
+  })
+
+  it('创建容器摘要不含环境变量值', async () => {
+    const { logs, sink } = createLogsSink()
+    const imageHex = 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890'
+    const res = await auditApp(logs).request(
+      jsonRequest('POST', `${DOCKER_MOUNT}/containers`, {
+        imageId: imageHex,
+        name: 'redis-echo',
+        ports: [],
+        env: [{ key: 'DB_PASSWORD', value: 'super-secret' }],
+        volumes: [],
+        restartPolicy: 'no',
+      }),
+    )
+    expect(res.status).toBe(201)
+    expect(sink.operations[0]).toMatchObject({
+      action: '创建容器',
+      target: 'redis-echo',
+      summary: `镜像 ${imageHex}`,
+      result: 'success',
+    })
+    const serialized = JSON.stringify(sink.operations[0])
+    expect(serialized).not.toContain('super-secret')
+    expect(serialized).not.toContain('DB_PASSWORD')
   })
 
   it('清空日志这条写请求本身也留痕（想抹掉痕迹只会留下「抹掉痕迹」这条痕迹）', async () => {

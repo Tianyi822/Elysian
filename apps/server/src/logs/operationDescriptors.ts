@@ -348,6 +348,18 @@ export const OPERATION_DESCRIPTORS: Readonly<Record<string, OperationDescriptor>
   },
 
   // 容器管理
+  [`POST ${DOCKER_MOUNT}/containers`]: {
+    category: 'containers',
+    action: '创建容器',
+    target: ({ body }) => {
+      const name = text(body, 'name')
+      return name === null ? '新容器' : name
+    },
+    summarize: ({ body }) => {
+      const imageId = text(body, 'imageId')
+      return imageId === null ? null : `镜像 ${imageId}`
+    },
+  },
   [`POST ${DOCKER_MOUNT}/containers/:id/start`]: {
     category: 'containers',
     action: '启动容器',

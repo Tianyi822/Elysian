@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs'
+import { mkdir, realpath } from 'node:fs/promises'
 import { PANEL_PORT } from '@elysian/contracts'
 import { resolveAvailability } from '../shared/availability.ts'
 import { SERVER_PORT } from '../shared/ports.ts'
@@ -110,6 +111,10 @@ export async function createDockerHostDeps(options: DockerHostDepsOptions = {}):
     onRestarting: (containerId) => {
       eventsHub.notifyRestarting(containerId)
     },
+    mkdir: async (path, mode) => {
+      await mkdir(path, { mode })
+    },
+    realpath: (path) => realpath(path),
   })
 
   return { available: true, socketReady: true, service, eventsHub }
