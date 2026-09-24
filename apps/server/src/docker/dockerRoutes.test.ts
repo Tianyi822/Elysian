@@ -156,7 +156,7 @@ describe('createDockerApp', () => {
     const action = vi.fn(async (id: string, kind: 'start' | 'stop' | 'restart') => ({
       ...SAMPLE_CONTAINER,
       id,
-      status: kind === 'stop' ? 'stopped' : 'running',
+      status: kind === 'stop' ? ('stopped' as const) : ('running' as const),
     }))
     const app = mountedApp({
       ...READY,

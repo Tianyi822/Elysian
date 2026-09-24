@@ -8,7 +8,65 @@ import type {
   RestartPolicy,
 } from '@elysian/contracts'
 import { CONTAINER_STATUSES, RESTART_POLICIES } from '@elysian/contracts'
+import type { Unsubscribe } from '@elysian/contracts'
 import type { ContainerAdapter, ContainerHostPolicy } from '../../contracts/adapters'
+import type { EventSourceFactory, EventSourceLike } from '../sse/eventsAdapter'
+import { parseElysianEvent } from '../sse/parse'
+
+const CONTAINER_STREAM_EVENT_NAMES = [
+  'container/sample',
+  'container/updated',
+  'container/created',
+  'container/removed',
+  'container/resync',
+] as const
+
+function defaultEventSourceFactory(): EventSourceFactory | undefined {
+  if (typeof EventSource === 'undefined') return undefined
+  return (url) => new EventSource(url) as unknown as EventSourceLike
+}
+
+/** Docker 容器 SSE：订阅 /api/docker/events，解析失败帧丢弃。 */
+export function createContainerWatchLive(
+  options: {
+    baseUrl?: string
+    createEventSource?: EventSourceFactory
+  } = {},
+): ContainerAdapter['watchLive'] {
+  const baseUrl = options.baseUrl ?? '/api/docker'
+  const factory = options.createEventSource ?? defaultEventSourceFactory()
+
+  return (handlers): Unsubscribe => {
+    if (!factory) {
+      handlers.onStatus('live')
+      return () => {}
+    }
+
+    const source = factory(`${baseUrl}/events`)
+    let opened = false
+    handlers.onStatus('connecting')
+
+    for (const name of CONTAINER_STREAM_EVENT_NAMES) {
+      source.addEventListener(name, (message: MessageEvent<string>) => {
+        const event = parseElysianEvent(message.data)
+        if (event) handlers.onEvent(event)
+      })
+    }
+
+    source.onopen = () => {
+      opened = true
+      handlers.onStatus('live')
+    }
+
+    source.onerror = () => {
+      if (opened) handlers.onStatus('connecting')
+    }
+
+    return () => {
+      source.close()
+    }
+  }
+}
 
 const NOT_CONNECTED = async (): Promise<never> => {
   throw new Error('容器管理的该操作尚未接入')
@@ -213,7 +271,11 @@ async function requestJson(url: string, init?: RequestInit): Promise<unknown> {
 }
 
 /** Docker 运行时的容器只读 adapter：list、listImages 与 createPolicy 走 /api/docker。 */
-export function createHttpContainersAdapter(baseUrl = '/api/docker'): ContainerAdapter {
+export function createHttpContainersAdapter(
+  baseUrl = '/api/docker',
+  options: { createEventSource?: EventSourceFactory } = {},
+): ContainerAdapter {
+  const watchLive = createContainerWatchLive({ baseUrl, ...options })
   return {
     async list() {
       return parseContainerListResponse(await requestJson(`${baseUrl}/containers`))
@@ -232,5 +294,6 @@ export function createHttpContainersAdapter(baseUrl = '/api/docker'): ContainerA
     create: NOT_CONNECTED,
     removeImage: NOT_CONNECTED,
     pullImage: NOT_CONNECTED,
+    watchLive,
   }
 }

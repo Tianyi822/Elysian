@@ -37,7 +37,8 @@ import { createHttpUsersAdapter } from '../http/usersHttpAdapter'
 import { createHttpFilesAdapter } from '../http/filesHttpAdapter'
 import { createHttpContainersAdapter } from '../http/containersHttpAdapter'
 import { createTerminalWsAdapter } from '../http/terminalWsAdapter'
-import type { EventsAdapter, TerminalAdapter } from '../../contracts/adapters'
+import type { ContainerAdapter, EventsAdapter, TerminalAdapter } from '../../contracts/adapters'
+import { useContainersStore } from '../../stores/containersStore'
 
 /**
  * 演示网关。事件流默认优先走同源 mock SSE 端点，连不上就降级到内存事件源，
@@ -84,8 +85,9 @@ export function createMockGateway(
   const ssh = options.ssh === 'http' ? createHttpSshAdapter() : new MockSshAdapter()
   const users = options.users === 'http' ? createHttpUsersAdapter() : new MockUserAdapter()
   const files = options.files === 'http' ? createHttpFilesAdapter() : new MockFilesAdapter()
+  const useHttpContainers = options.containers === 'http'
   const containers =
-    options.containers === 'http'
+    useHttpContainers
       ? createHttpContainersAdapter()
       : new MockContainerAdapter(read, {
           onAction: (containerId) => {
@@ -116,16 +118,27 @@ export function createMockGateway(
     terminals,
     websites: new MockWebsitesAdapter(),
     resources,
-    events: wrapLive(
-      containerEvents.wrap(
-        options.eventStream === 'memory'
-          ? createInMemoryEventsAdapter(read, { intervalMs: eventIntervalMs })
-          : createResilientEventsAdapter({
-              url: '/api/events',
-              fallback: () => createInMemoryEventsAdapter(read, { intervalMs: eventIntervalMs }),
-            }),
+    events: attachDockerContainerWatch(
+      wrapLive(
+        useHttpContainers
+          ? options.eventStream === 'memory'
+            ? createInMemoryEventsAdapter(read, { intervalMs: eventIntervalMs })
+            : createResilientEventsAdapter({
+                url: '/api/events',
+                fallback: () => createInMemoryEventsAdapter(read, { intervalMs: eventIntervalMs }),
+              })
+          : containerEvents.wrap(
+              options.eventStream === 'memory'
+                ? createInMemoryEventsAdapter(read, { intervalMs: eventIntervalMs })
+                : createResilientEventsAdapter({
+                    url: '/api/events',
+                    fallback: () => createInMemoryEventsAdapter(read, { intervalMs: eventIntervalMs }),
+                  }),
+            ),
+        read,
       ),
-      read,
+      containers,
+      useHttpContainers,
     ),
     async reset() {
       dataset = createMockDataset()
@@ -145,6 +158,33 @@ export function createMockGateway(
  * 事件回灌包装：新事故在转发给界面之前先落进共享数据集，
  * 手动刷新重新聚合时与实时视图保持一致。
  */
+/**
+ * Docker 容器列表走 HTTP 时，容器事件来自 watchLive 而非 mock 采样层；
+ * onStatus 只更新容器 store，不写入全局事件流状态。
+ */
+function attachDockerContainerWatch(
+  underlying: EventsAdapter,
+  containers: ContainerAdapter,
+  enabled: boolean,
+): EventsAdapter {
+  if (!enabled) return underlying
+  return {
+    subscribe(handlers) {
+      const unsubscribeEvents = underlying.subscribe(handlers)
+      const unsubscribeWatch = containers.watchLive({
+        onEvent: handlers.onEvent,
+        onStatus: (status) => {
+          useContainersStore.getState().setLiveStatus(status)
+        },
+      })
+      return () => {
+        unsubscribeEvents()
+        unsubscribeWatch()
+      }
+    },
+  }
+}
+
 function wrapLive(underlying: EventsAdapter, getDataset: () => MockDataset): EventsAdapter {
   return {
     subscribe(handlers) {

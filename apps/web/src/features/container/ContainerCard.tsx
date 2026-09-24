@@ -7,6 +7,11 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 import { formatUptime } from '../../components/format'
+import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
+import {
+  containerRestartConfirmDescription,
+  containerStopConfirmDescription,
+} from './containerCopy'
 import { useContainersStore } from '../../stores/containersStore'
 
 const STATUS_TONE: Record<Container['status'], StatusTone> = {
@@ -28,22 +33,21 @@ const ACTION_BUTTON =
   'inline-flex items-center gap-1 rounded-lg border border-line px-2 py-1 text-xs text-fg-muted transition-colors hover:text-fg disabled:cursor-not-allowed disabled:opacity-50'
 
 /** 危险操作的确认文案与按钮语义：停止是破坏性的用危险色，重启是扰动性的用警告色。 */
-const CONFIRM_COPY = {
-  stop: {
-    title: (name: string) => `确认停止容器「${name}」？`,
-    description: '停止后容器内的服务会中断，可再次启动恢复。操作作用于演示数据，不会影响真实环境。',
-    confirmLabel: '确认停止',
+function confirmCopy(action: 'stop' | 'restart', name: string) {
+  const docker = isDockerRuntime()
+  return {
+    title: action === 'stop' ? `确认停止容器「${name}」？` : `确认重启容器「${name}」？`,
+    description:
+      action === 'stop'
+        ? containerStopConfirmDescription(docker)
+        : containerRestartConfirmDescription(docker),
+    confirmLabel: action === 'stop' ? '确认停止' : '确认重启',
     confirmClass:
-      'border-danger/50 bg-danger/10 text-danger hover:bg-danger/20',
-  },
-  restart: {
-    title: (name: string) => `确认重启容器「${name}」？`,
-    description: '重启期间服务会短暂不可用。操作作用于演示数据，不会影响真实环境。',
-    confirmLabel: '确认重启',
-    confirmClass:
-      'border-warning/50 bg-warning/10 text-warning hover:bg-warning/20',
-  },
-} as const
+      action === 'stop'
+        ? 'border-danger/50 bg-danger/10 text-danger hover:bg-danger/20'
+        : 'border-warning/50 bg-warning/10 text-warning hover:bg-warning/20',
+  }
+}
 
 export function ContainerCard({ container }: { container: Container }) {
   const gateway = useGateway()
@@ -209,9 +213,11 @@ export function ContainerCard({ container }: { container: Container }) {
               className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-surface-raised p-4 shadow-xl"
             >
               <Dialog.Title className="text-sm font-semibold">
-                {CONFIRM_COPY[confirmAction].title(container.name)}
+                {confirmCopy(confirmAction, container.name).title}
               </Dialog.Title>
-              <p className="mt-1.5 text-xs text-fg-muted">{CONFIRM_COPY[confirmAction].description}</p>
+              <p className="mt-1.5 text-xs text-fg-muted">
+                {confirmCopy(confirmAction, container.name).description}
+              </p>
               <div className="mt-4 flex justify-end gap-2">
                 <button
                   type="button"
@@ -227,9 +233,9 @@ export function ContainerCard({ container }: { container: Container }) {
                     setConfirmAction(null)
                     void runAction(gateway, container.id, action)
                   }}
-                  className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${CONFIRM_COPY[confirmAction].confirmClass}`}
+                  className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${confirmCopy(confirmAction, container.name).confirmClass}`}
                 >
-                  {CONFIRM_COPY[confirmAction].confirmLabel}
+                  {confirmCopy(confirmAction, container.name).confirmLabel}
                 </button>
               </div>
             </Dialog.Content>

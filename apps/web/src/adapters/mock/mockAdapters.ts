@@ -595,6 +595,14 @@ export class MockContainerAdapter implements ContainerAdapter {
     dataset.images.push(image)
     return { ...image }
   }
+
+  watchLive(handlers: {
+    onEvent: (event: ElysianEvent) => void
+    onStatus: (status: 'live' | 'connecting') => void
+  }): Unsubscribe {
+    handlers.onStatus('live')
+    return () => {}
+  }
 }
 
 /** 同步规则的模拟耗时：留出一拍让「同步中」的忙碌态可见。 */

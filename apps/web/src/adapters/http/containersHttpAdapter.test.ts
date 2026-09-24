@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { Container, ContainerImage } from '@elysian/contracts'
+import type { Container, ContainerImage, ElysianEvent } from '@elysian/contracts'
+import { FakeEventSource } from '../../test/fakeEventSource'
 import {
+  createContainerWatchLive,
   createHttpContainersAdapter,
   parseContainer,
   parseContainerImageListResponse,
@@ -125,6 +127,52 @@ describe('createHttpContainersAdapter', () => {
     const adapter = createHttpContainersAdapter()
     await expect(adapter.list()).rejects.toThrow('Docker 服务未就绪')
     vi.unstubAllGlobals()
+  })
+
+  it('watchLive 订阅 /api/docker/events 并按事件名派发', () => {
+    FakeEventSource.reset()
+    const statuses: Array<'live' | 'connecting'> = []
+    const events: ElysianEvent[] = []
+    const watchLive = createContainerWatchLive({ createEventSource: (url) => new FakeEventSource(url) })
+    const unsubscribe = watchLive({
+      onStatus: (status) => statuses.push(status),
+      onEvent: (event) => events.push(event),
+    })
+
+    const source = FakeEventSource.latest()
+    expect(source?.url).toBe('/api/docker/events')
+    expect(statuses).toEqual(['connecting'])
+
+    source?.emitOpen()
+    expect(statuses).toEqual(['connecting', 'live'])
+
+    const envelope = JSON.stringify({
+      id: 'evt-1',
+      name: 'container/sample',
+      at: '2026-09-12T08:00:00.000Z',
+      payload: { samples: [] },
+    })
+    source?.emitRaw('container/sample', envelope)
+    expect(events).toHaveLength(1)
+    expect(events[0]?.name).toBe('container/sample')
+
+    source?.emitRaw('container/sample', '坏帧')
+    expect(events).toHaveLength(1)
+
+    source?.emitError()
+    expect(statuses).toEqual(['connecting', 'live', 'connecting'])
+
+    unsubscribe()
+    expect(source?.closed).toBe(true)
+  })
+
+  it('watchLive 在 open 之前的 onerror 不上报 connecting', () => {
+    FakeEventSource.reset()
+    const statuses: Array<'live' | 'connecting'> = []
+    const watchLive = createContainerWatchLive({ createEventSource: (url) => new FakeEventSource(url) })
+    watchLive({ onStatus: (status) => statuses.push(status), onEvent: () => {} })
+    FakeEventSource.latest()?.emitError()
+    expect(statuses).toEqual(['connecting'])
   })
 
   it('未接入的方法统一抛固定中文', async () => {

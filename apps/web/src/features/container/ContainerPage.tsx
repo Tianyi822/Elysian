@@ -5,6 +5,7 @@ import { CONTAINER_STATUS_LABELS } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
+import { CONTAINER_LIVE_RECONNECT_MESSAGE } from './containerCopy'
 import { useContainersStore } from '../../stores/containersStore'
 import { ContainerCard } from './ContainerCard'
 import { ContainerCreateDialog } from './ContainerCreateDialog'
@@ -29,6 +30,7 @@ export function ContainerPage() {
   const statusFilter = useContainersStore((s) => s.statusFilter)
   const search = useContainersStore((s) => s.search)
   const view = useContainersStore((s) => s.view)
+  const liveStatus = useContainersStore((s) => s.liveStatus)
   const images = useContainersStore((s) => s.images)
   const load = useContainersStore((s) => s.load)
   const setStatusFilter = useContainersStore((s) => s.setStatusFilter)
@@ -63,6 +65,14 @@ export function ContainerPage() {
 
   return (
     <div className="mb-6">
+      {liveStatus === 'connecting' ? (
+        <p
+          role="status"
+          className="mb-4 rounded-xl border border-warning/40 bg-warning/10 px-4 py-2 text-xs text-warning"
+        >
+          {CONTAINER_LIVE_RECONNECT_MESSAGE}
+        </p>
+      ) : null}
       {view === 'grid' ? (
         <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-line bg-surface px-4 py-3">
           <div role="group" aria-label="状态筛选" className="flex flex-wrap basis-full gap-1 lg:basis-auto">

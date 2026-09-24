@@ -9,6 +9,7 @@ import type {
   ContainerImage,
   DatabaseEngine,
   DatabaseInstance,
+  ElysianEvent,
   EventStreamHandlers,
   FileEntry,
   FileSearchResult,
@@ -158,6 +159,14 @@ export interface ContainerAdapter {
   removeImage(imageId: string): Promise<void>
   /** 拉取镜像（mock）：确定性生成摘要与体积后追加内存数据集，同名同标签视为已存在；registry 仅记录拉取源，不产生真实数据流。 */
   pullImage(input: { name: string; tag: string; registry?: string }): Promise<ContainerImage>
+  /**
+   * 容器状态 SSE：Docker 运行时订阅 /api/docker/events；mock 立即上报 live 并返回空退订
+   * （采样仍由 gateway 的 containerEvents.wrap 负责）。
+   */
+  watchLive(handlers: {
+    onEvent: (event: ElysianEvent) => void
+    onStatus: (status: 'live' | 'connecting') => void
+  }): Unsubscribe
 }
 
 /** 演示会话的结果：结构化结果集、纯文本行，或清屏请求。 */

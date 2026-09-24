@@ -27,6 +27,7 @@ function pageGateway(overrides: Partial<ElysianGateway['containers']> = {}): Ely
       create: (input: ContainerCreateInput) => base.containers.create(input),
       removeImage: (imageId: string) => base.containers.removeImage(imageId),
       pullImage: (input: { name: string; tag: string }) => base.containers.pullImage(input),
+      watchLive: (handlers) => base.containers.watchLive(handlers),
       requestAction: async (id: string) => CONTAINERS.find((c) => c.id === id)!,
       ...overrides,
     },

@@ -4,6 +4,11 @@ import type { Container } from '@elysian/contracts'
 import type { ElysianGateway, EventsAdapter } from '../contracts/adapters'
 import { useNotificationStore } from './notificationStore'
 import { useEventStreamStore } from './eventStreamStore'
+import {
+  containerActionSuccessMessage,
+  containerRestartConfirmDescription,
+  containerStopConfirmDescription,
+} from '../features/container/containerCopy'
 import { useContainersStore } from './containersStore'
 import { CONTAINERS, CONTAINER_IMAGES } from '../adapters/mock/containersData'
 
@@ -20,6 +25,13 @@ function gatewayWith(overrides: Partial<ElysianGateway['containers']> = {}): Ely
       pullImage: async ({ name, tag }: { name: string; tag: string }) => ({
         id: 'img-pulled', name, tag, digest: 'sha256:abcd1234abcd', sizeMb: 42, pulledAt: '2026-09-12T08:00:00.000Z',
       }),
+      watchLive: (handlers: {
+        onEvent: (event: ElysianEvent) => void
+        onStatus: (status: 'live' | 'connecting') => void
+      }) => {
+        handlers.onStatus('live')
+        return () => {}
+      },
       ...overrides,
     },
   } as unknown as ElysianGateway
@@ -30,7 +42,7 @@ let emitToStore: ((event: ElysianEvent) => void) | undefined
 
 beforeEach(() => {
   useContainersStore.setState({
-    status: 'idle', errorMessage: undefined, containers: [], images: [], samples: {},
+    status: 'idle', liveStatus: 'live', errorMessage: undefined, containers: [], images: [], samples: {},
     view: 'grid', statusFilter: 'all', search: '', detailContainerId: undefined,
     terminal: undefined, busyActions: [], createOpen: false, creating: false, removingImageIds: [],
     pullingImage: undefined,
@@ -55,7 +67,12 @@ afterEach(() => {
 function event(name: 'container/sample', payload: Extract<ElysianEvent, { name: 'container/sample' }>['payload']): ElysianEvent
 function event(name: 'container/updated', payload: Extract<ElysianEvent, { name: 'container/updated' }>['payload']): ElysianEvent
 function event(name: 'container/created', payload: Extract<ElysianEvent, { name: 'container/created' }>['payload']): ElysianEvent
-function event(name: 'container/sample' | 'container/updated' | 'container/created', payload: unknown): ElysianEvent {
+function event(name: 'container/removed', payload: Extract<ElysianEvent, { name: 'container/removed' }>['payload']): ElysianEvent
+function event(name: 'container/resync', payload: Extract<ElysianEvent, { name: 'container/resync' }>['payload']): ElysianEvent
+function event(
+  name: 'container/sample' | 'container/updated' | 'container/created' | 'container/removed' | 'container/resync',
+  payload: unknown,
+): ElysianEvent {
   return { id: `t-${Math.random()}`, name, at: '2026-09-12T08:00:00.000Z', payload } as ElysianEvent
 }
 
@@ -74,6 +91,73 @@ describe('containersStore', () => {
     const state = useContainersStore.getState()
     expect(state.status).toBe('error')
     expect(state.errorMessage).toBe('连接失败')
+  })
+
+  it('container/updated 的 startedAt 字符串写回、null 清掉字段', async () => {
+    await useContainersStore.getState().load(gatewayWith())
+    const target = CONTAINERS.find((c) => c.id === 'ctr-nginx-proxy')!
+    emitToStore?.(
+      event('container/updated', {
+        containerId: target.id,
+        status: 'running',
+        startedAt: '2026-09-13T01:00:00.000Z',
+      }),
+    )
+    expect(useContainersStore.getState().containers.find((c) => c.id === target.id)?.startedAt).toBe(
+      '2026-09-13T01:00:00.000Z',
+    )
+
+    emitToStore?.(event('container/updated', { containerId: target.id, status: 'stopped', startedAt: null }))
+    const stopped = useContainersStore.getState().containers.find((c) => c.id === target.id)
+    expect(stopped?.status).toBe('stopped')
+    expect(stopped?.startedAt).toBeUndefined()
+  })
+
+  it('container/removed 删掉容器并在详情或终端指向它时关掉', async () => {
+    await useContainersStore.getState().load(gatewayWith())
+    useContainersStore.setState({
+      samples: { 'ctr-nginx-proxy': { cpuPercent: 1, memMb: 2 } },
+      detailContainerId: 'ctr-nginx-proxy',
+      terminal: { containerId: 'ctr-nginx-proxy', lines: [], history: [] },
+    })
+    emitToStore?.(event('container/removed', { containerId: 'ctr-nginx-proxy' }))
+    const state = useContainersStore.getState()
+    expect(state.containers.some((c) => c.id === 'ctr-nginx-proxy')).toBe(false)
+    expect(state.samples['ctr-nginx-proxy']).toBeUndefined()
+    expect(state.detailContainerId).toBeUndefined()
+    expect(state.terminal).toBeUndefined()
+  })
+
+  it('container/resync 再拉 list 与 listImages', async () => {
+    const list = vi.fn(async () => [...CONTAINERS].slice(0, 2))
+    const listImages = vi.fn(async () => [...CONTAINER_IMAGES].slice(0, 1))
+    await useContainersStore.getState().load(gatewayWith({ list, listImages }))
+    emitToStore?.(event('container/resync', {}))
+    await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(2))
+    expect(listImages).toHaveBeenCalledTimes(2)
+    expect(useContainersStore.getState().containers).toHaveLength(2)
+    expect(useContainersStore.getState().images).toHaveLength(1)
+  })
+
+  it('setLiveStatus(connecting) 清空 samples', () => {
+    useContainersStore.setState({
+      samples: { 'ctr-nginx-proxy': { cpuPercent: 9, memMb: 10 } },
+    })
+    useContainersStore.getState().setLiveStatus('connecting')
+    expect(useContainersStore.getState().samples).toEqual({})
+  })
+
+  it('Docker 运行时启停成功通知不含 mock 标注', () => {
+    expect(containerActionSuccessMessage('stop', 'web', true)).toBe('容器 web 已停止')
+    expect(containerActionSuccessMessage('restart', 'web', true)).toBe('已请求重启 web')
+    expect(containerActionSuccessMessage('restart', 'web', false)).toContain('mock')
+  })
+
+  it('停止确认含 SIGTERM、重启确认含服务会中断；mock 保持演示说明', () => {
+    expect(containerStopConfirmDescription(true)).toContain('SIGTERM')
+    expect(containerRestartConfirmDescription(true)).toContain('服务会中断')
+    expect(containerStopConfirmDescription(false)).toContain('演示数据')
+    expect(containerRestartConfirmDescription(false)).toContain('演示数据')
   })
 
   it('container/sample 更新采样表；container/updated 更新状态并清忙碌标记', async () => {

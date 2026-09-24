@@ -3,6 +3,8 @@ import { create } from 'zustand'
 import { resolveViewTab, writeStoredViewTab } from '../app/theme/themePreferences'
 import type { ElysianGateway } from '../contracts/adapters'
 import { pushHistory, type TerminalLine } from '../components/terminal/terminalSession'
+import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
+import { containerActionSuccessMessage } from '../features/container/containerCopy'
 import { getLastContainerSample, onStreamEvent } from './eventStreamStore'
 import { useNotificationStore } from './notificationStore'
 
@@ -28,6 +30,21 @@ function applySamples(samples: readonly ContainerSample[]): void {
  * container/updated 更新状态列并清掉该容器的忙碌标记。
  */
 let detachLive: Unsubscribe | undefined
+let activeGateway: ElysianGateway | undefined
+
+async function refreshAfterResync(): Promise<void> {
+  const gateway = activeGateway
+  if (!gateway) return
+  try {
+    const [containers, images] = await Promise.all([
+      gateway.containers.list(),
+      gateway.containers.listImages(),
+    ])
+    useContainersStore.setState({ containers, images })
+  } catch {
+    // 重同步失败时保留当前列表，等待下一拍 resync 或用户手动刷新。
+  }
+}
 
 function attachLiveEvents(): void {
   if (detachLive) return
@@ -46,13 +63,41 @@ function attachLiveEvents(): void {
       return
     }
     if (event.name === 'container/updated') {
-      const { containerId, status } = event.payload
+      const { containerId, status, startedAt } = event.payload
       useContainersStore.setState((state) => ({
-        containers: state.containers.map((container) =>
-          container.id === containerId ? { ...container, status } : container,
-        ),
+        containers: state.containers.map((container) => {
+          if (container.id !== containerId) return container
+          if (startedAt === null) {
+            const { startedAt: _removed, ...rest } = container
+            return { ...rest, status }
+          }
+          if (typeof startedAt === 'string') {
+            return { ...container, status, startedAt }
+          }
+          return { ...container, status }
+        }),
         busyActions: state.busyActions.filter((key) => !key.startsWith(`${containerId}:`)),
       }))
+      return
+    }
+    if (event.name === 'container/removed') {
+      const { containerId } = event.payload
+      useContainersStore.setState((state) => {
+        const { [containerId]: _sample, ...samples } = state.samples
+        return {
+          containers: state.containers.filter((container) => container.id !== containerId),
+          samples,
+          detailContainerId:
+            state.detailContainerId === containerId ? undefined : state.detailContainerId,
+          terminal:
+            state.terminal?.containerId === containerId ? undefined : state.terminal,
+          busyActions: state.busyActions.filter((key) => !key.startsWith(`${containerId}:`)),
+        }
+      })
+      return
+    }
+    if (event.name === 'container/resync') {
+      void refreshAfterResync()
     }
   })
 }
@@ -67,17 +112,12 @@ function replayLatestSample(): void {
   if (latest?.name === 'container/sample') applySamples(latest.payload.samples)
 }
 
-const ACTION_MESSAGES: Record<ContainerAction, (name: string) => string> = {
-  start: (name) => `容器 ${name} 已启动`,
-  stop: (name) => `容器 ${name} 已停止`,
-  restart: (name) => `已请求重启 ${name}（mock，待接入真实执行）`,
-}
-
 /** 拉取的模拟传输耗时；测试用假计时器推进。 */
 const PULL_DELAY_MS = 1500
 
 export const useContainersStore = create<{
   status: 'idle' | 'loading' | 'ready' | 'error'
+  liveStatus: 'live' | 'connecting'
   errorMessage?: string
   containers: readonly Container[]
   images: readonly ContainerImage[]
@@ -93,6 +133,7 @@ export const useContainersStore = create<{
   removingImageIds: readonly string[]
   pullingImage?: { name: string; tag: string; registry?: string }
   load: (gateway: ElysianGateway) => Promise<void>
+  setLiveStatus: (status: 'live' | 'connecting') => void
   setView: (view: 'grid' | 'images') => void
   setStatusFilter: (filter: ContainerStatus | 'all') => void
   setSearch: (value: string) => void
@@ -111,6 +152,7 @@ export const useContainersStore = create<{
   runAction: (gateway: ElysianGateway, containerId: string, action: ContainerAction) => Promise<void>
 }>((set, get) => ({
   status: 'idle',
+  liveStatus: 'live',
   containers: [],
   images: [],
   samples: {},
@@ -120,7 +162,15 @@ export const useContainersStore = create<{
   busyActions: [],
   createOpen: false, creating: false, removingImageIds: [], pullingImage: undefined,
 
+  setLiveStatus(liveStatus) {
+    set({
+      liveStatus,
+      ...(liveStatus === 'connecting' ? { samples: {} } : {}),
+    })
+  },
+
   async load(gateway) {
+    activeGateway = gateway
     attachLiveEvents()
     set({ status: 'loading', errorMessage: undefined })
     try {
@@ -299,7 +349,10 @@ export const useContainersStore = create<{
     set((state) => ({ busyActions: [...state.busyActions, key] }))
     try {
       await gateway.containers.requestAction(containerId, action)
-      useNotificationStore.getState().notify({ tone: 'success', message: ACTION_MESSAGES[action](name) })
+      useNotificationStore.getState().notify({
+        tone: 'success',
+        message: containerActionSuccessMessage(action, name, isDockerRuntime()),
+      })
     } catch (error) {
       const detail = error instanceof Error ? error.message : '未知错误'
       useNotificationStore
