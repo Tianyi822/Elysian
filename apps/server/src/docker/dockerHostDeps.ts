@@ -5,6 +5,7 @@ import { SERVER_PORT } from '../shared/ports.ts'
 import { assertEngineApi, createDockerTransport, type DockerTransport } from './dockerTransport.ts'
 import { createDockerEventsHub } from './dockerEventsHub.ts'
 import { createDockerReadService } from './dockerService.ts'
+import { resolveSelfContainerId } from './selfContainer.ts'
 import type { DockerAppDeps } from './dockerRoutes.ts'
 
 /*
@@ -16,6 +17,7 @@ export type DockerHostDepsOptions = {
   env?: NodeJS.ProcessEnv
   dockerenvExists?: boolean
   transport?: DockerTransport
+  readCgroup?: () => string
 }
 
 export type { DockerAppDeps } from './dockerRoutes.ts'
@@ -42,6 +44,33 @@ function readCgroupText(): string {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+async function listContainerIds(transport: DockerTransport): Promise<string[]> {
+  try {
+    const response = await transport.request({
+      method: 'GET',
+      path: '/v1.41/containers/json?all=1',
+      timeoutMs: 10_000,
+      maxBytes: 32 * 1024 * 1024,
+    })
+    if (response.status < 200 || response.status >= 300 || !Array.isArray(response.json)) {
+      return []
+    }
+    const ids: string[] = []
+    for (const entry of response.json) {
+      if (isRecord(entry) && typeof entry.Id === 'string' && entry.Id.length > 0) {
+        ids.push(entry.Id)
+      }
+    }
+    return ids
+  } catch {
+    return []
+  }
+}
+
 /** 容器管理片的真实装配：探测边界、socket 与 API 版本，产出路由工厂入参。 */
 export async function createDockerHostDeps(options: DockerHostDepsOptions = {}): Promise<DockerAppDeps> {
   const env = options.env ?? process.env
@@ -60,6 +89,11 @@ export async function createDockerHostDeps(options: DockerHostDepsOptions = {}):
     return { available: true, socketReady: false }
   }
 
+  const readCgroup = options.readCgroup ?? readCgroupText
+  const cgroupText = readCgroup()
+  const containerIds = await listContainerIds(transport)
+  const selfContainerId = resolveSelfContainerId(cgroupText, containerIds)
+
   const eventsHub = createDockerEventsHub({
     transport,
     now: () => Date.now(),
@@ -67,12 +101,12 @@ export async function createDockerHostDeps(options: DockerHostDepsOptions = {}):
       const timer = setTimeout(fn, ms)
       return () => clearTimeout(timer)
     },
-    readCgroup: readCgroupText,
   })
 
   const service = createDockerReadService(transport, {
     mountRoot,
     reservedPorts: RESERVED_PORTS,
+    selfContainerId,
     onRestarting: (containerId) => {
       eventsHub.notifyRestarting(containerId)
     },

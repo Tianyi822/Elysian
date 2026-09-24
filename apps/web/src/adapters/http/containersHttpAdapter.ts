@@ -12,7 +12,7 @@ import { CONTAINER_STATUSES, RESTART_POLICIES } from '@elysian/contracts'
 import type { Unsubscribe } from '@elysian/contracts'
 import type { ContainerAdapter, ContainerHostPolicy } from '../../contracts/adapters'
 import type { EventSourceFactory, EventSourceLike } from '../sse/eventsAdapter'
-import { parseElysianEvent } from '../sse/parse'
+import { parseElysianEvent, SseFrameParser } from '../sse/parse'
 
 const CONTAINER_STREAM_EVENT_NAMES = [
   'container/sample',
@@ -22,9 +22,118 @@ const CONTAINER_STREAM_EVENT_NAMES = [
   'container/resync',
 ] as const
 
+/** SSE 注释行 `: status connecting` 的载荷；服务端 Engine 断流而 HTTP 仍开着时写入，触发 connecting。 */
+export const CONTAINER_SSE_STATUS_CONNECTING = 'status connecting'
+
+function isConnectingStatusComment(line: string): boolean {
+  if (!line.startsWith(':')) return false
+  return line.slice(1).trimStart() === CONTAINER_SSE_STATUS_CONNECTING
+}
+
+export type ContainerEventSourceLike = EventSourceLike & {
+  registerConnectingCommentHandler?(handler: () => void): () => void
+}
+
 function defaultEventSourceFactory(): EventSourceFactory | undefined {
   if (typeof EventSource === 'undefined') return undefined
-  return (url) => new EventSource(url) as unknown as EventSourceLike
+  return (url) => {
+    const native = new EventSource(url) as unknown as ContainerEventSourceLike
+    if (typeof native.registerConnectingCommentHandler === 'function') {
+      return native
+    }
+    if (typeof fetch !== 'undefined') {
+      return createFetchContainerEventSource(url)
+    }
+    return native
+  }
+}
+
+function createFetchContainerEventSource(url: string): ContainerEventSourceLike {
+  const listeners = new Map<string, Set<(event: MessageEvent<string>) => void>>()
+  const connectingHandlers = new Set<() => void>()
+  const abort = new AbortController()
+  let closed = false
+
+  const source: ContainerEventSourceLike = {
+    onopen: null,
+    onerror: null,
+    addEventListener(type, listener) {
+      const set = listeners.get(type) ?? new Set()
+      set.add(listener)
+      listeners.set(type, set)
+    },
+    close() {
+      closed = true
+      abort.abort()
+      listeners.clear()
+      connectingHandlers.clear()
+      source.onopen = null
+      source.onerror = null
+    },
+    registerConnectingCommentHandler(handler) {
+      connectingHandlers.add(handler)
+      return () => {
+        connectingHandlers.delete(handler)
+      }
+    },
+  }
+
+  void (async () => {
+    try {
+      const response = await fetch(url, { signal: abort.signal })
+      if (!response.ok || !response.body) {
+        source.onerror?.(new Event('error'))
+        return
+      }
+      source.onopen?.(new Event('open'))
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      const parser = new SseFrameParser()
+
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+
+        for (;;) {
+          const match = /\r\n|\n|\r/.exec(buffer)
+          if (!match) break
+          const line = buffer.slice(0, match.index)
+          buffer = buffer.slice(match.index + match[0].length)
+
+          if (isConnectingStatusComment(line)) {
+            for (const handler of connectingHandlers) {
+              handler()
+            }
+            continue
+          }
+
+          for (const frame of parser.push(`${line}\n`)) {
+            for (const listener of listeners.get(frame.event) ?? []) {
+              listener({ data: frame.data } as MessageEvent<string>)
+            }
+          }
+        }
+      }
+      if (!closed) {
+        source.onerror?.(new Event('error'))
+      }
+    } catch {
+      if (!closed) {
+        source.onerror?.(new Event('error'))
+      }
+    }
+  })()
+
+  return source
+}
+
+function wireConnectingComment(
+  source: ContainerEventSourceLike,
+  onConnecting: () => void,
+): void {
+  source.registerConnectingCommentHandler?.(onConnecting)
 }
 
 /** Docker 容器 SSE：订阅 /api/docker/events，解析失败帧丢弃。 */
@@ -43,7 +152,7 @@ export function createContainerWatchLive(
       return () => {}
     }
 
-    const source = factory(`${baseUrl}/events`)
+    const source = factory(`${baseUrl}/events`) as ContainerEventSourceLike
     let opened = false
     handlers.onStatus('connecting')
 
@@ -62,6 +171,10 @@ export function createContainerWatchLive(
     source.onerror = () => {
       if (opened) handlers.onStatus('connecting')
     }
+
+    wireConnectingComment(source, () => {
+      if (opened) handlers.onStatus('connecting')
+    })
 
     return () => {
       source.close()

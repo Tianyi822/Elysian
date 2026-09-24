@@ -20,14 +20,14 @@ export function containerActionSuccessMessage(
 
 export function containerStopConfirmDescription(dockerRuntime: boolean): string {
   if (dockerRuntime) {
-    return '将向容器主进程发送 SIGTERM，停止后容器内的服务会中断，可再次启动恢复。'
+    return '停止后容器内的进程会收到 SIGTERM，10 秒内未退出则被强制结束。已发布的端口会释放，容器可再次启动。'
   }
   return '停止后容器内的服务会中断，可再次启动恢复。操作作用于演示数据，不会影响真实环境。'
 }
 
 export function containerRestartConfirmDescription(dockerRuntime: boolean): string {
   if (dockerRuntime) {
-    return '重启期间服务会中断，短暂不可用。'
+    return '重启期间容器内的服务会中断，完成后自动回到运行中。'
   }
   return '重启期间服务会短暂不可用。操作作用于演示数据，不会影响真实环境。'
 }

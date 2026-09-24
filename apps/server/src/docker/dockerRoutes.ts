@@ -7,6 +7,8 @@ import type { DockerEventsHub } from './dockerEventsHub.ts'
 const CONTAINER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/
 const SSE_RETRY_MS = 3_000
 const SSE_HEARTBEAT_MS = 15_000
+/** SSE 注释帧：Engine 事件流断开而 HTTP 仍开着时通知浏览器进入 connecting（与 web adapter 约定一致）。 */
+export const SSE_STATUS_CONNECTING = ': status connecting\n\n'
 
 /** 挂载路径：app.ts 用同一常量挂载，404 兜底也用它剥前缀——单一事实，两处不漂移。 */
 export const DOCKER_MOUNT = '/api/docker'
@@ -52,7 +54,9 @@ export function createDockerApp(deps: DockerAppDeps): Hono {
       const lastEventId = c.req.header('last-event-id')
       type HubFrame = { event: string; id: string; data: string }
       const pending: HubFrame[] = []
+      const pendingStatusComments: string[] = []
       let writeFrame: ((frame: HubFrame) => void) | undefined
+      let writeStatusComment: ((comment: string) => void) | undefined
       let unsubscribe: () => void
 
       try {
@@ -65,7 +69,15 @@ export function createDockerApp(deps: DockerAppDeps): Hono {
               pending.push(frame)
             }
           },
-          onStatus: () => {},
+          onStatus: (status) => {
+            if (status === 'connecting') {
+              if (writeStatusComment) {
+                void writeStatusComment(SSE_STATUS_CONNECTING)
+              } else {
+                pendingStatusComments.push(SSE_STATUS_CONNECTING)
+              }
+            }
+          },
         })
       } catch (error) {
         if (error instanceof Error && error.message === '实时连接数已达上限') {
@@ -88,6 +100,14 @@ export function createDockerApp(deps: DockerAppDeps): Hono {
           writeFrame(frame)
         }
         pending.length = 0
+
+        writeStatusComment = (comment) => {
+          void sseStream.write(comment)
+        }
+        for (const comment of pendingStatusComments) {
+          void writeStatusComment(comment)
+        }
+        pendingStatusComments.length = 0
 
         const heartbeat = setInterval(() => {
           void sseStream.write(': keep-alive\n\n')

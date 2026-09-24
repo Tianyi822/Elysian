@@ -153,9 +153,11 @@ describe('containersStore', () => {
     expect(containerActionSuccessMessage('restart', 'web', false)).toContain('mock')
   })
 
-  it('停止确认含 SIGTERM、重启确认含服务会中断；mock 保持演示说明', () => {
+  it('停止确认含 SIGTERM 与 10 秒；重启确认含服务中断与回到运行中；mock 保持演示说明', () => {
     expect(containerStopConfirmDescription(true)).toContain('SIGTERM')
+    expect(containerStopConfirmDescription(true)).toContain('10 秒')
     expect(containerRestartConfirmDescription(true)).toContain('服务会中断')
+    expect(containerRestartConfirmDescription(true)).toContain('运行中')
     expect(containerStopConfirmDescription(false)).toContain('演示数据')
     expect(containerRestartConfirmDescription(false)).toContain('演示数据')
   })

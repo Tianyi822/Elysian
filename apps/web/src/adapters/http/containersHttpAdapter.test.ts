@@ -166,6 +166,17 @@ describe('createHttpContainersAdapter', () => {
     expect(source?.closed).toBe(true)
   })
 
+  it('watchLive 在 open 后收到 : status connecting 注释时上报 connecting', () => {
+    FakeEventSource.reset()
+    const statuses: Array<'live' | 'connecting'> = []
+    const watchLive = createContainerWatchLive({ createEventSource: (url) => new FakeEventSource(url) })
+    watchLive({ onStatus: (status) => statuses.push(status), onEvent: () => {} })
+    const source = FakeEventSource.latest()
+    source?.emitOpen()
+    source?.emitCommentLine(': status connecting')
+    expect(statuses).toEqual(['connecting', 'live', 'connecting'])
+  })
+
   it('watchLive 在 open 之前的 onerror 不上报 connecting', () => {
     FakeEventSource.reset()
     const statuses: Array<'live' | 'connecting'> = []

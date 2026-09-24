@@ -4,6 +4,7 @@ import type { Container, ContainerImage } from '@elysian/contracts'
 import { InvalidRequestError } from '../shared/errors'
 import {
   DOCKER_MOUNT,
+  SSE_STATUS_CONNECTING,
   createDockerApp,
   type DockerAppDeps,
   type DockerEventsHub,
@@ -81,20 +82,33 @@ const READY: DockerAppDeps = {
   service: createFakeService(),
 }
 
-function createFakeHub(): DockerEventsHub {
+function createFakeHub(): DockerEventsHub & {
+  lastSubscribe?: {
+    onStatus: (status: 'live' | 'connecting') => void
+  }
+} {
   let count = 0
-  return {
-    subscribe() {
+  const hub = {
+    subscribe(handlers: {
+      onEvent: (frame: { event: string; id: string; data: string }) => void
+      onStatus: (status: 'live' | 'connecting') => void
+      lastEventId?: string
+    }) {
       count += 1
       if (count > 8) {
         throw new Error('实时连接数已达上限')
       }
+      hub.lastSubscribe = handlers
       return () => {
         count -= 1
       }
     },
     notifyRestarting: vi.fn(),
+    lastSubscribe: undefined as
+      | { onStatus: (status: 'live' | 'connecting') => void }
+      | undefined,
   }
+  return hub
 }
 
 describe('createDockerApp', () => {
@@ -209,5 +223,28 @@ describe('createDockerApp', () => {
     const blocked = await app.request(req('GET', '/api/docker/events'))
     expect(blocked.status).toBe(503)
     expect(await blocked.json()).toEqual({ error: '实时连接数已达上限' })
+  })
+
+  it('hub 上报 connecting 时 SSE 写入 status connecting 注释帧', async () => {
+    const hub = createFakeHub()
+    const app = mountedApp({
+      ...READY,
+      eventsHub: hub,
+    })
+    const res = await app.request(req('GET', '/api/docker/events'))
+    expect(res.status).toBe(200)
+
+    hub.lastSubscribe?.onStatus('connecting')
+    const reader = res.body!.getReader()
+    const decoder = new TextDecoder()
+    let text = ''
+    while (text.length < 200) {
+      const { value, done } = await reader.read()
+      if (done) break
+      text += decoder.decode(value, { stream: true })
+      if (text.includes('status connecting')) break
+    }
+    await reader.cancel()
+    expect(text).toContain(SSE_STATUS_CONNECTING.trim())
   })
 })

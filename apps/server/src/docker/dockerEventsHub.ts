@@ -34,7 +34,6 @@ export type DockerEventsHubDeps = {
   transport: DockerTransport
   now: () => number
   schedule: (fn: () => void, ms: number) => () => void
-  readCgroup: () => string
   bootId?: string
 }
 
@@ -93,7 +92,6 @@ async function mapWithConcurrency<T, R>(
 }
 
 export function createDockerEventsHub(deps: DockerEventsHubDeps): DockerEventsHub {
-  void deps.readCgroup
   const bootId = deps.bootId ?? randomUUID()
   let seq = 0
   let subscriberCount = 0
@@ -114,6 +112,7 @@ export function createDockerEventsHub(deps: DockerEventsHubDeps): DockerEventsHu
 
   const containerDebounce = new Map<string, () => void>()
   let imageResyncCancel: (() => void) | undefined
+  const lastKnownStartedAt = new Map<string, string>()
 
   function isoNow(): string {
     return new Date(deps.now()).toISOString()
@@ -169,9 +168,15 @@ export function createDockerEventsHub(deps: DockerEventsHubDeps): DockerEventsHu
       const oldest = oldestBufferedSeq()
 
       if (lastSampleFrame?.id === lastEventId && parsed !== null && parsed.boot === bootId) {
-        if (oldest === undefined || parsed.seq >= oldest) {
+        const gapLost = oldest !== undefined && oldest > parsed.seq + 1
+        if (!gapLost) {
           const { event, id, data } = lastSampleFrame
           onEvent({ event, id, data })
+          for (const frame of nonSampleBuffer) {
+            if (frame.seq > parsed.seq) {
+              onEvent({ event: frame.event, id: frame.id, data: frame.data })
+            }
+          }
           return
         }
       }
@@ -188,7 +193,6 @@ export function createDockerEventsHub(deps: DockerEventsHubDeps): DockerEventsHu
 
       if (needResync) {
         const resync = buildFrame('container/resync', {}, false)
-        pushBuffer(resync)
         onEvent({ event: resync.event, id: resync.id, data: resync.data })
       } else if (parsed !== null && parsed.boot === bootId) {
         for (const frame of nonSampleBuffer) {
@@ -264,6 +268,9 @@ export function createDockerEventsHub(deps: DockerEventsHubDeps): DockerEventsHu
     if (action === 'create') {
       const container = await inspectContainer(containerId)
       if (container) {
+        if (container.startedAt !== undefined) {
+          lastKnownStartedAt.set(container.id, container.startedAt)
+        }
         emit('container/created', { container }, false)
       }
       return
@@ -278,11 +285,19 @@ export function createDockerEventsHub(deps: DockerEventsHubDeps): DockerEventsHu
     ) {
       const container = await inspectContainer(containerId)
       if (container) {
+        if (container.startedAt !== undefined) {
+          lastKnownStartedAt.set(container.id, container.startedAt)
+        }
         emit('container/updated', updatedPayload(container), false)
       }
       return
     }
     emit('container/resync', {}, false)
+  }
+
+  function restartingStartedAt(containerId: string): string | null {
+    const cached = lastKnownStartedAt.get(containerId)
+    return cached ?? null
   }
 
   function onDockerLine(line: string): void {
@@ -482,15 +497,25 @@ export function createDockerEventsHub(deps: DockerEventsHubDeps): DockerEventsHu
     },
 
     notifyRestarting(containerId: string) {
-      emit(
-        'container/updated',
-        {
-          containerId,
-          status: 'restarting' satisfies ContainerStatus,
-          startedAt: null,
-        },
-        false,
-      )
+      void (async () => {
+        let startedAt = restartingStartedAt(containerId)
+        if (startedAt === null) {
+          const container = await inspectContainer(containerId)
+          if (container?.startedAt !== undefined) {
+            startedAt = container.startedAt
+            lastKnownStartedAt.set(containerId, startedAt)
+          }
+        }
+        emit(
+          'container/updated',
+          {
+            containerId,
+            status: 'restarting' satisfies ContainerStatus,
+            startedAt,
+          },
+          false,
+        )
+      })()
     },
   }
 }

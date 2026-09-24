@@ -114,7 +114,6 @@ describe('createDockerEventsHub', () => {
       transport,
       now: clock.now,
       schedule: clock.schedule,
-      readCgroup: () => '',
       bootId: BOOT_ID,
     })
 
@@ -138,7 +137,6 @@ describe('createDockerEventsHub', () => {
       transport,
       now: clock.now,
       schedule: clock.schedule,
-      readCgroup: () => '',
       bootId: BOOT_ID,
     })
 
@@ -174,7 +172,6 @@ describe('createDockerEventsHub', () => {
       transport,
       now: clock.now,
       schedule: clock.schedule,
-      readCgroup: () => '',
       bootId: BOOT_ID,
     })
 
@@ -231,7 +228,6 @@ describe('createDockerEventsHub', () => {
       transport,
       now: clock.now,
       schedule: clock.schedule,
-      readCgroup: () => '',
       bootId: BOOT_ID,
     })
 
@@ -291,7 +287,6 @@ describe('createDockerEventsHub', () => {
       transport,
       now: clock.now,
       schedule: clock.schedule,
-      readCgroup: () => '',
       bootId: BOOT_ID,
     })
 
@@ -331,7 +326,6 @@ describe('createDockerEventsHub', () => {
       transport,
       now: clock.now,
       schedule: clock.schedule,
-      readCgroup: () => '',
       bootId: BOOT_ID,
     })
 
@@ -389,17 +383,21 @@ describe('createDockerEventsHub', () => {
     expect(wrongBoot[0]).toBe('container/resync')
   })
 
-  it('notifyRestarting 立即推出 restarting 的 container/updated', () => {
+  it('notifyRestarting 在容器有 startedAt 时推送字符串而非 null', async () => {
     const clock = createFakeClock()
     const transport: DockerTransport = {
-      request: vi.fn(async () => ({ status: 200, json: [] })),
+      request: vi.fn(async (input) => {
+        if (input.path.includes('/json')) {
+          return { status: 200, json: baseInspect('running') }
+        }
+        return { status: 200, json: [] }
+      }),
       openStream: vi.fn(() => () => {}),
     }
     const hub = createDockerEventsHub({
       transport,
       now: clock.now,
       schedule: clock.schedule,
-      readCgroup: () => '',
       bootId: BOOT_ID,
     })
 
@@ -414,10 +412,54 @@ describe('createDockerEventsHub', () => {
     })
 
     hub.notifyRestarting(SHORT_ID)
-    expect(payload).toEqual({
-      containerId: SHORT_ID,
-      status: 'restarting',
-      startedAt: null,
+    await vi.waitFor(() => {
+      expect(payload).toEqual({
+        containerId: SHORT_ID,
+        status: 'restarting',
+        startedAt: '2024-06-01T10:01:00.000000000Z',
+      })
     })
+  })
+
+  it('Last-Event-ID 等于最新采样帧时仍重放其后非采样事件', async () => {
+    const clock = createFakeClock()
+    const transport: DockerTransport = {
+      request: vi.fn(async () => ({ status: 200, json: [] })),
+      openStream: vi.fn(() => () => {}),
+    }
+    const hub = createDockerEventsHub({
+      transport,
+      now: clock.now,
+      schedule: clock.schedule,
+      bootId: BOOT_ID,
+    })
+
+    let sampleEventId = ''
+    hub.subscribe({
+      onEvent: (frame) => {
+        if (frame.event === 'container/sample') {
+          sampleEventId = frame.id
+        }
+      },
+      onStatus: vi.fn(),
+    })
+    await vi.waitFor(() => expect(sampleEventId.length).toBeGreaterThan(0))
+
+    hub.notifyRestarting(SHORT_ID)
+
+    const replayNames: string[] = []
+    hub.subscribe({
+      lastEventId: sampleEventId,
+      onEvent: (frame) => {
+        replayNames.push(parseFrameData(frame.data).name)
+      },
+      onStatus: vi.fn(),
+    })
+
+    await vi.waitFor(() => {
+      expect(replayNames).toContain('container/updated')
+    })
+
+    expect(replayNames).toContain('container/sample')
   })
 })

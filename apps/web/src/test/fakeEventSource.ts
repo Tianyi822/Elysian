@@ -16,6 +16,7 @@ export class FakeEventSource implements EventSourceLike {
   }
 
   readonly listeners = new Map<string, Set<(event: MessageEvent<string>) => void>>()
+  private readonly connectingCommentHandlers = new Set<() => void>()
   onopen: ((event: Event) => void) | null = null
   onerror: ((event: Event) => void) | null = null
   closed = false
@@ -34,8 +35,25 @@ export class FakeEventSource implements EventSourceLike {
   close(): void {
     this.closed = true
     this.listeners.clear()
+    this.connectingCommentHandlers.clear()
     this.onopen = null
     this.onerror = null
+  }
+
+  registerConnectingCommentHandler(handler: () => void): () => void {
+    this.connectingCommentHandlers.add(handler)
+    return () => {
+      this.connectingCommentHandlers.delete(handler)
+    }
+  }
+
+  /** 投递 SSE 注释行（不含末尾换行），例如 `: status connecting`。 */
+  emitCommentLine(line: string): void {
+    if (line.startsWith(':') && line.slice(1).trimStart() === 'status connecting') {
+      for (const handler of this.connectingCommentHandlers) {
+        handler()
+      }
+    }
   }
 
   emitOpen(): void {
