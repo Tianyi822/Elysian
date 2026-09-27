@@ -57,6 +57,18 @@ describe('validateRegistry', () => {
       'example.com:5000',
     )
   })
+
+  it('拒绝路径、查询、凭证与无效端口，避免把目录请求送往其他目标', async () => {
+    for (const raw of [
+      'https://user:secret@example.com',
+      'example.com/v2/_catalog',
+      'example.com?next=evil',
+      'example.com:0',
+      'example.com:65536',
+    ]) {
+      await expect(validateRegistry(raw, PUBLIC_RESOLVE)).rejects.toThrow()
+    }
+  })
 })
 
 describe('isPublicAddress', () => {

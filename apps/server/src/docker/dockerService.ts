@@ -1,11 +1,15 @@
-import type { Container, ContainerImage } from '@elysian/contracts'
+import type { Container, ContainerImage, ImagePullProgress } from '@elysian/contracts'
 import { parseImageReference } from '@elysian/contracts'
 import { InvalidRequestError, invalidRequest } from '../shared/errors.ts'
 import type { DockerTransport } from './dockerTransport.ts'
 import { buildCreateSpec } from './createSpec.ts'
 import { mapContainer, mapImage } from './dockerMappers.ts'
-import { readPullProgress } from './dockerStreams.ts'
-import { validateRegistry, type RegistryResolver } from './registryPolicy.ts'
+import { createPullProgressDecoder, readPullProgress } from './dockerStreams.ts'
+import { validateRegistry, validateRegistryTarget, type RegistryResolver } from './registryPolicy.ts'
+import {
+  IMAGE_SEARCH_LIMIT, listRegistryTags, requestDockerHubToken, requestRegistryCatalog,
+  requestRegistryTags, searchCatalog, type CatalogFetcher, type TagsFetcher,
+} from './dockerImageSearch.ts'
 import { isSelfContainerInspect } from './selfContainer.ts'
 
 const API_PREFIX = '/v1.41'
@@ -32,10 +36,12 @@ const CONTAINER_RUNNING_REMOVE_MESSAGE = '容器正在运行，请先停止再�
 export type DockerReadService = {
   listContainers(): Promise<readonly Container[]>
   listImages(): Promise<readonly ContainerImage[]>
+  searchImages(term: string, registry?: string): Promise<{ names: readonly string[]; searchable: boolean }>
+  imageTags(name: string, registry?: string): Promise<{ tags: readonly string[]; searchable: boolean }>
   policy(): Promise<{ mountRoot: string; reservedPorts: readonly number[] }>
   action(id: string, action: 'start' | 'stop' | 'restart'): Promise<Container>
   create(body: unknown): Promise<Container>
-  pull(body: unknown, signal: AbortSignal): Promise<ContainerImage>
+  pull(body: unknown, signal: AbortSignal, onProgress?: (progress: ImagePullProgress) => void | Promise<void>): Promise<ContainerImage>
   removeContainer(id: string): Promise<void>
   removeImage(id: string): Promise<void>
 }
@@ -48,6 +54,9 @@ export type DockerServiceOptions = {
   mkdir: (path: string, mode: number) => Promise<void>
   realpath: (path: string) => Promise<string>
   resolveRegistry?: RegistryResolver
+  fetchCatalog?: CatalogFetcher
+  fetchTags?: TagsFetcher
+  fetchHubToken?: (repository: string) => Promise<string>
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -597,6 +606,54 @@ export function createDockerReadService(
         (summary, inspect) => mapImage(summary, inspect),
       )
     },
+    async searchImages(rawTerm, registry) {
+      const term = rawTerm.trim().toLowerCase()
+      if (term.length < 2 || term.length > 64 || !/^[a-z0-9][a-z0-9._/-]*$/.test(term)) {
+        throw invalidRequest('镜像搜索词格式无效')
+      }
+      if (registry && registry.trim() && registry.trim() !== 'https://registry-1.docker.io') {
+        let target
+        try {
+          target = await validateRegistryTarget(registry, wrapRegistryResolver(resolveRegistry))
+        } catch (error) {
+          throw invalidRequest(error instanceof Error ? error.message : '镜像源地址无效')
+        }
+        return searchCatalog(target, term, options.fetchCatalog ?? requestRegistryCatalog)
+      }
+      const response = await transport.request({
+        method: 'GET',
+        path: `${API_PREFIX}/images/search?term=${encodeURIComponent(term)}&limit=${IMAGE_SEARCH_LIMIT}`,
+        timeoutMs: 4_000,
+        maxBytes: 128 * 1024,
+      })
+      if (response.status < 200 || response.status >= 300 || !Array.isArray(response.json)) {
+        throw new Error(`搜索官方镜像失败（HTTP ${response.status}）`)
+      }
+      const names = response.json
+        .map((entry: unknown) => isRecord(entry) ? entry.name : undefined)
+        .filter((name: unknown): name is string => typeof name === 'string' && /^[a-z0-9][a-z0-9._/-]*$/.test(name))
+      return { names: [...new Set(names)].slice(0, IMAGE_SEARCH_LIMIT), searchable: true }
+    },
+    async imageTags(rawName, registry) {
+      const name = rawName.trim().toLowerCase()
+      if (name.length === 0 || name.length > 128 ||
+        !name.split('/').every((part) => /^[a-z0-9][a-z0-9._-]*$/.test(part))) {
+        throw invalidRequest('镜像仓库名格式无效')
+      }
+      const fetchTags = options.fetchTags ?? requestRegistryTags
+      if (registry?.trim() && registry.trim() !== 'https://registry-1.docker.io') {
+        let target
+        try {
+          target = await validateRegistryTarget(registry, wrapRegistryResolver(resolveRegistry))
+        } catch (error) {
+          throw invalidRequest(error instanceof Error ? error.message : '镜像源地址无效')
+        }
+        return listRegistryTags(target, name, fetchTags)
+      }
+      const repository = name.includes('/') ? name : `library/${name}`
+      const token = await (options.fetchHubToken ?? requestDockerHubToken)(repository)
+      return listRegistryTags({ host: 'registry-1.docker.io' }, repository, fetchTags, token)
+    },
     async policy() {
       return { mountRoot: options.mountRoot, reservedPorts: options.reservedPorts }
     },
@@ -693,7 +750,7 @@ export function createDockerReadService(
         return mapContainer(inspect)
       })
     },
-    async pull(body, signal) {
+    async pull(body, signal, onProgress) {
       if (pullInFlight) {
         throw new InvalidRequestError(409, PULL_BUSY_MESSAGE)
       }
@@ -726,11 +783,13 @@ export function createDockerReadService(
         }
 
         const pullPath = `${API_PREFIX}/images/create?fromImage=${encodeURIComponent(fromImage)}`
+        const progressDecoder = onProgress ? createPullProgressDecoder(onProgress) : undefined
         const pullResponse = await pullCreate({
           path: pullPath,
           timeoutMs: PULL_TIMEOUT_MS,
           maxBytes: PULL_PROGRESS_MAX_BYTES,
           signal,
+          ...(progressDecoder ? { onChunk: progressDecoder.feed } : {}),
         })
         if (pullResponse.status !== 200) {
           throw new Error(`拉取镜像失败（HTTP ${pullResponse.status}）`)
@@ -739,6 +798,7 @@ export function createDockerReadService(
         if (!progress.ok) {
           throw invalidRequest(progress.error)
         }
+        await progressDecoder?.finish()
 
         if (registryPullRef !== null) {
           await tagImageRef(transport, registryPullRef, input.name, input.tag)

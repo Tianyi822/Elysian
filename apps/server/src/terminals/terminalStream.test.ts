@@ -164,6 +164,17 @@ describe('TerminalStreamAssembler', () => {
     ])
   })
 
+  it('sh 的 PS1 哨兵跨块到齐且以换行结尾后交付 prompt', () => {
+    const assembler = new TerminalStreamAssembler()
+    assembler.push(new TextEncoder().encode(`${READY}\n`))
+    assembler.noteInput()
+    expect(assembler.push(new TextEncoder().encode('结果\x01PWD:/tm'))).toEqual([])
+    expect(assembler.push(new TextEncoder().encode('p\x02\n'))).toEqual([
+      { kind: 'lines', lines: ['结果'] },
+      { kind: 'prompt', cwd: '/tmp', droppedBytes: 0 },
+    ])
+  })
+
   it('哨兵与输出同行时哨兵剥离、其余文本保留为输出行', () => {
     const events = eventsOf(`${READY}\r\nout\x01PWD:/var\x02tail\r\n`)
     expect(events).toEqual([

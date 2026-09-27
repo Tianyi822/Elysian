@@ -38,11 +38,13 @@ export type TerminalViewportProps = {
   onAppendOutput: (lines: readonly string[]) => void
   onClear: () => void
   /**
-   * Ctrl+C 的领域侧通道（本机真实终端发 interrupt 帧到 PTY）。
-   * 可选：不传则只有本地 ^C 外观，行为逐字节不变（容器终端与 SQL 会话弹窗不传）。
+   * Ctrl+C 的领域侧通道（本机真实终端与容器终端经它发 interrupt 帧到 PTY）。
+   * 可选：不传则只有本地 ^C 外观，行为逐字节不变（SQL 会话弹窗不传）。
    */
   onInterrupt?: () => void
   inputLabel: string
+  /** 连接中或已断开时保留日志，但隐藏活动提示行并禁止键入。 */
+  interactive?: boolean
   /** 日志区字号（px），由页面持有；缺省为终端基准字号。 */
   fontSize?: number
   /**
@@ -71,6 +73,7 @@ export function TerminalViewport({
   onClear,
   onInterrupt,
   inputLabel,
+  interactive = true,
   fontSize = TERMINAL_FONT_SIZE_DEFAULT,
   onFontZoom,
   autoFocus = true,
@@ -86,8 +89,11 @@ export function TerminalViewport({
   const logRef = useRef<HTMLDivElement>(null)
   const attachInput = (node: HTMLInputElement | null) => {
     inputRef.current = node
-    if (autoFocus) node?.focus()
+    if (autoFocus && interactive) node?.focus()
   }
+  useEffect(() => {
+    if (autoFocus && interactive) inputRef.current?.focus()
+  }, [autoFocus, interactive])
   // 输入法组合态与「组合刚结束」的一次性标记：组合中的回车是确认候选而非发送。
   // Safari 派发确认回车的 keydown 晚于 compositionend（isComposing 已为 false），
   // 只能靠该标记吞掉这一枚；setTimeout(0) 复位保证之后的人工回车不受影响。
@@ -129,6 +135,7 @@ export function TerminalViewport({
 
   useEffect(() => {
     const onKeyDownCapture = (event: KeyboardEvent) => {
+      if (!interactive) return
       if (event.key !== 'Tab') return
       const root = trapRootRef?.current ?? rootRef.current
       if (!root || !root.contains(event.target as Node | null)) return
@@ -139,7 +146,7 @@ export function TerminalViewport({
     }
     document.addEventListener('keydown', onKeyDownCapture, true)
     return () => document.removeEventListener('keydown', onKeyDownCapture, true)
-  }, [trapRootRef])
+  }, [interactive, trapRootRef])
 
   const recall = (direction: -1 | 1) => {
     if (!history.length) return
@@ -193,6 +200,7 @@ export function TerminalViewport({
   }
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (!interactive) return
     if (event.nativeEvent.isComposing || composingRef.current) return
     if (event.key === 'Enter') {
       if (swallowEnterRef.current) {
@@ -250,6 +258,7 @@ export function TerminalViewport({
         id={inputId}
         ref={attachInput}
         value={draft}
+        disabled={!interactive}
         onChange={(event) => {
           setDraft(event.target.value)
           setCursor(event.target.selectionStart ?? event.target.value.length)
@@ -277,10 +286,10 @@ export function TerminalViewport({
         ref={logRef}
         role="log"
         aria-live="polite"
-        onClick={() => inputRef.current?.focus()}
+        onClick={() => { if (interactive) inputRef.current?.focus() }}
         onMouseUp={copyLogSelection}
         style={{ fontSize }}
-        className="flex-1 cursor-text overflow-y-auto whitespace-pre-wrap break-all px-4 py-3 font-mono leading-relaxed text-fg"
+        className="min-w-0 flex-1 cursor-text overflow-auto whitespace-pre px-4 py-3 font-mono leading-relaxed text-fg"
       >
         {lines.map((line, index) => (
           <p
@@ -297,7 +306,7 @@ export function TerminalViewport({
             />
           </p>
         ))}
-        <p aria-hidden="true">
+        {interactive ? <p aria-hidden="true">
           <span className="text-success">
             <TerminalText text={prompt} />
           </span>
@@ -306,7 +315,7 @@ export function TerminalViewport({
             <TerminalText text={draft.slice(cursor, cursor + 1) || ' '} />
           </span>
           <TerminalText text={draft.slice(cursor + 1)} />
-        </p>
+        </p> : null}
       </div>
     </div>
   )

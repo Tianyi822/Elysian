@@ -3,6 +3,9 @@ import type { ContainerAction } from '@elysian/contracts'
 /** 容器页 SSE 断线重连时的固定提示（与 brief 逐字一致）。 */
 export const CONTAINER_LIVE_RECONNECT_MESSAGE = '实时数据连接中断，正在重连…'
 
+/** 容器终端连接中断的兜底文案：容器域措辞，经 hostTerminalCloseMessage 的可选兜底参数传入。 */
+export const CONTAINER_TERMINAL_CLOSE_FALLBACK = '容器终端连接中断'
+
 /** 启停成功通知：Docker 运行时去掉 mock 标注，测试可注入 docker 而不依赖 Vite env。 */
 export function containerActionSuccessMessage(
   action: ContainerAction,

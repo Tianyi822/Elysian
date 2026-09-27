@@ -1,4 +1,4 @@
-import type { TerminalIdentity, TerminalsHostDeps, TerminalsService } from '../terminals/terminalsService.ts'
+import type { ShellSessionSpec, TerminalIdentity, TerminalsHostDeps, TerminalsService } from '../terminals/terminalsService.ts'
 import { createTerminalsService } from '../terminals/terminalsService.ts'
 import { createTerminalWsEvents, type TerminalWsEvents } from '../terminals/terminalConnection.ts'
 import {
@@ -12,6 +12,9 @@ import {
 } from './dockerExec.ts'
 
 export const DOCKER_EXEC_MAX_SESSIONS = 5
+
+/** 容器 shell 的启动行由探测后的 createExecPty 发送，这一层不得再写本机启动行。 */
+const CONTAINER_EXTERNAL_BOOTSTRAP: ShellSessionSpec = { env: {}, startupLine: '' }
 
 /** 断开清理 exec 的等待上限：脚本自身约一秒（两轮信号间 sleep 1），引擎挂起时放弃并断开。 */
 const DOCKER_EXEC_CLEANUP_TIMEOUT_MS = 10_000
@@ -27,7 +30,7 @@ export type DockerExecSessionsOptions = {
   createExecRunner: (containerId: string) => ExecRunner
   identityForContainer: (containerId: string) => TerminalIdentity
   listDir: (containerId: string, path: string) => Promise<readonly string[]>
-  listCommands: (containerId: string) => Promise<readonly string[]>
+  listCommands: (containerId: string, kind: 'bash' | 'sh') => Promise<readonly string[]>
   now?: () => number
 }
 
@@ -43,22 +46,31 @@ function createHostDepsForContainer(
   options: DockerExecSessionsOptions,
 ): TerminalsHostDeps {
   const now = options.now ?? (() => Date.now())
+  let shellKind: 'bash' | 'sh' | null = null
   return {
     available: true,
     identity: () => options.identityForContainer(containerId),
+    formatPrompt: () => '$ ',
     spawnPtyShell: () =>
-      createLazyExecPty(async () => {
+      createLazyExecPty(async (signal) => {
         const exec = options.createExecRunner(containerId)
-        const kind = await probeShell(exec)
+        const kind = await probeShell(exec, signal)
+        if (signal.aborted) throw new Error('容器终端连接已取消')
         if (kind === 'none') {
           throw new Error('该容器内没有可用的 shell')
         }
+        shellKind = kind
         const spec = shellSpecFor(kind, true)
         const interactive = options.createExecRunner(containerId)
-        return createExecPty(interactive, spec)
+        const pty = createExecPty(interactive, spec)
+        if (signal.aborted) {
+          await pty.kill()
+          throw new Error('容器终端连接已取消')
+        }
+        return pty
       }),
     listDir: (path) => options.listDir(containerId, path),
-    listCommands: () => options.listCommands(containerId),
+    listCommands: () => shellKind === null ? Promise.resolve([]) : options.listCommands(containerId, shellKind),
     /** exec 出的 shell 不随 hijack 断开退出：按 READY 哨兵捕获的 pid 跑断开清理脚本。 */
     disposeShell: (shellPid) => {
       if (shellPid === null) return
@@ -108,7 +120,7 @@ export function createDockerExecSessions(options: DockerExecSessionsOptions): Do
   function serviceFor(containerId: string): TerminalsService {
     let service = services.get(containerId)
     if (!service) {
-      service = createTerminalsService(createHostDepsForContainer(containerId, options))
+      service = createTerminalsService(createHostDepsForContainer(containerId, options), CONTAINER_EXTERNAL_BOOTSTRAP)
       services.set(containerId, service)
     }
     return service

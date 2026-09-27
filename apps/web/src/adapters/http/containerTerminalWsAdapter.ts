@@ -1,5 +1,6 @@
 import { completeWithPools, hostTerminalCloseMessage } from '../../components/terminal/terminalSession'
 import type { TerminalCompletion } from '../../components/terminal/terminalSession'
+import { CONTAINER_TERMINAL_CLOSE_FALLBACK } from '../../features/container/containerCopy'
 import type {
   HostTerminalCloseInfo,
   HostTerminalHandlers,
@@ -176,7 +177,11 @@ export function createContainerTerminalWsAdapter(
         )
         return
       }
-      pending.reject(new Error(hostTerminalCloseMessage(code, reason)))
+      // 升级成功但 ready 前被服务端关闭（如并发上限 1008）：按关闭码映射 reject，
+      // 兜底措辞用容器域文案。
+      pending.reject(
+        new Error(hostTerminalCloseMessage(code, reason, CONTAINER_TERMINAL_CLOSE_FALLBACK)),
+      )
       return
     }
 
@@ -246,6 +251,20 @@ export function createContainerTerminalWsAdapter(
       sessionsById.delete(sessionId)
       sessionBySocket.delete(live.socket)
       live.socket.close(1000)
+    },
+
+    cancelTerminalConnect(): void {
+      // 取消未决连接：先 settle（reject 兜底文案）再关 socket，与 reset() 同形态——
+      // 只关 socket 不 reject 会让被取消的 connectTerminal promise 永不落定。
+      // 只作用于未 ready 的 pending；已 ready 会话仍走 disconnectTerminal。
+      for (const pending of [...pendingBySocket.values()]) {
+        pendingBySocket.delete(pending.socket)
+        if (!pending.settled) {
+          pending.settled = true
+          pending.reject(new Error(CONNECT_FALLBACK_ERROR))
+        }
+        pending.socket.close(1000)
+      }
     },
 
     reset(): void {

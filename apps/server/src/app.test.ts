@@ -248,6 +248,8 @@ describe('createApp 组装', () => {
         service: {
           listContainers: async () => [],
           listImages: async () => [],
+          searchImages: async () => ({ names: [], searchable: true }),
+          imageTags: async () => ({ tags: [], searchable: true }),
           policy: async () => ({ mountRoot: '/srv', reservedPorts: [22] }),
           action: async (id) => ({
             id,

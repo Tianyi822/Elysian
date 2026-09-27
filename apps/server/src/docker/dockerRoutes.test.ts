@@ -43,6 +43,8 @@ function createFakeService(overrides: Partial<DockerReadService> = {}): DockerRe
   return {
     listContainers: async () => [SAMPLE_CONTAINER],
     listImages: async () => [SAMPLE_IMAGE],
+    searchImages: async () => ({ names: ['redis'], searchable: true }),
+    imageTags: async () => ({ tags: ['latest', '8-alpine'], searchable: true }),
     policy: async () => ({
       mountRoot: '/srv',
       reservedPorts: [22, 48100, 48101],
@@ -212,6 +214,24 @@ describe('createDockerApp', () => {
     })
   })
 
+  it('GET /images/search 传入搜索词与自定义镜像源', async () => {
+    const searchImages = vi.fn(async () => ({ names: ['redis'], searchable: true }))
+    const app = createDockerApp({ ...READY, service: createFakeService({ searchImages }) })
+    const res = await app.request(req('GET', '/images/search?term=red&registry=https%3A%2F%2Fmirror.example.com'))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ names: ['redis'], searchable: true })
+    expect(searchImages).toHaveBeenCalledWith('red', 'https://mirror.example.com')
+  })
+
+  it('GET /images/tags 传入仓库名与自定义镜像源', async () => {
+    const imageTags = vi.fn(async () => ({ tags: ['latest', '8-alpine'], searchable: true }))
+    const app = createDockerApp({ ...READY, service: createFakeService({ imageTags }) })
+    const res = await app.request(req('GET', '/images/tags?name=redis&registry=https%3A%2F%2Fmirror.example.com'))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ tags: ['latest', '8-alpine'], searchable: true })
+    expect(imageTags).toHaveBeenCalledWith('redis', 'https://mirror.example.com')
+  })
+
   it('跨源 POST /containers 先 403', async () => {
     const app = createDockerApp(READY)
     const res = await app.request(
@@ -325,6 +345,37 @@ describe('createDockerApp', () => {
     expect(pull).toHaveBeenCalledOnce()
   })
 
+  it('POST /images/pull/stream 在拉取结束前推送进度，随后发最终镜像', async () => {
+    let emitProgress!: () => Promise<void>
+    let finish!: () => void
+    const pull = vi.fn((_body: unknown, _signal: AbortSignal, onProgress?: (progress: { phase: 'downloading'; layerId: string; currentBytes: number; totalBytes: number }) => void | Promise<void>) =>
+      new Promise<ContainerImage>((resolve) => {
+        emitProgress = async () => { await onProgress?.({ phase: 'downloading', layerId: 'abc', currentBytes: 50, totalBytes: 100 }) }
+        finish = () => resolve(SAMPLE_IMAGE)
+      }),
+    )
+    const app = mountedApp({ ...READY, service: createFakeService({ pull }) })
+    const response = await app.request(req('POST', '/api/docker/images/pull/stream', { name: 'nginx', tag: '1.27' }))
+    expect(response.headers.get('content-type')).toContain('application/x-ndjson')
+    const reader = response.body!.getReader()
+    await vi.waitFor(() => expect(pull).toHaveBeenCalledOnce())
+    await emitProgress()
+    const first = await reader.read()
+    expect(new TextDecoder().decode(first.value)).toContain('"type":"progress"')
+    finish()
+    const second = await reader.read()
+    expect(new TextDecoder().decode(second.value)).toContain('"type":"result"')
+    await reader.cancel()
+  })
+
+  it('流式拉取失败时发送错误帧', async () => {
+    const app = mountedApp({ ...READY, service: createFakeService({
+      pull: async () => { throw new Error('镜像拉取失败') },
+    }) })
+    const response = await app.request(req('POST', '/api/docker/images/pull/stream', { name: 'nginx', tag: '1.27' }))
+    expect(await response.text()).toContain('"type":"error","error":"镜像拉取失败"')
+  })
+
   it('DELETE /images/:id 返回 204 且无响应体', async () => {
     const removeImage = vi.fn(async () => undefined)
     const app = mountedApp({
@@ -360,7 +411,7 @@ describe('createDockerApp', () => {
     expect(removeContainer).not.toHaveBeenCalled()
   })
 
-  describe('GET /containers/:id/terminal 升级前五项检查', () => {
+  describe('GET /containers/:id/terminal 升级前检查', () => {
     const terminalPath = `/api/docker/containers/${SAMPLE_CONTAINER.id}/terminal`
 
     it('整片不可用时 503', async () => {
@@ -401,14 +452,19 @@ describe('createDockerApp', () => {
       expect(await res.json()).toEqual({ error: TERMINAL_NOT_RUNNING_MESSAGE })
     })
 
-    it('自身容器 400', async () => {
+    it('自身容器运行中也允许升级终端，其他管理动作仍走各自守卫', async () => {
+      const upgrade = vi.fn((_c: Context, _events: TerminalWsEvents) =>
+        sendJson(200, { upgraded: true }),
+      )
       const app = mountedApp({
         ...TERMINAL_READY,
         selfContainerId: SAMPLE_CONTAINER.id,
+        upgradeWebSocket: upgrade,
       })
       const res = await app.request(req('GET', terminalPath))
-      expect(res.status).toBe(400)
-      expect(await res.json()).toEqual({ error: '不能对面板所在的容器执行该操作' })
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({ upgraded: true })
+      expect(upgrade).toHaveBeenCalledOnce()
     })
 
     it('通过前置检查后调用注入的 upgrade', async () => {

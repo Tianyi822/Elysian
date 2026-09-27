@@ -188,6 +188,84 @@ describe('createDockerReadService', () => {
   })
 })
 
+describe('镜像仓库搜索', () => {
+  it('默认源经 Docker Engine 搜索 Hub，带超时、响应预算和结果上限', async () => {
+    const transport = createRecordingTransport(({ path }) => ({
+      status: 200,
+      json: path.includes('/images/search?')
+        ? Array.from({ length: 20 }, (_, index) => ({ name: `repo${index}` }))
+        : [],
+    }))
+    const service = createDockerReadService(transport, createDeps())
+    const result = await service.searchImages('re')
+    expect(result.names).toHaveLength(10)
+    expect(transport.request).toHaveBeenCalledWith(expect.objectContaining({
+      path: '/v1.41/images/search?term=re&limit=10', timeoutMs: 4_000, maxBytes: 128 * 1024,
+    }))
+  })
+
+  it('自定义源只访问已校验公网地址的目录；目录不可用不回退 Hub', async () => {
+    const transport = createRecordingTransport(() => { throw new Error('不应查询 Engine') })
+    const fetchCatalog = vi.fn(async () => ({ status: 404, json: null }))
+    const service = createDockerReadService(transport, {
+      ...createDeps(), resolveRegistry: async () => ['1.2.3.4'], fetchCatalog,
+    })
+    await expect(service.searchImages('red', 'https://mirror.example.com')).resolves.toEqual({
+      names: [], searchable: false,
+    })
+    expect(fetchCatalog).toHaveBeenCalledWith(
+      { host: 'mirror.example.com', addresses: ['1.2.3.4'] },
+      '/v2/_catalog?n=100&last=rec',
+    )
+    expect(transport.request).not.toHaveBeenCalled()
+  })
+
+  it('自定义源解析到内网地址时阻止目录请求', async () => {
+    const fetchCatalog = vi.fn(async () => ({ status: 200, json: { repositories: ['redis'] } }))
+    const service = createDockerReadService(createRecordingTransport(() => ({ status: 200, json: [] })), {
+      ...createDeps(), resolveRegistry: async () => ['10.0.0.2'], fetchCatalog,
+    })
+    await expect(service.searchImages('red', 'mirror.example.com')).rejects.toThrow('镜像源无法解析为公网地址')
+    expect(fetchCatalog).not.toHaveBeenCalled()
+  })
+})
+
+describe('镜像版本查询', () => {
+  it('官方源为简写仓库补 library 前缀，并只向官方仓库发送公开令牌', async () => {
+    const fetchHubToken = vi.fn(async () => 'public-token')
+    const fetchTags = vi.fn(async () => ({ status: 200, json: { tags: ['7-alpine', 'latest', '8-alpine'] } }))
+    const service = createDockerReadService(createRecordingTransport(() => { throw new Error('不应访问 Engine') }), {
+      ...createDeps(), fetchHubToken, fetchTags,
+    })
+    await expect(service.imageTags('redis')).resolves.toEqual({ tags: ['latest', '8-alpine', '7-alpine'], searchable: true })
+    expect(fetchHubToken).toHaveBeenCalledWith('library/redis')
+    expect(fetchTags).toHaveBeenCalledWith({ host: 'registry-1.docker.io' }, '/v2/library/redis/tags/list', 'public-token')
+  })
+
+  it('自定义源只查询已校验地址，不发送官方令牌；目录不可用时提示手动输入', async () => {
+    const fetchHubToken = vi.fn(async () => 'public-token')
+    const fetchTags = vi.fn(async () => ({ status: 404, json: null }))
+    const service = createDockerReadService(createRecordingTransport(() => ({ status: 200, json: [] })), {
+      ...createDeps(), resolveRegistry: async () => ['1.2.3.4'], fetchHubToken, fetchTags,
+    })
+    await expect(service.imageTags('team/redis', 'https://mirror.example.com')).resolves.toEqual({ tags: [], searchable: false })
+    expect(fetchTags).toHaveBeenCalledWith(
+      { host: 'mirror.example.com', addresses: ['1.2.3.4'] }, '/v2/team/redis/tags/list', undefined,
+    )
+    expect(fetchHubToken).not.toHaveBeenCalled()
+  })
+
+  it('非法仓库名与内网自定义源在请求前拒绝', async () => {
+    const fetchTags = vi.fn(async () => ({ status: 200, json: { tags: ['latest'] } }))
+    const service = createDockerReadService(createRecordingTransport(() => ({ status: 200, json: [] })), {
+      ...createDeps(), resolveRegistry: async () => ['10.0.0.2'], fetchTags,
+    })
+    await expect(service.imageTags('../private')).rejects.toThrow('镜像仓库名格式无效')
+    await expect(service.imageTags('redis', 'mirror.example.com')).rejects.toThrow('镜像源无法解析为公网地址')
+    expect(fetchTags).not.toHaveBeenCalled()
+  })
+})
+
 describe('createDockerReadService.action', () => {
   const policyOptions = createDeps()
 
@@ -738,6 +816,39 @@ describe('createDockerReadService.pull', () => {
     await expect(
       service.pull({ name: 'nginx', tag: '1.27' }, new AbortController().signal),
     ).rejects.toMatchObject({ status: 400, message: 'denied' })
+  })
+
+  it('Engine 拉取尚未结束时就把分块进度推给调用方', async () => {
+    let listCalls = 0
+    const transport = createRecordingTransport(({ method, path }) => {
+      if (method === 'GET' && path === '/v1.41/images/json') {
+        listCalls += 1
+        return { status: 200, json: listCalls === 1 ? [] : [{ Id: IMAGE_ID }] }
+      }
+      if (method === 'GET' && /^\/v1\.41\/images\/[^/]+\/json$/.test(path)) {
+        return { status: 200, json: baseImageInspect({ RepoTags: ['nginx:1.27'] }) }
+      }
+      throw new Error(`未录制的请求：${method} ${path}`)
+    })
+    let release!: () => void
+    const held = new Promise<void>((resolve) => { release = resolve })
+    const bytes = encoder.encode('{"status":"Downloading","id":"abc","progressDetail":{"current":50,"total":100}}\n')
+    transport.pullCreate = vi.fn(async (input) => {
+      await input.onChunk?.(bytes.slice(0, 19))
+      await input.onChunk?.(bytes.slice(19))
+      await held
+      return { status: 200, chunks: [bytes] }
+    })
+    const updates: unknown[] = []
+    const service = createDockerReadService(transport, { ...createDeps(), resolveRegistry: resolvePublic })
+    const pending = service.pull({ name: 'nginx', tag: '1.27' }, new AbortController().signal, (progress) => {
+      updates.push(progress)
+    })
+    await vi.waitFor(() => expect(updates).toEqual([{
+      phase: 'downloading', layerId: 'abc', currentBytes: 50, totalBytes: 100,
+    }]))
+    release()
+    await expect(pending).resolves.toMatchObject({ name: 'nginx', tag: '1.27' })
   })
 
   it('第二个 pull 在第一个未完成时 409', async () => {

@@ -1,4 +1,7 @@
+import type { ImagePullProgress } from '@elysian/contracts'
+
 const MAX_PULL_PROGRESS_BYTES = 64 * 1024 * 1024
+const MAX_PULL_LINE_LENGTH = 128 * 1024
 
 export type PullProgressResult = { ok: true } | { ok: false; error: string }
 
@@ -7,12 +10,81 @@ function pullErrorFromLine(line: string): string | null {
   try {
     const value = JSON.parse(line) as unknown
     if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
-    const error = (value as { error?: unknown }).error
+    const frame = value as { error?: unknown; errorDetail?: { message?: unknown } }
+    const error = typeof frame.errorDetail?.message === 'string' ? frame.errorDetail.message : frame.error
     if (typeof error !== 'string' || error.length === 0) return null
     return error
   } catch {
     return null
   }
+}
+
+function progressFromLine(line: string): ImagePullProgress | null {
+  let frame: unknown
+  try { frame = JSON.parse(line) } catch { return null }
+  if (frame === null || typeof frame !== 'object' || Array.isArray(frame)) return null
+  const value = frame as { status?: unknown; id?: unknown; progressDetail?: { current?: unknown; total?: unknown } }
+  if (typeof value.status !== 'string') return null
+  const status = value.status
+  const phase: ImagePullProgress['phase'] =
+    status === 'Downloading' ? 'downloading' :
+    status === 'Extracting' ? 'extracting' :
+    status === 'Pulling fs layer' || status === 'Waiting' || status.startsWith('Pulling from ') ? 'preparing' : 'finalizing'
+  const layerId = typeof value.id === 'string' && value.id.length <= 64 && !status.startsWith('Pulling from ')
+    ? value.id : undefined
+  const current = value.progressDetail?.current
+  const total = value.progressDetail?.total
+  const hasBytes = (phase === 'downloading' || phase === 'extracting') &&
+    typeof current === 'number' && Number.isFinite(current) && current >= 0 &&
+    typeof total === 'number' && Number.isFinite(total) && total > 0
+  return {
+    phase,
+    ...(layerId ? { layerId } : {}),
+    ...(hasBytes ? { currentBytes: Math.min(current, total), totalBytes: total } : {}),
+  }
+}
+
+/** 按行增量解码 Engine 的 JSON 进度；跨块 UTF-8 与分行均不丢帧。 */
+export function createPullProgressDecoder(onProgress: (progress: ImagePullProgress) => void | Promise<void>) {
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let lastKey = ''
+
+  async function consume(line: string): Promise<void> {
+    if (line.endsWith('\r')) line = line.slice(0, -1)
+    const error = pullErrorFromLine(line)
+    if (error) throw new Error(error)
+    const progress = progressFromLine(line)
+    if (!progress) return
+    const percent = progress.totalBytes
+      ? Math.floor((progress.currentBytes ?? 0) / progress.totalBytes * 100)
+      : null
+    const key = `${progress.phase}:${progress.layerId ?? ''}:${percent ?? 'unknown'}`
+    if (key === lastKey) return
+    lastKey = key
+    await onProgress(progress)
+  }
+
+  async function feed(chunk: Uint8Array): Promise<void> {
+    buffer += decoder.decode(chunk, { stream: true })
+    for (;;) {
+      const newline = buffer.indexOf('\n')
+      if (newline === -1) break
+      const line = buffer.slice(0, newline)
+      buffer = buffer.slice(newline + 1)
+      if (line.length > MAX_PULL_LINE_LENGTH) throw new Error('拉取进度行过大')
+      await consume(line)
+    }
+    if (buffer.length > MAX_PULL_LINE_LENGTH) throw new Error('拉取进度行过大')
+  }
+
+  async function finish(): Promise<void> {
+    buffer += decoder.decode()
+    if (buffer) await consume(buffer)
+    buffer = ''
+  }
+
+  return { feed, finish }
 }
 
 export function readPullProgress(chunks: readonly Uint8Array[]): PullProgressResult {

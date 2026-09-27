@@ -1,6 +1,7 @@
 import { BlockList, isIP } from 'node:net'
 
 export type RegistryResolver = (hostname: string) => Promise<readonly string[]>
+export type ValidatedRegistryTarget = { host: string; addresses: readonly string[] }
 
 const RESOLVE_PUBLIC_ERROR = '镜像源无法解析为公网地址'
 const HTTP_NOT_ALLOWED = '镜像源须使用 https 协议或省略协议'
@@ -116,12 +117,20 @@ function parseRegistryInput(raw: string): string {
   if (!rest) {
     throw new Error(DISALLOWED_HOST)
   }
+  if (/[\/?#@\\]/.test(rest) || !/^[a-zA-Z0-9.-]+(?::\d{1,5})?$/.test(rest)) {
+    throw new Error(DISALLOWED_HOST)
+  }
   const { hostname } = splitHostPort(rest)
   assertResolvableHostname(hostname)
+  if (hostname.split('.').some((label) => !/^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?$/.test(label))) {
+    throw new Error(DISALLOWED_HOST)
+  }
+  const port = rest.slice(hostname.length + 1)
+  if (port && (Number(port) < 1 || Number(port) > 65535)) throw new Error(DISALLOWED_HOST)
   return rest
 }
 
-async function assertResolvesToPublic(hostname: string, resolve: RegistryResolver): Promise<void> {
+async function assertResolvesToPublic(hostname: string, resolve: RegistryResolver): Promise<readonly string[]> {
   let addresses: readonly string[]
   try {
     addresses = await resolve(hostname)
@@ -136,11 +145,16 @@ async function assertResolvesToPublic(hostname: string, resolve: RegistryResolve
       throw new Error(RESOLVE_PUBLIC_ERROR)
     }
   }
+  return addresses
+}
+
+export async function validateRegistryTarget(raw: string, resolve: RegistryResolver): Promise<{ host: string; addresses: readonly string[] }> {
+  const host = parseRegistryInput(raw)
+  const { hostname } = splitHostPort(host)
+  const addresses = await assertResolvesToPublic(hostname, resolve)
+  return { host, addresses }
 }
 
 export async function validateRegistry(raw: string, resolve: RegistryResolver): Promise<string> {
-  const host = parseRegistryInput(raw)
-  const { hostname } = splitHostPort(host)
-  await assertResolvesToPublic(hostname, resolve)
-  return host
+  return (await validateRegistryTarget(raw, resolve)).host
 }

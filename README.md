@@ -21,7 +21,7 @@ bun run typecheck  # Web 应用与契约包的类型检查
 
 ### Docker 开发（宿主机编辑，容器内跑）
 
-源码通过挂载同步到 Ubuntu 容器；改代码走 Vite 热更新，不必每次重建镜像。依赖装在容器 volume 里，不会覆盖宿主机的 `node_modules`。容器页以 DooD 方式接入真实 Engine：编排把宿主机 `/var/run/docker.sock` 以文件级 bind 挂进 web 容器，面板直接操作宿主 dockerd，容器页列出与启停的是宿主上的全部容器与镜像（持有宿主 socket 等价于宿主 root 权限，自身容器的危险操作由服务端识别并拒绝）。宿主机是 macOS 时，Docker Desktop 默认只共享 `/Users`、`/Volumes`、`/private`、`/tmp`，启动前必须设置 `ELYSIAN_DOCKER_MOUNT_ROOT` 为已共享路径（如 `/Users/<用户>/Elysian-srv`），未设置时 `docker compose up` 会因挂载报错退出；Linux 真机默认 `/srv` 成立。在 Docker 运行时（`ELYSIAN_DOCKER=1`）容器页的列表、镜像、启停与终端走真实 Engine（`/api/docker`）；宿主机本地 `bun run dev` 仍用 mock 容器数据。容器内资源指标历史写入命名 volume `elysian_metrics`，挂载到 `/var/lib/elysian`（SQLite 文件 `metrics.sqlite`），不会落在宿主绑定目录 `.:/app` 下。本地 `bun run dev`（未设 `ELYSIAN_DOCKER`）时仪表盘筛选栏会显示「演示数据」；`docker compose up` 注入 `ELYSIAN_DOCKER=1` 后该标识隐藏，图表走容器内采样与持久化库。
+源码通过挂载同步到 Ubuntu 容器；改代码走 Vite 热更新，不必每次重建镜像。依赖装在容器 volume 里，不会覆盖宿主机的 `node_modules`。容器页以 DooD 方式接入真实 Engine：编排把宿主机 `/var/run/docker.sock` 以文件级 bind 挂进 web 容器，面板直接操作宿主 dockerd，容器页列出与启停的是宿主上的全部容器与镜像（持有宿主 socket 等价于宿主 root 权限，自身容器的停止与重启由服务端识别并拒绝；运行中的自身容器允许打开终端）。宿主机是 macOS 时，Docker Desktop 默认只共享 `/Users`、`/Volumes`、`/private`、`/tmp`，启动前必须设置 `ELYSIAN_DOCKER_MOUNT_ROOT` 为已共享路径（如 `/Users/<用户>/Elysian-srv`），未设置时 `docker compose up` 会因挂载报错退出；Linux 真机默认 `/srv` 成立。在 Docker 运行时（`ELYSIAN_DOCKER=1`）容器页的列表、镜像、启停与终端走真实 Engine（`/api/docker`）；宿主机本地 `bun run dev` 仍用 mock 容器数据。容器内资源指标历史写入命名 volume `elysian_metrics`，挂载到 `/var/lib/elysian`（SQLite 文件 `metrics.sqlite`），不会落在宿主绑定目录 `.:/app` 下。本地 `bun run dev`（未设 `ELYSIAN_DOCKER`）时仪表盘筛选栏会显示「演示数据」；`docker compose up` 注入 `ELYSIAN_DOCKER=1` 后该标识隐藏，图表走容器内采样与持久化库。
 
 ```bash
 # macOS Docker Desktop 须先设对齐根（任选 /Users 下已共享路径）：

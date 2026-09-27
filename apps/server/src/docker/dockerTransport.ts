@@ -13,6 +13,7 @@ export type DockerTransport = {
     timeoutMs: number
     maxBytes: number
     signal?: AbortSignal
+    onChunk?: (chunk: Uint8Array) => void | Promise<void>
   }): Promise<{ status: number; chunks: readonly Uint8Array[] }>
   openStream?(input: {
     method: string
@@ -132,6 +133,7 @@ function pullCreateOverSocket(
     timeoutMs: number
     maxBytes: number
     signal?: AbortSignal
+    onChunk?: (chunk: Uint8Array) => void | Promise<void>
   },
 ): Promise<{ status: number; chunks: readonly Uint8Array[] }> {
   return new Promise((resolve, reject) => {
@@ -160,7 +162,18 @@ function pullCreateOverSocket(
             fail(new Error('拉取进度过大'))
             return
           }
-          chunks.push(new Uint8Array(chunk))
+          const bytes = new Uint8Array(chunk)
+          chunks.push(bytes)
+          if (input.onChunk) {
+            res.pause()
+            void Promise.resolve()
+              .then(() => input.onChunk?.(bytes))
+              .then(() => { if (!settled) res.resume() })
+              .catch((error: unknown) => {
+                req.destroy()
+                fail(error instanceof Error ? error : new Error(String(error)))
+              })
+          }
         })
         res.on('end', () => {
           if (settled) return

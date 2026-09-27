@@ -94,6 +94,12 @@ export function createDockerApp(deps: DockerAppDeps): Hono {
   app.get('/status', () => sendJson(200, { ok: true }))
   app.get('/containers', async () => sendJson(200, { containers: await service.listContainers() }))
   app.get('/images', async () => sendJson(200, { images: await service.listImages() }))
+  app.get('/images/search', async (c) => sendJson(200, await service.searchImages(
+    c.req.query('term') ?? '', c.req.query('registry'),
+  )))
+  app.get('/images/tags', async (c) => sendJson(200, await service.imageTags(
+    c.req.query('name') ?? '', c.req.query('registry'),
+  )))
   app.get('/policy', async () => sendJson(200, await service.policy()))
 
   if (eventsHub) {
@@ -210,6 +216,31 @@ export function createDockerApp(deps: DockerAppDeps): Hono {
     return sendJson(200, image)
   })
 
+  app.post('/images/pull/stream', async (c) => {
+    const body = await readJsonBody(c.req.raw)
+    c.header('Content-Type', 'application/x-ndjson; charset=utf-8')
+    c.header('Cache-Control', 'no-cache, no-transform')
+    c.header('X-Accel-Buffering', 'no')
+    return stream(c, async (output) => {
+      try {
+        const image = await service.pull(body, c.req.raw.signal, async (progress) => {
+          await output.write(`${JSON.stringify({ type: 'progress', progress })}\n`)
+        })
+        await output.write(`${JSON.stringify({ type: 'result', image })}\n`)
+      } catch (error) {
+        if (!c.req.raw.signal.aborted) {
+          try {
+            await output.write(`${JSON.stringify({
+              type: 'error', error: error instanceof Error ? error.message : '拉取镜像失败',
+            })}\n`)
+          } catch {
+            // 客户端断开后写流失败，服务端会话由请求 AbortSignal 清理。
+          }
+        }
+      }
+    })
+  })
+
   app.delete('/images/:id', async (c) => {
     const id = c.req.param('id')
     if (!CONTAINER_ID_PATTERN.test(id)) {
@@ -237,7 +268,7 @@ export function createDockerApp(deps: DockerAppDeps): Hono {
     }
 
     try {
-      await assertContainerTerminalAllowed(transport, id, deps.selfContainerId ?? null)
+      await assertContainerTerminalAllowed(transport, id)
     } catch (error) {
       if (error instanceof InvalidRequestError) {
         return sendJson(error.status, { error: error.message })

@@ -17,7 +17,10 @@ export function SelectDropdown<T extends string>({
   onSelect,
   fallbackLabel,
   fullWidth = false,
+  disabled = false,
+  id,
 }: {
+  id?: string
   ariaLabel: string
   /** 触发器里的字段名前缀，如「分类」；与当前值并排显示。 */
   label?: string
@@ -31,6 +34,7 @@ export function SelectDropdown<T extends string>({
   fallbackLabel?: string
   /** 表单场景拉满可用宽度；工具栏保持内容宽度。 */
   fullWidth?: boolean
+  disabled?: boolean
 }) {
   const valueLabel =
     (value !== undefined && items.find((item) => item.value === value)?.label) ||
@@ -40,13 +44,15 @@ export function SelectDropdown<T extends string>({
   const selected = active && !fullWidth
   return (
     <DropdownMenu.Root modal={false}>
-      <DropdownMenu.Trigger asChild>
+      <DropdownMenu.Trigger asChild disabled={disabled}>
         <button
+          id={id}
           type="button"
+          disabled={disabled}
           aria-label={`${ariaLabel}：${valueLabel}`}
           className={
             fullWidth
-              ? 'inline-flex w-full items-center justify-between gap-1.5 rounded-lg border border-line bg-surface-raised px-2.5 py-1.5 text-sm text-fg transition-colors hover:border-fg-subtle'
+              ? 'inline-flex w-full items-center justify-between gap-1.5 rounded-lg border border-line bg-surface-raised px-2.5 py-1.5 text-sm text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-60'
               : `inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${
                   selected
                     ? 'border-accent/50 bg-accent/10 text-accent'
@@ -65,7 +71,7 @@ export function SelectDropdown<T extends string>({
         <DropdownMenu.Content
           align="start"
           sideOffset={6}
-          className={`z-[60] rounded-lg border border-line bg-surface p-1 text-sm shadow-lg ${
+          className={`z-[70] max-h-60 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-lg border border-line bg-surface p-1 text-sm shadow-lg ${
             fullWidth ? 'min-w-[var(--radix-dropdown-menu-trigger-width)]' : 'min-w-32 text-xs'
           }`}
         >
@@ -81,7 +87,7 @@ export function SelectDropdown<T extends string>({
                 ) : (
                   <span aria-hidden className="w-[13px]" />
                 )}
-                <span className="tabular-nums">{item.label}</span>
+                <span className="min-w-0 truncate tabular-nums">{item.label}</span>
               </DropdownMenu.RadioItem>
             ))}
           </DropdownMenu.RadioGroup>

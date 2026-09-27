@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Container, ContainerCreateInput, ContainerImage } from '@elysian/contracts'
@@ -22,6 +22,8 @@ function pageGateway(overrides: Partial<ElysianGateway['containers']> = {}): Ely
       list: async () => [...CONTAINERS],
       // listImages 直通真实 mock 数据集：删除镜像要落实到数据集，读种子常量会绕过它。
       listImages: () => base.containers.listImages(),
+      searchImageNames: (term, registry, signal) => base.containers.searchImageNames(term, registry, signal),
+      imageTags: (name, registry, signal) => base.containers.imageTags(name, registry, signal),
       createPolicy: () => base.containers.createPolicy(),
       connectTerminal: (id, handlers) => base.containers.connectTerminal(id, handlers),
       sendTerminalInput: (sessionId, line) => base.containers.sendTerminalInput(sessionId, line),
@@ -41,7 +43,7 @@ function pageGateway(overrides: Partial<ElysianGateway['containers']> = {}): Ely
 
 beforeEach(() => {
   useContainersStore.setState({
-    status: 'idle', errorMessage: undefined, containers: [], images: [], samples: {},
+    status: 'idle', errorMessage: undefined, containers: [], images: [], imageRefreshStatus: 'idle', imageRefreshMessage: undefined, samples: {},
     view: 'grid', statusFilter: 'all', search: '', detailContainerId: undefined,
     terminal: undefined, busyActions: [], createOpen: false, creating: false, removingImageIds: [],
     pullingImage: undefined,
@@ -274,6 +276,36 @@ describe('拉取镜像', () => {
     await user.click(screen.getByRole('button', { name: '镜像' }))
     return { user, table: await screen.findByRole('table', { name: '镜像列表' }) }
   }
+
+  it('每次选择镜像页签及点击刷新按钮都重新读取列表', async () => {
+    const listImages = vi.fn(async () => [])
+    const user = userEvent.setup()
+    renderApp('/containers', { gateway: pageGateway({ listImages }) })
+    await screen.findByRole('list', { name: '容器列表' })
+    expect(listImages).toHaveBeenCalledTimes(1)
+    await user.click(screen.getByRole('button', { name: '镜像' }))
+    await waitFor(() => expect(listImages).toHaveBeenCalledTimes(2))
+    await user.click(screen.getByRole('button', { name: '镜像' }))
+    await waitFor(() => expect(listImages).toHaveBeenCalledTimes(3))
+    await user.click(screen.getByRole('button', { name: '刷新镜像' }))
+    await waitFor(() => expect(listImages).toHaveBeenCalledTimes(4))
+    expect(screen.getByRole('status')).toHaveTextContent('镜像列表已刷新')
+  })
+
+  it('镜像拉取行显示 Engine 提供的层进度与真实百分比', async () => {
+    await openImagesView()
+    await act(async () => {
+      useContainersStore.setState({ pullingImage: {
+        name: 'redis', tag: 'latest', progress: {
+          phase: 'downloading', layerId: 'abcdef1234567890', currentBytes: 5 * 1024 * 1024, totalBytes: 10 * 1024 * 1024,
+        },
+      } })
+    })
+    expect(screen.getByRole('progressbar', { name: '镜像层拉取进度' })).toHaveAttribute('aria-valuenow', '50')
+    expect(screen.getByText(/下载镜像层 abcdef123456/)).toBeInTheDocument()
+    expect(screen.getByText('5.0 MB / 10.0 MB')).toBeInTheDocument()
+    expect(screen.getByText('50%')).toBeInTheDocument()
+  })
 
   it('镜像视图有拉取入口，打开弹窗见演示徽章、源地址与引用输入', async () => {
     const { user } = await openImagesView()

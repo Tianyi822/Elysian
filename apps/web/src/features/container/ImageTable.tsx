@@ -10,6 +10,11 @@ import { registryHost } from './imageReference'
 
 const TH = 'px-4 py-3 text-sm font-medium'
 
+function formatPullBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${Math.round(bytes / 1024)} KB`
+}
+
 /**
  * 镜像视图：固定列宽表格，行内两行布局撑起可读高度。
  * 删除为演示动作：只允许删除未被引用的镜像，经确认对话框后落实到 mock 数据集。
@@ -123,19 +128,48 @@ export function ImageTable({
               <td colSpan={5} className="px-4 py-3">
                 <div className="flex items-center gap-2 text-sm text-fg-muted">
                   <Loader2 aria-hidden size={14} className="shrink-0 animate-spin text-accent" />
-                  <span className="shrink-0 font-mono text-fg">
+                  <span className="min-w-0 truncate font-mono text-fg">
                     {/* 完整拉取路径：源主机名 + 引用，与弹窗预览同一形状。 */}
                     {pullingImage.registry ? `${registryHost(pullingImage.registry)}/` : ''}
                     {pullingImage.name}:{pullingImage.tag}
                   </span>
                   <span className="shrink-0 text-xs">拉取中…</span>
-                  {/* 不确定进度条：滑块来回扫，motion-reduce 下静止。 */}
-                  <span
-                    aria-hidden="true"
-                    className="relative h-1 flex-1 overflow-hidden rounded-full bg-surface-raised"
-                  >
-                    <span className="pull-progress absolute inset-y-0 left-0 w-1/3 rounded-full bg-accent/60 motion-reduce:animate-none" />
+                </div>
+                <div className="mt-2 flex items-center gap-3 text-xs text-fg-muted">
+                  <span className="min-w-0 truncate">
+                    {pullingImage.progress?.phase === 'downloading' ? '下载镜像层' :
+                      pullingImage.progress?.phase === 'extracting' ? '解压镜像层' :
+                        pullingImage.progress?.phase === 'finalizing' ? '正在校验并写入镜像' : '正在准备镜像层'}
+                    {pullingImage.progress?.layerId && pullingImage.progress.phase !== 'finalizing'
+                      ? ` ${pullingImage.progress.layerId.slice(0, 12)}` : ''}
                   </span>
+                  {pullingImage.progress?.totalBytes ? (
+                    <span className="shrink-0 tabular-nums">
+                      {formatPullBytes(pullingImage.progress.currentBytes ?? 0)} / {formatPullBytes(pullingImage.progress.totalBytes)}
+                    </span>
+                  ) : null}
+                  {pullingImage.progress?.totalBytes ? (
+                    <span className="shrink-0 font-medium tabular-nums text-fg">
+                      {Math.floor((pullingImage.progress.currentBytes ?? 0) / pullingImage.progress.totalBytes * 100)}%
+                    </span>
+                  ) : null}
+                </div>
+                <div
+                  role="progressbar"
+                  aria-label="镜像层拉取进度"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={pullingImage.progress?.totalBytes
+                    ? Math.floor((pullingImage.progress.currentBytes ?? 0) / pullingImage.progress.totalBytes * 100)
+                    : undefined}
+                  className="relative mt-2 h-1.5 overflow-hidden rounded-full bg-surface-raised"
+                >
+                  {pullingImage.progress?.totalBytes ? (
+                    <span className="absolute inset-y-0 left-0 rounded-full bg-accent transition-[width] duration-150 motion-reduce:transition-none"
+                      style={{ width: `${(pullingImage.progress.currentBytes ?? 0) / pullingImage.progress.totalBytes * 100}%` }} />
+                  ) : (
+                    <span className="pull-progress absolute inset-y-0 left-0 w-1/3 rounded-full bg-accent/60 motion-reduce:animate-none" />
+                  )}
                 </div>
               </td>
             </tr>

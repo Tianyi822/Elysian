@@ -1,8 +1,12 @@
+import { useCallback, useState } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { completeTerminalCommand } from '../../adapters/mock/containerTerminal'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { TerminalShell } from '../../components/terminal/TerminalShell'
 import type { TerminalCompletion } from '../../components/terminal/terminalSession'
+import {
+  clampTerminalFontSize,
+  TERMINAL_FONT_SIZE_DEFAULT,
+} from '../../components/terminal/terminalFontSize'
 import { useContainersStore } from '../../stores/containersStore'
 
 const MOCK_BANNER = '演示终端 · 待接入真实执行'
@@ -23,6 +27,12 @@ export function TerminalWindow() {
   const appendTerminalOutput = useContainersStore((s) => s.appendTerminalOutput)
   const clearTerminalScreen = useContainersStore((s) => s.clearTerminalScreen)
   const closeTerminal = useContainersStore((s) => s.closeTerminal)
+  // 字号是弹窗级视图状态：与平台终端页同一口径（terminalFontSize 像素连续值），不持久化。
+  const [fontSize, setFontSize] = useState(TERMINAL_FONT_SIZE_DEFAULT)
+  const zoomFont = useCallback(
+    (deltaPx: number) => setFontSize((prev) => clampTerminalFontSize(prev + deltaPx)),
+    [],
+  )
 
   if (!terminal || !container) return null
 
@@ -30,7 +40,7 @@ export function TerminalWindow() {
     if (terminal.status === 'connected') {
       return gateway.containers.completeTerminal(terminal.sessionId, draft, cursor)
     }
-    return completeTerminalCommand(draft, cursor)
+    return { draft, cursor }
   }
 
   return (
@@ -41,6 +51,7 @@ export function TerminalWindow() {
       prompt={terminal.prompt}
       sessionKey={terminal.sessionId}
       lines={terminal.lines}
+      interactive={terminal.status === 'connected'}
       history={terminal.history}
       onSubmit={(command) => void submitCommand(gateway, command)}
       complete={complete}
@@ -48,6 +59,8 @@ export function TerminalWindow() {
       onClear={clearTerminalScreen}
       onClose={() => void closeTerminal(gateway)}
       onInterrupt={() => void interruptTerminal(gateway)}
+      fontSize={fontSize}
+      onFontZoom={zoomFont}
       labels={{
         input: '命令输入',
         close: '关闭终端',

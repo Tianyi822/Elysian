@@ -13,6 +13,18 @@ export function runContainerAdapterContract(make: () => ContainerAdapter): void 
       expect(new Set(images.map((i) => i.id)).size).toBe(images.length)
     })
 
+    it('searchImageNames 返回仓库名与可搜索状态', async () => {
+      const result = await make().searchImageNames('red')
+      expect(typeof result.searchable).toBe('boolean')
+      expect(result.names.every((name) => typeof name === 'string' && !name.includes(':'))).toBe(true)
+    })
+
+    it('imageTags 返回版本标签与可查询状态', async () => {
+      const result = await make().imageTags('redis')
+      expect(typeof result.searchable).toBe('boolean')
+      expect(result.tags.every((tag) => typeof tag === 'string' && !tag.includes(':'))).toBe(true)
+    })
+
     it('connectTerminal 后 sendTerminalInput help 收到含可用命令的 output 帧', async () => {
       const adapter = make()
       const containers = await adapter.list()
@@ -29,6 +41,11 @@ export function runContainerAdapterContract(make: () => ContainerAdapter): void 
       expect(output && output.type === 'output' ? output.lines.join(' ') : '').toContain('可用命令')
       await adapter.disconnectTerminal(info.id)
       await expect(adapter.sendTerminalInput(info.id, 'help')).rejects.toThrow('终端会话不存在')
+    })
+
+    it('cancelTerminalConnect（可选）在无 pending 连接时可安全调用', async () => {
+      const adapter = make()
+      adapter.cancelTerminalConnect?.()
     })
 
     it('对已停止容器执行 start 后返回运行中', async () => {

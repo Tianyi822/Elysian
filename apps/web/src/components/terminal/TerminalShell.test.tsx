@@ -14,10 +14,16 @@ function Harness({
   sessionKey = 'session-a',
   complete = (draft: string, cursor: number) => ({ draft, cursor }),
   onClose = () => {},
+  fontSize,
+  onFontZoom,
+  interactive = true,
 }: {
   sessionKey?: string
   complete?: (draft: string, cursor: number) => { draft: string; cursor: number }
   onClose?: () => void
+  fontSize?: number
+  onFontZoom?: (deltaPx: number) => void
+  interactive?: boolean
 }) {
   const [lines, setLines] = useState<readonly TerminalLine[]>([
     { kind: 'banner', text: '欢迎 · mock 数据' },
@@ -51,6 +57,9 @@ function Harness({
         }
         onClear={() => setLines([])}
         onClose={onClose}
+        fontSize={fontSize}
+        onFontZoom={onFontZoom}
+        interactive={interactive}
         labels={{
           input: '语句输入',
           close: '关闭会话',
@@ -72,6 +81,17 @@ describe('终端交互内核', () => {
     expect(within(dialog).getByText('db-main')).toBeInTheDocument()
     const input = within(dialog).getByLabelText('语句输入')
     expect(document.activeElement).toBe(input)
+  })
+
+  it('连接中由关闭按钮接收焦点，连接后聚焦输入框，弹窗容器不画蓝框', () => {
+    const view = render(<Harness interactive={false} />)
+    const dialog = screen.getByRole('dialog', { name: '演示会话' })
+    expect(dialog).toHaveClass('focus-visible:outline-none')
+    expect(screen.getByRole('button', { name: '关闭会话' })).toHaveFocus()
+    view.rerender(<Harness interactive />)
+    expect(screen.getByLabelText('语句输入')).toHaveFocus()
+    view.rerender(<Harness interactive={false} />)
+    expect(screen.getByRole('button', { name: '关闭会话' })).toHaveFocus()
   })
 
   it('回车提交后，日志里的输入行是提示符与裸命令在同一行拼接', async () => {
@@ -158,6 +178,24 @@ describe('终端交互内核', () => {
     view.rerender(<Harness sessionKey="session-b" />)
 
     expect(input).toHaveValue('')
+  })
+
+  it('fontSize 与 onFontZoom 透传给视口：字号落到日志区，Ctrl+滚轮触发缩放回调', () => {
+    const onFontZoom = vi.fn()
+    render(<Harness fontSize={14} onFontZoom={onFontZoom} />)
+    const log = screen.getByRole('log')
+    expect(log).toHaveStyle({ fontSize: '14px' })
+
+    fireEvent.wheel(log, { deltaY: -120, ctrlKey: true })
+    expect(onFontZoom).toHaveBeenCalledWith(1)
+
+    fireEvent.wheel(log, { deltaY: 120, ctrlKey: true })
+    expect(onFontZoom).toHaveBeenCalledWith(-1)
+  })
+
+  it('不传 fontSize 时日志区用终端基准字号，滚轮保持原生滚动', () => {
+    render(<Harness />)
+    expect(screen.getByRole('log')).toHaveStyle({ fontSize: '12px' })
   })
 })
 

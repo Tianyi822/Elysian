@@ -11,6 +11,7 @@ import { createDockerReadService } from './dockerService.ts'
 import { resolveSelfContainerId } from './selfContainer.ts'
 import { createDockerExecSessions } from './dockerExecSessions.ts'
 import { createContainerExecRunner } from './dockerExecRunner.ts'
+import { listDockerCommands, listDockerFiles } from './dockerExec.ts'
 import type { DockerAppDeps } from './dockerRoutes.ts'
 
 /*
@@ -147,8 +148,10 @@ export async function createDockerHostDeps(options: DockerHostDepsOptions = {}):
       hostLabel: containerId.slice(0, 13),
       homeDir: '/',
     }),
-    listDir: async () => [],
-    listCommands: async () => [],
+    listDir: (containerId, path) =>
+      listDockerFiles(createContainerExecRunner(socketPath, containerId), path),
+    listCommands: (containerId, kind) =>
+      listDockerCommands(createContainerExecRunner(socketPath, containerId), kind),
   })
 
   return {

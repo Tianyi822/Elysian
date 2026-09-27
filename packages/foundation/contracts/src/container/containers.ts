@@ -83,6 +83,14 @@ export type ContainerImage = {
   otherTags?: readonly string[]
 }
 
+/** Docker 拉取流中单个镜像层的实时进度；数值只来自 Engine 的 progressDetail。 */
+export type ImagePullProgress = {
+  phase: 'preparing' | 'downloading' | 'extracting' | 'finalizing'
+  layerId?: string
+  currentBytes?: number
+  totalBytes?: number
+}
+
 /** 容器资源采样的单项（事件 container/sample 的载荷成员）。 */
 export type ContainerSample = {
   containerId: string

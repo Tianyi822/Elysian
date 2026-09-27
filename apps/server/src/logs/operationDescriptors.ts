@@ -402,6 +402,15 @@ export const OPERATION_DESCRIPTORS: Readonly<Record<string, OperationDescriptor>
       return name === null || tag === null ? null : `${name}:${tag}`
     },
   },
+  [`POST ${DOCKER_MOUNT}/images/pull/stream`]: {
+    category: 'containers',
+    action: '发起镜像拉取',
+    summarize: ({ body }) => {
+      const name = text(body, 'name')
+      const tag = text(body, 'tag')
+      return name === null || tag === null ? null : `${name}:${tag}`
+    },
+  },
   [`DELETE ${DOCKER_MOUNT}/images/:id`]: {
     category: 'containers',
     action: '删除镜像',

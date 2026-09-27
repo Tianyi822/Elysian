@@ -3,6 +3,7 @@ import type {
   ContainerAction,
   ContainerCreateInput,
   ContainerImage,
+  ImagePullProgress,
   ContainerStatus,
   EnvPair,
   PortMapping,
@@ -460,6 +461,70 @@ async function requestNoContent(url: string, init?: RequestInit): Promise<void> 
   }
 }
 
+async function readImagePullStream(response: Response, onProgress?: (progress: ImagePullProgress) => void): Promise<ContainerImage> {
+  if (!response.body) throw new Error('镜像拉取未返回进度流')
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let image: ContainerImage | undefined
+  let complete = false
+
+  const consume = (line: string) => {
+    if (!line.trim()) return
+    let frame: unknown
+    try { frame = JSON.parse(line) } catch { throw new Error('镜像拉取进度格式无效') }
+    if (!frame || typeof frame !== 'object' || !('type' in frame)) throw new Error('镜像拉取进度格式无效')
+    if (frame.type === 'error') {
+      throw new Error('error' in frame && typeof frame.error === 'string' ? frame.error : '镜像拉取失败')
+    }
+    if (frame.type === 'result' && 'image' in frame) {
+      image = parseContainerImage(frame.image)
+      return
+    }
+    if (frame.type === 'progress' && 'progress' in frame && frame.progress && typeof frame.progress === 'object') {
+      const value = frame.progress as Partial<ImagePullProgress>
+      if (value.phase !== 'preparing' && value.phase !== 'downloading' && value.phase !== 'extracting' && value.phase !== 'finalizing') {
+        throw new Error('镜像拉取进度格式无效')
+      }
+      onProgress?.({
+        phase: value.phase,
+        ...(typeof value.layerId === 'string' ? { layerId: value.layerId } : {}),
+        ...(typeof value.currentBytes === 'number' && typeof value.totalBytes === 'number' &&
+          Number.isFinite(value.currentBytes) && Number.isFinite(value.totalBytes) && value.totalBytes > 0
+          ? { currentBytes: Math.max(0, Math.min(value.currentBytes, value.totalBytes)), totalBytes: value.totalBytes } : {}),
+      })
+      return
+    }
+    throw new Error('镜像拉取进度格式无效')
+  }
+
+  try {
+    for (;;) {
+      let result: ReadableStreamReadResult<Uint8Array>
+      try { result = await reader.read() } catch { throw new Error('镜像拉取连接中断') }
+      if (result.done) break
+      buffer += decoder.decode(result.value, { stream: true })
+      for (;;) {
+        const newline = buffer.indexOf('\n')
+        if (newline === -1) break
+        const line = buffer.slice(0, newline)
+        buffer = buffer.slice(newline + 1)
+        if (line.length > 128 * 1024) throw new Error('镜像拉取进度行过大')
+        consume(line)
+      }
+      if (buffer.length > 128 * 1024) throw new Error('镜像拉取进度行过大')
+    }
+    buffer += decoder.decode()
+    if (buffer) consume(buffer)
+    if (!image) throw new Error('镜像拉取连接提前结束')
+    complete = true
+    return image
+  } finally {
+    if (!complete) await reader.cancel().catch(() => undefined)
+    reader.releaseLock()
+  }
+}
+
 /** Docker 运行时的容器只读 adapter：list、listImages 与 createPolicy 走 /api/docker。 */
 export function createHttpContainersAdapter(
   baseUrl = '/api/docker',
@@ -476,6 +541,28 @@ export function createHttpContainersAdapter(
       return parseContainerImageListResponse(await requestJson(`${baseUrl}/images`))
     },
 
+    async searchImageNames(term, registry, signal) {
+      const params = new URLSearchParams({ term })
+      if (registry?.trim()) params.set('registry', registry.trim())
+      const result = await requestJson(`${baseUrl}/images/search?${params}`, { signal })
+      if (!result || typeof result !== 'object' || !('names' in result) || !Array.isArray(result.names) ||
+        !result.names.every((name) => typeof name === 'string') || !('searchable' in result) || typeof result.searchable !== 'boolean') {
+        throw new Error('镜像搜索响应格式无效')
+      }
+      return { names: result.names as string[], searchable: result.searchable }
+    },
+
+    async imageTags(name, registry, signal) {
+      const params = new URLSearchParams({ name })
+      if (registry?.trim()) params.set('registry', registry.trim())
+      const result = await requestJson(`${baseUrl}/images/tags?${params}`, { signal })
+      if (!result || typeof result !== 'object' || !('tags' in result) || !Array.isArray(result.tags) ||
+        !result.tags.every((tag) => typeof tag === 'string') || !('searchable' in result) || typeof result.searchable !== 'boolean') {
+        throw new Error('镜像版本响应格式无效')
+      }
+      return { tags: result.tags as string[], searchable: result.searchable }
+    },
+
     async createPolicy() {
       return parseContainerPolicyResponse(await requestJson(`${baseUrl}/policy`))
     },
@@ -485,6 +572,7 @@ export function createHttpContainersAdapter(
     interruptTerminal: terminal.interruptTerminal,
     completeTerminal: terminal.completeTerminal,
     disconnectTerminal: terminal.disconnectTerminal,
+    cancelTerminalConnect: terminal.cancelTerminalConnect,
 
     async requestAction(containerId, action: ContainerAction) {
       return parseContainer(
@@ -513,14 +601,22 @@ export function createHttpContainersAdapter(
       })
     },
 
-    async pullImage(input) {
-      return parseContainerImage(
-        await requestJson(`${baseUrl}/images/pull`, {
+    async pullImage(input, onProgress) {
+      let response: Response
+      try {
+        response = await fetch(`${baseUrl}/images/pull/stream`, {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: { 'content-type': 'application/json', accept: 'application/x-ndjson' },
           body: JSON.stringify(input),
-        }),
-      )
+        })
+      } catch {
+        throw new Error('容器管理请求网络失败')
+      }
+      if (!response.ok) {
+        const detail = await readErrorDetail(response)
+        throw new Error(detail ?? `镜像拉取请求失败：HTTP ${response.status}`)
+      }
+      return readImagePullStream(response, onProgress)
     },
     watchLive,
   }

@@ -54,6 +54,29 @@ describe('自绘单选下拉', () => {
     expect(props.onSelect).toHaveBeenCalledWith('files')
   })
 
+  it('键盘方向键可选值，Escape 关闭菜单并返回触发器', async () => {
+    const user = userEvent.setup()
+    const props = renderDropdown()
+    const trigger = screen.getByRole('button', { name: '操作分类筛选：全部' })
+    trigger.focus()
+    await user.keyboard('{Enter}')
+    expect(screen.getByRole('menu')).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+    await user.keyboard('{Enter}{ArrowDown}{Enter}')
+    expect(props.onSelect).toHaveBeenCalledWith('security')
+  })
+
+  it('禁用时不打开菜单', async () => {
+    const user = userEvent.setup()
+    renderDropdown({ disabled: true })
+    const trigger = screen.getByRole('button', { name: '操作分类筛选：全部' })
+    expect(trigger).toBeDisabled()
+    await user.click(trigger)
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+
   it('active 时触发器进入 accent 描边态，未激活时不走 accent', () => {
     const { rerender } = render(
       <SelectDropdown<Value> ariaLabel="操作分类筛选" items={ITEMS} value="all" onSelect={() => {}} />,

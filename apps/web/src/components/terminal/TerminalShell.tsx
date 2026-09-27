@@ -1,5 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { TerminalViewport } from './TerminalViewport'
 import type { TerminalCompletion, TerminalLine } from './terminalSession'
 
@@ -31,6 +31,14 @@ export type TerminalShellProps = {
   onClose: () => void
   /** Ctrl+C 的领域侧通道；不传时仅本地 ^C 外观（如 SQL 弹窗）。 */
   onInterrupt?: () => void
+  interactive?: boolean
+  /** 日志区字号（px），由弹窗持有；缺省为终端基准字号。 */
+  fontSize?: number
+  /**
+   * Ctrl/Cmd + 滚轮的字号缩放通道（正值放大、负值缩小）。
+   * 可选：不传则滚轮保持原生滚动（如 SQL 弹窗）。
+   */
+  onFontZoom?: (deltaPx: number) => void
   labels: {
     input: string
     close: string
@@ -109,10 +117,18 @@ export function TerminalShell({
   onClear,
   onClose,
   onInterrupt,
+  interactive = true,
+  fontSize,
+  onFontZoom,
   labels,
 }: TerminalShellProps) {
   const [confirmOpen, setConfirmOpen] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
+  const closeRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    if (!interactive) closeRef.current?.focus()
+  }, [interactive])
 
   return (
     <Dialog.Root open onOpenChange={() => {/* 外部来源全部忽略，只能走关闭确认 */}}>
@@ -124,7 +140,13 @@ export function TerminalShell({
           onEscapeKeyDown={(event) => event.preventDefault()}
           onPointerDownOutside={(event) => event.preventDefault()}
           onInteractOutside={(event) => event.preventDefault()}
-          className="fixed left-1/2 top-1/2 z-[55] flex h-[min(44rem,calc(100vh-3rem))] w-[min(72rem,calc(100vw-3rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line bg-bg shadow-2xl"
+          onOpenAutoFocus={(event) => {
+            if (!interactive) {
+              event.preventDefault()
+              closeRef.current?.focus()
+            }
+          }}
+          className="fixed left-1/2 top-1/2 z-[55] flex h-[min(44rem,calc(100vh-3rem))] w-[min(72rem,calc(100vw-3rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line bg-bg shadow-2xl focus-visible:outline-none"
         >
           <Dialog.Title className="sr-only">{title}</Dialog.Title>
           <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
@@ -135,6 +157,7 @@ export function TerminalShell({
               <span className="text-fg-muted">{subject}</span>
             </div>
             <button
+              ref={closeRef}
               type="button"
               onClick={() => setConfirmOpen(true)}
               className="rounded-lg border border-line px-2 py-1 text-xs text-fg-muted transition-colors hover:text-fg"
@@ -153,6 +176,9 @@ export function TerminalShell({
             onAppendOutput={onAppendOutput}
             onClear={onClear}
             onInterrupt={onInterrupt}
+            interactive={interactive}
+            fontSize={fontSize}
+            onFontZoom={onFontZoom}
             inputLabel={labels.input}
             trapRootRef={contentRef}
           />

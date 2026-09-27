@@ -122,8 +122,27 @@ describe('终端嵌入视口', () => {
       />,
     )
     const log = screen.getByRole('log')
-    expect(log).toHaveClass('whitespace-pre-wrap')
+    expect(log).toHaveClass('whitespace-pre', 'overflow-auto')
+    expect(log).not.toHaveClass('break-all')
     expect(log.querySelector('p')?.textContent).toBe(aligned)
+  })
+
+  it('未连接时仅显示原样文本输出，输入禁用且不绘制活动提示符', () => {
+    const json = '{"items":[{"name":"巡检","ok":true}]}'
+    render(
+      <TerminalViewport
+        prompt="$ " sessionKey="pending" interactive={false}
+        lines={[{ kind: 'output', text: json }, { kind: 'output', text: 'a   b' }]}
+        history={[]} onSubmit={() => {}} complete={(draft, cursor) => ({ draft, cursor })}
+        onAppendOutput={() => {}} onClear={() => {}} inputLabel="命令输入"
+      />,
+    )
+    const log = screen.getByRole('log')
+    expect(log).toHaveClass('whitespace-pre', 'overflow-auto')
+    expect(log.querySelectorAll('p')).toHaveLength(2)
+    expect(log.querySelectorAll('p')[0]?.textContent).toBe(json)
+    expect(log.querySelectorAll('p')[1]?.textContent).toBe('a   b')
+    expect(screen.getByLabelText('命令输入')).toBeDisabled()
   })
 
   it('宽字符各占固定两格宽的盒子，半角文本不拆分；空行保留一行高', () => {

@@ -1,11 +1,9 @@
 import { InvalidRequestError } from '../shared/errors.ts'
 import type { DockerTransport } from './dockerTransport.ts'
-import { isSelfContainerInspect } from './selfContainer.ts'
 
 const API_PREFIX = '/v1.41'
 const INSPECT_TIMEOUT_MS = 10_000
 const CONTAINER_NOT_FOUND_MESSAGE = '容器不存在'
-const ACTION_SELF_MESSAGE = '不能对面板所在的容器执行该操作'
 export const TERMINAL_NOT_RUNNING_MESSAGE = '只有运行中的容器可以打开终端'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -39,18 +37,12 @@ async function inspectContainer(transport: DockerTransport, id: string): Promise
   return response.json
 }
 
-/** 容器终端升级前五项检查中的业务校验（同源与整片 503 由路由前置处理）。 */
+/** 容器终端升级前的业务校验：包括面板自身在内，运行中的容器均可连接。 */
 export async function assertContainerTerminalAllowed(
   transport: DockerTransport,
   id: string,
-  selfContainerId: string | null | undefined,
 ): Promise<void> {
   const inspect = await inspectContainer(transport, id)
-  // 自我保护以 inspect 解析出的完整 Id 为准：容器名、前缀等寻址形态解析后都归一到
-  // 同一 Id，按名寻址不再绕过守卫。
-  if (isSelfContainerInspect(inspect, selfContainerId)) {
-    throw new InvalidRequestError(400, ACTION_SELF_MESSAGE)
-  }
   const status = containerRunningStatus(inspect)
   if (status !== 'running') {
     throw new InvalidRequestError(409, TERMINAL_NOT_RUNNING_MESSAGE)

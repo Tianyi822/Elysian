@@ -45,6 +45,11 @@ async function collectUntil(
 beforeAll(async () => {
   fs.rmSync(SOCKET_PATH, { force: true })
   server = http.createServer((req, res) => {
+    if (req.method === 'GET' && req.url === '/v1.41/exec/exec-1/json') {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ ExitCode: 7 }))
+      return
+    }
     const chunks: Buffer[] = []
     req.on('data', (chunk) => chunks.push(chunk))
     req.on('end', () => {
@@ -91,6 +96,22 @@ beforeEach(() => {
 })
 
 describe('createContainerExecRunner', () => {
+  it('exec inspect 返回真实退出码', async () => {
+    const runner = createContainerExecRunner(SOCKET_PATH, 'target-container')
+    const session = runner.run(['/bin/sh'], true)
+    await collectUntil(session.stdout, (text) => text.includes(GREETING.trim()))
+    await expect(session.exitCode?.()).resolves.toBe(7)
+    session.close()
+  })
+
+  it('连接尚未建立就 close 时不继续创建交互 exec', async () => {
+    const runner = createContainerExecRunner(SOCKET_PATH, 'target-container')
+    const session = runner.run(['/bin/sh'], true)
+    session.close()
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(upgradeRequestSeen).toBe(false)
+  })
+
   it(
     'exec createBody 携带 Env，start 请求以 Upgrade: tcp 走 101 hijack',
     async () => {
@@ -152,20 +173,20 @@ describe('createBoundedChunkQueue', () => {
   const decoder = new TextDecoder()
   const encode = (text: string) => new TextEncoder().encode(text)
 
-  it('未消费字节超过上限时丢最旧的块，保留最新', () => {
+  it('未消费字节超过上限时显式失败，不静默丢掉旧输出', () => {
     const queue = createBoundedChunkQueue(10)
     queue.push(encode('12345'))
     queue.push(encode('67890'))
-    queue.push(encode('ab'))
+    expect(() => queue.push(encode('ab'))).toThrow('输出缓冲超限')
+    expect(decoder.decode(queue.shift()!)).toBe('12345')
     expect(decoder.decode(queue.shift()!)).toBe('67890')
-    expect(decoder.decode(queue.shift()!)).toBe('ab')
     expect(queue.shift()).toBeUndefined()
   })
 
-  it('单个超过上限的块截尾保留末尾', () => {
+  it('单个超过上限的块拒绝，不截断成无法解释的尾部', () => {
     const queue = createBoundedChunkQueue(4)
-    queue.push(encode('abcdefgh'))
-    expect(decoder.decode(queue.shift()!)).toBe('efgh')
+    expect(() => queue.push(encode('abcdefgh'))).toThrow('输出缓冲超限')
+    expect(queue.shift()).toBeUndefined()
   })
 
   it('消费即释放驻留：shift 出队后可继续容纳新块', () => {

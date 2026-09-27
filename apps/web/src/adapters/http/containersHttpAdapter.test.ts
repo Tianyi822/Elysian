@@ -107,6 +107,26 @@ describe('createHttpContainersAdapter', () => {
     vi.unstubAllGlobals()
   })
 
+  it('searchImageNames() 编码源地址并传递取消信号', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ names: ['redis'], searchable: true }))
+    vi.stubGlobal('fetch', fetchMock)
+    const signal = new AbortController().signal
+    const result = await createHttpContainersAdapter().searchImageNames('red', 'https://mirror.example.com', signal)
+    expect(result).toEqual({ names: ['redis'], searchable: true })
+    expect(fetchMock).toHaveBeenCalledWith('/api/docker/images/search?term=red&registry=https%3A%2F%2Fmirror.example.com', { signal })
+    vi.unstubAllGlobals()
+  })
+
+  it('imageTags() 查询选定仓库版本并传递取消信号', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ tags: ['latest', '8-alpine'], searchable: true }))
+    vi.stubGlobal('fetch', fetchMock)
+    const signal = new AbortController().signal
+    const result = await createHttpContainersAdapter().imageTags('library/redis', 'https://mirror.example.com', signal)
+    expect(result).toEqual({ tags: ['latest', '8-alpine'], searchable: true })
+    expect(fetchMock).toHaveBeenCalledWith('/api/docker/images/tags?name=library%2Fredis&registry=https%3A%2F%2Fmirror.example.com', { signal })
+    vi.unstubAllGlobals()
+  })
+
   it('createPolicy() 请求 GET /api/docker/policy', async () => {
     const fetchMock = vi.fn(async () =>
       jsonResponse({ mountRoot: '/srv', reservedPorts: [48100] }),
@@ -119,6 +139,12 @@ describe('createHttpContainersAdapter', () => {
     })
     expect(fetchMock).toHaveBeenCalledWith('/api/docker/policy', undefined)
     vi.unstubAllGlobals()
+  })
+
+  it('cancelTerminalConnect 接到容器终端 WS 适配器，无 pending 时是安全 no-op', () => {
+    const adapter = createHttpContainersAdapter()
+    expect(typeof adapter.cancelTerminalConnect).toBe('function')
+    expect(() => adapter.cancelTerminalConnect?.()).not.toThrow()
   })
 
   it('HTTP 非 2xx 时抛响应体里的 error 字符串', async () => {
@@ -337,17 +363,39 @@ describe('createHttpContainersAdapter', () => {
     vi.unstubAllGlobals()
   })
 
-  it('pullImage() POST /images/pull 并解析返回镜像', async () => {
-    const fetchMock = vi.fn(async () => jsonResponse(baseImage))
+  it('pullImage() 在结果返回前逐块消费进度，再解析镜像', async () => {
+    const encoder = new TextEncoder()
+    let controller!: ReadableStreamDefaultController<Uint8Array>
+    const body = new ReadableStream<Uint8Array>({ start(value) { controller = value } })
+    const fetchMock = vi.fn(async () => new Response(body, {
+      status: 200, headers: { 'content-type': 'application/x-ndjson' },
+    }))
     vi.stubGlobal('fetch', fetchMock)
     const adapter = createHttpContainersAdapter()
-    const image = await adapter.pullImage({ name: 'nginx', tag: '1.27', registry: 'docker.1ms.run' })
-    expect(fetchMock).toHaveBeenCalledWith('/api/docker/images/pull', {
+    const onProgress = vi.fn()
+    const pending = adapter.pullImage({ name: 'nginx', tag: '1.27', registry: 'docker.1ms.run' }, onProgress)
+    const progressLine = `${JSON.stringify({ type: 'progress', progress: { phase: 'downloading', layerId: 'abc', currentBytes: 50, totalBytes: 100 } })}\n`
+    controller.enqueue(encoder.encode(progressLine.slice(0, 17)))
+    controller.enqueue(encoder.encode(progressLine.slice(17)))
+    await vi.waitFor(() => expect(onProgress).toHaveBeenCalledWith({ phase: 'downloading', layerId: 'abc', currentBytes: 50, totalBytes: 100 }))
+    controller.enqueue(encoder.encode(`${JSON.stringify({ type: 'result', image: baseImage })}\n`))
+    controller.close()
+    const image = await pending
+    expect(fetchMock).toHaveBeenCalledWith('/api/docker/images/pull/stream', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', accept: 'application/x-ndjson' },
       body: JSON.stringify({ name: 'nginx', tag: '1.27', registry: 'docker.1ms.run' }),
     })
     expect(image).toEqual(baseImage)
+    vi.unstubAllGlobals()
+  })
+
+  it('拉取流错误帧进入失败分支，未收到结果帧时也报错', async () => {
+    const adapter = createHttpContainersAdapter()
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"type":"error","error":"仓库拒绝访问"}\n')))
+    await expect(adapter.pullImage({ name: 'nginx', tag: '1.27' })).rejects.toThrow('仓库拒绝访问')
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"type":"progress","progress":{"phase":"preparing"}}\n')))
+    await expect(adapter.pullImage({ name: 'nginx', tag: '1.27' })).rejects.toThrow('镜像拉取连接提前结束')
     vi.unstubAllGlobals()
   })
 

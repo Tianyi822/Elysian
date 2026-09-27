@@ -522,6 +522,32 @@ export class MockContainerAdapter implements ContainerAdapter {
     return [...this.dataset().images]
   }
 
+  async searchImageNames(term: string, registry?: string): Promise<{ names: readonly string[]; searchable: boolean }> {
+    if (registry?.trim() && registry.trim() !== 'https://registry-1.docker.io') {
+      return { names: [], searchable: false }
+    }
+    const repositories = [...new Set([
+      'alpine', 'busybox', 'docker', 'mysql', 'nginx', 'node', 'postgres', 'redis', 'ubuntu',
+      ...this.dataset().images.map((image) => image.name),
+    ])].sort()
+    const query = term.trim().toLowerCase()
+    return { names: repositories.filter((name) => name.includes(query)), searchable: true }
+  }
+
+  async imageTags(name: string, registry?: string): Promise<{ tags: readonly string[]; searchable: boolean }> {
+    if (registry?.trim() && registry.trim() !== 'https://registry-1.docker.io') {
+      return { tags: [], searchable: false }
+    }
+    const examples: Record<string, string[]> = {
+      alpine: ['latest', '3.21', '3.20'],
+      nginx: ['latest', '1.27', '1.26-alpine'],
+      redis: ['latest', '8-alpine', '7-alpine'],
+      ubuntu: ['latest', '24.04', '22.04'],
+    }
+    const tags = examples[name] ?? ['latest']
+    return { tags: [...new Set([...tags, ...this.dataset().images.filter((image) => image.name === name).map((image) => image.tag)])], searchable: true }
+  }
+
   async createPolicy(): Promise<{ mountRoot: string; reservedPorts: readonly number[] }> {
     return { mountRoot: '/srv/elysian', reservedPorts: [48100] }
   }
@@ -564,6 +590,9 @@ export class MockContainerAdapter implements ContainerAdapter {
       throw new Error(`终端会话不存在 ${sessionId}`)
     }
   }
+
+  /** 取消未决的终端连接：mock 的 connectTerminal 同步 resolve，没有 pending 概念，no-op。 */
+  cancelTerminalConnect(): void {}
 
   private requireTerminalSession(sessionId: string): MockContainerTerminalSession {
     const session = this.terminalSessions.get(sessionId)

@@ -1,10 +1,13 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import {
   cleanupScriptPid,
   createExecPty,
+  createLazyExecPty,
   DOCKER_EXEC_CLEANUP_SCRIPT,
   DOCKER_EXEC_ECHO_LINE_MAX_CHARS,
+  listDockerCommands,
+  listDockerFiles,
   dockerShellProbeCommand,
   DOCKER_SHELL_PROBE_SCRIPT,
   type ExecRunner,
@@ -66,6 +69,33 @@ describe('probeShell', () => {
   })
 })
 
+describe('容器补全查询', () => {
+  it('bash 与 sh 用固定 argv 查询命令，去重并保留非空行', async () => {
+    const runs: Array<{ cmd: readonly string[]; tty: boolean }> = []
+    const exec = createExecRunner({
+      stdoutText: 'echo\r\necho\r\nls\r\n',
+      onRun: (cmd, tty) => runs.push({ cmd, tty }),
+    })
+    await expect(listDockerCommands(exec, 'bash')).resolves.toEqual(['echo', 'ls'])
+    await expect(listDockerCommands(exec, 'sh')).resolves.toEqual(['echo', 'ls'])
+    expect(runs[0]).toEqual({ cmd: ['/bin/bash', '-c', 'compgen -A command'], tty: true })
+    expect(runs[1]?.cmd.slice(0, 2)).toEqual(['/bin/sh', '-c'])
+    expect(runs[1]?.cmd[2]).toContain('for file in "$dir"/*')
+  })
+
+  it('文件列表把 cwd 仅作 argv，保留第 513 项给会话层判定超限', async () => {
+    const runs: string[][] = []
+    const exec = createExecRunner({
+      stdoutText: Array.from({ length: 514 }, (_, n) => `f${n}`).join('\n'),
+      onRun: (cmd) => { runs.push([...cmd]) },
+    })
+    const files = await listDockerFiles(exec, '/tmp/a b')
+    expect(runs[0]).toEqual(['/bin/ls', '-1A', '--color=never', '--', '/tmp/a b'])
+    expect(files).toHaveLength(513)
+    expect(() => listDockerFiles(exec, '../tmp')).toThrow('工作目录无效')
+  })
+})
+
 describe('shellSpecFor', () => {
   it('bash 规格的启动行含 READY: 与 $$', () => {
     const spec = shellSpecFor('bash', true)
@@ -87,7 +117,7 @@ describe('shellSpecFor', () => {
 
   it('sh 规格的 PS1 内嵌真实控制字节，PWD 哨兵不依赖 shell 转义解析', () => {
     const spec = shellSpecFor('sh', false)
-    expect(spec.env.PS1).toBe('$ \x01PWD:$PWD\x02 ')
+    expect(spec.env.PS1).toBe('\x01PWD:$PWD\x02\n')
     expect(spec.env.PS1).not.toContain('\\x01')
   })
 })
@@ -137,6 +167,26 @@ describe('DOCKER_EXEC_CLEANUP_SCRIPT', () => {
 })
 
 describe('createExecPty', () => {
+  it('exec 输出流自然结束时结算 exited，服务层可以发 exit 帧', async () => {
+    const close = vi.fn()
+    const exec: ExecRunner = {
+      run() {
+        return {
+          write: () => {},
+          stdout: (async function* () { yield new TextEncoder().encode('done\n') })(),
+          close,
+          exitCode: async () => 7,
+        }
+      },
+    }
+    const pty = createExecPty(exec, shellSpecFor('bash', true))
+    const lines: string[] = []
+    for await (const chunk of pty.stdout) lines.push(new TextDecoder().decode(chunk))
+    expect(lines).toEqual(['done\n'])
+    await expect(pty.exited).resolves.toBe(7)
+    expect(close).toHaveBeenCalledOnce()
+  })
+
   it('无 stty 时丢弃与输入相同的第一行回显', async () => {
     const spec = shellSpecFor('sh', false)
     expect(spec.startupLine).not.toContain('stty')
@@ -250,5 +300,31 @@ describe('createExecPty', () => {
     expect(runs[0]?.tty).toBe(true)
     expect(runs[0]?.env).toEqual(spec.env)
     expect(runs[0]?.cmd).toEqual(['/bin/bash', '--noediting'])
+  })
+})
+
+describe('createLazyExecPty', () => {
+  it('打开途中被关闭时通知探测并杀掉迟到创建的 PTY', async () => {
+    let resolveOpen!: (pty: ReturnType<typeof createLazyExecPty>) => void
+    const pending = new Promise<ReturnType<typeof createLazyExecPty>>((resolve) => {
+      resolveOpen = resolve
+    })
+    let signal: AbortSignal | undefined
+    const pty = createLazyExecPty((received) => {
+      signal = received
+      return pending
+    })
+    const next = pty.stdout[Symbol.asyncIterator]().next()
+    await pty.kill()
+    expect(signal?.aborted).toBe(true)
+    const lateKill = vi.fn(async () => 0)
+    resolveOpen({
+      write: () => {}, flush: () => {},
+      stdout: (async function* () {})(),
+      kill: lateKill,
+      exited: Promise.resolve(0),
+    })
+    await expect(next).rejects.toThrow('容器终端连接已取消')
+    expect(lateKill).toHaveBeenCalledOnce()
   })
 })

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ElysianEvent } from '@elysian/contracts'
-import type { Container } from '@elysian/contracts'
+import type { Container, ContainerImage } from '@elysian/contracts'
 import type { ElysianGateway, EventsAdapter, HostTerminalHandlers } from '../contracts/adapters'
 import { useNotificationStore } from './notificationStore'
 import { useEventStreamStore } from './eventStreamStore'
@@ -55,7 +55,7 @@ let emitToStore: ((event: ElysianEvent) => void) | undefined
 
 beforeEach(() => {
   useContainersStore.setState({
-    status: 'idle', liveStatus: 'live', errorMessage: undefined, containers: [], images: [], samples: {},
+    status: 'idle', liveStatus: 'live', errorMessage: undefined, containers: [], images: [], imageRefreshStatus: 'idle', imageRefreshMessage: undefined, samples: {},
     view: 'grid', statusFilter: 'all', search: '', detailContainerId: undefined,
     terminal: undefined, busyActions: [], createOpen: false, creating: false, removingImageIds: [],
     pullingImage: undefined,
@@ -288,6 +288,199 @@ describe('containersStore', () => {
   })
 })
 
+/** 可手动落定的 promise，模拟真实 WS 适配器「ready 帧后才 resolve」的 pending 连接。 */
+function deferredSession() {
+  let resolve!: (info: { id: string; user: string; hostLabel: string; prompt: string }) => void
+  let reject!: (error: unknown) => void
+  const promise = new Promise<{ id: string; user: string; hostLabel: string; prompt: string }>(
+    (res, rej) => {
+      resolve = res
+      reject = rej
+    },
+  )
+  return { promise, resolve, reject }
+}
+
+const SESSION_INFO = { id: 'sess-test', user: 'root', hostLabel: 'ctr', prompt: '$ ' } as const
+
+describe('终端会话 connecting 态', () => {
+  it('connecting 态连点两次只产生一次 connectTerminal（打开串行化）', async () => {
+    const gate = deferredSession()
+    const connect = vi.fn(() => gate.promise)
+    const gateway = gatewayWith({ connectTerminal: connect })
+    await useContainersStore.getState().load(gateway)
+
+    const first = useContainersStore.getState().openTerminal(gateway, 'ctr-nginx-proxy')
+    const second = useContainersStore.getState().openTerminal(gateway, 'ctr-nginx-proxy')
+    expect(connect).toHaveBeenCalledTimes(1)
+
+    gate.resolve(SESSION_INFO)
+    await Promise.all([first, second])
+    expect(useContainersStore.getState().terminal?.sessionId).toBe('sess-test')
+  })
+
+  it('connecting 中 closeTerminal 取消未决连接，立即重开同一容器不被迟到结算污染', async () => {
+    const first = deferredSession()
+    const cancel = vi.fn(() => {
+      // 与真实 cancelTerminalConnect 同语义：先 settle（reject）未决连接。
+      first.reject(new Error('连接容器终端失败'))
+    })
+    const gateway = gatewayWith({
+      connectTerminal: vi.fn(() => first.promise),
+      cancelTerminalConnect: cancel,
+    })
+    await useContainersStore.getState().load(gateway)
+
+    const opening = useContainersStore.getState().openTerminal(gateway, 'ctr-nginx-proxy')
+    expect(useContainersStore.getState().terminal?.status).toBe('connecting')
+
+    await useContainersStore.getState().closeTerminal(gateway)
+    expect(cancel).toHaveBeenCalledTimes(1)
+    expect(useContainersStore.getState().terminal).toBeUndefined()
+    // openTerminal 把连接失败吞进会话状态（不向调用方抛）；这里等它落定，
+    // 冲掉迟到 rejection 的微任务链，确认取消路径没有把 terminal 状态写回。
+    await opening
+
+    // 立即重开同一容器：connecting 中关窗不得卡住重开，新会话干净落位。
+    const second = deferredSession()
+    vi.mocked(gateway.containers.connectTerminal).mockImplementation(() => second.promise)
+    const reopening = useContainersStore.getState().openTerminal(gateway, 'ctr-nginx-proxy')
+    second.resolve({ ...SESSION_INFO, id: 'sess-2' })
+    await reopening
+    await vi.waitFor(() => {
+      const terminal = useContainersStore.getState().terminal
+      expect(terminal?.status).toBe('connected')
+      expect(terminal?.sessionId).toBe('sess-2')
+      expect(terminal?.lines.some((line) => line.text.includes('连接容器终端失败'))).toBe(false)
+    })
+  })
+
+  it('connecting 中取消后重开，旧连接的迟到 resolve 不改写新会话', async () => {
+    const first = deferredSession()
+    const disconnect = vi.fn(async () => {})
+    const gateway = gatewayWith({
+      connectTerminal: vi.fn(() => first.promise),
+      cancelTerminalConnect: () => {},
+      disconnectTerminal: disconnect,
+    })
+    await useContainersStore.getState().load(gateway)
+
+    const opening = useContainersStore.getState().openTerminal(gateway, 'ctr-nginx-proxy')
+    await useContainersStore.getState().closeTerminal(gateway)
+
+    const second = deferredSession()
+    vi.mocked(gateway.containers.connectTerminal).mockImplementation(() => second.promise)
+    const reopening = useContainersStore.getState().openTerminal(gateway, 'ctr-nginx-proxy')
+    second.resolve({ ...SESSION_INFO, id: 'sess-2' })
+    await reopening
+
+    first.resolve({ ...SESSION_INFO, id: 'sess-old' }) // 迟到的 resolve
+    await opening
+    await vi.waitFor(() => {
+      const terminal = useContainersStore.getState().terminal
+      expect(terminal?.sessionId).toBe('sess-2')
+      expect(terminal?.status).toBe('connected')
+      expect(disconnect).toHaveBeenCalledWith('sess-old')
+    })
+  })
+
+  it('旧会话的发送失败不把错误行写进新会话', async () => {
+    const gate = deferredSession()
+    const gateway = gatewayWith({ sendTerminalInput: () => gate.promise.then(() => {}) })
+    await useContainersStore.getState().load(gateway)
+    await useContainersStore.getState().openTerminal(gateway, 'ctr-nginx-proxy')
+    const sending = useContainersStore.getState().submitCommand(gateway, 'echo hi')
+    await useContainersStore.getState().closeTerminal(gateway)
+    await useContainersStore.getState().openTerminal(gateway, 'ctr-nginx-proxy')
+    gate.reject(new Error('旧会话发送失败'))
+    await sending
+    expect(useContainersStore.getState().terminal?.lines.some((line) => line.text.includes('旧会话发送失败'))).toBe(false)
+  })
+
+  it('container/removed 在 connecting 态也取消未决连接', async () => {
+    const gate = deferredSession()
+    const cancel = vi.fn()
+    const gateway = gatewayWith({
+      connectTerminal: vi.fn(() => gate.promise),
+      cancelTerminalConnect: cancel,
+    })
+    await useContainersStore.getState().load(gateway)
+
+    void useContainersStore.getState().openTerminal(gateway, 'ctr-nginx-proxy')
+    expect(useContainersStore.getState().terminal?.status).toBe('connecting')
+
+    emitToStore?.(event('container/removed', { containerId: 'ctr-nginx-proxy' }))
+    expect(cancel).toHaveBeenCalledTimes(1)
+    expect(useContainersStore.getState().terminal).toBeUndefined()
+  })
+})
+
+describe('终端帧路径', () => {
+  it('interruptTerminal 经 adapter 的中断通道发出', async () => {
+    const interrupt = vi.fn()
+    const gateway = gatewayWith({ interruptTerminal: interrupt })
+    await useContainersStore.getState().load(gateway)
+    await useContainersStore.getState().openTerminal(gateway, 'ctr-nginx-proxy')
+
+    await useContainersStore.getState().interruptTerminal(gateway)
+    expect(interrupt).toHaveBeenCalledWith('sess-test')
+  })
+
+  it('truncated 帧写入截断文案；exit 帧置 error 态并写入退出行', async () => {
+    const gateway = gatewayWith()
+    await useContainersStore.getState().load(gateway)
+    await useContainersStore.getState().openTerminal(gateway, 'ctr-nginx-proxy')
+
+    useContainersStore.getState().applyTerminalFrame('sess-test', {
+      type: 'truncated',
+      droppedBytes: 65536,
+    })
+    let terminal = useContainersStore.getState().terminal!
+    expect(terminal.status).toBe('connected')
+    expect(terminal.lines.at(-1)).toEqual({
+      kind: 'output',
+      text: '输出超出单轮上限，已丢弃 65536 字节',
+    })
+
+    useContainersStore.getState().applyTerminalFrame('sess-test', { type: 'exit', exitCode: 0 })
+    terminal = useContainersStore.getState().terminal!
+    expect(terminal.status).toBe('error')
+    expect(terminal.lines.at(-1)).toEqual({ kind: 'output', text: '会话已退出（退出码 0）' })
+  })
+
+  it('handleTerminalClose 按容器域文案映射关闭码', async () => {
+    const gateway = gatewayWith()
+    await useContainersStore.getState().load(gateway)
+    await useContainersStore.getState().openTerminal(gateway, 'ctr-nginx-proxy')
+
+    useContainersStore.getState().handleTerminalClose('sess-test', { code: 4000, reason: '' })
+    let terminal = useContainersStore.getState().terminal!
+    expect(terminal.lines.at(-1)).toEqual({ kind: 'output', text: '终端会话空闲超时，已断开' })
+
+    // 1008 的 reason 原样透传；置 error 后不再叠加。
+    useContainersStore.setState({
+      terminal: { ...terminal, sessionId: 'sess-2', status: 'connected' },
+    })
+    useContainersStore.getState().handleTerminalClose('sess-2', {
+      code: 1008,
+      reason: '并发容器终端会话已达上限（5）',
+    })
+    terminal = useContainersStore.getState().terminal!
+    expect(terminal.lines.at(-1)).toEqual({
+      kind: 'output',
+      text: '并发容器终端会话已达上限（5）',
+    })
+
+    // 其余关闭码（1006 等）用容器域兜底文案，不是本机终端的措辞。
+    useContainersStore.setState({
+      terminal: { ...terminal, sessionId: 'sess-3', status: 'connected' },
+    })
+    useContainersStore.getState().handleTerminalClose('sess-3', { code: 1006, reason: '' })
+    terminal = useContainersStore.getState().terminal!
+    expect(terminal.lines.at(-1)).toEqual({ kind: 'output', text: '容器终端连接中断' })
+  })
+})
+
 describe('创建容器', () => {
   const NEW_CONTAINER: Container = {
     id: 'ctr-redis-echo', name: 'redis-echo', status: 'running', imageId: 'img-redis',
@@ -363,9 +556,95 @@ describe('删除镜像', () => {
   })
 })
 
+describe('镜像列表刷新', () => {
+  it('失败保留旧列表，成功给出可见状态', async () => {
+    await useContainersStore.getState().load(gatewayWith())
+    const oldImages = useContainersStore.getState().images
+    await useContainersStore.getState().refreshImages(gatewayWith({ listImages: async () => { throw new Error('断线') } }))
+    expect(useContainersStore.getState()).toMatchObject({ images: oldImages, imageRefreshStatus: 'error', imageRefreshMessage: '刷新镜像失败：断线' })
+    await useContainersStore.getState().refreshImages(gatewayWith({ listImages: async () => [...CONTAINER_IMAGES].slice(0, 2) }))
+    expect(useContainersStore.getState()).toMatchObject({ imageRefreshStatus: 'success', imageRefreshMessage: '镜像列表已刷新' })
+    expect(useContainersStore.getState().images).toHaveLength(2)
+  })
+
+  it('晚到的刷新不得覆盖删除和下一次刷新', async () => {
+    await useContainersStore.getState().load(gatewayWith())
+    let settle!: (images: readonly ContainerImage[]) => void
+    const stale = new Promise<readonly ContainerImage[]>((resolve) => { settle = resolve })
+    const first = useContainersStore.getState().refreshImages(gatewayWith({ listImages: () => stale }))
+    await useContainersStore.getState().removeImage(gatewayWith(), CONTAINER_IMAGES[0]!.id)
+    settle([...CONTAINER_IMAGES])
+    await first
+    expect(useContainersStore.getState().images.some((image) => image.id === CONTAINER_IMAGES[0]!.id)).toBe(false)
+
+    let settleSecond!: (images: readonly ContainerImage[]) => void
+    const second = new Promise<readonly ContainerImage[]>((resolve) => { settleSecond = resolve })
+    const pending = useContainersStore.getState().refreshImages(gatewayWith({ listImages: () => second }))
+    await useContainersStore.getState().refreshImages(gatewayWith({ listImages: async () => [] }))
+    settleSecond([...CONTAINER_IMAGES])
+    await pending
+    expect(useContainersStore.getState().images).toEqual([])
+  })
+
+  it('晚到的刷新不得移除刚拉取的镜像', async () => {
+    vi.useFakeTimers()
+    try {
+      await useContainersStore.getState().load(gatewayWith())
+      let settle!: (images: readonly ContainerImage[]) => void
+      const stale = new Promise<readonly ContainerImage[]>((resolve) => { settle = resolve })
+      const refreshing = useContainersStore.getState().refreshImages(gatewayWith({ listImages: () => stale }))
+      const pulling = useContainersStore.getState().pullImage(gatewayWith(), { name: 'newrepo', tag: 'latest' })
+      await vi.advanceTimersByTimeAsync(1500)
+      await pulling
+      settle([...CONTAINER_IMAGES])
+      await refreshing
+      expect(useContainersStore.getState().images.some((image) => image.name === 'newrepo')).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('晚到的手动刷新不得覆盖事件重同步后的镜像列表', async () => {
+    let settle!: (images: readonly ContainerImage[]) => void
+    const stale = new Promise<readonly ContainerImage[]>((resolve) => { settle = resolve })
+    let calls = 0
+    const listImages = vi.fn(() => {
+      calls += 1
+      if (calls === 2) return stale
+      return Promise.resolve(calls === 3 ? [...CONTAINER_IMAGES].slice(0, 1) : [...CONTAINER_IMAGES])
+    })
+    const gateway = gatewayWith({ listImages })
+    await useContainersStore.getState().load(gateway)
+    const pending = useContainersStore.getState().refreshImages(gateway)
+    emitToStore?.(event('container/resync', {}))
+    await vi.waitFor(() => expect(useContainersStore.getState().images).toHaveLength(1))
+    settle([...CONTAINER_IMAGES])
+    await pending
+    expect(useContainersStore.getState().images).toHaveLength(1)
+  })
+})
+
 describe('拉取镜像', () => {
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  it('接收适配器实时层进度并写入拉取中行，完成后清除进度', async () => {
+    vi.useFakeTimers()
+    await useContainersStore.getState().load(gatewayWith())
+    let finish!: (image: ContainerImage) => void
+    const pullImage = vi.fn((_input: unknown, onProgress?: (progress: { phase: 'downloading'; layerId: string; currentBytes: number; totalBytes: number }) => void) => {
+      onProgress?.({ phase: 'downloading', layerId: 'abc', currentBytes: 25, totalBytes: 100 })
+      return new Promise<ContainerImage>((resolve) => { finish = resolve })
+    })
+    const pending = useContainersStore.getState().pullImage(gatewayWith({ pullImage }), { name: 'newrepo', tag: 'latest' })
+    await vi.advanceTimersByTimeAsync(1500)
+    expect(useContainersStore.getState().pullingImage?.progress).toEqual({
+      phase: 'downloading', layerId: 'abc', currentBytes: 25, totalBytes: 100,
+    })
+    finish({ ...CONTAINER_IMAGES[0]!, id: 'img-newrepo', name: 'newrepo', tag: 'latest' })
+    await pending
+    expect(useContainersStore.getState().pullingImage).toBeUndefined()
   })
 
   // 成功路径由 ContainerPage.test 的拉取全流程端到端覆盖，这里只测失败分支。

@@ -85,6 +85,8 @@ export type TerminalsHostDeps = {
   available: boolean
   identity(): TerminalIdentity
   spawnPtyShell(opts: { env: Record<string, string>; cwd: string }): PtyProcess
+  /** 容器终端使用固定提示符；缺省沿用本机终端的用户、主机和 cwd。 */
+  formatPrompt?(identity: TerminalIdentity, cwd: string): string
   listDir(path: string): Promise<readonly string[]>
   listCommands(): Promise<readonly string[]>
   /**
@@ -219,8 +221,10 @@ class TerminalSessionImpl implements TerminalSession {
     const proc = this.proc
     this.armIdle()
     try {
-      proc.write(this.shell.startupLine)
-      proc.flush()
+      if (this.shell.startupLine !== '') {
+        proc.write(this.shell.startupLine)
+        proc.flush()
+      }
     } catch {
       // 启动行写入失败：按退出路径收尾（pump 观察到流结束）。
     }
@@ -243,7 +247,7 @@ class TerminalSessionImpl implements TerminalSession {
           id: this.id,
           user: identity.user,
           hostLabel: identity.hostLabel,
-          prompt: buildTerminalPrompt(identity, identity.homeDir),
+          prompt: this.deps.formatPrompt?.(identity, identity.homeDir) ?? buildTerminalPrompt(identity, identity.homeDir),
         },
         completion: { commands: commands.slice(0, TERMINAL_COMPLETION_COMMANDS_MAX) },
       })
@@ -386,7 +390,7 @@ class TerminalSessionImpl implements TerminalSession {
       if (!identity) return
       this.emit({
         type: 'prompt',
-        prompt: buildTerminalPrompt(identity, cwd),
+        prompt: this.deps.formatPrompt?.(identity, cwd) ?? buildTerminalPrompt(identity, cwd),
         cwd,
         completion: { files },
       })

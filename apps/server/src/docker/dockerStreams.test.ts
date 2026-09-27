@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { demuxDockerStream, readPullProgress } from './dockerStreams'
+import { describe, expect, it, vi } from 'vitest'
+import { createPullProgressDecoder, demuxDockerStream, readPullProgress } from './dockerStreams'
 
 const encoder = new TextEncoder()
 const MAX_BYTES = 64 * 1024 * 1024
@@ -52,6 +52,12 @@ describe('readPullProgress', () => {
     })
   })
 
+  it('errorDetail.message 也作为拉取失败处理', () => {
+    expect(readPullProgress([chunk('{"errorDetail":{"message":"仓库拒绝访问"}}\n')])).toEqual({
+      ok: false, error: '仓库拒绝访问',
+    })
+  })
+
   it('总字节超过 64 MiB 时返回拉取进度过大', () => {
     const over = new Uint8Array(MAX_BYTES + 1)
     expect(readPullProgress([over])).toEqual({ ok: false, error: '拉取进度过大' })
@@ -60,6 +66,37 @@ describe('readPullProgress', () => {
   it('恰好 64 MiB 仍成功', () => {
     const exact = new Uint8Array(MAX_BYTES)
     expect(readPullProgress([exact])).toEqual({ ok: true })
+  })
+})
+
+describe('createPullProgressDecoder', () => {
+  it('跨块解析真实层进度、阶段切换，并跳过同一整数百分比的重复帧', async () => {
+    const progress: unknown[] = []
+    const decoder = createPullProgressDecoder((frame) => { progress.push(frame) })
+    const lines = [
+      { status: 'Pulling from library/alpine', id: '3.21' },
+      { status: 'Pulling fs layer', id: 'abc' },
+      { status: 'Downloading', id: 'abc', progressDetail: { current: 512, total: 1024 } },
+      { status: 'Downloading', id: 'abc', progressDetail: { current: 513, total: 1024 } },
+      { status: 'Extracting', id: 'abc', progressDetail: { current: 256, total: 1024 } },
+    ].map((frame) => `${JSON.stringify(frame)}\n`).join('')
+    const bytes = chunk(lines)
+    await decoder.feed(bytes.slice(0, 17))
+    await decoder.feed(bytes.slice(17))
+    await decoder.finish()
+    expect(progress).toEqual([
+      { phase: 'preparing' },
+      { phase: 'preparing', layerId: 'abc' },
+      { phase: 'downloading', layerId: 'abc', currentBytes: 512, totalBytes: 1024 },
+      { phase: 'extracting', layerId: 'abc', currentBytes: 256, totalBytes: 1024 },
+    ])
+  })
+
+  it('错误帧立即拒绝，不再把后续行当进度', async () => {
+    const onProgress = vi.fn()
+    const decoder = createPullProgressDecoder(onProgress)
+    await expect(decoder.feed(chunk('{"errorDetail":{"message":"拒绝访问"}}\n'))).rejects.toThrow('拒绝访问')
+    expect(onProgress).not.toHaveBeenCalled()
   })
 })
 

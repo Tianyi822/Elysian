@@ -7,6 +7,7 @@ import type {
   ContainerAction,
   ContainerCreateInput,
   ContainerImage,
+  ImagePullProgress,
   DatabaseEngine,
   DatabaseInstance,
   ElysianEvent,
@@ -147,6 +148,10 @@ export type ContainerHostPolicy = {
 export interface ContainerAdapter {
   list(): Promise<readonly Container[]>
   listImages(): Promise<readonly ContainerImage[]>
+  /** 查询当前镜像源中的仓库名；目录不可用时 searchable=false，仍可手动输入。 */
+  searchImageNames(term: string, registry?: string, signal?: AbortSignal): Promise<{ names: readonly string[]; searchable: boolean }>
+  /** 查询选定仓库的公开版本标签；不可列出时仍允许手动输入引用。 */
+  imageTags(name: string, registry?: string, signal?: AbortSignal): Promise<{ tags: readonly string[]; searchable: boolean }>
   /** Docker 运行时读取挂载根与保留端口；mock 返回演示策略。 */
   createPolicy(): Promise<ContainerHostPolicy>
   /** 打开容器终端流式会话；mock 在内存求值，Docker 运行时经 WebSocket 接 exec PTY。 */
@@ -158,6 +163,13 @@ export interface ContainerAdapter {
   interruptTerminal(sessionId: string): Promise<void>
   completeTerminal(sessionId: string, draft: string, cursor: number): TerminalCompletion
   disconnectTerminal(sessionId: string): Promise<void>
+  /**
+   * 取消未决的终端连接（connecting 态关窗或容器被删时调用）。语义与结算次序：
+   * 对全部未 ready 的 pending 先 settle（以「连接容器终端失败」reject，被取消的
+   * connectTerminal promise 不得悬挂）再关 socket（1000）；只作用于未 ready 的
+   * 连接，已 ready 会话仍走 disconnectTerminal。可选：mock 没有 pending 概念，no-op。
+   */
+  cancelTerminalConnect?(): void
   /** 请求容器动作（启动/停止/重启，均为 mock）。 */
   requestAction(containerId: string, action: ContainerAction): Promise<Container>
   /** 创建容器（mock）：追加内存数据集并推 container/created。 */
@@ -165,7 +177,7 @@ export interface ContainerAdapter {
   /** 删除镜像（mock）：仅允许删除未被引用的镜像，改写内存数据集。 */
   removeImage(imageId: string): Promise<void>
   /** 拉取镜像（mock）：确定性生成摘要与体积后追加内存数据集，同名同标签视为已存在；registry 仅记录拉取源，不产生真实数据流。 */
-  pullImage(input: { name: string; tag: string; registry?: string }): Promise<ContainerImage>
+  pullImage(input: { name: string; tag: string; registry?: string }, onProgress?: (progress: ImagePullProgress) => void): Promise<ContainerImage>
   /**
    * 容器状态 SSE：Docker 运行时订阅 /api/docker/events；mock 立即上报 live 并返回空退订
    * （采样仍由 gateway 的 containerEvents.wrap 负责）。

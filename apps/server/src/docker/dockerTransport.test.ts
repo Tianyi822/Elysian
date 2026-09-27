@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { EventEmitter } from 'node:events'
 
 const pullHttpMocks = vi.hoisted(() => {
   const destroy = vi.fn()
@@ -65,6 +66,39 @@ describe('pullCreate', () => {
     await expect(promise).rejects.toThrow('拉取已取消')
     expect(pullHttpMocks.destroy).toHaveBeenCalled()
     expect(pullHttpMocks.request).toHaveBeenCalled()
+  })
+
+  it('逐块回调完成前暂停 Engine 响应，不提前结束拉取', async () => {
+    let release!: () => void
+    const held = new Promise<void>((resolve) => { release = resolve })
+    const bytes = Buffer.from('{"status":"Downloading"}\n')
+    const response = Object.assign(new EventEmitter(), {
+      statusCode: 200,
+      pause: vi.fn(),
+      resume: vi.fn(),
+    })
+    response.resume.mockImplementation(() => response.emit('end'))
+    pullHttpMocks.request.mockImplementationOnce((_options: unknown, onResponse?: unknown) => ({
+      destroy: vi.fn(),
+      setTimeout: vi.fn(),
+      on: vi.fn(),
+      end: vi.fn(() => {
+        (onResponse as (res: typeof response) => void)(response)
+        response.emit('data', bytes)
+      }),
+    }))
+    const transport = createDockerTransport({ socketPath: '/var/run/docker.sock' })
+    const onChunk = vi.fn(async () => { await held })
+    const pending = transport.pullCreate!({
+      path: '/v1.41/images/create?fromImage=alpine%3Alatest', timeoutMs: 60_000,
+      maxBytes: 1024, onChunk,
+    })
+    await vi.waitFor(() => expect(onChunk).toHaveBeenCalledOnce())
+    expect(response.pause).toHaveBeenCalledOnce()
+    expect(response.resume).not.toHaveBeenCalled()
+    release()
+    await expect(pending).resolves.toEqual({ status: 200, chunks: [new Uint8Array(bytes)] })
+    expect(response.resume).toHaveBeenCalledOnce()
   })
 })
 
