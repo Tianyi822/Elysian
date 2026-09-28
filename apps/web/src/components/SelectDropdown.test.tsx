@@ -54,6 +54,38 @@ describe('自绘单选下拉', () => {
     expect(props.onSelect).toHaveBeenCalledWith('files')
   })
 
+  it('候选项文字靠左，选中勾跟在文字后面，未选项左侧不留空列', async () => {
+    const user = userEvent.setup()
+    renderDropdown()
+
+    await user.click(screen.getByRole('button', { name: '操作分类筛选：全部' }))
+    const selected = await screen.findByRole('menuitemradio', { name: '全部' })
+    const unselected = screen.getByRole('menuitemradio', { name: '文件管理' })
+
+    expect(selected.firstElementChild).toHaveTextContent('全部')
+    expect(selected.querySelector('svg')).not.toBeNull()
+    expect(unselected.firstElementChild).toHaveTextContent('文件管理')
+    expect(unselected.querySelector('svg')).toBeNull()
+    expect(selected).toHaveClass('text-left')
+  })
+
+  it('菜单超出高度时滚轮留在列表内，不冒泡到外层滚动锁', async () => {
+    const user = userEvent.setup()
+    renderDropdown()
+    await user.click(screen.getByRole('button', { name: '操作分类筛选：全部' }))
+    const scroller = screen.getByRole('menu').firstElementChild as HTMLDivElement
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 800 })
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 200 })
+    scroller.scrollTop = 40
+
+    const reachedDocument = vi.fn()
+    document.addEventListener('wheel', reachedDocument)
+    scroller.dispatchEvent(new WheelEvent('wheel', { deltaY: 30, bubbles: true, cancelable: true }))
+    document.removeEventListener('wheel', reachedDocument)
+
+    expect(reachedDocument).not.toHaveBeenCalled()
+  })
+
   it('键盘方向键可选值，Escape 关闭菜单并返回触发器', async () => {
     const user = userEvent.setup()
     const props = renderDropdown()

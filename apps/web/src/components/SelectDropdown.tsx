@@ -1,4 +1,6 @@
+import { useCallback, useRef, type FocusEvent } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
+import { FORM_CONTROL_HEIGHT_CLASS } from './formControl'
 import { Check, ChevronDown } from './icons'
 
 /**
@@ -9,7 +11,50 @@ import { Check, ChevronDown } from './icons'
  * 一排下拉读起来就是几个重复的词，看不出各自在筛什么。
  * 表单用 `fullWidth`，顶栏收起后的页签用 `triggerClassName` 自己控制显隐，菜单仍走这里。
  * 浮层不锁页面滚动：默认的模态锁会按滚动条宽度给 body 加 margin，窄屏上会把整页挤窄。
+ * 菜单通过 Portal 挂到 body。对话框自己的滚动锁会在 document 上取消滚轮默认行为，
+ * 因此可滚动的菜单要拦下 wheel / touchmove，否则列表滚不动。
+ * 候选项文字一律靠左；选中勾放在文字后面，不在左侧留空列。
  */
+
+/** 对话框滚动锁在 document 冒泡阶段取消滚轮。菜单自己能滚时拦住事件，滚轮才作用在列表上。 */
+function bindMenuScroll(node: HTMLDivElement | null, cleanup: { current: (() => void) | null }) {
+  cleanup.current?.()
+  cleanup.current = null
+  if (!node) return
+  const canScroll = () => node.scrollHeight > node.clientHeight + 1
+  const onWheel = (event: WheelEvent) => {
+    if (!canScroll()) return
+    const atTop = node.scrollTop <= 0
+    const atBottom = node.scrollTop + node.clientHeight >= node.scrollHeight - 1
+    if ((event.deltaY < 0 && atTop) || (event.deltaY > 0 && atBottom)) event.preventDefault()
+    event.stopPropagation()
+  }
+  const onTouchMove = (event: TouchEvent) => {
+    if (!canScroll()) return
+    event.stopPropagation()
+  }
+  node.addEventListener('wheel', onWheel, { passive: false })
+  node.addEventListener('touchmove', onTouchMove, { passive: true })
+  cleanup.current = () => {
+    node.removeEventListener('wheel', onWheel)
+    node.removeEventListener('touchmove', onTouchMove)
+  }
+}
+
+/** 方向键聚焦用了 preventScroll，这里只滚动菜单自身，避免把外层对话框一起带动。 */
+function revealFocusedItem(event: FocusEvent<HTMLDivElement>) {
+  const item = event.target
+  const container = event.currentTarget
+  if (!(item instanceof HTMLElement) || item === container) return
+  const containerRect = container.getBoundingClientRect()
+  const itemRect = item.getBoundingClientRect()
+  if (itemRect.top < containerRect.top) {
+    container.scrollTop -= containerRect.top - itemRect.top
+  } else if (itemRect.bottom > containerRect.bottom) {
+    container.scrollTop += itemRect.bottom - containerRect.bottom
+  }
+}
+
 export function SelectDropdown<T extends string>({
   ariaLabel,
   label,
@@ -63,7 +108,7 @@ export function SelectDropdown<T extends string>({
   const showPlaceholder = !matched && Boolean(fallbackLabel)
   const selected = active && !fullWidth
   const fieldTrigger =
-    'inline-flex w-full items-center justify-between gap-1.5 rounded-lg border border-line bg-surface-raised px-2.5 py-1.5 text-sm text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-60'
+    `inline-flex ${FORM_CONTROL_HEIGHT_CLASS} w-full items-center justify-between gap-1.5 rounded-lg border border-line bg-surface-raised px-2.5 text-sm text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-60`
   const filterTrigger = `inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${
     selected
       ? 'border-accent/50 bg-accent/10 text-accent'
@@ -79,6 +124,10 @@ export function SelectDropdown<T extends string>({
   ]
     .filter(Boolean)
     .join(' ')
+  const scrollCleanup = useRef<(() => void) | null>(null)
+  const attachScroll = useCallback((node: HTMLDivElement | null) => {
+    bindMenuScroll(node, scrollCleanup)
+  }, [])
 
   return (
     <DropdownMenu.Root modal={false}>
@@ -101,30 +150,34 @@ export function SelectDropdown<T extends string>({
         <DropdownMenu.Content
           align={align}
           sideOffset={6}
-          className={`z-[70] max-h-60 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-lg border border-line bg-surface p-1 text-sm shadow-lg ${
+          collisionPadding={8}
+          className={`z-[70] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-line bg-surface text-left text-sm shadow-lg ${
             fullWidth ? 'min-w-[var(--radix-dropdown-menu-trigger-width)]' : 'min-w-32 text-xs'
           }`}
         >
-          {items.length === 0 ? (
-            <p className="px-2 py-1.5 text-xs text-fg-muted">{emptyLabel ?? '没有可选项'}</p>
-          ) : (
-            <DropdownMenu.RadioGroup value={value ?? ''} onValueChange={(next) => onSelect(next as T)}>
-              {items.map((item) => (
-                <DropdownMenu.RadioItem
-                  key={item.value}
-                  value={item.value}
-                  className="flex cursor-default items-center gap-2 rounded px-2 py-1.5 outline-none text-fg-muted data-[highlighted]:bg-surface-raised data-[highlighted]:text-fg data-[state=checked]:font-medium data-[state=checked]:text-fg"
-                >
-                  {item.value === value ? (
-                    <Check aria-hidden size={13} />
-                  ) : (
-                    <span aria-hidden className="w-[13px]" />
-                  )}
-                  <span className={`min-w-0 truncate tabular-nums ${mono ? 'font-mono' : ''}`}>{item.label}</span>
-                </DropdownMenu.RadioItem>
-              ))}
-            </DropdownMenu.RadioGroup>
-          )}
+          <div
+            ref={attachScroll}
+            onFocus={revealFocusedItem}
+            className="hover-scrollbar max-h-60 overflow-y-auto overscroll-contain p-1"
+            style={{ maxHeight: 'min(15rem, var(--radix-dropdown-menu-content-available-height, 15rem))' }}
+          >
+            {items.length === 0 ? (
+              <p className="px-2 py-1.5 text-xs text-fg-muted">{emptyLabel ?? '没有可选项'}</p>
+            ) : (
+              <DropdownMenu.RadioGroup value={value ?? ''} onValueChange={(next) => onSelect(next as T)}>
+                {items.map((item) => (
+                  <DropdownMenu.RadioItem
+                    key={item.value}
+                    value={item.value}
+                    className="flex cursor-default items-center gap-2 rounded px-2 py-1.5 text-left outline-none text-fg-muted data-[highlighted]:bg-surface-raised data-[highlighted]:text-fg data-[state=checked]:font-medium data-[state=checked]:text-fg"
+                  >
+                    <span className={`min-w-0 truncate text-left tabular-nums ${mono ? 'font-mono' : ''}`}>{item.label}</span>
+                    {item.value === value ? <Check aria-hidden size={13} className="shrink-0" /> : null}
+                  </DropdownMenu.RadioItem>
+                ))}
+              </DropdownMenu.RadioGroup>
+            )}
+          </div>
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
