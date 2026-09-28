@@ -23,6 +23,23 @@ function wsOriginAllowed(request: Request): boolean {
 const MAX_SESSIONS = 5
 const MAX_FRAME_BYTES = 64 * 1024
 const IDLE_TIMEOUT = 10 * 60_000
+/** 单连接发送缓冲水位上限（1 MiB）：与下方 output 分支及 terminalConnection.sendFrame 同口径。 */
+const SEND_BUFFER_LIMIT_BYTES = 1024 * 1024
+
+/**
+ * 带水位检查的回执发送：readyState 为 OPEN 且底层未发送字节低于 1 MiB 才 send，
+ * 超限以 1008 断开——慢读客户端不能把服务端发送缓冲无界撑大。busy 拒绝回执与
+ * 执行失败回执走这里（此前直发，是同文件 output 分支之外漏掉的两处）；onOpen
+ * 失败回执紧随 close(1011)，无积压面，不走它。
+ */
+export function sendGuarded(conn: WsConn, payload: unknown): void {
+  if (conn.readyState !== 1) return
+  if (((conn.raw as { bufferedAmount?: number } | undefined)?.bufferedAmount ?? 0) >= SEND_BUFFER_LIMIT_BYTES) {
+    conn.close(1008, '输出缓冲超限')
+    return
+  }
+  conn.send(JSON.stringify(payload))
+}
 
 /**
  * 终端入站帧的类型与体积检查（应用层）：非字符串帧或超 64 KiB 的帧返回用于 close(1008)
@@ -195,7 +212,7 @@ export function createDatabaseApp(deps: DatabaseAppDeps): Hono {
         try { frame = JSON.parse(raw) as typeof frame } catch { conn.close(1008, '终端消息无效'); return }
         if (frame.type === 'interrupt') { conn.close(1000, '执行已中断'); return }
         if (frame.type !== 'execute' || typeof frame.text !== 'string') { conn.close(1008, '终端消息无效'); return }
-        if (state.busy) { conn.send(JSON.stringify({ type: 'error', text: '上一条命令仍在执行' })); return }
+        if (state.busy) { sendGuarded(conn, { type: 'error', text: '上一条命令仍在执行' }); return }
         clearTimeout(state.timer)
         state.busy = true
         const execute = executors.get(key(conn))
@@ -206,7 +223,7 @@ export function createDatabaseApp(deps: DatabaseAppDeps): Hono {
             recordUpgrade('success', '执行数据库终端语句', `输出 ${lines.length} 行`)
           } else conn.close(1008, '输出缓冲超限')
         }).catch((error: unknown) => {
-          if (conn.readyState === 1) conn.send(JSON.stringify({ type: 'error', text: error instanceof Error ? error.message : '执行失败' }))
+          sendGuarded(conn, { type: 'error', text: error instanceof Error ? error.message : '执行失败' })
           recordUpgrade('failure', '执行数据库终端语句', error instanceof Error ? error.message : '执行失败')
         }).finally(() => {
           state.busy = false

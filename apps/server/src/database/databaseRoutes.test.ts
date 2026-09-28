@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { DatabaseService } from './databaseService.ts'
-import { createDatabaseApp, terminalFrameViolation } from './databaseRoutes.ts'
+import { createDatabaseApp, sendGuarded, terminalFrameViolation } from './databaseRoutes.ts'
 import type { DatabaseInstance } from '@elysian/contracts'
 import type { OperationAuditLogs } from '../logs/operationAudit.ts'
 import type { SqliteService } from './sqliteService.ts'
+import type { WsConn } from '../terminals/terminalConnection.ts'
 
 const ID = 'db-1'
 const secret = { username: 'reader', password: 'password-hidden-from-list' }
@@ -105,6 +106,43 @@ describe('数据库终端帧上限与审计', () => {
   // onMessage 的语句执行摘要（「执行数据库终端语句」+「输出 N 行」，不落语句正文）、以及 index.ts
   // 传输层 websocket.maxPayloadLength 帧上限，都需要真实 Bun WebSocket 升级才能驱动，
   // app.request 无法进入这些回调（升级需 Bun server 实例接管），按代码评审口径覆盖。
+})
+
+describe('数据库终端回执发送水位（sendGuarded）', () => {
+  function fakeConn(readyState: number, bufferedAmount?: number): { conn: WsConn; send: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> } {
+    const send = vi.fn()
+    const close = vi.fn()
+    const conn: WsConn = { send, close, readyState, ...(bufferedAmount === undefined ? {} : { raw: { bufferedAmount } }) }
+    return { conn, send, close }
+  }
+  const payload = { type: 'error', text: '上一条命令仍在执行' }
+
+  it('未发送字节低于 1 MiB 且连接打开时发送 JSON 回执', () => {
+    const { conn, send, close } = fakeConn(1, 1024 * 1024 - 1)
+    sendGuarded(conn, payload)
+    expect(send).toHaveBeenCalledWith(JSON.stringify(payload))
+    expect(close).not.toHaveBeenCalled()
+  })
+
+  it('未发送字节达到或超过 1 MiB 时不发送并以 1008 断开（慢读背压终态）', () => {
+    for (const bufferedAmount of [1024 * 1024, 1024 * 1024 + 1]) {
+      const { conn, send, close } = fakeConn(1, bufferedAmount)
+      sendGuarded(conn, payload)
+      expect(send).not.toHaveBeenCalled()
+      expect(close).toHaveBeenCalledWith(1008, expect.any(String))
+    }
+  })
+
+  it('连接不在 OPEN 态时不发送也不断开；raw 缺失或 bufferedAmount 不可得时按 0 处理', () => {
+    const closed = fakeConn(3, 1024 * 1024 * 8)
+    sendGuarded(closed.conn, payload)
+    expect(closed.send).not.toHaveBeenCalled()
+    expect(closed.close).not.toHaveBeenCalled()
+    const noRaw = fakeConn(1)
+    sendGuarded(noRaw.conn, payload)
+    expect(noRaw.send).toHaveBeenCalledWith(JSON.stringify(payload))
+    expect(noRaw.close).not.toHaveBeenCalled()
+  })
 })
 
 it('SQLite 文件路由分别处理创建、上传、删除确认与列表', async () => {

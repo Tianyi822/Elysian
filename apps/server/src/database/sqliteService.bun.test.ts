@@ -96,6 +96,31 @@ test('终端写入遵守托管总量约束，超限后文件不继续增长', as
   await expect(service.create('second')).rejects.toThrow('上限')
 })
 
+test('download 并发准入：第 3 个并发导出以 503 拒绝，cleanup 释放名额且重复调用不过度递减', async () => {
+  const { service } = await fixture()
+  const row = await service.create('exports')
+  const id = row.id.slice(7)
+  const catchErr = (promise: Promise<unknown>) => promise.then(() => undefined, (caught: unknown) => caught)
+  const first = await service.download(id)
+  const second = await service.download(id)
+  // 上限 2：并发的第 3 个（MAX+1）在入口即被拒，不 fork 子进程、不落快照文件。
+  const rejected = await catchErr(service.download(id))
+  expect(rejected).toBeInstanceOf(InvalidRequestError)
+  expect((rejected as InvalidRequestError).status).toBe(503)
+  expect((rejected as InvalidRequestError).message).toBe('SQLite 快照导出并发已达上限，请稍后重试')
+  await first.cleanup()
+  await first.cleanup()
+  // 失败路径（404）在有空位时进入后也释放名额，不泄漏计数。
+  const missing = await catchErr(service.download('00000000-0000-0000-0000-000000000000'))
+  expect((missing as InvalidRequestError).status).toBe(404)
+  // cleanup 后名额回落可再次导出；重复 cleanup 不得把计数减过头（下方第 4 个仍应被拒）。
+  const third = await service.download(id)
+  expect(third.bytes).toBeGreaterThan(0)
+  expect(((await catchErr(service.download(id))) as InvalidRequestError).status).toBe(503)
+  await second.cleanup()
+  await third.cleanup()
+})
+
 test('sqliteFsMessage 只认 errno code：带 code 的裸 fs 错误替换为分类中文，无 code 的消息原样保留', () => {
   const raw = "ENOENT: no such file or directory, stat '/var/lib/elysian/data/sqlite/x.db'"
   const fsError = new Error(raw)

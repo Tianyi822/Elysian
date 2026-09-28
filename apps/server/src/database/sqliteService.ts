@@ -10,6 +10,12 @@ import type { DatabaseSession } from './databaseProtocol.ts'
 export const SQLITE_UPLOAD_LIMIT = 256 * 1024 ** 2
 const SQLITE_FILE_LIMIT = 1024 ** 3
 const SQLITE_TOTAL_LIMIT = 4 * 1024 ** 3
+/**
+ * 在途快照导出并发上限：每份 .export 快照 ≈ 库大小（至多 1 GiB）且 VACUUM 有 60 秒超时
+ * 窗口，入口 O(1) 计数把挂起下载的最坏瞬时磁盘与子进程放大钉在 2 份以内；名额由 download
+ * 返回的 cleanup（路由在 pull done/error/cancel 三处调用）或失败路径释放。
+ */
+const SQLITE_EXPORT_CONCURRENCY = 2
 const NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const HEADER = Buffer.from('SQLite format 3\0')
@@ -152,6 +158,7 @@ export function createSqliteService(options: {
   const registryPath = options.registryPath ?? join(ELYSIAN_CONFIG_DIR, 'sqlite-databases.json')
   const totalLimit = options.totalLimitBytes ?? SQLITE_TOTAL_LIMIT
   const active = new Map<string, Set<Worker>>()
+  let activeExports = 0
   let tail: Promise<unknown> = Promise.resolve()
   const serialized = <T>(work: () => Promise<T>): Promise<T> => {
     const run = tail.then(work)
@@ -370,14 +377,33 @@ export function createSqliteService(options: {
       }
     }) },
     async download(id) {
-      const row = await get(id)
-      if (row.state !== 'active') throw new InvalidRequestError(409, 'SQLite 文件尚未就绪')
-      const file = await checkedFile(id)
-      const target = join(await directory(), `.${id}.${randomUUID()}.export`)
+      // 并发准入在一切校验之前：超限直接 503，不再 fork 子进程、不落快照文件。
+      if (activeExports >= SQLITE_EXPORT_CONCURRENCY) throw new InvalidRequestError(503, 'SQLite 快照导出并发已达上限，请稍后重试')
+      activeExports += 1
+      let settled = false
+      /** 一次性收尾：递减在途计数并尽力删除快照（幂等），重复调用无副作用。 */
+      const settle = async (target?: string): Promise<void> => {
+        if (settled) return
+        settled = true
+        activeExports -= 1
+        if (target) await unlink(target).catch(() => undefined)
+      }
+      let handedOff = false
       try {
-        const result = await oneShot<{ bytes: number }>(file, 'export', { target }, false, 60_000)
-        return { path: target, name: `${row.name}.db`, bytes: result.bytes, cleanup: () => unlink(target).catch(() => undefined) }
-      } catch (error) { await unlink(target).catch(() => undefined); throw error }
+        const row = await get(id)
+        if (row.state !== 'active') throw new InvalidRequestError(409, 'SQLite 文件尚未就绪')
+        const file = await checkedFile(id)
+        const target = join(await directory(), `.${id}.${randomUUID()}.export`)
+        try {
+          const result = await oneShot<{ bytes: number }>(file, 'export', { target }, false, 60_000)
+          // 成功：释放名额的责任移交给返回的 cleanup（快照存活期间占住名额）。
+          handedOff = true
+          return { path: target, name: `${row.name}.db`, bytes: result.bytes, cleanup: () => settle(target) }
+        } catch (error) { await settle(target); throw error }
+      } finally {
+        // 失败路径兜底释放计数；成功路径已交接，一次性 flag 保证不重复递减。
+        if (!handedOff) await settle()
+      }
     },
     remove(id) { return serialized(async () => {
       const row = await get(id)
