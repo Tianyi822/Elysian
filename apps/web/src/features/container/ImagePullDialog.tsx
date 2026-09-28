@@ -3,6 +3,7 @@ import { X } from '../../components/icons'
 import { useEffect, useId, useRef, useState } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
+import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { useContainersStore } from '../../stores/containersStore'
 import {
@@ -19,7 +20,7 @@ import {
  */
 
 const INPUT_CLASS =
-  'w-full rounded-lg border border-line bg-surface-raised px-2.5 py-1.5 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle'
+  `${FORM_CONTROL_HEIGHT_CLASS} w-full rounded-lg border border-line bg-surface-raised px-2.5 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle`
 const FIELD_LABEL_CLASS = 'mb-2 block text-xs font-medium text-fg-muted'
 const FIELD_ERROR_CLASS = 'mt-1 text-xs text-danger'
 

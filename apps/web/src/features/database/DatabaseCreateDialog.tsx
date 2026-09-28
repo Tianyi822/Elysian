@@ -1,6 +1,7 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { useEffect, useRef, useState } from 'react'
 import type { DragEvent } from 'react'
+import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 import { File, Loader2, Upload, X } from '../../components/icons'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { useDatabaseStore } from '../../stores/databaseStore'
@@ -16,9 +17,9 @@ import {
 } from './databaseCreateForm'
 import type { DatabaseCreateDraft, DatabaseCreateFormErrors, SqliteFileSource } from './databaseCreateForm'
 
-const FIELD = 'w-full min-w-0 rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle'
+const FIELD = `${FORM_CONTROL_HEIGHT_CLASS} w-full min-w-0 rounded-lg border border-line bg-surface-raised px-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle`
 const LABEL = 'mb-2 block text-xs font-medium leading-5 text-fg-muted'
-const BUTTON = 'inline-flex min-h-9 items-center justify-center rounded-lg border border-line px-3 text-xs font-medium text-fg transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50'
+const BUTTON = `inline-flex ${FORM_CONTROL_HEIGHT_CLASS} items-center justify-center rounded-lg border border-line px-3 text-xs font-medium text-fg transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50`
 const ERROR = 'mt-1 text-xs text-danger'
 
 function SqliteFileField({

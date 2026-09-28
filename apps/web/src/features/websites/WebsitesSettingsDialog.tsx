@@ -2,6 +2,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { useState } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { X } from '../../components/icons'
+import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 import { useWebsitesStore } from '../../stores/websitesStore'
 
 /**
@@ -10,7 +11,7 @@ import { useWebsitesStore } from '../../stores/websitesStore'
  */
 
 const INPUT_CLASS =
-  'w-full rounded-lg border border-line bg-surface-raised px-2.5 py-1.5 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle'
+  `${FORM_CONTROL_HEIGHT_CLASS} w-full rounded-lg border border-line bg-surface-raised px-2.5 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle`
 
 export function WebsitesSettingsDialog() {
   const gateway = useGateway()

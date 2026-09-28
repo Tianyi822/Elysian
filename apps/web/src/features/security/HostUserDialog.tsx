@@ -15,7 +15,7 @@ import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { X } from '../../components/icons'
 import { useUsersStore } from '../../stores/usersStore'
 import { PasswordStrengthBar, PasswordVisibilityButton, passwordInputClass } from './passwordFieldParts'
-import { ACTION_CLASS, INPUT_CLASS, SwitchToggle } from './sshCardParts'
+import { ACTION_CLASS, INPUT_CLASS, SECONDARY_ACTION_CLASS, SwitchToggle } from './sshCardParts'
 
 /** 登录方式是否包含密码路径：只有这两种才需要（才允许）设置密码。 */
 function methodIncludesPassword(method: HostUserLoginMethod): boolean {
@@ -298,7 +298,7 @@ export function HostUserDialog() {
               <button
                 type="button"
                 onClick={() => closeDialog()}
-                className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
+                className={SECONDARY_ACTION_CLASS}
               >
                 取消
               </button>

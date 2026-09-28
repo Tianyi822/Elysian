@@ -1,5 +1,6 @@
 import type { SshPasswordStrength } from '@elysian/contracts'
 import { SSH_PASSWORD_STRENGTH_LABELS } from '@elysian/contracts'
+import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 import { Eye, EyeOff } from '../../components/icons'
 
 /*
@@ -31,7 +32,7 @@ const STRENGTH_SEGMENTS = ['bg-danger', 'bg-warning', 'bg-success'] as const
  * 因此这里绝不并上含 border-line 的通用输入类，避免两个边框色类在 CSS 里赌生成顺序。
  */
 const PASSWORD_INPUT_BASE_CLASS =
-  'h-[34px] w-full rounded-lg border bg-surface-raised px-2.5 pr-9 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle'
+  `${FORM_CONTROL_HEIGHT_CLASS} w-full rounded-lg border bg-surface-raised px-2.5 pr-9 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle`
 
 /** 完整的密码输入框类名：有输入取当前强度的描边（含聚焦接管），空输入回到默认边框与默认聚焦。 */
 export function passwordInputClass(strength: SshPasswordStrength | undefined): string {

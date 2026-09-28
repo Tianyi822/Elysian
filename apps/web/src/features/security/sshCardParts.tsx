@@ -1,18 +1,15 @@
 import * as Switch from '@radix-ui/react-switch'
 import { useId } from 'react'
 import type { ReactNode } from 'react'
+import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 
 /*
  * SSH 管理页的共用卡片部件：卡的形状、卡内区域的形状，以及卡内输入类控件与推进动作的类名。
  * 三张设置卡与密钥表共用它们，样式只在这里维护一份。
  */
 
-/**
- * 卡内控件统一高度（34px）。
- * 输入框按内距加行高算出来正好是 34px，按钮若只写内距会矮 4px——横排时一高一低。
- * 因此这里把高度写成显式常量，输入框与挨着它的按钮都取它，不靠两边的内距各自凑。
- */
-export const CONTROL_HEIGHT_CLASS = 'h-[34px]'
+/** 卡内控件高度，与表单控件同一套，见 `components/formControl.ts`。 */
+export const CONTROL_HEIGHT_CLASS = FORM_CONTROL_HEIGHT_CLASS
 
 /** 卡内输入框：坐在卡面或区域内都取浮起底，靠边框与悬停反馈显形。 */
 export const INPUT_CLASS = `min-w-0 flex-1 ${CONTROL_HEIGHT_CLASS} rounded-lg border border-line bg-surface-raised px-2.5 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle`

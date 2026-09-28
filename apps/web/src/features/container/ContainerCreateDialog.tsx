@@ -1,6 +1,7 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { useEffect, useState } from 'react'
 import { RESTART_POLICIES, RESTART_POLICY_LABELS } from '@elysian/contracts'
+import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { ChevronDown, Loader2, Plus, Trash2, X } from '../../components/icons'
 import { useGateway } from '../../adapters/GatewayProvider'
@@ -21,10 +22,10 @@ import type { ContainerCreateDraft, PortDraftRow } from './containerCreateForm'
  */
 
 const INPUT_CLASS =
-  'w-full rounded-lg border border-line bg-surface-raised px-2.5 py-1.5 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle'
+  `${FORM_CONTROL_HEIGHT_CLASS} w-full rounded-lg border border-line bg-surface-raised px-2.5 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle`
 const FIELD_ERROR_CLASS = 'mt-1 text-xs text-danger'
 const ROW_DELETE_BUTTON =
-  'inline-flex items-center gap-1 rounded-lg border border-line px-2 py-1 text-xs text-fg-muted transition-colors hover:text-danger'
+  `inline-flex ${FORM_CONTROL_HEIGHT_CLASS} items-center gap-1 rounded-lg border border-line px-2 text-xs text-fg-muted transition-colors hover:text-danger`
 const ROW_ADD_BUTTON =
   'inline-flex items-center gap-1 rounded-lg border border-dashed border-line px-2 py-1 text-xs text-fg-muted transition-colors hover:text-fg'
 const PROTOCOL_ITEMS = [

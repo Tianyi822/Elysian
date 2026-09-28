@@ -13,6 +13,7 @@ import type { WebsiteProjectKind, WebsiteRuntimeKind } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { Minus, Plus, X } from '../../components/icons'
 import { useWebsitesStore } from '../../stores/websitesStore'
+import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 import { SelectDropdown } from '../../components/SelectDropdown'
 
 /**
@@ -22,7 +23,7 @@ import { SelectDropdown } from '../../components/SelectDropdown'
  */
 
 const INPUT_CLASS =
-  'w-full rounded-lg border border-line bg-surface-raised px-2.5 py-1.5 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle'
+  `${FORM_CONTROL_HEIGHT_CLASS} w-full rounded-lg border border-line bg-surface-raised px-2.5 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle`
 
 const DEFAULT_PORT = 8080
 
@@ -48,7 +49,7 @@ function PortStepper({
         type="button"
         aria-label="端口减一"
         onClick={() => onChange(clamp(value - 1))}
-        className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-line bg-surface-raised text-fg-muted transition-colors hover:border-fg-subtle hover:text-fg"
+        className={`inline-flex ${FORM_CONTROL_HEIGHT_CLASS} w-[34px] shrink-0 items-center justify-center rounded-lg border border-line bg-surface-raised text-fg-muted transition-colors hover:border-fg-subtle hover:text-fg`}
       >
         <Minus aria-hidden size={14} />
       </button>
@@ -71,7 +72,7 @@ function PortStepper({
         type="button"
         aria-label="端口加一"
         onClick={() => onChange(clamp(value + 1))}
-        className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-line bg-surface-raised text-fg-muted transition-colors hover:border-fg-subtle hover:text-fg"
+        className={`inline-flex ${FORM_CONTROL_HEIGHT_CLASS} w-[34px] shrink-0 items-center justify-center rounded-lg border border-line bg-surface-raised text-fg-muted transition-colors hover:border-fg-subtle hover:text-fg`}
       >
         <Plus aria-hidden size={14} />
       </button>

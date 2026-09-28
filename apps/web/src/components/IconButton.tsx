@@ -1,5 +1,6 @@
 import * as Tooltip from '@radix-ui/react-tooltip'
 import type { FocusEventHandler, KeyboardEventHandler, PointerEventHandler, ReactNode } from 'react'
+import { FORM_CONTROL_HEIGHT_CLASS } from './formControl'
 
 /**
  * 图标按钮。图标按钮必须带 tooltip，这是项目红线，所以统一从这个组件出，
@@ -43,6 +44,7 @@ export function IconButton({
   variant = 'solid',
   tooltip = true,
   disabled = false,
+  formControl = false,
   className,
   onPointerDown,
   onKeyDown,
@@ -58,12 +60,17 @@ export function IconButton({
   tooltip?: boolean
   /** 忙碌中的动作禁用按钮；tooltip 与 aria-label 保持可及。 */
   disabled?: boolean
+  /** 与表单输入框同高，用在输入框同一行，避免图标按钮矮一截。 */
+  formControl?: boolean
   className?: string
   onPointerDown?: PointerEventHandler<HTMLButtonElement>
   onKeyDown?: KeyboardEventHandler<HTMLButtonElement>
   onFocus?: FocusEventHandler<HTMLButtonElement>
   onBlur?: FocusEventHandler<HTMLButtonElement>
 }) {
+  const variantClass = formControl
+    ? styleFor(variant, tone).replace(/\bsize-\d+\b/g, '').trim()
+    : styleFor(variant, tone)
   const button = (
     <button
       type="button"
@@ -74,7 +81,7 @@ export function IconButton({
       onFocus={onFocus}
       onBlur={onBlur}
       disabled={disabled}
-      className={`inline-flex items-center justify-center rounded transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${styleFor(variant, tone)} ${className ?? ''}`}
+      className={`inline-flex items-center justify-center ${formControl ? 'rounded-lg' : 'rounded'} transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${variantClass} ${formControl ? `${FORM_CONTROL_HEIGHT_CLASS} w-[34px]` : ''} ${className ?? ''}`}
     >
       {children}
     </button>

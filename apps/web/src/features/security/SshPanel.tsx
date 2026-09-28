@@ -332,7 +332,7 @@ function ServiceCard() {
           />
           <IconButton
             label="随机端口"
-            variant="ghost"
+            formControl
             onPress={() => setPortDraft(`${randomSshPort()}`)}
           >
             <RefreshCw aria-hidden size={14} />
@@ -437,7 +437,7 @@ function SshPortConfirmDialog() {
             <button
               type="button"
               onClick={() => cancelPortSave()}
-              className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
+              className={SECONDARY_ACTION_CLASS}
             >
               取消
             </button>
@@ -626,7 +626,7 @@ function RootCard() {
             </div>
             <IconButton
               label="随机生成强密码"
-              variant="ghost"
+              formControl
               onPress={() => setPasswordDraft(randomStrongPassword())}
             >
               <RefreshCw aria-hidden size={14} />

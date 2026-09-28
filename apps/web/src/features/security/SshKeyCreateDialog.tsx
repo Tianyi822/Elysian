@@ -6,7 +6,7 @@ import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { X } from '../../components/icons'
 import { useSshStore } from '../../stores/sshStore'
-import { ACTION_CLASS } from './sshCardParts'
+import { ACTION_CLASS, SECONDARY_ACTION_CLASS } from './sshCardParts'
 
 /**
  * 创建 SSH 密钥弹窗：选归属账号、起一个名称，密钥对由 adapter 生成。
@@ -150,7 +150,7 @@ export function SshKeyCreateDialog() {
               <button
                 type="button"
                 onClick={() => closeCreateKey()}
-                className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
+                className={SECONDARY_ACTION_CLASS}
               >
                 取消
               </button>
