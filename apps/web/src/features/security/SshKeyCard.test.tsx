@@ -115,8 +115,8 @@ describe('SSH 密钥表', () => {
     expect(within(dialog).getByText('请选择归属账号')).toBeInTheDocument()
     expect(useSshStore.getState().keys).toHaveLength(SEED_LOGIN_KEYS.length)
 
-    await user.click(within(dialog).getByRole('combobox', { name: '归属账号' }))
-    await user.click(await screen.findByRole('option', { name: 'wangwu' }))
+    await user.click(within(dialog).getByRole('button', { name: /归属账号/ }))
+    await user.click(await screen.findByRole('menuitemradio', { name: 'wangwu' }))
 
     // 空名称与重名同样就地报错，都不发请求
     await user.click(within(dialog).getByRole('button', { name: '创建密钥' }))
@@ -173,10 +173,10 @@ describe('SSH 密钥表', () => {
 
     await user.click(within(keyCard()).getByRole('button', { name: '创建 SSH 密钥' }))
     const dialog = await screen.findByRole('dialog', { name: '创建 SSH 密钥' })
-    await user.click(within(dialog).getByRole('combobox', { name: '归属账号' }))
+    await user.click(within(dialog).getByRole('button', { name: /归属账号/ }))
 
     expect(await screen.findByText('还没有可选的账号，先创建一个可登录的主机账号')).toBeInTheDocument()
-    expect(screen.queryAllByRole('option')).toHaveLength(0)
+    expect(screen.queryAllByRole('menuitemradio')).toHaveLength(0)
   })
 
   it('删除密钥：确认弹窗里取消不动数据，确认后行消失并发通知', async () => {

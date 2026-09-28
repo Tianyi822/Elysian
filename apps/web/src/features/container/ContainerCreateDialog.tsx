@@ -1,6 +1,7 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { useEffect, useState } from 'react'
 import { RESTART_POLICIES, RESTART_POLICY_LABELS } from '@elysian/contracts'
+import { SelectDropdown } from '../../components/SelectDropdown'
 import { ChevronDown, Loader2, Plus, Trash2, X } from '../../components/icons'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
@@ -26,6 +27,10 @@ const ROW_DELETE_BUTTON =
   'inline-flex items-center gap-1 rounded-lg border border-line px-2 py-1 text-xs text-fg-muted transition-colors hover:text-danger'
 const ROW_ADD_BUTTON =
   'inline-flex items-center gap-1 rounded-lg border border-dashed border-line px-2 py-1 text-xs text-fg-muted transition-colors hover:text-fg'
+const PROTOCOL_ITEMS = [
+  { value: 'tcp', label: 'tcp' },
+  { value: 'udp', label: 'udp' },
+] as const
 
 export function ContainerCreateDialog() {
   const gateway = useGateway()
@@ -110,19 +115,19 @@ export function ContainerCreateDialog() {
                   <label htmlFor="create-image">镜像</label>
                   <span className="text-danger">*</span>
                 </div>
-                <select
+                <SelectDropdown
                   id="create-image"
-                  value={draft.imageId}
-                  onChange={(event) => patch({ imageId: event.target.value })}
-                  className={INPUT_CLASS}
-                >
-                  <option value="">选择镜像</option>
-                  {images.map((image) => (
-                    <option key={image.id} value={image.id}>
-                      {image.name}:{image.tag}
-                    </option>
-                  ))}
-                </select>
+                  ariaLabel="镜像"
+                  fullWidth
+                  items={images.map((image) => ({
+                    value: image.id,
+                    label: `${image.name}:${image.tag}`,
+                  }))}
+                  value={draft.imageId || undefined}
+                  onSelect={(imageId) => patch({ imageId })}
+                  fallbackLabel="选择镜像"
+                  emptyLabel="没有可选镜像"
+                />
                 {showErrors && errors.imageId ? (
                   <p className={FIELD_ERROR_CLASS} id="create-image-error">{errors.imageId}</p>
                 ) : null}
@@ -214,17 +219,14 @@ export function ContainerCreateDialog() {
                             <label htmlFor={`create-port-protocol-${index}`} className="mb-1 block text-xs text-fg-muted">
                               协议
                             </label>
-                            <select
+                            <SelectDropdown
                               id={`create-port-protocol-${index}`}
+                              ariaLabel="协议"
+                              fullWidth
+                              items={PROTOCOL_ITEMS}
                               value={row.protocol}
-                              onChange={(event) =>
-                                updatePorts(index, { protocol: event.target.value as 'tcp' | 'udp' })
-                              }
-                              className={INPUT_CLASS}
-                            >
-                              <option value="tcp">tcp</option>
-                              <option value="udp">udp</option>
-                            </select>
+                              onSelect={(protocol) => updatePorts(index, { protocol })}
+                            />
                           </div>
                           <div className="flex min-w-36 flex-col justify-end pb-1.5">
                             <label
@@ -432,20 +434,17 @@ export function ContainerCreateDialog() {
                     <label htmlFor="create-restart" className="mb-1 block text-xs font-medium text-fg-muted">
                       重启策略
                     </label>
-                    <select
+                    <SelectDropdown
                       id="create-restart"
+                      ariaLabel="重启策略"
+                      fullWidth
+                      items={RESTART_POLICIES.map((policy) => ({
+                        value: policy,
+                        label: RESTART_POLICY_LABELS[policy],
+                      }))}
                       value={draft.restartPolicy}
-                      onChange={(event) =>
-                        patch({ restartPolicy: event.target.value as ContainerCreateDraft['restartPolicy'] })
-                      }
-                      className={INPUT_CLASS}
-                    >
-                      {RESTART_POLICIES.map((policy) => (
-                        <option key={policy} value={policy}>
-                          {RESTART_POLICY_LABELS[policy]}
-                        </option>
-                      ))}
-                    </select>
+                      onSelect={(restartPolicy) => patch({ restartPolicy })}
+                    />
                   </div>
                 </div>
               </div>

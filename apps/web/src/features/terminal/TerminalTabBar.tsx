@@ -1,9 +1,9 @@
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useIntrinsicWidth } from '../../app/layout/headerAccessoryWidth'
 import { IconButton } from '../../components/IconButton'
-import { Check, ChevronDown, Plus, X, ZoomIn, ZoomOut } from '../../components/icons'
+import { SelectDropdown } from '../../components/SelectDropdown'
+import { Plus, X, ZoomIn, ZoomOut } from '../../components/icons'
 import {
   TERMINAL_FONT_SIZE_MAX,
   TERMINAL_FONT_SIZE_MIN,
@@ -26,7 +26,7 @@ const STATUS_TEXT: Record<HostTerminalSession['status'], string | undefined> = {
  * 探针与可见形态共用同一段渲染。
  *
  * 两种形态都常驻 DOM、只切显示，测量与查询因此都不受当前形态影响。
- * 菜单由本文件自绘，不用原生 select，因此不会呼出操作系统的下拉控件，键盘与取值都留在界面内。
+ * 收起后的菜单用 SelectDropdown，不用原生 select。
  */
 export function TerminalTabBar({
   sessions,
@@ -123,47 +123,19 @@ export function TerminalTabBar({
           expanded ? 'hidden' : 'flex'
         } min-w-0 flex-1 items-center gap-1 overflow-hidden`}
       >
-        <DropdownMenu.Root modal={false}>
-          <DropdownMenu.Trigger asChild>
-            <button
-              type="button"
-              className={`${
-                expanded ? 'hidden' : 'inline-flex'
-              } min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-line px-2 py-1.5 text-xs text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg`}
-            >
-              <span className="sr-only">终端会话：</span>
-              <span className="truncate font-medium text-fg">{activeLabel}</span>
-              <ChevronDown aria-hidden size={13} className="shrink-0" />
-            </button>
-          </DropdownMenu.Trigger>
-          <DropdownMenu.Portal>
-            <DropdownMenu.Content
-              align="start"
-              sideOffset={6}
-              className="z-50 min-w-32 rounded-lg border border-line bg-surface p-1 text-xs shadow-lg"
-            >
-              <DropdownMenu.RadioGroup value={activeId} onValueChange={onSelect}>
-                {sessions.map((session) => {
-                  const label = tabLabel(session, sessions)
-                  return (
-                    <DropdownMenu.RadioItem
-                      key={session.id}
-                      value={session.id}
-                      className="flex cursor-default items-center gap-2 rounded px-2 py-1.5 outline-none text-fg-muted data-[highlighted]:bg-surface-raised data-[highlighted]:text-fg data-[state=checked]:font-medium data-[state=checked]:text-fg"
-                    >
-                      {session.id === activeId ? (
-                        <Check aria-hidden size={13} />
-                      ) : (
-                        <span aria-hidden className="w-[13px]" />
-                      )}
-                      {label}
-                    </DropdownMenu.RadioItem>
-                  )
-                })}
-              </DropdownMenu.RadioGroup>
-            </DropdownMenu.Content>
-          </DropdownMenu.Portal>
-        </DropdownMenu.Root>
+        <SelectDropdown
+          ariaLabel="终端会话"
+          items={sessions.map((session) => ({
+            value: session.id,
+            label: tabLabel(session, sessions),
+          }))}
+          value={active ? activeId : undefined}
+          onSelect={onSelect}
+          valueClassName="truncate font-medium text-fg"
+          triggerClassName={`${
+            expanded ? 'hidden' : 'inline-flex'
+          } min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-line px-2 py-1.5 text-xs text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg`}
+        />
         {active ? (
           <span hidden={expanded}>
             <IconButton

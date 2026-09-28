@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as Checkbox from '@radix-ui/react-checkbox'
 import * as Dialog from '@radix-ui/react-dialog'
-import * as Select from '@radix-ui/react-select'
 import {
   FILE_PERMISSION_ACTIONS,
   FILE_PERMISSION_ACTION_LABELS,
@@ -14,7 +13,8 @@ import {
 } from '@elysian/contracts'
 import type { FileEntry, FilePermission, FilePermissionAction, FilePermissionClass } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { Check, ChevronDown } from '../../components/icons'
+import { SelectDropdown } from '../../components/SelectDropdown'
+import { Check } from '../../components/icons'
 import { useFilesStore } from '../../stores/filesStore'
 
 /*
@@ -243,42 +243,19 @@ export function PermissionDialog({
               </div>
 
               <div className="min-w-32">
-                <span id="files-permission-owner-label" className="block text-xs text-fg-muted">
+                <label htmlFor="files-permission-owner" className="block text-xs text-fg-muted">
                   所有者
-                </span>
-                <Select.Root value={owner} onValueChange={setOwner}>
-                  <Select.Trigger
-                    aria-labelledby="files-permission-owner-label"
-                    className="mt-1.5 inline-flex h-[34px] w-full items-center justify-between gap-2 rounded-lg border border-line bg-surface px-2.5 font-mono text-sm leading-none text-fg transition-colors hover:border-fg-subtle"
-                  >
-                    <Select.Value className="leading-none" />
-                    <Select.Icon>
-                      <ChevronDown aria-hidden size={14} className="shrink-0 text-fg-subtle" />
-                    </Select.Icon>
-                  </Select.Trigger>
-                  <Select.Portal>
-                    <Select.Content
-                      position="popper"
-                      sideOffset={4}
-                      className="z-[62] max-h-64 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-lg border border-line bg-surface p-1 text-xs shadow-lg"
-                    >
-                      <Select.Viewport>
-                        {ownerOptions.map((name) => (
-                          <Select.Item
-                            key={name}
-                            value={name}
-                            className="flex cursor-default select-none items-center gap-2 rounded px-2 py-1.5 font-mono text-sm leading-none text-fg-muted outline-none data-[highlighted]:bg-surface-raised data-[highlighted]:text-fg data-[state=checked]:font-medium data-[state=checked]:text-fg"
-                          >
-                            <Select.ItemText>{name}</Select.ItemText>
-                            <Select.ItemIndicator className="ml-auto inline-flex w-3.5 text-fg">
-                              <Check aria-hidden size={13} />
-                            </Select.ItemIndicator>
-                          </Select.Item>
-                        ))}
-                      </Select.Viewport>
-                    </Select.Content>
-                  </Select.Portal>
-                </Select.Root>
+                </label>
+                <SelectDropdown
+                  id="files-permission-owner"
+                  ariaLabel="所有者"
+                  fullWidth
+                  mono
+                  triggerClassName="mt-1.5 inline-flex h-[34px] w-full items-center justify-between gap-2 rounded-lg border border-line bg-surface px-2.5 font-mono text-sm leading-none text-fg transition-colors hover:border-fg-subtle"
+                  items={ownerOptions.map((name) => ({ value: name, label: name }))}
+                  value={owner}
+                  onSelect={setOwner}
+                />
               </div>
 
               {isDirectory ? (

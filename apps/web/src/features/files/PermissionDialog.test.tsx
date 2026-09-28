@@ -34,21 +34,21 @@ function renderDialog(owner: string) {
 describe('权限对话框的属主候选', () => {
   it('当前属主是账号名时照常默认选中，账号在候选里', async () => {
     renderDialog('deploy')
-    const trigger = screen.getByRole('combobox')
+    const trigger = screen.getByRole('button', { name: /所有者/ })
     expect(trigger.textContent).toContain('deploy')
     await userEvent.click(trigger)
-    expect(await screen.findByRole('option', { name: 'deploy' })).toBeInTheDocument()
-    expect(screen.queryByRole('option', { name: '12345' })).not.toBeInTheDocument()
+    expect(await screen.findByRole('menuitemradio', { name: 'deploy' })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitemradio', { name: '12345' })).not.toBeInTheDocument()
   })
 
   it('当前属主是解析不出名字的 uid 串：默认回落 root，uid 串不进候选', async () => {
     renderDialog('12345')
     // 对话框默认值是 root，而不是必然提交失败的 '12345'
-    const trigger = screen.getByRole('combobox')
+    const trigger = screen.getByRole('button', { name: /所有者/ })
     expect(trigger.textContent).toContain('root')
     expect(trigger.textContent).not.toContain('12345')
     await userEvent.click(trigger)
-    expect(await screen.findByRole('option', { name: 'root' })).toBeInTheDocument()
-    expect(screen.queryByRole('option', { name: '12345' })).not.toBeInTheDocument()
+    expect(await screen.findByRole('menuitemradio', { name: 'root' })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitemradio', { name: '12345' })).not.toBeInTheDocument()
   })
 })

@@ -555,6 +555,11 @@ describe('容器操作联动', () => {
   })
 })
 
+async function pickImage(user: ReturnType<typeof userEvent.setup>, dialog: HTMLElement, label: string) {
+  await user.click(within(dialog).getByRole('button', { name: /镜像/ }))
+  await user.click(await screen.findByRole('menuitemradio', { name: label }))
+}
+
 describe('创建容器', () => {
   async function openCreateForm(gateway = pageGateway()) {
     const user = userEvent.setup()
@@ -568,6 +573,7 @@ describe('创建容器', () => {
   it('打开表单见 mock 徽章；可选设置默认收起，展开后可加端口行', async () => {
     const { user, dialog } = await openCreateForm()
     expect(dialog.textContent).toContain('演示 · 待接入真实执行')
+    expect(dialog.querySelector('select')).toBeNull()
     expect(within(dialog).queryByLabelText('容器端口')).not.toBeInTheDocument()
     await user.click(within(dialog).getByRole('button', { name: /可选设置/ }))
     await user.click(within(dialog).getByRole('button', { name: '添加端口映射' }))
@@ -594,7 +600,7 @@ describe('创建容器', () => {
 
   it('宿主端口与现有容器冲突显示行内错误', async () => {
     const { user, dialog } = await openCreateForm()
-    await user.selectOptions(within(dialog).getByLabelText('镜像'), 'img-redis')
+    await pickImage(user, dialog, 'redis:7.4-alpine')
     await user.click(within(dialog).getByRole('button', { name: /可选设置/ }))
     await user.click(within(dialog).getByRole('button', { name: '添加端口映射' }))
     await user.type(within(dialog).getByLabelText('容器端口'), '6379')
@@ -607,7 +613,7 @@ describe('创建容器', () => {
     const { user, dialog } = await openCreateForm(
       createMockGateway({ eventStream: 'memory', eventIntervalMs: 60_000 }),
     )
-    await user.selectOptions(within(dialog).getByLabelText('镜像'), 'img-redis')
+    await pickImage(user, dialog, 'redis:7.4-alpine')
     await user.type(within(dialog).getByLabelText('容器名称'), 'redis-echo')
     await user.click(within(dialog).getByRole('button', { name: /可选设置/ }))
     await user.click(within(dialog).getByRole('button', { name: '添加环境变量' }))
@@ -628,7 +634,7 @@ describe('创建容器', () => {
     const { user, dialog } = await openCreateForm(
       createMockGateway({ eventStream: 'memory', eventIntervalMs: 60_000 }),
     )
-    await user.selectOptions(within(dialog).getByLabelText('镜像'), 'img-alpine')
+    await pickImage(user, dialog, 'alpine:3.20')
     await user.click(within(dialog).getByRole('button', { name: '创建并运行' }))
     expect(await screen.findByRole('listitem', { name: 'alpine' })).toBeInTheDocument()
   })

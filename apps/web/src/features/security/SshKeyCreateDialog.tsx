@@ -1,10 +1,10 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import * as Select from '@radix-ui/react-select'
 import { useId, useState } from 'react'
 import { SSH_KEY_NAME_MAX_LENGTH, isValidSshKeyName } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
-import { Check, ChevronDown, X } from '../../components/icons'
+import { SelectDropdown } from '../../components/SelectDropdown'
+import { X } from '../../components/icons'
 import { useSshStore } from '../../stores/sshStore'
 import { ACTION_CLASS } from './sshCardParts'
 
@@ -87,52 +87,19 @@ export function SshKeyCreateDialog() {
           <div className="flex flex-col gap-4 overflow-y-auto px-4 py-4">
             <div>
               <div className="mb-2 flex items-center gap-1 text-xs font-medium text-fg-muted">
-                <label id={ownerLabelId}>归属账号</label>
+                <label htmlFor={ownerLabelId}>归属账号</label>
                 <span className="text-danger">*</span>
               </div>
-              <Select.Root value={userId || undefined} onValueChange={setUserId}>
-                <Select.Trigger
-                  aria-labelledby={ownerLabelId}
-                  className="flex h-[34px] w-full items-center justify-between gap-2 rounded-lg border border-line bg-surface-raised px-2.5 text-sm text-fg transition-colors data-[placeholder]:text-fg-subtle hover:border-fg-subtle"
-                >
-                  <Select.Value placeholder="选择这个密钥归谁用" />
-                  <Select.Icon>
-                    <ChevronDown aria-hidden size={14} className="shrink-0 text-fg-subtle" />
-                  </Select.Icon>
-                </Select.Trigger>
-                <Select.Portal>
-                  <Select.Content
-                    position="popper"
-                    sideOffset={4}
-                    // 层级抬到对话框（z-61）与遮罩（z-60）之上：弹层与对话框同为 60 时谁在上面
-                    // 取决于 DOM 顺序与堆叠上下文，对话框面板是不透明的，被盖住就等于点了没反应。
-                    className="z-[70] max-h-64 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-lg border border-line bg-surface p-1 text-xs shadow-lg"
-                  >
-                    {keyAccounts.length === 0 ? (
-                      // 账号清单为空时，弹层会是一个看不见的空盒——点开毫无反馈，等于坏掉。
-                      // 这里给出明确的一行说明，至少让这一次点击有结果。
-                      <p className="px-2 py-1.5 text-xs text-fg-muted">
-                        还没有可选的账号，先创建一个可登录的主机账号
-                      </p>
-                    ) : (
-                      <Select.Viewport>
-                        {keyAccounts.map((account) => (
-                          <Select.Item
-                            key={account.id}
-                            value={account.id}
-                            className="flex cursor-default select-none items-center gap-2 rounded px-2 py-1.5 text-fg-muted outline-none data-[highlighted]:bg-surface-raised data-[highlighted]:text-fg data-[state=checked]:font-medium data-[state=checked]:text-fg"
-                          >
-                            <Select.ItemText>{account.name}</Select.ItemText>
-                            <Select.ItemIndicator className="ml-auto inline-flex w-3.5 text-fg">
-                              <Check aria-hidden size={13} />
-                            </Select.ItemIndicator>
-                          </Select.Item>
-                        ))}
-                      </Select.Viewport>
-                    )}
-                  </Select.Content>
-                </Select.Portal>
-              </Select.Root>
+              <SelectDropdown
+                id={ownerLabelId}
+                ariaLabel="归属账号"
+                fullWidth
+                items={keyAccounts.map((account) => ({ value: account.id, label: account.name }))}
+                value={userId || undefined}
+                onSelect={setUserId}
+                fallbackLabel="选择这个密钥归谁用"
+                emptyLabel="还没有可选的账号，先创建一个可登录的主机账号"
+              />
               {ownerError ? <p className="mt-1 text-xs text-danger">{ownerError}</p> : null}
               <p className="mt-2 text-xs text-fg-subtle">
                 公钥会写进这个账号的 authorized_keys，因此拿到私钥的人是以它的身份登录。

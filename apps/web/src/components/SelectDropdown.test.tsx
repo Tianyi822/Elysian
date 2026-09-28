@@ -68,6 +68,21 @@ describe('自绘单选下拉', () => {
     expect(props.onSelect).toHaveBeenCalledWith('security')
   })
 
+  it('候选项为空时浮层说明原因，不渲染选项', async () => {
+    const user = userEvent.setup()
+    renderDropdown({
+      items: [],
+      value: undefined,
+      fallbackLabel: '选择容器',
+      emptyLabel: '没有可接管的运行中容器',
+    })
+
+    await user.click(screen.getByRole('button', { name: '操作分类筛选：选择容器' }))
+
+    expect(await screen.findByText('没有可接管的运行中容器')).toBeInTheDocument()
+    expect(screen.queryByRole('menuitemradio')).not.toBeInTheDocument()
+  })
+
   it('禁用时不打开菜单', async () => {
     const user = userEvent.setup()
     renderDropdown({ disabled: true })
