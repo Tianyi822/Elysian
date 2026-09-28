@@ -1,3 +1,4 @@
+import { SQLITE_READ_PRAGMAS } from '@elysian/contracts'
 import { InvalidRequestError } from '../shared/errors.ts'
 
 const MAX_SQL_BYTES = 64 * 1024
@@ -5,7 +6,7 @@ const FORBIDDEN = new Set([
   'ATTACH', 'DETACH', 'VACUUM', 'LOAD_EXTENSION', 'READFILE', 'WRITEFILE',
   'VIRTUAL', 'TRIGGER', 'ANALYZE', 'REINDEX',
 ])
-const READ_PRAGMAS = new Set(['TABLE_INFO', 'TABLE_XINFO', 'INDEX_LIST', 'INDEX_INFO', 'INDEX_XINFO', 'FOREIGN_KEY_LIST', 'DATABASE_LIST', 'USER_VERSION'])
+const READ_PRAGMAS = new Set<string>(SQLITE_READ_PRAGMAS)
 
 /** 只识别 SQL 的词法边界；单引号字符串和注释里的分号、关键字不参与权限判定。
  * 双引号、反引号、方括号标识符区间内的词参与禁词与语句形状判定（SQLite 解析器接受

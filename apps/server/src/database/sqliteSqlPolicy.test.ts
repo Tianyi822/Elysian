@@ -11,6 +11,16 @@ describe('SQLite 终端 SQL 边界', () => {
     ]) expect(() => validateSqliteStatement(sql)).not.toThrow()
   })
 
+  it('放行前端补全词表推荐的只读 PRAGMA 裸查询', () => {
+    for (const sql of ['PRAGMA page_size', 'PRAGMA journal_mode'])
+      expect(() => validateSqliteStatement(sql)).not.toThrow()
+  })
+
+  it('只读 PRAGMA 的赋值与调用形态仍然拒绝', () => {
+    for (const sql of ['PRAGMA journal_mode=WAL', 'PRAGMA page_size=4096'])
+      expect(() => validateSqliteStatement(sql)).toThrow()
+  })
+
   it('拒绝跨文件、扩展、危险 PRAGMA、触发器及多语句', () => {
     for (const sql of [
       "ATTACH DATABASE '/etc/passwd' AS other", 'SELECT 1; DELETE FROM notes',
