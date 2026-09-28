@@ -280,7 +280,19 @@ export function createDatabaseService(deps: {
   async function remove(id: string) {
     const row = await record(id)
     if (row.state === 'empty') throw new InvalidRequestError(409, '逻辑库已删除；请使用容器及数据删除操作')
-    const endpoint = await address(row)
+    let endpoint: DatabaseAddress
+    try {
+      endpoint = await address(row)
+    } catch (error) {
+      if (!(error instanceof InvalidRequestError) || error.status !== 404) throw error
+      // 容器已被外部删除（managed 或 adopted 同理）：逻辑库无从删除，登记只剩僵尸卡片。
+      // 跳过 drop，参照 forget 先例保留幂等 detach（最后一个接管登记仍尝试撤出面板网络）后直接清理登记。
+      if (row.source === 'adopted' && !(await registry.list()).some((item) => item.containerId === row.containerId && item.id !== id)) {
+        await docker.detach(row.containerId, DB_SHARED_NETWORK)
+      }
+      await registry.remove(id)
+      return
+    }
     const version = await protocol.version(row, endpoint, row.admin)
     if (!actualVersionMatches(row.versionTag, version)) throw new InvalidRequestError(409, '数据库实际版本与登记版本不一致')
     await protocol.drop(row, endpoint)

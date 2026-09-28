@@ -203,6 +203,36 @@ describe('数据库服务', () => {
     expect(await f.registry.list()).toHaveLength(0)
   })
 
+  it('接管容器被外部删除后 remove 仍清空登记、不抛错', async () => {
+    const f = fixture()
+    const adopted = await f.service.create(adoptInput())
+    // 容器已被外部删除：address 阶段 assertEngine 抛 404，remove 不得堵死成永久僵尸登记。
+    vi.mocked(f.docker.assertEngine).mockRejectedValue(new InvalidRequestError(404, '数据库容器已不存在'))
+    await expect(f.service.remove(adopted.id)).resolves.toBeUndefined()
+    expect(f.protocol.drop).not.toHaveBeenCalled()
+    // detach 对已删容器幂等（见 databaseDocker.ts 的 forget 先例），最后一个登记仍尝试撤出面板网络。
+    expect(f.docker.detach).toHaveBeenCalledWith(CONTAINER_ID, 'elysian-db-shared')
+    expect(await f.registry.list()).toHaveLength(0)
+  })
+
+  it('受管容器被外部删除后 remove 同样清空登记、不转为空容器', async () => {
+    const f = fixture()
+    const created = await f.service.create(f.input)
+    vi.mocked(f.docker.assertEngine).mockRejectedValue(new InvalidRequestError(404, '数据库容器已不存在'))
+    await expect(f.service.remove(created.id)).resolves.toBeUndefined()
+    expect(f.protocol.drop).not.toHaveBeenCalled()
+    expect(f.docker.detach).not.toHaveBeenCalled()
+    expect(await f.registry.list()).toHaveLength(0)
+  })
+
+  it('容器仅停止时 remove 仍按原错误上抛、保留登记', async () => {
+    const f = fixture()
+    const created = await f.service.create(f.input)
+    f.stop()
+    await expect(f.service.remove(created.id)).rejects.toThrow('容器已停止')
+    expect(await f.registry.list()).toHaveLength(1)
+  })
+
   it('同容器多接管库时仅移除最后一个登记才断开面板网络', async () => {
     const f = fixture()
     const first = await f.service.create(adoptInput())
