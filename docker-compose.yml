@@ -18,6 +18,10 @@ services:
     # 防火墙面板真实执行 ufw/iptables，需要网络管理能力。
     cap_add:
       - NET_ADMIN
+    networks:
+      - default
+      - elysian-db-local
+      - elysian-db-shared
     volumes:
       - .:/app
       # 面板自管数据统一放部署机的 ~/.Elysian（分类：data 库 / logs 日志 / state 时间戳 /
@@ -55,3 +59,9 @@ volumes:
   elysian_web_node_modules:
   elysian_contracts_node_modules:
   elysian_ssh_host_keys:
+
+networks:
+  elysian-db-local:
+    name: elysian-db-local
+  elysian-db-shared:
+    name: elysian-db-shared

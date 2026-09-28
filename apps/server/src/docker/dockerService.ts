@@ -564,6 +564,14 @@ export function createDockerReadService(
       if (isSelfContainerInspect(inspect, selfContainerId)) {
         throw new InvalidRequestError(400, ACTION_SELF_MESSAGE)
       }
+      const inspected = inspect as Record<string, unknown>
+      const config = inspected.Config as Record<string, unknown> | undefined
+      const labels = (config && typeof config === 'object' && 'Labels' in config)
+        ? (config as { Labels?: Record<string, string> }).Labels
+        : undefined
+      if (labels?.['elysian.database'] === 'true') {
+        throw new InvalidRequestError(409, '数据库容器须在数据库页使用“删除容器及数据”操作')
+      }
       const targetId = requireId(inspect, '容器')
       const response = await dockerRequest(transport, {
         method: 'DELETE',

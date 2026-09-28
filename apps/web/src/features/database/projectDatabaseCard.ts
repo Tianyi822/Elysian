@@ -19,7 +19,7 @@ export type DatabaseCardView =
       /** 数据库文件的绝对路径。 */
       filePath: string
       /** 文件大小（MB）。 */
-      fileSizeMb: number
+      fileSizeMb?: number
     }
 
 /** 按来源合成卡片视图；容器与镜像数据来自各自数据集，这里不复制它们的字段。 */
@@ -32,7 +32,7 @@ export function projectDatabaseCard(
     return {
       kind: 'file',
       filePath: database.filePath ?? '',
-      fileSizeMb: database.fileSizeMb ?? 0,
+      fileSizeMb: database.fileSizeMb,
     }
   }
 

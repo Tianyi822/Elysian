@@ -102,7 +102,7 @@ export function sqliteFilePath(draft: DatabaseCreateDraft): string {
 
 /** 文件名去掉扩展名后就是数据库名（卡片与列表用它标识这个库）。 */
 export function databaseNameFromFile(fileName: string): string {
-  return fileName.replace(/\.db$/i, '')
+  return fileName.replace(/\.(?:db|sqlite|sqlite3)$/i, '')
 }
 
 export function validateDatabaseCreateDraft(

@@ -1,69 +1,41 @@
 # Elysian
 
-Elysian 是 Agent 辅助的运维工作台：把当前事故、Agent 的分析过程、待审批动作与审计记录放在同一个界面里，供值班工程师扫视与决策。产品定位是克制、高密度、适合长时间使用的运维控制台，不做宣传页或角色展示页。
+Elysian 是 Agent 辅助的运维工作台，用于查看主机状态并操作容器、数据库、文件和安全配置。Web 使用 React、Vite、Tailwind CSS v4；服务端使用 Bun。非 Docker 本地开发保留可复现的演示数据，Docker 运行时通过同源 API 连接真实 Docker Engine 和数据库。
 
-## 当前阶段
-
-Web 侧当前只交付**仪表盘**一个界面（模板化卡片网格布局，ADR-0007）：单机资源监控（CPU、内存、网络 IO、磁盘 IO 的当前值与迷你趋势，以及运行负载 1/5/15 分钟与磁盘按挂载点占用的横向条形图）在内容区顶部，指标卡、按职责模块拆分与最近活动在其后，侧边栏底部保留切换主题，数据全部来自本地 mock。此前的七个界面（事件中心、事故详情、Agent 运行、技能目录、审批队列、审计日志、系统设置）已删除，其领域概念保留在契约与 mock 数据集里，界面将在后续阶段按同一模板逐个回归。
-
-不连接真实 Kubernetes、SSH、云厂商或数据库，不调用真实模型，没有用户认证与多租户，不实现生产级权限系统。唯一的网络请求是同源的 mock 事件流端点 `GET /api/events`（SSE），由 dev 与 preview 的 Vite 插件提供；端点不可用时界面自动降级到内存事件源。所有动作都停在「待接入真实执行」，不会呈现为已执行。
-
-## 快速开始
+## 运行
 
 ```bash
 bun install
-bun run dev        # 启动开发服务器与 mock 事件流端点，打开工作台
-bun run build      # 生产构建
-bun run preview    # 以 mock 事件流端点服务构建产物
-bun run test       # Vitest 全量测试
-bun run typecheck  # Web 应用与契约包的类型检查
+bun run dev
+bun run typecheck
+bun run test
+bun run build
+bun run preview
 ```
 
-### Docker 开发（宿主机编辑，容器内跑）
-
-源码通过挂载同步到 Ubuntu 容器；改代码走 Vite 热更新，不必每次重建镜像。依赖装在容器 volume 里，不会覆盖宿主机的 `node_modules`。容器页以 DooD 方式接入真实 Engine：编排把宿主机 `/var/run/docker.sock` 以文件级 bind 挂进 web 容器，面板直接操作宿主 dockerd，容器页列出与启停的是宿主上的全部容器与镜像（持有宿主 socket 等价于宿主 root 权限，自身容器的停止与重启由服务端识别并拒绝；运行中的自身容器允许打开终端）。宿主机是 macOS 时，Docker Desktop 默认只共享 `/Users`、`/Volumes`、`/private`、`/tmp`，启动前必须设置 `ELYSIAN_DOCKER_MOUNT_ROOT` 为已共享路径（如 `/Users/<用户>/Elysian-srv`），未设置时 `docker compose up` 会因挂载报错退出；Linux 真机默认 `/srv` 成立。在 Docker 运行时（`ELYSIAN_DOCKER=1`）容器页的列表、镜像、启停与终端走真实 Engine（`/api/docker`）；宿主机本地 `bun run dev` 仍用 mock 容器数据。容器内资源指标历史写入命名 volume `elysian_metrics`，挂载到 `/var/lib/elysian`（SQLite 文件 `metrics.sqlite`），不会落在宿主绑定目录 `.:/app` 下。本地 `bun run dev`（未设 `ELYSIAN_DOCKER`）时仪表盘筛选栏会显示「演示数据」；`docker compose up` 注入 `ELYSIAN_DOCKER=1` 后该标识隐藏，图表走容器内采样与持久化库。
+Docker 开发通过宿主 Docker socket 管理宿主容器。macOS Docker Desktop 需要把 `ELYSIAN_DOCKER_MOUNT_ROOT` 指向已共享的宿主路径；Linux 默认为 `/srv`。
 
 ```bash
-# macOS Docker Desktop 须先设对齐根（任选 /Users 下已共享路径）：
 ELYSIAN_DOCKER_MOUNT_ROOT=$HOME/Elysian-srv docker compose up -d
-docker compose up -d       # Linux 真机默认 /srv，无需设置；前台启动用 docker compose up
-docker compose down        # 停掉
-docker compose build       # 仅当 Dockerfile.dev 变更时
 ```
 
-## 目录与版本库范围
+面板监听宿主回环地址 `127.0.0.1:48100`。挂载 Docker socket 等价于授予宿主级容器管理权限，因此不要把面板反向代理到不可信网络。当前没有用户登录或请求鉴权。`bun run test` 覆盖 server、web 和契约包。
 
-仓库跟踪 `README.md`、`.gitignore` 与全部代码；设计文档留在本地工作区，不入库。
+## 数据库页
 
-```text
-README.md                       # 本文件
-apps/web/                       # React + Vite 工作台：外壳与仪表盘
-packages/foundation/contracts/  # @elysian/contracts：跨端领域协议，零运行时依赖
-CONTEXT.md / AGENTS.md          # 本地共识文档，不入库
-docs/                           # 决策记录与规格，不入库
-.scratch/                       # 票与规划材料，不入库
-```
+Docker 环境中的 MariaDB、MySQL、Redis 使用 `/api/databases` 和数据库协议 WebSocket。创建时必须输入明确的版本标签；缺少镜像时先拉取，再创建容器与专属持久卷，或验证现有容器的引擎、版本、管理员和普通账号后接管。MariaDB/MySQL 卡片对应逻辑库；Redis 卡片对应容器的 DB 0。访问范围分别映射到宿主回环端口、容器网络以及显式确认的所有宿主网卡端口。
 
-目标结构里尚未实现的边界（`apps/server`、`apps/worker`、`apps/cli`、`packages/harness/*`、`packages/skills/*`、`packages/capabilities/*`、`packages/execution/*`、`packages/persistence`、`packages/integrations`、`packages/api`、`packages/bundles`、`profiles/`）只登记在本地文档里，本阶段不建目录。
+普通删除只删除 SQL 逻辑库或清空 Redis DB 0，保留容器和卷。最后一个 SQL 逻辑库删除后显示空容器卡片，可复用容器或单独删除容器及专属卷；删除容器前会检查其他数据库。创建失败的登记显示待处理状态，可修复后核对。容器外部停机、删除和数据库状态变化由列表刷新反映。
 
-## 边界与红线
+数据库卡片的终端由服务端建立数据库协议连接，使用受限普通账号，不启动 Shell 或数据库命令行客户端。终端有限制输入、输出、执行时间、空闲时间和并发数；Redis 响应在协议读取阶段限制字节数，SQL 驱动按行输出并限制结果总量。普通账号仅拥有目标 SQL 库权限；Redis 普通账号使用 ACL 排除危险命令。数据库列表不返回密码；点击复制时才从服务端读取，响应禁止缓存。服务端登记与凭证保存在 `~/.Elysian/config/databases.json`，文件权限为 `0600`。
 
-以下摘要来自本地共识文档 `AGENTS.md`。该文档与 `docs/` 都不入版本库，仓库内保留这份摘要，完整版以其为准。
+Docker 环境中的 SQLite 使用面板持久卷 `~/.Elysian/data/sqlite`：可新建空库、上传单个独立 SQLite 快照、在受限数据库协议终端内读写、下载一致性快照，以及确认后删除实际文件。上传上限为 256 MiB，单库上限为 1 GiB，托管 SQLite 总量上限为 4 GiB；WAL 模式原库须先导出独立快照。文件登记位于 `~/.Elysian/config/sqlite-databases.json`，中断的创建、上传或删除会显示待处理状态。SQLite 终端允许常用查询、增删改、表/索引/视图 DDL 与事务语句，不支持文件操作、扩展加载、触发器或虚拟表创建。非 Docker 本地开发中的 SQLite 与其他数据库仍是演示状态。
 
-- 不接入真实 Kubernetes、SSH、云厂商或数据库凭证；界面上的数据库凭证只作演示并明确标注。
-- 不执行 Shell、任意 JavaScript 或用户提供的脚本。
-- 不实现真正的模型调用，不把随机文本伪装成真实 Agent 结论。
-- 不实现生产级权限系统，只保留前端状态与接口占位。
-- 高风险动作必须显示明确的审批状态，不能伪装成已经执行。
-- 不 vendor Cordis 源码，不让框架运行时进入浏览器依赖图。
-- 界面状态一律「文字 + 颜色」，不依赖颜色单独表达；布局采用模板化卡片网格，可访问性底线见本地 `AGENTS.md`。
+## 结构与边界
 
-## 本地文档
+- `apps/web/`：工作台页面、store、HTTP/WebSocket 与 mock adapter。
+- `apps/server/`：同源 API、Docker Engine 调用、数据库协议与本机操作。
+- `packages/foundation/contracts/`：跨端类型与纯常量。
+- `CONTEXT.md`、`AGENTS.md`、`docs/`：本地设计文档，不进入版本库。
 
-设计文档有意留在本地工作区、不进版本库，需要时在开发机上查看。
-
-- `CONTEXT.md`：术语与领域的唯一权威，含枚举取值与中文标签表。
-- `AGENTS.md`：工程约定、目录与边界、契约层规则、mock 与数据层约定、验收标准。
-- `docs/adr/`：决策记录，记录「为什么」。
-- `docs/specs/2026-09-12-web-workbench-spec.md`：本阶段的规格。
-- `.scratch/web-workbench/issues/`：拆分后的 11 张票与验收标准。
+没有接入真实 Kubernetes、云平台或 Agent 推理。真实数据库的账号边界与请求守卫已经实现；用户认证和多租户仍待后续完成。SQL 驱动会先解码单个结果行再执行应用侧输出截断，极端超大单行仍可能造成瞬时内存峰值；不要把此版本当作不可信用户可访问的数据库代理。所有 Docker 和数据库操作均具有真实效果，操作前应核对目标容器、版本、端口与删除确认内容。

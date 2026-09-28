@@ -6,6 +6,7 @@ declare module 'bun' {
     stdout: AsyncIterable<Uint8Array>
     exited: Promise<number>
     kill(signal?: number | string): void
+    send(message: unknown): void
   }
 
   export function spawn(
@@ -18,4 +19,18 @@ declare module 'bun' {
       cwd?: string
     },
   ): BunSpawnProcess
+
+  export function spawn(options: {
+    cmd: readonly string[]
+    uid?: number
+    gid?: number
+    env?: Record<string, string>
+    stdin: 'ignore'
+    stdout: 'ignore'
+    stderr: 'ignore'
+    ipc(message: unknown): void
+    onExit(): void
+  }): BunSpawnProcess
+
+  export function file(path: string): { stream(): ReadableStream<Uint8Array> }
 }

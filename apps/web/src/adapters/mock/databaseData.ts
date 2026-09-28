@@ -62,6 +62,7 @@ const instances: DatabaseInstance[] = [
     updatedAt: '2026-09-12T08:00:00.000Z',
   },
 ]
+const initialInstances = instances.map((row) => structuredClone(row))
 
 /** 只读出口：读方拿到的形状不变，create 经 addDatabaseInstance 追加。 */
 export const DATABASE_INSTANCES: readonly DatabaseInstance[] = instances
@@ -75,4 +76,8 @@ export function addDatabaseInstance(instance: DatabaseInstance): void {
 export function removeDatabaseInstance(databaseId: string): void {
   const index = instances.findIndex((instance) => instance.id === databaseId)
   if (index !== -1) instances.splice(index, 1)
+}
+
+export function resetDatabaseData(): void {
+  instances.splice(0, instances.length, ...initialInstances.map((row) => structuredClone(row)))
 }

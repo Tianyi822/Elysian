@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   DOCKER_MOUNT,
+  DATABASE_MOUNT,
   FILES_MOUNT,
   FIREWALL_MOUNT,
   LOGS_MOUNT,
@@ -26,6 +27,7 @@ const HTTP_ENDPOINTS: readonly { label: string; path: string }[] = [
   { label: '主机用户', path: `${USERS_MOUNT}/list` },
   { label: '文件管理', path: `${FILES_MOUNT}/entries` },
   { label: '容器', path: `${DOCKER_MOUNT}/containers` },
+  { label: '数据库', path: `${DATABASE_MOUNT}/` },
   { label: '日志', path: `${LOGS_MOUNT}/runtime` },
   // 平台内存的挂载见 apps/server/src/app.ts:87（无导出常量，按字面量锚定）。
   { label: '平台内存', path: '/api/platform/memory' },
@@ -33,7 +35,7 @@ const HTTP_ENDPOINTS: readonly { label: string; path: string }[] = [
 ]
 
 /** 需要 WebSocket 代理（ws: true）的键：终端与容器管理。 */
-const WS_PROXY_KEYS: readonly string[] = [TERMINAL_MOUNT, DOCKER_MOUNT]
+const WS_PROXY_KEYS: readonly string[] = [TERMINAL_MOUNT, DOCKER_MOUNT, DATABASE_MOUNT]
 
 /** 由本进程 elysianEventsVitePlugin 承载、绝不进代理表的端点。 */
 const PLUGIN_ENDPOINTS: readonly string[] = ['/api/events', '/api/resources/history']

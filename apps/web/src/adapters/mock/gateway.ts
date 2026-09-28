@@ -37,6 +37,8 @@ import { createHttpUsersAdapter } from '../http/usersHttpAdapter'
 import { createHttpFilesAdapter } from '../http/filesHttpAdapter'
 import { createHttpContainersAdapter } from '../http/containersHttpAdapter'
 import { createTerminalWsAdapter } from '../http/terminalWsAdapter'
+import { createHttpDatabaseAdapter } from '../http/databaseHttpAdapter'
+import { resetDatabaseData } from './databaseData'
 import type { ContainerAdapter, EventsAdapter, TerminalAdapter } from '../../contracts/adapters'
 import { useContainersStore } from '../../stores/containersStore'
 
@@ -68,6 +70,7 @@ export function createMockGateway(
     containers?: 'mock' | 'http'
     logs?: 'mock' | 'http'
     terminals?: 'mock' | 'ws'
+    databases?: 'mock' | 'http'
   } = {},
 ): ElysianGateway {
   let dataset = createMockDataset()
@@ -109,7 +112,7 @@ export function createMockGateway(
     approvals: new MockApprovalAdapter(read),
     audit: new MockAuditAdapter(read),
     containers,
-    databases: new MockDatabaseAdapter(),
+    databases: options.databases === 'http' ? createHttpDatabaseAdapter() : new MockDatabaseAdapter(),
     firewall,
     ssh,
     users,
@@ -149,6 +152,7 @@ export function createMockGateway(
       resetHostUsers()
       resetLogsData()
       resetWebsitesData()
+      resetDatabaseData()
       terminals.reset()
     },
   }

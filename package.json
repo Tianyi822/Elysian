@@ -11,7 +11,7 @@
     "dev": "bun run --filter @elysian/web dev",
     "build": "bun run --filter @elysian/web build",
     "preview": "bun run --filter @elysian/web preview",
-    "test": "bun run --filter @elysian/web test",
+    "test": "bun run --filter '*' test",
     "typecheck": "bun run --filter '*' typecheck"
   },
   "devDependencies": {

@@ -7,9 +7,7 @@ import type { TerminalCompletion } from '../../components/terminal/terminalSessi
 import { SESSION_BANNER, useDatabaseStore } from '../../stores/databaseStore'
 
 /**
- * 数据库演示会话的薄壳：交互内核在 TerminalShell，这里只接数据库域的东西——
- * 会话状态来自 databaseStore，语句引擎走 mock 适配层，提示符为实例名，
- * 演示标注由顶栏徽章常驻，日志区不重复一行。
+ * 数据库会话的薄壳：交互内核在 TerminalShell；本地走 mock，Docker 走数据库协议终端。
  */
 
 /** Tab 补全的行中词表：演示目录里的表名（SQL）或键名（Redis）。 */
@@ -77,6 +75,7 @@ export function SqlSessionWindow() {
   const appendSessionOutput = useDatabaseStore((state) => state.appendSessionOutput)
   const clearSessionScreen = useDatabaseStore((state) => state.clearSessionScreen)
   const closeSession = useDatabaseStore((state) => state.closeSession)
+  const interruptSession = useDatabaseStore((state) => state.interruptSession)
 
   const database = databases.find((candidate) => candidate.id === session?.databaseId)
   if (!session || !database) return null
@@ -91,7 +90,7 @@ export function SqlSessionWindow() {
   return (
     <TerminalShell
       title={`${database.name} SQL 会话`}
-      banner={SESSION_BANNER}
+      banner={database.source === 'demo' || !gateway.databases.openTerminal ? '演示 SQL 会话 · 待接入真实执行' : SESSION_BANNER}
       subject={subject}
       prompt={`${database.name}> `}
       sessionKey={session.databaseId}
@@ -102,6 +101,7 @@ export function SqlSessionWindow() {
       onAppendOutput={appendSessionOutput}
       onClear={clearSessionScreen}
       onClose={closeSession}
+      onInterrupt={gateway.databases.openTerminal && database.source !== 'demo' ? () => interruptSession(gateway) : undefined}
       labels={{
         input: 'SQL 输入',
         close: '关闭会话',

@@ -10,6 +10,7 @@ import { FILES_MOUNT } from '../files/filesRoutes.ts'
 import { SSH_MOUNT } from '../ssh/sshRoutes.ts'
 import { USERS_MOUNT } from '../users/usersRoutes.ts'
 import { DOCKER_MOUNT } from '../docker/dockerRoutes.ts'
+import { DATABASE_MOUNT } from '../shared/apiMounts.ts'
 import { LOGS_MOUNT } from './logsRoutes.ts'
 
 /*
@@ -26,9 +27,7 @@ import { LOGS_MOUNT } from './logsRoutes.ts'
  * POST /api/security/ssh/root-password、POST /api/security/users、PUT /api/security/users/:id
  * （前者的体是密码，后两者的体含密码）。
  *
- * database 类别**没有描述符**：数据库域本期全是 mock，不产生服务端写端点，因此也没有
- * 操作日志条目——把演示点击写进审计会让「审计只记真实发生的事实」失效。数据库域真实化时
- * 在表中登记 category: 'database' 即可，日志模块的其它部分一行不用改。
+ * 数据库写端点登记动作与目标；密码与语句正文均不进入摘要。
  *
  * 新增写端点若忘记登记，operationDescriptors.test.ts 的漂移守卫会立刻变红。
  */
@@ -418,6 +417,51 @@ export const OPERATION_DESCRIPTORS: Readonly<Record<string, OperationDescriptor>
       const id = param(params, 'id')
       return id === null ? null : `镜像 ${id}`
     },
+  },
+
+  [`POST ${DATABASE_MOUNT}`]: {
+    category: 'database',
+    action: '创建或接管数据库',
+    target: ({ body }) => text(body, 'name'),
+    summarize: ({ body }) => {
+      const engine = text(body, 'engine')
+      const version = text(body, 'versionTag')
+      return engine && version ? `${engine}:${version}` : null
+    },
+  },
+  [`POST ${DATABASE_MOUNT}/:id/reveal`]: {
+    category: 'database', action: '读取普通账号凭证',
+    target: ({ params }) => param(params, 'id'),
+  },
+  [`DELETE ${DATABASE_MOUNT}/:id`]: {
+    category: 'database', action: '删除逻辑库或清空 Redis DB 0',
+    target: ({ params }) => param(params, 'id'),
+  },
+  [`DELETE ${DATABASE_MOUNT}/:id/container`]: {
+    category: 'database', action: '删除数据库容器及专属卷',
+    target: ({ params }) => param(params, 'id'),
+  },
+  [`POST ${DATABASE_MOUNT}/:id/reconcile`]: {
+    category: 'database', action: '重新核对数据库', target: ({ params }) => param(params, 'id'),
+  },
+  [`DELETE ${DATABASE_MOUNT}/:id/registration`]: {
+    category: 'database', action: '移除待处理接管登记', target: ({ params }) => param(params, 'id'),
+  },
+  [`POST ${DATABASE_MOUNT}/sqlite`]: {
+    category: 'database', action: '新建 SQLite 文件', target: ({ body }) => text(body, 'name'),
+    summarize: () => null,
+  },
+  [`POST ${DATABASE_MOUNT}/sqlite/import`]: {
+    category: 'database', action: '导入 SQLite 文件',
+  },
+  [`DELETE ${DATABASE_MOUNT}/sqlite/:id`]: {
+    category: 'database', action: '删除 SQLite 文件', target: ({ params }) => param(params, 'id'),
+  },
+  [`POST ${DATABASE_MOUNT}/sqlite/:id/reconcile`]: {
+    category: 'database', action: '重新核对 SQLite 文件', target: ({ params }) => param(params, 'id'),
+  },
+  [`DELETE ${DATABASE_MOUNT}/sqlite/:id/registration`]: {
+    category: 'database', action: '清理待处理 SQLite 文件', target: ({ params }) => param(params, 'id'),
   },
 
   // 日志管理：清空是写端点，因此清空动作本身也留痕（「想抹掉痕迹」只会留下「抹掉痕迹」这条痕迹）。

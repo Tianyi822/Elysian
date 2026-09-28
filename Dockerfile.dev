@@ -11,7 +11,11 @@ RUN apt-get update \
 # SSH 面板联调环境：预生成主机密钥，并建联调账号 elysian。
 # -p '*' 表示不设可用密码但保持账号未锁定：shadow 里是 '!' 的锁定账号会被 sshd 拒绝公钥登录。
 RUN ssh-keygen -A \
-  && useradd -m -s /bin/bash -p '*' elysian
+  && useradd -m -s /bin/bash -p '*' elysian \
+  && groupadd -g 2001 elysian-sqlite \
+  && useradd -u 2001 -g 2001 -M -s /usr/sbin/nologin elysian-sqlite \
+  && cp /root/.bun/bin/bun /usr/local/bin/bun \
+  && chmod 755 /usr/local/bin/bun
 
 ENV BUN_INSTALL=/root/.bun
 ENV PATH="${BUN_INSTALL}/bin:${PATH}"

@@ -5,6 +5,7 @@
  * 各片路由文件从本文件 import 并 re-export，既有 import 路径保持不变。
  */
 export const DOCKER_MOUNT = '/api/docker'
+export const DATABASE_MOUNT = '/api/databases'
 export const FILES_MOUNT = '/api/files'
 export const FIREWALL_MOUNT = '/api/security/firewall'
 export const LOGS_MOUNT = '/api/logs'

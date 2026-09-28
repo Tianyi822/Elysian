@@ -5,11 +5,13 @@
   "scripts": {
     "dev": "bun --watch src/index.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run --config vitest.config.ts && bun test src/firewall/ruleTimesStore.bun.test.ts src/terminals/terminalsWiring.bun.test.ts"
+    "test": "vitest run --config vitest.config.ts && bun test src/firewall/ruleTimesStore.bun.test.ts src/terminals/terminalsWiring.bun.test.ts src/database/sqliteService.bun.test.ts"
   },
   "dependencies": {
     "@elysian/contracts": "workspace:*",
-    "hono": "^4.0.0"
+    "hono": "^4.0.0",
+    "mysql2": "^3.24.4",
+    "redis": "^6.2.1"
   },
   "devDependencies": {
     "@types/node": "^22.20.2",

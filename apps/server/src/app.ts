@@ -17,8 +17,16 @@ import { createUsersApp, type UsersAppDeps } from './users/usersRoutes.ts'
 import { createUsersHostDeps } from './users/usersHostDeps.ts'
 import { createDockerApp, type DockerAppDeps } from './docker/dockerRoutes.ts'
 import { createDockerHostDeps } from './docker/dockerHostDeps.ts'
+import { createDatabaseApp, type DatabaseAppDeps } from './database/databaseRoutes.ts'
+import { createDatabaseDocker } from './database/databaseDocker.ts'
+import { createDatabaseProtocol } from './database/databaseProtocol.ts'
+import { createFileDatabaseRegistry } from './database/databaseRegistry.ts'
+import { createDatabaseService } from './database/databaseService.ts'
+import { createSqliteService } from './database/sqliteService.ts'
+import { existsSync } from 'node:fs'
 import {
   DOCKER_MOUNT,
+  DATABASE_MOUNT,
   FILES_MOUNT,
   FIREWALL_MOUNT,
   LOGS_MOUNT,
@@ -57,6 +65,7 @@ export type AppDepsOverrides = {
   logs?: LogsService
   /** 容器管理片：缺省走真实接线（async 探测 socket 与 API 版本）。 */
   docker?: DockerAppDeps
+  databases?: DatabaseAppDeps
 }
 
 /**
@@ -99,5 +108,17 @@ export async function createApp(overrides: AppDepsOverrides = {}): Promise<Hono>
   app.route(LOGS_MOUNT, createLogsApp({ service: logs }))
   const docker = overrides.docker ?? (await createDockerHostDeps())
   app.route(DOCKER_MOUNT, createDockerApp({ ...docker, logs: docker.logs ?? logs }))
+  const sqliteAvailable = process.env.ELYSIAN_DOCKER === '1' && existsSync('/.dockerenv')
+  const databases = overrides.databases ?? (docker.socketReady && docker.transport && docker.service
+    ? { available: true, sqlite: sqliteAvailable ? createSqliteService({ uid: 2001, gid: 2001, bunBin: '/usr/local/bin/bun' }) : undefined, service: createDatabaseService({
+        registry: createFileDatabaseRegistry(),
+        docker: createDatabaseDocker(docker.transport, () => docker.service!.listImages()),
+        protocol: createDatabaseProtocol(),
+        listImages: () => docker.service!.listImages(),
+        listContainers: () => docker.service!.listContainers(),
+        selfContainerId: docker.selfContainerId ?? undefined,
+      }) }
+    : { available: sqliteAvailable, sqlite: sqliteAvailable ? createSqliteService({ uid: 2001, gid: 2001, bunBin: '/usr/local/bin/bun' }) : undefined })
+  app.route(DATABASE_MOUNT, createDatabaseApp({ ...databases, logs: databases.logs ?? logs }))
   return app
 }

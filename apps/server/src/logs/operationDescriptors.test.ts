@@ -64,6 +64,7 @@ function assembly(): Promise<Awaited<ReturnType<typeof createApp>>> {
     terminals: { available: true, service: { tryOpen: () => null, activeCount: () => 0 } },
     logs: createFakeLogs(),
     docker: { available: true, socketReady: true, service: STUB },
+    databases: { available: true, service: STUB },
   })
 }
 

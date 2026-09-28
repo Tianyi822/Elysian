@@ -219,7 +219,7 @@ describe('数据库页面', () => {
 
   it('adapter 返回空数据时显示空态', async () => {
     renderApp('/databases', { gateway: pageGateway({ list: async () => [] }) })
-    expect(await screen.findByText('这台机器上没有 MariaDB 的数据库容器')).toBeInTheDocument()
+    expect(await screen.findByText('没有 MariaDB 数据库')).toBeInTheDocument()
   })
 
   it('添加数据库：弹窗带演示标注，下拉自绘，填表创建后新卡片出现', async () => {
@@ -240,15 +240,16 @@ describe('数据库页面', () => {
     await user.type(within(dialog).getByLabelText('用户名'), 'ops')
     await user.type(within(dialog).getByLabelText('密码'), 'demo-mariadb-aaaa')
 
-    // 下拉全部自绘：点触发器出 listbox，选项是 option，不用原生 select。
-    await user.click(within(dialog).getByLabelText('字符集'))
-    await user.click(await screen.findByRole('option', { name: 'utf8mb3' }))
+    // 下拉全部自绘：点触发器出菜单项，不用原生 select。
+    expect(dialog.querySelector('select')).toBeNull()
+    await user.click(within(dialog).getByRole('button', { name: /字符集/ }))
+    await user.click(await screen.findByRole('menuitemradio', { name: 'utf8mb3' }))
 
-    await user.click(within(dialog).getByLabelText('访问权限'))
-    await user.click(await screen.findByRole('option', { name: '容器网络内' }))
+    await user.click(within(dialog).getByRole('button', { name: /访问权限/ }))
+    await user.click(await screen.findByRole('menuitemradio', { name: '容器网络内' }))
 
-    await user.click(within(dialog).getByLabelText('添加到容器'))
-    await user.click(await screen.findByRole('option', { name: /mariadb-primary（mariadb:10.11）/ }))
+    await user.click(within(dialog).getByRole('button', { name: /添加到容器/ }))
+    await user.click(await screen.findByRole('menuitemradio', { name: /mariadb-primary（mariadb:10.11）/ }))
 
     await user.click(within(dialog).getByRole('button', { name: '创建' }))
 
@@ -308,7 +309,7 @@ describe('数据库页面', () => {
     expect(created).not.toHaveTextContent('无账号')
   })
 
-  it('添加 SQLite：直接在本机新建时校验落点目录，建出 0 字节空库', async () => {
+  it('添加 SQLite：模拟新建时校验路径，生成 0 字节演示卡片', async () => {
     const user = userEvent.setup()
     renderApp('/databases', { gateway: pageGateway() })
     await screen.findByRole('list', { name: 'MariaDB 数据库列表' })
@@ -318,7 +319,7 @@ describe('数据库页面', () => {
     await user.click(screen.getByRole('button', { name: /添加数据库/ }))
     const dialog = await screen.findByRole('dialog', { name: '添加SQLite数据库' })
 
-    await user.click(within(dialog).getByRole('button', { name: '直接在本机新建' }))
+    await user.click(within(dialog).getByRole('button', { name: '模拟新建文件' }))
     await user.type(within(dialog).getByLabelText(/数据库名/), 'notes_local')
     await user.clear(within(dialog).getByLabelText('落点目录'))
     await user.type(within(dialog).getByLabelText('落点目录'), 'data/sqlite')
@@ -333,7 +334,7 @@ describe('数据库页面', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     const created = await screen.findByRole('article', { name: 'SQLite 数据库 notes_local' })
     expect(created).toHaveTextContent('/srv/elysian/data/sqlite/notes_local.db')
-    // 新建的空库是 0 字节，显示为 KB 而不是「0.0 MB」。
+    // 演示卡片的模拟大小是 0 字节，显示为 KB。
     expect(created).toHaveTextContent('0 KB')
   })
 

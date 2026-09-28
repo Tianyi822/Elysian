@@ -195,9 +195,9 @@ export type MockQueryResult =
   | { kind: 'clear' }
 
 /**
- * 创建数据库的输入：表单收集后经 adapter 提交；是演示动作，不产生真实连接。
+ * 创建数据库的输入：表单收集后经 adapter 提交；Docker 运行时由 HTTP adapter 落地。
  * 分两支——服务型由容器承载、要账号与访问权限；文件型（SQLite）只是一个本地文件，
- * 没有容器也没有账号，只记路径、大小与来源。
+ * 没有容器也没有账号；真实 SQLite 的路径与大小由服务端决定。
  */
 export type DatabaseCreateContainerInput = {
   kind: 'container'
@@ -209,6 +209,10 @@ export type DatabaseCreateContainerInput = {
   password: string
   accessScope: 'localhost' | 'container-network' | 'any-host'
   containerId: string
+  versionTag?: string
+  hostPort?: number
+  confirmPublic?: boolean
+  target?: { kind: 'new'; imageId: string; containerName: string } | { kind: 'managed'; containerId: string } | { kind: 'adopt'; containerId: string; admin: { username: string; password: string } }
 }
 
 export type DatabaseCreateFileInput = {
@@ -220,21 +224,30 @@ export type DatabaseCreateFileInput = {
   filePath: string
   /** 文件大小（MB）。 */
   fileSizeMb: number
-  /** `uploaded` 是上传/选择的既有文件，`created` 是本机新建的空库。 */
+  /** SQLite 文件来源；本地 mock 只模拟，Docker 上传需附带 file。 */
   origin: 'uploaded' | 'created'
+  /** Docker 环境上传时必须带真实浏览器文件；路径与大小由服务端核验。 */
+  file?: File
 }
 
 export type DatabaseCreateInput = DatabaseCreateContainerInput | DatabaseCreateFileInput
 
-/** 数据库区适配接口。本期为 mock 实现；未来换真实 adapter，页面不改。 */
+/** 数据库区适配接口：Docker 运行时走 HTTP/WebSocket，本地运行时走 mock。 */
 export interface DatabaseAdapter {
   list(): Promise<readonly DatabaseInstance[]>
-  /** 演示会话：语句在本页 mock 内确定性求值，不执行任何真实 SQL。 */
+  /** 本地演示会话的确定性求值；Docker 终端走 openTerminal。 */
   execMockQuery(databaseId: string, statement: string): Promise<MockQueryResult>
-  /** 创建数据库（演示）：追加内存数据集并返回新实例；同名同引擎视为已存在。 */
-  create(input: DatabaseCreateInput): Promise<DatabaseInstance>
-  /** 删除数据库（演示）：只改内存数据集，不触碰任何真实数据库。 */
+  /** 创建容器数据库或 SQLite 文件；本地运行时用 mock。 */
+  create(input: DatabaseCreateInput, onProgress?: (percent: number) => void): Promise<DatabaseInstance>
+  /** 删除目标逻辑库、SQLite 文件或演示卡片；真实容器与卷由独立操作删除。 */
   remove(databaseId: string): Promise<void>
+  discover?(engine: Exclude<DatabaseEngine, 'SQLite'>, versionTag: string): Promise<{ images: readonly ContainerImage[]; containers: readonly { id: string; name: string; accessScope: string; managed: boolean }[] }>
+  reveal?(databaseId: string): Promise<{ username: string; password: string }>
+  removeContainer?(databaseId: string): Promise<void>
+  reconcile?(databaseId: string): Promise<DatabaseInstance>
+  forget?(databaseId: string): Promise<void>
+  openTerminal?(databaseId: string): Promise<{ execute(input: string): Promise<readonly string[]>; close(): void }>
+  downloadSqlite?(databaseId: string): void
 }
 
 /**

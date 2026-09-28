@@ -27,6 +27,7 @@ export function GatewayProvider({
         users: isDockerRuntime() ? 'http' : 'mock',
         files: isDockerRuntime() ? 'http' : 'mock',
         containers: isDockerRuntime() ? 'http' : 'mock',
+        databases: isDockerRuntime() ? 'http' : 'mock',
         // 日志的 http 分支只影响运行与操作两类；登录日志没有真实端点，两种取值下都读内存演示。
         logs: isDockerRuntime() ? 'http' : 'mock',
         terminals: isDockerRuntime() ? 'ws' : 'mock',
