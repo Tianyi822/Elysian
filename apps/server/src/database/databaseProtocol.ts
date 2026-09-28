@@ -83,20 +83,26 @@ export function validateRedisTerminalCommand(input: string): string[] {
   return args
 }
 
-/** INFORMATION_SCHEMA 四张授权视图的行。普通账号自查只能看到自己的权限行，这是 MySQL/MariaDB 的保证。 */
+/** INFORMATION_SCHEMA 四张直授视图、例程授权视图与可适用角色视图的行。普通账号自查只能看到自己的权限行，这是 MySQL/MariaDB 的保证。 */
 export type SqlGrantRows = {
   userPrivileges: { PRIVILEGE_TYPE?: string; IS_GRANTABLE?: string }[]
   schemaPrivileges: { TABLE_SCHEMA?: string; IS_GRANTABLE?: string }[]
   tablePrivileges: { TABLE_SCHEMA?: string; IS_GRANTABLE?: string }[]
   columnPrivileges: { TABLE_SCHEMA?: string; IS_GRANTABLE?: string }[]
+  routinePrivileges: { TABLE_SCHEMA?: string; IS_GRANTABLE?: string }[]
+  applicableRoles: { ROLE_NAME?: string; IS_GRANTABLE?: string }[]
 }
 
 /**
  * 接管核验的白名单判定：普通账号的授权必须完全落在目标逻辑库内。
  * 不解析 SHOW GRANTS 文本——表级 `otherdb`.`tab` 与通配庈权限行 `app%`/`%` 都不命中「库名.*」形态的文本规则，
- * 白名单改为要求 SCHEMA/TABLE/COLUMN_PRIVILEGES 的 TABLE_SCHEMA 与目标库名全等。
+ * 白名单改为要求 SCHEMA/TABLE/COLUMN/ROUTINE_PRIVILEGES 的 TABLE_SCHEMA 与目标库名全等。
  */
 export function assertSqlGrantsWithinDatabase(name: string, rows: SqlGrantRows): void {
+  // 角色授予（mysql.role_edges）不进直授视图，只经 APPLICABLE_ROLES 呈现；存在可适用角色即可能越出目标库，直接拒绝接管。
+  if (rows.applicableRoles.length > 0) {
+    throw new InvalidRequestError(403, '普通账号存在可适用角色，权限可能越出目标库')
+  }
   // USER_PRIVILEGES 是全局层授权：FILE/SUPER 与任何具体全局权限都在这里有行；USAGE 是无实权的占位，沿用豁免。
   for (const row of rows.userPrivileges) {
     if (String(row.PRIVILEGE_TYPE ?? '').toUpperCase() !== 'USAGE') {
@@ -104,12 +110,13 @@ export function assertSqlGrantsWithinDatabase(name: string, rows: SqlGrantRows):
     }
   }
   // IS_GRANTABLE='YES' 即持有 GRANT OPTION，等价于旧文本规则里的 GRANT OPTION 匹配。
-  for (const row of [...rows.userPrivileges, ...rows.schemaPrivileges, ...rows.tablePrivileges, ...rows.columnPrivileges]) {
+  for (const row of [...rows.userPrivileges, ...rows.schemaPrivileges, ...rows.tablePrivileges, ...rows.columnPrivileges, ...rows.routinePrivileges]) {
     if (String(row.IS_GRANTABLE ?? '').toUpperCase() === 'YES') {
       throw new InvalidRequestError(403, '普通账号拥有超出目标数据库的权限')
     }
   }
-  for (const row of [...rows.schemaPrivileges, ...rows.tablePrivileges, ...rows.columnPrivileges]) {
+  // 例程授权与其他三层同口径：`GRANT EXECUTE ON otherdb.proc` 在 ROUTINE_PRIVILEGES 现形。
+  for (const row of [...rows.schemaPrivileges, ...rows.tablePrivileges, ...rows.columnPrivileges, ...rows.routinePrivileges]) {
     if (String(row.TABLE_SCHEMA ?? '') !== name) {
       throw new InvalidRequestError(403, '普通账号拥有其他数据库权限')
     }
@@ -120,6 +127,8 @@ export function assertSqlGrantsWithinDatabase(name: string, rows: SqlGrantRows):
  * 带字符串态的注释归一：单引号、双引号、反引号的引号区间原样保留（区间内不识别注释标记），
  * 仅在区间外把 -- 行注释、# 行注释、闭合块注释各替换为一个空格，供黑名单在归一结果上匹配。
  * 无字符串态的朴素归一会把 `select '#', load_file(...)` 里的 # 当伪注释起点，吞掉其后真实可执行的 LOAD_FILE。
+ * -- 行注释按 MySQL 词法要求第二个减号后随至少一个空白或控制字符；无空格 `--` 是双减号运算符，原文保留（fail-closed：黑名单看到更多而非更少）。
+ * `/*!` 前缀的版本执行注释会被服务器当 SQL 解析执行，原文保留供黑名单匹配；普通块注释仍替换为一个空格；未闭合块注释抛错。
  * 反斜杠转义只在单双引号字符串内生效（MySQL 默认 NO_BACKSLASH_ESCAPES 关）；三种引号都支持翻倍转义；
  * 反引号标识符内反斜杠不是转义符，不做跳过。未闭合引号保留原文，交由服务端报语法错误。
  */
@@ -148,7 +157,8 @@ function normalizeSqlComments(input: string): string {
       i = end
       continue
     }
-    if (char === '-' && input[i + 1] === '-') {
+    // charCodeAt 越界返回 NaN，NaN <= 0x20 为 false：行尾裸 `--` 不当注释，保留原文。
+    if (char === '-' && input[i + 1] === '-' && input.charCodeAt(i + 2) <= 0x20) {
       const newline = input.indexOf('\n', i + 2)
       i = newline < 0 ? input.length : newline
       out += ' '
@@ -163,8 +173,8 @@ function normalizeSqlComments(input: string): string {
     if (char === '/' && input[i + 1] === '*') {
       const end = input.indexOf('*/', i + 2)
       if (end < 0) throw invalidRequest('SQL 注释未闭合')
+      out += input[i + 2] === '!' ? input.slice(i, end + 2) : ' '
       i = end + 2
-      out += ' '
       continue
     }
     out += char
@@ -173,7 +183,9 @@ function normalizeSqlComments(input: string): string {
   return out
 }
 
-const SQL_TERMINAL_FORBIDDEN = /\b(?:LOAD\s+DATA|INTO\s+(?:OUTFILE|DUMPFILE)|LOAD_FILE\s*\(|INSTALL\s+PLUGIN|CREATE\s+FUNCTION|SET\s+GLOBAL|USE\s+)/i
+// SET 覆盖 @@GLOBAL/@@SESSION/@@LOCAL 变量地址形态（与 SET GLOBAL 等价）与角色激活（SET ROLE 即自提权）；
+// USE 允许后随反引号（`USE`db`` 无空白形态）；CALL 只拦跨库限定名调用，不拦本库 `CALL proc`。
+const SQL_TERMINAL_FORBIDDEN = /\b(?:LOAD\s+DATA|INTO\s+(?:OUTFILE|DUMPFILE)|LOAD_FILE\s*\(|INSTALL\s+PLUGIN|CREATE\s+FUNCTION|SET\s+(?:@@)?(?:GLOBAL|SESSION|LOCAL)\b|SET\s+(?:DEFAULT\s+)?ROLE\b|CALL\s+`?\w+`?\s*\.|USE(?=\s|`))/i
 
 /** 会话黑名单判定：先做带字符串态的注释归一再匹配禁词，拦截注释分隔（如 `SET /*x*\/GLOBAL`）与字符串伪装；执行仍送原文。 */
 export function validateSqlTerminalStatement(input: string): void {
@@ -255,12 +267,17 @@ export function createDatabaseProtocol(): DatabaseProtocol {
     try {
       // 普通账号自查 INFORMATION_SCHEMA 只能看到自己的权限行；接管失败（查询异常或越权行）即拒绝。
       // 弃用 SHOW GRANTS 文本解析：表级 `otherdb`.`tab` 与通配库名 `app%` 均不命中「库名.*」正则。
+      // 四张直授视图派生自 mysql.user/db/tables_priv/columns_priv，看不到角色授予（mysql.role_edges）与例程授权（mysql.procs_priv），
+      // 补查 ROUTINE_PRIVILEGES（与其他三层同口径按 TABLE_SCHEMA 全等判定）与 APPLICABLE_ROLES（行数大于 0 即存在可适用角色，直接拒绝）；
+      // MySQL 8 与 MariaDB 10.x 均有这两张视图，查询异常即 verify 失败，方向 fail-closed。
       const grantRows = async (sql: string) => (await user.query(sql))[0] as SqlGrantRows['userPrivileges']
       assertSqlGrantsWithinDatabase(record.name, {
         userPrivileges: await grantRows('SELECT PRIVILEGE_TYPE, IS_GRANTABLE FROM INFORMATION_SCHEMA.USER_PRIVILEGES'),
         schemaPrivileges: await grantRows('SELECT TABLE_SCHEMA, IS_GRANTABLE FROM INFORMATION_SCHEMA.SCHEMA_PRIVILEGES'),
         tablePrivileges: await grantRows('SELECT TABLE_SCHEMA, IS_GRANTABLE FROM INFORMATION_SCHEMA.TABLE_PRIVILEGES'),
         columnPrivileges: await grantRows('SELECT TABLE_SCHEMA, IS_GRANTABLE FROM INFORMATION_SCHEMA.COLUMN_PRIVILEGES'),
+        routinePrivileges: await grantRows('SELECT TABLE_SCHEMA, IS_GRANTABLE FROM INFORMATION_SCHEMA.ROUTINE_PRIVILEGES'),
+        applicableRoles: await grantRows('SELECT * FROM INFORMATION_SCHEMA.APPLICABLE_ROLES'),
       })
     } finally { await user.end() }
   }

@@ -30,6 +30,8 @@ const grantsWithin = (patch: Partial<SqlGrantRows>): SqlGrantRows => ({
   schemaPrivileges: [],
   tablePrivileges: [],
   columnPrivileges: [],
+  routinePrivileges: [],
+  applicableRoles: [],
   ...patch,
 })
 
@@ -80,7 +82,25 @@ describe('MySQL 授权白名单核验（INFORMATION_SCHEMA）', () => {
   it('仅目标库授权放行（面板自建账号的单库 GRANT 形态）', () => {
     const privileges = ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'CREATE', 'ALTER', 'DROP', 'INDEX', 'REFERENCES', 'CREATE VIEW', 'SHOW VIEW', 'TRIGGER']
     expect(() => assertSqlGrantsWithinDatabase('appdb', grantsWithin({
-      schemaPrivileges: privileges.map((privilege) => ({ PRIVILEGE_TYPE: privilege, TABLE_SCHEMA: 'appdb', IS_GRANTABLE: 'NO' })),
+      schemaPrivileges: privileges.map((privilege) => ({ PRIVILEGE: privilege, TABLE_SCHEMA: 'appdb', IS_GRANTABLE: 'NO' })),
+    }))).not.toThrow()
+  })
+  it('可适用角色（APPLICABLE_ROLES）非空必须拒绝——角色授予不进四张直授视图', () => {
+    expectReject(() => assertSqlGrantsWithinDatabase('appdb', grantsWithin({
+      applicableRoles: [{ ROLE_NAME: 'high_priv_role', IS_GRANTABLE: 'NO' }],
+    })), 403, /角色/)
+  })
+  it('例程授权（ROUTINE_PRIVILEGES）越库或带 GRANT OPTION 必须拒绝', () => {
+    expectReject(() => assertSqlGrantsWithinDatabase('appdb', grantsWithin({
+      routinePrivileges: [{ TABLE_SCHEMA: 'otherdb', IS_GRANTABLE: 'NO' }],
+    })), 403, /其他数据库/)
+    expectReject(() => assertSqlGrantsWithinDatabase('appdb', grantsWithin({
+      routinePrivileges: [{ TABLE_SCHEMA: 'appdb', IS_GRANTABLE: 'YES' }],
+    })), 403, /超出目标数据库/)
+  })
+  it('无可适用角色且例程授权落在目标库内放行', () => {
+    expect(() => assertSqlGrantsWithinDatabase('appdb', grantsWithin({
+      routinePrivileges: [{ TABLE_SCHEMA: 'appdb', IS_GRANTABLE: 'NO' }],
     }))).not.toThrow()
   })
 })
@@ -100,6 +120,36 @@ describe('SQL 终端黑名单（带字符串态的注释归一）', () => {
   it('原有禁词形态保持拦截', () => {
     expectReject(() => validateSqlTerminalStatement(`LOAD DATA LOCAL INFILE '/etc/passwd' INTO t`), 403, /禁止/)
     expectReject(() => validateSqlTerminalStatement(`SELECT * FROM t INTO OUTFILE '/tmp/x'`), 403, /禁止/)
+  })
+  it('无空格 -- 是双减号运算符而非注释，其后的禁词必须照常拦截', () => {
+    expectReject(() => validateSqlTerminalStatement(`SELECT 1--load_file('/etc/passwd')`), 403, /禁止/)
+  })
+  it('MySQL 版本执行注释内的代码会被服务器当 SQL 执行，禁词必须照常拦截，未闭合仍按 400 拒绝', () => {
+    expectReject(() => validateSqlTerminalStatement(`/*!40000 SELECT load_file('/etc/passwd') */`), 403, /禁止/)
+    expectReject(() => validateSqlTerminalStatement(`/*! USE otherdb */`), 403, /禁止/)
+    expectReject(() => validateSqlTerminalStatement(`/*! SET GLOBAL x=1 */`), 403, /禁止/)
+    expectReject(() => validateSqlTerminalStatement('SELECT /*! x'), 400, /注释未闭合/)
+  })
+  it('USE 反引号紧贴（无空白）的跨库切换必须拦截', () => {
+    expectReject(() => validateSqlTerminalStatement('USE`otherdb`'), 403, /禁止/)
+  })
+  it('SET @@GLOBAL 与 SET @@SESSION 变量地址形态必须拦截', () => {
+    expectReject(() => validateSqlTerminalStatement('SET @@GLOBAL.max_connections=1'), 403, /禁止/)
+    expectReject(() => validateSqlTerminalStatement('SET @@SESSION.sql_mode=1'), 403, /禁止/)
+  })
+  it('SET ROLE 与 SET DEFAULT ROLE 必须拦截——角色激活即自提权', () => {
+    expectReject(() => validateSqlTerminalStatement('SET ROLE r'), 403, /禁止/)
+    expectReject(() => validateSqlTerminalStatement('SET DEFAULT ROLE ALL TO u'), 403, /禁止/)
+  })
+  it('跨库限定名 CALL 拦截，本库 CALL 放行', () => {
+    expectReject(() => validateSqlTerminalStatement('CALL otherdb.p()'), 403, /禁止/)
+    expectReject(() => validateSqlTerminalStatement('CALL `otherdb`.p()'), 403, /禁止/)
+    expect(() => validateSqlTerminalStatement('CALL p()')).not.toThrow()
+  })
+  it('回归：-- 后随空白仍是行注释，普通块注释仍剔除，正常语句不受执行注释规则影响', () => {
+    expect(() => validateSqlTerminalStatement('SELECT 1 -- USE otherdb')).not.toThrow()
+    expect(() => validateSqlTerminalStatement('SELECT /* USE otherdb */ 1')).not.toThrow()
+    expect(() => validateSqlTerminalStatement('SELECT 1 -- 注释')).not.toThrow()
   })
   it('正常语句放行，字符串内的注释字符与转义不误伤', () => {
     for (const sql of ['SELECT 1', 'SELECT * FROM t /* 正常 */', 'SELECT "a#b", 1', `SELECT 'it''s', 'a\\'b\\''`]) {
