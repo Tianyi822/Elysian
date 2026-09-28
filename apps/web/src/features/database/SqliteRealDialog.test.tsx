@@ -18,7 +18,7 @@ it('Docker 环境上传真实 File，不提供可编辑路径', async () => {
   const create = vi.fn(async () => created)
   Object.assign(gateway.databases, { create })
   render(<GatewayProvider gateway={gateway}><DatabaseCreateDialog /></GatewayProvider>)
-  const dialog = screen.getByRole('dialog', { name: '添加SQLite数据库' })
+  const dialog = screen.getByRole('dialog', { name: '添加 SQLite 数据库' })
   expect(within(dialog).queryByLabelText('落点目录')).not.toBeInTheDocument()
   expect(within(dialog).getByText(/先导出快照/)).toBeInTheDocument()
   const file = new File(['SQLite format 3\0'], 'notes.db', { type: 'application/vnd.sqlite3' })

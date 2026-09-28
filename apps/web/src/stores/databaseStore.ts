@@ -35,6 +35,7 @@ export type DatabaseState = {
   /** 添加数据库弹窗的开关与提交中标记。 */
   createOpen: boolean
   creating: boolean
+  createError?: string
   uploadPercent?: number
   /** 正在执行删除的数据库 id：卡片动作行据此禁用。 */
   removingDatabaseIds: readonly string[]
@@ -65,6 +66,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   session: undefined,
   createOpen: false,
   creating: false,
+  createError: undefined,
   uploadPercent: undefined,
   removingDatabaseIds: [],
   setEngine: (engine) => {
@@ -189,14 +191,14 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   },
 
   openCreate() {
-    set({ createOpen: true })
+    set({ createOpen: true, createError: undefined })
   },
   closeCreate() {
-    set({ createOpen: false })
+    set({ createOpen: false, createError: undefined })
   },
 
   async createDatabase(gateway, input) {
-    set({ creating: true, uploadPercent: undefined })
+    set({ creating: true, uploadPercent: undefined, createError: undefined })
     try {
       const created = input.kind === 'file' && input.origin === 'uploaded'
         ? await gateway.databases.create(input, (percent) => set({ uploadPercent: percent }))
@@ -211,6 +213,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       if (created.source !== undefined) void get().refresh(gateway)
     } catch (error) {
       const detail = error instanceof Error ? error.message : '未知错误'
+      set({ createError: detail })
       useNotificationStore.getState().notify({ tone: 'danger', message: `创建数据库失败：${detail}` })
     } finally {
       set({ creating: false, uploadPercent: undefined })

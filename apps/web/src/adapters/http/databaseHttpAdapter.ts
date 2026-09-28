@@ -99,8 +99,8 @@ export function createHttpDatabaseAdapter(): DatabaseAdapter {
       }
       await request(`/${encodeURIComponent(id)}`, { method: 'DELETE' })
     },
-    discover(engine: Exclude<DatabaseEngine, 'SQLite'>, versionTag: string) {
-      return request<{ images: readonly ContainerImage[]; containers: readonly { id: string; name: string; accessScope: string; managed: boolean }[] }>(`/discover?engine=${encodeURIComponent(engine)}&versionTag=${encodeURIComponent(versionTag)}`)
+    discover(engine: Exclude<DatabaseEngine, 'SQLite'>, versionTag?: string) {
+      return request<{ images: readonly ContainerImage[]; containers: readonly { id: string; name: string; accessScope: string; managed: boolean; versionTag: string }[] }>(`/discover?engine=${encodeURIComponent(engine)}${versionTag === undefined ? '' : `&versionTag=${encodeURIComponent(versionTag)}`}`)
     },
     reveal: (id) => request(`/${encodeURIComponent(id)}/reveal`, { method: 'POST' }),
     async removeContainer(id) {

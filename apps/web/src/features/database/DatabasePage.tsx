@@ -125,7 +125,7 @@ export function DatabasePage() {
         {filtered.length === 0 ? (
           <EmptyState
             title={`没有 ${engine} 数据库`}
-            description={engine === 'SQLite' ? isDockerRuntime() ? '新建 SQLite 文件或上传独立数据库快照。' : '可以添加 SQLite 演示卡片；不会创建或上传实际文件。' : '先选择版本并拉取镜像，再创建容器和数据库，或接管已有容器。'}
+            description={engine === 'SQLite' ? isDockerRuntime() ? '新建 SQLite 文件或上传独立数据库快照。' : '可以添加 SQLite 演示卡片；不会创建或上传实际文件。' : '选择已有容器添加数据库，或在当前窗口拉取镜像并创建新容器。'}
           />
         ) : (
           /* 列数量内容区的实测宽度（容器查询）而非视口：侧边栏收展改变可用宽度，卡片随之增减，不会出现「空间变大卡片反而变小」的倒挂。 */

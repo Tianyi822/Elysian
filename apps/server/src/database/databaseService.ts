@@ -1,11 +1,12 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import type { DatabaseEngine, DatabaseInstance, ContainerImage } from '@elysian/contracts'
 import { InvalidRequestError, invalidRequest } from '../shared/errors.ts'
-import { databasePort, databaseImageHasTag, validDatabaseVersion, type DatabaseDocker } from './databaseDocker.ts'
+import { databasePort, databaseImageHasTag, imageMatches, validDatabaseVersion, type DatabaseDocker } from './databaseDocker.ts'
 import type { DatabaseProtocol, DatabaseAddress, DatabaseSession } from './databaseProtocol.ts'
 import type { DatabaseRecord, DatabaseRegistry, DatabaseSecret } from './databaseRegistry.ts'
 
 type Engine = Exclude<DatabaseEngine, 'SQLite'>
+type DatabaseContainerCandidate = { id: string; name: string; accessScope: string; managed: boolean; versionTag: string }
 export type DatabaseCreateRequest = {
   engine: Engine
   versionTag: string
@@ -22,7 +23,7 @@ export type DatabaseCreateRequest = {
 
 export type DatabaseService = {
   list(): Promise<DatabaseInstance[]>
-  discover(engine: Engine, versionTag: string): Promise<{ images: readonly ContainerImage[]; containers: { id: string; name: string; accessScope: string; managed: boolean }[] }>
+  discover(engine: Engine, versionTag?: string): Promise<{ images: readonly ContainerImage[]; containers: DatabaseContainerCandidate[] }>
   create(input: DatabaseCreateRequest): Promise<DatabaseInstance>
   reveal(id: string): Promise<DatabaseSecret>
   remove(id: string): Promise<void>
@@ -146,16 +147,40 @@ export function createDatabaseService(deps: {
     }
   }
 
-  async function discover(engine: Engine, versionTag: string) {
-    if (!validDatabaseVersion(versionTag)) throw invalidRequest('必须指定明确版本')
-    const images = (await deps.listImages()).filter((image) => databaseImageHasTag(image, engine, versionTag))
-    const containers: { id: string; name: string; accessScope: string; managed: boolean }[] = []
+  async function discover(engine: Engine, versionTag?: string) {
+    if (versionTag !== undefined && !validDatabaseVersion(versionTag)) throw invalidRequest('必须指定明确版本')
+    const allImages = await deps.listImages()
+    const imageTags = (image: ContainerImage): string[] => [
+      `${image.name}:${image.tag}`,
+      ...(image.otherTags ?? []),
+    ].flatMap((ref) => {
+      const colon = ref.lastIndexOf(':')
+      const name = ref.slice(0, colon)
+      const tag = ref.slice(colon + 1)
+      return colon > 0 && imageMatches(engine, name) && validDatabaseVersion(tag) ? [tag] : []
+    })
+    const images = allImages.filter((image) => versionTag === undefined
+      ? imageTags(image).length > 0
+      : databaseImageHasTag(image, engine, versionTag))
+    const containers: DatabaseContainerCandidate[] = []
     const registered = await registry.list()
     for (const container of await deps.listContainers()) {
       if (container.id === deps.selfContainerId) continue
       try {
-        const info = await docker.assertEngine(container.id, engine, versionTag)
-        containers.push({ id: container.id, name: container.name, accessScope: accessScopeFromInspect(info, engine), managed: registered.some((row) => row.containerId === container.id && row.source === 'managed') })
+        if (engine === 'Redis' && registered.some((row) => row.containerId === container.id && row.engine === 'Redis')) continue
+        const inspected = await docker.inspect(container.id)
+        if (!object(inspected.State).Running) continue
+        const managedRow = registered.find((row) => row.containerId === container.id && row.source === 'managed' && row.engine === engine)
+        const ref = String(object(inspected.Config).Image ?? '')
+        const colon = ref.lastIndexOf(':')
+        const refTag = colon > 0 && imageMatches(engine, ref.slice(0, colon)) && validDatabaseVersion(ref.slice(colon + 1))
+          ? ref.slice(colon + 1) : undefined
+        const matchingImages = allImages.filter((image) => image.id.replace(/^sha256:/, '') === String(inspected.Image ?? '').replace(/^sha256:/, ''))
+        const tags = [...new Set(matchingImages.flatMap(imageTags))]
+        const candidateTag = versionTag ?? managedRow?.versionTag ?? refTag ?? (tags.length === 1 ? tags[0] : undefined)
+        if (!candidateTag || !validDatabaseVersion(candidateTag)) continue
+        const info = await docker.assertEngine(container.id, engine, candidateTag)
+        containers.push({ id: container.id, name: container.name, accessScope: accessScopeFromInspect(info, engine), managed: Boolean(managedRow), versionTag: candidateTag })
       } catch { /* 其他引擎或停止的容器不作为接管候选。 */ }
     }
     return { images, containers }

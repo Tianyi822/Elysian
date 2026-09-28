@@ -46,6 +46,7 @@ function pageGateway(overrides: Partial<ElysianGateway['databases']> = {}): Elys
     execMockQuery: (id, statement) => base.databases.execMockQuery(id, statement),
     create: (input) => base.databases.create(input),
     remove: (databaseId) => base.databases.remove(databaseId),
+    discover: (engine, versionTag) => base.databases.discover!(engine, versionTag),
   }
   return { ...base, databases: Object.assign(databases, overrides) }
 }
@@ -228,30 +229,21 @@ describe('数据库页面', () => {
     await screen.findByRole('list', { name: 'MariaDB 数据库列表' })
 
     await user.click(screen.getByRole('button', { name: /添加数据库/ }))
-    const dialog = await screen.findByRole('dialog', { name: '添加MariaDB数据库' })
+    const dialog = await screen.findByRole('dialog', { name: '添加 MariaDB 数据库' })
     // 演示标注常驻弹窗顶栏。
-    expect(within(dialog).getByText('演示 · 待接入真实执行')).toBeInTheDocument()
-
-    // 必填校验：空表直接提交要能揭示行内错误。
-    await user.click(within(dialog).getByRole('button', { name: '创建' }))
-    expect(await within(dialog).findByText('请填写数据库名')).toBeInTheDocument()
-
-    await user.type(within(dialog).getByLabelText('数据库名'), 'orders_replica')
-    await user.type(within(dialog).getByLabelText('用户名'), 'ops')
+    expect(within(dialog).getByText('演示')).toBeInTheDocument()
+    expect(await within(dialog).findByText('先选择已有容器')).toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: /运行中的容器/ }))
+    await user.click(await screen.findByRole('menuitemradio', { name: /mariadb-primary · mariadb:10.11/ }))
+    await user.type(within(dialog).getByLabelText('逻辑库名'), 'orders_replica')
+    await user.type(within(dialog).getByLabelText('账号名'), 'ops')
     await user.type(within(dialog).getByLabelText('密码'), 'demo-mariadb-aaaa')
 
     // 下拉全部自绘：点触发器出菜单项，不用原生 select。
     expect(dialog.querySelector('select')).toBeNull()
     await user.click(within(dialog).getByRole('button', { name: /字符集/ }))
-    await user.click(await screen.findByRole('menuitemradio', { name: 'utf8mb3' }))
-
-    await user.click(within(dialog).getByRole('button', { name: /访问权限/ }))
-    await user.click(await screen.findByRole('menuitemradio', { name: '容器网络内' }))
-
-    await user.click(within(dialog).getByRole('button', { name: /添加到容器/ }))
-    await user.click(await screen.findByRole('menuitemradio', { name: /mariadb-primary（mariadb:10.11）/ }))
-
-    await user.click(within(dialog).getByRole('button', { name: '创建' }))
+    await user.click(await screen.findByRole('menuitemradio', { name: 'latin1' }))
+    await user.click(within(dialog).getByRole('button', { name: '创建逻辑库' }))
 
     // 创建成功：弹窗关闭、通知出现、新卡片入列。
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
@@ -272,6 +264,27 @@ describe('数据库页面', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
+  it('演示模式 Redis 无候选时在数据库弹窗拉取并创建新容器', async () => {
+    const user = userEvent.setup()
+    const gateway = pageGateway()
+    renderApp('/databases', { gateway })
+    await screen.findByRole('list', { name: 'MariaDB 数据库列表' })
+    await user.click(within(screen.getByRole('banner')).getByRole('button', { name: 'Redis' }))
+    await screen.findByRole('article', { name: 'Redis 数据库 redis-cache' })
+    await user.click(screen.getByRole('button', { name: /添加数据库/ }))
+    const dialog = await screen.findByRole('dialog', { name: '添加 Redis 数据库' })
+    await user.click(await within(dialog).findByRole('button', { name: '拉取镜像并新建容器' }))
+    await user.type(within(dialog).getByRole('textbox', { name: /版本标签/ }), '8.0')
+    await user.click(within(dialog).getByRole('button', { name: '拉取镜像' }))
+    expect(await within(dialog).findByRole('progressbar', { name: '当前窗口镜像拉取进度' })).toBeInTheDocument()
+    expect(await within(dialog).findByText('本地镜像已就绪：redis:8.0')).toBeInTheDocument()
+    await user.type(within(dialog).getByLabelText('账号名'), 'reader')
+    await user.type(within(dialog).getByLabelText(/密码（至少 12 位）/), 'strong-password-123')
+    await user.click(within(dialog).getByRole('button', { name: '创建并启动' }))
+    expect(await screen.findByRole('article', { name: 'Redis 数据库 0' })).toBeInTheDocument()
+    expect((await gateway.containers.list()).some((container) => container.name === 'elysian-redis')).toBe(true)
+  })
+
   it('添加 SQLite：表单没有账号与容器，拖拽文件后按文件名建库', async () => {
     const user = userEvent.setup()
     renderApp('/databases', { gateway: pageGateway() })
@@ -280,7 +293,7 @@ describe('数据库页面', () => {
     await screen.findByRole('article', { name: 'SQLite 数据库 elysian-notes' })
 
     await user.click(screen.getByRole('button', { name: /添加数据库/ }))
-    const dialog = await screen.findByRole('dialog', { name: '添加SQLite数据库' })
+    const dialog = await screen.findByRole('dialog', { name: '添加 SQLite 数据库' })
 
     // SQLite 没有账号体系，也没有承载容器：这两组字段在弹窗里不存在。
     expect(within(dialog).queryByLabelText('用户名')).not.toBeInTheDocument()
@@ -317,18 +330,18 @@ describe('数据库页面', () => {
     await screen.findByRole('article', { name: 'SQLite 数据库 elysian-notes' })
 
     await user.click(screen.getByRole('button', { name: /添加数据库/ }))
-    const dialog = await screen.findByRole('dialog', { name: '添加SQLite数据库' })
+    const dialog = await screen.findByRole('dialog', { name: '添加 SQLite 数据库' })
 
     await user.click(within(dialog).getByRole('button', { name: '模拟新建文件' }))
     await user.type(within(dialog).getByLabelText(/数据库名/), 'notes_local')
-    await user.clear(within(dialog).getByLabelText('落点目录'))
-    await user.type(within(dialog).getByLabelText('落点目录'), 'data/sqlite')
+    await user.clear(within(dialog).getByLabelText(/落点目录/))
+    await user.type(within(dialog).getByLabelText(/落点目录/), 'data/sqlite')
     await user.click(within(dialog).getByRole('button', { name: '创建' }))
 
     expect(await within(dialog).findByText(/绝对路径/)).toBeInTheDocument()
 
-    await user.clear(within(dialog).getByLabelText('落点目录'))
-    await user.type(within(dialog).getByLabelText('落点目录'), '/srv/elysian/data/sqlite')
+    await user.clear(within(dialog).getByLabelText(/落点目录/))
+    await user.type(within(dialog).getByLabelText(/落点目录/), '/srv/elysian/data/sqlite')
     await user.click(within(dialog).getByRole('button', { name: '创建' }))
 
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())

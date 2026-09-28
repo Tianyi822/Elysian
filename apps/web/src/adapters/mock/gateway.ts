@@ -112,7 +112,7 @@ export function createMockGateway(
     approvals: new MockApprovalAdapter(read),
     audit: new MockAuditAdapter(read),
     containers,
-    databases: options.databases === 'http' ? createHttpDatabaseAdapter() : new MockDatabaseAdapter(),
+    databases: options.databases === 'http' ? createHttpDatabaseAdapter() : new MockDatabaseAdapter(containers),
     firewall,
     ssh,
     users,

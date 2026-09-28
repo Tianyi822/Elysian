@@ -241,7 +241,7 @@ export interface DatabaseAdapter {
   create(input: DatabaseCreateInput, onProgress?: (percent: number) => void): Promise<DatabaseInstance>
   /** 删除目标逻辑库、SQLite 文件或演示卡片；真实容器与卷由独立操作删除。 */
   remove(databaseId: string): Promise<void>
-  discover?(engine: Exclude<DatabaseEngine, 'SQLite'>, versionTag: string): Promise<{ images: readonly ContainerImage[]; containers: readonly { id: string; name: string; accessScope: string; managed: boolean }[] }>
+  discover?(engine: Exclude<DatabaseEngine, 'SQLite'>, versionTag?: string): Promise<{ images: readonly ContainerImage[]; containers: readonly { id: string; name: string; accessScope: string; managed: boolean; versionTag: string }[] }>
   reveal?(databaseId: string): Promise<{ username: string; password: string }>
   removeContainer?(databaseId: string): Promise<void>
   reconcile?(databaseId: string): Promise<DatabaseInstance>

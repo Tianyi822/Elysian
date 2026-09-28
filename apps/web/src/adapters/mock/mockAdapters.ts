@@ -11,6 +11,7 @@ import type {
   ContainerAction,
   ContainerCreateInput,
   ContainerImage,
+  ImagePullProgress,
   DatabaseInstance,
   ElysianEvent,
   EventStreamHandlers,
@@ -678,11 +679,17 @@ export class MockContainerAdapter implements ContainerAdapter {
     dataset.images = dataset.images.filter((i) => i.id !== imageId)
   }
 
-  async pullImage(input: { name: string; tag: string; registry?: string }): Promise<ContainerImage> {
+  async pullImage(input: { name: string; tag: string; registry?: string }, onProgress?: (progress: ImagePullProgress) => void): Promise<ContainerImage> {
     // registry 只是界面记录的拉取源：mock 不区分来源，全部走同一份确定性数据。
     const dataset = this.dataset()
     if (dataset.images.some((i) => i.name === input.name && i.tag === input.tag)) {
       throw new Error(`镜像已存在：${input.name}:${input.tag}`)
+    }
+    if (onProgress) {
+      for (const currentBytes of [0, 25, 65, 100]) {
+        onProgress({ phase: currentBytes === 100 ? 'finalizing' : 'downloading', layerId: '演示镜像层', currentBytes: currentBytes * 1024 * 1024, totalBytes: 100 * 1024 * 1024 })
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
     }
     const { id, digest, sizeMb } = mockImageArtifact(input.name, input.tag)
     const image: ContainerImage = {
@@ -920,6 +927,23 @@ export class MockUserAdapter implements UserAdapter {
 }
 
 export class MockDatabaseAdapter implements DatabaseAdapter {
+  constructor(private readonly containersAdapter?: ContainerAdapter) {}
+
+  async discover(engine: 'MariaDB' | 'MySQL' | 'Redis', versionTag?: string) {
+    const containers = this.containersAdapter ? await this.containersAdapter.list() : CONTAINERS
+    const images = this.containersAdapter ? await this.containersAdapter.listImages() : CONTAINER_IMAGES
+    const matchingImages = images.filter((image) => image.name === engine.toLowerCase() && /^\d+(?:\.\d+){0,2}(?:[-.][A-Za-z0-9]+)*$/.test(image.tag))
+    return {
+      images: versionTag === undefined ? matchingImages : matchingImages.filter((image) => image.tag === versionTag),
+      containers: containers.flatMap((container) => {
+        const image = matchingImages.find((candidate) => candidate.id === container.imageId)
+        if (container.status !== 'running' || !image || (versionTag !== undefined && image.tag !== versionTag)) return []
+        if (engine === 'Redis' && DATABASE_INSTANCES.some((database) => database.engine === 'Redis' && database.containerId === container.id)) return []
+        return [{ id: container.id, name: container.name, accessScope: 'localhost', managed: true, versionTag: image.tag }]
+      }),
+    }
+  }
+
   async list(): Promise<readonly DatabaseInstance[]> {
     // 只有存在的分组才拷贝：文件型实例没有凭证、使用量与连接数。
     return DATABASE_INSTANCES.map((database) => ({
@@ -964,9 +988,19 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
       return { ...instance }
     }
 
-    const container = CONTAINERS.find((item) => item.id === input.containerId)
+    const createdContainer = input.target?.kind === 'new' && this.containersAdapter
+      ? await this.containersAdapter.create({
+          name: input.target.containerName,
+          imageId: input.target.imageId,
+          ports: input.accessScope === 'any-host' && input.hostPort
+            ? [{ containerPort: input.engine === 'Redis' ? 6379 : 3306, hostPort: input.hostPort, protocol: 'tcp', hostIp: '0.0.0.0' }]
+            : [],
+          env: [], volumes: [], restartPolicy: 'unless-stopped',
+        }) : undefined
+    const containerId = createdContainer?.id ?? input.containerId
+    const container = (this.containersAdapter ? await this.containersAdapter.list() : CONTAINERS).find((item) => item.id === containerId)
     if (!container) throw new Error(`未找到容器 ${input.containerId}`)
-    const image = CONTAINER_IMAGES.find((item) => item.id === container.imageId)
+    const image = (this.containersAdapter ? await this.containersAdapter.listImages() : CONTAINER_IMAGES).find((item) => item.id === container.imageId)
     const instance: DatabaseInstance = {
       id: `db-${container.name}-${input.name}`,
       engine: input.engine,
@@ -975,6 +1009,7 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
       version: image?.tag ?? '0',
       status: 'running',
       containerId: container.id,
+      source: 'demo',
       credentials: { username: input.username, password: input.password },
       storage: { usedGb: 0.1, totalGb: 32 },
       memory: { usedGb: 0.2, totalGb: 4 },

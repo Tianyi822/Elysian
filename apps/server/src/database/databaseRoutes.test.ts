@@ -24,6 +24,14 @@ function fixture() {
 }
 
 describe('数据库 HTTP 守卫', () => {
+  it('发现接口允许省略版本，并保留按版本查询', async () => {
+    const { app, service } = fixture()
+    expect((await app.request('http://localhost:48100/discover?engine=MySQL')).status).toBe(200)
+    expect(service.discover).toHaveBeenCalledWith('MySQL', undefined)
+    expect((await app.request('http://localhost:48100/discover?engine=MySQL&versionTag=8.4')).status).toBe(200)
+    expect(service.discover).toHaveBeenCalledWith('MySQL', '8.4')
+  })
+
   it('列表没有密码，按需凭证禁止缓存且跨源请求被拒', async () => {
     const { app } = fixture()
     const listed = await app.request('http://localhost:48100/')

@@ -88,7 +88,7 @@ export function createDatabaseApp(deps: DatabaseAppDeps): Hono {
     const engine = c.req.query('engine')
     const versionTag = c.req.query('versionTag')
     if (engine !== 'MariaDB' && engine !== 'MySQL' && engine !== 'Redis') throw new InvalidRequestError(400, '数据库引擎无效')
-    return c.json(await service().discover(engine, versionTag ?? ''))
+    return c.json(await service().discover(engine, versionTag))
   })
   app.post('/', async (c) => c.json(await service().create(validateDatabaseCreateRequest(await readJsonBody(c.req.raw))), 201))
   app.post('/:id/reveal', async (c) => {

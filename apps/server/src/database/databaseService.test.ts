@@ -17,10 +17,11 @@ function fixture() {
   let running = true
   let version = '8.4.7'
   const docker: DatabaseDocker = {
-    inspect: vi.fn(async () => ({ Id: CONTAINER_ID, State: { Running: running }, HostConfig: { PortBindings: {} }, Config: { Image: 'mysql:8.4' } })),
-    assertEngine: vi.fn(async () => {
+    inspect: vi.fn(async () => ({ Id: CONTAINER_ID, Image: IMAGE_ID, State: { Running: running }, HostConfig: { PortBindings: {} }, Config: { Image: 'mysql:8.4' } })),
+    assertEngine: vi.fn(async (_id, engine, tag) => {
       if (!running) throw new Error('容器已停止')
-      return { Id: CONTAINER_ID, State: { Running: true }, HostConfig: { PortBindings: {} }, Config: { Image: 'mysql:8.4' } }
+      if (engine !== 'MySQL' || tag !== '8.4') throw new Error('容器镜像与所选引擎或版本不一致')
+      return { Id: CONTAINER_ID, Image: IMAGE_ID, State: { Running: true }, HostConfig: { PortBindings: {} }, Config: { Image: 'mysql:8.4' } }
     }),
     address: vi.fn(async () => ({ host: '172.28.0.2', port: 0 })),
     attach: vi.fn(async () => { calls.push('attach') }),
@@ -46,6 +47,41 @@ function fixture() {
 }
 
 describe('数据库服务', () => {
+  it('按引擎发现运行中的明确版本容器；停止、错误引擎和不匹配版本不可选', async () => {
+    const f = fixture()
+    expect((await f.service.discover('MySQL')).containers).toEqual([{
+      id: CONTAINER_ID, name: 'mysql-test', accessScope: 'container-network', managed: false, versionTag: '8.4',
+    }])
+    expect((await f.service.discover('MySQL', '8.4')).images).toHaveLength(1)
+    expect((await f.service.discover('MySQL', '8.0')).containers).toHaveLength(0)
+    expect((await f.service.discover('MariaDB')).containers).toHaveLength(0)
+    f.stop()
+    expect((await f.service.discover('MySQL')).containers).toHaveLength(0)
+  })
+
+  it('已登记的 Redis DB 0 容器不再作为添加候选', async () => {
+    const f = fixture()
+    const redisImage: ContainerImage = { ...IMAGE, name: 'redis', tag: '7.4' }
+    const info = { Id: CONTAINER_ID, Image: IMAGE_ID, State: { Running: true }, HostConfig: { PortBindings: {} }, Config: { Image: 'redis:7.4' } }
+    const docker: DatabaseDocker = {
+      ...f.docker,
+      inspect: vi.fn(async () => info),
+      assertEngine: vi.fn(async () => info),
+    }
+    const service = createDatabaseService({
+      registry: f.registry, docker, protocol: f.protocol,
+      listImages: async () => [redisImage],
+      listContainers: async () => [{ id: CONTAINER_ID, name: 'redis-test' }],
+    })
+    expect((await service.discover('Redis')).containers).toHaveLength(1)
+    await f.registry.put({
+      id: 'redis-db0', engine: 'Redis', name: '0', versionTag: '7.4', containerId: CONTAINER_ID,
+      source: 'managed', accessScope: 'localhost', admin: { username: 'default', password: 'admin-secret' },
+      user: USER, createdAt: '2026-09-28T00:00:00.000Z', state: 'active',
+    })
+    expect((await service.discover('Redis')).containers).toHaveLength(0)
+  })
+
   it('要求明确版本和公网确认', () => {
     expect(() => validateDatabaseCreateRequest({ engine: 'MySQL', versionTag: 'latest' })).toThrow('版本')
     const base = fixture().input
