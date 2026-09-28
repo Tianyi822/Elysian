@@ -1,27 +1,18 @@
 import type { DatabaseInstance } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { DATABASE_CATALOG } from '../../adapters/mock/databaseCatalog'
-import { ENGINE_STATEMENTS } from '../../adapters/mock/databaseQuery'
 import { TerminalShell } from '../../components/terminal/TerminalShell'
 import type { TerminalCompletion } from '../../components/terminal/terminalSession'
 import { SESSION_BANNER, useDatabaseStore } from '../../stores/databaseStore'
+import { ENGINE_STATEMENTS } from './engineStatements'
 
 /**
- * 数据库会话的薄壳：交互内核在 TerminalShell；本地走 mock，Docker 走数据库协议终端。
+ * 数据库会话的薄壳：交互内核在 TerminalShell；Docker 走数据库协议终端。
  */
 
-/** Tab 补全的行中词表：演示目录里的表名（SQL）或键名（Redis）。 */
-function completionNames(database: DatabaseInstance): readonly string[] {
-  const catalog = DATABASE_CATALOG[database.id]
-  if (!catalog) return []
-  return database.engine === 'Redis'
-    ? catalog.keys.map((key) => key.name)
-    : catalog.tables.map((table) => table.name)
-}
-
 /**
- * 前缀补全，语义与容器终端一致：行首补语句、行中补目录名；
- * 唯一命中补齐并补空格，多命中收敛到最长公共前缀，无法收敛时把候选列成输出行。
+ * 前缀补全，语义与容器终端一致：行首补语句，唯一命中补齐并补空格，
+ * 多命中收敛到最长公共前缀，无法收敛时把候选列成输出行。
+ * 行中不补目录名：表名与键名目录已随演示引擎移除，与真实会话行为一致（无候选）。
  */
 export function completeSqlStatement(
   database: DatabaseInstance,
@@ -37,7 +28,7 @@ export function completeSqlStatement(
     .split(/\s+/)
     .filter(Boolean)
     .pop()
-  const pool = previousWord ? completionNames(database) : ENGINE_STATEMENTS[database.engine]
+  const pool = previousWord ? [] : ENGINE_STATEMENTS[database.engine]
   const matches = pool.filter((candidate) => candidate.startsWith(token))
 
   if (matches.length === 0) return { draft, cursor }

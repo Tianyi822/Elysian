@@ -1,6 +1,7 @@
 import { fireEvent, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createMockGateway } from '../../adapters/mock/gateway'
 import { useEventStreamStore } from '../../stores/eventStreamStore'
 import { renderApp } from '../../test/renderApp'
 import { NAV_ITEMS } from '../navigation'
@@ -47,7 +48,23 @@ describe('模板外壳', () => {
 
   it('点击数据库入口进入数据库卡片页，页签占据标题位', async () => {
     const user = userEvent.setup()
-    renderApp('/')
+    // 数据库域固定走 http adapter（jsdom 下 fetch 不可达），与 DatabasePage 测试同法注入自建 fake，
+    // 否则页面停在错误态，「数据库实例」区不会出现；本用例只验证导航落位，列表给空即可。
+    const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+    renderApp('/', {
+      gateway: {
+        ...base,
+        databases: {
+          async list() {
+            return []
+          },
+          async create() {
+            throw new Error('本用例不创建数据库')
+          },
+          async remove() {},
+        },
+      },
+    })
 
     await user.click(screen.getByRole('link', { name: '数据库' }))
 

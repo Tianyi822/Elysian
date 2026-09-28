@@ -188,12 +188,6 @@ export interface ContainerAdapter {
   }): Unsubscribe
 }
 
-/** 演示会话的结果：结构化结果集、纯文本行，或清屏请求。 */
-export type MockQueryResult =
-  | { kind: 'table'; columns: readonly string[]; rows: readonly (readonly string[])[]; notice: string }
-  | { kind: 'text'; lines: readonly string[] }
-  | { kind: 'clear' }
-
 /**
  * 创建数据库的输入：表单收集后经 adapter 提交；Docker 运行时由 HTTP adapter 落地。
  * 分两支——服务型由容器承载、要账号与访问权限；文件型（SQLite）只是一个本地文件，
@@ -232,12 +226,10 @@ export type DatabaseCreateFileInput = {
 
 export type DatabaseCreateInput = DatabaseCreateContainerInput | DatabaseCreateFileInput
 
-/** 数据库区适配接口：Docker 运行时走 HTTP/WebSocket，本地运行时走 mock。 */
+/** 数据库区适配接口：Docker 运行时走 HTTP/WebSocket。 */
 export interface DatabaseAdapter {
   list(): Promise<readonly DatabaseInstance[]>
-  /** 本地演示会话的确定性求值；Docker 终端走 openTerminal。 */
-  execMockQuery(databaseId: string, statement: string): Promise<MockQueryResult>
-  /** 创建容器数据库或 SQLite 文件；本地运行时用 mock。 */
+  /** 创建容器数据库或 SQLite 文件。 */
   create(input: DatabaseCreateInput, onProgress?: (percent: number) => void): Promise<DatabaseInstance>
   /** 删除目标逻辑库、SQLite 文件或演示卡片；真实容器与卷由独立操作删除。 */
   remove(databaseId: string): Promise<void>

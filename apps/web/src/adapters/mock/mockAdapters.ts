@@ -12,7 +12,6 @@ import type {
   ContainerCreateInput,
   ContainerImage,
   ImagePullProgress,
-  DatabaseInstance,
   ElysianEvent,
   EventStreamHandlers,
   FileEntry,
@@ -70,8 +69,6 @@ import type {
   ContainerAdapter,
   HostTerminalHandlers,
   HostTerminalSessionInfo,
-  DatabaseAdapter,
-  DatabaseCreateInput,
   EventsAdapter,
   FilesAdapter,
   FilePermissionInput,
@@ -80,7 +77,6 @@ import type {
   IncidentListQuery,
   IncidentListResult,
   LogsAdapter,
-  MockQueryResult,
   RunAdapter,
   SessionAdapter,
   SkillAdapter,
@@ -89,7 +85,6 @@ import type {
   UserAdapter,
   WebsitesAdapter,
 } from '../../contracts/adapters'
-import { DATABASE_INSTANCES, SQLITE_VERSION, addDatabaseInstance, removeDatabaseInstance } from './databaseData'
 import {
   addFirewallForward,
   addFirewallIpRule,
@@ -122,7 +117,6 @@ import {
   removeHostUser,
   updateHostUser,
 } from './usersData'
-import { registerSqliteCatalog } from './databaseCatalog'
 import {
   addSshLoginKey,
   findSshLoginKeyByName,
@@ -139,7 +133,6 @@ import {
   saveSshRootLoginPolicy,
   setSshServiceEnabled,
 } from './sshData'
-import { runMockQuery } from './databaseQuery'
 import { completeTerminalCommand, execContainerCommand } from './containerTerminal'
 import {
   chmodMockEntry,
@@ -166,7 +159,7 @@ import {
   setWebsiteProjectRunning,
   updateWebsiteProject,
 } from './websitesData'
-import { CONTAINERS, CONTAINER_IMAGES, mockImageArtifact } from './containersData'
+import { mockImageArtifact } from './containersData'
 import { autoContainerName } from '@elysian/contracts'
 import {
   INITIAL_DISKS,
@@ -923,107 +916,6 @@ export class MockUserAdapter implements UserAdapter {
     // 模拟读取系统账号的耗时；演示里账号集与「系统」天然一致，只回读总数。
     await new Promise((resolve) => setTimeout(resolve, HOST_USER_SYNC_DELAY_MS))
     return { total: getHostUsers().length }
-  }
-}
-
-export class MockDatabaseAdapter implements DatabaseAdapter {
-  constructor(private readonly containersAdapter?: ContainerAdapter) {}
-
-  async discover(engine: 'MariaDB' | 'MySQL' | 'Redis', versionTag?: string) {
-    const containers = this.containersAdapter ? await this.containersAdapter.list() : CONTAINERS
-    const images = this.containersAdapter ? await this.containersAdapter.listImages() : CONTAINER_IMAGES
-    const matchingImages = images.filter((image) => image.name === engine.toLowerCase() && /^\d+(?:\.\d+){0,2}(?:[-.][A-Za-z0-9]+)*$/.test(image.tag))
-    return {
-      images: versionTag === undefined ? matchingImages : matchingImages.filter((image) => image.tag === versionTag),
-      containers: containers.flatMap((container) => {
-        const image = matchingImages.find((candidate) => candidate.id === container.imageId)
-        if (container.status !== 'running' || !image || (versionTag !== undefined && image.tag !== versionTag)) return []
-        if (engine === 'Redis' && DATABASE_INSTANCES.some((database) => database.engine === 'Redis' && database.containerId === container.id)) return []
-        return [{ id: container.id, name: container.name, accessScope: 'localhost', managed: true, versionTag: image.tag }]
-      }),
-    }
-  }
-
-  async list(): Promise<readonly DatabaseInstance[]> {
-    // 只有存在的分组才拷贝：文件型实例没有凭证、使用量与连接数。
-    return DATABASE_INSTANCES.map((database) => ({
-      ...database,
-      ...(database.credentials ? { credentials: { ...database.credentials } } : {}),
-      ...(database.storage ? { storage: { ...database.storage } } : {}),
-      ...(database.memory ? { memory: { ...database.memory } } : {}),
-      ...(database.connections ? { connections: { ...database.connections } } : {}),
-    }))
-  }
-
-  async execMockQuery(databaseId: string, statement: string): Promise<MockQueryResult> {
-    const database = DATABASE_INSTANCES.find((item) => item.id === databaseId)
-    if (!database) throw new Error(`未找到数据库实例 ${databaseId}`)
-    return runMockQuery(database, statement)
-  }
-
-  async create(input: DatabaseCreateInput): Promise<DatabaseInstance> {
-    if (
-      DATABASE_INSTANCES.some((item) => item.engine === input.engine && item.name === input.name)
-    ) {
-      throw new Error(`数据库 ${input.name} 已存在`)
-    }
-
-    if (input.kind === 'file') {
-      // 文件型（SQLite）：实例即一个本地 .db 文件。新建的空库没有表；
-      // 上传的既有文件在演示里读不到内容，也按空库登记（不编造它的表结构）。
-      const instance: DatabaseInstance = {
-        id: `db-sqlite-${input.name}`,
-        engine: input.engine,
-        name: input.name,
-        version: SQLITE_VERSION,
-        status: 'running',
-        filePath: input.filePath,
-        fileSizeMb: input.fileSizeMb,
-        tableCount: 0,
-        lastWrittenAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      }
-      addDatabaseInstance(instance)
-      registerSqliteCatalog(instance.id)
-      return { ...instance }
-    }
-
-    const createdContainer = input.target?.kind === 'new' && this.containersAdapter
-      ? await this.containersAdapter.create({
-          name: input.target.containerName,
-          imageId: input.target.imageId,
-          ports: input.accessScope === 'any-host' && input.hostPort
-            ? [{ containerPort: input.engine === 'Redis' ? 6379 : 3306, hostPort: input.hostPort, protocol: 'tcp', hostIp: '0.0.0.0' }]
-            : [],
-          env: [], volumes: [], restartPolicy: 'unless-stopped',
-        }) : undefined
-    const containerId = createdContainer?.id ?? input.containerId
-    const container = (this.containersAdapter ? await this.containersAdapter.list() : CONTAINERS).find((item) => item.id === containerId)
-    if (!container) throw new Error(`未找到容器 ${input.containerId}`)
-    const image = (this.containersAdapter ? await this.containersAdapter.listImages() : CONTAINER_IMAGES).find((item) => item.id === container.imageId)
-    const instance: DatabaseInstance = {
-      id: `db-${container.name}-${input.name}`,
-      engine: input.engine,
-      name: input.name,
-      // 版本取承载容器镜像的标签：mariadb:10.11 上的库就是 10.11。
-      version: image?.tag ?? '0',
-      status: 'running',
-      containerId: container.id,
-      source: 'demo',
-      credentials: { username: input.username, password: input.password },
-      storage: { usedGb: 0.1, totalGb: 32 },
-      memory: { usedGb: 0.2, totalGb: 4 },
-      connections: { active: 1, max: 200 },
-      updatedAt: new Date().toISOString(),
-    }
-    addDatabaseInstance(instance)
-    return { ...instance }
-  }
-
-  async remove(databaseId: string): Promise<void> {
-    const database = DATABASE_INSTANCES.find((item) => item.id === databaseId)
-    if (!database) throw new Error(`未找到数据库实例 ${databaseId}`)
-    removeDatabaseInstance(databaseId)
   }
 }
 

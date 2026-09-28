@@ -64,7 +64,6 @@ function openTerminal(id: string): Promise<{ execute(input: string): Promise<rea
 export function createHttpDatabaseAdapter(): DatabaseAdapter {
   return {
     list: () => request<DatabaseInstance[]>('/'),
-    execMockQuery: async () => { throw new Error('真实数据库必须先建立协议连接') },
     async create(input: DatabaseCreateInput, onProgress) {
       if (input.kind === 'file') {
         if (input.origin === 'created') return request<DatabaseInstance>('/sqlite', { method: 'POST', body: JSON.stringify({ name: input.name }) })

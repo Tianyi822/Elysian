@@ -3,7 +3,6 @@ import { DATABASE_ENGINES, type Container, type ContainerImage, type DatabaseEng
 import type { ElysianGateway, DatabaseCreateInput } from '../contracts/adapters'
 import { resolveViewTab, writeStoredViewTab } from '../app/theme/themePreferences'
 import { pushHistory, type TerminalLine } from '../components/terminal/terminalSession'
-import { formatResultTable } from '../features/database/formatResultTable'
 import { useNotificationStore } from './notificationStore'
 
 /** 演示 SQL 会话：只存在内存，关闭即清空（含历史，不伪装成持久会话）。 */
@@ -141,31 +140,18 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     // input 行只存裸语句：提示符由终端壳渲染时拼在行首（提示符只有一个家）。
     set({ session: { ...session, lines: [...session.lines, { kind: 'input', text: statement }] } })
     try {
-      if (gateway.databases.openTerminal && get().databases.find((row) => row.id === session.databaseId)?.source !== 'demo' && !liveSession) {
-        throw new Error('数据库连接尚未建立')
-      }
-      const result = liveSession
-        ? { kind: 'text' as const, lines: await liveSession.execute(statement) }
-        : await gateway.databases.execMockQuery(session.databaseId, statement)
+      // 语句只在协议终端上执行：连接未建立（或已断开）时如实报错，不再有演示引擎回退。
+      if (!liveSession) throw new Error('数据库连接尚未建立')
+      const output = await liveSession.execute(statement)
       set((state) => {
         // 等待结果期间会话可能被关闭或换过实例：结果只落回同一实例的会话。
         const current = state.session
         if (!current || current.databaseId !== session.databaseId) return state
-        let lines: readonly TerminalLine[]
-        if (result.kind === 'clear') {
-          lines = []
-        } else if (result.kind === 'table') {
-          lines = [
-            ...current.lines,
-            ...asOutput(formatResultTable(result.columns, result.rows)),
-            { kind: 'output', text: result.notice },
-          ]
-        } else {
-          lines = [...current.lines, ...asOutput(result.lines)]
+        return {
+          session: { ...current, lines: [...current.lines, ...asOutput(output)], history: pushHistory(current.history, statement) },
         }
-        return { session: { ...current, lines, history: pushHistory(current.history, statement) } }
       })
-      if (liveSession) void get().refresh(gateway)
+      void get().refresh(gateway)
     } catch (error) {
       get().appendSessionOutput([`错误：${error instanceof Error ? error.message : '未知错误'}`])
       useNotificationStore.getState().notify({

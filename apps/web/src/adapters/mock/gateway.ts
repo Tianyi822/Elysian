@@ -5,7 +5,6 @@ import {
   MockApprovalAdapter,
   MockAuditAdapter,
   MockContainerAdapter,
-  MockDatabaseAdapter,
   MockFilesAdapter,
   MockFirewallAdapter,
   MockIncidentAdapter,
@@ -38,7 +37,6 @@ import { createHttpFilesAdapter } from '../http/filesHttpAdapter'
 import { createHttpContainersAdapter } from '../http/containersHttpAdapter'
 import { createTerminalWsAdapter } from '../http/terminalWsAdapter'
 import { createHttpDatabaseAdapter } from '../http/databaseHttpAdapter'
-import { resetDatabaseData } from './databaseData'
 import type { ContainerAdapter, EventsAdapter, TerminalAdapter } from '../../contracts/adapters'
 import { useContainersStore } from '../../stores/containersStore'
 
@@ -58,6 +56,9 @@ import { useContainersStore } from '../../stores/containersStore'
  * - `logs: 'http'` 在 Docker 运行时接通容器内平台日志的真实端点（运行与操作两类），
  *   登录日志没有真实端点，**两种取值下都读内存演示**；
  * - `terminals: 'ws'` 在 Docker 运行时经 WebSocket 接容器内真实 PTY，缺省仍是内存演示。
+ *
+ * 数据库域没有 mock 取值：始终走 HTTP adapter（`/api/databases`），
+ * 端点不可达时页面按既有错误态呈现。
  */
 export function createMockGateway(
   options: {
@@ -70,7 +71,6 @@ export function createMockGateway(
     containers?: 'mock' | 'http'
     logs?: 'mock' | 'http'
     terminals?: 'mock' | 'ws'
-    databases?: 'mock' | 'http'
   } = {},
 ): ElysianGateway {
   let dataset = createMockDataset()
@@ -112,7 +112,7 @@ export function createMockGateway(
     approvals: new MockApprovalAdapter(read),
     audit: new MockAuditAdapter(read),
     containers,
-    databases: options.databases === 'http' ? createHttpDatabaseAdapter() : new MockDatabaseAdapter(containers),
+    databases: createHttpDatabaseAdapter(),
     firewall,
     ssh,
     users,
@@ -152,7 +152,6 @@ export function createMockGateway(
       resetHostUsers()
       resetLogsData()
       resetWebsitesData()
-      resetDatabaseData()
       terminals.reset()
     },
   }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import type { DatabaseInstance } from '@elysian/contracts'
 import { CONTAINER_IMAGES, CONTAINERS } from '../../adapters/mock/containersData'
-import { DATABASE_INSTANCES } from '../../adapters/mock/databaseData'
 import {
   SQLITE_DATA_DIR,
   containersForEngine,
@@ -13,9 +13,14 @@ import {
   validateDatabaseCreateDraft,
 } from './databaseCreateForm'
 
+// 重名校验只消费引擎与名称：已存在实例内联在测试里，不再依赖演示数据集。
+const EXISTING: readonly DatabaseInstance[] = [
+  { id: 'db-mariadb-primary', engine: 'MariaDB', name: 'mariadb-primary', version: '10.11.8', status: 'running', updatedAt: '2026-09-12T08:00:00.000Z' },
+]
+
 describe('添加数据库表单', () => {
   it('必填字段缺失时逐项报错', () => {
-    const errors = validateDatabaseCreateDraft(emptyDraft('MariaDB'), DATABASE_INSTANCES, 'MariaDB')
+    const errors = validateDatabaseCreateDraft(emptyDraft('MariaDB'), EXISTING, 'MariaDB')
 
     expect(errors.name).toBe('请填写数据库名')
     expect(errors.username).toBe('请填写用户名')
@@ -29,21 +34,21 @@ describe('添加数据库表单', () => {
 
     const sameEngine = validateDatabaseCreateDraft(
       { ...draft, name: 'mariadb-primary' },
-      DATABASE_INSTANCES,
+      EXISTING,
       'MariaDB',
     )
     expect(sameEngine.name).toBe('该引擎下已有同名数据库')
 
-    const otherEngine = validateDatabaseCreateDraft(draft, DATABASE_INSTANCES, 'MySQL')
+    const otherEngine = validateDatabaseCreateDraft(draft, EXISTING, 'MySQL')
     expect(otherEngine.name).toBeUndefined()
   })
 
   it('名称只允许字母数字下划线与连字符', () => {
     const draft = { ...emptyDraft('MariaDB'), username: 'ops', password: 'x', containerId: 'ctr-mariadb-primary' }
 
-    expect(validateDatabaseCreateDraft({ ...draft, name: 'orders_2' }, DATABASE_INSTANCES, 'MariaDB').name).toBeUndefined()
-    expect(validateDatabaseCreateDraft({ ...draft, name: 'orders 2' }, DATABASE_INSTANCES, 'MariaDB').name).toBeDefined()
-    expect(validateDatabaseCreateDraft({ ...draft, name: '-orders' }, DATABASE_INSTANCES, 'MariaDB').name).toBeDefined()
+    expect(validateDatabaseCreateDraft({ ...draft, name: 'orders_2' }, EXISTING, 'MariaDB').name).toBeUndefined()
+    expect(validateDatabaseCreateDraft({ ...draft, name: 'orders 2' }, EXISTING, 'MariaDB').name).toBeDefined()
+    expect(validateDatabaseCreateDraft({ ...draft, name: '-orders' }, EXISTING, 'MariaDB').name).toBeDefined()
   })
 
   it('承载候选只列运行中且镜像匹配引擎的容器', () => {

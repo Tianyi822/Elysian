@@ -23,6 +23,66 @@ const MARIADB: DatabaseInstance = {
   updatedAt: '2026-09-12T08:00:00.000Z',
 }
 
+/**
+ * 数据库域在测试里用自建 fake（gateway 已固定走 http adapter，jsdom 下 fetch 不可达）：
+ * 列表返回内联 fixture，create/remove/discover 按各用例需要的最小行为实现，
+ * 容器事实仍取 base 的 mock 容器数据集。
+ */
+const DATABASE_FIXTURES: readonly DatabaseInstance[] = [
+  {
+    id: 'db-mariadb-primary',
+    engine: 'MariaDB',
+    name: 'mariadb-primary',
+    version: '10.11.8',
+    status: 'running',
+    containerId: 'ctr-mariadb-primary',
+    credentials: { username: 'ops', password: 'demo-mariadb-7f2c' },
+    storage: { usedGb: 128.4, totalGb: 256 },
+    memory: { usedGb: 3.2, totalGb: 8 },
+    connections: { active: 86, max: 200 },
+    updatedAt: '2026-09-12T08:00:00.000Z',
+  },
+  {
+    id: 'db-mysql-orders',
+    engine: 'MySQL',
+    name: 'mysql-orders',
+    version: '8.4.2',
+    status: 'warning',
+    containerId: 'ctr-mysql-orders',
+    credentials: { username: 'ops', password: 'demo-mysql-3b91' },
+    storage: { usedGb: 74.8, totalGb: 128 },
+    memory: { usedGb: 4.6, totalGb: 8 },
+    connections: { active: 142, max: 200 },
+    updatedAt: '2026-09-12T08:00:00.000Z',
+  },
+  {
+    id: 'db-redis-cache',
+    engine: 'Redis',
+    name: 'redis-cache',
+    version: '7.4',
+    status: 'running',
+    containerId: 'ctr-redis-cache',
+    credentials: { username: 'default', password: 'demo-redis-9a40' },
+    storage: { usedGb: 2.4, totalGb: 16 },
+    memory: { usedGb: 0.6, totalGb: 2 },
+    connections: { active: 34, max: 512 },
+    updatedAt: '2026-09-12T08:00:00.000Z',
+  },
+  {
+    // 文件型：SQLite 就是一个本地 .db 文件，没有容器、没有账号、没有连接上限。
+    id: 'db-sqlite-notes',
+    engine: 'SQLite',
+    name: 'elysian-notes',
+    version: '3.46.1',
+    status: 'running',
+    filePath: '/srv/elysian/data/sqlite/elysian-notes.db',
+    fileSizeMb: 4.2,
+    tableCount: 3,
+    lastWrittenAt: '2026-09-11T15:20:00.000Z',
+    updatedAt: '2026-09-12T08:00:00.000Z',
+  },
+]
+
 beforeEach(() => {
   useDatabaseStore.setState({
     engine: 'MariaDB',
@@ -41,12 +101,66 @@ beforeEach(() => {
 function pageGateway(overrides: Partial<ElysianGateway['databases']> = {}): ElysianGateway {
   const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
   const databases: ElysianGateway['databases'] = {
-    // 逐方法透传而不是展开实例：类方法在原型上，展开会丢掉。
-    list: () => base.databases.list(),
-    execMockQuery: (id, statement) => base.databases.execMockQuery(id, statement),
-    create: (input) => base.databases.create(input),
-    remove: (databaseId) => base.databases.remove(databaseId),
-    discover: (engine, versionTag) => base.databases.discover!(engine, versionTag),
+    async list() {
+      return DATABASE_FIXTURES.map((row) => structuredClone(row))
+    },
+    async create(input) {
+      if (input.kind === 'file') {
+        return {
+          id: `db-sqlite-${input.name}`,
+          engine: 'SQLite',
+          name: input.name,
+          version: '3.46.1',
+          status: 'running',
+          filePath: input.filePath,
+          fileSizeMb: input.fileSizeMb,
+          tableCount: 0,
+          updatedAt: '2026-09-12T08:00:00.000Z',
+        }
+      }
+      const createdContainer = input.target?.kind === 'new'
+        ? await base.containers.create({
+            name: input.target.containerName,
+            imageId: input.target.imageId,
+            ports: input.accessScope === 'any-host' && input.hostPort
+              ? [{ containerPort: input.engine === 'Redis' ? 6379 : 3306, hostPort: input.hostPort, protocol: 'tcp', hostIp: '0.0.0.0' }]
+              : [],
+            env: [], volumes: [], restartPolicy: 'unless-stopped',
+          })
+        : undefined
+      const containerId = createdContainer?.id ?? input.containerId
+      const container = (await base.containers.list()).find((item) => item.id === containerId)
+      if (!container) throw new Error(`未找到容器 ${input.containerId}`)
+      const image = (await base.containers.listImages()).find((item) => item.id === container.imageId)
+      return {
+        id: `db-${container.name}-${input.name}`,
+        engine: input.engine,
+        name: input.name,
+        version: image?.tag ?? '0',
+        status: 'running',
+        containerId: container.id,
+        credentials: { username: input.username, password: input.password },
+        storage: { usedGb: 0.1, totalGb: 32 },
+        memory: { usedGb: 0.2, totalGb: 4 },
+        connections: { active: 1, max: 200 },
+        updatedAt: '2026-09-12T08:00:00.000Z',
+      }
+    },
+    async remove() {},
+    async discover(engine, versionTag) {
+      const containers = await base.containers.list()
+      const images = await base.containers.listImages()
+      const matchingImages = images.filter((image) => image.name === engine.toLowerCase() && /^\d+(?:\.\d+){0,2}(?:[-.][A-Za-z0-9]+)*$/.test(image.tag))
+      return {
+        images: versionTag === undefined ? matchingImages : matchingImages.filter((image) => image.tag === versionTag),
+        containers: containers.flatMap((container) => {
+          const image = matchingImages.find((candidate) => candidate.id === container.imageId)
+          if (container.status !== 'running' || !image || (versionTag !== undefined && image.tag !== versionTag)) return []
+          if (engine === 'Redis' && DATABASE_FIXTURES.some((database) => database.engine === 'Redis' && database.containerId === container.id)) return []
+          return [{ id: container.id, name: container.name, accessScope: 'localhost', managed: true, versionTag: image.tag }]
+        }),
+      }
+    },
   }
   return { ...base, databases: Object.assign(databases, overrides) }
 }

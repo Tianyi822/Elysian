@@ -2,9 +2,20 @@ import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { DATABASE_ENGINES } from '@elysian/contracts'
+import type { ElysianGateway } from '../../contracts/adapters'
+import { createMockGateway } from '../../adapters/mock/gateway'
 import { resolveViewTab, writeStoredViewTab } from '../../app/theme/themePreferences'
 import { useDatabaseStore } from '../../stores/databaseStore'
 import { renderApp } from '../../test/renderApp'
+
+/**
+ * 数据库域在 gateway 里固定走 http adapter，jsdom 下 fetch 不可达；
+ * 用例只断言顶栏页签，数据区给一个空列表 fake，避免页面落进错误态的无关噪音。
+ */
+function switchGateway(): ElysianGateway {
+  const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+  return { ...base, databases: { ...base.databases, list: async () => [] } }
+}
 
 /** 顶栏的平铺分段控件，与窄屏下拉在同一个 banner 内。 */
 function segmentGroup(): HTMLElement {
@@ -26,7 +37,7 @@ beforeEach(() => {
 
 describe('数据库类型切换', () => {
   it('按首字母升序平铺四个类型，不含 SQLServer', () => {
-    renderApp('/databases')
+    renderApp('/databases', { gateway: switchGateway() })
 
     const items = within(segmentGroup()).getAllByRole('button')
     expect(items.map((item) => item.textContent)).toEqual([
@@ -41,7 +52,7 @@ describe('数据库类型切换', () => {
 
   it('点击平铺项切换当前类型，选中态随点击移动', async () => {
     const user = userEvent.setup()
-    renderApp('/databases')
+    renderApp('/databases', { gateway: switchGateway() })
 
     await user.click(within(segmentGroup()).getByRole('button', { name: 'Redis' }))
 
@@ -62,7 +73,7 @@ describe('数据库类型切换', () => {
       engine: resolveViewTab(window.localStorage, 'database', DATABASE_ENGINES, 'MariaDB'),
     })
 
-    renderApp('/databases')
+    renderApp('/databases', { gateway: switchGateway() })
 
     expect(within(segmentGroup()).getByRole('button', { name: 'SQLite' })).toHaveAttribute(
       'aria-pressed',
@@ -76,7 +87,7 @@ describe('数据库类型切换', () => {
 
   it('窄屏下拉由界面自绘：展开可选，选中后收起并更新当前项', async () => {
     const user = userEvent.setup()
-    renderApp('/databases')
+    renderApp('/databases', { gateway: switchGateway() })
 
     await user.click(trigger())
 
@@ -100,7 +111,7 @@ describe('数据库类型切换', () => {
 
   it('顶栏放得下六个类型时保持平铺，只藏下拉', () => {
     // jsdom 量不出任何宽度，按「放得下」处理：平铺参与布局，下拉只在收起时出场。
-    renderApp('/databases')
+    renderApp('/databases', { gateway: switchGateway() })
 
     expect(segmentSlot()).not.toHaveClass('hidden')
     expect(trigger()).toHaveClass('hidden')
@@ -121,7 +132,7 @@ describe('数据库类型切换', () => {
     })
 
     try {
-      renderApp('/databases')
+      renderApp('/databases', { gateway: switchGateway() })
 
       expect(segmentSlot()).toHaveClass('hidden')
       expect(trigger()).not.toHaveClass('hidden')
