@@ -84,10 +84,10 @@ export function TerminalViewport({
   const [draft, setDraft] = useState('')
   const [cursor, setCursor] = useState(0)
   const [historyIndex, setHistoryIndex] = useState<number | null>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const logRef = useRef<HTMLDivElement>(null)
-  const attachInput = (node: HTMLInputElement | null) => {
+  const attachInput = (node: HTMLTextAreaElement | null) => {
     inputRef.current = node
     if (autoFocus && interactive) node?.focus()
   }
@@ -199,10 +199,11 @@ export function TerminalViewport({
     void navigator.clipboard?.writeText(text).catch(() => {})
   }
 
-  const onKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
     if (!interactive) return
     if (event.nativeEvent.isComposing || composingRef.current) return
     if (event.key === 'Enter') {
+      if (event.shiftKey) return
       if (swallowEnterRef.current) {
         swallowEnterRef.current = false
         return
@@ -216,7 +217,7 @@ export function TerminalViewport({
       runCompletion()
       return
     }
-    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+    if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') && !draft.includes('\n')) {
       event.preventDefault()
       recall(event.key === 'ArrowUp' ? -1 : 1)
       return
@@ -254,7 +255,7 @@ export function TerminalViewport({
       <label htmlFor={inputId} className="sr-only">
         {inputLabel}
       </label>
-      <input
+      <textarea
         id={inputId}
         ref={attachInput}
         value={draft}
