@@ -2,10 +2,12 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { useEffect, useState } from 'react'
 import type { ContainerImage, DatabaseEngine, ImagePullProgress } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
+import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { Loader2, X } from '../../components/icons'
 import { useDatabaseStore } from '../../stores/databaseStore'
 import { DEFAULT_IMAGE_REGISTRY, registryHost, validateRegistryUrl } from '../container/imageReference'
+import { PasswordVisibilityButton } from '../security/passwordFieldParts'
 import { generateDemoPassword } from './databaseCreateForm'
 
 type Engine = Exclude<DatabaseEngine, 'SQLite'>
@@ -13,9 +15,9 @@ type Candidate = { id: string; name: string; accessScope: string; managed: boole
 type Scope = 'localhost' | 'container-network' | 'any-host'
 
 const VERSION_PATTERN = /^\d+(?:\.\d+){0,2}(?:[-.][A-Za-z0-9]+)*$/
-const FIELD = 'w-full min-w-0 rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle disabled:opacity-60'
+const FIELD = `${FORM_CONTROL_HEIGHT_CLASS} w-full min-w-0 rounded-lg border border-line bg-surface-raised px-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle disabled:opacity-60`
 const LABEL = 'mb-2 block text-xs font-medium leading-5 text-fg-muted'
-const BUTTON = 'inline-flex min-h-9 items-center justify-center rounded-lg border border-line px-3 text-xs font-medium text-fg transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50'
+const BUTTON = `inline-flex ${FORM_CONTROL_HEIGHT_CLASS} items-center justify-center rounded-lg border border-line px-3 text-xs font-medium text-fg transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50`
 const CHARSET_ITEMS = [{ value: 'utf8mb4', label: 'utf8mb4' }, { value: 'utf8', label: 'utf8' }, { value: 'latin1', label: 'latin1' }] as const
 const ACCESS_SCOPE_ITEMS = [
   { value: 'localhost', label: '仅宿主回环' },
@@ -68,8 +70,10 @@ export function RealDatabaseCreateDialog({ engine }: { engine: Engine }) {
   const [charset, setCharset] = useState('utf8mb4')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [passwordVisible, setPasswordVisible] = useState(false)
   const [adminUsername, setAdminUsername] = useState(engine === 'Redis' ? 'default' : 'root')
   const [adminPassword, setAdminPassword] = useState('')
+  const [adminPasswordVisible, setAdminPasswordVisible] = useState(false)
   const [containerName, setContainerName] = useState('elysian-' + engine.toLowerCase())
   const [scope, setScope] = useState<Scope>('localhost')
   const [hostPort, setHostPort] = useState('')
@@ -219,12 +223,12 @@ export function RealDatabaseCreateDialog({ engine }: { engine: Engine }) {
                 {registryError ? <p role="alert" className="mt-1 text-xs text-danger">{registryError}</p> : null}
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
-                <div><span className={LABEL}>镜像名称</span><p className={FIELD + ' font-mono'} aria-label="镜像名称">{repo}</p></div>
+                <div><span className={LABEL}>镜像名称</span><p className={FIELD + ' flex items-center font-mono'} aria-label="镜像名称">{repo}</p></div>
                 <div>
                   <label htmlFor="real-db-version" className={LABEL}>版本标签（不支持 latest）</label>
                   <div className="flex min-w-0 gap-2">
                     <input id="real-db-version" className={FIELD + ' min-w-0 flex-1 font-mono'} disabled={busy} value={versionTag} onChange={(event) => { setVersionTag(event.target.value.trim()); setPullComplete(false); setPullError('') }} placeholder={engine === 'MariaDB' ? '例如 11.4' : engine === 'MySQL' ? '例如 8.4' : '例如 7.4'} autoComplete="off" spellCheck={false} />
-                    <SelectDropdown ariaLabel="版本标签建议" disabled={busy || tags.length === 0} items={tagItems} value={undefined} onSelect={(tag) => { setVersionTag(tag); setPullComplete(false); setPullError('') }} fallbackLabel="选择版本" triggerClassName="inline-flex min-h-9 shrink-0 items-center gap-1 whitespace-nowrap rounded-lg border border-line bg-surface-raised px-2 text-xs text-fg disabled:opacity-50" />
+                    <SelectDropdown ariaLabel="版本标签建议" disabled={busy || tags.length === 0} items={tagItems} value={undefined} onSelect={(tag) => { setVersionTag(tag); setPullComplete(false); setPullError('') }} fallbackLabel="选择版本" triggerClassName={`inline-flex ${FORM_CONTROL_HEIGHT_CLASS} shrink-0 items-center gap-1 whitespace-nowrap rounded-lg border border-line bg-surface-raised px-2 text-xs text-fg disabled:opacity-50`} />
                   </div>
                   {versionTag && !validVersion ? <p role="alert" className="mt-1 text-xs text-danger">请输入明确的数字版本标签</p> : null}
                   {tagStatus === 'loading' ? <p role="status" className="mt-1 text-xs text-fg-subtle">正在查询版本…</p> : null}
@@ -267,7 +271,7 @@ export function RealDatabaseCreateDialog({ engine }: { engine: Engine }) {
 
           <section aria-labelledby="db-details-title" className="border-t border-line pt-5">
             <h3 id="db-details-title" className="mb-3 text-sm font-semibold text-fg">数据库信息</h3>
-            {engine === 'Redis' ? <p className="rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg">Redis DB 0</p> : <div className="grid gap-4 sm:grid-cols-2">
+            {engine === 'Redis' ? <p className={`${FORM_CONTROL_HEIGHT_CLASS} flex items-center rounded-lg border border-line bg-surface-raised px-3 text-sm text-fg`}>Redis DB 0</p> : <div className="grid gap-4 sm:grid-cols-2">
               <div><label htmlFor="real-db-name" className={LABEL}>逻辑库名</label><input id="real-db-name" className={FIELD} disabled={busy} value={name} onChange={(event) => setName(event.target.value)} autoComplete="off" /></div>
               <div><label htmlFor="real-db-charset" className={LABEL}>字符集</label><SelectDropdown id="real-db-charset" ariaLabel="字符集" fullWidth disabled={busy} items={CHARSET_ITEMS} value={charset} onSelect={setCharset} /></div>
             </div>}
@@ -278,13 +282,24 @@ export function RealDatabaseCreateDialog({ engine }: { engine: Engine }) {
             <div className="grid gap-4 sm:grid-cols-2">
               <div><label htmlFor="real-db-user" className={LABEL}>账号名</label><input id="real-db-user" className={FIELD} disabled={busy} value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="off" /></div>
               <div><label htmlFor="real-db-password" className={LABEL}>密码{targetKind === 'new' ? '（至少 12 位）' : ''}</label>
-                <div className="flex min-w-0 gap-2"><input id="real-db-password" type="password" className={FIELD + ' min-w-0 flex-1'} disabled={busy} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" />
-                  <button type="button" disabled={busy} onClick={() => setPassword(generateDemoPassword(24))} className={BUTTON + ' min-w-16 shrink-0 whitespace-nowrap'}>生成</button></div>
+                <div className="flex min-w-0 gap-2">
+                  <div className="relative min-w-0 flex-1">
+                    <input id="real-db-password" type={passwordVisible ? 'text' : 'password'} className={FIELD + ' pr-9'} disabled={busy} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" />
+                    <PasswordVisibilityButton visible={passwordVisible} onToggle={setPasswordVisible} />
+                  </div>
+                  <button type="button" disabled={busy} onClick={() => setPassword(generateDemoPassword(24))} className={BUTTON + ' min-w-16 shrink-0 whitespace-nowrap'}>生成</button>
+                </div>
               </div>
             </div>
             {targetKind === 'existing' && selectedContainer && !selectedContainer.managed ? <div className="mt-4 grid gap-4 sm:grid-cols-2">
               <div><label htmlFor="real-db-admin" className={LABEL}>已有管理员账号</label><input id="real-db-admin" className={FIELD} disabled={busy} value={adminUsername} onChange={(event) => setAdminUsername(event.target.value)} /></div>
-              <div><label htmlFor="real-db-admin-password" className={LABEL}>管理员密码</label><input id="real-db-admin-password" type="password" className={FIELD} disabled={busy} value={adminPassword} onChange={(event) => setAdminPassword(event.target.value)} /></div>
+              <div>
+                <label htmlFor="real-db-admin-password" className={LABEL}>管理员密码</label>
+                <div className="relative">
+                  <input id="real-db-admin-password" type={adminPasswordVisible ? 'text' : 'password'} className={FIELD + ' pr-9'} disabled={busy} value={adminPassword} onChange={(event) => setAdminPassword(event.target.value)} autoComplete="new-password" />
+                  <PasswordVisibilityButton visible={adminPasswordVisible} onToggle={setAdminPasswordVisible} />
+                </div>
+              </div>
             </div> : null}
           </section>
 

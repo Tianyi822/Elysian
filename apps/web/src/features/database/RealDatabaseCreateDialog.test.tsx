@@ -20,6 +20,21 @@ const external = { id: 'external-1', name: 'mysql-external', accessScope: 'local
 
 beforeEach(() => useDatabaseStore.setState({ createOpen: true, creating: false, createError: undefined, databases: [] }))
 
+it('密码默认为掩码，可切换为明文再藏回去', async () => {
+  const user = userEvent.setup()
+  const gateway = createMockGateway({ eventStream: 'memory' })
+  Object.assign(gateway.databases, { discover: vi.fn(async () => ({ images: [], containers: [] })) })
+  render(<GatewayProvider gateway={gateway}><RealDatabaseCreateDialog engine="MySQL" /></GatewayProvider>)
+  const dialog = screen.getByRole('dialog', { name: '添加 MySQL 数据库' })
+  const input = within(dialog).getByLabelText('密码')
+  expect(input).toHaveAttribute('type', 'password')
+
+  await user.click(within(dialog).getByRole('button', { name: '显示密码' }))
+  expect(input).toHaveAttribute('type', 'text')
+  await user.click(within(dialog).getByRole('button', { name: '隐藏密码' }))
+  expect(input).toHaveAttribute('type', 'password')
+})
+
 it('默认选择已有容器，版本与范围来自候选；面板容器创建逻辑库', async () => {
   const user = userEvent.setup()
   const gateway = createMockGateway({ eventStream: 'memory' })
@@ -61,7 +76,11 @@ it('外部容器仅验证接管，显示已有管理员凭证字段', async () =
   await user.type(within(dialog).getByLabelText('账号名'), 'reader')
   await user.type(within(dialog).getByLabelText('密码'), 'existing-password')
   expect(within(dialog).getByRole('button', { name: '验证并接管' })).toBeDisabled()
-  await user.type(within(dialog).getByLabelText('管理员密码'), 'admin-password')
+  const adminPassword = within(dialog).getByLabelText('管理员密码')
+  expect(adminPassword).toHaveAttribute('type', 'password')
+  await user.click(within(adminPassword.parentElement as HTMLElement).getByRole('button', { name: '显示密码' }))
+  expect(adminPassword).toHaveAttribute('type', 'text')
+  await user.type(adminPassword, 'admin-password')
   await user.click(within(dialog).getByRole('button', { name: '验证并接管' }))
   await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({
     versionTag: '8.0', accessScope: 'localhost',
