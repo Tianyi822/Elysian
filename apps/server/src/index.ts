@@ -26,7 +26,10 @@ serve({
   fetch: (request, server) => app.fetch(request, server),
   // 终端 WS 的连接事件处理器：与路由侧 upgradeWebSocket 必须同源（bunWebSocket.ts
   // 的进程级唯一实例），多次 createBunWebSocket 会产出互不相识的两组处理器。
-  websocket: bunWebSocket.websocket,
+  // maxPayloadLength 必须并入该 handler 对象（顶层 serve 选项不生效）：64 KiB 取全
+  // 模块最大合法帧（数据库终端 64 KiB、terminals 应用层 8 KiB 均被覆盖），超限帧
+  // 在传输层即 1006 断连、message 回调不触发，不再先缓冲默认 16 MiB 再被应用层拒绝。
+  websocket: { ...bunWebSocket.websocket, maxPayloadLength: 64 * 1024 },
 })
 
 // 终端上的可读性保留：监听确认行照旧打在 stdout（运行日志文件是它的存档，不是它的替代）。

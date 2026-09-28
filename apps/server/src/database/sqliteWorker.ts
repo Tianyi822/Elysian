@@ -73,7 +73,10 @@ process.on('message', (message: unknown) => {
     } else throw new Error('SQLite 操作无效')
     process.send?.({ id: request.id, ok: true, value })
   } catch (error) {
-    process.send?.({ id: request.id, ok: false, error: error instanceof Error ? error.message : 'SQLite 操作失败' })
+    const code = (error as { code?: unknown } | null | undefined)?.code
+    const frame: { id: number; ok: boolean; error: string; code?: string } = { id: request.id, ok: false, error: error instanceof Error ? error.message : 'SQLite 操作失败' }
+    if (typeof code === 'string') frame.code = code
+    process.send?.(frame)
   }
 })
 process.on('disconnect', () => { db.close(true); process.exit(0) })

@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import type { DatabaseEngine, DatabaseInstance, ContainerImage } from '@elysian/contracts'
 import { InvalidRequestError, invalidRequest } from '../shared/errors.ts'
-import { databasePort, databaseImageHasTag, imageMatches, validDatabaseVersion, type DatabaseDocker } from './databaseDocker.ts'
+import { databasePort, databaseImageHasTag, imageMatches, validDatabaseVersion, DB_SHARED_NETWORK, type DatabaseDocker } from './databaseDocker.ts'
 import type { DatabaseProtocol, DatabaseAddress, DatabaseSession } from './databaseProtocol.ts'
 import type { DatabaseRecord, DatabaseRegistry, DatabaseSecret } from './databaseRegistry.ts'
 
@@ -285,11 +285,18 @@ export function createDatabaseService(deps: {
     if (!actualVersionMatches(row.versionTag, version)) throw new InvalidRequestError(409, '数据库实际版本与登记版本不一致')
     await protocol.drop(row, endpoint)
     if (row.engine === 'Redis') return
-    const siblings = (await registry.list()).filter((item) => item.containerId === row.containerId && item.id !== id && item.state !== 'empty')
+    const rows = await registry.list()
+    const siblings = rows.filter((item) => item.containerId === row.containerId && item.id !== id && item.state !== 'empty')
     if (row.source === 'managed' && siblings.length === 0) {
       row.state = 'empty'
       await registry.put(row)
-    } else await registry.remove(id)
+    } else {
+      // 接管的容器只在其上最后一个登记被移除时才撤出面板网络；同容器还有任何登记（含空容器登记）都不撤。
+      if (row.source === 'adopted' && !rows.some((item) => item.containerId === row.containerId && item.id !== id)) {
+        await docker.detach(row.containerId, DB_SHARED_NETWORK)
+      }
+      await registry.remove(id)
+    }
   }
 
   async function removeContainer(id: string) {
@@ -331,6 +338,8 @@ export function createDatabaseService(deps: {
     if (row.source !== 'adopted' || row.state !== 'needs-attention') {
       throw new InvalidRequestError(409, '只允许移除接管失败的待处理登记')
     }
+    // 撤销接管失败留下的网络副作用；容器已被外部删除时 detach 幂等返回，移除登记不被卡死。
+    await docker.detach(row.containerId, DB_SHARED_NETWORK)
     await registry.remove(id)
   }
 

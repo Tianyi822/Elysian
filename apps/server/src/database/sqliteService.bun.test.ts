@@ -1,8 +1,10 @@
 import { afterEach, expect, test } from 'bun:test'
+import { spawn } from 'bun'
 import { mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createSqliteService, SQLITE_UPLOAD_LIMIT } from './sqliteService.ts'
+import { InvalidRequestError } from '../shared/errors.ts'
+import { createSqliteService, SQLITE_UPLOAD_LIMIT, sqliteFsMessage } from './sqliteService.ts'
 
 const paths: string[] = []
 async function fixture() {
@@ -92,4 +94,76 @@ test('终端写入遵守托管总量约束，超限后文件不继续增长', as
   await session.close()
   expect((await stat(row.filePath!)).size).toBeLessThanOrEqual(8192)
   await expect(service.create('second')).rejects.toThrow('上限')
+})
+
+test('sqliteFsMessage 只认 errno code：带 code 的裸 fs 错误替换为分类中文，无 code 的消息原样保留', () => {
+  const raw = "ENOENT: no such file or directory, stat '/var/lib/elysian/data/sqlite/x.db'"
+  const fsError = new Error(raw)
+  ;(fsError as NodeJS.ErrnoException).code = 'ENOENT'
+  const classified = sqliteFsMessage(fsError)
+  expect(classified).not.toContain('ENOENT')
+  expect(classified).not.toContain('/var/lib/elysian/data/sqlite/x.db')
+  const unrecognized = new Error('EXDEV: invalid cross-device link')
+  ;(unrecognized as NodeJS.ErrnoException).code = 'EXDEV'
+  expect(sqliteFsMessage(unrecognized)).not.toContain('EXDEV')
+  expect(sqliteFsMessage(unrecognized)).not.toContain('invalid cross-device')
+  expect(sqliteFsMessage(new Error(raw))).toBe(raw)
+  expect(sqliteFsMessage(new Error('SQLite 文件完整性校验失败'))).toBe('SQLite 文件完整性校验失败')
+  expect(sqliteFsMessage(new InvalidRequestError(400, 'WAL 数据库请先导出独立快照再上传'))).toBe('WAL 数据库请先导出独立快照再上传')
+})
+
+test('worker 子进程回传 fs 错误时在 IPC 帧上附带 errno code', async () => {
+  const waiters: Array<(frame: Record<string, unknown>) => void> = []
+  const proc = spawn({
+    cmd: [process.execPath, new URL('./sqliteWorker.ts', import.meta.url).pathname],
+    env: { PATH: '/usr/local/bin:/usr/bin:/bin', HOME: '/tmp', ELYSIAN_SQLITE_FILE: ':memory:', ELYSIAN_SQLITE_CREATE: '0' },
+    stdin: 'ignore', stdout: 'ignore', stderr: 'ignore',
+    ipc(message: unknown) {
+      const frame = message as Record<string, unknown>
+      waiters.splice(0).forEach((resolve) => resolve(frame))
+    },
+  })
+  const nextFrame = () => new Promise<Record<string, unknown>>((resolve) => { waiters.push(resolve) })
+  try {
+    expect((await nextFrame()).type).toBe('ready')
+    proc.send?.({ id: 1, kind: 'probe' })
+    const failure = await nextFrame()
+    expect(failure.ok).toBe(false)
+    expect(failure.code).toBe('ENOENT')
+  } finally {
+    proc.kill(9)
+    await proc.exited
+  }
+})
+
+test('registry 父路径为普通文件时 list() 拒绝消息不含路径与 errno', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'elysian-sqlite-registry-'))
+  paths.push(root)
+  const blocker = join(root, 'blocker')
+  await writeFile(blocker, 'x')
+  const service = createSqliteService({ dataDir: join(root, 'data'), registryPath: join(blocker, 'registry.json') })
+  const error = await service.list().then(() => undefined, (caught: unknown) => caught)
+  expect(error).toBeInstanceOf(Error)
+  expect((error as Error).message).not.toContain('ENOTDIR')
+  expect((error as Error).message).not.toContain(root)
+})
+
+test('受管 .db 缺失时清单 metricsError 为分类中文，不含路径与 errno；WAL 拒绝仍保留业务消息', async () => {
+  const { service } = await fixture()
+  const created = await service.create('gone')
+  await rm(created.filePath!)
+  const missing = (await service.list())[0]
+  expect(missing?.status).toBe('stopped')
+  expect(missing?.metricsError).toBeTruthy()
+  expect(missing?.metricsError).not.toContain('ENOENT')
+  expect(missing?.metricsError).not.toContain('/tmp')
+  expect(missing?.metricsError).not.toContain(tmpdir())
+  const valid = await service.create('source')
+  const snapshot = await service.download(valid.id.slice(7))
+  const wal = Buffer.from(await readFile(snapshot.path))
+  await snapshot.cleanup()
+  wal[18] = 2; wal[19] = 2
+  await expect(service.importFile('wal', new Request('http://localhost', { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: wal }))).rejects.toThrow('WAL')
+  const walRow = (await service.list()).find((item) => item.name === 'wal')
+  expect(walRow?.metricsError).toContain('WAL')
 })

@@ -25,6 +25,7 @@ function fixture() {
     }),
     address: vi.fn(async () => ({ host: '172.28.0.2', port: 0 })),
     attach: vi.fn(async () => { calls.push('attach') }),
+    detach: vi.fn(async () => { calls.push('detach') }),
     create: vi.fn(async () => { calls.push('container'); return { containerId: CONTAINER_ID, volumeName: 'elysian-db-volume', started: true } }),
     removeManaged: vi.fn(async () => { calls.push('remove-container-volume') }),
     memory: vi.fn(async () => ({ usedGb: 0.1, totalGb: 1 })),
@@ -44,6 +45,14 @@ function fixture() {
     accessScope: 'container-network', target: { kind: 'new', imageId: IMAGE_ID, containerName: 'orders-db' },
   })
   return { service, input, registry, docker, protocol, calls, stop: () => { running = false }, setVersion: (next: string) => { version = next } }
+}
+
+function adoptInput() {
+  return validateDatabaseCreateRequest({
+    engine: 'MySQL', versionTag: '8.4', name: 'orders', user: USER,
+    accessScope: 'container-network',
+    target: { kind: 'adopt', containerId: CONTAINER_ID, admin: { username: 'root', password: 'existing-secret' } },
+  })
 }
 
 describe('数据库服务', () => {
@@ -162,5 +171,55 @@ describe('数据库服务', () => {
     g.setVersion('9.0.0')
     await expect(g.service.create(g.input)).rejects.toThrow('待处理')
     expect((await g.registry.list())[0]?.state).toBe('needs-attention')
+  })
+
+  it('接管失败后的 forget 会把容器移出面板网络并清空登记', async () => {
+    const f = fixture()
+    f.setVersion('9.0.0')
+    await expect(f.service.create(adoptInput())).rejects.toThrow('待处理')
+    const [row] = await f.registry.list()
+    await f.service.forget(row!.id)
+    expect(f.docker.detach).toHaveBeenCalledWith(CONTAINER_ID, 'elysian-db-shared')
+    expect(await f.registry.list()).toHaveLength(0)
+  })
+
+  it('容器已被外部删除时 forget 仍清空登记、不抛错', async () => {
+    const f = fixture()
+    f.setVersion('9.0.0')
+    await expect(f.service.create(adoptInput())).rejects.toThrow('待处理')
+    const [row] = await f.registry.list()
+    // 容器已消失：真实 detach 对 inspect 404 幂等返回（见 databaseDocker.test.ts），不得堵死登记移除。
+    vi.mocked(f.docker.inspect).mockRejectedValue(new InvalidRequestError(404, '数据库容器已不存在'))
+    await expect(f.service.forget(row!.id)).resolves.toBeUndefined()
+    expect(f.docker.detach).toHaveBeenCalledWith(CONTAINER_ID, 'elysian-db-shared')
+    expect(await f.registry.list()).toHaveLength(0)
+  })
+
+  it('接管成功后删除逻辑库时移出面板网络并移除登记', async () => {
+    const f = fixture()
+    const adopted = await f.service.create(adoptInput())
+    await f.service.remove(adopted.id)
+    expect(f.docker.detach).toHaveBeenCalledWith(CONTAINER_ID, 'elysian-db-shared')
+    expect(await f.registry.list()).toHaveLength(0)
+  })
+
+  it('同容器多接管库时仅移除最后一个登记才断开面板网络', async () => {
+    const f = fixture()
+    const first = await f.service.create(adoptInput())
+    const second = await f.service.create({ ...adoptInput(), name: 'reports' })
+    await f.service.remove(first.id)
+    expect(f.docker.detach).not.toHaveBeenCalled()
+    expect(await f.registry.list()).toHaveLength(1)
+    await f.service.remove(second.id)
+    expect(f.docker.detach).toHaveBeenCalledWith(CONTAINER_ID, 'elysian-db-shared')
+    expect(await f.registry.list()).toHaveLength(0)
+  })
+
+  it('面板创建的受管库删除与删容器全程不移出面板网络', async () => {
+    const f = fixture()
+    const created = await f.service.create(f.input)
+    await f.service.remove(created.id)
+    await f.service.removeContainer((await f.registry.list())[0]!.id)
+    expect(f.docker.detach).not.toHaveBeenCalled()
   })
 })

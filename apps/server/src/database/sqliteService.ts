@@ -33,7 +33,7 @@ export type SqliteService = {
   openSession(id: string): Promise<DatabaseSession>
 }
 
-type WorkerMessage = { id?: number; type?: string; ok?: boolean; value?: unknown; error?: string }
+type WorkerMessage = { id?: number; type?: string; ok?: boolean; value?: unknown; error?: string; code?: string }
 type Worker = { request<T>(kind: 'init' | 'probe' | 'validate' | 'execute' | 'export', extra?: { sql?: string; target?: string; limitBytes?: number }, timeout?: number): Promise<T>; close(): Promise<void> }
 
 async function spawnWorker(file: string, create: boolean, options: { uid?: number; gid?: number; bunBin?: string }): Promise<Worker> {
@@ -58,7 +58,11 @@ async function spawnWorker(file: string, create: boolean, options: { uid?: numbe
       pending.delete(frame.id)
       clearTimeout(task.timer)
       if (frame.ok) task.resolve(frame.value)
-      else task.reject(new Error(frame.error ?? 'SQLite 操作失败'))
+      else {
+        const err = new Error(frame.error ?? 'SQLite 操作失败')
+        if (typeof frame.code === 'string') (err as NodeJS.ErrnoException).code = frame.code
+        task.reject(err)
+      }
     },
     onExit() {
       closed = true
@@ -97,6 +101,43 @@ function validName(value: unknown): string {
   return value
 }
 
+const SQLITE_FS_MESSAGES: Record<string, string> = {
+  ENOENT: 'SQLite 管理文件不存在',
+  EACCES: 'SQLite 管理文件无法访问',
+  EPERM: 'SQLite 管理文件无法访问',
+  ENOTDIR: 'SQLite 管理路径类型无效',
+  EISDIR: 'SQLite 管理路径类型无效',
+  ENOSPC: 'SQLite 管理空间不足',
+  EDQUOT: 'SQLite 管理空间不足',
+  EROFS: 'SQLite 管理目录只读',
+  ELOOP: 'SQLite 管理路径嵌套超限',
+  ENAMETOOLONG: 'SQLite 管理路径超长',
+  EIO: 'SQLite 管理存储读写失败',
+  EMFILE: 'SQLite 管理文件句柄不足',
+  ENFILE: 'SQLite 管理文件句柄不足',
+}
+
+/**
+ * 把底层 fs 错误收敛为分类中文消息：只认 errno code、绝不读 message，
+ * 带 code 的错误（message 可能含服务器路径与 errno 细节）整体替换为固定文案，
+ * 未识别的 code 一律归为「SQLite 管理文件不可用」；
+ * InvalidRequestError 与手写的无 code 自定义 Error 原样返回 message。
+ */
+export function sqliteFsMessage(error: unknown): string {
+  if (error instanceof Error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (typeof code === 'string') return SQLITE_FS_MESSAGES[code] ?? 'SQLite 管理文件不可用'
+    return error.message
+  }
+  return 'SQLite 管理文件不可用'
+}
+
+/** 源头收敛：仅当错误带字符串 errno code（Node fs 的 ErrnoException）时替换为分类消息，其余原样上抛。 */
+function rewrapFsError(error: unknown): unknown {
+  if (error instanceof Error && typeof (error as NodeJS.ErrnoException).code === 'string') return new Error(sqliteFsMessage(error))
+  return error
+}
+
 export function createSqliteService(options: {
   dataDir?: string
   registryPath?: string
@@ -119,34 +160,38 @@ export function createSqliteService(options: {
   }
 
   async function directory(): Promise<string> {
-    await mkdir(dataDir, { recursive: true, mode: 0o700 })
-    const folder = await realpath(dataDir)
-    const info = await lstat(folder)
-    if (!info.isDirectory()) throw new Error('SQLite 管理目录无效')
-    await chmod(folder, 0o700)
-    if (options.uid !== undefined && options.gid !== undefined) await chown(folder, options.uid, options.gid)
-    return folder
+    try {
+      await mkdir(dataDir, { recursive: true, mode: 0o700 })
+      const folder = await realpath(dataDir)
+      const info = await lstat(folder)
+      if (!info.isDirectory()) throw new Error('SQLite 管理目录无效')
+      await chmod(folder, 0o700)
+      if (options.uid !== undefined && options.gid !== undefined) await chown(folder, options.uid, options.gid)
+      return folder
+    } catch (error) { throw rewrapFsError(error) }
   }
 
   async function records(): Promise<SqliteRecord[]> {
     let handle
     try { handle = await open(registryPath, constants.O_RDONLY | constants.O_NOFOLLOW) }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw rewrapFsError(error) }
     try {
       const info = await handle.stat()
       if (!info.isFile() || info.size > 1024 * 1024 || (info.mode & 0o077) !== 0 || info.uid !== process.getuid?.()) throw new Error('SQLite 登记文件权限无效')
       const parsed: unknown = JSON.parse(await handle.readFile({ encoding: 'utf8' }))
       if (!Array.isArray(parsed) || parsed.some((row) => !row || typeof row !== 'object' || !UUID.test(row.id) || !NAME.test(row.name) || !['pending', 'active', 'deleting'].includes(row.state))) throw new Error('SQLite 登记内容无效')
       return parsed as SqliteRecord[]
-    } finally { await handle.close() }
+    } catch (error) { throw rewrapFsError(error) } finally { await handle.close() }
   }
 
   async function save(rows: SqliteRecord[]): Promise<void> {
-    await mkdir(dirname(registryPath), { recursive: true, mode: 0o700 })
-    const temp = `${registryPath}.${randomUUID()}.tmp`
-    const handle = await open(temp, 'wx', 0o600)
-    try { await handle.writeFile(JSON.stringify(rows)); await handle.sync() } finally { await handle.close() }
-    try { await rename(temp, registryPath) } catch (error) { await unlink(temp).catch(() => undefined); throw error }
+    try {
+      await mkdir(dirname(registryPath), { recursive: true, mode: 0o700 })
+      const temp = `${registryPath}.${randomUUID()}.tmp`
+      const handle = await open(temp, 'wx', 0o600)
+      try { await handle.writeFile(JSON.stringify(rows)); await handle.sync() } finally { await handle.close() }
+      try { await rename(temp, registryPath) } catch (error) { await unlink(temp).catch(() => undefined); throw error }
+    } catch (error) { throw rewrapFsError(error) }
   }
 
   async function pathFor(id: string): Promise<string> {
@@ -155,12 +200,14 @@ export function createSqliteService(options: {
   }
 
   async function checkedFile(id: string): Promise<string> {
-    const path = await pathFor(id)
-    const info = await lstat(path)
-    if (!info.isFile() || info.nlink !== 1 || info.size > SQLITE_FILE_LIMIT || (info.mode & 0o077) !== 0 || (options.uid !== undefined && info.uid !== options.uid) || dirname(await realpath(path)) !== await directory()) {
-      throw new Error('SQLite 文件权限、类型或位置无效')
-    }
-    return path
+    try {
+      const path = await pathFor(id)
+      const info = await lstat(path)
+      if (!info.isFile() || info.nlink !== 1 || info.size > SQLITE_FILE_LIMIT || (info.mode & 0o077) !== 0 || (options.uid !== undefined && info.uid !== options.uid) || dirname(await realpath(path)) !== await directory()) {
+        throw new Error('SQLite 文件权限、类型或位置无效')
+      }
+      return path
+    } catch (error) { throw rewrapFsError(error) }
   }
 
   async function ownFile(path: string) {
@@ -170,7 +217,9 @@ export function createSqliteService(options: {
 
   async function oneShot<T>(path: string, kind: 'init' | 'probe' | 'validate' | 'export', extra?: { target?: string }, create = false, timeout = 15_000): Promise<T> {
     const worker = await spawnWorker(path, create, options)
-    try { return await worker.request<T>(kind, extra, timeout) } finally { await worker.close() }
+    try { return await worker.request<T>(kind, extra, timeout) }
+    catch (error) { throw rewrapFsError(error) }
+    finally { await worker.close() }
   }
 
   async function get(id: string): Promise<SqliteRecord> {
@@ -196,7 +245,7 @@ export function createSqliteService(options: {
       lastWrittenAt = info.mtime.toISOString()
     } catch (error) {
       status = 'stopped'
-      metricsError = error instanceof Error ? error.message : 'SQLite 文件不可用'
+      metricsError = sqliteFsMessage(error)
     }
     if (row.state !== 'active') { status = 'warning'; metricsError = row.error ?? 'SQLite 文件操作尚未完成，请重新核对或清理登记' }
     return { id: `sqlite-${row.id}`, engine: 'SQLite', name: row.name, version, status, filePath,
@@ -236,7 +285,7 @@ export function createSqliteService(options: {
         const info = await lstat(path)
         if (!info.isFile() || info.nlink !== 1) throw new Error('SQLite 文件类型无效，无法自动删除')
         await unlink(path)
-      } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
+      } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw rewrapFsError(error) }
     }
   }
 
@@ -277,7 +326,7 @@ export function createSqliteService(options: {
         }
         row.state = 'active'; await change(row)
         return project(row)
-      } catch (error) { row.error = error instanceof Error ? error.message : '创建失败'; await change(row); throw error }
+      } catch (error) { row.error = error instanceof Error ? sqliteFsMessage(error) : '创建失败'; await change(row); throw error }
     }) },
     importFile(name, request) { return serialized(async () => {
       validName(name)
@@ -315,7 +364,7 @@ export function createSqliteService(options: {
       } catch (error) {
         await handle?.close().catch(() => undefined)
         await unlink(staging).catch(() => undefined)
-        row.error = error instanceof Error ? error.message : '上传失败'
+        row.error = error instanceof Error ? sqliteFsMessage(error) : '上传失败'
         await change(row)
         throw error
       }
@@ -356,7 +405,7 @@ export function createSqliteService(options: {
         await oneShot(file, 'validate', undefined, false, 60_000)
         row.state = 'active'; row.error = undefined; await change(row)
         return project(row)
-      } catch (error) { row.state = 'pending'; row.error = error instanceof Error ? error.message : '核对失败'; await change(row); throw error }
+      } catch (error) { row.state = 'pending'; row.error = error instanceof Error ? sqliteFsMessage(error) : '核对失败'; await change(row); throw error }
     }) },
     forget(id) { return serialized(async () => {
       const row = await get(id)
@@ -374,7 +423,8 @@ export function createSqliteService(options: {
       return {
         execute: (input) => serialized(async () => {
           const file = await checkedFile(id)
-          const ownBytes = (await stat(file)).size
+          let ownBytes: number
+          try { ownBytes = (await stat(file)).size } catch (error) { throw rewrapFsError(error) }
           const others = (await totalBytes()) - ownBytes
           const limitBytes = Math.max(ownBytes, Math.min(SQLITE_FILE_LIMIT, totalLimit - others))
           return worker.request<string[]>('execute', { sql: input, limitBytes }, options.queryTimeoutMs ?? 15_000)

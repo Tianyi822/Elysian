@@ -7,7 +7,10 @@ const FORBIDDEN = new Set([
 ])
 const READ_PRAGMAS = new Set(['TABLE_INFO', 'TABLE_XINFO', 'INDEX_LIST', 'INDEX_INFO', 'INDEX_XINFO', 'FOREIGN_KEY_LIST', 'DATABASE_LIST', 'USER_VERSION'])
 
-/** 只识别 SQL 的词法边界；字符串和注释里的分号、关键字不参与权限判定。 */
+/** 只识别 SQL 的词法边界；单引号字符串和注释里的分号、关键字不参与权限判定。
+ * 双引号、反引号、方括号标识符区间内的词参与禁词与语句形状判定（SQLite 解析器接受
+ * 双引号包裹的函数名，如 SELECT "abs"(-1)），带引号标识符恰含禁词（如表名 "analyze"）
+ * 会被拒绝——fail-closed；区间内翻倍引号转义充当词分隔符。 */
 export function validateSqliteStatement(sql: string): void {
   if (!sql.trim()) throw new InvalidRequestError(400, '请输入 SQL 语句')
   if (Buffer.byteLength(sql) > MAX_SQL_BYTES) throw new InvalidRequestError(413, 'SQL 超过 64 KiB')
@@ -41,6 +44,7 @@ export function validateSqliteStatement(sql: string): void {
       const close = char === '[' ? ']' : char
       i++
       let closed = false
+      const start = i
       while (i < sql.length) {
         if (sql[i] === close) {
           if (sql[i + 1] === close) { i += 2; continue }
@@ -49,6 +53,10 @@ export function validateSqliteStatement(sql: string): void {
         i++
       }
       if (!closed) throw new InvalidRequestError(400, 'SQL 引号未闭合')
+      if (char !== "'") {
+        const text = sql.slice(start, i - 1)
+        for (const match of text.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)) words.push(match[0].toUpperCase())
+      }
       continue
     }
     if (/[A-Za-z_]/.test(char)) {

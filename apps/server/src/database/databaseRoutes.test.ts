@@ -1,12 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { DatabaseService } from './databaseService.ts'
-import { createDatabaseApp } from './databaseRoutes.ts'
+import { createDatabaseApp, terminalFrameViolation } from './databaseRoutes.ts'
 import type { DatabaseInstance } from '@elysian/contracts'
+import type { OperationAuditLogs } from '../logs/operationAudit.ts'
 import type { SqliteService } from './sqliteService.ts'
 
 const ID = 'db-1'
 const secret = { username: 'reader', password: 'password-hidden-from-list' }
-function fixture() {
+function fakeLogs(): OperationAuditLogs {
+  return { recordOperation: vi.fn(async () => undefined), log: vi.fn(async () => undefined) }
+}
+function fixture(logs?: OperationAuditLogs) {
   const instance: DatabaseInstance = { id: ID, engine: 'MySQL', name: 'orders', version: '8.4', status: 'running', updatedAt: '2026-09-28T00:00:00.000Z', hasCredentials: true, credentialUsername: secret.username }
   const service: DatabaseService = {
     list: vi.fn(async () => [instance]),
@@ -19,7 +23,7 @@ function fixture() {
     forget: vi.fn(async () => undefined),
     openSession: vi.fn(async () => ({ execute: async () => [], close: async () => undefined })),
   }
-  const app = createDatabaseApp({ available: true, service })
+  const app = createDatabaseApp({ available: true, service, logs })
   return { app, service }
 }
 
@@ -54,6 +58,53 @@ describe('数据库 HTTP 守卫', () => {
     const wsDenied = await app.request('http://localhost:48100/db-1/terminal', { headers: { Host: 'localhost:48100', Origin: 'http://evil.example' } })
     expect(wsDenied.status).toBe(403)
   })
+})
+
+describe('数据库终端帧上限与审计', () => {
+  it('terminalFrameViolation：二进制帧无效、超 64 KiB 超限、合法字符串放行', () => {
+    expect(terminalFrameViolation(Buffer.from('binary'))).toBe('终端消息无效')
+    expect(terminalFrameViolation(42)).toBe('终端消息无效')
+    expect(terminalFrameViolation('a'.repeat(65 * 1024))).toBe('输入超过 64 KiB')
+    expect(terminalFrameViolation('a'.repeat(64 * 1024))).toBeNull()
+    expect(terminalFrameViolation(JSON.stringify({ type: 'execute', text: 'SELECT 1' }))).toBeNull()
+  })
+
+  it('evil Origin 的终端 GET 返回 403 且记 failure/403 审计', async () => {
+    const logs = fakeLogs()
+    const { app } = fixture(logs)
+    const denied = await app.request('http://localhost:48100/db-1/terminal', { headers: { Host: 'localhost:48100', Origin: 'http://evil.example' } })
+    expect(denied.status).toBe(403)
+    expect(logs.recordOperation).toHaveBeenCalledWith(expect.objectContaining({
+      category: 'database',
+      action: '发起数据库协议终端连接',
+      target: 'db-1',
+      result: 'failure',
+      httpStatus: 403,
+    }))
+  })
+
+  it('available 但只挂 sqlite 时 MySQL 终端返回 503 且记 failure/503 审计', async () => {
+    const logs = fakeLogs()
+    const files: SqliteService = {
+      list: vi.fn(async () => []), create: vi.fn(), importFile: vi.fn(), download: vi.fn(),
+      remove: vi.fn(async () => undefined), reconcile: vi.fn(), forget: vi.fn(async () => undefined), openSession: vi.fn(),
+    }
+    const app = createDatabaseApp({ available: true, sqlite: files, logs })
+    const denied = await app.request('http://localhost:48100/db-1/terminal', { headers: { Host: 'localhost:48100', Origin: 'http://localhost:48100' } })
+    expect(denied.status).toBe(503)
+    expect(logs.recordOperation).toHaveBeenCalledWith(expect.objectContaining({
+      category: 'database',
+      action: '发起数据库协议终端连接',
+      target: 'db-1',
+      result: 'failure',
+      httpStatus: 503,
+    }))
+  })
+
+  // 覆盖项说明：onOpen 内按事实记录（会话超限 failure / openSession 成功 success / catch failure）、
+  // onMessage 的语句执行摘要（「执行数据库终端语句」+「输出 N 行」，不落语句正文）、以及 index.ts
+  // 传输层 websocket.maxPayloadLength 帧上限，都需要真实 Bun WebSocket 升级才能驱动，
+  // app.request 无法进入这些回调（升级需 Bun server 实例接管），按代码评审口径覆盖。
 })
 
 it('SQLite 文件路由分别处理创建、上传、删除确认与列表', async () => {

@@ -20,4 +20,23 @@ describe('SQLite 终端 SQL 边界', () => {
       'SELECT 1; /* comment */ DELETE FROM notes',
     ]) expect(() => validateSqliteStatement(sql)).toThrow()
   })
+
+  it('拒绝双引号、方括号包裹的禁词函数与关键字', () => {
+    for (const sql of [
+      'SELECT "readfile"("/etc/passwd")',
+      'SELECT "load_extension"("/tmp/x.so")',
+      'CREATE "VIRTUAL" TABLE x USING fts5(v)',
+      "SELECT [writefile]('/tmp/x')",
+      'SELECT `load_extension`("/tmp/x.so")',
+    ]) expect(() => validateSqliteStatement(sql)).toThrow()
+  })
+
+  it('放行合法带引号标识符，单引号字符串内容不参与判定', () => {
+    for (const sql of [
+      'SELECT "value" FROM "notes"',
+      "SELECT 'readfile'",
+      'SELECT `value` FROM [notes]',
+      "SELECT \"read\"\"file\"('/tmp/x')",
+    ]) expect(() => validateSqliteStatement(sql)).not.toThrow()
+  })
 })

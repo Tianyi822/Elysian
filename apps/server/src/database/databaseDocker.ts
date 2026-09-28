@@ -23,6 +23,7 @@ export type DatabaseDocker = {
   assertEngine(id: string, engine: Exclude<DatabaseEngine, 'SQLite'>, versionTag: string): Promise<Record<string, unknown>>
   address(id: string, network?: string): Promise<{ host: string; port: number }>
   attach(id: string, network: string): Promise<void>
+  detach(id: string, network: string): Promise<void>
   create(input: {
     engine: Exclude<DatabaseEngine, 'SQLite'>
     versionTag: string
@@ -106,6 +107,23 @@ export function createDatabaseDocker(
     const response = await request('POST', `${API}/networks/${encodeURIComponent(network)}/connect`, { Container: id })
     if (response.status !== 200 && response.status !== 201 && response.status !== 204) {
       throw new InvalidRequestError(409, '无法将数据库容器接入面板网络')
+    }
+  }
+
+  async function detach(id: string, network: string): Promise<void> {
+    if (network !== DB_PRIVATE_NETWORK && network !== DB_SHARED_NETWORK) throw invalidRequest('数据库网络无效')
+    let info: Record<string, unknown>
+    try {
+      info = await inspect(id)
+    } catch (error) {
+      // 容器已被外部删除时视为已离网：移除登记（forget）不被卡死，其余错误照常抛出。
+      if (error instanceof InvalidRequestError && error.status === 404) return
+      throw error
+    }
+    if (!obj(obj(info.NetworkSettings).Networks)[network]) return
+    const response = await request('POST', `${API}/networks/${encodeURIComponent(network)}/disconnect`, { Container: id })
+    if (response.status < 200 || response.status >= 300) {
+      throw new InvalidRequestError(409, '无法将数据库容器移出面板网络')
     }
   }
 
@@ -232,7 +250,7 @@ export function createDatabaseDocker(
     return { usedGb: usage / 1024 ** 3, totalGb: limit / 1024 ** 3 }
   }
 
-  return { inspect, assertEngine, address, attach, create, removeManaged, memory }
+  return { inspect, assertEngine, address, attach, detach, create, removeManaged, memory }
 }
 
 export function databasePort(engine: Exclude<DatabaseEngine, 'SQLite'>): number {
