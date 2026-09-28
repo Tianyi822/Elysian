@@ -2,7 +2,6 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { useEffect, useState } from 'react'
 import type { ContainerImage, DatabaseEngine, ImagePullProgress } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { Loader2, X } from '../../components/icons'
 import { useDatabaseStore } from '../../stores/databaseStore'
@@ -188,10 +187,7 @@ export function RealDatabaseCreateDialog({ engine }: { engine: Engine }) {
       <Dialog.Content aria-describedby={undefined} onPointerDownOutside={(event) => event.preventDefault()}
         className="fixed left-1/2 top-1/2 z-[55] flex max-h-[min(44rem,calc(100vh-2rem))] w-[min(42rem,calc(100vw-1.5rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line bg-bg shadow-2xl">
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-line px-5 py-3">
-          <div className="flex min-w-0 items-center gap-2">
-            {!isDockerRuntime() ? <span className="shrink-0 rounded bg-warning/15 px-1.5 py-0.5 text-xs font-medium text-warning">演示</span> : null}
-            <Dialog.Title className="truncate text-base font-semibold text-fg">添加 {engine} 数据库</Dialog.Title>
-          </div>
+          <Dialog.Title className="truncate text-base font-semibold text-fg">添加 {engine} 数据库</Dialog.Title>
           <button type="button" disabled={busy} onClick={close} aria-label="关闭弹窗" className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-fg-muted hover:bg-surface-raised disabled:opacity-50"><X aria-hidden size={16} /></button>
         </div>
 

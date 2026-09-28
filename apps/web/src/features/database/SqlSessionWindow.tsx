@@ -81,7 +81,7 @@ export function SqlSessionWindow() {
   return (
     <TerminalShell
       title={`${database.name} SQL 会话`}
-      banner={database.source === 'demo' || !gateway.databases.openTerminal ? '演示 SQL 会话 · 待接入真实执行' : SESSION_BANNER}
+      banner={SESSION_BANNER}
       subject={subject}
       prompt={`${database.name}> `}
       sessionKey={session.databaseId}
@@ -92,7 +92,7 @@ export function SqlSessionWindow() {
       onAppendOutput={appendSessionOutput}
       onClear={clearSessionScreen}
       onClose={closeSession}
-      onInterrupt={gateway.databases.openTerminal && database.source !== 'demo' ? () => interruptSession(gateway) : undefined}
+      onInterrupt={gateway.databases.openTerminal ? () => interruptSession(gateway) : undefined}
       labels={{
         input: 'SQL 输入',
         close: '关闭会话',

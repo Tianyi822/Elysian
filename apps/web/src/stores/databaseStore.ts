@@ -5,14 +5,14 @@ import { resolveViewTab, writeStoredViewTab } from '../app/theme/themePreference
 import { pushHistory, type TerminalLine } from '../components/terminal/terminalSession'
 import { useNotificationStore } from './notificationStore'
 
-/** 演示 SQL 会话：只存在内存，关闭即清空（含历史，不伪装成持久会话）。 */
+/** SQL 会话的界面状态：输出行与历史只存内存，关闭即清空（不伪装成持久会话）。 */
 export type SqlSession = {
   databaseId: string
   lines: readonly TerminalLine[]
   history: readonly string[]
 }
 
-/** 窗口顶栏徽章的常驻演示标注；日志区不再重复这一行。 */
+/** 窗口顶栏徽章的常驻标注；日志区不再重复这一行。 */
 export const SESSION_BANNER = '数据库协议会话'
 
 let liveSession: { execute(input: string): Promise<readonly string[]>; close(): void } | undefined
@@ -29,7 +29,7 @@ export type DatabaseState = {
   containers: readonly Container[]
   images: readonly ContainerImage[]
   errorMessage?: string
-  /** 演示 SQL 会话；同一时刻最多一个，undefined 表示没有打开。 */
+  /** SQL 会话；同一时刻最多一个，undefined 表示没有打开。 */
   session?: SqlSession
   /** 添加数据库弹窗的开关与提交中标记。 */
   createOpen: boolean
@@ -47,7 +47,7 @@ export type DatabaseState = {
   submitStatement(gateway: ElysianGateway, line: string): Promise<void>
   /** 终端内核的旁路输出：补全候选列表走这里追加。 */
   appendSessionOutput(lines: readonly string[]): void
-  /** 终端内核的 Ctrl+L 清屏：清空日志区，演示标注由窗口顶栏徽章常驻。 */
+  /** 终端内核的 Ctrl+L 清屏：清空日志区，标注由窗口顶栏徽章常驻。 */
   clearSessionScreen(): void
   openCreate(): void
   closeCreate(): void
@@ -102,9 +102,9 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   openSession(databaseId, gateway) {
     liveSession?.close()
     liveSession = undefined
-    // 日志区从空开始：演示标注由窗口顶栏徽章常驻，不在日志里重复一行。
+    // 日志区从空开始：标注由窗口顶栏徽章常驻，不在日志里重复一行。
     set({ session: { databaseId, lines: [], history: [] } })
-    if (gateway?.databases.openTerminal && get().databases.find((row) => row.id === databaseId)?.source !== 'demo') {
+    if (gateway?.databases.openTerminal) {
       void gateway.databases.openTerminal(databaseId).then((connection) => {
         if (get().session?.databaseId !== databaseId) { connection.close(); return }
         liveSession = connection
@@ -191,12 +191,13 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
         : await gateway.databases.create(input)
       useNotificationStore
         .getState()
-        .notify({ tone: 'success', message: `数据库 ${created.name} 已创建${created.source === undefined ? '（mock，待接入真实执行）' : created.source === 'demo' ? '（演示）' : ''}` })
+        .notify({ tone: 'success', message: `数据库 ${created.name} 已创建` })
       set((state) => ({
         databases: [...state.databases, created],
         createOpen: false,
       }))
-      if (created.source !== undefined) void get().refresh(gateway)
+      // 创建是真实变更：立即向服务端核对列表，不用本地拼接的状态冒充服务端事实。
+      void get().refresh(gateway)
     } catch (error) {
       const detail = error instanceof Error ? error.message : '未知错误'
       set({ createError: detail })
@@ -215,19 +216,11 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       await gateway.databases.remove(databaseId)
       useNotificationStore
         .getState()
-        .notify({ tone: 'success', message: database.engine === 'Redis' && database.source && database.source !== 'demo' ? 'Redis DB 0 已清空，容器与持久卷仍保留' : `数据库 ${database.name} 已删除${database.source === undefined ? '（mock，待接入真实执行）' : database.source === 'demo' ? '（演示）' : ''}` })
-      if (database.source && database.source !== 'demo') {
-        if (get().session?.databaseId === databaseId) get().closeSession()
-        await get().refresh(gateway)
-        set((state) => ({ removingDatabaseIds: state.removingDatabaseIds.filter((id) => id !== databaseId) }))
-        return
-      }
-      set((state) => ({
-        databases: state.databases.filter((item) => item.id !== databaseId),
-        // 删掉的库若还开着会话，一并关闭。
-        session: state.session?.databaseId === databaseId ? undefined : state.session,
-        removingDatabaseIds: state.removingDatabaseIds.filter((id) => id !== databaseId),
-      }))
+        .notify({ tone: 'success', message: database.engine === 'Redis' ? 'Redis DB 0 已清空，容器与持久卷仍保留' : `数据库 ${database.name} 已删除` })
+      // 删除是真实变更：关掉关联会话并向服务端核对，列表以服务端状态为准。
+      if (get().session?.databaseId === databaseId) get().closeSession()
+      await get().refresh(gateway)
+      set((state) => ({ removingDatabaseIds: state.removingDatabaseIds.filter((id) => id !== databaseId) }))
     } catch (error) {
       const detail = error instanceof Error ? error.message : '未知错误'
       useNotificationStore.getState().notify({ tone: 'danger', message: `删除数据库失败：${detail}` })

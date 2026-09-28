@@ -9,7 +9,6 @@ import {
   Database,
   Download,
   Gauge,
-  KeyRound,
   MariaDBLogo,
   MemoryStick,
   MySQLLogo,
@@ -17,9 +16,8 @@ import {
   Plus,
   Timer,
   Trash2,
-  UserRound,
 } from '../../components/icons'
-import { CopyButton, useClipboardCopy } from '../../components/CopyButton'
+import { useClipboardCopy } from '../../components/CopyButton'
 import { ErrorState, EmptyState, LoadingState } from '../../components/states/StateViews'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
@@ -34,7 +32,6 @@ import type { DatabaseCardView } from './projectDatabaseCard'
 import { SqlSessionWindow } from './SqlSessionWindow'
 import { DatabaseCreateDialog } from './DatabaseCreateDialog'
 import { ContainerDetailSheet } from '../container/ContainerDetailSheet'
-import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 
 const STATUS_TONE: Record<DatabaseStatus, StatusTone> = {
   running: 'success',
@@ -42,7 +39,7 @@ const STATUS_TONE: Record<DatabaseStatus, StatusTone> = {
   stopped: 'danger',
 }
 
-/** 数据库区在 Docker 环境展示真实服务与 SQLite 文件，本地开发使用演示数据。 */
+/** 数据库区展示 Docker 运行时承载的真实服务与 SQLite 文件；本地非 Docker 运行时数据库端点不可用，页面落入错误态。 */
 export function DatabasePage() {
   const gateway = useGateway()
   const status = useDatabaseStore((state) => state.status)
@@ -125,7 +122,7 @@ export function DatabasePage() {
         {filtered.length === 0 ? (
           <EmptyState
             title={`没有 ${engine} 数据库`}
-            description={engine === 'SQLite' ? isDockerRuntime() ? '新建 SQLite 文件或上传独立数据库快照。' : '可以添加 SQLite 演示卡片；不会创建或上传实际文件。' : '选择已有容器添加数据库，或在当前窗口拉取镜像并创建新容器。'}
+            description={engine === 'SQLite' ? '新建 SQLite 文件或上传独立数据库快照。' : '选择已有容器添加数据库，或在当前窗口拉取镜像并创建新容器。'}
           />
         ) : (
           /* 列数量内容区的实测宽度（容器查询）而非视口：侧边栏收展改变可用宽度，卡片随之增减，不会出现「空间变大卡片反而变小」的倒挂。 */
@@ -278,34 +275,11 @@ function DatabaseCard({
               value={database.lastWrittenAt ? formatDateTime(database.lastWrittenAt) : '不可用'}
             />
           </>
-        ) : database.source !== undefined && database.source !== 'demo' ? (
+        ) : (
           <>
             <FileStat icon={<Database aria-hidden size={14} />} label="已用空间" value={database.storage ? `${(database.storage.usedGb * 1024).toFixed(1)} MB` : '不可用'} />
             <FileStat icon={<MemoryStick aria-hidden size={14} />} label="容器内存" value={database.memory ? `${(database.memory.usedGb * 1024).toFixed(1)} MB` : '不可用'} />
             <FileStat icon={<Gauge aria-hidden size={14} />} label="连接数" value={database.connections ? `${database.connections.active}${database.connections.max ? ` / ${database.connections.max}` : ''}` : '不可用'} />
-          </>
-        ) : (
-          <>
-            <UsageMetric
-              icon={<Database aria-hidden size={14} />}
-              label="容量"
-              value={`${database.storage?.usedGb.toFixed(1)} / ${database.storage?.totalGb} GB`}
-              percent={percent(database.storage?.usedGb ?? 0, database.storage?.totalGb ?? 0)}
-            />
-            <UsageMetric
-              icon={<MemoryStick aria-hidden size={14} />}
-              label="内存占用"
-              value={`${database.memory?.usedGb.toFixed(1)} / ${database.memory?.totalGb} GB`}
-              percent={percent(database.memory?.usedGb ?? 0, database.memory?.totalGb ?? 0)}
-            />
-            <UsageMetric
-              icon={<Gauge aria-hidden size={14} />}
-              label="连接数"
-              value={`${database.connections?.active} / ${database.connections?.max}`}
-              percent={percent(database.connections?.active ?? 0, database.connections?.max ?? 0)}
-              warning={database.status === 'warning'}
-              demo
-            />
           </>
         )}
       </div>
@@ -314,26 +288,12 @@ function DatabaseCard({
 
       {/* 动作行沉底：卡片因同列内容高度不齐被拉伸时，操作区贴住卡底。 */}
       <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-line pt-3">
-        {/* SQLite 没有账号体系：不摆一对复制不了任何东西的按钮，也不占位说明。 */}
+        {/* SQLite 没有账号体系：不摆一对复制不了任何东西的按钮，也不占位说明。
+            服务型凭证只在用户点击复制时经 reveal 端点按需读取，列表响应没有明文渲染位。 */}
         {database.hasCredentials && gateway.databases.reveal ? (
           <>
             <button type="button" onClick={() => void revealAndCopy('username')} title="从服务端读取并复制普通账号" className="rounded border border-line px-2 py-1 text-xs">复制用户名</button>
             <button type="button" onClick={() => void revealAndCopy('password')} title="从服务端读取并复制普通账号密码" className="rounded border border-line px-2 py-1 text-xs">复制密码</button>
-          </>
-        ) : database.credentials ? (
-          <>
-            <CopyButton
-              label="用户名"
-              value={database.credentials.username}
-              tooltip="复制演示用户名 · 不对应任何真实数据库"
-              icon={<UserRound aria-hidden size={13} />}
-            />
-            <CopyButton
-              label="密码"
-              value={database.credentials.password}
-              tooltip="复制演示密码 · 不对应任何真实数据库"
-              icon={<KeyRound aria-hidden size={13} />}
-            />
           </>
         ) : null}
         {credentialError ? <p role="alert" className="w-full text-xs text-danger">{credentialError}</p> : null}
@@ -346,7 +306,7 @@ function DatabaseCard({
             className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-danger/40 px-3 py-1.5 text-xs text-danger transition-colors hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Trash2 aria-hidden size={13} />
-            {database.source === undefined || database.source === 'demo' ? '删除' : database.engine === 'Redis' ? '清空 DB 0' : '删除数据库'}
+            {database.engine === 'Redis' ? '清空 DB 0' : '删除数据库'}
           </button> : null}
           {database.engine !== 'SQLite' && database.source === 'managed' && gateway.databases.removeContainer ? <button type="button" onClick={() => setConfirmRemoveContainer(true)} className="rounded-lg border border-danger/40 px-2 py-1.5 text-xs text-danger">删除容器及数据</button> : null}
           {!database.emptyContainer ? <button
@@ -380,8 +340,6 @@ function DatabaseCard({
               <p className="mt-1.5 text-xs text-fg-muted">
                 {database.engine === 'SQLite' && database.source === 'managed'
                   ? '将永久删除面板管理目录中的实际 SQLite 数据库文件。请先下载快照备份；此操作无法撤销。'
-                  : database.source === 'demo' || !gateway.databases.reveal
-                  ? '仅删除演示卡片，刷新页面后恢复。'
                   : database.engine === 'Redis'
                     ? '将清空此 Redis 容器的 DB 0，容器和持久卷保留。此操作无法撤销。'
                     : '将删除目标逻辑库，容器和持久卷保留。此操作无法撤销。'}
@@ -460,46 +418,4 @@ function formatFileSize(sizeMb: number | undefined): string {
   if (sizeMb === undefined) return '不可用'
   if (sizeMb < 0.1) return `${Math.round(sizeMb * 1024)} KB`
   return `${sizeMb.toFixed(1)} MB`
-}
-
-function UsageMetric({
-  icon,
-  label,
-  value,
-  percent,
-  warning = false,
-  demo = false,
-}: {
-  icon: ReactNode
-  label: string
-  value: string
-  percent: number
-  warning?: boolean
-  /** 连接数补演示标注：条形 tooltip 明说数值待接入真实采集。 */
-  demo?: boolean
-}) {
-  return (
-    <div className="rounded-lg bg-surface-raised px-3 py-2.5">
-      <div className="flex items-center gap-1.5 text-xs text-fg-subtle">
-        {icon}
-        <span>{label}</span>
-      </div>
-      <p className="mt-1 text-sm font-medium tabular-nums text-fg">{value}</p>
-      <div
-        aria-hidden
-        className="mt-2 h-1.5 overflow-hidden rounded-full bg-line"
-        title={`${label}已使用 ${percent}%${demo ? '（演示数值 · 待接入真实采集）' : ''}`}
-      >
-        <div
-          className={`h-full rounded-full ${warning ? 'bg-warning' : 'bg-info'}`}
-          style={{ width: `${percent}%` }}
-        />
-      </div>
-    </div>
-  )
-}
-
-function percent(used: number, total: number): number {
-  if (total <= 0) return 0
-  return Math.min(100, Math.max(0, Math.round((used / total) * 100)))
 }

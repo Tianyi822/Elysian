@@ -13,7 +13,7 @@ const image: ContainerImage = {
 }
 const created: DatabaseInstance = {
   id: 'real-1', engine: 'MySQL', name: 'orders', version: '8.4.1', status: 'running',
-  versionTag: '8.4', updatedAt: '2026-09-28T00:00:00.000Z',
+  versionTag: '8.4', source: 'managed', updatedAt: '2026-09-28T00:00:00.000Z',
 }
 const managed = { id: 'managed-1', name: 'mysql-managed', accessScope: 'container-network', managed: true, versionTag: '8.4' }
 const external = { id: 'external-1', name: 'mysql-external', accessScope: 'localhost', managed: false, versionTag: '8.0' }

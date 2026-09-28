@@ -89,7 +89,7 @@ export interface EventsAdapter {
   subscribe(handlers: EventStreamHandlers): Unsubscribe
 }
 
-/** 演示命令引擎的结果（容器终端与数据库 SQL 会话仍在用）；clear 为 true 时界面清空输出区。 */
+/** 演示命令引擎的结果（容器终端 mock 在用）；clear 为 true 时界面清空输出区。 */
 export type MockCommandResult = { lines: readonly string[]; clear?: boolean }
 
 /**
@@ -214,13 +214,9 @@ export type DatabaseCreateFileInput = {
   engine: DatabaseEngine
   /** 数据库名，取文件名去掉扩展名。 */
   name: string
-  /** 文件绝对路径。 */
-  filePath: string
-  /** 文件大小（MB）。 */
-  fileSizeMb: number
-  /** SQLite 文件来源；本地 mock 只模拟，Docker 上传需附带 file。 */
+  /** SQLite 文件来源：上传既有文件或新建空库；路径与大小由服务端决定。 */
   origin: 'uploaded' | 'created'
-  /** Docker 环境上传时必须带真实浏览器文件；路径与大小由服务端核验。 */
+  /** 上传时必须带真实浏览器文件；新建空库不带。 */
   file?: File
 }
 
@@ -231,7 +227,7 @@ export interface DatabaseAdapter {
   list(): Promise<readonly DatabaseInstance[]>
   /** 创建容器数据库或 SQLite 文件。 */
   create(input: DatabaseCreateInput, onProgress?: (percent: number) => void): Promise<DatabaseInstance>
-  /** 删除目标逻辑库、SQLite 文件或演示卡片；真实容器与卷由独立操作删除。 */
+  /** 删除目标逻辑库或 SQLite 文件；真实容器与卷由独立操作删除。 */
   remove(databaseId: string): Promise<void>
   discover?(engine: Exclude<DatabaseEngine, 'SQLite'>, versionTag?: string): Promise<{ images: readonly ContainerImage[]; containers: readonly { id: string; name: string; accessScope: string; managed: boolean; versionTag: string }[] }>
   reveal?(databaseId: string): Promise<{ username: string; password: string }>

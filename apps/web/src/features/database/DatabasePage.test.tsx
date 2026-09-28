@@ -1,6 +1,6 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DatabaseInstance } from '@elysian/contracts'
 import type { ElysianGateway } from '../../contracts/adapters'
 import { createMockGateway } from '../../adapters/mock/gateway'
@@ -16,7 +16,9 @@ const MARIADB: DatabaseInstance = {
   version: '10.11.8',
   status: 'running',
   containerId: 'ctr-mariadb-primary',
-  credentials: { username: 'ops', password: 'demo-mariadb-7f2c' },
+  source: 'managed',
+  credentialUsername: 'ops',
+  hasCredentials: true,
   storage: { usedGb: 12.5, totalGb: 32 },
   memory: { usedGb: 1.5, totalGb: 4 },
   connections: { active: 12, max: 100 },
@@ -24,9 +26,8 @@ const MARIADB: DatabaseInstance = {
 }
 
 /**
- * 数据库域在测试里用自建 fake（gateway 已固定走 http adapter，jsdom 下 fetch 不可达）：
- * 列表返回内联 fixture，create/remove/discover 按各用例需要的最小行为实现，
- * 容器事实仍取 base 的 mock 容器数据集。
+ * 服务端列表响应的内联基准行：真实链路恒带 source（managed/adopted），
+ * 凭证只给 hasCredentials/credentialUsername，从不给明文。
  */
 const DATABASE_FIXTURES: readonly DatabaseInstance[] = [
   {
@@ -36,7 +37,9 @@ const DATABASE_FIXTURES: readonly DatabaseInstance[] = [
     version: '10.11.8',
     status: 'running',
     containerId: 'ctr-mariadb-primary',
-    credentials: { username: 'ops', password: 'demo-mariadb-7f2c' },
+    source: 'managed',
+    credentialUsername: 'ops',
+    hasCredentials: true,
     storage: { usedGb: 128.4, totalGb: 256 },
     memory: { usedGb: 3.2, totalGb: 8 },
     connections: { active: 86, max: 200 },
@@ -49,7 +52,9 @@ const DATABASE_FIXTURES: readonly DatabaseInstance[] = [
     version: '8.4.2',
     status: 'warning',
     containerId: 'ctr-mysql-orders',
-    credentials: { username: 'ops', password: 'demo-mysql-3b91' },
+    source: 'adopted',
+    credentialUsername: 'ops',
+    hasCredentials: true,
     storage: { usedGb: 74.8, totalGb: 128 },
     memory: { usedGb: 4.6, totalGb: 8 },
     connections: { active: 142, max: 200 },
@@ -62,7 +67,9 @@ const DATABASE_FIXTURES: readonly DatabaseInstance[] = [
     version: '7.4',
     status: 'running',
     containerId: 'ctr-redis-cache',
-    credentials: { username: 'default', password: 'demo-redis-9a40' },
+    source: 'managed',
+    credentialUsername: 'default',
+    hasCredentials: true,
     storage: { usedGb: 2.4, totalGb: 16 },
     memory: { usedGb: 0.6, totalGb: 2 },
     connections: { active: 34, max: 512 },
@@ -75,7 +82,8 @@ const DATABASE_FIXTURES: readonly DatabaseInstance[] = [
     name: 'elysian-notes',
     version: '3.46.1',
     status: 'running',
-    filePath: '/srv/elysian/data/sqlite/elysian-notes.db',
+    source: 'managed',
+    filePath: '/root/.Elysian/data/sqlite/elysian-notes.db',
     fileSizeMb: 4.2,
     tableCount: 3,
     lastWrittenAt: '2026-09-11T15:20:00.000Z',
@@ -98,25 +106,35 @@ beforeEach(() => {
   useContainersStore.setState({ view: 'grid', detailContainerId: undefined })
 })
 
+/**
+ * 数据库域在测试里用自建 fake（gateway 已固定走 http adapter，jsdom 下 fetch 不可达）：
+ * fake 像真实服务端一样持有行集——create 落行、remove 删行、list 返回当前行集，
+ * 因此界面每次 refresh 都以 fake 的状态为准；容器事实仍取 base 的 mock 容器数据集。
+ */
 function pageGateway(overrides: Partial<ElysianGateway['databases']> = {}): ElysianGateway {
   const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+  const rows: DatabaseInstance[] = DATABASE_FIXTURES.map((row) => structuredClone(row))
   const databases: ElysianGateway['databases'] = {
     async list() {
-      return DATABASE_FIXTURES.map((row) => structuredClone(row))
+      return rows.map((row) => structuredClone(row))
     },
     async create(input) {
       if (input.kind === 'file') {
-        return {
-          id: `db-sqlite-${input.name}`,
+        const created: DatabaseInstance = {
+          id: `sqlite-${input.name}`,
           engine: 'SQLite',
           name: input.name,
           version: '3.46.1',
           status: 'running',
-          filePath: input.filePath,
-          fileSizeMb: input.fileSizeMb,
+          source: 'managed',
+          // 真实链路里路径与大小由服务端决定（randomUUID 命名 + stat 实测），客户端不报送。
+          filePath: `/root/.Elysian/data/sqlite/${input.name}.db`,
+          fileSizeMb: input.origin === 'uploaded' ? 2 : 0,
           tableCount: 0,
           updatedAt: '2026-09-12T08:00:00.000Z',
         }
+        rows.push(created)
+        return structuredClone(created)
       }
       const createdContainer = input.target?.kind === 'new'
         ? await base.containers.create({
@@ -132,21 +150,28 @@ function pageGateway(overrides: Partial<ElysianGateway['databases']> = {}): Elys
       const container = (await base.containers.list()).find((item) => item.id === containerId)
       if (!container) throw new Error(`未找到容器 ${input.containerId}`)
       const image = (await base.containers.listImages()).find((item) => item.id === container.imageId)
-      return {
+      const created: DatabaseInstance = {
         id: `db-${container.name}-${input.name}`,
         engine: input.engine,
         name: input.name,
         version: image?.tag ?? '0',
         status: 'running',
         containerId: container.id,
-        credentials: { username: input.username, password: input.password },
+        source: 'managed',
+        credentialUsername: input.username,
+        hasCredentials: true,
         storage: { usedGb: 0.1, totalGb: 32 },
         memory: { usedGb: 0.2, totalGb: 4 },
         connections: { active: 1, max: 200 },
         updatedAt: '2026-09-12T08:00:00.000Z',
       }
+      rows.push(created)
+      return structuredClone(created)
     },
-    async remove() {},
+    async remove(databaseId) {
+      const index = rows.findIndex((row) => row.id === databaseId)
+      if (index >= 0) rows.splice(index, 1)
+    },
     async discover(engine, versionTag) {
       const containers = await base.containers.list()
       const images = await base.containers.listImages()
@@ -156,7 +181,7 @@ function pageGateway(overrides: Partial<ElysianGateway['databases']> = {}): Elys
         containers: containers.flatMap((container) => {
           const image = matchingImages.find((candidate) => candidate.id === container.imageId)
           if (container.status !== 'running' || !image || (versionTag !== undefined && image.tag !== versionTag)) return []
-          if (engine === 'Redis' && DATABASE_FIXTURES.some((database) => database.engine === 'Redis' && database.containerId === container.id)) return []
+          if (engine === 'Redis' && rows.some((database) => database.engine === 'Redis' && database.containerId === container.id)) return []
           return [{ id: container.id, name: container.name, accessScope: 'localhost', managed: true, versionTag: image.tag }]
         }),
       }
@@ -175,8 +200,9 @@ describe('数据库页面', () => {
     expect(card).toHaveTextContent('来源容器')
     expect(card).toHaveTextContent('mariadb-primary')
     expect(card).toHaveTextContent('mariadb:10.11')
-    expect(card).toHaveTextContent('容量12.5 / 32 GB')
-    expect(card).toHaveTextContent('内存占用1.5 / 4 GB')
+    // 服务型指标是三格静态事实（服务端采集值，采集失败显示「不可用」），没有配额占比条。
+    expect(card).toHaveTextContent('已用空间12800.0 MB')
+    expect(card).toHaveTextContent('容器内存1536.0 MB')
     expect(card).toHaveTextContent('连接数12 / 100')
     expect(card).toHaveTextContent('运行中')
     expect(within(card).getByLabelText('MariaDB 图标')).toBeInTheDocument()
@@ -187,33 +213,23 @@ describe('数据库页面', () => {
     expect(screen.queryByText(/个实例/)).not.toBeInTheDocument()
   })
 
-  it('卡片不出现凭证明文，演示声明只在复制按钮的 tooltip 上', async () => {
-    renderApp('/databases', { gateway: pageGateway({ list: async () => [MARIADB] }) })
-
-    const card = await screen.findByRole('article', { name: 'MariaDB 数据库 mariadb-test' })
-    expect(card).not.toHaveTextContent(MARIADB.credentials!.password)
-    expect(card).not.toHaveTextContent(MARIADB.credentials!.username)
-    expect(card).toHaveTextContent('用户名')
-    expect(card).toHaveTextContent('密码')
-    // 卡片上不放常驻演示文案：声明收敛进 tooltip 与会话横幅。
-    expect(card).not.toHaveTextContent('演示凭证')
-    expect(card).not.toHaveTextContent('演示数值')
-    expect(within(card).getByRole('button', { name: '用户名' })).toHaveAttribute(
-      'title',
-      expect.stringContaining('不对应任何真实数据库'),
-    )
-  })
-
-  it('两个复制按钮把演示凭证的值写进剪贴板', async () => {
+  it('凭证只在点击复制时经 reveal 按需读取，卡片不出现明文与演示豁免文案', async () => {
     const user = userEvent.setup()
-    renderApp('/databases', { gateway: pageGateway({ list: async () => [MARIADB] }) })
+    const reveal = vi.fn(async () => ({ username: 'ops', password: 'real-secret-1' }))
+    renderApp('/databases', { gateway: pageGateway({ list: async () => [structuredClone(MARIADB)], reveal }) })
+
     const card = await screen.findByRole('article', { name: 'MariaDB 数据库 mariadb-test' })
+    // 真实链路没有列表下发明文的渲染位：密码不出现，也不再有「演示凭证」的豁免文案。
+    expect(card).not.toHaveTextContent('real-secret-1')
+    expect(card).not.toHaveTextContent('演示')
+    expect(within(card).getByRole('button', { name: '复制用户名' })).toHaveAttribute(
+      'title',
+      '从服务端读取并复制普通账号',
+    )
 
-    await user.click(within(card).getByRole('button', { name: '用户名' }))
-    await expect(navigator.clipboard.readText()).resolves.toBe(MARIADB.credentials!.username)
-
-    await user.click(within(card).getByRole('button', { name: '密码' }))
-    await expect(navigator.clipboard.readText()).resolves.toBe(MARIADB.credentials!.password)
+    await user.click(within(card).getByRole('button', { name: '复制密码' }))
+    await expect(navigator.clipboard.readText()).resolves.toBe('real-secret-1')
+    expect(reveal).toHaveBeenCalledWith('test-mariadb')
   })
 
   it('切换到 MySQL 展示 MySQL 卡片；切到 SQLite 显示本地文件形态', async () => {
@@ -232,11 +248,11 @@ describe('数据库页面', () => {
     await user.click(within(screen.getByRole('banner')).getByRole('button', { name: 'SQLite' }))
     const sqliteCard = await screen.findByRole('article', { name: 'SQLite 数据库 elysian-notes' })
     expect(sqliteCard).toHaveTextContent('数据库文件')
-    expect(sqliteCard).toHaveTextContent('/srv/elysian/data/sqlite/elysian-notes.db')
+    expect(sqliteCard).toHaveTextContent('/root/.Elysian/data/sqlite/elysian-notes.db')
     expect(sqliteCard).toHaveTextContent('4.2 MB')
     expect(sqliteCard).not.toHaveTextContent('无账号')
     expect(sqliteCard).not.toHaveTextContent('连接数')
-    expect(within(sqliteCard).queryByRole('button', { name: '用户名' })).not.toBeInTheDocument()
+    expect(within(sqliteCard).queryByRole('button', { name: '复制用户名' })).not.toBeInTheDocument()
     expect(within(sqliteCard).getByRole('button', { name: '连接' })).toBeInTheDocument()
   })
 
@@ -256,7 +272,10 @@ describe('数据库页面', () => {
     const list = await screen.findByRole('list', { name: 'MariaDB 数据库列表' })
     const card = within(list).getByRole('article', { name: 'MariaDB 数据库 mariadb-primary' })
     await user.click(within(card).getByRole('button', { name: '连接' }))
-    expect(await screen.findByRole('dialog', { name: 'mariadb-primary SQL 会话' })).toBeInTheDocument()
+    const sessionDialog = await screen.findByRole('dialog', { name: 'mariadb-primary SQL 会话' })
+    // 会话横幅恒为「数据库协议会话」：不再有按 source 或 adapter 能力切换的演示降级文案。
+    expect(within(sessionDialog).getByText('数据库协议会话')).toBeInTheDocument()
+    expect(within(sessionDialog).queryByText(/演示 SQL 会话/)).not.toBeInTheDocument()
 
     // 会话弹窗是模态的，真实用户点不到侧边栏；用路由导航等价浏览器后退离开本页，
     // 页面卸载应把会话清空，而不是留在全局 store 里。
@@ -337,15 +356,15 @@ describe('数据库页面', () => {
     expect(await screen.findByText('没有 MariaDB 数据库')).toBeInTheDocument()
   })
 
-  it('添加数据库：弹窗带演示标注，下拉自绘，填表创建后新卡片出现', async () => {
+  it('添加数据库：弹窗不再带演示徽章，填表创建后新卡片出现且通知不带 mock 标注', async () => {
     const user = userEvent.setup()
     renderApp('/databases', { gateway: pageGateway() })
     await screen.findByRole('list', { name: 'MariaDB 数据库列表' })
 
     await user.click(screen.getByRole('button', { name: /添加数据库/ }))
     const dialog = await screen.findByRole('dialog', { name: '添加 MariaDB 数据库' })
-    // 演示标注常驻弹窗顶栏。
-    expect(within(dialog).getByText('演示')).toBeInTheDocument()
+    // 全真实操作链路的弹窗不挂「演示」徽章。
+    expect(within(dialog).queryByText('演示')).not.toBeInTheDocument()
     expect(await within(dialog).findByText('先选择已有容器')).toBeInTheDocument()
     await user.click(within(dialog).getByRole('button', { name: /运行中的容器/ }))
     await user.click(await screen.findByRole('menuitemradio', { name: /mariadb-primary · mariadb:10.11/ }))
@@ -359,9 +378,10 @@ describe('数据库页面', () => {
     await user.click(await screen.findByRole('menuitemradio', { name: 'latin1' }))
     await user.click(within(dialog).getByRole('button', { name: '创建逻辑库' }))
 
-    // 创建成功：弹窗关闭、通知出现、新卡片入列。
+    // 创建成功：弹窗关闭、通知不带 mock/演示 标注、新卡片入列（经服务端刷新）。
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
-    expect(await screen.findByText(/已创建/)).toBeInTheDocument()
+    expect(await screen.findByText('数据库 orders_replica 已创建')).toBeInTheDocument()
+    expect(screen.queryByText(/mock，待接入真实执行/)).not.toBeInTheDocument()
     expect(
       await screen.findByRole('article', { name: 'MariaDB 数据库 orders_replica' }),
     ).toBeInTheDocument()
@@ -378,7 +398,7 @@ describe('数据库页面', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
-  it('演示模式 Redis 无候选时在数据库弹窗拉取并创建新容器', async () => {
+  it('Redis 无候选时在数据库弹窗拉取并创建新容器', async () => {
     const user = userEvent.setup()
     const gateway = pageGateway()
     renderApp('/databases', { gateway })
@@ -414,6 +434,10 @@ describe('数据库页面', () => {
     expect(within(dialog).queryByLabelText('密码')).not.toBeInTheDocument()
     expect(within(dialog).queryByLabelText('添加到容器')).not.toBeInTheDocument()
     expect(within(dialog).queryByLabelText('访问权限')).not.toBeInTheDocument()
+    // 弹窗恒按真实链路渲染：没有演示徽章，落点由服务端决定、不收集目录。
+    expect(within(dialog).queryByText('演示')).not.toBeInTheDocument()
+    expect(within(dialog).queryByLabelText(/落点目录/)).not.toBeInTheDocument()
+    expect(within(dialog).getByText('管理目录：~/.Elysian/data/sqlite（文件名由服务端生成）')).toBeInTheDocument()
 
     // 拖拽上传：把文件拖进拖拽区，表单读取名称与大小（不读内容）。
     const dropped = new File([new Uint8Array(2 * 1024 * 1024)], 'orders-backup.db', {
@@ -428,15 +452,17 @@ describe('数据库页面', () => {
     // 数据库名跟文件名走。
     expect(within(dialog).getByLabelText(/数据库名/)).toHaveValue('orders-backup')
 
-    await user.click(within(dialog).getByRole('button', { name: '创建' }))
+    await user.click(within(dialog).getByRole('button', { name: '上传并创建' }))
 
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     const created = await screen.findByRole('article', { name: 'SQLite 数据库 orders-backup' })
-    expect(created).toHaveTextContent('/srv/elysian/data/sqlite/orders-backup.db')
+    // 路径与大小由服务端决定并随列表返回，客户端不报送。
+    expect(created).toHaveTextContent('/root/.Elysian/data/sqlite/orders-backup.db')
+    expect(created).toHaveTextContent('2.0 MB')
     expect(created).not.toHaveTextContent('无账号')
   })
 
-  it('添加 SQLite：模拟新建时校验路径，生成 0 字节演示卡片', async () => {
+  it('添加 SQLite：新建空库只填名称，提交后登记服务端生成的文件', async () => {
     const user = userEvent.setup()
     renderApp('/databases', { gateway: pageGateway() })
     await screen.findByRole('list', { name: 'MariaDB 数据库列表' })
@@ -446,23 +472,15 @@ describe('数据库页面', () => {
     await user.click(screen.getByRole('button', { name: /添加数据库/ }))
     const dialog = await screen.findByRole('dialog', { name: '添加 SQLite 数据库' })
 
-    await user.click(within(dialog).getByRole('button', { name: '模拟新建文件' }))
+    await user.click(within(dialog).getByRole('button', { name: '新建空数据库' }))
     await user.type(within(dialog).getByLabelText(/数据库名/), 'notes_local')
-    await user.clear(within(dialog).getByLabelText(/落点目录/))
-    await user.type(within(dialog).getByLabelText(/落点目录/), 'data/sqlite')
-    await user.click(within(dialog).getByRole('button', { name: '创建' }))
-
-    expect(await within(dialog).findByText(/绝对路径/)).toBeInTheDocument()
-
-    await user.clear(within(dialog).getByLabelText(/落点目录/))
-    await user.type(within(dialog).getByLabelText(/落点目录/), '/srv/elysian/data/sqlite')
+    expect(within(dialog).queryByLabelText(/落点目录/)).not.toBeInTheDocument()
     await user.click(within(dialog).getByRole('button', { name: '创建' }))
 
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     const created = await screen.findByRole('article', { name: 'SQLite 数据库 notes_local' })
-    expect(created).toHaveTextContent('/srv/elysian/data/sqlite/notes_local.db')
-    // 演示卡片的模拟大小是 0 字节，显示为 KB。
-    expect(created).toHaveTextContent('0 KB')
+    expect(created).toHaveTextContent('/root/.Elysian/data/sqlite/notes_local.db')
+    expect(created).not.toHaveTextContent('演示')
   })
 
   it('点击文件路径行把路径复制到剪贴板，并给出已复制反馈', async () => {
@@ -477,38 +495,45 @@ describe('数据库页面', () => {
     await user.click(row)
 
     await expect(navigator.clipboard.readText()).resolves.toBe(
-      '/srv/elysian/data/sqlite/elysian-notes.db',
+      '/root/.Elysian/data/sqlite/elysian-notes.db',
     )
     // 反馈与复制按钮同款：行内短暂显示「已复制」，路径不消失，并另发一条成功通知。
     expect(await within(card).findByText('已复制')).toBeInTheDocument()
-    expect(card).toHaveTextContent('/srv/elysian/data/sqlite/elysian-notes.db')
+    expect(card).toHaveTextContent('/root/.Elysian/data/sqlite/elysian-notes.db')
     expect(useNotificationStore.getState().notifications[0]).toMatchObject({
       tone: 'success',
       message: '已复制文件路径',
     })
   })
 
-  it('删除数据库需要确认：取消不删，确认后卡片消失且通知带 mock 标注', async () => {
+  it('删除数据库需要确认：取消不删，确认后通知不带 mock 标注且向服务端核对', async () => {
     const user = userEvent.setup()
-    renderApp('/databases', { gateway: pageGateway() })
+    const gateway = pageGateway()
+    const listSpy = vi.spyOn(gateway.databases, 'list')
+    renderApp('/databases', { gateway })
     const list = await screen.findByRole('list', { name: 'MariaDB 数据库列表' })
     const card = within(list).getByRole('article', { name: 'MariaDB 数据库 mariadb-primary' })
 
     // 取消路径：确认弹窗出现，取消后卡片仍在。
-    await user.click(within(card).getByRole('button', { name: '删除' }))
+    await user.click(within(card).getByRole('button', { name: '删除数据库' }))
     const confirm = await screen.findByRole('dialog', { name: /确认删除数据库/ })
+    expect(confirm).toHaveTextContent('将删除目标逻辑库，容器和持久卷保留。此操作无法撤销。')
     await user.click(within(confirm).getByRole('button', { name: '取消' }))
     expect(screen.queryByRole('dialog', { name: /确认删除数据库/ })).not.toBeInTheDocument()
     expect(screen.getByRole('article', { name: 'MariaDB 数据库 mariadb-primary' })).toBeInTheDocument()
 
-    // 确认路径：卡片移除，通知带 mock 标注。
-    await user.click(within(card).getByRole('button', { name: '删除' }))
+    // 确认路径：删除后必向服务端核对（refresh），卡片以服务端状态为准消失，
+    // 通知不带「mock，待接入真实执行」之类的演示标注。
+    await user.click(within(card).getByRole('button', { name: '删除数据库' }))
     const confirmAgain = await screen.findByRole('dialog', { name: /确认删除数据库/ })
     await user.click(within(confirmAgain).getByRole('button', { name: '确认删除' }))
 
     await waitFor(() =>
       expect(screen.queryByRole('article', { name: 'MariaDB 数据库 mariadb-primary' })).not.toBeInTheDocument(),
     )
-    expect(await screen.findByText(/已删除（mock，待接入真实执行）/)).toBeInTheDocument()
+    expect(await screen.findByText('数据库 mariadb-primary 已删除')).toBeInTheDocument()
+    expect(screen.queryByText(/mock，待接入真实执行/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/（演示）/)).not.toBeInTheDocument()
+    expect(listSpy.mock.calls.length).toBeGreaterThan(1)
   })
 })

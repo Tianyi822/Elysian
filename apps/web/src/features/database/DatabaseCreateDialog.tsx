@@ -4,7 +4,6 @@ import type { DragEvent } from 'react'
 import { File, Loader2, Upload, X } from '../../components/icons'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { useDatabaseStore } from '../../stores/databaseStore'
-import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { RealDatabaseCreateDialog } from './RealDatabaseCreateDialog'
 import {
   SQLITE_FILE_SUFFIX,
@@ -12,7 +11,6 @@ import {
   databaseNameFromFile,
   emptyDraft,
   hasDatabaseCreateErrors,
-  sqliteFilePath,
   toDatabaseCreateInput,
   validateDatabaseCreateDraft,
 } from './databaseCreateForm'
@@ -24,10 +22,9 @@ const BUTTON = 'inline-flex min-h-9 items-center justify-center rounded-lg borde
 const ERROR = 'mt-1 text-xs text-danger'
 
 function SqliteFileField({
-  draft, real, errors, showErrors, creating, onPickFile, onPatch,
+  draft, errors, showErrors, creating, onPickFile, onPatch,
 }: {
   draft: DatabaseCreateDraft
-  real: boolean
   errors: DatabaseCreateFormErrors
   showErrors: boolean
   creating: boolean
@@ -51,7 +48,7 @@ function SqliteFileField({
           className={'min-h-10 px-2 text-center text-xs transition-colors disabled:opacity-50 ' +
             (index > 0 ? 'border-l border-line ' : '') +
             (draft.fileSource === source ? 'bg-surface-raised font-medium text-fg' : 'text-fg-muted hover:bg-surface-raised hover:text-fg')}>
-          {source === 'upload' ? real ? '上传 SQLite 文件' : '选择文件信息（演示）' : real ? '新建空数据库' : '模拟新建文件'}
+          {source === 'upload' ? '上传 SQLite 文件' : '新建空数据库'}
         </button>
       ))}
     </div>
@@ -70,27 +67,15 @@ function SqliteFileField({
         <input id="db-create-file" ref={inputRef} type="file" disabled={creating}
           accept={'.db,.sqlite,.sqlite3,' + SQLITE_FILE_SUFFIX + ',application/vnd.sqlite3,application/x-sqlite3'}
           className="sr-only" onChange={(event) => { if (event.target.files?.[0]) onPickFile(event.target.files[0]) }} />
-        <p className="text-xs leading-5 text-fg-subtle">{real
-          ? '上传独立、完整的 SQLite 快照。正在使用 WAL 的数据库请先导出快照。上限 256 MiB。'
-          : '仅记录文件名与大小；文件内容不会上传或保存。'}</p>
+        <p className="text-xs leading-5 text-fg-subtle">上传独立、完整的 SQLite 快照。正在使用 WAL 的数据库请先导出快照。上限 256 MiB。</p>
       </div>
       {showErrors && errors.file ? <p className={ERROR} role="alert">{errors.file}</p> : null}
     </> : <>
-      {!real ? <div className="mt-4">
-        <label htmlFor="db-create-directory" className={LABEL}>落点目录 <span className="text-danger">*</span></label>
-        <input id="db-create-directory" value={draft.directory} disabled={creating}
-          onChange={(event) => onPatch({ directory: event.target.value })}
-          autoComplete="off" spellCheck={false} className={FIELD + ' font-mono'} />
-        {showErrors && errors.directory ? <p className={ERROR} role="alert">{errors.directory}</p> : null}
-      </div> : null}
-      <p className="mt-3 text-xs leading-5 text-fg-subtle">{real
-        ? '文件将创建在面板管理目录 ~/.Elysian/data/sqlite；没有容器和账号。'
-        : '仅模拟一个 ' + SQLITE_FILE_SUFFIX + ' 文件路径，不会在本机创建文件；没有容器和账号。'}</p>
+      <p className="mt-3 text-xs leading-5 text-fg-subtle">文件将创建在面板管理目录 ~/.Elysian/data/sqlite；没有容器和账号。</p>
     </>}
 
     <p className="mt-3 break-all rounded-lg bg-surface-raised px-3 py-2 font-mono text-xs text-fg-muted">
-      {real ? '管理目录：~/.Elysian/data/sqlite（文件名由服务端生成）'
-        : draft.name.trim() ? sqliteFilePath(draft) : '落点：' + draft.directory + '/{数据库名}' + SQLITE_FILE_SUFFIX}
+      管理目录：~/.Elysian/data/sqlite（文件名由服务端生成）
     </p>
   </section>
 }
@@ -105,26 +90,25 @@ export function DatabaseCreateDialog() {
   const databases = useDatabaseStore((state) => state.databases)
   const closeCreate = useDatabaseStore((state) => state.closeCreate)
   const createDatabase = useDatabaseStore((state) => state.createDatabase)
-  const [draft, setDraft] = useState(() => emptyDraft(engine))
+  const [draft, setDraft] = useState(() => emptyDraft())
   const [showErrors, setShowErrors] = useState(false)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
 
   useEffect(() => {
     if (open) {
-      setDraft(emptyDraft(engine))
+      setDraft(emptyDraft())
       setShowErrors(false)
       setSelectedFile(null)
     }
-    // 弹窗每次打开都按当时的引擎重置草稿。
+    // 弹窗每次打开都重置草稿。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
   if (!open) return null
   if (engine !== 'SQLite') return <RealDatabaseCreateDialog engine={engine} />
-  const real = isDockerRuntime()
   const errors = {
-    ...validateDatabaseCreateDraft(draft, databases, engine),
-    ...(real && selectedFile && selectedFile.size > 256 * 1024 ** 2 ? { file: 'SQLite 文件超过 256 MiB 上传上限' } : {}),
+    ...validateDatabaseCreateDraft(draft, databases),
+    ...(selectedFile && selectedFile.size > 256 * 1024 ** 2 ? { file: 'SQLite 文件超过 256 MiB 上传上限' } : {}),
   }
   const disabled = creating || (showErrors && hasDatabaseCreateErrors(errors))
   const patch = (part: Partial<DatabaseCreateDraft>) => setDraft((current) => ({ ...current, ...part }))
@@ -140,8 +124,8 @@ export function DatabaseCreateDialog() {
   const submit = () => {
     setShowErrors(true)
     if (hasDatabaseCreateErrors(errors)) return
-    const input = toDatabaseCreateInput(draft, engine)
-    if (input.kind === 'file' && real && input.origin === 'uploaded') {
+    const input = toDatabaseCreateInput(draft)
+    if (input.origin === 'uploaded') {
       if (!selectedFile) return
       input.file = selectedFile
     }
@@ -156,10 +140,7 @@ export function DatabaseCreateDialog() {
         onInteractOutside={(event) => event.preventDefault()}
         className="fixed left-1/2 top-1/2 z-[55] flex max-h-[min(44rem,calc(100vh-2rem))] w-[min(42rem,calc(100vw-1.5rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line bg-bg shadow-2xl">
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-line px-5 py-3">
-          <div className="flex min-w-0 items-center gap-2">
-            {!real ? <span className="shrink-0 rounded bg-warning/15 px-1.5 py-0.5 text-xs font-medium text-warning">演示</span> : null}
-            <Dialog.Title className="truncate text-base font-semibold text-fg">添加 SQLite 数据库</Dialog.Title>
-          </div>
+          <Dialog.Title className="truncate text-base font-semibold text-fg">添加 SQLite 数据库</Dialog.Title>
           <button type="button" onClick={closeCreate} disabled={creating} aria-label="关闭弹窗"
             className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-fg-muted hover:bg-surface-raised disabled:opacity-50"><X aria-hidden size={16} /></button>
         </div>
@@ -173,20 +154,18 @@ export function DatabaseCreateDialog() {
               className={FIELD + ' font-mono'} />
             {showErrors && errors.name ? <p id="db-create-name-error" className={ERROR} role="alert">{errors.name}</p> : null}
           </section>
-          <SqliteFileField draft={draft} real={real} errors={errors} showErrors={showErrors} creating={creating}
+          <SqliteFileField draft={draft} errors={errors} showErrors={showErrors} creating={creating}
             onPatch={patch} onPickFile={pickFile} />
           {createError ? <p role="alert" className="mt-4 text-xs text-danger">{createError}</p> : null}
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-line px-5 py-3">
-          <p className="text-xs text-fg-subtle">{real
-            ? uploadPercent !== undefined ? '上传进度 ' + uploadPercent + '%' : '数据库文件保存在面板持久卷中。'
-            : '所有数据仅存在于演示内存。'}</p>
+          <p className="text-xs text-fg-subtle">{uploadPercent !== undefined ? '上传进度 ' + uploadPercent + '%' : '数据库文件保存在面板持久卷中。'}</p>
           <div className="ml-auto flex gap-2">
             <button type="button" onClick={closeCreate} disabled={creating} className={BUTTON}>取消</button>
             <button type="button" onClick={submit} disabled={disabled} className={BUTTON + ' bg-surface-raised'}>
               {creating ? <Loader2 aria-hidden size={13} className="mr-1.5 animate-spin" /> : null}
-              {creating ? real && draft.fileSource === 'upload' ? '上传中…' : '创建中…'
-                : real && draft.fileSource === 'upload' ? '上传并创建' : '创建'}
+              {creating ? draft.fileSource === 'upload' ? '上传中…' : '创建中…'
+                : draft.fileSource === 'upload' ? '上传并创建' : '创建'}
             </button>
           </div>
         </div>
