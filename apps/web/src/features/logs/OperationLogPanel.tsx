@@ -12,6 +12,7 @@ import type { OperationLogEntry, OperationLogOutcome } from '@elysian/contracts'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { formatLoginTime } from '../../components/format'
+import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 import { Search } from '../../components/icons'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { StatusTag } from '../../components/StatusTag'
@@ -309,7 +310,7 @@ export function OperationLogPanel() {
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="请输入搜索关键字"
-            className="w-full rounded-lg border border-line bg-surface-raised py-1.5 pl-8 pr-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle"
+            className={`${FORM_CONTROL_HEIGHT_CLASS} w-full rounded-lg border border-line bg-surface-raised pl-8 pr-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle`}
           />
           <Search
             aria-hidden

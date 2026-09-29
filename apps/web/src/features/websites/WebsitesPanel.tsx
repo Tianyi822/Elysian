@@ -5,6 +5,7 @@ import { IconButton } from '../../components/IconButton'
 import { RefreshCw, Search } from '../../components/icons'
 import { EmptyState } from '../../components/states/StateViews'
 import { useWebsitesStore } from '../../stores/websitesStore'
+import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { WebsiteDetailSheet } from './WebsiteDetailSheet'
 import { WebsitesCard } from './WebsitesCard'
@@ -23,7 +24,7 @@ import { filterWebsiteProjects } from './websitesListing'
  */
 
 const TOOL_BUTTON_CLASS =
-  'inline-flex items-center rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
+  `inline-flex ${FORM_CONTROL_HEIGHT_CLASS} items-center rounded-lg border border-line bg-surface-raised px-3 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50`
 
 /** 反向代理通道横幅：unavailable 为降级说明，active 且有 detail 为漂移说明附对账按钮。 */
 function ProxyStatusBanner({
@@ -120,10 +121,10 @@ export function WebsitesPanel() {
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="请输入项目名称或备注"
-              className="w-full rounded-lg border border-line bg-surface-raised py-1.5 pl-8 pr-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle"
+              className={`${FORM_CONTROL_HEIGHT_CLASS} w-full rounded-lg border border-line bg-surface-raised pl-8 pr-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle`}
             />
           </div>
-          <IconButton label="刷新" onPress={() => void refresh(gateway)}>
+          <IconButton label="刷新" formControl onPress={() => void refresh(gateway)}>
             <RefreshCw aria-hidden size={13} className={refreshing ? 'animate-spin' : undefined} />
           </IconButton>
         </div>

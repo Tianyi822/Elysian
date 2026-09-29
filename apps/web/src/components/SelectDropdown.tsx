@@ -109,7 +109,7 @@ export function SelectDropdown<T extends string>({
   const selected = active && !fullWidth
   const fieldTrigger =
     `inline-flex ${FORM_CONTROL_HEIGHT_CLASS} w-full items-center justify-between gap-1.5 rounded-lg border border-line bg-surface-raised px-2.5 text-sm text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-60`
-  const filterTrigger = `inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${
+  const filterTrigger = `inline-flex ${FORM_CONTROL_HEIGHT_CLASS} shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 text-xs font-medium transition-colors ${
     selected
       ? 'border-accent/50 bg-accent/10 text-accent'
       : 'border-line bg-surface-raised text-fg hover:border-fg-subtle'
