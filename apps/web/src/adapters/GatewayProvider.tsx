@@ -31,6 +31,9 @@ export function GatewayProvider({
         containers: isDockerRuntime() ? 'http' : 'mock',
         // 网站在 Docker 运行时经 /api/websites 落真实容器、站点目录与宿主 Caddy 配置。
         websites: isDockerRuntime() ? 'http' : 'mock',
+        // 依赖检测在 Docker 运行时接 /api/platform/dependencies 现场探测宿主
+        // Docker 与 Caddy 通道；本地开发恒双 ok，不弹安装引导。
+        dependencies: isDockerRuntime() ? 'http' : 'mock',
         // 日志的 http 分支只影响运行与操作两类；登录日志没有真实端点，两种取值下都读内存演示。
         logs: isDockerRuntime() ? 'http' : 'mock',
         terminals: isDockerRuntime() ? 'ws' : 'mock',

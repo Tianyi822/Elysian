@@ -12,6 +12,7 @@ import type {
   ContainerCreateInput,
   ContainerImage,
   ImagePullProgress,
+  DependencyProbeReport,
   ElysianEvent,
   EventStreamHandlers,
   FileEntry,
@@ -69,6 +70,7 @@ import type {
   ApprovalAdapter,
   AuditAdapter,
   ContainerAdapter,
+  DependenciesAdapter,
   HostTerminalHandlers,
   HostTerminalSessionInfo,
   EventsAdapter,
@@ -952,6 +954,24 @@ export class MockWebsitesAdapter implements WebsitesAdapter {
   async reconcileProxy(): Promise<WebsiteProxyStatus> {
     // 演示环境没有真实的宿主 Caddy 通道，对账是 no-op，状态保持正常。
     return DEMO_PROXY_STATUS
+  }
+}
+
+/** 演示模式恒报双就绪：宿主依赖引导只属于 Docker 运行时的真实场景，本地开发不弹窗。 */
+const DEMO_DEPENDENCY_REPORT: DependencyProbeReport = {
+  docker: { state: 'ok', detail: null },
+  caddy: { state: 'ok', detail: null },
+}
+
+/**
+ * 依赖检测 mock 实现：恒双 ok、不可变（演示模式不引导，与 AGENTS.md 替换表摘要一致）。
+ * 要复现 missing / error 等模拟态，测试在 gateway 字面量手写 dependencies 片注入
+ * 可控 probe（DependencyGuideDialogs.test.tsx / WebsitesPage.test.tsx 的既有做法，
+ * 与 sshPanel.ts 的委托替身同款接缝）；真实场景由 http 实现接 /api/platform/dependencies。
+ */
+export class MockDependenciesAdapter implements DependenciesAdapter {
+  async probe(): Promise<DependencyProbeReport> {
+    return DEMO_DEPENDENCY_REPORT
   }
 }
 

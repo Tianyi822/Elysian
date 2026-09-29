@@ -10,6 +10,7 @@ import type {
   ImagePullProgress,
   DatabaseEngine,
   DatabaseInstance,
+  DependencyProbeReport,
   ElysianEvent,
   EventStreamHandlers,
   FileEntry,
@@ -394,6 +395,17 @@ export interface ResourceHistoryAdapter {
   list(range: ResourceHistoryTimeRange): Promise<readonly ResourceSamplePoint[]>
 }
 
+/**
+ * 宿主依赖检测接缝：现场探测宿主 Docker Engine 与 Caddy 管理通道的就绪性。
+ * Docker 运行时经同源 HTTP（/api/platform/dependencies，服务端每次请求现场探测、
+ * 结果不吃缓存）；mock 实现恒双 ok（本地开发是演示模式，宿主依赖引导只属于
+ * Docker 运行时的真实场景）。探测失败时引导层静默降级，不伪装成依赖缺失。
+ */
+export interface DependenciesAdapter {
+  /** 现场探测宿主 Docker 与 Caddy 通道；mock 实现恒双 ok（演示模式不引导）。 */
+  probe(): Promise<DependencyProbeReport>
+}
+
 /** 页面注入的聚合入口。 */
 export interface ElysianGateway {
   session: SessionAdapter
@@ -413,6 +425,7 @@ export interface ElysianGateway {
   terminals: TerminalAdapter
   websites: WebsitesAdapter
   resources: ResourceHistoryAdapter
+  dependencies: DependenciesAdapter
   /** 把演示数据重置回种子状态。 */
   reset(): Promise<void>
 }

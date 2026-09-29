@@ -5,6 +5,7 @@ import {
   MockApprovalAdapter,
   MockAuditAdapter,
   MockContainerAdapter,
+  MockDependenciesAdapter,
   MockFilesAdapter,
   MockFirewallAdapter,
   MockIncidentAdapter,
@@ -36,6 +37,7 @@ import { createHttpUsersAdapter } from '../http/usersHttpAdapter'
 import { createHttpFilesAdapter } from '../http/filesHttpAdapter'
 import { createHttpContainersAdapter } from '../http/containersHttpAdapter'
 import { createHttpWebsitesAdapter } from '../http/websitesHttpAdapter'
+import { createHttpDependenciesAdapter } from '../http/dependenciesHttpAdapter'
 import { createTerminalWsAdapter } from '../http/terminalWsAdapter'
 import { createHttpDatabaseAdapter } from '../http/databaseHttpAdapter'
 import type { ContainerAdapter, EventsAdapter, TerminalAdapter } from '../../contracts/adapters'
@@ -56,6 +58,8 @@ import { useContainersStore } from '../../stores/containersStore'
  * - `containers: 'http'` 在 Docker 运行时接通容器内只读列表的真实端点，缺省仍是内存演示；
  * - `websites: 'http'` 在 Docker 运行时接通容器内网站管理的真实端点（容器、站点目录
  *   与宿主 Caddy 配置），缺省仍是内存演示；
+ * - `dependencies: 'http'` 在 Docker 运行时接通宿主依赖检测的真实端点
+ *   （/api/platform/dependencies，现场探测 Docker 与 Caddy 通道），缺省恒双 ok 不引导；
  * - `logs: 'http'` 在 Docker 运行时接通容器内平台日志的真实端点（运行与操作两类），
  *   登录日志没有真实端点，**两种取值下都读内存演示**；
  * - `terminals: 'ws'` 在 Docker 运行时经 WebSocket 接容器内真实 PTY，缺省仍是内存演示。
@@ -73,6 +77,7 @@ export function createMockGateway(
     files?: 'mock' | 'http'
     containers?: 'mock' | 'http'
     websites?: 'mock' | 'http'
+    dependencies?: 'mock' | 'http'
     logs?: 'mock' | 'http'
     terminals?: 'mock' | 'ws'
   } = {},
@@ -111,6 +116,10 @@ export function createMockGateway(
   // 宿主机本地开发保留内存演示（macOS 开发宿主没有 Docker Engine 与 caddy socket）。
   const websites =
     options.websites === 'http' ? createHttpWebsitesAdapter() : new MockWebsitesAdapter()
+  // 依赖检测：Docker 运行时接 /api/platform/dependencies 现场探测；本地开发恒双 ok，
+  // 引导弹窗永不出现（要看引导效果走容器环境或组件测试注入）。
+  const dependencies =
+    options.dependencies === 'http' ? createHttpDependenciesAdapter() : new MockDependenciesAdapter()
 
   return {
     session: new MockSessionAdapter(),
@@ -129,6 +138,7 @@ export function createMockGateway(
     terminals,
     websites,
     resources,
+    dependencies,
     events: attachDockerContainerWatch(
       wrapLive(
         useHttpContainers
