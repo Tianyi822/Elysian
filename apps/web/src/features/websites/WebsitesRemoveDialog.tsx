@@ -3,8 +3,8 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { useWebsitesStore } from '../../stores/websitesStore'
 
 /**
- * 删除项目确认弹窗：删除是危险动作，确认文案明示只作用于演示内存，
- * 不触碰任何真实站点；取消与关闭都不产生任何变更。
+ * 删除项目确认弹窗：删除是危险动作，确认文案明示会连站点目录一起删除；
+ * 取消与关闭都不产生任何变更。
  */
 export function WebsitesRemoveDialog() {
   const gateway = useGateway()
@@ -32,7 +32,7 @@ export function WebsitesRemoveDialog() {
               确认删除项目「{removeTarget.name}」？
             </p>
             <p className="text-xs text-fg-muted">
-              删除只发生在演示内存里，不会触碰任何真实站点；刷新页面后演示数据回到种子状态。
+              将停止并删除站点容器、删除站点目录 {removeTarget.rootDir}（含其中全部文件）、移除登记并回收反向代理配置，不可恢复。
             </p>
           </div>
           <div className="flex items-center justify-end gap-2 border-t border-line px-4 py-2.5">

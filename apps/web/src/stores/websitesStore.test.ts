@@ -7,11 +7,11 @@ import type {
 } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
 import { useNotificationStore } from './notificationStore'
-import { useWebsitesStore } from './websitesStore'
+import { useWebsitesStore, websiteNoticeSuffix } from './websitesStore'
 
 /*
  * 网站区 store 的行为测试。网关全部用手写 stub 注入，
- * 不依赖 mock 实现（它正在并行演进），只依赖 adapter 接口形状。
+ * 不依赖 mock 实现，只依赖 adapter 接口形状。
  */
 
 function project(overrides: Partial<WebsiteProject>): WebsiteProject {
@@ -20,10 +20,12 @@ function project(overrides: Partial<WebsiteProject>): WebsiteProject {
     kind: 'java',
     name: 'app',
     pid: null,
+    containerId: 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90',
     port: 8080,
     runtimeVersion: '17',
     rootDir: '/www/wwwroot/app',
     runState: 'stopped',
+    domain: null,
     expiryAt: null,
     note: null,
     cert: 'none',
@@ -86,7 +88,7 @@ const FIXTURES: readonly WebsiteProject[] = [
 function gatewayWith(overrides: Partial<ElysianGateway['websites']> = {}): ElysianGateway {
   return {
     websites: {
-      list: async () => [...FIXTURES],
+      list: async () => ({ projects: [...FIXTURES], proxy: { state: 'active', detail: null } }),
       create: async (kind: WebsiteProjectKind, input: WebsiteProjectCreateInput) =>
         project({
           id: `web-${kind}-new`,
@@ -106,6 +108,7 @@ function gatewayWith(overrides: Partial<ElysianGateway['websites']> = {}): Elysi
         return { ...target, runState: running ? 'running' : 'stopped', pid: running ? target.pid : null }
       },
       logs: async (projectId: string) => [`[${projectId}] 日志行一`, `[${projectId}] 日志行二`],
+      reconcileProxy: async () => ({ state: 'active', detail: null }),
       ...overrides,
     },
   } as unknown as ElysianGateway
@@ -116,9 +119,11 @@ beforeEach(() => {
     status: 'idle',
     errorMessage: undefined,
     projects: [],
+    proxyStatus: { state: 'active', detail: null },
     search: '',
     category: 'all',
     refreshing: false,
+    reconciling: false,
     saving: false,
     createDialogOpen: false,
     settingsTarget: undefined,
@@ -223,7 +228,7 @@ describe('新建项目', () => {
     expect(state.saving).toBe(false)
     expect(useNotificationStore.getState().notifications[0]).toMatchObject({
       tone: 'success',
-      message: '项目 新站点 已添加（mock，待接入真实执行）',
+      message: '项目 新站点 已添加（演示数据，刷新后还原）',
     })
   })
 
@@ -263,7 +268,7 @@ describe('设置与删除', () => {
     expect(state.projects.find((item) => item.id === 'web-node-site')?.note).toBe('已交给市场部维护')
     expect(useNotificationStore.getState().notifications[0]).toMatchObject({
       tone: 'success',
-      message: '项目 marketing-site 已修改（mock，待接入真实执行）',
+      message: '项目 marketing-site 已修改（演示数据，刷新后还原）',
     })
   })
 
@@ -280,7 +285,7 @@ describe('设置与删除', () => {
     expect(state.busyProjectIds).toEqual([])
     expect(useNotificationStore.getState().notifications[0]).toMatchObject({
       tone: 'success',
-      message: '项目 company-portal 已删除（mock，待接入真实执行）',
+      message: '项目 company-portal 已删除（演示数据，刷新后还原）',
     })
   })
 })
@@ -306,7 +311,7 @@ describe('启停', () => {
     expect(state.busyProjectIds).toEqual([])
     expect(useNotificationStore.getState().notifications[0]).toMatchObject({
       tone: 'success',
-      message: '项目 订单中心-api 已停止（mock，待接入真实执行）',
+      message: '项目 订单中心-api 已停止（演示数据，刷新后还原）',
     })
   })
 
@@ -326,6 +331,59 @@ describe('启停', () => {
       tone: 'danger',
       message: '执行层未接入',
     })
+  })
+})
+
+describe('反向代理状态与对账', () => {
+  it('load 与 refresh 把列表附带的通道状态落地', async () => {
+    const unavailable = { state: 'unavailable' as const, detail: '宿主未提供 Caddy 管理通道' }
+    await useWebsitesStore.getState().load(gatewayWith({ list: async () => ({ projects: [...FIXTURES], proxy: unavailable }) }))
+    expect(useWebsitesStore.getState().proxyStatus).toEqual(unavailable)
+
+    const drifted = { state: 'active' as const, detail: '2 个站点的路由未下发' }
+    await useWebsitesStore.getState().refresh(
+      gatewayWith({ list: async () => ({ projects: [...FIXTURES], proxy: drifted }) }),
+    )
+    expect(useWebsitesStore.getState().proxyStatus).toEqual(drifted)
+  })
+
+  it('reconcileProxy 成功：状态落地、成功通知并随后静默刷新', async () => {
+    const list = vi.fn(async () => ({ projects: [...FIXTURES], proxy: { state: 'active' as const, detail: null } }))
+    const gateway = gatewayWith({
+      list,
+      reconcileProxy: async () => ({ state: 'active' as const, detail: null }),
+    })
+    await useWebsitesStore.getState().load(gateway)
+
+    await useWebsitesStore.getState().reconcileProxy(gateway)
+
+    const state = useWebsitesStore.getState()
+    expect(state.proxyStatus).toEqual({ state: 'active', detail: null })
+    expect(state.reconciling).toBe(false)
+    // 对账成功后自动刷新一次：证书与路由折算随新列表更新。
+    expect(list).toHaveBeenCalledTimes(2)
+    expect(useNotificationStore.getState().notifications[0]).toMatchObject({
+      tone: 'success',
+      message: '反向代理配置已重新下发',
+    })
+  })
+
+  it('reconcileProxy 失败：危险通知透传 adapter 错误，reconciling 复位', async () => {
+    await useWebsitesStore.getState().load(gatewayWith())
+    await useWebsitesStore.getState().reconcileProxy(
+      gatewayWith({ reconcileProxy: async () => { throw new Error('宿主 Caddy 存在面板外的配置，拒绝覆盖') } }),
+    )
+
+    expect(useWebsitesStore.getState().reconciling).toBe(false)
+    expect(useNotificationStore.getState().notifications[0]).toMatchObject({
+      tone: 'danger',
+      message: '宿主 Caddy 存在面板外的配置，拒绝覆盖',
+    })
+  })
+
+  it('动作完成提示按运行模式标注：Docker 真实执行不带后缀，本地演示标注演示语义', () => {
+    expect(websiteNoticeSuffix(true)).toBe('')
+    expect(websiteNoticeSuffix(false)).toBe('（演示数据，刷新后还原）')
   })
 })
 

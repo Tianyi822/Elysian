@@ -3,10 +3,23 @@ import type {
   WebsiteProject,
   WebsiteProjectCreateInput,
   WebsiteProjectKind,
+  WebsiteProxyStatus,
 } from '@elysian/contracts'
 import { create } from 'zustand'
 import type { ElysianGateway } from '../contracts/adapters'
+import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
 import { useNotificationStore } from './notificationStore'
+
+/**
+ * 动作完成提示的运行模式标注：Docker 运行时动作已真实执行（容器、站点目录与
+ * 反向代理配置），直接呈现结果；宿主机本地开发（内存演示数据集）标注演示语义，
+ * 括号形态追加在句子末尾，只用这一个来源。
+ */
+export function websiteNoticeSuffix(dockerRuntime: boolean): string {
+  return dockerRuntime ? '' : '（演示数据，刷新后还原）'
+}
+
+const NOTICE_SUFFIX = websiteNoticeSuffix(isDockerRuntime())
 
 type WebsitesStatus = 'idle' | 'loading' | 'ready' | 'error'
 
@@ -14,12 +27,16 @@ type WebsitesState = {
   status: WebsitesStatus
   errorMessage: string | undefined
   projects: readonly WebsiteProject[]
+  /** 反向代理通道状态：unavailable 或 active 且 detail 非空时面板渲染横幅。 */
+  proxyStatus: WebsiteProxyStatus
   /** 搜索按项目名称与备注匹配，单列表卡片直接消费。 */
   search: string
   /** 「全部分类」筛选：all 表示不过滤。 */
   category: WebsiteCategory | 'all'
   /** 刷新走静默重载：不闪整页加载态，只锁刷新按钮一拍。 */
   refreshing: boolean
+  /** 「重新下发反向代理配置」按钮的忙碌态：动作进行中禁用并转圈。 */
+  reconciling: boolean
   saving: boolean
   createDialogOpen: boolean
   settingsTarget: WebsiteProject | undefined
@@ -31,6 +48,8 @@ type WebsitesState = {
   busyProjectIds: readonly string[]
   load: (gateway: ElysianGateway) => Promise<void>
   refresh: (gateway: ElysianGateway) => Promise<void>
+  /** 域级对账：从登记全量重新下发反向代理配置，成功后刷新列表与通道状态。 */
+  reconcileProxy: (gateway: ElysianGateway) => Promise<void>
   setSearch: (search: string) => void
   setCategory: (category: WebsiteCategory | 'all') => void
   openCreate: () => void
@@ -87,9 +106,12 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
     status: 'idle',
     errorMessage: undefined,
     projects: [],
+    // 初始值等同「通道正常且无漂移」：首次 load 之前不渲染横幅。
+    proxyStatus: { state: 'active', detail: null },
     search: '',
     category: 'all',
     refreshing: false,
+    reconciling: false,
     saving: false,
     createDialogOpen: false,
     settingsTarget: undefined,
@@ -103,8 +125,8 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
       if (get().status === 'loading') return
       set({ status: 'loading', errorMessage: undefined })
       try {
-        const projects = await gateway.websites.list()
-        set({ status: 'ready', projects })
+        const { projects, proxy } = await gateway.websites.list()
+        set({ status: 'ready', projects, proxyStatus: proxy })
       } catch (error) {
         set({ status: 'error', errorMessage: errorMessageOf(error, '网站数据加载失败') })
       }
@@ -115,12 +137,28 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
       if (get().refreshing) return
       set({ refreshing: true })
       try {
-        const projects = await gateway.websites.list()
-        set({ status: 'ready', projects, errorMessage: undefined })
+        const { projects, proxy } = await gateway.websites.list()
+        set({ status: 'ready', projects, proxyStatus: proxy, errorMessage: undefined })
       } catch (error) {
         notify(errorMessageOf(error, '刷新失败'), 'danger')
       } finally {
         set({ refreshing: false })
+      }
+    },
+
+    async reconcileProxy(gateway) {
+      if (get().reconciling) return
+      set({ reconciling: true })
+      try {
+        const proxy = await gateway.websites.reconcileProxy()
+        set({ proxyStatus: proxy })
+        notify('反向代理配置已重新下发')
+        // 证书与路由的折算要等下一次列表读取：成功后静默刷新一次，横幅随之下线。
+        await get().refresh(gateway)
+      } catch (error) {
+        notify(errorMessageOf(error, '反向代理配置下发失败'), 'danger')
+      } finally {
+        set({ reconciling: false })
       }
     },
 
@@ -146,7 +184,7 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
       try {
         const created = await gateway.websites.create(kind, input)
         set((state) => ({ projects: [...state.projects, created], createDialogOpen: false, saving: false }))
-        notify(`项目 ${created.name} 已添加（mock，待接入真实执行）`)
+        notify(`项目 ${created.name} 已添加${NOTICE_SUFFIX}`)
         return true
       } catch (error) {
         set({ saving: false })
@@ -173,7 +211,7 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
           settingsTarget: undefined,
           saving: false,
         }))
-        notify(`项目 ${updated.name} 已修改（mock，待接入真实执行）`)
+        notify(`项目 ${updated.name} 已修改${NOTICE_SUFFIX}`)
         return true
       } catch (error) {
         set({ saving: false })
@@ -200,7 +238,7 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
           removeTarget: undefined,
           busyProjectIds: state.busyProjectIds.filter((id) => id !== project.id),
         }))
-        notify(`项目 ${project.name} 已删除（mock，待接入真实执行）`)
+        notify(`项目 ${project.name} 已删除${NOTICE_SUFFIX}`)
       } catch (error) {
         set((state) => ({ busyProjectIds: state.busyProjectIds.filter((id) => id !== project.id) }))
         notify(errorMessageOf(error, '删除失败'), 'danger')
@@ -226,7 +264,7 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
           projects: state.projects.map((item) => (item.id === confirmed.id ? confirmed : item)),
           busyProjectIds: state.busyProjectIds.filter((id) => id !== project.id),
         }))
-        notify(`项目 ${project.name} 已${running ? '启动' : '停止'}（mock，待接入真实执行）`)
+        notify(`项目 ${project.name} 已${running ? '启动' : '停止'}${NOTICE_SUFFIX}`)
       } catch (error) {
         set((state) => ({
           projects: state.projects.map((item) => (item.id === previous.id ? previous : item)),

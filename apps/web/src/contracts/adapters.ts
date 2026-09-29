@@ -27,10 +27,12 @@ import type {
   SshAdapter,
   Unsubscribe,
   UserAdapter,
+  WebsiteListReport,
   WebsiteProject,
   WebsiteProjectCreateInput,
   WebsiteProjectKind,
   WebsiteProjectUpdateInput,
+  WebsiteProxyStatus,
 } from '@elysian/contracts'
 import type { TerminalCompletion } from '../components/terminal/terminalSession'
 
@@ -282,22 +284,28 @@ export type { SshAdapter } from '@elysian/contracts'
 export type { UserAdapter } from '@elysian/contracts'
 
 /**
- * 网站部署适配接口。本期为 mock 实现：项目改动只落内存数据集；
- * 真实的项目启停、删除由未来执行层筛选与执行，页面不改。
+ * 网站部署适配接口。mock 实现服务宿主机本地开发（内存演示数据集）；
+ * Docker 运行时经同源 HTTP（/api/websites）落真实容器、站点目录与反向代理，
+ * 两种实现对同一套契约断言复跑——这就是「mock 可替换」的验证方式。
  */
 export interface WebsitesAdapter {
-  /** 全部项目（演示）：五种运行时类型共用一份列表，卡片上以标签区分。 */
-  list(): Promise<readonly WebsiteProject[]>
-  /** 新建项目（演示）：新建即已停止、无证书；同类型同名拒绝。 */
+  /** 全部项目附带反向代理通道状态：列表读取时探测一次，读端点无副作用。 */
+  list(): Promise<WebsiteListReport>
+  /** 新建项目：新建即已停止、无证书；名称跨类型全局唯一（站点目录只由名称推导）。 */
   create(kind: WebsiteProjectKind, input: WebsiteProjectCreateInput): Promise<WebsiteProject>
-  /** 修改项目（演示）：设置弹窗只改备注与到期时间。 */
+  /** 修改项目：设置弹窗只改备注与到期时间，名称、根目录、域名、端口不可改。 */
   update(projectId: string, input: WebsiteProjectUpdateInput): Promise<WebsiteProject>
-  /** 删除项目（演示）：只改内存数据集，不触碰任何真实站点。 */
+  /** 删除项目：停容器、回收反向代理路由、删容器与站点目录、删登记；不幂等。 */
   remove(projectId: string): Promise<void>
-  /** 启动或停止项目（演示）：Java/Node 启动后补进程号，停止后清空。 */
+  /** 启动或停止项目：非 HTML 落容器启停并回报进程号，HTML 翻转托管开关。 */
   setRunning(projectId: string, running: boolean): Promise<WebsiteProject>
-  /** 项目运行日志（演示）：确定性模板行，详情抽屉按需拉取。 */
+  /** 项目运行日志：非 HTML 读容器日志，HTML 为宿主 Caddy 托管说明行。 */
   logs(projectId: string): Promise<readonly string[]>
+  /**
+   * 域级对账：从登记全量重新生成并下发反向代理配置，返回下发后的通道状态。
+   * 覆盖「降级期间创建了域名站点、通道恢复后路由未下发」与「配置漂移」两个场景。
+   */
+  reconcileProxy(): Promise<WebsiteProxyStatus>
 }
 
 /** 页面级访问区域。权限只做到这一粒度，本阶段不实现更细的权限模型。 */

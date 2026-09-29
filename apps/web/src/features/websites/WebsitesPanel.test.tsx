@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ElysianGateway } from '../../contracts/adapters'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { resetWebsitesData } from '../../adapters/mock/websitesData'
@@ -26,6 +26,7 @@ function sessionGateway(overrides: Partial<ElysianGateway['websites']> = {}): El
       remove: (projectId) => websites.remove(projectId),
       setRunning: (projectId, running) => websites.setRunning(projectId, running),
       logs: (projectId) => websites.logs(projectId),
+      reconcileProxy: () => websites.reconcileProxy(),
       ...overrides,
     },
   }
@@ -56,9 +57,11 @@ beforeEach(() => {
     status: 'idle',
     errorMessage: undefined,
     projects: [],
+    proxyStatus: { state: 'active', detail: null },
     search: '',
     category: 'all',
     refreshing: false,
+    reconciling: false,
     saving: false,
     createDialogOpen: false,
     settingsTarget: undefined,
@@ -140,7 +143,7 @@ describe('详情抽屉', () => {
     expect(await within(dialog).findByText(/启动完成，监听端口 8080/)).toBeInTheDocument()
   })
 
-  it('HTML 项目详情显示 Nginx 托管说明而不是部署命令', async () => {
+  it('HTML 项目详情显示 Caddy 托管说明而不是部署命令', async () => {
     const user = userEvent.setup()
     await openWebsites()
 
@@ -148,7 +151,7 @@ describe('详情抽屉', () => {
     const dialog = await screen.findByRole('dialog')
 
     expect(
-      await within(dialog).findByText('静态站点由 Nginx 直接托管，无部署命令'),
+      await within(dialog).findByText('静态站点由宿主 Caddy 直接托管，无部署命令'),
     ).toBeInTheDocument()
   })
 })
@@ -178,7 +181,7 @@ describe('建站', () => {
 
     expect(screen.queryByRole('dialog', { name: '添加项目' })).not.toBeInTheDocument()
     expect(await within(list).findByRole('article', { name: /static-home/ })).toBeInTheDocument()
-    expect(lastNotification()).toBe('项目 static-home 已添加（mock，待接入真实执行）')
+    expect(lastNotification()).toBe('项目 static-home 已添加（演示数据，刷新后还原）')
   })
 })
 
@@ -191,7 +194,7 @@ describe('卡片动作', () => {
     await user.click(within(java).getByRole('button', { name: '停止' }))
 
     expect(await within(java).findByText('已停止')).toBeInTheDocument()
-    expect(lastNotification()).toContain('已停止（mock，待接入真实执行）')
+    expect(lastNotification()).toContain('已停止（演示数据，刷新后还原）')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
@@ -207,7 +210,7 @@ describe('卡片动作', () => {
     await user.click(within(dialog).getByRole('button', { name: '保存修改' }))
 
     expect(screen.queryByRole('dialog', { name: /设置项目/ })).not.toBeInTheDocument()
-    expect(lastNotification()).toBe('项目 订单中心-api 已修改（mock，待接入真实执行）')
+    expect(lastNotification()).toBe('项目 订单中心-api 已修改（演示数据，刷新后还原）')
   })
 
   it('设置弹窗预填当前值：不改任何字段保存，备注与到期时间原样保留', async () => {
@@ -242,7 +245,58 @@ describe('卡片动作', () => {
     await waitFor(() =>
       expect(screen.queryByRole('article', { name: '订单中心-api' })).not.toBeInTheDocument(),
     )
-    expect(lastNotification()).toContain('已删除（mock，待接入真实执行）')
+    expect(lastNotification()).toContain('已删除（演示数据，刷新后还原）')
+  })
+})
+
+describe('反向代理横幅', () => {
+  it('通道不可用时呈现降级横幅，无对账按钮', async () => {
+    renderApp('/websites', {
+      gateway: sessionGateway({
+        list: async () => ({
+          projects: [],
+          proxy: { state: 'unavailable', detail: '宿主未提供 Caddy 管理通道' },
+        }),
+      }),
+    })
+    // 页面先过 RequireArea 权限校验（期间另有「正在校验访问权限…」的 status），
+    // 按横幅文案等待，避开校验期的同名角色。
+    const banner = await screen.findByText(/反向代理通道不可用/)
+    expect(banner).toHaveTextContent(
+      '反向代理通道不可用：宿主未提供 Caddy 管理通道。站点容器照常运行，域名路由与证书未下发。',
+    )
+    expect(
+      screen.queryByRole('button', { name: '重新下发反向代理配置' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('通道可用但配置漂移时呈现漂移横幅与对账按钮，点击后补发并随刷新消失', async () => {
+    const user = userEvent.setup()
+    let drifted = true
+    const reconcile = vi.fn(async () => ({ state: 'active' as const, detail: null }))
+    renderApp('/websites', {
+      gateway: sessionGateway({
+        list: async () => ({
+          projects: [],
+          proxy: drifted
+            ? { state: 'active', detail: '2 个站点的路由未下发' }
+            : { state: 'active', detail: null },
+        }),
+        reconcileProxy: reconcile,
+      }),
+    })
+    const banner = await screen.findByText(/反向代理配置未完全生效/)
+    expect(banner).toHaveTextContent('反向代理配置未完全生效：2 个站点的路由未下发。')
+
+    drifted = false
+    await user.click(screen.getByRole('button', { name: '重新下发反向代理配置' }))
+
+    expect(reconcile).toHaveBeenCalledTimes(1)
+    expect(lastNotification()).toBe('反向代理配置已重新下发')
+    // 横幅随对账后的下一次列表读取消失（成功通知自身也是 status，不能按角色等）。
+    await waitFor(() =>
+      expect(screen.queryByText(/反向代理配置未完全生效/)).not.toBeInTheDocument(),
+    )
   })
 })
 
@@ -261,7 +315,7 @@ describe('四态', () => {
             await gate
             throw new Error('演示连接失败')
           }
-          return []
+          return { projects: [], proxy: { state: 'active', detail: null } }
         },
       }),
     })

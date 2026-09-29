@@ -35,6 +35,7 @@ import { createHttpSshAdapter } from '../http/sshHttpAdapter'
 import { createHttpUsersAdapter } from '../http/usersHttpAdapter'
 import { createHttpFilesAdapter } from '../http/filesHttpAdapter'
 import { createHttpContainersAdapter } from '../http/containersHttpAdapter'
+import { createHttpWebsitesAdapter } from '../http/websitesHttpAdapter'
 import { createTerminalWsAdapter } from '../http/terminalWsAdapter'
 import { createHttpDatabaseAdapter } from '../http/databaseHttpAdapter'
 import type { ContainerAdapter, EventsAdapter, TerminalAdapter } from '../../contracts/adapters'
@@ -53,6 +54,8 @@ import { useContainersStore } from '../../stores/containersStore'
  * - `users: 'http'` 在 Docker 运行时接通容器内系统账号的真实端点，缺省仍是内存演示；
  * - `files: 'http'` 在 Docker 运行时接通容器内文件管理的真实端点，缺省仍是内存演示；
  * - `containers: 'http'` 在 Docker 运行时接通容器内只读列表的真实端点，缺省仍是内存演示；
+ * - `websites: 'http'` 在 Docker 运行时接通容器内网站管理的真实端点（容器、站点目录
+ *   与宿主 Caddy 配置），缺省仍是内存演示；
  * - `logs: 'http'` 在 Docker 运行时接通容器内平台日志的真实端点（运行与操作两类），
  *   登录日志没有真实端点，**两种取值下都读内存演示**；
  * - `terminals: 'ws'` 在 Docker 运行时经 WebSocket 接容器内真实 PTY，缺省仍是内存演示。
@@ -69,6 +72,7 @@ export function createMockGateway(
     users?: 'mock' | 'http'
     files?: 'mock' | 'http'
     containers?: 'mock' | 'http'
+    websites?: 'mock' | 'http'
     logs?: 'mock' | 'http'
     terminals?: 'mock' | 'ws'
   } = {},
@@ -103,6 +107,10 @@ export function createMockGateway(
   // 日志：运行与操作两类在容器内走真实端点；登录日志没有真实端点（面板还没有登录功能），
   // 两种取值下都读内存演示——判定见 logsHttpAdapter 的 loginLogs。
   const logs = options.logs === 'http' ? createHttpLogsAdapter() : new MockLogsAdapter()
+  // 网站：Docker 运行时经 /api/websites 落真实容器、站点目录与宿主 Caddy 配置；
+  // 宿主机本地开发保留内存演示（macOS 开发宿主没有 Docker Engine 与 caddy socket）。
+  const websites =
+    options.websites === 'http' ? createHttpWebsitesAdapter() : new MockWebsitesAdapter()
 
   return {
     session: new MockSessionAdapter(),
@@ -119,7 +127,7 @@ export function createMockGateway(
     files,
     logs,
     terminals,
-    websites: new MockWebsitesAdapter(),
+    websites,
     resources,
     events: attachDockerContainerWatch(
       wrapLive(

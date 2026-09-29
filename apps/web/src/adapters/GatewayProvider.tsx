@@ -21,13 +21,16 @@ export function GatewayProvider({
     () =>
       gateway ??
       createMockGateway({
-        // 防火墙、SSH、主机账号、文件管理、容器列表与日志端点只在容器内的 dev/preview 中间件挂载；宿主机本地开发走内存演示。
+        // 防火墙、SSH、主机账号、文件管理、容器列表、网站管理与日志端点只在容器内的
+        // dev/preview 中间件挂载；宿主机本地开发走内存演示。
         // 数据库域固定走 HTTP adapter（/api/databases），不做本地 mock 分流。
         firewall: isDockerRuntime() ? 'http' : 'mock',
         ssh: isDockerRuntime() ? 'http' : 'mock',
         users: isDockerRuntime() ? 'http' : 'mock',
         files: isDockerRuntime() ? 'http' : 'mock',
         containers: isDockerRuntime() ? 'http' : 'mock',
+        // 网站在 Docker 运行时经 /api/websites 落真实容器、站点目录与宿主 Caddy 配置。
+        websites: isDockerRuntime() ? 'http' : 'mock',
         // 日志的 http 分支只影响运行与操作两类；登录日志没有真实端点，两种取值下都读内存演示。
         logs: isDockerRuntime() ? 'http' : 'mock',
         terminals: isDockerRuntime() ? 'ws' : 'mock',

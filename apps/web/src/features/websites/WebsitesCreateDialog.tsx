@@ -4,6 +4,7 @@ import {
   WEBSITE_PROJECT_KINDS,
   WEBSITE_PROJECT_KIND_LABELS,
   WEBSITE_RUNTIME_VERSIONS,
+  isValidWebsiteDomain,
   isValidWebsitePort,
   isValidWebsiteProjectName,
   parseProjectNameFromGitUrl,
@@ -18,8 +19,8 @@ import { SelectDropdown } from '../../components/SelectDropdown'
 
 /**
  * 添加项目弹窗：类型、Git 地址（可贴链接自动带出名称）、名称、运行时版本（非 HTML）、
- * 端口（自定义加减，全类型必填）、备注。根目录固定由名称推导，创建表单不暴露。
- * 提交失败保留弹窗，错误经通知条呈现。本期 Git 只存地址，不真拉代码。
+ * 端口（自定义加减，全类型必填）、域名（可选，创建后不可改）、备注。根目录固定由
+ * 名称推导，创建表单不暴露。Git 只登记地址，不自动拉取代码。
  */
 
 const INPUT_CLASS =
@@ -93,10 +94,12 @@ export function WebsitesCreateDialog() {
   const [autoName, setAutoName] = useState<string | null>(null)
   const [runtimeVersion, setRuntimeVersion] = useState<string | null>(() => defaultRuntimeVersion('java'))
   const [port, setPort] = useState(DEFAULT_PORT)
+  const [domain, setDomain] = useState('')
   const [note, setNote] = useState('')
   const [nameError, setNameError] = useState<string | undefined>(undefined)
   const [portError, setPortError] = useState<string | undefined>(undefined)
   const [versionError, setVersionError] = useState<string | undefined>(undefined)
+  const [domainError, setDomainError] = useState<string | undefined>(undefined)
 
   const usesRuntime = websiteProjectUsesRuntime(kind)
 
@@ -134,10 +137,17 @@ export function WebsitesCreateDialog() {
       return
     }
     setVersionError(undefined)
+    const trimmedDomain = domain.trim()
+    if (trimmedDomain && !isValidWebsiteDomain(trimmedDomain)) {
+      setDomainError('域名无效')
+      return
+    }
+    setDomainError(undefined)
     void createProject(gateway, kind, {
       name: trimmedName,
       port,
       runtimeVersion: usesRuntime ? runtimeVersion : null,
+      domain: trimmedDomain || null,
       gitUrl: gitUrl.trim() || null,
       note: note.trim() || null,
     })
@@ -155,12 +165,7 @@ export function WebsitesCreateDialog() {
         >
           <Dialog.Title className="sr-only">添加项目</Dialog.Title>
           <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
-            <div className="flex items-center gap-2 text-xs">
-              <span className="rounded bg-warning/15 px-1.5 py-0.5 font-medium text-warning">
-                演示 · 待接入真实执行
-              </span>
-              <span className="text-sm font-medium text-fg">添加项目</span>
-            </div>
+            <span className="text-sm font-medium text-fg">添加项目</span>
             <Dialog.Close asChild>
               <button
                 type="button"
@@ -206,7 +211,7 @@ export function WebsitesCreateDialog() {
                 className={INPUT_CLASS}
               />
               <p className="mt-1 text-xs text-fg-subtle">
-                演示：只记录地址，代码将落到固定目录（详情页可见），不触碰真实仓库。
+                只登记地址，不自动拉取代码；站点目录与运行环境创建后由你部署产物。
               </p>
             </div>
 
@@ -259,6 +264,27 @@ export function WebsitesCreateDialog() {
             </div>
 
             <div>
+              <label htmlFor="website-create-domain" className="mb-1 block text-xs font-medium text-fg-muted">
+                域名
+              </label>
+              <input
+                id="website-create-domain"
+                value={domain}
+                onChange={(event) => {
+                  setDomain(event.target.value)
+                  setDomainError(undefined)
+                }}
+                placeholder="如 www.example.com"
+                className={INPUT_CLASS}
+              />
+              {domainError ? (
+                <p className="mt-1 text-xs text-danger">{domainError}</p>
+              ) : (
+                <p className="mt-1 text-xs text-fg-subtle">选填；绑定后由宿主 Caddy 提供域名路由与 HTTPS，创建后不可改。</p>
+              )}
+            </div>
+
+            <div>
               <label htmlFor="website-create-note" className="mb-1 block text-xs font-medium text-fg-muted">
                 备注
               </label>
@@ -272,8 +298,7 @@ export function WebsitesCreateDialog() {
             </div>
           </div>
 
-          <div className="flex items-center justify-between gap-2 border-t border-line px-4 py-2.5">
-            <p className="text-xs text-fg-subtle">只改演示内存，不触碰真实站点。</p>
+          <div className="flex items-center justify-end gap-2 border-t border-line px-4 py-2.5">
             <div className="flex gap-2">
               <button
                 type="button"

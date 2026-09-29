@@ -49,10 +49,12 @@ import type {
   SshRootAuth,
   SshRootLoginPolicy,
   Unsubscribe,
+  WebsiteListReport,
   WebsiteProject,
   WebsiteProjectCreateInput,
   WebsiteProjectKind,
   WebsiteProjectUpdateInput,
+  WebsiteProxyStatus,
 } from '@elysian/contracts'
 import {
   PLATFORM_LOG_CATEGORY_LABELS,
@@ -919,9 +921,12 @@ export class MockUserAdapter implements UserAdapter {
   }
 }
 
+/** 演示环境恒报通道正常：mock 呈现完整功能，不模拟降级与漂移。 */
+const DEMO_PROXY_STATUS: WebsiteProxyStatus = { state: 'active', detail: null }
+
 export class MockWebsitesAdapter implements WebsitesAdapter {
-  async list(): Promise<readonly WebsiteProject[]> {
-    return getWebsiteProjects()
+  async list(): Promise<WebsiteListReport> {
+    return { projects: getWebsiteProjects(), proxy: DEMO_PROXY_STATUS }
   }
 
   async create(kind: WebsiteProjectKind, input: WebsiteProjectCreateInput): Promise<WebsiteProject> {
@@ -942,6 +947,11 @@ export class MockWebsitesAdapter implements WebsitesAdapter {
 
   async logs(projectId: string): Promise<readonly string[]> {
     return getWebsiteLogs(projectId)
+  }
+
+  async reconcileProxy(): Promise<WebsiteProxyStatus> {
+    // 演示环境没有真实的宿主 Caddy 通道，对账是 no-op，状态保持正常。
+    return DEMO_PROXY_STATUS
   }
 }
 

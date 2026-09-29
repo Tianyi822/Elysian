@@ -1,5 +1,5 @@
 import * as Tooltip from '@radix-ui/react-tooltip'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -20,10 +20,12 @@ const javaRunning: WebsiteProject = {
   kind: 'java',
   name: '订单中心-api',
   pid: 23180,
+  containerId: 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90',
   port: 8080,
   runtimeVersion: '17',
   rootDir: '/www/wwwroot/order-api',
   runState: 'running',
+  domain: 'order.example.com',
   expiryAt: '2026-12-20',
   note: '商城核心下单链路',
   cert: 'deployed',
@@ -46,10 +48,12 @@ const nodeProject: WebsiteProject = {
   kind: 'node',
   name: 'marketing-site',
   pid: 18422,
+  containerId: 'b1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90',
   port: 3000,
   runtimeVersion: '20.11.1',
   rootDir: '/www/wwwroot/marketing-site',
   runState: 'running',
+  domain: 'www.acme.example.com',
   expiryAt: '2027-03-15',
   note: '官网与落地页',
   cert: 'expired',
@@ -64,10 +68,12 @@ const goProject: WebsiteProject = {
   kind: 'go',
   name: 'log-collector',
   pid: 24001,
+  containerId: 'c1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90',
   port: 9100,
   runtimeVersion: '1.22.4',
   rootDir: '/www/wwwroot/log-collector',
   runState: 'running',
+  domain: 'logs.acme.example.com',
   expiryAt: null,
   note: '日志采集 Agent',
   cert: 'deployed',
@@ -82,10 +88,12 @@ const htmlProject: WebsiteProject = {
   kind: 'html',
   name: 'company-portal',
   pid: null,
+  containerId: null,
   port: 8088,
   runtimeVersion: null,
   rootDir: '/www/wwwroot/company-portal',
   runState: 'running',
+  domain: 'www.company.example.com',
   expiryAt: '2027-06-30',
   note: null,
   cert: 'none',
@@ -122,17 +130,16 @@ describe('网站详情抽屉', () => {
     expect(container.innerHTML).toBe('')
   })
 
-  it('头部呈现名称、运行状态与演示徽标；类型与分类只在基本信息出现一次', () => {
+  it('头部呈现名称与运行状态；类型与分类只在基本信息出现一次', () => {
     openDetail(javaRunning)
     renderSheet()
     expect(screen.getByText('订单中心-api')).toBeInTheDocument()
     expect(screen.getByText('运行中')).toBeInTheDocument()
-    expect(screen.getByText('演示 · 待接入真实执行')).toBeInTheDocument()
     expect(screen.getAllByText('Java项目')).toHaveLength(1)
     expect(screen.getAllByText('生产环境')).toHaveLength(1)
   })
 
-  it('运行快览呈现 PID、端口与流量；基本信息含到期、备注、Git 与根目录链接，不含重复的运行态/PID/端口', () => {
+  it('运行快览呈现 PID、端口与流量；基本信息含域名、容器 ID、到期、备注、Git 与根目录链接', () => {
     openDetail(javaRunning)
     renderSheet()
     expect(screen.getByRole('region', { name: '运行快览' })).toBeInTheDocument()
@@ -140,6 +147,10 @@ describe('网站详情抽屉', () => {
     expect(screen.getByText('8080')).toBeInTheDocument()
     expect(screen.getByText('864 MB')).toBeInTheDocument()
     expect(screen.getByText('218.4 GB')).toBeInTheDocument()
+    expect(screen.getByText('order.example.com')).toBeInTheDocument()
+    expect(
+      screen.getByText('a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90'),
+    ).toBeInTheDocument()
     expect(screen.getByText('2026-12-20')).toBeInTheDocument()
     expect(screen.getByText('商城核心下单链路')).toBeInTheDocument()
     expect(screen.getByText('https://github.com/acme/order-api.git')).toBeInTheDocument()
@@ -153,7 +164,19 @@ describe('网站详情抽屉', () => {
     expect(basic).not.toHaveTextContent('运行状态')
   })
 
-  it('已停止项目快览 PID 显示 —；html 项目快览有端口无 PID；部署命令区显示 Nginx 托管说明', () => {
+  it('未绑定域名与无容器的 HTML 站，域名与容器 ID 显示 —', () => {
+    openDetail({
+      ...htmlProject,
+      domain: null,
+      note: '企业官网静态页',
+      gitUrl: 'https://github.com/acme/company-portal.git',
+    })
+    renderSheet()
+    const basic = screen.getByRole('region', { name: '基本信息' })
+    expect(within(basic).getAllByText('—')).toHaveLength(2)
+  })
+
+  it('已停止项目快览 PID 显示 —；html 项目快览有端口无 PID；部署命令区显示 Caddy 托管说明', () => {
     openDetail(javaStopped)
     const stopped = renderSheet()
     expect(screen.getByText('—')).toBeInTheDocument()
@@ -165,7 +188,7 @@ describe('网站详情抽屉', () => {
     expect(screen.queryByText('PID')).not.toBeInTheDocument()
     expect(screen.getByText('8088')).toBeInTheDocument()
     expect(screen.getByText('264 MB')).toBeInTheDocument()
-    expect(screen.getByText('静态站点由 Nginx 直接托管，无部署命令')).toBeInTheDocument()
+    expect(screen.getByText('静态站点由宿主 Caddy 直接托管，无部署命令')).toBeInTheDocument()
   })
 
   it('go 项目到期时间显示长期有效', () => {
@@ -227,6 +250,18 @@ describe('网站详情抽屉', () => {
     useWebsitesStore.setState({ detailTarget: javaRunning, detailLogs: undefined, detailLogsLoading: true })
     renderSheet()
     expect(screen.getByRole('status')).toHaveTextContent('正在加载运行日志…')
+  })
+
+  it('刷新期间旧日志留屏，不被加载文案整段替换', () => {
+    useWebsitesStore.setState({
+      detailTarget: javaRunning,
+      detailLogs: ['旧日志一', '旧日志二'],
+      detailLogsLoading: true,
+    })
+    renderSheet()
+    expect(screen.getByText('旧日志一')).toBeInTheDocument()
+    expect(screen.getByText('旧日志二')).toBeInTheDocument()
+    expect(screen.queryByText('正在加载运行日志…')).not.toBeInTheDocument()
   })
 
   it('日志为空数组时显示暂无日志', () => {

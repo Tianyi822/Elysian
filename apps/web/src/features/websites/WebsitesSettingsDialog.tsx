@@ -45,12 +45,7 @@ export function WebsitesSettingsDialog() {
         >
           <Dialog.Title className="sr-only">设置项目 {settingsTarget.name}</Dialog.Title>
           <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
-            <div className="flex items-center gap-2 text-xs">
-              <span className="rounded bg-warning/15 px-1.5 py-0.5 font-medium text-warning">
-                演示 · 待接入真实执行
-              </span>
-              <span className="text-sm font-medium text-fg">设置项目 {settingsTarget.name}</span>
-            </div>
+            <span className="text-sm font-medium text-fg">设置项目 {settingsTarget.name}</span>
             <Dialog.Close asChild>
               <button
                 type="button"
@@ -91,8 +86,7 @@ export function WebsitesSettingsDialog() {
             </div>
           </div>
 
-          <div className="flex items-center justify-between gap-2 border-t border-line px-4 py-2.5">
-            <p className="text-xs text-fg-subtle">只改演示内存，不触碰真实站点。</p>
+          <div className="flex items-center justify-end gap-2 border-t border-line px-4 py-2.5">
             <div className="flex gap-2">
               <button
                 type="button"

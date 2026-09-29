@@ -108,19 +108,12 @@ export function WebsiteDetailSheet() {
           className="fixed inset-y-0 right-0 z-50 flex w-full max-w-xl flex-col overflow-y-auto border-l border-line bg-surface p-6 shadow-xl will-change-transform motion-reduce:animate-none data-[state=open]:animate-sheet-panel-in data-[state=closed]:animate-sheet-panel-out"
         >
           <header className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <Dialog.Title className="text-lg font-semibold tracking-tight">{project.name}</Dialog.Title>
-                <StatusTag
-                  label={WEBSITE_RUN_STATE_LABELS[project.runState]}
-                  tone={RUN_STATE_TONE[project.runState]}
-                />
-              </div>
-              <p className="mt-2">
-                <span className="rounded bg-warning/15 px-1.5 py-0.5 text-xs font-medium text-warning">
-                  演示 · 待接入真实执行
-                </span>
-              </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Dialog.Title className="text-lg font-semibold tracking-tight">{project.name}</Dialog.Title>
+              <StatusTag
+                label={WEBSITE_RUN_STATE_LABELS[project.runState]}
+                tone={RUN_STATE_TONE[project.runState]}
+              />
             </div>
             <Dialog.Close asChild>
               <span>
@@ -157,6 +150,20 @@ export function WebsiteDetailSheet() {
                     <span className="tabular-nums">{project.runtimeVersion}</span>
                   </Row>
                 )}
+                <Row label="域名">
+                  {project.domain ? (
+                    <span className="break-all">{project.domain}</span>
+                  ) : (
+                    '—'
+                  )}
+                </Row>
+                <Row label="容器 ID">
+                  {project.containerId ? (
+                    <span className="break-all font-mono text-xs">{project.containerId}</span>
+                  ) : (
+                    '—'
+                  )}
+                </Row>
                 <Row label="根目录">
                   <Link
                     to={`/files${project.rootDir}`}
@@ -208,7 +215,7 @@ export function WebsiteDetailSheet() {
                   {project.deployCommand}
                 </code>
               ) : (
-                <p className="text-sm text-fg-muted">静态站点由 Nginx 直接托管，无部署命令</p>
+                <p className="text-sm text-fg-muted">静态站点由宿主 Caddy 直接托管，无部署命令</p>
               )}
             </Section>
 
@@ -229,11 +236,10 @@ export function WebsiteDetailSheet() {
                 </IconButton>
               }
             >
-              {detailLogsLoading ? (
-                <p role="status" className="text-sm text-fg-muted">
-                  正在加载运行日志…
-                </p>
-              ) : detailLogs && detailLogs.length > 0 ? (
+              {/* 刷新不清旧日志：store 保留 detailLogs 只置 loading，这里同样让旧内容
+                  留屏，进行中状态由节标题右侧的刷新按钮转圈表达；加载文案只在没有
+                  任何旧内容时占位。 */}
+              {detailLogs && detailLogs.length > 0 ? (
                 <pre className="max-h-80 overflow-y-auto whitespace-pre-wrap break-all rounded-lg border border-line bg-surface px-3 py-2.5 font-mono text-xs leading-5 text-fg">
                   {detailLogs.map((line, index) => (
                     <span key={`${index}-${line}`} className="block">
@@ -241,6 +247,10 @@ export function WebsiteDetailSheet() {
                     </span>
                   ))}
                 </pre>
+              ) : detailLogsLoading ? (
+                <p role="status" className="text-sm text-fg-muted">
+                  正在加载运行日志…
+                </p>
               ) : (
                 <p className="text-sm text-fg-muted">暂无日志</p>
               )}

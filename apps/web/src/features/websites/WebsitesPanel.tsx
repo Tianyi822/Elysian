@@ -14,9 +14,10 @@ import { WebsitesSettingsDialog } from './WebsitesSettingsDialog'
 import { filterWebsiteProjects } from './websitesListing'
 
 /**
- * 网站项目面板：工具栏（添加项目 + 分类/搜索/刷新）、Docker 区同款卡片网格、
- * 详情抽屉。五种运行时类型共用一张列表，类型在创建时选择、
- * 在卡片与详情抽屉上以标签呈现。
+ * 网站项目面板：工具栏（添加项目 + 分类/搜索/刷新）、代理通道横幅、Docker 区
+ * 同款卡片网格、详情抽屉。五种运行时类型共用一张列表，类型在创建时选择、
+ * 在卡片与详情抽屉上以标签呈现。横幅是域级状态：通道不可用或配置漂移时如实
+ * 呈现，不影响四状态判定。
  *
  * 瀑布列布局：卡片高度随内容伸缩，不强制对齐。
  */
@@ -24,12 +25,55 @@ import { filterWebsiteProjects } from './websitesListing'
 const TOOL_BUTTON_CLASS =
   'inline-flex items-center rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
 
+/** 反向代理通道横幅：unavailable 为降级说明，active 且有 detail 为漂移说明附对账按钮。 */
+function ProxyStatusBanner({
+  detail,
+  unavailable,
+  reconciling,
+  onReconcile,
+}: {
+  detail: string | null
+  unavailable: boolean
+  reconciling: boolean
+  onReconcile: () => void
+}) {
+  if (unavailable) {
+    return (
+      <p
+        role="status"
+        className="mb-4 rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-xs text-warning"
+      >
+        反向代理通道不可用{detail ? `：${detail}` : ''}。站点容器照常运行，域名路由与证书未下发。
+      </p>
+    )
+  }
+  return (
+    <div
+      role="status"
+      className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-xs text-warning"
+    >
+      <p className="min-w-0 flex-1">反向代理配置未完全生效：{detail}。</p>
+      <button
+        type="button"
+        onClick={onReconcile}
+        disabled={reconciling}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-warning/50 px-3 py-1.5 font-medium text-warning transition-colors hover:bg-warning/20 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <RefreshCw aria-hidden size={12} className={reconciling ? 'animate-spin' : undefined} />
+        {reconciling ? '正在重新下发…' : '重新下发反向代理配置'}
+      </button>
+    </div>
+  )
+}
+
 export function WebsitesPanel() {
   const gateway = useGateway()
   const projects = useWebsitesStore((s) => s.projects)
+  const proxyStatus = useWebsitesStore((s) => s.proxyStatus)
   const search = useWebsitesStore((s) => s.search)
   const category = useWebsitesStore((s) => s.category)
   const refreshing = useWebsitesStore((s) => s.refreshing)
+  const reconciling = useWebsitesStore((s) => s.reconciling)
   const createDialogOpen = useWebsitesStore((s) => s.createDialogOpen)
   // 渲染期要用的状态必须走订阅选择器：getState() 读到的是不触发重渲染的瞬时值，
   // busy 与 settingsTarget 若不订阅，卡片的禁用与弹窗的预填都会静默失效。
@@ -39,6 +83,7 @@ export function WebsitesPanel() {
   const setCategory = useWebsitesStore((s) => s.setCategory)
   const openCreate = useWebsitesStore((s) => s.openCreate)
   const refresh = useWebsitesStore((s) => s.refresh)
+  const reconcileProxy = useWebsitesStore((s) => s.reconcileProxy)
 
   const filtered = filterWebsiteProjects(projects, { category, search })
 
@@ -83,6 +128,15 @@ export function WebsitesPanel() {
           </IconButton>
         </div>
       </div>
+
+      {proxyStatus.state === 'unavailable' || proxyStatus.detail !== null ? (
+        <ProxyStatusBanner
+          detail={proxyStatus.detail}
+          unavailable={proxyStatus.state === 'unavailable'}
+          reconciling={reconciling}
+          onReconcile={() => void reconcileProxy(gateway)}
+        />
+      ) : null}
 
       {filtered.length === 0 ? (
         projects.length === 0 ? (
