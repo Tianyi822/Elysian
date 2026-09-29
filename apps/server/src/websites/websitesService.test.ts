@@ -65,14 +65,6 @@ function fixture(options: {
       if (caddyState.failCurrentWith) throw caddyState.failCurrentWith
       return caddyState.current
     },
-    async probe() {
-      try {
-        await this.currentConfig()
-        return { state: 'active', detail: null }
-      } catch (error) {
-        return { state: 'unavailable', detail: error instanceof Error ? error.message : String(error) }
-      }
-    },
   }
   const service = createWebsiteService({
     registry,

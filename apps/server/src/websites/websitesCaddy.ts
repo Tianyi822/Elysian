@@ -57,7 +57,7 @@ function channelError(error: unknown): CaddyChannelError {
 
 /**
  * 通道侧错误 → 代理状态报告的唯一映射：连接类失败给固定中文 detail，引擎侧失败
- * 带引擎消息。probe 与服务层（列表探测、对账返回）共用本函数，映射与文案不落第二份。
+ * 带引擎消息。服务层（列表探测、对账返回）消费本函数，映射与文案不落第二份。
  */
 export function caddyChannelStatus(error: unknown): WebsiteProxyStatus {
   if (error instanceof CaddyChannelError) {
@@ -137,8 +137,6 @@ export type WebsiteCaddy = {
   load(config: unknown): Promise<void>
   /** 读取当前完整配置（GET /config/），兼作通道探测；连接类失败 unavailable 为真。 */
   currentConfig(): Promise<unknown>
-  /** 通道状态探测：连接类失败给固定中文 detail，引擎侧失败带引擎消息。 */
-  probe(): Promise<WebsiteProxyStatus>
 }
 
 export type WebsiteCaddyOptions = {
@@ -179,14 +177,6 @@ export function createWebsiteCaddy(options: WebsiteCaddyOptions = {}): WebsiteCa
         )
       }
       return response.json
-    },
-    async probe() {
-      try {
-        await this.currentConfig()
-        return { state: 'active', detail: null }
-      } catch (error) {
-        return caddyChannelStatus(error)
-      }
     },
   }
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   caddyAdminListen,
+  caddyChannelStatus,
   createWebsiteCaddy,
   resolveCaddySocketPath,
   CaddyChannelError,
@@ -79,20 +80,22 @@ describe('currentConfig（GET /config/）', () => {
   })
 })
 
-describe('probe 状态探测', () => {
-  it('成功映射 active，detail 为 null', async () => {
-    const { caddy } = channel(async () => ({ status: 200, json: {} }))
-    await expect(caddy.probe()).resolves.toEqual({ state: 'active', detail: null })
+describe('caddyChannelStatus 通道错误映射', () => {
+  it('连接类失败（unavailable）给固定中文 detail', () => {
+    expect(caddyChannelStatus(new CaddyChannelError('connect ENOENT', true))).toEqual({
+      state: 'unavailable',
+      detail: '宿主未提供 Caddy 管理通道',
+    })
   })
 
-  it('连接类失败映射 unavailable + 固定中文 detail', async () => {
-    const error = connectionErrorOf('ENOENT')
-    const { caddy } = channel(async () => { throw error })
-    await expect(caddy.probe()).resolves.toEqual({ state: 'unavailable', detail: '宿主未提供 Caddy 管理通道' })
+  it('引擎侧失败映射 unavailable + 引擎消息', () => {
+    expect(caddyChannelStatus(new CaddyChannelError('boom', false))).toEqual({
+      state: 'unavailable',
+      detail: 'boom',
+    })
   })
 
-  it('引擎侧失败映射 unavailable + 引擎消息', async () => {
-    const { caddy } = channel(async () => ({ status: 500, json: { message: 'boom' } }))
-    await expect(caddy.probe()).resolves.toEqual({ state: 'unavailable', detail: 'boom' })
+  it('非通道错误兜底映射为 unavailable + 原始消息', () => {
+    expect(caddyChannelStatus(new Error('意外'))).toEqual({ state: 'unavailable', detail: '意外' })
   })
 })
