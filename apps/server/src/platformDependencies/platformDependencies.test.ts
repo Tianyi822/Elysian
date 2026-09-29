@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { DependencyProbeReport, LogStorageStats, OperationLogCategory, PlatformLogCategory } from '@elysian/contracts'
+import { unlinkSync, writeFileSync } from 'node:fs'
 import { createApp } from '../app.ts'
 import { createDockerTransport, type DockerTransport } from '../docker/dockerTransport.ts'
 import type { LogsService } from '../logs/logsService.ts'
@@ -8,7 +9,12 @@ import {
   createWebsiteCaddy,
   type CaddySocketRequest,
 } from '../websites/websitesCaddy.ts'
-import { createDependencyProbe, DOCKER_UNAVAILABLE_DETAIL } from './dependencyProbe.ts'
+import {
+  CADDY_SYSTEM_ERROR_DETAIL,
+  createDependencyProbe,
+  DOCKER_SYSTEM_ERROR_DETAIL,
+  DOCKER_UNAVAILABLE_DETAIL,
+} from './dependencyProbe.ts'
 import { createPlatformDependenciesApp } from './platformDependenciesRoutes.ts'
 
 /*
@@ -89,6 +95,28 @@ describe('探测实现（fake 注入）', () => {
     const { prober } = fixture({ caddy: async () => ({ status: 500, json: { message: 'x' } }) })
     expect((await prober.probe()).caddy).toEqual({ state: 'error', detail: 'x' })
   })
+
+  it('docker 非连接类系统错误（ENOTSOCK）归 error，detail 固定文案、不透传内嵌路径的 message', async () => {
+    const { prober } = fixture({
+      docker: () => {
+        throw connectionError('ENOTSOCK', '/var/run/docker.sock')
+      },
+    })
+    const docker = (await prober.probe()).docker
+    expect(docker).toEqual({ state: 'error', detail: DOCKER_SYSTEM_ERROR_DETAIL })
+    expect(docker.detail).not.toContain('/var/run/docker.sock')
+  })
+
+  it('caddy 非连接类系统错误（ENOTSOCK）归 error，detail 固定文案、不透传内嵌路径的 message', async () => {
+    const { prober } = fixture({
+      caddy: () => {
+        throw connectionError('ENOTSOCK', '/run/caddy/admin.sock')
+      },
+    })
+    const caddy = (await prober.probe()).caddy
+    expect(caddy).toEqual({ state: 'error', detail: CADDY_SYSTEM_ERROR_DETAIL })
+    expect(caddy.detail).not.toContain('/run/caddy/admin.sock')
+  })
 })
 
 describe('env 覆盖（真实路径，不注入 requestImpl）', () => {
@@ -104,6 +132,30 @@ describe('env 覆盖（真实路径，不注入 requestImpl）', () => {
       ELYSIAN_CADDY_SOCKET: `/tmp/elysian-test-no-caddy-${process.pid}.sock`,
     })
     expect(report.caddy).toEqual({ state: 'missing', detail: CADDY_CHANNEL_UNAVAILABLE_DETAIL })
+  })
+
+  it('ELYSIAN_DOCKER_SOCKET 指向非 socket 普通文件：真实 ENOTSOCK 落 error + 固定文案，不透传宿主绝对路径', async () => {
+    const notSocket = `/tmp/elysian-test-notsock-docker-${process.pid}.txt`
+    writeFileSync(notSocket, 'not a socket')
+    try {
+      const report = await createDependencyProbe().probe({ ELYSIAN_DOCKER_SOCKET: notSocket })
+      expect(report.docker).toEqual({ state: 'error', detail: DOCKER_SYSTEM_ERROR_DETAIL })
+      expect(report.docker.detail).not.toContain(notSocket)
+    } finally {
+      unlinkSync(notSocket)
+    }
+  })
+
+  it('ELYSIAN_CADDY_SOCKET 指向非 socket 普通文件：真实 ENOTSOCK 落 error + 固定文案，不透传宿主绝对路径', async () => {
+    const notSocket = `/tmp/elysian-test-notsock-caddy-${process.pid}.txt`
+    writeFileSync(notSocket, 'not a socket')
+    try {
+      const report = await createDependencyProbe().probe({ ELYSIAN_CADDY_SOCKET: notSocket })
+      expect(report.caddy).toEqual({ state: 'error', detail: CADDY_SYSTEM_ERROR_DETAIL })
+      expect(report.caddy.detail).not.toContain(notSocket)
+    } finally {
+      unlinkSync(notSocket)
+    }
   })
 })
 

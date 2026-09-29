@@ -31,7 +31,12 @@ export function caddyAdminListen(socketPath: string): string {
  * 拒绝或故障（HTTP 错误、超时、响应异常），消息带引擎原因。
  */
 export class CaddyChannelError extends Error {
-  constructor(message: string, readonly unavailable: boolean) {
+  constructor(
+    message: string,
+    readonly unavailable: boolean,
+    /** 系统调用失败的 errno（非连接类，如 ENOTSOCK）：message 内嵌宿主路径，消费方按需改写文案。 */
+    readonly code?: string,
+  ) {
     super(message)
     this.name = 'CaddyChannelError'
   }
@@ -51,6 +56,9 @@ function channelError(error: unknown): CaddyChannelError {
   const code = (error as NodeJS.ErrnoException | null)?.code
   if (typeof code === 'string' && CONNECTION_ERROR_CODES.has(code)) {
     return new CaddyChannelError(CADDY_CHANNEL_UNAVAILABLE_DETAIL, true)
+  }
+  if (typeof code === 'string') {
+    return new CaddyChannelError(error instanceof Error ? error.message : String(error), false, code)
   }
   return new CaddyChannelError(error instanceof Error ? error.message : String(error), false)
 }

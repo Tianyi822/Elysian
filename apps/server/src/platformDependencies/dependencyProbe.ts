@@ -22,12 +22,27 @@ import {
 /** Docker 连接类失败的固定中文 detail：未安装或未接通不逐码区分，唯一文案的唯一字面量。 */
 export const DOCKER_UNAVAILABLE_DETAIL = 'Docker 未安装或未接通'
 
+/**
+ * 非连接类系统错误（errno 如 ENOTSOCK、ETIMEDOUT——socket 路径指向非 socket 文件、
+ * 连接中途系统级失败）的固定中文 detail：此类错误的 message 形如
+ * `connect ENOTSOCK <宿主绝对路径>`，属于内嵌宿主路径的非受控文本，不逐字透传。
+ */
+export const DOCKER_SYSTEM_ERROR_DETAIL = 'Docker 连接异常'
+
+/** Caddy 侧同口径的系统错误固定文案（errno 经 CaddyChannelError.code 辨别）。 */
+export const CADDY_SYSTEM_ERROR_DETAIL = 'Caddy 连接异常'
+
 /** 连接类错误码集合：与 websitesCaddy 的 CONNECTION_ERROR_CODES 同集，不逐码对外区分。 */
 const CONNECTION_ERROR_CODES = new Set(['ENOENT', 'EACCES', 'ECONNREFUSED'])
 
 function isConnectionError(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException | null)?.code
   return typeof code === 'string' && CONNECTION_ERROR_CODES.has(code)
+}
+
+/** 系统级 errno 错误（含经 channelError 包装、携带 code 的 CaddyChannelError）：message 不透传。 */
+function isSystemErrno(error: unknown): boolean {
+  return typeof (error as NodeJS.ErrnoException | null)?.code === 'string'
 }
 
 function messageOf(error: unknown): string {
@@ -42,6 +57,9 @@ async function probeDocker(transport: DockerTransport): Promise<DependencyProbe>
     if (isConnectionError(error)) {
       return { state: 'missing', detail: DOCKER_UNAVAILABLE_DETAIL }
     }
+    if (isSystemErrno(error)) {
+      return { state: 'error', detail: DOCKER_SYSTEM_ERROR_DETAIL }
+    }
     return { state: 'error', detail: messageOf(error) }
   }
 }
@@ -53,6 +71,9 @@ async function probeCaddy(caddy: WebsiteCaddy): Promise<DependencyProbe> {
   } catch (error) {
     if (error instanceof CaddyChannelError && error.unavailable) {
       return { state: 'missing', detail: CADDY_CHANNEL_UNAVAILABLE_DETAIL }
+    }
+    if (isSystemErrno(error)) {
+      return { state: 'error', detail: CADDY_SYSTEM_ERROR_DETAIL }
     }
     return { state: 'error', detail: messageOf(error) }
   }
