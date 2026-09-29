@@ -57,6 +57,12 @@ describe('容器页骨架', () => {
     expect(within(list).getAllByRole('listitem')).toHaveLength(10)
   })
 
+  it('mock 网关依赖恒 ok：页面成功态不出现安装引导弹窗', async () => {
+    renderApp('/containers', { gateway: pageGateway() })
+    await screen.findByRole('list', { name: '容器列表' })
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
   it('状态筛选只保留所选状态的容器', async () => {
     const user = userEvent.setup()
     renderApp('/containers', { gateway: pageGateway() })
@@ -92,6 +98,8 @@ describe('容器页骨架', () => {
     })
     renderApp('/containers', { gateway })
     expect(await screen.findByText('容器数据加载失败')).toBeInTheDocument()
+    // mock 网关依赖恒 ok：错误态不叠加安装引导弹窗。
+    expect(screen.queryByRole('dialog')).toBeNull()
 
     fail = false
     await user.click(screen.getByRole('button', { name: '重试' }))

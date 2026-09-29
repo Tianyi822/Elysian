@@ -26,6 +26,8 @@ import { DATABASE_STATUS_LABELS } from '@elysian/contracts'
 import type { DatabaseInstance, DatabaseStatus } from '@elysian/contracts'
 import { useDatabaseStore } from '../../stores/databaseStore'
 import { useContainersStore } from '../../stores/containersStore'
+import { useDependencyGuideStore } from '../../stores/dependencyGuideStore'
+import { DependencyGuideDialogs } from '../platform/DependencyGuideDialogs'
 import { formatDateTime } from '../../components/format'
 import { projectDatabaseCard } from './projectDatabaseCard'
 import type { DatabaseCardView } from './projectDatabaseCard'
@@ -54,10 +56,13 @@ export function DatabasePage() {
   const openCreate = useDatabaseStore((state) => state.openCreate)
   const removingDatabaseIds = useDatabaseStore((state) => state.removingDatabaseIds)
   const removeDatabase = useDatabaseStore((state) => state.removeDatabase)
+  const check = useDependencyGuideStore((state) => state.check)
 
   useEffect(() => {
     void load(gateway)
-  }, [gateway, load])
+    // 依赖检测幂等：切页重挂不重探，报告由引导层消费。
+    void check(gateway)
+  }, [gateway, load, check])
   useEffect(() => {
     if (!gateway.databases.openTerminal) return
     const timer = window.setInterval(() => { void refresh(gateway) }, 15_000)
@@ -92,15 +97,26 @@ export function DatabasePage() {
 
   if (status === 'error') {
     return (
-      <ErrorState
-        title="数据库数据加载失败"
-        description={errorMessage}
-        onRetry={() => void load(gateway)}
-      />
+      <>
+        <ErrorState
+          title="数据库数据加载失败"
+          description={errorMessage}
+          onRetry={() => void load(gateway)}
+        />
+        {/* Docker 未就绪时弹窗叠加在错误态之上，引导层与状态层各说各的。 */}
+        <DependencyGuideDialogs scope="docker-dependent" reload={() => void load(gateway)} />
+      </>
     )
   }
 
-  if (status !== 'ready') return <LoadingState label="正在加载数据库数据…" />
+  if (status !== 'ready') {
+    return (
+      <>
+        <LoadingState label="正在加载数据库数据…" />
+        <DependencyGuideDialogs scope="docker-dependent" reload={() => void load(gateway)} />
+      </>
+    )
+  }
 
   const filtered = databases.filter((database) => database.engine === engine)
 
@@ -152,6 +168,7 @@ export function DatabasePage() {
       <SqlSessionWindow />
       <DatabaseCreateDialog />
       <ContainerDetailSheet />
+      <DependencyGuideDialogs scope="docker-dependent" reload={() => void load(gateway)} />
     </>
   )
 }

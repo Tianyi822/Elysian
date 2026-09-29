@@ -5,8 +5,10 @@ import { CONTAINER_STATUS_LABELS } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
+import { DependencyGuideDialogs } from '../platform/DependencyGuideDialogs'
 import { CONTAINER_LIVE_RECONNECT_MESSAGE } from './containerCopy'
 import { useContainersStore } from '../../stores/containersStore'
+import { useDependencyGuideStore } from '../../stores/dependencyGuideStore'
 import { ContainerCard } from './ContainerCard'
 import { ContainerCreateDialog } from './ContainerCreateDialog'
 import { ContainerDetailSheet } from './ContainerDetailSheet'
@@ -36,6 +38,7 @@ export function ContainerPage() {
   const imageRefreshMessage = useContainersStore((s) => s.imageRefreshMessage)
   const refreshImages = useContainersStore((s) => s.refreshImages)
   const load = useContainersStore((s) => s.load)
+  const check = useDependencyGuideStore((s) => s.check)
   const setStatusFilter = useContainersStore((s) => s.setStatusFilter)
   const setSearch = useContainersStore((s) => s.setSearch)
   const openCreate = useContainersStore((s) => s.openCreate)
@@ -44,19 +47,26 @@ export function ContainerPage() {
 
   useEffect(() => {
     void load(gateway)
-  }, [gateway, load])
+    // 依赖检测幂等：切页重挂不重探，报告由引导层消费。
+    void check(gateway)
+  }, [gateway, load, check])
 
   if (status !== 'ready') {
-    if (status === 'error') {
-      return (
-        <ErrorState
-          title="容器数据加载失败"
-          description={errorMessage}
-          onRetry={() => void load(gateway)}
-        />
-      )
-    }
-    return <LoadingState label="正在加载容器数据…" />
+    return (
+      <>
+        {status === 'error' ? (
+          <ErrorState
+            title="容器数据加载失败"
+            description={errorMessage}
+            onRetry={() => void load(gateway)}
+          />
+        ) : (
+          <LoadingState label="正在加载容器数据…" />
+        )}
+        {/* Docker 未就绪时弹窗叠加在错误态 / 加载态之上，引导层与状态层各说各的。 */}
+        <DependencyGuideDialogs scope="docker-dependent" reload={() => void load(gateway)} />
+      </>
+    )
   }
 
   const keyword = search.trim().toLowerCase()
@@ -164,6 +174,7 @@ export function ContainerPage() {
       {pullOpen ? <ImagePullDialog onClose={() => setPullOpen(false)} /> : null}
       <ContainerDetailSheet />
       <TerminalWindow />
+      <DependencyGuideDialogs scope="docker-dependent" reload={() => void load(gateway)} />
     </div>
   )
 }

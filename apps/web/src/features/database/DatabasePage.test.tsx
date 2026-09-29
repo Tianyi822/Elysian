@@ -351,6 +351,23 @@ describe('数据库页面', () => {
     expect(await screen.findByRole('article', { name: 'MariaDB 数据库 mariadb-test' })).toBeInTheDocument()
   })
 
+  it('mock 网关依赖恒 ok：错误态与成功态都不出现安装引导弹窗', async () => {
+    let failed = true
+    const gateway = pageGateway({
+      list: async () => {
+        if (failed) throw new Error('演示数据库连接失败')
+        return [MARIADB]
+      },
+    })
+    renderApp('/databases', { gateway })
+    await screen.findByRole('alert')
+    expect(screen.queryByRole('dialog')).toBeNull()
+    failed = false
+    await userEvent.setup().click(within(screen.getByRole('alert')).getByRole('button', { name: '重试' }))
+    expect(await screen.findByRole('article', { name: 'MariaDB 数据库 mariadb-test' })).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
   it('adapter 返回空数据时显示空态', async () => {
     renderApp('/databases', { gateway: pageGateway({ list: async () => [] }) })
     expect(await screen.findByText('没有 MariaDB 数据库')).toBeInTheDocument()
