@@ -88,9 +88,9 @@ describe('OPERATION_DESCRIPTORS 漂移守卫', () => {
   it('ALL 路由都是只读端点：写方法一律 405，不进描述符表', async () => {
     const app = await assembly()
     const allRoutes = app.routes.filter((route) => route.method === 'ALL' && !route.path.includes('*'))
-    // 本片当前只有 /api/platform/memory 一条；没有这条断言，将来谁用 app.all 加一个写端点
-    // 就没人拦（写端点走 app.all 会绕过「写方法」那一条守卫）。
-    expect(allRoutes.map((route) => route.path).sort()).toEqual(['/api/platform/memory'])
+    // platform 域当前两条（memory 与 dependencies），都是只读探测；没有这条断言，将来谁用
+    // app.all 加一个写端点就没人拦（写端点走 app.all 会绕过「写方法」那一条守卫）。
+    expect(allRoutes.map((route) => route.path).sort()).toEqual(['/api/platform/dependencies', '/api/platform/memory'])
     for (const route of allRoutes) {
       expect(OPERATION_DESCRIPTORS[`POST ${route.path}`]).toBeUndefined()
       const res = await app.request(new Request(`http://localhost:5173${route.path}`, { method: 'POST' }))

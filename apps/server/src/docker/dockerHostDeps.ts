@@ -42,7 +42,8 @@ function resolveMountRoot(env: NodeJS.ProcessEnv): string {
   return typeof value === 'string' && value.length > 0 ? value : '/srv'
 }
 
-function resolveSocketPath(env: NodeJS.ProcessEnv): string {
+/** Docker socket 路径解析：ELYSIAN_DOCKER_SOCKET 可覆盖，依赖检测探测与装配共用同一出口。 */
+export function resolveSocketPath(env: NodeJS.ProcessEnv): string {
   const value = env.ELYSIAN_DOCKER_SOCKET
   return typeof value === 'string' && value.length > 0 ? value : '/var/run/docker.sock'
 }

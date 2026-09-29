@@ -8,6 +8,8 @@ import { createOperationAudit } from './logs/operationAudit.ts'
 import { createLogsApp } from './logs/logsRoutes.ts'
 import type { LogsService } from './logs/logsService.ts'
 import { endpointErrorHandler } from './middleware/guard.ts'
+import { createDependencyProbe } from './platformDependencies/dependencyProbe.ts'
+import { createPlatformDependenciesApp, type PlatformDependenciesAppDeps } from './platformDependencies/platformDependenciesRoutes.ts'
 import { createPlatformMemoryApp } from './platformMemory/platformMemoryRoutes.ts'
 import { createSshApp, type SshApiDeps } from './ssh/sshRoutes.ts'
 import { createSshHostDeps } from './ssh/sshHostDeps.ts'
@@ -35,6 +37,7 @@ import {
   FILES_MOUNT,
   FIREWALL_MOUNT,
   LOGS_MOUNT,
+  PLATFORM_MOUNT,
   SSH_MOUNT,
   TERMINAL_MOUNT,
   USERS_MOUNT,
@@ -45,6 +48,8 @@ import {
  * 组装 Elysian server 的 Hono 应用。挂载结构：
  * - /api/health：存活检查，无守卫；
  * - /api/platform/memory：平台内存采样，无容器边界、无同源守卫（与 vite 端点时代一致）；
+ * - /api/platform/dependencies：宿主依赖检测（Docker 与 Caddy 通道的就绪性），每次请求
+ *   现场探测、纯读，同样无容器边界——Docker 缺失这个事实要在三域全 503 时仍拿得到；
  * - /api/security/*：安全区三片（防火墙/SSH/用户管理），同源守卫由各片路由在可用性
  *   判定之后自行挂载——顺序 503 → 403 与各片既有行为逐字一致，app 层不代挂；
  * - /api/files：文件管理片，守卫链与安全区三片同构；
@@ -74,6 +79,8 @@ export type AppDepsOverrides = {
   databases?: DatabaseAppDeps
   /** 网站管理片：缺省走真实接线（依赖容器片的 transport 与挂载根策略）。 */
   websites?: WebsitesAppDeps
+  /** 依赖检测片：缺省走真实接线（每次请求现场探测 Docker 与 Caddy 通道）。 */
+  platformDependencies?: PlatformDependenciesAppDeps
 }
 
 /**
@@ -101,7 +108,10 @@ export async function createApp(overrides: AppDepsOverrides = {}): Promise<Hono>
   app.use('/api/*', createOperationAudit(logs))
 
   app.get('/api/health', (c) => c.json({ ok: true }))
-  app.route('/api/platform', createPlatformMemoryApp())
+  app.route(PLATFORM_MOUNT, createPlatformMemoryApp())
+  app.route(PLATFORM_MOUNT, createPlatformDependenciesApp(
+    overrides.platformDependencies ?? createDependencyProbe(),
+  ))
   // 防火墙接线是 async：规则时间账本依赖 bun:sqlite，仅在容器分支动态加载。
   app.route(FIREWALL_MOUNT, createFirewallApp(overrides.firewall ?? (await resolveFirewallDeps())))
   app.route(SSH_MOUNT, createSshApp(overrides.ssh ?? createSshHostDeps()))

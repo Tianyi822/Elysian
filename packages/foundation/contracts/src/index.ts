@@ -38,5 +38,6 @@ export * from './websites/websites.ts'
 export * from './security/firewall.ts'
 export * from './security/ssh.ts'
 export * from './security/users.ts'
-// 平台运行域：进程内存采样
+// 平台运行域：进程内存采样、宿主依赖检测
 export * from './platform/memory.ts'
+export * from './platform/dependencies.ts'
