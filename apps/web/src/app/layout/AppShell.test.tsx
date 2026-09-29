@@ -5,7 +5,7 @@ import { createMockGateway } from '../../adapters/mock/gateway'
 import { useEventStreamStore } from '../../stores/eventStreamStore'
 import { renderApp } from '../../test/renderApp'
 import { NAV_ITEMS } from '../navigation'
-import { moveItem } from '../navigationOrder'
+import { moveNavItem } from '../navigationOrder'
 import { writeStoredNavOrder } from '../theme/themePreferences'
 
 beforeEach(() => {
@@ -148,7 +148,8 @@ describe('模板外壳', () => {
     renderApp('/')
     const nav = screen.getByRole('navigation', { name: '主导航' })
     const handles = within(nav).getAllByRole('button', { name: /拖拽排序：/ })
-    expect(handles).toHaveLength(NAV_ITEMS.length)
+    expect(handles).toHaveLength(NAV_ITEMS.length - 1)
+    expect(within(nav).queryByRole('button', { name: '拖拽排序：仪表盘' })).not.toBeInTheDocument()
     for (const handle of handles) {
       expect(handle.parentElement).toHaveClass('opacity-0')
     }
@@ -158,9 +159,7 @@ describe('模板外壳', () => {
     expect(within(nav).getByRole('button', { name: '拖拽排序：平台日志' }).parentElement).toHaveClass(
       'opacity-100',
     )
-    expect(within(nav).getByRole('button', { name: '拖拽排序：仪表盘' }).parentElement).toHaveClass(
-      'opacity-0',
-    )
+    expect(within(nav).queryByRole('button', { name: '拖拽排序：仪表盘' })).not.toBeInTheDocument()
 
     await user.unhover(logs)
     expect(within(nav).getByRole('button', { name: '拖拽排序：平台日志' }).parentElement).toHaveClass(
@@ -175,33 +174,42 @@ describe('模板外壳', () => {
     const { unmount } = renderApp('/')
     const nav = screen.getByRole('navigation', { name: '主导航' })
     const restore = installNavRects()
-    const handle = within(nav).getByRole('button', { name: '拖拽排序：仪表盘' })
+    const handle = within(nav).getByRole('button', { name: '拖拽排序：安全' })
 
     try {
-      fireEvent.pointerDown(handle, { button: 0, pointerId: 1, clientY: 20 })
+      fireEvent.pointerDown(handle, { button: 0, pointerId: 1, clientY: 64 })
+      fireEvent.pointerMove(window, { pointerId: 1, clientY: 63 })
+      expect(nav.querySelector<HTMLElement>('[data-nav-item="/"]')?.style.transform).toBe('')
+      expect(nav.querySelector<HTMLElement>('[data-nav-item="/docker"]')?.style.transform).toBe('')
+
+      fireEvent.pointerMove(window, { pointerId: 1, clientY: 87 })
+      expect(nav.querySelector<HTMLElement>('[data-nav-item="/docker"]')?.style.transform).toBe('')
+
       fireEvent.pointerMove(window, { pointerId: 1, clientY: 120 })
 
-      const shifted = nav.querySelector<HTMLElement>('[data-nav-item="/security"]')
-      const dragged = nav.querySelector<HTMLElement>('[data-nav-item="/"]')
+      const shifted = nav.querySelector<HTMLElement>('[data-nav-item="/docker"]')
+      const dragged = nav.querySelector<HTMLElement>('[data-nav-item="/security"]')
       expect(shifted?.style.transform).toBe('translateY(-44px)')
       expect(shifted?.className).toContain('transition-transform')
-      expect(dragged?.style.transform).toBe('translateY(100px)')
+      expect(dragged?.style.transform).toBe('translateY(56px)')
       expect(dragged?.className).not.toContain('transition-transform')
+      expect(nav.querySelector<HTMLElement>('[data-nav-item="/"]')?.style.transform).toBe('')
 
       fireEvent.pointerUp(window, { pointerId: 1, clientY: 120 })
     } finally {
       restore()
     }
 
-    const expected = moveItem(
+    const expected = moveNavItem(
       NAV_ITEMS.map((item) => item.to),
-      0,
+      1,
       2,
     )
     expect(within(nav).getAllByRole('link').map((link) => link.textContent)).toEqual(
-      expected.map((path) => NAV_ITEMS.find((item) => item.to === path)?.label),
+      expected?.map((path) => NAV_ITEMS.find((item) => item.to === path)?.label),
     )
     expect(JSON.parse(localStorage.getItem('elysian.ui-preferences') ?? '{}').nav).toEqual(expected)
+    if (!expected) return
 
     unmount()
     renderApp('/')
@@ -212,12 +220,38 @@ describe('模板外壳', () => {
     ).toEqual(expected.map((path) => NAV_ITEMS.find((item) => item.to === path)?.label))
   })
 
+  it('拖到仪表盘上松手不会把它挤下去', () => {
+    renderApp('/')
+    const nav = screen.getByRole('navigation', { name: '主导航' })
+    const restore = installNavRects()
+    try {
+      fireEvent.pointerDown(within(nav).getByRole('button', { name: '拖拽排序：安全' }), {
+        button: 0,
+        pointerId: 1,
+        clientY: 64,
+      })
+      fireEvent.pointerMove(window, { pointerId: 1, clientY: 10 })
+      expect(nav.querySelector<HTMLElement>('[data-nav-item="/"]')?.style.transform).toBe('')
+      fireEvent.pointerUp(window, { pointerId: 1, clientY: 10 })
+    } finally {
+      restore()
+    }
+
+    const labels = within(nav).getAllByRole('link').map((link) => link.textContent)
+    expect(labels[0]).toBe('仪表盘')
+    expect(labels[1]).toBe('安全')
+  })
+
   it('方向键可以调整导航顺序，焦点留在同一项上', async () => {
     const user = userEvent.setup()
     renderApp('/')
     const nav = screen.getByRole('navigation', { name: '主导航' })
     const handle = within(nav).getByRole('button', { name: '拖拽排序：安全' })
     handle.focus()
+    await user.keyboard('{ArrowUp}')
+    expect(within(nav).getAllByRole('link').map((link) => link.textContent)?.[0]).toBe('仪表盘')
+    expect(within(nav).getAllByRole('link').map((link) => link.textContent)?.[1]).toBe('安全')
+
     await user.keyboard('{ArrowDown}')
 
     expect(document.activeElement).toHaveAccessibleName('拖拽排序：安全')
@@ -233,7 +267,9 @@ describe('模板外壳', () => {
     )
     renderApp('/')
     const nav = screen.getByRole('navigation', { name: '主导航' })
-    expect(within(nav).getAllByRole('link')[0]).toHaveTextContent('网站')
+    const labels = within(nav).getAllByRole('link')
+    expect(labels[0]).toHaveTextContent('仪表盘')
+    expect(labels[1]).toHaveTextContent('网站')
 
     await user.click(screen.getByRole('button', { name: '收起侧边栏' }))
     expect(screen.queryByRole('button', { name: /拖拽排序：/ })).not.toBeInTheDocument()
@@ -246,10 +282,10 @@ describe('模板外壳', () => {
     const drawer = screen.getByRole('dialog', { name: '主导航' })
     const restore = installNavRects()
     try {
-      fireEvent.pointerDown(within(drawer).getByRole('button', { name: '拖拽排序：仪表盘' }), {
+      fireEvent.pointerDown(within(drawer).getByRole('button', { name: '拖拽排序：安全' }), {
         button: 0,
         pointerId: 1,
-        clientY: 20,
+        clientY: 64,
       })
       fireEvent.pointerMove(window, { pointerId: 1, clientY: 120 })
       fireEvent.pointerUp(window, { pointerId: 1, clientY: 120 })
@@ -261,8 +297,9 @@ describe('模板外壳', () => {
     const labels = within(screen.getByRole('navigation', { name: '主导航' }))
       .getAllByRole('link')
       .map((link) => link.textContent)
-    expect(labels[0]).toBe('安全')
-    expect(labels[2]).toBe('仪表盘')
+    expect(labels[0]).toBe('仪表盘')
+    expect(labels[1]).toBe('Docker')
+    expect(labels[2]).toBe('安全')
   })
 
   it('桌面侧边栏可以收起并展开', async () => {

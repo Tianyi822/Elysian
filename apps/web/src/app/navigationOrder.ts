@@ -1,15 +1,22 @@
 import { useSyncExternalStore } from 'react'
-import { NAV_ITEMS } from './navigation'
+import { NAV_ITEMS, PINNED_NAV_PATH } from './navigation'
 import { UI_PREFERENCES_KEY, readStoredNavOrder, writeStoredNavOrder } from './theme/themePreferences'
 
 const DEFAULT_NAV_PATHS: readonly string[] = NAV_ITEMS.map((item) => item.to)
 
-/** 按已存路径排列已知项：不认识的丢掉，重复的忽略，缺的按默认顺序补在末尾。 */
+/** 按已存路径排列已知项：不认识的丢掉，重复的忽略，缺的按默认顺序补在末尾。仪表盘再固定到第一位。 */
 export function mergeNavOrder(known: readonly string[], stored: readonly string[] | null): string[] {
-  return orderNavItems(
+  const ordered = orderNavItems(
     known.map((to) => ({ to })),
     stored ?? [],
   ).map((item) => item.to)
+  return pinNavPath(ordered, PINNED_NAV_PATH)
+}
+
+function pinNavPath(paths: string[], pinned: string): string[] {
+  const index = paths.indexOf(pinned)
+  if (index <= 0) return paths
+  return [pinned, ...paths.slice(0, index), ...paths.slice(index + 1)]
 }
 
 export function orderNavItems<T extends { to: string }>(items: readonly T[], order: readonly string[]): T[] {
@@ -28,16 +35,25 @@ export function orderNavItems<T extends { to: string }>(items: readonly T[], ord
   return ordered
 }
 
-/** 指针越过槽位中线才算进该槽；间距无效时停在第一项。 */
+/**
+ * 指针落在哪一项的区间里，落点就是哪一项。区间从该项顶部到下一项顶部。
+ * 拖拽手柄在行的正中，所以上下都要再移动约半个身位、越过与相邻项的交界，才会换槽。
+ * 间距无效时停在第一项。
+ */
 export function slotIndexAtPoint(clientY: number, slotTops: readonly number[], stride: number): number {
   if (slotTops.length === 0 || stride <= 0) return 0
-  const half = stride / 2
   let index = 0
   for (let i = 0; i < slotTops.length; i++) {
     const top = slotTops[i]
-    if (top !== undefined && clientY >= top + half) index = i
+    if (top !== undefined && clientY >= top) index = i
   }
   return index
+}
+
+/** 仪表盘占第 0 位且不可排序，拖拽落点不得进入这一位。 */
+export function clampMovableSlot(index: number, length: number): number {
+  if (length <= 1) return 0
+  return Math.min(Math.max(index, 1), length - 1)
 }
 
 /**
@@ -64,6 +80,14 @@ export function moveItem<T>(items: readonly T[], from: number, to: number): T[] 
   if (item === undefined) return items.slice()
   next.splice(to, 0, item)
   return next
+}
+
+/** 移动主导航的一项。仪表盘固定在第一位，把它当作起点或落点时不改顺序。 */
+export function moveNavItem(items: readonly string[], from: number, to: number): string[] | null {
+  const pinned = items.indexOf(PINNED_NAV_PATH)
+  if (pinned !== -1 && (from === pinned || to === pinned)) return null
+  if (from === to || from < 0 || to < 0 || from >= items.length || to >= items.length) return null
+  return moveItem(items, from, to)
 }
 
 /**

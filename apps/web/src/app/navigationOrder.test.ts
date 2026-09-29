@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mergeNavOrder, moveItem, slotIndexAtPoint, translateForSlot } from './navigationOrder'
+import { clampMovableSlot, mergeNavOrder, moveItem, moveNavItem, slotIndexAtPoint, translateForSlot } from './navigationOrder'
 
 const KNOWN = ['/', '/security', '/docker', '/databases'] as const
 
@@ -8,24 +8,43 @@ describe('导航顺序合并', () => {
     expect(mergeNavOrder(KNOWN, null)).toEqual(['/', '/security', '/docker', '/databases'])
   })
 
-  it('按已存顺序排列，丢掉不认识的路径，缺的项按默认顺序补在末尾', () => {
+  it('按已存顺序排列，丢掉不认识的路径，缺的项按默认顺序补在末尾，仪表盘固定第一', () => {
     expect(mergeNavOrder(KNOWN, ['/databases', '/missing', '/databases', '/', '/files'])).toEqual([
-      '/databases',
       '/',
+      '/databases',
       '/security',
       '/docker',
     ])
+  })
+
+  it('已存顺序把仪表盘放在后面时，读出来仍在第一位', () => {
+    expect(mergeNavOrder(KNOWN, ['/docker', '/security', '/'])).toEqual(['/', '/docker', '/security', '/databases'])
   })
 })
 
 describe('拖拽位移', () => {
   const tops = [0, 44, 88, 132]
 
-  it('指针越过槽位中线才算进入该槽', () => {
+  it('指针落在项的区间内才算进入该槽，上下都要越过交界', () => {
     expect(slotIndexAtPoint(20, tops, 44)).toBe(0)
+    expect(slotIndexAtPoint(43, tops, 44)).toBe(0)
+    expect(slotIndexAtPoint(44, tops, 44)).toBe(1)
+    // 第 2 项中心约在 66。贴近中线的向上移动仍留在本项，要到上一项底部才换槽。
+    expect(slotIndexAtPoint(66, tops, 44)).toBe(1)
+    expect(slotIndexAtPoint(65, tops, 44)).toBe(1)
     expect(slotIndexAtPoint(70, tops, 44)).toBe(1)
+    // 向下到下一项顶部即换槽，不必拖到下一项中线。
+    expect(slotIndexAtPoint(87, tops, 44)).toBe(1)
+    expect(slotIndexAtPoint(88, tops, 44)).toBe(2)
     expect(slotIndexAtPoint(120, tops, 44)).toBe(2)
     expect(slotIndexAtPoint(400, tops, 44)).toBe(3)
+  })
+
+  it('拖拽落点不得进入仪表盘那一位', () => {
+    expect(clampMovableSlot(0, 4)).toBe(1)
+    expect(clampMovableSlot(2, 4)).toBe(2)
+    expect(clampMovableSlot(9, 4)).toBe(3)
+    expect(clampMovableSlot(0, 1)).toBe(0)
   })
 
   it('间距无效时停在原位', () => {
@@ -52,5 +71,12 @@ describe('移动一项', () => {
     expect(moveItem(['a', 'b', 'c'], 2, 0)).toEqual(['c', 'a', 'b'])
     expect(moveItem(['a', 'b'], 0, 0)).toEqual(['a', 'b'])
     expect(moveItem(['a', 'b'], -1, 0)).toEqual(['a', 'b'])
+  })
+
+  it('仪表盘不能被挪走，别的项也不能插到它前面', () => {
+    const order = ['/', '/security', '/docker']
+    expect(moveNavItem(order, 0, 2)).toBeNull()
+    expect(moveNavItem(order, 1, 0)).toBeNull()
+    expect(moveNavItem(order, 2, 1)).toEqual(['/', '/docker', '/security'])
   })
 })

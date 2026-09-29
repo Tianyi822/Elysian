@@ -9,9 +9,12 @@ export type NavItem = {
   end?: boolean
 }
 
+/** 仪表盘固定在主导航第一位，不参与拖拽或键盘排序。 */
+export const PINNED_NAV_PATH = '/'
+
 /** 侧边栏导航项；路由路径与显示名保持一致（领域词，产品名不同的取产品名，如 Docker）。 */
 export const NAV_ITEMS: readonly NavItem[] = [
-  { to: '/', label: '仪表盘', icon: LayoutDashboard, end: true },
+  { to: PINNED_NAV_PATH, label: '仪表盘', icon: LayoutDashboard, end: true },
   { to: '/security', label: '安全', icon: ShieldCheck },
   { to: '/docker', label: 'Docker', icon: Container },
   { to: '/databases', label: '数据库', icon: Database },

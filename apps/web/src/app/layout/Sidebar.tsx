@@ -2,10 +2,11 @@ import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as Reac
 import { NavLink } from 'react-router'
 import { GripVertical } from '../../components/icons'
 import { IconButton } from '../../components/IconButton'
-import { NAV_ITEMS } from '../navigation'
+import { NAV_ITEMS, PINNED_NAV_PATH } from '../navigation'
 import {
+  clampMovableSlot,
   commitNavOrder,
-  moveItem,
+  moveNavItem,
   orderNavItems,
   playNavFlip,
   slotIndexAtPoint,
@@ -70,7 +71,10 @@ export function Sidebar({
       if (!session || event.pointerId !== session.pointerId) return
       event.preventDefault()
       const offsetY = event.clientY - session.startY
-      const currentIndex = slotIndexAtPoint(event.clientY, session.tops, session.stride)
+      const currentIndex = clampMovableSlot(
+        slotIndexAtPoint(event.clientY, session.tops, session.stride),
+        session.tops.length,
+      )
       if (currentIndex === session.currentIndex && offsetY === session.offsetY) return
       const next = { ...session, offsetY, currentIndex }
       dragRef.current = next
@@ -81,7 +85,8 @@ export function Sidebar({
       if (!session || event.pointerId !== session.pointerId) return
       dragRef.current = null
       if (commit && session.originIndex !== session.currentIndex) {
-        commitNavOrder(moveItem(pathsRef.current, session.originIndex, session.currentIndex))
+        const next = moveNavItem(pathsRef.current, session.originIndex, session.currentIndex)
+        if (next) commitNavOrder(next)
       }
       setDrag(null)
     }
@@ -105,7 +110,7 @@ export function Sidebar({
   }, [paths])
 
   function startDrag(index: number, event: ReactPointerEvent<HTMLButtonElement>) {
-    if (event.button !== 0 || !listRef.current) return
+    if (event.button !== 0 || !listRef.current || pathsRef.current[index] === PINNED_NAV_PATH) return
     const measured = measureSlots(listRef.current)
     if (!measured) return
     event.preventDefault()
@@ -133,14 +138,15 @@ export function Sidebar({
     if (delta === 0) return
     const to = index + delta
     const current = pathsRef.current
-    if (to < 0 || to >= current.length || !listRef.current) return
+    const next = moveNavItem(current, index, to)
+    if (!next || !listRef.current) return
     pendingFlip.current = new Map(
       [...listRef.current.querySelectorAll<HTMLElement>('[data-nav-item]')].flatMap((node) => {
         const id = node.dataset['navItem']
         return id ? [[id, node.getBoundingClientRect().top] as const] : []
       }),
     )
-    commitNavOrder(moveItem(current, index, to))
+    commitNavOrder(next)
   }
 
   return (
@@ -151,6 +157,7 @@ export function Sidebar({
         className={`flex flex-1 flex-col gap-1 p-3 ${collapsed ? 'items-center' : ''}`}
       >
         {items.map((item, index) => {
+          const pinned = item.to === PINNED_NAV_PATH
           const draggingThis = drag?.originIndex === index
           const shift =
             drag !== null
@@ -181,7 +188,7 @@ export function Sidebar({
                 className={({ isActive }) =>
                   [
                     'flex min-h-10 items-center gap-3 rounded-lg px-3 py-2 text-sm no-underline transition-colors',
-                    collapsed ? 'w-10 justify-center px-0' : 'w-full pr-9',
+                    collapsed ? 'w-10 justify-center px-0' : pinned ? 'w-full' : 'w-full pr-9',
                     isActive
                       ? 'bg-surface-raised font-medium text-fg'
                       : draggingThis
@@ -193,7 +200,7 @@ export function Sidebar({
                 <item.icon aria-hidden size={17} />
                 <span className={collapsed ? 'sr-only' : undefined}>{item.label}</span>
               </NavLink>
-              {collapsed ? null : (
+              {collapsed || pinned ? null : (
                 <span
                   data-dragging={draggingThis ? '' : undefined}
                   className={`absolute top-1/2 right-1.5 -translate-y-1/2 has-[:focus-visible]:opacity-100 data-[dragging]:opacity-100 ${

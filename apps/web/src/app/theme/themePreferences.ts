@@ -18,7 +18,7 @@ export type UiPreferences = {
   theme?: Theme
   savedAt: string
   tabs?: Partial<Record<ViewTabKey, string>>
-  /** 主导航路径顺序。不认识的路径在读取侧合并时丢掉，缺的项按默认顺序补上。 */
+  /** 主导航路径顺序。不认识的路径在读取侧合并时丢掉，缺的项按默认顺序补上，仪表盘固定在第一位。 */
   nav?: string[]
 }
 
