@@ -55,7 +55,7 @@ let emitToStore: ((event: ElysianEvent) => void) | undefined
 
 beforeEach(() => {
   useContainersStore.setState({
-    status: 'idle', liveStatus: 'live', errorMessage: undefined, containers: [], images: [], imageRefreshStatus: 'idle', imageRefreshMessage: undefined, samples: {},
+    status: 'idle', liveStatus: 'live', errorMessage: undefined, containers: [], images: [], imageRefreshStatus: 'idle', samples: {},
     view: 'grid', statusFilter: 'all', search: '', detailContainerId: undefined,
     terminal: undefined, busyActions: [], createOpen: false, creating: false, removingImageIds: [],
     pullingImage: undefined,
@@ -557,14 +557,32 @@ describe('删除镜像', () => {
 })
 
 describe('镜像列表刷新', () => {
-  it('失败保留旧列表，成功给出可见状态', async () => {
+  it('失败保留旧列表并走通知，成功更新列表并走通知', async () => {
+    useNotificationStore.getState().clear()
     await useContainersStore.getState().load(gatewayWith())
     const oldImages = useContainersStore.getState().images
     await useContainersStore.getState().refreshImages(gatewayWith({ listImages: async () => { throw new Error('断线') } }))
-    expect(useContainersStore.getState()).toMatchObject({ images: oldImages, imageRefreshStatus: 'error', imageRefreshMessage: '刷新镜像失败：断线' })
+    expect(useContainersStore.getState()).toMatchObject({ images: oldImages, imageRefreshStatus: 'idle' })
+    expect(useNotificationStore.getState().notifications.at(-1)).toMatchObject({ tone: 'danger', message: '刷新镜像失败：断线' })
     await useContainersStore.getState().refreshImages(gatewayWith({ listImages: async () => [...CONTAINER_IMAGES].slice(0, 2) }))
-    expect(useContainersStore.getState()).toMatchObject({ imageRefreshStatus: 'success', imageRefreshMessage: '镜像列表已刷新' })
+    expect(useContainersStore.getState()).toMatchObject({ imageRefreshStatus: 'idle' })
+    expect(useNotificationStore.getState().notifications.at(-1)).toMatchObject({ tone: 'success', message: '镜像列表已刷新' })
     expect(useContainersStore.getState().images).toHaveLength(2)
+  })
+
+  it('页签自动刷新（notify:false）成功静默、失败仍发危险通知', async () => {
+    useNotificationStore.getState().clear()
+    await useContainersStore.getState().load(gatewayWith())
+    await useContainersStore.getState().refreshImages(
+      gatewayWith({ listImages: async () => [...CONTAINER_IMAGES] }),
+      { notify: false },
+    )
+    expect(useNotificationStore.getState().notifications).toHaveLength(0)
+    await useContainersStore.getState().refreshImages(
+      gatewayWith({ listImages: async () => { throw new Error('断线') } }),
+      { notify: false },
+    )
+    expect(useNotificationStore.getState().notifications.at(-1)).toMatchObject({ tone: 'danger', message: '刷新镜像失败：断线' })
   })
 
   it('晚到的刷新不得覆盖删除和下一次刷新', async () => {

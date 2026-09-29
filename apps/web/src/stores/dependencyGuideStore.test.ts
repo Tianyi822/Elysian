@@ -4,6 +4,7 @@ import type { ElysianGateway } from '../contracts/adapters'
 import { useNotificationStore } from './notificationStore'
 import {
   caddyGuideVisible,
+  caddyInstallEntryVisible,
   dockerGuideVisible,
   useDependencyGuideStore,
 } from './dependencyGuideStore'
@@ -194,6 +195,17 @@ describe('dismiss 语义', () => {
     expect(caddyGuideVisible(state.report, state.dismissedCaddy)).toBe(false)
     expect(state.dismissedDocker).toBe(false)
   })
+
+  it('reopenCaddy 清掉 Caddy 关闭标记，弹窗重新可见', async () => {
+    const gateway = gatewayWith(async () => CADDY_MISSING)
+    await useDependencyGuideStore.getState().check(gateway)
+    useDependencyGuideStore.getState().dismissCaddy()
+    expect(caddyGuideVisible(useDependencyGuideStore.getState().report, useDependencyGuideStore.getState().dismissedCaddy)).toBe(false)
+    useDependencyGuideStore.getState().reopenCaddy()
+    const state = useDependencyGuideStore.getState()
+    expect(caddyGuideVisible(state.report, state.dismissedCaddy)).toBe(true)
+    expect(state.dismissedDocker).toBe(false)
+  })
 })
 
 describe('优先级派生选择器', () => {
@@ -232,5 +244,19 @@ describe('优先级派生选择器', () => {
   it('双 ok 时两个弹窗都不可见', () => {
     expect(dockerGuideVisible(ALL_OK, false)).toBe(false)
     expect(caddyGuideVisible(ALL_OK, false)).toBe(false)
+  })
+})
+
+describe('网站页安装入口可见性', () => {
+  it('docker ok 且 caddy missing 时入口可见，与关闭标记无关', () => {
+    expect(caddyInstallEntryVisible(CADDY_MISSING)).toBe(true)
+    expect(caddyInstallEntryVisible(undefined)).toBe(false)
+    expect(caddyInstallEntryVisible(DOCKER_MISSING)).toBe(false)
+    expect(caddyInstallEntryVisible(ALL_OK)).toBe(false)
+    const caddyError: DependencyProbeReport = {
+      docker: { state: 'ok', detail: null },
+      caddy: { state: 'error', detail: 'Caddy 引擎故障' },
+    }
+    expect(caddyInstallEntryVisible(caddyError)).toBe(false)
   })
 })

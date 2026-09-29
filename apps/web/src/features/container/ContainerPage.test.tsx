@@ -7,6 +7,7 @@ import { createMockGateway } from '../../adapters/mock/gateway'
 import { CONTAINERS } from '../../adapters/mock/containersData'
 import { resolveViewTab, writeStoredViewTab } from '../../app/theme/themePreferences'
 import { useContainersStore } from '../../stores/containersStore'
+import { useNotificationStore } from '../../stores/notificationStore'
 import { renderApp } from '../../test/renderApp'
 
 /**
@@ -42,8 +43,10 @@ function pageGateway(overrides: Partial<ElysianGateway['containers']> = {}): Ely
 }
 
 beforeEach(() => {
+  // 通知是模块级共享态：镜像刷新等操作现在也走通知，不清会跨用例串台。
+  useNotificationStore.getState().clear()
   useContainersStore.setState({
-    status: 'idle', errorMessage: undefined, containers: [], images: [], imageRefreshStatus: 'idle', imageRefreshMessage: undefined, samples: {},
+    status: 'idle', errorMessage: undefined, containers: [], images: [], imageRefreshStatus: 'idle', samples: {},
     view: 'grid', statusFilter: 'all', search: '', detailContainerId: undefined,
     terminal: undefined, busyActions: [], createOpen: false, creating: false, removingImageIds: [],
     pullingImage: undefined,
@@ -297,7 +300,9 @@ describe('拉取镜像', () => {
     await waitFor(() => expect(listImages).toHaveBeenCalledTimes(3))
     await user.click(screen.getByRole('button', { name: '刷新镜像' }))
     await waitFor(() => expect(listImages).toHaveBeenCalledTimes(4))
-    expect(screen.getByRole('status')).toHaveTextContent('镜像列表已刷新')
+    // 刷新结果走全局通知组件，页面内不再有单独的反馈条。
+    const notifications = await screen.findByLabelText('通知')
+    expect(within(notifications).getByRole('status')).toHaveTextContent('镜像列表已刷新')
   })
 
   it('镜像拉取行显示 Engine 提供的层进度与真实百分比', async () => {

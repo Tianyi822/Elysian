@@ -21,6 +21,7 @@ export function ContainerViewSwitch() {
 
   return <HeaderTabs items={VIEW_TABS} value={view} onSelect={(next) => {
     setView(next)
-    if (next === 'images' && useContainersStore.getState().status === 'ready') void refreshImages(gateway)
+    // 页签切换的自动刷新是静默的：成功不打扰，失败仍走危险通知；显式「刷新镜像」按钮才报成功。
+    if (next === 'images' && useContainersStore.getState().status === 'ready') void refreshImages(gateway, { notify: false })
   }} groupLabel="视图切换" />
 }

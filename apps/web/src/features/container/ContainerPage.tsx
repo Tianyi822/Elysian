@@ -35,7 +35,6 @@ export function ContainerPage() {
   const liveStatus = useContainersStore((s) => s.liveStatus)
   const images = useContainersStore((s) => s.images)
   const imageRefreshStatus = useContainersStore((s) => s.imageRefreshStatus)
-  const imageRefreshMessage = useContainersStore((s) => s.imageRefreshMessage)
   const refreshImages = useContainersStore((s) => s.refreshImages)
   const load = useContainersStore((s) => s.load)
   const check = useDependencyGuideStore((s) => s.check)
@@ -138,15 +137,19 @@ export function ContainerPage() {
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-surface px-4 py-3">
             <p className="text-xs text-fg-muted">共 {images.length} 个镜像</p>
             <div className="flex flex-wrap items-center gap-2">
-              <button type="button" onClick={() => void refreshImages(gateway)} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle">
-                <RotateCw aria-hidden size={14} />刷新镜像
+              <button
+                type="button"
+                onClick={() => void refreshImages(gateway)}
+                disabled={imageRefreshStatus === 'loading'}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <RotateCw aria-hidden size={14} className={imageRefreshStatus === 'loading' ? 'animate-spin' : undefined} />刷新镜像
               </button>
               <button type="button" onClick={() => setPullOpen(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle">
                 <Download aria-hidden size={14} />拉取镜像
               </button>
             </div>
           </div>
-          {imageRefreshStatus !== 'idle' ? <p role="status" className={`mb-3 text-xs ${imageRefreshStatus === 'error' ? 'text-danger' : 'text-fg-muted'}`}>{imageRefreshMessage}</p> : null}
           <ImageTable images={images} containers={containers} />
         </>
       ) : filtered.length === 0 ? (

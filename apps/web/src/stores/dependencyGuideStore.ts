@@ -27,9 +27,11 @@ type DependencyGuideState = {
    * 组件据此调页面的 reload 重入业务加载；无依赖转就绪时为 null。
    */
   recheck: (gateway: ElysianGateway) => Promise<'docker' | 'caddy' | null>
-  /** 会话内关闭标记：刷新浏览器即重置，无专门重开入口。 */
+  /** 会话内关闭标记：刷新浏览器即重置；Caddy 关闭后由网站页工具栏「安装 Caddy」重开，Docker 无重开入口。 */
   dismissDocker: () => void
   dismissCaddy: () => void
+  /** 网站页工具栏「安装 Caddy」的重开动作：只清 Caddy 的关闭标记（该入口仅 Docker 就绪时可见）。 */
+  reopenCaddy: () => void
 }
 
 function notify(message: string, tone: 'success' | 'danger' = 'success'): void {
@@ -55,6 +57,14 @@ export function caddyGuideVisible(
     report.caddy.state === 'missing' &&
     !dismissed
   )
+}
+
+/**
+ * 网站页工具栏「安装 Caddy」重开入口的可见性：与弹窗关闭标记无关，
+ * Docker 就绪且 Caddy 缺失期间常驻，装好（或降级为 error）即随报告消失。
+ */
+export function caddyInstallEntryVisible(report: DependencyProbeReport | undefined): boolean {
+  return report !== undefined && report.docker.state === 'ok' && report.caddy.state === 'missing'
 }
 
 export const useDependencyGuideStore = create<DependencyGuideState>((set, get) => ({
@@ -104,5 +114,9 @@ export const useDependencyGuideStore = create<DependencyGuideState>((set, get) =
 
   dismissCaddy() {
     set({ dismissedCaddy: true })
+  },
+
+  reopenCaddy() {
+    set({ dismissedCaddy: false })
   },
 }))

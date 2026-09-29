@@ -1,10 +1,12 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { DependencyProbeReport } from '@elysian/contracts'
 import type { ElysianGateway } from '../../contracts/adapters'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { resetWebsitesData } from '../../adapters/mock/websitesData'
 import { useNotificationStore } from '../../stores/notificationStore'
+import { useDependencyGuideStore } from '../../stores/dependencyGuideStore'
 import { useWebsitesStore } from '../../stores/websitesStore'
 import { renderApp } from '../../test/renderApp'
 
@@ -53,6 +55,14 @@ beforeEach(() => {
   useNotificationStore.getState().clear()
   // 用例会增删改共享的 mock 数据集：每个用例前重置回种子，断言不依赖用例声明顺序。
   resetWebsitesData()
+  // 引导层报告是模块级共享态：注入过缺失报告的用例不能泄漏到后续用例（mock 网关恒双 ok）。
+  useDependencyGuideStore.setState({
+    report: undefined,
+    status: 'idle',
+    rechecking: false,
+    dismissedDocker: false,
+    dismissedCaddy: false,
+  })
   useWebsitesStore.setState({
     status: 'idle',
     errorMessage: undefined,
@@ -329,5 +339,36 @@ describe('四态', () => {
     expect(await screen.findByText('您的列表为空')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '添加一个项目' }))
     expect(await screen.findByRole('dialog', { name: '添加项目' })).toBeInTheDocument()
+  })
+})
+
+describe('Caddy 安装引导入口', () => {
+  const CADDY_MISSING_REPORT: DependencyProbeReport = {
+    docker: { state: 'ok', detail: null },
+    caddy: { state: 'missing', detail: '宿主未提供 Caddy 管理通道' },
+  }
+
+  it('双依赖就绪时工具栏无「安装 Caddy」入口', async () => {
+    await openWebsites()
+    expect(screen.queryByRole('button', { name: '安装 Caddy' })).not.toBeInTheDocument()
+  })
+
+  it('Caddy 缺失：弹窗可关，工具栏入口常驻并重开引导', async () => {
+    const user = userEvent.setup()
+    // 域方法在原型上，展开会丢：以 sessionGateway 打底（websites 已显式委托）再覆写 dependencies。
+    const base = sessionGateway()
+    const gateway: ElysianGateway = { ...base, dependencies: { probe: async () => CADDY_MISSING_REPORT } }
+    renderApp('/websites', { gateway })
+
+    // Docker 就绪 + Caddy 缺失：引导弹窗自动出现。Radix 打开期间把弹窗外内容整体
+    // aria-hidden，role 查询看不见页面，先断言弹窗本体再往下走。
+    const dialog = await screen.findByRole('dialog', { name: '安装 Caddy' })
+    expect(within(dialog).getByText(/面板不会代你执行任何安装命令/)).toBeInTheDocument()
+
+    await user.click(within(dialog).getByRole('button', { name: '关闭弹窗' }))
+    // 弹窗关闭后页面恢复可查询：项目列表与常驻入口都在位。
+    expect(await screen.findByRole('list', { name: '网站项目列表' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '安装 Caddy' }))
+    expect(await screen.findByRole('dialog', { name: '安装 Caddy' })).toBeInTheDocument()
   })
 })

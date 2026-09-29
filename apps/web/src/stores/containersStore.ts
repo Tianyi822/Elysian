@@ -181,8 +181,8 @@ export const useContainersStore = create<{
   errorMessage?: string
   containers: readonly Container[]
   images: readonly ContainerImage[]
-  imageRefreshStatus: 'idle' | 'loading' | 'success' | 'error'
-  imageRefreshMessage?: string
+  /** 镜像手动刷新的忙碌标记（loading 期间锁按钮）；结果经全局通知组件反馈，页面不另写反馈条。 */
+  imageRefreshStatus: 'idle' | 'loading'
   samples: Readonly<Record<string, { cpuPercent: number; memMb: number }>>
   view: 'grid' | 'images'
   statusFilter: ContainerStatus | 'all'
@@ -195,7 +195,7 @@ export const useContainersStore = create<{
   removingImageIds: readonly string[]
   pullingImage?: { name: string; tag: string; registry?: string; progress?: ImagePullProgress }
   load: (gateway: ElysianGateway) => Promise<void>
-  refreshImages: (gateway: ElysianGateway) => Promise<void>
+  refreshImages: (gateway: ElysianGateway, options?: { notify?: boolean }) => Promise<void>
   setLiveStatus: (status: 'live' | 'connecting') => void
   setView: (view: 'grid' | 'images') => void
   setStatusFilter: (filter: ContainerStatus | 'all') => void
@@ -222,7 +222,6 @@ export const useContainersStore = create<{
   containers: [],
   images: [],
   imageRefreshStatus: 'idle',
-  imageRefreshMessage: undefined,
   samples: {},
   view: resolveViewTab(window.localStorage, 'containers', ['grid', 'images'] as const, 'grid'),
   statusFilter: 'all',
@@ -243,7 +242,7 @@ export const useContainersStore = create<{
     imageRevision += 1
     imageRefreshSequence += 1
     const revision = imageRevision
-    set({ status: 'loading', errorMessage: undefined, imageRefreshStatus: 'idle', imageRefreshMessage: undefined })
+    set({ status: 'loading', errorMessage: undefined, imageRefreshStatus: 'idle' })
     try {
       const [containers, images] = await Promise.all([
         gateway.containers.list(),
@@ -261,23 +260,28 @@ export const useContainersStore = create<{
     }
   },
 
-  async refreshImages(gateway) {
+  async refreshImages(gateway, options) {
+    // 缺省通知结果；页签自动刷新传 notify:false 静默成功（失败仍可见），避免每次切页签都弹提示。
+    const notifyOutcome = options?.notify !== false
     const sequence = ++imageRefreshSequence
     const revision = imageRevision
-    set({ imageRefreshStatus: 'loading', imageRefreshMessage: '正在刷新镜像列表…' })
+    set({ imageRefreshStatus: 'loading' })
     try {
       const images = await gateway.containers.listImages()
       if (sequence !== imageRefreshSequence) return
       if (revision !== imageRevision) {
-        set({ imageRefreshStatus: 'success', imageRefreshMessage: '镜像列表已由其他操作更新' })
+        set({ imageRefreshStatus: 'idle' })
+        if (notifyOutcome) useNotificationStore.getState().notify({ tone: 'success', message: '镜像列表已由其他操作更新' })
         return
       }
       imageRevision += 1
-      set({ images, imageRefreshStatus: 'success', imageRefreshMessage: '镜像列表已刷新' })
+      set({ images, imageRefreshStatus: 'idle' })
+      if (notifyOutcome) useNotificationStore.getState().notify({ tone: 'success', message: '镜像列表已刷新' })
     } catch (error) {
       if (sequence !== imageRefreshSequence) return
       const detail = error instanceof Error ? error.message : '未知错误'
-      set({ imageRefreshStatus: 'error', imageRefreshMessage: `刷新镜像失败：${detail}` })
+      set({ imageRefreshStatus: 'idle' })
+      useNotificationStore.getState().notify({ tone: 'danger', message: `刷新镜像失败：${detail}` })
     }
   },
 
