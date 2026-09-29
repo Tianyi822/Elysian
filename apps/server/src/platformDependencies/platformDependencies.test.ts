@@ -182,6 +182,33 @@ describe('路由（createPlatformDependenciesApp）', () => {
     }
     expect(probe).not.toHaveBeenCalled()
   })
+
+  it('固定窗口限流：超限 GET 返回 429 与中文文案且不触发探测，窗口滚动后恢复', async () => {
+    const probe = vi.fn(async (): Promise<DependencyProbeReport> => OK_REPORT)
+    const app = createPlatformDependenciesApp({ probe, probeRateLimit: 2, rateWindowMs: 60 })
+    for (let i = 0; i < 2; i += 1) {
+      expect((await app.request('http://localhost:48100/dependencies')).status).toBe(200)
+    }
+    const limited = await app.request('http://localhost:48100/dependencies')
+    expect(limited.status).toBe(429)
+    expect(await limited.json()).toEqual({ error: '依赖检测请求过于频繁，请稍后再试' })
+    expect(Number(limited.headers.get('retry-after'))).toBeGreaterThanOrEqual(1)
+    expect(probe).toHaveBeenCalledTimes(2)
+    await new Promise((resolve) => setTimeout(resolve, 70))
+    expect((await app.request('http://localhost:48100/dependencies')).status).toBe(200)
+    expect(probe).toHaveBeenCalledTimes(3)
+  })
+
+  it('非 GET 的 405 不占用探测限额', async () => {
+    const probe = vi.fn(async (): Promise<DependencyProbeReport> => OK_REPORT)
+    const app = createPlatformDependenciesApp({ probe, probeRateLimit: 1 })
+    for (let i = 0; i < 5; i += 1) {
+      const res = await app.request('http://localhost:48100/dependencies', { method: 'POST' })
+      expect(res.status).toBe(405)
+    }
+    expect((await app.request('http://localhost:48100/dependencies')).status).toBe(200)
+    expect(probe).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('app 接线与审计零记录', () => {
