@@ -228,7 +228,7 @@ describe('模板外壳', () => {
     const user = userEvent.setup()
     writeStoredNavOrder(
       localStorage,
-      ['/websites', '/', '/security', '/containers', '/databases', '/files', '/logs', '/terminals'],
+      ['/websites', '/', '/security', '/docker', '/databases', '/files', '/logs', '/terminals'],
       '2026-09-22T00:00:00.000Z',
     )
     renderApp('/')

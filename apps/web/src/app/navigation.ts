@@ -9,11 +9,11 @@ export type NavItem = {
   end?: boolean
 }
 
-/** 侧边栏导航项；显示名取产品命名，路由路径保持领域词。 */
+/** 侧边栏导航项；路由路径与显示名保持一致（领域词，产品名不同的取产品名，如 Docker）。 */
 export const NAV_ITEMS: readonly NavItem[] = [
   { to: '/', label: '仪表盘', icon: LayoutDashboard, end: true },
   { to: '/security', label: '安全', icon: ShieldCheck },
-  { to: '/containers', label: 'Docker', icon: Container },
+  { to: '/docker', label: 'Docker', icon: Container },
   { to: '/databases', label: '数据库', icon: Database },
   { to: '/files', label: '文件管理', icon: FolderTree },
   { to: '/logs', label: '平台日志', icon: ScrollText },

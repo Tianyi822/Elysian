@@ -59,7 +59,7 @@ export const routes: RouteObject[] = [
         ),
       },
       {
-        path: 'containers',
+        path: 'docker',
         handle: {
           headerAccessory: ContainerViewSwitch,
           hideHeaderTitle: true,

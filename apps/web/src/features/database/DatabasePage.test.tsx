@@ -279,7 +279,7 @@ describe('数据库页面', () => {
 
     // 会话弹窗是模态的，真实用户点不到侧边栏；用路由导航等价浏览器后退离开本页，
     // 页面卸载应把会话清空，而不是留在全局 store 里。
-    await router.navigate('/containers')
+    await router.navigate('/docker')
     await waitFor(() => expect(useDatabaseStore.getState().session).toBeUndefined())
 
     await router.navigate('/databases')

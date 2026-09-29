@@ -55,20 +55,20 @@ beforeEach(() => {
 
 describe('容器页骨架', () => {
   it('进入页面渲染全部 10 个容器', async () => {
-    renderApp('/containers', { gateway: pageGateway() })
+    renderApp('/docker', { gateway: pageGateway() })
     const list = await screen.findByRole('list', { name: '容器列表' })
     expect(within(list).getAllByRole('listitem')).toHaveLength(10)
   })
 
   it('mock 网关依赖恒 ok：页面成功态不出现安装引导弹窗', async () => {
-    renderApp('/containers', { gateway: pageGateway() })
+    renderApp('/docker', { gateway: pageGateway() })
     await screen.findByRole('list', { name: '容器列表' })
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
   it('状态筛选只保留所选状态的容器', async () => {
     const user = userEvent.setup()
-    renderApp('/containers', { gateway: pageGateway() })
+    renderApp('/docker', { gateway: pageGateway() })
     await screen.findByRole('list', { name: '容器列表' })
 
     await user.click(screen.getByRole('button', { name: '已停止' }))
@@ -79,7 +79,7 @@ describe('容器页骨架', () => {
 
   it('搜索按名称过滤，无结果显示专属空态', async () => {
     const user = userEvent.setup()
-    renderApp('/containers', { gateway: pageGateway() })
+    renderApp('/docker', { gateway: pageGateway() })
     await screen.findByRole('list', { name: '容器列表' })
 
     await user.type(screen.getByLabelText('搜索容器名称'), 'nginx')
@@ -99,7 +99,7 @@ describe('容器页骨架', () => {
         return [...(CONTAINERS as readonly Container[])]
       },
     })
-    renderApp('/containers', { gateway })
+    renderApp('/docker', { gateway })
     expect(await screen.findByText('容器数据加载失败')).toBeInTheDocument()
     // mock 网关依赖恒 ok：错误态不叠加安装引导弹窗。
     expect(screen.queryByRole('dialog')).toBeNull()
@@ -110,7 +110,7 @@ describe('容器页骨架', () => {
   })
 
   it('数据集为空渲染空态', async () => {
-    renderApp('/containers', {
+    renderApp('/docker', {
       gateway: pageGateway({
         list: async () => [],
         listImages: async () => [] as readonly ContainerImage[],
@@ -122,7 +122,7 @@ describe('容器页骨架', () => {
 
 describe('容器卡片', () => {
   it('卡片显示名称、ID 前 13 位、镜像、状态标签与端口映射', async () => {
-    renderApp('/containers', { gateway: pageGateway() })
+    renderApp('/docker', { gateway: pageGateway() })
     const card = await screen.findByRole('listitem', { name: 'nginx-proxy' })
     expect(card.textContent).toContain('ctr-nginx-pro')
     expect(card.textContent).toContain('nginx:1.27-alpine')
@@ -132,7 +132,7 @@ describe('容器卡片', () => {
   })
 
   it('运行中卡片有实时资源数值；停止的卡片资源显示 — 且终端禁用', async () => {
-    renderApp('/containers', { gateway: pageGateway() })
+    renderApp('/docker', { gateway: pageGateway() })
     const running = await screen.findByRole('listitem', { name: 'nginx-proxy' })
     expect(running.textContent).toMatch(/CPU \d+%/)
     expect(running.textContent).toMatch(/内存 \d+ MB/)
@@ -147,7 +147,7 @@ describe('容器卡片', () => {
 
   it('停止与重启是危险操作：取消不执行，确认后才执行', async () => {
     const user = userEvent.setup()
-    renderApp('/containers', { gateway: pageGateway() })
+    renderApp('/docker', { gateway: pageGateway() })
     const card = await screen.findByRole('listitem', { name: 'nginx-proxy' })
 
     await user.click(within(card).getByRole('button', { name: '停止' }))
@@ -170,7 +170,7 @@ describe('容器卡片', () => {
   })
 
   it('重启中的卡片操作全部禁用；卡片显示运行时长', async () => {
-    renderApp('/containers', { gateway: pageGateway() })
+    renderApp('/docker', { gateway: pageGateway() })
     const restarting = await screen.findByRole('listitem', { name: 'metrics-agent' })
     for (const name of ['终端', '停止', '重启']) {
       expect(within(restarting).getByRole('button', { name })).toBeDisabled()
@@ -182,7 +182,7 @@ describe('容器卡片', () => {
 describe('镜像视图', () => {
   it('切换到镜像视图显示 8 行镜像与引用数', async () => {
     const user = userEvent.setup()
-    renderApp('/containers', { gateway: pageGateway() })
+    renderApp('/docker', { gateway: pageGateway() })
     await screen.findByRole('list', { name: '容器列表' })
     expect(
       within(screen.getByRole('banner')).getByRole('group', { name: '视图切换' }),
@@ -210,7 +210,7 @@ describe('镜像视图', () => {
       view: resolveViewTab(window.localStorage, 'containers', ['grid', 'images'] as const, 'grid'),
     })
 
-    renderApp('/containers', { gateway: pageGateway() })
+    renderApp('/docker', { gateway: pageGateway() })
 
     expect(await screen.findByRole('table', { name: '镜像列表' })).toBeInTheDocument()
     expect(
@@ -220,7 +220,7 @@ describe('镜像视图', () => {
 
   it('删除按钮按引用区分：被引用禁用并说明，未引用可发起删除', async () => {
     const user = userEvent.setup()
-    renderApp('/containers', { gateway: pageGateway() })
+    renderApp('/docker', { gateway: pageGateway() })
     await screen.findByRole('list', { name: '容器列表' })
     await user.click(screen.getByRole('button', { name: '镜像' }))
     const table = await screen.findByRole('table', { name: '镜像列表' })
@@ -242,7 +242,7 @@ describe('镜像视图', () => {
   it('删除落实到 mock：确认后行消失、通知带 mock 标注、数据集不再返回该镜像', async () => {
     const user = userEvent.setup()
     const gateway = pageGateway()
-    renderApp('/containers', { gateway })
+    renderApp('/docker', { gateway })
     await screen.findByRole('list', { name: '容器列表' })
     await user.click(screen.getByRole('button', { name: '镜像' }))
     const table = await screen.findByRole('table', { name: '镜像列表' })
@@ -282,7 +282,7 @@ describe('拉取镜像', () => {
 
   async function openImagesView(gateway = pageGateway()) {
     const user = userEvent.setup()
-    renderApp('/containers', { gateway })
+    renderApp('/docker', { gateway })
     await screen.findByRole('list', { name: '容器列表' })
     await user.click(screen.getByRole('button', { name: '镜像' }))
     return { user, table: await screen.findByRole('table', { name: '镜像列表' }) }
@@ -291,7 +291,7 @@ describe('拉取镜像', () => {
   it('每次选择镜像页签及点击刷新按钮都重新读取列表', async () => {
     const listImages = vi.fn(async () => [])
     const user = userEvent.setup()
-    renderApp('/containers', { gateway: pageGateway({ listImages }) })
+    renderApp('/docker', { gateway: pageGateway({ listImages }) })
     await screen.findByRole('list', { name: '容器列表' })
     expect(listImages).toHaveBeenCalledTimes(1)
     await user.click(screen.getByRole('button', { name: '镜像' }))
@@ -358,7 +358,7 @@ describe('拉取镜像', () => {
 
   it('拉取全流程：提交后弹窗关、拉取中行出现，完成后入列并发 mock 通知', async () => {
     const user = userEvent.setup()
-    renderApp('/containers', { gateway: pageGateway() })
+    renderApp('/docker', { gateway: pageGateway() })
     await screen.findByRole('list', { name: '容器列表' })
     await user.click(screen.getByRole('button', { name: '镜像' }))
     const table = await screen.findByRole('table', { name: '镜像列表' })
@@ -384,7 +384,7 @@ describe('拉取镜像', () => {
 describe('容器详情面板', () => {
   it('点击详情打开右侧面板，分节展示完整配置', async () => {
     const user = userEvent.setup()
-    renderApp('/containers', { gateway: pageGateway() })
+    renderApp('/docker', { gateway: pageGateway() })
     const card = await screen.findByRole('listitem', { name: 'postgres-db' })
 
     await user.click(within(card).getByRole('button', { name: '详情' }))
@@ -411,7 +411,7 @@ describe('容器详情面板', () => {
 
   it('Esc 关闭面板回到列表', async () => {
     const user = userEvent.setup()
-    renderApp('/containers', { gateway: pageGateway() })
+    renderApp('/docker', { gateway: pageGateway() })
     const card = await screen.findByRole('listitem', { name: 'redis-cache' })
     await user.click(within(card).getByRole('button', { name: '详情' }))
     expect(await screen.findByRole('dialog', { name: 'redis-cache' })).toBeInTheDocument()
@@ -427,7 +427,7 @@ describe('演示终端', () => {
   // 命令输出与补全规则在 containerTerminal.test，不在这里重复。
   async function openTerminalOf(name: string) {
     const user = userEvent.setup()
-    renderApp('/containers', { gateway: pageGateway() })
+    renderApp('/docker', { gateway: pageGateway() })
     const card = await screen.findByRole('listitem', { name })
     await user.click(within(card).getByRole('button', { name: '终端' }))
     const dialog = await screen.findByRole('dialog', { name: `${name} 终端` })
@@ -532,7 +532,7 @@ describe('演示终端', () => {
 describe('容器操作联动', () => {
   it('停止操作经事件流回流：卡片变已停止、终端禁用、右上角出现通知', async () => {
     const user = userEvent.setup()
-    renderApp('/containers', {
+    renderApp('/docker', {
       gateway: createMockGateway({ eventStream: 'memory', eventIntervalMs: 50 }),
     })
     const card = await screen.findByRole('listitem', { name: 'nginx-proxy' })
@@ -550,7 +550,7 @@ describe('容器操作联动', () => {
 
   it('重启操作的通知带 mock 标注，且随后回到运行中', async () => {
     const user = userEvent.setup()
-    renderApp('/containers', {
+    renderApp('/docker', {
       gateway: createMockGateway({ eventStream: 'memory', eventIntervalMs: 50 }),
     })
     const card = await screen.findByRole('listitem', { name: 'redis-cache' })
@@ -576,7 +576,7 @@ async function pickImage(user: ReturnType<typeof userEvent.setup>, dialog: HTMLE
 describe('创建容器', () => {
   async function openCreateForm(gateway = pageGateway()) {
     const user = userEvent.setup()
-    renderApp('/containers', { gateway })
+    renderApp('/docker', { gateway })
     await screen.findByRole('list', { name: '容器列表' })
     await user.click(screen.getByRole('button', { name: '创建容器' }))
     const dialog = await screen.findByRole('dialog', { name: '创建容器' })

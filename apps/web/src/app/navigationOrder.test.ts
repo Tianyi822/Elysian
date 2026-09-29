@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { mergeNavOrder, moveItem, slotIndexAtPoint, translateForSlot } from './navigationOrder'
 
-const KNOWN = ['/', '/security', '/containers', '/databases'] as const
+const KNOWN = ['/', '/security', '/docker', '/databases'] as const
 
 describe('导航顺序合并', () => {
   it('没有存过顺序时沿用默认顺序', () => {
-    expect(mergeNavOrder(KNOWN, null)).toEqual(['/', '/security', '/containers', '/databases'])
+    expect(mergeNavOrder(KNOWN, null)).toEqual(['/', '/security', '/docker', '/databases'])
   })
 
   it('按已存顺序排列，丢掉不认识的路径，缺的项按默认顺序补在末尾', () => {
@@ -13,7 +13,7 @@ describe('导航顺序合并', () => {
       '/databases',
       '/',
       '/security',
-      '/containers',
+      '/docker',
     ])
   })
 })

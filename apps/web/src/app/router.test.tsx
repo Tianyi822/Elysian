@@ -14,7 +14,7 @@ describe('路由表', () => {
   })
 
   it('/containers 渲染 Docker 区', async () => {
-    renderApp('/containers')
+    renderApp('/docker')
     expect(await screen.findByRole('group', { name: '视图切换' })).toBeInTheDocument()
   })
 
