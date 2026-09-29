@@ -3,6 +3,7 @@ import {
   createHttpDependenciesAdapter,
   parseDependencyProbe,
   parseDependencyProbeReport,
+  sanitizeDependencyText,
 } from './dependenciesHttpAdapter'
 
 /*
@@ -38,6 +39,32 @@ describe('parseDependencyProbe', () => {
     expect(() => parseDependencyProbe({ state: 'unavailable', detail: null })).toThrow('依赖检测响应状态取值无效')
     expect(() => parseDependencyProbe({ state: 1, detail: null })).toThrow('依赖检测响应状态取值无效')
     expect(() => parseDependencyProbe({ detail: null })).toThrow('依赖检测响应状态取值无效')
+  })
+
+  it('detail 超长截断、控制与零宽字符剥离——响应文本不整段进弹窗', () => {
+    const long = parseDependencyProbe({ state: 'error', detail: '注'.repeat(500) }).detail
+    expect(long?.length).toBe(201)
+    expect(long?.endsWith('…')).toBe(true)
+    expect(parseDependencyProbe({ state: 'error', detail: 'A\u0000B' }).detail).toBe('A B')
+    // 零宽字符剥离成空格后不得拼出与官方文案同形的词（防视觉伪装）。
+    expect(parseDependencyProbe({ state: 'error', detail: '重新检\u200b测' }).detail).toBe('重新检 测')
+  })
+})
+
+describe('sanitizeDependencyText', () => {
+  it('控制字符、行分隔、零宽与方向覆盖字符压平为空格', () => {
+    expect(sanitizeDependencyText('a\u0000b\u007fc')).toBe('a b c')
+    expect(sanitizeDependencyText('a\u2028b\u2029c')).toBe('a b c')
+    expect(sanitizeDependencyText('a\u200bb\u200ec')).toBe('a b c')
+    expect(sanitizeDependencyText('a\u202ab\u2066c\ufeff')).toBe('a b c ')
+  })
+
+  it('超长文本截断到 200 字符并追加省略号，短文本原样保留', () => {
+    expect(sanitizeDependencyText('正常文案')).toBe('正常文案')
+    const sanitized = sanitizeDependencyText('长'.repeat(300))
+    expect(sanitized.length).toBe(201)
+    expect(sanitized.startsWith('长'.repeat(200))).toBe(true)
+    expect(sanitized.endsWith('…')).toBe(true)
   })
 })
 
@@ -99,6 +126,34 @@ describe('createHttpDependenciesAdapter', () => {
     vi.stubGlobal('fetch', fetchMock)
     const adapter = createHttpDependenciesAdapter()
     await expect(adapter.probe()).rejects.toThrow('依赖检测请求失败：HTTP 500')
+    vi.unstubAllGlobals()
+  })
+
+  it('HTTP 非 2xx 的 error 字段为非字符串时不拼接其内容，回退状态码中文文案', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ error: { inject: '<script>赋值文案' } }), {
+          status: 502,
+          headers: { 'content-type': 'application/json' },
+        }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const adapter = createHttpDependenciesAdapter()
+    await expect(adapter.probe()).rejects.toThrow('依赖检测请求失败：HTTP 502')
+    vi.unstubAllGlobals()
+  })
+
+  it('HTTP 非 2xx 的 error 文案超长或含控制字符时经同一清洗——无约束文本不进通知区', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ error: `${'注'.repeat(500)}\u0000尾注` }), {
+          status: 502,
+          headers: { 'content-type': 'application/json' },
+        }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const adapter = createHttpDependenciesAdapter()
+    await expect(adapter.probe()).rejects.toThrow(`${'注'.repeat(200)}…`)
     vi.unstubAllGlobals()
   })
 

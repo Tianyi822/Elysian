@@ -8,6 +8,22 @@ import type { DependenciesAdapter } from '../../contracts/adapters'
  * 风格与 websitesHttpAdapter 一致：解析函数全部导出，测试直接喂样本。
  */
 
+/** 响应携带文案的呈现上限：探测原因是单行中文短句，超长即非受控文本。 */
+const DETAIL_MAX_LENGTH = 200
+
+/** 不可见与控制字符（C0/C1、零宽、方向覆盖、行分隔、BOM）：压平为空格，防视觉伪装与换行拼排。 */
+const INVISIBLE_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/g
+
+/**
+ * 响应携带文案的统一约束：剥离不可见字符并截断到上限。探测 detail 会渲染在官方
+ * 安装步骤旁、非 2xx 的 error 文案会进 danger 通知，能伪造同源响应的一方不应因此
+ * 获得无长度与内容约束的社工文案位。
+ */
+export function sanitizeDependencyText(value: string): string {
+  const flattened = value.replace(INVISIBLE_CHARACTERS, ' ')
+  return flattened.length > DETAIL_MAX_LENGTH ? `${flattened.slice(0, DETAIL_MAX_LENGTH)}…` : flattened
+}
+
 function asObject(value: unknown, message: string): Record<string, unknown> {
   if (!value || typeof value !== 'object') {
     throw new Error(message)
@@ -29,7 +45,7 @@ function oneOf<T extends string>(
 function stringOrNull(value: unknown, message: string): string | null {
   if (value === null) return null
   if (typeof value !== 'string') throw new Error(message)
-  return value
+  return sanitizeDependencyText(value)
 }
 
 /** 校验单个依赖的探测结果：state 取枚举，detail 可空。 */
@@ -60,7 +76,14 @@ async function requestJson(url: string): Promise<unknown> {
   if (!response.ok) {
     const detail = await response
       .json()
-      .then((body) => (body && typeof body === 'object' && 'error' in body ? String((body as { error: unknown }).error) : null))
+      .then((body) => {
+        if (body && typeof body === 'object' && 'error' in body) {
+          const error = (body as { error: unknown }).error
+          // 只透传非空字符串并经统一清洗；非字符串（对象、数组等）不再 String() 拼接。
+          if (typeof error === 'string' && error.length > 0) return sanitizeDependencyText(error)
+        }
+        return null
+      })
       .catch(() => null)
     throw new Error(detail ?? `依赖检测请求失败：HTTP ${response.status}`)
   }
