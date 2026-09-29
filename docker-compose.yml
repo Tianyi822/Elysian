@@ -15,6 +15,12 @@ services:
       # 绑定挂载对齐根：服务端按容器内路径校验挂载越界，须与 volumes 里同一变量的
       # bind 挂载同值；macOS 必设为已共享路径，未设时 compose up 显式挂载报错。
       ELYSIAN_DOCKER_MOUNT_ROOT: ${ELYSIAN_DOCKER_MOUNT_ROOT:-/srv}
+      # 宿主 Caddy 管理通道 socket（网站域反向代理）。宿主侧用 Caddy 官方 apt 仓库装
+      # caddy、systemd 常驻，/etc/caddy/Caddyfile 全局段写 admin unix//run/caddy/admin.sock，
+      # 并用 systemd drop-in（RuntimeDirectory=caddy）或 tmpfiles.d 保证 /run/caddy 开机即在；
+      # Caddy 绝不进面板镜像、也不用 caddy 容器承载流量。宿主没装 caddy 时通道如实降级
+      # （列表横幅呈现不可用），站点容器生命周期不受影响。
+      ELYSIAN_CADDY_SOCKET: ${ELYSIAN_CADDY_SOCKET:-/run/caddy/admin.sock}
     # 防火墙面板真实执行 ufw/iptables，需要网络管理能力。
     cap_add:
       - NET_ADMIN
@@ -40,6 +46,13 @@ services:
       # 宿主引擎 socket（DooD）：文件级 bind 挂载，容器页经 Engine API 直连宿主 dockerd。
       # 勿改挂 /var/run 整目录——Ubuntu 里它是 /run 的符号链接，会吞掉 command 建的 /run/sshd。
       - /var/run/docker.sock:/var/run/docker.sock
+      # 宿主 Caddy 的 admin socket：**目录级** bind。caddy 重启（含 systemd 升级重启）会
+      # unlink 旧 socket 并以新 inode 重建，文件级 bind 的容器内挂载点会一直指向旧 inode，
+      # 通道从此静默不可用；且宿主 socket 尚不存在时 Docker 会把文件级挂载目标创建为
+      # 目录，caddy 反而无法绑定。docker.sock 用文件级是因为 dockerd 从不重建 socket，
+      # 该先例不能照抄到会重启的进程。宿主目录缺失时 Docker 自动建空目录（对目录 bind
+      # 无害，caddy 启动后在目录内建 socket 即可）。
+      - /run/caddy:/run/caddy
       # 绑定挂载对齐根：挂载源由宿主引擎按宿主文件系统解析，而 realpath 校验与 mkdir 在
       # web 容器内执行，两侧须同路径同内容。macOS Docker Desktop 默认只共享 /Users、
       # /Volumes、/private、/tmp，启动前必须设为 /Users/<用户>/Elysian-srv 之类已共享路径，

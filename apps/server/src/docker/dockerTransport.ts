@@ -14,6 +14,8 @@ export type DockerTransport = {
     maxBytes: number
     signal?: AbortSignal
     onChunk?: (chunk: Uint8Array) => void | Promise<void>
+    /** HTTP 方法：缺省 POST（镜像拉取）；网站域读容器日志走 GET。 */
+    method?: string
   }): Promise<{ status: number; chunks: readonly Uint8Array[] }>
   openStream?(input: {
     method: string
@@ -134,6 +136,7 @@ function pullCreateOverSocket(
     maxBytes: number
     signal?: AbortSignal
     onChunk?: (chunk: Uint8Array) => void | Promise<void>
+    method?: string
   },
 ): Promise<{ status: number; chunks: readonly Uint8Array[] }> {
   return new Promise((resolve, reject) => {
@@ -151,7 +154,7 @@ function pullCreateOverSocket(
       {
         socketPath,
         hostname: 'localhost',
-        method: 'POST',
+        method: input.method ?? 'POST',
         path: input.path,
       },
       (res) => {

@@ -23,6 +23,11 @@ import { createDatabaseProtocol } from './database/databaseProtocol.ts'
 import { createFileDatabaseRegistry } from './database/databaseRegistry.ts'
 import { createDatabaseService } from './database/databaseService.ts'
 import { createSqliteService } from './database/sqliteService.ts'
+import { createWebsitesApp, type WebsitesAppDeps } from './websites/websitesRoutes.ts'
+import { createWebsiteCaddy } from './websites/websitesCaddy.ts'
+import { createWebsiteDocker } from './websites/websitesDocker.ts'
+import { createFileWebsiteRegistry } from './websites/websitesRegistry.ts'
+import { createWebsiteService } from './websites/websitesService.ts'
 import { existsSync } from 'node:fs'
 import {
   DOCKER_MOUNT,
@@ -33,6 +38,7 @@ import {
   SSH_MOUNT,
   TERMINAL_MOUNT,
   USERS_MOUNT,
+  WEBSITES_MOUNT,
 } from './shared/apiMounts.ts'
 
 /*
@@ -66,6 +72,8 @@ export type AppDepsOverrides = {
   /** 容器管理片：缺省走真实接线（async 探测 socket 与 API 版本）。 */
   docker?: DockerAppDeps
   databases?: DatabaseAppDeps
+  /** 网站管理片：缺省走真实接线（依赖容器片的 transport 与挂载根策略）。 */
+  websites?: WebsitesAppDeps
 }
 
 /**
@@ -120,5 +128,27 @@ export async function createApp(overrides: AppDepsOverrides = {}): Promise<Hono>
       }) }
     : { available: sqliteAvailable, sqlite: sqliteAvailable ? createSqliteService({ uid: 2001, gid: 2001, bunBin: '/usr/local/bin/bun' }) : undefined })
   app.route(DATABASE_MOUNT, createDatabaseApp({ ...databases, logs: databases.logs ?? logs }))
+  // 网站片依赖容器片的 transport 与挂载根策略（policy() 返回挂载根与保留端口）；
+  // 站点容器经 Engine API 建在宿主上，反向代理通道经 ELYSIAN_CADDY_SOCKET 的 unix
+  // socket 驱动宿主 Caddy（无 caddy 的宿主如实降级，容器生命周期不受影响）。
+  // policy 只在真正走缺省接线时才调用：注入 websites 覆盖（漂移守卫的 STUB）不碰它。
+  let websites = overrides.websites
+  if (!websites) {
+    if (docker.socketReady && docker.transport && docker.service && typeof docker.service.policy === 'function') {
+      const dockerPolicy = await docker.service.policy()
+      websites = { available: true, service: createWebsiteService({
+        registry: createFileWebsiteRegistry(),
+        docker: createWebsiteDocker(docker.transport, () => docker.service!.listImages()),
+        caddy: createWebsiteCaddy(),
+        mountRoot: dockerPolicy.mountRoot,
+        listPortBindings: async () => (await docker.service!.listContainers())
+          .flatMap((container) => container.ports),
+        selfContainerId: docker.selfContainerId ?? undefined,
+      }) }
+    } else {
+      websites = { available: false }
+    }
+  }
+  app.route(WEBSITES_MOUNT, createWebsitesApp({ ...websites, logs: websites.logs ?? logs }))
   return app
 }
