@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { LOG_ENTRY_FETCH_LIMIT } from '@elysian/contracts'
 import { LOG_RECORD_MAX_BYTES } from './logRecords'
-import { openLogStore } from './logStore'
+import { createUnavailableLogStore, openLogStore } from './logStore'
 
 describe('openLogStore', () => {
   it('操作日志按分类与结果筛选，关键字忽略大小写并按字面匹配 %', async () => {
@@ -125,6 +125,109 @@ describe('openLogStore', () => {
     expect(page.total).toBe(total)
     expect(page.entries).toHaveLength(LOG_ENTRY_FETCH_LIMIT)
     expect(page.truncated).toBe(true)
+    store.close()
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('过期行按时间删除，超预算从最旧的行删', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'elysian-logs-'))
+    const store = openLogStore(join(dir, 'logs.sqlite'))
+    store.insertRuntime({ at: '2026-09-01T00:00:00.000Z', level: 'info', source: 'a', message: '旧' })
+    store.insertRuntime({ at: '2026-09-30T00:00:00.000Z', level: 'info', source: 'a', message: '新' })
+    const aged = store.sweep('runtime', new Date('2026-09-30T00:00:00.000Z'))
+    expect(aged.deletedByAge).toBe(1)
+    expect(store.queryRuntime({}).entries.map((entry) => entry.message)).toEqual(['新'])
+
+    const tight = openLogStore(join(dir, 'budget.sqlite'), {
+      runtime: { retentionDays: 7, maxTotalBytes: 1 },
+    })
+    tight.insertRuntime({ at: '2026-09-29T00:00:00.000Z', level: 'info', source: 'a', message: '旧行' })
+    tight.insertRuntime({ at: '2026-09-30T00:00:00.000Z', level: 'info', source: 'a', message: '新行' })
+    const sized = tight.sweep('runtime', new Date('2026-09-30T00:00:00.000Z'))
+    expect(sized.deletedBySize).toBe(2)
+    expect(sized.trimmedBySize).toBe(true)
+    expect(sized.totalBytes).toBe(0)
+    expect(tight.queryRuntime({}).total).toBe(0)
+    store.close()
+    tight.close()
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('清空只删除所选类别并返回行数与字节', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'elysian-logs-'))
+    const store = openLogStore(join(dir, 'logs.sqlite'))
+    store.insertRuntime({ at: '2026-09-30T00:00:00.000Z', level: 'info', source: 'a', message: '运行' })
+    store.insertOperation({
+      at: '2026-09-30T00:00:01.000Z',
+      category: 'files',
+      action: '复制文件',
+      target: null,
+      summary: 'ok',
+      result: 'success',
+      method: 'POST',
+      path: '/api/files/copy',
+      httpStatus: 200,
+    })
+    const cleared = store.clear('operation')
+    expect(cleared.rowCount).toBe(1)
+    expect(cleared.totalBytes).toBeGreaterThan(0)
+    expect(store.queryRuntime({}).total).toBe(1)
+    expect(store.queryOperation({}).total).toBe(0)
+    store.close()
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('不可用库的写入计入 failedWrites，查询抛中文错误', () => {
+    const broken = createUnavailableLogStore()
+    broken.insertRuntime({ at: '2026-09-30T00:00:00.000Z', level: 'info', source: 'a', message: 'x' })
+    expect(broken.counters().failedWrites).toBe(1)
+    expect(() => broken.queryRuntime({})).toThrow('日志数据库不可用')
+  })
+
+  it('storage 不计登录字节，fileCount 为运行与操作行数之和', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'elysian-logs-'))
+    const store = openLogStore(join(dir, 'logs.sqlite'))
+    store.insertRuntime({ at: '2026-09-30T00:00:00.000Z', level: 'info', source: 'a', message: '运行' })
+    store.insertOperation({
+      at: '2026-09-30T00:00:01.000Z',
+      category: 'files',
+      action: '复制',
+      target: null,
+      summary: 'ok',
+      result: 'success',
+      method: null,
+      path: null,
+      httpStatus: null,
+    })
+    const beforeLogin = store.storage({
+      category: 'runtime',
+      lastSweepAt: null,
+      trimmedBySize: false,
+    })
+    expect(beforeLogin.fileCount).toBe(2)
+    expect(beforeLogin.runtimeBytes).toBeGreaterThan(0)
+    expect(beforeLogin.operationBytes).toBeGreaterThan(0)
+    expect(beforeLogin.totalBytes).toBe(beforeLogin.runtimeBytes + beforeLogin.operationBytes)
+    expect(beforeLogin.oldestAt).toBe('2026-09-30T00:00:00.000Z')
+
+    store.insertLogin({
+      at: '2026-09-29T00:00:00.000Z',
+      ip: '127.0.0.1',
+      location: '本机',
+      userAgent: 't',
+      status: 'success',
+    })
+    const afterLogin = store.storage({
+      category: 'login',
+      lastSweepAt: '2026-09-30T12:00:00.000Z',
+      trimmedBySize: true,
+    })
+    expect(afterLogin.totalBytes).toBe(beforeLogin.totalBytes)
+    expect(afterLogin.runtimeBytes).toBe(beforeLogin.runtimeBytes)
+    expect(afterLogin.operationBytes).toBe(beforeLogin.operationBytes)
+    expect(afterLogin.fileCount).toBe(2)
+    expect(afterLogin.lastSweepAt).toBe('2026-09-30T12:00:00.000Z')
+    expect(afterLogin.trimmedBySize).toBe(true)
     store.close()
     await rm(dir, { recursive: true, force: true })
   })

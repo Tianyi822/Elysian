@@ -1,11 +1,14 @@
 import { Database } from 'bun:sqlite'
 import {
   LOG_ENTRY_FETCH_LIMIT,
+  LOG_RETENTION_POLICIES,
   type LoginLogEntry,
   type LoginLogListQuery,
   type LogListQuery,
   type LogPage,
+  type LogRetentionPolicy,
   type LoginLogStatus,
+  type LogStorageStats,
   type OperationLogCategory,
   type OperationLogEntry,
   type OperationLogListQuery,
@@ -59,6 +62,26 @@ export type OperationInsert = {
   sourceKey?: string
 }
 
+export type LogSweepCategory = 'runtime' | 'operation' | 'login'
+export type LogClearCategory = 'runtime' | 'operation'
+
+export type LogSweepResult = {
+  deletedByAge: number
+  deletedBySize: number
+  freedBytes: number
+  totalBytes: number
+  trimmedBySize: boolean
+  failed: number
+}
+
+export type LogClearResult = {
+  rowCount: number
+  totalBytes: number
+  oldestAt: string | null
+}
+
+export type LogStorePolicies = Partial<Record<LogSweepCategory, LogRetentionPolicy>>
+
 export type LogStore = {
   insertRuntime(input: RuntimeInsert): void
   insertLogin(input: LoginInsert): void
@@ -66,9 +89,32 @@ export type LogStore = {
   queryRuntime(query: LogListQuery): LogPage<RuntimeLogEntry>
   queryLogin(query: LoginLogListQuery): LogPage<LoginLogEntry>
   queryOperation(query: OperationLogListQuery): LogPage<OperationLogEntry>
+  clear(category: LogClearCategory): LogClearResult
+  sweep(category: LogSweepCategory, now: Date): LogSweepResult
+  storage(sweep: {
+    category: LogSweepCategory
+    lastSweepAt: string | null
+    trimmedBySize: boolean
+  }): LogStorageStats
   counters(): { droppedRecords: number; failedWrites: number }
   close(): void
 }
+
+/** 登录日志默认保留：与 logRetention.LOGIN_LOG_RETENTION_POLICY 同值。 */
+const DEFAULT_LOGIN_POLICY: LogRetentionPolicy = {
+  retentionDays: 30,
+  maxTotalBytes: 16 * 1024 * 1024,
+}
+
+const TABLE_OF: Record<LogSweepCategory, string> = {
+  runtime: 'runtime_logs',
+  operation: 'operation_logs',
+  login: 'login_logs',
+}
+
+const DAY_MS = 86_400_000
+
+const UNAVAILABLE_MESSAGE = '日志数据库不可用'
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS runtime_logs (
@@ -133,9 +179,29 @@ function cursorBind(query: LogListQuery): CursorBind {
 
 const CURSOR_SQL = '(? IS NULL OR at < ? OR (at = ? AND id < ?))'
 
-export function openLogStore(path: string): LogStore {
+function resolvePolicies(policies?: LogStorePolicies): Record<LogSweepCategory, LogRetentionPolicy> {
+  return {
+    runtime: policies?.runtime ?? LOG_RETENTION_POLICIES.runtime,
+    operation: policies?.operation ?? LOG_RETENTION_POLICIES.operation,
+    login: policies?.login ?? DEFAULT_LOGIN_POLICY,
+  }
+}
+
+function emptySweep(failed = 0): LogSweepResult {
+  return {
+    deletedByAge: 0,
+    deletedBySize: 0,
+    freedBytes: 0,
+    totalBytes: 0,
+    trimmedBySize: false,
+    failed,
+  }
+}
+
+export function openLogStore(path: string, policies?: LogStorePolicies): LogStore {
   const db = new Database(path)
   db.exec(SCHEMA)
+  const resolved = resolvePolicies(policies)
 
   let droppedRecords = 0
   let failedWrites = 0
@@ -173,6 +239,21 @@ export function openLogStore(path: string): LogStore {
     } catch {
       failedWrites += 1
     }
+  }
+
+  function sumBytes(table: string): number {
+    const row = db.prepare(`SELECT COALESCE(SUM(bytes), 0) AS n FROM ${table}`).get() as { n: number }
+    return Number(row.n)
+  }
+
+  function countRows(table: string): number {
+    const row = db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }
+    return Number(row.n)
+  }
+
+  function minAt(table: string): string | null {
+    const row = db.prepare(`SELECT MIN(at) AS at FROM ${table}`).get() as { at: string | null }
+    return row.at ?? null
   }
 
   return {
@@ -350,6 +431,101 @@ export function openLogStore(path: string): LogStore {
       })
     },
 
+    clear(category) {
+      const table = TABLE_OF[category]
+      return db.transaction(() => {
+        const stats = db
+          .prepare(
+            `SELECT COUNT(*) AS rowCount, COALESCE(SUM(bytes), 0) AS totalBytes, MIN(at) AS oldestAt FROM ${table}`,
+          )
+          .get() as { rowCount: number; totalBytes: number; oldestAt: string | null }
+        db.prepare(`DELETE FROM ${table}`).run()
+        return {
+          rowCount: Number(stats.rowCount),
+          totalBytes: Number(stats.totalBytes),
+          oldestAt: stats.oldestAt ?? null,
+        }
+      })()
+    },
+
+    sweep(category, now) {
+      const table = TABLE_OF[category]
+      const policy = resolved[category]
+      try {
+        let freedBytes = 0
+        const cutoff = new Date(now.getTime() - policy.retentionDays * DAY_MS).toISOString()
+        const ageBytesRow = db
+          .prepare(`SELECT COALESCE(SUM(bytes), 0) AS n FROM ${table} WHERE at < ?`)
+          .get(cutoff) as { n: number }
+        const ageDelete = db.prepare(`DELETE FROM ${table} WHERE at < ?`).run(cutoff)
+        const deletedByAge = Number(ageDelete.changes)
+        freedBytes += Number(ageBytesRow.n)
+
+        const rows = db
+          .prepare(`SELECT id, bytes FROM ${table} ORDER BY at ASC, id ASC`)
+          .all() as Array<{ id: number; bytes: number }>
+        let total = rows.reduce((sum, row) => sum + Number(row.bytes), 0)
+        const deleteIds: number[] = []
+        let deletedBySize = 0
+        for (const row of rows) {
+          if (total <= policy.maxTotalBytes) break
+          deleteIds.push(Number(row.id))
+          total -= Number(row.bytes)
+          freedBytes += Number(row.bytes)
+          deletedBySize += 1
+        }
+        if (deleteIds.length > 0) {
+          db.prepare(`DELETE FROM ${table} WHERE id IN (${deleteIds.map(() => '?').join(', ')})`).run(
+            ...deleteIds,
+          )
+        }
+
+        return {
+          deletedByAge,
+          deletedBySize,
+          freedBytes,
+          totalBytes: sumBytes(table),
+          trimmedBySize: deletedBySize > 0,
+          failed: 0,
+        }
+      } catch (error) {
+        console.error(
+          `Elysian 日志巡检失败（${category}）：${error instanceof Error ? error.message : String(error)}`,
+        )
+        try {
+          return { ...emptySweep(1), totalBytes: sumBytes(table) }
+        } catch {
+          return emptySweep(1)
+        }
+      }
+    },
+
+    storage(sweep) {
+      const runtimeBytes = sumBytes('runtime_logs')
+      const operationBytes = sumBytes('operation_logs')
+      const runtimeCount = countRows('runtime_logs')
+      const operationCount = countRows('operation_logs')
+      const runtimeOldest = minAt('runtime_logs')
+      const operationOldest = minAt('operation_logs')
+      let oldestAt: string | null = null
+      if (runtimeOldest !== null && operationOldest !== null) {
+        oldestAt = runtimeOldest < operationOldest ? runtimeOldest : operationOldest
+      } else {
+        oldestAt = runtimeOldest ?? operationOldest
+      }
+      return {
+        totalBytes: runtimeBytes + operationBytes,
+        runtimeBytes,
+        operationBytes,
+        fileCount: runtimeCount + operationCount,
+        oldestAt,
+        lastSweepAt: sweep.lastSweepAt,
+        trimmedBySize: sweep.trimmedBySize,
+        droppedRecords,
+        failedWrites,
+      }
+    },
+
     counters() {
       return { droppedRecords, failedWrites }
     },
@@ -357,6 +533,50 @@ export function openLogStore(path: string): LogStore {
     close() {
       db.close()
     },
+  }
+}
+
+export function createUnavailableLogStore(): LogStore {
+  let failedWrites = 0
+
+  function unavailable(): never {
+    throw new Error(UNAVAILABLE_MESSAGE)
+  }
+
+  return {
+    insertRuntime() {
+      failedWrites += 1
+    },
+    insertLogin() {
+      failedWrites += 1
+    },
+    insertOperation() {
+      failedWrites += 1
+    },
+    queryRuntime: unavailable,
+    queryLogin: unavailable,
+    queryOperation: unavailable,
+    clear: unavailable,
+    sweep() {
+      return emptySweep(1)
+    },
+    storage(sweep) {
+      return {
+        totalBytes: 0,
+        runtimeBytes: 0,
+        operationBytes: 0,
+        fileCount: 0,
+        oldestAt: null,
+        lastSweepAt: sweep.lastSweepAt,
+        trimmedBySize: sweep.trimmedBySize,
+        droppedRecords: 0,
+        failedWrites,
+      }
+    },
+    counters() {
+      return { droppedRecords: 0, failedWrites }
+    },
+    close() {},
   }
 }
 
