@@ -32,6 +32,7 @@ import { createWebsiteDocker } from './websites/websitesDocker.ts'
 import { createFileWebsiteRegistry } from './websites/websitesRegistry.ts'
 import { createFileWebsiteCertificateStore } from './websites/websitesCertificates.ts'
 import { createWebsiteService } from './websites/websitesService.ts'
+import { createFileWebsiteRuntimeCatalogCache, createWebsiteRuntimeCatalogService } from './websites/websiteRuntimeCatalog.ts'
 import { createAuthApp, resolveAuthDeps, type AuthAppDeps } from './auth/authRoutes.ts'
 import { requireSession } from './auth/authMiddleware.ts'
 import { existsSync } from 'node:fs'
@@ -186,6 +187,7 @@ export async function createApp(overrides: AppDepsOverrides = {}): Promise<Hono>
         docker: createWebsiteDocker(docker.transport, () => docker.service!.listImages()),
         caddy: createWebsiteCaddy(),
         mountRoot: dockerPolicy.mountRoot,
+        runtimeCatalog: createWebsiteRuntimeCatalogService({ cache: createFileWebsiteRuntimeCatalogCache() }),
         listPortBindings: async () => (await docker.service!.listContainers())
           .flatMap((container) => container.ports),
         selfContainerId: docker.selfContainerId ?? undefined,

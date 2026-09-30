@@ -1,5 +1,6 @@
 import type { WebsiteAccessInput, WebsiteProject, WebsiteProjectCreateInput, WebsiteProjectUpdateInput } from '@elysian/contracts'
 import { isValidWebsiteDomain, isValidWebsitePort, isValidWebsiteProjectName, websiteDefaultDeployCommand, websiteProjectRootDir, websiteProjectUsesRuntime, websiteRuntimeImageRef } from '@elysian/contracts'
+import { MOCK_WEBSITE_RUNTIME_REPORT } from './websiteRuntimeCatalog'
 
 /** 本地演示从空项目列表开始；每次刷新重置，不保留旧网站测试种子。 */
 export const SEED_PROJECTS: readonly WebsiteProject[] = []
@@ -31,7 +32,7 @@ export function addWebsiteProject(kind: WebsiteProject['kind'], input: WebsitePr
   if (projects.some((project) => project.name === name)) throw new Error(`项目已存在：${name}`)
   if (projects.some((project) => project.port === input.port)) throw new Error(`宿主端口已被站点占用：${input.port}`)
   const runtimeVersion = websiteProjectUsesRuntime(kind) ? input.runtimeVersion?.trim() ?? null : null
-  if (websiteProjectUsesRuntime(kind) && !websiteRuntimeImageRef(kind, runtimeVersion)) throw new Error('请选择正式运行时版本')
+  if (websiteProjectUsesRuntime(kind) && !websiteRuntimeImageRef(kind, runtimeVersion, MOCK_WEBSITE_RUNTIME_REPORT.catalog)) throw new Error('请选择正式运行时版本')
   const access = input.access
   const domain = access.mode === 'domain' ? access.domain.trim().toLowerCase() : null
   if (domain && !isValidWebsiteDomain(domain)) throw new Error('域名无效')

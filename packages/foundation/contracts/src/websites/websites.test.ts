@@ -7,12 +7,14 @@ import {
   WEBSITE_PROXY_STATES,
   WEBSITE_PROXY_STATE_LABELS,
   WEBSITE_ROOT_BASE,
-  WEBSITE_RUNTIME_VERSIONS,
   isValidWebsiteDomain,
   isValidWebsiteProjectName,
   websiteDefaultDeployCommand,
   websiteProjectRootDir,
   websiteRuntimeImageRef,
+  parseWebsiteRuntimeCatalogReport,
+  isWebsiteRuntimeReleaseVersion,
+  type WebsiteRuntimeCatalogReport,
 } from './websites.ts'
 
 describe('isValidWebsiteProjectName 收紧为路径段判据', () => {
@@ -84,26 +86,45 @@ describe('isValidWebsiteDomain 域名判据', () => {
   })
 })
 
-describe('websiteRuntimeImageRef 镜像引用的唯一权威', () => {
-  it('四个官方库按契约目录内版本生成钉死引用', () => {
-    expect(websiteRuntimeImageRef('java', '17')).toBe('eclipse-temurin:17.0.20.1_1-jre')
-    expect(websiteRuntimeImageRef('node', '20.20.2')).toBe('node:20.20.2')
-    expect(websiteRuntimeImageRef('go', '1.23.12')).toBe('golang:1.23.12')
-    expect(websiteRuntimeImageRef('python', '3.11.16')).toBe('python:3.11.16-slim')
-  })
-
-  it('目录外版本、latest、空版本被拒绝，HTML 使用固定镜像', () => {
-    expect(websiteRuntimeImageRef('node', 'latest')).toBe(null)
-    expect(websiteRuntimeImageRef('node', '99.9.9')).toBe(null)
-    expect(websiteRuntimeImageRef('node', null)).toBe(null)
+describe('动态运行时目录', () => {
+  const report: WebsiteRuntimeCatalogReport = {
+    fetchedAt: '2026-09-30T00:00:00.000Z', stale: false, detail: null,
+    catalog: {
+      java: [{ version: '17.0.1+12', image: 'eclipse-temurin:17.0.1_12-jre', maintenance: 'legacy', checkedAt: '2026-09-30' }],
+      node: [{ version: '24.21.0', image: 'node:24.21.0', maintenance: 'maintained', checkedAt: '2026-09-30' }],
+      go: [{ version: '1.16.7', image: 'golang:1.16.7', maintenance: 'legacy', checkedAt: '2026-09-30' }],
+      python: [{ version: '3.9.7', image: 'python:3.9.7-slim', maintenance: 'legacy', checkedAt: '2026-09-30' }],
+    },
+  }
+  it('从提供的目录解析镜像，不依赖固定版本表', () => {
+    const parsed = parseWebsiteRuntimeCatalogReport(report)
+    expect(websiteRuntimeImageRef('java', '17.0.1+12', parsed.catalog)).toBe('eclipse-temurin:17.0.1_12-jre')
+    expect(websiteRuntimeImageRef('node', '24.21.0', parsed.catalog)).toBe('node:24.21.0')
+    expect(websiteRuntimeImageRef('node', '99.9.9', parsed.catalog)).toBeNull()
     expect(websiteRuntimeImageRef('html', null)).toBe('nginx:1.30.4-alpine3.24')
+    const initial = structuredClone(report)
+    initial.catalog.java = [{ ...initial.catalog.java[0]!, version: '17.0.0+35', image: 'eclipse-temurin:17_35-jre' }]
+    expect(websiteRuntimeImageRef('java', '17.0.0+35', parseWebsiteRuntimeCatalogReport(initial).catalog)).toBe('eclipse-temurin:17_35-jre')
   })
-
-  it('契约目录内每个版本都能映射出镜像引用', () => {
-    for (const kind of ['java', 'node', 'go', 'python'] as const) {
-      for (const version of WEBSITE_RUNTIME_VERSIONS[kind]) {
-        expect(websiteRuntimeImageRef(kind, version), `${kind} ${version}`).not.toBe(null)
-      }
+  it('拒绝预发布、浮动标签、重复版本和版本／镜像不匹配', () => {
+    for (const change of [
+      { version: '24.21.0-rc.1' }, { image: 'node:latest' }, { image: 'node:23.0.0' },
+    ]) {
+      const bad = structuredClone(report)
+      bad.catalog.node = [{ ...bad.catalog.node[0]!, ...change }]
+      expect(() => parseWebsiteRuntimeCatalogReport(bad)).toThrow('正式运行时版本目录响应无效')
+    }
+    const bad = structuredClone(report)
+    bad.catalog.node = [bad.catalog.node[0]!, bad.catalog.node[0]!]
+    expect(() => parseWebsiteRuntimeCatalogReport(bad)).toThrow('正式运行时版本目录响应无效')
+    expect(isWebsiteRuntimeReleaseVersion('java', '28-ea')).toBe(false)
+    expect(isWebsiteRuntimeReleaseVersion('go', '1.28beta1')).toBe(false)
+    expect(isWebsiteRuntimeReleaseVersion('python', '3.15.0rc3')).toBe(false)
+    for (const version of ['17', '17+35']) {
+      expect(isWebsiteRuntimeReleaseVersion('java', version)).toBe(false)
+      const short = structuredClone(report)
+      short.catalog.java = [{ ...short.catalog.java[0]!, version }]
+      expect(() => parseWebsiteRuntimeCatalogReport(short)).toThrow('正式运行时版本目录响应无效')
     }
   })
 })

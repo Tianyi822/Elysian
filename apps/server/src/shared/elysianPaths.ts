@@ -43,5 +43,6 @@ export const ELYSIAN_PATHS = {
   panelCredentials: join(ELYSIAN_CONFIG_DIR, 'panel-credentials.json'),
   /** 面板会话文件（服务端权威，0600）：重启不掉线、改密即全失效的载体。 */
   panelSessions: join(ELYSIAN_STATE_DIR, 'panel-sessions.json'),
+  websiteRuntimeCatalog: join(ELYSIAN_STATE_DIR, 'website-runtime-catalog.json'),
   keygenWorkspace: join(ELYSIAN_TMP_DIR, 'ssh-keygen'),
 } as const

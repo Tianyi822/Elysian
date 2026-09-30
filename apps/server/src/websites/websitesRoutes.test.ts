@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { WebsiteService } from './websitesService.ts'
 import { createWebsitesApp } from './websitesRoutes.ts'
 import type { WebsiteProject } from '@elysian/contracts'
+import { runtimeReport } from './websiteRuntimeTestUtils.ts'
 
 const project = { id: 'p', kind: 'html', name: 'site', pid: null, containerId: 'a'.repeat(64), port: 8080,
   runtimeVersion: null, rootDir: '/srv/wwwroot/site', runState: 'stopped', accessMode: 'direct', domain: null,
@@ -10,6 +11,7 @@ const project = { id: 'p', kind: 'html', name: 'site', pid: null, containerId: '
 
 function fixture() {
   const service: WebsiteService = {
+    runtimeCatalog: vi.fn(async () => runtimeReport()),
     list: vi.fn(async () => ({ projects: [project], proxy: { state: 'active' as const, detail: null } })),
     create: vi.fn(async () => ({ project, firewallPort: null })),
     update: vi.fn(async () => project),
@@ -23,6 +25,14 @@ function fixture() {
 }
 
 describe('网站访问接口', () => {
+  it('版本端点返回动态目录并禁止浏览器缓存', async () => {
+    const { app, service } = fixture()
+    const response = await app.request('http://localhost/runtimes', { headers: { host: 'localhost' } })
+    expect(response.status).toBe(200)
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(await response.json()).toEqual(runtimeReport())
+    expect(service.runtimeCatalog).toHaveBeenCalledOnce()
+  })
   it('创建解析访问模式与启动命令', async () => {
     const { app, service } = fixture()
     const response = await app.request('http://localhost/', { method: 'POST', headers: { 'content-type': 'application/json', origin: 'http://localhost', host: 'localhost' },

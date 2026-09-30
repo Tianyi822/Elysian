@@ -26,6 +26,10 @@ export function createWebsitesApp(deps: WebsitesAppDeps): Hono {
   }
   app.use('*', sameOriginGuard())
   app.get('/', async (c) => c.json(await service().list()))
+  app.get('/runtimes', async (c) => {
+    c.header('Cache-Control', 'no-store')
+    return c.json(await service().runtimeCatalog())
+  })
   app.post('/', async (c) => c.json(await service().create(validateWebsiteCreateRequest(await readJsonBody(c.req.raw, 256 * 1024))), 201))
   app.put('/:id', async (c) => c.json(await service().update(c.req.param('id'), validateWebsiteUpdateRequest(await readJsonBody(c.req.raw)))))
   app.put('/:id/access', async (c) => c.json(await service().setAccess(c.req.param('id'), validateWebsiteAccessRequest(await readJsonBody(c.req.raw, 256 * 1024)))))

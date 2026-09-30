@@ -1,10 +1,8 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   WEBSITE_PROJECT_KINDS,
   WEBSITE_PROJECT_KIND_LABELS,
-  WEBSITE_RUNTIME_VERSIONS,
-  WEBSITE_RUNTIME_CATALOG,
   isValidWebsiteDomain,
   isValidWebsitePort,
   isValidWebsiteProjectName,
@@ -12,7 +10,7 @@ import {
   websiteProjectUsesRuntime,
   websiteDefaultDeployCommand,
 } from '@elysian/contracts'
-import type { WebsiteProjectKind, WebsiteRuntimeKind } from '@elysian/contracts'
+import type { WebsiteProjectKind, WebsiteRuntimeKind, WebsiteRuntimeCatalog, WebsiteRuntimeCatalogReport } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { Minus, Plus, X } from '../../components/icons'
 import { useWebsitesStore } from '../../stores/websitesStore'
@@ -31,9 +29,9 @@ const INPUT_CLASS =
 
 const DEFAULT_PORT = 8080
 
-function defaultRuntimeVersion(kind: WebsiteProjectKind): string | null {
+function defaultRuntimeVersion(kind: WebsiteProjectKind, catalog?: WebsiteRuntimeCatalog): string | null {
   if (!websiteProjectUsesRuntime(kind)) return null
-  return WEBSITE_RUNTIME_VERSIONS[kind as WebsiteRuntimeKind][0] ?? null
+  return catalog?.[kind as WebsiteRuntimeKind][0]?.version ?? null
 }
 
 /** 自定义端口控件：文本输入 + 加减按钮，不使用浏览器 type=number 的系统步进。 */
@@ -96,7 +94,11 @@ export function WebsitesCreateDialog() {
   const [name, setName] = useState('')
   /** 最近一次由 Git URL 自动带出的名称；名称仍等于它时，换 URL 可继续覆盖。 */
   const [autoName, setAutoName] = useState<string | null>(null)
-  const [runtimeVersion, setRuntimeVersion] = useState<string | null>(() => defaultRuntimeVersion('java'))
+  const [runtimeVersion, setRuntimeVersion] = useState<string | null>(null)
+  const [runtimeReport, setRuntimeReport] = useState<WebsiteRuntimeCatalogReport>()
+  const [runtimeLoading, setRuntimeLoading] = useState(true)
+  const [runtimeError, setRuntimeError] = useState<string>()
+  const [runtimeAttempt, setRuntimeAttempt] = useState(0)
   const [port, setPort] = useState(DEFAULT_PORT)
   const [domain, setDomain] = useState('')
   const [accessMode, setAccessMode] = useState<'direct' | 'domain'>('direct')
@@ -110,7 +112,6 @@ export function WebsitesCreateDialog() {
   const privateKeyReadVersion = useRef(0)
   const [command, setCommand] = useState('')
   const [versionSearch, setVersionSearch] = useState('')
-  const [showLegacy, setShowLegacy] = useState(false)
   const [note, setNote] = useState('')
   const [nameError, setNameError] = useState<string | undefined>(undefined)
   const [portError, setPortError] = useState<string | undefined>(undefined)
@@ -120,10 +121,31 @@ export function WebsitesCreateDialog() {
   const [commandError, setCommandError] = useState<string | undefined>(undefined)
 
   const usesRuntime = websiteProjectUsesRuntime(kind)
+  const runtimeEntries = usesRuntime ? runtimeReport?.catalog[kind as WebsiteRuntimeKind] ?? [] : []
+
+  useEffect(() => {
+    const abort = new AbortController()
+    setRuntimeLoading(true)
+    setRuntimeError(undefined)
+    void gateway.websites.runtimeCatalog(abort.signal).then((report) => {
+      if (!abort.signal.aborted) setRuntimeReport(report)
+    }).catch((error: unknown) => {
+      if (!abort.signal.aborted) setRuntimeError(error instanceof Error ? error.message : '正式版本目录获取失败')
+    }).finally(() => {
+      if (!abort.signal.aborted) setRuntimeLoading(false)
+    })
+    return () => abort.abort()
+  }, [gateway, runtimeAttempt])
+
+  useEffect(() => {
+    const entries = kind === 'html' ? [] : runtimeReport?.catalog[kind] ?? []
+    setRuntimeVersion((previous) => entries.some((entry) => entry.version === previous) ? previous : defaultRuntimeVersion(kind, runtimeReport?.catalog))
+  }, [kind, runtimeReport])
 
   const applyKind = (next: WebsiteProjectKind) => {
     setKind(next)
-    setRuntimeVersion(defaultRuntimeVersion(next))
+    setRuntimeVersion(defaultRuntimeVersion(next, runtimeReport?.catalog))
+    setVersionSearch('')
     setCommand(websiteDefaultDeployCommand(next, port) ?? '')
     setVersionError(undefined)
   }
@@ -267,27 +289,31 @@ export function WebsitesCreateDialog() {
 
             {usesRuntime ? (
               <div>
-                <p className="mb-1 text-xs font-medium text-fg-muted">
+                <label htmlFor="website-create-runtime-version" className="mb-1 block text-xs font-medium text-fg-muted">
                   运行时版本 <span className="text-danger">*</span>
-                </p>
+                </label>
                 <SelectDropdown
+                  id="website-create-runtime-version"
                   ariaLabel="运行时版本"
                   fullWidth
-                  items={WEBSITE_RUNTIME_CATALOG[kind as WebsiteRuntimeKind]
-                    .filter((entry) => (showLegacy || entry.maintenance === 'maintained') && entry.version.includes(versionSearch.trim()))
-                    .map((entry) => ({ value: entry.version, label: `${entry.version}${entry.maintenance === 'legacy' ? ' · 旧版本' : ''}` }))}
+                  items={runtimeEntries
+                    .filter((entry) => entry.version.includes(versionSearch.trim()))
+                    .map((entry) => ({ value: entry.version, label: entry.version }))}
                   value={runtimeVersion ?? undefined}
                   onSelect={(next) => {
                     setRuntimeVersion(next)
                     setVersionError(undefined)
                   }}
-                  fallbackLabel="请选择版本"
+                  fallbackLabel={runtimeVersion ?? '请选择版本'}
+                  emptyLabel="没有匹配的正式版本"
+                  disabled={runtimeLoading || Boolean(runtimeError)}
                 />
                 {versionError ? <p className="mt-1 text-xs text-danger">{versionError}</p> : null}
-                <div className="mt-2 flex gap-2">
-                  <input aria-label="搜索运行时版本" value={versionSearch} onChange={(event) => setVersionSearch(event.target.value)} placeholder="搜索版本号" className={INPUT_CLASS} />
-                  <button type="button" aria-pressed={showLegacy} onClick={() => setShowLegacy(!showLegacy)} className="shrink-0 rounded-lg border border-line px-2 text-xs text-fg-muted">{showLegacy ? '收起旧版本' : '旧版本'}</button>
-                </div>
+                <input aria-label="搜索运行时版本" value={versionSearch} onChange={(event) => setVersionSearch(event.target.value)} placeholder="搜索版本号（包含历史补丁）" className={`${INPUT_CLASS} mt-2`} />
+                {runtimeLoading ? <p role="status" className="mt-1 text-xs text-fg-muted">正在从官方获取正式版本…</p> : null}
+                {runtimeError ? <div role="alert" className="mt-1 text-xs text-danger">{runtimeError}<button type="button" className="ml-2 underline" onClick={() => setRuntimeAttempt((attempt) => attempt + 1)}>重新获取</button></div> : null}
+                {!runtimeLoading && !runtimeError ? <p className="mt-1 text-xs text-fg-subtle">共 {runtimeEntries.length} 个正式版本，包含历史补丁</p> : null}
+                {runtimeReport?.detail ? <p role="status" className="mt-1 text-xs text-warning">{runtimeReport.detail}</p> : null}
               </div>
             ) : null}
 
@@ -350,7 +376,7 @@ export function WebsitesCreateDialog() {
               <button
                 type="button"
                 onClick={submit}
-                disabled={saving || (accessMode === 'domain' && (readingCertificate || readingPrivateKey))}
+                disabled={saving || (usesRuntime && (runtimeLoading || Boolean(runtimeError) || !runtimeVersion)) || (accessMode === 'domain' && (readingCertificate || readingPrivateKey))}
                 className="rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:opacity-50"
               >
                 添加项目

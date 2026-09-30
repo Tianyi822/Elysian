@@ -84,8 +84,7 @@ export const WEBSITE_PROXY_STATE_LABELS: Record<WebsiteProxyState, string> = {
 export type WebsiteRuntimeKind = Exclude<WebsiteProjectKind, 'html'>
 
 /**
- * 各语言可选运行时版本目录：镜像引用由 `websiteRuntimeImageRef` 从这里推导，
- * 版本钉死、禁 latest；表单与服务端共用同一目录，调整可选版本只改这份表。
+ * 后端从官方发布记录与镜像标签取得的可选运行时版本；版本钉死、禁 latest。
  */
 export type WebsiteRuntimeCatalogEntry = {
   version: string
@@ -94,49 +93,56 @@ export type WebsiteRuntimeCatalogEntry = {
   checkedAt: string
 }
 
-/** 精确的 Docker 官方镜像标签；维护者校验脚本会检查正式版形态与镜像存在性。 */
-export const WEBSITE_RUNTIME_CATALOG: Record<WebsiteRuntimeKind, readonly WebsiteRuntimeCatalogEntry[]> = {
-  java: [
-    { version: '25', image: 'eclipse-temurin:25.0.4.1_1-jre', maintenance: 'maintained', checkedAt: '2026-09-30' },
-    { version: '21', image: 'eclipse-temurin:21.0.12.1_1-jre', maintenance: 'maintained', checkedAt: '2026-09-30' },
-    { version: '17', image: 'eclipse-temurin:17.0.20.1_1-jre', maintenance: 'maintained', checkedAt: '2026-09-30' },
-    { version: '11', image: 'eclipse-temurin:11.0.32_9-jre', maintenance: 'maintained', checkedAt: '2026-09-30' },
-    { version: '8', image: 'eclipse-temurin:8u502-b07-jre', maintenance: 'maintained', checkedAt: '2026-09-30' },
-    { version: '26', image: 'eclipse-temurin:26.0.2_10-jre', maintenance: 'legacy', checkedAt: '2026-09-30' },
-  ],
-  node: [
-    { version: '26.10.0', image: 'node:26.10.0', maintenance: 'maintained', checkedAt: '2026-09-30' },
-    { version: '24.21.0', image: 'node:24.21.0', maintenance: 'maintained', checkedAt: '2026-09-30' },
-    { version: '22.23.3', image: 'node:22.23.3', maintenance: 'maintained', checkedAt: '2026-09-30' },
-    { version: '20.20.2', image: 'node:20.20.2', maintenance: 'legacy', checkedAt: '2026-09-30' },
-    { version: '18.20.8', image: 'node:18.20.8', maintenance: 'legacy', checkedAt: '2026-09-30' },
-    { version: '16.20.2', image: 'node:16.20.2', maintenance: 'legacy', checkedAt: '2026-09-30' },
-    { version: '14.21.3', image: 'node:14.21.3', maintenance: 'legacy', checkedAt: '2026-09-30' },
-  ],
-  go: [
-    { version: '1.27.1', image: 'golang:1.27.1', maintenance: 'maintained', checkedAt: '2026-09-30' },
-    { version: '1.26.8', image: 'golang:1.26.8', maintenance: 'maintained', checkedAt: '2026-09-30' },
-    { version: '1.25.13', image: 'golang:1.25.13', maintenance: 'legacy', checkedAt: '2026-09-30' },
-    { version: '1.24.13', image: 'golang:1.24.13', maintenance: 'legacy', checkedAt: '2026-09-30' },
-    { version: '1.23.12', image: 'golang:1.23.12', maintenance: 'legacy', checkedAt: '2026-09-30' },
-    { version: '1.22.12', image: 'golang:1.22.12', maintenance: 'legacy', checkedAt: '2026-09-30' },
-  ],
-  python: [
-    { version: '3.14.7', image: 'python:3.14.7-slim', maintenance: 'maintained', checkedAt: '2026-09-30' },
-    { version: '3.13.15', image: 'python:3.13.15-slim', maintenance: 'maintained', checkedAt: '2026-09-30' },
-    { version: '3.12.14', image: 'python:3.12.14-slim', maintenance: 'maintained', checkedAt: '2026-09-30' },
-    { version: '3.11.16', image: 'python:3.11.16-slim', maintenance: 'maintained', checkedAt: '2026-09-30' },
-    { version: '3.10.21', image: 'python:3.10.21-slim', maintenance: 'maintained', checkedAt: '2026-09-30' },
-    { version: '3.9.23', image: 'python:3.9.23-slim', maintenance: 'legacy', checkedAt: '2026-09-30' },
-    { version: '3.8.20', image: 'python:3.8.20-slim', maintenance: 'legacy', checkedAt: '2026-09-30' },
-  ],
+export type WebsiteRuntimeCatalog = Record<WebsiteRuntimeKind, readonly WebsiteRuntimeCatalogEntry[]>
+export type WebsiteRuntimeCatalogReport = {
+  catalog: WebsiteRuntimeCatalog
+  fetchedAt: string
+  stale: boolean
+  detail: string | null
 }
 
-export const WEBSITE_RUNTIME_VERSIONS: Record<WebsiteRuntimeKind, readonly string[]> = {
-  java: WEBSITE_RUNTIME_CATALOG.java.map((entry) => entry.version),
-  node: WEBSITE_RUNTIME_CATALOG.node.map((entry) => entry.version),
-  go: WEBSITE_RUNTIME_CATALOG.go.map((entry) => entry.version),
-  python: WEBSITE_RUNTIME_CATALOG.python.map((entry) => entry.version),
+/** Java 初始 GA 的省略零分量展开为完整版本，正式构建号保持原样。 */
+export function normalizeWebsiteJavaReleaseVersion(version: string): string {
+  const match = /^(\d+(?:\.\d+){0,3})\+(\d+)$/.exec(version)
+  if (!match) return version
+  const parts = match[1]!.split('.')
+  while (parts.length < 3) parts.push('0')
+  return `${parts.join('.')}+${match[2]}`
+}
+
+export function isWebsiteRuntimeReleaseVersion(kind: WebsiteRuntimeKind, version: string): boolean {
+  return kind === 'java' ? /^(8u\d+-b\d+|\d+\.\d+\.\d+(?:\.\d+)?\+\d+)$/.test(version) : /^\d+\.\d+\.\d+$/.test(version)
+}
+
+/** 传输与缓存的共同校验出口：拒绝预发布、浮动镜像和版本／镜像不匹配。 */
+export function parseWebsiteRuntimeCatalogReport(value: unknown): WebsiteRuntimeCatalogReport {
+  const message = '正式运行时版本目录响应无效'
+  if (!value || typeof value !== 'object') throw new Error(message)
+  const row = value as Record<string, unknown>
+  if (typeof row.fetchedAt !== 'string' || !Number.isFinite(Date.parse(row.fetchedAt)) || typeof row.stale !== 'boolean' || (row.detail !== null && typeof row.detail !== 'string')) throw new Error(message)
+  if (!row.catalog || typeof row.catalog !== 'object') throw new Error(message)
+  const source = row.catalog as Record<string, unknown>
+  const catalog: WebsiteRuntimeCatalog = { java: [], node: [], go: [], python: [] }
+  for (const kind of ['java', 'node', 'go', 'python'] as const) {
+    const entries = source[kind]
+    if (!Array.isArray(entries) || entries.length === 0 || entries.length > 5000) throw new Error(message)
+    const seen = new Set<string>()
+    catalog[kind] = entries.map((item: unknown) => {
+      if (!item || typeof item !== 'object') throw new Error(message)
+      const entry = item as Record<string, unknown>
+      if (typeof entry.version !== 'string' || !isWebsiteRuntimeReleaseVersion(kind, entry.version) || seen.has(entry.version) || typeof entry.image !== 'string' || (entry.maintenance !== 'maintained' && entry.maintenance !== 'legacy') || typeof entry.checkedAt !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(entry.checkedAt)) throw new Error(message)
+      const image = entry.image
+      if (kind === 'java') {
+        const match = /^eclipse-temurin:(8u\d+-b\d+|\d+(?:\.\d+){0,3}_\d+)-(jre|jdk)$/.exec(image)
+        if (!match) throw new Error(message)
+        const exact = normalizeWebsiteJavaReleaseVersion(match[1]!.replace('_', '+'))
+        if (entry.version !== exact) throw new Error(message)
+      } else if (image !== `${kind === 'go' ? 'golang' : kind}:${entry.version}${kind === 'python' ? '-slim' : ''}`) throw new Error(message)
+      seen.add(entry.version)
+      return { version: entry.version, image, maintenance: entry.maintenance, checkedAt: entry.checkedAt }
+    })
+  }
+  return { catalog, fetchedAt: row.fetchedAt, stale: row.stale, detail: row.detail }
 }
 
 /** 演示缺省挂载根：mock 与无服务端挂载根信息时的站点目录前缀来源。 */
@@ -309,21 +315,21 @@ export function isValidWebsiteDomain(domain: string): boolean {
   return labels.every((label) => WEBSITE_DOMAIN_LABEL_PATTERN.test(label))
 }
 
-/** 官方镜像仓库与 tag 后缀：镜像引用的唯一映射，仅四个官方库、版本由契约目录钉死。 */
+/** HTML 使用固定的 Docker 官方 Nginx 镜像。 */
 export const WEBSITE_HTML_IMAGE = 'nginx:1.30.4-alpine3.24'
 
 /**
- * 运行时镜像引用的唯一权威：version 必须落在 `WEBSITE_RUNTIME_VERSIONS[kind]`
- * 目录内（禁 latest），否则返回 null；HTML 返回固定 Nginx 镜像。
+ * version 必须落在后端提供的正式版本目录内，否则返回 null；HTML 返回固定镜像。
  * 建容器与删除时的镜像核对都从这里取引用，用户无法指定任意镜像。
  */
 export function websiteRuntimeImageRef(
   kind: WebsiteProjectKind,
   version: string | null,
+  catalog?: WebsiteRuntimeCatalog,
 ): string | null {
   if (kind === 'html') return WEBSITE_HTML_IMAGE
   if (version === null) return null
-  return WEBSITE_RUNTIME_CATALOG[kind].find((entry) => entry.version === version)?.image ?? null
+  return catalog?.[kind].find((entry) => entry.version === version)?.image ?? null
 }
 
 /**

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createHttpWebsitesAdapter, parseWebsiteProject } from '../adapters/http/websitesHttpAdapter'
 import { MockWebsitesAdapter } from '../adapters/mock/mockAdapters'
 import { resetWebsitesData } from '../adapters/mock/websitesData'
+import { MOCK_WEBSITE_RUNTIME_REPORT } from '../adapters/mock/websiteRuntimeCatalog'
 
 const row = { id: 'p', kind: 'html', name: 'site', pid: null, containerId: 'a'.repeat(64), port: 8080,
   runtimeVersion: null, rootDir: '/srv/wwwroot/site', runState: 'stopped', accessMode: 'domain', domain: 'example.com',
@@ -12,6 +13,19 @@ const row = { id: 'p', kind: 'html', name: 'site', pid: null, containerId: 'a'.r
 afterEach(() => { vi.unstubAllGlobals(); resetWebsitesData() })
 
 describe('网站 adapter 访问配置', () => {
+  it('版本目录通过同源 API 获取，拒绝预发布响应', async () => {
+    const fetcher = vi.fn(async () => Response.json(MOCK_WEBSITE_RUNTIME_REPORT))
+    vi.stubGlobal('fetch', fetcher)
+    const signal = new AbortController().signal
+    const adapter = createHttpWebsitesAdapter()
+    expect(await adapter.runtimeCatalog(signal)).toEqual(MOCK_WEBSITE_RUNTIME_REPORT)
+    expect(fetcher).toHaveBeenCalledWith('/api/websites/runtimes', { signal, cache: 'no-store' })
+    const invalid = structuredClone(MOCK_WEBSITE_RUNTIME_REPORT)
+    invalid.catalog.node = [{ version: '24.22.0-rc.1', image: 'node:24.22.0-rc.1', maintenance: 'legacy', checkedAt: '2026-09-30' }]
+    fetcher.mockResolvedValue(Response.json(invalid))
+    await expect(adapter.runtimeCatalog()).rejects.toThrow('正式运行时版本目录响应无效')
+  })
+
   it('响应只解析公开证书元数据，不接受旧 cert 字段代替证书', () => {
     expect(parseWebsiteProject(row).certificate?.applied).toBe(true)
     expect(() => parseWebsiteProject({ ...row, certificate: undefined, cert: 'deployed' })).toThrow('证书响应无效')

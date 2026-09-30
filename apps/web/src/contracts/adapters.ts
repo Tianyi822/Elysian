@@ -39,6 +39,7 @@ import type {
   WebsiteProjectKind,
   WebsiteProjectUpdateInput,
   WebsiteProxyStatus,
+  WebsiteRuntimeCatalogReport,
 } from '@elysian/contracts'
 import type { TerminalCompletion } from '../components/terminal/terminalSession'
 
@@ -308,6 +309,7 @@ export type WebsiteMutateResult = {
 }
 
 export interface WebsitesAdapter {
+  runtimeCatalog(signal?: AbortSignal): Promise<WebsiteRuntimeCatalogReport>
   /** 全部项目附带反向代理通道状态：列表读取时探测一次，读端点无副作用。 */
   list(): Promise<WebsiteListReport>
   /** 新建项目：新建即已停止、无证书；名称跨类型全局唯一（站点目录只由名称推导）。 */

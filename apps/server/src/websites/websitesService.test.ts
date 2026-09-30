@@ -6,6 +6,8 @@ import { createMemoryWebsiteCertificateStore } from './websitesCertificates.ts'
 import { makeTestChain } from './websitesCertificateTestUtils.ts'
 import { createMemoryWebsiteRegistry, type WebsiteRegistry } from './websitesRegistry.ts'
 import { createWebsiteService, validateWebsiteAccessRequest, validateWebsiteCreateRequest } from './websitesService.ts'
+import { runtimeReport } from './websiteRuntimeTestUtils.ts'
+import type { WebsiteRuntimeCatalogService } from './websiteRuntimeCatalog.ts'
 
 const options = { adminListen: 'unix//run/caddy/admin.sock' }
 function fixture(
@@ -13,6 +15,7 @@ function fixture(
   trustedRoots?: readonly string[],
   /** null = 不注入（检验 service 的缺省 skipped 行为）；缺省注入记录型 fake 返回 opened。 */
   openFirewallPort?: ((port: number, note: string) => Promise<{ state: 'opened' | 'skipped' | 'failed'; port: number; detail: string | null }>) | null,
+  runtimeCatalog: WebsiteRuntimeCatalogService = { get: async () => runtimeReport() },
 ) {
   const calls: string[] = []
   const portOpens: Array<{ port: number; note: string }> = []
@@ -39,6 +42,7 @@ function fixture(
     async load(next) { if (failLoad) throw new Error('模拟下发失败'); config = next; calls.push('caddy-load') },
   }
   const service = createWebsiteService({ registry, docker, caddy, certificates: createMemoryWebsiteCertificateStore(), trustedRoots,
+    runtimeCatalog,
     mountRoot: '/srv', listPortBindings: async () => [],
     ...(openFirewallPort === null ? {} : { openFirewallPort: openFirewallPort ?? (async (port: number, note: string) => { portOpens.push({ port, note }); return { state: 'opened' as const, port, detail: null } }) }) })
   return { service, calls, portOpens, states, getConfig: () => config, setConfig: (next: unknown) => { config = next }, setFailLoad: (value: boolean) => { failLoad = value }, registry }
@@ -50,6 +54,28 @@ function request(kind: 'node' | 'html' = 'node', port = 3000, name = 'site') {
 }
 
 describe('网站访问与容器编排', () => {
+  it('拒绝不在官方目录的版本，且不留下容器或登记', async () => {
+    const { service, calls, registry, states } = fixture()
+    await expect(service.create({ ...request(), runtimeVersion: '99.9.9' })).rejects.toThrow('不在正式可选目录')
+    expect(calls).toEqual([])
+    expect(states.size).toBe(0)
+    expect(await registry.list()).toEqual([])
+    expect(() => validateWebsiteCreateRequest({ ...request(), runtimeVersion: '24.22.0-rc.1' })).toThrow('版本')
+  })
+
+  it('版本来源不可用时 HTML 项目仍能创建，已登记项目仍可启停', async () => {
+    let offline = false
+    const { service } = fixture(undefined, undefined, undefined, { get: async () => {
+      if (offline) throw new Error('版本目录网络不可用')
+      return runtimeReport()
+    } })
+    const node = (await service.create(request())).project
+    offline = true
+    expect((await service.create(request('html', 8088, 'docs'))).project.kind).toBe('html')
+    expect((await service.setRunning(node.id, true)).runState).toBe('running')
+    await expect(service.create(request('node', 3001, 'another'))).rejects.toThrow('版本目录网络不可用')
+  })
+
   it('HTML 和 Node 均创建已停止容器；直连无需 Caddy 路由', async () => {
     const { service, calls } = fixture()
     const node = (await service.create(request())).project

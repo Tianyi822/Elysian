@@ -578,13 +578,10 @@ describe('网站域词典', () => {
     expect(contracts.WEBSITE_RUN_STATE_LABELS.stopped).toBe('已停止')
   })
 
-  it('运行时目录只提供固定的正式官方镜像', () => {
-    for (const entries of Object.values(contracts.WEBSITE_RUNTIME_CATALOG)) {
-      for (const entry of entries) {
-        expect(entry.image).not.toMatch(/latest|alpha|beta|rc|nightly/i)
-        expect(entry.checkedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/)
-      }
-    }
+  it('运行时目录由后端提供，HTML 使用固定的官方镜像', () => {
+    expect('WEBSITE_RUNTIME_CATALOG' in contracts).toBe(false)
+    expect(contracts.isWebsiteRuntimeReleaseVersion('node', '24.21.0')).toBe(true)
+    expect(contracts.isWebsiteRuntimeReleaseVersion('node', '24.21.0-rc.1')).toBe(false)
     expect(contracts.websiteRuntimeImageRef('html', null)).toBe('nginx:1.30.4-alpine3.24')
   })
 
@@ -603,13 +600,9 @@ describe('网站域词典', () => {
     expect(contracts.websiteProjectUsesPort('html')).toBe(true)
   })
 
-  it('运行时版本：四种语言需要，HTML 不需要；各语言有 mock 版本目录', () => {
+  it('运行时版本：四种语言需要，HTML 不需要', () => {
     expect(contracts.websiteProjectUsesRuntime('java')).toBe(true)
     expect(contracts.websiteProjectUsesRuntime('html')).toBe(false)
-    expect(contracts.WEBSITE_RUNTIME_VERSIONS.java).toContain('17')
-    expect(contracts.WEBSITE_RUNTIME_VERSIONS.node).toContain('24.21.0')
-    expect(contracts.WEBSITE_RUNTIME_VERSIONS.go.length).toBeGreaterThan(0)
-    expect(contracts.WEBSITE_RUNTIME_VERSIONS.python.length).toBeGreaterThan(0)
   })
 
   it('根目录由固定前缀与项目名推导', () => {

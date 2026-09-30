@@ -33,6 +33,8 @@ Docker 环境中的 SQLite 使用面板持久卷 `~/.Elysian/data/sqlite`：可�
 
 ## 结构与边界
 
+网站项目通过容器运行，Java、Node、Go、Python 的版本由后端自动获取：语言官方正式发布记录与 Docker 官方镜像精确标签取交集，包含五年前版本线及历史正式补丁，排除预发布、快照和浮动标签。添加项目窗口通过同源 API 读取目录并支持版本号搜索。目录缓存六小时，过期后按请求自动刷新，获取失败时明确提示并保留已有缓存；缓存位于 `~/.Elysian/state/website-runtime-catalog.json`，生产代码不维护固定版本表。`bun run check:website-runtimes` 可诊断官方来源与镜像库的自动获取路径；本地演示仍使用可复现 mock。
+
 - `apps/web/`：工作台页面、store、HTTP/WebSocket 与 mock adapter。
 - `apps/server/`：同源 API、Docker Engine 调用、数据库协议与本机操作。
 - `packages/foundation/contracts/`：跨端类型与纯常量。

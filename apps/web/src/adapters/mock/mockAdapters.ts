@@ -1,3 +1,4 @@
+import { MOCK_WEBSITE_RUNTIME_REPORT } from './websiteRuntimeCatalog'
 import {
   effectivePortHostIp,
   hostPortBindingsOverlap,
@@ -941,6 +942,9 @@ export class MockUserAdapter implements UserAdapter {
 const DEMO_PROXY_STATUS: WebsiteProxyStatus = { state: 'active', detail: null }
 
 export class MockWebsitesAdapter implements WebsitesAdapter {
+  async runtimeCatalog() {
+    return structuredClone(MOCK_WEBSITE_RUNTIME_REPORT)
+  }
   async list(): Promise<WebsiteListReport> {
     return { projects: getWebsiteProjects(), proxy: DEMO_PROXY_STATUS }
   }

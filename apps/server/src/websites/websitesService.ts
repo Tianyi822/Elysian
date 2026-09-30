@@ -7,6 +7,7 @@ import type {
   WebsiteProject,
   WebsiteProjectKind,
   WebsiteProxyStatus,
+  WebsiteRuntimeCatalogReport,
 } from '@elysian/contracts'
 import {
   PANEL_PORT,
@@ -17,6 +18,7 @@ import {
   WEBSITE_HTML_IMAGE,
   websiteProjectUsesRuntime,
   websiteRuntimeImageRef,
+  isWebsiteRuntimeReleaseVersion,
 } from '@elysian/contracts'
 import { InvalidRequestError, invalidRequest } from '../shared/errors.ts'
 import { SERVER_PORT } from '../shared/ports.ts'
@@ -26,6 +28,7 @@ import { createMemoryWebsiteCertificateStore, validateWebsiteCertificate, type W
 import type { WebsiteDocker } from './websitesDocker.ts'
 import { websiteContainerCmd } from './websitesDocker.ts'
 import type { WebsiteRecord, WebsiteRegistry } from './websitesRegistry.ts'
+import type { WebsiteRuntimeCatalogService } from './websiteRuntimeCatalog.ts'
 
 /*
  * 网站域编排层：校验（手写中文校验，复用契约纯函数）、查重（名称跨类型全局唯一、
@@ -73,6 +76,7 @@ export function validateWebsiteAccessRequest(input: unknown): WebsiteAccessInput
 }
 
 export type WebsiteService = {
+  runtimeCatalog(): Promise<WebsiteRuntimeCatalogReport>
   list(): Promise<WebsiteListReport>
   create(input: WebsiteCreateRequest): Promise<WebsiteMutateResult>
   update(id: string, input: WebsiteUpdateRequest): Promise<WebsiteProject>
@@ -129,9 +133,7 @@ export function validateWebsiteCreateRequest(input: unknown): WebsiteCreateReque
     if (typeof row.runtimeVersion !== 'string' || row.runtimeVersion.trim() === '') {
       throw invalidRequest('请选择运行时版本')
     }
-    if (websiteRuntimeImageRef(kind, row.runtimeVersion) === null) {
-      throw invalidRequest('运行时版本不在可选目录内')
-    }
+    if (kind !== 'html' && !isWebsiteRuntimeReleaseVersion(kind, row.runtimeVersion)) throw invalidRequest('请选择正式运行时版本')
     runtimeVersion = row.runtimeVersion
   }
   const access = validateWebsiteAccessRequest(row.access)
@@ -193,6 +195,7 @@ export function createWebsiteService(deps: {
   certificates?: WebsiteCertificateStore
   trustedRoots?: readonly string[]
   mountRoot: string
+  runtimeCatalog: WebsiteRuntimeCatalogService
   listPortBindings(): Promise<readonly PortMapping[]>
   selfContainerId?: string
   /** 直连端口的防火墙自动开放（app.ts 装配层注入）；缺省恒 skipped。 */
@@ -343,6 +346,10 @@ export function createWebsiteService(deps: {
   }
 
   async function create(input: WebsiteCreateRequest): Promise<WebsiteMutateResult> {
+    // 先核对动态目录，再进入任何站点目录、证书或 Docker 写操作。
+    const imageRef = input.kind === 'html' ? WEBSITE_HTML_IMAGE
+      : websiteRuntimeImageRef(input.kind, input.runtimeVersion, (await deps.runtimeCatalog.get()).catalog)
+    if (!imageRef) throw invalidRequest('运行时版本不在正式可选目录内，请刷新版本目录')
     // 全局串行化全部创建：名称（跨类型全局唯一）与域名的查重都是跨 await 的
     // check-then-act，按 kind+name 分键会让并发同名/同域创建双双通过查重。
     if (inProgress.has(CREATE_MUTEX_KEY)) throw new InvalidRequestError(409, '网站项目正在创建，请稍后再试')
@@ -375,7 +382,6 @@ export function createWebsiteService(deps: {
       let rootDir: string
       try { rootDir = await docker.ensureSiteDir(input.name, deps.mountRoot) }
       catch (error) { if (certificate) await certificates.remove(certificate.ref); throw error }
-      const imageRef = input.kind === 'html' ? WEBSITE_HTML_IMAGE : websiteRuntimeImageRef(input.kind, input.runtimeVersion)
       let containerId: string | null = null
       let containerName: string | null = null
       if (imageRef !== null) {
@@ -710,5 +716,5 @@ export function createWebsiteService(deps: {
     }
   }
 
-  return { list, create, update, setAccess, setRunning, logs, remove, reconcileProxy }
+  return { runtimeCatalog: () => deps.runtimeCatalog.get(), list, create, update, setAccess, setRunning, logs, remove, reconcileProxy }
 }

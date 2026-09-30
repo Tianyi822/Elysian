@@ -13,6 +13,7 @@ import {
   WEBSITE_PROJECT_KINDS,
   WEBSITE_PROXY_STATES,
   WEBSITE_RUN_STATES,
+  parseWebsiteRuntimeCatalogReport,
 } from '@elysian/contracts'
 import type { WebsitesAdapter, WebsiteMutateResult } from '../../contracts/adapters'
 import { reportUnauthorized } from './unauthorized'
@@ -193,7 +194,7 @@ async function requestJson(url: string, init?: RequestInit): Promise<unknown> {
 }
 
 /**
- * Docker 运行时的网站管理 adapter：七个动作落到 /api/websites/*。
+ * Docker 运行时的网站管理 adapter：版本目录与项目管理落到 /api/websites/*。
  * 项目 id 经一次 encodeURIComponent 进路径（id 由服务端生成，正常是
  * URL 安全字符，编码只兜异常形态）；删除携带确认正文，缺确认服务端 400。
  */
@@ -205,6 +206,9 @@ export function createHttpWebsitesAdapter(baseUrl = '/api/websites'): WebsitesAd
       ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
     })
   return {
+    async runtimeCatalog(signal) {
+      return parseWebsiteRuntimeCatalogReport(await requestJson(`${baseUrl}/runtimes`, { signal }))
+    },
     async list() {
       return parseWebsiteListReport(await requestJson(baseUrl))
     },
