@@ -37,7 +37,7 @@ describe('openLogStore', () => {
     await rm(dir, { recursive: true, force: true })
   })
 
-  it('同一 sourceKey 只保留一行，超长记录计入 droppedRecords', async () => {
+  it('同一 sourceKey 只保留一行，超长 message 先截断再写入且不计入 droppedRecords', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'elysian-logs-'))
     const store = openLogStore(join(dir, 'logs.sqlite'))
     store.insertRuntime({
@@ -62,8 +62,11 @@ describe('openLogStore', () => {
       source: 'server.test',
       message: '中'.repeat(LOG_RECORD_MAX_BYTES),
     })
-    expect(store.queryRuntime({}).total).toBe(1)
-    expect(store.counters()).toEqual({ droppedRecords: 1, failedWrites: 0 })
+    const page = store.queryRuntime({})
+    expect(page.total).toBe(2)
+    const truncated = page.entries.find((entry) => entry.at === '2026-09-23T00:00:03.000Z')
+    expect(truncated?.message.endsWith('…（已截断）')).toBe(true)
+    expect(store.counters()).toEqual({ droppedRecords: 0, failedWrites: 0 })
     store.close()
     await rm(dir, { recursive: true, force: true })
   })

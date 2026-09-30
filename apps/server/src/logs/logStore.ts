@@ -122,11 +122,6 @@ function recordBytes(value: unknown): number {
   return utf8ByteLength(JSON.stringify(value))
 }
 
-/** 仅清洗控制字符与空白，不按字段上限截断——供字节硬闸度量超大原文。 */
-function cleanLine(text: string): string {
-  return normalizeSingleLine(text, Number.MAX_SAFE_INTEGER)
-}
-
 type CursorBind = [string | null, string | null, string | null, number | null]
 
 function cursorBind(query: LogListQuery): CursorBind {
@@ -182,17 +177,6 @@ export function openLogStore(path: string): LogStore {
   return {
     insertRuntime(input) {
       const source = normalizeSingleLine(input.source, LOG_SOURCE_MAX_LENGTH)
-      // 字节硬闸用未截断正文度量，避免先截到 LOG_MESSAGE_MAX_LENGTH 后永远进不了 64 KiB 闸门。
-      const gateBytes = recordBytes({
-        at: input.at,
-        level: input.level,
-        source,
-        message: cleanLine(input.message),
-      })
-      if (gateBytes > LOG_RECORD_MAX_BYTES) {
-        droppedRecords += 1
-        return
-      }
       const message = normalizeSingleLine(input.message, LOG_MESSAGE_MAX_LENGTH)
       const bytes = recordBytes({
         at: input.at,
@@ -200,6 +184,10 @@ export function openLogStore(path: string): LogStore {
         source,
         message,
       })
+      if (bytes > LOG_RECORD_MAX_BYTES) {
+        droppedRecords += 1
+        return
+      }
       const sourceKey = input.sourceKey
       tryRun(() => {
         if (sourceKey !== undefined) {
