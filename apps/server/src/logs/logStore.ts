@@ -16,6 +16,7 @@ import {
   type PlatformLogLevel,
   type RuntimeLogEntry,
 } from '@elysian/contracts'
+import { createHash } from 'node:crypto'
 import {
   LOG_ACTION_MAX_LENGTH,
   LOG_IP_MAX_LENGTH,
@@ -29,6 +30,9 @@ import {
   LOG_TARGET_MAX_LENGTH,
   LOG_USER_AGENT_MAX_LENGTH,
   normalizeSingleLine,
+  parseLoginLogLine,
+  parseOperationLogLine,
+  parseRuntimeLogLine,
   utf8ByteLength,
 } from './logRecords.ts'
 
@@ -86,6 +90,10 @@ export type LogStore = {
   insertRuntime(input: RuntimeInsert): void
   insertLogin(input: LoginInsert): void
   insertOperation(input: OperationInsert): void
+  importFile(
+    category: LogSweepCategory,
+    lines: readonly string[],
+  ): { inserted: number; skipped: number }
   queryRuntime(query: LogListQuery): LogPage<RuntimeLogEntry>
   queryLogin(query: LoginLogListQuery): LogPage<LoginLogEntry>
   queryOperation(query: OperationLogListQuery): LogPage<OperationLogEntry>
@@ -256,7 +264,7 @@ export function openLogStore(path: string, policies?: LogStorePolicies): LogStor
     return row.at ?? null
   }
 
-  return {
+  const store: LogStore = {
     insertRuntime(input) {
       const source = normalizeSingleLine(input.source, LOG_SOURCE_MAX_LENGTH)
       const message = normalizeSingleLine(input.message, LOG_MESSAGE_MAX_LENGTH)
@@ -360,6 +368,72 @@ export function openLogStore(path: string, policies?: LogStorePolicies): LogStor
           )
         }
       })
+    },
+
+    importFile(category, lines) {
+      return db.transaction(() => {
+        let inserted = 0
+        let skipped = 0
+        for (const line of lines) {
+          if (line.length === 0) continue
+          const sourceKey = createHash('sha256').update(line).digest('hex')
+          if (category === 'runtime') {
+            const record = parseRuntimeLogLine(line)
+            if (record === null) {
+              skipped += 1
+              console.error(`Elysian 日志导入跳过坏行（runtime）：${line.slice(0, 200)}`)
+              continue
+            }
+            store.insertRuntime({
+              at: record.at,
+              level: record.level,
+              source: record.source,
+              message: record.message,
+              sourceKey,
+            })
+            inserted += 1
+            continue
+          }
+          if (category === 'login') {
+            const record = parseLoginLogLine(line)
+            if (record === null) {
+              skipped += 1
+              console.error(`Elysian 日志导入跳过坏行（login）：${line.slice(0, 200)}`)
+              continue
+            }
+            store.insertLogin({
+              at: record.at,
+              ip: record.ip,
+              location: record.location,
+              userAgent: record.userAgent,
+              status: record.status,
+              sourceKey,
+            })
+            inserted += 1
+            continue
+          }
+          const record = parseOperationLogLine(line)
+          if (record === null) {
+            skipped += 1
+            console.error(`Elysian 日志导入跳过坏行（operation）：${line.slice(0, 200)}`)
+            continue
+          }
+          store.insertOperation({
+            at: record.at,
+            category: record.category,
+            action: record.action,
+            target: record.target,
+            summary: record.summary,
+            result: record.result,
+            method: record.method,
+            path: record.path,
+            httpStatus: record.httpStatus,
+            sourceKey,
+          })
+          inserted += 1
+        }
+        return { inserted, skipped }
+      })()
     },
 
     queryRuntime(query) {
@@ -534,6 +608,7 @@ export function openLogStore(path: string, policies?: LogStorePolicies): LogStor
       db.close()
     },
   }
+  return store
 }
 
 export function createUnavailableLogStore(): LogStore {
@@ -552,6 +627,10 @@ export function createUnavailableLogStore(): LogStore {
     },
     insertOperation() {
       failedWrites += 1
+    },
+    importFile(_category, lines) {
+      failedWrites += lines.filter((line) => line.length > 0).length
+      return { inserted: 0, skipped: lines.filter((line) => line.length > 0).length }
     },
     queryRuntime: unavailable,
     queryLogin: unavailable,
