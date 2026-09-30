@@ -1,28 +1,44 @@
 import { describe, expect, it, vi } from 'vitest'
 import { changePanelPassword } from './passwordChange.ts'
+import { InvalidRequestError } from '../shared/errors.ts'
 import { createMemoryCredentialsStore } from './credentialsStore.ts'
 import { createScryptHasher } from './passwordHasher.ts'
 import { runResetPasswordCli, type ResetPasswordIo } from './resetPasswordCli.ts'
 
 /*
- * 改密测试：passwordChange 纯函数（两次一致/长度/写盘与返回值一致/调用形状）与
- * resetPasswordCli 的交互流程（注入 reader fake 与内存 store，不真起交互、不碰
- * ~/.Elysian）。import resetPasswordCli 本身即验证 import.meta.main 门禁：门禁失效
- * 时顶层会开始读 stdin，本文件无法安静地完成。
+ * 改密测试：passwordChange 纯函数（两次一致/长度/写盘与返回值一致/调用形状/校验错误
+ * 的 InvalidRequestError 分型）与 resetPasswordCli 的交互流程（注入 reader fake 与
+ * 内存 store，不真起交互、不碰 ~/.Elysian）。import resetPasswordCli 本身即验证
+ * import.meta.main 门禁：门禁失效时顶层会开始读 stdin，本文件无法安静地完成。
  */
 
 describe('changePanelPassword', () => {
-  it('两次不一致：抛「两次输入的密码不一致」，不触发哈希与写盘', async () => {
+  it('两次不一致：抛 InvalidRequestError「两次输入的密码不一致」，不触发哈希与写盘', async () => {
     const hasher = { hash: vi.fn(async (plain: string) => `hash:${plain}`), verify: vi.fn(async () => false) }
     const credentials = createMemoryCredentialsStore()
     await expect(changePanelPassword({ credentials, hasher }, 'abcdefg1', 'abcdefg2')).rejects.toThrow('两次输入的密码不一致')
+    await expect(changePanelPassword({ credentials, hasher }, 'abcdefg1', 'abcdefg2')).rejects.toBeInstanceOf(InvalidRequestError)
     expect(hasher.hash).not.toHaveBeenCalled()
     await expect(credentials.current()).resolves.toBeNull()
   })
 
-  it('长度不足 8 位：抛「密码至少需要 8 位」', async () => {
+  it('长度不足 8 位：抛 InvalidRequestError「密码至少需要 8 位」', async () => {
     const hasher = { hash: vi.fn(async (plain: string) => `hash:${plain}`), verify: vi.fn(async () => false) }
     await expect(changePanelPassword({ credentials: createMemoryCredentialsStore(), hasher }, '1234567', '1234567')).rejects.toThrow('密码至少需要 8 位')
+    await expect(changePanelPassword({ credentials: createMemoryCredentialsStore(), hasher }, '1234567', '1234567')).rejects.toBeInstanceOf(InvalidRequestError)
+  })
+
+  it('写盘 IO 故障：原样上抛普通 Error，不包装成 InvalidRequestError', async () => {
+    const hasher = { hash: vi.fn(async () => 'hash:x'), verify: vi.fn(async () => false) }
+    const credentials = {
+      current: async () => null,
+      write: async () => {
+        throw new Error('EACCES: permission denied, open')
+      },
+    }
+    const outcome = changePanelPassword({ credentials, hasher }, 'long-enough-pwd', 'long-enough-pwd')
+    await expect(outcome).rejects.toThrow('EACCES')
+    await expect(outcome).rejects.not.toBeInstanceOf(InvalidRequestError)
   })
 
   it('成功：哈希新密码、经 store.write 落盘，返回值与 store 里的一致（含新 passwordChangedAt）', async () => {

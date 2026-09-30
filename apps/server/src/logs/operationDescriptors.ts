@@ -25,7 +25,8 @@ import { LOGS_MOUNT } from './logsRoutes.ts'
  * 该端点本来就有参数摘要，两者同桌）。于是「不声明 ⇒ 请求体里的密码/密钥材料永远不进日志」
  * 不靠实现者的自觉，而靠采集中间件在 clone 之前就先查这张表。据此**不声明**的端点：
  * POST /api/security/ssh/root-password、POST /api/security/users、PUT /api/security/users/:id
- * （前者的体是密码，后两者的体含密码）与 POST /api/auth/login（登录体含密码）。
+ * （前者的体是密码，后两者的体含密码）与 POST /api/auth/login、POST /api/auth/password
+ * （登录与改密的体都含密码字段）；POST /api/auth/sessions/logout-others 无请求体，同样无可摘要。
  *
  * 数据库写端点登记动作与目标；密码与语句正文均不进入摘要。
  *
@@ -526,6 +527,10 @@ export const OPERATION_DESCRIPTORS: Readonly<Record<string, OperationDescriptor>
   // 也记一条 success。
   [`POST ${AUTH_MOUNT}/login`]: { category: 'auth', action: '登录面板' },
   [`POST ${AUTH_MOUNT}/logout`]: { category: 'auth', action: '退出登录' },
+  // 设置页端点：改密体含三个密码字段——**不声明 summarize**（与 login 同纪律，请求体
+  // 结构性地不进日志）；退出其他会话无请求体，同样无可摘要。
+  [`POST ${AUTH_MOUNT}/password`]: { category: 'auth', action: '修改面板密码' },
+  [`POST ${AUTH_MOUNT}/sessions/logout-others`]: { category: 'auth', action: '退出其他会话' },
 }
 
 /**

@@ -38,6 +38,10 @@ export interface SessionStore {
   /** 校验并滑动续期；会话不存在、过期或 epoch 不匹配时删除并回 null。 */
   validate(sessionId: string, pwdEpoch: string): Promise<PanelSession | null>
   destroy(sessionId: string): Promise<void>
+  /** 只读列举未过期会话：过期会话就地过滤、不落盘（清扫仍由 validate 顺带完成）。 */
+  list(): Promise<readonly PanelSession[]>
+  /** 销毁除 keepSessionId 外的全部会话，立即落盘。 */
+  destroyOthers(keepSessionId: string): Promise<void>
 }
 
 const SESSIONS_PATH = ELYSIAN_PATHS.panelSessions
@@ -164,6 +168,20 @@ export function createFileSessionStore(path: string = SESSIONS_PATH, options: Se
       if (!sessions.some((session) => session.id === sessionId)) return
       await persist(sessions.filter((session) => session.id !== sessionId))
     },
+
+    async list(): Promise<readonly PanelSession[]> {
+      const at = now()
+      // 只读视图：过滤过期但不落盘——读端点无副作用，磁盘上的清扫仍由 validate 顺带完成。
+      return (await load()).filter((session) => !isExpired(session, at)).map((session) => ({ ...session }))
+    },
+
+    async destroyOthers(keepSessionId: string): Promise<void> {
+      const sessions = [...(await load())]
+      const next = sessions.filter((session) => session.id === keepSessionId)
+      // 没有其他会话时不写文件（与 destroy 的无用写规避同纪律）；有销毁则立即落盘。
+      if (next.length === sessions.length) return
+      await persist(next)
+    },
   }
 }
 
@@ -193,6 +211,13 @@ export function createMemorySessionStore(options: SessionStoreOptions = {}): Ses
     },
     async destroy(sessionId: string) {
       sessions = sessions.filter((session) => session.id !== sessionId)
+    },
+    async list() {
+      const at = now()
+      return sessions.filter((session) => !isExpired(session, at)).map((session) => ({ ...session }))
+    },
+    async destroyOthers(keepSessionId: string) {
+      sessions = sessions.filter((session) => session.id === keepSessionId)
     },
   }
 }

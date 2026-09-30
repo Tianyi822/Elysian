@@ -26,5 +26,42 @@ export function runSessionAdapterContract(make: () => SessionAdapter, expectedMo
     it('logout 幂等成功路径不抛', async () => {
       await expect(make().logout()).resolves.toBeUndefined()
     })
+
+    it('listSessions 返回非空数组，每行三字段类型合法（时间为可解析的 ISO 串），恰有一行 current: true', async () => {
+      const rows = await make().listSessions()
+      expect(rows.length).toBeGreaterThan(0)
+      for (const row of rows) {
+        expect(typeof row.createdAt).toBe('string')
+        expect(typeof row.lastUsedAt).toBe('string')
+        expect(typeof row.current).toBe('boolean')
+        expect(Number.isNaN(Date.parse(row.createdAt))).toBe(false)
+        expect(Number.isNaN(Date.parse(row.lastUsedAt))).toBe(false)
+      }
+      expect(rows.filter((row) => row.current)).toHaveLength(1)
+    })
+
+    it('changePassword 两次不一致 → rejects「两次输入的密码不一致」', async () => {
+      await expect(
+        make().changePassword({
+          currentPassword: 'whatever',
+          newPassword: 'long-enough-1',
+          confirmNewPassword: 'long-enough-2',
+        }),
+      ).rejects.toThrow('两次输入的密码不一致')
+    })
+
+    it('changePassword 长度不足 → rejects「密码至少需要 8 位」', async () => {
+      await expect(
+        make().changePassword({
+          currentPassword: 'whatever',
+          newPassword: 'short',
+          confirmNewPassword: 'short',
+        }),
+      ).rejects.toThrow('密码至少需要 8 位')
+    })
+
+    it('logoutOtherSessions 成功路径不抛', async () => {
+      await expect(make().logoutOtherSessions()).resolves.toBeUndefined()
+    })
   })
 }

@@ -400,6 +400,23 @@ export type SessionStatus = {
   devAccount: boolean
 }
 
+/** 活跃会话列表的一行（GET /api/auth/sessions）：不含会话 id（不透明凭据不下发），也没有设备信息（服务端不采集）。 */
+export type SessionListRow = {
+  /** 会话创建时间（ISO 字符串）。 */
+  createdAt: string
+  /** 最近一次使用时间（ISO 字符串，服务端滑动窗口的基准）。 */
+  lastUsedAt: string
+  /** 是否为发起本次请求的当前会话。 */
+  current: boolean
+}
+
+/** 修改面板密码的输入：三个口令字段只经请求体直达服务端，不进任何日志。 */
+export type PanelPasswordChangeInput = {
+  currentPassword: string
+  newPassword: string
+  confirmNewPassword: string
+}
+
 /**
  * 会话与权限接缝。`canView` 是页面级权限占位（未来策略接缝）；
  * 登录鉴权走 `status`/`login`/`logout`：Docker 运行时经 /api/auth 承载真实会话，
@@ -413,6 +430,12 @@ export interface SessionAdapter {
   login(username: string, password: string): Promise<void>
   /** 登出并清除会话 Cookie；幂等。 */
   logout(): Promise<void>
+  /** 列出活跃会话（含当前会话标记），按最近活跃倒序；real 模式经 GET /api/auth/sessions。 */
+  listSessions(): Promise<readonly SessionListRow[]>
+  /** 修改面板密码：成功后全部会话按 pwdEpoch 语义失效、当前会话 Cookie 一并清除；失败抛中文 Error。 */
+  changePassword(input: PanelPasswordChangeInput): Promise<void>
+  /** 退出除当前会话外的全部活跃会话；成功后重列会话只剩当前会话。 */
+  logoutOtherSessions(): Promise<void>
 }
 
 /** 资源历史查询的时间窗（与仪表盘 FilterBar 选项对齐）。 */

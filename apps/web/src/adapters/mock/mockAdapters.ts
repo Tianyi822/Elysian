@@ -86,6 +86,8 @@ import type {
   LogsAdapter,
   RunAdapter,
   SessionAdapter,
+  SessionListRow,
+  PanelPasswordChangeInput,
   SessionStatus,
   SkillAdapter,
   SshAdapter,
@@ -311,8 +313,33 @@ export class MockAuditAdapter implements AuditAdapter {
  * 会话与权限的 mock 实现：演示环境全部放行。
  * 让「无权限」分支真实存在但默认不触发——接入认证后换成真实实现即可，界面不用改。
  */
-/** 会话的 mock 实现：演示模式恒放行，登录与登出直接成功（本地无后端，不强制登录）。 */
+/**
+ * 会话的 mock 实现：演示模式恒放行，登录与登出直接成功（本地无后端，不强制登录）。
+ * 内存持有一份演示会话列表：种子两行（当前会话 −2 小时创建、另一会话 −3 天创建、
+ * −1 小时活跃），相对偏移确定、绝对值随取用时刻（与审批 mock 用 new Date() 同口径）。
+ */
+/** 演示模式没有真实凭据可改，如实失败而不是伪装成功（红线：绝不把演示状态呈现为已执行）。 */
+const DEMO_PASSWORD_MIN_LENGTH = 8
+
 export class MockSessionAdapter implements SessionAdapter {
+  private rows: SessionListRow[]
+
+  constructor() {
+    const nowMs = Date.now()
+    this.rows = [
+      {
+        createdAt: new Date(nowMs - 2 * 60 * 60 * 1000).toISOString(),
+        lastUsedAt: new Date(nowMs).toISOString(),
+        current: true,
+      },
+      {
+        createdAt: new Date(nowMs - 3 * 24 * 60 * 60 * 1000).toISOString(),
+        lastUsedAt: new Date(nowMs - 60 * 60 * 1000).toISOString(),
+        current: false,
+      },
+    ]
+  }
+
   async canView(): Promise<boolean> {
     return true
   }
@@ -324,6 +351,22 @@ export class MockSessionAdapter implements SessionAdapter {
   async login(): Promise<void> {}
 
   async logout(): Promise<void> {}
+
+  async listSessions(): Promise<readonly SessionListRow[]> {
+    // 当前行在前（其 lastUsedAt 恒为最新），与服务端「按最近活跃倒序」同一呈现。
+    return [...this.rows]
+  }
+
+  async changePassword(input: PanelPasswordChangeInput): Promise<void> {
+    // 与服务端同一次序校验（先一致性、后长度）；校验通过即抛演示不支持。
+    if (input.newPassword !== input.confirmNewPassword) throw new Error('两次输入的密码不一致')
+    if (input.newPassword.length < DEMO_PASSWORD_MIN_LENGTH) throw new Error('密码至少需要 8 位')
+    throw new Error('演示模式不支持修改面板密码')
+  }
+
+  async logoutOtherSessions(): Promise<void> {
+    this.rows = this.rows.filter((row) => row.current)
+  }
 }
 
 /** 文件目录的 mock 实现：读手工种子的目录树；列举与统计只读，四个变更动作只改内存数据。 */

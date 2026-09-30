@@ -212,6 +212,75 @@ describe('requireSession 接线（enabled: true）', () => {
     expect((await app.get('/api/logs/runtime', cookie)).status).toBe(401)
   })
 
+  it('设置端点不在豁免清单：无 Cookie 的 GET /sessions、POST /password、POST /sessions/logout-others 一律 401「未登录或会话已过期」', async () => {
+    const { app } = await buildApp()
+    const list = await app.get('/api/auth/sessions')
+    expect(list.status).toBe(401)
+    expect(await list.json()).toEqual({ error: '未登录或会话已过期' })
+    const change = await app.postJson('/api/auth/password', {
+      currentPassword: 'a',
+      newPassword: 'b',
+      confirmNewPassword: 'c',
+    })
+    expect(change.status).toBe(401)
+    expect(await change.json()).toEqual({ error: '未登录或会话已过期' })
+    const others = await app.post('/api/auth/sessions/logout-others')
+    expect(others.status).toBe(401)
+    expect(await others.json()).toEqual({ error: '未登录或会话已过期' })
+  })
+
+  it('带有效会话可达设置端点：GET /api/auth/sessions 回当前会话一行（current: true）', async () => {
+    const { app } = await buildApp()
+    const loginRes = await app.postJson('/api/auth/login', { username: 'admin', password: 'e2e-password' })
+    const cookie = loginRes.headers.get('set-cookie')!.split(';')[0]!
+
+    const res = await app.get('/api/auth/sessions', cookie)
+    expect(res.status).toBe(200)
+    const body = await res.json() as { sessions: Array<{ current: boolean }> }
+    expect(body.sessions).toHaveLength(1)
+    expect(body.sessions[0]!.current).toBe(true)
+  })
+
+  it('面板改密端点（POST /api/auth/password）后旧会话下一次请求 401（epoch 失效端到端，与 CLI 改密同语义）、新密码可再登录', async () => {
+    const { app } = await buildApp()
+    const loginRes = await app.postJson('/api/auth/login', { username: 'admin', password: 'e2e-password' })
+    const cookie = loginRes.headers.get('set-cookie')!.split(';')[0]!
+
+    const change = await app.postJson(
+      '/api/auth/password',
+      { currentPassword: 'e2e-password', newPassword: 'rotated-password', confirmNewPassword: 'rotated-password' },
+      cookie,
+    )
+    expect(change.status).toBe(200)
+    expect(change.headers.get('set-cookie')).toContain('Max-Age=0')
+
+    // 旧 Cookie 下一次请求即 401（epoch 不匹配被 validate 删除）。
+    expect((await app.get('/api/logs/runtime', cookie)).status).toBe(401)
+
+    // 新密码可登录、旧密码 401。
+    const relogin = await app.postJson('/api/auth/login', { username: 'admin', password: 'rotated-password' })
+    expect(relogin.status).toBe(200)
+    expect((await app.get('/api/logs/runtime', relogin.headers.get('set-cookie')!.split(';')[0]!)).status).toBe(200)
+    const oldPassword = await app.postJson('/api/auth/login', { username: 'admin', password: 'e2e-password' })
+    expect(oldPassword.status).toBe(401)
+  })
+
+  it('退出其他会话端点保留当前会话、其余会话下一次请求 401', async () => {
+    const { app } = await buildApp()
+    const firstLogin = await app.postJson('/api/auth/login', { username: 'admin', password: 'e2e-password' })
+    const cookieA = firstLogin.headers.get('set-cookie')!.split(';')[0]!
+    const secondLogin = await app.postJson('/api/auth/login', { username: 'admin', password: 'e2e-password' })
+    const cookieB = secondLogin.headers.get('set-cookie')!.split(';')[0]!
+
+    const res = await app.post('/api/auth/sessions/logout-others', cookieA)
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true })
+
+    // 当前会话不受影响；另一会话下一次请求即 401。
+    expect(await (await app.get('/api/auth/session', cookieA)).json()).toEqual({ authenticated: true, devAccount: false })
+    expect((await app.get('/api/logs/runtime', cookieB)).status).toBe(401)
+  })
+
   it('登录成功与失败都落操作日志（auth 分类），密码与用户名不进任何记录', async () => {
     const { app, records } = await buildApp()
 

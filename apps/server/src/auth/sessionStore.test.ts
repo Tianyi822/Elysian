@@ -127,6 +127,55 @@ describe('createFileSessionStore', () => {
     await expect(store.destroy('no-such-id')).resolves.toBeUndefined()
   })
 
+  it('list 只回未过期会话且不落盘：调用前后文件内容不变（过期清扫仍由 validate 完成）', async () => {
+    const dir = await tempDir()
+    const path = join(dir, 'state', 'panel-sessions.json')
+    let now = 1_760_000_000_000
+    const store = createFileSessionStore(path, { now: () => now })
+    const stale = await store.create(EPOCH)
+    now += SESSION_IDLE_TTL_MS + 1
+    const fresh = await store.create(EPOCH)
+
+    const before = readFileSync(path, 'utf8')
+    const listed = await store.list()
+    expect(readFileSync(path, 'utf8')).toBe(before)
+
+    // 过期会话被就地过滤：视图里只剩 fresh；磁盘上两者都在（list 不触发清扫）。
+    expect(listed.map((session) => session.id)).toEqual([fresh.id])
+    const onDisk = JSON.parse(readFileSync(path, 'utf8')) as { sessions: { id: string }[] }
+    expect(onDisk.sessions.map((session) => session.id)).toEqual([stale.id, fresh.id])
+  })
+
+  it('destroyOthers 保留 keep 会话、销毁其余并立即落盘；重启后销毁结果可见', async () => {
+    const dir = await tempDir()
+    const path = join(dir, 'state', 'panel-sessions.json')
+    const store = createFileSessionStore(path)
+    const first = await store.create(EPOCH)
+    const second = await store.create(EPOCH)
+    const third = await store.create(EPOCH)
+
+    await store.destroyOthers(second.id)
+    const onDisk = JSON.parse(readFileSync(path, 'utf8')) as { sessions: { id: string }[] }
+    expect(onDisk.sessions.map((session) => session.id)).toEqual([second.id])
+
+    const restarted = createFileSessionStore(path)
+    await expect(restarted.validate(first.id, EPOCH)).resolves.toBeNull()
+    await expect(restarted.validate(second.id, EPOCH)).resolves.not.toBeNull()
+    await expect(restarted.validate(third.id, EPOCH)).resolves.toBeNull()
+  })
+
+  it('destroyOthers 没有其他会话时不写文件（与 destroy 的无用写规避同纪律），keep 会话仍有效', async () => {
+    const dir = await tempDir()
+    const path = join(dir, 'state', 'panel-sessions.json')
+    const store = createFileSessionStore(path)
+    const only = await store.create(EPOCH)
+
+    const before = readFileSync(path, 'utf8')
+    await expect(store.destroyOthers(only.id)).resolves.toBeUndefined()
+    expect(readFileSync(path, 'utf8')).toBe(before)
+    await expect(store.validate(only.id, EPOCH)).resolves.not.toBeNull()
+  })
+
   it('惰性清扫：校验有效会话时顺带剔除磁盘上已过期的其他会话', async () => {
     const dir = await tempDir()
     const path = join(dir, 'state', 'panel-sessions.json')
@@ -187,5 +236,26 @@ describe('createMemorySessionStore', () => {
 
     await store.destroy(second.id)
     await expect(store.validate(second.id, EPOCH)).resolves.toBeNull()
+  })
+
+  it('与文件版同语义：list 只回未过期会话，destroyOthers 保留 keep 会话、销毁其余', async () => {
+    let now = 1_760_000_000_000
+    const store: SessionStore = createMemorySessionStore({ now: () => now })
+    const first = await store.create(EPOCH)
+    now += 60_000
+    const second = await store.create(EPOCH)
+
+    // 全部未过期：视图两行齐全。
+    expect((await store.list()).map((session) => session.id)).toEqual([first.id, second.id])
+
+    // first 距上次使用已超 12h，second 还差半分钟未超时。
+    now += SESSION_IDLE_TTL_MS - 30_000
+    const third = await store.create(EPOCH)
+    expect((await store.list()).map((session) => session.id)).toEqual([second.id, third.id])
+
+    await store.destroyOthers(third.id)
+    expect((await store.list()).map((session) => session.id)).toEqual([third.id])
+    await expect(store.validate(second.id, EPOCH)).resolves.toBeNull()
+    await expect(store.validate(third.id, EPOCH)).resolves.not.toBeNull()
   })
 })

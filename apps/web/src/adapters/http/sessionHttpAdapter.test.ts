@@ -109,3 +109,79 @@ describe('createHttpSessionAdapter', () => {
     await expect(createHttpSessionAdapter().status()).rejects.toThrow('登录状态响应不是有效 JSON')
   })
 })
+
+/*
+ * 设置页三方法（listSessions / changePassword / logoutOtherSessions）：与既有三端点
+ * 不同，它们的 401 是「登录后的管理端点会话失效」，须经共享 401 拦截上报——
+ * 是接线差异的回归锚（login/logout/session 的 401 是业务结果，不经共享拦截）。
+ */
+describe('createHttpSessionAdapter 设置页三方法', () => {
+  const changeInput = { currentPassword: 'old-password', newPassword: 'brand-new-password', confirmNewPassword: 'brand-new-password' }
+
+  it('listSessions 落到 GET /api/auth/sessions 并带 no-store，逐行透传三字段', async () => {
+    const rows = [{ createdAt: '2026-01-01T00:00:00.000Z', lastUsedAt: '2026-01-02T00:00:00.000Z', current: true }]
+    const fetchMock = vi.fn(async () => jsonResponse({ sessions: rows }))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(createHttpSessionAdapter().listSessions()).resolves.toEqual(rows)
+    expect(fetchMock).toHaveBeenCalledWith('/api/auth/sessions', { cache: 'no-store' })
+  })
+
+  it('changePassword 落到 POST /api/auth/password，体为三个口令字段；400 透传服务端中文文案', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ ok: true }))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(createHttpSessionAdapter().changePassword(changeInput)).resolves.toBeUndefined()
+    expect(fetchMock).toHaveBeenCalledWith('/api/auth/password', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(changeInput),
+    })
+
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ error: '当前密码不正确' }, 400)))
+    await expect(createHttpSessionAdapter().changePassword(changeInput)).rejects.toThrow('当前密码不正确')
+  })
+
+  it('changePassword 的 400 无 error 字段时回落 HTTP 状态码文案', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({}, 400)))
+    await expect(createHttpSessionAdapter().changePassword(changeInput)).rejects.toThrow('修改密码失败：HTTP 400')
+  })
+
+  it('logoutOtherSessions 落到 POST /api/auth/sessions/logout-others（无体）', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ ok: true }))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(createHttpSessionAdapter().logoutOtherSessions()).resolves.toBeUndefined()
+    expect(fetchMock).toHaveBeenCalledWith('/api/auth/sessions/logout-others', { method: 'POST' })
+  })
+
+  it('三个新方法的 401 上报全局监听并抛「登录状态已失效，请重新登录」', async () => {
+    const listener = vi.fn()
+    setUnauthorizedListener(listener)
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ error: '未登录或会话已过期' }, 401)))
+    const adapter = createHttpSessionAdapter()
+    await expect(adapter.listSessions()).rejects.toThrow('登录状态已失效，请重新登录')
+    await expect(adapter.changePassword(changeInput)).rejects.toThrow('登录状态已失效，请重新登录')
+    await expect(adapter.logoutOtherSessions()).rejects.toThrow('登录状态已失效，请重新登录')
+    expect(listener).toHaveBeenCalledTimes(3)
+  })
+
+  it('listSessions 响应形状漂移（外层缺 sessions、行缺字段、类型错）抛「会话列表响应无效」', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ nope: [] })))
+    await expect(createHttpSessionAdapter().listSessions()).rejects.toThrow('会话列表响应无效')
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ sessions: [{ createdAt: 'x', lastUsedAt: 'y' }] })))
+    await expect(createHttpSessionAdapter().listSessions()).rejects.toThrow('会话列表响应无效')
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ sessions: [{ createdAt: 1, lastUsedAt: 'y', current: true }] })))
+    await expect(createHttpSessionAdapter().listSessions()).rejects.toThrow('会话列表响应无效')
+  })
+
+  it('listSessions 响应不是有效 JSON 抛中文错误', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('not json', { status: 200 })))
+    await expect(createHttpSessionAdapter().listSessions()).rejects.toThrow('会话列表响应不是有效 JSON')
+  })
+
+  it('三个新方法服务不可达都抛中文错误（不裸抛 TypeError）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Promise.reject(new TypeError('Failed to fetch'))))
+    const adapter = createHttpSessionAdapter()
+    await expect(adapter.listSessions()).rejects.toThrow('会话列表获取失败：面板服务不可达')
+    await expect(adapter.changePassword(changeInput)).rejects.toThrow('修改密码失败：面板服务不可达')
+    await expect(adapter.logoutOtherSessions()).rejects.toThrow('退出其他会话失败：面板服务不可达')
+  })
+})

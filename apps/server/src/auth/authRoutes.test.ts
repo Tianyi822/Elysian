@@ -1,8 +1,12 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
+import { existsSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createAuthApp, type AuthAppDeps } from './authRoutes.ts'
-import { DUMMY_HASH, SESSION_COOKIE_NAME } from './authConfig.ts'
-import { createMemoryCredentialsStore } from './credentialsStore.ts'
-import { createMemorySessionStore } from './sessionStore.ts'
+import { DUMMY_HASH, SESSION_COOKIE_NAME, SESSION_IDLE_TTL_MS } from './authConfig.ts'
+import { createFileCredentialsStore, createMemoryCredentialsStore, type CredentialsStore } from './credentialsStore.ts'
+import { createFileSessionStore, createMemorySessionStore } from './sessionStore.ts'
 import { createScryptHasher, type PasswordHasher } from './passwordHasher.ts'
 
 /*
@@ -343,6 +347,321 @@ describe('GET /api/auth/session', () => {
       const res = await app.request(`http://localhost:5173/session`)
       expect(await res.json()).toEqual({ authenticated: true, devAccount })
     }
+  })
+})
+
+/*
+ * 设置页三个端点（POST /password、GET /sessions、POST /sessions/logout-others）：
+ * 内存 fake 直驱 createAuthApp（不经 requireSession——鉴权接线回归在 authWiring.test.ts）。
+ * 锚定改密的校验次序与中文 400 文案、Cookie 清除、凭据落盘、会话列表的三字段投影、
+ * 退出其他会话的保留语义，以及 enabled:false 时三端点一律 503 且不碰任何文件。
+ */
+
+/** 记录型凭据 store：包住内存版，记录每次 write 收到的哈希（断言改密真实落盘内容）。 */
+function recordingCredentialsStore(initialHash?: string): { credentials: CredentialsStore; writes: string[] } {
+  const inner = createMemoryCredentialsStore(
+    initialHash === undefined ? undefined : { username: 'admin', passwordHash: initialHash, passwordChangedAt: EPOCH },
+  )
+  const writes: string[] = []
+  const credentials: CredentialsStore = {
+    current: () => inner.current(),
+    write: async (hash) => {
+      writes.push(hash)
+      return inner.write(hash)
+    },
+  }
+  return { credentials, writes }
+}
+
+/** 改密请求：与 loginRequest 同源同形（JSON + Origin/Host）。 */
+function changeRequest(body: unknown): Request {
+  return new Request('http://localhost:5173/password', {
+    method: 'POST',
+    headers: { host: 'localhost:5173', origin: ORIGIN, 'content-type': 'application/json' },
+    body: typeof body === 'string' ? body : JSON.stringify(body),
+  })
+}
+
+/** 已登录的改密 fixture：凭据密码 current-password，记录型凭据 store + 内存会话 store。 */
+async function passwordFixture(overrides: Partial<AuthAppDeps> = {}): Promise<{
+  app: ReturnType<typeof createAuthApp>
+  deps: AuthAppDeps
+  writes: string[]
+  cookie: string
+}> {
+  const hasher = createScryptHasher()
+  const { credentials, writes } = recordingCredentialsStore(await hasher.hash('current-password'))
+  const deps: AuthAppDeps = {
+    enabled: true,
+    devAccount: false,
+    credentials,
+    sessions: createMemorySessionStore(),
+    hasher,
+    ...overrides,
+  }
+  const app = createAuthApp(deps)
+  const loginRes = await login(app, { username: 'admin', password: 'current-password' })
+  return { app, deps, writes, cookie: loginRes.headers.get('set-cookie')!.split(';')[0]! }
+}
+
+const AUTH_DISABLED_MESSAGE = { error: '鉴权未启用，会话管理不可用' }
+
+let settingsTempDir: string | undefined
+
+afterEach(async () => {
+  if (settingsTempDir) await rm(settingsTempDir, { recursive: true, force: true }).catch(() => undefined)
+  settingsTempDir = undefined
+})
+
+describe('POST /api/auth/password', () => {
+  it('成功：200 { ok: true }，Set-Cookie Max-Age=0 清 Cookie，credentials.write 收到可验证的新哈希且 passwordChangedAt 前移', async () => {
+    const { app, deps, writes } = await passwordFixture()
+    const before = (await deps.credentials.current())!.passwordChangedAt
+
+    const res = await app.request(changeRequest({
+      currentPassword: 'current-password',
+      newPassword: 'brand-new-password',
+      confirmNewPassword: 'brand-new-password',
+    }))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true })
+    expect(res.headers.get('set-cookie')).toBe(`${SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`)
+
+    expect(writes).toHaveLength(1)
+    expect(await createScryptHasher().verify('brand-new-password', writes[0]!)).toBe(true)
+    expect((await deps.credentials.current())!.passwordChangedAt).not.toBe(before)
+  })
+
+  it('当前密码错：400「当前密码不正确」，凭据不被改写', async () => {
+    const { app, writes } = await passwordFixture()
+    const res = await app.request(changeRequest({
+      currentPassword: 'wrong-password',
+      newPassword: 'brand-new-password',
+      confirmNewPassword: 'brand-new-password',
+    }))
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: '当前密码不正确' })
+    expect(writes).toHaveLength(0)
+  })
+
+  it('两次不一致：400「两次输入的密码不一致」，凭据不被改写', async () => {
+    const { app, writes } = await passwordFixture()
+    const res = await app.request(changeRequest({
+      currentPassword: 'current-password',
+      newPassword: 'brand-new-password',
+      confirmNewPassword: 'different-password',
+    }))
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: '两次输入的密码不一致' })
+    expect(writes).toHaveLength(0)
+  })
+
+  it('新密码不足 8 位：400「密码至少需要 8 位」，凭据不被改写', async () => {
+    const { app, writes } = await passwordFixture()
+    const res = await app.request(changeRequest({
+      currentPassword: 'current-password',
+      newPassword: 'short',
+      confirmNewPassword: 'short',
+    }))
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: '密码至少需要 8 位' })
+    expect(writes).toHaveLength(0)
+  })
+
+  it('请求体形状不合法（缺字段、类型错、空串、超 256）：400「请求体不合法」，凭据不被改写', async () => {
+    const { app, writes } = await passwordFixture()
+    for (const body of [
+      {},
+      { newPassword: 'brand-new-password', confirmNewPassword: 'brand-new-password' },
+      { currentPassword: '', newPassword: 'brand-new-password', confirmNewPassword: 'brand-new-password' },
+      { currentPassword: 'current-password', newPassword: '', confirmNewPassword: 'brand-new-password' },
+      { currentPassword: 'current-password', newPassword: 'brand-new-password', confirmNewPassword: 'brand-new-password'.repeat(20) },
+      { currentPassword: 1, newPassword: 'brand-new-password', confirmNewPassword: 'brand-new-password' },
+      ['current-password'],
+    ]) {
+      const res = await app.request(changeRequest(body))
+      expect(res.status, JSON.stringify(body)).toBe(400)
+      expect(await res.json()).toEqual({ error: '请求体不合法' })
+    }
+    expect(writes).toHaveLength(0)
+  })
+
+  it('Content-Type 不是 JSON：415（readJsonBody 双拦语义保留）', async () => {
+    const { app } = await passwordFixture()
+    const res = await app.request(new Request('http://localhost:5173/password', {
+      method: 'POST',
+      headers: { host: 'localhost:5173', origin: ORIGIN, 'content-type': 'text/plain' },
+      body: 'currentPassword=a',
+    }))
+    expect(res.status).toBe(415)
+    expect(await res.json()).toEqual({ error: 'Content-Type 必须为 application/json' })
+  })
+
+  it('凭据不可用（文件缺失/损坏）：400「面板凭据不可用，无法修改密码」', async () => {
+    const deps: AuthAppDeps = {
+      enabled: true,
+      devAccount: false,
+      credentials: createMemoryCredentialsStore(),
+      sessions: createMemorySessionStore(),
+      hasher: createScryptHasher(),
+    }
+    const app = createAuthApp(deps)
+    const res = await app.request(changeRequest({
+      currentPassword: 'whatever',
+      newPassword: 'brand-new-password',
+      confirmNewPassword: 'brand-new-password',
+    }))
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: '面板凭据不可用，无法修改密码' })
+  })
+
+  it('写盘 IO 故障：500 服务端错误而非 400（fs 原文不伪装成校验文案）', async () => {
+    const hasher = createScryptHasher()
+    const credentials: CredentialsStore = {
+      current: async () => ({ username: 'admin', passwordHash: await hasher.hash('current-password'), passwordChangedAt: EPOCH }),
+      write: async () => {
+        throw new Error("EACCES: permission denied, open '/root/.Elysian/config/panel-credentials.json.tmp'")
+      },
+    }
+    const deps: AuthAppDeps = {
+      enabled: true,
+      devAccount: false,
+      credentials,
+      sessions: createMemorySessionStore(),
+      hasher,
+    }
+    const app = createAuthApp(deps)
+    const loginRes = await login(app, { username: 'admin', password: 'current-password' })
+    const cookie = loginRes.headers.get('set-cookie')!.split(';')[0]!
+
+    const res = await app.request('http://localhost:5173/password', {
+      method: 'POST',
+      headers: { host: 'localhost:5173', origin: ORIGIN, 'content-type': 'application/json', cookie },
+      body: JSON.stringify({
+        currentPassword: 'current-password',
+        newPassword: 'brand-new-password',
+        confirmNewPassword: 'brand-new-password',
+      }),
+    })
+    expect(res.status).toBe(500)
+    expect(await res.json()).toEqual({
+      error: "EACCES: permission denied, open '/root/.Elysian/config/panel-credentials.json.tmp'",
+    })
+  })
+})
+
+describe('GET /api/auth/sessions', () => {
+  it('回 ISO 三字段行、按最近活跃倒序、恰一行 current:true；JSON 不含 id/pwdEpoch，带 Cache-Control no-store', async () => {
+    let now = 1_760_000_000_000
+    const sessions = createMemorySessionStore({ now: () => now })
+    await sessions.create(EPOCH) // oldest：随后过期
+    now += 60_000
+    await sessions.create(EPOCH) // middle：仍有效、非当前
+    // oldest 距上次使用已超 12h，middle 还差半分钟未超时。
+    now += SESSION_IDLE_TTL_MS - 30_000
+    const current = await sessions.create(EPOCH)
+
+    const hasher = createScryptHasher()
+    const deps: AuthAppDeps = {
+      enabled: true,
+      devAccount: false,
+      credentials: createMemoryCredentialsStore({ username: 'admin', passwordHash: await hasher.hash('p'), passwordChangedAt: EPOCH }),
+      sessions,
+      hasher,
+    }
+    const app = createAuthApp(deps)
+    const res = await app.request('http://localhost:5173/sessions', {
+      headers: { cookie: `${SESSION_COOKIE_NAME}=${current.id}` },
+    })
+    expect(res.status).toBe(200)
+    expect(res.headers.get('cache-control')).toBe('no-store')
+
+    const body = await res.json() as { sessions: Array<Record<string, unknown>> }
+    // 过期会话不出现：只剩 current 与 middle 两行。
+    expect(body.sessions).toHaveLength(2)
+    for (const row of body.sessions) {
+      expect(Object.keys(row).sort()).toEqual(['createdAt', 'current', 'lastUsedAt'])
+      expect(Number.isNaN(Date.parse(row['createdAt'] as string))).toBe(false)
+      expect(Number.isNaN(Date.parse(row['lastUsedAt'] as string))).toBe(false)
+    }
+    expect(JSON.stringify(body)).not.toContain('pwdEpoch')
+
+    // 恰一行 current:true 且排最前（最近活跃倒序）。
+    expect(body.sessions.map((row) => row['current'])).toEqual([true, false])
+    const lastUsedAt = body.sessions.map((row) => Date.parse(row['lastUsedAt'] as string))
+    expect(lastUsedAt[0]!).toBeGreaterThan(lastUsedAt[1]!)
+    // 倒序首行的 lastUsedAt 就是当前会话的滑动时刻（可控时钟的 now）。
+    expect(lastUsedAt[0]).toBe(now)
+  })
+})
+
+describe('POST /api/auth/sessions/logout-others', () => {
+  it('销毁除当前会话外的全部会话并 200 { ok: true }；随后 GET /sessions 只剩当前行（current:true）', async () => {
+    const hasher = createScryptHasher()
+    const sessions = createMemorySessionStore()
+    const deps: AuthAppDeps = {
+      enabled: true,
+      devAccount: false,
+      credentials: createMemoryCredentialsStore({ username: 'admin', passwordHash: await hasher.hash('p'), passwordChangedAt: EPOCH }),
+      sessions,
+      hasher,
+    }
+    const app = createAuthApp(deps)
+    const first = await sessions.create(EPOCH)
+    const second = await sessions.create(EPOCH)
+    const third = await sessions.create(EPOCH)
+
+    // 无请求体：与 logout 同形态。
+    const res = await app.request('http://localhost:5173/sessions/logout-others', {
+      method: 'POST',
+      headers: { host: 'localhost:5173', origin: ORIGIN, cookie: `${SESSION_COOKIE_NAME}=${second.id}` },
+    })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true })
+
+    await expect(deps.sessions.validate(first.id, EPOCH)).resolves.toBeNull()
+    await expect(deps.sessions.validate(second.id, EPOCH)).resolves.not.toBeNull()
+    await expect(deps.sessions.validate(third.id, EPOCH)).resolves.toBeNull()
+
+    const list = await app.request('http://localhost:5173/sessions', {
+      headers: { cookie: `${SESSION_COOKIE_NAME}=${second.id}` },
+    })
+    const body = await list.json() as { sessions: Array<{ current: boolean }> }
+    expect(body.sessions).toHaveLength(1)
+    expect(body.sessions[0]!.current).toBe(true)
+  })
+})
+
+describe('设置端点在 enabled: false 时', () => {
+  it('三端点均 503 且文案逐字「鉴权未启用，会话管理不可用」，不写任何文件', async () => {
+    const dir = join(tmpdir(), `elysian-auth-settings-off-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    settingsTempDir = dir
+    const deps: AuthAppDeps = {
+      enabled: false,
+      devAccount: false,
+      credentials: createFileCredentialsStore(join(dir, 'config', 'panel-credentials.json')),
+      sessions: createFileSessionStore(join(dir, 'state', 'panel-sessions.json')),
+      hasher: createScryptHasher(),
+    }
+    const app = createAuthApp(deps)
+
+    const change = await app.request(changeRequest({ currentPassword: 'a', newPassword: 'b', confirmNewPassword: 'c' }))
+    expect(change.status).toBe(503)
+    expect(await change.json()).toEqual(AUTH_DISABLED_MESSAGE)
+
+    const list = await app.request('http://localhost:5173/sessions')
+    expect(list.status).toBe(503)
+    expect(await list.json()).toEqual(AUTH_DISABLED_MESSAGE)
+
+    const others = await app.request('http://localhost:5173/sessions/logout-others', {
+      method: 'POST',
+      headers: { host: 'localhost:5173', origin: ORIGIN },
+    })
+    expect(others.status).toBe(503)
+    expect(await others.json()).toEqual(AUTH_DISABLED_MESSAGE)
+
+    expect(existsSync(join(dir, 'config', 'panel-credentials.json'))).toBe(false)
+    expect(existsSync(join(dir, 'state', 'panel-sessions.json'))).toBe(false)
   })
 })
 
