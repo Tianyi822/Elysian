@@ -33,6 +33,7 @@ export const ELYSIAN_HOST_KEYS_DIR = join(ELYSIAN_HOME, 'ssh', 'host-keys')
 export const ELYSIAN_PATHS = {
   metricsSqlite: join(ELYSIAN_DATA_DIR, 'metrics.sqlite'),
   firewallSqlite: join(ELYSIAN_DATA_DIR, 'firewall.sqlite'),
+  logsSqlite: join(ELYSIAN_DATA_DIR, 'logs.sqlite'),
   sshdLog: join(ELYSIAN_LOGS_DIR, 'sshd.log'),
   platformLogsDir: ELYSIAN_PLATFORM_LOGS_DIR,
   runtimeLogsDir: join(ELYSIAN_PLATFORM_LOGS_DIR, 'runtime'),
