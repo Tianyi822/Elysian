@@ -8,6 +8,7 @@ import type {
 } from '@elysian/contracts'
 import { DEPENDENCY_PROBE_STATES, DEPENDENCY_SETUP_STEPS, DEPENDENCY_SETUP_TARGETS } from '@elysian/contracts'
 import type { DependenciesAdapter } from '../../contracts/adapters'
+import { reportUnauthorized } from './unauthorized'
 
 /*
  * 浏览器侧宿主依赖检测（Docker 运行时，/api/platform/dependencies）。服务端每次
@@ -81,6 +82,7 @@ async function requestJson(url: string): Promise<unknown> {
     throw new Error('依赖检测请求网络失败')
   }
   if (!response.ok) {
+    if (reportUnauthorized(response)) throw new Error('登录状态已失效，请重新登录')
     const detail = await response
       .json()
       .then((body) => {
@@ -147,6 +149,8 @@ export function createHttpDependenciesAdapter(baseUrl = '/api/platform/dependenc
         return { ok: false, message: await errorMessage(response, '这一步没有完成') }
       }
       if (!response.ok) {
+        // 会话过期的安装步骤：上报后抛中文错误，而不是把「HTTP 401」透传给安装窗口。
+        if (reportUnauthorized(response)) throw new Error('登录状态已失效，请重新登录')
         throw new Error(await errorMessage(response, `依赖安装请求失败：HTTP ${response.status}`))
       }
       try {

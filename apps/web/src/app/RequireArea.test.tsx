@@ -10,6 +10,9 @@ function gatewayDenying(area: PageArea): ElysianGateway {
     ...base,
     session: {
       canView: async (requested) => requested !== area,
+      status: async () => ({ mode: 'demo', authenticated: true, devAccount: false }),
+      login: async () => {},
+      logout: async () => {},
     },
   }
 }
@@ -37,6 +40,9 @@ describe('页面级访问闸门', () => {
           canView: async () => {
             throw new Error('会话服务不可用')
           },
+          status: async () => ({ mode: 'demo', authenticated: true, devAccount: false }),
+          login: async () => {},
+          logout: async () => {},
         },
       },
     })

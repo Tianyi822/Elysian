@@ -1,0 +1,104 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ElysianGateway, SessionAdapter, SessionStatus } from '../contracts/adapters'
+import { useSessionStore } from './sessionStore'
+
+/*
+ * 会话 store 的状态流转：probe（authed / anonymous / 抛错落 error）、login（成功置 authed、
+ * 失败向上抛且 phase 不变）、logout（无论请求成败都回到 anonymous）、expire（只动 phase）。
+ * store 是模块级单例，每条用例前重置回 unknown。
+ */
+
+function gatewayWithSession(session: Partial<SessionAdapter>): ElysianGateway {
+  return { session: session as SessionAdapter } as unknown as ElysianGateway
+}
+
+function statusOf(partial: Partial<SessionStatus>): SessionStatus {
+  return { mode: 'real', authenticated: false, devAccount: false, ...partial }
+}
+
+beforeEach(() => {
+  useSessionStore.setState({ phase: 'unknown', mode: undefined, devAccount: false })
+})
+
+describe('sessionStore.probe', () => {
+  it('authenticated 为 true 时落 authed，并记录 mode 与 devAccount', async () => {
+    const gateway = gatewayWithSession({
+      status: async () => statusOf({ mode: 'real', authenticated: true, devAccount: true }),
+    })
+    await useSessionStore.getState().probe(gateway)
+    expect(useSessionStore.getState().phase).toBe('authed')
+    expect(useSessionStore.getState().mode).toBe('real')
+    expect(useSessionStore.getState().devAccount).toBe(true)
+  })
+
+  it('authenticated 为 false 时落 anonymous', async () => {
+    const gateway = gatewayWithSession({
+      status: async () => statusOf({ authenticated: false }),
+    })
+    await useSessionStore.getState().probe(gateway)
+    expect(useSessionStore.getState().phase).toBe('anonymous')
+  })
+
+  it('status() 抛错（服务不可达、坏 JSON）时落 error，不装作已登录', async () => {
+    const gateway = gatewayWithSession({
+      status: async () => {
+        throw new Error('登录状态检查失败：面板服务不可达')
+      },
+    })
+    await useSessionStore.getState().probe(gateway)
+    expect(useSessionStore.getState().phase).toBe('error')
+  })
+})
+
+describe('sessionStore.login', () => {
+  it('成功置 authed', async () => {
+    const login = vi.fn(async () => {})
+    await useSessionStore.getState().login(gatewayWithSession({ login }), 'admin', 'secret')
+    expect(login).toHaveBeenCalledWith('admin', 'secret')
+    expect(useSessionStore.getState().phase).toBe('authed')
+  })
+
+  it('失败向上抛中文错误且 phase 不变（仍停在 anonymous）', async () => {
+    useSessionStore.setState({ phase: 'anonymous' })
+    const gateway = gatewayWithSession({
+      login: async () => {
+        throw new Error('用户名或密码错误')
+      },
+    })
+    await expect(useSessionStore.getState().login(gateway, 'admin', 'wrong')).rejects.toThrow(
+      '用户名或密码错误',
+    )
+    expect(useSessionStore.getState().phase).toBe('anonymous')
+  })
+})
+
+describe('sessionStore.logout', () => {
+  it('成功置 anonymous', async () => {
+    useSessionStore.setState({ phase: 'authed', mode: 'real' })
+    await useSessionStore.getState().logout(gatewayWithSession({ logout: async () => {} }))
+    expect(useSessionStore.getState().phase).toBe('anonymous')
+  })
+
+  it('登出请求失败也回到 anonymous（幂等端点，不让用户卡在已登录壳里）', async () => {
+    useSessionStore.setState({ phase: 'authed', mode: 'real' })
+    const gateway = gatewayWithSession({
+      logout: async () => {
+        throw new Error('退出登录失败：面板服务不可达')
+      },
+    })
+    await expect(useSessionStore.getState().logout(gateway)).rejects.toThrow()
+    expect(useSessionStore.getState().phase).toBe('anonymous')
+  })
+})
+
+describe('sessionStore.expire', () => {
+  it('任意 401 到达时只置 anonymous，不清 mode 与 devAccount', () => {
+    useSessionStore.setState({ phase: 'authed', mode: 'real', devAccount: true })
+    useSessionStore.getState().expire()
+    expect(useSessionStore.getState()).toMatchObject({
+      phase: 'anonymous',
+      mode: 'real',
+      devAccount: true,
+    })
+  })
+})

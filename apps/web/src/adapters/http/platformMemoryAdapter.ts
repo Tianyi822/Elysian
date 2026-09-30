@@ -1,4 +1,5 @@
 import { parsePlatformMemoryResponse, type PlatformMemorySample } from '../platformMemory/types'
+import { reportUnauthorized } from './unauthorized'
 
 export type { PlatformMemorySample }
 
@@ -16,6 +17,7 @@ export async function fetchPlatformMemory(
     throw new Error('平台内存采集失败')
   }
   if (!response.ok) {
+    if (reportUnauthorized(response)) throw new Error('登录状态已失效，请重新登录')
     throw new Error('平台内存采集失败')
   }
   let body: unknown

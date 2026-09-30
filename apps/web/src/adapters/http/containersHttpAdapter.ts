@@ -14,6 +14,7 @@ import { CONTAINER_STATUSES, RESTART_POLICIES } from '@elysian/contracts'
 import type { Unsubscribe } from '@elysian/contracts'
 import type { ContainerAdapter, ContainerHostPolicy } from '../../contracts/adapters'
 import { createContainerTerminalWsAdapter } from './containerTerminalWsAdapter'
+import { reportUnauthorized, reportUnauthorizedStatus } from './unauthorized'
 import type { EventSourceFactory, EventSourceLike } from '../sse/eventsAdapter'
 import { parseElysianEvent, SseFrameParser } from '../sse/parse'
 
@@ -72,7 +73,8 @@ function delayMs(ms: number, signal: AbortSignal): Promise<void> {
   })
 }
 
-function createFetchContainerEventSource(url: string): ContainerEventSourceLike {
+/** fetch 实现的容器事件源（EventSource 不可用时兜底；导出供 401 终止语义直接测试）。 */
+export function createFetchContainerEventSource(url: string): ContainerEventSourceLike {
   const listeners = new Map<string, Set<(event: MessageEvent<string>) => void>>()
   const connectingHandlers = new Set<() => void>()
   let closed = false
@@ -119,6 +121,15 @@ function createFetchContainerEventSource(url: string): ContainerEventSourceLike 
             signal,
             ...(Object.keys(headers).length > 0 ? { headers } : {}),
           })
+          if (response.status === 401) {
+            // 未登录：上报后按既有失败路径触发一次 onerror（容器页 live 状态如实显示断开），
+            // 再置 closed 终止循环——未登录前的退避重连毫无意义，徒增请求；
+            // 重新登录后用户重新进入页面自然重连。
+            reportUnauthorizedStatus(response.status)
+            source.onerror?.(new Event('error'))
+            closed = true
+            return 'failed'
+          }
           if (!response.ok || !response.body) {
             return 'failed'
           }
@@ -438,6 +449,7 @@ async function requestJson(url: string, init?: RequestInit): Promise<unknown> {
     throw new Error('容器管理请求网络失败')
   }
   if (!response.ok) {
+    if (reportUnauthorized(response)) throw new Error('登录状态已失效，请重新登录')
     const detail = await readErrorDetail(response)
     throw new Error(detail ?? `容器管理请求失败：HTTP ${response.status}`)
   }
@@ -456,6 +468,7 @@ async function requestNoContent(url: string, init?: RequestInit): Promise<void> 
     throw new Error('容器管理请求网络失败')
   }
   if (!response.ok) {
+    if (reportUnauthorized(response)) throw new Error('登录状态已失效，请重新登录')
     const detail = await readErrorDetail(response)
     throw new Error(detail ?? `容器管理请求失败：HTTP ${response.status}`)
   }
@@ -613,6 +626,8 @@ export function createHttpContainersAdapter(
         throw new Error('容器管理请求网络失败')
       }
       if (!response.ok) {
+        // 401 先上报再抛中文错误，不进流读取（未登录时拉流没有意义）。
+        if (reportUnauthorized(response)) throw new Error('登录状态已失效，请重新登录')
         const detail = await readErrorDetail(response)
         throw new Error(detail ?? `镜像拉取请求失败：HTTP ${response.status}`)
       }

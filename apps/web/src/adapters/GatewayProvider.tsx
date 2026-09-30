@@ -37,6 +37,9 @@ export function GatewayProvider({
         // 日志的 http 分支只影响运行与操作两类；登录日志没有真实端点，两种取值下都读内存演示。
         logs: isDockerRuntime() ? 'http' : 'mock',
         terminals: isDockerRuntime() ? 'ws' : 'mock',
+        // 会话在 Docker 运行时经 /api/auth 走真实登录（requireSession 读写全挡）；
+        // 本地无后端演示不强制登录。
+        session: isDockerRuntime() ? 'http' : 'mock',
       }),
     [gateway],
   )

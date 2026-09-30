@@ -85,6 +85,7 @@ import type {
   LogsAdapter,
   RunAdapter,
   SessionAdapter,
+  SessionStatus,
   SkillAdapter,
   SshAdapter,
   SshKeyAccount,
@@ -308,10 +309,19 @@ export class MockAuditAdapter implements AuditAdapter {
  * 会话与权限的 mock 实现：演示环境全部放行。
  * 让「无权限」分支真实存在但默认不触发——接入认证后换成真实实现即可，界面不用改。
  */
+/** 会话的 mock 实现：演示模式恒放行，登录与登出直接成功（本地无后端，不强制登录）。 */
 export class MockSessionAdapter implements SessionAdapter {
   async canView(): Promise<boolean> {
     return true
   }
+
+  async status(): Promise<SessionStatus> {
+    return { mode: 'demo', authenticated: true, devAccount: false }
+  }
+
+  async login(): Promise<void> {}
+
+  async logout(): Promise<void> {}
 }
 
 /** 文件目录的 mock 实现：读手工种子的目录树；列举与统计只读，四个变更动作只改内存数据。 */

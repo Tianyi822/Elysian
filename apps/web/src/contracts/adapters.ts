@@ -242,7 +242,8 @@ export interface DatabaseAdapter {
   reconcile?(databaseId: string): Promise<DatabaseInstance>
   forget?(databaseId: string): Promise<void>
   openTerminal?(databaseId: string): Promise<{ execute(input: string): Promise<readonly string[]>; close(): void }>
-  downloadSqlite?(databaseId: string): void
+  /** 下载一致性 SQLite 快照；失败（含会话过期）抛中文错误，不再静默下载错误 JSON。 */
+  downloadSqlite?(databaseId: string): Promise<void>
 }
 
 /**
@@ -372,12 +373,31 @@ export type FilePermissionInput = {
   recursive: boolean
 }
 
+/** 会话运行模式：demo 为本地无后端演示（恒放行不强制登录），real 为真实服务端会话。 */
+export type SessionMode = 'demo' | 'real'
+
+/** 会话探测结果（GET /api/auth/session）：真实模式由服务端判定，演示模式恒放行。 */
+export type SessionStatus = {
+  /** demo：本地无后端演示，恒放行不强制登录；real：真实会话。 */
+  mode: SessionMode
+  authenticated: boolean
+  /** 服务端开发固定账号当前可用（仅 real 模式可能为 true）。 */
+  devAccount: boolean
+}
+
 /**
- * 会话与权限占位。本期没有认证，mock 实现全部放行；
- * 但界面上的「无权限」分支是真实存在的，接入认证后由这里决定。
+ * 会话与权限接缝。`canView` 是页面级权限占位（未来策略接缝）；
+ * 登录鉴权走 `status`/`login`/`logout`：Docker 运行时经 /api/auth 承载真实会话，
+ * 演示模式（mock、本地无后端）不强制登录。
  */
 export interface SessionAdapter {
   canView(area: PageArea): Promise<boolean>
+  /** 探测当前会话；服务端不可达或响应无效时抛中文错误。 */
+  status(): Promise<SessionStatus>
+  /** 登录（用户名 + 密码，Cookie 由服务端下发）；失败抛中文 Error（如「用户名或密码错误」），成功无返回。 */
+  login(username: string, password: string): Promise<void>
+  /** 登出并清除会话 Cookie；幂等。 */
+  logout(): Promise<void>
 }
 
 /** 资源历史查询的时间窗（与仪表盘 FilterBar 选项对齐）。 */

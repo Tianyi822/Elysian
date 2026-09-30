@@ -1,6 +1,7 @@
 import type { HostUser, HostUserLoginMethod, HostUserStatus } from '@elysian/contracts'
 import { HOST_USER_LOGIN_METHODS, HOST_USER_STATUSES } from '@elysian/contracts'
 import type { UserAdapter } from '../../contracts/adapters'
+import { reportUnauthorized } from './unauthorized'
 
 /*
  * 浏览器侧同源主机账号管理（Docker 运行时）。useradd/usermod/userdel/gpasswd/chpasswd
@@ -90,6 +91,7 @@ async function requestJson(url: string, init?: RequestInit): Promise<unknown> {
     throw new Error('主机账号请求网络失败')
   }
   if (!response.ok) {
+    if (reportUnauthorized(response)) throw new Error('登录状态已失效，请重新登录')
     const detail = await response
       .json()
       .then((body) => (body && typeof body === 'object' && 'error' in body ? String((body as { error: unknown }).error) : null))

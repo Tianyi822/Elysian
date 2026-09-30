@@ -19,6 +19,7 @@ import {
 } from '@elysian/contracts'
 import type { LogsAdapter } from '../../contracts/adapters'
 import { getLoginLogs } from '../mock/logsData'
+import { reportUnauthorized } from './unauthorized'
 
 /*
  * 浏览器侧同源平台日志（Docker 运行时）。服务端把运行日志与操作日志写进部署机器的
@@ -183,6 +184,7 @@ async function requestJson(url: string, init?: RequestInit): Promise<unknown> {
     throw new Error('日志请求网络失败')
   }
   if (!response.ok) {
+    if (reportUnauthorized(response)) throw new Error('登录状态已失效，请重新登录')
     const detail = await response
       .json()
       .then((body) => (body && typeof body === 'object' && 'error' in body ? String((body as { error: unknown }).error) : null))

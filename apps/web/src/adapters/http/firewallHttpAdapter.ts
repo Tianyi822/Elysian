@@ -16,6 +16,7 @@ import {
   FIREWALL_RULE_STATUSES,
 } from '@elysian/contracts'
 import type { FirewallAdapter } from '../../contracts/adapters'
+import { reportUnauthorized } from './unauthorized'
 
 /*
  * 浏览器侧同源防火墙查询（Docker 运行时）。系统采样、ufw 命令仅存在于
@@ -216,6 +217,7 @@ async function requestJson(baseUrl: string, init?: RequestInit): Promise<unknown
     throw new Error('防火墙请求网络失败')
   }
   if (!response.ok) {
+    if (reportUnauthorized(response)) throw new Error('登录状态已失效，请重新登录')
     const detail = await response
       .json()
       .then((body) => (body && typeof body === 'object' && 'error' in body ? String((body as { error: unknown }).error) : null))

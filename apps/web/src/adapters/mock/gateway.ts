@@ -38,10 +38,12 @@ import { createHttpFilesAdapter } from '../http/filesHttpAdapter'
 import { createHttpContainersAdapter } from '../http/containersHttpAdapter'
 import { createHttpWebsitesAdapter } from '../http/websitesHttpAdapter'
 import { createHttpDependenciesAdapter } from '../http/dependenciesHttpAdapter'
+import { createHttpSessionAdapter } from '../http/sessionHttpAdapter'
 import { createTerminalWsAdapter } from '../http/terminalWsAdapter'
 import { createHttpDatabaseAdapter } from '../http/databaseHttpAdapter'
 import type { ContainerAdapter, EventsAdapter, TerminalAdapter } from '../../contracts/adapters'
 import { useContainersStore } from '../../stores/containersStore'
+import { useSessionStore } from '../../stores/sessionStore'
 
 /**
  * 演示网关。事件流默认优先走同源 mock SSE 端点，连不上就降级到内存事件源，
@@ -62,7 +64,9 @@ import { useContainersStore } from '../../stores/containersStore'
  *   （/api/platform/dependencies，现场探测 Docker 与 Caddy 通道），缺省恒双 ok 不引导；
  * - `logs: 'http'` 在 Docker 运行时接通容器内平台日志的真实端点（运行与操作两类），
  *   登录日志没有真实端点，**两种取值下都读内存演示**；
- * - `terminals: 'ws'` 在 Docker 运行时经 WebSocket 接容器内真实 PTY，缺省仍是内存演示。
+ * - `terminals: 'ws'` 在 Docker 运行时经 WebSocket 接容器内真实 PTY，缺省仍是内存演示；
+ * - `session: 'http'` 在 Docker 运行时经 /api/auth 承载真实会话（登录/登出/探测），
+ *   缺省仍是演示放行（不强制登录）。
  *
  * 数据库域没有 mock 取值：始终走 HTTP adapter（`/api/databases`），
  * 端点不可达时页面按既有错误态呈现。
@@ -80,6 +84,7 @@ export function createMockGateway(
     dependencies?: 'mock' | 'http'
     logs?: 'mock' | 'http'
     terminals?: 'mock' | 'ws'
+    session?: 'mock' | 'http'
   } = {},
 ): ElysianGateway {
   let dataset = createMockDataset()
@@ -120,9 +125,16 @@ export function createMockGateway(
   // 引导弹窗永不出现（要看引导效果走容器环境或组件测试注入）。
   const dependencies =
     options.dependencies === 'http' ? createHttpDependenciesAdapter() : new MockDependenciesAdapter()
+  // 会话：Docker 运行时经 /api/auth 承载真实登录；演示模式不强制登录——mock 装配即
+  // 同步落位「演示放行」的会话态（adapter→store 的先例见上方 useContainersStore），
+  // 界面与测试的首屏渲染不必等探测返回；'http' 分支留给 RequireSession 挂载时异步探测。
+  const session = options.session === 'http' ? createHttpSessionAdapter() : new MockSessionAdapter()
+  if (options.session !== 'http') {
+    useSessionStore.setState({ phase: 'authed', mode: 'demo', devAccount: false })
+  }
 
   return {
-    session: new MockSessionAdapter(),
+    session,
     incidents: new MockIncidentAdapter(read),
     runs: new MockRunAdapter(read),
     skills: new MockSkillAdapter(read),

@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Container, ContainerImage, ElysianEvent } from '@elysian/contracts'
 import { FakeEventSource } from '../../test/fakeEventSource'
+import { setUnauthorizedListener } from './unauthorized'
 import {
   createContainerWatchLive,
+  createFetchContainerEventSource,
   createHttpContainersAdapter,
   parseContainer,
   parseContainerImageListResponse,
@@ -154,6 +156,56 @@ describe('createHttpContainersAdapter', () => {
     await expect(adapter.list()).rejects.toThrow('Docker 服务未就绪')
     vi.unstubAllGlobals()
   })
+
+  it('401 时上报全局监听并抛中文登录失效错误', async () => {
+    const listener = vi.fn()
+    setUnauthorizedListener(listener)
+    const fetchMock = vi.fn(async () => jsonResponse({ error: '未登录或会话已过期' }, 401))
+    vi.stubGlobal('fetch', fetchMock)
+    const adapter = createHttpContainersAdapter()
+    await expect(adapter.list()).rejects.toThrow('登录状态已失效，请重新登录')
+    expect(listener).toHaveBeenCalledTimes(1)
+    vi.unstubAllGlobals()
+    setUnauthorizedListener(() => {})
+  })
+
+  it('pullImage 的 401：上报并抛中文错误，不进流读取（无进度回调）', async () => {
+    const listener = vi.fn()
+    setUnauthorizedListener(listener)
+    const fetchMock = vi.fn(async () => jsonResponse({ error: '未登录或会话已过期' }, 401))
+    vi.stubGlobal('fetch', fetchMock)
+    const onProgress = vi.fn()
+    await expect(
+      createHttpContainersAdapter().pullImage({ name: 'redis', tag: 'latest' }, onProgress),
+    ).rejects.toThrow('登录状态已失效，请重新登录')
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(onProgress).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+    setUnauthorizedListener(() => {})
+  })
+
+  it('fetch-SSE 的 401：上报一次、触发一次 onerror、超过初始退避窗口后不再重连', async () => {
+    const listener = vi.fn()
+    setUnauthorizedListener(listener)
+    const fetchMock = vi.fn(
+      async () => jsonResponse({ error: '未登录或会话已过期' }, 401),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const source = createFetchContainerEventSource('/api/docker/events')
+    const onError = vi.fn()
+    source.onerror = onError
+    try {
+      // 等待超过初始退避（1s）：401 后循环应已终止，fetch 不应有第二次。
+      await new Promise((resolve) => setTimeout(resolve, 1_300))
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(onError).toHaveBeenCalledTimes(1)
+      expect(listener).toHaveBeenCalledTimes(1)
+    } finally {
+      source.close()
+      vi.unstubAllGlobals()
+      setUnauthorizedListener(() => {})
+    }
+  }, 5_000)
 
   it('watchLive 订阅 /api/docker/events 并按事件名派发', () => {
     FakeEventSource.reset()

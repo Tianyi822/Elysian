@@ -8,6 +8,7 @@ import { DatabaseEngineSwitch } from '../features/database/DatabaseEngineSwitch'
 import { DatabasePage } from '../features/database/DatabasePage'
 import { FilesPage } from '../features/files/FilesPage'
 import { FilesPathTitle } from '../features/files/FilesPathTitle'
+import { LoginPage } from '../features/auth/LoginPage'
 import { LogsPage } from '../features/logs/LogsPage'
 import { LogsTabSwitch } from '../features/logs/LogsTabSwitch'
 import { SecurityPage } from '../features/security/SecurityPage'
@@ -17,6 +18,7 @@ import { WebsitesPage } from '../features/websites/WebsitesPage'
 import { AppShell } from './layout/AppShell'
 import { NotFoundPage } from './NotFoundPage'
 import { RequireArea } from './RequireArea'
+import { RequireSession } from './RequireSession'
 
 /** 路由级外壳插槽：页面经 handle 向顶栏贡献控件与标题行为，外壳不硬编码具体页面。 */
 export type RouteHandle = {
@@ -31,12 +33,18 @@ export type RouteHandle = {
 
 /**
  * 路由表只有这一份。本阶段仪表盘为主界面，Docker 区承载容器与镜像两个视图，
- * 后续界面按同一模板回归时在这里加路由。
+ * 后续界面按同一模板回归时在这里加路由。/login 是顶层平级路由（不进 AppShell、
+ * 不包 RequireArea）；其余全部子路由在会话闸门（RequireSession）之内。
  */
 export const routes: RouteObject[] = [
+  { path: '/login', element: <LoginPage /> },
   {
     path: '/',
-    element: <AppShell />,
+    element: (
+      <RequireSession>
+        <AppShell />
+      </RequireSession>
+    ),
     children: [
       {
         index: true,

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { setUnauthorizedListener } from './unauthorized'
 import {
   createHttpDependenciesAdapter,
   parseDependencyProbe,
@@ -210,6 +211,46 @@ describe('createHttpDependenciesAdapter', () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, message: 'Caddy 已安装' }))
     await expect(adapter.setup('caddy', 'configure')).resolves.toEqual({ ok: true, message: 'Caddy 已安装' })
     vi.unstubAllGlobals()
+  })
+
+  it('setup 的 401 上报全局监听并抛中文错误，不把「HTTP 401」透传给安装窗口', async () => {
+    const listener = vi.fn()
+    setUnauthorizedListener(listener)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: '未登录或会话已过期' }), {
+            status: 401,
+            headers: { 'content-type': 'application/json' },
+          }),
+      ),
+    )
+    const adapter = createHttpDependenciesAdapter()
+    await expect(adapter.setup('docker', 'install')).rejects.toThrow('登录状态已失效，请重新登录')
+    expect(listener).toHaveBeenCalledTimes(1)
+    vi.unstubAllGlobals()
+    setUnauthorizedListener(() => {})
+  })
+
+  it('probe 的 401 同样上报并抛中文错误', async () => {
+    const listener = vi.fn()
+    setUnauthorizedListener(listener)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: '未登录或会话已过期' }), {
+            status: 401,
+            headers: { 'content-type': 'application/json' },
+          }),
+      ),
+    )
+    const adapter = createHttpDependenciesAdapter()
+    await expect(adapter.probe()).rejects.toThrow('登录状态已失效，请重新登录')
+    expect(listener).toHaveBeenCalledTimes(1)
+    vi.unstubAllGlobals()
+    setUnauthorizedListener(() => {})
   })
 })
 

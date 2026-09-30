@@ -315,7 +315,7 @@ function DatabaseCard({
         ) : null}
         {credentialError ? <p role="alert" className="w-full text-xs text-danger">{credentialError}</p> : null}
         <div className="ml-auto flex shrink-0 items-center gap-2">
-          {database.engine === 'SQLite' && database.source === 'managed' && database.status === 'running' && gateway.databases.downloadSqlite ? <button type="button" onClick={() => gateway.databases.downloadSqlite?.(database.id)} title="下载一致性 SQLite 快照" className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-xs"><Download aria-hidden size={13} />下载快照</button> : null}
+          {database.engine === 'SQLite' && database.source === 'managed' && database.status === 'running' && gateway.databases.downloadSqlite ? <button type="button" onClick={() => void gateway.databases.downloadSqlite?.(database.id).catch((error: unknown) => setCredentialError(error instanceof Error ? error.message : '下载失败'))} title="下载一致性 SQLite 快照" className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-xs"><Download aria-hidden size={13} />下载快照</button> : null}
           {!database.emptyContainer ? <button
             type="button"
             onClick={() => setConfirmRemove(true)}

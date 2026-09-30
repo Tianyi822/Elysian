@@ -1,6 +1,7 @@
 import type { FileEntry, FileKind, FileSearchResult } from '@elysian/contracts'
 import { FILE_KINDS } from '@elysian/contracts'
 import type { FilesAdapter } from '../../contracts/adapters'
+import { reportUnauthorized } from './unauthorized'
 
 /*
  * 浏览器侧同源文件管理（Docker 运行时）。cp/mv/tar/chmod 只存在于容器内的
@@ -98,6 +99,7 @@ async function requestJson(url: string, init?: RequestInit): Promise<unknown> {
     throw new Error('文件管理请求网络失败')
   }
   if (!response.ok) {
+    if (reportUnauthorized(response)) throw new Error('登录状态已失效，请重新登录')
     const detail = await response
       .json()
       .then((body) => (body && typeof body === 'object' && 'error' in body ? String((body as { error: unknown }).error) : null))

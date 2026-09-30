@@ -15,6 +15,7 @@ import {
   WEBSITE_RUN_STATES,
 } from '@elysian/contracts'
 import type { WebsitesAdapter } from '../../contracts/adapters'
+import { reportUnauthorized } from './unauthorized'
 
 /*
  * 浏览器侧同源网站管理（Docker 运行时，/api/websites）。容器生命周期、站点目录
@@ -164,6 +165,7 @@ async function requestJson(url: string, init?: RequestInit): Promise<unknown> {
     throw new Error('网站管理请求网络失败')
   }
   if (!response.ok) {
+    if (reportUnauthorized(response)) throw new Error('登录状态已失效，请重新登录')
     const detail = await response
       .json()
       .then((body) => (body && typeof body === 'object' && 'error' in body ? String((body as { error: unknown }).error) : null))

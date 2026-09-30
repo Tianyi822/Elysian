@@ -9,6 +9,7 @@ import type {
   HostTerminalSessionInfo,
   TerminalAdapter,
 } from '../../contracts/adapters'
+import { reportUnauthorized } from './unauthorized'
 
 /*
  * Docker 运行时的本机终端适配器：经同源 WebSocket 接容器内 PTY（协议权威见
@@ -103,6 +104,8 @@ function parseReadyFrame(
 async function fetchConnectError(): Promise<string> {
   try {
     const response = await fetch(TERMINAL_STATUS_URL)
+    // 会话过期的升级拒绝同样回 401：先上报（前端随后跳登录），再走中文原因路径。
+    reportUnauthorized(response)
     const body: unknown = await response.json()
     if (isObject(body) && typeof body.error === 'string' && body.error.length > 0) {
       return body.error

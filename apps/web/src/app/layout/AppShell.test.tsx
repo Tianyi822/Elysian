@@ -1,8 +1,9 @@
-import { fireEvent, screen, within } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { useEventStreamStore } from '../../stores/eventStreamStore'
+import { useSessionStore } from '../../stores/sessionStore'
 import { renderApp } from '../../test/renderApp'
 import { NAV_ITEMS } from '../navigation'
 import { moveNavItem } from '../navigationOrder'
@@ -312,6 +313,42 @@ describe('模板外壳', () => {
 
     await user.click(screen.getByRole('button', { name: '展开侧边栏' }))
     expect(screen.getByRole('button', { name: '收起侧边栏' })).toBeInTheDocument()
+  })
+})
+
+describe('顶栏登出', () => {
+  beforeEach(() => {
+    useSessionStore.setState({ phase: 'authed', mode: 'real', devAccount: false })
+  })
+
+  it('真实会话模式渲染登出按钮，点击后经登出回到登录页', async () => {
+    const user = userEvent.setup()
+    const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+    // 底座装配会同步落位演示放行；注入的 fake session 是事实源，重置后交 probe。
+    useSessionStore.setState({ phase: 'unknown', mode: undefined, devAccount: false })
+    const { router } = renderApp('/', {
+      gateway: {
+        ...base,
+        session: {
+          canView: async () => true,
+          status: async () => ({ mode: 'real', authenticated: true, devAccount: false }),
+          login: async () => {},
+          logout: async () => {},
+        },
+      },
+    })
+
+    const logout = await screen.findByRole('button', { name: '退出登录' })
+    await user.click(logout)
+
+    await waitFor(() => expect(router.state.location.pathname).toBe('/login'))
+    expect(await screen.findByRole('heading', { level: 1, name: '登录 Elysian' })).toBeInTheDocument()
+  })
+
+  it('演示模式（本地无后端）不渲染登出按钮', async () => {
+    renderApp('/')
+    await screen.findByRole('banner')
+    expect(screen.queryByRole('button', { name: '退出登录' })).not.toBeInTheDocument()
   })
 })
 
