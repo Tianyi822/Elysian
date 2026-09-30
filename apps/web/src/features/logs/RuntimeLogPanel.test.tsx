@@ -16,6 +16,10 @@ import { levelTone, matchesRuntimeSearch } from './RuntimeLogPanel'
 /*
  * 运行日志面板：日期时间｜等级｜日志信息三列表格 + 全屏 + 搜索 + 日志大小 + 清空。
  * 行数与文案都从种子数据推出来，不硬编码具体条数；悬浮窗的细节另有 LogMessageCell.test.tsx。
+ *
+ * userEvent 一律 delay: null：本文件是全量跑里最长的（15 次整树渲染 + 数十次按键），
+ * 共享宿主机饥饿窗口内按键间的人为 setTimeout 轮次会被放大到击穿预算；去掉人为延时
+ * 只减少等待轮次，事件序列（keydown/input/keyup、pointer）与断言不变。
  */
 
 beforeEach(() => {
@@ -123,7 +127,7 @@ describe('运行日志表格', () => {
   })
 
   it('悬停单元格出现展开图标，点击弹出悬浮窗，Esc 关闭且焦点回到图标', async () => {
-    const user = userEvent.setup()
+    const user = userEvent.setup({ delay: null })
     renderApp('/logs', { gateway: gatewayWithLogs() })
     await waitForTable()
 
@@ -148,7 +152,7 @@ describe('运行日志表格', () => {
 
 describe('搜索与全屏', () => {
   it('搜索按 message 与 source 过滤，无命中和搜日期都不出满屏', async () => {
-    const user = userEvent.setup()
+    const user = userEvent.setup({ delay: null })
     renderApp('/logs', { gateway: gatewayWithLogs() })
     await waitForTable()
 
@@ -185,7 +189,7 @@ describe('搜索与全屏', () => {
         return base.logs.runtimeLog()
       },
     })
-    const user = userEvent.setup()
+    const user = userEvent.setup({ delay: null })
     renderApp('/logs', { gateway })
     await waitForTable()
 
@@ -195,7 +199,7 @@ describe('搜索与全屏', () => {
   })
 
   it('全屏展示里同样是一张完整表格，退出全屏后弹窗关闭', async () => {
-    const user = userEvent.setup()
+    const user = userEvent.setup({ delay: null })
     renderApp('/logs', { gateway: gatewayWithLogs() })
     await waitForTable()
 
@@ -219,7 +223,7 @@ describe('搜索与全屏', () => {
 
 describe('清空日志与其余能力', () => {
   it('清空要二次确认，并逐字写明不可恢复；取消不动数据', async () => {
-    const user = userEvent.setup()
+    const user = userEvent.setup({ delay: null })
     // 取消路径不该发出请求：一旦发出就抛错，让用例直接失败而不是静默通过。
     const clearLogs = vi.fn(async (): Promise<never> => {
       throw new Error('取消之后不该调用清空端点')
@@ -240,7 +244,7 @@ describe('清空日志与其余能力', () => {
   })
 
   it('确认清空后删除并刷新：列表只剩一条「已清空」留痕，通知里是响应的事实', async () => {
-    const user = userEvent.setup()
+    const user = userEvent.setup({ delay: null })
     renderApp('/logs', { gateway: gatewayWithLogs() })
     await waitForTable()
 
@@ -305,7 +309,7 @@ describe('清空日志与其余能力', () => {
         return base.logs.runtimeLog()
       },
     })
-    const user = userEvent.setup()
+    const user = userEvent.setup({ delay: null })
     renderApp('/logs', { gateway })
 
     expect(await screen.findByRole('alert')).toHaveTextContent('演示用的读取失败')
