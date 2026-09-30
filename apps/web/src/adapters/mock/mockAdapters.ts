@@ -53,6 +53,7 @@ import type {
   Unsubscribe,
   WebsiteListReport,
   WebsiteProject,
+  WebsiteAccessInput,
   WebsiteProjectCreateInput,
   WebsiteProjectKind,
   WebsiteProjectUpdateInput,
@@ -161,6 +162,7 @@ import {
   getWebsiteLogs,
   getWebsiteProjects,
   removeWebsiteProject,
+  setWebsiteProjectAccess,
   setWebsiteProjectRunning,
   updateWebsiteProject,
 } from './websitesData'
@@ -938,6 +940,10 @@ export class MockWebsitesAdapter implements WebsitesAdapter {
 
   async update(projectId: string, input: WebsiteProjectUpdateInput): Promise<WebsiteProject> {
     return updateWebsiteProject(projectId, input)
+  }
+
+  async setAccess(projectId: string, access: WebsiteAccessInput): Promise<WebsiteProject> {
+    return setWebsiteProjectAccess(projectId, access)
   }
 
   async remove(projectId: string): Promise<void> {

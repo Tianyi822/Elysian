@@ -472,23 +472,17 @@ export const OPERATION_DESCRIPTORS: Readonly<Record<string, OperationDescriptor>
     category: 'database', action: '清理待处理 SQLite 文件', target: ({ params }) => param(params, 'id'),
   },
 
-  // 网站管理：五个写端点（含反向代理对账）；站点无凭据，摘要只取白名单字段。
+  // 网站创建和访问配置会携带私钥；不声明 summarize/体 target，审计采集器便不会读取请求体。
   [`POST ${WEBSITES_MOUNT}`]: {
     category: 'websites',
     action: '创建网站项目',
-    target: ({ body }) => text(body, 'name'),
-    summarize: ({ body }) => {
-      const kind = text(body, 'kind')
-      const port = body?.['port']
-      if (kind === null || (typeof port !== 'number' && typeof port !== 'string')) return null
-      const domain = text(body, 'domain')
-      return domain === null
-        ? `类型 ${kind}，端口 ${String(port)}`
-        : `类型 ${kind}，端口 ${String(port)}，域名 ${domain}`
-    },
   },
   [`PUT ${WEBSITES_MOUNT}/:id`]: {
     category: 'websites', action: '修改网站项目设置',
+    target: ({ params }) => param(params, 'id'),
+  },
+  [`PUT ${WEBSITES_MOUNT}/:id/access`]: {
+    category: 'websites', action: '调整网站访问配置',
     target: ({ params }) => param(params, 'id'),
   },
   [`POST ${WEBSITES_MOUNT}/:id/running`]: {

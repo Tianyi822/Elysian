@@ -1,5 +1,6 @@
 import type {
   WebsiteCategory,
+  WebsiteAccessInput,
   WebsiteProject,
   WebsiteProjectCreateInput,
   WebsiteProjectKind,
@@ -60,12 +61,13 @@ type WebsitesState = {
     kind: WebsiteProjectKind,
     input: WebsiteProjectCreateInput,
   ) => Promise<boolean>
+  saveAccess: (gateway: ElysianGateway, projectId: string, access: WebsiteAccessInput) => Promise<WebsiteProject>
   openSettings: (project: WebsiteProject) => void
   closeSettings: () => void
   saveSettings: (
     gateway: ElysianGateway,
     projectId: string,
-    input: { note: string | null; expiryAt: string | null },
+    input: { note: string | null; expiryAt: string | null; command?: string | null },
   ) => Promise<boolean>
   openRemove: (project: WebsiteProject) => void
   closeRemove: () => void
@@ -153,7 +155,7 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
         const proxy = await gateway.websites.reconcileProxy()
         set({ proxyStatus: proxy })
         notify('反向代理配置已重新下发')
-        // 证书与路由的折算要等下一次列表读取：成功后静默刷新一次，横幅随之下线。
+        // 路由事实要等下一次列表读取：成功后静默刷新一次，横幅随之下线。
         await get().refresh(gateway)
       } catch (error) {
         notify(errorMessageOf(error, '反向代理配置下发失败'), 'danger')
@@ -190,6 +192,23 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
         set({ saving: false })
         notify(errorMessageOf(error, '添加失败'), 'danger')
         return false
+      }
+    },
+
+    async saveAccess(gateway, projectId, access) {
+      if (get().busyProjectIds.includes(projectId)) throw new Error('项目正在执行其他操作')
+      set((state) => ({ busyProjectIds: [...state.busyProjectIds, projectId] }))
+      try {
+        const updated = await gateway.websites.setAccess(projectId, access)
+        set((state) => ({
+          projects: state.projects.map((project) => project.id === projectId ? updated : project),
+          detailTarget: state.detailTarget?.id === projectId ? updated : state.detailTarget,
+        }))
+        notify(`项目 ${updated.name} 的访问配置已保存${NOTICE_SUFFIX}`)
+        await get().refresh(gateway)
+        return get().projects.find((project) => project.id === projectId) ?? updated
+      } finally {
+        set((state) => ({ busyProjectIds: state.busyProjectIds.filter((id) => id !== projectId) }))
       }
     },
 

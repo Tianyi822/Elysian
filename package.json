@@ -12,7 +12,8 @@
     "build": "bun run --filter @elysian/web build",
     "preview": "bun run --filter @elysian/web preview",
     "test": "bun run --filter '*' test",
-    "typecheck": "bun run --filter '*' typecheck"
+    "typecheck": "bun run --filter '*' typecheck",
+    "check:website-runtimes": "bun scripts/check-website-runtime-catalog.ts"
   },
   "devDependencies": {
     "typescript": "^7.0.2"

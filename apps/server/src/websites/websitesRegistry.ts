@@ -2,7 +2,7 @@ import { constants } from 'node:fs'
 import { mkdir, open, rename, unlink } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
-import type { WebsiteCategory, WebsiteProjectKind } from '@elysian/contracts'
+import type { WebsiteAccessMode, WebsiteCategory, WebsiteProjectKind } from '@elysian/contracts'
 import { ELYSIAN_CONFIG_DIR } from '../shared/elysianPaths.ts'
 
 /*
@@ -21,17 +21,20 @@ export type WebsiteRecord = {
   runtimeVersion: string | null
   /** 站点目录绝对路径（创建时经 realpath 复核后固化）。 */
   rootDir: string
-  /** 绑定域名：创建后不可改；null 表示未绑定，不生成反向代理路由。 */
+  /** 域名模式的绑定域名；直连模式为 null。 */
   domain: string | null
-  /** 容器名（服务端生成的 elysian-site-<hex>）；HTML 为 null。 */
+  accessMode: WebsiteAccessMode
+  /** 仅为私有证书文件引用和公开元数据；PEM 与私钥均不进入登记。 */
+  certificate: { ref: string; issuer: string; notAfter: string; fingerprint256: string } | null
+  /** 容器名（服务端生成的 elysian-site-<hex>）。 */
   containerName: string | null
-  /** 容器 64 位 ID；容器被外部删除后保留登记值如实显示；HTML 为 null。 */
+  /** 容器 64 位 ID；容器被外部删除后保留登记值如实显示。 */
   containerId: string | null
-  /** 创建时由 websiteRuntimeImageRef 推导并固化的镜像引用（删除五重核对用）；HTML 为 null。 */
+  /** 创建时由 websiteRuntimeImageRef 推导并固化的镜像引用（删除五重核对用）。 */
   imageRef: string | null
-  /** 面板为站点容器配置的启动命令（websiteDefaultDeployCommand 生成）；HTML 为 null。 */
+  /** 面板为站点容器配置的启动命令；HTML 使用固定 Nginx 命令。 */
   deployCommand: string | null
-  /** HTML 的托管开关（开即 running）；非 HTML 的运行事实来自容器，不用本字段。 */
+  /** 保留旧登记字段；运行事实一律来自容器。 */
   enabled: boolean
   category: WebsiteCategory
   expiryAt: string | null

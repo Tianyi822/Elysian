@@ -171,7 +171,7 @@ export function createWebsiteCaddy(options: WebsiteCaddyOptions = {}): WebsiteCa
       const response = await guardedRequest({ method: 'POST', path: '/load', body: config })
       if (response.status < 200 || response.status >= 300) {
         throw new CaddyChannelError(
-          engineMessage(response.json, `HTTP ${response.status}`),
+          `Caddy 拒绝路由或证书配置（HTTP ${response.status}）`,
           false,
         )
       }

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type {
   PortMapping,
+  WebsiteAccessInput,
   WebsiteListReport,
   WebsiteProject,
   WebsiteProjectKind,
@@ -12,14 +13,17 @@ import {
   isValidWebsitePort,
   isValidWebsiteProjectName,
   websiteDefaultDeployCommand,
+  WEBSITE_HTML_IMAGE,
   websiteProjectUsesRuntime,
   websiteRuntimeImageRef,
 } from '@elysian/contracts'
 import { InvalidRequestError, invalidRequest } from '../shared/errors.ts'
 import { SERVER_PORT } from '../shared/ports.ts'
-import { buildCaddyConfig, hasForeignConfig, managedHosts, missingHosts, type CaddyManagedSite } from './caddyConfig.ts'
+import { appliedCertificateFingerprints, appliedManagedHosts, buildCaddyConfig, hasForeignConfig, type CaddyManagedSite } from './caddyConfig.ts'
 import { CaddyChannelError, caddyChannelStatus, type WebsiteCaddy } from './websitesCaddy.ts'
+import { createMemoryWebsiteCertificateStore, validateWebsiteCertificate, type WebsiteCertificateMaterial, type WebsiteCertificateStore } from './websitesCertificates.ts'
 import type { WebsiteDocker } from './websitesDocker.ts'
+import { websiteContainerCmd } from './websitesDocker.ts'
 import type { WebsiteRecord, WebsiteRegistry } from './websitesRegistry.ts'
 
 /*
@@ -31,7 +35,7 @@ import type { WebsiteRecord, WebsiteRegistry } from './websitesRegistry.ts'
 
 /** 面板与 SSH 保留端口（与容器页 createSpec 同一张表的前三项）。 */
 const PANEL_RESERVED_PORTS: readonly number[] = [22, PANEL_PORT, SERVER_PORT]
-/** 归宿主 Caddy 的端口：站点流量一律经反向代理进来。 */
+/** 80/443 归宿主 Caddy，项目容器不能占用。 */
 const PROXY_RESERVED_PORTS: readonly number[] = [80, 443]
 /** 全局创建互斥键：名称与域名的查重都是 check-then-act，串行化全部创建才能关死并发窗口。 */
 const CREATE_MUTEX_KEY = 'create'
@@ -42,7 +46,8 @@ export type WebsiteCreateRequest = {
   name: string
   port: number
   runtimeVersion: string | null
-  domain: string | null
+  access: WebsiteAccessInput
+  command: string | null
   gitUrl: string | null
   note: string | null
 }
@@ -50,12 +55,27 @@ export type WebsiteCreateRequest = {
 export type WebsiteUpdateRequest = {
   note?: string | null
   expiryAt?: string | null
+  command?: string | null
+}
+
+/** 访问方式统一入口，密钥只在请求内短暂存在。 */
+export function validateWebsiteAccessRequest(input: unknown): WebsiteAccessInput {
+  const row = object(input)
+  if (row.mode === 'direct') return { mode: 'direct' }
+  if (row.mode !== 'domain') throw invalidRequest('请选择访问方式')
+  if (typeof row.domain !== 'string' || !isValidWebsiteDomain(row.domain)) throw invalidRequest('域名无效')
+  const certificatePem = row.certificatePem
+  const privateKeyPem = row.privateKeyPem
+  if ((certificatePem === undefined) !== (privateKeyPem === undefined)) throw invalidRequest('请同时上传证书链和私钥')
+  if (certificatePem !== undefined && (typeof certificatePem !== 'string' || typeof privateKeyPem !== 'string')) throw invalidRequest('证书文件无效')
+  return { mode: 'domain', domain: row.domain.trim().toLowerCase(), ...(certificatePem !== undefined ? { certificatePem: certificatePem as string, privateKeyPem: privateKeyPem as string } : {}) }
 }
 
 export type WebsiteService = {
   list(): Promise<WebsiteListReport>
   create(input: WebsiteCreateRequest): Promise<WebsiteProject>
   update(id: string, input: WebsiteUpdateRequest): Promise<WebsiteProject>
+  setAccess(id: string, access: WebsiteAccessInput): Promise<WebsiteProject>
   setRunning(id: string, running: boolean): Promise<WebsiteProject>
   logs(id: string): Promise<readonly string[]>
   remove(id: string): Promise<void>
@@ -107,19 +127,18 @@ export function validateWebsiteCreateRequest(input: unknown): WebsiteCreateReque
     }
     runtimeVersion = row.runtimeVersion
   }
-  let domain: string | null = null
-  if (row.domain !== undefined && row.domain !== null && row.domain !== '') {
-    if (typeof row.domain !== 'string' || !isValidWebsiteDomain(row.domain)) throw invalidRequest('域名无效')
-    // DNS 与 Caddy 的 host 匹配都大小写不敏感：登记统一归一小写，大小写变体在
-    // 查重与路由生成里都是同一域名，不会生成同 host 双路由互相遮蔽。
-    domain = row.domain.trim().toLowerCase()
-  }
+  const access = validateWebsiteAccessRequest(row.access)
+  if (access.mode === 'domain' && (!access.certificatePem || !access.privateKeyPem)) throw invalidRequest('域名访问需要上传公开 CA 证书链和私钥')
+  const command = kind === 'html' ? websiteDefaultDeployCommand('html', row.port) :
+    trimmed(row.command, '启动命令', 2048) ?? websiteDefaultDeployCommand(kind, row.port)
+  if (command === null) throw invalidRequest('请填写容器启动命令')
   return {
     kind,
     name: row.name.trim(),
     port: row.port,
     runtimeVersion,
-    domain,
+    access,
+    command,
     gitUrl: trimmed(row.gitUrl, 'Git 地址', 2048),
     note: trimmed(row.note, '备注', 1024),
   }
@@ -136,6 +155,7 @@ export function validateWebsiteUpdateRequest(input: unknown): WebsiteUpdateReque
   if (row.expiryAt !== undefined) {
     request.expiryAt = normalizeExpiryAt(row.expiryAt)
   }
+  if (row.command !== undefined) request.command = trimmed(row.command, '启动命令', 2048)
   return request
 }
 
@@ -147,16 +167,13 @@ function hostIpsOverlap(a: string, b: string): boolean {
   return a === b || a === '0.0.0.0' || b === '0.0.0.0'
 }
 
-/** 期望路由投影：有域名的容器站 reverse_proxy、开着的 HTML 域名站 file_server。 */
+/** 期望路由投影：只有域名模式生成反向代理路由。 */
 function expectedProxy(rows: readonly WebsiteRecord[]): { sites: readonly CaddyManagedSite[]; hosts: Set<string> } {
   const sites: CaddyManagedSite[] = []
   const hosts = new Set<string>()
   for (const row of rows) {
-    if (row.domain === null) continue
-    if (row.kind === 'html' && !row.enabled) continue
-    sites.push(row.kind === 'html'
-      ? { kind: 'static', domain: row.domain, root: row.rootDir }
-      : { kind: 'proxy', domain: row.domain, port: row.port })
+    if (row.accessMode !== 'domain' || row.domain === null) continue
+    sites.push({ kind: 'proxy', domain: row.domain, port: row.port })
     hosts.add(row.domain)
   }
   return { sites, hosts }
@@ -166,11 +183,14 @@ export function createWebsiteService(deps: {
   registry: WebsiteRegistry
   docker: WebsiteDocker
   caddy: WebsiteCaddy
+  certificates?: WebsiteCertificateStore
+  trustedRoots?: readonly string[]
   mountRoot: string
   listPortBindings(): Promise<readonly PortMapping[]>
   selfContainerId?: string
 }): WebsiteService {
   const { registry, docker, caddy } = deps
+  const certificates = deps.certificates ?? createMemoryWebsiteCertificateStore()
   const inProgress = new Set<string>()
 
   async function record(id: string): Promise<WebsiteRecord> {
@@ -179,19 +199,18 @@ export function createWebsiteService(deps: {
     return found
   }
 
-  async function currentHosts(): Promise<Set<string> | null> {
+  async function currentConfigOrNull(): Promise<unknown | null> {
     try {
-      return managedHosts(await caddy.currentConfig())
+      return await caddy.currentConfig()
     } catch {
       return null
     }
   }
 
-  async function projectRow(row: WebsiteRecord, hosts: ReadonlySet<string> | null): Promise<WebsiteProject> {
+  async function projectRow(row: WebsiteRecord, config: unknown | null): Promise<WebsiteProject> {
     let running = false
     let pid: number | null = null
-    if (row.kind !== 'html') {
-      if (row.containerId) {
+    if (row.containerId) {
         try {
           const state = object(object(await docker.inspect(row.containerId)).State)
           running = state.Running === true
@@ -202,32 +221,46 @@ export function createWebsiteService(deps: {
           // 容器已被容器页或外部 docker rm 删除：折算为已停止、pid=null，
           // containerId 保留登记值如实显示，不隐藏也不伪报运行。
         }
-      }
-    } else {
-      running = row.enabled
     }
+    const routeApplied = row.domain !== null && config !== null &&
+      appliedManagedHosts(expectedProxy([row]).sites, config).has(row.domain)
     return {
       id: row.id, kind: row.kind, name: row.name, pid,
       containerId: row.containerId, port: row.port,
       runtimeVersion: row.runtimeVersion, rootDir: row.rootDir,
       runState: running ? 'running' : 'stopped',
-      domain: row.domain, expiryAt: row.expiryAt, note: row.note,
-      cert: row.domain !== null && hosts !== null && hosts.has(row.domain) ? 'deployed' : 'none',
+      accessMode: row.accessMode, domain: row.domain, routeApplied, expiryAt: row.expiryAt, note: row.note,
+      certificate: row.certificate ? {
+        issuer: row.certificate.issuer,
+        notAfter: row.certificate.notAfter,
+        fingerprint256: row.certificate.fingerprint256,
+        applied: config !== null && appliedCertificateFingerprints(config).has(row.certificate.fingerprint256),
+      } : null,
       category: row.category, deployCommand: row.deployCommand, gitUrl: row.gitUrl,
       traffic: { todayMb: 0, totalGb: 0 },
     }
   }
 
-  /** 下发结果：成功给出期望 host 集合（供 cert 折算）；通道不可用给出中文原因（如实返回、不报成功）。 */
-  type CaddyPushResult = { applied: true; hosts: Set<string> } | { applied: false; detail: string | null }
+  /** 下发结果：成功给出已下发配置；通道不可用给出中文原因。 */
+  type CaddyPushResult = { applied: true; config: unknown } | { applied: false; detail: string | null }
+
+  async function sitesWithCertificates(rows: readonly WebsiteRecord[]): Promise<readonly CaddyManagedSite[]> {
+    const sites = expectedProxy(rows).sites
+    return Promise.all(sites.map(async (site) => {
+      const row = rows.find((item) => item.domain === site.domain)
+      if (!row?.certificate) throw new Error(`域名 ${site.domain} 缺少证书登记`)
+      const material = await certificates.read(row.certificate.ref)
+      return { ...site, ...material }
+    }))
+  }
 
   /**
    * 下发核心（站点变更与对账共用一份编排）：读当前配置 → 外部配置防护 → POST /load
    * 整配置原子替换。通道不可用按结果返回（调用方决定跳过还是呈现）；存在面板外
    * 配置（409）或下发被拒时抛中文错误。
    */
-  async function pushCaddyConfig(rows: readonly WebsiteRecord[]): Promise<CaddyPushResult> {
-    const { sites, hosts } = expectedProxy(rows)
+  async function pushCaddyConfig(rows: readonly WebsiteRecord[], knownHosts = expectedProxy(rows).hosts): Promise<CaddyPushResult> {
+    const sites = await sitesWithCertificates(rows)
     const config = buildCaddyConfig(sites, { adminListen: caddy.adminListen })
     let current: unknown
     try {
@@ -236,7 +269,7 @@ export function createWebsiteService(deps: {
       if (error instanceof CaddyChannelError) return { applied: false, detail: caddyChannelStatus(error).detail }
       throw error
     }
-    if (hasForeignConfig(current, hosts, { adminListen: caddy.adminListen })) {
+    if (hasForeignConfig(current, knownHosts, { adminListen: caddy.adminListen })) {
       throw new InvalidRequestError(409, '宿主 Caddy 存在面板外的配置，拒绝覆盖')
     }
     try {
@@ -247,21 +280,18 @@ export function createWebsiteService(deps: {
       }
       throw error
     }
-    return { applied: true, hosts }
+    return { applied: true, config }
   }
 
   /**
-   * 下发队列：同进程内的全部下发串行执行，且每次都从 registry **重新读取**再推导
-   * （mutate 可先施加排除或忽略——删除在移除登记前回收路由时排除自身）。没有它，
+   * 下发队列：同进程内的全部下发串行执行，且每次都从 registry **重新读取**再推导。没有它，
    * 两个并发站点写各自拿着旧快照整配置替换，后发会把先发刚下发的路由回滚掉。
    */
   let pushTail: Promise<unknown> = Promise.resolve()
-  function queueCaddyPush(
-    mutate?: (rows: readonly WebsiteRecord[]) => readonly WebsiteRecord[],
-  ): Promise<CaddyPushResult> {
+  function queueCaddyPush(): Promise<CaddyPushResult> {
     const run = pushTail.then(async () => {
       const rows = await registry.list()
-      return pushCaddyConfig(mutate ? mutate(rows) : rows)
+      return pushCaddyConfig(rows)
     })
     pushTail = run.catch(() => undefined)
     return run
@@ -283,19 +313,20 @@ export function createWebsiteService(deps: {
   async function list(): Promise<WebsiteListReport> {
     const rows = await registry.list()
     const { hosts: expectedHosts } = expectedProxy(rows)
-    let hosts: Set<string> | null
+    let config: unknown | null
     let proxy: WebsiteProxyStatus
     try {
-      hosts = managedHosts(await caddy.currentConfig())
-      const missing = [...expectedHosts].filter((host) => !hosts!.has(host))
+      config = await caddy.currentConfig()
+      const applied = appliedManagedHosts(expectedProxy(rows).sites, config)
+      const missing = [...expectedHosts].filter((host) => !applied.has(host))
       proxy = missing.length > 0
         ? { state: 'active', detail: `${missing.length} 个站点的路由未下发` }
         : { state: 'active', detail: null }
     } catch (error) {
-      hosts = null
+      config = null
       proxy = caddyChannelStatus(error)
     }
-    return { projects: await Promise.all(rows.map((row) => projectRow(row, hosts))), proxy }
+    return { projects: await Promise.all(rows.map((row) => projectRow(row, config))), proxy }
   }
 
   async function create(input: WebsiteCreateRequest): Promise<WebsiteProject> {
@@ -304,48 +335,47 @@ export function createWebsiteService(deps: {
     if (inProgress.has(CREATE_MUTEX_KEY)) throw new InvalidRequestError(409, '网站项目正在创建，请稍后再试')
     inProgress.add(CREATE_MUTEX_KEY)
     try {
+      const run = pushTail.then(async () => {
       const rows = await registry.list()
       if (rows.some((row) => row.name === input.name)) {
         throw new InvalidRequestError(409, `项目已存在：${input.name}`)
       }
-      if (input.domain !== null && rows.some((row) => row.domain === input.domain)) {
-        throw new InvalidRequestError(409, `域名已被绑定：${input.domain}`)
+      const domain = input.access.mode === 'domain' ? input.access.domain : null
+      if (domain !== null && rows.some((row) => row.domain === domain)) {
+        throw new InvalidRequestError(409, `域名已被绑定：${domain}`)
       }
       await assertPortAvailable(input.port, rows)
 
+      let certificate: WebsiteRecord['certificate'] = null
+      if (input.access.mode === 'domain') {
+        const material = { certificatePem: input.access.certificatePem!, privateKeyPem: input.access.privateKeyPem! }
+        const metadata = validateWebsiteCertificate(material, domain!, deps.trustedRoots)
+        certificate = { ...metadata, ref: await certificates.save(material) }
+        try { await caddy.currentConfig() } catch (error) {
+          await certificates.remove(certificate.ref)
+          throw new Error(`Caddy 管理通道不可用：${caddyChannelStatus(error).detail ?? '请重新检测'}`)
+        }
+      }
+
       // 目录与镜像先于容器：镜像缺失不建容器；目录建后失败保留（空目录无害）。
       const projectId = randomUUID()
-      const rootDir = await docker.ensureSiteDir(input.name, deps.mountRoot)
-      const imageRef = input.kind === 'html' ? null : websiteRuntimeImageRef(input.kind, input.runtimeVersion)
+      let rootDir: string
+      try { rootDir = await docker.ensureSiteDir(input.name, deps.mountRoot) }
+      catch (error) { if (certificate) await certificates.remove(certificate.ref); throw error }
+      const imageRef = input.kind === 'html' ? WEBSITE_HTML_IMAGE : websiteRuntimeImageRef(input.kind, input.runtimeVersion)
       let containerId: string | null = null
       let containerName: string | null = null
-      if (input.kind !== 'html' && imageRef !== null) {
+      if (imageRef !== null) {
+        try {
         await docker.ensureImage(imageRef)
         containerName = docker.newContainerName()
         const created = await docker.create({
-          imageRef, kind: input.kind, version: input.runtimeVersion as string,
+          imageRef, kind: input.kind, version: input.runtimeVersion ?? 'html',
           projectId, port: input.port, bindSource: rootDir, containerName,
+          accessMode: input.access.mode, command: input.command,
         })
         containerId = created.containerId
-        try {
-          await docker.start(containerId)
-        } catch (error) {
-          const reason = error instanceof Error ? error.message : String(error)
-          let message = `创建站点容器失败：容器启动失败，已撤销创建：${reason}`
-          try {
-            await docker.removeCreated(containerId)
-          } catch {
-            message += `且撤销失败，容器 ID 为 ${containerId}`
-          }
-          throw new Error(message)
-        }
-        // 新建即已停止（对齐 mock 基准：新建卡片呈已停止、pid=null；容器与目录已就位）。
-        try {
-          await docker.stop(containerId)
-        } catch (error) {
-          const reason = error instanceof Error ? error.message : String(error)
-          throw new Error(`创建站点容器失败：容器启动后无法停止：${reason}；容器 ${containerId.slice(0, 12)} 已创建，请到容器页处理`)
-        }
+        } catch (error) { if (certificate) await certificates.remove(certificate.ref); throw error }
       }
 
       const row: WebsiteRecord = {
@@ -355,11 +385,13 @@ export function createWebsiteService(deps: {
         port: input.port,
         runtimeVersion: input.kind === 'html' ? null : input.runtimeVersion,
         rootDir,
-        domain: input.domain,
+        domain,
+        accessMode: input.access.mode,
+        certificate,
         containerName,
         containerId,
         imageRef,
-        deployCommand: websiteDefaultDeployCommand(input.kind, input.port),
+        deployCommand: input.command,
         enabled: false,
         category: 'development',
         expiryAt: null,
@@ -367,22 +399,36 @@ export function createWebsiteService(deps: {
         gitUrl: input.gitUrl,
         createdAt: new Date().toISOString(),
       }
+      let previousConfig: unknown | null = null
+      let appliedConfig: unknown | null = null
+      let caddyLoaded = false
       try {
+        if (domain !== null) {
+          previousConfig = await caddy.currentConfig()
+          if (hasForeignConfig(previousConfig, expectedProxy(rows).hosts, { adminListen: caddy.adminListen })) throw new InvalidRequestError(409, '宿主 Caddy 存在面板外的配置，拒绝覆盖')
+          const sites = await sitesWithCertificates([...rows, row])
+          appliedConfig = buildCaddyConfig(sites, { adminListen: caddy.adminListen })
+          await caddy.load(appliedConfig)
+          caddyLoaded = true
+        }
         await registry.put(row)
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error)
+        let rollbackFailure = false
+        if (caddyLoaded && previousConfig !== null) {
+          try { await caddy.load(previousConfig) } catch { rollbackFailure = true }
+        }
         if (containerId !== null) {
-          await docker.stop(containerId).catch(() => undefined)
           await docker.removeCreated(containerId).catch(() => undefined)
         }
-        throw new Error(`网站登记写入失败：${reason}；站点容器已回滚删除，站点目录保留`)
+        if (certificate) await certificates.remove(certificate.ref).catch(() => undefined)
+        throw new Error(`网站创建失败：${reason}；容器已回滚，站点目录保留${rollbackFailure ? '；原 Caddy 配置恢复失败，配置可能不同步，请重新下发反向代理配置' : ''}`)
       }
 
-      // 每次站点创建后从登记全量重下发（无域名站点的配置不变，重下发可顺带补发
-      // 此前降级期间遗留的路由）；通道不可用时跳过、不报成功，cert 停在 none，
-      // 界面横幅如实呈现。
-      const pushed = await queueCaddyPush()
-      return projectRow(row, pushed.applied ? pushed.hosts : null)
+      return projectRow(row, appliedConfig ?? await currentConfigOrNull())
+      })
+      pushTail = run.catch(() => undefined)
+      return await run
     } finally {
       inProgress.delete(CREATE_MUTEX_KEY)
     }
@@ -400,10 +446,136 @@ export function createWebsiteService(deps: {
         ...(input.note !== undefined ? { note: input.note } : {}),
         ...(input.expiryAt !== undefined ? { expiryAt: input.expiryAt } : {}),
       }
-      await registry.put(updated)
-      return projectRow(updated, await currentHosts())
+      if (input.command !== undefined && input.command !== row.deployCommand) {
+        if (row.kind === 'html') throw invalidRequest('HTML 项目使用固定 Nginx 启动命令')
+        websiteContainerCmd(row.kind, input.command)
+        if (!row.containerId || !row.imageRef) throw new InvalidRequestError(409, '站点容器不存在，请删除项目后重建')
+        const oldRunning = object(object(await docker.inspect(row.containerId)).State).Running === true
+        const containerName = docker.newContainerName()
+        const created = await docker.create({
+          imageRef: row.imageRef, kind: row.kind, version: row.runtimeVersion ?? 'html', projectId: row.id,
+          port: row.port, bindSource: row.rootDir, containerName, accessMode: row.accessMode, command: input.command,
+        })
+        let stopped = false
+        let registered = false
+        try {
+          if (oldRunning) { await docker.stop(row.containerId); stopped = true; await docker.start(created.containerId) }
+          updated.containerId = created.containerId
+          updated.containerName = containerName
+          updated.deployCommand = input.command
+          await registry.put(updated)
+          registered = true
+          await docker.removeManaged({ containerId: row.containerId, containerName: row.containerName ?? '', projectId: row.id,
+            kind: row.kind, version: row.runtimeVersion ?? 'html', imageRef: row.imageRef, rootDir: row.rootDir,
+            selfContainerId: deps.selfContainerId })
+        } catch (error) {
+          const failures: string[] = []
+          if (registered) try { await registry.put(row) } catch { failures.push('登记') }
+          await docker.stop(created.containerId).catch(() => undefined)
+          try { await docker.removeCreated(created.containerId) } catch { failures.push('新容器') }
+          if (stopped) try { await docker.start(row.containerId) } catch { failures.push('原容器') }
+          throw new Error(`启动命令保存失败：${error instanceof Error ? error.message : String(error)}${failures.length ? `；${failures.join('、')}恢复失败，配置可能不同步` : '；原容器已恢复'}`)
+        }
+      } else await registry.put(updated)
+      return projectRow(updated, await currentConfigOrNull())
     } finally {
       inProgress.delete(id)
+    }
+  }
+
+  async function setAccess(id: string, access: WebsiteAccessInput): Promise<WebsiteProject> {
+    if (inProgress.has(CREATE_MUTEX_KEY) || inProgress.has(id)) {
+      throw new InvalidRequestError(409, '项目正在执行其他操作')
+    }
+    inProgress.add(CREATE_MUTEX_KEY)
+    inProgress.add(id)
+    try {
+      const run = pushTail.then(async () => {
+        const rows = await registry.list()
+        const row = rows.find((item) => item.id === id)
+        if (!row) throw new InvalidRequestError(404, `未找到项目 ${id}`)
+        const domain = access.mode === 'domain' ? access.domain : null
+        if (domain && rows.some((item) => item.id !== id && item.domain === domain)) throw new InvalidRequestError(409, `域名已被绑定：${domain}`)
+        let certificate: WebsiteRecord['certificate'] = null
+        let stagedRef: string | null = null
+        if (access.mode === 'domain') {
+          let material: WebsiteCertificateMaterial
+          if (access.certificatePem && access.privateKeyPem) {
+            material = { certificatePem: access.certificatePem, privateKeyPem: access.privateKeyPem }
+            const metadata = validateWebsiteCertificate(material, access.domain, deps.trustedRoots)
+            stagedRef = await certificates.save(material)
+            certificate = { ...metadata, ref: stagedRef }
+          } else {
+            if (!row.certificate) throw invalidRequest('域名访问需要上传公开 CA 证书链和私钥')
+            material = await certificates.read(row.certificate.ref)
+            validateWebsiteCertificate(material, access.domain, deps.trustedRoots)
+            certificate = row.certificate
+          }
+        }
+        const changingMode = row.accessMode !== access.mode
+        const updated: WebsiteRecord = { ...row, accessMode: access.mode, domain, certificate }
+        if (!changingMode && row.domain === domain && !stagedRef) return projectRow(row, await currentConfigOrNull())
+        let previousConfig: unknown | null = null
+        let nextConfig: unknown | null = null
+        let caddyLoaded = false
+        let newContainerId: string | null = null
+        let oldStopped = false
+        let registryChanged = false
+        let oldRunning = false
+        try {
+          oldRunning = row.containerId ? object(object(await docker.inspect(row.containerId)).State).Running === true : false
+          if (changingMode) {
+            if (!row.imageRef || !row.containerId) throw new InvalidRequestError(409, '站点容器不存在，请删除项目后重建')
+            await docker.ensureImage(row.imageRef)
+            const containerName = docker.newContainerName()
+            newContainerId = (await docker.create({
+              imageRef: row.imageRef, kind: row.kind, version: row.runtimeVersion ?? 'html',
+              projectId: row.id, port: row.port, bindSource: row.rootDir, containerName,
+              accessMode: access.mode, command: row.deployCommand,
+            })).containerId
+            updated.containerId = newContainerId
+            updated.containerName = containerName
+            if (oldRunning) {
+              await docker.stop(row.containerId)
+              oldStopped = true
+              await docker.start(newContainerId)
+            }
+          }
+          if (row.domain !== null || domain !== null) {
+            previousConfig = await caddy.currentConfig()
+            if (hasForeignConfig(previousConfig, expectedProxy(rows).hosts, { adminListen: caddy.adminListen })) throw new InvalidRequestError(409, '宿主 Caddy 存在面板外的配置，拒绝覆盖')
+            nextConfig = buildCaddyConfig(await sitesWithCertificates(rows.map((item) => item.id === id ? updated : item)), { adminListen: caddy.adminListen })
+            await caddy.load(nextConfig)
+            caddyLoaded = true
+          }
+          await registry.put(updated)
+          registryChanged = true
+          if (changingMode && row.containerId) await docker.removeManaged({
+            containerId: row.containerId, containerName: row.containerName ?? '', projectId: row.id,
+            kind: row.kind, version: row.runtimeVersion ?? 'html', imageRef: row.imageRef ?? '', rootDir: row.rootDir,
+            selfContainerId: deps.selfContainerId,
+          })
+          if (row.certificate && row.certificate.ref !== certificate?.ref) await certificates.remove(row.certificate.ref)
+          return projectRow(updated, nextConfig ?? await currentConfigOrNull())
+        } catch (error) {
+          const failures: string[] = []
+          if (registryChanged) try { await registry.put(row) } catch { failures.push('登记') }
+          if (caddyLoaded && previousConfig) try { await caddy.load(previousConfig) } catch { failures.push('Caddy 配置') }
+          if (newContainerId) {
+            await docker.stop(newContainerId).catch(() => undefined)
+            try { await docker.removeCreated(newContainerId) } catch { failures.push('新容器') }
+          }
+          if (oldStopped && row.containerId) try { await docker.start(row.containerId) } catch { failures.push('原容器') }
+          if (stagedRef) await certificates.remove(stagedRef).catch(() => undefined)
+          const reason = error instanceof Error ? error.message : String(error)
+          throw new Error(`访问配置保存失败：${reason}${failures.length ? `；${failures.join('、')}恢复失败，配置可能不同步，请检查后重新对账` : '；原访问配置已恢复'}`)
+        }
+      })
+      pushTail = run.catch(() => undefined)
+      return await run
+    } finally {
+      inProgress.delete(id)
+      inProgress.delete(CREATE_MUTEX_KEY)
     }
   }
 
@@ -412,23 +584,6 @@ export function createWebsiteService(deps: {
     inProgress.add(id)
     try {
       const row = await record(id)
-      if (row.kind === 'html') {
-        if (row.enabled !== running) {
-          // 先落登记再走下发队列（队列内部重新读登记推导整配置）：并发的其他站点
-          // 写不会拿旧快照把本次路由回滚；下发被拒（外配/引擎拒绝）时回滚登记，
-          // 保持界面回滚与事实一致。通道不可用属降级跳过，登记保留、横幅如实呈现。
-          const updated = { ...row, enabled: running }
-          await registry.put(updated)
-          try {
-            const pushed = await queueCaddyPush()
-            return projectRow(updated, pushed.applied ? pushed.hosts : null)
-          } catch (error) {
-            await registry.put(row).catch(() => undefined)
-            throw error
-          }
-        }
-        return projectRow(row, await currentHosts())
-      }
       if (!row.containerId) throw new InvalidRequestError(409, '站点没有容器')
       try {
         if (running) await docker.start(row.containerId)
@@ -439,7 +594,7 @@ export function createWebsiteService(deps: {
         }
         throw error
       }
-      return projectRow(row, await currentHosts())
+      return projectRow(row, await currentConfigOrNull())
     } finally {
       inProgress.delete(id)
     }
@@ -447,7 +602,6 @@ export function createWebsiteService(deps: {
 
   async function logs(id: string): Promise<readonly string[]> {
     const row = await record(id)
-    if (row.kind === 'html') return ['静态站点由宿主 Caddy 直接托管，无应用运行日志']
     if (!row.containerId) throw new InvalidRequestError(409, '站点没有容器')
     try {
       return await docker.logs(row.containerId)
@@ -460,63 +614,71 @@ export function createWebsiteService(deps: {
   }
 
   async function remove(id: string): Promise<void> {
-    if (inProgress.has(id)) throw new InvalidRequestError(409, '项目正在执行其他操作')
+    if (inProgress.has(id) || inProgress.has(CREATE_MUTEX_KEY)) throw new InvalidRequestError(409, '项目正在执行其他操作')
     inProgress.add(id)
+    inProgress.add(CREATE_MUTEX_KEY)
     try {
-      const row = await record(id)
-      if (row.kind !== 'html' && row.containerId !== null) {
-        try {
-          await docker.stop(row.containerId)
-        } catch (error) {
-          if (!(error instanceof InvalidRequestError) || error.status !== 404) throw error
+      const run = pushTail.then(async () => {
+        const row = await record(id)
+        if (row.containerId !== null) {
+          try {
+            await docker.stop(row.containerId)
+          } catch (error) {
+            if (!(error instanceof InvalidRequestError) || error.status !== 404) throw error
+          }
         }
-      }
-      // Caddy 路由回收：下发队列重新读登记并排除本站后全量重下发；失败不阻断资源
-      // 删除，报错说明配置残留将在下次下发时回收（通道不可用属降级跳过，不算回收失败）。
-      let caddyFailure: string | null = null
-      try {
-        await queueCaddyPush((rows) => rows.filter((item) => item.id !== id))
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error)
-        caddyFailure = `反向代理配置回收失败：${reason}；站点资源已删除，配置残留将在下次下发时回收`
-      }
-      if (row.kind !== 'html' && row.containerId !== null) {
-        // 容器已被外部删除时 removeManaged 幂等跳过容器删除，其余步骤照常。
-        await docker.removeManaged({
-          containerId: row.containerId,
-          containerName: row.containerName ?? '',
-          projectId: row.id,
-          kind: row.kind,
-          version: row.runtimeVersion ?? '',
-          imageRef: row.imageRef ?? '',
-          rootDir: row.rootDir,
-          selfContainerId: deps.selfContainerId,
-        })
-      }
-      let dirFailure: string | null = null
-      try {
-        await docker.removeSiteDir(row.rootDir, deps.mountRoot)
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error)
-        dirFailure = `站点目录删除失败：${reason}`
-      }
-      await registry.remove(id)
-      if (caddyFailure !== null) throw new Error(caddyFailure)
-      if (dirFailure !== null) throw new Error(dirFailure)
+        // Caddy 路由回收与登记删除同处下发队列，避免并发创建重新带回旧路由。
+        let caddyFailure: string | null = null
+        try {
+          const rows = await registry.list()
+          await pushCaddyConfig(rows.filter((item) => item.id !== id), expectedProxy(rows).hosts)
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error)
+          caddyFailure = `反向代理配置回收失败：${reason}；站点资源已删除，配置残留将在下次下发时回收`
+        }
+        if (row.containerId !== null) {
+          // 容器已被外部删除时 removeManaged 幂等跳过容器删除，其余步骤照常。
+          await docker.removeManaged({
+            containerId: row.containerId,
+            containerName: row.containerName ?? '',
+            projectId: row.id,
+            kind: row.kind,
+            version: row.runtimeVersion ?? 'html',
+            imageRef: row.imageRef ?? '',
+            rootDir: row.rootDir,
+            selfContainerId: deps.selfContainerId,
+          })
+        }
+        let dirFailure: string | null = null
+        try {
+          await docker.removeSiteDir(row.rootDir, deps.mountRoot)
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error)
+          dirFailure = `站点目录删除失败：${reason}`
+        }
+        await registry.remove(id)
+        if (row.certificate) await certificates.remove(row.certificate.ref)
+        if (caddyFailure !== null) throw new Error(caddyFailure)
+        if (dirFailure !== null) throw new Error(dirFailure)
+      })
+      pushTail = run.catch(() => undefined)
+      await run
     } finally {
       inProgress.delete(id)
+      inProgress.delete(CREATE_MUTEX_KEY)
     }
   }
 
   /** 域级对账：走同一条下发队列从 registry 全量重新生成并下发，返回下发后的代理状态。 */
   async function reconcileProxy(): Promise<WebsiteProxyStatus> {
-    const { hosts } = expectedProxy(await registry.list())
     const pushed = await queueCaddyPush()
     if (!pushed.applied) return { state: 'unavailable', detail: pushed.detail }
     try {
-      const missing = missingHosts(hosts, await caddy.currentConfig())
-      return missing.size > 0
-        ? { state: 'active', detail: `${missing.size} 个站点的路由未下发` }
+      const { sites, hosts } = expectedProxy(await registry.list())
+      const applied = appliedManagedHosts(sites, await caddy.currentConfig())
+      const missing = [...hosts].filter((host) => !applied.has(host))
+      return missing.length > 0
+        ? { state: 'active', detail: `${missing.length} 个站点的路由未下发` }
         : { state: 'active', detail: null }
     } catch {
       // /load 已成功（2xx 即整配置生效）；复核读取失败不推翻下发事实。
@@ -524,5 +686,5 @@ export function createWebsiteService(deps: {
     }
   }
 
-  return { list, create, update, setRunning, logs, remove, reconcileProxy }
+  return { list, create, update, setAccess, setRunning, logs, remove, reconcileProxy }
 }

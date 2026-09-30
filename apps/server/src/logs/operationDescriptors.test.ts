@@ -134,6 +134,13 @@ describe('OPERATION_DESCRIPTORS 漂移守卫', () => {
     expect(OPERATION_DESCRIPTORS[`POST ${LOGS_MOUNT}/runtime/clear`]?.action).toBe('清空运行日志')
     expect(OPERATION_DESCRIPTORS[`POST ${LOGS_MOUNT}/operation/clear`]?.action).toBe('清空操作日志')
   })
+
+  it('访问配置操作留痕且不读取证书私钥', () => {
+    const descriptor = OPERATION_DESCRIPTORS['PUT /api/websites/:id/access']
+    expect(descriptor?.category).toBe('websites')
+    expect(descriptor?.action).toBe('调整网站访问配置')
+    expect(descriptor?.summarize).toBeUndefined()
+  })
 })
 
 describe('extractPathParams', () => {

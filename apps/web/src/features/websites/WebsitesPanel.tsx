@@ -1,4 +1,5 @@
 import type { WebsiteCategory } from '@elysian/contracts'
+import { useState } from 'react'
 import { WEBSITE_CATEGORIES, WEBSITE_CATEGORY_LABELS } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { IconButton } from '../../components/IconButton'
@@ -13,6 +14,7 @@ import { WebsitesCard } from './WebsitesCard'
 import { WebsitesCreateDialog } from './WebsitesCreateDialog'
 import { WebsitesRemoveDialog } from './WebsitesRemoveDialog'
 import { WebsitesSettingsDialog } from './WebsitesSettingsDialog'
+import { CaddyConfigDialog } from './CaddyConfigDialog'
 import { filterWebsiteProjects } from './websitesListing'
 
 /**
@@ -45,7 +47,7 @@ function ProxyStatusBanner({
         role="status"
         className="mb-4 rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-xs text-warning"
       >
-        反向代理通道不可用{detail ? `：${detail}` : ''}。站点容器照常运行，域名路由与证书未下发。
+        反向代理通道不可用{detail ? `：${detail}` : ''}。站点容器照常运行；当前无法核对域名路由或证书状态。
       </p>
     )
   }
@@ -69,6 +71,7 @@ function ProxyStatusBanner({
 }
 
 export function WebsitesPanel() {
+  const [caddyConfigOpen, setCaddyConfigOpen] = useState(false)
   const gateway = useGateway()
   const projects = useWebsitesStore((s) => s.projects)
   const proxyStatus = useWebsitesStore((s) => s.proxyStatus)
@@ -101,6 +104,11 @@ export function WebsitesPanel() {
         {caddyInstallEntryVisible(dependencyReport) ? (
           <button type="button" onClick={reopenCaddy} className={TOOL_BUTTON_CLASS}>
             安装 Caddy
+          </button>
+        ) : null}
+        {dependencyReport?.docker.state === 'ok' ? (
+          <button type="button" onClick={() => setCaddyConfigOpen(true)} className={TOOL_BUTTON_CLASS}>
+            访问配置
           </button>
         ) : null}
 
@@ -139,7 +147,7 @@ export function WebsitesPanel() {
         </div>
       </div>
 
-      {proxyStatus.state === 'unavailable' || proxyStatus.detail !== null ? (
+      {projects.some((project) => project.accessMode === 'domain') && (proxyStatus.state === 'unavailable' || proxyStatus.detail !== null) ? (
         <ProxyStatusBanner
           detail={proxyStatus.detail}
           unavailable={proxyStatus.state === 'unavailable'}
@@ -191,6 +199,12 @@ export function WebsitesPanel() {
       </div>
 
       {createDialogOpen ? <WebsitesCreateDialog /> : null}
+      {caddyConfigOpen ? (
+        <CaddyConfigDialog
+          onClose={() => setCaddyConfigOpen(false)}
+          onAddProject={() => { setCaddyConfigOpen(false); openCreate() }}
+        />
+      ) : null}
       {/* 设置弹窗的表单初始值取自 settingsTarget，必须条件挂载：
           常驻挂载时 useState 惰性初始化只跑一次（目标是 undefined），预填会永久失效。 */}
       {settingsTarget ? <WebsitesSettingsDialog key={settingsTarget.id} /> : null}

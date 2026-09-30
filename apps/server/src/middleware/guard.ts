@@ -62,14 +62,14 @@ export function sameOriginGuard(): MiddlewareHandler {
   }
 }
 
-export async function readJsonBody(req: Request): Promise<unknown> {
+export async function readJsonBody(req: Request, maxBytes = MAX_JSON_BODY_BYTES): Promise<unknown> {
   const contentType = (req.headers.get('content-type') ?? '').toLowerCase()
   if (!contentType.startsWith('application/json')) {
     throw new EndpointGuardError(415, 'Content-Type 必须为 application/json')
   }
   // 先按申报的 content-length 直接拒；实读再累计字节数，防谎报长度绕过。
   const declaredLength = Number(req.headers.get('content-length'))
-  if (declaredLength > MAX_JSON_BODY_BYTES) {
+  if (declaredLength > maxBytes) {
     throw new EndpointGuardError(413, '请求体过大')
   }
   const chunks: Uint8Array[] = []
@@ -80,7 +80,7 @@ export async function readJsonBody(req: Request): Promise<unknown> {
       const { done, value } = await reader.read()
       if (done) break
       receivedBytes += value.byteLength
-      if (receivedBytes > MAX_JSON_BODY_BYTES) {
+      if (receivedBytes > maxBytes) {
         throw new EndpointGuardError(413, '请求体过大')
       }
       chunks.push(value)

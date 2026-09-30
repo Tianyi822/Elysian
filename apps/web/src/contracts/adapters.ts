@@ -31,6 +31,7 @@ import type {
   SshAdapter,
   Unsubscribe,
   UserAdapter,
+  WebsiteAccessInput,
   WebsiteListReport,
   WebsiteProject,
   WebsiteProjectCreateInput,
@@ -297,8 +298,10 @@ export interface WebsitesAdapter {
   list(): Promise<WebsiteListReport>
   /** 新建项目：新建即已停止、无证书；名称跨类型全局唯一（站点目录只由名称推导）。 */
   create(kind: WebsiteProjectKind, input: WebsiteProjectCreateInput): Promise<WebsiteProject>
-  /** 修改项目：设置弹窗只改备注与到期时间，名称、根目录、域名、端口不可改。 */
+  /** 修改项目备注与到期时间。 */
   update(projectId: string, input: WebsiteProjectUpdateInput): Promise<WebsiteProject>
+  /** 切换直连或域名访问，并可更换证书。 */
+  setAccess(projectId: string, access: WebsiteAccessInput): Promise<WebsiteProject>
   /** 删除项目：停容器、回收反向代理路由、删容器与站点目录、删登记；不幂等。 */
   remove(projectId: string): Promise<void>
   /** 启动或停止项目：非 HTML 落容器启停并回报进程号，HTML 翻转托管开关。 */

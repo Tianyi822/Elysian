@@ -4,7 +4,6 @@ import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 import {
   WEBSITE_CATEGORY_LABELS,
-  WEBSITE_CERT_STATE_LABELS,
   WEBSITE_PROJECT_KIND_LABELS,
   WEBSITE_RUN_STATE_LABELS,
 } from '@elysian/contracts'
@@ -24,10 +23,10 @@ const RUN_STATE_TONE: Record<WebsiteProject['runState'], StatusTone> = {
   stopped: 'neutral',
 }
 
-const CERT_TONE: Record<WebsiteProject['cert'], StatusTone> = {
-  deployed: 'success',
-  expired: 'danger',
-  none: 'neutral',
+function routeStatusLabel(project: WebsiteProject): string {
+  if (project.accessMode === 'direct') return 'IP＋端口直连'
+  if (!project.routeApplied) return '待下发'
+  return project.runState === 'stopped' ? '路由已下发，项目未运行' : '路由已下发'
 }
 
 /** 今日流量：满 1 GB 换算成 GB 保留一位小数，否则按 MB 展示。 */
@@ -92,7 +91,7 @@ export function WebsiteDetailSheet() {
 
   if (!project) return null
 
-  const showPid = project.kind !== 'html'
+  const showPid = true
 
   return (
     <Dialog.Root
@@ -145,6 +144,7 @@ export function WebsiteDetailSheet() {
               <dl className="divide-y divide-line">
                 <Row label="类型">{WEBSITE_PROJECT_KIND_LABELS[project.kind]}</Row>
                 <Row label="分类">{WEBSITE_CATEGORY_LABELS[project.category]}</Row>
+                <Row label="访问方式">{project.accessMode === 'direct' ? `IP＋端口直连（HTTP，端口 ${project.port}）` : '域名 HTTPS'}</Row>
                 {project.runtimeVersion !== null && (
                   <Row label="运行时版本">
                     <span className="tabular-nums">{project.runtimeVersion}</span>
@@ -186,12 +186,13 @@ export function WebsiteDetailSheet() {
                     '长期有效'
                   )}
                 </Row>
-                <Row label="SSL证书">
+                <Row label="域名路由">
                   <StatusTag
-                    label={WEBSITE_CERT_STATE_LABELS[project.cert]}
-                    tone={CERT_TONE[project.cert]}
+                    label={routeStatusLabel(project)}
+                    tone={project.routeApplied ? 'success' : 'neutral'}
                   />
                 </Row>
+                {project.certificate ? <Row label="证书"><span>{project.certificate.applied ? '已下发' : '待下发'} · 有效至 {project.certificate.notAfter.slice(0, 10)}{Date.parse(project.certificate.notAfter) - Date.now() < 30 * 86400_000 ? ' · 请尽快重新上传' : ''}</span></Row> : null}
                 <Row label="备注">
                   <span className="break-all">{project.note ?? '—'}</span>
                 </Row>
@@ -215,7 +216,7 @@ export function WebsiteDetailSheet() {
                   {project.deployCommand}
                 </code>
               ) : (
-                <p className="text-sm text-fg-muted">静态站点由宿主 Caddy 直接托管，无部署命令</p>
+                <p className="text-sm text-fg-muted">尚未配置启动命令</p>
               )}
             </Section>
 

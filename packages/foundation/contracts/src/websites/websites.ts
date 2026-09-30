@@ -1,8 +1,7 @@
 /*
- * 网站部署域类型与词典。非 HTML 站点每个项目一个 Docker 容器：官方镜像、
- * 版本钉死禁 latest（镜像引用的唯一来源是 websiteRuntimeImageRef）、站点目录
- * bind 挂载进 /app、端口以 127.0.0.1 同号发布；HTML 静态站无容器，由宿主
- * 系统级 Caddy 的 file_server 直接托管站点目录（PHP 与 .NET 不在本期范围）。
+ * 网站部署域类型与词典。每个项目一个 Docker 容器：运行时使用钉死版本的
+ * 官方镜像，HTML 使用固定 Nginx 镜像；站点目录 bind 挂载，直连端口发布到
+ * 0.0.0.0，域名模式发布到 127.0.0.1（PHP 与 .NET 不在本期范围）。
  * 反向代理由宿主 Caddy 承载：面板经 admin unix socket 以整配置原子替换
  * （POST /load）下发由登记全量生成的路由，通道状态与配置漂移在列表读取时
  * 以 WebsiteProxyStatus 如实呈现；本模块只放类型、枚举、纯常量表与纯函数，
@@ -40,19 +39,19 @@ export const WEBSITE_RUN_STATE_LABELS: Record<WebsiteRunState, string> = {
   stopped: '已停止',
 }
 
-export type WebsiteCertState = 'deployed' | 'expired' | 'none'
+export type WebsiteAccessMode = 'direct' | 'domain'
 
-export const WEBSITE_CERT_STATES = [
-  'deployed',
-  'expired',
-  'none',
-] as const satisfies readonly WebsiteCertState[]
-
-export const WEBSITE_CERT_STATE_LABELS: Record<WebsiteCertState, string> = {
-  deployed: '已部署',
-  expired: '已过期',
-  none: '未部署',
+/** 证书只描述用户上传的公开 CA 证书；applied 是 Caddy 配置核对事实。 */
+export type WebsiteCertificate = {
+  issuer: string
+  notAfter: string
+  fingerprint256: string
+  applied: boolean
 }
+
+export type WebsiteAccessInput =
+  | { mode: 'direct' }
+  | { mode: 'domain'; domain: string; certificatePem?: string; privateKeyPem?: string }
 
 export type WebsiteCategory = 'production' | 'testing' | 'development'
 
@@ -88,11 +87,56 @@ export type WebsiteRuntimeKind = Exclude<WebsiteProjectKind, 'html'>
  * 各语言可选运行时版本目录：镜像引用由 `websiteRuntimeImageRef` 从这里推导，
  * 版本钉死、禁 latest；表单与服务端共用同一目录，调整可选版本只改这份表。
  */
+export type WebsiteRuntimeCatalogEntry = {
+  version: string
+  image: string
+  maintenance: 'maintained' | 'legacy'
+  checkedAt: string
+}
+
+/** 精确的 Docker 官方镜像标签；维护者校验脚本会检查正式版形态与镜像存在性。 */
+export const WEBSITE_RUNTIME_CATALOG: Record<WebsiteRuntimeKind, readonly WebsiteRuntimeCatalogEntry[]> = {
+  java: [
+    { version: '25', image: 'eclipse-temurin:25.0.4.1_1-jre', maintenance: 'maintained', checkedAt: '2026-09-30' },
+    { version: '21', image: 'eclipse-temurin:21.0.12.1_1-jre', maintenance: 'maintained', checkedAt: '2026-09-30' },
+    { version: '17', image: 'eclipse-temurin:17.0.20.1_1-jre', maintenance: 'maintained', checkedAt: '2026-09-30' },
+    { version: '11', image: 'eclipse-temurin:11.0.32_9-jre', maintenance: 'maintained', checkedAt: '2026-09-30' },
+    { version: '8', image: 'eclipse-temurin:8u502-b07-jre', maintenance: 'maintained', checkedAt: '2026-09-30' },
+    { version: '26', image: 'eclipse-temurin:26.0.2_10-jre', maintenance: 'legacy', checkedAt: '2026-09-30' },
+  ],
+  node: [
+    { version: '26.10.0', image: 'node:26.10.0', maintenance: 'maintained', checkedAt: '2026-09-30' },
+    { version: '24.21.0', image: 'node:24.21.0', maintenance: 'maintained', checkedAt: '2026-09-30' },
+    { version: '22.23.3', image: 'node:22.23.3', maintenance: 'maintained', checkedAt: '2026-09-30' },
+    { version: '20.20.2', image: 'node:20.20.2', maintenance: 'legacy', checkedAt: '2026-09-30' },
+    { version: '18.20.8', image: 'node:18.20.8', maintenance: 'legacy', checkedAt: '2026-09-30' },
+    { version: '16.20.2', image: 'node:16.20.2', maintenance: 'legacy', checkedAt: '2026-09-30' },
+    { version: '14.21.3', image: 'node:14.21.3', maintenance: 'legacy', checkedAt: '2026-09-30' },
+  ],
+  go: [
+    { version: '1.27.1', image: 'golang:1.27.1', maintenance: 'maintained', checkedAt: '2026-09-30' },
+    { version: '1.26.8', image: 'golang:1.26.8', maintenance: 'maintained', checkedAt: '2026-09-30' },
+    { version: '1.25.13', image: 'golang:1.25.13', maintenance: 'legacy', checkedAt: '2026-09-30' },
+    { version: '1.24.13', image: 'golang:1.24.13', maintenance: 'legacy', checkedAt: '2026-09-30' },
+    { version: '1.23.12', image: 'golang:1.23.12', maintenance: 'legacy', checkedAt: '2026-09-30' },
+    { version: '1.22.12', image: 'golang:1.22.12', maintenance: 'legacy', checkedAt: '2026-09-30' },
+  ],
+  python: [
+    { version: '3.14.7', image: 'python:3.14.7-slim', maintenance: 'maintained', checkedAt: '2026-09-30' },
+    { version: '3.13.15', image: 'python:3.13.15-slim', maintenance: 'maintained', checkedAt: '2026-09-30' },
+    { version: '3.12.14', image: 'python:3.12.14-slim', maintenance: 'maintained', checkedAt: '2026-09-30' },
+    { version: '3.11.16', image: 'python:3.11.16-slim', maintenance: 'maintained', checkedAt: '2026-09-30' },
+    { version: '3.10.21', image: 'python:3.10.21-slim', maintenance: 'maintained', checkedAt: '2026-09-30' },
+    { version: '3.9.23', image: 'python:3.9.23-slim', maintenance: 'legacy', checkedAt: '2026-09-30' },
+    { version: '3.8.20', image: 'python:3.8.20-slim', maintenance: 'legacy', checkedAt: '2026-09-30' },
+  ],
+}
+
 export const WEBSITE_RUNTIME_VERSIONS: Record<WebsiteRuntimeKind, readonly string[]> = {
-  java: ['11', '17', '21'],
-  node: ['18.19.1', '20.11.1', '22.4.0'],
-  go: ['1.21.5', '1.22.4', '1.23.1'],
-  python: ['3.10.14', '3.11.9', '3.12.4'],
+  java: WEBSITE_RUNTIME_CATALOG.java.map((entry) => entry.version),
+  node: WEBSITE_RUNTIME_CATALOG.node.map((entry) => entry.version),
+  go: WEBSITE_RUNTIME_CATALOG.go.map((entry) => entry.version),
+  python: WEBSITE_RUNTIME_CATALOG.python.map((entry) => entry.version),
 }
 
 /** 演示缺省挂载根：mock 与无服务端挂载根信息时的站点目录前缀来源。 */
@@ -114,29 +158,31 @@ export type WebsiteProject = {
   kind: WebsiteProjectKind
   /** 项目名称，卡片首行的显示主体；站点目录路径段的唯一来源，跨类型全局唯一。 */
   name: string
-  /** 容器主进程在宿主命名空间的 PID（Docker inspect 的 State.Pid）：运行中为正整数，停止为 null，HTML 恒 null。 */
+  /** 容器主进程在宿主命名空间的 PID；停止时为 null。 */
   pid: number | null
-  /** 站点容器 ID（64 位十六进制）：非 HTML 为来源容器 ID，HTML 无容器为 null；容器被外部删除后保留登记值如实显示。 */
+  /** 站点容器 ID（64 位十六进制）；容器被外部删除后保留登记值如实显示。 */
   containerId: string | null
-  /** 服务端口：host 与 container 同号、HostIp 恒 127.0.0.1（站点流量一律经宿主 Caddy 进来）；HTML 只登记不发布。 */
+  /** 宿主发布端口。直连绑 0.0.0.0，域名绑 127.0.0.1；HTML 容器内端口为 80。 */
   port: number
   /** 运行时版本：Java/Node/Go/Python 有值，HTML 为 null。 */
   runtimeVersion: string | null
   /** 站点目录的绝对路径：真实环境为服务端解析的挂载根下路径（<mountRoot>/wwwroot/<项目名>），演示环境为固定前缀。 */
   rootDir: string
-  /** 运行状态：非 HTML 为容器 State.Running 的折算；HTML 为面板登记的托管开关（enabled），开即 running。 */
+  /** 运行状态来自容器 State.Running。 */
   runState: WebsiteRunState
-  /** 绑定域名：创建时可选登记、创建后不可改；null 表示未绑定，未绑定的站点不生成反向代理路由。 */
+  accessMode: WebsiteAccessMode
+  /** 域名访问时的主机名；直连为 null。 */
   domain: string | null
+  /** 当前 Caddy 配置的 :443 监听、域名、处理器和目标均与项目登记一致；不代表证书已签发或公网可达。 */
+  routeApplied: boolean
   /** 到期时间（ISO）；演示字段，创建表单不填。 */
   expiryAt: string | null
   /** 备注为空时界面显示 —。 */
   note: string | null
-  /** 证书事实按域名路由折算：none = 未绑定域名或域名路由不在当前 Caddy 配置中；deployed = 绑定了域名且该域名出现在面板成功读取的当前 Caddy 配置里；expired = 真实实现不产生（ACME 自动续期由 Caddy 自管），保留给 mock 演示三态。 */
-  cert: WebsiteCertState
+  certificate: WebsiteCertificate | null
   /** 项目分类，供「全部分类」下拉过滤。 */
   category: WebsiteCategory
-  /** 面板为站点容器配置的启动命令：创建时按类型生成（websiteDefaultDeployCommand）并固化进登记，如实反映容器 Cmd；HTML 无容器为 null。 */
+  /** 面板为站点容器配置的启动命令；HTML 使用 Nginx 默认命令。 */
   deployCommand: string | null
   /** Git 仓库地址：只登记不拉取代码，站点目录内容仍由用户部署。 */
   gitUrl: string | null
@@ -144,31 +190,33 @@ export type WebsiteProject = {
   traffic: WebsiteTraffic
 }
 
-/** 新建项目的输入。站点目录由服务端按挂载根下的项目名推导；新建即已停止、无证书。 */
+/** 新建项目的输入。站点目录由服务端按挂载根下的项目名推导；新建即已停止。 */
 export type WebsiteProjectCreateInput = {
   name: string
   /** 端口必填，1–65535。 */
   port: number
   /** 运行时版本：非 HTML 类型必填；HTML 传入会被忽略。 */
   runtimeVersion?: string | null
-  /** 域名：可选，创建后不可改；空串按未绑定处理。 */
-  domain?: string | null
+  access: WebsiteAccessInput
+  /** Docker Cmd 参数；Java/Go 必填，Node/Python可用缺省值。 */
+  command?: string | null
   /** Git 仓库地址；空串按未配置处理。 */
   gitUrl?: string | null
   note?: string | null
 }
 
-/** 修改项目的输入：设置弹窗只改备注与到期时间，名称、根目录、域名、端口不动。 */
+/** 修改项目的输入：备注、到期时间和非 HTML 启动命令；访问方式由专用入口管理。 */
 export type WebsiteProjectUpdateInput = {
   note?: string | null
   /** ISO 时间或 null（取消到期）。 */
   expiryAt?: string | null
+  command?: string | null
 }
 
 /**
  * 反向代理通道状态报告：state 为 unavailable 时 detail 给中文原因；
- * 通道可用但当前 Caddy 配置与登记期望有缺口（漂移，含降级期间创建的域名站点
- * 未获路由）时 state 仍为 active、detail 如实写缺口（如「N 个站点的路由未下发」）；
+ * 通道可用但当前 Caddy 配置与登记期望有缺口（例如外部重置）时 state 仍为
+ * active、detail 如实写缺口（如「N 个站点的路由未下发」）；
  * 正常且无漂移为 detail null。
  */
 export type WebsiteProxyStatus = {
@@ -262,35 +310,26 @@ export function isValidWebsiteDomain(domain: string): boolean {
 }
 
 /** 官方镜像仓库与 tag 后缀：镜像引用的唯一映射，仅四个官方库、版本由契约目录钉死。 */
-const WEBSITE_RUNTIME_IMAGES: Record<WebsiteRuntimeKind, { repository: string; tagSuffix: string }> =
-  {
-    java: { repository: 'eclipse-temurin', tagSuffix: '-jre' },
-    node: { repository: 'node', tagSuffix: '' },
-    go: { repository: 'golang', tagSuffix: '' },
-    python: { repository: 'python', tagSuffix: '-slim' },
-  }
+export const WEBSITE_HTML_IMAGE = 'nginx:1.30.4-alpine3.24'
 
 /**
  * 运行时镜像引用的唯一权威：version 必须落在 `WEBSITE_RUNTIME_VERSIONS[kind]`
- * 目录内（禁 latest），否则返回 null；命中返回 `eclipse-temurin:<v>-jre`、
- * `node:<v>`、`golang:<v>`、`python:<v>-slim`。html 无运行时镜像、恒为 null。
+ * 目录内（禁 latest），否则返回 null；HTML 返回固定 Nginx 镜像。
  * 建容器与删除时的镜像核对都从这里取引用，用户无法指定任意镜像。
  */
 export function websiteRuntimeImageRef(
   kind: WebsiteProjectKind,
   version: string | null,
 ): string | null {
-  if (kind === 'html' || version === null) return null
-  if (!WEBSITE_RUNTIME_VERSIONS[kind].includes(version)) return null
-  const image = WEBSITE_RUNTIME_IMAGES[kind]
-  return `${image.repository}:${version}${image.tagSuffix}`
+  if (kind === 'html') return WEBSITE_HTML_IMAGE
+  if (version === null) return null
+  return WEBSITE_RUNTIME_CATALOG[kind].find((entry) => entry.version === version)?.image ?? null
 }
 
 /**
  * 面板为站点容器配置的启动命令（创建时生成、固化进登记，如实反映容器 Cmd）：
- * python 用内置 http.server 直接服务 /app；node 内嵌一行式静态文件服务脚本
- * （端口内嵌、单引号包裹可整行复制）；java 与 go 无内置文件服务，长驻占位
- * `tail -f /dev/null`（部署产物后可经容器页重建或调整）；html 无容器为 null。
+ * python 用内置 http.server 直接服务 /app；node 提供可编辑的静态服务命令；
+ * java 与 go 需要用户填写命令；HTML 使用固定 Nginx 命令。
  * mock 与服务端共用本函数，是缺省命令的单一事实来源。
  */
 export function websiteDefaultDeployCommand(
@@ -299,13 +338,13 @@ export function websiteDefaultDeployCommand(
 ): string | null {
   switch (kind) {
     case 'html':
-      return null
+      return 'nginx -g daemon off;'
     case 'python':
       return `python3 -m http.server ${port} --bind 0.0.0.0 --directory /app`
     case 'node':
       return `node -e 'require("http").createServer((q,s)=>{const f=require("path").join("/app",require("path").normalize(q.url).replace(/^([.]{2}[\\/\\\\])+/,""));require("fs").readFile(f,(e,d)=>{s.statusCode=e?404:200;s.end(e?"404 Not Found":d)})}).listen(${port})'`
     case 'java':
     case 'go':
-      return 'tail -f /dev/null'
+      return null
   }
 }

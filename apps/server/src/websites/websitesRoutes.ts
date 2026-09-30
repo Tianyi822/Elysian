@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { endpointErrorHandler, readJsonBody, sameOriginGuard, sendJson } from '../middleware/guard.ts'
 import { InvalidRequestError } from '../shared/errors.ts'
 import type { WebsiteService } from './websitesService.ts'
-import { validateWebsiteCreateRequest, validateWebsiteUpdateRequest } from './websitesService.ts'
+import { validateWebsiteAccessRequest, validateWebsiteCreateRequest, validateWebsiteUpdateRequest } from './websitesService.ts'
 import type { OperationAuditLogs } from '../logs/operationAudit.ts'
 
 /*
@@ -26,8 +26,9 @@ export function createWebsitesApp(deps: WebsitesAppDeps): Hono {
   }
   app.use('*', sameOriginGuard())
   app.get('/', async (c) => c.json(await service().list()))
-  app.post('/', async (c) => c.json(await service().create(validateWebsiteCreateRequest(await readJsonBody(c.req.raw))), 201))
+  app.post('/', async (c) => c.json(await service().create(validateWebsiteCreateRequest(await readJsonBody(c.req.raw, 256 * 1024))), 201))
   app.put('/:id', async (c) => c.json(await service().update(c.req.param('id'), validateWebsiteUpdateRequest(await readJsonBody(c.req.raw)))))
+  app.put('/:id/access', async (c) => c.json(await service().setAccess(c.req.param('id'), validateWebsiteAccessRequest(await readJsonBody(c.req.raw, 256 * 1024)))))
   app.post('/:id/running', async (c) => {
     const body = await readJsonBody(c.req.raw) as { running?: unknown }
     if (typeof body.running !== 'boolean') throw new InvalidRequestError(400, '启停状态须为布尔值')

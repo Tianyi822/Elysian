@@ -137,11 +137,6 @@ const ENUM_TABLES: ReadonlyArray<{
     labels: contracts.WEBSITE_RUN_STATE_LABELS,
   },
   {
-    name: 'WebsiteCertState',
-    values: contracts.WEBSITE_CERT_STATES,
-    labels: contracts.WEBSITE_CERT_STATE_LABELS,
-  },
-  {
     name: 'WebsiteCategory',
     values: contracts.WEBSITE_CATEGORIES,
     labels: contracts.WEBSITE_CATEGORY_LABELS,
@@ -583,11 +578,14 @@ describe('网站域词典', () => {
     expect(contracts.WEBSITE_RUN_STATE_LABELS.stopped).toBe('已停止')
   })
 
-  it('SSL 证书状态是已部署、已过期、未部署三值', () => {
-    expect([...contracts.WEBSITE_CERT_STATES]).toEqual(['deployed', 'expired', 'none'])
-    expect(contracts.WEBSITE_CERT_STATE_LABELS.deployed).toBe('已部署')
-    expect(contracts.WEBSITE_CERT_STATE_LABELS.expired).toBe('已过期')
-    expect(contracts.WEBSITE_CERT_STATE_LABELS.none).toBe('未部署')
+  it('运行时目录只提供固定的正式官方镜像', () => {
+    for (const entries of Object.values(contracts.WEBSITE_RUNTIME_CATALOG)) {
+      for (const entry of entries) {
+        expect(entry.image).not.toMatch(/latest|alpha|beta|rc|nightly/i)
+        expect(entry.checkedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+      }
+    }
+    expect(contracts.websiteRuntimeImageRef('html', null)).toBe('nginx:1.30.4-alpine3.24')
   })
 
   it('分类是生产、测试、开发三档，全部分类只是界面的不过滤态，不入枚举', () => {
@@ -609,7 +607,7 @@ describe('网站域词典', () => {
     expect(contracts.websiteProjectUsesRuntime('java')).toBe(true)
     expect(contracts.websiteProjectUsesRuntime('html')).toBe(false)
     expect(contracts.WEBSITE_RUNTIME_VERSIONS.java).toContain('17')
-    expect(contracts.WEBSITE_RUNTIME_VERSIONS.node).toContain('20.11.1')
+    expect(contracts.WEBSITE_RUNTIME_VERSIONS.node).toContain('24.21.0')
     expect(contracts.WEBSITE_RUNTIME_VERSIONS.go.length).toBeGreaterThan(0)
     expect(contracts.WEBSITE_RUNTIME_VERSIONS.python.length).toBeGreaterThan(0)
   })

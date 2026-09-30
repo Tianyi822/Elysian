@@ -50,11 +50,11 @@ describe('load（POST /load）', () => {
     expect(calls).toEqual([{ method: 'POST', path: '/load', body: { admin: { listen: 'unix//run/caddy/admin.sock' } } }])
   })
 
-  it('非 2xx 抛引擎侧通道错误，消息取引擎 message、缺省回 HTTP 状态', async () => {
+  it('非 2xx 隐去 Caddy 原始响应，避免回显 PEM 私钥', async () => {
     const { caddy } = channel(async () => ({ status: 400, json: { message: 'invalid config' } }))
-    await expect(caddy.load({})).rejects.toMatchObject({ unavailable: false, message: 'invalid config' })
+    await expect(caddy.load({})).rejects.toMatchObject({ unavailable: false, message: 'Caddy 拒绝路由或证书配置（HTTP 400）' })
     const bare = channel(async () => ({ status: 500, json: null }))
-    await expect(bare.caddy.load({})).rejects.toMatchObject({ unavailable: false, message: 'HTTP 500' })
+    await expect(bare.caddy.load({})).rejects.toMatchObject({ unavailable: false, message: 'Caddy 拒绝路由或证书配置（HTTP 500）' })
   })
 })
 

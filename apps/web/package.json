@@ -3,9 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "bun --bun vite",
     "build": "vite build --config vite.build.config.ts",
-    "preview": "vite preview --port 4173",
+    "preview": "bun --bun vite preview --port 4173",
     "test": "vitest run --config vitest.config.ts && bun test src/adapters/hostMetrics/metricsStore.bun.test.ts",
     "test:bun": "bun test src/adapters/hostMetrics",
     "test:watch": "vitest --config vitest.config.ts",

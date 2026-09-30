@@ -23,6 +23,7 @@ export function WebsitesSettingsDialog() {
   const [note, setNote] = useState(() => settingsTarget?.note ?? '')
   // date 输入只吃 YYYY-MM-DD，到期时间种子即此形态。
   const [expiryDate, setExpiryDate] = useState(() => settingsTarget?.expiryAt?.slice(0, 10) ?? '')
+  const [command, setCommand] = useState(() => settingsTarget?.deployCommand ?? '')
 
   if (!settingsTarget) return null
 
@@ -30,6 +31,7 @@ export function WebsitesSettingsDialog() {
     void saveSettings(gateway, settingsTarget.id, {
       note: note.trim() || null,
       expiryAt: expiryDate || null,
+      ...(settingsTarget.kind === 'html' ? {} : { command: command.trim() }),
     })
   }
 
@@ -58,6 +60,7 @@ export function WebsitesSettingsDialog() {
           </div>
 
           <div className="flex flex-col gap-4 overflow-y-auto px-4 py-4">
+            {settingsTarget.kind !== 'html' ? <div><label htmlFor="website-settings-command" className="mb-1 block text-xs font-medium text-fg-muted">容器启动命令</label><input id="website-settings-command" value={command} onChange={(event) => setCommand(event.target.value)} className={INPUT_CLASS} /><p className="mt-1 text-xs text-fg-subtle">修改后会重建容器，运行中的项目会短暂停机；服务需监听容器内 0.0.0.0。</p></div> : null}
             <div>
               <label htmlFor="website-settings-expiry" className="mb-1 block text-xs font-medium text-fg-muted">
                 到期时间

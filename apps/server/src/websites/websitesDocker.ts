@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { mkdir, realpath, rm } from 'node:fs/promises'
-import type { ContainerImage, WebsiteRuntimeKind } from '@elysian/contracts'
+import type { ContainerImage, WebsiteAccessMode, WebsiteProjectKind } from '@elysian/contracts'
 import { websiteDefaultDeployCommand } from '@elysian/contracts'
 import { InvalidRequestError, invalidRequest } from '../shared/errors.ts'
 import type { DockerTransport } from '../docker/dockerTransport.ts'
@@ -21,21 +21,24 @@ const LOG_MAX_BYTES = 1024 * 1024
 const SITE_CONTAINER_NAME_PATTERN = /^elysian-site-[0-9a-f]{12}$/
 /** 站点容器内的挂载点：站点目录 bind 的唯一目标。 */
 const SITE_APP_TARGET = '/app'
+const SITE_HTML_TARGET = '/usr/share/nginx/html'
 
 export type WebsiteContainerCreateInput = {
   imageRef: string
-  kind: WebsiteRuntimeKind
+  kind: WebsiteProjectKind
   version: string
   projectId: string
   port: number
   bindSource: string
+  accessMode: WebsiteAccessMode
+  command: string | null
 }
 
 export type WebsiteContainerIdentity = {
   containerId: string
   containerName: string
   projectId: string
-  kind: WebsiteRuntimeKind
+  kind: WebsiteProjectKind
   version: string
   imageRef: string
   rootDir: string
@@ -86,14 +89,31 @@ export function isValidSiteContainerName(name: string): boolean {
  * 站点容器启动命令的 argv 形：由契约的 websiteDefaultDeployCommand（显示字符串的
  * 单一事实来源）推导——node 的脚本参数含空格，不能按空白切分，按已知包裹形状剥出。
  */
-export function websiteContainerCmd(kind: WebsiteRuntimeKind, port: number): string[] {
-  const command = websiteDefaultDeployCommand(kind, port)
-  if (command === null) return []
-  if (kind === 'node') {
-    const prefix = 'node -e \''
-    return ['node', '-e', command.slice(prefix.length, command.length - 1)]
+export function websiteContainerCmd(kind: WebsiteProjectKind, command: string | null): string[] {
+  if (kind === 'html') return ['nginx', '-g', 'daemon off;']
+  if (!command?.trim()) throw invalidRequest('请填写容器启动命令')
+  if (command.length > 2048 || /[\u0000-\u001f\u007f]/.test(command)) throw invalidRequest('启动命令无效')
+  const args: string[] = []
+  let current = ''
+  let quote: 'single' | 'double' | null = null
+  let escaped = false
+  let started = false
+  for (const char of command.trim()) {
+    if (escaped) { current += char; escaped = false; started = true; continue }
+    if (char === '\\' && quote !== 'single') { escaped = true; continue }
+    if (char === "'" && quote !== 'double') { quote = quote === 'single' ? null : 'single'; started = true; continue }
+    if (char === '"' && quote !== 'single') { quote = quote === 'double' ? null : 'double'; started = true; continue }
+    if (/\s/.test(char) && quote === null) {
+      if (started) { args.push(current); current = ''; started = false }
+      continue
+    }
+    current += char
+    started = true
   }
-  return command.split(' ')
+  if (quote || escaped) throw invalidRequest('启动命令的引号或转义不完整')
+  if (started) args.push(current)
+  if (args.length === 0 || args[0] === '') throw invalidRequest('请填写容器启动命令')
+  return args
 }
 
 /** 挂载根归一化：必须是绝对路径、无结尾斜杠、不含路径穿越段（对齐 createSpec 口径）。 */
@@ -196,10 +216,12 @@ export function createWebsiteDocker(
     if (!isValidSiteContainerName(input.containerName)) throw invalidRequest('容器名称无效')
     if (!Number.isInteger(input.port) || input.port < 1 || input.port > 65535) throw invalidRequest('端口需为 1-65535 的整数')
     if (typeof input.bindSource !== 'string' || !input.bindSource.startsWith('/')) throw invalidRequest('站点目录无效')
-    const portKey = `${input.port}/tcp`
+    const containerPort = input.kind === 'html' ? 80 : input.port
+    const portKey = `${containerPort}/tcp`
+    const bindTarget = input.kind === 'html' ? SITE_HTML_TARGET : SITE_APP_TARGET
     const createBody = {
       Image: input.imageRef,
-      Cmd: websiteContainerCmd(input.kind, input.port),
+      Cmd: websiteContainerCmd(input.kind, input.command ?? websiteDefaultDeployCommand(input.kind, input.port)),
       Labels: {
         'elysian.managed': 'true',
         'elysian.website': 'true',
@@ -208,8 +230,8 @@ export function createWebsiteDocker(
         'elysian.website.version': input.version,
       },
       HostConfig: {
-        Binds: [`${input.bindSource}:${SITE_APP_TARGET}`],
-        PortBindings: { [portKey]: [{ HostIp: '127.0.0.1', HostPort: String(input.port) }] },
+        Binds: [`${input.bindSource}:${bindTarget}${input.kind === 'html' ? ':ro' : ''}`],
+        PortBindings: { [portKey]: [{ HostIp: input.accessMode === 'direct' ? '0.0.0.0' : '127.0.0.1', HostPort: String(input.port) }] },
         RestartPolicy: { Name: 'unless-stopped' },
       },
       ExposedPorts: { [portKey]: {} },
@@ -274,7 +296,7 @@ export function createWebsiteDocker(
     const mounts = Array.isArray(info.Mounts) ? info.Mounts : []
     const bindMounted = mounts.some((mount: unknown) => {
       const row = obj(mount)
-      return row.Type === 'bind' && row.Source === identity.rootDir && row.Destination === SITE_APP_TARGET
+      return row.Type === 'bind' && row.Source === identity.rootDir && row.Destination === (identity.kind === 'html' ? SITE_HTML_TARGET : SITE_APP_TARGET)
     })
     const nameOk = rawName === identity.containerName && isValidSiteContainerName(rawName)
     const labelsOk = labels['elysian.managed'] === 'true' && labels['elysian.website'] === 'true' &&

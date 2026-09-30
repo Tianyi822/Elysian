@@ -29,6 +29,7 @@ import { createWebsitesApp, type WebsitesAppDeps } from './websites/websitesRout
 import { createWebsiteCaddy } from './websites/websitesCaddy.ts'
 import { createWebsiteDocker } from './websites/websitesDocker.ts'
 import { createFileWebsiteRegistry } from './websites/websitesRegistry.ts'
+import { createFileWebsiteCertificateStore } from './websites/websitesCertificates.ts'
 import { createWebsiteService } from './websites/websitesService.ts'
 import { existsSync } from 'node:fs'
 import {
@@ -148,6 +149,7 @@ export async function createApp(overrides: AppDepsOverrides = {}): Promise<Hono>
       const dockerPolicy = await docker.service.policy()
       websites = { available: true, service: createWebsiteService({
         registry: createFileWebsiteRegistry(),
+        certificates: createFileWebsiteCertificateStore(),
         docker: createWebsiteDocker(docker.transport, () => docker.service!.listImages()),
         caddy: createWebsiteCaddy(),
         mountRoot: dockerPolicy.mountRoot,

@@ -1,25 +1,28 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import {
   WEBSITE_PROJECT_KINDS,
   WEBSITE_PROJECT_KIND_LABELS,
   WEBSITE_RUNTIME_VERSIONS,
+  WEBSITE_RUNTIME_CATALOG,
   isValidWebsiteDomain,
   isValidWebsitePort,
   isValidWebsiteProjectName,
   parseProjectNameFromGitUrl,
   websiteProjectUsesRuntime,
+  websiteDefaultDeployCommand,
 } from '@elysian/contracts'
 import type { WebsiteProjectKind, WebsiteRuntimeKind } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { Minus, Plus, X } from '../../components/icons'
 import { useWebsitesStore } from '../../stores/websitesStore'
+import { useDependencyGuideStore } from '../../stores/dependencyGuideStore'
 import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 import { SelectDropdown } from '../../components/SelectDropdown'
 
 /**
  * 添加项目弹窗：类型、Git 地址（可贴链接自动带出名称）、名称、运行时版本（非 HTML）、
- * 端口（自定义加减，全类型必填）、域名（可选，创建后不可改）、备注。根目录固定由
+ * 端口（自定义加减，全类型必填）、互斥的直连或域名入口与证书、备注。根目录固定由
  * 名称推导，创建表单不暴露。Git 只登记地址，不自动拉取代码。
  */
 
@@ -86,6 +89,7 @@ export function WebsitesCreateDialog() {
   const saving = useWebsitesStore((s) => s.saving)
   const closeCreate = useWebsitesStore((s) => s.closeCreate)
   const createProject = useWebsitesStore((s) => s.createProject)
+  const caddyReady = useDependencyGuideStore((s) => s.report?.caddy.state === 'ok')
 
   const [kind, setKind] = useState<WebsiteProjectKind>('java')
   const [gitUrl, setGitUrl] = useState('')
@@ -95,18 +99,41 @@ export function WebsitesCreateDialog() {
   const [runtimeVersion, setRuntimeVersion] = useState<string | null>(() => defaultRuntimeVersion('java'))
   const [port, setPort] = useState(DEFAULT_PORT)
   const [domain, setDomain] = useState('')
+  const [accessMode, setAccessMode] = useState<'direct' | 'domain'>('direct')
+  const [certificatePem, setCertificatePem] = useState('')
+  const [privateKeyPem, setPrivateKeyPem] = useState('')
+  const [certificateName, setCertificateName] = useState('')
+  const [privateKeyName, setPrivateKeyName] = useState('')
+  const [readingCertificate, setReadingCertificate] = useState(false)
+  const [readingPrivateKey, setReadingPrivateKey] = useState(false)
+  const certificateReadVersion = useRef(0)
+  const privateKeyReadVersion = useRef(0)
+  const [command, setCommand] = useState('')
+  const [versionSearch, setVersionSearch] = useState('')
+  const [showLegacy, setShowLegacy] = useState(false)
   const [note, setNote] = useState('')
   const [nameError, setNameError] = useState<string | undefined>(undefined)
   const [portError, setPortError] = useState<string | undefined>(undefined)
   const [versionError, setVersionError] = useState<string | undefined>(undefined)
   const [domainError, setDomainError] = useState<string | undefined>(undefined)
+  const [accessError, setAccessError] = useState<string | undefined>(undefined)
+  const [commandError, setCommandError] = useState<string | undefined>(undefined)
 
   const usesRuntime = websiteProjectUsesRuntime(kind)
 
   const applyKind = (next: WebsiteProjectKind) => {
     setKind(next)
     setRuntimeVersion(defaultRuntimeVersion(next))
+    setCommand(websiteDefaultDeployCommand(next, port) ?? '')
     setVersionError(undefined)
+  }
+
+  const applyPort = (next: number) => {
+    const oldDefault = websiteDefaultDeployCommand(kind, port)
+    const nextDefault = websiteDefaultDeployCommand(kind, next)
+    if (oldDefault !== null && command === oldDefault && nextDefault !== null) setCommand(nextDefault)
+    setPort(next)
+    setPortError(undefined)
   }
 
   const applyGitUrl = (next: string) => {
@@ -137,17 +164,23 @@ export function WebsitesCreateDialog() {
       return
     }
     setVersionError(undefined)
+    if (!command.trim() && kind !== 'html') { setCommandError('请填写容器启动命令'); return }
+    setCommandError(undefined)
     const trimmedDomain = domain.trim()
-    if (trimmedDomain && !isValidWebsiteDomain(trimmedDomain)) {
+    if (accessMode === 'domain' && !isValidWebsiteDomain(trimmedDomain)) {
       setDomainError('域名无效')
       return
     }
     setDomainError(undefined)
+    if (accessMode === 'domain' && !caddyReady) { setAccessError('Caddy 管理通道不可用，请先安装或重新检测'); return }
+    if (accessMode === 'domain' && (!certificatePem || !privateKeyPem)) { setAccessError('请同时上传公开 CA 证书链和私钥'); return }
+    setAccessError(undefined)
     void createProject(gateway, kind, {
       name: trimmedName,
       port,
       runtimeVersion: usesRuntime ? runtimeVersion : null,
-      domain: trimmedDomain || null,
+      access: accessMode === 'direct' ? { mode: 'direct' } : { mode: 'domain', domain: trimmedDomain, certificatePem, privateKeyPem },
+      command: kind === 'html' ? null : command.trim(),
       gitUrl: gitUrl.trim() || null,
       note: note.trim() || null,
     })
@@ -240,10 +273,9 @@ export function WebsitesCreateDialog() {
                 <SelectDropdown
                   ariaLabel="运行时版本"
                   fullWidth
-                  items={WEBSITE_RUNTIME_VERSIONS[kind as WebsiteRuntimeKind].map((version) => ({
-                    value: version,
-                    label: version,
-                  }))}
+                  items={WEBSITE_RUNTIME_CATALOG[kind as WebsiteRuntimeKind]
+                    .filter((entry) => (showLegacy || entry.maintenance === 'maintained') && entry.version.includes(versionSearch.trim()))
+                    .map((entry) => ({ value: entry.version, label: `${entry.version}${entry.maintenance === 'legacy' ? ' · 旧版本' : ''}` }))}
                   value={runtimeVersion ?? undefined}
                   onSelect={(next) => {
                     setRuntimeVersion(next)
@@ -252,6 +284,10 @@ export function WebsitesCreateDialog() {
                   fallbackLabel="请选择版本"
                 />
                 {versionError ? <p className="mt-1 text-xs text-danger">{versionError}</p> : null}
+                <div className="mt-2 flex gap-2">
+                  <input aria-label="搜索运行时版本" value={versionSearch} onChange={(event) => setVersionSearch(event.target.value)} placeholder="搜索版本号" className={INPUT_CLASS} />
+                  <button type="button" aria-pressed={showLegacy} onClick={() => setShowLegacy(!showLegacy)} className="shrink-0 rounded-lg border border-line px-2 text-xs text-fg-muted">{showLegacy ? '收起旧版本' : '旧版本'}</button>
+                </div>
               </div>
             ) : null}
 
@@ -259,29 +295,33 @@ export function WebsitesCreateDialog() {
               <label htmlFor="website-create-port" className="mb-1 block text-xs font-medium text-fg-muted">
                 端口 <span className="text-danger">*</span>
               </label>
-              <PortStepper id="website-create-port" value={port} onChange={setPort} />
+              <PortStepper id="website-create-port" value={port} onChange={applyPort} />
               {portError ? <p className="mt-1 text-xs text-danger">{portError}</p> : null}
             </div>
 
             <div>
-              <label htmlFor="website-create-domain" className="mb-1 block text-xs font-medium text-fg-muted">
-                域名
-              </label>
-              <input
-                id="website-create-domain"
-                value={domain}
-                onChange={(event) => {
-                  setDomain(event.target.value)
-                  setDomainError(undefined)
-                }}
-                placeholder="如 www.example.com"
-                className={INPUT_CLASS}
-              />
-              {domainError ? (
-                <p className="mt-1 text-xs text-danger">{domainError}</p>
-              ) : (
-                <p className="mt-1 text-xs text-fg-subtle">选填；绑定后由宿主 Caddy 提供域名路由与 HTTPS，创建后不可改。</p>
-              )}
+              <label htmlFor="website-create-command" className="mb-1 block text-xs font-medium text-fg-muted">启动命令 {kind !== 'html' ? <span className="text-danger">*</span> : null}</label>
+              <input id="website-create-command" value={kind === 'html' ? 'Nginx 默认命令' : command} disabled={kind === 'html'} onChange={(event) => { setCommand(event.target.value); setCommandError(undefined) }} placeholder={kind === 'java' ? '如 java -jar app.jar' : kind === 'go' ? '如 ./server --port 8080' : ''} className={INPUT_CLASS} />
+              {commandError ? <p className="mt-1 text-xs text-danger">{commandError}</p> : <p className="mt-1 text-xs text-fg-subtle">命令作为 Docker 参数执行，不经宿主 Shell；服务需监听容器内 0.0.0.0。</p>}
+            </div>
+
+            <div>
+              <p className="mb-2 text-xs font-medium text-fg-muted">访问方式</p>
+              <div role="group" aria-label="访问方式" className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <button type="button" aria-pressed={accessMode === 'direct'} onClick={() => { setAccessMode('direct'); setAccessError(undefined) }} className={`rounded-lg border p-3 text-left text-xs ${accessMode === 'direct' ? 'border-accent bg-accent/10 text-fg' : 'border-line text-fg-muted'}`}><strong className="block">IP＋端口直连</strong><span>HTTP · 无需证书</span></button>
+                <button type="button" aria-pressed={accessMode === 'domain'} onClick={() => { setAccessMode('domain'); setAccessError(undefined) }} className={`rounded-lg border p-3 text-left text-xs ${accessMode === 'domain' ? 'border-accent bg-accent/10 text-fg' : 'border-line text-fg-muted'}`}><strong className="block">域名访问</strong><span>HTTPS · 需自备公开 CA 证书</span></button>
+              </div>
+              {accessMode === 'domain' ? <div className="mt-3 space-y-2">
+                <label htmlFor="website-create-domain" className="block text-xs text-fg-muted">访问域名 *</label>
+                <input id="website-create-domain" value={domain} onChange={(event) => { setDomain(event.target.value); setDomainError(undefined) }} placeholder="www.example.com" className={INPUT_CLASS} />
+                {domainError ? <p className="text-xs text-danger">{domainError}</p> : null}
+                <label className="block text-xs text-fg-muted">PEM 证书链 *<input type="file" accept=".pem,.crt,.cer" className="mt-1 block w-full text-xs" onChange={(event) => { const file = event.target.files?.[0]; if (file) { const version = ++certificateReadVersion.current; setCertificateName(file.name); setCertificatePem(''); setReadingCertificate(true); void file.text().then((pem) => { if (version === certificateReadVersion.current) setCertificatePem(pem) }).catch(() => { if (version === certificateReadVersion.current) setAccessError('证书文件读取失败') }).finally(() => { if (version === certificateReadVersion.current) setReadingCertificate(false) }) } }} /></label>
+                <label className="block text-xs text-fg-muted">PEM 私钥 *<input type="file" accept=".pem,.key" className="mt-1 block w-full text-xs" onChange={(event) => { const file = event.target.files?.[0]; if (file) { const version = ++privateKeyReadVersion.current; setPrivateKeyName(file.name); setPrivateKeyPem(''); setReadingPrivateKey(true); void file.text().then((pem) => { if (version === privateKeyReadVersion.current) setPrivateKeyPem(pem) }).catch(() => { if (version === privateKeyReadVersion.current) setAccessError('私钥文件读取失败') }).finally(() => { if (version === privateKeyReadVersion.current) setReadingPrivateKey(false) }) } }} /></label>
+                <p className="text-xs text-fg-subtle">{certificateName && privateKeyName ? `已选择 ${certificateName}、${privateKeyName}` : '证书和私钥仅用于当前项目；续期时需重新上传。'}</p>
+              </div> : null}
+              {accessError ? <p role="alert" className="mt-2 text-xs text-danger">{accessError}</p> : null}
+              <p className="mt-3 rounded-lg border border-line p-2 text-xs text-fg-muted">访问路径：{accessMode === 'direct' ? `http://服务器IP:${port} → 项目容器` : `https://${domain.trim() || '域名'} → Caddy → 项目容器`}</p>
+              <p className="mt-1 text-xs text-fg-subtle">请自行核对服务器防火墙、DNS 与公网可达性。</p>
             </div>
 
             <div>
@@ -310,7 +350,7 @@ export function WebsitesCreateDialog() {
               <button
                 type="button"
                 onClick={submit}
-                disabled={saving}
+                disabled={saving || (accessMode === 'domain' && (readingCertificate || readingPrivateKey))}
                 className="rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:opacity-50"
               >
                 添加项目

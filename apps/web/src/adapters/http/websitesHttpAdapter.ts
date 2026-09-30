@@ -1,6 +1,6 @@
 import type {
   WebsiteCategory,
-  WebsiteCertState,
+  WebsiteAccessMode,
   WebsiteListReport,
   WebsiteProject,
   WebsiteProjectKind,
@@ -10,7 +10,6 @@ import type {
 } from '@elysian/contracts'
 import {
   WEBSITE_CATEGORIES,
-  WEBSITE_CERT_STATES,
   WEBSITE_PROJECT_KINDS,
   WEBSITE_PROXY_STATES,
   WEBSITE_RUN_STATES,
@@ -77,6 +76,18 @@ export function parseWebsiteProject(value: unknown): WebsiteProject {
   if (row.containerId !== null && typeof row.containerId !== 'string') {
     throw new Error('网站项目容器 ID 响应无效')
   }
+  if (typeof row.routeApplied !== 'boolean') {
+    throw new Error('网站项目路由状态响应无效')
+  }
+  let certificate: WebsiteProject['certificate'] = null
+  if (row.certificate !== null) {
+    const cert = asObject(row.certificate, '网站项目证书响应无效')
+    if (typeof cert.issuer !== 'string' || typeof cert.notAfter !== 'string' ||
+      typeof cert.fingerprint256 !== 'string' || typeof cert.applied !== 'boolean') {
+      throw new Error('网站项目证书响应无效')
+    }
+    certificate = { issuer: cert.issuer, notAfter: cert.notAfter, fingerprint256: cert.fingerprint256, applied: cert.applied }
+  }
   return {
     id: row.id,
     kind: oneOf<WebsiteProjectKind>(row.kind, WEBSITE_PROJECT_KINDS, '网站项目类型响应无效'),
@@ -87,10 +98,12 @@ export function parseWebsiteProject(value: unknown): WebsiteProject {
     runtimeVersion: stringOrNull(row.runtimeVersion, '网站项目运行时版本响应无效'),
     rootDir: row.rootDir,
     runState: oneOf<WebsiteRunState>(row.runState, WEBSITE_RUN_STATES, '网站项目运行状态响应无效'),
+    accessMode: oneOf<WebsiteAccessMode>(row.accessMode, ['direct', 'domain'], '网站项目访问方式响应无效'),
     domain: stringOrNull(row.domain, '网站项目域名响应无效'),
+    routeApplied: row.routeApplied,
     expiryAt: stringOrNull(row.expiryAt, '网站项目到期时间响应无效'),
     note: stringOrNull(row.note, '网站项目备注响应无效'),
-    cert: oneOf<WebsiteCertState>(row.cert, WEBSITE_CERT_STATES, '网站项目证书状态响应无效'),
+    certificate,
     category: oneOf<WebsiteCategory>(row.category, WEBSITE_CATEGORIES, '网站项目分类响应无效'),
     deployCommand: stringOrNull(row.deployCommand, '网站项目部署命令响应无效'),
     gitUrl: stringOrNull(row.gitUrl, '网站项目 Git 地址响应无效'),
@@ -187,7 +200,8 @@ export function createHttpWebsitesAdapter(baseUrl = '/api/websites'): WebsitesAd
         name: input.name,
         port: input.port,
         runtimeVersion: input.runtimeVersion ?? null,
-        domain: input.domain ?? null,
+        access: input.access,
+        command: input.command ?? null,
         gitUrl: input.gitUrl ?? null,
         note: input.note ?? null,
       }))
@@ -197,7 +211,12 @@ export function createHttpWebsitesAdapter(baseUrl = '/api/websites'): WebsitesAd
       return parseWebsiteProject(await sendJson(`/${encodeURIComponent(projectId)}`, 'PUT', {
         note: input.note ?? null,
         expiryAt: input.expiryAt ?? null,
+        ...(input.command === undefined ? {} : { command: input.command }),
       }))
+    },
+
+    async setAccess(projectId, access) {
+      return parseWebsiteProject(await sendJson(`/${encodeURIComponent(projectId)}/access`, 'PUT', access))
     },
 
     async remove(projectId) {

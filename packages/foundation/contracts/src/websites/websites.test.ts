@@ -86,17 +86,17 @@ describe('isValidWebsiteDomain 域名判据', () => {
 
 describe('websiteRuntimeImageRef 镜像引用的唯一权威', () => {
   it('四个官方库按契约目录内版本生成钉死引用', () => {
-    expect(websiteRuntimeImageRef('java', '17')).toBe('eclipse-temurin:17-jre')
-    expect(websiteRuntimeImageRef('node', '20.11.1')).toBe('node:20.11.1')
-    expect(websiteRuntimeImageRef('go', '1.23.1')).toBe('golang:1.23.1')
-    expect(websiteRuntimeImageRef('python', '3.11.9')).toBe('python:3.11.9-slim')
+    expect(websiteRuntimeImageRef('java', '17')).toBe('eclipse-temurin:17.0.20.1_1-jre')
+    expect(websiteRuntimeImageRef('node', '20.20.2')).toBe('node:20.20.2')
+    expect(websiteRuntimeImageRef('go', '1.23.12')).toBe('golang:1.23.12')
+    expect(websiteRuntimeImageRef('python', '3.11.16')).toBe('python:3.11.16-slim')
   })
 
-  it('目录外版本、latest、空版本与 html 一律 null', () => {
+  it('目录外版本、latest、空版本被拒绝，HTML 使用固定镜像', () => {
     expect(websiteRuntimeImageRef('node', 'latest')).toBe(null)
     expect(websiteRuntimeImageRef('node', '99.9.9')).toBe(null)
     expect(websiteRuntimeImageRef('node', null)).toBe(null)
-    expect(websiteRuntimeImageRef('html', '17')).toBe(null)
+    expect(websiteRuntimeImageRef('html', null)).toBe('nginx:1.30.4-alpine3.24')
   })
 
   it('契约目录内每个版本都能映射出镜像引用', () => {
@@ -125,10 +125,10 @@ describe('websiteDefaultDeployCommand 缺省启动命令', () => {
     expect(websiteDefaultDeployCommand('node', 3100)).toContain('.listen(3100)')
   })
 
-  it('java 与 go 是长驻占位，html 无命令', () => {
-    expect(websiteDefaultDeployCommand('java', 8080)).toBe('tail -f /dev/null')
-    expect(websiteDefaultDeployCommand('go', 9100)).toBe('tail -f /dev/null')
-    expect(websiteDefaultDeployCommand('html', 8088)).toBe(null)
+  it('java 与 go 必须填写命令，HTML 使用固定 Nginx 命令', () => {
+    expect(websiteDefaultDeployCommand('java', 8080)).toBe(null)
+    expect(websiteDefaultDeployCommand('go', 9100)).toBe(null)
+    expect(websiteDefaultDeployCommand('html', 8088)).toBe('nginx -g daemon off;')
   })
 })
 
