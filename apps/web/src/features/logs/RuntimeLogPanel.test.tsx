@@ -1,8 +1,8 @@
 import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { LOG_ENTRY_FETCH_LIMIT, formatLogBytes, logRetentionText } from '@elysian/contracts'
+import { LOG_ENTRY_FETCH_LIMIT, formatLogBytes, logRetentionText, type LogListQuery } from '@elysian/contracts'
 import type { LogStorageStats, RuntimeLogListReport } from '@elysian/contracts'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { SEED_RUNTIME_LOGS, resetLogsData } from '../../adapters/mock/logsData'
 import type { ElysianGateway } from '../../contracts/adapters'
@@ -28,15 +28,19 @@ beforeEach(() => {
   useLogsStore.setState({ tab: 'runtime' })
 })
 
+afterEach(() => {
+  vi.useRealTimers()
+})
+
 /** 逐方法转发而不是展开 `base.logs`：mock adapter 是类实例，展开会丢掉原型上的方法。 */
 function gatewayWithLogs(overrides: Partial<ElysianGateway['logs']> = {}): ElysianGateway {
   const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
   return {
     ...base,
     logs: {
-      runtimeLog: overrides.runtimeLog ?? (() => base.logs.runtimeLog()),
-      loginLogs: overrides.loginLogs ?? (() => base.logs.loginLogs()),
-      operationLogs: overrides.operationLogs ?? (() => base.logs.operationLogs()),
+      runtimeLog: overrides.runtimeLog ?? ((query) => base.logs.runtimeLog(query)),
+      loginLogs: overrides.loginLogs ?? ((query) => base.logs.loginLogs(query)),
+      operationLogs: overrides.operationLogs ?? ((query) => base.logs.operationLogs(query)),
       clearLogs: overrides.clearLogs ?? ((category) => base.logs.clearLogs(category)),
     },
   }
@@ -154,6 +158,26 @@ describe('运行日志表格', () => {
 })
 
 describe('搜索与全屏', () => {
+  it('搜索 300 毫秒后请求带 q', async () => {
+    const calls: LogListQuery[] = []
+    const gateway = gatewayWithLogs({
+      runtimeLog: async (query) => {
+        calls.push(query ?? {})
+        return reportWith()
+      },
+    })
+    renderApp('/logs', { gateway })
+    await waitForTable()
+    const initialCalls = calls.length
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    act(() => {
+      useRuntimeLogStore.getState().setSearch('慢查询')
+    })
+    await vi.advanceTimersByTimeAsync(300)
+    expect(calls.length).toBeGreaterThan(initialCalls)
+    expect(calls.at(-1)?.q).toBe('慢查询')
+  })
+
   it('搜索按 message 与 source 过滤，无命中和搜日期都不出满屏', async () => {
     const user = userEvent.setup({ delay: null })
     renderApp('/logs', { gateway: gatewayWithLogs() })
@@ -208,15 +232,20 @@ describe('搜索与全屏', () => {
 
     await user.click(screen.getByRole('button', { name: '全屏展示' }))
     const dialog = await screen.findByRole('dialog')
-    const fullscreenRegion = within(dialog).getByRole('region', { name: '运行日志表' })
-    expect(within(fullscreenRegion).getAllByRole('row')).toHaveLength(SEED_RUNTIME_LOGS.length + 1)
+    expect(
+      within(within(dialog).getByRole('region', { name: '运行日志表' })).getAllByRole('row'),
+    ).toHaveLength(SEED_RUNTIME_LOGS.length + 1)
 
     // 搜索关键字在全屏里同样生效（两个容器共用同一份过滤结果）。
     act(() => useRuntimeLogStore.getState().setSearch('轮询公告列表'))
-    await waitFor(() =>
-      expect(within(fullscreenRegion).getAllByRole('row')).toHaveLength(
-        SEED_RUNTIME_LOGS.filter((entry) => entry.message.includes('轮询公告列表')).length + 1,
-      ),
+    await waitFor(
+      () =>
+        expect(
+          within(within(dialog).getByRole('region', { name: '运行日志表' })).getAllByRole('row'),
+        ).toHaveLength(
+          SEED_RUNTIME_LOGS.filter((entry) => entry.message.includes('轮询公告列表')).length + 1,
+        ),
+      { timeout: 3000 },
     )
 
     await user.click(within(dialog).getByRole('button', { name: '退出全屏' }))
@@ -295,7 +324,7 @@ describe('清空日志与其余能力', () => {
 
   it('没有任何记录时给空状态，而不是一张空表', async () => {
     renderApp('/logs', {
-      gateway: gatewayWithLogs({ runtimeLog: async () => reportWith({ entries: [] }) }),
+      gateway: gatewayWithLogs({ runtimeLog: async () => reportWith({ entries: [], total: 0 }) }),
     })
 
     expect(await screen.findByText('还没有运行日志')).toBeInTheDocument()

@@ -1,6 +1,7 @@
-import { screen, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { LoginLogListQuery } from '@elysian/contracts'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { SEED_LOGIN_LOGS } from '../../adapters/mock/logsData'
 import type { ElysianGateway } from '../../contracts/adapters'
@@ -25,11 +26,18 @@ const INITIAL_STATE = {
   skippedFiles: 0,
   statusFilter: 'all' as const,
   search: '',
+  refreshing: false,
+  loadingOlder: false,
+  olderError: undefined,
 }
 
 beforeEach(() => {
   useLoginLogStore.setState(INITIAL_STATE)
   useLogsStore.setState({ tab: 'runtime' })
+})
+
+afterEach(() => {
+  vi.useRealTimers()
 })
 
 async function openLoginTab() {
@@ -88,8 +96,8 @@ describe('平台登录日志面板', () => {
     const gateway: ElysianGateway = {
       ...base,
       logs: {
-        runtimeLog: () => base.logs.runtimeLog(),
-        operationLogs: () => base.logs.operationLogs(),
+        runtimeLog: (query) => base.logs.runtimeLog(query),
+        operationLogs: (query) => base.logs.operationLogs(query),
         clearLogs: (category) => base.logs.clearLogs(category),
         loginLogs: () => {
           calls += 1
@@ -113,8 +121,8 @@ describe('平台登录日志面板', () => {
     const gateway: ElysianGateway = {
       ...base,
       logs: {
-        runtimeLog: () => base.logs.runtimeLog(),
-        operationLogs: () => base.logs.operationLogs(),
+        runtimeLog: (query) => base.logs.runtimeLog(query),
+        operationLogs: (query) => base.logs.operationLogs(query),
         clearLogs: (category) => base.logs.clearLogs(category),
         loginLogs: async () => ({ entries: [], total: 0, truncated: false, skippedLines: 0, skippedFiles: 0 }),
       },
@@ -129,18 +137,25 @@ describe('平台登录日志面板', () => {
     const user = userEvent.setup()
     renderApp('/logs')
     await openLoginTab()
-    const table = within(await screen.findByRole('region', { name: '登录日志表' })).getByRole('table')
+    await screen.findByRole('region', { name: '登录日志表' })
 
     await user.click(statusFilterButton('登录失败'))
     const failureCount = seedCount((entry) => entry.status === 'failure')
     expect(failureCount).toBeGreaterThan(0)
-    expect(loginRows(table)).toHaveLength(failureCount)
+    await waitFor(() => {
+      const table = within(screen.getByRole('region', { name: '登录日志表' })).getByRole('table')
+      expect(loginRows(table)).toHaveLength(failureCount)
+    })
+    const table = within(screen.getByRole('region', { name: '登录日志表' })).getByRole('table')
     expect(within(table).getAllByText('登录失败')).toHaveLength(failureCount)
     expect(within(table).queryByText('登录成功')).not.toBeInTheDocument()
     expect(statusFilterButton('登录失败')).toHaveAttribute('aria-pressed', 'true')
 
     await user.click(statusFilterButton('全部'))
-    expect(loginRows(table)).toHaveLength(SEED_LOGIN_LOGS.length)
+    await waitFor(() => {
+      const restored = within(screen.getByRole('region', { name: '登录日志表' })).getByRole('table')
+      expect(loginRows(restored)).toHaveLength(SEED_LOGIN_LOGS.length)
+    })
     expect(statusFilterButton('全部')).toHaveAttribute('aria-pressed', 'true')
   })
 
@@ -148,20 +163,29 @@ describe('平台登录日志面板', () => {
     const user = userEvent.setup()
     renderApp('/logs')
     await openLoginTab()
-    const table = within(await screen.findByRole('region', { name: '登录日志表' })).getByRole('table')
+    await screen.findByRole('region', { name: '登录日志表' })
     const searchBox = screen.getByLabelText('搜索登录日志')
 
     await user.type(searchBox, '114.135')
-    expect(loginRows(table)).toHaveLength(seedCount((entry) => entry.ip.includes('114.135')))
+    await waitFor(() => {
+      const table = within(screen.getByRole('region', { name: '登录日志表' })).getByRole('table')
+      expect(loginRows(table)).toHaveLength(seedCount((entry) => entry.ip.includes('114.135')))
+    })
 
     await user.clear(searchBox)
     await user.type(searchBox, 'Safari')
-    expect(loginRows(table)).toHaveLength(seedCount((entry) => entry.userAgent.includes('Safari')))
+    await waitFor(() => {
+      const table = within(screen.getByRole('region', { name: '登录日志表' })).getByRole('table')
+      expect(loginRows(table)).toHaveLength(seedCount((entry) => entry.userAgent.includes('Safari')))
+    })
 
     await user.click(statusFilterButton('登录失败'))
-    expect(loginRows(table)).toHaveLength(
-      seedCount((entry) => entry.userAgent.includes('Safari') && entry.status === 'failure'),
-    )
+    await waitFor(() => {
+      const table = within(screen.getByRole('region', { name: '登录日志表' })).getByRole('table')
+      expect(loginRows(table)).toHaveLength(
+        seedCount((entry) => entry.userAgent.includes('Safari') && entry.status === 'failure'),
+      )
+    })
   })
 
   it('宿主机演示态在筛选栏标注「演示数据」', async () => {
@@ -175,10 +199,16 @@ describe('平台登录日志面板', () => {
     const user = userEvent.setup()
     renderApp('/logs')
     await openLoginTab()
-    const table = within(await screen.findByRole('region', { name: '登录日志表' })).getByRole('table')
+    await screen.findByRole('region', { name: '登录日志表' })
 
     await user.type(screen.getByLabelText('搜索登录日志'), '绝不存在的关键字')
-    expect(within(table).getByText('没有匹配的登录记录，换个关键词或清空筛选')).toBeInTheDocument()
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole('region', { name: '登录日志表' })).getByText(
+          '没有匹配的登录记录，换个关键词或清空筛选',
+        ),
+      ).toBeInTheDocument(),
+    )
   })
 
   it('刷新后仍停在上次的日志页签', async () => {
@@ -193,5 +223,56 @@ describe('平台登录日志面板', () => {
     expect(
       within(screen.getByRole('banner')).getByRole('button', { name: '登录日志' }),
     ).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('搜索 300 毫秒后请求带 q', async () => {
+    const calls: LoginLogListQuery[] = []
+    const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+    const gateway: ElysianGateway = {
+      ...base,
+      logs: {
+        runtimeLog: (query) => base.logs.runtimeLog(query),
+        operationLogs: (query) => base.logs.operationLogs(query),
+        clearLogs: (category) => base.logs.clearLogs(category),
+        loginLogs: async (query) => {
+          calls.push(query ?? {})
+          return base.logs.loginLogs(query)
+        },
+      },
+    }
+    renderApp('/logs', { gateway })
+    await openLoginTab()
+    await screen.findByRole('region', { name: '登录日志表' })
+    const initialCalls = calls.length
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    act(() => {
+      useLoginLogStore.getState().setSearch('114.135')
+    })
+    await vi.advanceTimersByTimeAsync(300)
+    expect(calls.length).toBeGreaterThan(initialCalls)
+    expect(calls.at(-1)?.q).toBe('114.135')
+  })
+
+  it('登录状态筛选让请求带 status', async () => {
+    const calls: LoginLogListQuery[] = []
+    const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+    const gateway: ElysianGateway = {
+      ...base,
+      logs: {
+        runtimeLog: (query) => base.logs.runtimeLog(query),
+        operationLogs: (query) => base.logs.operationLogs(query),
+        clearLogs: (category) => base.logs.clearLogs(category),
+        loginLogs: async (query) => {
+          calls.push(query ?? {})
+          return base.logs.loginLogs(query)
+        },
+      },
+    }
+    const user = userEvent.setup()
+    renderApp('/logs', { gateway })
+    await openLoginTab()
+    await screen.findByRole('region', { name: '登录日志表' })
+    await user.click(statusFilterButton('登录失败'))
+    await waitFor(() => expect(calls.at(-1)?.status).toBe('failure'))
   })
 })

@@ -25,7 +25,7 @@ export type LogPage<T> = {
 }
 
 /** 排序与翻页游标用的数字键：纯数字 id 直接解析，否则取末尾 `#<digits>`。 */
-function logNumericSortKey(id: string): number {
+export function logNumericSortKey(id: string): number {
   if (/^\d+$/.test(id)) {
     return Number(id)
   }

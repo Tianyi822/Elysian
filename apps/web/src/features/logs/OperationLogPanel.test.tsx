@@ -1,14 +1,16 @@
-import { screen, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import {
   LOG_ENTRY_FETCH_LIMIT,
   OPERATION_LOG_CATEGORY_LABELS,
   OPERATION_LOG_OUTCOME_LABELS,
   formatLogBytes,
+  logNumericSortKey,
   logRetentionText,
+  type OperationLogListQuery,
 } from '@elysian/contracts'
 import type { OperationLogEntry } from '@elysian/contracts'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { SEED_OPERATION_LOGS } from '../../adapters/mock/logsData'
 import type { ElysianGateway } from '../../contracts/adapters'
@@ -38,6 +40,8 @@ const INITIAL_STATE = {
   resultFilter: 'all' as const,
   search: '',
   refreshing: false,
+  loadingOlder: false,
+  olderError: undefined,
   clearing: false,
   clearTarget: null,
 }
@@ -45,6 +49,10 @@ const INITIAL_STATE = {
 beforeEach(() => {
   useOperationLogStore.setState(INITIAL_STATE)
   useLogsStore.setState({ tab: 'operation' })
+})
+
+afterEach(() => {
+  vi.useRealTimers()
 })
 
 /**
@@ -57,9 +65,9 @@ function gatewayWithLogs(overrides: Partial<ElysianGateway['logs']>): ElysianGat
   return {
     ...base,
     logs: {
-      runtimeLog: overrides.runtimeLog ?? (() => base.logs.runtimeLog()),
-      loginLogs: overrides.loginLogs ?? (() => base.logs.loginLogs()),
-      operationLogs: overrides.operationLogs ?? (() => base.logs.operationLogs()),
+      runtimeLog: overrides.runtimeLog ?? ((query) => base.logs.runtimeLog(query)),
+      loginLogs: overrides.loginLogs ?? ((query) => base.logs.loginLogs(query)),
+      operationLogs: overrides.operationLogs ?? ((query) => base.logs.operationLogs(query)),
       clearLogs: overrides.clearLogs ?? ((category) => base.logs.clearLogs(category)),
     },
   }
@@ -200,7 +208,7 @@ describe('平台操作日志面板', () => {
       }),
     )
 
-    expect(dataRows()).toHaveLength(terminals.length)
+    await waitFor(() => expect(dataRows()).toHaveLength(terminals.length))
     expect(dataRows()[0]).toHaveTextContent(terminals[0]!.action)
     // 筛选生效要在触发器上看得见：当前值回到可访问名，accent 态标出「这里筛过了」。
     expect(trigger).toHaveAccessibleName(`操作分类筛选：${OPERATION_LOG_CATEGORY_LABELS.terminals}`)
@@ -208,7 +216,7 @@ describe('平台操作日志面板', () => {
 
     await user.click(trigger)
     await user.click(await screen.findByRole('menuitemradio', { name: '全部' }))
-    expect(dataRows()).toHaveLength(SEED_OPERATION_LOGS.length)
+    await waitFor(() => expect(dataRows()).toHaveLength(SEED_OPERATION_LOGS.length))
     expect(trigger).not.toHaveClass('bg-accent/10')
   })
 
@@ -225,9 +233,8 @@ describe('平台操作日志面板', () => {
       await screen.findByRole('menuitemradio', { name: OPERATION_LOG_OUTCOME_LABELS.failure }),
     )
 
-    const rows = dataRows()
-    expect(rows).toHaveLength(failures.length)
-    for (const row of rows) {
+    await waitFor(() => expect(dataRows()).toHaveLength(failures.length))
+    for (const row of dataRows()) {
       expect(row).toHaveTextContent(OPERATION_LOG_OUTCOME_LABELS.failure)
     }
   })
@@ -241,22 +248,21 @@ describe('平台操作日志面板', () => {
 
     // 命中 target（「账号 wangwu」）
     await user.type(search, 'WANGWU')
-    let rows = dataRows()
-    expect(rows).toHaveLength(1)
-    expect(rows[0]).toHaveTextContent('修改系统账号')
+    await waitFor(() => expect(dataRows()[0]).toHaveTextContent('修改系统账号'))
+    expect(dataRows()).toHaveLength(1)
 
     // 命中 action 与 summary（「修改 SSH 监听端口」的摘要「端口 2222」）
     await user.clear(search)
     await user.type(search, '2222')
-    rows = dataRows()
-    expect(rows).toHaveLength(1)
-    expect(rows[0]).toHaveTextContent('修改 SSH 监听端口')
+    await waitFor(() => expect(dataRows()[0]).toHaveTextContent('修改 SSH 监听端口'))
+    expect(dataRows()).toHaveLength(1)
 
     // 没命中：表格内给提示行，而不是整页空状态（数据本来就有，只是筛掉了）。
     await user.clear(search)
     await user.type(search, '不存在的关键字')
-    expect(dataRows()).toHaveLength(1)
-    expect(screen.getByText('没有匹配的操作记录，换个关键词或清空筛选')).toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.getByText('没有匹配的操作记录，换个关键词或清空筛选')).toBeInTheDocument(),
+    )
   })
 
   it('没有任何记录时给空状态与说明', async () => {
@@ -281,10 +287,11 @@ describe('平台操作日志面板', () => {
       }),
     )
 
-    expect(dataRows()).toHaveLength(1)
-    expect(
-      screen.getByText('还没有数据库类操作记录；通过面板按钮改动数据库的动作会记录在这里。'),
-    ).toBeInTheDocument()
+    await waitFor(() =>
+      expect(
+        screen.getByText('还没有数据库类操作记录；通过面板按钮改动数据库的动作会记录在这里。'),
+      ).toBeInTheDocument(),
+    )
   })
 
   it('加载失败时给出错误态，重试成功后条目出现', async () => {
@@ -378,5 +385,122 @@ describe('平台操作日志面板', () => {
     // 聚焦后回车同样能打开（键盘路径与点击等价）。
     await user.keyboard('{Enter}')
     expect(await screen.findByLabelText('完整日志内容')).toBeInTheDocument()
+  })
+
+  it('改分类会带 category 重新请求，条数用 total', async () => {
+    const calls: OperationLogListQuery[] = []
+    const gateway = gatewayWithLogs({
+      operationLogs: async (query) => {
+        calls.push(query ?? {})
+        return reportWith(SEED_OPERATION_LOGS, { total: 40, truncated: true })
+      },
+    })
+    const user = userEvent.setup()
+    renderApp('/logs', { gateway })
+    await screen.findByRole('region', { name: '操作日志表' })
+    await user.click(screen.getByRole('button', { name: '操作分类筛选：全部' }))
+    await user.click(await screen.findByRole('menuitemradio', { name: OPERATION_LOG_CATEGORY_LABELS.security }))
+    await waitFor(() => expect(calls.at(-1)?.category).toBe('security'))
+    expect(screen.getByText(/共/)).toHaveTextContent('40')
+    expect(screen.getByRole('button', { name: '加载更早的记录' })).toBeInTheDocument()
+    expect(screen.getByText('还有更早的记录')).toBeInTheDocument()
+  })
+
+  it('搜索防抖 300 毫秒后请求带 trim 后的 q', async () => {
+    const calls: OperationLogListQuery[] = []
+    const gateway = gatewayWithLogs({
+      operationLogs: async (query) => {
+        calls.push(query ?? {})
+        return reportWith(SEED_OPERATION_LOGS)
+      },
+    })
+    renderApp('/logs', { gateway })
+    await screen.findByRole('region', { name: '操作日志表' })
+    const initialCalls = calls.length
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    act(() => {
+      useOperationLogStore.getState().setSearch('  端口  ')
+    })
+    await vi.advanceTimersByTimeAsync(300)
+    expect(calls.length).toBeGreaterThan(initialCalls)
+    expect(calls.at(-1)?.q).toBe('端口')
+  })
+
+  it('加载更早：第二次请求带末行 before/beforeId，行数为两页之和', async () => {
+    const page1 = SEED_OPERATION_LOGS.slice(0, 3)
+    const page2 = SEED_OPERATION_LOGS.slice(3, 6)
+    const calls: OperationLogListQuery[] = []
+    const gateway = gatewayWithLogs({
+      operationLogs: async (query) => {
+        calls.push(query ?? {})
+        if (query?.before) {
+          return reportWith(page2, { total: 6, truncated: false })
+        }
+        return reportWith(page1, { total: 6, truncated: true })
+      },
+    })
+    const user = userEvent.setup()
+    renderApp('/logs', { gateway })
+    await screen.findByRole('region', { name: '操作日志表' })
+    expect(dataRows()).toHaveLength(3)
+    await user.click(screen.getByRole('button', { name: '加载更早的记录' }))
+    await waitFor(() => expect(dataRows()).toHaveLength(6))
+    const last = page1[page1.length - 1]!
+    expect(calls.at(-1)).toMatchObject({
+      before: last.at,
+      beforeId: logNumericSortKey(last.id),
+    })
+  })
+
+  it('加载更早失败时保留第一页并提示', async () => {
+    const page1 = SEED_OPERATION_LOGS.slice(0, 3)
+    let calls = 0
+    const gateway = gatewayWithLogs({
+      operationLogs: async (query) => {
+        calls += 1
+        if (query?.before) throw new Error('更早页不可用')
+        return reportWith(page1, { total: 6, truncated: true })
+      },
+    })
+    const user = userEvent.setup()
+    renderApp('/logs', { gateway })
+    await screen.findByRole('region', { name: '操作日志表' })
+    await user.click(screen.getByRole('button', { name: '加载更早的记录' }))
+    await waitFor(() => expect(screen.getByText('更早的记录加载失败')).toBeInTheDocument())
+    expect(dataRows()).toHaveLength(3)
+    expect(calls).toBe(2)
+  })
+
+  it('无筛选且 total 为 0 时整页空状态', async () => {
+    renderApp('/logs', {
+      gateway: gatewayWithLogs({ operationLogs: async () => reportWith([], { total: 0 }) }),
+    })
+    expect(await screen.findByText('还没有操作日志')).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: '操作日志表' })).not.toBeInTheDocument()
+  })
+
+  it('数据库分类且 total 为 0 时保留工具栏并解释空槽', async () => {
+    const calls: OperationLogListQuery[] = []
+    const gateway = gatewayWithLogs({
+      operationLogs: async (query) => {
+        calls.push(query ?? {})
+        if (query?.category === 'database') {
+          return reportWith([], { total: 0, storage: { ...emptyReport().storage, totalBytes: 13_713 } })
+        }
+        return reportWith(SEED_OPERATION_LOGS)
+      },
+    })
+    const user = userEvent.setup()
+    renderApp('/logs', { gateway })
+    await screen.findByRole('region', { name: '操作日志表' })
+    await user.click(screen.getByRole('button', { name: '操作分类筛选：全部' }))
+    await user.click(
+      await screen.findByRole('menuitemradio', { name: OPERATION_LOG_CATEGORY_LABELS.database }),
+    )
+    await waitFor(() => expect(calls.at(-1)?.category).toBe('database'))
+    expect(
+      screen.getByText('还没有数据库类操作记录；通过面板按钮改动数据库的动作会记录在这里。'),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^操作分类筛选/ })).toBeInTheDocument()
   })
 })

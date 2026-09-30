@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import { logNumericSortKey } from '@elysian/contracts'
+import type { OperationLogListQuery } from '@elysian/contracts'
 import { createMockGateway } from '../adapters/mock/gateway'
 import { SEED_OPERATION_LOGS, resetLogsData } from '../adapters/mock/logsData'
 import type { ElysianGateway } from '../contracts/adapters'
@@ -16,9 +18,9 @@ function gatewayWith(overrides: Partial<ElysianGateway['logs']> = {}): ElysianGa
   return {
     ...base,
     logs: {
-      runtimeLog: overrides.runtimeLog ?? (() => base.logs.runtimeLog()),
-      loginLogs: overrides.loginLogs ?? (() => base.logs.loginLogs()),
-      operationLogs: overrides.operationLogs ?? (() => base.logs.operationLogs()),
+      runtimeLog: overrides.runtimeLog ?? ((query) => base.logs.runtimeLog(query)),
+      loginLogs: overrides.loginLogs ?? ((query) => base.logs.loginLogs(query)),
+      operationLogs: overrides.operationLogs ?? ((query) => base.logs.operationLogs(query)),
       clearLogs: overrides.clearLogs ?? ((category) => base.logs.clearLogs(category)),
     },
   }
@@ -74,5 +76,72 @@ describe('操作日志 store', () => {
     const notice = useNotificationStore.getState().notifications[0]
     expect(notice?.tone).toBe('success')
     expect(notice?.message).toContain('操作日志已清空')
+    expect(notice?.message).toContain('条记录')
+  })
+
+  it('load 按当前筛选传查询参数并写入 total', async () => {
+    const calls: OperationLogListQuery[] = []
+    const gateway = gatewayWith({
+      operationLogs: async (query) => {
+        calls.push(query ?? {})
+        return {
+          entries: SEED_OPERATION_LOGS.slice(0, 2),
+          total: 40,
+          truncated: true,
+          skippedLines: 0,
+          skippedFiles: 0,
+          storage: (await gatewayWith().logs.operationLogs()).storage,
+        }
+      },
+    })
+    useOperationLogStore.getState().setCategoryFilter('security')
+    useOperationLogStore.getState().setResultFilter('failure')
+    useOperationLogStore.getState().setSearch(' 端口 ')
+    await useOperationLogStore.getState().load(gateway)
+
+    expect(calls.at(-1)).toEqual({ category: 'security', result: 'failure', q: '端口' })
+    expect(useOperationLogStore.getState().total).toBe(40)
+    expect(useOperationLogStore.getState().truncated).toBe(true)
+  })
+
+  it('loadOlder 带末行游标并拼接；失败保留原条目', async () => {
+    const page1 = SEED_OPERATION_LOGS.slice(0, 2)
+    const page2 = SEED_OPERATION_LOGS.slice(2, 4)
+    const gateway = gatewayWith({
+      operationLogs: async (query) => {
+        if (query?.before) {
+          return {
+            entries: page2,
+            total: 4,
+            truncated: false,
+            skippedLines: 0,
+            skippedFiles: 0,
+            storage: (await gatewayWith().logs.operationLogs()).storage,
+          }
+        }
+        return {
+          entries: page1,
+          total: 4,
+          truncated: true,
+          skippedLines: 0,
+          skippedFiles: 0,
+          storage: (await gatewayWith().logs.operationLogs()).storage,
+        }
+      },
+    })
+    await useOperationLogStore.getState().load(gateway)
+    await useOperationLogStore.getState().loadOlder(gateway)
+    expect(useOperationLogStore.getState().entries).toEqual([...page1, ...page2])
+
+    useOperationLogStore.setState({ entries: page1, truncated: true, olderError: undefined })
+    const failing = gatewayWith({
+      operationLogs: async () => {
+        throw new Error('更早页不可用')
+      },
+    })
+    await useOperationLogStore.getState().loadOlder(failing)
+    expect(useOperationLogStore.getState().entries).toEqual(page1)
+    expect(useOperationLogStore.getState().olderError).toBeTruthy()
+    expect(logNumericSortKey(page1[page1.length - 1]!.id)).toBe(11)
   })
 })

@@ -130,9 +130,6 @@ export const LOG_RETENTION_POLICIES: Record<PlatformLogCategory, LogRetentionPol
   operation: { retentionDays: 30, maxTotalBytes: 64 * 1024 * 1024 },
 }
 
-/** 单个日志文件的字节上限：达到即滚动到新分片（界面在清空确认里说明）。 */
-export const LOG_SHARD_MAX_BYTES = 8 * 1024 * 1024
-
 /** 单次读取最多返回的条目数（取最近的）；超出部分留在服务器磁盘上。 */
 export const LOG_ENTRY_FETCH_LIMIT = 1000
 

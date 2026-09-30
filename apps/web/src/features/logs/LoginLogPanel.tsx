@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useRef } from 'react'
 import { LOG_ENTRY_FETCH_LIMIT, LOGIN_LOG_STATUS_LABELS } from '@elysian/contracts'
 import type { LoginLogEntry } from '@elysian/contracts'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
@@ -25,7 +25,7 @@ const STATUS_FILTERS: readonly { value: LoginLogStatusFilter; label: string }[] 
 ]
 
 /**
- * 平台登录日志面板：表格上方是状态筛选与关键字搜索，下方为全量结果的过滤视图（无分页）。
+ * 平台登录日志面板：表格上方是状态筛选与关键字搜索，下方为服务端筛选结果。
  * IP 与归属地拆成两列；用户代理整串截断展示，完整内容放悬停提示；
  * 每列都给显式宽度，只有用户代理列吃掉剩余空间，行高不随内容跳动。
  */
@@ -34,33 +34,31 @@ export function LoginLogPanel() {
   const status = useLoginLogStore((s) => s.status)
   const errorMessage = useLoginLogStore((s) => s.errorMessage)
   const entries = useLoginLogStore((s) => s.entries)
+  const total = useLoginLogStore((s) => s.total)
   const truncated = useLoginLogStore((s) => s.truncated)
   const skippedLines = useLoginLogStore((s) => s.skippedLines)
   const skippedFiles = useLoginLogStore((s) => s.skippedFiles)
   const statusFilter = useLoginLogStore((s) => s.statusFilter)
   const search = useLoginLogStore((s) => s.search)
+  const refreshing = useLoginLogStore((s) => s.refreshing)
+  const loadingOlder = useLoginLogStore((s) => s.loadingOlder)
+  const olderError = useLoginLogStore((s) => s.olderError)
   const load = useLoginLogStore((s) => s.load)
+  const loadOlder = useLoginLogStore((s) => s.loadOlder)
   const setStatusFilter = useLoginLogStore((s) => s.setStatusFilter)
   const setSearch = useLoginLogStore((s) => s.setSearch)
 
-  useEffect(() => {
-    void load(gateway)
-  }, [gateway, load])
+  const committedSearchRef = useRef(search.trim())
+  const trimmedSearch = search.trim()
 
-  const keyword = search.trim().toLowerCase()
-  const visibleEntries = useMemo(
-    () =>
-      entries.filter((entry) => {
-        if (statusFilter !== 'all' && entry.status !== statusFilter) return false
-        if (!keyword) return true
-        return (
-          entry.ip.toLowerCase().includes(keyword) ||
-          entry.location.toLowerCase().includes(keyword) ||
-          entry.userAgent.toLowerCase().includes(keyword)
-        )
-      }),
-    [entries, statusFilter, keyword],
-  )
+  useEffect(() => {
+    const delay = trimmedSearch === committedSearchRef.current ? 0 : 300
+    const handle = setTimeout(() => {
+      committedSearchRef.current = trimmedSearch
+      void load(gateway)
+    }, delay)
+    return () => clearTimeout(handle)
+  }, [gateway, load, statusFilter, trimmedSearch])
 
   if (status === 'loading' || status === 'idle') {
     return <LoadingState label="正在加载登录日志…" />
@@ -70,7 +68,8 @@ export function LoginLogPanel() {
     return <ErrorState title="登录日志加载失败" description={errorMessage} onRetry={() => void load(gateway)} />
   }
 
-  if (entries.length === 0) {
+  const filtersClear = statusFilter === 'all' && trimmedSearch.length === 0
+  if (total === 0 && filtersClear) {
     return <EmptyState title="还没有登录日志" description="登录成功或失败后，记录会出现在这里。" />
   }
 
@@ -78,6 +77,8 @@ export function LoginLogPanel() {
   if (truncated) notices.push(`仅显示最近 ${LOG_ENTRY_FETCH_LIMIT} 条`)
   if (skippedLines > 0) notices.push(`有 ${skippedLines} 行无法解析，已跳过`)
   if (skippedFiles > 0) notices.push(`有 ${skippedFiles} 个日志文件读取失败，已跳过`)
+
+  const querying = refreshing && !loadingOlder
 
   return (
     <div>
@@ -127,56 +128,83 @@ export function LoginLogPanel() {
         </p>
       ) : null}
 
-      <div role="region" aria-label="登录日志表" className="overflow-x-auto rounded-xl border border-line bg-surface">
-        <table className="w-full min-w-[960px] table-fixed border-separate border-spacing-0 text-left text-sm">
-          <colgroup>
-            <col className="w-40" />
-            <col className="w-56" />
-            <col />
-            <col className="w-24" />
-            <col className="w-44" />
-          </colgroup>
-          <thead>
-            <tr>
-              {['IP 地址', '归属地', '用户代理', '登录状态', '时间'].map((label) => (
-                <th
-                  key={label}
-                  scope="col"
-                  className="border-b border-line bg-surface px-3 py-2.5 text-xs font-medium text-fg-muted"
-                >
-                  {label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {visibleEntries.map((entry) => (
-              <tr key={entry.id} className="transition-colors hover:bg-surface-raised">
-                <td className="border-b border-line px-3 py-2.5 font-medium tabular-nums">{entry.ip}</td>
-                <td className="border-b border-line px-3 py-2.5 text-fg-muted">{entry.location}</td>
-                <td className="border-b border-line px-3 py-2.5 text-fg-muted">
-                  <span className="block truncate" title={entry.userAgent}>
-                    {entry.userAgent}
-                  </span>
-                </td>
-                <td className="border-b border-line px-3 py-2.5">
-                  <StatusTag label={LOGIN_LOG_STATUS_LABELS[entry.status]} tone={STATUS_TONES[entry.status]} />
-                </td>
-                <td className="border-b border-line px-3 py-2.5 tabular-nums text-fg-muted">
-                  {formatLoginTime(entry.time)}
-                </td>
-              </tr>
-            ))}
-            {visibleEntries.length === 0 ? (
+      {querying ? (
+        <LoadingState label="正在查询…" />
+      ) : (
+        <div role="region" aria-label="登录日志表" className="overflow-x-auto rounded-xl border border-line bg-surface">
+          <table className="w-full min-w-[960px] table-fixed border-separate border-spacing-0 text-left text-sm">
+            <colgroup>
+              <col className="w-40" />
+              <col className="w-56" />
+              <col />
+              <col className="w-24" />
+              <col className="w-44" />
+            </colgroup>
+            <thead>
               <tr>
-                <td colSpan={5} className="border-b border-line px-3 py-8 text-center text-sm text-fg-muted">
-                  没有匹配的登录记录，换个关键词或清空筛选
-                </td>
+                {['IP 地址', '归属地', '用户代理', '登录状态', '时间'].map((label) => (
+                  <th
+                    key={label}
+                    scope="col"
+                    className="border-b border-line bg-surface px-3 py-2.5 text-xs font-medium text-fg-muted"
+                  >
+                    {label}
+                  </th>
+                ))}
               </tr>
-            ) : null}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {entries.map((entry) => (
+                <tr key={entry.id} className="transition-colors hover:bg-surface-raised">
+                  <td className="border-b border-line px-3 py-2.5 font-medium tabular-nums">{entry.ip}</td>
+                  <td className="border-b border-line px-3 py-2.5 text-fg-muted">{entry.location}</td>
+                  <td className="border-b border-line px-3 py-2.5 text-fg-muted">
+                    <span className="block truncate" title={entry.userAgent}>
+                      {entry.userAgent}
+                    </span>
+                  </td>
+                  <td className="border-b border-line px-3 py-2.5">
+                    <StatusTag label={LOGIN_LOG_STATUS_LABELS[entry.status]} tone={STATUS_TONES[entry.status]} />
+                  </td>
+                  <td className="border-b border-line px-3 py-2.5 tabular-nums text-fg-muted">
+                    {formatLoginTime(entry.time)}
+                  </td>
+                </tr>
+              ))}
+              {entries.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="border-b border-line px-3 py-8 text-center text-sm text-fg-muted">
+                    没有匹配的登录记录，换个关键词或清空筛选
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {truncated ? (
+        <div className="mt-3 flex flex-col items-start gap-2">
+          <p className="text-xs text-fg-muted">还有更早的记录</p>
+          <button
+            type="button"
+            disabled={loadingOlder}
+            onClick={() => void loadOlder(gateway)}
+            className="rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:opacity-50"
+          >
+            {loadingOlder ? '加载中…' : '加载更早的记录'}
+          </button>
+          {olderError ? (
+            <p role="status" className="text-xs text-danger">
+              更早的记录加载失败
+            </p>
+          ) : null}
+        </div>
+      ) : olderError ? (
+        <p role="status" className="mt-3 text-xs text-danger">
+          更早的记录加载失败
+        </p>
+      ) : null}
     </div>
   )
 }

@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { LOG_SHARD_MAX_BYTES, formatLogBytes } from '@elysian/contracts'
+import { formatLogBytes } from '@elysian/contracts'
 import type { LogStorageStats } from '@elysian/contracts'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { GatewayProvider } from '../../adapters/GatewayProvider'
@@ -35,9 +35,9 @@ function gatewayWith(overrides: Partial<ElysianGateway['logs']> = {}): ElysianGa
   return {
     ...base,
     logs: {
-      runtimeLog: overrides.runtimeLog ?? (() => base.logs.runtimeLog()),
-      loginLogs: overrides.loginLogs ?? (() => base.logs.loginLogs()),
-      operationLogs: overrides.operationLogs ?? (() => base.logs.operationLogs()),
+      runtimeLog: overrides.runtimeLog ?? ((query) => base.logs.runtimeLog(query)),
+      loginLogs: overrides.loginLogs ?? ((query) => base.logs.loginLogs(query)),
+      operationLogs: overrides.operationLogs ?? ((query) => base.logs.operationLogs(query)),
       clearLogs: overrides.clearLogs ?? ((category) => base.logs.clearLogs(category)),
     },
   }
@@ -63,11 +63,12 @@ describe('清空日志的二次确认', () => {
     expect(within(dialog).getByText('确认清空运行日志？')).toBeInTheDocument()
 
     // 数字一律走契约口径，不手写「256 MB」这类会与保留说明分叉的文案。
-    expect(dialog).toHaveTextContent(`共 12 个文件、约 ${formatLogBytes(STORAGE.runtimeBytes)}`)
+    expect(dialog).toHaveTextContent('全部记录')
+    expect(dialog).toHaveTextContent(`共 ${STORAGE.runtimeRowCount} 条、约 ${formatLogBytes(STORAGE.runtimeBytes)}`)
+    expect(dialog).not.toHaveTextContent('分片')
     expect(dialog).toHaveTextContent('日志最早可追溯到')
     expect(dialog).toHaveTextContent('2026-09-16 19:24:54')
     expect(dialog).toHaveTextContent('保留 7 天')
-    expect(dialog).toHaveTextContent(formatLogBytes(LOG_SHARD_MAX_BYTES))
     expect(dialog).toHaveTextContent('清空后无法恢复，也不会留下备份')
     expect(dialog).toHaveTextContent('系统服务自己的日志（如 sshd.log）不受影响')
     expect(dialog).toHaveTextContent('演示数据：只清空内存中的演示日志，不触碰任何文件')
@@ -114,6 +115,7 @@ describe('清空日志的二次确认', () => {
     const notice = useNotificationStore.getState().notifications[0]
     expect(notice?.tone).toBe('success')
     expect(notice?.message).toContain(`释放 ${formatLogBytes(STORAGE.runtimeBytes)}`)
+    expect(notice?.message).toContain('条记录')
   })
 
   it('删除失败时保留弹窗供重试，并如实报错', async () => {

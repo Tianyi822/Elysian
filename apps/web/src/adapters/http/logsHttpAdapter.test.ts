@@ -254,14 +254,14 @@ describe('createHttpLogsAdapter 的请求接线', () => {
       before: '2026-09-23T00:00:00.000Z',
       beforeId: 4,
     })
-    expect(fetchMock.mock.calls[0]![0]).toBe(
+    expect(String(fetchMock.mock.calls.at(0)?.at(0))).toBe(
       '/api/logs/operation?category=files&q=%E5%A4%8D%E5%88%B6&before=2026-09-23T00%3A00%3A00.000Z&beforeId=4',
     )
 
     fetchMock.mockClear()
     await createHttpLogsAdapter().operationLogs()
-    expect(fetchMock.mock.calls[0]![0]).toBe('/api/logs/operation')
-    expect(String(fetchMock.mock.calls[0]![0]).endsWith('?')).toBe(false)
+    expect(String(fetchMock.mock.calls.at(0)?.at(0))).toBe('/api/logs/operation')
+    expect(String(fetchMock.mock.calls.at(0)?.at(0)).endsWith('?')).toBe(false)
   })
 })
 

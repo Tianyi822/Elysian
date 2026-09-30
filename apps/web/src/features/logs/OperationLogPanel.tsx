@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useRef } from 'react'
 import {
   LOG_ENTRY_FETCH_LIMIT,
   OPERATION_LOG_CATEGORIES,
@@ -29,7 +29,7 @@ import type { LogColumn } from './LogTable'
 
 /**
  * 平台操作日志面板：服务端在写端点中间件与显式调用点采集的真实动作记录，
- * 界面只读（倒序条目 + 截断/坏行计数 + 存储统计），分类、结果与搜索都只影响视图。
+ * 界面只读（倒序条目 + 截断/坏行计数 + 存储统计），分类、结果与搜索走服务端筛选。
  *
  * 筛选走两个自绘下拉（分类、结果）而不是六枚 chip 加三枚 chip 平铺：chip 一多，
  * 两组「全部」并排出现就再也读不出哪个管分类、哪个管结果。下拉的触发器带字段名前缀，
@@ -208,6 +208,7 @@ export function OperationLogPanel() {
   const status = useOperationLogStore((s) => s.status)
   const errorMessage = useOperationLogStore((s) => s.errorMessage)
   const entries = useOperationLogStore((s) => s.entries)
+  const total = useOperationLogStore((s) => s.total)
   const truncated = useOperationLogStore((s) => s.truncated)
   const skippedLines = useOperationLogStore((s) => s.skippedLines)
   const skippedFiles = useOperationLogStore((s) => s.skippedFiles)
@@ -215,25 +216,26 @@ export function OperationLogPanel() {
   const categoryFilter = useOperationLogStore((s) => s.categoryFilter)
   const resultFilter = useOperationLogStore((s) => s.resultFilter)
   const search = useOperationLogStore((s) => s.search)
+  const refreshing = useOperationLogStore((s) => s.refreshing)
+  const loadingOlder = useOperationLogStore((s) => s.loadingOlder)
+  const olderError = useOperationLogStore((s) => s.olderError)
   const load = useOperationLogStore((s) => s.load)
+  const loadOlder = useOperationLogStore((s) => s.loadOlder)
   const setCategoryFilter = useOperationLogStore((s) => s.setCategoryFilter)
   const setResultFilter = useOperationLogStore((s) => s.setResultFilter)
   const setSearch = useOperationLogStore((s) => s.setSearch)
 
-  useEffect(() => {
-    void load(gateway)
-  }, [gateway, load])
+  const committedSearchRef = useRef(search.trim())
+  const trimmedSearch = search.trim()
 
-  const keyword = search.trim().toLowerCase()
-  const visibleEntries = useMemo(
-    () =>
-      entries.filter((entry) => {
-        if (categoryFilter !== 'all' && entry.category !== categoryFilter) return false
-        if (resultFilter !== 'all' && entry.result !== resultFilter) return false
-        return matchesOperationSearch(entry, keyword)
-      }),
-    [entries, categoryFilter, resultFilter, keyword],
-  )
+  useEffect(() => {
+    const delay = trimmedSearch === committedSearchRef.current ? 0 : 300
+    const handle = setTimeout(() => {
+      committedSearchRef.current = trimmedSearch
+      void load(gateway)
+    }, delay)
+    return () => clearTimeout(handle)
+  }, [gateway, load, categoryFilter, resultFilter, trimmedSearch])
 
   if (status === 'loading' || status === 'idle') {
     return <LoadingState label="正在加载操作日志…" />
@@ -245,8 +247,11 @@ export function OperationLogPanel() {
     )
   }
 
+  const filtersClear =
+    categoryFilter === 'all' && resultFilter === 'all' && trimmedSearch.length === 0
+
   // 一条记录都没有：先讲清楚这个页签是干什么的，不摆空表。
-  if (entries.length === 0) {
+  if (total === 0 && filtersClear) {
     return (
       <EmptyState
         title="还没有操作日志"
@@ -254,6 +259,8 @@ export function OperationLogPanel() {
       />
     )
   }
+
+  const querying = refreshing && !loadingOlder
 
   return (
     <div className="flex h-full flex-col">
@@ -303,7 +310,7 @@ export function OperationLogPanel() {
             <span className="tabular-nums text-fg">{formatLogBytes(storage.totalBytes)}</span>
           </span>
           <span>
-            共 <span className="tabular-nums text-fg">{visibleEntries.length}</span> 条操作记录
+            共 <span className="tabular-nums text-fg">{total}</span> 条操作记录
           </span>
         </div>
       </div>
@@ -347,15 +354,41 @@ export function OperationLogPanel() {
         </div>
       ) : null}
 
-      {/* 操作日志倒序展示（最新在最上），纵向滚动位置交给用户。 */}
-      <LogTable
-        label="操作日志表"
-        minWidthClass={OPERATION_LOG_TABLE_MIN_WIDTH_CLASS}
-        columns={COLUMNS}
-        rows={visibleEntries}
-        rowKey={(entry) => entry.id}
-        emptyMessage={filteredEmptyText(categoryFilter, keyword.length > 0)}
-      />
+      {querying ? (
+        <LoadingState label="正在查询…" />
+      ) : (
+        <LogTable
+          label="操作日志表"
+          minWidthClass={OPERATION_LOG_TABLE_MIN_WIDTH_CLASS}
+          columns={COLUMNS}
+          rows={entries}
+          rowKey={(entry) => entry.id}
+          emptyMessage={filteredEmptyText(categoryFilter, trimmedSearch.length > 0)}
+        />
+      )}
+
+      {truncated ? (
+        <div className="mt-3 flex flex-col items-start gap-2">
+          <p className="text-xs text-fg-muted">还有更早的记录</p>
+          <button
+            type="button"
+            disabled={loadingOlder}
+            onClick={() => void loadOlder(gateway)}
+            className="rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:opacity-50"
+          >
+            {loadingOlder ? '加载中…' : '加载更早的记录'}
+          </button>
+          {olderError ? (
+            <p role="status" className="text-xs text-danger">
+              更早的记录加载失败
+            </p>
+          ) : null}
+        </div>
+      ) : olderError ? (
+        <p role="status" className="mt-3 text-xs text-danger">
+          更早的记录加载失败
+        </p>
+      ) : null}
     </div>
   )
 }

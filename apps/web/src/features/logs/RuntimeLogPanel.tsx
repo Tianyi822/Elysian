@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useRef } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { LOG_ENTRY_FETCH_LIMIT, formatLogBytes, logRetentionText } from '@elysian/contracts'
 import type { PlatformLogLevel, RuntimeLogEntry } from '@elysian/contracts'
@@ -19,13 +19,7 @@ import type { LogColumn } from './LogTable'
  * 平台运行日志面板：日期时间｜等级｜日志信息三列固定宽度表格（超出省略、点击展开悬浮窗），
  * 条目按时间倒序（新 → 旧），最新一条在最上，与操作日志同一口径。
  * 工具栏三块为搜索、视图操作（刷新日志 / 全屏展示）与日志大小 + 清空日志
- * （破坏性动作走二次确认），窄屏按块各占一行。
- *
- * 列宽取值见 LogTable.tsx 顶部的算式：两列的时间与等级是固定字符数内容，单元格用等宽字体
- * 加 tabular-nums，所以列宽是「字符数 × 字宽 + 内距」算出来的，不是估的。
- *
- * 数据为空（历史上一行都没写过）时用 EmptyState 顶替表格；搜索无命中只是表格里的一行提示，
- * 因为那时数据仍在、清掉关键词就能看见。
+ * （破坏性动作走二次确认），窄屏按块各占一行。搜索走服务端筛选并防抖。
  */
 
 /** 工具按钮：与防火墙面板同款的中性描边小按钮；给 pressed 时按开关形态高亮。 */
@@ -135,6 +129,7 @@ export function RuntimeLogPanel() {
   const status = useRuntimeLogStore((s) => s.status)
   const errorMessage = useRuntimeLogStore((s) => s.errorMessage)
   const entries = useRuntimeLogStore((s) => s.entries)
+  const total = useRuntimeLogStore((s) => s.total)
   const truncated = useRuntimeLogStore((s) => s.truncated)
   const skippedLines = useRuntimeLogStore((s) => s.skippedLines)
   const skippedFiles = useRuntimeLogStore((s) => s.skippedFiles)
@@ -142,20 +137,25 @@ export function RuntimeLogPanel() {
   const search = useRuntimeLogStore((s) => s.search)
   const fullscreen = useRuntimeLogStore((s) => s.fullscreen)
   const refreshing = useRuntimeLogStore((s) => s.refreshing)
+  const loadingOlder = useRuntimeLogStore((s) => s.loadingOlder)
+  const olderError = useRuntimeLogStore((s) => s.olderError)
   const load = useRuntimeLogStore((s) => s.load)
+  const loadOlder = useRuntimeLogStore((s) => s.loadOlder)
   const setSearch = useRuntimeLogStore((s) => s.setSearch)
   const setFullscreen = useRuntimeLogStore((s) => s.setFullscreen)
   const openClear = useRuntimeLogStore((s) => s.openClear)
 
-  useEffect(() => {
-    void load(gateway)
-  }, [gateway, load])
+  const committedSearchRef = useRef(search.trim())
+  const trimmedSearch = search.trim()
 
-  const keyword = search.trim()
-  const visibleEntries = useMemo(
-    () => entries.filter((entry) => matchesRuntimeSearch(entry, keyword)),
-    [entries, keyword],
-  )
+  useEffect(() => {
+    const delay = trimmedSearch === committedSearchRef.current ? 0 : 300
+    const handle = setTimeout(() => {
+      committedSearchRef.current = trimmedSearch
+      void load(gateway)
+    }, delay)
+    return () => clearTimeout(handle)
+  }, [gateway, load, trimmedSearch])
 
   if (status === 'loading' || status === 'idle') {
     return <LoadingState label="正在加载运行日志…" />
@@ -172,7 +172,30 @@ export function RuntimeLogPanel() {
   if (skippedFiles > 0) notices.push(`有 ${skippedFiles} 个日志文件读取失败，已跳过`)
 
   const emptyMessage =
-    entries.length === 0 ? '还没有运行日志' : '没有匹配的运行日志，换个关键词或清空搜索'
+    total === 0 && trimmedSearch.length === 0
+      ? '还没有运行日志'
+      : '没有匹配的运行日志，换个关键词或清空搜索'
+
+  const querying = refreshing && !loadingOlder
+  const showEmptyPage = total === 0 && trimmedSearch.length === 0
+
+  const table = querying ? (
+    <LoadingState label="正在查询…" />
+  ) : showEmptyPage ? (
+    <EmptyState
+      title="还没有运行日志"
+      description="服务启动、请求失败与保留巡检都会写进这里，先跑起来再回来看。"
+    />
+  ) : (
+    <LogTable
+      label="运行日志表"
+      minWidthClass={TABLE_MIN_WIDTH_CLASS}
+      columns={RUNTIME_LOG_COLUMNS}
+      rows={entries}
+      rowKey={(entry) => entry.id}
+      emptyMessage={emptyMessage}
+    />
+  )
 
   return (
     <div className="flex h-full flex-col gap-3">
@@ -232,21 +255,30 @@ export function RuntimeLogPanel() {
         </p>
       ) : null}
 
-      {entries.length === 0 ? (
-        <EmptyState
-          title="还没有运行日志"
-          description="服务启动、请求失败与保留巡检都会写进这里，先跑起来再回来看。"
-        />
-      ) : (
-        <LogTable
-          label="运行日志表"
-          minWidthClass={TABLE_MIN_WIDTH_CLASS}
-          columns={RUNTIME_LOG_COLUMNS}
-          rows={visibleEntries}
-          rowKey={(entry) => entry.id}
-          emptyMessage={emptyMessage}
-        />
-      )}
+      {table}
+
+      {truncated ? (
+        <div className="flex flex-col items-start gap-2">
+          <p className="text-xs text-fg-muted">还有更早的记录</p>
+          <button
+            type="button"
+            disabled={loadingOlder}
+            onClick={() => void loadOlder(gateway)}
+            className="rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:opacity-50"
+          >
+            {loadingOlder ? '加载中…' : '加载更早的记录'}
+          </button>
+          {olderError ? (
+            <p role="status" className="text-xs text-danger">
+              更早的记录加载失败
+            </p>
+          ) : null}
+        </div>
+      ) : olderError ? (
+        <p role="status" className="text-xs text-danger">
+          更早的记录加载失败
+        </p>
+      ) : null}
 
       <Dialog.Root open={fullscreen} onOpenChange={setFullscreen}>
         <Dialog.Portal>
@@ -267,15 +299,19 @@ export function RuntimeLogPanel() {
               </Dialog.Close>
             </div>
             {/* 全屏容器里不给 min-h：矮视口下表格自己滚动，不撑破弹窗。 */}
-            <LogTable
-              label="运行日志表"
-              minWidthClass={TABLE_MIN_WIDTH_CLASS}
-              columns={RUNTIME_LOG_COLUMNS}
-              rows={visibleEntries}
-              rowKey={(entry) => entry.id}
-              emptyMessage={emptyMessage}
-              regionClassName="min-h-0 flex-1 overflow-auto rounded-xl border border-line bg-surface hover-scrollbar"
-            />
+            {querying ? (
+              <LoadingState label="正在查询…" />
+            ) : (
+              <LogTable
+                label="运行日志表"
+                minWidthClass={TABLE_MIN_WIDTH_CLASS}
+                columns={RUNTIME_LOG_COLUMNS}
+                rows={entries}
+                rowKey={(entry) => entry.id}
+                emptyMessage={emptyMessage}
+                regionClassName="min-h-0 flex-1 overflow-auto rounded-xl border border-line bg-surface hover-scrollbar"
+              />
+            )}
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>

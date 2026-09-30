@@ -1,5 +1,5 @@
-import type { LogStorageStats, PlatformLogCategory, RuntimeLogEntry } from '@elysian/contracts'
-import { PLATFORM_LOG_CATEGORY_LABELS, formatLogBytes } from '@elysian/contracts'
+import type { LogListQuery, LogStorageStats, PlatformLogCategory, RuntimeLogEntry } from '@elysian/contracts'
+import { PLATFORM_LOG_CATEGORY_LABELS, formatLogBytes, logNumericSortKey } from '@elysian/contracts'
 import { create } from 'zustand'
 import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
 import type { ElysianGateway } from '../contracts/adapters'
@@ -9,6 +9,15 @@ type RuntimeLogStatus = 'idle' | 'loading' | 'ready' | 'error'
 
 /** 清空完成提示的演示标注：容器内清的是服务器上的真实文件，不再带标注。 */
 const MOCK_SUFFIX = isDockerRuntime() ? '' : '（演示数据，只清空内存中的演示日志）'
+
+let loadRequestId = 0
+
+function currentQuery(search: string): LogListQuery {
+  const query: LogListQuery = {}
+  const q = search.trim()
+  if (q) query.q = q
+  return query
+}
 
 type RuntimeLogState = {
   status: RuntimeLogStatus
@@ -22,17 +31,20 @@ type RuntimeLogState = {
   skippedLines: number
   skippedFiles: number
   storage: LogStorageStats | undefined
-  /** 搜索匹配 message 与 source，大小写不敏感；只影响视图，不动数据。 */
+  /** 搜索匹配 message 与 source，大小写不敏感；只改状态，由面板触发 load。 */
   search: string
   /** 全屏展示开合。 */
   fullscreen: boolean
   /** 刷新忙碌态：刷新期间按钮置灰；首屏加载走 status。 */
   refreshing: boolean
+  loadingOlder: boolean
+  olderError: string | undefined
   /** 清空忙碌态：二次确认之后的删除请求进行中。 */
   clearing: boolean
   /** 待清空的类别（清空二次确认的目标）；null 表示弹窗关闭。 */
   clearTarget: PlatformLogCategory | null
   load: (gateway: ElysianGateway) => Promise<void>
+  loadOlder: (gateway: ElysianGateway) => Promise<void>
   setSearch: (search: string) => void
   setFullscreen: (fullscreen: boolean) => void
   openClear: (category: PlatformLogCategory) => void
@@ -52,18 +64,27 @@ export const useRuntimeLogStore = create<RuntimeLogState>((set, get) => ({
   search: '',
   fullscreen: false,
   refreshing: false,
+  loadingOlder: false,
+  olderError: undefined,
   clearing: false,
   clearTarget: null,
 
   async load(gateway) {
-    if (get().refreshing) return
+    const requestId = ++loadRequestId
     const first = get().status !== 'ready'
-    set({ refreshing: true, ...(first ? { status: 'loading' as const } : {}), errorMessage: undefined })
+    set({
+      refreshing: true,
+      ...(first ? { status: 'loading' as const } : {}),
+      errorMessage: undefined,
+      olderError: undefined,
+    })
     try {
-      const report = await gateway.logs.runtimeLog()
+      const report = await gateway.logs.runtimeLog(currentQuery(get().search))
+      if (requestId !== loadRequestId) return
       set({
         status: 'ready',
         entries: report.entries,
+        total: report.total,
         truncated: report.truncated,
         skippedLines: report.skippedLines,
         skippedFiles: report.skippedFiles,
@@ -71,10 +92,35 @@ export const useRuntimeLogStore = create<RuntimeLogState>((set, get) => ({
         refreshing: false,
       })
     } catch (error) {
+      if (requestId !== loadRequestId) return
       set({
         status: 'error',
         errorMessage: error instanceof Error ? error.message : '运行日志加载失败',
         refreshing: false,
+      })
+    }
+  },
+
+  async loadOlder(gateway) {
+    const { truncated, entries, loadingOlder, refreshing, search } = get()
+    if (!truncated || entries.length === 0 || loadingOlder || refreshing) return
+    const last = entries[entries.length - 1]!
+    set({ loadingOlder: true, olderError: undefined })
+    try {
+      const report = await gateway.logs.runtimeLog({
+        ...currentQuery(search),
+        before: last.at,
+        beforeId: logNumericSortKey(last.id),
+      })
+      set({
+        entries: [...get().entries, ...report.entries],
+        truncated: report.truncated,
+        loadingOlder: false,
+      })
+    } catch (error) {
+      set({
+        olderError: error instanceof Error ? error.message : '更早的记录加载失败',
+        loadingOlder: false,
       })
     }
   },
@@ -103,7 +149,7 @@ export const useRuntimeLogStore = create<RuntimeLogState>((set, get) => ({
       const report = await gateway.logs.clearLogs(category)
       useNotificationStore.getState().notify({
         tone: 'success',
-        message: `${PLATFORM_LOG_CATEGORY_LABELS[report.category]}已清空：删除 ${report.rowCount} 个文件，释放 ${formatLogBytes(report.totalBytes)}${MOCK_SUFFIX}`,
+        message: `${PLATFORM_LOG_CATEGORY_LABELS[report.category]}已清空：删除 ${report.rowCount} 条记录，释放 ${formatLogBytes(report.totalBytes)}${MOCK_SUFFIX}`,
       })
       set({ clearTarget: null, clearing: false })
       // 清空后重新读取：正常会读到一条「已清空」留痕（自指留痕），不是空表。

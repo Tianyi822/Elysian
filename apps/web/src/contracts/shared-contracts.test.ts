@@ -555,9 +555,8 @@ describe('日志域词典', () => {
     expect(contracts.formatLogBytes(bytes)).toBe(expected)
   })
 
-  it('单次读取上限取最近的 1000 条，分片阈值是 8 MiB', () => {
+  it('单次读取上限取最近的 1000 条', () => {
     expect(contracts.LOG_ENTRY_FETCH_LIMIT).toBe(1000)
-    expect(contracts.LOG_SHARD_MAX_BYTES).toBe(8 * 1024 * 1024)
   })
 })
 
