@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { resolveViewTab, writeStoredViewTab } from '../app/theme/themePreferences'
 
-/** 日志区页签取值。三类日志各占一页：运行与操作两类读服务端落盘的真实日志，登录日志仍是演示。 */
+/** 日志区页签取值。三类日志各占一页；容器内都读服务端落盘的真实日志，宿主机本地开发仍是演示。 */
 export type LogsTab = 'runtime' | 'login' | 'operation'
 
 /** 页签表：顶栏切换与页内内容共用，值保持英文标识符，中文文案只在这里维护。 */

@@ -22,7 +22,7 @@ import type {
   FirewallPortSync,
   Incident,
   IncidentListRow,
-  LoginLogEntry,
+  LoginLogListReport,
   LogClearReport,
   ModuleStatus,
   OperationLogListReport,
@@ -262,14 +262,14 @@ export type { FirewallAdapter } from '@elysian/contracts'
 
 /**
  * 日志接缝：平台运行日志、操作日志与登录日志的读取，加一个按类别的清空。
- * 运行与操作两类在容器内走真实 HTTP（服务端写 `~/.Elysian/logs/platform/`，界面读同一份文件）；
- * 登录日志本期仍是内存演示。两种实现跑同一套契约断言（logsAdapterContract）。
+ * 三类在容器内走真实 HTTP（服务端写 `~/.Elysian/logs/platform/`，界面读同一份文件）；
+ * 宿主机本地开发仍读内存种子。两种实现跑同一套契约断言（logsAdapterContract）。
  */
 export interface LogsAdapter {
   /** 读取平台运行日志（时间倒序，最新在最上，含截断与存储统计）。 */
   runtimeLog(): Promise<RuntimeLogListReport>
-  /** 读取平台登录日志（演示），按时间倒序返回。 */
-  loginLogs(): Promise<readonly LoginLogEntry[]>
+  /** 读取平台登录日志（时间倒序，含截断标记）。 */
+  loginLogs(): Promise<LoginLogListReport>
   /** 读取平台操作日志（时间倒序，含截断与存储统计）。 */
   operationLogs(): Promise<OperationLogListReport>
   /**

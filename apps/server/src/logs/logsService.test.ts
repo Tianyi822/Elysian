@@ -7,7 +7,8 @@ import { createGunzip, createGzip } from 'node:zlib'
 import { pipeline } from 'node:stream/promises'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { PlatformLogCategory } from '@elysian/contracts'
-import { parseOperationLogLine, parseRuntimeLogLine } from './logRecords'
+import { parseLoginLogLine, parseOperationLogLine, parseRuntimeLogLine } from './logRecords'
+import type { LogShardCategory } from './logsPaths'
 import { createLogWriter } from './logWriter'
 import { LOG_SWEEP_INTERVAL_MS, createLogsService, type LogsService } from './logsService'
 import type { LogRetentionDeps } from './logRetention'
@@ -78,7 +79,7 @@ function createHarness(overrides: { failAppend?: boolean } = {}): Harness {
   }
 
   /** 读取侧的列目录：只给普通文件（与真实接线同形）。 */
-  const listRegularFiles = async (category: PlatformLogCategory) => {
+  const listRegularFiles = async (category: LogShardCategory) => {
     const listed: { path: string; name: string; sizeBytes: number }[] = []
     for (const name of await readdir(join(root, category)).catch(() => [])) {
       const path = join(root, category, name)
@@ -94,7 +95,7 @@ function createHarness(overrides: { failAppend?: boolean } = {}): Harness {
   }
 
   /** 保留/统计侧的列目录：给目录里的全部条目（含符号链接与子目录，子目录按递归字节和）。 */
-  const listAllEntries = async (category: PlatformLogCategory) => {
+  const listAllEntries = async (category: LogShardCategory) => {
     const listed: {
       path: string
       name: string
@@ -143,7 +144,7 @@ function createHarness(overrides: { failAppend?: boolean } = {}): Harness {
     await rename(tmp, dest)
   }
 
-  const mkWriter = (category: PlatformLogCategory) =>
+  const mkWriter = (category: LogShardCategory) =>
     createLogWriter(
       {
         platformLogsDir: root,
@@ -173,7 +174,7 @@ function createHarness(overrides: { failAppend?: boolean } = {}): Harness {
   })
 
   const service = createLogsService({
-    writers: { runtime: mkWriter('runtime'), operation: mkWriter('operation') },
+    writers: { runtime: mkWriter('runtime'), operation: mkWriter('operation'), login: mkWriter('login') },
     readers: {
       runtime: { listFiles: readerFiles.listFiles, readLines: readerFiles.readLines, parseLine: parseRuntimeLogLine },
       operation: {
@@ -181,8 +182,9 @@ function createHarness(overrides: { failAppend?: boolean } = {}): Harness {
         readLines: readerFiles.readLines,
         parseLine: parseOperationLogLine,
       },
+      login: { listFiles: readerFiles.listFiles, readLines: readerFiles.readLines, parseLine: parseLoginLogLine },
     },
-    retention: { runtime: mkRetention(), operation: mkRetention() },
+    retention: { runtime: mkRetention(), operation: mkRetention(), login: mkRetention() },
     now: () => state.clock,
     startTimer: (onTick, intervalMs) => {
       state.timers.push({ onTick, intervalMs })
@@ -669,5 +671,23 @@ describe('巡检', () => {
     } finally {
       console.error = original
     }
+  })
+
+  it('登录日志按时间倒序读回，地址归一、归属地由地址推导、用户代理单行化', async () => {
+    const { service, state } = createHarness()
+    await service.recordLogin({ ip: '127.0.0.1', userAgent: 'Browser/1', status: 'failure' })
+    state.clock = new Date(NOW.getTime() + 1000)
+    await service.recordLogin({ ip: '10.1.2.3', userAgent: 'Browser/2', status: 'success' })
+    state.clock = new Date(NOW.getTime() + 2000)
+    await service.recordLogin({ ip: 'not-an-ip', userAgent: 'bad\nagent', status: 'success' })
+
+    const report = await service.loginLog()
+    expect(report.entries.map((entry) => entry.ip)).toEqual(['未知', '10.1.2.3', '127.0.0.1'])
+    expect(report.entries.map((entry) => entry.location)).toEqual(['未知', '内网', '本机'])
+    expect(report.entries.map((entry) => entry.status)).toEqual(['success', 'success', 'failure'])
+    expect(report.entries[0]?.userAgent).toBe('bad agent')
+    expect(report.entries[2]?.userAgent).toBe('Browser/1')
+    expect(report.truncated).toBe(false)
+    expect(report.skippedLines).toBe(0)
   })
 })

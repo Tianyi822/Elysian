@@ -4,10 +4,9 @@ import { createInterface } from 'node:readline'
 import { pipeline } from 'node:stream/promises'
 import { createGunzip, createGzip } from 'node:zlib'
 import { join } from 'node:path'
-import type { PlatformLogCategory } from '@elysian/contracts'
 import { ELYSIAN_PATHS } from '../shared/elysianPaths.ts'
-import { parseOperationLogLine, parseRuntimeLogLine } from './logRecords.ts'
-import { logCategoryDir } from './logsPaths.ts'
+import { parseLoginLogLine, parseOperationLogLine, parseRuntimeLogLine } from './logRecords.ts'
+import { logCategoryDir, type LogShardCategory } from './logsPaths.ts'
 import { createLogWriter, type LogWriter } from './logWriter.ts'
 import { createLogsService, type LogsService } from './logsService.ts'
 import type { LogFileStat } from './logRetention.ts'
@@ -110,7 +109,7 @@ async function readLines(path: string, onLine: (line: string) => void): Promise<
  * 字节和（递归同样不跟随符号链接，链接按自身 lstat 大小计）。目录不存在或不可读归一为 []。
  */
 function createListEntries(platformLogsDir: string) {
-  return async (category: PlatformLogCategory): Promise<LogFileStat[]> => {
+  return async (category: LogShardCategory): Promise<LogFileStat[]> => {
     const dir = logCategoryDir(category, platformLogsDir)
     return listEntriesIn(dir)
   }
@@ -160,7 +159,7 @@ async function listEntriesIn(dir: string): Promise<LogFileStat[]> {
 /** 读取侧的列目录：**只返回 lstat 为普通文件的项**（符号链接与子目录一律跳过，不跟随链接读外部文件）。 */
 function createListRegularFiles(platformLogsDir: string) {
   return async (
-    category: PlatformLogCategory,
+    category: LogShardCategory,
   ): Promise<{ path: string; name: string; sizeBytes: number }[]> => {
     const dir = logCategoryDir(category, platformLogsDir)
     const listed: { path: string; name: string; sizeBytes: number }[] = []
@@ -185,7 +184,7 @@ export function createLogsHostDeps(options: LogsHostDepsOptions = {}): LogsHostD
   // 前向引用：写入器的巡检回调要调 service，而 service 由写入器构成。
   let service: LogsService | undefined
 
-  const mkWriter = (category: PlatformLogCategory): LogWriter =>
+  const mkWriter = (category: LogShardCategory): LogWriter =>
     createLogWriter(
       {
         platformLogsDir,
@@ -218,12 +217,13 @@ export function createLogsHostDeps(options: LogsHostDepsOptions = {}): LogsHostD
   }
 
   service = createLogsService({
-    writers: { runtime: mkWriter('runtime'), operation: mkWriter('operation') },
+    writers: { runtime: mkWriter('runtime'), operation: mkWriter('operation'), login: mkWriter('login') },
     readers: {
       runtime: { ...readerFiles, parseLine: parseRuntimeLogLine },
       operation: { ...readerFiles, parseLine: parseOperationLogLine },
+      login: { ...readerFiles, parseLine: parseLoginLogLine },
     },
-    retention: { runtime: { ...retention }, operation: { ...retention } },
+    retention: { runtime: { ...retention }, operation: { ...retention }, login: { ...retention } },
     now,
     // 只在第一次巡检请求到来时注册（也就是第一次写入之后）：装配期零副作用。
     startTimer: (onTick, intervalMs) => {

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { LOG_ENTRY_FETCH_LIMIT, type PlatformLogCategory } from '@elysian/contracts'
+import { LOG_ENTRY_FETCH_LIMIT } from '@elysian/contracts'
 import { parseRuntimeLogLine, serializeRuntimeLogRecord, type RuntimeLogRecord } from './logRecords'
 import { LOG_READ_MAX_RECORDS, readLogRecords, type LogFileRef, type LogReaderDeps } from './logReader'
+import type { LogShardCategory } from './logsPaths'
 
 /*
  * 读取器的行为测试（全部用可观测的 fake deps，不碰文件系统、不读时钟）：
@@ -40,7 +41,7 @@ function createFakeDeps(files: readonly FakeFile[]): FakeDeps {
   return {
     readPaths,
     lineCounts,
-    listFiles: async (category: PlatformLogCategory): Promise<readonly LogFileRef[]> =>
+    listFiles: async (category: LogShardCategory): Promise<readonly LogFileRef[]> =>
       files
         .filter((file) => parseLogShardNameCategory(file.name) === category)
         .map((file) => ({
@@ -64,9 +65,10 @@ function createFakeDeps(files: readonly FakeFile[]): FakeDeps {
 }
 
 /** 测试内的名字 → 类别判定（与 logsPaths 的口径一致，但只看前缀，语义足够）。 */
-function parseLogShardNameCategory(name: string): PlatformLogCategory | null {
+function parseLogShardNameCategory(name: string): LogShardCategory | null {
   if (name.startsWith('runtime-')) return 'runtime'
   if (name.startsWith('operation-')) return 'operation'
+  if (name.startsWith('login-')) return 'login'
   return null
 }
 

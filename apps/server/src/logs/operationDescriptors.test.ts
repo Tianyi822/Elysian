@@ -39,7 +39,9 @@ function createFakeLogs(): LogsService {
       oldestAt: null,
       clearedAt: '2026-09-23T00:00:00.000Z',
     }),
+    loginLog: async () => ({ entries: [], truncated: false, skippedLines: 0, skippedFiles: 0 }),
     log: async () => undefined,
+    recordLogin: async () => undefined,
     recordOperation: async () => undefined,
     runSweep: async () => ({
       removedTmp: 0,

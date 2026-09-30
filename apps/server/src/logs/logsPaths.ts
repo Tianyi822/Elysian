@@ -1,5 +1,8 @@
 import { join } from 'node:path'
 import type { PlatformLogCategory } from '@elysian/contracts'
+
+/** 分片目录名。login 与运行/操作共用写入器，但不是 PlatformLogCategory。 */
+export type LogShardCategory = PlatformLogCategory | 'login'
 import { ELYSIAN_PATHS } from '../shared/elysianPaths.ts'
 
 /*
@@ -25,7 +28,7 @@ const SHARD_EXTENSION = '.jsonl'
 const COMPRESSED_SHARD_EXTENSION = '.jsonl.gz'
 
 export type ParsedLogShardName = {
-  category: PlatformLogCategory
+  category: LogShardCategory
   /** 片首条日志的时刻（ISO 8601、秒精度、Z 结尾），即文件名里那段时刻。 */
   at: string
   compressed: boolean
@@ -33,7 +36,7 @@ export type ParsedLogShardName = {
 
 /** 类别目录：`<平台日志根>/<类别>`。 */
 export function logCategoryDir(
-  category: PlatformLogCategory,
+  category: LogShardCategory,
   rootDir: string = DEFAULT_PLATFORM_LOGS_DIR,
 ): string {
   return join(rootDir, category)
@@ -44,7 +47,7 @@ export function logCategoryDir(
  * `_<n>`（同名冲突，见文件头）。`compressed` 为真时加 `.gz`。
  */
 export function logShardName(
-  category: PlatformLogCategory,
+  category: LogShardCategory,
   at: Date,
   compressed: boolean,
   duplicateIndex = 1,
@@ -56,7 +59,7 @@ export function logShardName(
   return `${category}-${stamp}${suffix}${extension}`
 }
 
-const SHARD_NAME_PATTERN = /^(runtime|operation)-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z(?:_(\d+))?\.jsonl(\.gz)?$/
+const SHARD_NAME_PATTERN = /^(runtime|operation|login)-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z(?:_(\d+))?\.jsonl(\.gz)?$/
 
 /**
  * 解析文件名；不是本模块形态时返回 null（sshd.log、临时文件、外部文件都落到 null）。
@@ -65,7 +68,7 @@ const SHARD_NAME_PATTERN = /^(runtime|operation)-(\d{4})(\d{2})(\d{2})T(\d{2})(\
 export function parseLogShardName(name: string): ParsedLogShardName | null {
   const match = SHARD_NAME_PATTERN.exec(name)
   if (match === null) return null
-  const category = match[1] as PlatformLogCategory
+  const category = match[1] as LogShardCategory
   // `_1` 不是本模块产生的形态（基本形态不带后缀），一律落到 null。
   if (match[8] !== undefined && Number(match[8]) < 2) return null
   const at = `${match[2]}-${match[3]}-${match[4]}T${match[5]}:${match[6]}:${match[7]}Z`

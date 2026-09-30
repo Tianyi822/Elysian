@@ -1,6 +1,8 @@
 import type { Context, MiddlewareHandler } from 'hono'
 import { matchedRoutes } from 'hono/route'
-import type { OperationLogCategory, OperationLogOutcome } from '@elysian/contracts'
+import type { LoginLogStatus, OperationLogCategory, OperationLogOutcome } from '@elysian/contracts'
+import { AUTH_MOUNT } from '../shared/apiMounts.ts'
+import { peerAddressFromEnv } from './loginClient.ts'
 import { OPERATION_DESCRIPTORS, extractPathParams, type OperationDescriptor } from './operationDescriptors.ts'
 import type { LogsService } from './logsService.ts'
 
@@ -30,8 +32,11 @@ import type { LogsService } from './logsService.ts'
  * console.error，绝不让业务请求失败——动作已经真实执行，回 500 是撒谎。
  */
 
-/** 采集只需要服务的这两个出口：写一条操作日志与写一条运行日志。 */
-export type OperationAuditLogs = Pick<LogsService, 'recordOperation' | 'log'>
+/** 采集需要的出口：写操作日志、写运行日志，以及登录端点额外的登录日志。 */
+export type OperationAuditLogs = Pick<LogsService, 'recordOperation' | 'log' | 'recordLogin'>
+
+/** 登录日志只记这一条路由：最终状态码 < 400 为成功，其余（401 / 400 / 429 / 5xx）为失败。 */
+const LOGIN_ATTEMPT_KEY = `POST ${AUTH_MOUNT}/login`
 
 /** 摘要读体的上限：超限即摘要退化为 null（读体只为生成摘要，不值得为它承担任意大小的解析）。 */
 export const OPERATION_SUMMARY_BODY_MAX_BYTES = 8 * 1024
@@ -226,6 +231,18 @@ export function createOperationAudit(logs: OperationAuditLogs): MiddlewareHandle
         path: c.req.path,
         httpStatus: status,
       })
+    }
+
+    // 登录日志与操作日志分开落盘：只记登录端点，字段是对端地址与 User-Agent，不读请求体。
+    if (routePath !== null && `${method} ${routePath}` === LOGIN_ATTEMPT_KEY) {
+      const statusValue: LoginLogStatus = resultOf(status) === 'success' ? 'success' : 'failure'
+      await safeWrite(() =>
+        logs.recordLogin({
+          ip: peerAddressFromEnv(c.env, c.req.raw),
+          userAgent: c.req.header('user-agent') ?? '',
+          status: statusValue,
+        }),
+      )
     }
 
     // 5xx 的运行日志：无论描述符是否命中都记（常规 5xx 的唯一可靠来源，见文件头）。

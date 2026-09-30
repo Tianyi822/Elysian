@@ -32,8 +32,13 @@ const LOGS_STORAGE: LogStorageStats = {
 }
 
 /** 记录型日志 fake：recordOperation 的输入原样保留供断言（操作审计接线）。 */
-function createRecordingLogs(): { service: LogsService; records: Parameters<LogsService['recordOperation']>[0][] } {
+function createRecordingLogs(): {
+  service: LogsService
+  records: Parameters<LogsService['recordOperation']>[0][]
+  loginRecords: Parameters<LogsService['recordLogin']>[0][]
+} {
   const records: Parameters<LogsService['recordOperation']>[0][] = []
+  const loginRecords: Parameters<LogsService['recordLogin']>[0][] = []
   const service: LogsService = {
     runtimeLog: async () => ({ entries: [], truncated: false, skippedLines: 0, skippedFiles: 0, storage: LOGS_STORAGE }),
     operationLog: async () => ({
@@ -62,7 +67,23 @@ function createRecordingLogs(): { service: LogsService; records: Parameters<Logs
       oldestAt: null,
       clearedAt: '2026-09-30T00:00:00.000Z',
     }),
+    loginLog: async () => ({
+      entries: [...loginRecords].reverse().map((record, index) => ({
+        id: `2026-09-30T00:00:00.000Z#${loginRecords.length - index}`,
+        ip: record.ip,
+        location: '未知',
+        userAgent: record.userAgent === '' ? '未知' : record.userAgent,
+        status: record.status,
+        time: '2026-09-30T00:00:00.000Z',
+      })),
+      truncated: false,
+      skippedLines: 0,
+      skippedFiles: 0,
+    }),
     log: async () => undefined,
+    recordLogin: async (input) => {
+      loginRecords.push(input)
+    },
     recordOperation: async (input) => {
       records.push(input)
     },
@@ -78,7 +99,7 @@ function createRecordingLogs(): { service: LogsService; records: Parameters<Logs
       at: '2026-09-30T00:00:00.000Z',
     }),
   }
-  return { service, records }
+  return { service, records, loginRecords }
 }
 
 async function buildApp() {
@@ -94,7 +115,7 @@ async function buildApp() {
     logs: logs.service,
     auth: { enabled: true, credentials, sessions, hasher },
   })
-  return { app: clientOf(app), credentials, records: logs.records }
+  return { app: clientOf(app), hono: app, credentials, records: logs.records, loginRecords: logs.loginRecords }
 }
 
 function clientOf(app: Hono) {
@@ -282,9 +303,22 @@ describe('requireSession 接线（enabled: true）', () => {
   })
 
   it('登录成功与失败都落操作日志（auth 分类），密码与用户名不进任何记录', async () => {
-    const { app, records } = await buildApp()
+    const { app, hono, records, loginRecords } = await buildApp()
 
-    const ok = await app.postJson('/api/auth/login', { username: 'admin', password: 'e2e-password' })
+    const ok = await hono.request(
+      new Request(new URL('/api/auth/login', ORIGIN), {
+        method: 'POST',
+        headers: {
+          host: 'localhost:5173',
+          origin: ORIGIN,
+          'content-type': 'application/json',
+          'user-agent': 'PanelBrowser/9',
+        },
+        body: JSON.stringify({ username: 'admin', password: 'e2e-password' }),
+      }),
+      undefined,
+      { requestIP: () => ({ address: '127.0.0.1' }) },
+    )
     expect(ok.status).toBe(200)
     const bad = await app.postJson('/api/auth/login', { username: 'admin', password: 'wrong-password' })
     expect(bad.status).toBe(401)
@@ -300,6 +334,20 @@ describe('requireSession 接线（enabled: true）', () => {
     expect(JSON.stringify(records)).not.toContain('e2e-password')
     expect(JSON.stringify(records)).not.toContain('wrong-password')
     expect(JSON.stringify(records)).not.toContain('admin')
+
+    expect(loginRecords).toEqual([
+      { ip: '127.0.0.1', userAgent: 'PanelBrowser/9', status: 'success' },
+      { ip: '未知', userAgent: '', status: 'failure' },
+    ])
+    expect(JSON.stringify(loginRecords)).not.toContain('e2e-password')
+    expect(JSON.stringify(loginRecords)).not.toContain('wrong-password')
+
+    const cookie = ok.headers.get('set-cookie')!.split(';')[0]!
+    const listed = await app.get('/api/logs/login', cookie)
+    expect(listed.status).toBe(200)
+    const body = (await listed.json()) as { entries: { ip: string; status: string; userAgent: string }[] }
+    expect(body.entries.map((entry) => entry.status)).toEqual(['failure', 'success'])
+    expect(body.entries[1]).toMatchObject({ ip: '127.0.0.1', userAgent: 'PanelBrowser/9', status: 'success' })
   })
 
   it('enabled: false（注入覆盖）：中间件放行、登录片演示语义（既有测试形态）', async () => {

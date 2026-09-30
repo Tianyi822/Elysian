@@ -27,9 +27,10 @@ describe('日志适配器 mock 数据形状', () => {
   // 契约集合里的「两次读取相等」对同一引用的 mock 恒真，确定性由这里的种子断言锁住；
   // 登录记录非空与日志体积量级是演示数据属性，不进契约集合，留在 mock 侧断言。
   it('登录日志 mock：非空且读取结果与种子完全一致', async () => {
-    const entries = await new MockLogsAdapter().loginLogs()
-    expect(entries.length).toBeGreaterThan(0)
-    expect(entries).toEqual(SEED_LOGIN_LOGS)
+    const report = await new MockLogsAdapter().loginLogs()
+    expect(report.entries.length).toBeGreaterThan(0)
+    expect(report.entries).toEqual(SEED_LOGIN_LOGS)
+    expect(report.truncated).toBe(false)
   })
 
   it('运行日志 mock：240 条确定性条目，与种子完全一致，跨多个等级且体积在十几 KB 量级', async () => {

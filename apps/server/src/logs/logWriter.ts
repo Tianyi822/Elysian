@@ -1,9 +1,11 @@
 import { join } from 'node:path'
-import { LOG_SHARD_MAX_BYTES, type PlatformLogCategory } from '@elysian/contracts'
+import { LOG_SHARD_MAX_BYTES } from '@elysian/contracts'
 import {
   isRecordOversize,
+  serializeLoginLogRecord,
   serializeOperationLogRecord,
   serializeRuntimeLogRecord,
+  type LoginLogRecord,
   type OperationLogRecord,
   type RuntimeLogRecord,
 } from './logRecords.ts'
@@ -14,6 +16,7 @@ import {
   parseLogShardName,
   utcDayKey,
   utcDayKeyOfShard,
+  type LogShardCategory,
   type ParsedLogShardName,
 } from './logsPaths.ts'
 
@@ -57,7 +60,7 @@ export type LogWriterDeps = {
 }
 
 export type LogWriter = {
-  append(record: RuntimeLogRecord | OperationLogRecord): Promise<void>
+  append(record: RuntimeLogRecord | OperationLogRecord | LoginLogRecord): Promise<void>
   currentPath(): string | null
   /** 封盘并忘掉当前片：此后 append 会重新采用当日片或新建（活动片已过期、清空两条路径用）。 */
   seal(): Promise<void>
@@ -80,7 +83,7 @@ function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-export function createLogWriter(deps: LogWriterDeps, category: PlatformLogCategory): LogWriter {
+export function createLogWriter(deps: LogWriterDeps, category: LogShardCategory): LogWriter {
   const dir = logCategoryDir(category, deps.platformLogsDir)
 
   let tail: Promise<unknown> = Promise.resolve()
@@ -99,10 +102,10 @@ export function createLogWriter(deps: LogWriterDeps, category: PlatformLogCatego
     return result
   }
 
-  function serialize(record: RuntimeLogRecord | OperationLogRecord): string {
-    return category === 'runtime'
-      ? serializeRuntimeLogRecord(record as RuntimeLogRecord)
-      : serializeOperationLogRecord(record as OperationLogRecord)
+  function serialize(record: RuntimeLogRecord | OperationLogRecord | LoginLogRecord): string {
+    if (category === 'runtime') return serializeRuntimeLogRecord(record as RuntimeLogRecord)
+    if (category === 'login') return serializeLoginLogRecord(record as LoginLogRecord)
+    return serializeOperationLogRecord(record as OperationLogRecord)
   }
 
   /**
@@ -171,7 +174,7 @@ export function createLogWriter(deps: LogWriterDeps, category: PlatformLogCatego
     return shard
   }
 
-  async function writeOne(record: RuntimeLogRecord | OperationLogRecord): Promise<void> {
+  async function writeOne(record: RuntimeLogRecord | OperationLogRecord | LoginLogRecord): Promise<void> {
     const line = serialize(record)
     if (isRecordOversize(line)) {
       // 硬闸：保证一条记录永远塞得进一个分片（不会出现无法推进的死循环）。

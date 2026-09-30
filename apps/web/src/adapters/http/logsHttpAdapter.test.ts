@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { SEED_LOGIN_LOGS } from '../mock/logsData'
 import {
   createHttpLogsAdapter,
   parseLogClearResponse,
+  parseLoginLogResponse,
   parseLogStorage,
   parseOperationLogEntry,
   parseOperationLogResponse,
@@ -210,10 +210,60 @@ describe('createHttpLogsAdapter 的请求接线', () => {
     await expect(createHttpLogsAdapter().runtimeLog()).rejects.toThrow('日志请求失败：HTTP 503')
   })
 
-  it('登录日志不发请求：本期没有登录端点，两套实现读同一份演示种子', async () => {
-    const fetchMock = vi.fn()
+  it('登录日志请求 GET /api/logs/login 并解析条目', async () => {
+    const report = {
+      entries: [
+        {
+          id: '2026-09-30T00:00:00.000Z#1',
+          ip: '127.0.0.1',
+          location: '本机',
+          userAgent: 'PanelBrowser/1',
+          status: 'success',
+          time: '2026-09-30T00:00:00.000Z',
+        },
+      ],
+      truncated: false,
+      skippedLines: 0,
+      skippedFiles: 0,
+    }
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(report), { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
-    expect(await createHttpLogsAdapter().loginLogs()).toEqual(SEED_LOGIN_LOGS)
-    expect(fetchMock).not.toHaveBeenCalled()
+    expect(await createHttpLogsAdapter().loginLogs()).toEqual(report)
+    expect(fetchMock).toHaveBeenCalledWith('/api/logs/login', undefined)
+  })
+})
+
+describe('parseLoginLogResponse', () => {
+  it('接受倒序条目与截断计数', () => {
+    const report = {
+      entries: [
+        {
+          id: '2026-09-30T00:00:00.000Z#1',
+          ip: '10.0.0.8',
+          location: '内网',
+          userAgent: 'Browser/1',
+          status: 'failure' as const,
+          time: '2026-09-30T00:00:00.000Z',
+        },
+      ],
+      truncated: true,
+      skippedLines: 1,
+      skippedFiles: 0,
+    }
+    expect(parseLoginLogResponse(report)).toEqual(report)
+  })
+
+  it('状态越界或条目不是数组时抛中文错误', () => {
+    expect(() => parseLoginLogResponse({ entries: 'nope', truncated: false, skippedLines: 0, skippedFiles: 0 })).toThrow(
+      '登录日志响应无效：应为数组',
+    )
+    expect(() =>
+      parseLoginLogResponse({
+        entries: [{ id: 'a', ip: '1.1.1.1', location: '未知', userAgent: 'x', status: 'maybe', time: 't' }],
+        truncated: false,
+        skippedLines: 0,
+        skippedFiles: 0,
+      }),
+    ).toThrow('登录日志状态响应无效')
   })
 })

@@ -99,6 +99,12 @@ function createFakeLogsService(): LogsService {
         storage: storageOf(runtime, operation),
       }
     },
+    async loginLog() {
+      return { entries: [], truncated: false, skippedLines: 0, skippedFiles: 0 }
+    },
+    async recordLogin() {
+      return undefined
+    },
     async clear(category: PlatformLogCategory) {
       const cleared = category === 'runtime' ? runtime : operation
       const report: LogClearReport = {
@@ -194,7 +200,7 @@ afterEach(() => {
 runLogsAdapterContract('http', makeHttpAdapter)
 
 describe('HTTP 日志端点接线', () => {
-  it('三个端点各自落在 /api/logs 下的约定路径上', async () => {
+  it('四个端点各自落在 /api/logs 下的约定路径上', async () => {
     const app = createLogsApp({ service: createFakeLogsService() })
     const calls: { url: string; method: string; body: unknown }[] = []
     vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -210,10 +216,12 @@ describe('HTTP 日志端点接线', () => {
     const adapter = createHttpLogsAdapter()
     await adapter.runtimeLog()
     await adapter.operationLogs()
+    await adapter.loginLogs()
     await adapter.clearLogs('operation')
     expect(calls).toEqual([
       { url: '/api/logs/runtime', method: 'GET', body: undefined },
       { url: '/api/logs/operation', method: 'GET', body: undefined },
+      { url: '/api/logs/login', method: 'GET', body: undefined },
       { url: '/api/logs/operation/clear', method: 'POST', body: '{}' },
     ])
   })

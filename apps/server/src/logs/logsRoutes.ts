@@ -6,6 +6,7 @@ import { LOGS_MOUNT } from '../shared/apiMounts.ts'
 
 /*
  * 平台日志路由（/api/logs/*）：只做守卫链、路由分发与 service 透传。
+ * 读端点是运行日志、操作日志与登录日志；清空只覆盖契约里可清空的类别（不含登录日志）。
  *
  * **本片没有容器边界**：它只读写 ~/.Elysian 下面板自有的目录，不执行系统命令、不碰系统
  * 文件、不需要 root 能力，因此宿主机本地开发与容器内是同一套实现，守卫链也**没有 503 段**
@@ -54,6 +55,7 @@ export function createLogsApp(deps: LogsAppDeps): Hono {
 
   app.get('/runtime', async () => sendLogJson(200, await service.runtimeLog()))
   app.get('/operation', async () => sendLogJson(200, await service.operationLog()))
+  app.get('/login', async () => sendLogJson(200, await service.loginLog()))
 
   // 清空是写端点：读体只为走同一套守卫链（同源、Content-Type、体积上限），
   // 请求体内容不参与任何决策（路径即类别）。

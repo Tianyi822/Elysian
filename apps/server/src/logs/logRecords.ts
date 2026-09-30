@@ -1,7 +1,10 @@
 import {
+  LOGIN_LOG_STATUSES,
   OPERATION_LOG_CATEGORIES,
   OPERATION_LOG_OUTCOMES,
   PLATFORM_LOG_LEVELS,
+  type LoginLogEntry,
+  type LoginLogStatus,
   type OperationLogCategory,
   type OperationLogEntry,
   type OperationLogOutcome,
@@ -35,6 +38,12 @@ export const LOG_SUMMARY_MAX_LENGTH = 200
  */
 export const LOG_METHOD_MAX_LENGTH = 16
 export const LOG_PATH_MAX_LENGTH = 2048
+/** 登录来源地址上限（IPv6 文本远短于它）。 */
+export const LOG_IP_MAX_LENGTH = 64
+/** 归属地上限：真实记录只有「本机 / 内网 / 未知」。 */
+export const LOG_LOCATION_MAX_LENGTH = 32
+/** User-Agent 上限：超长截断，表格本身也只展示截断后的整串。 */
+export const LOG_USER_AGENT_MAX_LENGTH = 512
 /** 单条记录的字节上限：超限的记录直接丢弃，保证一条记录永远塞得进一个分片。 */
 export const LOG_RECORD_MAX_BYTES = 64 * 1024
 /** 截断标记：正文超长时追加在末尾，且计入上限。 */
@@ -46,6 +55,15 @@ export type RuntimeLogRecord = {
   level: PlatformLogLevel
   source: string
   message: string
+}
+
+export type LoginLogRecord = {
+  at: string
+  seq: number
+  ip: string
+  location: string
+  userAgent: string
+  status: LoginLogStatus
 }
 
 export type OperationLogRecord = {
@@ -104,6 +122,18 @@ export function serializeRuntimeLogRecord(record: RuntimeLogRecord): string {
   })
 }
 
+/** 字段顺序固定：at → seq → ip → location → userAgent → status。 */
+export function serializeLoginLogRecord(record: LoginLogRecord): string {
+  return JSON.stringify({
+    at: record.at,
+    seq: record.seq,
+    ip: normalizeSingleLine(record.ip, LOG_IP_MAX_LENGTH),
+    location: normalizeSingleLine(record.location, LOG_LOCATION_MAX_LENGTH),
+    userAgent: normalizeSingleLine(record.userAgent, LOG_USER_AGENT_MAX_LENGTH),
+    status: record.status,
+  })
+}
+
 /** 字段顺序固定：at → seq → category → action → target → result → httpStatus → method → path → summary → actor。 */
 export function serializeOperationLogRecord(record: OperationLogRecord): string {
   return JSON.stringify({
@@ -145,6 +175,10 @@ function isOperationCategory(value: unknown): value is OperationLogCategory {
   return typeof value === 'string' && (OPERATION_LOG_CATEGORIES as readonly string[]).includes(value)
 }
 
+function isLoginStatus(value: unknown): value is LoginLogStatus {
+  return typeof value === 'string' && (LOGIN_LOG_STATUSES as readonly string[]).includes(value)
+}
+
 function isOperationOutcome(value: unknown): value is OperationLogOutcome {
   return typeof value === 'string' && (OPERATION_LOG_OUTCOMES as readonly string[]).includes(value)
 }
@@ -167,6 +201,25 @@ export function parseRuntimeLogLine(line: string): RuntimeLogRecord | null {
     level: value['level'],
     source: value['source'],
     message: value['message'],
+  }
+}
+
+/** 解析登录日志的一行；坏行与形状不合法返回 null。 */
+export function parseLoginLogLine(line: string): LoginLogRecord | null {
+  const value = asJsonObject(line)
+  if (value === null) return null
+  if (!isIsoTimestamp(value['at'])) return null
+  if (!Number.isInteger(value['seq'])) return null
+  if (typeof value['ip'] !== 'string' || typeof value['location'] !== 'string') return null
+  if (typeof value['userAgent'] !== 'string') return null
+  if (!isLoginStatus(value['status'])) return null
+  return {
+    at: value['at'],
+    seq: value['seq'] as number,
+    ip: value['ip'],
+    location: value['location'],
+    userAgent: value['userAgent'],
+    status: value['status'],
   }
 }
 
@@ -212,6 +265,18 @@ export function toRuntimeLogEntry(record: RuntimeLogRecord): RuntimeLogEntry {
     level: record.level,
     source: record.source,
     message: record.message,
+  }
+}
+
+/** 已校验的记录 → 界面条目。time 取 at（界面字段名与运行/操作日志的 at 不同）。 */
+export function toLoginLogEntry(record: LoginLogRecord): LoginLogEntry {
+  return {
+    id: logRecordId(record.at, record.seq),
+    ip: record.ip,
+    location: record.location,
+    userAgent: record.userAgent,
+    status: record.status,
+    time: record.at,
   }
 }
 

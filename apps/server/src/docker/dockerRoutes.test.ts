@@ -486,7 +486,7 @@ describe('createDockerApp', () => {
       const log = vi.fn(async () => undefined)
       const app = mountedApp({
         ...TERMINAL_READY,
-        logs: { recordOperation, log },
+        logs: { recordOperation, log, recordLogin: async () => undefined },
         upgradeWebSocket: () => sendJson(200, { upgraded: true }),
       })
       const res = await app.request(req('GET', terminalPath))

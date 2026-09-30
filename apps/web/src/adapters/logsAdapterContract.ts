@@ -30,15 +30,18 @@ export function runLogsAdapterContract(name: string, make: () => LogsAdapter): v
     })
 
     it('登录日志：按时间倒序，状态取值合法，字段齐全', async () => {
-      const entries = await make().loginLogs()
-      for (const entry of entries) {
+      const report = await make().loginLogs()
+      expect(report.truncated).toEqual(expect.any(Boolean))
+      expect(report.skippedLines).toBeGreaterThanOrEqual(0)
+      expect(report.skippedFiles).toBeGreaterThanOrEqual(0)
+      for (const entry of report.entries) {
         expect(LOGIN_LOG_STATUSES).toContain(entry.status)
         expect(entry.ip).toBeTruthy()
         expect(entry.location).toBeTruthy()
         expect(entry.userAgent).toBeTruthy()
         expect(entry.time).toBeTruthy()
       }
-      const times = entries.map((entry) => entry.time)
+      const times = report.entries.map((entry) => entry.time)
       expect([...times].sort().reverse()).toEqual(times)
     })
 

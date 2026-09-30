@@ -499,7 +499,7 @@ describe('日志域词典', () => {
     expect(contracts.LOGIN_LOG_STATUS_LABELS.failure).toBe('登录失败')
   })
 
-  it('平台日志只有运行与操作两类：登录日志不落盘，不在其中', () => {
+  it('平台日志类别只有运行与操作：登录日志单独落盘，不进合计与清空', () => {
     expect([...contracts.PLATFORM_LOG_CATEGORIES]).toEqual(['runtime', 'operation'])
     expect(contracts.PLATFORM_LOG_CATEGORY_LABELS.runtime).toBe('运行日志')
     expect(contracts.PLATFORM_LOG_CATEGORY_LABELS.operation).toBe('操作日志')

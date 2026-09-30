@@ -2,6 +2,8 @@ import type {
   LogClearReport,
   LogStorageStats,
   LoginLogEntry,
+  LoginLogListReport,
+  LoginLogStatus,
   OperationLogCategory,
   OperationLogEntry,
   OperationLogListReport,
@@ -12,19 +14,19 @@ import type {
   RuntimeLogListReport,
 } from '@elysian/contracts'
 import {
+  LOGIN_LOG_STATUSES,
   OPERATION_LOG_CATEGORIES,
   OPERATION_LOG_OUTCOMES,
   PLATFORM_LOG_CATEGORIES,
   PLATFORM_LOG_LEVELS,
 } from '@elysian/contracts'
 import type { LogsAdapter } from '../../contracts/adapters'
-import { getLoginLogs } from '../mock/logsData'
 import { reportUnauthorized } from './unauthorized'
 
 /*
  * 浏览器侧同源平台日志（Docker 运行时）。服务端把运行日志与操作日志写进部署机器的
- * ~/.Elysian/logs/platform/{runtime,operation}/，这里只做 JSON 形状校验与中文错误翻译，
- * 风格与 filesHttpAdapter 一致。三类日志的落点差别见 loginLogs 的说明。
+ * ~/.Elysian/logs/platform/{runtime,operation,login}/，这里只做 JSON 形状校验与中文错误翻译，
+ * 风格与 filesHttpAdapter 一致。
  */
 
 function asObject(value: unknown): Record<string, unknown> {
@@ -114,6 +116,38 @@ export function parseRuntimeLogResponse(body: unknown): RuntimeLogListReport {
   }
 }
 
+/** 校验一条登录日志条目：状态取值必须在契约表内。 */
+export function parseLoginLogEntry(value: unknown): LoginLogEntry {
+  const row = asObject(value)
+  const status = row.status
+  if (typeof status !== 'string' || !LOGIN_LOG_STATUSES.includes(status as LoginLogStatus)) {
+    throw new Error('登录日志状态响应无效')
+  }
+  return {
+    id: asString(row, 'id'),
+    ip: asString(row, 'ip', '来源'),
+    location: asString(row, 'location', '归属地'),
+    userAgent: asString(row, 'userAgent', '用户代理'),
+    status: status as LoginLogStatus,
+    time: asString(row, 'time', '时间'),
+  }
+}
+
+/** 校验 GET /login 响应：条目数组（倒序）、截断标记、坏行/坏文件计数。 */
+export function parseLoginLogResponse(body: unknown): LoginLogListReport {
+  const row = asObject(body)
+  const entries = row.entries
+  if (!Array.isArray(entries)) {
+    throw new Error('登录日志响应无效：应为数组')
+  }
+  return {
+    entries: entries.map((entry) => parseLoginLogEntry(entry)),
+    truncated: asBoolean(row.truncated, '截断标记'),
+    skippedLines: asNonNegativeNumber(row.skippedLines, '坏行计数'),
+    skippedFiles: asNonNegativeNumber(row.skippedFiles, '坏文件计数'),
+  }
+}
+
 /** 校验一条操作日志条目：分类与结果取值必须在契约表内。 */
 export function parseOperationLogEntry(value: unknown): OperationLogEntry {
   const row = asObject(value)
@@ -199,9 +233,10 @@ async function requestJson(url: string, init?: RequestInit): Promise<unknown> {
 }
 
 /**
- * Docker 运行时的日志 adapter：运行与操作两类落到 /api/logs/*。
+ * Docker 运行时的日志 adapter：运行、操作与登录三类都落到 /api/logs/*。
  * 清空是写端点，请求体固定空对象 `{}`——统一守卫链要求非 GET 请求有可读的请求体，
  * 类别取自路径（服务端的清空路由由契约常量推导），请求体不参与路由决策。
+ * 登录日志不在可清空类别里。
  */
 export function createHttpLogsAdapter(baseUrl = '/api/logs'): LogsAdapter {
   return {
@@ -209,13 +244,8 @@ export function createHttpLogsAdapter(baseUrl = '/api/logs'): LogsAdapter {
       return parseRuntimeLogResponse(await requestJson(`${baseUrl}/runtime`))
     },
 
-    /**
-     * 登录日志本期仍是内存演示：面板还没有登录功能，服务端也没有对应端点，
-     * 因此这条在两套实现（mock 与 http）下读到的是同一份种子。
-     * 接入真实登录采集时换成 GET /api/logs/login，形状不变。
-     */
-    async loginLogs(): Promise<readonly LoginLogEntry[]> {
-      return getLoginLogs()
+    async loginLogs() {
+      return parseLoginLogResponse(await requestJson(`${baseUrl}/login`))
     },
 
     async operationLogs() {

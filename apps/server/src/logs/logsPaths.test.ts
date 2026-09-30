@@ -33,6 +33,12 @@ describe('logShardName 与 parseLogShardName', () => {
   it('构造固定宽度基本格式，解析往返得到秒精度时刻', () => {
     expect(logShardName('runtime', AT, false)).toBe('runtime-20260923T031500Z.jsonl')
     expect(logShardName('operation', AT, true)).toBe('operation-20260923T031500Z.jsonl.gz')
+    expect(logShardName('login', AT, false)).toBe('login-20260923T031500Z.jsonl')
+    expect(parseLogShardName('login-20260923T031500Z.jsonl')).toEqual({
+      category: 'login',
+      at: '2026-09-23T03:15:00Z',
+      compressed: false,
+    })
     expect(parseLogShardName('runtime-20260923T031500Z.jsonl')).toEqual({
       category: 'runtime',
       at: '2026-09-23T03:15:00Z',

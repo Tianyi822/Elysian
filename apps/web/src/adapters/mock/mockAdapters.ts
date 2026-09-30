@@ -33,7 +33,7 @@ import type {
   HostUserInput,
   Incident,
   IncidentListRow,
-  LoginLogEntry,
+  LoginLogListReport,
   LogClearReport,
   LogStorageStats,
   ModuleStatus,
@@ -494,8 +494,13 @@ export class MockLogsAdapter implements LogsAdapter {
     }
   }
 
-  async loginLogs(): Promise<readonly LoginLogEntry[]> {
-    return getLoginLogs()
+  async loginLogs(): Promise<LoginLogListReport> {
+    return {
+      entries: getLoginLogs(),
+      truncated: false,
+      skippedLines: 0,
+      skippedFiles: 0,
+    }
   }
 
   async operationLogs(): Promise<OperationLogListReport> {

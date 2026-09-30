@@ -11,6 +11,9 @@ type LoginLogState = {
   status: LoginLogLoadStatus
   errorMessage: string | undefined
   entries: readonly LoginLogEntry[]
+  truncated: boolean
+  skippedLines: number
+  skippedFiles: number
   /** 状态筛选；与搜索一样只影响视图，不动数据。 */
   statusFilter: LoginLogStatusFilter
   /** 搜索按 IP、归属地与用户代理匹配。 */
@@ -24,6 +27,9 @@ export const useLoginLogStore = create<LoginLogState>((set, get) => ({
   status: 'idle',
   errorMessage: undefined,
   entries: [],
+  truncated: false,
+  skippedLines: 0,
+  skippedFiles: 0,
   statusFilter: 'all',
   search: '',
 
@@ -31,8 +37,14 @@ export const useLoginLogStore = create<LoginLogState>((set, get) => ({
     if (get().status === 'loading') return
     set({ status: 'loading', errorMessage: undefined })
     try {
-      const entries = await gateway.logs.loginLogs()
-      set({ status: 'ready', entries })
+      const report = await gateway.logs.loginLogs()
+      set({
+        status: 'ready',
+        entries: report.entries,
+        truncated: report.truncated,
+        skippedLines: report.skippedLines,
+        skippedFiles: report.skippedFiles,
+      })
     } catch (error) {
       set({ status: 'error', errorMessage: error instanceof Error ? error.message : '登录日志加载失败' })
     }

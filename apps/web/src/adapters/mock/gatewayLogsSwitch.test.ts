@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createMockGateway } from './gateway'
 import { MockFilesAdapter, MockLogsAdapter } from './mockAdapters'
-import { SEED_LOGIN_LOGS, SEED_RUNTIME_LOGS } from './logsData'
+import { SEED_RUNTIME_LOGS } from './logsData'
 
 /*
- * gateway 日志片的分流断言：运行与操作两类在容器内走真实端点，登录日志没有真实端点，
- * 两种取值下都读内存演示。事件流固定 'memory'，不创建指向不存在端点的 EventSource。
+ * gateway 日志片的分流断言：容器内三类日志都走真实端点，缺省仍是内存演示。
+ * 事件流固定 'memory'，不创建指向不存在端点的 EventSource。
  */
 
 /** 端点形状的最小合法响应：两个 GET 都用它，够验证接线与解析放行。 */
@@ -48,7 +48,7 @@ describe('createMockGateway 日志片分流', () => {
     expect(gateway.files).toBeInstanceOf(MockFilesAdapter)
   })
 
-  it("logs: 'http'：两类日志落到同源 /api/logs，登录日志不发请求", async () => {
+  it("logs: 'http'：三类日志都落到同源 /api/logs", async () => {
     const fetchMock = vi.fn(
       async (_input: RequestInfo | URL, _init?: RequestInit) =>
         new Response(JSON.stringify(EMPTY_REPORT), {
@@ -60,14 +60,12 @@ describe('createMockGateway 日志片分流', () => {
 
     await gateway.logs.runtimeLog()
     await gateway.logs.operationLogs()
+    await gateway.logs.loginLogs()
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       '/api/logs/runtime',
       '/api/logs/operation',
+      '/api/logs/login',
     ])
-
-    fetchMock.mockClear()
-    expect(await gateway.logs.loginLogs()).toEqual(SEED_LOGIN_LOGS)
-    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('reset() 把清空过的日志恢复回种子', async () => {

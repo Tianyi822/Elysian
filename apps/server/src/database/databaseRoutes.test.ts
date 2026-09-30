@@ -9,7 +9,11 @@ import type { WsConn } from '../terminals/terminalConnection.ts'
 const ID = 'db-1'
 const secret = { username: 'reader', password: 'password-hidden-from-list' }
 function fakeLogs(): OperationAuditLogs {
-  return { recordOperation: vi.fn(async () => undefined), log: vi.fn(async () => undefined) }
+  return {
+    recordOperation: vi.fn(async () => undefined),
+    log: vi.fn(async () => undefined),
+    recordLogin: vi.fn(async () => undefined),
+  }
 }
 function fixture(logs?: OperationAuditLogs) {
   const instance: DatabaseInstance = { id: ID, engine: 'MySQL', name: 'orders', version: '8.4', status: 'running', updatedAt: '2026-09-28T00:00:00.000Z', hasCredentials: true, credentialUsername: secret.username }

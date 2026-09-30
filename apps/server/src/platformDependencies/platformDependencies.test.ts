@@ -281,7 +281,9 @@ function createRecordingLogs(): { service: LogsService; records: Parameters<Logs
       oldestAt: null,
       clearedAt: '2026-09-29T00:00:00.000Z',
     }),
+    loginLog: async () => ({ entries: [], truncated: false, skippedLines: 0, skippedFiles: 0 }),
     log: async () => undefined,
+    recordLogin: async () => undefined,
     recordOperation: async (input) => {
       records.push(input)
     },

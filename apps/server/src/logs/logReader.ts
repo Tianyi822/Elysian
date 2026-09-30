@@ -1,5 +1,5 @@
-import { LOG_ENTRY_FETCH_LIMIT, type PlatformLogCategory } from '@elysian/contracts'
-import { compareLogShards, parseLogShardName, type ParsedLogShardName } from './logsPaths.ts'
+import { LOG_ENTRY_FETCH_LIMIT } from '@elysian/contracts'
+import { compareLogShards, parseLogShardName, type LogShardCategory, type ParsedLogShardName } from './logsPaths.ts'
 
 /*
  * 平台日志的读取器：把分片按时间顺序拼回一条流。
@@ -31,7 +31,7 @@ export type LogReaderDeps<Record> = {
    * 目录不存在（ENOENT）→ []，其它错误也归一为 []：读取侧永不因目录状态失败。
    * **只返回 lstat 为普通文件的项**：符号链接与子目录一律跳过（不跟随链接读外部文件）。
    */
-  listFiles(category: PlatformLogCategory): Promise<readonly LogFileRef[]>
+  listFiles(category: LogShardCategory): Promise<readonly LogFileRef[]>
   /**
    * 逐行读一个文件到 EOF；实现内部对 .gz 自动接 createGunzip，并自行关闭流与 readline。
    * 没有「中途停止」的契约：读侧要的是文件的尾部（最新记录），中途停下只会丢掉尾部。
@@ -100,7 +100,7 @@ function compareRecordsByTime(a: { at: string; seq: number }, b: { at: string; s
  */
 export async function readLogRecords<Record extends { at: string; seq: number }>(
   deps: LogReaderDeps<Record>,
-  category: PlatformLogCategory,
+  category: LogShardCategory,
   limit: number,
 ): Promise<LogReadResult<Record>> {
   const listed = await deps.listFiles(category)

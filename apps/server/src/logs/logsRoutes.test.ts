@@ -79,7 +79,23 @@ function createFakeService(): { service: LogsService; cleared: PlatformLogCatego
       cleared.push(category)
       return { category, fileCount: 2, totalBytes: 1024, oldestAt: '2026-09-22T00:00:00Z', clearedAt: '2026-09-23T00:00:00Z' }
     },
+    loginLog: async () => ({
+      entries: [
+        {
+          id: '2026-09-23T00:00:02.000Z#3',
+          ip: '127.0.0.1',
+          location: '本机',
+          userAgent: 'TestBrowser/1',
+          status: 'success',
+          time: '2026-09-23T00:00:02.000Z',
+        },
+      ],
+      truncated: false,
+      skippedLines: 0,
+      skippedFiles: 0,
+    }),
     log: async () => undefined,
+    recordLogin: async () => undefined,
     recordOperation: async () => undefined,
     runSweep: async () => SWEEP,
   }
@@ -129,7 +145,7 @@ describe('createLogsApp', () => {
     for (const route of clearRoutes) expect(route.method).toBe('POST')
   })
 
-  it('GET /runtime 与 /operation 透传服务的报告形状，并显式带 cache-control: no-store', async () => {
+  it('GET /runtime、/operation 与 /login 透传服务的报告形状，并显式带 cache-control: no-store', async () => {
     const app = mountedApp({ service: createFakeService().service })
 
     const runtime = await app.request(requestOf('GET', '/runtime'))
@@ -147,6 +163,21 @@ describe('createLogsApp', () => {
     expect(operationBody.truncated).toBe(true)
     expect(operationBody.skippedLines).toBe(1)
     expect(operationBody.skippedFiles).toBe(2)
+
+    const login = await app.request(requestOf('GET', '/login'))
+    expect(login.status).toBe(200)
+    expect(login.headers.get('cache-control')).toBe('no-store')
+    const loginBody = (await login.json()) as { entries: { ip: string; location: string; status: string }[] }
+    expect(loginBody.entries).toEqual([
+      {
+        id: '2026-09-23T00:00:02.000Z#3',
+        ip: '127.0.0.1',
+        location: '本机',
+        userAgent: 'TestBrowser/1',
+        status: 'success',
+        time: '2026-09-23T00:00:02.000Z',
+      },
+    ])
   })
 
   it('读端点不设同源守卫（GET 无副作用），跨源 GET 照常 200', async () => {

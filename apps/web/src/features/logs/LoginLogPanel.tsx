@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'react'
-import { LOGIN_LOG_STATUS_LABELS } from '@elysian/contracts'
+import { LOG_ENTRY_FETCH_LIMIT, LOGIN_LOG_STATUS_LABELS } from '@elysian/contracts'
 import type { LoginLogEntry } from '@elysian/contracts'
+import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { formatLoginTime } from '../../components/format'
 import { Search } from '../../components/icons'
@@ -33,6 +34,9 @@ export function LoginLogPanel() {
   const status = useLoginLogStore((s) => s.status)
   const errorMessage = useLoginLogStore((s) => s.errorMessage)
   const entries = useLoginLogStore((s) => s.entries)
+  const truncated = useLoginLogStore((s) => s.truncated)
+  const skippedLines = useLoginLogStore((s) => s.skippedLines)
+  const skippedFiles = useLoginLogStore((s) => s.skippedFiles)
   const statusFilter = useLoginLogStore((s) => s.statusFilter)
   const search = useLoginLogStore((s) => s.search)
   const load = useLoginLogStore((s) => s.load)
@@ -67,16 +71,22 @@ export function LoginLogPanel() {
   }
 
   if (entries.length === 0) {
-    return <EmptyState title="还没有登录日志" description="接入真实采集后，登录记录会出现在这里。" />
+    return <EmptyState title="还没有登录日志" description="登录成功或失败后，记录会出现在这里。" />
   }
+
+  const notices: string[] = []
+  if (truncated) notices.push(`仅显示最近 ${LOG_ENTRY_FETCH_LIMIT} 条`)
+  if (skippedLines > 0) notices.push(`有 ${skippedLines} 行无法解析，已跳过`)
+  if (skippedFiles > 0) notices.push(`有 ${skippedFiles} 个日志文件读取失败，已跳过`)
 
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-surface px-4 py-3">
-        {/* 登录日志在任何运行时都读内存种子数据（不像安全区按运行时分流），标注无条件展示。 */}
-        <span role="status" className="text-sm text-fg-muted">
-          演示数据
-        </span>
+        {isDockerRuntime() ? null : (
+          <span role="status" className="text-sm text-fg-muted">
+            演示数据
+          </span>
+        )}
         <div role="group" aria-label="登录状态筛选" className="flex items-center gap-2">
           {STATUS_FILTERS.map(({ value, label }) => (
             <button
@@ -111,6 +121,11 @@ export function LoginLogPanel() {
           />
         </div>
       </div>
+      {notices.length > 0 ? (
+        <p role="status" className="mb-3 text-xs text-fg-muted">
+          {notices.join('；')}
+        </p>
+      ) : null}
 
       <div role="region" aria-label="登录日志表" className="overflow-x-auto rounded-xl border border-line bg-surface">
         <table className="w-full min-w-[960px] table-fixed border-separate border-spacing-0 text-left text-sm">

@@ -19,6 +19,9 @@ const INITIAL_STATE = {
   status: 'idle' as const,
   errorMessage: undefined,
   entries: [],
+  truncated: false,
+  skippedLines: 0,
+  skippedFiles: 0,
   statusFilter: 'all' as const,
   search: '',
 }
@@ -112,7 +115,7 @@ describe('平台登录日志面板', () => {
         runtimeLog: () => base.logs.runtimeLog(),
         operationLogs: () => base.logs.operationLogs(),
         clearLogs: (category) => base.logs.clearLogs(category),
-        loginLogs: async () => [],
+        loginLogs: async () => ({ entries: [], truncated: false, skippedLines: 0, skippedFiles: 0 }),
       },
     }
     renderApp('/logs', { gateway })
@@ -160,7 +163,7 @@ describe('平台登录日志面板', () => {
     )
   })
 
-  it('数据源在任何运行时都是种子数据：筛选栏常驻「演示数据」标注', async () => {
+  it('宿主机演示态在筛选栏标注「演示数据」', async () => {
     renderApp('/logs')
     await openLoginTab()
     await screen.findByRole('region', { name: '登录日志表' })

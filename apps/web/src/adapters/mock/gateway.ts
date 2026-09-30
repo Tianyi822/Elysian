@@ -62,8 +62,7 @@ import { useSessionStore } from '../../stores/sessionStore'
  *   与宿主 Caddy 配置），缺省仍是内存演示；
  * - `dependencies: 'http'` 在 Docker 运行时接通宿主依赖检测的真实端点
  *   （/api/platform/dependencies，现场探测 Docker 与 Caddy 通道），缺省恒双 ok 不引导；
- * - `logs: 'http'` 在 Docker 运行时接通容器内平台日志的真实端点（运行与操作两类），
- *   登录日志没有真实端点，**两种取值下都读内存演示**；
+ * - `logs: 'http'` 在 Docker 运行时接通容器内平台日志的真实端点（运行、操作与登录三类）；
  * - `terminals: 'ws'` 在 Docker 运行时经 WebSocket 接容器内真实 PTY，缺省仍是内存演示；
  * - `session: 'http'` 在 Docker 运行时经 /api/auth 承载真实会话（登录/登出/探测），
  *   缺省仍是演示放行（不强制登录）。
@@ -114,8 +113,7 @@ export function createMockGateway(
           scheduleRestart: (containerId) => containerEvents.scheduleRestart(containerId),
           onCreate: (containerId) => containerEvents.emitCreated(containerId),
         })
-  // 日志：运行与操作两类在容器内走真实端点；登录日志没有真实端点（面板还没有登录功能），
-  // 两种取值下都读内存演示——判定见 logsHttpAdapter 的 loginLogs。
+  // 日志：容器内三类都走 /api/logs；宿主机本地开发读内存种子。
   const logs = options.logs === 'http' ? createHttpLogsAdapter() : new MockLogsAdapter()
   // 网站：Docker 运行时经 /api/websites 落真实容器、站点目录与宿主 Caddy 配置；
   // 宿主机本地开发保留内存演示（macOS 开发宿主没有 Docker Engine 与 caddy socket）。

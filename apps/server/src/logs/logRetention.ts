@@ -1,9 +1,9 @@
 import {
   LOG_RETENTION_POLICIES,
+  type LogRetentionPolicy,
   type LogStorageStats,
-  type PlatformLogCategory,
 } from '@elysian/contracts'
-import { logCategoryDir, parseLogShardName, type ParsedLogShardName } from './logsPaths.ts'
+import { logCategoryDir, parseLogShardName, type LogShardCategory, type ParsedLogShardName } from './logsPaths.ts'
 import type { LogWriter } from './logWriter.ts'
 
 /*
@@ -28,6 +28,19 @@ import type { LogWriter } from './logWriter.ts'
 /** 静默窗口：mtime 距今不足它的文件不动（刚写过的片可能仍在被另一个进程写）。 */
 export const LOG_FILE_QUIET_MS = 60_000
 
+/**
+ * 登录日志的保留：30 天、16 MiB。行很短，窗口与操作日志对齐；
+ * 不进运行/操作的「日志大小」合计，也不能从界面清空。
+ */
+export const LOGIN_LOG_RETENTION_POLICY: LogRetentionPolicy = {
+  retentionDays: 30,
+  maxTotalBytes: 16 * 1024 * 1024,
+}
+
+export function retentionPolicyOf(category: LogShardCategory): LogRetentionPolicy {
+  return category === 'login' ? LOGIN_LOG_RETENTION_POLICY : LOG_RETENTION_POLICIES[category]
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000
 
 export type LogFileStat = {
@@ -50,7 +63,7 @@ export type LogRetentionDeps = {
   /** 每轮巡检开头做一次，目录被外部删掉时自愈；recursive + 0700，幂等。 */
   ensureDir(dir: string): Promise<void>
   /** { path, name, sizeBytes, mtimeMs, kind }；目录不存在 → []（不做名字过滤，由本模块判定形态）。 */
-  listFiles(category: PlatformLogCategory): Promise<LogFileStat[]>
+  listFiles(category: LogShardCategory): Promise<LogFileStat[]>
   /**
    * 把 src 压缩写到 dest：内部先写 `dest.tmp` 再 rename（原子发布），并把 src 的 mtime
    * 搬到产物上；**不删 src**（删源由调用方在成功后做，崩溃窗口里源片始终完好）。
@@ -111,7 +124,7 @@ export type RetentionEntry = {
 /** 列目录结果 → 保留口径的条目（`.tmp` 除外，按覆盖下界升序）。 */
 export function retentionEntries(
   files: readonly LogFileStat[],
-  category: PlatformLogCategory,
+  category: LogShardCategory,
 ): RetentionEntry[] {
   const entries: RetentionEntry[] = []
   for (const file of files) {
@@ -148,7 +161,7 @@ function sumBytes(entries: readonly RetentionEntry[]): number {
   return entries.reduce((total, entry) => total + entry.file.sizeBytes, 0)
 }
 
-async function listEntries(deps: LogRetentionDeps, category: PlatformLogCategory): Promise<RetentionEntry[]> {
+async function listEntries(deps: LogRetentionDeps, category: LogShardCategory): Promise<RetentionEntry[]> {
   return retentionEntries(await deps.listFiles(category), category)
 }
 
@@ -177,10 +190,10 @@ async function removeTracked(
  */
 export async function runRetentionSweep(
   deps: LogRetentionDeps,
-  category: PlatformLogCategory,
+  category: LogShardCategory,
 ): Promise<SweepResult> {
   const dir = logCategoryDir(category, deps.platformLogsDir)
-  const policy = LOG_RETENTION_POLICIES[category]
+  const policy = retentionPolicyOf(category)
   const nowMs = deps.now().getTime()
   const retentionMs = policy.retentionDays * DAY_MS
   const state = { freedBytes: 0, failed: 0 }

@@ -34,7 +34,7 @@ export function GatewayProvider({
         // 依赖检测在 Docker 运行时接 /api/platform/dependencies 现场探测宿主
         // Docker 与 Caddy 通道；本地开发恒双 ok，不弹安装引导。
         dependencies: isDockerRuntime() ? 'http' : 'mock',
-        // 日志的 http 分支只影响运行与操作两类；登录日志没有真实端点，两种取值下都读内存演示。
+        // 日志在 Docker 运行时三类都走 /api/logs；宿主机本地开发读内存种子。
         logs: isDockerRuntime() ? 'http' : 'mock',
         terminals: isDockerRuntime() ? 'ws' : 'mock',
         // 会话在 Docker 运行时经 /api/auth 走真实登录（requireSession 读写全挡）；

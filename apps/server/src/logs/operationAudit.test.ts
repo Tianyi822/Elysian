@@ -34,14 +34,17 @@ import type { LogsService } from './logsService.ts'
 
 type OperationInput = Parameters<LogsService['recordOperation']>[0]
 
+type LoginInput = Parameters<LogsService['recordLogin']>[0]
+
 type Sink = {
   operations: OperationInput[]
   logs: { level: PlatformLogLevel; source: string; message: string }[]
+  logins: LoginInput[]
 }
 
 /** 日志服务 fake：把记录收进数组；可注入抛错的实现，验证「采集失败不影响业务响应」。 */
 function createLogsSink(overrides: Partial<OperationAuditLogs> = {}): { logs: OperationAuditLogs; sink: Sink } {
-  const sink: Sink = { operations: [], logs: [] }
+  const sink: Sink = { operations: [], logs: [], logins: [] }
   return {
     sink,
     logs: {
@@ -50,6 +53,9 @@ function createLogsSink(overrides: Partial<OperationAuditLogs> = {}): { logs: Op
       },
       log: async (level, source, message) => {
         sink.logs.push({ level, source, message })
+      },
+      recordLogin: async (input) => {
+        sink.logins.push(input)
       },
       ...overrides,
     },
@@ -524,5 +530,24 @@ describe('createOperationAudit', () => {
       path: `${LOGS_MOUNT}/runtime/clear`,
       httpStatus: 200,
     })
+    expect(sink.logins).toHaveLength(0)
+  })
+
+  it('登录端点额外记登录日志：状态取最终响应，地址来自 requestIP，密码不进记录', async () => {
+    const { logs, sink } = createLogsSink()
+    const app = new Hono()
+    app.use('/api/*', createOperationAudit(logs))
+    app.post('/api/auth/login', (c) => c.json({ error: '用户名或密码错误' }, 401))
+
+    const res = await app.request(
+      jsonRequest('POST', '/api/auth/login', { username: 'admin', password: 'secret-value' }, { 'user-agent': 'TestBrowser/1' }),
+      undefined,
+      { requestIP: () => ({ address: '10.0.0.8' }) },
+    )
+    expect(res.status).toBe(401)
+    expect(sink.operations[0]).toMatchObject({ category: 'auth', action: '登录面板', result: 'failure', httpStatus: 401 })
+    expect(sink.logins).toEqual([{ ip: '10.0.0.8', userAgent: 'TestBrowser/1', status: 'failure' }])
+    expect(JSON.stringify(sink.logins)).not.toContain('secret-value')
+    expect(JSON.stringify(sink.operations)).not.toContain('secret-value')
   })
 })
