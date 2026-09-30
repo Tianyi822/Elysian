@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { LOG_CLEARABLE_CATEGORIES, type PlatformLogCategory } from '@elysian/contracts'
 import { endpointErrorHandler, readJsonBody, sameOriginGuard, sendJson } from '../middleware/guard.ts'
 import type { LogsService } from './logsService.ts'
+import { parseLoginListQuery, parseOperationListQuery, parseRuntimeListQuery } from './logListQuery.ts'
 import { LOGS_MOUNT } from '../shared/apiMounts.ts'
 
 /*
@@ -53,9 +54,15 @@ export function createLogsApp(deps: LogsAppDeps): Hono {
   // 同源守卫先于路由分发：跨源写请求在解析任何请求体之前就被拒绝（未知路径先 403 后 404）。
   app.use('*', sameOriginGuard())
 
-  app.get('/runtime', async () => sendLogJson(200, await service.runtimeLog()))
-  app.get('/operation', async () => sendLogJson(200, await service.operationLog()))
-  app.get('/login', async () => sendLogJson(200, await service.loginLog()))
+  app.get('/runtime', async (c) =>
+    sendLogJson(200, await service.runtimeLog(parseRuntimeListQuery(new URL(c.req.url).searchParams))),
+  )
+  app.get('/operation', async (c) =>
+    sendLogJson(200, await service.operationLog(parseOperationListQuery(new URL(c.req.url).searchParams))),
+  )
+  app.get('/login', async (c) =>
+    sendLogJson(200, await service.loginLog(parseLoginListQuery(new URL(c.req.url).searchParams))),
+  )
 
   // 清空是写端点：读体只为走同一套守卫链（同源、Content-Type、体积上限），
   // 请求体内容不参与任何决策（路径即类别）。

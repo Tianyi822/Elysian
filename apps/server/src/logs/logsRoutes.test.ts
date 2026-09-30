@@ -147,6 +147,22 @@ describe('createLogsApp', () => {
     for (const route of clearRoutes) expect(route.method).toBe('POST')
   })
 
+  it('GET /operation 把解析后的筛选参数传给 service.operationLog', async () => {
+    let received: unknown
+    const { service: base } = createFakeService()
+    const service: LogsService = {
+      ...base,
+      operationLog: async (query) => {
+        received = query
+        return base.operationLog()
+      },
+    }
+    const app = mountedApp({ service })
+    const res = await app.request(requestOf('GET', '/operation?category=files&q=复制'))
+    expect(res.status).toBe(200)
+    expect(received).toEqual({ category: 'files', q: '复制' })
+  })
+
   it('GET /runtime、/operation 与 /login 透传服务的报告形状，并显式带 cache-control: no-store', async () => {
     const app = mountedApp({ service: createFakeService().service })
 

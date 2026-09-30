@@ -7,7 +7,10 @@ import {
   type LoginLogStatus,
   type LogStorageStats,
   type OperationLogCategory,
+  type LoginLogListQuery,
+  type LogListQuery,
   type OperationLogListReport,
+  type OperationLogListQuery,
   type OperationLogOutcome,
   type PlatformLogCategory,
   type PlatformLogLevel,
@@ -74,10 +77,10 @@ export type LogsServiceDeps = {
 }
 
 export type LogsService = {
-  runtimeLog(): Promise<RuntimeLogListReport>
-  operationLog(): Promise<OperationLogListReport>
+  runtimeLog(query?: LogListQuery): Promise<RuntimeLogListReport>
+  operationLog(query?: OperationLogListQuery): Promise<OperationLogListReport>
   /** 登录日志列表（时间倒序）。 */
-  loginLog(): Promise<LoginLogListReport>
+  loginLog(query?: LoginLogListQuery): Promise<LoginLogListReport>
   clear(category: PlatformLogCategory): Promise<LogClearReport>
   log(level: PlatformLogLevel, source: string, message: string): Promise<void>
   /**
@@ -310,7 +313,7 @@ export function createLogsService(deps: LogsServiceDeps): LogsService {
     await deps.writers.operation.append(record)
   }
 
-  async function runtimeLog(): Promise<RuntimeLogListReport> {
+  async function runtimeLog(_query?: LogListQuery): Promise<RuntimeLogListReport> {
     const read = await readLogRecords(deps.readers.runtime, 'runtime', LOG_ENTRY_FETCH_LIMIT)
     const entries = read.records.map(toRuntimeLogEntry).reverse()
     return {
@@ -324,7 +327,7 @@ export function createLogsService(deps: LogsServiceDeps): LogsService {
     }
   }
 
-  async function loginLog(): Promise<LoginLogListReport> {
+  async function loginLog(_query?: LoginLogListQuery): Promise<LoginLogListReport> {
     const read = await readLogRecords(deps.readers.login, 'login', LOG_ENTRY_FETCH_LIMIT)
     const entries = read.records.map(toLoginLogEntry).reverse()
     return {
@@ -336,7 +339,7 @@ export function createLogsService(deps: LogsServiceDeps): LogsService {
     }
   }
 
-  async function operationLog(): Promise<OperationLogListReport> {
+  async function operationLog(_query?: OperationLogListQuery): Promise<OperationLogListReport> {
     const read = await readLogRecords(deps.readers.operation, 'operation', LOG_ENTRY_FETCH_LIMIT)
     const entries = read.records.map(toOperationLogEntry).reverse()
     return {
