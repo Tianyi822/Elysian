@@ -2,10 +2,13 @@ import type {
   LogClearReport,
   LogStorageStats,
   LoginLogEntry,
+  LoginLogListQuery,
   LoginLogListReport,
   LoginLogStatus,
+  LogListQuery,
   OperationLogCategory,
   OperationLogEntry,
+  OperationLogListQuery,
   OperationLogListReport,
   OperationLogOutcome,
   PlatformLogCategory,
@@ -214,6 +217,41 @@ export function parseLogClearResponse(body: unknown): LogClearReport {
   }
 }
 
+/** 列表 GET 的查询串：只追加有值的字段，全空则返回空字符串（URL 不以 ? 结尾）。 */
+function appendLogListQueryParams(params: URLSearchParams, query: LogListQuery): void {
+  if (query.q !== undefined) params.set('q', query.q)
+  if (query.limit !== undefined) params.set('limit', String(query.limit))
+  if (query.before !== undefined) params.set('before', query.before)
+  if (query.beforeId !== undefined) params.set('beforeId', String(query.beforeId))
+}
+
+function operationLogQueryString(query?: OperationLogListQuery): string {
+  if (!query) return ''
+  const params = new URLSearchParams()
+  if (query.category !== undefined) params.set('category', query.category)
+  if (query.result !== undefined) params.set('result', query.result)
+  appendLogListQueryParams(params, query)
+  const serialized = params.toString()
+  return serialized ? `?${serialized}` : ''
+}
+
+function loginLogQueryString(query?: LoginLogListQuery): string {
+  if (!query) return ''
+  const params = new URLSearchParams()
+  appendLogListQueryParams(params, query)
+  if (query.status !== undefined) params.set('status', query.status)
+  const serialized = params.toString()
+  return serialized ? `?${serialized}` : ''
+}
+
+function runtimeLogQueryString(query?: LogListQuery): string {
+  if (!query) return ''
+  const params = new URLSearchParams()
+  appendLogListQueryParams(params, query)
+  const serialized = params.toString()
+  return serialized ? `?${serialized}` : ''
+}
+
 async function requestJson(url: string, init?: RequestInit): Promise<unknown> {
   let response: Response
   try {
@@ -244,16 +282,18 @@ async function requestJson(url: string, init?: RequestInit): Promise<unknown> {
  */
 export function createHttpLogsAdapter(baseUrl = '/api/logs'): LogsAdapter {
   return {
-    async runtimeLog() {
-      return parseRuntimeLogResponse(await requestJson(`${baseUrl}/runtime`))
+    async runtimeLog(query?: LogListQuery) {
+      return parseRuntimeLogResponse(await requestJson(`${baseUrl}/runtime${runtimeLogQueryString(query)}`))
     },
 
-    async loginLogs() {
-      return parseLoginLogResponse(await requestJson(`${baseUrl}/login`))
+    async loginLogs(query?: LoginLogListQuery) {
+      return parseLoginLogResponse(await requestJson(`${baseUrl}/login${loginLogQueryString(query)}`))
     },
 
-    async operationLogs() {
-      return parseOperationLogResponse(await requestJson(`${baseUrl}/operation`))
+    async operationLogs(query?: OperationLogListQuery) {
+      return parseOperationLogResponse(
+        await requestJson(`${baseUrl}/operation${operationLogQueryString(query)}`),
+      )
     },
 
     async clearLogs(category: PlatformLogCategory) {

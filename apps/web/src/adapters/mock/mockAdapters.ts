@@ -33,6 +33,7 @@ import type {
   HostUserInput,
   Incident,
   IncidentListRow,
+  LoginLogEntry,
   LoginLogListReport,
   LogClearReport,
   LogStorageStats,
@@ -68,6 +69,12 @@ import {
   isValidHostUserName,
   isValidSshKeyName,
   isValidSshPort,
+  pageByQuery,
+} from '@elysian/contracts'
+import type {
+  LoginLogListQuery,
+  LogListQuery,
+  OperationLogListQuery,
 } from '@elysian/contracts'
 import type {
   ApprovalAdapter,
@@ -479,38 +486,65 @@ function operationClearTrace(category: PlatformLogCategory, report: LogClearRepo
  * 列表不设截断：演示数据只有几百条，远低于服务端的单次读取上限。
  */
 export class MockLogsAdapter implements LogsAdapter {
-  async runtimeLog(): Promise<RuntimeLogListReport> {
-    const entries = runtimeLogEntries()
+  async runtimeLog(query?: LogListQuery): Promise<RuntimeLogListReport> {
+    const runtime = runtimeLogEntries()
+    const operation = operationLogEntries()
+    const page = pageByQuery(runtime, query ?? {}, (entry, keyword) => {
+      const needle = keyword.toLowerCase()
+      return entry.message.toLowerCase().includes(needle) || entry.source.toLowerCase().includes(needle)
+    })
     return {
-      entries,
-      total: entries.length,
-      truncated: false,
+      entries: page.entries,
+      total: page.total,
+      truncated: page.truncated,
       skippedLines: 0,
       skippedFiles: 0,
-      storage: logStorage(entries, operationLogEntries()),
+      storage: logStorage(runtime, operation),
     }
   }
 
-  async loginLogs(): Promise<LoginLogListReport> {
-    const entries = getLoginLogs()
+  async loginLogs(query?: LoginLogListQuery): Promise<LoginLogListReport> {
+    const rows = getLoginLogs().map((entry) => ({ ...entry, at: entry.time }))
+    const page = pageByQuery(rows, query ?? {}, (entry, keyword) => {
+      const needle = keyword.toLowerCase()
+      if (query?.status && entry.status !== query.status) return false
+      return (
+        entry.status.toLowerCase().includes(needle)
+        || entry.ip.toLowerCase().includes(needle)
+        || entry.location.toLowerCase().includes(needle)
+        || entry.userAgent.toLowerCase().includes(needle)
+      )
+    })
+    const entries: LoginLogEntry[] = page.entries.map(({ at: _at, ...entry }) => entry)
     return {
       entries,
-      total: entries.length,
-      truncated: false,
+      total: page.total,
+      truncated: page.truncated,
       skippedLines: 0,
       skippedFiles: 0,
     }
   }
 
-  async operationLogs(): Promise<OperationLogListReport> {
-    const entries = operationLogEntries()
+  async operationLogs(query?: OperationLogListQuery): Promise<OperationLogListReport> {
+    const runtime = runtimeLogEntries()
+    const operation = operationLogEntries()
+    const page = pageByQuery(operation, query ?? {}, (entry, keyword) => {
+      const needle = keyword.toLowerCase()
+      if (query?.category && entry.category !== query.category) return false
+      if (query?.result && entry.result !== query.result) return false
+      return (
+        entry.action.toLowerCase().includes(needle)
+        || entry.summary.toLowerCase().includes(needle)
+        || (entry.target?.toLowerCase().includes(needle) ?? false)
+      )
+    })
     return {
-      entries,
-      total: entries.length,
-      truncated: false,
+      entries: page.entries,
+      total: page.total,
+      truncated: page.truncated,
       skippedLines: 0,
       skippedFiles: 0,
-      storage: logStorage(runtimeLogEntries(), entries),
+      storage: logStorage(runtime, operation),
     }
   }
 

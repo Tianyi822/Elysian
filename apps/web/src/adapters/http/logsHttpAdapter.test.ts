@@ -235,6 +235,34 @@ describe('createHttpLogsAdapter 的请求接线', () => {
     expect(await createHttpLogsAdapter().loginLogs()).toEqual(report)
     expect(fetchMock).toHaveBeenCalledWith('/api/logs/login', undefined)
   })
+
+  it('操作日志带筛选与翻页参数时拼进查询串，无 query 时 URL 不以 ? 结尾', async () => {
+    const operationBody = {
+      entries: [],
+      total: 0,
+      truncated: false,
+      skippedLines: 0,
+      skippedFiles: 0,
+      storage: realStorageRow,
+    }
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(operationBody), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await createHttpLogsAdapter().operationLogs({
+      category: 'files',
+      q: '复制',
+      before: '2026-09-23T00:00:00.000Z',
+      beforeId: 4,
+    })
+    expect(fetchMock.mock.calls[0]![0]).toBe(
+      '/api/logs/operation?category=files&q=%E5%A4%8D%E5%88%B6&before=2026-09-23T00%3A00%3A00.000Z&beforeId=4',
+    )
+
+    fetchMock.mockClear()
+    await createHttpLogsAdapter().operationLogs()
+    expect(fetchMock.mock.calls[0]![0]).toBe('/api/logs/operation')
+    expect(String(fetchMock.mock.calls[0]![0]).endsWith('?')).toBe(false)
+  })
 })
 
 describe('parseLoginLogResponse', () => {

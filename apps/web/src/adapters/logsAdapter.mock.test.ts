@@ -94,4 +94,41 @@ describe('日志适配器 mock 数据形状', () => {
     expect(entries).toHaveLength(1)
     expect(entries[0]!.category).toBe('logs')
   })
+
+  it('操作日志 mock：分类筛选、total 与 limit 截断，翻页 id 并集等于该分类全集', async () => {
+    const adapter = new MockLogsAdapter()
+    const filesIds = new Set(
+      SEED_OPERATION_LOGS.filter((entry) => entry.category === 'files').map((entry) => entry.id),
+    )
+    expect(filesIds.size).toBeGreaterThan(1)
+
+    const first = await adapter.operationLogs({ category: 'files', limit: 1 })
+    expect(first.total).toBe(filesIds.size)
+    expect(first.entries).toHaveLength(1)
+    expect(first.truncated).toBe(true)
+
+    const cursor = first.entries[0]!
+    const suffix = cursor.id.slice(cursor.id.lastIndexOf('#') + 1)
+    const second = await adapter.operationLogs({
+      category: 'files',
+      limit: 1,
+      before: cursor.at,
+      beforeId: Number(suffix),
+    })
+    expect(second.entries).toHaveLength(1)
+    expect(second.entries[0]!.id).not.toBe(cursor.id)
+
+    const pageIds = new Set([cursor.id, second.entries[0]!.id])
+    if (filesIds.size > 2) {
+      const third = await adapter.operationLogs({
+        category: 'files',
+        limit: 1,
+        before: second.entries[0]!.at,
+        beforeId: Number(second.entries[0]!.id.slice(second.entries[0]!.id.lastIndexOf('#') + 1)),
+      })
+      expect(third.entries).toHaveLength(1)
+      pageIds.add(third.entries[0]!.id)
+    }
+    expect(pageIds).toEqual(filesIds)
+  })
 })

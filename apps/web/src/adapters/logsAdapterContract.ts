@@ -24,6 +24,20 @@ import type { LogsAdapter } from '../contracts/adapters'
  */
 export function runLogsAdapterContract(name: string, make: () => LogsAdapter): void {
   describe(`LogsAdapter 契约（${name}）`, () => {
+    it('列表不带 query 时 total 不少于当前页条目数', async () => {
+      const adapter = make()
+      for (const report of [await adapter.runtimeLog(), await adapter.loginLogs(), await adapter.operationLogs()]) {
+        expect(report.total).toBeGreaterThanOrEqual(report.entries.length)
+      }
+    })
+
+    it('当前页无条目时 truncated 为 false', async () => {
+      const adapter = make()
+      const emptyRuntime = await adapter.runtimeLog({ q: '__elysian_no_match__' })
+      expect(emptyRuntime.entries).toHaveLength(0)
+      expect(emptyRuntime.truncated).toBe(false)
+    })
+
     it('登录日志：两次读取完全一致', async () => {
       const adapter = make()
       expect(await adapter.loginLogs()).toEqual(await adapter.loginLogs())

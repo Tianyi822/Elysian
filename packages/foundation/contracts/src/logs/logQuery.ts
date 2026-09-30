@@ -41,7 +41,7 @@ export function pageByQuery<T extends { id: string; at: string }>(
   matches: (entry: T, keyword: string) => boolean,
 ): LogPage<T> {
   const keyword = query.q?.trim() ?? ''
-  const matched = entries.filter((entry) => keyword === '' || matches(entry, keyword))
+  const matched = entries.filter((entry) => matches(entry, keyword))
   const sorted = [...matched].sort(compareLogEntries)
   const total = sorted.length
 

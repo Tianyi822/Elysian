@@ -22,9 +22,12 @@ import type {
   FirewallPortSync,
   Incident,
   IncidentListRow,
+  LoginLogListQuery,
   LoginLogListReport,
   LogClearReport,
+  LogListQuery,
   ModuleStatus,
+  OperationLogListQuery,
   OperationLogListReport,
   PlatformLogCategory,
   RuntimeLogListReport,
@@ -267,11 +270,11 @@ export type { FirewallAdapter } from '@elysian/contracts'
  */
 export interface LogsAdapter {
   /** 读取平台运行日志（时间倒序，最新在最上，含截断与存储统计）。 */
-  runtimeLog(): Promise<RuntimeLogListReport>
+  runtimeLog(query?: LogListQuery): Promise<RuntimeLogListReport>
   /** 读取平台登录日志（时间倒序，含截断标记）。 */
-  loginLogs(): Promise<LoginLogListReport>
+  loginLogs(query?: LoginLogListQuery): Promise<LoginLogListReport>
   /** 读取平台操作日志（时间倒序，含截断与存储统计）。 */
-  operationLogs(): Promise<OperationLogListReport>
+  operationLogs(query?: OperationLogListQuery): Promise<OperationLogListReport>
   /**
    * 清空一个类别的日志，返回已删除的事实（不可恢复）。
    * 清空动作本身会留下一条留痕：该类别最多剩一条记录，且必须是本次清空的留痕。

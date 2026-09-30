@@ -6,7 +6,8 @@ import type {
   PlatformLogLevel,
   RuntimeLogEntry,
 } from '@elysian/contracts'
-import { PLATFORM_LOG_CATEGORY_LABELS } from '@elysian/contracts'
+import { PLATFORM_LOG_CATEGORY_LABELS, pageByQuery } from '@elysian/contracts'
+import type { LoginLogListQuery, LogListQuery, OperationLogListQuery } from '@elysian/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SweepResult } from '../../../../server/src/logs/logsService.ts'
 import { createLogsApp, LOGS_MOUNT } from '../../../../server/src/logs/logsRoutes.ts'
@@ -79,28 +80,59 @@ function createFakeLogsService(): LogsService {
   }
 
   const service: LogsService = {
-    async runtimeLog() {
+    async runtimeLog(query: LogListQuery = {}) {
+      const page = pageByQuery(runtime, query, (entry, keyword) => {
+        const needle = keyword.toLowerCase()
+        return entry.message.toLowerCase().includes(needle) || entry.source.toLowerCase().includes(needle)
+      })
       return {
-        entries: runtime,
-        total: runtime.length,
-        truncated: false,
+        entries: page.entries,
+        total: page.total,
+        truncated: page.truncated,
         skippedLines: 0,
         skippedFiles: 0,
         storage: storageOf(runtime, operation),
       }
     },
-    async operationLog() {
+    async operationLog(query: OperationLogListQuery = {}) {
+      const page = pageByQuery(operation, query, (entry, keyword) => {
+        const needle = keyword.toLowerCase()
+        if (query.category && entry.category !== query.category) return false
+        if (query.result && entry.result !== query.result) return false
+        return (
+          entry.action.toLowerCase().includes(needle)
+          || entry.summary.toLowerCase().includes(needle)
+          || (entry.target?.toLowerCase().includes(needle) ?? false)
+        )
+      })
       return {
-        entries: operation,
-        total: operation.length,
-        truncated: false,
+        entries: page.entries,
+        total: page.total,
+        truncated: page.truncated,
         skippedLines: 0,
         skippedFiles: 0,
         storage: storageOf(runtime, operation),
       }
     },
-    async loginLog() {
-      return { entries: [], total: 0, truncated: false, skippedLines: 0, skippedFiles: 0 }
+    async loginLog(query: LoginLogListQuery = {}) {
+      const rows: { id: string; at: string; ip: string; location: string; userAgent: string; status: 'success' | 'failure'; time: string }[] = []
+      const page = pageByQuery(rows, query, (entry, keyword) => {
+        const needle = keyword.toLowerCase()
+        if (query.status && entry.status !== query.status) return false
+        return (
+          entry.status.toLowerCase().includes(needle)
+          || entry.ip.toLowerCase().includes(needle)
+          || entry.location.toLowerCase().includes(needle)
+          || entry.userAgent.toLowerCase().includes(needle)
+        )
+      })
+      return {
+        entries: page.entries.map(({ at: _at, ...entry }) => entry),
+        total: page.total,
+        truncated: page.truncated,
+        skippedLines: 0,
+        skippedFiles: 0,
+      }
     },
     async recordLogin() {
       return undefined
@@ -187,7 +219,8 @@ function makeHttpAdapter() {
     const headers = new Headers(init?.headers)
     headers.set('origin', url.origin)
     headers.set('host', url.host)
-    return app.request(new Request(new URL(relative || '/', url), { ...init, headers }))
+    const path = relative || '/'
+    return app.request(new Request(new URL(`${path}${url.search}`, url.origin), { ...init, headers }))
   })
   return createHttpLogsAdapter('/api/logs')
 }
