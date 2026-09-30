@@ -1,16 +1,17 @@
 import { Database } from 'bun:sqlite'
-import type {
-  LoginLogEntry,
-  LoginLogListQuery,
-  LogListQuery,
-  LogPage,
-  LoginLogStatus,
-  OperationLogCategory,
-  OperationLogEntry,
-  OperationLogListQuery,
-  OperationLogOutcome,
-  PlatformLogLevel,
-  RuntimeLogEntry,
+import {
+  LOG_ENTRY_FETCH_LIMIT,
+  type LoginLogEntry,
+  type LoginLogListQuery,
+  type LogListQuery,
+  type LogPage,
+  type LoginLogStatus,
+  type OperationLogCategory,
+  type OperationLogEntry,
+  type OperationLogListQuery,
+  type OperationLogOutcome,
+  type PlatformLogLevel,
+  type RuntimeLogEntry,
 } from '@elysian/contracts'
 import {
   LOG_ACTION_MAX_LENGTH,
@@ -371,7 +372,7 @@ function queryTable<T>(options: {
   keywordParams: (pattern: string) => unknown[]
   mapRow: (row: Row) => T
 }): LogPage<T> {
-  const limit = options.query.limit ?? 1000
+  const limit = Math.min(options.query.limit ?? LOG_ENTRY_FETCH_LIMIT, LOG_ENTRY_FETCH_LIMIT)
   const keyword = options.query.q?.trim() ?? ''
   const whereParts: string[] = [CURSOR_SQL]
   const params: unknown[] = [...cursorBind(options.query)]

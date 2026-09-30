@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { LOG_ENTRY_FETCH_LIMIT } from '@elysian/contracts'
 import { LOG_RECORD_MAX_BYTES } from './logRecords'
 import { openLogStore } from './logStore'
 
@@ -103,6 +104,27 @@ describe('openLogStore', () => {
     expect(store.queryLogin({ status: 'failure' }).total).toBe(1)
     expect(store.queryLogin({ status: 'failure' }).entries[0]?.ip).toBe('198.51.100.8')
     expect(store.queryLogin({ status: 'failure' }).entries[0]?.time).toBe('2026-09-23T00:00:02.000Z')
+    store.close()
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('limit 超过 LOG_ENTRY_FETCH_LIMIT 时钳到上限', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'elysian-logs-'))
+    const store = openLogStore(join(dir, 'logs.sqlite'))
+    const total = LOG_ENTRY_FETCH_LIMIT + 3
+    const base = Date.UTC(2026, 8, 23)
+    for (let i = 0; i < total; i += 1) {
+      store.insertRuntime({
+        at: new Date(base + i * 1000).toISOString(),
+        level: 'info',
+        source: 'server.clamp',
+        message: `row-${i}`,
+      })
+    }
+    const page = store.queryRuntime({ limit: 5000 })
+    expect(page.total).toBe(total)
+    expect(page.entries).toHaveLength(LOG_ENTRY_FETCH_LIMIT)
+    expect(page.truncated).toBe(true)
     store.close()
     await rm(dir, { recursive: true, force: true })
   })
