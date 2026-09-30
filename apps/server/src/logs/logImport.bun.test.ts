@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { createGzip } from 'node:zlib'
 import { importPlatformLogs } from './logImport'
-import { openLogStore } from './logStore'
+import { createUnavailableLogStore, openLogStore } from './logStore'
 
 async function writeGzipFile(path: string, content: string): Promise<void> {
   const tmp = `${path}.tmp`
@@ -101,6 +101,33 @@ describe('importPlatformLogs', () => {
     await expect(importPlatformLogs(store, platformLogsDir)).resolves.toBeUndefined()
     expect(await readdir(join(platformLogsDir, 'runtime'))).toContain('runtime-20260923T040000Z.jsonl')
     expect(await readdir(join(platformLogsDir, 'runtime'))).toContain('notes.txt')
+
+    store.close()
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it('不可用库导入不删除分片', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'elysian-log-import-unavail-'))
+    const platformLogsDir = join(root, 'platform')
+    await mkdir(join(platformLogsDir, 'runtime'), { recursive: true })
+    const shardName = 'runtime-20260923T032510Z.jsonl'
+    const shardPath = join(platformLogsDir, 'runtime', shardName)
+    await writeFile(
+      shardPath,
+      `${JSON.stringify({
+        at: '2026-09-23T03:25:10.001Z',
+        seq: 1,
+        level: 'info',
+        source: 'server.lifecycle',
+        message: 'panel ready',
+      })}\n`,
+      'utf8',
+    )
+
+    const store = createUnavailableLogStore()
+    await expect(importPlatformLogs(store, platformLogsDir)).resolves.toBeUndefined()
+    expect(await readdir(join(platformLogsDir, 'runtime'))).toEqual([shardName])
+    expect(store.counters().failedWrites).toBe(0)
 
     store.close()
     await rm(root, { recursive: true, force: true })

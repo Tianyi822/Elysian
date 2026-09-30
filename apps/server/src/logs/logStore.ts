@@ -384,13 +384,18 @@ export function openLogStore(path: string, policies?: LogStorePolicies): LogStor
               console.error(`Elysian 日志导入跳过坏行（runtime）：${line.slice(0, 200)}`)
               continue
             }
-            store.insertRuntime({
+            const source = normalizeSingleLine(record.source, LOG_SOURCE_MAX_LENGTH)
+            const message = normalizeSingleLine(record.message, LOG_MESSAGE_MAX_LENGTH)
+            const bytes = recordBytes({
               at: record.at,
               level: record.level,
-              source: record.source,
-              message: record.message,
-              sourceKey,
+              source,
+              message,
             })
+            if (bytes > LOG_RECORD_MAX_BYTES) {
+              throw new Error('日志记录超过大小上限，导入中止')
+            }
+            insertRuntimeSql.run(record.at, record.level, source, message, sourceKey, bytes)
             inserted += 1
             continue
           }
@@ -401,14 +406,20 @@ export function openLogStore(path: string, policies?: LogStorePolicies): LogStor
               console.error(`Elysian 日志导入跳过坏行（login）：${line.slice(0, 200)}`)
               continue
             }
-            store.insertLogin({
+            const ip = normalizeSingleLine(record.ip, LOG_IP_MAX_LENGTH)
+            const location = normalizeSingleLine(record.location, LOG_LOCATION_MAX_LENGTH)
+            const userAgent = normalizeSingleLine(record.userAgent, LOG_USER_AGENT_MAX_LENGTH)
+            const bytes = recordBytes({
               at: record.at,
-              ip: record.ip,
-              location: record.location,
-              userAgent: record.userAgent,
+              ip,
+              location,
+              userAgent,
               status: record.status,
-              sourceKey,
             })
+            if (bytes > LOG_RECORD_MAX_BYTES) {
+              throw new Error('日志记录超过大小上限，导入中止')
+            }
+            insertLoginSql.run(record.at, ip, location, userAgent, record.status, sourceKey, bytes)
             inserted += 1
             continue
           }
@@ -418,18 +429,41 @@ export function openLogStore(path: string, policies?: LogStorePolicies): LogStor
             console.error(`Elysian 日志导入跳过坏行（operation）：${line.slice(0, 200)}`)
             continue
           }
-          store.insertOperation({
+          const action = normalizeSingleLine(record.action, LOG_ACTION_MAX_LENGTH)
+          const target =
+            record.target === null ? null : normalizeSingleLine(record.target, LOG_TARGET_MAX_LENGTH)
+          const summary = normalizeSingleLine(record.summary, LOG_SUMMARY_MAX_LENGTH)
+          const method =
+            record.method === null ? null : normalizeSingleLine(record.method, LOG_METHOD_MAX_LENGTH)
+          const path =
+            record.path === null ? null : normalizeSingleLine(record.path, LOG_PATH_MAX_LENGTH)
+          const bytes = recordBytes({
             at: record.at,
             category: record.category,
-            action: record.action,
-            target: record.target,
-            summary: record.summary,
+            action,
+            target,
             result: record.result,
-            method: record.method,
-            path: record.path,
             httpStatus: record.httpStatus,
-            sourceKey,
+            method,
+            path,
+            summary,
           })
+          if (bytes > LOG_RECORD_MAX_BYTES) {
+            throw new Error('日志记录超过大小上限，导入中止')
+          }
+          insertOperationSql.run(
+            record.at,
+            record.category,
+            action,
+            target,
+            summary,
+            record.result,
+            method,
+            path,
+            record.httpStatus,
+            sourceKey,
+            bytes,
+          )
           inserted += 1
         }
         return { inserted, skipped }
@@ -628,11 +662,7 @@ export function createUnavailableLogStore(): LogStore {
     insertOperation() {
       failedWrites += 1
     },
-    importFile(_category, lines) {
-      failedWrites += lines.filter((line) => line.length > 0).length
-      return { inserted: 0, skipped: lines.filter((line) => line.length > 0).length }
-    },
-    queryRuntime: unavailable,
+    importFile: unavailable,    queryRuntime: unavailable,
     queryLogin: unavailable,
     queryOperation: unavailable,
     clear: unavailable,
