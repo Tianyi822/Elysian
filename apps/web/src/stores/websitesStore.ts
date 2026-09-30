@@ -10,6 +10,7 @@ import { create } from 'zustand'
 import type { ElysianGateway } from '../contracts/adapters'
 import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
 import { useNotificationStore } from './notificationStore'
+import { notifyFirewallPortSync } from './firewallPortNotice'
 
 /**
  * 动作完成提示的运行模式标注：Docker 运行时动作已真实执行（容器、站点目录与
@@ -184,9 +185,10 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
       if (get().saving) return false
       set({ saving: true })
       try {
-        const created = await gateway.websites.create(kind, input)
+        const { project: created, firewallPort } = await gateway.websites.create(kind, input)
         set((state) => ({ projects: [...state.projects, created], createDialogOpen: false, saving: false }))
         notify(`项目 ${created.name} 已添加${NOTICE_SUFFIX}`)
+        notifyFirewallPortSync(firewallPort)
         return true
       } catch (error) {
         set({ saving: false })
@@ -199,12 +201,13 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
       if (get().busyProjectIds.includes(projectId)) throw new Error('项目正在执行其他操作')
       set((state) => ({ busyProjectIds: [...state.busyProjectIds, projectId] }))
       try {
-        const updated = await gateway.websites.setAccess(projectId, access)
+        const { project: updated, firewallPort } = await gateway.websites.setAccess(projectId, access)
         set((state) => ({
           projects: state.projects.map((project) => project.id === projectId ? updated : project),
           detailTarget: state.detailTarget?.id === projectId ? updated : state.detailTarget,
         }))
         notify(`项目 ${updated.name} 的访问配置已保存${NOTICE_SUFFIX}`)
+        notifyFirewallPortSync(firewallPort)
         await get().refresh(gateway)
         return get().projects.find((project) => project.id === projectId) ?? updated
       } finally {

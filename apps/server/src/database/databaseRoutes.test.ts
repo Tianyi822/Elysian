@@ -16,7 +16,7 @@ function fixture(logs?: OperationAuditLogs) {
   const service: DatabaseService = {
     list: vi.fn(async () => [instance]),
     discover: vi.fn(async () => ({ images: [], containers: [] })),
-    create: vi.fn(async () => instance),
+    create: vi.fn(async () => ({ instance, firewallPort: null })),
     reveal: vi.fn(async () => secret),
     remove: vi.fn(async () => undefined),
     removeContainer: vi.fn(async () => undefined),

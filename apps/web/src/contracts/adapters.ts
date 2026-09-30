@@ -19,6 +19,7 @@ import type {
   FileEntry,
   FileSearchResult,
   FirewallAdapter,
+  FirewallPortSync,
   Incident,
   IncidentListRow,
   LoginLogEntry,
@@ -230,10 +231,16 @@ export type DatabaseCreateFileInput = {
 export type DatabaseCreateInput = DatabaseCreateContainerInput | DatabaseCreateFileInput
 
 /** 数据库区适配接口：Docker 运行时走 HTTP/WebSocket。 */
+/** 数据库创建结果：实例之外带回任意主机访问端口的防火墙自动开放事实（其他场景为 null）。 */
+export type DatabaseCreateResult = {
+  instance: DatabaseInstance
+  firewallPort: FirewallPortSync | null
+}
+
 export interface DatabaseAdapter {
   list(): Promise<readonly DatabaseInstance[]>
-  /** 创建容器数据库或 SQLite 文件。 */
-  create(input: DatabaseCreateInput, onProgress?: (percent: number) => void): Promise<DatabaseInstance>
+  /** 创建容器数据库或 SQLite 文件；任意主机访问的端口自动开放结果随实例带回。 */
+  create(input: DatabaseCreateInput, onProgress?: (percent: number) => void): Promise<DatabaseCreateResult>
   /** 删除目标逻辑库或 SQLite 文件；真实容器与卷由独立操作删除。 */
   remove(databaseId: string): Promise<void>
   discover?(engine: Exclude<DatabaseEngine, 'SQLite'>, versionTag?: string): Promise<{ images: readonly ContainerImage[]; containers: readonly { id: string; name: string; accessScope: string; managed: boolean; versionTag: string }[] }>
@@ -294,15 +301,21 @@ export type { UserAdapter } from '@elysian/contracts'
  * Docker 运行时经同源 HTTP（/api/websites）落真实容器、站点目录与反向代理，
  * 两种实现对同一套契约断言复跑——这就是「mock 可替换」的验证方式。
  */
+/** 创建与访问方式切换的结果：项目之外带回直连端口的防火墙自动开放事实（不联动场景为 null）。 */
+export type WebsiteMutateResult = {
+  project: WebsiteProject
+  firewallPort: FirewallPortSync | null
+}
+
 export interface WebsitesAdapter {
   /** 全部项目附带反向代理通道状态：列表读取时探测一次，读端点无副作用。 */
   list(): Promise<WebsiteListReport>
   /** 新建项目：新建即已停止、无证书；名称跨类型全局唯一（站点目录只由名称推导）。 */
-  create(kind: WebsiteProjectKind, input: WebsiteProjectCreateInput): Promise<WebsiteProject>
+  create(kind: WebsiteProjectKind, input: WebsiteProjectCreateInput): Promise<WebsiteMutateResult>
   /** 修改项目备注与到期时间。 */
   update(projectId: string, input: WebsiteProjectUpdateInput): Promise<WebsiteProject>
   /** 切换直连或域名访问，并可更换证书。 */
-  setAccess(projectId: string, access: WebsiteAccessInput): Promise<WebsiteProject>
+  setAccess(projectId: string, access: WebsiteAccessInput): Promise<WebsiteMutateResult>
   /** 删除项目：停容器、回收反向代理路由、删容器与站点目录、删登记；不幂等。 */
   remove(projectId: string): Promise<void>
   /** 启动或停止项目：非 HTML 落容器启停并回报进程号，HTML 翻转托管开关。 */

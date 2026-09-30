@@ -156,6 +156,19 @@ export function formatFirewallPort(rule: Pick<FirewallRule, 'port' | 'portTo' | 
 }
 
 /*
+ * 端口自动开放：网站直连项目与任意主机访问的数据库把宿主端口发布到 0.0.0.0，
+ * 创建（及网站切换为直连）时面板在防火墙页管理的同一份 ufw 里幂等补一条
+ * 入站 TCP 放行规则。结果随创建响应带回前端，拼进完成通知。
+ */
+export type FirewallPortSync = {
+  /** opened=本次新写入并已复核；skipped=已有等价放行规则或防火墙片不可用，无需动作；failed=写入未生效，需要用户到安全页处理。 */
+  state: 'opened' | 'skipped' | 'failed'
+  port: number
+  /** skipped/failed 时的中文说明；opened 为 null。 */
+  detail: string | null
+}
+
+/*
  * 端口防扫描：真实实现基于内核 xt_recent 的双名单 jail——监控端口的 TCP 新连接按源 IP
  * 记入跟踪名单，判定窗口内超过阈值即把该 IP 记入封锁名单并在封禁期内直接丢弃；
  * 封锁名单读 /proc/net/xt_recent，解封写回该文件；统计读 iptables 规则包计数。

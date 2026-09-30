@@ -11,9 +11,9 @@ const project = { id: 'p', kind: 'html', name: 'site', pid: null, containerId: '
 function fixture() {
   const service: WebsiteService = {
     list: vi.fn(async () => ({ projects: [project], proxy: { state: 'active' as const, detail: null } })),
-    create: vi.fn(async () => project),
+    create: vi.fn(async () => ({ project, firewallPort: null })),
     update: vi.fn(async () => project),
-    setAccess: vi.fn(async () => project),
+    setAccess: vi.fn(async () => ({ project, firewallPort: null })),
     setRunning: vi.fn(async () => project),
     logs: vi.fn(async () => ['日志']),
     remove: vi.fn(async () => undefined),

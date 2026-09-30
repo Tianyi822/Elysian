@@ -321,7 +321,7 @@ export function WebsitesCreateDialog() {
               </div> : null}
               {accessError ? <p role="alert" className="mt-2 text-xs text-danger">{accessError}</p> : null}
               <p className="mt-3 rounded-lg border border-line p-2 text-xs text-fg-muted">访问路径：{accessMode === 'direct' ? `http://服务器IP:${port} → 项目容器` : `https://${domain.trim() || '域名'} → Caddy → 项目容器`}</p>
-              <p className="mt-1 text-xs text-fg-subtle">请自行核对服务器防火墙、DNS 与公网可达性。</p>
+              <p className="mt-1 text-xs text-fg-subtle">{accessMode === 'direct' ? `创建时将自动在防火墙开放端口 ${port}；DNS 与公网可达性请自行核对。` : '域名访问经宿主 Caddy 的 80/443，这两个端口请在安全页确认开放；DNS 与公网可达性请自行核对。'}</p>
             </div>
 
             <div>

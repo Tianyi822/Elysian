@@ -2,6 +2,7 @@ import type {
   FirewallAdapter,
   FirewallForwardRule,
   FirewallIpRule,
+  FirewallPortSync,
   FirewallRule,
   FirewallRuleInput,
   FirewallScanConfig,
@@ -28,6 +29,7 @@ import {
   specFromInput,
   specToArgs,
   type IpUfwLine,
+  type ParsedUfwLine,
   type PortUfwLine,
   type RuleRowContext,
   type UfwRuleSpec,
@@ -214,6 +216,48 @@ function hasPanelAllowRow(rows: readonly UfwStatusRow[]): boolean {
       row.to === `${PANEL_PORT}/tcp` &&
       row.from === 'Anywhere',
   )
+}
+
+/** 规则账本里存在该端口的入站 TCP 放行规则（精确单端口；端口段规则不在此判定内）。 */
+function hasPortAllowLine(lines: readonly ParsedUfwLine[], port: number): boolean {
+  return lines.some(
+    (line) =>
+      line.kind === 'port' &&
+      line.spec.action === 'allow' &&
+      line.spec.direction === 'in' &&
+      line.spec.proto === 'tcp' &&
+      line.spec.port === String(port),
+  )
+}
+
+/**
+ * 端口自动开放（网站直连项目 / 任意主机访问的数据库在创建时调用）：
+ * 防火墙页管理的同一份 ufw 里幂等补一条入站 TCP 放行规则。
+ * 与 service.create 不同，这里不抛错——结果以 FirewallPortSync 带回创建响应，
+ * 由前端拼进完成通知；写入后必须能在账本里复核到（保底必须可验证的同款口径）。
+ */
+export async function ensurePortRule(
+  deps: FirewallHostDeps,
+  input: { port: number; note: string },
+): Promise<FirewallPortSync> {
+  try {
+    const lines = parseShowAdded(await deps.runUfw(['show', 'added']))
+    if (hasPortAllowLine(lines, input.port)) {
+      return { state: 'skipped', port: input.port, detail: '防火墙已有该端口的放行规则' }
+    }
+    if (lines.filter((line) => line.kind === 'port').length >= FIREWALL_LIMITS.userRules) {
+      return { state: 'failed', port: input.port, detail: `端口规则已达上限（最多 ${FIREWALL_LIMITS.userRules} 条），请先删除不再需要的规则` }
+    }
+    await deps.runUfw(['allow', `${input.port}/tcp`, 'comment', input.note])
+    const after = parseShowAdded(await deps.runUfw(['show', 'added']))
+    if (!hasPortAllowLine(after, input.port)) {
+      return { state: 'failed', port: input.port, detail: `ufw allow 执行后规则账本仍无 ${input.port}/tcp，请到安全页核对` }
+    }
+    return { state: 'opened', port: input.port, detail: null }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    return { state: 'failed', port: input.port, detail }
+  }
 }
 
 export function createFirewallService(deps: FirewallHostDeps): FirewallAdapter {

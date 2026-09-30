@@ -9,6 +9,7 @@ import type {
 } from '@elysian/contracts'
 import { invalidRequest, readJsonBody, sameOriginGuard, sendJson } from '../middleware/guard.ts'
 import { FIREWALL_MOUNT } from '../shared/apiMounts.ts'
+import type { FirewallHostDeps } from './firewallService.ts'
 
 /*
  * 防火墙真实路由：/api/security/firewall/*（apps/server 的 Hono 子应用，仅容器内可用）。
@@ -24,6 +25,8 @@ export type FirewallAppDeps = {
   /** false 时一切请求 503：不在容器内的强制保护（见 firewallHostDeps 的 /.dockerenv 校验）。 */
   available: boolean
   service?: FirewallAdapter
+  /** 真实接线（可用时恒有）：装配层用它构造端口自动开放闭包注入其他域；测试注入 fake 时不带。 */
+  hostDeps?: FirewallHostDeps
 }
 
 export function createFirewallApp(deps: FirewallAppDeps): Hono {

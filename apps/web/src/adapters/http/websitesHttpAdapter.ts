@@ -14,8 +14,9 @@ import {
   WEBSITE_PROXY_STATES,
   WEBSITE_RUN_STATES,
 } from '@elysian/contracts'
-import type { WebsitesAdapter } from '../../contracts/adapters'
+import type { WebsitesAdapter, WebsiteMutateResult } from '../../contracts/adapters'
 import { reportUnauthorized } from './unauthorized'
+import { parseFirewallPortSync } from './firewallHttpAdapter'
 
 /*
  * 浏览器侧同源网站管理（Docker 运行时，/api/websites）。容器生命周期、站点目录
@@ -112,6 +113,18 @@ export function parseWebsiteProject(value: unknown): WebsiteProject {
   }
 }
 
+/** 校验创建与切换访问方式的响应：项目附带可空的防火墙端口开放结果。 */
+export function parseWebsiteMutateResult(value: unknown): WebsiteMutateResult {
+  const row = asObject(value, '网站项目变更响应无效')
+  if (!('project' in row)) {
+    throw new Error('网站项目变更响应无效')
+  }
+  return {
+    project: parseWebsiteProject(row.project),
+    firewallPort: parseFirewallPortSync(row.firewallPort ?? null),
+  }
+}
+
 /** 校验反向代理通道状态：state 取枚举，detail 可空。 */
 export function parseWebsiteProxyStatus(value: unknown): WebsiteProxyStatus {
   const row = asObject(value, '反向代理状态响应无效')
@@ -197,7 +210,7 @@ export function createHttpWebsitesAdapter(baseUrl = '/api/websites'): WebsitesAd
     },
 
     async create(kind, input) {
-      return parseWebsiteProject(await sendJson('/', 'POST', {
+      return parseWebsiteMutateResult(await sendJson('/', 'POST', {
         kind,
         name: input.name,
         port: input.port,
@@ -218,7 +231,7 @@ export function createHttpWebsitesAdapter(baseUrl = '/api/websites'): WebsitesAd
     },
 
     async setAccess(projectId, access) {
-      return parseWebsiteProject(await sendJson(`/${encodeURIComponent(projectId)}/access`, 'PUT', access))
+      return parseWebsiteMutateResult(await sendJson(`/${encodeURIComponent(projectId)}/access`, 'PUT', access))
     },
 
     async remove(projectId) {

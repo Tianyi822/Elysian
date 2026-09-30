@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto'
-import type { DatabaseEngine, DatabaseInstance, ContainerImage } from '@elysian/contracts'
+import type { DatabaseEngine, DatabaseInstance, ContainerImage, FirewallPortSync } from '@elysian/contracts'
 import { InvalidRequestError, invalidRequest } from '../shared/errors.ts'
 import { databasePort, databaseImageHasTag, imageMatches, validDatabaseVersion, DB_SHARED_NETWORK, type DatabaseDocker } from './databaseDocker.ts'
 import type { DatabaseProtocol, DatabaseAddress, DatabaseSession } from './databaseProtocol.ts'
@@ -21,10 +21,16 @@ export type DatabaseCreateRequest = {
     { kind: 'adopt'; containerId: string; admin: DatabaseSecret }
 }
 
+/** 创建结果：实例之外带回任意主机访问端口的防火墙自动开放事实（其他场景为 null）。 */
+export type DatabaseCreateResult = {
+  instance: DatabaseInstance
+  firewallPort: FirewallPortSync | null
+}
+
 export type DatabaseService = {
   list(): Promise<DatabaseInstance[]>
   discover(engine: Engine, versionTag?: string): Promise<{ images: readonly ContainerImage[]; containers: DatabaseContainerCandidate[] }>
-  create(input: DatabaseCreateRequest): Promise<DatabaseInstance>
+  create(input: DatabaseCreateRequest): Promise<DatabaseCreateResult>
   reveal(id: string): Promise<DatabaseSecret>
   remove(id: string): Promise<void>
   removeContainer(id: string): Promise<void>
@@ -81,9 +87,13 @@ export function createDatabaseService(deps: {
   listImages(): Promise<readonly ContainerImage[]>
   listContainers(): Promise<readonly { id: string; name: string }[]>
   selfContainerId?: string
+  /** 任意主机访问端口的防火墙自动开放（app.ts 装配层注入）；缺省恒 skipped。 */
+  openFirewallPort?: (port: number, note: string) => Promise<FirewallPortSync>
 }): DatabaseService {
   const { registry, docker, protocol } = deps
   const inProgress = new Set<string>()
+  const openFirewallPort = deps.openFirewallPort
+    ?? (async (port: number) => ({ state: 'skipped' as const, port, detail: '防火墙片不可用，端口未自动开放' }))
 
   async function record(id: string) {
     const found = (await registry.list()).find((row) => row.id === id)
@@ -186,7 +196,7 @@ export function createDatabaseService(deps: {
     return { images, containers }
   }
 
-  async function create(input: DatabaseCreateRequest): Promise<DatabaseInstance> {
+  async function create(input: DatabaseCreateRequest): Promise<DatabaseCreateResult> {
     const key = `${input.engine}:${input.name}:${input.target.kind === 'new' ? input.target.containerName : input.target.containerId}`
     if (inProgress.has(key)) throw new InvalidRequestError(409, '相同数据库正在创建')
     inProgress.add(key)
@@ -261,7 +271,13 @@ export function createDatabaseService(deps: {
         row.state = 'active'
         await registry.put(row)
         for (const old of rows.filter((item) => item.state === 'empty' && item.containerId === row.containerId)) await registry.remove(old.id)
-        return projection(row)
+        // 任意主机访问把宿主端口发布到 0.0.0.0：数据库确认可用后在防火墙页管理的
+        // 同一份 ufw 里幂等开放；失败不回滚（实例本机仍可用），结果如实带回响应。
+        const instance = await projection(row)
+        const firewallPort = input.target.kind === 'new' && input.accessScope === 'any-host' && typeof input.hostPort === 'number'
+          ? await openFirewallPort(input.hostPort, `Elysian 数据库 ${input.name}`)
+          : null
+        return { instance, firewallPort }
       } catch (error) {
         throw new Error(`数据库创建未完成；容器 ${containerId.slice(0, 12)} 已登记为待处理：${error instanceof Error ? error.message : '未知错误'}`)
       }

@@ -21,10 +21,11 @@ describe('网站 adapter 访问配置', () => {
     const requests: { url: string; init?: RequestInit }[] = []
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       requests.push({ url, init })
-      return new Response(JSON.stringify(row), { status: 200, headers: { 'content-type': 'application/json' } })
+      return new Response(JSON.stringify({ project: row, firewallPort: null }), { status: 200, headers: { 'content-type': 'application/json' } })
     }))
     const adapter = createHttpWebsitesAdapter()
-    await adapter.create('html', { name: 'site', port: 8080, access: { mode: 'direct' } })
+    const created = await adapter.create('html', { name: 'site', port: 8080, access: { mode: 'direct' } })
+    expect(created.firewallPort).toBeNull()
     await adapter.setAccess('p', { mode: 'domain', domain: 'example.com', certificatePem: 'cert', privateKeyPem: 'key' })
     expect(requests[0]?.url).toBe('/api/websites/')
     expect(JSON.parse(String(requests[0]?.init?.body)).access).toEqual({ mode: 'direct' })
@@ -36,12 +37,12 @@ describe('网站 adapter 访问配置', () => {
   it('mock 从空列表开始，直连项目可以创建、启停和更换访问方式', async () => {
     const adapter = new MockWebsitesAdapter()
     expect((await adapter.list()).projects).toEqual([])
-    const project = await adapter.create('html', { name: 'docs', port: 8088, access: { mode: 'direct' } })
+    const project = (await adapter.create('html', { name: 'docs', port: 8088, access: { mode: 'direct' } })).project
     expect(project.containerId).toMatch(/^[0-9a-f]{64}$/)
     expect((await adapter.setRunning(project.id, true)).runState).toBe('running')
-    const domain = await adapter.setAccess(project.id, { mode: 'domain', domain: 'example.com', certificatePem: 'cert', privateKeyPem: 'key' })
+    const domain = (await adapter.setAccess(project.id, { mode: 'domain', domain: 'example.com', certificatePem: 'cert', privateKeyPem: 'key' })).project
     expect(domain.domain).toBe('example.com')
     expect(domain.certificate?.applied).toBe(true)
-    expect((await adapter.setAccess(project.id, { mode: 'direct' })).certificate).toBeNull()
+    expect((await adapter.setAccess(project.id, { mode: 'direct' })).project.certificate).toBeNull()
   })
 })

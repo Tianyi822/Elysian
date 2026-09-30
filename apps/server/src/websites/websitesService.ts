@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type {
+  FirewallPortSync,
   PortMapping,
   WebsiteAccessInput,
   WebsiteListReport,
@@ -73,13 +74,19 @@ export function validateWebsiteAccessRequest(input: unknown): WebsiteAccessInput
 
 export type WebsiteService = {
   list(): Promise<WebsiteListReport>
-  create(input: WebsiteCreateRequest): Promise<WebsiteProject>
+  create(input: WebsiteCreateRequest): Promise<WebsiteMutateResult>
   update(id: string, input: WebsiteUpdateRequest): Promise<WebsiteProject>
-  setAccess(id: string, access: WebsiteAccessInput): Promise<WebsiteProject>
+  setAccess(id: string, access: WebsiteAccessInput): Promise<WebsiteMutateResult>
   setRunning(id: string, running: boolean): Promise<WebsiteProject>
   logs(id: string): Promise<readonly string[]>
   remove(id: string): Promise<void>
   reconcileProxy(): Promise<WebsiteProxyStatus>
+}
+
+/** 创建与访问方式切换的结果：项目之外带回直连端口的防火墙自动开放事实（不联动场景为 null）。 */
+export type WebsiteMutateResult = {
+  project: WebsiteProject
+  firewallPort: FirewallPortSync | null
 }
 
 function object(value: unknown): Record<string, unknown> {
@@ -188,10 +195,16 @@ export function createWebsiteService(deps: {
   mountRoot: string
   listPortBindings(): Promise<readonly PortMapping[]>
   selfContainerId?: string
+  /** 直连端口的防火墙自动开放（app.ts 装配层注入）；缺省恒 skipped。 */
+  openFirewallPort?: (port: number, note: string) => Promise<FirewallPortSync>
 }): WebsiteService {
   const { registry, docker, caddy } = deps
   const certificates = deps.certificates ?? createMemoryWebsiteCertificateStore()
   const inProgress = new Set<string>()
+  // 端口自动开放：直连项目把宿主端口发布到 0.0.0.0，创建与切换为直连时在防火墙页
+  // 管理的同一份 ufw 里幂等补放行规则；未注入（测试/非容器装配）恒 skipped 不打扰。
+  const openFirewallPort = deps.openFirewallPort
+    ?? (async (port: number) => ({ state: 'skipped' as const, port, detail: '防火墙片不可用，端口未自动开放' }))
 
   async function record(id: string): Promise<WebsiteRecord> {
     const found = (await registry.list()).find((row) => row.id === id)
@@ -329,7 +342,7 @@ export function createWebsiteService(deps: {
     return { projects: await Promise.all(rows.map((row) => projectRow(row, config))), proxy }
   }
 
-  async function create(input: WebsiteCreateRequest): Promise<WebsiteProject> {
+  async function create(input: WebsiteCreateRequest): Promise<WebsiteMutateResult> {
     // 全局串行化全部创建：名称（跨类型全局唯一）与域名的查重都是跨 await 的
     // check-then-act，按 kind+name 分键会让并发同名/同域创建双双通过查重。
     if (inProgress.has(CREATE_MUTEX_KEY)) throw new InvalidRequestError(409, '网站项目正在创建，请稍后再试')
@@ -425,7 +438,13 @@ export function createWebsiteService(deps: {
         throw new Error(`网站创建失败：${reason}；容器已回滚，站点目录保留${rollbackFailure ? '；原 Caddy 配置恢复失败，配置可能不同步，请重新下发反向代理配置' : ''}`)
       }
 
-      return projectRow(row, appliedConfig ?? await currentConfigOrNull())
+      // 端口自动开放放在登记落账之后：失败不回滚容器（直连端口在宿主本机仍可达，
+      // 只是外部不可达），结果如实带回响应由前端呈现。
+      const project = await projectRow(row, appliedConfig ?? await currentConfigOrNull())
+      const firewallPort = input.access.mode === 'direct'
+        ? await openFirewallPort(input.port, `Elysian 网站 ${input.name}`)
+        : null
+      return { project, firewallPort }
       })
       pushTail = run.catch(() => undefined)
       return await run
@@ -483,7 +502,7 @@ export function createWebsiteService(deps: {
     }
   }
 
-  async function setAccess(id: string, access: WebsiteAccessInput): Promise<WebsiteProject> {
+  async function setAccess(id: string, access: WebsiteAccessInput): Promise<WebsiteMutateResult> {
     if (inProgress.has(CREATE_MUTEX_KEY) || inProgress.has(id)) {
       throw new InvalidRequestError(409, '项目正在执行其他操作')
     }
@@ -514,7 +533,7 @@ export function createWebsiteService(deps: {
         }
         const changingMode = row.accessMode !== access.mode
         const updated: WebsiteRecord = { ...row, accessMode: access.mode, domain, certificate }
-        if (!changingMode && row.domain === domain && !stagedRef) return projectRow(row, await currentConfigOrNull())
+        if (!changingMode && row.domain === domain && !stagedRef) return { project: await projectRow(row, await currentConfigOrNull()), firewallPort: null }
         let previousConfig: unknown | null = null
         let nextConfig: unknown | null = null
         let caddyLoaded = false
@@ -556,7 +575,12 @@ export function createWebsiteService(deps: {
             selfContainerId: deps.selfContainerId,
           })
           if (row.certificate && row.certificate.ref !== certificate?.ref) await certificates.remove(row.certificate.ref)
-          return projectRow(updated, nextConfig ?? await currentConfigOrNull())
+          // 切换为直连：端口新发布到 0.0.0.0，与创建同口径自动开放；失败不回滚切换。
+          const project = await projectRow(updated, nextConfig ?? await currentConfigOrNull())
+          const firewallPort = changingMode && access.mode === 'direct'
+            ? await openFirewallPort(row.port, `Elysian 网站 ${row.name}`)
+            : null
+          return { project, firewallPort }
         } catch (error) {
           const failures: string[] = []
           if (registryChanged) try { await registry.put(row) } catch { failures.push('登记') }

@@ -3,6 +3,7 @@ import { createFilesApp, type FilesAppDeps } from './files/filesRoutes.ts'
 import { createFilesHostDeps } from './files/filesHostDeps.ts'
 import { createFirewallApp, type FirewallAppDeps } from './firewall/firewallRoutes.ts'
 import { resolveFirewallDeps } from './firewall/firewallHostDeps.ts'
+import { ensurePortRule } from './firewall/firewallService.ts'
 import { createLogsHostDeps } from './logs/logsHostDeps.ts'
 import { createOperationAudit } from './logs/operationAudit.ts'
 import { createLogsApp } from './logs/logsRoutes.ts'
@@ -139,7 +140,13 @@ export async function createApp(overrides: AppDepsOverrides = {}): Promise<Hono>
     overrides.platformDependencies ?? createDependencyProbe(),
   ))
   // 防火墙接线是 async：规则时间账本依赖 bun:sqlite，仅在容器分支动态加载。
-  app.route(FIREWALL_MOUNT, createFirewallApp(overrides.firewall ?? (await resolveFirewallDeps())))
+  const firewall = overrides.firewall ?? (await resolveFirewallDeps())
+  app.route(FIREWALL_MOUNT, createFirewallApp(firewall))
+  // 端口自动开放闭包（网站直连与数据库任意主机访问在创建时调用）：真实接线经
+  // ensurePortRule 幂等补规则；测试注入的防火墙片没有 hostDeps，恒报 skipped 不打扰。
+  const openFirewallPort = firewall.hostDeps !== undefined
+    ? (port: number, note: string) => ensurePortRule(firewall.hostDeps!, { port, note })
+    : async (port: number) => ({ state: 'skipped' as const, port, detail: '防火墙片不可用，端口未自动开放' })
   app.route(SSH_MOUNT, createSshApp(overrides.ssh ?? createSshHostDeps()))
   app.route(USERS_MOUNT, createUsersApp(overrides.users ?? createUsersHostDeps()))
   app.route(FILES_MOUNT, createFilesApp(overrides.files ?? createFilesHostDeps()))
@@ -161,6 +168,7 @@ export async function createApp(overrides: AppDepsOverrides = {}): Promise<Hono>
         listImages: () => docker.service!.listImages(),
         listContainers: () => docker.service!.listContainers(),
         selfContainerId: docker.selfContainerId ?? undefined,
+        openFirewallPort,
       }) }
     : { available: sqliteAvailable, sqlite: sqliteAvailable ? createSqliteService({ uid: 2001, gid: 2001, bunBin: '/usr/local/bin/bun' }) : undefined })
   app.route(DATABASE_MOUNT, createDatabaseApp({ ...databases, logs: databases.logs ?? logs }))
@@ -181,6 +189,7 @@ export async function createApp(overrides: AppDepsOverrides = {}): Promise<Hono>
         listPortBindings: async () => (await docker.service!.listContainers())
           .flatMap((container) => container.ports),
         selfContainerId: docker.selfContainerId ?? undefined,
+        openFirewallPort,
       }) }
     } else {
       websites = { available: false }

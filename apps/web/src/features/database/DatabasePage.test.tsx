@@ -134,7 +134,7 @@ function pageGateway(overrides: Partial<ElysianGateway['databases']> = {}): Elys
           updatedAt: '2026-09-12T08:00:00.000Z',
         }
         rows.push(created)
-        return structuredClone(created)
+        return { instance: structuredClone(created), firewallPort: null }
       }
       const createdContainer = input.target?.kind === 'new'
         ? await base.containers.create({
@@ -166,7 +166,7 @@ function pageGateway(overrides: Partial<ElysianGateway['databases']> = {}): Elys
         updatedAt: '2026-09-12T08:00:00.000Z',
       }
       rows.push(created)
-      return structuredClone(created)
+      return { instance: structuredClone(created), firewallPort: null }
     },
     async remove(databaseId) {
       const index = rows.findIndex((row) => row.id === databaseId)

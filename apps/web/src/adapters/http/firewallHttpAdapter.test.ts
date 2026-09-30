@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   parseFirewallOverviewResponse,
+  parseFirewallPortSync,
   parseForwardResponse,
   parseForwardRulesResponse,
   parseIpRuleResponse,
@@ -166,5 +167,22 @@ describe('parseScanResponse', () => {
       '防火墙防扫描封锁条目响应无效',
     )
     expect(() => parseScanResponse(null)).toThrow('防火墙响应格式无效')
+  })
+})
+
+describe('端口自动开放结果解析', () => {
+  it('三态与可空 detail 逐字段校验；null 直通为未联动', () => {
+    expect(parseFirewallPortSync(null)).toBeNull()
+    expect(parseFirewallPortSync({ state: 'opened', port: 8080, detail: null })).toEqual({ state: 'opened', port: 8080, detail: null })
+    expect(parseFirewallPortSync({ state: 'skipped', port: 8080, detail: '防火墙已有该端口的放行规则' })).toEqual({ state: 'skipped', port: 8080, detail: '防火墙已有该端口的放行规则' })
+    const failed = parseFirewallPortSync({ state: 'failed', port: 8080, detail: '端口规则已达上限（最多 200 条）' })
+    expect(failed?.state).toBe('failed')
+  })
+
+  it('形状漂移抛中文错误', () => {
+    expect(() => parseFirewallPortSync('opened')).toThrow('防火墙响应格式无效')
+    expect(() => parseFirewallPortSync({ state: 'opening', port: 8080, detail: null })).toThrow('防火墙端口开放结果响应无效')
+    expect(() => parseFirewallPortSync({ state: 'opened', port: '8080', detail: null })).toThrow('防火墙端口开放结果响应无效')
+    expect(() => parseFirewallPortSync({ state: 'failed', port: 8080, detail: 42 })).toThrow('防火墙端口开放结果响应无效')
   })
 })

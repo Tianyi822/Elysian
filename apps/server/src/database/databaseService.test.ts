@@ -13,6 +13,7 @@ const USER = { username: 'reader', password: 'strong-password-123' }
 
 function fixture() {
   const calls: string[] = []
+  const portOpens: Array<{ port: number; note: string }> = []
   const registry = createMemoryDatabaseRegistry()
   let running = true
   let version = '8.4.7'
@@ -39,12 +40,13 @@ function fixture() {
     metrics: vi.fn(async () => ({ sizeGb: 0.01, connections: { active: 1, max: 100 } })),
     session: vi.fn(async () => ({ execute: async () => ['OK'], close: async () => undefined })),
   }
-  const service = createDatabaseService({ registry, docker, protocol, listImages: async () => [IMAGE], listContainers: async () => [{ id: CONTAINER_ID, name: 'mysql-test' }] })
+  const service = createDatabaseService({ registry, docker, protocol, listImages: async () => [IMAGE], listContainers: async () => [{ id: CONTAINER_ID, name: 'mysql-test' }],
+    openFirewallPort: async (port, note) => { portOpens.push({ port, note }); return { state: 'opened', port, detail: null } } })
   const input = validateDatabaseCreateRequest({
     engine: 'MySQL', versionTag: '8.4', name: 'orders', user: USER,
     accessScope: 'container-network', target: { kind: 'new', imageId: IMAGE_ID, containerName: 'orders-db' },
   })
-  return { service, input, registry, docker, protocol, calls, stop: () => { running = false }, setVersion: (next: string) => { version = next } }
+  return { service, input, registry, docker, protocol, calls, portOpens, stop: () => { running = false }, setVersion: (next: string) => { version = next } }
 }
 
 function adoptInput() {
@@ -102,7 +104,7 @@ describe('数据库服务', () => {
   it('缺镜像由发现接口反映；创建后先有容器与卷再建逻辑库，列表不含密码', async () => {
     const f = fixture()
     expect((await f.service.discover('MySQL', '8.4')).images).toHaveLength(1)
-    const created = await f.service.create(f.input)
+    const created = (await f.service.create(f.input)).instance
     expect(f.calls.slice(0, 3)).toEqual(['container', 'logical-db', 'verify-user'])
     expect(created.source).toBe('managed')
     expect(created.volumeName).toBe('elysian-db-volume')
@@ -114,7 +116,7 @@ describe('数据库服务', () => {
 
   it('接管已有容器先接入面板网络并验证已有普通账号，不创建账号', async () => {
     const f = fixture()
-    const adopted = await f.service.create({ ...f.input, target: { kind: 'adopt', containerId: CONTAINER_ID, admin: { username: 'root', password: 'existing-secret' } } })
+    const adopted = (await f.service.create({ ...f.input, target: { kind: 'adopt', containerId: CONTAINER_ID, admin: { username: 'root', password: 'existing-secret' } } })).instance
     expect(adopted.source).toBe('adopted')
     expect(f.calls).toContain('attach')
     expect(f.calls).not.toContain('logical-db')
@@ -124,28 +126,28 @@ describe('数据库服务', () => {
 
   it('普通删除只删除逻辑库，显式删除容器及数据才删除专属卷', async () => {
     const f = fixture()
-    const created = await f.service.create(f.input)
+    const created = (await f.service.create(f.input)).instance
     await f.service.remove(created.id)
     expect(f.calls).toContain('drop-db')
     expect(f.calls).not.toContain('remove-container-volume')
     expect((await f.service.list())[0]?.emptyContainer).toBe(true)
-    const next = await f.service.create(f.input)
+    const next = (await f.service.create(f.input)).instance
     await f.service.removeContainer(next.id)
     expect(f.calls).toContain('remove-container-volume')
   })
 
   it('面板创建的空容器仍可承载新逻辑库，无须重复提供管理员密码', async () => {
     const f = fixture()
-    const first = await f.service.create(f.input)
+    const first = (await f.service.create(f.input)).instance
     await f.service.remove(first.id)
-    const second = await f.service.create({ ...f.input, name: 'new_orders', target: { kind: 'managed', containerId: CONTAINER_ID } })
+    const second = (await f.service.create({ ...f.input, name: 'new_orders', target: { kind: 'managed', containerId: CONTAINER_ID } })).instance
     expect(second.name).toBe('new_orders')
     expect((await f.service.list()).some((row) => row.emptyContainer)).toBe(false)
   })
 
   it('容器内有未登记的其他逻辑库时禁止删除专属卷', async () => {
     const f = fixture()
-    const created = await f.service.create(f.input)
+    const created = (await f.service.create(f.input)).instance
     vi.mocked(f.protocol.hasOtherDatabases).mockResolvedValue(true)
     await expect(f.service.removeContainer(created.id)).rejects.toThrow('其他数据库')
     expect(f.calls).not.toContain('remove-container-volume')
@@ -153,7 +155,7 @@ describe('数据库服务', () => {
 
   it('外部删掉受管容器后仍可清理登记的孤儿卷', async () => {
     const f = fixture()
-    const created = await f.service.create(f.input)
+    const created = (await f.service.create(f.input)).instance
     vi.mocked(f.docker.assertEngine).mockRejectedValue(new InvalidRequestError(404, '数据库容器已不存在'))
     await f.service.removeContainer(created.id)
     expect(f.calls).toContain('remove-container-volume')
@@ -197,7 +199,7 @@ describe('数据库服务', () => {
 
   it('接管成功后删除逻辑库时移出面板网络并移除登记', async () => {
     const f = fixture()
-    const adopted = await f.service.create(adoptInput())
+    const adopted = (await f.service.create(adoptInput())).instance
     await f.service.remove(adopted.id)
     expect(f.docker.detach).toHaveBeenCalledWith(CONTAINER_ID, 'elysian-db-shared')
     expect(await f.registry.list()).toHaveLength(0)
@@ -205,7 +207,7 @@ describe('数据库服务', () => {
 
   it('接管容器被外部删除后 remove 仍清空登记、不抛错', async () => {
     const f = fixture()
-    const adopted = await f.service.create(adoptInput())
+    const adopted = (await f.service.create(adoptInput())).instance
     // 容器已被外部删除：address 阶段 assertEngine 抛 404，remove 不得堵死成永久僵尸登记。
     vi.mocked(f.docker.assertEngine).mockRejectedValue(new InvalidRequestError(404, '数据库容器已不存在'))
     await expect(f.service.remove(adopted.id)).resolves.toBeUndefined()
@@ -217,7 +219,7 @@ describe('数据库服务', () => {
 
   it('受管容器被外部删除后 remove 同样清空登记、不转为空容器', async () => {
     const f = fixture()
-    const created = await f.service.create(f.input)
+    const created = (await f.service.create(f.input)).instance
     vi.mocked(f.docker.assertEngine).mockRejectedValue(new InvalidRequestError(404, '数据库容器已不存在'))
     await expect(f.service.remove(created.id)).resolves.toBeUndefined()
     expect(f.protocol.drop).not.toHaveBeenCalled()
@@ -227,7 +229,7 @@ describe('数据库服务', () => {
 
   it('容器仅停止时 remove 仍按原错误上抛、保留登记', async () => {
     const f = fixture()
-    const created = await f.service.create(f.input)
+    const created = (await f.service.create(f.input)).instance
     f.stop()
     await expect(f.service.remove(created.id)).rejects.toThrow('容器已停止')
     expect(await f.registry.list()).toHaveLength(1)
@@ -235,8 +237,8 @@ describe('数据库服务', () => {
 
   it('同容器多接管库时仅移除最后一个登记才断开面板网络', async () => {
     const f = fixture()
-    const first = await f.service.create(adoptInput())
-    const second = await f.service.create({ ...adoptInput(), name: 'reports' })
+    const first = (await f.service.create(adoptInput())).instance
+    const second = (await f.service.create({ ...adoptInput(), name: 'reports' })).instance
     await f.service.remove(first.id)
     expect(f.docker.detach).not.toHaveBeenCalled()
     expect(await f.registry.list()).toHaveLength(1)
@@ -247,9 +249,34 @@ describe('数据库服务', () => {
 
   it('面板创建的受管库删除与删容器全程不移出面板网络', async () => {
     const f = fixture()
-    const created = await f.service.create(f.input)
+    const created = (await f.service.create(f.input)).instance
     await f.service.remove(created.id)
     await f.service.removeContainer((await f.registry.list())[0]!.id)
     expect(f.docker.detach).not.toHaveBeenCalled()
+  })
+
+  it('任意主机访问的新建库自动开放防火墙端口；其他范围与接管不触发', async () => {
+    const f = fixture()
+    const anyHost = await f.service.create({ ...f.input, accessScope: 'any-host', hostPort: 13306, confirmPublic: true })
+    expect(anyHost.firewallPort).toEqual({ state: 'opened', port: 13306, detail: null })
+    expect(f.portOpens).toEqual([{ port: 13306, note: 'Elysian 数据库 orders' }])
+
+    const local = await f.service.create({ ...f.input, name: 'inner' })
+    expect(local.firewallPort).toBeNull()
+    expect(f.portOpens).toHaveLength(1)
+
+    const adopted = await f.service.create({ ...f.input, name: 'taken', target: { kind: 'adopt', containerId: CONTAINER_ID, admin: { username: 'root', password: 'existing-secret' } } })
+    expect(adopted.firewallPort).toBeNull()
+    expect(f.portOpens).toHaveLength(1)
+  })
+
+  it('开口失败不影响数据库创建成功：结果如实带回', async () => {
+    const registry = createMemoryDatabaseRegistry()
+    const f = fixture()
+    const service = createDatabaseService({ registry, docker: f.docker, protocol: f.protocol, listImages: async () => [IMAGE], listContainers: async () => [],
+      openFirewallPort: async (port) => ({ state: 'failed', port, detail: '端口规则已达上限（最多 200 条）' }) })
+    const result = await service.create({ ...f.input, accessScope: 'any-host', hostPort: 13307, confirmPublic: true })
+    expect(result.instance.source).toBe('managed')
+    expect(result.firewallPort).toEqual({ state: 'failed', port: 13307, detail: '端口规则已达上限（最多 200 条）' })
   })
 })

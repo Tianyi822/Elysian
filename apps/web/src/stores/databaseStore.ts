@@ -4,6 +4,7 @@ import type { ElysianGateway, DatabaseCreateInput } from '../contracts/adapters'
 import { resolveViewTab, writeStoredViewTab } from '../app/theme/themePreferences'
 import { pushHistory, type TerminalLine } from '../components/terminal/terminalSession'
 import { useNotificationStore } from './notificationStore'
+import { notifyFirewallPortSync } from './firewallPortNotice'
 
 /** SQL 会话的界面状态：输出行与历史只存内存，关闭即清空（不伪装成持久会话）。 */
 export type SqlSession = {
@@ -186,12 +187,13 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   async createDatabase(gateway, input) {
     set({ creating: true, uploadPercent: undefined, createError: undefined })
     try {
-      const created = input.kind === 'file' && input.origin === 'uploaded'
+      const { instance: created, firewallPort } = input.kind === 'file' && input.origin === 'uploaded'
         ? await gateway.databases.create(input, (percent) => set({ uploadPercent: percent }))
         : await gateway.databases.create(input)
       useNotificationStore
         .getState()
         .notify({ tone: 'success', message: `数据库 ${created.name} 已创建` })
+      notifyFirewallPortSync(firewallPort)
       set((state) => ({
         databases: [...state.databases, created],
         createOpen: false,

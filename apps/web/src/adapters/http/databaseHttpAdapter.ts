@@ -1,6 +1,7 @@
 import type { DatabaseInstance, DatabaseEngine, ContainerImage } from '@elysian/contracts'
-import type { DatabaseAdapter, DatabaseCreateInput } from '../../contracts/adapters'
+import type { DatabaseAdapter, DatabaseCreateInput, DatabaseCreateResult } from '../../contracts/adapters'
 import { reportUnauthorized, reportUnauthorizedStatus } from './unauthorized'
+import { parseFirewallPortSync } from './firewallHttpAdapter'
 
 const BASE = '/api/databases'
 
@@ -74,11 +75,11 @@ function openTerminal(id: string): Promise<{ execute(input: string): Promise<rea
 export function createHttpDatabaseAdapter(): DatabaseAdapter {
   return {
     list: () => request<DatabaseInstance[]>('/'),
-    async create(input: DatabaseCreateInput, onProgress) {
+    async create(input: DatabaseCreateInput, onProgress): Promise<DatabaseCreateResult> {
       if (input.kind === 'file') {
-        if (input.origin === 'created') return request<DatabaseInstance>('/sqlite', { method: 'POST', body: JSON.stringify({ name: input.name }) })
+        if (input.origin === 'created') return { instance: await request<DatabaseInstance>('/sqlite', { method: 'POST', body: JSON.stringify({ name: input.name }) }), firewallPort: null }
         if (!input.file) throw new Error('请选择实际 SQLite 文件')
-        return new Promise<DatabaseInstance>((resolve, reject) => {
+        const instance = await new Promise<DatabaseInstance>((resolve, reject) => {
           const xhr = new XMLHttpRequest()
           xhr.open('POST', `${BASE}/sqlite/import?name=${encodeURIComponent(input.name)}`)
           xhr.setRequestHeader('Content-Type', 'application/octet-stream')
@@ -96,14 +97,16 @@ export function createHttpDatabaseAdapter(): DatabaseAdapter {
           }
           xhr.send(input.file)
         })
+        return { instance, firewallPort: null }
       }
       if (!input.versionTag || !input.target) throw new Error('请选择数据库版本和容器')
-      return request<DatabaseInstance>('/', { method: 'POST', body: JSON.stringify({
+      const body = await request<{ instance: DatabaseInstance; firewallPort: unknown }>('/', { method: 'POST', body: JSON.stringify({
         engine: input.engine, versionTag: input.versionTag,
         name: input.engine === 'Redis' ? '0' : input.name,
         charset: input.charset, user: { username: input.username, password: input.password },
         accessScope: input.accessScope, hostPort: input.hostPort, confirmPublic: input.confirmPublic, target: input.target,
       }) })
+      return { instance: body.instance, firewallPort: parseFirewallPortSync(body.firewallPort ?? null) }
     },
     async remove(id) {
       if (id.startsWith('sqlite-')) {

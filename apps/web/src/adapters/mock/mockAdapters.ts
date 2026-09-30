@@ -91,6 +91,7 @@ import type {
   SshKeyAccount,
   UserAdapter,
   WebsitesAdapter,
+  WebsiteMutateResult,
 } from '../../contracts/adapters'
 import {
   addFirewallForward,
@@ -944,16 +945,16 @@ export class MockWebsitesAdapter implements WebsitesAdapter {
     return { projects: getWebsiteProjects(), proxy: DEMO_PROXY_STATUS }
   }
 
-  async create(kind: WebsiteProjectKind, input: WebsiteProjectCreateInput): Promise<WebsiteProject> {
-    return addWebsiteProject(kind, input)
+  async create(kind: WebsiteProjectKind, input: WebsiteProjectCreateInput): Promise<WebsiteMutateResult> {
+    return { project: addWebsiteProject(kind, input), firewallPort: null }
   }
 
   async update(projectId: string, input: WebsiteProjectUpdateInput): Promise<WebsiteProject> {
     return updateWebsiteProject(projectId, input)
   }
 
-  async setAccess(projectId: string, access: WebsiteAccessInput): Promise<WebsiteProject> {
-    return setWebsiteProjectAccess(projectId, access)
+  async setAccess(projectId: string, access: WebsiteAccessInput): Promise<WebsiteMutateResult> {
+    return { project: setWebsiteProjectAccess(projectId, access), firewallPort: null }
   }
 
   async remove(projectId: string): Promise<void> {

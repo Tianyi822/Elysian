@@ -265,6 +265,7 @@ export function RealDatabaseCreateDialog({ engine }: { engine: Engine }) {
               {scope === 'any-host' ? <div className="space-y-3">
                 <div><label htmlFor="real-db-port" className={LABEL}>宿主端口</label><input id="real-db-port" type="number" min="1" max="65535" className={FIELD} disabled={busy} value={hostPort} onChange={(event) => setHostPort(event.target.value)} /></div>
                 <label className="flex items-start gap-2 text-xs leading-5 text-warning"><input type="checkbox" className="mt-0.5" disabled={busy} checked={confirmPublic} onChange={(event) => setConfirmPublic(event.target.checked)} />确认数据库端口将监听所有宿主网卡</label>
+                <p className="text-xs text-fg-subtle">创建成功后将自动在防火墙开放该端口。</p>
               </div> : null}
             </div>}
           </section>

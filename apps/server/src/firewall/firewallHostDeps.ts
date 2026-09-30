@@ -26,6 +26,8 @@ export type FirewallDeps = {
   /** false 时一切请求 503：不在容器内的强制保护（见 resolveAvailability 的判据）。 */
   available: boolean
   service?: FirewallAdapter
+  /** 真实接线（available 时恒有）：装配层用它构造端口自动开放闭包注入其他域。 */
+  hostDeps?: FirewallHostDeps
 }
 
 function execToStdout(file: string, args: readonly string[]): Promise<string> {
@@ -81,5 +83,5 @@ export async function resolveFirewallDeps(): Promise<FirewallDeps> {
     console.error('[elysian] ufw 启动恢复失败：', error instanceof Error ? error.message : error)
   })
 
-  return { available: true, service }
+  return { available: true, service, hostDeps: deps }
 }

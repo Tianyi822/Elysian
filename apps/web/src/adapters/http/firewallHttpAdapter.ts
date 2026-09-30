@@ -2,6 +2,7 @@ import type {
   FirewallForwardRule,
   FirewallImportResult,
   FirewallIpRule,
+  FirewallPortSync,
   FirewallRule,
   FirewallRuleInput,
   FirewallScanConfig,
@@ -78,6 +79,20 @@ function isNullableString(value: unknown): value is string | null {
 }
 
 /** 端口规则逐字段校验。 */
+/** 校验端口自动开放结果（创建网站/数据库响应里的可空字段）；null 表示本次未联动。 */
+export function parseFirewallPortSync(value: unknown): FirewallPortSync | null {
+  if (value === null) return null
+  const row = asObject(value)
+  if (
+    (row.state !== 'opened' && row.state !== 'skipped' && row.state !== 'failed') ||
+    typeof row.port !== 'number' ||
+    (row.detail !== null && typeof row.detail !== 'string')
+  ) {
+    throw new Error('防火墙端口开放结果响应无效')
+  }
+  return { state: row.state, port: row.port, detail: row.detail as string | null }
+}
+
 export function parseFirewallRule(value: unknown): FirewallRule {
   const row = asObject(value)
   if (

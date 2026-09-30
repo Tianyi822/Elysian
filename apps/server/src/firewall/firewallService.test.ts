@@ -6,6 +6,7 @@ import {
   backupPathOf,
   createFirewallService,
   ensurePanelRule,
+  ensurePortRule,
   restoreIfNeeded,
   type FirewallHostDeps,
 } from './firewallService'
@@ -1302,6 +1303,68 @@ describe('ensurePanelRule 保底（地址族）', () => {
     const error = await caught(ensurePanelRule(fake.deps))
     expect(error).toBeInstanceOf(Error)
     expect((error as Error).message).toContain('面板端口保底规则未生效')
+  })
+})
+
+describe('ensurePortRule 端口自动开放', () => {
+  it('已有等价入站 TCP 放行规则：skipped 且不执行任何写命令', async () => {
+    const fake = createFakeDeps({ rules: ['allow 8080/tcp', 'allow out 9090/udp'] })
+
+    const result = await ensurePortRule(fake.deps, { port: 8080, note: 'Elysian 网站 demo' })
+    expect(result).toEqual({ state: 'skipped', port: 8080, detail: '防火墙已有该端口的放行规则' })
+    expect(fake.ufwCalls.filter((args) => args[0] === 'allow')).toHaveLength(0)
+  })
+
+  it('同端口的 deny、出站或 UDP 规则不算已开放：补写 allow 并复核为 opened', async () => {
+    const fake = createFakeDeps({ rules: ['deny 8080/tcp', 'allow out 8080/tcp', 'allow 8080/udp'] })
+
+    const result = await ensurePortRule(fake.deps, { port: 8080, note: 'Elysian 网站 demo' })
+    expect(result.state).toBe('opened')
+    expect(result.detail).toBeNull()
+    expect(fake.ufwCalls).toContainEqual(['allow', '8080/tcp', 'comment', 'Elysian 网站 demo'])
+  })
+
+  it('无既有规则：执行 allow 带固定备注，IPv4 与 IPv6 账本同时落规则', async () => {
+    const fake = createFakeDeps()
+
+    const result = await ensurePortRule(fake.deps, { port: 18080, note: 'Elysian 数据库 orders' })
+    expect(result).toEqual({ state: 'opened', port: 18080, detail: null })
+    expect(fake.getV4Rules()).toContain("allow 18080/tcp comment 'Elysian 数据库 orders'")
+    expect(fake.getV6Rules()).toContain("allow 18080/tcp comment 'Elysian 数据库 orders'")
+  })
+
+  it('补写后复核仍读不到规则（账本未落）：failed 带复核失败文案，不抛错', async () => {
+    const fake = createFakeDeps()
+    // show added 恒报空账本：allow 命令本身成功执行，但复核判定无规则。
+    const deps = {
+      ...fake.deps,
+      runUfw: async (args: readonly string[]) => {
+        if (args[0] === 'show') return 'Added user rules:\n(None)'
+        return fake.deps.runUfw(args)
+      },
+    }
+
+    const result = await ensurePortRule(deps, { port: 8080, note: 'Elysian 网站 demo' })
+    expect(result.state).toBe('failed')
+    expect(result.detail).toContain('仍无 8080/tcp')
+  })
+
+  it('端口规则已达上限：failed 且不执行 allow', async () => {
+    const rules = Array.from({ length: FIREWALL_LIMITS.userRules }, (_, i) => `allow ${20000 + i}/tcp`)
+    const fake = createFakeDeps({ rules })
+
+    const result = await ensurePortRule(fake.deps, { port: 8080, note: 'Elysian 网站 demo' })
+    expect(result.state).toBe('failed')
+    expect(result.detail).toContain('已达上限')
+    expect(fake.ufwCalls.filter((args) => args[0] === 'allow')).toHaveLength(0)
+  })
+
+  it('ufw 执行抛错：failed 带原始错误信息，不抛错', async () => {
+    const fake = createFakeDeps()
+    const deps = { ...fake.deps, runUfw: async () => { throw new Error('ufw 不可用') } }
+
+    const result = await ensurePortRule(deps, { port: 8080, note: 'Elysian 网站 demo' })
+    expect(result).toEqual({ state: 'failed', port: 8080, detail: 'ufw 不可用' })
   })
 })
 
