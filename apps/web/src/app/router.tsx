@@ -13,6 +13,7 @@ import { LogsPage } from '../features/logs/LogsPage'
 import { LogsTabSwitch } from '../features/logs/LogsTabSwitch'
 import { SecurityPage } from '../features/security/SecurityPage'
 import { SecurityTabSwitch } from '../features/security/SecurityTabSwitch'
+import { SettingsPage } from '../features/settings/SettingsPage'
 import { TerminalPage } from '../features/terminal/TerminalPage'
 import { WebsitesPage } from '../features/websites/WebsitesPage'
 import { AppShell } from './layout/AppShell'
@@ -131,6 +132,14 @@ export const routes: RouteObject[] = [
         element: (
           <RequireArea area="websites" title="网站">
             <WebsitesPage />
+          </RequireArea>
+        ),
+      },
+      {
+        path: 'settings',
+        element: (
+          <RequireArea area="settings" title="设置">
+            <SettingsPage />
           </RequireArea>
         ),
       },

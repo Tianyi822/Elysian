@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { NAV_ITEMS } from './navigation'
 import { clampMovableSlot, mergeNavOrder, moveItem, moveNavItem, slotIndexAtPoint, translateForSlot } from './navigationOrder'
 
 const KNOWN = ['/', '/security', '/docker', '/databases'] as const
@@ -19,6 +20,21 @@ describe('导航顺序合并', () => {
 
   it('已存顺序把仪表盘放在后面时，读出来仍在第一位', () => {
     expect(mergeNavOrder(KNOWN, ['/docker', '/security', '/'])).toEqual(['/', '/docker', '/security', '/databases'])
+  })
+
+  it('已存偏好不含导航新增项（/settings）时，新项按默认顺序补在末尾，仪表盘仍在第一位', () => {
+    const known = NAV_ITEMS.map((item) => item.to)
+    expect(mergeNavOrder(known, ['/', '/websites'])).toEqual([
+      '/',
+      '/websites',
+      '/security',
+      '/docker',
+      '/databases',
+      '/files',
+      '/logs',
+      '/terminals',
+      '/settings',
+    ])
   })
 })
 

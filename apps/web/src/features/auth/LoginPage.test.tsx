@@ -8,13 +8,14 @@ import { renderApp } from '../../test/renderApp'
 
 /*
  * 登录页：label 关联、空提交不发包、错误显示在 role="alert"、成功后按 from 回跳
- * （// 与 /\ 视为外站回落 /）、devAccount 提示出现/不出现、已登录访问 /login 重定向。
+ * （// 与 /\ 视为外站回落 /）、devAccount 提示出现/不出现、已登录访问 /login 重定向、
+ * store 一次性提示（改密后需重新登录）在表单上方展示且登录成功即清除。
  * 注入的 fake session 是事实源：装配 mock 底座后重置会话 store（底座会同步落位演示放行）。
  */
 
 function gatewayWithSession(session: Partial<SessionAdapter>): ElysianGateway {
   const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
-  useSessionStore.setState({ phase: 'unknown', mode: undefined, devAccount: false })
+  useSessionStore.setState({ phase: 'unknown', mode: undefined, devAccount: false, notice: null })
   return { ...base, session: session as SessionAdapter }
 }
 
@@ -34,11 +35,19 @@ function anonymousSession(loginImpl?: (username: string, password: string) => vo
     logout: async () => {
       authenticated = false
     },
+    listSessions: async () => [
+      { createdAt: '2026-01-01T00:00:00.000Z', lastUsedAt: '2026-01-01T00:00:00.000Z', current: true },
+      { createdAt: '2025-12-30T00:00:00.000Z', lastUsedAt: '2025-12-31T00:00:00.000Z', current: false },
+    ],
+    changePassword: async () => {
+      throw new Error('演示模式不支持修改面板密码')
+    },
+    logoutOtherSessions: async () => {},
   }
 }
 
 beforeEach(() => {
-  useSessionStore.setState({ phase: 'unknown', mode: undefined, devAccount: false })
+  useSessionStore.setState({ phase: 'unknown', mode: undefined, devAccount: false, notice: null })
 })
 
 describe('LoginPage', () => {
@@ -146,5 +155,40 @@ describe('LoginPage', () => {
       }),
     })
     expect(await screen.findByRole('heading', { level: 1, name: '仪表盘' })).toBeInTheDocument()
+  })
+
+  it('store 携带一次性提示时，登录页在表单上方以 role="status" 展示，且与开发账号提示互不排斥', async () => {
+    const gateway = gatewayWithSession({
+      ...anonymousSession(),
+      status: async () => ({ mode: 'real', authenticated: false, devAccount: true }),
+    })
+    useSessionStore.setState({ notice: '密码已修改，请使用新密码重新登录' })
+    renderApp('/login', { gateway })
+
+    const status = await screen.findByRole('status')
+    expect(status).toHaveTextContent('密码已修改，请使用新密码重新登录')
+    expect(screen.getByText(/开发模式已启用固定账号：dev \/ dev-elysian/)).toBeInTheDocument()
+    expect(screen.getByLabelText('用户名')).toBeInTheDocument()
+  })
+
+  it('没有一次性提示时不渲染提示行', async () => {
+    renderApp('/login', { gateway: gatewayWithSession(anonymousSession()) })
+    await screen.findByRole('heading', { level: 1, name: '登录 Elysian' })
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('登录成功后清除一次性提示', async () => {
+    const gateway = gatewayWithSession(anonymousSession())
+    useSessionStore.setState({ notice: '密码已修改，请使用新密码重新登录' })
+    const user = userEvent.setup()
+    renderApp('/login', { gateway })
+
+    await screen.findByRole('status')
+    await user.type(await screen.findByLabelText('用户名'), 'admin')
+    await user.type(screen.getByLabelText('密码'), 'new-secret')
+    await user.click(screen.getByRole('button', { name: '登录' }))
+
+    await waitFor(() => expect(useSessionStore.getState().notice).toBeNull())
+    expect(useSessionStore.getState().phase).toBe('authed')
   })
 })

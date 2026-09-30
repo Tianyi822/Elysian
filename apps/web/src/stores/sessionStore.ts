@@ -13,13 +13,20 @@ type SessionStoreState = {
   phase: SessionPhase
   mode: SessionMode | undefined
   devAccount: boolean
+  /**
+   * 一次性提示（如改密成功后的「需用新密码重新登录」）：唯一写点是设置页改密成功，
+   * 唯一清点是 login() 成功——改密后用户只能经登录页重新进入，提示在两次登录之间保持准确。
+   * probe/logout/expire 不触碰它（登出或 401 不改变「密码刚改过」这一事实）。
+   */
+  notice: string | null
+  setNotice(text: string | null): void
   /** 挂载时探测一次：authenticated → authed/anonymous；status() 抛错（服务不可达等）→ error。 */
   probe(gateway: ElysianGateway): Promise<void>
-  /** 成功置 authed；失败向上抛中文错误，phase 不变。 */
+  /** 成功置 authed 并清除一次性提示；失败向上抛中文错误，phase 不变。 */
   login(gateway: ElysianGateway, username: string, password: string): Promise<void>
   /** 置 anonymous（登出请求幂等，网络失败也回到登录页）。 */
   logout(gateway: ElysianGateway): Promise<void>
-  /** 任意 401 到达时置 anonymous（不清 mode/devAccount）。 */
+  /** 任意 401 到达时置 anonymous（不清 mode/devAccount 与 notice）。 */
   expire(): void
 }
 
@@ -27,6 +34,11 @@ export const useSessionStore = create<SessionStoreState>((set) => ({
   phase: 'unknown',
   mode: undefined,
   devAccount: false,
+  notice: null,
+
+  setNotice(notice) {
+    set({ notice })
+  },
 
   async probe(gateway) {
     try {
@@ -43,7 +55,8 @@ export const useSessionStore = create<SessionStoreState>((set) => ({
 
   async login(gateway, username, password) {
     await gateway.session.login(username, password)
-    set({ phase: 'authed' })
+    // 登录成功即消费一次性提示：它只在「密码刚改过、还没重新登录」的窗口内成立。
+    set({ phase: 'authed', notice: null })
   },
 
   async logout(gateway) {

@@ -51,6 +51,7 @@ export {
   ScrollText,
   Search,
   Server,
+  Settings,
   ShieldCheck,
   Siren,
   Square,

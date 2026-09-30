@@ -5,6 +5,7 @@ import { useSessionStore } from './sessionStore'
 /*
  * 会话 store 的状态流转：probe（authed / anonymous / 抛错落 error）、login（成功置 authed、
  * 失败向上抛且 phase 不变）、logout（无论请求成败都回到 anonymous）、expire（只动 phase）。
+ * notice 是一次性提示：setNotice 置位、login 成功清除、probe/logout/expire 不触碰。
  * store 是模块级单例，每条用例前重置回 unknown。
  */
 
@@ -17,7 +18,7 @@ function statusOf(partial: Partial<SessionStatus>): SessionStatus {
 }
 
 beforeEach(() => {
-  useSessionStore.setState({ phase: 'unknown', mode: undefined, devAccount: false })
+  useSessionStore.setState({ phase: 'unknown', mode: undefined, devAccount: false, notice: null })
 })
 
 describe('sessionStore.probe', () => {
@@ -100,5 +101,51 @@ describe('sessionStore.expire', () => {
       mode: 'real',
       devAccount: true,
     })
+  })
+})
+
+describe('sessionStore.notice', () => {
+  it('setNotice 置位，再置 null 清除', () => {
+    useSessionStore.getState().setNotice('密码已修改，请使用新密码重新登录')
+    expect(useSessionStore.getState().notice).toBe('密码已修改，请使用新密码重新登录')
+    useSessionStore.getState().setNotice(null)
+    expect(useSessionStore.getState().notice).toBeNull()
+  })
+
+  it('login 成功清除一次性提示', async () => {
+    useSessionStore.getState().setNotice('密码已修改，请使用新密码重新登录')
+    await useSessionStore.getState().login(gatewayWithSession({ login: async () => {} }), 'admin', 'new-secret')
+    expect(useSessionStore.getState()).toMatchObject({ phase: 'authed', notice: null })
+  })
+
+  it('login 失败不触碰一次性提示（phase 也不变）', async () => {
+    useSessionStore.getState().setNotice('密码已修改，请使用新密码重新登录')
+    useSessionStore.setState({ phase: 'anonymous' })
+    const gateway = gatewayWithSession({
+      login: async () => {
+        throw new Error('用户名或密码错误')
+      },
+    })
+    await expect(useSessionStore.getState().login(gateway, 'admin', 'wrong')).rejects.toThrow()
+    expect(useSessionStore.getState()).toMatchObject({
+      phase: 'anonymous',
+      notice: '密码已修改，请使用新密码重新登录',
+    })
+  })
+
+  it('probe、logout、expire 都不触碰一次性提示', async () => {
+    const notice = '密码已修改，请使用新密码重新登录'
+    useSessionStore.getState().setNotice(notice)
+
+    await useSessionStore.getState().probe(
+      gatewayWithSession({ status: async () => statusOf({ authenticated: true }) }),
+    )
+    expect(useSessionStore.getState().notice).toBe(notice)
+
+    await useSessionStore.getState().logout(gatewayWithSession({ logout: async () => {} }))
+    expect(useSessionStore.getState().notice).toBe(notice)
+
+    useSessionStore.getState().expire()
+    expect(useSessionStore.getState().notice).toBe(notice)
   })
 })

@@ -59,6 +59,17 @@ describe('路由表', () => {
     expect(screen.queryByRole('group', { name: '网站页签' })).not.toBeInTheDocument()
   })
 
+  it('/settings 渲染设置页，顶栏标题随导航项给出，会话区块落演示数据', async () => {
+    renderApp('/settings')
+    expect(await screen.findByRole('heading', { level: 1, name: '设置' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: '账号与安全' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: '外观' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '面板信息' })).toBeInTheDocument()
+    // 演示网关的会话列表是内存种子两行，当前会话标记可见。
+    expect(await screen.findByRole('region', { name: '活跃会话表' })).toBeInTheDocument()
+    expect(screen.getByText('当前会话')).toBeInTheDocument()
+  })
+
   it('未匹配的地址进入未找到页面', async () => {
     renderApp('/does-not-exist')
     expect(

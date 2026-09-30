@@ -8,6 +8,8 @@ import { useSessionStore } from '../../stores/sessionStore'
  * 登录页（/login，顶层平级路由，不进 AppShell、不包 RequireArea）。
  * 真实会话（Docker 运行时）经 /api/auth/login 登录；服务端中文错误（如「用户名或密码错误」）
  * 显示在 role="alert" 的错误框——不区分用户名错还是密码错，与服务端一致。
+ * 会话 store 的一次性提示（如改密成功的「需用新密码重新登录」）在表单上方以 role="status" 展示，
+ * 与开发账号提示同位、互不排斥；登录成功由 store 清除。
  * 演示模式（本地无后端）不强制登录：访问 /login 直接回仪表盘。
  */
 
@@ -25,6 +27,7 @@ export function LoginPage() {
   const phase = useSessionStore((state) => state.phase)
   const mode = useSessionStore((state) => state.mode)
   const devAccount = useSessionStore((state) => state.devAccount)
+  const notice = useSessionStore((state) => state.notice)
   const probe = useSessionStore((state) => state.probe)
   const login = useSessionStore((state) => state.login)
   const [username, setUsername] = useState('')
@@ -69,6 +72,12 @@ export function LoginPage() {
         {devAccount ? (
           <p className="mt-4 rounded-lg border border-warning/40 p-2.5 text-xs text-warning" role="note">
             开发模式已启用固定账号：dev / dev-elysian（仅开发环境可用，生产打包不含此账号）
+          </p>
+        ) : null}
+
+        {notice ? (
+          <p role="status" className="mt-4 rounded-lg border border-line p-2.5 text-xs text-fg-muted">
+            {notice}
           </p>
         ) : null}
 
