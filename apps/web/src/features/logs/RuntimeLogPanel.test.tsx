@@ -57,6 +57,7 @@ const ZERO_STORAGE: LogStorageStats = {
 function reportWith(overrides: Partial<RuntimeLogListReport> = {}): RuntimeLogListReport {
   return {
     entries: SEED_RUNTIME_LOGS,
+    total: SEED_RUNTIME_LOGS.length,
     truncated: false,
     skippedLines: 0,
     skippedFiles: 0,

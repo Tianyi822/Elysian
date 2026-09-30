@@ -370,7 +370,7 @@ describe('createOperationAudit', () => {
     expect(serialized).not.toContain('伪造摘要')
   })
 
-  it('体里伪造审计字段（category/action/result/actor/at）不改变落盘的记录', async () => {
+  it('体里伪造审计字段（category/action/result/at）不改变落盘的记录', async () => {
     const { logs, sink } = createLogsSink()
     await auditApp(logs).request(
       jsonRequest('PUT', `${SSH_MOUNT}/port`, {
@@ -378,7 +378,6 @@ describe('createOperationAudit', () => {
         category: 'database',
         action: '已批准的删除',
         result: 'success',
-        actor: 'root',
         at: '2000-01-01T00:00:00.000Z',
       }),
     )
@@ -386,7 +385,6 @@ describe('createOperationAudit', () => {
     const serialized = JSON.stringify(sink.operations[0])
     expect(serialized).not.toContain('database')
     expect(serialized).not.toContain('已批准的删除')
-    expect(serialized).not.toContain('root')
     // 时间由服务层在写入时取服务端时钟：采集器交给服务层的输入里根本没有 at。
     expect(sink.operations[0]).not.toHaveProperty('at')
   })

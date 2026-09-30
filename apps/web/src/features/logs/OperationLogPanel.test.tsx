@@ -21,7 +21,7 @@ import {
 } from './OperationLogPanel'
 
 /**
- * 操作日志面板：六列固定宽表格、分类/结果/搜索三重筛选、三态与两种空状态、
+ * 操作日志面板：五列固定宽表格、分类/结果/搜索三重筛选、三态与两种空状态、
  * 长文本单元格的悬浮窗。条目来自 adapter（本用例走 mock 种子），界面只做视图筛选。
  */
 
@@ -29,6 +29,7 @@ const INITIAL_STATE = {
   status: 'idle' as const,
   errorMessage: undefined,
   entries: [],
+  total: 0,
   truncated: false,
   skippedLines: 0,
   skippedFiles: 0,
@@ -68,6 +69,7 @@ function gatewayWithLogs(overrides: Partial<ElysianGateway['logs']>): ElysianGat
 function emptyReport() {
   return {
     entries: [] as readonly OperationLogEntry[],
+    total: 0,
     truncated: false,
     skippedLines: 0,
     skippedFiles: 0,
@@ -93,6 +95,7 @@ function reportWith(
   return {
     ...emptyReport(),
     entries,
+    total: entries.length,
     storage: {
       ...emptyReport().storage,
       totalBytes: 13_713,
@@ -112,7 +115,6 @@ const LONG_ENTRY: OperationLogEntry = {
   target: '账号 deploy-operator',
   summary: 'deploy.sh 755 root（递归）——参数摘要同样写得很长，长到一屏放不下',
   result: 'failure',
-  actor: 'panel',
   method: 'POST',
   path: '/api/files/chmod',
   httpStatus: 400,
@@ -127,24 +129,23 @@ function dataRows(): HTMLElement[] {
 }
 
 describe('平台操作日志面板', () => {
-  it('渲染六列表格，列头、条目与日志大小都来自 adapter', async () => {
+  it('渲染五列表格，列头、条目与日志大小都来自 adapter', async () => {
     const gateway = gatewayWithLogs({})
     const report = await gateway.logs.operationLogs()
     renderApp('/logs', { gateway })
 
     // 表头给全，表格本身为可滚动区域（窄屏整表横向滚动）。
     const region = await screen.findByRole('region', { name: '操作日志表' })
-    for (const label of ['日期时间', '操作人', '分类', '操作对象', '操作内容', '结果']) {
+    for (const label of ['日期时间', '分类', '操作对象', '操作内容', '结果']) {
       expect(within(region).getByRole('columnheader', { name: label })).toBeInTheDocument()
     }
 
     const rows = dataRows()
     expect(rows).toHaveLength(SEED_OPERATION_LOGS.length)
 
-    // 首行：时间是本地格式、操作人读作「本机面板」、分类与结果走契约标签表。
+    // 首行：时间是本地格式，分类与结果走契约标签表。
     const first = SEED_OPERATION_LOGS[0]!
     expect(rows[0]).toHaveTextContent(first.action)
-    expect(rows[0]).toHaveTextContent('本机面板')
     expect(rows[0]).toHaveTextContent(OPERATION_LOG_CATEGORY_LABELS[first.category])
     expect(rows[0]).toHaveTextContent(OPERATION_LOG_OUTCOME_LABELS[first.result])
     expect(rows[0]).toHaveTextContent(first.summary)
@@ -171,11 +172,11 @@ describe('平台操作日志面板', () => {
     expect(retention.parentElement).not.toBe(screen.getByText(/条操作记录/).parentElement)
   })
 
-  it('列宽固定且表格最小宽度等于六列之和（窄屏整表横向滚动，不压缩列）', async () => {
+  it('列宽固定且表格最小宽度等于五列之和（窄屏整表横向滚动，不压缩列）', async () => {
     renderApp('/logs', { gateway: gatewayWithLogs({}) })
 
     const region = await screen.findByRole('region', { name: '操作日志表' })
-    expect(within(region).getAllByRole('columnheader')).toHaveLength(6)
+    expect(within(region).getAllByRole('columnheader')).toHaveLength(5)
     expect(within(region).getByRole('table')).toHaveClass(OPERATION_LOG_TABLE_MIN_WIDTH_CLASS)
     // 类名与算式同一处口径：改列宽时两处必须一起改，写死数字或漏改都会被这条拦下。
     expect(OPERATION_LOG_TABLE_MIN_WIDTH_CLASS).toContain(`[${OPERATION_LOG_TABLE_MIN_PX}px]`)
@@ -350,7 +351,6 @@ describe('平台操作日志面板', () => {
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
     expect(popover).toHaveTextContent(LONG_ENTRY.action)
     expect(popover).toHaveTextContent(LONG_ENTRY.summary)
-    expect(popover).toHaveTextContent('本机面板')
     expect(popover).toHaveTextContent('POST')
     expect(popover).toHaveTextContent('/api/files/chmod')
     expect(popover).toHaveTextContent(OPERATION_LOG_OUTCOME_LABELS.failure)

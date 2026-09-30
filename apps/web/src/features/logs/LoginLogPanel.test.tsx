@@ -19,6 +19,7 @@ const INITIAL_STATE = {
   status: 'idle' as const,
   errorMessage: undefined,
   entries: [],
+  total: 0,
   truncated: false,
   skippedLines: 0,
   skippedFiles: 0,
@@ -115,7 +116,7 @@ describe('平台登录日志面板', () => {
         runtimeLog: () => base.logs.runtimeLog(),
         operationLogs: () => base.logs.operationLogs(),
         clearLogs: (category) => base.logs.clearLogs(category),
-        loginLogs: async () => ({ entries: [], truncated: false, skippedLines: 0, skippedFiles: 0 }),
+        loginLogs: async () => ({ entries: [], total: 0, truncated: false, skippedLines: 0, skippedFiles: 0 }),
       },
     }
     renderApp('/logs', { gateway })

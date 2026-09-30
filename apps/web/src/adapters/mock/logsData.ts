@@ -82,18 +82,18 @@ export const SEED_RUNTIME_LOGS: readonly RuntimeLogEntry[] = buildRuntimeLogEntr
  * 数据库分类**没有条目**：本期数据库域全是演示，演示动作不写进审计（规格 10.5）。
  */
 export const SEED_OPERATION_LOGS: readonly OperationLogEntry[] = [
-  { id: '2026-09-23T03:25:10.004Z#12', at: '2026-09-23T03:25:10.004Z', category: 'security', action: '修改 SSH 监听端口', target: 'sshd', summary: '端口 2222', result: 'success', actor: 'panel', method: 'PUT', path: '/api/security/ssh/port', httpStatus: 200 },
-  { id: '2026-09-23T02:41:33.512Z#11', at: '2026-09-23T02:41:33.512Z', category: 'logs', action: '清空运行日志', target: null, summary: '', result: 'success', actor: 'panel', method: 'POST', path: '/api/logs/runtime/clear', httpStatus: 200 },
-  { id: '2026-09-23T01:58:20.187Z#10', at: '2026-09-23T01:58:20.187Z', category: 'files', action: '压缩文件', target: null, summary: 'site', result: 'success', actor: 'panel', method: 'POST', path: '/api/files/compress', httpStatus: 200 },
-  { id: '2026-09-23T00:47:02.930Z#9', at: '2026-09-23T00:47:02.930Z', category: 'security', action: '修改 Root 登录策略', target: 'sshd', summary: '仅允许密钥', result: 'success', actor: 'panel', method: 'PUT', path: '/api/security/ssh/root-login-policy', httpStatus: 200 },
-  { id: '2026-09-22T23:36:41.266Z#8', at: '2026-09-22T23:36:41.266Z', category: 'terminals', action: '打开本机终端会话', target: null, summary: '', result: 'success', actor: 'panel', method: 'GET', path: '/api/terminals/ws', httpStatus: 200 },
-  { id: '2026-09-22T22:19:55.408Z#7', at: '2026-09-22T22:19:55.408Z', category: 'files', action: '复制文件', target: null, summary: 'docs → /srv/backup', result: 'success', actor: 'panel', method: 'POST', path: '/api/files/copy', httpStatus: 200 },
-  { id: '2026-09-22T21:05:12.741Z#6', at: '2026-09-22T21:05:12.741Z', category: 'security', action: '修改系统账号', target: '账号 wangwu', summary: '', result: 'failure', actor: 'panel', method: 'PUT', path: '/api/security/users/wangwu', httpStatus: 400 },
-  { id: '2026-09-22T20:33:07.519Z#5', at: '2026-09-22T20:33:07.519Z', category: 'terminals', action: '打开本机终端会话', target: null, summary: '', result: 'failure', actor: 'panel', method: 'GET', path: '/api/terminals/ws', httpStatus: 403 },
-  { id: '2026-09-22T19:48:30.095Z#4', at: '2026-09-22T19:48:30.095Z', category: 'logs', action: '清空操作日志', target: null, summary: '', result: 'success', actor: 'panel', method: 'POST', path: '/api/logs/operation/clear', httpStatus: 200 },
-  { id: '2026-09-22T18:57:44.830Z#3', at: '2026-09-22T18:57:44.830Z', category: 'files', action: '修改权限', target: null, summary: 'deploy.sh 755 root（递归）', result: 'failure', actor: 'panel', method: 'POST', path: '/api/files/chmod', httpStatus: 400 },
-  { id: '2026-09-22T18:12:26.374Z#2', at: '2026-09-22T18:12:26.374Z', category: 'security', action: '修改 SSH 登录方式', target: 'sshd', summary: '密码登录 开，密钥登录 开', result: 'success', actor: 'panel', method: 'PUT', path: '/api/security/ssh/auth-methods', httpStatus: 200 },
-  { id: '2026-09-22T17:29:58.611Z#1', at: '2026-09-22T17:29:58.611Z', category: 'security', action: '修改防火墙开关', target: null, summary: '防火墙 开，禁 Ping 开', result: 'success', actor: 'panel', method: 'PUT', path: '/api/security/firewall/toggles', httpStatus: 200 },
+  { id: '2026-09-23T03:25:10.004Z#12', at: '2026-09-23T03:25:10.004Z', category: 'security', action: '修改 SSH 监听端口', target: 'sshd', summary: '端口 2222', result: 'success', method: 'PUT', path: '/api/security/ssh/port', httpStatus: 200 },
+  { id: '2026-09-23T02:41:33.512Z#11', at: '2026-09-23T02:41:33.512Z', category: 'logs', action: '清空运行日志', target: null, summary: '', result: 'success', method: 'POST', path: '/api/logs/runtime/clear', httpStatus: 200 },
+  { id: '2026-09-23T01:58:20.187Z#10', at: '2026-09-23T01:58:20.187Z', category: 'files', action: '压缩文件', target: null, summary: 'site', result: 'success', method: 'POST', path: '/api/files/compress', httpStatus: 200 },
+  { id: '2026-09-23T00:47:02.930Z#9', at: '2026-09-23T00:47:02.930Z', category: 'security', action: '修改 Root 登录策略', target: 'sshd', summary: '仅允许密钥', result: 'success', method: 'PUT', path: '/api/security/ssh/root-login-policy', httpStatus: 200 },
+  { id: '2026-09-22T23:36:41.266Z#8', at: '2026-09-22T23:36:41.266Z', category: 'terminals', action: '打开本机终端会话', target: null, summary: '', result: 'success', method: 'GET', path: '/api/terminals/ws', httpStatus: 200 },
+  { id: '2026-09-22T22:19:55.408Z#7', at: '2026-09-22T22:19:55.408Z', category: 'files', action: '复制文件', target: null, summary: 'docs → /srv/backup', result: 'success', method: 'POST', path: '/api/files/copy', httpStatus: 200 },
+  { id: '2026-09-22T21:05:12.741Z#6', at: '2026-09-22T21:05:12.741Z', category: 'security', action: '修改系统账号', target: '账号 wangwu', summary: '', result: 'failure', method: 'PUT', path: '/api/security/users/wangwu', httpStatus: 400 },
+  { id: '2026-09-22T20:33:07.519Z#5', at: '2026-09-22T20:33:07.519Z', category: 'terminals', action: '打开本机终端会话', target: null, summary: '', result: 'failure', method: 'GET', path: '/api/terminals/ws', httpStatus: 403 },
+  { id: '2026-09-22T19:48:30.095Z#4', at: '2026-09-22T19:48:30.095Z', category: 'logs', action: '清空操作日志', target: null, summary: '', result: 'success', method: 'POST', path: '/api/logs/operation/clear', httpStatus: 200 },
+  { id: '2026-09-22T18:57:44.830Z#3', at: '2026-09-22T18:57:44.830Z', category: 'files', action: '修改权限', target: null, summary: 'deploy.sh 755 root（递归）', result: 'failure', method: 'POST', path: '/api/files/chmod', httpStatus: 400 },
+  { id: '2026-09-22T18:12:26.374Z#2', at: '2026-09-22T18:12:26.374Z', category: 'security', action: '修改 SSH 登录方式', target: 'sshd', summary: '密码登录 开，密钥登录 开', result: 'success', method: 'PUT', path: '/api/security/ssh/auth-methods', httpStatus: 200 },
+  { id: '2026-09-22T17:29:58.611Z#1', at: '2026-09-22T17:29:58.611Z', category: 'security', action: '修改防火墙开关', target: null, summary: '防火墙 开，禁 Ping 开', result: 'success', method: 'PUT', path: '/api/security/firewall/toggles', httpStatus: 200 },
 ]
 
 // 内存态：清空改写这两个数组（清空后数组里只剩本次清空留下的留痕），resetLogsData 恢复种子。

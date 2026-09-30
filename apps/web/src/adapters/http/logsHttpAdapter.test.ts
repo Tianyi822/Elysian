@@ -12,7 +12,7 @@ import {
 
 /*
  * 纯解析函数的契约测试 + fetch 接线断言，不发任何真实请求。
- * 形状样例对齐规格的端点表：运行日志条目五字段、操作日志条目十一字段、
+ * 形状样例对齐规格的端点表：运行日志条目五字段、操作日志条目十字段、
  * 报告带截断标记与存储统计、清空响应包在 `{ cleared }` 里。
  */
 
@@ -44,7 +44,6 @@ const realOperationRow = {
   target: 'sshd',
   summary: '端口 2222',
   result: 'success',
-  actor: 'panel',
   method: 'PUT',
   path: '/api/security/ssh/port',
   httpStatus: 200,
@@ -119,6 +118,7 @@ describe('parseRuntimeLogResponse / parseOperationLogResponse', () => {
   it('接受两份报告：条目数组、截断标记、坏行计数与存储统计', () => {
     const runtime = {
       entries: [realRuntimeRow],
+      total: 1,
       truncated: true,
       skippedLines: 2,
       skippedFiles: 1,
@@ -126,6 +126,7 @@ describe('parseRuntimeLogResponse / parseOperationLogResponse', () => {
     }
     const operation = {
       entries: [realOperationRow],
+      total: 1,
       truncated: false,
       skippedLines: 0,
       skippedFiles: 0,
@@ -136,7 +137,7 @@ describe('parseRuntimeLogResponse / parseOperationLogResponse', () => {
   })
 
   it('entries 不是数组、缺 storage 或标记类型不对时抛中文错误', () => {
-    const base = { entries: [], truncated: false, skippedLines: 0, skippedFiles: 0, storage: realStorageRow }
+    const base = { entries: [], total: 0, truncated: false, skippedLines: 0, skippedFiles: 0, storage: realStorageRow }
     expect(() => parseRuntimeLogResponse({ ...base, entries: null })).toThrow(
       '运行日志响应无效：应为数组',
     )
@@ -222,6 +223,7 @@ describe('createHttpLogsAdapter 的请求接线', () => {
           time: '2026-09-30T00:00:00.000Z',
         },
       ],
+      total: 1,
       truncated: false,
       skippedLines: 0,
       skippedFiles: 0,
@@ -246,6 +248,7 @@ describe('parseLoginLogResponse', () => {
           time: '2026-09-30T00:00:00.000Z',
         },
       ],
+      total: 1,
       truncated: true,
       skippedLines: 1,
       skippedFiles: 0,
@@ -254,12 +257,13 @@ describe('parseLoginLogResponse', () => {
   })
 
   it('状态越界或条目不是数组时抛中文错误', () => {
-    expect(() => parseLoginLogResponse({ entries: 'nope', truncated: false, skippedLines: 0, skippedFiles: 0 })).toThrow(
+    expect(() => parseLoginLogResponse({ entries: 'nope', total: 0, truncated: false, skippedLines: 0, skippedFiles: 0 })).toThrow(
       '登录日志响应无效：应为数组',
     )
     expect(() =>
       parseLoginLogResponse({
         entries: [{ id: 'a', ip: '1.1.1.1', location: '未知', userAgent: 'x', status: 'maybe', time: 't' }],
+        total: 1,
         truncated: false,
         skippedLines: 0,
         skippedFiles: 0,

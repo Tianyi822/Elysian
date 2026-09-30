@@ -15,6 +15,7 @@ type RuntimeLogState = {
   errorMessage: string | undefined
   /** 时间倒序（新 → 旧），与操作日志一致；界面按此顺序渲染，纵向滚动位置交给用户。 */
   entries: readonly RuntimeLogEntry[]
+  total: number
   /** 因条数上限或读取字节预算未读全（更旧的内容还在服务器磁盘上）。 */
   truncated: boolean
   /** 无法解析而被跳过的行数与读取失败而被整份跳过的文件数（正常为 0）。 */
@@ -43,6 +44,7 @@ export const useRuntimeLogStore = create<RuntimeLogState>((set, get) => ({
   status: 'idle',
   errorMessage: undefined,
   entries: [],
+  total: 0,
   truncated: false,
   skippedLines: 0,
   skippedFiles: 0,

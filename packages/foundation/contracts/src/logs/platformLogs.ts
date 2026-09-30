@@ -112,7 +112,6 @@ export type OperationLogEntry = {
   /** 参数摘要，如「端口 2222」；没有参数时为空串。 */
   summary: string
   result: OperationLogOutcome
-  actor: string
   method: string | null
   path: string | null
   httpStatus: number | null
@@ -167,6 +166,8 @@ export type LogStorageStats = {
 export type RuntimeLogListReport = {
   /** 时间倒序（新 → 旧），与操作日志、登录日志同一口径：最新一条在最上。 */
   entries: readonly RuntimeLogEntry[]
+  /** 符合当前筛选条件的条目总数（不受翻页游标影响）。 */
+  total: number
   /** 因条数上限或读取字节预算未读全（更旧的内容还在磁盘上）。 */
   truncated: boolean
   /** 无法解析而被跳过的行数（正常为 0；非 0 时界面提示）。 */
@@ -180,6 +181,7 @@ export type RuntimeLogListReport = {
 export type OperationLogListReport = {
   /** 时间倒序（新 → 旧），与登录日志一致。 */
   entries: readonly OperationLogEntry[]
+  total: number
   truncated: boolean
   skippedLines: number
   skippedFiles: number
@@ -236,8 +238,8 @@ export function formatLogBytes(bytes: number): string {
   return `${text} ${logByteUnit(scale)}`
 }
 
-/** 保留策略的一行中文说明：`保留 7 天 · 总量上限 256.00 MB，超出后旧日志先压缩再自动删除`（数值一律走 formatLogBytes）。 */
+/** 保留策略的一行中文说明（数值一律走 formatLogBytes）。 */
 export function logRetentionText(category: PlatformLogCategory): string {
   const policy = LOG_RETENTION_POLICIES[category]
-  return `保留 ${policy.retentionDays} 天 · 总量上限 ${formatLogBytes(policy.maxTotalBytes)}，超出后旧日志先压缩再自动删除`
+  return `保留 ${policy.retentionDays} 天 · 总量上限 ${formatLogBytes(policy.maxTotalBytes)}，超出后从最旧的记录开始自动删除`
 }

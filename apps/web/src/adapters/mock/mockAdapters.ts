@@ -469,7 +469,6 @@ function operationClearTrace(category: PlatformLogCategory, report: LogClearRepo
     target: null,
     summary: `删除 ${report.fileCount} 个文件，释放 ${formatLogBytes(report.totalBytes)}`,
     result: 'success',
-    actor: 'panel',
     method: 'POST',
     path: `/api/logs/${category}/clear`,
     httpStatus: 200,
@@ -487,6 +486,7 @@ export class MockLogsAdapter implements LogsAdapter {
     const entries = runtimeLogEntries()
     return {
       entries,
+      total: entries.length,
       truncated: false,
       skippedLines: 0,
       skippedFiles: 0,
@@ -495,8 +495,10 @@ export class MockLogsAdapter implements LogsAdapter {
   }
 
   async loginLogs(): Promise<LoginLogListReport> {
+    const entries = getLoginLogs()
     return {
-      entries: getLoginLogs(),
+      entries,
+      total: entries.length,
       truncated: false,
       skippedLines: 0,
       skippedFiles: 0,
@@ -507,6 +509,7 @@ export class MockLogsAdapter implements LogsAdapter {
     const entries = operationLogEntries()
     return {
       entries,
+      total: entries.length,
       truncated: false,
       skippedLines: 0,
       skippedFiles: 0,

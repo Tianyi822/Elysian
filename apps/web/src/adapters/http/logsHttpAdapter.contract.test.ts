@@ -84,6 +84,7 @@ function createFakeLogsService(): LogsService {
     async runtimeLog() {
       return {
         entries: runtime,
+        total: runtime.length,
         truncated: false,
         skippedLines: 0,
         skippedFiles: 0,
@@ -93,6 +94,7 @@ function createFakeLogsService(): LogsService {
     async operationLog() {
       return {
         entries: operation,
+        total: operation.length,
         truncated: false,
         skippedLines: 0,
         skippedFiles: 0,
@@ -100,7 +102,7 @@ function createFakeLogsService(): LogsService {
       }
     },
     async loginLog() {
-      return { entries: [], truncated: false, skippedLines: 0, skippedFiles: 0 }
+      return { entries: [], total: 0, truncated: false, skippedLines: 0, skippedFiles: 0 }
     },
     async recordLogin() {
       return undefined
@@ -148,7 +150,6 @@ function createFakeLogsService(): LogsService {
           target: input.target ?? null,
           summary: input.summary ?? '',
           result: input.result,
-          actor: 'panel',
           method: input.method ?? null,
           path: input.path ?? null,
           httpStatus: input.httpStatus ?? null,

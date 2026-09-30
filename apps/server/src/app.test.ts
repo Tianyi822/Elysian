@@ -46,12 +46,13 @@ function createFakeLogs(): {
       entries: [
         { id: '2026-09-23T00:00:00.000Z#1', at: '2026-09-23T00:00:00.000Z', level: 'info', source: 'server.lifecycle', message: '已启动' },
       ],
+      total: 1,
       truncated: false,
       skippedLines: 0,
       skippedFiles: 0,
       storage: LOGS_STORAGE,
     }),
-    operationLog: async () => ({ entries: [], truncated: false, skippedLines: 0, skippedFiles: 0, storage: LOGS_STORAGE }),
+    operationLog: async () => ({ entries: [], total: 0, truncated: false, skippedLines: 0, skippedFiles: 0, storage: LOGS_STORAGE }),
     clear: async (category: PlatformLogCategory) => ({
       category,
       fileCount: 0,
@@ -59,7 +60,7 @@ function createFakeLogs(): {
       oldestAt: null,
       clearedAt: '2026-09-23T00:00:00.000Z',
     }),
-    loginLog: async () => ({ entries: [], truncated: false, skippedLines: 0, skippedFiles: 0 }),
+    loginLog: async () => ({ entries: [], total: 0, truncated: false, skippedLines: 0, skippedFiles: 0 }),
     log: async (_level, _source, message) => {
       runtimeLogs.push(message)
     },

@@ -40,7 +40,7 @@ function createRecordingLogs(): {
   const records: Parameters<LogsService['recordOperation']>[0][] = []
   const loginRecords: Parameters<LogsService['recordLogin']>[0][] = []
   const service: LogsService = {
-    runtimeLog: async () => ({ entries: [], truncated: false, skippedLines: 0, skippedFiles: 0, storage: LOGS_STORAGE }),
+    runtimeLog: async () => ({ entries: [], total: 0, truncated: false, skippedLines: 0, skippedFiles: 0, storage: LOGS_STORAGE }),
     operationLog: async () => ({
       entries: records.map((record, index) => ({
         id: `2026-09-30T00:00:00.000Z#${index + 1}`,
@@ -50,11 +50,11 @@ function createRecordingLogs(): {
         target: record.target ?? null,
         summary: record.summary ?? '',
         result: record.result,
-        actor: 'panel',
         method: record.method ?? null,
         path: record.path ?? null,
         httpStatus: record.httpStatus ?? null,
       })),
+      total: records.length,
       truncated: false,
       skippedLines: 0,
       skippedFiles: 0,
@@ -76,6 +76,7 @@ function createRecordingLogs(): {
         status: record.status,
         time: '2026-09-30T00:00:00.000Z',
       })),
+      total: loginRecords.length,
       truncated: false,
       skippedLines: 0,
       skippedFiles: 0,

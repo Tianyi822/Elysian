@@ -11,6 +11,7 @@ import { SEED_RUNTIME_LOGS } from './logsData'
 /** 端点形状的最小合法响应：两个 GET 都用它，够验证接线与解析放行。 */
 const EMPTY_REPORT = {
   entries: [],
+  total: 0,
   truncated: false,
   skippedLines: 0,
   skippedFiles: 0,

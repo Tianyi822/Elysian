@@ -14,7 +14,7 @@ import type { LogsService } from './logsService.ts'
  * 客户端无法绕开、也无法伪造：
  * - 没有写入口：「/api/logs/*」只有 GET 与 clear，不存在接受日志正文的端点；
  * - 记录内容全部由服务端生成：at/seq 取服务端时钟与进程计数器，category/action/target
- *   来自描述符表，result/httpStatus 取自最终响应，actor 是常量——客户端提交的任何字段
+ *   来自描述符表，result/httpStatus 取自最终响应——客户端提交的任何字段
  *   都不参与，也不存在「客户端可控值直接变成审计事实」的路径；
  * - 凭据隔离：**只有描述符声明了 summarize 的端点才会被读取请求体**（对象名要取体时该端点
  *   本来就有摘要，两者同桌），密码类端点因此结构性地不可能泄漏到日志——判断发生在 clone

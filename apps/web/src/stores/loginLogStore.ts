@@ -11,6 +11,7 @@ type LoginLogState = {
   status: LoginLogLoadStatus
   errorMessage: string | undefined
   entries: readonly LoginLogEntry[]
+  total: number
   truncated: boolean
   skippedLines: number
   skippedFiles: number
@@ -27,6 +28,7 @@ export const useLoginLogStore = create<LoginLogState>((set, get) => ({
   status: 'idle',
   errorMessage: undefined,
   entries: [],
+  total: 0,
   truncated: false,
   skippedLines: 0,
   skippedFiles: 0,

@@ -45,7 +45,6 @@ const OPERATION: OperationLogRecord = {
   method: 'PUT',
   path: '/api/security/ssh/port',
   summary: '端口 2222',
-  actor: 'panel',
 }
 
 describe('normalizeSingleLine', () => {
@@ -120,7 +119,7 @@ describe('serializeRuntimeLogRecord', () => {
 describe('serializeOperationLogRecord', () => {
   it('字段顺序固定，null 字段保持 null', () => {
     expect(serializeOperationLogRecord(OPERATION)).toBe(
-      '{"at":"2026-09-23T03:25:10.004Z","seq":7,"category":"security","action":"修改 SSH 监听端口","target":"sshd","result":"success","httpStatus":200,"method":"PUT","path":"/api/security/ssh/port","summary":"端口 2222","actor":"panel"}',
+      '{"at":"2026-09-23T03:25:10.004Z","seq":7,"category":"security","action":"修改 SSH 监听端口","target":"sshd","result":"success","httpStatus":200,"method":"PUT","path":"/api/security/ssh/port","summary":"端口 2222"}',
     )
     const bare = serializeOperationLogRecord({
       ...OPERATION,
@@ -222,8 +221,10 @@ describe('parseRuntimeLogLine', () => {
 })
 
 describe('parseOperationLogLine', () => {
-  it('合法行往返一致', () => {
-    expect(parseOperationLogLine(serializeOperationLogRecord(OPERATION))).toEqual(OPERATION)
+  it('合法行往返一致，多余字段不进记录', () => {
+    const line = serializeOperationLogRecord(OPERATION)
+    expect(parseOperationLogLine(line)).toEqual(OPERATION)
+    expect(parseOperationLogLine(`${line.slice(0, -1)},"actor":"panel"}`)).toEqual(OPERATION)
   })
 
   it('缺字段、类别越界、结果越界、httpStatus 非整数都返回 null', () => {
@@ -234,7 +235,6 @@ describe('parseOperationLogLine', () => {
       return JSON.stringify(copy)
     }
     for (const line of [
-      without('actor'),
       without('summary'),
       without('httpStatus'),
       JSON.stringify({ ...base, category: 'database2' }),
@@ -245,7 +245,6 @@ describe('parseOperationLogLine', () => {
     ]) {
       expect(parseOperationLogLine(line)).toBeNull()
     }
-    expect(parseOperationLogLine(without('actor'))).toBeNull()
   })
 
   it('null 字段是合法形状（无对象、无参数、非 HTTP 触发）', () => {
@@ -289,7 +288,6 @@ describe('id 与条目转换', () => {
       target: null,
       summary: OPERATION.summary,
       result: OPERATION.result,
-      actor: OPERATION.actor,
       method: null,
       path: null,
       httpStatus: null,

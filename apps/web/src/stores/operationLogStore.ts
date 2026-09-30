@@ -32,6 +32,7 @@ type OperationLogState = {
   errorMessage: string | undefined
   /** 时间倒序（新 → 旧），与登录日志一致。 */
   entries: readonly OperationLogEntry[]
+  total: number
   truncated: boolean
   skippedLines: number
   skippedFiles: number
@@ -60,6 +61,7 @@ export const useOperationLogStore = create<OperationLogState>((set, get) => ({
   status: 'idle',
   errorMessage: undefined,
   entries: [],
+  total: 0,
   truncated: false,
   skippedLines: 0,
   skippedFiles: 0,

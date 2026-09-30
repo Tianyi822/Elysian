@@ -77,7 +77,6 @@ export type OperationLogRecord = {
   method: string | null
   path: string | null
   summary: string
-  actor: string
 }
 
 /**
@@ -134,7 +133,7 @@ export function serializeLoginLogRecord(record: LoginLogRecord): string {
   })
 }
 
-/** 字段顺序固定：at → seq → category → action → target → result → httpStatus → method → path → summary → actor。 */
+/** 字段顺序固定：at → seq → category → action → target → result → httpStatus → method → path → summary。 */
 export function serializeOperationLogRecord(record: OperationLogRecord): string {
   return JSON.stringify({
     at: record.at,
@@ -147,7 +146,6 @@ export function serializeOperationLogRecord(record: OperationLogRecord): string 
     method: record.method === null ? null : normalizeSingleLine(record.method, LOG_METHOD_MAX_LENGTH),
     path: record.path === null ? null : normalizeSingleLine(record.path, LOG_PATH_MAX_LENGTH),
     summary: normalizeSingleLine(record.summary, LOG_SUMMARY_MAX_LENGTH),
-    actor: record.actor,
   })
 }
 
@@ -236,7 +234,7 @@ export function parseOperationLogLine(line: string): OperationLogRecord | null {
   if (value['httpStatus'] !== null && !Number.isInteger(value['httpStatus'])) return null
   if (!isNullableString(value['method'])) return null
   if (!isNullableString(value['path'])) return null
-  if (typeof value['summary'] !== 'string' || typeof value['actor'] !== 'string') return null
+  if (typeof value['summary'] !== 'string') return null
   return {
     at: value['at'],
     seq: value['seq'] as number,
@@ -248,7 +246,6 @@ export function parseOperationLogLine(line: string): OperationLogRecord | null {
     method: value['method'],
     path: value['path'],
     summary: value['summary'],
-    actor: value['actor'],
   }
 }
 
@@ -290,7 +287,6 @@ export function toOperationLogEntry(record: OperationLogRecord): OperationLogEnt
     target: record.target,
     summary: record.summary,
     result: record.result,
-    actor: record.actor,
     method: record.method,
     path: record.path,
     httpStatus: record.httpStatus,

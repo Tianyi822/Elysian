@@ -109,6 +109,7 @@ export function parseRuntimeLogResponse(body: unknown): RuntimeLogListReport {
   }
   return {
     entries: entries.map((entry) => parseRuntimeLogEntry(entry)),
+    total: asNonNegativeNumber(row.total, '总数'),
     truncated: asBoolean(row.truncated, '截断标记'),
     skippedLines: asNonNegativeNumber(row.skippedLines, '坏行计数'),
     skippedFiles: asNonNegativeNumber(row.skippedFiles, '坏文件计数'),
@@ -142,6 +143,7 @@ export function parseLoginLogResponse(body: unknown): LoginLogListReport {
   }
   return {
     entries: entries.map((entry) => parseLoginLogEntry(entry)),
+    total: asNonNegativeNumber(row.total, '总数'),
     truncated: asBoolean(row.truncated, '截断标记'),
     skippedLines: asNonNegativeNumber(row.skippedLines, '坏行计数'),
     skippedFiles: asNonNegativeNumber(row.skippedFiles, '坏文件计数'),
@@ -171,7 +173,6 @@ export function parseOperationLogEntry(value: unknown): OperationLogEntry {
     target: asNullableString(row.target),
     summary: asString(row, 'summary', '摘要'),
     result: result as OperationLogOutcome,
-    actor: asString(row, 'actor', '操作人'),
     method: asNullableString(row.method),
     path: asNullableString(row.path),
     httpStatus: httpStatus ?? null,
@@ -187,6 +188,7 @@ export function parseOperationLogResponse(body: unknown): OperationLogListReport
   }
   return {
     entries: entries.map((entry) => parseOperationLogEntry(entry)),
+    total: asNonNegativeNumber(row.total, '总数'),
     truncated: asBoolean(row.truncated, '截断标记'),
     skippedLines: asNonNegativeNumber(row.skippedLines, '坏行计数'),
     skippedFiles: asNonNegativeNumber(row.skippedFiles, '坏文件计数'),

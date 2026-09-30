@@ -38,6 +38,7 @@ export type LoginLogEntry = {
 /** 登录日志列表响应。条目时间倒序（新 → 旧）。 */
 export type LoginLogListReport = {
   entries: readonly LoginLogEntry[]
+  total: number
   /** 因条数上限或读取字节预算未读全（更旧的内容还在磁盘上）。 */
   truncated: boolean
   /** 无法解析而被跳过的行数（正常为 0）。 */

@@ -49,6 +49,7 @@ function createFakeService(): { service: LogsService; cleared: PlatformLogCatego
   const service: LogsService = {
     runtimeLog: async () => ({
       entries: [{ id: '2026-09-23T00:00:00.000Z#1', at: '2026-09-23T00:00:00.000Z', level: 'info', source: 'server.lifecycle', message: '已启动' }],
+      total: 1,
       truncated: false,
       skippedLines: 0,
       skippedFiles: 0,
@@ -64,12 +65,12 @@ function createFakeService(): { service: LogsService; cleared: PlatformLogCatego
           target: 'sshd',
           summary: '端口 2222',
           result: 'success',
-          actor: 'panel',
           method: 'PUT',
           path: '/api/security/ssh/port',
           httpStatus: 200,
         },
       ],
+      total: 1,
       truncated: true,
       skippedLines: 1,
       skippedFiles: 2,
@@ -90,6 +91,7 @@ function createFakeService(): { service: LogsService; cleared: PlatformLogCatego
           time: '2026-09-23T00:00:02.000Z',
         },
       ],
+      total: 1,
       truncated: false,
       skippedLines: 0,
       skippedFiles: 0,
@@ -328,11 +330,10 @@ describe('createLogsApp 接真实接线（临时根）', () => {
       await service.runSweep('runtime', 'manual')
 
       const operation = (await (await app.request(requestOf('GET', '/operation'))).json()) as {
-        entries: { action: string; actor: string; target: string | null; summary: string }[]
+        entries: { action: string; target: string | null; summary: string }[]
       }
       expect(operation.entries[0]).toMatchObject({
         action: '修改 SSH 监听端口',
-        actor: 'panel',
         target: 'sshd',
         summary: '端口 2222',
       })

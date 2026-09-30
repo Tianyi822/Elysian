@@ -17,7 +17,7 @@ import { LOGS_MOUNT } from './logsRoutes.ts'
  * 操作日志的端点描述符表：**什么动作被记录、记成什么**的唯一权威。
  *
  * 采集中间件（operationAudit）挂在 app 层、包住每一个到达服务端的写请求：命中本表的
- * 请求由服务端自己生成记录，客户端无法提交、也无法影响 category/action/result/actor
+ * 请求由服务端自己生成记录，客户端无法提交、也无法影响 category/action/result
  * 任何一个字段（详见 operationAudit 的注释）。因此本表的全部内容都是**服务端常量**，
  * 唯一从请求取值的是 summarize 与 target 函数——它们只读自己点名的那几个字段。
  *

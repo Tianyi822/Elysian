@@ -285,7 +285,7 @@ describe('写运行日志与列表', () => {
     expect(report.storage.runtimeBytes).toBeGreaterThan(0)
   })
 
-  it('recordOperation 写入操作日志，列表倒序（新 → 旧），actor 固定 panel', async () => {
+  it('recordOperation 写入操作日志，列表倒序（新 → 旧）', async () => {
     const { service } = createHarness()
 
     await service.recordOperation({
@@ -303,7 +303,6 @@ describe('写运行日志与列表', () => {
     const report = await service.operationLog()
 
     expect(report.entries.map((entry) => entry.action)).toEqual(['清空运行日志', '复制文件', '修改 SSH 监听端口'])
-    expect(report.entries.every((entry) => entry.actor === 'panel')).toBe(true)
     expect(report.entries[2]).toMatchObject({
       category: 'security',
       target: null,

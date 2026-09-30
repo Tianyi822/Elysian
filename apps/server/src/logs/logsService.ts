@@ -55,9 +55,6 @@ import type { LogWriter } from './logWriter.ts'
 /** 巡检定时器间隔：每 5 分钟一次。 */
 export const LOG_SWEEP_INTERVAL_MS = 5 * 60 * 1000
 
-/** 操作日志的操作人标识：面板本期无认证，一律「本机面板」。 */
-export const LOG_ACTOR = 'panel'
-
 export type SweepReason = 'first-write' | 'timer' | 'after-roll' | 'after-clear' | 'manual'
 
 export type LogsServiceDeps = {
@@ -309,16 +306,17 @@ export function createLogsService(deps: LogsServiceDeps): LogsService {
       method: input.method ?? null,
       path: input.path ?? null,
       summary: input.summary ?? '',
-      actor: LOG_ACTOR,
     }
     await deps.writers.operation.append(record)
   }
 
   async function runtimeLog(): Promise<RuntimeLogListReport> {
     const read = await readLogRecords(deps.readers.runtime, 'runtime', LOG_ENTRY_FETCH_LIMIT)
+    const entries = read.records.map(toRuntimeLogEntry).reverse()
     return {
       // 运行日志倒序（新 → 旧）：与操作日志同一口径，最新一条在表格最上方。
-      entries: read.records.map(toRuntimeLogEntry).reverse(),
+      entries,
+      total: entries.length,
       truncated: read.truncated,
       skippedLines: read.skippedLines,
       skippedFiles: read.skippedFiles,
@@ -328,8 +326,10 @@ export function createLogsService(deps: LogsServiceDeps): LogsService {
 
   async function loginLog(): Promise<LoginLogListReport> {
     const read = await readLogRecords(deps.readers.login, 'login', LOG_ENTRY_FETCH_LIMIT)
+    const entries = read.records.map(toLoginLogEntry).reverse()
     return {
-      entries: read.records.map(toLoginLogEntry).reverse(),
+      entries,
+      total: entries.length,
       truncated: read.truncated,
       skippedLines: read.skippedLines,
       skippedFiles: read.skippedFiles,
@@ -338,9 +338,11 @@ export function createLogsService(deps: LogsServiceDeps): LogsService {
 
   async function operationLog(): Promise<OperationLogListReport> {
     const read = await readLogRecords(deps.readers.operation, 'operation', LOG_ENTRY_FETCH_LIMIT)
+    const entries = read.records.map(toOperationLogEntry).reverse()
     return {
       // 操作日志倒序（新 → 旧），与登录日志一致。
-      entries: read.records.map(toOperationLogEntry).reverse(),
+      entries,
+      total: entries.length,
       truncated: read.truncated,
       skippedLines: read.skippedLines,
       skippedFiles: read.skippedFiles,

@@ -491,10 +491,9 @@ describe('操作日志类别', () => {
       method: 'POST',
       path: '/api/logs/runtime/clear',
       summary: '',
-      actor: 'panel',
     })
     expect(writer.currentPath()).toBe(join(root, 'operation', 'operation-20260923T031500Z.jsonl'))
     const [line] = await readLines(writer.currentPath()!)
-    expect(JSON.parse(line!)).toMatchObject({ category: 'logs', actor: 'panel', seq: 7 })
+    expect(JSON.parse(line!)).toMatchObject({ category: 'logs', seq: 7 })
   })
 })

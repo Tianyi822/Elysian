@@ -73,7 +73,6 @@ export function runLogsAdapterContract(name: string, make: () => LogsAdapter): v
         expect(OPERATION_LOG_OUTCOMES).toContain(entry.result)
         expect(entry.id).toBeTruthy()
         expect(entry.action).toBeTruthy()
-        expect(entry.actor).toBeTruthy()
         expect(Number.isNaN(Date.parse(entry.at))).toBe(false)
       }
       const times = report.entries.map((entry) => entry.at)

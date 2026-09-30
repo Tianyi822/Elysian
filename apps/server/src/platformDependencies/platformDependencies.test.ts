@@ -254,7 +254,7 @@ const LOGS_STORAGE: LogStorageStats = {
 function createRecordingLogs(): { service: LogsService; records: Parameters<LogsService['recordOperation']>[0][] } {
   const records: Parameters<LogsService['recordOperation']>[0][] = []
   const service: LogsService = {
-    runtimeLog: async () => ({ entries: [], truncated: false, skippedLines: 0, skippedFiles: 0, storage: LOGS_STORAGE }),
+    runtimeLog: async () => ({ entries: [], total: 0, truncated: false, skippedLines: 0, skippedFiles: 0, storage: LOGS_STORAGE }),
     operationLog: async () => ({
       entries: records.map((record, index) => ({
         id: `2026-09-29T00:00:00.000Z#${index + 1}`,
@@ -264,11 +264,11 @@ function createRecordingLogs(): { service: LogsService; records: Parameters<Logs
         target: record.target ?? null,
         summary: record.summary ?? '',
         result: record.result,
-        actor: '本地运维',
         method: record.method ?? null,
         path: record.path ?? null,
         httpStatus: record.httpStatus ?? null,
       })),
+      total: records.length,
       truncated: false,
       skippedLines: 0,
       skippedFiles: 0,
@@ -281,7 +281,7 @@ function createRecordingLogs(): { service: LogsService; records: Parameters<Logs
       oldestAt: null,
       clearedAt: '2026-09-29T00:00:00.000Z',
     }),
-    loginLog: async () => ({ entries: [], truncated: false, skippedLines: 0, skippedFiles: 0 }),
+    loginLog: async () => ({ entries: [], total: 0, truncated: false, skippedLines: 0, skippedFiles: 0 }),
     log: async () => undefined,
     recordLogin: async () => undefined,
     recordOperation: async (input) => {
