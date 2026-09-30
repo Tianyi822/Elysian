@@ -21,6 +21,12 @@ const app = await createApp({ logs: logs.service })
 serve({
   hostname: '127.0.0.1',
   port: SERVER_PORT,
+  // 缺省 10 秒：连接上无字节流动即被服务端关闭。依赖安装的一步在宿主上跑 apt，
+  // 最长 240 秒内没有任何响应字节，中途被掐断后 vite 代理只能给浏览器回 502
+  // （脚本仍在宿主继续跑完，形成「报错但实际装好了」）。取 Bun 上限 255 秒，
+  // 顺序保持：步骤自身超时（≤240s）先触发并回 422，连接超时兜底其后，vite 代理
+  // 的 400 秒再兜外层。只影响 HTTP 连接，WebSocket 的空闲超时在 websocket 选项里。
+  idleTimeout: 255,
   // 第二参数（Bun server 实例）必须传给 app.fetch：hono/bun 的 upgradeWebSocket
   // 从 fetch 的第二参数取实例，丢弃它会让 /api/terminals/ws 升级抛 TypeError。
   fetch: (request, server) => app.fetch(request, server),
