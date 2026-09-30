@@ -1,5 +1,6 @@
 import type { LoginLogStatus } from './logs.ts'
 import type { OperationLogCategory, OperationLogOutcome } from './platformLogs.ts'
+import { LOG_ENTRY_FETCH_LIMIT } from './platformLogs.ts'
 
 export type LogListQuery = {
   q?: string
@@ -23,12 +24,24 @@ export type LogPage<T> = {
   truncated: boolean
 }
 
+/** 排序与翻页游标用的数字键：纯数字 id 直接解析，否则取末尾 `#<digits>`。 */
+function logNumericSortKey(id: string): number {
+  if (/^\d+$/.test(id)) {
+    return Number(id)
+  }
+  const suffix = id.match(/#(\d+)$/)
+  if (suffix) {
+    return Number(suffix[1])
+  }
+  return Number.NaN
+}
+
 function compareLogEntries<T extends { id: string; at: string }>(a: T, b: T): number {
   if (a.at !== b.at) {
     return a.at > b.at ? -1 : 1
   }
-  const idA = Number(a.id)
-  const idB = Number(b.id)
+  const idA = logNumericSortKey(a.id)
+  const idB = logNumericSortKey(b.id)
   if (idA !== idB) {
     return idA > idB ? -1 : 1
   }
@@ -51,11 +64,11 @@ export function pageByQuery<T extends { id: string; at: string }>(
     const beforeId = query.beforeId
     window = sorted.filter(
       (entry) =>
-        entry.at < before || (entry.at === before && Number(entry.id) < beforeId),
+        entry.at < before || (entry.at === before && logNumericSortKey(entry.id) < beforeId),
     )
   }
 
-  const limit = query.limit ?? 1000
+  const limit = Math.min(query.limit ?? LOG_ENTRY_FETCH_LIMIT, LOG_ENTRY_FETCH_LIMIT)
   const truncated = window.length > limit
   const pageEntries = window.slice(0, limit)
 

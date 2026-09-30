@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { logRetentionText, pageByQuery, type LogListQuery } from '@elysian/contracts'
+import { LOG_ENTRY_FETCH_LIMIT, logRetentionText, pageByQuery, type LogListQuery } from '@elysian/contracts'
 
 const rows = [
   { id: '3', at: '2026-09-23T00:00:02.000Z', message: 'Alpha' },
@@ -33,6 +33,32 @@ describe('pageByQuery', () => {
 
   it('缺省 limit 是 1000', () => {
     expect(pageByQuery(rows, {}, match).entries).toHaveLength(3)
+  })
+
+  it('同一 at 下 composite id 按 # 后缀排序，before + beforeId 只取更旧行', () => {
+    const composite = [
+      { id: '2026-09-23T00:00:02.000Z#12', at: '2026-09-23T00:00:02.000Z', message: 'newer' },
+      { id: '2026-09-23T00:00:02.000Z#11', at: '2026-09-23T00:00:02.000Z', message: 'older' },
+      { id: '2026-09-23T00:00:01.000Z#1', at: '2026-09-23T00:00:01.000Z', message: 'prev' },
+    ]
+    const page = pageByQuery(
+      composite,
+      { before: '2026-09-23T00:00:02.000Z', beforeId: 12 },
+      match,
+    )
+    expect(page.entries.map((entry) => entry.id)).toEqual(['2026-09-23T00:00:02.000Z#11', '2026-09-23T00:00:01.000Z#1'])
+  })
+
+  it('limit 超过 LOG_ENTRY_FETCH_LIMIT 时最多返回 LOG_ENTRY_FETCH_LIMIT 条', () => {
+    const many = Array.from({ length: LOG_ENTRY_FETCH_LIMIT + 5 }, (_, index) => ({
+      id: String(LOG_ENTRY_FETCH_LIMIT + 5 - index),
+      at: `2026-09-23T00:00:${String(index).padStart(2, '0')}.000Z`,
+      message: 'x',
+    }))
+    const page = pageByQuery(many, { limit: 5000 }, match)
+    expect(page.entries).toHaveLength(LOG_ENTRY_FETCH_LIMIT)
+    expect(page.truncated).toBe(true)
+    expect(page.total).toBe(LOG_ENTRY_FETCH_LIMIT + 5)
   })
 })
 

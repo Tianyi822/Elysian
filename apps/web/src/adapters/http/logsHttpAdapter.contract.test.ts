@@ -120,8 +120,7 @@ function createFakeLogsService(): LogsService {
         const needle = keyword.toLowerCase()
         if (query.status && entry.status !== query.status) return false
         return (
-          entry.status.toLowerCase().includes(needle)
-          || entry.ip.toLowerCase().includes(needle)
+          entry.ip.toLowerCase().includes(needle)
           || entry.location.toLowerCase().includes(needle)
           || entry.userAgent.toLowerCase().includes(needle)
         )
