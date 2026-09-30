@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ElysianEvent } from '@elysian/contracts'
-import { FakeEventSource } from '../../test/fakeEventSource'
 import { createMockGateway } from './gateway'
 import { MockContainerAdapter, MockFilesAdapter } from './mockAdapters'
 import { MockTerminalAdapter } from './terminalAdapter'
@@ -30,9 +29,12 @@ describe('createMockGateway containers 可选片分流', () => {
     vi.unstubAllGlobals()
   })
 
-  it("containers: 'http' 时 watchLive 事件进入 events.subscribe，onStatus 只写容器 store", () => {
-    FakeEventSource.reset()
-    vi.stubGlobal('EventSource', FakeEventSource)
+  it("containers: 'http' 时断开与恢复都更新容器 store，事件进入 events.subscribe", async () => {
+    let controller: ReadableStreamDefaultController<Uint8Array> | undefined
+    const fetchMock = vi.fn(async () => new Response(new ReadableStream({
+      start(value) { controller = value },
+    }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
     useContainersStore.setState({ liveStatus: 'live' })
     useEventStreamStore.setState({ status: 'live' })
     const gateway = createMockGateway({ eventStream: 'memory', containers: 'http' })
@@ -42,25 +44,29 @@ describe('createMockGateway containers 可选片分流', () => {
       onStatus: () => {},
     })
 
-    const source = FakeEventSource.latest()
-    expect(source?.url).toBe('/api/docker/events')
-    source?.emitOpen()
+    try {
+      expect(fetchMock).toHaveBeenCalledWith('/api/docker/events', expect.objectContaining({ signal: expect.any(AbortSignal) }))
+      await vi.waitFor(() => expect(useContainersStore.getState().liveStatus).toBe('live'))
+      const envelope = JSON.stringify({
+        id: 'evt-docker-1',
+        name: 'container/removed',
+        at: '2026-09-12T08:00:00.000Z',
+        payload: { containerId: 'abc' },
+      })
+      controller!.enqueue(new TextEncoder().encode(`event: container/removed\ndata: ${envelope}\n\n`))
+      await vi.waitFor(() => expect(events.some((e) => e.name === 'container/removed')).toBe(true))
 
-    const envelope = JSON.stringify({
-      id: 'evt-docker-1',
-      name: 'container/removed',
-      at: '2026-09-12T08:00:00.000Z',
-      payload: { containerId: 'abc' },
-    })
-    source?.emitRaw('container/removed', envelope)
-    expect(events.some((e) => e.name === 'container/removed')).toBe(true)
-
-    source?.emitError()
-    expect(useContainersStore.getState().liveStatus).toBe('connecting')
-    expect(useEventStreamStore.getState().status).toBe('live')
-
-    unsub()
-    vi.unstubAllGlobals()
+      controller!.enqueue(new TextEncoder().encode(': status connecting\n\n'))
+      await vi.waitFor(() => expect(useContainersStore.getState().liveStatus).toBe('connecting'))
+      expect(useEventStreamStore.getState().status).toBe('live')
+      controller!.enqueue(new TextEncoder().encode(': status live\n\n'))
+      await vi.waitFor(() => expect(useContainersStore.getState().liveStatus).toBe('live'))
+      expect(useEventStreamStore.getState().status).toBe('live')
+    } finally {
+      unsub()
+      controller?.close()
+      vi.unstubAllGlobals()
+    }
   })
 
   it("containers: 'http' 不改变 files 与 terminals 的类型", () => {

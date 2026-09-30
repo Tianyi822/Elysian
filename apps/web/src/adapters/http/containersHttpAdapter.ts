@@ -28,28 +28,27 @@ const CONTAINER_STREAM_EVENT_NAMES = [
 
 /** SSE 注释行 `: status connecting` 的载荷；服务端 Engine 断流而 HTTP 仍开着时写入，触发 connecting。 */
 export const CONTAINER_SSE_STATUS_CONNECTING = 'status connecting'
+export const CONTAINER_SSE_STATUS_LIVE = 'status live'
 
-function isConnectingStatusComment(line: string): boolean {
-  if (!line.startsWith(':')) return false
-  return line.slice(1).trimStart() === CONTAINER_SSE_STATUS_CONNECTING
+type ContainerLiveStatus = 'live' | 'connecting'
+
+function parseStatusComment(line: string): ContainerLiveStatus | undefined {
+  if (!line.startsWith(':')) return undefined
+  const comment = line.slice(1).trimStart()
+  if (comment === CONTAINER_SSE_STATUS_CONNECTING) return 'connecting'
+  if (comment === CONTAINER_SSE_STATUS_LIVE) return 'live'
+  return undefined
 }
 
 export type ContainerEventSourceLike = EventSourceLike & {
-  registerConnectingCommentHandler?(handler: () => void): () => void
+  registerStatusCommentHandler?(handler: (status: ContainerLiveStatus) => void): () => void
 }
 
 function defaultEventSourceFactory(): EventSourceFactory | undefined {
+  // 原生 EventSource 不暴露注释帧；直接用 fetch 读取 Engine 状态，避免额外创建一条未关闭的连接。
+  if (typeof fetch !== 'undefined') return createFetchContainerEventSource
   if (typeof EventSource === 'undefined') return undefined
-  return (url) => {
-    const native = new EventSource(url) as unknown as ContainerEventSourceLike
-    if (typeof native.registerConnectingCommentHandler === 'function') {
-      return native
-    }
-    if (typeof fetch !== 'undefined') {
-      return createFetchContainerEventSource(url)
-    }
-    return native
-  }
+  return (url) => new EventSource(url) as unknown as ContainerEventSourceLike
 }
 
 const FETCH_SSE_INITIAL_BACKOFF_MS = 1_000
@@ -73,10 +72,10 @@ function delayMs(ms: number, signal: AbortSignal): Promise<void> {
   })
 }
 
-/** fetch 实现的容器事件源（EventSource 不可用时兜底；导出供 401 终止语义直接测试）。 */
+/** fetch 实现的容器事件源，读取断开与恢复注释帧；导出供重连与 401 终止语义测试。 */
 export function createFetchContainerEventSource(url: string): ContainerEventSourceLike {
   const listeners = new Map<string, Set<(event: MessageEvent<string>) => void>>()
-  const connectingHandlers = new Set<() => void>()
+  const statusHandlers = new Set<(status: ContainerLiveStatus) => void>()
   let closed = false
   let lastEventId: string | undefined
   let backoffMs = FETCH_SSE_INITIAL_BACKOFF_MS
@@ -94,14 +93,14 @@ export function createFetchContainerEventSource(url: string): ContainerEventSour
       closed = true
       streamAbort?.abort()
       listeners.clear()
-      connectingHandlers.clear()
+      statusHandlers.clear()
       source.onopen = null
       source.onerror = null
     },
-    registerConnectingCommentHandler(handler) {
-      connectingHandlers.add(handler)
+    registerStatusCommentHandler(handler) {
+      statusHandlers.add(handler)
       return () => {
-        connectingHandlers.delete(handler)
+        statusHandlers.delete(handler)
       }
     },
   }
@@ -153,9 +152,10 @@ export function createFetchContainerEventSource(url: string): ContainerEventSour
               const line = buffer.slice(0, match.index)
               buffer = buffer.slice(match.index + match[0].length)
 
-              if (isConnectingStatusComment(line)) {
-                for (const handler of connectingHandlers) {
-                  handler()
+              const status = parseStatusComment(line)
+              if (status !== undefined) {
+                for (const handler of statusHandlers) {
+                  handler(status)
                 }
                 continue
               }
@@ -204,13 +204,6 @@ export function createFetchContainerEventSource(url: string): ContainerEventSour
   return source
 }
 
-function wireConnectingComment(
-  source: ContainerEventSourceLike,
-  onConnecting: () => void,
-): void {
-  source.registerConnectingCommentHandler?.(onConnecting)
-}
-
 /** Docker 容器 SSE：订阅 /api/docker/events，解析失败帧丢弃。 */
 export function createContainerWatchLive(
   options: {
@@ -247,8 +240,8 @@ export function createContainerWatchLive(
       if (opened) handlers.onStatus('connecting')
     }
 
-    wireConnectingComment(source, () => {
-      if (opened) handlers.onStatus('connecting')
+    source.registerStatusCommentHandler?.((status) => {
+      if (opened) handlers.onStatus(status)
     })
 
     return () => {

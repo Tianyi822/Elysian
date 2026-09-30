@@ -528,4 +528,49 @@ describe('createDockerApp', () => {
     await reader.cancel()
     expect(text).toContain(SSE_STATUS_CONNECTING.trim())
   })
+
+  it('首次订阅按连接中、重同步、恢复的顺序写入 SSE，随后断开和恢复都通知客户端', async () => {
+    const unsubscribe = vi.fn()
+    let reportStatus: ((status: 'live' | 'connecting') => void) | undefined
+    const hub: DockerEventsHub = {
+      subscribe(handlers) {
+        reportStatus = handlers.onStatus
+        handlers.onStatus('connecting')
+        handlers.onEvent({ event: 'container/resync', id: 'boot.1', data: '{}' })
+        handlers.onStatus('live')
+        return unsubscribe
+      },
+      notifyRestarting: vi.fn(),
+    }
+    const abort = new AbortController()
+    const request = new Request(req('GET', '/api/docker/events'), { signal: abort.signal })
+    const res = await mountedApp({ ...READY, eventsHub: hub }).request(request)
+    const reader = res.body!.getReader()
+    const decoder = new TextDecoder()
+    let text = ''
+    const readUntil = async (tail: string) => {
+      while (!text.endsWith(tail)) {
+        const { value, done } = await reader.read()
+        if (done) break
+        text += decoder.decode(value, { stream: true })
+      }
+    }
+    try {
+      await readUntil('data: {}\n\n')
+      expect(text).toContain(': status connecting')
+      expect(text.indexOf(': status connecting')).toBeLessThan(text.indexOf('event: container/resync'))
+      await readUntil(': status live\n\n')
+      expect(text).toContain(': status live\n\n')
+
+      reportStatus?.('connecting')
+      await readUntil(': status connecting\n\n')
+      reportStatus?.('live')
+      await readUntil(': status live\n\n')
+      expect(text.match(/: status live/g)).toHaveLength(2)
+    } finally {
+      abort.abort()
+      await reader.cancel()
+    }
+    await vi.waitFor(() => expect(unsubscribe).toHaveBeenCalledOnce())
+  })
 })

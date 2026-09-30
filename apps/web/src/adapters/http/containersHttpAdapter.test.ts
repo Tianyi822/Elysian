@@ -255,6 +255,61 @@ describe('createHttpContainersAdapter', () => {
     expect(statuses).toEqual(['connecting', 'live', 'connecting'])
   })
 
+  it('Engine 断开后采样仍可到达，直到恢复注释才清除 connecting', () => {
+    FakeEventSource.reset()
+    const statuses: Array<'live' | 'connecting'> = []
+    const onEvent = vi.fn()
+    const unsubscribe = createContainerWatchLive({ createEventSource: (url) => new FakeEventSource(url) })({
+      onStatus: (status) => statuses.push(status), onEvent,
+    })
+    const source = FakeEventSource.latest()!
+    try {
+      source.emitOpen()
+      source.emitCommentLine(': status connecting')
+      source.emit('container/sample', {
+        id: 'evt-1', name: 'container/sample', at: '2026-09-12T08:00:00.000Z', payload: { samples: [] },
+      })
+      expect(onEvent).toHaveBeenCalledOnce()
+      expect(statuses.at(-1)).toBe('connecting')
+      source.emitCommentLine(': status live')
+      expect(statuses).toEqual(['connecting', 'live', 'connecting', 'live'])
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  it('默认只创建一条 fetch SSE，支持连接中和恢复注释，退订后中止请求', async () => {
+    const nativeConstructor = vi.fn()
+    class NativeEventSource {
+      constructor(url: string) { nativeConstructor(url) }
+    }
+    vi.stubGlobal('EventSource', NativeEventSource)
+    let controller: ReadableStreamDefaultController<Uint8Array> | undefined
+    let signal: AbortSignal | undefined
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      signal = init?.signal ?? undefined
+      return new Response(new ReadableStream({ start(value) { controller = value } }), { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const statuses: Array<'live' | 'connecting'> = []
+    const unsubscribe = createContainerWatchLive()({ onStatus: (status) => statuses.push(status), onEvent: () => {} })
+    try {
+      await vi.waitFor(() => expect(statuses).toEqual(['connecting', 'live']))
+      controller!.enqueue(new TextEncoder().encode(': status connecting\n\n'))
+      await vi.waitFor(() => expect(statuses.at(-1)).toBe('connecting'))
+      controller!.enqueue(new TextEncoder().encode(': status li'))
+      controller!.enqueue(new TextEncoder().encode('ve\n\n'))
+      await vi.waitFor(() => expect(statuses.at(-1)).toBe('live'))
+      expect(nativeConstructor).not.toHaveBeenCalled()
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    } finally {
+      unsubscribe()
+      controller?.close()
+      vi.unstubAllGlobals()
+    }
+    expect(signal?.aborted).toBe(true)
+  })
+
   it('watchLive 在 open 之前的 onerror 不上报 connecting', () => {
     FakeEventSource.reset()
     const statuses: Array<'live' | 'connecting'> = []
@@ -266,10 +321,6 @@ describe('createHttpContainersAdapter', () => {
 
   it('fetch 事件源断流后带 Last-Event-ID 重连，并在退避期间上报 connecting', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
-    class NativeEventSourceWithoutConnectingHandler {
-      constructor(_url: string) {}
-    }
-    vi.stubGlobal('EventSource', NativeEventSourceWithoutConnectingHandler)
 
     const envelope = JSON.stringify({
       id: 'evt-1',
@@ -340,11 +391,6 @@ describe('createHttpContainersAdapter', () => {
   })
 
   it('fetch 事件源解析 : status connecting 注释', async () => {
-    class NativeEventSourceWithoutConnectingHandler {
-      constructor(_url: string) {}
-    }
-    vi.stubGlobal('EventSource', NativeEventSourceWithoutConnectingHandler)
-
     const fetchMock = vi.fn(async () =>
       new Response(
         new ReadableStream({

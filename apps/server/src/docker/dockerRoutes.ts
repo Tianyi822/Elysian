@@ -22,8 +22,9 @@ import type { DockerEventsHub } from './dockerEventsHub.ts'
 const CONTAINER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/
 const SSE_RETRY_MS = 3_000
 const SSE_HEARTBEAT_MS = 15_000
-/** SSE 注释帧：Engine 事件流断开而 HTTP 仍开着时通知浏览器进入 connecting（与 web adapter 约定一致）。 */
+/** SSE 注释帧：传递 Engine 连接状态（与 web adapter 约定一致），独立于 HTTP 连接。 */
 export const SSE_STATUS_CONNECTING = ': status connecting\n\n'
+export const SSE_STATUS_LIVE = ': status live\n\n'
 
 /** 挂载路径：定义在 shared/apiMounts.ts，此处 re-export 保持既有 import 路径。 */
 export { DOCKER_MOUNT }
@@ -105,31 +106,23 @@ export function createDockerApp(deps: DockerAppDeps): Hono {
   if (eventsHub) {
     app.get('/events', (c) => {
       const lastEventId = c.req.header('last-event-id')
-      type HubFrame = { event: string; id: string; data: string }
-      const pending: HubFrame[] = []
-      const pendingStatusComments: string[] = []
-      let writeFrame: ((frame: HubFrame) => void) | undefined
-      let writeStatusComment: ((comment: string) => void) | undefined
+      // 事件与状态共用队列，首次订阅同步触发的 connecting → resync → live 保持原始顺序。
+      const pending: string[] = []
+      let writeChunk: ((chunk: string) => void) | undefined
+      const enqueue = (chunk: string) => {
+        if (writeChunk) writeChunk(chunk)
+        else pending.push(chunk)
+      }
       let unsubscribe: () => void
 
       try {
         unsubscribe = eventsHub.subscribe({
           lastEventId,
           onEvent: (frame) => {
-            if (writeFrame) {
-              writeFrame(frame)
-            } else {
-              pending.push(frame)
-            }
+            enqueue(`event: ${frame.event}\nid: ${frame.id}\ndata: ${frame.data}\n\n`)
           },
           onStatus: (status) => {
-            if (status === 'connecting') {
-              if (writeStatusComment) {
-                void writeStatusComment(SSE_STATUS_CONNECTING)
-              } else {
-                pendingStatusComments.push(SSE_STATUS_CONNECTING)
-              }
-            }
+            enqueue(status === 'connecting' ? SSE_STATUS_CONNECTING : SSE_STATUS_LIVE)
           },
         })
       } catch (error) {
@@ -144,23 +137,13 @@ export function createDockerApp(deps: DockerAppDeps): Hono {
 
       return stream(c, async (sseStream) => {
         await sseStream.write(`retry: ${SSE_RETRY_MS}\n\n`)
-        writeFrame = (frame) => {
-          void sseStream.write(
-            `event: ${frame.event}\nid: ${frame.id}\ndata: ${frame.data}\n\n`,
-          )
+        writeChunk = (chunk) => {
+          void sseStream.write(chunk)
         }
-        for (const frame of pending) {
-          writeFrame(frame)
+        for (const chunk of pending) {
+          writeChunk(chunk)
         }
         pending.length = 0
-
-        writeStatusComment = (comment) => {
-          void sseStream.write(comment)
-        }
-        for (const comment of pendingStatusComments) {
-          void writeStatusComment(comment)
-        }
-        pendingStatusComments.length = 0
 
         const heartbeat = setInterval(() => {
           void sseStream.write(': keep-alive\n\n')

@@ -150,6 +150,33 @@ describe('createDockerEventsHub', () => {
     for (const u of unsubs) u()
   })
 
+  it('Engine 断开后重连上报 live，且 HTTP 订阅无需重新建立', () => {
+    const clock = createFakeClock()
+    let closeEngine: (() => void) | undefined
+    const transport: DockerTransport = {
+      request: vi.fn(async () => ({ status: 200, json: [] })),
+      openStream: vi.fn((input) => {
+        closeEngine = input.onClose
+        return () => {}
+      }),
+    }
+    const hub = createDockerEventsHub({ transport, now: clock.now, schedule: clock.schedule, bootId: BOOT_ID })
+    const statuses: Array<'live' | 'connecting'> = []
+    const onEvent = vi.fn()
+    const unsubscribe = hub.subscribe({ onEvent, onStatus: (status) => statuses.push(status) })
+    try {
+      expect(statuses).toEqual(['connecting', 'live'])
+      closeEngine?.()
+      expect(statuses).toEqual(['connecting', 'live', 'connecting'])
+      clock.advance(1_000)
+      expect(transport.openStream).toHaveBeenCalledTimes(2)
+      expect(statuses).toEqual(['connecting', 'live', 'connecting', 'live'])
+      expect(onEvent.mock.calls.filter(([frame]) => frame.event === 'container/resync')).toHaveLength(2)
+    } finally {
+      unsubscribe()
+    }
+  })
+
   it('die 防抖 inspect 后推出 container/updated 且 startedAt 为 null', async () => {
     const clock = createFakeClock()
     let pushLine: ((line: string) => void) | undefined
