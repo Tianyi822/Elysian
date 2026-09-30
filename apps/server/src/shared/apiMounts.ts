@@ -4,6 +4,7 @@
  * 同模式）：不 import hono、不 import node:*，浏览器侧构建链也能安全解析它。
  * 各片路由文件从本文件 import 并 re-export，既有 import 路径保持不变。
  */
+export const AUTH_MOUNT = '/api/auth'
 export const DOCKER_MOUNT = '/api/docker'
 export const DATABASE_MOUNT = '/api/databases'
 export const FILES_MOUNT = '/api/files'

@@ -12,6 +12,11 @@ services:
       - "127.0.0.1:2222:22"
     environment:
       ELYSIAN_DOCKER: "1"
+      # 开发固定账号 dev / dev-elysian 的开关。插值缺省关是被跟踪编排的第一道闸：
+      # 「克隆即 docker compose up」的环境不携带公开固定凭据；开发与试用显式
+      # `ELYSIAN_AUTH_DEV=1 docker compose up` 启用。服务端 ELYSIAN_AUTH_DEV 缺省
+      # 恒关是第二道闸：生产编排即使误拷这一行，未设变量时插值结果为 0，账号不可用。
+      ELYSIAN_AUTH_DEV: "${ELYSIAN_AUTH_DEV:-0}"
       # 绑定挂载对齐根：服务端按容器内路径校验挂载越界，须与 volumes 里同一变量的
       # bind 挂载同值；macOS 必设为已共享路径，未设时 compose up 显式挂载报错。
       ELYSIAN_DOCKER_MOUNT_ROOT: ${ELYSIAN_DOCKER_MOUNT_ROOT:-/srv}

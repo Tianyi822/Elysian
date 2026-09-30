@@ -57,6 +57,8 @@ function createFakeLogs(): LogsService {
 
 function assembly(): Promise<Awaited<ReturnType<typeof createApp>>> {
   return createApp({
+    // 鉴权关：漂移守卫只读 app.routes 与发 405 探针，不测鉴权行为（鉴权接线在 authWiring.test.ts）。
+    auth: { enabled: false },
     firewall: { available: true, service: STUB },
     ssh: { available: true, service: STUB },
     users: { available: true, service: STUB },

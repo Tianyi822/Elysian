@@ -1,5 +1,7 @@
 import { serve } from 'bun'
 import { createApp } from './app.ts'
+import { createFileCredentialsStore, ensureFirstBootCredentials } from './auth/credentialsStore.ts'
+import { isDevAccountEnabled } from './auth/authConfig.ts'
 import { createLogsHostDeps } from './logs/logsHostDeps.ts'
 import { SERVER_PORT } from './shared/ports.ts'
 import { bunWebSocket } from './terminals/bunWebSocket.ts'
@@ -14,9 +16,17 @@ import { bunWebSocket } from './terminals/bunWebSocket.ts'
  * 时器都发生在第一次写入之后。启动行**写在 index.ts 而不是 createApp 里**，
  * 正是为了让测试调用 createApp() 时不产生任何文件系统副作用（启动行是唯一必须
  * 由装配层写的一条记录，其余由采集中间件与各调用点自己写）。
+ *
+ * 首启凭据保障同样在这里：dev 开关开时只打警告行；否则凭据文件缺失时生成随机
+ * 初始密码（横幅只打 stdout、不落日志文件），运行日志只记一条不含明文的事实。
  */
 const logs = createLogsHostDeps()
-const app = await createApp({ logs: logs.service })
+const credentials = createFileCredentialsStore()
+const boot = await ensureFirstBootCredentials(credentials, { dev: isDevAccountEnabled() })
+if (boot === 'created') {
+  await logs.service.log('info', 'server.lifecycle', '面板初始密码已生成（admin）')
+}
+const app = await createApp({ logs: logs.service, auth: { credentials } })
 
 serve({
   hostname: '127.0.0.1',

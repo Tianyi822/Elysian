@@ -10,7 +10,7 @@ import { FILES_MOUNT } from '../files/filesRoutes.ts'
 import { SSH_MOUNT } from '../ssh/sshRoutes.ts'
 import { USERS_MOUNT } from '../users/usersRoutes.ts'
 import { DOCKER_MOUNT } from '../docker/dockerRoutes.ts'
-import { DATABASE_MOUNT, PLATFORM_MOUNT, WEBSITES_MOUNT } from '../shared/apiMounts.ts'
+import { AUTH_MOUNT, DATABASE_MOUNT, PLATFORM_MOUNT, WEBSITES_MOUNT } from '../shared/apiMounts.ts'
 import { LOGS_MOUNT } from './logsRoutes.ts'
 
 /*
@@ -25,7 +25,7 @@ import { LOGS_MOUNT } from './logsRoutes.ts'
  * 该端点本来就有参数摘要，两者同桌）。于是「不声明 ⇒ 请求体里的密码/密钥材料永远不进日志」
  * 不靠实现者的自觉，而靠采集中间件在 clone 之前就先查这张表。据此**不声明**的端点：
  * POST /api/security/ssh/root-password、POST /api/security/users、PUT /api/security/users/:id
- * （前者的体是密码，后两者的体含密码）。
+ * （前者的体是密码，后两者的体含密码）与 POST /api/auth/login（登录体含密码）。
  *
  * 数据库写端点登记动作与目标；密码与语句正文均不进入摘要。
  *
@@ -519,6 +519,13 @@ export const OPERATION_DESCRIPTORS: Readonly<Record<string, OperationDescriptor>
     action: '安装 Caddy',
     target: ({ params }) => setupStepTarget('Caddy', params.step),
   },
+
+  // 登录鉴权：登录体含密码——**不声明 summarize**（采集中间件因此在 clone 之前就跳过
+  // 请求体，密码结构性地不进任何日志）；不声明 target（单用户语义下用户名也无信息量，
+  // 记录为 null）。登出在鉴权豁免清单内（幂等可达），操作审计照常包住：无会话的登出
+  // 也记一条 success。
+  [`POST ${AUTH_MOUNT}/login`]: { category: 'auth', action: '登录面板' },
+  [`POST ${AUTH_MOUNT}/logout`]: { category: 'auth', action: '退出登录' },
 }
 
 /**

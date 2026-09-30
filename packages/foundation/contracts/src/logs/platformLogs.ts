@@ -55,7 +55,7 @@ export type RuntimeLogEntry = {
   message: string
 }
 
-/** 操作日志：操作分类。安全区按面板分区、数据库与网站按「按钮间接操作资源」的语义单列。 */
+/** 操作日志：操作分类。安全区按面板分区、数据库与网站按「按钮间接操作资源」的语义单列；auth 是面板自身的登录鉴权动作。 */
 export type OperationLogCategory =
   | 'security'
   | 'files'
@@ -64,6 +64,7 @@ export type OperationLogCategory =
   | 'logs'
   | 'containers'
   | 'websites'
+  | 'auth'
 
 export const OPERATION_LOG_CATEGORIES = [
   'security',
@@ -73,6 +74,7 @@ export const OPERATION_LOG_CATEGORIES = [
   'logs',
   'containers',
   'websites',
+  'auth',
 ] as const satisfies readonly OperationLogCategory[]
 
 export const OPERATION_LOG_CATEGORY_LABELS: Record<OperationLogCategory, string> = {
@@ -83,6 +85,7 @@ export const OPERATION_LOG_CATEGORY_LABELS: Record<OperationLogCategory, string>
   logs: '日志管理',
   containers: '容器管理',
   websites: '网站管理',
+  auth: '登录鉴权',
 }
 
 export type OperationLogOutcome = 'success' | 'failure'

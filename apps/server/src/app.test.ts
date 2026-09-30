@@ -85,13 +85,13 @@ function createFakeLogs(): {
 
 describe('createApp 组装', () => {
   it('GET /api/health 返回 200 与 ok', async () => {
-    const res = await (await createApp()).request('/api/health')
+    const res = await (await createApp({ auth: { enabled: false } })).request('/api/health')
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ ok: true })
   })
 
   it('平台内存挂在 /api/platform/memory，形状与换算来自契约', async () => {
-    const res = await (await createApp()).request('/api/platform/memory')
+    const res = await (await createApp({ auth: { enabled: false } })).request('/api/platform/memory')
     expect(res.status).toBe(200)
     const body = (await res.json()) as Record<string, number>
     expect(Object.keys(body).sort()).toEqual(['heapTotalMb', 'heapUsedMb', 'rssMb'])
@@ -102,7 +102,7 @@ describe('createApp 组装', () => {
   })
 
   it('SSH 与用户管理两片挂真实接线：非容器环境整片 503（含未知路径），文案与容器边界一致', async () => {
-    const app = await createApp()
+    const app = await createApp({ auth: { enabled: false } })
     const expects: readonly [string, string][] = [
       ['/api/security/ssh/overview', '真实 SSH 管理仅在 Docker 容器内可用'],
       ['/api/security/users', '真实用户管理仅在 Docker 容器内可用'],
@@ -117,7 +117,7 @@ describe('createApp 组装', () => {
   })
 
   it('防火墙片挂真实接线：非容器环境整片 503（含未知路径与写方法），文案与容器边界一致', async () => {
-    const app = await createApp()
+    const app = await createApp({ auth: { enabled: false } })
     const expects: readonly [string, string][] = [
       ['/api/security/firewall', '真实防火墙仅在 Docker 容器内可用'],
       ['/api/security/firewall/toggles', '真实防火墙仅在 Docker 容器内可用'],
@@ -131,14 +131,14 @@ describe('createApp 组装', () => {
   })
 
   it('容器管理片挂真实接线：非容器环境整片 503，文案与容器边界一致', async () => {
-    const app = await createApp()
+    const app = await createApp({ auth: { enabled: false } })
     const res = await app.request('/api/docker/containers')
     expect(res.status).toBe(503)
     expect(await res.json()).toEqual({ error: '真实容器管理仅在 Docker 容器内可用' })
   })
 
   it('文件管理片挂真实接线：非容器环境整片 503（含未知路径），文案与容器边界一致', async () => {
-    const app = await createApp()
+    const app = await createApp({ auth: { enabled: false } })
     const expects: readonly [string, string][] = [
       ['/api/files/entries?path=%2Fvar%2Flog', '真实文件管理仅在 Docker 容器内可用'],
       ['/api/files/search?keyword=log', '真实文件管理仅在 Docker 容器内可用'],
@@ -152,7 +152,7 @@ describe('createApp 组装', () => {
   })
 
   it('终端片挂真实接线：非容器环境整片 503（含 /ws 与 /status），文案与容器边界一致', async () => {
-    const app = await createApp()
+    const app = await createApp({ auth: { enabled: false } })
     const expects: readonly [string, string][] = [
       ['/api/terminals/status', '真实终端仅在 Docker 容器内可用'],
       ['/api/terminals/ws', '真实终端仅在 Docker 容器内可用'],
@@ -167,7 +167,7 @@ describe('createApp 组装', () => {
 
   it('日志片与容器边界无关：非容器环境下读端点照常 200、带 no-store，未知路径 404', async () => {
     const logs = createFakeLogs()
-    const app = await createApp({ logs: logs.service })
+    const app = await createApp({ logs: logs.service, auth: { enabled: false } })
 
     const runtime = await app.request(`${LOGS_MOUNT}/runtime`)
     expect(runtime.status).toBe(200)
@@ -188,7 +188,7 @@ describe('createApp 组装', () => {
   })
 
   it('日志片在容器外也不返回 503（本片没有容器边界）', async () => {
-    const app = await createApp({ logs: createFakeLogs().service })
+    const app = await createApp({ logs: createFakeLogs().service, auth: { enabled: false } })
     const res = await app.request(`${LOGS_MOUNT}/runtime`)
     expect(res.status).not.toBe(503)
   })
@@ -196,6 +196,7 @@ describe('createApp 组装', () => {
   it('终端片拿到同一个日志服务：/ws 的同源校验通过后记录一条 terminals 操作日志与一条运行日志', async () => {
     const logs = createFakeLogs()
     const app = await createApp({
+      auth: { enabled: false },
       logs: logs.service,
       terminals: { available: true, service: { tryOpen: () => null, activeCount: () => 0 } },
     })
@@ -241,6 +242,7 @@ describe('createApp 组装', () => {
       managedCount: () => 0,
     }
     const app = await createApp({
+      auth: { enabled: false },
       logs: logs.service,
       docker: {
         available: true,

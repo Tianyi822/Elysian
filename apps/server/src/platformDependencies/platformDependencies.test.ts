@@ -218,7 +218,7 @@ describe('app 接线与审计零记录', () => {
       docker: { state: 'missing', detail: DOCKER_UNAVAILABLE_DETAIL },
       caddy: { state: 'missing', detail: CADDY_CHANNEL_UNAVAILABLE_DETAIL },
     }))
-    const app = await createApp({ platformDependencies: { probe }, logs })
+    const app = await createApp({ platformDependencies: { probe }, logs, auth: { enabled: false } })
     const res = await app.request('http://localhost:48100/api/platform/dependencies')
     expect(res.status).toBe(200)
     expect(res.headers.get('cache-control')).toBe('no-store')

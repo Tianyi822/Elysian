@@ -25,7 +25,7 @@ export const ELYSIAN_STATE_DIR = join(ELYSIAN_HOME, 'state')
 export const ELYSIAN_BACKUPS_DIR = join(ELYSIAN_HOME, 'backups')
 /** 临时：密钥生成等工作区，即生即灭。 */
 export const ELYSIAN_TMP_DIR = join(ELYSIAN_HOME, 'tmp')
-/** 配置：预留给将来的面板配置文件，本期没有文件形态。 */
+/** 配置：面板自管的配置文件（凭据、数据库与网站登记）。 */
 export const ELYSIAN_CONFIG_DIR = join(ELYSIAN_HOME, 'config')
 /** sshd 主机密钥：持久在卷上，/etc/ssh/ssh_host_* 以符号链接指向这里。 */
 export const ELYSIAN_HOST_KEYS_DIR = join(ELYSIAN_HOME, 'ssh', 'host-keys')
@@ -39,5 +39,9 @@ export const ELYSIAN_PATHS = {
   operationLogsDir: join(ELYSIAN_PLATFORM_LOGS_DIR, 'operation'),
   sshChangedAt: join(ELYSIAN_STATE_DIR, 'ssh-changed-at'),
   sshRootPasswordResetAt: join(ELYSIAN_STATE_DIR, 'ssh-root-password-reset-at'),
+  /** 面板登录凭据（单用户 admin，scrypt 哈希，0600）。 */
+  panelCredentials: join(ELYSIAN_CONFIG_DIR, 'panel-credentials.json'),
+  /** 面板会话文件（服务端权威，0600）：重启不掉线、改密即全失效的载体。 */
+  panelSessions: join(ELYSIAN_STATE_DIR, 'panel-sessions.json'),
   keygenWorkspace: join(ELYSIAN_TMP_DIR, 'ssh-keygen'),
 } as const

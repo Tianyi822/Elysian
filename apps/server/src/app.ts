@@ -31,8 +31,11 @@ import { createWebsiteDocker } from './websites/websitesDocker.ts'
 import { createFileWebsiteRegistry } from './websites/websitesRegistry.ts'
 import { createFileWebsiteCertificateStore } from './websites/websitesCertificates.ts'
 import { createWebsiteService } from './websites/websitesService.ts'
+import { createAuthApp, resolveAuthDeps, type AuthAppDeps } from './auth/authRoutes.ts'
+import { requireSession } from './auth/authMiddleware.ts'
 import { existsSync } from 'node:fs'
 import {
+  AUTH_MOUNT,
   DOCKER_MOUNT,
   DATABASE_MOUNT,
   FILES_MOUNT,
@@ -47,7 +50,9 @@ import {
 
 /*
  * 组装 Elysian server 的 Hono 应用。挂载结构：
- * - /api/health：存活检查，无守卫；
+ * - /api/health：存活检查，无守卫（鉴权豁免清单内，供容器存活检查）；
+ * - /api/auth：登录鉴权片（POST /login、POST /logout、GET /session），三端点在
+ *   鉴权豁免清单内（登录流程自身 + 登出幂等），其余 /api/* 一律要求有效会话；
  * - /api/platform/memory：平台内存采样，无容器边界、无同源守卫（与 vite 端点时代一致）；
  * - /api/platform/dependencies：宿主依赖检测（Docker 与 Caddy 通道的就绪性），每次请求
  *   现场探测、纯读，同样无容器边界——Docker 缺失这个事实要在三域全 503 时仍拿得到；
@@ -64,8 +69,13 @@ import {
  * 中间件按注册顺序包住其后的路由，注册晚了就包不住任何一片。它包住每一个到达服务端的
  * 写请求（含被守卫拒绝的那些），记录内容全部由服务端生成，客户端无法投稿也无法绕开。
  *
+ * 鉴权中间件 requireSession 紧随其后（顺序是关键）：审计在前让被 401 拒绝的写请求也
+ * 落操作日志；鉴权在全部片路由之前让读写全挡。请求经手次序：401 → 503 → 403 → 端点
+ * → 404。
+ *
  * 装配期不写任何日志、不建任何目录：日志目录创建与巡检定时器都发生在第一次 append 之后，
- * 因此任何调用 createApp 的测试都不会碰开发者真实的 ~/.Elysian/logs。
+ * 因此任何调用 createApp 的测试都不会碰开发者真实的 ~/.Elysian/logs；鉴权的两个 store
+ * 同样惰性 IO（首次用到才读文件）。
  */
 export type AppDepsOverrides = {
   firewall?: FirewallAppDeps
@@ -82,6 +92,13 @@ export type AppDepsOverrides = {
   websites?: WebsitesAppDeps
   /** 依赖检测片：缺省走真实接线（每次请求现场探测 Docker 与 Caddy 通道）。 */
   platformDependencies?: PlatformDependenciesAppDeps
+  /**
+   * 登录鉴权（Partial 覆盖，与 logs、docker 等同模式）：缺省按 resolveAuthDeps 装配
+   * （enabled: true、devAccount 读环境开关、真实文件版两个 store、scrypt hasher——
+   * 两个 store 都是惰性 IO，createApp 本身不读不写任何文件）。既有测试注入
+   * `auth: { enabled: false }` 即回到无鉴权演示语义（中间件与登录片短路）。
+   */
+  auth?: Partial<AuthAppDeps>
 }
 
 /**
@@ -107,8 +124,16 @@ export async function createApp(overrides: AppDepsOverrides = {}): Promise<Hono>
     return endpointErrorHandler(error, c)
   })
   app.use('/api/*', createOperationAudit(logs))
+  // 登录鉴权：紧随操作审计之后、全部片路由之前，读写全挡（豁免 health 与 auth 三端点，
+  // 先剥单个尾斜杠再精确匹配）。中间件先于路由 handler 执行，因此 WS 升级与 SSE 在
+  // 升级/开流之前就先过鉴权；401 短路在 upgradeWebSocket 之前以普通 Response 返回。
+  // 请求经手次序：401（鉴权）→ 503（各片可用性）→ 403（同源）→ 端点 → 404——鉴权先于
+  // 可用性是显式决定：不向未登录方暴露各片可用性事实。
+  const auth = resolveAuthDeps(overrides.auth)
+  app.use('/api/*', requireSession(auth))
 
   app.get('/api/health', (c) => c.json({ ok: true }))
+  app.route(AUTH_MOUNT, createAuthApp(auth))
   app.route(PLATFORM_MOUNT, createPlatformMemoryApp())
   app.route(PLATFORM_MOUNT, createPlatformDependenciesApp(
     overrides.platformDependencies ?? createDependencyProbe(),
