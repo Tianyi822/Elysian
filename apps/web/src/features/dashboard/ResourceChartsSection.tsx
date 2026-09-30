@@ -107,7 +107,6 @@ export function ResourceChartsSection({
 
   return (
     <section aria-label="服务器状态" className="@container mb-6">
-      <h2 className="mb-3 text-sm font-semibold text-fg-muted">服务器状态</h2>
       {/* 列数取内容区实测宽度而非视口：侧边栏收展改变可用宽度，卡片随之增减。
           两列要求单卡至少 ~280px，否则趋势图的横轴标签和负载轨道都会挤到不可读；
           宽屏加到三列把单卡宽度压回可读比例，负载条与磁盘环不再被拉成横幅。 */}

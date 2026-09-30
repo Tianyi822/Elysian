@@ -159,7 +159,7 @@ describe('仪表盘资源监控', () => {
     await renderReady()
 
     const section = screen.getByLabelText('服务器状态')
-    expect(within(section).getByRole('heading', { name: '服务器状态' })).toBeInTheDocument()
+    expect(within(section).queryByRole('heading', { name: '服务器状态' })).not.toBeInTheDocument()
 
     for (const key of METRIC_KEYS) {
       const card = within(section).getByRole('article', { name: RESOURCE_METRIC_LABELS[key] })
