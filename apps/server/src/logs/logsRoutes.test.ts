@@ -1,13 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { Hono } from 'hono'
-import { readFileSync, writeFileSync } from 'node:fs'
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { LOG_CLEARABLE_CATEGORIES, type LogStorageStats, type PlatformLogCategory } from '@elysian/contracts'
 import { endpointErrorHandler } from '../middleware/guard.ts'
 import { createLogsHostDeps } from './logsHostDeps.ts'
-import type { SweepResult } from './logRetention.ts'
+import type { SweepResult } from './logsService.ts'
 import { LOGS_MOUNT, createLogsApp, type LogsAppDeps } from './logsRoutes.ts'
 import type { LogsService } from './logsService.ts'
 
@@ -23,7 +19,9 @@ const STORAGE: LogStorageStats = {
   totalBytes: 3072,
   runtimeBytes: 2048,
   operationBytes: 1024,
-  fileCount: 3,
+  runtimeRowCount: 3,
+  operationRowCount: 0,
+  rowCount: 3,
   oldestAt: '2026-09-22T00:00:00Z',
   lastSweepAt: null,
   trimmedBySize: false,
@@ -78,7 +76,7 @@ function createFakeService(): { service: LogsService; cleared: PlatformLogCatego
     }),
     clear: async (category) => {
       cleared.push(category)
-      return { category, fileCount: 2, totalBytes: 1024, oldestAt: '2026-09-22T00:00:00Z', clearedAt: '2026-09-23T00:00:00Z' }
+      return { category, rowCount: 2, totalBytes: 1024, oldestAt: '2026-09-22T00:00:00Z', clearedAt: '2026-09-23T00:00:00Z' }
     },
     loginLog: async () => ({
       entries: [
@@ -214,7 +212,7 @@ describe('createLogsApp', () => {
       expect(res.status).toBe(200)
       const body = (await res.json()) as { cleared: Record<string, unknown> }
       expect(body.cleared['category']).toBe(category)
-      expect(body.cleared['fileCount']).toBe(2)
+      expect(body.cleared['rowCount']).toBe(2)
       expect(body.cleared['totalBytes']).toBe(1024)
     }
     expect(cleared).toEqual([...LOG_CLEARABLE_CATEGORIES])
@@ -305,121 +303,88 @@ describe('createLogsApp', () => {
 })
 
 /*
- * 真实接线的端到端往返：注入临时根（mkdtemp）后走 HTTP，验证「请求 → 服务 → 真文件」
- * 与「真文件 → 服务 → 响应」这一整圈，以及清空后磁盘上确实什么都不剩（只剩一条留痕）。
- * 默认接线读的是开发者真实的 ~/.Elysian，那一路不做自动化断言（见 ARCHITECTURE 第十节）。
+ * 临时接线的端到端往返：createLogsHostDeps 在 Task 6 仍用内存 LogStore（Task 7 换 SQLite）。
+ * 这里验证「请求 → 服务 → 内存库 → 响应」与清空后只剩留痕。
  */
 describe('createLogsApp 接真实接线（临时根）', () => {
-  async function withTempRoot<T>(task: (root: string) => Promise<T>): Promise<T> {
-    const root = await mkdtemp(join(tmpdir(), 'elysian-logs-routes-'))
-    try {
-      return await task(root)
-    } finally {
-      await rm(root, { recursive: true, force: true })
-    }
-  }
-
   it('写入 → 读取：两个类别的报告都取到刚写下的记录（都按时间倒序）', async () => {
-    await withTempRoot(async (root) => {
-      const { service } = createLogsHostDeps({ platformLogsDir: root })
-      const app = mountedApp({ service })
+    const { service } = createLogsHostDeps({ platformLogsDir: '/tmp/unused-platform-logs' })
+    const app = mountedApp({ service })
 
-      await service.log('info', 'server.lifecycle', 'Elysian 服务已启动：http://127.0.0.1:48101')
-      await service.recordOperation({
-        category: 'security',
-        action: '修改 SSH 监听端口',
-        target: 'sshd',
-        result: 'success',
-        summary: '端口 2222',
-        method: 'PUT',
-        path: '/api/security/ssh/port',
-        httpStatus: 200,
-      })
+    await service.log('info', 'server.lifecycle', 'Elysian 服务已启动：http://127.0.0.1:48101')
+    await service.recordOperation({
+      category: 'security',
+      action: '修改 SSH 监听端口',
+      target: 'sshd',
+      result: 'success',
+      summary: '端口 2222',
+      method: 'PUT',
+      path: '/api/security/ssh/port',
+      httpStatus: 200,
+    })
 
-      const runtime = (await (await app.request(requestOf('GET', '/runtime'))).json()) as {
-        entries: { message: string; source: string; level: string }[]
-        storage: LogStorageStats
-      }
-      expect(runtime.entries.some((entry) => entry.message.includes('Elysian 服务已启动'))).toBe(true)
-      expect(runtime.storage.runtimeBytes).toBeGreaterThan(0)
-      // 巡检留痕也真的落在同一个文件里（first-write 上报由写入器携带，见 logsService）。
-      await service.runSweep('runtime', 'manual')
+    const runtime = (await (await app.request(requestOf('GET', '/runtime'))).json()) as {
+      entries: { message: string; source: string; level: string }[]
+      storage: LogStorageStats
+    }
+    expect(runtime.entries.some((entry) => entry.message.includes('Elysian 服务已启动'))).toBe(true)
+    expect(runtime.storage.runtimeBytes).toBeGreaterThan(0)
+    await service.runSweep('runtime', 'manual')
 
-      const operation = (await (await app.request(requestOf('GET', '/operation'))).json()) as {
-        entries: { action: string; target: string | null; summary: string }[]
-      }
-      expect(operation.entries[0]).toMatchObject({
-        action: '修改 SSH 监听端口',
-        target: 'sshd',
-        summary: '端口 2222',
-      })
+    const operation = (await (await app.request(requestOf('GET', '/operation'))).json()) as {
+      entries: { action: string; target: string | null; summary: string }[]
+    }
+    expect(operation.entries[0]).toMatchObject({
+      action: '修改 SSH 监听端口',
+      target: 'sshd',
+      summary: '端口 2222',
     })
   })
 
-  it('清空不可恢复：磁盘上只剩一条「已清空」留痕，重复清空状态等价（第二次删掉的是那条留痕）', async () => {
-    await withTempRoot(async (root) => {
-      const { service } = createLogsHostDeps({ platformLogsDir: root })
-      const app = mountedApp({ service })
+  it('清空不可恢复：只剩一条「已清空」留痕，重复清空状态等价', async () => {
+    const { service } = createLogsHostDeps({ platformLogsDir: '/tmp/unused-platform-logs' })
+    const app = mountedApp({ service })
 
-      await service.log('info', 'server.lifecycle', '第一条')
-      await service.log('info', 'server.lifecycle', '第二条')
-      const before = readFileSync(join(root, 'runtime', await firstShardName(root, 'runtime')), 'utf8')
-      expect(before.trim().split('\n').length).toBeGreaterThanOrEqual(2)
+    await service.log('info', 'server.lifecycle', '第一条')
+    await service.log('info', 'server.lifecycle', '第二条')
+    expect((await service.runtimeLog()).total).toBeGreaterThanOrEqual(2)
 
-      const cleared = await app.request(jsonRequest('POST', '/runtime/clear', {}))
-      expect(cleared.status).toBe(200)
-      const report = ((await cleared.json()) as { cleared: { fileCount: number; totalBytes: number } }).cleared
-      expect(report.fileCount).toBe(1)
-      expect(report.totalBytes).toBeGreaterThan(0)
+    const cleared = await app.request(jsonRequest('POST', '/runtime/clear', {}))
+    expect(cleared.status).toBe(200)
+    const report = ((await cleared.json()) as { cleared: { rowCount: number; totalBytes: number } }).cleared
+    expect(report.rowCount).toBe(2)
+    expect(report.totalBytes).toBeGreaterThan(0)
 
-      // 磁盘上确实不可恢复：类别目录里只剩一个文件、文件里只剩一条留痕。
-      const names = await readdir(join(root, 'runtime'))
-      expect(names).toHaveLength(1)
-      const after = readFileSync(join(root, 'runtime', names[0] as string), 'utf8').trim().split('\n')
-      expect(after).toHaveLength(1)
-      expect(JSON.parse(after[0] as string)).toMatchObject({ level: 'warning', source: 'logs.clear' })
+    const after = await service.runtimeLog()
+    expect(after.entries).toHaveLength(1)
+    expect(after.entries[0]).toMatchObject({ level: 'warning', source: 'logs.clear' })
 
-      // 再清一次：状态等价（第二次删掉的正是第一次留下的那条留痕文件，fileCount 因此是 1）。
-      const second = await app.request(jsonRequest('POST', '/runtime/clear', {}))
-      expect(second.status).toBe(200)
-      expect(((await second.json()) as { cleared: { fileCount: number } }).cleared.fileCount).toBe(1)
-      expect(await readdir(join(root, 'runtime'))).toHaveLength(1)
-    })
+    const second = await app.request(jsonRequest('POST', '/runtime/clear', {}))
+    expect(second.status).toBe(200)
+    expect(((await second.json()) as { cleared: { rowCount: number } }).cleared.rowCount).toBe(1)
+    expect((await service.runtimeLog()).entries).toHaveLength(1)
   })
 
-  it('清空只清本类别，另一个类别与目录外的 sshd.log 都不受影响', async () => {
-    await withTempRoot(async (root) => {
-      const { service } = createLogsHostDeps({ platformLogsDir: root })
-      const app = mountedApp({ service })
+  it('清空只清本类别，另一个类别不受影响', async () => {
+    const { service } = createLogsHostDeps({ platformLogsDir: '/tmp/unused-platform-logs' })
+    const app = mountedApp({ service })
 
-      await service.recordOperation({
-        category: 'files',
-        action: '压缩文件',
-        result: 'success',
-        summary: '/var/log/syslog',
-        method: 'POST',
-        path: '/api/files/compress',
-        httpStatus: 200,
-      })
-      // sshd.log 在真实布局里与 platform/ 平级；这里放进临时根（不是类别目录）代表「日志模块不碰的外部文件」。
-      const sshdLog = join(root, 'sshd.log')
-      writeFileSync(sshdLog, 'sshd 自己的日志\n')
-
-      expect((await app.request(jsonRequest('POST', '/runtime/clear', {}))).status).toBe(200)
-
-      const operation = (await (await app.request(requestOf('GET', '/operation'))).json()) as {
-        entries: { action: string }[]
-      }
-      expect(operation.entries[0]?.action).toBe('压缩文件')
-      expect(readFileSync(sshdLog, 'utf8')).toBe('sshd 自己的日志\n')
+    await service.recordOperation({
+      category: 'files',
+      action: '压缩文件',
+      result: 'success',
+      summary: '/var/log/syslog',
+      method: 'POST',
+      path: '/api/files/compress',
+      httpStatus: 200,
     })
+
+    expect((await app.request(jsonRequest('POST', '/runtime/clear', {}))).status).toBe(200)
+
+    const operation = (await (await app.request(requestOf('GET', '/operation'))).json()) as {
+      entries: { action: string }[]
+    }
+    expect(operation.entries.some((entry) => entry.action === '压缩文件')).toBe(true)
   })
 })
 
-/** 类别目录里第一个分片名（真实接线写入后必然存在）。 */
-async function firstShardName(root: string, category: PlatformLogCategory): Promise<string> {
-  const names = await readdir(join(root, category))
-  const name = names.find((entry) => entry.endsWith('.jsonl'))
-  if (name === undefined) throw new Error(`没有找到 ${category} 的分片：${names.join(',')}`)
-  return name
-}

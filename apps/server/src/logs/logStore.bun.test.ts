@@ -184,7 +184,7 @@ describe('openLogStore', () => {
     expect(() => broken.queryRuntime({})).toThrow('日志数据库不可用')
   })
 
-  it('storage 不计登录字节，fileCount 为运行与操作行数之和', async () => {
+  it('storage 不计登录字节，rowCount 为运行与操作行数之和', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'elysian-logs-'))
     const store = openLogStore(join(dir, 'logs.sqlite'))
     store.insertRuntime({ at: '2026-09-30T00:00:00.000Z', level: 'info', source: 'a', message: '运行' })
@@ -204,7 +204,9 @@ describe('openLogStore', () => {
       lastSweepAt: null,
       trimmedBySize: false,
     })
-    expect(beforeLogin.fileCount).toBe(2)
+    expect(beforeLogin.rowCount).toBe(2)
+    expect(beforeLogin.runtimeRowCount).toBe(1)
+    expect(beforeLogin.operationRowCount).toBe(1)
     expect(beforeLogin.runtimeBytes).toBeGreaterThan(0)
     expect(beforeLogin.operationBytes).toBeGreaterThan(0)
     expect(beforeLogin.totalBytes).toBe(beforeLogin.runtimeBytes + beforeLogin.operationBytes)
@@ -225,7 +227,7 @@ describe('openLogStore', () => {
     expect(afterLogin.totalBytes).toBe(beforeLogin.totalBytes)
     expect(afterLogin.runtimeBytes).toBe(beforeLogin.runtimeBytes)
     expect(afterLogin.operationBytes).toBe(beforeLogin.operationBytes)
-    expect(afterLogin.fileCount).toBe(2)
+    expect(afterLogin.rowCount).toBe(2)
     expect(afterLogin.lastSweepAt).toBe('2026-09-30T12:00:00.000Z')
     expect(afterLogin.trimmedBySize).toBe(true)
     store.close()

@@ -148,9 +148,13 @@ export type LogStorageStats = {
   totalBytes: number
   runtimeBytes: number
   operationBytes: number
-  /** 条目数：分片、压缩片，以及目录里其它被纳入保留口径的条目（外来文件、符号链接、子目录）。 */
-  fileCount: number
-  /** 现存最旧日志的覆盖下界（分片取片名时刻，其它条目取 mtime）；没有日志时为 null。 */
+  /** 运行日志表当前行数。 */
+  runtimeRowCount: number
+  /** 操作日志表当前行数。 */
+  operationRowCount: number
+  /** 运行 + 操作两类行数之和（登录日志不计）。 */
+  rowCount: number
+  /** 现存最旧日志的覆盖下界（两表 MIN(at) 的较小值）；没有日志时为 null。 */
   oldestAt: string | null
   /** 本进程内**该类别**最近一次保留巡检的时间（ISO）；还没跑过为 null。 */
   lastSweepAt: string | null
@@ -158,7 +162,7 @@ export type LogStorageStats = {
   trimmedBySize: boolean
   /** 本进程内因超长被丢弃的记录数（正常为 0）。 */
   droppedRecords: number
-  /** 本进程内写盘失败的记录数（正常为 0；操作日志面板据此提示审计缺口）。 */
+  /** 本进程内写失败的记录数（正常为 0；操作日志面板据此提示审计缺口）。 */
   failedWrites: number
 }
 
@@ -191,9 +195,9 @@ export type OperationLogListReport = {
 /** 清空结果：已删除的事实。 */
 export type LogClearReport = {
   category: PlatformLogCategory
-  fileCount: number
+  rowCount: number
   totalBytes: number
-  /** 被清掉的最旧日志的片名时刻（ISO）；本来就没有日志时为 null。 */
+  /** 被清掉的最旧日志时刻（ISO）；本来就没有日志时为 null。 */
   oldestAt: string | null
   clearedAt: string
 }

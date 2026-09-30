@@ -3,15 +3,12 @@ import {
   LOG_ENTRY_FETCH_LIMIT,
   LOG_RETENTION_POLICIES,
   type LoginLogEntry,
-  type LoginLogListQuery,
   type LogListQuery,
   type LogPage,
   type LogRetentionPolicy,
   type LoginLogStatus,
-  type LogStorageStats,
   type OperationLogCategory,
   type OperationLogEntry,
-  type OperationLogListQuery,
   type OperationLogOutcome,
   type PlatformLogLevel,
   type RuntimeLogEntry,
@@ -35,77 +32,28 @@ import {
   parseRuntimeLogLine,
   utf8ByteLength,
 } from './logRecords.ts'
+import type {
+  LogStore,
+  LogStorePolicies,
+  LogSweepCategory,
+  LogSweepResult,
+} from './logStoreTypes.ts'
 
-export type RuntimeInsert = {
-  at: string
-  level: PlatformLogLevel
-  source: string
-  message: string
-  sourceKey?: string
-}
+export type {
+  LoginInsert,
+  LogClearCategory,
+  LogClearResult,
+  LogStore,
+  LogStorePolicies,
+  LogSweepCategory,
+  LogSweepResult,
+  OperationInsert,
+  RuntimeInsert,
+} from './logStoreTypes.ts'
 
-export type LoginInsert = {
-  at: string
-  ip: string
-  location: string
-  userAgent: string
-  status: LoginLogStatus
-  sourceKey?: string
-}
-
-export type OperationInsert = {
-  at: string
-  category: OperationLogCategory
-  action: string
-  target: string | null
-  summary: string
-  result: OperationLogOutcome
-  method: string | null
-  path: string | null
-  httpStatus: number | null
-  sourceKey?: string
-}
-
-export type LogSweepCategory = 'runtime' | 'operation' | 'login'
-export type LogClearCategory = 'runtime' | 'operation'
-
-export type LogSweepResult = {
-  deletedByAge: number
-  deletedBySize: number
-  freedBytes: number
-  totalBytes: number
-  trimmedBySize: boolean
-  failed: number
-}
-
-export type LogClearResult = {
-  rowCount: number
-  totalBytes: number
-  oldestAt: string | null
-}
-
-export type LogStorePolicies = Partial<Record<LogSweepCategory, LogRetentionPolicy>>
-
-export type LogStore = {
-  insertRuntime(input: RuntimeInsert): void
-  insertLogin(input: LoginInsert): void
-  insertOperation(input: OperationInsert): void
-  importFile(
-    category: LogSweepCategory,
-    lines: readonly string[],
-  ): { inserted: number; skipped: number }
-  queryRuntime(query: LogListQuery): LogPage<RuntimeLogEntry>
-  queryLogin(query: LoginLogListQuery): LogPage<LoginLogEntry>
-  queryOperation(query: OperationLogListQuery): LogPage<OperationLogEntry>
-  clear(category: LogClearCategory): LogClearResult
-  sweep(category: LogSweepCategory, now: Date): LogSweepResult
-  storage(sweep: {
-    category: LogSweepCategory
-    lastSweepAt: string | null
-    trimmedBySize: boolean
-  }): LogStorageStats
-  counters(): { droppedRecords: number; failedWrites: number }
-  close(): void
+/** bun:sqlite 的 Database 在当前 @types 下缺 transaction 声明；返回的是可再调用的包装函数。 */
+type SqliteDatabase = Database & {
+  transaction<T>(fn: () => T): () => T
 }
 
 /** 登录日志默认保留：与 logRetention.LOGIN_LOG_RETENTION_POLICY 同值。 */
@@ -207,7 +155,7 @@ function emptySweep(failed = 0): LogSweepResult {
 }
 
 export function openLogStore(path: string, policies?: LogStorePolicies): LogStore {
-  const db = new Database(path)
+  const db = new Database(path) as SqliteDatabase
   db.exec(SCHEMA)
   const resolved = resolvePolicies(policies)
 
@@ -625,7 +573,9 @@ export function openLogStore(path: string, policies?: LogStorePolicies): LogStor
         totalBytes: runtimeBytes + operationBytes,
         runtimeBytes,
         operationBytes,
-        fileCount: runtimeCount + operationCount,
+        runtimeRowCount: runtimeCount,
+        operationRowCount: operationCount,
+        rowCount: runtimeCount + operationCount,
         oldestAt,
         lastSweepAt: sweep.lastSweepAt,
         trimmedBySize: sweep.trimmedBySize,
@@ -674,7 +624,9 @@ export function createUnavailableLogStore(): LogStore {
         totalBytes: 0,
         runtimeBytes: 0,
         operationBytes: 0,
-        fileCount: 0,
+        runtimeRowCount: 0,
+        operationRowCount: 0,
+        rowCount: 0,
         oldestAt: null,
         lastSweepAt: sweep.lastSweepAt,
         trimmedBySize: sweep.trimmedBySize,

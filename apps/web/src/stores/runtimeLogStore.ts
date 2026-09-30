@@ -103,7 +103,7 @@ export const useRuntimeLogStore = create<RuntimeLogState>((set, get) => ({
       const report = await gateway.logs.clearLogs(category)
       useNotificationStore.getState().notify({
         tone: 'success',
-        message: `${PLATFORM_LOG_CATEGORY_LABELS[report.category]}已清空：删除 ${report.fileCount} 个文件，释放 ${formatLogBytes(report.totalBytes)}${MOCK_SUFFIX}`,
+        message: `${PLATFORM_LOG_CATEGORY_LABELS[report.category]}已清空：删除 ${report.rowCount} 个文件，释放 ${formatLogBytes(report.totalBytes)}${MOCK_SUFFIX}`,
       })
       set({ clearTarget: null, clearing: false })
       // 清空后重新读取：正常会读到一条「已清空」留痕（自指留痕），不是空表。

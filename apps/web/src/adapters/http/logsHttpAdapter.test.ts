@@ -20,7 +20,9 @@ const realStorageRow = {
   totalBytes: 320 * 1024,
   runtimeBytes: 256 * 1024,
   operationBytes: 64 * 1024,
-  fileCount: 3,
+  runtimeRowCount: 3,
+  operationRowCount: 0,
+  rowCount: 3,
   oldestAt: '2026-09-22T17:29:58.611Z',
   lastSweepAt: null,
   trimmedBySize: false,
@@ -102,7 +104,7 @@ describe('parseLogStorage', () => {
     expect(() => parseLogStorage({ ...realStorageRow, totalBytes: -1 })).toThrow(
       '日志大小统计响应无效',
     )
-    expect(() => parseLogStorage({ ...realStorageRow, fileCount: '3' })).toThrow(
+    expect(() => parseLogStorage({ ...realStorageRow, rowCount: '3' })).toThrow(
       '日志大小统计响应无效',
     )
     expect(() => parseLogStorage({ ...realStorageRow, trimmedBySize: 'false' })).toThrow(
@@ -160,7 +162,7 @@ describe('parseLogClearResponse', () => {
   it('接受 `{ cleared }` 包裹的清空报告', () => {
     const report = {
       category: 'runtime',
-      fileCount: 4,
+      rowCount: 4,
       totalBytes: 33_000_000,
       oldestAt: '2026-09-16T11:24:54.000Z',
       clearedAt: '2026-09-23T04:00:00.000Z',
@@ -172,12 +174,12 @@ describe('parseLogClearResponse', () => {
     expect(() => parseLogClearResponse({})).toThrow('日志响应格式无效')
     expect(() =>
       parseLogClearResponse({
-        cleared: { category: 'login', fileCount: 0, totalBytes: 0, oldestAt: null, clearedAt: 'x' },
+        cleared: { category: 'login', rowCount: 0, totalBytes: 0, oldestAt: null, clearedAt: 'x' },
       }),
     ).toThrow('日志清空类别响应无效')
     expect(() =>
       parseLogClearResponse({
-        cleared: { category: 'runtime', fileCount: 0, totalBytes: 0, oldestAt: null },
+        cleared: { category: 'runtime', rowCount: 0, totalBytes: 0, oldestAt: null },
       }),
     ).toThrow('日志清空时间响应无效')
   })

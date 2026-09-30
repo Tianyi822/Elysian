@@ -33,7 +33,7 @@ export function ClearLogsDialog() {
   const label = PLATFORM_LOG_CATEGORY_LABELS[clearTarget]
   // 运行日志面板的存储快照里，运行日志自己的字节数是 runtimeBytes。
   const totalBytes = storage?.runtimeBytes ?? 0
-  const fileCount = storage?.fileCount ?? 0
+  const fileCount = storage?.rowCount ?? 0
   const oldestAt = storage?.oldestAt ?? null
 
   return (

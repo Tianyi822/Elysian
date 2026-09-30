@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { Writable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { createGunzip } from 'node:zlib'
-import type { LogStore, LogSweepCategory } from './logStore.ts'
+import type { LogStore, LogSweepCategory } from './logStoreTypes.ts'
 
 /** 仅接受现行分片命名：类别-UTC 时间戳，可选 _2+ 后缀，可选 .gz。 */
 const SHARD_FILE_PATTERN =

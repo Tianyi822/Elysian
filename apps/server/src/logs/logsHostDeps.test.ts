@@ -203,12 +203,12 @@ describe('真实压缩与读取', () => {
     const linkBytes = (await lstat(join(runtimeDir(), 'link.bin'))).size
     const dirLinkBytes = (await lstat(join(runtimeDir(), 'dir-link'))).size
     // 四个条目：分片、两个链接、子目录；链接计自身大小、子目录计递归和（300），都不是目标的大小。
-    expect(storage.fileCount).toBe(4)
+    expect(storage.rowCount).toBe(4)
     expect(storage.runtimeBytes).toBe(shardBytes + linkBytes + dirLinkBytes + 300)
 
     const report = await service.clear('runtime')
 
-    expect(report.fileCount).toBe(4)
+    expect(report.rowCount).toBe(4)
     // 目录里只剩清空留下的一条留痕；链接目标与目录外的文件都不受影响。
     expect((await namesOf()).length).toBe(1)
     expect(await readFile(outsideFile, 'utf8')).toHaveLength(500)
@@ -240,7 +240,7 @@ describe('真实压缩与读取', () => {
 
     const report = await service.clear('runtime')
 
-    expect(report.fileCount).toBe(1)
+    expect(report.rowCount).toBe(1)
     expect(await namesOf()).toHaveLength(1)
     const after = await service.runtimeLog()
     expect(after.entries).toHaveLength(1)

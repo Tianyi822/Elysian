@@ -8,7 +8,7 @@ import type {
 } from '@elysian/contracts'
 import { PLATFORM_LOG_CATEGORY_LABELS } from '@elysian/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { SweepResult } from '../../../../server/src/logs/logRetention.ts'
+import type { SweepResult } from '../../../../server/src/logs/logsService.ts'
 import { createLogsApp, LOGS_MOUNT } from '../../../../server/src/logs/logsRoutes.ts'
 import type { LogsService } from '../../../../server/src/logs/logsService.ts'
 import { runLogsAdapterContract } from '../logsAdapterContract'
@@ -39,10 +39,6 @@ function bytesOf(entries: readonly object[]): number {
   return entries.reduce((sum, entry) => sum + UTF8.encode(`${JSON.stringify(entry)}\n`).length, 0)
 }
 
-function shardCount(entries: readonly { at: string }[]): number {
-  return new Set(entries.map((entry) => entry.at.slice(0, 10))).size
-}
-
 /** 与 server 侧 collectStorageStats 同口径：总量为两类之和，最旧时间取两类合并后的最小值。 */
 function storageOf(
   runtime: readonly RuntimeLogEntry[],
@@ -55,7 +51,9 @@ function storageOf(
     totalBytes: runtimeBytes + operationBytes,
     runtimeBytes,
     operationBytes,
-    fileCount: shardCount(runtime) + shardCount(operation),
+    runtimeRowCount: runtime.length,
+    operationRowCount: operation.length,
+    rowCount: runtime.length + operation.length,
     oldestAt: oldest ?? null,
     lastSweepAt: null,
     trimmedBySize: false,
@@ -111,7 +109,7 @@ function createFakeLogsService(): LogsService {
       const cleared = category === 'runtime' ? runtime : operation
       const report: LogClearReport = {
         category,
-        fileCount: shardCount(cleared),
+        rowCount: cleared.length,
         totalBytes: bytesOf(cleared),
         oldestAt: [...cleared].map((entry) => entry.at).sort()[0] ?? null,
         clearedAt: new Date().toISOString(),
@@ -125,13 +123,13 @@ function createFakeLogsService(): LogsService {
           category: 'logs',
           action: `清空${PLATFORM_LOG_CATEGORY_LABELS[category]}`,
           result: 'success',
-          summary: `删除 ${report.fileCount} 个文件`,
+          summary: `删除 ${report.rowCount} 个文件`,
           method: 'POST',
           path: `${LOGS_MOUNT}/${category}/clear`,
           httpStatus: 200,
         })
       }
-      writeRuntime('warning', 'logs.clear', `${PLATFORM_LOG_CATEGORY_LABELS[category]}已清空：删除 ${report.fileCount} 个文件`)
+      writeRuntime('warning', 'logs.clear', `${PLATFORM_LOG_CATEGORY_LABELS[category]}已清空：删除 ${report.rowCount} 个文件`)
       return report
     },
     async log(level, source, message) {

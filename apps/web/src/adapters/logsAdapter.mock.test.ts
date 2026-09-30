@@ -81,7 +81,7 @@ describe('日志适配器 mock 数据形状', () => {
 
     expect(report.category).toBe('runtime')
     expect(report.totalBytes).toBe(before.storage.runtimeBytes)
-    expect(report.fileCount).toBeGreaterThan(0)
+    expect(report.rowCount).toBeGreaterThan(0)
     // 条目倒序（最新在最上），最旧的那条因此在末位。
     expect(report.oldestAt).toBe(SEED_RUNTIME_LOGS[SEED_RUNTIME_LOGS.length - 1]!.at)
   })

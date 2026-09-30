@@ -19,7 +19,9 @@ const STORAGE: LogStorageStats = {
   totalBytes: 320 * 1024,
   runtimeBytes: 256 * 1024,
   operationBytes: 64 * 1024,
-  fileCount: 12,
+  runtimeRowCount: 12,
+  operationRowCount: 0,
+  rowCount: 12,
   oldestAt: '2026-09-16T11:24:54.000Z',
   lastSweepAt: null,
   trimmedBySize: false,
@@ -97,7 +99,7 @@ describe('清空日志的二次确认', () => {
     const user = userEvent.setup()
     const clearLogs = vi.fn(async () => ({
       category: 'runtime' as const,
-      fileCount: 12,
+      rowCount: 12,
       totalBytes: STORAGE.runtimeBytes,
       oldestAt: STORAGE.oldestAt,
       clearedAt: '2026-09-23T03:25:10.004Z',

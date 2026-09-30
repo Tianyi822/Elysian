@@ -562,7 +562,7 @@ describe('巡检的幂等与边界', () => {
       { lastSweepAt: null, trimmedBySize: false },
     )
 
-    expect(stats).toMatchObject({ runtimeBytes: 5, totalBytes: 5, fileCount: 1 })
+    expect(stats).toMatchObject({ runtimeBytes: 5, totalBytes: 5, rowCount: 1 })
     expect(stats.oldestAt).toBe(new Date(NOW.getTime() - 24 * 60 * 60 * 1000).toISOString())
   })
 
@@ -591,7 +591,7 @@ describe('巡检的幂等与边界', () => {
       { lastSweepAt: null, trimmedBySize: false },
     )
     // 链接计自身 lstat 大小（不是目标的 4096），目录计递归和 2048。
-    expect(stats.fileCount).toBe(2)
+    expect(stats.rowCount).toBe(2)
     expect(stats.runtimeBytes).toBe(2048 + (await lstat(join(dirOf(), 'notes-link.bin'))).size)
 
     const result = await runRetentionSweep(deps, 'runtime')
@@ -636,7 +636,9 @@ describe('存储统计聚合', () => {
       totalBytes: 10,
       runtimeBytes: 6,
       operationBytes: 4,
-      fileCount: 2,
+      runtimeRowCount: 1,
+      operationRowCount: 1,
+      rowCount: 2,
       oldestAt: '2026-09-10T00:00:00Z',
       lastSweepAt: '2026-09-23T11:00:00.000Z',
       trimmedBySize: true,
@@ -654,7 +656,7 @@ describe('存储统计聚合', () => {
       { lastSweepAt: null, trimmedBySize: false },
     )
 
-    expect(stats).toMatchObject({ totalBytes: 0, runtimeBytes: 0, operationBytes: 0, fileCount: 0, oldestAt: null })
+    expect(stats).toMatchObject({ totalBytes: 0, runtimeBytes: 0, operationBytes: 0, rowCount: 0, oldestAt: null })
   })
 
   it('统计口径排除 .tmp，但保留分片与外来普通文件', async () => {
@@ -669,7 +671,7 @@ describe('存储统计聚合', () => {
       { lastSweepAt: null, trimmedBySize: false },
     )
 
-    expect(stats).toMatchObject({ fileCount: 2, oldestAt: '2026-09-19T00:00:00Z' })
+    expect(stats).toMatchObject({ rowCount: 2, oldestAt: '2026-09-19T00:00:00Z' })
     expect(stats.runtimeBytes).toBe(3) // 'x\n' + 'y'
   })
 })

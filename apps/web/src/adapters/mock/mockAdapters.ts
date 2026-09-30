@@ -418,12 +418,7 @@ function logEntriesBytes(entries: readonly object[]): number {
   return entries.reduce((sum, entry) => sum + encoder.encode(`${JSON.stringify(entry)}\n`).length, 0)
 }
 
-/** 分片数：真实实现按 UTC 自然日滚动分片，这里按条目时间分组得到同样的量级。 */
-function logShardCount(entries: readonly { at: string }[]): number {
-  return new Set(entries.map((entry) => entry.at.slice(0, 10))).size
-}
-
-/** 存储统计：两类条目的字节、分片数与最旧时间为两类合计（口径与真实实现的 collectStorageStats 一致）。 */
+/** 存储统计：两类条目的字节、行数与最旧时间为两类合计。 */
 function logStorage(
   runtime: readonly RuntimeLogEntry[],
   operation: readonly OperationLogEntry[],
@@ -435,7 +430,9 @@ function logStorage(
     totalBytes: runtimeBytes + operationBytes,
     runtimeBytes,
     operationBytes,
-    fileCount: logShardCount(runtime) + logShardCount(operation),
+    runtimeRowCount: runtime.length,
+    operationRowCount: operation.length,
+    rowCount: runtime.length + operation.length,
     oldestAt: oldest ?? null,
     lastSweepAt: null,
     trimmedBySize: false,
@@ -455,7 +452,7 @@ function runtimeClearTrace(category: PlatformLogCategory, report: LogClearReport
     at,
     level: 'warning',
     source: 'logs.clear',
-    message: `${PLATFORM_LOG_CATEGORY_LABELS[category]}已清空：删除 ${report.fileCount} 个文件，释放 ${formatLogBytes(report.totalBytes)}`,
+    message: `${PLATFORM_LOG_CATEGORY_LABELS[category]}已清空：删除 ${report.rowCount} 个文件，释放 ${formatLogBytes(report.totalBytes)}`,
   }
 }
 
@@ -467,7 +464,7 @@ function operationClearTrace(category: PlatformLogCategory, report: LogClearRepo
     category: 'logs',
     action: `清空${PLATFORM_LOG_CATEGORY_LABELS[category]}`,
     target: null,
-    summary: `删除 ${report.fileCount} 个文件，释放 ${formatLogBytes(report.totalBytes)}`,
+    summary: `删除 ${report.rowCount} 个文件，释放 ${formatLogBytes(report.totalBytes)}`,
     result: 'success',
     method: 'POST',
     path: `/api/logs/${category}/clear`,
@@ -523,7 +520,7 @@ export class MockLogsAdapter implements LogsAdapter {
     // 报告回的是**已删除的事实**：条目前的字节、分片数与最旧时间。
     const report: LogClearReport = {
       category,
-      fileCount: logShardCount(cleared),
+      rowCount: cleared.length,
       totalBytes: logEntriesBytes(cleared),
       oldestAt: oldestAtOf(cleared),
       clearedAt,

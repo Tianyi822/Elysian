@@ -75,7 +75,9 @@ export function parseLogStorage(value: unknown): LogStorageStats {
     totalBytes: asNonNegativeNumber(row.totalBytes, '大小统计'),
     runtimeBytes: asNonNegativeNumber(row.runtimeBytes, '大小统计'),
     operationBytes: asNonNegativeNumber(row.operationBytes, '大小统计'),
-    fileCount: asNonNegativeNumber(row.fileCount, '大小统计'),
+    rowCount: asNonNegativeNumber(row.rowCount, '大小统计'),
+    runtimeRowCount: asNonNegativeNumber(row.runtimeRowCount, '大小统计'),
+    operationRowCount: asNonNegativeNumber(row.operationRowCount, '大小统计'),
     oldestAt: asNullableString(row.oldestAt),
     lastSweepAt: asNullableString(row.lastSweepAt),
     trimmedBySize: asBoolean(row.trimmedBySize, '大小统计'),
@@ -205,7 +207,7 @@ export function parseLogClearResponse(body: unknown): LogClearReport {
   }
   return {
     category: category as PlatformLogCategory,
-    fileCount: asNonNegativeNumber(row.fileCount, '清空文件数'),
+    rowCount: asNonNegativeNumber(row.rowCount, '清空文件数'),
     totalBytes: asNonNegativeNumber(row.totalBytes, '清空大小'),
     oldestAt: asNullableString(row.oldestAt),
     clearedAt: asString(row, 'clearedAt', '清空时间'),

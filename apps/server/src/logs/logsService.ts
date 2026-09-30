@@ -1,5 +1,5 @@
 import {
-  LOG_ENTRY_FETCH_LIMIT,
+  LOG_RETENTION_POLICIES,
   PLATFORM_LOG_CATEGORY_LABELS,
   formatLogBytes,
   type LogClearReport,
@@ -17,42 +17,13 @@ import {
   type RuntimeLogListReport,
 } from '@elysian/contracts'
 import { loginLocationOf, normalizePeerAddress } from './loginClient.ts'
-import {
-  normalizeSingleLine,
-  toLoginLogEntry,
-  toOperationLogEntry,
-  toRuntimeLogEntry,
-  LOG_USER_AGENT_MAX_LENGTH,
-  type LoginLogRecord,
-  type OperationLogRecord,
-  type RuntimeLogRecord,
-} from './logRecords.ts'
-import { readLogRecords, type LogReaderDeps } from './logReader.ts'
-import {
-  collectStorageStats,
-  retentionEntries,
-  retentionPolicyOf,
-  runRetentionSweep,
-  type LogRetentionDeps,
-  type SweepResult,
-} from './logRetention.ts'
-import type { LogShardCategory } from './logsPaths.ts'
-import type { LogWriter } from './logWriter.ts'
+import { normalizeSingleLine, LOG_USER_AGENT_MAX_LENGTH } from './logRecords.ts'
+import type { LogStore, LogSweepCategory } from './logStoreTypes.ts'
 
 /*
- * 日志服务的编排层：列表、清空、写运行日志、写操作日志、触发巡检，以及计数器与
- * 巡检状态的唯一持有者。
- *
- * 锁只有两把，落点写死：
- * - **writer 串行队列**（logWriter 内）：所有 append 与 seal 共用它，任何两条记录不交错；
- * - **类别维护锁**（本文件，per-category promise 链）：clear 与 sweep 都先取它，
- *   因此「清空与巡检永不并发」只在一个地方实现与测试。
- * clear 在维护锁内用 writer.sealAndRun 把「封盘 + 删除全部文件」做成一个不被 append
- * 插入的临界区：清空期间排队的 append 在清空之后落地，写进新建的分片（不丢日志，
- * 也不会写进刚被删掉的文件名）。
- *
- * 巡检定时器只在**第一次收到该类别的巡检请求**（也就是第一次写入之后）注册，
- * 因此装配期与「从没写过日志的进程」都不产生定时器，也无需 dispose。
+ * 日志服务的编排层：列表、清空、写运行/登录/操作日志、触发巡检。
+ * 读写全部走 LogStore；类别维护锁保证 clear 与 sweep 不并发。
+ * 巡检定时器只在第一次收到该类别的巡检请求后注册。
  */
 
 /** 巡检定时器间隔：每 5 分钟一次。 */
@@ -61,32 +32,30 @@ export const LOG_SWEEP_INTERVAL_MS = 5 * 60 * 1000
 export type SweepReason = 'first-write' | 'timer' | 'after-roll' | 'after-clear' | 'manual'
 
 export type LogsServiceDeps = {
-  /** 每类别一个写入器（由 logsHostDeps 构造）。login 与运行/操作共用写入器，目录分开。 */
-  writers: Record<LogShardCategory, LogWriter>
-  /** 每类别一个读取器依赖：listFiles / readLines / parseLine 三件套，parseLine 决定记录类型。 */
-  readers: {
-    runtime: LogReaderDeps<RuntimeLogRecord>
-    operation: LogReaderDeps<OperationLogRecord>
-    login: LogReaderDeps<LoginLogRecord>
-  }
-  /** 每类别一份巡检依赖（listFiles / gzipFile / removeFile / ensureDir），writer 由本层注入。 */
-  retention: Record<LogShardCategory, Omit<LogRetentionDeps, 'writer'>>
+  store: LogStore
   now(): Date
-  /** 巡检定时器的注册出口（第一次收到巡检请求时调用一次，实现在 hostDeps 里 setInterval + unref）。 */
+  /** 巡检定时器的注册出口（第一次收到巡检请求时调用一次）。 */
   startTimer(onTick: () => void, intervalMs: number): void
+}
+
+export type SweepResult = {
+  removedTmp: 0
+  compressed: 0
+  deletedByAge: number
+  deletedBySize: number
+  freedBytes: number
+  totalBytes: number
+  trimmedBySize: boolean
+  failed: number
+  at: string
 }
 
 export type LogsService = {
   runtimeLog(query?: LogListQuery): Promise<RuntimeLogListReport>
   operationLog(query?: OperationLogListQuery): Promise<OperationLogListReport>
-  /** 登录日志列表（时间倒序）。 */
   loginLog(query?: LoginLogListQuery): Promise<LoginLogListReport>
   clear(category: PlatformLogCategory): Promise<LogClearReport>
   log(level: PlatformLogLevel, source: string, message: string): Promise<void>
-  /**
-   * 记一次登录尝试。ip 会先归一成合法地址（否则「未知」），归属地由地址推导；
-   * userAgent 单行化，空串收成「未知」。写失败不抛给调用方（写入器自己计数）。
-   */
   recordLogin(input: { ip: string; userAgent: string; status: LoginLogStatus }): Promise<void>
   recordOperation(input: {
     category: OperationLogCategory
@@ -98,33 +67,41 @@ export type LogsService = {
     path?: string | null
     httpStatus?: number | null
   }): Promise<void>
-  /**
-   * 单个类别的巡检入口。内部先取该类别的维护锁，再执行四步巡检；
-   * 并发触发同一类别时合并到同一次（后到的调用等待前一个完成即返回，不排队、不重复扫）。
-   * 返回巡检结果（测试与排障直接看计数）。
-   */
-  runSweep(category: LogShardCategory, reason: SweepReason): Promise<SweepResult>
+  runSweep(category: LogSweepCategory, reason: SweepReason): Promise<SweepResult>
+}
+
+const LOGIN_RETENTION_POLICY = {
+  retentionDays: 30,
+  maxTotalBytes: 16 * 1024 * 1024,
+} as const
+
+function retentionPolicyOf(category: LogSweepCategory) {
+  return category === 'login' ? LOGIN_RETENTION_POLICY : LOG_RETENTION_POLICIES[category]
+}
+
+function categoryLabel(category: LogSweepCategory): string {
+  return category === 'login' ? '登录日志' : PLATFORM_LOG_CATEGORY_LABELS[category]
 }
 
 export function createLogsService(deps: LogsServiceDeps): LogsService {
-  let seq = 0
-  // 巡检状态**按类别**：进程级单值会让一个类别的裁剪显示在另一个类别的报告里，
-  // 也会被无关类别的下一次巡检瞬间冲掉（界面提示因此可能永远看不到）。
-  const sweepState: Record<LogShardCategory, { lastSweepAt: string | null; trimmedBySize: boolean }> = {
+  const sweepState: Record<LogSweepCategory, { lastSweepAt: string | null; trimmedBySize: boolean }> = {
     runtime: { lastSweepAt: null, trimmedBySize: false },
     operation: { lastSweepAt: null, trimmedBySize: false },
     login: { lastSweepAt: null, trimmedBySize: false },
   }
-  const locks: Record<LogShardCategory, Promise<void>> = {
+  const locks: Record<LogSweepCategory, Promise<void>> = {
     runtime: Promise.resolve(),
     operation: Promise.resolve(),
     login: Promise.resolve(),
   }
-  const pending: Partial<Record<LogShardCategory, Promise<SweepResult>>> = {}
-  const timerStarted: Record<LogShardCategory, boolean> = { runtime: false, operation: false, login: false }
+  const pending: Partial<Record<LogSweepCategory, Promise<SweepResult>>> = {}
+  const timerStarted: Record<LogSweepCategory, boolean> = {
+    runtime: false,
+    operation: false,
+    login: false,
+  }
 
-  /** 类别维护锁：per-category promise 链，FIFO，clear 与 sweep 都先取它。 */
-  function withMaintenanceLock<T>(category: LogShardCategory, task: () => Promise<T>): Promise<T> {
+  function withMaintenanceLock<T>(category: LogSweepCategory, task: () => Promise<T>): Promise<T> {
     const previous = locks[category]
     let release: () => void = () => {}
     locks[category] = new Promise<void>((resolve) => {
@@ -133,58 +110,35 @@ export function createLogsService(deps: LogsServiceDeps): LogsService {
     return previous.then(task, task).finally(() => release())
   }
 
-  function nextSeq(): number {
-    seq += 1
-    return seq
-  }
-
-  function counters(): { droppedRecords: number; failedWrites: number } {
-    const runtime = deps.writers.runtime.counters()
-    const operation = deps.writers.operation.counters()
-    const login = deps.writers.login.counters()
-    return {
-      droppedRecords: runtime.droppedRecords + operation.droppedRecords + login.droppedRecords,
-      failedWrites: runtime.failedWrites + operation.failedWrites + login.failedWrites,
-    }
-  }
-
-  function categoryLabel(category: LogShardCategory): string {
-    return category === 'login' ? '登录日志' : PLATFORM_LOG_CATEGORY_LABELS[category]
-  }
-
-  /** 单个类别的存储统计：口径与巡检一致，巡检状态取该类别自己的那一份。 */
-  async function storage(category: LogShardCategory): Promise<LogStorageStats> {
-    return collectStorageStats(
-      { listFiles: (listed) => deps.retention[listed].listFiles(listed) },
-      counters(),
-      sweepState[category],
-    )
+  function storage(category: LogSweepCategory): LogStorageStats {
+    return deps.store.storage({
+      category,
+      lastSweepAt: sweepState[category].lastSweepAt,
+      trimmedBySize: sweepState[category].trimmedBySize,
+    })
   }
 
   async function log(level: PlatformLogLevel, source: string, message: string): Promise<void> {
-    await deps.writers.runtime.append({
+    deps.store.insertRuntime({
       at: deps.now().toISOString(),
-      seq: nextSeq(),
       level,
       source,
       message,
     })
   }
 
-  /** 巡检的收尾留痕：一行摘要（有删除或失败时 warning），超预算未删净时另加一行警告。 */
   async function logSweepResult(
-    category: LogShardCategory,
+    category: LogSweepCategory,
     reason: SweepReason,
     result: SweepResult,
   ): Promise<void> {
-    // 清空自己已经写了一条「已清空」留痕（清空后界面应当**正好一条**），after-clear 不再重复报。
     if (reason === 'after-clear') return
     const deleted = result.deletedByAge + result.deletedBySize
     const level: PlatformLogLevel = deleted > 0 || result.failed > 0 ? 'warning' : 'info'
     await log(
       level,
       'logs.retention',
-      `保留巡检完成：压缩 ${result.compressed}、删除 ${deleted}、释放 ${formatLogBytes(result.freedBytes)}`,
+      `保留巡检完成：删除 ${deleted}、释放 ${formatLogBytes(result.freedBytes)}`,
     )
     if (result.failed > 0) {
       await log('warning', 'logs.retention', `保留巡检有 ${result.failed} 项失败（详见服务端 stderr 与目录权限）`)
@@ -199,18 +153,25 @@ export function createLogsService(deps: LogsServiceDeps): LogsService {
     }
   }
 
-  /** 巡检本体：调用方必须已经持有类别维护锁。 */
-  async function sweepLocked(category: LogShardCategory, reason: SweepReason): Promise<SweepResult> {
-    const result = await runRetentionSweep(
-      { ...deps.retention[category], writer: deps.writers[category] },
-      category,
-    )
+  async function sweepLocked(category: LogSweepCategory, reason: SweepReason): Promise<SweepResult> {
+    const raw = deps.store.sweep(category, deps.now())
+    const result: SweepResult = {
+      removedTmp: 0,
+      compressed: 0,
+      deletedByAge: raw.deletedByAge,
+      deletedBySize: raw.deletedBySize,
+      freedBytes: raw.freedBytes,
+      totalBytes: raw.totalBytes,
+      trimmedBySize: raw.trimmedBySize,
+      failed: raw.failed,
+      at: deps.now().toISOString(),
+    }
     sweepState[category] = { lastSweepAt: result.at, trimmedBySize: result.trimmedBySize }
     await logSweepResult(category, reason, result)
     return result
   }
 
-  function runSweep(category: LogShardCategory, reason: SweepReason): Promise<SweepResult> {
+  function runSweep(category: LogSweepCategory, reason: SweepReason): Promise<SweepResult> {
     const inFlight = pending[category]
     if (inFlight !== undefined) return inFlight
     if (!timerStarted[category]) {
@@ -230,126 +191,95 @@ export function createLogsService(deps: LogsServiceDeps): LogsService {
 
   async function clear(category: PlatformLogCategory): Promise<LogClearReport> {
     return withMaintenanceLock(category, async () => {
-      const writer = deps.writers[category]
-      const retention = deps.retention[category]
-      let fileCount = 0
-      let totalBytes = 0
-      let oldestAt: string | null = null
-      let failed = 0
-
-      // ① 封盘并独占：删除动作与 append 互不插入（清空期间的 append 排队，之后写进新建的分片）。
-      await writer.sealAndRun(async () => {
-        // ② 清该类别目录下**全部条目**：活动片、已压缩片、`.tmp` 残留、以及任何其它形态的
-        //    普通文件、符号链接与子目录，一个不留（「一个不留」必须覆盖非本模块命名与非常规条目，
-        //    否则它们会落在窗口与预算之外永久累积；它们是别人放在面板私有 0700 目录里的东西）。
-        //    符号链接只摘链接自身、子目录递归删除（都不跟随链接，链接目标与目录外的文件不受影响）；
-        //    sshd.log 在另一个目录，天然不碰。
-        const files = await retention.listFiles(category)
-        const counted = new Map(retentionEntries(files, category).map((entry) => [entry.file.path, entry]))
-        for (const file of files) {
-          try {
-            await retention.removeFile(file.path)
-          } catch (error) {
-            failed += 1
-            console.error(
-              `Elysian 清空日志失败（${category}：${file.path}）：${error instanceof Error ? error.message : String(error)}`,
-            )
-            continue
-          }
-          const entry = counted.get(file.path)
-          // `.tmp` 删掉但不进统计口径（与「日志大小」同口径）。
-          if (entry === undefined) continue
-          // 报告回的是**已删除的事实**：条目数与字节按统计口径计入（子目录按递归字节和）。
-          fileCount += 1
-          totalBytes += entry.file.sizeBytes
-          if (oldestAt === null || entry.at < oldestAt) oldestAt = entry.at
-        }
-      })
-
+      const cleared = deps.store.clear(category)
       const clearedAt = deps.now().toISOString()
-      // ③ 自指留痕：清空动作本身写回新文件（运行日志的 warning；操作日志那条由采集中间件写）。
-      await log(
-        'warning',
-        'logs.clear',
-        `${categoryLabel(category)}已清空：删除 ${fileCount} 个文件，释放 ${formatLogBytes(totalBytes)}`,
-      )
-      if (failed > 0) {
-        await log('warning', 'logs.clear', `${categoryLabel(category)}清空有 ${failed} 个文件未能删除`)
-      }
-      // 顺带巡检（清临时残留）：已经在维护锁里，走不加锁的那份。
+      const text = `删除 ${cleared.rowCount} 条记录，释放 ${formatLogBytes(cleared.totalBytes)}`
+      deps.store.insertRuntime({
+        at: clearedAt,
+        level: 'warning',
+        source: 'logs.clear',
+        message: `${PLATFORM_LOG_CATEGORY_LABELS[category]}已清空：${text}`,
+      })
+      deps.store.insertOperation({
+        at: clearedAt,
+        category: 'logs',
+        action: category === 'runtime' ? '清空运行日志' : '清空操作日志',
+        target: null,
+        summary: text,
+        result: 'success',
+        method: null,
+        path: null,
+        httpStatus: null,
+      })
       await sweepLocked(category, 'after-clear')
-
-      return { category, fileCount, totalBytes, oldestAt, clearedAt }
+      return {
+        category,
+        rowCount: cleared.rowCount,
+        totalBytes: cleared.totalBytes,
+        oldestAt: cleared.oldestAt,
+        clearedAt,
+      }
     })
   }
 
   async function recordLogin(input: Parameters<LogsService['recordLogin']>[0]): Promise<void> {
     const ip = normalizePeerAddress(input.ip)
     const userAgent = normalizeSingleLine(input.userAgent, LOG_USER_AGENT_MAX_LENGTH)
-    const record: LoginLogRecord = {
+    deps.store.insertLogin({
       at: deps.now().toISOString(),
-      seq: nextSeq(),
       ip,
       location: loginLocationOf(ip),
       userAgent: userAgent === '' ? '未知' : userAgent,
       status: input.status,
-    }
-    await deps.writers.login.append(record)
+    })
   }
 
   async function recordOperation(input: Parameters<LogsService['recordOperation']>[0]): Promise<void> {
-    const record: OperationLogRecord = {
+    deps.store.insertOperation({
       at: deps.now().toISOString(),
-      seq: nextSeq(),
       category: input.category,
       action: input.action,
       target: input.target ?? null,
+      summary: input.summary ?? '',
       result: input.result,
-      httpStatus: input.httpStatus ?? null,
       method: input.method ?? null,
       path: input.path ?? null,
-      summary: input.summary ?? '',
-    }
-    await deps.writers.operation.append(record)
+      httpStatus: input.httpStatus ?? null,
+    })
   }
 
-  async function runtimeLog(_query?: LogListQuery): Promise<RuntimeLogListReport> {
-    const read = await readLogRecords(deps.readers.runtime, 'runtime', LOG_ENTRY_FETCH_LIMIT)
-    const entries = read.records.map(toRuntimeLogEntry).reverse()
+  async function runtimeLog(query: LogListQuery = {}): Promise<RuntimeLogListReport> {
+    const page = deps.store.queryRuntime(query)
     return {
-      // 运行日志倒序（新 → 旧）：与操作日志同一口径，最新一条在表格最上方。
-      entries,
-      total: entries.length,
-      truncated: read.truncated,
-      skippedLines: read.skippedLines,
-      skippedFiles: read.skippedFiles,
-      storage: await storage('runtime'),
+      entries: page.entries,
+      total: page.total,
+      truncated: page.truncated,
+      skippedLines: 0,
+      skippedFiles: 0,
+      storage: storage('runtime'),
     }
   }
 
-  async function loginLog(_query?: LoginLogListQuery): Promise<LoginLogListReport> {
-    const read = await readLogRecords(deps.readers.login, 'login', LOG_ENTRY_FETCH_LIMIT)
-    const entries = read.records.map(toLoginLogEntry).reverse()
+  async function loginLog(query: LoginLogListQuery = {}): Promise<LoginLogListReport> {
+    const page = deps.store.queryLogin(query)
     return {
-      entries,
-      total: entries.length,
-      truncated: read.truncated,
-      skippedLines: read.skippedLines,
-      skippedFiles: read.skippedFiles,
+      entries: page.entries,
+      total: page.total,
+      truncated: page.truncated,
+      skippedLines: 0,
+      skippedFiles: 0,
     }
   }
 
-  async function operationLog(_query?: OperationLogListQuery): Promise<OperationLogListReport> {
-    const read = await readLogRecords(deps.readers.operation, 'operation', LOG_ENTRY_FETCH_LIMIT)
-    const entries = read.records.map(toOperationLogEntry).reverse()
+  async function operationLog(query: OperationLogListQuery = {}): Promise<OperationLogListReport> {
+    const page = deps.store.queryOperation(query)
     return {
-      // 操作日志倒序（新 → 旧），与登录日志一致。
-      entries,
-      total: entries.length,
-      truncated: read.truncated,
-      skippedLines: read.skippedLines,
-      skippedFiles: read.skippedFiles,
-      storage: await storage('operation'),
+      entries: page.entries,
+      total: page.total,
+      truncated: page.truncated,
+      skippedLines: 0,
+      skippedFiles: 0,
+      storage: storage('operation'),
     }
   }
 
