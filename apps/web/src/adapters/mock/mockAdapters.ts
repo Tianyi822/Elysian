@@ -452,7 +452,7 @@ function runtimeClearTrace(category: PlatformLogCategory, report: LogClearReport
     at,
     level: 'warning',
     source: 'logs.clear',
-    message: `${PLATFORM_LOG_CATEGORY_LABELS[category]}已清空：删除 ${report.rowCount} 个文件，释放 ${formatLogBytes(report.totalBytes)}`,
+    message: `${PLATFORM_LOG_CATEGORY_LABELS[category]}已清空：删除 ${report.rowCount} 条记录，释放 ${formatLogBytes(report.totalBytes)}`,
   }
 }
 
@@ -464,7 +464,7 @@ function operationClearTrace(category: PlatformLogCategory, report: LogClearRepo
     category: 'logs',
     action: `清空${PLATFORM_LOG_CATEGORY_LABELS[category]}`,
     target: null,
-    summary: `删除 ${report.rowCount} 个文件，释放 ${formatLogBytes(report.totalBytes)}`,
+    summary: `删除 ${report.rowCount} 条记录，释放 ${formatLogBytes(report.totalBytes)}`,
     result: 'success',
     method: 'POST',
     path: `/api/logs/${category}/clear`,

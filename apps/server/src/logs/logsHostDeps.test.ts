@@ -12,6 +12,8 @@ import { createLogsHostDeps } from './logsHostDeps'
  * 跑在 mkdtemp 目录上（不碰开发者真实的 ~/.Elysian，不执行任何系统命令）。
  * 这里覆盖的是读行器（readline + createGunzip）、appender（O_NOFOLLOW）、
  * gzipFile（流式压缩 + mtime 搬运）与 listFiles（lstat 过滤）这四个真实实现。
+ *
+ * Task 6 起 hostDeps 暂用内存 LogStore，下列分片目录断言整套跳过；Task 7 替换为 SQLite 装配测试。
  */
 
 let root = ''
@@ -49,7 +51,7 @@ async function gunzipLines(path: string): Promise<string[]> {
   return lines
 }
 
-describe('装配 → 写入 → 读取', () => {
+describe.skip('装配 → 写入 → 读取', () => {
   it('装配期零副作用：不建目录、不起定时器（不写就没有 platform 目录）', async () => {
     createLogsHostDeps({ platformLogsDir: join(root, 'platform') })
     await expect(lstat(join(root, 'platform'))).rejects.toThrow()
@@ -98,7 +100,7 @@ describe('装配 → 写入 → 读取', () => {
   })
 })
 
-describe('真实压缩与读取', () => {
+describe.skip('真实压缩与读取', () => {
   it('巡检把已封盘分片压成 .gz，内容经 createGunzip 读回一致，mtime 未变', async () => {
     let clock = new Date('2026-09-20T10:00:00.000Z')
     const { service } = createLogsHostDeps({ platformLogsDir: root, now: () => clock })
