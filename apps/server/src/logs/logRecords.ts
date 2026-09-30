@@ -13,7 +13,7 @@ import {
 } from '@elysian/contracts'
 
 /*
- * 平台日志的记录形状、净化、序列化与逐行解析（全纯函数，落盘与读回共用同一套判据）。
+ * 平台日志的记录形状、净化与逐行解析（全纯函数；导入分片与读回共用同一套判据）。
  *
  * 净化面是**整行**：运行日志的 source/message 与操作日志的 action/target/summary/method/path
  * 在写入前全部过 normalizeSingleLine，不是只洗 message。理由有两面：
@@ -21,7 +21,6 @@ import {
  * ② 任何一条含 U+2028 的正文都会让读侧把它切成两行、两段都解析失败。
  *
  * null 分支只出现在 parse*LogLine：坏行与形状不合法返回 null，读取侧计入 skippedLines。
- * serialize* 只接受已校验的记录（类型即契约），不返回 null。
  */
 
 /** message 上限（字符）：先截断，再走 64 KiB 硬闸。 */
@@ -105,48 +104,9 @@ export function utf8ByteLength(text: string): number {
   return new TextEncoder().encode(text).length
 }
 
-/** 序列化后的单行是否超过单条记录上限（超限丢弃并计数，不抛错）。 */
+/** 单行是否超过单条记录上限（超限丢弃并计数，不抛错）。 */
 export function isRecordOversize(line: string): boolean {
   return utf8ByteLength(line) > LOG_RECORD_MAX_BYTES
-}
-
-/** 字段顺序固定，便于 grep 与人工阅读：at → seq → level → source → message。 */
-export function serializeRuntimeLogRecord(record: RuntimeLogRecord): string {
-  return JSON.stringify({
-    at: record.at,
-    seq: record.seq,
-    level: record.level,
-    source: normalizeSingleLine(record.source, LOG_SOURCE_MAX_LENGTH),
-    message: normalizeSingleLine(record.message, LOG_MESSAGE_MAX_LENGTH),
-  })
-}
-
-/** 字段顺序固定：at → seq → ip → location → userAgent → status。 */
-export function serializeLoginLogRecord(record: LoginLogRecord): string {
-  return JSON.stringify({
-    at: record.at,
-    seq: record.seq,
-    ip: normalizeSingleLine(record.ip, LOG_IP_MAX_LENGTH),
-    location: normalizeSingleLine(record.location, LOG_LOCATION_MAX_LENGTH),
-    userAgent: normalizeSingleLine(record.userAgent, LOG_USER_AGENT_MAX_LENGTH),
-    status: record.status,
-  })
-}
-
-/** 字段顺序固定：at → seq → category → action → target → result → httpStatus → method → path → summary。 */
-export function serializeOperationLogRecord(record: OperationLogRecord): string {
-  return JSON.stringify({
-    at: record.at,
-    seq: record.seq,
-    category: record.category,
-    action: normalizeSingleLine(record.action, LOG_ACTION_MAX_LENGTH),
-    target: record.target === null ? null : normalizeSingleLine(record.target, LOG_TARGET_MAX_LENGTH),
-    result: record.result,
-    httpStatus: record.httpStatus,
-    method: record.method === null ? null : normalizeSingleLine(record.method, LOG_METHOD_MAX_LENGTH),
-    path: record.path === null ? null : normalizeSingleLine(record.path, LOG_PATH_MAX_LENGTH),
-    summary: normalizeSingleLine(record.summary, LOG_SUMMARY_MAX_LENGTH),
-  })
 }
 
 /** 解析出的 JSON 对象（非对象与坏 JSON 都返回 null）。 */

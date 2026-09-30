@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import { Hono } from 'hono'
 import { LOG_CLEARABLE_CATEGORIES, type LogStorageStats, type PlatformLogCategory } from '@elysian/contracts'
 import { endpointErrorHandler } from '../middleware/guard.ts'
-import { createLogsHostDeps } from './logsHostDeps.ts'
 import type { SweepResult } from './logsService.ts'
 import { LOGS_MOUNT, createLogsApp, type LogsAppDeps } from './logsRoutes.ts'
 import type { LogsService } from './logsService.ts'
@@ -10,9 +9,8 @@ import type { LogsService } from './logsService.ts'
 /*
  * 日志路由的守卫链与端点测试：fake service 注入，app.request 驱动。
  * 覆盖清空路由的等式断言（由契约常量推导，不写死两条）、同源 403、读体守卫
- * 415/413/400、404 文案、读端点的 cache-control: no-store 与响应透传；
- * 末尾一组走**真实接线 + 临时根**的端到端往返（写入 → 读取 → 清空），
- * 断言清空之后磁盘上确实什么都不剩。
+ * 415/413/400、404 文案、读端点的 cache-control: no-store 与响应透传。
+ * 真实 SQLite 接线的端到端往返见 logsRoutes.bun.test.ts（D14：bun:sqlite 不进 vitest）。
  */
 
 const STORAGE: LogStorageStats = {
@@ -299,92 +297,6 @@ describe('createLogsApp', () => {
     const app = mountedApp({ service: createFakeService().service })
     const res = await app.request(requestOf('GET', '/runtime'))
     expect(res.status).not.toBe(503)
-  })
-})
-
-/*
- * 临时接线的端到端往返：createLogsHostDeps 在 Task 6 仍用内存 LogStore（Task 7 换 SQLite）。
- * 这里验证「请求 → 服务 → 内存库 → 响应」与清空后只剩留痕。
- */
-describe('createLogsApp 接真实接线（临时根）', () => {
-  it('写入 → 读取：两个类别的报告都取到刚写下的记录（都按时间倒序）', async () => {
-    const { service } = createLogsHostDeps({ platformLogsDir: '/tmp/unused-platform-logs' })
-    const app = mountedApp({ service })
-
-    await service.log('info', 'server.lifecycle', 'Elysian 服务已启动：http://127.0.0.1:48101')
-    await service.recordOperation({
-      category: 'security',
-      action: '修改 SSH 监听端口',
-      target: 'sshd',
-      result: 'success',
-      summary: '端口 2222',
-      method: 'PUT',
-      path: '/api/security/ssh/port',
-      httpStatus: 200,
-    })
-
-    const runtime = (await (await app.request(requestOf('GET', '/runtime'))).json()) as {
-      entries: { message: string; source: string; level: string }[]
-      storage: LogStorageStats
-    }
-    expect(runtime.entries.some((entry) => entry.message.includes('Elysian 服务已启动'))).toBe(true)
-    expect(runtime.storage.runtimeBytes).toBeGreaterThan(0)
-    await service.runSweep('runtime', 'manual')
-
-    const operation = (await (await app.request(requestOf('GET', '/operation'))).json()) as {
-      entries: { action: string; target: string | null; summary: string }[]
-    }
-    expect(operation.entries[0]).toMatchObject({
-      action: '修改 SSH 监听端口',
-      target: 'sshd',
-      summary: '端口 2222',
-    })
-  })
-
-  it('清空不可恢复：只剩一条「已清空」留痕，重复清空状态等价', async () => {
-    const { service } = createLogsHostDeps({ platformLogsDir: '/tmp/unused-platform-logs' })
-    const app = mountedApp({ service })
-
-    await service.log('info', 'server.lifecycle', '第一条')
-    await service.log('info', 'server.lifecycle', '第二条')
-    expect((await service.runtimeLog()).total).toBeGreaterThanOrEqual(2)
-
-    const cleared = await app.request(jsonRequest('POST', '/runtime/clear', {}))
-    expect(cleared.status).toBe(200)
-    const report = ((await cleared.json()) as { cleared: { rowCount: number; totalBytes: number } }).cleared
-    expect(report.rowCount).toBe(2)
-    expect(report.totalBytes).toBeGreaterThan(0)
-
-    const after = await service.runtimeLog()
-    expect(after.entries).toHaveLength(1)
-    expect(after.entries[0]).toMatchObject({ level: 'warning', source: 'logs.clear' })
-
-    const second = await app.request(jsonRequest('POST', '/runtime/clear', {}))
-    expect(second.status).toBe(200)
-    expect(((await second.json()) as { cleared: { rowCount: number } }).cleared.rowCount).toBe(1)
-    expect((await service.runtimeLog()).entries).toHaveLength(1)
-  })
-
-  it('清空只清本类别，另一个类别不受影响', async () => {
-    const { service } = createLogsHostDeps({ platformLogsDir: '/tmp/unused-platform-logs' })
-    const app = mountedApp({ service })
-
-    await service.recordOperation({
-      category: 'files',
-      action: '压缩文件',
-      result: 'success',
-      summary: '/var/log/syslog',
-      method: 'POST',
-      path: '/api/files/compress',
-      httpStatus: 200,
-    })
-
-    expect((await app.request(jsonRequest('POST', '/runtime/clear', {}))).status).toBe(200)
-
-    const operation = (await (await app.request(requestOf('GET', '/operation'))).json()) as {
-      entries: { action: string }[]
-    }
-    expect(operation.entries.some((entry) => entry.action === '压缩文件')).toBe(true)
   })
 })
 

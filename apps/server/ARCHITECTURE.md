@@ -98,15 +98,15 @@ apps/server/
     │   ├── dockerExecSessions.ts                # 会话表与并发上限
     │   ├── dockerTerminalGuard.ts               # 容器终端升级前五项检查(同源/整片 503 由路由前置)
     │   └── selfContainer.ts / .test.ts          # 识别面板自身容器,拒绝自伤动作
-    └── logs/                                    # 平台日志片(新实现;方案见 docs/specs/2026-09-23-logs-real-spec.md)
-        ├── logsPaths.ts / .test.ts              # 类别目录与分片文件名构造/解析(纯,`_2` 后缀不破坏字典序)
-        ├── logRecords.ts / .test.ts             # 记录形状、单行化与截断、序列化、逐行解析(全纯)
-        ├── logWriter.ts / .test.ts              # 活动片管理、串行队列、判分片与封盘、崩溃恢复(adoptOrCreate)
-        ├── logReader.ts / .test.ts              # 分片拼回一条升序流:内存有界、坏行/坏文件跳过、按 id 去重
-        ├── logRetention.ts / .test.ts           # 巡检四步(清 tmp → 压缩 → 按时间删 → 按预算删)与存储统计聚合
-        ├── logsService.ts / .test.ts            # 编排:列表、清空、写运行日志与操作日志、巡检(类别维护锁在此层)
-        ├── logsHostDeps.ts / .test.ts           # 真实接线:fs 原语、node:zlib 流式 gzip、时钟、读行器
-        ├── logsRoutes.ts / .test.ts             # /api/logs 路由:两个读端点(no-store)+ 契约常量推导的清空端点
+    └── logs/                                    # 平台日志片(SQLite;导入既有 jsonl 分片后只写库)
+        ├── logRecords.ts / .test.ts             # 记录形状、单行化与截断、逐行解析(全纯)
+        ├── logStore.ts / .bun.test.ts           # bun:sqlite 存储、查询、清空、巡检与不可用回落
+        ├── logStoreTypes.ts                     # LogStore 接口与插入/巡检结果类型
+        ├── logImport.ts / .bun.test.ts          # 启动时导入 platform 分片并删除已导入文件
+        ├── logsService.ts / .test.ts            # 编排:列表、清空、写运行/操作/登录日志、巡检定时器
+        ├── logsHostDeps.ts / .bun.test.ts       # 打开库、导入分片、装配 LogsService（动态加载 bun:sqlite）
+        ├── unavailableLogStore.ts               # 不可用回落 store（无 bun:sqlite，供 createApp 默认装配）
+        ├── logsRoutes.ts / .test.ts / .bun.test.ts  # /api/logs 路由；真实接线端到端在 bun test
         ├── operationDescriptors.ts / .test.ts   # 端点描述符表 + 路径参数还原(纯)+ 漂移守卫
         └── operationAudit.ts / .test.ts         # app 层采集中间件:命中描述符才记录、状态映射、白名单摘要
 ```
@@ -172,7 +172,7 @@ apps/server/
 // 形状示意(实现以此为准)
 export async function createApp(overrides: AppDepsOverrides = {}): Promise<Hono> {
   const app = new Hono({ strict: false })  // D1:users 根路径的带/无尾斜杠双形式都必须命中
-  const logs = overrides.logs ?? createLogsHostDeps().service   // 构造期零副作用(不建目录、不写、不起定时器)
+  const logs = overrides.logs ?? createLogsService({ store: createUnavailableLogStore(), now: () => new Date(), startTimer })  // 未注入不碰 ~/.Elysian
   app.onError((error, c) => { ... logs.log('error', 'server.http', `请求处理失败:...`) ; return endpointErrorHandler(error, c) })  // D18:兜底
   app.use('/api/*', createOperationAudit(logs))               // D17:必须在所有 app.route 之前
   app.route('/api/platform', createPlatformMemoryApp())       // D12:无容器边界
@@ -188,7 +188,7 @@ export async function createApp(overrides: AppDepsOverrides = {}): Promise<Hono>
 }
 ```
 
-`createApp` 是 async 工厂:防火墙与终端的接线依赖运行时探测(bun:sqlite 账本、Bun.spawn),只在容器分支动态加载(D14),`index.ts` 以 `await createApp()` 装配——它先构造日志接线(`createLogsHostDeps()`,此步不碰文件系统),把同一个 `service` 同时交给采集中间件、终端片与日志片,`serve(...)` 之后才写启动行(D18)。覆盖参数 `AppDepsOverrides` 全部可选:不传时行为与从前逐字一致;需要注入 fake 的测试(app 组装、漂移守卫)靠它,四个片的漂移守卫测试即用 `available: true` + 最小 service 形状拿到完整路由表。MOUNT 常量统一定义在 `shared/apiMounts.ts`、app.ts 直接引用(各路由文件 re-export 保持兼容),与 D3 的剥前缀同源(平台内存无导出常量,按字面量 `/api/platform` 挂载)。子应用工厂签名:`createFirewallApp(deps: { available: boolean, service?: FirewallService })` 等——`available: false` 时返回全方法 503 分支(含未知路径);`service` 可注入 fake(路由测试用),缺省由 app.ts 从 hostDeps 装配提供(日志片没有 `available`,见 D16)。每片子应用内部结构同构:`use('*', 同源中间件)` → 具名路由(handler 内 `readJsonBody`)→ `all('*', 剥前缀 404 兜底)`;终端片的 `/ws` 路由以升级前置同源短路替代同源中间件覆盖(D13),无读体;日志片的读端点显式带 `cache-control: no-store`,清空端点由 `LOG_CLEARABLE_CATEGORIES` 推导(D16)。
+`createApp` 是 async 工厂:防火墙与终端的接线依赖运行时探测(bun:sqlite 账本、Bun.spawn),只在容器分支动态加载(D14),`index.ts` 以 `const logs = await createLogsHostDeps()` 打开库并导入分片后再 `createApp({ logs: logs.service, ... })`——`createApp` 未注入 logs 时只用不可用 store,不碰 `~/.Elysian`。覆盖参数 `AppDepsOverrides` 全部可选;需要注入 fake 的测试(app 组装、漂移守卫)靠它,四个片的漂移守卫测试即用 `available: true` + 最小 service 形状拿到完整路由表。MOUNT 常量统一定义在 `shared/apiMounts.ts`、app.ts 直接引用(各路由文件 re-export 保持兼容),与 D3 的剥前缀同源(平台内存无导出常量,按字面量 `/api/platform` 挂载)。子应用工厂签名:`createFirewallApp(deps: { available: boolean, service?: FirewallService })` 等——`available: false` 时返回全方法 503 分支(含未知路径);`service` 可注入 fake(路由测试用),缺省由 app.ts 从 hostDeps 装配提供(日志片没有 `available`,见 D16)。每片子应用内部结构同构:`use('*', 同源中间件)` → 具名路由(handler 内 `readJsonBody`)→ `all('*', 剥前缀 404 兜底)`;终端片的 `/ws` 路由以升级前置同源短路替代同源中间件覆盖(D13),无读体;日志片的读端点显式带 `cache-control: no-store`,清空端点由 `LOG_CLEARABLE_CATEGORIES` 推导(D16)。
 
 ## 七、迁移映射总表
 

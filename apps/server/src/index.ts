@@ -12,15 +12,14 @@ import { bunWebSocket } from './terminals/bunWebSocket.ts'
  * server.proxy 把 /api/security 与 /api/platform 转发到这里，浏览器始终
  * 走同源 vite 访问；本端口不发布宿主端口、不监听 0.0.0.0，局域网不可达。
  *
- * 日志接线在这里构造并交给 createApp：装配本身不碰文件系统，目录创建、巡检定
- * 时器都发生在第一次写入之后。启动行**写在 index.ts 而不是 createApp 里**，
- * 正是为了让测试调用 createApp() 时不产生任何文件系统副作用（启动行是唯一必须
- * 由装配层写的一条记录，其余由采集中间件与各调用点自己写）。
+ * 日志接线在这里打开 SQLite 并导入既有分片，再交给 createApp。createApp 未注入
+ * logs 时只用不可用 store，不碰 ~/.Elysian。启动行**写在 index.ts 而不是 createApp
+ * 里**，让测试调用 createApp() 时不产生文件系统副作用。
  *
  * 首启凭据保障同样在这里：dev 开关开时只打警告行；否则凭据文件缺失时生成随机
  * 初始密码（横幅只打 stdout、不落日志文件），运行日志只记一条不含明文的事实。
  */
-const logs = createLogsHostDeps()
+const logs = await createLogsHostDeps()
 const credentials = createFileCredentialsStore()
 const boot = await ensureFirstBootCredentials(credentials, { dev: isDevAccountEnabled() })
 if (boot === 'created') {

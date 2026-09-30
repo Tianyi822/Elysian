@@ -1,18 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
-  LOG_ACTION_MAX_LENGTH,
   LOG_MESSAGE_MAX_LENGTH,
   LOG_RECORD_MAX_BYTES,
   LOG_SOURCE_MAX_LENGTH,
-  LOG_SUMMARY_MAX_LENGTH,
   LOG_TRUNCATION_MARKER,
   isRecordOversize,
   logRecordId,
   normalizeSingleLine,
   parseOperationLogLine,
   parseRuntimeLogLine,
-  serializeOperationLogRecord,
-  serializeRuntimeLogRecord,
   toOperationLogEntry,
   toRuntimeLogEntry,
   utf8ByteLength,
@@ -21,9 +17,8 @@ import {
 } from './logRecords'
 
 /*
- * 记录层的纯行为测试：序列化字段顺序、单行化（U+2028 / U+2029 / U+0085 三条独立用例）、
- * 净化面覆盖到 action/target/summary/method/path、message 截断、64 KiB 硬闸、
- * 坏行与形状不合法、id 生成与条目转换。全部纯函数，不碰文件系统、不读时钟。
+ * 记录层的纯行为测试：单行化（U+2028 / U+2029 / U+0085 三条独立用例）、
+ * 64 KiB 硬闸、坏行与形状不合法、id 生成与条目转换。全部纯函数，不碰文件系统、不读时钟。
  */
 
 const RUNTIME: RuntimeLogRecord = {
@@ -87,90 +82,6 @@ describe('normalizeSingleLine', () => {
   })
 })
 
-describe('serializeRuntimeLogRecord', () => {
-  it('字段顺序固定为 at → seq → level → source → message', () => {
-    expect(serializeRuntimeLogRecord(RUNTIME)).toBe(
-      '{"at":"2026-09-23T03:24:54.123Z","seq":10241,"level":"info","source":"server.lifecycle","message":"Elysian 服务已启动：http://127.0.0.1:48101"}',
-    )
-  })
-
-  it('source 与 message 都过净化（不是只洗 message）', () => {
-    const line = serializeRuntimeLogRecord({
-      ...RUNTIME,
-      source: 'server\u2028lifecycle',
-      message: '第一行\n第二行',
-    })
-    expect(line).not.toContain('\u2028')
-    expect(line).not.toContain('\n')
-    expect(parseRuntimeLogLine(line)).toMatchObject({
-      source: 'server lifecycle',
-      message: '第一行 第二行',
-    })
-  })
-
-  it('message 超长在序列化时截断', () => {
-    const line = serializeRuntimeLogRecord({ ...RUNTIME, message: 'x'.repeat(LOG_MESSAGE_MAX_LENGTH + 1) })
-    const parsed = parseRuntimeLogLine(line)
-    expect(parsed?.message.length).toBe(LOG_MESSAGE_MAX_LENGTH)
-    expect(parsed?.message.endsWith(LOG_TRUNCATION_MARKER)).toBe(true)
-  })
-})
-
-describe('serializeOperationLogRecord', () => {
-  it('字段顺序固定，null 字段保持 null', () => {
-    expect(serializeOperationLogRecord(OPERATION)).toBe(
-      '{"at":"2026-09-23T03:25:10.004Z","seq":7,"category":"security","action":"修改 SSH 监听端口","target":"sshd","result":"success","httpStatus":200,"method":"PUT","path":"/api/security/ssh/port","summary":"端口 2222"}',
-    )
-    const bare = serializeOperationLogRecord({
-      ...OPERATION,
-      target: null,
-      httpStatus: null,
-      method: null,
-      path: null,
-      summary: '',
-    })
-    expect(bare).toContain('"target":null')
-    expect(bare).toContain('"httpStatus":null')
-    expect(bare).toContain('"method":null')
-    expect(bare).toContain('"path":null')
-    expect(bare).toContain('"summary":""')
-  })
-
-  it('action / target / summary / method / path 全部过净化，落盘行里不再有行分隔符', () => {
-    const line = serializeOperationLogRecord({
-      ...OPERATION,
-      action: '修改\u2028端口',
-      target: '账号 wangwu\u2029',
-      summary: '端口\n2222',
-      method: 'P\u0000UT',
-      path: '/api/security/users/a\u2028b',
-    })
-    expect(line).not.toContain('\u2028')
-    expect(line).not.toContain('\u2029')
-    expect(line).not.toContain('\u0000')
-    expect(parseOperationLogLine(line)).toMatchObject({
-      action: '修改 端口',
-      target: '账号 wangwu',
-      summary: '端口 2222',
-      method: 'P UT',
-      path: '/api/security/users/a b',
-    })
-  })
-
-  it('action / target / summary 各自按上限截断', () => {
-    const line = serializeOperationLogRecord({
-      ...OPERATION,
-      action: 'a'.repeat(LOG_ACTION_MAX_LENGTH + 1),
-      target: 'b'.repeat(200),
-      summary: 'c'.repeat(LOG_SUMMARY_MAX_LENGTH + 1),
-    })
-    const parsed = parseOperationLogLine(line)
-    expect(parsed?.action.length).toBe(LOG_ACTION_MAX_LENGTH)
-    expect(parsed?.summary.length).toBe(LOG_SUMMARY_MAX_LENGTH)
-    expect(parsed?.target).toBe('b'.repeat(64 - LOG_TRUNCATION_MARKER.length) + LOG_TRUNCATION_MARKER)
-  })
-})
-
 describe('单条记录硬闸', () => {
   it('上限内（含上限本身）放行，超一个字节即丢弃', () => {
     expect(LOG_RECORD_MAX_BYTES).toBe(64 * 1024)
@@ -181,7 +92,10 @@ describe('单条记录硬闸', () => {
   })
 
   it('正常记录（含最长 message）远在硬闸之内', () => {
-    const line = serializeRuntimeLogRecord({ ...RUNTIME, message: '中'.repeat(LOG_MESSAGE_MAX_LENGTH) })
+    const line = JSON.stringify({
+      ...RUNTIME,
+      message: '中'.repeat(LOG_MESSAGE_MAX_LENGTH),
+    })
     expect(utf8ByteLength(line)).toBeLessThan(LOG_RECORD_MAX_BYTES)
     expect(isRecordOversize(line)).toBe(false)
   })
@@ -207,13 +121,13 @@ describe('parseRuntimeLogLine', () => {
   })
 
   it('合法行往返一致，多余字段不进记录（形状收敛到已知字段）', () => {
-    const line = serializeRuntimeLogRecord(RUNTIME)
+    const line = JSON.stringify(RUNTIME)
     expect(parseRuntimeLogLine(line)).toEqual(RUNTIME)
     expect(parseRuntimeLogLine(`${line.slice(0, -1)},"extra":1}`)).toEqual(RUNTIME)
   })
 
   it('半行（崩溃残行）解析失败但不影响其它行', () => {
-    const line = serializeRuntimeLogRecord(RUNTIME)
+    const line = JSON.stringify(RUNTIME)
     const truncated = line.slice(0, line.length - 20)
     expect(parseRuntimeLogLine(truncated)).toBeNull()
     expect(parseRuntimeLogLine(line)).toEqual(RUNTIME)
@@ -222,7 +136,7 @@ describe('parseRuntimeLogLine', () => {
 
 describe('parseOperationLogLine', () => {
   it('合法行往返一致，多余字段不进记录', () => {
-    const line = serializeOperationLogRecord(OPERATION)
+    const line = JSON.stringify(OPERATION)
     expect(parseOperationLogLine(line)).toEqual(OPERATION)
     expect(parseOperationLogLine(`${line.slice(0, -1)},"actor":"panel"}`)).toEqual(OPERATION)
   })
@@ -258,7 +172,7 @@ describe('parseOperationLogLine', () => {
       method: null,
       path: null,
     }
-    expect(parseOperationLogLine(serializeOperationLogRecord(record))).toEqual(record)
+    expect(parseOperationLogLine(JSON.stringify(record))).toEqual(record)
   })
 })
 

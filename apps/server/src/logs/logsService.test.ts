@@ -5,6 +5,7 @@ import {
   type LoginLogListQuery,
   type LogClearReport,
   type LogListQuery,
+  type LogStorageStats,
   type OperationLogEntry,
   type OperationLogListQuery,
   type RuntimeLogEntry,

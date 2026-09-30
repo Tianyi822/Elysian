@@ -56,7 +56,7 @@ type SqliteDatabase = Database & {
   transaction<T>(fn: () => T): () => T
 }
 
-/** 登录日志默认保留：与 logRetention.LOGIN_LOG_RETENTION_POLICY 同值。 */
+/** 登录日志默认保留：与旧文本分片 LOGIN_LOG_RETENTION_POLICY 同值。 */
 const DEFAULT_LOGIN_POLICY: LogRetentionPolicy = {
   retentionDays: 30,
   maxTotalBytes: 16 * 1024 * 1024,
@@ -69,8 +69,6 @@ const TABLE_OF: Record<LogSweepCategory, string> = {
 }
 
 const DAY_MS = 86_400_000
-
-const UNAVAILABLE_MESSAGE = '日志数据库不可用'
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS runtime_logs (
@@ -595,51 +593,7 @@ export function openLogStore(path: string, policies?: LogStorePolicies): LogStor
   return store
 }
 
-export function createUnavailableLogStore(): LogStore {
-  let failedWrites = 0
-
-  function unavailable(): never {
-    throw new Error(UNAVAILABLE_MESSAGE)
-  }
-
-  return {
-    insertRuntime() {
-      failedWrites += 1
-    },
-    insertLogin() {
-      failedWrites += 1
-    },
-    insertOperation() {
-      failedWrites += 1
-    },
-    importFile: unavailable,    queryRuntime: unavailable,
-    queryLogin: unavailable,
-    queryOperation: unavailable,
-    clear: unavailable,
-    sweep() {
-      return emptySweep(1)
-    },
-    storage(sweep) {
-      return {
-        totalBytes: 0,
-        runtimeBytes: 0,
-        operationBytes: 0,
-        runtimeRowCount: 0,
-        operationRowCount: 0,
-        rowCount: 0,
-        oldestAt: null,
-        lastSweepAt: sweep.lastSweepAt,
-        trimmedBySize: sweep.trimmedBySize,
-        droppedRecords: 0,
-        failedWrites,
-      }
-    },
-    counters() {
-      return { droppedRecords: 0, failedWrites }
-    },
-    close() {},
-  }
-}
+export { createUnavailableLogStore } from './unavailableLogStore.ts'
 
 type Row = Record<string, unknown>
 

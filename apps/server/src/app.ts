@@ -4,10 +4,10 @@ import { createFilesHostDeps } from './files/filesHostDeps.ts'
 import { createFirewallApp, type FirewallAppDeps } from './firewall/firewallRoutes.ts'
 import { resolveFirewallDeps } from './firewall/firewallHostDeps.ts'
 import { ensurePortRule } from './firewall/firewallService.ts'
-import { createLogsHostDeps } from './logs/logsHostDeps.ts'
+import { createUnavailableLogStore } from './logs/unavailableLogStore.ts'
 import { createOperationAudit } from './logs/operationAudit.ts'
 import { createLogsApp } from './logs/logsRoutes.ts'
-import type { LogsService } from './logs/logsService.ts'
+import { createLogsService, type LogsService } from './logs/logsService.ts'
 import { endpointErrorHandler } from './middleware/guard.ts'
 import { createDependencyProbe } from './platformDependencies/dependencyProbe.ts'
 import { createPlatformDependenciesApp, type PlatformDependenciesAppDeps } from './platformDependencies/platformDependenciesRoutes.ts'
@@ -112,7 +112,18 @@ export async function createApp(overrides: AppDepsOverrides = {}): Promise<Hono>
   // 都必须命中列表端点，默认 strict 下带尾斜杠形会 404。副作用是其余端点的带尾斜杠形
   // 从 404 放宽为同路由匹配（已知行为放宽，浏览器 adapter 不产生这些请求形）。
   const app = new Hono({ strict: false })
-  const logs = overrides.logs ?? createLogsHostDeps().service
+  // 未注入 logs 时用不可用 store：createApp 测例不碰 ~/.Elysian/data/logs.sqlite。
+  // 真实打开与导入只在 index.ts 经 createLogsHostDeps 完成。
+  const logs =
+    overrides.logs ??
+    createLogsService({
+      store: createUnavailableLogStore(),
+      now: () => new Date(),
+      startTimer: (onTick, intervalMs) => {
+        const timer = setInterval(onTick, intervalMs)
+        timer.unref()
+      },
+    })
 
   // onError 是**兜底**而不是 5xx 的主来源：各子应用都注册了自己的 onError，子应用的 500
   // 由子应用自己映射，父 onError 根本不会被调用；常规 5xx 的运行日志由采集中间件按
