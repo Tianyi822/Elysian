@@ -317,12 +317,12 @@ describe('模板外壳', () => {
   })
 })
 
-describe('顶栏登出', () => {
+describe('侧边栏登出', () => {
   beforeEach(() => {
     useSessionStore.setState({ phase: 'authed', mode: 'real', devAccount: false })
   })
 
-  it('真实会话模式渲染登出按钮，点击后经登出回到登录页', async () => {
+  it('真实会话模式在运维人员行渲染登出按钮，顶栏不再有，点击后回到登录页', async () => {
     const user = userEvent.setup()
     const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
     // 底座装配会同步落位演示放行；注入的 fake session 是事实源，重置后交 probe。
@@ -348,6 +348,8 @@ describe('顶栏登出', () => {
     })
 
     const logout = await screen.findByRole('button', { name: '退出登录' })
+    expect(screen.getByLabelText('快捷操作')).toContainElement(logout)
+    expect(screen.getByRole('banner')).not.toContainElement(logout)
     await user.click(logout)
 
     await waitFor(() => expect(router.state.location.pathname).toBe('/login'))
@@ -357,6 +359,7 @@ describe('顶栏登出', () => {
   it('演示模式（本地无后端）不渲染登出按钮', async () => {
     renderApp('/')
     await screen.findByRole('banner')
+    expect(screen.getByText('运维人员')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '退出登录' })).not.toBeInTheDocument()
   })
 })

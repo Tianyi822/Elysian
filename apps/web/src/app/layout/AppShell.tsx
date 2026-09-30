@@ -1,13 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { LogOut, Menu, PanelLeftClose, PanelLeftOpen } from '../../components/icons'
+import { Menu, PanelLeftClose, PanelLeftOpen } from '../../components/icons'
 import { Outlet, useLocation, useMatches } from 'react-router'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { MemoryMonitorBadge } from '../../components/MemoryMonitorBadge'
 import { IconButton } from '../../components/IconButton'
 import { NotificationHost } from '../../components/NotificationHost'
 import { useEventStreamStore } from '../../stores/eventStreamStore'
-import { useSessionStore } from '../../stores/sessionStore'
 import { NAV_ITEMS } from '../navigation'
 import type { RouteHandle } from '../router'
 import {
@@ -26,10 +25,6 @@ export function AppShell() {
   const location = useLocation()
   const matches = useMatches()
   const connectEventStream = useEventStreamStore((state) => state.connect)
-  // 顶栏登出只在真实会话模式渲染：演示模式没有可登出的会话，不摆假动作。
-  const sessionMode = useSessionStore((state) => state.mode)
-  const logout = useSessionStore((state) => state.logout)
-  const [loggingOut, setLoggingOut] = useState(false)
 
   // 顶栏标题跟随当前导航项；未匹配路由沿用仪表盘缺省，由未找到页面给出自己的标题。
   // 页签式标题的页面（安全、Docker、数据库）经路由 handle 声明藏掉可视标题，页签占据标题位。
@@ -132,19 +127,6 @@ export function AppShell() {
                   className="ml-auto flex shrink-0 flex-nowrap items-center justify-end gap-2"
                 >
                   <MemoryMonitorBadge />
-                  {sessionMode === 'real' ? (
-                    <IconButton
-                      label="退出登录"
-                      disabled={loggingOut}
-                      onPress={() => {
-                        setLoggingOut(true)
-                        // 登出置 anonymous 后 RequireSession 自动 Navigate 到 /login。
-                        void logout(gateway)
-                      }}
-                    >
-                      <LogOut aria-hidden size={16} />
-                    </IconButton>
-                  ) : null}
                 </div>
               </div>
             </header>

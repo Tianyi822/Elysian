@@ -1,7 +1,10 @@
-import { Monitor, Moon, Sun } from '../../components/icons'
-import type { IconComponent } from '../../components/icons'
+import { useState } from 'react'
 import type { ReactNode } from 'react'
+import { LogOut, Monitor, Moon, Sun } from '../../components/icons'
+import type { IconComponent } from '../../components/icons'
+import { useGateway } from '../../adapters/GatewayProvider'
 import { IconButton } from '../../components/IconButton'
+import { useSessionStore } from '../../stores/sessionStore'
 import { useTheme } from '../theme/ThemeProvider'
 
 function ActionItem({
@@ -45,8 +48,8 @@ function ActionItem({
   )
 }
 
-/** 与主题行同一套行高、图标槽与字号，放在切换主题下方。不是按钮。 */
-function OperatorRow({ collapsed = false }: { collapsed?: boolean }) {
+/** 与主题行同一套行高、图标槽与字号，放在切换主题下方。身份本身不是按钮，登出挂在行尾。 */
+function OperatorRow({ collapsed = false, trailing }: { collapsed?: boolean; trailing?: ReactNode }) {
   return (
     <div
       className={[
@@ -60,14 +63,19 @@ function OperatorRow({ collapsed = false }: { collapsed?: boolean }) {
       >
         运
       </span>
-      <span className={collapsed ? 'sr-only' : 'min-w-0 truncate text-sm font-medium'}>运维人员</span>
+      <span className={collapsed ? 'sr-only' : 'min-w-0 flex-1 truncate text-sm font-medium'}>运维人员</span>
+      {trailing}
     </div>
   )
 }
 
-/** 侧边栏底部：主题切换，以及其下的当前操作者。桌面侧边栏与窄屏抽屉共用。 */
+/** 侧边栏底部：主题切换，以及其下的当前操作者。真实会话时登出挂在操作者行尾。桌面侧边栏与窄屏抽屉共用。 */
 export function QuickActions({ collapsed = false }: { collapsed?: boolean }) {
   const { theme, followsSystem, toggleTheme, followSystemTheme } = useTheme()
+  const gateway = useGateway()
+  const sessionMode = useSessionStore((state) => state.mode)
+  const logout = useSessionStore((state) => state.logout)
+  const [loggingOut, setLoggingOut] = useState(false)
 
   return (
     <section aria-label="快捷操作">
@@ -91,7 +99,25 @@ export function QuickActions({ collapsed = false }: { collapsed?: boolean }) {
             ) : undefined
           }
         />
-        <OperatorRow collapsed={collapsed} />
+        <OperatorRow
+          collapsed={collapsed}
+          trailing={
+            sessionMode === 'real' ? (
+              <IconButton
+                label="退出登录"
+                variant="ghost"
+                disabled={loggingOut}
+                onPress={() => {
+                  setLoggingOut(true)
+                  // 登出置 anonymous 后 RequireSession 自动 Navigate 到 /login。
+                  void logout(gateway)
+                }}
+              >
+                <LogOut aria-hidden size={15} />
+              </IconButton>
+            ) : undefined
+          }
+        />
       </div>
     </section>
   )
