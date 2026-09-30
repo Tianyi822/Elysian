@@ -3,6 +3,7 @@ import {
   createHttpDependenciesAdapter,
   parseDependencyProbe,
   parseDependencyProbeReport,
+  parseDependencySetupResult,
   sanitizeDependencyText,
 } from './dependenciesHttpAdapter'
 
@@ -84,6 +85,21 @@ describe('parseDependencyProbeReport', () => {
     expect(() =>
       parseDependencyProbeReport({ ...VALID_REPORT, docker: { state: 'broken', detail: null } }),
     ).toThrow('依赖检测响应状态取值无效')
+  })
+})
+
+describe('parseDependencySetupResult', () => {
+  it('成功结果还原 ok 与中文结论', () => {
+    expect(parseDependencySetupResult({ ok: true, message: 'Caddy 已安装' })).toEqual({
+      ok: true,
+      message: 'Caddy 已安装',
+    })
+  })
+
+  it('ok 不为 true 或缺少结论时抛中文错误', () => {
+    expect(() => parseDependencySetupResult({ ok: false, message: '失败' })).toThrow('依赖安装响应无效')
+    expect(() => parseDependencySetupResult({ ok: true })).toThrow('依赖安装响应无效')
+    expect(() => parseDependencySetupResult(null)).toThrow('依赖安装响应无效')
   })
 })
 
@@ -170,6 +186,29 @@ describe('createHttpDependenciesAdapter', () => {
     vi.stubGlobal('fetch', fetchMock)
     const adapter = createHttpDependenciesAdapter()
     await expect(adapter.probe()).rejects.toThrow('依赖检测响应不是有效 JSON')
+    vi.unstubAllGlobals()
+  })
+
+  it('setup 落到同源 POST，422 收成失败结果而不是抛错', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/setup/caddy/install')) {
+        return new Response(JSON.stringify({ error: '这一步没有完成' }), {
+          status: 422,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      return jsonResponse({ ok: true, message: 'Caddy 已安装' })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const adapter = createHttpDependenciesAdapter()
+    const failed = await adapter.setup('caddy', 'install')
+    expect(failed).toEqual({ ok: false, message: '这一步没有完成' })
+    expect(fetchMock).toHaveBeenCalledWith('/api/platform/dependencies/setup/caddy/install', {
+      method: 'POST',
+      cache: 'no-store',
+    })
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, message: 'Caddy 已安装' }))
+    await expect(adapter.setup('caddy', 'configure')).resolves.toEqual({ ok: true, message: 'Caddy 已安装' })
     vi.unstubAllGlobals()
   })
 })

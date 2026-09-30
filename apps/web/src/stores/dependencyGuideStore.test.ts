@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DependencyProbeReport } from '@elysian/contracts'
+import { readMutedDependencyGuide } from '../app/theme/themePreferences'
 import type { ElysianGateway } from '../contracts/adapters'
 import { useNotificationStore } from './notificationStore'
 import {
@@ -205,6 +206,29 @@ describe('dismiss 语义', () => {
     const state = useDependencyGuideStore.getState()
     expect(caddyGuideVisible(state.report, state.dismissedCaddy)).toBe(true)
     expect(state.dismissedDocker).toBe(false)
+  })
+
+  it('不再提示写入偏好，重开安装入口时清掉', async () => {
+    localStorage.clear()
+    const gateway = gatewayWith(async () => CADDY_MISSING)
+    await useDependencyGuideStore.getState().check(gateway)
+    useDependencyGuideStore.getState().muteGuide('caddy')
+    expect(readMutedDependencyGuide(localStorage, 'caddy')).toBe(true)
+    expect(
+      caddyGuideVisible(
+        useDependencyGuideStore.getState().report,
+        useDependencyGuideStore.getState().dismissedCaddy,
+      ),
+    ).toBe(false)
+    useDependencyGuideStore.getState().reopenCaddy()
+    expect(readMutedDependencyGuide(localStorage, 'caddy')).toBe(false)
+    expect(
+      caddyGuideVisible(
+        useDependencyGuideStore.getState().report,
+        useDependencyGuideStore.getState().dismissedCaddy,
+      ),
+    ).toBe(true)
+    localStorage.clear()
   })
 })
 

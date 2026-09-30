@@ -1,7 +1,8 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DependencyProbeReport } from '@elysian/contracts'
+import { UI_PREFERENCES_KEY, readMutedDependencyGuide } from '../../app/theme/themePreferences'
 import { GatewayProvider } from '../../adapters/GatewayProvider'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import type { ElysianGateway } from '../../contracts/adapters'
@@ -45,18 +46,24 @@ const ALL_OK: DependencyProbeReport = {
 }
 
 /** 可控探测网关：report 变量在用例内翻转即可模拟「缺失 → 接通」。 */
-function gatewayWithProbe(probe: () => Promise<DependencyProbeReport>): ElysianGateway {
+function gatewayWithProbe(
+  probe: () => Promise<DependencyProbeReport>,
+  setup: ElysianGateway['dependencies']['setup'] = async () => ({ ok: true, message: '已完成' }),
+): ElysianGateway {
   const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
-  return { ...base, dependencies: { probe } }
+  return { ...base, dependencies: { probe, setup } }
 }
 
 async function renderDialogs(
   probe: () => Promise<DependencyProbeReport>,
-  options: { scope?: 'docker-dependent' | 'websites' } = {},
+  options: {
+    scope?: 'docker-dependent' | 'websites'
+    setup?: ElysianGateway['dependencies']['setup']
+  } = {},
 ) {
   const scope = options.scope ?? 'websites'
   const reload = vi.fn()
-  const gateway = gatewayWithProbe(probe)
+  const gateway = gatewayWithProbe(probe, options.setup)
   const view = render(
     <GatewayProvider gateway={gateway}>
       <DependencyGuideDialogs scope={scope} reload={reload} />
@@ -69,6 +76,7 @@ async function renderDialogs(
 }
 
 beforeEach(() => {
+  localStorage.removeItem(UI_PREFERENCES_KEY)
   useDependencyGuideStore.setState({
     report: undefined,
     status: 'idle',
@@ -79,14 +87,43 @@ beforeEach(() => {
   useNotificationStore.getState().clear()
 })
 
+afterEach(() => {
+  localStorage.removeItem(UI_PREFERENCES_KEY)
+  useDependencyGuideStore.setState({ dismissedDocker: false, dismissedCaddy: false })
+})
+
 describe('优先级组合（状态组合表）', () => {
-  it('docker missing：Docker 弹窗渲染，含标题、四条步骤、不代装声明与 detail 次要文字', async () => {
+  it('docker missing：Docker 弹窗渲染，含三步、分步安装说明与 detail', async () => {
     await renderDialogs(async () => DOCKER_MISSING)
     const dialog = screen.getByRole('dialog', { name: '安装 Docker' })
-    expect(within(dialog).getAllByRole('listitem')).toHaveLength(4)
-    expect(screen.getByText(/面板不会代你执行任何安装命令/)).toBeInTheDocument()
+    expect(within(dialog).getAllByText('安装 Docker').length).toBeGreaterThan(0)
+    expect(within(dialog).getAllByText('开机自启').length).toBeGreaterThan(0)
+    expect(within(dialog).getAllByText('确认接通').length).toBeGreaterThan(0)
+    expect(within(dialog).getByText(/官方安装脚本/)).toBeInTheDocument()
+    expect(within(dialog).getByText(/开机即起/)).toBeInTheDocument()
+    expect(within(dialog).getByText(/分步安装/)).toBeInTheDocument()
+    expect(within(dialog).queryByText(/不会代你执行/)).toBeNull()
     expect(screen.getByText(/Docker 未安装或未接通/)).toBeInTheDocument()
     expect(screen.queryByRole('dialog', { name: '安装 Caddy' })).toBeNull()
+    expect(screen.getByRole('button', { name: '关闭弹窗' })).not.toHaveFocus()
+  })
+
+  it('不再提示后弹窗关闭，重新探测也不再出现', async () => {
+    const user = userEvent.setup()
+    const { gateway } = await renderDialogs(async () => CADDY_MISSING)
+    await user.click(screen.getByRole('button', { name: '不再提示' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(readMutedDependencyGuide(localStorage, 'caddy')).toBe(true)
+    useDependencyGuideStore.setState({
+      report: undefined,
+      status: 'idle',
+      dismissedDocker: readMutedDependencyGuide(localStorage, 'docker'),
+      dismissedCaddy: readMutedDependencyGuide(localStorage, 'caddy'),
+    })
+    await act(async () => {
+      await useDependencyGuideStore.getState().check(gateway)
+    })
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
   it('docker error（版本过低）：Docker 弹窗仍渲染且 detail 为引擎原因', async () => {
@@ -103,7 +140,11 @@ describe('优先级组合（状态组合表）', () => {
   it('docker ok + caddy missing + scope websites：Caddy 弹窗渲染', async () => {
     await renderDialogs(async () => CADDY_MISSING)
     const dialog = screen.getByRole('dialog', { name: '安装 Caddy' })
-    expect(within(dialog).getAllByRole('listitem')).toHaveLength(4)
+    expect(within(dialog).getAllByText('绑定管理通道').length).toBeGreaterThan(0)
+    expect(within(dialog).getAllByText('启动并常驻').length).toBeGreaterThan(0)
+    expect(within(dialog).getAllByText('确认通道').length).toBeGreaterThan(0)
+    expect(within(dialog).getByText(/官方软件源/)).toBeInTheDocument()
+    expect(within(dialog).getByText(/管理通道可连通/)).toBeInTheDocument()
     expect(screen.getByText(/宿主未提供 Caddy 管理通道/)).toBeInTheDocument()
     expect(screen.queryByRole('dialog', { name: '安装 Docker' })).toBeNull()
   })
@@ -154,26 +195,59 @@ describe('关闭语义（会话内不重弹）', () => {
   })
 })
 
-describe('重新检测', () => {
-  it('pending 时按钮禁用并显示「正在检测…」，转 ok 后弹窗消失、发成功通知且 reload 被调用一次', async () => {
+describe('分步安装', () => {
+  it('执行中按钮禁用；全部成功后弹窗消失、发成功通知且 reload 被调用一次', async () => {
     const user = userEvent.setup()
     let current: DependencyProbeReport = CADDY_MISSING
-    let pending: Promise<DependencyProbeReport> | null = null
-    let release: ((report: DependencyProbeReport) => void) | undefined
-    const { reload } = await renderDialogs(() => pending ?? Promise.resolve(current))
-    // 首次 check 已消费 CADDY_MISSING；点「重新检测」前把探测换挂起的 promise。
-    pending = new Promise<DependencyProbeReport>((resolve) => {
-      release = (report) => resolve(report)
+    let first = true
+    let release: ((result: { ok: true; message: string }) => void) | undefined
+    const setup = vi.fn(() => {
+      if (first) {
+        first = false
+        return new Promise<{ ok: true; message: string }>((resolve) => {
+          release = resolve
+        })
+      }
+      return Promise.resolve({ ok: true as const, message: '已完成' })
     })
-    await user.click(screen.getByRole('button', { name: '重新检测' }))
-    const checking = screen.getByRole('button', { name: '正在检测…' })
-    expect(checking).toBeDisabled()
-    release!(ALL_OK)
+    const { reload } = await renderDialogs(() => Promise.resolve(current), { setup })
+    await user.click(screen.getByRole('button', { name: '开始安装' }))
+    const running = await screen.findByRole('button', { name: '正在执行…' })
+    expect(running).toBeDisabled()
     current = ALL_OK
-    await act(async () => {})
-    expect(screen.queryByRole('dialog')).toBeNull()
+    release!({ ok: true, message: '已完成' })
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull()
+    })
     expect(useNotificationStore.getState().notifications.map((n) => n.message)).toContain('Caddy 管理通道已就绪')
     expect(reload).toHaveBeenCalledTimes(1)
+  })
+
+  it('一步成功后滑到下一步，失败则停住且不执行后续步骤', async () => {
+    const user = userEvent.setup()
+    const scrolled: string[] = []
+    const original = HTMLElement.prototype.scrollIntoView
+    HTMLElement.prototype.scrollIntoView = function (this: HTMLElement) {
+      const stage = this.getAttribute('data-stage')
+      if (stage) scrolled.push(stage)
+    }
+    const calls: string[] = []
+    try {
+      await renderDialogs(async () => CADDY_MISSING, {
+        setup: async (_target, step) => {
+          calls.push(step)
+          if (step === 'configure') return { ok: false, message: 'Caddyfile 校验没有通过，已恢复原文件。' }
+          return { ok: true, message: '已完成' }
+        },
+      })
+      await user.click(screen.getByRole('button', { name: '开始安装' }))
+      expect(await screen.findByRole('alert')).toHaveTextContent('Caddyfile 校验没有通过，已恢复原文件。')
+      expect(calls).toEqual(['install', 'configure'])
+      expect(scrolled).toEqual(['install', 'configure'])
+      expect(screen.getByRole('button', { name: '重试' })).toBeEnabled()
+    } finally {
+      HTMLElement.prototype.scrollIntoView = original
+    }
   })
 
   it('docker 转就绪但 caddy 仍缺失：只发 Docker 通知，弹窗切换为 Caddy 引导（未关闭时）', async () => {
@@ -181,26 +255,22 @@ describe('重新检测', () => {
     let current = DOCKER_MISSING
     const { reload } = await renderDialogs(async () => current)
     current = CADDY_MISSING
-    await user.click(screen.getByRole('button', { name: '重新检测' }))
-    await act(async () => {})
+    await user.click(screen.getByRole('button', { name: '开始安装' }))
+    expect(await screen.findByRole('dialog', { name: '安装 Caddy' })).toBeInTheDocument()
     const messages = useNotificationStore.getState().notifications.map((n) => n.message)
     expect(messages).toContain('Docker 已就绪')
     expect(messages).not.toContain('Caddy 管理通道已就绪')
     expect(reload).toHaveBeenCalledTimes(1)
-    // Docker 就绪后 Caddy 维度出现：网站页同一报告下 Caddy 弹窗接续引导。
-    expect(screen.getByRole('dialog', { name: '安装 Caddy' })).toBeInTheDocument()
   })
 
   it('仍缺失时停留并刷新 detail，reload 不被调用', async () => {
     const user = userEvent.setup()
     let current = DOCKER_MISSING
     const { reload } = await renderDialogs(async () => current)
-    // 只变 docker 的状态与 detail（missing → error），caddy 保持缺失。
     current = DOCKER_ERROR_CADDY_MISSING
-    await user.click(screen.getByRole('button', { name: '重新检测' }))
-    await act(async () => {})
+    await user.click(screen.getByRole('button', { name: '开始安装' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Docker Engine API 版本过低，需要 1.41 及以上')
     expect(screen.getByRole('dialog', { name: '安装 Docker' })).toBeInTheDocument()
-    expect(screen.getByText(/Docker Engine API 版本过低，需要 1.41 及以上/)).toBeInTheDocument()
     expect(reload).not.toHaveBeenCalled()
   })
 
@@ -212,8 +282,8 @@ describe('重新检测', () => {
     const { reload } = await renderDialogs(probe)
     failing = true
     current = ALL_OK
-    await user.click(screen.getByRole('button', { name: '重新检测' }))
-    await act(async () => {})
+    await user.click(screen.getByRole('button', { name: '开始安装' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('依赖检测失败')
     expect(screen.getByRole('dialog', { name: '安装 Docker' })).toBeInTheDocument()
     const notifications = useNotificationStore.getState().notifications
     expect(notifications).toHaveLength(1)

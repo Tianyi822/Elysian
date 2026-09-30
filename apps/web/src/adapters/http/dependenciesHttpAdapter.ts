@@ -1,5 +1,12 @@
-import type { DependencyProbe, DependencyProbeReport, DependencyProbeState } from '@elysian/contracts'
-import { DEPENDENCY_PROBE_STATES } from '@elysian/contracts'
+import type {
+  DependencyProbe,
+  DependencyProbeReport,
+  DependencyProbeState,
+  DependencySetupResult,
+  DependencySetupStep,
+  DependencySetupTarget,
+} from '@elysian/contracts'
+import { DEPENDENCY_PROBE_STATES, DEPENDENCY_SETUP_STEPS, DEPENDENCY_SETUP_TARGETS } from '@elysian/contracts'
 import type { DependenciesAdapter } from '../../contracts/adapters'
 
 /*
@@ -94,14 +101,60 @@ async function requestJson(url: string): Promise<unknown> {
   }
 }
 
+/** 校验一步安装的成功响应。失败走 HTTP 422，不进这里。 */
+export function parseDependencySetupResult(body: unknown): DependencySetupResult {
+  const row = asObject(body, '依赖安装响应无效')
+  if (row.ok !== true) throw new Error('依赖安装响应无效')
+  if (typeof row.message !== 'string' || row.message.length === 0) throw new Error('依赖安装响应无效')
+  return { ok: true, message: sanitizeDependencyText(row.message) }
+}
+
+async function errorMessage(response: Response, fallback: string): Promise<string> {
+  const detail = await response
+    .json()
+    .then((body) => {
+      if (body && typeof body === 'object' && 'error' in body) {
+        const error = (body as { error: unknown }).error
+        if (typeof error === 'string' && error.length > 0) return sanitizeDependencyText(error)
+      }
+      return null
+    })
+    .catch(() => null)
+  return detail ?? fallback
+}
+
 /**
- * Docker 运行时的依赖检测 adapter：GET /api/platform/dependencies。
- * 纯读探测，无副作用；探测请求失败时抛中文错误，由引导层静默降级。
+ * Docker 运行时的依赖检测 adapter：GET 探测，POST 执行安装的一步。
+ * 探测失败时抛中文错误，由引导层静默降级；安装失败（422）收成结果，让步骤停在窗口里。
  */
 export function createHttpDependenciesAdapter(baseUrl = '/api/platform/dependencies'): DependenciesAdapter {
   return {
     async probe(): Promise<DependencyProbeReport> {
       return parseDependencyProbeReport(await requestJson(baseUrl))
+    },
+    async setup(target: DependencySetupTarget, step: DependencySetupStep): Promise<DependencySetupResult> {
+      if (!DEPENDENCY_SETUP_TARGETS.includes(target) || !DEPENDENCY_SETUP_STEPS.includes(step)) {
+        throw new Error('安装步骤无效')
+      }
+      const url = `${baseUrl}/setup/${encodeURIComponent(target)}/${encodeURIComponent(step)}`
+      let response: Response
+      try {
+        response = await fetch(url, { method: 'POST', cache: 'no-store' })
+      } catch {
+        throw new Error('依赖安装请求网络失败')
+      }
+      if (response.status === 422) {
+        return { ok: false, message: await errorMessage(response, '这一步没有完成') }
+      }
+      if (!response.ok) {
+        throw new Error(await errorMessage(response, `依赖安装请求失败：HTTP ${response.status}`))
+      }
+      try {
+        return parseDependencySetupResult(await response.json())
+      } catch (error) {
+        if (error instanceof Error && error.message === '依赖安装响应无效') throw error
+        throw new Error('依赖安装响应不是有效 JSON')
+      }
     },
   }
 }

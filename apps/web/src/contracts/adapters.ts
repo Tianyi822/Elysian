@@ -11,6 +11,9 @@ import type {
   DatabaseEngine,
   DatabaseInstance,
   DependencyProbeReport,
+  DependencySetupResult,
+  DependencySetupStep,
+  DependencySetupTarget,
   ElysianEvent,
   EventStreamHandlers,
   FileEntry,
@@ -404,6 +407,11 @@ export interface ResourceHistoryAdapter {
 export interface DependenciesAdapter {
   /** 现场探测宿主 Docker 与 Caddy 通道；mock 实现恒双 ok（演示模式不引导）。 */
   probe(): Promise<DependencyProbeReport>
+  /**
+   * 在宿主上执行安装的一步。脚本由服务端固定，这里只传目标与步骤名。
+   * mock 立即成功：演示模式不弹引导；测试注入缺失报告时用它走完分步而不碰宿主。
+   */
+  setup(target: DependencySetupTarget, step: DependencySetupStep): Promise<DependencySetupResult>
 }
 
 /** 页面注入的聚合入口。 */

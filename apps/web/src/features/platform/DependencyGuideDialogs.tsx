@@ -1,22 +1,46 @@
 import * as Dialog from '@radix-ui/react-dialog'
+import { useEffect, useRef, useState } from 'react'
+import type { DependencySetupStep } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { X } from '../../components/icons'
+import { Check, Loader2, TriangleAlert, X } from '../../components/icons'
 import {
   caddyGuideVisible,
   dockerGuideVisible,
   useDependencyGuideStore,
 } from '../../stores/dependencyGuideStore'
 import { DEPENDENCY_GUIDE_CONTENT } from './dependencyGuideCopy'
-import type { DependencyGuideKind } from './dependencyGuideCopy'
+import type { DependencyGuideKind, DependencyGuideStage, DependencyGuideStageId } from './dependencyGuideCopy'
 
 /**
- * 依赖引导层：叠加在页面四状态与域级状态层（横幅 / 错误态）之上的弹窗，
- * 只做引导不做状态常驻——安装步骤与「重新检测」入口在此，通道降级事实仍在
- * 各页既有的横幅与错误态里。挂点是三页（容器 / 数据库 scope 为 docker-dependent，
- * 网站 scope 为 websites）；优先级编排全在 store 的派生选择器：Docker 未就绪时
- * 任何页面只弹 Docker 弹窗，Caddy 弹窗以 Docker 就绪为前置且仅 missing 才引导。
- * 依赖经「重新检测」转就绪时调 reload 重入页面业务加载，四状态机制不动。
+ * 依赖引导层：叠加在页面四状态与域级状态层之上的弹窗。
+ * 优先级编排全在 store：Docker 未就绪时任何页面只弹 Docker，Caddy 以 Docker 就绪为前置且仅 missing 才引导。
+ * 弹窗里的步骤全部同时留在窗口中；用户点一次「开始安装」后面板依次执行，一步成功就滑到下一步。
+ * 最后一步只重新探测，转就绪时调 reload 重入页面业务加载。
  */
+
+type StageStatus = 'pending' | 'running' | 'done' | 'failed'
+
+const STAGE_STATUS_LABEL: Record<StageStatus, string> = {
+  pending: '等待',
+  running: '正在执行',
+  done: '已完成',
+  failed: '未完成',
+}
+
+/** 测试里不等待，避免滑动停顿拖慢用例；界面上留半秒让人看清这一步已经完成。 */
+const SLIDE_PAUSE_MS = import.meta.env.MODE === 'test' ? 0 : 450
+
+function delay(ms: number): Promise<void> {
+  if (ms <= 0) return Promise.resolve()
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
+
+function prefersReducedMotion(): boolean {
+  return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
 export function DependencyGuideDialogs({
   scope,
   reload,
@@ -26,22 +50,21 @@ export function DependencyGuideDialogs({
 }) {
   const gateway = useGateway()
   const report = useDependencyGuideStore((s) => s.report)
-  const rechecking = useDependencyGuideStore((s) => s.rechecking)
   const dismissedDocker = useDependencyGuideStore((s) => s.dismissedDocker)
   const dismissedCaddy = useDependencyGuideStore((s) => s.dismissedCaddy)
   const recheck = useDependencyGuideStore((s) => s.recheck)
   const dismissDocker = useDependencyGuideStore((s) => s.dismissDocker)
   const dismissCaddy = useDependencyGuideStore((s) => s.dismissCaddy)
+  const muteGuide = useDependencyGuideStore((s) => s.muteGuide)
 
   const showDocker = dockerGuideVisible(report, dismissedDocker)
   // caddyGuideVisible 已含 Docker 就绪前置，两弹窗不会同时出现；Caddy 分支只挂网站页。
   const showCaddy = scope === 'websites' && caddyGuideVisible(report, dismissedCaddy)
 
-  const runRecheck = () => {
-    void recheck(gateway).then((becameReady) => {
-      // 转就绪的交接：页面可能还停在 ErrorState、横幅还挂着旧状态，重拉业务数据。
-      if (becameReady !== null) reload()
-    })
+  const verifyReady = async () => {
+    const becameReady = await recheck(gateway)
+    if (becameReady !== null) reload()
+    return becameReady
   }
 
   return (
@@ -50,45 +73,132 @@ export function DependencyGuideDialogs({
         <DependencyGuideDialog
           kind="docker"
           detail={report?.docker.detail ?? null}
-          rechecking={rechecking}
-          onRecheck={runRecheck}
+          onVerify={verifyReady}
           onDismiss={dismissDocker}
+          onMute={() => muteGuide('docker')}
         />
       ) : null}
       {showCaddy ? (
         <DependencyGuideDialog
           kind="caddy"
           detail={report?.caddy.detail ?? null}
-          rechecking={rechecking}
-          onRecheck={runRecheck}
+          onVerify={verifyReady}
           onDismiss={dismissCaddy}
+          onMute={() => muteGuide('caddy')}
         />
       ) : null}
     </>
   )
 }
 
-/**
- * 参数化的引导弹窗：Docker 与 Caddy 两个弹窗骨架完全同构，差异只在文案表
- * （DEPENDENCY_GUIDE_CONTENT）。Radix 模式照 WebsitesCreateDialog：Portal +
- * Overlay、sr-only Title 加可视标题行、右上关闭按钮、阻止误点关闭
- * （Esc 与关闭按钮仍是显式关闭）。焦点管理交给 Radix。
- */
+function statusIcon(status: StageStatus) {
+  if (status === 'running') return <Loader2 aria-hidden className="size-3.5 shrink-0 animate-spin" />
+  if (status === 'done') return <Check aria-hidden className="size-3.5 shrink-0 text-success" />
+  if (status === 'failed') return <TriangleAlert aria-hidden className="size-3.5 shrink-0 text-danger" />
+  return null
+}
+
+function isHostStep(id: DependencyGuideStageId): id is DependencySetupStep {
+  return id !== 'verify'
+}
+
 function DependencyGuideDialog({
   kind,
   detail,
-  rechecking,
-  onRecheck,
+  onVerify,
   onDismiss,
+  onMute,
 }: {
   kind: DependencyGuideKind
   /** 当前探测的非就绪原因（missing / error 时恒有值），以次要文字呈现。 */
   detail: string | null
-  rechecking: boolean
-  onRecheck: () => void
+  onVerify: () => Promise<'docker' | 'caddy' | null>
   onDismiss: () => void
+  onMute: () => void
 }) {
+  const gateway = useGateway()
   const content = DEPENDENCY_GUIDE_CONTENT[kind]
+  const stages = content.stages
+  const [statuses, setStatuses] = useState<StageStatus[]>(() => stages.map(() => 'pending'))
+  const [active, setActive] = useState(0)
+  const [failure, setFailure] = useState<string | null>(null)
+  const [running, setRunning] = useState(false)
+  const contentRef = useRef<HTMLDivElement>(null)
+  const cardRefs = useRef<Array<HTMLElement | null>>([])
+  const runToken = useRef<object | null>(null)
+  const lock = useRef(false)
+
+  useEffect(() => () => {
+    runToken.current = null
+  }, [])
+
+  const scrollTo = (index: number) => {
+    const node = cardRefs.current[index]
+    if (!node) return
+    try {
+      node.scrollIntoView({
+        behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+        inline: 'center',
+        block: 'nearest',
+      })
+    } catch {
+      node.scrollIntoView()
+    }
+  }
+
+  const runFrom = async (start: number) => {
+    if (lock.current) return
+    lock.current = true
+    const token = {}
+    runToken.current = token
+    setRunning(true)
+    setFailure(null)
+    try {
+      for (let index = start; index < stages.length; index += 1) {
+        if (runToken.current !== token) return
+        setActive(index)
+        scrollTo(index)
+        setStatuses((prev) => prev.map((status, i) => (i === index ? 'running' : status)))
+        const stage = stages[index]
+        if (stage === undefined) return
+        const result = await runStage(stage)
+        if (runToken.current !== token) return
+        if (!result.ok) {
+          setStatuses((prev) => prev.map((status, i) => (i === index ? 'failed' : status)))
+          setFailure(result.message)
+          return
+        }
+        setStatuses((prev) => prev.map((status, i) => (i === index ? 'done' : status)))
+        if (index < stages.length - 1) await delay(SLIDE_PAUSE_MS)
+      }
+    } catch (error) {
+      if (runToken.current !== token) return
+      setFailure(error instanceof Error ? error.message : '这一步没有完成')
+      setStatuses((prev) => prev.map((status) => (status === 'running' ? 'failed' : status)))
+    } finally {
+      lock.current = false
+      if (runToken.current === token) setRunning(false)
+    }
+  }
+
+  const runStage = async (stage: DependencyGuideStage): Promise<{ ok: boolean; message: string }> => {
+    if (!isHostStep(stage.id)) {
+      const before = useDependencyGuideStore.getState().report
+      const became = await onVerify()
+      if (became !== null) return { ok: true, message: content.successNotice }
+      const after = useDependencyGuideStore.getState().report
+      if (after === before) return { ok: false, message: '依赖检测失败' }
+      const probe = kind === 'docker' ? after?.docker : after?.caddy
+      if (probe?.state === 'ok') return { ok: true, message: content.successNotice }
+      return { ok: false, message: probe?.detail ?? '仍未接通' }
+    }
+    return gateway.dependencies.setup(kind, stage.id)
+  }
+
+  const failedIndex = statuses.findIndex((status) => status === 'failed')
+  const buttonLabel = running ? '正在执行…' : failedIndex >= 0 ? '重试' : '开始安装'
+  const startAt = failedIndex >= 0 ? failedIndex : Math.max(0, statuses.findIndex((status) => status !== 'done'))
+
   return (
     <Dialog.Root
       open
@@ -99,9 +209,18 @@ function DependencyGuideDialog({
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60" />
         <Dialog.Content
+          ref={contentRef}
+          tabIndex={-1}
           onPointerDownOutside={(event) => event.preventDefault()}
           onInteractOutside={(event) => event.preventDefault()}
-          className="fixed left-1/2 top-1/2 z-[55] flex max-h-[min(40rem,calc(100vh-3rem))] w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line bg-bg shadow-2xl"
+          // 打开时 Radix 会把焦点落到第一个按钮（关闭）上，浏览器因此画出焦点环。
+          // 焦点改到窗口本身，窗口不画环；键盘 Tab 到按钮时环仍在。
+          onOpenAutoFocus={(event) => {
+            event.preventDefault()
+            contentRef.current?.focus()
+          }}
+          aria-busy={running}
+          className="fixed left-1/2 top-1/2 z-[55] flex max-h-[min(40rem,calc(100vh-3rem))] w-[min(44rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line bg-bg shadow-2xl focus-visible:outline-none"
         >
           <Dialog.Title className="sr-only">{content.title}</Dialog.Title>
           <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
@@ -117,7 +236,7 @@ function DependencyGuideDialog({
             </Dialog.Close>
           </div>
 
-          <div className="flex flex-col gap-3 overflow-y-auto px-4 py-4">
+          <div className="flex min-h-0 min-w-0 flex-col gap-3 overflow-y-auto px-4 py-4">
             <Dialog.Description className="text-xs leading-relaxed text-fg-muted">
               {content.lead}
             </Dialog.Description>
@@ -126,21 +245,84 @@ function DependencyGuideDialog({
                 当前探测结果：{detail}
               </p>
             ) : null}
-            <ol className="flex list-decimal flex-col gap-2 pl-5 text-xs leading-relaxed text-fg-muted">
-              {content.steps.map((step, index) => (
-                <li key={index}>{step}</li>
-              ))}
+            <p className="text-xs tabular-nums text-fg-muted">
+              第 {active + 1} 步，共 {stages.length} 步
+            </p>
+            <ol
+              aria-label="安装步骤"
+              className="grid gap-2"
+              style={{ gridTemplateColumns: `repeat(${stages.length}, minmax(0, 1fr))` }}
+            >
+              {stages.map((stage, index) => {
+                const status = statuses[index] ?? 'pending'
+                const current = index === active
+                return (
+                  <li
+                    key={stage.id}
+                    aria-current={current ? 'step' : undefined}
+                    className={`min-w-0 rounded-lg border px-2 py-1.5 ${current ? 'border-fg-subtle' : 'border-line'}`}
+                  >
+                    <span className="flex items-center gap-1 text-xs text-fg">
+                      <span className="tabular-nums text-fg-muted">{index + 1}</span>
+                      <span className="min-w-0">{stage.title}</span>
+                    </span>
+                    <span className={`mt-0.5 flex items-center gap-1 text-xs ${status === 'failed' ? 'text-danger' : status === 'done' ? 'text-success' : 'text-fg-muted'}`}>
+                      {statusIcon(status)}
+                      {STAGE_STATUS_LABEL[status]}
+                    </span>
+                  </li>
+                )
+              })}
             </ol>
+            <div
+              aria-label="安装步骤页面"
+              className="flex min-w-0 snap-x snap-mandatory gap-3 overflow-x-auto scroll-smooth pb-1 motion-reduce:scroll-auto"
+            >
+              {stages.map((stage, index) => {
+                const status = statuses[index] ?? 'pending'
+                const current = index === active
+                return (
+                  <article
+                    key={stage.id}
+                    data-stage={stage.id}
+                    data-active={current ? 'true' : 'false'}
+                    ref={(node) => {
+                      cardRefs.current[index] = node
+                    }}
+                    className={`w-[78%] shrink-0 snap-center rounded-lg border px-3 py-3 ${current ? 'border-fg-subtle' : 'border-line'}`}
+                  >
+                    <h3 className="text-sm font-medium text-fg">{stage.title}</h3>
+                    <p className="mt-1 text-xs leading-relaxed text-fg-muted">{stage.detail}</p>
+                    <p className="mt-3 flex items-center gap-1.5 text-xs text-fg">
+                      {statusIcon(status)}
+                      <span>{STAGE_STATUS_LABEL[status]}</span>
+                    </p>
+                    {status === 'failed' && failure ? (
+                      <p role="alert" className="mt-2 text-xs text-danger">{failure}</p>
+                    ) : null}
+                  </article>
+                )
+              })}
+            </div>
           </div>
 
-          <div className="flex items-center justify-end gap-2 border-t border-line px-4 py-2.5">
+          <div className="flex items-center justify-between gap-2 border-t border-line px-4 py-2.5">
             <button
               type="button"
-              onClick={onRecheck}
-              disabled={rechecking}
+              onClick={onMute}
+              className="rounded-lg px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
+            >
+              不再提示
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void runFrom(startAt)
+              }}
+              disabled={running}
               className="rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {rechecking ? '正在检测…' : '重新检测'}
+              {buttonLabel}
             </button>
           </div>
         </Dialog.Content>

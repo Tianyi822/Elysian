@@ -1,5 +1,10 @@
 import type { DependencyProbeReport } from '@elysian/contracts'
 import { create } from 'zustand'
+import {
+  readMutedDependencyGuide,
+  writeMutedDependencyGuide,
+  type DependencyGuideMuteKey,
+} from '../app/theme/themePreferences'
 import type { ElysianGateway } from '../contracts/adapters'
 import { DEPENDENCY_GUIDE_CONTENT } from '../features/platform/dependencyGuideCopy'
 import { useNotificationStore } from './notificationStore'
@@ -27,15 +32,36 @@ type DependencyGuideState = {
    * 组件据此调页面的 reload 重入业务加载；无依赖转就绪时为 null。
    */
   recheck: (gateway: ElysianGateway) => Promise<'docker' | 'caddy' | null>
-  /** 会话内关闭标记：刷新浏览器即重置；Caddy 关闭后由网站页工具栏「安装 Caddy」重开，Docker 无重开入口。 */
+  /** 点关闭：只在本次打开期间不再弹，刷新后仍会按探测结果出现。 */
   dismissDocker: () => void
   dismissCaddy: () => void
-  /** 网站页工具栏「安装 Caddy」的重开动作：只清 Caddy 的关闭标记（该入口仅 Docker 就绪时可见）。 */
+  /** 点「不再提示」：写入界面偏好，刷新和再次进入页面都不再自动弹。 */
+  muteGuide: (kind: DependencyGuideMuteKey) => void
+  /** 网站页工具栏「安装 Caddy」的重开动作：清掉关闭标记和「不再提示」。 */
   reopenCaddy: () => void
 }
 
 function notify(message: string, tone: 'success' | 'danger' = 'success'): void {
   useNotificationStore.getState().notify({ message, tone })
+}
+
+function readDismissed(): { dismissedDocker: boolean; dismissedCaddy: boolean } {
+  try {
+    return {
+      dismissedDocker: readMutedDependencyGuide(localStorage, 'docker'),
+      dismissedCaddy: readMutedDependencyGuide(localStorage, 'caddy'),
+    }
+  } catch {
+    return { dismissedDocker: false, dismissedCaddy: false }
+  }
+}
+
+function writeMuted(kind: DependencyGuideMuteKey, muted: boolean): void {
+  try {
+    writeMutedDependencyGuide(localStorage, kind, muted)
+  } catch {
+    // 偏好写不进去时仍关掉当前弹窗，至少这一次不再挡着操作。
+  }
 }
 
 /** Docker 弹窗可见性：missing 与 error 都引导（三页都不可用，装官方新版对两种情形都成立）。 */
@@ -71,8 +97,7 @@ export const useDependencyGuideStore = create<DependencyGuideState>((set, get) =
   report: undefined,
   status: 'idle',
   rechecking: false,
-  dismissedDocker: false,
-  dismissedCaddy: false,
+  ...readDismissed(),
 
   async check(gateway) {
     if (get().status === 'checking' || get().status === 'checked') return
@@ -116,7 +141,14 @@ export const useDependencyGuideStore = create<DependencyGuideState>((set, get) =
     set({ dismissedCaddy: true })
   },
 
+  muteGuide(kind) {
+    writeMuted(kind, true)
+    if (kind === 'docker') set({ dismissedDocker: true })
+    else set({ dismissedCaddy: true })
+  },
+
   reopenCaddy() {
+    writeMuted('caddy', false)
     set({ dismissedCaddy: false })
   },
 }))

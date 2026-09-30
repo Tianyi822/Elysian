@@ -35,7 +35,12 @@ export default defineConfig({
     // /api/events 与 /api/resources/history 的 SSE 事件流仍由本进程的 elysianEventsVitePlugin 提供，不经代理。
     proxy: {
       '/api/security': { target: serverTarget },
-      '/api/platform': { target: serverTarget },
+      '/api/platform': {
+        target: serverTarget,
+        // 依赖安装含 apt 与官方安装脚本，一步可能要数分钟。
+        timeout: 400_000,
+        proxyTimeout: 400_000,
+      },
       '/api/files': { target: serverTarget },
       '/api/logs': { target: serverTarget },
       '/api/docker': { target: serverTarget, ws: true },
@@ -49,7 +54,12 @@ export default defineConfig({
     // 同样必须用对象形式保持原 Host 头（理由见 server.proxy 注释）。
     proxy: {
       '/api/security': { target: serverTarget },
-      '/api/platform': { target: serverTarget },
+      '/api/platform': {
+        target: serverTarget,
+        // 依赖安装含 apt 与官方安装脚本，一步可能要数分钟。
+        timeout: 400_000,
+        proxyTimeout: 400_000,
+      },
       '/api/files': { target: serverTarget },
       '/api/logs': { target: serverTarget },
       '/api/docker': { target: serverTarget, ws: true },

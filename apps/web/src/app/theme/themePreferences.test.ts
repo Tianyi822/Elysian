@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest'
 import {
   UI_PREFERENCES_KEY,
   clearStoredTheme,
+  readMutedDependencyGuide,
   readStoredNavOrder,
   readStoredTheme,
   readStoredViewTab,
   resolveViewTab,
+  writeMutedDependencyGuide,
   writeStoredNavOrder,
   writeStoredTheme,
   writeStoredViewTab,
@@ -165,5 +167,26 @@ describe('页签偏好存储', () => {
     expect(resolveViewTab(fakeStorage(), 'security', ['firewall', 'ssh', 'users'] as const, 'firewall')).toBe(
       'firewall',
     )
+  })
+})
+
+describe('依赖引导不再提示', () => {
+  it('记下之后刷新仍在，改主题或跟随系统都不会丢掉', () => {
+    const storage = fakeStorage()
+    writeMutedDependencyGuide(storage, 'caddy', true, '2026-09-29T00:00:00.000Z')
+    expect(readMutedDependencyGuide(storage, 'caddy')).toBe(true)
+    expect(readMutedDependencyGuide(storage, 'docker')).toBe(false)
+
+    writeStoredTheme(storage, 'dark', '2026-09-29T01:00:00.000Z')
+    expect(readMutedDependencyGuide(storage, 'caddy')).toBe(true)
+    expect(readStoredTheme(storage)).toBe('dark')
+
+    clearStoredTheme(storage)
+    expect(readStoredTheme(storage)).toBeNull()
+    expect(readMutedDependencyGuide(storage, 'caddy')).toBe(true)
+
+    writeMutedDependencyGuide(storage, 'caddy', false, '2026-09-29T02:00:00.000Z')
+    expect(readMutedDependencyGuide(storage, 'caddy')).toBe(false)
+    expect(storage.map.has(UI_PREFERENCES_KEY)).toBe(false)
   })
 })

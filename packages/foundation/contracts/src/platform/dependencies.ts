@@ -21,3 +21,25 @@ export type DependencyProbeReport = {
   docker: DependencyProbe
   caddy: DependencyProbe
 }
+
+/**
+ * 依赖安装的目标。确认通道仍走探测，不在这组步骤里。
+ * docker 只有 install / enable；caddy 还有 configure。非法组合由服务端拒绝。
+ */
+export const DEPENDENCY_SETUP_TARGETS = ['docker', 'caddy'] as const
+
+export type DependencySetupTarget = (typeof DEPENDENCY_SETUP_TARGETS)[number]
+
+export const DOCKER_SETUP_STEPS = ['install', 'enable'] as const
+
+export const CADDY_SETUP_STEPS = ['install', 'configure', 'enable'] as const
+
+export const DEPENDENCY_SETUP_STEPS = ['install', 'configure', 'enable'] as const
+
+export type DependencySetupStep = (typeof DEPENDENCY_SETUP_STEPS)[number]
+
+/** 一步安装的结果。失败也是 422 的中文原因，不携带宿主命令原文。 */
+export type DependencySetupResult = {
+  ok: boolean
+  message: string
+}

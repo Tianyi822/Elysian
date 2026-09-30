@@ -10,7 +10,7 @@ import { FILES_MOUNT } from '../files/filesRoutes.ts'
 import { SSH_MOUNT } from '../ssh/sshRoutes.ts'
 import { USERS_MOUNT } from '../users/usersRoutes.ts'
 import { DOCKER_MOUNT } from '../docker/dockerRoutes.ts'
-import { DATABASE_MOUNT, WEBSITES_MOUNT } from '../shared/apiMounts.ts'
+import { DATABASE_MOUNT, PLATFORM_MOUNT, WEBSITES_MOUNT } from '../shared/apiMounts.ts'
 import { LOGS_MOUNT } from './logsRoutes.ts'
 
 /*
@@ -116,6 +116,14 @@ function ipRuleSummary(body: Record<string, unknown> | null): string | null {
   const label = policyLabel(body?.['policy'])
   if (source === null || label === null) return null
   return `来源 ${source} ${label}`
+}
+
+/** 依赖安装步骤的对象名：只认固定步骤，其余不进日志对象。 */
+function setupStepTarget(name: string, step: string | undefined): string | null {
+  if (step === 'install') return `${name} 安装`
+  if (step === 'configure') return `${name} 配置管理通道`
+  if (step === 'enable') return `${name} 启动并常驻`
+  return null
 }
 
 /**
@@ -504,6 +512,18 @@ export const OPERATION_DESCRIPTORS: Readonly<Record<string, OperationDescriptor>
   [`POST ${LOGS_MOUNT}/operation/clear`]: {
     category: 'logs',
     action: '清空操作日志',
+  },
+
+  // 宿主依赖安装：一步一个写请求。目标只取路径里的步骤名，不读请求体。
+  [`POST ${PLATFORM_MOUNT}/dependencies/setup/docker/:step`]: {
+    category: 'containers',
+    action: '安装 Docker',
+    target: ({ params }) => setupStepTarget('Docker', params.step),
+  },
+  [`POST ${PLATFORM_MOUNT}/dependencies/setup/caddy/:step`]: {
+    category: 'websites',
+    action: '安装 Caddy',
+    target: ({ params }) => setupStepTarget('Caddy', params.step),
   },
 }
 

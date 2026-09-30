@@ -13,6 +13,7 @@ import type {
   ContainerImage,
   ImagePullProgress,
   DependencyProbeReport,
+  DependencySetupResult,
   ElysianEvent,
   EventStreamHandlers,
   FileEntry,
@@ -972,6 +973,11 @@ const DEMO_DEPENDENCY_REPORT: DependencyProbeReport = {
 export class MockDependenciesAdapter implements DependenciesAdapter {
   async probe(): Promise<DependencyProbeReport> {
     return DEMO_DEPENDENCY_REPORT
+  }
+
+  /** 演示模式不弹引导。测试若注入缺失报告，分步安装走这个无副作用的成功结果。 */
+  async setup(): Promise<DependencySetupResult> {
+    return { ok: true, message: '已完成' }
   }
 }
 

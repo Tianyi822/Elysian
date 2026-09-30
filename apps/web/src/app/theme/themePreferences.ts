@@ -1,17 +1,21 @@
 import type { Theme } from './ThemeProvider'
 
 /**
- * 界面偏好的本地存储格式：主题、顶栏分组页签选中态与主导航顺序。
+ * 界面偏好的本地存储格式：主题、顶栏分组页签选中态、主导航顺序，以及依赖安装引导的「不再提示」。
  *
  * 存的是带版本号的结构化数据而不是裸字符串：格式以后要加字段时，读的一侧按 version
  * 判断即可，不必把旧数据当成脏数据丢掉。读的时候逐项校验，认不出来一律返回 null，
  * 由调用方回落到默认值——坏掉的偏好不该让界面打不开。
  *
- * 各字段彼此独立：清掉主题（跟随系统）不得丢掉页签或导航顺序，改其中一项也不得丢掉其余。
+ * 各字段彼此独立：清掉主题（跟随系统）不得丢掉页签、导航顺序或「不再提示」，改其中一项也不得丢掉其余。
  */
 export const VIEW_TAB_KEYS = ['security', 'logs', 'database', 'containers'] as const
 
 export type ViewTabKey = (typeof VIEW_TAB_KEYS)[number]
+
+export const DEPENDENCY_GUIDE_MUTE_KEYS = ['docker', 'caddy'] as const
+
+export type DependencyGuideMuteKey = (typeof DEPENDENCY_GUIDE_MUTE_KEYS)[number]
 
 export type UiPreferences = {
   version: 1
@@ -20,6 +24,8 @@ export type UiPreferences = {
   tabs?: Partial<Record<ViewTabKey, string>>
   /** 主导航路径顺序。不认识的路径在读取侧合并时丢掉，缺的项按默认顺序补上，仪表盘固定在第一位。 */
   nav?: string[]
+  /** 依赖安装引导点过「不再提示」的项。只存 true；关掉主题或改导航不得丢掉它。 */
+  guides?: Partial<Record<DependencyGuideMuteKey, true>>
 }
 
 export const UI_PREFERENCES_KEY = 'elysian.ui-preferences'
@@ -46,6 +52,15 @@ function parseTabs(value: unknown): Partial<Record<ViewTabKey, string>> | undefi
   return Object.keys(tabs).length > 0 ? tabs : undefined
 }
 
+function parseGuides(value: unknown): UiPreferences['guides'] | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const record = value as Record<string, unknown>
+  const guides: NonNullable<UiPreferences['guides']> = {}
+  if (record.docker === true) guides.docker = true
+  if (record.caddy === true) guides.caddy = true
+  return guides.docker === true || guides.caddy === true ? guides : undefined
+}
+
 function parsePreferences(storage: PreferenceStorage): UiPreferences | null {
   const raw = storage.getItem(UI_PREFERENCES_KEY)
   if (!raw) return null
@@ -65,6 +80,7 @@ function parsePreferences(storage: PreferenceStorage): UiPreferences | null {
   const savedAt = typeof record.savedAt === 'string' ? record.savedAt : ''
   const tabs = parseTabs(record.tabs)
   const nav = parseNav(record.nav)
+  const guides = parseGuides(record.guides)
 
   return {
     version: 1,
@@ -72,6 +88,7 @@ function parsePreferences(storage: PreferenceStorage): UiPreferences | null {
     savedAt,
     ...(tabs ? { tabs } : {}),
     ...(nav ? { nav } : {}),
+    ...(guides ? { guides } : {}),
   }
 }
 
@@ -95,12 +112,13 @@ export function writeStoredTheme(
     savedAt,
     ...(current?.tabs ? { tabs: current.tabs } : {}),
     ...(current?.nav ? { nav: current.nav } : {}),
+    ...(current?.guides ? { guides: current.guides } : {}),
   })
 }
 
 export function clearStoredTheme(storage: PreferenceStorage): void {
   const current = parsePreferences(storage)
-  if (!current?.tabs && !current?.nav) {
+  if (!current?.tabs && !current?.nav && !current?.guides) {
     storage.removeItem(UI_PREFERENCES_KEY)
     return
   }
@@ -109,6 +127,7 @@ export function clearStoredTheme(storage: PreferenceStorage): void {
     savedAt: current.savedAt,
     ...(current.tabs ? { tabs: current.tabs } : {}),
     ...(current.nav ? { nav: current.nav } : {}),
+    ...(current.guides ? { guides: current.guides } : {}),
   })
 }
 
@@ -130,6 +149,7 @@ export function writeStoredViewTab(
     savedAt,
     tabs: { ...current?.tabs, [key]: value },
     ...(current?.nav ? { nav: current.nav } : {}),
+    ...(current?.guides ? { guides: current.guides } : {}),
   })
 }
 
@@ -144,7 +164,7 @@ export function writeStoredNavOrder(
 ): void {
   const current = parsePreferences(storage)
   const nav = order.filter((entry) => entry.length > 0)
-  if (nav.length === 0 && !current?.theme && !current?.tabs) {
+  if (nav.length === 0 && !current?.theme && !current?.tabs && !current?.guides) {
     storage.removeItem(UI_PREFERENCES_KEY)
     return
   }
@@ -154,6 +174,7 @@ export function writeStoredNavOrder(
     savedAt,
     ...(current?.tabs ? { tabs: current.tabs } : {}),
     ...(nav.length > 0 ? { nav: [...nav] } : {}),
+    ...(current?.guides ? { guides: current.guides } : {}),
   })
 }
 
@@ -168,4 +189,37 @@ export function resolveViewTab<T extends string>(
   return stored !== null && (allowed as readonly string[]).includes(stored)
     ? (stored as T)
     : fallback
+}
+
+export function readMutedDependencyGuide(
+  storage: PreferenceStorage,
+  kind: DependencyGuideMuteKey,
+): boolean {
+  return parsePreferences(storage)?.guides?.[kind] === true
+}
+
+/** 记下或取消「不再提示」。没有其他偏好可留时整份删掉，避免留下空壳。 */
+export function writeMutedDependencyGuide(
+  storage: PreferenceStorage,
+  kind: DependencyGuideMuteKey,
+  muted: boolean,
+  savedAt = new Date().toISOString(),
+): void {
+  const current = parsePreferences(storage)
+  const guides: NonNullable<UiPreferences['guides']> = { ...current?.guides }
+  if (muted) guides[kind] = true
+  else delete guides[kind]
+  const kept = guides.docker === true || guides.caddy === true ? guides : undefined
+  if (!kept && !current?.theme && !current?.tabs && !current?.nav) {
+    storage.removeItem(UI_PREFERENCES_KEY)
+    return
+  }
+  writePreferences(storage, {
+    version: 1,
+    ...(current?.theme ? { theme: current.theme } : {}),
+    savedAt,
+    ...(current?.tabs ? { tabs: current.tabs } : {}),
+    ...(current?.nav ? { nav: current.nav } : {}),
+    ...(kept ? { guides: kept } : {}),
+  })
 }
