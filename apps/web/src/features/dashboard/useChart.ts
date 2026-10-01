@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import * as echarts from 'echarts/core'
 import type { EChartsCoreOption } from 'echarts/core'
-import { readChartPalette } from './chartOptions'
-import type { ChartPalette, ChartSize } from './chartOptions'
+import type { ChartSize } from './chartOptions'
 
 function readSize(el: HTMLElement | null): ChartSize {
   if (!el) return { width: 0, height: 0 }
@@ -150,11 +149,3 @@ export function useChart(
   return { containerRef, isZoomed, resetZoom }
 }
 
-/** 图表配色随主题收敛：effect 在属性翻转之后读取令牌，随后一次渲染刷新图例色点。 */
-export function useChartPalette(theme: 'dark' | 'light'): ChartPalette {
-  const [palette, setPalette] = useState(() => readChartPalette(theme))
-  useEffect(() => {
-    setPalette(readChartPalette(theme))
-  }, [theme])
-  return palette
-}

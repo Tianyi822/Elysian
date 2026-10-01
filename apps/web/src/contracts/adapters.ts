@@ -1,8 +1,4 @@
 import type {
-  AgentRun,
-  ApprovalOutcome,
-  ApprovalRequest,
-  AuditRecord,
   Container,
   ContainerAction,
   ContainerCreateInput,
@@ -20,18 +16,14 @@ import type {
   FileSearchResult,
   FirewallAdapter,
   FirewallPortSync,
-  Incident,
-  IncidentListRow,
   LoginLogListQuery,
   LoginLogListReport,
   LogClearReport,
   LogListQuery,
-  ModuleStatus,
   OperationLogListQuery,
   OperationLogListReport,
   PlatformLogCategory,
   RuntimeLogListReport,
-  Skill,
   SshAdapter,
   Unsubscribe,
   UserAdapter,
@@ -50,52 +42,6 @@ import type { TerminalCompletion } from '../components/terminal/terminalSession'
  * Web 侧适配接口。界面只依赖这些接口，不关心数据来自 mock、内存降级还是真实网关。
  * 这是整个前端唯一的测试接缝：页面测试在这里注入替代实现。
  */
-
-/** 事件中心的查询条件。空数组或缺省表示不筛选该维度。 */
-export type IncidentListQuery = {
-  severities?: readonly string[]
-  statuses?: readonly string[]
-  sources?: readonly string[]
-  sort?: IncidentSort
-}
-
-export type IncidentSort = 'detected-desc' | 'detected-asc' | 'severity'
-
-export type IncidentListResult = {
-  rows: readonly IncidentListRow[]
-  total: number
-  /** 数据集里出现过的全部来源，供筛选器渲染候选项。 */
-  availableSources: readonly string[]
-}
-
-export interface IncidentAdapter {
-  listRows(query: IncidentListQuery): Promise<IncidentListResult>
-  find(incidentId: string): Promise<Incident | undefined>
-}
-
-export interface SkillAdapter {
-  list(): Promise<readonly Skill[]>
-  setEnabled(skillId: string, enabled: boolean): Promise<Skill>
-}
-
-export interface ApprovalAdapter {
-  list(): Promise<readonly ApprovalRequest[]>
-  decide(
-    requestId: string,
-    decision: { outcome: ApprovalOutcome; note?: string },
-  ): Promise<ApprovalRequest>
-}
-
-export interface AuditAdapter {
-  list(): Promise<readonly AuditRecord[]>
-}
-
-export interface RunAdapter {
-  list(): Promise<readonly AgentRun[]>
-  find(runId: string): Promise<AgentRun | undefined>
-  /** 各职责模块的忙闲状态。 */
-  listModuleStatuses(): Promise<readonly ModuleStatus[]>
-}
 
 export interface EventsAdapter {
   subscribe(handlers: EventStreamHandlers): Unsubscribe
@@ -483,11 +429,6 @@ export interface DependenciesAdapter {
 /** 页面注入的聚合入口。 */
 export interface ElysianGateway {
   session: SessionAdapter
-  incidents: IncidentAdapter
-  runs: RunAdapter
-  skills: SkillAdapter
-  approvals: ApprovalAdapter
-  audit: AuditAdapter
   events: EventsAdapter
   containers: ContainerAdapter
   databases: DatabaseAdapter
@@ -500,6 +441,4 @@ export interface ElysianGateway {
   websites: WebsitesAdapter
   resources: ResourceHistoryAdapter
   dependencies: DependenciesAdapter
-  /** 把演示数据重置回种子状态。 */
-  reset(): Promise<void>
 }
