@@ -56,6 +56,43 @@ describe('parseSessionStatus', () => {
     expect(() => parseSessionStatus({ authenticated: true, devAccount: false, returnTo: 1 })).toThrow('登录状态响应无效')
     expect(() => parseSessionStatus({ authenticated: true, devAccount: false, returnTo: ['x'] })).toThrow('登录状态响应无效')
   })
+
+  // 良构校验拦的是版本错配（新前端配旧容器）下的畸形值，不是重新裁决——只看能否解析为绝对 http/https URL。
+  it('returnTo 是非 URL 字符串抛「登录状态响应无效」', () => {
+    expect(() => parseSessionStatus({ authenticated: true, devAccount: false, returnTo: 'not-a-url' })).toThrow('登录状态响应无效')
+    expect(() => parseSessionStatus({ authenticated: true, devAccount: false, returnTo: '/projects/42' })).toThrow('登录状态响应无效')
+    expect(() => parseSessionStatus({ authenticated: true, devAccount: false, returnTo: '//127.0.0.1:5173/x' })).toThrow('登录状态响应无效')
+  })
+
+  it('returnTo 是非 http/https 协议（javascript:、data:）抛「登录状态响应无效」', () => {
+    expect(() => parseSessionStatus({ authenticated: true, devAccount: false, returnTo: 'javascript:alert(1)' })).toThrow('登录状态响应无效')
+    expect(() => parseSessionStatus({ authenticated: true, devAccount: false, returnTo: 'data:text/html,hi' })).toThrow('登录状态响应无效')
+  })
+
+  it('returnTo 是合法绝对 http/https URL 时原样通过（良构校验不改动值）', () => {
+    expect(parseSessionStatus({ authenticated: true, devAccount: false, returnTo: 'http://127.0.0.1:5173/projects/42' })).toEqual({
+      mode: 'real',
+      authenticated: true,
+      devAccount: false,
+      returnTo: 'http://127.0.0.1:5173/projects/42',
+    })
+    expect(parseSessionStatus({ authenticated: true, devAccount: false, returnTo: 'https://localhost:48100/x' })).toEqual({
+      mode: 'real',
+      authenticated: true,
+      devAccount: false,
+      returnTo: 'https://localhost:48100/x',
+    })
+  })
+
+  it('returnTo 为 null（被拦截）与缺键（未回答）仍是合法线格式，不被良构校验误伤', () => {
+    expect(parseSessionStatus({ authenticated: true, devAccount: false, returnTo: null })).toEqual({
+      mode: 'real',
+      authenticated: true,
+      devAccount: false,
+      returnTo: null,
+    })
+    expect(parseSessionStatus({ authenticated: true, devAccount: false })).not.toHaveProperty('returnTo')
+  })
 })
 
 describe('createHttpSessionAdapter', () => {

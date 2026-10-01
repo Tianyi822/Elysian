@@ -12,7 +12,21 @@ import { reportUnauthorized } from './unauthorized'
  * Cookie 由浏览器自动携带（Path=/、同源），这里不读也不写任何凭据。
  */
 
-/** 校验 GET /session 响应：authenticated 与 devAccount 都必须是布尔；returnTo 只接受字符串或 null。形状漂移抛中文错误。 */
+/**
+ * returnTo 的良构校验：字符串形态的回跳值必须能解析为绝对 http/https URL，否则视为响应形状漂移。
+ * 只查线格式、不重新裁决——不读白名单、不比 origin、不复制服务端规则；这一层拦的是版本错配
+ * （新前端配旧容器）下的畸形值，避免 LoginPage 渲染期 new URL(adjudicated) 抛错整页白屏。
+ */
+function isWellFormedHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'http:' || url.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+/** 校验 GET /session 响应：authenticated 与 devAccount 都必须是布尔；returnTo 只接受 null 或良构的绝对 http/https URL 字符串。形状漂移抛中文错误。 */
 export function parseSessionStatus(body: unknown): SessionStatus {
   if (!body || typeof body !== 'object') throw new Error('登录状态响应无效')
   const row = body as Record<string, unknown>
@@ -20,8 +34,12 @@ export function parseSessionStatus(body: unknown): SessionStatus {
     throw new Error('登录状态响应无效')
   }
   const returnTo = row['returnTo']
-  if (returnTo !== undefined && returnTo !== null && typeof returnTo !== 'string') {
-    throw new Error('登录状态响应无效')
+  // undefined（缺键，未回答）与 null（被拦截）都是合法线格式；字符串必须是绝对 http/https URL，
+  // 数字/数组/非 URL 串/其它 scheme 一律抛错——probe 会把它吸收成 phase: 'error'。
+  if (returnTo !== undefined && returnTo !== null) {
+    if (typeof returnTo !== 'string' || !isWellFormedHttpUrl(returnTo)) {
+      throw new Error('登录状态响应无效')
+    }
   }
   const status: SessionStatus = { mode: 'real', authenticated: row.authenticated, devAccount: row.devAccount }
   // 缺键时不写该字段：undefined 与「服务端回答被拦截」的 null 是两件事。
