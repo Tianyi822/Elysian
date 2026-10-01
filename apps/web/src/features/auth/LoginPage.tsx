@@ -3,6 +3,7 @@ import type { FormEvent } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { PasswordVisibilityButton } from '../security/passwordFieldParts'
+import { LoadingState } from '../../components/states/StateViews'
 import { useSessionStore } from '../../stores/sessionStore'
 
 /*
@@ -12,6 +13,7 @@ import { useSessionStore } from '../../stores/sessionStore'
  * 会话 store 的一次性提示（如改密成功的「需用新密码重新登录」）在表单上方以 role="status" 展示，
  * 与开发账号提示同位、互不排斥；登录成功由 store 清除。
  * 演示模式（本地无后端）不强制登录：访问 /login 直接回仪表盘。
+ * 回跳由服务端裁决（GET /api/auth/session?returnTo=），本组件只执行 assign，不自行判定地址可否使用。
  */
 
 /** 回跳目标校验：须为以单个 / 开头的站内路径；`//` 与 `/\` 是协议相对跳转，一律回落首页。 */
@@ -29,6 +31,7 @@ export function LoginPage() {
   const mode = useSessionStore((state) => state.mode)
   const devAccount = useSessionStore((state) => state.devAccount)
   const notice = useSessionStore((state) => state.notice)
+  const returnTo = useSessionStore((state) => state.returnTo)
   const probe = useSessionStore((state) => state.probe)
   const login = useSessionStore((state) => state.login)
   const [username, setUsername] = useState('')
@@ -37,13 +40,31 @@ export function LoginPage() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // /login 不在 RequireSession 之内，这里自己探测一次（补齐 devAccount 回显与已登录判定）；
+  const requestedReturnTo = new URLSearchParams(location.search).get('returnTo') ?? undefined
+
+  // /login 不在 RequireSession 之内，这里自己探测一次（补齐 devAccount 回显、已登录判定与服务端回跳裁决）；
   // 演示网关在装配时已同步落位 authed，不会重复探测。
   useEffect(() => {
-    if (useSessionStore.getState().phase === 'unknown') void probe(gateway)
-  }, [probe, gateway])
+    if (useSessionStore.getState().phase === 'unknown') void probe(gateway, requestedReturnTo)
+  }, [probe, gateway, requestedReturnTo])
 
   const target = safeRedirectTarget((location.state as { from?: unknown } | null)?.from)
+  const adjudicated = typeof returnTo === 'string' ? returnTo : null
+
+  // 离开 SPA 的唯一出口：phase 到位且裁决可用时把浏览器送回来源应用。只在 effect 里 assign 一次，
+  // 提交路径不重复调用——phase 变化自然走到这里。
+  useEffect(() => {
+    if (phase === 'authed' && adjudicated !== null) window.location.assign(adjudicated)
+  }, [phase, adjudicated])
+
+  // 已登录且回跳可用：只呈现过渡态，不闪现表单。
+  if (phase === 'authed' && adjudicated !== null) {
+    return (
+      <main className="flex min-h-dvh items-center justify-center bg-bg p-4 text-fg">
+        <LoadingState label="正在返回刚才的应用…" />
+      </main>
+    )
+  }
 
   // 已登录（探测为 authed 或演示模式）访问 /login：按回跳目标送回，无来源则首页。
   if (phase === 'authed' || mode === 'demo') {
@@ -57,8 +78,11 @@ export function LoginPage() {
     setSubmitting(true)
     try {
       await login(gateway, username, password)
-      // phase 已置 authed，上方渲染分支随即按回跳目标导航。
-      navigate(target, { replace: true })
+      // 只有「没有可用的服务端裁决」才走站内导航：有裁决时 phase 变 authed 后由上面的 effect 离开 SPA。
+      // 两条路径必须互斥，否则站内 navigate 与外站 assign 抢同一次跳转，用户会被先送回面板首页。
+      if (adjudicated === null) {
+        navigate(target, { replace: true })
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '登录失败')
       setSubmitting(false)
@@ -74,6 +98,16 @@ export function LoginPage() {
         {devAccount ? (
           <p className="mt-4 rounded-lg border border-warning/40 p-2.5 text-xs text-warning" role="note">
             开发模式已启用固定账号：dev / dev-elysian（仅开发环境可用，生产打包不含此账号）
+          </p>
+        ) : null}
+
+        {adjudicated !== null ? (
+          <p role="note" className="mt-4 rounded-lg border border-line p-2.5 text-xs text-fg-muted">
+            {`登录后将返回 ${new URL(adjudicated).origin}`}
+          </p>
+        ) : requestedReturnTo !== undefined && returnTo === null ? (
+          <p role="alert" className="mt-4 rounded-lg border border-warning/40 p-2.5 text-xs text-warning">
+            回跳地址不在允许名单，登录后将留在面板。
           </p>
         ) : null}
 

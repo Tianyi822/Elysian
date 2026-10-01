@@ -1,8 +1,8 @@
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockGateway } from '../../adapters/mock/gateway'
-import type { ElysianGateway, SessionAdapter } from '../../contracts/adapters'
+import type { ElysianGateway, SessionAdapter, SessionStatus } from '../../contracts/adapters'
 import { useSessionStore } from '../../stores/sessionStore'
 import { renderApp } from '../../test/renderApp'
 
@@ -11,11 +11,13 @@ import { renderApp } from '../../test/renderApp'
  * （// 与 /\ 视为外站回落 /）、devAccount 提示出现/不出现、已登录访问 /login 重定向、
  * store 一次性提示（改密后需重新登录）在表单上方展示且登录成功即清除。
  * 注入的 fake session 是事实源：装配 mock 底座后重置会话 store（底座会同步落位演示放行）。
+ * 回跳闭环按服务端裁决的三态分支：字符串=可用（离开 SPA 走 location.assign，只回显 origin）、
+ * null=被拦截（提示后留在站内）、undefined=服务端未回答（不外跳，含演示模式与不带参数的老行为）。
  */
 
 function gatewayWithSession(session: Partial<SessionAdapter>): ElysianGateway {
   const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
-  useSessionStore.setState({ phase: 'unknown', mode: undefined, devAccount: false, notice: null })
+  useSessionStore.setState({ phase: 'unknown', mode: undefined, devAccount: false, notice: null, returnTo: undefined })
   return { ...base, session: session as SessionAdapter }
 }
 
@@ -46,8 +48,54 @@ function anonymousSession(loginImpl?: (username: string, password: string) => vo
   }
 }
 
+/**
+ * 带服务端回跳裁决的 session fake：status 原样回答裁决值，login 成功后转已登录。
+ * authenticated 初值可控，用于「已登录直接回跳」与「登录后回跳」两条路径。
+ */
+function adjudicatedSession(
+  returnTo: string | null | undefined,
+  options: { authenticated?: boolean } = {},
+): SessionAdapter {
+  let authenticated = options.authenticated ?? false
+  return {
+    canView: async () => true,
+    status: async () => ({ mode: 'real', authenticated, devAccount: false, returnTo }),
+    login: async () => {
+      authenticated = true
+    },
+    logout: async () => {
+      authenticated = false
+    },
+    listSessions: async () => [{ createdAt: '2026-01-01T00:00:00.000Z', lastUsedAt: '2026-01-01T00:00:00.000Z', current: true }],
+    changePassword: async () => {
+      throw new Error('演示模式不支持修改面板密码')
+    },
+    logoutOtherSessions: async () => {},
+  }
+}
+
+/**
+ * 替换 window.location：jsdom 的 location.assign 不可重定义（vi.spyOn 抛 Cannot redefine property），
+ * vi.stubGlobal 走 defineProperty 且由 afterEach 的 unstubAllGlobals 自动复原。
+ */
+function stubLocationAssign(): ReturnType<typeof vi.fn> {
+  const assign = vi.fn()
+  vi.stubGlobal('location', {
+    origin: 'http://127.0.0.1:48100',
+    href: 'http://127.0.0.1:48100/login',
+    pathname: '/login',
+    search: '',
+    assign,
+  })
+  return assign
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
 beforeEach(() => {
-  useSessionStore.setState({ phase: 'unknown', mode: undefined, devAccount: false, notice: null })
+  useSessionStore.setState({ phase: 'unknown', mode: undefined, devAccount: false, notice: null, returnTo: undefined })
 })
 
 describe('LoginPage', () => {
@@ -190,5 +238,88 @@ describe('LoginPage', () => {
 
     await waitFor(() => expect(useSessionStore.getState().notice).toBeNull())
     expect(useSessionStore.getState().phase).toBe('authed')
+  })
+
+  it('已登录且服务端裁决通过：渲染过渡态并 assign 回来源应用，不出现表单', async () => {
+    const assign = stubLocationAssign()
+    renderApp('/login?returnTo=http%3A%2F%2F127.0.0.1%3A5173%2Fprojects%2F42', {
+      gateway: gatewayWithSession(adjudicatedSession('http://127.0.0.1:5173/projects/42', { authenticated: true })),
+    })
+    expect(await screen.findByText('正在返回刚才的应用…')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '登录' })).not.toBeInTheDocument()
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('http://127.0.0.1:5173/projects/42'))
+    expect(assign).toHaveBeenCalledTimes(1)
+  })
+
+  it('未登录且裁决通过：只回显 origin，登录成功后 assign 且不做站内导航', async () => {
+    const assign = stubLocationAssign()
+    const user = userEvent.setup()
+    const { router } = renderApp('/login?returnTo=http%3A%2F%2F127.0.0.1%3A5173%2Fprojects%2F42', {
+      gateway: gatewayWithSession(adjudicatedSession('http://127.0.0.1:5173/projects/42')),
+    })
+    expect(await screen.findByText('登录后将返回 http://127.0.0.1:5173')).toBeInTheDocument()
+    await user.type(screen.getByLabelText('用户名'), 'admin')
+    await user.type(screen.getByLabelText('密码'), 'right-password')
+    await user.click(screen.getByRole('button', { name: '登录' }))
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('http://127.0.0.1:5173/projects/42'))
+    expect(router.state.location.pathname).toBe('/login')
+  })
+
+  it('带 returnTo 但裁决为 null：显示被拦截提示，登录后留在站内', async () => {
+    const assign = stubLocationAssign()
+    const user = userEvent.setup()
+    const { router } = renderApp('/login?returnTo=http%3A%2F%2F127.0.0.1%3A9999%2Fx', {
+      gateway: gatewayWithSession(adjudicatedSession(null)),
+    })
+    expect(await screen.findByText('回跳地址不在允许名单，登录后将留在面板。')).toBeInTheDocument()
+    await user.type(screen.getByLabelText('用户名'), 'admin')
+    await user.type(screen.getByLabelText('密码'), 'right-password')
+    await user.click(screen.getByRole('button', { name: '登录' }))
+    await waitFor(() => expect(router.state.location.pathname).toBe('/'))
+    expect(assign).not.toHaveBeenCalled()
+  })
+
+  it('已登录但裁决为 null：按站内路径回落首页，不外跳', async () => {
+    const assign = stubLocationAssign()
+    renderApp('/login?returnTo=http%3A%2F%2F127.0.0.1%3A9999%2Fx', {
+      gateway: gatewayWithSession(adjudicatedSession(null, { authenticated: true })),
+    })
+    await waitFor(() => expect(useSessionStore.getState().phase).toBe('authed'))
+    expect(assign).not.toHaveBeenCalled()
+  })
+
+  it('不带 returnTo 时行为不变：已登录回首页、不呈现任何回跳提示、不 assign', async () => {
+    const assign = stubLocationAssign()
+    const { router } = renderApp('/login', {
+      gateway: gatewayWithSession(adjudicatedSession(undefined, { authenticated: true })),
+    })
+    await waitFor(() => expect(router.state.location.pathname).toBe('/'))
+    expect(screen.queryByText(/登录后将返回/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/回跳地址不在允许名单/)).not.toBeInTheDocument()
+    expect(assign).not.toHaveBeenCalled()
+  })
+
+  it('演示模式带 returnTo 也不外跳（mock 不回答裁决值）', async () => {
+    const assign = stubLocationAssign()
+    const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+    renderApp('/login?returnTo=http%3A%2F%2F127.0.0.1%3A5173%2Fx', { gateway: base })
+    await waitFor(() => expect(useSessionStore.getState().mode).toBe('demo'))
+    expect(assign).not.toHaveBeenCalled()
+  })
+
+  it('回跳地址只在探测请求里交给服务端，本组件不参与判定', async () => {
+    // 裁决值只在收到原始参数时才回可用：页面漏传参数或改传字面量都会退化成被拦截提示。
+    const status = vi.fn(async (returnTo?: string): Promise<SessionStatus> => ({
+      mode: 'real',
+      authenticated: false,
+      devAccount: false,
+      returnTo: returnTo === 'http://127.0.0.1:5173/projects/42' ? returnTo : null,
+    }))
+    renderApp('/login?returnTo=http%3A%2F%2F127.0.0.1%3A5173%2Fprojects%2F42', {
+      gateway: gatewayWithSession({ ...adjudicatedSession(null), status }),
+    })
+    await waitFor(() => expect(status).toHaveBeenCalledWith('http://127.0.0.1:5173/projects/42'))
+    expect(await screen.findByText('登录后将返回 http://127.0.0.1:5173')).toBeInTheDocument()
+    expect(screen.queryByText('回跳地址不在允许名单，登录后将留在面板。')).not.toBeInTheDocument()
   })
 })
