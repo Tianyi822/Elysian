@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"elysian/server/internal/middleware"
 	"elysian/server/internal/paths"
 	"elysian/server/internal/seam"
 	"elysian/server/internal/shared"
@@ -14,8 +15,11 @@ import (
 
 // 会话校验中间件（authMiddleware.ts 等价物）：装配层把它挂在审计之后、全部域路由
 // 之前——因此 SSE 与三个 WS 升级端点在升级/开流之前先过鉴权，401 以普通 HTTP 响应
-// 短路返回。豁免判定：先剥**单个**尾部斜杠再对四条路径精确匹配（StripTailSlash 已在
-// 更外层剥过一次，这里再剥一次与 TS isAuthExemptPath 自剥同口径）。
+// 短路返回。豁免判定：对**原始入站路径**剥单个尾部斜杠后精确匹配四条——TS 侧没有
+// 剥斜杠中间件、requireSession 收到原始路径，isAuthExemptPath 只自剥一层；Go 装配栈
+// 的 StripTailSlash 已在外层剥过一层，这里经 InboundPath 取回剥前路径判定，不得对
+// 已剥路径二次剥层（否则 /api/auth/login// 双斜杠形被误判为豁免，无会话请求越过
+// 401 闸门）。独立挂载（上游无 StripTailSlash）时 r.URL.Path 即原始路径。
 //
 // 请求经手次序：401（鉴权）→ 503（各片可用性）→ 403（同源）→ 端点 → 404。鉴权先于
 // 可用性是显式决定：不向未登录方暴露各片可用性事实。
@@ -107,7 +111,7 @@ func (r resolvedDeps) currentPwdEpoch() (string, error) {
 
 // RequireSession app 级会话校验中间件（go-plan §3.8 冻结签名）：
 //   - Enabled=false（测试/无鉴权演示注入）直接放行；
-//   - 豁免路径（剥单尾斜杠后精确匹配四条）放行；
+//   - 豁免路径（原始入站路径剥单尾斜杠后精确匹配四条）放行；
 //   - Cookie 解析（seam.ParseSessionCookie，取最后一个 elysian_session 段）失败 → 401；
 //   - 每次直读凭据取 epoch，sessions.validate 失败 → 401；统一 {"error":"未登录或会话已过期"}。
 //
@@ -117,7 +121,14 @@ func RequireSession(deps Deps) func(http.Handler) http.Handler {
 	resolved := resolveDeps(deps)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !resolved.enabled || IsAuthExemptPath(r.URL.Path) {
+			// 豁免判定以剥斜杠前的原始入站路径为准（对齐 TS requireSession 收到原始
+			// 路径）：StripTailSlash 剥掉的一层经 InboundPath 取回，避免二次剥层把
+			// /api/auth/login// 误判为豁免。
+			exemptPath := r.URL.Path
+			if raw, ok := middleware.InboundPath(r); ok {
+				exemptPath = raw
+			}
+			if !resolved.enabled || IsAuthExemptPath(exemptPath) {
 				next.ServeHTTP(w, r)
 				return
 			}

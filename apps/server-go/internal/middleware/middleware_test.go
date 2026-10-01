@@ -13,13 +13,16 @@ import (
 
 // recordingHandler 记录中间件改写后的请求形状。
 type recordingHandler struct {
-	path   string
-	called bool
+	path       string
+	called     bool
+	inbound    string
+	hasInbound bool
 }
 
 func (h *recordingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.called = true
 	h.path = r.URL.Path
+	h.inbound, h.hasInbound = InboundPath(r)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -85,6 +88,27 @@ func TestStripTailSlash(t *testing.T) {
 			}
 		})
 	}
+}
+
+// 剥层发生时把剥前原始路径存进请求上下文：鉴权豁免判定（RequireSession）必须以
+// TS requireSession 收到的原始路径为准，不得在已剥路径上二次剥层。
+func TestStripTailSlashStashesInboundPath(t *testing.T) {
+	t.Run("剥层时上下文带剥前原始路径", func(t *testing.T) {
+		h := &recordingHandler{}
+		StripTailSlash(h).ServeHTTP(httptest.NewRecorder(),
+			httptest.NewRequest(http.MethodGet, "/api/auth/login//", nil))
+		if !h.hasInbound || h.inbound != "/api/auth/login//" {
+			t.Errorf("InboundPath = (%q, %v)，期望 (%q, true)", h.inbound, h.hasInbound, "/api/auth/login//")
+		}
+	})
+	t.Run("未剥层不写 InboundPath", func(t *testing.T) {
+		h := &recordingHandler{}
+		StripTailSlash(h).ServeHTTP(httptest.NewRecorder(),
+			httptest.NewRequest(http.MethodGet, "/api/auth/login", nil))
+		if h.hasInbound {
+			t.Errorf("未剥层不应写 InboundPath，实际 %q", h.inbound)
+		}
+	})
 }
 
 func TestSameOrigin(t *testing.T) {

@@ -187,6 +187,38 @@ func TestRequireSessionExemptPaths(t *testing.T) {
 	}
 }
 
+// 双尾斜杠形不放行（authConfig.test.ts:32 锚点的装配端对齐）：TS requireSession 收到
+// 原始未归一路径，isAuthExemptPath 剥单个尾斜杠后 /api/auth/login// 不在豁免清单，
+// 无会话必 401。Go 装配栈里 StripTailSlash 已剥一层，豁免判定必须以剥前原始路径为准；
+// 曾因对已剥路径二次剥层把 /api/auth/login// 误判为豁免——无会话请求越过 401 闸门、
+// 最终在路由层落到 404 而非 TS 的 401，本组用例钉死回归。
+func TestRequireSession双尾斜杠形不放行(t *testing.T) {
+	client, _ := newWiringFixture(t, nil)
+	for _, item := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/health//"},
+		{http.MethodPost, "/api/auth/login//"},
+		{http.MethodGet, "/api/auth/session//"},
+		{http.MethodPost, "/api/auth/logout//"},
+	} {
+		var recorder *httptest.ResponseRecorder
+		if item.method == http.MethodGet {
+			recorder = client.get(item.path, "")
+		} else {
+			recorder = client.post(item.path, "")
+		}
+		if recorder.Code != http.StatusUnauthorized {
+			t.Errorf("%s %s 状态码 = %d，期望 401（双尾斜杠不在豁免清单）", item.method, item.path, recorder.Code)
+			continue
+		}
+		if !strings.Contains(recorder.Body.String(), `"error":"未登录或会话已过期"`) {
+			t.Errorf("%s %s 响应体 = %s", item.method, item.path, recorder.Body.String())
+		}
+	}
+}
+
 func TestRequireSessionPassesWithCookie(t *testing.T) {
 	client, _ := newWiringFixture(t, nil)
 	login := client.postJSON("/api/auth/login", `{"username":"admin","password":"e2e-password"}`, "")

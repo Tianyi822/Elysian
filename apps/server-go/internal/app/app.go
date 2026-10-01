@@ -9,7 +9,8 @@
 //	databases → websites → /api 兜底 404（纯文本）→ 非 /api SPA。
 //
 // OperationAudit 在 RequireSession 之前（401 也落审计），RequireSession 挡全部片
-// （豁免恰好四条：/api/health 与 auth 三端点，先剥单个尾斜杠再精确匹配）。挂载次序
+// （豁免恰好四条：/api/health 与 auth 三端点，以 StripTailSlash 剥层前的原始路径剥
+// 单个尾斜杠后精确匹配——双尾斜杠形不在豁免清单，无会话必 401）。挂载次序
 // 对齐 TS app.ts:153-216 的同一次序。
 package app
 

@@ -274,6 +274,36 @@ func Test整片503不记操作日志(t *testing.T) {
 	}
 }
 
+// 鉴权豁免双尾斜杠不放行（authConfig.test.ts:32 锚点在真实装配栈的对齐）：TS
+// requireSession 收到原始未归一路径，双尾斜杠形剥单个尾斜杠后不在豁免清单、无会话
+// 必 401；StripTailSlash 与豁免判定若各自剥一层会把双斜杠误判为豁免——无会话请求
+// 越过 401 闸门、最终落到路由层 404 而非 TS 的 401，本锚点钉死豁免判定以剥前原始
+// 路径为准。
+func Test鉴权豁免双尾斜杠不放行(t *testing.T) {
+	handler := newAssemblyHandler(t, &fakeLogsService{}, auth.Deps{Enabled: true})
+	for _, item := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/health//"},
+		{http.MethodGet, "/api/auth/session//"},
+		{http.MethodPost, "/api/auth/login//"},
+		{http.MethodPost, "/api/auth/logout//"},
+	} {
+		var req *http.Request
+		if item.method == http.MethodPost {
+			req = sameOriginRequest(item.method, item.path, "")
+		} else {
+			req = httptest.NewRequest(item.method, item.path, nil)
+		}
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s %s 状态码 = %d，期望 401（双尾斜杠不在豁免清单）", item.method, item.path, rec.Code)
+		}
+	}
+}
+
 func Test登录会话登出最小链路(t *testing.T) {
 	fake := &fakeLogsService{}
 	handler := newAssemblyHandler(t, fake, auth.Deps{Enabled: true, DevAccount: true})

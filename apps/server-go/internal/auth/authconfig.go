@@ -68,7 +68,9 @@ var AuthExemptPaths = []string{
 }
 
 // IsAuthExemptPath 豁免判定：剥单个尾斜杠后精确匹配四条豁免路径（authConfig.test.ts
-// 锚点：/api/auth/login//、/api/auth/loginx、/api/auth 等近形路径不放行）。
+// 锚点：/api/auth/login//、/api/auth/loginx、/api/auth 等近形路径不放行）。调用方必须
+// 传原始入站路径——装配栈里经 middleware.InboundPath 取回剥前路径（RequireSession），
+// 对 StripTailSlash 已剥过的路径调用会多还原一层，把双尾斜杠形误判为豁免。
 func IsAuthExemptPath(path string) bool {
 	normalized := path
 	if len(path) > 1 && path[len(path)-1] == '/' {
