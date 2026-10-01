@@ -42,6 +42,8 @@ export const ELYSIAN_PATHS = {
   sshRootPasswordResetAt: join(ELYSIAN_STATE_DIR, 'ssh-root-password-reset-at'),
   /** 面板登录凭据（单用户 admin，scrypt 哈希，0600）。 */
   panelCredentials: join(ELYSIAN_CONFIG_DIR, 'panel-credentials.json'),
+  /** 单点登录的回跳白名单（用户手写、面板只读；缺失即不开放跳转）。 */
+  ssoReturnOrigins: join(ELYSIAN_CONFIG_DIR, 'sso-return-origins.json'),
   /** 面板会话文件（服务端权威，0600）：重启不掉线、改密即全失效的载体。 */
   panelSessions: join(ELYSIAN_STATE_DIR, 'panel-sessions.json'),
   websiteRuntimeCatalog: join(ELYSIAN_STATE_DIR, 'website-runtime-catalog.json'),

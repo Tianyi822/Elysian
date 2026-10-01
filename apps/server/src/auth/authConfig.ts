@@ -74,3 +74,12 @@ export const LOGIN_FIELD_MAX_LENGTH = 256
 
 /** 回跳地址长度上限：远超人类可读 URL，只挡滥用（与 LOGIN_FIELD_MAX_LENGTH 同纪律）。 */
 export const RETURN_TO_MAX_LENGTH = 2048
+
+/** 回跳白名单整表不可用时的中文诊断前缀（经 console.error 落 stderr）。 */
+export const SSO_ORIGINS_UNAVAILABLE = 'Elysian 回跳白名单不可用'
+
+/** 回跳白名单里单项无效被丢弃时的中文诊断前缀。 */
+export const SSO_ORIGIN_IGNORED = 'Elysian 回跳白名单忽略无效项'
+
+/** 回跳白名单文件体积上限：几行 origin 远小于此，超限视为不可用（与凭据文件同纪律）。 */
+export const RETURN_ORIGINS_MAX_BYTES = 16 * 1024
