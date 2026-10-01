@@ -45,4 +45,12 @@ describe('parseSessionCookie', () => {
     expect(parseSessionCookie(null)).toBeNull()
     expect(parseSessionCookie(undefined)).toBeNull()
   })
+
+  it('多条同名 Cookie 取最后一个匹配：更深层 Path 植入的首条无法遮蔽面板真会话', () => {
+    // 浏览器按 path 长度降序回送同名 Cookie，面板自身 Path=/ 的 Cookie 恒排同名
+    // 最后，取末个匹配即免疫更深层植入的遮蔽。
+    expect(parseSessionCookie('elysian_session=attacker; other=1; elysian_session=real')).toBe('real')
+    // 末条命中为空串时维持既有语义：回 null。
+    expect(parseSessionCookie('elysian_session=real; elysian_session=')).toBeNull()
+  })
 })

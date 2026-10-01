@@ -27,17 +27,23 @@ export type SessionAuth = {
 /**
  * 解析 Cookie 头里的会话 id：按 `;` 分段、去首空格后找 `elysian_session=` 前缀，
  * 不引任何依赖。无 Cookie 头（Hono 取不到时是 undefined）或没有该键回 null。
+ *
+ * 取**最后一个**匹配而非首条：浏览器回送同名 Cookie 时按 path 长度降序排列，
+ * 更深层 Path 植入的条目排在前、面板自身 Path=/ 的 Cookie 恒排同名最后（HttpOnly
+ * 拦截同 name+domain+path 的 JS 覆写，攻击者拿不到排位更后的条目）。取末个匹配
+ * 即天然免疫更深层 Path 的植入 Cookie 遮蔽面板真会话；末条命中为空串仍回 null。
  */
 export function parseSessionCookie(cookieHeader: string | null | undefined): string | null {
   if (cookieHeader === null || cookieHeader === undefined) return null
+  let matched: string | null = null
   for (const part of cookieHeader.split(';')) {
     const trimmed = part.trim()
     if (trimmed.startsWith(`${SESSION_COOKIE_NAME}=`)) {
       const value = trimmed.slice(SESSION_COOKIE_NAME.length + 1)
-      return value === '' ? null : value
+      matched = value === '' ? null : value
     }
   }
-  return null
+  return matched
 }
 
 /** 豁免判定：剥单个尾斜杠后精确匹配四条豁免路径。 */
