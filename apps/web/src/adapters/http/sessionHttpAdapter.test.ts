@@ -35,6 +35,27 @@ describe('parseSessionStatus', () => {
       '登录状态响应无效',
     )
   })
+
+  it('服务端回答 returnTo 时原样保留；缺键时不含该字段', () => {
+    expect(parseSessionStatus({ authenticated: true, devAccount: false, returnTo: 'http://127.0.0.1:5173/x' })).toEqual({
+      mode: 'real',
+      authenticated: true,
+      devAccount: false,
+      returnTo: 'http://127.0.0.1:5173/x',
+    })
+    expect(parseSessionStatus({ authenticated: true, devAccount: false, returnTo: null })).toEqual({
+      mode: 'real',
+      authenticated: true,
+      devAccount: false,
+      returnTo: null,
+    })
+    expect(parseSessionStatus({ authenticated: true, devAccount: false })).not.toHaveProperty('returnTo')
+  })
+
+  it('returnTo 形状漂移（数字、数组）抛「登录状态响应无效」', () => {
+    expect(() => parseSessionStatus({ authenticated: true, devAccount: false, returnTo: 1 })).toThrow('登录状态响应无效')
+    expect(() => parseSessionStatus({ authenticated: true, devAccount: false, returnTo: ['x'] })).toThrow('登录状态响应无效')
+  })
 })
 
 describe('createHttpSessionAdapter', () => {
@@ -44,6 +65,24 @@ describe('createHttpSessionAdapter', () => {
     const status = await createHttpSessionAdapter().status()
     expect(fetchMock).toHaveBeenCalledWith('/api/auth/session', { cache: 'no-store' })
     expect(status).toEqual({ mode: 'real', authenticated: false, devAccount: true })
+  })
+
+  it('status 带 returnTo 时以编码后的查询串请求，未带或空串时 URL 不含问号', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ authenticated: true, devAccount: false, returnTo: 'http://127.0.0.1:5173/x' }))
+    vi.stubGlobal('fetch', fetchMock)
+    const status = await createHttpSessionAdapter().status('http://127.0.0.1:5173/x')
+    expect(fetchMock).toHaveBeenCalledWith('/api/auth/session?returnTo=http%3A%2F%2F127.0.0.1%3A5173%2Fx', { cache: 'no-store' })
+    expect(status.returnTo).toBe('http://127.0.0.1:5173/x')
+
+    const plain = vi.fn(async () => jsonResponse({ authenticated: false, devAccount: false }))
+    vi.stubGlobal('fetch', plain)
+    await createHttpSessionAdapter().status()
+    expect(plain).toHaveBeenCalledWith('/api/auth/session', { cache: 'no-store' })
+
+    const blank = vi.fn(async () => jsonResponse({ authenticated: false, devAccount: false }))
+    vi.stubGlobal('fetch', blank)
+    await createHttpSessionAdapter().status('')
+    expect(blank).toHaveBeenCalledWith('/api/auth/session', { cache: 'no-store' })
   })
 
   it('canView 跟随 status 的 authenticated', async () => {

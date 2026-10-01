@@ -15,6 +15,11 @@ export function runSessionAdapterContract(make: () => SessionAdapter, expectedMo
       expect(typeof status.devAccount).toBe('boolean')
     })
 
+    it('status 带 returnTo 参数调用不抛，authenticated 仍为布尔', async () => {
+      const status = await make().status('http://127.0.0.1:5173/')
+      expect(typeof status.authenticated).toBe('boolean')
+    })
+
     it('canView 回布尔值（页面级权限占位的同一形状）', async () => {
       expect(typeof (await make().canView('dashboard'))).toBe('boolean')
     })

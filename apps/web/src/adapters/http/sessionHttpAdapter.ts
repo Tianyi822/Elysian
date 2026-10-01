@@ -12,14 +12,21 @@ import { reportUnauthorized } from './unauthorized'
  * Cookie 由浏览器自动携带（Path=/、同源），这里不读也不写任何凭据。
  */
 
-/** 校验 GET /session 响应：authenticated 与 devAccount 都必须是布尔，形状漂移抛中文错误。 */
+/** 校验 GET /session 响应：authenticated 与 devAccount 都必须是布尔；returnTo 只接受字符串或 null。形状漂移抛中文错误。 */
 export function parseSessionStatus(body: unknown): SessionStatus {
   if (!body || typeof body !== 'object') throw new Error('登录状态响应无效')
   const row = body as Record<string, unknown>
   if (typeof row.authenticated !== 'boolean' || typeof row.devAccount !== 'boolean') {
     throw new Error('登录状态响应无效')
   }
-  return { mode: 'real', authenticated: row.authenticated, devAccount: row.devAccount }
+  const returnTo = row['returnTo']
+  if (returnTo !== undefined && returnTo !== null && typeof returnTo !== 'string') {
+    throw new Error('登录状态响应无效')
+  }
+  const status: SessionStatus = { mode: 'real', authenticated: row.authenticated, devAccount: row.devAccount }
+  // 缺键时不写该字段：undefined 与「服务端回答被拦截」的 null 是两件事。
+  if (returnTo !== undefined) status.returnTo = returnTo
+  return status
 }
 
 /** 校验 GET /sessions 响应：外层 sessions 数组、每行 createdAt/lastUsedAt 字符串与 current 布尔，漂移抛中文错误。 */
@@ -52,10 +59,12 @@ async function readErrorDetail(response: Response): Promise<string | null> {
 }
 
 export function createHttpSessionAdapter(baseUrl = '/api/auth'): SessionAdapter {
-  const status = async (): Promise<SessionStatus> => {
+  const status = async (returnTo?: string): Promise<SessionStatus> => {
+    // 编码交给 URLSearchParams：冒号与斜杠一律转义，回跳地址不破坏查询串结构。
+    const query = returnTo === undefined || returnTo === '' ? '' : `?${new URLSearchParams({ returnTo }).toString()}`
     let response: Response
     try {
-      response = await fetch(`${baseUrl}/session`, { cache: 'no-store' })
+      response = await fetch(`${baseUrl}/session${query}`, { cache: 'no-store' })
     } catch {
       throw new Error('登录状态检查失败：面板服务不可达')
     }

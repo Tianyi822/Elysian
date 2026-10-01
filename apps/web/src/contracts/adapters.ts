@@ -401,6 +401,8 @@ export type SessionStatus = {
   authenticated: boolean
   /** 服务端开发固定账号当前可用（仅 real 模式可能为 true）。 */
   devAccount: boolean
+  /** 服务端裁决过的回跳地址（仅请求带 returnTo 时回答）：null 表示被拦截，undefined 表示未回答。 */
+  returnTo?: string | null
 }
 
 /** 活跃会话列表的一行（GET /api/auth/sessions）：不含会话 id（不透明凭据不下发），也没有设备信息（服务端不采集）。 */
@@ -427,8 +429,8 @@ export type PanelPasswordChangeInput = {
  */
 export interface SessionAdapter {
   canView(area: PageArea): Promise<boolean>
-  /** 探测当前会话；服务端不可达或响应无效时抛中文错误。 */
-  status(): Promise<SessionStatus>
+  /** 探测当前会话；带 returnTo 时同时请求服务端裁决该回跳地址。服务端不可达或响应无效时抛中文错误。 */
+  status(returnTo?: string): Promise<SessionStatus>
   /** 登录（用户名 + 密码，Cookie 由服务端下发）；失败抛中文 Error（如「用户名或密码错误」），成功无返回。 */
   login(username: string, password: string): Promise<void>
   /** 登出并清除会话 Cookie；幂等。 */

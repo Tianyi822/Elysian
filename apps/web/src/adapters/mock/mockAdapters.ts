@@ -351,7 +351,8 @@ export class MockSessionAdapter implements SessionAdapter {
     return true
   }
 
-  async status(): Promise<SessionStatus> {
+  // 演示模式刻意忽略回跳参数（_returnTo 只声明不使用）且不回答 returnTo：本地无后端时不存在「把浏览器送回外部 origin」这件事。
+  async status(_returnTo?: string): Promise<SessionStatus> {
     return { mode: 'demo', authenticated: true, devAccount: false }
   }
 

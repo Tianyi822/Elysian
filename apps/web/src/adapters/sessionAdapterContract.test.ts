@@ -19,8 +19,9 @@ async function stubAuthServer(input: RequestInfo | URL, init?: RequestInit): Pro
   const method = (init?.method ?? 'GET').toUpperCase()
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
-  if (method === 'GET' && url === '/api/auth/session') return json({ authenticated: true, devAccount: false })
-  if (method === 'GET' && url === '/api/auth/sessions') {
+  const pathname = url.split('?')[0]
+  if (method === 'GET' && pathname === '/api/auth/session') return json({ authenticated: true, devAccount: false })
+  if (method === 'GET' && pathname === '/api/auth/sessions') {
     return json({
       sessions: [
         { createdAt: '2026-01-01T00:00:00.000Z', lastUsedAt: '2026-01-02T00:00:00.000Z', current: true },
@@ -28,10 +29,10 @@ async function stubAuthServer(input: RequestInfo | URL, init?: RequestInit): Pro
       ],
     })
   }
-  if (method === 'POST' && url === '/api/auth/login') return json({ ok: true })
-  if (method === 'POST' && url === '/api/auth/logout') return json({ ok: true })
-  if (method === 'POST' && url === '/api/auth/sessions/logout-others') return json({ ok: true })
-  if (method === 'POST' && url === '/api/auth/password') {
+  if (method === 'POST' && pathname === '/api/auth/login') return json({ ok: true })
+  if (method === 'POST' && pathname === '/api/auth/logout') return json({ ok: true })
+  if (method === 'POST' && pathname === '/api/auth/sessions/logout-others') return json({ ok: true })
+  if (method === 'POST' && pathname === '/api/auth/password') {
     const body = JSON.parse(String(init?.body ?? '{}')) as { newPassword?: string; confirmNewPassword?: string }
     if (body.newPassword !== body.confirmNewPassword) return json({ error: '两次输入的密码不一致' }, 400)
     if ((body.newPassword ?? '').length < 8) return json({ error: '密码至少需要 8 位' }, 400)
@@ -59,6 +60,12 @@ describe('MockSessionAdapter', () => {
     const rows = await adapter.listSessions()
     expect(rows).toHaveLength(1)
     expect(rows[0]!.current).toBe(true)
+  })
+
+  it('实现特有行为：演示模式带 returnTo 调用不回 returnTo 字段（永不外跳）', async () => {
+    const status = await new MockSessionAdapter().status('http://127.0.0.1:5173/x')
+    expect(status).not.toHaveProperty('returnTo')
+    expect(status.mode).toBe('demo')
   })
 })
 
