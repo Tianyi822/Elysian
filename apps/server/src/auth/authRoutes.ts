@@ -12,6 +12,7 @@ import {
   PANEL_USERNAME,
   SESSION_COOKIE_MAX_AGE,
   SESSION_COOKIE_NAME,
+  SSO_ORIGINS_UNAVAILABLE,
   isCookieSecureEnabled,
   isDevAccountEnabled,
 } from './authConfig.ts'
@@ -20,7 +21,7 @@ import { createFileSessionStore, type SessionStore } from './sessionStore.ts'
 import { changePanelPassword } from './passwordChange.ts'
 import { createScryptHasher, type PasswordHasher } from './passwordHasher.ts'
 import { adjudicateReturnTo } from './returnTo.ts'
-import { createFileReturnOriginRegistry, type ReturnOriginRegistry } from './returnOriginRegistry.ts'
+import { createFileReturnOriginRegistry, errorReason, type ReturnOriginRegistry } from './returnOriginRegistry.ts'
 import { currentPwdEpoch, parseSessionCookie } from './authMiddleware.ts'
 
 /*
@@ -204,7 +205,12 @@ export function createAuthApp(deps: AuthAppDeps): Hono {
       return jsonResponse(200, { authenticated, devAccount: deps.devAccount }, { 'cache-control': 'no-store' })
     }
     // 白名单读取自身故障按空表处理：回跳关掉了，但登录与探测照常。
-    const allowed = await deps.returnOrigins.list().catch(() => [] as readonly string[])
+    // 退化不静默：读不到名单又永不跳转恰是最难自查的故障，先落一行与 registry 同前缀的
+    // 中文诊断（带 errno code 或 message）再回空表；响应形状与状态码不受任何影响。
+    const allowed = await deps.returnOrigins.list().catch((error: unknown) => {
+      console.error(`${SSO_ORIGINS_UNAVAILABLE}：会话探测按空表回跳（${errorReason(error)}）`)
+      return [] as readonly string[]
+    })
     return jsonResponse(
       200,
       { authenticated, devAccount: deps.devAccount, returnTo: adjudicateReturnTo(requestedReturnTo, allowed) },

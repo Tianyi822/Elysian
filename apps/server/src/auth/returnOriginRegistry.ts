@@ -42,6 +42,22 @@ function normalizeOrigin(entry: unknown): string | null {
   return url.origin === entry ? entry : null
 }
 
+/**
+ * 从任意抛值安全提取诊断归因：优先 errno code，其次非空 message（字符串抛值本身也算），
+ * 都拿不到回「未知错误」。对 null 等非对象抛值只做 typeof 判断后取属性，绝不二次抛错
+ * 把退化本身变成 reject。导出供 authRoutes 的白名单退化诊断复用，保证归因口径一致。
+ */
+export function errorReason(error: unknown): string {
+  if (typeof error === 'object' && error !== null) {
+    const { code, message } = error as { code?: unknown; message?: unknown }
+    if (typeof code === 'string' && code.length > 0) return code
+    if (typeof message === 'string' && message.length > 0) return message
+    return '未知错误'
+  }
+  if (typeof error === 'string' && error.length > 0) return error
+  return '未知错误'
+}
+
 function unavailable(reason: string): readonly string[] {
   console.error(`${SSO_ORIGINS_UNAVAILABLE}：${reason}`)
   return []
@@ -88,8 +104,7 @@ export function createFileReturnOriginRegistry(path: string = REGISTRY_PATH): Re
         if (stat.size > RETURN_ORIGINS_MAX_BYTES) return unavailable(`超过 ${RETURN_ORIGINS_MAX_BYTES} 字节上限`)
         return parseOrigins(await handle.readFile({ encoding: 'utf8' }))
       } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code
-        return unavailable(`读取或解析失败（${code ?? (error as Error).message ?? '未知错误'}）`)
+        return unavailable(`读取或解析失败（${errorReason(error)}）`)
       } finally {
         await handle.close()
       }

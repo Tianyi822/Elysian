@@ -1,10 +1,10 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { existsSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createAuthApp, type AuthAppDeps } from './authRoutes.ts'
-import { DUMMY_HASH, SESSION_COOKIE_NAME, SESSION_IDLE_TTL_MS } from './authConfig.ts'
+import { DUMMY_HASH, SESSION_COOKIE_NAME, SESSION_IDLE_TTL_MS, SSO_ORIGINS_UNAVAILABLE } from './authConfig.ts'
 import { createFileCredentialsStore, createMemoryCredentialsStore, type CredentialsStore } from './credentialsStore.ts'
 import { createFileSessionStore, createMemorySessionStore } from './sessionStore.ts'
 import { createScryptHasher, type PasswordHasher } from './passwordHasher.ts'
@@ -415,6 +415,8 @@ describe('GET /api/auth/session 的回跳裁决', () => {
 
   it('白名单读取抛错：探测回答不受累，returnTo 按空名单判 null', async () => {
     const { app, cookie } = await sessionApp([TOOL])
+    // 路由退化会落一行诊断（见下一条用例），本用例只锚定行为，静音避免测试输出噪声。
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const broken = createAuthApp({
       enabled: true,
       devAccount: false,
@@ -433,6 +435,33 @@ describe('GET /api/auth/session 的回跳裁决', () => {
     expect(res.status).toBe(200)
     expect((await res.json() as { returnTo: string | null }).returnTo).toBeNull()
     expect((await app.request('http://localhost:5173/session')).status).toBe(200)
+    errors.mockRestore()
+  })
+
+  it('白名单读取 reject 时落一行中文诊断：退化不静默，文案以前缀开头并携带归因', async () => {
+    const { cookie } = await sessionApp([TOOL])
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const broken = createAuthApp({
+      enabled: true,
+      devAccount: false,
+      credentials: createMemoryCredentialsStore(),
+      sessions: createMemorySessionStore(),
+      hasher: createScryptHasher(),
+      returnOrigins: {
+        list: async () => {
+          throw Object.assign(new Error('模拟读取故障'), { code: 'EACCES' })
+        },
+      },
+    })
+    const res = await broken.request(`http://localhost:5173/session?returnTo=${encodeURIComponent(`${TOOL}/x`)}`, {
+      headers: { cookie },
+    })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ authenticated: false, devAccount: false, returnTo: null })
+    expect(errors).toHaveBeenCalledTimes(1)
+    expect(String(errors.mock.calls[0]![0]).startsWith(SSO_ORIGINS_UNAVAILABLE)).toBe(true)
+    expect(errors.mock.calls[0]![0]).toContain('EACCES')
+    errors.mockRestore()
   })
 
   it('enabled:false 的演示语义不回答 returnTo（面板不充当跳转器）', async () => {
@@ -509,6 +538,7 @@ const AUTH_DISABLED_MESSAGE = { error: '鉴权未启用，会话管理不可用'
 let settingsTempDir: string | undefined
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   if (settingsTempDir) await rm(settingsTempDir, { recursive: true, force: true }).catch(() => undefined)
   settingsTempDir = undefined
 })
