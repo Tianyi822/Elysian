@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { FormEvent } from 'react'
+import type { FormEvent, ReactNode } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { PasswordVisibilityButton } from '../security/passwordFieldParts'
@@ -26,6 +26,14 @@ function safeRedirectTarget(from: unknown): string {
   if (typeof from !== 'string') return '/'
   if (!from.startsWith('/') || from.startsWith('//') || from.startsWith('/\\')) return '/'
   return from
+}
+
+/**
+ * 登录页各态共用的居中外壳：错误态、两个过渡态、表单四处都用它。
+ * 一处样式改动只需改这里，不会只落在某一份拷贝上（此前四处手抄同一串 className）。
+ */
+function CenteredShell({ children }: { children: ReactNode }) {
+  return <main className="flex min-h-dvh items-center justify-center bg-bg p-4 text-fg">{children}</main>
 }
 
 export function LoginPage() {
@@ -75,13 +83,13 @@ export function LoginPage() {
   // 重试沿用同一个 returnTo 参数，恢复后照常走下面的分支。
   if (phase === 'error') {
     return (
-      <main className="flex min-h-dvh items-center justify-center bg-bg p-4 text-fg">
+      <CenteredShell>
         <ErrorState
           title="登录状态检查失败"
           description="无法连接面板服务，请确认服务已启动。"
           onRetry={() => void probe(gateway, requestedReturnTo)}
         />
-      </main>
+      </CenteredShell>
     )
   }
 
@@ -90,18 +98,18 @@ export function LoginPage() {
   // 就是规约禁止的闪屏与误跳。不带 returnTo 时不加这一帧，首帧行为与改动前逐字相同。
   if (requestedReturnTo !== undefined && !verdictIsFresh) {
     return (
-      <main className="flex min-h-dvh items-center justify-center bg-bg p-4 text-fg">
+      <CenteredShell>
         <LoadingState label="正在检查登录状态…" />
-      </main>
+      </CenteredShell>
     )
   }
 
   // 已登录且回跳可用：只呈现过渡态，不闪现表单。
   if (phase === 'authed' && adjudicated !== null) {
     return (
-      <main className="flex min-h-dvh items-center justify-center bg-bg p-4 text-fg">
+      <CenteredShell>
         <LoadingState label="正在返回刚才的应用…" />
-      </main>
+      </CenteredShell>
     )
   }
 
@@ -129,7 +137,7 @@ export function LoginPage() {
   }
 
   return (
-    <main className="flex min-h-dvh items-center justify-center bg-bg p-4 text-fg">
+    <CenteredShell>
       <section className="w-full max-w-sm rounded-xl border border-line bg-surface p-6">
         <h1 className="text-lg font-semibold tracking-tight">登录 Elysian</h1>
         <p className="mt-1 text-xs text-fg-muted">运维工作台需要登录后使用。</p>
@@ -210,6 +218,6 @@ export function LoginPage() {
           </button>
         </form>
       </section>
-    </main>
+    </CenteredShell>
   )
 }

@@ -21,7 +21,8 @@ import { createFileSessionStore, type SessionStore } from './sessionStore.ts'
 import { changePanelPassword } from './passwordChange.ts'
 import { createScryptHasher, type PasswordHasher } from './passwordHasher.ts'
 import { adjudicateReturnTo } from './returnTo.ts'
-import { createFileReturnOriginRegistry, errorReason, type ReturnOriginRegistry } from './returnOriginRegistry.ts'
+import { createFileReturnOriginRegistry, type ReturnOriginRegistry } from './returnOriginRegistry.ts'
+import { errorReason } from '../shared/errorReason.ts'
 import { currentPwdEpoch, parseSessionCookie } from './authMiddleware.ts'
 
 /*

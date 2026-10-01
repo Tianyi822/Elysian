@@ -2,6 +2,7 @@ import { constants } from 'node:fs'
 import { open } from 'node:fs/promises'
 import { ALLOWED_HOSTNAMES } from '../shared/allowedHostnames.ts'
 import { ELYSIAN_PATHS } from '../shared/elysianPaths.ts'
+import { errorReason } from '../shared/errorReason.ts'
 import { RETURN_ORIGINS_MAX_BYTES, SSO_ORIGIN_IGNORED, SSO_ORIGINS_UNAVAILABLE } from './authConfig.ts'
 
 /*
@@ -42,22 +43,6 @@ function normalizeOrigin(entry: unknown): string | null {
   return url.origin === entry ? entry : null
 }
 
-/**
- * 从任意抛值安全提取诊断归因：优先 errno code，其次非空 message（字符串抛值本身也算），
- * 都拿不到回「未知错误」。对 null 等非对象抛值只做 typeof 判断后取属性，绝不二次抛错
- * 把退化本身变成 reject。导出供 authRoutes 的白名单退化诊断复用，保证归因口径一致。
- */
-export function errorReason(error: unknown): string {
-  if (typeof error === 'object' && error !== null) {
-    const { code, message } = error as { code?: unknown; message?: unknown }
-    if (typeof code === 'string' && code.length > 0) return code
-    if (typeof message === 'string' && message.length > 0) return message
-    return '未知错误'
-  }
-  if (typeof error === 'string' && error.length > 0) return error
-  return '未知错误'
-}
-
 function unavailable(reason: string): readonly string[] {
   console.error(`${SSO_ORIGINS_UNAVAILABLE}：${reason}`)
   return []
@@ -95,7 +80,7 @@ export function createFileReturnOriginRegistry(path: string = REGISTRY_PATH): Re
         handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code
-        if (code === 'ENOENT' || code === 'ELOOP' || code === 'ENOTDIR') return unavailable(`文件不可读（${code ?? '未知错误'}）`)
+        if (code === 'ENOENT' || code === 'ELOOP' || code === 'ENOTDIR') return unavailable(`文件不可读（${errorReason(error)}）`)
         throw error
       }
       try {

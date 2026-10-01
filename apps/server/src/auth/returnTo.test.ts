@@ -51,9 +51,9 @@ describe('adjudicateReturnTo', () => {
   })
 
   it('反斜杠变形只改变 path，主机仍是名单内的那个', () => {
-    // WHATWG 对 special scheme 把 \ 当路径分隔符：实测归一为 http://127.0.0.1:5173//@evil.example，
-    // 主机停在 127.0.0.1:5173，跳转不出外站。断言只锁「结果 origin 仍是名单内的那个」，
-    // 不钉死斜杠数量——那是 URL 规范的实现细节，钉住它会让计划随解析器版本腐坏。
+    // WHATWG 对 special scheme 把 \ 当路径分隔符：主机因此停在名单里的 127.0.0.1:5173，跳转出不了外站。
+    // 本用例守护的不变量是「结果 origin 仍是名单内的那个」，不钉死归一后 @ 之前有几个斜杠——
+    // 斜杠折叠方式是 URL 解析器的实现细节，钉住它会让测试随解析器版本腐坏。
     const result = adjudicateReturnTo('http://127.0.0.1:5173\\@evil.example', ALLOWED)
     expect(result).not.toBeNull()
     expect(new URL(result as string).origin).toBe('http://127.0.0.1:5173')
