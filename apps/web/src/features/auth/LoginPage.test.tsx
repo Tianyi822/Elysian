@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react'
+import { act, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockGateway } from '../../adapters/mock/gateway'
@@ -13,6 +13,7 @@ import { renderApp } from '../../test/renderApp'
  * 注入的 fake session 是事实源：装配 mock 底座后重置会话 store（底座会同步落位演示放行）。
  * 回跳闭环按服务端裁决的三态分支：字符串=可用（离开 SPA 走 location.assign，只回显 origin）、
  * null=被拦截（提示后留在站内）、undefined=服务端未回答（不外跳，含演示模式与不带参数的老行为）。
+ * 带 returnTo 时探测未落地的首帧是「正在检查登录状态…」过渡态、全程不闪现表单；不带 returnTo 首帧仍是表单。
  */
 
 function gatewayWithSession(session: Partial<SessionAdapter>): ElysianGateway {
@@ -75,17 +76,47 @@ function adjudicatedSession(
 }
 
 /**
+ * 探测在途的 session fake：status 挂起，直到 settle() 显式给出裁决值。
+ * 用于把「probe 未落地的首帧」与「落地后的分支」钉在同一条用例里——
+ * 表单是否只闪现一帧，只有靠这种手动放行才测得出来。
+ */
+function pendingProbeSession(): { session: SessionAdapter; settle: (status: SessionStatus) => void } {
+  let resolve: ((status: SessionStatus) => void) | undefined
+  let settled: SessionStatus | undefined
+  const session: SessionAdapter = {
+    ...adjudicatedSession(undefined),
+    status: () =>
+      new Promise<SessionStatus>((r) => {
+        if (settled) r(settled)
+        else resolve = r
+      }),
+  }
+  return {
+    session,
+    settle(status) {
+      settled = status
+      resolve?.(status)
+    },
+  }
+}
+
+/**
  * 替换 window.location：jsdom 的 location.assign 不可重定义（vi.spyOn 抛 Cannot redefine property），
  * vi.stubGlobal 走 defineProperty 且由 afterEach 的 unstubAllGlobals 自动复原。
+ * 字段按真实 location 补齐：protocol/host 是 ws adapter 拼地址的依据（缺值会静默拼出 ws://undefined），
+ * replace 与 assign 同为整页跳转出口，缺值会在调用处直接抛 TypeError。
  */
 function stubLocationAssign(): ReturnType<typeof vi.fn> {
   const assign = vi.fn()
   vi.stubGlobal('location', {
     origin: 'http://127.0.0.1:48100',
+    protocol: 'http:',
+    host: '127.0.0.1:48100',
     href: 'http://127.0.0.1:48100/login',
     pathname: '/login',
     search: '',
     assign,
+    replace: vi.fn(),
   })
   return assign
 }
@@ -251,6 +282,50 @@ describe('LoginPage', () => {
     expect(assign).toHaveBeenCalledTimes(1)
   })
 
+  it('带 returnTo 且探测未落地：首帧不闪现表单，落地为已登录后才 assign 且全程无表单', async () => {
+    const assign = stubLocationAssign()
+    const { session, settle } = pendingProbeSession()
+    renderApp('/login?returnTo=http%3A%2F%2F127.0.0.1%3A5173%2Fprojects%2F42', {
+      gateway: gatewayWithSession(session),
+    })
+    // 探测在途：只有过渡态，表单（含「登录」按钮）一帧都不出现
+    expect(screen.getByRole('status')).toHaveTextContent('正在检查登录状态…')
+    expect(screen.queryByRole('button', { name: '登录' })).not.toBeInTheDocument()
+    expect(assign).not.toHaveBeenCalled()
+
+    await act(async () => {
+      settle({ mode: 'real', authenticated: true, devAccount: false, returnTo: 'http://127.0.0.1:5173/projects/42' })
+    })
+    expect(await screen.findByText('正在返回刚才的应用…')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '登录' })).not.toBeInTheDocument()
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('http://127.0.0.1:5173/projects/42'))
+    expect(assign).toHaveBeenCalledTimes(1)
+  })
+
+  it('带 returnTo 且探测未落地：裁决为 null 时表单与被拦截提示随探测一起出现', async () => {
+    const assign = stubLocationAssign()
+    const { session, settle } = pendingProbeSession()
+    renderApp('/login?returnTo=http%3A%2F%2F127.0.0.1%3A9999%2Fx', { gateway: gatewayWithSession(session) })
+    expect(screen.queryByRole('button', { name: '登录' })).not.toBeInTheDocument()
+
+    await act(async () => {
+      settle({ mode: 'real', authenticated: false, devAccount: false, returnTo: null })
+    })
+    expect(await screen.findByRole('button', { name: '登录' })).toBeInTheDocument()
+    expect(screen.getByText('回跳地址不在允许名单，登录后将留在面板。')).toBeInTheDocument()
+    expect(assign).not.toHaveBeenCalled()
+  })
+
+  it('不带 returnTo 且探测未落地：首帧仍是表单，不新增加载帧', () => {
+    const assign = stubLocationAssign()
+    const { session } = pendingProbeSession()
+    renderApp('/login', { gateway: gatewayWithSession(session) })
+    expect(screen.getByRole('heading', { level: 1, name: '登录 Elysian' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '登录' })).toBeInTheDocument()
+    expect(screen.queryByText('正在检查登录状态…')).not.toBeInTheDocument()
+    expect(assign).not.toHaveBeenCalled()
+  })
+
   it('未登录且裁决通过：只回显 origin，登录成功后 assign 且不做站内导航', async () => {
     const assign = stubLocationAssign()
     const user = userEvent.setup()
@@ -262,6 +337,8 @@ describe('LoginPage', () => {
     await user.type(screen.getByLabelText('密码'), 'right-password')
     await user.click(screen.getByRole('button', { name: '登录' }))
     await waitFor(() => expect(assign).toHaveBeenCalledWith('http://127.0.0.1:5173/projects/42'))
+    // 唯一出口在 effect：提交路径自身不再 assign，否则站内 navigate 与外站 assign 会抢同一次跳转。
+    expect(assign).toHaveBeenCalledTimes(1)
     expect(router.state.location.pathname).toBe('/login')
   })
 

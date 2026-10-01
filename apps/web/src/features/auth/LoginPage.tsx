@@ -14,6 +14,7 @@ import { useSessionStore } from '../../stores/sessionStore'
  * 与开发账号提示同位、互不排斥；登录成功由 store 清除。
  * 演示模式（本地无后端）不强制登录：访问 /login 直接回仪表盘。
  * 回跳由服务端裁决（GET /api/auth/session?returnTo=），本组件只执行 assign，不自行判定地址可否使用。
+ * 带 returnTo 时探测在途与回跳在途都只渲染过渡态，绝不闪现登录表单；不带 returnTo 首帧仍是表单。
  */
 
 /** 回跳目标校验：须为以单个 / 开头的站内路径；`//` 与 `/\` 是协议相对跳转，一律回落首页。 */
@@ -56,6 +57,17 @@ export function LoginPage() {
   useEffect(() => {
     if (phase === 'authed' && adjudicated !== null) window.location.assign(adjudicated)
   }, [phase, adjudicated])
+
+  // 带 returnTo 时探测未落地一律渲染过渡态：真实会话下 status 要等一次 /api/auth/session 往返，
+  // 从来源应用跳进来的已登录用户若先看到表单，就是规约禁止的闪屏。
+  // 不带 returnTo 时不加这一帧，首帧行为与改动前逐字相同。
+  if (phase === 'unknown' && requestedReturnTo !== undefined) {
+    return (
+      <main className="flex min-h-dvh items-center justify-center bg-bg p-4 text-fg">
+        <LoadingState label="正在检查登录状态…" />
+      </main>
+    )
+  }
 
   // 已登录且回跳可用：只呈现过渡态，不闪现表单。
   if (phase === 'authed' && adjudicated !== null) {
