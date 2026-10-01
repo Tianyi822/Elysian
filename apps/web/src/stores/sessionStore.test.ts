@@ -18,7 +18,7 @@ function statusOf(partial: Partial<SessionStatus>): SessionStatus {
 }
 
 beforeEach(() => {
-  useSessionStore.setState({ phase: 'unknown', mode: undefined, devAccount: false, notice: null })
+  useSessionStore.setState({ phase: 'unknown', mode: undefined, devAccount: false, notice: null, returnTo: undefined })
 })
 
 describe('sessionStore.probe', () => {
@@ -48,6 +48,52 @@ describe('sessionStore.probe', () => {
     })
     await useSessionStore.getState().probe(gateway)
     expect(useSessionStore.getState().phase).toBe('error')
+  })
+
+  it('带 returnTo 探测时保存服务端裁决值，并原样把参数交给 adapter', async () => {
+    const seen: (string | undefined)[] = []
+    const gateway = gatewayWithSession({
+      status: async (returnTo) => {
+        seen.push(returnTo)
+        return statusOf({ authenticated: true, returnTo: 'http://127.0.0.1:5173/x' })
+      },
+    })
+    await useSessionStore.getState().probe(gateway, 'http://127.0.0.1:5173/x')
+    expect(seen).toEqual(['http://127.0.0.1:5173/x'])
+    expect(useSessionStore.getState().returnTo).toBe('http://127.0.0.1:5173/x')
+  })
+
+  it('服务端回答 null（被拦截）时保存 null，与未回答的 undefined 可区分', async () => {
+    const gateway = gatewayWithSession({ status: async () => statusOf({ authenticated: false, returnTo: null }) })
+    await useSessionStore.getState().probe(gateway, 'http://evil.example')
+    expect(useSessionStore.getState().returnTo).toBeNull()
+  })
+
+  it('不带参数探测时清掉旧的裁决值', async () => {
+    useSessionStore.setState({ returnTo: 'http://127.0.0.1:5173/x' })
+    const gateway = gatewayWithSession({ status: async () => statusOf({ authenticated: true }) })
+    await useSessionStore.getState().probe(gateway)
+    expect(useSessionStore.getState().returnTo).toBeUndefined()
+  })
+
+  it('expire 与 logout 都不清 returnTo（它是服务端事实，与会话有效性无关）', async () => {
+    useSessionStore.setState({ returnTo: 'http://127.0.0.1:5173/x' })
+    useSessionStore.getState().expire()
+    expect(useSessionStore.getState().returnTo).toBe('http://127.0.0.1:5173/x')
+    await useSessionStore.getState().logout(gatewayWithSession({ logout: async () => {} }))
+    expect(useSessionStore.getState().returnTo).toBe('http://127.0.0.1:5173/x')
+  })
+
+  it('探测抛错落 error 时不动 returnTo', async () => {
+    useSessionStore.setState({ returnTo: 'http://127.0.0.1:5173/x' })
+    const gateway = gatewayWithSession({
+      status: async () => {
+        throw new Error('登录状态检查失败：面板服务不可达')
+      },
+    })
+    await useSessionStore.getState().probe(gateway)
+    expect(useSessionStore.getState().phase).toBe('error')
+    expect(useSessionStore.getState().returnTo).toBe('http://127.0.0.1:5173/x')
   })
 })
 
