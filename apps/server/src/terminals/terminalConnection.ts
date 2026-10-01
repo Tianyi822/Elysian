@@ -1,5 +1,6 @@
 import { parseTerminalClientFrame } from './terminalFrames.ts'
 import type { TerminalDisposeCause, TerminalSession, TerminalSessionEvents, TerminalsService } from './terminalsService.ts'
+import { SESSION_REVOKED_CLOSE_CODE, SESSION_REVOKED_CLOSE_REASON, type SessionConnections } from '../auth/sessionConnections.ts'
 
 /*
  * WS 连接胶水：把 hono/Bun 的 WebSocket 事件（open/message/close）接到会话服务上。
@@ -54,8 +55,20 @@ function bufferedBytes(conn: WsConn): number {
   return typeof buffered === 'number' ? buffered : 0
 }
 
-export function createTerminalWsEvents(service: TerminalsService): TerminalWsEvents {
+/**
+ * 会话撤销接线（可选）：升级请求携带有效会话 id 时由 /ws 路由传入。onOpen 成功建
+ * 会话后把「关闭本连接」的 closer 登记进撤销表；登出/改密/退出其他会话触发 revoke
+ * 时，已建立的终端连接立即关闭而不是存活到自然断开。onClose 注销收口。
+ */
+export type TerminalRevocation = {
+  sessionId: string
+  connections: SessionConnections
+}
+
+export function createTerminalWsEvents(service: TerminalsService, revocation?: TerminalRevocation): TerminalWsEvents {
   const sessions = new WeakMap<object, TerminalSession>()
+  // 撤销 closer 账本：与 sessions 同键（底层 socket），onClose 时取出注销。
+  const revokers = new WeakMap<object, () => void>()
 
   /** 会话账本键：底层 socket（raw）优先——同一连接的每个事件都是新的 WSContext 包装。 */
   function keyOf(conn: WsConn): object {
@@ -99,11 +112,24 @@ export function createTerminalWsEvents(service: TerminalsService): TerminalWsEve
       try {
         const session = service.tryOpen(eventsFor(conn))
         if (!session) {
-          // 并发已达上限：不建 PTY，直接 1008 拒绝。
+          // 并发已达上限：不建 PTY，直接 1008 拒绝；未建会话也不登记撤销 closer。
           conn.close(TERMINAL_VIOLATION_CLOSE_CODE, TERMINAL_LIMIT_REASON)
           return
         }
         sessions.set(keyOf(conn), session)
+        if (revocation) {
+          // closer 先把自己摘出撤销表再关闭连接：撤销是一次性的，重复 revoke 不重复关闭。
+          const closer = () => {
+            revocation.connections.unregister(revocation.sessionId, closer)
+            try {
+              conn.close(SESSION_REVOKED_CLOSE_CODE, SESSION_REVOKED_CLOSE_REASON)
+            } catch {
+              // 已关闭的连接再次 close：忽略。
+            }
+          }
+          revocation.connections.register(revocation.sessionId, closer)
+          revokers.set(keyOf(conn), closer)
+        }
       } catch (error) {
         conn.close(1011, `终端会话建立失败：${error instanceof Error ? error.message : String(error)}`)
       }
@@ -133,9 +159,18 @@ export function createTerminalWsEvents(service: TerminalsService): TerminalWsEve
       }
     },
     onClose(_evt, conn) {
-      const session = sessions.get(keyOf(conn))
+      // 撤销 closer 先于会话清理注销：连接已亡，后续 revoke 不再触碰它。
+      const key = keyOf(conn)
+      if (revocation) {
+        const revoker = revokers.get(key)
+        if (revoker) {
+          revocation.connections.unregister(revocation.sessionId, revoker)
+          revokers.delete(key)
+        }
+      }
+      const session = sessions.get(key)
       if (!session) return
-      sessions.delete(keyOf(conn))
+      sessions.delete(key)
       disposeQuietly(session, 'client-close')
     },
   }

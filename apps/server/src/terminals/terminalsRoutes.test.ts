@@ -1,15 +1,24 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Hono } from 'hono'
 import { TERMINAL_MOUNT, createTerminalsApp, type TerminalsAppDeps } from './terminalsRoutes.ts'
+import { bunWebSocket } from './bunWebSocket.ts'
+import type { TerminalWsEvents, WsConn } from './terminalConnection.ts'
+import type { SessionConnections } from '../auth/sessionConnections.ts'
 import type { TerminalsService } from './terminalsService.ts'
 
 /*
  * 终端路由的守卫链测试：fake service 注入，app.request 驱动。503 整片（含未知
  * 路径）、/status 200、/ws 升级前同源校验矩阵（Origin 缺失/host 不一致/Host 不在
  * 名单）、未知路径 404 剥前缀文案。升级分支本身不进 vitest（upgradeWebSocket
- * 依赖 Bun server 实例），由 bun 冒烟覆盖——这是防「假满足」的前置短路形态的
- * 代价与纪律。
+ * 依赖 Bun server 实例）——合法升级的撤销接线用 vi.mock bunWebSocket 钉死传参，
+ * 真实升级后 revoke 触发 close 由容器内冒烟（terminalsWiring.bun.test.ts）覆盖。
  */
+
+// 文件级 mock：vi.mock 对路由 handler 内的动态 import 同样生效；既有用例全部短路
+// 在升级之前（403/503/404），不受影响。
+vi.mock('./bunWebSocket.ts', () => ({
+  bunWebSocket: { upgradeWebSocket: vi.fn(async () => new Response(null, { status: 200 })) },
+}))
 
 function createFakeService(): TerminalsService {
   return {
@@ -120,5 +129,82 @@ describe('createTerminalsApp', () => {
     const res = await mountedApp(AVAILABLE).request(req('POST', `${TERMINAL_MOUNT}/nowhere`, { origin: '' }))
     expect(res.status).toBe(403)
     expect(await res.json()).toEqual({ error: '请求来源不允许' })
+  })
+
+  describe('/ws 合法升级的撤销接线', () => {
+    /** 可升级的 fake service：tryOpen 恒成功（最小会话形状，onOpen 走登记分支）。 */
+    function createUpgradableService(): TerminalsService {
+      return {
+        tryOpen: () => ({
+          id: 't1',
+          handleClientFrame: () => {},
+          dispose: async () => {},
+        }),
+        activeCount: () => 1,
+      }
+    }
+
+    function spySessionConnections(): SessionConnections {
+      return {
+        register: vi.fn(),
+        unregister: vi.fn(),
+        revoke: vi.fn(),
+        revokeOthers: vi.fn(),
+        revokeAll: vi.fn(),
+      }
+    }
+
+    it('带会话 Cookie：wsEvents 携带 sessionId 与撤销表（onOpen 登记、撤销关闭、onClose 注销）', async () => {
+      const upgradeWebSocket = vi.mocked(bunWebSocket.upgradeWebSocket)
+      upgradeWebSocket.mockClear()
+      const connections = spySessionConnections()
+      const app = mountedApp({
+        available: true,
+        service: createUpgradableService(),
+        sessionConnections: connections,
+      })
+
+      const res = await app.request(req('GET', `${TERMINAL_MOUNT}/ws`, { cookie: 'elysian_session=abc' }))
+      expect(res.status).toBe(200)
+      expect(upgradeWebSocket).toHaveBeenCalledTimes(1)
+
+      // 第二参是每请求构造的 wsEvents：驱动其生命周期验证 revocation 已接进连接。
+      const events = upgradeWebSocket.mock.calls[0]![1] as TerminalWsEvents
+      const closes: { code: number; reason: string }[] = []
+      const conn: WsConn = { send: () => {}, close: (code, reason) => closes.push({ code, reason }), readyState: 1 }
+
+      events.onOpen({ type: 'open' }, conn)
+      expect(connections.register).toHaveBeenCalledTimes(1)
+      // connections 标注为 SessionConnections（传 deps 时类型正确），断言处用
+      // vi.mocked 收窄回 Mock 才能访问 .mock 调用记录。
+      expect(vi.mocked(connections.register).mock.calls[0]![0]).toBe('abc')
+
+      const closer = vi.mocked(connections.register).mock.calls[0]![1]
+      closer()
+      expect(closes).toEqual([{ code: 1008, reason: '面板会话已失效，连接已关闭' }])
+
+      events.onClose({ type: 'close' }, conn)
+      expect(connections.unregister).toHaveBeenCalledWith('abc', closer)
+    })
+
+    it('不带会话 Cookie：revocation 为 undefined（不登记撤销 closer）', async () => {
+      const upgradeWebSocket = vi.mocked(bunWebSocket.upgradeWebSocket)
+      upgradeWebSocket.mockClear()
+      const connections = spySessionConnections()
+      const app = mountedApp({
+        available: true,
+        service: createUpgradableService(),
+        sessionConnections: connections,
+      })
+
+      const res = await app.request(req('GET', `${TERMINAL_MOUNT}/ws`))
+      expect(res.status).toBe(200)
+      expect(upgradeWebSocket).toHaveBeenCalledTimes(1)
+
+      const events = upgradeWebSocket.mock.calls[0]![1] as TerminalWsEvents
+      const conn: WsConn = { send: () => {}, close: () => {}, readyState: 1 }
+      events.onOpen({ type: 'open' }, conn)
+      expect(connections.register).not.toHaveBeenCalled()
+    })
   })
 })

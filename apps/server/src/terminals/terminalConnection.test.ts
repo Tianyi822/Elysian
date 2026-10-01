@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   TERMINAL_BACKPRESSURE_REASON,
   TERMINAL_LIMIT_REASON,
@@ -8,6 +8,7 @@ import {
   type TerminalWsEvents,
   type WsConn,
 } from './terminalConnection.ts'
+import { SESSION_REVOKED_CLOSE_CODE, SESSION_REVOKED_CLOSE_REASON, createSessionConnections, type SessionConnections } from '../auth/sessionConnections.ts'
 import type {
   TerminalClientFrame,
 } from './terminalFrames.ts'
@@ -228,5 +229,55 @@ describe('createTerminalWsEvents', () => {
     fake.openedEvents[0]?.sendFrame({ type: 'pong' })
     expect(conn.sentFrames()).toEqual([{ type: 'pong' }])
     expect(conn.closes).toEqual([])
+  })
+})
+
+/** spy 版撤销表：只看登记/注销调用；关闭行为用真撤销表测。 */
+function spySessionConnections(): SessionConnections {
+  return {
+    register: vi.fn(),
+    unregister: vi.fn(),
+    revoke: vi.fn(),
+    revokeOthers: vi.fn(),
+    revokeAll: vi.fn(),
+  }
+}
+
+describe('createTerminalWsEvents 的会话撤销接线', () => {
+  it('带 revocation 时 onOpen 登记 closer；撤销触发后连接以 1008 与中文 reason 关闭', () => {
+    const fake = createFakeService()
+    const connections = createSessionConnections()
+    const events = createTerminalWsEvents(fake.service, { sessionId: 'abc', connections })
+    const conn = openConnection(events)
+
+    // 登记进撤销表：revoke 触发 closer，连接以撤销口径关闭（closer 先把自己摘出
+    // 撤销表再关闭，撤销是一次性的、不重复关闭）。
+    connections.revoke('abc')
+    expect(conn.closes).toEqual([{ code: SESSION_REVOKED_CLOSE_CODE, reason: SESSION_REVOKED_CLOSE_REASON }])
+    // PTY 清理走 close 触发的 onClose 既有路径，不由 closer 代劳。
+    expect(fake.disposals).toEqual([])
+  })
+
+  it('onClose 注销后 revoke 不重复关闭该连接（自然断开的连接退出撤销表）', () => {
+    const fake = createFakeService()
+    const connections = createSessionConnections()
+    const events = createTerminalWsEvents(fake.service, { sessionId: 'abc', connections })
+    const conn = openConnection(events)
+
+    events.onClose({ type: 'close' }, conn.conn)
+    expect(fake.disposals).toEqual(['client-close'])
+
+    connections.revoke('abc')
+    expect(conn.closes).toEqual([])
+  })
+
+  it('并发上限拒绝（不建会话）时不登记撤销 closer', () => {
+    const fake = createFakeService({ rejectOpen: true })
+    const connections = spySessionConnections()
+    const events = createTerminalWsEvents(fake.service, { sessionId: 'abc', connections })
+    const conn = openConnection(events)
+
+    expect(conn.closes).toEqual([{ code: TERMINAL_VIOLATION_CLOSE_CODE, reason: TERMINAL_LIMIT_REASON }])
+    expect(connections.register).not.toHaveBeenCalled()
   })
 })

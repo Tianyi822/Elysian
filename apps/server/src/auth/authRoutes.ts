@@ -24,6 +24,7 @@ import { adjudicateReturnTo } from './returnTo.ts'
 import { createFileReturnOriginRegistry, type ReturnOriginRegistry } from './returnOriginRegistry.ts'
 import { errorReason } from '../shared/errorReason.ts'
 import { currentPwdEpoch, parseSessionCookie } from './authMiddleware.ts'
+import type { SessionConnections } from './sessionConnections.ts'
 
 /*
  * 登录鉴权片（/api/auth/*）：POST /login、POST /logout、GET /session，以及设置页的
@@ -59,6 +60,12 @@ export type AuthAppDeps = {
   loginRateLimit?: number
   /** 限流窗口毫秒，缺省 60_000；测试注入小值。 */
   loginRateWindowMs?: number
+  /**
+   * 会话连接撤销表（可选）：登出/改密/退出其他会话三条显式失效路径在销毁服务端
+   * 会话的同时关闭该会话名下已建立的终端连接。app.ts 把同一实例穿给 auth 片与
+   * terminals 片；不传即无撤销（独立驱动本片的既有测试零改动）。
+   */
+  sessionConnections?: SessionConnections
 }
 
 /** 缺省装配：enabled 缺省真、devAccount 读环境开关、两个真实文件版 store（惰性 IO）、scrypt hasher。 */
@@ -72,6 +79,7 @@ export function resolveAuthDeps(partial: Partial<AuthAppDeps> = {}): AuthAppDeps
     returnOrigins: partial.returnOrigins ?? createFileReturnOriginRegistry(),
     loginRateLimit: partial.loginRateLimit,
     loginRateWindowMs: partial.loginRateWindowMs,
+    sessionConnections: partial.sessionConnections,
   }
 }
 
@@ -186,7 +194,11 @@ export function createAuthApp(deps: AuthAppDeps): Hono {
     // 幂等：鉴权豁免清单内，无有效会话同样可达；无论如何清浏览器侧 Cookie。
     if (deps.enabled) {
       const sessionId = parseSessionCookie(c.req.header('cookie'))
-      if (sessionId !== null) await deps.sessions.destroy(sessionId)
+      if (sessionId !== null) {
+        await deps.sessions.destroy(sessionId)
+        // 会话销毁即撤销：该会话名下已建立的终端连接一并关闭，不等到自然断开。
+        deps.sessionConnections?.revoke(sessionId)
+      }
     }
     return jsonResponse(200, { ok: true }, { 'set-cookie': sessionCookie('', 0) })
   })
@@ -242,6 +254,8 @@ export function createAuthApp(deps: AuthAppDeps): Hono {
 
     // 会话失效不靠显式删除：新 passwordChangedAt 即新 epoch，全部既有会话在下一次
     // validate 时被删除；这里只给当前浏览器清 Cookie 作 UX 收尾。
+    // 连接层不等 epoch 惰性失效：改密成功立即关闭全部会话名下已建立的终端连接。
+    deps.sessionConnections?.revokeAll()
     return jsonResponse(200, { ok: true }, { 'set-cookie': sessionCookie('', 0) })
   })
 
@@ -265,7 +279,11 @@ export function createAuthApp(deps: AuthAppDeps): Hono {
     const currentId = parseSessionCookie(c.req.header('cookie'))
     // requireSession 刚校验过当前会话，currentId 必非 null；null 只出现在绕过中间件
     // 直驱本片的场景，无从判定保留谁，按不动任何会话收尾（不放大故障半径）。
-    if (currentId !== null) await deps.sessions.destroyOthers(currentId)
+    if (currentId !== null) {
+      await deps.sessions.destroyOthers(currentId)
+      // 其他会话名下已建立的终端连接一并关闭，保留当前会话的连接。
+      deps.sessionConnections?.revokeOthers(currentId)
+    }
     return jsonResponse(200, { ok: true })
   })
 

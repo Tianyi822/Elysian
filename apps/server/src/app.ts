@@ -35,6 +35,7 @@ import { createWebsiteService } from './websites/websitesService.ts'
 import { createFileWebsiteRuntimeCatalogCache, createWebsiteRuntimeCatalogService } from './websites/websiteRuntimeCatalog.ts'
 import { createAuthApp, resolveAuthDeps, type AuthAppDeps } from './auth/authRoutes.ts'
 import { requireSession } from './auth/authMiddleware.ts'
+import { createSessionConnections } from './auth/sessionConnections.ts'
 import { existsSync } from 'node:fs'
 import {
   AUTH_MOUNT,
@@ -143,10 +144,14 @@ export async function createApp(overrides: AppDepsOverrides = {}): Promise<Hono>
   // 请求经手次序：401（鉴权）→ 503（各片可用性）→ 403（同源）→ 端点 → 404——鉴权先于
   // 可用性是显式决定：不向未登录方暴露各片可用性事实。
   const auth = resolveAuthDeps(overrides.auth)
+  // 会话连接撤销表：auth 片（登出/改密/退出其他会话触发撤销）与 terminals 片（升级时
+  // 登记 closer）必须共享同一实例——装配期创建一次（缺省新建，测试可注入 spy），内存
+  // 结构、构造零副作用，不新增任何请求路径 IO。
+  const sessionConnections = auth.sessionConnections ?? createSessionConnections()
   app.use('/api/*', requireSession(auth))
 
   app.get('/api/health', (c) => c.json({ ok: true }))
-  app.route(AUTH_MOUNT, createAuthApp(auth))
+  app.route(AUTH_MOUNT, createAuthApp({ ...auth, sessionConnections }))
   app.route(PLATFORM_MOUNT, createPlatformMemoryApp())
   app.route(PLATFORM_MOUNT, createPlatformDependenciesApp(
     overrides.platformDependencies ?? createDependencyProbe(),
@@ -167,7 +172,7 @@ export async function createApp(overrides: AppDepsOverrides = {}): Promise<Hono>
   // 覆盖路径同样要与 logs 合并：漏了这一步不会有任何既有测试变红（终端片把 logs 做成
   // 可选、不传即跳过），但「系统级操作都显示在操作日志」会静默缺掉终端会话这一类。
   const terminals = overrides.terminals ?? (await createTerminalsHostDeps())
-  app.route(TERMINAL_MOUNT, createTerminalsApp({ ...terminals, logs: terminals.logs ?? logs }))
+  app.route(TERMINAL_MOUNT, createTerminalsApp({ ...terminals, logs: terminals.logs ?? logs, sessionConnections }))
   app.route(LOGS_MOUNT, createLogsApp({ service: logs }))
   const docker = overrides.docker ?? (await createDockerHostDeps())
   app.route(DOCKER_MOUNT, createDockerApp({ ...docker, logs: docker.logs ?? logs }))

@@ -22,8 +22,12 @@ import { SESSION_ABSOLUTE_TTL_MS, SESSION_IDLE_TTL_MS } from './authConfig.ts'
  * 落盘时机：create 与 destroy 立即写文件；lastUsedAt 滑动只改内存，随下一次
  * create/destroy 顺带落盘（进程崩溃最多让某会话的空闲窗口被低估，无害）。
  *
- * 边界如实记录：鉴权只发生在请求与升级的边界，已建立的 WS/SSE 长连接存活至自然
- * 断开；新连接与新请求在过期后一律 401。
+ * 边界如实记录：鉴权只发生在请求与升级的边界。登出、改密（epoch 轮换）、退出其他
+ * 会话三条显式失效路径经会话连接撤销表（sessionConnections.ts）立即关闭已登记的
+ * 终端连接；会话空闲/绝对过期与 CLI resetpwd（跨进程改凭据文件，无进程内触发点）
+ * 下已建立连接存活至自然断开，且空闲回收对主动保活的客户端不构成回收——任意客户
+ * 端帧（含协议内置 ping）都会重置空闲计时，持续打 ping 的终端事实上无界存活。新
+ * 连接与新请求在失效后一律 401。
  */
 
 export type PanelSession = {

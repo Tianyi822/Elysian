@@ -9,6 +9,7 @@ import { createFileCredentialsStore, createMemoryCredentialsStore, type Credenti
 import { createFileSessionStore, createMemorySessionStore } from './sessionStore.ts'
 import { createScryptHasher, type PasswordHasher } from './passwordHasher.ts'
 import { createMemoryReturnOriginRegistry } from './returnOriginRegistry.ts'
+import type { SessionConnections } from './sessionConnections.ts'
 
 /*
  * 登录片路由测试：内存 fake（真实 scrypt hasher——时序与往返行为本身就是被测对象），
@@ -293,6 +294,33 @@ describe('POST /api/auth/logout', () => {
     expect(await res.json()).toEqual({ ok: true })
     expect(res.headers.get('set-cookie')).toContain('Max-Age=0')
   })
+
+  it('登出成功触发撤销表 revoke(该会话 id)：已建立的终端连接随会话一起关闭', async () => {
+    const hasher = createScryptHasher()
+    const sessions = createMemorySessionStore()
+    const connections = spySessionConnections()
+    const deps: AuthAppDeps = {
+      enabled: true,
+      devAccount: false,
+      credentials: createMemoryCredentialsStore({ username: 'admin', passwordHash: await hasher.hash('p'), passwordChangedAt: EPOCH }),
+      sessions,
+      hasher,
+      returnOrigins: createMemoryReturnOriginRegistry(),
+      sessionConnections: connections,
+    }
+    const app = createAuthApp(deps)
+    const loginRes = await login(app, { username: 'admin', password: 'p' })
+    const cookie = loginRes.headers.get('set-cookie')!.split(';')[0]!
+    const sessionId = cookie.slice(`${SESSION_COOKIE_NAME}=`.length)
+
+    const res = await app.request(`http://localhost:5173/logout`, {
+      method: 'POST',
+      headers: { host: 'localhost:5173', origin: ORIGIN, cookie },
+    })
+    expect(res.status).toBe(200)
+    expect(connections.revoke).toHaveBeenCalledTimes(1)
+    expect(connections.revoke).toHaveBeenCalledWith(sessionId)
+  })
 })
 
 describe('GET /api/auth/session', () => {
@@ -555,6 +583,17 @@ async function passwordFixture(overrides: Partial<AuthAppDeps> = {}): Promise<{
 
 const AUTH_DISABLED_MESSAGE = { error: '鉴权未启用，会话管理不可用' }
 
+/** spy 版会话连接撤销表：断言三条失效路径对撤销表的调用（不依赖终端片）。 */
+function spySessionConnections(): SessionConnections {
+  return {
+    register: vi.fn(),
+    unregister: vi.fn(),
+    revoke: vi.fn(),
+    revokeOthers: vi.fn(),
+    revokeAll: vi.fn(),
+  }
+}
+
 let settingsTempDir: string | undefined
 
 afterEach(async () => {
@@ -700,6 +739,27 @@ describe('POST /api/auth/password', () => {
       error: "EACCES: permission denied, open '/root/.Elysian/config/panel-credentials.json.tmp'",
     })
   })
+
+  it('改密成功触发撤销表 revokeAll（全部会话的终端连接关闭）；当前密码错时不触发', async () => {
+    const connections = spySessionConnections()
+    const { app } = await passwordFixture({ sessionConnections: connections })
+
+    const wrong = await app.request(changeRequest({
+      currentPassword: 'wrong-password',
+      newPassword: 'brand-new-password',
+      confirmNewPassword: 'brand-new-password',
+    }))
+    expect(wrong.status).toBe(400)
+    expect(connections.revokeAll).not.toHaveBeenCalled()
+
+    const res = await app.request(changeRequest({
+      currentPassword: 'current-password',
+      newPassword: 'brand-new-password',
+      confirmNewPassword: 'brand-new-password',
+    }))
+    expect(res.status).toBe(200)
+    expect(connections.revokeAll).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('GET /api/auth/sessions', () => {
@@ -783,6 +843,32 @@ describe('POST /api/auth/sessions/logout-others', () => {
     const body = await list.json() as { sessions: Array<{ current: boolean }> }
     expect(body.sessions).toHaveLength(1)
     expect(body.sessions[0]!.current).toBe(true)
+  })
+
+  it('退出其他会话触发撤销表 revokeOthers(当前 id)：其他会话的终端连接一并关闭', async () => {
+    const hasher = createScryptHasher()
+    const sessions = createMemorySessionStore()
+    const connections = spySessionConnections()
+    const deps: AuthAppDeps = {
+      enabled: true,
+      devAccount: false,
+      credentials: createMemoryCredentialsStore({ username: 'admin', passwordHash: await hasher.hash('p'), passwordChangedAt: EPOCH }),
+      sessions,
+      hasher,
+      returnOrigins: createMemoryReturnOriginRegistry(),
+      sessionConnections: connections,
+    }
+    const app = createAuthApp(deps)
+    await sessions.create(EPOCH)
+    const current = await sessions.create(EPOCH)
+
+    const res = await app.request('http://localhost:5173/sessions/logout-others', {
+      method: 'POST',
+      headers: { host: 'localhost:5173', origin: ORIGIN, cookie: `${SESSION_COOKIE_NAME}=${current.id}` },
+    })
+    expect(res.status).toBe(200)
+    expect(connections.revokeOthers).toHaveBeenCalledTimes(1)
+    expect(connections.revokeOthers).toHaveBeenCalledWith(current.id)
   })
 })
 

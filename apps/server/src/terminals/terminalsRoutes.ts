@@ -1,6 +1,8 @@
 import { Hono } from 'hono'
 import { ALLOWED_HOSTNAMES, endpointErrorHandler, sameOriginGuard, sendJson } from '../middleware/guard.ts'
 import { recordPanelOperation, type OperationAuditLogs } from '../logs/operationAudit.ts'
+import { parseSessionCookie } from '../auth/authMiddleware.ts'
+import type { SessionConnections } from '../auth/sessionConnections.ts'
 import { createTerminalWsEvents } from './terminalConnection.ts'
 import type { TerminalsService } from './terminalsService.ts'
 import { TERMINAL_MOUNT } from '../shared/apiMounts.ts'
@@ -34,6 +36,12 @@ export type TerminalsAppDeps = {
    * 命令级别的记录**不做**：终端命令既不经 HTTP、也可能含敏感内容，留给治理期。
    */
   logs?: OperationAuditLogs
+  /**
+   * 会话连接撤销表（可选）：app.ts 与 auth 片穿同一实例。/ws 升级时解析请求会话
+   * id，把「该会话被撤销即关闭连接」的 closer 登记进表；登出/改密/退出其他会话在
+   * auth 片触发撤销。不传即无撤销（独立驱动本片的既有测试零改动）。
+   */
+  sessionConnections?: SessionConnections
 }
 
 /**
@@ -76,7 +84,8 @@ export function createTerminalsApp(deps: TerminalsAppDeps): Hono {
   // 请求它取回中文原因。无副作用 GET，走既有放行语义。
   app.get('/status', () => sendJson(200, { ok: true }))
 
-  const wsEvents = createTerminalWsEvents(deps.service)
+  // 66 行可用性判定后提取：闭包（路由 handler）内不保持属性收窄。
+  const service = deps.service
 
   app.get('/ws', async (c) => {
     // 前置校验必须在 upgradeWebSocket 之前短路返回普通 Response（见文件头注释）。
@@ -97,11 +106,17 @@ export function createTerminalsApp(deps: TerminalsAppDeps): Hono {
         httpStatus: 200,
       })
     }
+    // 会话撤销接线：requireSession 已在升级边界校验过该请求的会话，这里只取 id 不再
+    // validate。wsEvents 每请求构造（revocation 是该连接的会话归属，不能工厂级共享）。
+    const sessionId = parseSessionCookie(c.req.header('cookie'))
+    const revocation = deps.sessionConnections && sessionId !== null
+      ? { sessionId, connections: deps.sessionConnections }
+      : undefined
     // hono/bun 的入口模块在加载期引用 Bun 全局（其 ssg.js 顶层代码），vitest 的 node
     // 运行时进不了它的模块图——合法升级路径才动态加载 bunWebSocket（ESM 模块缓存
     // 保证 createBunWebSocket 仍每进程恰好一次）。
     const { bunWebSocket } = await import('./bunWebSocket.ts')
-    return bunWebSocket.upgradeWebSocket(c, wsEvents)
+    return bunWebSocket.upgradeWebSocket(c, createTerminalWsEvents(service, revocation))
   })
 
   // 未知端点兜底：剥掉挂载前缀后的相对路径进文案，与既有四片的文案格式逐字一致。

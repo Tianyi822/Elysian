@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { Hono } from 'hono'
 import type { LogStorageStats, OperationLogCategory, PlatformLogCategory } from '@elysian/contracts'
 import { createApp } from '../app.ts'
@@ -9,6 +9,15 @@ import { createScryptHasher } from './passwordHasher.ts'
 import { SESSION_COOKIE_NAME } from './authConfig.ts'
 import { createMemoryReturnOriginRegistry } from './returnOriginRegistry.ts'
 import type { AuthAppDeps } from './authRoutes.ts'
+import type { SessionConnections } from './sessionConnections.ts'
+import { bunWebSocket } from '../terminals/bunWebSocket.ts'
+import type { TerminalWsEvents, WsConn } from '../terminals/terminalConnection.ts'
+
+// 终端升级入口的文件级 mock：本文件的其余用例全部短路在升级之前（401/403/503），
+// 不受影响；会话撤销接线用例靠它捕获 upgradeWebSocket 的第二参。
+vi.mock('../terminals/bunWebSocket.ts', () => ({
+  bunWebSocket: { upgradeWebSocket: vi.fn(async () => new Response(null, { status: 200 })) },
+}))
 
 /*
  * 鉴权接线端到端测试：createApp 以 enabled: true + 内存 fake store 装配，锚定
@@ -394,5 +403,80 @@ describe('requireSession 接线（enabled: true）', () => {
 
     const evil = await app.get(`/api/auth/session?returnTo=${encodeURIComponent('http://evil.example/x')}`)
     expect((await evil.json() as { returnTo: string | null }).returnTo).toBeNull()
+  })
+})
+
+describe('会话连接撤销接线（app.ts 同一实例穿 auth 与 terminals 两片）', () => {
+  it('升级时 closer 登记进注入的撤销表（sessionId 与登录下发一致）；登出触发 revoke(该 id)', async () => {
+    const upgradeWebSocket = vi.mocked(bunWebSocket.upgradeWebSocket)
+    upgradeWebSocket.mockClear()
+    const connections: SessionConnections = {
+      register: vi.fn(),
+      unregister: vi.fn(),
+      revoke: vi.fn(),
+      revokeOthers: vi.fn(),
+      revokeAll: vi.fn(),
+    }
+    const hasher = createScryptHasher()
+    const app = await createApp({
+      logs: createRecordingLogs().service,
+      auth: {
+        enabled: true,
+        credentials: createMemoryCredentialsStore({
+          username: 'admin',
+          passwordHash: await hasher.hash('e2e-password'),
+          passwordChangedAt: EPOCH,
+        }),
+        sessions: createMemorySessionStore(),
+        hasher,
+        returnOrigins: createMemoryReturnOriginRegistry(),
+        sessionConnections: connections,
+      },
+      terminals: {
+        available: true,
+        service: {
+          tryOpen: () => ({ id: 't1', handleClientFrame: () => {}, dispose: async () => {} }),
+          activeCount: () => 1,
+        },
+      },
+    })
+
+    // 登录取该次下发的会话 id。
+    const loginRes = await app.request(new Request(new URL('/api/auth/login', ORIGIN), {
+      method: 'POST',
+      headers: { host: 'localhost:5173', origin: ORIGIN, 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'admin', password: 'e2e-password' }),
+    }))
+    expect(loginRes.status).toBe(200)
+    const cookie = loginRes.headers.get('set-cookie')!.split(';')[0]!
+    const sessionId = cookie.slice(`${SESSION_COOKIE_NAME}=`.length)
+
+    // WS 升级（requireSession 已在边界放行）：捕获的第二参 wsEvents 驱动生命周期，
+    // 撤销 closer 必须登记进**注入的同一实例**且携带该会话 id。
+    const wsRes = await app.request(new Request(new URL('/api/terminals/ws', ORIGIN), {
+      headers: { host: 'localhost:5173', origin: ORIGIN, cookie },
+    }))
+    expect(wsRes.status).toBe(200)
+    expect(upgradeWebSocket).toHaveBeenCalledTimes(1)
+    const events = upgradeWebSocket.mock.calls[0]![1] as TerminalWsEvents
+    const closes: { code: number; reason: string }[] = []
+    const conn: WsConn = { send: () => {}, close: (code, reason) => closes.push({ code, reason }), readyState: 1 }
+
+    events.onOpen({ type: 'open' }, conn)
+    expect(connections.register).toHaveBeenCalledTimes(1)
+    // connections 标注为 SessionConnections（传 deps 时类型正确），断言处用
+    // vi.mocked 收窄回 Mock 才能访问 .mock 调用记录。
+    expect(vi.mocked(connections.register).mock.calls[0]![0]).toBe(sessionId)
+    vi.mocked(connections.register).mock.calls[0]![1]()
+    expect(closes).toEqual([{ code: 1008, reason: '面板会话已失效，连接已关闭' }])
+
+    // 同一 app 登出：revoke 以登录下发的会话 id 被调——终端侧登记与 auth 侧撤销
+    // 经 app.ts 在同一 spy 上会合，漏穿任何一侧即红。
+    const logoutRes = await app.request(new Request(new URL('/api/auth/logout', ORIGIN), {
+      method: 'POST',
+      headers: { host: 'localhost:5173', origin: ORIGIN, cookie },
+    }))
+    expect(logoutRes.status).toBe(200)
+    expect(connections.revoke).toHaveBeenCalledWith(sessionId)
   })
 })
