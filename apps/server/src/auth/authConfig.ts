@@ -71,3 +71,6 @@ export const INITIAL_PASSWORD_CHARSET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnop
 
 /** 登录请求体字段上限：用户名与密码各 ≤ 256 字符（远超真实口令长度，只挡滥用）。 */
 export const LOGIN_FIELD_MAX_LENGTH = 256
+
+/** 回跳地址长度上限：远超人类可读 URL，只挡滥用（与 LOGIN_FIELD_MAX_LENGTH 同纪律）。 */
+export const RETURN_TO_MAX_LENGTH = 2048
