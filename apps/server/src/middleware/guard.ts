@@ -62,6 +62,29 @@ export function sameOriginGuard(): MiddlewareHandler {
   }
 }
 
+/**
+ * WS 升级专用同源校验（比 REST 的 GET 放行更严）：必须带 Origin；Origin 的 host
+ * （含端口，小写归一）与 Host 头一致；Host 的 hostname 落在回环允许名单内。
+ * Upgrade 是 GET，sameOriginGuard 对 GET/HEAD 放行拦不到，因此 WS 路由需要
+ * 在调用 upgradeWebSocket 之前显式前置此校验。
+ */
+export function isSameOriginUpgrade(req: Request): boolean {
+  const origin = req.headers.get('origin')
+  const host = req.headers.get('host')
+  if (!origin || !host) return false
+  try {
+    if (new URL(origin).host.toLowerCase() !== host.toLowerCase()) return false
+  } catch {
+    return false
+  }
+  try {
+    const hostname = new URL(`http://${host}`).hostname.toLowerCase()
+    return ALLOWED_HOSTNAMES.includes(hostname)
+  } catch {
+    return false
+  }
+}
+
 export async function readJsonBody(req: Request, maxBytes = MAX_JSON_BODY_BYTES): Promise<unknown> {
   const contentType = (req.headers.get('content-type') ?? '').toLowerCase()
   if (!contentType.startsWith('application/json')) {

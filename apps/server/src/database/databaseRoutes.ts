@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { ALLOWED_HOSTNAMES, endpointErrorHandler, readJsonBody, sameOriginGuard, sendJson } from '../middleware/guard.ts'
+import { endpointErrorHandler, isSameOriginUpgrade, readJsonBody, sameOriginGuard, sendJson } from '../middleware/guard.ts'
 import { InvalidRequestError } from '../shared/errors.ts'
 import type { DatabaseService } from './databaseService.ts'
 import { validateDatabaseCreateRequest } from './databaseService.ts'
@@ -10,15 +10,7 @@ import type { OperationLogOutcome } from '@elysian/contracts'
 
 export type DatabaseAppDeps = { available: boolean; service?: DatabaseService; sqlite?: SqliteService; logs?: OperationAuditLogs }
 
-function wsOriginAllowed(request: Request): boolean {
-  const origin = request.headers.get('origin')
-  const host = request.headers.get('host')
-  if (!origin || !host) return false
-  try {
-    return new URL(origin).host.toLowerCase() === host.toLowerCase() &&
-      ALLOWED_HOSTNAMES.includes(new URL(`http://${host}`).hostname.toLowerCase())
-  } catch { return false }
-}
+// wsOriginAllowed 已由 middleware/guard.ts 的 isSameOriginUpgrade 统一承担，此处不再本地定义。
 
 const MAX_SESSIONS = 5
 const MAX_FRAME_BYTES = 64 * 1024
@@ -149,7 +141,7 @@ export function createDatabaseApp(deps: DatabaseAppDeps): Hono {
     const id = c.req.param('id')
     // 拒绝路径也要留痕：GET 升级不在采集中间件范围内（GET/HEAD 放行），被拒的终端
     // 连接尝试在这里显式记 failure，与 HTTP 写端点「被守卫拒绝的请求也进审计」对齐。
-    if (!wsOriginAllowed(c.req.raw)) {
+    if (!isSameOriginUpgrade(c.req.raw)) {
       if (deps.logs) {
         await recordPanelOperation(deps.logs, {
           category: 'database', action: '发起数据库协议终端连接', target: id,

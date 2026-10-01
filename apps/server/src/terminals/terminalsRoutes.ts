@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { ALLOWED_HOSTNAMES, endpointErrorHandler, sameOriginGuard, sendJson } from '../middleware/guard.ts'
+import { endpointErrorHandler, isSameOriginUpgrade, sameOriginGuard, sendJson } from '../middleware/guard.ts'
 import { recordPanelOperation, type OperationAuditLogs } from '../logs/operationAudit.ts'
 import { parseSessionCookie } from '../auth/authMiddleware.ts'
 import type { SessionConnections } from '../auth/sessionConnections.ts'
@@ -48,22 +48,7 @@ export type TerminalsAppDeps = {
  * WS 升级专用同源校验（比 REST 的 GET 放行更严）：必须带 Origin；Origin 的 host
  * （含端口，小写归一）与 Host 头一致；Host 的 hostname 落在回环允许名单内。
  */
-function isSameOriginUpgrade(req: Request): boolean {
-  const origin = req.headers.get('origin')
-  const host = req.headers.get('host')
-  if (!origin || !host) return false
-  try {
-    if (new URL(origin).host.toLowerCase() !== host.toLowerCase()) return false
-  } catch {
-    return false
-  }
-  try {
-    const hostname = new URL(`http://${host}`).hostname.toLowerCase()
-    return ALLOWED_HOSTNAMES.includes(hostname)
-  } catch {
-    return false
-  }
-}
+// isSameOriginUpgrade 由 middleware/guard.ts 统一提供，此处不再本地定义。
 
 /** 终端子应用工厂：app.ts 挂到 TERMINAL_MOUNT；测试直接 request 驱动（升级分支由 bun 冒烟覆盖）。 */
 export function createTerminalsApp(deps: TerminalsAppDeps): Hono {

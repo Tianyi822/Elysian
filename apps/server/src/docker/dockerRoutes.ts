@@ -2,10 +2,10 @@ import type { Context } from 'hono'
 import { Hono } from 'hono'
 import { stream } from 'hono/streaming'
 import {
-  ALLOWED_HOSTNAMES,
   endpointErrorHandler,
   InvalidRequestError,
   invalidRequest,
+  isSameOriginUpgrade,
   readJsonBody,
   sameOriginGuard,
   sendJson,
@@ -32,23 +32,7 @@ export { DOCKER_MOUNT }
 export type { DockerReadService } from './dockerService.ts'
 export type { DockerEventsHub } from './dockerEventsHub.ts'
 
-/** WS 升级专用同源校验（与终端片 /ws 逐字同口径）。 */
-function isSameOriginUpgrade(req: Request): boolean {
-  const origin = req.headers.get('origin')
-  const host = req.headers.get('host')
-  if (!origin || !host) return false
-  try {
-    if (new URL(origin).host.toLowerCase() !== host.toLowerCase()) return false
-  } catch {
-    return false
-  }
-  try {
-    const hostname = new URL(`http://${host}`).hostname.toLowerCase()
-    return ALLOWED_HOSTNAMES.includes(hostname)
-  } catch {
-    return false
-  }
-}
+/** WS 升级专用同源校验由 middleware/guard.ts 统一提供，此处不再本地定义。 */
 
 export type DockerWebSocketUpgrade = (
   c: Context,
