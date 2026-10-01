@@ -3,7 +3,7 @@ import type { FormEvent } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { PasswordVisibilityButton } from '../security/passwordFieldParts'
-import { LoadingState } from '../../components/states/StateViews'
+import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { useSessionStore } from '../../stores/sessionStore'
 
 /*
@@ -15,6 +15,8 @@ import { useSessionStore } from '../../stores/sessionStore'
  * 演示模式（本地无后端）不强制登录：访问 /login 直接回仪表盘。
  * 回跳由服务端裁决（GET /api/auth/session?returnTo=），本组件只执行 assign，不自行判定地址可否使用。
  * 带 returnTo 时探测在途与回跳在途都只渲染过渡态，绝不闪现登录表单；不带 returnTo 首帧仍是表单。
+ * 探测请求本身失败（面板不可达、响应无效）落 error：带与不带 returnTo 一律渲染错误态与重试，
+ * 不退回表单假装面板健康——同一故障一种呈现，与 RequireSession 的既有做法一致。
  */
 
 /** 回跳目标校验：须为以单个 / 开头的站内路径；`//` 与 `/\` 是协议相对跳转，一律回落首页。 */
@@ -65,6 +67,21 @@ export function LoginPage() {
     return (
       <main className="flex min-h-dvh items-center justify-center bg-bg p-4 text-fg">
         <LoadingState label="正在检查登录状态…" />
+      </main>
+    )
+  }
+
+  // 探测请求本身失败（面板不可达 / 响应无效）：错误态加重试，与 RequireSession 同一条呈现。
+  // 带与不带 returnTo 都一样——同一故障不该因怎么到达而分叉，红线要求的四态也不以来源为条件。
+  // 重试沿用同一个 returnTo 参数，恢复后照常走下面的分支。
+  if (phase === 'error') {
+    return (
+      <main className="flex min-h-dvh items-center justify-center bg-bg p-4 text-fg">
+        <ErrorState
+          title="登录状态检查失败"
+          description="无法连接面板服务，请确认服务已启动。"
+          onRetry={() => void probe(gateway, requestedReturnTo)}
+        />
       </main>
     )
   }

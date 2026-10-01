@@ -399,4 +399,73 @@ describe('LoginPage', () => {
     expect(await screen.findByText('登录后将返回 http://127.0.0.1:5173')).toBeInTheDocument()
     expect(screen.queryByText('回跳地址不在允许名单，登录后将留在面板。')).not.toBeInTheDocument()
   })
+
+  it('不带 returnTo 探测失败：渲染错误态与重试，不退回表单假装面板健康', async () => {
+    const gateway = gatewayWithSession({
+      ...anonymousSession(),
+      status: vi.fn(async () => {
+        throw new Error('登录状态检查失败：面板服务不可达')
+      }),
+    })
+    renderApp('/login', { gateway })
+    expect(await screen.findByText('登录状态检查失败')).toBeInTheDocument()
+    expect(screen.getByText('无法连接面板服务，请确认服务已启动。')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument()
+    // 错误态下表单整帧不出现（不呈现「像健康」的登录框）。
+    expect(screen.queryByRole('heading', { level: 1, name: '登录 Elysian' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '登录' })).not.toBeInTheDocument()
+  })
+
+  it('带 returnTo 探测失败：同一故障同一呈现，也是错误态而非表单', async () => {
+    const gateway = gatewayWithSession({
+      ...anonymousSession(),
+      status: vi.fn(async () => {
+        throw new Error('登录状态检查失败：面板服务不可达')
+      }),
+    })
+    renderApp('/login?returnTo=http%3A%2F%2F127.0.0.1%3A5173%2Fx', { gateway })
+    expect(await screen.findByText('登录状态检查失败')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '登录' })).not.toBeInTheDocument()
+  })
+
+  it('错误态点重试且探测成功：恢复正常分支（未登录回到表单）', async () => {
+    const user = userEvent.setup()
+    let attempts = 0
+    const gateway = gatewayWithSession({
+      ...anonymousSession(),
+      status: vi.fn(async (): Promise<SessionStatus> => {
+        attempts += 1
+        if (attempts === 1) throw new Error('登录状态检查失败：面板服务不可达')
+        return { mode: 'real', authenticated: false, devAccount: false }
+      }),
+    })
+    renderApp('/login', { gateway })
+    expect(await screen.findByText('登录状态检查失败')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '重试' }))
+    expect(await screen.findByRole('heading', { level: 1, name: '登录 Elysian' })).toBeInTheDocument()
+    // 首帧探测一次失败、重试再一次，共两次——没有隐藏的重复探测。
+    await waitFor(() => expect(attempts).toBe(2))
+  })
+
+  it('错误态重试沿用同一个 returnTo 参数', async () => {
+    const user = userEvent.setup()
+    let attempts = 0
+    const seen: (string | undefined)[] = []
+    const gateway = gatewayWithSession({
+      ...anonymousSession(),
+      status: vi.fn(async (returnTo?: string): Promise<SessionStatus> => {
+        attempts += 1
+        seen.push(returnTo)
+        if (attempts === 1) throw new Error('登录状态检查失败：面板服务不可达')
+        return { mode: 'real', authenticated: false, devAccount: false, returnTo: returnTo ?? null }
+      }),
+    })
+    renderApp('/login?returnTo=http%3A%2F%2F127.0.0.1%3A5173%2Fx', { gateway })
+    expect(await screen.findByText('登录状态检查失败')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '重试' }))
+    await waitFor(() => expect(screen.getByText('登录后将返回 http://127.0.0.1:5173')).toBeInTheDocument())
+    // 两次探测都带同一个原始地址，不是重试时把它丢了。
+    expect(seen).toEqual(['http://127.0.0.1:5173/x', 'http://127.0.0.1:5173/x'])
+  })
 })
