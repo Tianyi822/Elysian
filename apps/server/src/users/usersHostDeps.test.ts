@@ -3,13 +3,13 @@ import { EventEmitter } from 'node:events'
 import {
   createUsersHostDeps,
   resolveUsersAvailability,
-  runChpasswdViaStdin,
   runGetentViaExecFile,
   type ChpasswdChildLike,
   type ExecFileLike,
   type SpawnChpasswdLike,
   type UsersHostDepsOptions,
 } from './usersHostDeps'
+import { runChpasswdViaStdin } from '../shared/chpasswd.ts'
 import { createUsersApp } from './usersRoutes'
 import type { UsersHostDeps } from './usersService'
 

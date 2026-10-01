@@ -35,10 +35,10 @@ describe('MockTerminalAdapter', () => {
     expect(adapter.complete(session.id, 'who', 3)).toEqual({ draft: 'whoami ', cursor: 7 })
   })
 
-  it('createMockGateway 暴露 terminals 接缝，reset 后旧会话失效', async () => {
+  it('createMockGateway 暴露 terminals 接缝，disconnect 后旧会话失效', async () => {
     const gateway = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
     const session = await gateway.terminals.connect(collectFrames([]))
-    await gateway.reset()
+    await gateway.terminals.disconnect(session.id)
     await expect(gateway.terminals.sendInput(session.id, 'whoami')).rejects.toThrow(
       '终端会话不存在',
     )

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createMockGateway } from './gateway'
 import { MockFilesAdapter, MockLogsAdapter } from './mockAdapters'
-import { SEED_RUNTIME_LOGS } from './logsData'
+import { resetLogsData, SEED_RUNTIME_LOGS } from './logsData'
 
 /*
  * gateway 日志片的分流断言：容器内三类日志都走真实端点，缺省仍是内存演示。
@@ -71,12 +71,13 @@ describe('createMockGateway 日志片分流', () => {
     ])
   })
 
-  it('reset() 把清空过的日志恢复回种子', async () => {
+  it('clearLogs 后调用 resetLogsData，日志恢复到种子状态', async () => {
     const gateway = createMockGateway({ eventStream: 'memory' })
     await gateway.logs.clearLogs('runtime')
     expect((await gateway.logs.runtimeLog()).entries).toHaveLength(1)
 
-    await gateway.reset()
-    expect((await gateway.logs.runtimeLog()).entries).toEqual(SEED_RUNTIME_LOGS)
+    resetLogsData()
+    const fresh = createMockGateway({ eventStream: 'memory' })
+    expect((await fresh.logs.runtimeLog()).entries).toEqual(SEED_RUNTIME_LOGS)
   })
 })

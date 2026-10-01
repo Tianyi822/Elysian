@@ -21,10 +21,7 @@ beforeEach(() => {
     status: 'idle',
     refreshing: false,
     range: '5m',
-    stats: undefined,
-    modules: undefined,
     resources: undefined,
-    auditRecords: undefined,
     errorMessage: undefined,
   })
   useEventStreamStore.getState().disconnect()
@@ -63,13 +60,12 @@ describe('仪表盘布局', () => {
     let calls = 0
     const gateway: ElysianGateway = {
       ...base,
-      incidents: {
-        listRows: async (query) => {
+      resources: {
+        list: async (range) => {
           calls += 1
           if (calls === 1) throw new Error('演示用的读取失败')
-          return base.incidents.listRows(query)
+          return base.resources.list(range)
         },
-        find: (incidentId) => base.incidents.find(incidentId),
       },
     }
 
@@ -116,13 +112,12 @@ describe('仪表盘筛选栏', () => {
     let calls = 0
     const gateway: ElysianGateway = {
       ...base,
-      incidents: {
-        listRows: async (query) => {
+      resources: {
+        list: async (range) => {
           calls += 1
           if (calls > 1) throw new Error('演示用的刷新失败')
-          return base.incidents.listRows(query)
+          return base.resources.list(range)
         },
-        find: (incidentId) => base.incidents.find(incidentId),
       },
     }
 
