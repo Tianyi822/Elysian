@@ -1,0 +1,22 @@
+# apps/server-go/Dockerfile.go-dev —— Go 开发测试镜像（宿主机编辑，容器内跑门禁与服务）
+# 系统级夹具复刻根 Dockerfile.dev（sshd/ufw/NET_ADMIN 依赖、联调账号、sqlite 专用 uid），
+# 基底换 Go 工具链、去掉 Bun。
+FROM golang:1.23-bookworm
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl ufw iproute2 openssh-server sudo \
+ && rm -rf /var/lib/apt/lists/* \
+ && ssh-keygen -A \
+ && useradd -m -s /bin/bash -p '*' elysian \
+ && groupadd -g 2001 elysian-sqlite \
+ && useradd -u 2001 -g 2001 -M -s /usr/sbin/nologin elysian-sqlite
+
+WORKDIR /app
+
+# 48101 是 Go 后端服务端口（与契约端口同值，compose 发布宿主回环 48102）；
+# 22 是 compose command 里按需启动的 sshd（SSH 域联调）。
+EXPOSE 48101 22
+
+CMD ["sleep", "infinity"]

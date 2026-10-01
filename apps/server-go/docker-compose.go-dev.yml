@@ -1,0 +1,54 @@
+# apps/server-go/docker-compose.go-dev.yml
+# 独立 project: elysian-go-dev、服务名 go，与根 docker-compose.yml 可同时运行
+# （数据卷、ssh 端口、宿主发布端口全部错开）。
+name: elysian-go-dev
+services:
+  go:
+    build:
+      context: ../..
+      dockerfile: apps/server-go/Dockerfile.go-dev
+    ports:
+      - "127.0.0.1:48102:48101"   # Go 服务监听容器内 48101，只发布宿主回环 48102
+      - "127.0.0.1:2223:22"       # 容器内 sshd（SSH 域联调），与现有栈 2222 错开
+    environment:
+      ELYSIAN_DOCKER: "1"
+      ELYSIAN_AUTH_DEV: "${ELYSIAN_AUTH_DEV:-0}"
+      ELYSIAN_DOCKER_MOUNT_ROOT: ${ELYSIAN_DOCKER_MOUNT_ROOT:-/srv}
+      ELYSIAN_CADDY_SOCKET: ${ELYSIAN_CADDY_SOCKET:-/run/caddy/admin.sock}
+      ELYSIAN_LISTEN_HOST: "0.0.0.0"   # 仅容器内；安全由 ports 只发布宿主回环保证
+    cap_add:
+      - NET_ADMIN
+    networks:
+      - default
+      - elysian-db-local      # 服务级挂载：不写则服务只落 default，两张 external 网会被
+      - elysian-db-shared     # compose 整个丢弃，面板与数据库容器不在同一网桥、DB 容器
+                              # IP 不可达（database 域 address 走容器 IP）
+    volumes:
+      - ../..:/app                          # 仓库根源码绑定
+      - elysian_go_state:/var/lib/elysian   # 面板数据卷（与现有栈 elysian_metrics 隔离）
+      - elysian_go_ssh_host_keys:/var/lib/elysian/ssh/host-keys
+      - elysian_go_mod:/go/pkg/mod          # Go 模块缓存命名卷（预热）
+      - elysian_go_build:/root/.cache/go-build
+      - /var/run/docker.sock:/var/run/docker.sock   # 文件级 bind（dockerd 从不重建 socket）
+      - /run/caddy:/run/caddy                       # 目录级 bind（caddy 重启换 inode）
+      - ${ELYSIAN_DOCKER_MOUNT_ROOT:-/srv}:${ELYSIAN_DOCKER_MOUNT_ROOT:-/srv}
+    working_dir: /app/apps/server-go
+    # 先备好 ~/.Elysian 的分类目录与符号链接、种主机密钥并落到默认路径，再起容器内
+    # sshd（日志写 ~/.Elysian/logs/sshd.log，启动失败只影响 SSH 联调、不阻断服务），
+    # 最后预热模块缓存并启动 Go 后端（监听容器内 0.0.0.0:48101，宿主只发布回环 48102）。
+    # 注意写成单物理行（与根 docker-compose.yml 的 command 同样式）：YAML 折叠标量对
+    # 更深缩进续行会保留字面换行，sh -c 内出现换行即碎裂。
+    command: sh -c "mkdir -p /var/lib/elysian/data /var/lib/elysian/logs /var/lib/elysian/state /var/lib/elysian/backups /var/lib/elysian/tmp /var/lib/elysian/config && ln -sfn /var/lib/elysian /root/.Elysian && if [ ! -e /root/.Elysian/ssh/host-keys/ssh_host_ed25519_key ]; then cp -a /etc/ssh/ssh_host_* /root/.Elysian/ssh/host-keys/; fi && ln -sfn /root/.Elysian/ssh/host-keys/* /etc/ssh/ && mkdir -p /run/sshd && (/usr/sbin/sshd -E /root/.Elysian/logs/sshd.log || true) && go mod download && go run ./cmd/elysian"
+volumes:
+  elysian_go_state:
+  elysian_go_ssh_host_keys:
+  elysian_go_mod:
+  elysian_go_build:
+networks:
+  default: {}
+  elysian-db-local:
+    name: elysian-db-local
+    external: true      # 由现有栈或 dev-check 幂等创建；database 域真实联调需要
+  elysian-db-shared:
+    name: elysian-db-shared
+    external: true
