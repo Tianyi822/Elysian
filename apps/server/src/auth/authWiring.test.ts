@@ -7,6 +7,8 @@ import { createMemoryCredentialsStore } from './credentialsStore.ts'
 import { createMemorySessionStore } from './sessionStore.ts'
 import { createScryptHasher } from './passwordHasher.ts'
 import { SESSION_COOKIE_NAME } from './authConfig.ts'
+import { createMemoryReturnOriginRegistry } from './returnOriginRegistry.ts'
+import type { AuthAppDeps } from './authRoutes.ts'
 
 /*
  * 鉴权接线端到端测试：createApp 以 enabled: true + 内存 fake store 装配，锚定
@@ -105,7 +107,7 @@ function createRecordingLogs(): {
   return { service, records, loginRecords }
 }
 
-async function buildApp() {
+async function buildApp(authOverrides: Partial<AuthAppDeps> = {}) {
   const hasher = createScryptHasher()
   const credentials = createMemoryCredentialsStore({
     username: 'admin',
@@ -116,7 +118,7 @@ async function buildApp() {
   const logs = createRecordingLogs()
   const app = await createApp({
     logs: logs.service,
-    auth: { enabled: true, credentials, sessions, hasher },
+    auth: { enabled: true, credentials, sessions, hasher, ...authOverrides },
   })
   return { app: clientOf(app), hono: app, credentials, records: logs.records, loginRecords: logs.loginRecords }
 }
@@ -365,5 +367,30 @@ describe('requireSession 接线（enabled: true）', () => {
     const login = await client.postJson('/api/auth/login', { username: 'x', password: 'y' })
     expect(login.status).toBe(200)
     expect(login.headers.get('set-cookie')).toBeNull()
+  })
+
+  it('工具后端形状：不带 Origin 头、只带会话 Cookie 的 GET /api/auth/session 回 authenticated:true', async () => {
+    const { app } = await buildApp()
+    const loginRes = await app.postJson('/api/auth/login', { username: 'admin', password: 'e2e-password' })
+    const cookie = loginRes.headers.get('set-cookie')!.split(';')[0]!
+
+    const res = await app.get('/api/auth/session', cookie)
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ authenticated: true, devAccount: false })
+
+    const anonymous = await app.get('/api/auth/session')
+    expect(await anonymous.json()).toEqual({ authenticated: false, devAccount: false })
+  })
+
+  it('回跳端到端：名单内可回跳并保留 path，名单外一律 null', async () => {
+    const { app } = await buildApp({ returnOrigins: createMemoryReturnOriginRegistry(['http://127.0.0.1:5173']) })
+    const hit = await app.get(`/api/auth/session?returnTo=${encodeURIComponent('http://127.0.0.1:5173/projects/42')}`)
+    expect((await hit.json() as { returnTo: string | null }).returnTo).toBe('http://127.0.0.1:5173/projects/42')
+
+    const miss = await app.get(`/api/auth/session?returnTo=${encodeURIComponent('http://127.0.0.1:6000/x')}`)
+    expect((await miss.json() as { returnTo: string | null }).returnTo).toBeNull()
+
+    const evil = await app.get(`/api/auth/session?returnTo=${encodeURIComponent('http://evil.example/x')}`)
+    expect((await evil.json() as { returnTo: string | null }).returnTo).toBeNull()
   })
 })

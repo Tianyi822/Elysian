@@ -19,7 +19,10 @@ import { RETURN_ORIGINS_MAX_BYTES, SSO_ORIGIN_IGNORED, SSO_ORIGINS_UNAVAILABLE }
 const REGISTRY_PATH = ELYSIAN_PATHS.ssoReturnOrigins
 
 export interface ReturnOriginRegistry {
-  /** 当前允许回跳的 origin；不可用时恒回空表。每次调用直读文件，不做任何缓存。 */
+  /**
+   * 当前允许回跳的 origin；不可用时恒回空表。每次调用直读文件，不做任何缓存。
+   * 可能 reject：超出 fail-closed 集合的 errno（EACCES/EMFILE/EIO 等）与 close 故障会原样上抛，调用方必须退化为「白名单不可用」处理。
+   */
   list(): Promise<readonly string[]>
 }
 
@@ -84,8 +87,9 @@ export function createFileReturnOriginRegistry(path: string = REGISTRY_PATH): Re
         if (!stat.isFile()) return unavailable('路径不是文件')
         if (stat.size > RETURN_ORIGINS_MAX_BYTES) return unavailable(`超过 ${RETURN_ORIGINS_MAX_BYTES} 字节上限`)
         return parseOrigins(await handle.readFile({ encoding: 'utf8' }))
-      } catch {
-        return unavailable('读取或解析失败')
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        return unavailable(`读取或解析失败（${code ?? (error as Error).message ?? '未知错误'}）`)
       } finally {
         await handle.close()
       }

@@ -19,6 +19,8 @@ import { createFileCredentialsStore, type CredentialsStore } from './credentials
 import { createFileSessionStore, type SessionStore } from './sessionStore.ts'
 import { changePanelPassword } from './passwordChange.ts'
 import { createScryptHasher, type PasswordHasher } from './passwordHasher.ts'
+import { adjudicateReturnTo } from './returnTo.ts'
+import { createFileReturnOriginRegistry, type ReturnOriginRegistry } from './returnOriginRegistry.ts'
 import { currentPwdEpoch, parseSessionCookie } from './authMiddleware.ts'
 
 /*
@@ -49,6 +51,8 @@ export type AuthAppDeps = {
   credentials: CredentialsStore
   sessions: SessionStore
   hasher: PasswordHasher
+  /** 回跳白名单：只服务 GET /session 的 returnTo 裁决，不参与任何鉴权判定。 */
+  returnOrigins: ReturnOriginRegistry
   /** 登录限流（次/窗口），缺省 5；测试注入小值。 */
   loginRateLimit?: number
   /** 限流窗口毫秒，缺省 60_000；测试注入小值。 */
@@ -63,6 +67,7 @@ export function resolveAuthDeps(partial: Partial<AuthAppDeps> = {}): AuthAppDeps
     credentials: partial.credentials ?? createFileCredentialsStore(),
     sessions: partial.sessions ?? createFileSessionStore(),
     hasher: partial.hasher ?? createScryptHasher(),
+    returnOrigins: partial.returnOrigins ?? createFileReturnOriginRegistry(),
     loginRateLimit: partial.loginRateLimit,
     loginRateWindowMs: partial.loginRateWindowMs,
   }
@@ -185,12 +190,26 @@ export function createAuthApp(deps: AuthAppDeps): Hono {
   })
 
   app.get('/session', async (c) => {
-    if (!deps.enabled) return jsonResponse(200, { authenticated: true, devAccount: deps.devAccount }, { 'cache-control': 'no-store' })
+    // 演示语义：恒已登录，且不回答回跳——面板本身没有鉴权时充当跳转器毫无意义。
+    if (!deps.enabled) {
+      return jsonResponse(200, { authenticated: true, devAccount: deps.devAccount }, { 'cache-control': 'no-store' })
+    }
     const sessionId = parseSessionCookie(c.req.header('cookie'))
     const authenticated = sessionId === null
       ? false
       : (await deps.sessions.validate(sessionId, await currentPwdEpoch(deps.credentials))) !== null
-    return jsonResponse(200, { authenticated, devAccount: deps.devAccount }, { 'cache-control': 'no-store' })
+    const requestedReturnTo = c.req.query('returnTo')
+    // 不带 returnTo 参数时响应形状与既往逐字相同：面板前端探测与外部消费方共用本端点，形状不无谓扩张。
+    if (requestedReturnTo === undefined) {
+      return jsonResponse(200, { authenticated, devAccount: deps.devAccount }, { 'cache-control': 'no-store' })
+    }
+    // 白名单读取自身故障按空表处理：回跳关掉了，但登录与探测照常。
+    const allowed = await deps.returnOrigins.list().catch(() => [] as readonly string[])
+    return jsonResponse(
+      200,
+      { authenticated, devAccount: deps.devAccount, returnTo: adjudicateReturnTo(requestedReturnTo, allowed) },
+      { 'cache-control': 'no-store' },
+    )
   })
 
   // —— 设置页端点（requireSession 覆盖之下，豁免清单不含任何一条）——

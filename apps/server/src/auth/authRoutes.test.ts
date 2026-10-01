@@ -8,6 +8,7 @@ import { DUMMY_HASH, SESSION_COOKIE_NAME, SESSION_IDLE_TTL_MS } from './authConf
 import { createFileCredentialsStore, createMemoryCredentialsStore, type CredentialsStore } from './credentialsStore.ts'
 import { createFileSessionStore, createMemorySessionStore } from './sessionStore.ts'
 import { createScryptHasher, type PasswordHasher } from './passwordHasher.ts'
+import { createMemoryReturnOriginRegistry } from './returnOriginRegistry.ts'
 
 /*
  * 登录片路由测试：内存 fake（真实 scrypt hasher——时序与往返行为本身就是被测对象），
@@ -46,6 +47,7 @@ function fixture(overrides: Partial<AuthAppDeps> = {}): Fixture {
     credentials: createMemoryCredentialsStore(),
     sessions: createMemorySessionStore(),
     hasher,
+    returnOrigins: createMemoryReturnOriginRegistry(),
     ...overrides,
   }
   return {
@@ -81,6 +83,7 @@ describe('POST /api/auth/login', () => {
       credentials: createMemoryCredentialsStore({ username: 'admin', passwordHash: await hasher.hash('right-password'), passwordChangedAt: EPOCH }),
       sessions: createMemorySessionStore(),
       hasher,
+      returnOrigins: createMemoryReturnOriginRegistry(),
     }
     const app = createAuthApp(deps)
     const res = await login(app, { username: 'admin', password: 'right-password' })
@@ -216,6 +219,7 @@ describe('POST /api/auth/login', () => {
         credentials: createMemoryCredentialsStore({ username: 'admin', passwordHash: await hasher.hash('right-password'), passwordChangedAt: EPOCH }),
         sessions: createMemorySessionStore(),
         hasher,
+        returnOrigins: createMemoryReturnOriginRegistry(),
       }
       const app = createAuthApp(deps)
       const res = await login(app, { username: 'admin', password: 'right-password' })
@@ -260,6 +264,7 @@ describe('POST /api/auth/logout', () => {
       credentials: createMemoryCredentialsStore({ username: 'admin', passwordHash: await hasher.hash('p'), passwordChangedAt: EPOCH }),
       sessions,
       hasher,
+      returnOrigins: createMemoryReturnOriginRegistry(),
     }
     const app = createAuthApp(deps)
     const loginRes = await login(app, { username: 'admin', password: 'p' })
@@ -299,6 +304,7 @@ describe('GET /api/auth/session', () => {
       credentials: createMemoryCredentialsStore({ username: 'admin', passwordHash: await hasher.hash(password), passwordChangedAt: EPOCH }),
       sessions: createMemorySessionStore(),
       hasher,
+      returnOrigins: createMemoryReturnOriginRegistry(),
     }
     const app = createAuthApp(deps)
     const loginRes = await login(app, { username: 'admin', password })
@@ -329,6 +335,7 @@ describe('GET /api/auth/session', () => {
       credentials,
       sessions: createMemorySessionStore(),
       hasher,
+      returnOrigins: createMemoryReturnOriginRegistry(),
     }
     const app = createAuthApp(deps)
     const loginRes = await login(app, { username: 'admin', password: 'old-password' })
@@ -347,6 +354,98 @@ describe('GET /api/auth/session', () => {
       const res = await app.request(`http://localhost:5173/session`)
       expect(await res.json()).toEqual({ authenticated: true, devAccount })
     }
+  })
+})
+
+describe('GET /api/auth/session 的回跳裁决', () => {
+  const TOOL = 'http://127.0.0.1:5173'
+
+  async function sessionApp(origins: readonly string[]): Promise<{ app: ReturnType<typeof createAuthApp>; cookie: string }> {
+    const hasher = createScryptHasher()
+    const deps: AuthAppDeps = {
+      enabled: true,
+      devAccount: false,
+      credentials: createMemoryCredentialsStore({
+        username: 'admin',
+        passwordHash: await hasher.hash('return-password'),
+        passwordChangedAt: EPOCH,
+      }),
+      sessions: createMemorySessionStore(),
+      hasher,
+      returnOrigins: createMemoryReturnOriginRegistry(origins),
+    }
+    const app = createAuthApp(deps)
+    const loginRes = await login(app, { username: 'admin', password: 'return-password' })
+    return { app, cookie: loginRes.headers.get('set-cookie')!.split(';')[0]! }
+  }
+
+  it('不带 returnTo 参数：响应键与改动前逐字相同（不含 returnTo）', async () => {
+    const { app, cookie } = await sessionApp([TOOL])
+    const res = await app.request('http://localhost:5173/session', { headers: { cookie } })
+    expect(Object.keys(await res.json() as Record<string, unknown>).sort()).toEqual(['authenticated', 'devAccount'])
+  })
+
+  it('带 returnTo 且命中名单：authenticated 与裁决结果一起回答', async () => {
+    const { app, cookie } = await sessionApp([TOOL])
+    const res = await app.request(
+      `http://localhost:5173/session?returnTo=${encodeURIComponent(`${TOOL}/projects/42`)}`,
+      { headers: { cookie } },
+    )
+    expect(await res.json()).toEqual({
+      authenticated: true,
+      devAccount: false,
+      returnTo: `${TOOL}/projects/42`,
+    })
+  })
+
+  it('带 returnTo 但不在名单：回 null，而 authenticated 如实', async () => {
+    const { app, cookie } = await sessionApp([TOOL])
+    const res = await app.request(
+      `http://localhost:5173/session?returnTo=${encodeURIComponent('http://127.0.0.1:9999/x')}`,
+      { headers: { cookie } },
+    )
+    expect(await res.json()).toEqual({ authenticated: true, devAccount: false, returnTo: null })
+  })
+
+  it('未登录时也回答裁决：跳转判定与会话有效性是两件独立的事', async () => {
+    const { app } = await sessionApp([TOOL])
+    const res = await app.request(`http://localhost:5173/session?returnTo=${encodeURIComponent(`${TOOL}/x`)}`)
+    expect(await res.json()).toEqual({ authenticated: false, devAccount: false, returnTo: `${TOOL}/x` })
+  })
+
+  it('白名单读取抛错：探测回答不受累，returnTo 按空名单判 null', async () => {
+    const { app, cookie } = await sessionApp([TOOL])
+    const broken = createAuthApp({
+      enabled: true,
+      devAccount: false,
+      credentials: createMemoryCredentialsStore(),
+      sessions: createMemorySessionStore(),
+      hasher: createScryptHasher(),
+      returnOrigins: {
+        list: async () => {
+          throw new Error('模拟 IO 故障')
+        },
+      },
+    })
+    const res = await broken.request(`http://localhost:5173/session?returnTo=${encodeURIComponent(`${TOOL}/x`)}`, {
+      headers: { cookie },
+    })
+    expect(res.status).toBe(200)
+    expect((await res.json() as { returnTo: string | null }).returnTo).toBeNull()
+    expect((await app.request('http://localhost:5173/session')).status).toBe(200)
+  })
+
+  it('enabled:false 的演示语义不回答 returnTo（面板不充当跳转器）', async () => {
+    const app = createAuthApp({
+      enabled: false,
+      devAccount: false,
+      credentials: createMemoryCredentialsStore(),
+      sessions: createMemorySessionStore(),
+      hasher: createScryptHasher(),
+      returnOrigins: createMemoryReturnOriginRegistry([TOOL]),
+    })
+    const res = await app.request(`http://localhost:5173/session?returnTo=${encodeURIComponent(`${TOOL}/x`)}`)
+    expect(Object.keys(await res.json() as Record<string, unknown>).sort()).toEqual(['authenticated', 'devAccount'])
   })
 })
 
@@ -397,6 +496,7 @@ async function passwordFixture(overrides: Partial<AuthAppDeps> = {}): Promise<{
     credentials,
     sessions: createMemorySessionStore(),
     hasher,
+    returnOrigins: createMemoryReturnOriginRegistry(),
     ...overrides,
   }
   const app = createAuthApp(deps)
@@ -504,6 +604,7 @@ describe('POST /api/auth/password', () => {
       credentials: createMemoryCredentialsStore(),
       sessions: createMemorySessionStore(),
       hasher: createScryptHasher(),
+      returnOrigins: createMemoryReturnOriginRegistry(),
     }
     const app = createAuthApp(deps)
     const res = await app.request(changeRequest({
@@ -529,6 +630,7 @@ describe('POST /api/auth/password', () => {
       credentials,
       sessions: createMemorySessionStore(),
       hasher,
+      returnOrigins: createMemoryReturnOriginRegistry(),
     }
     const app = createAuthApp(deps)
     const loginRes = await login(app, { username: 'admin', password: 'current-password' })
@@ -568,6 +670,7 @@ describe('GET /api/auth/sessions', () => {
       credentials: createMemoryCredentialsStore({ username: 'admin', passwordHash: await hasher.hash('p'), passwordChangedAt: EPOCH }),
       sessions,
       hasher,
+      returnOrigins: createMemoryReturnOriginRegistry(),
     }
     const app = createAuthApp(deps)
     const res = await app.request('http://localhost:5173/sessions', {
@@ -605,6 +708,7 @@ describe('POST /api/auth/sessions/logout-others', () => {
       credentials: createMemoryCredentialsStore({ username: 'admin', passwordHash: await hasher.hash('p'), passwordChangedAt: EPOCH }),
       sessions,
       hasher,
+      returnOrigins: createMemoryReturnOriginRegistry(),
     }
     const app = createAuthApp(deps)
     const first = await sessions.create(EPOCH)
@@ -642,6 +746,7 @@ describe('设置端点在 enabled: false 时', () => {
       credentials: createFileCredentialsStore(join(dir, 'config', 'panel-credentials.json')),
       sessions: createFileSessionStore(join(dir, 'state', 'panel-sessions.json')),
       hasher: createScryptHasher(),
+      returnOrigins: createMemoryReturnOriginRegistry(),
     }
     const app = createAuthApp(deps)
 
