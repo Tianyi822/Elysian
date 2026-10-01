@@ -1,36 +1,26 @@
 import type {
   LogClearReport,
   LogStorageStats,
+  LogListQuery,
+  LoginLogListQuery,
   OperationLogEntry,
-  PlatformLogCategory,
-  PlatformLogLevel,
+  OperationLogListQuery,
   RuntimeLogEntry,
 } from '@elysian/contracts'
 import { PLATFORM_LOG_CATEGORY_LABELS, pageByQuery } from '@elysian/contracts'
-import type { LoginLogListQuery, LogListQuery, OperationLogListQuery } from '@elysian/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { SweepResult } from '../../../../server/src/logs/logsService.ts'
-import { createLogsApp, LOGS_MOUNT } from '../../../../server/src/logs/logsRoutes.ts'
-import type { LogsService } from '../../../../server/src/logs/logsService.ts'
 import { runLogsAdapterContract } from '../logsAdapterContract'
-import { SEED_OPERATION_LOGS, SEED_RUNTIME_LOGS } from '../mock/logsData'
+import { SEED_LOGIN_LOGS, SEED_OPERATION_LOGS, SEED_RUNTIME_LOGS } from '../mock/logsData'
 import { createHttpLogsAdapter } from './logsHttpAdapter'
 
 /*
  * 同一套日志契约断言对 HTTP 实现再跑一遍（「mock 可替换」的验证在日志域不能缺一半）。
  *
- * 端点用的是**服务端真实的日志子应用**（apps/server/src/logs/logsRoutes.ts 的
- * createLogsApp），只有 LogsService 是假的——因此被检验的是真实的路由、守卫链、
- * 状态码与响应形状，而不是一份手抄的形状。跨包 import 服务端源码有先例
- * （proxyTable.test.ts 取挂载常量）。
- *
- * 两点测试侧脚手架的说明：
- * - 不 import app.ts 的 createApp：它为终端片动态 `import('bun')`，web 的 vitest
- *   pipeline（jsdom + node）解析不到 bun 模块图；子应用本身零 bun 依赖，直接驱动它。
- * - 子应用的路径是相对的（挂载前缀由 app.ts 拼接），因此桩把 `/api/logs` 前缀剥掉再转发；
- *   「挂载前缀就是 /api/logs」由 proxyTable.test.ts 与 server 侧用例各自锚定。
- * - 写端点要过同源守卫：桩补上 Origin 与 Host（浏览器对同源写请求自动带 Origin、
- *   Host 由网络层给出），与真实浏览器的请求同形。
+ * TS 后端删除后，「真实服务端路由」的保证由 Go 侧自轨承担（apps/server-go/internal/logs/
+ * router_test.go 锚路由、状态码与守卫，.zcode/go-migration 的 e2e 脚本锚端到端接线）；
+ * 这里改用一个内存态的 /api/logs 端点桩驱动同一套契约断言：桩与真实实现共用种子数据集、
+ * 响应形状（存储统计、`{ cleared }` 包裹、清空自指留痕）与 `pageByQuery` 分页口径，
+ * 被检验的仍是 adapter 的请求接线、JSON 形状校验与状态映射，而不是一份手抄的响应。
  */
 
 const UTF8 = new TextEncoder()
@@ -40,7 +30,7 @@ function bytesOf(entries: readonly object[]): number {
   return entries.reduce((sum, entry) => sum + UTF8.encode(`${JSON.stringify(entry)}\n`).length, 0)
 }
 
-/** 与 server 侧 collectStorageStats 同口径：总量为两类之和，最旧时间取两类合并后的最小值。 */
+/** 与服务端 collectStorageStats 同口径：总量为两类之和，最旧时间取两类合并后的最小值。 */
 function storageOf(
   runtime: readonly RuntimeLogEntry[],
   operation: readonly OperationLogEntry[],
@@ -64,79 +54,95 @@ function storageOf(
 }
 
 /**
- * 假服务：内存条目 + 与真实服务端同形的自指留痕（规格 7.2）。
+ * 内存态的 /api/logs 端点桩：种子数据 + 与真实服务端同形的清空留痕（规格 7.2）。
  * 运行日志的留痕由服务层在清空后写；操作日志的留痕在生产里由 app 层采集中间件记录
- * （清空本身是写端点），这里由假服务代替——两种留痕的形状与真实实现一致。
+ * （清空本身是写端点），这里由桩代替——两种留痕的形状与真实实现一致。
+ * 分页与筛选直接复用契约的 pageByQuery（与 mock、真实服务端同一口径）。
  */
-function createFakeLogsService(): LogsService {
+function createLogsApiStub() {
   let runtime: RuntimeLogEntry[] = [...SEED_RUNTIME_LOGS]
   let operation: OperationLogEntry[] = [...SEED_OPERATION_LOGS]
   let seq = 1000
 
-  const writeRuntime = (level: PlatformLogLevel, source: string, message: string): void => {
-    const at = new Date().toISOString()
-    seq += 1
-    runtime = [...runtime, { id: `${at}#${seq}`, at, level, source, message }]
-  }
+  const respond = (body: unknown, status = 200): Response =>
+    new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 
-  const service: LogsService = {
-    async runtimeLog(query: LogListQuery = {}) {
+  return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const url = new URL(String(input), 'http://localhost')
+    const method = (init?.method ?? 'GET').toUpperCase()
+    const query: LogListQuery = {
+      q: url.searchParams.get('q') ?? undefined,
+      limit: url.searchParams.get('limit') ? Number(url.searchParams.get('limit')) : undefined,
+      before: url.searchParams.get('before') ?? undefined,
+      beforeId: url.searchParams.get('beforeId') ? Number(url.searchParams.get('beforeId')) : undefined,
+    }
+    const recordTrace = (category: 'runtime' | 'operation', rowCount: number): void => {
+      const at = new Date().toISOString()
+      seq += 1
+      const label = PLATFORM_LOG_CATEGORY_LABELS[category]
+      if (category === 'runtime') {
+        runtime = [
+          ...runtime,
+          { id: `${at}#${seq}`, at, level: 'warning', source: 'logs.clear', message: `${label}已清空：删除 ${rowCount} 个文件` },
+        ]
+      } else {
+        // 清空操作日志的留痕由采集中间件写（它记录的正是这次 POST），倒序排在最前。
+        operation = [
+          {
+            id: `${at}#${seq}`,
+            at,
+            category: 'logs',
+            action: `清空${label}`,
+            target: null,
+            summary: `删除 ${rowCount} 个文件`,
+            result: 'success',
+            method: 'POST',
+            path: `/api/logs/${category}/clear`,
+            httpStatus: 200,
+          },
+          ...operation,
+        ]
+      }
+    }
+
+    if (url.pathname === '/api/logs/runtime' && method === 'GET') {
       const page = pageByQuery(runtime, query, (entry, keyword) => {
         const needle = keyword.toLowerCase()
         return entry.message.toLowerCase().includes(needle) || entry.source.toLowerCase().includes(needle)
       })
-      return {
-        entries: page.entries,
-        total: page.total,
-        truncated: page.truncated,
-        skippedLines: 0,
-        skippedFiles: 0,
-        storage: storageOf(runtime, operation),
-      }
-    },
-    async operationLog(query: OperationLogListQuery = {}) {
-      const page = pageByQuery(operation, query, (entry, keyword) => {
+      return respond({ ...page, skippedLines: 0, skippedFiles: 0, storage: storageOf(runtime, operation) })
+    }
+    if (url.pathname === '/api/logs/operation' && method === 'GET') {
+      const operationQuery = query as OperationLogListQuery
+      const category = url.searchParams.get('category')
+      const result = url.searchParams.get('result')
+      const page = pageByQuery(operation, operationQuery, (entry, keyword) => {
         const needle = keyword.toLowerCase()
-        if (query.category && entry.category !== query.category) return false
-        if (query.result && entry.result !== query.result) return false
+        if (category && entry.category !== category) return false
+        if (result && entry.result !== result) return false
         return (
           entry.action.toLowerCase().includes(needle)
           || entry.summary.toLowerCase().includes(needle)
           || (entry.target?.toLowerCase().includes(needle) ?? false)
         )
       })
-      return {
-        entries: page.entries,
-        total: page.total,
-        truncated: page.truncated,
+      return respond({ ...page, skippedLines: 0, skippedFiles: 0, storage: storageOf(runtime, operation) })
+    }
+    if (url.pathname === '/api/logs/login' && method === 'GET') {
+      const loginQuery = query as LoginLogListQuery
+      const status = url.searchParams.get('status')
+      const rows = SEED_LOGIN_LOGS.filter((entry) => !status || entry.status === status)
+      return respond({
+        entries: rows.slice(0, loginQuery.limit ?? rows.length),
+        total: rows.length,
+        truncated: false,
         skippedLines: 0,
         skippedFiles: 0,
-        storage: storageOf(runtime, operation),
-      }
-    },
-    async loginLog(query: LoginLogListQuery = {}) {
-      const rows: { id: string; at: string; ip: string; location: string; userAgent: string; status: 'success' | 'failure'; time: string }[] = []
-      const page = pageByQuery(rows, query, (entry, keyword) => {
-        const needle = keyword.toLowerCase()
-        if (query.status && entry.status !== query.status) return false
-        return (
-          entry.ip.toLowerCase().includes(needle)
-          || entry.location.toLowerCase().includes(needle)
-          || entry.userAgent.toLowerCase().includes(needle)
-        )
       })
-      return {
-        entries: page.entries.map(({ at: _at, ...entry }) => entry),
-        total: page.total,
-        truncated: page.truncated,
-        skippedLines: 0,
-        skippedFiles: 0,
-      }
-    },
-    async recordLogin() {
-      return undefined
-    },
-    async clear(category: PlatformLogCategory) {
+    }
+    const clearMatch = /^\/api\/logs\/(runtime|operation)\/clear$/.exec(url.pathname)
+    if (clearMatch && method === 'POST') {
+      const category = clearMatch[1] as 'runtime' | 'operation'
       const cleared = category === 'runtime' ? runtime : operation
       const report: LogClearReport = {
         category,
@@ -149,78 +155,18 @@ function createFakeLogsService(): LogsService {
         runtime = []
       } else {
         operation = []
-        // 清空操作日志时，操作日志的留痕由采集中间件写（它记录的正是这次 POST）。
-        await service.recordOperation({
-          category: 'logs',
-          action: `清空${PLATFORM_LOG_CATEGORY_LABELS[category]}`,
-          result: 'success',
-          summary: `删除 ${report.rowCount} 个文件`,
-          method: 'POST',
-          path: `${LOGS_MOUNT}/${category}/clear`,
-          httpStatus: 200,
-        })
       }
-      writeRuntime('warning', 'logs.clear', `${PLATFORM_LOG_CATEGORY_LABELS[category]}已清空：删除 ${report.rowCount} 个文件`)
-      return report
-    },
-    async log(level, source, message) {
-      writeRuntime(level, source, message)
-    },
-    async recordOperation(input) {
-      const at = new Date().toISOString()
-      seq += 1
-      // 倒序：新记录排在最前（与 operationLog 的返回顺序一致）。
-      operation = [
-        {
-          id: `${at}#${seq}`,
-          at,
-          category: input.category,
-          action: input.action,
-          target: input.target ?? null,
-          summary: input.summary ?? '',
-          result: input.result,
-          method: input.method ?? null,
-          path: input.path ?? null,
-          httpStatus: input.httpStatus ?? null,
-        },
-        ...operation,
-      ]
-    },
-    async runSweep() {
-      // 契约断言只覆盖读取与清空：巡检由服务端轨自己的用例覆盖，这里回一份空结果。
-      return EMPTY_SWEEP
-    },
+      recordTrace(category, report.rowCount)
+      return respond({ cleared: report })
+    }
+    return respond({ error: `未知日志端点：${method} ${url.pathname}` }, 404)
   }
-  return service
 }
 
-/** 巡检结果的最小合法形状：契约用例从不触发巡检，只满足接口。 */
-const EMPTY_SWEEP: SweepResult = {
-  removedTmp: 0,
-  compressed: 0,
-  deletedByAge: 0,
-  deletedBySize: 0,
-  freedBytes: 0,
-  totalBytes: 0,
-  trimmedBySize: false,
-  failed: 0,
-  at: '2026-09-23T00:00:00.000Z',
-}
-
-/** 每次新建子应用（连同假服务）并装好 fetch 桩：清空会改写状态，用例之间不能共用。 */
+/** 每次新建一份端点桩（连同其内存状态）并装好 fetch 桩：清空会改写状态，用例之间不能共用。 */
 function makeHttpAdapter() {
-  const app = createLogsApp({ service: createFakeLogsService() })
-  vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = new URL(String(input), 'http://localhost')
-    const relative = url.pathname.startsWith(LOGS_MOUNT)
-      ? url.pathname.slice(LOGS_MOUNT.length)
-      : url.pathname
-    const headers = new Headers(init?.headers)
-    headers.set('origin', url.origin)
-    headers.set('host', url.host)
-    const path = relative || '/'
-    return app.request(new Request(new URL(`${path}${url.search}`, url.origin), { ...init, headers }))
-  })
+  const handle = createLogsApiStub()
+  vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => handle(input, init))
   return createHttpLogsAdapter('/api/logs')
 }
 
@@ -232,17 +178,11 @@ runLogsAdapterContract('http', makeHttpAdapter)
 
 describe('HTTP 日志端点接线', () => {
   it('四个端点各自落在 /api/logs 下的约定路径上', async () => {
-    const app = createLogsApp({ service: createFakeLogsService() })
     const calls: { url: string; method: string; body: unknown }[] = []
+    const handle = createLogsApiStub()
     vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
       calls.push({ url: String(input), method: init?.method ?? 'GET', body: init?.body })
-      const url = new URL(String(input), 'http://localhost')
-      const headers = new Headers(init?.headers)
-      headers.set('origin', url.origin)
-      headers.set('host', url.host)
-      return app.request(
-        new Request(new URL(url.pathname.slice(LOGS_MOUNT.length) || '/', url), { ...init, headers }),
-      )
+      return handle(input, init)
     })
     const adapter = createHttpLogsAdapter()
     await adapter.runtimeLog()

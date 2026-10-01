@@ -19,7 +19,7 @@ const (
 	// terminalCols / terminalRows 容器终端的固定规格（契约 TERMINAL_COLS/ROWS）。
 	terminalCols = 100
 	terminalRows = 30
-	// panelPort 面板端口（契约 PANEL_PORT）；serverPort 与 TS shared/ports.ts 同值。
+	// panelPort 面板端口（契约 PANEL_PORT）；serverPort 为后端 API 契约端口。
 	panelPort  = contract.PanelPort
 	serverPort = 48101
 	// maxShellWords 启动命令分词上限（契约 MAX_SHELL_WORDS）。

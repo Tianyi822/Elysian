@@ -2,12 +2,24 @@ import { PANEL_PORT } from '@elysian/contracts'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'vite'
-import { ALLOWED_HOSTNAMES } from '../server/src/shared/allowedHostnames.ts'
-import { SERVER_PORT } from '../server/src/shared/ports.ts'
 import { elysianEventsVitePlugin } from './src/adapters/sse/mockEventsPlugin.vite.ts'
 
-/** 代理目标：后端 API server 只在容器内回环监听（端口唯一权威在 server 侧 shared/ports.ts）。 */
-const serverTarget = `http://127.0.0.1:${SERVER_PORT}`
+/** 后端 API 服务的契约端口：唯一权威在 Go 侧 apps/server-go/internal/config 的 ListenPort。 */
+export const API_PORT = 48101
+
+/** 缺省代理目标：宿主机直跑 Go 后端（go run ./cmd/elysian，监听本机回环契约端口）。 */
+export const DEFAULT_API_ORIGIN = `http://127.0.0.1:${API_PORT}`
+
+/** 代理目标：web 容器内开发时由根 docker-compose.yml 注入 ELYSIAN_API_ORIGIN 指向 go-dev 容器。 */
+const apiOrigin = process.env.ELYSIAN_API_ORIGIN ?? DEFAULT_API_ORIGIN
+
+/**
+ * Host 允许名单：写请求的 Host 头必须解析到名单内的本机地址。Origin 与 Host 互相一致
+ * 挡不住 DNS rebinding（攻击域名两头上自身一致），名单把可写的访问面钉死在本机回环；
+ * Go 侧 apps/server-go/internal/shared/allowedhostnames.go 是同一份清单，两道防线是
+ * 一个显式决定，不依赖平台默认。
+ */
+const ALLOWED_HOSTNAMES: readonly string[] = ['127.0.0.1', 'localhost', '[::1]']
 
 /**
  * dev 与 preview 共享的 API 代理配置。必须用对象形式且不设 changeOrigin——vite 对字符串简写
@@ -17,20 +29,20 @@ const serverTarget = `http://127.0.0.1:${SERVER_PORT}`
  * /api/events 与 /api/resources/history 的 SSE 事件流由 elysianEventsVitePlugin 提供，不经代理。
  */
 const apiProxy = {
-  '/api/security': { target: serverTarget },
+  '/api/security': { target: apiOrigin },
   '/api/platform': {
-    target: serverTarget,
+    target: apiOrigin,
     // 依赖安装含 apt 与官方安装脚本，一步可能要数分钟。
     timeout: 400_000,
     proxyTimeout: 400_000,
   },
-  '/api/auth': { target: serverTarget },
-  '/api/files': { target: serverTarget },
-  '/api/logs': { target: serverTarget },
-  '/api/docker': { target: serverTarget, ws: true },
-  '/api/databases': { target: serverTarget, ws: true },
-  '/api/websites': { target: serverTarget },
-  '/api/terminals': { target: serverTarget, ws: true },
+  '/api/auth': { target: apiOrigin },
+  '/api/files': { target: apiOrigin },
+  '/api/logs': { target: apiOrigin },
+  '/api/docker': { target: apiOrigin, ws: true },
+  '/api/databases': { target: apiOrigin, ws: true },
+  '/api/websites': { target: apiOrigin },
+  '/api/terminals': { target: apiOrigin, ws: true },
 }
 
 export default defineConfig({

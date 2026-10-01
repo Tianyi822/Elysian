@@ -10,8 +10,8 @@ import {
 
 /**
  * 指标库路径：部署机器 ~/.Elysian/data/ 下（容器内 ~/.Elysian 经符号链接到持久卷）。
- * 路径约定与 apps/server/src/shared/elysianPaths.ts 是同一套布局；hostMetrics 属
- * web 侧 Node 模块、不能引 server 包，这里自行按同一规则拼接。
+ * 路径约定与 Go 后端 apps/server-go/internal/paths 是同一套布局；hostMetrics 属
+ * web 侧 Node 模块、不能引 Go 包，这里自行按同一规则拼接。
  */
 export const METRICS_SQLITE_PATH = join(homedir(), '.Elysian', 'data', 'metrics.sqlite')
 

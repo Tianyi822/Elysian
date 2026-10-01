@@ -1,19 +1,19 @@
-# 开发用镜像：宿主机编辑源码，容器内跑 Bun + Vite。
+# 开发用镜像：宿主机编辑源码，容器内跑 Bun + Vite（与容器内 sshd 联调环境）。
+# API 不在此镜像：Go 后端由 apps/server-go/Dockerfile.go-dev 承载，其系统级夹具
+# （ufw/iproute2、sudo、sqlite 专用 uid）仍复刻本镜像原有的服务器依赖。
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates curl unzip ufw iproute2 openssh-server sudo \
+  && apt-get install -y --no-install-recommends ca-certificates curl unzip openssh-server \
   && rm -rf /var/lib/apt/lists/* \
   && curl -fsSL https://bun.sh/install | bash
 
-# SSH 面板联调环境：预生成主机密钥，并建联调账号 elysian。
+# SSH 联调环境：预生成主机密钥，并建联调账号 elysian。
 # -p '*' 表示不设可用密码但保持账号未锁定：shadow 里是 '!' 的锁定账号会被 sshd 拒绝公钥登录。
 RUN ssh-keygen -A \
   && useradd -m -s /bin/bash -p '*' elysian \
-  && groupadd -g 2001 elysian-sqlite \
-  && useradd -u 2001 -g 2001 -M -s /usr/sbin/nologin elysian-sqlite \
   && cp /root/.bun/bin/bun /usr/local/bin/bun \
   && chmod 755 /usr/local/bin/bun
 

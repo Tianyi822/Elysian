@@ -13,8 +13,8 @@
 //	ELYSIAN_DOCKER_MOUNT_ROOT 非空生效；缺省 /srv。绑定挂载根（docker 域读取）。
 //	ELYSIAN_LISTEN_HOST       非空生效；缺省 127.0.0.1。HTTP 监听地址。
 //
-// 监听端口固定 48101，不设 env（与 apps/server/src/shared/ports.ts 的 SERVER_PORT
-// 同值的契约端口；迁移期两处常量并存，TS 删除时收敛）。
+// 监听端口固定 48101，不设 env（后端 API 服务的契约端口；web 侧 vite.config 的
+// API_PORT 与部署脚本 scripts/install.sh 的 PANEL_PORT 同值）。
 package config
 
 import "os"

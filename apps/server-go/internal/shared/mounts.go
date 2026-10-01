@@ -1,7 +1,8 @@
 package shared
 
-// API 挂载路径常量（TS apiMounts.ts 等价物）：app 装配、各域 404 兜底剥前缀与
-// 操作日志描述符表共用同一份字面量——单一事实，多处不漂移。
+// API 挂载路径常量：app 装配、各域 404 兜底剥前缀与
+// 操作日志描述符表共用同一份字面量——单一事实，多处不漂移。web 侧测试按字面量
+// 抄写同值清单（apps/web/src/adapters/http/proxyTable.test.ts），两侧共同锚定。
 const (
 	// AuthMount 登录鉴权片挂载点。
 	AuthMount = "/api/auth"

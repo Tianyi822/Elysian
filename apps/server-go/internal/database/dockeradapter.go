@@ -28,7 +28,7 @@ const (
 	dockerResponseMaxBytes = 4 * 1024 * 1024
 	// panelPort 面板端口（契约 PANEL_PORT 同值）。
 	panelPort = 48100
-	// serverPort 服务端口（TS shared/ports.ts 的 SERVER_PORT 同值）。
+	// serverPort 服务端口（后端 API 契约端口，config.ListenPort 同值）。
 	serverPort = 48101
 )
 

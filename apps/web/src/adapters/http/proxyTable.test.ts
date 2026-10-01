@@ -1,24 +1,25 @@
 import { describe, expect, it } from 'vitest'
-import {
-  DOCKER_MOUNT,
-  DATABASE_MOUNT,
-  FILES_MOUNT,
-  FIREWALL_MOUNT,
-  LOGS_MOUNT,
-  SSH_MOUNT,
-  TERMINAL_MOUNT,
-  USERS_MOUNT,
-} from '../../../../server/src/shared/apiMounts.ts'
-import { SERVER_PORT } from '../../../../server/src/shared/ports.ts'
-import config from '../../../vite.config'
+import config, { API_PORT, DEFAULT_API_ORIGIN } from '../../../vite.config'
 
 /*
  * dev 与 preview 的同源代理表必须覆盖浏览器侧全部 HTTP 端点：容器内这些切片走
- * 「真实 HTTP adapter → vite 同源代理 → 容器内回环 server」，代理表缺项时请求会被
+ * 「真实 HTTP adapter → vite 同源代理 → Go 后端」，代理表缺项时请求会被
  * vite 的 SPA 回退吞成 index.html（响应不是 JSON，界面整片报「不是有效 JSON」而不可用）。
  * 这条接线既不在类型系统里、也不在组件测试里（没有组件会请求真实网络），只能在这里锚死：
- * 端点路径取 server 侧的挂载常量，新增切片忘记补代理时本用例立刻红。
+ * 挂载路径按字面量抄自 Go 侧唯一权威 apps/server-go/internal/shared/mounts.go
+ * （web 不能跨语言 import，字面量漂移由 Go 侧 router 测试与本表的路径共同暴露），
+ * 新增切片忘记补代理时本用例立刻红。
  */
+
+// 与 apps/server-go/internal/shared/mounts.go 逐字同值的挂载常量（浏览器侧副本）。
+const FIREWALL_MOUNT = '/api/security/firewall'
+const SSH_MOUNT = '/api/security/ssh'
+const USERS_MOUNT = '/api/security/users'
+const FILES_MOUNT = '/api/files'
+const DOCKER_MOUNT = '/api/docker'
+const DATABASE_MOUNT = '/api/databases'
+const LOGS_MOUNT = '/api/logs'
+const TERMINAL_MOUNT = '/api/terminals'
 
 /** 浏览器经 HTTP adapter 直连的端点：安全三片、文件管理、容器、平台日志、终端 WebSocket 与平台内存。 */
 const HTTP_ENDPOINTS: readonly { label: string; path: string }[] = [
@@ -29,7 +30,7 @@ const HTTP_ENDPOINTS: readonly { label: string; path: string }[] = [
   { label: '容器', path: `${DOCKER_MOUNT}/containers` },
   { label: '数据库', path: `${DATABASE_MOUNT}/` },
   { label: '日志', path: `${LOGS_MOUNT}/runtime` },
-  // 平台内存的挂载见 apps/server/src/app.ts:87（无导出常量，按字面量锚定）。
+  // 平台内存与依赖检测同挂 /api/platform（Go 侧 PlatformMount，无独立子常量）。
   { label: '平台内存', path: '/api/platform/memory' },
   { label: '终端', path: `${TERMINAL_MOUNT}/ws` },
 ]
@@ -59,11 +60,14 @@ describe('vite 同源代理表', () => {
     expect(missing).toEqual([])
   })
 
-  it.each(tables)('$name 的代理目标都是容器内回环的 server 端口，且保持对象形式（不改写 Host 头）', ({ proxy }) => {
+  it.each(tables)('$name 的代理目标都是缺省的宿主回环 Go 后端端口，且保持对象形式（不改写 Host 头）', ({ proxy }) => {
+    // vite.config 读同一进程 env：本进程未注入 ELYSIAN_API_ORIGIN 时全表必然是缺省回环目标。
+    const expectedTarget = process.env.ELYSIAN_API_ORIGIN ?? DEFAULT_API_ORIGIN
+    expect(DEFAULT_API_ORIGIN).toBe(`http://127.0.0.1:${API_PORT}`)
     for (const [prefix, options] of Object.entries(proxy)) {
       expect({ prefix, target: (options as { target?: string }).target }).toEqual({
         prefix,
-        target: `http://127.0.0.1:${SERVER_PORT}`,
+        target: expectedTarget,
       })
       // 字符串简写会强制 changeOrigin:true，改写 Host 头后同源守卫会 403 掉全部写请求
       expect({ prefix, changeOrigin: (options as { changeOrigin?: boolean }).changeOrigin }).toEqual({

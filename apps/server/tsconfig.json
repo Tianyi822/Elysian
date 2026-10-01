@@ -1,9 +1,0 @@
-{
-  "extends": "../../tsconfig.base.json",
-  "include": ["src", "vitest.config.ts"],
-  "exclude": ["src/**/*.bun.test.ts"],
-  "compilerOptions": {
-    "types": ["node"],
-    "lib": ["ES2022"]
-  }
-}

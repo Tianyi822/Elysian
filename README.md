@@ -1,6 +1,6 @@
 # Elysian
 
-Elysian 是 Agent 辅助的运维工作台，用于查看主机状态并操作容器、数据库、文件和安全配置。Web 使用 React、Vite、Tailwind CSS v4；服务端使用 Bun。非 Docker 本地开发保留可复现的演示数据，Docker 运行时通过同源 API 连接真实 Docker Engine 和数据库。
+Elysian 是 Agent 辅助的运维工作台，用于查看主机状态并操作容器、数据库、文件和安全配置。Web 使用 React、Vite、Tailwind CSS v4；后端使用 Go（`apps/server-go`，chi 路由，发布为内嵌前端产物的单二进制）。非 Docker 本地开发保留可复现的演示数据，Docker 运行时通过同源 API 连接真实 Docker Engine 和数据库。
 
 ## 运行
 
@@ -13,13 +13,20 @@ bun run build
 bun run preview
 ```
 
-Docker 开发通过宿主 Docker socket 管理宿主容器。macOS Docker Desktop 需要把 `ELYSIAN_DOCKER_MOUNT_ROOT` 指向已共享的宿主路径；Linux 默认为 `/srv`。
+Docker 开发分两个编排：根 `docker-compose.yml` 只跑前端 dev 与容器内 sshd；Go API 由 `apps/server-go/docker-compose.go-dev.yml` 提供（监听容器内 48101，只发布宿主回环 48102），vite 把 `/api/*` 同源代理过去。macOS Docker Desktop 需要把 `ELYSIAN_DOCKER_MOUNT_ROOT` 指向已共享的宿主路径；Linux 默认为 `/srv`。
 
 ```bash
 ELYSIAN_DOCKER_MOUNT_ROOT=$HOME/Elysian-srv docker compose up -d
+ELYSIAN_DOCKER_MOUNT_ROOT=$HOME/Elysian-srv docker compose -f apps/server-go/docker-compose.go-dev.yml up -d
 ```
 
-面板监听宿主回环地址 `127.0.0.1:48100`。挂载 Docker socket 等价于授予宿主级容器管理权限，因此不要把面板反向代理到不可信网络。面板有单管理员登录：服务端会话加 HttpOnly Cookie，除四条鉴权豁免路径（`/api/health` 与 `/api/auth` 的 login、session、logout）外，全部 `/api/*` 读写都要求已登录会话。同机回环上的自有工具复用浏览器本就按 host 共享的这枚会话，回跳地址由服务端按白名单裁决（`docs/adr/0017-*`），面板仍是单用户、不含多租户。`bun run test` 覆盖 server、web 和契约包。
+Go 后端的开发与门禁一律在 Docker 容器内跑：`bash apps/server-go/dev-check.sh ./...`（缺省全量，可传包路径缩小范围）。宿主机命令只覆盖前端与契约包：`bun run test` 覆盖 web 和契约包。
+
+面板监听宿主回环地址 `127.0.0.1:48100`。挂载 Docker socket 等价于授予宿主级容器管理权限，因此不要把面板反向代理到不可信网络。面板有单管理员登录：服务端会话加 HttpOnly Cookie，除四条鉴权豁免路径（`/api/health` 与 `/api/auth` 的 login、session、logout）外，全部 `/api/*` 读写都要求已登录会话。同机回环上的自有工具复用浏览器本就按 host 共享的这枚会话，回跳地址由服务端按白名单裁决（`docs/adr/0017-*`），面板仍是单用户、不含多租户。
+
+## 部署
+
+源码一键部署入口是 `scripts/install.sh`（Ubuntu/Debian 虚拟机，root 执行）：按官方校验安装锁定版本的 Go 与 bun 工具链，构建前端与 Go 单二进制，写 systemd 服务（裸机模式，只绑 `127.0.0.1:48101`），首启初始密码打印在 stdout，`--uninstall` 卸载（保留 `~/.Elysian` 数据）。忘记密码时在部署机执行 `HOME=/var/lib/elysian /usr/local/bin/elysian resetpwd`。
 
 ## 数据库页
 
@@ -36,7 +43,7 @@ Docker 环境中的 SQLite 使用面板持久卷 `~/.Elysian/data/sqlite`：可�
 网站项目通过容器运行，Java、Node、Go、Python 的版本由后端自动获取：语言官方正式发布记录与 Docker 官方镜像精确标签取交集，包含五年前版本线及历史正式补丁，排除预发布、快照和浮动标签。添加项目窗口通过同源 API 读取目录并支持版本号搜索。目录缓存六小时，过期后按请求自动刷新，获取失败时明确提示并保留已有缓存；缓存位于 `~/.Elysian/state/website-runtime-catalog.json`，生产代码不维护固定版本表。`bun run check:website-runtimes` 可诊断官方来源与镜像库的自动获取路径；本地演示仍使用可复现 mock。
 
 - `apps/web/`：工作台页面、store、HTTP/WebSocket 与 mock adapter。
-- `apps/server/`：同源 API、Docker Engine 调用、数据库协议与本机操作。
+- `apps/server-go/`：Go 后端（chi）：同源 API、Docker Engine 调用、数据库协议与本机操作。
 - `packages/foundation/contracts/`：跨端类型与纯常量。
 - `CONTEXT.md`、`AGENTS.md`、`docs/`：本地设计文档，不进入版本库。
 
