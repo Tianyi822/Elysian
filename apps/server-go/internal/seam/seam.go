@@ -234,7 +234,16 @@ type TerminalConnEvents interface {
 
 // TerminalKit 终端会话机工具箱（terminals 域实现；docker 域容器 exec 终端复用）。
 type TerminalKit interface {
-	NewService(deps TerminalHostDeps, maxSessions int) TerminalsService
+	// NewService 建一个会话机。shell 驯化规格与会话身份解析由消费方注入（集成期
+	// seam 修订：骨架形状缺这两项，容器 exec 终端无法表达「空启动行 + 容器身份」，
+	// 已按 gaps 协议由集成阶段收口）：本机终端传 terminals 域的本机规格与身份解析，
+	// 容器 exec 终端传空启动行规格与按容器解析的身份。
+	NewService(deps TerminalHostDeps, spec ShellSessionSpec, identity func() TerminalIdentity, maxSessions int) TerminalsService
+	// NewTotalLimitedService 合计上限包装器：getActive() 返回的跨服务活跃合计
+	// ≥ max 时 tryOpen 拒绝（连接层 1008 拒、不建 PTY）。docker 容器终端的
+	// 「全部容器合计 5 上限」由此承载——包装器必须由 terminals 域产出，连接胶水
+	// 只认本域会话机类型。
+	NewTotalLimitedService(inner TerminalsService, getActive func() int, max int) TerminalsService
 	// NewConnEvents 构造连接胶水；revocation 可为 nil（docker 容器终端不接线撤销表，现状语义）。
 	NewConnEvents(svc TerminalsService, revocation SessionConnections, sessionID string) TerminalConnEvents
 }
