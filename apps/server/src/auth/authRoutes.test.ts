@@ -360,23 +360,31 @@ describe('GET /api/auth/session', () => {
 describe('GET /api/auth/session 的回跳裁决', () => {
   const TOOL = 'http://127.0.0.1:5173'
 
-  async function sessionApp(origins: readonly string[]): Promise<{ app: ReturnType<typeof createAuthApp>; cookie: string }> {
+  async function sessionApp(origins: readonly string[]): Promise<{
+    app: ReturnType<typeof createAuthApp>
+    cookie: string
+    credentials: CredentialsStore
+    sessions: ReturnType<typeof createMemorySessionStore>
+    hasher: PasswordHasher
+  }> {
     const hasher = createScryptHasher()
+    const credentials = createMemoryCredentialsStore({
+      username: 'admin',
+      passwordHash: await hasher.hash('return-password'),
+      passwordChangedAt: EPOCH,
+    })
+    const sessions = createMemorySessionStore()
     const deps: AuthAppDeps = {
       enabled: true,
       devAccount: false,
-      credentials: createMemoryCredentialsStore({
-        username: 'admin',
-        passwordHash: await hasher.hash('return-password'),
-        passwordChangedAt: EPOCH,
-      }),
-      sessions: createMemorySessionStore(),
+      credentials,
+      sessions,
       hasher,
       returnOrigins: createMemoryReturnOriginRegistry(origins),
     }
     const app = createAuthApp(deps)
     const loginRes = await login(app, { username: 'admin', password: 'return-password' })
-    return { app, cookie: loginRes.headers.get('set-cookie')!.split(';')[0]! }
+    return { app, cookie: loginRes.headers.get('set-cookie')!.split(';')[0]!, credentials, sessions, hasher }
   }
 
   it('不带 returnTo 参数：响应键与改动前逐字相同（不含 returnTo）', async () => {
@@ -413,16 +421,18 @@ describe('GET /api/auth/session 的回跳裁决', () => {
     expect(await res.json()).toEqual({ authenticated: false, devAccount: false, returnTo: `${TOOL}/x` })
   })
 
-  it('白名单读取抛错：探测回答不受累，returnTo 按空名单判 null', async () => {
-    const { app, cookie } = await sessionApp([TOOL])
-    // 路由退化会落一行诊断（见下一条用例），本用例只锚定行为，静音避免测试输出噪声。
+  it('白名单读取抛错：探测回答不受累，authenticated 照常 true、returnTo 按空名单判 null', async () => {
+    // 关键：broken 复用登录时那批 credentials/sessions——authenticated:true 只能来自代码而非夹具，
+    // 这才钉住规格的「白名单读取抛错时探测不受累」。若用空 store，false 只是夹具性质、什么都证明不了。
+    const { cookie, credentials, sessions, hasher } = await sessionApp([TOOL])
+    // 路由退化会落一行诊断，本用例只锚定行为，静音避免测试输出噪声。
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const broken = createAuthApp({
       enabled: true,
       devAccount: false,
-      credentials: createMemoryCredentialsStore(),
-      sessions: createMemorySessionStore(),
-      hasher: createScryptHasher(),
+      credentials,
+      sessions,
+      hasher,
       returnOrigins: {
         list: async () => {
           throw new Error('模拟 IO 故障')
@@ -433,20 +443,20 @@ describe('GET /api/auth/session 的回跳裁决', () => {
       headers: { cookie },
     })
     expect(res.status).toBe(200)
-    expect((await res.json() as { returnTo: string | null }).returnTo).toBeNull()
-    expect((await app.request('http://localhost:5173/session')).status).toBe(200)
+    expect(await res.json()).toEqual({ authenticated: true, devAccount: false, returnTo: null })
     errors.mockRestore()
   })
 
   it('白名单读取 reject 时落一行中文诊断：退化不静默，文案以前缀开头并携带归因', async () => {
-    const { cookie } = await sessionApp([TOOL])
+    // 同样复用登录时的 store：即便白名单抛错，已登录会话照常回答 authenticated:true。
+    const { cookie, credentials, sessions, hasher } = await sessionApp([TOOL])
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const broken = createAuthApp({
       enabled: true,
       devAccount: false,
-      credentials: createMemoryCredentialsStore(),
-      sessions: createMemorySessionStore(),
-      hasher: createScryptHasher(),
+      credentials,
+      sessions,
+      hasher,
       returnOrigins: {
         list: async () => {
           throw Object.assign(new Error('模拟读取故障'), { code: 'EACCES' })
@@ -457,11 +467,21 @@ describe('GET /api/auth/session 的回跳裁决', () => {
       headers: { cookie },
     })
     expect(res.status).toBe(200)
-    expect(await res.json()).toEqual({ authenticated: false, devAccount: false, returnTo: null })
+    expect(await res.json()).toEqual({ authenticated: true, devAccount: false, returnTo: null })
     expect(errors).toHaveBeenCalledTimes(1)
     expect(String(errors.mock.calls[0]![0]).startsWith(SSO_ORIGINS_UNAVAILABLE)).toBe(true)
     expect(errors.mock.calls[0]![0]).toContain('EACCES')
     errors.mockRestore()
+  })
+
+  it('回答 returnTo 的分支同样带 cache-control: no-store', async () => {
+    const { app, cookie } = await sessionApp([TOOL])
+    const res = await app.request(`http://localhost:5173/session?returnTo=${encodeURIComponent(`${TOOL}/x`)}`, {
+      headers: { cookie },
+    })
+    expect(res.status).toBe(200)
+    expect(res.headers.get('cache-control')).toBe('no-store')
+    expect((await res.json() as { returnTo: string | null }).returnTo).toBe(`${TOOL}/x`)
   })
 
   it('enabled:false 的演示语义不回答 returnTo（面板不充当跳转器）', async () => {

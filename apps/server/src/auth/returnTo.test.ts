@@ -68,6 +68,15 @@ describe('adjudicateReturnTo', () => {
     expect(adjudicateReturnTo('http://evil.example/x', ['http://evil.example'])).toBeNull()
   })
 
+  it('恰好 RETURN_TO_MAX_LENGTH 的地址被接受，多一个字符即拒（长度上限边界）', () => {
+    const base = 'http://127.0.0.1:5173/'
+    const exact = base + 'a'.repeat(RETURN_TO_MAX_LENGTH - base.length)
+    expect(exact.length).toBe(RETURN_TO_MAX_LENGTH)
+    expect(adjudicateReturnTo(exact, ALLOWED)).toBe(exact)
+    // 超一个字符就落到长度闸之外，不交给 URL 解析。
+    expect(adjudicateReturnTo(`${exact}a`, ALLOWED)).toBeNull()
+  })
+
   it('超过 RETURN_TO_MAX_LENGTH 直接 null，不交给 URL 解析', () => {
     const long = `http://127.0.0.1:5173/${'a'.repeat(RETURN_TO_MAX_LENGTH)}`
     expect(adjudicateReturnTo(long, ALLOWED)).toBeNull()

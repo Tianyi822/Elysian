@@ -87,6 +87,22 @@ describe('createFileReturnOriginRegistry', () => {
     expect(ignored[3]![0]).toContain('42')
   })
 
+  it('默认端口归一（:80 / :443）后与自身不等 → 该条目被丢弃（它在裁决处永远匹配不上）', async () => {
+    const dir = await tempDir()
+    const path = join(dir, 'default-port.json')
+    writeOrigins(
+      path,
+      JSON.stringify({ version: 1, origins: ['http://127.0.0.1:80', 'https://127.0.0.1:443', 'http://127.0.0.1:5173'] }),
+    )
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    // 只有显式非默认端口的 5173 留下；两条默认端口被归一成 http(s)://127.0.0.1、与自身不等而丢弃。
+    await expect(createFileReturnOriginRegistry(path).list()).resolves.toEqual(['http://127.0.0.1:5173'])
+    const ignored = errors.mock.calls.filter((call) => String(call[0]).startsWith(SSO_ORIGIN_IGNORED))
+    expect(ignored).toHaveLength(2)
+    expect(ignored[0]![0]).toContain('http://127.0.0.1:80')
+    expect(ignored[1]![0]).toContain('https://127.0.0.1:443')
+  })
+
   it('IPv6 回环字面量合法', async () => {
     const dir = await tempDir()
     const path = join(dir, 'v6.json')

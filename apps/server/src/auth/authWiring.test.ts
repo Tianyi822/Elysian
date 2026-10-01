@@ -118,7 +118,9 @@ async function buildApp(authOverrides: Partial<AuthAppDeps> = {}) {
   const logs = createRecordingLogs()
   const app = await createApp({
     logs: logs.service,
-    auth: { enabled: true, credentials, sessions, hasher, ...authOverrides },
+    // 缺省注入内存版白名单：测试不得解析开发者真实的 ~/.Elysian/config（缺省装配走的是文件版）。
+    // 需要名单的用例经 authOverrides 覆盖成带 origin 的内存版实例。
+    auth: { enabled: true, credentials, sessions, hasher, returnOrigins: createMemoryReturnOriginRegistry(), ...authOverrides },
   })
   return { app: clientOf(app), hono: app, credentials, records: logs.records, loginRecords: logs.loginRecords }
 }
