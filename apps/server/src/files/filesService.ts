@@ -49,6 +49,11 @@ import {
  * - 写禁区双道检查：归一化字符串前缀之外再做一次 realpath 复核，中间组件符号链接
  *   （如 /tmp/x → /root/.ssh）解析后清单依然命中；清单同时收录面板资产的字符串名
  *   与卷挂真身（/root/.Elysian 与 /var/lib/elysian）。
+ * - 锚点防换链（TOCTOU）：复制/移动/重命名/压缩四个写入口在复核时捕获目标目录的
+ *   realpath 锚点，命令执行前复验锚点不变、执行后核验产物落点仍在锚点内。锚点复验
+ *   与 mv/cp/tar 子进程 spawn 之间仍有毫秒级窗口，竞态赢家的写穿由执行后落点校验
+ *   清理，但被覆盖的保护区原文件内容不可恢复——损害从「凭据接管」降为「保护区文件
+ *   被删或被覆盖后清理、fail closed、可 resetpwd 恢复」，不承诺绝对防写穿。
  * - 递归 chmod 分三段：入口 realpath 复核 → 受限遍历收集（超限在收集段拒绝，不留
  *   半改状态）→ 收集列表逐项过写禁区判定后才执行，chmod -R /root 砸不穿保护区。
  * - 读遍历全程 lstat 不跟随符号链接（防循环与 /proc、/sys、/dev 陷阱），深度与
@@ -235,14 +240,57 @@ export function createFilesService(deps: FilesHostDeps) {
     }
   }
 
-  /** 写禁区判定（两道）：归一化路径前缀 + realpath 复核，命中任一即拒绝。 */
-  async function assertNotForbiddenWrite(path: string): Promise<void> {
+  /**
+   * 写禁区判定（两道）：归一化路径前缀 + realpath 复核，命中任一即拒绝。放行时返回
+   * realpath 复核的取值作为目录锚点——判定内部本就要做这次 realpath，零新增系统调用，
+   * 调用方可拿它做命令执行前后的「锚点防换链」复验（见 assertDirAnchorUnchanged）。
+   */
+  async function assertNotForbiddenWrite(path: string): Promise<string | null> {
     if (matchPathPrefix(path, forbiddenPrefixes) !== null) {
       throw invalidRequest(`拒绝操作受保护路径：${path}`)
     }
     const resolved = await resolvedOrNull(path)
     if (resolved !== null && matchPathPrefix(resolved, forbiddenPrefixes) !== null) {
       throw invalidRequest(`拒绝操作受保护路径：${resolved}`)
+    }
+    return resolved
+  }
+
+  /**
+   * 目录锚点复验：resolvedOrNull 取值与锚点捕获时严格相等（含双 null）才放行。锚点
+   * 捕获与命令执行之间目标目录被整体换成符号链接（如 /tmp → /root/.ssh）时，后续
+   * cp/mv/tar 会经链接把产物落进保护区，这里在命令执行前拒绝。抛普通 Error（500
+   * 口径）：目录被换链不是客户端的请求错误，不伪装成 invalidRequest。
+   */
+  async function assertDirAnchorUnchanged(dirPath: string, anchor: string | null): Promise<void> {
+    const resolved = await resolvedOrNull(dirPath)
+    if (resolved !== anchor) {
+      throw new Error(`目标目录在操作期间被替换，已中止：${dirPath}`)
+    }
+  }
+
+  /**
+   * 执行后落点校验：产物必须仍在锚点目录内。先 lstat：产物消失直接中止；产物本身是
+   * 符号链接时不做 realpath 包含判定（realpath 会跟随产物自身的链接——活链接解析到
+   * 锚点外误判写穿、断链回 null 后再 startsWith 会崩，而产物自身是否为链接与写穿
+   * 无关），改验父目录锚点复验，中间组件换链由它抓住。非符号链接产物 realpath 不在
+   * 锚点之下（含解析失败）时，先尽力清理产物（node rm 对符号链接只摘链接本身，无
+   * 穿透风险）再中止；anchor 为 null 时只做父目录锚点复验（复核时断链的路径命令
+   * 自身会先失败，到不了这里，防御性收口）。
+   */
+  async function verifyArtifactWithinAnchor(artifactPath: string, anchorDirPath: string, anchor: string | null): Promise<void> {
+    const stats = await lstatOrNull(artifactPath)
+    if (stats === null) {
+      throw new Error(`产物落点异常，已清理并中止：${artifactPath}`)
+    }
+    if (stats.isSymbolicLink() || anchor === null) {
+      await assertDirAnchorUnchanged(anchorDirPath, anchor)
+      return
+    }
+    const resolved = await resolvedOrNull(artifactPath)
+    if (!resolved?.startsWith(`${anchor}/`)) {
+      await deps.rmPath(artifactPath).catch(() => {})
+      throw new Error(`产物落点异常，已清理并中止：${artifactPath}`)
     }
   }
 
@@ -324,12 +372,20 @@ export function createFilesService(deps: FilesHostDeps) {
     throw new Error(`无法在目标目录创建暂存目录：${destDir}`)
   }
 
-  /** 暂存目录复核：仍是我们创建的那个目录（不是被换成符号链接的名字）才允许发布。 */
+  /**
+   * 暂存目录复核：仍是我们创建的那个目录（不是被换成符号链接的名字）才允许发布。
+   * lstat 判定之外再做一次 realpath 过写禁区——锚点复验之后才被换链的暂存目录名，
+   * 解析后落进保护区的在这里拦下（防复验后才换链的第二道）。
+   */
   async function assertStagingIntact(stagingDir: string): Promise<void> {
     const stats = await deps.lstat(stagingDir).catch((error: unknown) => {
       throw new Error(`暂存目录不可用（${stagingDir}）：${error instanceof Error ? error.message : String(error)}`)
     })
     if (stats.isSymbolicLink() || !stats.isDirectory()) {
+      throw new Error(`暂存目录被抢占，已放弃发布：${stagingDir}`)
+    }
+    const resolved = await resolvedOrNull(stagingDir)
+    if (resolved !== null && matchPathPrefix(resolved, forbiddenPrefixes) !== null) {
       throw new Error(`暂存目录被抢占，已放弃发布：${stagingDir}`)
     }
   }
@@ -443,7 +499,7 @@ export function createFilesService(deps: FilesHostDeps) {
       await assertNotVirtualSource(src)
       const srcIsDirectory = srcStats.isDirectory()
       if (srcIsDirectory) await assertDestNotInsideSource(src, destDir, '复制')
-      await assertNotForbiddenWrite(destDir)
+      const destDirAnchor = await assertNotForbiddenWrite(destDir)
       const newName = await deriveUniqueName(destDir, leafNameOf(src))
       // 目标目录放行不代表派生出的目标名放行：源名恰好补齐一条禁区路径时（往 /root 落一个
       // 名为 .ssh 的条目），条目的完整路径已进保护区，与其余判据一样先于任何命令拒绝。
@@ -452,12 +508,17 @@ export function createFilesService(deps: FilesHostDeps) {
       const stagingDir = await createStagingDir(destDir)
       try {
         const staged = childPathOf(stagingDir, STAGED_ARTIFACT_NAME)
+        // 锚点防换链：mkdir 前目标目录被换链会使暂存落进保护区，cp 执行前先拒。
+        await assertDirAnchorUnchanged(destDir, destDirAnchor)
         const args = ['-a', src, staged] as const
         await deps.runCp(args).catch((error: unknown) => {
           throw commandError('cp', args, error)
         })
         await assertStagingIntact(stagingDir)
+        // rename 发布是穿透点：发布前再验一次锚点，发布后核验产物落点仍在锚点内。
+        await assertDirAnchorUnchanged(destDir, destDirAnchor)
         const published = await publishCopyArtifact(staged, destDir, newName)
+        await verifyArtifactWithinAnchor(published.path, destDir, destDirAnchor)
         return readEntry(published.path, published.name, await uidNameMap())
       } finally {
         // 暂存目录与残留产物一并清理（尽力而为，不掩盖原始错误）
@@ -477,16 +538,19 @@ export function createFilesService(deps: FilesHostDeps) {
       if (parentDirOf(src) === destDir) throw invalidRequest('目标目录与源目录相同')
       // 源的移动自带删除语义，与复制的只读源不同：源与目标都查完整写禁区。
       await assertNotForbiddenWrite(src)
-      await assertNotForbiddenWrite(destDir)
+      const destDirAnchor = await assertNotForbiddenWrite(destDir)
       if (srcStats.isDirectory()) await assertDestNotInsideSource(src, destDir, '移动')
       const newName = await deriveUniqueName(destDir, leafNameOf(src))
       const destChild = childPathOf(destDir, newName)
-      // 同复制：目标目录放行不代表派生出的目标名放行（源名恰好补齐一条禁区路径）。
+      // 同复制：目标目录放行不代表派生出的目标名放行（源名恰好补齐禁区路径）。
       assertNotForbiddenTargetPath(destChild)
+      // 锚点防换链：mv 执行前复验目标目录、执行后核验产物落点仍在锚点内。
+      await assertDirAnchorUnchanged(destDir, destDirAnchor)
       const args = ['-T', src, destChild] as const
       await deps.runMv(args).catch((error: unknown) => {
         throw commandError('mv', args, error)
       })
+      await verifyArtifactWithinAnchor(destChild, destDir, destDirAnchor)
       return readEntry(destChild, newName, await uidNameMap())
     },
 
@@ -510,12 +574,18 @@ export function createFilesService(deps: FilesHostDeps) {
       const siblings = new Set((await deps.readdir(parent)).map((dirent: Dirent) => dirent.name))
       if (siblings.has(trimmed)) throw invalidRequest(`同名条目已存在：${trimmed}`)
       await assertNotForbiddenWrite(normalized)
+      // 父目录此前只有 statDirectory（stat 跟随符号链接，拦不住换链）：这里补完整写
+      // 禁区判定并捕获锚点，顺带堵住父目录静态换链而条目 realpath 因 ENOENT 回 null 的漏判。
+      const parentAnchor = await assertNotForbiddenWrite(parent)
       const target = childPathOf(parent, trimmed)
       // 目标名可能恰好补齐一条禁区路径（父目录放行、名字补齐），按同一道判定拒绝。
       assertNotForbiddenTargetPath(target)
+      // 锚点防换链：rename 执行前复验父目录、执行后核验产物落点仍在锚点内。
+      await assertDirAnchorUnchanged(parent, parentAnchor)
       await deps.renamePath(normalized, target).catch((error: unknown) => {
         throw new Error(`重命名失败（${normalized} → ${target}）：${error instanceof Error ? error.message : String(error)}`)
       })
+      await verifyArtifactWithinAnchor(target, parent, parentAnchor)
       return readEntry(target, trimmed, await uidNameMap())
     },
 
@@ -531,6 +601,7 @@ export function createFilesService(deps: FilesHostDeps) {
       const archivePath = childPathOf(parent, archiveName)
       if (await nameExists(archivePath)) throw invalidRequest(`同名压缩包已存在：${archiveName}`)
       await assertNotForbiddenWrite(normalized)
+      const parentAnchor = await assertNotForbiddenWrite(parent)
       // 产物名恒为 `<名>.tar.gz`，今天不可能等于清单里的任何前缀；仍过同一道判定，
       // 让「派生落点全部先于命令过写禁区判定」这条规律完整可审，清单扩张时不留缺口。
       assertNotForbiddenTargetPath(archivePath)
@@ -539,11 +610,15 @@ export function createFilesService(deps: FilesHostDeps) {
       try {
         const staged = childPathOf(stagingDir, STAGED_ARTIFACT_NAME)
         const args = ['-czf', staged, '-C', parent, '--', leaf] as const
+        // 锚点防换链：tar 执行前与发布前各复验一次父目录，发布后核验产物落点。
+        await assertDirAnchorUnchanged(parent, parentAnchor)
         await deps.runTar(args).catch((error: unknown) => {
           throw commandError('tar', args, error)
         })
         await assertStagingIntact(stagingDir)
+        await assertDirAnchorUnchanged(parent, parentAnchor)
         await publishArchive(staged, archivePath, archiveName)
+        await verifyArtifactWithinAnchor(archivePath, parent, parentAnchor)
         return readEntry(archivePath, archiveName, await uidNameMap())
       } finally {
         await deps.rmPath(stagingDir).catch(() => {})

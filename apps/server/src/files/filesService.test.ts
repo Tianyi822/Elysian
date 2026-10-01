@@ -466,6 +466,26 @@ function childNamesOf(host: FakeFilesHost, path: string): readonly string[] {
   return [...(host.nodeAt(path, true)?.children?.keys() ?? [])]
 }
 
+/**
+ * 抢注时机三：目标目录锚点捕获（复核里第一次成功 realpath 它）之后立刻把它整体
+ * 换成指向 target 的符号链接——模拟「复核通过后、命令执行前」目录被敌对进程换链。
+ * 返回「换链是否真的发生」的探针（修复前部分入口对目录无 realpath 复核，探针没有
+ * 触发点，planted 为 false 即红，避免空转绿灯）。
+ */
+function swapDirAfterFirstRealpath(host: FakeFilesHost, dirPath: string, target: string): () => boolean {
+  const originalRealpath = host.deps.realpath
+  let planted = false
+  host.deps.realpath = async (path: string) => {
+    const resolved = await originalRealpath(path)
+    if (!planted && path === dirPath) {
+      planted = true
+      plantSymlink(host, dirPath, target)
+    }
+    return resolved
+  }
+  return () => planted
+}
+
 describe('list', () => {
   it('返回直接子项：目录无 sizeBytes、文件有；owner 经 getent 解析、查不到用 uid 呈现', async () => {
     const { service } = createService()
@@ -719,6 +739,22 @@ describe('copyEntry', () => {
     expect(host.nodeAt('/tmp/nginx 副本/nginx.conf')!.size).toBe(1478)
     expect(host.nodeAt('/root/.ssh/authorized_keys')!.size).toBe(394)
   })
+
+  it('暂存目录落点被换链进保护区：锚点捕获后换链，cp 执行前拒绝且不留残余', async () => {
+    const { host, service } = createService()
+    // 源名与 /root/.ssh 既有条目同名：deriveUniqueName 会派生「 副本」名，
+    // 修复前发布 rename 会把产物落到 /root/.ssh/authorized_keys 副本（写穿保护区）。
+    host.nodeAt('/var/www')!.children!.set('authorized_keys', file(120))
+    const planted = swapDirAfterFirstRealpath(host, '/tmp', '/root/.ssh')
+
+    await expect(service.copyEntry('/var/www/authorized_keys', '/tmp')).rejects.toThrow('目标目录在操作期间被替换，已中止：/tmp')
+
+    expect(planted()).toBe(true)
+    // cp 一条都没执行；/root/.ssh 里既无产物也无暂存残留（finally 已清理换链后误建的暂存）
+    expect(writeCommands(host).filter((entry) => entry.command === 'cp')).toEqual([])
+    expect(childNamesOf(host, '/root/.ssh')).toEqual(['authorized_keys'])
+    expect(host.nodeAt('/root/.ssh/authorized_keys')!.size).toBe(394)
+  })
 })
 
 describe('moveEntry', () => {
@@ -770,6 +806,19 @@ describe('moveEntry', () => {
     await expect(service.moveEntry('/home/deploy/.ssh', '/root')).rejects.toThrow('拒绝操作受保护路径：/root/.ssh')
     expect(writeCommands(host)).toEqual([])
     expect(host.nodeAt('/root/.ssh')).toBe(null)
+  })
+
+  it('目标目录在锚点捕获后被换成指向保护区的符号链接：拒绝执行且零写命令', async () => {
+    const { host, service } = createService()
+    const planted = swapDirAfterFirstRealpath(host, '/tmp', '/root/.Elysian')
+
+    // 修复前：mv -T 经换链后的 /tmp 把源文件直接写进 /root/.Elysian 并成功返回
+    await expect(service.moveEntry('/var/www/index.html', '/tmp')).rejects.toThrow('目标目录在操作期间被替换，已中止：/tmp')
+
+    expect(planted()).toBe(true)
+    expect(writeCommands(host)).toEqual([])
+    expect(host.nodeAt('/var/www/index.html')).not.toBeNull()
+    expect(host.nodeAt('/root/.Elysian/index.html')).toBeNull()
   })
 })
 
@@ -828,6 +877,19 @@ describe('renameEntry', () => {
     expect(host.renames).toEqual([])
     expect(host.nodeAt('/root/.ssh')).toBe(null)
   })
+
+  it('父目录在锚点捕获后被换链：拒绝 rename 且不写穿', async () => {
+    const { host, service } = createService()
+    const planted = swapDirAfterFirstRealpath(host, '/var/www', '/root/.ssh')
+
+    // 修复前：renameEntry 对父目录只有 statDirectory（stat 跟随符号链接，拦不住换链），
+    // 探针没有触发点，rename 直接成功
+    await expect(service.renameEntry('/var/www/index.html', 'home.html')).rejects.toThrow('目标目录在操作期间被替换，已中止：/var/www')
+
+    expect(planted()).toBe(true)
+    expect(host.renames).toEqual([])
+    expect(host.nodeAt('/root/.ssh/home.html')).toBeNull()
+  })
 })
 
 describe('compressEntry', () => {
@@ -877,6 +939,19 @@ describe('compressEntry', () => {
     const tar = writeCommands(host).find((entry) => entry.command === 'tar')!
     expect(tar.args[1]).toMatch(/^\/etc\/\.elysian-staging-[0-9a-f]+\/\.payload$/)
     expect(childNamesOf(host, '/etc').filter((name) => name.startsWith('.elysian-staging-'))).toEqual([])
+  })
+
+  it('父目录在锚点捕获后被换链：拒绝压缩与发布且零命令', async () => {
+    const { host, service } = createService()
+    const planted = swapDirAfterFirstRealpath(host, '/srv', '/root/.Elysian')
+
+    // 修复前：对父目录 /srv 无 realpath 复核，探针不触发，tar 打包与发布全部成功
+    await expect(service.compressEntry('/srv/deploy.sh')).rejects.toThrow('目标目录在操作期间被替换，已中止：/srv')
+
+    expect(planted()).toBe(true)
+    expect(writeCommands(host)).toEqual([])
+    // 换链后误建进保护区的暂存目录已被 finally 清理，保护区无任何新条目
+    expect(childNamesOf(host, '/root/.Elysian')).toEqual(['data'])
   })
 })
 
