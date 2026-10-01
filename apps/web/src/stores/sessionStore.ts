@@ -15,9 +15,16 @@ type SessionStoreState = {
   devAccount: boolean
   /**
    * 服务端裁决过的回跳地址：字符串 = 可用、null = 被拦截、undefined = 服务端未回答（未带参数或演示模式）。
-   * 只有登录页读它并据此离开 SPA。
+   * 只有登录页读它并据此离开 SPA。它回答的是「服务端最近裁决了什么」，
+   * 是否与当前请求同一条由 `returnToFor` 判定，二者一起才构成「这次 ?returnTo= 的裁决」。
    */
   returnTo: string | null | undefined
+  /**
+   * `returnTo` 这次裁决所对应的**请求值**（probe 的第二个入参原样记录）：
+   * 登录页据此判断裁决是否属于当前 URL 上的 `?returnTo=`，不等即视为「尚未裁决」——重探、期间不跳转也不显示裁决派生提示。
+   * 这是把裁决绑回它裁决的那次请求，不在前端做 origin 比对或再裁决（客户端不得参与安全判定）。
+   */
+  returnToFor: string | undefined
   /**
    * 一次性提示（如改密成功后的「需用新密码重新登录」）：唯一写点是设置页改密成功，
    * 唯一清点是 login() 成功——改密后用户只能经登录页重新进入，提示在两次登录之间保持准确。
@@ -40,6 +47,7 @@ export const useSessionStore = create<SessionStoreState>((set) => ({
   mode: undefined,
   devAccount: false,
   returnTo: undefined,
+  returnToFor: undefined,
   notice: null,
 
   setNotice(notice) {
@@ -55,6 +63,8 @@ export const useSessionStore = create<SessionStoreState>((set) => ({
         devAccount: status.devAccount,
         // 未带参数探测时 status.returnTo 为 undefined，顺带清掉旧裁决值（跨页面不残留）。
         returnTo: status.returnTo,
+        // 把请求值一并记下：登录页据此确认这条裁决就是它这次 ?returnTo= 的答案，而非上一次请求的残留。
+        returnToFor: returnTo,
       })
     } catch {
       set({ phase: 'error' })

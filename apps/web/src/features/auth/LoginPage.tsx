@@ -14,6 +14,8 @@ import { useSessionStore } from '../../stores/sessionStore'
  * 与开发账号提示同位、互不排斥；登录成功由 store 清除。
  * 演示模式（本地无后端）不强制登录：访问 /login 直接回仪表盘。
  * 回跳由服务端裁决（GET /api/auth/session?returnTo=），本组件只执行 assign，不自行判定地址可否使用。
+ * 裁决须绑回它裁决的那次请求：store 里的 returnToFor 与当前 URL 的 returnTo 不一致即当作尚未裁决——
+ * 重探、期间不跳转也不显示裁决派生提示，warm store 下换地址进来或空手进来都不会沿用上一条陈旧裁决。
  * 带 returnTo 时探测在途与回跳在途都只渲染过渡态，绝不闪现登录表单；不带 returnTo 首帧仍是表单。
  * 探测请求本身失败（面板不可达、响应无效）落 error：带与不带 returnTo 一律渲染错误态与重试，
  * 不退回表单假装面板健康——同一故障一种呈现，与 RequireSession 的既有做法一致。
@@ -35,6 +37,7 @@ export function LoginPage() {
   const devAccount = useSessionStore((state) => state.devAccount)
   const notice = useSessionStore((state) => state.notice)
   const returnTo = useSessionStore((state) => state.returnTo)
+  const returnToFor = useSessionStore((state) => state.returnToFor)
   const probe = useSessionStore((state) => state.probe)
   const login = useSessionStore((state) => state.login)
   const [username, setUsername] = useState('')
@@ -47,32 +50,28 @@ export function LoginPage() {
 
   // /login 不在 RequireSession 之内，这里自己探测一次（补齐 devAccount 回显、已登录判定与服务端回跳裁决）；
   // 演示网关在装配时已同步落位 authed，不会重复探测。
+  // 除首屏（phase 仍 unknown）外，warm store 里那条裁决对应的若不是本次 URL 的 returnTo，也重新探测——
+  // 否则带着新地址进来会沿用旧地址的裁决（既可能误跳旧工具，也可能对新地址根本不裁决）。
   useEffect(() => {
-    if (useSessionStore.getState().phase === 'unknown') void probe(gateway, requestedReturnTo)
+    const state = useSessionStore.getState()
+    if (state.phase === 'unknown' || state.returnToFor !== requestedReturnTo) void probe(gateway, requestedReturnTo)
   }, [probe, gateway, requestedReturnTo])
 
   const target = safeRedirectTarget((location.state as { from?: unknown } | null)?.from)
-  const adjudicated = typeof returnTo === 'string' ? returnTo : null
+  // 裁决只有在「它裁决的就是本次请求」时才可执行：returnToFor 与 URL 上的 returnTo 不一致，
+  // 就当尚未裁决（不跳转、不渲染裁决派生的提示）。这里只比请求值串，不做 origin 比对或再裁决。
+  const verdictIsFresh = returnToFor === requestedReturnTo
+  const adjudicated = verdictIsFresh && typeof returnTo === 'string' ? returnTo : null
 
-  // 离开 SPA 的唯一出口：phase 到位且裁决可用时把浏览器送回来源应用。只在 effect 里 assign 一次，
+  // 离开 SPA 的唯一出口：phase 到位且本次裁决可用时把浏览器送回来源应用。只在 effect 里 assign 一次，
   // 提交路径不重复调用——phase 变化自然走到这里。
   useEffect(() => {
     if (phase === 'authed' && adjudicated !== null) window.location.assign(adjudicated)
   }, [phase, adjudicated])
 
-  // 带 returnTo 时探测未落地一律渲染过渡态：真实会话下 status 要等一次 /api/auth/session 往返，
-  // 从来源应用跳进来的已登录用户若先看到表单，就是规约禁止的闪屏。
-  // 不带 returnTo 时不加这一帧，首帧行为与改动前逐字相同。
-  if (phase === 'unknown' && requestedReturnTo !== undefined) {
-    return (
-      <main className="flex min-h-dvh items-center justify-center bg-bg p-4 text-fg">
-        <LoadingState label="正在检查登录状态…" />
-      </main>
-    )
-  }
-
   // 探测请求本身失败（面板不可达 / 响应无效）：错误态加重试，与 RequireSession 同一条呈现。
   // 带与不带 returnTo 都一样——同一故障不该因怎么到达而分叉，红线要求的四态也不以来源为条件。
+  // 排在「裁决未就绪」帧之前：失败时 returnToFor 不会更新到本次请求，若先判未就绪会卡在无限加载。
   // 重试沿用同一个 returnTo 参数，恢复后照常走下面的分支。
   if (phase === 'error') {
     return (
@@ -82,6 +81,17 @@ export function LoginPage() {
           description="无法连接面板服务，请确认服务已启动。"
           onRetry={() => void probe(gateway, requestedReturnTo)}
         />
+      </main>
+    )
+  }
+
+  // 带 returnTo 且本次裁决尚未落地（首屏在途，或 warm store 裁决对应的是别的地址、正在重探）一律渲染过渡态：
+  // 真实会话下 status 要等一次 /api/auth/session 往返，从来源应用跳进来的已登录用户若先看到表单或旧裁决，
+  // 就是规约禁止的闪屏与误跳。不带 returnTo 时不加这一帧，首帧行为与改动前逐字相同。
+  if (requestedReturnTo !== undefined && !verdictIsFresh) {
+    return (
+      <main className="flex min-h-dvh items-center justify-center bg-bg p-4 text-fg">
+        <LoadingState label="正在检查登录状态…" />
       </main>
     )
   }

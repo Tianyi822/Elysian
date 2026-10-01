@@ -18,7 +18,7 @@ import { renderApp } from '../../test/renderApp'
 
 function gatewayWithSession(session: Partial<SessionAdapter>): ElysianGateway {
   const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
-  useSessionStore.setState({ phase: 'unknown', mode: undefined, devAccount: false, notice: null, returnTo: undefined })
+  useSessionStore.setState({ phase: 'unknown', mode: undefined, devAccount: false, notice: null, returnTo: undefined, returnToFor: undefined })
   return { ...base, session: session as SessionAdapter }
 }
 
@@ -126,7 +126,7 @@ afterEach(() => {
 })
 
 beforeEach(() => {
-  useSessionStore.setState({ phase: 'unknown', mode: undefined, devAccount: false, notice: null, returnTo: undefined })
+  useSessionStore.setState({ phase: 'unknown', mode: undefined, devAccount: false, notice: null, returnTo: undefined, returnToFor: undefined })
 })
 
 describe('LoginPage', () => {
@@ -467,5 +467,47 @@ describe('LoginPage', () => {
     await waitFor(() => expect(screen.getByText('登录后将返回 http://127.0.0.1:5173')).toBeInTheDocument())
     // 两次探测都带同一个原始地址，不是重试时把它丢了。
     expect(seen).toEqual(['http://127.0.0.1:5173/x', 'http://127.0.0.1:5173/x'])
+  })
+
+  // 裁决必须绑回它裁决的那次请求：warm store 里那条裁决若不是本次 URL 的 returnTo，就当尚未裁决——
+  // 重探、期间不跳转。下面两条钉住「换地址进来不会误跳上一个工具」「空手进来不会沿用陈旧裁决」。
+  it('warm store 持有 X 的裁决，带 ?returnTo=Y 进入：以 Y 重探、送去 Y 且从不送去 X', async () => {
+    const assign = stubLocationAssign()
+    const X = 'http://127.0.0.1:5173/x'
+    const Y = 'http://127.0.0.1:8080/y'
+    // 服务端只裁决当前请求的地址：收到 Y 回 Y，收到别的回 null。
+    const status = vi.fn(async (returnTo?: string): Promise<SessionStatus> => ({
+      mode: 'real',
+      authenticated: true,
+      devAccount: false,
+      returnTo: returnTo === Y ? Y : null,
+    }))
+    const gateway = gatewayWithSession({ ...adjudicatedSession(X, { authenticated: true }), status })
+    // 预热：上一轮把 X 裁决成可用、浏览器已登录（phase 非 unknown），store 挂着 X 的裁决。
+    useSessionStore.setState({ phase: 'authed', mode: 'real', returnTo: X, returnToFor: X })
+    renderApp(`/login?returnTo=${encodeURIComponent(Y)}`, { gateway })
+    // 必须带新地址 Y 再问一次，而不是拿旧裁决直接跳。
+    await waitFor(() => expect(status).toHaveBeenCalledWith(Y))
+    await waitFor(() => expect(assign).toHaveBeenCalledWith(Y))
+    expect(assign).not.toHaveBeenCalledWith(X)
+  })
+
+  it('warm store 持有 X 的裁决，空手进入 /login：清掉陈旧裁决、绝不把浏览器送去 X', async () => {
+    const assign = stubLocationAssign()
+    const X = 'http://127.0.0.1:5173/x'
+    // 无 returnTo 参数时服务端不回答裁决（真实形状）：status 收到 undefined 就回 undefined。
+    const status = vi.fn(async (returnTo?: string): Promise<SessionStatus> => ({
+      mode: 'real',
+      authenticated: true,
+      devAccount: false,
+      returnTo: returnTo === undefined ? undefined : null,
+    }))
+    const gateway = gatewayWithSession({ ...adjudicatedSession(X, { authenticated: true }), status })
+    useSessionStore.setState({ phase: 'authed', mode: 'real', returnTo: X, returnToFor: X })
+    const { router } = renderApp('/login', { gateway })
+    // 已登录且无参数：按站内路径回落首页；store 里挂着的 X 从不外送。
+    await waitFor(() => expect(router.state.location.pathname).toBe('/'))
+    expect(assign).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().returnToFor).toBeUndefined()
   })
 })

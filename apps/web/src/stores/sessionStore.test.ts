@@ -18,7 +18,7 @@ function statusOf(partial: Partial<SessionStatus>): SessionStatus {
 }
 
 beforeEach(() => {
-  useSessionStore.setState({ phase: 'unknown', mode: undefined, devAccount: false, notice: null, returnTo: undefined })
+  useSessionStore.setState({ phase: 'unknown', mode: undefined, devAccount: false, notice: null, returnTo: undefined, returnToFor: undefined })
 })
 
 describe('sessionStore.probe', () => {
@@ -61,6 +61,36 @@ describe('sessionStore.probe', () => {
     await useSessionStore.getState().probe(gateway, 'http://127.0.0.1:5173/x')
     expect(seen).toEqual(['http://127.0.0.1:5173/x'])
     expect(useSessionStore.getState().returnTo).toBe('http://127.0.0.1:5173/x')
+  })
+
+  it('探测记录裁决所对应的请求值，供登录页判定这条裁决属于哪次请求', async () => {
+    const gateway = gatewayWithSession({ status: async () => statusOf({ authenticated: true, returnTo: 'http://127.0.0.1:5173/x' }) })
+    await useSessionStore.getState().probe(gateway, 'http://127.0.0.1:5173/x')
+    expect(useSessionStore.getState().returnToFor).toBe('http://127.0.0.1:5173/x')
+    // 换一次请求（不同地址）探测：请求值随裁决一起更新，旧值不留存。
+    await useSessionStore.getState().probe(gateway, 'http://127.0.0.1:8080/y')
+    expect(useSessionStore.getState().returnToFor).toBe('http://127.0.0.1:8080/y')
+  })
+
+  it('不带参数探测时把请求值一并清成 undefined（与裁决值同形，不残留上一次）', async () => {
+    useSessionStore.setState({ returnTo: 'http://127.0.0.1:5173/x', returnToFor: 'http://127.0.0.1:5173/x' })
+    const gateway = gatewayWithSession({ status: async () => statusOf({ authenticated: true }) })
+    await useSessionStore.getState().probe(gateway)
+    expect(useSessionStore.getState().returnTo).toBeUndefined()
+    expect(useSessionStore.getState().returnToFor).toBeUndefined()
+  })
+
+  it('探测抛错落 error 时既不动裁决值也不动请求值', async () => {
+    useSessionStore.setState({ returnTo: 'http://127.0.0.1:5173/x', returnToFor: 'http://127.0.0.1:5173/x' })
+    const gateway = gatewayWithSession({
+      status: async () => {
+        throw new Error('登录状态检查失败：面板服务不可达')
+      },
+    })
+    await useSessionStore.getState().probe(gateway, 'http://127.0.0.1:9999/z')
+    expect(useSessionStore.getState().phase).toBe('error')
+    expect(useSessionStore.getState().returnTo).toBe('http://127.0.0.1:5173/x')
+    expect(useSessionStore.getState().returnToFor).toBe('http://127.0.0.1:5173/x')
   })
 
   it('服务端回答 null（被拦截）时保存 null，与未回答的 undefined 可区分', async () => {
