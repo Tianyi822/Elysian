@@ -95,7 +95,7 @@ export function IconButton({
       <Tooltip.Portal>
         <Tooltip.Content
           sideOffset={6}
-          className="z-50 rounded border border-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg"
+          className="z-[80] rounded border border-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg"
         >
           {label}
           <Tooltip.Arrow className="fill-surface-raised" />
