@@ -1,17 +1,18 @@
 import { describe, expect, it, vi } from 'vitest'
 import { fetchPlatformMemory } from './platformMemoryAdapter'
+import { platformMemorySample } from '../../test/platformMemorySample'
 
 describe('fetchPlatformMemory', () => {
   it('把合法 JSON 读成采样', async () => {
+    const sample = platformMemorySample()
+    const fetch = vi.fn(async () => new Response(JSON.stringify(sample)))
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => new Response(JSON.stringify({ rssMb: 80, heapUsedMb: 40, heapTotalMb: 50 }))),
+      fetch,
     )
-    await expect(fetchPlatformMemory()).resolves.toEqual({
-      rssMb: 80,
-      heapUsedMb: 40,
-      heapTotalMb: 50,
-    })
+    const signal = new AbortController().signal
+    await expect(fetchPlatformMemory('/api/platform/memory', signal)).resolves.toEqual(sample)
+    expect(fetch).toHaveBeenCalledWith('/api/platform/memory', { cache: 'no-store', signal })
     vi.unstubAllGlobals()
   })
 

@@ -178,9 +178,10 @@ func (noopCaddyAdmin) Load(context.Context, []byte) *seam.CaddyChannelError {
 	return &seam.CaddyChannelError{Message: "Caddy 管理通道尚未接线"}
 }
 
-// memoryHandler GET /api/platform/memory：非 GET（含 HEAD）一律 405，成功回 MB 采样。
+// memoryHandler GET /api/platform/memory：非 GET（含 HEAD）一律 405，成功回 MiB 采样。
 func memoryHandler(readUsage func() memoryUsage) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
 		if strings.ToUpper(r.Method) != http.MethodGet {
 			shared.SendError(w, http.StatusMethodNotAllowed, "只允许 GET")
 			return

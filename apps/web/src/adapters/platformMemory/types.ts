@@ -5,7 +5,6 @@
 import type { PlatformMemorySample } from '@elysian/contracts'
 
 export type { PlatformMemorySample }
-export { sampleFromUsage } from '@elysian/contracts'
 
 function isNonNegativeFinite(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
@@ -17,12 +16,40 @@ export function parsePlatformMemoryResponse(body: unknown): PlatformMemorySample
     throw new Error('平台内存响应格式无效')
   }
   const row = body as Record<string, unknown>
-  if (
-    !isNonNegativeFinite(row.rssMb) ||
-    !isNonNegativeFinite(row.heapUsedMb) ||
-    !isNonNegativeFinite(row.heapTotalMb)
-  ) {
+  const source = row.rssSource
+  if (source !== 'smaps-rollup' && source !== 'smaps' && source !== 'statm' && source !== 'unavailable') {
     throw new Error('平台内存响应格式无效')
   }
-  return { rssMb: row.rssMb, heapUsedMb: row.heapUsedMb, heapTotalMb: row.heapTotalMb }
+  const rssMb = row.rssMb
+  if (source === 'unavailable' ? rssMb !== null : !isNonNegativeFinite(rssMb)) {
+    throw new Error('平台内存响应格式无效')
+  }
+  const systemTotalMb = row.systemTotalMb ?? null
+  if (systemTotalMb !== null && (!isNonNegativeFinite(systemTotalMb) || systemTotalMb === 0)) {
+    throw new Error('平台内存响应格式无效')
+  }
+  if (typeof row.sampledAt !== 'string' || !Number.isFinite(Date.parse(row.sampledAt))) {
+    throw new Error('平台内存响应格式无效')
+  }
+  const numberField = (key: string): number => {
+    const value = row[key]
+    if (!isNonNegativeFinite(value)) throw new Error('平台内存响应格式无效')
+    return value
+  }
+  const gcCount = numberField('gcCount')
+  if (!Number.isSafeInteger(gcCount)) throw new Error('平台内存响应格式无效')
+  return {
+    rssMb: rssMb as number | null,
+    rssSource: source,
+    systemTotalMb: systemTotalMb as number | null,
+    sampledAt: row.sampledAt,
+    heapUsedMb: numberField('heapUsedMb'),
+    heapTotalMb: numberField('heapTotalMb'),
+    heapUnusedMb: numberField('heapUnusedMb'),
+    heapRetainedMb: numberField('heapRetainedMb'),
+    heapReleasedMb: numberField('heapReleasedMb'),
+    runtimeOtherMb: numberField('runtimeOtherMb'),
+    heapLiveMb: numberField('heapLiveMb'),
+    gcCount,
+  }
 }

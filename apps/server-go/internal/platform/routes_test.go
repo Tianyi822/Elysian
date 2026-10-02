@@ -7,29 +7,41 @@ import (
 )
 
 // 平台内存路由对等测试（platformMemoryRoutes.test.ts）：
-// 注入读数 → 200 MB 换算；非 GET（含 HEAD）405「只允许 GET」。
+// 注入读数 → 200 MiB 换算与来源；非 GET（含 HEAD）405「只允许 GET」。
 
 func TestMemoryRouteGet(t *testing.T) {
 	router := NewRouter(Deps{
-		readUsage: func() memoryUsage {
-			return memoryUsage{RSS: 80 * 1024 * 1024, HeapUsed: 40 * 1024 * 1024, HeapTotal: 50 * 1024 * 1024}
-		},
+		readUsage: testMemoryUsage,
 	})
 	rec := doRequest(t, router, http.MethodGet, "/memory", nil)
 	assertStatus(t, rec, http.StatusOK)
 	if ct := rec.Header().Get("Content-Type"); ct != "application/json; charset=utf-8" {
 		t.Fatalf("Content-Type 不符：%q", ct)
 	}
-	assertJSONEqual(t, rec, `{"rssMb":80,"heapUsedMb":40,"heapTotalMb":50}`)
+	if rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("内存采样不能被缓存")
+	}
+	assertJSONEqual(t, rec, `{"rssMb":80,"rssSource":"smaps-rollup","systemTotalMb":1024,"sampledAt":"2026-10-02T06:00:00Z","heapUsedMb":40,"heapTotalMb":50,"heapUnusedMb":1,"heapRetainedMb":3,"heapReleasedMb":6,"runtimeOtherMb":5,"heapLiveMb":35,"gcCount":8}`)
 }
 
 func TestMemoryRouteRejectsNonGet(t *testing.T) {
-	router := NewRouter(Deps{readUsage: func() memoryUsage { return memoryUsage{1, 1, 1} }})
+	router := NewRouter(Deps{readUsage: testMemoryUsage})
 	for _, method := range []string{http.MethodPost, http.MethodHead, http.MethodPut, http.MethodDelete} {
 		rec := doRequest(t, router, method, "/memory", nil)
 		assertStatus(t, rec, http.StatusMethodNotAllowed)
 		assertJSONEqual(t, rec, `{"error":"只允许 GET"}`)
 	}
+}
+
+func TestMemoryRouteUnavailableRSS(t *testing.T) {
+	router := NewRouter(Deps{readUsage: func() memoryUsage {
+		usage := testMemoryUsage()
+		usage.RSS, usage.RSSSource = nil, "unavailable"
+		return usage
+	}})
+	rec := doRequest(t, router, http.MethodGet, "/memory", nil)
+	assertStatus(t, rec, http.StatusOK)
+	assertJSONEqual(t, rec, `{"rssMb":null,"rssSource":"unavailable","systemTotalMb":1024,"sampledAt":"2026-10-02T06:00:00Z","heapUsedMb":40,"heapTotalMb":50,"heapUnusedMb":1,"heapRetainedMb":3,"heapReleasedMb":6,"runtimeOtherMb":5,"heapLiveMb":35,"gcCount":8}`)
 }
 
 // 依赖检测路由对等测试（platformDependencies.test.ts 路由段）：GET 200 no-store、

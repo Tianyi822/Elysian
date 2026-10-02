@@ -2,72 +2,183 @@ package platform
 
 import (
 	"errors"
+	"fmt"
 	"os"
-	"runtime"
+	"runtime/metrics"
 	"strconv"
 	"strings"
+	"time"
 )
 
-// 平台内存采样（platformMemoryRoutes.ts + contracts/src/platform/memory.ts 等价物）：
-// GET /api/platform/memory 回读当前 server 进程的内存账换算成 MB。不依赖 Docker、
-// 不碰宿主机接口——本地与容器内都是这份真实进程账；数值不取整（浮点直接序列化），
-// 前端契约只要求三键非负有限数（platform 盘点 §11.9）。
-
-// platformMemorySample 内存采样响应体；键序即 JSON 输出序。
+// 平台内存只采样当前 Go 后端进程。RSS 是系统读数，Go 各项来自同批 runtime/metrics；
+// 采样不触发 GC。Mb 字段保留契约名称，数值与界面单位均为 MiB。
 type platformMemorySample struct {
-	RSSMb       float64 `json:"rssMb"`
-	HeapUsedMb  float64 `json:"heapUsedMb"`
-	HeapTotalMb float64 `json:"heapTotalMb"`
+	RSSMb          *float64 `json:"rssMb"`
+	RSSSource      string   `json:"rssSource"`
+	SystemTotalMb  *float64 `json:"systemTotalMb"`
+	SampledAt      string   `json:"sampledAt"`
+	HeapUsedMb     float64  `json:"heapUsedMb"`
+	HeapTotalMb    float64  `json:"heapTotalMb"`
+	HeapUnusedMb   float64  `json:"heapUnusedMb"`
+	HeapRetainedMb float64  `json:"heapRetainedMb"`
+	HeapReleasedMb float64  `json:"heapReleasedMb"`
+	RuntimeOtherMb float64  `json:"runtimeOtherMb"`
+	HeapLiveMb     float64  `json:"heapLiveMb"`
+	GCCount        uint64   `json:"gcCount"`
 }
 
-// memoryUsage 进程内存读数（字节）。
 type memoryUsage struct {
-	RSS       float64
-	HeapUsed  float64
-	HeapTotal float64
+	RSS          *float64
+	RSSSource    string
+	SystemTotal  *float64
+	SampledAt    time.Time
+	HeapUsed     uint64
+	HeapTotal    uint64
+	HeapUnused   uint64
+	HeapRetained uint64
+	HeapReleased uint64
+	RuntimeOther uint64
+	HeapLive     uint64
+	GCCount      uint64
 }
 
-const bytesPerMB = 1024 * 1024
+const bytesPerMiB = 1024 * 1024
 
-// sampleFromUsage 把字节读数换算成 MB 采样（contracts sampleFromUsage 等价物）。
 func sampleFromUsage(usage memoryUsage) platformMemorySample {
+	var rss *float64
+	if usage.RSS != nil {
+		value := *usage.RSS / bytesPerMiB
+		rss = &value
+	}
+	var systemTotal *float64
+	if usage.SystemTotal != nil {
+		value := *usage.SystemTotal / bytesPerMiB
+		systemTotal = &value
+	}
 	return platformMemorySample{
-		RSSMb:       usage.RSS / bytesPerMB,
-		HeapUsedMb:  usage.HeapUsed / bytesPerMB,
-		HeapTotalMb: usage.HeapTotal / bytesPerMB,
+		RSSMb:          rss,
+		RSSSource:      usage.RSSSource,
+		SystemTotalMb:  systemTotal,
+		SampledAt:      usage.SampledAt.UTC().Format(time.RFC3339Nano),
+		HeapUsedMb:     float64(usage.HeapUsed) / bytesPerMiB,
+		HeapTotalMb:    float64(usage.HeapTotal) / bytesPerMiB,
+		HeapUnusedMb:   float64(usage.HeapUnused) / bytesPerMiB,
+		HeapRetainedMb: float64(usage.HeapRetained) / bytesPerMiB,
+		HeapReleasedMb: float64(usage.HeapReleased) / bytesPerMiB,
+		RuntimeOtherMb: float64(usage.RuntimeOther) / bytesPerMiB,
+		HeapLiveMb:     float64(usage.HeapLive) / bytesPerMiB,
+		GCCount:        usage.GCCount,
 	}
 }
 
-// processMemoryUsage 进程内存读数（process.memoryUsage 的 Go 等价物）：
-// HeapAlloc/HeapSys 取自 runtime.MemStats；RSS 优先取 /proc/self/statm 常驻页，
-// 读不到（非 Linux）回落 MemStats.Sys。
 func processMemoryUsage() memoryUsage {
-	var stats runtime.MemStats
-	runtime.ReadMemStats(&stats)
-	usage := memoryUsage{
-		RSS:       float64(stats.Sys),
-		HeapUsed:  float64(stats.HeapAlloc),
-		HeapTotal: float64(stats.HeapSys),
+	samples := []metrics.Sample{
+		{Name: "/memory/classes/heap/objects:bytes"},
+		{Name: "/memory/classes/heap/unused:bytes"},
+		{Name: "/memory/classes/heap/free:bytes"},
+		{Name: "/memory/classes/heap/released:bytes"},
+		{Name: "/memory/classes/total:bytes"},
+		{Name: "/gc/heap/live:bytes"},
+		{Name: "/gc/cycles/total:gc-cycles"},
 	}
-	if rss, err := procResidentBytes(); err == nil {
-		usage.RSS = rss
+	metrics.Read(samples)
+	heapTotal := samples[0].Value.Uint64() + samples[1].Value.Uint64() + samples[2].Value.Uint64() + samples[3].Value.Uint64()
+	rss, source := readResidentBytes(os.ReadFile, os.Getpagesize())
+	return memoryUsage{
+		RSS:          rss,
+		RSSSource:    source,
+		SystemTotal:  readSystemMemoryBytes(os.ReadFile),
+		SampledAt:    time.Now(),
+		HeapUsed:     samples[0].Value.Uint64(),
+		HeapTotal:    heapTotal,
+		HeapUnused:   samples[1].Value.Uint64(),
+		HeapRetained: samples[2].Value.Uint64(),
+		HeapReleased: samples[3].Value.Uint64(),
+		RuntimeOther: samples[4].Value.Uint64() - heapTotal,
+		HeapLive:     samples[5].Value.Uint64(),
+		GCCount:      samples[6].Value.Uint64(),
 	}
-	return usage
 }
 
-// procResidentBytes 读 /proc/self/statm 第二列（常驻页数）× 页大小。
-func procResidentBytes() (float64, error) {
-	data, err := os.ReadFile("/proc/self/statm")
+// 系统总内存作为 RSS 占比的参照。容器内读数属于宿主 Linux 内核，不冒充容器限额。
+func readSystemMemoryBytes(readFile func(string) ([]byte, error)) *float64 {
+	data, err := readFile("/proc/meminfo")
 	if err != nil {
-		return 0, err
+		return nil
 	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || fields[0] != "MemTotal:" {
+			continue
+		}
+		if len(fields) != 3 || fields[2] != "kB" {
+			return nil
+		}
+		value, err := strconv.ParseUint(fields[1], 10, 64)
+		if err != nil || value == 0 {
+			return nil
+		}
+		bytes := float64(value) * 1024
+		return &bytes
+	}
+	return nil
+}
+
+// statm 的常驻页数可能受内核异步记账影响。优先用 smaps_rollup，旧内核用 smaps，
+// 两者不可读才采用明确标为近似的 statm；全部失败时返回 null，不用 Go Sys 冒充 RSS。
+func readResidentBytes(readFile func(string) ([]byte, error), pageSize int) (*float64, string) {
+	for _, source := range []string{"smaps-rollup", "smaps", "statm"} {
+		path := "/proc/self/" + strings.ReplaceAll(source, "-", "_")
+		data, err := readFile(path)
+		if err != nil {
+			continue
+		}
+		var rss float64
+		if source == "statm" {
+			rss, err = parseResidentPages(data, pageSize)
+		} else {
+			rss, err = parseSmapsRSS(data)
+		}
+		if err == nil {
+			return &rss, source
+		}
+	}
+	return nil, "unavailable"
+}
+
+// smaps 有多段映射，逐项相加；rollup 只有一个 Rss 字段。内核 kB 单位是 1024 字节。
+func parseSmapsRSS(data []byte) (float64, error) {
+	var total uint64
+	found := false
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || fields[0] != "Rss:" {
+			continue
+		}
+		if len(fields) != 3 || fields[2] != "kB" {
+			return 0, errors.New("常驻内存字段格式无效")
+		}
+		value, err := strconv.ParseUint(fields[1], 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("常驻内存字段格式无效：%w", err)
+		}
+		total += value
+		found = true
+	}
+	if !found {
+		return 0, errors.New("常驻内存字段缺失")
+	}
+	return float64(total) * 1024, nil
+}
+
+func parseResidentPages(data []byte, pageSize int) (float64, error) {
 	fields := strings.Fields(string(data))
-	if len(fields) < 2 {
-		return 0, errors.New("/proc/self/statm 字段不足")
+	if len(fields) < 2 || pageSize <= 0 {
+		return 0, errors.New("常驻页数字段不足")
 	}
-	pages, err := strconv.ParseFloat(fields[1], 64)
+	pages, err := strconv.ParseUint(fields[1], 10, 64)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("常驻页数字段格式无效：%w", err)
 	}
-	return pages * float64(os.Getpagesize()), nil
+	return float64(pages) * float64(pageSize), nil
 }

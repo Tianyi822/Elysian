@@ -151,18 +151,40 @@ func Test平台内存挂载与形状(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("状态码 = %d，期望 200", rec.Code)
 	}
-	var body map[string]float64
+	var body map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("响应体不是 JSON 数字对象：%v（%s）", err, rec.Body.String())
+		t.Fatalf("响应体不是内存采样对象：%v（%s）", err, rec.Body.String())
 	}
-	if len(body) != 3 {
-		t.Fatalf("键集 = %v，期望恰好 rssMb/heapUsedMb/heapTotalMb 三键", body)
+	if len(body) != 12 {
+		t.Fatalf("键集 = %v，期望内存分项、系统总量、来源与采样时间共十二键", body)
 	}
-	for _, key := range []string{"rssMb", "heapUsedMb", "heapTotalMb"} {
-		value, ok := body[key]
+	for _, key := range []string{"heapUsedMb", "heapTotalMb", "heapUnusedMb", "heapRetainedMb", "heapReleasedMb", "runtimeOtherMb", "heapLiveMb", "gcCount"} {
+		value, ok := body[key].(float64)
 		if !ok || value < 0 {
 			t.Fatalf("键 %s 缺失或非有限非负：%v", key, value)
 		}
+	}
+	source, ok := body["rssSource"].(string)
+	if !ok || (source != "smaps-rollup" && source != "smaps" && source != "statm" && source != "unavailable") {
+		t.Fatalf("实际常驻内存来源无效：%v", body["rssSource"])
+	}
+	if source == "unavailable" {
+		if body["rssMb"] != nil {
+			t.Fatal("不可用来源必须返回 null")
+		}
+	} else if rss, ok := body["rssMb"].(float64); !ok || rss < 0 {
+		t.Fatalf("系统常驻内存读数无效：%v", body["rssMb"])
+	}
+	if at, ok := body["sampledAt"].(string); !ok || at == "" {
+		t.Fatal("采样时间缺失")
+	}
+	if body["systemTotalMb"] != nil {
+		if total, ok := body["systemTotalMb"].(float64); !ok || total <= 0 {
+			t.Fatal("系统总内存参照无效")
+		}
+	}
+	if rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("实时采样不能被缓存")
 	}
 }
 
