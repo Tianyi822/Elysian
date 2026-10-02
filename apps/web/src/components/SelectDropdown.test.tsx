@@ -1,4 +1,5 @@
-import { render, screen } from '@testing-library/react'
+import * as Tooltip from '@radix-ui/react-tooltip'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { SelectDropdown } from './SelectDropdown'
@@ -25,11 +26,94 @@ function renderDropdown(overrides: Partial<Parameters<typeof SelectDropdown<Valu
     onSelect: vi.fn(),
     ...overrides,
   }
-  render(<SelectDropdown<Value> {...props} />)
+  render(<Tooltip.Provider><SelectDropdown<Value> {...props} /></Tooltip.Provider>)
   return props
 }
 
 describe('自绘单选下拉', () => {
+  it('搜索在菜单内，输入即时显示，防抖只应用最后一次文字；清空立即恢复且取消待办', async () => {
+    const user = userEvent.setup()
+    renderDropdown({ search: { ariaLabel: '搜索分类', placeholder: '输入分类' } })
+    expect(screen.queryByRole('textbox', { name: '搜索分类' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '操作分类筛选：全部' }))
+    const menu = screen.getByRole('menu')
+    const input = within(menu).getByRole('textbox', { name: '搜索分类' })
+    expect(input).toHaveFocus()
+    vi.useFakeTimers()
+    try {
+      fireEvent.change(input, { target: { value: '安全' } })
+      expect(input).toHaveValue('安全')
+      act(() => vi.advanceTimersByTime(200))
+      fireEvent.change(input, { target: { value: '文件' } })
+      act(() => vi.advanceTimersByTime(299))
+      expect(screen.getAllByRole('menuitemradio')).toHaveLength(3)
+      act(() => vi.advanceTimersByTime(1))
+      expect(screen.getAllByRole('menuitemradio')).toHaveLength(1)
+      expect(screen.getByRole('menuitemradio', { name: '文件管理' })).toBeInTheDocument()
+      expect(input).toHaveFocus()
+      expect(screen.getByRole('status')).toHaveTextContent('显示 1 / 3 项')
+      fireEvent.change(input, { target: { value: '安全' } })
+      fireEvent.click(screen.getByRole('button', { name: '清空搜索' }))
+      expect(input).toHaveValue('')
+      expect(input).toHaveFocus()
+      expect(screen.getAllByRole('menuitemradio')).toHaveLength(3)
+      act(() => vi.advanceTimersByTime(300))
+      expect(screen.getAllByRole('menuitemradio')).toHaveLength(3)
+    } finally { vi.useRealTimers() }
+  })
+
+  it('输入法组合期间不筛选也不选值，结束后才防抖过滤', async () => {
+    const user = userEvent.setup()
+    const props = renderDropdown({ search: { ariaLabel: '搜索分类', placeholder: '输入分类' } })
+    await user.click(screen.getByRole('button', { name: '操作分类筛选：全部' }))
+    const input = screen.getByRole('textbox', { name: '搜索分类' })
+    vi.useFakeTimers()
+    try {
+      fireEvent.compositionStart(input)
+      fireEvent.change(input, { target: { value: '安全' } })
+      fireEvent.keyDown(input, { key: 'Enter', isComposing: true, keyCode: 229 })
+      act(() => vi.advanceTimersByTime(300))
+      expect(screen.getAllByRole('menuitemradio')).toHaveLength(3)
+      expect(props.onSelect).not.toHaveBeenCalled()
+      fireEvent.compositionEnd(input)
+      act(() => vi.advanceTimersByTime(299))
+      expect(screen.getAllByRole('menuitemradio')).toHaveLength(3)
+      act(() => vi.advanceTimersByTime(1))
+      expect(screen.getAllByRole('menuitemradio')).toHaveLength(1)
+    } finally { vi.useRealTimers() }
+  })
+
+  it('搜索输入支持空格与 Enter 立即过滤，方向键选值，Escape 返回触发器且重开清空', async () => {
+    const user = userEvent.setup()
+    const props = renderDropdown({ search: { ariaLabel: '搜索分类', placeholder: '输入分类' } })
+    const trigger = screen.getByRole('button', { name: '操作分类筛选：全部' })
+    trigger.focus()
+    await user.keyboard('{Enter}')
+    await user.type(screen.getByRole('textbox', { name: '搜索分类' }), ' 文件 ')
+    await user.keyboard('{Enter}')
+    expect(screen.getAllByRole('menuitemradio')).toHaveLength(1)
+    await user.keyboard('{ArrowDown}')
+    expect(screen.getByRole('menuitemradio', { name: '文件管理' })).toHaveFocus()
+    await user.keyboard('{ArrowUp}')
+    expect(screen.getByRole('textbox', { name: '搜索分类' })).toHaveFocus()
+    await user.keyboard('{Escape}')
+    expect(trigger).toHaveFocus()
+    await user.keyboard('{Enter}')
+    expect(screen.getByRole('textbox', { name: '搜索分类' })).toHaveValue('')
+    expect(screen.getAllByRole('menuitemradio')).toHaveLength(3)
+    await user.keyboard('{ArrowDown}{ArrowDown}{Enter}')
+    expect(props.onSelect).toHaveBeenCalledWith('security')
+  })
+
+  it('输入后立刻用方向键选值，会先应用搜索再导航，避免选择过滤前的候选项', async () => {
+    const user = userEvent.setup()
+    const props = renderDropdown({ search: { ariaLabel: '搜索分类', placeholder: '输入分类' } })
+    await user.click(screen.getByRole('button', { name: '操作分类筛选：全部' }))
+    await user.type(screen.getByRole('textbox', { name: '搜索分类' }), '文件')
+    await user.keyboard('{ArrowDown}{Enter}')
+    expect(props.onSelect).toHaveBeenCalledWith('files')
+  })
+
   it('触发器同时显示字段名与当前值，aria-label 把两者拼在一起', () => {
     renderDropdown()
 
