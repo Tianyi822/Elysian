@@ -10,7 +10,6 @@ import {
   PROC_STAT,
   cpuUsagePercent,
   ioMbps,
-  parseDf,
   parseLoadavg,
   parseMeminfo,
   readHostSample,
@@ -35,16 +34,6 @@ describe('parseLoadavg', () => {
 describe('parseMeminfo', () => {
   it('按 MemTotal 与 MemAvailable 计算内存占用百分比', () => {
     expect(parseMeminfo(fixture('meminfo.txt'))).toBe(60)
-  })
-})
-
-describe('parseDf', () => {
-  it('解析 df -P -k 输出，跳过 tmpfs 等伪文件系统', () => {
-    expect(parseDf(fixture('df.txt'))).toEqual([
-      { mount: '/', usagePct: 62, usedKb: 620000, sizeKb: 1000000 },
-      { mount: '/data', usagePct: 78, usedKb: 1560000, sizeKb: 2000000 },
-      { mount: '/backup', usagePct: 41, usedKb: 2050000, sizeKb: 5000000 },
-    ])
   })
 })
 
@@ -75,10 +64,9 @@ describe('readHostSample', () => {
     [PROC_DISKSTATS]: fixture('diskstats-next.txt'),
   }
 
-  it('无 prev 时 IO 与 CPU 差分为 0，仍解析负载、内存与磁盘', async () => {
+  it('无 prev 时 IO 与 CPU 差分为 0，仍解析负载与内存', async () => {
     const result = await readHostSample({
       readFile: async (path) => files[path] ?? '',
-      execDf: async () => fixture('df.txt'),
     })
 
     expect(result.sample).toEqual({
@@ -91,11 +79,6 @@ describe('readHostSample', () => {
       diskRead: 0,
       diskWrite: 0,
       load: { m1: 0.52, m5: 0.58, m15: 0.59 },
-      disks: [
-        { mount: '/', usagePct: 62, usedKb: 620000, sizeKb: 1000000 },
-        { mount: '/data', usagePct: 78, usedKb: 1560000, sizeKb: 2000000 },
-        { mount: '/backup', usagePct: 41, usedKb: 2050000, sizeKb: 5000000 },
-      ],
     })
     expect(result.nextPrev.stat).toBe(fixture('stat-next.txt'))
     expect(result.nextPrev.net).toBe(fixture('netdev-next.txt'))
@@ -109,7 +92,6 @@ describe('readHostSample', () => {
 
     const result = await readHostSample({
       readFile: async (path) => files[path] ?? '',
-      execDf: async () => fixture('df.txt'),
       prev: {
         stat: fixture('stat-prev.txt'),
         net: fixture('netdev-prev.txt'),

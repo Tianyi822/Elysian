@@ -2,17 +2,15 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { EventName } from '@elysian/contracts'
 import { createMockDataset } from '../mock/dataset.ts'
 import {
-  INITIAL_DISKS,
   INITIAL_LOAD,
   listMockHistory,
-  nextDisksWalk,
   nextLoadWalk,
   seedMockHistoryIfEmpty,
   TIME_RANGES,
   type ResourceSamplePoint,
   type TimeRange,
 } from '../mock/resourceMetrics.ts'
-import type { DiskUsage, SystemLoad } from '../mock/resourceMetrics.ts'
+import type { SystemLoad } from '../mock/resourceMetrics.ts'
 import type { HostSamplePrev } from '../hostMetrics/readHostSample.ts'
 import { SSE_HEARTBEAT, formatSseFrame } from './parse.ts'
 
@@ -73,7 +71,6 @@ export type ResourceSample = {
   diskRead: number
   diskWrite: number
   load: SystemLoad
-  disks: DiskUsage[]
 }
 
 const WALK_BOUNDS = {
@@ -113,11 +110,10 @@ export function nextResourceSample(walk: ResourceSample): ResourceSample {
     diskWrite,
     diskIo: diskRead + diskWrite,
     load: nextLoadWalk(walk.load),
-    disks: nextDisksWalk(walk.disks),
   }
 }
 
-/** 初始游走状态：负载取低位空闲值，磁盘占用取种子配置。 */
+/** 初始游走状态：负载取低位空闲值。 */
 export function initialResourceWalk(): ResourceSample {
   return {
     cpu: 55,
@@ -129,7 +125,6 @@ export function initialResourceWalk(): ResourceSample {
     diskWrite: 80,
     diskIo: 210,
     load: { ...INITIAL_LOAD },
-    disks: INITIAL_DISKS.map((disk) => ({ ...disk })),
   }
 }
 

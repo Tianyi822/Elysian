@@ -164,12 +164,7 @@ import {
 } from './websitesData'
 import { mockImageArtifact } from './containersData'
 import { autoContainerName } from '@elysian/contracts'
-import {
-  INITIAL_DISKS,
-  INITIAL_LOAD,
-  nextDisksWalk,
-  nextLoadWalk,
-} from './resourceMetrics'
+import { INITIAL_LOAD, nextLoadWalk } from './resourceMetrics'
 import type { MockDataset } from './dataset'
 
 /*
@@ -947,7 +942,6 @@ export function createInMemoryEventsAdapter(
         diskWrite: 80,
         diskIo: 210,
         load: { ...INITIAL_LOAD },
-        disks: INITIAL_DISKS.map((disk) => ({ ...disk })),
       }
       const stepWalk = (): typeof walk => {
         const networkRx = Math.min(550, Math.max(30, walk.networkRx + Math.round((Math.random() - 0.5) * 50)))
@@ -964,7 +958,6 @@ export function createInMemoryEventsAdapter(
           diskWrite,
           diskIo: diskRead + diskWrite,
           load: nextLoadWalk(walk.load),
-          disks: nextDisksWalk(walk.disks),
         }
         return walk
       }

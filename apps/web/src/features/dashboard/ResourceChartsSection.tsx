@@ -1,4 +1,3 @@
-import type { EChartsCoreOption } from 'echarts/core'
 import { useTheme } from '../../app/theme/ThemeProvider'
 import {
   RESOURCE_METRIC_LABELS,
@@ -6,15 +5,8 @@ import {
   type ResourceMetricKey,
   type ResourceSamplePoint,
 } from '../../adapters/mock/resourceMetrics'
-import type { DiskUsage, SystemLoad } from '../../adapters/mock/resourceMetrics'
 import './chartComponents'
-import {
-  buildDiskRingOption,
-  buildLoadBarsOption,
-  buildResourceTrendOption,
-  readChartPalette,
-} from './chartOptions'
-import type { ChartSize } from './chartOptions'
+import { buildResourceTrendOption, readChartPalette } from './chartOptions'
 import { formatResourceMetricValue } from './formatMetricDisplay'
 import { useChart } from './useChart'
 
@@ -61,55 +53,18 @@ function ResourcePanel({
   )
 }
 
-function BarsPanel({
-  title,
-  buildOption,
-  rebuildKey,
-}: {
-  title: string
-  buildOption: (size: ChartSize) => EChartsCoreOption
-  rebuildKey: string
-}) {
-  const { containerRef } = useChart(buildOption, rebuildKey)
-
-  return (
-    <article
-      aria-label={title}
-      className="flex min-w-0 flex-col rounded-xl border border-line bg-surface p-4 md:p-5"
-    >
-      <h2 className="text-sm font-semibold">{title}</h2>
-      {/* 图吃满卡片剩余高度：与趋势卡同排时被拉高，小图跟着变大而不是缩在顶部。 */}
-      <div ref={containerRef} className="mt-4 min-h-40 w-full flex-1" />
-    </article>
-  )
-}
-
-function BarsPlaceholder({ title }: { title: string }) {
-  return (
-    <article
-      aria-label={title}
-      className="flex min-w-0 flex-col rounded-xl border border-line bg-surface p-4 md:p-5"
-    >
-      <h2 className="text-sm font-semibold">{title}</h2>
-      <p className="mt-4 text-sm text-fg-muted">等待资源采样…</p>
-    </article>
-  )
-}
-
 export function ResourceChartsSection({
   resources,
-  system,
 }: {
   resources: readonly ResourceSamplePoint[]
-  system?: { load: SystemLoad; disks: readonly DiskUsage[] }
 }) {
   const { theme } = useTheme()
 
   return (
     <section aria-label="服务器状态" className="@container mb-6">
       {/* 列数取内容区实测宽度而非视口：侧边栏收展改变可用宽度，卡片随之增减。
-          两列要求单卡至少 ~280px，否则趋势图的横轴标签和负载轨道都会挤到不可读；
-          宽屏加到三列把单卡宽度压回可读比例，负载条与磁盘环不再被拉成横幅。 */}
+          两列要求单卡至少 ~280px，否则趋势图的横轴标签挤到不可读；
+          宽屏加到三列把单卡宽度压回可读比例。 */}
       <div className="grid grid-cols-1 gap-4 @xl:grid-cols-2 @7xl:grid-cols-3">
         {(Object.keys(RESOURCE_METRIC_LABELS) as ResourceMetricKey[]).map((metricKey) => (
           <ResourcePanel
@@ -119,25 +74,6 @@ export function ResourceChartsSection({
             theme={theme}
           />
         ))}
-
-        {system ? (
-          <BarsPanel
-            title="运行负载"
-            buildOption={(size) => buildLoadBarsOption(system.load, readChartPalette(theme), size)}
-            rebuildKey={`load:${theme}:${JSON.stringify(system.load)}`}
-          />
-        ) : (
-          <BarsPlaceholder title="运行负载" />
-        )}
-        {system ? (
-          <BarsPanel
-            title="磁盘占用"
-            buildOption={(size) => buildDiskRingOption(system.disks, readChartPalette(theme), size)}
-            rebuildKey={`disk:${theme}:${JSON.stringify(system.disks)}`}
-          />
-        ) : (
-          <BarsPlaceholder title="磁盘占用" />
-        )}
       </div>
     </section>
   )

@@ -9,7 +9,6 @@ export function DashboardPage() {
   const gateway = useGateway()
   const status = useDashboardStore((state) => state.status)
   const resources = useDashboardStore((state) => state.resources)
-  const system = useDashboardStore((state) => state.system)
   const range = useDashboardStore((state) => state.range)
   const refreshing = useDashboardStore((state) => state.refreshing)
   const errorMessage = useDashboardStore((state) => state.errorMessage)
@@ -68,7 +67,7 @@ export function DashboardPage() {
         onRefresh={() => void refresh(gateway)}
         refreshing={refreshing}
       />
-      <ResourceChartsSection resources={resources} system={system} />
+      <ResourceChartsSection resources={resources} />
     </>
   )
 }

@@ -1,4 +1,4 @@
-import type { DiskUsage, SystemLoad } from '../mock/resourceMetrics.ts'
+import type { SystemLoad } from '../mock/resourceMetrics.ts'
 
 export const PROC_LOADAVG = '/proc/loadavg'
 export const PROC_MEMINFO = '/proc/meminfo'
@@ -19,7 +19,6 @@ export type HostSample = {
   diskRead: number
   diskWrite: number
   load: SystemLoad
-  disks: DiskUsage[]
 }
 
 export type HostSamplePrev = {
@@ -73,66 +72,6 @@ export function parseMeminfo(text: string): number {
 
   const usedPct = ((memTotalKb - memAvailableKb) / memTotalKb) * 100
   return Math.round(usedPct)
-}
-
-const DF_NOISE_FILESYSTEMS = new Set([
-  'tmpfs',
-  'devtmpfs',
-  'proc',
-  'sysfs',
-  'cgroup',
-  'cgroup2',
-  'squashfs',
-  'ramfs',
-  'devpts',
-  'mqueue',
-])
-
-/** 排除伪文件系统与 /dev|/proc|/sys|/run 下挂载；每个挂载点的占用率相对自身容量，互不嵌套。 */
-export function isNoiseDfMount(filesystem: string, mount: string): boolean {
-  const fs = filesystem.toLowerCase()
-  if (DF_NOISE_FILESYSTEMS.has(fs)) return true
-  if (mount === '/dev' || mount.startsWith('/dev/')) return true
-  if (mount.startsWith('/proc') || mount.startsWith('/sys') || mount.startsWith('/run')) return true
-  return false
-}
-
-export function parseDf(text: string): DiskUsage[] {
-  const lines = text.trim().split('\n')
-  const disks: DiskUsage[] = []
-
-  for (const line of lines.slice(1)) {
-    if (!line.trim()) {
-      continue
-    }
-    const parts = line.trim().split(/\s+/)
-    if (parts.length < 6) {
-      continue
-    }
-    const filesystem = parts[0] ?? ''
-    const sizeKb = Number.parseInt(parts[parts.length - 5] ?? '', 10)
-    const usedKb = Number.parseInt(parts[parts.length - 4] ?? '', 10)
-    const capacity = parts[parts.length - 2] ?? ''
-    const mount = parts[parts.length - 1] ?? ''
-    const pctMatch = /^(\d+)%$/.exec(capacity)
-    if (!pctMatch || !mount.startsWith('/')) {
-      continue
-    }
-    if (!Number.isFinite(sizeKb) || !Number.isFinite(usedKb) || sizeKb <= 0) {
-      continue
-    }
-    if (isNoiseDfMount(filesystem, mount)) {
-      continue
-    }
-    disks.push({
-      mount,
-      usagePct: Number.parseInt(pctMatch[1] ?? '', 10),
-      usedKb,
-      sizeKb,
-    })
-  }
-
-  return disks
 }
 
 function parseCpuAggregateLine(text: string): { total: number; idle: number } | null {
@@ -262,16 +201,14 @@ export function ioMbps(
 
 export async function readHostSample(deps: {
   readFile(path: string): Promise<string>
-  execDf(): Promise<string>
   prev?: HostSamplePrev
 }): Promise<ReadHostSampleResult> {
-  const [loadavgText, meminfoText, statText, netText, diskText, dfText] = await Promise.all([
+  const [loadavgText, meminfoText, statText, netText, diskText] = await Promise.all([
     deps.readFile(PROC_LOADAVG),
     deps.readFile(PROC_MEMINFO),
     deps.readFile(PROC_STAT),
     deps.readFile(PROC_NET_DEV),
     deps.readFile(PROC_DISKSTATS),
-    deps.execDf(),
   ])
 
   const now = Date.now()
@@ -299,7 +236,6 @@ export async function readHostSample(deps: {
     diskRead: disk.read,
     diskWrite: disk.write,
     load: parseLoadavg(loadavgText),
-    disks: parseDf(dfText),
   }
 
   return {

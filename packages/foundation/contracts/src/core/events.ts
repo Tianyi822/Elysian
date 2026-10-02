@@ -57,8 +57,6 @@ export interface Events {
     diskWrite: number
     /** Linux load average 风格的运行负载（1/5/15 分钟均值）。 */
     load: { m1: number; m5: number; m15: number }
-    /** 磁盘占用：按挂载点的使用率与容量（KiB，与 df -k 一致）。 */
-    disks: ReadonlyArray<{ mount: string; usagePct: number; usedKb: number; sizeKb: number }>
   }
   /** @mode emit */
   'container/sample': {

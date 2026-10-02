@@ -11,8 +11,6 @@ const PALETTE: ChartPalette = {
   subtle: '#ss',
   axisLine: '#aa',
   accent: '#ac',
-  warning: '#wn',
-  danger: '#dg',
   surface: '#sf',
 }
 

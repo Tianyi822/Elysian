@@ -5,7 +5,6 @@ import { createMockGateway } from '../adapters/mock/gateway'
 import * as resourceMetrics from '../adapters/mock/resourceMetrics'
 import { resetMockHistory } from '../adapters/mock/resourceMetrics'
 import { onStreamEvent, useEventStreamStore } from './eventStreamStore'
-import { INITIAL_DISKS } from '../adapters/mock/resourceMetrics'
 import { mergeResourceSampleIntoWindow, useDashboardStore } from './dashboardStore'
 
 function resetStores() {
@@ -17,7 +16,6 @@ function resetStores() {
     refreshing: false,
     range: '5m',
     resources: undefined,
-    system: undefined,
     errorMessage: undefined,
   })
 }
@@ -43,11 +41,6 @@ const samplePayload = {
   diskRead: 200,
   diskWrite: 0,
   load: { m1: 0.4, m5: 0.3, m15: 0.2 },
-  disks: [
-    { mount: '/', usagePct: 63, usedKb: 630_000, sizeKb: 1_000_000 },
-    { mount: '/data', usagePct: 79, usedKb: 1_580_000, sizeKb: 2_000_000 },
-    { mount: '/backup', usagePct: 42, usedKb: 2_100_000, sizeKb: 5_000_000 },
-  ],
 }
 
 beforeEach(resetStores)
@@ -83,40 +76,6 @@ describe('仪表盘 store 资源窗与引用稳定', () => {
     expect(useDashboardStore.getState().range).toBe('5m')
   })
 
-  it('load 后不把 mock 初始挂载写入 system', async () => {
-    const gateway = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
-    await useDashboardStore.getState().load(gateway)
-
-    const system = useDashboardStore.getState().system
-    expect(system).toBeUndefined()
-    expect(INITIAL_DISKS.map((disk) => disk.mount)).toEqual(['/', '/data', '/backup'])
-  })
-
-  it('resource/sample 后 refresh 仍保留采样中的负载与磁盘', async () => {
-    const gateway = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
-    await useDashboardStore.getState().load(gateway)
-
-    emit({
-      id: 'evt-refresh-preserve',
-      name: 'resource/sample',
-      at: new Date().toISOString(),
-      payload: {
-        ...samplePayload,
-        load: { m1: 1.1, m5: 0.9, m15: 0.7 },
-        disks: [
-          { mount: '/var', usagePct: 11, usedKb: 11_000, sizeKb: 100_000 },
-          { mount: '/srv', usagePct: 22, usedKb: 22_000, sizeKb: 100_000 },
-        ],
-      },
-    })
-
-    await useDashboardStore.getState().refresh(gateway)
-
-    const system = useDashboardStore.getState().system
-    expect(system?.load).toEqual({ m1: 1.1, m5: 0.9, m15: 0.7 })
-    expect(system?.disks.map((disk) => disk.mount)).toEqual(['/var', '/srv'])
-  })
-
   it('setRange 拉取失败时保留图表并设置错误信息', async () => {
     const gateway = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
     await useDashboardStore.getState().load(gateway)
@@ -130,35 +89,6 @@ describe('仪表盘 store 资源窗与引用稳定', () => {
     )
     expect(useDashboardStore.getState().resources).toBe(before)
     expect(useDashboardStore.getState().range).toBe('7d')
-  })
-
-  it('相同 load/disks 不更换 system 引用', async () => {
-    const gateway = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
-    await useDashboardStore.getState().load(gateway)
-
-    const t0 = Date.now()
-    emit({
-      id: 'evt-live-sys-1',
-      name: 'resource/sample',
-      at: new Date(t0).toISOString(),
-      payload: samplePayload,
-    })
-    const first = useDashboardStore.getState().system
-
-    emit({
-      id: 'evt-live-sys-2',
-      name: 'resource/sample',
-      at: new Date(t0 + 3_000).toISOString(),
-      payload: {
-        ...samplePayload,
-        cpu: 70,
-        memory: 80,
-      },
-    })
-    const second = useDashboardStore.getState().system
-
-    expect(second).toBe(first)
-    expect(useDashboardStore.getState().resources?.at(-1)?.cpu).toBe(70)
   })
 
   it('setRange 会按新窗重新 list', async () => {
@@ -175,7 +105,7 @@ describe('仪表盘 store 资源窗与引用稳定', () => {
 })
 
 describe('仪表盘 store 的事件回灌', () => {
-  it('resource/sample 追加当前窗资源点并更新 system', async () => {
+  it('resource/sample 追加当前窗资源点', async () => {
     const gateway = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
     await useDashboardStore.getState().load(gateway)
 
@@ -195,10 +125,6 @@ describe('仪表盘 store 的事件回灌', () => {
     const last = resources?.[resources.length - 1]
     expect(last?.cpu).toBe(66)
     expect(last?.memory).toBe(77)
-
-    const system = useDashboardStore.getState().system
-    expect(system?.load).toEqual({ m1: 0.4, m5: 0.3, m15: 0.2 })
-    expect(system?.disks.map((disk) => disk.usagePct)).toEqual([63, 79, 42])
   })
 
   it('resource/sample 合并趋势序列，不用 listMockHistory 整窗覆盖', async () => {

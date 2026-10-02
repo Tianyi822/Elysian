@@ -13,10 +13,9 @@ vi.mock('../hostMetrics/metricsStore.ts', () => ({
   },
 }))
 
-import { parseDf } from '../hostMetrics/readHostSample.ts'
-import { DF_ARGS, readHostSampleFromProc } from './mockEventsPlugin.node'
+import { readHostSampleFromProc } from './mockEventsPlugin.node'
 
-/** Linux /proc 固定样例：loadavg、meminfo、stat、net/dev、diskstats 与 df 的真实格式。 */
+/** Linux /proc 固定样例：loadavg、meminfo、stat、net/dev 与 diskstats 的真实格式。 */
 const PROC_FILES: Record<string, string> = {
   '/proc/loadavg': '0.20 0.18 0.12 1/527 1234\n',
   '/proc/meminfo': 'MemTotal:       8000212 kB\nMemFree:         3900000 kB\nMemAvailable:    4000106 kB\n',
@@ -26,41 +25,9 @@ const PROC_FILES: Record<string, string> = {
   '/proc/diskstats': '   7       0 sda 4096 100 8192 1000 2048 50 4096 500 0 500 1500\n',
 }
 
-/** df -k -P 的 POSIX 单行输出：容量列为纯数字 KiB，与 parseDf 的解析约定一致。 */
-const DF_KIB_OUTPUT =
-  'Filesystem     1024-blocks      Used Available Capacity Mounted on\n' +
-  '/dev/vda1         61784384  20538368  38059012      36% /\n'
-
-/** 同一块盘的 df -h -P 输出：人类可读列（59G/20G）就是被误截成两位数的 bug 形态。 */
-const DF_HUMAN_OUTPUT =
-  'Filesystem      Size  Used Avail Use% Mounted on\n' + '/dev/vda1        59G   20G   37G  36% /\n'
-
-describe('df 采样参数与解析约定', () => {
-  it('df 输出纯数字 KiB 列：参数固定为 -k -P', () => {
-    expect(DF_ARGS).toEqual(['-k', '-P'])
-  })
-
-  it('人类可读列按纯数字解析会错约 6 个数量级：解析约定只认 KiB 数字列', () => {
-    const parsed = parseDf(DF_HUMAN_OUTPUT)
-    expect(parsed).toHaveLength(1)
-    // '59G'/'20G' 被 parseInt 截断成 59/20——这正是修复前的 Docker 磁盘数值。
-    expect(parsed[0]).toMatchObject({ sizeKb: 59, usedKb: 20 })
-  })
-})
-
 describe('readHostSampleFromProc', () => {
-  it('df 输出与解析约定一致：磁盘容量落在真实 KiB 量级，不再是两位数', async () => {
-    const { sample } = await readHostSampleFromProc(undefined, async () => DF_KIB_OUTPUT, (path) =>
-      Promise.resolve(PROC_FILES[path] ?? ''),
-    )
-    expect(sample.disks).toEqual([{ mount: '/', usagePct: 36, usedKb: 20538368, sizeKb: 61784384 }])
-    // 量级断言：约 60 GB 的盘是数千万 KiB；人类可读误解析只会得到几十。
-    expect(sample.disks[0]!.sizeKb).toBeGreaterThan(10_000_000)
-    expect(sample.disks[0]!.sizeKb).toBeLessThan(1_000_000_000)
-  })
-
   it('/proc 样例按真实格式解析：内存、负载与无前置采样的 CPU', async () => {
-    const { sample, nextPrev } = await readHostSampleFromProc(undefined, async () => DF_KIB_OUTPUT, (path) =>
+    const { sample, nextPrev } = await readHostSampleFromProc(undefined, (path) =>
       Promise.resolve(PROC_FILES[path] ?? ''),
     )
     // (8000212 - 4000106) / 8000212 ≈ 50%。

@@ -4,12 +4,7 @@ import {
   DEFAULT_TIME_RANGE,
   timeRangeDurationMs,
 } from '../adapters/mock/resourceMetrics'
-import type {
-  DiskUsage,
-  ResourceSamplePoint,
-  SystemLoad,
-  TimeRange,
-} from '../adapters/mock/resourceMetrics'
+import type { ResourceSamplePoint, TimeRange } from '../adapters/mock/resourceMetrics'
 import type { ElysianGateway } from '../contracts/adapters'
 import { onStreamEvent } from './eventStreamStore'
 
@@ -31,32 +26,11 @@ export function mergeResourceSampleIntoWindow(
   return [...inWindow, point]
 }
 
-export function sameSystemSnapshot(
-  a: { load: SystemLoad; disks: readonly DiskUsage[] },
-  b: { load: SystemLoad; disks: readonly DiskUsage[] },
-): boolean {
-  return (
-    a.load.m1 === b.load.m1 &&
-    a.load.m5 === b.load.m5 &&
-    a.load.m15 === b.load.m15 &&
-    a.disks.length === b.disks.length &&
-    a.disks.every(
-      (d, i) =>
-        d.mount === b.disks[i]?.mount &&
-        d.usagePct === b.disks[i]?.usagePct &&
-        d.usedKb === b.disks[i]?.usedKb &&
-        d.sizeKb === b.disks[i]?.sizeKb,
-    )
-  )
-}
-
 export type DashboardState = {
   status: 'idle' | 'loading' | 'ready' | 'error'
   refreshing: boolean
   /** 当前时间窗内的资源采样序列（毫秒时间戳横轴）。 */
   resources?: readonly ResourceSamplePoint[]
-  /** 系统负载与磁盘占用的最新采样，随事件心跳更新。 */
-  system?: { load: SystemLoad; disks: readonly DiskUsage[] }
   range: TimeRange
   errorMessage?: string
   load: (gateway: ElysianGateway) => Promise<void>
@@ -96,7 +70,7 @@ function attachLiveEvents(): void {
     if (event.name === 'resource/sample') {
       const ts = Date.parse(event.at)
       const atMs = Number.isFinite(ts) ? ts : Date.now()
-      const { cpu, memory, networkIo, networkRx, networkTx, diskIo, diskRead, diskWrite, load, disks } =
+      const { cpu, memory, networkIo, networkRx, networkTx, diskIo, diskRead, diskWrite } =
         event.payload
       const point: ResourceSamplePoint = {
         ts: atMs,
@@ -109,17 +83,9 @@ function attachLiveEvents(): void {
         diskRead,
         diskWrite,
       }
-      useDashboardStore.setState((state) => {
-        const resources = mergeResourceSampleIntoWindow(state.resources, state.range, point)
-        const nextSystem = { load, disks }
-        return {
-          resources,
-          system:
-            state.system && sameSystemSnapshot(state.system, nextSystem)
-              ? state.system
-              : nextSystem,
-        }
-      })
+      useDashboardStore.setState((state) => ({
+        resources: mergeResourceSampleIntoWindow(state.resources, state.range, point),
+      }))
     }
   })
 }
@@ -135,7 +101,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     set({ status: 'loading', errorMessage: undefined })
     try {
       const data = await loadDashboard(gateway, range)
-      set((state) => ({ status: 'ready', ...data, system: state.system }))
+      set({ status: 'ready', ...data })
     } catch (error) {
       set({
         status: 'error',
@@ -149,12 +115,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     set({ refreshing: true, errorMessage: undefined })
     try {
       const data = await loadDashboard(gateway, range)
-      set((state) => ({
-        status: 'ready',
-        ...data,
-        system: state.system,
-        refreshing: false,
-      }))
+      set({ status: 'ready', ...data, refreshing: false })
     } catch (error) {
       set({
         refreshing: false,

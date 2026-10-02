@@ -1,8 +1,6 @@
-import { execFile } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { promisify } from 'node:util'
 import type { Plugin } from 'vite'
 import { isDockerEnv } from '../hostMetrics/isDockerEnv.ts'
 import {
@@ -13,30 +11,12 @@ import {
 import { readHostSample, type HostSamplePrev } from '../hostMetrics/readHostSample.ts'
 import { createEventsHandler, createResourceHistoryHandler } from './mockEventsPlugin.ts'
 
-const execFileAsync = promisify(execFile)
-
-/**
- * df 采样参数：-k 输出纯数字的 KiB 容量列、-P 固定 POSIX 单行格式，与 readHostSample
- * 里 parseDf 按纯数字列解析的约定一致（-h 的人类可读列如 59G 会被截成 59，差约 6 个数量级）。
- */
-export const DF_ARGS = ['-k', '-P'] as const
-
-async function execDfReal(): Promise<string> {
-  const { stdout } = await execFileAsync('df', [...DF_ARGS])
-  return stdout
-}
-
-/** /proc 与 df 的采样入口；df 与 /proc 读取均可注入，测试用固定文本还原真实格式。 */
+/** /proc 的采样入口；读取可注入，测试用固定文本还原真实格式。 */
 export async function readHostSampleFromProc(
   prev?: HostSamplePrev,
-  execDf: () => Promise<string> = execDfReal,
   readFileFn: (path: string) => Promise<string> = (path) => readFile(path, 'utf8'),
 ) {
-  return readHostSample({
-    readFile: readFileFn,
-    execDf,
-    prev,
-  })
+  return readHostSample({ readFile: readFileFn, prev })
 }
 
 function ensureMetricsDir(): void {

@@ -189,11 +189,12 @@ describe('仪表盘资源监控', () => {
     }
   })
 
-  it('运行负载与磁盘占用条形图仍在', async () => {
+  it('服务器状态区只留四张趋势卡，负载与磁盘占用卡已下线', async () => {
     await renderReady()
     const section = screen.getByLabelText('服务器状态')
-    expect(within(section).getByRole('article', { name: '运行负载' })).toBeInTheDocument()
-    expect(within(section).getByRole('article', { name: '磁盘占用' })).toBeInTheDocument()
+    expect(within(section).queryByRole('article', { name: '运行负载' })).not.toBeInTheDocument()
+    expect(within(section).queryByRole('article', { name: '磁盘占用' })).not.toBeInTheDocument()
+    expect(within(section).getAllByRole('article')).toHaveLength(4)
   })
 })
 
