@@ -83,6 +83,10 @@ beforeEach(() => {
     rechecking: false,
     dismissedDocker: false,
     dismissedCaddy: false,
+    progress: {
+      docker: { statuses: ['pending', 'pending', 'pending'], active: 0, failure: null },
+      caddy: { statuses: ['pending', 'pending', 'pending', 'pending'], active: 0, failure: null },
+    },
   })
   useNotificationStore.getState().clear()
 })
@@ -101,7 +105,12 @@ describe('优先级组合（状态组合表）', () => {
     expect(within(dialog).getAllByText('确认接通').length).toBeGreaterThan(0)
     expect(within(dialog).getByText(/官方安装脚本/)).toBeInTheDocument()
     expect(within(dialog).getByText(/开机即起/)).toBeInTheDocument()
-    expect(within(dialog).getByText(/分步安装/)).toBeInTheDocument()
+    // 整窗说明不再常驻正文，收在标题右侧的问号里
+    expect(dialog).not.toHaveTextContent(/分步代装/)
+    await userEvent.click(within(dialog).getByRole('button', { name: '安装 Docker 说明' }))
+    const help = await screen.findByRole('dialog', { name: '安装 Docker 说明' })
+    expect(within(help).getByText(/分步代装/)).toBeInTheDocument()
+    expect(within(help).getByText(/不会从头再装/)).toBeInTheDocument()
     expect(within(dialog).queryByText(/不会代你执行/)).toBeNull()
     expect(screen.getByText(/Docker 未安装或未接通/)).toBeInTheDocument()
     expect(screen.queryByRole('dialog', { name: '安装 Caddy' })).toBeNull()
@@ -248,6 +257,34 @@ describe('分步安装', () => {
     } finally {
       HTMLElement.prototype.scrollIntoView = original
     }
+  })
+
+  it('失败后关掉弹窗再重开，仍停在失败那一步，重试不重跑已成功的步骤', async () => {
+    const user = userEvent.setup()
+    const calls: string[] = []
+    await renderDialogs(async () => CADDY_MISSING, {
+      setup: async (_target, step) => {
+        calls.push(step)
+        if (step === 'configure') return { ok: false, message: 'Caddyfile 校验没有通过，已恢复原文件。' }
+        return { ok: true, message: '已完成' }
+      },
+    })
+
+    await user.click(screen.getByRole('button', { name: '开始安装' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Caddyfile 校验没有通过')
+    expect(calls).toEqual(['install', 'configure'])
+
+    await user.click(screen.getByRole('button', { name: '关闭弹窗' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    // 网站页工具栏的「安装 Caddy」重开：进度在 store 里，不随弹窗卸载而归零。
+    act(() => useDependencyGuideStore.getState().reopenCaddy())
+    const dialog = await screen.findByRole('dialog', { name: '安装 Caddy' })
+    expect(within(dialog).getByText('第 2 步，共 4 步')).toBeInTheDocument()
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('Caddyfile 校验没有通过')
+
+    await user.click(within(dialog).getByRole('button', { name: '重试' }))
+    await waitFor(() => expect(calls).toEqual(['install', 'configure', 'configure']))
   })
 
   it('docker 转就绪但 caddy 仍缺失：只发 Docker 通知，弹窗切换为 Caddy 引导（未关闭时）', async () => {

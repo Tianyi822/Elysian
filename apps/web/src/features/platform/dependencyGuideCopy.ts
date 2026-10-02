@@ -18,8 +18,11 @@ export type DependencyGuideStage = {
 
 export type DependencyGuideContent = {
   title: string
-  /** 引导语；同时是 Dialog.Description。 */
-  lead: string
+  /**
+   * 这套引导在做什么：说人话的三段——缺了什么、影响什么、面板怎么装。
+   * 收在标题右侧的问号里，不占弹窗正文。
+   */
+  help: readonly string[]
   stages: readonly DependencyGuideStage[]
   /** 依赖经确认步骤转就绪时的成功通知文案（store 发、单一字面量）。 */
   successNotice: string
@@ -28,7 +31,11 @@ export type DependencyGuideContent = {
 export const DEPENDENCY_GUIDE_CONTENT: Record<DependencyGuideKind, DependencyGuideContent> = {
   docker: {
     title: '安装 Docker',
-    lead: 'Docker 引擎不可用，容器、数据库与网站功能都依赖宿主 Docker。面板会在宿主上分步安装，一步成功后自动进入下一步。',
+    help: [
+      '这台机器上还没有可用的 Docker 引擎，容器、数据库与网站三个页面都要靠它运行。',
+      '面板会分步代装：先装引擎，再设为开机自启，最后确认可连通。每步成功自动进入下一步。',
+      '某一步失败会停在那一步并写明原因，重试从失败的那一步继续，不会从头再装。',
+    ],
     stages: [
       {
         id: 'install',
@@ -50,7 +57,12 @@ export const DEPENDENCY_GUIDE_CONTENT: Record<DependencyGuideKind, DependencyGui
   },
   caddy: {
     title: '安装 Caddy',
-    lead: '反向代理通道不可用，域名路由与 HTTPS 证书需要宿主上的系统级 Caddy。面板会在宿主上分步安装，一步成功后自动进入下一步；站点容器不受影响，照常运行。',
+    help: [
+      '网站用域名访问时的 HTTPS 证书与转发，由这台机器上的 Caddy 负责，面板自己不处理。',
+      '现在机器上没有 Caddy，所以域名访问用不了；用服务器 IP 加端口访问的网站不受影响，照常运行。',
+      '面板会分步代装：装软件、接上面板、设为开机自启、确认可连通。每步成功自动进入下一步。',
+      '某一步失败会停在那一步并写明原因，重试从失败的那一步继续，不会从头再装。',
+    ],
     stages: [
       {
         id: 'install',

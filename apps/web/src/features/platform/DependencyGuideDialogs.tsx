@@ -1,13 +1,15 @@
 import * as Dialog from '@radix-ui/react-dialog'
+import * as Popover from '@radix-ui/react-popover'
 import { useEffect, useRef, useState } from 'react'
 import type { DependencySetupStep } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { Check, Loader2, TriangleAlert, X } from '../../components/icons'
+import { Check, CircleHelp, Loader2, TriangleAlert, X } from '../../components/icons'
 import {
   caddyGuideVisible,
   dockerGuideVisible,
   useDependencyGuideStore,
 } from '../../stores/dependencyGuideStore'
+import type { DependencyStageStatus } from '../../stores/dependencyGuideStore'
 import { DEPENDENCY_GUIDE_CONTENT } from './dependencyGuideCopy'
 import type { DependencyGuideKind, DependencyGuideStage, DependencyGuideStageId } from './dependencyGuideCopy'
 
@@ -18,9 +20,7 @@ import type { DependencyGuideKind, DependencyGuideStage, DependencyGuideStageId 
  * 最后一步只重新探测，转就绪时调 reload 重入页面业务加载。
  */
 
-type StageStatus = 'pending' | 'running' | 'done' | 'failed'
-
-const STAGE_STATUS_LABEL: Record<StageStatus, string> = {
+const STAGE_STATUS_LABEL: Record<DependencyStageStatus, string> = {
   pending: '等待',
   running: '正在执行',
   done: '已完成',
@@ -91,11 +91,44 @@ export function DependencyGuideDialogs({
   )
 }
 
-function statusIcon(status: StageStatus) {
+function statusIcon(status: DependencyStageStatus) {
   if (status === 'running') return <Loader2 aria-hidden className="size-3.5 shrink-0 animate-spin" />
   if (status === 'done') return <Check aria-hidden className="size-3.5 shrink-0 text-success" />
   if (status === 'failed') return <TriangleAlert aria-hidden className="size-3.5 shrink-0 text-danger" />
   return null
+}
+
+/**
+ * 标题右侧的问号：这套引导在做什么，点开才显示，不占弹窗正文。
+ * 浮层不走 Portal——Dialog 是模态的，portal 到 body 的浮层会被它的 pointer-events 屏蔽。
+ */
+function GuideHelp({ title, paragraphs }: { title: string; paragraphs: readonly string[] }) {
+  return (
+    <Popover.Root>
+      <Popover.Trigger asChild>
+        <button
+          type="button"
+          aria-label={`${title} 说明`}
+          className="inline-flex size-4 items-center justify-center rounded text-fg-subtle outline-none transition-colors hover:text-fg focus-visible:ring-2 focus-visible:ring-info"
+        >
+          <CircleHelp aria-hidden size={13} />
+        </button>
+      </Popover.Trigger>
+      <Popover.Content
+        side="bottom"
+        align="start"
+        sideOffset={6}
+        collisionPadding={8}
+        aria-label={`${title} 说明`}
+        className="z-[60] w-80 space-y-2 rounded-lg border border-line bg-surface-raised p-3 text-xs leading-relaxed text-fg-muted shadow-lg"
+      >
+        {paragraphs.map((paragraph) => (
+          <p key={paragraph}>{paragraph}</p>
+        ))}
+        <Popover.Arrow className="fill-surface-raised" />
+      </Popover.Content>
+    </Popover.Root>
+  )
 }
 
 function isHostStep(id: DependencyGuideStageId): id is DependencySetupStep {
@@ -119,14 +152,23 @@ function DependencyGuideDialog({
   const gateway = useGateway()
   const content = DEPENDENCY_GUIDE_CONTENT[kind]
   const stages = content.stages
-  const [statuses, setStatuses] = useState<StageStatus[]>(() => stages.map(() => 'pending'))
-  const [active, setActive] = useState(0)
-  const [failure, setFailure] = useState<string | null>(null)
+  // 进度存在 store：关掉弹窗或切页再回来仍停在原步骤，不在这里重新归零。
+  const statuses = useDependencyGuideStore((state) => state.progress[kind].statuses)
+  const active = useDependencyGuideStore((state) => state.progress[kind].active)
+  const failure = useDependencyGuideStore((state) => state.progress[kind].failure)
+  const patchProgress = useDependencyGuideStore((state) => state.patchProgress)
   const [running, setRunning] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
   const cardRefs = useRef<Array<HTMLElement | null>>([])
   const runToken = useRef<object | null>(null)
   const lock = useRef(false)
+
+  const markStage = (index: number, status: DependencyStageStatus) => {
+    const current = useDependencyGuideStore.getState().progress[kind].statuses
+    patchProgress(kind, {
+      statuses: current.map((value, position) => (position === index ? status : value)),
+    })
+  }
 
   useEffect(() => () => {
     runToken.current = null
@@ -152,29 +194,33 @@ function DependencyGuideDialog({
     const token = {}
     runToken.current = token
     setRunning(true)
-    setFailure(null)
+    patchProgress(kind, { failure: null })
     try {
       for (let index = start; index < stages.length; index += 1) {
         if (runToken.current !== token) return
-        setActive(index)
+        patchProgress(kind, { active: index })
         scrollTo(index)
-        setStatuses((prev) => prev.map((status, i) => (i === index ? 'running' : status)))
+        markStage(index, 'running')
         const stage = stages[index]
         if (stage === undefined) return
         const result = await runStage(stage)
         if (runToken.current !== token) return
         if (!result.ok) {
-          setStatuses((prev) => prev.map((status, i) => (i === index ? 'failed' : status)))
-          setFailure(result.message)
+          markStage(index, 'failed')
+          patchProgress(kind, { failure: result.message })
           return
         }
-        setStatuses((prev) => prev.map((status, i) => (i === index ? 'done' : status)))
+        markStage(index, 'done')
         if (index < stages.length - 1) await delay(SLIDE_PAUSE_MS)
       }
     } catch (error) {
       if (runToken.current !== token) return
-      setFailure(error instanceof Error ? error.message : '这一步没有完成')
-      setStatuses((prev) => prev.map((status) => (status === 'running' ? 'failed' : status)))
+      patchProgress(kind, {
+        failure: error instanceof Error ? error.message : '这一步没有完成',
+        statuses: useDependencyGuideStore
+          .getState()
+          .progress[kind].statuses.map((status) => (status === 'running' ? 'failed' : status)),
+      })
     } finally {
       lock.current = false
       if (runToken.current === token) setRunning(false)
@@ -224,7 +270,10 @@ function DependencyGuideDialog({
         >
           <Dialog.Title className="sr-only">{content.title}</Dialog.Title>
           <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
-            <span className="text-sm font-medium text-fg">{content.title}</span>
+            <span className="flex items-center gap-1.5 text-sm font-medium text-fg">
+              {content.title}
+              <GuideHelp title={content.title} paragraphs={content.help} />
+            </span>
             <Dialog.Close asChild>
               <button
                 type="button"
@@ -237,9 +286,6 @@ function DependencyGuideDialog({
           </div>
 
           <div className="flex min-h-0 min-w-0 flex-col gap-3 overflow-y-auto px-4 py-4">
-            <Dialog.Description className="text-xs leading-relaxed text-fg-muted">
-              {content.lead}
-            </Dialog.Description>
             {detail ? (
               <p className="rounded-lg bg-surface-raised px-3 py-2 text-xs text-fg-muted">
                 当前探测结果：{detail}
