@@ -3,7 +3,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { Menu, PanelLeftClose, PanelLeftOpen } from '../../components/icons'
 import { Outlet, useLocation, useMatches } from 'react-router'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { MemoryMonitorBadge } from '../../components/MemoryMonitorBadge'
+import { SystemLoadBadge } from '../../components/SystemLoadBadge'
 import { IconButton } from '../../components/IconButton'
 import { NotificationHost } from '../../components/NotificationHost'
 import { useEventStreamStore } from '../../stores/eventStreamStore'
@@ -126,7 +126,7 @@ export function AppShell() {
                   ref={headerActionsRef}
                   className="ml-auto flex shrink-0 flex-nowrap items-center justify-end gap-2"
                 >
-                  <MemoryMonitorBadge />
+                  <SystemLoadBadge />
                 </div>
               </div>
             </header>

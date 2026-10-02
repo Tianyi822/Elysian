@@ -44,7 +44,7 @@ type HeaderRowRefs = {
   row: RefObject<HTMLElement | null>
   /** 行内标题：量它截断容器的滚动宽度，即标题不被挤压时所需的宽度。页签式标题的页面不渲染标题，量 0。 */
   title: RefObject<HTMLElement | null>
-  /** 右侧功能簇：内存自检与用户占位。 */
+  /** 右侧功能簇：系统负载与用户占位。 */
   actions: RefObject<HTMLElement | null>
   /** 标题文本。文本变长变短不改标题的盒宽，ResizeObserver 因此不触发，用它显式重算。 */
   titleText: string

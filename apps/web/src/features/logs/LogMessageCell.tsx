@@ -11,7 +11,7 @@ import { Maximize2 } from '../../components/icons'
  * 三处刻意的选择：
  * - 展开图标用 `opacity-0` 而不是隐藏 DOM，所以它始终可聚焦、可被读屏发现；
  * - 单元格文本不写 `title`：原生提示会与悬浮窗抢同一块位置；
- * - 触发器是原生 button（Tooltip 套 Popover 套 button，与 MemoryMonitorBadge 同款），
+ * - 触发器是原生 button（Tooltip 套 Popover 套 button，与 SystemLoadBadge 同款），
  *   不用 IconButton——它不是 forwardRef、也不透传 rest props，Radix 经 Slot 传下来的
  *   ref 与 aria-* 会整份丢掉，点图标将没有任何反应。
  */

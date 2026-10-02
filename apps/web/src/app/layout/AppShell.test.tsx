@@ -76,12 +76,12 @@ describe('模板外壳', () => {
     expect(await screen.findByRole('region', { name: '数据库实例' })).toBeInTheDocument()
   })
 
-  it('顶栏含品牌、标题与内存自检，不含运维人员', async () => {
+  it('顶栏含品牌、标题与系统负载，不含运维人员', async () => {
     renderApp('/')
     const header = screen.getByRole('banner')
     expect(screen.getByText('Elysian')).toBeInTheDocument()
     expect(screen.getByRole('heading', { level: 1, name: '仪表盘' })).toBeInTheDocument()
-    expect(within(header).getByRole('button', { name: '内存自检' })).toBeInTheDocument()
+    expect(within(header).getByRole('button', { name: '系统负载' })).toBeInTheDocument()
     expect(within(header).queryByText('运维人员')).not.toBeInTheDocument()
   })
 

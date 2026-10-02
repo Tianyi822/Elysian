@@ -46,6 +46,13 @@ export function getLastContainerSample(): ElysianEvent | undefined {
   return lastContainerSample
 }
 
+/** 最近一拍单机资源采样的模块级缓存，供挂载晚于事件流连接的顶栏系统负载指示器回放。 */
+let lastResourceSample: ElysianEvent | undefined
+
+export function getLastResourceSample(): ElysianEvent | undefined {
+  return lastResourceSample
+}
+
 export const useEventStreamStore = create<EventStreamState>((set) => ({
   status: 'connecting',
   recent: [],
@@ -72,6 +79,7 @@ export const useEventStreamStore = create<EventStreamState>((set) => ({
           event.name === 'container/updated'
         ) {
           if (event.name === 'container/sample') lastContainerSample = event
+          if (event.name === 'resource/sample') lastResourceSample = event
           for (const listener of listeners) listener(event)
           return
         }

@@ -4,16 +4,17 @@ import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { fetchPlatformMemory } from '../adapters/http/platformMemoryAdapter'
 import type { PlatformMemorySample } from '../adapters/platformMemory/types'
+import type { SystemLoad } from '../adapters/mock/resourceMetrics'
 import { formatDateTime } from './format'
-import { CircleHelp, MemoryStick } from './icons'
+import { CircleHelp, Gauge } from './icons'
+import { getLastResourceSample, onStreamEvent } from '../stores/eventStreamStore'
 
 /**
- * 内存自检：顶栏的自诊断图标，采集 Elysian 后端进程自身的常驻内存。
+ * 系统负载指示器：顶栏一枚读数条，合并了这台机器的忙闲（load average）与面板自身内存。
  *
- * 顶栏只显图标与绝对用量、不显百分比——百分比与仪表盘的「内存占用率」卡同屏会被读成
- * 同一口径的两个数；占系统总内存的比例连同它的分母一起收进点击浮层。
- * 数据由同源 GET /api/platform/memory 采集 Go 后端进程，不包含浏览器、开发启动器或其他容器。
- * 采不到时如实显示失败，不伪造数字。
+ * 负载随事件流每拍到达，内存每 5 秒采一次后端进程；两个口径不同，常驻读数只给
+ * 1 分钟负载与内存用量，三档负载与内存明细收在点击浮层里分节列出。
+ * 采不到时如实显示失败或占位，不伪造数字。
  */
 
 export const SAMPLE_INTERVAL_MS = 5_000
@@ -62,6 +63,27 @@ function readPlatformMemory(signal?: AbortSignal): Promise<PlatformMemorySample>
   return fetchPlatformMemory('/api/platform/memory', signal)
 }
 
+/**
+ * 最新一拍的 load average：事件流每拍带过来，挂载晚于首拍时从缓存回放。
+ * 事件流没接通时保持 undefined，界面显示占位而不是 0（0 会被读成机器空闲）。
+ */
+export function useSystemLoad(): SystemLoad | undefined {
+  const [load, setLoad] = useState<SystemLoad | undefined>(() => readLoad(getLastResourceSample()))
+  useEffect(
+    () =>
+      onStreamEvent((event) => {
+        const next = readLoad(event)
+        if (next) setLoad(next)
+      }),
+    [],
+  )
+  return load
+}
+
+function readLoad(event: ReturnType<typeof getLastResourceSample>): SystemLoad | undefined {
+  return event?.name === 'resource/sample' ? event.payload.load : undefined
+}
+
 function formatMiB(valueMb: number): string {
   return `${valueMb.toFixed(1)} MiB`
 }
@@ -90,16 +112,8 @@ function Row({ label, value }: { label: string; value: string }) {
   )
 }
 
-/** 浮层里的一组口径：标题说明这是哪一套算法，组内只放该算法下的量。 */
-function Section({
-  title,
-  help,
-  children,
-}: {
-  title: string
-  help?: ReactNode
-  children: ReactNode
-}) {
+/** 浮层里的一组：标题说明这是哪个口径，组内只放该口径下的读数。 */
+function Section({ title, help, children }: { title: string; help?: ReactNode; children: ReactNode }) {
   return (
     <section className="mt-3">
       <p className="mb-1.5 flex items-center gap-1.5 font-medium text-fg-subtle">
@@ -111,7 +125,7 @@ function Section({
   )
 }
 
-/** 两套口径的关系说明：常驻内存与 Go 运行时对不上是正常现象，点开才看得到解释。 */
+/** 两套内存口径的关系说明：常驻内存与 Go 运行时对不上是正常现象，点开才看得到解释。 */
 function ScopeHelp() {
   return (
     <Popover.Root>
@@ -147,22 +161,24 @@ function ScopeHelp() {
 }
 
 /**
- * 顶栏内存自检：图标加常驻用量，悬停有说明，点击展开两套口径的明细。
+ * 顶栏系统负载：常驻 1 分钟负载与面板内存，悬停有说明，点击展开分节明细。
  */
-export function MemoryMonitorBadge() {
+export function SystemLoadBadge() {
   const view = usePlatformMemory()
+  const load = useSystemLoad()
   const sample = view.status === 'ready' ? view.sample : null
   const residentPercent = sample ? memoryPercent(sample.rssMb, sample.systemTotalMb) : null
-  const value = sample
+  const memoryText = sample
     ? formatResident(sample)
     : view.status === 'loading'
       ? '采集中'
       : '采集失败'
+  const loadText = load ? load.m1.toFixed(2) : '—'
   const ratio = residentPercent === null ? '—' : `${residentPercent.toFixed(1)}%`
   const hint = sample
     ? sample.rssMb === null
-      ? '暂时无法读取后端内存'
-      : '点击查看后端进程内存明细'
+      ? '暂时无法读取后端内存，点击查看负载明细'
+      : '点击查看 1/5/15 分钟负载与内存明细'
     : view.status === 'loading'
       ? '正在读取后端内存'
       : '后端内存读取失败，稍后会再试'
@@ -174,7 +190,7 @@ export function MemoryMonitorBadge() {
           <Popover.Trigger asChild>
             <button
               type="button"
-              aria-label="内存自检"
+              aria-label="系统负载"
               className={[
                 'inline-flex items-center gap-1.5 whitespace-nowrap rounded px-1.5 py-1 text-xs outline-none transition-colors',
                 'hover:bg-surface-raised focus-visible:ring-2 focus-visible:ring-info focus-visible:ring-offset-2 focus-visible:ring-offset-surface',
@@ -185,8 +201,12 @@ export function MemoryMonitorBadge() {
                     : 'text-fg-subtle',
               ].join(' ')}
             >
-              <MemoryStick aria-hidden size={16} className="shrink-0" />
-              <span className="leading-none tabular-nums">{value}</span>
+              <Gauge aria-hidden size={16} className="shrink-0" />
+              <span className="tabular-nums">{loadText}</span>
+              <span aria-hidden className="text-fg-subtle">
+                ·
+              </span>
+              <span className="tabular-nums">{memoryText}</span>
             </button>
           </Popover.Trigger>
         </Tooltip.Trigger>
@@ -195,7 +215,7 @@ export function MemoryMonitorBadge() {
             sideOffset={6}
             className="z-50 max-w-64 rounded border border-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg"
           >
-            内存自检 · {hint}
+            系统负载 · {hint}
             <Tooltip.Arrow className="fill-surface-raised" />
           </Tooltip.Content>
         </Tooltip.Portal>
@@ -207,17 +227,31 @@ export function MemoryMonitorBadge() {
           align="end"
           sideOffset={6}
           collisionPadding={8}
-          aria-label="内存自检详情"
+          aria-label="系统负载明细"
           className="z-50 w-80 rounded-lg border border-line bg-surface-raised p-3 text-xs shadow-lg"
         >
-          <p className="border-b border-line pb-2 text-sm font-medium text-fg">内存自检</p>
+          <p className="border-b border-line pb-2 text-sm font-medium text-fg">系统负载</p>
           <p className="pt-2 leading-relaxed text-fg-subtle">
-            只统计 Elysian 后端进程自身占用的内存。
+            负载是这台机器的忙闲读数，面板内存只统计 Elysian 后端进程自身占用的内存。
           </p>
+
+          <Section title="机器负载（load average）">
+            {load ? (
+              <dl className="space-y-1.5">
+                <Row label="1 分钟" value={load.m1.toFixed(2)} />
+                <Row label="5 分钟" value={load.m5.toFixed(2)} />
+                <Row label="15 分钟" value={load.m15.toFixed(2)} />
+              </dl>
+            ) : (
+              <p className="leading-relaxed text-fg-muted">
+                还没收到事件流的资源采样，负载读数暂不可用。
+              </p>
+            )}
+          </Section>
 
           {sample ? (
             <>
-              <Section title="进程常驻（RSS）">
+              <Section title="面板常驻内存（RSS）">
                 <dl className="space-y-1.5">
                   <Row label="常驻内存" value={formatResident(sample)} />
                   <Row label="系统总内存" value={formatTotalMemory(sample.systemTotalMb)} />
@@ -255,13 +289,15 @@ export function MemoryMonitorBadge() {
               </Section>
             </>
           ) : (
-            <p className="mt-3 leading-relaxed text-fg-muted">
-              {view.status === 'loading' ? '正在读取后端进程内存…' : '后端进程内存读取失败，稍后会再试。'}
-            </p>
+            <Section title="面板内存">
+              <p className="leading-relaxed text-fg-muted">
+                {view.status === 'loading' ? '正在读取后端进程内存…' : '后端进程内存读取失败，稍后会再试。'}
+              </p>
+            </Section>
           )}
 
           <p className="mt-3 border-t border-line pt-2 text-fg-subtle">
-            每 {SAMPLE_INTERVAL_MS / 1000} 秒采样一次
+            负载每拍随事件流更新 · 内存每 {SAMPLE_INTERVAL_MS / 1000} 秒采样一次
             {sample ? ` · 采样于 ${formatDateTime(sample.sampledAt)}` : ''}
           </p>
           <Popover.Arrow className="fill-surface-raised" />
