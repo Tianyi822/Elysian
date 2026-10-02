@@ -6,7 +6,7 @@ import { IconButton } from '../../components/IconButton'
 import { RefreshCw, Search } from '../../components/icons'
 import { EmptyState } from '../../components/states/StateViews'
 import { useWebsitesStore } from '../../stores/websitesStore'
-import { caddyInstallEntryVisible, useDependencyGuideStore } from '../../stores/dependencyGuideStore'
+import { accessConfigEntryVisible, caddyInstallEntryVisible, useDependencyGuideStore } from '../../stores/dependencyGuideStore'
 import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { WebsiteDetailSheet } from './WebsiteDetailSheet'
@@ -106,7 +106,7 @@ export function WebsitesPanel() {
             安装 Caddy
           </button>
         ) : null}
-        {dependencyReport?.docker.state === 'ok' ? (
+        {accessConfigEntryVisible(dependencyReport) ? (
           <button type="button" onClick={() => setCaddyConfigOpen(true)} className={TOOL_BUTTON_CLASS}>
             访问配置
           </button>
