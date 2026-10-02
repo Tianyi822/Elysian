@@ -406,7 +406,7 @@ func FetchWebsiteRuntimeCatalog(ctx context.Context, fetcher sourceFetcher, asOf
 		add(KindGo, version, version)
 	}
 	for _, release := range pythonData {
-		// 网站 Python 启动命令使用 python3，Python 2 不属于此运行时。
+		// 网站 Python 运行时仅提供 Python 3，Python 2 不属于此目录。
 		match := pythonSourceVersion.FindStringSubmatch(release.Name)
 		if release.PreRelease || !release.IsPublished || match == nil || truncateDate(release.ReleaseDate) > asOf {
 			continue

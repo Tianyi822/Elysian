@@ -2,7 +2,6 @@ package websites
 
 import (
 	"errors"
-	"fmt"
 	"math"
 	"regexp"
 	"strings"
@@ -127,20 +126,13 @@ func WebsiteRuntimeImageRef(kind string, version *string, catalog *runtimeCatalo
 }
 
 // WebsiteDefaultDeployCommand 面板为站点容器配置的启动命令（创建时生成、固化进登记，
-// 如实反映容器 Cmd）：mock、服务端与容器 Cmd 的单一事实来源。java/go 需要用户填写，
+// 如实反映容器 Cmd）：与前端契约保持同一规则。java/node/go/python 需要用户填写，
 // 返回 nil。
-func WebsiteDefaultDeployCommand(kind string, port int) *string {
-	switch kind {
-	case KindHTML:
+func WebsiteDefaultDeployCommand(kind string) *string {
+	if kind == KindHTML {
 		return stringPtr("nginx -g daemon off;")
-	case KindPython:
-		return stringPtr(fmt.Sprintf("python3 -m http.server %d --bind 0.0.0.0 --directory /app", port))
-	case KindNode:
-		script := fmt.Sprintf(`require("http").createServer((q,s)=>{const f=require("path").join("/app",require("path").normalize(q.url).replace(/^([.]{2}[\/\\])+/,""));require("fs").readFile(f,(e,d)=>{s.statusCode=e?404:200;s.end(e?"404 Not Found":d)})}).listen(%d)`, port)
-		return stringPtr("node -e '" + script + "'")
-	default:
-		return nil
 	}
+	return nil
 }
 
 // catalogEntriesFor 按类型取目录切片；未知类型返回 nil。

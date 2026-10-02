@@ -207,14 +207,11 @@ func validateWebsiteCreateRequest(input any) (createRequest, error) {
 	}
 	request.Access = access
 	if kind == KindHTML {
-		request.Command = *WebsiteDefaultDeployCommand(KindHTML, port)
+		request.Command = *WebsiteDefaultDeployCommand(KindHTML)
 	} else {
 		command, err := trimmed(row["command"], "启动命令", 2048)
 		if err != nil {
 			return createRequest{}, err
-		}
-		if command == nil {
-			command = WebsiteDefaultDeployCommand(kind, port)
 		}
 		if command == nil {
 			return createRequest{}, shared.InvalidRequest("请填写容器启动命令")

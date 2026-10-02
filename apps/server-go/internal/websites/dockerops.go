@@ -398,7 +398,7 @@ func (d *websiteDocker) Create(ctx context.Context, input containerCreateInput) 
 	}
 	command := input.Command
 	if command == nil {
-		command = WebsiteDefaultDeployCommand(input.Kind, input.Port)
+		command = WebsiteDefaultDeployCommand(input.Kind)
 	}
 	cmd, err := WebsiteContainerCmd(input.Kind, command)
 	if err != nil {

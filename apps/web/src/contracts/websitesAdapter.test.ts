@@ -13,6 +13,18 @@ const row = { id: 'p', kind: 'html', name: 'site', pid: null, containerId: 'a'.r
 afterEach(() => { vi.unstubAllGlobals(); resetWebsitesData() })
 
 describe('网站 adapter 访问配置', () => {
+  it.each([
+    ['node', '24.21.0', 'node app.js'],
+    ['python', '3.9.7', 'python3 app.py'],
+  ] as const)('mock %s 创建不能补填启动命令，必须使用用户输入', async (kind, runtimeVersion, command) => {
+    const adapter = new MockWebsitesAdapter()
+    const input = { name: 'app', port: 8080, runtimeVersion, access: { mode: 'direct' as const } }
+    await expect(adapter.create(kind, input)).rejects.toThrow('请填写容器启动命令')
+    expect((await adapter.list()).projects).toEqual([])
+    const created = await adapter.create(kind, { ...input, command })
+    expect(created.project.deployCommand).toBe(command)
+  })
+
   it('版本目录通过同源 API 获取，拒绝预发布响应', async () => {
     const fetcher = vi.fn(async () => Response.json(MOCK_WEBSITE_RUNTIME_REPORT))
     vi.stubGlobal('fetch', fetcher)

@@ -84,20 +84,19 @@ func TestWebsiteRuntimeImageRef(t *testing.T) {
 }
 
 func TestWebsiteDefaultDeployCommand(t *testing.T) {
-	if command := WebsiteDefaultDeployCommand(KindHTML, 8080); *command != "nginx -g daemon off;" {
+	if command := WebsiteDefaultDeployCommand(KindHTML); *command != "nginx -g daemon off;" {
 		t.Fatalf("HTML 缺省命令不符：%s", *command)
 	}
-	if command := WebsiteDefaultDeployCommand(KindPython, 8080); *command != "python3 -m http.server 8080 --bind 0.0.0.0 --directory /app" {
-		t.Fatalf("python 缺省命令不符：%s", *command)
+	if command := WebsiteDefaultDeployCommand(KindPython); command != nil {
+		t.Fatalf("python 应无缺省命令")
 	}
-	node := "node -e 'require(\"http\").createServer((q,s)=>{const f=require(\"path\").join(\"/app\",require(\"path\").normalize(q.url).replace(/^([.]{2}[\\/\\\\])+/,\"\"));require(\"fs\").readFile(f,(e,d)=>{s.statusCode=e?404:200;s.end(e?\"404 Not Found\":d)})}).listen(3000)'"
-	if command := WebsiteDefaultDeployCommand(KindNode, 3000); *command != node {
-		t.Fatalf("node 缺省命令不符：\n%s\n%s", *command, node)
+	if command := WebsiteDefaultDeployCommand(KindNode); command != nil {
+		t.Fatalf("node 应无缺省命令")
 	}
-	if command := WebsiteDefaultDeployCommand(KindJava, 8080); command != nil {
+	if command := WebsiteDefaultDeployCommand(KindJava); command != nil {
 		t.Fatalf("java 应无缺省命令")
 	}
-	if command := WebsiteDefaultDeployCommand(KindGo, 8080); command != nil {
+	if command := WebsiteDefaultDeployCommand(KindGo); command != nil {
 		t.Fatalf("go 应无缺省命令")
 	}
 }

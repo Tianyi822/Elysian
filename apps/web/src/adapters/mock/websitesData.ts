@@ -38,7 +38,7 @@ export function addWebsiteProject(kind: WebsiteProject['kind'], input: WebsitePr
   if (domain && !isValidWebsiteDomain(domain)) throw new Error('域名无效')
   if (domain && projects.some((project) => project.domain === domain)) throw new Error(`域名已被绑定：${domain}`)
   const certificate = metadata(access)
-  const command = kind === 'html' ? websiteDefaultDeployCommand(kind, input.port) : input.command?.trim() || websiteDefaultDeployCommand(kind, input.port)
+  const command = kind === 'html' ? websiteDefaultDeployCommand(kind) : input.command?.trim()
   if (!command) throw new Error('请填写容器启动命令')
   const id = `website-${kind}-${name}`
   const project: WebsiteProject = {

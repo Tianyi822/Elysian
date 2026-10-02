@@ -318,11 +318,39 @@ func domainRequest(t *testing.T, kind string, port int, name, domain string, cha
 	}
 	if kind != KindHTML {
 		body["runtimeVersion"] = "24.21.0"
+		body["command"] = "node dist/server.js"
 	}
 	return buildCreate(t, body)
 }
 
 // ---------- 「网站访问与容器编排」12 例 ----------
+
+func TestRuntimeCreateRequiresExplicitCommand(t *testing.T) {
+	for _, item := range []struct{ kind, version, command string }{
+		{KindNode, "24.21.0", "node app.js"},
+		{KindPython, "3.9.7", "python3 app.py"},
+	} {
+		t.Run(item.kind, func(t *testing.T) {
+			body := map[string]any{
+				"kind": item.kind, "name": "app", "port": 8080,
+				"runtimeVersion": item.version, "access": map[string]any{"mode": "direct"},
+			}
+			for _, command := range []any{nil, "", "   "} {
+				body["command"] = command
+				_, err := validateWebsiteCreateRequest(marshalAnyValue(body))
+				requireError(t, err, "请填写容器启动命令")
+			}
+			delete(body, "command")
+			_, err := validateWebsiteCreateRequest(marshalAnyValue(body))
+			requireError(t, err, "请填写容器启动命令")
+			body["command"] = item.command
+			request := buildCreate(t, body)
+			if request.Command != item.command {
+				t.Fatalf("应使用用户填写的命令，得到 %q", request.Command)
+			}
+		})
+	}
+}
 
 func TestCreateRejectsVersionOutsideCatalog(t *testing.T) {
 	f := fixture(t, nil, nil, nil, nil)
@@ -407,6 +435,91 @@ func TestCreateStoppedContainersAndLogs(t *testing.T) {
 	lines, err := f.service.Logs(context.Background(), html.Project.ID)
 	if err != nil || len(lines) != 1 {
 		t.Fatalf("logs 应返回行数组：%v", err)
+	}
+}
+
+func TestDirectProjectsHaveIndependentContainersWithoutCaddy(t *testing.T) {
+	f := fixture(t, nil, nil, nil, nil)
+	f.caddy.down = true
+	cases := []struct {
+		kind    string
+		version any
+		command any
+	}{
+		{KindHTML, nil, nil},
+		{KindHTML, nil, nil},
+		{KindJava, "17.0.1+12", "java -jar app.jar"},
+		{KindNode, "24.21.0", "node dist/server.js"},
+		{KindGo, "1.16.7", "./server"},
+		{KindPython, "3.9.7", "python -m http.server 18085"},
+	}
+	ids := map[string]bool{}
+	names := map[string]bool{}
+	roots := map[string]bool{}
+	var projects []websiteProject
+	for i, tc := range cases {
+		request := buildCreate(t, map[string]any{
+			"kind": tc.kind, "name": fmt.Sprintf("site-%d", i), "port": 18080 + i,
+			"runtimeVersion": tc.version, "command": tc.command,
+			"access": map[string]any{"mode": AccessModeDirect},
+		})
+		result, err := f.service.Create(context.Background(), request)
+		if err != nil {
+			t.Fatalf("Caddy 缺失时 %s 项目应可创建：%v", tc.kind, err)
+		}
+		project := result.Project
+		if project.ContainerID == nil || project.RunState != RunStateStopped {
+			t.Fatalf("每个项目应有独立的已停止容器：%+v", project)
+		}
+		if ids[*project.ContainerID] || roots[project.RootDir] {
+			t.Fatalf("项目之间不得共用容器 ID 或站点目录：%+v", project)
+		}
+		ids[*project.ContainerID] = true
+		roots[project.RootDir] = true
+		projects = append(projects, project)
+	}
+	rows, err := f.registry.List(context.Background())
+	if err != nil || len(rows) != len(cases) {
+		t.Fatalf("每个项目应独立登记：%v", err)
+	}
+	for _, row := range rows {
+		if row.ContainerName == nil || names[*row.ContainerName] {
+			t.Fatalf("项目之间不得共用容器名：%+v", row)
+		}
+		names[*row.ContainerName] = true
+	}
+	createCount := 0
+	for _, call := range f.docker.snapshotCalls() {
+		if strings.HasPrefix(call, "create:") {
+			createCount++
+		}
+	}
+	if createCount != len(cases) {
+		t.Fatalf("每个项目应单独创建容器，得到 %d 次创建", createCount)
+	}
+	for _, project := range projects[:2] {
+		if _, err := f.service.SetRunning(context.Background(), project.ID, true); err != nil {
+			t.Fatalf("Caddy 缺失时项目应可启动：%v", err)
+		}
+	}
+	if _, err := f.service.SetRunning(context.Background(), projects[0].ID, false); err != nil {
+		t.Fatalf("项目应可单独停止：%v", err)
+	}
+	report, err := f.service.List(context.Background())
+	if err != nil {
+		t.Fatalf("Caddy 缺失时项目应可列出：%v", err)
+	}
+	for _, project := range report.Projects {
+		expected := RunStateStopped
+		if project.ID == projects[1].ID {
+			expected = RunStateRunning
+		}
+		if project.RunState != expected {
+			t.Fatalf("单个项目启停不得影响其他容器：%s 应为 %s，得到 %s", project.Name, expected, project.RunState)
+		}
+	}
+	if len(*f.calls) != 0 {
+		t.Fatalf("直连容器生命周期不得下发 Caddy 配置：%v", *f.calls)
 	}
 }
 

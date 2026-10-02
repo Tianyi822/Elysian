@@ -334,23 +334,9 @@ export function websiteRuntimeImageRef(
 
 /**
  * 面板为站点容器配置的启动命令（创建时生成、固化进登记，如实反映容器 Cmd）：
- * python 用内置 http.server 直接服务 /app；node 提供可编辑的静态服务命令；
- * java 与 go 需要用户填写命令；HTML 使用固定 Nginx 命令。
- * mock 与服务端共用本函数，是缺省命令的单一事实来源。
+ * java、node、go 与 python 需要用户填写命令；
+ * HTML 使用固定 Nginx 命令。前端与 mock 共用本函数，Go 服务端保持同一规则。
  */
-export function websiteDefaultDeployCommand(
-  kind: WebsiteProjectKind,
-  port: number,
-): string | null {
-  switch (kind) {
-    case 'html':
-      return 'nginx -g daemon off;'
-    case 'python':
-      return `python3 -m http.server ${port} --bind 0.0.0.0 --directory /app`
-    case 'node':
-      return `node -e 'require("http").createServer((q,s)=>{const f=require("path").join("/app",require("path").normalize(q.url).replace(/^([.]{2}[\\/\\\\])+/,""));require("fs").readFile(f,(e,d)=>{s.statusCode=e?404:200;s.end(e?"404 Not Found":d)})}).listen(${port})'`
-    case 'java':
-    case 'go':
-      return null
-  }
+export function websiteDefaultDeployCommand(kind: WebsiteProjectKind): string | null {
+  return kind === 'html' ? 'nginx -g daemon off;' : null
 }

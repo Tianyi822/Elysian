@@ -8,7 +8,6 @@ import {
   isValidWebsiteProjectName,
   parseProjectNameFromGitUrl,
   websiteProjectUsesRuntime,
-  websiteDefaultDeployCommand,
 } from '@elysian/contracts'
 import type { WebsiteProjectKind, WebsiteRuntimeKind, WebsiteRuntimeCatalog, WebsiteRuntimeCatalogReport } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
@@ -20,8 +19,8 @@ import { SelectDropdown } from '../../components/SelectDropdown'
 
 /**
  * 添加项目弹窗：类型、Git 地址（可贴链接自动带出名称）、名称、运行时版本（非 HTML）、
- * 端口（自定义加减，全类型必填）、互斥的直连或域名入口与证书、备注。根目录固定由
- * 名称推导，创建表单不暴露。Git 只登记地址，不自动拉取代码。
+ * 端口（自定义加减，全类型必填）、Caddy 就绪时的访问方式与证书、备注。Caddy 未就绪
+ * 时固定直连并隐藏访问方式区域。根目录固定由名称推导，Git 只登记地址，不自动拉取代码。
  */
 
 const INPUT_CLASS =
@@ -101,7 +100,9 @@ export function WebsitesCreateDialog() {
   const [runtimeAttempt, setRuntimeAttempt] = useState(0)
   const [port, setPort] = useState(DEFAULT_PORT)
   const [domain, setDomain] = useState('')
-  const [accessMode, setAccessMode] = useState<'direct' | 'domain'>('direct')
+  const [selectedAccessMode, setAccessMode] = useState<'direct' | 'domain'>('direct')
+  // 报告变化也立即回落直连，避免隐藏的域名选项阻止提交或进入创建请求。
+  const accessMode = caddyReady ? selectedAccessMode : 'direct'
   const [certificatePem, setCertificatePem] = useState('')
   const [privateKeyPem, setPrivateKeyPem] = useState('')
   const [certificateName, setCertificateName] = useState('')
@@ -111,7 +112,6 @@ export function WebsitesCreateDialog() {
   const certificateReadVersion = useRef(0)
   const privateKeyReadVersion = useRef(0)
   const [command, setCommand] = useState('')
-  const [versionSearch, setVersionSearch] = useState('')
   const [note, setNote] = useState('')
   const [nameError, setNameError] = useState<string | undefined>(undefined)
   const [portError, setPortError] = useState<string | undefined>(undefined)
@@ -145,15 +145,11 @@ export function WebsitesCreateDialog() {
   const applyKind = (next: WebsiteProjectKind) => {
     setKind(next)
     setRuntimeVersion(defaultRuntimeVersion(next, runtimeReport?.catalog))
-    setVersionSearch('')
-    setCommand(websiteDefaultDeployCommand(next, port) ?? '')
+    setCommand('')
     setVersionError(undefined)
   }
 
   const applyPort = (next: number) => {
-    const oldDefault = websiteDefaultDeployCommand(kind, port)
-    const nextDefault = websiteDefaultDeployCommand(kind, next)
-    if (oldDefault !== null && command === oldDefault && nextDefault !== null) setCommand(nextDefault)
     setPort(next)
     setPortError(undefined)
   }
@@ -293,12 +289,12 @@ export function WebsitesCreateDialog() {
                   运行时版本 <span className="text-danger">*</span>
                 </label>
                 <SelectDropdown
+                  key={kind}
                   id="website-create-runtime-version"
                   ariaLabel="运行时版本"
                   fullWidth
-                  items={runtimeEntries
-                    .filter((entry) => entry.version.includes(versionSearch.trim()))
-                    .map((entry) => ({ value: entry.version, label: entry.version }))}
+                  items={runtimeEntries.map((entry) => ({ value: entry.version, label: entry.version }))}
+                  search={{ ariaLabel: '搜索运行时版本', placeholder: '搜索版本号（包含历史补丁）' }}
                   value={runtimeVersion ?? undefined}
                   onSelect={(next) => {
                     setRuntimeVersion(next)
@@ -309,7 +305,6 @@ export function WebsitesCreateDialog() {
                   disabled={runtimeLoading || Boolean(runtimeError)}
                 />
                 {versionError ? <p className="mt-1 text-xs text-danger">{versionError}</p> : null}
-                <input aria-label="搜索运行时版本" value={versionSearch} onChange={(event) => setVersionSearch(event.target.value)} placeholder="搜索版本号（包含历史补丁）" className={`${INPUT_CLASS} mt-2`} />
                 {runtimeLoading ? <p role="status" className="mt-1 text-xs text-fg-muted">正在从官方获取正式版本…</p> : null}
                 {runtimeError ? <div role="alert" className="mt-1 text-xs text-danger">{runtimeError}<button type="button" className="ml-2 underline" onClick={() => setRuntimeAttempt((attempt) => attempt + 1)}>重新获取</button></div> : null}
                 {!runtimeLoading && !runtimeError ? <p className="mt-1 text-xs text-fg-subtle">共 {runtimeEntries.length} 个正式版本，包含历史补丁</p> : null}
@@ -327,11 +322,11 @@ export function WebsitesCreateDialog() {
 
             <div>
               <label htmlFor="website-create-command" className="mb-1 block text-xs font-medium text-fg-muted">启动命令 {kind !== 'html' ? <span className="text-danger">*</span> : null}</label>
-              <input id="website-create-command" value={kind === 'html' ? 'Nginx 默认命令' : command} disabled={kind === 'html'} onChange={(event) => { setCommand(event.target.value); setCommandError(undefined) }} placeholder={kind === 'java' ? '如 java -jar app.jar' : kind === 'go' ? '如 ./server --port 8080' : ''} className={INPUT_CLASS} />
+              <input id="website-create-command" value={kind === 'html' ? 'Nginx 默认命令' : command} disabled={kind === 'html'} onChange={(event) => { setCommand(event.target.value); setCommandError(undefined) }} placeholder={kind === 'java' ? '如 java -jar app.jar' : kind === 'node' ? '如 node app.js' : kind === 'go' ? '如 ./server --port 8080' : kind === 'python' ? `如 python3 -m http.server ${port} --bind 0.0.0.0 --directory /app` : ''} className={INPUT_CLASS} />
               {commandError ? <p className="mt-1 text-xs text-danger">{commandError}</p> : <p className="mt-1 text-xs text-fg-subtle">命令作为 Docker 参数执行，不经宿主 Shell；服务需监听容器内 0.0.0.0。</p>}
             </div>
 
-            <div>
+            {caddyReady ? <div>
               <p className="mb-2 text-xs font-medium text-fg-muted">访问方式</p>
               <div role="group" aria-label="访问方式" className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <button type="button" aria-pressed={accessMode === 'direct'} onClick={() => { setAccessMode('direct'); setAccessError(undefined) }} className={`rounded-lg border p-3 text-left text-xs ${accessMode === 'direct' ? 'border-accent bg-accent/10 text-fg' : 'border-line text-fg-muted'}`}><strong className="block">IP＋端口直连</strong><span>HTTP · 无需证书</span></button>
@@ -348,7 +343,7 @@ export function WebsitesCreateDialog() {
               {accessError ? <p role="alert" className="mt-2 text-xs text-danger">{accessError}</p> : null}
               <p className="mt-3 rounded-lg border border-line p-2 text-xs text-fg-muted">访问路径：{accessMode === 'direct' ? `http://服务器IP:${port} → 项目容器` : `https://${domain.trim() || '域名'} → Caddy → 项目容器`}</p>
               <p className="mt-1 text-xs text-fg-subtle">{accessMode === 'direct' ? `创建时将自动在防火墙开放端口 ${port}；DNS 与公网可达性请自行核对。` : '域名访问经宿主 Caddy 的 80/443，这两个端口请在安全页确认开放；DNS 与公网可达性请自行核对。'}</p>
-            </div>
+            </div> : null}
 
             <div>
               <label htmlFor="website-create-note" className="mb-1 block text-xs font-medium text-fg-muted">

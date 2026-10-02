@@ -130,26 +130,12 @@ describe('动态运行时目录', () => {
 })
 
 describe('websiteDefaultDeployCommand 缺省启动命令', () => {
-  it('python 用内置 http.server 服务 /app，端口内嵌', () => {
-    expect(websiteDefaultDeployCommand('python', 8000)).toBe(
-      'python3 -m http.server 8000 --bind 0.0.0.0 --directory /app',
-    )
-  })
-
-  it('node 内嵌一行式静态文件服务脚本，单引号包裹且端口内嵌', () => {
-    const command = websiteDefaultDeployCommand('node', 3000)
-    expect(command).not.toBe(null)
-    expect(command!.startsWith("node -e '")).toBe(true)
-    expect(command!.endsWith("'")).toBe(true)
-    expect(command!).toContain('.listen(3000)')
-    expect(command!).not.toContain('\n')
-    expect(websiteDefaultDeployCommand('node', 3100)).toContain('.listen(3100)')
-  })
-
-  it('java 与 go 必须填写命令，HTML 使用固定 Nginx 命令', () => {
-    expect(websiteDefaultDeployCommand('java', 8080)).toBe(null)
-    expect(websiteDefaultDeployCommand('go', 9100)).toBe(null)
-    expect(websiteDefaultDeployCommand('html', 8088)).toBe('nginx -g daemon off;')
+  it('java、node、go 与 python 必须填写命令，HTML 使用固定 Nginx 命令', () => {
+    expect(websiteDefaultDeployCommand('java')).toBe(null)
+    expect(websiteDefaultDeployCommand('node')).toBe(null)
+    expect(websiteDefaultDeployCommand('go')).toBe(null)
+    expect(websiteDefaultDeployCommand('python')).toBe(null)
+    expect(websiteDefaultDeployCommand('html')).toBe('nginx -g daemon off;')
   })
 })
 
