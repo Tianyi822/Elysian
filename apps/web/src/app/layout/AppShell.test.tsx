@@ -81,7 +81,7 @@ describe('模板外壳', () => {
     const header = screen.getByRole('banner')
     expect(screen.getByText('Elysian')).toBeInTheDocument()
     expect(screen.getByRole('heading', { level: 1, name: '仪表盘' })).toBeInTheDocument()
-    expect(within(header).getByRole('button', { name: '平台内存占用' })).toBeInTheDocument()
+    expect(within(header).getByRole('button', { name: '内存自检' })).toBeInTheDocument()
     expect(within(header).queryByText('运维人员')).not.toBeInTheDocument()
   })
 

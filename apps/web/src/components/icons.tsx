@@ -16,6 +16,7 @@ export {
   ChevronDown,
   ChevronRight,
   CircleCheck,
+  CircleHelp,
   Container,
   Copy,
   Database,

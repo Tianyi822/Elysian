@@ -125,7 +125,7 @@ describe('数据库类型切换', () => {
       this: Element,
     ) {
       const rect = original.call(this)
-      if (this.querySelector('[aria-label="平台内存占用"]')) {
+      if (this.querySelector('[aria-label="内存自检"]')) {
         Object.defineProperty(rect, 'width', { value: 5000 })
       }
       return rect
