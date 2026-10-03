@@ -1,85 +1,66 @@
-# Elysian 源码一键部署（Ubuntu/Debian 虚拟机）
+# Elysian systemd 源码部署
 
-本文面向要在真实虚拟机上部署 Elysian 面板的运维人员：拿到源码后运行一个脚本即完成部署，脚本幂等可重跑，支持 `--uninstall` 卸载。
+正式安装支持 Ubuntu/Debian、systemd、x86_64 或 arm64，需 root 与访问 apt、GitHub、Go 模块代理和 npm registry 的网络。建议至少 2 核、2 GiB 内存与足够的源码构建及数据备份空间。
 
-## 定位与适用范围
-
-- 适用系统：Ubuntu 22.04/24.04、Debian 12（bookworm）或更新的 apt 系发行版，架构 x86_64 或 arm64（aarch64）。
-- 适用形态：无 Docker 运行时的裸机虚拟机。面板以「裸机直执模式」（`ELYSIAN_BARE_METAL=1`）运行，防火墙、SSH、主机账号、文件等安全操作直接在宿主上执行。
-- 面板进程只绑定 `127.0.0.1:48101`（回环红线）；对外服务由你自行配置反向代理，脚本不申请证书、不开防火墙端口。
-- 面板本身不依赖 Docker 运行时；安装 Docker 与 Caddy 只是可选的功能扩展（见下文「可选启用容器与网站功能」）。
-
-## 虚拟机前置要求
-
-- root 权限（`sudo bash scripts/install.sh` 亦可，脚本内部自检 root）。
-- 可出网：安装过程会访问 Debian/Ubuntu apt 源、`go.dev`（Go 工具链）、GitHub（bun 工具链）、npm registry（前端依赖）与 Go 模块代理。
-- 已启用 systemd（Ubuntu/Debian 服务器默认即有）。
-- 硬件建议：2 核 CPU / 2 GiB 内存 / 10 GiB 磁盘（构建期峰值约需 2 GiB 内存与 3 GiB 临时空间）。
-
-## 一键部署
+## 安装与引导
 
 ```bash
-# 1. 拿到源码（克隆或解包均可）
-git clone <你的仓库地址> elysian && cd elysian
-# 或：tar -xf elysian-src.tar.gz && cd elysian
-
-# 2. 一键安装（幂等：重复执行即升级到当前源码并重启服务）
+git clone https://github.com/Tianyi822/Elysian.git
+cd Elysian
 sudo bash scripts/install.sh
 ```
 
-脚本依次完成：架构与发行版检测 → apt 安装 curl/ca-certificates/unzip → 安装 Go 与 bun（缺则装，已有且满足版本则复用）→ `bun install` + `bun run build` 构建前端 → 清空并拷贝 `apps/web/dist` 到 `apps/server-go/web/dist`、`CGO_ENABLED=0` 构建嵌入前端的单二进制 → 安装到 `/usr/local/bin/elysian` → 创建系统账号 → 写入并启动 systemd 服务 → 轮询 `/api/health` 就绪 → 打印后续指引。
+仓库须公开或通过部署者自己的 Git 凭据取得源码。脚本安装缺少的工具链及 UFW，以 `elysian-build` 无特权账号在临时源码副本构建，不在面板凭据目录执行源码脚本。Go 工具链固定 1.23.12，bun 固定 1.4.2，下载按官方索引的 SHA256 校验；依赖按 bun.lock 和 go.sum 锁定。安装与在线更新共用 [build-release.sh](build-release.sh)。构建失败时旧服务继续运行；安装切换前预检并备份，启动或健康检查失败时恢复原程序、数据、单元与本次涉及的面板规则。环境文件 `/etc/default/elysian` 保留。
 
-版本锁定与校验：Go 固定 `1.23.12`（sha256 对照 go.dev 官方下载索引），bun 固定 `1.4.2`（sha256 对照 GitHub Release 官方 asset digest），校验不通过即中止，不落半安装状态。
+默认前端 `http://<服务器 IP>:48100`，后端 `127.0.0.1:48101`。前端提供页面、静态资源和同源 `/api` 代理，支持 Cookie、上传、SSE 和 WebSocket。正式入口接受 IP 或本机 Host，跨源业务写请求及未允许的域名被拒绝。面板仅管理宿主 UFW 的面板 TCP 规则，保持 UFW 原启停状态，并核验启用的 IPv6；部署者需自行配置云安全组。此部署方式不配置域名反代、HTTPS 或证书。
 
-## 首次登录与初始密码
+既有安装需先运行此脚本完成维护能力引导；此后可在系统设置中改端口、重启与更新。Docker 开发环境保留既有回环端口映射，设置页维护功能不可执行。
 
-- 面板首次启动会生成管理员账号 `admin` 的初始密码，只打印一次到进程 stdout，不落任何日志文件。查看方式：
+## 登录与配置
 
-  ```bash
-  journalctl -u elysian -b --no-pager | grep '初始密码'
-  ```
+```bash
+# 首次启动只打印一次初始密码
+journalctl -u elysian -b --no-pager | grep '初始密码'
+# 忘记密码时重置（全部会话失效）
+HOME=/var/lib/elysian /usr/local/bin/elysian resetpwd
+# 服务管理
+systemctl status elysian
+systemctl restart elysian
+```
 
-- 忘记或错过初始密码时，在面板所在机器重置（输入两次新密码，改完所有会话失效）：
+服务以 root 运行以执行宿主安全操作，SQLite 子进程降权到 `elysian-sqlite`（UID/GID 2001）。`HOME=/var/lib/elysian`，因此数据根为 `/var/lib/elysian/.Elysian`。`/etc/default/elysian` 可配置 Docker/Caddy socket 等环境覆盖；端口仅使用 `config/panel-network.json` 的 `frontendPort` 和 `backendPort` 两个整数，配置损坏拒绝启动。请优先在设置页「保存并重启」修改端口，手写文件不会自动迁移 UFW 规则。
 
-  ```bash
-  HOME=/var/lib/elysian elysian resetpwd
-  ```
+程序版本在 `/opt/elysian/releases`，`current` 符号链接原子选择当前版本，`/usr/local/bin/elysian` 指向当前程序。根拥有的维护程序及共用构建脚本在 `/opt/elysian/maintenance`；在线任务执行当前程序的独立副本，不受服务停止影响。
 
-- 登录后也可在「系统设置」页修改面板密码。
+## 设置页维护与更新
 
-## 脚本做了什么
+设置页展示当前端口和提交。修改端口前显示新旧地址，提交后显示阶段和日志；新入口完成事务后自动跳转，等待超时保留新旧地址供手动打开。刷新页面从服务端恢复活动／最后任务。端口或版本变化保留登录会话，修改密码使会话失效。
 
-- 系统账号：`elysian-sqlite`（固定 uid/gid 2001，SQLite 托管子进程的降权身份，服务端硬编码 2001 降权，账号缺失即建库失败）与 `elysian`（数据目录归属账号，不用于登录、无 shell）。
-- systemd 单元 `/etc/systemd/system/elysian.service`：`Restart=always`（间隔 5 秒）、输出走 journal、`StateDirectory=elysian`（systemd 创建并保活 `/var/lib/elysian`）。
-- 服务以 root 运行：面板在裸机模式要直接执行 ufw/sshd/账号等宿主操作，且 SQLite 托管子进程降权到 uid 2001 需要 root 父进程（`syscall.Credential` 语义）；`HOME` 显式指向 `/var/lib/elysian`，因此 `~/.Elysian` 即 `/var/lib/elysian/.Elysian`，data/logs/state/backups/tmp/config 分类目录语义与容器部署一致。
-- 面板数据全部在 `/var/lib/elysian/.Elysian/`：`data/`（指标与防火墙 SQLite）、`logs/`、`state/`（含面板会话）、`backups/`、`tmp/`、`config/`（含面板凭据 `panel-credentials.json`）。
-- 可选环境覆盖：`/etc/default/elysian`（文件可不存在），例如覆盖 `ELYSIAN_DOCKER_SOCKET`、`ELYSIAN_CADDY_SOCKET`；改完执行 `systemctl restart elysian` 生效。
+更新查询固定仓库 [Tianyi822/Elysian](https://github.com/Tianyi822/Elysian) 的默认分支，锁定已检查 SHA 下载源码，以无特权账号构建。旧程序在下载与构建期间继续服务。构建上限 30 分钟，切换后健康等待 60 秒，检查两个入口、静态资源与提交。失败恢复旧版本与数据，成功保留当前和上一成功版本。仓库未公开、GitHub 限流、下载或构建失败会显示具体错误。
 
-## 升级与卸载
+任务及日志在 `state/panel-maintenance/<任务 ID>.json` 和 `.log`，日志最多 2 MiB、API 分页读取；事务备份在 `backups/panel-maintenance/<任务 ID>`，安装引导备份在 `backups/install-*`。备份含凭据，目录权限为 0700；确认不再需要恢复后由管理员清理备份。切换时复制 config/data/state 并保留权限和属主，不将版本更新误当成密码重置。
 
-- 升级：更新源码到目标版本后重跑 `sudo bash scripts/install.sh`，脚本会先停服、重建、重启，`/var/lib/elysian` 数据不受影响。
-- 卸载：`sudo bash scripts/install.sh --uninstall`。会停止并注销服务、删除 `/usr/local/bin/elysian` 与 systemd 单元、删除 `elysian`/`elysian-sqlite` 账号；保留 `/var/lib/elysian`（含面板凭据与数据），彻底清除请手动 `rm -rf /var/lib/elysian`；Go 与 bun 工具链一并保留。
+## 中断恢复
 
-## 可选启用容器与网站功能
+服务的 `ExecStartPre` 自动检查事务，提交完成则保留，未提交则恢复旧程序、配置、持久化数据及面板规则；活跃独立 worker 持有锁时由其继续处理。恢复失败会阻止服务启动，保留任务与备份。排查命令：
 
-面板的容器页、数据库页与网站页依赖宿主上的 Docker Engine（容器运行时）与 Caddy（网站域名 HTTPS 的反代），两者都是可选安装，面板自身不依赖它们即可运行：
+```bash
+journalctl -u elysian -n 100 --no-pager
+journalctl -u 'elysian-maintenance-*' -n 100 --no-pager
+# 确认独立维护任务已结束，再停服执行恢复
+systemctl stop elysian
+HOME=/var/lib/elysian /opt/elysian/maintenance/elysian maintenance-recover
+systemctl start elysian
+```
 
-- 安装 Docker Engine：按 Docker 官方文档（docs.docker.com）在虚拟机上安装并启动 docker 后，`systemctl restart elysian`。面板每次请求会现场探测 Docker 通道，就绪后容器与数据库功能自动可用；未就绪时面板会引导安装。
-- 安装 Caddy：按 Caddy 官方文档（caddyserver.com）在宿主安装 Caddy。面板不申请、签发或续期证书；网站页的域名模式要求你自行提供公开 CA 证书，由宿主 Caddy 提供 HTTPS，80 端口重定向 443。IP＋端口模式不依赖 Caddy。
-- 若你希望面板探测到自定义路径的 socket，可在 `/etc/default/elysian` 设置 `ELYSIAN_DOCKER_SOCKET` / `ELYSIAN_CADDY_SOCKET`。
+不要在独立维护任务运行中手动修改 current、端口配置或事务备份。共享 UFW 规则冲突需先在安全页或宿主处理；面板不会拆分用户的端口段、应用配置或共享规则。安装引导若进程被强制终止，可使用保留的 install-* 目录人工恢复 unit、maintenance、data 分类目录和旧版本，再执行该备份对应的 `maintenance-bootstrap-restore <备份>/firewall.json`。
 
-## 对外访问（自行反代）
+## Docker 与网站
 
-面板只监听 `127.0.0.1:48101`。远程访问请在同一台机器上配置你自己的反向代理（Nginx、Caddy、HAProxy 等）把公网端口转发到回环，并自行提供 TLS 证书；面板登录基于 Cookie，反代需保留 `Host` 与 `Cookie` 头并支持 WebSocket 与 SSE 升级（`/api/terminals/ws` 与 `GET /api/events`）。脚本不修改防火墙：如宿主启用了 ufw，放行反代端口的规则由你自己决定与执行。
+面板进程自身不依赖 Docker，但容器、数据库与网站功能依赖宿主 Docker Engine；Caddy 仅用于网站的域名 HTTPS。缺少依赖时由既有安装引导处理。IP＋端口网站无需 Caddy。面板不会申请、签发或续期证书，网站构建仍使用一次性非特权容器。
 
-## 冒烟模式与门禁
+## 卸载与验证
 
-- `ELYSIAN_SMOKE=1 bash scripts/install.sh` 进入冒烟模式：跳过 systemd 与系统用户，仅装工具链、构建、以前台进程启动（`HOME=/var/lib/elysian`）、curl `/api/health`、验证嵌入首页与首启密码横幅后清理退出。
-- 仓库内门禁 `.zcode/go-migration/script-smoke.sh`（需宿主机有 Docker，不入版本库）：`git archive` 导出当前分支到临时目录，在干净的 `debian:bookworm` 容器内挂载执行上述冒烟模式，期待退出 0。这是部署脚本的回归门禁，改动 `scripts/install.sh` 后应重跑。
+`sudo bash scripts/install.sh --uninstall` 停止并注销服务，删除程序版本、维护工具和系统账号，保留 `/var/lib/elysian` 数据、Go/bun 工具链及 UFW 规则；管理员可自行确认后清理面板规则。
 
-## 常见问题
-
-- 端口被占：面板固定 `48101`，`ss -ltnp | grep 48101` 找占用方；48101 冲突时先停掉占用进程再 `systemctl restart elysian`（监听地址固定回环，端口不提供配置）。
-- 服务起不来：`journalctl -u elysian -n 100 --no-pager` 看启动错误；构建类问题修复后直接重跑安装脚本。
-- 下载校验失败：多为网络劫持或镜像不完整，重跑脚本会重新下载校验。
-- 误删 `/usr/local/bin/elysian`：重跑安装脚本即可恢复（构建产物仍在源码树内时仅重装，秒级完成）。
+前端验证为 `bun run typecheck`、`bun run test`、`bun run build`；Go 门禁为 `bash apps/server-go/dev-check.sh ./...`，全部 Go 检查在开发容器内运行。脚本语法检查为 `bash -n scripts/install.sh scripts/build-release.sh`。`ELYSIAN_SMOKE=1 bash scripts/install.sh` 仅供一次性容器冒烟，跳过 systemd 与系统账号，验证两入口、嵌入页面与首启密码；正式验收需要一次性 Ubuntu/Debian VM，核对远端前端、后端回环、规则迁移、配置持久化、会话、SSE 与 WebSocket，容器冒烟不能替代 VM 验收。

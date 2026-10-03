@@ -42,3 +42,5 @@ export * from './security/users.ts'
 // 平台运行域：进程内存采样、宿主依赖检测
 export * from './platform/memory.ts'
 export * from './platform/dependencies.ts'
+
+export * from './platform/panel.ts'

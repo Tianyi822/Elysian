@@ -1,3 +1,4 @@
+import { usePanelStore } from '../../stores/panelStore'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Switch from '@radix-ui/react-switch'
 import { PANEL_PORT } from '@elysian/contracts'
@@ -14,7 +15,7 @@ import { FIREWALL_INPUT_CLASS } from './firewallFormParts'
 const SCAN_POLL_MS = 5000
 
 /*
- * 面板端口（唯一权威在 @elysian/contracts 的 PANEL_PORT，服务端守卫同一常量）：
+ * 面板端口由 PanelAdapter 提供，演示时使用契约默认值，服务端同步保护实际配置：
  * 把它加进监控会把正常访问面板的连接也计入封禁判据，人先被锁在外面。
  * 客户端与服务端同规则拒绝，两侧文案一致。
  */
@@ -41,6 +42,8 @@ function draftFromConfig(config: { ports: readonly number[]; windowSeconds: numb
 }
 
 export function FirewallScanDialog() {
+ const panelGateway = useGateway()
+ useEffect(() => { void usePanelStore.getState().load(panelGateway) }, [panelGateway])
   const gateway = useGateway()
   const status = useFirewallStore((s) => s.scanStatus)
   const scan = useFirewallStore((s) => s.scanProtection)
@@ -86,7 +89,7 @@ export function FirewallScanDialog() {
       setConfigError('监控端口需为逗号分隔的 1–65535 端口列表')
       return
     }
-    if (ports.includes(PANEL_PORT)) {
+    if (ports.includes(usePanelStore.getState().info?.ports.frontendPort ?? PANEL_PORT) || ports.includes(usePanelStore.getState().info?.ports.backendPort ?? 48101)) {
       setConfigError('面板端口不允许加入防扫描监控')
       return
     }

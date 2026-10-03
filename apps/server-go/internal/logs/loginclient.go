@@ -3,6 +3,8 @@ package logs
 import (
 	"net"
 	"net/http"
+
+	"elysian/server/internal/shared"
 	"strings"
 )
 
@@ -38,7 +40,7 @@ func PeerAddressFromRequest(r *http.Request) string {
 	if r == nil || r.RemoteAddr == "" {
 		return unknownAddress
 	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	host, _, err := net.SplitHostPort(shared.PanelPeerAddress(r))
 	if err != nil {
 		return unknownAddress
 	}

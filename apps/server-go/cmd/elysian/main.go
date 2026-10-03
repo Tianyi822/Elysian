@@ -25,7 +25,10 @@ import (
 	"elysian/server/internal/config"
 	"elysian/server/internal/database"
 	"elysian/server/internal/logs"
+	"elysian/server/internal/panel"
 	"elysian/server/internal/paths"
+	"elysian/server/internal/shared"
+	"path/filepath"
 )
 
 // shutdownTimeout 优雅关闭时限：存量请求收尾，超时强制退出。
@@ -56,11 +59,48 @@ func run() error {
 	// 二进制并以 ELYSIAN_SQLITE_FILE / ELYSIAN_SQLITE_CREATE 私有 env 传参。
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "panel-ports", "panel-init", "maintenance-bootstrap", "maintenance-install-check", "maintenance-bootstrap-save", "maintenance-bootstrap-restore":
+			ports, err := config.ReadPanelNetwork(filepath.Join(paths.ConfigDir, "panel-network.json"))
+			if err != nil {
+				return err
+			}
+			host := panel.SystemHost{Store: panel.Store{Root: paths.ElysianHome}, DockerSocket: cfg.DockerSocket, MissingServiceOK: os.Args[1] == "maintenance-install-check"}
+			if os.Args[1] == "maintenance-install-check" {
+				return panel.CheckInstall(context.Background(), panel.Store{Root: paths.ElysianHome}, host, ports)
+			}
+			if os.Args[1] == "maintenance-bootstrap-save" || os.Args[1] == "maintenance-bootstrap-restore" {
+				if len(os.Args) != 3 {
+					return errors.New("防火墙引导备份命令需要文件路径")
+				}
+				if os.Args[1] == "maintenance-bootstrap-save" {
+					return panel.SaveBootstrapRules(context.Background(), host, ports, os.Args[2])
+				}
+				return panel.RestoreBootstrapRules(context.Background(), host, os.Args[2])
+			}
+			if os.Args[1] == "panel-init" {
+				return config.AtomicJSON(filepath.Join(paths.ConfigDir, "panel-network.json"), ports)
+			}
+			if os.Args[1] == "maintenance-bootstrap" {
+				return panel.Bootstrap(context.Background(), panel.SystemHost{Store: panel.Store{Root: paths.ElysianHome}, DockerSocket: cfg.DockerSocket}, ports)
+			}
+			fmt.Printf("%d %d\n", ports.FrontendPort, ports.BackendPort)
+			return nil
+		case "maintenance-worker", "maintenance-recover":
+			return panel.RunCLI(context.Background(), os.Args[1], os.Args[2:], paths.ElysianHome, cfg.DockerSocket)
 		case "resetpwd":
 			os.Exit(auth.RunResetPasswordCLI(os.Stdin, os.Stdout))
 		case "__sqlite-worker":
 			os.Exit(database.RunSQLiteWorker(os.Stdin, os.Stdout, os.Getenv))
 		}
+	}
+
+	if cfg.BareMetal {
+		var err error
+		cfg.Network, err = config.ReadPanelNetwork(filepath.Join(paths.ConfigDir, "panel-network.json"))
+		if err != nil {
+			return err
+		}
+		cfg.ListenHost = "127.0.0.1"
 	}
 
 	// 启动序列第一步：打开日志（建表 + 分片导入；打开失败内部降级为不可用实现）。
@@ -83,16 +123,36 @@ func run() error {
 	}
 
 	// 启动序列第四步：listen（先 listen 再打启动确认，端口被占时如实报错退出）。
-	addr := net.JoinHostPort(cfg.ListenHost, strconv.Itoa(config.ListenPort))
+	addr := net.JoinHostPort(cfg.ListenHost, strconv.Itoa(cfg.PanelPorts().BackendPort))
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("监听 %s 失败：%w", addr, err)
+	}
+	var publicServer *http.Server
+	var publicListener net.Listener
+	if cfg.BareMetal {
+		public, private, err := shared.NewPanelGateway(handler, cfg.PanelPorts().FrontendPort, cfg.PanelPorts().BackendPort)
+		if err != nil {
+			listener.Close()
+			return err
+		}
+		handler = private
+		publicListener, err = net.Listen("tcp", ":"+strconv.Itoa(cfg.PanelPorts().FrontendPort))
+		if err != nil {
+			listener.Close()
+			return fmt.Errorf("前端端口监听失败：%w", err)
+		}
+		publicServer = &http.Server{Handler: public, IdleTimeout: connectionIdleTimeout, ReadHeaderTimeout: connectionIdleTimeout}
 	}
 	srv := &http.Server{
 		Handler:           handler,
 		IdleTimeout:       connectionIdleTimeout,
 		ReadHeaderTimeout: connectionIdleTimeout,
 	}
+	if publicServer != nil {
+		defer publicServer.Close()
+	}
+	publicFailure := make(chan error, 1)
 
 	idleClosed := make(chan struct{})
 	go func() {
@@ -102,6 +162,9 @@ func run() error {
 		log.Print("收到退出信号，开始优雅关闭")
 		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
+		if publicServer != nil {
+			_ = publicServer.Shutdown(ctx)
+		}
 		if err := srv.Shutdown(ctx); err != nil {
 			log.Printf("优雅关闭未在时限内完成：%v", err)
 		}
@@ -113,10 +176,24 @@ func run() error {
 	fmt.Printf("Elysian server 已监听 http://%s\n", addr)
 	appLogs.Runtime("info", "server.lifecycle", fmt.Sprintf("Elysian 服务已启动：http://%s", addr))
 
+	if publicServer != nil {
+		appLogs.Runtime("info", "server.lifecycle", fmt.Sprintf("面板前端端口：%d；后端回环端口：%d", cfg.PanelPorts().FrontendPort, cfg.PanelPorts().BackendPort))
+		go func() {
+			if err := publicServer.Serve(publicListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Printf("面板前端服务异常：%v", err)
+				publicFailure <- err
+				_ = srv.Close()
+			}
+		}()
+	}
 	if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("HTTP 服务异常退出：%w", err)
 	}
-	<-idleClosed
+	select {
+	case <-idleClosed:
+	case err := <-publicFailure:
+		return fmt.Errorf("面板前端服务异常退出：%w", err)
+	}
 	log.Print("Elysian Go 后端已退出")
 	return nil
 }

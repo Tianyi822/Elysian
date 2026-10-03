@@ -9,7 +9,7 @@
 #                                       构建、起进程、curl /api/health、清理（供
 #                                       .zcode/go-migration/script-smoke.sh 在干净容器内调用）
 #
-# 设计依据：AGENTS.md（只绑回环、~/.Elysian 分类目录、首启初始密码打 stdout）、
+# 设计依据：AGENTS.md（前端 IP 直连、后端回环、~/.Elysian 分类目录、首启初始密码打 stdout）、
 # apps/server-go/go-plan §8（发布构建：bun run build → 清空并拷贝 dist → CGO_ENABLED=0 单二进制）。
 set -euo pipefail
 
@@ -26,6 +26,8 @@ PANEL_BIN="/usr/local/bin/elysian"
 UNIT_FILE="/etc/systemd/system/elysian.service"
 STATE_DIR="/var/lib/elysian"
 PANEL_PORT="48101"
+FRONTEND_PORT="48100"
+INSTALL_ROOT="/opt/elysian"
 HEALTH_URL="http://127.0.0.1:${PANEL_PORT}/api/health"
 ENV_FILE="/etc/default/elysian"
 
@@ -83,6 +85,9 @@ apt_install_deps() {
   command -v curl >/dev/null 2>&1 || need+=(curl)
   [ -e /etc/ssl/certs/ca-certificates.crt ] || need+=(ca-certificates)
   command -v unzip >/dev/null 2>&1 || need+=(unzip)
+  command -v ufw >/dev/null 2>&1 || need+=(ufw)
+  command -v ss >/dev/null 2>&1 || need+=(iproute2)
+  command -v runuser >/dev/null 2>&1 || need+=(util-linux)
   if [ "${#need[@]}" -eq 0 ]; then
     info "系统依赖（curl / ca-certificates / unzip）已齐备"
     return 0
@@ -162,37 +167,44 @@ install_bun() {
   info "bun 就绪：$(bun --version)"
 }
 
-# ---------- 构建（go-plan §8 发布构建流） ----------
+# ---------- 构建与版本安装 ----------
 
-build_frontend() {
-  info "安装前端依赖（bun install --frozen-lockfile）"
-  (cd "$REPO_ROOT" && bun install --frozen-lockfile) \
-    || die "bun install 失败。请确认 bun >= 1.2 且能访问 npm registry；修复后重跑。"
-  info "构建前端（vite build；注入 ELYSIAN_DOCKER=1 使面板走 HTTP 适配层）"
-  # ELYSIAN_DOCKER 在构建期经 vite define 固化进产物（apps/web/vite.build.config.ts），
-  # 决定浏览器侧适配层走 HTTP 还是 mock：VM 部署是真实执行，必须与 compose 同法注入。
-  (cd "$REPO_ROOT" && ELYSIAN_DOCKER=1 bun run build) \
-    || die "前端构建失败（bun run build）。请先在本机排除构建错误后重跑。"
-  [ -f "$REPO_ROOT/apps/web/dist/index.html" ] || die "前端构建产物缺 index.html，构建可能未完成。"
-}
-
-build_server() {
-  info "嵌入前端产物并构建 Go 单二进制（CGO_ENABLED=0）"
-  # 清空再拷贝，防旧产物残留（go-plan §8）；dist 入库占位 .gitkeep 不参与发布。
-  rm -rf "$REPO_ROOT/apps/server-go/web/dist"
-  mkdir -p "$REPO_ROOT/apps/server-go/web/dist"
-  cp -a "$REPO_ROOT/apps/web/dist/." "$REPO_ROOT/apps/server-go/web/dist/"
-  # -buildvcs=false：导出/克隆目录的属主与执行者（root）不一致时，git 的 dubious ownership
-  # 会令 VCS 状态探测报错；部署构建无需版本号烙印，直接关掉。
-  (cd "$REPO_ROOT/apps/server-go" && CGO_ENABLED=0 go build -buildvcs=false -ldflags="-s -w" -o elysian ./cmd/elysian) \
-    || die "Go 后端构建失败。请确认 Go >= 1.23 且能访问 Go 模块代理；修复后重跑。"
-  [ -x "$REPO_ROOT/apps/server-go/elysian" ] || die "未找到构建产物 elysian。"
+build_release() {
+  BUILD_DIR="$(mktemp -d)"
+  BUILD_COMMIT="unknown"
+  if command -v git >/dev/null 2>&1; then
+    BUILD_COMMIT="$(git -c safe.directory="$REPO_ROOT" -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
+    if [ "$BUILD_COMMIT" != unknown ] && ! git -c safe.directory="$REPO_ROOT" -C "$REPO_ROOT" diff --quiet HEAD --; then
+      BUILD_COMMIT="${BUILD_COMMIT}-dirty"
+    fi
+  fi
+  if [ -n "$SMOKE" ]; then
+    bash "$REPO_ROOT/scripts/build-release.sh" "$REPO_ROOT" "$BUILD_DIR" "$BUILD_COMMIT" || die "源码构建失败，原面板未停服。"
+  else
+    ensure_accounts
+    BUILD_SOURCE="$(mktemp -d /var/tmp/elysian-install-source.XXXXXX)"
+    tar -C "$REPO_ROOT" --exclude=.git --exclude=node_modules --exclude=dist --exclude=.env --exclude='.env.*' --exclude=.codex --exclude=.zcode --exclude=.agents --exclude=.Elysian -cf - . | tar -C "$BUILD_SOURCE" -xf -
+    install -m 0644 "$REPO_ROOT/scripts/build-release.sh" "$BUILD_DIR/build-release.sh"
+    chown -R elysian-build:elysian-build "$BUILD_SOURCE" "$BUILD_DIR"
+    runuser -u elysian-build -- env HOME="$BUILD_SOURCE" PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin bash "$BUILD_DIR/build-release.sh" "$BUILD_SOURCE" "$BUILD_DIR" "$BUILD_COMMIT" || die "源码构建失败，原面板未停服。"
+  fi
 }
 
 install_binary() {
-  info "安装二进制到 $PANEL_BIN"
-  install -m 0755 "$REPO_ROOT/apps/server-go/elysian" "$PANEL_BIN" \
-    || die "写入 $PANEL_BIN 失败。"
+  mkdir -p "$INSTALL_ROOT/releases" "$INSTALL_ROOT/maintenance" "$STATE_DIR/.Elysian/config" "$STATE_DIR/.Elysian/state/panel-maintenance"
+  chmod 0755 "$INSTALL_ROOT" "$INSTALL_ROOT/releases" "$INSTALL_ROOT/maintenance"
+  chmod 0700 "$STATE_DIR/.Elysian" "$STATE_DIR/.Elysian/config" "$STATE_DIR/.Elysian/state" "$STATE_DIR/.Elysian/state/panel-maintenance"
+  RELEASE_DIR="$INSTALL_ROOT/releases/${BUILD_COMMIT}-${INSTALL_STAMP}"
+  mkdir -p "$RELEASE_DIR"
+  install -m 0755 "$BUILD_DIR/elysian" "$RELEASE_DIR/elysian"
+  install -m 0755 "$BUILD_DIR/elysian" "$INSTALL_ROOT/maintenance/elysian"
+  install -m 0644 "$REPO_ROOT/scripts/build-release.sh" "$INSTALL_ROOT/maintenance/build-release.sh"
+  ln -s "$RELEASE_DIR" "$INSTALL_ROOT/.current-$INSTALL_STAMP"
+  mv -Tf "$INSTALL_ROOT/.current-$INSTALL_STAMP" "$INSTALL_ROOT/current"
+  ln -sfn "$INSTALL_ROOT/current/elysian" "$PANEL_BIN"
+  HOME="$STATE_DIR" "$PANEL_BIN" panel-init || die "面板端口配置损坏，安装已中止。"
+  read -r FRONTEND_PORT PANEL_PORT < <(HOME="$STATE_DIR" "$PANEL_BIN" panel-ports)
+  HEALTH_URL="http://127.0.0.1:${PANEL_PORT}/api/health"
 }
 
 # ---------- 系统账号与 systemd 单元 ----------
@@ -214,7 +226,10 @@ ensure_accounts() {
     useradd --system --home-dir "$STATE_DIR" --no-create-home --shell /usr/sbin/nologin elysian \
       || die "创建 elysian 系统用户失败。"
   fi
-  info "系统账号就绪：elysian、elysian-sqlite（2001）"
+  if ! id -u elysian-build >/dev/null 2>&1; then
+    useradd --system --user-group --home-dir /var/lib/elysian-build --no-create-home --shell /usr/sbin/nologin elysian-build || die "创建无特权构建账号失败。"
+  fi
+  info "系统账号就绪：elysian、elysian-sqlite（2001）、elysian-build"
 }
 
 write_unit() {
@@ -237,10 +252,11 @@ User=root
 # backups/tmp/config 分类目录语义与容器内符号链接方案一致。
 Environment=HOME=${STATE_DIR}
 Environment=ELYSIAN_BARE_METAL=1
-# 红线：面板只绑回环，对外服务由用户自行反代；脚本不开防火墙端口、不申请证书。
+# 后端固定回环，正式前端对外监听；端口由 panel-network.json 管理。
 Environment=ELYSIAN_LISTEN_HOST=127.0.0.1
 # 可选环境覆盖（如 ELYSIAN_DOCKER_SOCKET / ELYSIAN_CADDY_SOCKET），文件缺省不报错。
 EnvironmentFile=-${ENV_FILE}
+ExecStartPre=${INSTALL_ROOT}/maintenance/elysian maintenance-recover
 ExecStart=${PANEL_BIN}
 Restart=always
 RestartSec=5
@@ -266,7 +282,7 @@ wait_health() {
   info "等待就绪：$HEALTH_URL"
   local i
   for i in $(seq 1 60); do
-    if curl -fsS --max-time 3 "$HEALTH_URL" >/dev/null 2>&1; then
+    if curl -fsS --max-time 3 "$HEALTH_URL" >/dev/null 2>&1 && curl -fsS --max-time 3 "http://127.0.0.1:${FRONTEND_PORT}/" | grep -q '<title>Elysian</title>'; then
       info "健康检查通过（/api/health 200）"
       return 0
     fi
@@ -283,7 +299,9 @@ wait_health() {
 print_summary() {
   echo
   echo "Elysian 部署完成。"
-  echo "  面板地址：http://127.0.0.1:${PANEL_PORT}（仅回环；对外访问请自行配置反向代理，脚本不申请证书、不开防火墙端口）"
+  echo "  面板地址：http://<服务器 IP>:${FRONTEND_PORT}（前端入口）"
+  echo "  后端地址：127.0.0.1:${PANEL_PORT}（不对外开放）"
+  echo "  面板更新与改端口：登录后进入系统设置"
   echo "  查看首启初始密码（仅第一次启动打印）：journalctl -u $SERVICE_NAME -b --no-pager | grep '初始密码'"
   echo "  忘记密码时重置：HOME=${STATE_DIR} $PANEL_BIN resetpwd"
   echo "  服务管理：systemctl status/restart/stop $SERVICE_NAME"
@@ -307,7 +325,10 @@ uninstall() {
     info "删除二进制 $PANEL_BIN"
     rm -f "$PANEL_BIN"
   fi
+  rm -rf "$INSTALL_ROOT"
   info "删除系统账号 elysian / elysian-sqlite（数据文件属主将退化为纯数字 UID，属正常现象）"
+  userdel elysian-build >/dev/null 2>&1 || true
+  groupdel elysian-build >/dev/null 2>&1 || true
   userdel elysian >/dev/null 2>&1 || true
   userdel elysian-sqlite >/dev/null 2>&1 || true
   groupdel elysian-sqlite >/dev/null 2>&1 || true
@@ -322,15 +343,90 @@ smoke_run() {
   # 与生产同 HOME 语义（跳过系统用户，目录手动创建）。
   mkdir -p "$STATE_DIR"
   SMOKE_LOG="$(mktemp)"
+  HOME="$STATE_DIR" "$BUILD_DIR/elysian" panel-init
+  read -r FRONTEND_PORT PANEL_PORT < <(HOME="$STATE_DIR" "$BUILD_DIR/elysian" panel-ports)
+  HEALTH_URL="http://127.0.0.1:${PANEL_PORT}/api/health"
   info "后台启动面板进程（HOME=${STATE_DIR} ELYSIAN_BARE_METAL=1）"
-  env HOME="$STATE_DIR" ELYSIAN_BARE_METAL=1 "$REPO_ROOT/apps/server-go/elysian" >"$SMOKE_LOG" 2>&1 &
+  env HOME="$STATE_DIR" ELYSIAN_BARE_METAL=1 "$BUILD_DIR/elysian" >"$SMOKE_LOG" 2>&1 &
   SMOKE_PID=$!
-  trap 'kill "$SMOKE_PID" 2>/dev/null || true; wait "$SMOKE_PID" 2>/dev/null || true; rm -f "$SMOKE_LOG"' EXIT
+  trap 'kill "$SMOKE_PID" 2>/dev/null || true; wait "$SMOKE_PID" 2>/dev/null || true; rm -f "$SMOKE_LOG"; install_exit' EXIT
   wait_health
-  curl -fsS --max-time 5 "http://127.0.0.1:${PANEL_PORT}/" | grep -q '<title>Elysian</title>' \
+  curl -fsS --max-time 5 "http://127.0.0.1:${FRONTEND_PORT}/" | grep -q '<title>Elysian</title>' \
     || die "首页未返回嵌入的前端产物（缺 <title>Elysian</title>），嵌入 dist 可能失败。"
   grep -q '初始密码' "$SMOKE_LOG" || die "首启凭据横幅未打印（应输出「初始密码：…」）。"
   info "冒烟检查通过：健康端点 200、嵌入首页可访问、首启初始密码已打印"
+}
+
+# ---------- 安装切换事务（在线更新由独立维护 worker 执行） ----------
+
+install_exit() {
+  local result=$?
+  if [ "${INSTALL_ACTIVATED:-0}" = 1 ] && [ "${INSTALL_COMMITTED:-0}" != 1 ]; then
+    info "安装未完成，恢复原程序、数据与本次涉及的面板规则"
+    systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
+    local item
+    for item in config data state; do
+      rm -rf "$STATE_DIR/.Elysian/$item"
+      if [ -e "$INSTALL_BACKUP/data/$item" ]; then cp -a "$INSTALL_BACKUP/data/$item" "$STATE_DIR/.Elysian/$item" || result=1; fi
+    done
+    HOME="$STATE_DIR" "$BUILD_DIR/elysian" maintenance-bootstrap-restore "$INSTALL_BACKUP/firewall.json" || result=1
+    if [ -n "${PREVIOUS_RELEASE:-}" ]; then
+      ln -s "$PREVIOUS_RELEASE" "$INSTALL_ROOT/.restore-$$"
+      mv -Tf "$INSTALL_ROOT/.restore-$$" "$INSTALL_ROOT/current"
+      ln -sfn "$INSTALL_ROOT/current/elysian" "$PANEL_BIN"
+    else
+      rm -f "$INSTALL_ROOT/current" "$PANEL_BIN"
+    fi
+    rm -f "$UNIT_FILE"
+    if [ -e "$INSTALL_BACKUP/unit" ]; then cp -a "$INSTALL_BACKUP/unit" "$UNIT_FILE" || result=1; fi
+    rm -f "$INSTALL_ROOT/maintenance/elysian" "$INSTALL_ROOT/maintenance/build-release.sh"
+    if [ -d "$INSTALL_BACKUP/maintenance" ]; then cp -a "$INSTALL_BACKUP/maintenance/." "$INSTALL_ROOT/maintenance/" || result=1; fi
+    systemctl daemon-reload || result=1
+    if [ "${WAS_ACTIVE:-0}" = 1 ]; then systemctl start "$SERVICE_NAME" || result=1; fi
+    if [ "${WAS_ENABLED:-0}" != 1 ]; then systemctl disable "$SERVICE_NAME" >/dev/null 2>&1 || true; fi
+    info "恢复记录与备份：$INSTALL_BACKUP"
+  fi
+  if [ -n "${BUILD_SOURCE:-}" ]; then rm -rf "$BUILD_SOURCE"; fi
+  if [ -n "${BUILD_DIR:-}" ]; then rm -rf "$BUILD_DIR"; fi
+  return "$result"
+}
+
+prepare_install_switch() {
+  local tasks="$STATE_DIR/.Elysian/state/panel-maintenance"
+  mkdir -p "$tasks" "$INSTALL_ROOT/releases"
+  chmod 0700 "$tasks"
+  exec 9>"$tasks/worker.lock"
+  flock -n 9 || die "另一项面板维护任务正在执行。"
+  exec 8>"$tasks/operations.lock"
+  flock -x 8
+  HOME="$STATE_DIR" "$BUILD_DIR/elysian" maintenance-install-check || die "安装切换预检失败，原面板继续运行。"
+  INSTALL_BACKUP="$STATE_DIR/.Elysian/backups/install-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  mkdir -p "$INSTALL_BACKUP/data"
+  chmod 0700 "$INSTALL_BACKUP"
+  HOME="$STATE_DIR" "$BUILD_DIR/elysian" maintenance-bootstrap-save "$INSTALL_BACKUP/firewall.json"
+  if [ -e "$UNIT_FILE" ]; then cp -a "$UNIT_FILE" "$INSTALL_BACKUP/unit"; fi
+  if [ -d "$INSTALL_ROOT/maintenance" ]; then cp -a "$INSTALL_ROOT/maintenance" "$INSTALL_BACKUP/maintenance"; fi
+  INSTALL_STAMP="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  PREVIOUS_RELEASE=""
+  if [ -L "$INSTALL_ROOT/current" ]; then
+    PREVIOUS_RELEASE="$(readlink -f "$INSTALL_ROOT/current")"
+  elif [ -f "$PANEL_BIN" ]; then
+    PREVIOUS_RELEASE="$INSTALL_ROOT/releases/legacy-$INSTALL_STAMP"
+    mkdir -p "$PREVIOUS_RELEASE"
+    install -m 0755 "$PANEL_BIN" "$PREVIOUS_RELEASE/elysian"
+  fi
+  WAS_ACTIVE=0; WAS_ENABLED=0
+  if systemctl is-active --quiet "$SERVICE_NAME"; then WAS_ACTIVE=1; fi
+  if systemctl is-enabled --quiet "$SERVICE_NAME"; then WAS_ENABLED=1; fi
+  if [ -e "$UNIT_FILE" ] || [ "$WAS_ACTIVE" = 1 ]; then
+    systemctl stop "$SERVICE_NAME" || die "无法停止原服务，安装切换已中止。"
+  fi
+  HOME="$STATE_DIR" "$BUILD_DIR/elysian" maintenance-install-check || { [ "$WAS_ACTIVE" = 0 ] || systemctl start "$SERVICE_NAME"; die "实际切换前预检失败，原版本已恢复启动。"; }
+  local item
+  for item in config data state; do
+    if [ -e "$STATE_DIR/.Elysian/$item" ]; then cp -a "$STATE_DIR/.Elysian/$item" "$INSTALL_BACKUP/data/$item" || { [ "$WAS_ACTIVE" = 0 ] || systemctl start "$SERVICE_NAME"; die "备份失败，原版本已重新启动。"; }; fi
+  done
+  INSTALL_ACTIVATED=1
 }
 
 # ---------- 主流程 ----------
@@ -341,24 +437,22 @@ main() {
     return 0
   fi
   [ "${1:-}" = "" ] || die "未知参数：$1。用法：bash scripts/install.sh [--uninstall]（环境变量 ELYSIAN_SMOKE=1 进入冒烟模式）。"
+  trap install_exit EXIT
   require_preflight
   apt_install_deps
   install_go
   install_bun
-  build_frontend
-  build_server
+  build_release
   if [ -n "$SMOKE" ]; then
     smoke_run
   else
-    if [ -f "$UNIT_FILE" ]; then
-      info "检测到已有安装，先停服再升级（数据不受影响）"
-      systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
-    fi
+    prepare_install_switch
     install_binary
-    ensure_accounts
     write_unit
+    HOME="$STATE_DIR" "$PANEL_BIN" maintenance-bootstrap || die "前端防火墙规则核对失败，请处理冲突后重跑安装脚本。"
     start_service
     wait_health
+    INSTALL_COMMITTED=1
     print_summary
   fi
 }

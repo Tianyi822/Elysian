@@ -47,7 +47,7 @@ var (
 // validateScanConfig 校验防扫描配置；不合法返回中文 400。判据是纯函数、不依赖开关
 // 状态，因此调用方可以先校验请求再判前置状态：面板端口这条保底判据在「防扫描
 // 未启用」时同样拦得住。校验通过时返回端口升序排序后的副本（落规则用）。
-func validateScanConfig(config ScanConfig) (ScanConfig, error) {
+func validateScanConfig(config ScanConfig, protectedPorts ...int) (ScanConfig, error) {
 	invalid := len(config.Ports) == 0
 	for _, port := range config.Ports {
 		if !jsIsInteger(port) || port < 1 || port > 65535 {
@@ -61,8 +61,8 @@ func validateScanConfig(config ScanConfig) (ScanConfig, error) {
 	// DROP 规则挂在 ufw-before-input 链里，先于保底放行匹配：监控面板端口会把面板
 	// 客户端 IP 封进黑名单，且封禁后连解封端点本身都不可达。
 	for _, port := range config.Ports {
-		if port == float64(PanelPort) {
-			return ScanConfig{}, shared.InvalidRequest(fmt.Sprintf("面板端口不允许加入防扫描监控：%d 是工作台自身的访问通道", PanelPort))
+		if coversPanelPort(port, nil, protectedPorts...) {
+			return ScanConfig{}, shared.InvalidRequest(fmt.Sprintf("面板端口不允许加入防扫描监控：%d 是工作台自身的访问通道", int(port)))
 		}
 	}
 	if len(config.Ports) > 15 {
@@ -161,13 +161,13 @@ func parseScanSection(beforeRules string) scanSectionState {
 
 // setScanSection 启用/停用并落配置：插进 filter 表的 COMMIT 之前（转发段的 *nat 块
 // 另有 COMMIT，不能锚错表）；family 取 "v4" 或 "v6"（链名与名单名不同）。
-func setScanSection(beforeRules string, enabled bool, config ScanConfig, family string) (string, error) {
+func setScanSection(beforeRules string, enabled bool, config ScanConfig, family string, ports ...int) (string, error) {
 	withoutSection := removeMarkedSection(beforeRules, scanMarker)
 	if !enabled {
 		return withoutSection, nil
 	}
 
-	valid, err := validateScanConfig(config)
+	valid, err := validateScanConfig(config, ports...)
 	if err != nil {
 		return "", err
 	}

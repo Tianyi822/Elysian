@@ -115,8 +115,11 @@ var panelCanonical = canonicalId(panelSpec)
 
 // service FirewallAdapter 的实现（一个进程一个实例，内存态即进程级）。
 type service struct {
-	deps  hostDeps
-	paths FirewallPaths
+	panelPort      int
+	backendPort    int
+	panelCanonical string
+	deps           hostDeps
+	paths          FirewallPaths
 	// rulesWriteMu 规则文件读-改-写的互斥队列：before.rules/before6.rules 的并发变更
 	// 排队执行，每次都基于最新落盘内容计算，杜绝「两个请求读同一份原文、后写覆盖
 	// 前写」。覆盖面与 TS 版 serializeRulesWrite 一致：setToggles、转发三写、
@@ -134,8 +137,13 @@ type service struct {
 }
 
 // newService 构造服务实例。
-func newService(deps hostDeps) Service {
+func newService(deps hostDeps) Service { return newServiceWithPorts(deps, PanelPort, 48101) }
+
+func newServiceWithPorts(deps hostDeps, panelPort, backendPort int) Service {
 	return &service{
+		panelPort:       panelPort,
+		backendPort:     backendPort,
+		panelCanonical:  canonicalId(ufwRuleSpec{Action: "allow", Direction: "in", Proto: "tcp", Port: strconv.Itoa(panelPort), From: "any"}),
 		deps:            deps,
 		paths:           deps.Paths(),
 		updatedAtMap:    map[string]string{},
@@ -329,10 +337,11 @@ func restoreRulesFromBackups(deps hostDeps, fwPaths FirewallPaths) bool {
 }
 
 // hasPanelAllowRow status 规则表里存在面板端口的 IPv4 入站放行行（来源不限）。
-func hasPanelAllowRow(rows []ufwStatusRow) bool {
+func hasPanelAllowRow(rows []ufwStatusRow, ports ...int) bool {
+	panelPort := defaultPort(ports)
 	for _, row := range rows {
 		if !row.V6 && row.Action == "allow" && row.Direction == "in" &&
-			row.To == fmt.Sprintf("%d/tcp", PanelPort) && row.From == "Anywhere" {
+			row.To == fmt.Sprintf("%d/tcp", panelPort) && row.From == "Anywhere" {
 			return true
 		}
 	}
@@ -357,7 +366,8 @@ func hasPortAllowLine(lines []parsedUfwLine, port int) bool {
 // 合并双栈账本，看不出「只剩 v6 半条」的残缺（v4 账本丢失时 Docker 端口映射的 IPv4
 // 流量会被默认拒绝丢包）。行缺失或未激活无法核验时幂等补写（ufw 对已有半边自会
 // 跳过），补写后激活态仍无 IPv4 行则报错：保底必须可验证，静默失败等于把面板锁死。
-func ensurePanelRule(deps hostDeps) error {
+func ensurePanelRule(deps hostDeps, ports ...int) error {
+	panelPort := defaultPort(ports)
 	before, err := deps.RunUfw([]string{"status", "verbose"})
 	if err != nil {
 		return err
@@ -366,10 +376,10 @@ func ensurePanelRule(deps hostDeps) error {
 	if err != nil {
 		return err
 	}
-	if beforeStatus.Active && hasPanelAllowRow(parseStatusRows(before)) {
+	if beforeStatus.Active && hasPanelAllowRow(parseStatusRows(before), panelPort) {
 		return nil
 	}
-	if _, err := deps.RunUfw([]string{"allow", fmt.Sprintf("%d/tcp", PanelPort), "comment", "Elysian 面板"}); err != nil {
+	if _, err := deps.RunUfw([]string{"allow", fmt.Sprintf("%d/tcp", panelPort), "comment", "Elysian 面板"}); err != nil {
 		return err
 	}
 	after, err := deps.RunUfw([]string{"status", "verbose"})
@@ -380,8 +390,8 @@ func ensurePanelRule(deps hostDeps) error {
 	if err != nil {
 		return err
 	}
-	if afterStatus.Active && !hasPanelAllowRow(parseStatusRows(after)) {
-		return fmt.Errorf("面板端口保底规则未生效：ufw allow %d/tcp 执行后 status 仍无 IPv4 放行行，请检查 /etc/ufw/user.rules", PanelPort)
+	if afterStatus.Active && !hasPanelAllowRow(parseStatusRows(after), panelPort) {
+		return fmt.Errorf("面板端口保底规则未生效：ufw allow %d/tcp 执行后 status 仍无 IPv4 放行行，请检查 /etc/ufw/user.rules", panelPort)
 	}
 	return nil
 }
@@ -540,7 +550,7 @@ func (s *service) applyRulesFile() error {
 		return err
 	}
 	specs := parseForwardSection(beforeRules)
-	if err := ensurePanelRule(s.deps); err != nil {
+	if err := ensurePanelRule(s.deps, s.panelPort); err != nil {
 		return err
 	}
 	if _, err := s.runUfw([]string{"--force", "disable"}); err != nil {
@@ -613,7 +623,7 @@ var reEnabledYes = regexp.MustCompile(`(?m)^ENABLED=yes$`)
 // restoreIfNeeded 容器没有 systemd：ufw.conf 记 ENABLED=yes 而内核规则已随上次容器
 // 停止消失，启动时重新装载一次，等价真实服务器的 ufw.service 开机自启。装载失败
 // （规则文件可能损坏）时先用备份恢复再试一次，仍失败返回错误由调用方记录。
-func restoreIfNeeded(deps hostDeps) error {
+func restoreIfNeeded(deps hostDeps, ports ...int) error {
 	fwPaths := deps.Paths()
 	conf, err := deps.ReadText(fwPaths.UfwConf)
 	if err != nil {
@@ -622,7 +632,7 @@ func restoreIfNeeded(deps hostDeps) error {
 	if !reEnabledYes.MatchString(conf) {
 		return nil
 	}
-	if err := ensurePanelRule(deps); err != nil {
+	if err := ensurePanelRule(deps, ports...); err != nil {
 		return err
 	}
 	if enableAndCheckActive(deps) {
@@ -760,7 +770,7 @@ func (s *service) writeScanSection(enabled bool, config ScanConfig) error {
 		}
 		beforeV6 = &text
 	}
-	nextV4, err := setScanSection(beforeV4, enabled, config, "v4")
+	nextV4, err := setScanSection(beforeV4, enabled, config, "v4", s.panelPort, s.backendPort)
 	if err != nil {
 		return err
 	}
@@ -768,7 +778,7 @@ func (s *service) writeScanSection(enabled bool, config ScanConfig) error {
 		return err
 	}
 	if beforeV6 != nil {
-		nextV6, err := setScanSection(*beforeV6, enabled, config, "v6")
+		nextV6, err := setScanSection(*beforeV6, enabled, config, "v6", s.panelPort, s.backendPort)
 		if err != nil {
 			return err
 		}
@@ -843,7 +853,7 @@ func (s *service) SetToggles(next FirewallToggles) (FirewallToggles, error) {
 
 		if next.FirewallEnabled != current.FirewallEnabled {
 			if next.FirewallEnabled {
-				if err := ensurePanelRule(s.deps); err != nil {
+				if err := ensurePanelRule(s.deps, s.panelPort); err != nil {
 					return err
 				}
 				if _, err := s.runUfw([]string{"--force", "enable"}); err != nil {
@@ -881,6 +891,9 @@ func (s *service) SetToggles(next FirewallToggles) (FirewallToggles, error) {
 
 // Create 新建端口规则。
 func (s *service) Create(input RuleInput) (FirewallRule, error) {
+	if err := s.protectPorts(input); err != nil {
+		return FirewallRule{}, err
+	}
 	spec, err := specFromInput(input)
 	if err != nil {
 		return FirewallRule{}, err
@@ -911,6 +924,9 @@ func (s *service) Create(input RuleInput) (FirewallRule, error) {
 
 // Update 修改端口规则。
 func (s *service) Update(ruleId string, input RuleInput) (FirewallRule, error) {
+	if err := s.protectPorts(input); err != nil {
+		return FirewallRule{}, err
+	}
 	parsed := parseRuleId(ruleId)
 	if parsed == nil {
 		return FirewallRule{}, fmt.Errorf("无效的规则标识：%s", ruleId)
@@ -938,7 +954,7 @@ func (s *service) Update(ruleId string, input RuleInput) (FirewallRule, error) {
 	nextCanonical := canonicalId(spec)
 	// 面板保底规则只放行等价规范的原地更新（如只改备注）；改成 deny、换端口或换来源
 	// 都会把工作台锁在防火墙外。
-	if oldCanonical == panelCanonical && nextCanonical != panelCanonical {
+	if oldCanonical == s.panelCanonical && nextCanonical != s.panelCanonical {
 		return FirewallRule{}, fmt.Errorf("面板端口规则不允许变更：它是保证工作台可访问的保底规则")
 	}
 	if s.findDuplicate(state, input, oldCanonical) != nil {
@@ -978,7 +994,7 @@ func (s *service) Remove(ruleId string) error {
 	if parsed == nil {
 		return fmt.Errorf("无效的规则标识：%s", ruleId)
 	}
-	if canonicalId(parsed.Spec) == panelCanonical {
+	if canonicalId(parsed.Spec) == s.panelCanonical {
 		return fmt.Errorf("面板端口规则不允许删除：它是保证工作台可访问的保底规则")
 	}
 	state, err := s.readState()
@@ -1185,7 +1201,7 @@ func (s *service) RemoveIpRule(ruleId string) error {
 func (s *service) CreateForward(input ForwardInput) (FirewallForwardRule, error) {
 	var row FirewallForwardRule
 	err := s.serialize(func() error {
-		spec, err := specFromForwardInput(input)
+		spec, err := specFromForwardInput(input, s.panelPort, s.backendPort)
 		if err != nil {
 			return err
 		}
@@ -1239,7 +1255,7 @@ func (s *service) UpdateForward(ruleId string, input ForwardInput) (FirewallForw
 		if !found {
 			return fmt.Errorf("未找到端口转发 %s（可能已在系统侧变更，请先同步）", ruleId)
 		}
-		spec, err := specFromForwardInput(input)
+		spec, err := specFromForwardInput(input, s.panelPort, s.backendPort)
 		if err != nil {
 			return err
 		}
@@ -1342,7 +1358,7 @@ func (s *service) SetScanConfig(config ScanConfig) (FirewallScanProtection, erro
 	err := s.serialize(func() error {
 		// 先校验请求体（纯函数），再判开关状态：非法配置在任何状态下都按请求本身
 		// 被拒，面板端口这条保底判据不会因为「防扫描未启用」而躲过。
-		if _, err := validateScanConfig(config); err != nil {
+		if _, err := validateScanConfig(config, s.panelPort, s.backendPort); err != nil {
 			return err
 		}
 		beforeRules, err := s.deps.ReadText(s.paths.BeforeRules)
@@ -1418,10 +1434,28 @@ func (s *service) SyncFromSystem() (int, error) {
 
 // portOpenerService seam.PortOpener 实现：幂等补 ufw 放行，永不返回错误。
 type portOpenerService struct {
-	host hostDeps
+	host        hostDeps
+	backendPort int
 }
 
 // EnsurePortRule 幂等补 ufw 放行；一切结果以 contract.FirewallPortSync 带回。
 func (p portOpenerService) EnsurePortRule(_ context.Context, port int, note string) contract.FirewallPortSync {
+	if port == p.backendPort {
+		detail := "面板后端端口不能对外开放"
+		return contract.FirewallPortSync{State: contract.FirewallPortSyncFailed, Port: port, Detail: &detail}
+	}
 	return ensurePortRule(p.host, port, note)
+}
+
+func (s *service) protectPorts(input RuleInput) error {
+	if input.Direction == "outbound" || input.Protocol == "udp" {
+		return nil
+	}
+	if (input.Policy == "allow" || input.Policy == "limit") && coversPanelPort(input.Port, input.PortTo, s.backendPort) {
+		return shared.InvalidRequest("面板后端端口只供本机访问，不能添加入站放行规则")
+	}
+	if input.Policy == "deny" && coversPanelPort(input.Port, input.PortTo, s.panelPort) {
+		return shared.InvalidRequest("面板端口规则不允许变更：不能封禁面板前端端口")
+	}
+	return nil
 }

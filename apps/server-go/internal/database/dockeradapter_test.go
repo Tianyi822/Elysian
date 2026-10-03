@@ -327,3 +327,17 @@ func TestCreateAccessScopeDockerConfig(t *testing.T) {
 }
 
 func intPtr(value int) *int { return &value }
+
+func TestDatabaseUsesActualPanelReservedPorts(t *testing.T) {
+	docker := newDockerAPI(nil, func(context.Context) ([]contract.ContainerImage, error) { return nil, nil }, []int{22, 49000, 49001})
+	for _, port := range []int{49000, 49001, 48100} {
+		_, err := docker.create(context.Background(), createInput{engine: engineMySQL, versionTag: "8.4", imageID: testImageID, containerName: "check-port", accessScope: scopeAnyHost, hostPort: &port})
+		if err == nil {
+			t.Fatal("没有镜像应失败")
+		}
+		reserved := strings.Contains(err.Error(), "被面板保留")
+		if reserved != (port != 48100) {
+			t.Fatalf("端口 %d 的保护错误：%v", port, err)
+		}
+	}
+}

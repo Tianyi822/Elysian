@@ -13,6 +13,7 @@ import (
 // 任何绕过（含 internal/<域>/<域>2 变体目录）都算违规。
 func TestNoCrossDomainImports(t *testing.T) {
 	domains := map[string]bool{
+		"elysian/server/internal/panel":     true,
 		"elysian/server/internal/auth":      true,
 		"elysian/server/internal/logs":      true,
 		"elysian/server/internal/platform":  true,

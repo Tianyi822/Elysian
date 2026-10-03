@@ -1,3 +1,5 @@
+import { mockPanelAdapter } from './panelMock'
+import { createHttpPanelAdapter } from '../http/panelHttpAdapter'
 import type { ElysianGateway } from '../../contracts/adapters'
 import { createMockDataset } from './dataset'
 import {
@@ -60,6 +62,7 @@ export function createGateway(
     logs?: 'mock' | 'http'
     terminals?: 'mock' | 'ws'
     session?: 'mock' | 'http'
+    panel?: 'mock' | 'http'
   } = {},
 ): ElysianGateway {
   const dataset = createMockDataset()
@@ -100,6 +103,7 @@ export function createGateway(
   }
 
   return {
+    panel: options.panel === 'http' ? createHttpPanelAdapter() : mockPanelAdapter,
     session,
     containers,
     databases: createHttpDatabaseAdapter(),

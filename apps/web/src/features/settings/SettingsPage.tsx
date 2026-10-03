@@ -1,3 +1,4 @@
+import { PanelMaintenanceSettings } from './PanelMaintenanceSettings'
 import { useId, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
@@ -138,9 +139,10 @@ export function SettingsPage() {
   }
 
   return (
+    <div className="max-w-3xl space-y-5">
     <section
       aria-labelledby={titleId}
-      className="max-w-md rounded-xl border border-line bg-surface p-5"
+      className="rounded-xl border border-line bg-surface p-5"
     >
       <h2 id={titleId} className="text-sm font-medium text-fg">
         修改面板密码
@@ -193,5 +195,7 @@ export function SettingsPage() {
         </button>
       </form>
     </section>
+    <PanelMaintenanceSettings />
+    </div>
   )
 }

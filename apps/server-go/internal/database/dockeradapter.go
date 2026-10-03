@@ -88,12 +88,17 @@ func stripSha256Prefix(id string) string { return strings.TrimPrefix(id, "sha256
 
 // dockerAPI 是 Engine 适配器。
 type dockerAPI struct {
-	transport  seam.DockerTransport
-	listImages func(ctx context.Context) ([]contract.ContainerImage, error)
+	transport     seam.DockerTransport
+	listImages    func(ctx context.Context) ([]contract.ContainerImage, error)
+	reservedPorts []int
 }
 
-func newDockerAPI(transport seam.DockerTransport, listImages func(ctx context.Context) ([]contract.ContainerImage, error)) *dockerAPI {
-	return &dockerAPI{transport: transport, listImages: listImages}
+func newDockerAPI(transport seam.DockerTransport, listImages func(ctx context.Context) ([]contract.ContainerImage, error), ports ...[]int) *dockerAPI {
+	reserved := []int{22, panelPort, serverPort}
+	if len(ports) > 0 && len(ports[0]) > 0 {
+		reserved = ports[0]
+	}
+	return &dockerAPI{transport: transport, listImages: listImages, reservedPorts: reserved}
 }
 
 // request 发一次 Engine 请求并返回响应。
@@ -356,8 +361,10 @@ func (d *dockerAPI) create(ctx context.Context, input createInput) (createResult
 	if accessScope == scopeAnyHost && (input.hostPort == nil || hostPort < 1 || hostPort > 65535) {
 		return createResult{}, shared.InvalidRequest("任意主机访问必须指定有效宿主端口")
 	}
-	if hostPort != 0 && (hostPort == 22 || hostPort == panelPort || hostPort == serverPort) {
-		return createResult{}, shared.InvalidRequest("宿主端口被面板保留")
+	for _, reserved := range d.reservedPorts {
+		if hostPort != 0 && hostPort == reserved {
+			return createResult{}, shared.InvalidRequest("宿主端口被面板保留")
+		}
 	}
 	images, err := d.listImages(ctx)
 	if err != nil {

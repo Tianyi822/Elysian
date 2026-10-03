@@ -298,7 +298,7 @@ func parseOurNatRuleNumbers(listing string) []int {
 
 // specFromForwardInput 校验转发输入并映射为规范；不合法抛中文 400。这些失败都源于
 // 请求体本身（端口、协议、目标地址、面板禁区），端点按 400 返回。
-func specFromForwardInput(input ForwardInput) (ForwardSpec, error) {
+func specFromForwardInput(input ForwardInput, ports ...int) (ForwardSpec, error) {
 	if !jsIsInteger(input.Port) || input.Port < 1 || input.Port > 65535 {
 		return ForwardSpec{}, shared.InvalidRequest(fmt.Sprintf("外部端口无效：%s（应为 1–65535 的整数）", jsNumberToString(input.Port)))
 	}
@@ -314,8 +314,8 @@ func specFromForwardInput(input ForwardInput) (ForwardSpec, error) {
 		return ForwardSpec{}, shared.InvalidRequest(fmt.Sprintf("协议无效：%s", input.Protocol))
 	}
 	// DNAT 劫走面板端口的入站流量会绕过保底放行，把工作台自己锁在外面。
-	if coversPanelPort(input.Port, input.PortTo) {
-		return ForwardSpec{}, shared.InvalidRequest(fmt.Sprintf("面板端口不允许配置转发：外部端口段覆盖 %d（工作台自身的访问通道）", PanelPort))
+	if coversPanelPort(input.Port, input.PortTo, ports...) {
+		return ForwardSpec{}, shared.InvalidRequest(fmt.Sprintf("面板端口不允许配置转发：外部端口段覆盖 %d（工作台自身的访问通道）", defaultPort(ports)))
 	}
 	// --to-destination 只接受单个 IPv4 地址：带 / 的网段会写出 iptables-restore
 	// 装载失败的坏规则。

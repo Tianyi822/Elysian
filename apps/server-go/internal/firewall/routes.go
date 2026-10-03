@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"elysian/server/internal/config"
 	"elysian/server/internal/middleware"
 	"elysian/server/internal/seam"
 	"elysian/server/internal/shared"
@@ -43,6 +44,8 @@ type Service interface {
 
 // Deps 路由工厂的注入形状（go-plan §3.8 跨域字段 + 域内测试注入口）。
 type Deps struct {
+	Ports config.PanelNetwork
+
 	// Available 为 false 时一切请求 503（非容器/非裸机的强制保护）。
 	Available bool
 	// DBPath 规则时间账本路径（paths.ElysianPaths.FirewallSqlite）。
@@ -71,9 +74,9 @@ func NewRouter(deps Deps) chi.Router {
 	svc := deps.service
 	if svc == nil {
 		if deps.host != nil {
-			svc = newService(deps.host)
+			svc = newServiceWithPorts(deps.host, resolvePorts(deps.Ports).FrontendPort, resolvePorts(deps.Ports).BackendPort)
 		} else {
-			svc = assembleRealService(deps.DBPath, deps.Now)
+			svc = assembleRealService(deps.DBPath, deps.Now, resolvePorts(deps.Ports))
 		}
 	}
 	return newRouterWithService(svc)
@@ -87,7 +90,11 @@ func NewPortOpener(deps Deps) seam.PortOpener {
 		return seam.NoopPortOpener()
 	}
 	// ensurePortRule 只读 show added 与执行 allow，用不到时间账本，不开 sqlite。
-	return portOpenerService{host: newExecHostDeps("", deps.Now)}
+	ports := deps.Ports
+	if ports == (config.PanelNetwork{}) {
+		ports = config.DefaultPanelNetwork()
+	}
+	return portOpenerService{host: newExecHostDeps("", deps.Now), backendPort: ports.BackendPort}
 }
 
 // ---------- 路由装配 ----------
@@ -587,3 +594,10 @@ func strOrEmpty(value any) string {
 }
 
 var _ seam.PortOpener = portOpenerService{}
+
+func resolvePorts(p config.PanelNetwork) config.PanelNetwork {
+	if p == (config.PanelNetwork{}) {
+		return config.DefaultPanelNetwork()
+	}
+	return p
+}

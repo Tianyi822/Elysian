@@ -45,7 +45,7 @@ func sameOriginStrict(r *http.Request) bool {
 	if !strings.EqualFold(originURL.Host, host) {
 		return false
 	}
-	return isAllowedHostname(host)
+	return isAllowedHostname(host) || (originURL.Scheme == "http" && shared.TrustedPanelHost(r))
 }
 
 // isAllowedHostname 从 Host 头取 hostname（去端口、IPv6 保留方括号、大小写归一）；

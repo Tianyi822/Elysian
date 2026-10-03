@@ -15,6 +15,8 @@ import (
 
 // Deps 装配入参（go-plan §3.8）：模式事实经 config 产出、装配层注入，本包不读 env。
 type Deps struct {
+	ReservedPorts []int
+
 	Mode       config.RuntimeMode
 	SocketPath string // cfg.DockerSocket
 	MountRoot  string // cfg.MountRoot
@@ -75,7 +77,7 @@ func Assemble(deps Deps) (Stack, error) {
 	service := newDockerService(serviceDeps{
 		transport:       transport,
 		mountRoot:       mountRoot,
-		reservedPorts:   reservedPortsList(),
+		reservedPorts:   assemblyReservedPorts(deps.ReservedPorts),
 		selfContainerID: selfID,
 		onRestarting:    func(containerID string) { hub.NotifyRestarting(containerID) },
 		mkdir: func(path string, mode os.FileMode) error {
@@ -198,4 +200,11 @@ func listContainerIDsFromEngine(transport seam.DockerTransport) []string {
 		}
 	}
 	return ids
+}
+
+func assemblyReservedPorts(ports []int) []int {
+	if ports == nil {
+		return reservedPortsList()
+	}
+	return ports
 }

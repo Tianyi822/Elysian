@@ -32,6 +32,7 @@ import (
 	"elysian/server/internal/firewall"
 	"elysian/server/internal/logs"
 	"elysian/server/internal/middleware"
+	"elysian/server/internal/panel"
 	"elysian/server/internal/paths"
 	"elysian/server/internal/platform"
 	"elysian/server/internal/seam"
@@ -85,11 +86,12 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps) (htt
 
 	// 容器管理片最先装配：database/websites 的可用性与引擎事实由它分发。
 	stack, err := docker.Assemble(docker.Deps{
-		Mode:       cfg.Mode(),
-		SocketPath: cfg.DockerSocket,
-		MountRoot:  cfg.MountRoot,
-		Logs:       appLogs,
-		Kit:        terminals.NewKit(),
+		ReservedPorts: []int{22, cfg.PanelPorts().FrontendPort, cfg.PanelPorts().BackendPort},
+		Mode:          cfg.Mode(),
+		SocketPath:    cfg.DockerSocket,
+		MountRoot:     cfg.MountRoot,
+		Logs:          appLogs,
+		Kit:           terminals.NewKit(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("装配容器管理片失败：%w", err)
@@ -99,6 +101,7 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps) (htt
 	// 同源（防火墙不可用时恒 skipped，行为与装配层注入 NoopPortOpener 一致）。
 	firewallDeps := firewall.Deps{
 		Available: cfg.HostOpsAvailable(),
+		Ports:     cfg.PanelPorts(),
 		DBPath:    paths.Default.FirewallSqlite,
 	}
 	portOpener := firewall.NewPortOpener(firewallDeps)
@@ -112,6 +115,8 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps) (htt
 		CaddySocket:  cfg.CaddySocket,
 	})
 
+	panelStore := panel.Store{Root: paths.ElysianHome}
+	panelManager := panel.Manager{Store: panelStore, Host: panel.SystemHost{Store: panelStore, DockerSocket: cfg.DockerSocket}, Source: panel.GitHubSource{}, Ports: cfg.PanelPorts(), Enabled: cfg.BareMetal}
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.StripTailSlash)
@@ -120,9 +125,15 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps) (htt
 	r.Group(func(api chi.Router) {
 		api.Use(logs.OperationAuditMiddleware(appLogs))
 		api.Use(auth.RequireSession(authDeps))
+		api.Use(panelManager.WriteGuard)
+		api.Mount("/api/panel", panelManager.Router())
 
 		// 存活检查：鉴权豁免清单之首，供容器存活检查。
 		api.Get(shared.HealthPath, func(w http.ResponseWriter, r *http.Request) {
+			if cfg.BareMetal {
+				panelManager.Health(w, r)
+				return
+			}
 			shared.SendJSON(w, http.StatusOK, healthBody{OK: true})
 		})
 

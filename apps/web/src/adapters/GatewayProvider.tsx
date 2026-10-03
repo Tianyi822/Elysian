@@ -40,6 +40,7 @@ export function GatewayProvider({
         // 会话在 Docker 运行时经 /api/auth 走真实登录（requireSession 读写全挡）；
         // 本地无后端演示不强制登录。
         session: isDockerRuntime() ? 'http' : 'mock',
+        panel: isDockerRuntime() ? 'http' : 'mock',
       }),
     [gateway],
   )

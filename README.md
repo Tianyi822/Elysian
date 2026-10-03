@@ -13,17 +13,23 @@ bun run build
 bun run preview
 ```
 
-Docker 开发分两个编排：根 `docker-compose.yml` 只跑前端 dev 与容器内 sshd；Go API 由 `apps/server-go/docker-compose.go-dev.yml` 提供（监听容器内 48101，只发布宿主回环 48102），vite 把 `/api/*` 同源代理过去。日常用 `bash scripts/dev.sh up` 一条命令按正确顺序起两个栈（`down` 停止、`restart-go` 让 Go 代码或环境变量变更生效）；手动起时 macOS Docker Desktop 需要把 `ELYSIAN_DOCKER_MOUNT_ROOT` 指向已共享的宿主路径（仓库根 `.env` 会被脚本透传给两个栈），Linux 默认为 `/srv`。开发账号 `dev / dev-elysian` 需显式开启：`ELYSIAN_AUTH_DEV=1 bash scripts/dev.sh up`。
+Docker 开发分两个编排：根 `docker-compose.yml` 只跑前端 dev 与容器内 sshd；Go API 由 `apps/server-go/docker-compose.go-dev.yml` 提供（监听容器内 48101，只发布宿主回环 48102），vite 把 `/api/*` 同源代理过去。日常用 `bash scripts/dev.sh up` 一条命令显式选择两个编排文件、按正确顺序起两个栈并等待同源 API 就绪（`down` 停止、`restart-go` 让 Go 代码或环境变量变更生效）；单独运行根目录的 `docker compose up` 只启动前端。手动起时 macOS Docker Desktop 需要把 `ELYSIAN_DOCKER_MOUNT_ROOT` 指向已共享的宿主路径（仓库根 `.env` 会被脚本透传给两个栈），Linux 默认为 `/srv`。开发账号 `dev / dev-elysian` 需显式开启：`ELYSIAN_AUTH_DEV=1 bash scripts/dev.sh up`。
 
 Go 后端的开发与门禁一律在 Docker 容器内跑：`bash apps/server-go/dev-check.sh ./...`（缺省全量，可传包路径缩小范围）。宿主机命令只覆盖前端与契约包：`bun run test` 覆盖 web 和契约包。
 
 顶栏系统负载读数条合并两个口径：这台机器的 1 分钟 load average（每拍随 `resource/sample` 事件流更新，1/5/15 三档列在明细里）与 Go 后端单进程的实际常驻内存（每五秒读取，单位为 MiB；Linux 优先使用 `/proc/self/smaps_rollup`，回落到 `smaps`，仅有 `statm` 时以 ≈ 标注近似，无法读取时显示不可用）。任一路没到就显示占位，不把缺失当成 0。读数条只显图标与两个数，名称由按钮的 `aria-label` 与悬停提示承载，不显百分比——百分比与仪表盘的「内存占用率」同屏会被读成同一口径的两个数。点击展开分节明细：机器负载三档、面板常驻内存（RSS）与 Go 运行时两组口径，两套口径不能相加，理由写在「Go 运行时」标题右侧问号的浮层里。占比以 `/proc/meminfo` 的系统总内存为参照（容器内属于宿主 Linux 内核，不表示容器限额），连同这个分母一起显示在明细中，总量不可读时不推断百分比；系统总内存达到 1024 MiB 时以 GiB 展示。内存采样不主动触发垃圾回收，不包含浏览器、开发启动器或其他容器。
 
-面板监听宿主回环地址 `127.0.0.1:48100`。挂载 Docker socket 等价于授予宿主级容器管理权限，因此不要把面板反向代理到不可信网络。面板有单管理员登录：服务端会话加 HttpOnly Cookie，除四条鉴权豁免路径（`/api/health` 与 `/api/auth` 的 login、session、logout）外，全部 `/api/*` 读写都要求已登录会话。同机回环上的自有工具复用浏览器本就按 host 共享的这枚会话，回跳地址由服务端按白名单裁决（`docs/adr/0017-*`），面板仍是单用户、不含多租户。
+Docker 开发入口只绑定宿主回环地址 `127.0.0.1:48100`；正式 systemd 安装版通过服务器 IP 与前端端口访问，后端始终监听回环。挂载 Docker socket 等价于授予宿主级容器管理权限，应限制能够访问面板的网络。面板有单管理员登录：服务端会话加 HttpOnly Cookie，除四条鉴权豁免路径（`/api/health` 与 `/api/auth` 的 login、session、logout）外，全部 `/api/*` 读写都要求已登录会话。同机回环上的自有工具复用浏览器本就按 host 共享的这枚会话，回跳地址由服务端按白名单裁决（`docs/adr/0017-*`），面板仍是单用户、不含多租户。
 
 ## 部署
 
-源码一键部署入口是 `scripts/install.sh`（Ubuntu/Debian 虚拟机，root 执行）：按官方校验安装锁定版本的 Go 与 bun 工具链，构建前端与 Go 单二进制，写 systemd 服务（裸机模式，只绑 `127.0.0.1:48101`），首启初始密码打印在 stdout，`--uninstall` 卸载（保留 `~/.Elysian` 数据）。忘记密码时在部署机执行 `HOME=/var/lib/elysian /usr/local/bin/elysian resetpwd`。
+源码部署入口是 `sudo bash scripts/install.sh`（Ubuntu/Debian systemd，x86_64／arm64）：按官方校验安装 Go 与 bun，以 `elysian-build` 无特权账号构建内嵌前端的 Go 单二进制，安装版本目录与维护工具、创建 systemd 服务。默认入口 `http://<服务器 IP>:48100`，后端固定 `127.0.0.1:48101`。UFW 仅添加面板前端 TCP 规则并清理精确识别的面板后端遗留规则，保持原启停状态；云安全组、域名反代和 HTTPS 由部署者管理。首启初始密码打印在 stdout。忘记密码时执行 `HOME=/var/lib/elysian /usr/local/bin/elysian resetpwd`。完整部署与恢复说明见 [部署指南](scripts/README-deploy.md)。
+
+系统设置提供修改密码、面板端口、重启和源码更新。正式端口的唯一配置来源是 `~/.Elysian/config/panel-network.json`（整数 1–65535、端口互异），损坏时拒绝启动，不回落默认值。端口迁移检查宿主监听、SSH 配置、网站登记与运行／停用容器预留端口，先开放新前端、切换并检查两入口与页面资源，再删除旧前端规则；交换端口时先撤销即将成为后端的面板放行规则。共享或非面板规则冲突明确中止，不清空 UFW。端口与版本变更保留会话；改密码仍使全部会话失效。Docker 开发与本地演示显示「仅支持 systemd 安装版」。既有安装须先运行升级后的安装脚本完成一次维护能力引导。
+
+在线更新固定来自 [Tianyi822/Elysian](https://github.com/Tianyi822/Elysian) 的实际默认分支，检查后锁定完整提交 SHA，经 GitHub 源码归档 API 下载、安全解包，使用 `bun install --frozen-lockfile` 和 `go build -mod=readonly` 构建。安装与在线更新共用 [构建脚本](scripts/build-release.sh)，在线更新不重跑完整安装。构建上限 30 分钟，旧面板在构建期间继续服务；切换前停服备份配置及持久化数据，健康等待 60 秒，检查前后端、页面静态资源与运行提交，成功保留当前及上一成功版本，失败恢复程序、数据、配置和本次涉及的规则。仓库未公开、网络或限流错误保留当前程序。
+
+维护由 `systemd-run` 启动当前程序副本执行，面板停服后任务继续运行。端口、重启与更新共用持久化任务、跨进程文件锁和请求提交编号；重复提交返回同一任务，并发维护返回 409。维护开始前等待已经进入的写请求结束，正在获取源码或部署的网站任务会阻止维护，维护期间拒绝新的配置写入。任务、阶段与分页日志位于 `state/panel-maintenance`，切换备份位于 `backups/panel-maintenance`，版本位于 `/opt/elysian/releases`，当前入口为 `/opt/elysian/current`。systemd 启动前恢复未提交的中断事务；恢复失败拒绝启动并保留错误与备份。接口为 `GET /api/panel`、`PUT /api/panel/ports`、`POST /api/panel/restart`、`GET/POST /api/panel/update`、`GET /api/panel/tasks/:id?offset=0`；执行返回 202 和任务 ID，沿用会话、同源守卫与操作审计，仅迁移任务的健康探测临时允许提交请求的旧 Origin 跨端口访问。
 
 ## 数据库页
 

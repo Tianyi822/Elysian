@@ -2,6 +2,7 @@ package firewall
 
 import (
 	"bytes"
+	"elysian/server/internal/config"
 	"errors"
 	"fmt"
 	"os"
@@ -122,16 +123,20 @@ func (h *execHostDeps) RuleTimes() ruleTimes { return h.times }
 
 // assembleRealService 生产装配：接线 + 账本 + 启动恢复（fire-and-forget goroutine，
 // 失败只落 stderr，不阻塞也不拖垮装配）。
-func assembleRealService(dbPath string, now func() time.Time) Service {
+func assembleRealService(dbPath string, now func() time.Time, networks ...config.PanelNetwork) Service {
+	p := config.DefaultPanelNetwork()
+	if len(networks) > 0 {
+		p = networks[0]
+	}
 	host := newExecHostDeps(dbPath, now)
-	svc := newService(host)
+	svc := newServiceWithPorts(host, p.FrontendPort, p.BackendPort)
 	go func() {
 		defer func() {
 			if rec := recover(); rec != nil {
 				fmt.Fprintf(os.Stderr, "[elysian] ufw 启动恢复失败：%v\n", rec)
 			}
 		}()
-		if err := restoreIfNeeded(host); err != nil {
+		if err := restoreIfNeeded(host, p.FrontendPort); err != nil {
 			fmt.Fprintf(os.Stderr, "[elysian] ufw 启动恢复失败：%v\n", err)
 		}
 	}()

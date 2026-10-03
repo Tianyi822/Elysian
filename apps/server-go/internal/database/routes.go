@@ -49,7 +49,7 @@ func NewRouter(deps Deps) chi.Router {
 	if deps.EngineAvailable && deps.Engine != nil && deps.Views != nil {
 		svc = newDatabaseService(serviceDeps{
 			registry:        newFileDatabaseRegistry(filepath.Join(paths.ConfigDir, "databases.json")),
-			docker:          newDockerAPI(deps.Engine, deps.Views.ListImages),
+			docker:          newDockerAPI(deps.Engine, deps.Views.ListImages, deps.Views.Policy().ReservedPorts),
 			protocol:        newProtocolAPI(),
 			listImages:      deps.Views.ListImages,
 			listContainers:  deps.Views.ListContainers,

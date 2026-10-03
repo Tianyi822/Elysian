@@ -556,6 +556,17 @@ var operationDescriptors = map[string]*opDescriptor{
 	},
 
 	// 日志管理：清空本身也留痕（「想抹掉痕迹」只会留下「抹掉痕迹」这条痕迹）。
+	"PUT /api/panel/ports": {
+		category: "security", action: "修改面板端口并重启",
+		summarize: func(input *opInput) *string {
+			return sp(fmt.Sprintf("前端：%v；后端回环：%v", input.body["frontendPort"], input.body["backendPort"]))
+		},
+	},
+	"POST /api/panel/restart": {category: "security", action: "重启面板"},
+	"POST /api/panel/update": {
+		category: "security", action: "更新面板并重启",
+		summarize: func(input *opInput) *string { return bodyText(input.body, "targetCommit") },
+	},
 	"POST /api/logs/runtime/clear": {
 		category: "logs", action: "清空运行日志",
 	},

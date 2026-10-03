@@ -1,3 +1,5 @@
+import type { PanelInfo, PanelPorts, PanelTask, PanelTaskReport, PanelUpdate } from '@elysian/contracts'
+import type { WebsiteSource, WebsiteGitSourceInput, WebsiteDeploymentInput, WebsiteDeploymentTask, WebsiteBuildConfig, WebsiteDeploymentLogs } from '@elysian/contracts'
 import type {
   Container,
   ContainerAction,
@@ -427,7 +429,18 @@ export interface DependenciesAdapter {
 }
 
 /** 页面注入的聚合入口。 */
+export interface PanelAdapter {
+ info(): Promise<PanelInfo>
+ checkUpdate(): Promise<PanelUpdate>
+ ports(value: PanelPorts, requestId: string): Promise<PanelTask>
+ restart(requestId: string): Promise<PanelTask>
+ update(targetCommit: string, requestId: string): Promise<PanelTask>
+ task(id: string, offset?: number): Promise<PanelTaskReport>
+ ready(origin: string, id: string, signal?: AbortSignal): Promise<boolean>
+}
+
 export interface ElysianGateway {
+ panel: PanelAdapter
   session: SessionAdapter
   events: EventsAdapter
   containers: ContainerAdapter

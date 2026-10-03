@@ -13,13 +13,12 @@
 //	ELYSIAN_DOCKER_MOUNT_ROOT 非空生效；缺省 /srv。绑定挂载根（docker 域读取）。
 //	ELYSIAN_LISTEN_HOST       非空生效；缺省 127.0.0.1。HTTP 监听地址。
 //
-// 监听端口固定 48101，不设 env（后端 API 服务的契约端口；web 侧 vite.config 的
-// API_PORT 与部署脚本 scripts/install.sh 的 PANEL_PORT 同值）。
+// Docker 开发端口固定 48101；正式安装端口由 panel-network.json 提供，后端固定回环。
 package config
 
 import "os"
 
-// ListenPort 是后端 API 服务的契约监听端口。
+// ListenPort 是开发运行时的后端默认端口。
 const ListenPort = 48101
 
 // 环境变量缺省值。
@@ -46,6 +45,8 @@ const (
 
 // Config 一次性读取的环境变量快照；构造后不再变化。
 type Config struct {
+	Network PanelNetwork
+
 	// Docker 是 ELYSIAN_DOCKER 严格等于 "1" 的判定结果。
 	Docker bool
 	// BareMetal 是 ELYSIAN_BARE_METAL 严格等于 "1" 的判定结果。
