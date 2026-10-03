@@ -47,6 +47,7 @@ function MetaCell({ label, value, numeric = false }: { label: string; value: str
 
 /** 运行时版本格文案：有版本时「Java 17」，HTML 等无版本时只写短名。 */
 function runtimeVersionLabel(project: WebsiteProject): string {
+  if (project.deploymentTarget === 'static') return 'Nginx'
   const short = RUNTIME_SHORT[project.kind]
   return project.runtimeVersion ? `${short} ${project.runtimeVersion}` : short
 }
@@ -58,6 +59,8 @@ export function WebsitesCard({
   onToggleRunning,
   onOpenSettings,
   onOpenRemove,
+  onRedeploy,
+  onRollback,
 }: {
   project: WebsiteProject
   busy: boolean
@@ -65,6 +68,8 @@ export function WebsitesCard({
   onToggleRunning: () => void
   onOpenSettings: () => void
   onOpenRemove: () => void
+  onRedeploy?: () => void
+  onRollback?: () => void
 }): JSX.Element {
   const running = project.runState === 'running'
 
@@ -88,6 +93,7 @@ export function WebsitesCard({
         <MetaCell label="环境" value={WEBSITE_CATEGORY_LABELS[project.category]} />
         {running && project.pid !== null ? <MetaCell label="PID" value={String(project.pid)} numeric /> : null}
         <MetaCell label="运行时版本" value={runtimeVersionLabel(project)} />
+        {project.buildRuntimeVersion && <MetaCell label="构建版本" value={`${RUNTIME_SHORT[project.kind]} ${project.buildRuntimeVersion}`} />}
       </div>
 
       <p className="rounded-lg bg-surface-raised px-3 py-2">
@@ -102,7 +108,7 @@ export function WebsitesCard({
         </Link>
       </p>
 
-      <div className="mt-auto flex items-center gap-2">
+      <div className="mt-auto flex flex-wrap items-center gap-2">
         <button
           type="button"
           className={ACTION_BUTTON}
@@ -114,6 +120,8 @@ export function WebsitesCard({
         >
           详情
         </button>
+        {onRedeploy && <button type="button" className={ACTION_BUTTON} disabled={busy} onClick={(event) => { event.stopPropagation(); onRedeploy() }}>重新部署</button>}
+        {onRollback && <button type="button" className={ACTION_BUTTON} disabled={busy} onClick={(event) => { event.stopPropagation(); onRollback() }}>回滚</button>}
         <div className="ml-auto flex items-center gap-1.5" onClick={(event) => event.stopPropagation()}>
           <IconButton
             label={running ? '停止' : '启动'}

@@ -1,3 +1,4 @@
+import type { WebsiteRelease, WebsiteDeploymentTarget } from './deployments.ts'
 /*
  * 网站部署域类型与词典。每个项目一个 Docker 容器：运行时使用钉死版本的
  * 官方镜像，HTML 使用固定 Nginx 镜像；站点目录 bind 挂载，直连端口发布到
@@ -160,6 +161,11 @@ export type WebsiteTraffic = {
 }
 
 export type WebsiteProject = {
+  currentRelease?: WebsiteRelease
+  previousRelease?: WebsiteRelease
+  buildRuntimeVersion?: string
+  deploymentTarget?: WebsiteDeploymentTarget
+
   id: string
   kind: WebsiteProjectKind
   /** 项目名称，卡片首行的显示主体；站点目录路径段的唯一来源，跨类型全局唯一。 */
@@ -190,7 +196,7 @@ export type WebsiteProject = {
   category: WebsiteCategory
   /** 面板为站点容器配置的启动命令；HTML 使用 Nginx 默认命令。 */
   deployCommand: string | null
-  /** Git 仓库地址：只登记不拉取代码，站点目录内容仍由用户部署。 */
+  /** Git 仓库地址；部署来源固定实际提交，人工创建项目仅保留登记。 */
   gitUrl: string | null
   /** 流量统计：真实实现恒 0（无统计来源，不伪造数字），mock 演示数据保留非零。 */
   traffic: WebsiteTraffic
@@ -204,7 +210,7 @@ export type WebsiteProjectCreateInput = {
   /** 运行时版本：非 HTML 类型必填；HTML 传入会被忽略。 */
   runtimeVersion?: string | null
   access: WebsiteAccessInput
-  /** Docker Cmd 参数；Java/Go 必填，Node/Python可用缺省值。 */
+  /** Docker Cmd 参数；非 HTML 类型必须由用户明确填写。 */
   command?: string | null
   /** Git 仓库地址；空串按未配置处理。 */
   gitUrl?: string | null
@@ -236,7 +242,7 @@ export type WebsiteListReport = {
   proxy: WebsiteProxyStatus
 }
 
-/** 所有项目类型都登记端口：HTML 的 port 是登记保留位，静态托管由宿主 Caddy 直接提供，不发布也不监听该端口。 */
+/** 所有项目类型都登记宿主端口：HTML 与 Node 静态目标映射到独立 Nginx 容器的 80 端口。 */
 export function websiteProjectUsesPort(_kind: WebsiteProjectKind): boolean {
   return true
 }

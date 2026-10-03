@@ -47,25 +47,29 @@ type websiteTraffic struct {
 
 // websiteProject 列表投影（TS WebsiteProject）。
 type websiteProject struct {
-	ID             string              `json:"id"`
-	Kind           string              `json:"kind"`
-	Name           string              `json:"name"`
-	Pid            *int                `json:"pid"`
-	ContainerID    *string             `json:"containerId"`
-	Port           int                 `json:"port"`
-	RuntimeVersion *string             `json:"runtimeVersion"`
-	RootDir        string              `json:"rootDir"`
-	RunState       string              `json:"runState"`
-	AccessMode     string              `json:"accessMode"`
-	Domain         *string             `json:"domain"`
-	RouteApplied   bool                `json:"routeApplied"`
-	ExpiryAt       *string             `json:"expiryAt"`
-	Note           *string             `json:"note"`
-	Certificate    *websiteCertificate `json:"certificate"`
-	Category       string              `json:"category"`
-	DeployCommand  *string             `json:"deployCommand"`
-	GitURL         *string             `json:"gitUrl"`
-	Traffic        websiteTraffic      `json:"traffic"`
+	CurrentRelease      *releaseRecord      `json:"currentRelease,omitempty"`
+	PreviousRelease     *releaseRecord      `json:"previousRelease,omitempty"`
+	BuildRuntimeVersion string              `json:"buildRuntimeVersion,omitempty"`
+	DeploymentTarget    string              `json:"deploymentTarget,omitempty"`
+	ID                  string              `json:"id"`
+	Kind                string              `json:"kind"`
+	Name                string              `json:"name"`
+	Pid                 *int                `json:"pid"`
+	ContainerID         *string             `json:"containerId"`
+	Port                int                 `json:"port"`
+	RuntimeVersion      *string             `json:"runtimeVersion"`
+	RootDir             string              `json:"rootDir"`
+	RunState            string              `json:"runState"`
+	AccessMode          string              `json:"accessMode"`
+	Domain              *string             `json:"domain"`
+	RouteApplied        bool                `json:"routeApplied"`
+	ExpiryAt            *string             `json:"expiryAt"`
+	Note                *string             `json:"note"`
+	Certificate         *websiteCertificate `json:"certificate"`
+	Category            string              `json:"category"`
+	DeployCommand       *string             `json:"deployCommand"`
+	GitURL              *string             `json:"gitUrl"`
+	Traffic             websiteTraffic      `json:"traffic"`
 }
 
 // websiteProxyStatus 反向代理通道状态报告。

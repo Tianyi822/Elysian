@@ -109,7 +109,16 @@ func (t *unixTransport) Stream(ctx context.Context, req seam.EngineRequest, onCh
 			}
 			chunk := make([]byte, n)
 			copy(chunk, buf[:n])
-			aggregated = append(aggregated, chunk...)
+			if req.ResponseWriter != nil && response.StatusCode < 300 {
+				if _, err := req.ResponseWriter.Write(chunk); err != nil {
+					return seam.EngineResponse{}, err
+				}
+			} else if !req.DiscardBody {
+				if req.ResponseWriter != nil && int64(len(aggregated)+len(chunk)) > requestDefaultMax {
+					return seam.EngineResponse{}, errors.New("Docker 错误响应过大")
+				}
+				aggregated = append(aggregated, chunk...)
+			}
 			if onChunk != nil {
 				onChunk(chunk)
 			}
@@ -132,12 +141,23 @@ func (t *unixTransport) newHTTPRequest(ctx context.Context, req seam.EngineReque
 		target += "?" + req.Query.Encode()
 	}
 	var body io.Reader
+	if req.Body != nil && req.BodyReader != nil {
+		return nil, errors.New("Docker 请求不能同时包含 JSON 与流式正文")
+	}
+	body = req.BodyReader
 	if req.Body != nil {
 		body = bytes.NewReader(req.Body)
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, req.Method, target, body)
 	if err != nil {
 		return nil, err
+	}
+	if req.BodyReader != nil {
+		contentType := req.ContentType
+		if contentType == "" {
+			contentType = "application/json"
+		}
+		httpReq.Header.Set("Content-Type", contentType)
 	}
 	if req.Body != nil {
 		httpReq.Header.Set("Content-Type", "application/json")

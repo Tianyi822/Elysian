@@ -89,12 +89,16 @@ const EngineAPIPrefix = "/v1.41"
 
 // EngineRequest 一次 Engine API 请求的形状。
 type EngineRequest struct {
-	Method   string // GET/POST/PUT/DELETE
-	Path     string // 不含版本前缀，如 "/containers/json"
-	Query    url.Values
-	Body     []byte        // JSON；nil 表示无体
-	Timeout  time.Duration // <=0 由实现取缺省
-	MaxBytes int64         // 响应体上限；<=0 由实现取缺省（4 MiB）
+	Method         string // GET/POST/PUT/DELETE
+	Path           string // 不含版本前缀，如 "/containers/json"
+	Query          url.Values
+	Body           []byte        // JSON；nil 表示无体
+	BodyReader     io.Reader     // 有界流式文件输入；与 Body 互斥
+	ContentType    string        // 流输入的媒体类型，缺省 application/json
+	ResponseWriter io.Writer     // Stream 写入接收器时不聚合响应；写失败中止请求
+	DiscardBody    bool          // Stream 只消费回调，不聚合进度
+	Timeout        time.Duration // <=0 由实现取缺省
+	MaxBytes       int64         // 响应体上限；<=0 由实现取缺省（4 MiB）
 }
 
 // EngineResponse 一次 Engine API 请求的响应。

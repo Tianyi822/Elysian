@@ -40,10 +40,9 @@ func (s *websiteService) Create(ctx context.Context, input createRequest) (mutat
 	}
 	// 全局串行化全部创建：名称（跨类型全局唯一）与域名的查重都是跨 await 的
 	// check-then-act，按 kind+name 分键会让并发同名/同域创建双双通过查重。
-	if s.inProgress.has(createMutexKey) {
+	if !s.inProgress.acquire(createMutexKey) {
 		return mutateResult{}, &shared.InvalidRequestError{Status: 409, Message: "网站项目正在创建，请稍后再试"}
 	}
-	s.inProgress.add(createMutexKey)
 	defer s.inProgress.remove(createMutexKey)
 
 	// 下发队列内的多步编排不随发起方请求取消（TS Promise 语义：执行到完成）。
@@ -231,14 +230,16 @@ func (s *websiteService) createQueued(ctx context.Context, input createRequest, 
 // 迁移运行状态。整记录读改写必须与同项目的启停/删除互斥：否则 update 以陈旧全量
 // 记录回写，会静默回滚并发启停刚翻转的 enabled。
 func (s *websiteService) Update(ctx context.Context, id string, input updateRequest) (websiteProject, error) {
-	if s.inProgress.has(id) {
+	if !s.inProgress.acquire(id) {
 		return websiteProject{}, &shared.InvalidRequestError{Status: 409, Message: "项目正在执行其他操作"}
 	}
-	s.inProgress.add(id)
 	defer s.inProgress.remove(id)
 
 	row, err := s.record(ctx, id)
 	if err != nil {
+		return websiteProject{}, err
+	}
+	if err := s.assertRecordContainer(ctx, row); err != nil {
 		return websiteProject{}, err
 	}
 	updated := copyRecord(row)
@@ -250,7 +251,7 @@ func (s *websiteService) Update(ctx context.Context, id string, input updateRequ
 	}
 	commandChanged := input.Command != nil && !deployCommandEquals(input.Command.value, row.DeployCommand)
 	if commandChanged {
-		if row.Kind == KindHTML {
+		if runtimeRecordKind(row) == KindHTML {
 			return websiteProject{}, shared.InvalidRequest("HTML 项目使用固定 Nginx 启动命令")
 		}
 		if _, err := WebsiteContainerCmd(row.Kind, input.Command.value); err != nil {
@@ -270,11 +271,11 @@ func (s *websiteService) Update(ctx context.Context, id string, input updateRequ
 		containerName := s.deps.docker.NewContainerName()
 		newContainerID, err := s.deps.docker.Create(ctx, containerCreateInput{
 			ImageRef:      *row.ImageRef,
-			Kind:          row.Kind,
-			Version:       versionOrDefault(row.RuntimeVersion),
+			Kind:          runtimeRecordKind(row),
+			Version:       runtimeRecordVersion(row),
 			ProjectID:     row.ID,
 			Port:          row.Port,
-			BindSource:    row.RootDir,
+			BindSource:    runtimeRecordDir(row),
 			AccessMode:    row.AccessMode,
 			Command:       input.Command.value,
 			ContainerName: containerName,
@@ -305,10 +306,10 @@ func (s *websiteService) Update(ctx context.Context, id string, input updateRequ
 				ContainerID:     *row.ContainerID,
 				ContainerName:   stringOrEmpty(row.ContainerName),
 				ProjectID:       row.ID,
-				Kind:            row.Kind,
-				Version:         versionOrDefault(row.RuntimeVersion),
+				Kind:            runtimeRecordKind(row),
+				Version:         runtimeRecordVersion(row),
 				ImageRef:        stringOrEmpty(row.ImageRef),
-				RootDir:         row.RootDir,
+				RootDir:         runtimeRecordDir(row),
 				SelfContainerID: s.deps.selfContainerID,
 			})
 			return err
@@ -349,11 +350,9 @@ func (s *websiteService) Update(ctx context.Context, id string, input updateRequ
 // 同域名换证书只替换证书不重建容器；无变化短路。双互斥（'create' + id），下发在
 // 队列内执行。
 func (s *websiteService) SetAccess(ctx context.Context, id string, access accessInput) (mutateResult, error) {
-	if s.inProgress.has(createMutexKey) || s.inProgress.has(id) {
+	if !s.inProgress.acquire(createMutexKey, id) {
 		return mutateResult{}, &shared.InvalidRequestError{Status: 409, Message: "项目正在执行其他操作"}
 	}
-	s.inProgress.add(createMutexKey)
-	s.inProgress.add(id)
 	defer func() {
 		s.inProgress.remove(id)
 		s.inProgress.remove(createMutexKey)
@@ -425,6 +424,9 @@ func (s *websiteService) setAccessQueued(ctx context.Context, id string, access 
 		}
 	}
 	changingMode := row.AccessMode != access.Mode
+	if err := s.assertRecordContainer(ctx, *row); err != nil {
+		return mutateResult{}, err
+	}
 	updated := copyRecord(*row)
 	updated.AccessMode = access.Mode
 	if domain == "" {
@@ -471,11 +473,11 @@ func (s *websiteService) setAccessQueued(ctx context.Context, id string, access 
 			containerName := s.deps.docker.NewContainerName()
 			created, err := s.deps.docker.Create(ctx, containerCreateInput{
 				ImageRef:      *row.ImageRef,
-				Kind:          row.Kind,
-				Version:       versionOrDefault(row.RuntimeVersion),
+				Kind:          runtimeRecordKind(row),
+				Version:       runtimeRecordVersion(row),
 				ProjectID:     row.ID,
 				Port:          row.Port,
-				BindSource:    row.RootDir,
+				BindSource:    runtimeRecordDir(row),
 				AccessMode:    access.Mode,
 				Command:       row.DeployCommand,
 				ContainerName: containerName,
@@ -533,10 +535,10 @@ func (s *websiteService) setAccessQueued(ctx context.Context, id string, access 
 				ContainerID:     *row.ContainerID,
 				ContainerName:   stringOrEmpty(row.ContainerName),
 				ProjectID:       row.ID,
-				Kind:            row.Kind,
-				Version:         versionOrDefault(row.RuntimeVersion),
+				Kind:            runtimeRecordKind(row),
+				Version:         runtimeRecordVersion(row),
 				ImageRef:        stringOrEmpty(row.ImageRef),
-				RootDir:         row.RootDir,
+				RootDir:         runtimeRecordDir(row),
 				SelfContainerID: s.deps.selfContainerID,
 			}); err != nil {
 				return err
@@ -604,10 +606,9 @@ func (s *websiteService) setAccessQueued(ctx context.Context, id string, access 
 // SetRunning 启停：start 已运行容器引擎回 304 视为成功；容器已被外部删除 →
 // 404「站点容器已不存在，请删除站点后重建」。
 func (s *websiteService) SetRunning(ctx context.Context, id string, running bool) (websiteProject, error) {
-	if s.inProgress.has(id) {
+	if !s.inProgress.acquire(id) {
 		return websiteProject{}, &shared.InvalidRequestError{Status: 409, Message: "项目正在执行其他操作"}
 	}
-	s.inProgress.add(id)
 	defer s.inProgress.remove(id)
 
 	row, err := s.record(ctx, id)
@@ -616,6 +617,9 @@ func (s *websiteService) SetRunning(ctx context.Context, id string, running bool
 	}
 	if row.ContainerID == nil {
 		return websiteProject{}, &shared.InvalidRequestError{Status: 409, Message: "站点没有容器"}
+	}
+	if err := s.assertRecordContainer(ctx, row); err != nil {
+		return websiteProject{}, err
 	}
 	var opErr error
 	if running {
@@ -658,11 +662,9 @@ func (s *websiteService) Logs(ctx context.Context, id string) ([]string, error) 
 // Caddy 回收失败不阻断删除，最后抛「配置残留将在下次下发时回收」；目录删除失败
 // 同样最后抛。
 func (s *websiteService) Remove(ctx context.Context, id string) error {
-	if s.inProgress.has(id) || s.inProgress.has(createMutexKey) {
+	if !s.inProgress.acquire(createMutexKey, id) {
 		return &shared.InvalidRequestError{Status: 409, Message: "项目正在执行其他操作"}
 	}
-	s.inProgress.add(id)
-	s.inProgress.add(createMutexKey)
 	defer func() {
 		s.inProgress.remove(id)
 		s.inProgress.remove(createMutexKey)
@@ -681,6 +683,12 @@ func (s *websiteService) removeQueued(ctx context.Context, id string) error {
 	row, err := s.record(ctx, id)
 	if err != nil {
 		return err
+	}
+	if err := s.assertRecordContainer(ctx, row); err != nil {
+		var missing *shared.InvalidRequestError
+		if !errors.As(err, &missing) || missing.Status != 404 {
+			return err
+		}
 	}
 	if row.ContainerID != nil {
 		if err := s.deps.docker.Stop(ctx, *row.ContainerID); err != nil {
@@ -713,12 +721,18 @@ func (s *websiteService) removeQueued(ctx context.Context, id string) error {
 			ContainerID:     *row.ContainerID,
 			ContainerName:   stringOrEmpty(row.ContainerName),
 			ProjectID:       row.ID,
-			Kind:            row.Kind,
-			Version:         versionOrDefault(row.RuntimeVersion),
+			Kind:            runtimeRecordKind(row),
+			Version:         runtimeRecordVersion(row),
 			ImageRef:        stringOrEmpty(row.ImageRef),
-			RootDir:         row.RootDir,
+			RootDir:         runtimeRecordDir(row),
 			SelfContainerID: s.deps.selfContainerID,
 		}); err != nil {
+			return err
+		}
+	}
+	if row.PreviousRelease != nil {
+		previous := releaseAsRecord(row, *row.PreviousRelease)
+		if _, err := s.deps.docker.RemoveManaged(ctx, recordIdentity(previous, s.deps.selfContainerID)); err != nil {
 			return err
 		}
 	}

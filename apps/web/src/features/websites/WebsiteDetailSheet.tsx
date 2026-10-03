@@ -150,6 +150,9 @@ export function WebsiteDetailSheet() {
                     <span className="tabular-nums">{project.runtimeVersion}</span>
                   </Row>
                 )}
+                {project.deploymentTarget === 'static' && <Row label="运行环境">Nginx 静态站点</Row>}
+                {project.buildRuntimeVersion && <Row label="构建版本">{project.buildRuntimeVersion}</Row>}
+                {project.currentRelease && <Row label="发布版本"><span className="break-all font-mono text-xs">{project.currentRelease.commit || project.currentRelease.id}</span></Row>}
                 <Row label="域名">
                   {project.domain ? (
                     <span className="break-all">{project.domain}</span>
@@ -172,6 +175,7 @@ export function WebsiteDetailSheet() {
                     {project.rootDir}
                   </Link>
                 </Row>
+                {project.currentRelease && <Row label="产物目录"><Link to={`/files${project.currentRelease.directory}`} className="break-all text-accent hover:underline">{project.currentRelease.directory}</Link></Row>}
                 <Row label="Git 地址">
                   {project.gitUrl ? (
                     <span className="break-all font-mono text-xs">{project.gitUrl}</span>

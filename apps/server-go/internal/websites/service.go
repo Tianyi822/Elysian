@@ -89,6 +89,7 @@ type serviceDeps struct {
 	certificates     CertificateStore
 	trustedRoots     []*x509.Certificate
 	mountRoot        string
+	reservedPorts    []int
 	runtimeCatalog   catalogSource
 	listPortBindings func(ctx context.Context) ([]contract.PortBindingView, error)
 	selfContainerID  string
@@ -306,6 +307,20 @@ type mutexSet struct {
 
 func newMutexSet() *mutexSet { return &mutexSet{items: map[string]struct{}{}} }
 
+func (m *mutexSet) acquire(keys ...string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, key := range keys {
+		if _, exists := m.items[key]; exists {
+			return false
+		}
+	}
+	for _, key := range keys {
+		m.items[key] = struct{}{}
+	}
+	return true
+}
+
 func (m *mutexSet) has(key string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -351,9 +366,10 @@ func (q *pushQueue) run(task func()) {
 
 // websiteService 编排服务实现。
 type websiteService struct {
-	deps       serviceDeps
-	inProgress *mutexSet
-	queue      *pushQueue
+	deployments *deploymentManager
+	deps        serviceDeps
+	inProgress  *mutexSet
+	queue       *pushQueue
 }
 
 // NewWebsiteService 组装编排服务。certificates 为 nil 时落内存版（测试/降级）；
@@ -410,6 +426,7 @@ func parseJSONValue(raw json.RawMessage) any {
 // 容器已被外部删除（404）→ 折算 stopped/pid=null、containerId 保留登记值如实显示，
 // 非 404 错误原样上抛。
 func (s *websiteService) projectRow(ctx context.Context, row WebsiteRecord, config any) (websiteProject, error) {
+	row = syncReleaseRecord(row)
 	running := false
 	var pid *int
 	if row.ContainerID != nil {
@@ -436,6 +453,7 @@ func (s *websiteService) projectRow(ctx context.Context, row WebsiteRecord, conf
 		_, routeApplied = AppliedManagedHosts(sites, config)[*row.Domain]
 	}
 	project := websiteProject{
+		CurrentRelease: row.CurrentRelease, PreviousRelease: row.PreviousRelease, BuildRuntimeVersion: row.BuildRuntimeVersion, DeploymentTarget: row.DeploymentTarget,
 		ID:             row.ID,
 		Kind:           row.Kind,
 		Name:           row.Name,
@@ -540,7 +558,11 @@ func (s *websiteService) pushCaddyConfig(ctx context.Context, rows []WebsiteReco
 // assertPortAvailable 端口三重查重：保留端口 → 现有容器绑定（含 0.0.0.0 重叠）→
 // registry 已登记站点。
 func (s *websiteService) assertPortAvailable(ctx context.Context, port int, rows []WebsiteRecord) error {
-	for _, reserved := range panelReservedPorts {
+	ports := s.deps.reservedPorts
+	if len(ports) == 0 {
+		ports = panelReservedPorts
+	}
+	for _, reserved := range ports {
 		if port == reserved {
 			return shared.InvalidRequest(fmt.Sprintf("宿主端口为面板保留：%d", port))
 		}

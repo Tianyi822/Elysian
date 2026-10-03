@@ -349,6 +349,7 @@ func (d *websiteDocker) NewContainerName() string {
 
 // engineCreateBody 容器创建请求体（键序即 TS 对象插入序）。
 type engineCreateBody struct {
+	WorkingDir   string              `json:"WorkingDir,omitempty"`
 	Image        string              `json:"Image"`
 	Cmd          []string            `json:"Cmd"`
 	Labels       map[string]string   `json:"Labels"`
@@ -405,8 +406,9 @@ func (d *websiteDocker) Create(ctx context.Context, input containerCreateInput) 
 		return "", err
 	}
 	body, err := marshalJSONCompact(engineCreateBody{
-		Image: input.ImageRef,
-		Cmd:   cmd,
+		Image:      input.ImageRef,
+		WorkingDir: "/app",
+		Cmd:        cmd,
 		Labels: map[string]string{
 			"elysian.managed":         "true",
 			"elysian.website":         "true",

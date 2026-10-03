@@ -175,13 +175,19 @@ func newProductionService(deps Deps) websiteServiceInterface {
 			return FetchWebsiteRuntimeCatalog(ctx, nil, now().UTC().Format("2006-01-02"))
 		}, now, NewFileRuntimeCatalogCache(cachePath), catalogCacheTTL)
 	}
-	return NewWebsiteService(serviceDeps{
-		registry:         registry,
-		docker:           docker,
-		caddy:            caddy,
-		certificates:     certificates,
-		trustedRoots:     deps.TrustedRoots,
-		mountRoot:        mountRoot,
+	service := NewWebsiteService(serviceDeps{
+		registry:     registry,
+		docker:       docker,
+		caddy:        caddy,
+		certificates: certificates,
+		trustedRoots: deps.TrustedRoots,
+		mountRoot:    mountRoot,
+		reservedPorts: func() []int {
+			if deps.Views != nil {
+				return deps.Views.Policy().ReservedPorts
+			}
+			return nil
+		}(),
 		runtimeCatalog:   catalog,
 		listPortBindings: portBindings,
 		selfContainerID:  deps.SelfID,
@@ -189,6 +195,8 @@ func newProductionService(deps Deps) websiteServiceInterface {
 			return opener.EnsurePortRule(ctx, port, note)
 		},
 	})
+	service.deployments = productionDeploymentManager(service, deploymentEngine{transport: deps.Engine})
+	return service
 }
 
 // caddyChannelAdapter seam.CaddyAdmin + adminListen 的服务视图适配。
@@ -211,6 +219,9 @@ func (a caddyChannelAdapter) Load(ctx context.Context, config []byte) *seam.Cadd
 func mountService(r chi.Router, service websiteServiceInterface) {
 	r.Use(middleware.SameOriginGuard())
 	r.Use(middleware.EndpointErrorHandler)
+	if concrete, ok := service.(*websiteService); ok && concrete.deployments != nil {
+		mountDeploymentRoutes(r, concrete.deployments)
+	}
 
 	guard := func(w http.ResponseWriter) {
 		// 防御性兜底：现有装配下 service 恒可用，分支不可达，文案登记错误表。

@@ -259,7 +259,23 @@ export type WebsiteMutateResult = {
   firewallPort: FirewallPortSync | null
 }
 
+export interface WebsiteDeploymentsAdapter {
+  archive(file: File, mode: 'source' | 'artifact', signal?: AbortSignal): Promise<WebsiteSource>
+  git(input: WebsiteGitSourceInput, signal?: AbortSignal): Promise<WebsiteSource>
+  source(id: string, signal?: AbortSignal): Promise<WebsiteSource>
+  discardSource(id: string): Promise<void>
+  submit(input: WebsiteDeploymentInput): Promise<WebsiteDeploymentTask>
+  list(): Promise<readonly WebsiteDeploymentTask[]>
+  task(id: string): Promise<WebsiteDeploymentTask>
+  logs(id: string, offset: number): Promise<WebsiteDeploymentLogs>
+  cancel(id: string): Promise<void>
+  resume(id: string, config: WebsiteBuildConfig): Promise<WebsiteDeploymentTask>
+  rollback(projectId: string): Promise<WebsiteDeploymentTask>
+}
+
 export interface WebsitesAdapter {
+  /** 旧 adapter 可缺省；生产与标准 mock 均提供完整部署接缝。 */
+  deployment?: WebsiteDeploymentsAdapter
   runtimeCatalog(signal?: AbortSignal): Promise<WebsiteRuntimeCatalogReport>
   /** 全部项目附带反向代理通道状态：列表读取时探测一次，读端点无副作用。 */
   list(): Promise<WebsiteListReport>
@@ -271,9 +287,9 @@ export interface WebsitesAdapter {
   setAccess(projectId: string, access: WebsiteAccessInput): Promise<WebsiteMutateResult>
   /** 删除项目：停容器、回收反向代理路由、删容器与站点目录、删登记；不幂等。 */
   remove(projectId: string): Promise<void>
-  /** 启动或停止项目：非 HTML 落容器启停并回报进程号，HTML 翻转托管开关。 */
+  /** 启动或停止项目：每个项目的独立运行容器启停。 */
   setRunning(projectId: string, running: boolean): Promise<WebsiteProject>
-  /** 项目运行日志：非 HTML 读容器日志，HTML 为宿主 Caddy 托管说明行。 */
+  /** 项目运行日志：读取项目容器日志。 */
   logs(projectId: string): Promise<readonly string[]>
   /**
    * 域级对账：从登记全量重新生成并下发反向代理配置，返回下发后的通道状态。

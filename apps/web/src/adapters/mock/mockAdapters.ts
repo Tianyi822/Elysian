@@ -1,3 +1,4 @@
+import { createMockWebsiteDeployments } from './websiteDeploymentsMock'
 import { MOCK_WEBSITE_RUNTIME_REPORT } from './websiteRuntimeCatalog'
 import {
   effectivePortHostIp,
@@ -856,6 +857,7 @@ export class MockUserAdapter implements UserAdapter {
 const DEMO_PROXY_STATUS: WebsiteProxyStatus = { state: 'active', detail: null }
 
 export class MockWebsitesAdapter implements WebsitesAdapter {
+  deployment = createMockWebsiteDeployments()
   async runtimeCatalog() {
     return structuredClone(MOCK_WEBSITE_RUNTIME_REPORT)
   }

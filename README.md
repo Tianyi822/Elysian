@@ -41,6 +41,16 @@ Docker 环境中的 MariaDB、MySQL、Redis 使用 `/api/databases` 和数据库
 
 Docker 环境中的 SQLite 使用面板持久卷 `~/.Elysian/data/sqlite`：可新建空库、上传单个独立 SQLite 快照、在受限数据库协议终端内读写、下载一致性快照，以及确认后删除实际文件。上传上限为 256 MiB，单库上限为 1 GiB，托管 SQLite 总量上限为 4 GiB；WAL 模式原库须先导出独立快照。文件登记位于 `~/.Elysian/config/sqlite-databases.json`，中断的创建、上传或删除会显示待处理状态。SQLite 终端允许常用查询、增删改、表/索引/视图 DDL 与事务语句，不支持文件操作、扩展加载、触发器或虚拟表创建。非 Docker 本地开发中的 SQLite 与其他数据库仍是演示状态。
 
+## 网站项目部署
+
+添加项目与重新部署共用三步流程：上传 ZIP／tar.gz 或获取 HTTPS Git → 选择识别出的目录、构建工具、入口与精确版本 → 测试、构建并部署。支持普通 Java、Maven／Gradle（优先项目 Wrapper）、Node、Go、Python 与 HTML；可明确选择已构建产物跳过测试和构建。Git 支持分支、标签、提交与一次性私有令牌，准备后固定实际提交；令牌只用于临时拉取，不写登记与日志。启动命令保持空值，通过「采用建议」或手动填写确认；多入口、多工具与多产物由用户选择。
+
+构建使用一次性非特权容器，每个项目使用独立运行容器。Java 构建 JDK 与运行 JRE 分开设置，Node 可选择服务或 Nginx 静态站点；静态站点的构建版本与运行环境分别记录。构建和测试期间旧项目继续运行，新容器内部端口就绪后完成发布，失败恢复旧版本；当前及上一成功版本保留供回滚。任务支持取消、补充配置继续执行和重新部署；关闭弹窗或刷新后通过「部署任务」恢复查看。未发现测试、测试通过与明确跳过分别显示。
+
+默认单构建并发、2 CPU／2 GiB、20 分钟超时；压缩包上限 512 MiB、展开上限 2 GiB、10 万条目，拒绝路径穿越、链接、特殊文件与损坏包。服务端可通过 ELYSIAN_DEPLOY_CONCURRENCY、ELYSIAN_DEPLOY_CPUS、ELYSIAN_DEPLOY_MEMORY_BYTES、ELYSIAN_DEPLOY_TIMEOUT_SECONDS、ELYSIAN_DEPLOY_ARCHIVE_BYTES、ELYSIAN_DEPLOY_EXPANDED_BYTES、ELYSIAN_DEPLOY_ENTRIES 调整。来源位于 ~/.Elysian/tmp/website-sources，保留 24 小时；任务与日志分别位于 state/website-deployments、logs/website-deployments，保留 30 天；重启中断的任务明确标记且不自动重新发布。旧项目按人工部署项目兼容读取。SSH Git、WAR／Tomcat、提交触发与多环境发布不在支持范围。
+
+真实容器验收需在 Docker 开发后端中显式执行 ELYSIAN_DEPLOY_INTEGRATION=1 go test ./internal/websites -run 'TestDeploymentReal' -timeout 40m；测试会拉取官方精确版本镜像，只创建并清理自己的测试项目。设计与接口约定见本地 [ADR-0018](docs/adr/0018-website-build-and-deployment-pipeline.md)。
+
 ## 结构与边界
 
 网站项目通过容器运行，Java、Node、Go、Python 的版本由后端自动获取：语言官方正式发布记录与 Docker 官方镜像精确标签取交集，包含五年前版本线及历史正式补丁，排除预发布、快照和浮动标签。添加项目窗口通过同源 API 读取目录并支持版本号搜索。目录缓存六小时，过期后按请求自动刷新，获取失败时明确提示并保留已有缓存；缓存位于 `~/.Elysian/state/website-runtime-catalog.json`，生产代码不维护固定版本表。`bun run check:website-runtimes` 可诊断官方来源与镜像库的自动获取路径；本地演示仍使用可复现 mock。

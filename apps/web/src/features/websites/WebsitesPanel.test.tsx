@@ -5,207 +5,118 @@ import { createMockGateway } from '../../adapters/mock/gateway'
 import { resetWebsitesData } from '../../adapters/mock/websitesData'
 import { useDependencyGuideStore } from '../../stores/dependencyGuideStore'
 import { useWebsitesStore } from '../../stores/websitesStore'
+import { useWebsiteDeploymentsStore } from '../../stores/websiteDeploymentsStore'
 import { renderApp } from '../../test/renderApp'
 import { MOCK_WEBSITE_RUNTIME_REPORT } from '../../adapters/mock/websiteRuntimeCatalog'
-import type { WebsitesAdapter } from '../../contracts/adapters'
+import type { WebsiteProjectKind } from '@elysian/contracts'
 
 beforeEach(() => {
   resetWebsitesData()
-  useWebsitesStore.setState({ status: 'idle', projects: [], createDialogOpen: false, detailTarget: undefined,
-    settingsTarget: undefined, removeTarget: undefined, proxyStatus: { state: 'active', detail: null }, busyProjectIds: [] })
+  useWebsitesStore.setState({ status: 'idle', projects: [], createDialogOpen: false, detailTarget: undefined, settingsTarget: undefined, removeTarget: undefined, proxyStatus: { state: 'active', detail: null }, busyProjectIds: [] })
+  useWebsiteDeploymentsStore.setState({ tasks: [], loading: false, error: undefined })
   useDependencyGuideStore.setState({ report: undefined, status: 'idle', dismissedDocker: false, dismissedCaddy: false })
 })
-
-async function open(runtimeCatalog?: WebsitesAdapter['runtimeCatalog']) {
+async function open() {
   const gateway = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
-  if (runtimeCatalog) gateway.websites.runtimeCatalog = runtimeCatalog
   renderApp('/websites', { gateway })
   await screen.findByText('您的列表为空')
   return gateway
 }
-
-async function createHtml(user: ReturnType<typeof userEvent.setup>) {
+async function prepare(kind: WebsiteProjectKind, user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: '添加项目' }))
-  await user.click(screen.getByRole('button', { name: 'HTML项目' }))
-  await user.type(screen.getByLabelText('项目名称 *'), 'docs')
-  await user.click(within(screen.getByRole('dialog', { name: '添加项目' })).getByRole('button', { name: '添加项目' }))
-  await screen.findByRole('article', { name: 'docs' })
+  await user.upload(screen.getByLabelText('项目压缩包'), new File(['demo'], 'docs.zip', { type: 'application/zip' }))
+  await user.click(screen.getByRole('button', { name: '获取并识别' }))
+  await user.click(await screen.findByRole('button', { name: /项目目录与构建工具：/ }))
+  await user.click(screen.getByRole('menuitemradio', { name: new RegExp(`${kind === 'html' ? 'HTML' : kind === 'java' ? 'Java' : kind === 'node' ? 'Node' : kind === 'go' ? 'Go' : 'Python'}项目`) }))
 }
-
-describe('网站访问配置引导', () => {
-  it.each(['missing', 'error'] as const)('Caddy %s 时隐藏访问方式区域，创建请求固定直连', async (state) => {
-    const user = userEvent.setup()
-    useDependencyGuideStore.setState({
-      report: { docker: { state: 'ok', detail: null }, caddy: { state, detail: 'Caddy 不可用' } },
-      status: 'checked', dismissedCaddy: true,
-    })
-    const gateway = await open()
-    const create = vi.spyOn(gateway.websites, 'create')
+describe('三步构建与部署', () => {
+  it.each(['node', 'python'] as const)('%s 启动命令为空，采用建议才写入', async (kind) => {
+    const user = userEvent.setup(); await open(); await prepare(kind, user)
+    expect(screen.getByLabelText('启动命令 *')).toHaveValue('')
+    await user.click(screen.getByRole('button', { name: '采用建议' }))
+    expect(screen.getByLabelText('启动命令 *')).not.toHaveValue('')
+  })
+  it.each(['missing', 'error'] as const)('Caddy %s 时隐藏访问区域，提交固定直连', async (state) => {
+    const user = userEvent.setup(); const gateway = await open()
+    act(() => useDependencyGuideStore.setState({ report: { docker: { state: 'ok', detail: null }, caddy: { state, detail: '通道不可用' } }, dismissedCaddy: true }))
+    const submit = vi.spyOn(gateway.websites.deployment!, 'submit')
+    await prepare('html', user)
+    expect(screen.queryByRole('button', { name: /访问方式：/ })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '构建并部署' }))
+    await screen.findByText(/演示部署完成/)
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({ access: { mode: 'direct' }, config: expect.objectContaining({ target: 'static', command: '' }) }))
+    await user.click(screen.getByRole('button', { name: '关闭弹窗' }))
+    expect(await screen.findByRole('article', { name: 'docs' })).toBeInTheDocument()
+  })
+  it('多个候选必须选择，版本搜索位于下拉中', async () => {
+    const user = userEvent.setup(); await open()
     await user.click(screen.getByRole('button', { name: '添加项目' }))
-    const dialog = within(screen.getByRole('dialog', { name: '添加项目' }))
-    expect(dialog.queryByRole('group', { name: '访问方式' })).not.toBeInTheDocument()
-    expect(dialog.queryByText(/访问路径/)).not.toBeInTheDocument()
-    expect(dialog.queryByText(/创建时将自动在防火墙/)).not.toBeInTheDocument()
-    await user.click(dialog.getByRole('button', { name: 'HTML项目' }))
-    await user.type(dialog.getByLabelText('项目名称 *'), 'docs')
-    await user.click(dialog.getByRole('button', { name: '添加项目' }))
-    await screen.findByRole('article', { name: 'docs' })
-    expect(create).toHaveBeenCalledWith('html', expect.objectContaining({ access: { mode: 'direct' } }))
-    expect(useWebsitesStore.getState().projects[0]?.accessMode).toBe('direct')
+    await user.upload(screen.getByLabelText('项目压缩包'), new File(['demo'], 'bundle.zip', { type: 'application/zip' }))
+    await user.click(screen.getByRole('button', { name: '获取并识别' }))
+    expect(await screen.findByRole('button', { name: '构建并部署' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: /项目目录与构建工具：/ }))
+    await user.click(screen.getByRole('menuitemradio', { name: /Go项目/ }))
+    expect(screen.queryByRole('textbox', { name: /搜索.*版本/ })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /构建运行时版本：/ }))
+    const search = screen.getByRole('textbox', { name: '搜索构建运行时版本' })
+    await user.type(search, '1.16')
+    await waitFor(() => expect(screen.queryByRole('menuitemradio', { name: '1.27.1' })).not.toBeInTheDocument())
+    expect(screen.getByRole('menuitemradio', { name: '1.16.7' })).toBeInTheDocument()
   })
-
-  it('Caddy 就绪时可选域名，通道失效后隐藏区域并回落直连提交', async () => {
-    const user = userEvent.setup()
-    const gateway = await open()
-    const create = vi.spyOn(gateway.websites, 'create')
+  it('已构建产物跳过测试与构建，HTML 不依赖运行时目录', async () => {
+    const user = userEvent.setup(); const gateway = await open()
+    gateway.websites.runtimeCatalog = async () => { throw new Error('版本目录网络不可用') }
     await user.click(screen.getByRole('button', { name: '添加项目' }))
-    const dialog = within(screen.getByRole('dialog', { name: '添加项目' }))
-    await user.click(dialog.getByRole('button', { name: 'HTML项目' }))
-    await user.type(dialog.getByLabelText('项目名称 *'), 'docs')
-    expect(dialog.getByRole('group', { name: '访问方式' })).toBeInTheDocument()
-    await user.click(dialog.getByRole('button', { name: /域名访问/ }))
-    expect(dialog.getByLabelText('访问域名 *')).toBeInTheDocument()
-    act(() => useDependencyGuideStore.setState({
-      report: { docker: { state: 'ok', detail: null }, caddy: { state: 'error', detail: '管理通道连接失败' } },
-    }))
-    expect(dialog.queryByRole('group', { name: '访问方式' })).not.toBeInTheDocument()
-    expect(dialog.queryByLabelText('访问域名 *')).not.toBeInTheDocument()
-    await user.click(dialog.getByRole('button', { name: '添加项目' }))
-    await screen.findByRole('article', { name: 'docs' })
-    expect(create).toHaveBeenCalledWith('html', expect.objectContaining({ access: { mode: 'direct' } }))
+    await user.click(screen.getByLabelText('已构建产物（跳过测试与构建）'))
+    await user.upload(screen.getByLabelText('项目压缩包'), new File(['demo'], 'docs.zip', { type: 'application/zip' }))
+    await user.click(screen.getByRole('button', { name: '获取并识别' }))
+    await user.click(screen.getByRole('button', { name: /项目目录与构建工具：/ }))
+    await user.click(screen.getByRole('menuitemradio', { name: /HTML项目/ }))
+    await user.click(screen.getByRole('button', { name: '部署并启动' }))
+    expect(await screen.findByText('已明确跳过测试')).toBeInTheDocument()
   })
-
-  it('官方目录首次失败可重试，获取成功后开放版本选择', async () => {
-    const user = userEvent.setup()
-    const runtimeCatalog = vi.fn<WebsitesAdapter['runtimeCatalog']>()
-      .mockRejectedValueOnce(new Error('无法获取正式运行时版本：网络不可用'))
-      .mockResolvedValueOnce(MOCK_WEBSITE_RUNTIME_REPORT)
-    await open(runtimeCatalog)
-    await user.click(screen.getByRole('button', { name: '添加项目' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('网络不可用')
-    const dialog = screen.getByRole('dialog', { name: '添加项目' })
-    expect(within(dialog).getByRole('button', { name: '添加项目' })).toBeDisabled()
-    await user.click(screen.getByRole('button', { name: '重新获取' }))
-    expect(await screen.findByRole('button', { name: '运行时版本：25.0.4.1+1' })).toBeEnabled()
-    expect(runtimeCatalog).toHaveBeenCalledTimes(2)
+  it('Node 静态目标使用 Nginx，构建版本独立显示', async () => {
+    const user = userEvent.setup(); await open(); await prepare('node', user)
+    await user.click(screen.getByRole('button', { name: /部署目标：/ }))
+    await user.click(screen.getByRole('menuitemradio', { name: 'Nginx 静态站点' }))
+    expect(screen.queryByLabelText('启动命令 *')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '构建并部署' }))
+    await screen.findByText(/演示部署完成/)
+    await user.click(screen.getByRole('button', { name: '关闭弹窗' }))
+    const project = await screen.findByRole('article', { name: 'docs' })
+    expect(project).toHaveTextContent('Nginx')
+    expect(project).toHaveTextContent('构建版本')
   })
-
-  it('使用过期缓存时提示来源，已获取版本仍可选择', async () => {
-    const user = userEvent.setup()
-    await open(async () => ({ ...MOCK_WEBSITE_RUNTIME_REPORT, stale: true, detail: '版本目录更新失败，正在使用上次获取的缓存' }))
-    await user.click(screen.getByRole('button', { name: '添加项目' }))
-    expect(await screen.findByText('版本目录更新失败，正在使用上次获取的缓存')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '运行时版本：25.0.4.1+1' })).toBeEnabled()
+  it('公开与私有 Git 传递引用及一次性令牌', async () => {
+    const user = userEvent.setup(); const gateway = await open(); const git = vi.spyOn(gateway.websites.deployment!, 'git')
+    await user.click(screen.getByRole('button', { name: '添加项目' })); await user.click(screen.getByRole('button', { name: 'HTTPS Git' }))
+    await user.type(screen.getByLabelText('Git 地址（HTTPS）'), 'https://example.org/app.git')
+    await user.type(screen.getByLabelText('分支、标签或提交（可选）'), 'v1.2.3')
+    await user.type(screen.getByLabelText('私有仓库令牌（可选）'), 'secret-token')
+    await user.click(screen.getByRole('button', { name: '获取并识别' }))
+    await screen.findByRole('button', { name: /项目目录与构建工具：/ })
+    expect(git).toHaveBeenCalledWith(expect.objectContaining({ ref: 'v1.2.3', token: 'secret-token' }), expect.any(AbortSignal))
+    await user.click(screen.getByRole('button', { name: '返回来源' }))
+    expect(screen.getByLabelText('私有仓库令牌（可选）')).toHaveValue('')
   })
-
-  it('版本目录网络故障不阻止 HTML 创建', async () => {
-    const user = userEvent.setup()
-    await open(async () => { throw new Error('版本目录网络不可用') })
-    await createHtml(user)
-    expect(useWebsitesStore.getState().projects[0]?.kind).toBe('html')
+  it('版本目录失败可以重试，表单输入保留', async () => {
+    const user = userEvent.setup(); const gateway = await open()
+    const catalog = vi.fn().mockRejectedValueOnce(new Error('版本目录加载失败')).mockResolvedValue(MOCK_WEBSITE_RUNTIME_REPORT)
+    gateway.websites.runtimeCatalog = catalog
+    await prepare('python', user)
+    await user.click(screen.getByRole('button', { name: '重试版本目录' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /^运行时版本：3.14.7$/ })).toBeEnabled())
+    expect(screen.getByLabelText('项目名称 *')).toHaveValue('docs')
+    expect(catalog).toHaveBeenCalledTimes(2)
   })
-
-  it('空项目可创建 HTML 直连容器，并显示访问方式入口', async () => {
-    const user = userEvent.setup()
-    await open()
-    expect(screen.getByRole('button', { name: '访问配置' })).toBeInTheDocument()
-    await createHtml(user)
-    const project = useWebsitesStore.getState().projects[0]
-    expect(project?.containerId).toMatch(/^[0-9a-f]{64}$/)
-    expect(project?.accessMode).toBe('direct')
-    expect(project?.runState).toBe('stopped')
-  })
-
-  it.each([
-    ['Node项目', '如 node app.js', '如 node app.js'],
-    ['Python项目', '如 python3 -m http.server 8080 --bind 0.0.0.0 --directory /app', '如 python3 -m http.server 8081 --bind 0.0.0.0 --directory /app'],
-  ])('%s 启动命令只显示占位示例，切换类型与修改端口不填入实际值，留空不能创建', async (kind, placeholder, nextPlaceholder) => {
-    const user = userEvent.setup()
-    const gateway = await open()
-    const create = vi.spyOn(gateway.websites, 'create')
-    await user.click(screen.getByRole('button', { name: '添加项目' }))
-    await user.type(screen.getByLabelText('启动命令 *'), 'java -jar app.jar')
-    await user.click(screen.getByRole('button', { name: kind }))
-    const command = screen.getByLabelText('启动命令 *')
-    expect(command).toHaveValue('')
-    expect(command).toHaveAttribute('placeholder', placeholder)
-    await user.click(screen.getByRole('button', { name: '端口加一' }))
-    expect(command).toHaveValue('')
-    expect(command).toHaveAttribute('placeholder', nextPlaceholder)
-    await user.type(screen.getByLabelText('项目名称 *'), 'app')
-    await user.click(within(screen.getByRole('dialog', { name: '添加项目' })).getByRole('button', { name: '添加项目' }))
-    expect(screen.getByText('请填写容器启动命令')).toBeInTheDocument()
-    expect(create).not.toHaveBeenCalled()
-  })
-
-  it.each([
-    ['Java项目', '17.0.1+12', 'java -jar app.jar'],
-    ['Node项目', '14.17.6', 'node app.js'],
-    ['Go项目', '1.16.7', './app'],
-    ['Python项目', '3.9.7', 'python3 app.py'],
-  ])('%s 可直接搜索并创建历史正式补丁 %s', async (kind, version, command) => {
-    const user = userEvent.setup()
-    await open()
-    await user.click(screen.getByRole('button', { name: '添加项目' }))
-    await user.click(screen.getByRole('button', { name: kind }))
-    expect(screen.queryByRole('button', { name: '旧版本' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('textbox', { name: '搜索运行时版本' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: /^运行时版本：/ }))
-    const menu = within(screen.getByRole('menu', { name: '运行时版本' }))
-    const search = menu.getByRole('textbox', { name: '搜索运行时版本' })
-    expect(search).toHaveFocus()
-    await user.type(search, version)
-    await waitFor(() => expect(menu.getAllByRole('menuitemradio')).toHaveLength(1))
-    await user.click(menu.getByRole('menuitemradio', { name: version }))
-    await user.type(screen.getByLabelText('项目名称 *'), 'historical-app')
-    if (command) await user.type(screen.getByLabelText('启动命令 *'), command)
-    await user.click(within(screen.getByRole('dialog', { name: '添加项目' })).getByRole('button', { name: '添加项目' }))
-    await screen.findByRole('article', { name: 'historical-app' })
-    expect(useWebsitesStore.getState().projects[0]?.runtimeVersion).toBe(version)
-    if (command) expect(useWebsitesStore.getState().projects[0]?.deployCommand).toBe(command)
-  })
-
-  it('切换语言清空版本搜索，无匹配结果时不丢失已选版本', async () => {
-    const user = userEvent.setup()
-    await open()
-    await user.click(screen.getByRole('button', { name: '添加项目' }))
-    await user.click(screen.getByRole('button', { name: '运行时版本：25.0.4.1+1' }))
-    const search = screen.getByRole('textbox', { name: '搜索运行时版本' })
-    await user.type(search, '不存在的版本')
-    expect(screen.getByRole('button', { name: '运行时版本：25.0.4.1+1' })).toBeInTheDocument()
-    expect(await screen.findByText('没有匹配的正式版本')).toBeInTheDocument()
-    await user.keyboard('{Escape}')
-    expect(screen.getByRole('dialog', { name: '添加项目' })).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Python项目' }))
-    await user.click(screen.getByRole('button', { name: /^运行时版本：/ }))
-    expect(screen.getByRole('textbox', { name: '搜索运行时版本' })).toHaveValue('')
-    expect(screen.getAllByRole('menuitemradio').length).toBeGreaterThan(1)
-  })
-
-  it('先选项目再切换域名访问，上传证书后显示路由及证书核对结果', async () => {
-    const user = userEvent.setup()
-    await open()
-    await createHtml(user)
-    await user.click(screen.getByRole('button', { name: '访问配置' }))
-    const dialog = screen.getByRole('dialog', { name: '访问配置' })
-    await user.click(within(dialog).getByRole('button', { name: /docs/ }))
-    await user.click(within(dialog).getByRole('button', { name: /域名访问/ }))
-    await user.type(within(dialog).getByLabelText('访问域名 *'), 'example.com')
-    const files = within(dialog).getAllByLabelText(/PEM/)
-    await user.upload(files[0]!, new File(['certificate'], 'chain.pem', { type: 'application/x-pem-file' }))
-    await user.upload(files[1]!, new File(['private-key'], 'key.pem', { type: 'application/x-pem-file' }))
-    await user.click(within(dialog).getByRole('button', { name: '保存访问配置' }))
-    await waitFor(() => expect(useWebsitesStore.getState().projects[0]?.domain).toBe('example.com'))
-    expect(within(dialog).getAllByText(/路由和证书已下发，项目未运行/).length).toBeGreaterThan(0)
-  })
-
-  it('窄屏对话框与键盘焦点仍可操作', async () => {
-    const user = userEvent.setup()
-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 375 })
-    await open()
-    await user.click(screen.getByRole('button', { name: '访问配置' }))
-    expect(screen.getByRole('dialog', { name: '访问配置' })).toHaveClass('w-[min(52rem,calc(100vw-1.5rem))]')
-    await user.keyboard('{Escape}')
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: '访问配置' })).not.toBeInTheDocument())
+  it('关闭任务后可从任务列表恢复，键盘焦点在弹窗内', async () => {
+    const user = userEvent.setup(); await open(); await prepare('html', user)
+    await user.click(screen.getByRole('button', { name: '构建并部署' })); await screen.findByText(/演示部署完成/)
+    await user.click(screen.getByRole('button', { name: '关闭弹窗' }))
+    await user.click(screen.getByRole('button', { name: '部署任务' }))
+    await user.click(within(screen.getByLabelText('部署任务列表')).getByRole('button', { name: /docs/ }))
+    const dialog = await screen.findByRole('dialog')
+    await user.tab(); expect(dialog).toContainElement(document.activeElement as HTMLElement)
+    expect(await screen.findByRole('log', { name: '部署日志' })).toHaveTextContent('演示环境')
   })
 })

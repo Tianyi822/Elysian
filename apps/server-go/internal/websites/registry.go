@@ -27,25 +27,29 @@ type WebsiteCertificateRef struct {
 
 // WebsiteRecord 登记行（JSON 键序即 TS 对象插入序；存量 TS 版 websites.json 直接可读）。
 type WebsiteRecord struct {
-	ID             string                 `json:"id"`
-	Kind           string                 `json:"kind"`
-	Name           string                 `json:"name"`
-	Port           int                    `json:"port"`
-	RuntimeVersion *string                `json:"runtimeVersion"`
-	RootDir        string                 `json:"rootDir"`
-	Domain         *string                `json:"domain"`
-	AccessMode     string                 `json:"accessMode"`
-	Certificate    *WebsiteCertificateRef `json:"certificate"`
-	ContainerName  *string                `json:"containerName"`
-	ContainerID    *string                `json:"containerId"`
-	ImageRef       *string                `json:"imageRef"`
-	DeployCommand  *string                `json:"deployCommand"`
-	Enabled        bool                   `json:"enabled"`
-	Category       string                 `json:"category"`
-	ExpiryAt       *string                `json:"expiryAt"`
-	Note           *string                `json:"note"`
-	GitURL         *string                `json:"gitUrl"`
-	CreatedAt      string                 `json:"createdAt"`
+	CurrentRelease      *releaseRecord         `json:"currentRelease,omitempty"`
+	PreviousRelease     *releaseRecord         `json:"previousRelease,omitempty"`
+	BuildRuntimeVersion string                 `json:"buildRuntimeVersion,omitempty"`
+	DeploymentTarget    string                 `json:"deploymentTarget,omitempty"`
+	ID                  string                 `json:"id"`
+	Kind                string                 `json:"kind"`
+	Name                string                 `json:"name"`
+	Port                int                    `json:"port"`
+	RuntimeVersion      *string                `json:"runtimeVersion"`
+	RootDir             string                 `json:"rootDir"`
+	Domain              *string                `json:"domain"`
+	AccessMode          string                 `json:"accessMode"`
+	Certificate         *WebsiteCertificateRef `json:"certificate"`
+	ContainerName       *string                `json:"containerName"`
+	ContainerID         *string                `json:"containerId"`
+	ImageRef            *string                `json:"imageRef"`
+	DeployCommand       *string                `json:"deployCommand"`
+	Enabled             bool                   `json:"enabled"`
+	Category            string                 `json:"category"`
+	ExpiryAt            *string                `json:"expiryAt"`
+	Note                *string                `json:"note"`
+	GitURL              *string                `json:"gitUrl"`
+	CreatedAt           string                 `json:"createdAt"`
 }
 
 // Registry 网站登记接口（文件实现为生产缺省，内存实现为测试/降级用）。
@@ -145,6 +149,7 @@ func (r *fileWebsiteRegistry) List(context.Context) ([]WebsiteRecord, error) {
 }
 
 func (r *fileWebsiteRegistry) Put(_ context.Context, record WebsiteRecord) error {
+	record = syncReleaseRecord(record)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rows, err := r.read()
@@ -198,6 +203,7 @@ func (m *memoryWebsiteRegistry) List(context.Context) ([]WebsiteRecord, error) {
 }
 
 func (m *memoryWebsiteRegistry) Put(_ context.Context, record WebsiteRecord) error {
+	record = syncReleaseRecord(record)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	updated := make([]WebsiteRecord, 0, len(m.rows)+1)
@@ -226,6 +232,14 @@ func (m *memoryWebsiteRegistry) Remove(_ context.Context, id string) error {
 
 // copyRecord 深拷贝登记行的指针字段，防止调用方共享内部状态。
 func copyRecord(row WebsiteRecord) WebsiteRecord {
+	if row.CurrentRelease != nil {
+		v := *row.CurrentRelease
+		row.CurrentRelease = &v
+	}
+	if row.PreviousRelease != nil {
+		v := *row.PreviousRelease
+		row.PreviousRelease = &v
+	}
 	row.RuntimeVersion = copyStringPtr(row.RuntimeVersion)
 	row.Domain = copyStringPtr(row.Domain)
 	row.ContainerName = copyStringPtr(row.ContainerName)

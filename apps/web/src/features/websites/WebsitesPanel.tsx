@@ -1,6 +1,7 @@
-import type { WebsiteCategory } from '@elysian/contracts'
-import { useState } from 'react'
-import { WEBSITE_CATEGORIES, WEBSITE_CATEGORY_LABELS } from '@elysian/contracts'
+import { useWebsiteDeploymentsStore } from '../../stores/websiteDeploymentsStore'
+import type { WebsiteCategory, WebsiteProject, WebsiteDeploymentTask } from '@elysian/contracts'
+import { useState, useEffect } from 'react'
+import { WEBSITE_CATEGORIES, WEBSITE_CATEGORY_LABELS, WEBSITE_DEPLOYMENT_STATE_LABELS, websiteDeploymentIsActive } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { IconButton } from '../../components/IconButton'
 import { RefreshCw, Search } from '../../components/icons'
@@ -73,6 +74,20 @@ function ProxyStatusBanner({
 export function WebsitesPanel() {
   const [caddyConfigOpen, setCaddyConfigOpen] = useState(false)
   const gateway = useGateway()
+  const [redeployTarget, setRedeployTarget] = useState<WebsiteProject>()
+  const [selectedTask, setSelectedTask] = useState<WebsiteDeploymentTask>()
+  const [taskListOpen, setTaskListOpen] = useState(false)
+  const tasks = useWebsiteDeploymentsStore((s) => s.tasks)
+  const taskError = useWebsiteDeploymentsStore((s) => s.error)
+  const [operationError, setOperationError] = useState<string>()
+  const [rollbackIds, setRollbackIds] = useState<readonly string[]>([])
+  const hasActiveTask = tasks.some((task) => websiteDeploymentIsActive(task.state))
+  useEffect(() => { void useWebsiteDeploymentsStore.getState().refresh(gateway) }, [gateway])
+  useEffect(() => {
+    if (!taskListOpen && !hasActiveTask) return
+    const timer = window.setInterval(() => void useWebsiteDeploymentsStore.getState().refresh(gateway), 2000)
+    return () => window.clearInterval(timer)
+  }, [gateway, taskListOpen, hasActiveTask])
   const projects = useWebsitesStore((s) => s.projects)
   const proxyStatus = useWebsitesStore((s) => s.proxyStatus)
   const search = useWebsitesStore((s) => s.search)
@@ -101,6 +116,7 @@ export function WebsitesPanel() {
         <button type="button" onClick={openCreate} className={TOOL_BUTTON_CLASS}>
           添加项目
         </button>
+        <button type="button" className={TOOL_BUTTON_CLASS} aria-expanded={taskListOpen} onClick={() => setTaskListOpen((value) => !value)}>部署任务{tasks.some((task) => websiteDeploymentIsActive(task.state) || task.state === 'awaiting-config') ? `（${tasks.filter((task) => websiteDeploymentIsActive(task.state) || task.state === 'awaiting-config').length}）` : ''}</button>
         {caddyInstallEntryVisible(dependencyReport) ? (
           <button type="button" onClick={reopenCaddy} className={TOOL_BUTTON_CLASS}>
             安装 Caddy
@@ -147,6 +163,10 @@ export function WebsitesPanel() {
         </div>
       </div>
 
+      {operationError && <p role="alert" className="mb-4 text-xs text-danger">{operationError}</p>}
+      {taskListOpen && <div className="mb-4 space-y-2 rounded-xl border border-line bg-surface p-4" aria-label="部署任务列表">
+        {taskError ? <p role="alert" className="text-xs text-danger">{taskError}</p> : tasks.length === 0 ? <p className="text-xs text-fg-muted">暂无部署任务</p> : tasks.map((task) => <button type="button" key={task.id} onClick={() => setSelectedTask(task)} className="flex w-full flex-wrap items-center justify-between gap-2 rounded-lg border border-line p-3 text-left text-xs hover:bg-surface-raised"><span className="min-w-0 break-all">{task.name}</span><span>{WEBSITE_DEPLOYMENT_STATE_LABELS[task.state]} · {task.stage}</span></button>)}
+      </div>}
       {projects.some((project) => project.accessMode === 'domain') && (proxyStatus.state === 'unavailable' || proxyStatus.detail !== null) ? (
         <ProxyStatusBanner
           detail={proxyStatus.detail}
@@ -179,13 +199,15 @@ export function WebsitesPanel() {
             <li key={project.id} className="mb-4 break-inside-avoid">
               <WebsitesCard
                 project={project}
-                busy={busyIds.includes(project.id)}
+                busy={busyIds.includes(project.id) || rollbackIds.includes(project.id) || tasks.some((task) => task.projectId === project.id && (websiteDeploymentIsActive(task.state) || task.state === 'awaiting-config'))}
                 onOpenDetail={() => useWebsitesStore.getState().openDetail(gateway, project)}
                 onToggleRunning={() =>
                   void useWebsitesStore
                     .getState()
                     .setRunning(gateway, project, project.runState !== 'running')
                 }
+                onRedeploy={() => setRedeployTarget(project)}
+                onRollback={project.previousRelease ? () => { setOperationError(undefined); setRollbackIds((ids) => [...ids, project.id]); void gateway.websites.deployment?.rollback(project.id).then((task) => { useWebsiteDeploymentsStore.getState().put(task); setSelectedTask(task) }).catch((error: unknown) => setOperationError(error instanceof Error ? error.message : '回滚提交失败')).finally(() => setRollbackIds((ids) => ids.filter((id) => id !== project.id))) } : undefined}
                 onOpenSettings={() => useWebsitesStore.getState().openSettings(project)}
                 onOpenRemove={() => useWebsitesStore.getState().openRemove(project)}
               />
@@ -199,6 +221,8 @@ export function WebsitesPanel() {
       </div>
 
       {createDialogOpen ? <WebsitesCreateDialog /> : null}
+      {redeployTarget ? <WebsitesCreateDialog project={redeployTarget} onClose={() => setRedeployTarget(undefined)} /> : null}
+      {selectedTask ? <WebsitesCreateDialog existingTask={selectedTask} project={projects.find((project) => project.id === selectedTask.projectId)} onClose={() => setSelectedTask(undefined)} /> : null}
       {caddyConfigOpen ? (
         <CaddyConfigDialog
           onClose={() => setCaddyConfigOpen(false)}

@@ -1,3 +1,4 @@
+import type { WebsiteSource, WebsiteDeploymentTask, WebsiteDeploymentLogs } from '@elysian/contracts'
 import type {
   WebsiteCategory,
   WebsiteAccessMode,
@@ -92,6 +93,10 @@ export function parseWebsiteProject(value: unknown): WebsiteProject {
     certificate = { issuer: cert.issuer, notAfter: cert.notAfter, fingerprint256: cert.fingerprint256, applied: cert.applied }
   }
   return {
+    ...(row.currentRelease ? { currentRelease: row.currentRelease as WebsiteProject['currentRelease'] } : {}),
+    ...(row.previousRelease ? { previousRelease: row.previousRelease as WebsiteProject['previousRelease'] } : {}),
+    ...(typeof row.buildRuntimeVersion === 'string' ? { buildRuntimeVersion: row.buildRuntimeVersion } : {}),
+    ...(row.deploymentTarget === 'static' || row.deploymentTarget === 'service' ? { deploymentTarget: row.deploymentTarget } : {}),
     id: row.id,
     kind: oneOf<WebsiteProjectKind>(row.kind, WEBSITE_PROJECT_KINDS, '网站项目类型响应无效'),
     name: row.name,
@@ -206,6 +211,19 @@ export function createHttpWebsitesAdapter(baseUrl = '/api/websites'): WebsitesAd
       ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
     })
   return {
+    deployment: {
+      async archive(file, mode, signal) { return parseDeploymentSource(await requestJson(`${baseUrl}/sources/archive?mode=${mode}`, { method: 'POST', body: file, headers: { 'content-type': 'application/octet-stream', 'x-file-name': encodeURIComponent(file.name) }, signal })) },
+      async git(input, signal) { return parseDeploymentSource(await requestJson(`${baseUrl}/sources/git`, { method: 'POST', body: JSON.stringify(input), headers: { 'content-type': 'application/json' }, signal })) },
+      async source(id, signal) { return parseDeploymentSource(await requestJson(`${baseUrl}/sources/${encodeURIComponent(id)}`, { signal })) },
+      async discardSource(id) { await sendJson(`/sources/${encodeURIComponent(id)}`, 'DELETE') },
+      async submit(input) { return parseDeploymentTask(await sendJson('/deployments', 'POST', { ...input })) },
+      async list() { const rows = await requestJson(`${baseUrl}/deployments`); if (!Array.isArray(rows)) throw new Error('部署任务列表无效'); return rows.map(parseDeploymentTask) },
+      async task(id) { return parseDeploymentTask(await requestJson(`${baseUrl}/deployments/${encodeURIComponent(id)}`)) },
+      async logs(id, offset) { const row = asObject(await requestJson(`${baseUrl}/deployments/${encodeURIComponent(id)}/logs?offset=${offset}`), '部署日志无效'); if (!Array.isArray(row.lines) || !row.lines.every((line) => typeof line === 'string') || typeof row.next !== 'number' || typeof row.total !== 'number') throw new Error('部署日志无效'); return row as WebsiteDeploymentLogs },
+      async cancel(id) { await sendJson(`/deployments/${encodeURIComponent(id)}/cancel`, 'POST', {}) },
+      async resume(id, config) { return parseDeploymentTask(await sendJson(`/deployments/${encodeURIComponent(id)}/resume`, 'POST', { ...config })) },
+      async rollback(projectId) { return parseDeploymentTask(await sendJson(`/deployments/rollback/${encodeURIComponent(projectId)}`, 'POST', {})) },
+    },
     async runtimeCatalog(signal) {
       return parseWebsiteRuntimeCatalogReport(await requestJson(`${baseUrl}/runtimes`, { signal }))
     },
@@ -263,4 +281,35 @@ export function createHttpWebsitesAdapter(baseUrl = '/api/websites'): WebsitesAd
       return proxy
     },
   }
+}
+
+function deploymentStrings(value: unknown): boolean {
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
+}
+function validateDeploymentConfig(value: unknown) {
+  const config = asObject(value, '部署配置响应无效')
+  if (typeof config.candidateId !== 'string' || typeof config.command !== 'string' || typeof config.skipTests !== 'boolean' || !['service', 'static'].includes(String(config.target))) throw new Error('部署配置响应无效')
+  for (const key of ['buildVersion', 'runtimeVersion', 'toolVersion', 'entry', 'artifact']) if (config[key] !== undefined && typeof config[key] !== 'string') throw new Error('部署配置响应无效')
+  for (const key of ['testSteps', 'buildSteps']) if (config[key] !== undefined && !deploymentStrings(config[key])) throw new Error('部署配置响应无效')
+}
+export function parseDeploymentSource(value: unknown): WebsiteSource {
+  const row = asObject(value, '项目来源响应无效')
+  if (typeof row.id !== 'string' || typeof row.name !== 'string' || typeof row.createdAt !== 'string' || typeof row.expiresAt !== 'string' || !['preparing', 'ready', 'failed', 'interrupted'].includes(String(row.state)) || !['source', 'artifact'].includes(String(row.mode)) || !['archive', 'git'].includes(String(row.type))) throw new Error('项目来源响应无效')
+  if (row.report !== undefined) {
+    const report = asObject(row.report, '项目识别报告无效')
+    if (!Array.isArray(report.candidates) || !deploymentStrings(report.warnings)) throw new Error('项目识别报告无效')
+    for (const value of report.candidates) {
+      const candidate = asObject(value, '项目识别候选无效')
+      if (typeof candidate.id !== 'string' || typeof candidate.directory !== 'string' || !WEBSITE_PROJECT_KINDS.includes(candidate.kind as WebsiteProjectKind) || !['javac', 'maven', 'gradle', 'npm', 'pnpm', 'yarn', 'bun', 'go', 'pip', 'uv', 'poetry', 'static', 'artifact'].includes(String(candidate.tool)) || typeof candidate.wrapper !== 'boolean' || typeof candidate.suggestedCommand !== 'string') throw new Error('项目识别候选无效')
+      for (const key of ['entries', 'testSteps', 'buildSteps', 'artifacts', 'warnings']) if (!deploymentStrings(candidate[key])) throw new Error('项目识别候选无效')
+    }
+  } else if (row.state === 'ready') throw new Error('项目识别报告无效')
+  return row as WebsiteSource
+}
+export function parseDeploymentTask(value: unknown): WebsiteDeploymentTask {
+  const row = asObject(value, '部署任务响应无效')
+  if (typeof row.id !== 'string' || typeof row.name !== 'string' || typeof row.sourceId !== 'string' || typeof row.stage !== 'string' || typeof row.createdAt !== 'string' || typeof row.updatedAt !== 'string' || !['queued', 'building', 'awaiting-config', 'publishing', 'succeeded', 'failed', 'cancelled', 'interrupted'].includes(String(row.state)) || !['pending', 'passed', 'failed', 'absent', 'skipped'].includes(String(row.testResult))) throw new Error('部署任务响应无效')
+  validateDeploymentConfig(row.config)
+  if (row.artifacts !== undefined && !deploymentStrings(row.artifacts)) throw new Error('部署产物响应无效')
+  return row as WebsiteDeploymentTask
 }

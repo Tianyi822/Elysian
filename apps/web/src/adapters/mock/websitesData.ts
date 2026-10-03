@@ -1,4 +1,4 @@
-import type { WebsiteAccessInput, WebsiteProject, WebsiteProjectCreateInput, WebsiteProjectUpdateInput } from '@elysian/contracts'
+import type { WebsiteBuildConfig, WebsiteAccessInput, WebsiteProject, WebsiteProjectCreateInput, WebsiteProjectUpdateInput } from '@elysian/contracts'
 import { isValidWebsiteDomain, isValidWebsitePort, isValidWebsiteProjectName, websiteDefaultDeployCommand, websiteProjectRootDir, websiteProjectUsesRuntime, websiteRuntimeImageRef } from '@elysian/contracts'
 import { MOCK_WEBSITE_RUNTIME_REPORT } from './websiteRuntimeCatalog'
 
@@ -25,23 +25,25 @@ function metadata(access: WebsiteAccessInput): WebsiteProject['certificate'] {
   return { issuer: '演示证书', notAfter: '2027-09-30T00:00:00.000Z', fingerprint256: '演示指纹', applied: true }
 }
 
-export function addWebsiteProject(kind: WebsiteProject['kind'], input: WebsiteProjectCreateInput): WebsiteProject {
+export function addWebsiteProject(kind: WebsiteProject['kind'], input: WebsiteProjectCreateInput, deploymentConfig?: WebsiteBuildConfig): WebsiteProject {
   const name = input.name.trim()
   if (!isValidWebsiteProjectName(name)) throw new Error('项目名称需为 1-64 个字符')
   if (!isValidWebsitePort(input.port)) throw new Error('端口需为 1-65535 的整数')
   if (projects.some((project) => project.name === name)) throw new Error(`项目已存在：${name}`)
   if (projects.some((project) => project.port === input.port)) throw new Error(`宿主端口已被站点占用：${input.port}`)
-  const runtimeVersion = websiteProjectUsesRuntime(kind) ? input.runtimeVersion?.trim() ?? null : null
-  if (websiteProjectUsesRuntime(kind) && !websiteRuntimeImageRef(kind, runtimeVersion, MOCK_WEBSITE_RUNTIME_REPORT.catalog)) throw new Error('请选择正式运行时版本')
+  const staticTarget = deploymentConfig?.target === 'static'
+  const runtimeVersion = !staticTarget && websiteProjectUsesRuntime(kind) ? input.runtimeVersion?.trim() ?? null : null
+  if (!staticTarget && websiteProjectUsesRuntime(kind) && !websiteRuntimeImageRef(kind, runtimeVersion, MOCK_WEBSITE_RUNTIME_REPORT.catalog)) throw new Error('请选择正式运行时版本')
   const access = input.access
   const domain = access.mode === 'domain' ? access.domain.trim().toLowerCase() : null
   if (domain && !isValidWebsiteDomain(domain)) throw new Error('域名无效')
   if (domain && projects.some((project) => project.domain === domain)) throw new Error(`域名已被绑定：${domain}`)
   const certificate = metadata(access)
-  const command = kind === 'html' ? websiteDefaultDeployCommand(kind) : input.command?.trim()
+  const command = kind === 'html' || staticTarget ? websiteDefaultDeployCommand('html') : input.command?.trim()
   if (!command) throw new Error('请填写容器启动命令')
   const id = `website-${kind}-${name}`
   const project: WebsiteProject = {
+    ...(deploymentConfig ? { deploymentTarget: deploymentConfig.target, buildRuntimeVersion: deploymentConfig.buildVersion } : {}),
     id, kind, name, pid: null, containerId: seedContainerId(id), port: input.port,
     runtimeVersion, rootDir: websiteProjectRootDir(name), runState: 'stopped',
     accessMode: access.mode, domain, routeApplied: domain !== null, certificate,
@@ -92,4 +94,8 @@ export function getWebsiteLogs(projectId: string): readonly string[] {
   return project.runState === 'running'
     ? [`[${project.name}] 容器运行中`, `监听容器端口 ${project.kind === 'html' ? 80 : project.port}`]
     : [`[${project.name}] 容器已停止`]
+}
+
+export function applyWebsiteDeploymentConfig(projectId: string, config: WebsiteBuildConfig): void {
+  projects = projects.map((project) => project.id === projectId ? { ...project, deploymentTarget: config.target, buildRuntimeVersion: config.buildVersion, runtimeVersion: config.target === 'static' ? null : config.runtimeVersion ?? null, deployCommand: config.target === 'static' ? websiteDefaultDeployCommand('html') : config.command } : project)
 }
