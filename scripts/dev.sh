@@ -14,7 +14,6 @@
 set -eo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-GO_DEV_DIR="$ROOT/apps/server-go"
 
 die() { echo "dev.sh: $1" >&2; exit 1; }
 
@@ -25,12 +24,29 @@ if [ -f "$ROOT/.env" ]; then
   ENVARGS=(--env-file "$ROOT/.env")
 fi
 
+web_compose() { docker compose "${ENVARGS[@]}" -f "$ROOT/docker-compose.yml" "$@"; }
+go_compose() { docker compose "${ENVARGS[@]}" -p elysian-go-dev -f "$ROOT/apps/server-go/docker-compose.go-dev.yml" "$@"; }
+
+# 容器 Up 仅说明入口进程运行，Go 仍可能在下载模块或编译。
+# 从 web 容器探测同源 API，把 Vite、共享网络和 Go 后端一起纳入就绪判断。
+wait_ready() {
+  local deadline=$((SECONDS + 180))
+  echo "等待前端与 Go API 就绪（首次编译可能需要几分钟）…"
+  until web_compose exec -T web curl -fsS --max-time 2 http://127.0.0.1:48100/api/health 2>/dev/null | grep -q '"ok":true'; do
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      web_compose logs --tail 20 web >&2 || true
+      go_compose logs --tail 20 go >&2 || true
+      die "前端或 Go API 在 180 秒内未就绪，请检查上述容器日志后重试。"
+    fi
+    sleep 1
+  done
+}
+
 case "${1:-}" in
   up)
-    cd "$ROOT"
-    docker compose "${ENVARGS[@]}" up -d --build
-    cd "$GO_DEV_DIR"
-    docker compose "${ENVARGS[@]}" up -d --build
+    web_compose up -d --build
+    go_compose up -d --build
+    wait_ready
     echo
     echo "开发环境已就绪："
     echo "  面板    http://127.0.0.1:48100"
@@ -40,14 +56,13 @@ case "${1:-}" in
     fi
     ;;
   down)
-    cd "$GO_DEV_DIR"
-    docker compose "${ENVARGS[@]}" down
-    cd "$ROOT"
-    docker compose "${ENVARGS[@]}" down
+    go_compose down
+    web_compose down
     ;;
   restart-go)
-    cd "$GO_DEV_DIR"
-    docker compose "${ENVARGS[@]}" up -d --force-recreate go
+    go_compose up -d --force-recreate go
+    wait_ready
+    echo "Go API 已重启，面板入口 http://127.0.0.1:48100"
     ;;
   *)
     die "用法：bash scripts/dev.sh up | down | restart-go"
