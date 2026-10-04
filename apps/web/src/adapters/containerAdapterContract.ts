@@ -118,5 +118,73 @@ export function runContainerAdapterContract(make: () => ContainerAdapter): void 
       expect(first.digest).toBe(second.digest)
       expect(first.sizeMb).toBe(second.sizeMb)
     })
+
+    it('createApp 建出带绝对目录的工作区，listApps 能读到', async () => {
+      const adapter = make()
+      const created = await adapter.createApp({ slug: 'grafana', displayName: '监控栈' })
+      expect(created.slug).toBe('grafana')
+      expect(created.directory.startsWith('/')).toBe(true)
+      const apps = await adapter.listApps()
+      expect(apps.map((app) => app.slug)).toContain('grafana')
+    })
+
+    it('createApp 拒绝非法标识与重名，错误是中文', async () => {
+      const adapter = make()
+      await expect(adapter.createApp({ slug: '../etc', displayName: 'x' })).rejects.toThrow('工作区名称只能由')
+      await adapter.createApp({ slug: 'app', displayName: '应用' })
+      await expect(adapter.createApp({ slug: 'app', displayName: '再来' })).rejects.toThrow('工作区名称已存在')
+    })
+
+    it('上传、读取、改写、删除文件按相对路径落实', async () => {
+      const adapter = make()
+      await adapter.createApp({ slug: 'app', displayName: '应用' })
+      const uploaded = await adapter.uploadAppFile('app', 'config/app.yml', new Blob(['key: value\n']))
+      expect(uploaded.path).toBe('config/app.yml')
+      expect((await adapter.listApps())[0]!.files.map((file) => file.path)).toContain('config/app.yml')
+
+      const read = await adapter.readAppContent('app', 'config/app.yml')
+      expect(read.content).toContain('key: value')
+
+      await adapter.writeAppContent('app', 'config/app.yml', 'key: changed\n')
+      expect((await adapter.readAppContent('app', 'config/app.yml')).content).toContain('changed')
+
+      await adapter.removeAppFile('app', 'config/app.yml')
+      await expect(adapter.readAppContent('app', 'config/app.yml')).rejects.toThrow('工作区内没有该文件')
+    })
+
+    it('上传与读取都拒绝穿越工作区的路径', async () => {
+      const adapter = make()
+      await adapter.createApp({ slug: 'app', displayName: '应用' })
+      await expect(adapter.uploadAppFile('app', '../../etc/passwd', new Blob(['x']))).rejects.toThrow('. 与 .. 段')
+      await expect(adapter.uploadAppFile('app', '/etc/passwd', new Blob(['x']))).rejects.toThrow('必须是相对路径')
+      await expect(adapter.readAppContent('app', '../secret')).rejects.toThrow('. 与 .. 段')
+    })
+
+    it('checkCompose 报出缺失与已存在的引用，并给出判定范围', async () => {
+      const adapter = make()
+      await adapter.createApp({ slug: 'app', displayName: '应用' })
+      await adapter.uploadAppFile('app', 'real.env', new Blob(['A=1\n']))
+      await adapter.uploadAppFile(
+        'app',
+        'compose.yml',
+        new Blob(['services:\n  app:\n    env_file:\n      - ./real.env\n      - ./missing.env\n      - /abs/path\n']),
+      )
+      const checked = await adapter.checkCompose('app', 'compose.yml')
+      expect(checked.coverage).toBeTruthy()
+      expect(checked.references.map((reference) => [reference.path, reference.exists])).toEqual([
+        ['real.env', true],
+        ['missing.env', false],
+      ])
+      expect(checked.undetermined.join('\n')).toContain('/abs/path')
+    })
+
+    it('removeApp 连文件一起消失', async () => {
+      const adapter = make()
+      await adapter.createApp({ slug: 'app', displayName: '应用' })
+      await adapter.uploadAppFile('app', 'a.txt', new Blob(['a']))
+      await adapter.removeApp('app')
+      expect(await adapter.listApps()).toHaveLength(0)
+      await expect(adapter.removeApp('app')).rejects.toThrow('容器应用工作区不存在')
+    })
   })
 }

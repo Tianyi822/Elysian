@@ -26,6 +26,7 @@ import (
 
 	"elysian/server/internal/auth"
 	"elysian/server/internal/config"
+	"elysian/server/internal/containerapps"
 	"elysian/server/internal/database"
 	"elysian/server/internal/docker"
 	"elysian/server/internal/files"
@@ -159,6 +160,11 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps) (htt
 		}))
 		api.Mount(shared.LogsMount, logs.NewRouter(logs.Deps{Service: appLogs}))
 		api.Mount(shared.DockerMount, stack.Router)
+		// 容器应用工作区：随容器上传的配置文件的存放、内容读写与 compose 路径自检。
+		// 只落盘与回显路径，不执行 compose、不做 build（ADR-0020）。
+		api.Mount(shared.ContainerAppsMount, containerapps.Handler{
+			Registry: &containerapps.Registry{MountRoot: cfg.MountRoot},
+		}.Router())
 		api.Mount(shared.DatabaseMount, database.NewRouter(database.Deps{
 			EngineAvailable: stack.Ready,
 			SqliteAvailable: cfg.HostOpsAvailable(),

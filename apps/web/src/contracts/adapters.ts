@@ -1,9 +1,12 @@
-import type { PanelInfo, PanelPorts, PanelTask, PanelTaskReport, PanelUpdate } from '@elysian/contracts'
+import type { PanelCommit, PanelInfo, PanelPorts, PanelTask, PanelTaskReport, PanelUpdate } from '@elysian/contracts'
 import type { WebsiteSource, WebsiteGitSourceInput, WebsiteDeploymentInput, WebsiteDeploymentTask, WebsiteBuildConfig, WebsiteDeploymentLogs } from '@elysian/contracts'
 import type {
   Container,
   ContainerAction,
+  ContainerApp,
+  ContainerAppFile,
   ContainerCreateInput,
+  ComposeCheckResult,
   ContainerImage,
   ImagePullProgress,
   DatabaseEngine,
@@ -134,6 +137,25 @@ export interface ContainerAdapter {
   requestAction(containerId: string, action: ContainerAction): Promise<Container>
   /** 创建容器（mock）：追加内存数据集并推 container/created。 */
   create(input: ContainerCreateInput): Promise<Container>
+  /**
+   * 容器应用工作区：随容器上传的配置文件的存放、内容读写与 compose 路径自检。
+   * 面板只落盘并回显真实路径，不执行 docker compose、不做 docker build（ADR-0020）。
+   */
+  /** 列全部工作区（含当场扫出的文件清单）。 */
+  listApps(): Promise<readonly ContainerApp[]>
+  /** 建工作区：标识与展示名按服务端同一规则校验，重名回中文错误。 */
+  createApp(input: { slug: string; displayName: string }): Promise<ContainerApp>
+  /** 删工作区：连目录一起删，调用方必须已就绝对路径取得二次确认。 */
+  removeApp(slug: string): Promise<void>
+  /** 上传单个文件（覆盖同名）；file 是浏览器 File 对象或等价的可读流来源。 */
+  uploadAppFile(slug: string, path: string, file: Blob): Promise<ContainerAppFile>
+  removeAppFile(slug: string, path: string): Promise<void>
+  /** 读文本文件全文；非 UTF-8 或超限回中文错误。 */
+  readAppContent(slug: string, path: string): Promise<{ path: string; content: string; file: ContainerAppFile }>
+  /** 覆盖写文本文件。 */
+  writeAppContent(slug: string, path: string, content: string): Promise<ContainerAppFile>
+  /** 对某个 compose 文件做引用路径自检；结果是保守扫描，coverage 字段说明范围。 */
+  checkCompose(slug: string, path: string): Promise<ComposeCheckResult>
   /** 删除镜像（mock）：仅允许删除未被引用的镜像，改写内存数据集。 */
   removeImage(imageId: string): Promise<void>
   /** 拉取镜像（mock）：确定性生成摘要与体积后追加内存数据集，同名同标签视为已存在；registry 仅记录拉取源，不产生真实数据流。 */
@@ -448,6 +470,8 @@ export interface DependenciesAdapter {
 export interface PanelAdapter {
  info(): Promise<PanelInfo>
  checkUpdate(): Promise<PanelUpdate>
+ /** 更新日志：列默认分支最近的提交，只读上游，不改动面板状态。 */
+ commits(): Promise<PanelCommit[]>
  ports(value: PanelPorts, requestId: string): Promise<PanelTask>
  restart(requestId: string): Promise<PanelTask>
  update(targetCommit: string, requestId: string): Promise<PanelTask>

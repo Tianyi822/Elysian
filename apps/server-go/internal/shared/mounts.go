@@ -8,6 +8,8 @@ const (
 	AuthMount = "/api/auth"
 	// DockerMount 容器管理片挂载点。
 	DockerMount = "/api/docker"
+	// ContainerAppsMount 容器应用工作区片挂载点（随容器上传的配置文件的存放与自检）。
+	ContainerAppsMount = "/api/container-apps"
 	// DatabaseMount 数据库片挂载点。
 	DatabaseMount = "/api/databases"
 	// FilesMount 文件管理片挂载点。

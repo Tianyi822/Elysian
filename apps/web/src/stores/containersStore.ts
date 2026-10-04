@@ -184,7 +184,7 @@ export const useContainersStore = create<{
   /** 镜像手动刷新的忙碌标记（loading 期间锁按钮）；结果经全局通知组件反馈，页面不另写反馈条。 */
   imageRefreshStatus: 'idle' | 'loading'
   samples: Readonly<Record<string, { cpuPercent: number; memMb: number }>>
-  view: 'grid' | 'images'
+  view: 'grid' | 'images' | 'apps'
   statusFilter: ContainerStatus | 'all'
   search: string
   detailContainerId?: string
@@ -197,7 +197,7 @@ export const useContainersStore = create<{
   load: (gateway: ElysianGateway) => Promise<void>
   refreshImages: (gateway: ElysianGateway, options?: { notify?: boolean }) => Promise<void>
   setLiveStatus: (status: 'live' | 'connecting') => void
-  setView: (view: 'grid' | 'images') => void
+  setView: (view: 'grid' | 'images' | 'apps') => void
   setStatusFilter: (filter: ContainerStatus | 'all') => void
   setSearch: (value: string) => void
   openCreate: () => void
@@ -223,7 +223,7 @@ export const useContainersStore = create<{
   images: [],
   imageRefreshStatus: 'idle',
   samples: {},
-  view: resolveViewTab(window.localStorage, 'containers', ['grid', 'images'] as const, 'grid'),
+  view: resolveViewTab(window.localStorage, 'containers', ['grid', 'images', 'apps'] as const, 'grid'),
   statusFilter: 'all',
   search: '',
   busyActions: [],

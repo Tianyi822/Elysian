@@ -24,6 +24,7 @@ export * from './core/context-services.ts'
 export * from './dashboard/domain.ts'
 // 资源页面
 export * from './container/containers.ts'
+export * from './container/containerApps.ts'
 export * from './container/shellWords.ts'
 export * from './container/containerFields.ts'
 export * from './container/imageReference.ts'

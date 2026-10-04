@@ -2,7 +2,10 @@ import { withRequestDeadline } from './requestDeadline'
 import type {
   Container,
   ContainerAction,
+  ContainerApp,
+  ContainerAppFile,
   ContainerCreateInput,
+  ComposeCheckResult,
   ContainerImage,
   ImagePullProgress,
   ContainerStatus,
@@ -18,6 +21,9 @@ import { createContainerTerminalWsAdapter } from './containerTerminalWsAdapter'
 import { reportUnauthorized, reportUnauthorizedStatus } from './unauthorized'
 import type { EventSourceFactory, EventSourceLike } from '../sse/eventsAdapter'
 import { parseElysianEvent, SseFrameParser } from '../sse/parse'
+
+/** 工作区上传/编辑的时限：长请求用自己的时限，不套 60 秒普通写超时（AGENTS.md 时限约定）。 */
+const APP_UPLOAD_TIMEOUT = 180_000
 
 const CONTAINER_STREAM_EVENT_NAMES = [
   'container/sample',
@@ -435,6 +441,78 @@ async function readErrorDetail(response: Response): Promise<string | null> {
     .catch(() => null)
 }
 
+/** 工作区与 compose 自检的响应解析：字段缺失或类型不符一律中文报错，不猜默认值。 */
+function asRecord(value: unknown, message: string): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error(message)
+  return value as Record<string, unknown>
+}
+
+function asString(value: unknown, message: string): string {
+  if (typeof value !== 'string') throw new Error(message)
+  return value
+}
+
+function parseContainerAppFile(value: unknown): ContainerAppFile {
+  const row = asRecord(value, '工作区文件响应无效')
+  if (typeof row.size !== 'number' || typeof row.text !== 'boolean') throw new Error('工作区文件响应无效')
+  return {
+    path: asString(row.path, '工作区文件响应无效'),
+    size: row.size,
+    modifiedAt: asString(row.modifiedAt, '工作区文件响应无效'),
+    text: row.text,
+  }
+}
+
+function parseContainerApp(value: unknown): ContainerApp {
+  const row = asRecord(value, '容器应用工作区响应无效')
+  const files = row.files
+  if (!Array.isArray(files)) throw new Error('容器应用工作区响应无效')
+  return {
+    slug: asString(row.slug, '容器应用工作区响应无效'),
+    displayName: asString(row.displayName, '容器应用工作区响应无效'),
+    createdAt: asString(row.createdAt, '容器应用工作区响应无效'),
+    directory: asString(row.directory, '容器应用工作区响应无效'),
+    files: files.map(parseContainerAppFile),
+  }
+}
+
+function parseComposeCheck(value: unknown): ComposeCheckResult {
+  const row = asRecord(value, 'compose 自检响应无效')
+  if (!Array.isArray(row.references) || !Array.isArray(row.undetermined)) throw new Error('compose 自检响应无效')
+  return {
+    composePath: asString(row.composePath, 'compose 自检响应无效'),
+    composeDir: asString(row.composeDir, 'compose 自检响应无效'),
+    references: row.references.map((item) => {
+      const reference = asRecord(item, 'compose 自检响应无效')
+      if (typeof reference.exists !== 'boolean' || typeof reference.line !== 'number') throw new Error('compose 自检响应无效')
+      const kind = asString(reference.kind, 'compose 自检响应无效')
+      if (kind !== 'volume' && kind !== 'env_file') throw new Error('compose 自检引用类型无效')
+      return {
+        raw: asString(reference.raw, 'compose 自检响应无效'),
+        kind,
+        line: reference.line,
+        path: asString(reference.path, 'compose 自检响应无效'),
+        scope: asString(reference.scope, 'compose 自检响应无效'),
+        exists: reference.exists,
+      }
+    }),
+    undetermined: row.undetermined.map((item) => asString(item, 'compose 自检响应无效')),
+    // 判定范围说明缺失即视为响应无效：界面必须把它显示出来，不能让人误当全量解析。
+    coverage: asString(row.coverage, 'compose 自检响应缺少判定范围说明'),
+  }
+}
+
+/**
+ * 工作区端点挂在独立片 /api/container-apps 下（Go 侧 shared.ContainerAppsMount），
+ * 不在 /api/docker 里：容器引擎访问与应用文件是两件事，各自有守卫与体积上限。
+ */
+export const CONTAINER_APPS_BASE_URL = '/api/container-apps'
+
+function appPath(slug: string, sub: string, path?: string): string {
+  const query = path === undefined ? '' : `?path=${encodeURIComponent(path)}`
+  return `${CONTAINER_APPS_BASE_URL}/${encodeURIComponent(slug)}${sub}${query}`
+}
+
 function requestJson(url: string, init?: RequestInit): Promise<unknown> {
   return withRequestDeadline(init, (bounded) => readJson(url, bounded))
 }
@@ -610,6 +688,78 @@ export function createHttpContainersAdapter(
         }),
       )
     },
+    /**
+     * 容器应用工作区（挂 /api/container-apps）。上传与编辑走各自时限：
+     * 配置文件虽小，但一次 32 MiB 的上传不该被 60 秒写超时掐断成结果未确认。
+     */
+    async listApps() {
+      const body = asRecord(await requestJson(CONTAINER_APPS_BASE_URL), '容器应用工作区响应无效')
+      if (!Array.isArray(body.apps)) throw new Error('容器应用工作区响应无效')
+      return body.apps.map(parseContainerApp)
+    },
+
+    async createApp(input) {
+      return parseContainerApp(
+        await requestJson(CONTAINER_APPS_BASE_URL, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(input),
+        }),
+      )
+    },
+
+    async removeApp(slug) {
+      await requestNoContent(appPath(slug, '/'), { method: 'DELETE' })
+    },
+
+    async uploadAppFile(slug, path, file) {
+      return parseContainerAppFile(
+        await withRequestDeadline(
+          {
+            method: 'PUT',
+            headers: { 'content-type': 'application/octet-stream' },
+            body: file,
+          },
+          (bounded) => readJson(appPath(slug, '/files', path), bounded),
+          APP_UPLOAD_TIMEOUT,
+        ),
+      )
+    },
+
+    async removeAppFile(slug, path) {
+      await requestNoContent(appPath(slug, '/files', path), { method: 'DELETE' })
+    },
+
+    async readAppContent(slug, path) {
+      const body = asRecord(
+        await requestJson(appPath(slug, '/content', path)),
+        '工作区文件内容响应无效',
+      )
+      return {
+        path: asString(body.path, '工作区文件内容响应无效'),
+        content: asString(body.content, '工作区文件内容响应无效'),
+        file: parseContainerAppFile(body.file),
+      }
+    },
+
+    async writeAppContent(slug, path, content) {
+      return parseContainerAppFile(
+        await withRequestDeadline(
+          {
+            method: 'PUT',
+            headers: { 'content-type': 'text/plain' },
+            body: content,
+          },
+          (bounded) => readJson(appPath(slug, '/content', path), bounded),
+          APP_UPLOAD_TIMEOUT,
+        ),
+      )
+    },
+
+    async checkCompose(slug, path) {
+      return parseComposeCheck(await requestJson(appPath(slug, '/compose-check', path)))
+    },
+
     async removeImage(imageId) {
       await requestNoContent(`${baseUrl}/images/${encodeURIComponent(imageId)}`, {
         method: 'DELETE',

@@ -59,7 +59,9 @@ type Config struct {
 	DockerSocket string
 	// CaddySocket 是 Caddy admin socket 路径（websites/platform 共用）。
 	CaddySocket string
-	// MountRoot 是绑定挂载根（docker 域读取；files 域不读此变量）。
+	// MountRoot 是绑定挂载根（docker 与 containerapps 域读取；files 域不读此变量）。
+	// containerapps 的工作区实体落在 <MountRoot>/elysian/apps 下，因为只有这一侧的
+	// 路径在宿主、面板与 Docker daemon 三方是同一字符串。
 	MountRoot string
 	// ListenHost 是 HTTP 监听地址（仅 go-dev 容器设 0.0.0.0，安全由「端口只发布
 	// 宿主回环」保证）。

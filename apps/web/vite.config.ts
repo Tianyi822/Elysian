@@ -42,6 +42,7 @@ const apiProxy = {
   '/api/files': { target: apiOrigin },
   '/api/logs': { target: apiOrigin },
   '/api/docker': { target: apiOrigin, ws: true },
+  '/api/container-apps': { target: apiOrigin },
   '/api/databases': { target: apiOrigin, ws: true },
   '/api/websites': { target: apiOrigin },
   '/api/terminals': { target: apiOrigin, ws: true },

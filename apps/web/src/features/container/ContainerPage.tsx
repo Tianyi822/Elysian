@@ -1,14 +1,17 @@
 import { useEffect, useState } from 'react'
-import { Download, RotateCw, Search } from '../../components/icons'
+import { Download, Search } from '../../components/icons'
 import type { ContainerStatus } from '@elysian/contracts'
 import { CONTAINER_STATUS_LABELS } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
+import { RefreshButton } from '../../components/RefreshState'
+import { CTL_CHIP, CTL_FIELD, CTL_PRIMARY, CTL_TOOLBAR } from '../../components/formControl'
 import { DependencyGuideDialogs } from '../platform/DependencyGuideDialogs'
 import { CONTAINER_LIVE_RECONNECT_MESSAGE } from './containerCopy'
 import { useContainersStore } from '../../stores/containersStore'
 import { useDependencyGuideStore } from '../../stores/dependencyGuideStore'
+import { ContainerAppsPanel } from './ContainerAppsPanel'
 import { ContainerCard } from './ContainerCard'
 import { ContainerCreateDialog } from './ContainerCreateDialog'
 import { ContainerDetailSheet } from './ContainerDetailSheet'
@@ -86,7 +89,7 @@ export function ContainerPage() {
         </p>
       ) : null}
       {view === 'grid' ? (
-        <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-line bg-surface px-4 py-3">
+        <div className={`${CTL_TOOLBAR} mb-4 flex flex-wrap items-center gap-3 panel-surface px-4 py-3`}>
           <div role="group" aria-label="状态筛选" className="flex flex-wrap basis-full gap-1 lg:basis-auto">
             {STATUS_FILTERS.map((filter) => (
               <button
@@ -94,12 +97,7 @@ export function ContainerPage() {
                 type="button"
                 aria-pressed={statusFilter === filter.value}
                 onClick={() => setStatusFilter(filter.value)}
-                className={[
-                  'rounded-lg border px-2.5 py-1 text-xs transition-colors',
-                  statusFilter === filter.value
-                    ? 'border-accent/50 bg-accent/10 font-medium text-accent'
-                    : 'border-line text-fg-muted hover:bg-surface-raised hover:text-fg',
-                ].join(' ')}
+                className={CTL_CHIP}
               >
                 {filter.label}
               </button>
@@ -119,38 +117,38 @@ export function ContainerPage() {
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="搜索容器名称"
-              className="w-full rounded-lg border border-line bg-surface-raised py-1.5 pl-8 pr-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle"
+              className={`${CTL_FIELD} pl-8`}
             />
           </div>
           <button
             type="button"
             onClick={() => openCreate()}
-            className="ml-auto inline-flex items-center rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle"
+            className={`${CTL_PRIMARY} ml-auto`}
           >
             创建容器
           </button>
         </div>
       ) : null}
 
-      {view === 'images' ? (
+      {view === 'apps' ? (
+        <ContainerAppsPanel />
+      ) : view === 'images' ? (
         <>
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-surface px-4 py-3">
+          <div className={`${CTL_TOOLBAR} mb-4 flex flex-wrap items-center justify-between gap-3 panel-surface px-4 py-3`}>
             <p className="text-xs text-fg-muted">共 {images.length} 个镜像</p>
             <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => void refreshImages(gateway)}
-                disabled={imageRefreshStatus === 'loading'}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <RotateCw aria-hidden size={14} className={imageRefreshStatus === 'loading' ? 'animate-spin' : undefined} />刷新镜像
-              </button>
-              <button type="button" onClick={() => setPullOpen(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle">
+              <RefreshButton
+                onPress={() => void refreshImages(gateway)}
+                busy={imageRefreshStatus === 'loading'}
+                label="刷新镜像"
+                formControl
+              />
+              <button type="button" onClick={() => setPullOpen(true)} className={CTL_PRIMARY}>
                 <Download aria-hidden size={14} />拉取镜像
               </button>
             </div>
           </div>
-          <ImageTable images={images} containers={containers} />
+          <ImageTable images={images} containers={containers} busy={imageRefreshStatus === 'loading'} />
         </>
       ) : filtered.length === 0 ? (
         <EmptyState
@@ -164,7 +162,7 @@ export function ContainerPage() {
           }
         />
       ) : (
-        <ul aria-label="容器列表" className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+        <ul aria-label="容器列表" className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,18rem),1fr))] gap-4">
           {filtered.map((container) => (
             <li key={container.id} aria-label={container.name} className="h-full">
               <ContainerCard container={container} />

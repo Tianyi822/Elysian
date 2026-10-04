@@ -37,6 +37,15 @@ function pageGateway(overrides: Partial<ElysianGateway['containers']> = {}): Ely
       pullImage: (input: { name: string; tag: string }) => base.containers.pullImage(input),
       watchLive: (handlers) => base.containers.watchLive(handlers),
       requestAction: async (id: string) => CONTAINERS.find((c) => c.id === id)!,
+      // 应用工作区直通 mock 实现：页面测试不覆盖它时也该拿到可用的演示行为。
+      listApps: () => base.containers.listApps(),
+      createApp: (input) => base.containers.createApp(input),
+      removeApp: (slug) => base.containers.removeApp(slug),
+      uploadAppFile: (slug, path, file) => base.containers.uploadAppFile(slug, path, file),
+      removeAppFile: (slug, path) => base.containers.removeAppFile(slug, path),
+      readAppContent: (slug, path) => base.containers.readAppContent(slug, path),
+      writeAppContent: (slug, path, content) => base.containers.writeAppContent(slug, path, content),
+      checkCompose: (slug, path) => base.containers.checkCompose(slug, path),
       ...overrides,
     },
   }
@@ -185,7 +194,7 @@ describe('镜像视图', () => {
     renderApp('/docker', { gateway: pageGateway() })
     await screen.findByRole('list', { name: '容器列表' })
     expect(
-      within(screen.getByRole('banner')).getByRole('group', { name: '视图切换' }),
+      within(screen.getByRole('main')).getByRole('group', { name: '视图切换' }),
     ).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '镜像' }))
@@ -214,7 +223,7 @@ describe('镜像视图', () => {
 
     expect(await screen.findByRole('table', { name: '镜像列表' })).toBeInTheDocument()
     expect(
-      within(screen.getByRole('banner')).getByRole('button', { name: '镜像' }),
+      within(screen.getByRole('main')).getByRole('button', { name: '镜像' }),
     ).toHaveAttribute('aria-pressed', 'true')
   })
 
@@ -405,7 +414,7 @@ describe('容器详情面板', () => {
     const headings = within(dialog).getAllByRole('heading', { level: 3 })
     expect(headings).toHaveLength(7)
     for (const heading of headings) {
-      expect(heading.closest('section')).toHaveClass('rounded-xl', 'border', 'border-line')
+      expect(heading.closest('section')).toHaveClass('panel-surface')
     }
   })
 

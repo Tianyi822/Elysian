@@ -4,10 +4,19 @@ import {
   effectivePortHostIp,
   hostPortBindingsOverlap,
 } from '../../features/container/containerCreateForm'
+import {
+  checkComposeReferences,
+  normalizeWorkspaceRelativePath,
+  validateContainerAppDisplayName,
+  validateContainerAppSlug,
+} from '@elysian/contracts'
 import type {
   Container,
   ContainerAction,
+  ContainerApp,
+  ContainerAppFile,
   ContainerCreateInput,
+  ComposeCheckResult,
   ContainerImage,
   ImagePullProgress,
   DependencyProbeReport,
@@ -432,6 +441,11 @@ type MockContainerTerminalSession = {
 export class MockContainerAdapter implements ContainerAdapter {
   private nextTerminalId = 1
   private readonly terminalSessions = new Map<string, MockContainerTerminalSession>()
+  /**
+   * 演示用工作区：只存内存，刷新即回空（AGENTS.md「演示状态只存在内存」）。
+   * 目录形状与真实侧一致（<mountRoot>/apps/<slug>），好让回显路径的样式在演示下也成立。
+   */
+  private readonly demoApps = new Map<string, { displayName: string; createdAt: string; files: Map<string, string> }>()
 
   constructor(
     private readonly dataset: () => MockDataset,
@@ -594,6 +608,123 @@ export class MockContainerAdapter implements ContainerAdapter {
     dataset.containers.push(container)
     this.hooks.onCreate(container.id)
     return { ...container }
+  }
+
+  /** 演示工作区的绝对目录形状，与真实侧 <mountRoot>/apps/<slug> 一致。 */
+  private demoAppDir(slug: string): string {
+    return `/srv/elysian/apps/${slug}`
+  }
+
+  private requireDemoApp(slug: string) {
+    const app = this.demoApps.get(slug)
+    if (!app) throw new Error(`容器应用工作区不存在：${slug}`)
+    return app
+  }
+
+  private demoFileEntries(files: Map<string, string>): readonly ContainerAppFile[] {
+    return [...files.entries()]
+      .map(([path, content]) => ({
+        path,
+        size: new TextEncoder().encode(content).length,
+        modifiedAt: new Date().toISOString(),
+        text: !content.includes('\u0000'),
+      }))
+      .sort((left, right) => left.path.localeCompare(right.path))
+  }
+
+  async listApps(): Promise<readonly ContainerApp[]> {
+    return [...this.demoApps.entries()]
+      .map(([slug, app]) => ({
+        slug,
+        displayName: app.displayName,
+        createdAt: app.createdAt,
+        directory: this.demoAppDir(slug),
+        files: this.demoFileEntries(app.files),
+      }))
+      .sort((left, right) => left.slug.localeCompare(right.slug))
+  }
+
+  async createApp(input: { slug: string; displayName: string }): Promise<ContainerApp> {
+    const slugError = validateContainerAppSlug(input.slug)
+    if (slugError) throw new Error(slugError)
+    const nameError = validateContainerAppDisplayName(input.displayName)
+    if (nameError) throw new Error(nameError)
+    if (this.demoApps.has(input.slug)) throw new Error(`工作区名称已存在，请换一个：${input.slug}`)
+    const createdAt = new Date().toISOString()
+    this.demoApps.set(input.slug, {
+      displayName: input.displayName || input.slug,
+      createdAt,
+      files: new Map(),
+    })
+    return {
+      slug: input.slug,
+      displayName: input.displayName || input.slug,
+      createdAt,
+      directory: this.demoAppDir(input.slug),
+      files: [],
+    }
+  }
+
+  async removeApp(slug: string): Promise<void> {
+    this.requireDemoApp(slug)
+    this.demoApps.delete(slug)
+  }
+
+  async uploadAppFile(slug: string, path: string, file: Blob): Promise<ContainerAppFile> {
+    const app = this.requireDemoApp(slug)
+    const normalized = normalizeWorkspaceRelativePath(path)
+    const content = await file.text()
+    app.files.set(normalized, content)
+    return this.demoFileEntries(new Map([[normalized, content]]))[0]!
+  }
+
+  async removeAppFile(slug: string, path: string): Promise<void> {
+    const app = this.requireDemoApp(slug)
+    const normalized = normalizeWorkspaceRelativePath(path)
+    if (!app.files.delete(normalized)) throw new Error(`工作区内没有该文件：${normalized}`)
+  }
+
+  async readAppContent(slug: string, path: string): Promise<{ path: string; content: string; file: ContainerAppFile }> {
+    const app = this.requireDemoApp(slug)
+    const normalized = normalizeWorkspaceRelativePath(path)
+    const content = app.files.get(normalized)
+    if (content === undefined) throw new Error(`工作区内没有该文件：${normalized}`)
+    return {
+      path: normalized,
+      content,
+      file: this.demoFileEntries(new Map([[normalized, content]]))[0]!,
+    }
+  }
+
+  async writeAppContent(slug: string, path: string, content: string): Promise<ContainerAppFile> {
+    const app = this.requireDemoApp(slug)
+    const normalized = normalizeWorkspaceRelativePath(path)
+    if (content.includes('\u0000')) throw new Error('编辑内容必须是 UTF-8 文本且不含空字符')
+    app.files.set(normalized, content)
+    return this.demoFileEntries(new Map([[normalized, content]]))[0]!
+  }
+
+  /**
+   * 演示侧的 compose 自检：与 Go 侧同一套保守规则（只判 ./ 开头的相对引用与
+   * env_file，绝对路径/变量/锚点/build 一律列入未能判定）。两侧规则一致才不会
+   * 出现「演示看着对、真实环境给出另一套结论」。
+   */
+  async checkCompose(slug: string, path: string): Promise<ComposeCheckResult> {
+    const app = this.requireDemoApp(slug)
+    const normalized = normalizeWorkspaceRelativePath(path)
+    const content = app.files.get(normalized)
+    if (content === undefined) throw new Error(`工作区内没有该文件：${normalized}`)
+    return checkComposeReferences({
+      composePath: normalized,
+      composeDir: `${this.demoAppDir(slug)}/${normalized.split('/').slice(0, -1).join('/')}`.replace(/\/$/, ''),
+      content,
+      hasFile: (relative) => {
+        // 演示侧只有文件没有目录：引用指向目录时按「该前缀下有文件」判定存在。
+        if (app.files.has(relative)) return true
+        const prefix = relative.endsWith('/') ? relative : `${relative}/`
+        return [...app.files.keys()].some((candidate) => candidate.startsWith(prefix))
+      },
+    })
   }
 
   async removeImage(imageId: string): Promise<void> {
