@@ -233,7 +233,7 @@ describe('createHttpLogsAdapter 的请求接线', () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify(report), { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
     expect(await createHttpLogsAdapter().loginLogs()).toEqual(report)
-    expect(fetchMock).toHaveBeenCalledWith('/api/logs/login', undefined)
+    expect(fetchMock).toHaveBeenCalledWith('/api/logs/login', { signal: expect.any(AbortSignal) })
   })
 
   it('操作日志带筛选与翻页参数时拼进查询串，无 query 时 URL 不以 ? 结尾', async () => {

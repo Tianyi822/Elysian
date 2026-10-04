@@ -22,7 +22,7 @@ describe('部署 HTTP 契约', () => {
       const signal = new AbortController().signal
       await api.archive(file, 'source', signal)
       expect(fetcher.mock.calls[0]?.[0]).toBe('/api/websites/sources/archive?mode=source')
-      expect(fetcher.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ body: file, signal, headers: expect.objectContaining({ 'x-file-name': encodeURIComponent(file.name) }) }))
+      expect(fetcher.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ body: file, signal: expect.any(AbortSignal), headers: expect.objectContaining({ 'x-file-name': encodeURIComponent(file.name) }) }))
       await api.resume('task', config as Parameters<typeof api.resume>[1])
       expect(fetcher.mock.calls[1]?.[0]).toBe('/api/websites/deployments/task/resume')
     } finally { vi.unstubAllGlobals() }

@@ -1,3 +1,4 @@
+import { withRequestDeadline } from './requestDeadline'
 import type {
   LogClearReport,
   LogStorageStats,
@@ -252,7 +253,11 @@ function runtimeLogQueryString(query?: LogListQuery): string {
   return serialized ? `?${serialized}` : ''
 }
 
-async function requestJson(url: string, init?: RequestInit): Promise<unknown> {
+function requestJson(url: string, init?: RequestInit): Promise<unknown> {
+  return withRequestDeadline(init, (bounded) => readJson(url, bounded))
+}
+
+async function readJson(url: string, init?: RequestInit): Promise<unknown> {
   let response: Response
   try {
     response = await fetch(url, init)

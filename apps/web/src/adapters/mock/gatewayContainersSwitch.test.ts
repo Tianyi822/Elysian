@@ -25,7 +25,7 @@ describe('createMockGateway containers 可选片分流', () => {
     const gateway = createMockGateway({ eventStream: 'memory', containers: 'http' })
     expect(gateway.containers).not.toBeInstanceOf(MockContainerAdapter)
     await gateway.containers.list()
-    expect(fetchMock).toHaveBeenCalledWith('/api/docker/containers', undefined)
+    expect(fetchMock).toHaveBeenCalledWith('/api/docker/containers', { signal: expect.any(AbortSignal) })
     vi.unstubAllGlobals()
   })
 

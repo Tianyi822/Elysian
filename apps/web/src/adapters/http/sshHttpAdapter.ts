@@ -1,3 +1,4 @@
+import { withRequestDeadline } from './requestDeadline'
 import type {
   SshAuthMethods,
   SshAuthSettings,
@@ -216,7 +217,11 @@ export function parseSshLoginRecordsResponse(body: unknown): readonly SshLoginRe
   })
 }
 
-async function requestJson(url: string, init?: RequestInit): Promise<unknown> {
+function requestJson(url: string, init?: RequestInit): Promise<unknown> {
+  return withRequestDeadline(init, (bounded) => readJson(url, bounded))
+}
+
+async function readJson(url: string, init?: RequestInit): Promise<unknown> {
   let response: Response
   try {
     response = await fetch(url, init)

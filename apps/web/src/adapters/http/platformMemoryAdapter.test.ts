@@ -12,7 +12,7 @@ describe('fetchPlatformMemory', () => {
     )
     const signal = new AbortController().signal
     await expect(fetchPlatformMemory('/api/platform/memory', signal)).resolves.toEqual(sample)
-    expect(fetch).toHaveBeenCalledWith('/api/platform/memory', { cache: 'no-store', signal })
+    expect(fetch).toHaveBeenCalledWith('/api/platform/memory', { cache: 'no-store', signal: expect.any(AbortSignal) })
     vi.unstubAllGlobals()
   })
 

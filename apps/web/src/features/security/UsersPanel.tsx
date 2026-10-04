@@ -24,6 +24,7 @@ export function UsersPanel() {
   const gateway = useGateway()
   const status = useUsersStore((s) => s.status)
   const errorMessage = useUsersStore((s) => s.errorMessage)
+  const operationError = useUsersStore((s) => s.operationError)
   const users = useUsersStore((s) => s.users)
   const search = useUsersStore((s) => s.search)
   const syncing = useUsersStore((s) => s.syncing)
@@ -55,6 +56,7 @@ export function UsersPanel() {
 
   return (
     <div>
+      {operationError ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-danger/40 p-3 text-xs text-danger"><p className="min-w-0 flex-1">{operationError}</p><button type="button" className="rounded border border-line px-3 py-1.5 text-fg" onClick={() => void load(gateway)}>重新读取状态</button></div> : null}
       <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-surface px-4 py-3">
         {/* 用户动作只在容器内真实执行 useradd/usermod/userdel；宿主机本地开发是内存演示，明示出来。 */}
         {!isDockerRuntime() ? (

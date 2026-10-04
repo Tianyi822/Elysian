@@ -100,7 +100,7 @@ describe('createHttpSessionAdapter', () => {
     const fetchMock = vi.fn(async () => jsonResponse({ authenticated: false, devAccount: true }))
     vi.stubGlobal('fetch', fetchMock)
     const status = await createHttpSessionAdapter().status()
-    expect(fetchMock).toHaveBeenCalledWith('/api/auth/session', { cache: 'no-store' })
+    expect(fetchMock).toHaveBeenCalledWith('/api/auth/session', { cache: 'no-store', signal: expect.any(AbortSignal) })
     expect(status).toEqual({ mode: 'real', authenticated: false, devAccount: true })
   })
 
@@ -108,18 +108,18 @@ describe('createHttpSessionAdapter', () => {
     const fetchMock = vi.fn(async () => jsonResponse({ authenticated: true, devAccount: false, returnTo: 'http://127.0.0.1:5173/x' }))
     vi.stubGlobal('fetch', fetchMock)
     const status = await createHttpSessionAdapter().status('http://127.0.0.1:5173/x')
-    expect(fetchMock).toHaveBeenCalledWith('/api/auth/session?returnTo=http%3A%2F%2F127.0.0.1%3A5173%2Fx', { cache: 'no-store' })
+    expect(fetchMock).toHaveBeenCalledWith('/api/auth/session?returnTo=http%3A%2F%2F127.0.0.1%3A5173%2Fx', { cache: 'no-store', signal: expect.any(AbortSignal) })
     expect(status.returnTo).toBe('http://127.0.0.1:5173/x')
 
     const plain = vi.fn(async () => jsonResponse({ authenticated: false, devAccount: false }))
     vi.stubGlobal('fetch', plain)
     await createHttpSessionAdapter().status()
-    expect(plain).toHaveBeenCalledWith('/api/auth/session', { cache: 'no-store' })
+    expect(plain).toHaveBeenCalledWith('/api/auth/session', { cache: 'no-store', signal: expect.any(AbortSignal) })
 
     const blank = vi.fn(async () => jsonResponse({ authenticated: false, devAccount: false }))
     vi.stubGlobal('fetch', blank)
     await createHttpSessionAdapter().status('')
-    expect(blank).toHaveBeenCalledWith('/api/auth/session', { cache: 'no-store' })
+    expect(blank).toHaveBeenCalledWith('/api/auth/session', { cache: 'no-store', signal: expect.any(AbortSignal) })
   })
 
   it('canView 跟随 status 的 authenticated', async () => {
@@ -135,6 +135,7 @@ describe('createHttpSessionAdapter', () => {
     vi.stubGlobal('fetch', fetchMock)
     await createHttpSessionAdapter().login('admin', 'secret')
     expect(fetchMock).toHaveBeenCalledWith('/api/auth/login', {
+      signal: expect.any(AbortSignal),
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ username: 'admin', password: 'secret' }),
@@ -199,7 +200,7 @@ describe('createHttpSessionAdapter 设置页三方法', () => {
     const fetchMock = vi.fn(async () => jsonResponse({ sessions: rows }))
     vi.stubGlobal('fetch', fetchMock)
     await expect(createHttpSessionAdapter().listSessions()).resolves.toEqual(rows)
-    expect(fetchMock).toHaveBeenCalledWith('/api/auth/sessions', { cache: 'no-store' })
+    expect(fetchMock).toHaveBeenCalledWith('/api/auth/sessions', { cache: 'no-store', signal: expect.any(AbortSignal) })
   })
 
   it('changePassword 落到 POST /api/auth/password，体为三个口令字段；400 透传服务端中文文案', async () => {
@@ -207,6 +208,7 @@ describe('createHttpSessionAdapter 设置页三方法', () => {
     vi.stubGlobal('fetch', fetchMock)
     await expect(createHttpSessionAdapter().changePassword(changeInput)).resolves.toBeUndefined()
     expect(fetchMock).toHaveBeenCalledWith('/api/auth/password', {
+      signal: expect.any(AbortSignal),
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(changeInput),
@@ -225,7 +227,7 @@ describe('createHttpSessionAdapter 设置页三方法', () => {
     const fetchMock = vi.fn(async () => jsonResponse({ ok: true }))
     vi.stubGlobal('fetch', fetchMock)
     await expect(createHttpSessionAdapter().logoutOtherSessions()).resolves.toBeUndefined()
-    expect(fetchMock).toHaveBeenCalledWith('/api/auth/sessions/logout-others', { method: 'POST' })
+    expect(fetchMock).toHaveBeenCalledWith('/api/auth/sessions/logout-others', { method: 'POST', signal: expect.any(AbortSignal) })
   })
 
   it('三个新方法的 401 上报全局监听并抛「登录状态已失效，请重新登录」', async () => {

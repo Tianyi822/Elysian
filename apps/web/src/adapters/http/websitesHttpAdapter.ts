@@ -1,3 +1,4 @@
+import { withRequestDeadline } from './requestDeadline'
 import type { WebsiteSource, WebsiteDeploymentTask, WebsiteDeploymentLogs } from '@elysian/contracts'
 import type {
   WebsiteCategory,
@@ -176,7 +177,11 @@ export function parseWebsiteReconcileResponse(body: unknown): {
   return { proxy: parseWebsiteProxyStatus(row.proxy), applied: row.applied }
 }
 
-async function requestJson(url: string, init?: RequestInit): Promise<unknown> {
+function requestJson(url: string, init?: RequestInit): Promise<unknown> {
+  return withRequestDeadline(init, (bounded) => readJson(url, bounded), /\/sources\/(?:archive|git)(?:\?|$)/.test(url) ? 10 * 60_000 : undefined)
+}
+
+async function readJson(url: string, init?: RequestInit): Promise<unknown> {
   let response: Response
   try {
     response = await fetch(url, { ...init, cache: 'no-store' })
@@ -309,6 +314,7 @@ export function parseDeploymentSource(value: unknown): WebsiteSource {
 export function parseDeploymentTask(value: unknown): WebsiteDeploymentTask {
   const row = asObject(value, '部署任务响应无效')
   if (typeof row.id !== 'string' || typeof row.name !== 'string' || typeof row.sourceId !== 'string' || typeof row.stage !== 'string' || typeof row.createdAt !== 'string' || typeof row.updatedAt !== 'string' || !['queued', 'building', 'awaiting-config', 'publishing', 'succeeded', 'failed', 'cancelled', 'interrupted'].includes(String(row.state)) || !['pending', 'passed', 'failed', 'absent', 'skipped'].includes(String(row.testResult))) throw new Error('部署任务响应无效')
+  if (row.projectStatus !== undefined && !['present', 'deleted', 'not-created'].includes(String(row.projectStatus))) throw new Error('部署项目状态无效')
   validateDeploymentConfig(row.config)
   if (row.artifacts !== undefined && !deploymentStrings(row.artifacts)) throw new Error('部署产物响应无效')
   return row as WebsiteDeploymentTask

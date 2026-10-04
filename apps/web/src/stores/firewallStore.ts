@@ -11,6 +11,7 @@ import type {
   FirewallToggles,
 } from '@elysian/contracts'
 import { create } from 'zustand'
+import { hasUncertainOutcome } from '../adapters/http/requestDeadline'
 import type { ElysianGateway } from '../contracts/adapters'
 import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
 import { useNotificationStore } from './notificationStore'
@@ -29,6 +30,7 @@ type FirewallStatus = 'idle' | 'loading' | 'ready' | 'error'
 type FirewallState = {
   status: FirewallStatus
   errorMessage: string | undefined
+  operationError: string | undefined
   rules: readonly FirewallRule[]
   ipRules: readonly FirewallIpRule[]
   forwards: readonly FirewallForwardRule[]
@@ -93,9 +95,17 @@ function notify(message: string, tone: 'success' | 'danger' = 'success'): void {
   useNotificationStore.getState().notify({ message, tone })
 }
 
+async function readFirewall(gateway: ElysianGateway) {
+  const [toggles, rules, ipRules, forwards] = await Promise.all([
+    gateway.firewall.toggles(), gateway.firewall.list(), gateway.firewall.listIpRules(), gateway.firewall.listForwards(),
+  ])
+  return { toggles, rules, ipRules, forwards }
+}
+
 export const useFirewallStore = create<FirewallState>((set, get) => ({
   status: 'idle',
   errorMessage: undefined,
+  operationError: undefined,
   rules: [],
   ipRules: [],
   forwards: [],
@@ -131,7 +141,7 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
         gateway.firewall.listIpRules(),
         gateway.firewall.listForwards(),
       ])
-      set({ status: 'ready', toggles, rules, ipRules, forwards, errorMessage: undefined })
+      set({ status: 'ready', toggles, rules, ipRules, forwards, errorMessage: undefined, operationError: undefined })
     } catch (error) {
       set({
         status: 'error',
@@ -156,9 +166,11 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
         gateway.firewall.listIpRules(),
         gateway.firewall.listForwards(),
       ])
-      set({ toggles, rules, ipRules, forwards })
+      set({ toggles, rules, ipRules, forwards, operationError: undefined })
     } catch (error) {
-      notify(error instanceof Error ? `列表同步失败：${error.message}` : '列表同步失败', 'danger')
+      const message = error instanceof Error ? `列表同步失败：${error.message}` : '列表同步失败'
+      set({ operationError: message })
+      notify(message, 'danger')
     }
   },
 
@@ -174,7 +186,7 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
   async toggle(gateway, next) {
     const previous = get().toggles
     if (get().toggling) return
-    set({ toggling: true, toggles: next })
+    set({ toggling: true, toggles: next, operationError: undefined })
     try {
       const confirmed = await gateway.firewall.setToggles(next)
       set({ toggles: confirmed, toggling: false })
@@ -184,8 +196,14 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
           : `禁 ping 已${next.pingBlocked ? '开启' : '关闭'}${REAL_ACTION_LABEL}`,
       )
     } catch (error) {
-      set({ toggles: previous, toggling: false })
-      notify(error instanceof Error ? `切换失败：${error.message}` : '切换失败', 'danger')
+      const message = error instanceof Error ? `切换失败：${error.message}` : '切换失败'
+      set({ toggles: previous, operationError: message })
+      notify(message, 'danger')
+      if (hasUncertainOutcome(error)) {
+        try { set(await readFirewall(gateway)) } catch { /* 保留未确认提示，由用户重试读取。 */ }
+      }
+    } finally {
+      set({ toggling: false })
     }
   },
 
@@ -433,10 +451,12 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
     try {
       await gateway.firewall.syncFromSystem()
       // 同步后重拉三类列表，让系统侧（含命令行手敲）的规则进面板。
-      await get().load(gateway)
+      set({ ...await readFirewall(gateway), status: 'ready', errorMessage: undefined, operationError: undefined })
       notify(`已从操作系统同步防火墙规则，当前共 ${get().rules.length + get().ipRules.length + get().forwards.length} 条${REAL_ACTION_LABEL}`)
     } catch (error) {
-      notify(error instanceof Error ? `同步失败：${error.message}` : '同步失败', 'danger')
+      const message = error instanceof Error ? `同步失败：${error.message}` : '同步失败'
+      set({ operationError: message })
+      notify(message, 'danger')
     } finally {
       set({ syncing: false })
     }

@@ -48,6 +48,6 @@ describe('createMockGateway 会话片分流', () => {
       authenticated: false,
       devAccount: false,
     })
-    expect(fetchMock).toHaveBeenCalledWith('/api/auth/session', { cache: 'no-store' })
+    expect(fetchMock).toHaveBeenCalledWith('/api/auth/session', { cache: 'no-store', signal: expect.any(AbortSignal) })
   })
 })

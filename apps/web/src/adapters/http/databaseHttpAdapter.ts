@@ -1,3 +1,4 @@
+import { withRequestDeadline } from './requestDeadline'
 import type { DatabaseInstance, DatabaseEngine, ContainerImage } from '@elysian/contracts'
 import type { DatabaseAdapter, DatabaseCreateInput, DatabaseCreateResult } from '../../contracts/adapters'
 import { reportUnauthorized, reportUnauthorizedStatus } from './unauthorized'
@@ -11,7 +12,11 @@ export function sqliteDownloadName(disposition: string | null, fallbackId: strin
   return match?.[1]?.trim() || `${fallbackId}.sqlite`
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+function request<T>(path: string, init?: RequestInit): Promise<T> {
+  return withRequestDeadline(init, (bounded) => readJson<T>(path, bounded), path.includes("/install") || (init?.method === "POST" && path === "/") ? 30 * 60_000 : undefined)
+}
+
+async function readJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${BASE}${path}`, {
     ...init,
     headers: { ...(init?.body ? { 'Content-Type': 'application/json' } : {}), ...init?.headers },

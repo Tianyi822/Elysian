@@ -168,9 +168,9 @@ describe('createHttpFilesAdapter', () => {
     await adapter.list('/var/log/nginx+old')
     await adapter.search('部署 脚本.sh')
     await adapter.size('/var/log')
-    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/files/entries?path=%2Fvar%2Flog%2Fnginx%2Bold', undefined)
-    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/files/search?keyword=%E9%83%A8%E7%BD%B2%20%E8%84%9A%E6%9C%AC.sh', undefined)
-    expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/files/size?path=%2Fvar%2Flog', undefined)
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/files/entries?path=%2Fvar%2Flog%2Fnginx%2Bold', { signal: expect.any(AbortSignal) })
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/files/search?keyword=%E9%83%A8%E7%BD%B2%20%E8%84%9A%E6%9C%AC.sh', { signal: expect.any(AbortSignal) })
+    expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/files/size?path=%2Fvar%2Flog', { signal: expect.any(AbortSignal) })
     vi.unstubAllGlobals()
   })
 
@@ -183,6 +183,7 @@ describe('createHttpFilesAdapter', () => {
     await adapter.renameEntry('/tmp/auth.log', 'auth.log.bak')
     await adapter.compressEntry('/tmp/auth.log')
     const post = (body: unknown) => ({
+      signal: expect.any(AbortSignal),
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
@@ -200,6 +201,7 @@ describe('createHttpFilesAdapter', () => {
     const adapter = createHttpFilesAdapter()
     await adapter.chmod('/tmp/报表', { mode: '755', owner: 'root', recursive: false })
     expect(fetchMock).toHaveBeenCalledWith('/api/files/chmod', {
+      signal: expect.any(AbortSignal),
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ path: '/tmp/报表', mode: '755', owner: 'root', recursive: false }),

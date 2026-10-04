@@ -1,3 +1,4 @@
+import { withRequestDeadline } from './requestDeadline'
 import type { HostUser, HostUserLoginMethod, HostUserStatus } from '@elysian/contracts'
 import { HOST_USER_LOGIN_METHODS, HOST_USER_STATUSES } from '@elysian/contracts'
 import type { UserAdapter } from '../../contracts/adapters'
@@ -83,7 +84,11 @@ export function parseHostUserSyncResponse(body: unknown): { total: number } {
   return { total }
 }
 
-async function requestJson(url: string, init?: RequestInit): Promise<unknown> {
+function requestJson(url: string, init?: RequestInit): Promise<unknown> {
+  return withRequestDeadline(init, (bounded) => readJson(url, bounded))
+}
+
+async function readJson(url: string, init?: RequestInit): Promise<unknown> {
   let response: Response
   try {
     response = await fetch(url, init)

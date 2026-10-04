@@ -1,3 +1,4 @@
+import { withRequestDeadline } from './requestDeadline'
 import type { PanelPasswordChangeInput, SessionAdapter, SessionListRow, SessionStatus } from '../../contracts/adapters'
 import { reportUnauthorized } from './unauthorized'
 
@@ -77,12 +78,12 @@ async function readErrorDetail(response: Response): Promise<string | null> {
 }
 
 export function createHttpSessionAdapter(baseUrl = '/api/auth'): SessionAdapter {
-  const status = async (returnTo?: string): Promise<SessionStatus> => {
+  const status = (returnTo?: string): Promise<SessionStatus> => withRequestDeadline(undefined, async (init) => {
     // 编码交给 URLSearchParams：冒号与斜杠一律转义，回跳地址不破坏查询串结构。
     const query = returnTo === undefined || returnTo === '' ? '' : `?${new URLSearchParams({ returnTo }).toString()}`
     let response: Response
     try {
-      response = await fetch(`${baseUrl}/session${query}`, { cache: 'no-store' })
+      response = await fetch(`${baseUrl}/session${query}`, { ...init, cache: 'no-store' })
     } catch {
       throw new Error('登录状态检查失败：面板服务不可达')
     }
@@ -96,7 +97,7 @@ export function createHttpSessionAdapter(baseUrl = '/api/auth'): SessionAdapter 
       throw new Error('登录状态响应不是有效 JSON')
     }
     return parseSessionStatus(body)
-  }
+  })
 
   return {
     /** 页面级权限占位：真实会话已通过即放行（单用户面板，粒度见 contracts/adapters.ts）。 */
@@ -104,93 +105,108 @@ export function createHttpSessionAdapter(baseUrl = '/api/auth'): SessionAdapter 
 
     status,
 
-    async login(username, password) {
-      let response: Response
-      try {
-        response = await fetch(`${baseUrl}/login`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ username, password }),
-        })
-      } catch {
-        throw new Error('登录请求失败：面板服务不可达')
-      }
-      if (!response.ok) {
-        // 透传服务端中文文案（「用户名或密码错误」「登录尝试过于频繁，请稍后再试」等）。
-        const detail = await readErrorDetail(response)
-        throw new Error(detail ?? `登录失败：HTTP ${response.status}`)
-      }
+    login(username, password) {
+      return withRequestDeadline({ method: 'POST' }, async (bounded) => {
+        const timedFetch = (url: string, init?: RequestInit) => fetch(url, { ...init, signal: bounded.signal })
+        let response: Response
+        try {
+          response = await timedFetch(`${baseUrl}/login`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ username, password }),
+          })
+        } catch {
+          throw new Error('登录请求失败：面板服务不可达')
+        }
+        if (!response.ok) {
+          // 透传服务端中文文案（「用户名或密码错误」「登录尝试过于频繁，请稍后再试」等）。
+          const detail = await readErrorDetail(response)
+          throw new Error(detail ?? `登录失败：HTTP ${response.status}`)
+        }
+      })
     },
 
-    async logout() {
-      let response: Response
-      try {
-        response = await fetch(`${baseUrl}/logout`, { method: 'POST' })
-      } catch {
-        throw new Error('退出登录失败：面板服务不可达')
-      }
-      if (!response.ok) {
-        throw new Error(`退出登录失败：HTTP ${response.status}`)
-      }
+    logout() {
+      return withRequestDeadline({ method: 'POST' }, async (bounded) => {
+        const timedFetch = (url: string, init?: RequestInit) => fetch(url, { ...init, signal: bounded.signal })
+        let response: Response
+        try {
+          response = await timedFetch(`${baseUrl}/logout`, { method: 'POST' })
+        } catch {
+          throw new Error('退出登录失败：面板服务不可达')
+        }
+        if (!response.ok) {
+          throw new Error(`退出登录失败：HTTP ${response.status}`)
+        }
+      })
     },
 
-    async listSessions() {
-      let response: Response
-      try {
-        response = await fetch(`${baseUrl}/sessions`, { cache: 'no-store' })
-      } catch {
-        throw new Error('会话列表获取失败：面板服务不可达')
-      }
-      if (reportUnauthorized(response)) throw new Error('登录状态已失效，请重新登录')
-      if (!response.ok) {
-        const detail = await readErrorDetail(response)
-        throw new Error(detail ?? `会话列表获取失败：HTTP ${response.status}`)
-      }
-      let body: unknown
-      try {
-        body = await response.json()
-      } catch {
-        throw new Error('会话列表响应不是有效 JSON')
-      }
-      return parseSessionList(body)
+    listSessions() {
+      return withRequestDeadline(undefined, async (bounded) => {
+        const timedFetch = (url: string, init?: RequestInit) => fetch(url, { ...init, signal: bounded.signal })
+        let response: Response
+        try {
+          response = await timedFetch(`${baseUrl}/sessions`, { cache: 'no-store' })
+        } catch {
+          throw new Error('会话列表获取失败：面板服务不可达')
+        }
+        if (reportUnauthorized(response)) throw new Error('登录状态已失效，请重新登录')
+        if (!response.ok) {
+          const detail = await readErrorDetail(response)
+          throw new Error(detail ?? `会话列表获取失败：HTTP ${response.status}`)
+        }
+        let body: unknown
+        try {
+          body = await response.json()
+        } catch {
+          throw new Error('会话列表响应不是有效 JSON')
+        }
+        return parseSessionList(body)
+      })
     },
 
-    async changePassword(input: PanelPasswordChangeInput) {
-      let response: Response
-      try {
-        response = await fetch(`${baseUrl}/password`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            currentPassword: input.currentPassword,
-            newPassword: input.newPassword,
-            confirmNewPassword: input.confirmNewPassword,
-          }),
-        })
-      } catch {
-        throw new Error('修改密码失败：面板服务不可达')
-      }
-      if (reportUnauthorized(response)) throw new Error('登录状态已失效，请重新登录')
-      if (!response.ok) {
-        // 透传服务端中文文案（「当前密码不正确」「两次输入的密码不一致」「密码至少需要 8 位」等）。
-        const detail = await readErrorDetail(response)
-        throw new Error(detail ?? `修改密码失败：HTTP ${response.status}`)
-      }
+    changePassword(input: PanelPasswordChangeInput) {
+      return withRequestDeadline({ method: 'POST' }, async (bounded) => {
+        const timedFetch = (url: string, init?: RequestInit) => fetch(url, { ...init, signal: bounded.signal })
+        let response: Response
+        try {
+          response = await timedFetch(`${baseUrl}/password`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              currentPassword: input.currentPassword,
+              newPassword: input.newPassword,
+              confirmNewPassword: input.confirmNewPassword,
+            }),
+          })
+        } catch {
+          throw new Error('修改密码失败：面板服务不可达')
+        }
+        if (reportUnauthorized(response)) throw new Error('登录状态已失效，请重新登录')
+        if (!response.ok) {
+          // 透传服务端中文文案（「当前密码不正确」「两次输入的密码不一致」「密码至少需要 8 位」等）。
+          const detail = await readErrorDetail(response)
+          throw new Error(detail ?? `修改密码失败：HTTP ${response.status}`)
+        }
+      })
     },
 
-    async logoutOtherSessions() {
-      let response: Response
-      try {
-        // 无请求体（与 logout 同形态）。
-        response = await fetch(`${baseUrl}/sessions/logout-others`, { method: 'POST' })
-      } catch {
-        throw new Error('退出其他会话失败：面板服务不可达')
-      }
-      if (reportUnauthorized(response)) throw new Error('登录状态已失效，请重新登录')
-      if (!response.ok) {
-        const detail = await readErrorDetail(response)
-        throw new Error(detail ?? `退出其他会话失败：HTTP ${response.status}`)
-      }
+    logoutOtherSessions() {
+      return withRequestDeadline({ method: 'POST' }, async (bounded) => {
+        const timedFetch = (url: string, init?: RequestInit) => fetch(url, { ...init, signal: bounded.signal })
+        let response: Response
+        try {
+          // 无请求体（与 logout 同形态）。
+          response = await timedFetch(`${baseUrl}/sessions/logout-others`, { method: 'POST' })
+        } catch {
+          throw new Error('退出其他会话失败：面板服务不可达')
+        }
+        if (reportUnauthorized(response)) throw new Error('登录状态已失效，请重新登录')
+        if (!response.ok) {
+          const detail = await readErrorDetail(response)
+          throw new Error(detail ?? `退出其他会话失败：HTTP ${response.status}`)
+        }
+      })
     },
   }
 }

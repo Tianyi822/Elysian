@@ -9,6 +9,7 @@ package security
 import (
 	"bytes"
 	"context"
+	"elysian/server/internal/shared"
 	"errors"
 	"os"
 	"os/exec"
@@ -64,12 +65,13 @@ func realExecFile(name string, args []string) (string, string, error) {
 
 // execContextOutput 带 context 的命令执行（ctx 取消即中止子进程）。
 func execContextOutput(ctx context.Context, name string, args []string) (string, string, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd, bounded, cancel := shared.SystemCommand(ctx, name, args...)
+	defer cancel()
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
-	return stdout.String(), stderr.String(), err
+	return stdout.String(), stderr.String(), shared.SystemCommandError(bounded, err)
 }
 
 // newRealUsersDeps 容器内真实依赖。

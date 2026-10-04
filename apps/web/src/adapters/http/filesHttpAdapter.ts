@@ -1,3 +1,4 @@
+import { withRequestDeadline } from './requestDeadline'
 import type { FileEntry, FileKind, FileSearchResult } from '@elysian/contracts'
 import { FILE_KINDS } from '@elysian/contracts'
 import type { FilesAdapter } from '../../contracts/adapters'
@@ -91,7 +92,11 @@ export function parseFileOkResponse(body: unknown): void {
   }
 }
 
-async function requestJson(url: string, init?: RequestInit): Promise<unknown> {
+function requestJson(url: string, init?: RequestInit): Promise<unknown> {
+  return withRequestDeadline(init, (bounded) => readJson(url, bounded))
+}
+
+async function readJson(url: string, init?: RequestInit): Promise<unknown> {
   let response: Response
   try {
     response = await fetch(url, init)

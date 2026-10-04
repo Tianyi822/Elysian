@@ -1,3 +1,4 @@
+import { hasUncertainOutcome } from '../adapters/http/requestDeadline'
 import type { HostUser, HostUserInput } from '@elysian/contracts'
 import { HOST_USER_LOGIN_METHOD_LABELS, HOST_USER_STATUS_LABELS } from '@elysian/contracts'
 import { create } from 'zustand'
@@ -11,6 +12,7 @@ type UsersStatus = 'idle' | 'loading' | 'ready' | 'error'
 type UsersState = {
   status: UsersStatus
   errorMessage: string | undefined
+  operationError: string | undefined
   users: readonly HostUser[]
   /** 搜索词：按用户名与备注匹配。 */
   search: string
@@ -44,9 +46,16 @@ function notify(message: string, tone: 'success' | 'danger' = 'success'): void {
 const MOCK_NOTE = isDockerRuntime() ? '' : 'mock，待接入真实执行'
 const MOCK_SUFFIX = MOCK_NOTE ? `（${MOCK_NOTE}）` : ''
 
-export const useUsersStore = create<UsersState>((set, get) => ({
+export const useUsersStore = create<UsersState>((set, get) => {
+  const recordFailure = async (error: unknown, gateway: ElysianGateway) => {
+    const message = error instanceof Error ? error.message : '操作失败，请重试'
+    if (hasUncertainOutcome(error)) await get().load(gateway)
+    set({ operationError: message })
+  }
+  return ({
   status: 'idle',
   errorMessage: undefined,
+  operationError: undefined,
   users: [],
   search: '',
   syncing: false,
@@ -60,7 +69,7 @@ export const useUsersStore = create<UsersState>((set, get) => ({
     set({ status: 'loading', errorMessage: undefined })
     try {
       const users = await gateway.users.list()
-      set({ status: 'ready', users })
+      set({ status: 'ready', users, operationError: undefined })
     } catch (error) {
       set({ status: 'error', errorMessage: error instanceof Error ? error.message : '账号数据加载失败' })
     }
@@ -82,6 +91,7 @@ export const useUsersStore = create<UsersState>((set, get) => ({
     } catch (error) {
       set({ syncing: false })
       notify(error instanceof Error ? `同步失败：${error.message}` : '同步失败', 'danger')
+      await recordFailure(error, gateway)
     }
   },
 
@@ -133,6 +143,7 @@ export const useUsersStore = create<UsersState>((set, get) => ({
     } catch (error) {
       set({ saving: false })
       notify(error instanceof Error ? `保存失败：${error.message}` : '保存失败', 'danger')
+      await recordFailure(error, gateway)
       return false
     }
   },
@@ -161,6 +172,8 @@ export const useUsersStore = create<UsersState>((set, get) => ({
         removingUserIds: state.removingUserIds.filter((id) => id !== userId),
       }))
       notify(error instanceof Error ? `删除失败：${error.message}` : '删除失败', 'danger')
+      await recordFailure(error, gateway)
     }
   },
-}))
+})
+})

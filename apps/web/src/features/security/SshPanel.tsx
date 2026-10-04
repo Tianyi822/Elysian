@@ -80,6 +80,7 @@ export function SshPanel() {
   const gateway = useGateway()
   const status = useSshStore((s) => s.status)
   const errorMessage = useSshStore((s) => s.errorMessage)
+  const operationError = useSshStore((s) => s.operationError)
   const createKeyOpen = useSshStore((s) => s.createKeyOpen)
   const viewKey = useSshStore((s) => s.viewKey)
   const closeKeyView = useSshStore((s) => s.closeKeyView)
@@ -109,6 +110,7 @@ export function SshPanel() {
 
   return (
     <>
+      {operationError ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-danger/40 p-3 text-xs text-danger"><p className="min-w-0 flex-1">{operationError}</p><button type="button" className="rounded border border-line px-3 py-1.5 text-fg" onClick={() => void load(gateway)}>重新读取状态</button></div> : null}
       {/* 两列瀑布：左设置右数据，列各自按内容堆叠、矮卡不被邻列拉平；
           Root 卡的密码/密钥区收起时左列自然变矮，不把数据表拉出卡内空白。 */}
       <div className="flex flex-col gap-4">

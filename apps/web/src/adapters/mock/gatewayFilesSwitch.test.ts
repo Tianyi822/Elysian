@@ -45,7 +45,7 @@ describe('createMockGateway 可选片分流', () => {
     vi.stubGlobal('fetch', fetchMock)
     const gateway = createMockGateway({ eventStream: 'memory', files: 'http' })
     await gateway.files.list('/var/log')
-    expect(fetchMock).toHaveBeenCalledWith('/api/files/entries?path=%2Fvar%2Flog', undefined)
+    expect(fetchMock).toHaveBeenCalledWith('/api/files/entries?path=%2Fvar%2Flog', { signal: expect.any(AbortSignal) })
     vi.unstubAllGlobals()
   })
 

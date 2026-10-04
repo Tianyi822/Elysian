@@ -10,6 +10,8 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strconv"
+	"strings"
+	"time"
 )
 
 type panelRequestKey struct{}
@@ -37,12 +39,17 @@ func NewPanelGateway(backend http.Handler, frontendPort, backendPort int) (http.
 		p.Out.Header.Set(gatewayTokenHeader, token)
 		p.Out.Header.Set(gatewayPeerHeader, p.In.RemoteAddr)
 	}, FlushInterval: -1}
+	securityProxy := boundedSecurityProxy(proxy, 65*time.Second)
 	public := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !PanelIPHost(r.Host, frontendPort) {
 			SendError(w, 403, "面板仅允许通过 IP 地址或本机地址访问")
 			return
 		}
-		proxy.ServeHTTP(w, r)
+		if r.URL.Path == "/api/security" || strings.HasPrefix(r.URL.Path, "/api/security/") {
+			securityProxy.ServeHTTP(w, r)
+		} else {
+			proxy.ServeHTTP(w, r)
+		}
 	})
 	private := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		peer, _, _ := net.SplitHostPort(r.RemoteAddr)
@@ -54,6 +61,11 @@ func NewPanelGateway(backend http.Handler, frontendPort, backendPort int) (http.
 		backend.ServeHTTP(w, r)
 	})
 	return public, private, nil
+}
+
+// 安全片只提供 JSON，限时覆盖代理读取响应体；安装、上传及流式通道不经过此包装。
+func boundedSecurityProxy(proxy http.Handler, timeout time.Duration) http.Handler {
+	return http.TimeoutHandler(proxy, timeout, `{"error":"安全请求超时，操作结果尚未确认，请重新读取状态"}`)
 }
 
 func PanelIPHost(host string, port int) bool {

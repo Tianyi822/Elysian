@@ -162,6 +162,7 @@ export function FirewallPanel() {
   const gateway = useGateway()
   const status = useFirewallStore((s) => s.status)
   const errorMessage = useFirewallStore((s) => s.errorMessage)
+  const operationError = useFirewallStore((s) => s.operationError)
   const rules = useFirewallStore((s) => s.rules)
   const ipRules = useFirewallStore((s) => s.ipRules)
   const forwards = useFirewallStore((s) => s.forwards)
@@ -261,6 +262,7 @@ export function FirewallPanel() {
 
   return (
     <div>
+      {operationError ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-danger/40 p-3 text-xs text-danger"><p className="min-w-0 flex-1">{operationError}</p><button type="button" className="rounded border border-line px-3 py-1.5 text-fg" onClick={() => void load(gateway)}>重新读取状态</button></div> : null}
       <div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-3 rounded-xl border border-line bg-surface px-4 py-3">
         {/* 防火墙动作只在容器内真实执行 ufw；宿主机本地开发是内存演示，明示出来。 */}
         {!isDockerRuntime() ? (

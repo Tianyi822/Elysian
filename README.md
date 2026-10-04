@@ -15,6 +15,10 @@ bun run preview
 
 Docker 开发分两个编排：根 `docker-compose.yml` 只跑前端 dev 与容器内 sshd；Go API 由 `apps/server-go/docker-compose.go-dev.yml` 提供（监听容器内 48101，只发布宿主回环 48102），vite 把 `/api/*` 同源代理过去。日常用 `bash scripts/dev.sh up` 一条命令显式选择两个编排文件、按正确顺序起两个栈并等待同源 API 就绪（`down` 停止、`restart-go` 让 Go 代码或环境变量变更生效）；单独运行根目录的 `docker compose up` 只启动前端。手动起时 macOS Docker Desktop 需要把 `ELYSIAN_DOCKER_MOUNT_ROOT` 指向已共享的宿主路径（仓库根 `.env` 会被脚本透传给两个栈），Linux 默认为 `/srv`。开发账号 `dev / dev-elysian` 需显式开启：`ELYSIAN_AUTH_DEV=1 bash scripts/dev.sh up`。
 
+Docker 安全页管理 Go 开发容器中的 Linux 环境；正式 systemd 安装版管理宿主环境。Go 容器启用 UFW 时，保底规则开放实际内部 API 入口 48101，启动前同步恢复并核验 IPv4 与已启用的 IPv6；恢复失败拒绝启动。该规则只作用于 Go 容器，宿主映射保持回环；正式安装版只保护配置的前端入口，后端不开放。入口规则不能经面板删除、修改或拒绝，端口转发和防扫描避开前后端。安全系统命令限时 30 秒，安全代理限时 65 秒；普通 JSON 读取限时 15 秒、写入限时 60 秒（包括响应体）。写超时显示「操作结果尚未确认」，不自动重放，安全页重新读取事实；错误解除忙碌并提供重试，采集失败不把旧内存值显示为当前读数。
+
+浏览器部署联调使用独立状态卷：`ELYSIAN_AUTH_DEV=1 ELYSIAN_GO_STATE_VOLUME=elysian-browser-qa-state bash scripts/dev.sh up`。保持该变量使用 `restart-go`／`down`；切回日常状态时去掉变量并运行 `bash scripts/dev.sh restart-go`，原卷保留。联调卷与日常卷分别保存凭据、任务和数据，浏览器测试不要往日常卷写入 fixture。容器重建使系统文件回到镜像默认值；验证已启用 UFW 的启动恢复应使用 `docker restart elysian-go-dev-go-1`，保留容器内规则文件。
+
 Go 后端的开发与门禁一律在 Docker 容器内跑：`bash apps/server-go/dev-check.sh ./...`（缺省全量，可传包路径缩小范围）。宿主机命令只覆盖前端与契约包：`bun run test` 覆盖 web 和契约包。
 
 顶栏系统负载读数条合并两个口径：这台机器的 1 分钟 load average（每拍随 `resource/sample` 事件流更新，1/5/15 三档列在明细里）与 Go 后端单进程的实际常驻内存（每五秒读取，单位为 MiB；Linux 优先使用 `/proc/self/smaps_rollup`，回落到 `smaps`，仅有 `statm` 时以 ≈ 标注近似，无法读取时显示不可用）。任一路没到就显示占位，不把缺失当成 0。读数条只显图标与两个数，名称由按钮的 `aria-label` 与悬停提示承载，不显百分比——百分比与仪表盘的「内存占用率」同屏会被读成同一口径的两个数。点击展开分节明细：机器负载三档、面板常驻内存（RSS）与 Go 运行时两组口径，两套口径不能相加，理由写在「Go 运行时」标题右侧问号的浮层里。占比以 `/proc/meminfo` 的系统总内存为参照（容器内属于宿主 Linux 内核，不表示容器限额），连同这个分母一起显示在明细中，总量不可读时不推断百分比；系统总内存达到 1024 MiB 时以 GiB 展示。内存采样不主动触发垃圾回收，不包含浏览器、开发启动器或其他容器。

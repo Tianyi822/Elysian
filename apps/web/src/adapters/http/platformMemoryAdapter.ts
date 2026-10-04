@@ -1,13 +1,18 @@
+import { withRequestDeadline } from './requestDeadline'
 import { parsePlatformMemoryResponse, type PlatformMemorySample } from '../platformMemory/types'
 import { reportUnauthorized } from './unauthorized'
 
 export type { PlatformMemorySample }
 
+export function fetchPlatformMemory(url = '/api/platform/memory', signal?: AbortSignal): Promise<PlatformMemorySample> {
+  return withRequestDeadline({ signal }, (init) => readPlatformMemory(url, init.signal ?? undefined))
+}
+
 /**
  * 浏览器侧同源读取 Go 后端进程内存，
  * 这里只做 JSON 形状校验与中文错误。
  */
-export async function fetchPlatformMemory(
+async function readPlatformMemory(
   url = '/api/platform/memory',
   signal?: AbortSignal,
 ): Promise<PlatformMemorySample> {

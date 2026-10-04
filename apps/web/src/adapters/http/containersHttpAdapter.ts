@@ -1,3 +1,4 @@
+import { withRequestDeadline } from './requestDeadline'
 import type {
   Container,
   ContainerAction,
@@ -434,7 +435,11 @@ async function readErrorDetail(response: Response): Promise<string | null> {
     .catch(() => null)
 }
 
-async function requestJson(url: string, init?: RequestInit): Promise<unknown> {
+function requestJson(url: string, init?: RequestInit): Promise<unknown> {
+  return withRequestDeadline(init, (bounded) => readJson(url, bounded))
+}
+
+async function readJson(url: string, init?: RequestInit): Promise<unknown> {
   let response: Response
   try {
     response = await fetch(url, init)
@@ -453,7 +458,11 @@ async function requestJson(url: string, init?: RequestInit): Promise<unknown> {
   }
 }
 
-async function requestNoContent(url: string, init?: RequestInit): Promise<void> {
+function requestNoContent(url: string, init?: RequestInit): Promise<void> {
+  return withRequestDeadline(init, (bounded) => readNoContent(url, bounded))
+}
+
+async function readNoContent(url: string, init?: RequestInit): Promise<void> {
   let response: Response
   try {
     response = await fetch(url, init)

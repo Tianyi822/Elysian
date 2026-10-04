@@ -10,6 +10,8 @@ package security
 
 import (
 	"bytes"
+	"context"
+	"elysian/server/internal/shared"
 	"errors"
 	"fmt"
 	"io"
@@ -88,11 +90,18 @@ func execDetail(err error) string {
 
 // execToStdout 执行命令并返回 stdout；失败抛带 stderr 详情的错误。
 func execToStdout(name string, args []string) (string, error) {
-	cmd := exec.Command(name, args...)
+	cmd, ctx, cancel := shared.SystemCommand(context.Background(), name, args...)
+	defer cancel()
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return "", shared.SystemCommandError(ctx, err)
+		}
+		if detail := strings.TrimSpace(stderr.String()); detail != "" {
+			return "", errors.New(detail)
+		}
 		return "", errors.New(execDetail(err))
 	}
 	return stdout.String(), nil
@@ -310,6 +319,8 @@ func runChpasswdViaStdin(spawnChpasswd spawnChpasswdLike, input string) (string,
 // execChpasswdChild 真实 chpasswd 子进程（exec.Command 封装成 chpasswdChild）。
 type execChpasswdChild struct {
 	cmd    *exec.Cmd
+	ctx    context.Context
+	cancel context.CancelFunc
 	stdin  io.WriteCloser
 	stdout io.ReadCloser
 	stderr io.ReadCloser
@@ -325,7 +336,10 @@ func (c *execChpasswdChild) Stdout() io.Reader { return c.stdout }
 func (c *execChpasswdChild) Stderr() io.Reader { return c.stderr }
 
 // Wait 等待退出。
-func (c *execChpasswdChild) Wait() error { return c.cmd.Wait() }
+func (c *execChpasswdChild) Wait() error {
+	defer c.cancel()
+	return shared.SystemCommandError(c.ctx, c.cmd.Wait())
+}
 
 // ExitCode 退出码（-1 = 被信号杀死）。
 func (c *execChpasswdChild) ExitCode() int {
@@ -337,7 +351,13 @@ func (c *execChpasswdChild) ExitCode() int {
 
 // spawnChpasswdPipe 真实 spawn 接线：stdio 三路 pipe。
 func spawnChpasswdPipe() (chpasswdChild, error) {
-	cmd := exec.Command("chpasswd")
+	cmd, ctx, cancel := shared.SystemCommand(context.Background(), "chpasswd")
+	started := false
+	defer func() {
+		if !started {
+			cancel()
+		}
+	}()
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -353,7 +373,8 @@ func spawnChpasswdPipe() (chpasswdChild, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	return &execChpasswdChild{cmd: cmd, stdin: stdin, stdout: stdout, stderr: stderr}, nil
+	started = true
+	return &execChpasswdChild{cmd: cmd, ctx: ctx, cancel: cancel, stdin: stdin, stdout: stdout, stderr: stderr}, nil
 }
 
 // ---------- 真实接线 ----------

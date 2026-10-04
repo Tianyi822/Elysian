@@ -1,3 +1,4 @@
+import { withRequestDeadline } from './requestDeadline'
 import type {
   FirewallForwardRule,
   FirewallImportResult,
@@ -224,7 +225,11 @@ export function parseScanResponse(body: unknown): FirewallScanProtection {
   }
 }
 
-async function requestJson(baseUrl: string, init?: RequestInit): Promise<unknown> {
+function requestJson(baseUrl: string, init?: RequestInit): Promise<unknown> {
+  return withRequestDeadline(init, (bounded) => readJson(baseUrl, bounded))
+}
+
+async function readJson(baseUrl: string, init?: RequestInit): Promise<unknown> {
   let response: Response
   try {
     response = await fetch(baseUrl, init)

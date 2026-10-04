@@ -1,3 +1,4 @@
+import { hasUncertainOutcome } from '../adapters/http/requestDeadline'
 import type {
   FirewallRule,
   FirewallToggles,
@@ -32,6 +33,7 @@ const MOCK_SUFFIX = MOCK_NOTE ? `（${MOCK_NOTE}）` : ''
 type SshState = {
   status: SshStatus
   errorMessage: string | undefined
+  operationError: string | undefined
   overview: SshOverview | undefined
   settings: SshAuthSettings | undefined
   rootAuth: SshRootAuth | undefined
@@ -181,9 +183,16 @@ async function linkSshPortToFirewall(gateway: ElysianGateway, port: number): Pro
   }
 }
 
-export const useSshStore = create<SshState>((set, get) => ({
+export const useSshStore = create<SshState>((set, get) => {
+  const recordFailure = async (error: unknown, gateway: ElysianGateway) => {
+    const message = error instanceof Error ? error.message : '操作失败，请重试'
+    if (hasUncertainOutcome(error)) await get().load(gateway)
+    set({ operationError: message })
+  }
+  return ({
   status: 'idle',
   errorMessage: undefined,
+  operationError: undefined,
   overview: undefined,
   settings: undefined,
   rootAuth: undefined,
@@ -225,6 +234,7 @@ export const useSshStore = create<SshState>((set, get) => ({
       ])
       set({
         status: 'ready',
+        operationError: undefined,
         overview,
         settings,
         rootAuth,
@@ -255,6 +265,7 @@ export const useSshStore = create<SshState>((set, get) => ({
     } catch (error) {
       set({ overview: previous, togglingService: false })
       notify(error instanceof Error ? `切换失败：${error.message}` : '切换失败', 'danger')
+      await recordFailure(error, gateway)
     }
   },
 
@@ -273,6 +284,7 @@ export const useSshStore = create<SshState>((set, get) => ({
     } catch (error) {
       set({ settings: previous, savingAuth: false })
       notify(error instanceof Error ? `保存失败：${error.message}` : '保存失败', 'danger')
+      await recordFailure(error, gateway)
     }
   },
 
@@ -315,6 +327,7 @@ export const useSshStore = create<SshState>((set, get) => ({
       // 端口没改成：保留确认对话让用户能重试，原因走通知。
       set({ savingPort: false })
       notify(error instanceof Error ? `保存失败：${error.message}` : '保存失败', 'danger')
+      await recordFailure(error, gateway)
       return
     }
     // 联动放在端口保存的 try 之外：它自己的失败已在内部报成「联动失败」，
@@ -333,6 +346,7 @@ export const useSshStore = create<SshState>((set, get) => ({
     } catch (error) {
       set({ rootAuth: previous, savingPolicy: false })
       notify(error instanceof Error ? `保存失败：${error.message}` : '保存失败', 'danger')
+      await recordFailure(error, gateway)
     }
   },
 
@@ -356,6 +370,7 @@ export const useSshStore = create<SshState>((set, get) => ({
     } catch (error) {
       set({ resettingPassword: false })
       notify(error instanceof Error ? `重置失败：${error.message}` : '重置失败', 'danger')
+      await recordFailure(error, gateway)
     }
   },
 
@@ -384,6 +399,7 @@ export const useSshStore = create<SshState>((set, get) => ({
     } catch (error) {
       set({ generatingRootKey: false })
       notify(error instanceof Error ? `生成失败：${error.message}` : '生成失败', 'danger')
+      await recordFailure(error, gateway)
     }
   },
 
@@ -446,6 +462,7 @@ export const useSshStore = create<SshState>((set, get) => ({
     } catch (error) {
       set({ creatingKey: false })
       notify(error instanceof Error ? `创建失败：${error.message}` : '创建失败', 'danger')
+      await recordFailure(error, gateway)
       return false
     }
   },
@@ -474,6 +491,8 @@ export const useSshStore = create<SshState>((set, get) => ({
         removingKeyIds: state.removingKeyIds.filter((id) => id !== keyId),
       }))
       notify(error instanceof Error ? `删除失败：${error.message}` : '删除失败', 'danger')
+      await recordFailure(error, gateway)
     }
   },
-}))
+})
+})

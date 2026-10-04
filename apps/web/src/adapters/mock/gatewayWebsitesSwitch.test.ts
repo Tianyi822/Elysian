@@ -38,7 +38,7 @@ describe('createMockGateway 网站片分流', () => {
     vi.stubGlobal('fetch', fetchMock)
     const gateway = createMockGateway({ eventStream: 'memory', websites: 'http' })
     const report = await gateway.websites.list()
-    expect(fetchMock).toHaveBeenCalledWith('/api/websites', { cache: 'no-store' })
+    expect(fetchMock).toHaveBeenCalledWith('/api/websites', { cache: 'no-store', signal: expect.any(AbortSignal) })
     expect(report).toEqual({ projects: [], proxy: { state: 'active', detail: null } })
     vi.unstubAllGlobals()
   })

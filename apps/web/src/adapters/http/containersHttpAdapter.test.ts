@@ -94,7 +94,7 @@ describe('createHttpContainersAdapter', () => {
     vi.stubGlobal('fetch', fetchMock)
     const adapter = createHttpContainersAdapter()
     const containers = await adapter.list()
-    expect(fetchMock).toHaveBeenCalledWith('/api/docker/containers', undefined)
+    expect(fetchMock).toHaveBeenCalledWith('/api/docker/containers', { signal: expect.any(AbortSignal) })
     expect(containers).toEqual([baseContainer])
     vi.unstubAllGlobals()
   })
@@ -104,7 +104,7 @@ describe('createHttpContainersAdapter', () => {
     vi.stubGlobal('fetch', fetchMock)
     const adapter = createHttpContainersAdapter()
     const images = await adapter.listImages()
-    expect(fetchMock).toHaveBeenCalledWith('/api/docker/images', undefined)
+    expect(fetchMock).toHaveBeenCalledWith('/api/docker/images', { signal: expect.any(AbortSignal) })
     expect(images).toEqual([baseImage])
     vi.unstubAllGlobals()
   })
@@ -115,7 +115,7 @@ describe('createHttpContainersAdapter', () => {
     const signal = new AbortController().signal
     const result = await createHttpContainersAdapter().searchImageNames('red', 'https://mirror.example.com', signal)
     expect(result).toEqual({ names: ['redis'], searchable: true })
-    expect(fetchMock).toHaveBeenCalledWith('/api/docker/images/search?term=red&registry=https%3A%2F%2Fmirror.example.com', { signal })
+    expect(fetchMock).toHaveBeenCalledWith('/api/docker/images/search?term=red&registry=https%3A%2F%2Fmirror.example.com', { signal: expect.any(AbortSignal) })
     vi.unstubAllGlobals()
   })
 
@@ -125,7 +125,7 @@ describe('createHttpContainersAdapter', () => {
     const signal = new AbortController().signal
     const result = await createHttpContainersAdapter().imageTags('library/redis', 'https://mirror.example.com', signal)
     expect(result).toEqual({ tags: ['latest', '8-alpine'], searchable: true })
-    expect(fetchMock).toHaveBeenCalledWith('/api/docker/images/tags?name=library%2Fredis&registry=https%3A%2F%2Fmirror.example.com', { signal })
+    expect(fetchMock).toHaveBeenCalledWith('/api/docker/images/tags?name=library%2Fredis&registry=https%3A%2F%2Fmirror.example.com', { signal: expect.any(AbortSignal) })
     vi.unstubAllGlobals()
   })
 
@@ -139,7 +139,7 @@ describe('createHttpContainersAdapter', () => {
       mountRoot: '/srv',
       reservedPorts: [48100],
     })
-    expect(fetchMock).toHaveBeenCalledWith('/api/docker/policy', undefined)
+    expect(fetchMock).toHaveBeenCalledWith('/api/docker/policy', { signal: expect.any(AbortSignal) })
     vi.unstubAllGlobals()
   })
 
@@ -422,6 +422,7 @@ describe('createHttpContainersAdapter', () => {
     const adapter = createHttpContainersAdapter()
     const container = await adapter.requestAction('a1b2c3d4e5f6', 'start')
     expect(fetchMock).toHaveBeenCalledWith('/api/docker/containers/a1b2c3d4e5f6/start', {
+      signal: expect.any(AbortSignal),
       method: 'POST',
       headers: { 'content-type': 'application/json' },
     })
@@ -443,6 +444,7 @@ describe('createHttpContainersAdapter', () => {
     }
     const container = await adapter.create(input)
     expect(fetchMock).toHaveBeenCalledWith('/api/docker/containers', {
+      signal: expect.any(AbortSignal),
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(input),
@@ -503,6 +505,7 @@ describe('createHttpContainersAdapter', () => {
     const adapter = createHttpContainersAdapter()
     await expect(adapter.removeImage('sha256:abc/def')).resolves.toBeUndefined()
     expect(fetchMock).toHaveBeenCalledWith('/api/docker/images/sha256%3Aabc%2Fdef', {
+      signal: expect.any(AbortSignal),
       method: 'DELETE',
     })
     vi.unstubAllGlobals()

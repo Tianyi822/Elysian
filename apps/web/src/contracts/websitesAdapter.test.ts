@@ -31,7 +31,7 @@ describe('网站 adapter 访问配置', () => {
     const signal = new AbortController().signal
     const adapter = createHttpWebsitesAdapter()
     expect(await adapter.runtimeCatalog(signal)).toEqual(MOCK_WEBSITE_RUNTIME_REPORT)
-    expect(fetcher).toHaveBeenCalledWith('/api/websites/runtimes', { signal, cache: 'no-store' })
+    expect(fetcher).toHaveBeenCalledWith('/api/websites/runtimes', { signal: expect.any(AbortSignal), cache: 'no-store' })
     const invalid = structuredClone(MOCK_WEBSITE_RUNTIME_REPORT)
     invalid.catalog.node = [{ version: '24.22.0-rc.1', image: 'node:24.22.0-rc.1', maintenance: 'legacy', checkedAt: '2026-09-30' }]
     fetcher.mockResolvedValue(Response.json(invalid))

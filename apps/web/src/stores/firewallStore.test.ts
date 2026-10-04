@@ -3,6 +3,7 @@ import type { FirewallRule, FirewallToggles } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
 import { useFirewallStore } from './firewallStore'
 import { useNotificationStore } from './notificationStore'
+import { RequestTimeoutError } from '../adapters/http/requestDeadline'
 
 /*
  * 防火墙 store 的行为测试。网关用手写 stub 注入，只依赖 adapter 接口形状；
@@ -41,6 +42,25 @@ function gatewayWith(overrides: Partial<ElysianGateway['firewall']> = {}): Elysi
 beforeEach(() => {
   useFirewallStore.setState(useFirewallStore.getInitialState())
   useNotificationStore.setState({ notifications: [] })
+})
+
+describe('同步与不确定结果', () => {
+  it('同步成功但列表刷新失败时解除忙碌，只显示失败', async () => {
+    const gateway = gatewayWith({ syncFromSystem: async () => ({ total: 1 }), list: async () => { throw new Error('读取超时') } })
+    await useFirewallStore.getState().syncFromSystem(gateway)
+    expect(useFirewallStore.getState().syncing).toBe(false)
+    expect(useFirewallStore.getState().operationError).toContain('读取超时')
+    expect(useNotificationStore.getState().notifications.every((n) => n.tone === 'danger')).toBe(true)
+  })
+  it('开关写超时不重放，重新读取实际状态后解除忙碌', async () => {
+    const setToggles = vi.fn(async () => { throw new RequestTimeoutError(true) })
+    const gateway = gatewayWith({ setToggles, toggles: async () => ({ ...TOGGLES, firewallEnabled: false }) })
+    await useFirewallStore.getState().toggle(gateway, { ...TOGGLES, firewallEnabled: false })
+    expect(setToggles).toHaveBeenCalledTimes(1)
+    expect(useFirewallStore.getState().toggles.firewallEnabled).toBe(false)
+    expect(useFirewallStore.getState().toggling).toBe(false)
+    expect(useFirewallStore.getState().operationError).toContain('操作结果尚未确认')
+  })
 })
 
 describe('开关切换的并发保护', () => {
