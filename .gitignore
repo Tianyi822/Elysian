@@ -79,6 +79,11 @@ $RECYCLE.BIN/
 # superpowers 技能工作目录
 .superpowers/
 
+# Impeccable 本地设计上下文与验收产物
+/.impeccable/
+/PRODUCT.md
+/product.md
+
 # Go 后端（apps/server-go）构建产物与嵌入占位：dist 只留入库的 .gitkeep
 #（上方全局 dist/ 规则会排除目录本身，须先重新包含目录再放行占位文件）；
 # elysian 为发布构建产出的单二进制。
