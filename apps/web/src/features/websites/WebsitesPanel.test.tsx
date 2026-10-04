@@ -89,7 +89,7 @@ describe('三步构建与部署', () => {
   })
   it('公开与私有 Git 传递引用及一次性令牌', async () => {
     const user = userEvent.setup(); const gateway = await open(); const git = vi.spyOn(gateway.websites.deployment!, 'git')
-    await user.click(screen.getByRole('button', { name: '添加项目' })); await user.click(screen.getByRole('button', { name: 'HTTPS Git' }))
+    await user.click(screen.getByRole('button', { name: '添加项目' })); await user.click(screen.getByRole('button', { name: 'Git 仓库' }))
     await user.type(screen.getByLabelText('Git 地址（HTTPS）'), 'https://example.org/app.git')
     await user.type(screen.getByLabelText('分支、标签或提交（可选）'), 'v1.2.3')
     await user.type(screen.getByLabelText('私有仓库令牌（可选）'), 'secret-token')

@@ -51,7 +51,7 @@ Docker 环境中的 SQLite 使用面板持久卷 `~/.Elysian/data/sqlite`：可�
 
 构建使用一次性非特权容器，每个项目使用独立运行容器。Java 构建 JDK 与运行 JRE 分开设置，Node 可选择服务或 Nginx 静态站点；静态站点的构建版本与运行环境分别记录。构建和测试期间旧项目继续运行，新容器内部端口就绪后完成发布，失败恢复旧版本；当前及上一成功版本保留供回滚。任务支持取消、补充配置继续执行和重新部署；关闭弹窗或刷新后通过「部署任务」恢复查看。未发现测试、测试通过与明确跳过分别显示。
 
-默认单构建并发、2 CPU／2 GiB、20 分钟超时；压缩包上限 512 MiB、展开上限 2 GiB、10 万条目，拒绝路径穿越、链接、特殊文件与损坏包。服务端可通过 ELYSIAN_DEPLOY_CONCURRENCY、ELYSIAN_DEPLOY_CPUS、ELYSIAN_DEPLOY_MEMORY_BYTES、ELYSIAN_DEPLOY_TIMEOUT_SECONDS、ELYSIAN_DEPLOY_ARCHIVE_BYTES、ELYSIAN_DEPLOY_EXPANDED_BYTES、ELYSIAN_DEPLOY_ENTRIES 调整。来源位于 ~/.Elysian/tmp/website-sources，保留 24 小时；任务与日志分别位于 state/website-deployments、logs/website-deployments，保留 30 天；重启中断的任务明确标记且不自动重新发布。旧项目按人工部署项目兼容读取。SSH Git、WAR／Tomcat、提交触发与多环境发布不在支持范围。
+默认单构建并发、2 CPU／2 GiB、20 分钟超时；压缩包上限 512 MiB、展开上限 2 GiB、10 万条目，拒绝路径穿越、链接、特殊文件与损坏包。服务端可通过 ELYSIAN_DEPLOY_CONCURRENCY、ELYSIAN_DEPLOY_CPUS、ELYSIAN_DEPLOY_MEMORY_BYTES、ELYSIAN_DEPLOY_TIMEOUT_SECONDS、ELYSIAN_DEPLOY_ARCHIVE_BYTES、ELYSIAN_DEPLOY_EXPANDED_BYTES、ELYSIAN_DEPLOY_ENTRIES 调整。来源位于 ~/.Elysian/tmp/website-sources，保留 24 小时；任务与日志分别位于 state/website-deployments、logs/website-deployments，保留 30 天；项目删除后真实历史任务继续保留并显示「历史部署成功 · 项目已删除」及完成时间，未创建项目的任务不会标记已删除。任务列表与详情的只读 `projectStatus` 按项目登记和发布记录现场计算（present／deleted／not-created），不迁移旧任务。测试残留只能按已确认的任务 ID 将任务文件和日志移入 backups，恢复时移回同 ID 文件并重启服务；重启中断的任务明确标记且不自动重新发布。旧项目按人工部署项目兼容读取。SSH Git、WAR／Tomcat、提交触发与多环境发布不在支持范围。
 
 真实容器验收需在 Docker 开发后端中显式执行 ELYSIAN_DEPLOY_INTEGRATION=1 go test ./internal/websites -run 'TestDeploymentReal' -timeout 40m；测试会拉取官方精确版本镜像，只创建并清理自己的测试项目。设计与接口约定见本地 [ADR-0018](docs/adr/0018-website-build-and-deployment-pipeline.md)。
 

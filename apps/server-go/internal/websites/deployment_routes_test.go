@@ -91,3 +91,54 @@ func TestDeploymentSourceAndResumeRoutes(t *testing.T) {
 		t.Fatal("取消上传未停止")
 	}
 }
+
+func TestDeploymentProjectStatusResponses(t *testing.T) {
+	f := fixture(t, nil, nil, nil, nil)
+	m := newDeploymentManager(f.service, deploymentEngine{limits: defaultDeploymentLimits()}, t.TempDir(), t.TempDir(), t.TempDir())
+	if err := f.registry.Put(context.Background(), WebsiteRecord{ID: "existing"}); err != nil {
+		t.Fatal(err)
+	}
+	tasks := []deploymentTask{
+		{ID: "current", ProjectID: "existing", State: "succeeded"},
+		{ID: "history", ProjectID: "removed", State: "succeeded", Release: &releaseRecord{}},
+		{ID: "publishing", ProjectID: "new", State: "publishing", Pending: &WebsiteRecord{ID: "new"}},
+		{ID: "failed-new", State: "failed"},
+		{ID: "redeploy", ProjectID: "removed", State: "failed", Input: deploymentInput{ProjectID: "removed"}},
+	}
+	want := map[string]string{"current": "present", "history": "deleted", "publishing": "not-created", "failed-new": "not-created", "redeploy": "deleted"}
+	for i := range tasks {
+		task := tasks[i]
+		m.tasks[task.ID] = &task
+	}
+	r := chi.NewRouter()
+	mountDeploymentRoutes(r, m)
+	for _, path := range []string{"/deployments", "/deployments/history", "/deployments/publishing"} {
+		response := httptest.NewRecorder()
+		r.ServeHTTP(response, httptest.NewRequest("GET", path, nil))
+		if response.Code != 200 {
+			t.Fatal(response.Body.String())
+		}
+		var rows []deploymentTask
+		if path == "/deployments" {
+			if err := json.Unmarshal(response.Body.Bytes(), &rows); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			var task deploymentTask
+			if err := json.Unmarshal(response.Body.Bytes(), &task); err != nil {
+				t.Fatal(err)
+			}
+			rows = []deploymentTask{task}
+		}
+		for _, row := range rows {
+			if row.ProjectStatus != want[row.ID] {
+				t.Fatalf("%s 项目状态错误：%s", row.ID, row.ProjectStatus)
+			}
+		}
+	}
+	for _, task := range m.tasks {
+		if task.ProjectStatus != "" {
+			t.Fatal("只读状态写入了历史内存数据")
+		}
+	}
+}

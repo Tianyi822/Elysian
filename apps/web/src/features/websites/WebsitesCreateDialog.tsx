@@ -1,6 +1,7 @@
+import { deploymentTaskSummary } from './deploymentTaskSummary'
 import * as Dialog from '@radix-ui/react-dialog'
 import { useEffect, useRef, useState } from 'react'
-import { WEBSITE_PROJECT_KIND_LABELS, WEBSITE_DEPLOYMENT_STATE_LABELS, isValidWebsiteProjectName, isValidWebsitePort, isValidWebsiteDomain, parseProjectNameFromGitUrl, websiteDeploymentIsActive } from '@elysian/contracts'
+import { WEBSITE_PROJECT_KIND_LABELS, isValidWebsiteProjectName, isValidWebsitePort, isValidWebsiteDomain, parseProjectNameFromGitUrl, websiteDeploymentIsActive } from '@elysian/contracts'
 import type { WebsiteSource, WebsiteBuildConfig, WebsiteDeploymentTask, WebsiteProject, WebsiteRuntimeCatalogReport } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { useWebsitesStore } from '../../stores/websitesStore'
@@ -151,7 +152,7 @@ export function WebsitesCreateDialog({ project, existingTask, onClose }: { proje
       <div className="space-y-4 overflow-y-auto px-4 py-4">
         <Dialog.Description id="deployment-description" tabIndex={-1} className="text-xs text-fg-muted">获取项目后确认配置，测试与构建在隔离容器内执行。每个项目使用独立运行容器。</Dialog.Description>
         {step === 1 && <>
-          <div role="group" aria-label="项目来源" className="flex gap-2">{(['archive', 'git'] as const).map((type) => <button key={type} type="button" aria-pressed={sourceType === type} className={BUTTON} disabled={busy} onClick={() => setSourceType(type)}>{type === 'archive' ? '上传压缩包' : 'HTTPS Git'}</button>)}</div>
+          <div role="group" aria-label="项目来源" className="flex gap-2">{(['archive', 'git'] as const).map((type) => <button key={type} type="button" aria-pressed={sourceType === type} className={BUTTON} disabled={busy} onClick={() => setSourceType(type)}>{type === 'archive' ? '上传压缩包' : 'Git 仓库'}</button>)}</div>
           {sourceType === 'archive' ? label('deploy-archive', '项目压缩包', <input id="deploy-archive" type="file" accept=".zip,.tar.gz,.tgz" disabled={busy} onChange={(e) => setFile(e.target.files?.[0])} className="block w-full text-xs text-fg-muted file:mr-3 file:rounded-lg file:border file:border-line file:bg-surface-raised file:px-3 file:py-2 file:text-fg" />) : <>
             {label('deploy-git', 'Git 地址（HTTPS）', <input id="deploy-git" className={INPUT} value={url} disabled={busy} placeholder="https://github.com/org/repo.git" onChange={(e) => setUrl(e.target.value)} />)}
             {label('deploy-ref', '分支、标签或提交（可选）', <input id="deploy-ref" className={INPUT} value={gitRef} disabled={busy} placeholder="留空使用远端默认分支" onChange={(e) => setGitRef(e.target.value)} />)}
@@ -191,7 +192,7 @@ export function WebsitesCreateDialog({ project, existingTask, onClose }: { proje
           </>}
         </>}
         {step === 3 && task && <>
-          <p role="status" className="text-sm font-medium">{WEBSITE_DEPLOYMENT_STATE_LABELS[task.state]} · {task.stage}</p>
+          <p role="status" className="text-sm font-medium">{deploymentTaskSummary(task)}</p>
           <p className="text-xs text-fg-muted">{TEST_LABEL[task.testResult]}</p>
           {task.buildImage && <p className="break-all text-xs text-fg-muted">构建镜像：{task.buildImage}</p>}
           {task.runtimeImage && <p className="break-all text-xs text-fg-muted">运行镜像：{task.runtimeImage}</p>}

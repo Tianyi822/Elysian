@@ -42,6 +42,7 @@ export type WebsiteRelease = {
   command: string; containerId: string; containerName: string
 }
 export type WebsiteDeploymentTask = {
+  readonly projectStatus?: 'present' | 'deleted' | 'not-created'
   id: string; sourceId: string; projectId?: string; name: string; port?: number
   state: WebsiteDeploymentState; stage: string; createdAt: string; updatedAt: string
   config: WebsiteBuildConfig; buildImage?: string; runtimeImage?: string

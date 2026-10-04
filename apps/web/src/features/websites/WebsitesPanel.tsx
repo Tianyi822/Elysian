@@ -1,7 +1,9 @@
+import { deploymentTaskSummary } from './deploymentTaskSummary'
+import { formatDateTime } from '../../components/format'
 import { useWebsiteDeploymentsStore } from '../../stores/websiteDeploymentsStore'
 import type { WebsiteCategory, WebsiteProject, WebsiteDeploymentTask } from '@elysian/contracts'
 import { useState, useEffect } from 'react'
-import { WEBSITE_CATEGORIES, WEBSITE_CATEGORY_LABELS, WEBSITE_DEPLOYMENT_STATE_LABELS, websiteDeploymentIsActive } from '@elysian/contracts'
+import { WEBSITE_CATEGORIES, WEBSITE_CATEGORY_LABELS, websiteDeploymentIsActive } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { IconButton } from '../../components/IconButton'
 import { RefreshCw, Search } from '../../components/icons'
@@ -165,7 +167,7 @@ export function WebsitesPanel() {
 
       {operationError && <p role="alert" className="mb-4 text-xs text-danger">{operationError}</p>}
       {taskListOpen && <div className="mb-4 space-y-2 rounded-xl border border-line bg-surface p-4" aria-label="部署任务列表">
-        {taskError ? <p role="alert" className="text-xs text-danger">{taskError}</p> : tasks.length === 0 ? <p className="text-xs text-fg-muted">暂无部署任务</p> : tasks.map((task) => <button type="button" key={task.id} onClick={() => setSelectedTask(task)} className="flex w-full flex-wrap items-center justify-between gap-2 rounded-lg border border-line p-3 text-left text-xs hover:bg-surface-raised"><span className="min-w-0 break-all">{task.name}</span><span>{WEBSITE_DEPLOYMENT_STATE_LABELS[task.state]} · {task.stage}</span></button>)}
+        {taskError ? <p role="alert" className="text-xs text-danger">{taskError}</p> : tasks.length === 0 ? <p className="text-xs text-fg-muted">暂无部署任务</p> : tasks.map((task) => <button type="button" key={task.id} onClick={() => setSelectedTask(task)} className="flex w-full flex-wrap items-center justify-between gap-2 rounded-lg border border-line p-3 text-left text-xs hover:bg-surface-raised"><span className="min-w-0 break-all">{task.name}</span><span className="flex flex-col gap-1 text-right"><span>{deploymentTaskSummary(task)}</span>{!websiteDeploymentIsActive(task.state) && task.state !== 'awaiting-config' ? <time dateTime={task.updatedAt} className="text-fg-muted">完成于 {formatDateTime(task.updatedAt)}</time> : null}</span></button>)}
       </div>}
       {projects.some((project) => project.accessMode === 'domain') && (proxyStatus.state === 'unavailable' || proxyStatus.detail !== null) ? (
         <ProxyStatusBanner

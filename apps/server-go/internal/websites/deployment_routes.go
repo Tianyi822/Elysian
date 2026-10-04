@@ -133,6 +133,11 @@ func mountDeploymentRoutes(r chi.Router, m *deploymentManager) {
 			rows = append(rows, copy)
 		}
 		m.mu.Unlock()
+		rows, err := m.reportTasks(r.Context(), rows)
+		if err != nil {
+			middleware.WriteError(w, err)
+			return
+		}
 		w.Header().Set("Cache-Control", "no-store")
 		shared.SendJSON(w, 200, rows)
 	})
@@ -142,8 +147,13 @@ func mountDeploymentRoutes(r chi.Router, m *deploymentManager) {
 			middleware.WriteError(w, err)
 			return
 		}
+		rows, err := m.reportTasks(r.Context(), []deploymentTask{task})
+		if err != nil {
+			middleware.WriteError(w, err)
+			return
+		}
 		w.Header().Set("Cache-Control", "no-store")
-		shared.SendJSON(w, 200, task)
+		shared.SendJSON(w, 200, rows[0])
 	})
 	r.Get("/deployments/{taskId}/logs", func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "taskId")

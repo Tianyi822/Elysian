@@ -19,7 +19,7 @@ export function createMockWebsiteDeployments(): WebsiteDeploymentsAdapter {
     const value: WebsiteSource = { id: `demo-source-${++sequence}`, name, type, mode, state: 'ready', createdAt: stamp, expiresAt: '2026-10-02T00:00:00Z', report: { candidates: (['java', 'node', 'go', 'python', 'html'] as const).map(candidate), warnings: ['演示环境不执行 Git 拉取、压缩包解压或构建'] } }
     sources.set(value.id, value); return structuredClone(value)
   }
-  const getTask = (id: string) => { const value = tasks.get(id); if (!value) throw new Error('部署任务不存在'); return structuredClone(value) }
+  const getTask = (id: string) => { const value = tasks.get(id); if (!value) throw new Error('部署任务不存在'); const projectStatus: WebsiteDeploymentTask['projectStatus'] = getWebsiteProjects().some((p) => p.id === value.projectId) ? 'present' : value.projectId && (inputs.get(id)?.projectId || value.state === 'succeeded') ? 'deleted' : 'not-created'; return { ...structuredClone(value), projectStatus } }
   return {
     async archive(file, mode, signal) { if (signal?.aborted) throw new Error('上传已取消'); return source(file.name, 'archive', mode) },
     async git(input) { return source(input.url, 'git', input.mode) },
@@ -33,7 +33,7 @@ export function createMockWebsiteDeployments(): WebsiteDeploymentsAdapter {
       const value: WebsiteDeploymentTask = { id: `demo-task-${++sequence}`, sourceId: input.sourceId, projectId: input.projectId, name: input.name, port: input.port, state: 'queued', stage: '等待演示部署', createdAt: stamp, updatedAt: stamp, config: input.config, testResult: input.config.skipTests || src?.mode === 'artifact' ? 'skipped' : c.testSteps.length ? 'pending' : 'absent' }
       tasks.set(value.id, value); inputs.set(value.id, input); return structuredClone(value)
     },
-    async list() { return [...tasks.values()].map((value) => structuredClone(value)) },
+    async list() { return [...tasks.keys()].map(getTask) },
     async task(id) {
       const value = tasks.get(id); const input = inputs.get(id)
       if (!value) throw new Error('部署任务不存在')

@@ -77,6 +77,7 @@ type releaseRecord struct {
 	ContainerName  string `json:"containerName"`
 }
 type deploymentTask struct {
+	ProjectStatus     string                 `json:"projectStatus,omitempty"`
 	Port              int                    `json:"port"`
 	PreviousRunning   bool                   `json:"previousRunning"`
 	ID                string                 `json:"id"`

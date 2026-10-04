@@ -428,3 +428,26 @@ func (m *deploymentManager) cleanupContainers() {
 		}
 	}
 }
+
+// reportTasks 只给响应副本补状态，不迁移或改写持久化历史任务。
+func (m *deploymentManager) reportTasks(ctx context.Context, tasks []deploymentTask) ([]deploymentTask, error) {
+	projects, err := m.service.deps.registry.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	present := map[string]bool{}
+	for _, row := range projects {
+		present[row.ID] = true
+	}
+	for i := range tasks {
+		task := &tasks[i]
+		if task.ProjectID != "" && present[task.ProjectID] {
+			task.ProjectStatus = "present"
+		} else if task.ProjectID != "" && (task.Release != nil || task.Previous != nil || task.Input.ProjectID != "" || task.State == "succeeded") {
+			task.ProjectStatus = "deleted"
+		} else {
+			task.ProjectStatus = "not-created"
+		}
+	}
+	return tasks, nil
+}
