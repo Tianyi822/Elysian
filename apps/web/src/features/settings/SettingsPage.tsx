@@ -4,6 +4,7 @@ import { useId, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { PasswordVisibilityButton } from '../security/passwordFieldParts'
+import { CTL_FIELD } from '../../components/formControl'
 import { useSessionStore } from '../../stores/sessionStore'
 
 /*
@@ -20,7 +21,7 @@ const PASSWORD_CHANGE_NOTICE = '密码已修改，请使用新密码重新登录
 const PASSWORD_MIN_LENGTH = 8
 
 const INPUT_CLASS =
-  'h-[34px] w-full rounded-lg border border-line bg-surface-raised px-2.5 pr-9 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-warning'
+  `${CTL_FIELD} pr-9 disabled:cursor-not-allowed aria-invalid:border-warning`
 
 function newPasswordGuidance(value: string): { text: string; warning: boolean } {
   if (value.length === 0) return { text: '至少 8 位', warning: false }
@@ -150,7 +151,7 @@ export function SettingsPage() {
     <div className="max-w-3xl space-y-5">
     <section
       aria-labelledby={titleId}
-      className="rounded-xl border border-line bg-surface p-5"
+      className="panel-surface p-5"
     >
       <h2 id={titleId} className="text-sm font-medium text-fg">
         修改面板密码
@@ -194,7 +195,7 @@ export function SettingsPage() {
         <button
           type="submit"
           disabled={submitting}
-          className="h-9 rounded-lg border border-line bg-surface-raised px-4 text-sm font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50"
+          className="h-9 rounded-lg border border-control-line bg-surface-raised px-4 text-sm font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50"
         >
           {submitting ? '正在修改…' : '修改密码'}
         </button>
@@ -202,8 +203,8 @@ export function SettingsPage() {
     </section>
     <Dialog.Root open={confirmOpen} onOpenChange={setConfirmOpen}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/60" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-surface-raised p-4 shadow-xl">
+        <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl">
           <Dialog.Title className="text-sm font-semibold text-fg">确认修改密码</Dialog.Title>
           <Dialog.Description className="mt-2 text-xs leading-5 text-fg-muted">修改后，所有已登录设备都会退出，请用新密码重新登录。</Dialog.Description>
           <div className="mt-4 flex justify-end gap-2">
