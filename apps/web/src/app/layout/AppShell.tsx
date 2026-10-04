@@ -110,7 +110,12 @@ export function AppShell() {
                 <Dialog.Close asChild>
                   <span>
                     {/* 标题「主导航」已在旁边，悬停提示反而跟随焦点常驻，视觉提示关掉。 */}
-                    <IconButton label="关闭主导航" tooltip={false}>
+                    <IconButton
+                      label="关闭主导航"
+                      tooltip={false}
+                      variant="ghost"
+                      className="size-7 text-nav-muted hover:bg-nav-hover hover:text-nav-fg"
+                    >
                       {/* 抽屉向左收起，用面板折叠图标比 X 更贴合动作语义。 */}
                       <PanelLeftClose aria-hidden size={16} />
                     </IconButton>

@@ -5,7 +5,7 @@ import { formatDateTime } from '../../components/format'
 import { KeyRound, Search, Trash2 } from '../../components/icons'
 import { SSH_PAGE_SIZE, useSshStore } from '../../stores/sshStore'
 import { CTL_FIELD } from '../../components/formControl'
-import { ACTION_CLASS, Section, TablePager } from './sshCardParts'
+import { ACTION_CLASS, Section, TABLE_CELL_CLASS, TABLE_CONTAINER_CLASS, TABLE_HEADER_CLASS, TablePager } from './sshCardParts'
 import { filterSshKeys } from './sshKeySearch'
 
 /**
@@ -65,16 +65,15 @@ export function SshKeyCard() {
         </button>
       </div>
 
-      {/* 表格直接坐在卡面上：行悬停按交互词汇表向上步进一级表面，因此不再套一层浮起底。 */}
-      <div className="min-w-0 overflow-x-auto">
-        <table className="w-full table-fixed border-separate border-spacing-0 text-left text-sm">
+      <div role="region" aria-label="SSH 密钥表" className={TABLE_CONTAINER_CLASS}>
+        <table className="w-full min-w-[28rem] table-fixed border-separate border-spacing-0 text-left text-sm">
           {/* 归属账号是这张表的分组线索（谁手里有哪把钥匙），因此紧跟在名称之后。
               操作列定宽，只占两枚按钮的宽度；名称列钉住，窄屏下它始终在视线里。 */}
           <colgroup>
             <col className="w-[30%]" />
-            <col className="w-[24%]" />
-            <col className="w-[32%]" />
-            <col className="w-14" />
+            <col className="w-[22%]" />
+            <col className="w-[30%]" />
+            <col className="w-20" />
           </colgroup>
           <thead>
             <tr>
@@ -82,8 +81,8 @@ export function SshKeyCard() {
                 <th
                   key={label}
                   scope="col"
-                  className={`border-b border-line pb-2 text-xs font-medium text-fg-muted ${
-                    index === 0 ? 'sticky left-0 z-20 border-r bg-surface' : 'pl-3'
+                  className={`${TABLE_HEADER_CLASS} ${
+                    index === 0 ? 'sticky left-0 z-20 border-r' : ''
                   }`}
                 >
                   {label}
@@ -94,7 +93,7 @@ export function SshKeyCard() {
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={4} className="border-b border-line py-8 text-center text-sm text-fg-muted">
+                <td colSpan={4} className="px-3 py-8 text-center text-sm text-fg-muted">
                   {keys.length === 0
                     ? '还没有密钥，点右上角「创建 SSH 密钥」新建一把'
                     : '没有匹配的密钥，换个关键词试试'}
@@ -128,23 +127,23 @@ function KeyRow({ sshKey, ownerName }: { sshKey: SshLoginKey; ownerName: string 
   const openRemoveKey = useSshStore((s) => s.openRemoveKey)
 
   return (
-    <tr className="group transition-colors hover:bg-surface-raised">
+    <tr className="group transition-none hover:bg-surface-raised">
       {/* 名称超长截断显示：完整名称在悬停提示里，密钥全文在「查看密钥」弹窗里。
           名称列钉在左边并带不透明底，窄屏横向滚动时后面的列不会从它下面透出来。 */}
-      <td className="sticky left-0 z-10 whitespace-nowrap border-b border-r border-line bg-surface py-2.5 pr-3 group-hover:bg-surface-raised">
+      <td className={`${TABLE_CELL_CLASS} sticky left-0 z-10 whitespace-nowrap border-r bg-surface group-hover:bg-surface-raised`}>
         <span className="block truncate text-fg" title={sshKey.name}>
           {sshKey.name}
         </span>
       </td>
-      <td className="border-b border-line py-2.5 pl-3 text-fg-muted">
+      <td className={`${TABLE_CELL_CLASS} text-fg-muted`}>
         <span className="block truncate" title={ownerName}>
           {ownerName}
         </span>
       </td>
-      <td className="border-b border-line py-2.5 pl-3 tabular-nums text-fg-muted">
+      <td className={`${TABLE_CELL_CLASS} whitespace-nowrap tabular-nums text-fg-muted`}>
         {formatDateTime(sshKey.createdAt)}
       </td>
-      <td className="border-b border-line py-2.5">
+      <td className={TABLE_CELL_CLASS}>
         {/* 按钮左对齐：与「操作」表头共用同一条左边界，列宽就是两枚按钮的宽度。 */}
         <div className="flex items-center justify-start gap-1">
           {/* 按钮名带上密钥名：一列多行时读屏与查询都能分辨是哪一把。 */}

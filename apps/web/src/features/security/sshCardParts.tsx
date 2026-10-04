@@ -20,6 +20,11 @@ export const ACTION_CLASS = `${CTL_PRIMARY} shrink-0`
 /** 次要动作：与推进动作同高同形，只去掉底色并把文字降一档色阶。 */
 export const SECONDARY_ACTION_CLASS = `${CTL_SECONDARY} shrink-0`
 
+/** 卡内表格沿用全站的圆角描边、表头内距与数据行密度，不重复叠加玻璃面板。 */
+export const TABLE_CONTAINER_CLASS = 'hover-scrollbar min-w-0 overflow-x-auto rounded-xl border border-line'
+export const TABLE_HEADER_CLASS = 'border-b border-line bg-surface px-3 py-2.5 text-xs font-medium text-fg-muted'
+export const TABLE_CELL_CLASS = 'border-b border-line px-3 py-2.5'
+
 /**
  * 表格的分页条：左侧给出条数摘要与每页容量，右侧是上一页、页码、下一页。
  * 两张表共用；`label` 区分是哪张表的分页导航，读屏与查询都要靠它分辨。

@@ -223,7 +223,7 @@
     position: relative;
     isolation: isolate;
     border: 1px solid var(--t-panel-line);
-    border-radius: var(--radius-xl);
+    border-radius: var(--panel-radius, var(--radius-xl));
     background-color: var(--t-surface);
     background-image: linear-gradient(180deg, var(--t-panel-sheen), transparent 46%);
     box-shadow:
@@ -376,6 +376,10 @@
   .icon-button {
     border-radius: var(--icon-button-radius, var(--radius-lg));
   }
+  .icon-button-form-control {
+    height: var(--ctl-height, 2.25rem);
+    width: var(--ctl-height, 2.25rem);
+  }
 
   /* 胶囊组：把一组相关控件包成一个胶囊对象，边框归胶囊、成员不再各自描边。
      高度与 .ctl 同为一档，包在旁边的按钮同一基线，不会矮出一截。 */
@@ -446,6 +450,21 @@
     --ctl-radius: 9999px;
     --ctl-height: 2.25rem;
     --icon-button-radius: 9999px;
+    /* 工具栏条自己也是胶囊：外壳圆角走 panel-surface 读的同一个变量。
+       条的高度由成员撑出来，圆角给到 9999px 才是胶囊而不是圆角矩形。 */
+    --panel-radius: 9999px;
+  }
+
+  /* 防火墙工具栏外层控件同高，分组内的按钮填满扣除描边和内距后的内容区。 */
+  .firewall-toolbar {
+    --panel-radius: var(--radius-xl);
+    --ctl-height: 2rem;
+  }
+  .firewall-toolbar .ctl-group {
+    padding-block: 2px;
+  }
+  .firewall-toolbar .ctl-group .ctl {
+    height: 100%;
   }
 
   /* 卡片内的信息格：标签加读数，或一行事实说明。 */

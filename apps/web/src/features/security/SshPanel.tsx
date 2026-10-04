@@ -16,7 +16,7 @@ import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { formatDateTime, formatLoginIp, formatLoginTime } from '../../components/format'
 import { RefreshCw, TriangleAlert } from '../../components/icons'
 import { SSH_PAGE_SIZE, useSshStore } from '../../stores/sshStore'
-import { ACTION_CLASS, INPUT_CLASS, Region, SECONDARY_ACTION_CLASS, Section, SwitchToggle, TablePager } from './sshCardParts'
+import { ACTION_CLASS, INPUT_CLASS, Region, SECONDARY_ACTION_CLASS, Section, SwitchToggle, TABLE_CELL_CLASS, TABLE_CONTAINER_CLASS, TABLE_HEADER_CLASS, TablePager } from './sshCardParts'
 import { SshKeyCard } from './SshKeyCard'
 import { SshKeyCreateDialog } from './SshKeyCreateDialog'
 import { SshKeyDialog } from './SshKeyDialog'
@@ -172,19 +172,19 @@ function SshLoginRecordsCard() {
         // 只读表格内部没有可聚焦的控件，因此这个滚动容器自己必须可聚焦：
         // 否则窄屏下键盘用户没有任何办法把后面的列滚出来。
         tabIndex={0}
-        className="min-w-0 overflow-x-auto"
+        className={TABLE_CONTAINER_CLASS}
       >
         {/* 最小宽度加首列钉住：窄屏下整表横向滚动，来源地址始终留在左边，其余列滚出来看。
-            32rem 是五列都不折行的下限，再小就在宽桌上也冒出用不上的横向滚动条。 */}
-        <table className="w-full min-w-[32rem] table-fixed border-separate border-spacing-0 text-left text-sm">
+            34rem 为地址、完整时间和统一单元格内距留出空间。 */}
+        <table className="w-full min-w-[34rem] table-fixed border-separate border-spacing-0 text-left text-sm">
           {/* 五列按内容需要分宽度：登录时间最长（精确到秒），端口、状态、用户都只有几个字符，
               平均分会让时间列折行、把行高撑起来。 */}
           <colgroup>
-            <col className="w-[27%]" />
+            <col className="w-[28%]" />
             <col className="w-[34%]" />
-            <col className="w-[13%]" />
-            <col className="w-[13%]" />
-            <col className="w-[13%]" />
+            <col className="w-[12%]" />
+            <col className="w-[14%]" />
+            <col className="w-[12%]" />
           </colgroup>
           <thead>
             <tr>
@@ -192,10 +192,8 @@ function SshLoginRecordsCard() {
                 <th
                   key={label}
                   scope="col"
-                  // 首列钉住、其内容与卡片左边齐平；其余列留出左内距，
-                  // 免得「登录时间」紧贴在钉住列右侧的分割线上。
-                  className={`border-b border-line pb-2 text-xs font-medium text-fg-muted ${
-                    index === 0 ? 'sticky left-0 z-20 border-r bg-surface' : 'pl-3'
+                  className={`${TABLE_HEADER_CLASS} ${
+                    index === 0 ? 'sticky left-0 z-20 border-r' : ''
                   }`}
                 >
                   {label}
@@ -206,7 +204,7 @@ function SshLoginRecordsCard() {
           <tbody>
             {loginRecords.length === 0 ? (
               <tr>
-                <td colSpan={5} className="border-b border-line py-8 text-center text-sm text-fg-muted">
+                <td colSpan={5} className="px-3 py-8 text-center text-sm text-fg-muted">
                   还没有登录记录
                 </td>
               </tr>
@@ -215,26 +213,29 @@ function SshLoginRecordsCard() {
                 // 回环来源（容器内自连）显示「本机」，原始地址放悬停提示：列里不再出现裸 ::1。
                 const ipLabel = formatLoginIp(record.ip)
                 return (
-                <tr key={record.id} className="group transition-colors hover:bg-surface-raised">
+                <tr key={record.id} className="group transition-none hover:bg-surface-raised">
                   {/* 钉住的列要自带不透明底，否则滚动时后面的内容会从它下面透出来；
                       行悬停时它也跟着步进一级，颜色与整行一致。 */}
                   <td
-                    title={ipLabel === record.ip ? undefined : record.ip}
-                    className="sticky left-0 z-10 whitespace-nowrap border-b border-r border-line bg-surface py-2.5 pr-3 tabular-nums text-fg group-hover:bg-surface-raised"
+                    className={`${TABLE_CELL_CLASS} sticky left-0 z-10 whitespace-nowrap border-r bg-surface tabular-nums text-fg group-hover:bg-surface-raised`}
                   >
-                    {ipLabel}
+                    <span className="block truncate" title={ipLabel === record.ip ? undefined : record.ip}>
+                      {ipLabel}
+                    </span>
                   </td>
-                  <td className="border-b border-line py-2.5 pl-3 tabular-nums text-fg-muted">
+                  <td className={`${TABLE_CELL_CLASS} whitespace-nowrap tabular-nums text-fg-muted`}>
                     {formatLoginTime(record.at)}
                   </td>
-                  <td className="border-b border-line py-2.5 pl-3 tabular-nums text-fg-muted">{record.port}</td>
-                  <td className="border-b border-line py-2.5 pl-3">
+                  <td className={`${TABLE_CELL_CLASS} tabular-nums text-fg-muted`}>{record.port}</td>
+                  <td className={TABLE_CELL_CLASS}>
                     <StatusTag
                       label={SSH_LOGIN_RESULT_LABELS[record.result]}
                       tone={record.result === 'succeeded' ? 'success' : 'danger'}
                     />
                   </td>
-                  <td className="border-b border-line py-2.5 pl-3 text-fg-muted">{record.user}</td>
+                  <td className={`${TABLE_CELL_CLASS} text-fg-muted`}>
+                    <span className="block truncate" title={record.user}>{record.user}</span>
+                  </td>
                 </tr>
                 )
               })
@@ -466,46 +467,48 @@ function LoginStatsRegion({ stats, enabled }: { stats: SshLoginStats; enabled: b
   return (
     <Region title="登录统计">
       {enabled ? (
-        <table className="w-full table-fixed border-separate border-spacing-0 text-center text-sm">
-          {/* 定宽三列：窗口名、成功、失败；表头与单元格全部居中，计数用等宽数字，翻动时列宽不跳。 */}
-          <colgroup>
-            <col className="w-[40%]" />
-            <col className="w-[30%]" />
-            <col className="w-[30%]" />
-          </colgroup>
-          <thead>
-            <tr>
-              {['时间窗口', SSH_LOGIN_RESULT_LABELS.succeeded, SSH_LOGIN_RESULT_LABELS.failed].map((label) => (
-                <th
-                  key={label}
-                  scope="col"
-                  className="border-b border-line pb-2 text-center text-xs font-medium text-fg-muted"
-                >
-                  {label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {SSH_LOGIN_WINDOWS.map((window) => (
-              <tr key={window}>
-                <th
-                  scope="row"
-                  className="border-b border-line py-2 text-center text-xs font-medium text-fg-muted"
-                >
-                  {SSH_LOGIN_WINDOW_LABELS[window]}
-                </th>
-                <td className="border-b border-line py-2 text-center tabular-nums text-fg">
-                  {stats[window].succeeded}
-                </td>
-                {/* 失败计数带危险色：爆破尝试是这块的重点信号，文字与颜色一起表达。 */}
-                <td className="border-b border-line py-2 text-center tabular-nums text-danger">
-                  {stats[window].failed}
-                </td>
+        <div className={TABLE_CONTAINER_CLASS}>
+          <table className="w-full table-fixed border-separate border-spacing-0 text-center text-sm">
+            {/* 定宽三列：窗口名、成功、失败；表头与单元格全部居中，计数用等宽数字，翻动时列宽不跳。 */}
+            <colgroup>
+              <col className="w-[40%]" />
+              <col className="w-[30%]" />
+              <col className="w-[30%]" />
+            </colgroup>
+            <thead>
+              <tr>
+                {['时间窗口', SSH_LOGIN_RESULT_LABELS.succeeded, SSH_LOGIN_RESULT_LABELS.failed].map((label) => (
+                  <th
+                    key={label}
+                    scope="col"
+                    className={`${TABLE_HEADER_CLASS} text-center`}
+                  >
+                    {label}
+                  </th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {SSH_LOGIN_WINDOWS.map((window) => (
+                <tr key={window}>
+                  <th
+                    scope="row"
+                    className={`${TABLE_CELL_CLASS} text-center text-xs font-medium text-fg-muted`}
+                  >
+                    {SSH_LOGIN_WINDOW_LABELS[window]}
+                  </th>
+                  <td className={`${TABLE_CELL_CLASS} text-center tabular-nums text-fg`}>
+                    {stats[window].succeeded}
+                  </td>
+                  {/* 失败计数带危险色：爆破尝试是这块的重点信号，文字与颜色一起表达。 */}
+                  <td className={`${TABLE_CELL_CLASS} text-center tabular-nums text-danger`}>
+                    {stats[window].failed}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       ) : (
         <p className="text-xs text-fg-subtle">SSH 服务未启用，没有登录记录可统计。</p>
       )}

@@ -192,10 +192,10 @@ export function SystemLoadBadge({ navigation = false, collapsed = false }: { nav
               type="button"
               aria-label="系统负载"
               className={[
-                'inline-flex items-center gap-2 whitespace-nowrap rounded-lg text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-focus',
+                'inline-flex items-center whitespace-nowrap rounded-lg text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-focus',
                 navigation
-                  ? `${collapsed ? 'size-10 justify-center' : 'min-h-9 w-full px-3'} hover:bg-nav-hover`
-                  : 'px-1.5 py-1 hover:bg-surface-raised',
+                  ? `${collapsed ? 'size-10 justify-center' : 'min-h-9 w-full px-3'} gap-3 hover:bg-nav-hover`
+                  : 'gap-2 px-1.5 py-1 hover:bg-surface-raised',
                 view.status === 'error'
                   ? 'text-danger'
                   : sample
@@ -203,7 +203,9 @@ export function SystemLoadBadge({ navigation = false, collapsed = false }: { nav
                     : navigation ? 'text-nav-muted' : 'text-fg-subtle',
               ].join(' ')}
             >
-              <Gauge aria-hidden size={16} className="shrink-0" />
+              <span className={`inline-flex shrink-0 items-center justify-center ${navigation ? 'size-6' : ''}`}>
+                <Gauge aria-hidden size={16} />
+              </span>
               <span className={collapsed ? 'sr-only' : 'tabular-nums'}>{loadText}</span>
               <span aria-hidden className={collapsed ? 'hidden' : undefined}>
                 ·

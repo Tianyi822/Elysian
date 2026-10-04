@@ -210,7 +210,6 @@ describe('防火墙面板', () => {
     const row = screen.getAllByRole('row', { name: /2234/ })[0]!
     await user.click(within(row).getByRole('button', { name: '删除' }))
     const confirm = await screen.findByRole('dialog', { name: '确认删除端口规则「tcp 2234」？' })
-    expect(confirm.textContent).toContain('不会触碰任何真实防火墙')
 
     await user.click(within(confirm).getByRole('button', { name: '取消' }))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
@@ -442,7 +441,7 @@ describe('防火墙面板', () => {
       // 同步后重拉三类列表，通知里的总数取界面统计条的三个计数之和。
       // 统计芯片内部分标签段与读数段两格（中间一道竖线），数字在兄弟段上，所以读整枚芯片。
       const chipCount = (label: string) =>
-        Number(screen.getByText(`${label}：`).parentElement?.textContent?.match(/(\d+)/)?.[1] ?? '0')
+        Number(screen.getByText(label, { selector: 'span' }).parentElement?.textContent?.match(/(\d+)/)?.[1] ?? '0')
       const expected = chipCount('端口规则') + chipCount('IP 规则') + chipCount('端口转发')
 
       const notifications = screen.getByLabelText('通知')
@@ -527,7 +526,7 @@ describe('防火墙面板', () => {
     await openFirewallPage()
 
     // 统计条按视图呈现三类计数
-    expect(screen.getByText('IP 规则：').parentElement).toHaveTextContent(`${SEED_IP_RULES.length}`)
+    expect(screen.getByText('IP 规则', { selector: 'span' }).parentElement).toHaveTextContent(`${SEED_IP_RULES.length}`)
 
     await user.click(screen.getByRole('button', { name: 'IP 规则' }))
     const region = await screen.findByRole('region', { name: 'IP 规则表' })

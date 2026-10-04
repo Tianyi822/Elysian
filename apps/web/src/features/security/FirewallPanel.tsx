@@ -13,7 +13,7 @@ import { useIntrinsicWidth } from '../../app/layout/headerAccessoryWidth'
 import { IconButton } from '../../components/IconButton'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { RefreshButton } from '../../components/RefreshState'
-import { CTL_CHIP, CTL_GROUP, CTL_PRIMARY, CTL_STAT, CTL_TOOLBAR } from '../../components/formControl'
+import { CTL_CHIP, CTL_FIELD, CTL_GROUP, CTL_PRIMARY, CTL_STAT, CTL_TOOLBAR } from '../../components/formControl'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 import { formatDateTime } from '../../components/format'
@@ -29,7 +29,7 @@ import { formatFirewallImportProblems, parseFirewallRulesJson } from './firewall
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 
 /**
- * 系统防火墙面板：开关、默认策略、统计、三类规则（端口/IP/转发）表格。
+ * 系统防火墙面板：开关、统计、三类规则（端口/IP/转发）表格。
  * 数据来自防火墙 adapter：Docker 运行时由 HTTP adapter 真实执行容器内 ufw，
  * 宿主机本地开发是内存演示（带「演示数据」标识）；动作完成提示按运行时如实描述。
  *
@@ -52,7 +52,7 @@ function PolicyText({ policy }: { policy: FirewallRule['policy'] }) {
 function StatChip({ label, count }: { label: string; count: number }) {
   return (
     <span className={CTL_STAT}>
-      <span className="inline-flex items-center px-2.5 text-fg-muted">{label}：</span>
+      <span className="inline-flex items-center px-2.5 text-fg-muted">{label}</span>
       <span className="inline-flex items-center px-2.5 font-medium tabular-nums text-accent-fg">{count}</span>
     </span>
   )
@@ -72,7 +72,7 @@ function ToggleRow({
 }) {
   return (
     <label
-      className={`inline-flex items-center gap-2 text-sm text-fg ${disabled ? 'opacity-50' : 'cursor-pointer'}`}
+      className={`inline-flex h-8 items-center gap-2 text-sm text-fg ${disabled ? 'opacity-50' : 'cursor-pointer'}`}
     >
       {label}
       <SwitchToggle label={label} checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} />
@@ -249,7 +249,7 @@ export function FirewallPanel() {
   return (
     <div>
       {operationError ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-danger/40 p-3 text-xs text-danger"><p className="min-w-0 flex-1">{operationError}</p><button type="button" className="rounded border border-line px-3 py-1.5 text-fg" onClick={() => void load(gateway)}>重新读取状态</button></div> : null}
-      <div className={`${CTL_TOOLBAR} mb-4 flex flex-wrap items-center gap-x-4 gap-y-3 panel-surface px-4 py-3`}>
+      <div className={`${CTL_TOOLBAR} firewall-toolbar mb-4 flex flex-wrap items-center gap-x-4 gap-y-2 panel-surface px-4 py-3`}>
         {/* 防火墙动作只在容器内真实执行 ufw；宿主机本地开发是内存演示，明示出来。 */}
         {!isDockerRuntime() ? (
           <span role="status" className="text-sm text-fg-muted">
@@ -269,14 +269,6 @@ export function FirewallPanel() {
           disabled={toggling}
           onCheckedChange={(checked) => void toggle(gateway, { ...toggles, pingBlocked: checked })}
         />
-        <span aria-hidden className="hidden h-5 w-px bg-line sm:block" />
-        {/* 默认策略只读呈现：改默认策略是系统级变更，由系统侧配置承担。
-            ufw 未激活时整段不打印 Default 行，此时如实标注未知，不替系统编一个策略出来。 */}
-        <span className="text-xs text-fg-muted" title="ufw Default 策略">
-          {toggles.defaultIncoming === null || toggles.defaultOutgoing === null
-            ? '默认策略：未知（防火墙未激活）'
-            : `默认策略：入站${FIREWALL_POLICY_LABELS[toggles.defaultIncoming]} · 出站${FIREWALL_POLICY_LABELS[toggles.defaultOutgoing]}`}
-        </span>
         {/* 三类规则的条数并进开关这条：它们是同一份防火墙状态读数，不该自己占一行。 */}
         <span aria-hidden className="hidden h-5 w-px bg-line sm:block" />
         <StatChip label="端口规则" count={rules.length} />
@@ -288,7 +280,7 @@ export function FirewallPanel() {
           放得下（按钮行 + 间距 + 搜索框）就同行，放不下就按钮一行、搜索占满第二行。 */}
       <div
         ref={toolbarRef}
-        className={`${CTL_TOOLBAR} mb-4 panel-surface px-4 py-3 ${
+        className={`${CTL_TOOLBAR} firewall-toolbar mb-4 panel-surface px-4 py-3 ${
           toolbarInline ? 'flex items-center gap-2' : ''
         }`}
       >
@@ -376,7 +368,7 @@ export function FirewallPanel() {
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="请输入端口/来源"
-            className="w-full rounded-lg border border-control-line bg-surface-raised py-1.5 pl-8 pr-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle"
+            className={`${CTL_FIELD} pl-8 pr-3`}
           />
         </div>
       </div>
@@ -387,7 +379,7 @@ export function FirewallPanel() {
           打开顶栏折叠菜单时滚动条补偿会按这份超出把整页挤窄。
           invisible（含 aria-hidden + pointer-events-none）使探针不参与无障碍树与交互。 */}
       <div aria-hidden className="pointer-events-none invisible absolute top-0 left-0 h-0 w-0 overflow-hidden">
-        <div ref={probeRef} className="flex w-max gap-2">
+        <div ref={probeRef} className={`${CTL_TOOLBAR} firewall-toolbar flex w-max gap-2`}>
           <ViewSwitch view={view} onChange={() => {}} />
           {toolbarButtons.map((label) => (
             <ToolButton key={label} label={label} />
@@ -594,7 +586,7 @@ function PortRow({ rule }: { rule: FirewallRule }) {
   const openEdit = useFirewallStore((s) => s.openEdit)
 
   return (
-    <tr className="group transition-colors hover:bg-surface-raised">
+    <tr className="group transition-none hover:bg-surface-raised">
       {/* 端口列钉在左边并强制一行：地址族后缀折到第二行会把行高从 43px 撑到 61px。 */}
       <td className="sticky left-0 z-10 whitespace-nowrap border-b border-r border-line bg-surface px-3 py-2.5 font-medium tabular-nums group-hover:bg-surface-raised">
         {formatFirewallPort(rule)}

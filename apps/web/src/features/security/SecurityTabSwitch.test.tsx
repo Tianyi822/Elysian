@@ -29,11 +29,11 @@ describe('安全页签切换', () => {
     expect(items[0]).toHaveAttribute('aria-pressed', 'true')
   })
 
-  it('页签不带边框与分割线，选中态由亮色指示条表达', () => {
+  it('页签组带统一容器边框，按钮不带分割线，选中态由亮色指示条表达', () => {
     renderApp('/security')
 
     const group = segmentGroup()
-    expect(group).not.toHaveClass('border')
+    expect(group).toHaveClass('border', 'border-line')
     const items = within(group).getAllByRole('button')
     for (const item of items) {
       expect(item).not.toHaveClass('border-l')

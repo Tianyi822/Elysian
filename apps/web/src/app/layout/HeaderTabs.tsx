@@ -50,7 +50,7 @@ export function HeaderTabs<T extends string>({
       ref={listRef}
       role="group"
       aria-label={groupLabel}
-      className="relative flex h-11 max-w-full items-stretch gap-1 rounded-lg bg-surface/40 p-1"
+      className="relative flex h-11 max-w-full items-stretch gap-1 rounded-lg border border-line bg-surface/80 p-1"
     >
       {items.map(({ value: itemValue, label }, index) => (
         <button
