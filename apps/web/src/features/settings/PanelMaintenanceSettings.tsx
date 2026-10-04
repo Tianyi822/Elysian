@@ -6,9 +6,10 @@ import type { PanelTask, PanelUpdate } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { usePanelStore } from '../../stores/panelStore'
 import { openPanelAddress, reloadPanelPage } from './panelNavigation'
+import { PanelChangelogDialog } from './PanelChangelogDialog'
 
-const BUTTON = 'h-9 rounded-lg border border-line bg-surface-raised px-4 text-sm font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
-const INPUT = 'h-9 w-full rounded-lg border border-line bg-surface-raised px-3 text-sm tabular-nums text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
+const BUTTON = 'h-9 rounded-lg border border-control-line bg-surface-raised px-4 text-sm font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
+const INPUT = 'h-9 w-full rounded-lg border border-control-line bg-surface-raised px-3 text-sm tabular-nums text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
 
 /** 只替换端口，保留浏览器实际使用的 IP（包括 IPv6），不接受服务端任意跳转地址。 */
 export function panelAddress(port: number, origin = window.location.origin): string {
@@ -30,6 +31,7 @@ export function PanelMaintenanceSettings() {
   const [submitting, setSubmitting] = useState(false)
   const [checking, setChecking] = useState(false)
   const [update, setUpdate] = useState<PanelUpdate | null>(null)
+  const [changelogOpen, setChangelogOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [connectionError, setConnectionError] = useState<string | null>(null)
   const [retry, setRetry] = useState(0)
@@ -104,7 +106,7 @@ export function PanelMaintenanceSettings() {
     finally { setChecking(false) }
   }
   return <>
-    <section aria-label="面板端口" className="rounded-xl border border-line bg-surface p-5">
+    <section aria-label="面板端口" className="panel-surface p-5">
       <div className="flex items-center gap-1.5"><h2 className="text-sm font-medium text-fg">面板端口</h2><SectionHelp label="面板端口说明">前端端口用于打开面板，后端端口供面板内部使用。保存后会重启，页面会短暂断开。</SectionHelp></div>
       {!info && !loadError ? <p role="status" className="mt-3 text-xs text-fg-muted">正在读取面板配置…</p> : null}
       {loadError ? <div className="mt-3"><p role="alert" className="text-xs text-danger">{loadError}</p><button className={`${BUTTON} mt-3`} onClick={() => void usePanelStore.getState().load(gateway)}>重新读取配置</button></div> : null}
@@ -117,14 +119,14 @@ export function PanelMaintenanceSettings() {
         <div className="flex flex-wrap gap-2"><button type="submit" disabled={unavailable} className={BUTTON}>{submitting ? '正在提交…' : '保存并重启'}</button><button type="button" disabled={unavailable} className={BUTTON} onClick={() => void submit('restart', (id) => gateway.panel.restart(id))}>重启面板</button></div>
       </form>
     </section>
-    <section aria-label="面板更新" className="rounded-xl border border-line bg-surface p-5">
+    <section aria-label="面板更新" className="panel-surface p-5">
       <div className="flex items-center gap-1.5"><h2 className="text-sm font-medium text-fg">面板更新</h2><SectionHelp label="面板更新说明">先下载并编译新版本，成功后重启。更新失败会恢复原版本，保留面板数据。</SectionHelp></div>
       <div className="mt-3 space-y-2 text-xs leading-5 text-fg-muted"><p>更新来源：<a className="text-fg underline underline-offset-4" href="https://github.com/Tianyi822/Elysian" target="_blank" rel="noreferrer">Tianyi822/Elysian</a> 的默认分支</p><p className="break-all">当前提交：{info?.commit ?? '正在读取…'}</p>{info?.buildTime && info.buildTime !== 'unknown' ? <p>构建时间：{info.buildTime}</p> : null}</div>
       {update ? <div role="status" className="mt-4 space-y-1 break-all text-xs leading-5 text-fg"><p>{update.available ? '发现可更新的提交' : '当前已是最新提交'} · {update.branch}</p><p>目标提交：{update.targetCommit}</p>{update.message ? <p className="text-fg-muted">{update.message}</p> : null}</div> : null}
-      <div className="mt-4 flex flex-wrap gap-2"><button className={BUTTON} disabled={unavailable || checking} onClick={() => void check()}>{checking ? '正在检查…' : '检查更新'}</button><button className={BUTTON} disabled={unavailable || checking || !update?.available} onClick={() => update && void submit(`update:${update.targetCommit}`, (id) => gateway.panel.update(update.targetCommit, id))}>更新并重启</button></div>
+      <div className="mt-4 flex flex-wrap gap-2"><button className={BUTTON} disabled={unavailable || checking} onClick={() => void check()}>{checking ? '正在检查…' : '检查更新'}</button><button className={BUTTON} disabled={unavailable || checking || !update?.available} onClick={() => update && void submit(`update:${update.targetCommit}`, (id) => gateway.panel.update(update.targetCommit, id))}>更新并重启</button><button className={BUTTON} disabled={!info?.available} title={info && !info.available ? info.reason : undefined} onClick={() => setChangelogOpen(true)}>更新日志</button></div>
     </section>
     {error ? <p role="alert" className="rounded-lg border border-danger/40 p-3 text-xs leading-5 text-danger">{error}</p> : null}
-    {task ? <section aria-label="面板维护进度" className="rounded-xl border border-line bg-surface p-5">
+    {task ? <section aria-label="面板维护进度" className="panel-surface p-5">
       <h2 className="text-sm font-medium text-fg">面板维护进度</h2><p role="status" className="mt-3 text-xs leading-5 text-fg">{PANEL_TASK_STATE_LABELS[task.state]} · {PANEL_TASK_PHASE_LABELS[task.phase] ?? task.phase}</p>
       {task.error ? <p role="alert" className="mt-3 break-words text-xs leading-5 text-danger">{task.error}</p> : null}
       {connectionError ? <div className="mt-3"><p role="alert" className="text-xs leading-5 text-warning">{connectionError}</p><button className={`${BUTTON} mt-3`} onClick={() => { setConnectionError(null); setRetry((v) => v + 1) }}>重新等待连接</button></div> : null}
@@ -132,5 +134,6 @@ export function PanelMaintenanceSettings() {
       {logs ? <pre aria-label="维护任务日志" className="mt-4 max-h-48 overflow-auto whitespace-pre-wrap break-words text-xs leading-5 text-fg-muted">{logs}</pre> : null}
       {hasMore ? <button className={`${BUTTON} mt-3`} disabled={loadingLogs} onClick={() => { setLoadingLogs(true); void usePanelStore.getState().poll(gateway).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : '读取维护日志失败')).finally(() => setLoadingLogs(false)) }}>{loadingLogs ? '正在读取…' : '继续读取日志'}</button> : null}
     </section> : null}
+    <PanelChangelogDialog open={changelogOpen} currentCommit={info?.commit ?? ''} onClose={() => setChangelogOpen(false)} />
   </>
 }

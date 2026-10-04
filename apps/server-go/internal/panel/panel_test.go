@@ -97,6 +97,9 @@ func (h *fakeHost) VerifyRules(_ context.Context, p config.PanelNetwork) error {
 type fakeSource struct{ fail bool }
 
 func (s fakeSource) Check(context.Context) (Update, error) { return Update{}, nil }
+func (s fakeSource) History(context.Context, int) ([]CommitLog, error) {
+	return nil, nil
+}
 func (s fakeSource) Download(_ context.Context, _, dir string) error {
 	if s.fail {
 		return fmt.Errorf("下载失败")
@@ -311,6 +314,36 @@ func TestGitHubUsesRepositoryDefaultBranchAndPinnedSHA(t *testing.T) {
 	}
 	if archivePath != "/repos/"+Repository+"/tarball/"+sha {
 		t.Fatal("下载未锁定提交")
+	}
+}
+func TestGitHubHistoryListsDefaultBranchCommits(t *testing.T) {
+	sha := strings.Repeat("c", 40)
+	var gotSha, gotLimit string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/" + Repository:
+			_, _ = w.Write([]byte(`{"default_branch":"release-track"}`))
+		case "/repos/" + Repository + "/commits":
+			gotSha, gotLimit = r.URL.Query().Get("sha"), r.URL.Query().Get("per_page")
+			_, _ = w.Write([]byte(`[{"sha":"` + sha + `","commit":{"message":"标题\n正文不展示","author":{"date":"2026-10-04T08:00:00Z"}}}]`))
+		default:
+			t.Errorf("更新了预期之外的路径 %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	s := GitHubSource{Client: srv.Client(), API: srv.URL}
+	commits, err := s.History(context.Background(), 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotSha != "release-track" || gotLimit != "50" {
+		t.Fatalf("提交列表未按默认分支与上限拉取：sha=%q per_page=%q", gotSha, gotLimit)
+	}
+	if len(commits) != 1 || commits[0].SHA != sha || commits[0].Message != "标题" {
+		t.Fatalf("提交列表解析失败：%+v", commits)
+	}
+	if commits[0].Time.Year() != 2026 {
+		t.Fatalf("提交时间未解析：%+v", commits[0])
 	}
 }
 func TestHealthCorsIsLimitedToOldOriginAndTask(t *testing.T) {

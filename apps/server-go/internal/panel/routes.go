@@ -187,6 +187,21 @@ func (m Manager) Router() chi.Router {
 		}
 		shared.SendJSON(w, 200, u)
 	})
+	// 更新日志：列默认分支最近的提交。只读上游，不写状态，因此不经维护事务与互斥。
+	r.Get("/commits", func(w http.ResponseWriter, r *http.Request) {
+		if !m.Enabled || !m.Host.Available() {
+			shared.SendError(w, 503, "仅支持 systemd 安装版")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		defer cancel()
+		commits, err := m.Source.History(ctx, 50)
+		if err != nil {
+			shared.SendError(w, 502, err.Error())
+			return
+		}
+		shared.SendJSON(w, 200, commits)
+	})
 	for _, route := range []struct{ method, path, kind string }{{"PUT", "/ports", "ports"}, {"POST", "/restart", "restart"}, {"POST", "/update", "update"}} {
 		kind := route.kind
 		r.MethodFunc(route.method, route.path, func(w http.ResponseWriter, r *http.Request) {

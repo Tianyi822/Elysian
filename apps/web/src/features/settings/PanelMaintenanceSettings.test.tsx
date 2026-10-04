@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockGateway } from '../../adapters/mock/gateway'
@@ -33,6 +33,7 @@ describe('端口与更新设置', () => {
     expect(await screen.findByText('仅支持 systemd 安装版，当前为演示模式')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '保存并重启' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '检查更新' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '更新日志' })).toBeDisabled()
     expect(screen.getByLabelText('当前密码')).toBeInTheDocument()
   })
   it('表单不常驻地址，校验相同端口并保留输入', async () => {
@@ -76,5 +77,33 @@ describe('端口与更新设置', () => {
     await user.click(await screen.findByRole('button', { name: '继续读取日志' }))
     await waitFor(() => expect(screen.getByLabelText('维护任务日志')).toHaveTextContent('已完成'))
     expect(read).toHaveBeenLastCalledWith(task.id, 20)
+  })
+  it('更新日志窗口列出上游提交并只标注命中当前提交的那一条', async () => {
+    const g = gateway()
+    g.panel.commits = vi.fn(async () => [
+      { sha: info.commit, message: '防火墙按运行模式保护实际入口', time: '2026-10-03T12:00:00Z' },
+      { sha: 'e'.repeat(40), message: '部署任务标注项目状态', time: '2026-10-02T12:00:00Z' },
+    ])
+    renderApp('/settings', { gateway: g })
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: '更新日志' }))
+    const dialog = await screen.findByRole('dialog', { name: '更新日志' })
+    expect(within(dialog).getByText('防火墙按运行模式保护实际入口')).toBeInTheDocument()
+    expect(within(dialog).getByText('部署任务标注项目状态')).toBeInTheDocument()
+    expect(within(dialog).getAllByText('当前版本')).toHaveLength(1)
+    expect(within(dialog).getByText(info.commit.slice(0, 7))).toBeInTheDocument()
+  })
+  it('更新日志读取失败把原因留在窗口内，重试再次拉取', async () => {
+    const g = gateway()
+    const commits = vi.fn().mockRejectedValueOnce(new Error('GitHub 不可达，请检查网络或 API 限额')).mockResolvedValueOnce([])
+    g.panel.commits = commits
+    renderApp('/settings', { gateway: g })
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: '更新日志' }))
+    const dialog = await screen.findByRole('dialog', { name: '更新日志' })
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('GitHub 不可达，请检查网络或 API 限额')
+    await user.click(within(dialog).getByRole('button', { name: '重新读取' }))
+    expect(await within(dialog).findByText('没有可展示的提交')).toBeInTheDocument()
+    expect(commits).toHaveBeenCalledTimes(2)
   })
 })

@@ -16,6 +16,8 @@ export type PanelUpdate = {
   message: string; available: boolean
 }
 export type PanelTaskReport = { task: PanelTask; logs: string; nextOffset: number; hasMore?: boolean }
+/** 上游仓库的一条提交，按默认分支从新到旧排列，供面板的更新日志窗口呈现。 */
+export type PanelCommit = { sha: string; message: string; time: string }
 export function panelTaskIsActive(task: PanelTask): boolean { return task.state === 'queued' || task.state === 'running' }
 export function validatePanelPorts(ports: PanelPorts): string | null {
   if (![ports.frontendPort, ports.backendPort].every((port) => Number.isInteger(port) && port >= 1 && port <= 65535)) return '端口必须是 1–65535 的整数'

@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -58,21 +59,34 @@ func (s GitHubSource) get(ctx context.Context, endpoint string) (*http.Response,
 	}
 	return response, nil
 }
-func (s GitHubSource) Check(ctx context.Context) (Update, error) {
-	u := Update{Repository: Repository, CurrentCommit: Commit}
+
+// defaultBranch 解析仓库的默认分支；Check 与 History 都以它为准，不写死分支名。
+func (s GitHubSource) defaultBranch(ctx context.Context) (string, error) {
 	r, err := s.get(ctx, s.api()+"/repos/"+Repository)
 	if err != nil {
-		return u, err
+		return "", err
 	}
 	defer r.Body.Close()
 	var repo struct {
 		DefaultBranch string `json:"default_branch"`
 	}
 	if err = json.NewDecoder(io.LimitReader(r.Body, 1024*1024)).Decode(&repo); err != nil || repo.DefaultBranch == "" {
-		return u, fmt.Errorf("GitHub 仓库信息无效")
+		return "", fmt.Errorf("GitHub 仓库信息无效")
 	}
-	u.Branch = repo.DefaultBranch
-	r, err = s.get(ctx, s.api()+"/repos/"+Repository+"/commits/"+url.PathEscape(u.Branch))
+	return repo.DefaultBranch, nil
+}
+
+// firstLine 只取提交说明的标题行，正文留给 GitHub。
+func firstLine(message string) string { return strings.SplitN(message, "\n", 2)[0] }
+
+func (s GitHubSource) Check(ctx context.Context) (Update, error) {
+	u := Update{Repository: Repository, CurrentCommit: Commit}
+	branch, err := s.defaultBranch(ctx)
+	if err != nil {
+		return u, err
+	}
+	u.Branch = branch
+	r, err := s.get(ctx, s.api()+"/repos/"+Repository+"/commits/"+url.PathEscape(u.Branch))
 	if err != nil {
 		return u, err
 	}
@@ -87,9 +101,47 @@ func (s GitHubSource) Check(ctx context.Context) (Update, error) {
 		return u, fmt.Errorf("GitHub 提交信息无效")
 	}
 	u.TargetCommit = result.SHA
-	u.Message = strings.SplitN(result.Commit.Message, "\n", 2)[0]
+	u.Message = firstLine(result.Commit.Message)
 	u.Available = u.TargetCommit != Commit
 	return u, nil
+}
+
+// History 列出默认分支最近的提交，供面板的更新日志窗口呈现。
+// 上限固定由调用方给，越界一律回落到默认值，不接受任意大的拉取。
+func (s GitHubSource) History(ctx context.Context, limit int) ([]CommitLog, error) {
+	branch, err := s.defaultBranch(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if limit < 1 || limit > 100 {
+		limit = 30
+	}
+	endpoint := s.api() + "/repos/" + Repository + "/commits?sha=" + url.QueryEscape(branch) + "&per_page=" + strconv.Itoa(limit)
+	r, err := s.get(ctx, endpoint)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Body.Close()
+	var result []struct {
+		SHA    string `json:"sha"`
+		Commit struct {
+			Message string `json:"message"`
+			Author  struct {
+				Time time.Time `json:"date"`
+			} `json:"author"`
+		} `json:"commit"`
+	}
+	if err = json.NewDecoder(io.LimitReader(r.Body, 4*1024*1024)).Decode(&result); err != nil {
+		return nil, fmt.Errorf("GitHub 提交列表无效")
+	}
+	commits := make([]CommitLog, 0, len(result))
+	for _, item := range result {
+		if !commitPattern.MatchString(item.SHA) {
+			return nil, fmt.Errorf("GitHub 提交列表无效")
+		}
+		commits = append(commits, CommitLog{SHA: item.SHA, Message: firstLine(item.Commit.Message), Time: item.Commit.Author.Time})
+	}
+	return commits, nil
 }
 func (s GitHubSource) Download(ctx context.Context, sha, destination string) error {
 	if !commitPattern.MatchString(sha) {

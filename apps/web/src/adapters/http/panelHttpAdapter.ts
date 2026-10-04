@@ -1,4 +1,4 @@
-import type { PanelInfo, PanelPorts, PanelTask, PanelTaskReport, PanelUpdate } from '@elysian/contracts'
+import type { PanelCommit, PanelInfo, PanelPorts, PanelTask, PanelTaskReport, PanelUpdate } from '@elysian/contracts'
 import { validatePanelPorts } from '@elysian/contracts'
 import type { PanelAdapter } from '../../contracts/adapters'
 import { reportUnauthorized } from './unauthorized'
@@ -26,6 +26,15 @@ export function parsePanelInfo(value: unknown): PanelInfo {
   if (typeof row.available !== 'boolean') throw new Error('面板维护能力响应无效')
   return { ...row, ports: ports(row.ports), activeTask: row.activeTask === null ? null : parsePanelTask(row.activeTask), lastTask: row.lastTask === null ? null : parsePanelTask(row.lastTask) } as PanelInfo
 }
+/** 更新日志：后端直接回一个数组，因此不走 object() 的单对象校验。 */
+export function parsePanelCommits(value: unknown): PanelCommit[] {
+  if (!Array.isArray(value)) throw new Error('更新日志响应无效')
+  return value.map((item) => {
+    const { sha, message, time } = object(item)
+    if (typeof sha !== 'string' || typeof message !== 'string' || typeof time !== 'string') throw new Error('更新日志响应无效')
+    return { sha, message, time }
+  })
+}
 async function request(path: string, method = 'GET', body?: unknown): Promise<unknown> {
   const abort = new AbortController(); const timer = setTimeout(() => abort.abort(), 30000)
   try {
@@ -48,6 +57,7 @@ export function createHttpPanelAdapter(base = '/api/panel'): PanelAdapter {
       if (typeof row.available !== 'boolean') throw new Error('更新信息响应无效')
       return row as PanelUpdate
     },
+    commits: async () => parsePanelCommits(await request(`${base}/commits`)),
     ports: async (value, requestId) => parsePanelTask(await request(`${base}/ports`, 'PUT', { ...value, requestId })),
     restart: async (requestId) => parsePanelTask(await request(`${base}/restart`, 'POST', { requestId })),
     update: async (targetCommit, requestId) => parsePanelTask(await request(`${base}/update`, 'POST', { targetCommit, requestId })),

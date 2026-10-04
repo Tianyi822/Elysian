@@ -54,8 +54,16 @@ type Update struct {
 	Available     bool   `json:"available"`
 }
 
+// CommitLog 是上游仓库的一条提交；面板的更新日志按默认分支列出一批这样的条目。
+type CommitLog struct {
+	SHA     string    `json:"sha"`
+	Message string    `json:"message"`
+	Time    time.Time `json:"time"`
+}
+
 type Source interface {
 	Check(context.Context) (Update, error)
+	History(context.Context, int) ([]CommitLog, error)
 	Download(context.Context, string, string) error
 }
 
