@@ -44,7 +44,13 @@ func readyRouter() (chiRouter, *fakeEngine) {
 		}
 		return 0, "", false
 	})
-	service := newService(engine, func(deps *serviceDeps) { deps.resolveRegistry = resolvePublicAlways })
+	service := newService(engine, func(deps *serviceDeps) {
+		deps.resolveRegistry = resolvePublicAlways
+		deps.fetchHubToken = func(context.Context, string) (string, error) { return "fixture-token", nil }
+		deps.fetchTags = func(context.Context, registryRequestTarget, string, string) (catalogResponse, error) {
+			return catalogResponse{status: 200, json: map[string]any{"tags": []any{"latest"}}}, nil
+		}
+	})
 	hub := newEventsHub(eventsHubConfig{transport: engine, bootID: "boot-r"})
 	router := newRouter(routerDeps{
 		available:    true,
