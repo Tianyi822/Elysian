@@ -102,7 +102,12 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps) (htt
 	firewallDeps := firewall.Deps{
 		Available: cfg.HostOpsAvailable(),
 		Ports:     cfg.PanelPorts(),
+		Mode:      cfg.Mode(),
 		DBPath:    paths.Default.FirewallSqlite,
+	}
+	firewallRouter, err := firewall.NewRouterChecked(firewallDeps)
+	if err != nil {
+		return nil, fmt.Errorf("防火墙入口恢复失败：%w", err)
 	}
 	portOpener := firewall.NewPortOpener(firewallDeps)
 
@@ -140,7 +145,7 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps) (htt
 		// 挂载次序对齐 TS app.ts:153-216（次序即行为：越晚挂载越难被路径前缀遮蔽）。
 		api.Mount(shared.AuthMount, auth.NewRouter(authDeps))
 		api.Mount(shared.PlatformMount, platformRouter)
-		api.Mount(shared.FirewallMount, firewall.NewRouter(firewallDeps))
+		api.Mount(shared.FirewallMount, firewallRouter)
 		api.Mount(shared.SshMount, security.NewSshRouter(securityDeps))
 		api.Mount(shared.UsersMount, security.NewUsersRouter(securityDeps))
 		api.Mount(shared.FilesMount, files.NewRouter(files.Deps{

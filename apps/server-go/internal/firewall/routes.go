@@ -45,6 +45,7 @@ type Service interface {
 // Deps 路由工厂的注入形状（go-plan §3.8 跨域字段 + 域内测试注入口）。
 type Deps struct {
 	Ports config.PanelNetwork
+	Mode  config.RuntimeMode
 
 	// Available 为 false 时一切请求 503（非容器/非裸机的强制保护）。
 	Available bool
@@ -63,23 +64,36 @@ type Deps struct {
 // NewRouter 构造防火墙片子路由器：自带 503/403/读体/404 兜底，由 internal/app 按
 // 固定次序挂载到 shared.FirewallMount。
 func NewRouter(deps Deps) chi.Router {
+	r, err := NewRouterChecked(deps)
+	if err != nil {
+		panic(err)
+	}
+	return r
+}
+
+// NewRouterChecked 在接受请求前完成入口恢复，失败交给装配层终止启动。
+func NewRouterChecked(deps Deps) (chi.Router, error) {
 	if !deps.Available {
 		// 整片 503：任意方法、含未知路径，容器边界保护先于一切守卫。
 		r := chi.NewRouter()
 		r.HandleFunc("/*", func(w http.ResponseWriter, _ *http.Request) {
 			shared.SendError(w, http.StatusServiceUnavailable, "真实防火墙仅在 Docker 容器内可用")
 		})
-		return r
+		return r, nil
 	}
 	svc := deps.service
 	if svc == nil {
 		if deps.host != nil {
-			svc = newServiceWithPorts(deps.host, resolvePorts(deps.Ports).FrontendPort, resolvePorts(deps.Ports).BackendPort)
+			svc = newServiceForMode(deps.host, resolvePorts(deps.Ports), deps.Mode)
 		} else {
-			svc = assembleRealService(deps.DBPath, deps.Now, resolvePorts(deps.Ports))
+			var err error
+			svc, err = assembleRealService(deps.DBPath, deps.Now, resolvePorts(deps.Ports), deps.Mode)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
-	return newRouterWithService(svc)
+	return newRouterWithService(svc), nil
 }
 
 // NewPortOpener 构造端口自动开放接缝（供 websites/database 域创建时联动）。

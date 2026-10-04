@@ -311,23 +311,16 @@ func TestServiceUpdatePanelDenyDenied(t *testing.T) {
 	}
 }
 
-func TestServiceUpdatePanelNoteOnlyAllowed(t *testing.T) {
+func TestServiceUpdatePanelNoteRejected(t *testing.T) {
 	fake := createFakeDeps(fakeUfwDepsSeed{Rules: []string{fmt.Sprintf("allow %d/tcp comment 'Elysian 面板'", PanelPort)}})
 	svc := newService(fake)
-	panelId := canonicalId(panelSpec) + ".ipv4"
-
 	in := allowInputWith(PanelPort)
 	in.Note = strp("面板保底")
-	rule, err := svc.Update(panelId, in)
-	if err != nil {
-		t.Fatal(err)
+	if _, err := svc.Update(canonicalId(panelSpec)+".ipv4", in); err == nil {
+		t.Fatal("系统入口规则不能修改备注")
 	}
-	calls := fake.calls()
-	if calls[2] != fmt.Sprintf("delete allow %d/tcp", PanelPort) || calls[3] != fmt.Sprintf("allow %d/tcp comment 面板保底", PanelPort) {
-		t.Errorf("等价更新应先删后建：%v", calls)
-	}
-	if rule.Note == nil || *rule.Note != "面板保底" {
-		t.Errorf("返回行备注错误：%+v", rule)
+	if len(fake.writeCommandCalls()) != 0 {
+		t.Fatal("保护规则不得被先删后建")
 	}
 }
 
@@ -1541,8 +1534,8 @@ func TestRestoreIfNeededNoAction(t *testing.T) {
 		}
 		return next()
 	}
-	if err := restoreIfNeeded(missingConf); err != nil {
-		t.Fatal(err)
+	if err := restoreIfNeeded(missingConf); err == nil {
+		t.Fatal("UFW 配置缺失必须明确报错")
 	}
 	if calls := missingConf.calls(); len(calls) != 0 {
 		t.Errorf("配置缺失零动作：%v", calls)

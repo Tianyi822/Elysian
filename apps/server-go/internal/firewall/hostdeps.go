@@ -2,11 +2,12 @@ package firewall
 
 import (
 	"bytes"
+	"context"
 	"elysian/server/internal/config"
+	"elysian/server/internal/shared"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 )
@@ -14,7 +15,7 @@ import (
 // 真实防火墙服务层的接线（firewallHostDeps.ts 等价物）：ufw/ss/iptables/ip6tables 经
 // exec 直接执行（非 shell），错误优先取 stderr 作 detail；规则时间账本打开失败不拖垮
 // 端点，退回会话账本；容器重启后内核规则已失而 ufw.conf 仍记 ENABLED=yes 时，启动
-// restoreIfNeeded（fire-and-forget，失败只落 stderr 诊断）。
+// 同步恢复并核验实际入口，恢复失败交装配层终止启动。
 
 // execHostDeps 生产接线。
 type execHostDeps struct {
@@ -25,11 +26,15 @@ type execHostDeps struct {
 
 // execToStdout 执行命令取 stdout；失败时 detail 优先取 stderr.trim()，否则错误消息。
 func execToStdout(name string, args []string) (string, error) {
-	cmd := exec.Command(name, args...)
+	cmd, ctx, cancel := shared.SystemCommand(context.Background(), name, args...)
+	defer cancel()
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
+		if ctx.Err() != nil {
+			return "", shared.SystemCommandError(ctx, err)
+		}
 		detail := trimSpaceJS(stderr.String())
 		if detail == "" {
 			detail = err.Error()
@@ -121,24 +126,12 @@ func (h *execHostDeps) Paths() FirewallPaths { return h.fwPaths }
 
 func (h *execHostDeps) RuleTimes() ruleTimes { return h.times }
 
-// assembleRealService 生产装配：接线 + 账本 + 启动恢复（fire-and-forget goroutine，
-// 失败只落 stderr，不阻塞也不拖垮装配）。
-func assembleRealService(dbPath string, now func() time.Time, networks ...config.PanelNetwork) Service {
-	p := config.DefaultPanelNetwork()
-	if len(networks) > 0 {
-		p = networks[0]
-	}
+// assembleRealService 在服务启动前恢复规则，并核验实际入口。
+func assembleRealService(dbPath string, now func() time.Time, network config.PanelNetwork, mode config.RuntimeMode) (Service, error) {
 	host := newExecHostDeps(dbPath, now)
-	svc := newServiceWithPorts(host, p.FrontendPort, p.BackendPort)
-	go func() {
-		defer func() {
-			if rec := recover(); rec != nil {
-				fmt.Fprintf(os.Stderr, "[elysian] ufw 启动恢复失败：%v\n", rec)
-			}
-		}()
-		if err := restoreIfNeeded(host, p.FrontendPort); err != nil {
-			fmt.Fprintf(os.Stderr, "[elysian] ufw 启动恢复失败：%v\n", err)
-		}
-	}()
-	return svc
+	svc := newServiceForMode(host, network, mode).(*service)
+	if err := restoreIfNeeded(host, svc.entryPort); err != nil {
+		return nil, err
+	}
+	return svc, nil
 }
