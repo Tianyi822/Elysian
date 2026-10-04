@@ -29,7 +29,7 @@ const HTTP_ENDPOINTS: readonly { label: string; path: string }[] = [
   { label: '主机用户', path: `${USERS_MOUNT}/list` },
   { label: '文件管理', path: `${FILES_MOUNT}/entries` },
   { label: '容器', path: `${DOCKER_MOUNT}/containers` },
-  { label: '容器应用工作区', path: `${CONTAINER_APPS_MOUNT}/` },
+  { label: '容器工作区', path: `${CONTAINER_APPS_MOUNT}/` },
   { label: '数据库', path: `${DATABASE_MOUNT}/` },
   { label: '日志', path: `${LOGS_MOUNT}/runtime` },
   // 平台内存与依赖检测同挂 /api/platform（Go 侧 PlatformMount，无独立子常量）。

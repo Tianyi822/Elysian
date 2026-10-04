@@ -355,7 +355,7 @@ export function runContainerAdapterContract(make: () => ContainerAdapter): void 
       await adapter.uploadAppFile('app', 'a.txt', new Blob(['a']))
       await adapter.removeApp('app')
       expect(await adapter.listApps()).toHaveLength(0)
-      await expect(adapter.removeApp('app')).rejects.toThrow('容器应用工作区不存在')
+      await expect(adapter.removeApp('app')).rejects.toThrow('容器工作区不存在')
     })
   })
 }

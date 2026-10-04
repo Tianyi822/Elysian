@@ -7,11 +7,11 @@ import { useContainersStore } from '../../stores/containersStore'
 const VIEW_TABS: readonly HeaderTabItem<'grid' | 'images' | 'apps'>[] = [
   { value: 'grid', label: '容器' },
   { value: 'images', label: '镜像' },
-  { value: 'apps', label: '应用工作区' },
+  { value: 'apps', label: '工作区' },
 ]
 
 /**
- * 容器/镜像/应用工作区视图切换。经路由 handle 挂进顶栏，占据原本的标题位（该页经 handle 声明藏掉可视标题），
+ * 容器/镜像/工作区视图切换。经路由 handle 挂进顶栏，占据原本的标题位（该页经 handle 声明藏掉可视标题），
  * 与页内内容共用同一 store，视图状态不进 URL。三项仍是一行短词，任何顶栏宽度都摊得开，不需要窄屏下拉。
  */
 export function ContainerViewSwitch() {

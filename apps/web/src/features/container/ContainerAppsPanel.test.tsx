@@ -10,7 +10,7 @@ import { useNotificationStore } from '../../stores/notificationStore'
 import { renderApp } from '../../test/renderApp'
 
 /**
- * 应用工作区面板测试：整页渲染后切到「应用工作区」页签，
+ * 工作区面板测试：整页渲染后切到「工作区」页签，
  * 数据走 mock 演示实现（内存工作区），需要观察失败与在途的用例按接口覆盖。
  *
  * mock 的容器 adapter 是类实例，方法挂在原型上，`{ ...base.containers }` 会把它们全部丢掉
@@ -32,7 +32,7 @@ async function openAppsView(gateway: ElysianGateway = appsGatewayWith()) {
   const user = userEvent.setup()
   renderApp('/docker', { gateway })
   await screen.findByRole('list', { name: '容器列表' })
-  await user.click(screen.getByRole('button', { name: '应用工作区' }))
+  await user.click(screen.getByRole('button', { name: '工作区' }))
   return user
 }
 
@@ -43,7 +43,7 @@ async function createWorkspace(user: ReturnType<typeof userEvent.setup>, slug: s
   const dialog = await screen.findByRole('dialog')
   await user.type(within(dialog).getByLabelText(/工作区标识/), slug)
   await user.click(within(dialog).getByRole('button', { name: '创建工作区' }))
-  const card = await screen.findByRole('listitem', { name: `应用工作区 ${slug}` })
+  const card = await screen.findByRole('listitem', { name: `工作区 ${slug}` })
   expect(screen.queryByRole('dialog')).toBeNull()
   return card
 }
@@ -79,21 +79,31 @@ beforeEach(() => {
   })
 })
 
-describe('应用工作区面板', () => {
+describe('工作区面板', () => {
+  it('Docker 引擎加载失败时仍可进入和创建文件工作区', async () => {
+    const user = userEvent.setup()
+    renderApp('/docker', { gateway: appsGateway({ list: async () => { throw new Error('Docker 服务未就绪') } }) })
+    await screen.findByText('容器数据加载失败')
+    await user.click(screen.getByRole('button', { name: '工作区' }))
+    await screen.findByText('还没有工作区')
+    const card = await createWorkspace(user, 'engine-offline')
+    expect(card.textContent).toContain('/srv/elysian/apps/engine-offline')
+  })
+
   it('首次进入给出空态与新建入口', async () => {
     await openAppsView()
-    expect(await screen.findByText('还没有应用工作区')).toBeTruthy()
+    expect(await screen.findByText('还没有工作区')).toBeTruthy()
   })
 
   it('加载失败给出错误态与重试，不是一片空白', async () => {
     const gateway = appsGateway({
       listApps: async () => {
-        throw new Error('应用工作区读取失败')
+        throw new Error('工作区读取失败')
       },
     })
     await openAppsView(gateway)
     const alert = await screen.findByRole('alert')
-    expect(alert.textContent).toContain('应用工作区加载失败')
+    expect(alert.textContent).toContain('工作区加载失败')
     expect(within(alert).getByRole('button', { name: '重试' })).toBeTruthy()
   })
 
@@ -218,12 +228,12 @@ describe('应用工作区面板', () => {
 
     await user.click(within(confirm).getByRole('button', { name: '取消' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    expect(screen.queryByRole('listitem', { name: '应用工作区 demo-app' })).toBeTruthy()
+    expect(screen.queryByRole('listitem', { name: '工作区 demo-app' })).toBeTruthy()
 
     await user.click(within(card).getByRole('button', { name: '删除工作区' }))
     const second = await screen.findByRole('dialog')
     await user.click(within(second).getByRole('button', { name: '确认删除' }))
-    await waitFor(() => expect(screen.queryByRole('listitem', { name: '应用工作区 demo-app' })).toBeNull())
+    await waitFor(() => expect(screen.queryByRole('listitem', { name: '工作区 demo-app' })).toBeNull())
     expect(await screen.findByText('已删除工作区 demo-app 及其目录')).toBeTruthy()
   })
 
@@ -245,8 +255,8 @@ describe('应用工作区面板', () => {
     await user.click(screen.getByRole('button', { name: '刷新工作区' }))
     await waitFor(() => expect(document.querySelector('.busy-veil')).toBeTruthy())
     // 白屏检查：遮罩盖上时卡片还是同一块内容，而不是换成加载态。
-    expect(screen.queryByRole('listitem', { name: '应用工作区 demo-app' })).toBe(card)
-    expect(screen.queryByText('正在加载应用工作区…')).toBeNull()
+    expect(screen.queryByRole('listitem', { name: '工作区 demo-app' })).toBe(card)
+    expect(screen.queryByText('正在加载工作区…')).toBeNull()
 
     await act(async () => {
       release?.()
@@ -269,7 +279,7 @@ describe('应用工作区面板', () => {
       ],
     })
     await openAppsView(gateway)
-    const card = await screen.findByRole('listitem', { name: '应用工作区 demo-app' })
+    const card = await screen.findByRole('listitem', { name: '工作区 demo-app' })
 
     expect(card.textContent).toContain('/srv/elysian/apps/demo-app/certs/server.p12')
     const edit = within(card).getByRole('button', { name: '二进制文件不支持编辑' })
@@ -360,12 +370,12 @@ function buildsGateway(
 
 async function openBuildArea(gateway: ElysianGateway) {
   const user = await openAppsView(gateway)
-  const card = await screen.findByRole('listitem', { name: '应用工作区 demo-app' })
+  const card = await screen.findByRole('listitem', { name: '工作区 demo-app' })
   await user.click(within(card).getByRole('button', { name: /^构建任务/ }))
   return { user, card }
 }
 
-describe('应用工作区构建任务区', () => {
+describe('工作区构建任务区', () => {
   it('卡片提供「构建镜像」入口，点开构建弹窗', async () => {
     const { user, card } = await openBuildArea(buildsGateway([]))
     await user.click(within(card).getByRole('button', { name: '构建镜像' }))
@@ -546,6 +556,6 @@ describe('应用工作区构建任务区', () => {
     const notice = await screen.findByText(/删除工作区失败：工作区有进行中的构建任务，请先取消或等待完成/)
     expect(notice).toBeTruthy()
     // 工作区还在。
-    expect(screen.getByRole('listitem', { name: '应用工作区 demo-app' })).toBeTruthy()
+    expect(screen.getByRole('listitem', { name: '工作区 demo-app' })).toBeTruthy()
   })
 })

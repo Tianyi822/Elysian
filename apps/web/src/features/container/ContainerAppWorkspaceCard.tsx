@@ -117,7 +117,7 @@ function buildTargetsLabel(task: ContainerBuildTask): string {
 }
 
 /**
- * 单个应用工作区卡片。
+ * 单个工作区卡片。
  *
  * 卡片把真实绝对路径摆在最显眼的位置：上传这些文件的意义就在于「compose 里能写到它」，
  * 所以目录一行、每个文件一行都给完整路径与复制入口，自检结果里也是同一个形状。
@@ -189,18 +189,18 @@ export function ContainerAppWorkspaceCard({
   }
 
   return (
-    <li aria-label={`应用工作区 ${app.displayName}`} className="h-full">
+    <li aria-label={`工作区 ${app.displayName}`} className="h-full">
       <div className="busy-host h-full">
         <BusyVeil busy={batchBusy} />
         <article className="flex h-full flex-col gap-3 panel-surface px-4 py-3.5">
           <header className="flex flex-wrap items-start justify-between gap-2">
-            <div className="min-w-0">
-              <h3 className="truncate text-sm font-medium">{app.displayName}</h3>
-              <p className="mt-0.5 font-mono text-xs text-fg-subtle">
+            <div className="min-w-0 max-w-full">
+              <h3 className="break-words text-sm font-medium">{app.displayName}</h3>
+              <p className="mt-0.5 break-all font-mono text-xs text-fg-subtle">
                 {app.slug} · {formatDateTime(app.createdAt)} 建
               </p>
             </div>
-            <div className="flex shrink-0 items-center gap-1.5">
+            <div className="flex max-w-full flex-wrap items-center gap-2">
               <input
                 type="file"
                 multiple
@@ -247,7 +247,7 @@ export function ContainerAppWorkspaceCard({
               <CopyPathButton value={app.directory} label="工作区真实路径" />
             </div>
             <p className="mt-1.5 text-xs text-fg-subtle">
-              compose 里 <span className="font-mono">./</span> 开头的引用请以该目录为根；文件不在这里就挂不上。
+              compose 里 <span className="font-mono">./</span> 开头的引用以 compose 文件所在目录为根；挂载时也可使用下方文件的绝对路径。
             </p>
           </div>
 
@@ -265,20 +265,19 @@ export function ContainerAppWorkspaceCard({
                 return (
                   <li
                     key={file.path}
-                    className="rounded-lg px-2 py-1.5 transition-colors hover:bg-surface-raised/60"
+                    className="rounded-lg px-2 py-2 transition-colors hover:bg-surface-raised/60"
                   >
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                      <span
-                        className={`min-w-0 flex-1 truncate font-mono text-xs ${rowBusy ? 'text-fg-subtle' : 'text-fg'}`}
-                        title={file.path}
-                      >
-                        {file.path}
-                      </span>
-                      {rowBusy ? <span className="text-xs text-fg-subtle">写入中…</span> : null}
-                      <span className="shrink-0 text-xs tabular-nums text-fg-muted">{formatWorkspaceSize(file.size)}</span>
-                      <span className="shrink-0 text-xs tabular-nums text-fg-subtle">
-                        {formatDateTime(file.modifiedAt)}
-                      </span>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <p className={`break-all font-mono text-xs ${rowBusy ? 'text-fg-subtle' : 'text-fg'}`}>
+                          {file.path}
+                        </p>
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs tabular-nums text-fg-subtle">
+                          {rowBusy ? <span>写入中…</span> : null}
+                          <span>{formatWorkspaceSize(file.size)}</span>
+                          <span>{formatDateTime(file.modifiedAt)}</span>
+                        </div>
+                      </div>
                       <div className="flex shrink-0 items-center gap-1">
                         <CopyPathButton value={absolute} label="文件真实路径" />
                         {isComposeFile(file.path) ? (
@@ -310,7 +309,7 @@ export function ContainerAppWorkspaceCard({
                         </IconButton>
                       </div>
                     </div>
-                    <p className="truncate font-mono text-xs text-fg-subtle" title={absolute}>
+                    <p className="mt-1.5 break-all font-mono text-xs leading-relaxed text-fg-subtle">
                       {absolute}
                     </p>
                   </li>

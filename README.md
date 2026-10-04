@@ -55,6 +55,10 @@ Docker 环境中的 SQLite 使用面板持久卷 `~/.Elysian/data/sqlite`：可�
 
 真实容器验收需在 Docker 开发后端中显式执行 ELYSIAN_DEPLOY_INTEGRATION=1 go test ./internal/websites -run 'TestDeploymentReal' -timeout 40m；测试会拉取官方精确版本镜像，只创建并清理自己的测试项目。设计与接口约定见本地 [ADR-0018](docs/adr/0018-website-build-and-deployment-pipeline.md)。
 
+## 容器工作区
+
+Docker 页的「工作区」集中保存 compose、`.env`、Dockerfile 和挂载配置，支持上传文件或目录、编辑文本、复制真实绝对路径、检查 compose 引用与构建镜像。文件保存在 `<mountRoot>/elysian/apps/<slug>`，登记表位于 `~/.Elysian/config/container-apps.json`；文件管理不依赖 Docker Engine 就绪，镜像构建需要引擎可用。compose 自检只检查可识别的路径引用，界面同时显示判定范围与未能判定的项目。面板不会执行 `docker compose up`，启动整套服务需在宿主机执行；本地演示模式仅使用内存数据。机制见 [工作区约定](docs/adr/0020-container-app-workspaces.md) 与 [镜像构建约定](docs/adr/0021-container-image-build.md)。
+
 ## 结构与边界
 
 网站项目通过容器运行，Java、Node、Go、Python 的版本由后端自动获取：语言官方正式发布记录与 Docker 官方镜像精确标签取交集，包含五年前版本线及历史正式补丁，排除预发布、快照和浮动标签。添加项目窗口通过同源 API 读取目录并支持版本号搜索。目录缓存六小时，过期后按请求自动刷新，获取失败时明确提示并保留已有缓存；缓存位于 `~/.Elysian/state/website-runtime-catalog.json`，生产代码不维护固定版本表。`bun run check:website-runtimes` 可诊断官方来源与镜像库的自动获取路径；本地演示仍使用可复现 mock。

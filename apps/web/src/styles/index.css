@@ -455,6 +455,13 @@
     --panel-radius: 9999px;
   }
 
+  /* 容器区：面板与操作控件使用圆角矩形，搜索框单独保留胶囊形状。 */
+  .container-toolbar {
+    --panel-radius: var(--radius-xl);
+    --ctl-radius: var(--radius-lg);
+    --icon-button-radius: var(--radius-lg);
+  }
+
   /* 防火墙工具栏外层控件同高，分组内的按钮填满扣除描边和内距后的内容区。 */
   .firewall-toolbar {
     --panel-radius: var(--radius-xl);

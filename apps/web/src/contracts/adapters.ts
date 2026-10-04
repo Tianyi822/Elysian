@@ -143,7 +143,7 @@ export interface ContainerAdapter {
   /** 创建容器（mock）：追加内存数据集并推 container/created。 */
   create(input: ContainerCreateInput): Promise<Container>
   /**
-   * 容器应用工作区：随容器一起上传的配置文件的存放、内容读写、compose 路径自检
+   * 容器工作区：随容器一起上传的配置文件的存放、内容读写、compose 路径自检
    * 与镜像构建（ADR-0021）。面板只落盘并回显真实路径，不执行 docker compose；
    * 镜像构建经 Docker Engine 的 /build 接口异步执行，compose up 不做。
    */

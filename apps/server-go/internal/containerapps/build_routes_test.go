@@ -104,7 +104,7 @@ func TestBuildRoutesPreviewAndErrors(t *testing.T) {
 		want    int
 		message string
 	}{
-		{"工作区不存在", http.MethodPost, "/ghost/builds/preview", `{"mode":"dockerfile"}`, http.StatusNotFound, "容器应用工作区不存在：ghost"},
+		{"工作区不存在", http.MethodPost, "/ghost/builds/preview", `{"mode":"dockerfile"}`, http.StatusNotFound, "容器工作区不存在：ghost"},
 		{"未知字段", http.MethodPost, "/rt/builds/preview", `{"mode":"dockerfile","extra":1}`, http.StatusBadRequest, "构建请求字段无效"},
 		{"两模式互斥", http.MethodPost, "/rt/builds/preview", `{"mode":"dockerfile","compose":"compose.yml"}`, http.StatusBadRequest, "构建请求字段无效"},
 		{"compose 模式带 target", http.MethodPost, "/rt/builds/preview", `{"mode":"compose","compose":"compose.yml","target":"x"}`, http.StatusBadRequest, "构建请求字段无效"},

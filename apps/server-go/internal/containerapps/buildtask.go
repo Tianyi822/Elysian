@@ -24,7 +24,7 @@ import (
 	"elysian/server/internal/shared"
 )
 
-// 容器应用工作区的镜像构建任务机（ADR-0021）：任务状态机 + worker 通道 + 取消 +
+// 容器工作区的镜像构建任务机（ADR-0021）：任务状态机 + worker 通道 + 取消 +
 // 中断恢复 + 30 天清理，形状对齐 websites 域的 deploymentManager。任务模型同
 // websites 域：202 提交 + 状态轮询 + 分页日志 + 取消 + 重启标 interrupted。
 //

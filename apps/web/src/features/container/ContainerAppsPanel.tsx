@@ -12,7 +12,7 @@ import { ContainerAppEditorSheet } from './ContainerAppEditorSheet'
 import { ContainerAppWorkspaceCard } from './ContainerAppWorkspaceCard'
 
 /**
- * 容器应用工作区视图：随容器一起上传的配置文件（compose.yml、.env、挂载用的配置目录）
+ * 容器工作区视图：随容器一起上传的配置文件（compose.yml、.env、挂载用的配置目录）
  * 的存放、真实路径回显、文本编辑、compose 引用自检与镜像构建任务区。
  *
  * 文件侧只落盘与给路径，不执行 docker compose（ADR-0020）；镜像构建经引擎 /build
@@ -41,24 +41,30 @@ export function ContainerAppsPanel() {
     if (status === 'error') {
       return (
         <ErrorState
-          title="应用工作区加载失败"
+          title="工作区加载失败"
           description={errorMessage}
           onRetry={() => void load(gateway)}
         />
       )
     }
-    return <LoadingState label="正在加载应用工作区…" />
+    return <LoadingState label="正在加载工作区…" />
   }
 
   return (
     <div>
-      <div className={`${CTL_TOOLBAR} mb-4 flex flex-wrap items-center justify-between gap-3 panel-surface px-4 py-3`}>
-        <p className="min-w-0 flex-1 text-xs text-fg-muted">
-          {docker
-            ? `共 ${apps.length} 个工作区、${fileCount} 个文件。面板只保存文件并给出真实路径，compose 与挂载由容器自己按路径加载。`
-            : `演示工作区只存在于内存，共 ${apps.length} 个；刷新回到空清单，给出的路径不代表宿主磁盘目录。`}
-        </p>
-        <div className="flex flex-wrap items-center gap-2">
+      <div className={`${CTL_TOOLBAR} container-toolbar mb-4 flex flex-wrap items-center justify-between gap-4 panel-surface px-4 py-3`}>
+        <div className="min-w-0 basis-full space-y-1.5 lg:flex-1 lg:basis-auto">
+          <p className="text-xs font-medium tabular-nums">共 {apps.length} 个工作区 · {fileCount} 个文件</p>
+          <p className="text-xs leading-relaxed text-fg-muted">
+            集中保存 compose、.env、Dockerfile 和挂载配置，复制路径、编辑文件、检查引用或构建镜像。
+          </p>
+          <p className="text-xs leading-relaxed text-fg-subtle">
+            {docker
+              ? '文件保存在宿主机；运行 compose 请在宿主机执行，面板不会自动启动整套服务。'
+              : '演示数据仅保存在内存，刷新页面即清空；显示的路径不代表宿主磁盘目录。'}
+          </p>
+        </div>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
           <RefreshButton onPress={() => void refresh(gateway)} busy={refreshing} label="刷新工作区" formControl />
           <button type="button" onClick={() => setCreateOpen(true)} className={CTL_PRIMARY}>
             <Plus aria-hidden size={14} />
@@ -72,10 +78,10 @@ export function ContainerAppsPanel() {
         <BusyVeil busy={refreshing} />
         {apps.length === 0 ? (
           <EmptyState
-            title="还没有应用工作区"
+            title="还没有工作区"
             description={
               docker
-                ? '为需要一起上传配置文件的容器建一个工作区，上传 compose 与配置文件后，界面会给出可直接抄进配置的真实路径。'
+                ? '新建工作区后上传 compose、Dockerfile 或配置文件，即可获取真实路径并继续编辑、自检或构建。'
                 : '演示模式下这里不落盘，创建工作区只在内存里存一份文件清单。'
             }
             action={
@@ -86,7 +92,7 @@ export function ContainerAppsPanel() {
           />
         ) : (
           <ul
-            aria-label="应用工作区列表"
+            aria-label="工作区列表"
             className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,26rem),1fr))] items-start gap-4"
           >
             {apps.map((app) => (
@@ -145,7 +151,7 @@ function CreateAppDialog({ onClose }: { onClose: () => void }) {
           className="fixed left-1/2 top-1/2 z-[61] w-[min(28rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl"
         >
           <div className="flex items-center justify-between gap-3">
-            <Dialog.Title className="text-sm font-medium">新建应用工作区</Dialog.Title>
+            <Dialog.Title className="text-sm font-medium">新建工作区</Dialog.Title>
             <button
               type="button"
               onClick={onClose}

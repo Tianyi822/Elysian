@@ -39,7 +39,7 @@ function pageGateway(overrides: Partial<ElysianGateway['containers']> = {}): Ely
       pullImage: (input: { name: string; tag: string }) => base.containers.pullImage(input),
       watchLive: (handlers: Parameters<typeof base.containers.watchLive>[0]) => base.containers.watchLive(handlers),
       requestAction: async (id: string) => CONTAINERS.find((c) => c.id === id)!,
-      // 应用工作区直通 mock 实现：页面测试不覆盖它时也该拿到可用的演示行为。
+      // 工作区直通 mock 实现：页面测试不覆盖它时也该拿到可用的演示行为。
       listApps: () => base.containers.listApps(),
       createApp: (input: { slug: string; displayName: string }) => base.containers.createApp(input),
       removeApp: (slug: string) => base.containers.removeApp(slug),

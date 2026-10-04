@@ -14,7 +14,7 @@ import { isComposeFile } from '../../stores/containerAppsStore'
 type Loaded = { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ready'; content: string }
 
 /**
- * 应用工作区里的文本文件编辑器。
+ * 工作区里的文本文件编辑器。
  *
  * 只服务工作区目录，不是通用文件管理器的写入口（那侧的写禁区不覆盖 /etc 这类系统路径）。
  * 保存后若该文件是 compose，store 会自动再跑一次引用自检。

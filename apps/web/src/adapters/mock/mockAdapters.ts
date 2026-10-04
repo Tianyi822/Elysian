@@ -670,7 +670,7 @@ export class MockContainerAdapter implements ContainerAdapter {
 
   private requireDemoApp(slug: string) {
     const app = this.demoApps.get(slug)
-    if (!app) throw new Error(`容器应用工作区不存在：${slug}`)
+    if (!app) throw new Error(`容器工作区不存在：${slug}`)
     return app
   }
 

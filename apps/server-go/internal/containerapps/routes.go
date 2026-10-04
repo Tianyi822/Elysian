@@ -71,7 +71,7 @@ type Handler struct {
 	Builds *BuildManager
 }
 
-// Router 构造容器应用工作区的 chi 路由。挂载点 /api/container-apps，
+// Router 构造容器工作区的 chi 路由。挂载点 /api/container-apps，
 // 与其余域片一样经鉴权中间件（app 装配层在 app 级 requireSession 已覆盖全部 /api/*）。
 func (h Handler) Router() chi.Router {
 	r := chi.NewRouter()

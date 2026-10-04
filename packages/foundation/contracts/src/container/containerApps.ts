@@ -1,5 +1,5 @@
 /**
- * 容器应用工作区：随容器一起上传的配置文件（compose.yml、.env、各类 config）的
+ * 容器工作区：随容器一起上传的配置文件（compose.yml、.env、各类 config）的
  * 存放、内容读写、compose 引用路径自检，以及镜像构建的预览与任务模型（ADR-0021）。
  *
  * 面板只落盘并回显真实路径，不执行 docker compose；镜像构建经 Docker Engine 的

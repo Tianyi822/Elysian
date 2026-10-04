@@ -1,4 +1,4 @@
-// Package containerapps 容器应用工作区：随容器一起上传的配置文件（compose.yml、.env、
+// Package containerapps 容器工作区：随容器一起上传的配置文件（compose.yml、.env、
 // 各类 config）的存放、登记、内容读写、compose 引用路径自检与镜像构建（ADR-0021）。
 //
 // 边界（ADR-0020）：面板只负责把文件存好并回显真实路径，不执行 docker compose——

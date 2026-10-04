@@ -76,14 +76,14 @@ func (r *Registry) load() ([]Record, error) {
 	}
 	var records []Record
 	if err = json.Unmarshal(b, &records); err != nil {
-		return nil, fmt.Errorf("容器应用工作区登记表损坏，请在服务器上检查 %s", r.registryPath())
+		return nil, fmt.Errorf("容器工作区登记表损坏，请在服务器上检查 %s", r.registryPath())
 	}
 	for i, record := range records {
 		if err = ValidateSlug(record.Slug); err != nil {
-			return nil, fmt.Errorf("容器应用工作区登记表第 %d 条记录的标识无效", i+1)
+			return nil, fmt.Errorf("容器工作区登记表第 %d 条记录的标识无效", i+1)
 		}
 		if record.Directory == "" || record.CreatedAt == "" {
-			return nil, fmt.Errorf("容器应用工作区登记表第 %d 条记录缺少必要字段", i+1)
+			return nil, fmt.Errorf("容器工作区登记表第 %d 条记录缺少必要字段", i+1)
 		}
 	}
 	sort.SliceStable(records, func(i, j int) bool { return records[i].Slug < records[j].Slug })
@@ -244,7 +244,7 @@ func (r *Registry) Directory(slug string) (string, error) {
 type NotFoundError struct{ Slug string }
 
 // Error 实现 error；消息是 API 契约（中文，逐字）。
-func (e *NotFoundError) Error() string { return "容器应用工作区不存在：" + e.Slug }
+func (e *NotFoundError) Error() string { return "容器工作区不存在：" + e.Slug }
 
 // AlreadyExistsError 标识已被占用；路由映射 409。
 type AlreadyExistsError struct{ Slug string }
