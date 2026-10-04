@@ -545,7 +545,26 @@ const baseComposeCheck = {
   coverage: '只判定 volumes 短语法与长语法 source、以及 env_file 引用的路径是否存在；含变量替换、锚点引用、flow 风格与 build 段的行列入未能判定清单（build 段请用构建预览），请人工核对',
 }
 
-describe('createHttpContainersAdapter 应用工作区端点', () => {
+describe('createHttpContainersAdapter 工作区端点', () => {
+  it.each([[], null])('空工作区文件清单 %j 可加载和创建', async (files) => {
+    const empty = { ...baseApp, files }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ apps: [empty, baseApp] }))
+      .mockResolvedValueOnce(jsonResponse(empty, 201))
+    vi.stubGlobal('fetch', fetchMock)
+    const adapter = createHttpContainersAdapter()
+    expect(await adapter.listApps()).toEqual([{ ...baseApp, files: [] }, baseApp])
+    expect(await adapter.createApp({ slug: baseApp.slug, displayName: baseApp.displayName }))
+      .toEqual({ ...baseApp, files: [] })
+    vi.unstubAllGlobals()
+  })
+
+  it.each([undefined, {}, 'invalid'])('无效文件清单 %j 仍明确报错', async (files) => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ apps: [{ ...baseApp, files }] })))
+    await expect(createHttpContainersAdapter().listApps()).rejects.toThrow('容器工作区响应无效')
+    vi.unstubAllGlobals()
+  })
+
   it('listApps() GET /api/container-apps 并解析 apps 数组', async () => {
     const fetchMock = vi.fn(async () => jsonResponse({ apps: [baseApp] }))
     vi.stubGlobal('fetch', fetchMock)

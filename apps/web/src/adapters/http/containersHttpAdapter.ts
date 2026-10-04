@@ -470,14 +470,15 @@ function parseContainerAppFile(value: unknown): ContainerAppFile {
 }
 
 function parseContainerApp(value: unknown): ContainerApp {
-  const row = asRecord(value, '容器应用工作区响应无效')
-  const files = row.files
-  if (!Array.isArray(files)) throw new Error('容器应用工作区响应无效')
+  const row = asRecord(value, '容器工作区响应无效')
+  // 兼容尚未重启的 Go 服务：空切片曾编码为 null，统一还原为空文件清单。
+  const files = row.files === null ? [] : row.files
+  if (!Array.isArray(files)) throw new Error('容器工作区响应无效')
   return {
-    slug: asString(row.slug, '容器应用工作区响应无效'),
-    displayName: asString(row.displayName, '容器应用工作区响应无效'),
-    createdAt: asString(row.createdAt, '容器应用工作区响应无效'),
-    directory: asString(row.directory, '容器应用工作区响应无效'),
+    slug: asString(row.slug, '容器工作区响应无效'),
+    displayName: asString(row.displayName, '容器工作区响应无效'),
+    createdAt: asString(row.createdAt, '容器工作区响应无效'),
+    directory: asString(row.directory, '容器工作区响应无效'),
     files: files.map(parseContainerAppFile),
   }
 }
@@ -820,12 +821,12 @@ export function createHttpContainersAdapter(
       )
     },
     /**
-     * 容器应用工作区（挂 /api/container-apps）。上传与编辑走各自时限：
+     * 容器工作区（挂 /api/container-apps）。上传与编辑走各自时限：
      * 配置文件虽小，但一次 32 MiB 的上传不该被 60 秒写超时掐断成结果未确认。
      */
     async listApps() {
-      const body = asRecord(await requestJson(CONTAINER_APPS_BASE_URL), '容器应用工作区响应无效')
-      if (!Array.isArray(body.apps)) throw new Error('容器应用工作区响应无效')
+      const body = asRecord(await requestJson(CONTAINER_APPS_BASE_URL), '容器工作区响应无效')
+      if (!Array.isArray(body.apps)) throw new Error('容器工作区响应无效')
       return body.apps.map(parseContainerApp)
     },
 

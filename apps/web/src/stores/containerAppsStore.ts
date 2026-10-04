@@ -12,7 +12,7 @@ import type { ElysianGateway } from '../contracts/adapters'
 import { useNotificationStore } from './notificationStore'
 
 /**
- * 容器应用工作区的界面状态。数据一律经 gateway.containers 的 adapter 取，
+ * 容器工作区的界面状态。数据一律经 gateway.containers 的 adapter 取，
  * 组件不碰数据来源；演示模式落在内存 mock，真实运行时落 /api/container-apps。
  */
 
@@ -67,7 +67,7 @@ export type ContainerAppsState = {
   buildPreview: ContainerBuildPreviewState | null
   buildLogs: Record<string, ContainerBuildLogsState>
   load(gateway: ElysianGateway): Promise<void>
-  refresh(gateway: ElysianGateway): Promise<void>
+  refresh(gateway: ElysianGateway, options?: { silent?: boolean }): Promise<void>
   create(gateway: ElysianGateway, input: { slug: string; displayName: string }): Promise<boolean>
   remove(gateway: ElysianGateway, slug: string): Promise<void>
   upload(gateway: ElysianGateway, slug: string, files: readonly File[]): Promise<void>
@@ -126,7 +126,7 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
 
   async load(gateway) {
     // 首次加载才换整块加载态；已有清单时的再取走 refresh，不闪白屏。
-    if (get().apps.length > 0) {
+    if (get().status === 'ready' || get().apps.length > 0) {
       await get().refresh(gateway)
       return
     }
@@ -138,13 +138,15 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
     }
   },
 
-  async refresh(gateway) {
-    set({ refreshing: true })
+  async refresh(gateway, options) {
+    if (!options?.silent) set({ refreshing: true })
     try {
-      set({ apps: await gateway.containers.listApps(), status: 'ready', refreshing: false })
+      set({ apps: await gateway.containers.listApps(), status: 'ready', errorMessage: undefined })
     } catch (cause) {
-      set({ refreshing: false, errorMessage: detail(cause) })
-      useNotificationStore.getState().notify({ tone: 'danger', message: `读取应用工作区失败：${detail(cause)}` })
+      set({ errorMessage: detail(cause) })
+      useNotificationStore.getState().notify({ tone: 'danger', message: `读取工作区失败：${detail(cause)}` })
+    } finally {
+      if (!options?.silent) set({ refreshing: false })
     }
   },
 
@@ -207,26 +209,29 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
         const saved = await gateway.containers.uploadAppFile(slug, relative, file)
         uploaded.push(saved.path)
       }
-      await get().refresh(gateway)
       useNotificationStore.getState().notify({
         tone: 'success',
         message: uploaded.length === 1 ? `已上传 ${uploaded[0]}` : `已上传 ${uploaded.length} 个文件`,
       })
-      // 上传完 compose 就顺手自检一次：用户传它就是为了确认引用路径。
-      const compose = uploaded.filter(isComposeFile).pop()
-      if (compose) void get().runCheck(gateway, slug, compose)
     } catch (cause) {
-      useNotificationStore.getState().notify({ tone: 'danger', message: `上传文件失败：${detail(cause)}` })
+      useNotificationStore.getState().notify({
+        tone: 'danger',
+        message: `上传文件失败：${detail(cause)}${uploaded.length > 0 ? `（已有 ${uploaded.length} 个文件上传成功）` : ''}`,
+      })
     } finally {
+      // 中途失败或写超时也回读事实；已落盘的文件不能因为后一项失败而藏在旧清单之外。
+      await get().refresh(gateway, { silent: true })
       set({ writing: null })
     }
+    const compose = uploaded.filter(isComposeFile).pop()
+    if (compose) void get().runCheck(gateway, slug, compose)
   },
 
   async save(gateway, slug, path, content) {
     set({ writing: appWritingKey(slug, path) })
     try {
       await gateway.containers.writeAppContent(slug, path, content)
-      await get().refresh(gateway)
+      await get().refresh(gateway, { silent: true })
       useNotificationStore.getState().notify({ tone: 'success', message: `已保存 ${path}` })
       if (isComposeFile(path)) void get().runCheck(gateway, slug, path)
       return true

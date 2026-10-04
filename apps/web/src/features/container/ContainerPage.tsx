@@ -53,6 +53,16 @@ export function ContainerPage() {
     void check(gateway)
   }, [gateway, load, check])
 
+  // 文件工作区不依赖 Docker Engine 就绪；引擎错误只影响容器、镜像与构建。
+  if (view === 'apps') {
+    return (
+      <div className="mb-6">
+        <ContainerAppsPanel />
+        <DependencyGuideDialogs scope="docker-dependent" reload={() => void load(gateway)} />
+      </div>
+    )
+  }
+
   if (status !== 'ready') {
     return (
       <>
@@ -89,8 +99,8 @@ export function ContainerPage() {
         </p>
       ) : null}
       {view === 'grid' ? (
-        <div className={`${CTL_TOOLBAR} mb-4 flex flex-wrap items-center gap-3 panel-surface px-4 py-3`}>
-          <div role="group" aria-label="状态筛选" className="flex flex-wrap basis-full gap-1 lg:basis-auto">
+        <div className={`${CTL_TOOLBAR} container-toolbar mb-4 flex flex-wrap items-center gap-4 panel-surface px-4 py-3`}>
+          <div role="group" aria-label="状态筛选" className="flex flex-wrap basis-full gap-2 lg:basis-auto">
             {STATUS_FILTERS.map((filter) => (
               <button
                 key={filter.value}
@@ -117,7 +127,7 @@ export function ContainerPage() {
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="搜索容器名称"
-              className={`${CTL_FIELD} pl-8`}
+              className={`${CTL_FIELD} rounded-full pl-8`}
             />
           </div>
           <button
@@ -130,11 +140,9 @@ export function ContainerPage() {
         </div>
       ) : null}
 
-      {view === 'apps' ? (
-        <ContainerAppsPanel />
-      ) : view === 'images' ? (
+      {view === 'images' ? (
         <>
-          <div className={`${CTL_TOOLBAR} mb-4 flex flex-wrap items-center justify-between gap-3 panel-surface px-4 py-3`}>
+          <div className={`${CTL_TOOLBAR} container-toolbar mb-4 flex flex-wrap items-center justify-between gap-4 panel-surface px-4 py-3`}>
             <p className="text-xs text-fg-muted">共 {images.length} 个镜像</p>
             <div className="flex flex-wrap items-center gap-2">
               <RefreshButton

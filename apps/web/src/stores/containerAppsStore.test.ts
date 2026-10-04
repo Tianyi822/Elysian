@@ -42,7 +42,57 @@ beforeEach(() => {
   resetStore()
 })
 
-describe('应用工作区构建状态', () => {
+describe('工作区文件状态', () => {
+  it('批量上传中途失败仍回读已成功落盘的文件，回读不驱动刷新遮罩', async () => {
+    const gateway = createMockGateway({ eventStream: 'memory', eventIntervalMs: 60_000 })
+    await gateway.containers.createApp({ slug: 'demo-app', displayName: '演示' })
+    await useContainerAppsStore.getState().load(gateway)
+    const listApps = vi.fn(async () => {
+      expect(useContainerAppsStore.getState().refreshing).toBe(false)
+      return gateway.containers.listApps()
+    })
+    const patched: ElysianGateway = {
+      ...gateway,
+      containers: Object.assign(Object.create(gateway.containers), {
+        listApps,
+        uploadAppFile: async (slug: string, path: string, file: Blob) => {
+          if (path === 'second.txt') throw new Error('上传连接中断')
+          return gateway.containers.uploadAppFile(slug, path, file)
+        },
+      }),
+    }
+    await useContainerAppsStore.getState().upload(patched, 'demo-app', [
+      new File(['first'], 'first.txt'), new File(['second'], 'second.txt'),
+    ])
+    const state = useContainerAppsStore.getState()
+    expect(listApps).toHaveBeenCalledTimes(1)
+    expect(state.apps[0]?.files.map((file) => file.path)).toEqual(['first.txt'])
+    expect(state.writing).toBeNull()
+    expect(useNotificationStore.getState().notifications[0]?.message)
+      .toBe('上传文件失败：上传连接中断（已有 1 个文件上传成功）')
+  })
+
+  it('空清单再次加载保留就绪态，刷新成功清除上次错误', async () => {
+    const gateway = createMockGateway({ eventStream: 'memory', eventIntervalMs: 60_000 })
+    await useContainerAppsStore.getState().load(gateway)
+    useContainerAppsStore.setState({ errorMessage: '上次读取失败' })
+    const patched: ElysianGateway = {
+      ...gateway,
+      containers: Object.assign(Object.create(gateway.containers), {
+        listApps: async () => {
+          expect(useContainerAppsStore.getState().status).toBe('ready')
+          expect(useContainerAppsStore.getState().refreshing).toBe(true)
+          return []
+        },
+      }),
+    }
+    await useContainerAppsStore.getState().load(patched)
+    expect(useContainerAppsStore.getState().errorMessage).toBeUndefined()
+    expect(useContainerAppsStore.getState().refreshing).toBe(false)
+  })
+})
+
+describe('工作区构建状态', () => {
   it('submitBuild 成功后任务入列并通知「已提交构建任务」', async () => {
     const gateway = createMockGateway({ eventStream: 'memory', eventIntervalMs: 60_000 })
     await seedWorkspace(gateway)

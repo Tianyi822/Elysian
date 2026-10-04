@@ -2,6 +2,7 @@ package containerapps
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -92,6 +93,42 @@ func TestResolveWithinWorkspaceBlocksSymlinkEscape(t *testing.T) {
 }
 
 // --- 登记与工作区生命周期 ---
+
+func TestEmptyWorkspaceFilesRemainJSONArray(t *testing.T) {
+	handler, _ := newTestHandler(t)
+	assertFiles := func(response *httptest.ResponseRecorder, status int, list bool) {
+		t.Helper()
+		if response.Code != status {
+			t.Fatalf("工作区请求失败：%d %s", response.Code, response.Body.String())
+		}
+		var body map[string]json.RawMessage
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if list {
+			var apps []map[string]json.RawMessage
+			if err := json.Unmarshal(body["apps"], &apps); err != nil || len(apps) != 1 {
+				t.Fatalf("应返回一个工作区：%s", response.Body.String())
+			}
+			body = apps[0]
+		}
+		if string(body["files"]) != "[]" {
+			t.Fatalf("空文件清单必须编码为 []：%s", response.Body.String())
+		}
+	}
+	assertFiles(do(t, handler, "POST", "/", "application/json", []byte(`{"slug":"empty","displayName":"空工作区"}`)), http.StatusCreated, false)
+	assertFiles(do(t, handler, "GET", "/", "", nil), http.StatusOK, true)
+	assertFiles(do(t, handler, "GET", "/empty/files", "", nil), http.StatusOK, false)
+	if uploaded := do(t, handler, "PUT", "/empty/files?path=config/app.yml", "application/octet-stream", []byte("key: value\n")); uploaded.Code != http.StatusOK {
+		t.Fatalf("上传失败：%d %s", uploaded.Code, uploaded.Body.String())
+	}
+	if removed := do(t, handler, "DELETE", "/empty/files?path=config/app.yml", "", nil); removed.Code != http.StatusNoContent {
+		t.Fatalf("删除失败：%d %s", removed.Code, removed.Body.String())
+	}
+	// 删除最后一个文件后，残留空目录也应返回数组，刷新不能重新触发加载失败。
+	assertFiles(do(t, handler, "GET", "/", "", nil), http.StatusOK, true)
+	assertFiles(do(t, handler, "GET", "/empty/files", "", nil), http.StatusOK, false)
+}
 
 func TestCreateListDeleteRoundTrip(t *testing.T) {
 	handler, mountRoot := newTestHandler(t)

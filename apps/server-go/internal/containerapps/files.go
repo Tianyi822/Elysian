@@ -36,7 +36,8 @@ type FileEntry struct {
 
 // ListFiles 扫描工作区目录，返回相对路径升序的文件清单。
 func ListFiles(workspaceDir string) ([]FileEntry, error) {
-	var files []FileEntry
+	// 空工作区也遵守 JSON 数组契约；nil 会编码成 null，阻断前端创建与列表解析。
+	files := []FileEntry{}
 	err := filepath.Walk(workspaceDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err

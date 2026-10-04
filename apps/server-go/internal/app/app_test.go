@@ -17,6 +17,7 @@ import (
 	"elysian/server/internal/config"
 	"elysian/server/internal/logs"
 	"elysian/server/internal/middleware"
+	"elysian/server/internal/paths"
 	"elysian/server/internal/seam"
 )
 
@@ -122,6 +123,42 @@ func TestStripTailSlashBeforeRouting(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Errorf("带尾斜杠的 health 应剥斜杠后命中：状态码 = %d，期望 200", rec.Code)
 	}
+}
+
+func TestContainerWorkspaceMountedLifecycle(t *testing.T) {
+	previousConfigDir := paths.ConfigDir
+	paths.ConfigDir = t.TempDir()
+	t.Cleanup(func() { paths.ConfigDir = previousConfigDir })
+	handler, err := newAssembly(&config.Config{ListenHost: "127.0.0.1", MountRoot: t.TempDir()}, &fakeLogsService{}, auth.Deps{
+		Enabled: false, Credentials: fakeCredentialsStore{}, Sessions: auth.NewMemorySessionStore(nil),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := func(method, target, body string, status int) *httptest.ResponseRecorder {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, sameOriginRequest(method, target, body))
+		if rec.Code != status {
+			t.Fatalf("%s %s = %d %s，期望 %d", method, target, rec.Code, rec.Body.String(), status)
+		}
+		return rec
+	}
+	// 走完整装配与尾斜杠中间件，使用前端实际请求的 URL，避免子路由单测漏掉挂载 404。
+	for _, target := range []string{"/api/container-apps", "/api/container-apps/"} {
+		if body := request(http.MethodGet, target, "", http.StatusOK).Body.String(); body != `{"apps":[]}` {
+			t.Fatalf("空清单应返回数组：%s", body)
+		}
+	}
+	created := request(http.MethodPost, "/api/container-apps", `{"slug":"route-check","displayName":"路由检查"}`, http.StatusCreated)
+	if !strings.Contains(created.Body.String(), `"files":[]`) {
+		t.Fatalf("新工作区应返回空文件数组：%s", created.Body.String())
+	}
+	request(http.MethodGet, "/api/container-apps/route-check/files", "", http.StatusOK)
+	// Docker 不可用只限制构建，文件管理仍能创建、读取与删除。
+	request(http.MethodGet, "/api/container-apps/route-check/builds", "", http.StatusServiceUnavailable)
+	request(http.MethodDelete, "/api/container-apps/route-check/", "", http.StatusNoContent)
+	request(http.MethodGet, "/api/container-apps/route-check/files", "", http.StatusNotFound)
 }
 
 func TestGlobalAPINotFoundPlainText(t *testing.T) {
