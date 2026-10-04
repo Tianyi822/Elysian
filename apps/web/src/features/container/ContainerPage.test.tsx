@@ -17,38 +17,51 @@ import { renderApp } from '../../test/renderApp'
  */
 function pageGateway(overrides: Partial<ElysianGateway['containers']> = {}): ElysianGateway {
   const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
-  return {
-    ...base,
-    containers: {
+  const containers = Object.assign(
+    {
       list: async () => [...CONTAINERS],
       // listImages 直通真实 mock 数据集：删除镜像要落实到数据集，读种子常量会绕过它。
       listImages: () => base.containers.listImages(),
-      searchImageNames: (term, registry, signal) => base.containers.searchImageNames(term, registry, signal),
-      imageTags: (name, registry, signal) => base.containers.imageTags(name, registry, signal),
+      searchImageNames: (term: string, registry?: string, signal?: AbortSignal) =>
+        base.containers.searchImageNames(term, registry, signal),
+      imageTags: (name: string, registry?: string, signal?: AbortSignal) =>
+        base.containers.imageTags(name, registry, signal),
       createPolicy: () => base.containers.createPolicy(),
-      connectTerminal: (id, handlers) => base.containers.connectTerminal(id, handlers),
-      sendTerminalInput: (sessionId, line) => base.containers.sendTerminalInput(sessionId, line),
-      interruptTerminal: (sessionId) => base.containers.interruptTerminal(sessionId),
-      completeTerminal: (sessionId, draft, cursor) =>
+      connectTerminal: (id: string, handlers: Parameters<typeof base.containers.connectTerminal>[1]) =>
+        base.containers.connectTerminal(id, handlers),
+      sendTerminalInput: (sessionId: string, line: string) => base.containers.sendTerminalInput(sessionId, line),
+      interruptTerminal: (sessionId: string) => base.containers.interruptTerminal(sessionId),
+      completeTerminal: (sessionId: string, draft: string, cursor: number) =>
         base.containers.completeTerminal(sessionId, draft, cursor),
-      disconnectTerminal: (sessionId) => base.containers.disconnectTerminal(sessionId),
+      disconnectTerminal: (sessionId: string) => base.containers.disconnectTerminal(sessionId),
       create: (input: ContainerCreateInput) => base.containers.create(input),
       removeImage: (imageId: string) => base.containers.removeImage(imageId),
       pullImage: (input: { name: string; tag: string }) => base.containers.pullImage(input),
-      watchLive: (handlers) => base.containers.watchLive(handlers),
+      watchLive: (handlers: Parameters<typeof base.containers.watchLive>[0]) => base.containers.watchLive(handlers),
       requestAction: async (id: string) => CONTAINERS.find((c) => c.id === id)!,
       // 应用工作区直通 mock 实现：页面测试不覆盖它时也该拿到可用的演示行为。
       listApps: () => base.containers.listApps(),
-      createApp: (input) => base.containers.createApp(input),
-      removeApp: (slug) => base.containers.removeApp(slug),
-      uploadAppFile: (slug, path, file) => base.containers.uploadAppFile(slug, path, file),
-      removeAppFile: (slug, path) => base.containers.removeAppFile(slug, path),
-      readAppContent: (slug, path) => base.containers.readAppContent(slug, path),
-      writeAppContent: (slug, path, content) => base.containers.writeAppContent(slug, path, content),
-      checkCompose: (slug, path) => base.containers.checkCompose(slug, path),
-      ...overrides,
+      createApp: (input: { slug: string; displayName: string }) => base.containers.createApp(input),
+      removeApp: (slug: string) => base.containers.removeApp(slug),
+      uploadAppFile: (slug: string, path: string, file: Blob) => base.containers.uploadAppFile(slug, path, file),
+      removeAppFile: (slug: string, path: string) => base.containers.removeAppFile(slug, path),
+      readAppContent: (slug: string, path: string) => base.containers.readAppContent(slug, path),
+      writeAppContent: (slug: string, path: string, content: string) =>
+        base.containers.writeAppContent(slug, path, content),
+      checkCompose: (slug: string, path: string) => base.containers.checkCompose(slug, path),
+      previewAppBuild: (slug: string, input: Parameters<typeof base.containers.previewAppBuild>[1]) =>
+        base.containers.previewAppBuild(slug, input),
+      submitAppBuild: (slug: string, input: Parameters<typeof base.containers.submitAppBuild>[1]) =>
+        base.containers.submitAppBuild(slug, input),
+      listAppBuilds: (slug: string) => base.containers.listAppBuilds(slug),
+      getAppBuild: (slug: string, taskId: string) => base.containers.getAppBuild(slug, taskId),
+      getAppBuildLogs: (slug: string, taskId: string, offset: number) =>
+        base.containers.getAppBuildLogs(slug, taskId, offset),
+      cancelAppBuild: (slug: string, taskId: string) => base.containers.cancelAppBuild(slug, taskId),
     },
-  }
+    overrides,
+  )
+  return { ...base, containers }
 }
 
 beforeEach(() => {

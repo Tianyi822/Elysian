@@ -2,6 +2,7 @@ package containerapps
 
 import (
 	"bytes"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -357,11 +358,11 @@ func TestCheckComposeEnvFileListAndAmbiguous(t *testing.T) {
 // 「checkCompose 报出缺失与已存在的引用」逐字相同，两侧必须给出同一分类结论。
 // Go 与 TS 各有一份扫描器（跨语言无法共享代码），漂移只能靠这条共同样本暴露。
 func TestCheckComposeMatchesWebContractFixture(t *testing.T) {
-	dir := t.TempDir()
+	dir := testDir(t)
 	if err := os.WriteFile(filepath.Join(dir, "real.env"), []byte("A=1\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	content := "services:\n  app:\n    env_file:\n      - ./real.env\n      - ./missing.env\n      - /abs/path\n"
+	content := "services:\n  app:\n    env_file:\n      - ./real.env\n      - ./missing.env\n      - /abs/path\n    build:\n      context: .\n"
 	result, err := CheckCompose(dir, "compose.yml", content)
 	if err != nil {
 		t.Fatal(err)
@@ -379,11 +380,16 @@ func TestCheckComposeMatchesWebContractFixture(t *testing.T) {
 			t.Fatalf("第 %d 条引用分类与 web 侧不一致：got %v want %v", i+1, got[i], want[i])
 		}
 	}
-	if !strings.Contains(strings.Join(result.Undetermined, "\n"), "/abs/path") {
+	undetermined := strings.Join(result.Undetermined, "\n")
+	if !strings.Contains(undetermined, "/abs/path") {
 		t.Fatalf("绝对路径应进未判定清单：%v", result.Undetermined)
 	}
-	if result.Coverage == "" {
-		t.Fatal("必须回传判定范围说明")
+	// build 行的两侧逐字新句（ADR-0021）：自检不判定 build 段，构建走预览。
+	if !strings.Contains(undetermined, "（build 段由构建任务解析，自检不判定）") {
+		t.Fatalf("build 行未判定句应按 ADR-0021 新句：%v", result.Undetermined)
+	}
+	if result.Coverage != "只判定 volumes 短语法与长语法 source、以及 env_file 引用的路径是否存在；含变量替换、锚点引用、flow 风格与 build 段的行列入未能判定清单（build 段请用构建预览），请人工核对" {
+		t.Fatalf("判定范围说明应按 ADR-0021 新句：%s", result.Coverage)
 	}
 }
 
@@ -408,5 +414,73 @@ func TestWorkspaceLivesUnderMountRootNotElysianHome(t *testing.T) {
 	}
 	if strings.Contains(response, paths.ElysianHome) {
 		t.Fatalf("回显路径不得指向 ~/.Elysian：%s", response)
+	}
+}
+
+// 接口安全审查员-4：工作区配额判定在 rename 之前——超限回 413、不留临时残留、
+// 已用量不增长；覆盖替换场景（换大文件被拒且旧文件保留、正常替换不受影响）。
+func TestUploadWorkspaceQuotaBeforeRename(t *testing.T) {
+	dir := testDir(t)
+	// 预置 120 MiB 稀疏文件抬高已用量（workspaceUsed 按逻辑大小统计）。
+	big := filepath.Join(dir, "big.bin")
+	if err := os.WriteFile(big, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(big, 120<<20); err != nil {
+		t.Fatal(err)
+	}
+	before, err := workspaceUsed(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := make([]byte, 9<<20)
+	_, err = Upload(dir, "new.bin", bytes.NewReader(payload), int64(len(payload)))
+	var tooLarge *TooLargeError
+	if !errors.As(err, &tooLarge) || tooLarge.Limit != maxWorkspaceBytes {
+		t.Fatalf("新文件超配额应 413（128 MiB），实际 %v", err)
+	}
+	entries, readErr := os.ReadDir(dir)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 1 || entries[0].Name() != "big.bin" {
+		t.Fatalf("超限后不得留残留：%v", entries)
+	}
+	after, err := workspaceUsed(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("超限被拒后已用量不得增长：%d → %d", before, after)
+	}
+
+	// 替换场景：A=27 MiB + B=100 MiB（合计 127 MiB），换 A 为 40 MiB 超限被拒且
+	// 旧 A 保留；换 A 为 5 MiB 在配额内成功。
+	dir2 := testDir(t)
+	writeSparse := func(name string, size int64) {
+		t.Helper()
+		path := filepath.Join(dir2, name)
+		if err := os.WriteFile(path, []byte("x"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Truncate(path, size); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeSparse("a.bin", 27<<20)
+	writeSparse("b.bin", 100<<20)
+	oversize := make([]byte, 40<<20)
+	_, err = Upload(dir2, "a.bin", bytes.NewReader(oversize), int64(len(oversize)))
+	if !errors.As(err, &tooLarge) {
+		t.Fatalf("替换超配额应 413，实际 %v", err)
+	}
+	info, statErr := os.Stat(filepath.Join(dir2, "a.bin"))
+	if statErr != nil || info.Size() != 27<<20 {
+		t.Fatalf("被拒后旧文件必须保留：%v %v", info, statErr)
+	}
+	small := bytes.Repeat([]byte("y"), 5<<20)
+	entry, err := Upload(dir2, "a.bin", bytes.NewReader(small), int64(len(small)))
+	if err != nil || entry.Size != int64(len(small)) {
+		t.Fatalf("配额内的替换应成功：%v %v", entry, err)
 	}
 }

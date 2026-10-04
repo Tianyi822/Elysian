@@ -13,10 +13,10 @@ import { ContainerAppWorkspaceCard } from './ContainerAppWorkspaceCard'
 
 /**
  * 容器应用工作区视图：随容器一起上传的配置文件（compose.yml、.env、挂载用的配置目录）
- * 的存放、真实路径回显、文本编辑与 compose 引用自检。
+ * 的存放、真实路径回显、文本编辑、compose 引用自检与镜像构建任务区。
  *
- * 面板只落盘与给路径，不执行 docker compose、不做 docker build（ADR-0020）：
- * compose 自己声明要加载哪些文件，界面把文件放好并写出真实路径，改动由用户抄回 compose。
+ * 文件侧只落盘与给路径，不执行 docker compose（ADR-0020）；镜像构建经引擎 /build
+ * 异步执行（ADR-0021），compose up 不做：改动由用户抄回 compose，拉起也在宿主自行完成。
  */
 export function ContainerAppsPanel() {
   const gateway = useGateway()

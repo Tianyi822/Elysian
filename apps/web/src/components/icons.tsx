@@ -29,6 +29,7 @@ export {
   Gauge,
   Globe,
   GripVertical,
+  Hammer,
   Inbox,
   Info,
   KeyRound,

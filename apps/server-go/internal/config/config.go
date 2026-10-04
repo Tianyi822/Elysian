@@ -12,6 +12,16 @@
 //	ELYSIAN_CADDY_SOCKET      非空生效；缺省 /run/caddy/admin.sock。Caddy admin socket。
 //	ELYSIAN_DOCKER_MOUNT_ROOT 非空生效；缺省 /srv。绑定挂载根（docker 域读取）。
 //	ELYSIAN_LISTEN_HOST       非空生效；缺省 127.0.0.1。HTTP 监听地址。
+//	ELYSIAN_APP_BUILD_TIMEOUT_SECONDS          正整数生效；缺省 1200。容器应用镜像
+//	                                          构建的单镜像时限（秒，ADR-0021）。
+//	ELYSIAN_APP_BUILD_TASK_TIMEOUT_SECONDS     正整数生效；缺省 3600。构建整任务时限。
+//	ELYSIAN_APP_BUILD_CONCURRENCY              正整数生效；缺省 1。全局同时构建任务数。
+//	ELYSIAN_APP_BUILD_LOG_BYTES                正整数生效；缺省 2097152。单任务构建
+//	                                          日志保留上限（字节）。
+//
+// ELYSIAN_APP_BUILD_* 四个变量不走本包：读 env 只发生在仅由装配层调用的各域导出
+// production* 构造器（containerapps.NewProductionBuildManager 与 websites 域
+// productionDeploymentManager 同一口径），config.Config 不携带这批变量。
 //
 // Docker 开发端口固定 48101；正式安装端口由 panel-network.json 提供，后端固定回环。
 package config

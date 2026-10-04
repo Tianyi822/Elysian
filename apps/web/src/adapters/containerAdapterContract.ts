@@ -1,5 +1,20 @@
 import { describe, expect, it } from 'vitest'
+import { isValidContainerBuildTag } from '@elysian/contracts'
+import type { ContainerBuildTask } from '@elysian/contracts'
 import type { ContainerAdapter, HostTerminalFrame, HostTerminalHandlers } from '../contracts/adapters'
+
+/**
+ * 轮询等构建任务到终态：任务推进是异步的（真实侧靠 worker，mock 靠注入节奏），
+ * 契约断言只约定「最终会到终态」，不绑定实现的具体时序。
+ */
+async function waitForBuildSettled(adapter: ContainerAdapter, slug: string, taskId: string): Promise<ContainerBuildTask> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const task = await adapter.getAppBuild(slug, taskId)
+    if (task.state !== 'queued' && task.state !== 'building') return task
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error('构建任务未在预期时间内到达终态')
+}
 
 /** 只依赖 adapter 接口本身，不依赖任何 mock 细节。 */
 export function runContainerAdapterContract(make: () => ContainerAdapter): void {
@@ -176,6 +191,162 @@ export function runContainerAdapterContract(make: () => ContainerAdapter): void 
         ['missing.env', false],
       ])
       expect(checked.undetermined.join('\n')).toContain('/abs/path')
+    })
+
+    it('previewAppBuild 预览 dockerfile 构建：形状、上下文统计与 FROM 警告', async () => {
+      const adapter = make()
+      await adapter.createApp({ slug: 'build-app', displayName: '构建演示' })
+      await adapter.uploadAppFile('build-app', 'Dockerfile', new Blob(['FROM alpine:3.20\nFROM $BASE\nCOPY . .\n']))
+      await adapter.uploadAppFile('build-app', '.env', new Blob(['A=1\n']))
+      const plan = await adapter.previewAppBuild('build-app', {
+        mode: 'dockerfile',
+        dockerfile: 'Dockerfile',
+        context: './',
+      })
+      expect(plan.mode).toBe('dockerfile')
+      if (plan.mode !== 'dockerfile') return
+      expect(plan.slug).toBe('build-app')
+      expect(plan.target).toBe('app')
+      expect(plan.dockerfile).toBe('Dockerfile')
+      // "./" 前缀剥掉后按工作区根归一化，根用 "."。
+      expect(plan.context).toBe('.')
+      expect(plan.imageRepository).toBe('elysian/build-app/app')
+      expect(plan.contextFiles).toBe(2)
+      expect(plan.contextBytes).toBeGreaterThan(0)
+      expect(plan.repositoryOccupied).toBe(false)
+      expect(plan.warnings.join('\n')).toContain('第 2 行 FROM 含未解析变量，面板未校验其镜像源')
+    })
+
+    it('previewAppBuild 对超限上下文给出逐字中文超限警告', async () => {
+      const adapter = make()
+      await adapter.createApp({ slug: 'build-app', displayName: '构建演示' })
+      await adapter.uploadAppFile('build-app', 'Dockerfile', new Blob(['FROM alpine:3.20\n']))
+      for (let index = 0; index < 512; index += 1) {
+        await adapter.uploadAppFile('build-app', `src/f${index}.txt`, new Blob(['x']))
+      }
+      const plan = await adapter.previewAppBuild('build-app', { mode: 'dockerfile', dockerfile: 'Dockerfile' })
+      expect(
+        plan.mode === 'dockerfile' ? plan.warnings.join('\n') : '',
+      ).toContain('构建上下文超过上限（≤512 个文件、128 MiB），任务将在打包阶段失败')
+    })
+
+    it('submitAppBuild 提交后 listAppBuilds 读到，tag 形状与任务对象齐全', async () => {
+      const adapter = make()
+      await adapter.createApp({ slug: 'build-app', displayName: '构建演示' })
+      await adapter.uploadAppFile('build-app', 'Dockerfile', new Blob(['FROM alpine:3.20\n']))
+      const task = await adapter.submitAppBuild('build-app', {
+        mode: 'dockerfile',
+        requestId: '0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b',
+        dockerfile: 'Dockerfile',
+        context: '.',
+      })
+      expect(task.slug).toBe('build-app')
+      expect(task.mode).toBe('dockerfile')
+      expect(task.state === 'queued' || task.state === 'building' || task.state === 'succeeded').toBe(true)
+      expect(task.input.mode).toBe('dockerfile')
+      expect(task.results).toEqual([])
+      expect(task.error).toBe('')
+      const builds = await adapter.listAppBuilds('build-app')
+      expect(builds.map((row) => row.id)).toContain(task.id)
+      // 等任务终态：results 落 tag 与镜像 ID，tag 形状由契约校验。
+      const finished = await waitForBuildSettled(adapter, 'build-app', task.id)
+      expect(finished.state).toBe('succeeded')
+      expect(finished.stage).toBe('构建成功')
+      expect(finished.results).toHaveLength(1)
+      const result = finished.results[0]!
+      expect(result.target).toBe('app')
+      expect(result.repository).toBe('elysian/build-app/app')
+      expect(isValidContainerBuildTag(result.tag)).toBe(true)
+      expect(result.imageId).toMatch(/^sha256:[0-9a-f]+$/)
+      expect(result.state).toBe('succeeded')
+      expect(result.error).toBe('')
+    })
+
+    it('submitAppBuild 重复 requestId 同参幂等返回原任务', async () => {
+      const adapter = make()
+      await adapter.createApp({ slug: 'build-app', displayName: '构建演示' })
+      await adapter.uploadAppFile('build-app', 'Dockerfile', new Blob(['FROM alpine:3.20\n']))
+      const input = {
+        mode: 'dockerfile' as const,
+        requestId: '0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b',
+        dockerfile: 'Dockerfile',
+        context: '.',
+      }
+      const first = await adapter.submitAppBuild('build-app', input)
+      const again = await adapter.submitAppBuild('build-app', input)
+      expect(again.id).toBe(first.id)
+      expect((await adapter.listAppBuilds('build-app'))).toHaveLength(1)
+    })
+
+    it('submitAppBuild 的 compose services 校验错误逐字', async () => {
+      const adapter = make()
+      await adapter.createApp({ slug: 'build-app', displayName: '构建演示' })
+      await adapter.uploadAppFile(
+        'build-app',
+        'compose.yml',
+        new Blob(['services:\n  web:\n    build:\n      context: ./web\n  db:\n    image: mariadb:11\n']),
+      )
+      const base = {
+        mode: 'compose' as const,
+        requestId: '0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b',
+        compose: 'compose.yml',
+      }
+      await expect(adapter.submitAppBuild('build-app', { ...base, services: ['nope'] })).rejects.toThrow(
+        '服务不存在：nope',
+      )
+      await expect(adapter.submitAppBuild('build-app', { ...base, services: ['db'] })).rejects.toThrow(
+        '服务没有 build 配置：db',
+      )
+      await expect(
+        adapter.submitAppBuild('build-app', { ...base, services: ['web', 'web'] }),
+      ).rejects.toThrow('服务 web 重复提交')
+    })
+
+    it('cancelAppBuild 取消排队/构建中的任务，已终态再取消报中文错误', async () => {
+      const adapter = make()
+      await adapter.createApp({ slug: 'build-app', displayName: '构建演示' })
+      await adapter.uploadAppFile('build-app', 'Dockerfile', new Blob(['FROM alpine:3.20\n']))
+      const task = await adapter.submitAppBuild('build-app', {
+        mode: 'dockerfile',
+        requestId: '0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b',
+        dockerfile: 'Dockerfile',
+      })
+      await adapter.cancelAppBuild('build-app', task.id)
+      const cancelled = await adapter.getAppBuild('build-app', task.id)
+      expect(cancelled.state).toBe('cancelled')
+      expect(cancelled.stage).toBe('已取消')
+      await expect(adapter.cancelAppBuild('build-app', task.id)).rejects.toThrow('构建已结束，无法取消')
+      await expect(adapter.cancelAppBuild('build-app', 'b0000000-0000-0000-0000-000000000000')).rejects.toThrow(
+        '构建任务不存在',
+      )
+    })
+
+    it('getAppBuildLogs 按字节 offset 分页推进，读尽后返回空行', async () => {
+      const adapter = make()
+      await adapter.createApp({ slug: 'build-app', displayName: '构建演示' })
+      await adapter.uploadAppFile('build-app', 'Dockerfile', new Blob(['FROM alpine:3.20\n']))
+      const task = await adapter.submitAppBuild('build-app', {
+        mode: 'dockerfile',
+        requestId: '0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b',
+        dockerfile: 'Dockerfile',
+      })
+      const finished = await waitForBuildSettled(adapter, 'build-app', task.id)
+      expect(finished.state).toBe('succeeded')
+      const first = await adapter.getAppBuildLogs('build-app', task.id, 0)
+      expect(first.lines.length).toBeGreaterThan(0)
+      expect(first.total).toBeGreaterThan(0)
+      expect(first.next).toBeGreaterThan(0)
+      expect(first.next).toBeLessThanOrEqual(first.total)
+      const tail = await adapter.getAppBuildLogs('build-app', task.id, first.next)
+      if (first.next < first.total) {
+        expect(tail.lines.length).toBeGreaterThan(0)
+        expect(tail.next).toBe(tail.total)
+      } else {
+        expect(tail.lines).toEqual([])
+      }
+      const drained = await adapter.getAppBuildLogs('build-app', task.id, tail.total)
+      expect(drained.lines).toEqual([])
+      expect(drained.next).toBe(drained.total)
     })
 
     it('removeApp 连文件一起消失', async () => {

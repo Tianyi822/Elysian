@@ -1,32 +1,48 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Check, Copy, File as FileIcon, Folder, Pencil, ShieldCheck, Trash2, Upload } from '../../components/icons'
-import { containerAppFilePath } from '@elysian/contracts'
-import type { ContainerApp, ContainerAppFile } from '@elysian/contracts'
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  CircleCheck,
+  Copy,
+  File as FileIcon,
+  Folder,
+  Hammer,
+  Loader2,
+  Pencil,
+  RotateCw,
+  ScrollText,
+  ShieldCheck,
+  Square,
+  Timer,
+  Trash2,
+  TriangleAlert,
+  Upload,
+} from '../../components/icons'
+import { containerAppFilePath, CONTAINER_BUILD_STATE_LABELS, isContainerBuildActive } from '@elysian/contracts'
+import type { ContainerApp, ContainerAppFile, ContainerBuildTask } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { useClipboardCopy } from '../../components/CopyButton'
-import { BusyVeil } from '../../components/RefreshState'
+import { BusyVeil, RefreshButton } from '../../components/RefreshState'
 import { IconButton } from '../../components/IconButton'
 import { CTL_CARD_ACTION, CTL_DANGER, CTL_SECONDARY } from '../../components/formControl'
-import { formatDate } from '../../components/format'
+import { formatDateTime } from '../../components/format'
 import {
   appWritingKey,
   isComposeFile,
+  newBuildRequestId,
   useContainerAppsStore,
   WORKSPACE_WRITING_PATH,
 } from '../../stores/containerAppsStore'
 import { ComposeCheckPanel } from './ComposeCheckPanel'
+import { ContainerBuildDialog } from './ContainerBuildDialog'
+import { ContainerBuildLogsSheet } from './ContainerBuildLogsSheet'
+import { formatWorkspaceSize } from './formatWorkspaceSize'
 
 /** 待确认的删除目标：工作区连目录一起删，单文件只删自己。 */
 type Pending = { kind: 'app' } | { kind: 'file'; path: string } | null
-
-/** 与镜像表同档的体积表达：工作区文件都是配置文本，不需要更大单位。 */
-function formatSize(bytes: number): string {
-  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${bytes} B`
-}
 
 function CopyPathButton({ value, label }: { value: string; label: string }) {
   const { copied, copy } = useClipboardCopy()
@@ -43,11 +59,69 @@ function CopyPathButton({ value, label }: { value: string; label: string }) {
   )
 }
 
+/** 状态一律「文字 + 颜色 + 图标」：颜色只作辅助，语义由文字承担。 */
+function BuildStateBadge({ state }: { state: ContainerBuildTask['state'] }) {
+  const label = CONTAINER_BUILD_STATE_LABELS[state]
+  if (state === 'queued') {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs text-fg-muted">
+        <Timer aria-hidden size={12} />
+        {label}
+      </span>
+    )
+  }
+  if (state === 'building') {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs text-fg-muted">
+        <Loader2 aria-hidden size={12} className="animate-spin motion-reduce:animate-none" />
+        {label}
+      </span>
+    )
+  }
+  if (state === 'succeeded') {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs text-success">
+        <CircleCheck aria-hidden size={12} />
+        {label}
+      </span>
+    )
+  }
+  if (state === 'failed') {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs text-danger">
+        <TriangleAlert aria-hidden size={12} />
+        {label}
+      </span>
+    )
+  }
+  if (state === 'cancelled') {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs text-fg-subtle">
+        <Square aria-hidden size={12} />
+        {label}
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center gap-1 text-xs text-warning">
+      <TriangleAlert aria-hidden size={12} />
+      {label}
+    </span>
+  )
+}
+
+/** 任务行的目标摘要：dockerfile 用目标名，compose 用提交的服务清单（缺省全部 build 服务）。 */
+function buildTargetsLabel(task: ContainerBuildTask): string {
+  if (task.mode === 'dockerfile') return task.input.mode === 'dockerfile' ? task.input.target ?? 'app' : 'app'
+  return task.input.mode === 'compose' && task.input.services?.length ? task.input.services.join('、') : '全部 build 服务'
+}
+
 /**
  * 单个应用工作区卡片。
  *
  * 卡片把真实绝对路径摆在最显眼的位置：上传这些文件的意义就在于「compose 里能写到它」，
  * 所以目录一行、每个文件一行都给完整路径与复制入口，自检结果里也是同一个形状。
+ * 卡片下方是可折叠的构建任务区（ADR-0021）：状态轮询、日志与取消都从这里出发。
  */
 export function ContainerAppWorkspaceCard({
   app,
@@ -64,13 +138,40 @@ export function ContainerAppWorkspaceCard({
   const removeFile = useContainerAppsStore((s) => s.removeFile)
   const runCheck = useContainerAppsStore((s) => s.runCheck)
   const clearCheck = useContainerAppsStore((s) => s.clearCheck)
+  const builds = useContainerAppsStore((s) => s.buildsBySlug[app.slug]) ?? []
+  const buildsLoading = useContainerAppsStore((s) => s.buildsLoading[app.slug]) === true
+  const buildsRefreshing = useContainerAppsStore((s) => s.buildsRefreshing[app.slug]) === true
+  const buildsError = useContainerAppsStore((s) => s.buildsError[app.slug]) ?? null
+  const ensureBuilds = useContainerAppsStore((s) => s.ensureBuilds)
+  const refreshBuilds = useContainerAppsStore((s) => s.refreshBuilds)
+  const submitBuild = useContainerAppsStore((s) => s.submitBuild)
+  const cancelBuild = useContainerAppsStore((s) => s.cancelBuild)
+
   const [pending, setPending] = useState<Pending>(null)
+  const [buildDialogOpen, setBuildDialogOpen] = useState(false)
+  const [buildsOpen, setBuildsOpen] = useState(false)
+  const [logsTaskId, setLogsTaskId] = useState<string | null>(null)
+  const [cancelTarget, setCancelTarget] = useState<ContainerBuildTask | null>(null)
 
   const directoryInputRef = useRef<HTMLInputElement>(null)
   // webkitdirectory 不在 React 的类型里，只能在节点上直接设属性。
   useEffect(() => {
     directoryInputRef.current?.setAttribute('webkitdirectory', '')
   }, [])
+
+  // 任务区首次展开才加载；之后收起再展开走刷新遮罩，不闪加载态。
+  useEffect(() => {
+    if (buildsOpen) void ensureBuilds(gateway, app.slug)
+  }, [buildsOpen, gateway, app.slug, ensureBuilds])
+
+  const hasActiveBuild = builds.some((task) => isContainerBuildActive(task.state))
+  // 静默轮询（对齐 WebsitesPanel 先例）：任一活跃任务、任务区展开或日志抽屉打开时 2s 一拍；
+  // 轮询不驱动 BusyVeil 与 RefreshButton，手动刷新才转图标。
+  useEffect(() => {
+    if (!buildsOpen && !hasActiveBuild && logsTaskId === null) return
+    const timer = window.setInterval(() => void refreshBuilds(gateway, app.slug, { silent: true }), 2000)
+    return () => window.clearInterval(timer)
+  }, [gateway, app.slug, buildsOpen, hasActiveBuild, logsTaskId, refreshBuilds])
 
   const batchBusy = writing === appWritingKey(app.slug, WORKSPACE_WRITING_PATH)
   const checkHere = check?.slug === app.slug ? check : null
@@ -82,6 +183,11 @@ export function ContainerAppWorkspaceCard({
     if (files.length > 0) void upload(gateway, app.slug, files)
   }
 
+  const rebuild = (task: ContainerBuildTask) => {
+    // 原参数重新提交，唯一换新 requestId：重试永远产生新任务，不复用旧任务的幂等键。
+    void submitBuild(gateway, app.slug, { ...task.input, requestId: newBuildRequestId() }, { notifyOnError: true })
+  }
+
   return (
     <li aria-label={`应用工作区 ${app.displayName}`} className="h-full">
       <div className="busy-host h-full">
@@ -91,7 +197,7 @@ export function ContainerAppWorkspaceCard({
             <div className="min-w-0">
               <h3 className="truncate text-sm font-medium">{app.displayName}</h3>
               <p className="mt-0.5 font-mono text-xs text-fg-subtle">
-                {app.slug} · {formatDate(app.createdAt)} 建
+                {app.slug} · {formatDateTime(app.createdAt)} 建
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-1.5">
@@ -118,6 +224,10 @@ export function ContainerAppWorkspaceCard({
                 <Folder aria-hidden size={13} />
                 上传目录
               </label>
+              <button type="button" onClick={() => setBuildDialogOpen(true)} className={CTL_CARD_ACTION}>
+                <Hammer aria-hidden size={13} />
+                构建镜像
+              </button>
               <IconButton
                 label="删除工作区"
                 variant="ghost"
@@ -165,9 +275,9 @@ export function ContainerAppWorkspaceCard({
                         {file.path}
                       </span>
                       {rowBusy ? <span className="text-xs text-fg-subtle">写入中…</span> : null}
-                      <span className="shrink-0 text-xs tabular-nums text-fg-muted">{formatSize(file.size)}</span>
+                      <span className="shrink-0 text-xs tabular-nums text-fg-muted">{formatWorkspaceSize(file.size)}</span>
                       <span className="shrink-0 text-xs tabular-nums text-fg-subtle">
-                        {formatDate(file.modifiedAt)}
+                        {formatDateTime(file.modifiedAt)}
                       </span>
                       <div className="flex shrink-0 items-center gap-1">
                         <CopyPathButton value={absolute} label="文件真实路径" />
@@ -216,6 +326,141 @@ export function ContainerAppWorkspaceCard({
               onClose={clearCheck}
             />
           ) : null}
+
+          {/* 构建任务区：折叠入口常驻；工具栏（折叠与刷新按钮）在遮罩外。 */}
+          <section aria-label={`${app.displayName} 的构建任务`} className="rounded-lg border border-line bg-surface px-2.5 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => setBuildsOpen((open) => !open)}
+                aria-expanded={buildsOpen}
+                className={`${CTL_CARD_ACTION}`}
+              >
+                {buildsOpen ? <ChevronDown aria-hidden size={13} /> : <ChevronRight aria-hidden size={13} />}
+                构建任务{builds.length > 0 ? `（${builds.length}）` : ''}
+              </button>
+              {buildsOpen ? (
+                <RefreshButton
+                  onPress={() => void refreshBuilds(gateway, app.slug)}
+                  busy={buildsRefreshing}
+                  label="刷新构建任务"
+                  variant="ghost"
+                />
+              ) : null}
+            </div>
+
+            {buildsOpen ? (
+              <div className="busy-host relative mt-2 border-t border-line pt-2">
+                <BusyVeil busy={buildsRefreshing} />
+                {buildsError ? (
+                  <div role="alert" className="flex flex-wrap items-center gap-2 py-2 text-xs text-danger">
+                    <TriangleAlert aria-hidden size={13} className="shrink-0" />
+                    <span className="min-w-0 flex-1">{buildsError}</span>
+                    <button
+                      type="button"
+                      onClick={() => void refreshBuilds(gateway, app.slug)}
+                      className={`${CTL_SECONDARY} px-2`}
+                    >
+                      重试
+                    </button>
+                  </div>
+                ) : buildsLoading && builds.length === 0 ? (
+                  <p role="status" className="flex items-center justify-center gap-2 py-4 text-xs text-fg-muted">
+                    <Loader2 aria-hidden size={13} className="animate-spin" />
+                    正在读取构建任务…
+                  </p>
+                ) : builds.length === 0 ? (
+                  <p className="py-3 text-center text-xs text-fg-subtle">
+                    还没有构建任务，点上方「构建镜像」从 Dockerfile 或 compose 服务开始。
+                  </p>
+                ) : (
+                  <ul className="space-y-2" aria-label={`${app.displayName} 的构建任务列表`}>
+                    {builds.map((task) => {
+                      const active = isContainerBuildActive(task.state)
+                      return (
+                        <li key={task.id} className="rounded-lg border border-line bg-surface-raised/50 px-2.5 py-2">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <span className="min-w-0 flex-1 truncate text-xs text-fg">
+                              <span className="font-mono">{buildTargetsLabel(task)}</span>
+                              <span className="ml-1.5 text-fg-subtle">
+                                {task.mode === 'dockerfile' ? 'Dockerfile' : 'compose'}
+                              </span>
+                            </span>
+                            <BuildStateBadge state={task.state} />
+                            <span className="shrink-0 text-xs tabular-nums text-fg-subtle" title={`提交于 ${task.createdAt}`}>
+                              {formatDateTime(task.createdAt)}
+                            </span>
+                            <div className="flex shrink-0 items-center gap-1">
+                              <IconButton
+                                label="查看构建日志"
+                                variant="ghost"
+                                onPress={() => setLogsTaskId(task.id)}
+                              >
+                                <ScrollText aria-hidden size={13} />
+                              </IconButton>
+                              {active ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setCancelTarget(task)}
+                                  className={`${CTL_DANGER} px-2 text-xs`}
+                                >
+                                  取消
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => rebuild(task)}
+                                  className={`${CTL_SECONDARY} gap-1 px-2 text-xs`}
+                                >
+                                  <RotateCw aria-hidden size={12} />
+                                  重新构建
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                          <p className="mt-1 text-xs text-fg-muted">{task.stage}</p>
+                          {task.state === 'failed' && task.error ? (
+                            <p role="alert" className="mt-1 break-all text-xs text-danger">
+                              {task.error}
+                            </p>
+                          ) : null}
+                          {task.state === 'succeeded' && task.results.length > 0 ? (
+                            <p className="mt-1 text-xs text-fg-subtle">
+                              面板不编排，请在宿主自行拉起（compose up 或 docker run）。
+                            </p>
+                          ) : null}
+                          {task.results.length > 0 ? (
+                            <ul className="mt-1.5 space-y-1">
+                              {task.results.map((result) => (
+                                <li key={`${result.target}:${result.tag}`} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                                  {result.state === 'succeeded' ? (
+                                    <>
+                                      <code className="min-w-0 flex-1 break-all font-mono text-xs text-fg">
+                                        {result.repository}:{result.tag}
+                                      </code>
+                                      <span className="shrink-0 text-xs text-fg-subtle">{result.target}</span>
+                                      <CopyPathButton
+                                        value={`${result.repository}:${result.tag}`}
+                                        label="完整镜像标签"
+                                      />
+                                    </>
+                                  ) : (
+                                    <p className="min-w-0 flex-1 break-all text-xs text-danger">
+                                      {result.target}：{result.error}
+                                    </p>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : null}
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
+              </div>
+            ) : null}
+          </section>
         </article>
 
         <Dialog.Root open={pending !== null} onOpenChange={(open) => { if (!open) setPending(null) }}>
@@ -258,6 +503,53 @@ export function ContainerAppWorkspaceCard({
             </Dialog.Content>
           </Dialog.Portal>
         </Dialog.Root>
+
+        <Dialog.Root
+          open={cancelTarget !== null}
+          onOpenChange={(open) => { if (!open) setCancelTarget(null) }}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
+            <Dialog.Content
+              aria-describedby="cancel-build-description"
+              className="fixed left-1/2 top-1/2 z-[61] w-[min(28rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl"
+            >
+              <Dialog.Title className="text-sm font-semibold">
+                取消构建任务 {cancelTarget ? buildTargetsLabel(cancelTarget) : ''}？
+              </Dialog.Title>
+              <p id="cancel-build-description" className="mt-1.5 text-xs text-fg-muted">
+                已完成的镜像会保留。取消后如需再次构建，用「重新构建」发起一个新任务。
+              </p>
+              <div className="mt-4 flex justify-end gap-2">
+                <button type="button" onClick={() => setCancelTarget(null)} className={`${CTL_SECONDARY} px-3`}>
+                  继续构建
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const target = cancelTarget
+                    setCancelTarget(null)
+                    if (target) void cancelBuild(gateway, app.slug, target.id)
+                  }}
+                  className={`${CTL_DANGER} px-3`}
+                >
+                  确认取消
+                </button>
+              </div>
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+
+        {buildDialogOpen ? (
+          <ContainerBuildDialog app={app} onClose={() => setBuildDialogOpen(false)} />
+        ) : null}
+        {logsTaskId ? (
+          <ContainerBuildLogsSheet
+            slug={app.slug}
+            taskId={logsTaskId}
+            onClose={() => setLogsTaskId(null)}
+          />
+        ) : null}
       </div>
     </li>
   )

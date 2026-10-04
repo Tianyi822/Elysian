@@ -7,6 +7,8 @@ import {
   createFetchContainerEventSource,
   createHttpContainersAdapter,
   parseContainer,
+  parseContainerBuildPlan,
+  parseContainerBuildTask,
   parseContainerImageListResponse,
   parseContainerListResponse,
   parseContainerPolicyResponse,
@@ -517,5 +519,306 @@ describe('createHttpContainersAdapter', () => {
     const adapter = createHttpContainersAdapter()
     await expect(adapter.removeImage('img-x')).rejects.toThrow('镜像仍被容器使用')
     vi.unstubAllGlobals()
+  })
+})
+
+const baseAppFile = {
+  path: 'config/app.yml',
+  size: 12,
+  modifiedAt: '2026-10-01T00:00:00Z',
+  text: true,
+}
+
+const baseApp = {
+  slug: 'myapp',
+  displayName: '我的应用',
+  createdAt: '2026-10-01T00:00:00Z',
+  directory: '/srv/elysian/apps/myapp',
+  files: [baseAppFile],
+}
+
+const baseComposeCheck = {
+  composePath: 'compose.yml',
+  composeDir: '/srv/elysian/apps/myapp',
+  references: [],
+  undetermined: ['第 3 行：build: ./web（build 段由构建任务解析，自检不判定）'],
+  coverage: '只判定 volumes 短语法与长语法 source、以及 env_file 引用的路径是否存在；含变量替换、锚点引用、flow 风格与 build 段的行列入未能判定清单（build 段请用构建预览），请人工核对',
+}
+
+describe('createHttpContainersAdapter 应用工作区端点', () => {
+  it('listApps() GET /api/container-apps 并解析 apps 数组', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ apps: [baseApp] }))
+    vi.stubGlobal('fetch', fetchMock)
+    const apps = await createHttpContainersAdapter().listApps()
+    expect(fetchMock).toHaveBeenCalledWith('/api/container-apps', { signal: expect.any(AbortSignal) })
+    expect(apps).toEqual([baseApp])
+    vi.unstubAllGlobals()
+  })
+
+  it('createApp() POST /api/container-apps 并解析工作区对象', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(baseApp, 201))
+    vi.stubGlobal('fetch', fetchMock)
+    const input = { slug: 'myapp', displayName: '我的应用' }
+    const created = await createHttpContainersAdapter().createApp(input)
+    expect(fetchMock).toHaveBeenCalledWith('/api/container-apps', {
+      signal: expect.any(AbortSignal),
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    })
+    expect(created.slug).toBe('myapp')
+    vi.unstubAllGlobals()
+  })
+
+  it('uploadAppFile() PUT /files?path=… 并解析文件条目', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(baseAppFile))
+    vi.stubGlobal('fetch', fetchMock)
+    const blob = new Blob(['key: value\n'])
+    const saved = await createHttpContainersAdapter().uploadAppFile('myapp', 'config/app.yml', blob)
+    expect(fetchMock).toHaveBeenCalledWith('/api/container-apps/myapp/files?path=config%2Fapp.yml', {
+      signal: expect.any(AbortSignal),
+      method: 'PUT',
+      headers: { 'content-type': 'application/octet-stream' },
+      body: blob,
+    })
+    expect(saved.path).toBe('config/app.yml')
+    vi.unstubAllGlobals()
+  })
+
+  it('checkCompose() GET /compose-check?path=… 并解析引用与判定范围', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(baseComposeCheck))
+    vi.stubGlobal('fetch', fetchMock)
+    const checked = await createHttpContainersAdapter().checkCompose('myapp', 'compose.yml')
+    expect(fetchMock).toHaveBeenCalledWith('/api/container-apps/myapp/compose-check?path=compose.yml', {
+      signal: expect.any(AbortSignal),
+    })
+    expect(checked.coverage).toContain('build 段请用构建预览')
+    expect(checked.undetermined[0]).toContain('build 段由构建任务解析，自检不判定')
+    vi.unstubAllGlobals()
+  })
+
+  it('readAppContent/writeAppContent/removeAppFile 走各自动词与查询串', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ path: 'config/app.yml', content: 'a: 1', file: baseAppFile }))
+    vi.stubGlobal('fetch', fetchMock)
+    const adapter = createHttpContainersAdapter()
+    await adapter.readAppContent('myapp', 'config/app.yml')
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/container-apps/myapp/content?path=config%2Fapp.yml', {
+      signal: expect.any(AbortSignal),
+    })
+    fetchMock.mockImplementation(async () => jsonResponse(baseAppFile))
+    await adapter.writeAppContent('myapp', 'config/app.yml', 'a: 2')
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/container-apps/myapp/content?path=config%2Fapp.yml', {
+      signal: expect.any(AbortSignal),
+      method: 'PUT',
+      headers: { 'content-type': 'text/plain' },
+      body: 'a: 2',
+    })
+    fetchMock.mockImplementation(async () => new Response(null, { status: 204 }))
+    await adapter.removeAppFile('myapp', 'config/app.yml')
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/container-apps/myapp/files?path=config%2Fapp.yml', {
+      signal: expect.any(AbortSignal),
+      method: 'DELETE',
+    })
+    await adapter.removeApp('myapp')
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/container-apps/myapp/', {
+      signal: expect.any(AbortSignal),
+      method: 'DELETE',
+    })
+    vi.unstubAllGlobals()
+  })
+})
+
+const baseBuildTask = {
+  id: '1001b1d5-build-1',
+  slug: 'myapp',
+  mode: 'compose',
+  requestId: '0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b',
+  state: 'building',
+  stage: '构建镜像 elysian/myapp/web',
+  createdAt: '2026-10-04T07:30:00Z',
+  updatedAt: '2026-10-04T07:31:12Z',
+  input: {
+    mode: 'compose',
+    requestId: '0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b',
+    compose: 'docker-compose.yml',
+    services: ['web'],
+  },
+  results: [
+    {
+      target: 'web',
+      repository: 'elysian/myapp/web',
+      tag: '20261004-073000-1001',
+      imageId: 'sha256:abcd0123',
+      state: 'succeeded',
+      error: '',
+    },
+  ],
+  error: '',
+}
+
+describe('createHttpContainersAdapter 镜像构建端点', () => {
+  it('previewAppBuild() POST /builds/preview 并解析 dockerfile 形态预览', async () => {
+    const preview = {
+      mode: 'dockerfile',
+      slug: 'myapp',
+      target: 'app',
+      dockerfile: 'Dockerfile',
+      context: '.',
+      imageRepository: 'elysian/myapp/app',
+      contextFiles: 2,
+      contextBytes: 128,
+      repositoryOccupied: false,
+      warnings: ['第 3 行 FROM 含未解析变量，面板未校验其镜像源'],
+    }
+    const fetchMock = vi.fn(async () => jsonResponse(preview))
+    vi.stubGlobal('fetch', fetchMock)
+    const input = { mode: 'dockerfile' as const, dockerfile: 'Dockerfile', context: './' }
+    const plan = await createHttpContainersAdapter().previewAppBuild('myapp', input)
+    expect(fetchMock).toHaveBeenCalledWith('/api/container-apps/myapp/builds/preview', {
+      signal: expect.any(AbortSignal),
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    })
+    expect(plan).toEqual(preview)
+    vi.unstubAllGlobals()
+  })
+
+  it('parseContainerBuildPlan 解析 compose 形态的服务清单', () => {
+    const plan = parseContainerBuildPlan({
+      mode: 'compose',
+      slug: 'myapp',
+      compose: 'docker-compose.yml',
+      services: [
+        {
+          service: 'web',
+          hasBuild: true,
+          target: 'web',
+          dockerfile: 'web/Dockerfile',
+          context: 'web',
+          imageRepository: 'elysian/myapp/web',
+          contextFiles: 8,
+          contextBytes: 524288,
+          imageNameInCompose: 'myapp-web',
+          repositoryOccupied: false,
+          warnings: [],
+        },
+        {
+          service: 'db',
+          hasBuild: false,
+          target: '',
+          dockerfile: '',
+          context: '',
+          imageRepository: '',
+          contextFiles: 0,
+          contextBytes: 0,
+          imageNameInCompose: 'mariadb:11',
+          repositoryOccupied: false,
+          warnings: [],
+        },
+      ],
+      warnings: [],
+    })
+    expect(plan.mode).toBe('compose')
+    if (plan.mode !== 'compose') return
+    expect(plan.services.map((service) => [service.service, service.hasBuild])).toEqual([
+      ['web', true],
+      ['db', false],
+    ])
+  })
+
+  it('parseContainerBuildPlan 缺字段或形态不对时抛中文错误', () => {
+    expect(() => parseContainerBuildPlan({ mode: 'dockerfile', slug: 'myapp' })).toThrow('构建预览响应无效')
+    expect(() => parseContainerBuildPlan({ mode: 'weird', slug: 'myapp' })).toThrow('构建预览响应无效')
+    expect(() =>
+      parseContainerBuildPlan({
+        mode: 'compose',
+        slug: 'myapp',
+        compose: 'c.yml',
+        services: [{ service: 'web' }],
+        warnings: [],
+      }),
+    ).toThrow('构建服务预览响应无效')
+  })
+
+  it('submitAppBuild() POST /builds 并解析 202 任务对象', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(baseBuildTask, 202))
+    vi.stubGlobal('fetch', fetchMock)
+    const input = {
+      mode: 'compose' as const,
+      requestId: '0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b',
+      compose: 'docker-compose.yml',
+      services: ['web'],
+    }
+    const task = await createHttpContainersAdapter().submitAppBuild('myapp', input)
+    expect(fetchMock).toHaveBeenCalledWith('/api/container-apps/myapp/builds', {
+      signal: expect.any(AbortSignal),
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    })
+    expect(task).toEqual(baseBuildTask)
+    vi.unstubAllGlobals()
+  })
+
+  it('listAppBuilds() GET /builds 并解析 builds 数组', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ builds: [baseBuildTask] }))
+    vi.stubGlobal('fetch', fetchMock)
+    const builds = await createHttpContainersAdapter().listAppBuilds('myapp')
+    expect(fetchMock).toHaveBeenCalledWith('/api/container-apps/myapp/builds', { signal: expect.any(AbortSignal) })
+    expect(builds).toEqual([baseBuildTask])
+    vi.unstubAllGlobals()
+  })
+
+  it('getAppBuildLogs() 拼出 ?offset= 查询串并解析分页响应', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ lines: ['打包构建上下文（2 个文件，64 字节）'], next: 40, total: 100 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const logs = await createHttpContainersAdapter().getAppBuildLogs('myapp', '1001b1d5-build-1', 0)
+    expect(fetchMock).toHaveBeenCalledWith('/api/container-apps/myapp/builds/1001b1d5-build-1/logs?offset=0', {
+      signal: expect.any(AbortSignal),
+    })
+    expect(logs.next).toBe(40)
+    expect(logs.lines[0]).toContain('打包构建上下文')
+    const next = await createHttpContainersAdapter().getAppBuildLogs('myapp', '1001b1d5-build-1', 40)
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/container-apps/myapp/builds/1001b1d5-build-1/logs?offset=40', {
+      signal: expect.any(AbortSignal),
+    })
+    expect(next.total).toBe(100)
+    vi.unstubAllGlobals()
+  })
+
+  it('cancelAppBuild() POST /builds/:id/cancel，204 不解析 JSON', async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await createHttpContainersAdapter().cancelAppBuild('myapp', '1001b1d5-build-1')
+    expect(fetchMock).toHaveBeenCalledWith('/api/container-apps/myapp/builds/1001b1d5-build-1/cancel', {
+      signal: expect.any(AbortSignal),
+      method: 'POST',
+    })
+    vi.unstubAllGlobals()
+  })
+
+  it('构建端点 503 时透传中文错误（引擎不可用整组拦截）', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ error: 'Docker 服务未就绪' }, 503))
+    vi.stubGlobal('fetch', fetchMock)
+    const adapter = createHttpContainersAdapter()
+    await expect(adapter.previewAppBuild('myapp', { mode: 'compose', compose: 'compose.yml' })).rejects.toThrow(
+      'Docker 服务未就绪',
+    )
+    await expect(adapter.listAppBuilds('myapp')).rejects.toThrow('Docker 服务未就绪')
+    vi.unstubAllGlobals()
+  })
+
+  it('任务对象缺字段时抛中文错误', () => {
+    expect(() => parseContainerBuildTask({ id: 'x', slug: 'myapp', mode: 'compose', state: 'queued' })).toThrow(
+      '构建任务响应无效',
+    )
+    expect(() =>
+      parseContainerBuildTask({
+        ...baseBuildTask,
+        results: [{ target: 'web', repository: 'r', tag: 't', imageId: '', state: 'pending', error: '' }],
+      }),
+    ).toThrow('构建结果状态响应无效')
+    expect(() => parseContainerBuildTask({ ...baseBuildTask, state: 'running' })).toThrow('构建任务状态响应无效')
   })
 })

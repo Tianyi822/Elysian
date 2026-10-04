@@ -1,8 +1,10 @@
 /**
  * 容器应用工作区：随容器一起上传的配置文件（compose.yml、.env、各类 config）的
- * 存放、内容读写与 compose 引用路径自检。
+ * 存放、内容读写、compose 引用路径自检，以及镜像构建的预览与任务模型（ADR-0021）。
  *
- * 面板只落盘并回显真实路径，不执行 docker compose、不做 docker build（ADR-0020）。
+ * 面板只落盘并回显真实路径，不执行 docker compose；镜像构建经 Docker Engine 的
+ * /build 接口异步执行，产物镜像统一落 elysian/ 保留命名空间。compose 自检不判定
+ * build 段——build 段由构建预览与构建任务解析。
  * 实体目录在 mountRoot 下，因为只有那一侧的路径在宿主、面板与 Docker daemon 三方一致。
  */
 
@@ -180,7 +182,7 @@ export function checkComposeReferences(input: {
       if (key === 'build') {
         mode = 'build'
         modeIndent = indent
-        undetermined.push(`第 ${lineNumber} 行：${line}（本轮不做构建，build 段不判定）`)
+        undetermined.push(`第 ${lineNumber} 行：${line}（build 段由构建任务解析，自检不判定）`)
         return
       }
       if (key === 'source' && mode === 'volumes') inspect('volume', value, lineNumber)
@@ -200,10 +202,131 @@ export function checkComposeReferences(input: {
   }
 }
 
-/** 判定范围说明；界面必须把它显示出来，不能让人误以为是全量解析。 */
+/** 判定范围说明；界面必须把它显示出来，不能让人误以为是全量解析。与 Go 侧 coverageText 逐字相同。 */
 export const COMPOSE_CHECK_COVERAGE =
   '只判定 volumes 短语法与长语法 source、以及 env_file 引用的路径是否存在；' +
-  '含变量替换、锚点引用、flow 风格与 build 段的行列入未能判定清单，请人工核对'
+  '含变量替换、锚点引用、flow 风格与 build 段的行列入未能判定清单（build 段请用构建预览），请人工核对'
+
+/*
+ * 镜像构建（ADR-0021）：上传 Dockerfile 后经 Docker Engine 的 /build 接口构建，
+ * compose 的 build: 段可逐服务构建。任务模型与网站部署同款——202 提交、状态轮询、
+ * 分页日志、取消与重启标 interrupted。产物镜像统一落 elysian/<slug>/<target>，
+ * 不覆盖用户镜像；compose up 不做，界面在构建成功后如实告知。
+ */
+
+/** 构建任务状态：英文枚举进契约，界面展示一律用中文标签表。 */
+export type ContainerBuildState = 'queued' | 'building' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
+
+export const CONTAINER_BUILD_STATE_LABELS: Record<ContainerBuildState, string> = {
+  queued: '等待构建',
+  building: '构建中',
+  succeeded: '构建成功',
+  failed: '构建失败',
+  cancelled: '已取消',
+  interrupted: '重启中断',
+}
+
+/** 活跃任务：轮询与「取消」入口只对这两种状态开放。 */
+export function isContainerBuildActive(state: ContainerBuildState): boolean {
+  return state === 'queued' || state === 'building'
+}
+
+/** 构建预览请求：两模式互斥，出现对方字段即被服务端拒绝。 */
+export type ContainerBuildPreviewInput =
+  | { mode: 'dockerfile'; /** 镜像目标名，缺省 "app"。 */ target?: string; /** 相对工作区根的 Dockerfile 路径。 */ dockerfile: string; /** 相对工作区根的构建上下文，允许 "." 与 "./" 前缀，缺省 "."。 */ context?: string }
+  | { mode: 'compose'; /** 相对工作区根的 compose 文件路径。 */ compose: string }
+
+/** 提交构建请求：requestId 幂等键（uuid 形状），compose 模式省略 services 即全部含 build 段的服务。 */
+export type ContainerBuildSubmitInput =
+  | { mode: 'dockerfile'; requestId: string; target?: string; dockerfile: string; context?: string }
+  | { mode: 'compose'; requestId: string; compose: string; services?: readonly string[] }
+
+/** compose 模式预览里的单个服务：无 build 段的服务只回显名字与 compose 里声明的镜像。 */
+export type ContainerBuildServicePlan = {
+  service: string
+  hasBuild: boolean
+  /** 服务名清洗出的镜像目标名；无 build 段时为空串。 */
+  target: string
+  /** 相对工作区根的 Dockerfile 路径；无 build 段时为空串。 */
+  dockerfile: string
+  /** 相对工作区根、正斜杠、已剥 "./" 的归一化路径；无 build 段时为空串。 */
+  context: string
+  /** elysian/<slug>/<target>；无 build 段时为空串。 */
+  imageRepository: string
+  contextFiles: number
+  contextBytes: number
+  /** compose 里 image: 字段声明的镜像引用；未声明时为空串。 */
+  imageNameInCompose: string
+  /** 该仓库已被非面板构建的镜像占用（缺 elysian.managed 标签）。 */
+  repositoryOccupied: boolean
+  warnings: readonly string[]
+}
+
+/** 构建预览结果：字段与服务端 JSON 逐字对齐，warnings 为逐字中文。 */
+export type ContainerBuildPlan =
+  | {
+      mode: 'dockerfile'
+      slug: string
+      target: string
+      dockerfile: string
+      context: string
+      imageRepository: string
+      contextFiles: number
+      contextBytes: number
+      repositoryOccupied: boolean
+      warnings: readonly string[]
+    }
+  | {
+      mode: 'compose'
+      slug: string
+      compose: string
+      services: readonly ContainerBuildServicePlan[]
+      warnings: readonly string[]
+    }
+
+/** 任务内单个目标的构建结果；失败目标保留错误原文，已完成目标的镜像保留。 */
+export type ContainerBuildResult = {
+  target: string
+  /** elysian/<slug>/<target>。 */
+  repository: string
+  /** UTC yyyyMMdd-HHmmss 加任务 id 前 4 字符派生的不可变标签；另挂 latest 别名（不在此回显）。 */
+  tag: string
+  /** 构建成功后按 repo:tag 回查出的镜像 ID；失败或未开始为空串。 */
+  imageId: string
+  state: 'succeeded' | 'failed'
+  error: string
+}
+
+/** 构建任务：持久化与响应同形，input 为原样存档的提交请求体。 */
+export type ContainerBuildTask = {
+  id: string
+  slug: string
+  mode: 'dockerfile' | 'compose'
+  requestId: string
+  state: ContainerBuildState
+  /** 中文阶段描述，随任务推进逐字变化。 */
+  stage: string
+  createdAt: string
+  updatedAt: string
+  input: ContainerBuildSubmitInput
+  /** 按构建次序逐目标追加。 */
+  results: readonly ContainerBuildResult[]
+  /** 任务级错误：多服务任务取首个失败目标的错误原文；未失败为空串。 */
+  error: string
+}
+
+/** 分页构建日志：offset 为已读字节，next 为本次读完的字节位置。 */
+export type ContainerBuildLogs = { lines: readonly string[]; next: number; total: number }
+
+/**
+ * 产物镜像 tag 形状：`<UTC yyyyMMdd-HHmmss>-<任务 id 前 4 字符>`，时间取任务提交时刻。
+ * 同秒不同任务因 id 后缀必不同；同任务同目标只构建一次。
+ */
+export const CONTAINER_BUILD_TAG_PATTERN = /^\d{8}-\d{6}-[0-9a-f]{4}$/
+
+export function isValidContainerBuildTag(tag: string): boolean {
+  return CONTAINER_BUILD_TAG_PATTERN.test(tag)
+}
 
 function ambiguousReference(value: string): boolean {
   return (

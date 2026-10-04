@@ -4,6 +4,12 @@ import type {
   ContainerAction,
   ContainerApp,
   ContainerAppFile,
+  ContainerBuildLogs,
+  ContainerBuildPlan,
+  ContainerBuildResult,
+  ContainerBuildServicePlan,
+  ContainerBuildState,
+  ContainerBuildTask,
   ContainerCreateInput,
   ComposeCheckResult,
   ContainerImage,
@@ -502,6 +508,123 @@ function parseComposeCheck(value: unknown): ComposeCheckResult {
   }
 }
 
+const CONTAINER_BUILD_STATES = ['queued', 'building', 'succeeded', 'failed', 'cancelled', 'interrupted'] as const
+
+function asBuildState(value: unknown): ContainerBuildState {
+  if (typeof value !== 'string' || !CONTAINER_BUILD_STATES.includes(value as ContainerBuildState)) {
+    throw new Error('构建任务状态响应无效')
+  }
+  return value as ContainerBuildState
+}
+
+function asStringArray(value: unknown, message: string): readonly string[] {
+  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) throw new Error(message)
+  return value
+}
+
+/** 构建结果条目：目标、仓库、tag、镜像 ID 与逐字错误原文。 */
+function parseContainerBuildResult(value: unknown): ContainerBuildResult {
+  const row = asRecord(value, '构建结果响应无效')
+  if (row.state !== 'succeeded' && row.state !== 'failed') throw new Error('构建结果状态响应无效')
+  return {
+    target: asString(row.target, '构建结果响应无效'),
+    repository: asString(row.repository, '构建结果响应无效'),
+    tag: asString(row.tag, '构建结果响应无效'),
+    imageId: asString(row.imageId, '构建结果响应无效'),
+    state: row.state,
+    error: asString(row.error, '构建结果响应无效'),
+  }
+}
+
+/** 构建任务对象：持久化与响应同形，input 为原样存档的提交请求体。 */
+export function parseContainerBuildTask(value: unknown): ContainerBuildTask {
+  const row = asRecord(value, '构建任务响应无效')
+  if (!Array.isArray(row.results)) throw new Error('构建任务响应无效')
+  const mode = asString(row.mode, '构建任务响应无效')
+  if (mode !== 'dockerfile' && mode !== 'compose') throw new Error('构建任务模式响应无效')
+  return {
+    id: asString(row.id, '构建任务响应无效'),
+    slug: asString(row.slug, '构建任务响应无效'),
+    mode,
+    requestId: asString(row.requestId, '构建任务响应无效'),
+    state: asBuildState(row.state),
+    stage: asString(row.stage, '构建任务响应无效'),
+    createdAt: asString(row.createdAt, '构建任务响应无效'),
+    updatedAt: asString(row.updatedAt, '构建任务响应无效'),
+    input: asRecord(row.input, '构建任务响应无效') as ContainerBuildTask['input'],
+    results: row.results.map(parseContainerBuildResult),
+    error: asString(row.error, '构建任务响应无效'),
+  }
+}
+
+/** compose 模式预览里的单个服务条目。 */
+function parseContainerBuildServicePlan(value: unknown): ContainerBuildServicePlan {
+  const row = asRecord(value, '构建服务预览响应无效')
+  if (typeof row.hasBuild !== 'boolean' || typeof row.contextFiles !== 'number' || typeof row.contextBytes !== 'number' || typeof row.repositoryOccupied !== 'boolean') {
+    throw new Error('构建服务预览响应无效')
+  }
+  return {
+    service: asString(row.service, '构建服务预览响应无效'),
+    hasBuild: row.hasBuild,
+    target: asString(row.target, '构建服务预览响应无效'),
+    dockerfile: asString(row.dockerfile, '构建服务预览响应无效'),
+    context: asString(row.context, '构建服务预览响应无效'),
+    imageRepository: asString(row.imageRepository, '构建服务预览响应无效'),
+    contextFiles: row.contextFiles,
+    contextBytes: row.contextBytes,
+    imageNameInCompose: asString(row.imageNameInCompose, '构建服务预览响应无效'),
+    repositoryOccupied: row.repositoryOccupied,
+    warnings: asStringArray(row.warnings, '构建服务预览响应无效'),
+  }
+}
+
+/** 构建预览：dockerfile 与 compose 两形态按 mode 分派，字段与后端 JSON 逐字对齐。 */
+export function parseContainerBuildPlan(value: unknown): ContainerBuildPlan {
+  const row = asRecord(value, '构建预览响应无效')
+  const mode = asString(row.mode, '构建预览响应无效')
+  const slug = asString(row.slug, '构建预览响应无效')
+  const warnings = asStringArray(row.warnings, '构建预览响应无效')
+  if (mode === 'dockerfile') {
+    if (typeof row.repositoryOccupied !== 'boolean' || typeof row.contextFiles !== 'number' || typeof row.contextBytes !== 'number') {
+      throw new Error('构建预览响应无效')
+    }
+    return {
+      mode,
+      slug,
+      target: asString(row.target, '构建预览响应无效'),
+      dockerfile: asString(row.dockerfile, '构建预览响应无效'),
+      context: asString(row.context, '构建预览响应无效'),
+      imageRepository: asString(row.imageRepository, '构建预览响应无效'),
+      contextFiles: row.contextFiles,
+      contextBytes: row.contextBytes,
+      repositoryOccupied: row.repositoryOccupied,
+      warnings,
+    }
+  }
+  if (mode === 'compose') {
+    if (!Array.isArray(row.services)) throw new Error('构建预览响应无效')
+    return {
+      mode,
+      slug,
+      compose: asString(row.compose, '构建预览响应无效'),
+      services: row.services.map(parseContainerBuildServicePlan),
+      warnings,
+    }
+  }
+  throw new Error('构建预览模式响应无效')
+}
+
+/** 构建日志分页响应：与网站部署日志同形状。 */
+export function parseContainerBuildLogs(value: unknown): ContainerBuildLogs {
+  const row = asRecord(value, '构建日志响应无效')
+  if (typeof row.next !== 'number' || typeof row.total !== 'number') throw new Error('构建日志响应无效')
+  return {
+    lines: asStringArray(row.lines, '构建日志响应无效'),
+    next: row.next,
+    total: row.total,
+  }
+}
+
 /**
  * 工作区端点挂在独立片 /api/container-apps 下（Go 侧 shared.ContainerAppsMount），
  * 不在 /api/docker 里：容器引擎访问与应用文件是两件事，各自有守卫与体积上限。
@@ -511,6 +634,14 @@ export const CONTAINER_APPS_BASE_URL = '/api/container-apps'
 function appPath(slug: string, sub: string, path?: string): string {
   const query = path === undefined ? '' : `?path=${encodeURIComponent(path)}`
   return `${CONTAINER_APPS_BASE_URL}/${encodeURIComponent(slug)}${sub}${query}`
+}
+
+/**
+ * 工作区子路径（不带 ?path=）：appPath 第三参只会拼 ?path=，构建日志要的是 ?offset=，
+ * 构建预览/提交则完全不带查询串，所以这里给一个只拼路径的变体，查询串由调用方自带。
+ */
+function appSub(slug: string, sub: string): string {
+  return `${CONTAINER_APPS_BASE_URL}/${encodeURIComponent(slug)}${sub}`
 }
 
 function requestJson(url: string, init?: RequestInit): Promise<unknown> {
@@ -758,6 +889,52 @@ export function createHttpContainersAdapter(
 
     async checkCompose(slug, path) {
       return parseComposeCheck(await requestJson(appPath(slug, '/compose-check', path)))
+    },
+
+    /**
+     * 镜像构建六个端点同样挂 /api/container-apps 之下（后端 shared.ContainerAppsMount
+     * 不新增挂载片，vite 代理表不动）。提交与查询都是快请求，不引入专用超时；
+     * 构建本身是 202 异步任务，进度靠 listAppBuilds 轮询与分页日志。
+     */
+    async previewAppBuild(slug, input) {
+      return parseContainerBuildPlan(
+        await requestJson(appSub(slug, '/builds/preview'), {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(input),
+        }),
+      )
+    },
+
+    async submitAppBuild(slug, input) {
+      return parseContainerBuildTask(
+        await requestJson(appSub(slug, '/builds'), {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(input),
+        }),
+      )
+    },
+
+    async listAppBuilds(slug) {
+      const body = asRecord(await requestJson(appSub(slug, '/builds')), '构建任务列表响应无效')
+      if (!Array.isArray(body.builds)) throw new Error('构建任务列表响应无效')
+      return body.builds.map(parseContainerBuildTask)
+    },
+
+    async getAppBuild(slug, taskId) {
+      return parseContainerBuildTask(await requestJson(appSub(slug, `/builds/${encodeURIComponent(taskId)}`)))
+    },
+
+    async getAppBuildLogs(slug, taskId, offset) {
+      const params = new URLSearchParams({ offset: String(offset) })
+      return parseContainerBuildLogs(
+        await requestJson(`${appSub(slug, `/builds/${encodeURIComponent(taskId)}/logs`)}?${params}`),
+      )
+    },
+
+    async cancelAppBuild(slug, taskId) {
+      await requestNoContent(appSub(slug, `/builds/${encodeURIComponent(taskId)}/cancel`), { method: 'POST' })
     },
 
     async removeImage(imageId) {

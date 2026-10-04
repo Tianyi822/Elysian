@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"context"
 	"errors"
 	"testing"
 )
@@ -114,5 +115,27 @@ func TestValidateRegistryTargetResolveFailures(t *testing.T) {
 func TestIsPublicAddressNonIP(t *testing.T) {
 	if isPublicAddress("example.com") {
 		t.Fatalf("非 IP 一律非公网")
+	}
+}
+
+// CheckRegistryHost 导出出口（ADR-0021）：语法拒绝不依赖 DNS，可稳定断言；
+// 保留 TLD（RFC 6761 .invalid）保证域名不可解析，落「镜像源无法解析为公网地址」。
+func TestCheckRegistryHostExport(t *testing.T) {
+	ctx := context.Background()
+	rejected := map[string]string{
+		"http://mirror.example.com": httpNotAllowed,
+		"1.2.3.4":                   disallowedHost,
+		"localhost":                 disallowedHost,
+		"singlelabel":               disallowedHost,
+	}
+	for raw, want := range rejected {
+		err := CheckRegistryHost(ctx, raw)
+		if err == nil || err.Error() != want {
+			t.Errorf("CheckRegistryHost(%q) 应拒 %q，实际 %v", raw, want, err)
+		}
+	}
+	err := CheckRegistryHost(ctx, "no-such-host.elysian.invalid")
+	if err == nil || err.Error() != resolvePublicError {
+		t.Errorf("不可解析主机应落 %q，实际 %v", resolvePublicError, err)
 	}
 }

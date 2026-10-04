@@ -121,8 +121,9 @@ func workspaceUsed(workspaceDir string) (int64, error) {
 // Upload 写入一个文件。目标已存在时整体覆盖（配置文件的常态就是反复改）。
 //
 // 落盘手法沿用面板既有做法：先写 <target>.upload 临时文件（O_CREATE|O_EXCL、0600）、
-// 边读边计数字节、超限即断，Sync 后 rename 提升到位。申报长度与实读长度不符也拒绝，
-// 避免截断文件被当成新版本。
+// 边读边计数字节、超限即断，Sync 后按「已用量（覆盖场景扣除旧文件）+ 临时文件字节」
+// 判工作区配额，超限在 rename 之前拒绝并清掉临时文件，再 rename 提升到位。申报长度
+// 与实读长度不符也拒绝，避免截断文件被当成新版本。
 func Upload(workspaceDir, rel string, body io.Reader, declaredLength int64) (FileEntry, error) {
 	target, err := resolveWithinWorkspace(workspaceDir, rel)
 	if err != nil {
@@ -142,9 +143,6 @@ func Upload(workspaceDir, rel string, body io.Reader, declaredLength int64) (Fil
 	}
 	if replacing && info.Size() > maxFileBytes {
 		return FileEntry{}, &TooLargeError{Limit: maxFileBytes}
-	}
-	if !replacing && used+maxFileBytes > maxWorkspaceBytes && used > maxWorkspaceBytes {
-		return FileEntry{}, &TooLargeError{Limit: maxWorkspaceBytes}
 	}
 	if err = os.MkdirAll(filepath.Dir(target), 0700); err != nil {
 		return FileEntry{}, err
@@ -175,6 +173,22 @@ func Upload(workspaceDir, rel string, body io.Reader, declaredLength int64) (Fil
 		copyErr = closeErr
 	}
 	if copyErr == nil {
+		// 配额判定在 rename 之前：超限直接清临时文件返回 413，不把超额内容落盘。
+		// 覆盖场景按「已用量扣除将被替换的旧文件」计算基线。
+		var tempInfo os.FileInfo
+		tempInfo, copyErr = os.Stat(tempName)
+		if copyErr == nil {
+			baseline := used
+			if replacing {
+				baseline -= info.Size()
+			}
+			if baseline+tempInfo.Size() > maxWorkspaceBytes {
+				cleanup()
+				return FileEntry{}, &TooLargeError{Limit: maxWorkspaceBytes}
+			}
+		}
+	}
+	if copyErr == nil {
 		if err = os.Rename(tempName, target); err != nil {
 			copyErr = err
 		}
@@ -187,9 +201,6 @@ func Upload(workspaceDir, rel string, body io.Reader, declaredLength int64) (Fil
 	final, err := os.Stat(target)
 	if err != nil {
 		return FileEntry{}, err
-	}
-	if used+final.Size() > maxWorkspaceBytes {
-		return FileEntry{}, &TooLargeError{Limit: maxWorkspaceBytes}
 	}
 	return FileEntry{
 		Path:       filepath.ToSlash(mustRel(workspaceDir, target)),

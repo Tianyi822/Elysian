@@ -7,12 +7,13 @@ import (
 	"strings"
 )
 
-// compose 自检的判定范围。这里刻意是**保守行扫描**而不是 YAML 解析：
-// go.mod 的固定选型写着不引入其它框架（go.mod:4-6），全站也没有 YAML 依赖，
-// 为一条辅助信息去加依赖不划算。代价是看得懂的范围有限，因此把看得懂的与
-// 判定不了的都如实回给界面——静默漏报比不检查更坑。
+// compose 自检的判定范围。这里刻意是**保守行扫描**而不是 YAML 解析：自检的职责是
+// 判定路径引用的存在性，build 段的解析属构建任务（ADR-0021 的 yaml.v3 解析），两套
+// 职责互不替代。代价是看得懂的范围有限，因此把看得懂的与判定不了的都如实回给
+// 界面——静默漏报比不检查更坑。两侧同句锚定：与 TS 侧 containerApps.ts 的
+// COMPOSE_CHECK_COVERAGE 逐字相同。
 const coverageText = "只判定 volumes 短语法与长语法 source、以及 env_file 引用的路径是否存在；" +
-	"含变量替换、锚点引用、flow 风格与 build 段的行列入未能判定清单，请人工核对"
+	"含变量替换、锚点引用、flow 风格与 build 段的行列入未能判定清单（build 段请用构建预览），请人工核对"
 
 // ReferenceKind 引用类型取值。
 const (
@@ -97,7 +98,7 @@ func CheckCompose(workspaceDir, composeRel, content string) (CheckResult, error)
 				continue
 			case "build":
 				mode, modeIndent = KindBuild, indent
-				result.Undetermined = append(result.Undetermined, fmt.Sprintf("第 %d 行：%s（本轮不做构建，build 段不判定）", lineNumber, line))
+				result.Undetermined = append(result.Undetermined, fmt.Sprintf("第 %d 行：%s（build 段由构建任务解析，自检不判定）", lineNumber, line))
 				continue
 			case "source":
 				if mode == KindVolume {

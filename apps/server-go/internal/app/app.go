@@ -160,10 +160,21 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps) (htt
 		}))
 		api.Mount(shared.LogsMount, logs.NewRouter(logs.Deps{Service: appLogs}))
 		api.Mount(shared.DockerMount, stack.Router)
-		// 容器应用工作区：随容器上传的配置文件的存放、内容读写与 compose 路径自检。
-		// 只落盘与回显路径，不执行 compose、不做 build（ADR-0020）。
+		// 容器应用工作区：配置文件的存放、内容读写、compose 路径自检与镜像构建
+		//（构建按 ADR-0021：引擎 /build classic 构建器，任务模型同 websites）。
+		containerAppsRegistry := &containerapps.Registry{MountRoot: cfg.MountRoot}
+		appBuilds := containerapps.NewProductionBuildManager(containerapps.BuildDeps{
+			Engine:   stack.Engine,
+			Policy:   docker.CheckRegistryHost,
+			Registry: containerAppsRegistry,
+		})
 		api.Mount(shared.ContainerAppsMount, containerapps.Handler{
-			Registry: &containerapps.Registry{MountRoot: cfg.MountRoot},
+			Registry:        containerAppsRegistry,
+			EngineAvailable: stack.Ready,
+			Engine:          stack.Engine,
+			Policy:          docker.CheckRegistryHost,
+			Logs:            appLogs,
+			Builds:          appBuilds,
 		}.Router())
 		api.Mount(shared.DatabaseMount, database.NewRouter(database.Deps{
 			EngineAvailable: stack.Ready,

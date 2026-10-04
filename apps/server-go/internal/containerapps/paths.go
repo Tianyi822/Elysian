@@ -1,11 +1,13 @@
 // Package containerapps 容器应用工作区：随容器一起上传的配置文件（compose.yml、.env、
-// 各类 config）的存放、登记、内容读写与 compose 引用路径自检。
+// 各类 config）的存放、登记、内容读写、compose 引用路径自检与镜像构建（ADR-0021）。
 //
-// 边界（ADR-0020）：面板只负责把文件存好并回显真实路径，不执行 docker compose、
-// 不做 docker build——启动由运维者在宿主上照回显路径自行编排。文件实体落在
-// mountRoot 之下而不是 ~/.Elysian 之下，因为只有 mountRoot 路径在宿主、面板与
-// Docker daemon 三方是同一个字符串；~/.Elysian 在 Docker 部署里是命名卷挂到
-// /var/lib/elysian 再软链回来的，把它回显进 compose 就是给一个错路径。
+// 边界（ADR-0020）：面板只负责把文件存好并回显真实路径，不执行 docker compose——
+// 启动由运维者在宿主上照回显路径自行编排。镜像构建按 ADR-0021 执行：Dockerfile 与
+// compose build 段经 Docker Engine 的 /build（classic 构建器）受控构建，产物镜像落
+// elysian/ 保留命名空间。文件实体落在 mountRoot 之下而不是 ~/.Elysian 之下，因为
+// 只有 mountRoot 路径在宿主、面板与 Docker daemon 三方是同一个字符串；~/.Elysian
+// 在 Docker 部署里是命名卷挂到 /var/lib/elysian 再软链回来的，把它回显进 compose
+// 就是给一个错路径。
 //
 // 内容读写只服务本域的工作区目录，不扩进文件管理域：后者的写禁区（files/paths.go
 // 的 forbiddenWritePrefixes）不覆盖 /etc，通用化等于打开任意写系统配置的口子。

@@ -5,6 +5,11 @@ import type {
   ContainerAction,
   ContainerApp,
   ContainerAppFile,
+  ContainerBuildLogs,
+  ContainerBuildPlan,
+  ContainerBuildPreviewInput,
+  ContainerBuildSubmitInput,
+  ContainerBuildTask,
   ContainerCreateInput,
   ComposeCheckResult,
   ContainerImage,
@@ -138,14 +143,15 @@ export interface ContainerAdapter {
   /** 创建容器（mock）：追加内存数据集并推 container/created。 */
   create(input: ContainerCreateInput): Promise<Container>
   /**
-   * 容器应用工作区：随容器上传的配置文件的存放、内容读写与 compose 路径自检。
-   * 面板只落盘并回显真实路径，不执行 docker compose、不做 docker build（ADR-0020）。
+   * 容器应用工作区：随容器一起上传的配置文件的存放、内容读写、compose 路径自检
+   * 与镜像构建（ADR-0021）。面板只落盘并回显真实路径，不执行 docker compose；
+   * 镜像构建经 Docker Engine 的 /build 接口异步执行，compose up 不做。
    */
   /** 列全部工作区（含当场扫出的文件清单）。 */
   listApps(): Promise<readonly ContainerApp[]>
   /** 建工作区：标识与展示名按服务端同一规则校验，重名回中文错误。 */
   createApp(input: { slug: string; displayName: string }): Promise<ContainerApp>
-  /** 删工作区：连目录一起删，调用方必须已就绝对路径取得二次确认。 */
+  /** 删工作区：连目录一起删，调用方必须已就绝对路径取得二次确认；活跃构建任务期间被拒。 */
   removeApp(slug: string): Promise<void>
   /** 上传单个文件（覆盖同名）；file 是浏览器 File 对象或等价的可读流来源。 */
   uploadAppFile(slug: string, path: string, file: Blob): Promise<ContainerAppFile>
@@ -156,6 +162,18 @@ export interface ContainerAdapter {
   writeAppContent(slug: string, path: string, content: string): Promise<ContainerAppFile>
   /** 对某个 compose 文件做引用路径自检；结果是保守扫描，coverage 字段说明范围。 */
   checkCompose(slug: string, path: string): Promise<ComposeCheckResult>
+  /** 构建预览（只读不构建）：路径校验、上下文统计、FROM 镜像源静态校验与占用回查。 */
+  previewAppBuild(slug: string, input: ContainerBuildPreviewInput): Promise<ContainerBuildPlan>
+  /** 提交构建任务（202）：requestId 同参幂等返回原任务，同工作区活跃任务唯一。 */
+  submitAppBuild(slug: string, input: ContainerBuildSubmitInput): Promise<ContainerBuildTask>
+  /** 列该工作区的构建任务，按创建时间倒序。 */
+  listAppBuilds(slug: string): Promise<readonly ContainerBuildTask[]>
+  /** 读单个构建任务；不存在抛中文错误。 */
+  getAppBuild(slug: string, taskId: string): Promise<ContainerBuildTask>
+  /** 分页读构建日志：offset 为已读字节，单次最多 64 KiB。 */
+  getAppBuildLogs(slug: string, taskId: string, offset: number): Promise<ContainerBuildLogs>
+  /** 取消活跃构建任务（排队中直接取消，构建中取消引擎流）；已终态抛中文错误。 */
+  cancelAppBuild(slug: string, taskId: string): Promise<void>
   /** 删除镜像（mock）：仅允许删除未被引用的镜像，改写内存数据集。 */
   removeImage(imageId: string): Promise<void>
   /** 拉取镜像（mock）：确定性生成摘要与体积后追加内存数据集，同名同标签视为已存在；registry 仅记录拉取源，不产生真实数据流。 */

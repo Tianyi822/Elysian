@@ -3,7 +3,9 @@ module elysian/server
 go 1.23
 
 // 固定选型（go-plan §固定选型）：不引入其它框架。骨架阶段仅 chi 与 gorilla/websocket
-// 被公共层直接引用，其余五项为各域实现者预钉版本；go.mod 为骨架/集成所有，域实现者只读。
+// 被公共层直接引用，其余各域实现者预钉版本；go.mod 为骨架/集成所有，域实现者只读。
+// gopkg.in/yaml.v3 为容器镜像构建引入（ADR-0021，纯 Go 单库，仅 Go 侧；TS 契约侧
+// 坚持零依赖），依赖与注释由集成侧变更。
 require (
 	github.com/creack/pty v1.1.23
 	github.com/go-chi/chi/v5 v5.1.0
@@ -11,6 +13,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/redis/go-redis/v9 v9.7.0
 	golang.org/x/crypto v0.27.0
+	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.33.1
 )
 
