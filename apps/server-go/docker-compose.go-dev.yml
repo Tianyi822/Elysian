@@ -41,6 +41,7 @@ services:
     command: sh -c "mkdir -p /var/lib/elysian/data /var/lib/elysian/logs /var/lib/elysian/state /var/lib/elysian/backups /var/lib/elysian/tmp /var/lib/elysian/config && ln -sfn /var/lib/elysian /root/.Elysian && if [ ! -e /root/.Elysian/ssh/host-keys/ssh_host_ed25519_key ]; then cp -a /etc/ssh/ssh_host_* /root/.Elysian/ssh/host-keys/; fi && ln -sfn /root/.Elysian/ssh/host-keys/* /etc/ssh/ && mkdir -p /run/sshd && (/usr/sbin/sshd -E /root/.Elysian/logs/sshd.log || true) && go mod download && go run ./cmd/elysian"
 volumes:
   elysian_go_state:
+    name: "${ELYSIAN_GO_STATE_VOLUME:-elysian-go-dev_elysian_go_state}"
   elysian_go_ssh_host_keys:
   elysian_go_mod:
   elysian_go_build:
