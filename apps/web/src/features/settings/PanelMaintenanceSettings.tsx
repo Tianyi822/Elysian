@@ -1,3 +1,4 @@
+import { SectionHelp } from '../../components/SectionHelp'
 import { useEffect, useId, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { PANEL_TASK_PHASE_LABELS, PANEL_TASK_STATE_LABELS, panelTaskIsActive, validatePanelPorts } from '@elysian/contracts'
@@ -23,7 +24,7 @@ export function PanelMaintenanceSettings() {
   const hasMore = usePanelStore((s) => s.hasMore)
   const [loadingLogs, setLoadingLogs] = useState(false)
   const loadError = usePanelStore((s) => s.error)
-  const frontendId = useId(), backendId = useId(), guidanceId = useId()
+  const frontendId = useId(), backendId = useId()
   const [frontend, setFrontend] = useState('')
   const [backend, setBackend] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -102,30 +103,24 @@ export function PanelMaintenanceSettings() {
     catch (cause) { setError(cause instanceof Error ? cause.message : '检查更新失败，请重试') }
     finally { setChecking(false) }
   }
-  const draftPort = Number(frontend)
-  const draftUrl = Number.isInteger(draftPort) && draftPort >= 1 && draftPort <= 65535 ? panelAddress(draftPort) : null
-
   return <>
     <section aria-label="面板端口" className="rounded-xl border border-line bg-surface p-5">
-      <h2 className="text-sm font-medium text-fg">面板端口</h2>
+      <div className="flex items-center gap-1.5"><h2 className="text-sm font-medium text-fg">面板端口</h2><SectionHelp label="面板端口说明">前端端口用于打开面板，后端端口供面板内部使用。保存后会重启，页面会短暂断开。</SectionHelp></div>
       {!info && !loadError ? <p role="status" className="mt-3 text-xs text-fg-muted">正在读取面板配置…</p> : null}
       {loadError ? <div className="mt-3"><p role="alert" className="text-xs text-danger">{loadError}</p><button className={`${BUTTON} mt-3`} onClick={() => void usePanelStore.getState().load(gateway)}>重新读取配置</button></div> : null}
       {info && !info.available ? <p role="status" className="mt-3 text-xs leading-5 text-fg-muted">{info.reason}</p> : null}
       <form onSubmit={onPorts} className="mt-5 space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
-          <div><label htmlFor={frontendId} className="mb-2 block text-xs font-medium text-fg">前端端口</label><input id={frontendId} inputMode="numeric" value={frontend} onChange={(e) => { setFrontend(e.target.value); setError(null) }} disabled={unavailable} aria-describedby={guidanceId} className={INPUT} /></div>
-          <div><label htmlFor={backendId} className="mb-2 block text-xs font-medium text-fg">后端端口</label><input id={backendId} inputMode="numeric" value={backend} onChange={(e) => { setBackend(e.target.value); setError(null) }} disabled={unavailable} aria-describedby={guidanceId} className={INPUT} /></div>
+          <div><label htmlFor={frontendId} className="mb-2 block text-xs font-medium text-fg">前端端口</label><input id={frontendId} inputMode="numeric" value={frontend} onChange={(e) => { setFrontend(e.target.value); setError(null) }} disabled={unavailable} className={INPUT} /></div>
+          <div><label htmlFor={backendId} className="mb-2 block text-xs font-medium text-fg">后端端口</label><input id={backendId} inputMode="numeric" value={backend} onChange={(e) => { setBackend(e.target.value); setError(null) }} disabled={unavailable} className={INPUT} /></div>
         </div>
-        <p id={guidanceId} className="text-xs leading-5 text-fg-muted">只开放前端 TCP 端口。后端始终监听 127.0.0.1，保存后会重启面板，连接将短暂中断。</p>
-        {info ? <div className="space-y-1 break-all text-xs leading-5 text-fg-muted"><p>当前地址：{panelAddress(info.ports.frontendPort)}</p>{draftUrl ? <p>保存后地址：{draftUrl}</p> : null}</div> : null}
         <div className="flex flex-wrap gap-2"><button type="submit" disabled={unavailable} className={BUTTON}>{submitting ? '正在提交…' : '保存并重启'}</button><button type="button" disabled={unavailable} className={BUTTON} onClick={() => void submit('restart', (id) => gateway.panel.restart(id))}>重启面板</button></div>
       </form>
     </section>
     <section aria-label="面板更新" className="rounded-xl border border-line bg-surface p-5">
-      <h2 className="text-sm font-medium text-fg">面板更新</h2>
+      <div className="flex items-center gap-1.5"><h2 className="text-sm font-medium text-fg">面板更新</h2><SectionHelp label="面板更新说明">先下载并编译新版本，成功后重启。更新失败会恢复原版本，保留面板数据。</SectionHelp></div>
       <div className="mt-3 space-y-2 text-xs leading-5 text-fg-muted"><p>更新来源：<a className="text-fg underline underline-offset-4" href="https://github.com/Tianyi822/Elysian" target="_blank" rel="noreferrer">Tianyi822/Elysian</a> 的默认分支</p><p className="break-all">当前提交：{info?.commit ?? '正在读取…'}</p>{info?.buildTime && info.buildTime !== 'unknown' ? <p>构建时间：{info.buildTime}</p> : null}</div>
       {update ? <div role="status" className="mt-4 space-y-1 break-all text-xs leading-5 text-fg"><p>{update.available ? '发现可更新的提交' : '当前已是最新提交'} · {update.branch}</p><p>目标提交：{update.targetCommit}</p>{update.message ? <p className="text-fg-muted">{update.message}</p> : null}</div> : null}
-      <p className="mt-4 text-xs leading-5 text-fg-muted">下载源码并构建成功后才会切换版本和重启。失败时恢复原版本，保留面板数据。</p>
       <div className="mt-4 flex flex-wrap gap-2"><button className={BUTTON} disabled={unavailable || checking} onClick={() => void check()}>{checking ? '正在检查…' : '检查更新'}</button><button className={BUTTON} disabled={unavailable || checking || !update?.available} onClick={() => update && void submit(`update:${update.targetCommit}`, (id) => gateway.panel.update(update.targetCommit, id))}>更新并重启</button></div>
     </section>
     {error ? <p role="alert" className="rounded-lg border border-danger/40 p-3 text-xs leading-5 text-danger">{error}</p> : null}

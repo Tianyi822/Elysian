@@ -17,6 +17,17 @@ function gateway() {
   return result
 }
 describe('端口与更新设置', () => {
+  it('点击标题旁问号显示直观说明，Escape 关闭', async () => {
+    renderApp('/settings'); const user = userEvent.setup()
+    const portsHelp = '前端端口用于打开面板，后端端口供面板内部使用。保存后会重启，页面会短暂断开。'
+    expect(screen.queryByText(portsHelp)).not.toBeInTheDocument()
+    await user.click(await screen.findByRole('button', { name: '面板端口说明' }))
+    expect(screen.getByRole('dialog', { name: '面板端口说明' })).toHaveTextContent(portsHelp)
+    await user.keyboard('{Escape}')
+    expect(screen.queryByText(portsHelp)).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '面板更新说明' }))
+    expect(screen.getByRole('dialog', { name: '面板更新说明' })).toHaveTextContent('先下载并编译新版本，成功后重启。更新失败会恢复原版本，保留面板数据。')
+  })
   it('演示模式明确不可执行，并保留密码表单', async () => {
     renderApp('/settings')
     expect(await screen.findByText('仅支持 systemd 安装版，当前为演示模式')).toBeInTheDocument()
@@ -24,12 +35,12 @@ describe('端口与更新设置', () => {
     expect(screen.getByRole('button', { name: '检查更新' })).toBeDisabled()
     expect(screen.getByLabelText('当前密码')).toBeInTheDocument()
   })
-  it('提交前展示地址变化，校验相同端口并保留输入', async () => {
+  it('表单不常驻地址，校验相同端口并保留输入', async () => {
     const g = gateway(); renderApp('/settings', { gateway: g }); const user = userEvent.setup()
     const front = await screen.findByLabelText('前端端口'); await waitFor(() => expect(front).toHaveValue('48100'))
     await user.clear(front); await user.type(front, '48101'); await user.click(screen.getByRole('button', { name: '保存并重启' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('前端与后端端口不能相同'); expect(g.panel.ports).not.toHaveBeenCalled()
-    await user.clear(front); await user.type(front, '49000'); expect(screen.getByText(/保存后地址：.*49000/)).toBeInTheDocument()
+    await user.clear(front); await user.type(front, '49000'); expect(screen.queryByText(/保存后地址：/)).not.toBeInTheDocument(); expect(screen.queryByText(/当前地址：/)).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '保存并重启' }))
     await waitFor(() => expect(g.panel.ports).toHaveBeenCalledWith({ frontendPort: 49000, backendPort: 48101 }, expect.any(String)))
     expect(await screen.findByText(/等待执行/)).toBeInTheDocument()

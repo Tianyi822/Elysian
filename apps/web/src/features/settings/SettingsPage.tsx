@@ -1,3 +1,4 @@
+import * as Dialog from '@radix-ui/react-dialog'
 import { PanelMaintenanceSettings } from './PanelMaintenanceSettings'
 import { useId, useState } from 'react'
 import type { FormEvent } from 'react'
@@ -6,9 +7,9 @@ import { PasswordVisibilityButton } from '../security/passwordFieldParts'
 import { useSessionStore } from '../../stores/sessionStore'
 
 /*
- * 设置页只做一件事：修改面板密码。主题在侧边栏切换，不在这里重复。
+ * 设置页提供密码、端口和更新管理。主题在侧边栏切换。
  * 表单是一条竖列：标签在输入框正上方，规则紧贴在框下，随输入更新；
- * 「全部会话失效」写在按钮正上方，点下去之前就能读到后果。
+ * 密码通过表单校验后确认会话退出，再提交接口。
  * 页面不渲染自己的 h1：顶栏标题由导航项给出。
  */
 
@@ -102,6 +103,7 @@ export function SettingsPage() {
   const [newPassword, setNewPassword] = useState('')
   const [confirmNewPassword, setConfirmNewPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [confirmOpen, setConfirmOpen] = useState(false)
   const [passwordError, setPasswordError] = useState<string | null>(null)
 
   const nextGuidance = newPasswordGuidance(newPassword)
@@ -125,6 +127,12 @@ export function SettingsPage() {
       setPasswordError('密码至少需要 8 位')
       return
     }
+    setConfirmOpen(true)
+  }
+
+  const confirmPasswordChange = async () => {
+    if (submitting) return
+    setConfirmOpen(false)
     setSubmitting(true)
     try {
       await gateway.session.changePassword({ currentPassword, newPassword, confirmNewPassword })
@@ -183,9 +191,6 @@ export function SettingsPage() {
             {passwordError}
           </p>
         ) : null}
-        <p className="text-xs leading-5 text-fg-muted">
-          修改成功后，全部登录会话会立刻失效，需要用新密码重新登录。
-        </p>
         <button
           type="submit"
           disabled={submitting}
@@ -195,6 +200,19 @@ export function SettingsPage() {
         </button>
       </form>
     </section>
+    <Dialog.Root open={confirmOpen} onOpenChange={setConfirmOpen}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/60" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-surface-raised p-4 shadow-xl">
+          <Dialog.Title className="text-sm font-semibold text-fg">确认修改密码</Dialog.Title>
+          <Dialog.Description className="mt-2 text-xs leading-5 text-fg-muted">修改后，所有已登录设备都会退出，请用新密码重新登录。</Dialog.Description>
+          <div className="mt-4 flex justify-end gap-2">
+            <Dialog.Close asChild><button type="button" className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted">取消</button></Dialog.Close>
+            <button type="button" disabled={submitting} className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-fg" onClick={() => void confirmPasswordChange()}>确认修改</button>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
     <PanelMaintenanceSettings />
     </div>
   )

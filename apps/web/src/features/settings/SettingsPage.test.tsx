@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import type { ElysianGateway, SessionAdapter } from '../../contracts/adapters'
 import { useSessionStore } from '../../stores/sessionStore'
@@ -44,6 +44,20 @@ async function fillPasswordForm(user: ReturnType<typeof userEvent.setup>, curren
 }
 
 describe('修改面板密码', () => {
+  it('校验后确认，取消保留输入且不提交', async () => {
+    const changePassword = vi.fn(async () => {})
+    renderApp('/settings', { gateway: baseGateway(realSession({ changePassword })) })
+    const user = userEvent.setup()
+    await fillPasswordForm(user, 'old-password', 'brand-new-pw')
+    await user.click(screen.getByRole('button', { name: '修改密码' }))
+    expect(screen.getByRole('dialog')).toHaveTextContent('修改后，所有已登录设备都会退出，请用新密码重新登录。')
+    expect(changePassword).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: '取消' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('新密码')).toHaveValue('brand-new-pw')
+    expect(changePassword).not.toHaveBeenCalled()
+  })
+
   it('每个密码框都能单独显示和隐藏', async () => {
     renderApp('/settings')
     const user = userEvent.setup()
@@ -66,7 +80,7 @@ describe('修改面板密码', () => {
 
     expect(await screen.findByText('至少 8 位')).toBeInTheDocument()
     expect(screen.getByText('再输入一次新密码')).toBeInTheDocument()
-    expect(screen.getByText('修改成功后，全部登录会话会立刻失效，需要用新密码重新登录。')).toBeInTheDocument()
+    expect(screen.queryByText('修改后，所有已登录设备都会退出，请用新密码重新登录。')).not.toBeInTheDocument()
 
     await user.type(screen.getByLabelText('新密码'), 'short')
     expect(screen.getByText('还差 3 位')).toBeInTheDocument()
@@ -96,6 +110,7 @@ describe('修改面板密码', () => {
 
     await fillPasswordForm(user, 'old-password', 'brand-new-pw')
     await user.click(screen.getByRole('button', { name: '修改密码' }))
+    await user.click(screen.getByRole('button', { name: '确认修改' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('当前密码不正确')
     expect(screen.getByRole('button', { name: '修改密码' })).toBeEnabled()
@@ -107,6 +122,7 @@ describe('修改面板密码', () => {
 
     await fillPasswordForm(user, 'old-password', 'brand-new-pw')
     await user.click(screen.getByRole('button', { name: '修改密码' }))
+    await user.click(screen.getByRole('button', { name: '确认修改' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('演示模式不支持修改面板密码')
   })
@@ -129,6 +145,7 @@ describe('修改面板密码', () => {
 
     await fillPasswordForm(user, 'old-password', 'brand-new-pw')
     await user.click(screen.getByRole('button', { name: '修改密码' }))
+    await user.click(screen.getByRole('button', { name: '确认修改' }))
 
     await waitFor(() => expect(router.state.location.pathname).toBe('/login'))
     expect(router.state.location.state).toMatchObject({ from: '/settings' })
