@@ -6,16 +6,17 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { formatDateTime } from '../../components/format'
 import { ArrowUpFromLine, File, Folder, Loader2, Search } from '../../components/icons'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
+import { BusyVeil, RefreshButton } from '../../components/RefreshState'
 import { useFilesStore } from '../../stores/filesStore'
 import { joinFilesPath, normalizeFilesPath, parentFilesPath } from './filesPath'
 import { formatEntrySize, orderFileEntries } from './filesListing'
 import { FileRowMenu } from './FileRowMenu'
 import { RenameDialog } from './RenameDialog'
 import { PermissionDialog } from './PermissionDialog'
+import { CTL_FIELD, CTL_PRIMARY, CTL_TOOLBAR } from '../../components/formControl'
 
-/** 「上一级」等主要按钮的通用样式：中性描边，动作写进文字。 */
-const TOOLBAR_ACTION_CLASS =
-  'inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
+/** 「上一级」等主要按钮：形状与色阶全部走控件层。 */
+const TOOLBAR_ACTION_CLASS = CTL_PRIMARY
 
 /** 重命名与权限对话框的挂起状态：两张表（目录列表与搜索结果）共用同一份。 */
 type DialogTarget = { entry: FileEntry; path: string } | null
@@ -38,6 +39,7 @@ export function FilesPage() {
   const searchKeyword = useFilesStore((s) => s.searchKeyword)
   const searchResults = useFilesStore((s) => s.searchResults)
   const searching = useFilesStore((s) => s.searching)
+  const reloading = useFilesStore((s) => s.reloading)
   const load = useFilesStore((s) => s.load)
   const paste = useFilesStore((s) => s.paste)
   const search = useFilesStore((s) => s.search)
@@ -72,7 +74,7 @@ export function FilesPage() {
 
   return (
     <section aria-label="文件管理">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <div className={`${CTL_TOOLBAR} mb-4 flex flex-wrap items-center justify-between gap-3`}>
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -93,6 +95,7 @@ export function FilesPage() {
               粘贴
             </button>
           ) : null}
+          <RefreshButton onPress={() => void load(gateway, path)} busy={reloading} formControl />
         </div>
         {status === 'ready' ? <FilesSearchBox onSearch={(keyword) => void search(gateway, keyword)} /> : null}
       </div>
@@ -132,14 +135,17 @@ export function FilesPage() {
             <EmptyState title="此目录为空" description="这个目录下没有任何文件或子目录。" />
           ) : (
             /* 换目录即换表：选中态随目录清空，不把上一个目录的选中行带进新目录。 */
-            <FileTable
-              key={path}
-              entries={entries}
-              path={path}
-              onOpen={go}
-              onRename={openRename}
-              onPermission={openPermission}
-            />
+            <div className="busy-host">
+              <BusyVeil busy={reloading} />
+              <FileTable
+                key={path}
+                entries={entries}
+                path={path}
+                onOpen={go}
+                onRename={openRename}
+                onPermission={openPermission}
+              />
+            </div>
           )}
         </>
       )}
@@ -188,7 +194,7 @@ function FilesSearchBox({ onSearch }: { onSearch(keyword: string): void }) {
           value={keyword}
           onChange={(event) => onSearch(event.target.value)}
           placeholder="搜索文件或目录"
-          className="h-[34px] w-full rounded-lg border border-line bg-surface-raised pl-8 pr-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle"
+          className={`${CTL_FIELD} pl-8`}
         />
       </div>
     </div>
@@ -224,7 +230,7 @@ function FileTable({
     <div
       role="region"
       aria-label="文件列表"
-      className="overflow-x-auto rounded-xl border border-line bg-surface"
+      className="overflow-x-auto panel-surface"
     >
       {/* 46rem 是五列都不挤的下限：低于它整表横向滚动，名称列钉在左边陪滚。 */}
       <table className="w-full min-w-[46rem] table-fixed border-separate border-spacing-0 text-left text-sm">
@@ -354,7 +360,7 @@ function SearchResultsTable({
     <div
       role="region"
       aria-label="搜索结果"
-      className="overflow-x-auto rounded-xl border border-line bg-surface"
+      className="overflow-x-auto panel-surface"
     >
       <table className="w-full min-w-[42rem] table-fixed border-separate border-spacing-0 text-left text-sm">
         <colgroup>
@@ -467,7 +473,7 @@ function DirectorySizeCell({ dirPath, name }: { dirPath: string; name: string })
       type="button"
       onClick={() => void computeSize(gateway, dirPath)}
       aria-label={`计算 ${name} 的目录大小`}
-      className="text-accent underline-offset-2 transition-colors hover:underline"
+      className="text-accent-fg underline-offset-2 transition-colors hover:underline"
     >
       计算
     </button>

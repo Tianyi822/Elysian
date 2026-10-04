@@ -244,7 +244,9 @@ describe('防火墙面板', () => {
     await openFirewallPage()
 
     const add = screen.getByRole('button', { name: '添加端口规则' })
-    expect(add.className).toContain('whitespace-nowrap')
+    // 不换行现在由控件层的 .ctl 统一给出，不再逐个按钮挂 utility；
+    // jsdom 不加载样式表，算不出 computed white-space，所以守住它确实走了控件层。
+    expect(add.className).toContain('ctl')
     expect(screen.getByRole('group', { name: '规则类型' }).className).toContain('shrink-0')
   })
 
@@ -438,9 +440,9 @@ describe('防火墙面板', () => {
 
       await vi.advanceTimersByTimeAsync(800)
       // 同步后重拉三类列表，通知里的总数取界面统计条的三个计数之和。
-      // 计数从统计条自身的文本读（容器里的第一个数字是端口规则的，不能用）。
+      // 统计芯片内部分标签段与读数段两格（中间一道竖线），数字在兄弟段上，所以读整枚芯片。
       const chipCount = (label: string) =>
-        Number(screen.getByText(`${label}：`).textContent?.match(/(\d+)/)?.[1] ?? '0')
+        Number(screen.getByText(`${label}：`).parentElement?.textContent?.match(/(\d+)/)?.[1] ?? '0')
       const expected = chipCount('端口规则') + chipCount('IP 规则') + chipCount('端口转发')
 
       const notifications = screen.getByLabelText('通知')

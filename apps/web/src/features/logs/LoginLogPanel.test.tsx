@@ -43,7 +43,7 @@ afterEach(() => {
 async function openLoginTab() {
   const user = userEvent.setup()
   await screen.findByRole('group', { name: '日志页签' })
-  await user.click(within(screen.getByRole('banner')).getByRole('button', { name: '登录日志' }))
+  await user.click(within(screen.getByRole('main')).getByRole('button', { name: '登录日志' }))
 }
 
 /** 状态筛选按钮（在顶栏下方的筛选组里，避免与表格内的状态标签同名混淆）。 */
@@ -221,7 +221,7 @@ describe('平台登录日志面板', () => {
 
     expect(await screen.findByRole('region', { name: '登录日志表' })).toBeInTheDocument()
     expect(
-      within(screen.getByRole('banner')).getByRole('button', { name: '登录日志' }),
+      within(screen.getByRole('main')).getByRole('button', { name: '登录日志' }),
     ).toHaveAttribute('aria-pressed', 'true')
   })
 

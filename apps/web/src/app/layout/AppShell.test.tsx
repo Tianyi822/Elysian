@@ -37,18 +37,20 @@ describe('模板外壳', () => {
     expect(links[0]).toHaveAttribute('aria-current', 'page')
   })
 
-  it('点击 Docker 入口切换到容器页，页签占据标题位', async () => {
+  it('点击 Docker 入口切换到容器页，页签放在内容区', async () => {
     const user = userEvent.setup()
     renderApp('/')
 
     await user.click(screen.getByRole('link', { name: 'Docker' }))
 
     expect(await screen.findByRole('group', { name: '视图切换' })).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: 'Docker' })).toHaveClass('sr-only')
     expect(screen.getByRole('link', { name: 'Docker' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('link', { name: 'Docker' })).toHaveClass('nav-link', 'bg-nav-selected')
+    expect(screen.getByRole('link', { name: '仪表盘' })).not.toHaveClass('bg-nav-selected')
   })
 
-  it('点击数据库入口进入数据库卡片页，页签占据标题位', async () => {
+  it('点击数据库入口进入数据库卡片页，页签放在内容区', async () => {
     const user = userEvent.setup()
     // 数据库域固定走 http adapter（jsdom 下 fetch 不可达），与 DatabasePage 测试同法注入自建 fake，
     // 否则页面停在错误态，「数据库实例」区不会出现；本用例只验证导航落位，列表给空即可。
@@ -71,18 +73,19 @@ describe('模板外壳', () => {
     await user.click(screen.getByRole('link', { name: '数据库' }))
 
     expect(await screen.findByRole('group', { name: '数据库类型' })).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: '数据库' })).toHaveClass('sr-only')
     expect(screen.getByRole('link', { name: '数据库' })).toHaveAttribute('aria-current', 'page')
     expect(await screen.findByRole('region', { name: '数据库实例' })).toBeInTheDocument()
   })
 
-  it('顶栏含品牌、标题与系统负载，不含运维人员', async () => {
+  it('外壳不渲染重复标题顶栏，系统负载放在导航底部', async () => {
     renderApp('/')
-    const header = screen.getByRole('banner')
+    const navigation = screen.getByRole('complementary', { name: '桌面主导航' })
+    expect(screen.queryByRole('banner')).not.toBeInTheDocument()
     expect(screen.getByText('Elysian')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { level: 1, name: '仪表盘' })).toBeInTheDocument()
-    expect(within(header).getByRole('button', { name: '系统负载' })).toBeInTheDocument()
-    expect(within(header).queryByText('运维人员')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: '仪表盘' })).toHaveClass('sr-only')
+    expect(within(navigation).getByRole('button', { name: '系统负载' })).toBeInTheDocument()
+    expect(within(navigation).getByText('运维人员')).toBeInTheDocument()
   })
 
   it('侧边栏底部只保留切换主题，其下显示运维人员', () => {
@@ -133,6 +136,35 @@ describe('模板外壳', () => {
     vi.unstubAllGlobals()
   })
 
+  it('折叠侧栏后底部只留两枚图标，点开主题才列出带文字的动作', async () => {
+    const user = userEvent.setup()
+    renderApp('/')
+    await user.click(await screen.findByRole('button', { name: '收起侧边栏' }))
+
+    const section = screen.getByLabelText('快捷操作')
+    // 折叠态不再常驻文字按钮：40px 里摆不下，动作收进浮层。
+    expect(within(section).queryByRole('button', { name: /切换到浅色主题/ })).not.toBeInTheDocument()
+    expect(within(section).queryByRole('button', { name: /跟随系统主题/ })).not.toBeInTheDocument()
+
+    await user.click(within(section).getByRole('button', { name: '主题设置' }))
+    await user.click(await screen.findByRole('button', { name: '切换到浅色主题' }))
+    expect(document.documentElement.dataset['theme']).toBe('light')
+    // 动作完成即收起浮层，不留悬空菜单。
+    expect(screen.queryByRole('button', { name: /切换到(浅色|深色)主题/ })).not.toBeInTheDocument()
+
+    // 存过手动偏好，「交回系统」才成为一件可做的事。
+    await user.click(within(section).getByRole('button', { name: '主题设置' }))
+    expect(await screen.findByRole('button', { name: '跟随系统主题' })).toBeInTheDocument()
+  })
+
+  it('演示模式折叠态的头像没有可列动作，因此不弹空浮层', async () => {
+    const user = userEvent.setup()
+    renderApp('/')
+    await user.click(await screen.findByRole('button', { name: '收起侧边栏' }))
+    await user.click(within(screen.getByLabelText('快捷操作')).getByRole('button', { name: '运维人员' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
   it('窄屏抽屉可以打开导航并关闭', async () => {
     const user = userEvent.setup()
     renderApp('/')
@@ -143,6 +175,19 @@ describe('模板外壳', () => {
 
     await user.click(screen.getByRole('button', { name: '关闭主导航' }))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('从页签页面经抽屉进入仪表盘后清除页签并恢复导航入口焦点', async () => {
+    const user = userEvent.setup()
+    const { router } = renderApp('/docker')
+    await user.click(screen.getByRole('button', { name: '打开主导航' }))
+    const drawer = screen.getByRole('dialog', { name: '主导航' })
+    await user.click(within(drawer).getByRole('link', { name: '仪表盘' }))
+
+    await waitFor(() => expect(router.state.location.pathname).toBe('/'))
+    expect(screen.queryByRole('dialog', { name: '主导航' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('group', { name: '视图切换' })).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: '打开主导航' })).toHaveFocus())
   })
 
   it('拖拽手柄默认隐藏，指针离开该项后不再显示', async () => {
@@ -349,7 +394,7 @@ describe('侧边栏登出', () => {
 
     const logout = await screen.findByRole('button', { name: '退出登录' })
     expect(screen.getByLabelText('快捷操作')).toContainElement(logout)
-    expect(screen.getByRole('banner')).not.toContainElement(logout)
+    expect(screen.queryByRole('banner')).not.toBeInTheDocument()
     await user.click(logout)
 
     await waitFor(() => expect(router.state.location.pathname).toBe('/login'))
@@ -358,7 +403,7 @@ describe('侧边栏登出', () => {
 
   it('演示模式（本地无后端）不渲染登出按钮', async () => {
     renderApp('/')
-    await screen.findByRole('banner')
+    await screen.findByRole('navigation', { name: '主导航' })
     expect(screen.getByText('运维人员')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '退出登录' })).not.toBeInTheDocument()
   })

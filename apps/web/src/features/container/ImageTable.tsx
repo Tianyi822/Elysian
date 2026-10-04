@@ -6,6 +6,7 @@ import { imageUsageCount } from '../../adapters/mock/containerViews'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useContainersStore } from '../../stores/containersStore'
+import { BusyVeil } from '../../components/RefreshState'
 import { registryHost } from './imageReference'
 
 const TH = 'px-4 py-3 text-sm font-medium'
@@ -22,9 +23,12 @@ function formatPullBytes(bytes: number): string {
 export function ImageTable({
   images,
   containers,
+  busy = false,
 }: {
   images: readonly ContainerImage[]
   containers: readonly Container[]
+  /** 刷新在途：旧镜像行留在表里，只由表格自身盖一层浅色遮罩。 */
+  busy?: boolean
 }) {
   const gateway = useGateway()
   const removingImageIds = useContainersStore((s) => s.removingImageIds)
@@ -35,7 +39,9 @@ export function ImageTable({
   const docker = isDockerRuntime()
 
   return (
-    <section aria-label="镜像列表" className="overflow-x-auto rounded-xl border border-line bg-surface">
+    <div className="busy-host">
+      <BusyVeil busy={busy} />
+    <section aria-label="镜像列表" className="overflow-x-auto panel-surface">
       <table className="w-full table-fixed text-sm" aria-label="镜像列表">
         <colgroup>
           <col className="w-[38%]" />
@@ -93,7 +99,7 @@ export function ImageTable({
                 <td className="px-4 py-3 text-right">
                   {usage > 0 ? (
                     <span
-                      className="inline-flex items-center gap-1 rounded-full border border-line bg-surface-raised px-2 py-0.5 text-xs text-fg"
+                      className="inline-flex items-center gap-1 rounded-full border border-control-line bg-surface-raised px-2 py-0.5 text-xs text-fg"
                       title={`${image.name}:${image.tag} 被 ${usage} 个容器引用`}
                     >
                       <span className="font-medium tabular-nums">{usage}</span>
@@ -110,7 +116,7 @@ export function ImageTable({
                     title={deleteTitle}
                     onClick={() => setPendingDelete(image)}
                     className={[
-                      'inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs transition-colors',
+                      'action-button gap-1 border px-2 py-1 text-xs transition-colors',
                       usage > 0 || removing
                         ? 'border-line text-fg-subtle disabled:cursor-not-allowed disabled:opacity-60'
                         : 'border-line text-fg-muted hover:border-danger/50 hover:bg-danger/10 hover:text-danger',
@@ -127,7 +133,7 @@ export function ImageTable({
             <tr>
               <td colSpan={5} className="px-4 py-3">
                 <div className="flex items-center gap-2 text-sm text-fg-muted">
-                  <Loader2 aria-hidden size={14} className="shrink-0 animate-spin text-accent" />
+                  <Loader2 aria-hidden size={14} className="shrink-0 animate-spin text-accent-fg" />
                   <span className="min-w-0 truncate font-mono text-fg">
                     {/* 完整拉取路径：源主机名 + 引用，与弹窗预览同一形状。 */}
                     {pullingImage.registry ? `${registryHost(pullingImage.registry)}/` : ''}
@@ -184,10 +190,10 @@ export function ImageTable({
         }}
       >
         <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/60" />
+          <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
           <Dialog.Content
             aria-describedby={undefined}
-            className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-surface-raised p-4 shadow-xl"
+            className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl"
           >
             <Dialog.Title className="text-sm font-semibold">
               确认删除镜像「{pendingDelete?.name}:{pendingDelete?.tag}」？
@@ -235,5 +241,6 @@ export function ImageTable({
         </Dialog.Portal>
       </Dialog.Root>
     </section>
+    </div>
   )
 }

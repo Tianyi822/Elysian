@@ -36,7 +36,7 @@ const PASSWORD_INPUT_BASE_CLASS =
 
 /** 完整的密码输入框类名：有输入取当前强度的描边（含聚焦接管），空输入回到默认边框与默认聚焦。 */
 export function passwordInputClass(strength: SshPasswordStrength | undefined): string {
-  return `${PASSWORD_INPUT_BASE_CLASS} ${strength ? STRENGTH_BORDER[strength] : 'border-line'}`
+  return `${PASSWORD_INPUT_BASE_CLASS} ${strength ? STRENGTH_BORDER[strength] : 'border-control-line'}`
 }
 
 /** 三段红黄绿强度彩条 + 条旁等级字：role=meter，读屏与断言都按等级名取值。 */

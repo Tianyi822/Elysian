@@ -20,7 +20,7 @@ import {
  */
 
 const INPUT_CLASS =
-  `${FORM_CONTROL_HEIGHT_CLASS} w-full rounded-lg border border-line bg-surface-raised px-2.5 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle`
+  `${FORM_CONTROL_HEIGHT_CLASS} w-full rounded-lg border border-control-line bg-surface-raised px-2.5 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle`
 const FIELD_LABEL_CLASS = 'mb-2 block text-xs font-medium text-fg-muted'
 const FIELD_ERROR_CLASS = 'mt-1 text-xs text-danger'
 
@@ -174,10 +174,10 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
   return (
     <Dialog.Root open onOpenChange={(open) => { if (!open) onClose() }}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60" />
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay" />
         <Dialog.Content
           aria-describedby={undefined}
-          className="fixed left-1/2 top-1/2 z-[55] flex max-h-[min(34rem,calc(100vh-3rem))] w-[min(30rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line bg-bg shadow-2xl"
+          className="fixed left-1/2 top-1/2 z-[55] flex max-h-[min(34rem,calc(100vh-3rem))] w-[min(30rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden panel-surface shadow-2xl"
         >
           <Dialog.Title className="sr-only">拉取镜像</Dialog.Title>
           <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-3">
@@ -266,7 +266,7 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
                 className={`${INPUT_CLASS} font-mono`}
               />
               {suggestionsOpen ? (
-                <div id={listId} role="listbox" aria-label="镜像名称建议" className="mt-1 max-h-40 overflow-y-auto rounded-lg border border-line bg-surface-raised p-1 shadow-lg">
+                <div id={listId} role="listbox" aria-label="镜像名称建议" className="mt-1 max-h-40 overflow-y-auto rounded-lg border border-control-line bg-surface-raised p-1 shadow-lg">
                   {suggestions.map((name, index) => (
                     <button key={name} id={`${listId}-${index}`} type="button" role="option" aria-selected={activeSuggestion === index}
                       onMouseDown={(event) => event.preventDefault()} onClick={() => chooseSuggestion(name)}
@@ -307,7 +307,7 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
             </div>
 
             {preview ? (
-              <div className="mt-4 rounded-lg border border-line bg-surface-raised px-3 py-2">
+              <div className="mt-4 rounded-lg border border-control-line bg-surface-raised px-3 py-2">
                 <p className="text-xs text-fg-subtle">将拉取</p>
                 <p className="mt-0.5 break-all font-mono text-sm text-fg">{preview}</p>
               </div>
@@ -332,7 +332,7 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
                 type="button"
                 onClick={submit}
                 disabled={invalid || Boolean(pullingImage)}
-                className="rounded-lg border border-accent/50 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/20 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-lg border border-accent/50 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent-fg transition-colors hover:bg-accent/20 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {pullingImage ? '拉取中…' : '拉取'}
               </button>

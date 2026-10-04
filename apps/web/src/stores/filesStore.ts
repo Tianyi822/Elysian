@@ -34,6 +34,8 @@ export type FilesState = {
   searchKeyword: string
   searchResults: readonly FileSearchResult[]
   searching: boolean
+  /** 同一目录的重新列举在途：旧列表留在屏上，只由它驱动表格遮罩。 */
+  reloading: boolean
   load(gateway: ElysianGateway, path: string): Promise<void>
   computeSize(gateway: ElysianGateway, path: string): Promise<void>
   copyToClipboard(path: string): void
@@ -78,18 +80,23 @@ export const useFilesStore = create<FilesState>((set, get) => {
     searchKeyword: '',
     searchResults: [],
     searching: false,
+    reloading: false,
     async load(gateway, path) {
       const sequence = ++loadSequence
-      set({ status: 'loading', path, errorMessage: undefined })
+      // 同一个目录再列一次是刷新：旧列表留在屏上，只置 reloading；
+      // 换目录才是新内容，走整块加载态。
+      const inPlace = get().status === 'ready' && get().path === path
+      set(inPlace ? { reloading: true, errorMessage: undefined } : { status: 'loading', path, reloading: false, errorMessage: undefined })
       try {
         const entries = await gateway.files.list(path)
         if (sequence !== loadSequence) return
-        set({ status: 'ready', entries })
+        set({ status: 'ready', entries, reloading: false })
       } catch (error) {
         if (sequence !== loadSequence) return
         set({
           status: 'error',
           entries: [],
+          reloading: false,
           errorMessage: error instanceof Error ? error.message : '读取目录内容失败',
         })
       }

@@ -1,5 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { forwardRef, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { NavLink } from 'react-router'
+import type { NavLinkProps } from 'react-router'
+import * as Tooltip from '@radix-ui/react-tooltip'
 import { GripVertical } from '../../components/icons'
 import { IconButton } from '../../components/IconButton'
 import { NAV_ITEMS, PINNED_NAV_PATH } from '../navigation'
@@ -14,6 +16,18 @@ import {
   useNavOrder,
 } from '../navigationOrder'
 import { QuickActions } from './QuickActions'
+import { SystemLoadBadge } from '../../components/SystemLoadBadge'
+
+// Radix Slot 会合并 className；将路由回调留在内部，避免回调被转成字符串。
+const SidebarLink = forwardRef<HTMLAnchorElement, NavLinkProps & { collapsed: boolean; pinned: boolean; dragging: boolean }>(
+  function SidebarLink({ collapsed, pinned, dragging, ...props }, ref) {
+    return <NavLink {...props} ref={ref} className={({ isActive }) => [
+      'nav-link relative flex min-h-10 items-center gap-3 rounded-lg px-3 py-2 text-sm no-underline transition-colors',
+      collapsed ? 'w-10 justify-center px-0' : pinned ? 'w-full' : 'w-full pr-9',
+      isActive ? 'bg-nav-selected font-semibold text-nav-fg' : dragging ? 'bg-nav-hover text-nav-fg' : 'text-nav-muted group-hover:bg-nav-hover group-hover:text-nav-fg',
+    ].join(' ')} />
+  },
+)
 
 type DragSession = {
   pointerId: number
@@ -154,7 +168,7 @@ export function Sidebar({
       <nav
         ref={listRef}
         aria-label="主导航"
-        className={`flex flex-1 flex-col gap-1 p-3 ${collapsed ? 'items-center' : ''}`}
+        className={`flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-3 ${collapsed ? 'items-center' : ''}`}
       >
         {items.map((item, index) => {
           const pinned = item.to === PINNED_NAV_PATH
@@ -163,6 +177,20 @@ export function Sidebar({
             drag !== null
               ? translateForSlot(index, drag.originIndex, drag.currentIndex, drag.offsetY, drag.stride)
               : 0
+          const navLink = (
+            <SidebarLink
+              to={item.to}
+              end={item.end}
+              draggable={false}
+              onClick={onNavigate}
+              collapsed={collapsed}
+              pinned={pinned}
+              dragging={draggingThis}
+            >
+              <item.icon aria-hidden size={17} />
+              <span className={collapsed ? 'sr-only' : undefined}>{item.label}</span>
+            </SidebarLink>
+          )
           return (
             <div
               key={item.to}
@@ -180,26 +208,20 @@ export function Sidebar({
               onPointerEnter={() => setHoveredTo(item.to)}
               onPointerLeave={() => setHoveredTo((current) => (current === item.to ? null : current))}
             >
-              <NavLink
-                to={item.to}
-                end={item.end}
-                draggable={false}
-                onClick={onNavigate}
-                className={({ isActive }) =>
-                  [
-                    'flex min-h-10 items-center gap-3 rounded-lg px-3 py-2 text-sm no-underline transition-colors',
-                    collapsed ? 'w-10 justify-center px-0' : pinned ? 'w-full' : 'w-full pr-9',
-                    isActive
-                      ? 'bg-surface-raised font-medium text-fg'
-                      : draggingThis
-                        ? 'bg-surface-raised text-fg'
-                        : 'text-fg-muted group-hover:bg-surface-raised group-hover:text-fg',
-                  ].join(' ')
-                }
-              >
-                <item.icon aria-hidden size={17} />
-                <span className={collapsed ? 'sr-only' : undefined}>{item.label}</span>
-              </NavLink>
+              {/* 展开态标签文字就在旁边，提示是重复；折叠态才套上悬停提示。
+                  只在需要时挂载 Tooltip.Root，避免同一实例在受控与非受控之间来回跳。 */}
+              {collapsed ? (
+                <Tooltip.Root>
+                  <Tooltip.Trigger asChild>{navLink}</Tooltip.Trigger>
+                  <Tooltip.Portal>
+                    <Tooltip.Content side="right" sideOffset={10} className="z-[80] rounded-lg border border-control-line bg-surface-raised px-3 py-1.5 text-xs text-fg shadow-lg">
+                      {item.label}
+                    </Tooltip.Content>
+                  </Tooltip.Portal>
+                </Tooltip.Root>
+              ) : (
+                navLink
+              )}
               {collapsed || pinned ? null : (
                 <span
                   data-dragging={draggingThis ? '' : undefined}
@@ -210,7 +232,7 @@ export function Sidebar({
                   <IconButton
                     label={`拖拽排序：${item.label}`}
                     variant="ghost"
-                    className="cursor-grab touch-none active:cursor-grabbing"
+                    className="cursor-grab touch-none text-nav-muted hover:bg-nav-hover hover:text-nav-fg active:cursor-grabbing"
                     onPointerDown={(event) => startDrag(index, event)}
                     onKeyDown={(event) => {
                       if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
@@ -227,7 +249,10 @@ export function Sidebar({
         })}
       </nav>
 
-      <div className={`border-t border-line p-3 ${collapsed ? 'items-center' : ''}`}>
+      <div className={`shrink-0 p-3 ${collapsed ? 'items-center' : ''}`}>
+        <div className="mb-2">
+          <SystemLoadBadge navigation collapsed={collapsed} />
+        </div>
         <QuickActions collapsed={collapsed} />
       </div>
     </div>

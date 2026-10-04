@@ -9,6 +9,8 @@ import { Search } from '../../components/icons'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
+import { RefreshButton } from '../../components/RefreshState'
+import { CTL_CHIP, CTL_FIELD, CTL_PRIMARY, CTL_TOOLBAR } from '../../components/formControl'
 import { useRuntimeLogStore } from '../../stores/runtimeLogStore'
 import { ClearLogsDialog } from './ClearLogsDialog'
 import { LogMessageCell } from './LogMessageCell'
@@ -22,7 +24,7 @@ import type { LogColumn } from './LogTable'
  * （破坏性动作走二次确认），窄屏按块各占一行。搜索走服务端筛选并防抖。
  */
 
-/** 工具按钮：与防火墙面板同款的中性描边小按钮；给 pressed 时按开关形态高亮。 */
+/** 工具按钮：与全站工具栏同一控件形状；给 pressed 时按筛选芯片形态高亮。 */
 function ToolButton({
   label,
   onClick,
@@ -40,11 +42,7 @@ function ToolButton({
       onClick={onClick}
       disabled={disabled}
       aria-pressed={pressed}
-      className={`inline-flex items-center rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50 ${
-        pressed
-          ? 'border-accent/50 bg-accent/10 text-accent'
-          : 'border-line bg-surface-raised text-fg hover:border-fg-subtle'
-      }`}
+      className={pressed === undefined ? CTL_PRIMARY : CTL_CHIP}
     >
       {label}
     </button>
@@ -179,9 +177,7 @@ export function RuntimeLogPanel() {
   const querying = refreshing && !loadingOlder
   const showEmptyPage = total === 0 && trimmedSearch.length === 0
 
-  const table = querying ? (
-    <LoadingState label="正在查询…" />
-  ) : showEmptyPage ? (
+  const table = showEmptyPage ? (
     <EmptyState
       title="还没有运行日志"
       description="服务启动、请求失败与保留巡检都会写进这里，先跑起来再回来看。"
@@ -194,6 +190,7 @@ export function RuntimeLogPanel() {
       rows={entries}
       rowKey={(entry) => entry.id}
       emptyMessage={emptyMessage}
+      busy={querying}
     />
   )
 
@@ -203,7 +200,7 @@ export function RuntimeLogPanel() {
         工具栏三块：搜索 / 视图操作 / 日志大小与清空。窄屏（md 以下）一块一行，
         md 起回到一行三段、最后一块靠右——自由折行会把清空按钮孤零零甩到第二行。
       */}
-      <div className="flex flex-col gap-2 rounded-xl border border-line bg-surface px-4 py-3 md:flex-row md:items-center">
+      <div className={`${CTL_TOOLBAR} flex flex-col gap-2 panel-surface px-4 py-3 md:flex-row md:items-center`}>
         <div className="relative w-full md:w-64">
           <Search
             aria-hidden
@@ -217,11 +214,16 @@ export function RuntimeLogPanel() {
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="请输入搜索关键字"
-            className="w-full rounded-lg border border-line bg-surface-raised py-1.5 pl-8 pr-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle"
+            className={`${CTL_FIELD} pl-8`}
           />
         </div>
         <div role="group" aria-label="日志视图操作" className="flex flex-wrap items-center gap-2">
-          <ToolButton label={refreshing ? '刷新中…' : '刷新日志'} disabled={refreshing} onClick={() => void load(gateway)} />
+          <RefreshButton
+            onPress={() => void load(gateway)}
+            busy={refreshing}
+            label="刷新日志"
+            formControl
+          />
           {/* 文案固定「全屏展示」，避免与弹窗内的「退出全屏」按钮重名；开合靠 pressed 高亮表达。 */}
           <ToolButton label="全屏展示" pressed={fullscreen} onClick={() => setFullscreen(!fullscreen)} />
         </div>
@@ -264,7 +266,7 @@ export function RuntimeLogPanel() {
             type="button"
             disabled={loadingOlder}
             onClick={() => void loadOlder(gateway)}
-            className="rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:opacity-50"
+            className="rounded-lg border border-control-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:opacity-50"
           >
             {loadingOlder ? '加载中…' : '加载更早的记录'}
           </button>
@@ -282,7 +284,7 @@ export function RuntimeLogPanel() {
 
       <Dialog.Root open={fullscreen} onOpenChange={setFullscreen}>
         <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-50 bg-black/70" />
+          <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay-strong" />
           <Dialog.Content
             aria-describedby={undefined}
             className="fixed inset-0 z-[55] flex flex-col gap-3 bg-bg p-4"
@@ -299,19 +301,16 @@ export function RuntimeLogPanel() {
               </Dialog.Close>
             </div>
             {/* 全屏容器里不给 min-h：矮视口下表格自己滚动，不撑破弹窗。 */}
-            {querying ? (
-              <LoadingState label="正在查询…" />
-            ) : (
-              <LogTable
-                label="运行日志表"
-                minWidthClass={TABLE_MIN_WIDTH_CLASS}
-                columns={RUNTIME_LOG_COLUMNS}
-                rows={entries}
-                rowKey={(entry) => entry.id}
-                emptyMessage={emptyMessage}
-                regionClassName="min-h-0 flex-1 overflow-auto rounded-xl border border-line bg-surface hover-scrollbar"
-              />
-            )}
+            <LogTable
+              label="运行日志表"
+              minWidthClass={TABLE_MIN_WIDTH_CLASS}
+              columns={RUNTIME_LOG_COLUMNS}
+              rows={entries}
+              rowKey={(entry) => entry.id}
+              emptyMessage={emptyMessage}
+              shellClassName="min-h-0 flex-1 overflow-hidden panel-surface"
+              busy={querying}
+            />
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>

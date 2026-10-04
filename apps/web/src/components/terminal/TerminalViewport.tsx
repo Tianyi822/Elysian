@@ -297,7 +297,7 @@ export function TerminalViewport({
             key={index}
             className={[
               'min-h-[1lh]',
-              line.kind === 'input' ? 'text-accent' : line.kind === 'banner' ? 'text-warning' : undefined,
+              line.kind === 'input' ? 'text-accent-fg' : line.kind === 'banner' ? 'text-warning' : undefined,
             ]
               .filter(Boolean)
               .join(' ')}

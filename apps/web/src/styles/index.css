@@ -15,11 +15,26 @@
   --color-fg-muted: var(--t-fg-muted);
   --color-fg-subtle: var(--t-fg-subtle);
   --color-accent: var(--t-accent);
+  --color-accent-fg: var(--t-accent-fg);
+  --color-on-accent: var(--t-on-accent);
   --color-success: var(--t-success);
   --color-warning: var(--t-warning);
   --color-danger: var(--t-danger);
   --color-info: var(--t-info);
   --color-focus: var(--t-focus);
+  --color-control-line: var(--t-control-line);
+  --color-nav-fg: var(--t-nav-fg);
+  --color-nav-muted: var(--t-nav-muted);
+  --color-nav-hover: var(--t-nav-hover);
+  --color-nav-selected: var(--t-nav-selected);
+  --color-overlay: var(--t-overlay);
+  --color-overlay-strong: var(--t-overlay-strong);
+  --color-chart-secondary: var(--t-chart-secondary);
+  --color-panel-glass: var(--t-panel-glass);
+  --color-panel-glass-overlay: var(--t-panel-glass-overlay);
+  --color-panel-line: var(--t-panel-line);
+  --color-panel-sheen: var(--t-panel-sheen);
+  --color-veil: var(--t-veil);
 
   --color-sev1: var(--t-sev1);
   --color-sev1-fg: var(--t-sev1-fg);
@@ -52,89 +67,572 @@
 [data-theme="dark"] {
   color-scheme: dark;
 
-  --t-bg: #0b0f14;
-  --t-surface: #131a23;
-  --t-surface-raised: #1a2330;
-  --t-line: #28323f;
-  --t-fg: #e8eef5;
-  --t-fg-muted: #a3b1c2;
-  --t-fg-subtle: #7c8ea3;
-  --t-accent: #4c8dff;
-  --t-success: #3fb950;
-  --t-warning: #d29922;
-  --t-danger: #f85149;
-  --t-info: #58a6ff;
-  --t-focus: #4c8dff;
+  --t-bg: #111827;
+  --t-surface: #1b2539;
+  --t-surface-raised: #26334a;
+  --t-line: #39485f;
+  --t-control-line: #697ea2;
+  --t-fg: #eaecf5;
+  --t-fg-muted: #bbc3d8;
+  --t-fg-subtle: #a0adc9;
+  --t-accent: #95c6f8;
+  --t-accent-fg: #95c6f8;
+  --t-on-accent: #111827;
+  --t-success: #7dd6a5;
+  --t-warning: #e4b66a;
+  --t-danger: #f3a0b2;
+  --t-info: #95bdeb;
+  --t-focus: #95c6f8;
 
-  --t-sev1: #3d1518;
-  --t-sev1-fg: #ff8a80;
-  --t-sev1-line: #7d2b2f;
-  --t-sev2: #3a2410;
-  --t-sev2-fg: #f0a45e;
-  --t-sev2-line: #7a4a1e;
-  --t-sev3: #33290a;
-  --t-sev3-fg: #e3c04a;
-  --t-sev3-line: #6b5514;
-  --t-sev4: #1c242e;
-  --t-sev4-fg: #9fb0c0;
-  --t-sev4-line: #33404d;
+  --t-nav-bg: rgb(46 71 115 / 68%);
+  --t-nav-opaque: #243853;
+  --t-nav-fg: #eaecf5;
+  --t-nav-muted: #bbc7e0;
+  --t-nav-hover: rgb(149 198 248 / 10%);
+  --t-nav-selected: rgb(149 198 248 / 16%);
+  --t-panel-glass: rgb(27 37 57 / 58%);
+  --t-panel-glass-overlay: rgb(27 37 57 / 76%);
+  --t-panel-line: rgb(151 176 212 / 15%);
+  --t-panel-sheen: rgb(255 255 255 / 5%);
+  --t-panel-shadow: rgb(5 10 22 / 46%);
+  --t-grain: 0.05;
+  --t-canvas-near: rgb(41 66 106 / 62%);
+  --t-canvas-far: rgb(78 60 112 / 44%);
+  --t-veil: rgb(190 214 245 / 12%);
+  --t-veil-sheen: rgb(255 255 255 / 18%);
+  --t-overlay: rgb(7 13 26 / 64%);
+  --t-overlay-strong: rgb(7 13 26 / 76%);
+  --t-chart-secondary: #b7a5e8;
+  --t-chart-brush: rgb(149 198 248 / 16%);
 
-  --t-risk-low: #0f2a1a;
-  --t-risk-low-fg: #6fd48a;
-  --t-risk-low-line: #1f6b3a;
-  --t-risk-medium: #33290a;
-  --t-risk-medium-fg: #e3c04a;
-  --t-risk-medium-line: #6b5514;
-  --t-risk-high: #3a2410;
-  --t-risk-high-fg: #f0a45e;
-  --t-risk-high-line: #7a4a1e;
-  --t-risk-critical: #3d1518;
-  --t-risk-critical-fg: #ff8a80;
-  --t-risk-critical-line: #7d2b2f;
+  --t-sev1: #402333;
+  --t-sev1-fg: #ffadc0;
+  --t-sev1-line: #ae657f;
+  --t-sev2: #3e2e22;
+  --t-sev2-fg: #f4bd86;
+  --t-sev2-line: #ac8052;
+  --t-sev3: #383323;
+  --t-sev3-fg: #ead18b;
+  --t-sev3-line: #99854d;
+  --t-sev4: #2c3448;
+  --t-sev4-fg: #c0c8df;
+  --t-sev4-line: #71809e;
+
+  --t-risk-low: #20392f;
+  --t-risk-low-fg: #98dfb4;
+  --t-risk-low-line: #598f72;
+  --t-risk-medium: #383323;
+  --t-risk-medium-fg: #ead18b;
+  --t-risk-medium-line: #99854d;
+  --t-risk-high: #3e2e22;
+  --t-risk-high-fg: #f4bd86;
+  --t-risk-high-line: #ac8052;
+  --t-risk-critical: #402333;
+  --t-risk-critical-fg: #ffadc0;
+  --t-risk-critical-line: #ae657f;
 }
 
 [data-theme="light"] {
   color-scheme: light;
 
-  --t-bg: #ffffff;
-  --t-surface: #f6f8fa;
-  --t-surface-raised: #ffffff;
-  --t-line: #d0d7de;
-  --t-fg: #1f2328;
-  --t-fg-muted: #59636e;
-  --t-fg-subtle: #6e7781;
-  --t-accent: #0969da;
-  --t-success: #1a7f37;
-  --t-warning: #9a6700;
-  --t-danger: #cf222e;
-  --t-info: #0969da;
-  --t-focus: #0969da;
+  --t-bg: #f9f1f8;
+  --t-surface: #fffcff;
+  --t-surface-raised: #f3eaf4;
+  --t-line: #dfd2e3;
+  --t-control-line: #927c9f;
+  --t-fg: #332b3c;
+  --t-fg-muted: #6b5f75;
+  --t-fg-subtle: #6e5d78;
+  --t-accent: #795a9c;
+  --t-accent-fg: #68488c;
+  --t-on-accent: #fffcff;
+  --t-success: #23673b;
+  --t-warning: #855512;
+  --t-danger: #a7344e;
+  --t-info: #405d8b;
+  --t-focus: #795a9c;
 
-  --t-sev1: #ffebe9;
-  --t-sev1-fg: #d6455d;
-  --t-sev1-line: #ff9a95;
-  --t-sev2: #fff1e5;
-  --t-sev2-fg: #d97706;
-  --t-sev2-line: #ffb77c;
-  --t-sev3: #fff8c5;
-  --t-sev3-fg: #b08900;
-  --t-sev3-line: #e0c34a;
-  --t-sev4: #f6f8fa;
-  --t-sev4-fg: #7b8794;
-  --t-sev4-line: #d0d7de;
+  --t-nav-bg: rgb(232 205 225 / 72%);
+  --t-nav-opaque: #edd7e7;
+  --t-nav-fg: #332b3c;
+  --t-nav-muted: #625369;
+  --t-nav-hover: rgb(121 90 156 / 8%);
+  --t-nav-selected: rgb(121 90 156 / 13%);
+  --t-panel-glass: rgb(255 252 255 / 56%);
+  --t-panel-glass-overlay: rgb(255 252 255 / 82%);
+  --t-panel-line: rgb(103 76 135 / 15%);
+  --t-panel-sheen: rgb(255 255 255 / 72%);
+  --t-panel-shadow: rgb(103 76 135 / 18%);
+  --t-grain: 0.035;
+  --t-canvas-near: rgb(236 210 229 / 78%);
+  --t-canvas-far: rgb(203 217 240 / 70%);
+  --t-veil: rgb(255 255 255 / 58%);
+  --t-veil-sheen: rgb(255 255 255 / 92%);
+  --t-overlay: rgb(51 43 60 / 38%);
+  --t-overlay-strong: rgb(51 43 60 / 52%);
+  --t-chart-secondary: #526ea6;
+  --t-chart-brush: rgb(121 90 156 / 14%);
 
-  --t-risk-low: #dafbe1;
-  --t-risk-low-fg: #0f5323;
-  --t-risk-low-line: #9ad3ab;
-  --t-risk-medium: #fff8c5;
-  --t-risk-medium-fg: #6b4c00;
-  --t-risk-medium-line: #e0c34a;
-  --t-risk-high: #fff1e5;
-  --t-risk-high-fg: #8f3d00;
-  --t-risk-high-line: #ffb77c;
-  --t-risk-critical: #ffebe9;
-  --t-risk-critical-fg: #a40e26;
-  --t-risk-critical-line: #ff9a95;
+  --t-sev1: #fbe7ed;
+  --t-sev1-fg: #ae3450;
+  --t-sev1-line: #c38093;
+  --t-sev2: #fff0e2;
+  --t-sev2-fg: #8a4607;
+  --t-sev2-line: #bb8859;
+  --t-sev3: #faf1d4;
+  --t-sev3-fg: #705911;
+  --t-sev3-line: #aa924c;
+  --t-sev4: #efebf4;
+  --t-sev4-fg: #625c70;
+  --t-sev4-line: #94879f;
+
+  --t-risk-low: #e5f4e9;
+  --t-risk-low-fg: #23603a;
+  --t-risk-low-line: #739b7e;
+  --t-risk-medium: #faf1d4;
+  --t-risk-medium-fg: #705911;
+  --t-risk-medium-line: #aa924c;
+  --t-risk-high: #fff0e2;
+  --t-risk-high-fg: #8a4607;
+  --t-risk-high-line: #bb8859;
+  --t-risk-critical: #fbe7ed;
+  --t-risk-critical-fg: #ae3450;
+  --t-risk-critical-line: #c38093;
+}
+
+/* 全站共用形状与外壳尺寸，业务页面不另设主题变体。 */
+@theme {
+  --radius-xl: 1rem;
+  --radius-lg: 0.5rem;
+}
+
+:root {
+  --shell-header-height: 4rem;
+
+  /* 细颗粒源图：灰度分形噪声，两处材质层共用，强度由 --t-grain 按主题调节。 */
+  --t-noise: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='128' height='128' filter='url(%23g)'/%3E%3C/svg%3E");
+}
+
+@layer components {
+  /*
+   * 卡片材质：自上而下的受光渐变 + 细颗粒 + 1px 中性描边 + 柔和环境投影。
+   * 表面边界只由描边与投影表达，不再有白色光学亮边；渐变走 background，
+   * 不会被元素上另加的 shadow-* 工具类整体抹掉。
+   */
+  .panel-surface {
+    position: relative;
+    isolation: isolate;
+    border: 1px solid var(--t-panel-line);
+    border-radius: var(--radius-xl);
+    background-color: var(--t-surface);
+    background-image: linear-gradient(180deg, var(--t-panel-sheen), transparent 46%);
+    box-shadow:
+      0 1px 2px var(--t-panel-shadow),
+      0 18px 38px -26px var(--t-panel-shadow);
+  }
+
+  /* 颗粒层落在面板底色之上、内容之下：isolate 把 -1 关在本层堆叠上下文里。 */
+  .panel-surface::after,
+  .glass-navigation::after,
+  .app-canvas::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    pointer-events: none;
+    background-image: var(--t-noise);
+    opacity: var(--t-grain);
+  }
+
+  .panel-surface thead th {
+    background-color: var(--t-surface-raised);
+  }
+
+  .panel-surface tbody tr {
+    transition: background-color 160ms ease-out;
+  }
+
+  .action-button {
+    display: inline-flex;
+    min-height: 2.25rem;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-lg);
+    transition: background-color 160ms ease-out, border-color 160ms ease-out, color 160ms ease-out;
+  }
+
+  /*
+   * 控件层：按钮、输入框、筛选芯片、胶囊组与信息格共用同一套高度、圆角、描边与色阶。
+   * 质感来自这些轴处处一致，而不是来自更强的光影——同一个工具栏里不允许出现
+   * 三种高度、两种圆角和「有的有边框有的没有」。色调只分三档：
+   * default 推进动作、quiet 次要动作、danger 破坏性动作。
+   */
+  .ctl {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    height: var(--ctl-height, 2.25rem);
+    padding: 0 0.75rem;
+    border: 1px solid transparent;
+    border-radius: var(--ctl-radius, var(--radius-lg));
+    font-size: 0.75rem;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color 160ms ease-out, border-color 160ms ease-out, color 160ms ease-out;
+  }
+
+  /* 卡内行动作：同一形状，只矮一档，保持卡片密度。 */
+  .ctl-sm {
+    --ctl-height: 1.75rem;
+    gap: 0.25rem;
+    padding: 0 0.5rem;
+  }
+
+  .ctl:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .ctl-default {
+    border-color: var(--t-control-line);
+    background-color: var(--t-surface-raised);
+    color: var(--t-fg);
+    font-weight: 500;
+  }
+  .ctl-default:hover:not(:disabled) {
+    border-color: var(--t-fg-subtle);
+  }
+
+  .ctl-quiet {
+    border-color: var(--t-line);
+    color: var(--t-fg-muted);
+  }
+  .ctl-quiet:hover:not(:disabled) {
+    background-color: var(--t-surface-raised);
+    color: var(--t-fg);
+  }
+
+  .ctl-danger {
+    border-color: color-mix(in srgb, var(--t-danger) 45%, transparent);
+    background-color: color-mix(in srgb, var(--t-danger) 12%, transparent);
+    color: var(--t-danger);
+    font-weight: 500;
+  }
+  .ctl-danger:hover:not(:disabled) {
+    background-color: color-mix(in srgb, var(--t-danger) 20%, transparent);
+  }
+
+  /* 输入框与按钮同高同圆角同描边，同一行里才看得出它们是一对。 */
+  .ctl-field {
+    display: block;
+    width: 100%;
+    height: var(--ctl-height, 2.25rem);
+    padding: 0 0.625rem;
+    border: 1px solid var(--t-control-line);
+    border-radius: var(--ctl-radius, var(--radius-lg));
+    background-color: var(--t-surface-raised);
+    color: var(--t-fg);
+    font-size: 0.875rem;
+    line-height: 1.5;
+    transition: border-color 160ms ease-out;
+  }
+  .ctl-field::placeholder {
+    color: var(--t-fg-subtle);
+  }
+  .ctl-field:hover:not(:disabled) {
+    border-color: var(--t-fg-subtle);
+  }
+  .ctl-field:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* 筛选芯片：与控件同高同圆角，选中态用强调色底 + 描边，文字始终在。
+     选中状态直接读 aria-pressed，不再另挂一个 data 属性形成两份真相。 */
+  .ctl-chip {
+    border-color: var(--t-line);
+    color: var(--t-fg-muted);
+  }
+  .ctl-chip:hover:not(:disabled) {
+    background-color: var(--t-surface-raised);
+    color: var(--t-fg);
+  }
+  .ctl-chip[aria-pressed="true"] {
+    border-color: color-mix(in srgb, var(--t-accent) 50%, transparent);
+    background-color: color-mix(in srgb, var(--t-accent) 12%, transparent);
+    color: var(--t-accent-fg);
+    font-weight: 500;
+  }
+
+  /*
+   * 图标按钮的圆角走可继承的自定义属性，而不是写死 utility：
+   * 放进胶囊组的成员要收成圆形，用 utility 覆盖会和 IconButton 自带的
+   * 同一属性打平手、只能赌样式表里的先后。
+   */
+  .icon-button {
+    border-radius: var(--icon-button-radius, var(--radius-lg));
+  }
+
+  /* 胶囊组：把一组相关控件包成一个胶囊对象，边框归胶囊、成员不再各自描边。
+     高度与 .ctl 同为一档，包在旁边的按钮同一基线，不会矮出一截。 */
+  .ctl-group {
+    --icon-button-radius: 9999px;
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 2px;
+    height: var(--ctl-height, 2.25rem);
+    padding: 0 3px;
+    border: 1px solid var(--t-panel-line);
+    border-radius: 9999px;
+    background-color: var(--t-surface);
+  }
+  /* 组内成员不再各自描边：边框归胶囊；高度收一档，在胶囊里留出呼吸。 */
+  .ctl-group .ctl {
+    --ctl-height: 1.75rem;
+    border-color: transparent;
+    border-radius: 9999px;
+    background-color: transparent;
+    color: var(--t-fg-muted);
+  }
+  .ctl-group .ctl:hover:not(:disabled) {
+    background-color: var(--t-surface-raised);
+    color: var(--t-fg);
+  }
+  /* 选中态由成员自己的类负责，不能被上面那条铺底压掉（多一层选择器才赢得过它）。 */
+  .ctl-group .ctl-chip[aria-pressed="true"] {
+    background-color: color-mix(in srgb, var(--t-accent) 12%, transparent);
+    color: var(--t-accent-fg);
+  }
+
+  /* 下拉触发器：与输入框同高同描边同圆角，只是内部两端排布。
+     形状走控件层，不写 utility——utility 在 utilities 层，工具栏的语境覆盖赢不过它。 */
+  .ctl-select {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.375rem;
+    height: var(--ctl-height, 2.25rem);
+    padding: 0 0.625rem;
+    border: 1px solid var(--t-control-line);
+    border-radius: var(--ctl-radius, var(--radius-lg));
+    background-color: var(--t-surface-raised);
+    color: var(--t-fg);
+    font-size: 0.875rem;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: border-color 160ms ease-out;
+  }
+  .ctl-select:hover:not(:disabled) {
+    border-color: var(--t-fg-subtle);
+  }
+  .ctl-select:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  /*
+   * 工具栏语境：一行里的按钮、芯片、输入框、下拉、读数与图标按钮共用同一高度与
+   * 同一形状。高度与圆角都走可继承的自定义属性，成员不必各自声明，也不必用
+   * utility 覆盖（utility 在 utilities 层，组件层的语境赢不过它）；
+   * 嵌在胶囊组里的成员自己收一档，不会被这一档拉平。
+   */
+  .toolbar {
+    --ctl-radius: 9999px;
+    --ctl-height: 2.25rem;
+    --icon-button-radius: 9999px;
+  }
+
+  /* 卡片内的信息格：标签加读数，或一行事实说明。 */
+  .tile {
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--t-panel-line);
+    background-color: var(--t-surface);
+    padding: 0.5rem 0.75rem;
+    font-size: 0.75rem;
+    color: var(--t-fg-muted);
+  }
+
+  /* 端口一类的分段读数：整枚芯片内部用竖线分格，宽度按内容。 */
+  .stat-chip {
+    display: inline-flex;
+    align-items: stretch;
+    overflow: hidden;
+    height: var(--ctl-height, auto);
+    border: 1px solid var(--t-line);
+    border-radius: var(--ctl-radius, var(--radius-lg));
+    background-color: var(--t-surface);
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .stat-chip > span + span {
+    border-left: 1px solid var(--t-line);
+  }
+
+  /* 导航与内容区之间不再画分割线：整块靠染色毛玻璃与一道外投影自立边界。 */
+  .glass-navigation {
+    position: relative;
+    isolation: isolate;
+    color: var(--t-nav-fg);
+    background-color: var(--t-nav-opaque);
+    background-image: linear-gradient(180deg, var(--t-panel-sheen), transparent 34%);
+    box-shadow: 12px 0 40px -30px var(--t-panel-shadow);
+  }
+
+  .nav-link[aria-current="page"]::before {
+    content: "";
+    position: absolute;
+    left: 4px;
+    top: 50%;
+    width: 2px;
+    height: 16px;
+    border-radius: 2px;
+    background-color: var(--t-accent);
+    transform: translateY(-50%);
+  }
+
+  .glass-navigation :focus-visible {
+    outline-offset: 2px;
+  }
+
+  /*
+   * 画布层：两团大半径色雾垫在毛玻璃之下。底色原本是纯色平面，20px 模糊
+   * 什么也解析不出来，面板因此读成一块平色矩形；有了可模糊的背景才成材质。
+   */
+  .app-canvas {
+    position: relative;
+    isolation: isolate;
+    background-color: var(--t-bg);
+    background-image:
+      radial-gradient(64rem 40rem at 6% -10%, var(--t-canvas-near), transparent 70%),
+      radial-gradient(58rem 38rem at 104% 108%, var(--t-canvas-far), transparent 68%);
+  }
+
+  /*
+   * 遮罩宿主：给「自身就是滚动容器、不便再套一层」的卡片补上定位上下文，
+   * 并裁掉遮罩在圆角外的溢出。遮罩本身始终是这个宿主的直接子元素。
+   */
+  .busy-host {
+    position: relative;
+    overflow: hidden;
+    border-radius: var(--radius-xl);
+  }
+
+  /*
+   * 刷新遮罩：只盖住正在刷新的那个组件，旧内容留在屏上透出，一道慢扫光表示
+   * 进行中。遮罩不吃指针，刷新期间界面照常可读可操作，不出现整块白屏。
+   */
+  .busy-veil {
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+    overflow: hidden;
+    border-radius: inherit;
+    pointer-events: none;
+    background-color: var(--t-veil);
+  }
+
+  .busy-veil > span {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 45%;
+    background-image: linear-gradient(100deg, transparent 34%, var(--t-veil-sheen) 50%, transparent 66%);
+    animation: var(--animate-veil-sweep);
+  }
+
+  /*
+   * 开关：轨道内凹一道读出「槽」，滑块带自己的投影与顶光读出「钮」。
+   * 关态是暗槽配灰钮，开态轨道转强调色、滑块转反色，几何仍由 h-5 w-9 与 size-3.5 给出。
+   */
+  .ui-switch {
+    border: 1px solid var(--t-control-line);
+    border-radius: 9999px;
+    background-color: var(--t-surface);
+    box-shadow: inset 0 1px 2px var(--t-panel-shadow);
+    transition: background-color 160ms ease-out, border-color 160ms ease-out, box-shadow 160ms ease-out;
+  }
+
+  .ui-switch:disabled {
+    opacity: 0.5;
+  }
+
+  .ui-switch[data-state="checked"] {
+    border-color: var(--t-accent);
+    background-color: var(--t-accent);
+    background-image: linear-gradient(180deg, var(--t-panel-sheen), transparent 58%);
+    box-shadow: inset 0 1px 1px rgb(255 255 255 / 18%);
+  }
+
+  .ui-switch-thumb {
+    border-radius: 9999px;
+    background-color: var(--t-fg-muted);
+    box-shadow: 0 1px 2px var(--t-panel-shadow), inset 0 1px 0 rgb(255 255 255 / 22%);
+    transition: transform 160ms cubic-bezier(0.4, 0, 0.2, 1), background-color 160ms ease-out;
+  }
+
+  .ui-switch[data-state="checked"] .ui-switch-thumb {
+    background-color: var(--t-on-accent);
+  }
+
+  /*
+   * 品牌字标：比正文大两档、字距收紧，颜色直接取主题的强调前景色 --t-accent-fg
+   * （浅色是紫、深色是冰蓝）——这就是全站链接与选中页签用的同一个品牌色。
+   * 不再从正文字色渐变到强调色：跨色相的渐变让字标在浅色下发灰、在深色下发白，
+   * 两边都不像本主题的颜色。
+   */
+  .brand-wordmark {
+    color: var(--t-accent-fg);
+    font-size: 1.375rem;
+    font-weight: 600;
+    letter-spacing: -0.035em;
+    line-height: 1.2;
+  }
+
+  @supports ((backdrop-filter: blur(20px)) or (-webkit-backdrop-filter: blur(20px))) {
+    .panel-surface {
+      background-color: var(--t-panel-glass);
+      -webkit-backdrop-filter: blur(20px);
+      backdrop-filter: blur(20px);
+    }
+    /* 遮罩之上的玻璃保留更高底色覆盖，保护辅助文字与控件边界的对比度。 */
+    .panel-surface[role="dialog"],
+    .panel-surface[role="alertdialog"] {
+      background-color: var(--t-panel-glass-overlay);
+    }
+    .glass-navigation {
+      background-color: var(--t-nav-bg);
+      -webkit-backdrop-filter: blur(20px);
+      backdrop-filter: blur(20px);
+    }
+  }
+}
+
+::selection {
+  color: var(--t-fg);
+  background-color: var(--t-chart-brush);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .action-button,
+  .panel-surface tbody tr {
+    transition: none;
+  }
+
+  .busy-veil > span {
+    animation: none;
+  }
+}
+
+input,
+textarea {
+  caret-color: var(--t-accent);
 }
 
 html {
@@ -162,6 +660,7 @@ body {
   --animate-sheet-panel-out: sheet-panel-out 160ms ease-in;
   --animate-pull-progress: pull-slide 1.2s ease-in-out infinite;
   --animate-caret-blink: caret-blink 1s step-end infinite;
+  --animate-veil-sweep: veil-sweep 1.7s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 
   @keyframes caret-blink {
     0%,
@@ -209,6 +708,14 @@ body {
     }
     to {
       transform: translateX(300%);
+    }
+  }
+  @keyframes veil-sweep {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(320%);
     }
   }
 }

@@ -18,10 +18,10 @@ const STATUS_TONE: Record<Container['status'], StatusTone> = {
   paused: 'warning',
 }
 
-/** 分节卡片：与容器卡片的内部信息块同一视觉语言（圆角描边、抬升底色）。 */
+/** 分节卡片：与容器卡片的内部信息块同一视觉语言（玻璃底色、白色亮边）。 */
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="rounded-xl border border-line bg-surface-raised px-3 py-2.5">
+    <section className="panel-surface px-3 py-2.5">
       <h3 className="text-xs font-medium text-fg-muted">{title}</h3>
       <div className="mt-2 space-y-1.5">{children}</div>
     </section>
@@ -88,10 +88,10 @@ export function ContainerDetailSheet() {
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/60 motion-reduce:animate-none data-[state=open]:animate-drawer-overlay-in data-[state=closed]:animate-drawer-overlay-out" />
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-overlay motion-reduce:animate-none data-[state=open]:animate-drawer-overlay-in data-[state=closed]:animate-drawer-overlay-out" />
         <Dialog.Content
           aria-describedby={undefined}
-          className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col overflow-y-auto border-l border-line bg-surface p-5 shadow-xl will-change-transform motion-reduce:animate-none data-[state=open]:animate-sheet-panel-in data-[state=closed]:animate-sheet-panel-out"
+          className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col overflow-y-auto panel-surface rounded-none p-5 shadow-xl will-change-transform motion-reduce:animate-none data-[state=open]:animate-sheet-panel-in data-[state=closed]:animate-sheet-panel-out"
         >
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">

@@ -30,6 +30,8 @@ export type DatabaseState = {
   containers: readonly Container[]
   images: readonly ContainerImage[]
   errorMessage?: string
+  /** 列表刷新在途：旧卡片留在屏上，只由实例区自身盖一层浅色遮罩。 */
+  refreshing: boolean
   /** SQL 会话；同一时刻最多一个，undefined 表示没有打开。 */
   session?: SqlSession
   /** 添加数据库弹窗的开关与提交中标记。 */
@@ -41,7 +43,7 @@ export type DatabaseState = {
   removingDatabaseIds: readonly string[]
   setEngine(engine: DatabaseEngine): void
   load(gateway: ElysianGateway): Promise<void>
-  refresh(gateway: ElysianGateway): Promise<void>
+  refresh(gateway: ElysianGateway, showIndicator?: boolean): Promise<void>
   openSession(databaseId: string, gateway?: ElysianGateway): void
   closeSession(): void
   interruptSession(gateway: ElysianGateway): void
@@ -63,6 +65,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   databases: [],
   containers: [],
   images: [],
+  refreshing: false,
   session: undefined,
   createOpen: false,
   creating: false,
@@ -89,13 +92,19 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       })
     }
   },
-  async refresh(gateway) {
+  /**
+   * 重新取回列表。默认静默——15 秒轮询与动作后的回读都走这条，不闪指示；
+   * 只有用户按下刷新才传 showIndicator，让按钮转起来、卡片盖遮罩。
+   */
+  async refresh(gateway, showIndicator = false) {
+    if (showIndicator) set({ refreshing: true })
     try {
       const [databases, containers, images] = await Promise.all([
         gateway.databases.list(), gateway.containers.list(), gateway.containers.listImages(),
       ])
-      set({ databases, containers, images })
+      set({ databases, containers, images, refreshing: false })
     } catch (error) {
+      set({ refreshing: false })
       useNotificationStore.getState().notify({ tone: 'danger', message: `数据库状态刷新失败：${error instanceof Error ? error.message : '未知错误'}` })
     }
   },

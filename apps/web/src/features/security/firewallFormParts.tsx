@@ -1,12 +1,11 @@
-import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
+import { CTL_FIELD } from '../../components/formControl'
 
 /*
  * 防火墙三个规则弹窗共用的表单部件与常量。
  * 提交不绑定 form 的回车提交（避开输入法组合回车），只走按钮点击。
  */
 
-export const FIREWALL_INPUT_CLASS =
-  `${FORM_CONTROL_HEIGHT_CLASS} w-full rounded-lg border border-line bg-surface-raised px-2.5 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle`
+export const FIREWALL_INPUT_CLASS = CTL_FIELD
 
 export function SegmentedControl<T extends string>({
   groupLabel,

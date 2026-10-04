@@ -114,13 +114,13 @@ export function HostUserDialog() {
   return (
     <Dialog.Root open onOpenChange={(next) => { if (!next) closeDialog() }}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/60" />
+        <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
         <Dialog.Content
           aria-describedby={undefined}
           // 点外部一律不关：填好的配置不该因为一次误点丢掉。Esc 与「取消」「关闭」仍可退出。
           onPointerDownOutside={(event) => event.preventDefault()}
           onInteractOutside={(event) => event.preventDefault()}
-          className="fixed left-1/2 top-1/2 z-[61] flex max-h-[min(40rem,calc(100vh-3rem))] w-[min(30rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line bg-bg shadow-2xl"
+          className="fixed left-1/2 top-1/2 z-[61] flex max-h-[min(40rem,calc(100vh-3rem))] w-[min(30rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden panel-surface shadow-2xl"
         >
           <Dialog.Title className="sr-only">{editing ? `修改账号 ${editing.name}` : '创建用户'}</Dialog.Title>
           <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
@@ -200,7 +200,7 @@ export function HostUserDialog() {
                     onClick={() => setLoginMethod(method)}
                     className={`rounded-lg border px-2.5 py-2 text-left text-xs transition-colors ${
                       loginMethod === method
-                        ? 'border-accent/50 bg-accent/10 font-medium text-accent'
+                        ? 'border-accent/50 bg-accent/10 font-medium text-accent-fg'
                         : 'border-line text-fg-muted hover:border-fg-subtle hover:text-fg'
                     }`}
                   >
@@ -263,7 +263,7 @@ export function HostUserDialog() {
                     onClick={() => setStatus(value)}
                     className={`rounded-lg border px-2.5 py-2 text-left text-xs transition-colors ${
                       status === value
-                        ? 'border-accent/50 bg-accent/10 font-medium text-accent'
+                        ? 'border-accent/50 bg-accent/10 font-medium text-accent-fg'
                         : 'border-line text-fg-muted hover:border-fg-subtle hover:text-fg'
                     }`}
                   >

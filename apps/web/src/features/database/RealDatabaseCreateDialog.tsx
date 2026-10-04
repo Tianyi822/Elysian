@@ -15,7 +15,7 @@ type Candidate = { id: string; name: string; accessScope: string; managed: boole
 type Scope = 'localhost' | 'container-network' | 'any-host'
 
 const VERSION_PATTERN = /^\d+(?:\.\d+){0,2}(?:[-.][A-Za-z0-9]+)*$/
-const FIELD = `${FORM_CONTROL_HEIGHT_CLASS} w-full min-w-0 rounded-lg border border-line bg-surface-raised px-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle disabled:opacity-60`
+const FIELD = `${FORM_CONTROL_HEIGHT_CLASS} w-full min-w-0 rounded-lg border border-control-line bg-surface-raised px-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle disabled:opacity-60`
 const LABEL = 'mb-2 block text-xs font-medium leading-5 text-fg-muted'
 const BUTTON = `inline-flex ${FORM_CONTROL_HEIGHT_CLASS} items-center justify-center rounded-lg border border-line px-3 text-xs font-medium text-fg transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50`
 const CHARSET_ITEMS = [{ value: 'utf8mb4', label: 'utf8mb4' }, { value: 'utf8', label: 'utf8' }, { value: 'latin1', label: 'latin1' }] as const
@@ -187,9 +187,9 @@ export function RealDatabaseCreateDialog({ engine }: { engine: Engine }) {
 
   return <Dialog.Root open onOpenChange={(open) => { if (!open && !busy) close() }}>
     <Dialog.Portal>
-      <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60" />
+      <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay" />
       <Dialog.Content aria-describedby={undefined} onPointerDownOutside={(event) => event.preventDefault()}
-        className="fixed left-1/2 top-1/2 z-[55] flex max-h-[min(44rem,calc(100vh-2rem))] w-[min(42rem,calc(100vw-1.5rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line bg-bg shadow-2xl">
+        className="fixed left-1/2 top-1/2 z-[55] flex max-h-[min(44rem,calc(100vh-2rem))] w-[min(42rem,calc(100vw-1.5rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden panel-surface shadow-2xl">
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-line px-5 py-3">
           <Dialog.Title className="truncate text-base font-semibold text-fg">添加 {engine} 数据库</Dialog.Title>
           <button type="button" disabled={busy} onClick={close} aria-label="关闭弹窗" className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-fg-muted hover:bg-surface-raised disabled:opacity-50"><X aria-hidden size={16} /></button>
@@ -200,9 +200,9 @@ export function RealDatabaseCreateDialog({ engine }: { engine: Engine }) {
             <h3 id="db-target-title" className="mb-3 text-sm font-semibold text-fg">承载容器</h3>
             <div role="group" aria-label="容器来源" className="grid grid-cols-2 gap-2">
               <button type="button" disabled={busy} aria-pressed={targetKind === 'existing'} onClick={() => setTargetKind('existing')}
-                className={BUTTON + (targetKind === 'existing' ? ' border-accent/50 bg-accent/10 text-accent' : '')}>使用已有容器</button>
+                className={BUTTON + (targetKind === 'existing' ? ' border-accent/50 bg-accent/10 text-accent-fg' : '')}>使用已有容器</button>
               <button type="button" disabled={busy} aria-pressed={targetKind === 'new'} onClick={() => setTargetKind('new')}
-                className={BUTTON + (targetKind === 'new' ? ' border-accent/50 bg-accent/10 text-accent' : '')}>创建新容器</button>
+                className={BUTTON + (targetKind === 'new' ? ' border-accent/50 bg-accent/10 text-accent-fg' : '')}>创建新容器</button>
             </div>
 
             {targetKind === 'existing' ? <div className="mt-4">
@@ -211,7 +211,7 @@ export function RealDatabaseCreateDialog({ engine }: { engine: Engine }) {
                 items={candidates.map((candidate) => ({ value: candidate.id, label: candidate.name + ' · ' + repo + ':' + candidate.versionTag + (candidate.managed ? ' · 面板管理' : ' · 外部容器') }))}
                 value={containerId || undefined} onSelect={setContainerId} fallbackLabel="选择已有容器" emptyLabel="没有可用的运行中容器" />
               {selectedContainer ? <p className="mt-2 text-xs text-fg-muted">版本 {selectedContainer.versionTag} · {ACCESS_SCOPE_ITEMS.find((item) => item.value === selectedContainer.accessScope)?.label ?? selectedContainer.accessScope} · {selectedContainer.managed ? '创建新逻辑库' : '验证并接管已有库'}</p> : null}
-              {!loading && !discoverError && candidates.length === 0 ? <div className="mt-3 rounded-lg border border-line bg-surface-raised p-3 text-xs text-fg-muted">
+              {!loading && !discoverError && candidates.length === 0 ? <div className="mt-3 rounded-lg border border-control-line bg-surface-raised p-3 text-xs text-fg-muted">
                 <p>没有可用的 {engine} 容器。</p>
                 <button type="button" onClick={() => setTargetKind('new')} className={BUTTON + ' mt-2 bg-surface'}>拉取镜像并新建容器</button>
               </div> : null}
@@ -228,14 +228,14 @@ export function RealDatabaseCreateDialog({ engine }: { engine: Engine }) {
                   <label htmlFor="real-db-version" className={LABEL}>版本标签（不支持 latest）</label>
                   <div className="flex min-w-0 gap-2">
                     <input id="real-db-version" className={FIELD + ' min-w-0 flex-1 font-mono'} disabled={busy} value={versionTag} onChange={(event) => { setVersionTag(event.target.value.trim()); setPullComplete(false); setPullError('') }} placeholder={engine === 'MariaDB' ? '例如 11.4' : engine === 'MySQL' ? '例如 8.4' : '例如 7.4'} autoComplete="off" spellCheck={false} />
-                    <SelectDropdown ariaLabel="版本标签建议" disabled={busy || tags.length === 0} items={tagItems} value={undefined} onSelect={(tag) => { setVersionTag(tag); setPullComplete(false); setPullError('') }} fallbackLabel="选择版本" triggerClassName={`inline-flex ${FORM_CONTROL_HEIGHT_CLASS} shrink-0 items-center gap-1 whitespace-nowrap rounded-lg border border-line bg-surface-raised px-2 text-xs text-fg disabled:opacity-50`} />
+                    <SelectDropdown ariaLabel="版本标签建议" disabled={busy || tags.length === 0} items={tagItems} value={undefined} onSelect={(tag) => { setVersionTag(tag); setPullComplete(false); setPullError('') }} fallbackLabel="选择版本" triggerClassName={`inline-flex ${FORM_CONTROL_HEIGHT_CLASS} shrink-0 items-center gap-1 whitespace-nowrap rounded-lg border border-control-line bg-surface-raised px-2 text-xs text-fg disabled:opacity-50`} />
                   </div>
                   {versionTag && !validVersion ? <p role="alert" className="mt-1 text-xs text-danger">请输入明确的数字版本标签</p> : null}
                   {tagStatus === 'loading' ? <p role="status" className="mt-1 text-xs text-fg-subtle">正在查询版本…</p> : null}
                   {tagStatus === 'unavailable' ? <p className="mt-1 text-xs text-fg-subtle">版本列表不可用，可手动输入。</p> : null}
                 </div>
               </div>
-              {validVersion && !registryError ? <div className="rounded-lg border border-line bg-surface-raised px-3 py-2 text-xs">
+              {validVersion && !registryError ? <div className="rounded-lg border border-control-line bg-surface-raised px-3 py-2 text-xs">
                 <span className="text-fg-muted">{image ? '本地镜像 ' : '将拉取 '}</span><span className="break-all font-mono text-fg">{image ? repo + ':' + versionTag : registryHost(registry) + '/' + repo + ':' + versionTag}</span>
               </div> : null}
               {validVersion && !loading && !discoverError ? image ? <p role="status" className="text-xs text-success">本地镜像已就绪：{repo}:{versionTag}</p> : <div className="rounded-lg border border-line bg-surface p-3">
@@ -272,7 +272,7 @@ export function RealDatabaseCreateDialog({ engine }: { engine: Engine }) {
 
           <section aria-labelledby="db-details-title" className="border-t border-line pt-5">
             <h3 id="db-details-title" className="mb-3 text-sm font-semibold text-fg">数据库信息</h3>
-            {engine === 'Redis' ? <p className={`${FORM_CONTROL_HEIGHT_CLASS} flex items-center rounded-lg border border-line bg-surface-raised px-3 text-sm text-fg`}>Redis DB 0</p> : <div className="grid gap-4 sm:grid-cols-2">
+            {engine === 'Redis' ? <p className={`${FORM_CONTROL_HEIGHT_CLASS} flex items-center rounded-lg border border-control-line bg-surface-raised px-3 text-sm text-fg`}>Redis DB 0</p> : <div className="grid gap-4 sm:grid-cols-2">
               <div><label htmlFor="real-db-name" className={LABEL}>逻辑库名</label><input id="real-db-name" className={FIELD} disabled={busy} value={name} onChange={(event) => setName(event.target.value)} autoComplete="off" /></div>
               <div><label htmlFor="real-db-charset" className={LABEL}>字符集</label><SelectDropdown id="real-db-charset" ariaLabel="字符集" fullWidth disabled={busy} items={CHARSET_ITEMS} value={charset} onSelect={setCharset} /></div>
             </div>}

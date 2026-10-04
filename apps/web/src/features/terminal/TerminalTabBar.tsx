@@ -2,8 +2,9 @@ import { useLayoutEffect, useRef, useState } from 'react'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useIntrinsicWidth } from '../../app/layout/headerAccessoryWidth'
 import { IconButton } from '../../components/IconButton'
+import { CTL_GROUP, CTL_PRIMARY, CTL_TOOLBAR } from '../../components/formControl'
 import { SelectDropdown } from '../../components/SelectDropdown'
-import { Plus, X, ZoomIn, ZoomOut } from '../../components/icons'
+import { X, ZoomIn, ZoomOut } from '../../components/icons'
 import {
   TERMINAL_FONT_SIZE_MAX,
   TERMINAL_FONT_SIZE_MIN,
@@ -18,7 +19,7 @@ const STATUS_TEXT: Record<HostTerminalSession['status'], string | undefined> = {
 }
 
 /**
- * 终端页的标签栏：兼页头。形态对齐顶栏 HeaderTabs——大字号、无盒、选中靠颜色与底边指示条。
+ * 终端页的标签栏：一枚浮在画布上的胶囊工具条，标签靠填充色表达选中，不再贴边压一条底边框。
  * 窄屏左侧留出浮动「打开主导航」的位置。
  *
  * 形态按标签栏留给平铺项的宽度决定：摆得下就摊开，摆不下就只显当前项、其余收进浮层菜单。
@@ -85,14 +86,14 @@ export function TerminalTabBar({
   return (
     <div
       ref={rowRef}
-      className="relative flex h-14 shrink-0 items-stretch border-b border-line bg-surface pl-14 pr-2 md:pl-3"
+      className="relative flex h-12 shrink-0 items-center rounded-full panel-surface py-0 pl-14 pr-2 md:pl-2"
     >
       {/* 固有宽度探针：脱离布局，量出全部标签摊开需要多宽。 */}
       <div
         aria-hidden
         className="pointer-events-none invisible absolute top-0 left-0 overflow-hidden"
       >
-        <div ref={probeRef} className="flex w-max">
+        <div ref={probeRef} className="flex w-max items-center">
           <TabItems
             sessions={sessions}
             activeId={activeId}
@@ -102,11 +103,11 @@ export function TerminalTabBar({
         </div>
       </div>
 
-      <div className={expanded ? 'flex min-w-0 flex-1 items-stretch' : 'hidden'}>
+      <div className={expanded ? 'flex min-w-0 flex-1 items-center' : 'hidden'}>
         <div
           role="tablist"
           aria-label="终端会话"
-          className="flex min-w-0 flex-1 items-stretch"
+          className="flex min-w-0 flex-1 items-center gap-1"
         >
           <TabItems
             sessions={sessions}
@@ -150,35 +151,34 @@ export function TerminalTabBar({
         ) : null}
       </div>
 
-      <div ref={trailingRef} className="flex shrink-0 items-center gap-2 pl-2">
+      <div ref={trailingRef} className={`${CTL_TOOLBAR} flex shrink-0 items-center gap-2 pl-2`}>
         {isDockerRuntime() ? null : (
           <span className="hidden rounded bg-warning/15 px-1.5 py-0.5 text-xs font-medium text-warning sm:inline">
             {hostTerminalBanner()}
           </span>
         )}
-        <IconButton
-          label="缩小终端字体"
-          variant="ghost"
-          disabled={fontSize <= TERMINAL_FONT_SIZE_MIN}
-          onPress={() => onFontZoom(-TERMINAL_FONT_SIZE_STEP)}
-        >
-          <ZoomOut aria-hidden size={16} />
-        </IconButton>
-        <IconButton
-          label="放大终端字体"
-          variant="ghost"
-          disabled={fontSize >= TERMINAL_FONT_SIZE_MAX}
-          onPress={() => onFontZoom(TERMINAL_FONT_SIZE_STEP)}
-        >
-          <ZoomIn aria-hidden size={16} />
-        </IconButton>
-        <button
-          type="button"
-          onClick={onCreate}
-          disabled={opening}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface-raised px-2.5 py-1 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <Plus aria-hidden size={15} />
+        {/* 缩放是一对反向动作，包进同一枚胶囊里才读得出它们管同一件事。 */}
+        <div className={CTL_GROUP}>
+          <IconButton
+            label="缩小终端字体"
+            variant="ghost"
+            className="size-7"
+            disabled={fontSize <= TERMINAL_FONT_SIZE_MIN}
+            onPress={() => onFontZoom(-TERMINAL_FONT_SIZE_STEP)}
+          >
+            <ZoomOut aria-hidden size={15} />
+          </IconButton>
+          <IconButton
+            label="放大终端字体"
+            variant="ghost"
+            className="size-7"
+            disabled={fontSize >= TERMINAL_FONT_SIZE_MAX}
+            onPress={() => onFontZoom(TERMINAL_FONT_SIZE_STEP)}
+          >
+            <ZoomIn aria-hidden size={15} />
+          </IconButton>
+        </div>
+        <button type="button" onClick={onCreate} disabled={opening} className={CTL_PRIMARY}>
           新建终端
         </button>
       </div>
@@ -207,8 +207,8 @@ function TabItems({
       <div
         key={session.id}
         className={[
-          'relative flex shrink-0 items-center',
-          selected ? 'text-fg' : 'text-fg-muted hover:text-fg',
+          'flex shrink-0 items-center rounded-full py-0.5 pr-1 transition-colors',
+          selected ? 'bg-nav-selected' : 'hover:bg-nav-hover',
         ].join(' ')}
       >
         <button
@@ -218,7 +218,9 @@ function TabItems({
           id={labelled ? `terminal-tab-${session.id}` : undefined}
           aria-controls={labelled && selected ? `terminal-panel-${session.id}` : undefined}
           onClick={() => onSelect(session.id)}
-          className="max-w-[16rem] truncate px-3 text-left text-base font-semibold"
+          className={`max-w-[14rem] truncate rounded-full pl-3 text-sm font-medium transition-colors ${
+            selected ? 'text-fg' : 'text-fg-muted hover:text-fg'
+          }`}
         >
           <span>{label}</span>
           {status ? (
@@ -240,9 +242,6 @@ function TabItems({
         >
           <X aria-hidden size={15} />
         </IconButton>
-        {selected ? (
-          <span aria-hidden className="absolute inset-x-3 bottom-0 h-0.5 rounded-full bg-accent" />
-        ) : null}
       </div>
     )
   })

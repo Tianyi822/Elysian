@@ -51,10 +51,10 @@ export function RenameDialog({
   return (
     <Dialog.Root open onOpenChange={(next) => !next && onClose()}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/60" />
+        <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
         <Dialog.Content
           aria-describedby={undefined}
-          className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-surface-raised p-4 shadow-xl"
+          className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl"
         >
           <Dialog.Title className="text-sm font-semibold">重命名「{entry.name}」</Dialog.Title>
           <form
@@ -71,7 +71,7 @@ export function RenameDialog({
               value={name}
               onChange={(event) => setName(event.target.value)}
               autoFocus
-              className="mt-1 h-[34px] w-full rounded-lg border border-line bg-surface px-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle"
+              className="mt-1 h-9 w-full rounded-lg border border-line bg-surface px-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle"
             />
             {errorMessage ? (
               <p role="alert" className="mt-2 text-xs text-danger">

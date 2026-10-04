@@ -5,6 +5,7 @@ import {
   GridComponent,
   LegendComponent,
   TooltipComponent,
+  ToolboxComponent,
 } from 'echarts/components'
 import * as echarts from 'echarts/core'
 import { LegacyGridContainLabel } from 'echarts/features'
@@ -23,6 +24,7 @@ echarts.use([
   LegendComponent,
   DataZoomComponent,
   BrushComponent,
+  ToolboxComponent,
   // 负载卡的读数整列落在 grid.containLabel 的保留区里；ECharts 6 已把它降级为可选特性，
   // 只走 echarts/core 就不会自动注册，靠隐式回落等于把布局押在一个会被移除的兼容层上。
   LegacyGridContainLabel,

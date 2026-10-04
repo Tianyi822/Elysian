@@ -120,7 +120,7 @@ function GuideHelp({ title, paragraphs }: { title: string; paragraphs: readonly 
         sideOffset={6}
         collisionPadding={8}
         aria-label={`${title} 说明`}
-        className="z-[60] w-80 space-y-2 rounded-lg border border-line bg-surface-raised p-3 text-xs leading-relaxed text-fg-muted shadow-lg"
+        className="z-[60] w-80 space-y-2 rounded-lg border border-control-line bg-surface-raised p-3 text-xs leading-relaxed text-fg-muted shadow-lg"
       >
         {paragraphs.map((paragraph) => (
           <p key={paragraph}>{paragraph}</p>
@@ -253,7 +253,7 @@ function DependencyGuideDialog({
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60" />
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay" />
         <Dialog.Content
           ref={contentRef}
           tabIndex={-1}
@@ -266,7 +266,7 @@ function DependencyGuideDialog({
             contentRef.current?.focus()
           }}
           aria-busy={running}
-          className="fixed left-1/2 top-1/2 z-[55] flex max-h-[min(40rem,calc(100vh-3rem))] w-[min(44rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line bg-bg shadow-2xl focus-visible:outline-none"
+          className="fixed left-1/2 top-1/2 z-[55] flex max-h-[min(40rem,calc(100vh-3rem))] w-[min(44rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden panel-surface shadow-2xl focus-visible:outline-none"
         >
           <Dialog.Title className="sr-only">{content.title}</Dialog.Title>
           <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
@@ -366,7 +366,7 @@ function DependencyGuideDialog({
                 void runFrom(startAt)
               }}
               disabled={running}
-              className="rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-lg border border-control-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50"
             >
               {buttonLabel}
             </button>

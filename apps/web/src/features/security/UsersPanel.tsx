@@ -6,7 +6,8 @@ import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { IconButton } from '../../components/IconButton'
 import { StatusTag } from '../../components/StatusTag'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
-import { Pencil, RefreshCw, Search, Trash2 } from '../../components/icons'
+import { BusyVeil, RefreshButton } from '../../components/RefreshState'
+import { Pencil, Search, Trash2 } from '../../components/icons'
 import { useUsersStore } from '../../stores/usersStore'
 import { ACTION_CLASS } from './sshCardParts'
 import { HostUserDialog } from './HostUserDialog'
@@ -57,7 +58,7 @@ export function UsersPanel() {
   return (
     <div>
       {operationError ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-danger/40 p-3 text-xs text-danger"><p className="min-w-0 flex-1">{operationError}</p><button type="button" className="rounded border border-line px-3 py-1.5 text-fg" onClick={() => void load(gateway)}>重新读取状态</button></div> : null}
-      <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-surface px-4 py-3">
+      <div className="mb-4 flex flex-wrap items-center gap-2 panel-surface px-4 py-3">
         {/* 用户动作只在容器内真实执行 useradd/usermod/userdel；宿主机本地开发是内存演示，明示出来。 */}
         {!isDockerRuntime() ? (
           <span role="status" className="text-sm text-fg-muted">
@@ -80,64 +81,66 @@ export function UsersPanel() {
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="搜索用户名或备注"
-            className="h-[34px] w-full rounded-lg border border-line bg-surface-raised pl-8 pr-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle"
+            className="h-9 w-full rounded-lg border border-control-line bg-surface-raised pl-8 pr-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle"
           />
         </div>
-        <IconButton
-          label={syncing ? '正在从系统同步账号' : '从系统同步账号'}
-          variant="solid"
+        <RefreshButton
           onPress={() => void syncFromSystem(gateway)}
-        >
-          <RefreshCw aria-hidden size={14} className={syncing ? 'animate-spin' : ''} />
-        </IconButton>
+          busy={syncing}
+          label={syncing ? '正在从系统同步账号' : '从系统同步账号'}
+          formControl
+        />
       </div>
 
       {/* 表格坐在面板里：行悬停向上步进一级表面；首列钉住，窄屏下其余列横向滚动。 */}
-      <div
-        role="region"
-        aria-label="主机账号表"
-        className="overflow-x-auto rounded-xl border border-line bg-surface"
-      >
-        {/* 44rem 是六列都不挤的下限：低于它整表横向滚动，而不是把备注压成几个字。
-            备注与权限组要放中文，给得宽；操作列定宽，只占两枚按钮的宽度。 */}
-        <table className="w-full min-w-[44rem] table-fixed border-separate border-spacing-0 text-left text-sm">
-          <colgroup>
-            <col className="w-[16%]" />
-            <col className="w-[18%]" />
-            <col className="w-[16%]" />
-            <col className="w-[10%]" />
-            <col className="w-[32%]" />
-            <col className="w-14" />
-          </colgroup>
-          <thead>
-            <tr>
-              {['用户名', '权限组', '登录方式', '状态', '备注', '操作'].map((label, index) => (
-                <th
-                  key={label}
-                  scope="col"
-                  className={`border-b border-line bg-surface px-3 py-2.5 text-xs font-medium text-fg-muted ${
-                    index === 0 ? 'sticky left-0 z-20 border-r' : ''
-                  }`}
-                >
-                  {label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.length === 0 ? (
+      <div className="busy-host">
+        <BusyVeil busy={syncing} />
+        <div
+          role="region"
+          aria-label="主机账号表"
+          className="overflow-x-auto panel-surface"
+        >
+          {/* 44rem 是六列都不挤的下限：低于它整表横向滚动，而不是把备注压成几个字。
+              备注与权限组要放中文，给得宽；操作列定宽，只占两枚按钮的宽度。 */}
+          <table className="w-full min-w-[44rem] table-fixed border-separate border-spacing-0 text-left text-sm">
+            <colgroup>
+              <col className="w-[16%]" />
+              <col className="w-[18%]" />
+              <col className="w-[16%]" />
+              <col className="w-[10%]" />
+              <col className="w-[32%]" />
+              <col className="w-14" />
+            </colgroup>
+            <thead>
               <tr>
-                <td colSpan={6} className="border-b border-line px-3 py-8 text-center text-sm text-fg-muted">
-                  {users.length === 0
-                    ? '还没有主机账号，点左上角「创建用户」新建一个'
-                    : '没有匹配的账号，换个关键词或清空搜索'}
-                </td>
+                {['用户名', '权限组', '登录方式', '状态', '备注', '操作'].map((label, index) => (
+                  <th
+                    key={label}
+                    scope="col"
+                    className={`border-b border-line bg-surface px-3 py-2.5 text-xs font-medium text-fg-muted ${
+                      index === 0 ? 'sticky left-0 z-20 border-r' : ''
+                    }`}
+                  >
+                    {label}
+                  </th>
+                ))}
               </tr>
-            ) : (
-              filtered.map((user) => <UserRow key={user.id} user={user} />)
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="border-b border-line px-3 py-8 text-center text-sm text-fg-muted">
+                    {users.length === 0
+                      ? '还没有主机账号，点左上角「创建用户」新建一个'
+                      : '没有匹配的账号，换个关键词或清空搜索'}
+                  </td>
+                </tr>
+              ) : (
+                filtered.map((user) => <UserRow key={user.id} user={user} />)
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <p className="mt-3 text-xs tabular-nums text-fg-muted">

@@ -65,7 +65,7 @@ export function CopyButton({
       type="button"
       onClick={() => void copy(value, label)}
       title={tooltip}
-      className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-line px-2 py-1.5 text-xs text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg"
+      className="action-button shrink-0 gap-1.5 border border-line px-2 py-1.5 text-xs text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg"
     >
       {copied ? <Check aria-hidden size={13} /> : (icon ?? <Copy aria-hidden size={13} />)}
       {copied ? '已复制' : label}

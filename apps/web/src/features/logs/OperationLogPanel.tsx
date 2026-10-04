@@ -12,7 +12,7 @@ import type { OperationLogEntry, OperationLogOutcome } from '@elysian/contracts'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { formatLoginTime } from '../../components/format'
-import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
+import { CTL_FIELD, CTL_TOOLBAR } from '../../components/formControl'
 import { Search } from '../../components/icons'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { StatusTag } from '../../components/StatusTag'
@@ -268,7 +268,7 @@ export function OperationLogPanel() {
         工具栏三块：筛选下拉 / 搜索 / 计数。窄屏（md 以下）一块一行，md 起回到一行三段、
         计数靠右。自由折行会把计数文字和控件混成一团，正是原来难以扫读的原因。
       */}
-      <div className="mb-4 flex flex-col gap-2 rounded-xl border border-line bg-surface px-4 py-3 md:flex-row md:items-center">
+      <div className={`${CTL_TOOLBAR} mb-4 flex flex-col gap-2 panel-surface px-4 py-3 md:flex-row md:items-center`}>
         <div role="group" aria-label="操作日志筛选" className="flex flex-wrap items-center gap-2">
           <SelectDropdown
             ariaLabel="操作分类筛选"
@@ -297,7 +297,7 @@ export function OperationLogPanel() {
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="请输入搜索关键字"
-            className={`${FORM_CONTROL_HEIGHT_CLASS} w-full rounded-lg border border-line bg-surface-raised pl-8 pr-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle`}
+            className={`${CTL_FIELD} pl-8`}
           />
           <Search
             aria-hidden
@@ -354,18 +354,15 @@ export function OperationLogPanel() {
         </div>
       ) : null}
 
-      {querying ? (
-        <LoadingState label="正在查询…" />
-      ) : (
-        <LogTable
-          label="操作日志表"
-          minWidthClass={OPERATION_LOG_TABLE_MIN_WIDTH_CLASS}
-          columns={COLUMNS}
-          rows={entries}
-          rowKey={(entry) => entry.id}
-          emptyMessage={filteredEmptyText(categoryFilter, trimmedSearch.length > 0)}
-        />
-      )}
+      <LogTable
+        label="操作日志表"
+        minWidthClass={OPERATION_LOG_TABLE_MIN_WIDTH_CLASS}
+        columns={COLUMNS}
+        rows={entries}
+        rowKey={(entry) => entry.id}
+        emptyMessage={filteredEmptyText(categoryFilter, trimmedSearch.length > 0)}
+        busy={querying}
+      />
 
       {truncated ? (
         <div className="mt-3 flex flex-col items-start gap-2">
@@ -374,7 +371,7 @@ export function OperationLogPanel() {
             type="button"
             disabled={loadingOlder}
             onClick={() => void loadOlder(gateway)}
-            className="rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:opacity-50"
+            className="rounded-lg border border-control-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:opacity-50"
           >
             {loadingOlder ? '加载中…' : '加载更早的记录'}
           </button>

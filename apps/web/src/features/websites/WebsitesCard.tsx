@@ -7,6 +7,7 @@ import {
 } from '@elysian/contracts'
 import { Pencil, Play, Square, Trash2 } from '../../components/icons'
 import { IconButton } from '../../components/IconButton'
+import { BusyVeil } from '../../components/RefreshState'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 
@@ -31,7 +32,7 @@ const RUNTIME_SHORT: Record<WebsiteProjectKind, string> = {
 }
 
 const ACTION_BUTTON =
-  'inline-flex items-center gap-1 rounded-lg border border-line px-2 py-1 text-xs text-fg-muted transition-colors hover:text-fg disabled:cursor-not-allowed disabled:opacity-50'
+  'action-button gap-1 border border-line px-2 py-1 text-xs text-fg-muted transition-colors hover:text-fg disabled:cursor-not-allowed disabled:opacity-50'
 
 /** 元信息格：标签在上、值在下，密度与容器卡片的指标格一致。 */
 function MetaCell({ label, value, numeric = false }: { label: string; value: string; numeric?: boolean }) {
@@ -55,6 +56,7 @@ function runtimeVersionLabel(project: WebsiteProject): string {
 export function WebsitesCard({
   project,
   busy,
+  refreshing = false,
   onOpenDetail,
   onToggleRunning,
   onOpenSettings,
@@ -64,6 +66,8 @@ export function WebsitesCard({
 }: {
   project: WebsiteProject
   busy: boolean
+  /** 列表刷新在途：卡片内容不换，只由自身盖一层浅色遮罩示意进行中。 */
+  refreshing?: boolean
   onOpenDetail: () => void
   onToggleRunning: () => void
   onOpenSettings: () => void
@@ -77,8 +81,9 @@ export function WebsitesCard({
     <article
       aria-label={project.name}
       onClick={onOpenDetail}
-      className="flex cursor-pointer flex-col gap-2 rounded-xl border border-line bg-surface p-4"
+      className="flex cursor-pointer flex-col gap-2 panel-surface p-4"
     >
+      <BusyVeil busy={refreshing} />
       {/* 不用 header 元素：测试工具链将其一律算作 banner 角色，会与顶栏 banner 冲突。 */}
       <div className="flex min-w-0 items-center gap-2">
         <h3 className="min-w-0 flex-1 truncate text-sm font-semibold" title={project.name}>
@@ -102,7 +107,7 @@ export function WebsitesCard({
           to={`/files${project.rootDir}`}
           title={project.rootDir}
           onClick={(event) => event.stopPropagation()}
-          className="mt-0.5 block truncate text-xs font-medium text-fg transition-colors hover:text-accent"
+          className="mt-0.5 block truncate text-xs font-medium text-fg transition-colors hover:text-accent-fg"
         >
           {project.rootDir}
         </Link>

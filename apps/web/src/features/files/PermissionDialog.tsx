@@ -34,12 +34,12 @@ import { useFilesStore } from '../../stores/filesStore'
  * 只有 top 对齐的参照是行盒顶部，与行高压平后按钮恰好占满、逐像素居中，勾选时也不会跳。
  */
 const CELL_CLASS =
-  'inline-flex size-5 items-center justify-center align-top rounded-md border transition-colors data-[state=checked]:border-accent/60 data-[state=checked]:bg-accent/10 data-[state=unchecked]:border-line data-[state=unchecked]:bg-surface-raised data-[state=unchecked]:hover:border-fg-subtle'
+  'inline-flex size-5 items-center justify-center align-top rounded-md border transition-colors data-[state=checked]:border-accent/60 data-[state=checked]:bg-accent/10 data-[state=unchecked]:border-control-line data-[state=unchecked]:bg-surface-raised data-[state=unchecked]:hover:border-fg-subtle'
 
 /** 勾选框里的对勾：勾上才渲染，颜色跟边框同调。 */
 function CellCheck() {
   return (
-    <Checkbox.Indicator className="text-accent">
+    <Checkbox.Indicator className="text-accent-fg">
       <Check aria-hidden size={12} strokeWidth={2.5} />
     </Checkbox.Indicator>
   )
@@ -142,10 +142,10 @@ export function PermissionDialog({
   return (
     <Dialog.Root open onOpenChange={(next) => !next && onClose()}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/60" />
+        <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
         <Dialog.Content
           aria-describedby={undefined}
-          className="fixed left-1/2 top-1/2 z-[61] w-[min(34rem,calc(100vw-2rem))] max-h-[calc(100dvh-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-line bg-surface-raised p-5 shadow-xl"
+          className="fixed left-1/2 top-1/2 z-[61] w-[min(34rem,calc(100vw-2rem))] max-h-[calc(100dvh-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto panel-surface p-5 shadow-xl"
         >
           <Dialog.Title className="text-sm font-semibold">修改权限</Dialog.Title>
           {/* 路径跟着标题走：看清正在改哪一个条目，名字之外还有它在哪。 */}
@@ -238,7 +238,7 @@ export function PermissionDialog({
                     if (isValidFileMode(next)) setMode(next)
                   }}
                   inputMode="numeric"
-                  className="mt-1.5 h-[34px] w-20 rounded-lg border border-line bg-surface px-2.5 text-center font-mono text-sm tabular-nums text-fg transition-colors hover:border-fg-subtle"
+                  className="mt-1.5 h-9 w-20 rounded-lg border border-line bg-surface px-2.5 text-center font-mono text-sm tabular-nums text-fg transition-colors hover:border-fg-subtle"
                 />
               </div>
 
@@ -251,7 +251,7 @@ export function PermissionDialog({
                   ariaLabel="所有者"
                   fullWidth
                   mono
-                  triggerClassName="mt-1.5 inline-flex h-[34px] w-full items-center justify-between gap-2 rounded-lg border border-line bg-surface px-2.5 font-mono text-sm leading-none text-fg transition-colors hover:border-fg-subtle"
+                  triggerClassName="mt-1.5 inline-flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-line bg-surface px-2.5 font-mono text-sm leading-none text-fg transition-colors hover:border-fg-subtle"
                   items={ownerOptions.map((name) => ({ value: name, label: name }))}
                   value={owner}
                   onSelect={setOwner}
@@ -259,7 +259,7 @@ export function PermissionDialog({
               </div>
 
               {isDirectory ? (
-                <label className="inline-flex h-[34px] cursor-pointer items-center gap-2 text-sm text-fg">
+                <label className="inline-flex h-9 cursor-pointer items-center gap-2 text-sm text-fg">
                   <Checkbox.Root
                     checked={recursive}
                     onCheckedChange={(checked) => setRecursive(checked === true)}
@@ -276,14 +276,14 @@ export function PermissionDialog({
                 <button
                   type="button"
                   onClick={onClose}
-                  className="h-[34px] rounded-lg border border-line px-3 text-xs text-fg-muted transition-colors hover:text-fg"
+                  className="h-9 rounded-lg border border-line px-3 text-xs text-fg-muted transition-colors hover:text-fg"
                 >
                   取消
                 </button>
                 <button
                   type="submit"
                   disabled={submitting}
-                  className="h-[34px] rounded-lg border border-line bg-surface px-3 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50"
+                  className="h-9 rounded-lg border border-line bg-surface px-3 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   应用
                 </button>

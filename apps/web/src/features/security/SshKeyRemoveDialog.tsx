@@ -20,10 +20,10 @@ export function SshKeyRemoveDialog() {
   return (
     <Dialog.Root open onOpenChange={(open) => { if (!open) closeRemoveKey() }}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/60" />
+        <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
         <Dialog.Content
           aria-describedby={undefined}
-          className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-surface-raised p-4 shadow-xl"
+          className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl"
         >
           <Dialog.Title className="text-sm font-semibold">
             确认删除 SSH 密钥「{removeKeyTarget.name}」？

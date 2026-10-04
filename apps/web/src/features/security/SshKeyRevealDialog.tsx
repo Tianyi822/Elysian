@@ -30,13 +30,13 @@ export function SshKeyRevealDialog({
   return (
     <Dialog.Root open onOpenChange={(next) => { if (!next) onClose() }}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60" />
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay" />
         <Dialog.Content
           aria-describedby={undefined}
           // 点外部一律不关：仅此一次可见的私钥不该因为一次误点丢掉。Esc 与「关闭」仍可退出。
           onPointerDownOutside={(event) => event.preventDefault()}
           onInteractOutside={(event) => event.preventDefault()}
-          className="fixed left-1/2 top-1/2 z-[55] flex max-h-[min(38rem,calc(100vh-3rem))] w-[min(34rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line bg-bg shadow-2xl"
+          className="fixed left-1/2 top-1/2 z-[55] flex max-h-[min(38rem,calc(100vh-3rem))] w-[min(34rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden panel-surface shadow-2xl"
         >
           <Dialog.Title className="sr-only">{title}</Dialog.Title>
           <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
@@ -76,7 +76,7 @@ export function SshKeyRevealDialog({
             {/* 私钥区可聚焦：键盘用户因此也能滚动读完这段长文本。 */}
             <pre
               tabIndex={0}
-              className="max-h-56 overflow-auto rounded-lg border border-line bg-surface-raised p-3 font-mono text-xs whitespace-pre text-fg"
+              className="max-h-56 overflow-auto rounded-lg border border-control-line bg-surface-raised p-3 font-mono text-xs whitespace-pre text-fg"
             >
               {material.privateKey}
             </pre>
@@ -103,7 +103,7 @@ export function SshKeyRevealDialog({
               <button
                 type="button"
                 onClick={() => downloadPrivateKey(filename, material)}
-                className="rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle"
+                className="rounded-lg border border-control-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle"
               >
                 下载私钥
               </button>

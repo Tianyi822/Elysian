@@ -19,12 +19,12 @@ export function WebsitesRemoveDialog() {
   return (
     <Dialog.Root open onOpenChange={(next) => { if (!next) closeRemove() }}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60" />
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay" />
         <Dialog.Content
           aria-describedby={undefined}
           onPointerDownOutside={(event) => event.preventDefault()}
           onInteractOutside={(event) => event.preventDefault()}
-          className="fixed left-1/2 top-1/2 z-[55] flex w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line bg-bg shadow-2xl"
+          className="fixed left-1/2 top-1/2 z-[55] flex w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden panel-surface shadow-2xl"
         >
           <Dialog.Title className="sr-only">确认删除项目「{removeTarget.name}」？</Dialog.Title>
           <div className="flex flex-col gap-2 px-4 py-4">

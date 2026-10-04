@@ -73,7 +73,7 @@ describe('RequireSession 会话闸门', () => {
 
   it('演示模式（本地无后端）不强制登录：mock 网关首屏即渲染外壳', () => {
     renderApp('/')
-    expect(screen.getByRole('banner')).toBeInTheDocument()
+    expect(screen.getByRole('navigation', { name: '主导航' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '登录 Elysian' })).not.toBeInTheDocument()
   })
 })

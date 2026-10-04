@@ -4,6 +4,7 @@ import { Navigate, useLocation, useNavigate } from 'react-router'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { PasswordVisibilityButton } from '../security/passwordFieldParts'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
+import { Info, TriangleAlert } from '../../components/icons'
 import { useSessionStore } from '../../stores/sessionStore'
 
 /*
@@ -21,8 +22,11 @@ import { useSessionStore } from '../../stores/sessionStore'
  * 不退回表单假装面板健康——同一故障一种呈现，与 RequireSession 的既有做法一致。
  */
 
-/** 回跳目标校验：须为以单个 / 开头的站内路径；`//` 与 `/\` 是协议相对跳转，一律回落首页。 */
-function safeRedirectTarget(from: unknown): string {
+/** 登录表单的两个文本控件同款：内凹一档表达「可写入」，与主按钮的凸起描边成对。 */
+const FIELD_CLASS =
+  'h-9 w-full rounded-lg border border-control-line bg-surface-raised px-2.5 text-sm text-fg shadow-[inset_0_1px_2px_var(--t-panel-shadow)] transition-colors placeholder:text-fg-subtle hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
+
+/** 回跳目标校验：须为以单个 / 开头的站内路径；`//` 与 `/\` 是协议相对跳转，一律回落首页。 */function safeRedirectTarget(from: unknown): string {
   if (typeof from !== 'string') return '/'
   if (!from.startsWith('/') || from.startsWith('//') || from.startsWith('/\\')) return '/'
   return from
@@ -31,9 +35,34 @@ function safeRedirectTarget(from: unknown): string {
 /**
  * 登录页各态共用的居中外壳：错误态、两个过渡态、表单四处都用它。
  * 一处样式改动只需改这里，不会只落在某一份拷贝上（此前四处手抄同一串 className）。
+ * app-canvas 提供色雾与细颗粒背景，卡片与侧栏的毛玻璃才有东西可糊。
  */
 function CenteredShell({ children }: { children: ReactNode }) {
-  return <main className="flex min-h-dvh items-center justify-center bg-bg p-4 text-fg">{children}</main>
+  return <main className="app-canvas flex min-h-dvh items-center justify-center p-4 text-fg">{children}</main>
+}
+
+/** 卡片内的提示条：图标 + 文字 + 色调三者同时表达，不只靠颜色。 */
+function Notice({
+  role,
+  tone,
+  children,
+}: {
+  role: 'note' | 'status' | 'alert'
+  tone: 'muted' | 'warning'
+  children: ReactNode
+}) {
+  const Icon = tone === 'warning' ? TriangleAlert : Info
+  return (
+    <p
+      role={role}
+      className={`mt-3 flex items-start gap-2 rounded-lg border px-3 py-2.5 text-xs leading-5 ${
+        tone === 'warning' ? 'border-warning/35 bg-warning/10 text-warning' : 'border-panel-line bg-surface/55 text-fg-muted'
+      }`}
+    >
+      <Icon aria-hidden size={14} className="mt-0.5 shrink-0" />
+      <span className="min-w-0">{children}</span>
+    </p>
+  )
 }
 
 export function LoginPage() {
@@ -138,31 +167,31 @@ export function LoginPage() {
 
   return (
     <CenteredShell>
-      <section className="w-full max-w-sm rounded-xl border border-line bg-surface p-6">
-        <h1 className="text-lg font-semibold tracking-tight">登录 Elysian</h1>
-        <p className="mt-1 text-xs text-fg-muted">运维工作台需要登录后使用。</p>
+      <section className="w-full max-w-sm panel-surface p-6 sm:p-7">
+        <div className="flex items-center gap-3">
+          {/* 品牌字标与标题同行：卡片开场一行认得出是谁。 */}
+          <span
+            aria-hidden
+            className="grid size-10 shrink-0 place-items-center rounded-xl border border-panel-line bg-nav-selected text-base font-semibold text-accent-fg shadow-[inset_0_1px_0_var(--t-panel-sheen)]"
+          >
+            E
+          </span>
+          <h1 className="min-w-0 text-lg font-semibold tracking-tight">登录 Elysian</h1>
+        </div>
 
         {devAccount ? (
-          <p className="mt-4 rounded-lg border border-warning/40 p-2.5 text-xs text-warning" role="note">
+          <Notice role="note" tone="warning">
             开发模式已启用固定账号：dev / dev-elysian（仅开发环境可用，生产打包不含此账号）
-          </p>
+          </Notice>
         ) : null}
 
         {adjudicated !== null ? (
-          <p role="note" className="mt-4 rounded-lg border border-line p-2.5 text-xs text-fg-muted">
-            {`登录后将返回 ${new URL(adjudicated).origin}`}
-          </p>
+          <Notice role="note" tone="muted">{`登录后将返回 ${new URL(adjudicated).origin}`}</Notice>
         ) : requestedReturnTo !== undefined && returnTo === null ? (
-          <p role="alert" className="mt-4 rounded-lg border border-warning/40 p-2.5 text-xs text-warning">
-            回跳地址不在允许名单，登录后将留在面板。
-          </p>
+          <Notice role="alert" tone="warning">回跳地址不在允许名单，登录后将留在面板。</Notice>
         ) : null}
 
-        {notice ? (
-          <p role="status" className="mt-4 rounded-lg border border-line p-2.5 text-xs text-fg-muted">
-            {notice}
-          </p>
-        ) : null}
+        {notice ? <Notice role="status" tone="muted">{notice}</Notice> : null}
 
         <form className="mt-5 flex flex-col gap-4" onSubmit={(event) => void onSubmit(event)}>
           <div className="flex flex-col gap-1.5">
@@ -178,7 +207,7 @@ export function LoginPage() {
               value={username}
               onChange={(event) => setUsername(event.target.value)}
               disabled={submitting}
-              className="h-[34px] w-full rounded-lg border border-line bg-surface-raised px-2.5 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50"
+              className={FIELD_CLASS}
             />
           </div>
 
@@ -196,15 +225,16 @@ export function LoginPage() {
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 disabled={submitting}
-                className="h-[34px] w-full rounded-lg border border-line bg-surface-raised px-2.5 pr-9 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50"
+                className={`${FIELD_CLASS} pr-9`}
               />
               <PasswordVisibilityButton visible={passwordVisible} onToggle={setPasswordVisible} />
             </div>
           </div>
 
           {error ? (
-            <p role="alert" className="rounded-lg border border-danger/40 p-2.5 text-xs text-danger">
-              {error}
+            <p role="alert" className="flex items-start gap-2 rounded-lg border border-danger/35 bg-danger/10 px-3 py-2.5 text-xs leading-5 text-danger">
+              <TriangleAlert aria-hidden size={14} className="mt-0.5 shrink-0" />
+              <span className="min-w-0">{error}</span>
             </p>
           ) : null}
 
@@ -212,7 +242,7 @@ export function LoginPage() {
           <button
             type="submit"
             disabled={submitting}
-            className="h-9 rounded-lg border border-line bg-surface-raised px-4 text-sm font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50"
+            className="h-9 w-full rounded-lg border border-control-line bg-surface-raised px-4 text-sm font-medium text-fg shadow-[0_1px_2px_var(--t-panel-shadow),inset_0_1px_0_var(--t-panel-sheen)] transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50"
           >
             {submitting ? '正在登录…' : '登录'}
           </button>

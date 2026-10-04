@@ -7,6 +7,7 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 import { formatUptime } from '../../components/format'
+import { CTL_CARD_ACTION, CTL_STAT, CTL_TILE } from '../../components/formControl'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import {
   containerRestartConfirmDescription,
@@ -28,9 +29,6 @@ function portBindLabel(hostIp: string | undefined): string | null {
   if (kind === 'address') return hostIp ?? null
   return null
 }
-
-const ACTION_BUTTON =
-  'inline-flex items-center gap-1 rounded-lg border border-line px-2 py-1 text-xs text-fg-muted transition-colors hover:text-fg disabled:cursor-not-allowed disabled:opacity-50'
 
 /** 危险操作的确认文案与按钮语义：停止是破坏性的用危险色，重启是扰动性的用警告色。 */
 function confirmCopy(action: 'stop' | 'restart', name: string) {
@@ -68,7 +66,7 @@ export function ContainerCard({ container }: { container: Container }) {
   return (
     <article
       aria-label={container.name}
-      className={`flex h-full flex-col gap-2 rounded-xl border border-line bg-surface p-4 ${
+      className={`flex h-full flex-col gap-2 panel-surface p-4 ${
         container.status === 'stopped' ? 'border-dashed' : ''
       }`}
     >
@@ -89,7 +87,7 @@ export function ContainerCard({ container }: { container: Container }) {
         />
       </div>
 
-      <div className="rounded-lg bg-surface-raised px-3 py-2 text-xs text-fg-muted">
+      <div className="tile">
         <p>
           镜像{' '}
           <span className="text-fg">
@@ -98,7 +96,7 @@ export function ContainerCard({ container }: { container: Container }) {
         </p>
       </div>
 
-      <div className="rounded-lg bg-surface-raised px-3 py-2 text-xs text-fg-muted">
+      <div className="tile">
         <p className="font-medium text-fg-muted">端口映射</p>
         {container.ports.length ? (
           /* 用 span 而不是嵌套 ul：嵌套的 listitem 会被外层「容器列表」的角色查询一并抓到。 */
@@ -108,21 +106,21 @@ export function ContainerCard({ container }: { container: Container }) {
               return (
               <span
                 key={`${port.containerPort}-${port.hostPort}-${port.protocol}`}
-                className="inline-flex items-stretch overflow-hidden rounded border border-line bg-surface text-xs tabular-nums"
+                className={CTL_STAT}
                 title={`容器内端口 ${port.containerPort} 映射到宿主机端口 ${port.hostPort}（${port.protocol}）`}
               >
                 <span className="px-1.5 py-1 text-fg-muted">{port.containerPort}</span>
-                <span aria-hidden="true" className="border-l border-line px-0.5 py-1 text-fg-subtle">
+                <span aria-hidden="true" className="px-0.5 py-1 text-fg-subtle">
                   {' → '}
                 </span>
-                <span className="border-l border-line px-1.5 py-1 font-medium text-fg">
+                <span className="px-1.5 py-1 font-medium text-fg">
                   {port.hostPort}
                 </span>
-                <span className="border-l border-line px-1.5 py-1 uppercase tracking-wide text-fg-subtle">
+                <span className="px-1.5 py-1 uppercase tracking-wide text-fg-subtle">
                   /{port.protocol}
                 </span>
                 {bindLabel ? (
-                  <span className="border-l border-line px-1.5 py-1 text-fg-muted">{bindLabel}</span>
+                  <span className="px-1.5 py-1 text-fg-muted">{bindLabel}</span>
                 ) : null}
               </span>
             )})}
@@ -133,15 +131,15 @@ export function ContainerCard({ container }: { container: Container }) {
       </div>
 
       <div className="grid grid-cols-3 gap-2">
-        <p className="rounded-lg bg-surface-raised px-3 py-2">
+        <p className={CTL_TILE}>
           <span className="block text-xs text-fg-subtle">CPU </span>
           <span className="mt-0.5 block text-sm font-medium tabular-nums text-fg">{cpu}</span>
         </p>
-        <p className="rounded-lg bg-surface-raised px-3 py-2">
+        <p className={CTL_TILE}>
           <span className="block text-xs text-fg-subtle">内存 </span>
           <span className="mt-0.5 block text-sm font-medium tabular-nums text-fg">{memory}</span>
         </p>
-        <p className="rounded-lg bg-surface-raised px-3 py-2">
+        <p className={CTL_TILE}>
           <span className="block text-xs text-fg-subtle">运行时长 </span>
           <span className="mt-0.5 block text-xs tabular-nums text-fg">
             {formatUptime(container.startedAt, new Date())}
@@ -152,7 +150,7 @@ export function ContainerCard({ container }: { container: Container }) {
       <div className="mt-auto flex flex-wrap items-center gap-2">
         <button
           type="button"
-          className={ACTION_BUTTON}
+          className={CTL_CARD_ACTION}
           disabled={container.status !== 'running'}
           title={pausedBlocked ? pausedTitle : undefined}
           onClick={() => void openTerminal(gateway, container.id)}
@@ -160,14 +158,14 @@ export function ContainerCard({ container }: { container: Container }) {
           <TerminalIcon aria-hidden size={13} />
           终端
         </button>
-        <button type="button" className={ACTION_BUTTON} onClick={() => openDetail(container.id)}>
+        <button type="button" className={CTL_CARD_ACTION} onClick={() => openDetail(container.id)}>
           <Info aria-hidden size={13} />
           详情
         </button>
         {container.status === 'stopped' ? (
           <button
             type="button"
-            className={ACTION_BUTTON}
+            className={CTL_CARD_ACTION}
             disabled={actionsDisabled}
             title={pausedBlocked ? pausedTitle : undefined}
             onClick={() => void runAction(gateway, container.id, 'start')}
@@ -178,7 +176,7 @@ export function ContainerCard({ container }: { container: Container }) {
         ) : (
           <button
             type="button"
-            className={ACTION_BUTTON}
+            className={CTL_CARD_ACTION}
             disabled={actionsDisabled}
             title={pausedBlocked ? pausedTitle : undefined}
             onClick={() => setConfirmAction('stop')}
@@ -189,7 +187,7 @@ export function ContainerCard({ container }: { container: Container }) {
         )}
         <button
           type="button"
-          className={ACTION_BUTTON}
+          className={CTL_CARD_ACTION}
           disabled={actionsDisabled || container.status === 'stopped'}
           title={pausedBlocked ? pausedTitle : undefined}
           onClick={() => setConfirmAction('restart')}
@@ -207,10 +205,10 @@ export function ContainerCard({ container }: { container: Container }) {
           }}
         >
           <Dialog.Portal>
-            <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/60" />
+            <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
             <Dialog.Content
               aria-describedby={undefined}
-              className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-surface-raised p-4 shadow-xl"
+              className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl"
             >
               <Dialog.Title className="text-sm font-semibold">
                 {confirmCopy(confirmAction, container.name).title}

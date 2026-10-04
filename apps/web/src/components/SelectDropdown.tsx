@@ -152,12 +152,10 @@ export function SelectDropdown<T extends string>({
   const valueLabel = matched?.label || fallbackLabel || value || ''
   const showPlaceholder = !matched && Boolean(fallbackLabel)
   const selected = active && !fullWidth
-  const fieldTrigger =
-    `inline-flex ${FORM_CONTROL_HEIGHT_CLASS} w-full items-center justify-between gap-1.5 rounded-lg border border-line bg-surface-raised px-2.5 text-sm text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-60`
-  const filterTrigger = `inline-flex ${FORM_CONTROL_HEIGHT_CLASS} shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 text-xs font-medium transition-colors ${
-    selected
-      ? 'border-accent/50 bg-accent/10 text-accent'
-      : 'border-line bg-surface-raised text-fg hover:border-fg-subtle'
+  // 形状（高度、描边、圆角、底色、字号）归控件层，这里只补两端排布需要的宽度与状态色。
+  const fieldTrigger = 'ctl-select w-full'
+  const filterTrigger = `ctl-select${
+    selected ? ' border-accent/50 bg-accent/10 text-accent-fg' : ''
   }`
   const triggerClass =
     triggerClassName ?? `${fullWidth ? fieldTrigger : filterTrigger}${className ? ` ${className}` : ''}`
@@ -192,7 +190,7 @@ export function SelectDropdown<T extends string>({
           className={triggerClass}
         >
           {label && !fullWidth && !triggerClassName ? (
-            <span className={selected ? 'text-accent' : 'text-fg-muted'}>{label}</span>
+            <span className={selected ? 'text-accent-fg' : 'text-fg-muted'}>{label}</span>
           ) : null}
           <span className={valueClass}>{valueLabel}</span>
           <ChevronDown aria-hidden size={13} className="shrink-0" />
@@ -242,7 +240,7 @@ export function SelectDropdown<T extends string>({
                     } else focusOption(direction)
                   }
                 }}
-                className={`${FORM_CONTROL_HEIGHT_CLASS} w-full rounded-lg border border-line bg-surface-raised pl-8 pr-9 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle`}
+                className={`${FORM_CONTROL_HEIGHT_CLASS} w-full rounded-lg border border-control-line bg-surface-raised pl-8 pr-9 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle`}
               />
               {searchText ? <IconButton
                 label="清空搜索"

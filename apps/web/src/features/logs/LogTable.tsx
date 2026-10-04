@@ -1,5 +1,6 @@
 import { Fragment } from 'react'
 import type { ReactNode } from 'react'
+import { BusyVeil } from '../../components/RefreshState'
 
 /*
  * 日志表格的共用底座：固定列宽、横向滚动、sticky 表头。
@@ -45,8 +46,13 @@ export function fixedColumnDemand(): { timestamp: number; level: number } {
   }
 }
 
-const DEFAULT_REGION_CLASS =
-  'min-h-72 flex-1 overflow-auto rounded-xl border border-line bg-surface hover-scrollbar'
+/**
+ * 外框承担卡片材质与定位上下文，内层滚动容器绝对铺满。
+ * 遮罩挂在外框上：滚动条动它不动，刷新期间整张表始终被盖住——
+ * 若把遮罩放进滚动容器，它会随内容一起卷出可视区。
+ */
+const DEFAULT_SHELL_CLASS = 'relative min-h-72 flex-1 overflow-hidden panel-surface'
+const SCROLL_CLASS = 'absolute inset-0 overflow-auto hover-scrollbar'
 
 export type LogColumn<T> = {
   /** 列标题，同时作为列标识（同一张表内不重复）。 */
@@ -68,7 +74,8 @@ export function LogTable<T>({
   rows,
   rowKey,
   emptyMessage,
-  regionClassName,
+  shellClassName,
+  busy = false,
 }: {
   /** 滚动容器的可访问名，如「运行日志表」。 */
   label: string
@@ -79,55 +86,56 @@ export function LogTable<T>({
   rowKey: (row: T) => string
   /** 表格内一行的空提示（数据为空或搜索无命中）。 */
   emptyMessage: ReactNode
-  /** 滚动容器的高度类；内嵌用默认，全屏弹窗里传 `min-h-0 flex-1` 免得撑破视口。 */
-  regionClassName?: string
+  /** 外框的高度类；内嵌用默认，全屏弹窗里传 `min-h-0 flex-1` 免得撑破视口。 */
+  shellClassName?: string
+  /** 查询在途：旧行留在表里，只由表格自身盖一层浅色遮罩，不换成加载占位。 */
+  busy?: boolean
 }) {
   return (
-    <div
-      role="region"
-      aria-label={label}
-      className={regionClassName ?? DEFAULT_REGION_CLASS}
-    >
-      <table className={`w-full ${minWidthClass} table-fixed border-separate border-spacing-0 text-left text-sm`}>
-        <colgroup>
-          {columns.map((column, index) => (
-            <col key={`${column.label}-${index}`} className={column.widthClass} />
-          ))}
-        </colgroup>
-        <thead>
-          <tr>
+    <div className={shellClassName ?? DEFAULT_SHELL_CLASS}>
+      <BusyVeil busy={busy} />
+      <div role="region" aria-label={label} className={SCROLL_CLASS}>
+        <table className={`w-full ${minWidthClass} table-fixed border-separate border-spacing-0 text-left text-sm`}>
+          <colgroup>
             {columns.map((column, index) => (
-              <th
-                key={`${column.label}-${index}`}
-                scope="col"
-                className="sticky top-0 z-10 border-b border-line bg-surface px-3 py-2.5 text-xs font-medium text-fg-muted"
-              >
-                {column.label}
-              </th>
+              <col key={`${column.label}-${index}`} className={column.widthClass} />
             ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length === 0 ? (
+          </colgroup>
+          <thead>
             <tr>
-              <td
-                colSpan={columns.length}
-                className="border-b border-line px-3 py-8 text-center text-sm text-fg-muted"
-              >
-                {emptyMessage}
-              </td>
+              {columns.map((column, index) => (
+                <th
+                  key={`${column.label}-${index}`}
+                  scope="col"
+                  className="sticky top-0 z-10 border-b border-line bg-surface px-3 py-2.5 text-xs font-medium text-fg-muted"
+                >
+                  {column.label}
+                </th>
+              ))}
             </tr>
-          ) : (
-            rows.map((row) => (
-              <tr key={rowKey(row)} className="transition-colors hover:bg-surface-raised">
-                {columns.map((column, index) => (
-                  <Fragment key={`${column.label}-${index}`}>{column.cell(row)}</Fragment>
-                ))}
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr>
+                <td
+                  colSpan={columns.length}
+                  className="border-b border-line px-3 py-8 text-center text-sm text-fg-muted"
+                >
+                  {emptyMessage}
+                </td>
               </tr>
-            ))
-          )}
-        </tbody>
-      </table>
+            ) : (
+              rows.map((row) => (
+                <tr key={rowKey(row)} className="transition-colors hover:bg-surface-raised">
+                  {columns.map((column, index) => (
+                    <Fragment key={`${column.label}-${index}`}>{column.cell(row)}</Fragment>
+                  ))}
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }

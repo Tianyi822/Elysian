@@ -5,9 +5,11 @@ import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { formatLoginTime } from '../../components/format'
 import { Search } from '../../components/icons'
+import { CTL_TOOLBAR } from '../../components/formControl'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
+import { BusyVeil } from '../../components/RefreshState'
 import { useLoginLogStore } from '../../stores/loginLogStore'
 import type { LoginLogStatusFilter } from '../../stores/loginLogStore'
 
@@ -82,7 +84,7 @@ export function LoginLogPanel() {
 
   return (
     <div>
-      <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-surface px-4 py-3">
+      <div className={`${CTL_TOOLBAR} mb-4 flex flex-wrap items-center gap-2 panel-surface px-4 py-3`}>
         {isDockerRuntime() ? null : (
           <span role="status" className="text-sm text-fg-muted">
             演示数据
@@ -95,10 +97,10 @@ export function LoginLogPanel() {
               type="button"
               aria-pressed={statusFilter === value}
               onClick={() => setStatusFilter(value)}
-              className={`inline-flex items-center rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
+              className={`action-button border px-3 py-1.5 text-xs font-medium transition-colors ${
                 statusFilter === value
                   ? 'border-success/50 bg-success/10 text-success'
-                  : 'border-line bg-surface-raised text-fg hover:border-fg-subtle'
+                  : 'border-control-line bg-surface-raised text-fg hover:border-fg-subtle'
               }`}
             >
               {label}
@@ -114,7 +116,7 @@ export function LoginLogPanel() {
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="请输入搜索关键字"
-            className="w-full rounded-lg border border-line bg-surface-raised py-1.5 pl-3 pr-8 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle"
+            className="w-full rounded-lg border border-control-line bg-surface-raised py-1.5 pl-3 pr-8 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle"
           />
           <Search
             aria-hidden
@@ -128,10 +130,9 @@ export function LoginLogPanel() {
         </p>
       ) : null}
 
-      {querying ? (
-        <LoadingState label="正在查询…" />
-      ) : (
-        <div role="region" aria-label="登录日志表" className="overflow-x-auto rounded-xl border border-line bg-surface">
+      <div className="busy-host">
+        <BusyVeil busy={querying} />
+        <div role="region" aria-label="登录日志表" className="overflow-x-auto panel-surface">
           <table className="w-full min-w-[960px] table-fixed border-separate border-spacing-0 text-left text-sm">
             <colgroup>
               <col className="w-40" />
@@ -181,7 +182,7 @@ export function LoginLogPanel() {
             </tbody>
           </table>
         </div>
-      )}
+      </div>
 
       {truncated ? (
         <div className="mt-3 flex flex-col items-start gap-2">
@@ -190,7 +191,7 @@ export function LoginLogPanel() {
             type="button"
             disabled={loadingOlder}
             onClick={() => void loadOlder(gateway)}
-            className="rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:opacity-50"
+            className="rounded-lg border border-control-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:opacity-50"
           >
             {loadingOlder ? '加载中…' : '加载更早的记录'}
           </button>

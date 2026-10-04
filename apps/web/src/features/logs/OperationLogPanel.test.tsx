@@ -212,7 +212,7 @@ describe('平台操作日志面板', () => {
     expect(dataRows()[0]).toHaveTextContent(terminals[0]!.action)
     // 筛选生效要在触发器上看得见：当前值回到可访问名，accent 态标出「这里筛过了」。
     expect(trigger).toHaveAccessibleName(`操作分类筛选：${OPERATION_LOG_CATEGORY_LABELS.terminals}`)
-    expect(trigger).toHaveClass('border-accent/50', 'bg-accent/10', 'text-accent')
+    expect(trigger).toHaveClass('border-accent/50', 'bg-accent/10', 'text-accent-fg')
 
     await user.click(trigger)
     await user.click(await screen.findByRole('menuitemradio', { name: '全部' }))

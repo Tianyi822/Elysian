@@ -1,6 +1,6 @@
 import { usePanelStore } from '../../stores/panelStore'
 import * as Dialog from '@radix-ui/react-dialog'
-import * as Switch from '@radix-ui/react-switch'
+import { SwitchToggle } from './sshCardParts'
 import { PANEL_PORT } from '@elysian/contracts'
 import { useEffect, useState } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
@@ -113,10 +113,10 @@ export function FirewallScanDialog() {
   return (
     <Dialog.Root open onOpenChange={(next) => { if (!next) closeScan() }}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60" />
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay" />
         <Dialog.Content
           aria-describedby={undefined}
-          className="fixed left-1/2 top-1/2 z-[55] flex max-h-[min(44rem,calc(100vh-3rem))] w-[min(38rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line bg-bg shadow-2xl"
+          className="fixed left-1/2 top-1/2 z-[55] flex max-h-[min(44rem,calc(100vh-3rem))] w-[min(38rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden panel-surface shadow-2xl"
         >
           <Dialog.Title className="sr-only">端口防扫描</Dialog.Title>
           <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
@@ -142,15 +142,12 @@ export function FirewallScanDialog() {
           <div className="flex flex-col gap-4 overflow-y-auto px-4 py-4">
             <label className="inline-flex w-fit cursor-pointer items-center gap-2 text-sm text-fg">
               防扫描开关
-              <Switch.Root
+              <SwitchToggle
+                label="防扫描开关"
                 checked={scan?.enabled ?? false}
-                onCheckedChange={(checked) => void toggleScanProtection(gateway, checked)}
                 disabled={status !== 'ready' || !scan}
-                aria-label="防扫描开关"
-                className="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border border-line bg-surface-raised transition-colors data-[state=checked]:border-accent data-[state=checked]:bg-accent data-[disabled]:opacity-50"
-              >
-                <Switch.Thumb className="ml-0.5 block size-3.5 rounded-full bg-fg-muted transition-transform data-[state=checked]:translate-x-4 data-[state=checked]:bg-white" />
-              </Switch.Root>
+                onCheckedChange={(checked) => void toggleScanProtection(gateway, checked)}
+              />
             </label>
 
             {/* 判定口径可配置并持久化在规则文本里；只有防扫描开启时可保存。 */}
@@ -226,7 +223,7 @@ export function FirewallScanDialog() {
                   type="button"
                   onClick={submitConfig}
                   disabled={!scan?.enabled}
-                  className="shrink-0 rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:opacity-50"
+                  className="shrink-0 rounded-lg border border-control-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:opacity-50"
                 >
                   保存配置
                 </button>
@@ -271,7 +268,7 @@ export function FirewallScanDialog() {
                                 id="scan-ip-search"
                                 value={ipSearch}
                                 onChange={(event) => onIpSearchChange(event.target.value)}
-                                className="w-full rounded border border-line bg-surface-raised py-0.5 pl-6 pr-1.5 text-xs font-normal text-fg transition-colors hover:border-fg-subtle"
+                                className="w-full rounded border border-control-line bg-surface-raised py-0.5 pl-6 pr-1.5 text-xs font-normal text-fg transition-colors hover:border-fg-subtle"
                               />
                             </span>
                           </div>
@@ -309,7 +306,7 @@ export function FirewallScanDialog() {
                               <button
                                 type="button"
                                 onClick={() => void unblockIp(gateway, entry.ip)}
-                                className="rounded px-1.5 py-0.5 text-xs text-accent transition-colors hover:bg-accent/10"
+                                className="rounded px-1.5 py-0.5 text-xs text-accent-fg transition-colors hover:bg-accent/10"
                               >
                                 解封
                               </button>

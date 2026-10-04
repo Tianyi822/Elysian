@@ -60,7 +60,7 @@ export function TerminalPage() {
               <button
                 type="button"
                 onClick={() => void openSession(gateway)}
-                className="mt-1 rounded-lg border border-line bg-surface-raised px-2 py-1 text-xs text-fg"
+                className="mt-1 rounded-lg border border-control-line bg-surface-raised px-2 py-1 text-xs text-fg"
               >
                 新建终端
               </button>
@@ -73,7 +73,7 @@ export function TerminalPage() {
   }
 
   return (
-    <section aria-label="终端" className="flex h-full min-h-0 flex-col bg-bg">
+    <section aria-label="终端" className="flex h-full min-h-0 flex-col gap-3 p-3 md:p-4">
       <TerminalTabBar
         sessions={sessions}
         activeId={activeId}
@@ -106,7 +106,7 @@ export function TerminalPage() {
           id={`terminal-panel-${active.id}`}
           role="tabpanel"
           aria-labelledby={`terminal-tab-${active.id}`}
-          className="flex min-h-0 flex-1 flex-col"
+          className="flex min-h-0 flex-1 flex-col overflow-hidden panel-surface"
         >
           <TerminalViewport
             prompt={active.prompt}

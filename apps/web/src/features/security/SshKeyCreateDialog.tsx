@@ -54,13 +54,13 @@ export function SshKeyCreateDialog() {
   return (
     <Dialog.Root open onOpenChange={(next) => { if (!next) closeCreateKey() }}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/60" />
+        <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
         <Dialog.Content
           aria-describedby={undefined}
           // 点外部一律不关：填好的名称不该因为一次误点丢掉。Esc 与「取消」「关闭」仍可退出。
           onPointerDownOutside={(event) => event.preventDefault()}
           onInteractOutside={(event) => event.preventDefault()}
-          className="fixed left-1/2 top-1/2 z-[61] flex max-h-[min(40rem,calc(100vh-3rem))] w-[min(28rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line bg-bg shadow-2xl"
+          className="fixed left-1/2 top-1/2 z-[61] flex max-h-[min(40rem,calc(100vh-3rem))] w-[min(28rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden panel-surface shadow-2xl"
         >
           <Dialog.Title className="sr-only">创建 SSH 密钥</Dialog.Title>
           <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
@@ -119,7 +119,7 @@ export function SshKeyCreateDialog() {
                   setNameError(undefined)
                 }}
                 placeholder="如 部署机"
-                className="h-[34px] w-full rounded-lg border border-line bg-surface-raised px-2.5 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle"
+                className="h-9 w-full rounded-lg border border-control-line bg-surface-raised px-2.5 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle"
               />
               {nameError ? <p className="mt-1 text-xs text-danger">{nameError}</p> : null}
               <p className="mt-2 text-xs text-fg-subtle">

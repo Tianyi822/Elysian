@@ -118,7 +118,7 @@ export function SshPanel() {
         {!isDockerRuntime() ? (
           <div
             role="status"
-            className="flex items-center rounded-xl border border-line bg-surface px-4 py-2.5 text-sm text-fg-muted"
+            className="flex items-center panel-surface px-4 py-2.5 text-sm text-fg-muted"
           >
             演示数据
           </div>
@@ -406,10 +406,10 @@ function SshPortConfirmDialog() {
   return (
     <Dialog.Root open onOpenChange={(next) => { if (!next) cancelPortSave() }}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/60" />
+        <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
         <Dialog.Content
           aria-describedby={undefined}
-          className="fixed left-1/2 top-1/2 z-[61] w-[min(26rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-surface-raised p-4 shadow-xl"
+          className="fixed left-1/2 top-1/2 z-[61] w-[min(26rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl"
         >
           <Dialog.Title className="text-sm font-semibold">确认修改 SSH 监听端口</Dialog.Title>
           <p className="mt-1.5 text-xs text-fg-muted">
@@ -720,10 +720,10 @@ function PasswordResetNoticeDialog({ onClose }: { onClose: () => void }) {
   return (
     <Dialog.Root open onOpenChange={(next) => { if (!next) onClose() }}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60" />
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay" />
         <Dialog.Content
           aria-describedby={undefined}
-          className="fixed left-1/2 top-1/2 z-[55] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-bg p-4 shadow-2xl"
+          className="fixed left-1/2 top-1/2 z-[55] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-2xl"
         >
           <Dialog.Title className="text-sm font-medium text-fg">Root 密码已重置</Dialog.Title>
           <p className="mt-2 text-xs text-fg-muted">下一次 SSH 登录需要使用新密码。</p>

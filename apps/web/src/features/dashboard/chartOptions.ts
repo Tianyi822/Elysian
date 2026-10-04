@@ -20,6 +20,9 @@ export type ChartPalette = {
   axisLine: string
   /** 强调色，供资源趋势图使用。 */
   accent: string
+  /** 第二系列与框选区域独立于状态颜色，双主题各自校验对比度。 */
+  secondary: string
+  brushFill: string
   /** 图表浮层表面色，供浅色主题避免继承 ECharts 默认深色浮层。 */
   surface?: string
 }
@@ -28,19 +31,23 @@ export type ChartPalette = {
 export type ChartSize = { width: number; height: number }
 
 const DARK_FALLBACK: ChartPalette = {
-  text: '#e8eef5',
-  subtle: '#7c8ea3',
-  axisLine: '#28323f',
-  accent: '#4c8dff',
-  surface: '#131a23',
+  text: '#eaecf5',
+  subtle: '#a0adc9',
+  axisLine: '#39485f',
+  accent: '#95c6f8',
+  secondary: '#b7a5e8',
+  brushFill: 'rgb(149 198 248 / 16%)',
+  surface: '#26334a',
 }
 
 const LIGHT_FALLBACK: ChartPalette = {
-  text: '#1f2328',
-  subtle: '#6e7781',
-  axisLine: '#d0d7de',
-  accent: '#0969da',
-  surface: '#ffffff',
+  text: '#332b3c',
+  subtle: '#6e5d78',
+  axisLine: '#dfd2e3',
+  accent: '#795a9c',
+  secondary: '#526ea6',
+  brushFill: 'rgb(121 90 156 / 14%)',
+  surface: '#f3eaf4',
 }
 
 /** 按主题读取图表配色：优先取 CSS 语义令牌，取不到时用同值回落。 */
@@ -57,6 +64,8 @@ export function readChartPalette(theme: 'dark' | 'light'): ChartPalette {
     subtle: read('--t-fg-subtle', fallback.subtle),
     axisLine: read('--t-line', fallback.axisLine),
     accent: read('--t-accent', fallback.accent),
+    secondary: read('--t-chart-secondary', fallback.secondary),
+    brushFill: read('--t-chart-brush', fallback.brushFill),
     surface: read('--t-surface-raised', fallback.surface ?? fallback.axisLine),
   }
 }
@@ -99,7 +108,7 @@ export function buildResourceTrendOption(
     : points.map((point) => point[key])
   const throughputUnit = throughput ? pickThroughputUnit(peakValues) : undefined
   const axisUnit = throughputUnit ?? storedUnit
-  const secondary = '#3ecf8e'
+  const secondary = palette.secondary
 
   const mapSeries = (field: 'networkRx' | 'networkTx' | 'diskRead' | 'diskWrite' | ResourceMetricKey) =>
     points.map((point) => {
@@ -204,7 +213,7 @@ export function buildResourceTrendOption(
       removeOnClick: false,
       brushStyle: {
         borderWidth: 1,
-        color: 'rgba(76, 141, 255, 0.16)',
+        color: palette.brushFill,
         borderColor: palette.accent,
       },
       outOfBrush: { colorAlpha: 0.35 },
@@ -247,4 +256,3 @@ export function buildResourceTrendOption(
     series: dualSeries,
   }
 }
-

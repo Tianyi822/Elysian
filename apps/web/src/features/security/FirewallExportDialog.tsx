@@ -35,10 +35,10 @@ export function FirewallExportDialog() {
   return (
     <Dialog.Root open onOpenChange={(next) => { if (!next) closeExport() }}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60" />
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay" />
         <Dialog.Content
           aria-describedby={undefined}
-          className="fixed left-1/2 top-1/2 z-[55] w-[min(26rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-bg shadow-2xl"
+          className="fixed left-1/2 top-1/2 z-[55] w-[min(26rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface shadow-2xl"
         >
           <Dialog.Title className="sr-only">导出规则</Dialog.Title>
           <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
@@ -96,7 +96,7 @@ export function FirewallExportDialog() {
             <button
               type="button"
               onClick={submit}
-              className="rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle"
+              className="rounded-lg border border-control-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle"
             >
               导出
             </button>

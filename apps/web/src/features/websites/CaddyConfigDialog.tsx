@@ -6,7 +6,7 @@ import { X } from '../../components/icons'
 import { useDependencyGuideStore } from '../../stores/dependencyGuideStore'
 import { useWebsitesStore } from '../../stores/websitesStore'
 
-const SECTION = 'rounded-xl border border-line bg-surface-raised p-4'
+const SECTION = 'panel-surface p-4'
 const ACTION = 'rounded-lg border border-line bg-surface px-3 py-2 text-xs font-medium text-fg hover:border-fg-subtle disabled:opacity-50'
 const INPUT = 'w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg'
 
@@ -91,8 +91,8 @@ export function CaddyConfigDialog({ onClose, onAddProject }: { onClose: () => vo
 
   return <Dialog.Root open onOpenChange={(open) => { if (!open && !saving) onClose() }}>
     <Dialog.Portal>
-      <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60" />
-      <Dialog.Content aria-describedby="access-config-description" className="fixed left-1/2 top-1/2 z-[55] flex max-h-[calc(100vh-2rem)] w-[min(52rem,calc(100vw-1.5rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line bg-bg shadow-2xl">
+      <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay" />
+      <Dialog.Content aria-describedby="access-config-description" className="fixed left-1/2 top-1/2 z-[55] flex max-h-[calc(100vh-2rem)] w-[min(52rem,calc(100vw-1.5rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden panel-surface shadow-2xl">
         <div className="flex items-start justify-between gap-3 border-b border-line px-5 py-4">
           <div><Dialog.Title className="text-base font-semibold text-fg">访问配置</Dialog.Title><Dialog.Description id="access-config-description" className="mt-1 text-xs text-fg-muted">选择项目，再选择 IP 直连或域名 HTTPS 访问。</Dialog.Description></div>
           <Dialog.Close asChild><button type="button" aria-label="关闭访问配置" disabled={saving} className="rounded-lg p-1.5 text-fg-muted hover:bg-surface-raised hover:text-fg"><X aria-hidden size={16} /></button></Dialog.Close>

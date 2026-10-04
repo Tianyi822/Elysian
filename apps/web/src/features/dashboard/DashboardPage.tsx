@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { ErrorState, EmptyState, LoadingState } from '../../components/states/StateViews'
+import { RefreshButton } from '../../components/RefreshState'
 import { useDashboardStore } from '../../stores/dashboardStore'
 import { FilterBar } from './FilterBar'
 import { ResourceChartsSection } from './ResourceChartsSection'
@@ -38,15 +39,7 @@ export function DashboardPage() {
       <EmptyState
         title="演示数据集为空"
         description="没有可展示的资源采样。可以刷新重试。"
-        action={
-          <button
-            type="button"
-            onClick={() => void load(gateway)}
-            className="mt-1 rounded-lg border border-line bg-surface-raised px-2 py-1 text-xs text-fg"
-          >
-            刷新
-          </button>
-        }
+        action={<RefreshButton onPress={() => void load(gateway)} />}
       />
     )
   }
@@ -67,7 +60,7 @@ export function DashboardPage() {
         onRefresh={() => void refresh(gateway)}
         refreshing={refreshing}
       />
-      <ResourceChartsSection resources={resources} />
+      <ResourceChartsSection resources={resources} refreshing={refreshing} />
     </>
   )
 }

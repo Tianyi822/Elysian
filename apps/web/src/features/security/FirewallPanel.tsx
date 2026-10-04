@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import * as Switch from '@radix-ui/react-switch'
+import { SwitchToggle } from './sshCardParts'
 import {
   FIREWALL_DIRECTION_LABELS,
   FIREWALL_POLICY_LABELS,
@@ -12,6 +12,8 @@ import { useNotificationStore } from '../../stores/notificationStore'
 import { useIntrinsicWidth } from '../../app/layout/headerAccessoryWidth'
 import { IconButton } from '../../components/IconButton'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
+import { RefreshButton } from '../../components/RefreshState'
+import { CTL_CHIP, CTL_GROUP, CTL_PRIMARY, CTL_STAT, CTL_TOOLBAR } from '../../components/formControl'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 import { formatDateTime } from '../../components/format'
@@ -46,14 +48,12 @@ function PolicyText({ policy }: { policy: FirewallRule['policy'] }) {
   return <span className={tone}>{FIREWALL_POLICY_LABELS[policy]}</span>
 }
 
-/** 截图同款的统计短条：端口/IP/转发取真实计数，地区规则等真实能力接入。 */
-function StatChip({ label, count, pending = false }: { label: string; count: number; pending?: boolean }) {
+/** 统计短条：端口/IP/转发取真实计数。没有真实来源的档位不占位，避免一排常零的读数被当成待接入能力。 */
+function StatChip({ label, count }: { label: string; count: number }) {
   return (
-    <span
-      title={pending ? '待接入' : undefined}
-      className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5 text-xs text-fg-muted"
-    >
-      {label}：<span className="font-medium tabular-nums text-accent">{count}</span>
+    <span className={CTL_STAT}>
+      <span className="inline-flex items-center px-2.5 text-fg-muted">{label}：</span>
+      <span className="inline-flex items-center px-2.5 font-medium tabular-nums text-accent-fg">{count}</span>
     </span>
   )
 }
@@ -75,15 +75,7 @@ function ToggleRow({
       className={`inline-flex items-center gap-2 text-sm text-fg ${disabled ? 'opacity-50' : 'cursor-pointer'}`}
     >
       {label}
-      <Switch.Root
-        checked={checked}
-        disabled={disabled}
-        onCheckedChange={onCheckedChange}
-        aria-label={label}
-        className="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border border-line bg-surface-raised transition-colors data-[state=checked]:border-accent data-[state=checked]:bg-accent"
-      >
-        <Switch.Thumb className="ml-0.5 block size-3.5 rounded-full bg-fg-muted transition-transform data-[state=checked]:translate-x-4 data-[state=checked]:bg-white" />
-      </Switch.Root>
+      <SwitchToggle label={label} checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} />
     </label>
   )
 }
@@ -103,7 +95,7 @@ function ToolButton({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="inline-flex items-center whitespace-nowrap rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:opacity-50"
+      className={CTL_PRIMARY}
     >
       {label}
     </button>
@@ -129,21 +121,15 @@ function ViewSwitch({
       aria-label="规则类型"
       // shrink-0 是必需的：overflow 非 visible 的 flex 项自动最小尺寸为 0，
       // 空间不够时整组会被压窄，里面的标签有 whitespace-nowrap 反而被裁切。
-      className="inline-flex shrink-0 overflow-hidden rounded-lg border border-line"
+      className={`${CTL_GROUP} shrink-0`}
     >
-      {options.map((option, index) => (
+      {options.map((option) => (
         <button
           key={option.value}
           type="button"
           aria-pressed={option.value === view}
           onClick={() => onChange(option.value)}
-          className={`whitespace-nowrap px-3 py-1.5 text-xs transition-colors ${
-            index > 0 ? 'border-l border-line' : ''
-          } ${
-            option.value === view
-              ? 'bg-surface-raised font-medium text-fg'
-              : 'text-fg-muted hover:bg-surface-raised hover:text-fg'
-          }`}
+          className={CTL_CHIP}
         >
           {option.label}
         </button>
@@ -263,7 +249,7 @@ export function FirewallPanel() {
   return (
     <div>
       {operationError ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-danger/40 p-3 text-xs text-danger"><p className="min-w-0 flex-1">{operationError}</p><button type="button" className="rounded border border-line px-3 py-1.5 text-fg" onClick={() => void load(gateway)}>重新读取状态</button></div> : null}
-      <div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-3 rounded-xl border border-line bg-surface px-4 py-3">
+      <div className={`${CTL_TOOLBAR} mb-4 flex flex-wrap items-center gap-x-4 gap-y-3 panel-surface px-4 py-3`}>
         {/* 防火墙动作只在容器内真实执行 ufw；宿主机本地开发是内存演示，明示出来。 */}
         {!isDockerRuntime() ? (
           <span role="status" className="text-sm text-fg-muted">
@@ -291,20 +277,18 @@ export function FirewallPanel() {
             ? '默认策略：未知（防火墙未激活）'
             : `默认策略：入站${FIREWALL_POLICY_LABELS[toggles.defaultIncoming]} · 出站${FIREWALL_POLICY_LABELS[toggles.defaultOutgoing]}`}
         </span>
-      </div>
-
-      <div className="mb-4 flex flex-wrap gap-2">
+        {/* 三类规则的条数并进开关这条：它们是同一份防火墙状态读数，不该自己占一行。 */}
+        <span aria-hidden className="hidden h-5 w-px bg-line sm:block" />
         <StatChip label="端口规则" count={rules.length} />
         <StatChip label="IP 规则" count={ipRules.length} />
         <StatChip label="端口转发" count={forwards.length} />
-        <StatChip label="地区规则" count={0} pending />
       </div>
 
       {/* 工具区：不依赖 flex 折行的猜测——探针量出按钮行的自然宽度，外壳量出可用宽度，
           放得下（按钮行 + 间距 + 搜索框）就同行，放不下就按钮一行、搜索占满第二行。 */}
       <div
         ref={toolbarRef}
-        className={`mb-4 rounded-xl border border-line bg-surface px-4 py-3 ${
+        className={`${CTL_TOOLBAR} mb-4 panel-surface px-4 py-3 ${
           toolbarInline ? 'flex items-center gap-2' : ''
         }`}
       >
@@ -370,10 +354,11 @@ export function FirewallPanel() {
             </>
           ) : null}
           <ToolButton label="端口防扫描" onClick={() => openScan(gateway)} />
-          <ToolButton
+          <RefreshButton
+            onPress={() => void syncFromSystem(gateway)}
+            busy={syncing}
             label={syncing ? '同步中…' : '同步规则'}
-            disabled={syncing}
-            onClick={() => void syncFromSystem(gateway)}
+            formControl
           />
         </div>
         <div
@@ -391,7 +376,7 @@ export function FirewallPanel() {
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="请输入端口/来源"
-            className="w-full rounded-lg border border-line bg-surface-raised py-1.5 pl-8 pr-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle"
+            className="w-full rounded-lg border border-control-line bg-surface-raised py-1.5 pl-8 pr-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle"
           />
         </div>
       </div>
@@ -414,7 +399,7 @@ export function FirewallPanel() {
 
       {view === 'port' ? (
         <>
-          <div role="region" aria-label="端口规则表" className="hover-scrollbar overflow-x-auto rounded-xl border border-line bg-surface">
+          <div role="region" aria-label="端口规则表" className="hover-scrollbar overflow-x-auto panel-surface">
             <table className="w-full min-w-[1040px] table-fixed border-separate border-spacing-0 text-left text-sm">
               {/* 每列都给显式宽度：没有指定宽度的那一列会独吞宽屏多出来的空间。
                   全部指定后，多出的空间按比例分摊到每一列。端口列要放得下最长的「40223 (ipv6)」；
@@ -486,7 +471,7 @@ export function FirewallPanel() {
                   onClick={() => setPage(pageNumber)}
                   className={`min-w-7 rounded-lg border px-2 py-1 tabular-nums transition-colors ${
                     pageNumber === safePage
-                      ? 'border-accent/50 bg-accent/10 font-medium text-accent'
+                      ? 'border-accent/50 bg-accent/10 font-medium text-accent-fg'
                       : 'border-line hover:bg-surface-raised hover:text-fg'
                   }`}
                 >
@@ -505,7 +490,7 @@ export function FirewallPanel() {
           </div>
         </>
       ) : view === 'ip' ? (
-        <div role="region" aria-label="IP 规则表" className="hover-scrollbar overflow-x-auto rounded-xl border border-line bg-surface">
+        <div role="region" aria-label="IP 规则表" className="hover-scrollbar overflow-x-auto panel-surface">
           <table className="w-full min-w-[640px] table-fixed border-separate border-spacing-0 text-left text-sm">
             <colgroup>
               <col className="w-48" />
@@ -542,7 +527,7 @@ export function FirewallPanel() {
           </table>
         </div>
       ) : (
-        <div role="region" aria-label="端口转发表" className="hover-scrollbar overflow-x-auto rounded-xl border border-line bg-surface">
+        <div role="region" aria-label="端口转发表" className="hover-scrollbar overflow-x-auto panel-surface">
           <table className="w-full min-w-[760px] table-fixed border-separate border-spacing-0 text-left text-sm">
             <colgroup>
               <col className="w-20" />

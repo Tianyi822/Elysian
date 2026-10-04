@@ -4,7 +4,8 @@ import { IconButton } from '../../components/IconButton'
 import { formatDateTime } from '../../components/format'
 import { KeyRound, Search, Trash2 } from '../../components/icons'
 import { SSH_PAGE_SIZE, useSshStore } from '../../stores/sshStore'
-import { ACTION_CLASS, CONTROL_HEIGHT_CLASS, Section, TablePager } from './sshCardParts'
+import { CTL_FIELD } from '../../components/formControl'
+import { ACTION_CLASS, Section, TablePager } from './sshCardParts'
 import { filterSshKeys } from './sshKeySearch'
 
 /**
@@ -56,7 +57,7 @@ export function SshKeyCard() {
             value={search}
             onChange={(event) => setKeySearch(event.target.value)}
             placeholder="搜索名称、账号或指纹"
-            className={`w-full ${CONTROL_HEIGHT_CLASS} rounded-lg border border-line bg-surface-raised pl-8 pr-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle`}
+            className={`${CTL_FIELD} pl-8`}
           />
         </div>
         <button type="button" onClick={() => openCreateKey()} className={ACTION_CLASS}>

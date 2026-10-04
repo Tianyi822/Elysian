@@ -13,12 +13,13 @@ import {
   MemoryStick,
   MySQLLogo,
   File,
-  Plus,
   Timer,
   Trash2,
 } from '../../components/icons'
 import { useClipboardCopy } from '../../components/CopyButton'
+import { CTL_PRIMARY, CTL_TOOLBAR } from '../../components/formControl'
 import { ErrorState, EmptyState, LoadingState } from '../../components/states/StateViews'
+import { BusyVeil, RefreshButton } from '../../components/RefreshState'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 import { useGateway } from '../../adapters/GatewayProvider'
@@ -50,6 +51,7 @@ export function DatabasePage() {
   const containers = useDatabaseStore((state) => state.containers)
   const images = useDatabaseStore((state) => state.images)
   const errorMessage = useDatabaseStore((state) => state.errorMessage)
+  const refreshing = useDatabaseStore((state) => state.refreshing)
   const load = useDatabaseStore((state) => state.load)
   const refresh = useDatabaseStore((state) => state.refresh)
   const openSession = useDatabaseStore((state) => state.openSession)
@@ -125,14 +127,12 @@ export function DatabasePage() {
       <section aria-label="数据库实例" className="mb-6">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-base font-semibold">{engine} 实例</h2>
-          <button
-            type="button"
-            onClick={openCreate}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle"
-          >
-            <Plus aria-hidden size={13} />
-            添加数据库
-          </button>
+          <div className={`${CTL_TOOLBAR} flex flex-wrap items-center gap-2`}>
+            <RefreshButton onPress={() => void refresh(gateway, true)} busy={refreshing} formControl />
+            <button type="button" onClick={openCreate} className={CTL_PRIMARY}>
+              添加数据库
+            </button>
+          </div>
         </div>
 
         {filtered.length === 0 ? (
@@ -145,7 +145,7 @@ export function DatabasePage() {
           <div className="@container">
             <ul
               aria-label={`${engine} 数据库列表`}
-              className="grid grid-cols-1 gap-4 @2xl:grid-cols-2 @5xl:grid-cols-3"
+              className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,18rem),1fr))] gap-4"
             >
               {filtered.map((database) => (
                 <li key={database.id} className="h-full">
@@ -153,6 +153,7 @@ export function DatabasePage() {
                     database={database}
                     view={projectDatabaseCard(database, containerById, imageById)}
                     removing={removingDatabaseIds.includes(database.id)}
+                    refreshing={refreshing}
                     onJump={() => {
                       if (database.containerId) openContainerDetail(database.containerId)
                     }}
@@ -177,6 +178,7 @@ function DatabaseCard({
   database,
   view,
   removing,
+  refreshing = false,
   onJump,
   onConnect,
   onRemove,
@@ -184,6 +186,8 @@ function DatabaseCard({
   database: DatabaseInstance
   view: DatabaseCardView
   removing: boolean
+  /** 列表刷新在途：卡片内容不换，只由自身盖一层浅色遮罩示意进行中。 */
+  refreshing?: boolean
   onJump(): void
   onConnect(): void
   onRemove(databaseId: string): void
@@ -207,8 +211,9 @@ function DatabaseCard({
   return (
     <article
       aria-label={`${database.engine} 数据库 ${database.name}`}
-      className="@container flex h-full flex-col gap-3 rounded-xl border border-line bg-surface p-4 md:p-5"
+      className="@container flex h-full flex-col gap-3 panel-surface p-4 md:p-5"
     >
+      <BusyVeil busy={refreshing} />
       {/* 头部是两行网格：图标跨两行；第一行实例名对状态标签，第二行版本对更新时间——左右同行同基线，不再各自堆叠错位。 */}
       <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1">
         <div className="row-span-2 flex items-center">
@@ -315,12 +320,12 @@ function DatabaseCard({
         ) : null}
         {credentialError ? <p role="alert" className="w-full text-xs text-danger">{credentialError}</p> : null}
         <div className="ml-auto flex shrink-0 items-center gap-2">
-          {database.engine === 'SQLite' && database.source === 'managed' && database.status === 'running' && gateway.databases.downloadSqlite ? <button type="button" onClick={() => void gateway.databases.downloadSqlite?.(database.id).catch((error: unknown) => setCredentialError(error instanceof Error ? error.message : '下载失败'))} title="下载一致性 SQLite 快照" className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-xs"><Download aria-hidden size={13} />下载快照</button> : null}
+          {database.engine === 'SQLite' && database.source === 'managed' && database.status === 'running' && gateway.databases.downloadSqlite ? <button type="button" onClick={() => void gateway.databases.downloadSqlite?.(database.id).catch((error: unknown) => setCredentialError(error instanceof Error ? error.message : '下载失败'))} title="下载一致性 SQLite 快照" className="action-button gap-1.5 border border-line px-3 py-1.5 text-xs"><Download aria-hidden size={13} />下载快照</button> : null}
           {!database.emptyContainer ? <button
             type="button"
             onClick={() => setConfirmRemove(true)}
             disabled={removing}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-danger/40 px-3 py-1.5 text-xs text-danger transition-colors hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-50"
+            className="action-button shrink-0 gap-1.5 border border-danger/40 px-3 py-1.5 text-xs text-danger transition-colors hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Trash2 aria-hidden size={13} />
             {database.engine === 'Redis' ? '清空 DB 0' : '删除数据库'}
@@ -330,7 +335,7 @@ function DatabaseCard({
             type="button"
             onClick={onConnect}
             disabled={removing || database.emptyContainer || database.status === 'stopped'}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50"
+            className="action-button shrink-0 gap-1.5 border border-control-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Cable aria-hidden size={13} />
             连接
@@ -346,10 +351,10 @@ function DatabaseCard({
           }}
         >
           <Dialog.Portal>
-            <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/60" />
+            <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
             <Dialog.Content
               aria-describedby={undefined}
-              className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-surface-raised p-4 shadow-xl"
+              className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl"
             >
               <Dialog.Title className="text-sm font-semibold">
                 确认删除数据库「{database.name}」？
@@ -384,7 +389,7 @@ function DatabaseCard({
           </Dialog.Portal>
         </Dialog.Root>
       ) : null}
-      {confirmRemoveContainer ? <Dialog.Root open onOpenChange={(next) => { if (!next) setConfirmRemoveContainer(false) }}><Dialog.Portal><Dialog.Overlay className="fixed inset-0 z-[60] bg-black/60" /><Dialog.Content aria-describedby={undefined} className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-surface-raised p-4 shadow-xl"><Dialog.Title className="text-sm font-semibold">删除容器及全部数据？</Dialog.Title><p className="mt-2 text-xs text-danger">将删除面板创建的数据库容器及其专属持久卷，全部数据无法恢复。容器内有其他数据库时服务端会拒绝。</p><div className="mt-4 flex justify-end gap-2"><button type="button" onClick={() => setConfirmRemoveContainer(false)} className="rounded border border-line px-3 py-1.5 text-xs">取消</button><button type="button" onClick={() => { setConfirmRemoveContainer(false); void gateway.databases.removeContainer?.(database.id).then(() => useDatabaseStore.getState().load(gateway)).catch((error: unknown) => setCredentialError(error instanceof Error ? error.message : '删除失败')) }} className="rounded border border-danger px-3 py-1.5 text-xs text-danger">确认删除容器及数据</button></div></Dialog.Content></Dialog.Portal></Dialog.Root> : null}
+      {confirmRemoveContainer ? <Dialog.Root open onOpenChange={(next) => { if (!next) setConfirmRemoveContainer(false) }}><Dialog.Portal><Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" /><Dialog.Content aria-describedby={undefined} className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl"><Dialog.Title className="text-sm font-semibold">删除容器及全部数据？</Dialog.Title><p className="mt-2 text-xs text-danger">将删除面板创建的数据库容器及其专属持久卷，全部数据无法恢复。容器内有其他数据库时服务端会拒绝。</p><div className="mt-4 flex justify-end gap-2"><button type="button" onClick={() => setConfirmRemoveContainer(false)} className="rounded border border-line px-3 py-1.5 text-xs">取消</button><button type="button" onClick={() => { setConfirmRemoveContainer(false); void gateway.databases.removeContainer?.(database.id).then(() => useDatabaseStore.getState().load(gateway)).catch((error: unknown) => setCredentialError(error instanceof Error ? error.message : '删除失败')) }} className="rounded border border-danger px-3 py-1.5 text-xs text-danger">确认删除容器及数据</button></div></Dialog.Content></Dialog.Portal></Dialog.Root> : null}
     </article>
   )
 }
@@ -395,16 +400,16 @@ function DatabaseMark({ engine }: { engine: DatabaseInstance['engine'] }) {
     engine === 'MariaDB'
       ? {
           logo: <MariaDBLogo aria-hidden size={23} />,
-          frame: 'border-[#c86b38]/40 bg-[#c86b38]/10 text-[#d98752]',
+          frame: 'border-warning/40 bg-warning/10 text-warning',
         }
       : engine === 'MySQL'
         ? {
             logo: <MySQLLogo aria-hidden size={23} />,
-            frame: 'border-[#00758f]/40 bg-[#00758f]/10 text-[#2da6bd]',
+            frame: 'border-info/40 bg-info/10 text-info',
           }
         : {
             logo: <Database aria-hidden size={18} />,
-            frame: 'border-line bg-surface-raised text-fg-muted',
+            frame: 'border-control-line bg-surface-raised text-fg-muted',
           }
 
   return (

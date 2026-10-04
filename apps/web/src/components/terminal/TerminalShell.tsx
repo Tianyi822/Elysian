@@ -74,10 +74,10 @@ export function ConfirmCloseDialog({
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/60" />
+        <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
         <Dialog.Content
           aria-describedby={undefined}
-          className="fixed left-1/2 top-1/2 z-[61] w-80 -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-surface-raised p-4 shadow-xl"
+          className="fixed left-1/2 top-1/2 z-[61] w-80 -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl"
         >
           <Dialog.Title className="text-sm font-semibold">{title}</Dialog.Title>
           <p className="mt-1.5 text-xs text-fg-muted">{description}</p>
@@ -133,7 +133,7 @@ export function TerminalShell({
   return (
     <Dialog.Root open onOpenChange={() => {/* 外部来源全部忽略，只能走关闭确认 */}}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/70" />
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay-strong" />
         <Dialog.Content
           ref={contentRef}
           aria-describedby={undefined}
@@ -146,7 +146,7 @@ export function TerminalShell({
               closeRef.current?.focus()
             }
           }}
-          className="fixed left-1/2 top-1/2 z-[55] flex h-[min(44rem,calc(100vh-3rem))] w-[min(72rem,calc(100vw-3rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line bg-bg shadow-2xl focus-visible:outline-none"
+          className="fixed left-1/2 top-1/2 z-[55] flex h-[min(44rem,calc(100vh-3rem))] w-[min(72rem,calc(100vw-3rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden panel-surface shadow-2xl focus-visible:outline-none"
         >
           <Dialog.Title className="sr-only">{title}</Dialog.Title>
           <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">

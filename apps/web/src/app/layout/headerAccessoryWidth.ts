@@ -2,12 +2,11 @@ import { createContext, useContext, useLayoutEffect, useState } from 'react'
 import type { RefObject } from 'react'
 
 /**
- * 顶栏「标题旁附属控件」（数据库类型切换、容器/镜像切换）的宽度预算。
+ * 内容区「页面附属控件」（数据库类型切换、容器/镜像切换）的宽度预算。
  *
- * 预算由外壳量出、经 context 交给控件：行的内容宽度减去标题固有宽度、右侧功能簇与两处行间距，
+ * 预算由外壳量出、经 context 交给控件：行的内容宽度减去标题固有宽度、导航触发器与行间距，
  * 剩下的才是附属控件能占的位置。控件拿自己的摊开宽度与预算比较，摆得下就摊开、摆不下才收起。
- * 量而不设断点，是因为同一视口宽度下可用宽度并不固定——侧边栏收展、标题长短、
- * 内存数值的位数都会改变它，而断点只看视口。
+ * 量而不设断点，是因为同一视口宽度下可用宽度并不固定——侧边栏收展与窄屏导航触发器都会改变它，而断点只看视口。
  *
  * 未量出时（测试环境里一切尺寸都是 0）取无限，按摊开呈现。
  */
@@ -40,11 +39,11 @@ export function useIntrinsicWidth(ref: RefObject<HTMLElement | null>, enabled = 
 }
 
 type HeaderRowRefs = {
-  /** 顶栏那一行。 */
+  /** 页面工具行。 */
   row: RefObject<HTMLElement | null>
   /** 行内标题：量它截断容器的滚动宽度，即标题不被挤压时所需的宽度。页签式标题的页面不渲染标题，量 0。 */
   title: RefObject<HTMLElement | null>
-  /** 右侧功能簇：系统负载与用户占位。 */
+  /** 窄屏导航触发器；桌面隐藏时宽度为 0。 */
   actions: RefObject<HTMLElement | null>
   /** 标题文本。文本变长变短不改标题的盒宽，ResizeObserver 因此不触发，用它显式重算。 */
   titleText: string

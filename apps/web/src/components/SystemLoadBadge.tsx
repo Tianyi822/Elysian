@@ -10,7 +10,7 @@ import { CircleHelp, Gauge } from './icons'
 import { getLastResourceSample, onStreamEvent } from '../stores/eventStreamStore'
 
 /**
- * 系统负载指示器：顶栏一枚读数条，合并了这台机器的忙闲（load average）与面板自身内存。
+ * 系统负载指示器：合并这台机器的忙闲（load average）与面板自身内存。
  *
  * 负载随事件流每拍到达，内存每 5 秒采一次后端进程；两个口径不同，常驻读数只给
  * 1 分钟负载与内存用量，三档负载与内存明细收在点击浮层里分节列出。
@@ -145,7 +145,7 @@ function ScopeHelp() {
           sideOffset={6}
           collisionPadding={8}
           aria-label="内存口径说明"
-          className="z-50 w-72 space-y-2 rounded-lg border border-line bg-surface-raised p-3 text-xs leading-relaxed text-fg-muted shadow-lg"
+          className="z-50 w-72 space-y-2 rounded-lg border border-control-line bg-surface-raised p-3 text-xs leading-relaxed text-fg-muted shadow-lg"
         >
           <p>常驻内存由操作系统记账：这个进程此刻实际占着多少物理内存。</p>
           <p>
@@ -161,9 +161,9 @@ function ScopeHelp() {
 }
 
 /**
- * 顶栏系统负载：常驻 1 分钟负载与面板内存，悬停有说明，点击展开分节明细。
+ * 导航底部常驻 1 分钟负载与面板内存，收起时通过图标进入明细。
  */
-export function SystemLoadBadge() {
+export function SystemLoadBadge({ navigation = false, collapsed = false }: { navigation?: boolean; collapsed?: boolean }) {
   const view = usePlatformMemory()
   const load = useSystemLoad()
   const sample = view.status === 'ready' ? view.sample : null
@@ -192,28 +192,30 @@ export function SystemLoadBadge() {
               type="button"
               aria-label="系统负载"
               className={[
-                'inline-flex items-center gap-1.5 whitespace-nowrap rounded px-1.5 py-1 text-xs outline-none transition-colors',
-                'hover:bg-surface-raised focus-visible:ring-2 focus-visible:ring-info focus-visible:ring-offset-2 focus-visible:ring-offset-surface',
+                'inline-flex items-center gap-2 whitespace-nowrap rounded-lg text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-focus',
+                navigation
+                  ? `${collapsed ? 'size-10 justify-center' : 'min-h-9 w-full px-3'} hover:bg-nav-hover`
+                  : 'px-1.5 py-1 hover:bg-surface-raised',
                 view.status === 'error'
                   ? 'text-danger'
                   : sample
-                    ? 'text-fg-muted hover:text-fg'
-                    : 'text-fg-subtle',
+                    ? navigation ? 'text-nav-muted hover:text-nav-fg' : 'text-fg-muted hover:text-fg'
+                    : navigation ? 'text-nav-muted' : 'text-fg-subtle',
               ].join(' ')}
             >
               <Gauge aria-hidden size={16} className="shrink-0" />
-              <span className="tabular-nums">{loadText}</span>
-              <span aria-hidden className="text-fg-subtle">
+              <span className={collapsed ? 'sr-only' : 'tabular-nums'}>{loadText}</span>
+              <span aria-hidden className={collapsed ? 'hidden' : undefined}>
                 ·
               </span>
-              <span className="tabular-nums">{memoryText}</span>
+              <span className={collapsed ? 'sr-only' : 'tabular-nums'}>{memoryText}</span>
             </button>
           </Popover.Trigger>
         </Tooltip.Trigger>
         <Tooltip.Portal>
           <Tooltip.Content
             sideOffset={6}
-            className="z-50 max-w-64 rounded border border-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg"
+            className="z-50 max-w-64 rounded border border-control-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg"
           >
             系统负载 · {hint}
             <Tooltip.Arrow className="fill-surface-raised" />
@@ -223,12 +225,12 @@ export function SystemLoadBadge() {
 
       <Popover.Portal>
         <Popover.Content
-          side="bottom"
-          align="end"
+          side={navigation ? collapsed ? 'right' : 'top' : 'bottom'}
+          align={navigation ? 'start' : 'end'}
           sideOffset={6}
           collisionPadding={8}
           aria-label="系统负载明细"
-          className="z-50 w-80 rounded-lg border border-line bg-surface-raised p-3 text-xs shadow-lg"
+          className="panel-surface z-50 w-80 max-w-[calc(100vw-2rem)] p-3 text-xs shadow-lg"
         >
           <p className="border-b border-line pb-2 text-sm font-medium text-fg">系统负载</p>
           <p className="pt-2 leading-relaxed text-fg-subtle">

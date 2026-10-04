@@ -11,6 +11,8 @@ const PALETTE: ChartPalette = {
   subtle: '#ss',
   axisLine: '#aa',
   accent: '#ac',
+  secondary: '#secondary',
+  brushFill: '#brush',
   surface: '#sf',
 }
 
@@ -118,6 +120,7 @@ describe('资源趋势 option', () => {
     expect(network.legend).toEqual(
       expect.objectContaining({ data: ['下行', '上行'] }),
     )
+    expect((network.series as ReadonlyArray<{ itemStyle: { color: string } }>)[1]?.itemStyle.color).toBe(PALETTE.secondary)
 
     const disk = buildResourceTrendOption(points, 'diskIo', PALETTE)
     expect((disk.series as ReadonlyArray<{ name: string }>).map((s) => s.name)).toEqual(['读', '写'])
@@ -131,6 +134,7 @@ describe('资源趋势 option', () => {
       expect.objectContaining({
         brushType: 'lineX',
         xAxisIndex: 0,
+        brushStyle: expect.objectContaining({ color: PALETTE.brushFill, borderColor: PALETTE.accent }),
       }),
     )
   })

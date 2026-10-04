@@ -17,7 +17,7 @@ import {
 } from './databaseCreateForm'
 import type { DatabaseCreateDraft, DatabaseCreateFormErrors, SqliteFileSource } from './databaseCreateForm'
 
-const FIELD = `${FORM_CONTROL_HEIGHT_CLASS} w-full min-w-0 rounded-lg border border-line bg-surface-raised px-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle`
+const FIELD = `${FORM_CONTROL_HEIGHT_CLASS} w-full min-w-0 rounded-lg border border-control-line bg-surface-raised px-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle`
 const LABEL = 'mb-2 block text-xs font-medium leading-5 text-fg-muted'
 const BUTTON = `inline-flex ${FORM_CONTROL_HEIGHT_CLASS} items-center justify-center rounded-lg border border-line px-3 text-xs font-medium text-fg transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50`
 const ERROR = 'mt-1 text-xs text-danger'
@@ -135,11 +135,11 @@ export function DatabaseCreateDialog() {
 
   return <Dialog.Root open onOpenChange={(next) => { if (!next && !creating) closeCreate() }}>
     <Dialog.Portal>
-      <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60" />
+      <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay" />
       <Dialog.Content aria-describedby={undefined}
         onPointerDownOutside={(event) => event.preventDefault()}
         onInteractOutside={(event) => event.preventDefault()}
-        className="fixed left-1/2 top-1/2 z-[55] flex max-h-[min(44rem,calc(100vh-2rem))] w-[min(42rem,calc(100vw-1.5rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line bg-bg shadow-2xl">
+        className="fixed left-1/2 top-1/2 z-[55] flex max-h-[min(44rem,calc(100vh-2rem))] w-[min(42rem,calc(100vw-1.5rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden panel-surface shadow-2xl">
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-line px-5 py-3">
           <Dialog.Title className="truncate text-base font-semibold text-fg">添加 SQLite 数据库</Dialog.Title>
           <button type="button" onClick={closeCreate} disabled={creating} aria-label="关闭弹窗"

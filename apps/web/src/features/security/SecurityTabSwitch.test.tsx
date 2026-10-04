@@ -13,7 +13,7 @@ import { useSecurityStore } from '../../stores/securityStore'
 
 /** 顶栏的平铺页签条。 */
 function segmentGroup(): HTMLElement {
-  return within(screen.getByRole('banner')).getByRole('group', { name: '安全页签' })
+  return within(screen.getByRole('main')).getByRole('group', { name: '安全页签' })
 }
 
 beforeEach(() => {

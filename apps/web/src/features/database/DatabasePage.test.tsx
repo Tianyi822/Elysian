@@ -237,7 +237,7 @@ describe('数据库页面', () => {
     renderApp('/databases', { gateway: pageGateway() })
     await screen.findByRole('list', { name: 'MariaDB 数据库列表' })
 
-    await user.click(within(screen.getByRole('banner')).getByRole('button', { name: 'MySQL' }))
+    await user.click(within(screen.getByRole('main')).getByRole('button', { name: 'MySQL' }))
     expect(await screen.findByRole('list', { name: 'MySQL 数据库列表' })).toBeInTheDocument()
     const mysqlCard = screen.getByRole('article', { name: 'MySQL 数据库 mysql-orders' })
     expect(mysqlCard).toHaveTextContent('连接偏高')
@@ -245,7 +245,7 @@ describe('数据库页面', () => {
     expect(within(mysqlCard).getByLabelText('MySQL 图标')).toBeInTheDocument()
 
     // SQLite 是本地单文件数据库：显示文件路径与大小，没有账号、没有来源容器、也没有连接数。
-    await user.click(within(screen.getByRole('banner')).getByRole('button', { name: 'SQLite' }))
+    await user.click(within(screen.getByRole('main')).getByRole('button', { name: 'SQLite' }))
     const sqliteCard = await screen.findByRole('article', { name: 'SQLite 数据库 elysian-notes' })
     expect(sqliteCard).toHaveTextContent('数据库文件')
     expect(sqliteCard).toHaveTextContent('/root/.Elysian/data/sqlite/elysian-notes.db')
@@ -261,7 +261,7 @@ describe('数据库页面', () => {
     renderApp('/databases', { gateway: pageGateway() })
     await screen.findByRole('list', { name: 'MariaDB 数据库列表' })
 
-    await user.click(within(screen.getByRole('banner')).getByRole('button', { name: 'Redis' }))
+    await user.click(within(screen.getByRole('main')).getByRole('button', { name: 'Redis' }))
     const redisCard = await screen.findByRole('article', { name: 'Redis 数据库 redis-cache' })
     expect(within(redisCard).getByLabelText('Redis 图标')).toBeInTheDocument()
   })
@@ -420,7 +420,7 @@ describe('数据库页面', () => {
     const gateway = pageGateway()
     renderApp('/databases', { gateway })
     await screen.findByRole('list', { name: 'MariaDB 数据库列表' })
-    await user.click(within(screen.getByRole('banner')).getByRole('button', { name: 'Redis' }))
+    await user.click(within(screen.getByRole('main')).getByRole('button', { name: 'Redis' }))
     await screen.findByRole('article', { name: 'Redis 数据库 redis-cache' })
     await user.click(screen.getByRole('button', { name: /添加数据库/ }))
     const dialog = await screen.findByRole('dialog', { name: '添加 Redis 数据库' })
@@ -440,7 +440,7 @@ describe('数据库页面', () => {
     const user = userEvent.setup()
     renderApp('/databases', { gateway: pageGateway() })
     await screen.findByRole('list', { name: 'MariaDB 数据库列表' })
-    await user.click(within(screen.getByRole('banner')).getByRole('button', { name: 'SQLite' }))
+    await user.click(within(screen.getByRole('main')).getByRole('button', { name: 'SQLite' }))
     await screen.findByRole('article', { name: 'SQLite 数据库 elysian-notes' })
 
     await user.click(screen.getByRole('button', { name: /添加数据库/ }))
@@ -483,7 +483,7 @@ describe('数据库页面', () => {
     const user = userEvent.setup()
     renderApp('/databases', { gateway: pageGateway() })
     await screen.findByRole('list', { name: 'MariaDB 数据库列表' })
-    await user.click(within(screen.getByRole('banner')).getByRole('button', { name: 'SQLite' }))
+    await user.click(within(screen.getByRole('main')).getByRole('button', { name: 'SQLite' }))
     await screen.findByRole('article', { name: 'SQLite 数据库 elysian-notes' })
 
     await user.click(screen.getByRole('button', { name: /添加数据库/ }))
@@ -504,7 +504,7 @@ describe('数据库页面', () => {
     const user = userEvent.setup()
     renderApp('/databases', { gateway: pageGateway() })
     await screen.findByRole('list', { name: 'MariaDB 数据库列表' })
-    await user.click(within(screen.getByRole('banner')).getByRole('button', { name: 'SQLite' }))
+    await user.click(within(screen.getByRole('main')).getByRole('button', { name: 'SQLite' }))
 
     const card = await screen.findByRole('article', { name: 'SQLite 数据库 elysian-notes' })
     const row = within(card).getByRole('button', { name: /复制数据库文件路径/ })

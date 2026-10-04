@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockGateway } from '../../adapters/mock/gateway'
@@ -150,7 +150,7 @@ describe('仪表盘快捷操作', () => {
 describe('仪表盘资源监控', () => {
   const latest = createResourceMetrics()[createResourceMetrics().length - 1]!
 
-  it('四张资源卡当前值取时序最后一天并带单位，并渲染趋势图', async () => {
+  it('四张读数卡取最后一个采样并带单位，下方四张趋势卡沿用同序数据', async () => {
     await renderReady()
 
     const section = screen.getByLabelText('服务器状态')
@@ -158,6 +158,10 @@ describe('仪表盘资源监控', () => {
 
     for (const key of METRIC_KEYS) {
       const card = within(section).getByRole('article', { name: RESOURCE_METRIC_LABELS[key] })
+      expect(screen.getByLabelText('当前资源读数')).toContainElement(card)
+      expect(screen.getByLabelText('资源趋势')).toContainElement(
+        within(section).getByRole('article', { name: `${RESOURCE_METRIC_LABELS[key]}趋势` }),
+      )
       const unit = RESOURCE_METRIC_UNITS[key]
       expect(
         within(card).getByText(formatResourceMetricValue(latest[key], unit)),
@@ -189,12 +193,24 @@ describe('仪表盘资源监控', () => {
     }
   })
 
-  it('服务器状态区只留四张趋势卡，负载与磁盘占用卡已下线', async () => {
+  it('服务器状态有四张读数卡与四张趋势卡，不增加新的资源指标', async () => {
     await renderReady()
     const section = screen.getByLabelText('服务器状态')
     expect(within(section).queryByRole('article', { name: '运行负载' })).not.toBeInTheDocument()
     expect(within(section).queryByRole('article', { name: '磁盘占用' })).not.toBeInTheDocument()
-    expect(within(section).getAllByRole('article')).toHaveLength(4)
+    expect(within(screen.getByLabelText('当前资源读数')).getAllByRole('article')).toHaveLength(4)
+    expect(within(screen.getByLabelText('资源趋势')).getAllByRole('article')).toHaveLength(4)
+  })
+
+  it('新增采样后当前读数立即更新，不保留拆分前的旧值', async () => {
+    await renderReady()
+    const resources = useDashboardStore.getState().resources!
+    act(() => {
+      useDashboardStore.setState({ resources: [...resources, { ...resources.at(-1)!, ts: resources.at(-1)!.ts + 3000, cpu: 87, memory: 91 }] })
+    })
+    const summary = screen.getByLabelText('当前资源读数')
+    expect(within(summary).getByText('87%')).toHaveClass('text-warning')
+    expect(within(summary).getByText('91%')).toHaveClass('text-warning')
   })
 })
 

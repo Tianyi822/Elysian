@@ -13,12 +13,12 @@ import { FORM_CONTROL_HEIGHT_CLASS } from './formControl'
  */
 
 type Tone = 'neutral' | 'danger' | 'danger-hover'
-type Variant = 'solid' | 'ghost'
+export type Variant = 'solid' | 'ghost'
 
 const STYLES: Record<Variant, Record<Exclude<Tone, 'danger-hover'>, string>> = {
   solid: {
-    neutral: 'size-7 border border-line bg-surface-raised text-fg-muted hover:text-fg',
-    danger: 'size-7 border border-line bg-surface-raised text-danger hover:border-danger/50 hover:bg-danger/10',
+    neutral: 'size-7 border border-control-line bg-surface-raised text-fg-muted hover:text-fg',
+    danger: 'size-7 border border-control-line bg-surface-raised text-danger hover:border-danger/50 hover:bg-danger/10',
   },
   ghost: {
     neutral: 'size-6 text-fg-subtle hover:bg-surface-raised hover:text-fg',
@@ -44,6 +44,7 @@ export function IconButton({
   variant = 'solid',
   tooltip = true,
   disabled = false,
+  busy = false,
   formControl = false,
   className,
   onPointerDown,
@@ -60,6 +61,8 @@ export function IconButton({
   tooltip?: boolean
   /** 忙碌中的动作禁用按钮；tooltip 与 aria-label 保持可及。 */
   disabled?: boolean
+  /** 读屏播报「忙」：动作仍在途，与 disabled 分开表达——有些忙碌态并不禁止点击。 */
+  busy?: boolean
   /** 与表单输入框同高，用在输入框同一行，避免图标按钮矮一截。 */
   formControl?: boolean
   className?: string
@@ -75,13 +78,14 @@ export function IconButton({
     <button
       type="button"
       aria-label={label}
+      aria-busy={busy || undefined}
       onClick={onPress}
       onPointerDown={onPointerDown}
       onKeyDown={onKeyDown}
       onFocus={onFocus}
       onBlur={onBlur}
       disabled={disabled}
-      className={`inline-flex items-center justify-center ${formControl ? 'rounded-lg' : 'rounded'} transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${variantClass} ${formControl ? `${FORM_CONTROL_HEIGHT_CLASS} w-[34px]` : ''} ${className ?? ''}`}
+      className={`icon-button inline-flex items-center justify-center transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${variantClass} ${formControl ? `${FORM_CONTROL_HEIGHT_CLASS} w-9` : ''} ${className ?? ''}`}
     >
       {children}
     </button>
@@ -95,7 +99,7 @@ export function IconButton({
       <Tooltip.Portal>
         <Tooltip.Content
           sideOffset={6}
-          className="z-[80] rounded border border-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg"
+          className="z-[80] rounded border border-control-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg"
         >
           {label}
           <Tooltip.Arrow className="fill-surface-raised" />

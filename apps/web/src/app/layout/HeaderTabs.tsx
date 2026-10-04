@@ -3,15 +3,7 @@ import { useLayoutEffect, useRef, useState } from 'react'
 /** 页签项：值进 store 与回调，中文文案只在各页的页签表里维护。 */
 export type HeaderTabItem<T extends string> = { value: T; label: string }
 
-/**
- * 顶栏标题位的大字页签条：无外框与分割线，字号字重与顶栏标题一致，
- * 选中与未选中只靠颜色区分；选中效果是一条贴着页签底边的亮色指示条，
- * 位置由选中按钮量出：首次渲染直接落在选中页签下方（刷新恢复选中态不会滑一次），
- * 用户点过页签之后切换才靠 CSS 过渡滑过去。
- *
- * 高度撑满顶栏一行（h-14 抵掉行的上下内边距），指示条因此贴着页签底边、
- * 压在顶栏的下边框上。使用本组件的页面通常同时经路由 handle 声明藏掉可视标题。
- */
+/** 页面内容区的紧凑页签；选中背景、文字与滑动指示条共同表达当前视图。 */
 export function HeaderTabs<T extends string>({
   items,
   value,
@@ -58,7 +50,7 @@ export function HeaderTabs<T extends string>({
       ref={listRef}
       role="group"
       aria-label={groupLabel}
-      className="relative -my-3 flex h-14 items-stretch"
+      className="relative flex h-11 max-w-full items-stretch gap-1 rounded-lg bg-surface/40 p-1"
     >
       {items.map(({ value: itemValue, label }, index) => (
         <button
@@ -72,8 +64,8 @@ export function HeaderTabs<T extends string>({
             setSliding(true)
             onSelect(itemValue)
           }}
-          className={`whitespace-nowrap px-3 text-base font-semibold transition-colors ${
-            value === itemValue ? 'text-fg' : 'text-fg-muted hover:text-fg'
+          className={`whitespace-nowrap rounded-md px-3 text-sm font-semibold transition-colors ${
+            value === itemValue ? 'bg-nav-selected text-accent-fg' : 'text-fg-muted hover:bg-nav-hover hover:text-fg'
           }`}
         >
           {label}
@@ -82,7 +74,7 @@ export function HeaderTabs<T extends string>({
       {/* 选中指示条：不占布局，left/width 跟着选中按钮走，用户切换时滑过去。 */}
       <span
         aria-hidden
-        className={`absolute bottom-0 h-0.5 rounded-full bg-accent motion-reduce:transition-none ${
+        className={`absolute bottom-1 h-0.5 rounded-full bg-accent motion-reduce:transition-none ${
           sliding ? 'transition-[left,width] duration-200' : ''
         }`}
         style={{ left: indicator.left, width: indicator.width }}

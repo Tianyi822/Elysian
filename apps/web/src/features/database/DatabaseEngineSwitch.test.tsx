@@ -17,9 +17,9 @@ function switchGateway(): ElysianGateway {
   return { ...base, databases: { ...base.databases, list: async () => [] } }
 }
 
-/** 顶栏的平铺分段控件，与窄屏下拉在同一个 banner 内。 */
+/** 内容区的平铺分段控件与窄屏下拉。 */
 function segmentGroup(): HTMLElement {
-  return within(screen.getByRole('banner')).getByRole('group', { name: '数据库类型' })
+  return within(screen.getByRole('main')).getByRole('group', { name: '数据库类型' })
 }
 
 /** 平铺形态的容器：宽度够时它参与顶栏布局，摆不下时整体隐藏。 */
@@ -109,7 +109,7 @@ describe('数据库类型切换', () => {
     )
   })
 
-  it('顶栏放得下六个类型时保持平铺，只藏下拉', () => {
+  it('内容区放得下六个类型时保持平铺，只藏下拉', () => {
     // jsdom 量不出任何宽度，按「放得下」处理：平铺参与布局，下拉只在收起时出场。
     renderApp('/databases', { gateway: switchGateway() })
 
@@ -117,15 +117,15 @@ describe('数据库类型切换', () => {
     expect(trigger()).toHaveClass('hidden')
   })
 
-  it('六个类型挤到右侧功能簇时才收起，改显自绘下拉', () => {
-    // 判断依据是真实宽度，jsdom 里一切尺寸都是 0：把右侧功能簇量成顶栏装不下的宽度，
-    // 等价于「六个类型已经顶到功能簇」，此时应让位收成下拉。
+  it('六个类型超出窄屏可用宽度时收起，改显自绘下拉', () => {
+    // 判断依据是真实宽度，jsdom 里一切尺寸都是 0：把窄屏导航触发器量成工具行装不下的宽度，
+    // 类型切换的可用宽度不足时应收成下拉。
     const original = Element.prototype.getBoundingClientRect
     vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
       this: Element,
     ) {
       const rect = original.call(this)
-      if (this.querySelector('[aria-label="系统负载"]')) {
+      if (this.querySelector('[aria-label="打开主导航"]')) {
         Object.defineProperty(rect, 'width', { value: 5000 })
       }
       return rect

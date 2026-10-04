@@ -1,4 +1,5 @@
 import { Inbox, Loader2, Lock, TriangleAlert } from '../icons'
+import { CTL_SECONDARY } from '../formControl'
 import type { ReactNode } from 'react'
 
 /**
@@ -11,7 +12,7 @@ export function LoadingState({ label = '加载中…' }: { label?: string }) {
     <div
       role="status"
       aria-live="polite"
-      className="flex items-center justify-center gap-2 rounded border border-line bg-surface p-6 text-sm text-fg-muted"
+      className="flex items-center justify-center gap-2 panel-surface p-6 text-sm text-fg-muted"
     >
       <Loader2 aria-hidden size={16} className="animate-spin" />
       {label}
@@ -29,7 +30,7 @@ export function EmptyState({
   action?: ReactNode
 }) {
   return (
-    <div className="flex flex-col items-center gap-1.5 rounded border border-line bg-surface p-6 text-center">
+    <div className="flex flex-col items-center gap-1.5 panel-surface p-6 text-center">
       <Inbox aria-hidden size={20} className="text-fg-subtle" />
       <p className="text-sm font-medium">{title}</p>
       {description ? <p className="max-w-prose text-xs text-fg-muted">{description}</p> : null}
@@ -53,7 +54,7 @@ export function ErrorState({
   return (
     <div
       role="alert"
-      className="flex flex-col items-center gap-1.5 rounded border border-danger/40 bg-surface p-6 text-center"
+      className="flex flex-col items-center gap-1.5 panel-surface p-6 text-center"
     >
       <TriangleAlert aria-hidden size={20} className="text-danger" />
       <p className="text-sm font-medium">{title}</p>
@@ -65,7 +66,7 @@ export function ErrorState({
               <button
                 type="button"
                 onClick={onRetry}
-                className="mt-1 rounded-lg border border-line bg-surface-raised px-2 py-1 text-xs text-fg"
+                className={`${CTL_SECONDARY} mt-1 px-2`}
               >
                 重试
               </button>
@@ -83,7 +84,7 @@ export function NoPermissionState({
   description?: string
 }) {
   return (
-    <div className="flex flex-col items-center gap-1.5 rounded border border-line bg-surface p-6 text-center">
+    <div className="flex flex-col items-center gap-1.5 panel-surface p-6 text-center">
       <Lock aria-hidden size={20} className="text-fg-subtle" />
       <p className="text-sm font-medium">{title}</p>
       <p className="max-w-prose text-xs text-fg-muted">{description}</p>

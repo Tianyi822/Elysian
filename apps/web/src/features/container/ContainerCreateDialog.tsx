@@ -22,12 +22,12 @@ import type { ContainerCreateDraft, PortDraftRow } from './containerCreateForm'
  */
 
 const INPUT_CLASS =
-  `${FORM_CONTROL_HEIGHT_CLASS} w-full rounded-lg border border-line bg-surface-raised px-2.5 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle`
+  `${FORM_CONTROL_HEIGHT_CLASS} w-full rounded-lg border border-control-line bg-surface-raised px-2.5 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle`
 const FIELD_ERROR_CLASS = 'mt-1 text-xs text-danger'
 const ROW_DELETE_BUTTON =
   `inline-flex ${FORM_CONTROL_HEIGHT_CLASS} items-center gap-1 rounded-lg border border-line px-2 text-xs text-fg-muted transition-colors hover:text-danger`
 const ROW_ADD_BUTTON =
-  'inline-flex items-center gap-1 rounded-lg border border-dashed border-line px-2 py-1 text-xs text-fg-muted transition-colors hover:text-fg'
+  'action-button gap-1 border border-dashed border-line px-2 py-1 text-xs text-fg-muted transition-colors hover:text-fg'
 const PROTOCOL_ITEMS = [
   { value: 'tcp', label: 'tcp' },
   { value: 'udp', label: 'udp' },
@@ -80,13 +80,13 @@ export function ContainerCreateDialog() {
   return (
     <Dialog.Root open onOpenChange={(next) => { if (!next) closeCreate() }}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60" />
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay" />
         <Dialog.Content
           aria-describedby={undefined}
           // 点外部一律不关：填好的配置不该因为一次误点丢掉。Esc 与「关闭」「取消」仍可退出。
           onPointerDownOutside={(event) => event.preventDefault()}
           onInteractOutside={(event) => event.preventDefault()}
-          className="fixed left-1/2 top-1/2 z-[55] flex max-h-[min(40rem,calc(100vh-3rem))] w-[min(42rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line bg-bg shadow-2xl"
+          className="fixed left-1/2 top-1/2 z-[55] flex max-h-[min(40rem,calc(100vh-3rem))] w-[min(42rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden panel-surface shadow-2xl"
         >
           <Dialog.Title className="sr-only">创建容器</Dialog.Title>
           <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
@@ -452,15 +452,15 @@ export function ContainerCreateDialog() {
             ) : null}
           </div>
 
-          <div className="flex items-center justify-between gap-2 border-t border-line px-4 py-3">
+          <div className="flex flex-col items-stretch gap-3 border-t border-line px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-xs text-fg-subtle">
               {docker ? '创建后立即启动。' : '创建后立即运行；所有数据仅存在于演示内存。'}
             </p>
-            <div className="flex justify-end gap-2">
+            <div className="flex shrink-0 justify-end gap-2 whitespace-nowrap">
               <button
                 type="button"
                 onClick={closeCreate}
-                className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
+                className="action-button border border-control-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
               >
                 取消
               </button>
@@ -468,7 +468,7 @@ export function ContainerCreateDialog() {
                 type="button"
                 onClick={submit}
                 disabled={disabled}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50"
+                className="action-button gap-1.5 border border-control-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {creating ? <Loader2 aria-hidden size={13} className="animate-spin" /> : null}
                 {creating ? '创建中…' : '创建并运行'}

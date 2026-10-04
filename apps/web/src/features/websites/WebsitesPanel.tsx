@@ -5,12 +5,12 @@ import type { WebsiteCategory, WebsiteProject, WebsiteDeploymentTask } from '@el
 import { useState, useEffect } from 'react'
 import { WEBSITE_CATEGORIES, WEBSITE_CATEGORY_LABELS, websiteDeploymentIsActive } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { IconButton } from '../../components/IconButton'
 import { RefreshCw, Search } from '../../components/icons'
 import { EmptyState } from '../../components/states/StateViews'
+import { RefreshButton } from '../../components/RefreshState'
 import { useWebsitesStore } from '../../stores/websitesStore'
 import { accessConfigEntryVisible, caddyInstallEntryVisible, useDependencyGuideStore } from '../../stores/dependencyGuideStore'
-import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
+import { CTL_FIELD, CTL_PRIMARY, CTL_TOOLBAR } from '../../components/formControl'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { WebsiteDetailSheet } from './WebsiteDetailSheet'
 import { WebsitesCard } from './WebsitesCard'
@@ -29,8 +29,7 @@ import { filterWebsiteProjects } from './websitesListing'
  * 瀑布列布局：卡片高度随内容伸缩，不强制对齐。
  */
 
-const TOOL_BUTTON_CLASS =
-  `inline-flex ${FORM_CONTROL_HEIGHT_CLASS} items-center rounded-lg border border-line bg-surface-raised px-3 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50`
+const TOOL_BUTTON_CLASS = CTL_PRIMARY
 
 /** 反向代理通道横幅：unavailable 为降级说明，active 且有 detail 为漂移说明附对账按钮。 */
 function ProxyStatusBanner({
@@ -64,7 +63,7 @@ function ProxyStatusBanner({
         type="button"
         onClick={onReconcile}
         disabled={reconciling}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-warning/50 px-3 py-1.5 font-medium text-warning transition-colors hover:bg-warning/20 disabled:cursor-not-allowed disabled:opacity-50"
+        className="action-button gap-1.5 border border-warning/50 px-3 py-1.5 font-medium text-warning transition-colors hover:bg-warning/20 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <RefreshCw aria-hidden size={12} className={reconciling ? 'animate-spin' : undefined} />
         {reconciling ? '正在重新下发…' : '重新下发反向代理配置'}
@@ -114,7 +113,7 @@ export function WebsitesPanel() {
 
   return (
     <div>
-      <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-surface px-4 py-3">
+      <div className={`${CTL_TOOLBAR} mb-4 flex flex-wrap items-center gap-2 panel-surface px-4 py-3`}>
         <button type="button" onClick={openCreate} className={TOOL_BUTTON_CLASS}>
           添加项目
         </button>
@@ -130,7 +129,7 @@ export function WebsitesPanel() {
           </button>
         ) : null}
 
-        <div className="ml-auto flex flex-wrap items-center gap-2">
+        <div className="flex w-full flex-wrap items-center gap-2 lg:ml-auto lg:w-auto">
           <SelectDropdown
             ariaLabel="项目分类"
             items={[
@@ -143,7 +142,7 @@ export function WebsitesPanel() {
             value={category}
             onSelect={setCategory}
           />
-          <div className="relative w-56">
+          <div className="relative min-w-0 flex-1 sm:w-56 sm:flex-none">
             <Search
               aria-hidden
               className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-fg-subtle"
@@ -156,17 +155,15 @@ export function WebsitesPanel() {
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="请输入项目名称或备注"
-              className={`${FORM_CONTROL_HEIGHT_CLASS} w-full rounded-lg border border-line bg-surface-raised pl-8 pr-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle`}
+              className={`${CTL_FIELD} pl-8`}
             />
           </div>
-          <IconButton label="刷新" formControl onPress={() => void refresh(gateway)}>
-            <RefreshCw aria-hidden size={13} className={refreshing ? 'animate-spin' : undefined} />
-          </IconButton>
+          <RefreshButton onPress={() => void refresh(gateway)} busy={refreshing} formControl />
         </div>
       </div>
 
       {operationError && <p role="alert" className="mb-4 text-xs text-danger">{operationError}</p>}
-      {taskListOpen && <div className="mb-4 space-y-2 rounded-xl border border-line bg-surface p-4" aria-label="部署任务列表">
+      {taskListOpen && <div className="mb-4 space-y-2 panel-surface p-4" aria-label="部署任务列表">
         {taskError ? <p role="alert" className="text-xs text-danger">{taskError}</p> : tasks.length === 0 ? <p className="text-xs text-fg-muted">暂无部署任务</p> : tasks.map((task) => <button type="button" key={task.id} onClick={() => setSelectedTask(task)} className="flex w-full flex-wrap items-center justify-between gap-2 rounded-lg border border-line p-3 text-left text-xs hover:bg-surface-raised"><span className="min-w-0 break-all">{task.name}</span><span className="flex flex-col gap-1 text-right"><span>{deploymentTaskSummary(task)}</span>{!websiteDeploymentIsActive(task.state) && task.state !== 'awaiting-config' ? <time dateTime={task.updatedAt} className="text-fg-muted">完成于 {formatDateTime(task.updatedAt)}</time> : null}</span></button>)}
       </div>}
       {projects.some((project) => project.accessMode === 'domain') && (proxyStatus.state === 'unavailable' || proxyStatus.detail !== null) ? (
@@ -195,13 +192,14 @@ export function WebsitesPanel() {
       ) : (
         <ul
           aria-label="网站项目列表"
-          className="columns-1 gap-4 md:columns-2 xl:columns-3"
+          className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,18rem),1fr))] items-start gap-4"
         >
           {filtered.map((project) => (
-            <li key={project.id} className="mb-4 break-inside-avoid">
+            <li key={project.id} className="min-w-0">
               <WebsitesCard
                 project={project}
                 busy={busyIds.includes(project.id) || rollbackIds.includes(project.id) || tasks.some((task) => task.projectId === project.id && (websiteDeploymentIsActive(task.state) || task.state === 'awaiting-config'))}
+                refreshing={refreshing}
                 onOpenDetail={() => useWebsitesStore.getState().openDetail(gateway, project)}
                 onToggleRunning={() =>
                   void useWebsitesStore

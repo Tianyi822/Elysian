@@ -112,9 +112,9 @@ export function userSessions(overrides: Partial<ElysianGateway['users']> = {}) {
   return { gateway, users }
 }
 
-/** 顶栏上的安全页签按钮。 */
+/** 内容区的安全页签按钮。 */
 export function securityTab(name: string): HTMLElement {
-  const group = within(screen.getByRole('banner')).getByRole('group', { name: '安全页签' })
+  const group = within(screen.getByRole('main')).getByRole('group', { name: '安全页签' })
   return within(group).getByRole('button', { name })
 }
 

@@ -17,7 +17,7 @@ type ToneStyle = { border: string; icon: IconComponent; iconColor: string }
 
 const TONE_STYLE: Record<NotificationTone, ToneStyle> = {
   success: { border: 'border-success/40', icon: CircleCheck, iconColor: 'text-success' },
-  info: { border: 'border-accent/40', icon: Info, iconColor: 'text-accent' },
+  info: { border: 'border-accent/40', icon: Info, iconColor: 'text-accent-fg' },
   danger: { border: 'border-danger/40', icon: TriangleAlert, iconColor: 'text-danger' },
 }
 
@@ -41,7 +41,7 @@ function NotificationItem({ notification }: { notification: AppNotification }) {
         // 角色放在内层，外层 li 保留列表语义。
         role={notification.tone === 'danger' ? 'alert' : 'status'}
         className={[
-          'relative flex items-start gap-2 rounded-lg border bg-surface p-2.5 pr-9 shadow-lg',
+          'panel-surface relative flex items-start gap-2 p-2.5 pr-9 shadow-lg',
           style.border,
         ].join(' ')}
       >

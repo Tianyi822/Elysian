@@ -41,7 +41,7 @@ export function ClearLogsDialog() {
   return (
     <Dialog.Root open onOpenChange={(open) => { if (!open) closeClear() }}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/60" />
+        <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
         <Dialog.Content
           ref={contentRef}
           // 容器可聚焦 + 接管打开时的自动聚焦：初始焦点不落在「确认清空」上，
@@ -51,7 +51,7 @@ export function ClearLogsDialog() {
             event.preventDefault()
             contentRef.current?.focus()
           }}
-          className="fixed left-1/2 top-1/2 z-[61] w-[min(26rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-surface-raised p-4 shadow-xl"
+          className="fixed left-1/2 top-1/2 z-[61] w-[min(26rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl"
         >
           <Dialog.Title className="text-sm font-semibold">{`确认清空${label}？`}</Dialog.Title>
           {/* 正文是必读信息：aria-describedby 指向它（Radix 默认启用，不要关掉）。 */}

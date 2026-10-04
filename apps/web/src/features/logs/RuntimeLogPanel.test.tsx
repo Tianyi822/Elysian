@@ -356,10 +356,12 @@ describe('工具栏分组', () => {
     await waitForTable()
 
     const viewGroup = screen.getByRole('group', { name: '日志视图操作' })
-    expect(within(viewGroup).getAllByRole('button').map((btn) => btn.textContent)).toEqual([
-      '刷新日志',
-      '全屏展示',
-    ])
+    // 刷新是纯图标按钮，名字长在 aria-label 上；全屏仍是文字按钮。
+    expect(
+      within(viewGroup)
+        .getAllByRole('button')
+        .map((btn) => btn.getAttribute('aria-label') ?? btn.textContent),
+    ).toEqual(['刷新日志', '全屏展示'])
     // 清空是破坏性动作，不与视图开关混在同一组里；窄屏下它与日志大小同占第三行。
     expect(within(viewGroup).queryByRole('button', { name: '清空日志' })).not.toBeInTheDocument()
     // 保留口径与演示态是关于数据来源的事实，放工具栏外的说明行，不占控件位。

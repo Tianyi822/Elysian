@@ -12,8 +12,8 @@ import { SelectDropdown } from '../../components/SelectDropdown'
 import { X } from '../../components/icons'
 import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 
-const INPUT = `${FORM_CONTROL_HEIGHT_CLASS} w-full rounded-lg border border-line bg-surface-raised px-2.5 text-sm text-fg placeholder:text-fg-subtle disabled:opacity-60`
-const BUTTON = 'rounded-lg border border-line bg-surface-raised px-3 py-2 text-xs font-medium text-fg hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
+const INPUT = `${FORM_CONTROL_HEIGHT_CLASS} w-full rounded-lg border border-control-line bg-surface-raised px-2.5 text-sm text-fg placeholder:text-fg-subtle disabled:opacity-60`
+const BUTTON = 'rounded-lg border border-control-line bg-surface-raised px-3 py-2 text-xs font-medium text-fg hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
 const TOOL_LABEL: Record<string, string> = { javac: '普通 Java · JDK', maven: 'Maven', gradle: 'Gradle', npm: 'npm', pnpm: 'pnpm', yarn: 'Yarn', bun: 'Bun', go: 'Go Modules', pip: 'Python / pip', uv: 'Python / uv', poetry: 'Python / Poetry', static: '静态目录', artifact: '已构建产物' }
 const TEST_LABEL = { pending: '等待测试', passed: '测试与检查已通过', failed: '测试或构建未完成，请查看日志', absent: '未发现测试', skipped: '已明确跳过测试' }
 const TOOL_DEFAULT: Record<string, string> = { maven: '3.9.11', gradle: '8.14.3', pnpm: '10.17.1', yarn: '1.22.22', bun: '1.2.22', uv: '0.8.22', poetry: '2.2.1' }
@@ -145,8 +145,8 @@ export function WebsitesCreateDialog({ project, existingTask, onClose }: { proje
   const runtimeSelect = (field: 'buildVersion' | 'runtimeVersion', title: string) => <div className="space-y-1"><p id={`deploy-${field}-label`} className="text-xs font-medium text-fg-muted">{title}</p><SelectDropdown ariaLabel={title} items={entries.map((entry) => ({ value: entry.version, label: entry.version }))} value={config[field] ?? ''} fallbackLabel={catalogLoading ? '正在加载版本…' : '请选择精确版本'} onSelect={(value) => patch({ [field]: value })} fullWidth disabled={busy || waiting} search={{ ariaLabel: `搜索${title}`, placeholder: '搜索版本号（包含历史补丁）' }} /></div>
 
   return <Dialog.Root open onOpenChange={(open) => { if (!open) closeDialog() }}><Dialog.Portal>
-    <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60" />
-    <Dialog.Content aria-describedby="deployment-description" onOpenAutoFocus={(event) => { event.preventDefault(); document.getElementById('deployment-description')?.focus() }} onPointerDownOutside={(e) => e.preventDefault()} onInteractOutside={(e) => e.preventDefault()} className="fixed left-1/2 top-1/2 z-[55] flex max-h-[calc(100dvh-2rem)] w-[min(38rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line bg-bg shadow-2xl">
+    <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay" />
+    <Dialog.Content aria-describedby="deployment-description" onOpenAutoFocus={(event) => { event.preventDefault(); document.getElementById('deployment-description')?.focus() }} onPointerDownOutside={(e) => e.preventDefault()} onInteractOutside={(e) => e.preventDefault()} className="fixed left-1/2 top-1/2 z-[55] flex max-h-[calc(100dvh-2rem)] w-[min(38rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden panel-surface shadow-2xl">
       <div className="flex items-center justify-between border-b border-line px-4 py-3"><Dialog.Title className="text-sm font-medium">{existingTask ? `部署任务 · ${existingTask.name}` : project ? `重新部署 ${project.name}` : '添加项目'}</Dialog.Title><IconButton label="关闭弹窗" onPress={closeDialog}><X aria-hidden size={15} /></IconButton></div>
       <div className="flex flex-wrap gap-2 border-b border-line px-4 py-3 text-xs" aria-label="部署步骤">{['项目来源', '识别与部署配置', '执行进度'].map((text, i) => <span key={text} aria-current={step === i + 1 ? 'step' : undefined} className={step === i + 1 ? 'font-medium text-fg' : 'text-fg-subtle'}>{i + 1}. {text}</span>)}</div>
       <div className="space-y-4 overflow-y-auto px-4 py-4">

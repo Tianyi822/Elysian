@@ -1,7 +1,7 @@
 import * as Switch from '@radix-ui/react-switch'
 import { useId } from 'react'
 import type { ReactNode } from 'react'
-import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
+import { CTL_FIELD, CTL_PRIMARY, CTL_SECONDARY, FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 
 /*
  * SSH 管理页的共用卡片部件：卡的形状、卡内区域的形状，以及卡内输入类控件与推进动作的类名。
@@ -11,14 +11,14 @@ import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 /** 卡内控件高度，与表单控件同一套，见 `components/formControl.ts`。 */
 export const CONTROL_HEIGHT_CLASS = FORM_CONTROL_HEIGHT_CLASS
 
-/** 卡内输入框：坐在卡面或区域内都取浮起底，靠边框与悬停反馈显形。 */
-export const INPUT_CLASS = `min-w-0 flex-1 ${CONTROL_HEIGHT_CLASS} rounded-lg border border-line bg-surface-raised px-2.5 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle`
+/** 卡内输入框：与按钮同高同圆角同描边，同一行里看得出是一对。 */
+export const INPUT_CLASS = `${CTL_FIELD} min-w-0 flex-1`
 
 /** 卡里的推进动作：中性描边加中字重，不用强调蓝做填充底。 */
-export const ACTION_CLASS = `inline-flex ${CONTROL_HEIGHT_CLASS} shrink-0 items-center rounded-lg border border-line bg-surface-raised px-3 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:opacity-50`
+export const ACTION_CLASS = `${CTL_PRIMARY} shrink-0`
 
 /** 次要动作：与推进动作同高同形，只去掉底色并把文字降一档色阶。 */
-export const SECONDARY_ACTION_CLASS = `inline-flex ${CONTROL_HEIGHT_CLASS} shrink-0 items-center rounded-lg border border-line px-3 text-xs text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg disabled:opacity-50`
+export const SECONDARY_ACTION_CLASS = `${CTL_SECONDARY} shrink-0`
 
 /**
  * 表格的分页条：左侧给出条数摘要与每页容量，右侧是上一页、页码、下一页。
@@ -62,7 +62,7 @@ export function TablePager({
             onClick={() => onPageChange(pageNumber)}
             className={`min-w-7 rounded-lg border px-2 py-1 tabular-nums transition-colors ${
               pageNumber === page
-                ? 'border-accent/50 bg-accent/10 font-medium text-accent'
+                ? 'border-accent/50 bg-accent/10 font-medium text-accent-fg'
                 : 'border-line hover:bg-surface-raised hover:text-fg'
             }`}
           >
@@ -100,9 +100,9 @@ export function SwitchToggle({
       disabled={disabled}
       onCheckedChange={onCheckedChange}
       aria-label={label}
-      className="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border border-line bg-surface-raised transition-colors data-[state=checked]:border-accent data-[state=checked]:bg-accent"
+      className="ui-switch relative inline-flex h-5 w-9 shrink-0 items-center"
     >
-      <Switch.Thumb className="ml-0.5 block size-3.5 rounded-full bg-fg-muted transition-transform data-[state=checked]:translate-x-4 data-[state=checked]:bg-white" />
+      <Switch.Thumb className="ui-switch-thumb ml-0.5 block size-3.5 data-[state=checked]:translate-x-4" />
     </Switch.Root>
   )
 }
@@ -115,7 +115,7 @@ export function Section({ title, children }: { title: string; children: ReactNod
       aria-labelledby={titleId}
       // min-w-0 是必需的：卡片是网格项，自动最小宽度会跟随内容，
       // 卡里的宽表格会因此把整张卡顶出视口，横向滚动也就落不到容器里。
-      className="flex min-w-0 flex-col rounded-xl border border-line bg-surface p-3 sm:p-4"
+      className="flex min-w-0 flex-col panel-surface p-3 sm:p-4"
     >
       <h2 id={titleId} className="text-sm font-medium text-fg">
         {title}

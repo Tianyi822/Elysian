@@ -229,7 +229,7 @@ describe('自绘单选下拉', () => {
     expect(screen.getByRole('button', { name: '操作分类筛选：文件管理' })).toHaveClass(
       'border-accent/50',
       'bg-accent/10',
-      'text-accent',
+      'text-accent-fg',
     )
   })
 })

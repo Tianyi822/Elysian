@@ -47,7 +47,7 @@ export function LogMessageCell({
             <Tooltip.Portal>
               <Tooltip.Content
                 sideOffset={6}
-                className="z-50 rounded border border-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg"
+                className="z-50 rounded border border-control-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg"
               >
                 {triggerLabel}
                 <Tooltip.Arrow className="fill-surface-raised" />
@@ -61,7 +61,7 @@ export function LogMessageCell({
               sideOffset={6}
               collisionPadding={8}
               aria-label="完整日志内容"
-              className="z-50 max-h-[calc(100vh-2rem)] w-[min(40rem,calc(100vw-2rem))] overflow-y-auto rounded-lg border border-line bg-surface-raised p-3 text-xs shadow-lg"
+              className="z-50 max-h-[calc(100vh-2rem)] w-[min(40rem,calc(100vw-2rem))] overflow-y-auto rounded-lg border border-control-line bg-surface-raised p-3 text-xs shadow-lg"
             >
               {/* 正文：原样呈现（含空白），超长时在正文区内部滚动；tabIndex 兜底可聚焦。 */}
               <div
