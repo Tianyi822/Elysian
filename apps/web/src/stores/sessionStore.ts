@@ -26,14 +26,15 @@ type SessionStoreState = {
    */
   returnToFor: string | undefined
   /**
-   * 一次性提示（如改密成功后的「需用新密码重新登录」）：唯一写点是设置页改密成功，
-   * 唯一清点是 login() 成功——改密后用户只能经登录页重新进入，提示在两次登录之间保持准确。
-   * probe/logout/expire 不触碰它（登出或 401 不改变「密码刚改过」这一事实）。
+   * 一次性提示（如改密成功或后台检查发现会话失效），login() 成功清除。
+   * probe/logout/expire 不触碰它，后台失效提示不覆盖已有的改密提示。
    */
   notice: string | null
   setNotice(text: string | null): void
   /** 挂载时探测一次：authenticated → authed/anonymous；status() 抛错（服务不可达等）→ error。带 returnTo 时同时取回裁决值。 */
   probe(gateway: ElysianGateway, returnTo?: string): Promise<void>
+  /** 静默检查已登录会话；失效时退出，网络故障保留页面，后台检查不延长空闲期限。 */
+  revalidate(gateway: ElysianGateway): Promise<void>
   /** 成功置 authed 并清除一次性提示；失败向上抛中文错误，phase 不变。 */
   login(gateway: ElysianGateway, username: string, password: string): Promise<void>
   /** 置 anonymous（登出请求幂等，网络失败也回到登录页）。 */
@@ -42,7 +43,7 @@ type SessionStoreState = {
   expire(): void
 }
 
-export const useSessionStore = create<SessionStoreState>((set) => ({
+export const useSessionStore = create<SessionStoreState>((set, get) => ({
   phase: 'unknown',
   mode: undefined,
   devAccount: false,
@@ -68,6 +69,19 @@ export const useSessionStore = create<SessionStoreState>((set) => ({
       })
     } catch {
       set({ phase: 'error' })
+    }
+  },
+
+  async revalidate(gateway) {
+    const current = get()
+    if (current.phase !== 'authed' || current.mode !== 'real') return
+    try {
+      const status = await gateway.session.status(undefined, { passive: true })
+      // 请求期间发生登出、新登录或其他会话状态变化时，丢弃旧响应。
+      if (get() !== current || status.authenticated) return
+      set({ phase: 'anonymous', notice: current.notice ?? '登录状态已失效，请重新登录' })
+    } catch {
+      // 暂时断网不等同于会话失效，下一轮检查继续确认；实际 API 仍由服务端鉴权。
     }
   },
 

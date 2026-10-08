@@ -37,10 +37,13 @@ type PanelSession struct {
 
 // SessionStore 会话存取接口。
 type SessionStore interface {
-	// Create 新建会话并立即落盘（文件版）。
-	Create(pwdEpoch string) (*PanelSession, error)
+	// Create 原子替换全部会话并立即落盘，返回新会话与被替换的 id。
+	// dev 与 admin 共用唯一管理员会话；写盘失败保留原会话。
+	Create(pwdEpoch string) (*PanelSession, []string, error)
 	// Validate 校验并滑动续期；会话不存在、过期或 epoch 不匹配时删除并回 nil。
 	Validate(sessionID, pwdEpoch string) (*PanelSession, error)
+	// Check 校验但不滑动续期，供后台会话检查使用。
+	Check(sessionID, pwdEpoch string) (*PanelSession, error)
 	// Destroy 销毁单个会话；无匹配不写文件。
 	Destroy(sessionID string) error
 	// List 只读列举未过期会话：过期会话就地过滤、不落盘（清扫仍由 Validate 顺带完成）。
@@ -118,35 +121,48 @@ func (s *sessionStoreCore) load() ([]PanelSession, error) {
 
 // commit 更新内存镜像；forceWrite 且为文件版时立即落盘（写失败原样上抛给调用方）。
 func (s *sessionStoreCore) commit(next []PanelSession, forceWrite bool) error {
-	s.cached = next
 	if forceWrite && s.writer != nil {
-		return s.writer(next)
+		if err := s.writer(next); err != nil {
+			return err
+		}
 	}
+	s.cached = next
 	return nil
 }
 
 // Create 实现 SessionStore。
-func (s *sessionStoreCore) Create(pwdEpoch string) (*PanelSession, error) {
+func (s *sessionStoreCore) Create(pwdEpoch string) (*PanelSession, []string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	loaded, err := s.load()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	at := s.now()
 	session := PanelSession{ID: newSessionID(), CreatedAt: at.UnixMilli(), LastUsedAt: at.UnixMilli(), PwdEpoch: pwdEpoch}
-	next := make([]PanelSession, 0, len(loaded)+1)
-	next = append(next, loaded...)
-	next = append(next, session)
-	if err := s.commit(next, true); err != nil {
-		return nil, err
+	replaced := make([]string, 0, len(loaded))
+	for _, old := range loaded {
+		replaced = append(replaced, old.ID)
+	}
+	// 创建与失效在同一把锁、同一次原子写内完成，绝不先清旧会话再写新会话。
+	if err := s.commit([]PanelSession{session}, true); err != nil {
+		return nil, nil, err
 	}
 	copied := session
-	return &copied, nil
+	return &copied, replaced, nil
 }
 
 // Validate 实现 SessionStore。
 func (s *sessionStoreCore) Validate(sessionID, pwdEpoch string) (*PanelSession, error) {
+	return s.validate(sessionID, pwdEpoch, true)
+}
+
+// Check 不把后台轮询视为用户活动，保留空闲过期语义。
+func (s *sessionStoreCore) Check(sessionID, pwdEpoch string) (*PanelSession, error) {
+	return s.validate(sessionID, pwdEpoch, false)
+}
+
+func (s *sessionStoreCore) validate(sessionID, pwdEpoch string, touch bool) (*PanelSession, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	at := s.now()
@@ -192,7 +208,9 @@ func (s *sessionStoreCore) Validate(sessionID, pwdEpoch string) (*PanelSession, 
 		return nil, nil
 	}
 	slid := *target
-	slid.LastUsedAt = at.UnixMilli()
+	if touch {
+		slid.LastUsedAt = at.UnixMilli()
+	}
 	next := make([]PanelSession, len(survivors))
 	copy(next, survivors)
 	for i := range next {

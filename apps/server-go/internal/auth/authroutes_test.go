@@ -802,15 +802,15 @@ func (s *recordingCredentialsStore) InnerCurrent(t *testing.T) *PanelCredentials
 func TestSessionsListProjection(t *testing.T) {
 	clock := &fakeClock{ms: 1_760_000_000_000}
 	sessions := NewMemorySessionStore(clock.now)
-	if _, err := sessions.Create(testEpoch); err != nil { // oldest：随后过期
+	if _, err := seedLegacySession(sessions, testEpoch); err != nil { // oldest：随后过期
 		t.Fatalf("Create 失败：%v", err)
 	}
 	clock.ms += 60_000
-	if _, err := sessions.Create(testEpoch); err != nil { // middle：仍有效、非当前
+	if _, err := seedLegacySession(sessions, testEpoch); err != nil { // middle：仍有效、非当前
 		t.Fatalf("Create 失败：%v", err)
 	}
 	clock.ms += int64(SessionIdleTTL/time.Millisecond) - 30_000
-	current, err := sessions.Create(testEpoch)
+	current, err := seedLegacySession(sessions, testEpoch)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
@@ -877,9 +877,9 @@ func TestLogoutOthersKeepsCurrent(t *testing.T) {
 			Username: "admin", PasswordHash: mustHash(t, "p"), PasswordChangedAt: testEpoch,
 		})
 	})
-	first, _ := f.sessions.Create(testEpoch)
-	second, _ := f.sessions.Create(testEpoch)
-	third, _ := f.sessions.Create(testEpoch)
+	first, _ := seedLegacySession(f.sessions, testEpoch)
+	second, _ := seedLegacySession(f.sessions, testEpoch)
+	third, _ := seedLegacySession(f.sessions, testEpoch)
 
 	recorder := f.request(http.MethodPost, "/sessions/logout-others", "", map[string]string{
 		"Origin": testOrigin, "Host": "localhost:5173", "Cookie": "elysian_session=" + second.ID,
@@ -919,10 +919,10 @@ func TestLogoutOthersTriggersRevokeOthers(t *testing.T) {
 			Username: "admin", PasswordHash: mustHash(t, "p"), PasswordChangedAt: testEpoch,
 		})
 	})
-	if _, err := f.sessions.Create(testEpoch); err != nil {
+	if _, err := seedLegacySession(f.sessions, testEpoch); err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
-	current, err := f.sessions.Create(testEpoch)
+	current, err := seedLegacySession(f.sessions, testEpoch)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}

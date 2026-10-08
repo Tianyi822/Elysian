@@ -1,10 +1,13 @@
-import { screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { MemoryRouter, Route, Routes } from 'react-router'
+import { GatewayProvider } from '../adapters/GatewayProvider'
 import { createMockGateway } from '../adapters/mock/gateway'
 import type { ElysianGateway, SessionAdapter } from '../contracts/adapters'
 import { useSessionStore } from '../stores/sessionStore'
 import { renderApp } from '../test/renderApp'
+import { RequireSession } from './RequireSession'
 
 /*
  * 会话闸门组件：unknown → 加载态；探测抛错 → 错误态且「重试」可重跑 probe；
@@ -21,6 +24,65 @@ function gatewayWithSession(session: Partial<SessionAdapter>): ElysianGateway {
 
 beforeEach(() => {
   useSessionStore.setState({ phase: 'unknown', mode: undefined, devAccount: false })
+})
+
+describe('RequireSession 后台会话检查', () => {
+  afterEach(() => {
+    cleanup()
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  async function renderGate(status: SessionAdapter['status']) {
+    const gateway = gatewayWithSession({ status })
+    await act(async () => {
+      render(
+        <GatewayProvider gateway={gateway}>
+          <MemoryRouter initialEntries={['/private']}>
+            <Routes>
+              <Route path="/private" element={<RequireSession><p>管理页面</p></RequireSession>} />
+              <Route path="/login" element={<h1>重新登录</h1>} />
+            </Routes>
+          </MemoryRouter>
+        </GatewayProvider>,
+      )
+    })
+  }
+
+  it('静止页面在下一轮检查发现失效后返回登录页，并停止轮询', async () => {
+    vi.useFakeTimers()
+    const status = vi.fn<SessionAdapter['status']>()
+      .mockResolvedValueOnce({ mode: 'real', authenticated: true, devAccount: true })
+      .mockResolvedValue({ mode: 'real', authenticated: false, devAccount: true })
+    await renderGate(status)
+    expect(screen.getByText('管理页面')).toBeInTheDocument()
+    await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
+    expect(screen.getByRole('heading', { name: '重新登录' })).toBeInTheDocument()
+    expect(status).toHaveBeenLastCalledWith(undefined, { passive: true })
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
+    expect(status).toHaveBeenCalledTimes(2)
+  })
+
+  it('后台标签页暂停检查，切回时立即检查，在途请求不重复发送', async () => {
+    vi.useFakeTimers()
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+    let resolve!: (status: Awaited<ReturnType<SessionAdapter['status']>>) => void
+    const status = vi.fn<SessionAdapter['status']>()
+      .mockResolvedValueOnce({ mode: 'real', authenticated: true, devAccount: true })
+      .mockImplementation(() => new Promise((done) => { resolve = done }))
+    await renderGate(status)
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
+    expect(status).toHaveBeenCalledTimes(1)
+    visibility.mockReturnValue('visible')
+    fireEvent(document, new Event('visibilitychange'))
+    fireEvent(window, new Event('focus'))
+    fireEvent(window, new Event('online'))
+    expect(status).toHaveBeenCalledTimes(2)
+    await act(async () => { resolve({ mode: 'real', authenticated: false, devAccount: true }) })
+    expect(screen.getByRole('heading', { name: '重新登录' })).toBeInTheDocument()
+    fireEvent(window, new Event('focus'))
+    expect(status).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('RequireSession 会话闸门', () => {

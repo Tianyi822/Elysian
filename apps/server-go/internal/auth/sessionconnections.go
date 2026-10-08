@@ -8,8 +8,8 @@ import (
 )
 
 // 会话连接撤销表（sessionConnections.ts 等价物，seam.SessionConnections 的实现）：
-// sessionId → 该会话名下已建立长连接的 closer 集合。登出、改密（pwdEpoch 轮换）、
-// 退出其他会话三条显式失效路径在销毁服务端会话的同时，主动关闭该会话名下已建立的
+// sessionId → 该会话名下已建立长连接的 closer 集合。新登录替换、登出、改密（pwdEpoch
+// 轮换）、退出其他会话在销毁服务端会话的同时，主动关闭该会话名下已建立的
 // 终端 WS 连接——否则连接层存活到自然断开，撤销只对新请求生效。纯内存结构，装配期
 // 创建一次、app 把同一实例穿给 auth 片（触发端点）与 terminals 片（登记 closer）。
 //

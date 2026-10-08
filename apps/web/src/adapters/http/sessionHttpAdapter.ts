@@ -78,9 +78,12 @@ async function readErrorDetail(response: Response): Promise<string | null> {
 }
 
 export function createHttpSessionAdapter(baseUrl = '/api/auth'): SessionAdapter {
-  const status = (returnTo?: string): Promise<SessionStatus> => withRequestDeadline(undefined, async (init) => {
+  const status: SessionAdapter['status'] = (returnTo, options) => withRequestDeadline(undefined, async (init) => {
     // 编码交给 URLSearchParams：冒号与斜杠一律转义，回跳地址不破坏查询串结构。
-    const query = returnTo === undefined || returnTo === '' ? '' : `?${new URLSearchParams({ returnTo }).toString()}`
+    const params = new URLSearchParams()
+    if (returnTo !== undefined && returnTo !== '') params.set('returnTo', returnTo)
+    if (options?.passive) params.set('passive', '1')
+    const query = params.size === 0 ? '' : `?${params.toString()}`
     let response: Response
     try {
       response = await fetch(`${baseUrl}/session${query}`, { ...init, cache: 'no-store' })

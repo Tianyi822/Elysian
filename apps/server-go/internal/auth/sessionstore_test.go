@@ -24,6 +24,24 @@ func sessionFilePath(dir string) string {
 	return filepath.Join(dir, "state", "panel-sessions.json")
 }
 
+// seedLegacySession 仅供兼容测试构造遗留的多会话文件；登录入口始终只创建单会话。
+func seedLegacySession(store SessionStore, epoch string) (*PanelSession, error) {
+	core := store.(*sessionStoreCore)
+	core.mu.Lock()
+	defer core.mu.Unlock()
+	loaded, err := core.load()
+	if err != nil {
+		return nil, err
+	}
+	at := core.now().UnixMilli()
+	session := PanelSession{ID: newSessionID(), CreatedAt: at, LastUsedAt: at, PwdEpoch: epoch}
+	next := append(append([]PanelSession{}, loaded...), session)
+	if err := core.commit(next, true); err != nil {
+		return nil, err
+	}
+	return &session, nil
+}
+
 func readSessionsOnDisk(t *testing.T, path string) sessionsOnDisk {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -57,7 +75,7 @@ func TestSessionStoreCreateShapeAndPermissions(t *testing.T) {
 	path := sessionFilePath(dir)
 	store := NewFileSessionStore(path, nil)
 
-	session, err := store.Create(testEpoch)
+	session, _, err := store.Create(testEpoch)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
@@ -90,17 +108,17 @@ func TestSessionStoreCreateShapeAndPermissions(t *testing.T) {
 	}
 }
 
-func TestSessionStoreTwoCreatesAndSliding(t *testing.T) {
+func TestSessionStoreReplacementAndSliding(t *testing.T) {
 	dir := tempDir(t)
 	clock := &fakeClock{ms: 1_760_000_000_000}
 	store := NewFileSessionStore(sessionFilePath(dir), clock.now)
 
-	first, err := store.Create(testEpoch)
+	first, _, err := store.Create(testEpoch)
 	if err != nil {
 		t.Fatalf("第一次 Create 失败：%v", err)
 	}
 	clock.ms += 1000
-	second, err := store.Create(testEpoch)
+	second, replaced, err := store.Create(testEpoch)
 	if err != nil {
 		t.Fatalf("第二次 Create 失败：%v", err)
 	}
@@ -108,8 +126,26 @@ func TestSessionStoreTwoCreatesAndSliding(t *testing.T) {
 		t.Error("两次 create 产出相同 id")
 	}
 
+	if len(replaced) != 1 || replaced[0] != first.ID {
+		t.Fatalf("替换清单应只含旧会话：%v", replaced)
+	}
+	if old, err := store.Validate(first.ID, testEpoch); err != nil || old != nil {
+		t.Fatalf("旧会话仍有效或校验失败：%v", err)
+	}
+	onDisk := readSessionsOnDisk(t, sessionFilePath(dir))
+	if len(onDisk.ids) != 1 || onDisk.ids[0] != second.ID {
+		t.Fatalf("磁盘应只保留新会话：%v", onDisk.ids)
+	}
+	restarted := NewFileSessionStore(sessionFilePath(dir), clock.now)
+	if old, err := restarted.Validate(first.ID, testEpoch); err != nil || old != nil {
+		t.Fatalf("重启后旧会话仍有效或校验失败：%v", err)
+	}
+	if current, err := restarted.Validate(second.ID, testEpoch); err != nil || current == nil {
+		t.Fatalf("重启后新会话不可用：%v", err)
+	}
+
 	clock.ms += 60_000
-	validated, err := store.Validate(first.ID, testEpoch)
+	validated, err := store.Validate(second.ID, testEpoch)
 	if err != nil {
 		t.Fatalf("Validate 失败：%v", err)
 	}
@@ -119,8 +155,8 @@ func TestSessionStoreTwoCreatesAndSliding(t *testing.T) {
 	if validated.LastUsedAt != clock.ms {
 		t.Errorf("滑动后 LastUsedAt = %d，期望 %d", validated.LastUsedAt, clock.ms)
 	}
-	if validated.CreatedAt != first.CreatedAt {
-		t.Errorf("CreatedAt 被改动：%d ≠ %d", validated.CreatedAt, first.CreatedAt)
+	if validated.CreatedAt != second.CreatedAt {
+		t.Errorf("CreatedAt 被改动：%d ≠ %d", validated.CreatedAt, second.CreatedAt)
 	}
 }
 
@@ -128,7 +164,7 @@ func TestSessionStoreIdleExpiryBoundary(t *testing.T) {
 	dir := tempDir(t)
 	clock := &fakeClock{ms: 1_760_000_000_000}
 	store := NewFileSessionStore(sessionFilePath(dir), clock.now)
-	session, err := store.Create(testEpoch)
+	session, _, err := store.Create(testEpoch)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
@@ -160,7 +196,7 @@ func TestSessionStoreSlidingKeepsAlive(t *testing.T) {
 	dir := tempDir(t)
 	clock := &fakeClock{ms: 1_760_000_000_000}
 	store := NewFileSessionStore(sessionFilePath(dir), clock.now)
-	session, err := store.Create(testEpoch)
+	session, _, err := store.Create(testEpoch)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
@@ -180,7 +216,7 @@ func TestSessionStoreAbsoluteExpiry(t *testing.T) {
 	dir := tempDir(t)
 	clock := &fakeClock{ms: 1_760_000_000_000}
 	store := NewFileSessionStore(sessionFilePath(dir), clock.now)
-	session, err := store.Create(testEpoch)
+	session, _, err := store.Create(testEpoch)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
@@ -204,7 +240,7 @@ func TestSessionStoreAbsoluteExpiry(t *testing.T) {
 func TestSessionStoreEpochMismatch(t *testing.T) {
 	dir := tempDir(t)
 	store := NewFileSessionStore(sessionFilePath(dir), nil)
-	session, err := store.Create(testEpoch)
+	session, _, err := store.Create(testEpoch)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
@@ -227,7 +263,7 @@ func TestSessionStoreEpochMismatch(t *testing.T) {
 func TestSessionStoreDestroy(t *testing.T) {
 	dir := tempDir(t)
 	store := NewFileSessionStore(sessionFilePath(dir), nil)
-	session, err := store.Create(testEpoch)
+	session, _, err := store.Create(testEpoch)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
@@ -251,12 +287,12 @@ func TestSessionStoreListDoesNotWrite(t *testing.T) {
 	path := sessionFilePath(dir)
 	clock := &fakeClock{ms: 1_760_000_000_000}
 	store := NewFileSessionStore(path, clock.now)
-	stale, err := store.Create(testEpoch)
+	stale, err := seedLegacySession(store, testEpoch)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
 	clock.ms += int64(SessionIdleTTL/time.Millisecond) + 1
-	fresh, err := store.Create(testEpoch)
+	fresh, err := seedLegacySession(store, testEpoch)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
@@ -289,15 +325,15 @@ func TestSessionStoreDestroyOthers(t *testing.T) {
 	dir := tempDir(t)
 	path := sessionFilePath(dir)
 	store := NewFileSessionStore(path, nil)
-	first, err := store.Create(testEpoch)
+	first, err := seedLegacySession(store, testEpoch)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
-	second, err := store.Create(testEpoch)
+	second, err := seedLegacySession(store, testEpoch)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
-	third, err := store.Create(testEpoch)
+	third, err := seedLegacySession(store, testEpoch)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
@@ -327,7 +363,7 @@ func TestSessionStoreDestroyOthersNoChangeNoWrite(t *testing.T) {
 	dir := tempDir(t)
 	path := sessionFilePath(dir)
 	store := NewFileSessionStore(path, nil)
-	only, err := store.Create(testEpoch)
+	only, _, err := store.Create(testEpoch)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
@@ -359,12 +395,12 @@ func TestSessionStoreLazySweep(t *testing.T) {
 	path := sessionFilePath(dir)
 	clock := &fakeClock{ms: 1_760_000_000_000}
 	store := NewFileSessionStore(path, clock.now)
-	stale, err := store.Create(testEpoch) // t0 创建，此后不再使用
+	stale, err := seedLegacySession(store, testEpoch) // t0 创建，此后不再使用
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
 	clock.ms += int64(SessionIdleTTL/time.Millisecond) + 1 // stale 的空闲窗口已超
-	active, err := store.Create(testEpoch)                 // 刚创建，必然有效
+	active, err := seedLegacySession(store, testEpoch)     // 刚创建，必然有效
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
@@ -393,7 +429,7 @@ func TestSessionStoreRestartKeepsSessions(t *testing.T) {
 	dir := tempDir(t)
 	path := sessionFilePath(dir)
 	first := NewFileSessionStore(path, nil)
-	session, err := first.Create(testEpoch)
+	session, _, err := first.Create(testEpoch)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
@@ -411,7 +447,7 @@ func TestSessionStoreCorruptFileFailClosed(t *testing.T) {
 	dir := tempDir(t)
 	path := sessionFilePath(dir)
 	store := NewFileSessionStore(path, nil)
-	session, err := store.Create(testEpoch)
+	session, _, err := store.Create(testEpoch)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
@@ -433,7 +469,7 @@ func TestSessionStoreCorruptFileFailClosed(t *testing.T) {
 	if validated != nil {
 		t.Error("坏 JSON 按空表 fail closed，validate 回 nil")
 	}
-	rebuilt, err := restarted.Create(testEpoch)
+	rebuilt, _, err := restarted.Create(testEpoch)
 	if err != nil {
 		t.Fatalf("重建失败：%v", err)
 	}
@@ -449,7 +485,7 @@ func TestSessionStoreCorruptFileFailClosed(t *testing.T) {
 func TestMemorySessionStoreSemantics(t *testing.T) {
 	clock := &fakeClock{ms: 1_760_000_000_000}
 	store := NewMemorySessionStore(clock.now)
-	session, err := store.Create(testEpoch)
+	session, _, err := store.Create(testEpoch)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
@@ -465,7 +501,7 @@ func TestMemorySessionStoreSemantics(t *testing.T) {
 		t.Fatal("滑动窗口内应有效")
 	}
 	clock.ms += int64(SessionIdleTTL/time.Millisecond) + 1
-	second, err := store.Create(testEpoch)
+	second, _, err := store.Create(testEpoch)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
@@ -498,12 +534,12 @@ func TestMemorySessionStoreSemantics(t *testing.T) {
 func TestMemorySessionStoreListAndDestroyOthers(t *testing.T) {
 	clock := &fakeClock{ms: 1_760_000_000_000}
 	store := NewMemorySessionStore(clock.now)
-	first, err := store.Create(testEpoch)
+	first, err := seedLegacySession(store, testEpoch)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
 	clock.ms += 60_000
-	second, err := store.Create(testEpoch)
+	second, err := seedLegacySession(store, testEpoch)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
@@ -517,7 +553,7 @@ func TestMemorySessionStoreListAndDestroyOthers(t *testing.T) {
 
 	// first 距上次使用已超 12h，second 还差半分钟未超时。
 	clock.ms += int64(SessionIdleTTL/time.Millisecond) - 30_000
-	third, err := store.Create(testEpoch)
+	third, err := seedLegacySession(store, testEpoch)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}

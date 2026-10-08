@@ -96,6 +96,13 @@ describe('parseSessionStatus', () => {
 })
 
 describe('createHttpSessionAdapter', () => {
+  it('后台检查发送 passive=1，不请求滑动续期', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ authenticated: true, devAccount: true }))
+    vi.stubGlobal('fetch', fetchMock)
+    await createHttpSessionAdapter().status(undefined, { passive: true })
+    expect(fetchMock).toHaveBeenCalledWith('/api/auth/session?passive=1', { cache: 'no-store', signal: expect.any(AbortSignal) })
+  })
+
   it('status 落到 GET /api/auth/session 并带 no-store', async () => {
     const fetchMock = vi.fn(async () => jsonResponse({ authenticated: false, devAccount: true }))
     vi.stubGlobal('fetch', fetchMock)

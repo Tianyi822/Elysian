@@ -43,7 +43,7 @@ type Deps struct {
 	// Enabled false 时整片退化为「无鉴权」演示语义：/session 恒答 authenticated:true、
 	// /login 恒成功。生产恒 true；测试注 false。
 	Enabled bool
-	// SessionConns 会话连接撤销表：登出/改密/退出其他会话三条显式失效路径在销毁服务端
+	// SessionConns 会话连接撤销表：新登录替换/登出/改密/退出其他会话在销毁服务端
 	// 会话的同时关闭该会话名下已建立的终端连接。装配层与 terminals 片共享同一实例；
 	// nil 即无撤销（独立驱动本片的行为不受影响）。
 	SessionConns seam.SessionConnections
@@ -294,9 +294,16 @@ func NewRouter(deps Deps) chi.Router {
 		if credentials != nil {
 			pwdEpoch = credentials.PasswordChangedAt
 		}
-		session, err := resolved.sessions.Create(pwdEpoch)
+		session, replaced, err := resolved.sessions.Create(pwdEpoch)
 		if err != nil {
 			return err
+		}
+		if resolved.sessionConns != nil {
+			// 只关闭本次原子替换的会话，不能 RevokeOthers：并发登录的较早请求
+			// 可能较晚走到这里，不得误关后一个有效会话的连接。
+			for _, id := range replaced {
+				resolved.sessionConns.Revoke(id)
+			}
 		}
 		w.Header().Set("Set-Cookie", sessionCookie(session.ID, SessionCookieMaxAge, resolved.cookieSecure))
 		shared.SendJSON(w, http.StatusOK, okBody{OK: true})
@@ -334,7 +341,11 @@ func NewRouter(deps Deps) chi.Router {
 			if err != nil {
 				return err
 			}
-			session, err := resolved.sessions.Validate(sessionID, epoch)
+			validate := resolved.sessions.Validate
+			if r.URL.Query().Get("passive") == "1" {
+				validate = resolved.sessions.Check
+			}
+			session, err := validate(sessionID, epoch)
 			if err != nil {
 				return err
 			}

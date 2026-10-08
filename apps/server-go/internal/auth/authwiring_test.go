@@ -313,11 +313,18 @@ func TestPasswordChangeEndpointInvalidatesOldSessions(t *testing.T) {
 }
 
 func TestLogoutOthersKeepsCurrentSession(t *testing.T) {
-	client, _ := newWiringFixture(t, nil)
-	first := client.postJSON("/api/auth/login", `{"username":"admin","password":"e2e-password"}`, "")
-	second := client.postJSON("/api/auth/login", `{"username":"admin","password":"e2e-password"}`, "")
-	cookieA := cookiePair(first.Header().Get("Set-Cookie"))
-	cookieB := cookiePair(second.Header().Get("Set-Cookie"))
+	store := NewMemorySessionStore(nil)
+	client, _ := newWiringFixture(t, func(deps *Deps) { deps.Sessions = store })
+	first, err := seedLegacySession(store, testEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := seedLegacySession(store, testEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookieA := "elysian_session=" + first.ID
+	cookieB := "elysian_session=" + second.ID
 
 	recorder := client.post("/api/auth/sessions/logout-others", cookieA)
 	if recorder.Code != http.StatusOK {

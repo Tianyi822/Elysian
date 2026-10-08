@@ -127,6 +127,55 @@ describe('sessionStore.probe', () => {
   })
 })
 
+describe('sessionStore.revalidate', () => {
+  it('旧会话失效时退出并显示重新登录提示，保留 SSO 裁决', async () => {
+    useSessionStore.setState({ phase: 'authed', mode: 'real', returnTo: 'http://localhost:5173/tool' })
+    const status = vi.fn(async () => statusOf({ authenticated: false }))
+    await useSessionStore.getState().revalidate(gatewayWithSession({ status }))
+    expect(status).toHaveBeenCalledWith(undefined, { passive: true })
+    expect(useSessionStore.getState()).toMatchObject({ phase: 'anonymous', notice: '登录状态已失效，请重新登录', returnTo: 'http://localhost:5173/tool' })
+  })
+
+  it('临时网络故障保留当前页面，恢复后继续检查', async () => {
+    useSessionStore.setState({ phase: 'authed', mode: 'real' })
+    const status = vi.fn<SessionAdapter['status']>()
+      .mockRejectedValueOnce(new Error('面板服务不可达'))
+      .mockResolvedValueOnce(statusOf({ authenticated: false }))
+    const gateway = gatewayWithSession({ status })
+    await useSessionStore.getState().revalidate(gateway)
+    expect(useSessionStore.getState().phase).toBe('authed')
+    await useSessionStore.getState().revalidate(gateway)
+    expect(useSessionStore.getState().phase).toBe('anonymous')
+  })
+
+  it('旧检查迟到的失效响应不能挤掉重新登录后的会话', async () => {
+    useSessionStore.setState({ phase: 'authed', mode: 'real' })
+    let resolve!: (status: SessionStatus) => void
+    const gateway = gatewayWithSession({
+      status: () => new Promise((done) => { resolve = done }),
+      login: async () => {},
+    })
+    const pending = useSessionStore.getState().revalidate(gateway)
+    useSessionStore.getState().expire()
+    await useSessionStore.getState().login(gateway, 'dev', 'dev-elysian')
+    resolve(statusOf({ authenticated: false }))
+    await pending
+    expect(useSessionStore.getState()).toMatchObject({ phase: 'authed', notice: null })
+  })
+
+  it('演示模式与未登录状态不轮询，失效时不覆盖改密提示', async () => {
+    const status = vi.fn(async () => statusOf({ authenticated: false }))
+    const gateway = gatewayWithSession({ status })
+    await useSessionStore.getState().revalidate(gateway)
+    useSessionStore.setState({ phase: 'authed', mode: 'demo' })
+    await useSessionStore.getState().revalidate(gateway)
+    expect(status).not.toHaveBeenCalled()
+    useSessionStore.setState({ mode: 'real', notice: '密码已修改，请使用新密码重新登录' })
+    await useSessionStore.getState().revalidate(gateway)
+    expect(useSessionStore.getState()).toMatchObject({ phase: 'anonymous', notice: '密码已修改，请使用新密码重新登录' })
+  })
+})
+
 describe('sessionStore.login', () => {
   it('成功置 authed', async () => {
     const login = vi.fn(async () => {})

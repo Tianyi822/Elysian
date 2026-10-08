@@ -433,8 +433,8 @@ export type PanelPasswordChangeInput = {
  */
 export interface SessionAdapter {
   canView(area: PageArea): Promise<boolean>
-  /** 探测当前会话；带 returnTo 时同时请求服务端裁决该回跳地址。服务端不可达或响应无效时抛中文错误。 */
-  status(returnTo?: string): Promise<SessionStatus>
+  /** 探测当前会话；带 returnTo 时同时请求服务端裁决回跳地址；passive 后台检查不延长空闲期限。服务端不可达或响应无效时抛中文错误。 */
+  status(returnTo?: string, options?: { passive?: boolean }): Promise<SessionStatus>
   /** 登录（用户名 + 密码，Cookie 由服务端下发）；失败抛中文 Error（如「用户名或密码错误」），成功无返回。 */
   login(username: string, password: string): Promise<void>
   /** 登出并清除会话 Cookie；幂等。 */
