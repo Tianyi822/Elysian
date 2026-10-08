@@ -376,6 +376,16 @@
   .icon-button {
     border-radius: var(--icon-button-radius, var(--radius-lg));
   }
+  /* 实体图标按钮的描边与底色走同一套自定义属性：默认档就是 control-line + surface-raised，
+     悬停也落在同一档（等于不变），因此只有语境改了变量的地方才看得出差异。 */
+  .icon-button-solid {
+    border: 1px solid var(--icon-button-line, var(--t-control-line));
+    background-color: var(--icon-button-bg, var(--t-surface-raised));
+  }
+  .icon-button-solid:hover:not(:disabled) {
+    border-color: var(--icon-button-line-hover, var(--t-control-line));
+    background-color: var(--icon-button-bg-hover, var(--t-surface-raised));
+  }
   .icon-button-form-control {
     height: var(--ctl-height, 2.25rem);
     width: var(--ctl-height, 2.25rem);
@@ -462,16 +472,31 @@
     --icon-button-radius: var(--radius-lg);
   }
 
-  /* 防火墙工具栏外层控件同高，分组内的按钮填满扣除描边和内距后的内容区。 */
+  /* 防火墙分组外框高 32px，内部页签扣除上下描边与内距后高 26px。 */
   .firewall-toolbar {
     --panel-radius: var(--radius-xl);
     --ctl-height: 2rem;
+    /* 图标按钮与同行按钮同一色阶：静止走分组的轻量轮廓，悬停才抬到控件档。 */
+    --icon-button-line: var(--t-panel-line);
+    --icon-button-bg: var(--t-surface);
+    --icon-button-line-hover: var(--t-control-line);
+    --icon-button-bg-hover: var(--t-surface-raised);
   }
   .firewall-toolbar .ctl-group {
     padding-block: 2px;
   }
   .firewall-toolbar .ctl-group .ctl {
     height: 100%;
+  }
+  /* 独立动作与页签外框同为一档（都读 --ctl-height），不再按内部色块收矮：
+     同一行里按钮比它旁边的胶囊组矮一截，读起来像两个体系。底色和描边沿用分组的轻量轮廓。 */
+  .firewall-toolbar .ctl-default {
+    border-color: var(--t-panel-line);
+    background-color: var(--t-surface);
+  }
+  .firewall-toolbar .ctl-default:hover:not(:disabled) {
+    border-color: var(--t-control-line);
+    background-color: var(--t-surface-raised);
   }
 
   /* 卡片内的信息格：标签加读数，或一行事实说明。 */

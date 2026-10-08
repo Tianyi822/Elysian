@@ -7,6 +7,8 @@ import type { FocusEventHandler, KeyboardEventHandler, PointerEventHandler, Reac
  *
  * solid：带边框与浅底的标准按钮；ghost：无边框无底色的弱化按钮，
  * 用于浮层卡片内的关闭等次要动作，悬停才浮现可点击感。
+ * solid 的描边与底色不在这里写 utility：控件层 .icon-button-solid 用可继承的自定义属性
+ * 给默认档，工具栏语境才能把它调到和同行按钮同一色阶（utility 在 utilities 层，赢不过它）。
  * danger-hover：ghost 专属，平时与 neutral 完全同色，悬停才转危险色——
  * 删除这类破坏性动作要克制，危险感留给悬停时刻，不常驻。
  */
@@ -16,8 +18,8 @@ export type Variant = 'solid' | 'ghost'
 
 const STYLES: Record<Variant, Record<Exclude<Tone, 'danger-hover'>, string>> = {
   solid: {
-    neutral: 'size-7 border border-control-line bg-surface-raised text-fg-muted hover:text-fg',
-    danger: 'size-7 border border-control-line bg-surface-raised text-danger hover:border-danger/50 hover:bg-danger/10',
+    neutral: 'size-7 text-fg-muted hover:text-fg',
+    danger: 'size-7 text-danger hover:border-danger/50 hover:bg-danger/10',
   },
   ghost: {
     neutral: 'size-6 text-fg-subtle hover:bg-surface-raised hover:text-fg',
@@ -84,7 +86,7 @@ export function IconButton({
       onFocus={onFocus}
       onBlur={onBlur}
       disabled={disabled}
-      className={`icon-button inline-flex items-center justify-center transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${variantClass} ${formControl ? 'icon-button-form-control' : ''} ${className ?? ''}`}
+      className={`icon-button inline-flex items-center justify-center transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${variant === 'solid' ? 'icon-button-solid' : ''} ${variantClass} ${formControl ? 'icon-button-form-control' : ''} ${className ?? ''}`}
     >
       {children}
     </button>
