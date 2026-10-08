@@ -1,11 +1,17 @@
 /** 面板安装版自身的网络、版本和维护任务协议。固定端口仅作为默认值。 */
 export const DEFAULT_PANEL_PORTS = { frontendPort: 48100, backendPort: 48101 } as const
 export type PanelPorts = { frontendPort: number; backendPort: number }
+export type PanelUpdateChannel = 'commit' | 'release'
+export const PANEL_UPDATE_CHANNEL_LABELS: Record<PanelUpdateChannel, string> = {
+  commit: '最新提交', release: '最新发版',
+}
 export type PanelTaskState = 'queued' | 'running' | 'succeeded' | 'failed' | 'rolled-back' | 'recovery-failed'
 export type PanelTask = {
   id: string; kind: 'ports' | 'restart' | 'update'; state: PanelTaskState; phase: string
   createdAt: string; updatedAt: string; oldPorts: PanelPorts; newPorts: PanelPorts
   targetCommit: string; error: string
+  /** 旧任务未记录更新策略；缺省按最新提交解释。 */
+  updateChannel?: PanelUpdateChannel; releaseTag?: string
 }
 export type PanelInfo = {
   ports: PanelPorts; commit: string; buildTime: string; repository: string
@@ -13,10 +19,11 @@ export type PanelInfo = {
 }
 export type PanelUpdate = {
   repository: string; branch: string; currentCommit: string; targetCommit: string
-  message: string; available: boolean
+  channel: PanelUpdateChannel; releaseTag: string; message: string; available: boolean
 }
+export type PanelUpdateTarget = Pick<PanelUpdate, 'channel' | 'targetCommit' | 'releaseTag'>
 export type PanelTaskReport = { task: PanelTask; logs: string; nextOffset: number; hasMore?: boolean }
-/** 上游仓库的一条提交，按默认分支从新到旧排列，供面板的更新日志窗口呈现。 */
+/** 所选更新来源的一条提交，从新到旧排列，供面板的更新日志窗口呈现。 */
 export type PanelCommit = { sha: string; message: string; time: string }
 export function panelTaskIsActive(task: PanelTask): boolean { return task.state === 'queued' || task.state === 'running' }
 export function validatePanelPorts(ports: PanelPorts): string | null {

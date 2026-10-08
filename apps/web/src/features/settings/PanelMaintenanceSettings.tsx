@@ -1,12 +1,13 @@
 import { SectionHelp } from '../../components/SectionHelp'
 import { useEffect, useId, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
-import { PANEL_TASK_PHASE_LABELS, PANEL_TASK_STATE_LABELS, panelTaskIsActive, validatePanelPorts } from '@elysian/contracts'
-import type { PanelTask, PanelUpdate } from '@elysian/contracts'
+import { PANEL_TASK_PHASE_LABELS, PANEL_TASK_STATE_LABELS, PANEL_UPDATE_CHANNEL_LABELS, panelTaskIsActive, validatePanelPorts } from '@elysian/contracts'
+import type { PanelTask, PanelUpdate, PanelUpdateChannel } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { usePanelStore } from '../../stores/panelStore'
 import { openPanelAddress, reloadPanelPage } from './panelNavigation'
 import { PanelChangelogDialog } from './PanelChangelogDialog'
+import { CTL_CHIP, CTL_GROUP } from '../../components/formControl'
 
 const BUTTON = 'h-9 rounded-lg border border-control-line bg-surface-raised px-4 text-sm font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
 const INPUT = 'h-9 w-full rounded-lg border border-control-line bg-surface-raised px-3 text-sm tabular-nums text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
@@ -30,7 +31,9 @@ export function PanelMaintenanceSettings() {
   const [backend, setBackend] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [checking, setChecking] = useState(false)
+  const [channel, setChannel] = useState<PanelUpdateChannel>('commit')
   const [update, setUpdate] = useState<PanelUpdate | null>(null)
+  const checkVersion = useRef(0)
   const [changelogOpen, setChangelogOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [connectionError, setConnectionError] = useState<string | null>(null)
@@ -100,10 +103,19 @@ export function PanelMaintenanceSettings() {
     void submit(`ports:${frontend}:${backend}`, (id) => gateway.panel.ports(ports, id))
   }
   const check = async () => {
-    setChecking(true); setError(null)
-    try { setUpdate(await gateway.panel.checkUpdate()) }
-    catch (cause) { setError(cause instanceof Error ? cause.message : '检查更新失败，请重试') }
-    finally { setChecking(false) }
+    const version = ++checkVersion.current
+    setChecking(true); setError(null); setUpdate(null)
+    try {
+      const result = await gateway.panel.checkUpdate(channel)
+      if (version === checkVersion.current) setUpdate(result)
+    }
+    catch (cause) { if (version === checkVersion.current) setError(cause instanceof Error ? cause.message : '检查更新失败，请重试') }
+    finally { if (version === checkVersion.current) setChecking(false) }
+  }
+  const selectChannel = (next: PanelUpdateChannel) => {
+    if (channel === next) return
+    checkVersion.current += 1
+    setChannel(next); setUpdate(null); setChecking(false); setError(null)
   }
   return <>
     <section aria-label="面板端口" className="panel-surface p-5">
@@ -121,19 +133,28 @@ export function PanelMaintenanceSettings() {
     </section>
     <section aria-label="面板更新" className="panel-surface p-5">
       <div className="flex items-center gap-1.5"><h2 className="text-sm font-medium text-fg">面板更新</h2><SectionHelp label="面板更新说明">先下载并编译新版本，成功后重启。更新失败会恢复原版本，保留面板数据。</SectionHelp></div>
-      <div className="mt-3 space-y-2 text-xs leading-5 text-fg-muted"><p>更新来源：<a className="text-fg underline underline-offset-4" href="https://github.com/Tianyi822/Elysian" target="_blank" rel="noreferrer">Tianyi822/Elysian</a> 的默认分支</p><p className="break-all">当前提交：{info?.commit ?? '正在读取…'}</p>{info?.buildTime && info.buildTime !== 'unknown' ? <p>构建时间：{info.buildTime}</p> : null}</div>
-      {update ? <div role="status" className="mt-4 space-y-1 break-all text-xs leading-5 text-fg"><p>{update.available ? '发现可更新的提交' : '当前已是最新提交'} · {update.branch}</p><p>目标提交：{update.targetCommit}</p>{update.message ? <p className="text-fg-muted">{update.message}</p> : null}</div> : null}
-      <div className="mt-4 flex flex-wrap gap-2"><button className={BUTTON} disabled={unavailable || checking} onClick={() => void check()}>{checking ? '正在检查…' : '检查更新'}</button><button className={BUTTON} disabled={unavailable || checking || !update?.available} onClick={() => update && void submit(`update:${update.targetCommit}`, (id) => gateway.panel.update(update.targetCommit, id))}>更新并重启</button><button className={BUTTON} disabled={!info?.available} title={info && !info.available ? info.reason : undefined} onClick={() => setChangelogOpen(true)}>更新日志</button></div>
+      <div role="group" aria-label="更新策略" className={`${CTL_GROUP} mt-4 max-w-full`}>
+        {(['commit', 'release'] as const).map((value) => <button key={value} type="button" aria-pressed={channel === value} disabled={active || submitting} className={CTL_CHIP} onClick={() => selectChannel(value)}>{PANEL_UPDATE_CHANNEL_LABELS[value]}</button>)}
+      </div>
+      <p className="mt-2 text-xs leading-5 text-fg-muted">{channel === 'commit' ? '跟随默认分支，获取最新改动。' : '使用最新正式发版，不包含预发布版本。'}</p>
+      <div className="mt-3 space-y-2 text-xs leading-5 text-fg-muted"><p>更新来源：<a className="text-fg underline underline-offset-4" href="https://github.com/Tianyi822/Elysian" target="_blank" rel="noreferrer">Tianyi822/Elysian</a> · {channel === 'commit' ? '默认分支' : '正式发版'}</p><p className="break-all">当前提交：{info?.commit ?? '正在读取…'}</p>{info?.buildTime && info.buildTime !== 'unknown' ? <p>构建时间：{info.buildTime}</p> : null}</div>
+      {update ? <div role="status" className="mt-4 space-y-1 break-all text-xs leading-5 text-fg">
+        {update.channel === 'release' ? <p>{!update.releaseTag ? '上游仓库暂无正式发版' : update.available ? '可切换至最新正式发版' : '当前已是最新正式发版'}{update.releaseTag ? ` · ${update.releaseTag}` : ''}</p> : <p>{update.available ? '发现可更新的提交' : '当前已是最新提交'} · {update.branch}</p>}
+        {update.targetCommit ? <p>目标提交：{update.targetCommit}</p> : null}
+        {update.message && update.targetCommit ? <p className="text-fg-muted">{update.message}</p> : null}
+      </div> : null}
+      <div className="mt-4 flex flex-wrap gap-2"><button className={BUTTON} disabled={unavailable || checking} onClick={() => void check()}>{checking ? '正在检查…' : '检查更新'}</button><button className={BUTTON} disabled={unavailable || checking || !update?.available || update.channel !== channel} onClick={() => update && void submit(`update:${update.channel}:${update.releaseTag}:${update.targetCommit}`, (id) => gateway.panel.update({ channel: update.channel, targetCommit: update.targetCommit, releaseTag: update.releaseTag }, id))}>更新并重启</button><button className={BUTTON} disabled={!info?.available} title={info && !info.available ? info.reason : undefined} onClick={() => setChangelogOpen(true)}>更新日志</button></div>
     </section>
     {error ? <p role="alert" className="rounded-lg border border-danger/40 p-3 text-xs leading-5 text-danger">{error}</p> : null}
     {task ? <section aria-label="面板维护进度" className="panel-surface p-5">
       <h2 className="text-sm font-medium text-fg">面板维护进度</h2><p role="status" className="mt-3 text-xs leading-5 text-fg">{PANEL_TASK_STATE_LABELS[task.state]} · {PANEL_TASK_PHASE_LABELS[task.phase] ?? task.phase}</p>
+      {task.kind === 'update' ? <p className="mt-2 break-all text-xs leading-5 text-fg-muted">更新策略：{PANEL_UPDATE_CHANNEL_LABELS[task.updateChannel ?? 'commit']}{task.releaseTag ? ` · ${task.releaseTag}` : ''}<br />目标提交：{task.targetCommit}</p> : null}
       {task.error ? <p role="alert" className="mt-3 break-words text-xs leading-5 text-danger">{task.error}</p> : null}
       {connectionError ? <div className="mt-3"><p role="alert" className="text-xs leading-5 text-warning">{connectionError}</p><button className={`${BUTTON} mt-3`} onClick={() => { setConnectionError(null); setRetry((v) => v + 1) }}>重新等待连接</button></div> : null}
       {task.kind === 'ports' ? <div className="mt-3 flex flex-col gap-2 break-all text-xs"><a className="text-fg underline underline-offset-4" href={panelAddress(task.newPorts.frontendPort)}>打开新地址：{panelAddress(task.newPorts.frontendPort)}</a><a className="text-fg-muted underline underline-offset-4" href={panelAddress(task.oldPorts.frontendPort)}>打开原地址：{panelAddress(task.oldPorts.frontendPort)}</a></div> : null}
       {logs ? <pre aria-label="维护任务日志" className="mt-4 max-h-48 overflow-auto whitespace-pre-wrap break-words text-xs leading-5 text-fg-muted">{logs}</pre> : null}
       {hasMore ? <button className={`${BUTTON} mt-3`} disabled={loadingLogs} onClick={() => { setLoadingLogs(true); void usePanelStore.getState().poll(gateway).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : '读取维护日志失败')).finally(() => setLoadingLogs(false)) }}>{loadingLogs ? '正在读取…' : '继续读取日志'}</button> : null}
     </section> : null}
-    <PanelChangelogDialog open={changelogOpen} currentCommit={info?.commit ?? ''} onClose={() => setChangelogOpen(false)} />
+    <PanelChangelogDialog open={changelogOpen} channel={channel} currentCommit={info?.commit ?? ''} onClose={() => setChangelogOpen(false)} />
   </>
 }

@@ -21,4 +21,24 @@ describe('面板维护 HTTP 契约', () => {
     expect(await createHttpPanelAdapter().ready('http://127.0.0.1:49000', task.id)).toBe(true)
     expect(fetch.mock.calls[1]?.[1]).toMatchObject({ credentials: 'omit' })
   })
+  it.each(['commit', 'release'] as const)('检查、日志和更新提交使用同一策略：%s', async (channel) => {
+    const target = { channel, targetCommit: 'b'.repeat(40), releaseTag: channel === 'release' ? 'v1.2.0' : '' }
+    const update = { ...target, repository: 'Tianyi822/Elysian', branch: channel === 'commit' ? 'main' : '', currentCommit: 'a'.repeat(40), message: '更新说明', available: true }
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(update)))
+      .mockResolvedValueOnce(new Response('[]'))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...task, kind: 'update', ...target, updateChannel: channel }), { status: 202 }))
+    vi.stubGlobal('fetch', fetch)
+    const adapter = createHttpPanelAdapter()
+    expect(await adapter.checkUpdate(channel)).toEqual(update)
+    await adapter.commits(channel)
+    await adapter.update(target, 'stable-request')
+    expect(fetch.mock.calls[0]?.[0]).toBe(`/api/panel/update?channel=${channel}`)
+    expect(fetch.mock.calls[1]?.[0]).toBe(`/api/panel/commits?channel=${channel}`)
+    expect(fetch.mock.calls[2]?.[1]).toMatchObject({ method: 'POST', body: JSON.stringify({ ...target, requestId: 'stable-request' }) })
+  })
+  it('拒绝其他策略的检查结果，避免发版选择执行默认分支', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ channel: 'commit', releaseTag: '', repository: 'Tianyi822/Elysian', branch: 'main', currentCommit: 'a'.repeat(40), targetCommit: 'b'.repeat(40), message: '更新', available: true }))))
+    await expect(createHttpPanelAdapter().checkUpdate('release')).rejects.toThrow('更新信息与所选策略不一致')
+  })
 })

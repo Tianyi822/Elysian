@@ -18,6 +18,8 @@ export function parsePanelTask(value: unknown): PanelTask {
   const row = object(value)
   for (const key of ['id', 'kind', 'state', 'phase', 'createdAt', 'updatedAt', 'targetCommit', 'error']) if (typeof row[key] !== 'string') throw new Error('面板任务响应无效')
   if (!['ports', 'restart', 'update'].includes(String(row.kind)) || !['queued', 'running', 'succeeded', 'failed', 'rolled-back', 'recovery-failed'].includes(String(row.state))) throw new Error('面板任务状态无效')
+  if (row.updateChannel !== undefined && row.updateChannel !== 'commit' && row.updateChannel !== 'release') throw new Error('面板任务更新策略无效')
+  if (row.releaseTag !== undefined && typeof row.releaseTag !== 'string') throw new Error('面板任务发版标签无效')
   return { ...row, oldPorts: ports(row.oldPorts), newPorts: ports(row.newPorts) } as PanelTask
 }
 export function parsePanelInfo(value: unknown): PanelInfo {
@@ -51,16 +53,18 @@ async function request(path: string, method = 'GET', body?: unknown): Promise<un
 export function createHttpPanelAdapter(base = '/api/panel'): PanelAdapter {
   return {
     info: async () => parsePanelInfo(await request(base)),
-    async checkUpdate() {
-      const row = object(await request(`${base}/update`))
-      for (const key of ['repository', 'branch', 'currentCommit', 'targetCommit', 'message']) if (typeof row[key] !== 'string') throw new Error('更新信息响应无效')
+    async checkUpdate(channel) {
+      const row = object(await request(`${base}/update?channel=${channel}`))
+      for (const key of ['repository', 'branch', 'currentCommit', 'targetCommit', 'message', 'releaseTag']) if (typeof row[key] !== 'string') throw new Error('更新信息响应无效')
       if (typeof row.available !== 'boolean') throw new Error('更新信息响应无效')
+      if (row.channel !== channel) throw new Error('更新信息与所选策略不一致，请重新检查')
+      if (row.available && (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(String(row.targetCommit)) || (channel === 'release' && row.releaseTag === ''))) throw new Error('更新目标响应无效')
       return row as PanelUpdate
     },
-    commits: async () => parsePanelCommits(await request(`${base}/commits`)),
+    commits: async (channel) => parsePanelCommits(await request(`${base}/commits?channel=${channel}`)),
     ports: async (value, requestId) => parsePanelTask(await request(`${base}/ports`, 'PUT', { ...value, requestId })),
     restart: async (requestId) => parsePanelTask(await request(`${base}/restart`, 'POST', { requestId })),
-    update: async (targetCommit, requestId) => parsePanelTask(await request(`${base}/update`, 'POST', { targetCommit, requestId })),
+    update: async ({ channel, targetCommit, releaseTag }, requestId) => parsePanelTask(await request(`${base}/update`, 'POST', { channel, targetCommit, releaseTag, requestId })),
     async task(id, offset = 0) {
       const row = object(await request(`${base}/tasks/${encodeURIComponent(id)}?offset=${offset}`))
       if (typeof row.logs !== 'string' || !Number.isSafeInteger(row.nextOffset) || Number(row.nextOffset) < 0) throw new Error('维护日志响应无效')

@@ -109,6 +109,11 @@ func (w Worker) execute(ctx context.Context, r *taskRecord) error {
 		return err
 	}
 	if r.Kind == "update" {
+		strategy := "最新提交"
+		if r.UpdateChannel == ChannelRelease {
+			strategy = "最新发版 " + r.ReleaseTag
+		}
+		w.Store.appendLog(r.ID, "更新策略："+strategy+"；目标提交："+r.TargetCommit+"\n")
 		stage := filepath.Join("/var/tmp/elysian-build", r.ID)
 		defer os.RemoveAll(stage)
 		if err = os.MkdirAll(filepath.Dir(stage), 0711); err != nil {

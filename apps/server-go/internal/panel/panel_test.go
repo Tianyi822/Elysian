@@ -96,8 +96,8 @@ func (h *fakeHost) VerifyRules(_ context.Context, p config.PanelNetwork) error {
 
 type fakeSource struct{ fail bool }
 
-func (s fakeSource) Check(context.Context) (Update, error) { return Update{}, nil }
-func (s fakeSource) History(context.Context, int) ([]CommitLog, error) {
+func (s fakeSource) Check(context.Context, UpdateChannel) (Update, error) { return Update{}, nil }
+func (s fakeSource) History(context.Context, UpdateChannel, int) ([]CommitLog, error) {
 	return nil, nil
 }
 func (s fakeSource) Download(_ context.Context, _, dir string) error {
@@ -305,7 +305,7 @@ func TestGitHubUsesRepositoryDefaultBranchAndPinnedSHA(t *testing.T) {
 	}))
 	defer srv.Close()
 	s := GitHubSource{Client: srv.Client(), API: srv.URL}
-	u, err := s.Check(context.Background())
+	u, err := s.Check(context.Background(), ChannelCommit)
 	if err != nil || u.Branch != "release-track" || u.TargetCommit != sha {
 		t.Fatalf("默认分支解析失败：%+v %v", u, err)
 	}
@@ -332,7 +332,7 @@ func TestGitHubHistoryListsDefaultBranchCommits(t *testing.T) {
 	}))
 	defer srv.Close()
 	s := GitHubSource{Client: srv.Client(), API: srv.URL}
-	commits, err := s.History(context.Background(), 50)
+	commits, err := s.History(context.Background(), ChannelCommit, 50)
 	if err != nil {
 		t.Fatal(err)
 	}

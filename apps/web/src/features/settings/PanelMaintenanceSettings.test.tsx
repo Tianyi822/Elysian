@@ -1,15 +1,16 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { usePanelStore } from '../../stores/panelStore'
 import { renderApp } from '../../test/renderApp'
-import type { PanelInfo, PanelTask } from '@elysian/contracts'
+import type { PanelInfo, PanelTask, PanelUpdate } from '@elysian/contracts'
 import { openPanelAddress } from './panelNavigation'
 vi.mock('./panelNavigation', () => ({ openPanelAddress: vi.fn(), reloadPanelPage: vi.fn() }))
 const ports = { frontendPort: 48100, backendPort: 48101 }
 const info: PanelInfo = { ports, commit: 'a'.repeat(40), buildTime: '', repository: 'Tianyi822/Elysian', available: true, reason: '', activeTask: null, lastTask: null }
 const task: PanelTask = { id: 'b'.repeat(32), kind: 'ports', state: 'queued', phase: 'checking', createdAt: '2026-10-03T00:00:00Z', updatedAt: '2026-10-03T00:00:00Z', oldPorts: ports, newPorts: { frontendPort: 49000, backendPort: 49001 }, targetCommit: '', error: '' }
+const releaseUpdate: PanelUpdate = { channel: 'release', releaseTag: 'v1.2.0', repository: info.repository, branch: '', currentCommit: info.commit, targetCommit: 'd'.repeat(40), available: true, message: '正式版说明' }
 beforeEach(() => { vi.clearAllMocks(); usePanelStore.setState({ info: null, task: null, logs: '', offset: 0, hasMore: false, error: null }) })
 function gateway() {
   const result = createMockGateway({ eventStream: 'memory', eventIntervalMs: 60000 })
@@ -53,9 +54,76 @@ describe('端口与更新设置', () => {
     await user.click(screen.getByRole('button', { name: '保存并重启' })); await waitFor(() => expect(submit).toHaveBeenCalledTimes(2)); expect(submit.mock.calls[0]?.[1]).toBe(submit.mock.calls[1]?.[1])
   })
   it('检查默认分支更新，再以锁定提交执行', async () => {
-    const g = gateway(); const sha = 'c'.repeat(40); g.panel.checkUpdate = async () => ({ repository: info.repository, branch: 'release-track', currentCommit: info.commit, targetCommit: sha, available: true, message: '修复说明' }); const update = vi.fn(async () => ({ ...task, kind: 'update' as const, newPorts: ports, targetCommit: sha })); g.panel.update = update
+    const g = gateway(); const sha = 'c'.repeat(40); g.panel.checkUpdate = vi.fn(async () => ({ channel: 'commit' as const, releaseTag: '', repository: info.repository, branch: 'release-track', currentCommit: info.commit, targetCommit: sha, available: true, message: '修复说明' })); const update = vi.fn(async () => ({ ...task, kind: 'update' as const, newPorts: ports, targetCommit: sha })); g.panel.update = update
     renderApp('/settings', { gateway: g }); const user = userEvent.setup(); await waitFor(() => expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled())
-    await user.click(screen.getByRole('button', { name: '检查更新' })); expect(await screen.findByText(`目标提交：${sha}`)).toBeInTheDocument(); await user.click(screen.getByRole('button', { name: '更新并重启' })); await waitFor(() => expect(update).toHaveBeenCalledWith(sha, expect.any(String)))
+    await user.click(screen.getByRole('button', { name: '检查更新' })); expect(await screen.findByText(`目标提交：${sha}`)).toBeInTheDocument(); await user.click(screen.getByRole('button', { name: '更新并重启' })); await waitFor(() => expect(update).toHaveBeenCalledWith({ channel: 'commit', targetCommit: sha, releaseTag: '' }, expect.any(String)))
+  })
+  it('最新发版按标签检查、展示并提交，更新日志使用相同策略', async () => {
+    const g = gateway()
+    g.panel.checkUpdate = vi.fn(async () => releaseUpdate)
+    g.panel.commits = vi.fn(async () => [])
+    g.panel.update = vi.fn(async () => ({ ...task, kind: 'update' as const, newPorts: ports, targetCommit: releaseUpdate.targetCommit, updateChannel: 'release' as const, releaseTag: releaseUpdate.releaseTag }))
+    renderApp('/settings', { gateway: g })
+    const user = userEvent.setup()
+    await waitFor(() => expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled())
+    expect(screen.getByRole('button', { name: '最新提交' })).toHaveAttribute('aria-pressed', 'true')
+    await user.click(screen.getByRole('button', { name: '最新发版' }))
+    await user.click(screen.getByRole('button', { name: '检查更新' }))
+    expect(await screen.findByText('可切换至最新正式发版 · v1.2.0')).toBeInTheDocument()
+    expect(g.panel.checkUpdate).toHaveBeenCalledWith('release')
+    await user.click(screen.getByRole('button', { name: '更新日志' }))
+    const dialog = await screen.findByRole('dialog', { name: '更新日志' })
+    expect(g.panel.commits).toHaveBeenCalledWith('release')
+    expect(dialog).toHaveTextContent('最新正式发版对应的提交记录')
+    await user.click(within(dialog).getByRole('button', { name: /^关闭$/ }))
+    await user.click(screen.getByRole('button', { name: '更新并重启' }))
+    await waitFor(() => expect(g.panel.update).toHaveBeenCalledWith({ channel: 'release', releaseTag: 'v1.2.0', targetCommit: releaseUpdate.targetCommit }, expect.any(String)))
+  })
+  it.each([false, true])('切换策略丢弃旧请求的迟到结果，旧请求失败=%s', async (failed) => {
+    const g = gateway()
+    let resolve!: (value: PanelUpdate) => void
+    let reject!: (error: Error) => void
+    g.panel.checkUpdate = vi.fn().mockImplementationOnce(() => new Promise<PanelUpdate>((done, error) => { resolve = done; reject = error })).mockResolvedValueOnce(releaseUpdate)
+    renderApp('/settings', { gateway: g })
+    const user = userEvent.setup()
+    await waitFor(() => expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: '检查更新' }))
+    await user.click(screen.getByRole('button', { name: '最新发版' }))
+    expect(screen.getByRole('button', { name: '更新并重启' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: '检查更新' }))
+    expect(await screen.findByText('可切换至最新正式发版 · v1.2.0')).toBeInTheDocument()
+    await act(async () => {
+      if (failed) reject(new Error('旧策略请求失败'))
+      else resolve({ ...releaseUpdate, channel: 'commit', branch: 'main', releaseTag: '' })
+    })
+    expect(screen.getByText('可切换至最新正式发版 · v1.2.0')).toBeInTheDocument()
+    expect(screen.queryByText('旧策略请求失败')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '最新提交' }))
+    expect(screen.queryByText('可切换至最新正式发版 · v1.2.0')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '更新并重启' })).toBeDisabled()
+  })
+  it.each([
+    { ...releaseUpdate, releaseTag: '', targetCommit: '', available: false, message: '上游仓库暂无正式发版', expected: '上游仓库暂无正式发版' },
+    { ...releaseUpdate, targetCommit: info.commit, available: false, expected: '当前已是最新正式发版 · v1.2.0' },
+  ])('发版不可更新时禁用提交：$expected', async ({ expected, ...result }) => {
+    const g = gateway(); g.panel.checkUpdate = vi.fn(async () => result)
+    renderApp('/settings', { gateway: g }); const user = userEvent.setup()
+    await waitFor(() => expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: '最新发版' }))
+    await user.click(screen.getByRole('button', { name: '检查更新' }))
+    expect(await screen.findByText(expected)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '更新并重启' })).toBeDisabled()
+  })
+  it('再次检查失败后不允许提交上一次的目标', async () => {
+    const g = gateway(); g.panel.checkUpdate = vi.fn().mockResolvedValueOnce(releaseUpdate).mockRejectedValueOnce(new Error('GitHub 请求失败'))
+    renderApp('/settings', { gateway: g }); const user = userEvent.setup()
+    await waitFor(() => expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: '最新发版' }))
+    await user.click(screen.getByRole('button', { name: '检查更新' }))
+    expect(await screen.findByText('可切换至最新正式发版 · v1.2.0')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '检查更新' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('GitHub 请求失败')
+    expect(screen.getByRole('button', { name: '更新并重启' })).toBeDisabled()
   })
   it('刷新后恢复后台任务及回滚错误', async () => {
     const g = gateway(); g.panel.info = async () => ({ ...info, lastTask: { ...task, state: 'rolled-back', error: '健康检查失败，已恢复' } })

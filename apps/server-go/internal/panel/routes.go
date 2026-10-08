@@ -38,10 +38,12 @@ type Info struct {
 	LastTask   *Task               `json:"lastTask"`
 }
 type submitInput struct {
-	RequestID    string `json:"requestId"`
-	FrontendPort int    `json:"frontendPort"`
-	BackendPort  int    `json:"backendPort"`
-	TargetCommit string `json:"targetCommit"`
+	RequestID    string        `json:"requestId"`
+	FrontendPort int           `json:"frontendPort"`
+	BackendPort  int           `json:"backendPort"`
+	TargetCommit string        `json:"targetCommit"`
+	Channel      UpdateChannel `json:"channel"`
+	ReleaseTag   string        `json:"releaseTag"`
 }
 
 func (m Manager) Info() (Info, error) {
@@ -66,14 +68,18 @@ func (m Manager) Info() (Info, error) {
 	}
 	return i, nil
 }
-func (m Manager) Check(ctx context.Context) (Update, error) {
+func (m Manager) Check(ctx context.Context, channel UpdateChannel) (Update, error) {
+	channel = normalizeChannel(channel)
+	if !validChannel(channel) {
+		return Update{}, shared.InvalidRequest("更新策略无效")
+	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	u, err := m.Source.Check(ctx)
+	u, err := m.Source.Check(ctx, channel)
 	if err != nil {
 		return u, err
 	}
-	err = config.AtomicJSON(filepath.Join(m.Store.Root, "state", "panel-update-check.json"), u)
+	err = config.AtomicJSON(m.Store.updateCheckPath(channel), u)
 	return u, err
 }
 
@@ -84,6 +90,15 @@ func (m Manager) Submit(ctx context.Context, kind string, input submitInput, ori
 	}
 	if !requestPattern.MatchString(input.RequestID) {
 		return result, shared.InvalidRequest("提交编号无效")
+	}
+	if kind == "update" {
+		input.Channel = normalizeChannel(input.Channel)
+		if !validChannel(input.Channel) {
+			return result, shared.InvalidRequest("更新策略无效")
+		}
+		if input.Channel == ChannelCommit && input.ReleaseTag != "" {
+			return result, shared.InvalidRequest("最新提交策略不能指定发版标签")
+		}
 	}
 	next := m.Ports
 	if kind == "ports" {
@@ -100,7 +115,7 @@ func (m Manager) Submit(ctx context.Context, kind string, input submitInput, ori
 			}
 			for _, row := range rows {
 				if row.RequestID == input.RequestID {
-					if row.Kind != kind || (kind == "ports" && row.NewPorts != next) || row.TargetCommit != input.TargetCommit {
+					if row.Kind != kind || (kind == "ports" && row.NewPorts != next) || row.TargetCommit != input.TargetCommit || (kind == "update" && (normalizeChannel(row.UpdateChannel) != input.Channel || row.ReleaseTag != input.ReleaseTag)) {
 						return shared.InvalidRequest("提交编号已用于不同操作")
 					}
 					result = row.Task
@@ -114,8 +129,8 @@ func (m Manager) Submit(ctx context.Context, kind string, input submitInput, ori
 			}
 			if kind == "update" {
 				var u Update
-				b, err := os.ReadFile(filepath.Join(m.Store.Root, "state", "panel-update-check.json"))
-				if err != nil || json.Unmarshal(b, &u) != nil || !u.Available || !commitPattern.MatchString(input.TargetCommit) || u.TargetCommit != input.TargetCommit {
+				b, err := os.ReadFile(m.Store.updateCheckPath(input.Channel))
+				if err != nil || json.Unmarshal(b, &u) != nil || u.Repository != Repository || normalizeChannel(u.Channel) != input.Channel || !u.Available || !commitPattern.MatchString(input.TargetCommit) || u.TargetCommit != input.TargetCommit || u.ReleaseTag != input.ReleaseTag || (input.Channel == ChannelRelease && u.ReleaseTag == "") {
 					return shared.InvalidRequest("请先检查更新，再提交已检查的目标版本")
 				}
 			}
@@ -128,6 +143,10 @@ func (m Manager) Submit(ctx context.Context, kind string, input submitInput, ori
 			}
 			now := time.Now().UTC()
 			r := taskRecord{Task: Task{ID: id, Kind: kind, State: "queued", Phase: "checking", CreatedAt: now, UpdatedAt: now, OldPorts: m.Ports, NewPorts: next, TargetCommit: input.TargetCommit}, RequestID: input.RequestID, Origin: origin}
+			if kind == "update" {
+				r.UpdateChannel = input.Channel
+				r.ReleaseTag = input.ReleaseTag
+			}
 			r.Worker = filepath.Join(m.Store.tasksDir(), id+".worker")
 			executable := m.Executable
 			if executable == "" {
@@ -176,26 +195,36 @@ func (m Manager) Router() chi.Router {
 		shared.SendJSON(w, 200, info)
 	})
 	r.Get("/update", func(w http.ResponseWriter, r *http.Request) {
+		channel := normalizeChannel(UpdateChannel(r.URL.Query().Get("channel")))
+		if !validChannel(channel) {
+			shared.SendError(w, 400, "更新策略无效")
+			return
+		}
 		if !m.Enabled || !m.Host.Available() {
 			shared.SendError(w, 503, "仅支持 systemd 安装版")
 			return
 		}
-		u, err := m.Check(r.Context())
+		u, err := m.Check(r.Context(), channel)
 		if err != nil {
 			shared.SendError(w, 502, err.Error())
 			return
 		}
 		shared.SendJSON(w, 200, u)
 	})
-	// 更新日志：列默认分支最近的提交。只读上游，不写状态，因此不经维护事务与互斥。
+	// 更新日志：列所选来源最近的提交。只读上游，不写状态，因此不经维护事务与互斥。
 	r.Get("/commits", func(w http.ResponseWriter, r *http.Request) {
+		channel := normalizeChannel(UpdateChannel(r.URL.Query().Get("channel")))
+		if !validChannel(channel) {
+			shared.SendError(w, 400, "更新策略无效")
+			return
+		}
 		if !m.Enabled || !m.Host.Available() {
 			shared.SendError(w, 503, "仅支持 systemd 安装版")
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 		defer cancel()
-		commits, err := m.Source.History(ctx, 50)
+		commits, err := m.Source.History(ctx, channel, 50)
 		if err != nil {
 			shared.SendError(w, 502, err.Error())
 			return

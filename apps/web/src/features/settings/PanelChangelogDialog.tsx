@@ -1,6 +1,6 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { useCallback, useEffect, useState } from 'react'
-import type { PanelCommit } from '@elysian/contracts'
+import type { PanelCommit, PanelUpdateChannel } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { formatDateTime } from '../../components/format'
 import { X } from '../../components/icons'
@@ -11,7 +11,7 @@ const BUTTON =
   'h-9 rounded-lg border border-control-line bg-surface-raised px-4 text-sm font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
 
 /**
- * 更新日志窗口：列上游仓库默认分支最近的提交标题，从新到旧。
+ * 更新日志窗口：列所选更新来源最近的提交标题，从新到旧。
  *
  * 数据只在窗口打开时读一次——它是只读的上游查询，不该常驻在面板 store 里，
  * 也不该在设置页每次挂载都替用户打一次 GitHub。当前运行的提交按 SHA 与
@@ -20,11 +20,13 @@ const BUTTON =
 export function PanelChangelogDialog({
   open,
   currentCommit,
+  channel,
   onClose,
 }: {
   open: boolean
   /** 正在运行的构建提交；命中列表里的某条时标为当前版本。 */
   currentCommit: string
+  channel: PanelUpdateChannel
   onClose: () => void
 }) {
   const gateway = useGateway()
@@ -38,7 +40,7 @@ export function PanelChangelogDialog({
     let cancelled = false
     setLoading(true)
     setError(null)
-    void gateway.panel.commits().then(
+    void gateway.panel.commits(channel).then(
       (rows) => {
         if (cancelled) return
         setCommits(rows)
@@ -53,7 +55,7 @@ export function PanelChangelogDialog({
     return () => {
       cancelled = true
     }
-  }, [open, gateway, attempt])
+  }, [open, gateway, attempt, channel])
 
   const read = useCallback(() => setAttempt((value) => value + 1), [])
 
@@ -71,7 +73,7 @@ export function PanelChangelogDialog({
             </Dialog.Close>
           </div>
           <Dialog.Description className="shrink-0 px-5 pt-1 text-xs leading-5 text-fg-muted">
-            上游仓库默认分支的提交记录，从新到旧。
+            {channel === 'commit' ? '上游仓库默认分支的提交记录，从新到旧。' : '最新正式发版对应的提交记录，从新到旧。'}
           </Dialog.Description>
 
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
@@ -80,7 +82,7 @@ export function PanelChangelogDialog({
             ) : error ? (
               <ErrorState title="更新日志读取失败" description={error} onRetry={read} />
             ) : commits.length === 0 ? (
-              <EmptyState title="没有可展示的提交" description="上游仓库没有返回提交记录。" />
+              <EmptyState title="没有可展示的提交" description={channel === 'commit' ? '上游仓库没有返回提交记录。' : '上游仓库暂无正式发版或未返回提交记录。'} />
             ) : (
               <ol className="flex flex-col gap-2">
                 {commits.map((commit) => {

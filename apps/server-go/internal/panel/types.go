@@ -15,17 +15,37 @@ const ServiceName = "elysian"
 var Commit = "unknown"
 var BuildTime = "unknown"
 
+type UpdateChannel string
+
+const (
+	ChannelCommit  UpdateChannel = "commit"
+	ChannelRelease UpdateChannel = "release"
+)
+
+func normalizeChannel(channel UpdateChannel) UpdateChannel {
+	if channel == "" {
+		return ChannelCommit
+	}
+	return channel
+}
+
+func validChannel(channel UpdateChannel) bool {
+	return channel == ChannelCommit || channel == ChannelRelease
+}
+
 type Task struct {
-	ID           string              `json:"id"`
-	Kind         string              `json:"kind"`
-	State        string              `json:"state"`
-	Phase        string              `json:"phase"`
-	CreatedAt    time.Time           `json:"createdAt"`
-	UpdatedAt    time.Time           `json:"updatedAt"`
-	OldPorts     config.PanelNetwork `json:"oldPorts"`
-	NewPorts     config.PanelNetwork `json:"newPorts"`
-	TargetCommit string              `json:"targetCommit"`
-	Error        string              `json:"error"`
+	ID            string              `json:"id"`
+	Kind          string              `json:"kind"`
+	State         string              `json:"state"`
+	Phase         string              `json:"phase"`
+	CreatedAt     time.Time           `json:"createdAt"`
+	UpdatedAt     time.Time           `json:"updatedAt"`
+	OldPorts      config.PanelNetwork `json:"oldPorts"`
+	NewPorts      config.PanelNetwork `json:"newPorts"`
+	TargetCommit  string              `json:"targetCommit"`
+	UpdateChannel UpdateChannel       `json:"updateChannel,omitempty"`
+	ReleaseTag    string              `json:"releaseTag,omitempty"`
+	Error         string              `json:"error"`
 }
 
 type taskRecord struct {
@@ -46,15 +66,17 @@ type taskRecord struct {
 func Active(state string) bool { return state == "queued" || state == "running" }
 
 type Update struct {
-	Repository    string `json:"repository"`
-	Branch        string `json:"branch"`
-	CurrentCommit string `json:"currentCommit"`
-	TargetCommit  string `json:"targetCommit"`
-	Message       string `json:"message"`
-	Available     bool   `json:"available"`
+	Channel       UpdateChannel `json:"channel"`
+	ReleaseTag    string        `json:"releaseTag"`
+	Repository    string        `json:"repository"`
+	Branch        string        `json:"branch"`
+	CurrentCommit string        `json:"currentCommit"`
+	TargetCommit  string        `json:"targetCommit"`
+	Message       string        `json:"message"`
+	Available     bool          `json:"available"`
 }
 
-// CommitLog 是上游仓库的一条提交；面板的更新日志按默认分支列出一批这样的条目。
+// CommitLog 是上游仓库的一条提交；面板的更新日志按所选来源列出一批这样的条目。
 type CommitLog struct {
 	SHA     string    `json:"sha"`
 	Message string    `json:"message"`
@@ -62,8 +84,8 @@ type CommitLog struct {
 }
 
 type Source interface {
-	Check(context.Context) (Update, error)
-	History(context.Context, int) ([]CommitLog, error)
+	Check(context.Context, UpdateChannel) (Update, error)
+	History(context.Context, UpdateChannel, int) ([]CommitLog, error)
 	Download(context.Context, string, string) error
 }
 

@@ -1,4 +1,4 @@
-import type { PanelCommit, PanelInfo, PanelPorts, PanelTask, PanelTaskReport, PanelUpdate } from '@elysian/contracts'
+import type { PanelCommit, PanelInfo, PanelPorts, PanelTask, PanelTaskReport, PanelUpdate, PanelUpdateChannel, PanelUpdateTarget } from '@elysian/contracts'
 import type { WebsiteSource, WebsiteGitSourceInput, WebsiteDeploymentInput, WebsiteDeploymentTask, WebsiteBuildConfig, WebsiteDeploymentLogs } from '@elysian/contracts'
 import type {
   Container,
@@ -487,12 +487,12 @@ export interface DependenciesAdapter {
 /** 页面注入的聚合入口。 */
 export interface PanelAdapter {
  info(): Promise<PanelInfo>
- checkUpdate(): Promise<PanelUpdate>
- /** 更新日志：列默认分支最近的提交，只读上游，不改动面板状态。 */
- commits(): Promise<PanelCommit[]>
+ checkUpdate(channel: PanelUpdateChannel): Promise<PanelUpdate>
+ /** 更新日志：列所选更新来源最近的提交，只读上游，不改动面板状态。 */
+ commits(channel: PanelUpdateChannel): Promise<PanelCommit[]>
  ports(value: PanelPorts, requestId: string): Promise<PanelTask>
  restart(requestId: string): Promise<PanelTask>
- update(targetCommit: string, requestId: string): Promise<PanelTask>
+ update(target: PanelUpdateTarget, requestId: string): Promise<PanelTask>
  task(id: string, offset?: number): Promise<PanelTaskReport>
  ready(origin: string, id: string, signal?: AbortSignal): Promise<boolean>
 }

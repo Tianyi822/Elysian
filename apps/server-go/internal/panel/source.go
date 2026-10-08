@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,6 +22,8 @@ type GitHubSource struct {
 	Client *http.Client
 	API    string
 }
+
+var errGitHubNotFound = errors.New("更新仓库尚未公开或目标版本不存在")
 
 func (s GitHubSource) client() *http.Client {
 	if s.Client != nil {
@@ -53,7 +56,7 @@ func (s GitHubSource) get(ctx context.Context, endpoint string) (*http.Response,
 	if response.StatusCode != 200 {
 		response.Body.Close()
 		if response.StatusCode == 404 {
-			return nil, fmt.Errorf("更新仓库尚未公开或目标提交不存在")
+			return nil, errGitHubNotFound
 		}
 		return nil, fmt.Errorf("GitHub 请求失败：HTTP %d（请检查网络或 API 限额）", response.StatusCode)
 	}
@@ -79,8 +82,30 @@ func (s GitHubSource) defaultBranch(ctx context.Context) (string, error) {
 // firstLine 只取提交说明的标题行，正文留给 GitHub。
 func firstLine(message string) string { return strings.SplitN(message, "\n", 2)[0] }
 
-func (s GitHubSource) Check(ctx context.Context) (Update, error) {
-	u := Update{Repository: Repository, CurrentCommit: Commit}
+func (s GitHubSource) Check(ctx context.Context, channel UpdateChannel) (Update, error) {
+	channel = normalizeChannel(channel)
+	u := Update{Repository: Repository, CurrentCommit: Commit, Channel: channel}
+	if !validChannel(channel) {
+		return u, fmt.Errorf("更新策略无效")
+	}
+	if channel == ChannelRelease {
+		release, err := s.latestRelease(ctx)
+		if err != nil {
+			return u, err
+		}
+		if release.Tag == "" {
+			u.Message = "上游仓库暂无正式发版"
+			return u, nil
+		}
+		u.ReleaseTag = release.Tag
+		u.Message = release.Name
+		u.TargetCommit, err = s.tagCommit(ctx, release.Tag)
+		if err != nil {
+			return u, err
+		}
+		u.Available = u.TargetCommit != Commit
+		return u, nil
+	}
 	branch, err := s.defaultBranch(ctx)
 	if err != nil {
 		return u, err
@@ -106,17 +131,34 @@ func (s GitHubSource) Check(ctx context.Context) (Update, error) {
 	return u, nil
 }
 
-// History 列出默认分支最近的提交，供面板的更新日志窗口呈现。
+// History 列出所选来源最近的提交；发版策略以发布标签的固定 SHA 为起点。
 // 上限固定由调用方给，越界一律回落到默认值，不接受任意大的拉取。
-func (s GitHubSource) History(ctx context.Context, limit int) ([]CommitLog, error) {
-	branch, err := s.defaultBranch(ctx)
-	if err != nil {
-		return nil, err
+func (s GitHubSource) History(ctx context.Context, channel UpdateChannel, limit int) ([]CommitLog, error) {
+	channel = normalizeChannel(channel)
+	if !validChannel(channel) {
+		return nil, fmt.Errorf("更新策略无效")
+	}
+	ref := ""
+	if channel == ChannelRelease {
+		u, err := s.Check(ctx, channel)
+		if err != nil {
+			return nil, err
+		}
+		if u.TargetCommit == "" {
+			return []CommitLog{}, nil
+		}
+		ref = u.TargetCommit
+	} else {
+		branch, err := s.defaultBranch(ctx)
+		if err != nil {
+			return nil, err
+		}
+		ref = branch
 	}
 	if limit < 1 || limit > 100 {
 		limit = 30
 	}
-	endpoint := s.api() + "/repos/" + Repository + "/commits?sha=" + url.QueryEscape(branch) + "&per_page=" + strconv.Itoa(limit)
+	endpoint := s.api() + "/repos/" + Repository + "/commits?sha=" + url.QueryEscape(ref) + "&per_page=" + strconv.Itoa(limit)
 	r, err := s.get(ctx, endpoint)
 	if err != nil {
 		return nil, err
@@ -143,6 +185,69 @@ func (s GitHubSource) History(ctx context.Context, limit int) ([]CommitLog, erro
 	}
 	return commits, nil
 }
+
+type githubRelease struct {
+	Tag        string `json:"tag_name"`
+	Name       string `json:"name"`
+	Draft      *bool  `json:"draft"`
+	Prerelease *bool  `json:"prerelease"`
+}
+
+// 使用 GitHub 标记的 latest 正式发版，不按标签字典序排序，也不把 target_commitish 当作版本。
+func (s GitHubSource) latestRelease(ctx context.Context) (githubRelease, error) {
+	var release githubRelease
+	r, err := s.get(ctx, s.api()+"/repos/"+Repository+"/releases/latest")
+	if errors.Is(err, errGitHubNotFound) {
+		// 仓库可访问但没有正式发版属于空状态；私有或不存在的仓库仍报告错误。
+		if _, repoErr := s.defaultBranch(ctx); repoErr != nil {
+			return release, repoErr
+		}
+		return release, nil
+	}
+	if err != nil {
+		return release, err
+	}
+	defer r.Body.Close()
+	if err = json.NewDecoder(io.LimitReader(r.Body, 1024*1024)).Decode(&release); err != nil || release.Tag == "" || len(release.Tag) > 1024 || release.Draft == nil || release.Prerelease == nil || *release.Draft || *release.Prerelease {
+		return githubRelease{}, fmt.Errorf("GitHub 正式发版信息无效")
+	}
+	if release.Name == "" {
+		release.Name = release.Tag
+	}
+	return release, nil
+}
+
+// 精确读取 tags 引用，兼容轻量标签和附注标签，最终只接受完整 commit SHA。
+func (s GitHubSource) tagCommit(ctx context.Context, tag string) (string, error) {
+	endpoint := s.api() + "/repos/" + Repository + "/git/ref/tags/" + url.PathEscape(tag)
+	for depth := 0; depth < 8; depth++ {
+		r, err := s.get(ctx, endpoint)
+		if err != nil {
+			return "", err
+		}
+		var result struct {
+			Object struct {
+				Type string `json:"type"`
+				SHA  string `json:"sha"`
+			} `json:"object"`
+		}
+		err = json.NewDecoder(io.LimitReader(r.Body, 1024*1024)).Decode(&result)
+		r.Body.Close()
+		if err != nil || !commitPattern.MatchString(result.Object.SHA) {
+			return "", fmt.Errorf("发版标签对应的提交无效")
+		}
+		switch result.Object.Type {
+		case "commit":
+			return result.Object.SHA, nil
+		case "tag":
+			endpoint = s.api() + "/repos/" + Repository + "/git/tags/" + result.Object.SHA
+		default:
+			return "", fmt.Errorf("发版标签未指向提交")
+		}
+	}
+	return "", fmt.Errorf("发版标签嵌套过深")
+}
+
 func (s GitHubSource) Download(ctx context.Context, sha, destination string) error {
 	if !commitPattern.MatchString(sha) {
 		return fmt.Errorf("目标提交无效")

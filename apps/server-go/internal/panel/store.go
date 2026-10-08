@@ -19,6 +19,14 @@ var commitPattern = regexp.MustCompile(`^(?:[a-f0-9]{40}|[a-f0-9]{64})$`)
 
 type Store struct{ Root string }
 
+func (s Store) updateCheckPath(channel UpdateChannel) string {
+	name := "panel-update-check.json"
+	if channel == ChannelRelease {
+		name = "panel-update-check-release.json"
+	}
+	return filepath.Join(s.Root, "state", name)
+}
+
 // 请求写操作持共享锁，维护提交持独占锁，等待已经开始的写请求结束。
 func (s Store) mutationGate(shared bool, fn func() error) error {
 	if err := os.MkdirAll(s.tasksDir(), 0700); err != nil {
