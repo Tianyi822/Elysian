@@ -3,6 +3,7 @@ import * as Popover from '@radix-ui/react-popover'
 import { useEffect, useRef, useState } from 'react'
 import type { DependencySetupStep } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
+import { IconButton } from '../../components/IconButton'
 import { Check, CircleHelp, Loader2, TriangleAlert, X } from '../../components/icons'
 import {
   caddyGuideVisible,
@@ -25,6 +26,13 @@ const STAGE_STATUS_LABEL: Record<DependencyStageStatus, string> = {
   running: '正在执行',
   done: '已完成',
   failed: '未完成',
+}
+
+const STAGE_DOT_STYLE: Record<DependencyStageStatus, string> = {
+  pending: 'bg-fg-subtle/30',
+  running: 'bg-fg-subtle/30 ring-2 ring-fg-subtle/50 ring-offset-2 ring-offset-surface',
+  done: 'bg-success shadow-[0_0_8px] shadow-success/35',
+  failed: 'bg-danger',
 }
 
 /** 测试里不等待，避免滑动停顿拖慢用例；界面上留半秒让人看清这一步已经完成。 */
@@ -143,7 +151,7 @@ function DependencyGuideDialog({
   onMute,
 }: {
   kind: DependencyGuideKind
-  /** 当前探测的非就绪原因（missing / error 时恒有值），以次要文字呈现。 */
+  /** 当前探测的非就绪原因，仅开发环境显示。 */
   detail: string | null
   onVerify: () => Promise<'docker' | 'caddy' | null>
   onDismiss: () => void
@@ -286,43 +294,14 @@ function DependencyGuideDialog({
           </div>
 
           <div className="flex min-h-0 min-w-0 flex-col gap-3 overflow-y-auto px-4 py-4">
-            {detail ? (
+            {import.meta.env.DEV && detail ? (
               <p className="rounded-lg bg-surface-raised px-3 py-2 text-xs text-fg-muted">
                 当前探测结果：{detail}
               </p>
             ) : null}
-            <p className="text-xs tabular-nums text-fg-muted">
-              第 {active + 1} 步，共 {stages.length} 步
-            </p>
-            <ol
-              aria-label="安装步骤"
-              className="grid gap-2"
-              style={{ gridTemplateColumns: `repeat(${stages.length}, minmax(0, 1fr))` }}
-            >
-              {stages.map((stage, index) => {
-                const status = statuses[index] ?? 'pending'
-                const current = index === active
-                return (
-                  <li
-                    key={stage.id}
-                    aria-current={current ? 'step' : undefined}
-                    className={`min-w-0 rounded-lg border px-2 py-1.5 ${current ? 'border-fg-subtle' : 'border-line'}`}
-                  >
-                    <span className="flex items-center gap-1 text-xs text-fg">
-                      <span className="tabular-nums text-fg-muted">{index + 1}</span>
-                      <span className="min-w-0">{stage.title}</span>
-                    </span>
-                    <span className={`mt-0.5 flex items-center gap-1 text-xs ${status === 'failed' ? 'text-danger' : status === 'done' ? 'text-success' : 'text-fg-muted'}`}>
-                      {statusIcon(status)}
-                      {STAGE_STATUS_LABEL[status]}
-                    </span>
-                  </li>
-                )
-              })}
-            </ol>
             <div
               aria-label="安装步骤页面"
-              className="flex min-w-0 snap-x snap-mandatory gap-3 overflow-x-auto scroll-smooth pb-1 motion-reduce:scroll-auto"
+              className="flex min-w-0 snap-x snap-mandatory gap-3 overflow-x-auto scroll-smooth [scrollbar-width:none] [&::-webkit-scrollbar]:hidden motion-reduce:scroll-auto"
             >
               {stages.map((stage, index) => {
                 const status = statuses[index] ?? 'pending'
@@ -350,6 +329,22 @@ function DependencyGuideDialog({
                 )
               })}
             </div>
+            <ol aria-label="安装步骤" className="flex items-center justify-center gap-2">
+              {stages.map((stage, index) => {
+                const status = statuses[index] ?? 'pending'
+                return (
+                  <li key={stage.id} aria-current={index === active ? 'step' : undefined}>
+                    <IconButton
+                      label={`${stage.title}：${STAGE_STATUS_LABEL[status]}`}
+                      variant="ghost"
+                      onPress={() => scrollTo(index)}
+                    >
+                      <span aria-hidden className={`size-2.5 rounded-full transition-colors ${STAGE_DOT_STYLE[status]}`} />
+                    </IconButton>
+                  </li>
+                )
+              })}
+            </ol>
           </div>
 
           <div className="flex items-center justify-between gap-2 border-t border-line px-4 py-2.5">

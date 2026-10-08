@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import * as Tooltip from '@radix-ui/react-tooltip'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DependencyProbeReport } from '@elysian/contracts'
 import { UI_PREFERENCES_KEY, readMutedDependencyGuide } from '../../app/theme/themePreferences'
@@ -68,6 +69,7 @@ async function renderDialogs(
     <GatewayProvider gateway={gateway}>
       <DependencyGuideDialogs scope={scope} reload={reload} />
     </GatewayProvider>,
+    { wrapper: ({ children }) => <Tooltip.Provider>{children}</Tooltip.Provider> },
   )
   await act(async () => {
     await useDependencyGuideStore.getState().check(gateway)
@@ -280,7 +282,9 @@ describe('分步安装', () => {
     // 网站页工具栏的「安装 Caddy」重开：进度在 store 里，不随弹窗卸载而归零。
     act(() => useDependencyGuideStore.getState().reopenCaddy())
     const dialog = await screen.findByRole('dialog', { name: '安装 Caddy' })
-    expect(within(dialog).getByText('第 2 步，共 4 步')).toBeInTheDocument()
+    const steps = within(dialog).getByRole('list', { name: '安装步骤' })
+    expect(within(steps).getByRole('button', { name: '安装 Caddy：已完成' })).toBeInTheDocument()
+    expect(within(steps).getByRole('button', { name: '绑定管理通道：未完成' }).closest('li')).toHaveAttribute('aria-current', 'step')
     expect(within(dialog).getByRole('alert')).toHaveTextContent('Caddyfile 校验没有通过')
 
     await user.click(within(dialog).getByRole('button', { name: '重试' }))
