@@ -84,6 +84,9 @@ $RECYCLE.BIN/
 /PRODUCT.md
 /product.md
 
+# 本地参考源码：Cordis TS 上游克隆（含自身 .git），仅作 Go 移植参考，不 vendor、不入库。
+/apps/cordis/
+
 # Go 后端（apps/server-go）构建产物与嵌入占位：dist 只留入库的 .gitkeep
 #（上方全局 dist/ 规则会排除目录本身，须先重新包含目录再放行占位文件）；
 # elysian 为发布构建产出的单二进制。
