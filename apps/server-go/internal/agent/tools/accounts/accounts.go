@@ -8,6 +8,7 @@
 package accounts
 
 import (
+	"context"
 	"errors"
 	"strings"
 
@@ -34,7 +35,7 @@ type Service struct {
 }
 
 func (d Deps) validate() error {
-	if d.Accounts == nil {
+	if tools.IsNil(d.Accounts) {
 		return errors.New("系统账号能力缺少 seam.SystemAccounts 实现：账号通道由宿主构造并注入")
 	}
 	return nil
@@ -52,7 +53,7 @@ func New(c *kardia.Context, deps Deps) (*Service, error) {
 	}
 	service.Service = base
 	if err := tools.RegisterAll(c, service.descriptors()...); err != nil {
-		return nil, err
+		return nil, errors.Join(err, service.Close(context.Background()))
 	}
 	return service, nil
 }

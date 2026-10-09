@@ -36,7 +36,8 @@ func (e *DeniedError) Error() string {
 	return fmt.Sprintf("工具 %q 被拒绝执行：%s", e.Name, e.Reason)
 }
 
-// Call 是一次调用的不可变描述，作为三段瀑布与 result 事件的参数。
+// Call 是一次调用的描述。各事件阶段与处理器分别取得参数快照；同一阶段内的
+// 监听者共享该阶段快照，应当只读。
 type Call struct {
 	ID   string
 	Name string
@@ -69,9 +70,9 @@ type Change struct {
 // PublicSchema 是对外可见的描述符投影：只含名字、说明与参数模式，处理器与
 // 内部字段不外泄。
 type PublicSchema struct {
-	Name        string
-	Description string
-	Parameters  map[string]any
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Parameters  map[string]any `json:"parameters"`
 }
 
 // Descriptor 声明一条工具。
@@ -109,7 +110,20 @@ func (d Descriptor) validate() error {
 	if err := d.Parameters.checkShape(d.Name); err != nil {
 		return fmt.Errorf("工具 %q 的参数模式非法：%w", d.Name, err)
 	}
+	if d.Parameters.Type != SchemaObject {
+		return fmt.Errorf("工具 %q 的顶层参数必须是 object", d.Name)
+	}
 	return nil
+}
+
+func (d Descriptor) clone() Descriptor {
+	d.Parameters = d.Parameters.clone()
+	return d
+}
+
+func (c Call) snapshot() Call {
+	c.Args = kardia.CloneConfig(c.Args).(Arguments)
+	return c
 }
 
 // Public 返回对外投影。

@@ -9,6 +9,7 @@
 package auth
 
 import (
+	"context"
 	"errors"
 
 	"elysian/server/internal/agent/kardia"
@@ -45,13 +46,13 @@ type Service struct {
 }
 
 func (d Deps) validate() error {
-	if d.Sessions == nil {
+	if tools.IsNil(d.Sessions) {
 		return errors.New("登录鉴权能力缺少会话存诸：SessionStore 由宿主构造并注入")
 	}
-	if d.Credentials == nil {
+	if tools.IsNil(d.Credentials) {
 		return errors.New("登录鉴权能力缺少凭据存诸：CredentialsStore 由宿主构造并注入")
 	}
-	if d.Origins == nil {
+	if tools.IsNil(d.Origins) {
 		return errors.New("登录鉴权能力缺少回跳白名单：ReturnOriginRegistry 由宿主构造并注入")
 	}
 	return nil
@@ -69,7 +70,7 @@ func New(c *kardia.Context, deps Deps) (*Service, error) {
 	}
 	service.Service = base
 	if err := tools.RegisterAll(c, service.descriptors()...); err != nil {
-		return nil, err
+		return nil, errors.Join(err, service.Close(context.Background()))
 	}
 	return service, nil
 }

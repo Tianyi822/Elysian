@@ -4,7 +4,6 @@ package tools
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"elysian/server/internal/agent/kardia"
 )
@@ -22,13 +21,9 @@ func RegisterAll(c *kardia.Context, descriptors ...Descriptor) error {
 	}
 	registered := make([]kardia.Disposable, 0, len(descriptors))
 	for _, descriptor := range descriptors {
-		dispose, err := registry.Register(descriptor)
+		dispose, err := registry.register(c, descriptor)
 		if err != nil {
 			return joinRollback(registered, err)
-		}
-		label := fmt.Sprintf("tools.register(%q)", descriptor.Name)
-		if _, err := c.Effect(label, func() (kardia.Disposable, error) { return dispose, nil }); err != nil {
-			return joinRollback(registered, errors.Join(err, dispose(context.Background())))
 		}
 		registered = append(registered, dispose)
 	}

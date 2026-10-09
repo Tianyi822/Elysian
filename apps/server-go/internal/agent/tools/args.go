@@ -4,6 +4,8 @@ package tools
 
 import (
 	"math"
+	"reflect"
+	"strconv"
 )
 
 // StringArg 取字符串参数。
@@ -20,15 +22,23 @@ func BoolArg(args Arguments, key string) (bool, bool) {
 
 // IntArg 取整数参数。JSON 解码得到的浮点只有在无小数部分时才接受。
 func IntArg(args Arguments, key string) (int, bool) {
-	switch value := args[key].(type) {
-	case int:
-		return value, true
-	case int64:
-		return int(value), true
-	case float32:
-		return intArgFromFloat(float64(value))
-	case float64:
-		return intArgFromFloat(value)
+	return integerValue(args[key])
+}
+
+func integerValue(value any) (int, bool) {
+	if value == nil {
+		return 0, false
+	}
+	v := reflect.ValueOf(value)
+	switch v.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		n := v.Int()
+		return int(n), int64(int(n)) == n
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		n := v.Uint()
+		return int(n), n <= uint64(^uint(0)>>1)
+	case reflect.Float32, reflect.Float64:
+		return intArgFromFloat(v.Float())
 	}
 	return 0, false
 }
@@ -43,7 +53,9 @@ func EnumOf(values ...string) []any {
 }
 
 func intArgFromFloat(value float64) (int, bool) {
-	if math.IsNaN(value) || math.IsInf(value, 0) || value != math.Trunc(value) {
+	// int 最大值转为 float64 会向上取整，必须使用开区间上界。
+	bound := math.Ldexp(1, strconv.IntSize-1)
+	if math.IsNaN(value) || math.IsInf(value, 0) || value != math.Trunc(value) || value < -bound || value >= bound {
 		return 0, false
 	}
 	return int(value), true

@@ -8,6 +8,7 @@
 package firewall
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -45,7 +46,7 @@ type Service struct {
 }
 
 func (d Deps) validate() error {
-	if d.Opener == nil {
+	if tools.IsNil(d.Opener) {
 		return errors.New("防火墙能力缺少 seam.PortOpener 实现：放行器由宿主构造并注入，不可用时请显式注入 seam.NoopPortOpener()")
 	}
 	return nil
@@ -66,7 +67,7 @@ func New(c *kardia.Context, deps Deps, cfg Config) (*Service, error) {
 	}
 	service.Service = base
 	if err := tools.RegisterAll(c, service.descriptors()...); err != nil {
-		return nil, err
+		return nil, errors.Join(err, service.Close(context.Background()))
 	}
 	return service, nil
 }

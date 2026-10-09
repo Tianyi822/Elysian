@@ -56,22 +56,45 @@ func newRegistry(c *kardia.Context, _ any) (kardia.Disposable, error) {
 }
 
 // Register 登记一条描述符并返回撤销器。描述符不合法、重名、change 事件失败
-// 都会拒绝登记（失败闭合）；撤销器幂等，重复调用返回 nil。
+// 都会拒绝登记（失败闭合）；条目归注册表激活代所有，撤销器共享一次清理结果。
 func (r *Registry) Register(descriptor Descriptor) (kardia.Disposable, error) {
+	return r.register(r.Ctx, descriptor)
+}
+
+// register 把登记与处理器绑定到提供者的激活代；直接登记归注册表自身所有。
+func (r *Registry) register(owner *kardia.Context, descriptor Descriptor) (kardia.Disposable, error) {
+	if err := r.Ctx.Lifetime().Err(); err != nil {
+		return nil, fmt.Errorf("工具注册表已停用：%w", err)
+	}
 	if err := descriptor.validate(); err != nil {
 		return nil, err
+	}
+	descriptor = descriptor.clone()
+	handler := descriptor.Handler
+	var done atomic.Bool
+	descriptor.Handler = func(access *kardia.Context, args Arguments) (any, error) {
+		if done.Load() {
+			return nil, fmt.Errorf("工具 %q 的登记已撤销", descriptor.Name)
+		}
+		if err := owner.Lifetime().Err(); err != nil {
+			return nil, fmt.Errorf("工具 %q 的提供者已停用：%w", descriptor.Name, err)
+		}
+		if err := r.Ctx.Lifetime().Err(); err != nil {
+			return nil, fmt.Errorf("工具注册表已停用：%w", err)
+		}
+		if access == nil {
+			access = owner
+		}
+		if err := Lifetime(access).Err(); err != nil {
+			return nil, fmt.Errorf("工具 %q 的调用已取消：%w", descriptor.Name, err)
+		}
+		return handler(access.Shadow(owner), args)
 	}
 	record, err := r.insert(descriptor)
 	if err != nil {
 		return nil, err
 	}
-	if err := r.emitChange(ChangeRegistered, descriptor.Name); err != nil {
-		// 事件失败即回滚，避免「表里有、外面不知道」的不一致。
-		r.remove(record)
-		return nil, fmt.Errorf("登记工具 %q 后上报变化失败：%w", descriptor.Name, err)
-	}
-	var done atomic.Bool
-	return func(ctx context.Context) error {
+	cleanup := func(ctx context.Context) error {
 		if ctx == nil {
 			return errors.New("撤销工具登记必须提供 ctx")
 		}
@@ -80,6 +103,21 @@ func (r *Registry) Register(descriptor Descriptor) (kardia.Disposable, error) {
 		}
 		r.remove(record)
 		return r.emitChange(ChangeRemoved, descriptor.Name)
+	}
+	dispose, err := owner.Effect(fmt.Sprintf("tools.register(%q)", descriptor.Name), func() (kardia.Disposable, error) {
+		return cleanup, nil
+	})
+	if err != nil {
+		return nil, errors.Join(err, cleanup(context.Background()))
+	}
+	if err := r.emitChange(ChangeRegistered, descriptor.Name); err != nil {
+		return nil, errors.Join(fmt.Errorf("登记工具 %q 后上报变化失败：%w", descriptor.Name, err), dispose(context.Background()))
+	}
+	return func(ctx context.Context) error {
+		if ctx == nil {
+			return errors.New("撤销工具登记必须提供 ctx")
+		}
+		return dispose(ctx)
 	}, nil
 }
 
@@ -115,7 +153,7 @@ func (r *Registry) Lookup(name string) (Descriptor, bool) {
 	if !ok {
 		return Descriptor{}, false
 	}
-	return record.descriptor, true
+	return record.descriptor.clone(), true
 }
 
 // List 返回按名字稳定排序的描述符快照。
@@ -123,7 +161,7 @@ func (r *Registry) List() []Descriptor {
 	r.mu.Lock()
 	list := make([]Descriptor, 0, len(r.items))
 	for _, record := range r.items {
-		list = append(list, record.descriptor)
+		list = append(list, record.descriptor.clone())
 	}
 	r.mu.Unlock()
 	sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
@@ -150,6 +188,9 @@ func (r *Registry) Size() int {
 // Execute 按名执行一条工具：先校验参数（不合法直接拒，不进策略链），再走三段
 // 瀑布，最后发 result 事件。参数为 nil 时按空对象处理。
 func (r *Registry) Execute(c *kardia.Context, name string, args Arguments) (any, error) {
+	if err := r.Ctx.Lifetime().Err(); err != nil {
+		return nil, fmt.Errorf("工具注册表已停用：%w", err)
+	}
 	descriptor, ok := r.Lookup(name)
 	if !ok {
 		return nil, fmt.Errorf("工具 %q 未注册", name)
@@ -157,6 +198,7 @@ func (r *Registry) Execute(c *kardia.Context, name string, args Arguments) (any,
 	if args == nil {
 		args = Arguments{}
 	}
+	args = kardia.CloneConfig(args).(Arguments)
 	if err := descriptor.Parameters.Validate(args); err != nil {
 		return nil, fmt.Errorf("工具 %q 的参数不合法：%w", name, err)
 	}
@@ -165,10 +207,13 @@ func (r *Registry) Execute(c *kardia.Context, name string, args Arguments) (any,
 	if c != nil {
 		site = r.CtxFor(c)
 	}
+	if err := Lifetime(site).Err(); err != nil {
+		return nil, fmt.Errorf("工具 %q 的调用已取消：%w", name, err)
+	}
 	outcome := runCall(site, descriptor, call, args)
-	if err := site.Emit(EventResult, call, outcome); err != nil && outcome.Err == nil {
+	if err := site.Emit(EventResult, call.snapshot(), outcome); err != nil {
 		// result 是审计事件：监听者失败不改写执行结果，但必须让调用方看见。
-		outcome.Err = fmt.Errorf("上报工具 %q 的结果失败：%w", name, err)
+		outcome.Err = errors.Join(outcome.Err, fmt.Errorf("上报工具 %q 的结果失败：%w", name, err))
 	}
 	return outcome.Value, outcome.Err
 }

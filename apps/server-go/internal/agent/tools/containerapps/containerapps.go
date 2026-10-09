@@ -11,6 +11,7 @@
 package containerapps
 
 import (
+	"context"
 	"errors"
 
 	"elysian/server/internal/agent/kardia"
@@ -27,14 +28,24 @@ type Deps struct {
 	// Workspace 是工作区登记表。
 	Workspace *domainapps.Registry
 	// Builds 是镜像构建任务机，带常驻定时器，只能由宿主构造并注入。
-	Builds *domainapps.BuildManager
+	Builds BuildTasks
 }
+
+// BuildTasks 是工具需要的最小任务接口；生产注入 *containerapps.BuildManager。
+// 接口只持有宿主对象，测试可以用替身而不启动任务机的常驻定时器。
+type BuildTasks interface {
+	List(slug string) []domainapps.BuildTask
+	Get(slug, taskID string) (domainapps.BuildTask, error)
+	Cancel(slug, taskID string) error
+}
+
+var _ BuildTasks = (*domainapps.BuildManager)(nil)
 
 // Config 是本能力自身的开关。
 type Config struct {
 	// MountRoot 是绑定挂载根；Deps.Workspace 为空时必填。
 	MountRoot string
-	// RegistryPath 覆盖登记表文件路径，缺省由 MountRoot 推导。
+	// RegistryPath 覆盖登记表文件路径，缺省使用面板 config/container-apps.json。
 	RegistryPath string
 }
 
@@ -52,7 +63,7 @@ type Service struct {
 	kardia.Service
 
 	workspace *domainapps.Registry
-	builds    *domainapps.BuildManager
+	builds    BuildTasks
 }
 
 // New 构造工作区能力服务，提供服务并登记描述符。
@@ -64,6 +75,9 @@ func New(c *kardia.Context, deps Deps, cfg Config) (*Service, error) {
 		}
 		workspace = &domainapps.Registry{MountRoot: cfg.MountRoot, RegistryPath: cfg.RegistryPath}
 	}
+	if tools.IsNil(deps.Builds) {
+		deps.Builds = nil
+	}
 	service := &Service{workspace: workspace, builds: deps.Builds}
 	base, err := kardia.NewService(c, ServiceName, service, nil)
 	if err != nil {
@@ -71,7 +85,7 @@ func New(c *kardia.Context, deps Deps, cfg Config) (*Service, error) {
 	}
 	service.Service = base
 	if err := tools.RegisterAll(c, service.descriptors()...); err != nil {
-		return nil, err
+		return nil, errors.Join(err, service.Close(context.Background()))
 	}
 	return service, nil
 }

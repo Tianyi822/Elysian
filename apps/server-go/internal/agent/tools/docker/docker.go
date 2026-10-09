@@ -9,6 +9,7 @@
 package docker
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -47,7 +48,7 @@ type Service struct {
 }
 
 func (d Deps) validate() error {
-	if d.Views == nil {
+	if tools.IsNil(d.Views) {
 		return errors.New("容器能力缺少 seam.DockerViews 实现：视图由宿主经 docker.Assemble 构造后注入")
 	}
 	return nil
@@ -71,7 +72,7 @@ func New(c *kardia.Context, deps Deps, cfg Config) (*Service, error) {
 	}
 	service.Service = base
 	if err := tools.RegisterAll(c, service.descriptors()...); err != nil {
-		return nil, err
+		return nil, errors.Join(err, service.Close(context.Background()))
 	}
 	return service, nil
 }

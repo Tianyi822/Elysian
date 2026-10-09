@@ -38,13 +38,13 @@ var (
 func runCall(site *kardia.Context, descriptor Descriptor, call Call, args Arguments) Outcome {
 	decision, err := site.Waterfall(EventPreExecute, func(*kardia.EventCtx) (any, error) {
 		return nil, nil
-	}, call)
+	}, call.snapshot())
 	if err != nil {
 		return Outcome{Err: err}
 	}
 	if decision != nil {
 		deny, ok := decision.(*Deny)
-		if !ok {
+		if !ok || deny == nil {
 			return Outcome{Err: fmt.Errorf("工具 %q 的 %s 监听者返回了无法识别的裁决：%T", call.Name, EventPreExecute, decision)}
 		}
 		reason := deny.Reason
@@ -55,13 +55,13 @@ func runCall(site *kardia.Context, descriptor Descriptor, call Call, args Argume
 	}
 
 	value, err := site.Waterfall(EventExecute, func(*kardia.EventCtx) (any, error) {
-		return descriptor.Handler(site, args)
-	}, call)
+		return descriptor.Handler(site, kardia.CloneConfig(args).(Arguments))
+	}, call.snapshot())
 	outcome := Outcome{Value: value, Err: err}
 
 	revised, err := site.Waterfall(EventPostExecute, func(*kardia.EventCtx) (any, error) {
 		return outcome, nil
-	}, call, outcome)
+	}, call.snapshot(), outcome)
 	if err != nil {
 		return Outcome{Err: err}
 	}

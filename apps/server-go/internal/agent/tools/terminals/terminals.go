@@ -33,7 +33,7 @@ type Service struct {
 }
 
 func (d Deps) validate() error {
-	if d.Kit == nil {
+	if tools.IsNil(d.Kit) {
 		return errors.New("终端能力缺少 seam.TerminalKit 实现：请注入 terminals.NewKit() 的产物")
 	}
 	return nil

@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"sort"
 	"unicode/utf8"
+
+	"elysian/server/internal/agent/kardia"
 )
 
 // 支持的参数类型（JSON Schema 子集）。
@@ -56,6 +58,10 @@ func (s Schema) Validate(value any) error {
 // JSONSchema 导出为 JSON Schema 形态，只含已声明字段，供未来的模型侧消费。
 func (s Schema) JSONSchema() map[string]any {
 	out := map[string]any{"type": s.Type}
+	if s.Type == SchemaObject {
+		out["additionalProperties"] = false
+		out["properties"] = map[string]any{}
+	}
 	if s.Description != "" {
 		out["description"] = s.Description
 	}
@@ -72,9 +78,7 @@ func (s Schema) JSONSchema() map[string]any {
 		out["properties"] = properties
 	}
 	if len(s.Enum) > 0 {
-		enum := make([]any, len(s.Enum))
-		copy(enum, s.Enum)
-		out["enum"] = enum
+		out["enum"] = kardia.CloneConfig(s.Enum)
 	}
 	if s.Items != nil {
 		out["items"] = s.Items.JSONSchema()
@@ -120,6 +124,16 @@ func (s Schema) checkShape(path string) error {
 	if s.MinLength != nil && *s.MinLength < 0 {
 		return fmt.Errorf("%s的 minLength 不得为负", label(path))
 	}
+	seen := make(map[string]bool, len(s.Required))
+	for _, name := range s.Required {
+		if _, ok := s.Properties[name]; !ok {
+			return fmt.Errorf("%s的 required 引用了未声明的属性 %q", label(path), name)
+		}
+		if seen[name] {
+			return fmt.Errorf("%s的 required 重复声明了属性 %q", label(path), name)
+		}
+		seen[name] = true
+	}
 	if s.Pattern != "" {
 		if _, err := regexp.Compile(s.Pattern); err != nil {
 			return fmt.Errorf("%s的正则表达式非法：%w", label(path), err)
@@ -149,6 +163,9 @@ func (s Schema) checkShape(path string) error {
 }
 
 func (s Schema) validate(path string, value any) error {
+	if len(s.Enum) > 0 && !enumContains(s.Enum, value) {
+		return fmt.Errorf("%s取值不在允许范围内", label(path))
+	}
 	switch s.Type {
 	case SchemaObject:
 		return s.validateObject(path, value)
@@ -157,9 +174,6 @@ func (s Schema) validate(path string, value any) error {
 	}
 	if !typeMatches(s.Type, value) {
 		return fmt.Errorf("%s必须是 %s，实际为 %s", label(path), s.Type, typeName(value))
-	}
-	if len(s.Enum) > 0 && !enumContains(s.Enum, value) {
-		return fmt.Errorf("%s取值 %v 不在允许范围内", label(path), value)
 	}
 	if s.Type == SchemaString {
 		text, _ := value.(string)
@@ -241,8 +255,8 @@ func typeMatches(schemaType string, value any) bool {
 		f, ok := numberValue(value)
 		return ok && !math.IsNaN(f) && !math.IsInf(f, 0)
 	case SchemaInteger:
-		f, ok := numberValue(value)
-		return ok && !math.IsNaN(f) && !math.IsInf(f, 0) && f == math.Trunc(f)
+		_, ok := integerValue(value)
+		return ok
 	case SchemaObject:
 		_, ok := value.(map[string]any)
 		return ok
@@ -283,23 +297,70 @@ func numberValue(value any) (float64, bool) {
 	return 0, false
 }
 
-// enumContains 按类型归一后比较：数字统一转 float64，其余走 reflect.DeepEqual
-// （直接用 == 比较接口里的切片会 panic）。
+// enumContains 精确比较数字，其余按 JSON 对象与数组的形状递归比较。
 func enumContains(enum []any, value any) bool {
 	for _, item := range enum {
-		if numberA, ok := numberValue(item); ok {
-			if numberB, ok := numberValue(value); ok {
-				if numberA == numberB {
-					return true
-				}
-				continue
-			}
-		}
-		if reflect.DeepEqual(item, value) {
+		if jsonEqual(item, value) {
 			return true
 		}
 	}
 	return false
+}
+
+func jsonEqual(a, b any) bool {
+	if _, ok := numberValue(a); ok {
+		return kardia.NumbersEqual(a, b)
+	}
+	switch a := a.(type) {
+	case map[string]any:
+		other, ok := b.(map[string]any)
+		if !ok || len(a) != len(other) {
+			return false
+		}
+		for key, value := range a {
+			got, exists := other[key]
+			if !exists || !jsonEqual(value, got) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		other, ok := b.([]any)
+		if !ok || len(a) != len(other) {
+			return false
+		}
+		for i, value := range a {
+			if !jsonEqual(value, other[i]) {
+				return false
+			}
+		}
+		return true
+	}
+	return reflect.DeepEqual(a, b)
+}
+
+// clone 冻结模式中的全部可变字段，不与注册输入和对外快照共享引用。
+func (s Schema) clone() Schema {
+	s.Required = append([]string(nil), s.Required...)
+	if s.Properties != nil {
+		properties := make(map[string]Schema, len(s.Properties))
+		for key, child := range s.Properties {
+			properties[key] = child.clone()
+		}
+		s.Properties = properties
+	}
+	if s.Enum != nil {
+		s.Enum = kardia.CloneConfig(s.Enum).([]any)
+	}
+	if s.Items != nil {
+		child := s.Items.clone()
+		s.Items = &child
+	}
+	if s.MinLength != nil {
+		n := *s.MinLength
+		s.MinLength = &n
+	}
+	return s
 }
 
 func typeName(value any) string {

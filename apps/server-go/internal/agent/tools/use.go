@@ -5,6 +5,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"reflect"
 
 	"elysian/server/internal/agent/kardia"
 )
@@ -29,7 +30,7 @@ func Use[T any](c *kardia.Context, name string) (T, error) {
 	if err != nil {
 		return zero, err
 	}
-	if value == nil {
+	if IsNil(value) {
 		return zero, fmt.Errorf("服务 %q 未提供", name)
 	}
 	got, ok := value.(T)
@@ -37,6 +38,18 @@ func Use[T any](c *kardia.Context, name string) (T, error) {
 		return zero, fmt.Errorf("服务 %q 的类型不符：期望 %T，实际 %T", name, zero, value)
 	}
 	return got, nil
+}
+
+// IsNil 识别接口中的带类型 nil，供宿主依赖与服务取值共同校验。
+func IsNil(value any) bool {
+	if value == nil {
+		return true
+	}
+	switch v := reflect.ValueOf(value); v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return v.IsNil()
+	}
+	return false
 }
 
 // RegistryFrom 取注册表服务。能力插件的 Apply 里用它拿到注入就绪的注册表。

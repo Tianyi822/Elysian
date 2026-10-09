@@ -7,6 +7,7 @@
 package panel
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -46,10 +47,10 @@ type Service struct {
 }
 
 func (d Deps) validate() error {
-	if d.Manager.Host == nil {
+	if tools.IsNil(d.Manager.Host) {
 		return errors.New("面板维护能力缺少 Host 实现：systemd 与 ufw 的操作面由宿主注入")
 	}
-	if d.Manager.Source == nil {
+	if tools.IsNil(d.Manager.Source) {
 		return errors.New("面板维护能力缺少 Source 实现：上游仓库解析由宿主注入")
 	}
 	return nil
@@ -73,7 +74,7 @@ func New(c *kardia.Context, deps Deps, cfg Config) (*Service, error) {
 	}
 	service.Service = base
 	if err := tools.RegisterAll(c, service.descriptors()...); err != nil {
-		return nil, err
+		return nil, errors.Join(err, service.Close(context.Background()))
 	}
 	return service, nil
 }

@@ -59,6 +59,26 @@ Docker 环境中的 SQLite 使用面板持久卷 `~/.Elysian/data/sqlite`：可�
 
 Docker 页的「工作区」集中保存 compose、`.env`、Dockerfile 和挂载配置，支持上传文件或目录、编辑文本、复制真实绝对路径、检查 compose 引用与构建镜像。文件保存在 `<mountRoot>/elysian/apps/<slug>`，登记表位于 `~/.Elysian/config/container-apps.json`；文件管理不依赖 Docker Engine 就绪，镜像构建需要引擎可用。compose 自检只检查可识别的路径引用，界面同时显示判定范围与未能判定的项目。面板不会执行 `docker compose up`，启动整套服务需在宿主机执行；本地演示模式仅使用内存数据。机制见 [工作区约定](docs/adr/0020-container-app-workspaces.md) 与 [镜像构建约定](docs/adr/0021-container-image-build.md)。
 
+## Agent 能力封装
+
+[agent/kardia](apps/server-go/internal/agent/kardia/) 提供 Go 插件底座，[agent/tools](apps/server-go/internal/agent/tools/) 独立封装现有能力，由宿主注入域对象后交给 Kardia 管理。它是进程内库层，尚未接入 HTTP 装配或模型推理。九个能力子包共提供 28 条工具，其中 3 条构建任务工具按依赖是否注入登记；终端子包只提供可被插件注入的会话工具箱。
+
+| 能力子包 | 已封装入口 |
+| --- | --- |
+| docker | 容器、镜像、策略、自身容器查询与镜像仓库地址校验 |
+| accounts | 系统账号列举、按名查询与托管 UID 判定 |
+| auth | 会话计数、凭据初始化状态与回跳白名单 |
+| websites | 网站登记摘要与 Caddy 配置摘要 |
+| containerapps | 工作区列举、查询、路径、文件列表、文本读取、compose 自检，以及构建任务列举、查询、取消 |
+| firewall | 幂等放行端口，返回 opened／skipped／failed 的真实状态 |
+| logs | 运行日志与操作日志写入 |
+| panel | 面板状态、更新检查与提交历史 |
+| terminals | `seam.TerminalKit` 命名服务 |
+
+调用顺序为 `tools.Install(ctx, root, tools.Plugin, 能力插件...)` → `tools.RegistryFrom(root)` → `registry.Schemas()`／`registry.Execute(root, name, args)`；插件须按依赖顺序传入，装载失败会逆序回滚，宿主退出时逆序销毁返回的 fiber。工具登记跟随提供者的激活代，撤销后旧处理器不可调用；参数模式与调用参数均使用独立快照。接入示例见 [example_test.go](apps/server-go/internal/agent/tools/example_test.go)，边界与设计见本地 [ADR-0023](docs/adr/0023-agent-capability-tool-layer.md)。
+
+工具层不裁决风险与审批，只透传 `tools/pre-execute` 的拒绝。Caddy 工具返回监听地址、路由数量与 TLS 配置状态，不返回配置原文；会话 ID、密码哈希和网站来源令牌不进入状态摘要。文件管理、平台依赖安装、数据库管理以及删除、重启、发布、改密、构建提交、工作区写文件尚未开放为 Agent 工具。门禁为 `bash apps/server-go/dev-check.sh ./internal/agent/... ./internal/app`，临时测试文件使用 `t.TempDir()` 自动清理；真实域对象由宿主持有和释放。
+
 ## 结构与边界
 
 网站项目通过容器运行，Java、Node、Go、Python 的版本由后端自动获取：语言官方正式发布记录与 Docker 官方镜像精确标签取交集，包含五年前版本线及历史正式补丁，排除预发布、快照和浮动标签。添加项目窗口通过同源 API 读取目录并支持版本号搜索。目录缓存六小时，过期后按请求自动刷新，获取失败时明确提示并保留已有缓存；缓存位于 `~/.Elysian/state/website-runtime-catalog.json`，生产代码不维护固定版本表。`bun run check:website-runtimes` 可诊断官方来源与镜像库的自动获取路径；本地演示仍使用可复现 mock。

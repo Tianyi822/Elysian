@@ -128,9 +128,49 @@ func TestCaddyConfigCurrent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("执行失败：%v", err)
 	}
-	raw, ok := value.(json.RawMessage)
-	if !ok || string(raw) != string(config) {
-		t.Fatalf("配置原文不符：%v", value)
+	summary, ok := value.(CaddySummary)
+	if !ok || summary.Servers == nil || len(summary.Servers) != 0 || summary.TLSConfigured {
+		t.Fatalf("配置摘要不符：%v", value)
+	}
+}
+
+func TestCaddySummaryNeverReturnsSecrets(t *testing.T) {
+	config := json.RawMessage(`{
+		"admin": {"identity": {"private_key": "admin-secret"}},
+		"apps": {
+			"http": {"servers": {"main": {"listen": [":443"], "routes": [{"handle": [
+				{"handler": "authentication", "providers": {"http_basic": {"accounts": [{"password": "hash-secret"}]}}},
+				{"handler": "reverse_proxy", "headers": {"request": {"set": {"Authorization": ["Bearer token-secret"]}}}}
+			]}]}}},
+			"tls": {"certificates": {"load_pem": [{"certificate": "cert-secret", "key": "key-secret"}]}}
+		}
+	}`)
+	root, registry := install(t, Deps{Sites: seededSites(t), Caddy: &fakeCaddy{config: config}}, Config{})
+	value, err := registry.Execute(root, "caddy_config_current", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary := value.(CaddySummary)
+	if !summary.TLSConfigured || len(summary.Servers) != 1 || summary.Servers[0].RouteCount != 1 || summary.Servers[0].Listen[0] != ":443" {
+		t.Fatalf("诊断事实缺失：%+v", summary)
+	}
+	encoded, err := json.Marshal(summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "secret") {
+		t.Fatalf("配置摘要泄漏秘密：%s", encoded)
+	}
+}
+
+func TestCaddySummaryRejectsInvalidConfig(t *testing.T) {
+	for _, raw := range []string{"", "null", "[]", `{"apps":{"http":{"servers":42}}}`} {
+		t.Run(raw, func(t *testing.T) {
+			root, registry := install(t, Deps{Sites: seededSites(t), Caddy: &fakeCaddy{config: json.RawMessage(raw)}}, Config{})
+			if _, err := registry.Execute(root, "caddy_config_current", nil); err == nil {
+				t.Fatal("无效配置不得报告成功")
+			}
+		})
 	}
 }
 

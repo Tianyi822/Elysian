@@ -1,11 +1,12 @@
 // Package logs 把日志写入能力封装成 kardia 插件。
 //
-// 只包 seam.Logs 的两个写方法：读侧三个查询与 RunSweep 因 logs 域未导出参数
-// 类型而不可达（ADR-0023 后续项）。日志服务由宿主构造并注入——logs.OpenService
+// 只包 seam.Logs 的两个写方法。读侧三个查询需通过域的 Parse*ListQuery 取得
+// 私有查询类型，RunSweep 的参数也未导出，均列为后续项。宿主的 logs.OpenService
 // 会打开 sqlite 句柄且没有导出 Close，本包不代为构造。
 package logs
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -55,7 +56,7 @@ type Service struct {
 
 // validate 在装载前裁决依赖是否齐备，缺项即失败（失败闭合）。
 func (d Deps) validate() error {
-	if d.Logs == nil {
+	if tools.IsNil(d.Logs) {
 		return errors.New("日志能力缺少 seam.Logs 实现：日志服务由宿主构造并注入")
 	}
 	return nil
@@ -76,7 +77,7 @@ func New(c *kardia.Context, deps Deps, cfg Config) (*Service, error) {
 	}
 	service.Service = base
 	if err := tools.RegisterAll(c, service.descriptors()...); err != nil {
-		return nil, err
+		return nil, errors.Join(err, service.Close(context.Background()))
 	}
 	return service, nil
 }

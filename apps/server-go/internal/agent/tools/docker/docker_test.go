@@ -78,6 +78,41 @@ func TestPluginRegistersFiveDescriptors(t *testing.T) {
 	}
 }
 
+func TestTypedNilDependencyFailsBeforeProvidingService(t *testing.T) {
+	root := kardia.NewContext()
+	t.Cleanup(func() { _ = root.Fiber().Dispose(context.Background()) })
+	if _, err := tools.Install(context.Background(), root, tools.Plugin, Plugin(Deps{Views: (*fakeViews)(nil)}, Config{})); err == nil {
+		t.Fatal("带类型的 nil 视图必须阻止装载")
+	}
+	if _, err := From(root); err == nil {
+		t.Fatal("构造失败不得留下服务")
+	}
+}
+
+func TestDirectNewRollsBackServiceOnDescriptorConflict(t *testing.T) {
+	root := kardia.NewContext()
+	t.Cleanup(func() { _ = root.Fiber().Dispose(context.Background()) })
+	if _, err := tools.Install(context.Background(), root, tools.Plugin); err != nil {
+		t.Fatal(err)
+	}
+	registry, err := tools.RegistryFrom(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Register(tools.Descriptor{Name: "docker_images_list", Description: "冲突工具", Parameters: tools.Schema{Type: tools.SchemaObject}, Handler: func(*kardia.Context, tools.Arguments) (any, error) { return nil, nil }}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(root, Deps{Views: &fakeViews{}}, Config{}); err == nil {
+		t.Fatal("重名描述符必须使构造失败")
+	}
+	if _, err := From(root); err == nil {
+		t.Fatal("直接构造失败也必须撤销服务")
+	}
+	if registry.Size() != 1 {
+		t.Fatal("失败时应只保留原有工具")
+	}
+}
+
 func TestListContainersHonoursLimit(t *testing.T) {
 	views := &fakeViews{containers: containers(3)}
 	root, registry := install(t, Deps{Views: views}, Config{ListLimit: 2})

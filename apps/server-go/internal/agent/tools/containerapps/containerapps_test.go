@@ -5,6 +5,7 @@ package containerapps
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -219,5 +220,89 @@ func TestBuildToolsAbsentWithoutManager(t *testing.T) {
 	}
 	if err := service.CancelBuild(root, "demo-app", "task-1"); err == nil {
 		t.Fatal("取消任务应失败闭合")
+	}
+}
+
+type fakeBuildTasks struct {
+	task      domainapps.BuildTask
+	err       error
+	cancelled string
+}
+
+func (f *fakeBuildTasks) List(slug string) []domainapps.BuildTask {
+	if slug == f.task.Slug {
+		return []domainapps.BuildTask{f.task}
+	}
+	return nil
+}
+
+func (f *fakeBuildTasks) Get(slug, id string) (domainapps.BuildTask, error) {
+	if f.err != nil {
+		return domainapps.BuildTask{}, f.err
+	}
+	if slug != f.task.Slug || id != f.task.ID {
+		return domainapps.BuildTask{}, errors.New("任务不属于该工作区")
+	}
+	return f.task, nil
+}
+
+func (f *fakeBuildTasks) Cancel(slug, id string) error {
+	if _, err := f.Get(slug, id); err != nil {
+		return err
+	}
+	f.cancelled = id
+	return nil
+}
+
+func TestBuildToolsUseInjectedTaskService(t *testing.T) {
+	workspace, _ := workspace(t)
+	builds := &fakeBuildTasks{task: domainapps.BuildTask{ID: "task-1", Slug: "demo-app", State: "running"}}
+	root, registry := install(t, Deps{Workspace: workspace, Builds: builds}, Config{})
+	if registry.Size() != 9 {
+		t.Fatalf("应登记工作区与三条构建工具：%d", registry.Size())
+	}
+	value, err := registry.Execute(root, "build_list", tools.Arguments{"slug": "demo-app"})
+	if err != nil || len(value.([]domainapps.BuildTask)) != 1 {
+		t.Fatalf("列举任务失败：%v %v", value, err)
+	}
+	value, err = registry.Execute(root, "build_get", tools.Arguments{"slug": "demo-app", "task": "task-1"})
+	if err != nil || value.(domainapps.BuildTask).State != "running" {
+		t.Fatalf("任务快照不符：%v %v", value, err)
+	}
+	value, err = registry.Execute(root, "build_list", tools.Arguments{"slug": "missing"})
+	if err != nil || value.([]domainapps.BuildTask) == nil {
+		t.Fatalf("空列表应输出数组：%v %v", value, err)
+	}
+	for _, args := range []tools.Arguments{{"slug": "another-app", "task": "task-1"}, {"slug": "../escape", "task": "task-1"}, {"slug": "demo-app", "task": ""}} {
+		if _, err := registry.Execute(root, "build_cancel", args); err == nil {
+			t.Fatalf("无效目标不得取消：%v", args)
+		}
+	}
+	if builds.cancelled != "" {
+		t.Fatal("无效请求不得取消任务")
+	}
+	sentinel := errors.New("任务存储不可用")
+	builds.err = sentinel
+	if _, err := registry.Execute(root, "build_cancel", tools.Arguments{"slug": "demo-app", "task": "task-1"}); !errors.Is(err, sentinel) {
+		t.Fatalf("域错误必须透传：%v", err)
+	}
+	builds.err = nil
+	if _, err := registry.Execute(root, "build_cancel", tools.Arguments{"slug": "demo-app", "task": "task-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if builds.cancelled != "task-1" {
+		t.Fatal("取消请求未传给宿主任务机")
+	}
+}
+
+func TestTypedNilBuildTasksOmitOptionalTools(t *testing.T) {
+	workspace, _ := workspace(t)
+	root, registry := install(t, Deps{Workspace: workspace, Builds: (*fakeBuildTasks)(nil)}, Config{})
+	service, err := From(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if service.HasBuilds() || registry.Size() != 6 {
+		t.Fatal("空任务机不得登记构建工具")
 	}
 }

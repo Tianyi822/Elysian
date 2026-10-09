@@ -12,10 +12,16 @@
 //	registry, err := tools.RegistryFrom(root)
 //	value, err := registry.Execute(root, "docker_containers_list", nil)
 //
+// Install 按依赖顺序装载并检查 FiberActive，失败逆序回滚。直接 Register 的条目
+// 归注册表所有，RegisterAll 的条目归能力插件所有；撤销或卸载后，保留的处理器
+// 引用也不可继续执行。已经进入域对象的请求依靠调用方 Lifetime 协作取消。
+// 参数与模式以独立快照传递；JSON Schema 显式导出 additionalProperties=false。
+// Caddy 工具只返回配置摘要，构建任务通过可注入的最小 BuildTasks 接口调用。
+//
 // 三条约定贯穿全部能力子包：
 //
-//  1. 服务方法的首参恒为调用点 Context（use site），内部经 kardia.Service.CtxFor
-//     取得影子链，与 kardia 自身的 timer 服务同形。
+//  1. 服务方法的首参恒为调用点 Context（use site）。经 Registry.Execute 调用时，
+//     登记包装器以能力提供者作为影子定义点，并保留调用方生命周期。
 //  2. 域对象一律由宿主经各子包的 Deps 注入；本层不构造任何自带常驻 goroutine、
 //     打开 sqlite 句柄或 fork 子进程的对象。这些域没有导出 Close（docker 的事件
 //     hub、websites 的部署管理器、containerapps 的构建管理器、logs 的库句柄、
@@ -26,13 +32,13 @@
 //
 // 每个能力子包（docker、logs、terminals、firewall、accounts、websites、
 // containerapps、auth、panel）导出同一套形状：Deps（宿主注入的域对象）、New、
-// Plugin、From 与 ServiceName；有自身开关的能力另有 Config（terminals 与 accounts
-// 没有）。每个子包至多 import 自己那一个域包，跨域接口一律取 internal/seam，
+// Plugin、From 与 ServiceName；有自身开关的能力另有 Config（terminals、accounts
+// 与 auth 没有）。每个子包至多 import 自己那一个域包，跨域接口一律取 internal/seam，
 // 依赖面由 imports_test.go 用 go list -deps 自查。
 //
 // 本轮未覆盖的域：files（服务未导出）、platform（只有 NewRouter）、database
 // （构造器与请求类型未导出且 fork 特权子进程）。firewall 的 21 方法 Service、
-// websites 的主服务、security 的 ssh/users API、panel.Submit、logs 的读侧查询
-// 同样因域侧未导出而包不到；containerapps 的两个构建预览需要 Engine 与完整构建
-// 请求，一并推迟。逐条登记在 ADR-0023。
+// websites 的主服务、security 的 ssh/users API 与 panel.Submit 尚未开放。logs
+// 的读侧查询需经域的 Parse*ListQuery 取得私有查询类型，本层只包装写入接缝；
+// containerapps 的两个构建预览需要 Engine 与完整构建请求，一并推迟。见 ADR-0023。
 package tools

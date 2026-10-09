@@ -10,9 +10,11 @@
 package websites
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 
 	"elysian/server/internal/agent/kardia"
 	"elysian/server/internal/agent/tools"
@@ -68,10 +70,10 @@ type Service struct {
 }
 
 func (d Deps) validate() error {
-	if d.Sites == nil {
+	if tools.IsNil(d.Sites) {
 		return errors.New("网站能力缺少登记表：websites.Registry 由宿主构造并注入")
 	}
-	if d.Caddy == nil {
+	if tools.IsNil(d.Caddy) {
 		return errors.New("网站能力缺少 Caddy 通道：seam.CaddyAdmin 由宿主构造并注入，宿主无 Caddy 时请注入不可用实现")
 	}
 	return nil
@@ -95,7 +97,7 @@ func New(c *kardia.Context, deps Deps, cfg Config) (*Service, error) {
 	}
 	service.Service = base
 	if err := tools.RegisterAll(c, service.descriptors()...); err != nil {
-		return nil, err
+		return nil, errors.Join(err, service.Close(context.Background()))
 	}
 	return service, nil
 }
@@ -128,13 +130,46 @@ func (s *Service) List(access *kardia.Context) ([]WebsiteSummary, error) {
 	return summaries, nil
 }
 
-// CaddyConfig 返回宿主 Caddy 的当前配置原文。
-func (s *Service) CaddyConfig(access *kardia.Context) (json.RawMessage, error) {
+// CaddySummary 只投影可供诊断的配置事实，不返回证书私钥、密码哈希与代理头。
+type CaddySummary struct {
+	Servers       []CaddyServerSummary `json:"servers"`
+	TLSConfigured bool                 `json:"tlsConfigured"`
+}
+
+// CaddyServerSummary 是一个 HTTP 服务的监听地址与路由数量。
+type CaddyServerSummary struct {
+	Name       string   `json:"name"`
+	Listen     []string `json:"listen"`
+	RouteCount int      `json:"routeCount"`
+}
+
+// CaddyConfig 返回宿主 Caddy 的当前配置摘要；只解码白名单字段。
+func (s *Service) CaddyConfig(access *kardia.Context) (CaddySummary, error) {
 	config, channelErr := s.deps.Caddy.CurrentConfig(tools.Lifetime(access))
 	if channelErr != nil {
-		return nil, channelErr
+		return CaddySummary{}, channelErr
 	}
-	return config, nil
+	var parsed *struct {
+		Apps struct {
+			HTTP struct {
+				Servers map[string]struct {
+					Listen []string          `json:"listen"`
+					Routes []json.RawMessage `json:"routes"`
+				} `json:"servers"`
+			} `json:"http"`
+			TLS json.RawMessage `json:"tls"`
+		} `json:"apps"`
+	}
+	if err := json.Unmarshal(config, &parsed); err != nil || parsed == nil {
+		return CaddySummary{}, errors.New("宿主 Caddy 返回了无效的配置对象")
+	}
+	result := CaddySummary{Servers: []CaddyServerSummary{}, TLSConfigured: len(parsed.Apps.TLS) > 0 && string(parsed.Apps.TLS) != "null"}
+	for name, server := range parsed.Apps.HTTP.Servers {
+		listen := append([]string{}, server.Listen...)
+		result.Servers = append(result.Servers, CaddyServerSummary{Name: name, Listen: listen, RouteCount: len(server.Routes)})
+	}
+	sort.Slice(result.Servers, func(i, j int) bool { return result.Servers[i].Name < result.Servers[j].Name })
+	return result, nil
 }
 
 func summarize(record domainwebsites.WebsiteRecord) WebsiteSummary {
@@ -166,7 +201,7 @@ func (s *Service) descriptors() []tools.Descriptor {
 		},
 		{
 			Name:        "caddy_config_current",
-			Description: "读取宿主 Caddy 的当前配置原文；宿主未提供通道时返回中文错误",
+			Description: "读取宿主 Caddy 的监听地址、路由数量与 TLS 配置状态；不返回证书、认证与代理头原文",
 			Parameters:  tools.Schema{Type: tools.SchemaObject},
 			Handler:     s.handleCaddyConfig,
 		},
