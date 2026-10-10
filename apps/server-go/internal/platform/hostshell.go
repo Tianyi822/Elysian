@@ -146,16 +146,16 @@ func (r *hostRunner) runOnHost(script string, timeout time.Duration) (hostComman
 func realExecCommand(file string, args []string, env []string, timeout time.Duration) (string, string, error) {
 	cmd := exec.Command(file, args...)
 	cmd.Env = env
-	stdout := &cappedBuffer{limit: maxOutputBytes}
-	stderr := &cappedBuffer{limit: maxOutputBytes}
+	// Start 在返回前即可启动输出复制协程；终止回调必须随缓冲区一起发布，
+	// 不能在 Start 后无锁写入。输出复制开始时 Process 已由 os/exec 初始化。
+	kill := func() { _ = cmd.Process.Kill() }
+	stdout := &cappedBuffer{limit: maxOutputBytes, kill: kill}
+	stderr := &cappedBuffer{limit: maxOutputBytes, kill: kill}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	if err := cmd.Start(); err != nil {
 		return "", "", err
 	}
-	kill := func() { _ = cmd.Process.Kill() }
-	stdout.kill = kill
-	stderr.kill = kill
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	timer := time.NewTimer(timeout)
