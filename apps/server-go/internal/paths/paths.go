@@ -6,7 +6,7 @@
 // UserHomeDir 走真实路径。
 //
 // 面板自管数据统一放部署机器的 ~/.Elysian 下、按类别分目录：data/（metrics.sqlite、
-// firewall.sqlite）、logs/（sshd.log）、state/（启停与密码重置时间戳）、backups/
+// firewall.sqlite、harness.sqlite）、logs/（sshd.log）、state/（启停与密码重置时间戳）、backups/
 // （写系统文件前的应用侧备份）、tmp/（密钥生成工作区）、config/（面板凭据、单点登录
 // 回跳白名单、数据库与网站登记）。系统自身文件（/etc/ufw、/etc/ssh/sshd_config、
 // authorized_keys）不属于面板数据，路径常量定义在各域内。MetricsSqlite 仅保留路径常量
@@ -22,7 +22,7 @@ import (
 var (
 	// ElysianHome 面板自管数据根：~/.Elysian。
 	ElysianHome = filepath.Join(mustHome(), ".Elysian")
-	// DataDir 数据库：metrics 指标库与防火墙规则时间账本。
+	// DataDir 数据库：metrics 指标库、防火墙规则时间账本与 Agent 任务事实库。
 	DataDir = filepath.Join(ElysianHome, "data")
 	// LogsDir 日志：面板托管的 sshd 定向日志。
 	LogsDir = filepath.Join(ElysianHome, "logs")
@@ -48,6 +48,15 @@ type ElysianPaths struct {
 	FirewallSqlite string
 	// LogsSqlite 面板日志库（运行/操作/登录三表）。
 	LogsSqlite string
+	// HarnessSqlite Agent 任务、运行、工具调用与事件事实库。
+	HarnessSqlite string
+	// AgentModels 模型配置与仅父进程读取的凭据。
+	AgentModels     string
+	AgentSkills     string
+	AgentMCPServers string
+	AgentExecution  string
+	SkillPackages   string
+	AgentWorkspaces string
 	// SshdLog 面板托管的 sshd 定向日志。
 	SshdLog string
 	// PlatformLogsDir 平台日志根。
@@ -80,6 +89,13 @@ func buildPaths() ElysianPaths {
 		MetricsSqlite:          filepath.Join(DataDir, "metrics.sqlite"),
 		FirewallSqlite:         filepath.Join(DataDir, "firewall.sqlite"),
 		LogsSqlite:             filepath.Join(DataDir, "logs.sqlite"),
+		HarnessSqlite:          filepath.Join(DataDir, "harness.sqlite"),
+		AgentModels:            filepath.Join(ConfigDir, "agent-models.json"),
+		AgentSkills:            filepath.Join(ConfigDir, "agent-skills.json"),
+		AgentMCPServers:        filepath.Join(ConfigDir, "agent-mcp-servers.json"),
+		AgentExecution:         filepath.Join(ConfigDir, "agent-execution.json"),
+		SkillPackages:          filepath.Join(DataDir, "skills"),
+		AgentWorkspaces:        filepath.Join(DataDir, "agent-workspaces"),
 		SshdLog:                filepath.Join(LogsDir, "sshd.log"),
 		PlatformLogsDir:        PlatformLogsDir,
 		RuntimeLogsDir:         filepath.Join(PlatformLogsDir, "runtime"),

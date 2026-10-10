@@ -41,6 +41,28 @@ func TestLoadDefaults(t *testing.T) {
 	}
 }
 
+func TestAgentConcurrencySnapshotAndValidation(t *testing.T) {
+	for _, tc := range []struct {
+		raw  string
+		want int
+	}{{"", 2}, {"1", 1}, {"2", 2}, {"3", 3}, {"4", 4}, {"0", 0}, {"5", 0}, {"-1", 0}, {"01", 0}, {"1.5", 0}, {" 2", 0}, {"two", 0}} {
+		t.Run(tc.raw, func(t *testing.T) {
+			value := tc.raw
+			cfg := load(func(key string) string {
+				if key == "ELYSIAN_AGENT_CONCURRENCY" {
+					return value
+				}
+				return ""
+			}, false)
+			value = "4" // 已读取的配置不能被之后的环境变化改写。
+			got, err := cfg.AgentConcurrency()
+			if got != tc.want || (err != nil) != (tc.want == 0) {
+				t.Fatalf("concurrency(%q)=%d, %v", tc.raw, got, err)
+			}
+		})
+	}
+}
+
 func TestModeDoubleGate(t *testing.T) {
 	cases := []struct {
 		name         string

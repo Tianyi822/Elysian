@@ -39,6 +39,31 @@ type Config struct {
 	ListLimit int
 }
 
+// ContainerSummary 是可进入工具事件与运行记录的容器摘要。凭据、启动命令和
+// 挂载内容不属于这个投影；新增域字段也不会自动进入工具结果。
+type ContainerSummary struct {
+	ID            string                     `json:"id"`
+	Name          string                     `json:"name"`
+	Status        string                     `json:"status"`
+	ImageID       string                     `json:"imageId"`
+	ImageRef      string                     `json:"imageRef,omitempty"`
+	Ports         []contract.PortBindingView `json:"ports"`
+	CreatedAt     string                     `json:"createdAt"`
+	StartedAt     string                     `json:"startedAt,omitempty"`
+	RestartPolicy string                     `json:"restartPolicy"`
+}
+
+// ImageSummary 显式列出镜像工具允许公开的字段。
+type ImageSummary struct {
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	Tag       string   `json:"tag"`
+	Digest    string   `json:"digest"`
+	SizeMB    int      `json:"sizeMb"`
+	PulledAt  *string  `json:"pulledAt"`
+	OtherTags []string `json:"otherTags,omitempty"`
+}
+
 // Service 是容器能力服务。
 type Service struct {
 	kardia.Service
@@ -169,7 +194,17 @@ func (s *Service) handleListContainers(access *kardia.Context, _ tools.Arguments
 	if err != nil {
 		return nil, err
 	}
-	return containers, nil
+	summaries := make([]ContainerSummary, len(containers))
+	for i, container := range containers {
+		summaries[i] = ContainerSummary{
+			ID: container.ID, Name: container.Name, Status: container.Status,
+			ImageID: container.ImageID, ImageRef: container.ImageRef,
+			Ports:     append([]contract.PortBindingView{}, container.Ports...),
+			CreatedAt: container.CreatedAt, StartedAt: container.StartedAt,
+			RestartPolicy: container.RestartPolicy,
+		}
+	}
+	return summaries, nil
 }
 
 func (s *Service) handleListImages(access *kardia.Context, _ tools.Arguments) (any, error) {
@@ -177,14 +212,27 @@ func (s *Service) handleListImages(access *kardia.Context, _ tools.Arguments) (a
 	if err != nil {
 		return nil, err
 	}
-	return images, nil
+	summaries := make([]ImageSummary, len(images))
+	for i, image := range images {
+		var pulledAt *string
+		if image.PulledAt != nil {
+			value := *image.PulledAt
+			pulledAt = &value
+		}
+		summaries[i] = ImageSummary{
+			ID: image.ID, Name: image.Name, Tag: image.Tag, Digest: image.Digest,
+			SizeMB: image.SizeMB, PulledAt: pulledAt,
+			OtherTags: append([]string{}, image.OtherTags...),
+		}
+	}
+	return summaries, nil
 }
 
 func (s *Service) handlePolicy(access *kardia.Context, _ tools.Arguments) (any, error) {
 	policy := s.Policy(access)
 	return map[string]any{
 		"mount_root":     policy.MountRoot,
-		"reserved_ports": policy.ReservedPorts,
+		"reserved_ports": append([]int{}, policy.ReservedPorts...),
 	}, nil
 }
 

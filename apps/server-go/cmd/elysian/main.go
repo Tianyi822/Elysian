@@ -4,7 +4,8 @@
 // 时补一条 lifecycle 运行日志（不含明文，横幅由 auth 域打 stdout）；监听就绪后打
 // stdout 确认行与「服务已启动」运行日志。子命令：`elysian resetpwd`（改密 CLI，
 // go-plan §11 D5）与内部隐藏子命令 `elysian __sqlite-worker`（SQLite 托管降权
-// 子进程，go-plan §11 D10，由 database 域以自身二进制 fork）。
+// 子进程，go-plan §11 D10，由 database 域以自身二进制 fork）及
+// `elysian __agent-worker`（由任务内核托管的匿名管道 Worker）。
 package main
 
 import (
@@ -17,9 +18,12 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync/atomic"
 	"syscall"
 	"time"
 
+	"elysian/server/internal/agent/execution"
+	"elysian/server/internal/agent/harness/worker"
 	"elysian/server/internal/app"
 	"elysian/server/internal/auth"
 	"elysian/server/internal/config"
@@ -47,7 +51,20 @@ func main() {
 	}
 }
 
-func run() error {
+func run() (runErr error) {
+	if len(os.Args) > 1 && os.Args[1] == "agent-exec-supervisor" {
+		if len(os.Args) != 2 {
+			return errors.New("容器 supervisor 不接受额外参数")
+		}
+		return execution.ServeSupervisor(context.Background(), os.Stdin, os.Stdout)
+	}
+	// Worker 只读匿名管道，不进入凭据、数据库或 HTTP 装配。
+	if len(os.Args) > 1 && os.Args[1] == "__agent-worker" {
+		if len(os.Args) != 2 {
+			return errors.New("Agent Worker 不接受额外命令行参数")
+		}
+		return worker.Serve(os.Stdin, os.Stdout, os.Stderr)
+	}
 	cfg := config.Load()
 	// 运行模式互斥（go-plan §3.1）：Docker 与裸机直执同设即配置错误，启动即失败。
 	if cfg.Docker && cfg.BareMetal {
@@ -117,10 +134,22 @@ func run() error {
 	}
 
 	// 启动序列第三步：装配。
-	handler, err := app.New(cfg, appLogs)
+	runtime, err := app.New(cfg, appLogs)
 	if err != nil {
 		return fmt.Errorf("装配 HTTP 服务失败：%w", err)
 	}
+	var shutdownStarted atomic.Bool
+	defer func() {
+		if shutdownStarted.Load() {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := runtime.Close(ctx); err != nil {
+			runErr = errors.Join(runErr, fmt.Errorf("关闭 Agent 任务运行服务失败：%w", err))
+		}
+	}()
+	var handler http.Handler = runtime
 
 	// 启动序列第四步：listen（先 listen 再打启动确认，端口被占时如实报错退出）。
 	addr := net.JoinHostPort(cfg.ListenHost, strconv.Itoa(cfg.PanelPorts().BackendPort))
@@ -155,18 +184,37 @@ func run() error {
 	publicFailure := make(chan error, 1)
 
 	idleClosed := make(chan struct{})
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sig)
+	stopShutdown := make(chan struct{})
+	defer close(stopShutdown)
 	go func() {
-		sig := make(chan os.Signal, 1)
-		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
-		<-sig
+		select {
+		case <-sig:
+		case <-stopShutdown:
+			return
+		}
 		log.Print("收到退出信号，开始优雅关闭")
+		shutdownStarted.Store(true)
 		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
+		// 同时停止任务派发与 HTTP 接收，不能等长请求占满关闭时限后才回收 Worker。
+		agentClosed := make(chan error, 1)
+		go func() { agentClosed <- runtime.Close(ctx) }()
 		if publicServer != nil {
 			_ = publicServer.Shutdown(ctx)
 		}
 		if err := srv.Shutdown(ctx); err != nil {
 			log.Printf("优雅关闭未在时限内完成：%v", err)
+		}
+		select {
+		case err := <-agentClosed:
+			if err != nil {
+				log.Printf("Agent 任务收尾未在时限内完成：%v", err)
+			}
+		case <-ctx.Done():
+			log.Print("Agent 任务收尾已达到关闭时限")
 		}
 		close(idleClosed)
 	}()

@@ -24,6 +24,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"elysian/server/internal/agent/harness"
 	"elysian/server/internal/auth"
 	"elysian/server/internal/config"
 	"elysian/server/internal/containerapps"
@@ -44,14 +45,14 @@ import (
 	"elysian/server/web"
 )
 
-// New 装配完整 http.Handler（生产装配；go-plan §3.8 冻结入口）。
+// New 装配完整 HTTP Runtime，调用方退出时必须调用 Close 回收后台任务资源。
 //
 // 签名在集成期带 logs 显式注入，与冻结形状的偏差及理由：main 启动序列的
 // 「首启凭据运行日志」与「服务已启动」两条 lifecycle 日志必须与审计中间件、
 // 各域写进同一个日志服务实例（TS 侧 index.ts 即把 logs.service 传进 createApp）；
 // 若装配层自开一份，同库双连接、启动日志与运行日志分家。nil 时装配层按缺省路径
 // 自行打开（tests 以假件注入，不碰磁盘）。
-func New(cfg *config.Config, appLogs seam.Logs) (http.Handler, error) {
+func New(cfg *config.Config, appLogs seam.Logs) (*Runtime, error) {
 	return newAssembly(cfg, appLogs, auth.Deps{
 		// 生产恒开启鉴权；dev 固定账号与 Cookie Secure 由 env 快照注入。
 		Enabled:      true,
@@ -64,7 +65,12 @@ func New(cfg *config.Config, appLogs seam.Logs) (http.Handler, error) {
 // CookieSecure，测试可注 Enabled=false 或内存 store）。共享实例在装配期创建一次：
 // 会话撤销表穿 auth 片（触发端）与 terminals 片（登记端），会话 store 穿
 // RequireSession 与 auth 片——漏穿只有静默缺断连/滑动丢失，没有测试会红。
-func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps) (http.Handler, error) {
+func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, factories ...harnessFactory) (*Runtime, error) {
+	if cfg.Mode() != config.ModeLocalDemo {
+		if _, err := cfg.AgentConcurrency(); err != nil {
+			return nil, err
+		}
+	}
 	if appLogs == nil {
 		// 生产便利路径：按缺省路径打开（打开失败内部降级为不可用实现，不返回错误）。
 		appLogs = logs.OpenService(paths.Default.LogsSqlite, nil)
@@ -123,6 +129,19 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps) (htt
 
 	panelStore := panel.Store{Root: paths.ElysianHome}
 	panelManager := panel.Manager{Store: panelStore, Host: panel.SystemHost{Store: panelStore, DockerSocket: cfg.DockerSocket}, Source: panel.GitHubSource{}, Ports: cfg.PanelPorts(), Enabled: cfg.BareMetal}
+	factory := harnessFactory(newProductionHarness)
+	if len(factories) > 0 && factories[0] != nil {
+		factory = factories[0]
+	}
+	agentRouter, closeAgent, agentErr := factory(cfg, stack.Views)
+	if agentErr != nil {
+		appLogs.Runtime("error", "server.agent", "Agent 任务运行服务不可用："+agentErr.Error())
+		agentRouter = harness.UnavailableRouter("Agent 任务存储或工具装配不可用，请查看面板运行日志")
+	}
+	runtime := &Runtime{closeDone: make(chan struct{})}
+	if closeAgent != nil {
+		runtime.closeFuncs = append(runtime.closeFuncs, closeAgent)
+	}
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.StripTailSlash)
@@ -133,6 +152,7 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps) (htt
 		api.Use(auth.RequireSession(authDeps))
 		api.Use(panelManager.WriteGuard)
 		api.Mount("/api/panel", panelManager.Router())
+		api.Mount("/api/agent", agentRouter)
 
 		// 存活检查：鉴权豁免清单之首，供容器存活检查。
 		api.Get(shared.HealthPath, func(w http.ResponseWriter, r *http.Request) {
@@ -208,7 +228,8 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps) (htt
 
 	// 父层兜底：panic 经 recover 落 server.http 运行日志后走同一条错误映射
 	//（TS app.onError 等价物；各片内部错误由片自身映射与审计中间件记录，不到这里）。
-	return parentErrorHandler(r, appLogs), nil
+	runtime.handler = parentErrorHandler(r, appLogs)
+	return runtime, nil
 }
 
 // parentErrorHandler 父层错误边界：只有「公共中间件或装配层抛出」的错误（Go 语义

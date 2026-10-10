@@ -3,6 +3,7 @@ package docker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -121,7 +122,7 @@ func TestListContainersHonoursLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("执行失败：%v", err)
 	}
-	list, ok := value.([]contract.Container)
+	list, ok := value.([]ContainerSummary)
 	if !ok || len(list) != 2 {
 		t.Fatalf("应按上限截断：%v", value)
 	}
@@ -154,7 +155,7 @@ func TestListImagesAndPolicyAndSelfContainer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("执行失败：%v", err)
 	}
-	if list, ok := images.([]contract.ContainerImage); !ok || len(list) != 1 || list[0].Name != "nginx" {
+	if list, ok := images.([]ImageSummary); !ok || len(list) != 1 || list[0].Name != "nginx" {
 		t.Fatalf("镜像视图不符：%v", images)
 	}
 
@@ -173,6 +174,50 @@ func TestListImagesAndPolicyAndSelfContainer(t *testing.T) {
 	}
 	if fields, ok := self.(map[string]any); !ok || fields["id"] != "abc123" || fields["identified"] != true {
 		t.Fatalf("自容器视图不符：%v", self)
+	}
+}
+
+func TestContainerSecretsNeverEnterToolEvents(t *testing.T) {
+	secret := "secret-env-value"
+	views := &fakeViews{containers: []contract.Container{{
+		ID: "container-1", Name: "web", Status: "running", ImageID: "image-1",
+		Env:     []contract.EnvPair{{Key: "PASSWORD", Value: &secret}},
+		Command: "run --password=secret-command-value",
+		Volumes: []contract.VolumeMount{{HostPath: "/secret-host-path", ContainerPath: "/secret-container-path"}},
+		Ports:   []contract.PortBindingView{{ContainerPort: 80, HostPort: 8080}},
+	}}}
+	root, registry := install(t, Deps{Views: views}, Config{})
+	seen := 0
+	_, err := root.On(tools.EventResult, func(event *kardia.EventCtx) (any, error) {
+		seen++
+		raw, marshalErr := json.Marshal(event.Args)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		for _, forbidden := range []string{"secret-", `"env"`, `"command"`, `"volumes"`} {
+			if strings.Contains(string(raw), forbidden) {
+				t.Fatalf("工具结果事件泄漏 %q：%s", forbidden, raw)
+			}
+		}
+		return nil, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := registry.Execute(root, "docker_containers_list", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seen != 1 {
+		t.Fatalf("结果事件次数 = %d", seen)
+	}
+	list := value.([]ContainerSummary)
+	if len(list) != 1 || list[0].ID != "container-1" || list[0].Ports[0].HostPort != 8080 {
+		t.Fatalf("安全摘要缺少诊断字段：%+v", list)
+	}
+	list[0].Ports[0].HostPort = 9000
+	if views.containers[0].Ports[0].HostPort != 8080 {
+		t.Fatal("工具摘要不得共享域端口切片")
 	}
 }
 
