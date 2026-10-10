@@ -74,6 +74,8 @@ var buildIDPattern = regexp.MustCompile(`^[a-f0-9-]{36}$`)
 // buildTagPattern 产物 tag 的钉死形状。
 var buildTagPattern = regexp.MustCompile(`^\d{8}-\d{6}-[0-9a-f]{4}$`)
 
+var errBuildTaskTerminal = errors.New("构建任务已结束")
+
 // randomBuildID 生成 uuid 形状任务标识。
 func randomBuildID() string {
 	b := make([]byte, 16)
@@ -393,6 +395,9 @@ func (m *BuildManager) mutate(taskID string, fn func(*BuildTask)) error {
 	task := m.tasks[taskID]
 	if task == nil {
 		return errors.New("构建任务不存在：" + taskID)
+	}
+	if !activeBuild(task.State) {
+		return errBuildTaskTerminal
 	}
 	updated := *task
 	updated.Results = append([]BuildResult(nil), task.Results...)
@@ -825,18 +830,19 @@ func (m *BuildManager) buildTarget(taskCtx, parent context.Context, taskID, slug
 // finishWith 终态收口：落终态、删 spool、写终态日志、清 cancel。任务已终态时以
 // 首个终态为准不覆盖（删除工作区中断残留任务后，worker 的取消路径属此类竞态）。
 func (m *BuildManager) finishWith(taskID, state, stage, message string) {
-	m.mu.Lock()
-	task := m.tasks[taskID]
-	alreadyFinal := task != nil && !activeBuild(task.State)
-	m.mu.Unlock()
-	if alreadyFinal {
-		_ = os.Remove(spoolTarPath(m.deps.SpoolRoot, taskID))
-		m.mu.Lock()
-		delete(m.cancel, taskID)
-		m.mu.Unlock()
-		return
+	if state == BuildStateFailed && m.deps.Registry != nil {
+		// 删除登记持有 Registry.mu，查询会等其完成。worker 可能先于删除方的
+		// InterruptActive 观察到文件消失，仍必须保留同一条领域错误文案。
+		if task, ok := m.snapshotTask(taskID); ok {
+			_, err := m.deps.Registry.Directory(task.Slug)
+			var missing *NotFoundError
+			if errors.As(err, &missing) {
+				message = workspaceDeletedMessage
+			}
+		}
 	}
-	_ = m.mutate(taskID, func(t *BuildTask) {
+	// 活跃检查与终态发布由 mutate 在同一把锁内完成；进度回写也不能改终态。
+	err := m.mutate(taskID, func(t *BuildTask) {
 		t.State = state
 		t.Stage = stage
 		if message != "" {
@@ -844,10 +850,12 @@ func (m *BuildManager) finishWith(taskID, state, stage, message string) {
 		}
 	})
 	_ = os.Remove(spoolTarPath(m.deps.SpoolRoot, taskID))
-	if message != "" {
-		m.log(taskID, "任务终态："+state+"："+message)
-	} else {
-		m.log(taskID, "任务终态："+state)
+	if err == nil {
+		if message != "" {
+			m.log(taskID, "任务终态："+state+"："+message)
+		} else {
+			m.log(taskID, "任务终态："+state)
+		}
 	}
 	m.mu.Lock()
 	delete(m.cancel, taskID)

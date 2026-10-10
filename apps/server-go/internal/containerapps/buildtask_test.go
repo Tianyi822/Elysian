@@ -1060,6 +1060,39 @@ func TestInterruptActiveAfterWorkspaceDelete(t *testing.T) {
 	env.manager.InterruptActive("no-such", workspaceDeletedMessage)
 }
 
+func TestDeletedWorkspaceFailureBeforeInterruptUsesDomainMessage(t *testing.T) {
+	env := newBuildTestEnv(t)
+	dir := env.createApp(t, "deleted-queued", "FROM alpine:3\n")
+	// Pin the worker before execution so deletion definitely wins the gap
+	// between accepting the task and reopening its workspace.
+	env.manager.workers <- struct{}{}
+	task, _, err := env.manager.Submit(context.Background(), dir, "deleted-queued", BuildPlanInput{
+		Mode: buildModeDockerfile, RequestID: "cccccccc-1111-2222-3333-444444444444", Dockerfile: "Dockerfile", Context: ".",
+	})
+	if err != nil {
+		<-env.manager.workers
+		t.Fatal(err)
+	}
+	if err = env.registry.Delete("deleted-queued"); err != nil {
+		<-env.manager.workers
+		t.Fatal(err)
+	}
+	<-env.manager.workers
+	final := waitForBuildTerminal(t, env.manager, "deleted-queued", task.ID)
+	if final.State != BuildStateFailed || final.Stage != buildStageFailed || final.Error != workspaceDeletedMessage {
+		t.Fatalf("worker 先发现删除时也必须返回固定领域错误：%+v", final)
+	}
+	env.manager.InterruptActive("deleted-queued", workspaceDeletedMessage)
+	if err = env.manager.mutate(task.ID, func(task *BuildTask) { task.State = BuildStateBuilding; task.Stage = "迟到的构建进度" }); !errors.Is(err, errBuildTaskTerminal) {
+		t.Fatalf("终态不得接受迟到进度：%v", err)
+	}
+	env.manager.finishWith(task.ID, BuildStateCancelled, buildStageCancelled, buildErrCancelled)
+	retained, err := env.manager.Get("deleted-queued", task.ID)
+	if err != nil || retained.State != final.State || retained.Stage != final.Stage || retained.Error != final.Error || retained.UpdatedAt != final.UpdatedAt {
+		t.Fatalf("迟到进度或取消覆盖了首个终态：%+v %v", retained, err)
+	}
+}
+
 func TestRecoveryMarksInterrupted(t *testing.T) {
 	stateDir := testDir(t)
 	stateRoot := filepath.Join(stateDir, "state")
