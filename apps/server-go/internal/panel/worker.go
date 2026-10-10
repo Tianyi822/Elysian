@@ -361,6 +361,10 @@ func (w Worker) pruneReleases(current, previous string) {
 }
 
 func copyTree(from, to string, excludeTasks bool) error {
+	return copyTreeExcept(from, to, excludeTasks, nil)
+}
+
+func copyTreeExcept(from, to string, excludeTasks bool, skip func(string) bool) error {
 	if _, err := os.Stat(from); os.IsNotExist(err) {
 		return nil
 	}
@@ -374,6 +378,12 @@ func copyTree(from, to string, excludeTasks bool) error {
 		}
 		if excludeTasks && rel == "panel-maintenance" {
 			return filepath.SkipDir
+		}
+		if skip != nil && skip(rel) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		if d.Type()&os.ModeSymlink != 0 {
 			return fmt.Errorf("面板数据备份不允许符号链接：%s", name)
@@ -409,15 +419,24 @@ func copyPanelData(root, destination string) error {
 	return nil
 }
 func restorePanelData(snapshot, root string) error {
+	// 服务已停止。先持久化工作流冻结标记，再原位保留全部当前 Agent
+	// 事实、配置和工作区；完成回执与未知执行屏障都不得倒退到旧快照。
+	preserveAgent, err := prepareAgentRestore(snapshot, root)
+	if err != nil {
+		return err
+	}
 	for _, dir := range []string{"config", "data", "state"} {
 		target := filepath.Join(root, dir)
-		if dir == "state" {
+		skip := func(name string) bool {
+			return dir == "state" && name == "panel-maintenance" || preserveAgent && agentDataEntry(dir, name)
+		}
+		if dir == "state" || preserveAgent {
 			entries, err := os.ReadDir(target)
 			if err != nil && !os.IsNotExist(err) {
 				return err
 			}
 			for _, e := range entries {
-				if e.Name() != "panel-maintenance" {
+				if !skip(e.Name()) {
 					if err = os.RemoveAll(filepath.Join(target, e.Name())); err != nil {
 						return err
 					}
@@ -426,7 +445,7 @@ func restorePanelData(snapshot, root string) error {
 		} else if err := os.RemoveAll(target); err != nil {
 			return err
 		}
-		if err := copyTree(filepath.Join(snapshot, dir), target, false); err != nil {
+		if err := copyTreeExcept(filepath.Join(snapshot, dir), target, false, skip); err != nil {
 			return err
 		}
 	}

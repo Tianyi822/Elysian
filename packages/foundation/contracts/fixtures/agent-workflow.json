@@ -1,0 +1,326 @@
+{
+  "definition": {
+    "id": "workflow-definition-fixture",
+    "revision": 1,
+    "name": "读取状态并确认",
+    "enabled": true,
+    "goal": "保留精确输入和检查结果，由管理员确认后结束",
+    "inputSchemaJson": "{\"type\":\"object\",\"properties\":{\"serial\":{\"type\":\"integer\"}},\"required\":[\"serial\"],\"additionalProperties\":false}",
+    "outputSchemaJson": "{\"type\":\"object\",\"properties\":{\"serial\":{\"type\":\"integer\"},\"approved\":{\"const\":true}},\"required\":[\"serial\",\"approved\"],\"additionalProperties\":false}",
+    "entry": "inspect",
+    "steps": [
+      {
+        "id": "inspect",
+        "kind": "operation",
+        "capability": "docker_containers_list",
+        "input": {
+          "object": {}
+        },
+        "outputSchemaJson": "true",
+        "next": "review"
+      },
+      {
+        "id": "review",
+        "kind": "approval",
+        "instruction": "核实读取结果并批准结束",
+        "input": {
+          "step": {
+            "stepId": "inspect",
+            "pointer": ""
+          }
+        },
+        "outputSchemaJson": "{\"type\":\"object\",\"properties\":{\"approved\":{\"const\":true}},\"required\":[\"approved\"],\"additionalProperties\":false}",
+        "finish": {
+          "object": {
+            "serial": {
+              "input": "/serial"
+            },
+            "approved": {
+              "step": {
+                "stepId": "review",
+                "pointer": "/approved"
+              }
+            }
+          }
+        }
+      }
+    ],
+    "createdAt": "2026-10-10T00:00:00Z"
+  },
+  "inputJson": "{\"serial\":9007199254740993}",
+  "expectedOutputJson": "{\"approved\":true,\"serial\":9007199254740993}",
+  "instance": {
+    "id": "workflow-1",
+    "requestId": "workflow-request-1",
+    "definitionId": "workflow-definition-fixture",
+    "definitionRevision": 1,
+    "sourceSessionId": "workflow-source-session",
+    "sessionId": "workflow-session-1",
+    "taskId": "workflow-task-1",
+    "revision": 3,
+    "status": "recovery-required",
+    "currentStepId": "review",
+    "activeRunId": "workflow-run-2",
+    "inputJson": "{\"serial\":9007199254740993}",
+    "model": {
+      "id": "profile-1",
+      "revision": 2,
+      "name": "测试模型",
+      "baseUrl": "https://model.example.test/v1",
+      "model": "test-model",
+      "contextTokens": 65536,
+      "outputTokens": 4096,
+      "capabilities": {
+        "text": true,
+        "tools": true,
+        "source": "用户配置"
+      },
+      "active": true,
+      "hasCredential": true
+    },
+    "snapshot": {
+      "environment": {
+        "sessionId": "workflow-source-session",
+        "revision": 1,
+        "skills": [],
+        "servers": [],
+        "tools": [
+          "docker_containers_list"
+        ],
+        "resources": [],
+        "executionProfiles": [],
+        "grants": [],
+        "trustedReadOnly": [
+          "docker_containers_list"
+        ]
+      },
+      "tools": [],
+      "digest": "fixture-snapshot"
+    },
+    "createdAt": "2026-10-10T00:00:00Z",
+    "updatedAt": "2026-10-10T00:00:00Z",
+    "readyAt": "2026-10-10T00:00:00Z",
+    "error": {
+      "code": "maintenance-restore",
+      "message": "维护恢复后等待人工核实"
+    },
+    "limits": {
+      "activeMilliseconds": 3600000,
+      "modelRequests": 64,
+      "calls": 64,
+      "tokens": 256000,
+      "resultBytes": 8388608,
+      "attempts": 3
+    },
+    "usage": {
+      "activeMilliseconds": 1200,
+      "reservedMilliseconds": 600000,
+      "modelRequests": 2,
+      "calls": 1,
+      "tokens": 2048,
+      "resultBytes": 1024
+    },
+    "lastSeq": "9007199254740993",
+    "allowedActions": [
+      "continue",
+      "renew-approval",
+      "retry",
+      "accept-result"
+    ]
+  },
+  "attempt": {
+    "workflowId": "workflow-1",
+    "stepId": "inspect",
+    "number": 1,
+    "runId": "workflow-run-1",
+    "runNumber": 1,
+    "status": "succeeded",
+    "inputJson": "{}",
+    "outputJson": "{\"items\":[],\"serial\":9007199254740993}",
+    "outputCallId": "call-1",
+    "outputRequestId": "model-request-1",
+    "completionSource": "operation",
+    "evidence": "已核实工具读取结果",
+    "eventSeq": "9007199254740993",
+    "workspaceRevision": 2,
+    "createdAt": "2026-10-10T00:00:00Z",
+    "endedAt": "2026-10-10T00:00:00Z"
+  },
+  "event": {
+    "workflowId": "workflow-1",
+    "seq": "9007199254740993",
+    "type": "workflow/recovery-required",
+    "stepId": "review",
+    "runId": "workflow-run-2",
+    "at": "2026-10-10T00:00:00Z",
+    "detail": "维护恢复后等待人工核实"
+  },
+  "create": {
+    "requestId": "workflow-request-1",
+    "definitionId": "workflow-definition-fixture",
+    "definitionRevision": 1,
+    "sourceSessionId": "workflow-source-session",
+    "inputJson": "{\"serial\":9007199254740993}"
+  },
+  "recovery": {
+    "requestId": "recovery-request-1",
+    "expectedRevision": 3,
+    "action": "accept-result",
+    "evidence": "已在宿主核对并留存完成证据",
+    "outputJson": "{\"approved\":true}"
+  },
+  "run": {
+    "id": "workflow-run-2",
+    "taskId": "workflow-task-1",
+    "sessionId": "workflow-session-1",
+    "runNumber": 1,
+    "requestId": "agent-request-1",
+    "input": "检查容器运行状态",
+    "model": {
+      "id": "profile-1",
+      "revision": 2,
+      "name": "测试模型",
+      "baseUrl": "https://model.example.test/v1",
+      "model": "test-model",
+      "contextTokens": 65536,
+      "outputTokens": 4096,
+      "capabilities": {
+        "text": true,
+        "tools": true,
+        "source": "用户配置"
+      },
+      "active": true,
+      "hasCredential": true
+    },
+    "historySeq": "9007199254740993",
+    "initialMemoryRevision": 1,
+    "phase": "completed",
+    "memoryStatus": "updated",
+    "status": "interrupted",
+    "createdAt": "2026-10-10T00:00:00Z",
+    "startedAt": "2026-10-10T00:00:01Z",
+    "endedAt": "2026-10-10T00:00:05Z",
+    "endReason": "completed",
+    "task": {
+      "id": "workflow-task-1",
+      "requestId": "agent-request-1",
+      "kind": "workflow",
+      "driverVersion": "v1",
+      "createdAt": "2026-10-10T00:00:00Z",
+      "sessionId": "workflow-session-1",
+      "goal": "检查容器运行状态",
+      "steps": []
+    },
+    "limits": {
+      "concurrency": 2,
+      "queueCapacity": 32,
+      "maxSteps": 16,
+      "inputBytes": 65536,
+      "callTimeoutSeconds": 30,
+      "runTimeoutSeconds": 600,
+      "resultBytes": 262144,
+      "runResultBytes": 2097152,
+      "logBytes": 1048576,
+      "frameBytes": 524288,
+      "retentionDays": 30,
+      "cancelGraceSeconds": 5,
+      "maxModelRequests": 16,
+      "modelTimeoutSeconds": 60,
+      "outputTokens": 4096,
+      "tokenBudget": 128000,
+      "userBytes": 32768,
+      "memoryBytes": 16384,
+      "modelResponseBytes": 524288
+    },
+    "usage": {
+      "calls": 1,
+      "resultBytes": 2,
+      "modelRequests": 3,
+      "tokens": 1200,
+      "estimatedTokens": 2000,
+      "actualTokens": 1200
+    },
+    "lastSeq": "9007199254740993",
+    "driver": "workflow",
+    "driverVersion": "v2",
+    "workflowId": "workflow-1",
+    "workflowStepId": "review",
+    "workflowAttempt": 1,
+    "workflowFrozenFrom": "waiting-approval",
+    "workflowOutputSchemaJson": "{\"type\":\"object\"}",
+    "workflowOutputJson": "{\"approved\":true}",
+    "workflowOutputRequestId": "model-request-2",
+    "workflowOutputCallId": "call-2",
+    "workflowNext": "next-step",
+    "workflowActiveReserved": 600000
+  },
+  "operation": {
+    "id": "operation-1",
+    "runId": "run-capability-1",
+    "taskId": "task-capability-1",
+    "modelRequestId": "model-request-1",
+    "callIndex": 0,
+    "modelCallId": "proposal-1",
+    "argumentsJson": "{\"value\":9007199254740993}",
+    "capability": {
+      "name": "mcp_example_write",
+      "description": "更新测试状态",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      },
+      "source": "mcp-tool",
+      "ref": {
+        "id": "mcp-00000000000000000000000000000000",
+        "revision": 1
+      },
+      "originalName": "write",
+      "catalogDigest": "catalog-digest",
+      "readOnly": false
+    },
+    "snapshotDigest": "snapshot-digest",
+    "workspaceRevision": 1,
+    "policy": "approval-required",
+    "status": "waiting-approval",
+    "approvalId": "approval-1",
+    "callId": "call-capability-1",
+    "createdAt": "2026-10-10T00:00:00Z",
+    "source": "workflow",
+    "workflowId": "workflow-1",
+    "workflowStepId": "inspect",
+    "workflowAttempt": 1
+  },
+  "approval": {
+    "kind": "workflow-gate",
+    "workflowId": "workflow-1",
+    "workflowStepId": "review",
+    "workflowAttempt": 1,
+    "contentDigest": "fixture-gate-content",
+    "instruction": "确认读取结果",
+    "inputJson": "{\"serial\":9007199254740993}",
+    "id": "approval-gate-1",
+    "runId": "workflow-run-2",
+    "status": "pending",
+    "createdAt": "2026-10-10T00:00:00Z",
+    "expiresAt": "2026-10-11T00:00:00Z"
+  },
+  "barrier": {
+    "id": "barrier-1",
+    "runId": "run-capability-1",
+    "operationId": "operation-1",
+    "status": "reconciled",
+    "createdAt": "2026-10-10T00:01:00Z",
+    "evidence": "已从目标系统确认操作完成。",
+    "decision": "confirmed-completed",
+    "reconciledAt": "2026-10-10T00:05:00Z",
+    "workflowId": "workflow-1"
+  }
+}

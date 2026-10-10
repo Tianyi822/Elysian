@@ -62,7 +62,11 @@ func (h SystemHost) WorkerActive(ctx context.Context, id string) bool {
 }
 func (h SystemHost) Stop(ctx context.Context) error {
 	_, err := h.command(ctx, "systemctl", "stop", ServiceName)
-	return err
+	if err != nil {
+		return err
+	}
+	// systemd 停止父进程不代表 Docker 子容器已停止；备份前必须独立核实。
+	return h.recoverAgentExecution(ctx)
 }
 func (h SystemHost) Start(ctx context.Context) error {
 	_, err := h.command(ctx, "systemctl", "start", ServiceName)
