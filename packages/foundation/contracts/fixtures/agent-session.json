@@ -1,0 +1,387 @@
+{
+  "createSession": {
+    "title": "容器检查",
+    "modelProfileId": "profile-1",
+    "modelRevision": 2
+  },
+  "switchModel": {
+    "modelProfileId": "profile-1",
+    "modelRevision": 2
+  },
+  "input": {
+    "requestId": "agent-request-1",
+    "content": "检查容器运行状态"
+  },
+  "session": {
+    "id": "session-1",
+    "title": "容器检查",
+    "createdAt": "2026-10-10T00:00:00Z",
+    "lastActivityAt": "2026-10-10T00:00:05Z",
+    "modelProfileId": "profile-1",
+    "modelRevision": 2,
+    "lastSeq": "9007199254740993",
+    "notices": [
+      "历史答复保留各轮固定模型版本"
+    ],
+    "modelChange": {
+      "before": {
+        "id": "profile-1",
+        "revision": 1,
+        "name": "测试模型",
+        "baseUrl": "https://model.example.test/v1",
+        "model": "test-model",
+        "contextTokens": 32768,
+        "outputTokens": 2048,
+        "capabilities": {
+          "text": true,
+          "tools": true,
+          "source": "用户配置"
+        },
+        "active": true,
+        "hasCredential": true
+      },
+      "after": {
+        "id": "profile-1",
+        "revision": 2,
+        "name": "测试模型",
+        "baseUrl": "https://model.example.test/v1",
+        "model": "test-model",
+        "contextTokens": 65536,
+        "outputTokens": 4096,
+        "capabilities": {
+          "text": true,
+          "tools": true,
+          "source": "用户配置"
+        },
+        "active": true,
+        "hasCredential": true
+      },
+      "differences": [
+        "上下文 token 容量",
+        "单次输出 token 上限"
+      ],
+      "notices": [
+        "模型能力可能变化，请核对文本、工具调用和上下文容量",
+        "切换后的首轮缓存命中率可能下降，实际取决于模型与供应商",
+        "切换可能改变响应速度与调用成本，实际取决于模型与供应商"
+      ]
+    }
+  },
+  "task": {
+    "id": "task-agent-1",
+    "requestId": "agent-request-1",
+    "kind": "agent",
+    "driverVersion": "v1",
+    "createdAt": "2026-10-10T00:00:00Z",
+    "sessionId": "session-1",
+    "goal": "检查容器运行状态",
+    "steps": null,
+    "latestRun": {
+      "id": "run-agent-1",
+      "taskId": "task-agent-1",
+      "sessionId": "session-1",
+      "runNumber": 1,
+      "requestId": "agent-request-1",
+      "input": "检查容器运行状态",
+      "model": {
+        "id": "profile-1",
+        "revision": 2,
+        "name": "测试模型",
+        "baseUrl": "https://model.example.test/v1",
+        "model": "test-model",
+        "contextTokens": 65536,
+        "outputTokens": 4096,
+        "capabilities": {
+          "text": true,
+          "tools": true,
+          "source": "用户配置"
+        },
+        "active": true,
+        "hasCredential": true
+      },
+      "historySeq": "9007199254740993",
+      "initialMemoryRevision": 1,
+      "phase": "completed",
+      "memoryStatus": "updated",
+      "status": "succeeded",
+      "createdAt": "2026-10-10T00:00:00Z",
+      "startedAt": "2026-10-10T00:00:01Z",
+      "endedAt": "2026-10-10T00:00:05Z",
+      "endReason": "completed",
+      "limits": {
+        "concurrency": 2,
+        "queueCapacity": 32,
+        "maxSteps": 16,
+        "inputBytes": 65536,
+        "callTimeoutSeconds": 30,
+        "runTimeoutSeconds": 600,
+        "resultBytes": 262144,
+        "runResultBytes": 2097152,
+        "logBytes": 1048576,
+        "frameBytes": 524288,
+        "retentionDays": 30,
+        "cancelGraceSeconds": 5,
+        "maxModelRequests": 16,
+        "modelTimeoutSeconds": 60,
+        "outputTokens": 4096,
+        "tokenBudget": 128000,
+        "userBytes": 32768,
+        "memoryBytes": 16384,
+        "modelResponseBytes": 524288
+      },
+      "usage": {
+        "calls": 1,
+        "resultBytes": 2,
+        "modelRequests": 3,
+        "tokens": 1200,
+        "estimatedTokens": 2000,
+        "actualTokens": 1200
+      },
+      "lastSeq": "9007199254740993"
+    },
+    "memoryStatus": "updated"
+  },
+  "run": {
+    "id": "run-agent-1",
+    "taskId": "task-agent-1",
+    "sessionId": "session-1",
+    "runNumber": 1,
+    "requestId": "agent-request-1",
+    "input": "检查容器运行状态",
+    "model": {
+      "id": "profile-1",
+      "revision": 2,
+      "name": "测试模型",
+      "baseUrl": "https://model.example.test/v1",
+      "model": "test-model",
+      "contextTokens": 65536,
+      "outputTokens": 4096,
+      "capabilities": {
+        "text": true,
+        "tools": true,
+        "source": "用户配置"
+      },
+      "active": true,
+      "hasCredential": true
+    },
+    "historySeq": "9007199254740993",
+    "initialMemoryRevision": 1,
+    "phase": "completed",
+    "memoryStatus": "updated",
+    "status": "succeeded",
+    "createdAt": "2026-10-10T00:00:00Z",
+    "startedAt": "2026-10-10T00:00:01Z",
+    "endedAt": "2026-10-10T00:00:05Z",
+    "endReason": "completed",
+    "task": {
+      "id": "task-agent-1",
+      "requestId": "agent-request-1",
+      "kind": "agent",
+      "driverVersion": "v1",
+      "createdAt": "2026-10-10T00:00:00Z",
+      "sessionId": "session-1",
+      "goal": "检查容器运行状态",
+      "steps": null
+    },
+    "limits": {
+      "concurrency": 2,
+      "queueCapacity": 32,
+      "maxSteps": 16,
+      "inputBytes": 65536,
+      "callTimeoutSeconds": 30,
+      "runTimeoutSeconds": 600,
+      "resultBytes": 262144,
+      "runResultBytes": 2097152,
+      "logBytes": 1048576,
+      "frameBytes": 524288,
+      "retentionDays": 30,
+      "cancelGraceSeconds": 5,
+      "maxModelRequests": 16,
+      "modelTimeoutSeconds": 60,
+      "outputTokens": 4096,
+      "tokenBudget": 128000,
+      "userBytes": 32768,
+      "memoryBytes": 16384,
+      "modelResponseBytes": 524288
+    },
+    "usage": {
+      "calls": 1,
+      "resultBytes": 2,
+      "modelRequests": 3,
+      "tokens": 1200,
+      "estimatedTokens": 2000,
+      "actualTokens": 1200
+    },
+    "lastSeq": "9007199254740993"
+  },
+  "call": {
+    "id": "call-agent-1",
+    "runId": "run-agent-1",
+    "modelRequestId": "model-request-1",
+    "modelCallId": "proposal-1",
+    "tool": "docker_containers_list",
+    "status": "succeeded",
+    "startedAt": "2026-10-10T00:00:02Z",
+    "endedAt": "2026-10-10T00:00:03Z",
+    "stepIndex": 0,
+    "args": {},
+    "result": [],
+    "truncated": false
+  },
+  "modelRequest": {
+    "id": "model-request-1",
+    "runId": "run-agent-1",
+    "index": 0,
+    "purpose": "inference",
+    "status": "succeeded",
+    "startedAt": "2026-10-10T00:00:01Z",
+    "endedAt": "2026-10-10T00:00:02Z",
+    "contextRefs": [
+      {
+        "runId": "run-agent-1",
+        "eventSeq": "1"
+      }
+    ],
+    "memoryRevision": 1,
+    "response": {
+      "content": "",
+      "toolCalls": [
+        {
+          "id": "proposal-1",
+          "name": "docker_containers_list",
+          "arguments": {}
+        }
+      ],
+      "finishReason": "tool_calls",
+      "usage": {
+        "promptTokens": 100,
+        "completionTokens": 20,
+        "totalTokens": 120
+      }
+    },
+    "estimatedTokens": 256,
+    "eventSeq": "3",
+    "historySeq": "9007199254740993"
+  },
+  "memory": {
+    "taskId": "task-agent-1",
+    "revision": 2,
+    "updatedAt": "2026-10-10T00:00:05Z",
+    "coverage": {
+      "runNumber": 1,
+      "eventSeq": "9007199254740993"
+    },
+    "objective": "检查容器运行状态",
+    "constraints": [
+      "仅执行只读查询"
+    ],
+    "facts": [
+      {
+        "text": "容器列表为空",
+        "sources": [
+          {
+            "runId": "run-agent-1",
+            "eventSeq": "9007199254740993"
+          }
+        ]
+      }
+    ],
+    "todos": [],
+    "openQuestions": [],
+    "summary": "容器检查完成。",
+    "memoryStatus": "updated"
+  },
+  "message": {
+    "id": "message-1",
+    "sessionId": "session-1",
+    "taskId": "task-agent-1",
+    "runId": "run-agent-1",
+    "seq": "9007199254740993",
+    "role": "assistant",
+    "content": "查询结果中没有容器。",
+    "createdAt": "2026-10-10T00:00:05Z",
+    "runStatus": "succeeded"
+  },
+  "event": {
+    "runId": "run-agent-1",
+    "seq": "9007199254740993",
+    "type": "memory/updated",
+    "at": "2026-10-10T00:00:05Z",
+    "data": {
+      "revision": 2,
+      "coverage": {
+        "runNumber": 1,
+        "eventSeq": "9007199254740993"
+      }
+    }
+  },
+  "info": {
+    "available": true,
+    "worker": "ready",
+    "storage": "ready",
+    "tools": [],
+    "limits": {
+      "concurrency": 2,
+      "queueCapacity": 32,
+      "maxSteps": 16,
+      "inputBytes": 65536,
+      "callTimeoutSeconds": 30,
+      "runTimeoutSeconds": 600,
+      "resultBytes": 262144,
+      "runResultBytes": 2097152,
+      "logBytes": 1048576,
+      "frameBytes": 524288,
+      "retentionDays": 30,
+      "cancelGraceSeconds": 5,
+      "maxModelRequests": 16,
+      "modelTimeoutSeconds": 60,
+      "outputTokens": 4096,
+      "tokenBudget": 128000,
+      "userBytes": 32768,
+      "memoryBytes": 16384,
+      "modelResponseBytes": 524288
+    },
+    "queueDepth": 0,
+    "batch": {
+      "available": true
+    },
+    "agent": {
+      "available": true
+    },
+    "skills": {
+      "available": false
+    },
+    "mcp": {
+      "available": false
+    },
+    "containerExecution": {
+      "available": false
+    },
+    "approvals": {
+      "available": false
+    },
+    "workflow": {
+      "available": false
+    },
+    "wiki": {
+      "available": false
+    },
+    "embedding": {
+      "available": false
+    },
+    "workflowV2": {
+      "available": false
+    },
+    "resourceLocks": {
+      "available": false
+    },
+    "executionRuntimes": {
+      "available": false
+    }
+  },
+  "emptyPage": {
+    "items": [],
+    "nextCursor": "9007199254740993",
+    "hasMore": false
+  }
+}

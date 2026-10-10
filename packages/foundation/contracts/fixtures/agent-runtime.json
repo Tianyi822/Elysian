@@ -1,0 +1,166 @@
+{
+  "input": {
+    "requestId": "diagnostic-request-1",
+    "kind": "tool-batch",
+    "steps": [
+      {
+        "tool": "docker_containers_list",
+        "args": {}
+      }
+    ]
+  },
+  "task": {
+    "id": "task-1",
+    "requestId": "diagnostic-request-1",
+    "kind": "tool-batch",
+    "steps": [
+      {
+        "tool": "docker_containers_list",
+        "args": {}
+      }
+    ],
+    "driverVersion": "v1",
+    "createdAt": "2026-10-10T00:00:00Z"
+  },
+  "run": {
+    "id": "run-1",
+    "taskId": "task-1",
+    "status": "succeeded",
+    "createdAt": "2026-10-10T00:00:00Z",
+    "startedAt": "2026-10-10T00:00:01Z",
+    "endedAt": "2026-10-10T00:00:02Z",
+    "endReason": "completed",
+    "task": {
+      "id": "task-1",
+      "requestId": "diagnostic-request-1",
+      "kind": "tool-batch",
+      "steps": [
+        {
+          "tool": "docker_containers_list",
+          "args": {}
+        }
+      ],
+      "driverVersion": "v1",
+      "createdAt": "2026-10-10T00:00:00Z"
+    },
+    "limits": {
+      "concurrency": 2,
+      "queueCapacity": 32,
+      "maxSteps": 16,
+      "inputBytes": 65536,
+      "callTimeoutSeconds": 30,
+      "runTimeoutSeconds": 300,
+      "resultBytes": 262144,
+      "runResultBytes": 2097152,
+      "logBytes": 1048576,
+      "frameBytes": 524288,
+      "retentionDays": 30,
+      "cancelGraceSeconds": 5
+    },
+    "usage": {
+      "calls": 1,
+      "resultBytes": 2
+    },
+    "lastSeq": "9007199254740993"
+  },
+  "call": {
+    "id": "call-1",
+    "runId": "run-1",
+    "tool": "docker_containers_list",
+    "status": "succeeded",
+    "startedAt": "2026-10-10T00:00:01Z",
+    "endedAt": "2026-10-10T00:00:02Z",
+    "stepIndex": 0,
+    "args": {},
+    "result": [],
+    "truncated": false
+  },
+  "event": {
+    "runId": "run-1",
+    "seq": "9007199254740993",
+    "type": "call/finished",
+    "at": "2026-10-10T00:00:02Z",
+    "callId": "call-1",
+    "stepIndex": 0,
+    "data": {
+      "status": "succeeded",
+      "resultBytes": 2
+    }
+  },
+  "info": {
+    "available": true,
+    "worker": "ready",
+    "storage": "ready",
+    "tools": [
+      {
+        "name": "docker_containers_list",
+        "description": "列出容器视图",
+        "parameters": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        }
+      }
+    ],
+    "limits": {
+      "concurrency": 2,
+      "queueCapacity": 32,
+      "maxSteps": 16,
+      "inputBytes": 65536,
+      "callTimeoutSeconds": 30,
+      "runTimeoutSeconds": 300,
+      "resultBytes": 262144,
+      "runResultBytes": 2097152,
+      "logBytes": 1048576,
+      "frameBytes": 524288,
+      "retentionDays": 30,
+      "cancelGraceSeconds": 5
+    },
+    "queueDepth": 0,
+    "batch": {
+      "available": true
+    },
+    "agent": {
+      "available": false
+    },
+    "skills": {
+      "available": false
+    },
+    "mcp": {
+      "available": false
+    },
+    "containerExecution": {
+      "available": false
+    },
+    "approvals": {
+      "available": false
+    },
+    "workflow": {
+      "available": false
+    },
+    "wiki": {
+      "available": false
+    },
+    "embedding": {
+      "available": false
+    },
+    "workflowV2": {
+      "available": false
+    },
+    "resourceLocks": {
+      "available": false
+    },
+    "executionRuntimes": {
+      "available": false
+    }
+  },
+  "failure": {
+    "code": "interrupted",
+    "message": "运行已中断，未自动重放"
+  },
+  "emptyPage": {
+    "items": [],
+    "nextCursor": "",
+    "hasMore": false
+  }
+}

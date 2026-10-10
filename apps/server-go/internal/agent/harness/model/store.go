@@ -1,0 +1,297 @@
+package model
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"sync"
+	"unicode"
+	"unicode/utf8"
+)
+
+const maxStoreBytes = 16 << 20
+
+var profileID = regexp.MustCompile(`^model-[a-f0-9]{32}$`)
+
+type storedProfile struct {
+	Profile
+	Secret string `json:"credential"`
+}
+
+type document struct {
+	Version  int             `json:"version"`
+	Profiles []storedProfile `json:"profiles"`
+}
+
+// Store 在内存中持有全部不可变修订；所有修改先持久化再对调用者可见。
+type Store struct {
+	mu      sync.RWMutex
+	path    string
+	records []Profile
+	write   func(string, []Profile) (bool, error)
+}
+
+func Open(path string) (*Store, error) {
+	if !filepath.IsAbs(path) {
+		return nil, problem(400, "invalid-profile-path", "模型配置必须使用绝对路径")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return nil, storageError()
+	}
+	records, err := readProfiles(path)
+	if err != nil {
+		return nil, err
+	}
+	return &Store{path: path, records: records, write: writeProfiles}, nil
+}
+
+func (s *Store) List() []Profile {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	latest := make(map[string]Profile)
+	for _, p := range s.records {
+		latest[p.ID] = p
+	}
+	result := make([]Profile, 0, len(latest))
+	for _, p := range latest {
+		result = append(result, p.Public())
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Name != result[j].Name {
+			return result[i].Name < result[j].Name
+		}
+		return result[i].ID < result[j].ID
+	})
+	return result
+}
+
+func (s *Store) Create(input Input) (Profile, error) {
+	p, err := fromInput(input, "")
+	if err != nil {
+		return Profile{}, err
+	}
+	var random [16]byte
+	if _, err = rand.Read(random[:]); err != nil {
+		return Profile{}, problem(503, "profile-id-unavailable", "无法分配模型配置编号")
+	}
+	p.ID, p.Revision = "model-"+hex.EncodeToString(random[:]), 1
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err = s.append(p); err != nil {
+		return Profile{}, err
+	}
+	return p.Public(), nil
+}
+
+func (s *Store) Update(id string, expectedRevision int, input Input) (Profile, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	latest, ok := s.latest(id)
+	if !ok {
+		return Profile{}, problem(404, "profile-not-found", "模型配置不存在")
+	}
+	if expectedRevision != latest.Revision {
+		return Profile{}, problem(409, "revision-conflict", "模型配置已被修改，请重新读取后重试")
+	}
+	p, err := fromInput(input, latest.Credential)
+	if err != nil {
+		return Profile{}, err
+	}
+	p.ID, p.Revision = id, latest.Revision+1
+	if p.Revision <= latest.Revision {
+		return Profile{}, problem(409, "revision-limit", "模型配置修订数量达到上限")
+	}
+	if err = s.append(p); err != nil {
+		return Profile{}, err
+	}
+	return p.Public(), nil
+}
+
+// Resolve 仅供父进程内部使用，返回指定修订的凭据。停用最新版本阻止全部新运行。
+func (s *Store) Resolve(id string, revision int, allowInactive bool) (Profile, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	latest, ok := s.latest(id)
+	if !ok {
+		return Profile{}, problem(404, "profile-not-found", "模型配置不存在")
+	}
+	for _, p := range s.records {
+		if p.ID == id && p.Revision == revision {
+			if !allowInactive && (!latest.Active || !p.Active) {
+				return Profile{}, problem(409, "profile-inactive", "模型配置已停用，不能开始新的运行")
+			}
+			return p, nil
+		}
+	}
+	return Profile{}, problem(404, "profile-revision-not-found", "模型配置修订不存在")
+}
+
+func (s *Store) latest(id string) (Profile, bool) {
+	for i := len(s.records) - 1; i >= 0; i-- {
+		if s.records[i].ID == id {
+			return s.records[i], true
+		}
+	}
+	return Profile{}, false
+}
+
+func (s *Store) append(p Profile) error {
+	records := append(append([]Profile(nil), s.records...), p)
+	committed, err := s.write(s.path, records)
+	if committed {
+		// rename 后目录同步失败属于结果未确认；内存仍须与可见文件保持一致。
+		s.records = records
+	}
+	return err
+}
+
+func fromInput(in Input, oldCredential string) (Profile, error) {
+	p := Profile{
+		Name: strings.TrimSpace(in.Name), BaseURL: strings.TrimRight(strings.TrimSpace(in.BaseURL), "/"),
+		Model: strings.TrimSpace(in.Model), ContextTokens: in.ContextTokens, OutputTokens: in.OutputTokens,
+		Capabilities: in.Capabilities, Active: in.Active, Credential: oldCredential,
+	}
+	if in.Credential != nil {
+		p.Credential = *in.Credential
+	}
+	p.HasCredential = p.Credential != ""
+	p.Capabilities.Source = strings.TrimSpace(p.Capabilities.Source)
+	if err := validateProfile(p); err != nil {
+		return Profile{}, err
+	}
+	return p, nil
+}
+
+func validateProfile(p Profile) error {
+	if !cleanText(p.Name, 120) || !cleanText(p.Model, 200) || !cleanText(p.BaseURL, 2048) || !cleanText(p.Capabilities.Source, 80) {
+		return problem(400, "invalid-profile", "模型名称、服务地址、模型标识与能力来源必须是有效文本")
+	}
+	u, err := url.Parse(p.BaseURL)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Opaque != "" {
+		return problem(400, "invalid-profile", "模型服务地址必须是无凭据、查询参数或片段的 HTTP 或 HTTPS 地址")
+	}
+	if p.ContextTokens < 1 || p.ContextTokens > 2_000_000 || p.OutputTokens < 1 || p.OutputTokens > p.ContextTokens {
+		return problem(400, "invalid-profile", "模型上下文与输出上限必须为有效的正整数，输出不能超过上下文")
+	}
+	if len(p.Credential) > 8192 || !utf8.ValidString(p.Credential) || strings.IndexFunc(p.Credential, unicode.IsControl) >= 0 {
+		return problem(400, "invalid-profile", "模型凭据格式无效")
+	}
+	return nil
+}
+
+func cleanText(value string, limit int) bool {
+	return value != "" && len(value) <= limit && utf8.ValidString(value) && strings.IndexFunc(value, unicode.IsControl) < 0
+}
+
+func readProfiles(path string) ([]Profile, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return []Profile{}, nil
+	}
+	if err != nil || !info.Mode().IsRegular() || info.Size() > maxStoreBytes {
+		return nil, storageError()
+	}
+	// 历史文件权限也收口，避免旧权限使已保存凭据可被其他用户读取。
+	if err := os.Chmod(path, 0600); err != nil {
+		return nil, storageError()
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, storageError()
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, maxStoreBytes+1))
+	if err != nil || len(b) > maxStoreBytes {
+		return nil, storageError()
+	}
+	var d document
+	if json.Unmarshal(b, &d) != nil || d.Version != 1 || d.Profiles == nil {
+		return nil, problem(503, "profile-storage", "模型配置文件格式无效，请检查配置文件")
+	}
+	revisions := make(map[string]int)
+	records := make([]Profile, 0, len(d.Profiles))
+	for _, stored := range d.Profiles {
+		p := stored.Profile
+		p.Credential, p.HasCredential = stored.Secret, stored.Secret != ""
+		if !profileID.MatchString(p.ID) || p.Revision != revisions[p.ID]+1 || validateProfile(p) != nil {
+			return nil, problem(503, "profile-storage", "模型配置修订或字段无效，请检查配置文件")
+		}
+		revisions[p.ID] = p.Revision
+		records = append(records, p)
+	}
+	return records, nil
+}
+
+func writeProfiles(path string, records []Profile) (bool, error) {
+	if info, err := os.Lstat(path); err == nil && !info.Mode().IsRegular() {
+		return false, storageError()
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, storageError()
+	}
+	d := document{Version: 1, Profiles: make([]storedProfile, 0, len(records))}
+	for _, p := range records {
+		d.Profiles = append(d.Profiles, storedProfile{Profile: p.Public(), Secret: p.Credential})
+	}
+	b, err := json.Marshal(d)
+	if err != nil || len(b) > maxStoreBytes {
+		return false, problem(503, "profile-storage", "模型配置存储达到容量上限")
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), ".model-profiles-*")
+	if err != nil {
+		return false, storageError()
+	}
+	tempPath := f.Name()
+	defer os.Remove(tempPath)
+	defer f.Close()
+	if err = f.Chmod(0600); err == nil {
+		_, err = f.Write(b)
+	}
+	if err == nil {
+		err = f.Sync()
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil || os.Rename(tempPath, path) != nil {
+		return false, storageError()
+	}
+	dir, err := os.Open(filepath.Dir(path))
+	if err == nil {
+		err = dir.Sync()
+		if closeErr := dir.Close(); err == nil {
+			err = closeErr
+		}
+	}
+	if err != nil {
+		return true, problem(503, "profile-write-unconfirmed", "模型配置已写入但持久化结果未确认，请重新读取后检查")
+	}
+	return true, nil
+}
+
+func storageError() *Error {
+	return problem(503, "profile-storage", "模型配置读取或持久化失败")
+}
+
+// Available 包含仍可被会话选择的旧修订；修改能力声明不撤销固定版本。
+func (s *Store) Available() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	active := make(map[string]bool)
+	for _, p := range s.records {
+		active[p.ID] = p.Active
+	}
+	for _, p := range s.records {
+		if active[p.ID] && p.Active && p.Capabilities.Text && p.Capabilities.Tools {
+			return true
+		}
+	}
+	return false
+}

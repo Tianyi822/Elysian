@@ -46,3 +46,9 @@ export * from './platform/memory.ts'
 export * from './platform/dependencies.ts'
 
 export * from './platform/panel.ts'
+// Agent 运行内核：真实工具任务与持久事件
+export * from './agent/runtime.ts'
+export * from './agent/capabilities.ts'
+export * from './agent/workflow.ts'
+export * from './agent/memory.ts'
+export * from './agent/resources.ts'

@@ -11,8 +11,8 @@
     "dev": "bun run --filter @elysian/web dev",
     "build": "bun run --filter @elysian/web build",
     "preview": "bun run --filter @elysian/web preview",
-    "test": "bun run --filter '*' test",
-    "typecheck": "bun run --filter '*' typecheck",
+    "test": "bun run --filter '@elysian/*' test",
+    "typecheck": "bun run --filter '@elysian/*' typecheck",
     "check:website-runtimes": "bash scripts/check-website-runtimes.sh"
   },
   "devDependencies": {
