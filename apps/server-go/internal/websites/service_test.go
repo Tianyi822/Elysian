@@ -62,12 +62,17 @@ func (d *fakeDockerOps) NewContainerName() string {
 }
 
 func (d *fakeDockerOps) Create(_ context.Context, input containerCreateInput) (string, error) {
-	if d.createGate != nil {
+	d.mu.Lock()
+	gate := d.createGate
+	if gate != nil {
 		if d.entered != nil {
 			close(d.entered)
 			d.entered = nil
 		}
-		<-d.createGate
+	}
+	d.mu.Unlock()
+	if gate != nil {
+		<-gate
 	}
 	d.mu.Lock()
 	d.sequence++
@@ -87,12 +92,17 @@ func (d *fakeDockerOps) Start(_ context.Context, id string) error {
 }
 
 func (d *fakeDockerOps) Stop(_ context.Context, id string) error {
-	if d.stopGate != nil {
+	d.mu.Lock()
+	gate := d.stopGate
+	if gate != nil {
 		if d.entered != nil {
 			close(d.entered)
 			d.entered = nil
 		}
-		<-d.stopGate
+	}
+	d.mu.Unlock()
+	if gate != nil {
+		<-gate
 	}
 	d.mu.Lock()
 	d.states[id] = false
@@ -719,9 +729,12 @@ func TestCreateMutexBlocksConcurrent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建失败：%v", err)
 	}
+	createGate, entered := make(chan struct{}), make(chan struct{})
+	releaseCreate := sync.OnceFunc(func() { close(createGate) })
+	t.Cleanup(releaseCreate)
 	f.docker.mu.Lock()
-	f.docker.createGate = make(chan struct{})
-	f.docker.entered = make(chan struct{})
+	f.docker.createGate = createGate
+	f.docker.entered = entered
 	f.docker.mu.Unlock()
 	var creatingErr error
 	done := make(chan struct{})
@@ -729,14 +742,14 @@ func TestCreateMutexBlocksConcurrent(t *testing.T) {
 		defer close(done)
 		_, creatingErr = f.service.Create(context.Background(), nodeDirectRequest(t, KindHTML, 8088, "docs"))
 	}()
-	<-f.docker.entered
+	<-entered
 	if _, err := f.service.SetAccess(context.Background(), existing.Project.ID, accessInput{Mode: AccessModeDirect}); err == nil || err.Error() != "项目正在执行其他操作" {
 		t.Fatalf("创建进行中 setAccess 应拒绝，得到 %v", err)
 	}
 	if _, err := f.service.Create(context.Background(), nodeDirectRequest(t, KindHTML, 8089, "other")); err == nil || !strings.Contains(err.Error(), "网站项目正在创建") {
 		t.Fatalf("创建进行中 create 应拒绝，得到 %v", err)
 	}
-	close(f.docker.createGate)
+	releaseCreate()
 	<-done
 	if creatingErr != nil {
 		t.Fatalf("被门控的创建应最终成功：%v", creatingErr)
@@ -758,9 +771,12 @@ func TestRemoveSerializesAndCleansRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建失败：%v", err)
 	}
+	stopGate, entered := make(chan struct{}), make(chan struct{})
+	releaseStop := sync.OnceFunc(func() { close(stopGate) })
+	t.Cleanup(releaseStop)
 	f.docker.mu.Lock()
-	f.docker.stopGate = make(chan struct{})
-	f.docker.entered = make(chan struct{})
+	f.docker.stopGate = stopGate
+	f.docker.entered = entered
 	f.docker.mu.Unlock()
 	done := make(chan struct{})
 	var removeErr error
@@ -768,11 +784,11 @@ func TestRemoveSerializesAndCleansRoutes(t *testing.T) {
 		defer close(done)
 		removeErr = f.service.Remove(context.Background(), created.Project.ID)
 	}()
-	<-f.docker.entered
+	<-entered
 	if _, err := f.service.Create(context.Background(), nodeDirectRequest(t, KindHTML, 8089, "other")); err == nil || !strings.Contains(err.Error(), "网站项目正在创建") {
 		t.Fatalf("删除进行中创建应拒绝，得到 %v", err)
 	}
-	close(f.docker.stopGate)
+	releaseStop()
 	<-done
 	if removeErr != nil {
 		t.Fatalf("删除应成功：%v", removeErr)

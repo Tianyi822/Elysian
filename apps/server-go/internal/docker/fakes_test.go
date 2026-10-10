@@ -189,3 +189,9 @@ func (c *captureSubscriber) frameCount() int {
 	defer c.mu.Unlock()
 	return len(c.frames)
 }
+
+func (c *captureSubscriber) frameSnapshot() []hubFrame {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]hubFrame(nil), c.frames...)
+}

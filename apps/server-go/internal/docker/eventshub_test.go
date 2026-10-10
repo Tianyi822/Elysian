@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -26,9 +27,9 @@ func newHubWithClock(engine *fakeEngine) (*eventsHub, *manualClock) {
 
 func TestHubFirstSubscribeStartsStreamAndResampleStopsOnUnsubscribe(t *testing.T) {
 	engine := newFakeEngine(func(engineCall) (int, string, bool) { return 200, "[]", true })
-	streamCalls := 0
+	var streamCalls atomic.Int32
 	engine.streamFn = func(ctx context.Context, call engineCall, onChunk func([]byte)) (seam.EngineResponse, error) {
-		streamCalls++
+		streamCalls.Add(1)
 		<-ctx.Done()
 		return seam.EngineResponse{}, ctx.Err()
 	}
@@ -39,8 +40,8 @@ func TestHubFirstSubscribeStartsStreamAndResampleStopsOnUnsubscribe(t *testing.T
 		t.Fatal(err)
 	}
 	time.Sleep(30 * time.Millisecond)
-	if streamCalls != 1 {
-		t.Fatalf("首订阅开流：%d", streamCalls)
+	if calls := streamCalls.Load(); calls != 1 {
+		t.Fatalf("首订阅开流：%d", calls)
 	}
 	events := subscriber.snapshot()
 	if len(events) < 3 || events[0] != "status:connecting" || !strings.HasPrefix(events[1], "event:container/resync:") || events[2] != "status:live" {
@@ -53,8 +54,8 @@ func TestHubFirstSubscribeStartsStreamAndResampleStopsOnUnsubscribe(t *testing.T
 		t.Fatal(err)
 	}
 	time.Sleep(30 * time.Millisecond)
-	if streamCalls != 2 {
-		t.Fatalf("重订阅再开流：%d", streamCalls)
+	if calls := streamCalls.Load(); calls != 2 {
+		t.Fatalf("重订阅再开流：%d", calls)
 	}
 }
 
@@ -79,11 +80,10 @@ func TestHubNinthSubscriber503(t *testing.T) {
 }
 
 func TestHubReconnectStatusSequenceWithBackoff(t *testing.T) {
-	streamFailures := 0
+	var streamFailures atomic.Int32
 	engine := newFakeEngine(func(engineCall) (int, string, bool) { return 200, "[]", true })
 	engine.streamFn = func(ctx context.Context, call engineCall, onChunk func([]byte)) (seam.EngineResponse, error) {
-		streamFailures++
-		if streamFailures <= 2 {
+		if streamFailures.Add(1) <= 2 {
 			return seam.EngineResponse{}, context.Canceled
 		}
 		<-ctx.Done()
@@ -131,10 +131,11 @@ func TestHubDieDebouncedUpdatedStartedAtNull(t *testing.T) {
 	hub.onDockerLine(`{"Type":"container","Action":"die","id":"` + id + `"}`)
 	clock.Advance(250)
 	time.Sleep(30 * time.Millisecond)
-	frame := subscriber.frames[subscriber.frameCount()-1]
-	if subscriber.frameCount() != base+1 || frame.event != "container/updated" {
-		t.Fatalf("die 防抖后 updated：%+v", subscriber.frames)
+	frames := subscriber.frameSnapshot()
+	if len(frames) != base+1 || frames[len(frames)-1].event != "container/updated" {
+		t.Fatalf("die 防抖后 updated：%+v", frames)
 	}
+	frame := frames[len(frames)-1]
 	if !strings.Contains(frame.data, `"containerId":"`+strings.Repeat("c", 64)+`"`) || !strings.Contains(frame.data, `"startedAt":null`) {
 		t.Fatalf("stopped → startedAt null：%s", frame.data)
 	}
@@ -153,7 +154,7 @@ func TestHubDestroyRemovedRenameResyncImagePullResync(t *testing.T) {
 	hub.onDockerLine(`{"Type":"container","Action":"destroy","id":"` + strings.Repeat("d", 64) + `"}`)
 	clock.Advance(250)
 	time.Sleep(20 * time.Millisecond)
-	frame := subscriber.frames[base]
+	frame := subscriber.frameSnapshot()[base]
 	if frame.event != "container/removed" || !strings.Contains(frame.data, `"containerId":"`+strings.Repeat("d", 64)+`"`) {
 		t.Fatalf("destroy → removed：%+v", frame)
 	}
@@ -162,16 +163,18 @@ func TestHubDestroyRemovedRenameResyncImagePullResync(t *testing.T) {
 	hub.onDockerLine(`{"Type":"container","Action":"rename","id":"x"}`)
 	clock.Advance(250)
 	time.Sleep(20 * time.Millisecond)
-	if subscriber.frames[base].event != "container/resync" {
-		t.Fatalf("rename → resync：%+v", subscriber.frames[base])
+	frame = subscriber.frameSnapshot()[base]
+	if frame.event != "container/resync" {
+		t.Fatalf("rename → resync：%+v", frame)
 	}
 
 	base = subscriber.frameCount()
 	hub.onDockerLine(`{"Type":"image","Action":"pull"}`)
 	clock.Advance(250)
 	time.Sleep(20 * time.Millisecond)
-	if subscriber.frames[base].event != "container/resync" {
-		t.Fatalf("镜像 pull → resync：%+v", subscriber.frames[base])
+	frame = subscriber.frameSnapshot()[base]
+	if frame.event != "container/resync" {
+		t.Fatalf("镜像 pull → resync：%+v", frame)
 	}
 }
 
@@ -197,9 +200,10 @@ func TestHubSample(t *testing.T) {
 	}
 	time.Sleep(50 * time.Millisecond)
 	var sample *hubFrame
-	for i := len(subscriber.frames) - 1; i >= 0; i-- {
-		if subscriber.frames[i].event == "container/sample" {
-			sample = &subscriber.frames[i]
+	frames := subscriber.frameSnapshot()
+	for i := len(frames) - 1; i >= 0; i-- {
+		if frames[i].event == "container/sample" {
+			sample = &frames[i]
 			break
 		}
 	}
@@ -233,9 +237,10 @@ func TestHubReplayFromSampleFrameID(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	// 找最新采样帧 id。
 	var sampleID string
-	for i := len(first.frames) - 1; i >= 0; i-- {
-		if first.frames[i].event == "container/sample" {
-			sampleID = first.frames[i].id
+	frames := first.frameSnapshot()
+	for i := len(frames) - 1; i >= 0; i-- {
+		if frames[i].event == "container/sample" {
+			sampleID = frames[i].id
 			break
 		}
 	}
@@ -256,11 +261,12 @@ func TestHubReplayFromSampleFrameID(t *testing.T) {
 	}
 	time.Sleep(30 * time.Millisecond)
 	// 先重放采样帧（原 id），再重放其后非采样帧（emitForTest 的 resync，seq 3）。
-	if second.frames[0].event != "container/sample" || second.frames[0].id != sampleID {
-		t.Fatalf("采样帧续传：%+v", second.frames[:2])
+	frames = second.frameSnapshot()
+	if len(frames) < 2 || frames[0].event != "container/sample" || frames[0].id != sampleID {
+		t.Fatalf("采样帧续传：%+v", frames)
 	}
-	if second.frames[1].event != "container/resync" || second.frames[1].id != "boot-1.3" {
-		t.Fatalf("其后非采样帧按序重放：%+v", second.frames[1])
+	if frames[1].event != "container/resync" || frames[1].id != "boot-1.3" {
+		t.Fatalf("其后非采样帧按序重放：%+v", frames[1])
 	}
 }
 
@@ -277,7 +283,7 @@ func TestHubReplayStaleLastEventIDResync(t *testing.T) {
 	for i := 0; i < 260; i++ {
 		hub.emitForTest("container/resync", map[string]any{})
 	}
-	staleID := first.frames[0].id
+	staleID := first.frameSnapshot()[0].id
 	unsubscribe()
 	time.Sleep(20 * time.Millisecond)
 
@@ -286,8 +292,9 @@ func TestHubReplayStaleLastEventIDResync(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(30 * time.Millisecond)
-	if second.frames[0].event != "container/resync" {
-		t.Fatalf("旧 id 重连先 resync：%+v", second.frames[0])
+	frames := second.frameSnapshot()
+	if len(frames) == 0 || frames[0].event != "container/resync" {
+		t.Fatalf("旧 id 重连先 resync：%+v", frames)
 	}
 }
 
@@ -308,8 +315,9 @@ func TestHubReplayOtherBootResync(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(30 * time.Millisecond)
-	if second.frames[0].event != "container/resync" {
-		t.Fatalf("异 boot 先 resync：%+v", second.frames[0])
+	frames := second.frameSnapshot()
+	if len(frames) == 0 || frames[0].event != "container/resync" {
+		t.Fatalf("异 boot 先 resync：%+v", frames)
 	}
 }
 
@@ -332,10 +340,11 @@ func TestHubNotifyRestartingUsesCache(t *testing.T) {
 	base := subscriber.frameCount()
 	hub.NotifyRestarting(id)
 	time.Sleep(50 * time.Millisecond)
-	frame := subscriber.frames[subscriber.frameCount()-1]
-	if subscriber.frameCount() != base+1 || frame.event != "container/updated" {
-		t.Fatalf("notifyRestarting 一帧 updated：%+v", subscriber.frames)
+	frames := subscriber.frameSnapshot()
+	if len(frames) != base+1 || frames[len(frames)-1].event != "container/updated" {
+		t.Fatalf("notifyRestarting 一帧 updated：%+v", frames)
 	}
+	frame := frames[len(frames)-1]
 	if !strings.Contains(frame.data, `"status":"restarting"`) || !strings.Contains(frame.data, `"startedAt":"2024-05-02T08:00:00Z"`) {
 		t.Fatalf("带缓存 startedAt 字符串：%s", frame.data)
 	}

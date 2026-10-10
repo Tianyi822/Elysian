@@ -581,6 +581,9 @@ func TestPullErrorLinePassthrough(t *testing.T) {
 func TestPullProgressBeforeFinish(t *testing.T) {
 	listCount := 0
 	release := make(chan struct{})
+	progressReady := make(chan struct{})
+	releasePull := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(releasePull)
 	original := pullScript(&listCount, 200, `{"status":"Download complete"}`+"\n")
 	engine := newFakeEngine(original)
 	engine.streamFn = func(ctx context.Context, call engineCall, onChunk func([]byte)) (seam.EngineResponse, error) {
@@ -590,6 +593,7 @@ func TestPullProgressBeforeFinish(t *testing.T) {
 				onChunk([]byte(line[:19]))
 				onChunk([]byte(line[19:]))
 			}
+			close(progressReady)
 			<-release
 			return seam.EngineResponse{Status: 200, Body: []byte(line)}, nil
 		}
@@ -598,17 +602,24 @@ func TestPullProgressBeforeFinish(t *testing.T) {
 	var updates []imagePullProgress
 	service := newService(engine, func(deps *serviceDeps) { deps.resolveRegistry = resolvePublicAlways })
 	done := make(chan error, 1)
+	input := mustDecode(t, `{"name":"nginx","tag":"1.27"}`)
 	go func() {
-		_, err := service.Pull(context.Background(), mustDecode(t, `{"name":"nginx","tag":"1.27"}`), func(p imagePullProgress) {
+		_, err := service.Pull(context.Background(), input, func(p imagePullProgress) {
 			updates = append(updates, p)
 		})
 		done <- err
 	}()
-	time.Sleep(150 * time.Millisecond)
+	select {
+	case <-progressReady:
+	case err := <-done:
+		t.Fatalf("流在进度断言前结束：%v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("等待分块进度超时")
+	}
 	if len(updates) != 1 || updates[0].Phase != "downloading" || updates[0].LayerID != "abc" || *updates[0].CurrentBytes != 50 || *updates[0].TotalBytes != 100 {
 		t.Fatalf("进度应在流结束前推送：%+v", updates)
 	}
-	close(release)
+	releasePull()
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
