@@ -61,7 +61,7 @@ Docker 页的「工作区」集中保存 compose、`.env`、Dockerfile 和挂载
 
 ## Agent 能力封装
 
-[agent/kardia](apps/server-go/internal/agent/kardia/) 提供 Go 插件底座，[agent/tools](apps/server-go/internal/agent/tools/) 独立封装现有能力，由宿主注入域对象后交给 Kardia 管理。它是进程内库层，尚未接入 HTTP 装配或模型推理。九个能力子包共提供 28 条工具，其中 3 条构建任务工具按依赖是否注入登记；终端子包只提供可被插件注入的会话工具箱。
+[agent/kardia](apps/server-go/internal/agent/kardia/) 提供 Go 插件底座，[agent/tools](apps/server-go/internal/agent/tools/) 独立封装现有能力，由宿主注入域对象后交给 Kardia 管理。两者是进程内库层；[agent/harness](apps/server-go/internal/agent/harness/) 通过装配层消费其中四条 Docker 只读工具，提供顺序工具批次与模型驱动的单 Agent 任务 API，并在固定会话环境中装配技能、MCP 和经审批的容器脚本。九个能力子包共提供 28 条工具，其中 3 条构建任务工具按依赖是否注入登记；终端子包只提供可被插件注入的会话工具箱，库中登记的工具不自动向运行 API 开放。
 
 | 能力子包 | 已封装入口 |
 | --- | --- |
@@ -77,15 +77,186 @@ Docker 页的「工作区」集中保存 compose、`.env`、Dockerfile 和挂载
 
 调用顺序为 `tools.Install(ctx, root, tools.Plugin, 能力插件...)` → `tools.RegistryFrom(root)` → `registry.Schemas()`／`registry.Execute(root, name, args)`；插件须按依赖顺序传入，装载失败会逆序回滚，宿主退出时逆序销毁返回的 fiber。工具登记跟随提供者的激活代，撤销后旧处理器不可调用；参数模式与调用参数均使用独立快照。接入示例见 [example_test.go](apps/server-go/internal/agent/tools/example_test.go)，边界与设计见本地 [ADR-0023](docs/adr/0023-agent-capability-tool-layer.md)。
 
-工具层不裁决风险与审批，只透传 `tools/pre-execute` 的拒绝。Caddy 工具返回监听地址、路由数量与 TLS 配置状态，不返回配置原文；会话 ID、密码哈希和网站来源令牌不进入状态摘要。文件管理、平台依赖安装、数据库管理以及删除、重启、发布、改密、构建提交、工作区写文件尚未开放为 Agent 工具。门禁为 `bash apps/server-go/dev-check.sh ./internal/agent/... ./internal/app`，临时测试文件使用 `t.TempDir()` 自动清理；真实域对象由宿主持有和释放。
+工具层不裁决风险与审批，只透传 `tools/pre-execute` 的拒绝。Caddy 工具返回监听地址、路由数量与 TLS 配置状态，不返回配置原文；会话 ID、密码哈希和网站来源令牌不进入状态摘要。文件管理、平台依赖安装、数据库管理以及删除、重启、发布、改密、构建提交、容器应用工作区写文件尚未开放为内置 Agent 工具；Agent Task 自有文件工作区另由运行内核管理。门禁为 `bash apps/server-go/dev-check.sh ./internal/agent/... ./internal/app ./cmd/elysian`，临时测试文件使用 `t.TempDir()` 自动清理；真实域对象由宿主持有和释放。
+
+## Agent 任务运行
+
+真实部署保留 `tool-batch/v1` 与旧 `agent/v1` 的读取、排队执行兼容；新建和继续的单 Agent Run 使用 `agent/v2`。内置工具仍只有 `docker_containers_list`、`docker_images_list`、`docker_policy_view`、`docker_self_container` 四条空参数 Docker 只读工具。v2 可按会话环境额外启用技能包、MCP 工具与资料、经审批的容器脚本。全部入口要求管理员会话与同源请求，浏览器断连、退出登录或登录会话替换不取消已接受任务。当前仅提供 API，没有 Agent 前端、Agent SSE、自动重试或多 Agent 调度；本地演示不启动内核、不回落 mock 成功。`GET /api/agent/runtime` 分别报告 `batch`、`agent`、`skills`、`mcp`、`containerExecution`、`approvals`、`workflow` 的装配可用性；配置和服务的具体连通性仍由创建、探测与执行结果确认。未配置模型不影响顺序批次。
+
+以下表格路径均以 `/api/agent` 为前缀。
+
+| 运行与会话接口 | 用途 |
+| --- | --- |
+| `POST /runs` | 提交 `{requestId,kind:"tool-batch",steps:[{tool,args:{}}]}`；落盘返回 202，同 requestId 和输入回读 200，冲突 409 |
+| `GET /runs?status=&requestId=&sessionId=&taskId=&workflowId=&cursor=&limit=`、`GET /runs/:id` | 分页查询或读取运行详情、固定快照、预算与状态 |
+| `GET /runs/:id/calls?cursor=&limit=`、`GET /runs/:id/events?after=&limit=` | 工具结果与事实事件；after、seq 为十进制字符串 |
+| `POST /runs/:id/cancel` | 请求取消，响应中的状态才是停止事实 |
+| `GET/POST /model-profiles`、`PUT /model-profiles/:id` | 模型公开配置与不可变修订；更新须 expectedRevision |
+| `GET/POST /sessions`、`GET /sessions/:id` | 创建 `{title,modelProfileId,modelRevision}` 或查询会话 |
+| `PUT /sessions/:id/model` | 空闲时提交 `{modelProfileId,modelRevision}` 切换模型，返回能力与缓存提示 |
+| `GET /sessions/:id/messages?after=&limit=`、`GET /sessions/:id/tasks` | 公开对话和任务分页 |
+| `POST /sessions/:id/tasks`、`POST /tasks/:id/runs` | 新任务或继续输入：`{requestId,content,skills?,resources?,prompts?}` |
+| `GET /tasks/:id`、`GET /tasks/:id/memory?revision=`、`GET /runs/:id/model-requests` | 任务、工作记忆和公开模型过程；不返回隐藏推理 |
+| `GET/PUT /sessions/:id/environment` | 读取或以 `{expectedRevision,environment}` 更新会话环境，首次 expectedRevision 为 0，仅空闲时允许修改 |
+| `GET /runs/:id/operations`、`GET /runs/:id/context-items` | 读取本轮的规范化操作与实际载入资料 |
+| `GET /approvals`、`POST /approvals/:id/decision` | 最多 200 条，pending/approved 优先再按新近排序；决定为 `{decision:"approved"}` 或 `{decision:"denied"}` |
+| `GET /execution-barriers`、`POST /execution-barriers/:id/reconcile` | 最近 200 条执行屏障；核实提交 `{decision:"confirmed-completed"或"confirmed-stopped",evidence}` |
+
+一个 Session 包含多个 Task，一个 Task 可有多轮 Run。排队、执行、等待审批或整理期间会话保持忙碌，拒绝新输入、模型和环境切换；已接受的同一请求可幂等回读。环境包含 `skills`、`servers`、`executionProfiles`、`grants` 的 `{id,revision,digest?}` 引用，以及 `tools`、`resources:[{serverId,uri}]`、`trustedReadOnly`。所有配置固定具体 revision，MCP 目录固定 digest；Run 保存完整公开快照，后续配置修改不改变已接受 Run。技能和服务器未选入环境就不可使用，用户本轮的 `skills`、`resources`、`prompts:[{serverId,name,arguments}]` 只能在该范围内显式选取资料。MCP 提示仅能由用户选择，不作为模型自主可调用工具；它的 role 作为资料来源保留，不变成系统指令。
+
+模型配置字段为 `name`、`baseUrl`、`model`、`contextTokens`、`outputTokens`、`capabilities:{text,tools,source}`、`active` 与可选 `credential`。Agent 要求文本与工具能力；非流式 Chat Completions 在 baseUrl 后追加 `/chat/completions`，禁止跳转、Cookie 与自动重试，响应上限 512 KiB。凭据只写不回显，更新时省略沿用旧值、空串清除。模型 JSON 和工具参数拒绝重复键，参数保留数值精度；审批和执行使用字符串 `argumentsJson`，不能经浏览器 `JSON.parse` 后重序列化决定执行内容。实际 token 与缓存用量未报告时保持未知，保守估算单独记录。
+
+父进程用原始目标、任务记忆、未整理完整事实组和近期公开 user/assistant 对话组装上下文；工具过程与工作记忆按 Task 隔离，不保存隐藏推理。压力 checkpoint 和正常答复后的单次整理共用 Run 预算，记忆有证据引用、revision 和覆盖游标，不能静默丢弃当前任务未整理事实。可恢复整理失败保留旧记忆和原始事实，正常答复可成功并标记 stale；取消、时限、存储失效与执行结果未确认仍走终止路径。
+
+### 技能、MCP 与执行配置
+
+| 管理接口 | 用途 |
+| --- | --- |
+| `GET /skills`、`GET /skills/:id?revision=` | 技能最新公开修订或指定历史版本 |
+| `PUT /skills/:id` | `{expectedRevision,enabled}` 显式启停；内容更新重新导入并指定 skillId、expectedRevision |
+| `GET/POST /skills/imports`、`GET /skills/imports/:id`、`POST /skills/imports/:id/cancel` | 持久导入任务；新任务 202、相同输入幂等回读 200，列表支持 cursor、limit |
+| `GET/POST /mcp-servers`、`GET /mcp-servers/:id?revision=`、`PUT /mcp-servers/:id` | MCP 配置；详情必须指定 revision，更新提交 expectedRevision 与完整配置 |
+| `POST /mcp-servers/:id/probe` | 以 `{revision}` 初始化并发现目录，最长 60 秒 |
+| `GET /mcp-servers/:id/catalog?revision=&digest=` | 固定目录；省略 digest 读取该修订最近一次探测目录，返回 modelAliases、resourceAliases、promptAliases |
+| `GET/POST /execution-profiles`、`GET/PUT /execution-profiles/:id`、`PUT /execution-profiles/:id/enabled` | Python、Node、Bash 执行配置；写入使用 expectedRevision，启停显式传 enabled |
+| `GET/POST /grants`、`GET/PUT /grants/:id`、`PUT /grants/:id/enabled` | 管理员预设的业务目录与网络授权，写入同样检查修订 |
+| `POST /skills/:id/revoke`、`POST /mcp-servers/:id/revoke`、`POST /execution-profiles/:id/revoke`、`POST /grants/:id/revoke` | `{revision,reason}` 永久撤销，revision 为 0 撤销该编号全部修订，正数只撤销指定修订 |
+
+技能支持面板进程可见的绝对目录、ZIP 上传和 HTTPS Git。JSON 导入为 `{requestId,source:{kind:"directory",path},enabled}` 或 `{requestId,source:{kind:"git",url,ref,subdirectory?},enabled,credential?}`；Git 必须显式指定分支、标签或提交，服务端锁定完整提交。ZIP 使用 multipart/form-data，依次为 `metadata` JSON（source 为 `{kind:"zip"}`）和 `archive` 文件，拒绝第三部分。包根目录必须有带 YAML frontmatter 的 `SKILL.md`，必填 name、description，可含 license、compatibility、metadata、allowed-tools；名称采用小写字母数字和连字符。包在 `data/skills/packages/<digest>` 按内容保存，拒绝越界路径、链接、特殊文件和重复路径。导入只复制和校验，不执行技能代码、Git hooks 或 submodule；Git 需要面板运行环境安装 git，不支持 SSH Git、Git LFS 内容下载或依赖自动安装。导入任务重启后标 interrupted，不自动重做。
+
+Run 最初只得到技能名称、描述与读取工具；可逐步加载 `SKILL.md` 和参考文件。脚本必须位于包内 `scripts/`，执行前本 Task 已加载同修订 `SKILL.md`；脚本内容、镜像摘要、命令、目录/网络授权与工作区版本一并固定进审批。技能正文、MCP annotations 和输出都是资料，不会自行扩大权限；`allowed-tools` 仅是技能自述。启停阻止新 Run 选择该能力；永久撤销在派发前再次核对，旧快照和旧审批也不能绕过，已发生的外部副作用不因撤销而回滚。MCP 探测也核对持久撤销；启动在开放入口前恢复执行器拒绝表，撤销 MCP 服务或 grant 会关闭已有相关 stdio 容器和代理隧道，停止未确认时暂停派发。
+
+MCP 固定协议版本 `2025-11-25`，支持 Streamable HTTP 的 JSON/SSE 响应及专属容器 stdio，分页发现 tools/resources/prompts，提供 tools/call、resources/read、prompts/get；拒绝服务器反向 sampling、elicitation、roots 等请求。模型工具使用目录返回的稳定 `modelAliases`，资源和提示的 `trustedReadOnly` 使用对应 aliases，不能直接填远端原始名称。参数和结构化结果校验使用 JSON Schema 2020-12，仅允许文档内引用，不下载外部 schema；不支持的约束直接拒绝。派发前重新探测并比较固定目录 digest，目录变化停止旧操作。凭据与 stdio 环境变量只写不回显；HTTP 禁止跳转与重试。`isError` 属于可反馈给模型的业务错误；连接中断或取消不能当作远端已停止，也不能重发同一调用。
+
+MCP 当前不含旧 HTTP+SSE 传输、其他协议版本、OAuth 自动发现、资源模板发现/展开、资源订阅、completion、独立 GET SSE 长连接或事件重连续传。只把文本和结构化数据送给模型，图片、音频、blob 和资源链接保持未读取资料，不自动下载或宣称已理解。远端 HTTP MCP 由父进程直连管理员配置地址，不经过容器的出网授权代理。stdio 服务使用已固定摘要镜像及命令，默认不出网、不挂业务目录；可同时指定 `grantId` 与正数 `grantRevision` 固定目录/网络授权，同一授权修订也必须选入会话环境，执行计划与审批显示其完整内容。stdio 容器由执行器持有，每个操作使用独立 scope 与容器身份；审批前只固定已保存目录，不启动远端进程。消费审批、获取资源租约并落盘派发后才启动目录核验，核验通过才调用业务能力；操作结束确认容器停止后释放租约。最长存活 300 秒，未知停止保留锁和执行屏障，不重发既有调用。管理员显式探测也使用独立临时 scope，结束确认停止，不保留默认作用域的常驻连接。
+
+容器执行需要可访问的 Docker Engine、预先存在的 Linux 镜像和同架构 Linux 面板二进制；镜像必须固定 `仓库@sha256:完整摘要`，不能声明额外 VOLUME，不自动拉取镜像或安装解释器。脚本使用 UID/GID 65532、只读根文件系统、全部 capabilities 删除、no-new-privileges、无特权、无 Docker socket、无面板凭据，网络固定 none。技能和 supervisor 放只读 `/bundle`，任务文件复制到 `/workspace`，默认仅有受限临时目录。显式目录 grant 只能引用挂载根内已存在、无符号链接的业务子目录，容器中依序为 `/grants/0` 等；系统目录、凭据目录和面板状态不可授权。配置最多登记 32 个目录，单次执行器最多挂载 16 个。
+
+脚本和 stdio MCP 的授权出网仅支持 HTTP/HTTPS 代理，按精确协议、域名、端口授权；每次连接核对全部 DNS 结果并固定实际拨号 IP，私网还需 privateCidrs。回环、链路本地、实例元数据和特殊地址禁止，不能用通配符或 IP 字面量授权。不遵循代理环境变量的程序无法直连出网；HTTPS CONNECT 限制目标地址，不检查加密隧道里的路径和应用内容。代理每执行最多 4 条同时连接、64 次连接、累计双向 16 MiB。
+
+### 审批、恢复与工作区
+
+内置只读和技能资料加载可直接执行；MCP 工具默认需逐调用审批，只有管理员在 `trustedReadOnly` 明确授予的能力可直接执行。MCP 资源和提示即使是读取，也需显式只读信任才跳过审批。脚本总需审批。父进程先持久化模型提议，再生成完整 Operation；同一模型响应中的多条调用按顺序处理，一次只等待当前调用。审批或资源等待释放本次 Worker 执行槽，会话仍保持忙碌；审批同意将同一 Run 排回队列，从已保存 responseId/callIndex 继续，不重问模型、不重放已完成调用、不重置次数、token 和已消耗运行时间。等待审批或资源的时间不计入 10 分钟活动执行预算。
+
+审批期限 24 小时，最多 32 个待审批；重复相同决定幂等，不同决定冲突。拒绝和到期结束 Run，取消撤销未消费审批；同意后仍须重新校验版本、撤销、目录摘要、参数和工作区版本，并在派发事务内一次消费。参数、脚本、运行环境或工作区发生变化不能沿用旧审批。面板重启保留 queued、waiting-approval 和 waiting-resource；遗留 running 中断，已派发调用的未知结果不自动补做。
+
+潜在写操作派发前先保存全局 ExecutionBarrier。已确认结果解除该屏障；失联、未确认停止或重启留下 dispatched/unknown 时，后续潜在写操作停止派发，只读核实也须通过资源租约的冲突检查。操作者从目标系统独立核实后，提交 `confirmed-completed` 或 `confirmed-stopped` 及 1 至 8192 字节证据；核实只关闭不确定性记录，不重放调用、不把旧 Run 改成成功，也不撤销已经发生的外部效果。取消先落请求再确认停止，父端不响应超过 5 秒宽限使内核暂停派发；重启不会清除未决写操作屏障。
+
+### 资源锁与执行池
+
+父进程管理有界 Worker 池，默认全局并发 2，生产环境可用 `ELYSIAN_AGENT_CONCURRENCY=1` 至 `4` 调整（未设置或空值为 2，非法值以中文配置错误拒绝启动）；同一根工作流最多同时占用 2 个执行槽，普通会话仍遵守 busy 约束。每个 Run 独立保存取消、调用和整理状态；取消一个 Run 不终止其他执行槽。审批与资源等待不占 Worker，也不重新消耗模型请求或工具预算。
+
+| 资源与执行接口 | 用途 |
+| --- | --- |
+| `GET/POST /resource-rules`、`GET/PUT /resource-rules/:id` | 不可变资源规则修订；更新需 `expectedRevision` |
+| `GET /resource-locks` | 等待、持有、未知与释放的持久租约，活动状态优先，最多 200 条 |
+| `POST /resource-locks/:id/reconcile` | 仅管理探测租约：提交 `{decision:"confirmed-stopped",evidence}`，同一决定幂等 |
+| `GET /execution-runtimes` | 当前受管容器身份、MCP 服务修订与生命周期；不返回凭据、命令或环境 |
+
+会话环境通过 `resourceRules:[{id,revision,digest?}]` 固定规则，Operation 与审批保存精确资源声明。规则只能由管理员配置，按能力修订、MCP 原始名称和目录 digest 匹配，再用固定字符串或 JSON Pointer 提取资源身份；`complete` 表示管理员明确声明覆盖全部影响范围。声明无法完整解析时使用全局独占锁，不让模型自行推断权限或锁范围。资源身份不含规则 revision，更新规则不会使同一资源变成互不相干的锁。相同资源支持读共享、写独占及目录子树冲突；stdio 容器按整个目录 grant 声明范围，有网络 grant 时保守全局独占，不用单次工具参数缩小后台进程权限。
+
+资源获取、审批消费、预算预留和派发标记在同一事务完成。冲突进入 `waiting-resource`，保留会话 busy、当前操作及审批，按冲突等待顺序恢复；后续操作不能越过更早的冲突等待者。正常完成确认停止后释放；取消只直接释放尚未获得的等待租约，已派发且停止未知的租约必须保留，重启将遗留持有租约标记未知。任何未知租约或未知执行屏障都阻止新的外部能力派发；操作租约仍须通过对应执行屏障提交核实证据，不能走管理探测核实入口解除。
+
+管理员 `POST /mcp-servers/:id/probe` 无需模型审批，但仍检查维护与永久撤销，先持久化独占生命周期租约再启动。冲突返回 409，不创建等待任务；目录只有在确认停止后才保存。租约的 `scopeId` 是启动前固定的执行容器标签身份，已观测的实际 Docker 容器编号另存 `containerId`，并保留 `source:"mcp-probe"`、`serverId` 与 `serverRevision`。停止未知时返回错误并保留锁，管理员凭目标系统证据确认容器已停止后核实。`/resource-leases` 与其核实入口是 `/resource-locks` 的同状态别名。
+
+| 任务工作区接口 | 用途 |
+| --- | --- |
+| `GET /tasks/:id/workspace` | 当前数据库版本指针、文件路径、大小和 digest |
+| `GET /tasks/:id/workspace?path=` | `{version,path,content}`；content 为原始字节的标准 base64，不是直接文件下载 |
+| `PUT /tasks/:id/workspace?path=&expectedRevision=` | 上传原始请求体，创建新文件版本；空工作区 expectedRevision 为 0 |
+| `DELETE /tasks/:id/workspace?path=&expectedRevision=` | 删除相对路径并产生新版本 |
+
+工作区只属于会话内 Agent Task，编辑限该会话空闲时；等待审批也不可改，工作区读写不刷新会话活动时间或延长保留期。文件路径禁止绝对路径、越界和链接；每次修改产生不可变版本，通过 expectedRevision 与数据库 CAS 发布当前指针，不以磁盘最大版本猜测当前文件。容器执行后只有完整复制、校验并确认停止的文件才可进入结果事务；非零退出码或展示结果超限不抹掉已经确认的文件变化。失败或未确认导出保留旧指针；孤立候选版本不自动发布。任务工作区与容器应用工作区、网站源码目录分别管理。
+
+### 长期 Wiki 记忆
+
+长期记忆采用有链接、有证据的 Markdown Wiki 组织方式，以 SQLite 为权威存储，支持候选式导入和整空间导出。`harness.sqlite` 显式升级至 schema v5，保留旧批次、会话和活动 `workflow/v1` 的语义。长期记忆按业务空间隔离，可显式选择附带全局空间；`PUT /sessions/:id/memory` 提交 `{spaceId,includeGlobal}`，新会话默认不关联空间。Run 接受时固定空间及页面修订，父进程按原始目标与本轮输入召回有来源的整页内容，最多 8 页、16 KiB。页面和来源都是资料，不能授予工具权限、改变预算或充当系统指令。工作记忆仍属于单个 Task，长期 Wiki 页面与它分别保存。
+
+| 长期记忆接口 | 用途 |
+| --- | --- |
+| `GET/POST /memory-spaces` | 列出或创建业务／全局空间 |
+| `PUT /memory-spaces/:spaceId`、`GET /sessions/:id/memory` | 以 `expectedRevision` 修订空间名称；查询会话的空间选择 |
+| `GET/POST /memory-spaces/:spaceId/pages` | 列出或创建页面；`includeWithdrawn=1` 包含撤回页 |
+| `GET/PUT/DELETE /memory-spaces/:spaceId/pages/:id` | 读取、产生新修订或撤回；修改提交 `expectedRevision` |
+| `GET /memory-spaces/:spaceId/pages/:id/revisions/:revision` | 查询保留的不可变历史修订 |
+| `GET /memory-spaces/:spaceId/search?q=&limit=` | 中文双字文本与可用向量索引融合，返回 `degraded` 与回落原因 |
+| `POST /memory-spaces/:spaceId/imports`、`GET /memory-spaces/:spaceId/export`、`GET /memory-spaces/:spaceId/checks` | Markdown 导入为待确认候选、导出页面与来源、自检断链／孤立页／过期页／无效来源 |
+| `GET /memory-proposals`、`POST /memory-proposals/:id/decision` | 查询候选；提交 `{decision:"approved"}` 或 `rejected` 后原子发布或拒绝 |
+| `GET /memory-extractions?cursor=&limit=`、`GET /memory-extractions/:id` | 回读异步提炼状态、固定模型版本、用量及候选编号 |
+| `POST /memory-extractions` | `{requestId,runId}` 或 `{requestId,workflowId}`；对成功来源的固定快照发起一次人工提炼，相同请求幂等回读 |
+| `GET /embedding-requests?cursor=&limit=` | 索引和查询的独立用量记录；含固定配置修订、估算和供应商实际用量，缺失保持未知，不返回输入正文 |
+| `GET/POST /embedding-profiles`、`PUT /embedding-profiles/:id` | 独立 Embedding 服务配置；更新需 `expectedRevision`，凭据只写 |
+| `GET/POST /memory-spaces/:spaceId/indexes` | 读取索引覆盖情况；以 `{requestId,profileId,profileRevision}` 提交异步重建，任务状态经 `/memory-extractions/:id` 回读 |
+
+成功普通 Agent Run 与成功根工作流在发布事务中最多入队一次长期记忆提炼；子步骤不重复入队。提炼及索引任务仅在前台没有活动或排队 Run 时开始。提炼固定当次模型版本，最多 60 秒、32 KiB 输入和 4096 token 输出，只允许一次 `propose_wiki_pages` 结构函数，不获得域工具或执行权限；最多生成 4 个待确认候选。模型响应先落盘，再验证并发布候选。失败保留既有页面，任务标记 `stale`；重启将执行中的提炼标为 `interrupted`，不自动重试。需要再次提炼时使用新的人工请求标识，沿用成功来源的固定输入快照，不混入后续任务事实。输入与完整响应仅保存在父端，公开提炼接口不返回它们或凭据。
+
+提炼可建议新页，也可修订固定输入中实际携带的已有页面；修订候选保留准确的 `pageId` 和基准 revision，人工采纳时页面若已变化则拒绝覆盖。运行或工作流证据必须逐字匹配保存的公开答复或成功结果，不能仅凭一个成功编号接受任意文字。维护回滚标记在同一恢复事务内中断所有排队和执行中的提炼／索引任务及未完成向量请求，然后才能移除；原输入和已保存响应保留，核验后显式提交新任务。
+
+页面保存不可变 revision 与 digest，召回、工作记忆、模型过程及后续候选保留来源依赖。撤回会使相关上下文 generation 失效，并取消依赖旧资料的活动运行、撤销未消费审批；新模型请求与结果发布边界继续检查，不能靠旧快照绕过撤回。页面正文最多 16 KiB、全局最多 10000 页。
+
+全文索引由汉字双字片段、英文和标识符词项组成，可额外设置各最多 32 项的 `tags`、`aliases`。观察类页面默认 30 天到期，过期页退出自动召回；偏好、约定和经验默认长期保留。模型可调用 `wiki_search`、`wiki_read` 和 `wiki_follow_links`，只能读取本轮固定的可见修订，调用与返回内容均计入原有限额。被上下文容量裁掉的页面不会记录成已使用来源。
+
+公开消息及工作区查询会标出 `quarantined` 和 `wikiSources`。撤回保留历史内容和文件，隔离版本不能作为脚本输入；人工覆盖单个文件仍继承原工作区的隔离状态，清空工作区后可从有效事实重新生成。证据摘录必须来自已保存的成功公开答复或结果，来源会话清理后保留有界摘录并标记 `originalCleared`；撤回不等于删除审计或彻底遗忘。
+
+Embedding 使用独立的 `config/agent-embeddings.json`，采用 0600 文件、原子替换与同步，保留不可变修订。索引以页面修订／digest 与 Embedding 修订为键，更新页面不会误用旧向量；显式重建受单任务 60 秒限制，未完成时保留已确认索引并显示回落。查询使用余弦相似度与文本名次 RRF 合并；索引缺失、部分过期或供应商失败时继续提供中文双字文本结果。HTTP 不重试、不跟随跳转，响应上限 512 KiB，查询向量请求另限 3 秒。旧 `/wiki/*` 入口保留为同一状态的兼容接口。设计见本地 [ADR-0029](docs/adr/0029-agent-wiki-memory-and-embeddings.md)。
+
+启用 Embedding 后，索引重建会向该配置地址发送页面标题和正文，混合检索会发送查询文本（自动召回时包含任务目标／当前输入）；供应商按自己的规则处理这些内容。每次索引或查询先写入独立请求记录再发送，估算与供应商报告的实际 token、缓存 token 分开保存，不并入 Agent 对话预算；未报告的字段不补零，失败响应中已报告的用量仍保留。公开账本只含输入字节数与摘要，不含正文、查询原文、向量或凭据，终态记录保留 30 天。维护期间直接服务调用也禁止修改 Embedding 配置和发起新请求。
+
+### 工作流与隔离分支
+
+管理员可保存不可变模板修订，将 Agent 分析、直接能力操作、人工确认和条件分支组成流程。`workflow/v1` 保留顺序执行；显式指定 `languageVersion:"workflow/v2"` 可加入有界并行、数组迭代和固定修订的子流程。每个实例创建专用 Session 与根 Task，从来源会话复制模型修订及能力环境，不复制来源历史或文件；接受时固定完整子流程模板闭包，并检查全部嵌套步骤的能力。非终态实例占用专用会话，普通任务输入、切换配置和人工工作区编辑均拒绝；等待审批或资源释放执行槽。当前提供管理员 API，不含流程编辑器、定时触发或自动重试。
+
+| 工作流接口 | 用途 |
+| --- | --- |
+| `GET/POST /workflow-definitions` | 最新模板列表；创建模板返回 201 |
+| `GET /workflow-definitions/:id?revision=`、`PUT /workflow-definitions/:id` | 读取最新或历史修订；更新提交完整模板字段及 expectedRevision，创建新修订 |
+| `POST /workflow-instances` | `{requestId,definitionId,definitionRevision,sourceSessionId,inputJson}`；必须明确模板修订，新实例 202、幂等回读 200 |
+| `GET /workflow-instances?status=&cursor=&limit=`、`GET /workflow-instances/:id` | 查询实例状态、固定快照、累计预算与 allowedActions |
+| `GET /workflow-instances/:id/execution-tree` | v2 的作用域、稳定节点身份、尝试、当前状态与节点 allowedActions |
+| `GET /workflow-instances/:id/steps?cursor=&limit=`、`GET /workflow-instances/:id/events?cursor=&limit=` | 阶段尝试和工作流事实分页；cursor、seq 为十进制字符串 |
+| `POST /workflow-instances/:id/cancel` | 保存取消请求，状态回读确认收尾 |
+| `POST /workflow-instances/:id/recover` | `{requestId,expectedRevision,nodeId?,action,evidence,outputJson?}`；v2 必须指明 nodeId；明确恢复 202、相同请求回读 200 |
+
+模板字段为 `name`、`enabled`、`goal`、`inputSchemaJson`、`outputSchemaJson`、`entry`、`steps`。每步包含 `id`、`kind`、`input` 和 `outputSchemaJson`。`agent` 需要 instruction，可用 selection 显式选择技能/MCP 资料；`operation` 需要固定环境内的 capability 别名；`approval` 需要人工确认说明 instruction；这三种步骤必须二选一指定 next 或 finish。`condition` 使用 condition、then、else 选择分支。最多 32 步，必须全部可达且无循环，前序结果引用必须在所有到达路径上都已完成。
+
+v2 新增 `parallel`（`parallel:{join:"all",branches:[{id,input,body}]}`）、`foreach`（`foreach:{items,body}`）和 `subworkflow`（`subworkflow:{definitionId,definitionRevision}`）。`body` 为含 `entry`、`steps`、`outputSchemaJson` 的局部有向无环图；每个局部图最多 32 步，最多嵌套 4 层、展开 256 节点、单次 8 分支或 32 个数组项。空数组直接产出 `[]`；并行结果按分支 ID 组成对象，迭代结果按原数组顺序组成数组，子流程直接返回其输出。绑定只读取本作用域输入及前序节点，不跨分支读取未完成结果。
+
+每个子作用域有独立 Task，展开时复制父工作记忆及工作区的固定版本；分支后续记忆、工具事实和文件互不污染。汇合保留父文件，把分支新增或修改文件放到 `.workflow/<nodeId>/<ordinal>/`，不把分支删除应用到父目录；归档准备完成后以数据库版本 CAS 与输出、后继 ready 一起提交。展开与汇合有持久回执，重启不重复执行已完成分支。分支失败关闭整个实例的新派发入口，已派发分支仍保存真实结果；恢复指定失败节点，成功兄弟分支不重跑。Wiki 来源随输入、工作记忆、文件和结构化结果穿过分支及汇合；撤回同时隔离后续消费者和无活动 Run 的阶段边界，不能通过恢复沿用失效来源。
+
+input/finish 绑定严格五选一：`{literalJson:"精确 JSON 字符串"}`、`{input:"JSON Pointer"}`、`{step:{stepId,pointer}}`、`{object:{字段名:绑定}}`、`{array:[绑定]}`；finish 可以读取本步结果。条件 op 为 eq/ne/lt/lte/gt/gte/exists/and/or/not，使用 left/right 或 children 组合，不执行表达式代码。Schema 使用 JSON Schema 2020-12 的已支持范围，拒绝外部引用与未知约束。JSON 字符串保留数值精度；实例 inputJson 不超过 32 KiB，工作流请求体 1 MiB、结果值 256 KiB，绑定深度 32、节点 4096。
+
+Agent 步骤在公开答复后经专用 `workflow_finish` 函数提交结构化对象结果，计入原有预算；校验通过并随成功事实落盘后才推进下一步。直接能力操作复用现有审批、撤销、执行屏障和工作区检查。人工确认输出固定 `{approved:true}`，不替代后续写操作的独立审批；条件步骤输出 `{matched:布尔值}`。阶段输出、证据引用与工作区版本可以在 steps 中回读。
+
+失败或中断进入 recovery-required，禁止自动重试。输入绑定缺失也保存失败 Run 与尝试，可凭外部证据补录 Agent 或操作步骤的结果，不派发缺少参数的操作。恢复 action 为 continue（维护冻结的确认边界）、renew-approval（未派发操作重新申请审批）、retry（新 Run 明确重试）或 accept-result（补录通过 Schema 校验的外部结果），以 allowedActions 为当前提示，提交时再次校验。恢复需要 1 至 8192 字节证据，不能重置预算、改变固定环境或绕过永久撤销。未知执行必须先人工核实屏障；confirmed-completed 可支持结果补录，confirmed-stopped 之后只能明确重试。补录保留独立人工完成证据，不把原 Run/Call 的失败或中断终态改成成功。
+
+工作流恢复只能继续使用仍然有效的资料来源。Wiki 页面撤回后，依赖该页的输入、记忆、文件与结果永久失效；更新页面或恢复历史修订不会解除旧快照的失效，continue、retry、renew-approval 和 accept-result 均不能绕过。需要继续业务时，应结束原实例，以有效来源重新创建任务或流程；原实例保留审计事实。
+
+非终态实例上限 32；每实例累计活动执行 60 分钟、模型请求 64 次、工具调用 64 次、256000 token、结果 8 MiB，每步最多 3 次尝试，单 Run 仍受下表更小的限额约束。v2 的全部子作用域共用根实例预算，并发运行先预留额度、收尾时结算，不能各自获得一份额度；每个根实例最多同时运行 2 个 Run。审批等待不计活动时间，恢复和重试不获得新额度。取消、预算耗尽或拒绝审批会撤销全部未消费分支审批，等待已派发运行确认停止后才释放会话。设计见本地 [ADR-0028](docs/adr/0028-agent-workflow-scopes-and-resource-concurrency.md)。
+
+| 默认限额 | 值 |
+| --- | --- |
+| Run 并发、排队、工具调用数 | 2、32、每 Run 16 次；显式资料加载也消耗工具次数 |
+| 请求与工具结果 | JSON 提交 64 KiB；工具单次 256 KiB、累计 2 MiB；列表工具最多 200 个完整条目 |
+| 批次与 Agent 时间 | 批次 5 分钟；Agent 活动执行 10 分钟；工具 30 秒；模型单次 60 秒；取消宽限 5 秒 |
+| 模型与记忆 | 最多 16 次请求（含整理）、单次 4096 token、总预算 128000 token、用户输入 32 KiB、可变记忆 16 KiB |
+| 技能导入 | ZIP 64 MiB、展开 64 MiB、2048 文件、待处理 32、并发 1、5 分钟；SKILL.md 1 MiB、frontmatter 64 KiB |
+| MCP | 单消息 512 KiB、目录合计 512 项/4 MiB、单 schema 128 KiB、每类最多 64 页、内容最多 128 块 |
+| 执行配置 | 最多 1 CPU、512 MiB、128 PID、5 分钟；harness 脚本仍受更短的工具 30 秒和 Run 剩余时限约束，配置只能进一步收紧 |
+| 容器输出与工作区 | stdout/stderr 合计 2 MiB；工作区每版本 128 MiB/4096 文件、归档总量 2 GiB；旧版本也计入容量 |
+
+既有分页接口返回 `{items,nextCursor,hasMore}`，普通分页默认 50、Run 事件默认 100、工作流事件默认 50，上限 200；operations/context-items 和审批/屏障为数组，不承诺分页。环境最多 32 技能、32 MCP 服务、128 工具选择、64 资源、16 执行配置、32 授权、256 只读信任别名。队列满返回 429，非法或超前事件游标返回 400。
+
+父进程独占 `~/.Elysian/data/harness.sqlite`，状态及事实事件在同一 SQLite WAL 事务提交；Worker 只经受限匿名 JSONL 管道请求模型和工具，不持有数据库、凭据、Docker socket 或域对象。Worker 继承系统进程权限，不是安全沙箱；脚本与 stdio MCP 才使用受限容器。stderr 仅保留前 4 KiB 内存诊断，无任务日志 API，logBytes 为预留字段。配置在 `config/agent-models.json`、`agent-skills.json`、`agent-mcp-servers.json`、`agent-execution.json`，包与工作区在 `data/skills`、`data/agent-workspaces`；凭据配置采用 0600 原子写入和同步。会话无活动 30 天且无活动 Run、无非终态工作流、无未决执行屏障时级联清理所属事实与工作区；批次终态保留 30 天，幂等记录随数据保留，配置历史和技能包不随会话删除。会话删除事务先写入持久工作区清理记录，文件删除成功才移除记录；清理失败或进程中断后可继续清理，不因数据库引用已删除而遗忘残留。
+
+`app.Runtime.Close(ctx)` 统一回收 Worker、技能导入、MCP、执行容器、库与插件。启动核对并清理带本执行器标签的遗留容器及卷，无法确认停止则停止派发；不清理无关容器。正式维护冻结新派发与审批恢复，停服后备份 config/data。维护回退始终原位保留当前全部 Agent 配置、运行库、技能与工作区，包括已完成工作流的回执；其他领域恢复旧快照前，先同步落盘 `state/panel-maintenance/agent-workflow-recovery.json`。内核启动消费标记，将非终态工作流冻结为 recovery-required 并撤销未消费审批，事务成功后才删除并同步标记；完成回执和未知执行屏障保留。当前库损坏、无法核实，或当前库缺失而备份含 Agent 数据时拒绝自动恢复，不能拼接新旧事实。旧二进制不支持新 schema 时保持 Agent 不可用，不能降级运行库来启动。自动化验收使用假模型、假 MCP、临时配置及专用执行容器，不读取生产凭据；实际模型/MCP 连通性需操作者提供配置。设计分别见本地 [ADR-0024](docs/adr/0024-agent-task-runtime-kernel.md)、[ADR-0025](docs/adr/0025-single-agent-sessions-and-working-memory.md)、[ADR-0026](docs/adr/0026-agent-capabilities-approvals-and-execution.md)、[ADR-0027](docs/adr/0027-agent-sequential-workflows.md)。
 
 ## 结构与边界
 
 网站项目通过容器运行，Java、Node、Go、Python 的版本由后端自动获取：语言官方正式发布记录与 Docker 官方镜像精确标签取交集，包含五年前版本线及历史正式补丁，排除预发布、快照和浮动标签。添加项目窗口通过同源 API 读取目录并支持版本号搜索。目录缓存六小时，过期后按请求自动刷新，获取失败时明确提示并保留已有缓存；缓存位于 `~/.Elysian/state/website-runtime-catalog.json`，生产代码不维护固定版本表。`bun run check:website-runtimes` 可诊断官方来源与镜像库的自动获取路径；本地演示仍使用可复现 mock。
 
 - `apps/web/`：工作台页面、store、HTTP/WebSocket 与 mock adapter。
-- `apps/server-go/`：Go 后端（chi）：同源 API、Docker Engine 调用、数据库协议与本机操作。
+- `apps/server-go/`：Go 后端（chi）：同源 API、Docker Engine 调用、数据库协议、本机操作与 Agent 任务运行内核；Worker 由同一二进制托管。
 - `packages/foundation/contracts/`：跨端类型与纯常量。
 - `CONTEXT.md`、`AGENTS.md`、`docs/`：本地设计文档，不进入版本库。
 
-没有接入真实 Kubernetes、云平台或 Agent 推理。真实数据库的账号边界与请求守卫已经实现；面板已落地单管理员登录与服务端会话鉴权，多租户与人员级权限仍待后续完成。SQL 驱动会先解码单个结果行再执行应用侧输出截断，极端超大单行仍可能造成瞬时内存峰值；不要把此版本当作不可信用户可访问的数据库代理。所有 Docker 和数据库操作均具有真实效果，操作前应核对目标容器、版本、端口与删除确认内容。
+没有接入真实 Kubernetes 或云平台操作；单 Agent 通过用户配置的模型执行内置只读任务，并可在固定能力和审批范围内调用 MCP 或执行容器脚本。真实数据库的账号边界与请求守卫已经实现；面板已落地单管理员登录与服务端会话鉴权，多租户与人员级权限仍待后续完成。SQL 驱动会先解码单个结果行再执行应用侧输出截断，极端超大单行仍可能造成瞬时内存峰值；不要把此版本当作不可信用户可访问的数据库代理。所有 Docker 和数据库操作均具有真实效果，操作前应核对目标容器、版本、端口与删除确认内容。
