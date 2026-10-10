@@ -1,0 +1,296 @@
+{
+  "space": {
+    "id": "space-one",
+    "revision": 1,
+    "name": "运维知识",
+    "kind": "business",
+    "createdAt": "2026-10-10T00:00:00Z"
+  },
+  "page": {
+    "id": "page-one",
+    "spaceId": "space-one",
+    "slug": "containers/check",
+    "revision": 2,
+    "title": "容器检查",
+    "markdown": "执行只读检查并核对健康状态。",
+    "kind": "runbook",
+    "status": "active",
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "createdAt": "2026-10-10T00:00:00Z",
+    "updatedAt": "2026-10-10T00:00:00Z",
+    "evidence": [
+      {
+        "id": "source-one",
+        "kind": "run",
+        "runId": "run-one",
+        "eventSeq": "9007199254740993",
+        "text": "已核验容器运行正常",
+        "createdAt": "2026-10-10T00:00:00Z",
+        "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "originalCleared": false
+      }
+    ],
+    "sources": [],
+    "links": [],
+    "tags": [
+      "Docker",
+      "健康检查"
+    ],
+    "aliases": [
+      "容器体检"
+    ]
+  },
+  "proposal": {
+    "id": "proposal-one",
+    "spaceId": "space-one",
+    "status": "pending",
+    "originKind": "extraction",
+    "originId": "extraction-one",
+    "createdAt": "2026-10-10T00:00:00Z",
+    "page": {
+      "expectedRevision": 2,
+      "slug": "containers/check",
+      "title": "容器检查",
+      "markdown": "先核对健康状态。",
+      "kind": "runbook",
+      "evidence": [
+        {
+          "id": "source-one",
+          "kind": "run",
+          "runId": "run-one",
+          "eventSeq": "9007199254740993",
+          "text": "已核验容器运行正常",
+          "createdAt": "2026-10-10T00:00:00Z",
+          "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "originalCleared": false
+        }
+      ],
+      "sources": [],
+      "tags": [
+        "Docker",
+        "健康检查"
+      ],
+      "aliases": [
+        "容器体检"
+      ]
+    },
+    "pageId": "page-one"
+  },
+  "embedding": {
+    "id": "embedding-one",
+    "revision": 2,
+    "name": "测试向量模型",
+    "baseUrl": "https://embedding.example.test/v1",
+    "model": "test-embedding",
+    "dimensions": 2,
+    "active": true,
+    "hasCredential": true
+  },
+  "extraction": {
+    "id": "extraction-one",
+    "kind": "extraction",
+    "originKind": "run",
+    "originId": "run-one",
+    "spaceId": "space-one",
+    "status": "succeeded",
+    "memoryStatus": "updated",
+    "taskId": "task-one",
+    "runId": "run-one",
+    "generation": 3,
+    "model": {
+      "id": "model-one",
+      "revision": 1,
+      "name": "测试模型",
+      "baseUrl": "https://model.example.test/v1",
+      "model": "test",
+      "contextTokens": 65536,
+      "outputTokens": 4096,
+      "capabilities": {
+        "text": true,
+        "tools": true,
+        "source": "fixture"
+      },
+      "active": true,
+      "hasCredential": true
+    },
+    "createdAt": "2026-10-10T00:00:00Z",
+    "startedAt": "2026-10-10T00:00:00Z",
+    "endedAt": "2026-10-10T00:00:00Z",
+    "usage": {},
+    "estimatedTokens": 1024,
+    "candidateIds": [
+      "proposal-one"
+    ],
+    "sources": [
+      {
+        "pageId": "page-one",
+        "revision": 2,
+        "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  },
+  "search": {
+    "items": [
+      {
+        "page": {
+          "id": "page-one",
+          "spaceId": "space-one",
+          "slug": "containers/check",
+          "revision": 2,
+          "title": "容器检查",
+          "markdown": "执行只读检查并核对健康状态。",
+          "kind": "runbook",
+          "status": "active",
+          "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "createdAt": "2026-10-10T00:00:00Z",
+          "updatedAt": "2026-10-10T00:00:00Z",
+          "evidence": [
+            {
+              "id": "source-one",
+              "kind": "run",
+              "runId": "run-one",
+              "eventSeq": "9007199254740993",
+              "text": "已核验容器运行正常",
+              "createdAt": "2026-10-10T00:00:00Z",
+              "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "originalCleared": false
+            }
+          ],
+          "sources": [],
+          "links": [],
+          "tags": [
+            "Docker",
+            "健康检查"
+          ],
+          "aliases": [
+            "容器体检"
+          ]
+        },
+        "score": 0.031,
+        "method": "hybrid-rrf"
+      }
+    ],
+    "degraded": false
+  },
+  "checks": {
+    "orphanPages": [],
+    "brokenLinks": [],
+    "expiredPages": [],
+    "invalidSources": []
+  },
+  "index": {
+    "profile": {
+      "id": "embedding-one",
+      "revision": 2,
+      "name": "测试向量模型",
+      "baseUrl": "https://embedding.example.test/v1",
+      "model": "test-embedding",
+      "dimensions": 2,
+      "active": true,
+      "hasCredential": true
+    },
+    "pages": 1,
+    "indexedPages": 1,
+    "status": "ready"
+  },
+  "rule": {
+    "name": "固定数据库写入",
+    "enabled": true,
+    "complete": true,
+    "selector": {
+      "source": "mcp-tool",
+      "ref": {
+        "id": "server-one",
+        "revision": 2
+      },
+      "originalName": "database_update",
+      "catalogDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "mappings": [
+      {
+        "kind": "database",
+        "authority": "primary",
+        "access": "write",
+        "pointer": "/database"
+      }
+    ],
+    "id": "rule-one",
+    "revision": 1,
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "createdAt": "2026-10-10T00:00:00Z"
+  },
+  "lease": {
+    "id": "lease-one",
+    "runId": "run-one",
+    "operationId": "operation-one",
+    "scopeId": "scope-one",
+    "state": "unknown",
+    "claims": [
+      {
+        "kind": "database",
+        "authority": "primary",
+        "key": "production",
+        "access": "write"
+      }
+    ],
+    "createdAt": "2026-10-10T00:00:00Z",
+    "evidence": "远端是否停止仍需核验"
+  },
+  "probeLease": {
+    "id": "probe-lease-one",
+    "source": "mcp-probe",
+    "serverId": "server-one",
+    "serverRevision": 2,
+    "containerId": "container-one",
+    "scopeId": "probe-scope-one",
+    "state": "unknown",
+    "claims": [
+      {
+        "kind": "database",
+        "authority": "primary",
+        "key": "production",
+        "access": "write"
+      }
+    ],
+    "createdAt": "2026-10-10T00:00:00Z",
+    "evidence": "需独立核实探测容器已经停止"
+  },
+  "workspaceView": {
+    "version": {
+      "taskId": "task-one",
+      "revision": 2,
+      "baseRevision": 1,
+      "bytes": 5,
+      "fileCount": 1,
+      "digest": "workspace-digest"
+    },
+    "files": [
+      {
+        "path": "notes.txt",
+        "size": 5,
+        "digest": "file-digest"
+      }
+    ],
+    "quarantined": true,
+    "wikiSources": [
+      {
+        "pageId": "page-one",
+        "revision": 2,
+        "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  },
+  "embeddingRequest": {
+    "id": "embedding-query-one",
+    "profileId": "embedding-one",
+    "profileRevision": 2,
+    "purpose": "query",
+    "status": "succeeded",
+    "inputBytes": 18,
+    "inputDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "estimatedTokens": 274,
+    "usage": {},
+    "startedAt": "2026-10-10T00:00:00Z",
+    "endedAt": "2026-10-10T00:00:01Z"
+  }
+}

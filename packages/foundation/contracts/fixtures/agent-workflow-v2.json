@@ -1,0 +1,215 @@
+{
+  "definition": {
+    "languageVersion": "workflow/v2",
+    "id": "definition-v2",
+    "revision": 3,
+    "name": "并行容器检查",
+    "enabled": true,
+    "goal": "核对两个范围的容器状态",
+    "inputSchemaJson": "{}",
+    "outputSchemaJson": "{}",
+    "entry": "parallel-check",
+    "steps": [
+      {
+        "id": "parallel-check",
+        "kind": "parallel",
+        "input": {
+          "input": ""
+        },
+        "outputSchemaJson": "{}",
+        "finish": {
+          "step": {
+            "stepId": "parallel-check",
+            "pointer": ""
+          }
+        },
+        "parallel": {
+          "join": "all",
+          "branches": [
+            {
+              "id": "first",
+              "input": {
+                "input": ""
+              },
+              "body": {
+                "entry": "inspect",
+                "steps": [
+                  {
+                    "id": "inspect",
+                    "kind": "operation",
+                    "capability": "docker_containers_list",
+                    "input": {
+                      "object": {}
+                    },
+                    "outputSchemaJson": "{}",
+                    "finish": {
+                      "step": {
+                        "stepId": "inspect",
+                        "pointer": ""
+                      }
+                    }
+                  }
+                ],
+                "outputSchemaJson": "{}"
+              }
+            },
+            {
+              "id": "second",
+              "input": {
+                "input": ""
+              },
+              "body": {
+                "entry": "inspect",
+                "steps": [
+                  {
+                    "id": "inspect",
+                    "kind": "operation",
+                    "capability": "docker_containers_list",
+                    "input": {
+                      "object": {}
+                    },
+                    "outputSchemaJson": "{}",
+                    "finish": {
+                      "step": {
+                        "stepId": "inspect",
+                        "pointer": ""
+                      }
+                    }
+                  }
+                ],
+                "outputSchemaJson": "{}"
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "createdAt": "2026-10-10T00:00:00Z"
+  },
+  "tree": {
+    "rootScopeId": "scope-one",
+    "scopes": [
+      {
+        "id": "scope-one",
+        "workflowId": "workflow-one",
+        "path": "/",
+        "kind": "root",
+        "taskId": "task-one",
+        "parentWorkspaceRevision": 0,
+        "parentMemoryRevision": 0,
+        "depth": 0,
+        "ordinal": 0,
+        "status": "running",
+        "currentStepId": "parallel-check",
+        "inputJson": "{\"serial\":9007199254740993}",
+        "body": {
+          "entry": "parallel-check",
+          "steps": [
+            {
+              "id": "parallel-check",
+              "kind": "parallel",
+              "input": {
+                "input": ""
+              },
+              "outputSchemaJson": "{}",
+              "finish": {
+                "step": {
+                  "stepId": "parallel-check",
+                  "pointer": ""
+                }
+              },
+              "parallel": {
+                "join": "all",
+                "branches": [
+                  {
+                    "id": "first",
+                    "input": {
+                      "input": ""
+                    },
+                    "body": {
+                      "entry": "inspect",
+                      "steps": [
+                        {
+                          "id": "inspect",
+                          "kind": "operation",
+                          "capability": "docker_containers_list",
+                          "input": {
+                            "object": {}
+                          },
+                          "outputSchemaJson": "{}",
+                          "finish": {
+                            "step": {
+                              "stepId": "inspect",
+                              "pointer": ""
+                            }
+                          }
+                        }
+                      ],
+                      "outputSchemaJson": "{}"
+                    }
+                  },
+                  {
+                    "id": "second",
+                    "input": {
+                      "input": ""
+                    },
+                    "body": {
+                      "entry": "inspect",
+                      "steps": [
+                        {
+                          "id": "inspect",
+                          "kind": "operation",
+                          "capability": "docker_containers_list",
+                          "input": {
+                            "object": {}
+                          },
+                          "outputSchemaJson": "{}",
+                          "finish": {
+                            "step": {
+                              "stepId": "inspect",
+                              "pointer": ""
+                            }
+                          }
+                        }
+                      ],
+                      "outputSchemaJson": "{}"
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "outputSchemaJson": "{}"
+        },
+        "createdAt": "2026-10-10T00:00:00Z"
+      }
+    ],
+    "nodes": [
+      {
+        "id": "node-one",
+        "workflowId": "workflow-one",
+        "scopeId": "scope-one",
+        "stepId": "parallel-check",
+        "stableKey": "/parallel-check",
+        "kind": "parallel",
+        "ordinal": 0,
+        "status": "running",
+        "taskId": "task-one",
+        "attempt": 1,
+        "revision": 2,
+        "inputJson": "{\"serial\":9007199254740993}",
+        "expanded": true,
+        "joinWorkspaceRevision": 0,
+        "createdAt": "2026-10-10T00:00:00Z",
+        "allowedActions": []
+      }
+    ]
+  },
+  "recovery": {
+    "nodeId": "node-one",
+    "requestId": "recover-one",
+    "expectedRevision": 2,
+    "action": "retry",
+    "evidence": "确认此前执行已停止"
+  }
+}
