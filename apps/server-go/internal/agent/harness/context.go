@@ -208,11 +208,11 @@ func (a *agentExecution) contextFacts(ctx context.Context) (WorkingMemory, []fac
 		if a.workflowOutput != nil {
 			workflowGroups = append(workflowGroups, a.workflowOutput.fact(a.run))
 		}
-		for _, group := range workflowGroups {
-			if cursorAfter(group.cursor, memory.Coverage) {
-				groups = append(groups, group)
-			}
-		}
+		// 完成凭据不按共享记忆覆盖游标压制：Task 记忆的 Coverage 会被兄弟分支的
+		// 整理推进，但那些整理因作用域隔离吸收不了本作用域的步骤输出，压制等于
+		// 静默丢失未整理完成资料。隔离与顺序边界只由 workflowContextFacts 决定；
+		// 已吸收资料的重复注入由整理摘要与证据引用兜底，不能以丢失为代价去重。
+		groups = append(groups, workflowGroups...)
 	}
 	sort.SliceStable(groups, func(i, j int) bool { return cursorAfter(groups[j].cursor, groups[i].cursor) })
 	// 读取时固定接受输入时的 Session 边界，排除其他任务的工具/记忆。

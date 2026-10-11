@@ -284,12 +284,21 @@ func (m *Manager) promoteWorkflowV2(ctx context.Context, candidate WorkflowInsta
 		}
 		return m.store.refreshWorkflowV2(ctx, tx, &w)
 	})
-	if err != nil && m.deps.Workspaces != nil {
-		for _, version := range prepared {
-			_ = m.deps.Workspaces.Discard(context.Background(), version.TaskID, version.Revision)
-		}
-	}
+	m.discardPreparedCandidates(err, prepared)
 	return err
+}
+
+// discardPreparedCandidates 只在错误确属「事务已回滚」时丢弃候选工作区版本；
+// 提交结果未确认的错误必须保留候选——数据库指针可能已经引用它们，删掉归档
+// 会让落库指针指向不存在的版本。保留的候选由会话级联清理（workspace_cleanup
+// → RemoveTask）在任务生命周期结束时自然回收。
+func (m *Manager) discardPreparedCandidates(err error, prepared []workspace.Version) {
+	if err == nil || m.deps.Workspaces == nil || commitUnconfirmed(err) {
+		return
+	}
+	for _, version := range prepared {
+		_ = m.deps.Workspaces.Discard(context.Background(), version.TaskID, version.Revision)
+	}
 }
 
 func (m *Manager) checkWorkflowEnvironmentTx(ctx context.Context, tx *sql.Tx, w WorkflowInstance) error {
@@ -500,7 +509,9 @@ func (m *Manager) queueWorkflowV2Leaf(ctx context.Context, tx *sql.Tx, w *Workfl
 		driver = step.Kind
 	}
 	node.Attempt++
-	run := Run{ID: m.deps.NewID(), TaskID: scope.TaskID, SessionID: w.SessionID, RequestID: "workflow-node:" + m.deps.NewID(), RunNumber: number, Driver: driver, DriverVersion: "v2", Snapshot: &w.Snapshot, Model: &w.Model, WorkflowID: w.ID, WorkflowStepID: node.ID, WorkflowAttempt: node.Attempt, WorkflowOutputSchemaJSON: step.OutputSchemaJSON, Status: StateQueued, CreatedAt: stamp(m.deps.Now()), LastSeq: "0", HistorySeq: session.LastSeq, InitialMemoryRevision: memory.Revision, Input: input, Limits: m.deps.AgentLimits, Phase: "queued", MemoryStatus: "stale", Selection: step.Selection}
+	// 作用域与节点身份是分支隔离过滤的生效前提：兄弟公开消息与跨 scope
+	// 完成资料都依赖 Run.ScopeID 非空才会被排除（v1 单链运行保持为空）。
+	run := Run{ID: m.deps.NewID(), TaskID: scope.TaskID, SessionID: w.SessionID, RequestID: "workflow-node:" + m.deps.NewID(), RunNumber: number, Driver: driver, DriverVersion: "v2", ScopeID: scope.ID, NodeID: node.ID, Snapshot: &w.Snapshot, Model: &w.Model, WorkflowID: w.ID, WorkflowStepID: node.ID, WorkflowAttempt: node.Attempt, WorkflowOutputSchemaJSON: step.OutputSchemaJSON, Status: StateQueued, CreatedAt: stamp(m.deps.Now()), LastSeq: "0", HistorySeq: session.LastSeq, InitialMemoryRevision: memory.Revision, Input: input, Limits: m.deps.AgentLimits, Phase: "queued", MemoryStatus: "stale", Selection: step.Selection}
 	if step.Kind == "agent" {
 		run.Input = step.Instruction + "\n步骤输入（数据）：\n" + input
 	}

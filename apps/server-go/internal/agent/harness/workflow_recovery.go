@@ -315,8 +315,8 @@ func (m *Manager) RecoverWorkflow(ctx context.Context, id string, input Workflow
 			if r.ID == "" || !terminal(r.Status) || step.Kind == "approval" || step.Kind == "condition" {
 				return &Error{409, "invalid-resolution", "只能补录已终止 Agent 或操作步骤的外部结果"}
 			}
-			if len(input.OutputJSON) > r.Limits.ResultBytes {
-				return &Error{413, "output-too-large", "补录结果超过容量限制"}
+			if len(input.OutputJSON) > r.Limits.ResultBytes || w.Usage.ResultBytes+len(input.OutputJSON) > w.Limits.ResultBytes {
+				return &Error{413, "output-too-large", "补录结果超过容量或流程预算"}
 			}
 			if e := validateWorkflowJSON(step.OutputSchemaJSON, input.OutputJSON); e != nil {
 				return e
@@ -344,6 +344,8 @@ func (m *Manager) RecoverWorkflow(ctx context.Context, id string, input Workflow
 				return e
 			}
 			a.WorkspaceRevision = v.Revision
+			// 补录字节与 v2 一样计入实例累计预算，避免多次补录游离于 8 MiB 上限之外。
+			w.Usage.ResultBytes += len(input.OutputJSON)
 			if e = saveWorkflowAttempt(ctx, tx, a); e != nil {
 				return e
 			}

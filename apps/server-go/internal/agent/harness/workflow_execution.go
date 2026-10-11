@@ -151,6 +151,26 @@ func (m *Manager) workflowContextFacts(ctx context.Context, r Run) ([]factGroup,
 	if err != nil {
 		return nil, err
 	}
+	// v2 的 attempt 主键按节点维度唯一（同名步骤在并行分支与迭代中是多个节点），
+	// 展示给模型的步骤来源要换回节点对应的步骤定义 ID，不能暴露节点 UUID。
+	nodeSteps := map[string]string{}
+	for _, a := range attempts {
+		if a.NodeID == "" {
+			continue
+		}
+		if _, ok := nodeSteps[a.NodeID]; ok {
+			continue
+		}
+		var raw string
+		if e := m.store.db.QueryRowContext(ctx, "SELECT document FROM workflow_nodes WHERE id=?", a.NodeID).Scan(&raw); e != nil {
+			return nil, e
+		}
+		var node WorkflowNodeExecution
+		if e := json.Unmarshal([]byte(raw), &node); e != nil {
+			return nil, e
+		}
+		nodeSteps[a.NodeID] = node.StepID
+	}
 	out := []factGroup{}
 	for _, a := range attempts {
 		if r.ScopeID != "" && a.ScopeID != r.ScopeID {
@@ -170,8 +190,12 @@ func (m *Manager) workflowContextFacts(ctx context.Context, r Run) ([]factGroup,
 		if e != nil {
 			return nil, e
 		}
+		stepLabel := a.StepID
+		if a.NodeID != "" {
+			stepLabel = nodeSteps[a.NodeID]
+		}
 		ref := EvidenceRef{RunID: a.RunID, EventSeq: a.EventSeq}
-		content := "流程步骤 " + a.StepID + " 完成资料（来源 " + refKey(ref) + "；完成方式 " + a.CompletionSource + "）：\n" + value
+		content := "流程步骤 " + stepLabel + " 完成资料（来源 " + refKey(ref) + "；完成方式 " + a.CompletionSource + "）：\n" + value
 		if a.Evidence != "" {
 			content += "\n人工核实证据：" + a.Evidence
 		}
