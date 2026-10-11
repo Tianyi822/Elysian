@@ -22,6 +22,10 @@ type WorkspaceView struct {
 	WikiSources []WikiRef         `json:"wikiSources,omitempty"`
 }
 
+// workspaceViewMaxBytes 限制 JSON 单文件读取的返回体大小：Content 会整体进入内存
+// 并经 base64 放大，超限文件直接拒绝，避免并发读取推高面板内存峰值。
+const workspaceViewMaxBytes int64 = 4 << 20
+
 func (m *Manager) workspaceStoreLocked() (*workspace.Store, error) {
 	if m.closed {
 		return nil, closedError()
@@ -153,7 +157,7 @@ func (m *Manager) Workspace(ctx context.Context, taskID, path string) (Workspace
 		return WorkspaceView{}, workspaceFailure(err)
 	}
 	if path != "" {
-		content, version, err := backend.Read(ctx, taskID, current.Revision, path)
+		content, version, err := backend.ReadLimited(ctx, taskID, current.Revision, path, workspaceViewMaxBytes)
 		if err != nil {
 			return WorkspaceView{}, workspaceFailure(err)
 		}
@@ -234,9 +238,28 @@ func (m *Manager) mutateWorkspace(ctx context.Context, taskID string, expectedRe
 	})
 	// 事务错误可能是提交结果未确认，保留不可变候选，不擅自删除潜在已引用版本。
 	if err != nil {
+		// 任务在预检查与写事务之间被并发清理时，prepare 已发布的归档没有任何
+		// 记录指向且全部 API 均不可达，补写清理记录交由下一轮 sweep 兜底回收。
+		if recordErr := m.recordOrphanWorkspace(ctx, taskID); recordErr != nil {
+			return workspace.Version{}, errors.Join(workspaceFailure(err), recordErr)
+		}
 		return workspace.Version{}, workspaceFailure(err)
 	}
 	return version, nil
+}
+
+// recordOrphanWorkspace 在写事务失败后复核任务是否仍存在；任务已被清理时补写
+// workspace_cleanup 记录。该表以 task_id 为主键，重复补写幂等；任务标识不复用。
+func (m *Manager) recordOrphanWorkspace(ctx context.Context, taskID string) error {
+	var count int
+	if err := m.store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM tasks WHERE id=?", taskID).Scan(&count); err != nil {
+		return err
+	}
+	if count != 0 {
+		return nil
+	}
+	_, err := m.store.db.ExecContext(ctx, "INSERT OR IGNORE INTO workspace_cleanup(task_id) VALUES(?)", taskID)
+	return err
 }
 
 func workspaceFailure(err error) error {

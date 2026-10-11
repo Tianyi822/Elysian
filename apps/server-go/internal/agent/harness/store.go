@@ -22,6 +22,8 @@ type store struct {
 	now  func() time.Time
 	// beforeWrite 只供故障注入测试；生产恒 nil。
 	beforeWrite func(string) error
+	// failNextCommit 非空时使下一次提交按失败返回，只供故障注入测试；生产恒 nil。
+	failNextCommit error
 }
 
 const schema = `
@@ -112,6 +114,9 @@ func (s *store) close() error {
 	return errors.Join(errs...)
 }
 
+// write 结束后调用方可能仍持有事务内准备的候选产物：fn 返回错误意味着事务
+// 已回滚、数据库不引用任何候选；Commit 失败则提交结果未确认，数据库可能已经
+// 引用候选版本，错误以 unconfirmedCommit 包装返回，清理路径必须保留候选。
 func (s *store) write(ctx context.Context, op string, fn func(*sql.Tx) error) error {
 	if s.beforeWrite != nil {
 		if err := s.beforeWrite(op); err != nil {
@@ -126,7 +131,34 @@ func (s *store) write(ctx context.Context, op string, fn func(*sql.Tx) error) er
 	if err = fn(tx); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if s.failNextCommit != nil {
+		err = s.failNextCommit
+		s.failNextCommit = nil
+		return &unconfirmedCommit{op: op, err: err}
+	}
+	if err = tx.Commit(); err != nil {
+		return &unconfirmedCommit{op: op, err: err}
+	}
+	return nil
+}
+
+// unconfirmedCommit 表示事务体已执行完毕但提交结果未知：数据库可能已落盘，
+// 也可能没有；调用方不得按「已回滚」清理与该事务关联的候选产物。
+type unconfirmedCommit struct {
+	op  string
+	err error
+}
+
+func (e *unconfirmedCommit) Error() string {
+	return "事务提交结果未确认（" + e.op + "）：" + e.err.Error()
+}
+func (e *unconfirmedCommit) Unwrap() error { return e.err }
+
+// commitUnconfirmed 判定写事务错误是否停在「提交结果未知」：数据库指针可能
+// 已经引用候选工作区版本，Discard 会删掉被引用的归档，必须保留待后续核实。
+func commitUnconfirmed(err error) bool {
+	var unconfirmed *unconfirmedCommit
+	return errors.As(err, &unconfirmed)
 }
 
 func stamp(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }

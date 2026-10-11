@@ -227,11 +227,24 @@ func (s *Store) List(ctx context.Context, taskID string, revision int) (Snapshot
 }
 
 func (s *Store) Read(ctx context.Context, taskID string, revision int, name string) ([]byte, Version, error) {
+	return s.read(ctx, taskID, revision, name, 0)
+}
+
+// ReadLimited 在 Read 之上增加单文件返回上限：超过 limit 字节的文件直接拒绝，
+// 不把内容载入调用方内存。limit 必须为正数；0 表示不设限（等价于 Read）。
+func (s *Store) ReadLimited(ctx context.Context, taskID string, revision int, name string, limit int64) ([]byte, Version, error) {
+	return s.read(ctx, taskID, revision, name, limit)
+}
+
+func (s *Store) read(ctx context.Context, taskID string, revision int, name string, limit int64) ([]byte, Version, error) {
 	if err := validateTask(taskID, revision); err != nil {
 		return nil, Version{}, err
 	}
 	if err := validatePath(name); err != nil {
 		return nil, Version{}, err
+	}
+	if limit < 0 {
+		return nil, Version{}, problem(400, "workspace_invalid_limit", "工作区单文件读取上限必须为非负数")
 	}
 	release, err := s.acquire(ctx)
 	if err != nil {
@@ -245,7 +258,17 @@ func (s *Store) Read(ctx context.Context, taskID string, revision int, name stri
 	defer loaded.close()
 	for _, entry := range loaded.entries {
 		if entry.Path == name {
-			data, readErr := io.ReadAll(&contextReader{ctx: ctx, r: entry.reader()})
+			if limit > 0 && entry.Size > limit {
+				return nil, loaded.version, quotaError("工作区文件超过单次读取上限")
+			}
+			var reader io.Reader = &contextReader{ctx: ctx, r: entry.reader()}
+			if limit > 0 {
+				reader = io.LimitReader(reader, limit+1)
+			}
+			data, readErr := io.ReadAll(reader)
+			if readErr == nil && limit > 0 && int64(len(data)) > limit {
+				return nil, loaded.version, quotaError("工作区文件超过单次读取上限")
+			}
 			return data, loaded.version, exposeError(readErr)
 		}
 	}
