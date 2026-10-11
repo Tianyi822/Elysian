@@ -170,6 +170,13 @@ func (e *Executor) start(ctx context.Context, id string, p config.Profile, grant
 	if err := validateCommand(start.Command, start.Environment); err != nil {
 		return nil, err
 	}
+	// 停用是紧急切断语义：停用只追加 Enabled=false 的新修订，固定修订快照本身仍为启用，
+	// 必须回查配置里的最新修订，禁止停用授权继续挂载业务目录或启动执行容器。
+	if grant != nil && e.options.ResolveGrant != nil {
+		if latest, err := e.options.ResolveGrant(grant.ID, 0); err != nil || latest == nil || latest.ID != grant.ID || !latest.Enabled {
+			return nil, problem(403, "execution-grant-disabled", "执行授权已停用，不能用于新的操作")
+		}
+	}
 	binds, err := e.binds(grant)
 	if err != nil {
 		return nil, err

@@ -24,7 +24,9 @@ type Options struct {
 	// SupervisorPath 必须是包含 agent-exec-supervisor 入口的 Linux 同二进制。
 	SupervisorPath string
 	MountRoot      string
-	ResolveGrant   func(string, int) (*config.Grant, error)
+	// ResolveGrant 按修订解析执行授权；revision 为 0 时解析最新修订，
+	// 供派发前回查停用状态。未装配时跳过停用回查。
+	ResolveGrant func(string, int) (*config.Grant, error)
 	// 注入仅供测试；生产使用系统 DNS 和 TCP 拨号。
 	LookupIP    func(context.Context, string) ([]net.IPAddr, error)
 	DialContext func(context.Context, string, string) (net.Conn, error)

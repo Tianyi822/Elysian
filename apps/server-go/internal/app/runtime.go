@@ -154,14 +154,7 @@ func assembleProductionHarness(cfg *config.Config, views seam.DockerViews, optio
 	if binErr == nil {
 		extensions.Executor, err = execution.New(execution.Options{SocketPath: cfg.DockerSocket, SupervisorPath: binary, MountRoot: cfg.MountRoot,
 			ResolveGrant: func(id string, revision int) (*execconfig.Grant, error) {
-				if extensions.Config == nil {
-					return nil, errors.New("容器执行授权配置不可用")
-				}
-				grant, err := extensions.Config.GetGrant(id, revision, true)
-				if err != nil {
-					return nil, err
-				}
-				return &grant, nil
+				return resolveExecutionGrant(extensions.Config, id, revision)
 			},
 		})
 		if err != nil {
@@ -225,6 +218,19 @@ func assembleProductionHarness(cfg *config.Config, views seam.DockerViews, optio
 		register(closeManager)
 	}
 	return handler, resources.Close, nil
+}
+
+// resolveExecutionGrant 供执行器解析挂载授权：停用即紧急切断，停用、撤销与
+// 不存在的授权同样拒绝，不允许停用的授权继续为 MCP stdio 容器挂载业务目录。
+func resolveExecutionGrant(config *execconfig.Store, id string, revision int) (*execconfig.Grant, error) {
+	if config == nil {
+		return nil, errors.New("容器执行授权配置不可用")
+	}
+	grant, err := config.GetGrant(id, revision, false)
+	if err != nil {
+		return nil, err
+	}
+	return &grant, nil
 }
 
 func joinDiagnostic(previous, next string) string {
