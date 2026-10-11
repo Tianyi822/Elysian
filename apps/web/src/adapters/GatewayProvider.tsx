@@ -41,6 +41,7 @@ export function GatewayProvider({
         // 本地无后端演示不强制登录。
         session: isDockerRuntime() ? 'http' : 'mock',
         panel: isDockerRuntime() ? 'http' : 'mock',
+        wiki: isDockerRuntime() ? 'http' : 'mock',
       }),
     [gateway],
   )

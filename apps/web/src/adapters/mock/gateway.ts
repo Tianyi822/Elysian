@@ -30,7 +30,8 @@ import { createHttpDependenciesAdapter } from '../http/dependenciesHttpAdapter'
 import { createHttpSessionAdapter } from '../http/sessionHttpAdapter'
 import { createTerminalWsAdapter } from '../http/terminalWsAdapter'
 import { createHttpDatabaseAdapter } from '../http/databaseHttpAdapter'
-import type { ContainerAdapter, EventsAdapter, TerminalAdapter } from '../../contracts/adapters'
+import { createHttpAgentWikiReadAdapter } from '../http/agentWikiReadHttpAdapter'
+import type { AgentWikiReadAdapter, ContainerAdapter, EventsAdapter, TerminalAdapter } from '../../contracts/adapters'
 import { useContainersStore } from '../../stores/containersStore'
 import { useSessionStore } from '../../stores/sessionStore'
 
@@ -45,6 +46,7 @@ import { useSessionStore } from '../../stores/sessionStore'
  *   在 Docker 运行时接通对应的真实端点，缺省仍是内存演示；
  * - `terminals: 'ws'` 在 Docker 运行时经 WebSocket 接容器内真实 PTY；
  * - `session: 'http'` 在 Docker 运行时经 /api/auth 走真实登录。
+ * - `wiki: 'http'` 在 Docker 运行时读取真实 Agent Wiki，演示模式明确为空。
  *
  * 数据库域没有 mock 取值：始终走 HTTP adapter（/api/databases）。
  */
@@ -63,6 +65,7 @@ export function createGateway(
     terminals?: 'mock' | 'ws'
     session?: 'mock' | 'http'
     panel?: 'mock' | 'http'
+    wiki?: 'mock' | 'http'
   } = {},
 ): ElysianGateway {
   const dataset = createMockDataset()
@@ -116,6 +119,7 @@ export function createGateway(
     websites,
     resources,
     dependencies,
+    wiki: options.wiki === 'http' ? createHttpAgentWikiReadAdapter() : createMockWikiReadAdapter(),
     events: attachDockerContainerWatch(
       useHttpContainers
         ? options.eventStream === 'memory'
@@ -135,6 +139,19 @@ export function createGateway(
       containers,
       useHttpContainers,
     ),
+  }
+}
+
+/** 演示模式不伪造 Wiki 内容，详情请求明确报告暂无可读数据。 */
+export function createMockWikiReadAdapter(): AgentWikiReadAdapter {
+  const unavailable = async (): Promise<never> => { throw new Error('演示模式暂无 Wiki 数据') }
+  return {
+    available: false,
+    listSpaces: async () => [],
+    listPages: async () => [],
+    getPage: unavailable,
+    getPageRevision: unavailable,
+    search: async () => ({ items: [], degraded: true, reason: '演示模式暂无 Wiki 数据' }),
   }
 }
 

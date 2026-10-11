@@ -1,4 +1,4 @@
-import type { PanelCommit, PanelInfo, PanelPorts, PanelTask, PanelTaskReport, PanelUpdate, PanelUpdateChannel, PanelUpdateTarget } from '@elysian/contracts'
+import type { AgentMemoryPage, AgentMemorySearchResult, AgentMemorySpace, PanelCommit, PanelInfo, PanelPorts, PanelTask, PanelTaskReport, PanelUpdate, PanelUpdateChannel, PanelUpdateTarget } from '@elysian/contracts'
 import type { WebsiteSource, WebsiteGitSourceInput, WebsiteDeploymentInput, WebsiteDeploymentTask, WebsiteBuildConfig, WebsiteDeploymentLogs } from '@elysian/contracts'
 import type {
   Container,
@@ -484,6 +484,18 @@ export interface DependenciesAdapter {
   setup(target: DependencySetupTarget, step: DependencySetupStep): Promise<DependencySetupResult>
 }
 
+/** 预留 Wiki 读取接缝；只暴露现有同源 API 的查询，不提供写入或页面导航。 */
+export interface AgentWikiReadAdapter {
+  /** 是否接通真实读取接口；演示环境为 false，不表示服务端当前健康状态。 */
+  readonly available: boolean
+  listSpaces(signal?: AbortSignal): Promise<readonly AgentMemorySpace[]>
+  listPages(spaceId: string, includeWithdrawn?: boolean, signal?: AbortSignal): Promise<readonly AgentMemoryPage[]>
+  getPage(spaceId: string, pageId: string, signal?: AbortSignal): Promise<AgentMemoryPage>
+  /** 后端按精确修订号读取，不提供修订目录。 */
+  getPageRevision(spaceId: string, pageId: string, revision: number, signal?: AbortSignal): Promise<AgentMemoryPage>
+  search(spaceId: string, query: string, limit?: number, signal?: AbortSignal): Promise<AgentMemorySearchResult>
+}
+
 /** 页面注入的聚合入口。 */
 export interface PanelAdapter {
  info(): Promise<PanelInfo>
@@ -512,4 +524,5 @@ export interface ElysianGateway {
   websites: WebsitesAdapter
   resources: ResourceHistoryAdapter
   dependencies: DependenciesAdapter
+  wiki: AgentWikiReadAdapter
 }
