@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -47,7 +48,7 @@ func UnavailableRouter(reason string) http.Handler {
 
 func newRuntimeRouter(service runtimeService, unavailableReason string) http.Handler {
 	r := chi.NewRouter()
-	r.Use(middleware.EndpointErrorHandler)
+	r.Use(panicGuard)
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			if !middleware.SameOrigin(req) {
@@ -276,4 +277,21 @@ func writeRuntimeError(w http.ResponseWriter, err error) {
 		Error string `json:"error"`
 		Code  string `json:"code"`
 	}{Error: message, Code: code})
+}
+
+// panicGuard panic 兜底：recover 到的 panic 值可能携带绝对路径、SQL/引擎细节等
+// 内部状态，一律不回显给客户端，固定按运行时未知错误回 500（与 writeRuntimeError
+// 对未知错误的净化同口径，panic 路径不得旁路）；细节只写标准错误日志。
+func panicGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		defer func() {
+			rec := recover()
+			if rec == nil {
+				return
+			}
+			log.Printf("任务运行路由 panic：%s %s — %v", req.Method, req.URL.Path, rec)
+			writeRuntimeError(w, &Error{Status: http.StatusInternalServerError, Code: "internal", Message: "任务运行服务发生错误"})
+		}()
+		next.ServeHTTP(w, req)
+	})
 }

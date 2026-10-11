@@ -226,7 +226,7 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 	// 非 /api 路径：嵌入前端静态资源 + SPA 回落 index.html，禁目录列表（go-plan §8）。
 	r.HandleFunc("/*", spaHandler(web.DistFS()))
 
-	// 父层兜底：panic 经 recover 落 server.http 运行日志后走同一条错误映射
+	// 父层兜底：panic 经 recover 落 server.http 运行日志后回固定内部错误文案
 	//（TS app.onError 等价物；各片内部错误由片自身映射与审计中间件记录，不到这里）。
 	runtime.handler = parentErrorHandler(r, appLogs)
 	return runtime, nil
@@ -234,7 +234,8 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 
 // parentErrorHandler 父层错误边界：只有「公共中间件或装配层抛出」的错误（Go 语义
 // 是 panic）到得了这里——先记一条 server.http 运行日志（消息格式与 TS app.onError
-// 逐字一致），再走与各域相同的错误映射。
+// 逐字一致），再回固定 500 文案；panic 值的原始文本可能携带内部细节，绝不回显给
+// 客户端。
 func parentErrorHandler(next http.Handler, appLogs seam.Logs) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
@@ -250,7 +251,7 @@ func parentErrorHandler(next http.Handler, appLogs seam.Logs) http.Handler {
 				appLogs.Runtime("error", "server.http",
 					fmt.Sprintf("请求处理失败：%s %s — %s", r.Method, r.URL.Path, err.Error()))
 			}
-			middleware.WriteError(w, err)
+			shared.SendError(w, http.StatusInternalServerError, "服务内部错误")
 		}()
 		next.ServeHTTP(w, r)
 	})
