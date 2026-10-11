@@ -69,7 +69,20 @@ func validateEmbeddingProfile(p EmbeddingProfile) error {
 	if len(p.Credential) > 8192 || !utf8.ValidString(p.Credential) {
 		return bad("invalid-embedding-profile", "Embedding 凭据格式无效")
 	}
+	// 明文 HTTP 会把 Bearer 凭据原样送上网，只有不出网卡的回环地址允许携带凭据。
+	if u.Scheme == "http" && p.Credential != "" && !embeddingLoopbackHost(u.Hostname()) {
+		return bad("invalid-embedding-profile", "HTTP Embedding 服务地址携带凭据时仅允许本机回环地址，请改用 HTTPS 或清除凭据")
+	}
 	return nil
+}
+
+// embeddingLoopbackHost 判定主机是否为本机回环；明文 HTTP 仅在回环内允许携带凭据。
+func embeddingLoopbackHost(host string) bool {
+	switch strings.ToLower(host) {
+	case "127.0.0.1", "::1", "localhost":
+		return true
+	}
+	return false
 }
 
 func embeddingFromInput(in EmbeddingProfileInput, old string, id string, revision int) (EmbeddingProfile, error) {

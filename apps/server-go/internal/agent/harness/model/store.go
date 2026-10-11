@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode"
@@ -184,7 +185,20 @@ func validateProfile(p Profile) error {
 	if len(p.Credential) > 8192 || !utf8.ValidString(p.Credential) || strings.IndexFunc(p.Credential, unicode.IsControl) >= 0 {
 		return problem(400, "invalid-profile", "模型凭据格式无效")
 	}
+	// 明文 HTTP 会把 Bearer 凭据原样送上网，只有不出网卡的回环地址允许携带凭据。
+	if u.Scheme == "http" && p.Credential != "" && !loopbackHost(u.Hostname()) {
+		return problem(400, "invalid-profile", "HTTP 模型服务地址携带凭据时仅允许本机回环地址，请改用 HTTPS 或清除凭据")
+	}
 	return nil
+}
+
+// loopbackHost 判定主机是否为本机回环；明文 HTTP 仅在回环内允许携带凭据。
+func loopbackHost(host string) bool {
+	switch strings.ToLower(host) {
+	case "127.0.0.1", "::1", "localhost":
+		return true
+	}
+	return false
 }
 
 func cleanText(value string, limit int) bool {
@@ -218,11 +232,19 @@ func readProfiles(path string) ([]Profile, error) {
 	}
 	revisions := make(map[string]int)
 	records := make([]Profile, 0, len(d.Profiles))
-	for _, stored := range d.Profiles {
+	for i, stored := range d.Profiles {
 		p := stored.Profile
 		p.Credential, p.HasCredential = stored.Secret, stored.Secret != ""
-		if !profileID.MatchString(p.ID) || p.Revision != revisions[p.ID]+1 || validateProfile(p) != nil {
-			return nil, problem(503, "profile-storage", "模型配置修订或字段无效，请检查配置文件")
+		// 拒载报错指明具体条目与原因：存量配置被新校验拒绝时，手工修复不必逐条翻找。
+		locate := "第 " + strconv.Itoa(i+1) + " 条模型配置"
+		if profileID.MatchString(p.ID) {
+			locate = "模型配置 " + p.ID + "（第 " + strconv.Itoa(i+1) + " 条）"
+		}
+		if !profileID.MatchString(p.ID) || p.Revision != revisions[p.ID]+1 {
+			return nil, problem(503, "profile-storage", locate+"的修订号无效，请检查配置文件")
+		}
+		if err := validateProfile(p); err != nil {
+			return nil, problem(503, "profile-storage", locate+"："+err.Error())
 		}
 		revisions[p.ID] = p.Revision
 		records = append(records, p)

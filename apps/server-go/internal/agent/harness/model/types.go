@@ -33,7 +33,7 @@ func (p Profile) Public() Profile {
 	return p
 }
 
-// Input 中省略 Credential 表示沿用旧值，显式空串表示清除；本地服务允许无凭据。
+// Input 中省略 Credential 表示沿用旧值，显式空串表示清除；本地服务允许无凭据，携带凭据的明文 HTTP 仅限本机回环地址。
 type Input struct {
 	Name          string       `json:"name"`
 	BaseURL       string       `json:"baseUrl"`
