@@ -20,7 +20,8 @@ import (
 func harnessAssemblyFixture(t *testing.T) (*config.Config, harnessAssemblyOptions) {
 	t.Helper()
 	root := t.TempDir()
-	p := paths.ElysianPaths{AgentModels: filepath.Join(root, "config", "agent-models.json"), AgentSkills: filepath.Join(root, "config", "agent-skills.json"), AgentMCPServers: filepath.Join(root, "config", "agent-mcp-servers.json"), AgentExecution: filepath.Join(root, "config", "agent-execution.json"), HarnessSqlite: filepath.Join(root, "data", "harness.sqlite"), SkillPackages: filepath.Join(root, "data", "skills"), AgentWorkspaces: filepath.Join(root, "data", "agent-workspaces")}
+	configRoot := filepath.Join(root, "config", "agent")
+	p := paths.ElysianPaths{AgentModels: filepath.Join(configRoot, "models.json"), AgentSkills: filepath.Join(configRoot, "skills.json"), AgentMCPServers: filepath.Join(configRoot, "mcp-servers.json"), AgentExecution: filepath.Join(configRoot, "execution.json"), AgentEmbeddings: filepath.Join(configRoot, "embeddings.json"), AgentRuntime: filepath.Join(configRoot, "runtime.json"), HarnessSqlite: filepath.Join(root, "data", "harness.sqlite"), SkillPackages: filepath.Join(root, "data", "skills"), AgentWorkspaces: filepath.Join(root, "data", "agent-workspaces")}
 	return &config.Config{BareMetal: true, MountRoot: t.TempDir(), DockerSocket: filepath.Join(root, "absent.sock")}, harnessAssemblyOptions{Paths: p, Home: root}
 }
 
@@ -168,14 +169,22 @@ func TestHarnessAssemblyUsesConfiguredConcurrencyForBothRunKinds(t *testing.T) {
 		want  int
 	}{{"", 2}, {"1", 1}, {"4", 4}} {
 		t.Run(tc.value, func(t *testing.T) {
-			t.Setenv("ELYSIAN_AGENT_CONCURRENCY", tc.value)
 			fixture, options := harnessAssemblyFixture(t)
-			cfg := config.Load()
-			cfg.BareMetal, cfg.Docker = true, false
-			cfg.MountRoot, cfg.DockerSocket = fixture.MountRoot, fixture.DockerSocket
+			cfg := fixture
+			if tc.value != "" {
+				if err := os.MkdirAll(filepath.Dir(options.Paths.AgentRuntime), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(options.Paths.AgentRuntime, []byte(`{"version":1,"concurrency":`+tc.value+`}`), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			called := false
 			options.NewManager = func(deps harness.Deps) (http.Handler, func(context.Context) error, error) {
 				called = true
+				if deps.EmbeddingConfigPath != options.Paths.AgentEmbeddings {
+					t.Fatalf("Embedding 配置未使用显式 Agent 路径：%q", deps.EmbeddingConfigPath)
+				}
 				batch, agent := harness.DefaultLimits(), harness.DefaultAgentLimits()
 				batch.Concurrency, agent.Concurrency = tc.want, tc.want
 				if deps.Limits != batch || deps.AgentLimits != agent {
@@ -196,21 +205,27 @@ func TestHarnessAssemblyUsesConfiguredConcurrencyForBothRunKinds(t *testing.T) {
 }
 
 func TestInvalidHarnessConcurrencyRejectsStartupBeforeOpeningResources(t *testing.T) {
-	t.Setenv("ELYSIAN_AGENT_CONCURRENCY", "5")
-	cfg := config.Load()
-	cfg.BareMetal, cfg.Docker = true, false
-	_, options := harnessAssemblyFixture(t)
+	cfg, options := harnessAssemblyFixture(t)
+	if err := os.MkdirAll(filepath.Dir(options.Paths.AgentRuntime), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(options.Paths.AgentRuntime, []byte(`{"version":1,"concurrency":5}`), 0600); err != nil {
+		t.Fatal(err)
+	}
 	options.NewManager = func(harness.Deps) (http.Handler, func(context.Context) error, error) {
 		t.Fatal("错误配置不能启动Worker")
 		return nil, nil, nil
 	}
 	_, closeResource, err := assembleProductionHarness(cfg, nil, options)
-	if err == nil || closeResource != nil || !strings.Contains(err.Error(), "ELYSIAN_AGENT_CONCURRENCY 必须为 1 至 4") {
+	if err == nil || closeResource != nil || !strings.Contains(err.Error(), "concurrency 必须为 1 至 4") {
 		t.Fatalf("非法并发没有中文拒绝：%v", err)
 	}
-	if _, err := os.Stat(filepath.Dir(options.Paths.AgentModels)); !os.IsNotExist(err) {
-		t.Fatalf("非法配置已打开资源：%v", err)
+	if _, err := os.Stat(options.Paths.HarnessSqlite); !os.IsNotExist(err) {
+		t.Fatalf("非法配置已打开运行库：%v", err)
 	}
+	previous := paths.Default.AgentRuntime
+	paths.Default.AgentRuntime = options.Paths.AgentRuntime
+	t.Cleanup(func() { paths.Default.AgentRuntime = previous })
 	if runtime, err := newAssembly(cfg, nil, auth.Deps{}); err == nil || runtime != nil {
 		t.Fatal("生产启动错误被静默降级为面板可用")
 	}

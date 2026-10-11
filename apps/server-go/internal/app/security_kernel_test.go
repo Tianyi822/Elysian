@@ -44,7 +44,7 @@ func TestResolveExecutionGrantRejectsDisabledGrant(t *testing.T) {
 	if err := os.MkdirAll(mountRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	store, err := execconfig.Open(filepath.Join(root, "config", "agent-execution.json"), execconfig.Options{MountRoot: mountRoot})
+	store, err := execconfig.Open(filepath.Join(root, "config", "agent", "execution.json"), execconfig.Options{MountRoot: mountRoot})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -36,6 +36,8 @@ var (
 	TmpDir = filepath.Join(ElysianHome, "tmp")
 	// ConfigDir 配置：面板自管的配置文件（凭据、数据库与网站登记）。
 	ConfigDir = filepath.Join(ElysianHome, "config")
+	// AgentConfigDir Agent 独立配置目录。
+	AgentConfigDir = filepath.Join(ConfigDir, "agent")
 	// HostKeysDir sshd 主机密钥：持久在卷上，/etc/ssh/ssh_host_* 以符号链接指向这里。
 	HostKeysDir = filepath.Join(ElysianHome, "ssh", "host-keys")
 )
@@ -55,6 +57,8 @@ type ElysianPaths struct {
 	AgentSkills     string
 	AgentMCPServers string
 	AgentExecution  string
+	AgentEmbeddings string
+	AgentRuntime    string
 	SkillPackages   string
 	AgentWorkspaces string
 	// SshdLog 面板托管的 sshd 定向日志。
@@ -90,10 +94,12 @@ func buildPaths() ElysianPaths {
 		FirewallSqlite:         filepath.Join(DataDir, "firewall.sqlite"),
 		LogsSqlite:             filepath.Join(DataDir, "logs.sqlite"),
 		HarnessSqlite:          filepath.Join(DataDir, "harness.sqlite"),
-		AgentModels:            filepath.Join(ConfigDir, "agent-models.json"),
-		AgentSkills:            filepath.Join(ConfigDir, "agent-skills.json"),
-		AgentMCPServers:        filepath.Join(ConfigDir, "agent-mcp-servers.json"),
-		AgentExecution:         filepath.Join(ConfigDir, "agent-execution.json"),
+		AgentModels:            filepath.Join(AgentConfigDir, "models.json"),
+		AgentSkills:            filepath.Join(AgentConfigDir, "skills.json"),
+		AgentMCPServers:        filepath.Join(AgentConfigDir, "mcp-servers.json"),
+		AgentExecution:         filepath.Join(AgentConfigDir, "execution.json"),
+		AgentEmbeddings:        filepath.Join(AgentConfigDir, "embeddings.json"),
+		AgentRuntime:           filepath.Join(AgentConfigDir, "runtime.json"),
 		SkillPackages:          filepath.Join(DataDir, "skills"),
 		AgentWorkspaces:        filepath.Join(DataDir, "agent-workspaces"),
 		SshdLog:                filepath.Join(LogsDir, "sshd.log"),

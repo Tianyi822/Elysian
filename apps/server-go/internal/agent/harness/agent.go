@@ -64,6 +64,9 @@ func (m *Manager) agentAvailableLocked() error {
 	if m.closed {
 		return closedError()
 	}
+	if err := m.store.recordsFault(); err != nil {
+		return &Error{Status: 503, Code: "record-storage-unavailable", Message: err.Error()}
+	}
 	if m.blocked != "" {
 		return &Error{Status: 503, Code: "runtime-unavailable", Message: m.blocked}
 	}
@@ -84,7 +87,7 @@ func (a *agentExecution) begin(ctx context.Context) (func(), error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	execution := m.executionLocked(a.run.ID)
-	if m.closed || execution == nil || execution.finishing || m.blocked != "" || ctx.Err() != nil {
+	if m.closed || execution == nil || execution.finishing || m.blocked != "" || m.store.recordsFault() != nil || ctx.Err() != nil {
 		return nil, context.Canceled
 	}
 	if a.busy || a.finalized {
@@ -259,7 +262,7 @@ func (a *agentExecution) mustStop(err error) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	execution := m.executionLocked(a.run.ID)
-	if m.storageError || execution == nil || execution.unresponsive || m.blocked != "" {
+	if m.storageError || execution == nil || execution.unresponsive || m.blocked != "" || m.store.recordsFault() != nil {
 		return true
 	}
 	var e *Error
@@ -394,6 +397,9 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 			}
 			resultCh <- result
 		}()
+		if result.err = m.store.recordsFault(); result.err != nil {
+			return
+		}
 		result.response, result.err = m.deps.ModelClient.Complete(callCtx, profile, request)
 	}()
 	var result modelOutcome

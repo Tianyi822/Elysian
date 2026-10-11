@@ -60,17 +60,19 @@ func TestMaintenancePreservesPendingAgentFactsDuringRestore(t *testing.T) {
 				"INSERT INTO workspace_versions VALUES('task-current',7)",
 			)
 			agentFiles := []string{
-				"config/agent-models.json", "config/agent-execution.json", "config/agent-skills.json",
-				"config/agent-mcp.json", "config/agent-future.lock", "data/harness.sqlite.lock",
+				"config/agent/models.json", "config/agent/execution.json", "config/agent/skills.json",
+				"config/agent/mcp-servers.json", "config/agent/models.json.lock", "data/harness.sqlite.lock",
 				"data/skills/skill/3/SKILL.md", "data/agent-workspaces/task-current.7.tar",
+				"data/agent-records/sessions/session-current.jsonl",
 			}
 			for _, name := range agentFiles {
 				writeRestoreFixture(t, root, name, "当前修订")
 				writeRestoreFixture(t, snapshot, name, "旧修订")
 			}
 			writeRestoreFixture(t, snapshot, "data/harness.sqlite", "旧数据库")
-			writeRestoreFixture(t, snapshot, "config/agent-snapshot-only.json", "不应重新引入的配置")
+			writeRestoreFixture(t, snapshot, "config/agent/snapshot-only.json", "不应重新引入的配置")
 			writeRestoreFixture(t, snapshot, "data/skills/removed/SKILL.md", "已移除的技能")
+			writeRestoreFixture(t, snapshot, "data/agent-records/sessions/removed.jsonl", "已清理的记录")
 			writeRestoreFixture(t, root, "config/panel-network.json", "新端口")
 			writeRestoreFixture(t, snapshot, "config/panel-network.json", "旧端口")
 			writeRestoreFixture(t, root, "data/websites/current.txt", "新网站数据")
@@ -90,7 +92,7 @@ func TestMaintenancePreservesPendingAgentFactsDuringRestore(t *testing.T) {
 			if err != nil || !bytes.Equal(before, after) {
 				t.Fatalf("当前运行库和执行证据被覆盖：%v", err)
 			}
-			for _, name := range []string{"config/agent-snapshot-only.json", "data/skills/removed/SKILL.md"} {
+			for _, name := range []string{"config/agent/snapshot-only.json", "data/skills/removed/SKILL.md", "data/agent-records/sessions/removed.jsonl"} {
 				if _, err := os.Stat(filepath.Join(root, name)); !os.IsNotExist(err) {
 					t.Fatalf("旧备份不应重新引入 Agent 文件 %s：%v", name, err)
 				}
@@ -106,13 +108,13 @@ func TestMaintenancePreservesCompletedWorkflowAfterBarrierConfirmed(t *testing.T
 	root, snapshot := t.TempDir(), t.TempDir()
 	createRestoreDatabase(t, root, "PRAGMA user_version=4", "CREATE TABLE execution_barriers(state TEXT NOT NULL)", "INSERT INTO execution_barriers VALUES('confirmed')",
 		"CREATE TABLE workflow_instances(id TEXT PRIMARY KEY,state TEXT NOT NULL)", "INSERT INTO workflow_instances VALUES('workflow-completed','succeeded')")
-	writeRestoreFixture(t, root, "config/agent-models.json", "新修订")
-	writeRestoreFixture(t, snapshot, "config/agent-models.json", "旧修订")
+	writeRestoreFixture(t, root, "config/agent/models.json", "新修订")
+	writeRestoreFixture(t, snapshot, "config/agent/models.json", "旧修订")
 	createRestoreDatabase(t, snapshot, "PRAGMA user_version=2", "CREATE TABLE messages(content TEXT)", "INSERT INTO messages VALUES('备份时的事实')")
 	if err := restorePanelData(snapshot, root); err != nil {
 		t.Fatal(err)
 	}
-	assertRestoreFixture(t, root, "config/agent-models.json", "新修订")
+	assertRestoreFixture(t, root, "config/agent/models.json", "新修订")
 	db, err := sql.Open("sqlite", filepath.Join(root, "data/harness.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -153,7 +155,7 @@ func assertWorkflowRecoveryFence(t *testing.T, root string) workflowRecoveryFenc
 }
 
 func TestMaintenanceRefusesSnapshotAgentDataWhenCurrentDatabaseMissing(t *testing.T) {
-	for _, name := range []string{"data/harness.sqlite", "config/agent-models.json", "data/skills/package/SKILL.md"} {
+	for _, name := range []string{"data/harness.sqlite", "config/agent/models.json", "data/skills/package/SKILL.md", "data/agent-records/sessions/old.jsonl"} {
 		t.Run(name, func(t *testing.T) {
 			root, snapshot := t.TempDir(), t.TempDir()
 			writeRestoreFixture(t, snapshot, name, "备份中的 Agent 事实")
@@ -177,6 +179,19 @@ func TestMaintenanceWithoutAgentDataRestoresNormally(t *testing.T) {
 	assertRestoreFixture(t, root, "config/panel-network.json", "旧端口")
 	if _, err := os.Stat(WorkflowRecoveryFencePath(root)); !os.IsNotExist(err) {
 		t.Fatalf("没有 Agent 数据不需要冻结标记：%v", err)
+	}
+}
+
+func TestMaintenanceRejectsInvalidAgentDirectories(t *testing.T) {
+	for _, name := range []string{"config/agent", "data/agent-records"} {
+		t.Run(name, func(t *testing.T) {
+			root, snapshot := t.TempDir(), t.TempDir()
+			createRestoreDatabase(t, root, "PRAGMA user_version=5", "CREATE TABLE execution_barriers(state TEXT NOT NULL)", "CREATE TABLE resource_leases(state TEXT NOT NULL)")
+			writeRestoreFixture(t, root, name, "普通文件不能冒充 Agent 目录")
+			if err := restorePanelData(snapshot, root); err == nil || !strings.Contains(err.Error(), "拒绝恢复") {
+				t.Fatalf("Agent 数据目录类型错误必须拒绝恢复：%v", err)
+			}
+		})
 	}
 }
 
@@ -285,7 +300,7 @@ func TestMaintenanceRefusesRestoreWhenBarrierCannotBeDetermined(t *testing.T) {
 func TestMaintenanceRestoreFailureLeavesPendingAgentFactsInPlace(t *testing.T) {
 	root, snapshot := t.TempDir(), t.TempDir()
 	createRestoreDatabase(t, root, "PRAGMA user_version=3", "CREATE TABLE execution_barriers(state TEXT NOT NULL)", "INSERT INTO execution_barriers VALUES('unknown')")
-	writeRestoreFixture(t, root, "config/agent-models.json", "当前修订")
+	writeRestoreFixture(t, root, "config/agent/models.json", "当前修订")
 	writeRestoreFixture(t, root, "data/agent-workspaces/task.7.tar", "当前工作区")
 	writeRestoreFixture(t, snapshot, "data/other.txt", "原文件")
 	if err := os.Symlink("other.txt", filepath.Join(snapshot, "data/link.txt")); err != nil {
@@ -294,7 +309,7 @@ func TestMaintenanceRestoreFailureLeavesPendingAgentFactsInPlace(t *testing.T) {
 	if err := restorePanelData(snapshot, root); err == nil {
 		t.Fatal("包含符号链接的备份应该失败")
 	}
-	assertRestoreFixture(t, root, "config/agent-models.json", "当前修订")
+	assertRestoreFixture(t, root, "config/agent/models.json", "当前修订")
 	assertRestoreFixture(t, root, "data/agent-workspaces/task.7.tar", "当前工作区")
 	if preserve, err := preserveAgentFacts(root); err != nil || !preserve {
 		t.Fatalf("失败后未决执行屏障必须仍然有效：%v", err)

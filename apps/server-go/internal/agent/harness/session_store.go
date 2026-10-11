@@ -283,6 +283,9 @@ func (s *store) sweepSessions(ctx context.Context, tx *sql.Tx, cutoff string) er
 		return err
 	}
 	for _, id := range ids {
+		if err = purgeRecordOwner(ctx, tx, recordOwner{kind: "session", id: id}); err != nil {
+			return err
+		}
 		if _, err = tx.ExecContext(ctx, "INSERT OR IGNORE INTO wiki_cleared_sources(run_id,cleared_at) SELECT id,? FROM runs WHERE session_id=?", stamp(s.now()), id); err != nil {
 			return err
 		}

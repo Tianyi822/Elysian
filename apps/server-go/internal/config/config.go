@@ -1,5 +1,6 @@
-// Package config 是运行模式与环境变量的唯一出口（go-plan §3.1）：一次性读 env 产出
-// 不可变 *Config，域包不读 env、不读 /.dockerenv，一切模式事实经装配层以 Deps 字段注入。
+// Package config 是运行模式与环境变量的唯一出口（go-plan §3.1）：一次性读 env，
+// 启动装配加载文件配置后固定快照；域包不读 env、不读 /.dockerenv，
+// 一切模式事实经装配层以 Deps 字段注入。
 //
 // 环境变量全表（全集，不新增未登记变量）：
 //
@@ -12,7 +13,6 @@
 //	ELYSIAN_CADDY_SOCKET      非空生效；缺省 /run/caddy/admin.sock。Caddy admin socket。
 //	ELYSIAN_DOCKER_MOUNT_ROOT 非空生效；缺省 /srv。绑定挂载根（docker 域读取）。
 //	ELYSIAN_LISTEN_HOST       非空生效；缺省 127.0.0.1。HTTP 监听地址。
-//	ELYSIAN_AGENT_CONCURRENCY 缺省 2；仅允许 1–4。生产 Agent Worker 池全局并发。
 //	ELYSIAN_APP_BUILD_TIMEOUT_SECONDS          正整数生效；缺省 1200。容器应用镜像
 //	                                          构建的单镜像时限（秒，ADR-0021）。
 //	ELYSIAN_APP_BUILD_TASK_TIMEOUT_SECONDS     正整数生效；缺省 3600。构建整任务时限。
@@ -27,10 +27,7 @@
 // Docker 开发端口固定 48101；正式安装端口由 panel-network.json 提供，后端固定回环。
 package config
 
-import (
-	"errors"
-	"os"
-)
+import "os"
 
 // ListenPort 是开发运行时的后端默认端口。
 const ListenPort = 48101
@@ -57,7 +54,7 @@ const (
 	ModeBareMetal
 )
 
-// Config 一次性读取的环境变量快照；构造后不再变化。
+// Config 保存环境变量与启动时文件配置的快照；装配完成后不再变化。
 type Config struct {
 	Network PanelNetwork
 
@@ -84,11 +81,12 @@ type Config struct {
 	// dockerEnvFile 是 Load 时刻 /.dockerenv 是否存在的事实快照；Mode 与
 	// InContainer 都以它为据，避免判定中途文件系统变化。
 	dockerEnvFile bool
-	// 保留环境快照，生产装配前校验；非法值不得静默回落默认并发。
-	agentConcurrency string
+	// Agent runtime.json 在装配时只读一次，随后所有 Run 共用这一快照。
+	agentRuntime       AgentRuntime
+	agentRuntimeLoaded bool
 }
 
-// Load 读取全部环境变量与 /.dockerenv 存在性，产出不可变 *Config。
+// Load 读取全部环境变量与 /.dockerenv 存在性；文件配置由启动装配显式加载。
 func Load() *Config {
 	_, err := os.Stat(dockerEnvMarker)
 	return load(os.Getenv, err == nil)
@@ -97,29 +95,38 @@ func Load() *Config {
 // load 以注入的 getenv 与 /.dockerenv 存在性构造 Config；测试用。
 func load(getenv func(string) string, dockerEnvFile bool) *Config {
 	return &Config{
-		Docker:           strictlyOne(getenv("ELYSIAN_DOCKER")),
-		BareMetal:        strictlyOne(getenv("ELYSIAN_BARE_METAL")),
-		AuthDev:          strictlyOne(getenv("ELYSIAN_AUTH_DEV")),
-		CookieSecure:     strictlyOne(getenv("ELYSIAN_COOKIE_SECURE")),
-		DockerSocket:     nonEmptyOrDefault(getenv("ELYSIAN_DOCKER_SOCKET"), defaultDockerSocket),
-		CaddySocket:      nonEmptyOrDefault(getenv("ELYSIAN_CADDY_SOCKET"), defaultCaddySocket),
-		MountRoot:        nonEmptyOrDefault(getenv("ELYSIAN_DOCKER_MOUNT_ROOT"), defaultMountRoot),
-		ListenHost:       nonEmptyOrDefault(getenv("ELYSIAN_LISTEN_HOST"), defaultListenHost),
-		dockerEnvFile:    dockerEnvFile,
-		agentConcurrency: getenv("ELYSIAN_AGENT_CONCURRENCY"),
+		Docker:        strictlyOne(getenv("ELYSIAN_DOCKER")),
+		BareMetal:     strictlyOne(getenv("ELYSIAN_BARE_METAL")),
+		AuthDev:       strictlyOne(getenv("ELYSIAN_AUTH_DEV")),
+		CookieSecure:  strictlyOne(getenv("ELYSIAN_COOKIE_SECURE")),
+		DockerSocket:  nonEmptyOrDefault(getenv("ELYSIAN_DOCKER_SOCKET"), defaultDockerSocket),
+		CaddySocket:   nonEmptyOrDefault(getenv("ELYSIAN_CADDY_SOCKET"), defaultCaddySocket),
+		MountRoot:     nonEmptyOrDefault(getenv("ELYSIAN_DOCKER_MOUNT_ROOT"), defaultMountRoot),
+		ListenHost:    nonEmptyOrDefault(getenv("ELYSIAN_LISTEN_HOST"), defaultListenHost),
+		dockerEnvFile: dockerEnvFile,
 	}
 }
 
-// AgentConcurrency 返回生产 Worker 池并发；手工构造的零值配置同样使用缺省 2。
-// 本地演示不启用 Agent，不消费此配置。
-func (c *Config) AgentConcurrency() (int, error) {
-	if c.agentConcurrency == "" {
-		return 2, nil
+// LoadAgentRuntime 在装配时读取一次配置；后续调用沿用同一快照，文件变化须重启。
+func (c *Config) LoadAgentRuntime(filename string) error {
+	if c.agentRuntimeLoaded {
+		return nil
 	}
-	if len(c.agentConcurrency) != 1 || c.agentConcurrency[0] < '1' || c.agentConcurrency[0] > '4' {
-		return 0, errors.New("ELYSIAN_AGENT_CONCURRENCY 必须为 1 至 4 的整数；未设置时默认为 2")
+	runtime, err := ReadAgentRuntime(filename)
+	if err != nil {
+		return err
 	}
-	return int(c.agentConcurrency[0] - '0'), nil
+	c.agentRuntime = runtime
+	c.agentRuntimeLoaded = true
+	return nil
+}
+
+// AgentConcurrency 返回已加载的 Worker 池并发；手工构造的零值配置默认 2。
+func (c *Config) AgentConcurrency() int {
+	if !c.agentRuntimeLoaded {
+		return DefaultAgentRuntime().Concurrency
+	}
+	return c.agentRuntime.Concurrency
 }
 
 // strictlyOne 判定「严格等于 '1' 才开」：'0'、'true'、缺省及其余取值一律恒关。

@@ -7,9 +7,8 @@ import (
 )
 
 // schemaVersion is bumped whenever a durable execution fact or a memory
-// reference changes shape.  v5 is additive: v1-v4 rows remain readable and
-// active workflow/v1 instances keep their original driver semantics.
-const schemaVersion = 5
+// reference changes shape. v6 adds a transactional JSONL record outbox.
+const schemaVersion = 6
 
 const capabilitySchema = `
 CREATE TABLE workspace_cleanup (task_id TEXT PRIMARY KEY);
@@ -142,7 +141,12 @@ func migrateStore(db *sql.DB) error {
 	if _, err = tx.Exec(workflowV2Schema); err != nil {
 		return err
 	}
-	if _, err = tx.Exec("PRAGMA user_version=5"); err != nil {
+	if version < 6 {
+		if err = migrateRecordOutbox(tx); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.Exec("PRAGMA user_version=6"); err != nil {
 		return err
 	}
 	return tx.Commit()

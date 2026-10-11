@@ -64,7 +64,12 @@ func (m *Manager) embeddingComplete(ctx context.Context, profile EmbeddingProfil
 		return nil, storageFailure(err)
 	}
 	m.mu.Unlock()
-	vector, usage, err := embeddingCompleteHTTP(ctx, profile, input)
+	var vector []float64
+	var usage model.Usage
+	err = m.store.recordsFault()
+	if err == nil {
+		vector, usage, err = embeddingCompleteHTTP(ctx, profile, input)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	record.Usage, record.Status, record.EndedAt = usage, StateSucceeded, wikiNow(m)

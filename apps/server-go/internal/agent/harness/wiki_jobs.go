@@ -239,7 +239,7 @@ func (m *Manager) wikiJobLoop() {
 
 func (m *Manager) runNextWikiJob() bool {
 	m.mu.Lock()
-	if m.closed || m.blocked != "" || m.storageError || m.ctx.Err() != nil || m.deps.DispatchGuard != nil && m.deps.DispatchGuard() != nil {
+	if m.closed || m.blocked != "" || m.storageError || m.store.recordsFault() != nil || m.ctx.Err() != nil || m.deps.DispatchGuard != nil && m.deps.DispatchGuard() != nil {
 		m.mu.Unlock()
 		return false
 	}
@@ -364,6 +364,9 @@ func (m *Manager) completeWikiExtraction(ctx context.Context, profile model.Prof
 			}
 			done <- out
 		}()
+		if out.err = m.store.recordsFault(); out.err != nil {
+			return
+		}
 		out.response, out.err = m.deps.ModelClient.Complete(ctx, profile, request)
 	}()
 	select {

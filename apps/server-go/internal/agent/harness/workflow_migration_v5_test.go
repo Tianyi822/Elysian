@@ -121,8 +121,8 @@ func TestWorkflowV4MigrationKeepsActiveV1ApprovalSemantics(t *testing.T) {
 				t.Fatal(err)
 			}
 			var version int
-			if err = upgraded.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 5 {
-				t.Fatalf("未完成v4→v5: %d %v", version, err)
+			if err = upgraded.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != schemaVersion {
+				t.Fatalf("未完成v4→当前版本: %d %v", version, err)
 			}
 			for _, item := range []struct{ table, id, original string }{{"workflow_instances", w.ID, oldWorkflow}, {"operations", a.OperationID, oldOperation}, {"approvals", a.ID, oldApproval}} {
 				var got string

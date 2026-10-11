@@ -49,7 +49,11 @@ func (m *Manager) probeServer(ctx context.Context, e *Extensions, server mcp.Ser
 	stop := context.AfterFunc(m.ctx, cancel)
 	defer stop()
 	defer cancel()
-	catalog, probeErr := e.MCP.Probe(pctx, server)
+	var catalog mcp.Catalog
+	probeErr := m.store.recordsFault()
+	if probeErr == nil {
+		catalog, probeErr = e.MCP.Probe(pctx, server)
+	}
 	lease.ContainerID = e.MCP.StdioIdentity(pctx, server.ID, server.Revision)
 	closeCtx, closeCancel := context.WithTimeout(mcp.WithScope(context.Background(), lease.ScopeID), 5*time.Second)
 	closeErr := e.MCP.CloseServer(closeCtx, server.ID, server.Revision)

@@ -13,6 +13,9 @@ func (m *Manager) workflowWritable() error {
 	if m.closed {
 		return closedError()
 	}
+	if err := m.store.recordsFault(); err != nil {
+		return &Error{503, "record-storage-unavailable", err.Error()}
+	}
 	if m.storageError {
 		return &Error{503, "storage-unavailable", "运行存储不可用"}
 	}

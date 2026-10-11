@@ -15,9 +15,18 @@ func TestMaintenanceWithoutConfiguredExecutionDoesNotRequireDocker(t *testing.T)
 	if err := h.recoverAgentExecution(context.Background()); err != nil {
 		t.Fatalf("普通安装不应被新增 Docker 依赖阻止维护：%v", err)
 	}
-	writeRestoreFixture(t, h.Store.Root, "config/agent-mcp-servers.json", `{"version":1,"servers":[{"transport":"streamable-http"}],"catalogs":[]}`)
+	writeRestoreFixture(t, h.Store.Root, "config/agent/mcp-servers.json", `{"version":1,"servers":[{"transport":"streamable-http"}],"catalogs":[]}`)
 	if err := h.recoverAgentExecution(context.Background()); err != nil {
 		t.Fatalf("仅 HTTP MCP 不应要求 Docker：%v", err)
+	}
+}
+
+func TestMaintenanceIgnoresLegacyAgentConfigurationPaths(t *testing.T) {
+	root := t.TempDir()
+	writeRestoreFixture(t, root, "config/agent-execution.json", "不再读取的旧执行配置")
+	writeRestoreFixture(t, root, "config/agent-mcp-servers.json", "不再读取的旧 MCP 配置")
+	if required, err := AgentExecutionRecoveryRequired(root); err != nil || required {
+		t.Fatalf("旧配置路径不应参与执行恢复判定：%t %v", required, err)
 	}
 }
 
@@ -27,13 +36,13 @@ func TestMaintenanceRequiresDockerForConfiguredOrPendingExecution(t *testing.T) 
 			h := SystemHost{Store: Store{Root: t.TempDir()}, DockerSocket: filepath.Join(t.TempDir(), "absent.sock")}
 			switch kind {
 			case "执行配置":
-				writeRestoreFixture(t, h.Store.Root, "config/agent-execution.json", `{"schema":1,"profiles":[{"enabled":false}],"grants":[]}`)
+				writeRestoreFixture(t, h.Store.Root, "config/agent/execution.json", `{"schema":1,"profiles":[{"enabled":false}],"grants":[]}`)
 			case "stdio配置":
-				writeRestoreFixture(t, h.Store.Root, "config/agent-mcp-servers.json", `{"version":1,"servers":[{"transport":"container-stdio","active":false}],"catalogs":[]}`)
+				writeRestoreFixture(t, h.Store.Root, "config/agent/mcp-servers.json", `{"version":1,"servers":[{"transport":"container-stdio","active":false}],"catalogs":[]}`)
 			case "未决屏障":
 				createRestoreDatabase(t, h.Store.Root, "PRAGMA user_version=3", "CREATE TABLE execution_barriers(state TEXT NOT NULL)", "INSERT INTO execution_barriers VALUES('unknown')")
 			case "配置损坏":
-				writeRestoreFixture(t, h.Store.Root, "config/agent-execution.json", "损坏配置")
+				writeRestoreFixture(t, h.Store.Root, "config/agent/execution.json", "损坏配置")
 			}
 			if err := h.recoverAgentExecution(context.Background()); err == nil {
 				t.Fatal("存在执行历史且无法确认容器停止时必须阻止维护")

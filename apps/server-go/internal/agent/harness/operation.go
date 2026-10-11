@@ -434,6 +434,9 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 			}
 			results <- result
 		}()
+		if result.e = m.store.recordsFault(); result.e != nil {
+			return
+		}
 		// Resource ownership, approval consumption and the dispatch barrier
 		// have committed before a stdio catalogue check can start container
 		// code. A failed check settles through the same bounded cleanup path
@@ -446,6 +449,8 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		m.mu.Lock()
 		if m.closed || execution.finishing || m.storageError || callCtx.Err() != nil {
 			result.e = context.Canceled
+		} else if m.store.recordsFault() != nil {
+			result.e = m.store.recordsFault()
 		} else if result.e = m.checkRevocations(callCtx, *a.run.Snapshot, o); result.e == nil && m.deps.DispatchGuard != nil {
 			result.e = m.deps.DispatchGuard()
 		}

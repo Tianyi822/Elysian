@@ -76,10 +76,10 @@ func assembleProductionHarness(cfg *config.Config, views seam.DockerViews, optio
 	if cfg.Mode() == config.ModeLocalDemo {
 		return harness.UnavailableRouter("本地演示模式不启用 Agent 任务运行"), nil, nil
 	}
-	concurrency, err := cfg.AgentConcurrency()
-	if err != nil {
+	if err := cfg.LoadAgentRuntime(options.Paths.AgentRuntime); err != nil {
 		return nil, nil, err
 	}
+	concurrency := cfg.AgentConcurrency()
 	if options.NewManager == nil {
 		options.NewManager = func(deps harness.Deps) (http.Handler, func(context.Context) error, error) {
 			manager, err := harness.New(deps)
@@ -107,7 +107,7 @@ func assembleProductionHarness(cfg *config.Config, views seam.DockerViews, optio
 	}
 	register(bridge.Close)
 	profiles, profileErr := model.Open(options.Paths.AgentModels)
-	deps := harness.Deps{Path: options.Paths.HarnessSqlite, Tools: bridge, Profiles: profiles, WorkflowRecoveryFence: panel.WorkflowRecoveryFencePath(options.Home)}
+	deps := harness.Deps{Path: options.Paths.HarnessSqlite, EmbeddingConfigPath: options.Paths.AgentEmbeddings, Tools: bridge, Profiles: profiles, WorkflowRecoveryFence: panel.WorkflowRecoveryFencePath(options.Home)}
 	deps.Limits = harness.DefaultLimits()
 	deps.AgentLimits = harness.DefaultAgentLimits()
 	deps.Limits.Concurrency = concurrency
@@ -130,17 +130,17 @@ func assembleProductionHarness(cfg *config.Config, views seam.DockerViews, optio
 	}
 	extensions.Skills, err = skills.Open(filepath.Join(configRoot, filepath.Base(options.Paths.AgentSkills)), filepath.Join(dataRoot, filepath.Base(options.Paths.SkillPackages)), skills.Options{})
 	if err != nil {
-		extensions.SkillsReason = "技能配置或包目录不可用，请检查 config/agent-skills.json 与 data/skills"
+		extensions.SkillsReason = "技能配置或包目录不可用，请检查 config/agent/skills.json 与 data/skills"
 	} else {
 		register(extensions.Skills.Close)
 	}
 	extensions.Servers, err = mcp.Open(filepath.Join(configRoot, filepath.Base(options.Paths.AgentMCPServers)))
 	if err != nil {
-		extensions.MCPReason = "MCP 配置不可用，请检查 config/agent-mcp-servers.json"
+		extensions.MCPReason = "MCP 配置不可用，请检查 config/agent/mcp-servers.json"
 	}
 	extensions.Config, err = execconfig.Open(filepath.Join(configRoot, filepath.Base(options.Paths.AgentExecution)), execconfig.Options{MountRoot: cfg.MountRoot})
 	if err != nil {
-		extensions.ExecutionReason = "容器执行配置或挂载根不可用，请检查 config/agent-execution.json 与业务挂载根"
+		extensions.ExecutionReason = "容器执行配置或挂载根不可用，请检查 config/agent/execution.json 与业务挂载根"
 	} else {
 		register(func(context.Context) error { return extensions.Config.Close() })
 	}
@@ -208,7 +208,7 @@ func assembleProductionHarness(cfg *config.Config, views seam.DockerViews, optio
 		return nil
 	}
 	if profileErr != nil {
-		deps.ModelConfigError = "模型配置文件不可用，请检查 config/agent-models.json"
+		deps.ModelConfigError = "模型配置文件不可用，请检查 config/agent/models.json"
 	}
 	handler, closeManager, err := options.NewManager(deps)
 	if err != nil {

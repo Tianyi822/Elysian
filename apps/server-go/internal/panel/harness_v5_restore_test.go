@@ -24,8 +24,8 @@ func TestMaintenancePreservesV5ScopeWikiAndUnknownProbeFacts(t *testing.T) {
 		"CREATE TABLE wiki_dependencies(kind TEXT,id TEXT,page_id TEXT)",
 		"INSERT INTO wiki_dependencies VALUES('workflow-node','node','page')",
 	)
-	writeRestoreFixture(t, root, "config/agent-embeddings.json", "当前embedding修订")
-	writeRestoreFixture(t, snapshot, "config/agent-embeddings.json", "旧embedding修订")
+	writeRestoreFixture(t, root, "config/agent/embeddings.json", "当前embedding修订")
+	writeRestoreFixture(t, snapshot, "config/agent/embeddings.json", "旧embedding修订")
 	writeRestoreFixture(t, snapshot, "data/harness.sqlite", "不得回放的旧库")
 	writeRestoreFixture(t, root, "data/agent-workspaces/branch-task.3.tar", "当前分支产物")
 	writeRestoreFixture(t, snapshot, "data/agent-workspaces/branch-task.1.tar", "旧分支产物")
@@ -50,7 +50,7 @@ func TestMaintenancePreservesV5ScopeWikiAndUnknownProbeFacts(t *testing.T) {
 	if err := restorePanelData(snapshot, root); err != nil {
 		t.Fatal(err)
 	}
-	assertRestoreFixture(t, root, "config/agent-embeddings.json", "当前embedding修订")
+	assertRestoreFixture(t, root, "config/agent/embeddings.json", "当前embedding修订")
 	assertRestoreFixture(t, root, "data/agent-workspaces/branch-task.3.tar", "当前分支产物")
 	assertWorkflowRecoveryFence(t, root)
 	db, err := sql.Open("sqlite", filepath.Join(root, "data", "harness.sqlite"))

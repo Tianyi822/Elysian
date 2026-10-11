@@ -18,16 +18,16 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// agentDataEntry 同时用于删除与复制过滤。连同锁文件一起保留全部 agent
-// 配置，避免数据库引用的模型、技能与执行授权修订退回旧版本。
+// agentDataEntry 同时用于删除与复制过滤。Agent 配置、记录和工作区
+// 必须与当前运行库一起保留，避免版本恢复倒退已提交的事实。
 func agentDataEntry(dir, name string) bool {
 	if dir == "config" {
-		return strings.HasPrefix(name, "agent-")
+		return name == "agent"
 	}
 	if dir != "data" {
 		return false
 	}
-	return name == "skills" || name == "agent-workspaces" || name == "harness.sqlite" ||
+	return name == "skills" || name == "agent-workspaces" || name == "agent-records" || name == "harness.sqlite" ||
 		strings.HasPrefix(name, "harness.sqlite-") || strings.HasPrefix(name, "harness.sqlite.")
 }
 
@@ -90,7 +90,8 @@ func inspectAgentEntries(root string) (bool, error) {
 			if err != nil {
 				return false, fmt.Errorf("无法检查 Agent 数据实体，已拒绝恢复：%w", err)
 			}
-			wantDirectory := dir == "data" && (entry.Name() == "skills" || entry.Name() == "agent-workspaces")
+			wantDirectory := dir == "config" && entry.Name() == "agent" ||
+				dir == "data" && (entry.Name() == "skills" || entry.Name() == "agent-workspaces" || entry.Name() == "agent-records")
 			if wantDirectory && !info.IsDir() || !wantDirectory && !info.Mode().IsRegular() {
 				return false, fmt.Errorf("Agent 数据实体类型无效，已拒绝恢复：%s", entry.Name())
 			}

@@ -108,7 +108,7 @@ func (m *Manager) RebuildWikiIndex(ctx context.Context, spaceID string, input Wi
 
 func (m *Manager) runNextWikiIndexJob() bool {
 	m.mu.Lock()
-	if m.closed || m.blocked != "" || m.storageError || m.ctx.Err() != nil || m.deps.DispatchGuard != nil && m.deps.DispatchGuard() != nil {
+	if m.closed || m.blocked != "" || m.storageError || m.store.recordsFault() != nil || m.ctx.Err() != nil || m.deps.DispatchGuard != nil && m.deps.DispatchGuard() != nil {
 		m.mu.Unlock()
 		return false
 	}

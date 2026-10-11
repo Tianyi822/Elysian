@@ -97,6 +97,9 @@ func (m *Manager) invoke(ctx context.Context, run Run, index int, name string, a
 			}
 			response <- result
 		}()
+		if result.err = m.store.recordsFault(); result.err != nil {
+			return
+		}
 		if m.deps.Tools == nil || !m.deps.Tools.Available() {
 			result.err = errors.New("工具依赖不可用")
 		} else {

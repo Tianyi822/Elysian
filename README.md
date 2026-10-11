@@ -29,7 +29,7 @@ Docker 开发入口只绑定宿主回环地址 `127.0.0.1:48100`；正式 system
 
 源码部署入口是 `sudo bash scripts/install.sh`（Ubuntu/Debian systemd，x86_64／arm64）：按官方校验安装 Go 与 bun，以 `elysian-build` 无特权账号构建内嵌前端的 Go 单二进制，安装版本目录与维护工具、创建 systemd 服务。默认入口 `http://<服务器 IP>:48100`，后端固定 `127.0.0.1:48101`。UFW 仅添加面板前端 TCP 规则并清理精确识别的面板后端遗留规则，保持原启停状态；云安全组、域名反代和 HTTPS 由部署者管理。首启初始密码打印在 stdout。忘记密码时执行 `HOME=/var/lib/elysian /usr/local/bin/elysian resetpwd`。完整部署与恢复说明见 [部署指南](scripts/README-deploy.md)。
 
-系统设置提供修改密码、面板端口、重启和源码更新。正式端口的唯一配置来源是 `~/.Elysian/config/panel-network.json`（整数 1–65535、端口互异），损坏时拒绝启动，不回落默认值。端口迁移检查宿主监听、SSH 配置、网站登记与运行／停用容器预留端口，先开放新前端、切换并检查两入口与页面资源，再删除旧前端规则；交换端口时先撤销即将成为后端的面板放行规则。共享或非面板规则冲突明确中止，不清空 UFW。端口与版本变更保留会话；密码表单通过校验后显示确认弹窗，确认修改使全部会话失效，取消保留输入。端口和更新说明由标题旁问号浮层展示；表单不常驻显示地址，维护连接超时保留新旧入口的手动链接。Docker 开发与本地演示显示「仅支持 systemd 安装版」。既有安装须先运行升级后的安装脚本完成一次维护能力引导。
+系统设置提供修改密码、面板端口、重启和源码更新。正式端口的唯一配置来源是 `~/.Elysian/config/panel-network.json`（整数 1–65535、端口互异），损坏时拒绝启动，不回落默认值。服务启动时读取该文件一次，不热加载；手动修改后重启会重读，但不会同步迁移 UFW 规则，因此请使用「系统设置 → 面板端口 → 保存并重启」。端口迁移检查宿主监听、SSH 配置、网站登记与运行／停用容器预留端口，先开放新前端、切换并检查两入口与页面资源，再删除旧前端规则；交换端口时先撤销即将成为后端的面板放行规则。共享或非面板规则冲突明确中止，不清空 UFW。端口与版本变更保留会话；密码表单通过校验后显示确认弹窗，确认修改使全部会话失效，取消保留输入。端口和更新说明由标题旁问号浮层展示；表单不常驻显示地址，维护连接超时保留新旧入口的手动链接。Docker 开发端口由 compose 与 Vite 配置独立控制；Docker 开发与本地演示的系统设置显示「仅支持 systemd 安装版」。既有安装须先运行升级后的安装脚本完成一次维护能力引导。
 
 在线更新固定来自 [Tianyi822/Elysian](https://github.com/Tianyi822/Elysian)，可选「最新提交」或「最新发版」。最新提交跟随实际默认分支；最新发版使用 GitHub latest 正式 Release，排除草稿和预发布，将发布标签解析为完整提交 SHA。两种策略均锁定检查所得 SHA，经 GitHub 源码归档 API 下载、安全解包，使用 `bun install --frozen-lockfile` 和 `go build -mod=readonly` 构建。安装与在线更新共用 [构建脚本](scripts/build-release.sh)，在线更新不重跑完整安装。构建上限 30 分钟，旧面板在构建期间继续服务；切换前停服备份配置及持久化数据，健康等待 60 秒，检查前后端、页面静态资源与运行提交，成功保留当前及上一成功版本，失败恢复程序、数据、配置和本次涉及的规则。没有正式发版时显示空状态，不回落默认分支；仓库未公开、标签失效、网络或限流错误保留当前程序。切换策略清空旧检查结果，重新检查后才允许更新。更新日志按所选策略读取默认分支或最新正式发版对应的提交记录。
 
@@ -144,7 +144,7 @@ MCP 当前不含旧 HTTP+SSE 传输、其他协议版本、OAuth 自动发现、
 
 ### 资源锁与执行池
 
-父进程管理有界 Worker 池，默认全局并发 2，生产环境可用 `ELYSIAN_AGENT_CONCURRENCY=1` 至 `4` 调整（未设置或空值为 2，非法值以中文配置错误拒绝启动）；同一根工作流最多同时占用 2 个执行槽，普通会话仍遵守 busy 约束。每个 Run 独立保存取消、调用和整理状态；取消一个 Run 不终止其他执行槽。审批与资源等待不占 Worker，也不重新消耗模型请求或工具预算。
+父进程管理有界 Worker 池，默认全局并发 2；`~/.Elysian/config/agent/runtime.json` 可写入 `{"version":1,"concurrency":2}`，并发仅允许 1 至 4，缺文件默认 2，非法配置拒绝启动，修改后重启生效。旧环境变量 `ELYSIAN_AGENT_CONCURRENCY` 不再读取。同一根工作流最多同时占用 2 个执行槽，普通会话仍遵守 busy 约束。每个 Run 独立保存取消、调用和整理状态；取消一个 Run 不终止其他执行槽。审批与资源等待不占 Worker，也不重新消耗模型请求或工具预算。
 
 | 资源与执行接口 | 用途 |
 | --- | --- |
@@ -198,7 +198,7 @@ MCP 当前不含旧 HTTP+SSE 传输、其他协议版本、OAuth 自动发现、
 
 公开消息及工作区查询会标出 `quarantined` 和 `wikiSources`。撤回保留历史内容和文件，隔离版本不能作为脚本输入；人工覆盖单个文件仍继承原工作区的隔离状态，清空工作区后可从有效事实重新生成。证据摘录必须来自已保存的成功公开答复或结果，来源会话清理后保留有界摘录并标记 `originalCleared`；撤回不等于删除审计或彻底遗忘。
 
-Embedding 使用独立的 `config/agent-embeddings.json`，采用 0600 文件、原子替换与同步，保留不可变修订。索引以页面修订／digest 与 Embedding 修订为键，更新页面不会误用旧向量；显式重建受单任务 60 秒限制，未完成时保留已确认索引并显示回落。查询使用余弦相似度与文本名次 RRF 合并；索引缺失、部分过期或供应商失败时继续提供中文双字文本结果。HTTP 不重试、不跟随跳转，响应上限 512 KiB，查询向量请求另限 3 秒。旧 `/wiki/*` 入口保留为同一状态的兼容接口。设计见本地 [ADR-0029](docs/adr/0029-agent-wiki-memory-and-embeddings.md)。
+Embedding 使用独立的 `config/agent/embeddings.json`，采用 0600 文件、原子替换与同步，保留不可变修订。索引以页面修订／digest 与 Embedding 修订为键，更新页面不会误用旧向量；显式重建受单任务 60 秒限制，未完成时保留已确认索引并显示回落。查询使用余弦相似度与文本名次 RRF 合并；索引缺失、部分过期或供应商失败时继续提供中文双字文本结果。HTTP 不重试、不跟随跳转，响应上限 512 KiB，查询向量请求另限 3 秒。旧 `/wiki/*` 入口保留为同一状态的兼容接口。Web gateway 预留空间、页面、修订和搜索的只读接缝，尚不提供 Wiki 页面或导航。设计见本地 [ADR-0029](docs/adr/0029-agent-wiki-memory-and-embeddings.md)。
 
 启用 Embedding 后，索引重建会向该配置地址发送页面标题和正文，混合检索会发送查询文本（自动召回时包含任务目标／当前输入）；供应商按自己的规则处理这些内容。每次索引或查询先写入独立请求记录再发送，估算与供应商报告的实际 token、缓存 token 分开保存，不并入 Agent 对话预算；未报告的字段不补零，失败响应中已报告的用量仍保留。公开账本只含输入字节数与摘要，不含正文、查询原文、向量或凭据，终态记录保留 30 天。维护期间直接服务调用也禁止修改 Embedding 配置和发起新请求。
 
@@ -246,7 +246,7 @@ Agent 步骤在公开答复后经专用 `workflow_finish` 函数提交结构化�
 
 既有分页接口返回 `{items,nextCursor,hasMore}`，普通分页默认 50、Run 事件默认 100、工作流事件默认 50，上限 200；operations/context-items 和审批/屏障为数组，不承诺分页。环境最多 32 技能、32 MCP 服务、128 工具选择、64 资源、16 执行配置、32 授权、256 只读信任别名。队列满返回 429，非法或超前事件游标返回 400。
 
-父进程独占 `~/.Elysian/data/harness.sqlite`，状态及事实事件在同一 SQLite WAL 事务提交；Worker 只经受限匿名 JSONL 管道请求模型和工具，不持有数据库、凭据、Docker socket 或域对象。Worker 继承系统进程权限，不是安全沙箱；脚本与 stdio MCP 才使用受限容器。stderr 仅保留前 4 KiB 内存诊断，无任务日志 API，logBytes 为预留字段。配置在 `config/agent-models.json`、`agent-skills.json`、`agent-mcp-servers.json`、`agent-execution.json`，包与工作区在 `data/skills`、`data/agent-workspaces`；凭据配置采用 0600 原子写入和同步。会话无活动 30 天且无活动 Run、无非终态工作流、无未决执行屏障时级联清理所属事实与工作区；批次终态保留 30 天，幂等记录随数据保留，配置历史和技能包不随会话删除。会话删除事务先写入持久工作区清理记录，文件删除成功才移除记录；清理失败或进程中断后可继续清理，不因数据库引用已删除而遗忘残留。
+父进程独占 `~/.Elysian/data/harness.sqlite`，状态及事实事件在同一 SQLite WAL 事务提交；`data/agent-records` 按会话或独立批次保存已持久化运行事实的 JSONL 副本，SQLite 仍是查询与事务的权威来源。副本通过同事务待写队列提交后同步落盘，重启先补写核对再开放派发；副本故障停止派发，不把已提交事务重做，也不采集原始 HTTP 或凭据。Worker 只经受限匿名 JSONL 管道请求模型和工具，不持有数据库、凭据、Docker socket 或域对象。Worker 继承系统权限，不是安全沙箱；脚本与 stdio MCP 才使用受限容器。stderr 仅保留前 4 KiB 内存诊断，无任务日志 API，logBytes 为预留字段。Agent 配置集中在 `config/agent/` 的 `models.json`、`skills.json`、`mcp-servers.json`、`execution.json`、`embeddings.json`、`runtime.json`；旧 `config/agent-*.json` 不迁移也不再读取。包与工作区在 `data/skills`、`data/agent-workspaces`；凭据配置采用 0600 原子写入和同步。会话无活动 30 天且无活动 Run、无非终态工作流、无未决执行屏障时级联清理所属事实、工作区与 JSONL；批次终态保留 30 天，幂等记录随数据保留，配置历史和技能包不随会话删除。会话删除事务先写入持久清理记录，文件删除成功才移除记录；清理失败或进程中断后继续清理。JSONL 待写账本保留到所属会话或批次清理，可用于缺失文件或截断尾部的重建；完整行错改及额外内容会阻止派发，须修复后重启核对。设计见本地 [ADR-0030](docs/adr/0030-agent-config-and-jsonl-records.md)。
 
 `app.Runtime.Close(ctx)` 统一回收 Worker、技能导入、MCP、执行容器、库与插件。启动核对并清理带本执行器标签的遗留容器及卷，无法确认停止则停止派发；不清理无关容器。正式维护冻结新派发与审批恢复，停服后备份 config/data。维护回退始终原位保留当前全部 Agent 配置、运行库、技能与工作区，包括已完成工作流的回执；其他领域恢复旧快照前，先同步落盘 `state/panel-maintenance/agent-workflow-recovery.json`。内核启动消费标记，将非终态工作流冻结为 recovery-required 并撤销未消费审批，事务成功后才删除并同步标记；完成回执和未知执行屏障保留。当前库损坏、无法核实，或当前库缺失而备份含 Agent 数据时拒绝自动恢复，不能拼接新旧事实。旧二进制不支持新 schema 时保持 Agent 不可用，不能降级运行库来启动。自动化验收使用假模型、假 MCP、临时配置及专用执行容器，不读取生产凭据；实际模型/MCP 连通性需操作者提供配置。设计分别见本地 [ADR-0024](docs/adr/0024-agent-task-runtime-kernel.md)、[ADR-0025](docs/adr/0025-single-agent-sessions-and-working-memory.md)、[ADR-0026](docs/adr/0026-agent-capabilities-approvals-and-execution.md)、[ADR-0027](docs/adr/0027-agent-sequential-workflows.md)。
 

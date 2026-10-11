@@ -34,6 +34,7 @@ type Deps struct {
 	AgentLimits           Limits
 	ModelConfigError      string
 	Path                  string
+	EmbeddingConfigPath   string
 	Tools                 ToolInvoker
 	Limits                Limits
 	Now                   func() time.Time
@@ -110,6 +111,9 @@ func New(deps Deps) (*Manager, error) {
 	}
 	if err == nil {
 		err = (&Manager{store: s, deps: deps}).recoverWikiJobs(context.Background())
+	}
+	if err == nil {
+		err = s.recordsFault()
 	}
 	if err != nil {
 		_ = s.close()
@@ -205,6 +209,9 @@ func (m *Manager) availableLocked() error {
 	if m.closed {
 		return &Error{Status: 503, Code: "runtime-stopped", Message: "任务运行内核已停止"}
 	}
+	if err := m.store.recordsFault(); err != nil {
+		return &Error{Status: 503, Code: "record-storage-unavailable", Message: err.Error()}
+	}
 	if m.blocked != "" {
 		return &Error{Status: 503, Code: "runtime-unavailable", Message: m.blocked}
 	}
@@ -220,7 +227,7 @@ func (m *Manager) Info() RuntimeInfo {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	i := RuntimeInfo{Worker: m.workerState, Storage: "ready", Limits: m.deps.Limits, Tools: []tools.PublicSchema{}}
-	if m.storageError {
+	if m.storageError || m.store.recordsFault() != nil {
 		i.Storage = "unavailable"
 	}
 	if m.closed {
@@ -252,8 +259,15 @@ func (m *Manager) Info() RuntimeInfo {
 			i.Available, i.Reason = false, dispatchError.Error()
 		}
 	}
+	if recordErr := m.store.recordsFault(); recordErr != nil {
+		dispatchError = recordErr
+		i.Available, i.Reason = false, recordErr.Error()
+	}
 	i.Batch = RuntimeCapability{Available: i.Available, Reason: i.Reason}
 	i.Workflow.Available = !m.closed && !m.storageError && dispatchError == nil
+	if dispatchError != nil {
+		i.Workflow.Reason = dispatchError.Error()
+	}
 	i.Wiki = i.Workflow
 	i.WorkflowV2 = i.Workflow
 	i.ResourceLocks = i.Workflow
@@ -462,7 +476,7 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 			return
 		}
 		m.mu.Lock()
-		blocked := m.blocked != ""
+		blocked := m.blocked != "" || m.store.recordsFault() != nil
 		p := slot.process
 		m.mu.Unlock()
 		if blocked {
@@ -672,6 +686,11 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 			continue
 		}
 		r.Task = taskSnapshot
+		if m.store.recordsFault() != nil {
+			m.finishLocked(r.ID, StateInterrupted, "record-storage-unavailable", "JSONL 记录副本不可用，未启动执行")
+			m.mu.Unlock()
+			continue
+		}
 		remaining := time.Duration(r.Limits.RunTimeoutSeconds)*time.Second - time.Duration(r.ActiveMilliseconds)*time.Millisecond
 		if r.WorkflowID != "" && time.Duration(r.WorkflowActiveReserved)*time.Millisecond < remaining {
 			remaining = time.Duration(r.WorkflowActiveReserved) * time.Millisecond

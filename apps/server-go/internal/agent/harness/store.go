@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -17,9 +18,15 @@ import (
 
 // store 只由面板进程持有。状态和事实事件始终在同一事务提交。
 type store struct {
-	db   *sql.DB
-	lock *os.File
-	now  func() time.Time
+	db             *sql.DB
+	lock           *os.File
+	now            func() time.Time
+	recordsRoot    string
+	recordsMu      sync.Mutex
+	recordsStateMu sync.RWMutex
+	recordsErr     error
+	// recordHook injects append/fsync crash points in tests only.
+	recordHook func(string) error
 	// beforeWrite 只供故障注入测试；生产恒 nil。
 	beforeWrite func(string) error
 	// failNextCommit 非空时使下一次提交按失败返回，只供故障注入测试；生产恒 nil。
@@ -68,7 +75,7 @@ func openStore(path string, now func() time.Time) (*store, error) {
 		lock.Close()
 		return nil, errors.New("运行数据库已由另一个面板进程持有")
 	}
-	s := &store{lock: lock, now: now}
+	s := &store{lock: lock, now: now, recordsRoot: filepath.Join(filepath.Dir(path), "agent-records")}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		s.close()
@@ -97,6 +104,13 @@ func openStore(path string, now func() time.Time) (*store, error) {
 		s.close()
 		return nil, err
 	}
+	if err = s.prepareRecords(); err == nil {
+		err = s.reconcileRecords(true)
+	}
+	if err != nil {
+		s.close()
+		return nil, fmt.Errorf("恢复 Agent JSONL 记录失败：%w", err)
+	}
 	return s, nil
 }
 
@@ -123,6 +137,8 @@ func (s *store) write(ctx context.Context, op string, fn func(*sql.Tx) error) er
 			return err
 		}
 	}
+	s.recordsMu.Lock()
+	defer s.recordsMu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -138,6 +154,14 @@ func (s *store) write(ctx context.Context, op string, fn func(*sql.Tx) error) er
 	}
 	if err = tx.Commit(); err != nil {
 		return &unconfirmedCommit{op: op, err: err}
+	}
+	// A committed SQLite transaction remains successful when its JSONL copy
+	// fails. Freeze new dispatch at the external-call gates, but keep accepting
+	// in-flight receipts into SQLite and its outbox for recovery at restart.
+	if s.recordsFault() == nil {
+		if err = s.reconcileRecords(false); err != nil {
+			s.failRecords(err)
+		}
 	}
 	return nil
 }
@@ -405,12 +429,36 @@ func (s *store) sweep(ctx context.Context, days int) error {
 		if err := s.sweepSessions(ctx, tx, cutoff); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM runs WHERE session_id='' AND state IN ('succeeded','failed','cancelled','interrupted') AND ended_at<>'' AND julianday(ended_at)<julianday(?)
+		const expiredBatchRuns = ` FROM runs WHERE session_id='' AND state IN ('succeeded','failed','cancelled','interrupted') AND ended_at<>'' AND julianday(ended_at)<julianday(?)
  AND NOT EXISTS(SELECT 1 FROM resource_leases l WHERE l.run_id=runs.id AND l.state IN ('held','unknown'))
- AND NOT EXISTS(SELECT 1 FROM execution_barriers b WHERE b.run_id=runs.id AND b.state IN ('dispatched','unknown'))`, cutoff); err != nil {
+	 AND NOT EXISTS(SELECT 1 FROM execution_barriers b WHERE b.run_id=runs.id AND b.state IN ('dispatched','unknown'))`
+		rows, err := tx.QueryContext(ctx, "SELECT id"+expiredBatchRuns, cutoff)
+		if err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, "DELETE FROM tasks WHERE session_id='' AND NOT EXISTS(SELECT 1 FROM runs WHERE runs.task_id=tasks.id)")
+		var expired []string
+		for rows.Next() {
+			var id string
+			if err = rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+			expired = append(expired, id)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
+		for _, id := range expired {
+			if err = purgeRecordOwner(ctx, tx, recordOwner{kind: "batch-run", id: id}); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, "DELETE"+expiredBatchRuns, cutoff); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, "DELETE FROM tasks WHERE session_id='' AND NOT EXISTS(SELECT 1 FROM runs WHERE runs.task_id=tasks.id)")
 		return err
 	})
 }

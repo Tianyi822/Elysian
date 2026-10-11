@@ -19,7 +19,7 @@ func AgentExecutionRecoveryRequired(root string) (bool, error) {
 		Schema   int               `json:"schema"`
 		Profiles []json.RawMessage `json:"profiles"`
 	}
-	present, err := readAgentRecoveryConfig(filepath.Join(root, "config", "agent-execution.json"), &executionConfig)
+	present, err := readAgentRecoveryConfig(filepath.Join(root, "config", "agent", "execution.json"), &executionConfig)
 	if err != nil {
 		return false, err
 	}
@@ -36,7 +36,7 @@ func AgentExecutionRecoveryRequired(root string) (bool, error) {
 			Stdio     json.RawMessage `json:"stdio"`
 		} `json:"servers"`
 	}
-	present, err = readAgentRecoveryConfig(filepath.Join(root, "config", "agent-mcp-servers.json"), &mcpConfig)
+	present, err = readAgentRecoveryConfig(filepath.Join(root, "config", "agent", "mcp-servers.json"), &mcpConfig)
 	if err != nil {
 		return false, err
 	}

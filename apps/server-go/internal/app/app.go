@@ -67,7 +67,7 @@ func New(cfg *config.Config, appLogs seam.Logs) (*Runtime, error) {
 // RequireSession 与 auth 片——漏穿只有静默缺断连/滑动丢失，没有测试会红。
 func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, factories ...harnessFactory) (*Runtime, error) {
 	if cfg.Mode() != config.ModeLocalDemo {
-		if _, err := cfg.AgentConcurrency(); err != nil {
+		if err := cfg.LoadAgentRuntime(paths.Default.AgentRuntime); err != nil {
 			return nil, err
 		}
 	}

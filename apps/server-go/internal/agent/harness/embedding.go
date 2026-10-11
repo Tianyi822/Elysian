@@ -262,7 +262,10 @@ type embeddingDocument struct {
 }
 
 func (m *Manager) embeddingConfigPath() string {
-	return filepath.Join(filepath.Dir(filepath.Dir(m.deps.Path)), "config", "agent-embeddings.json")
+	if m.deps.EmbeddingConfigPath != "" {
+		return m.deps.EmbeddingConfigPath
+	}
+	return filepath.Join(filepath.Dir(filepath.Dir(m.deps.Path)), "config", "agent", "embeddings.json")
 }
 
 func (m *Manager) readEmbeddingProfiles() ([]EmbeddingProfile, error) {

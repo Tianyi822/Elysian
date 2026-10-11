@@ -83,7 +83,7 @@ func TestMaintenanceBacksUpHarnessDatabaseAfterServiceStops(t *testing.T) {
 
 func TestMaintenancePreservesCurrentAgentSessionsMemoryAndModelRevisions(t *testing.T) {
 	w, record, host := setupWorker(t, "ports")
-	modelPath := filepath.Join(w.Store.Root, "config", "agent-models.json")
+	modelPath := filepath.Join(w.Store.Root, "config", "agent", "models.json")
 	profiles, err := model.Open(modelPath)
 	if err != nil {
 		t.Fatal(err)
@@ -126,6 +126,7 @@ func TestMaintenancePreservesCurrentAgentSessionsMemoryAndModelRevisions(t *test
 	if _, err := db.Exec("INSERT INTO sessions VALUES('session-backup',?,1)", created.ID); err != nil {
 		t.Fatal(err)
 	}
+	writeRestoreFixture(t, w.Store.Root, "data/agent-records/sessions/session-backup.jsonl", `{"seq":"1","kind":"message"}`+"\n")
 	w.Host = &harnessSnapshotHost{fakeHost: host, stopDatabase: func() error {
 		if _, err := db.Exec("INSERT INTO messages VALUES('session-backup',2,'停服收尾后的公开答复')"); err != nil {
 			return err
@@ -138,6 +139,7 @@ func TestMaintenancePreservesCurrentAgentSessionsMemoryAndModelRevisions(t *test
 	if !record.SnapshotReady || host.stops != 1 {
 		t.Fatal("必须在停服后生成完整维护快照")
 	}
+	assertRestoreFixture(t, record.Snapshot, "data/agent-records/sessions/session-backup.jsonl", `{"seq":"1","kind":"message"}`+"\n")
 	// 模拟候选版本继续产生模型修订与任务事实；旧快照不能倒退这些事实。
 	input.Name = "候选版本模型第三版"
 	if _, err := profiles.Update(created.ID, 2, input); err != nil {
@@ -154,9 +156,11 @@ func TestMaintenancePreservesCurrentAgentSessionsMemoryAndModelRevisions(t *test
 	if err := candidate.Close(); err != nil {
 		t.Fatal(err)
 	}
+	writeRestoreFixture(t, w.Store.Root, "data/agent-records/sessions/session-backup.jsonl", `{"seq":"2","kind":"message"}`+"\n")
 	if err := restorePanelData(record.Snapshot, w.Store.Root); err != nil {
 		t.Fatal(err)
 	}
+	assertRestoreFixture(t, w.Store.Root, "data/agent-records/sessions/session-backup.jsonl", `{"seq":"2","kind":"message"}`+"\n")
 	restored, err := model.Open(modelPath)
 	if err != nil {
 		t.Fatal(err)

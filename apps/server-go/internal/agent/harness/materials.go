@@ -166,6 +166,9 @@ func (m *Manager) checkProbeLocked(ctx context.Context, server mcp.Server) error
 	if m.closed || m.store == nil {
 		return closedError()
 	}
+	if err := m.store.recordsFault(); err != nil {
+		return &Error{503, "record-storage-unavailable", err.Error()}
+	}
 	if m.blocked != "" {
 		return &Error{503, "runtime-unavailable", m.blocked}
 	}
