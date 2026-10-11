@@ -379,3 +379,44 @@ func TestSkillFrontmatterValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// 删除登记后磁盘包目录的回收：仅回收「无引用且超过保护期」的摘要目录，
+// 被引用的与保护期内的（覆盖导入先落位后登记的无引用窗口）必须保留，
+// 非摘要命名的外来目录不动。
+func TestPrunePackagesKeepsReferencedAndFreshOrphans(t *testing.T) {
+	s, _, packages := fixture(t, Options{})
+	packagesRoot := filepath.Join(packages, "packages")
+	staleDigest := strings.Repeat("a", 64)
+	freshDigest := strings.Repeat("b", 64)
+	referencedDigest := strings.Repeat("c", 64)
+	for _, digest := range []string{staleDigest, freshDigest, referencedDigest} {
+		dir := filepath.Join(packagesRoot, digest)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(testSkill), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stale := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(filepath.Join(packagesRoot, staleDigest), stale, stale); err != nil {
+		t.Fatal(err)
+	}
+	foreign := filepath.Join(packagesRoot, "not-a-digest")
+	if err := os.MkdirAll(foreign, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s.prunePackages(document{Skills: []Skill{{Digest: referencedDigest}}})
+	if _, err := os.Lstat(filepath.Join(packagesRoot, staleDigest)); !os.IsNotExist(err) {
+		t.Fatal("超期无引用的包目录未被回收")
+	}
+	if _, err := os.Lstat(filepath.Join(packagesRoot, freshDigest)); err != nil {
+		t.Fatalf("保护期内的包目录不应回收：%v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(packagesRoot, referencedDigest)); err != nil {
+		t.Fatalf("被引用的包目录不应回收：%v", err)
+	}
+	if _, err := os.Lstat(foreign); err != nil {
+		t.Fatalf("非摘要命名的外来目录不应被动：%v", err)
+	}
+}

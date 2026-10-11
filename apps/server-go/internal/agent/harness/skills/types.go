@@ -28,15 +28,18 @@ func problem(status int, code, message string) error {
 }
 
 type Limits struct {
-	PackageBytes int64         `json:"packageBytes"`
-	ArchiveBytes int64         `json:"archiveBytes"`
-	Files        int           `json:"files"`
-	Queue        int           `json:"queue"`
-	Timeout      time.Duration `json:"-"`
+	PackageBytes int64 `json:"packageBytes"`
+	ArchiveBytes int64 `json:"archiveBytes"`
+	Files        int   `json:"files"`
+	Queue        int   `json:"queue"`
+	// ImportHistory 是导入记录的滚动保留条数：登记文件为全量复写的单一 JSON，
+	// 历史不收缩会随导入次数不可逆增长并卡死在写盘上限上，故只保留最近的终态记录。
+	ImportHistory int           `json:"importHistory"`
+	Timeout       time.Duration `json:"-"`
 }
 
 func DefaultLimits() Limits {
-	return Limits{PackageBytes: 64 << 20, ArchiveBytes: 64 << 20, Files: 2048, Queue: 32, Timeout: 5 * time.Minute}
+	return Limits{PackageBytes: 64 << 20, ArchiveBytes: 64 << 20, Files: 2048, Queue: 32, ImportHistory: 128, Timeout: 5 * time.Minute}
 }
 
 // GitFetcher 只获取公开指定来源；实现必须禁止执行仓库 hooks 与 submodule。

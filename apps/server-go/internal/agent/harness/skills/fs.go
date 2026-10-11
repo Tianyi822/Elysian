@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/sys/unix"
@@ -28,11 +29,22 @@ func cleanRelative(value string) (string, error) {
 		return "", problem(400, "invalid-path", "技能文件路径无效")
 	}
 	for _, part := range strings.Split(value, "/") {
-		if part == "." || part == ".." || part == "" {
+		if part == "." || part == ".." || part == "" || hasInvisibleRune(part) {
 			return "", problem(400, "invalid-path", "技能文件路径无效")
 		}
 	}
 	return value, nil
+}
+
+// hasInvisibleRune 判定是否包含不可打印或方向控制字符（格式控制符、控制符、代理对、
+// 私用区、未分配码点、行段分隔符与非常规空白），防止路径在人审与模型可见清单中视觉混淆。
+func hasInvisibleRune(value string) bool {
+	for _, r := range value {
+		if !unicode.IsGraphic(r) || (unicode.Is(unicode.Zs, r) && r != ' ') {
+			return true
+		}
+	}
+	return false
 }
 
 // openDirectory 逐级拒绝符号链接；不依赖先检查再打开的路径判定。

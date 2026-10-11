@@ -69,6 +69,17 @@ func registerExtensionRoutes(r chi.Router, service runtimeService) {
 		item, err := e.Skills.SetEnabled(chi.URLParam(req, "id"), in.ExpectedRevision, *in.Enabled)
 		sendExtension(w, 200, item, err)
 	}))
+	// 删除技能是登记容量触顶后的板内自助恢复入口：删除收回文档条目、产出更小的
+	// 登记文件，因此在写盘上限拒绝增长之后仍可落盘，无需停面板手工编辑 0600 配置。
+	r.Delete("/skills/{id}", wrap("skills", func(e *Extensions, w http.ResponseWriter, req *http.Request) {
+		revision, err := extensionRevision(req, true)
+		if err != nil {
+			writeRuntimeError(w, err)
+			return
+		}
+		item, err := e.Skills.Delete(chi.URLParam(req, "id"), revision)
+		sendExtension(w, 200, item, err)
+	}))
 	r.Get("/skills/imports", wrap("skills", func(e *Extensions, w http.ResponseWriter, req *http.Request) {
 		q, err := runtimeQuery(req, 50, "cursor", "limit")
 		if err != nil {
@@ -117,6 +128,15 @@ func registerExtensionRoutes(r chi.Router, service runtimeService) {
 			status = http.StatusAccepted
 		}
 		shared.SendJSON(w, status, task)
+	}))
+	// 删除已达终态的导入记录：配合滚动保留，为登记容量触顶提供直接的清理入口。
+	r.Delete("/skills/imports/{id}", wrap("skills", func(e *Extensions, w http.ResponseWriter, req *http.Request) {
+		if _, err := runtimeQuery(req, 50); err != nil {
+			writeRuntimeError(w, err)
+			return
+		}
+		task, err := e.Skills.DeleteImport(chi.URLParam(req, "id"))
+		sendExtension(w, 200, task, err)
 	}))
 	r.Get("/mcp-servers", wrap("mcp", func(e *Extensions, w http.ResponseWriter, req *http.Request) {
 		if _, err := runtimeQuery(req, 50); err != nil {

@@ -42,7 +42,7 @@ func parseManifest(raw []byte) (Manifest, error) {
 	if err := decoder.Decode(&manifest); err != nil {
 		return manifest, problem(400, "invalid-frontmatter", "技能元数据格式无效或包含不支持字段")
 	}
-	if len(manifest.Name) > 64 || !skillName.MatchString(manifest.Name) || strings.TrimSpace(manifest.Description) == "" || utf8.RuneCountInString(manifest.Description) > 1024 || utf8.RuneCountInString(manifest.Compatibility) > 500 {
+	if len(manifest.Name) > 64 || !skillName.MatchString(manifest.Name) || strings.TrimSpace(manifest.Description) == "" || hasInvisibleRune(manifest.Description) || utf8.RuneCountInString(manifest.Description) > 1024 || utf8.RuneCountInString(manifest.Compatibility) > 500 {
 		return manifest, problem(400, "invalid-frontmatter", "技能 name、description 或 compatibility 不符合格式与长度要求")
 	}
 	if strings.TrimSpace(text[4+end+5:]) == "" {

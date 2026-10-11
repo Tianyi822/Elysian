@@ -48,8 +48,12 @@ func Open(configPath, packageRoot string, options Options) (*Store, error) {
 	if options.Limits == (Limits{}) {
 		options.Limits = defaults
 	}
-	if options.Limits.PackageBytes <= 0 || options.Limits.PackageBytes > defaults.PackageBytes || options.Limits.ArchiveBytes <= 0 || options.Limits.ArchiveBytes > defaults.ArchiveBytes || options.Limits.Files <= 0 || options.Limits.Files > defaults.Files || options.Limits.Queue <= 0 || options.Limits.Queue > defaults.Queue || options.Limits.Timeout <= 0 || options.Limits.Timeout > defaults.Timeout {
+	if options.Limits.PackageBytes <= 0 || options.Limits.PackageBytes > defaults.PackageBytes || options.Limits.ArchiveBytes <= 0 || options.Limits.ArchiveBytes > defaults.ArchiveBytes || options.Limits.Files <= 0 || options.Limits.Files > defaults.Files || options.Limits.Queue <= 0 || options.Limits.Queue > defaults.Queue || options.Limits.ImportHistory > defaults.ImportHistory || options.Limits.Timeout <= 0 || options.Limits.Timeout > defaults.Timeout {
 		return nil, problem(400, "invalid-limits", "技能导入限额无效")
+	}
+	// 导入历史保留条数允许缺省（≤0 时取默认值），调用方沿用旧构造不必感知新字段。
+	if options.Limits.ImportHistory <= 0 {
+		options.Limits.ImportHistory = defaults.ImportHistory
 	}
 	if options.Now == nil {
 		options.Now = time.Now
@@ -159,14 +163,73 @@ func clone[T any](value T) T {
 	return result
 }
 func (s *Store) save(next document) error {
+	// 每次落盘前先滚动收缩导入历史：写盘上限只拒绝增长，若历史只增不减，
+	// 触顶后除删除外没有任何自助恢复入口，收缩必须先于写入成为常态。
+	s.pruneImports(&next)
 	committed, err := s.write(s.configPath, next)
 	if committed {
 		s.doc = next
+		// 按落盘后的文档回收无引用包目录；单个删除失败不阻断落盘，下次保存重试。
+		s.prunePackages(next)
 	}
-	if err != nil {
+	if err != nil && !isCapacityRejection(err) {
 		s.unavailable = true
 	}
 	return err
+}
+
+// packageGracePeriod 是包目录的无引用保护期：导入先把包改名落位、再持锁登记，
+// 失败的导入也按设计留下无引用内容；保护期覆盖这两条无引用窗口，超期后由
+// 下一次落盘回收。导入时限 5 分钟，一小时留足余量。
+const packageGracePeriod = time.Hour
+
+// prunePackages 删除不再被任何技能修订引用、且落位超过保护期的包目录。
+// 内容按整体摘要共享，回收只以文档引用为准；仅处理符合摘要命名形状的目录，
+// 目录不可读或单个删除失败都静默跳过，不阻断落盘。
+func (s *Store) prunePackages(next document) {
+	packagesRoot := filepath.Join(s.root, "packages")
+	dir, err := openDirectory(packagesRoot, false)
+	if err != nil {
+		return
+	}
+	names, err := dir.Readdirnames(-1)
+	dir.Close()
+	if err != nil {
+		return
+	}
+	referenced := make(map[string]bool, len(next.Skills))
+	for _, skill := range next.Skills {
+		referenced[skill.Digest] = true
+	}
+	deadline := s.options.Now().Add(-packageGracePeriod)
+	for _, name := range names {
+		if !digestPattern.MatchString(name) || referenced[name] {
+			continue
+		}
+		info, err := os.Lstat(filepath.Join(packagesRoot, name))
+		if err != nil || !info.IsDir() || info.ModTime().After(deadline) {
+			continue
+		}
+		_ = os.RemoveAll(filepath.Join(packagesRoot, name))
+	}
+}
+
+// pruneImports 按条数滚动保留导入记录：从最旧开始只淘汰已达终态的历史，
+// queued/running 任务永不淘汰；超限而最旧记录未终态时暂缓收缩，待其终态后的下一次落盘继续。
+func (s *Store) pruneImports(next *document) {
+	for len(next.Imports) > s.options.Limits.ImportHistory {
+		if next.Imports[0].State == StateQueued || next.Imports[0].State == StateRunning {
+			return
+		}
+		next.Imports = next.Imports[1:]
+	}
+}
+
+// isCapacityRejection 判定确定性的登记容量拒绝：该错误在写盘前产生，没有存储不确定性，
+// 不应像存储故障那样把整个存储置为不可用，连只读操作也一并拒绝。
+func isCapacityRejection(err error) bool {
+	var known *Error
+	return errors.As(err, &known) && known.Code == "skill-config-limit"
 }
 func (s *Store) check() error {
 	if s.closed {
@@ -254,6 +317,38 @@ func (s *Store) SetEnabled(id string, expectedRevision int, enabled bool) (Skill
 	item.CreatedAt = s.stamp()
 	next := clone(s.doc)
 	next.Skills = append(next.Skills, item)
+	if err = s.save(next); err != nil {
+		return Skill{}, err
+	}
+	return clone(item), nil
+}
+
+// Delete 永久删除一个技能的全部修订登记（按最新修订做 CAS）。
+// 这是登记容量触顶后的板内自助恢复入口：删除产出的是更小的登记文件，
+// 因此在写盘上限拒绝增长之后仍可落盘。已把该技能固定进环境的会话在派发读取时
+// 会得到 skill-not-found，等价于最强形式的永久撤销。
+// 包目录按内容摘要共享去重且可能与进行中的导入竞争，本入口不删除磁盘上的包内容。
+func (s *Store) Delete(id string, expectedRevision int) (Skill, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.check(); err != nil {
+		return Skill{}, err
+	}
+	item, err := s.get(id, 0, true)
+	if err != nil {
+		return item, err
+	}
+	if item.Revision != expectedRevision {
+		return Skill{}, problem(409, "skill-revision-conflict", "技能修订已变化，请重新读取")
+	}
+	next := clone(s.doc)
+	remaining := make([]Skill, 0, len(next.Skills))
+	for _, entry := range next.Skills {
+		if entry.ID != id {
+			remaining = append(remaining, entry)
+		}
+	}
+	next.Skills = remaining
 	if err = s.save(next); err != nil {
 		return Skill{}, err
 	}
@@ -368,6 +463,32 @@ func (s *Store) CancelImport(id string) (ImportTask, error) {
 		}
 		if cancel := s.cancel[id]; cancel != nil {
 			cancel()
+		}
+		return clone(task.ImportTask), nil
+	}
+	return ImportTask{}, problem(404, "import-not-found", "技能导入任务不存在")
+}
+
+// DeleteImport 删除一条已达终态的导入记录，给管理员提供收缩登记的直接清理入口；
+// queued/running 任务不可删除。记录删除后，同一 requestId 重放会开始新导入而非幂等回读。
+func (s *Store) DeleteImport(id string) (ImportTask, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.check(); err != nil {
+		return ImportTask{}, err
+	}
+	next := clone(s.doc)
+	for i := range next.Imports {
+		task := next.Imports[i]
+		if task.ID != id {
+			continue
+		}
+		if task.State == StateQueued || task.State == StateRunning {
+			return ImportTask{}, problem(409, "import-not-finished", "导入任务尚未结束，不能删除记录")
+		}
+		next.Imports = append(next.Imports[:i], next.Imports[i+1:]...)
+		if err := s.save(next); err != nil {
+			return ImportTask{}, err
 		}
 		return clone(task.ImportTask), nil
 	}
