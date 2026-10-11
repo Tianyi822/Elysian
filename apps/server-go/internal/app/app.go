@@ -139,6 +139,11 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 		agentRouter = harness.UnavailableRouter("Agent 任务存储或工具装配不可用，请查看面板运行日志")
 	}
 	runtime := &Runtime{closeDone: make(chan struct{})}
+	var fileTransfers *files.TransferManager
+	if cfg.HostOpsAvailable() {
+		fileTransfers = files.NewTransferManager(paths.TmpDir+"/files-downloads", security.NewSystemAccounts())
+		runtime.closeFuncs = append(runtime.closeFuncs, fileTransfers.Close)
+	}
 	if closeAgent != nil {
 		runtime.closeFuncs = append(runtime.closeFuncs, closeAgent)
 	}
@@ -172,6 +177,7 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 		api.Mount(shared.FilesMount, files.NewRouter(files.Deps{
 			Available: cfg.HostOpsAvailable(),
 			Accounts:  security.NewSystemAccounts(),
+			Transfers: fileTransfers,
 		}))
 		api.Mount(shared.TerminalMount, terminals.NewRouter(terminals.Deps{
 			Available:    cfg.HostOpsAvailable(),
@@ -242,6 +248,9 @@ func parentErrorHandler(next http.Handler, appLogs seam.Logs) http.Handler {
 			rec := recover()
 			if rec == nil {
 				return
+			}
+			if rec == http.ErrAbortHandler {
+				panic(rec)
 			}
 			err, ok := rec.(error)
 			if !ok {

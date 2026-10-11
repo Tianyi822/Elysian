@@ -354,11 +354,28 @@ export type PageArea =
   | 'audit'
   | 'settings'
 
-/**
- * 文件目录的读取接缝，形状对齐未来的目录列举服务。本期只有只读列举与目录大小统计；
- * 上传、删除等系统级变更等执行层接入后再扩展。
- */
+/** 下载准备结果。ID 仅在当前登录会话中短时有效，不代替登录凭据。 */
+export type FileDownload = { id: string; name: string; sizeBytes: number; expiresAt: string }
+
+/** 上传前核对的目标状态；token 由服务端绑定路径、大小与目标版本。 */
+export type FileUploadCheck = {
+  state: 'create' | 'replace'
+  token: string
+  existing?: FileEntry
+}
+
+export type FileUploadOptions = {
+  signal?: AbortSignal
+  onProgress?: (percent: number) => void
+}
+
+/** 文件管理接缝：真实运行时走同源 API，本地演示只修改内存目录树。 */
 export interface FilesAdapter {
+  prepareDownload(path: string, signal?: AbortSignal): Promise<FileDownload>
+  /** 交给浏览器下载管理器；后续 HTTP 错误通过回调通知，不宣称保存完成。 */
+  startDownload(download: FileDownload, onError?: (error: Error) => void): void
+  checkUpload(dirPath: string, name: string, sizeBytes: number, signal?: AbortSignal): Promise<FileUploadCheck>
+  uploadFile(dirPath: string, file: File, check: FileUploadCheck, overwrite: boolean, options?: FileUploadOptions): Promise<FileEntry>
   /**
    * 列出一个目录的直接子项（演示）。路径须为归一化后的绝对路径；
    * 不承诺任何顺序，排序由界面决定；目录不存在时抛出中文错误。

@@ -45,6 +45,16 @@ Docker 环境中的 MariaDB、MySQL、Redis 使用 `/api/databases` 和数据库
 
 Docker 环境中的 SQLite 使用面板持久卷 `~/.Elysian/data/sqlite`：可新建空库、上传单个独立 SQLite 快照、在受限数据库协议终端内读写、下载一致性快照，以及确认后删除实际文件。上传上限为 256 MiB，单库上限为 1 GiB，托管 SQLite 总量上限为 4 GiB；WAL 模式原库须先导出独立快照。文件登记位于 `~/.Elysian/config/sqlite-databases.json`，中断的创建、上传或删除会显示待处理状态。SQLite 终端允许常用查询、增删改、表/索引/视图 DDL 与事务语句，不支持文件操作、扩展加载、触发器或虚拟表创建。非 Docker 本地开发中的 SQLite 与其他数据库仍是演示状态。
 
+## 文件上传与下载
+
+文件页右键普通文件（含 ZIP、tar.gz）原样下载；目录自动打包为 `<目录名>.tar.gz`，保留顶层目录和空目录。右键文件或列表空白可「上传至当前目录」，右键目录可「上传至该目录」；搜索结果中的「当前目录」仍指页面路径。上传支持多选文件并逐项处理，同名普通文件须选择覆盖或跳过，目录、符号链接与特殊文件不可覆盖；窗口显示固定目标路径、进度、结果与取消入口。
+
+传输经同源 `/api/files`：`POST /downloads` 准备文件，`GET /downloads/{id}` 领取一次性附件；`POST /uploads/check` 核对目标，`PUT /upload` 发送原始文件流。下载交给浏览器管理，不在前端整包缓存；目录在 `~/.Elysian/tmp/files-downloads` 内使用私有临时文件，打开后解除目录项，领取结束、取消、过期或进程退出即释放。下载 ID 与上传核对令牌绑定登录会话，领取／使用期限为 10 分钟；上传使用前核对令牌，流传完后再次核对目标，目标变化须重新确认。上传在目标文件系统私有暂存后原子发布，新建权限 `0644`，覆盖保留属主与权限；失败与取消回读目录，不自动重传。
+
+默认单文件上传与单个临时归档各限 10 GiB，临时归档合计限 20 GiB；普通文件直接下载不设字节上限。目录打包并发 1、上传与下载共享传输并发 2、待领取下载最多 8 个；打包最长 30 分钟、单次传输最长 2 小时，目录上限 50,000 个条目与 64 层。根目录、系统虚拟目录和特殊文件不能下载；归档内部符号链接保存为链接、不展开目标。正在被外部程序修改的文件不提供一致性快照；数据库备份应使用数据库自身的快照或导出能力。外部特权进程在最终核对与覆盖发布之间仍有竞态窗口。本地演示只登记内存上传信息，下载明确提示无真实正文。规范见 [文件传输](docs/specs/2026-10-11-files-transfer.md)。
+
+门禁：`bash apps/server-go/dev-check.sh ./internal/files ./internal/app ./internal/logs`。大文件专项验收在 Go 开发容器内执行：`ELYSIAN_FILES_LARGE_UPLOAD_TEST=1 go test ./internal/files -run TestUploadLargeStreaming -count=1 -v`、`ELYSIAN_FILES_LARGE_DOWNLOAD_TEST=1 go test ./internal/files -run TestDownloadLargeStreaming -count=1 -v`；各传输 3 GiB，使用专用临时目录自动清理并采样内存。
+
 ## 网站项目部署
 
 添加项目与重新部署共用三步流程：上传 ZIP／tar.gz 或获取 HTTPS Git → 选择识别出的目录、构建工具、入口与精确版本 → 测试、构建并部署。支持普通 Java、Maven／Gradle（优先项目 Wrapper）、Node、Go、Python 与 HTML；可明确选择已构建产物跳过测试和构建。Git 支持分支、标签、提交与一次性私有令牌，准备后固定实际提交；令牌只用于临时拉取，不写登记与日志。启动命令保持空值，通过「采用建议」或手动填写确认；多入口、多工具与多产物由用户选择。

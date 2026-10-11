@@ -365,6 +365,10 @@ var operationDescriptors = map[string]*opDescriptor{
 	},
 
 	// 文件管理（/api/files）
+	"PUT /api/files/upload": {
+		// 文件正文可能很大且包含凭据；仅记录动作和结果，采集器绝不读取正文。
+		category: "files", action: "上传文件",
+	},
 	"POST /api/files/copy": {
 		category: "files", action: "复制文件",
 		summarize: func(input *opInput) *string {

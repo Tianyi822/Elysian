@@ -3,6 +3,7 @@ import type { FileEntry, FileKind, FileSearchResult } from '@elysian/contracts'
 import { FILE_KINDS } from '@elysian/contracts'
 import type { FilesAdapter } from '../../contracts/adapters'
 import { reportUnauthorized } from './unauthorized'
+import { createHttpFileTransfers } from './filesTransfersHttp'
 
 /*
  * 浏览器侧同源文件管理（Docker 运行时）。cp/mv/tar/chmod 只存在于容器内的
@@ -131,6 +132,7 @@ export function createHttpFilesAdapter(baseUrl = '/api/files'): FilesAdapter {
       body: JSON.stringify(payload),
     })
   return {
+    ...createHttpFileTransfers(baseUrl, parseFileEntry, parseFileEntryResponse),
     async list(dirPath) {
       return parseFileListResponse(
         await requestJson(`${baseUrl}/entries?path=${encodeURIComponent(dirPath)}`),

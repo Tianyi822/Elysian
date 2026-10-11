@@ -1,5 +1,7 @@
 import type { FileEntry, FileSearchResult } from '@elysian/contracts'
 import { isValidFileName, isValidFileMode, matchesFilePath, normalizeFileSearch } from '@elysian/contracts'
+import type { FileUploadCheck } from '../../contracts/adapters'
+import { FileTransferError } from '../filesTransferError'
 
 /*
  * 文件管理演示数据集：一台运维主机的目录树手工种子，修改时间相对固定基准日生成，
@@ -165,6 +167,8 @@ let FILE_TREE = buildFileTree()
 /** 重建目录树：「重置演示数据」把右键菜单产生的所有变更一并还原。 */
 export function resetFilesData(): void {
   FILE_TREE = buildFileTree()
+  uploadChecks.clear()
+  uploadSequence = 0
 }
 
 /**
@@ -351,4 +355,45 @@ export function searchMockFiles(keyword: string): readonly FileSearchResult[] {
   }
   walk('/', FILE_TREE)
   return results
+}
+
+type MockUploadCheck = {
+  dirPath: string; name: string; sizeBytes: number; directory: MockDirectoryNode
+  existing?: MockNode; signature: string
+}
+const uploadChecks = new Map<string, MockUploadCheck>()
+let uploadSequence = 0
+
+/** 演示只登记元数据；冲突确认绑定节点，改名、替换或权限变化均要求重新确认。 */
+export function checkMockFileUpload(dirPath: string, name: string, sizeBytes: number): FileUploadCheck {
+  if (!isValidFileName(name)) throw new FileTransferError(400, `无效的名称：${name}`)
+  if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0 || sizeBytes > 10 * 1024 ** 3) {
+    throw new FileTransferError(413, '单文件上传大小不能超过 10 GiB')
+  }
+  const directory = findDirectory(dirPath)
+  const existing = Object.hasOwn(directory.children, name) ? directory.children[name] : undefined
+  if (existing?.kind === 'directory') throw new FileTransferError(400, `不能覆盖同名目录：${name}`)
+  const token = `mock-upload-${++uploadSequence}`
+  if (uploadChecks.size >= 128) uploadChecks.delete(uploadChecks.keys().next().value!)
+  uploadChecks.set(token, { dirPath, name, sizeBytes, directory, existing, signature: JSON.stringify(existing) ?? '' })
+  return { state: existing ? 'replace' : 'create', token, existing: existing ? toEntry(name, existing) : undefined }
+}
+
+export function uploadMockFile(dirPath: string, file: File, check: FileUploadCheck, overwrite: boolean): FileEntry {
+  const recorded = uploadChecks.get(check.token)
+  uploadChecks.delete(check.token)
+  const directory = findDirectory(dirPath)
+  const existing = Object.hasOwn(directory.children, file.name) ? directory.children[file.name] : undefined
+  if (!recorded || recorded.dirPath !== dirPath || recorded.name !== file.name || recorded.sizeBytes !== file.size
+    || recorded.directory !== directory || recorded.existing !== existing
+    || recorded.signature !== (JSON.stringify(existing) ?? '')) {
+    throw new FileTransferError(409, '上传目标已变化，请重新确认')
+  }
+  if (existing && !overwrite) throw new FileTransferError(409, '同名文件已存在，请确认覆盖或跳过')
+  const saved: MockFileNode = {
+    kind: 'file', sizeBytes: file.size, modifiedAt: mt('09-16 12:00'),
+    mode: existing?.mode ?? '644', owner: existing?.owner ?? 'root',
+  }
+  Object.defineProperty(directory.children, file.name, { value: saved, writable: true, enumerable: true, configurable: true })
+  return toEntry(file.name, saved)
 }

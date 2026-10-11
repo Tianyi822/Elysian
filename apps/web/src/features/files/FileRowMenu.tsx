@@ -3,6 +3,8 @@ import type { ReactNode } from 'react'
 import type { FileEntry } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { useFilesStore } from '../../stores/filesStore'
+import { ClipboardPaste, Copy, Download, FileArchive, FolderInput, KeyRound, Pencil, Upload } from '../../components/icons'
+import { FileMenuContent, FileMenuItem } from './FileMenu'
 
 /**
  * 表格行的右键菜单：复制、粘贴、移动、重命名、权限、压缩，对齐系统文件管理器的操作面。
@@ -16,12 +18,18 @@ export function FileRowMenu({
   entryPath,
   onRename,
   onPermission,
+  onDownload,
+  onUpload,
+  transferBusy = false,
   children,
 }: {
   entry: FileEntry
   entryPath: string
   onRename(entry: FileEntry, entryPath: string): void
   onPermission(entry: FileEntry, entryPath: string): void
+  onDownload(entry: FileEntry, entryPath: string): void
+  onUpload(entry: FileEntry, entryPath: string): void
+  transferBusy?: boolean
   children: ReactNode
 }) {
   const gateway = useGateway()
@@ -33,45 +41,29 @@ export function FileRowMenu({
 
   return (
     <ContextMenu.Root>
-      <ContextMenu.Trigger asChild>{children}</ContextMenu.Trigger>
+      <ContextMenu.Trigger asChild onContextMenu={(event) => event.stopPropagation()}>{children}</ContextMenu.Trigger>
       <ContextMenu.Portal>
-        <ContextMenu.Content className="z-50 min-w-36 rounded-lg border border-line bg-surface p-1 text-xs shadow-lg">
-          <MenuItem onSelect={() => copyToClipboard(entryPath)}>复制</MenuItem>
+        <FileMenuContent>
+          <FileMenuItem icon={Download} onSelect={() => onDownload(entry, entryPath)}>下载</FileMenuItem>
+          <FileMenuItem icon={Upload} disabled={transferBusy} onSelect={() => onUpload(entry, entryPath)}>
+            {entry.kind === 'directory' ? '上传至该目录' : '上传至当前目录'}
+          </FileMenuItem>
+          <FileMenuItem icon={Copy} onSelect={() => copyToClipboard(entryPath)}>复制</FileMenuItem>
           {entry.kind === 'directory' ? (
-            <MenuItem
+            <FileMenuItem
+              icon={ClipboardPaste}
               disabled={clipboard === undefined}
               onSelect={() => void paste(gateway, entryPath)}
             >
               粘贴到此目录
-            </MenuItem>
+            </FileMenuItem>
           ) : null}
-          <MenuItem onSelect={() => moveToClipboard(entryPath)}>移动</MenuItem>
-          <ContextMenu.Separator className="my-1 h-px bg-line" />
-          <MenuItem onSelect={() => onRename(entry, entryPath)}>重命名</MenuItem>
-          <MenuItem onSelect={() => onPermission(entry, entryPath)}>权限</MenuItem>
-          <MenuItem onSelect={() => void compress(gateway, entryPath)}>压缩</MenuItem>
-        </ContextMenu.Content>
+          <FileMenuItem icon={FolderInput} onSelect={() => moveToClipboard(entryPath)}>移动</FileMenuItem>
+          <FileMenuItem icon={Pencil} onSelect={() => onRename(entry, entryPath)}>重命名</FileMenuItem>
+          <FileMenuItem icon={KeyRound} onSelect={() => onPermission(entry, entryPath)}>权限</FileMenuItem>
+          <FileMenuItem icon={FileArchive} onSelect={() => void compress(gateway, entryPath)}>压缩</FileMenuItem>
+        </FileMenuContent>
       </ContextMenu.Portal>
     </ContextMenu.Root>
-  )
-}
-
-function MenuItem({
-  children,
-  disabled,
-  onSelect,
-}: {
-  children: string
-  disabled?: boolean
-  onSelect(): void
-}) {
-  return (
-    <ContextMenu.Item
-      disabled={disabled}
-      onSelect={onSelect}
-      className="flex cursor-default select-none items-center rounded px-2 py-1.5 text-fg-muted outline-none data-[disabled]:opacity-50 data-[highlighted]:bg-surface-raised data-[highlighted]:text-fg"
-    >
-      {children}
-    </ContextMenu.Item>
   )
 }

@@ -11,6 +11,8 @@ import { useFilesStore } from '../../stores/filesStore'
 import { joinFilesPath, normalizeFilesPath, parentFilesPath } from './filesPath'
 import { formatEntrySize, orderFileEntries } from './filesListing'
 import { FileRowMenu } from './FileRowMenu'
+import { FilesBackgroundMenu } from './FilesBackgroundMenu'
+import { FileDownloadDialog, FileUploadDialog } from './FileTransferDialogs'
 import { RenameDialog } from './RenameDialog'
 import { PermissionDialog } from './PermissionDialog'
 import { CTL_FIELD, CTL_PRIMARY, CTL_TOOLBAR } from '../../components/formControl'
@@ -44,6 +46,11 @@ export function FilesPage() {
   const paste = useFilesStore((s) => s.paste)
   const search = useFilesStore((s) => s.search)
   const clearSearch = useFilesStore((s) => s.clearSearch)
+  const uploadFiles = useFilesStore((s) => s.uploadFiles)
+  const downloadEntry = useFilesStore((s) => s.downloadEntry)
+  const transferBusy = useFilesStore((s) => s.upload?.busy ?? false)
+  const uploadInput = useRef<HTMLInputElement>(null)
+  const uploadTarget = useRef(path)
 
   const [renaming, setRenaming] = useState<DialogTarget>(null)
   const [permitting, setPermitting] = useState<DialogTarget>(null)
@@ -52,6 +59,13 @@ export function FilesPage() {
   const openRename = (entry: FileEntry, entryPath: string) => setRenaming({ entry, path: entryPath })
   const openPermission = (entry: FileEntry, entryPath: string) =>
     setPermitting({ entry, path: entryPath })
+  const chooseUpload = (targetPath: string) => {
+    if (transferBusy) return
+    uploadTarget.current = targetPath
+    uploadInput.current?.click()
+  }
+  const onUpload = (entry: FileEntry, entryPath: string) => chooseUpload(entry.kind === 'directory' ? entryPath : path)
+  const onDownload = (entry: FileEntry, entryPath: string) => void downloadEntry(gateway, entryPath, entry)
 
   useEffect(() => {
     void load(gateway, path)
@@ -100,55 +114,78 @@ export function FilesPage() {
         {status === 'ready' ? <FilesSearchBox onSearch={(keyword) => void search(gateway, keyword)} /> : null}
       </div>
 
-      {isSearching ? (
-        searching ? (
-          <LoadingState label="正在搜索…" />
-        ) : searchResults.length === 0 ? (
-          <EmptyState
-            title="没有找到匹配的条目"
-            description={`可搜索的范围内没有名称或路径包含「${searchKeyword.trim()}」的条目，换个关键词试试。`}
-          />
-        ) : (
-          <SearchResultsTable
-            key={searchKeyword}
-            results={searchResults}
-            onOpen={go}
-            onRename={openRename}
-            onPermission={openPermission}
-          />
-        )
-      ) : (
-        <>
-          {status === 'loading' || status === 'idle' ? (
-            <LoadingState label="正在读取目录内容…" />
-          ) : status === 'error' ? (
-            <ErrorState
-              title="目录读取失败"
-              description={errorMessage}
-              action={
-                <button type="button" onClick={() => go('/')} className={TOOLBAR_ACTION_CLASS}>
-                  返回根目录
-                </button>
-              }
+      <input
+        ref={uploadInput}
+        type="file"
+        multiple
+        hidden
+        aria-label="选择上传文件"
+        onChange={(event) => {
+          const files = Array.from(event.currentTarget.files ?? [])
+          event.currentTarget.value = ''
+          if (files.length) void uploadFiles(gateway, uploadTarget.current, files)
+        }}
+      />
+      <FilesBackgroundMenu onUpload={() => chooseUpload(path)} disabled={status !== 'ready' || transferBusy}>
+        {isSearching ? (
+          searching ? (
+            <LoadingState label="正在搜索…" />
+          ) : searchResults.length === 0 ? (
+            <EmptyState
+              title="没有找到匹配的条目"
+              description={`可搜索的范围内没有名称或路径包含「${searchKeyword.trim()}」的条目，换个关键词试试。`}
             />
-          ) : entries.length === 0 ? (
-            <EmptyState title="此目录为空" description="这个目录下没有任何文件或子目录。" />
           ) : (
-            /* 换目录即换表：选中态随目录清空，不把上一个目录的选中行带进新目录。 */
-            <div className="busy-host">
-              <BusyVeil busy={reloading} />
-              <FileTable
-                key={path}
-                entries={entries}
-                path={path}
-                onOpen={go}
-                onRename={openRename}
-                onPermission={openPermission}
+            <SearchResultsTable
+              key={searchKeyword}
+              results={searchResults}
+              onOpen={go}
+              onRename={openRename}
+              onPermission={openPermission}
+              onDownload={onDownload}
+              onUpload={onUpload}
+              transferBusy={transferBusy}
+            />
+          )
+        ) : (
+          <>
+            {status === 'loading' || status === 'idle' ? (
+              <LoadingState label="正在读取目录内容…" />
+            ) : status === 'error' ? (
+              <ErrorState
+                title="目录读取失败"
+                description={errorMessage}
+                action={
+                  <button type="button" onClick={() => go('/')} className={TOOLBAR_ACTION_CLASS}>
+                    返回根目录
+                  </button>
+                }
               />
-            </div>
-          )}
-        </>
-      )}
+            ) : entries.length === 0 ? (
+              <EmptyState title="此目录为空" description="这个目录下没有任何文件或子目录。" />
+            ) : (
+              /* 换目录即换表：选中态随目录清空，不把上一个目录的选中行带进新目录。 */
+              <div className="busy-host">
+                <BusyVeil busy={reloading} />
+                <FileTable
+                  key={path}
+                  entries={entries}
+                  path={path}
+                  onOpen={go}
+                  onRename={openRename}
+                  onPermission={openPermission}
+                  onDownload={onDownload}
+                  onUpload={onUpload}
+                  transferBusy={transferBusy}
+                />
+              </div>
+            )}
+          </>
+        )}
+      </FilesBackgroundMenu>
+
+      <FileDownloadDialog />
+      <FileUploadDialog />
 
       {renaming ? (
         <RenameDialog
@@ -207,12 +244,18 @@ function FileTable({
   onOpen,
   onRename,
   onPermission,
+  onDownload,
+  onUpload,
+  transferBusy,
 }: {
   entries: readonly FileEntry[]
   path: string
   onOpen(path: string): void
   onRename(entry: FileEntry, entryPath: string): void
   onPermission(entry: FileEntry, entryPath: string): void
+  onDownload(entry: FileEntry, entryPath: string): void
+  onUpload(entry: FileEntry, entryPath: string): void
+  transferBusy: boolean
 }) {
   const ordered = useMemo(() => orderFileEntries(entries), [entries])
   const [selectedName, setSelectedName] = useState<string | null>(null)
@@ -268,6 +311,9 @@ function FileTable({
                 entryPath={entryPath}
                 onRename={onRename}
                 onPermission={onPermission}
+                onDownload={onDownload}
+                onUpload={onUpload}
+                transferBusy={transferBusy}
               >
                 <tr
                   ref={(element) => {
@@ -345,11 +391,17 @@ function SearchResultsTable({
   onOpen,
   onRename,
   onPermission,
+  onDownload,
+  onUpload,
+  transferBusy,
 }: {
   results: readonly FileSearchResult[]
   onOpen(path: string): void
   onRename(entry: FileEntry, entryPath: string): void
   onPermission(entry: FileEntry, entryPath: string): void
+  onDownload(entry: FileEntry, entryPath: string): void
+  onUpload(entry: FileEntry, entryPath: string): void
+  transferBusy: boolean
 }) {
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
 
@@ -394,6 +446,9 @@ function SearchResultsTable({
                 entryPath={result.path}
                 onRename={onRename}
                 onPermission={onPermission}
+                onDownload={onDownload}
+                onUpload={onUpload}
+                transferBusy={transferBusy}
               >
                 <tr
                   tabIndex={0}

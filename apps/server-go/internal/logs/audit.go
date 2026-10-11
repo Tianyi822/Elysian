@@ -108,6 +108,9 @@ type statusRecorder struct {
 	status int
 }
 
+// Unwrap 让流式上传的 ResponseController 可把读取时限和取消传至真实连接。
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
 // WriteHeader 记首个状态码。
 func (r *statusRecorder) WriteHeader(code int) {
 	if r.status == 0 {

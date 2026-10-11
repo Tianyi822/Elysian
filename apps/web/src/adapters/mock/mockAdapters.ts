@@ -1,4 +1,5 @@
 import { createMockWebsiteDeployments } from './websiteDeploymentsMock'
+import type { FileDownload, FileUploadCheck, FileUploadOptions } from '../../contracts/adapters'
 import { MOCK_WEBSITE_RUNTIME_REPORT } from './websiteRuntimeCatalog'
 import {
   effectivePortHostIp,
@@ -155,6 +156,7 @@ import {
 import { completeTerminalCommand, execContainerCommand } from './containerTerminal'
 import {
   chmodMockEntry,
+  checkMockFileUpload,
   compressMockEntry,
   copyMockEntry,
   listMockDirectory,
@@ -162,6 +164,7 @@ import {
   moveMockEntry,
   renameMockEntry,
   searchMockFiles,
+  uploadMockFile,
 } from './filesData'
 import {
   getLoginLogs,
@@ -243,6 +246,27 @@ export class MockSessionAdapter implements SessionAdapter {
 
 /** 文件目录的 mock 实现：读手工种子的目录树；列举与统计只读，四个变更动作只改内存数据。 */
 export class MockFilesAdapter implements FilesAdapter {
+  async prepareDownload(_path: string, signal?: AbortSignal): Promise<FileDownload> {
+    signal?.throwIfAborted()
+    throw new Error('演示模式没有真实文件内容，请在连接后端的文件页面下载')
+  }
+
+  startDownload(_download: FileDownload, onError?: (error: Error) => void): void {
+    onError?.(new Error('演示模式没有真实文件内容'))
+  }
+
+  async checkUpload(dirPath: string, name: string, sizeBytes: number, signal?: AbortSignal): Promise<FileUploadCheck> {
+    signal?.throwIfAborted()
+    return checkMockFileUpload(dirPath, name, sizeBytes)
+  }
+
+  async uploadFile(dirPath: string, file: File, check: FileUploadCheck, overwrite: boolean, options?: FileUploadOptions): Promise<FileEntry> {
+    options?.signal?.throwIfAborted()
+    const saved = uploadMockFile(dirPath, file, check, overwrite)
+    options?.onProgress?.(100)
+    return saved
+  }
+
   async list(dirPath: string): Promise<readonly FileEntry[]> {
     return listMockDirectory(dirPath)
   }

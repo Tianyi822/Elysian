@@ -22,6 +22,8 @@ beforeEach(() => {
     searchResults: [],
     searching: false,
     errorMessage: undefined,
+    download: undefined,
+    upload: undefined,
   })
 })
 
@@ -141,6 +143,10 @@ describe('文件管理页', () => {
       compressEntry: () => new Promise(() => {}),
       chmod: () => new Promise(() => {}),
       search: () => new Promise(() => {}),
+      prepareDownload: () => new Promise(() => {}),
+      startDownload: () => {},
+      checkUpload: () => new Promise(() => {}),
+      uploadFile: () => new Promise(() => {}),
     }
     renderApp('/files', { gateway })
 
@@ -174,6 +180,10 @@ describe('文件管理页', () => {
       compressEntry: (path) => mockFiles.compressEntry(path),
       chmod: (path, input) => mockFiles.chmod(path, input),
       search: (keyword) => mockFiles.search(keyword),
+      prepareDownload: (...args) => mockFiles.prepareDownload(...args),
+      startDownload: (...args) => mockFiles.startDownload(...args),
+      checkUpload: (...args) => mockFiles.checkUpload(...args),
+      uploadFile: (...args) => mockFiles.uploadFile(...args),
     }
     renderApp('/files', { gateway })
     const region = await screen.findByRole('region', { name: '文件列表' })
@@ -202,6 +212,10 @@ describe('文件管理页', () => {
       compressEntry: (path) => mockFiles.compressEntry(path),
       chmod: (path, input) => mockFiles.chmod(path, input),
       search: (keyword) => mockFiles.search(keyword),
+      prepareDownload: (...args) => mockFiles.prepareDownload(...args),
+      startDownload: (...args) => mockFiles.startDownload(...args),
+      checkUpload: (...args) => mockFiles.checkUpload(...args),
+      uploadFile: (...args) => mockFiles.uploadFile(...args),
     }
     renderApp('/files', { gateway })
     let region = await screen.findByRole('region', { name: '文件列表' })
@@ -235,6 +249,10 @@ describe('文件管理页', () => {
       compressEntry: (path) => mockFiles.compressEntry(path),
       chmod: (path, input) => mockFiles.chmod(path, input),
       search: (keyword) => mockFiles.search(keyword),
+      prepareDownload: (...args) => mockFiles.prepareDownload(...args),
+      startDownload: (...args) => mockFiles.startDownload(...args),
+      checkUpload: (...args) => mockFiles.checkUpload(...args),
+      uploadFile: (...args) => mockFiles.uploadFile(...args),
     }
     renderApp('/files', { gateway })
     const region = await screen.findByRole('region', { name: '文件列表' })

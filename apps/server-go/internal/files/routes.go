@@ -30,6 +30,7 @@ import (
 type Deps struct {
 	Available bool
 	Accounts  seam.SystemAccounts
+	Transfers *TransferManager
 
 	// host 让真实服务编排跑在注入的宿主原语上（对齐 TS filesHostDeps 测试的注入路径）。
 	host hostDeps
@@ -65,6 +66,9 @@ func NewRouter(deps Deps) chi.Router {
 	// 同源守卫先于读体与路由分发：跨源写请求在解析任何请求体之前就被拒绝
 	//（未知路径同样先 403 后 404）。
 	r.Use(middleware.SameOriginGuard())
+	if deps.Transfers != nil {
+		deps.Transfers.mount(r)
+	}
 
 	r.Get("/entries", func(w http.ResponseWriter, r *http.Request) {
 		dirPath, err := requireQueryPath(r)
