@@ -61,8 +61,8 @@ describe('路由表', () => {
     expect(screen.queryByRole('group', { name: '网站页签' })).not.toBeInTheDocument()
   })
 
-  it('/settings 只渲染修改密码，顶栏标题随导航项给出', async () => {
-    renderApp('/settings')
+  it('账号安全页签渲染密码表单和设置导航', async () => {
+    renderApp('/settings?tab=account')
     expect(await screen.findByRole('heading', { level: 1, name: '设置' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { level: 2, name: '修改面板密码' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '外观' })).not.toBeInTheDocument()

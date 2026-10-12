@@ -23,6 +23,7 @@ import { LogsTabSwitch } from '../features/logs/LogsTabSwitch'
 import { SecurityPage } from '../features/security/SecurityPage'
 import { SecurityTabSwitch } from '../features/security/SecurityTabSwitch'
 import { SettingsPage } from '../features/settings/SettingsPage'
+import { SettingsTabSwitch } from '../features/settings/SettingsTabSwitch'
 import { TerminalPage } from '../features/terminal/TerminalPage'
 import { WebsitesPage } from '../features/websites/WebsitesPage'
 import { AppShell } from './layout/AppShell'
@@ -218,6 +219,7 @@ export const routes: RouteObject[] = [
       },
       {
         path: 'settings',
+        handle: { headerAccessory: SettingsTabSwitch, hideHeaderTitle: true } satisfies RouteHandle,
         element: (
           <RequireArea area="settings" title="设置">
             <SettingsPage />

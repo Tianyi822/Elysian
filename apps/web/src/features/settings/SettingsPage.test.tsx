@@ -1,13 +1,16 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import type { ElysianGateway, SessionAdapter } from '../../contracts/adapters'
+import { useAgentRuntimeStore } from '../../stores/agentRuntimeStore'
+import { useModelSettingsStore } from '../../stores/modelSettingsStore'
+import { demoAgentRuntimeInfo } from '../../adapters/mock/agent/agentRunsMockAdapter'
 import { useSessionStore } from '../../stores/sessionStore'
 import { renderApp } from '../../test/renderApp'
 
 /*
- * 设置页只保留修改密码：失败反馈、演示模式的如实失败、两次不一致的校验次序、
+ * 设置页页签、懒加载与草稿保留，以及账号改密闭环。
  * 成功后由 RequireSession 唯一导航到 /login。字段下的规则随输入更新。
  * store 是模块级单例，每条用例前重置。
  */
@@ -34,6 +37,8 @@ function baseGateway(session: SessionAdapter): ElysianGateway {
 }
 
 beforeEach(() => {
+  useAgentRuntimeStore.getState().reset()
+  useModelSettingsStore.getState().reset()
   useSessionStore.setState({ phase: 'unknown', mode: undefined, devAccount: false, notice: null })
 })
 
@@ -46,7 +51,7 @@ async function fillPasswordForm(user: ReturnType<typeof userEvent.setup>, curren
 describe('修改面板密码', () => {
   it('校验后确认，取消保留输入且不提交', async () => {
     const changePassword = vi.fn(async () => {})
-    renderApp('/settings', { gateway: baseGateway(realSession({ changePassword })) })
+    renderApp('/settings?tab=account', { gateway: baseGateway(realSession({ changePassword })) })
     const user = userEvent.setup()
     await fillPasswordForm(user, 'old-password', 'brand-new-pw')
     await user.click(screen.getByRole('button', { name: '修改密码' }))
@@ -59,7 +64,7 @@ describe('修改面板密码', () => {
   })
 
   it('每个密码框都能单独显示和隐藏', async () => {
-    renderApp('/settings')
+    renderApp('/settings?tab=account')
     const user = userEvent.setup()
     const current = await screen.findByLabelText('当前密码')
     const next = screen.getByLabelText('新密码')
@@ -75,7 +80,7 @@ describe('修改面板密码', () => {
   })
 
   it('规则贴在字段下方，并随输入从「至少 8 位」变成还差几位、再变成已满足', async () => {
-    renderApp('/settings')
+    renderApp('/settings?tab=account')
     const user = userEvent.setup()
 
     expect(await screen.findByText('至少 8 位')).toBeInTheDocument()
@@ -106,7 +111,7 @@ describe('修改面板密码', () => {
       }),
     )
     const user = userEvent.setup()
-    renderApp('/settings', { gateway })
+    renderApp('/settings?tab=account', { gateway })
 
     await fillPasswordForm(user, 'old-password', 'brand-new-pw')
     await user.click(screen.getByRole('button', { name: '修改密码' }))
@@ -117,7 +122,7 @@ describe('修改面板密码', () => {
   })
 
   it('演示模式校验通过后如实抛「演示模式不支持修改面板密码」', async () => {
-    renderApp('/settings')
+    renderApp('/settings?tab=account')
     const user = userEvent.setup()
 
     await fillPasswordForm(user, 'old-password', 'brand-new-pw')
@@ -128,7 +133,7 @@ describe('修改面板密码', () => {
   })
 
   it('演示模式两次不一致先得到一致性错误（与服务端同一次序）', async () => {
-    renderApp('/settings')
+    renderApp('/settings?tab=account')
     const user = userEvent.setup()
 
     await user.type(await screen.findByLabelText('当前密码'), 'old-password')
@@ -140,7 +145,7 @@ describe('修改面板密码', () => {
   })
 
   it('成功后页面自身不导航：store 置一次性提示并落 anonymous，RequireSession 把路由带到 /login', async () => {
-    const { router } = renderApp('/settings', { gateway: baseGateway(realSession()) })
+    const { router } = renderApp('/settings?tab=account', { gateway: baseGateway(realSession()) })
     const user = userEvent.setup()
 
     await fillPasswordForm(user, 'old-password', 'brand-new-pw')
@@ -148,12 +153,72 @@ describe('修改面板密码', () => {
     await user.click(screen.getByRole('button', { name: '确认修改' }))
 
     await waitFor(() => expect(router.state.location.pathname).toBe('/login'))
-    expect(router.state.location.state).toMatchObject({ from: '/settings' })
+    expect(router.state.location.state).toMatchObject({ from: '/settings?tab=account' })
     expect(useSessionStore.getState()).toMatchObject({
       phase: 'anonymous',
       notice: PASSWORD_CHANGE_NOTICE,
     })
     expect(screen.getByRole('heading', { level: 1, name: '登录 Elysian' })).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent(PASSWORD_CHANGE_NOTICE)
+  })
+})
+
+describe('设置页签与模型入口', () => {
+  it('首次访问账号页不读取模型，切换后保留模型弹窗草稿并隐藏其门户', async () => {
+    const gateway = baseGateway(realSession())
+    const read = vi.spyOn(gateway.agentCapabilities, 'listModelServices')
+    const { router } = renderApp('/settings?tab=account', { gateway })
+    const user = userEvent.setup()
+    await screen.findByLabelText('当前密码')
+    expect(read).not.toHaveBeenCalled()
+    await user.click(within(screen.getByRole('group', { name: '设置页签' })).getByRole('button', { name: '模型配置' }))
+    await screen.findByRole('region', { name: '模型配置列表' })
+    await user.click(screen.getByRole('button', { name: '新建模型配置' }))
+    await user.clear(screen.getByLabelText('名称'))
+    await user.type(screen.getByLabelText('名称'), '尚未保存的模型草稿')
+    await act(async () => { await router.navigate('/settings?tab=account') })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    await act(async () => { await router.navigate('/settings?tab=models') })
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByLabelText('名称')).toHaveValue('尚未保存的模型草稿')
+    expect(screen.getByLabelText('配置方式')).toHaveTextContent('自定义（兼容 API）')
+    expect(read).toHaveBeenCalledTimes(1)
+  })
+  it('默认进入模型配置，切换页签保留账号输入与查询参数', async () => {
+    const { router } = renderApp('/settings?source=workbench')
+    const user = userEvent.setup()
+    expect(await screen.findByRole('region', { name: '模型配置列表' })).toBeInTheDocument()
+    expect(screen.queryByLabelText('当前密码')).not.toBeInTheDocument()
+    const tabs = screen.getByRole('group', { name: '设置页签' })
+    await user.click(within(tabs).getByRole('button', { name: '账号安全' }))
+    await user.type(await screen.findByLabelText('当前密码'), 'unsaved-draft')
+    await user.click(within(tabs).getByRole('button', { name: '面板维护' }))
+    expect(await screen.findByLabelText('前端端口')).toBeInTheDocument()
+    await user.click(within(tabs).getByRole('button', { name: '账号安全' }))
+    expect(screen.getByLabelText('当前密码')).toHaveValue('unsaved-draft')
+    expect(router.state.location.search).toContain('source=workbench')
+  })
+  it('维护回跳直接显示面板维护', async () => {
+    renderApp('/settings?maintenanceTask=test-task')
+    expect(await screen.findByLabelText('前端端口')).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: '模型配置列表' })).not.toBeInTheDocument()
+  })
+  it('旧入口在内核不可用时也迁移，账号安全继续可访问', async () => {
+    const gateway = baseGateway(realSession())
+    gateway.agentRuns.runtime = async () => ({ ...demoAgentRuntimeInfo(), available: false, reason: '测试内核未就绪' })
+    const { router } = renderApp('/agent/capabilities?tab=models', { gateway })
+    expect(await screen.findByText('测试内核未就绪')).toBeInTheDocument()
+    expect(router.state.location.pathname).toBe('/settings')
+    expect(router.state.location.search).toBe('?tab=models')
+    const user = userEvent.setup()
+    await user.click(within(screen.getByRole('group', { name: '设置页签' })).getByRole('button', { name: '账号安全' }))
+    expect(await screen.findByLabelText('当前密码')).toBeInTheDocument()
+  })
+  it('模型设置保留 Agent 权限检查，拒绝后不读取模型目录', async () => {
+    const gateway = baseGateway(realSession({ canView: async (area) => area !== 'agent' }))
+    const read = vi.spyOn(gateway.agentCapabilities, 'listModelServices')
+    renderApp('/settings', { gateway })
+    expect(await screen.findByText('无权限查看「模型配置」')).toBeInTheDocument()
+    expect(read).not.toHaveBeenCalled()
   })
 })

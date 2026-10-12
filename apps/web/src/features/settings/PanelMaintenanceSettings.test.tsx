@@ -19,7 +19,7 @@ function gateway() {
 }
 describe('端口与更新设置', () => {
   it('点击标题旁问号显示直观说明，Escape 关闭', async () => {
-    renderApp('/settings'); const user = userEvent.setup()
+    renderApp('/settings?tab=maintenance'); const user = userEvent.setup()
     const portsHelp = '前端端口用于打开面板，后端端口供面板内部使用。保存后会重启，页面会短暂断开。'
     expect(screen.queryByText(portsHelp)).not.toBeInTheDocument()
     await user.click(await screen.findByRole('button', { name: '面板端口说明' }))
@@ -29,16 +29,16 @@ describe('端口与更新设置', () => {
     await user.click(screen.getByRole('button', { name: '面板更新说明' }))
     expect(screen.getByRole('dialog', { name: '面板更新说明' })).toHaveTextContent('先下载并编译新版本，成功后重启。更新失败会恢复原版本，保留面板数据。')
   })
-  it('演示模式明确不可执行，并保留密码表单', async () => {
-    renderApp('/settings')
+  it('演示模式明确不可执行，只展示维护设置', async () => {
+    renderApp('/settings?tab=maintenance')
     expect(await screen.findByText('仅支持 systemd 安装版，当前为演示模式')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '保存并重启' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '检查更新' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '更新日志' })).toBeDisabled()
-    expect(screen.getByLabelText('当前密码')).toBeInTheDocument()
+    expect(screen.queryByLabelText('当前密码')).not.toBeInTheDocument()
   })
   it('表单不常驻地址，校验相同端口并保留输入', async () => {
-    const g = gateway(); renderApp('/settings', { gateway: g }); const user = userEvent.setup()
+    const g = gateway(); renderApp('/settings?tab=maintenance', { gateway: g }); const user = userEvent.setup()
     const front = await screen.findByLabelText('前端端口'); await waitFor(() => expect(front).toHaveValue('48100'))
     await user.clear(front); await user.type(front, '48101'); await user.click(screen.getByRole('button', { name: '保存并重启' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('前端与后端端口不能相同'); expect(g.panel.ports).not.toHaveBeenCalled()
@@ -49,13 +49,13 @@ describe('端口与更新设置', () => {
   })
   it('真实失败显示原因，重试沿用同一提交编号', async () => {
     const g = gateway(); const submit = vi.fn().mockRejectedValue(new Error('端口已被宿主服务占用')); g.panel.ports = submit
-    renderApp('/settings', { gateway: g }); const user = userEvent.setup(); await waitFor(() => expect(screen.getByLabelText('前端端口')).toHaveValue('48100'))
+    renderApp('/settings?tab=maintenance', { gateway: g }); const user = userEvent.setup(); await waitFor(() => expect(screen.getByLabelText('前端端口')).toHaveValue('48100'))
     await user.click(screen.getByRole('button', { name: '保存并重启' })); expect(await screen.findByRole('alert')).toHaveTextContent('端口已被宿主服务占用')
     await user.click(screen.getByRole('button', { name: '保存并重启' })); await waitFor(() => expect(submit).toHaveBeenCalledTimes(2)); expect(submit.mock.calls[0]?.[1]).toBe(submit.mock.calls[1]?.[1])
   })
   it('检查默认分支更新，再以锁定提交执行', async () => {
     const g = gateway(); const sha = 'c'.repeat(40); g.panel.checkUpdate = vi.fn(async () => ({ channel: 'commit' as const, releaseTag: '', repository: info.repository, branch: 'release-track', currentCommit: info.commit, targetCommit: sha, available: true, message: '修复说明' })); const update = vi.fn(async () => ({ ...task, kind: 'update' as const, newPorts: ports, targetCommit: sha })); g.panel.update = update
-    renderApp('/settings', { gateway: g }); const user = userEvent.setup(); await waitFor(() => expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled())
+    renderApp('/settings?tab=maintenance', { gateway: g }); const user = userEvent.setup(); await waitFor(() => expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled())
     await user.click(screen.getByRole('button', { name: '检查更新' })); expect(await screen.findByText(`目标提交：${sha}`)).toBeInTheDocument(); await user.click(screen.getByRole('button', { name: '更新并重启' })); await waitFor(() => expect(update).toHaveBeenCalledWith({ channel: 'commit', targetCommit: sha, releaseTag: '' }, expect.any(String)))
   })
   it('最新发版按标签检查、展示并提交，更新日志使用相同策略', async () => {
@@ -63,7 +63,7 @@ describe('端口与更新设置', () => {
     g.panel.checkUpdate = vi.fn(async () => releaseUpdate)
     g.panel.commits = vi.fn(async () => [])
     g.panel.update = vi.fn(async () => ({ ...task, kind: 'update' as const, newPorts: ports, targetCommit: releaseUpdate.targetCommit, updateChannel: 'release' as const, releaseTag: releaseUpdate.releaseTag }))
-    renderApp('/settings', { gateway: g })
+    renderApp('/settings?tab=maintenance', { gateway: g })
     const user = userEvent.setup()
     await waitFor(() => expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled())
     expect(screen.getByRole('button', { name: '最新提交' })).toHaveAttribute('aria-pressed', 'true')
@@ -84,7 +84,7 @@ describe('端口与更新设置', () => {
     let resolve!: (value: PanelUpdate) => void
     let reject!: (error: Error) => void
     g.panel.checkUpdate = vi.fn().mockImplementationOnce(() => new Promise<PanelUpdate>((done, error) => { resolve = done; reject = error })).mockResolvedValueOnce(releaseUpdate)
-    renderApp('/settings', { gateway: g })
+    renderApp('/settings?tab=maintenance', { gateway: g })
     const user = userEvent.setup()
     await waitFor(() => expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled())
     await user.click(screen.getByRole('button', { name: '检查更新' }))
@@ -107,7 +107,7 @@ describe('端口与更新设置', () => {
     { ...releaseUpdate, targetCommit: info.commit, available: false, expected: '当前已是最新正式发版 · v1.2.0' },
   ])('发版不可更新时禁用提交：$expected', async ({ expected, ...result }) => {
     const g = gateway(); g.panel.checkUpdate = vi.fn(async () => result)
-    renderApp('/settings', { gateway: g }); const user = userEvent.setup()
+    renderApp('/settings?tab=maintenance', { gateway: g }); const user = userEvent.setup()
     await waitFor(() => expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled())
     await user.click(screen.getByRole('button', { name: '最新发版' }))
     await user.click(screen.getByRole('button', { name: '检查更新' }))
@@ -116,7 +116,7 @@ describe('端口与更新设置', () => {
   })
   it('再次检查失败后不允许提交上一次的目标', async () => {
     const g = gateway(); g.panel.checkUpdate = vi.fn().mockResolvedValueOnce(releaseUpdate).mockRejectedValueOnce(new Error('GitHub 请求失败'))
-    renderApp('/settings', { gateway: g }); const user = userEvent.setup()
+    renderApp('/settings?tab=maintenance', { gateway: g }); const user = userEvent.setup()
     await waitFor(() => expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled())
     await user.click(screen.getByRole('button', { name: '最新发版' }))
     await user.click(screen.getByRole('button', { name: '检查更新' }))
@@ -127,13 +127,13 @@ describe('端口与更新设置', () => {
   })
   it('刷新后恢复后台任务及回滚错误', async () => {
     const g = gateway(); g.panel.info = async () => ({ ...info, lastTask: { ...task, state: 'rolled-back', error: '健康检查失败，已恢复' } })
-    renderApp('/settings', { gateway: g }); expect(await screen.findByRole('alert')).toHaveTextContent('健康检查失败，已恢复'); expect(screen.getByRole('link', { name: /打开原地址/ })).toBeInTheDocument()
+    renderApp('/settings?tab=maintenance', { gateway: g }); expect(await screen.findByRole('alert')).toHaveTextContent('健康检查失败，已恢复'); expect(screen.getByRole('link', { name: /打开原地址/ })).toBeInTheDocument()
   })
   it('新入口确认任务提交后跳转，探测使用任务编号', async () => {
     const g = gateway(); g.panel.info = async () => ({ ...info, activeTask: task })
     g.panel.task = async () => ({ task, logs: '检查部署环境\n', nextOffset: 20 })
     g.panel.ready = vi.fn(async () => true)
-    renderApp('/settings', { gateway: g })
+    renderApp('/settings?tab=maintenance', { gateway: g })
     await waitFor(() => expect(openPanelAddress).toHaveBeenCalledWith(expect.stringContaining(':49000/settings?maintenanceTask=' + task.id)), { timeout: 4000 })
     expect(g.panel.ready).toHaveBeenCalledWith(expect.stringContaining(':49000'), task.id, expect.any(AbortSignal))
   })
@@ -141,7 +141,7 @@ describe('端口与更新设置', () => {
     const g = gateway(); const finished = { ...task, state: 'succeeded' as const }
     g.panel.info = async () => ({ ...info, lastTask: finished })
     const read = vi.fn().mockResolvedValueOnce({ task: finished, logs: '检查部署环境\n', nextOffset: 20, hasMore: true }).mockResolvedValueOnce({ task: finished, logs: '已完成\n', nextOffset: 30, hasMore: false }); g.panel.task = read
-    renderApp('/settings', { gateway: g }); const user = userEvent.setup()
+    renderApp('/settings?tab=maintenance', { gateway: g }); const user = userEvent.setup()
     await user.click(await screen.findByRole('button', { name: '继续读取日志' }))
     await waitFor(() => expect(screen.getByLabelText('维护任务日志')).toHaveTextContent('已完成'))
     expect(read).toHaveBeenLastCalledWith(task.id, 20)
@@ -152,7 +152,7 @@ describe('端口与更新设置', () => {
       { sha: info.commit, message: '防火墙按运行模式保护实际入口', time: '2026-10-03T12:00:00Z' },
       { sha: 'e'.repeat(40), message: '部署任务标注项目状态', time: '2026-10-02T12:00:00Z' },
     ])
-    renderApp('/settings', { gateway: g })
+    renderApp('/settings?tab=maintenance', { gateway: g })
     const user = userEvent.setup()
     await user.click(await screen.findByRole('button', { name: '更新日志' }))
     const dialog = await screen.findByRole('dialog', { name: '更新日志' })
@@ -165,7 +165,7 @@ describe('端口与更新设置', () => {
     const g = gateway()
     const commits = vi.fn().mockRejectedValueOnce(new Error('GitHub 不可达，请检查网络或 API 限额')).mockResolvedValueOnce([])
     g.panel.commits = commits
-    renderApp('/settings', { gateway: g })
+    renderApp('/settings?tab=maintenance', { gateway: g })
     const user = userEvent.setup()
     await user.click(await screen.findByRole('button', { name: '更新日志' }))
     const dialog = await screen.findByRole('dialog', { name: '更新日志' })
