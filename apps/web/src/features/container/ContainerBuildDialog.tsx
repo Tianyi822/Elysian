@@ -4,7 +4,9 @@ import { Hammer, Loader2, TriangleAlert, X } from '../../components/icons'
 import type { ContainerApp, ContainerBuildSubmitInput } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
-import { CTL_CHIP, CTL_FIELD, CTL_PRIMARY, CTL_SECONDARY, CTL_SELECT } from '../../components/formControl'
+import { CTL_CHIP, CTL_FIELD, CTL_PRIMARY, CTL_SECONDARY } from '../../components/formControl'
+import { SelectDropdown } from '../../components/SelectDropdown'
+import { SuggestionInput } from '../../components/SuggestionInput'
 import { newBuildRequestId, useContainerAppsStore } from '../../stores/containerAppsStore'
 import { isComposeFile } from '../../stores/containerAppsStore'
 import { formatWorkspaceSize } from './formatWorkspaceSize'
@@ -192,24 +194,20 @@ export function ContainerBuildDialog({ app, onClose }: { app: ContainerApp; onCl
                   <label htmlFor={`build-dockerfile-${app.slug}`} className="mb-1 block text-xs font-medium text-fg-muted">
                     Dockerfile 路径（相对工作区根）
                   </label>
-                  <input
+                  <SuggestionInput
                     id={`build-dockerfile-${app.slug}`}
+                    ariaLabel="Dockerfile 路径（相对工作区根）"
+                    items={textPaths.map(path => ({ value: path, label: path }))}
                     value={dockerfile}
-                    onChange={(event) => {
-                      setDockerfile(event.target.value)
+                    onValueChange={(value) => {
+                      setDockerfile(value)
                       clearBuildPreview()
                     }}
                     placeholder="Dockerfile"
                     autoComplete="off"
                     spellCheck={false}
-                    list={`build-dockerfile-list-${app.slug}`}
-                    className={`${CTL_FIELD} font-mono`}
+                    className="font-mono"
                   />
-                  <datalist id={`build-dockerfile-list-${app.slug}`}>
-                    {textPaths.map((path) => (
-                      <option key={path} value={path} />
-                    ))}
-                  </datalist>
                 </div>
                 <div>
                   <label htmlFor={`build-context-${app.slug}`} className="mb-1 block text-xs font-medium text-fg-muted">
@@ -235,23 +233,22 @@ export function ContainerBuildDialog({ app, onClose }: { app: ContainerApp; onCl
                   <label htmlFor={`build-compose-${app.slug}`} className="mb-1 block text-xs font-medium text-fg-muted">
                     compose 文件（相对工作区根）
                   </label>
-                  <select
+                  <SelectDropdown
                     id={`build-compose-${app.slug}`}
+                    ariaLabel="compose 文件（相对工作区根）"
                     value={compose}
-                    onChange={(event) => {
-                      setCompose(event.target.value)
+                    onSelect={(value) => {
+                      setCompose(value)
                       setSelectedServices([])
                       clearBuildPreview()
                     }}
-                    className={CTL_SELECT}
-                  >
-                    {composeFiles.length === 0 ? <option value="">工作区内没有 compose 文件</option> : null}
-                    {composeFiles.map((path) => (
-                      <option key={path} value={path}>
-                        {path}
-                      </option>
-                    ))}
-                  </select>
+                    fullWidth
+                    mono
+                    items={composeFiles.map((path) => ({ value: path, label: path }))}
+                    fallbackLabel="工作区内没有 compose 文件"
+                    emptyLabel="工作区内没有 compose 文件"
+                    disabled={composeFiles.length === 0}
+                  />
                 </div>
                 {plan?.mode === 'compose' ? (
                   <fieldset className="space-y-1.5">

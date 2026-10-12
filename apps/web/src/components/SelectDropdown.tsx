@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type FocusEvent } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { FORM_CONTROL_HEIGHT_CLASS } from './formControl'
+import { CTL_SELECT, FORM_CONTROL_HEIGHT_CLASS } from './formControl'
 import { IconButton } from './IconButton'
 import { Check, ChevronDown, Search, X } from './icons'
+import { DROPDOWN_OPTION_CLASS, DROPDOWN_SURFACE_CLASS } from './dropdownStyles'
+import { bindMenuScroll, revealMenuItem } from './dropdownScroll'
 
 /**
  * 自定义单选下拉：Radix 触发器 + 候选项，不使用原生 select，因此不会呼出操作系统的下拉控件。
@@ -19,43 +21,12 @@ import { Check, ChevronDown, Search, X } from './icons'
  * 不过滤，清空与 Enter 立即生效，关闭后重置，不改变已选值。
  */
 
-/** 对话框滚动锁在 document 冒泡阶段取消滚轮。菜单自己能滚时拦住事件，滚轮才作用在列表上。 */
-function bindMenuScroll(node: HTMLDivElement | null, cleanup: { current: (() => void) | null }) {
-  cleanup.current?.()
-  cleanup.current = null
-  if (!node) return
-  const canScroll = () => node.scrollHeight > node.clientHeight + 1
-  const onWheel = (event: WheelEvent) => {
-    if (!canScroll()) return
-    const atTop = node.scrollTop <= 0
-    const atBottom = node.scrollTop + node.clientHeight >= node.scrollHeight - 1
-    if ((event.deltaY < 0 && atTop) || (event.deltaY > 0 && atBottom)) event.preventDefault()
-    event.stopPropagation()
-  }
-  const onTouchMove = (event: TouchEvent) => {
-    if (!canScroll()) return
-    event.stopPropagation()
-  }
-  node.addEventListener('wheel', onWheel, { passive: false })
-  node.addEventListener('touchmove', onTouchMove, { passive: true })
-  cleanup.current = () => {
-    node.removeEventListener('wheel', onWheel)
-    node.removeEventListener('touchmove', onTouchMove)
-  }
-}
-
 /** 方向键聚焦用了 preventScroll，这里只滚动菜单自身，避免把外层对话框一起带动。 */
 function revealFocusedItem(event: FocusEvent<HTMLDivElement>) {
   const item = event.target
   const container = event.currentTarget
   if (!(item instanceof HTMLElement) || item === container) return
-  const containerRect = container.getBoundingClientRect()
-  const itemRect = item.getBoundingClientRect()
-  if (itemRect.top < containerRect.top) {
-    container.scrollTop -= containerRect.top - itemRect.top
-  } else if (itemRect.bottom > containerRect.bottom) {
-    container.scrollTop += itemRect.bottom - containerRect.bottom
-  }
+  revealMenuItem(container, item)
 }
 
 export function SelectDropdown<T extends string>({
@@ -153,8 +124,8 @@ export function SelectDropdown<T extends string>({
   const showPlaceholder = !matched && Boolean(fallbackLabel)
   const selected = active && !fullWidth
   // 形状（高度、描边、圆角、底色、字号）归控件层，这里只补两端排布需要的宽度与状态色。
-  const fieldTrigger = 'ctl-select w-full'
-  const filterTrigger = `ctl-select${
+  const fieldTrigger = `${CTL_SELECT} w-full`
+  const filterTrigger = `${CTL_SELECT}${
     selected ? ' border-accent/50 bg-accent/10 text-accent-fg' : ''
   }`
   const triggerClass =
@@ -208,7 +179,7 @@ export function SelectDropdown<T extends string>({
               searchInput.current?.focus()
             }
           } : undefined}
-          className={`z-[70] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-line bg-surface text-left text-sm shadow-lg ${
+          className={`${DROPDOWN_SURFACE_CLASS} ${
             fullWidth ? 'w-[var(--radix-dropdown-menu-trigger-width)]' : 'min-w-32 text-xs'
           }`}
         >
@@ -273,7 +244,7 @@ export function SelectDropdown<T extends string>({
                         searchInput.current?.focus()
                       }
                     } : undefined}
-                    className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-left outline-none text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg data-[highlighted]:bg-surface-raised data-[highlighted]:text-fg data-[state=checked]:font-medium data-[state=checked]:text-fg"
+                    className={DROPDOWN_OPTION_CLASS}
                   >
                     <span className={`min-w-0 truncate text-left tabular-nums ${mono ? 'font-mono' : ''}`}>{item.label}</span>
                     {item.value === value ? <Check aria-hidden size={13} className="shrink-0" /> : null}

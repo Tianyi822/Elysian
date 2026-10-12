@@ -1,5 +1,6 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import * as Tooltip from '@radix-ui/react-tooltip'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ContainerApp, ContainerBuildPlan, ContainerBuildSubmitInput } from '@elysian/contracts'
 import { GatewayProvider } from '../../adapters/GatewayProvider'
@@ -52,9 +53,9 @@ async function dialogGateway(
 function renderDialog(gateway: ElysianGateway, onClose = vi.fn()) {
   const user = userEvent.setup()
   render(
-    <GatewayProvider gateway={gateway}>
+    <Tooltip.Provider><GatewayProvider gateway={gateway}>
       <ContainerBuildDialog app={app} onClose={onClose} />
-    </GatewayProvider>,
+    </GatewayProvider></Tooltip.Provider>,
   )
   return { user, onClose }
 }

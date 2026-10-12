@@ -2,6 +2,8 @@
 
 Elysian 是 Agent 辅助的运维工作台，用于查看主机状态并操作容器、数据库、文件和安全配置。Web 使用 React、Vite、Tailwind CSS v4；后端使用 Go（`apps/server-go`，chi 路由，发布为内嵌前端产物的单二进制）。非 Docker 本地开发保留可复现的演示数据，Docker 运行时通过同源 API 连接真实 Docker Engine 和数据库。
 
+下拉选择统一复用 Web 的 `components/SelectDropdown`，可自由输入的本地候选字段复用 `components/SuggestionInput`；使用 Radix 浮层、自绘触发器与选项，支持双主题、键盘选择、弹窗内滚动与窄屏避让，不使用系统级 `<select>` 或 `<datalist>`。
+
 ## 运行
 
 ```bash

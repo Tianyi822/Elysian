@@ -609,12 +609,11 @@
   }
 
   /*
-   * 遮罩宿主：给「自身就是滚动容器、不便再套一层」的卡片补上定位上下文，
-   * 并裁掉遮罩在圆角外的溢出。遮罩本身始终是这个宿主的直接子元素。
+   * 遮罩宿主只提供定位上下文与遮罩圆角，不裁切内容或控件的焦点环。
+   * 扫光由 busy-veil 自行裁切；表格等内容由自身的滚动容器管理溢出。
    */
   .busy-host {
     position: relative;
-    overflow: hidden;
     border-radius: var(--radius-xl);
   }
 
@@ -854,6 +853,110 @@ body {
 button:not(:disabled),
 select:not(:disabled) {
   cursor: pointer;
+}
+
+/* 自绘滚动条：原生视口保留惯性滚动，14px 命中区中的圆角滑块随主题着色。 */
+.scroll-area {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.scroll-area-viewport {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-width: none;
+}
+
+.scroll-area-viewport::-webkit-scrollbar {
+  display: none;
+}
+
+.scroll-area-viewport:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
+}
+
+.scroll-area-track {
+  position: absolute;
+  right: 2px;
+  width: 14px;
+  border-radius: 999px;
+  touch-action: none;
+  user-select: none;
+  cursor: grab;
+}
+
+.scroll-area-thumb {
+  position: absolute;
+  left: 5px;
+  width: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-fg-subtle) 72%, transparent);
+  transition: background-color 150ms ease, width 150ms ease, left 150ms ease;
+}
+
+.scroll-area-track:is(:hover, :focus-visible, [data-dragging]) .scroll-area-thumb {
+  left: 4px;
+  width: 6px;
+  background: var(--color-fg-muted);
+}
+
+.scroll-area-track:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -1px;
+}
+
+.scroll-area-track[data-dragging] {
+  cursor: grabbing;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scroll-area-thumb { transition: none; }
+}
+
+/*
+ * 表格保留原生滚动：仅溢出时显示，支持拖动、Shift＋滚轮、触控板与键盘。
+ * 12px 命中区中的滑块只画 6px，透明轨道融入面板；溢出时无需悬停即可发现。
+ * Firefox 回落标准属性，避免 Chromium 的标准属性盖掉圆角与命中区样式。
+ */
+.table-scrollbar::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+.table-scrollbar::-webkit-scrollbar-track,
+.table-scrollbar::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.table-scrollbar::-webkit-scrollbar-thumb {
+  min-width: 40px;
+  min-height: 40px;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-color: var(--color-fg-subtle);
+  background-clip: padding-box;
+}
+
+.table-scrollbar::-webkit-scrollbar-thumb:hover,
+.table-scrollbar::-webkit-scrollbar-thumb:active {
+  background-color: var(--color-fg-muted);
+}
+
+.table-scrollbar::-webkit-scrollbar-button {
+  display: none;
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  .table-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-fg-subtle) transparent;
+  }
 }
 
 /*
