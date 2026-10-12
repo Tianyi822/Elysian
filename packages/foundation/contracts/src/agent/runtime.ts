@@ -177,6 +177,15 @@ export type RuntimeInfo = {
   executionRuntimes?: RuntimeCapability
 }
 export type RuntimeCapability = { available: boolean; reason?: string }
+/** 执行器受管进程的公开身份与生命周期；不包含容器凭据或启动参数。state 当前取值 running 与 stopping。 */
+export type AgentExecutionRuntime = {
+  id: string
+  containerId: string
+  /** 由 stdio MCP 探测启动的进程才回填服务身份。 */
+  serverId?: string
+  serverRevision?: number
+  state: string
+}
 export type AgentRuntimeInfo = RuntimeInfo & {
   batch: RuntimeCapability
   agent: RuntimeCapability

@@ -38,7 +38,9 @@
           "source": "用户配置"
         },
         "active": true,
-        "hasCredential": true
+        "hasCredential": true,
+        "provider": "openai-compatible",
+        "apiFormat": "chat-completions"
       },
       "after": {
         "id": "profile-1",
@@ -54,7 +56,9 @@
           "source": "用户配置"
         },
         "active": true,
-        "hasCredential": true
+        "hasCredential": true,
+        "provider": "openai-compatible",
+        "apiFormat": "chat-completions"
       },
       "differences": [
         "上下文 token 容量",
@@ -97,7 +101,9 @@
           "source": "用户配置"
         },
         "active": true,
-        "hasCredential": true
+        "hasCredential": true,
+        "provider": "openai-compatible",
+        "apiFormat": "chat-completions"
       },
       "historySeq": "9007199254740993",
       "initialMemoryRevision": 1,
@@ -162,7 +168,9 @@
         "source": "用户配置"
       },
       "active": true,
-      "hasCredential": true
+      "hasCredential": true,
+      "provider": "openai-compatible",
+      "apiFormat": "chat-completions"
     },
     "historySeq": "9007199254740993",
     "initialMemoryRevision": 1,
@@ -229,6 +237,16 @@
     "truncated": false
   },
   "modelRequest": {
+    "wikiSources": [
+      {
+        "pageId": "wiki-page-1",
+        "revision": 1,
+        "digest": "wiki-page-digest"
+      }
+    ],
+    "contextItemIds": [
+      "context-agent-1"
+    ],
     "id": "model-request-1",
     "runId": "run-agent-1",
     "index": 0,
@@ -292,6 +310,14 @@
     "memoryStatus": "updated"
   },
   "message": {
+    "quarantined": true,
+    "wikiSources": [
+      {
+        "pageId": "wiki-page-1",
+        "revision": 1,
+        "digest": "wiki-page-digest"
+      }
+    ],
     "id": "message-1",
     "sessionId": "session-1",
     "taskId": "task-agent-1",

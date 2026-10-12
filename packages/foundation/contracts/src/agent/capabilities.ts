@@ -52,6 +52,9 @@ export const AGENT_OPERATION_STATUS_LABELS: Record<AgentOperationStatus, string>
   planned: '已规划', 'waiting-approval': '等待审批', 'waiting-resource': '等待资源', dispatched: '已派发', completed: '已确认完成', unknown: '结果未确认',
 }
 export type AgentOperation = {
+  /** workflow/v2 执行树定位：所属作用域与节点；非工作流运行为空。 */
+  scopeId?: string
+  nodeId?: string
   source?: string
   workflowId?: string
   workflowStepId?: string
@@ -88,6 +91,9 @@ export const AGENT_APPROVAL_STATUS_LABELS: Record<AgentApprovalStatus, string> =
 }
 export type AgentApprovalDecision = 'approved' | 'denied'
 type AgentApprovalCommon = {
+  /** workflow/v2 执行树定位：所属作用域与节点；非工作流审批为空。 */
+  scopeId?: string
+  nodeId?: string
   workflowId?: string
   workflowStepId?: string
   workflowAttempt?: number
@@ -123,6 +129,9 @@ export type AgentApprovalDecisionInput = { decision: AgentApprovalDecision }
 export type AgentExecutionBarrierStatus = 'dispatched' | 'unknown' | 'confirmed' | 'reconciled'
 export type AgentReconciliationDecision = 'confirmed-completed' | 'confirmed-stopped'
 export type AgentExecutionBarrier = {
+  /** workflow/v2 执行树定位：所属作用域与节点；非工作流屏障为空。 */
+  scopeId?: string
+  nodeId?: string
   workflowId?: string
   id: string
   runId: string
@@ -196,6 +205,36 @@ export type AgentSkill = {
   digest: string
   bytes: number
   files: readonly AgentWorkspaceFile[]
+}
+export type AgentSkillFilePreview = {
+  skillId: string
+  revision: number
+  path: string
+  previewable: boolean
+  content?: string
+  reason?: 'binary' | 'too-large'
+}
+export type AgentCapabilityKind = 'skill' | 'mcp' | 'execution-profile' | 'grant'
+export type AgentCapabilityRevocation = {
+  /** SQLite row cursor is kept as a decimal string to avoid precision loss. */
+  cursor: string
+  kind: AgentCapabilityKind
+  id: string
+  /** Zero revokes every revision of this capability. */
+  revision: number
+  reason: string
+  createdAt: string
+}
+export type AgentCapabilityRevocationQuery = {
+  kind?: AgentCapabilityKind
+  id?: string
+  cursor?: string
+  limit?: number
+}
+export type AgentCapabilityRevocationPage = {
+  items: readonly AgentCapabilityRevocation[]
+  nextCursor: string
+  hasMore: boolean
 }
 export type AgentSkillImportInput = {
   requestId: string

@@ -76,7 +76,9 @@
         "source": "用户配置"
       },
       "active": true,
-      "hasCredential": true
+      "hasCredential": true,
+      "provider": "openai-compatible",
+      "apiFormat": "chat-completions"
     },
     "snapshot": {
       "environment": {
@@ -190,7 +192,9 @@
         "source": "用户配置"
       },
       "active": true,
-      "hasCredential": true
+      "hasCredential": true,
+      "provider": "openai-compatible",
+      "apiFormat": "chat-completions"
     },
     "historySeq": "9007199254740993",
     "initialMemoryRevision": 1,

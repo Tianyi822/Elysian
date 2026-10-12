@@ -48,7 +48,7 @@ export type AgentWorkflowParallel = { join: 'all'; branches: readonly AgentWorkf
 export type AgentWorkflowBranch = { id: string; input: AgentWorkflowBinding; body: AgentWorkflowBody }
 export type AgentWorkflowForeach = { items: AgentWorkflowBinding; body: AgentWorkflowBody }
 export type AgentWorkflowSubworkflow = { definitionId: string; definitionRevision: number }
-export type AgentWorkflowLanguageVersion = 'v1' | 'workflow/v2'
+export type AgentWorkflowLanguageVersion = 'v1' | 'workflow/v1' | 'workflow/v2'
 export type AgentWorkflowDefinition = {
   languageVersion?: AgentWorkflowLanguageVersion
   id: string
@@ -193,7 +193,7 @@ export type AgentWorkflowNodeExecution = {
   stableKey: string
   kind: AgentWorkflowStepKind
   ordinal: number
-  status: AgentWorkflowStatus
+  status: AgentWorkflowStatus | 'skipped'
   taskId: string
   runId?: string
   attempt: number

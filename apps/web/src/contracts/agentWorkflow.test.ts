@@ -40,12 +40,12 @@ describe('工作流共享契约', () => {
   })
 
   it('持久实例、步骤尝试、恢复输入和冻结运行与Go保持同一字段', () => {
-    const instance: AgentWorkflowInstance = { ...fixture.instance, status: 'recovery-required', allowedActions: [...AGENT_WORKFLOW_RECOVERY_ACTIONS] }
+    const instance: AgentWorkflowInstance = { ...fixture.instance, model: { ...fixture.instance.model, provider: 'openai-compatible', apiFormat: 'chat-completions' }, status: 'recovery-required', allowedActions: [...AGENT_WORKFLOW_RECOVERY_ACTIONS] }
     const attempt: AgentWorkflowAttempt = { ...fixture.attempt, status: 'succeeded' }
     const event: AgentWorkflowEvent = fixture.event
     const create: AgentCreateWorkflowInput = fixture.create
     const recovery: AgentWorkflowRecoveryInput = { ...fixture.recovery, action: 'accept-result' }
-    const run: RuntimeRun = { ...fixture.run, status: 'interrupted', workflowFrozenFrom: 'waiting-approval', phase: 'completed', memoryStatus: 'updated', task: { ...fixture.run.task, kind: 'workflow', steps: [] } }
+    const run: RuntimeRun = { ...fixture.run, model: { ...fixture.run.model, provider: 'openai-compatible', apiFormat: 'chat-completions' }, status: 'interrupted', workflowFrozenFrom: 'waiting-approval', phase: 'completed', memoryStatus: 'updated', task: { ...fixture.run.task, kind: 'workflow', steps: [] } }
     const operation: AgentOperation = { ...fixture.operation, policy: 'approval-required', status: 'waiting-approval' }
     const approval: AgentWorkflowApproval = { ...fixture.approval, kind: 'workflow-gate', status: 'pending' }
     const barrier: AgentExecutionBarrier = { ...fixture.barrier, status: 'reconciled', decision: 'confirmed-completed' }

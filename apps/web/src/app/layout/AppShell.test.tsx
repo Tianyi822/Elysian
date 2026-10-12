@@ -18,7 +18,7 @@ beforeEach(() => {
 })
 
 describe('模板外壳', () => {
-  it('侧边栏包含仪表盘、安全、Docker、数据库、文件管理、平台日志、终端、网站与设置九项', () => {
+  it('侧边栏包含仪表盘、安全、Docker、数据库、文件管理、平台日志、终端、网站、Ely 与设置十项', () => {
     renderApp('/')
     const nav = screen.getByRole('navigation', { name: '主导航' })
     const links = within(nav).getAllByRole('link')
@@ -32,6 +32,7 @@ describe('模板外壳', () => {
       '平台日志',
       '终端',
       '网站',
+      'Ely',
       '设置',
     ])
     expect(links[0]).toHaveAttribute('aria-current', 'page')

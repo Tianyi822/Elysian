@@ -1,11 +1,39 @@
 import type { RuntimeFailure, RuntimeJSONValue, RuntimeMemoryStatus, RuntimeRunStatus } from './runtime.ts'
 import type { AgentPromptRef, AgentResourceRef, AgentRevisionRef } from './capabilities.ts'
+import type { AgentWikiRef } from './memory.ts'
 
 /** 模型能力由配置声明；source 记录能力信息来源。 */
-export type AgentModelCapabilities = { text: boolean; tools: boolean; source: string }
+export type AgentModelReasoningLevel = string
+export type AgentModelCapabilities = {
+  /** 是否支持文本输入；Ely 运行要求文本与工具调用。 */
+  text: boolean
+  tools: boolean
+  /** 多模态输入能力；缺失时按 false 处理以兼容旧配置。 */
+  image?: boolean
+  video?: boolean
+  pdf?: boolean
+  /** 高级响应能力；缺失时按 false 处理以兼容旧配置。 */
+  structuredOutput?: boolean
+  webSearch?: boolean
+  systemMessages?: boolean
+  /** 支持的推理等级，按用户指定的低到高顺序保存；不选择本次运行的强度。 */
+  reasoningLevels?: readonly AgentModelReasoningLevel[]
+  source: string
+}
+
+export type AgentModelProvider = 'openai-compatible' | 'deepseek'
+
+export const AGENT_MODEL_API_FORMATS = [
+  { value: 'anthropic-messages', label: 'Anthropic Messages (/v1/messages)' },
+  { value: 'chat-completions', label: 'Chat Completions (/chat/completions)' },
+  { value: 'responses', label: 'Responses (/responses)' },
+] as const
+export type AgentModelAPIFormat = typeof AGENT_MODEL_API_FORMATS[number]['value']
 
 /** 公开的不可变模型修订，不包含 credential 字段。 */
 export type AgentModelProfile = {
+  provider: AgentModelProvider
+  apiFormat: AgentModelAPIFormat
   id: string
   revision: number
   name: string
@@ -16,9 +44,59 @@ export type AgentModelProfile = {
   capabilities: AgentModelCapabilities
   active: boolean
   hasCredential: boolean
+  service?: { id: string; revision: number; name: string; active: boolean; enabled: boolean }
+}
+
+/** 一个服务共用地址、协议和凭据，保存时原子更新全部模型修订。 */
+export type AgentModelService = {
+  id: string
+  revision: number
+  name: string
+  provider: AgentModelProvider
+  apiFormat: AgentModelAPIFormat
+  baseUrl: string
+  active: boolean
+  hasCredential: boolean
+  models: readonly (AgentModelProfile & { enabled: boolean })[]
+}
+export type AgentModelServiceInput = {
+  name: string
+  provider: AgentModelProvider
+  apiFormat: AgentModelAPIFormat
+  baseUrl: string
+  active: boolean
+  credential?: string
+  models: readonly {
+    id?: string
+    name: string
+    model: string
+    contextTokens: number
+    outputTokens: number
+    capabilities: AgentModelCapabilities
+    enabled: boolean
+  }[]
+}
+export type AgentUpdateModelServiceInput = AgentModelServiceInput & { expectedRevision: number }
+
+/** 读取远端目录的临时连接信息，不保存配置；省略凭据可沿用同地址的已保存凭据。 */
+export type AgentModelDiscoveryInput = {
+  provider: AgentModelProvider
+  apiFormat: AgentModelAPIFormat
+  baseUrl: string
+  credential?: string
+  serviceId?: string
+  expectedRevision?: number
+}
+export type AgentDiscoveredModel = {
+  model: string
+  name: string
+  contextTokens?: number
+  outputTokens?: number
 }
 
 export type AgentModelProfileInput = {
+  provider: AgentModelProvider
+  apiFormat: AgentModelAPIFormat
   name: string
   baseUrl: string
   model: string
@@ -66,6 +144,10 @@ export type AgentInput = {
 
 /** 公开对话只包含用户输入和助手答复，不承载工具结果、工作记忆或隐藏推理。 */
 export type AgentMessage = {
+  /** 服务端判定该消息引用了不可信或未核实内容，展示时须与普通答复区分。 */
+  quarantined?: boolean
+  /** 消息成文时引用的 Wiki 页面修订；由父进程核验，不在前端补全。 */
+  wikiSources?: readonly AgentWikiRef[]
   id: string
   sessionId: string
   taskId: string
@@ -112,6 +194,10 @@ export type AgentModelResponse = {
   usage: AgentModelUsage
 }
 export type AgentModelRequestRecord = {
+  /** 本次请求随上下文送入的 Wiki 页面修订。 */
+  wikiSources?: readonly AgentWikiRef[]
+  /** 本次请求实际载入的资料条目（技能正文、MCP 资源等 ContextItem 的 ID）。 */
+  contextItemIds?: readonly string[]
   id: string
   runId: string
   index: number

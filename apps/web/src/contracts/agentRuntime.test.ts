@@ -99,7 +99,7 @@ describe('真实任务运行共享契约', () => {
     const seq = '9007199254740993'
     const model: AgentModelProfile = {
       id: 'profile-1', revision: 2, name: '测试模型', baseUrl: 'https://model.example.test/v1',
-      model: 'test-model', contextTokens: 65536, outputTokens: 4096,
+      model: 'test-model', provider: 'openai-compatible' as const, apiFormat: 'chat-completions' as const, contextTokens: 65536, outputTokens: 4096,
       capabilities: { text: true, tools: true, source: '用户配置' }, active: true, hasCredential: true,
     }
     const createSession: AgentCreateSessionInput = { title: '容器检查', modelProfileId: model.id, modelRevision: 2 }
@@ -110,7 +110,7 @@ describe('真实任务运行共享契约', () => {
       modelProfileId: model.id, modelRevision: 2, lastSeq: seq,
       notices: ['历史答复保留各轮固定模型版本'],
       modelChange: {
-        before: { ...model, revision: 1, contextTokens: 32768, outputTokens: 2048 },
+        before: { ...model, revision: 1, provider: 'openai-compatible' as const, apiFormat: 'chat-completions' as const, contextTokens: 32768, outputTokens: 2048 },
         after: model,
         differences: ['上下文 token 容量', '单次输出 token 上限'],
         notices: [
@@ -148,6 +148,8 @@ describe('真实任务运行共享契约', () => {
       endedAt: '2026-10-10T00:00:03Z', stepIndex: 0, args: {}, result: [], truncated: false,
     }
     const modelRequest: AgentModelRequestRecord = {
+      wikiSources: [{ pageId: 'wiki-page-1', revision: 1, digest: 'wiki-page-digest' }],
+      contextItemIds: ['context-agent-1'],
       id: 'model-request-1', runId: run.id, index: 0, purpose: 'inference', status: 'succeeded',
       startedAt: '2026-10-10T00:00:01Z', endedAt: '2026-10-10T00:00:02Z',
       contextRefs: [{ runId: run.id, eventSeq: '1' }], memoryRevision: 1,
@@ -165,6 +167,8 @@ describe('真实任务运行共享契约', () => {
       todos: [], openQuestions: [], summary: '容器检查完成。',
     }
     const message: AgentMessage = {
+      quarantined: true,
+      wikiSources: [{ pageId: 'wiki-page-1', revision: 1, digest: 'wiki-page-digest' }],
       id: 'message-1', sessionId: session.id, taskId: task.id, runId: run.id, seq,
       role: 'assistant', content: '查询结果中没有容器。', createdAt: endedAt, runStatus: 'succeeded',
     }
@@ -199,7 +203,7 @@ describe('真实任务运行共享契约', () => {
     expect(agentFixture.modelRequest.response.usage).not.toHaveProperty('cachedTokens')
     const input: AgentModelProfileInput = {
       name: '测试模型', baseUrl: 'https://model.example.test/v1', model: 'test-model',
-      contextTokens: 65536, outputTokens: 4096, capabilities: { text: true, tools: true, source: '用户配置' }, active: true,
+      provider: 'openai-compatible' as const, apiFormat: 'chat-completions' as const, contextTokens: 65536, outputTokens: 4096, capabilities: { text: true, tools: true, source: '用户配置' }, active: true,
     }
     const clearCredential: AgentUpdateModelProfileInput = { ...input, expectedRevision: 2, credential: '' }
     expect(input).not.toHaveProperty('credential')

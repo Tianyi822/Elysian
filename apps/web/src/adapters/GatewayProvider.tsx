@@ -41,7 +41,15 @@ export function GatewayProvider({
         // 本地无后端演示不强制登录。
         session: isDockerRuntime() ? 'http' : 'mock',
         panel: isDockerRuntime() ? 'http' : 'mock',
-        wiki: isDockerRuntime() ? 'http' : 'mock',
+        // Agent（Ely）七域在 Docker 运行时接 /api/agent 同源端点（JSON 分页与轮询，
+        // 无 SSE）；本地演示用确定性种子（运行时报告 available:true）。
+        agentWorkbench: isDockerRuntime() ? 'http' : 'mock',
+        agentApprovals: isDockerRuntime() ? 'http' : 'mock',
+        agentRuns: isDockerRuntime() ? 'http' : 'mock',
+        agentWorkflows: isDockerRuntime() ? 'http' : 'mock',
+        agentCapabilities: isDockerRuntime() ? 'http' : 'mock',
+        agentExtensions: isDockerRuntime() ? 'http' : 'mock',
+        agentMemory: isDockerRuntime() ? 'http' : 'mock',
       }),
     [gateway],
   )

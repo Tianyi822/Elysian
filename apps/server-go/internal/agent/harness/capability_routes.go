@@ -97,6 +97,17 @@ func registerCapabilityRoutes(r chi.Router, service runtimeService) {
 			respond(w, map[string]bool{"revoked": e == nil}, e)
 		}))
 	}
+	r.Get("/capability-revocations", wrap(func(m *Manager, w http.ResponseWriter, req *http.Request) {
+		query, e := runtimeQuery(req, 50, "kind", "id", "cursor", "limit")
+		if e != nil {
+			writeRuntimeError(w, e)
+			return
+		}
+		page, e := m.CapabilityRevocations(req.Context(), CapabilityRevocationQuery{
+			Kind: req.URL.Query().Get("kind"), ID: req.URL.Query().Get("id"), Cursor: query.Cursor, Limit: query.Limit,
+		})
+		respond(w, page, e)
+	}))
 	r.Get("/tasks/{id}/workspace", wrap(func(m *Manager, w http.ResponseWriter, req *http.Request) {
 		if _, e := runtimeQuery(req, 50, "path"); e != nil {
 			writeRuntimeError(w, e)

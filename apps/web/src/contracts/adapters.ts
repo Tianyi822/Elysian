@@ -1,6 +1,80 @@
-import type { AgentMemoryPage, AgentMemorySearchResult, AgentMemorySpace, PanelCommit, PanelInfo, PanelPorts, PanelTask, PanelTaskReport, PanelUpdate, PanelUpdateChannel, PanelUpdateTarget } from '@elysian/contracts'
+import type { PanelCommit, PanelInfo, PanelPorts, PanelTask, PanelTaskReport, PanelUpdate, PanelUpdateChannel, PanelUpdateTarget } from '@elysian/contracts'
 import type { WebsiteSource, WebsiteGitSourceInput, WebsiteDeploymentInput, WebsiteDeploymentTask, WebsiteBuildConfig, WebsiteDeploymentLogs } from '@elysian/contracts'
 import type {
+  AgentApproval,
+  AgentApprovalDecisionInput,
+  AgentCapabilityRevocationPage,
+  AgentCapabilityRevocationQuery,
+  AgentContextItem,
+  AgentCreateMemoryExtractionInput,
+  AgentCreateSessionInput,
+  AgentCreateWorkflowDefinitionInput,
+  AgentCreateWorkflowInput,
+  AgentEmbeddingProfile,
+  AgentEmbeddingProfileInput,
+  AgentEmbeddingRequest,
+  AgentEnvironment,
+  AgentExecutionBarrier,
+  AgentExecutionGrant,
+  AgentExecutionGrantInput,
+  AgentExecutionProfile,
+  AgentExecutionProfileInput,
+  AgentExecutionRuntime,
+  AgentInput,
+  AgentMCPCatalogProjection,
+  AgentMCPServer,
+  AgentMCPServerInput,
+  AgentMemoryChecks,
+  AgentMemoryExtraction,
+  AgentMemoryExport,
+  AgentMemoryIndexInput,
+  AgentMemoryIndexStatus,
+  AgentMemoryPage,
+  AgentMemoryPageInput,
+  AgentMemoryProposal,
+  AgentMemoryProposalDecisionInput,
+  AgentMemoryProposalStatus,
+  AgentMemorySearchResult,
+  AgentMemorySpace,
+  AgentMemorySpaceInput,
+  AgentMemorySpaceSelection,
+  AgentMessage,
+  AgentModelProfile,
+  AgentModelService,
+  AgentModelServiceInput,
+  AgentModelDiscoveryInput,
+  AgentDiscoveredModel,
+  AgentUpdateModelServiceInput,
+  AgentModelProfileInput,
+  AgentModelRequestRecord,
+  AgentOperation,
+  AgentReconciliationInput,
+  AgentResourceLease,
+  AgentResourceLeaseReconcileInput,
+  AgentResourceRule,
+  AgentResourceRuleInput,
+  AgentRuntimeInfo,
+  AgentSession,
+  AgentSkill,
+  AgentSkillFilePreview,
+  AgentSkillImportInput,
+  AgentSkillImportTask,
+  AgentSwitchModelInput,
+  AgentUpdateEmbeddingProfileInput,
+  AgentUpdateMCPServerInput,
+  AgentUpdateModelProfileInput,
+  AgentUpdateResourceRuleInput,
+  AgentUpdateWorkflowDefinitionInput,
+  AgentWorkingMemory,
+  AgentWorkspaceVersion,
+  AgentWorkspaceView,
+  AgentWorkflowAttempt,
+  AgentWorkflowDefinition,
+  AgentWorkflowEvent,
+  AgentWorkflowExecutionTree,
+  AgentWorkflowInstance,
+  AgentWorkflowRecoveryInput,
+  AgentWorkflowStatus,
   Container,
   ContainerAction,
   ContainerApp,
@@ -33,6 +107,13 @@ import type {
   OperationLogListQuery,
   OperationLogListReport,
   PlatformLogCategory,
+  RuntimeCall,
+  RuntimeEvent,
+  RuntimeListQuery,
+  RuntimePage,
+  RuntimeRun,
+  RuntimeSubmitInput,
+  RuntimeTask,
   RuntimeLogListReport,
   SshAdapter,
   Unsubscribe,
@@ -348,6 +429,7 @@ export type PageArea =
   | 'terminals'
   | 'websites'
   | 'incidents'
+  | 'agent'
   | 'runs'
   | 'skills'
   | 'approvals'
@@ -501,16 +583,233 @@ export interface DependenciesAdapter {
   setup(target: DependencySetupTarget, step: DependencySetupStep): Promise<DependencySetupResult>
 }
 
-/** 预留 Wiki 读取接缝；只暴露现有同源 API 的查询，不提供写入或页面导航。 */
-export interface AgentWikiReadAdapter {
+/*
+ * Agent（Ely）七域适配接口。全部端点挂同源 /api/agent 前缀，无 SSE——
+ * 增量经 JSON 分页与轮询推进，游标（seq/lastSeq/eventSeq/nextCursor 等）一律按
+ * 十进制字符串传递与比较，不得转 number。可取消的读取方法带 signal?: AbortSignal。
+ * 接口形状与 @elysian/contracts 的领域类型对齐；HTTP 与 mock 两种实现对同一套
+ * 契约断言复跑。Wiki 只读接缝（AgentWikiReadAdapter）的方法名已并入
+ * AgentMemoryAdapter 超集，gateway.wiki 字段由完整记忆域 agentMemory 取代。
+ */
+
+/** Agent 分页查询：cursor 为服务端不透明或十进制字符串游标，空页保留当前游标。 */
+export type AgentPageQuery = { cursor?: string; limit?: number }
+
+/** 会话公开消息增量查询：after 为十进制事件序号，超过会话 lastSeq 回 400 future-cursor。 */
+export type AgentMessageQuery = { after?: string; limit?: number }
+
+/**
+ * Ely 工作台域（ADR-0025 会话面）：Session → Task → Run 层级、公开消息流、
+ * Task 工作记忆、会话记忆空间选择、能力环境快照、模型请求记录与 Task 工作区。
+ * 会话 busy（activeRunId/activeWorkflowId 非空）时写方法被服务端 409 session-busy 拒绝。
+ */
+export interface AgentWorkbenchAdapter {
+  listSessions(query?: AgentPageQuery, signal?: AbortSignal): Promise<RuntimePage<AgentSession>>
+  getSession(sessionId: string, signal?: AbortSignal): Promise<AgentSession>
+  createSession(input: AgentCreateSessionInput): Promise<AgentSession>
+  switchModel(sessionId: string, input: AgentSwitchModelInput): Promise<AgentSession>
+  listMessages(sessionId: string, query?: AgentMessageQuery, signal?: AbortSignal): Promise<RuntimePage<AgentMessage>>
+  listTasks(sessionId: string, query?: AgentPageQuery, signal?: AbortSignal): Promise<RuntimePage<RuntimeTask>>
+  /** 会话内新建 Task+Run（AgentInput 带 requestId 幂等；重复提交回读旧 Run）。 */
+  createTask(sessionId: string, input: AgentInput): Promise<RuntimeRun>
+  /** 同一 Task 续轮（同 AgentInput，requestId 幂等）。 */
+  continueRun(taskId: string, input: AgentInput): Promise<RuntimeRun>
+  getTask(taskId: string, signal?: AbortSignal): Promise<RuntimeTask>
+  /**
+   * Task 工作记忆（GET /tasks/{id}/memory）。与会话记忆空间选择是两个不同资源：
+   * 这里读 Task 的结构化工作记忆，revision 省略读最新。
+   */
+  getTaskWorkingMemory(taskId: string, revision?: number, signal?: AbortSignal): Promise<AgentWorkingMemory>
+  /** 会话记忆空间选择现值（GET /sessions/{id}/memory）；写前必须先回显服务端现值。 */
+  readSessionMemorySelection(sessionId: string, signal?: AbortSignal): Promise<AgentMemorySpaceSelection>
+  /** 保存会话记忆空间选择（PUT，无 requestId 字段）。 */
+  writeSessionMemorySelection(sessionId: string, selection: AgentMemorySpaceSelection): Promise<AgentMemorySpaceSelection>
+  /** Run 的模型请求分页（cursor=request_index）。 */
+  listModelRequests(runId: string, query?: AgentPageQuery, signal?: AbortSignal): Promise<RuntimePage<AgentModelRequestRecord>>
+  /** 会话固定能力环境快照（读取无副作用）。 */
+  getSessionEnvironment(sessionId: string, signal?: AbortSignal): Promise<AgentEnvironment>
+  /** CAS 更新会话环境（body 携带 expectedRevision；冲突 409 revision-conflict）。 */
+  updateSessionEnvironment(sessionId: string, expectedRevision: number, environment: AgentEnvironment): Promise<AgentEnvironment>
+  /** 工作区文件清单；quarantined 与 wikiSources 随版本返回。 */
+  listWorkspace(taskId: string, signal?: AbortSignal): Promise<AgentWorkspaceView>
+  /** 读单文件：content 为 base64（服务端事实，与 PUT 体不对称）；超过 4 MiB 回中文错误。 */
+  readWorkspaceFile(taskId: string, path: string, signal?: AbortSignal): Promise<AgentWorkspaceView>
+  /**
+   * 写工作区文件：请求体为原始文件字节（≤128 MiB），绝不 JSON 包装或 base64 编码；
+   * path 与非负 expectedRevision 走查询参数，CAS 冲突 409。
+   */
+  writeWorkspaceFile(taskId: string, path: string, expectedRevision: number, bytes: Uint8Array): Promise<AgentWorkspaceVersion>
+  deleteWorkspaceFile(taskId: string, path: string, expectedRevision: number): Promise<AgentWorkspaceVersion>
+}
+
+/**
+ * 审批与治理域：审批决定、Run 操作与资料、执行屏障人工核实、四类能力显式撤销
+ * 与探测遗留租约核实。审批/操作/屏障/租约列表为全量数组不分页，前端按需过滤。
+ */
+export interface AgentApprovalsAdapter {
+  /** 审批列表（≤200 条，pending/approved 优先排序）。 */
+  listApprovals(workflowId?: string, signal?: AbortSignal): Promise<readonly AgentApproval[]>
+  /** 决定：同决定重复幂等，不同决定 409 decision-conflict；批准撞队列满 429 且保持 pending。 */
+  decideApproval(approvalId: string, input: AgentApprovalDecisionInput): Promise<AgentApproval>
+  /** Run 全部 Operation；argumentsJson 是审批与派发参数的权威字符串。 */
+  listOperations(runId: string, signal?: AbortSignal): Promise<readonly AgentOperation[]>
+  listContextItems(runId: string, signal?: AbortSignal): Promise<readonly AgentContextItem[]>
+  listBarriers(workflowId?: string, signal?: AbortSignal): Promise<readonly AgentExecutionBarrier[]>
+  /** 人工核实屏障：仅 unknown 状态，同证据同决定幂等。 */
+  reconcileBarrier(barrierId: string, input: AgentReconciliationInput): Promise<AgentExecutionBarrier>
+  /** 资源租约（/resource-locks；/resource-leases 是同源别名，前端只走 locks）。 */
+  listResourceLocks(signal?: AbortSignal): Promise<readonly AgentResourceLease[]>
+  /** 核实遗留探测租约：仅 confirmed-stopped，不代替运行节点恢复。 */
+  reconcileResourceLock(lockId: string, input: AgentResourceLeaseReconcileInput): Promise<AgentResourceLease>
+  /** 四类能力显式撤销共用形状（body {revision,reason}，无 requestId）；返回撤销事实。 */
+  revokeSkill(skillId: string, revision: number, reason: string): Promise<{ revoked: boolean }>
+  revokeMcpServer(serverId: string, revision: number, reason: string): Promise<{ revoked: boolean }>
+  revokeExecutionProfile(profileId: string, revision: number, reason: string): Promise<{ revoked: boolean }>
+  revokeGrant(grantId: string, revision: number, reason: string): Promise<{ revoked: boolean }>
+}
+
+/**
+ * 运行记录域：运行时能力报告与旧兼容 tool-batch Run。
+ * 页面先读 runtime() 判定可用性与 12 个能力位，再轮询 Run 详情/事件/调用。
+ */
+export interface AgentRunsAdapter {
+  /** GET /runtime：唯一在内核不可用时也可读的端点；available:false 时携带中文 reason。 */
+  runtime(signal?: AbortSignal): Promise<AgentRuntimeInfo>
+  /** 旧兼容批次提交（requestId 幂等；仅四条空参只读工具）。 */
+  submitBatch(input: RuntimeSubmitInput): Promise<RuntimeRun>
+  listRuns(query?: RuntimeListQuery, signal?: AbortSignal): Promise<RuntimePage<RuntimeRun>>
+  getRun(runId: string, signal?: AbortSignal): Promise<RuntimeRun>
+  listRunCalls(runId: string, query?: AgentPageQuery, signal?: AbortSignal): Promise<RuntimePage<RuntimeCall>>
+  /** Run 事件增量轮询：after 为规范非负十进制字符串，空页保留当前游标。 */
+  listRunEvents(runId: string, query?: { after?: string; limit?: number }, signal?: AbortSignal): Promise<RuntimePage<RuntimeEvent>>
+  /** 请求取消：202 未终态 / 200 已终态；返回 Run，「取消请求已提交」不等于「已停止」。 */
+  cancelRun(runId: string): Promise<RuntimeRun>
+}
+
+/** 工作流域（ADR-0027 v1 + workflow/v2）：模板修订与实例全生命周期。 */
+export interface AgentWorkflowsAdapter {
+  listDefinitions(signal?: AbortSignal): Promise<readonly AgentWorkflowDefinition[]>
+  getDefinition(definitionId: string, revision?: number, signal?: AbortSignal): Promise<AgentWorkflowDefinition>
+  createDefinition(input: AgentCreateWorkflowDefinitionInput): Promise<AgentWorkflowDefinition>
+  /** 更新模板（body 携带 expectedRevision，产生新修订；无 requestId）。 */
+  updateDefinition(definitionId: string, input: AgentUpdateWorkflowDefinitionInput): Promise<AgentWorkflowDefinition>
+  /** 创建实例（requestId 幂等；复制来源会话模型修订与能力环境，不复制历史/文件）。 */
+  createInstance(input: AgentCreateWorkflowInput): Promise<AgentWorkflowInstance>
+  listInstances(query: { status?: AgentWorkflowStatus; cursor?: string; limit?: number }, signal?: AbortSignal): Promise<RuntimePage<AgentWorkflowInstance>>
+  /** 实例详情（v2 附执行树与节点级 allowedActions）。 */
+  getInstance(instanceId: string, signal?: AbortSignal): Promise<AgentWorkflowInstance>
+  getExecutionTree(instanceId: string, signal?: AbortSignal): Promise<AgentWorkflowExecutionTree>
+  listAttempts(instanceId: string, query?: AgentPageQuery, signal?: AbortSignal): Promise<RuntimePage<AgentWorkflowAttempt>>
+  listInstanceEvents(instanceId: string, query?: AgentPageQuery, signal?: AbortSignal): Promise<RuntimePage<AgentWorkflowEvent>>
+  /** 取消实例：受理不等于已停止，终态以服务端状态为准。 */
+  cancelInstance(instanceId: string): Promise<AgentWorkflowInstance>
+  /** 人工恢复（幂等 requestId + expectedRevision + 核实证据；恢复动作按 allowedActions 展示）。 */
+  recoverInstance(instanceId: string, input: AgentWorkflowRecoveryInput): Promise<AgentWorkflowInstance>
+}
+
+/**
+ * 模型与执行配置域（config/agent 的 HTTP 面）：模型 Profile、执行 Profile、
+ * 目录/网络授权、资源规则与执行器受管运行时。凭据只写不回显。
+ */
+export interface AgentCapabilitiesAdapter {
+  discoverModels(input: AgentModelDiscoveryInput, signal?: AbortSignal): Promise<readonly AgentDiscoveredModel[]>
+  listModelServices(signal?: AbortSignal): Promise<readonly AgentModelService[]>
+  createModelService(input: AgentModelServiceInput): Promise<AgentModelService>
+  updateModelService(serviceId: string, input: AgentUpdateModelServiceInput): Promise<AgentModelService>
+  listModelProfiles(signal?: AbortSignal): Promise<readonly AgentModelProfile[]>
+  createModelProfile(input: AgentModelProfileInput): Promise<AgentModelProfile>
+  /** 更新产生新修订（body 携带 expectedRevision；凭据省略沿用、空串清除）。 */
+  updateModelProfile(profileId: string, input: AgentUpdateModelProfileInput): Promise<AgentModelProfile>
+  listExecutionProfiles(signal?: AbortSignal): Promise<readonly AgentExecutionProfile[]>
+  getExecutionProfile(profileId: string, revision?: number, signal?: AbortSignal): Promise<AgentExecutionProfile>
+  /** Input 自带 expectedRevision（服务端事实）；新建禁止自带 id。 */
+  createExecutionProfile(input: AgentExecutionProfileInput): Promise<AgentExecutionProfile>
+  updateExecutionProfile(profileId: string, input: AgentExecutionProfileInput): Promise<AgentExecutionProfile>
+  setExecutionProfileEnabled(profileId: string, expectedRevision: number, enabled: boolean): Promise<AgentExecutionProfile>
+  listGrants(signal?: AbortSignal): Promise<readonly AgentExecutionGrant[]>
+  getGrant(grantId: string, revision?: number, signal?: AbortSignal): Promise<AgentExecutionGrant>
+  createGrant(input: AgentExecutionGrantInput): Promise<AgentExecutionGrant>
+  updateGrant(grantId: string, input: AgentExecutionGrantInput): Promise<AgentExecutionGrant>
+  setGrantEnabled(grantId: string, expectedRevision: number, enabled: boolean): Promise<AgentExecutionGrant>
+  /** 执行器受管进程（GET /execution-runtimes）；执行器未就绪回空数组。 */
+  listExecutionRuntimes(signal?: AbortSignal): Promise<readonly AgentExecutionRuntime[]>
+  listResourceRules(signal?: AbortSignal): Promise<readonly AgentResourceRule[]>
+  getResourceRule(ruleId: string, revision?: number, signal?: AbortSignal): Promise<AgentResourceRule>
+  createResourceRule(input: AgentResourceRuleInput): Promise<AgentResourceRule>
+  updateResourceRule(ruleId: string, input: AgentUpdateResourceRuleInput): Promise<AgentResourceRule>
+}
+
+/**
+ * 技能与 MCP 域：技能目录与异步导入（ZIP/目录/Git）、MCP 服务增查改、
+ * 现场探测与固定目录读取。技能不可直接创建，只能经导入。
+ */
+export interface AgentExtensionsAdapter {
+  listSkills(signal?: AbortSignal): Promise<readonly AgentSkill[]>
+  getSkill(skillId: string, revision?: number, signal?: AbortSignal): Promise<AgentSkill>
+  /** Immutable revision only; binary and over-limit files return a descriptive preview state. */
+  getSkillFile(skillId: string, revision: number, path: string, signal?: AbortSignal): Promise<AgentSkillFilePreview>
+  listCapabilityRevocations(query?: AgentCapabilityRevocationQuery, signal?: AbortSignal): Promise<AgentCapabilityRevocationPage>
+  setSkillEnabled(skillId: string, expectedRevision: number, enabled: boolean): Promise<AgentSkill>
+  /** 删除技能（revision 走查询参数；登记容量触顶后的板内自助清理入口）。 */
+  deleteSkill(skillId: string, revision: number): Promise<void>
+  listSkillImports(query?: AgentPageQuery, signal?: AbortSignal): Promise<RuntimePage<AgentSkillImportTask>>
+  /** 导入异步任务：JSON 来源直接提交；archive 存在时按 multipart（metadata+archive 两段）。 */
+  createSkillImport(input: AgentSkillImportInput, archive?: Blob): Promise<AgentSkillImportTask>
+  getSkillImport(importId: string, signal?: AbortSignal): Promise<AgentSkillImportTask>
+  cancelSkillImport(importId: string): Promise<AgentSkillImportTask>
+  /** 删除已达终态的导入记录。 */
+  deleteSkillImportRecord(importId: string): Promise<void>
+  listMcpServers(signal?: AbortSignal): Promise<readonly AgentMCPServer[]>
+  createMcpServer(input: AgentMCPServerInput): Promise<AgentMCPServer>
+  /** 详情（revision 必填正整数）。 */
+  getMcpServer(serverId: string, revision: number, signal?: AbortSignal): Promise<AgentMCPServer>
+  updateMcpServer(serverId: string, input: AgentUpdateMCPServerInput): Promise<AgentMCPServer>
+  /** 现场探测（revision 必填）：受撤销表与派发守卫约束；结果未知的租约走审批域核实。 */
+  probeMcpServer(serverId: string, revision: number): Promise<AgentMCPCatalogProjection>
+  /** 读取已固定目录（revision 必填，digest 可选校验）。 */
+  getMcpCatalog(serverId: string, revision: number, digest?: string, signal?: AbortSignal): Promise<AgentMCPCatalogProjection>
+}
+
+/**
+ * 长期记忆域（ADR-0029 正式 /memory-* API）：空间、页面、修订、搜索、导入导出、
+ * 一致性检查、索引重建、提炼候选与任务、Embedding 配置与用量。
+ * 原 Wiki 只读接缝的方法名（listSpaces/listPages/getPage/getPageRevision/search）
+ * 并入本接口超集；/wiki/* 兼容入口不由前端消费。
+ */
+export interface AgentMemoryAdapter {
   /** 是否接通真实读取接口；演示环境为 false，不表示服务端当前健康状态。 */
   readonly available: boolean
   listSpaces(signal?: AbortSignal): Promise<readonly AgentMemorySpace[]>
+  createSpace(input: AgentMemorySpaceInput): Promise<AgentMemorySpace>
+  /** 空间改名（body {expectedRevision,name}，无 requestId）。 */
+  renameSpace(spaceId: string, expectedRevision: number, name: string): Promise<AgentMemorySpace>
   listPages(spaceId: string, includeWithdrawn?: boolean, signal?: AbortSignal): Promise<readonly AgentMemoryPage[]>
+  createPage(spaceId: string, input: AgentMemoryPageInput): Promise<AgentMemoryPage>
   getPage(spaceId: string, pageId: string, signal?: AbortSignal): Promise<AgentMemoryPage>
+  updatePage(spaceId: string, pageId: string, input: AgentMemoryPageInput): Promise<AgentMemoryPage>
+  /** 撤回页面（body 携带 expectedRevision，无 requestId）。 */
+  withdrawPage(spaceId: string, pageId: string, expectedRevision: number): Promise<AgentMemoryPage>
   /** 后端按精确修订号读取，不提供修订目录。 */
   getPageRevision(spaceId: string, pageId: string, revision: number, signal?: AbortSignal): Promise<AgentMemoryPage>
   search(spaceId: string, query: string, limit?: number, signal?: AbortSignal): Promise<AgentMemorySearchResult>
+  /** 导入文件集（202，返回候选列表，由候选决定流程采纳）。 */
+  importPages(spaceId: string, files: Readonly<Record<string, string>>): Promise<readonly AgentMemoryProposal[]>
+  exportSpace(spaceId: string, signal?: AbortSignal): Promise<AgentMemoryExport>
+  checkSpace(spaceId: string, signal?: AbortSignal): Promise<AgentMemoryChecks>
+  /** 索引状态（每条 Embedding 配置一行；无配置时为空数组）。 */
+  indexStatus(spaceId: string, signal?: AbortSignal): Promise<readonly AgentMemoryIndexStatus[]>
+  /** 重建索引（requestId 幂等；202 返回 kind=embedding 的任务，轮询经 getExtraction）。 */
+  rebuildIndex(spaceId: string, input: AgentMemoryIndexInput): Promise<AgentMemoryExtraction>
+  listProposals(query: { spaceId?: string; status?: AgentMemoryProposalStatus }, signal?: AbortSignal): Promise<readonly AgentMemoryProposal[]>
+  decideProposal(proposalId: string, input: AgentMemoryProposalDecisionInput): Promise<AgentMemoryProposal>
+  listExtractions(query?: AgentPageQuery, signal?: AbortSignal): Promise<RuntimePage<AgentMemoryExtraction>>
+  /** 创建提炼（requestId 幂等；202 新建 / 200 重复回读）。 */
+  createExtraction(input: AgentCreateMemoryExtractionInput): Promise<AgentMemoryExtraction>
+  getExtraction(extractionId: string, signal?: AbortSignal): Promise<AgentMemoryExtraction>
+  listEmbeddingProfiles(signal?: AbortSignal): Promise<readonly AgentEmbeddingProfile[]>
+  createEmbeddingProfile(input: AgentEmbeddingProfileInput): Promise<AgentEmbeddingProfile>
+  updateEmbeddingProfile(profileId: string, input: AgentUpdateEmbeddingProfileInput): Promise<AgentEmbeddingProfile>
+  listEmbeddingRequests(query?: AgentPageQuery, signal?: AbortSignal): Promise<RuntimePage<AgentEmbeddingRequest>>
 }
 
 /** 页面注入的聚合入口。 */
@@ -541,5 +840,11 @@ export interface ElysianGateway {
   websites: WebsitesAdapter
   resources: ResourceHistoryAdapter
   dependencies: DependenciesAdapter
-  wiki: AgentWikiReadAdapter
+  agentWorkbench: AgentWorkbenchAdapter
+  agentApprovals: AgentApprovalsAdapter
+  agentRuns: AgentRunsAdapter
+  agentWorkflows: AgentWorkflowsAdapter
+  agentCapabilities: AgentCapabilitiesAdapter
+  agentExtensions: AgentExtensionsAdapter
+  agentMemory: AgentMemoryAdapter
 }

@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+	"unicode/utf8"
 
 	"elysian/server/internal/agent/execution"
 	execconfig "elysian/server/internal/agent/execution/config"
@@ -59,6 +60,46 @@ func registerExtensionRoutes(r chi.Router, service runtimeService) {
 		}
 		item, err := e.Skills.Get(chi.URLParam(req, "id"), revision, true)
 		sendExtension(w, 200, item, err)
+	}))
+	r.Get("/skills/{id}/files", wrap("skills", func(e *Extensions, w http.ResponseWriter, req *http.Request) {
+		if _, err := runtimeQuery(req, 50, "revision", "path"); err != nil {
+			writeRuntimeError(w, err)
+			return
+		}
+		revision, err := positiveRevision(req.URL.Query().Get("revision"))
+		if err != nil {
+			writeRuntimeError(w, err)
+			return
+		}
+		filePath := req.URL.Query().Get("path")
+		if filePath == "" {
+			writeRuntimeError(w, bad("invalid-skill-path", "必须指定技能文件路径"))
+			return
+		}
+		content, err := e.Skills.ReadFile(req.Context(), chi.URLParam(req, "id"), revision, filePath, 256<<10)
+		if err != nil {
+			var skillErr *skills.Error
+			if errors.As(err, &skillErr) && skillErr.Code == "skill-size-limit" {
+				shared.SendJSON(w, http.StatusOK, map[string]any{
+					"skillId": chi.URLParam(req, "id"), "revision": revision, "path": filePath,
+					"previewable": false, "reason": "too-large",
+				})
+				return
+			}
+			writeRuntimeError(w, err)
+			return
+		}
+		if !utf8.Valid(content) || bytes.IndexByte(content, 0) >= 0 {
+			shared.SendJSON(w, http.StatusOK, map[string]any{
+				"skillId": chi.URLParam(req, "id"), "revision": revision, "path": filePath,
+				"previewable": false, "reason": "binary",
+			})
+			return
+		}
+		shared.SendJSON(w, http.StatusOK, map[string]any{
+			"skillId": chi.URLParam(req, "id"), "revision": revision, "path": filePath,
+			"previewable": true, "content": string(content),
+		})
 	}))
 	r.Put("/skills/{id}", wrap("skills", func(e *Extensions, w http.ResponseWriter, req *http.Request) {
 		in, err := readEnabledInput(w, req)

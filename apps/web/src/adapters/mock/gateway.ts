@@ -30,8 +30,21 @@ import { createHttpDependenciesAdapter } from '../http/dependenciesHttpAdapter'
 import { createHttpSessionAdapter } from '../http/sessionHttpAdapter'
 import { createTerminalWsAdapter } from '../http/terminalWsAdapter'
 import { createHttpDatabaseAdapter } from '../http/databaseHttpAdapter'
-import { createHttpAgentWikiReadAdapter } from '../http/agentWikiReadHttpAdapter'
-import type { AgentWikiReadAdapter, ContainerAdapter, EventsAdapter, TerminalAdapter } from '../../contracts/adapters'
+import { createHttpAgentWorkbenchAdapter } from '../http/agent/agentWorkbenchHttpAdapter'
+import { createHttpAgentApprovalsAdapter } from '../http/agent/agentApprovalsHttpAdapter'
+import { createHttpAgentRunsAdapter } from '../http/agent/agentRunsHttpAdapter'
+import { createHttpAgentWorkflowsAdapter } from '../http/agent/agentWorkflowsHttpAdapter'
+import { createHttpAgentCapabilitiesAdapter } from '../http/agent/agentCapabilitiesHttpAdapter'
+import { createHttpAgentExtensionsAdapter } from '../http/agent/agentExtensionsHttpAdapter'
+import { createHttpAgentMemoryAdapter } from '../http/agent/agentMemoryHttpAdapter'
+import { AgentWorkbenchMockAdapter } from './agent/agentWorkbenchMockAdapter'
+import { AgentApprovalsMockAdapter } from './agent/agentApprovalsMockAdapter'
+import { AgentRunsMockAdapter } from './agent/agentRunsMockAdapter'
+import { AgentWorkflowsMockAdapter } from './agent/agentWorkflowsMockAdapter'
+import { AgentCapabilitiesMockAdapter } from './agent/agentCapabilitiesMockAdapter'
+import { AgentExtensionsMockAdapter } from './agent/agentExtensionsMockAdapter'
+import { AgentMemoryMockAdapter } from './agent/agentMemoryMockAdapter'
+import type { ContainerAdapter, EventsAdapter, TerminalAdapter } from '../../contracts/adapters'
 import { useContainersStore } from '../../stores/containersStore'
 import { useSessionStore } from '../../stores/sessionStore'
 
@@ -46,7 +59,9 @@ import { useSessionStore } from '../../stores/sessionStore'
  *   在 Docker 运行时接通对应的真实端点，缺省仍是内存演示；
  * - `terminals: 'ws'` 在 Docker 运行时经 WebSocket 接容器内真实 PTY；
  * - `session: 'http'` 在 Docker 运行时经 /api/auth 走真实登录。
- * - `wiki: 'http'` 在 Docker 运行时读取真实 Agent Wiki，演示模式明确为空。
+ * - `agentWorkbench/agentApprovals/agentRuns/agentWorkflows/agentCapabilities/
+ *   agentExtensions/agentMemory: 'http'` 在 Docker 运行时接通 /api/agent 真实端点，
+ *   缺省为确定性演示实现（运行时报告 available:true，其余域为最小种子）。
  *
  * 数据库域没有 mock 取值：始终走 HTTP adapter（/api/databases）。
  */
@@ -65,7 +80,13 @@ export function createGateway(
     terminals?: 'mock' | 'ws'
     session?: 'mock' | 'http'
     panel?: 'mock' | 'http'
-    wiki?: 'mock' | 'http'
+    agentWorkbench?: 'mock' | 'http'
+    agentApprovals?: 'mock' | 'http'
+    agentRuns?: 'mock' | 'http'
+    agentWorkflows?: 'mock' | 'http'
+    agentCapabilities?: 'mock' | 'http'
+    agentExtensions?: 'mock' | 'http'
+    agentMemory?: 'mock' | 'http'
   } = {},
 ): ElysianGateway {
   const dataset = createMockDataset()
@@ -104,6 +125,20 @@ export function createGateway(
   if (options.session !== 'http') {
     useSessionStore.setState({ phase: 'authed', mode: 'demo', devAccount: false })
   }
+  const agentWorkbench =
+    options.agentWorkbench === 'http' ? createHttpAgentWorkbenchAdapter() : new AgentWorkbenchMockAdapter()
+  const agentApprovals =
+    options.agentApprovals === 'http' ? createHttpAgentApprovalsAdapter() : new AgentApprovalsMockAdapter()
+  const agentRuns =
+    options.agentRuns === 'http' ? createHttpAgentRunsAdapter() : new AgentRunsMockAdapter()
+  const agentWorkflows =
+    options.agentWorkflows === 'http' ? createHttpAgentWorkflowsAdapter() : new AgentWorkflowsMockAdapter()
+  const agentCapabilities =
+    options.agentCapabilities === 'http' ? createHttpAgentCapabilitiesAdapter() : new AgentCapabilitiesMockAdapter()
+  const agentExtensions =
+    options.agentExtensions === 'http' ? createHttpAgentExtensionsAdapter() : new AgentExtensionsMockAdapter()
+  const agentMemory =
+    options.agentMemory === 'http' ? createHttpAgentMemoryAdapter() : new AgentMemoryMockAdapter()
 
   return {
     panel: options.panel === 'http' ? createHttpPanelAdapter() : mockPanelAdapter,
@@ -119,7 +154,13 @@ export function createGateway(
     websites,
     resources,
     dependencies,
-    wiki: options.wiki === 'http' ? createHttpAgentWikiReadAdapter() : createMockWikiReadAdapter(),
+    agentWorkbench,
+    agentApprovals,
+    agentRuns,
+    agentWorkflows,
+    agentCapabilities,
+    agentExtensions,
+    agentMemory,
     events: attachDockerContainerWatch(
       useHttpContainers
         ? options.eventStream === 'memory'
@@ -139,19 +180,6 @@ export function createGateway(
       containers,
       useHttpContainers,
     ),
-  }
-}
-
-/** 演示模式不伪造 Wiki 内容，详情请求明确报告暂无可读数据。 */
-export function createMockWikiReadAdapter(): AgentWikiReadAdapter {
-  const unavailable = async (): Promise<never> => { throw new Error('演示模式暂无 Wiki 数据') }
-  return {
-    available: false,
-    listSpaces: async () => [],
-    listPages: async () => [],
-    getPage: unavailable,
-    getPageRevision: unavailable,
-    search: async () => ({ items: [], degraded: true, reason: '演示模式暂无 Wiki 数据' }),
   }
 }
 

@@ -33,6 +33,7 @@ describe('导航顺序合并', () => {
       '/files',
       '/logs',
       '/terminals',
+      '/agent',
       '/settings',
     ])
   })

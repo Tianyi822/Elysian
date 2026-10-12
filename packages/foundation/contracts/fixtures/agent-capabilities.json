@@ -1,74 +1,332 @@
 {
   "environment": {
-    "sessionId": "session-capability-1", "revision": 2,
-    "skills": [{ "id": "skill-1", "revision": 1, "digest": "skill-digest" }],
-    "servers": [{ "id": "mcp-00000000000000000000000000000000", "revision": 1, "digest": "catalog-digest" }],
-    "tools": ["mcp_example_write"],
-    "resources": [{ "serverId": "mcp-00000000000000000000000000000000", "uri": "example://status" }],
-    "executionProfiles": [{ "id": "execution-1", "revision": 1 }],
-    "grants": [{ "id": "grant-00000000000000000000000000000000", "revision": 1 }],
+    "sessionId": "session-capability-1",
+    "revision": 2,
+    "skills": [
+      {
+        "id": "skill-1",
+        "revision": 1,
+        "digest": "skill-digest"
+      }
+    ],
+    "servers": [
+      {
+        "id": "mcp-00000000000000000000000000000000",
+        "revision": 1,
+        "digest": "catalog-digest"
+      }
+    ],
+    "tools": [
+      "mcp_example_write"
+    ],
+    "resources": [
+      {
+        "serverId": "mcp-00000000000000000000000000000000",
+        "uri": "example://status"
+      }
+    ],
+    "executionProfiles": [
+      {
+        "id": "execution-1",
+        "revision": 1
+      }
+    ],
+    "grants": [
+      {
+        "id": "grant-00000000000000000000000000000000",
+        "revision": 1
+      }
+    ],
     "trustedReadOnly": []
   },
   "capability": {
-    "name": "mcp_example_write", "description": "更新测试状态", "parameters": { "type": "object", "properties": { "value": { "type": "integer" } }, "required": ["value"], "additionalProperties": false },
-    "source": "mcp-tool", "ref": { "id": "mcp-00000000000000000000000000000000", "revision": 1 }, "originalName": "write", "catalogDigest": "catalog-digest", "readOnly": false
+    "name": "mcp_example_write",
+    "description": "更新测试状态",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "source": "mcp-tool",
+    "ref": {
+      "id": "mcp-00000000000000000000000000000000",
+      "revision": 1
+    },
+    "originalName": "write",
+    "catalogDigest": "catalog-digest",
+    "readOnly": false
   },
   "operation": {
-    "id": "operation-1", "runId": "run-capability-1", "taskId": "task-capability-1", "modelRequestId": "model-request-1", "callIndex": 0, "modelCallId": "proposal-1",
+    "scopeId": "scope-root",
+    "nodeId": "node-write",
+    "id": "operation-1",
+    "runId": "run-capability-1",
+    "taskId": "task-capability-1",
+    "modelRequestId": "model-request-1",
+    "callIndex": 0,
+    "modelCallId": "proposal-1",
     "argumentsJson": "{\"value\":9007199254740993}",
     "capability": {
-      "name": "mcp_example_write", "description": "更新测试状态", "parameters": { "type": "object", "properties": { "value": { "type": "integer" } }, "required": ["value"], "additionalProperties": false },
-      "source": "mcp-tool", "ref": { "id": "mcp-00000000000000000000000000000000", "revision": 1 }, "originalName": "write", "catalogDigest": "catalog-digest", "readOnly": false
+      "name": "mcp_example_write",
+      "description": "更新测试状态",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      },
+      "source": "mcp-tool",
+      "ref": {
+        "id": "mcp-00000000000000000000000000000000",
+        "revision": 1
+      },
+      "originalName": "write",
+      "catalogDigest": "catalog-digest",
+      "readOnly": false
     },
-    "snapshotDigest": "snapshot-digest", "workspaceRevision": 1, "policy": "approval-required", "status": "waiting-approval", "approvalId": "approval-1", "callId": "call-capability-1", "createdAt": "2026-10-10T00:00:00Z"
+    "snapshotDigest": "snapshot-digest",
+    "workspaceRevision": 1,
+    "policy": "approval-required",
+    "status": "waiting-approval",
+    "approvalId": "approval-1",
+    "callId": "call-capability-1",
+    "createdAt": "2026-10-10T00:00:00Z"
   },
   "approval": {
-    "id": "approval-1", "runId": "run-capability-1", "operationId": "operation-1", "status": "pending", "createdAt": "2026-10-10T00:00:00Z", "expiresAt": "2026-10-11T00:00:00Z",
+    "scopeId": "scope-root",
+    "nodeId": "node-write",
+    "id": "approval-1",
+    "runId": "run-capability-1",
+    "operationId": "operation-1",
+    "status": "pending",
+    "createdAt": "2026-10-10T00:00:00Z",
+    "expiresAt": "2026-10-11T00:00:00Z",
     "operation": {
-      "id": "operation-1", "runId": "run-capability-1", "taskId": "task-capability-1", "modelRequestId": "model-request-1", "callIndex": 0, "modelCallId": "proposal-1", "argumentsJson": "{\"value\":9007199254740993}",
+      "scopeId": "scope-root",
+      "nodeId": "node-write",
+      "id": "operation-1",
+      "runId": "run-capability-1",
+      "taskId": "task-capability-1",
+      "modelRequestId": "model-request-1",
+      "callIndex": 0,
+      "modelCallId": "proposal-1",
+      "argumentsJson": "{\"value\":9007199254740993}",
       "capability": {
-        "name": "mcp_example_write", "description": "更新测试状态", "parameters": { "type": "object", "properties": { "value": { "type": "integer" } }, "required": ["value"], "additionalProperties": false },
-        "source": "mcp-tool", "ref": { "id": "mcp-00000000000000000000000000000000", "revision": 1 }, "originalName": "write", "catalogDigest": "catalog-digest", "readOnly": false
+        "name": "mcp_example_write",
+        "description": "更新测试状态",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        "source": "mcp-tool",
+        "ref": {
+          "id": "mcp-00000000000000000000000000000000",
+          "revision": 1
+        },
+        "originalName": "write",
+        "catalogDigest": "catalog-digest",
+        "readOnly": false
       },
-      "snapshotDigest": "snapshot-digest", "workspaceRevision": 1, "policy": "approval-required", "status": "waiting-approval", "approvalId": "approval-1", "callId": "call-capability-1", "createdAt": "2026-10-10T00:00:00Z"
+      "snapshotDigest": "snapshot-digest",
+      "workspaceRevision": 1,
+      "policy": "approval-required",
+      "status": "waiting-approval",
+      "approvalId": "approval-1",
+      "callId": "call-capability-1",
+      "createdAt": "2026-10-10T00:00:00Z"
     }
   },
   "workspace": {
-    "taskId": "task-capability-1", "revision": 1, "baseRevision": 0, "bytes": 5, "fileCount": 1, "digest": "workspace-digest",
-    "files": [{ "path": "report.txt", "size": 5, "digest": "file-digest" }]
+    "taskId": "task-capability-1",
+    "revision": 1,
+    "baseRevision": 0,
+    "bytes": 5,
+    "fileCount": 1,
+    "digest": "workspace-digest",
+    "files": [
+      {
+        "path": "report.txt",
+        "size": 5,
+        "digest": "file-digest"
+      }
+    ]
   },
   "barrier": {
-    "id": "barrier-1", "runId": "run-capability-1", "operationId": "operation-1", "status": "reconciled", "createdAt": "2026-10-10T00:01:00Z",
-    "evidence": "已从目标系统确认操作完成。", "decision": "confirmed-completed", "reconciledAt": "2026-10-10T00:05:00Z"
+    "scopeId": "scope-root",
+    "nodeId": "node-write",
+    "id": "barrier-1",
+    "runId": "run-capability-1",
+    "operationId": "operation-1",
+    "status": "reconciled",
+    "createdAt": "2026-10-10T00:01:00Z",
+    "evidence": "已从目标系统确认操作完成。",
+    "decision": "confirmed-completed",
+    "reconciledAt": "2026-10-10T00:05:00Z"
   },
   "contextItem": {
-    "id": "context-1", "runId": "run-capability-1", "taskId": "task-capability-1", "source": "skill", "ref": { "id": "skill-1", "revision": 1 },
-    "path": "SKILL.md", "digest": "context-digest", "content": "只在获准范围内执行。", "createdAt": "2026-10-10T00:00:00Z", "eventSeq": "9007199254740993"
+    "id": "context-1",
+    "runId": "run-capability-1",
+    "taskId": "task-capability-1",
+    "source": "skill",
+    "ref": {
+      "id": "skill-1",
+      "revision": 1
+    },
+    "path": "SKILL.md",
+    "digest": "context-digest",
+    "content": "只在获准范围内执行。",
+    "createdAt": "2026-10-10T00:00:00Z",
+    "eventSeq": "9007199254740993"
   },
   "skill": {
-    "id": "skill-1", "revision": 1, "createdAt": "2026-10-10T00:00:00Z", "enabled": true,
-    "source": { "kind": "git", "url": "https://example.test/skills.git", "ref": "main", "commit": "0123456789012345678901234567890123456789" },
-    "manifest": { "name": "example-check", "description": "读取测试状态" }, "digest": "skill-digest", "bytes": 5,
-    "files": [{ "path": "SKILL.md", "size": 5, "digest": "file-digest" }]
+    "id": "skill-1",
+    "revision": 1,
+    "createdAt": "2026-10-10T00:00:00Z",
+    "enabled": true,
+    "source": {
+      "kind": "git",
+      "url": "https://example.test/skills.git",
+      "ref": "main",
+      "commit": "0123456789012345678901234567890123456789"
+    },
+    "manifest": {
+      "name": "example-check",
+      "description": "读取测试状态"
+    },
+    "digest": "skill-digest",
+    "bytes": 5,
+    "files": [
+      {
+        "path": "SKILL.md",
+        "size": 5,
+        "digest": "file-digest"
+      }
+    ]
   },
   "mcpServer": {
-    "id": "mcp-00000000000000000000000000000000", "revision": 1, "name": "测试 MCP", "transport": "streamable-http", "url": "https://example.test/mcp", "active": true, "revoked": false, "hasCredential": true
+    "id": "mcp-00000000000000000000000000000000",
+    "revision": 1,
+    "name": "测试 MCP",
+    "transport": "streamable-http",
+    "url": "https://example.test/mcp",
+    "active": true,
+    "revoked": false,
+    "hasCredential": true
   },
   "mcpStdioServer": {
-    "id": "mcp-11111111111111111111111111111111", "revision": 1, "name": "容器 MCP", "transport": "stdio", "active": true, "revoked": false, "hasCredential": false,
-    "stdio": { "image": "python@sha256:0123456789012345678901234567890123456789012345678901234567890123", "command": ["python3", "-m", "example_mcp"], "hasEnvironment": true, "grantId": "grant-00000000000000000000000000000000", "grantRevision": 1 }
+    "id": "mcp-11111111111111111111111111111111",
+    "revision": 1,
+    "name": "容器 MCP",
+    "transport": "stdio",
+    "active": true,
+    "revoked": false,
+    "hasCredential": false,
+    "stdio": {
+      "image": "python@sha256:0123456789012345678901234567890123456789012345678901234567890123",
+      "command": [
+        "python3",
+        "-m",
+        "example_mcp"
+      ],
+      "hasEnvironment": true,
+      "grantId": "grant-00000000000000000000000000000000",
+      "grantRevision": 1
+    }
   },
   "mcpCatalog": {
-    "protocolVersion": "2025-11-25", "capabilities": { "tools": true, "resources": true, "prompts": true },
-    "tools": [{ "name": "write", "inputSchema": { "type": "object" }, "annotations": { "readOnlyHint": false } }],
-    "resources": [{ "uri": "example://status", "name": "状态" }], "prompts": [{ "name": "diagnose", "arguments": [{ "name": "subject", "required": true }] }],
-    "digest": "catalog-digest", "fetchedAt": "2026-10-10T00:00:00Z"
+    "protocolVersion": "2025-11-25",
+    "capabilities": {
+      "tools": true,
+      "resources": true,
+      "prompts": true
+    },
+    "tools": [
+      {
+        "name": "write",
+        "inputSchema": {
+          "type": "object"
+        },
+        "annotations": {
+          "readOnlyHint": false
+        }
+      }
+    ],
+    "resources": [
+      {
+        "uri": "example://status",
+        "name": "状态"
+      }
+    ],
+    "prompts": [
+      {
+        "name": "diagnose",
+        "arguments": [
+          {
+            "name": "subject",
+            "required": true
+          }
+        ]
+      }
+    ],
+    "digest": "catalog-digest",
+    "fetchedAt": "2026-10-10T00:00:00Z"
   },
   "executionProfile": {
-    "id": "execution-1", "revision": 1, "enabled": true, "name": "Python", "image": "python@sha256:0123456789012345678901234567890123456789012345678901234567890123", "runtime": "python", "command": ["python3"],
-    "timeoutSeconds": 300, "cpuMillis": 1000, "memoryBytes": 536870912, "pids": 128, "createdAt": "2026-10-10T00:00:00Z"
+    "id": "execution-1",
+    "revision": 1,
+    "enabled": true,
+    "name": "Python",
+    "image": "python@sha256:0123456789012345678901234567890123456789012345678901234567890123",
+    "runtime": "python",
+    "command": [
+      "python3"
+    ],
+    "timeoutSeconds": 300,
+    "cpuMillis": 1000,
+    "memoryBytes": 536870912,
+    "pids": 128,
+    "createdAt": "2026-10-10T00:00:00Z"
   },
   "grant": {
-    "id": "grant-00000000000000000000000000000000", "revision": 1, "enabled": true, "name": "测试授权", "directories": [{ "path": "/srv/example", "access": "ro" }], "network": [{ "scheme": "https", "host": "example.test", "port": 443 }], "privateCidrs": [], "createdAt": "2026-10-10T00:00:00Z"
+    "id": "grant-00000000000000000000000000000000",
+    "revision": 1,
+    "enabled": true,
+    "name": "测试授权",
+    "directories": [
+      {
+        "path": "/srv/example",
+        "access": "ro"
+      }
+    ],
+    "network": [
+      {
+        "scheme": "https",
+        "host": "example.test",
+        "port": 443
+      }
+    ],
+    "privateCidrs": [],
+    "createdAt": "2026-10-10T00:00:00Z"
   }
 }

@@ -12,6 +12,72 @@ import (
 	"elysian/server/internal/agent/mcp"
 )
 
+type CapabilityRevocation struct {
+	Cursor    string `json:"cursor"`
+	Kind      string `json:"kind"`
+	ID        string `json:"id"`
+	Revision  int    `json:"revision"`
+	Reason    string `json:"reason"`
+	CreatedAt string `json:"createdAt"`
+}
+
+type CapabilityRevocationQuery struct {
+	Kind   string
+	ID     string
+	Cursor string
+	Limit  int
+}
+
+func (m *Manager) CapabilityRevocations(ctx context.Context, query CapabilityRevocationQuery) (Page[CapabilityRevocation], error) {
+	page := Page[CapabilityRevocation]{Items: []CapabilityRevocation{}, NextCursor: query.Cursor}
+	if query.Limit < 1 || query.Limit > 200 {
+		return page, bad("invalid-limit", "每页条数必须为 1 到 200 的整数")
+	}
+	cursor := int64(0)
+	if query.Cursor != "" {
+		parsed, err := strconv.ParseInt(query.Cursor, 10, 64)
+		if err != nil || parsed < 0 || strconv.FormatInt(parsed, 10) != query.Cursor {
+			return page, bad("invalid-cursor", "撤销记录游标必须为规范非负十进制字符串")
+		}
+		cursor = parsed
+	}
+	if query.Kind != "" && query.Kind != "skill" && query.Kind != "mcp" && query.Kind != "execution-profile" && query.Kind != "grant" {
+		return page, bad("invalid-revocation", "撤销能力类型无效")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed || m.store == nil || m.store.db == nil {
+		return page, closedError()
+	}
+	rows, err := m.store.db.QueryContext(ctx, `SELECT rowid,kind,id,revision,reason,created_at
+		FROM capability_revocations WHERE rowid>? AND (?='' OR kind=?) AND (?='' OR id=?)
+		ORDER BY rowid LIMIT ?`, cursor, query.Kind, query.Kind, query.ID, query.ID, query.Limit+1)
+	if err != nil {
+		return page, storageFailure(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var rowID int64
+		var item CapabilityRevocation
+		if err := rows.Scan(&rowID, &item.Kind, &item.ID, &item.Revision, &item.Reason, &item.CreatedAt); err != nil {
+			return page, storageFailure(err)
+		}
+		item.Cursor = strconv.FormatInt(rowID, 10)
+		page.Items = append(page.Items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return Page[CapabilityRevocation]{}, storageFailure(err)
+	}
+	if len(page.Items) > query.Limit {
+		page.HasMore = true
+		page.Items = page.Items[:query.Limit]
+	}
+	if len(page.Items) > 0 {
+		page.NextCursor = page.Items[len(page.Items)-1].Cursor
+	}
+	return page, nil
+}
+
 // 显式引用成为父端生成的持久资料加载组；挂起恢复同模型提议使用同一游标。
 func (a *agentExecution) selectedMaterials(ctx context.Context) (*worker.ModelResponse, error) {
 	if a.run.DriverVersion != "v2" || a.run.Selection == nil || a.run.Snapshot == nil {

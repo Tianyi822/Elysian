@@ -8,11 +8,14 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
+	"elysian/server/internal/agent/harness/skills"
 	"elysian/server/internal/agent/mcp"
 	"github.com/go-chi/chi/v5"
 )
@@ -41,6 +44,121 @@ func TestExtensionProbeRespectsPersistentRevocationsAfterRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtimeErrorCode(t, m.checkProbe(context.Background(), server), "capability-revoked")
+}
+
+func TestSkillFilePreviewRequiresExactRevisionAndVerifiesManifest(t *testing.T) {
+	f := newExtensionFixture(t)
+	router := extensionRouter(f.extensions)
+	path := "/skills/" + f.skill.ID + "/files?revision=" + strconv.Itoa(f.skill.Revision) + "&path=SKILL.md"
+	response := runtimeRouteRequest(router, http.MethodGet, path, "")
+	if response.Code != 200 || !strings.Contains(response.Body.String(), "marker-skill-raw") {
+		t.Fatalf("技能正文读取失败：%d %s", response.Code, response.Body.String())
+	}
+	for _, query := range []string{"?path=SKILL.md", "?revision=0&path=SKILL.md", "?revision=1&path=../SKILL.md", "?revision=1&path=missing.md"} {
+		response = runtimeRouteRequest(router, http.MethodGet, "/skills/"+f.skill.ID+"/files"+query, "")
+		if response.Code < 400 {
+			t.Fatalf("非法或未知文件读取被接收：%s %d", query, response.Code)
+		}
+	}
+}
+
+func TestSkillFilePreviewBoundsAndDigest(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	if err := os.Mkdir(source, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string][]byte{
+		"SKILL.md":   []byte("---\nname: preview\ndescription: 预览验收\n---\n原始内容\n"),
+		"binary.dat": {0, 1, 2},
+		"large.txt":  bytes.Repeat([]byte("x"), (256<<10)+1),
+	} {
+		if err := os.WriteFile(filepath.Join(source, name), content, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	packagesRoot := filepath.Join(root, "skills")
+	store, err := skills.Open(filepath.Join(root, "config", "skills.json"), packagesRoot, skills.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close(context.Background()) })
+	job, _, err := store.StartImport(context.Background(), skills.ImportInput{RequestID: "preview-fixture", Source: skills.Source{Kind: "directory", Path: source}, Enabled: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeEventually(t, func() bool {
+		job, err = store.GetImport(job.ID)
+		return err == nil && job.State == skills.StateSucceeded
+	})
+	skill, err := store.Get(job.SkillID, job.Revision, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := extensionRouter(&Extensions{Skills: store})
+	for name, reason := range map[string]string{"binary.dat": "binary", "large.txt": "too-large"} {
+		response := runtimeRouteRequest(router, http.MethodGet, "/skills/"+skill.ID+"/files?revision="+strconv.Itoa(skill.Revision)+"&path="+name, "")
+		var preview struct {
+			Previewable bool   `json:"previewable"`
+			Reason      string `json:"reason"`
+			Content     string `json:"content"`
+		}
+		if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &preview) != nil || preview.Previewable || preview.Reason != reason || preview.Content != "" {
+			t.Fatalf("预览限制未生效：%s %d %s", name, response.Code, response.Body.String())
+		}
+	}
+	if err := os.WriteFile(filepath.Join(packagesRoot, "packages", skill.Digest, "SKILL.md"), []byte("已篡改"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	response := runtimeRouteRequest(router, http.MethodGet, "/skills/"+skill.ID+"/files?revision="+strconv.Itoa(skill.Revision)+"&path=SKILL.md", "")
+	if response.Code != 503 || !strings.Contains(response.Body.String(), "skill-content-changed") {
+		t.Fatalf("内容摘要不一致仍可预览：%d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestCapabilityRevocationsPagePersistsReasonsAndRevisionZero(t *testing.T) {
+	m, _, _ := agentManager(t, operationClient(), nil)
+	for _, entry := range []struct {
+		kind, id, reason string
+		revision         int
+	}{
+		{"skill", "skill-a", "第一条", 2},
+		{"mcp", "server-b", "全部修订", 0},
+		{"grant", "grant-c", "第三条", 3},
+	} {
+		if err := m.Revoke(context.Background(), entry.kind, entry.id, entry.revision, entry.reason); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first := runtimeRouteRequest(m.Router(), http.MethodGet, "/capability-revocations?limit=1", "")
+	var page Page[CapabilityRevocation]
+	if first.Code != 200 || json.Unmarshal(first.Body.Bytes(), &page) != nil || len(page.Items) != 1 || !page.HasMore || page.NextCursor == "" {
+		t.Fatalf("撤销记录第一页无效：%d %s", first.Code, first.Body.String())
+	}
+	second := runtimeRouteRequest(m.Router(), http.MethodGet, "/capability-revocations?cursor="+page.NextCursor+"&limit=1", "")
+	if second.Code != 200 || json.Unmarshal(second.Body.Bytes(), &page) != nil || len(page.Items) != 1 || page.Items[0].Revision != 0 || page.Items[0].Reason != "全部修订" {
+		t.Fatalf("全修订撤销记录丢失：%d %s", second.Code, second.Body.String())
+	}
+	filtered := runtimeRouteRequest(m.Router(), http.MethodGet, "/capability-revocations?kind=grant&id=grant-c", "")
+	if filtered.Code != 200 || json.Unmarshal(filtered.Body.Bytes(), &page) != nil || len(page.Items) != 1 || page.Items[0].Kind != "grant" {
+		t.Fatalf("撤销记录过滤错误：%d %s", filtered.Code, filtered.Body.String())
+	}
+	for _, query := range []string{"?cursor=01", "?kind=unknown", "?limit=0", "?id=a&id=b"} {
+		response := runtimeRouteRequest(m.Router(), http.MethodGet, "/capability-revocations"+query, "")
+		if response.Code != 400 {
+			t.Fatalf("非法撤销查询被接收：%s %d", query, response.Code)
+		}
+	}
+	m = reopenOperationManager(t, m)
+	persisted := runtimeRouteRequest(m.Router(), http.MethodGet, "/capability-revocations?kind=mcp&id=server-b", "")
+	if persisted.Code != 200 || json.Unmarshal(persisted.Body.Bytes(), &page) != nil || len(page.Items) != 1 || page.Items[0].Revision != 0 {
+		t.Fatalf("重启后撤销记录丢失：%d %s", persisted.Code, persisted.Body.String())
+	}
+	cursor := page.NextCursor
+	empty := runtimeRouteRequest(m.Router(), http.MethodGet, "/capability-revocations?kind=mcp&id=server-b&cursor="+cursor, "")
+	if empty.Code != 200 || json.Unmarshal(empty.Body.Bytes(), &page) != nil || len(page.Items) != 0 || page.NextCursor != cursor {
+		t.Fatalf("空页丢失游标：%d %s", empty.Code, empty.Body.String())
+	}
 }
 
 func TestExtensionMCPRoutesProtectCredentialsAndImmutableRevisions(t *testing.T) {

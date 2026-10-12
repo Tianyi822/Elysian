@@ -28,7 +28,7 @@ describe('长期记忆、资源互斥和复合流程共享契约', () => {
     const proposal: AgentMemoryProposal = { ...fixture.proposal, status: 'pending', page: { ...fixture.proposal.page, kind: 'runbook' } }
     const embedding: AgentEmbeddingProfile = fixture.embedding
     const embeddingRequest: AgentEmbeddingRequest = { ...fixture.embeddingRequest, purpose: 'query', status: 'succeeded' }
-    const extraction: AgentMemoryExtraction = { ...fixture.extraction, kind: 'extraction', status: 'succeeded', memoryStatus: 'updated' }
+    const extraction: AgentMemoryExtraction = { ...fixture.extraction, model: { ...fixture.extraction.model, provider: 'openai-compatible', apiFormat: 'chat-completions' }, kind: 'extraction', status: 'succeeded', memoryStatus: 'updated' }
     const search: AgentMemorySearchResult = { ...fixture.search, items: fixture.search.items.map((hit) => ({ ...hit, page, method: 'hybrid-rrf' })) }
     const checks: AgentMemoryChecks = fixture.checks
     const index: AgentMemoryIndexStatus = { ...fixture.index, status: 'ready' }

@@ -93,7 +93,7 @@ Docker 页的「工作区」集中保存 compose、`.env`、Dockerfile 和挂载
 
 ## Agent 任务运行
 
-真实部署保留 `tool-batch/v1` 与旧 `agent/v1` 的读取、排队执行兼容；新建和继续的单 Agent Run 使用 `agent/v2`。内置工具仍只有 `docker_containers_list`、`docker_images_list`、`docker_policy_view`、`docker_self_container` 四条空参数 Docker 只读工具。v2 可按会话环境额外启用技能包、MCP 工具与资料、经审批的容器脚本。全部入口要求管理员会话与同源请求，浏览器断连、退出登录或登录会话替换不取消已接受任务。当前仅提供 API，没有 Agent 前端、Agent SSE、自动重试或多 Agent 调度；本地演示不启动内核、不回落 mock 成功。`GET /api/agent/runtime` 分别报告 `batch`、`agent`、`skills`、`mcp`、`containerExecution`、`approvals`、`workflow` 的装配可用性；配置和服务的具体连通性仍由创建、探测与执行结果确认。未配置模型不影响顺序批次。
+真实部署保留 `tool-batch/v1` 与旧 `agent/v1` 的读取、排队执行兼容；新建和继续的单 Agent Run 使用 `agent/v2`。内置工具仍只有 `docker_containers_list`、`docker_images_list`、`docker_policy_view`、`docker_self_container` 四条空参数 Docker 只读工具。v2 可按会话环境额外启用技能包、MCP 工具与资料、经审批的容器脚本。全部入口要求管理员会话与同源请求，浏览器断连、退出登录或登录会话替换不取消已接受任务。Web 面板提供 Agent 界面（Ely，`/agent` 七页，增量经 JSON 分页轮询）；不提供 Agent SSE、自动重试或多 Agent 调度；本地演示不启动内核、不回落 mock 成功。`GET /api/agent/runtime` 分别报告 `batch`、`agent`、`skills`、`mcp`、`containerExecution`、`approvals`、`workflow` 的装配可用性；配置和服务的具体连通性仍由创建、探测与执行结果确认。未配置模型不影响顺序批次。
 
 以下表格路径均以 `/api/agent` 为前缀。
 
@@ -216,13 +216,13 @@ MCP 当前不含旧 HTTP+SSE 传输、其他协议版本、OAuth 自动发现、
 
 公开消息及工作区查询会标出 `quarantined` 和 `wikiSources`。撤回保留历史内容和文件，隔离版本不能作为脚本输入；人工覆盖单个文件仍继承原工作区的隔离状态，清空工作区后可从有效事实重新生成。证据摘录必须来自已保存的成功公开答复或结果，来源会话清理后保留有界摘录并标记 `originalCleared`；撤回不等于删除审计或彻底遗忘。
 
-Embedding 使用独立的 `config/agent/embeddings.json`，采用 0600 文件、原子替换与同步，保留不可变修订。索引以页面修订／digest 与 Embedding 修订为键，更新页面不会误用旧向量；显式重建受单任务 60 秒限制，未完成时保留已确认索引并显示回落。查询使用余弦相似度与文本名次 RRF 合并；索引缺失、部分过期或供应商失败时继续提供中文双字文本结果。HTTP 不重试、不跟随跳转，响应上限 512 KiB，查询向量请求另限 3 秒。旧 `/wiki/*` 入口保留为同一状态的兼容接口。Web gateway 预留空间、页面、修订和搜索的只读接缝，尚不提供 Wiki 页面或导航。设计见本地 [ADR-0029](docs/adr/0029-agent-wiki-memory-and-embeddings.md)。
+Embedding 使用独立的 `config/agent/embeddings.json`，采用 0600 文件、原子替换与同步，保留不可变修订。索引以页面修订／digest 与 Embedding 修订为键，更新页面不会误用旧向量；显式重建受单任务 60 秒限制，未完成时保留已确认索引并显示回落。查询使用余弦相似度与文本名次 RRF 合并；索引缺失、部分过期或供应商失败时继续提供中文双字文本结果。HTTP 不重试、不跟随跳转，响应上限 512 KiB，查询向量请求另限 3 秒。Web 经 `/agent/memory` 页（agentMemory 域）消费正式 memory-spaces 接口；旧 `/wiki/*` 入口保留为同一状态的兼容接口，但前端不消费。设计见本地 [ADR-0029](docs/adr/0029-agent-wiki-memory-and-embeddings.md)。
 
 启用 Embedding 后，索引重建会向该配置地址发送页面标题和正文，混合检索会发送查询文本（自动召回时包含任务目标／当前输入）；供应商按自己的规则处理这些内容。每次索引或查询先写入独立请求记录再发送，估算与供应商报告的实际 token、缓存 token 分开保存，不并入 Agent 对话预算；未报告的字段不补零，失败响应中已报告的用量仍保留。公开账本只含输入字节数与摘要，不含正文、查询原文、向量或凭据，终态记录保留 30 天。维护期间直接服务调用也禁止修改 Embedding 配置和发起新请求。
 
 ### 工作流与隔离分支
 
-管理员可保存不可变模板修订，将 Agent 分析、直接能力操作、人工确认和条件分支组成流程。`workflow/v1` 保留顺序执行；显式指定 `languageVersion:"workflow/v2"` 可加入有界并行、数组迭代和固定修订的子流程。每个实例创建专用 Session 与根 Task，从来源会话复制模型修订及能力环境，不复制来源历史或文件；接受时固定完整子流程模板闭包，并检查全部嵌套步骤的能力。非终态实例占用专用会话，普通任务输入、切换配置和人工工作区编辑均拒绝；等待审批或资源释放执行槽。当前提供管理员 API，不含流程编辑器、定时触发或自动重试。
+管理员可保存不可变模板修订，将 Agent 分析、直接能力操作、人工确认和条件分支组成流程。`workflow/v1` 保留顺序执行；显式指定 `languageVersion:"workflow/v2"` 可加入有界并行、数组迭代和固定修订的子流程。每个实例创建专用 Session 与根 Task，从来源会话复制模型修订及能力环境，不复制来源历史或文件；接受时固定完整子流程模板闭包，并检查全部嵌套步骤的能力。非终态实例占用专用会话，普通任务输入、切换配置和人工工作区编辑均拒绝；等待审批或资源释放执行槽。Web 的 `/agent/workflows` 提供模板表单及高级 JSON 编辑、实例执行树和人工恢复入口；不提供定时触发或自动重试。
 
 | 工作流接口 | 用途 |
 | --- | --- |

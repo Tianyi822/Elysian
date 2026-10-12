@@ -29,8 +29,9 @@ const ALLOWED_HOSTNAMES: readonly string[] = ['127.0.0.1', 'localhost', '[::1]']
  * /api/events 与 /api/resources/history 的 SSE 事件流由 elysianEventsVitePlugin 提供，不经代理。
  */
 const apiProxy = {
-	'/api/panel': { target: apiOrigin },
-	'/api/health': { target: apiOrigin },
+  '/api/agent': { target: apiOrigin },
+  '/api/panel': { target: apiOrigin },
+  '/api/health': { target: apiOrigin },
   '/api/security': { target: apiOrigin, timeout: 65_000, proxyTimeout: 65_000 },
   '/api/platform': {
     target: apiOrigin,

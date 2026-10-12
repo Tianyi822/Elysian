@@ -111,7 +111,9 @@
         "source": "fixture"
       },
       "active": true,
-      "hasCredential": true
+      "hasCredential": true,
+      "provider": "openai-compatible",
+      "apiFormat": "chat-completions"
     },
     "createdAt": "2026-10-10T00:00:00Z",
     "startedAt": "2026-10-10T00:00:00Z",

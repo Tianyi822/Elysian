@@ -1,6 +1,15 @@
-import { createBrowserRouter, createMemoryRouter } from 'react-router'
+import { createBrowserRouter, createMemoryRouter, Navigate, useSearchParams } from 'react-router'
 import type { RouteObject } from 'react-router'
-import type { ComponentType } from 'react'
+import type { ComponentType, ReactNode } from 'react'
+import { AgentApprovalsPage } from '../features/agent-approvals/AgentApprovalsPage'
+import { AgentCapabilitiesPage } from '../features/agent-capabilities/AgentCapabilitiesPage'
+import { AgentExtensionsPage } from '../features/agent-extensions/AgentExtensionsPage'
+import { AgentMemoryPage } from '../features/agent-memory/AgentMemoryPage'
+import { AgentRunsPage } from '../features/agent-runs/AgentRunsPage'
+import { AgentWorkbenchPage } from '../features/agent-workbench/AgentWorkbenchPage'
+import { AgentWorkflowsPage } from '../features/agent-workflows/AgentWorkflowsPage'
+import { AgentAreaTabs } from '../components/agent/AgentAreaTabs'
+import { AgentRuntimeBoundary } from '../components/agent/AgentRuntimeBoundary'
 import { ContainerPage } from '../features/container/ContainerPage'
 import { ContainerViewSwitch } from '../features/container/ContainerViewSwitch'
 import { DashboardPage } from '../features/dashboard/DashboardPage'
@@ -30,6 +39,22 @@ export type RouteHandle = {
   hideHeader?: boolean
   /** 主区去掉内边距并禁止外层滚动，让全屏页自己吃高度。 */
   flushMain?: boolean
+}
+
+function agentPage(title: string, content: ReactNode) {
+  return (
+    <RequireArea area="agent" title={title}>
+      <AgentRuntimeBoundary>{content}</AgentRuntimeBoundary>
+    </RequireArea>
+  )
+}
+
+/** 配置入口迁移在 Agent 运行时闸门之前完成。 */
+function AgentCapabilitiesRoute() {
+  const [params] = useSearchParams()
+  return params.get('tab') === 'models'
+    ? <Navigate to="/settings?tab=models" replace />
+    : agentPage('执行配置', <AgentCapabilitiesPage />)
 }
 
 /**
@@ -134,6 +159,62 @@ export const routes: RouteObject[] = [
             <WebsitesPage />
           </RequireArea>
         ),
+      },
+      {
+        path: 'agent',
+        handle: {
+          headerAccessory: AgentAreaTabs,
+          hideHeaderTitle: true,
+        } satisfies RouteHandle,
+        element: agentPage('Ely 工作台', <AgentWorkbenchPage />),
+      },
+      {
+        path: 'agent/approvals',
+        handle: {
+          headerAccessory: AgentAreaTabs,
+          hideHeaderTitle: true,
+        } satisfies RouteHandle,
+        element: agentPage('审批与治理', <AgentApprovalsPage />),
+      },
+      {
+        path: 'agent/runs',
+        handle: {
+          headerAccessory: AgentAreaTabs,
+          hideHeaderTitle: true,
+        } satisfies RouteHandle,
+        element: agentPage('运行记录', <AgentRunsPage />),
+      },
+      {
+        path: 'agent/workflows',
+        handle: {
+          headerAccessory: AgentAreaTabs,
+          hideHeaderTitle: true,
+        } satisfies RouteHandle,
+        element: agentPage('工作流', <AgentWorkflowsPage />),
+      },
+      {
+        path: 'agent/capabilities',
+        handle: {
+          headerAccessory: AgentAreaTabs,
+          hideHeaderTitle: true,
+        } satisfies RouteHandle,
+        element: <AgentCapabilitiesRoute />,
+      },
+      {
+        path: 'agent/extensions',
+        handle: {
+          headerAccessory: AgentAreaTabs,
+          hideHeaderTitle: true,
+        } satisfies RouteHandle,
+        element: agentPage('技能与 MCP', <AgentExtensionsPage />),
+      },
+      {
+        path: 'agent/memory',
+        handle: {
+          headerAccessory: AgentAreaTabs,
+          hideHeaderTitle: true,
+        } satisfies RouteHandle,
+        element: agentPage('长期记忆', <AgentMemoryPage />),
       },
       {
         path: 'settings',

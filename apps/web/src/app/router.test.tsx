@@ -1,10 +1,12 @@
 import { screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { renderApp } from '../test/renderApp'
+import { resetAgentTestState } from '../test/agentTestUtils'
 import { useTerminalsStore } from '../stores/terminalsStore'
 
 beforeEach(() => {
   useTerminalsStore.getState().resetLocal()
+  resetAgentTestState()
 })
 
 describe('路由表', () => {
@@ -66,6 +68,53 @@ describe('路由表', () => {
     expect(screen.queryByRole('heading', { name: '外观' })).not.toBeInTheDocument()
     expect(screen.queryByRole('region', { name: '面板信息' })).not.toBeInTheDocument()
     expect(screen.queryByRole('region', { name: '活跃会话表' })).not.toBeInTheDocument()
+  })
+
+  it('/agent 渲染 Ely 工作台与七页签', async () => {
+    renderApp('/agent')
+    const group = await screen.findByRole('group', { name: 'Ely 页签' })
+    expect(within(group).getAllByRole('button').map((button) => button.textContent)).toEqual([
+      '工作台',
+      '审批与治理',
+      '运行记录',
+      '工作流',
+      '执行配置',
+      '技能与 MCP',
+      '长期记忆',
+    ])
+    expect(await screen.findByRole('navigation', { name: '工作台视图' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Ely' })).toHaveAttribute('aria-current', 'page')
+  })
+
+  it.each([
+    ['/agent/runs', 'region', 'Run 列表'],
+    ['/agent/workflows', 'region', '工作流'],
+    ['/agent/capabilities', 'group', '配置页签'],
+  ] as const)('%s 可达且渲染功能页', async (path, role, name) => {
+    renderApp(path)
+    expect(await screen.findByRole(role, { name })).toBeInTheDocument()
+    // 顶栏页签不重复渲染（收起形态隐藏，摊开形态只有一份）。
+    expect(screen.getAllByRole('group', { name: 'Ely 页签' })).toHaveLength(1)
+  })
+
+  it('/agent/approvals 可达且渲染审批与治理页（agent-approvals 模块已落地）', async () => {
+    renderApp('/agent/approvals')
+    expect(await screen.findByRole('group', { name: '审批与治理页签' })).toBeInTheDocument()
+    expect(await screen.findByRole('region', { name: '审批列表' })).toBeInTheDocument()
+    expect(screen.getAllByRole('group', { name: 'Ely 页签' })).toHaveLength(1)
+  })
+
+  it('/agent/extensions 可达且渲染技能与 MCP 页（agent-extensions 模块已落地）', async () => {
+    renderApp('/agent/extensions')
+    expect(await screen.findByRole('region', { name: '技能目录' })).toBeInTheDocument()
+    expect(screen.getAllByRole('group', { name: 'Ely 页签' })).toHaveLength(1)
+  })
+
+  it('/agent/memory 可达且渲染长期记忆页（agent-memory 模块已落地）', async () => {
+    renderApp('/agent/memory')
+    expect(await screen.findByRole('region', { name: '记忆空间列表' })).toBeInTheDocument()
+    expect(await screen.findByText('全局运维常识')).toBeInTheDocument()
+    expect(screen.getAllByRole('group', { name: 'Ely 页签' })).toHaveLength(1)
   })
 
   it('未匹配的地址进入未找到页面', async () => {
