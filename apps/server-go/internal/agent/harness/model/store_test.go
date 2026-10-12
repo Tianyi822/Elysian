@@ -11,7 +11,49 @@ import (
 
 func profileInput() Input {
 	secret := "stored-test-secret"
-	return Input{Name: "本地模型", BaseURL: "http://127.0.0.1:11434/v1/", Model: "test-model", ContextTokens: 8192, OutputTokens: 1024, Capabilities: Capabilities{Text: true, Tools: true, Source: "用户配置"}, Active: true, Credential: &secret}
+	return Input{Provider: ProviderOpenAICompatible, APIFormat: FormatChatCompletions, Name: "本地模型", BaseURL: "http://127.0.0.1:11434/v1/", Model: "test-model", ContextTokens: 8192, OutputTokens: 1024, Capabilities: Capabilities{Text: true, Tools: true, Source: "用户配置"}, Active: true, Credential: &secret}
+}
+
+func TestProviderRevisionAndCredentialValidation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "models.json")
+	store, _ := Open(path)
+	in := profileInput()
+	in.Provider, in.Model = ProviderDeepSeek, "deepseek-flash"
+	created, err := store.Create(in)
+	if err != nil || created.Provider != ProviderDeepSeek {
+		t.Fatalf("供应商未保存：%+v %v", created, err)
+	}
+	in.Credential = nil
+	updated, err := store.Update(created.ID, 1, in)
+	if err != nil || updated.Provider != ProviderDeepSeek || !updated.HasCredential {
+		t.Fatalf("DeepSeek 更新丢失凭据：%+v %v", updated, err)
+	}
+	reopened, err := Open(path)
+	if err != nil || reopened.List()[0].Provider != ProviderDeepSeek {
+		t.Fatalf("供应商持久化失败：%v", err)
+	}
+	empty := ""
+	blank := "   "
+	in.Credential = &blank
+	_, err = store.Update(created.ID, 2, in)
+	requireCode(t, err, "invalid-profile")
+	in.Credential = &empty
+	_, err = store.Update(created.ID, 2, in)
+	requireCode(t, err, "invalid-profile")
+	in.Active = false
+	if _, err = store.Update(created.ID, 2, in); err != nil {
+		t.Fatal(err)
+	}
+	in.Provider = "unknown"
+	_, err = store.Create(in)
+	requireCode(t, err, "invalid-profile")
+	in.Provider = ""
+	_, err = store.Create(in)
+	requireCode(t, err, "invalid-profile")
+	old, _ := store.Resolve(created.ID, 1, true)
+	if old.Provider != ProviderDeepSeek || old.Credential != "stored-test-secret" {
+		t.Fatal("供应商或凭据的旧修订被修改")
+	}
 }
 
 func TestProfilesKeepImmutableRevisionsAndWriteOnlyCredentials(t *testing.T) {

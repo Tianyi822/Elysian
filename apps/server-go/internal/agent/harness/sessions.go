@@ -3,8 +3,10 @@ package harness
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	"elysian/server/internal/agent/harness/model"
 )
@@ -45,6 +47,55 @@ func (m *Manager) UpdateModelProfile(id string, revision int, input model.Input)
 		return model.Profile{}, err
 	}
 	return profiles.Update(id, revision, input)
+}
+
+func (m *Manager) ListModelServices() ([]model.Service, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	profiles, err := m.modelStoreLocked()
+	if err != nil {
+		return nil, err
+	}
+	return profiles.Services(), nil
+}
+func (m *Manager) CreateModelService(input model.ServiceInput) (model.Service, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	profiles, err := m.modelStoreLocked()
+	if err != nil {
+		return model.Service{}, err
+	}
+	return profiles.CreateService(input)
+}
+func (m *Manager) UpdateModelService(id string, revision int, input model.ServiceInput) (model.Service, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	profiles, err := m.modelStoreLocked()
+	if err != nil {
+		return model.Service{}, err
+	}
+	return profiles.UpdateService(id, revision, input)
+}
+
+func (m *Manager) DiscoverModels(ctx context.Context, input model.DiscoveryInput) ([]model.DiscoveredModel, error) {
+	m.mu.Lock()
+	profiles, err := m.modelStoreLocked()
+	var profile model.Profile
+	if err == nil {
+		profile, err = profiles.DiscoveryProfile(input)
+	}
+	client := m.deps.ModelCatalog
+	m.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	if client == nil {
+		return nil, &Error{Status: 503, Code: "model-catalog-unavailable", Message: "模型目录读取服务不可用"}
+	}
+	// 网络请求不持有内核锁，不占用 Agent 执行额度。
+	callCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	return client.ListModels(callCtx, profile)
 }
 
 func (m *Manager) CreateSession(ctx context.Context, input CreateSessionInput) (Session, error) {
@@ -104,7 +155,7 @@ func (m *Manager) SwitchSessionModel(ctx context.Context, id string, input Switc
 		if oldErr == nil {
 			public := old.Public()
 			change.Before = &public
-			if old.Capabilities != next.Capabilities {
+			if !reflect.DeepEqual(old.Capabilities, next.Capabilities) {
 				change.Differences = append(change.Differences, "模型能力声明")
 			}
 			if old.ContextTokens != next.ContextTokens {
@@ -113,8 +164,8 @@ func (m *Manager) SwitchSessionModel(ctx context.Context, id string, input Switc
 			if old.OutputTokens != next.OutputTokens {
 				change.Differences = append(change.Differences, "单次输出 token 上限")
 			}
-			if old.Model != next.Model || old.BaseURL != next.BaseURL {
-				change.Differences = append(change.Differences, "模型或服务地址")
+			if old.Model != next.Model || old.BaseURL != next.BaseURL || old.Provider != next.Provider || old.APIFormat != next.APIFormat {
+				change.Differences = append(change.Differences, "模型、供应商、API 格式或服务地址")
 			}
 		} else {
 			change.Differences = append(change.Differences, "原模型配置不可读取")

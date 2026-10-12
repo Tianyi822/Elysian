@@ -31,6 +31,7 @@ type Deps struct {
 	Catalog               CapabilityCatalog
 	Profiles              *model.Store
 	ModelClient           model.Client
+	ModelCatalog          model.CatalogClient
 	AgentLimits           Limits
 	ModelConfigError      string
 	Path                  string
@@ -95,6 +96,9 @@ func New(deps Deps) (*Manager, error) {
 	}
 	if deps.ModelClient == nil {
 		deps.ModelClient = model.NewClient(nil)
+	}
+	if deps.ModelCatalog == nil {
+		deps.ModelCatalog = model.NewCatalogClient(nil)
 	}
 	if deps.Spawn == nil {
 		deps.Spawn = func(ctx context.Context) (worker.Process, error) { return worker.Spawn(ctx, worker.Options{}) }

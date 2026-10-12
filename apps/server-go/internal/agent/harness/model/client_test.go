@@ -33,8 +33,58 @@ func TestModelResponseRejectsDuplicateKeysAndKeepsLargeArguments(t *testing.T) {
 
 func testProfile(base string) Profile {
 	return Profile{
+		Provider: ProviderOpenAICompatible, APIFormat: FormatChatCompletions,
 		Name: "测试模型", BaseURL: base, Model: "test-model", ContextTokens: 8192, OutputTokens: 1024,
 		Capabilities: Capabilities{Text: true, Tools: true, Source: "用户配置"}, Active: true,
+	}
+}
+
+func TestDeepSeekProviderDisablesThinkingForEveryRequest(t *testing.T) {
+	for _, choice := range []string{"", "auto", "required", "checkpoint", "workflow_finish"} {
+		t.Run("choice="+choice, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body map[string]json.RawMessage
+				if json.NewDecoder(r.Body).Decode(&body) != nil || string(body["thinking"]) != `{"type":"disabled"}` || string(body["stream"]) != "false" || r.URL.Path != "/chat/completions" {
+					t.Error("DeepSeek 请求未关闭思考或使用了错误协议")
+				}
+				if choice == "" {
+					io.WriteString(w, `{"choices":[{"index":0,"message":{"role":"assistant","content":"完成"},"finish_reason":"stop"}]}`)
+				} else {
+					name := choice
+					if choice == "auto" || choice == "required" {
+						name = "docker_containers_list"
+					}
+					fmt.Fprintf(w, `{"choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call-1","type":"function","function":{"name":%q,"arguments":"{}"}}]},"finish_reason":"tool_calls"}]}`, name)
+				}
+			}))
+			defer server.Close()
+			profile := testProfile(server.URL)
+			profile.Provider, profile.Model, profile.Credential = ProviderDeepSeek, "deepseek-flash", "fake-key"
+			request := testRequest()
+			if choice != "" {
+				request.Tools, request.ToolChoice = testTools(), choice
+				if choice == "checkpoint" || choice == "workflow_finish" {
+					request.Tools[0].Name = choice
+				}
+			}
+			if _, err := NewClient(nil).Complete(context.Background(), profile, request); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestCompatibleProviderDoesNotSendVendorParameters(t *testing.T) {
+	provider, err := resolveProtocol(FormatChatCompletions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := provider.prepare(testProfile("https://example.test/v1"), testRequest())
+	if err != nil || strings.Contains(string(prepared.body), "thinking") || prepared.endpoint != "https://example.test/v1/chat/completions" {
+		t.Fatalf("通用接口被供应商参数污染：%v", err)
+	}
+	if _, err = resolveProtocol("unknown"); err == nil {
+		t.Fatal("未知供应商未拒绝")
 	}
 }
 

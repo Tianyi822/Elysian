@@ -19,7 +19,7 @@ func sessionAPIManager(t *testing.T) (*Manager, model.Profile) {
 		t.Fatal(err)
 	}
 	secret := "profile-secret-not-in-response"
-	profile, err := profiles.Create(model.Input{Name: "模型一", BaseURL: "https://models.invalid/v1", Model: "model-one", ContextTokens: 32000, OutputTokens: 4096, Capabilities: model.Capabilities{Text: true, Tools: true, Source: "manual"}, Active: true, Credential: &secret})
+	profile, err := profiles.Create(model.Input{Provider: model.ProviderOpenAICompatible, APIFormat: model.FormatChatCompletions, Name: "模型一", BaseURL: "https://models.invalid/v1", Model: "model-one", ContextTokens: 32000, OutputTokens: 4096, Capabilities: model.Capabilities{Text: true, Tools: true, Source: "manual"}, Active: true, Credential: &secret})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestAgentRoutesProfileRevisionsStayPinnedAndSwitchReportsImpact(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := `{"expectedRevision":1,"name":"模型二","baseUrl":"https://models.invalid/v1","model":"model-two","contextTokens":64000,"outputTokens":2048,"capabilities":{"text":true,"tools":true,"source":"manual"},"active":true}`
+	body := `{"expectedRevision":1,"name":"模型二","baseUrl":"https://models.invalid/v1","model":"model-two","provider":"openai-compatible","apiFormat":"chat-completions","contextTokens":64000,"outputTokens":2048,"capabilities":{"text":true,"tools":true,"source":"manual"},"active":true}`
 	response := runtimeRouteRequest(handler, "PUT", "/model-profiles/"+profile.ID, body)
 	var updated model.Profile
 	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &updated) != nil || updated.Revision != 2 || strings.Contains(response.Body.String(), "profile-secret-not-in-response") {
@@ -151,7 +151,7 @@ func TestAgentRoutesRejectUntrustedFieldsAndUnsupportedModels(t *testing.T) {
 			t.Fatalf("请求守卫失败：%s %d %s", test.path, response.Code, response.Body.String())
 		}
 	}
-	unsupported, err := m.deps.Profiles.Create(model.Input{Name: "只支持文本", BaseURL: "https://models.invalid/v1", Model: "text-only", ContextTokens: 32000, OutputTokens: 4096, Capabilities: model.Capabilities{Text: true, Tools: false, Source: "manual"}, Active: true})
+	unsupported, err := m.deps.Profiles.Create(model.Input{Provider: model.ProviderOpenAICompatible, APIFormat: model.FormatChatCompletions, Name: "只支持文本", BaseURL: "https://models.invalid/v1", Model: "text-only", ContextTokens: 32000, OutputTokens: 4096, Capabilities: model.Capabilities{Text: true, Tools: false, Source: "manual"}, Active: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +209,7 @@ func TestAgentRoutesPinnedCapableRevisionSurvivesUnsupportedLatestRevision(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := model.Input{Name: "最新只支持文本", BaseURL: profile.BaseURL, Model: "text-only", ContextTokens: 32000, OutputTokens: 4096, Capabilities: model.Capabilities{Text: true, Tools: false, Source: "manual"}, Active: true}
+	input := model.Input{Provider: model.ProviderOpenAICompatible, APIFormat: model.FormatChatCompletions, Name: "最新只支持文本", BaseURL: profile.BaseURL, Model: "text-only", ContextTokens: 32000, OutputTokens: 4096, Capabilities: model.Capabilities{Text: true, Tools: false, Source: "manual"}, Active: true}
 	if _, err = m.UpdateModelProfile(profile.ID, 1, input); err != nil {
 		t.Fatal(err)
 	}
@@ -228,5 +228,54 @@ func TestAgentRoutesPinnedCapableRevisionSurvivesUnsupportedLatestRevision(t *te
 	accepted, err := m.deps.Profiles.Resolve(profile.ID, 1, true)
 	if err != nil || !accepted.Capabilities.Tools {
 		t.Fatalf("停用丢失了已接受运行需要的旧版：%+v %v", accepted, err)
+	}
+}
+
+func TestAgentModelServiceRoutesAtomicRevisionsAndCredentialRedaction(t *testing.T) {
+	m, _ := sessionAPIManager(t)
+	handler := m.Router()
+	key := "fake-service-key"
+	input := model.ServiceInput{Name: "DeepSeek", Provider: model.ProviderDeepSeek, APIFormat: model.FormatAnthropicMessages, BaseURL: "https://api.deepseek.com/anthropic", Credential: &key, Active: true, Models: []model.ServiceModelInput{
+		{Name: "Flash", Model: "deepseek-flash", ContextTokens: 1000000, OutputTokens: 4096, Capabilities: model.Capabilities{Text: true, Tools: true, Source: "假服务"}, Enabled: true},
+		{Name: "Pro", Model: "deepseek-v4-pro", ContextTokens: 1000000, OutputTokens: 4096, Capabilities: model.Capabilities{Text: true, Tools: true, Source: "假服务"}, Enabled: true},
+	}}
+	body, _ := json.Marshal(input)
+	response := runtimeRouteRequest(handler, "POST", "/model-services", string(body))
+	var service model.Service
+	if response.Code != 201 || json.Unmarshal(response.Body.Bytes(), &service) != nil || len(service.Models) != 2 || strings.Contains(response.Body.String(), key) {
+		t.Fatalf("服务创建或凭据过滤失败：%d %s", response.Code, response.Body.String())
+	}
+	for i := range input.Models {
+		input.Models[i].ID = service.Models[i].ID
+	}
+	input.Credential = nil
+	input.APIFormat = model.FormatResponses
+	input.BaseURL = "https://api.deepseek.com"
+	update := struct {
+		ExpectedRevision int `json:"expectedRevision"`
+		model.ServiceInput
+	}{1, input}
+	body, _ = json.Marshal(update)
+	response = runtimeRouteRequest(handler, "PUT", "/model-services/"+service.ID, string(body))
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &service) != nil || service.Revision != 2 || !service.HasCredential || service.Models[0].Revision != 2 || service.Models[0].APIFormat != model.FormatResponses {
+		t.Fatalf("服务更新失败：%d %s", response.Code, response.Body.String())
+	}
+	if repeated := runtimeRouteRequest(handler, "PUT", "/model-services/"+service.ID, string(body)); repeated.Code != 409 {
+		t.Fatal("旧服务修订被接收")
+	}
+	update.ExpectedRevision = 2
+	update.Models[1].ContextTokens = 0
+	body, _ = json.Marshal(update)
+	if invalid := runtimeRouteRequest(handler, "PUT", "/model-services/"+service.ID, string(body)); invalid.Code != 400 {
+		t.Fatal("无效组被接收")
+	}
+	response = runtimeRouteRequest(handler, "GET", "/model-services", "")
+	if response.Code != 200 || strings.Contains(response.Body.String(), key) || !strings.Contains(response.Body.String(), `"revision":2`) {
+		t.Fatal("服务列表读取或原子保存失败")
+	}
+	input.APIFormat = "unknown"
+	body, _ = json.Marshal(input)
+	if invalid := runtimeRouteRequest(handler, "POST", "/model-services", string(body)); invalid.Code != 400 {
+		t.Fatal("未知协议被接收")
 	}
 }

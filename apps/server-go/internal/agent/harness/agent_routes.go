@@ -17,6 +17,10 @@ import (
 )
 
 type agentRuntimeService interface {
+	ListModelServices() ([]model.Service, error)
+	CreateModelService(model.ServiceInput) (model.Service, error)
+	UpdateModelService(string, int, model.ServiceInput) (model.Service, error)
+	DiscoverModels(context.Context, model.DiscoveryInput) ([]model.DiscoveredModel, error)
 	ListModelProfiles() ([]model.Profile, error)
 	CreateModelProfile(model.Input) (model.Profile, error)
 	UpdateModelProfile(string, int, model.Input) (model.Profile, error)
@@ -65,6 +69,61 @@ func registerAgentRoutes(r chi.Router, service runtimeService) {
 			handler(agent, w, req)
 		}
 	}
+	r.Post("/model-services/discover", wrap(func(s agentRuntimeService, w http.ResponseWriter, req *http.Request) {
+		input, err := readAgentInput[model.DiscoveryInput](w, req)
+		if err != nil {
+			writeRuntimeError(w, err)
+			return
+		}
+		models, err := s.DiscoverModels(req.Context(), input)
+		if err != nil {
+			writeRuntimeError(w, err)
+			return
+		}
+		shared.SendJSON(w, 200, models)
+	}))
+	r.Get("/model-services", wrap(func(s agentRuntimeService, w http.ResponseWriter, req *http.Request) {
+		if _, err := runtimeQuery(req, 50); err != nil {
+			writeRuntimeError(w, err)
+			return
+		}
+		services, err := s.ListModelServices()
+		if err != nil {
+			writeRuntimeError(w, err)
+			return
+		}
+		shared.SendJSON(w, 200, services)
+	}))
+	r.Post("/model-services", wrap(func(s agentRuntimeService, w http.ResponseWriter, req *http.Request) {
+		input, err := readAgentInput[model.ServiceInput](w, req)
+		if err != nil {
+			writeRuntimeError(w, err)
+			return
+		}
+		service, err := s.CreateModelService(input)
+		if err != nil {
+			writeRuntimeError(w, err)
+			return
+		}
+		shared.SendJSON(w, 201, service)
+	}))
+	r.Put("/model-services/{id}", wrap(func(s agentRuntimeService, w http.ResponseWriter, req *http.Request) {
+		input, err := readAgentInput[struct {
+			ExpectedRevision int `json:"expectedRevision"`
+			model.ServiceInput
+		}](w, req)
+		if err != nil {
+			writeRuntimeError(w, err)
+			return
+		}
+		service, err := s.UpdateModelService(chi.URLParam(req, "id"), input.ExpectedRevision, input.ServiceInput)
+		if err != nil {
+			writeRuntimeError(w, err)
+			return
+		}
+		shared.SendJSON(w, 200, service)
+	}))
+
 	r.Get("/model-profiles", wrap(func(s agentRuntimeService, w http.ResponseWriter, req *http.Request) {
 		if _, err := runtimeQuery(req, 50); err != nil {
 			writeRuntimeError(w, err)

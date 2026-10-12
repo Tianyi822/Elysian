@@ -103,7 +103,9 @@ Docker 页的「工作区」集中保存 compose、`.env`、Dockerfile 和挂载
 | `GET /runs?status=&requestId=&sessionId=&taskId=&workflowId=&cursor=&limit=`、`GET /runs/:id` | 分页查询或读取运行详情、固定快照、预算与状态 |
 | `GET /runs/:id/calls?cursor=&limit=`、`GET /runs/:id/events?after=&limit=` | 工具结果与事实事件；after、seq 为十进制字符串 |
 | `POST /runs/:id/cancel` | 请求取消，响应中的状态才是停止事实 |
-| `GET/POST /model-profiles`、`PUT /model-profiles/:id` | 模型公开配置与不可变修订；更新须 expectedRevision |
+| `GET/POST /model-services`、`PUT /model-services/:id` | 共享服务信息与多模型列表；整组保存须 expectedRevision，一次原子写入 |
+| `POST /model-services/discover` | 以表单连接信息读取远端模型目录；可按 serviceId/expectedRevision 沿用同地址的凭据，不保存配置 |
+| `GET/POST /model-profiles`、`PUT /model-profiles/:id` | 模型公开配置与不可变修订；更新须 expectedRevision，服务所属模型经服务端点更新 |
 | `GET/POST /sessions`、`GET /sessions/:id` | 创建 `{title,modelProfileId,modelRevision}` 或查询会话 |
 | `PUT /sessions/:id/model` | 空闲时提交 `{modelProfileId,modelRevision}` 切换模型，返回能力与缓存提示 |
 | `GET /sessions/:id/messages?after=&limit=`、`GET /sessions/:id/tasks` | 公开对话和任务分页 |
@@ -116,7 +118,11 @@ Docker 页的「工作区」集中保存 compose、`.env`、Dockerfile 和挂载
 
 一个 Session 包含多个 Task，一个 Task 可有多轮 Run。排队、执行、等待审批或整理期间会话保持忙碌，拒绝新输入、模型和环境切换；已接受的同一请求可幂等回读。环境包含 `skills`、`servers`、`executionProfiles`、`grants` 的 `{id,revision,digest?}` 引用，以及 `tools`、`resources:[{serverId,uri}]`、`trustedReadOnly`。所有配置固定具体 revision，MCP 目录固定 digest；Run 保存完整公开快照，后续配置修改不改变已接受 Run。技能和服务器未选入环境就不可使用，用户本轮的 `skills`、`resources`、`prompts:[{serverId,name,arguments}]` 只能在该范围内显式选取资料。MCP 提示仅能由用户选择，不作为模型自主可调用工具；它的 role 作为资料来源保留，不变成系统指令。
 
-模型配置字段为 `name`、`baseUrl`、`model`、`contextTokens`、`outputTokens`、`capabilities:{text,tools,source}`、`active` 与可选 `credential`。Agent 要求文本与工具能力；非流式 Chat Completions 在 baseUrl 后追加 `/chat/completions`，禁止跳转、Cookie 与自动重试，响应上限 512 KiB。凭据只写不回显，更新时省略沿用旧值、空串清除。模型 JSON 和工具参数拒绝重复键，参数保留数值精度；审批和执行使用字符串 `argumentsJson`，不能经浏览器 `JSON.parse` 后重序列化决定执行内容。实际 token 与缓存用量未报告时保持未知，保守估算单独记录。
+模型设置按服务管理：名称、`provider`（`openai-compatible` 或 `deepseek`）、`apiFormat`、`baseUrl`、`active` 与可选 `credential` 共用，每个服务可配置 1–64 个模型，各模型独立设置 `name`、`model`、`contextTokens`、`outputTokens`、`capabilities`（文本、工具调用、图片/视频/PDF 输入、JSON 结构化输出、原生联网搜索、系统消息、支持的推理等级与来源） 与 `enabled`。API 格式由用户选择 `chat-completions`、`anthropic-messages` 或 `responses`，均须显式声明；不迁移旧配置。整组新增、编辑、移除和共享凭据以一次 CAS 原子写入 `config/agent/models.json`，为各模型追加不可变修订。服务停用保留各模型开关，移除模型阻止新运行并保留历史修订。
+
+DeepSeek 预设只填写服务名称和 `https://api.deepseek.com`；Anthropic 格式基址为 `https://api.deepseek.com/anthropic`，启用时必须填写 API Key。新建模型列表为空，「添加模型」新增空白模型标识与名称；旁边的「获取模型」读取服务目录，搜索、勾选后才加入草稿，不自动选择或保存。DeepSeek 目录按[官方接口](https://api-docs.deepseek.com/zh-cn/api/list-models/)经共享基址的 `GET /models` 获取，使用 Bearer 鉴权，与生成协议独立；自定义 Chat/Responses 使用基址后的 `/models`，Anthropic 使用 `/v1/models`（基址已有 `/v1` 时只追加 `/models`）。目录返回容量时采用其数值，未提供时沿用表单缺省容量；未知模型默认上下文 64000、最大输出 4096 token。DeepSeek Flash 与 Pro 按[官方参数](https://api-docs.deepseek.com/zh-cn/quick_start/pricing)填入上下文 1M、最大输出 384K（393216）；Flash 支持图片输入，Pro 不支持，两者支持 JSON 输出、工具调用、系统消息与 disabled/low/high/max 推理等级。原生联网搜索、视频与 PDF 不作支持声明。已有模型可显式应用官方参数；自定义能力与有序推理等级均可编辑，并随模型修订保存。高级能力为支持范围声明，当前 Ely 运行仍使用文本与工具、DeepSeek 非思考模式，实际单次输出仍受运行预算的 4096 token 上限约束。服务不支持目录时可继续手动添加。自定义服务支持三种兼容协议，本机服务可不填写凭据。凭据只写不回显，省略沿用、输入替换、空串清除；目录读取不会将已保存凭据发送到修改后的服务地址。
+
+模型访问层通过 `model.Client` 隔离内核，协议适配器负责请求编码、鉴权头和公开响应解码，统一 HTTP 传输负责大小限制、超时、跳转与错误处理。Chat 在 baseUrl 后追加 `/chat/completions`，Responses 追加 `/responses`；Anthropic 追加 `/v1/messages`，已以 `/v1` 结尾则只追加 `/messages`，使用 `x-api-key` 与 `anthropic-version:2023-06-01`。DeepSeek 的 Chat / Messages 显式发送 `thinking:{type:"disabled"}`，Responses 发送 `reasoning:{effort:"none"}`；Responses 使用完整公开历史和 `store:false`。三种格式均支持文本、工具结果往返、强制函数输出和用量映射，不保存隐藏推理。Agent 要求文本与工具能力；HTTP 非流式、禁止跳转、Cookie 与自动重试，响应上限 512 KiB。模型 JSON 和工具参数拒绝重复键，参数保留数值精度；审批和执行使用字符串 `argumentsJson`，不能经浏览器 `JSON.parse` 后重序列化决定执行内容。实际 token 与缓存用量未报告时保持未知，保守估算单独记录。Go 有 OpenAI 与 Anthropic 官方 SDK，本项目保留 Go 1.23 和标准库访问层，以维持精确 JSON 与无重试的既有边界。
 
 父进程用原始目标、任务记忆、未整理完整事实组和近期公开 user/assistant 对话组装上下文；工具过程与工作记忆按 Task 隔离，不保存隐藏推理。压力 checkpoint 和正常答复后的单次整理共用 Run 预算，记忆有证据引用、revision 和覆盖游标，不能静默丢弃当前任务未整理事实。可恢复整理失败保留旧记忆和原始事实，正常答复可成功并标记 stale；取消、时限、存储失效与执行结果未确认仍走终止路径。
 
