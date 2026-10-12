@@ -85,7 +85,7 @@ export function AppShell() {
         <Dialog.Root open={drawerOpen} onOpenChange={setDrawerOpen}>
           {hideHeader && (
             <Dialog.Trigger asChild>
-              <span ref={headerActionsRef} className="fixed left-3 top-3 z-30 md:hidden">
+              <span ref={headerActionsRef} className="fixed left-3 top-0 z-30 flex h-[var(--shell-header-height)] items-center md:hidden">
                 <IconButton label="打开主导航">
                   <Menu aria-hidden size={16} />
                 </IconButton>

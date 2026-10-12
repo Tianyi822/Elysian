@@ -133,9 +133,9 @@ export function AgentChatPage() {
         />
         <div className="chat-composer-tools">
           <IconButton label="添加文件或图片" variant="ghost" onPress={() => fileInput.current?.click()} disabled={attaching || chat.loading} className="chat-add-file"><Paperclip size={20} aria-hidden /></IconButton>
-          <div className="chat-permission" title={`${permissionMode.description}（当前仅预览）`}>
-            <SelectDropdown ariaLabel="权限模式" items={PERMISSION_MODES.map(({ Icon, ...mode }) => ({ ...mode, icon: <Icon size={16} /> }))} value={permissionMode.value} onSelect={chat.setPermissionMode}
-              leadingIcon={<PermissionIcon size={16} className="shrink-0" aria-hidden />} triggerClassName="chat-select chat-permission-select" contentClassName="chat-composer-menu chat-permission-menu" />
+          <div className="chat-permission" title={`${permissionMode.label}：${permissionMode.description}（当前仅预览）`}>
+            <SelectDropdown ariaLabel="权限模式" items={PERMISSION_MODES.map(({ Icon, ...mode }) => ({ ...mode, icon: <Icon size={16} className={mode.value === 'full' && permissionMode.value === 'full' ? 'text-danger' : undefined} /> }))} value={permissionMode.value} onSelect={chat.setPermissionMode}
+              leadingIcon={<PermissionIcon size={16} className={`shrink-0${permissionMode.value === 'full' ? ' text-danger' : ''}`} aria-hidden />} triggerClassName="chat-select chat-permission-select" contentClassName="chat-composer-menu chat-permission-menu" />
           </div>
           <div className="chat-model">
             <SelectDropdown ariaLabel="选择模型" value={model?.id} onSelect={chat.setModel}
