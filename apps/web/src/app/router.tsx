@@ -9,6 +9,7 @@ import { DatabasePage } from '../features/database/DatabasePage'
 import { FilesPage } from '../features/files/FilesPage'
 import { FilesPathTitle } from '../features/files/FilesPathTitle'
 import { LoginPage } from '../features/auth/LoginPage'
+import { AgentChatPage } from '../features/agent/AgentChatPage'
 import { LogsPage } from '../features/logs/LogsPage'
 import { LogsTabSwitch } from '../features/logs/LogsTabSwitch'
 import { SecurityPage } from '../features/security/SecurityPage'
@@ -33,7 +34,7 @@ export type RouteHandle = {
   flushMain?: boolean
 }
 
-/** 重设计期间只保留空白路由与访问门禁，不挂载 Agent 页面逻辑。 */
+/** 尚未设计的 Agent 子页仅保留访问门禁与空白内容。 */
 function agentPage(title: string) {
   return (
     <RequireArea area="agent" title={title}>
@@ -155,7 +156,8 @@ export const routes: RouteObject[] = [
       },
       {
         path: 'agent',
-        element: agentPage('Ely 工作台'),
+        handle: { hideHeader: true, flushMain: true } satisfies RouteHandle,
+        element: <RequireArea area="agent" title="Ely 工作台"><AgentChatPage /></RequireArea>,
       },
       {
         path: 'agent/approvals',

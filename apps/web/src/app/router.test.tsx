@@ -5,7 +5,6 @@ import { useTerminalsStore } from '../stores/terminalsStore'
 import { createMockGateway } from '../adapters/mock/gateway'
 
 const agentRoutes = [
-  ['/agent', '工作台'],
   ['/agent/approvals', '审批与治理'],
   ['/agent/runs', '运行记录'],
   ['/agent/workflows', '工作流'],
@@ -92,7 +91,18 @@ describe('路由表', () => {
     expect(screen.getByRole('link', { name: 'Ely 智能体' })).toHaveAttribute('aria-current', 'page')
   })
 
-  it('空白智能体入口仍执行访问权限检查', async () => {
+  it('智能体入口打开本地会话，仅加载模型目录且不检查运行时', async () => {
+    const gateway = createMockGateway({ eventStream: 'memory' })
+    const runtime = vi.spyOn(gateway.agentRuntime, 'runtime')
+    const models = vi.spyOn(gateway.modelSettings, 'listModelServices')
+    renderApp('/agent', { gateway })
+    expect(await screen.findByRole('textbox', { name: '发送给 Ely 的消息' })).toBeInTheDocument()
+    await waitFor(() => expect(models).toHaveBeenCalledTimes(1))
+    expect(runtime).not.toHaveBeenCalled()
+    expect(screen.queryByRole('group', { name: 'Ely 页签' })).not.toBeInTheDocument()
+  })
+
+  it('智能体入口仍执行访问权限检查', async () => {
     const gateway = createMockGateway({ eventStream: 'memory' })
     vi.spyOn(gateway.session, 'canView').mockResolvedValue(false)
     renderApp('/agent', { gateway })

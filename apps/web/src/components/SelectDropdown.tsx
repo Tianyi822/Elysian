@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FocusEvent } from 'react'
+import { useCallback, useEffect, useId, useRef, useState, type FocusEvent, type ReactNode } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { CTL_SELECT, FORM_CONTROL_HEIGHT_CLASS } from './formControl'
 import { IconButton } from './IconButton'
@@ -44,7 +44,9 @@ export function SelectDropdown<T extends string>({
   mono = false,
   className,
   triggerClassName,
+  contentClassName,
   valueClassName,
+  leadingIcon,
   align = 'start',
   search,
 }: {
@@ -54,7 +56,7 @@ export function SelectDropdown<T extends string>({
   label?: string
   /** 筛选生效中：描边、底色与文字走 accent，让「有筛选」不只在浮层里看得见。 */
   active?: boolean
-  items: readonly { value: T; label: string }[]
+  items: readonly { value: T; label: string; icon?: ReactNode; description?: string }[]
   /** undefined 表示尚未选择，触发器显示 fallbackLabel。 */
   value: T | undefined
   onSelect: (value: T) => void
@@ -74,13 +76,18 @@ export function SelectDropdown<T extends string>({
    * 不能再叠一层默认的 inline-flex。
    */
   triggerClassName?: string
+  /** 追加到菜单浮层的类名，用于页面内的局部样式。 */
+  contentClassName?: string
   /** 当前值文字的附加类名，顶栏收起态用来把值从触发器的次要色里提亮。 */
   valueClassName?: string
+  /** 图标放进同一触发按钮，共享悬停背景、焦点与点击区域。 */
+  leadingIcon?: ReactNode
   align?: 'start' | 'end'
   /** 浮层内搜索；候选项由组件过滤，调用方始终提供完整集合。 */
   search?: { ariaLabel: string; placeholder: string }
 }) {
   const [open, setOpen] = useState(false)
+  const descriptionId = useId()
   const [searchText, setSearchText] = useState('')
   const [committedSearch, setCommittedSearch] = useState('')
   const [composing, setComposing] = useState(false)
@@ -88,6 +95,7 @@ export function SelectDropdown<T extends string>({
   const listRef = useRef<HTMLDivElement | null>(null)
   const focusAfterFilter = useRef<'first' | 'last' | null>(null)
   const searchable = Boolean(search)
+  const detailed = items.some(item => item.description)
   const focusOption = (direction: 'first' | 'last') => {
     const options = listRef.current?.querySelectorAll<HTMLElement>('[role="menuitemradio"]')
     const option = direction === 'first' ? options?.[0] : options?.[options.length - 1]
@@ -160,6 +168,7 @@ export function SelectDropdown<T extends string>({
           aria-label={`${ariaLabel}：${valueLabel}`}
           className={triggerClass}
         >
+          {leadingIcon}
           {label && !fullWidth && !triggerClassName ? (
             <span className={selected ? 'text-accent-fg' : 'text-fg-muted'}>{label}</span>
           ) : null}
@@ -180,8 +189,8 @@ export function SelectDropdown<T extends string>({
             }
           } : undefined}
           className={`${DROPDOWN_SURFACE_CLASS} ${
-            fullWidth ? 'w-[var(--radix-dropdown-menu-trigger-width)]' : 'min-w-32 text-xs'
-          }`}
+            fullWidth ? 'w-[var(--radix-dropdown-menu-trigger-width)]' : detailed ? 'min-w-64 text-sm' : 'min-w-32 text-xs'
+          } ${contentClassName ?? ''}`}
         >
           {search ? <div className="border-b border-line p-2">
             <div className="relative">
@@ -236,6 +245,9 @@ export function SelectDropdown<T extends string>({
                   <DropdownMenu.RadioItem
                     key={item.value}
                     value={item.value}
+                    textValue={item.label}
+                    aria-label={item.description ? item.label : undefined}
+                    aria-describedby={item.description ? `${descriptionId}-${index}` : undefined}
                     onPointerMove={searchable ? (event) => { if (document.activeElement === searchInput.current) event.preventDefault() } : undefined}
                     onKeyDown={searchable ? (event) => {
                       if (event.key === 'ArrowUp' && index === 0) {
@@ -246,8 +258,12 @@ export function SelectDropdown<T extends string>({
                     } : undefined}
                     className={DROPDOWN_OPTION_CLASS}
                   >
-                    <span className={`min-w-0 truncate text-left tabular-nums ${mono ? 'font-mono' : ''}`}>{item.label}</span>
-                    {item.value === value ? <Check aria-hidden size={13} className="shrink-0" /> : null}
+                    {item.icon && <span aria-hidden className="shrink-0 self-start pt-1.5">{item.icon}</span>}
+                    {item.description ? <span className="min-w-0 flex-1 py-1">
+                      <span className={`block text-left leading-5 ${mono ? 'font-mono' : ''}`}>{item.label}</span>
+                      <span id={`${descriptionId}-${index}`} className="mt-1 block text-xs font-normal leading-5 text-fg-muted">{item.description}</span>
+                    </span> : <span className={`min-w-0 truncate text-left tabular-nums ${mono ? 'font-mono' : ''}`}>{item.label}</span>}
+                    {item.value === value ? <Check aria-hidden size={detailed ? 20 : 13} className="shrink-0" /> : null}
                   </DropdownMenu.RadioItem>
                 ))}
               </DropdownMenu.RadioGroup>

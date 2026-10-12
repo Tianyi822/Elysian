@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { ElysianGateway, SessionMode } from '../contracts/adapters'
 import { setUnauthorizedListener } from '../adapters/http/unauthorized'
+import { useAgentChatStore } from './agentChatStore'
 
 /**
  * 会话生命周期：unknown（探测中）→ authed / anonymous，探测请求本身失败落 error。
@@ -87,6 +88,8 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
 
   async login(gateway, username, password) {
     await gateway.session.login(username, password)
+    // 只有成功的新登录开启新会话；普通页面恢复、状态探测与失败登录保留本地对话。
+    void useAgentChatStore.getState().newSession()
     // 登录成功即消费一次性提示：它只在「密码刚改过、还没重新登录」的窗口内成立。
     set({ phase: 'authed', notice: null })
   },

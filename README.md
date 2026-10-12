@@ -93,7 +93,7 @@ Docker 页的「工作区」集中保存 compose、`.env`、Dockerfile 和挂载
 
 ## Agent 任务运行
 
-真实部署保留 `tool-batch/v1` 与旧 `agent/v1` 的读取、排队执行兼容；新建和继续的单 Agent Run 使用 `agent/v2`。内置工具仍只有 `docker_containers_list`、`docker_images_list`、`docker_policy_view`、`docker_self_container` 四条空参数 Docker 只读工具。v2 可按会话环境额外启用技能包、MCP 工具与资料、经审批的容器脚本。全部入口要求管理员会话与同源请求，浏览器断连、退出登录或登录会话替换不取消已接受任务。Web 的「Ely 智能体」入口仅保留 `/agent` 七个空白路由，不显示顶部 tab 栏，供逐页重新实现；页面不挂载业务组件、运行时检查或 Agent 数据轮询，专属 store、HTTP 适配器与演示逻辑均不在前端保留。系统设置的模型配置经独立的 `modelSettings` 与 `agentRuntime` 网关读取模型及内核状态。Agent 后端 API、运行内核、数据和跨端契约独立保留；不提供 Agent SSE、自动重试或多 Agent 调度；本地演示不启动内核、不回落 mock 成功。`GET /api/agent/runtime` 分别报告 `batch`、`agent`、`skills`、`mcp`、`containerExecution`、`approvals`、`workflow` 的装配可用性；配置和服务的具体连通性仍由创建、探测与执行结果确认。未配置模型不影响顺序批次。
+真实部署保留 `tool-batch/v1` 与旧 `agent/v1` 的读取、排队执行兼容；新建和继续的单 Agent Run 使用 `agent/v2`。内置工具仍只有 `docker_containers_list`、`docker_images_list`、`docker_policy_view`、`docker_self_container` 四条空参数 Docker 只读工具。v2 可按会话环境额外启用技能包、MCP 工具与资料、经审批的容器脚本。全部入口要求管理员会话与同源请求，浏览器断连、退出登录或登录会话替换不取消已接受任务。Web 的「Ely 智能体」在 `/agent` 提供单会话前端预览：进入即打开当前会话，同一次面板登录下返回或刷新恢复上次内容，成功重新登录后新建会话。输入组件参照 Codex，支持多种文件的多选、文本输入、模型与思考等级选择，以及「请求批准」「帮我批准」「完全开放」三种模式。模型目录经现有 `modelSettings` 网关读取，思考等级以模型声明为准；文本、附件与选择仅保存在本地浏览器，不提交 Agent 会话、消息或执行请求，三种模式不改变后端权限。浏览器持久化是用户授权的界面预览例外，不代表服务端运行记录。其余六个 Agent 路由保持空白，所有入口均不显示顶部 tab 栏、不读取运行时或轮询 Agent 任务。系统设置的模型配置继续独立使用 `modelSettings` 与 `agentRuntime` 网关。Agent 后端 API、运行内核、数据和跨端契约独立保留；不提供 Agent SSE、自动重试或多 Agent 调度；本地演示不启动内核、不回落 mock 成功。`GET /api/agent/runtime` 分别报告 `batch`、`agent`、`skills`、`mcp`、`containerExecution`、`approvals`、`workflow` 的装配可用性；配置和服务的具体连通性仍由创建、探测与执行结果确认。未配置模型不影响顺序批次。
 
 以下表格路径均以 `/api/agent` 为前缀。
 
