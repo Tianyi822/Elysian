@@ -28,6 +28,8 @@ type TerminalSession = {
   /** 每次打开唯一；即使测试适配器重用 sessionId，旧回调也不能污染新窗口。 */
   openId?: string
   prompt: string
+  /** 输入已发出，等待服务端 prompt 帧确认 Shell 重新就绪。 */
+  awaitingPrompt: boolean
   status: ContainerTerminalStatus
   lines: readonly TerminalLine[]
   history: readonly string[]
@@ -434,6 +436,7 @@ export const useContainersStore = create<{
         sessionId: pendingId,
         openId: pendingId,
         prompt: '$ ',
+        awaitingPrompt: false,
         status: 'connecting',
         lines: [
           ...(isDockerRuntime() ? [] : [{ kind: 'banner' as const, text: TERMINAL_BANNER }]),
@@ -455,6 +458,7 @@ export const useContainersStore = create<{
             ...state.terminal,
             sessionId: info.id,
             prompt: info.prompt,
+            awaitingPrompt: false,
             status: 'connected',
             lines: state.terminal.lines.filter((line) => line.text !== '正在连接容器终端…'),
           },
@@ -490,35 +494,38 @@ export const useContainersStore = create<{
 
   async submitCommand(gateway, command) {
     const session = get().terminal
-    const trimmed = command.trim()
-    if (!session || session.status !== 'connected' || !trimmed) return
+    if (!session || session.status !== 'connected') return
+    const input = session.awaitingPrompt ? command : command.trim()
+    if (!session.awaitingPrompt && !input) return
 
-    if (trimmed === 'clear') {
+    if (!session.awaitingPrompt && input === 'clear') {
       set({
         terminal: {
           ...session,
           lines: [],
-          history: pushHistory(session.history, trimmed),
+          history: pushHistory(session.history, input),
         },
       })
       return
     }
 
-    const submittedPrompt = session.prompt
+    const submittedPrompt = session.awaitingPrompt ? '' : session.prompt
     set({
       terminal: {
         ...session,
-        lines: [...session.lines, { kind: 'input', text: trimmed, prompt: submittedPrompt }],
-        history: pushHistory(session.history, trimmed),
+        awaitingPrompt: true,
+        lines: [...session.lines, { kind: 'input', text: input, prompt: submittedPrompt }],
+        history: session.awaitingPrompt ? session.history : pushHistory(session.history, input),
       },
     })
     try {
-      await gateway.containers.sendTerminalInput(session.sessionId, trimmed)
+      await gateway.containers.sendTerminalInput(session.sessionId, input)
     } catch (error) {
       const text = error instanceof Error ? error.message : '命令执行失败'
       set((state) => ({
         terminal: state.terminal?.openId === session.openId && state.terminal?.sessionId === session.sessionId ? {
           ...state.terminal,
+          awaitingPrompt: session.awaitingPrompt,
           lines: [...state.terminal.lines, { kind: 'output', text }],
         } : state.terminal,
       }))
@@ -548,7 +555,7 @@ export const useContainersStore = create<{
             },
           }
         case 'prompt':
-          return { terminal: { ...session, prompt: frame.prompt } }
+          return { terminal: { ...session, prompt: frame.prompt, awaitingPrompt: false } }
         case 'truncated':
           return {
             terminal: {

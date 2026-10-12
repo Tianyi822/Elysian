@@ -57,6 +57,7 @@ describe('terminalsStore', () => {
     const session = useTerminalsStore.getState().sessions[0]!
     expect(session.lines.map((line) => line.text)).toEqual(['whoami', 'ops'])
     expect(session.history).toEqual(['whoami'])
+    expect(session.awaitingPrompt).toBe(false)
   })
 
   it('submitCommand 对 clear 清屏并记历史', async () => {
@@ -79,6 +80,7 @@ describe('terminalsStore', () => {
     await useTerminalsStore.getState().submitCommand(gateway, 'whoami')
     const session = useTerminalsStore.getState().sessions[0]!
     expect(session.lines.map((line) => line.text)).toEqual(['whoami', '终端会话不存在 term-x'])
+    expect(session.awaitingPrompt).toBe(false)
   })
 
   it('关闭最后一条后 sessions 为空且 hasUserDismissed，resetLocal 后可再开', async () => {
@@ -122,6 +124,44 @@ describe('terminalsStore', () => {
 })
 
 describe('terminalsStore 流式帧与关闭映射', () => {
+  it('持续运行期间发送完成、输出、截断和中断均不恢复提示符，只有该会话的 prompt 帧恢复', async () => {
+    const sendInput = vi.fn(async () => {})
+    const interrupt = vi.fn(async () => {})
+    const gateway = gatewayWith({ sendInput, interrupt })
+    await useTerminalsStore.getState().openSession(gateway)
+    const firstId = useTerminalsStore.getState().activeId!
+    await useTerminalsStore.getState().submitCommand(gateway, 'top')
+    const firstSession = () => useTerminalsStore.getState().sessions.find(session => session.id === firstId)!
+    expect(firstSession().awaitingPrompt).toBe(true)
+    useTerminalsStore.getState().applyFrame(firstId, { type: 'output', lines: ['Tasks: 8 total'] })
+    useTerminalsStore.getState().applyFrame(firstId, { type: 'truncated', droppedBytes: 1 })
+    await useTerminalsStore.getState().interruptCommand(gateway)
+    expect(interrupt).toHaveBeenCalledWith(firstId)
+    expect(firstSession().awaitingPrompt).toBe(true)
+
+    await useTerminalsStore.getState().openSession(gateway)
+    expect(useTerminalsStore.getState().sessions.at(-1)!.awaitingPrompt).toBe(false)
+    expect(firstSession().awaitingPrompt).toBe(true)
+    useTerminalsStore.getState().applyFrame(firstId, { type: 'prompt', prompt: 'ops@elysian-demo:/tmp$ ' })
+    expect(firstSession().awaitingPrompt).toBe(false)
+    expect(firstSession().prompt).toBe('ops@elysian-demo:/tmp$ ')
+  })
+
+  it('运行中的输入保留空白与空行，不带 Shell 提示符、不写命令历史或吞掉 clear', async () => {
+    const sendInput = vi.fn(async () => {})
+    const gateway = gatewayWith({ sendInput })
+    await useTerminalsStore.getState().openSession(gateway)
+    const id = useTerminalsStore.getState().activeId!
+    for (const command of ['cat', '  data  ', '', 'clear']) await useTerminalsStore.getState().submitCommand(gateway, command)
+    const session = useTerminalsStore.getState().sessions[0]!
+    expect(sendInput.mock.calls).toEqual([[id, 'cat'], [id, '  data  '], [id, ''], [id, 'clear']])
+    expect(session.history).toEqual(['cat'])
+    expect(session.lines.slice(1)).toEqual(['  data  ', '', 'clear'].map(text => ({ kind: 'input', text, prompt: '' })))
+    sendInput.mockRejectedValueOnce(new Error('输入发送失败'))
+    await useTerminalsStore.getState().submitCommand(gateway, 'more')
+    expect(useTerminalsStore.getState().sessions[0]!.awaitingPrompt).toBe(true)
+  })
+
   it('后台会话的 output 帧落到自己的标签，不动活动会话', async () => {
     const gateway = gatewayWith()
     await useTerminalsStore.getState().openSession(gateway)

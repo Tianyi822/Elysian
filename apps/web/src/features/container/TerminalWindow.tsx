@@ -49,6 +49,7 @@ export function TerminalWindow() {
       banner={isDockerRuntime() ? DOCKER_BANNER : MOCK_BANNER}
       subject={container.name}
       prompt={terminal.prompt}
+      awaitingPrompt={terminal.awaitingPrompt}
       sessionKey={terminal.sessionId}
       lines={terminal.lines}
       interactive={terminal.status === 'connected'}

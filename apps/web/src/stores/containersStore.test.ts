@@ -28,6 +28,7 @@ function gatewayWith(overrides: Partial<ElysianGateway['containers']> = {}): Ely
       },
       sendTerminalInput: async () => {
         terminalHandlers?.onFrame('sess-test', { type: 'output', lines: ['ok'] })
+        terminalHandlers?.onFrame('sess-test', { type: 'prompt', prompt: '$ ' })
       },
       interruptTerminal: async () => {},
       completeTerminal: (_sessionId: string, draft: string, cursor: number) => ({ draft, cursor }),
@@ -135,6 +136,7 @@ describe('containersStore', () => {
         containerId: 'ctr-nginx-proxy',
         sessionId: 'sess-test',
         prompt: '$ ',
+        awaitingPrompt: false,
         status: 'connected',
         lines: [],
         history: [],
@@ -206,6 +208,7 @@ describe('containersStore', () => {
         if (command !== 'clear') {
           handlers?.onFrame('sess-1', { type: 'output', lines: ['line-1'] })
         }
+        handlers?.onFrame('sess-1', { type: 'prompt', prompt: '$ ' })
       },
     })
     await useContainersStore.getState().load(gateway)
@@ -233,6 +236,41 @@ describe('containersStore', () => {
     await useContainersStore.getState().submitCommand(gateway, 'env')
     await useContainersStore.getState().submitCommand(gateway, 'env')
     expect(useContainersStore.getState().terminal?.history).toEqual(['env'])
+  })
+
+  it('容器命令等待 prompt 帧结束，前台输入与中断不产生新的 Shell 命令', async () => {
+    const sendTerminalInput = vi.fn(async () => {})
+    const interruptTerminal = vi.fn(async () => {})
+    const gateway = gatewayWith({ sendTerminalInput, interruptTerminal })
+    await useContainersStore.getState().openTerminal(gateway, 'ctr-nginx-proxy')
+    await useContainersStore.getState().submitCommand(gateway, 'top')
+    const id = useContainersStore.getState().terminal!.sessionId
+    expect(useContainersStore.getState().terminal!.awaitingPrompt).toBe(true)
+    useContainersStore.getState().applyTerminalFrame(id, { type: 'output', lines: ['Tasks: 8 total'] })
+    useContainersStore.getState().applyTerminalFrame(id, { type: 'truncated', droppedBytes: 1 })
+    for (const input of [' q ', '', 'clear']) await useContainersStore.getState().submitCommand(gateway, input)
+    expect(sendTerminalInput.mock.calls).toEqual([[id, 'top'], [id, ' q '], [id, ''], [id, 'clear']])
+    expect(useContainersStore.getState().terminal!.history).toEqual(['top'])
+    expect(useContainersStore.getState().terminal!.lines.slice(-3)).toEqual([' q ', '', 'clear'].map(text => ({ kind: 'input', text, prompt: '' })))
+    await useContainersStore.getState().interruptTerminal(gateway)
+    expect(interruptTerminal).toHaveBeenCalledWith(id)
+    expect(useContainersStore.getState().terminal!.awaitingPrompt).toBe(true)
+    useContainersStore.getState().applyTerminalFrame('unrelated-session', { type: 'prompt', prompt: '$ ' })
+    expect(useContainersStore.getState().terminal!.awaitingPrompt).toBe(true)
+    useContainersStore.getState().applyTerminalFrame(id, { type: 'prompt', prompt: '$ ' })
+    expect(useContainersStore.getState().terminal!.awaitingPrompt).toBe(false)
+  })
+
+  it('容器发送失败恢复原有就绪状态，不将仍运行的前台程序视为已结束', async () => {
+    const sendTerminalInput = vi.fn(async () => {}).mockRejectedValueOnce(new Error('发送失败'))
+    const gateway = gatewayWith({ sendTerminalInput })
+    await useContainersStore.getState().openTerminal(gateway, 'ctr-nginx-proxy')
+    await useContainersStore.getState().submitCommand(gateway, 'top')
+    expect(useContainersStore.getState().terminal!.awaitingPrompt).toBe(false)
+    await useContainersStore.getState().submitCommand(gateway, 'top')
+    sendTerminalInput.mockRejectedValueOnce(new Error('发送失败'))
+    await useContainersStore.getState().submitCommand(gateway, 'q')
+    expect(useContainersStore.getState().terminal!.awaitingPrompt).toBe(true)
   })
 
   it('runAction 成功发通知并清忙碌；失败发危险通知', async () => {

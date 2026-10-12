@@ -35,6 +35,8 @@ export type HostTerminalSession = {
   user: string
   hostLabel: string
   prompt: string
+  /** 输入已发出，等待服务端 prompt 帧确认 Shell 重新就绪。 */
+  awaitingPrompt: boolean
   status: HostTerminalStatus
   errorMessage?: string
   lines: readonly TerminalLine[]
@@ -127,6 +129,7 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => ({
           user: FALLBACK_USER,
           hostLabel: FALLBACK_HOST,
           prompt: FALLBACK_PROMPT,
+          awaitingPrompt: false,
           status: 'connecting',
           lines: [],
           history: [],
@@ -146,6 +149,7 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => ({
                 user: info.user,
                 hostLabel: info.hostLabel,
                 prompt: info.prompt,
+                awaitingPrompt: false,
                 status: 'connected',
                 errorMessage: undefined,
               }
@@ -189,6 +193,7 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => ({
                 user: info.user,
                 hostLabel: info.hostLabel,
                 prompt: info.prompt,
+                awaitingPrompt: false,
                 status: 'connected',
                 errorMessage: undefined,
                 lines: [],
@@ -231,16 +236,17 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => ({
   },
 
   async submitCommand(gateway, command) {
-    const trimmed = command.trim()
     const activeId = get().activeId
     const session = get().sessions.find((candidate) => candidate.id === activeId)
-    if (!session || session.status !== 'connected' || !trimmed) return
+    if (!session || session.status !== 'connected') return
+    const input = session.awaitingPrompt ? command : command.trim()
+    if (!session.awaitingPrompt && !input) return
 
-    if (trimmed === 'clear') {
+    if (!session.awaitingPrompt && input === 'clear') {
       set((state) => ({
         sessions: state.sessions.map((candidate) =>
           candidate.id === session.id
-            ? { ...candidate, lines: [], history: pushHistory(candidate.history, trimmed) }
+            ? { ...candidate, lines: [], history: pushHistory(candidate.history, input) }
             : candidate,
         ),
       }))
@@ -249,26 +255,27 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => ({
 
     // 回显与历史在提交时落定（流式模型没有同步的「执行成功」回执）；输出由 output 帧异步追加。
     // 提示符快照取提交当时的值：随后的 prompt 帧只更新活动行，不改写已落日志的命令。
-    const submittedPrompt = session.prompt
+    const submittedPrompt = session.awaitingPrompt ? '' : session.prompt
     set((state) => ({
       sessions: state.sessions.map((candidate) =>
         candidate.id === session.id
           ? {
               ...candidate,
-              lines: [...candidate.lines, { kind: 'input', text: trimmed, prompt: submittedPrompt }],
-              history: pushHistory(candidate.history, trimmed),
+              awaitingPrompt: true,
+              lines: [...candidate.lines, { kind: 'input', text: input, prompt: submittedPrompt }],
+              history: session.awaitingPrompt ? candidate.history : pushHistory(candidate.history, input),
             }
           : candidate,
       ),
     }))
     try {
-      await gateway.terminals.sendInput(session.id, trimmed)
+      await gateway.terminals.sendInput(session.id, input)
     } catch (error) {
       const text = error instanceof Error ? error.message : '命令执行失败'
       set((state) => ({
         sessions: state.sessions.map((candidate) =>
           candidate.id === session.id
-            ? { ...candidate, lines: [...candidate.lines, { kind: 'output', text }] }
+            ? { ...candidate, awaitingPrompt: session.awaitingPrompt, lines: [...candidate.lines, { kind: 'output', text }] }
             : candidate,
         ),
       }))
@@ -294,7 +301,7 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => ({
           case 'output':
             return { ...session, lines: [...session.lines, ...asOutput(frame.lines)] }
           case 'prompt':
-            return { ...session, prompt: frame.prompt }
+            return { ...session, prompt: frame.prompt, awaitingPrompt: false }
           case 'truncated':
             return {
               ...session,

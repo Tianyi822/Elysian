@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockGateway } from '../../adapters/mock/gateway'
@@ -64,6 +64,37 @@ describe('终端页', () => {
     await user.type(input, 'whoami{Enter}')
     expect(await screen.findByText('ops@elysian-demo:~$ whoami')).toBeInTheDocument()
     expect(screen.getByRole('log')).toHaveTextContent(/\bops\b/)
+  })
+
+  it('top 运行和 Ctrl+C 等待期间不显示 Shell 提示符，收到 prompt 后才恢复', async () => {
+    const user = userEvent.setup()
+    const gateway = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+    const sendInput = vi.spyOn(gateway.terminals, 'sendInput').mockResolvedValue(undefined)
+    const interrupt = vi.spyOn(gateway.terminals, 'interrupt').mockResolvedValue(undefined)
+    const complete = vi.spyOn(gateway.terminals, 'complete')
+    renderApp('/terminals', { gateway })
+    const input = await screen.findByLabelText('命令输入')
+    expect(screen.getByText('ops@elysian-demo:~$')).toBeInTheDocument()
+    await user.type(input, 'top{Enter}')
+    const id = useTerminalsStore.getState().activeId!
+    expect(sendInput).toHaveBeenCalledWith(id, 'top')
+    expect(screen.getByText('ops@elysian-demo:~$ top')).toBeInTheDocument()
+    expect(screen.queryByText('ops@elysian-demo:~$')).not.toBeInTheDocument()
+    act(() => useTerminalsStore.getState().applyFrame(id, { type: 'output', lines: ['Tasks: 8 total'] }))
+    expect(screen.getByText('Tasks: 8 total')).toBeInTheDocument()
+    expect(input).toBeEnabled()
+    await user.keyboard('{ArrowUp}{Tab}')
+    expect(input).toHaveValue('')
+    expect(complete).not.toHaveBeenCalled()
+    await user.keyboard('{Control>}c{/Control}')
+    expect(interrupt).toHaveBeenCalledWith(id)
+    expect(screen.getByText('^C')).toBeInTheDocument()
+    expect(screen.queryByText('ops@elysian-demo:~$^C')).not.toBeInTheDocument()
+    expect(screen.queryByText('ops@elysian-demo:~$')).not.toBeInTheDocument()
+    act(() => useTerminalsStore.getState().applyFrame(id, { type: 'prompt', prompt: 'ops@elysian-demo:~$ ' }))
+    expect(screen.getByText('ops@elysian-demo:~$')).toBeInTheDocument()
+    await user.keyboard('{ArrowUp}')
+    expect(input).toHaveValue('top')
   })
 
   it('新建标签后切换，各自保留已提交的历史', async () => {

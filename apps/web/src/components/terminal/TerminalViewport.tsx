@@ -20,7 +20,8 @@ import { TerminalText } from './TerminalText'
  * Tab、方向键与 Ctrl 组合键在 keydown 里接管，光标位置经 onSelect 回读进模型。
  *
  * input 行存裸语句。行上带提交时的提示符快照时用快照，否则用当前提示符拼在行首。
- * 活动行始终用当前提示符。提示符随工作目录变化时，已提交的行保持提交当时的样子。
+ * 等待命令结束时活动行只显示前台程序输入，prompt 帧确认 Shell 就绪后才显示提示符。
+ * 提示符随工作目录变化时，已提交的行保持提交当时的样子。
  * 复制口径：Ctrl+C 恒为中断，Cmd+C 恒为复制（macOS 习惯，原生 Cmd+C 会复制到
  * input 的不可见选区上，所以复制由内核接管）；选中即复制，mouseup 收尾时写入剪贴板。
  * 日志按终端栅格排版：保留连续空白（ls -l、SQL 结果表靠空格补位对齐）、宽字符固定两格、
@@ -45,6 +46,8 @@ export type TerminalViewportProps = {
   inputLabel: string
   /** 连接中或已断开时保留日志，但隐藏活动提示行并禁止键入。 */
   interactive?: boolean
+  /** 等待 Shell 就绪时隐藏提示符与命令补全/历史，仍可输入前台程序内容或 Ctrl+C。 */
+  awaitingPrompt?: boolean
   /** 日志区字号（px），由页面持有；缺省为终端基准字号。 */
   fontSize?: number
   /**
@@ -74,6 +77,7 @@ export function TerminalViewport({
   onInterrupt,
   inputLabel,
   interactive = true,
+  awaitingPrompt = false,
   fontSize = TERMINAL_FONT_SIZE_DEFAULT,
   onFontZoom,
   autoFocus = true,
@@ -109,7 +113,7 @@ export function TerminalViewport({
   useEffect(() => {
     // jsdom 未实现 Element.scrollTo，可选调用让测试环境降级为 no-op，浏览器行为不变。
     logRef.current?.scrollTo?.({ top: logRef.current.scrollHeight })
-  }, [lines.length, draft])
+  }, [lines.length, draft, awaitingPrompt])
 
   useEffect(() => {
     const input = inputRef.current
@@ -149,7 +153,7 @@ export function TerminalViewport({
   }, [interactive, trapRootRef])
 
   const recall = (direction: -1 | 1) => {
-    if (!history.length) return
+    if (awaitingPrompt || !history.length) return
     const { draft: nextDraft, index: next } = recallHistory(history, historyIndex, direction)
     setHistoryIndex(next)
     setDraft(nextDraft)
@@ -165,6 +169,7 @@ export function TerminalViewport({
   }
 
   const runCompletion = () => {
+    if (awaitingPrompt) return
     const result = complete(draft, cursor)
     if (result.candidates) {
       onAppendOutput(formatTerminalColumns(result.candidates))
@@ -175,7 +180,7 @@ export function TerminalViewport({
   }
 
   const interrupt = () => {
-    onAppendOutput([`${prompt}${draft}^C`])
+    onAppendOutput([`${awaitingPrompt ? '' : prompt}${draft}^C`])
     setDraft('')
     setCursor(0)
     setHistoryIndex(null)
@@ -308,9 +313,9 @@ export function TerminalViewport({
           </p>
         ))}
         {interactive ? <p aria-hidden="true">
-          <span className="text-success">
+          {!awaitingPrompt && <span className="text-success">
             <TerminalText text={prompt} />
-          </span>
+          </span>}
           <TerminalText text={draft.slice(0, cursor)} />
           <span className="bg-fg text-bg motion-safe:animate-caret-blink">
             <TerminalText text={draft.slice(cursor, cursor + 1) || ' '} />

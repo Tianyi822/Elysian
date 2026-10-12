@@ -32,6 +32,8 @@ export type TerminalShellProps = {
   /** Ctrl+C 的领域侧通道；不传时仅本地 ^C 外观（如 SQL 弹窗）。 */
   onInterrupt?: () => void
   interactive?: boolean
+  /** 等待服务端确认命令结束时隐藏 Shell 提示符，保留前台输入与中断。 */
+  awaitingPrompt?: boolean
   /** 日志区字号（px），由弹窗持有；缺省为终端基准字号。 */
   fontSize?: number
   /**
@@ -118,6 +120,7 @@ export function TerminalShell({
   onClose,
   onInterrupt,
   interactive = true,
+  awaitingPrompt = false,
   fontSize,
   onFontZoom,
   labels,
@@ -177,6 +180,7 @@ export function TerminalShell({
             onClear={onClear}
             onInterrupt={onInterrupt}
             interactive={interactive}
+            awaitingPrompt={awaitingPrompt}
             fontSize={fontSize}
             onFontZoom={onFontZoom}
             inputLabel={labels.input}

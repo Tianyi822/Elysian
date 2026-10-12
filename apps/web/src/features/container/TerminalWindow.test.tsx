@@ -26,6 +26,7 @@ function mountTerminalWindow() {
       containerId: 'ctr-nginx-proxy',
       sessionId: 'sess-test',
       prompt: '$ ',
+      awaitingPrompt: false,
       status: 'connected',
       lines: [],
       history: [],
@@ -99,6 +100,17 @@ describe('TerminalWindow 字号缩放', () => {
       terminal: state.terminal && { ...state.terminal, status: 'connected', lines: [] },
     })))
     expect(screen.getByLabelText('命令输入')).toBeEnabled()
+    expect(screen.getByRole('log')).toHaveTextContent('$')
+  })
+
+  it('容器命令运行时保留输入但隐藏 Shell 提示符，prompt 帧到达后恢复', () => {
+    mountTerminalWindow()
+    act(() => useContainersStore.setState((state) => ({
+      terminal: state.terminal && { ...state.terminal, awaitingPrompt: true },
+    })))
+    expect(screen.getByLabelText('命令输入')).toBeEnabled()
+    expect(screen.getByRole('log')).not.toHaveTextContent('$')
+    act(() => useContainersStore.getState().applyTerminalFrame('sess-test', { type: 'prompt', prompt: '$ ' }))
     expect(screen.getByRole('log')).toHaveTextContent('$')
   })
 })

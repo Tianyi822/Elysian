@@ -110,6 +110,7 @@ export function TerminalPage() {
         >
           <TerminalViewport
             prompt={active.prompt}
+            awaitingPrompt={active.awaitingPrompt}
             sessionKey={active.id}
             lines={active.lines}
             history={active.history}

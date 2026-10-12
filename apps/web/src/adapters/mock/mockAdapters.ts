@@ -593,6 +593,7 @@ export class MockContainerAdapter implements ContainerAdapter {
     if (lines.length > 0) {
       session.handlers.onFrame(sessionId, { type: 'output', lines })
     }
+    session.handlers.onFrame(sessionId, { type: 'prompt', prompt: '$ ' })
   }
 
   async interruptTerminal(sessionId: string): Promise<void> {
