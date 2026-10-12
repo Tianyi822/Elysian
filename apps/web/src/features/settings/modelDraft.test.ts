@@ -11,7 +11,7 @@ describe('模型目录与预设参数', () => {
     expect(modelPresetDraft('openai-compatible', 'deepseek-flash')).toBeUndefined()
   })
   it('不把未知服务的默认输出放大到上下文容量，明确的远端容量优先', () => {
-    expect(discoveredModelDraft('openai-compatible', { model: 'custom', name: 'Custom' })).toMatchObject({ outputTokens: '4096', image: false, reasoningLevels: [] })
+    expect(discoveredModelDraft('openai-compatible', { model: 'custom', name: 'Custom' })).toMatchObject({ outputTokens: '4096', image: false, tools: true, structuredOutput: true, systemMessages: true, webSearch: false, reasoningLevels: [], source: '模型服务目录与默认配置' })
     expect(discoveredModelDraft('openai-compatible', { model: 'custom', name: 'Custom', contextTokens: 2048 })).toMatchObject({ outputTokens: '2048' })
     expect(discoveredModelDraft('deepseek', { model: 'deepseek-flash', name: 'Flash', contextTokens: 128000, outputTokens: 8000 })).toMatchObject({ contextTokens: '128000', outputTokens: '8000' })
   })

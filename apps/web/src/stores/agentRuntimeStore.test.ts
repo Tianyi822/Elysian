@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentRuntimeInfo } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
-import { demoAgentRuntimeInfo } from '../adapters/mock/agent/agentRunsMockAdapter'
+import { demoAgentRuntimeInfo } from '../adapters/mock/agent/agentRuntimeMock'
 import { useAgentRuntimeStore } from './agentRuntimeStore'
 
 function gatewayWith(info: AgentRuntimeInfo, error?: Error): ElysianGateway {
   return {
-    agentRuns: {
+    agentRuntime: {
       runtime: () => error === undefined ? Promise.resolve(info) : Promise.reject(error),
     },
   } as unknown as ElysianGateway
@@ -29,7 +29,7 @@ describe('agentRuntimeStore', () => {
     const slowInfo = demoAgentRuntimeInfo()
     const fastInfo = { ...demoAgentRuntimeInfo(), queueDepth: 7 }
     const gateway = {
-      agentRuns: {
+      agentRuntime: {
         runtime: () => new Promise<AgentRuntimeInfo>((resolve) => {
           if (releaseSlow === undefined) {
             releaseSlow = resolve
@@ -84,7 +84,7 @@ describe('agentRuntimeStore', () => {
     let resolveRuntime: ((value: AgentRuntimeInfo) => void) | undefined
     const info = demoAgentRuntimeInfo()
     const gateway = {
-      agentRuns: { runtime: () => new Promise<AgentRuntimeInfo>((resolve) => { resolveRuntime = resolve }) },
+      agentRuntime: { runtime: () => new Promise<AgentRuntimeInfo>((resolve) => { resolveRuntime = resolve }) },
     } as unknown as ElysianGateway
     const pending = useAgentRuntimeStore.getState().load(gateway)
     useAgentRuntimeStore.getState().reportUnavailable('存储故障')

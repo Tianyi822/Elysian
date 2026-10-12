@@ -5,8 +5,7 @@ import { Check, ChevronDown, Plus, X } from '../../components/icons'
 import { CTL_FIELD, CTL_SECONDARY } from '../../components/formControl'
 import type { DraftModel } from './modelDraft'
 
-const inputTypes = [['text', '文本'], ['image', '图片'], ['video', '视频'], ['pdf', 'PDF']] as const
-const abilities = [['tools', '工具调用'], ['structuredOutput', '结构化输出'], ['webSearch', '原生联网搜索'], ['systemMessages', '对话中系统消息']] as const
+const multimodalInputs = [['image', '图片'], ['video', '视频']] as const
 
 function CapabilityChoice({ label, checked, onChange }: { label: string; checked: boolean; onChange(value: boolean): void }) {
   return <label className="inline-flex min-h-8 cursor-pointer items-center gap-2 rounded-md border border-line px-2.5 py-1.5 text-xs text-fg-muted transition-colors hover:border-control-line has-[[data-state=checked]]:border-control-line has-[[data-state=checked]]:bg-surface-raised has-[[data-state=checked]]:text-fg">
@@ -35,11 +34,8 @@ export function ModelAdvancedFields({ row, onChange }: { row: DraftModel; onChan
       <ChevronDown aria-hidden size={14} className="-rotate-90 transition-transform group-open/advanced:rotate-0" />高级配置
     </summary>
     <div className="mt-3 flex flex-col gap-4">
-      <fieldset><legend className="mb-2 text-xs text-fg-muted">输入类型</legend><div className="flex flex-wrap gap-2">
-        {inputTypes.map(([key, label]) => <CapabilityChoice key={key} label={label} checked={row[key]} onChange={value => onChange({ [key]: value })} />)}
-      </div></fieldset>
-      <fieldset><legend className="mb-2 text-xs text-fg-muted">模型能力</legend><div className="flex flex-wrap gap-2">
-        {abilities.map(([key, label]) => <CapabilityChoice key={key} label={label} checked={row[key]} onChange={value => onChange({ [key]: value })} />)}
+      <fieldset><legend className="mb-2 text-xs text-fg-muted">多模态输入</legend><div className="flex flex-wrap gap-2">
+        {multimodalInputs.map(([key, label]) => <CapabilityChoice key={key} label={label} checked={row[key]} onChange={value => onChange({ [key]: value })} />)}
       </div></fieldset>
       <div>
         <p className="mb-2 text-xs text-fg-muted">推理等级（从低到高）</p>
@@ -56,8 +52,6 @@ export function ModelAdvancedFields({ row, onChange }: { row: DraftModel; onChan
         </div>}
         {error && <p role="alert" className="mt-2 text-xs text-danger">{error}</p>}
       </div>
-      <p className="text-xs leading-5 text-fg-subtle">记录模型支持的能力。Ely 当前使用文本和工具调用；推理等级表示可用范围。</p>
-      <div><label htmlFor={`model-source-${row.key}`} className="mb-1.5 block text-xs text-fg-muted">能力来源</label><input id={`model-source-${row.key}`} required maxLength={80} value={row.source} onChange={event => onChange({ source: event.target.value })} className={`${CTL_FIELD} h-9 w-full`} /></div>
     </div>
   </details>
 }

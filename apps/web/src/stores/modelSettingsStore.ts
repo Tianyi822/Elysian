@@ -3,8 +3,12 @@ import type { AgentModelProfile, AgentModelProfileInput, AgentModelService, Agen
 import { create } from 'zustand'
 import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
 import type { ElysianGateway } from '../contracts/adapters'
-import { isRevisionConflict } from './agentCapabilitiesStore'
 import { useNotificationStore } from './notificationStore'
+
+/** 模型配置的修订冲突保留表单草稿，由用户确认最新修订后提交。 */
+export function isRevisionConflict(error: unknown): boolean {
+  return error !== null && typeof error === 'object' && 'code' in error && error.code === 'revision-conflict'
+}
 
 /** 模型设置独立读取目录；凭据只在提交内存中经过，不进入 store 或浏览器持久化。 */
 export function validateModelInput(input: AgentModelProfileInput, hasCredential = false): string | undefined {
@@ -49,7 +53,7 @@ export const useModelSettingsStore = create<ModelSettingsState>((set, get) => {
     const request = ++sequence
     set(refresh && get().status === 'ready' ? { reloading: true, errorMessage: undefined } : { status: 'loading', errorMessage: undefined })
     try {
-      const services = await gateway.agentCapabilities.listModelServices()
+      const services = await gateway.modelSettings.listModelServices()
       const models = services.flatMap(service => service.models)
       if (request === sequence) set({ models, services, status: 'ready', reloading: false, errorMessage: undefined })
     } catch (error) {
@@ -76,8 +80,8 @@ export const useModelSettingsStore = create<ModelSettingsState>((set, get) => {
       set({ saving: true })
       try {
         const service = editing
-          ? await gateway.agentCapabilities.updateModelService(editing.id, { ...input, expectedRevision: editing.revision })
-          : await gateway.agentCapabilities.createModelService(input)
+          ? await gateway.modelSettings.updateModelService(editing.id, { ...input, expectedRevision: editing.revision })
+          : await gateway.modelSettings.createModelService(input)
         set(state => { const services = [...state.services.filter(item => item.id !== service.id), service]; return { services, models: services.flatMap(item => item.models) } })
         notify(`模型服务「${service.name}」已${editing ? '更新' : '创建'}${isDockerRuntime() ? '' : '（演示数据）'}`)
         await get().refresh(gateway)
@@ -96,8 +100,8 @@ export const useModelSettingsStore = create<ModelSettingsState>((set, get) => {
       set({ saving: true })
       try {
         const profile = editing
-          ? await gateway.agentCapabilities.updateModelProfile(editing.id, { ...input, expectedRevision: editing.revision })
-          : await gateway.agentCapabilities.createModelProfile(input)
+          ? await gateway.modelSettings.updateModelProfile(editing.id, { ...input, expectedRevision: editing.revision })
+          : await gateway.modelSettings.createModelProfile(input)
         set((state) => ({ models: [...state.models.filter((item) => item.id !== profile.id), profile] }))
         notify(`模型配置「${profile.name}」已${editing ? '更新' : '创建'}（修订 ${profile.revision}）${isDockerRuntime() ? '' : '（演示数据）'}`)
         await get().refresh(gateway)

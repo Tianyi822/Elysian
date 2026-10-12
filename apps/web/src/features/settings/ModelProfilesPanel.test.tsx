@@ -5,8 +5,8 @@ import { createMemoryRouter, RouterProvider } from 'react-router'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { ThemeProvider } from '../../app/theme/ThemeProvider'
 import { GatewayProvider } from '../../adapters/GatewayProvider'
-import { AgentCapabilitiesMockAdapter, resetAgentCapabilitiesData } from '../../adapters/mock/agent/agentCapabilitiesMockAdapter'
-import { demoAgentRuntimeInfo } from '../../adapters/mock/agent/agentRunsMockAdapter'
+import { ModelSettingsMockAdapter, resetModelSettingsData } from '../../adapters/mock/agent/modelSettingsMockAdapter'
+import { demoAgentRuntimeInfo } from '../../adapters/mock/agent/agentRuntimeMock'
 import type { ElysianGateway } from '../../contracts/adapters'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { useModelSettingsStore } from '../../stores/modelSettingsStore'
@@ -28,10 +28,10 @@ vi.mock('../../adapters/mock/gateway', () => ({
   },
 }))
 
-function makePageGateway(adapter: AgentCapabilitiesMockAdapter = new AgentCapabilitiesMockAdapter()): ElysianGateway {
+function makePageGateway(adapter: ModelSettingsMockAdapter = new ModelSettingsMockAdapter()): ElysianGateway {
   return {
-    agentCapabilities: adapter,
-    agentRuns: { runtime: async () => demoAgentRuntimeInfo() },
+    modelSettings: adapter,
+    agentRuntime: { runtime: async () => demoAgentRuntimeInfo() },
   } as unknown as ElysianGateway
 }
 
@@ -61,7 +61,7 @@ async function renderReady(path = '/settings', gateway?: ElysianGateway) {
 }
 
 beforeEach(() => {
-  resetAgentCapabilitiesData()
+  resetModelSettingsData()
   useAgentRuntimeStore.getState().reset()
   useModelSettingsStore.getState().reset()
   useNotificationStore.getState().clear()
@@ -72,7 +72,7 @@ async function editMain(user: ReturnType<typeof userEvent.setup>) {
   await user.click(within(screen.getByText('gpt-5').closest('tr')!).getByRole('button', { name: /编辑/ }))
   return screen.getByRole('dialog')
 }
-const toInput = (service: Awaited<ReturnType<AgentCapabilitiesMockAdapter['listModelServices']>>[number]) => ({ name: service.name, provider: service.provider, apiFormat: service.apiFormat, baseUrl: service.baseUrl, active: service.active, models: service.models.map(model => ({ id: model.id, name: model.name, model: model.model, contextTokens: model.contextTokens, outputTokens: model.outputTokens, capabilities: model.capabilities, enabled: model.enabled })) })
+const toInput = (service: Awaited<ReturnType<ModelSettingsMockAdapter['listModelServices']>>[number]) => ({ name: service.name, provider: service.provider, apiFormat: service.apiFormat, baseUrl: service.baseUrl, active: service.active, models: service.models.map(model => ({ id: model.id, name: model.name, model: model.model, contextTokens: model.contextTokens, outputTokens: model.outputTokens, capabilities: model.capabilities, enabled: model.enabled })) })
 
 describe('模型服务表单', () => {
   it('模型页不显示重复说明，刷新与新建操作同排且 DeepSeek 显示官方输出上限', async () => {
@@ -87,7 +87,7 @@ describe('模型服务表单', () => {
   })
 
   it('新建模型列表为空，手动添加后可移除最后一项，空列表不能提交', async () => {
-    const adapter = new AgentCapabilitiesMockAdapter()
+    const adapter = new ModelSettingsMockAdapter()
     const create = vi.spyOn(adapter, 'createModelService')
     const user = userEvent.setup()
     await renderReady('/settings', makePageGateway(adapter))
@@ -111,7 +111,7 @@ describe('模型服务表单', () => {
     expect(create).not.toHaveBeenCalled()
   })
   it('自定义服务选择 Responses 并一次创建两个模型，共用 API Key', async () => {
-    const adapter = new AgentCapabilitiesMockAdapter()
+    const adapter = new ModelSettingsMockAdapter()
     const create = vi.spyOn(adapter, 'createModelService')
     const user = userEvent.setup()
     await renderReady('/settings', makePageGateway(adapter))
@@ -126,6 +126,10 @@ describe('模型服务表单', () => {
     await user.click(within(dialog).getByRole('button', { name: '添加模型' }))
     await user.type(within(dialog).getByLabelText('模型 ID'), 'custom-one')
     expect(within(dialog).queryByLabelText('模型名称')).toBeNull()
+    expect(within(dialog).queryByRole('group', { name: '模型能力' })).toBeNull()
+    expect(within(dialog).getByRole('group', { name: '多模态输入' })).toBeInTheDocument()
+    for (const label of ['文本', 'PDF']) expect(within(dialog).queryByRole('checkbox', { name: label })).toBeNull()
+    for (const label of ['工具调用', '结构化输出', '原生联网搜索', '对话中系统消息']) expect(within(dialog).queryByRole('checkbox', { name: label })).toBeNull()
     await user.type(key, 'fake-key')
     await user.click(within(dialog).getByRole('button', { name: '显示输入的 API Key' }))
     expect(key.type).toBe('text')
@@ -141,38 +145,44 @@ describe('模型服务表单', () => {
     const saved = services.find(service => service.name === '测试服务')!
     expect(saved.models).toHaveLength(2)
     expect(saved.models.every(model => model.hasCredential && !('credential' in model))).toBe(true)
+    for (const model of saved.models) expect(model.capabilities).toMatchObject({ text: true, tools: true, structuredOutput: true, systemMessages: true, webSearch: false, pdf: false })
     expect(within(screen.getByRole('button', { name: '编辑 custom-two' }).closest('tr')!).getByText('已停用')).toBeDefined()
   })
-  it('模型条目保存并回读独立能力与自定义推理等级，显式关闭不会回弹', async () => {
-    const adapter = new AgentCapabilitiesMockAdapter()
+  it('多模态输入与推理等级可编辑，保存时保留已有的模型能力与 PDF 声明', async () => {
+    const adapter = new ModelSettingsMockAdapter()
+    const service = (await adapter.listModelServices()).find(row => row.models.some(model => model.model === 'gpt-5'))!
+    const input = toInput(service)
+    const savedCapabilities = { ...input.models[0]!.capabilities, tools: false, structuredOutput: false, webSearch: true, systemMessages: false, pdf: true }
+    await adapter.updateModelService(service.id, { ...input, expectedRevision: service.revision, models: [{ ...input.models[0]!, capabilities: savedCapabilities }] })
     const update = vi.spyOn(adapter, 'updateModelService')
     const user = userEvent.setup()
     await renderReady('/settings', makePageGateway(adapter))
     let dialog = await editMain(user)
     await user.click(within(dialog).getByRole('button', { name: '编辑模型 1' }))
-    for (const label of ['图片', '视频', 'PDF', '结构化输出', '原生联网搜索', '对话中系统消息']) await user.click(within(dialog).getByRole('checkbox', { name: label }))
+    for (const label of ['图片', '视频']) await user.click(within(dialog).getByRole('checkbox', { name: label }))
     await user.click(within(dialog).getByRole('button', { name: '添加推理等级' }))
     await user.type(within(dialog).getByLabelText('新的推理等级'), 'medium{Enter}')
     expect(update).not.toHaveBeenCalled()
     await user.click(within(dialog).getByRole('button', { name: '保存模型配置' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(update).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
-      models: [expect.objectContaining({ capabilities: expect.objectContaining({ image: true, video: true, pdf: true, structuredOutput: true, webSearch: true, systemMessages: true, reasoningLevels: ['medium'] }) })],
+      models: [expect.objectContaining({ capabilities: expect.objectContaining({ ...savedCapabilities, image: true, video: true, pdf: true, reasoningLevels: ['medium'] }) })],
     }))
     dialog = await editMain(user)
     await user.click(within(dialog).getByRole('button', { name: '编辑模型 1' }))
-    for (const label of ['图片', '视频', 'PDF', '结构化输出', '原生联网搜索', '对话中系统消息']) expect(within(dialog).getByRole('checkbox', { name: label })).toBeChecked()
-    await user.click(within(dialog).getByRole('checkbox', { name: '对话中系统消息' }))
+    for (const label of ['图片', '视频']) expect(within(dialog).getByRole('checkbox', { name: label })).toBeChecked()
+    await user.click(within(dialog).getByRole('checkbox', { name: '图片' }))
     await user.click(within(dialog).getByRole('button', { name: '移除推理等级 medium' }))
     await user.click(within(dialog).getByRole('button', { name: '保存模型配置' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     dialog = await editMain(user)
     await user.click(within(dialog).getByRole('button', { name: '编辑模型 1' }))
-    expect(within(dialog).getByRole('checkbox', { name: '对话中系统消息' })).not.toBeChecked()
+    expect(within(dialog).getByRole('checkbox', { name: '图片' })).not.toBeChecked()
     expect(within(dialog).queryByRole('button', { name: /移除推理等级/ })).toBeNull()
+    expect(update).toHaveBeenLastCalledWith(service.id, expect.objectContaining({ models: [expect.objectContaining({ capabilities: expect.objectContaining({ ...savedCapabilities, image: false, video: true, pdf: true, reasoningLevels: [] }) })] }))
   })
   it('DeepSeek 手动添加为空白项，获取后选择多个模型，容量取服务返回且能力按具体模型填充', async () => {
-    const adapter = new AgentCapabilitiesMockAdapter()
+    const adapter = new ModelSettingsMockAdapter()
     const create = vi.spyOn(adapter, 'createModelService')
     const discover = vi.spyOn(adapter, 'discoverModels')
     const user = userEvent.setup()
@@ -221,18 +231,17 @@ describe('模型服务表单', () => {
     expect(within(dialog).getByLabelText('上下文上限（token）')).toHaveValue(1048576)
     expect(within(dialog).getByLabelText('输出上限（token）')).toHaveValue(393216)
     expect(within(dialog).getByRole('checkbox', { name: '图片' })).toBeChecked()
-    expect(within(dialog).getByRole('checkbox', { name: '原生联网搜索' })).not.toBeChecked()
     await user.click(within(dialog).getByRole('button', { name: '编辑模型 2' }))
     expect(within(dialog).getByRole('checkbox', { name: '图片' })).not.toBeChecked()
-    expect(within(dialog).getByRole('checkbox', { name: '结构化输出' })).toBeChecked()
     expect(within(dialog).getByRole('button', { name: '移除推理等级 max' })).toBeInTheDocument()
     await user.click(within(dialog).getByRole('button', { name: '创建模型配置' }))
     expect(await screen.findByRole('button', { name: '编辑 deepseek-v4-pro' })).toBeDefined()
-    expect(create).toHaveBeenCalledWith(expect.objectContaining({ provider: 'deepseek', models: [expect.objectContaining({ model: 'deepseek-flash' }), expect.objectContaining({ model: 'deepseek-v4-pro' })] }))
+    const capabilities = expect.objectContaining({ tools: true, structuredOutput: true, systemMessages: true, webSearch: false })
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ provider: 'deepseek', models: [expect.objectContaining({ model: 'deepseek-flash', capabilities }), expect.objectContaining({ model: 'deepseek-v4-pro', capabilities })] }))
     expect(screen.queryByDisplayValue('fake-deepseek-key')).toBeNull()
   })
   it('编辑沿用凭据获取，支持替换和清除；空目录与读取失败保留草稿', async () => {
-    const adapter = new AgentCapabilitiesMockAdapter()
+    const adapter = new ModelSettingsMockAdapter()
     const discover = vi.spyOn(adapter, 'discoverModels').mockResolvedValueOnce([]).mockRejectedValueOnce(new Error('模型服务鉴权失败，请检查配置凭据')).mockResolvedValue([])
     const user = userEvent.setup()
     await renderReady('/settings', makePageGateway(adapter))
@@ -251,7 +260,7 @@ describe('模型服务表单', () => {
     expect(discover.mock.calls[2]?.[0].credential).toBe('')
   })
   it('获取期间阻止重复请求，连接信息改变后丢弃旧结果', async () => {
-    const adapter = new AgentCapabilitiesMockAdapter()
+    const adapter = new ModelSettingsMockAdapter()
     let resolve!: (rows: { model: string; name: string }[]) => void
     const discover = vi.spyOn(adapter, 'discoverModels').mockReturnValue(new Promise(done => { resolve = done }))
     const user = userEvent.setup()
@@ -267,7 +276,7 @@ describe('模型服务表单', () => {
     expect(within(dialog).queryByRole('region', { name: '可选模型' })).toBeNull()
   })
   it('编辑服务保留、替换和清除共用凭据，并修改 API 格式', async () => {
-    const adapter = new AgentCapabilitiesMockAdapter()
+    const adapter = new ModelSettingsMockAdapter()
     const update = vi.spyOn(adapter, 'updateModelService')
     const user = userEvent.setup()
     await renderReady('/settings', makePageGateway(adapter))
@@ -293,7 +302,7 @@ describe('模型服务表单', () => {
     expect(within(screen.getByText('gpt-5').closest('tr')!).getByText('未配置 API Key')).toBeDefined()
   })
   it('CAS 冲突保留服务与模型草稿，明确采用最新修订后再保存', async () => {
-    const adapter = new AgentCapabilitiesMockAdapter()
+    const adapter = new ModelSettingsMockAdapter()
     const user = userEvent.setup()
     await renderReady('/settings', makePageGateway(adapter))
     const service = (await adapter.listModelServices())[0]!
@@ -312,7 +321,7 @@ describe('模型服务表单', () => {
     expect(await screen.findByRole('button', { name: '编辑 retained-model-draft' })).toBeDefined()
   })
   it('模型目录为空仍可创建，读取失败显示重试', async () => {
-    const adapter = new AgentCapabilitiesMockAdapter()
+    const adapter = new ModelSettingsMockAdapter()
     vi.spyOn(adapter, 'listModelServices').mockResolvedValueOnce([]).mockRejectedValueOnce(new Error('模型目录断开'))
     const user = userEvent.setup()
     renderCapabilitiesPage('/settings', makePageGateway(adapter))

@@ -3,17 +3,16 @@ import * as Dialog from '@radix-ui/react-dialog'
 import * as Switch from '@radix-ui/react-switch'
 import { AGENT_MODEL_API_FORMATS, getAgentModelPreset, type AgentDiscoveredModel, type AgentModelAPIFormat, type AgentModelProvider, type AgentModelService, type AgentModelServiceInput } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { useInFlightSubmit } from '../../components/agent/useInFlightSubmit'
+import { useInFlightSubmit } from './useInFlightSubmit'
 import { CTL_PRIMARY, CTL_SECONDARY, CTL_FIELD } from '../../components/formControl'
 import { Download, Eye, EyeOff, Loader2, Pencil, Plus, Search, Trash2, X } from '../../components/icons'
 import { StatusTag } from '../../components/StatusTag'
-import { useModelSettingsStore, validateModelInput } from '../../stores/modelSettingsStore'
+import { useModelSettingsStore, validateModelInput, isRevisionConflict } from '../../stores/modelSettingsStore'
 import { EmptyState } from '../../components/states/StateViews'
-import { RevisionConflictNotice } from '../../components/agent/RevisionConflictNotice'
+import { RevisionConflictNotice } from './RevisionConflictNotice'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { SuggestionInput } from '../../components/SuggestionInput'
 import { ScrollArea } from '../../components/ScrollArea'
-import { isRevisionConflict } from '../../stores/agentCapabilitiesStore'
 import { RefreshButton } from '../../components/RefreshState'
 import { ModelAdvancedFields } from './ModelAdvancedFields'
 import { blankModel, discoveredModelDraft, modelDraftDisplayName, modelPresetDraft, savedModelDraft, type DraftModel } from './modelDraft'
@@ -41,15 +40,15 @@ export function ModelProfilesPanel({ active = true, refreshing = false, onRefres
     {rows.length === 0 ? <EmptyState title={search.trim() ? '没有匹配的模型配置' : '还没有模型配置'} description={search.trim() ? '换个关键词，或清空过滤查看全部模型配置。' : '添加 DeepSeek 或自定义模型服务，同一服务可配置多个模型。'} /> : <div role="region" aria-label="模型配置列表" tabIndex={0} className="table-scrollbar min-w-0 overflow-x-auto panel-surface">
       <table className="w-full min-w-[54rem] table-fixed border-separate border-spacing-0 text-left text-sm">
         <colgroup>{['30%', '28%', '8%', '8%', '10%', '9%', '7%'].map((width, index) => <col key={index} style={{ width }} />)}</colgroup>
-        <thead><tr>{['模型 ID', '服务地址', '上下文', '输出', '能力', '状态', '操作'].map(label => <th key={label} scope="col" className="border-b border-line bg-surface px-3 py-2.5 text-xs font-medium text-fg-muted">{label}</th>)}</tr></thead>
+        <thead><tr>{['模型 ID', '服务地址', '上下文', '输出', '能力', '状态', '操作'].map((label, index) => <th key={label} scope="col" className={`border-b border-line bg-surface px-3 py-2.5 text-xs font-medium text-fg-muted ${index === 0 ? 'sticky left-0 z-20 border-r' : ''}`}>{label}</th>)}</tr></thead>
         <tbody>{rows.map(({ service, model }) => {
           const details = `${service.name} · ${AGENT_MODEL_API_FORMATS.find(format => format.value === service.apiFormat)?.label.split(' (')[0]} · 修订 ${model.revision}`
-          return <tr key={model.id} className="transition-colors hover:bg-surface-raised/50">
-          <td className="border-b border-line px-3 py-3"><span className="block truncate font-mono text-xs font-medium" title={model.model}>{model.model}</span><span className="block truncate text-xs text-fg-subtle" title={details}>{details}</span></td>
+          return <tr key={model.id} className="group transition-colors hover:bg-surface-raised">
+          <td className="sticky left-0 z-10 border-b border-r border-line bg-surface px-3 py-3 transition-colors group-hover:bg-surface-raised"><span className="block truncate font-mono text-xs font-medium" title={model.model}>{model.model}</span><span className="block truncate text-xs text-fg-subtle" title={details}>{details}</span></td>
           <td className="border-b border-line px-3 py-3"><span className="block truncate font-mono text-xs" title={service.baseUrl}>{service.baseUrl}</span><span className="text-xs text-fg-subtle">{service.hasCredential ? '已配置 API Key' : '未配置 API Key'}</span></td>
           <td className="border-b border-line px-3 py-3 tabular-nums text-fg-muted">{formatTokens(model.contextTokens)}</td>
           <td className="border-b border-line px-3 py-3 tabular-nums text-fg-muted">{formatTokens(model.outputTokens)}</td>
-          <td className="border-b border-line px-3 py-3"><span className="inline-flex flex-wrap gap-1">{model.capabilities.text && <StatusTag label="文本" tone="info" />}{model.capabilities.tools && <StatusTag label="工具" tone="info" />}</span></td>
+          <td className="border-b border-line px-3 py-3"><StatusTag label={model.capabilities.image || model.capabilities.video ? '多模态' : '文本'} tone="info" /></td>
           <td className="border-b border-line px-3 py-3"><StatusTag label={model.active ? '已启用' : '已停用'} tone={model.active ? 'success' : 'neutral'} /></td>
           <td className="border-b border-line px-3 py-3"><button type="button" onClick={() => setEditing(service)} aria-label={`编辑 ${model.model}`} className={iconButton}><Pencil aria-hidden size={14} /></button></td>
         </tr>})}</tbody>
@@ -97,7 +96,7 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
     discoveryRequest.current = controller
     setFetchingModels(true); setCatalogError(undefined)
     try {
-      const rows = await gateway.agentCapabilities.discoverModels({ provider, apiFormat, baseUrl, ...(clear ? { credential: '' } : credential ? { credential } : {}), ...(service ? { serviceId: service.id, expectedRevision: revision } : {}) }, controller.signal)
+      const rows = await gateway.modelSettings.discoverModels({ provider, apiFormat, baseUrl, ...(clear ? { credential: '' } : credential ? { credential } : {}), ...(service ? { serviceId: service.id, expectedRevision: revision } : {}) }, controller.signal)
       if (discoveryRequest.current === controller) { setCatalog(rows); setSelectedModels([]) }
     } catch (error) {
       if (discoveryRequest.current === controller && !controller.signal.aborted) {
@@ -187,7 +186,7 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
               </div>}
               {models.length === 0 && <p className="py-3 text-xs text-fg-subtle">尚未添加模型，可获取模型或手动添加。</p>}
               {models.map((row, index) => <div key={row.key} className="rounded-lg border border-line">
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2"><span className="min-w-0 basis-full truncate font-mono text-sm sm:flex-1 sm:basis-auto" title={row.model}>{row.model || `新模型 ${index + 1}`}</span><span className="rounded bg-surface-raised px-1.5 py-0.5 text-[11px] tabular-nums text-fg-muted">{formatTokens(Number(row.contextTokens))}</span><div className="flex items-center gap-1">{row.text && <StatusTag label="文本" tone="neutral" />}{row.tools && <StatusTag label="工具" tone="neutral" />}</div><div className="ml-auto flex items-center gap-1"><button type="button" aria-label={`编辑模型 ${index + 1}`} aria-expanded={expanded === row.key} aria-controls={`model-fields-${row.key}`} onClick={() => setExpanded(value => value === row.key ? undefined : row.key)} className={iconButton}><Pencil aria-hidden size={13} /></button><button type="button" aria-label={`移除模型 ${index + 1}`} disabled={Boolean(service) && models.length === 1} onClick={() => setModels(rows => rows.filter(model => model.key !== row.key))} className={iconButton}><Trash2 aria-hidden size={13} /></button><Toggle label={`启用模型 ${index + 1}`} checked={row.enabled} onChange={value => patch(row.key, { enabled: value })} /></div></div>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2"><span className="min-w-0 basis-full truncate font-mono text-sm sm:flex-1 sm:basis-auto" title={row.model}>{row.model || `新模型 ${index + 1}`}</span><span className="rounded bg-surface-raised px-1.5 py-0.5 text-[11px] tabular-nums text-fg-muted">{formatTokens(Number(row.contextTokens))}</span><StatusTag label={row.image || row.video ? '多模态' : '文本'} tone="neutral" /><div className="ml-auto flex items-center gap-1"><button type="button" aria-label={`编辑模型 ${index + 1}`} aria-expanded={expanded === row.key} aria-controls={`model-fields-${row.key}`} onClick={() => setExpanded(value => value === row.key ? undefined : row.key)} className={iconButton}><Pencil aria-hidden size={13} /></button><button type="button" aria-label={`移除模型 ${index + 1}`} disabled={Boolean(service) && models.length === 1} onClick={() => setModels(rows => rows.filter(model => model.key !== row.key))} className={iconButton}><Trash2 aria-hidden size={13} /></button><Toggle label={`启用模型 ${index + 1}`} checked={row.enabled} onChange={value => patch(row.key, { enabled: value })} /></div></div>
                 {expanded === row.key && <fieldset id={`model-fields-${row.key}`} className="grid grid-cols-1 gap-4 border-t border-line p-3 sm:grid-cols-2"><legend className="sr-only">模型 {index + 1} 参数</legend>
                   <div className="sm:col-span-2"><Field label="模型 ID" id={`model-id-${row.key}`}><SuggestionInput id={`model-id-${row.key}`} ariaLabel="模型 ID" items={catalog?.map(model => ({ value: model.model, label: model.name })) ?? []} required maxLength={200} disabled={submitting} value={row.model} onValueChange={model => patch(row.key, { model, displayName: model.trim() === row.model.trim() ? row.displayName : catalog?.find(item => item.model === model.trim())?.name ?? '', ...modelPresetDraft(provider, model) })} className="h-9 w-full font-mono text-xs" /></Field></div>
                   <Field label="上下文上限（token）" id={`model-context-${row.key}`}><input id={`model-context-${row.key}`} type="number" required min={1} max={2000000} step={1} value={row.contextTokens} onChange={event => patch(row.key, { contextTokens: event.target.value })} className={`${CTL_FIELD} h-9 w-full tabular-nums`} /></Field>

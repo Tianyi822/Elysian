@@ -1,12 +1,21 @@
-import { screen, within } from '@testing-library/react'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { screen, waitFor, within } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderApp } from '../test/renderApp'
-import { resetAgentTestState } from '../test/agentTestUtils'
 import { useTerminalsStore } from '../stores/terminalsStore'
+import { createMockGateway } from '../adapters/mock/gateway'
+
+const agentRoutes = [
+  ['/agent', '工作台'],
+  ['/agent/approvals', '审批与治理'],
+  ['/agent/runs', '运行记录'],
+  ['/agent/workflows', '工作流'],
+  ['/agent/capabilities', '执行配置'],
+  ['/agent/extensions', '技能与 MCP'],
+  ['/agent/memory', '长期记忆'],
+] as const
 
 beforeEach(() => {
   useTerminalsStore.getState().resetLocal()
-  resetAgentTestState()
 })
 
 describe('路由表', () => {
@@ -70,51 +79,25 @@ describe('路由表', () => {
     expect(screen.queryByRole('region', { name: '活跃会话表' })).not.toBeInTheDocument()
   })
 
-  it('/agent 渲染 Ely 工作台与七页签', async () => {
-    renderApp('/agent')
-    const group = await screen.findByRole('group', { name: 'Ely 页签' })
-    expect(within(group).getAllByRole('button').map((button) => button.textContent)).toEqual([
-      '工作台',
-      '审批与治理',
-      '运行记录',
-      '工作流',
-      '执行配置',
-      '技能与 MCP',
-      '长期记忆',
-    ])
-    expect(await screen.findByRole('navigation', { name: '工作台视图' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Ely' })).toHaveAttribute('aria-current', 'page')
+  it.each(agentRoutes)('%s 不显示页签，内容区为空且不读取 Agent 数据', async (path) => {
+    const gateway = createMockGateway({ eventStream: 'memory', eventIntervalMs: 60_000 })
+    const runtime = vi.spyOn(gateway.agentRuntime, 'runtime')
+    const models = vi.spyOn(gateway.modelSettings, 'listModelServices')
+    renderApp(`${path}?session=existing-session`, { gateway })
+    expect(screen.queryByRole('group', { name: 'Ely 页签' })).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText('正在校验访问权限…')).not.toBeInTheDocument())
+    expect(screen.getByRole('main').children).toHaveLength(2)
+    expect(runtime).not.toHaveBeenCalled()
+    expect(models).not.toHaveBeenCalled()
+    expect(screen.getByRole('link', { name: 'Ely 智能体' })).toHaveAttribute('aria-current', 'page')
   })
 
-  it.each([
-    ['/agent/runs', 'region', 'Run 列表'],
-    ['/agent/workflows', 'region', '工作流'],
-    ['/agent/capabilities', 'group', '配置页签'],
-  ] as const)('%s 可达且渲染功能页', async (path, role, name) => {
-    renderApp(path)
-    expect(await screen.findByRole(role, { name })).toBeInTheDocument()
-    // 顶栏页签不重复渲染（收起形态隐藏，摊开形态只有一份）。
-    expect(screen.getAllByRole('group', { name: 'Ely 页签' })).toHaveLength(1)
-  })
-
-  it('/agent/approvals 可达且渲染审批与治理页（agent-approvals 模块已落地）', async () => {
-    renderApp('/agent/approvals')
-    expect(await screen.findByRole('group', { name: '审批与治理页签' })).toBeInTheDocument()
-    expect(await screen.findByRole('region', { name: '审批列表' })).toBeInTheDocument()
-    expect(screen.getAllByRole('group', { name: 'Ely 页签' })).toHaveLength(1)
-  })
-
-  it('/agent/extensions 可达且渲染技能与 MCP 页（agent-extensions 模块已落地）', async () => {
-    renderApp('/agent/extensions')
-    expect(await screen.findByRole('region', { name: '技能目录' })).toBeInTheDocument()
-    expect(screen.getAllByRole('group', { name: 'Ely 页签' })).toHaveLength(1)
-  })
-
-  it('/agent/memory 可达且渲染长期记忆页（agent-memory 模块已落地）', async () => {
-    renderApp('/agent/memory')
-    expect(await screen.findByRole('region', { name: '记忆空间列表' })).toBeInTheDocument()
-    expect(await screen.findByText('全局运维常识')).toBeInTheDocument()
-    expect(screen.getAllByRole('group', { name: 'Ely 页签' })).toHaveLength(1)
+  it('空白智能体入口仍执行访问权限检查', async () => {
+    const gateway = createMockGateway({ eventStream: 'memory' })
+    vi.spyOn(gateway.session, 'canView').mockResolvedValue(false)
+    renderApp('/agent', { gateway })
+    expect(await screen.findByText('无权限查看「Ely 工作台」')).toBeInTheDocument()
+    expect(screen.queryByRole('group', { name: 'Ely 页签' })).not.toBeInTheDocument()
   })
 
   it('未匹配的地址进入未找到页面', async () => {

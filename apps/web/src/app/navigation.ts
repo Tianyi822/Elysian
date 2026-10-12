@@ -22,6 +22,6 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { to: '/logs', label: '平台日志', icon: ScrollText },
   { to: '/terminals', label: '终端', icon: Terminal },
   { to: '/websites', label: '网站', icon: Globe },
-  { to: '/agent', label: 'Ely', icon: Bot },
+  { to: '/agent', label: 'Ely 智能体', icon: Bot },
   { to: '/settings', label: '设置', icon: Settings },
 ]

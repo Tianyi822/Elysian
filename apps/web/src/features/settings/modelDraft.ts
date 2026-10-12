@@ -37,7 +37,7 @@ function capabilityDraft(capabilities: AgentModelCapabilities) {
 export function blankModel(): DraftModel {
   return {
     key: crypto.randomUUID(), displayName: '', model: '', contextTokens: '64000', outputTokens: '4096',
-    ...capabilityDraft({ text: true, tools: true, source: '用户配置' }), enabled: true,
+    ...capabilityDraft({ text: true, tools: true, structuredOutput: true, systemMessages: true, source: '默认配置' }), enabled: true,
   }
 }
 
@@ -61,7 +61,7 @@ export function discoveredModelDraft(provider: AgentModelProvider, model: AgentD
   row.displayName = model.name
   row.contextTokens = String(model.contextTokens ?? Number(row.contextTokens))
   row.outputTokens = String(Math.min(model.outputTokens ?? Number(row.outputTokens), Number(row.contextTokens)))
-  if (!getAgentModelPreset(provider, model.model)) row.source = '模型服务目录；能力由用户确认'
+  if (!getAgentModelPreset(provider, model.model)) row.source = '模型服务目录与默认配置'
   return row
 }
 

@@ -1,10 +1,10 @@
-import type { LucideIcon } from 'lucide-react'
-import type { SVGProps } from 'react'
+import type { LucideIcon, LucideProps } from 'lucide-react'
+import { forwardRef, type SVGProps } from 'react'
 
 /**
  * 图标唯一出口。界面不直接依赖图标库，只认这个模块——
  * 引入自定义图标集时改本文件即可：按 IconComponent 的形状提供组件，消费方一行都不用动。
- * 未列出的图标要用时在这里加一行转出，让「界面上出现过哪些图标」在一处可查。
+ * 图标库转出与自定义 SVG 定义都集中在本文件，业务组件只导入图标，不内联 SVG。
  */
 export type IconComponent = LucideIcon
 
@@ -12,7 +12,6 @@ export {
   ArrowUpFromLine,
   BadgeCheck,
   BookOpen,
-  Bot,
   Brain,
   Cable,
   Check,
@@ -84,6 +83,17 @@ export {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
+
+/** Ely 智能体图标。使用用户提供的 SVG 路径，颜色继承主题与交互状态。 */
+export const Bot: IconComponent = forwardRef<SVGSVGElement, LucideProps>(function Bot(
+  { size = 24, color = 'currentColor', absoluteStrokeWidth: _absoluteStrokeWidth, ...props }, ref,
+) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width={size} height={size} fill={color} ref={ref} {...props}>
+      <path d="M853.333333 512a341.333333 341.333333 0 1 0-682.666666 0 341.333333 341.333333 0 0 0 682.666666 0z m85.333334 0c0 235.648-191.018667 426.666667-426.666667 426.666667S85.333333 747.648 85.333333 512 276.352 85.333333 512 85.333333s426.666667 191.018667 426.666667 426.666667zM327.253333 459.605333A192.085333 192.085333 0 0 1 512 320a42.666667 42.666667 0 1 0 0-85.333333c-127.018667 0-233.984 85.333333-266.88 201.728a42.666667 42.666667 0 0 0 82.090667 23.210666z" />
+    </svg>
+  )
+})
 
 /** 数据库品牌图标。路径来自产品提供的官方 Logo，只在图标出口维护。 */
 type BrandIconProps = SVGProps<SVGSVGElement> & { size?: number | string }

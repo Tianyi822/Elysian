@@ -4,11 +4,11 @@ import type {
   AgentModelProfileInput,
 } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
-import { AgentCapabilitiesMockAdapter } from '../adapters/mock/agent/agentCapabilitiesMockAdapter'
+import { ModelSettingsMockAdapter } from '../adapters/mock/agent/modelSettingsMockAdapter'
 import {
   mockUpdateModelProfile,
-  resetAgentCapabilitiesData,
-} from '../adapters/mock/agent/agentCapabilitiesData'
+  resetModelSettingsData,
+} from '../adapters/mock/agent/modelSettingsData'
 import { useNotificationStore } from './notificationStore'
 import { useModelSettingsStore } from './modelSettingsStore'
 
@@ -17,8 +17,8 @@ import { useModelSettingsStore } from './modelSettingsStore'
  * 编号一致性拦截、写操作单飞锁、CAS 冲突回读合并与修订详情。
  */
 
-function makeGateway(adapter = new AgentCapabilitiesMockAdapter()): { gateway: ElysianGateway; adapter: AgentCapabilitiesMockAdapter } {
-  return { gateway: { agentCapabilities: adapter } as unknown as ElysianGateway, adapter }
+function makeGateway(adapter = new ModelSettingsMockAdapter()): { gateway: ElysianGateway; adapter: ModelSettingsMockAdapter } {
+  return { gateway: { modelSettings: adapter } as unknown as ElysianGateway, adapter }
 }
 
 const MODEL_INPUT: AgentModelProfileInput = {
@@ -31,7 +31,7 @@ const MODEL_INPUT: AgentModelProfileInput = {
   active: true,
 }
 
-beforeEach(() => { resetAgentCapabilitiesData(); useModelSettingsStore.getState().reset(); useNotificationStore.getState().clear() })
+beforeEach(() => { resetModelSettingsData(); useModelSettingsStore.getState().reset(); useNotificationStore.getState().clear() })
 describe('模型设置保存与冲突回读', () => {
   it('新建模型（提交凭据）后列表回显 hasCredential=true 且凭据不回显', async () => {
     const { gateway } = makeGateway()
@@ -79,16 +79,14 @@ describe('模型设置保存与冲突回读', () => {
     expect(result).toBe(false)
     expect(useModelSettingsStore.getState().models[0]?.name).toBe('他处改模型')
   })
-  it('只读取模型目录，失败重试不影响执行域', async () => {
+  it('模型目录读取失败后可以重试', async () => {
     const { gateway, adapter } = makeGateway()
-    const execution = vi.spyOn(adapter, 'listExecutionProfiles')
     const read = vi.spyOn(adapter, 'listModelServices').mockRejectedValueOnce(new Error('读取失败'))
     await useModelSettingsStore.getState().load(gateway)
     expect(useModelSettingsStore.getState().status).toBe('error')
     await useModelSettingsStore.getState().refresh(gateway)
     expect(useModelSettingsStore.getState().status).toBe('ready')
     expect(read).toHaveBeenCalledTimes(2)
-    expect(execution).not.toHaveBeenCalled()
   })
   it('缺少 API Key 的启用 DeepSeek 配置在提交前拦截', async () => {
     const { gateway, adapter } = makeGateway()

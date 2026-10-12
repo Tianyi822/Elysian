@@ -5,7 +5,7 @@ import { createMockGateway } from '../../adapters/mock/gateway'
 import type { ElysianGateway, SessionAdapter } from '../../contracts/adapters'
 import { useAgentRuntimeStore } from '../../stores/agentRuntimeStore'
 import { useModelSettingsStore } from '../../stores/modelSettingsStore'
-import { demoAgentRuntimeInfo } from '../../adapters/mock/agent/agentRunsMockAdapter'
+import { demoAgentRuntimeInfo } from '../../adapters/mock/agent/agentRuntimeMock'
 import { useSessionStore } from '../../stores/sessionStore'
 import { renderApp } from '../../test/renderApp'
 
@@ -166,7 +166,7 @@ describe('修改面板密码', () => {
 describe('设置页签与模型入口', () => {
   it('首次访问账号页不读取模型，切换后保留模型弹窗草稿并隐藏其门户', async () => {
     const gateway = baseGateway(realSession())
-    const read = vi.spyOn(gateway.agentCapabilities, 'listModelServices')
+    const read = vi.spyOn(gateway.modelSettings, 'listModelServices')
     const { router } = renderApp('/settings?tab=account', { gateway })
     const user = userEvent.setup()
     await screen.findByLabelText('当前密码')
@@ -205,7 +205,7 @@ describe('设置页签与模型入口', () => {
   })
   it('旧入口在内核不可用时也迁移，账号安全继续可访问', async () => {
     const gateway = baseGateway(realSession())
-    gateway.agentRuns.runtime = async () => ({ ...demoAgentRuntimeInfo(), available: false, reason: '测试内核未就绪' })
+    gateway.agentRuntime.runtime = async () => ({ ...demoAgentRuntimeInfo(), available: false, reason: '测试内核未就绪' })
     const { router } = renderApp('/agent/capabilities?tab=models', { gateway })
     expect(await screen.findByText('测试内核未就绪')).toBeInTheDocument()
     expect(router.state.location.pathname).toBe('/settings')
@@ -216,7 +216,7 @@ describe('设置页签与模型入口', () => {
   })
   it('模型设置保留 Agent 权限检查，拒绝后不读取模型目录', async () => {
     const gateway = baseGateway(realSession({ canView: async (area) => area !== 'agent' }))
-    const read = vi.spyOn(gateway.agentCapabilities, 'listModelServices')
+    const read = vi.spyOn(gateway.modelSettings, 'listModelServices')
     renderApp('/settings', { gateway })
     expect(await screen.findByText('无权限查看「模型配置」')).toBeInTheDocument()
     expect(read).not.toHaveBeenCalled()

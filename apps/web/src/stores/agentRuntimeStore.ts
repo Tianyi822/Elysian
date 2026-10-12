@@ -3,8 +3,8 @@ import type { AgentRuntimeInfo } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
 
 /*
- * Agent 运行时能力报告的唯一共享 store：全部 Agent 页面先经它判定内核可用性与
- * 12 个能力位。读取走 gateway.agentRuns.runtime()（GET /api/agent/runtime，唯一在
+ * 模型设置使用的 Agent 运行时能力报告：先判定内核可用性与
+ * 12 个能力位。读取走 gateway.agentRuntime.runtime()（GET /api/agent/runtime，唯一在
  * 内核不可用时也可读的端点）；闭包 sequence 丢弃过期响应。静默重载不整块白屏，
  * 只刷新 info——是否盖遮罩由调用方决定。
  */
@@ -39,7 +39,7 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>((set, get) => {
           : { status: 'loading', reloading: false, errorMessage: undefined })
       }
       try {
-        const info = await gateway.agentRuns.runtime(options?.signal)
+        const info = await gateway.agentRuntime.runtime(options?.signal)
         if (sequence !== loadSequence || options?.signal?.aborted) return
         set({
           status: 'ready', info, reloading: false, errorMessage: undefined,
