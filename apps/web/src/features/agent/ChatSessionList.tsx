@@ -1,16 +1,16 @@
-import { Plus, PanelLeftClose } from '../../components/icons'
-import { IconButton } from '../../components/IconButton'
+import { Plus, X } from '../../components/icons'
 import { BusyVeil, RefreshButton } from '../../components/RefreshState'
+import { IconButton } from '../../components/IconButton'
 import { LoadingState } from '../../components/states/StateViews'
 import { agentChatSessionKey } from '../../contracts/agentChat'
 import { useAgentChatStore } from '../../stores/agentChatStore'
 
-export function ChatSessionList({ onSelect, onNew, onClose, onRefresh, onMore, refreshing }: {
+export function ChatSessionList({ onSelect, onNew, onRefresh, onMore, onClose, refreshing }: {
   onSelect: (key: string) => void
   onNew: () => void
-  onClose: () => void
   onRefresh: () => void
   onMore: () => void
+  onClose?: () => void
   refreshing: boolean
 }) {
   const chat = useAgentChatStore()
@@ -29,7 +29,7 @@ export function ChatSessionList({ onSelect, onNew, onClose, onRefresh, onMore, r
   return <div className="chat-session-list">
     <div className="chat-session-heading"><span className="text-sm font-medium">会话</span>
       <RefreshButton label="刷新会话列表" variant="ghost" busy={refreshing} onPress={onRefresh} />
-      <IconButton label="收起会话列表" variant="ghost" onPress={onClose}><PanelLeftClose size={16} aria-hidden /></IconButton>
+      {onClose && <IconButton label="关闭会话列表" variant="ghost" onPress={onClose}><X size={16} aria-hidden /></IconButton>}
     </div>
     <button type="button" className="chat-new chat-session-new" disabled={chat.sending} onClick={onNew}><Plus size={15} aria-hidden />新会话</button>
     <div className="chat-session-rows hover-scrollbar">

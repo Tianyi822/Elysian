@@ -47,6 +47,7 @@ export {
   Image,
   KeyRound,
   LayoutDashboard,
+  List,
   ListTodo,
   Loader2,
   Lock,

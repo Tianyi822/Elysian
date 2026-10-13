@@ -1,14 +1,16 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState, type Ref, type RefObject } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router'
 import * as Dialog from '@radix-ui/react-dialog'
+import * as Tooltip from '@radix-ui/react-tooltip'
 import { useShellLayout } from '../../app/layout/ShellLayoutContext'
 import { ChatSessionList } from './ChatSessionList'
 import { RUNTIME_RUN_STATUS_LABELS } from '@elysian/contracts'
-import { Bot, Brain, Hand, Paperclip, Plus, PanelLeftOpen, Send, ShieldAlert, ShieldCheck, X, type IconComponent } from '../../components/icons'
+import { Bot, Brain, Hand, List, Paperclip, Plus, Send, ShieldAlert, ShieldCheck, X, type IconComponent } from '../../components/icons'
 import { IconButton } from '../../components/IconButton'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { RefreshButton } from '../../components/RefreshState'
 import { useGateway } from '../../adapters/GatewayProvider'
+import { subscribeWhileVisible } from '../../adapters/subscribeWhileVisible'
 import type { AgentChatPermissionMode } from '../../contracts/agentChat'
 import { isChatRunActive, useAgentChatStore } from '../../stores/agentChatStore'
 import { ChatAttachment } from './ChatAttachment'
@@ -22,6 +24,33 @@ const PERMISSION_MODES: readonly { value: AgentChatPermissionMode; label: string
   { value: 'full', label: '完全开放', description: '免逐项审批暂未接入，目前仅保存选择。', Icon: ShieldAlert },
 ]
 
+/**
+ * 会话列表开关：固定在聊天页头内，不再随侧边栏状态左右移动。
+ * 焦点由代码归还时压掉提示：Radix 的提示只在失焦或指针离开触发器时收起，
+ * 而程序化聚焦时指针往往不在把手上，提示因此会留在画面上无人关闭。
+ */
+function SessionToggle({ expanded, controls, onClick, buttonRef, focusReturnsByCode }: {
+  expanded: boolean
+  controls: string
+  onClick: () => void
+  buttonRef?: Ref<HTMLButtonElement>
+  focusReturnsByCode?: RefObject<boolean>
+}) {
+  const label = expanded ? '收起会话列表' : '打开会话列表'
+  return <Tooltip.Root>
+    <Tooltip.Trigger asChild onFocus={event => { if (focusReturnsByCode?.current) event.preventDefault() }}>
+      <button ref={buttonRef} type="button" className="chat-session-toggle" aria-label={label}
+        aria-expanded={expanded} aria-controls={controls} onClick={onClick}>
+        <List size={16} aria-hidden />
+      </button>
+    </Tooltip.Trigger>
+    <Tooltip.Portal><Tooltip.Content side="bottom" sideOffset={6}
+      className="z-[80] rounded border border-control-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg">
+      {label}<Tooltip.Arrow className="fill-surface-raised" />
+    </Tooltip.Content></Tooltip.Portal>
+  </Tooltip.Root>
+}
+
 /** 基本文本聊天，沿用现有会话、模型目录与任务续轮接口。 */
 export function AgentChatPage() {
   const chat = useAgentChatStore()
@@ -30,12 +59,15 @@ export function AgentChatPage() {
   const [params, setParams] = useSearchParams()
   const [navigationReady, setNavigationReady] = useState<string | null>(null)
   const [listCollapsed, setListCollapsed] = useState(false)
+  const [wide, setWide] = useState(() => window.matchMedia?.('(min-width: 1100px)').matches ?? false)
   const [listRefreshing, setListRefreshing] = useState(false)
   const requestedId = params.get('session') || undefined
   const routeState = location.state && typeof location.state === 'object' ? location.state : {}
   const requestedDraft = typeof routeState.agentDraftId === 'string' ? routeState.agentDraftId : undefined
-  const listTrigger = useRef<HTMLSpanElement>(null)
+  const listTrigger = useRef<HTMLButtonElement>(null)
+  const listDrawer = useRef<HTMLDivElement>(null)
   const restoreListFocus = useRef(false)
+  const returnListFocusByCode = useRef(false)
   const { agentConversation: api } = useGateway()
   const { models, status, error, reload } = useChatModels()
   const input = useRef<HTMLTextAreaElement>(null)
@@ -47,9 +79,31 @@ export function AgentChatPage() {
   const permissionMode = PERMISSION_MODES.find(mode => mode.value === session?.permissionMode) ?? PERMISSION_MODES[0]!
   const PermissionIcon = permissionMode.Icon
   const model = models.find(item => item.id === session?.modelId)
+  /** 模型标识与设置页的「模型 ID」列同一口径；服务名放副行，不占触发器宽度。 */
+  const modelOptions = models.map(item => ({
+    value: item.id,
+    label: models.some(other => other.id !== item.id && other.model === item.model) ? `${item.model} · ${item.serviceName}` : item.model,
+    description: item.serviceName,
+  }))
   const busy = chat.sending || isChatRunActive(chat.run) || !!chat.remoteSession?.activeRunId || !!chat.remoteSession?.activeWorkflowId
   const restoring = !!session?.remote && !chat.remoteSession
   const attachmentsLocked = !session || chat.loading || busy || restoring || !!session.pending
+  const readError = chat.syncError && error && chat.syncError !== error
+    ? `会话：${chat.syncError}\n模型：${error}`
+    : chat.syncError || error
+  const retryReadLabel = chat.syncError && error ? '重新读取会话和模型' : chat.syncError ? '重新读取会话' : '重新读取模型'
+  const retryReads = () => {
+    if (chat.syncError) void chat.refresh(api)
+    if (error) reload()
+  }
+
+  const focusListTrigger = () => {
+    const trigger = listTrigger.current
+    if (!trigger) return
+    returnListFocusByCode.current = true
+    trigger.focus()
+    returnListFocusByCode.current = false
+  }
 
   useEffect(() => {
     let active = true
@@ -74,8 +128,19 @@ export function AgentChatPage() {
   useEffect(() => {
     if (!listCollapsed || !restoreListFocus.current) return
     restoreListFocus.current = false
-    listTrigger.current?.querySelector('button')?.focus()
+    focusListTrigger()
   }, [listCollapsed])
+  useEffect(() => {
+    const media = window.matchMedia?.('(min-width: 1100px)')
+    if (!media) return
+    const update = () => setWide(media.matches)
+    update()
+    media.addEventListener('change', update)
+    return () => media.removeEventListener('change', update)
+  }, [])
+  useEffect(() => {
+    if (wide && shell.conversationDrawerOpen) shell.closeConversationDrawer()
+  }, [wide, shell.conversationDrawerOpen, shell.closeConversationDrawer])
   useEffect(() => {
     if (!api.available) return
     const timer = setInterval(() => {
@@ -93,30 +158,34 @@ export function AgentChatPage() {
 
   useEffect(() => {
     if (!session?.remote || chat.loading || chat.sending || !api.available) return
-    const controller = new AbortController()
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const poll = async () => {
-      await chat.refresh(api, controller.signal)
-      const latest = useAgentChatStore.getState()
-      if (!controller.signal.aborted && (isChatRunActive(latest.run) || latest.remoteSession?.activeRunId || latest.remoteSession?.activeWorkflowId || latest.session?.pending)) {
-        timer = setTimeout(() => { void poll() }, 1500)
+    return subscribeWhileVisible(() => {
+      const controller = new AbortController()
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const poll = async () => {
+        await chat.refresh(api, controller.signal)
+        const latest = useAgentChatStore.getState()
+        if (!controller.signal.aborted && (isChatRunActive(latest.run) || latest.remoteSession?.activeRunId || latest.remoteSession?.activeWorkflowId || latest.session?.pending)) {
+          timer = setTimeout(() => { void poll() }, 1500)
+        }
       }
-    }
-    void poll()
-    return () => { controller.abort(); clearTimeout(timer) }
+      void poll()
+      return () => { controller.abort(); clearTimeout(timer) }
+    })
   }, [api, session?.id, session?.remote?.sessionId, chat.loading, chat.sending, chat.refresh])
 
   const liveRunId = isChatRunActive(chat.run) ? chat.run!.id : undefined
   useEffect(() => {
     if (!liveRunId || !api.available) return
-    const controller = new AbortController()
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const connect = async () => {
-      await chat.watchOutput(api, liveRunId, controller.signal)
-      if (!controller.signal.aborted) timer = setTimeout(() => { void connect() }, 1000)
-    }
-    void connect()
-    return () => { controller.abort(); clearTimeout(timer) }
+    return subscribeWhileVisible(() => {
+      const controller = new AbortController()
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const connect = async () => {
+        await chat.watchOutput(api, liveRunId, controller.signal)
+        if (!controller.signal.aborted) timer = setTimeout(() => { void connect() }, 1000)
+      }
+      void connect()
+      return () => { controller.abort(); clearTimeout(timer) }
+    })
   }, [api, liveRunId, chat.watchOutput])
   const followContent = useCallback(() => {
     if (following.current && history.current) history.current.scrollTop = history.current.scrollHeight
@@ -168,17 +237,29 @@ export function AgentChatPage() {
     shell.closeConversationDrawer()
   }
   const refreshList = () => { setListRefreshing(true); void chat.loadSessions(api).finally(() => setListRefreshing(false)) }
-  const list = <ChatSessionList onSelect={selectConversation} onNew={newConversation} onClose={closeList}
-    onRefresh={refreshList} onMore={() => { void chat.loadSessions(api, true) }} refreshing={listRefreshing} />
-  const showSidebar = shell.sidebarCollapsed && !listCollapsed
+  const list = <ChatSessionList onSelect={selectConversation} onNew={newConversation}
+    onRefresh={refreshList} onMore={() => { void chat.loadSessions(api, true) }} refreshing={listRefreshing}
+    onClose={closeList} />
+  const showSidebar = wide && shell.sidebarCollapsed && !listCollapsed
+  const expanded = showSidebar || shell.conversationDrawerOpen
+  const toggle = <SessionToggle expanded={expanded} buttonRef={listTrigger}
+    focusReturnsByCode={returnListFocusByCode}
+    controls={wide ? 'chat-session-sidebar' : 'chat-session-drawer'} onClick={() => {
+      if (expanded) closeList()
+      else if (wide) { shell.setSidebarCollapsed(true); setListCollapsed(false) }
+      else shell.openConversationDrawer()
+    }} />
 
   return <div className="agent-workspace" data-navigation-expanded={!shell.sidebarCollapsed || undefined}>
-    {showSidebar && <aside aria-label="会话列表" className="chat-session-sidebar">{list}</aside>}
+    {wide && <aside id="chat-session-sidebar" aria-label="会话列表"
+      className="chat-session-sidebar" data-open={showSidebar || undefined}
+      aria-hidden={!showSidebar || undefined}>{list}</aside>}
     <Dialog.Root open={shell.conversationDrawerOpen} onOpenChange={shell.setConversationDrawerOpen}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-40 bg-overlay" />
-        <Dialog.Content aria-describedby={undefined} className="chat-session-drawer panel-surface fixed inset-y-0 left-0 z-50 flex rounded-none shadow-xl"
-          onCloseAutoFocus={event => { event.preventDefault(); if (!shell.navigationOpen) listTrigger.current?.querySelector('button')?.focus() }}>
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-overlay motion-reduce:animate-none data-[state=open]:animate-drawer-overlay-in data-[state=closed]:animate-drawer-overlay-out" />
+        <Dialog.Content ref={listDrawer} id="chat-session-drawer" aria-describedby={undefined} className="chat-session-drawer panel-surface fixed inset-y-0 left-0 z-50 flex flex-col rounded-none shadow-xl will-change-transform motion-reduce:animate-none data-[state=open]:animate-drawer-panel-in data-[state=closed]:animate-drawer-panel-out"
+          onOpenAutoFocus={event => { event.preventDefault(); listDrawer.current?.focus() }}
+          onCloseAutoFocus={event => { event.preventDefault(); if (!shell.navigationOpen) focusListTrigger() }}>
           <Dialog.Title className="sr-only">会话列表</Dialog.Title>{list}
         </Dialog.Content>
       </Dialog.Portal>
@@ -186,13 +267,8 @@ export function AgentChatPage() {
     <section aria-label="Ely 会话" className="agent-chat">
 
     <header className="chat-header">
-      <div className="flex min-w-0 items-center gap-2">
-        <span ref={listTrigger} className={showSidebar ? 'chat-list-toggle' : ''}>
-          <IconButton className="chat-list-trigger" label="打开会话列表" variant="ghost" onPress={() => {
-            if (window.matchMedia('(min-width: 1100px)').matches) { shell.setSidebarCollapsed(true); setListCollapsed(false) }
-            else shell.openConversationDrawer()
-          }}><PanelLeftOpen size={17} aria-hidden /></IconButton>
-        </span>
+      {toggle}
+      <div className="flex min-w-0 flex-1 items-center gap-2">
         <span className="chat-title max-w-64 truncate text-sm font-medium" title={title}>{title}</span>
       </div>
       <button type="button" className="chat-new" disabled={chat.sending} onClick={newConversation}><Plus size={14} aria-hidden /><span>新会话</span></button>
@@ -227,8 +303,10 @@ export function AgentChatPage() {
       {run && !isChatRunActive(run) && run.status !== 'succeeded' && <p role="alert" className="mb-3 text-xs text-danger">{RUNTIME_RUN_STATUS_LABELS[run.status]}{run.error ? `：${run.error.message}` : ''}</p>}
       {chat.notice && <div role="status" className="mb-3 flex items-start gap-2 text-xs text-fg-muted"><span className="min-w-0 flex-1">{chat.notice}</span><button type="button" aria-label="关闭提示" onClick={chat.clearNotice}><X size={14} aria-hidden /></button></div>}
       {chat.error && <p role="alert" className="mb-3 text-xs text-danger">{chat.error}</p>}
-      {chat.syncError && <div role="alert" className="mb-3 flex items-center gap-2 text-xs text-danger"><span className="min-w-0 flex-1">{chat.syncError}</span><RefreshButton label="重新读取会话" busy={chat.refreshing} onPress={() => { void chat.refresh(api) }} /></div>}
-      {error && <div role="alert" className="mb-3 flex items-center gap-2 text-xs text-danger"><span className="min-w-0 flex-1">{error}</span><RefreshButton label="重新读取模型" busy={status === 'loading'} onPress={reload} /></div>}
+      {readError && <div role="alert" className="mb-3 flex items-center gap-2 text-xs text-danger">
+        <span className="min-w-0 flex-1 whitespace-pre-line break-words">{readError}</span>
+        <RefreshButton label={retryReadLabel} busy={chat.refreshing || status === 'loading'} onPress={retryReads} />
+      </div>}
       {!api.available && <p className="mb-3 text-xs text-fg-muted">当前为本地演示，请在已连接后端的面板中使用聊天。</p>}
       {status === 'ready' && (!models.length || (session?.remote && !model)) && <p className="mb-3 text-xs text-fg-muted">请选择支持文本与工具调用的可用模型，或<Link className="underline underline-offset-4 hover:text-fg" to="/settings?tab=models">前往设置添加模型</Link>。</p>}
       {!!session?.attachments.length && <p className="mb-3 text-xs text-fg-muted">附件仅保存在本地，暂未接入模型；请移除附件后发送文本。</p>}
@@ -261,10 +339,11 @@ export function AgentChatPage() {
           </div>
           <div className="chat-model">
             <SelectDropdown ariaLabel="选择模型" value={model?.id} onSelect={chat.setModel}
-              items={models.map(item => ({ value: item.id, label: models.some(other => other.id !== item.id && other.name === item.name) ? `${item.name} · ${item.serviceName} · ${item.model}` : item.name }))}
+              items={modelOptions}
               fallbackLabel={status === 'loading' ? '加载模型…' : status === 'error' ? '模型不可用' : '选择模型'}
               disabled={status !== 'ready' || !models.length || busy || restoring || !!session?.pending} triggerClassName="chat-select chat-model-select" contentClassName="chat-composer-menu"
-              search={models.length > 6 ? { ariaLabel: '搜索模型', placeholder: '搜索模型…' } : undefined} />
+              mono
+              search={models.length > 6 ? { ariaLabel: '搜索模型', placeholder: '搜索模型 ID…' } : undefined} />
           </div>
           <div className="chat-reasoning">
             <SelectDropdown ariaLabel="选择思考等级" value={session?.reasoningLevel ?? ''}

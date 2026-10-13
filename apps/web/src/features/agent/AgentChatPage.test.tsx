@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { useState, type ReactNode } from 'react'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -8,22 +9,90 @@ import { createMockGateway } from '../../adapters/mock/gateway'
 import { useAgentChatStore } from '../../stores/agentChatStore'
 import { chatTestApi, chatTestModel } from '../../test/agentChatFixtures'
 import { AgentChatPage } from './AgentChatPage'
+import { ShellLayoutContext, useShellLayout } from '../../app/layout/ShellLayoutContext'
 
-function renderChat(backend = chatTestApi(), initialEntry = '/agent') {
+function TestShell({ children }: { children: ReactNode }) {
+  const defaults = useShellLayout()
+  const [open, setOpen] = useState(false)
+  return <ShellLayoutContext.Provider value={{ ...defaults, conversationDrawerOpen: open,
+    setConversationDrawerOpen: setOpen, openConversationDrawer: () => setOpen(true), closeConversationDrawer: () => setOpen(false) }}>
+    {children}
+  </ShellLayoutContext.Provider>
+}
+
+function renderChat(backend = chatTestApi(), initialEntry = '/agent', modelError?: string) {
   const gateway = createMockGateway({ eventStream: 'memory' })
   gateway.agentConversation = backend.api
-  vi.spyOn(gateway.modelSettings, 'listModelServices').mockResolvedValue([{
+  const readModels = vi.spyOn(gateway.modelSettings, 'listModelServices').mockResolvedValue([{
     id: 'service-1', revision: 1, name: '测试服务', provider: 'openai-compatible', apiFormat: 'chat-completions',
     baseUrl: chatTestModel.baseUrl, active: true, hasCredential: true, models: [{ ...chatTestModel, enabled: true }],
   }])
-  const router = createMemoryRouter([{ path: '*', element: <Tooltip.Provider><GatewayProvider gateway={gateway}><AgentChatPage /></GatewayProvider></Tooltip.Provider> }], { initialEntries: [initialEntry] })
+  if (modelError) readModels.mockRejectedValueOnce(new Error(modelError))
+  const router = createMemoryRouter([{ path: '*', element: <Tooltip.Provider><GatewayProvider gateway={gateway}><TestShell><AgentChatPage /></TestShell></GatewayProvider></Tooltip.Provider> }], { initialEntries: [initialEntry] })
   const view = render(<RouterProvider router={router} />)
-  return { ...view, ...backend, router }
+  return { ...view, ...backend, router, readModels }
 }
 
-beforeEach(async () => { await useAgentChatStore.getState().newSession() })
+beforeEach(async () => {
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: query === '(min-width: 1100px)', media: query, onchange: null,
+    addListener: vi.fn(), removeListener: vi.fn(), addEventListener: vi.fn(), removeEventListener: vi.fn(), dispatchEvent: () => false,
+  }))
+  await useAgentChatStore.getState().newSession()
+})
 
 describe('基本聊天界面', () => {
+  it.each([
+    ['相同错误只显示一次', '读取超时，请检查面板连接后重试'],
+    ['不同错误保留各自原因', '模型目录读取失败'],
+  ])('会话与模型同时读取失败：%s，共用重试入口', async (_name, modelError) => {
+    const sessionError = '读取超时，请检查面板连接后重试'
+    const backend = chatTestApi()
+    backend.api.getSession.mockRejectedValue(new Error(sessionError))
+    const { readModels } = renderChat(backend, '/agent?session=server-session', modelError)
+    const retry = await screen.findByRole('button', { name: '重新读取会话和模型' })
+    await waitFor(() => expect(retry).toBeEnabled())
+    const alert = screen.getByRole('alert')
+    expect(alert).toHaveTextContent(sessionError)
+    expect(within(alert).getAllByRole('button')).toHaveLength(1)
+    expect(screen.getAllByText(sessionError, { exact: false })).toHaveLength(1)
+    if (modelError !== sessionError) {
+      expect(alert).toHaveTextContent(`会话：${sessionError}`)
+      expect(alert).toHaveTextContent(`模型：${modelError}`)
+    }
+
+    let finishSession!: (session: typeof backend.session) => void
+    backend.api.getSession.mockClear().mockReturnValue(new Promise(resolve => { finishSession = resolve }))
+    readModels.mockClear()
+    fireEvent.click(retry)
+    await waitFor(() => expect(readModels).toHaveBeenCalledOnce())
+    expect(backend.api.getSession).toHaveBeenCalledOnce()
+    // 模型先恢复时，同一提示继续承载未完成的会话读取，防止重复点击。
+    await waitFor(() => expect(retry).toHaveAccessibleName('重新读取会话'))
+    expect(retry).toBeDisabled()
+    expect(screen.getByRole('alert')).toBe(alert)
+    await act(async () => { finishSession(backend.session) })
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+    expect(screen.getByRole('button', { name: '选择模型：test-model' })).toBeEnabled()
+    expect(backend.api.createTask).not.toHaveBeenCalled()
+    expect(backend.api.continueTask).not.toHaveBeenCalled()
+  })
+
+  it.each(['会话', '模型'] as const)('仅%s读取失败时只重试对应读取', async source => {
+    const backend = chatTestApi()
+    if (source === '会话') backend.api.getSession.mockRejectedValue(new Error('读取会话失败'))
+    const { readModels } = renderChat(backend, '/agent?session=server-session', source === '模型' ? '读取模型失败' : undefined)
+    const retry = await screen.findByRole('button', { name: `重新读取${source}` })
+    await waitFor(() => expect(retry).toBeEnabled())
+    expect(screen.getByRole('alert')).toHaveTextContent(`读取${source}失败`)
+    backend.api.getSession.mockClear().mockResolvedValue(backend.session)
+    readModels.mockClear()
+    fireEvent.click(retry)
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+    expect(backend.api.getSession).toHaveBeenCalledTimes(source === '会话' ? 1 : 0)
+    expect(readModels).toHaveBeenCalledTimes(source === '模型' ? 1 : 0)
+  })
+
   it('会话、新草稿与浏览器前进后退分别恢复原记录和输入', async () => {
     const backend = chatTestApi()
     const a = { ...backend.session, id: 'history-a', title: '历史 A' }
@@ -66,12 +135,52 @@ describe('基本聊天界面', () => {
     expect(useAgentChatStore.getState().session?.id).toBe(draftId)
   })
 
-  it('桌面收起会话栏后将键盘焦点交还打开入口', async () => {
+  it('模型菜单按模型 ID 列出，与设置页的「模型 ID」同一标识，服务名放副行', async () => {
+    const user = userEvent.setup()
     renderChat()
-    fireEvent.click(screen.getByRole('button', { name: '收起会话列表' }))
-    expect(screen.getByRole('button', { name: '打开会话列表' })).toHaveFocus()
+    await user.click(await screen.findByRole('button', { name: '选择模型：test-model' }))
+    const option = await screen.findByRole('menuitemradio', { name: 'test-model' })
+    expect(option).toHaveTextContent('test-model')
+    expect(option).toHaveTextContent('测试服务')
+  })
+
+  it('桌面边缘把手可反复开关会话栏，保留键盘焦点与展开状态', async () => {
+    renderChat()
+    const toggle = screen.getByRole('button', { name: '收起会话列表' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAccessibleName('打开会话列表')
+    expect(toggle).toHaveFocus()
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByRole('complementary', { name: '会话列表' })).not.toBeInTheDocument()
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('complementary', { name: '会话列表' })).toBeInTheDocument()
+    expect(toggle).toHaveFocus()
     await waitFor(() => expect(screen.getByRole('textbox')).toBeEnabled())
+  })
+
+  it('窄屏边缘把手打开会话抽屉，关闭和 Escape 都归还焦点且不留下悬停提示', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: false, media: query, onchange: null, addListener: vi.fn(), removeListener: vi.fn(),
+      addEventListener: vi.fn(), removeEventListener: vi.fn(), dispatchEvent: () => false,
+    }))
+    const user = userEvent.setup()
+    renderChat()
+    const trigger = screen.getByRole('button', { name: '打开会话列表' })
+    await user.click(trigger)
+    const drawer = screen.getByRole('dialog', { name: '会话列表' })
+    expect(screen.queryByRole('complementary', { name: '会话列表' })).not.toBeInTheDocument()
+    await user.click(within(drawer).getByRole('button', { name: '关闭会话列表' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+    // Radix 的提示只在失焦或指针离开触发器时收起，指针不在把手上时程序化聚焦弹出的提示没人关。
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
+    await user.click(trigger)
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
   })
 
   it('运行未完成时已显示流式 Markdown，确认后原位衔接且不重复回答', async () => {
@@ -150,7 +259,7 @@ describe('基本聊天界面', () => {
     await waitFor(() => expect(useAgentChatStore.getState().run?.status).toBe('running'))
     expect(screen.queryByText(/Ely 正在|正在整理会话|正在发送/)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '选择模型：测试模型' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '选择模型：test-model' })).toBeDisabled()
     vi.useFakeTimers()
     try {
       // 返回页面会重新读取；在可控定时器下检查后续轮询。
