@@ -2,7 +2,7 @@ import { withRequestDeadline } from './requestDeadline'
 import type { FileEntry, FileKind, FileSearchResult } from '@elysian/contracts'
 import { FILE_KINDS } from '@elysian/contracts'
 import type { FilesAdapter } from '../../contracts/adapters'
-import { reportUnauthorized } from './unauthorized'
+import { fetchWithSession, reportUnauthorized } from './unauthorized'
 import { createHttpFileTransfers } from './filesTransfersHttp'
 
 /*
@@ -100,7 +100,7 @@ function requestJson(url: string, init?: RequestInit): Promise<unknown> {
 async function readJson(url: string, init?: RequestInit): Promise<unknown> {
   let response: Response
   try {
-    response = await fetch(url, init)
+    response = await fetchWithSession(url, init)
   } catch {
     throw new Error('文件管理请求网络失败')
   }

@@ -8,7 +8,7 @@ import type {
 } from '@elysian/contracts'
 import { DEPENDENCY_PROBE_STATES, DEPENDENCY_SETUP_STEPS, DEPENDENCY_SETUP_TARGETS } from '@elysian/contracts'
 import type { DependenciesAdapter } from '../../contracts/adapters'
-import { reportUnauthorized } from './unauthorized'
+import { fetchWithSession, reportUnauthorized } from './unauthorized'
 
 /*
  * 浏览器侧宿主依赖检测（Docker 运行时，/api/platform/dependencies）。服务端每次
@@ -77,7 +77,7 @@ export function parseDependencyProbeReport(body: unknown): DependencyProbeReport
 async function requestJson(url: string): Promise<unknown> {
   let response: Response
   try {
-    response = await fetch(url, { cache: 'no-store' })
+    response = await fetchWithSession(url, { cache: 'no-store' })
   } catch {
     throw new Error('依赖检测请求网络失败')
   }
@@ -141,7 +141,7 @@ export function createHttpDependenciesAdapter(baseUrl = '/api/platform/dependenc
       const url = `${baseUrl}/setup/${encodeURIComponent(target)}/${encodeURIComponent(step)}`
       let response: Response
       try {
-        response = await fetch(url, { method: 'POST', cache: 'no-store' })
+        response = await fetchWithSession(url, { method: 'POST', cache: 'no-store' })
       } catch {
         throw new Error('依赖安装请求网络失败')
       }

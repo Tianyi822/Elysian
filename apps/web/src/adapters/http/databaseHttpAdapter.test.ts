@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { setUnauthorizedListener } from './unauthorized'
+import { advanceAuthGeneration, setUnauthorizedListener } from './unauthorized'
 import { createHttpDatabaseAdapter, sqliteDownloadName } from './databaseHttpAdapter'
 
 /*
@@ -17,6 +17,19 @@ function jsonResponse(body: unknown, status = 200, headers: Record<string, strin
     status,
     headers: { 'content-type': 'application/json', ...headers },
   })
+}
+
+class FakeXHR {
+  static last: FakeXHR
+  upload: { onprogress?: (event: ProgressEvent) => void } = {}
+  status = 401
+  responseText = '{"error":"未登录或会话已过期"}'
+  onload?: () => void
+  onerror?: () => void
+  open = vi.fn()
+  setRequestHeader = vi.fn()
+  send = vi.fn()
+  constructor() { FakeXHR.last = this }
 }
 
 describe('createHttpDatabaseAdapter 401 拦截', () => {
@@ -44,6 +57,32 @@ describe('createHttpDatabaseAdapter 401 拦截', () => {
     expect(listener).toHaveBeenCalledTimes(1)
     expect(clickSpy).not.toHaveBeenCalled()
     clickSpy.mockRestore()
+  })
+
+  it('重新登录后旧 SQLite 下载的 401 仍拒绝下载，不使新会话失效', async () => {
+    const listener = vi.fn()
+    setUnauthorizedListener(listener)
+    let complete!: (response: Response) => void
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((resolve) => { complete = resolve })))
+    const pending = createHttpDatabaseAdapter().downloadSqlite?.('sqlite-demo')
+    advanceAuthGeneration()
+    complete(jsonResponse({ error: '未登录或会话已过期' }, 401))
+    await expect(pending).rejects.toThrow('登录状态已失效，请重新登录')
+    expect(listener).not.toHaveBeenCalled()
+  })
+
+  it.each([false, true])('SQLite 上传 401 仍拒绝请求，仅当前登录代次上报（旧请求：%s）', async (stale) => {
+    const listener = vi.fn()
+    setUnauthorizedListener(listener)
+    vi.stubGlobal('XMLHttpRequest', FakeXHR)
+    const file = new File(['sqlite-bytes'], 'demo.sqlite')
+    const pending = createHttpDatabaseAdapter().create({ kind: 'file', engine: 'SQLite', name: 'demo', origin: 'uploaded', file })
+    const xhr = FakeXHR.last
+    if (stale) advanceAuthGeneration()
+    xhr.onload?.()
+    await expect(pending).rejects.toThrow('登录状态已失效，请重新登录')
+    expect(listener).toHaveBeenCalledTimes(stale ? 0 : 1)
+    expect(xhr.send).toHaveBeenCalledExactlyOnceWith(file)
   })
 
   it('downloadSqlite 成功：fetch 取 blob 后经 object URL 触发下载并带文件名', async () => {

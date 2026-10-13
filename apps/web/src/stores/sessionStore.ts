@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { ElysianGateway, SessionMode } from '../contracts/adapters'
-import { setUnauthorizedListener } from '../adapters/http/unauthorized'
+import { advanceAuthGeneration, setUnauthorizedListener } from '../adapters/http/unauthorized'
 import { useAgentChatStore } from './agentChatStore'
 
 /**
@@ -40,8 +40,23 @@ type SessionStoreState = {
   login(gateway: ElysianGateway, username: string, password: string): Promise<void>
   /** 置 anonymous（登出请求幂等，网络失败也回到登录页）。 */
   logout(gateway: ElysianGateway): Promise<void>
-  /** 任意 401 到达时置 anonymous（不清 mode/devAccount 与 notice）。 */
+  /** 当前登录代次的 401 到达时置 anonymous（不清 mode/devAccount 与 notice）。 */
   expire(): void
+}
+
+let sessionGeneration = 0
+let authRevision = 0
+let authMutation: Promise<void> | undefined
+let probeRequest: { gateway: ElysianGateway; returnTo?: string; generation: number; promise: Promise<void> } | undefined
+let validationRequest: { gateway: ElysianGateway; generation: number; promise: Promise<void> } | undefined
+const invalidateChecks = () => { sessionGeneration += 1; probeRequest = undefined; validationRequest = undefined }
+
+/** 登录与登出按调用顺序提交，避免迟到的 Set-Cookie 覆盖较新的会话操作。 */
+function mutateAuthentication(action: () => Promise<void>): Promise<void> {
+  const promise = authMutation ? authMutation.catch(() => {}).then(action) : (async () => action())()
+  authMutation = promise
+  void promise.finally(() => { if (authMutation === promise) authMutation = undefined }).catch(() => {})
+  return promise
 }
 
 export const useSessionStore = create<SessionStoreState>((set, get) => ({
@@ -56,53 +71,90 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
     set({ notice })
   },
 
-  async probe(gateway, returnTo) {
-    try {
-      const status = await gateway.session.status(returnTo)
-      set({
-        phase: status.authenticated ? 'authed' : 'anonymous',
-        mode: status.mode,
-        devAccount: status.devAccount,
-        // 未带参数探测时 status.returnTo 为 undefined，顺带清掉旧裁决值（跨页面不残留）。
-        returnTo: status.returnTo,
-        // 把请求值一并记下：登录页据此确认这条裁决就是它这次 ?returnTo= 的答案，而非上一次请求的残留。
-        returnToFor: returnTo,
-      })
-    } catch {
-      set({ phase: 'error' })
-    }
+  probe(gateway, returnTo) {
+    if (probeRequest?.gateway === gateway && probeRequest.returnTo === returnTo && probeRequest.generation === sessionGeneration) return probeRequest.promise
+    const generation = ++sessionGeneration
+    if (get().phase === 'error') set({ phase: 'unknown' })
+    const promise = (async () => {
+      try {
+        // 鉴权写操作结束后才读取 Cookie；成功登录或登出会使这次旧探测失效。
+        if (authMutation) await authMutation.catch(() => {})
+        if (generation !== sessionGeneration) return
+        const status = await gateway.session.status(returnTo)
+        if (generation !== sessionGeneration) return
+        if (get().phase !== (status.authenticated ? 'authed' : 'anonymous')) advanceAuthGeneration()
+        if (!status.authenticated) useAgentChatStore.getState().clearDisplay()
+        set({ phase: status.authenticated ? 'authed' : 'anonymous', mode: status.mode,
+          devAccount: status.devAccount, returnTo: status.returnTo, returnToFor: returnTo })
+      } catch {
+        if (generation === sessionGeneration) set({ phase: 'error' })
+      }
+    })()
+    probeRequest = { gateway, returnTo, generation, promise }
+    void promise.finally(() => { if (probeRequest?.generation === generation) probeRequest = undefined })
+    return promise
   },
 
-  async revalidate(gateway) {
+  revalidate(gateway) {
     const current = get()
-    if (current.phase !== 'authed' || current.mode !== 'real') return
-    try {
-      const status = await gateway.session.status(undefined, { passive: true })
-      // 请求期间发生登出、新登录或其他会话状态变化时，丢弃旧响应。
-      if (get() !== current || status.authenticated) return
-      set({ phase: 'anonymous', notice: current.notice ?? '登录状态已失效，请重新登录' })
-    } catch {
-      // 暂时断网不等同于会话失效，下一轮检查继续确认；实际 API 仍由服务端鉴权。
-    }
+    if (current.phase !== 'authed' || current.mode !== 'real' || authMutation) return Promise.resolve()
+    if (validationRequest?.gateway === gateway && validationRequest.generation === sessionGeneration) return validationRequest.promise
+    const generation = sessionGeneration
+    const promise = (async () => {
+      try {
+        const status = await gateway.session.status(undefined, { passive: true })
+        if (generation !== sessionGeneration || get().phase !== 'authed' || status.authenticated) return
+        advanceAuthGeneration()
+        invalidateChecks()
+        useAgentChatStore.getState().clearDisplay()
+        set({ phase: 'anonymous', notice: get().notice ?? '登录状态已失效，请重新登录' })
+      } catch {
+        // 网络故障保留页面；真实 API 仍由服务端鉴权。
+      }
+    })()
+    validationRequest = { gateway, generation, promise }
+    void promise.finally(() => { if (validationRequest?.promise === promise) validationRequest = undefined })
+    return promise
   },
 
   async login(gateway, username, password) {
-    await gateway.session.login(username, password)
-    // 只有成功的新登录开启新会话；普通页面恢复、状态探测与失败登录保留本地对话。
-    void useAgentChatStore.getState().newSession()
+    advanceAuthGeneration()
+    invalidateChecks()
+    const revision = ++authRevision
+    await mutateAuthentication(() => gateway.session.login(username, password))
+    if (revision !== authRevision) throw new Error('登录操作已被更新的会话操作替代，请重新登录。')
+    advanceAuthGeneration()
+    invalidateChecks()
+    // 新登录恢复上次选中的会话，公开数据重新经过服务端鉴权读取。
+    useAgentChatStore.getState().clearDisplay()
     // 登录成功即消费一次性提示：它只在「密码刚改过、还没重新登录」的窗口内成立。
     set({ phase: 'authed', notice: null })
   },
 
   async logout(gateway) {
+    advanceAuthGeneration()
+    invalidateChecks()
+    const revision = ++authRevision
+    useAgentChatStore.getState().clearDisplay()
+    // 先关闭页面闸门，使仍在挂载的聊天组件没有机会重新读取公开内容。
+    set({ phase: 'anonymous' })
     try {
-      await gateway.session.logout()
+      await mutateAuthentication(() => gateway.session.logout())
     } finally {
-      set({ phase: 'anonymous' })
+      if (revision === authRevision) {
+        advanceAuthGeneration()
+        invalidateChecks()
+        useAgentChatStore.getState().clearDisplay()
+        set({ phase: 'anonymous' })
+      }
     }
   },
 
   expire() {
+    advanceAuthGeneration()
+    invalidateChecks()
+    authRevision += 1
+    useAgentChatStore.getState().clearDisplay()
     set({ phase: 'anonymous' })
   },
 }))

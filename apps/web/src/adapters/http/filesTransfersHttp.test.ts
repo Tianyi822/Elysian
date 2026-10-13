@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHttpFilesAdapter } from './filesHttpAdapter'
 import { FILE_DOWNLOAD_PREPARE_TIMEOUT, FILE_TRANSFER_TIMEOUT, parseFileDownload } from './filesTransfersHttp'
 import { FileTransferError } from '../filesTransferError'
-import { setUnauthorizedListener } from './unauthorized'
+import { advanceAuthGeneration, setUnauthorizedListener } from './unauthorized'
 
 const prepared = { id: 'download-1', name: '日志 + 备份.tar.gz', sizeBytes: 3 * 1024 ** 3, expiresAt: '2030-01-01T00:00:00Z' }
 const entry = { name: '备份 + %.zip', kind: 'file', mode: '644', owner: 'root', modifiedAt: '2026-10-11T00:00:00Z', sizeBytes: 3 }
@@ -66,6 +66,21 @@ describe('文件传输 HTTP adapter', () => {
     expect(onError.mock.calls[0]?.[0].status).toBe(401)
   })
 
+  it('重新登录后旧下载的 401 只反馈下载失败，不使新会话失效', () => {
+    const unauthorized = vi.fn()
+    setUnauthorizedListener(unauthorized)
+    const onError = vi.fn()
+    createHttpFilesAdapter().startDownload(prepared, onError)
+    const frame = document.querySelector('iframe')!
+    advanceAuthGeneration()
+    Object.defineProperty(frame, 'contentDocument', { value: { body: { textContent: '{"error":"未登录或会话已过期"}' } } })
+    frame.dispatchEvent(new Event('load'))
+    expect(unauthorized).not.toHaveBeenCalled()
+    expect(onError).toHaveBeenCalledOnce()
+    expect(onError.mock.calls[0]?.[0]).toMatchObject({ status: 401, message: '未登录或会话已过期' })
+    expect(document.querySelector('iframe')).toBeNull()
+  })
+
   it('检查同名条目并校验文件；409保留状态，401上报', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ state: 'replace', token: 'token', existing: entry }))))
     expect(await createHttpFilesAdapter().checkUpload('/tmp', entry.name, 3)).toMatchObject({ state: 'replace', token: 'token' })
@@ -111,6 +126,20 @@ describe('文件传输 HTTP adapter', () => {
       await expect(request).rejects.toThrow(failure === 'conflict' ? '目标已变化' : '操作结果尚未确认')
       expect(xhr.send).toHaveBeenCalledOnce()
     }
+  })
+
+  it.each([false, true])('上传 401 仍拒绝请求，仅当前登录代次上报（旧请求：%s）', async (stale) => {
+    const unauthorized = vi.fn()
+    setUnauthorizedListener(unauthorized)
+    const pending = createHttpFilesAdapter().uploadFile('/tmp', new File(['zip'], entry.name), { state: 'create', token: 't' }, false)
+    const xhr = FakeXHR.last
+    if (stale) advanceAuthGeneration()
+    xhr.status = 401
+    xhr.responseText = '{"error":"未登录或会话已过期"}'
+    xhr.onload?.()
+    await expect(pending).rejects.toMatchObject({ status: 401, message: '登录状态已失效，请重新登录' })
+    expect(unauthorized).toHaveBeenCalledTimes(stale ? 0 : 1)
+    expect(xhr.send).toHaveBeenCalledOnce()
   })
 
   it('拒绝无效下载标识与超过10GiB的上传，不发送请求', async () => {

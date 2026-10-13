@@ -129,12 +129,13 @@ describe('createHttpSessionAdapter', () => {
     expect(blank).toHaveBeenCalledWith('/api/auth/session', { cache: 'no-store', signal: expect.any(AbortSignal) })
   })
 
-  it('canView 跟随 status 的 authenticated', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => jsonResponse({ authenticated: false, devAccount: false })),
-    )
-    await expect(createHttpSessionAdapter().canView('dashboard')).resolves.toBe(false)
+  it('canView 只提供单管理员页面策略，不重复请求登录端点', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ authenticated: false, devAccount: false }))
+    vi.stubGlobal('fetch', fetchMock)
+    const adapter = createHttpSessionAdapter()
+    await expect(adapter.canView('dashboard')).resolves.toBe(true)
+    await expect(adapter.canView('agent')).resolves.toBe(true)
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('login 落到 POST /api/auth/login，体为 JSON 的用户名与密码', async () => {

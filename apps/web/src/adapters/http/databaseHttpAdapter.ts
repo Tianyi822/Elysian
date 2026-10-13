@@ -1,7 +1,7 @@
 import { withRequestDeadline } from './requestDeadline'
 import type { DatabaseInstance, DatabaseEngine, ContainerImage } from '@elysian/contracts'
 import type { DatabaseAdapter, DatabaseCreateInput, DatabaseCreateResult } from '../../contracts/adapters'
-import { reportUnauthorized, reportUnauthorizedStatus } from './unauthorized'
+import { captureAuthGeneration, fetchWithSession, reportUnauthorized, reportUnauthorizedStatus } from './unauthorized'
 import { parseFirewallPortSync } from './firewallHttpAdapter'
 
 const BASE = '/api/databases'
@@ -17,7 +17,7 @@ function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 async function readJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${BASE}${path}`, {
+  const response = await fetchWithSession(`${BASE}${path}`, {
     ...init,
     headers: { ...(init?.body ? { 'Content-Type': 'application/json' } : {}), ...init?.headers },
     cache: 'no-store',
@@ -86,6 +86,7 @@ export function createHttpDatabaseAdapter(): DatabaseAdapter {
         if (!input.file) throw new Error('请选择实际 SQLite 文件')
         const instance = await new Promise<DatabaseInstance>((resolve, reject) => {
           const xhr = new XMLHttpRequest()
+          const generation = captureAuthGeneration()
           xhr.open('POST', `${BASE}/sqlite/import?name=${encodeURIComponent(input.name)}`)
           xhr.setRequestHeader('Content-Type', 'application/octet-stream')
           xhr.upload.onprogress = (event) => { if (event.lengthComputable) onProgress?.(Math.round(event.loaded / event.total * 100)) }
@@ -95,7 +96,7 @@ export function createHttpDatabaseAdapter(): DatabaseAdapter {
             try { body = JSON.parse(xhr.responseText) as typeof body } catch { reject(new Error('SQLite 上传响应无效')); return }
             if (xhr.status < 200 || xhr.status >= 300) {
               // 会话过期：按状态号上报（XHR 拿不到 Response 对象），错误不透传 HTTP 401。
-              if (reportUnauthorizedStatus(xhr.status)) reject(new Error('登录状态已失效，请重新登录'))
+              if (reportUnauthorizedStatus(xhr.status, generation)) reject(new Error('登录状态已失效，请重新登录'))
               else reject(new Error(body.error ?? 'SQLite 文件上传失败'))
             }
             else resolve(body)
@@ -139,7 +140,7 @@ export function createHttpDatabaseAdapter(): DatabaseAdapter {
       const url = `${BASE}/sqlite/${encodeURIComponent(id)}/download`
       let response: Response
       try {
-        response = await fetch(url)
+        response = await fetchWithSession(url)
       } catch {
         throw new Error('SQLite 下载失败：面板服务不可达')
       }

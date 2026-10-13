@@ -2,7 +2,7 @@ import type { FileEntry } from '@elysian/contracts'
 import type { FileDownload, FilesAdapter, FileUploadCheck } from '../../contracts/adapters'
 import { FileTransferError } from '../filesTransferError'
 import { RequestTimeoutError, withRequestDeadline } from './requestDeadline'
-import { reportUnauthorized, reportUnauthorizedStatus } from './unauthorized'
+import { captureAuthGeneration, fetchWithSession, reportUnauthorized, reportUnauthorizedStatus } from './unauthorized'
 
 export const FILE_DOWNLOAD_PREPARE_TIMEOUT = 30 * 60_000
 export const FILE_TRANSFER_TIMEOUT = 2 * 60 * 60_000
@@ -40,7 +40,7 @@ export function createHttpFileTransfers(
   const post = (endpoint: string, body: unknown, signal?: AbortSignal, timeout?: number) =>
     withRequestDeadline({ method: 'POST', signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, async (init) => {
       let response: Response
-      try { response = await fetch(`${baseUrl}/${endpoint}`, init) } catch (error) {
+      try { response = await fetchWithSession(`${baseUrl}/${endpoint}`, init) } catch (error) {
         if (init.signal?.aborted) throw error
         throw new Error('文件传输请求网络失败')
       }
@@ -55,6 +55,7 @@ export function createHttpFileTransfers(
       return parseFileDownload(await post('downloads', { path }, signal, FILE_DOWNLOAD_PREPARE_TIMEOUT))
     },
     startDownload(download, onError) {
+      const generation = captureAuthGeneration()
       // 不设置 download 属性：只有成功的 Content-Disposition 才触发保存，401/404 JSON 不会变成文件。
       const frame = document.createElement('iframe')
       frame.hidden = true
@@ -70,7 +71,7 @@ export function createHttpFileTransfers(
           if (typeof row.error === 'string') {
             // iframe 不暴露 HTTP 状态；此文案是全局 RequireSession 的固定 401 响应。
             const status = row.error === '未登录或会话已过期' ? 401 : typeof row.status === 'number' ? row.status : 0
-            reportUnauthorizedStatus(status)
+            reportUnauthorizedStatus(status, generation)
             onError?.(new FileTransferError(status, row.error))
           } else {
             onError?.(new Error('文件下载响应无效，请重新下载'))
@@ -102,6 +103,7 @@ export function createHttpFileTransfers(
         const signal = options?.signal
         if (signal?.aborted) { reject(new DOMException('上传已取消', 'AbortError')); return }
         const xhr = new XMLHttpRequest()
+        const generation = captureAuthGeneration()
         const cleanup = () => signal?.removeEventListener('abort', abort)
         const fail = (error: unknown) => { cleanup(); reject(error) }
         const abort = () => xhr.abort()
@@ -114,7 +116,7 @@ export function createHttpFileTransfers(
           if (event.lengthComputable && event.total > 0) options?.onProgress?.(Math.min(100, Math.floor(event.loaded / event.total * 100)))
         }
         xhr.onload = () => {
-          if (reportUnauthorizedStatus(xhr.status)) { fail(new FileTransferError(401, '登录状态已失效，请重新登录')); return }
+          if (reportUnauthorizedStatus(xhr.status, generation)) { fail(new FileTransferError(401, '登录状态已失效，请重新登录')); return }
           let value: unknown
           try { value = JSON.parse(xhr.responseText) } catch { value = null }
           if (xhr.status < 200 || xhr.status >= 300) { fail(new FileTransferError(xhr.status, errorMessage(value, xhr.status))); return }

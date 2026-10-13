@@ -7,7 +7,7 @@ import type {
   HostTerminalSessionInfo,
 } from '../../contracts/adapters'
 import type { TerminalSocket, TerminalSocketFactory } from './terminalWsAdapter'
-import { reportUnauthorized } from './unauthorized'
+import { fetchWithSession, reportUnauthorized } from './unauthorized'
 
 /*
  * Docker 运行时的容器终端：经同源 WebSocket 接指定容器的 exec PTY。
@@ -79,7 +79,7 @@ function parseReadyFrame(
 
 async function fetchConnectError(): Promise<string> {
   try {
-    const response = await fetch(DOCKER_STATUS_URL)
+    const response = await fetchWithSession(DOCKER_STATUS_URL)
     // 会话过期的升级拒绝同样回 401：先上报（前端随后跳登录），再走中文原因路径。
     reportUnauthorized(response)
     const body: unknown = await response.json()

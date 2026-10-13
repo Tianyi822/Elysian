@@ -18,7 +18,7 @@ import {
   parseWebsiteRuntimeCatalogReport,
 } from '@elysian/contracts'
 import type { WebsitesAdapter, WebsiteMutateResult } from '../../contracts/adapters'
-import { reportUnauthorized } from './unauthorized'
+import { fetchWithSession, reportUnauthorized } from './unauthorized'
 import { parseFirewallPortSync } from './firewallHttpAdapter'
 
 /*
@@ -184,7 +184,7 @@ function requestJson(url: string, init?: RequestInit): Promise<unknown> {
 async function readJson(url: string, init?: RequestInit): Promise<unknown> {
   let response: Response
   try {
-    response = await fetch(url, { ...init, cache: 'no-store' })
+    response = await fetchWithSession(url, { ...init, cache: 'no-store' })
   } catch {
     throw new Error('网站管理请求网络失败')
   }

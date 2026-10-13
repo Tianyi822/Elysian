@@ -18,7 +18,7 @@ import {
   FIREWALL_RULE_STATUSES,
 } from '@elysian/contracts'
 import type { FirewallAdapter } from '../../contracts/adapters'
-import { reportUnauthorized } from './unauthorized'
+import { fetchWithSession, reportUnauthorized } from './unauthorized'
 
 /*
  * 浏览器侧同源防火墙查询（Docker 运行时）。系统采样、ufw 命令仅存在于
@@ -232,7 +232,7 @@ function requestJson(baseUrl: string, init?: RequestInit): Promise<unknown> {
 async function readJson(baseUrl: string, init?: RequestInit): Promise<unknown> {
   let response: Response
   try {
-    response = await fetch(baseUrl, init)
+    response = await fetchWithSession(baseUrl, init)
   } catch {
     throw new Error('防火墙请求网络失败')
   }

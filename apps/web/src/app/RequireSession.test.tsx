@@ -1,13 +1,16 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { StrictMode } from 'react'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { GatewayProvider } from '../adapters/GatewayProvider'
 import { createMockGateway } from '../adapters/mock/gateway'
+import { createHttpSessionAdapter } from '../adapters/http/sessionHttpAdapter'
 import type { ElysianGateway, SessionAdapter } from '../contracts/adapters'
 import { useSessionStore } from '../stores/sessionStore'
 import { renderApp } from '../test/renderApp'
 import { RequireSession } from './RequireSession'
+import { RequireArea } from './RequireArea'
 
 /*
  * 会话闸门组件：unknown → 加载态；探测抛错 → 错误态且「重试」可重跑 probe；
@@ -23,6 +26,7 @@ function gatewayWithSession(session: Partial<SessionAdapter>): ElysianGateway {
 }
 
 beforeEach(() => {
+  useSessionStore.getState().expire()
   useSessionStore.setState({ phase: 'unknown', mode: undefined, devAccount: false })
 })
 
@@ -86,6 +90,37 @@ describe('RequireSession 后台会话检查', () => {
 })
 
 describe('RequireSession 会话闸门', () => {
+  it('StrictMode 刷新只发一次登录探测，页面权限检查不会额外请求会话', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ authenticated: true, devAccount: true }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const gateway = gatewayWithSession(createHttpSessionAdapter())
+      render(<StrictMode><GatewayProvider gateway={gateway}><MemoryRouter>
+        <RequireSession><RequireArea area="dashboard" title="仪表盘"><p>已鉴权的仪表盘</p></RequireArea></RequireSession>
+      </MemoryRouter></GatewayProvider></StrictMode>)
+      expect(await screen.findByText('已鉴权的仪表盘')).toBeInTheDocument()
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(fetchMock).toHaveBeenCalledWith('/api/auth/session', { cache: 'no-store', signal: expect.any(AbortSignal) })
+      expect(screen.queryByText(/无权限查看/)).not.toBeInTheDocument()
+    } finally { vi.unstubAllGlobals() }
+  })
+
+  it('明确未登录时单管理员页面策略也不能绕过会话闸门', async () => {
+    const canView = vi.fn(async () => true)
+    const gateway = gatewayWithSession({
+      status: async () => ({ mode: 'real', authenticated: false, devAccount: true }), canView,
+    })
+    render(<GatewayProvider gateway={gateway}><MemoryRouter initialEntries={['/agent']}><Routes>
+      <Route path="/agent" element={<RequireSession><RequireArea area="agent" title="Ely"><p>私人会话内容</p></RequireArea></RequireSession>} />
+      <Route path="/login" element={<h1>重新登录</h1>} />
+    </Routes></MemoryRouter></GatewayProvider>)
+    expect(await screen.findByRole('heading', { name: '重新登录' })).toBeInTheDocument()
+    expect(canView).not.toHaveBeenCalled()
+    expect(screen.queryByText('私人会话内容')).not.toBeInTheDocument()
+  })
+
   it('探测期间渲染加载态（正在检查登录状态…）', () => {
     const never = new Promise<never>(() => {})
     const gateway = gatewayWithSession({

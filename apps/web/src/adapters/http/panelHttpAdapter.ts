@@ -1,7 +1,7 @@
 import type { PanelCommit, PanelInfo, PanelPorts, PanelTask, PanelTaskReport, PanelUpdate } from '@elysian/contracts'
 import { validatePanelPorts } from '@elysian/contracts'
 import type { PanelAdapter } from '../../contracts/adapters'
-import { reportUnauthorized } from './unauthorized'
+import { fetchWithSession, reportUnauthorized } from './unauthorized'
 
 function object(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error('面板维护响应无效')
@@ -40,7 +40,7 @@ export function parsePanelCommits(value: unknown): PanelCommit[] {
 async function request(path: string, method = 'GET', body?: unknown): Promise<unknown> {
   const abort = new AbortController(); const timer = setTimeout(() => abort.abort(), 30000)
   try {
-  const response = await fetch(path, { method, signal: abort.signal, credentials: 'same-origin', cache: 'no-store', ...(body === undefined ? {} : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }) })
+  const response = await fetchWithSession(path, { method, signal: abort.signal, credentials: 'same-origin', cache: 'no-store', ...(body === undefined ? {} : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }) })
   if (response.status === 401) { reportUnauthorized(response); throw new Error('登录状态已失效，请重新登录') }
   const data: unknown = await response.json()
   if (!response.ok) { const row = object(data); throw new Error(typeof row.error === 'string' ? row.error : `面板维护请求失败：HTTP ${response.status}`) }

@@ -24,7 +24,7 @@ import { CONTAINER_STATUSES, RESTART_POLICIES } from '@elysian/contracts'
 import type { Unsubscribe } from '@elysian/contracts'
 import type { ContainerAdapter, ContainerHostPolicy } from '../../contracts/adapters'
 import { createContainerTerminalWsAdapter } from './containerTerminalWsAdapter'
-import { reportUnauthorized, reportUnauthorizedStatus } from './unauthorized'
+import { fetchWithSession, reportUnauthorized } from './unauthorized'
 import type { EventSourceFactory, EventSourceLike } from '../sse/eventsAdapter'
 import { parseElysianEvent, SseFrameParser } from '../sse/parse'
 
@@ -129,7 +129,7 @@ export function createFetchContainerEventSource(url: string): ContainerEventSour
           if (lastEventId !== undefined) {
             headers['Last-Event-ID'] = lastEventId
           }
-          const response = await fetch(url, {
+          const response = await fetchWithSession(url, {
             signal,
             ...(Object.keys(headers).length > 0 ? { headers } : {}),
           })
@@ -137,7 +137,7 @@ export function createFetchContainerEventSource(url: string): ContainerEventSour
             // 未登录：上报后按既有失败路径触发一次 onerror（容器页 live 状态如实显示断开），
             // 再置 closed 终止循环——未登录前的退避重连毫无意义，徒增请求；
             // 重新登录后用户重新进入页面自然重连。
-            reportUnauthorizedStatus(response.status)
+            reportUnauthorized(response)
             source.onerror?.(new Event('error'))
             closed = true
             return 'failed'
@@ -652,7 +652,7 @@ function requestJson(url: string, init?: RequestInit): Promise<unknown> {
 async function readJson(url: string, init?: RequestInit): Promise<unknown> {
   let response: Response
   try {
-    response = await fetch(url, init)
+    response = await fetchWithSession(url, init)
   } catch {
     throw new Error('容器管理请求网络失败')
   }
@@ -675,7 +675,7 @@ function requestNoContent(url: string, init?: RequestInit): Promise<void> {
 async function readNoContent(url: string, init?: RequestInit): Promise<void> {
   let response: Response
   try {
-    response = await fetch(url, init)
+    response = await fetchWithSession(url, init)
   } catch {
     throw new Error('容器管理请求网络失败')
   }
@@ -947,7 +947,7 @@ export function createHttpContainersAdapter(
     async pullImage(input, onProgress) {
       let response: Response
       try {
-        response = await fetch(`${baseUrl}/images/pull/stream`, {
+        response = await fetchWithSession(`${baseUrl}/images/pull/stream`, {
           method: 'POST',
           headers: { 'content-type': 'application/json', accept: 'application/x-ndjson' },
           body: JSON.stringify(input),

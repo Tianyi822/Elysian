@@ -20,7 +20,7 @@ import {
   SSH_SERVICE_STATUSES,
 } from '@elysian/contracts'
 import type { SshAdapter, SshKeyAccount } from '../../contracts/adapters'
-import { reportUnauthorized } from './unauthorized'
+import { fetchWithSession, reportUnauthorized } from './unauthorized'
 
 /*
  * 浏览器侧同源 SSH 管理（Docker 运行时）。sshd、ssh-keygen、chpasswd 与 getent
@@ -224,7 +224,7 @@ function requestJson(url: string, init?: RequestInit): Promise<unknown> {
 async function readJson(url: string, init?: RequestInit): Promise<unknown> {
   let response: Response
   try {
-    response = await fetch(url, init)
+    response = await fetchWithSession(url, init)
   } catch {
     throw new Error('SSH 请求网络失败')
   }

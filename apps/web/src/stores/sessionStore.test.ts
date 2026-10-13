@@ -1,6 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ElysianGateway, SessionAdapter, SessionStatus } from '../contracts/adapters'
 import { useSessionStore } from './sessionStore'
+import { useAgentChatStore } from './agentChatStore'
+import { fetchWithSession, reportUnauthorized } from '../adapters/http/unauthorized'
 
 /*
  * 会话 store 的状态流转：probe（authed / anonymous / 抛错落 error）、login（成功置 authed、
@@ -18,10 +20,121 @@ function statusOf(partial: Partial<SessionStatus>): SessionStatus {
 }
 
 beforeEach(() => {
+  useSessionStore.getState().expire()
   useSessionStore.setState({ phase: 'unknown', mode: undefined, devAccount: false, notice: null, returnTo: undefined, returnToFor: undefined })
+})
+afterEach(() => vi.restoreAllMocks())
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (error: Error) => void
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail })
+  return { promise, resolve, reject }
+}
+
+describe('旧请求的 401 与重新登录', () => {
+  it('登录前请求迟到的 401 不注销新会话，当前 401 仍会注销', async () => {
+    const response = deferred<Response>()
+    vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(response.promise)
+      .mockResolvedValueOnce(new Response('', { status: 401 }))
+    const oldRequest = fetchWithSession('/api/agent/sessions')
+    await useSessionStore.getState().login(gatewayWithSession({ login: async () => {} }), 'dev', 'example')
+    response.resolve(new Response('', { status: 401 }))
+    expect(reportUnauthorized(await oldRequest)).toBe(true)
+    expect(useSessionStore.getState().phase).toBe('authed')
+    expect(reportUnauthorized(await fetchWithSession('/api/agent/sessions'))).toBe(true)
+    expect(useSessionStore.getState().phase).toBe('anonymous')
+  })
+
+  it('旧请求在登录进行时收到 401，不会使即将成功的登录被替代', async () => {
+    const response = deferred<Response>()
+    const login = deferred<void>()
+    vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(response.promise)
+    const oldRequest = fetchWithSession('/api/files')
+    const loggingIn = useSessionStore.getState().login(gatewayWithSession({ login: () => login.promise }), 'dev', 'example')
+    response.resolve(new Response('', { status: 401 }))
+    expect(reportUnauthorized(await oldRequest)).toBe(true)
+    login.resolve()
+    await expect(loggingIn).resolves.toBeUndefined()
+    expect(useSessionStore.getState().phase).toBe('authed')
+  })
+
+  it('登录进行期间发出的请求不能用迟到 401 注销成功后的会话', async () => {
+    const response = deferred<Response>()
+    const login = deferred<void>()
+    vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(response.promise)
+    const loggingIn = useSessionStore.getState().login(gatewayWithSession({ login: () => login.promise }), 'dev', 'example')
+    const oldRequest = fetchWithSession('/api/files')
+    login.resolve()
+    await loggingIn
+    response.resolve(new Response('', { status: 401 }))
+    expect(reportUnauthorized(await oldRequest)).toBe(true)
+    expect(useSessionStore.getState().phase).toBe('authed')
+  })
+
+  it('普通探测与后台验证不会让在途请求的真实 401 失效', async () => {
+    useSessionStore.setState({ phase: 'authed', mode: 'real' })
+    const response = deferred<Response>()
+    vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(response.promise)
+    const request = fetchWithSession('/api/files')
+    const gateway = gatewayWithSession({ status: async () => statusOf({ authenticated: true }) })
+    await useSessionStore.getState().probe(gateway)
+    await useSessionStore.getState().revalidate(gateway)
+    response.resolve(new Response('', { status: 401 }))
+    expect(reportUnauthorized(await request)).toBe(true)
+    expect(useSessionStore.getState().phase).toBe('anonymous')
+  })
 })
 
 describe('sessionStore.probe', () => {
+  it('同网关与回跳参数的在途探测共用一次请求，完成后允许重新读取', async () => {
+    const response = deferred<SessionStatus>()
+    const status = vi.fn<SessionAdapter['status']>().mockReturnValue(response.promise)
+    const gateway = gatewayWithSession({ status })
+    const first = useSessionStore.getState().probe(gateway)
+    const second = useSessionStore.getState().probe(gateway)
+    expect(first).toBe(second)
+    expect(status).toHaveBeenCalledTimes(1)
+    response.resolve(statusOf({ authenticated: true }))
+    await first
+    await useSessionStore.getState().probe(gateway)
+    expect(status).toHaveBeenCalledTimes(2)
+  })
+
+  it('新的回跳探测覆盖旧请求，旧请求迟到时不篡改裁决', async () => {
+    const old = deferred<SessionStatus>()
+    const current = deferred<SessionStatus>()
+    const status = vi.fn<SessionAdapter['status']>().mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise)
+    const gateway = gatewayWithSession({ status })
+    const first = useSessionStore.getState().probe(gateway, 'http://localhost:4000/old')
+    const second = useSessionStore.getState().probe(gateway, 'http://localhost:4000/current')
+    current.resolve(statusOf({ authenticated: true, returnTo: 'http://localhost:4000/current' }))
+    await second
+    old.resolve(statusOf({ authenticated: false, returnTo: null }))
+    await first
+    expect(useSessionStore.getState()).toMatchObject({ phase: 'authed', returnTo: 'http://localhost:4000/current', returnToFor: 'http://localhost:4000/current' })
+  })
+
+  it('同步抛错的适配器不会留下无法重试的在途标记', async () => {
+    const status = vi.fn<SessionAdapter['status']>().mockImplementationOnce(() => { throw new Error('探测失败') }).mockResolvedValue(statusOf({ authenticated: true }))
+    const gateway = gatewayWithSession({ status })
+    await useSessionStore.getState().probe(gateway)
+    expect(useSessionStore.getState().phase).toBe('error')
+    await useSessionStore.getState().probe(gateway)
+    expect(useSessionStore.getState().phase).toBe('authed')
+    expect(status).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['resolve', 'reject'] as const)('失效后旧探测 %s 不能重新打开页面或改成错误态', async (outcome) => {
+    const response = deferred<SessionStatus>()
+    const checking = useSessionStore.getState().probe(gatewayWithSession({ status: () => response.promise }))
+    useSessionStore.getState().expire()
+    if (outcome === 'resolve') response.resolve(statusOf({ authenticated: true }))
+    else response.reject(new Error('旧请求失败'))
+    await checking
+    expect(useSessionStore.getState().phase).toBe('anonymous')
+  })
+
   it('authenticated 为 true 时落 authed，并记录 mode 与 devAccount', async () => {
     const gateway = gatewayWithSession({
       status: async () => statusOf({ mode: 'real', authenticated: true, devAccount: true }),
@@ -128,6 +241,21 @@ describe('sessionStore.probe', () => {
 })
 
 describe('sessionStore.revalidate', () => {
+  it('后台校验在途复用，修改提示不妨碍有效的失效响应生效', async () => {
+    useSessionStore.setState({ phase: 'authed', mode: 'real' })
+    const response = deferred<SessionStatus>()
+    const status = vi.fn<SessionAdapter['status']>().mockReturnValue(response.promise)
+    const gateway = gatewayWithSession({ status })
+    const first = useSessionStore.getState().revalidate(gateway)
+    const second = useSessionStore.getState().revalidate(gateway)
+    expect(first).toBe(second)
+    useSessionStore.getState().setNotice('请保存当前草稿')
+    response.resolve(statusOf({ authenticated: false }))
+    await first
+    expect(status).toHaveBeenCalledTimes(1)
+    expect(useSessionStore.getState()).toMatchObject({ phase: 'anonymous', notice: '请保存当前草稿' })
+  })
+
   it('旧会话失效时退出并显示重新登录提示，保留 SSO 裁决', async () => {
     useSessionStore.setState({ phase: 'authed', mode: 'real', returnTo: 'http://localhost:5173/tool' })
     const status = vi.fn(async () => statusOf({ authenticated: false }))
@@ -177,6 +305,66 @@ describe('sessionStore.revalidate', () => {
 })
 
 describe('sessionStore.login', () => {
+  it('重新登录保留选中会话与草稿，公开内容清空后从服务端重新读取', async () => {
+    await useAgentChatStore.getState().newSession()
+    useAgentChatStore.getState().setDraft('下次继续编辑')
+    const previous = useAgentChatStore.getState().session!
+    useAgentChatStore.setState({
+      messages: [{ id: 'm', sessionId: 'remote', taskId: 'task', runId: 'run', seq: '1', role: 'assistant', content: '旧公开答复', createdAt: '2026-10-13T00:00:00Z' }],
+      reasoning: { run: '旧思考' },
+      liveOutput: { runId: 'run', responseId: 'r', reasoning: '旧思考', content: '旧增量', done: false },
+    })
+    const reset = vi.spyOn(useAgentChatStore.getState(), 'newSession')
+    await useSessionStore.getState().login(gatewayWithSession({ login: async () => {} }), 'dev', 'dev-elysian')
+    expect(reset).not.toHaveBeenCalled()
+    expect(useAgentChatStore.getState()).toMatchObject({ session: null, messages: [], reasoning: {}, liveOutput: null })
+    await useAgentChatStore.getState().ensureSession()
+    expect(useAgentChatStore.getState().session).toMatchObject({ id: previous.id, draft: '下次继续编辑' })
+  })
+
+  it('登录期间旧探测不能覆盖状态，主动探测等写操作完成后退出', async () => {
+    useSessionStore.setState({ phase: 'anonymous', mode: 'real' })
+    const old = deferred<SessionStatus>()
+    const accepted = deferred<void>()
+    const status = vi.fn<SessionAdapter['status']>().mockReturnValue(old.promise)
+    const gateway = gatewayWithSession({ status, login: () => accepted.promise })
+    const initialProbe = useSessionStore.getState().probe(gateway)
+    const login = useSessionStore.getState().login(gateway, 'admin', 'secret')
+    const duringLogin = useSessionStore.getState().probe(gateway)
+    old.resolve(statusOf({ authenticated: false }))
+    await initialProbe
+    expect(status).toHaveBeenCalledTimes(1)
+    accepted.resolve()
+    await Promise.all([login, duringLogin])
+    expect(useSessionStore.getState().phase).toBe('authed')
+    expect(status).toHaveBeenCalledTimes(1)
+  })
+
+  it('登录后立即登出按顺序提交，迟到的登录成功不能回到已登录', async () => {
+    const accepted = deferred<void>()
+    const logout = vi.fn(async () => {})
+    const gateway = gatewayWithSession({ login: () => accepted.promise, logout })
+    const login = useSessionStore.getState().login(gateway, 'admin', 'secret')
+    const superseded = expect(login).rejects.toThrow('登录操作已被更新的会话操作替代')
+    const signingOut = useSessionStore.getState().logout(gateway)
+    expect(useSessionStore.getState().phase).toBe('anonymous')
+    expect(logout).not.toHaveBeenCalled()
+    accepted.resolve()
+    await Promise.all([superseded, signingOut])
+    expect(logout).toHaveBeenCalledOnce()
+    expect(useSessionStore.getState().phase).toBe('anonymous')
+  })
+
+  it('登录期间收到失效通知后，旧登录响应不能重新打开页面', async () => {
+    const accepted = deferred<void>()
+    const login = useSessionStore.getState().login(gatewayWithSession({ login: () => accepted.promise }), 'admin', 'secret')
+    const superseded = expect(login).rejects.toThrow('登录操作已被更新的会话操作替代')
+    useSessionStore.getState().expire()
+    accepted.resolve()
+    await superseded
+    expect(useSessionStore.getState().phase).toBe('anonymous')
+  })
+
   it('成功置 authed', async () => {
     const login = vi.fn(async () => {})
     await useSessionStore.getState().login(gatewayWithSession({ login }), 'admin', 'secret')
@@ -199,6 +387,41 @@ describe('sessionStore.login', () => {
 })
 
 describe('sessionStore.logout', () => {
+  it('登出立即关闭页面并清空公开内容，旧探测和新探测都不能回灌', async () => {
+    useSessionStore.setState({ phase: 'authed', mode: 'real' })
+    const accepted = deferred<void>()
+    const old = deferred<SessionStatus>()
+    const status = vi.fn<SessionAdapter['status']>().mockReturnValue(old.promise)
+    const gateway = gatewayWithSession({ status, logout: () => accepted.promise })
+    useAgentChatStore.setState({ reasoning: { run: '未登出前的思考' } })
+    const oldProbe = useSessionStore.getState().probe(gateway)
+    const signingOut = useSessionStore.getState().logout(gateway)
+    expect(useSessionStore.getState().phase).toBe('anonymous')
+    expect(useAgentChatStore.getState().reasoning).toEqual({})
+    const duringLogout = useSessionStore.getState().probe(gateway)
+    old.resolve(statusOf({ authenticated: true }))
+    await oldProbe
+    expect(useSessionStore.getState().phase).toBe('anonymous')
+    accepted.resolve()
+    await Promise.all([signingOut, duringLogout])
+    expect(status).toHaveBeenCalledTimes(1)
+    expect(useSessionStore.getState().phase).toBe('anonymous')
+  })
+
+  it('登出未返回时的新登录等待原请求，较旧的登出不覆盖新登录', async () => {
+    useSessionStore.setState({ phase: 'authed', mode: 'real' })
+    const accepted = deferred<void>()
+    const login = vi.fn(async () => {})
+    const gateway = gatewayWithSession({ logout: () => accepted.promise, login })
+    const signingOut = useSessionStore.getState().logout(gateway)
+    const signingIn = useSessionStore.getState().login(gateway, 'admin', 'secret')
+    expect(login).not.toHaveBeenCalled()
+    accepted.resolve()
+    await Promise.all([signingOut, signingIn])
+    expect(login).toHaveBeenCalledOnce()
+    expect(useSessionStore.getState().phase).toBe('authed')
+  })
+
   it('成功置 anonymous', async () => {
     useSessionStore.setState({ phase: 'authed', mode: 'real' })
     await useSessionStore.getState().logout(gatewayWithSession({ logout: async () => {} }))

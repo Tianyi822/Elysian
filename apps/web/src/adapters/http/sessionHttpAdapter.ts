@@ -1,6 +1,6 @@
 import { withRequestDeadline } from './requestDeadline'
 import type { PanelPasswordChangeInput, SessionAdapter, SessionListRow, SessionStatus } from '../../contracts/adapters'
-import { reportUnauthorized } from './unauthorized'
+import { fetchWithSession, reportUnauthorized } from './unauthorized'
 
 /*
  * Docker 运行时的会话 adapter（/api/auth）。登录/登出/探测三个端点全部用本文件私有
@@ -86,7 +86,7 @@ export function createHttpSessionAdapter(baseUrl = '/api/auth'): SessionAdapter 
     const query = params.size === 0 ? '' : `?${params.toString()}`
     let response: Response
     try {
-      response = await fetch(`${baseUrl}/session${query}`, { ...init, cache: 'no-store' })
+      response = await fetchWithSession(`${baseUrl}/session${query}`, { ...init, cache: 'no-store' })
     } catch {
       throw new Error('登录状态检查失败：面板服务不可达')
     }
@@ -103,14 +103,14 @@ export function createHttpSessionAdapter(baseUrl = '/api/auth'): SessionAdapter 
   })
 
   return {
-    /** 页面级权限占位：真实会话已通过即放行（单用户面板，粒度见 contracts/adapters.ts）。 */
-    canView: async () => (await status()).authenticated,
+    /** 单管理员的页面策略。登录由外层 RequireSession 统一检查，API 始终由服务端鉴权。 */
+    canView: async () => true,
 
     status,
 
     login(username, password) {
       return withRequestDeadline({ method: 'POST' }, async (bounded) => {
-        const timedFetch = (url: string, init?: RequestInit) => fetch(url, { ...init, signal: bounded.signal })
+        const timedFetch = (url: string, init?: RequestInit) => fetchWithSession(url, { ...init, signal: bounded.signal })
         let response: Response
         try {
           response = await timedFetch(`${baseUrl}/login`, {
@@ -131,7 +131,7 @@ export function createHttpSessionAdapter(baseUrl = '/api/auth'): SessionAdapter 
 
     logout() {
       return withRequestDeadline({ method: 'POST' }, async (bounded) => {
-        const timedFetch = (url: string, init?: RequestInit) => fetch(url, { ...init, signal: bounded.signal })
+        const timedFetch = (url: string, init?: RequestInit) => fetchWithSession(url, { ...init, signal: bounded.signal })
         let response: Response
         try {
           response = await timedFetch(`${baseUrl}/logout`, { method: 'POST' })
@@ -146,7 +146,7 @@ export function createHttpSessionAdapter(baseUrl = '/api/auth'): SessionAdapter 
 
     listSessions() {
       return withRequestDeadline(undefined, async (bounded) => {
-        const timedFetch = (url: string, init?: RequestInit) => fetch(url, { ...init, signal: bounded.signal })
+        const timedFetch = (url: string, init?: RequestInit) => fetchWithSession(url, { ...init, signal: bounded.signal })
         let response: Response
         try {
           response = await timedFetch(`${baseUrl}/sessions`, { cache: 'no-store' })
@@ -170,7 +170,7 @@ export function createHttpSessionAdapter(baseUrl = '/api/auth'): SessionAdapter 
 
     changePassword(input: PanelPasswordChangeInput) {
       return withRequestDeadline({ method: 'POST' }, async (bounded) => {
-        const timedFetch = (url: string, init?: RequestInit) => fetch(url, { ...init, signal: bounded.signal })
+        const timedFetch = (url: string, init?: RequestInit) => fetchWithSession(url, { ...init, signal: bounded.signal })
         let response: Response
         try {
           response = await timedFetch(`${baseUrl}/password`, {
@@ -196,7 +196,7 @@ export function createHttpSessionAdapter(baseUrl = '/api/auth'): SessionAdapter 
 
     logoutOtherSessions() {
       return withRequestDeadline({ method: 'POST' }, async (bounded) => {
-        const timedFetch = (url: string, init?: RequestInit) => fetch(url, { ...init, signal: bounded.signal })
+        const timedFetch = (url: string, init?: RequestInit) => fetchWithSession(url, { ...init, signal: bounded.signal })
         let response: Response
         try {
           // 无请求体（与 logout 同形态）。

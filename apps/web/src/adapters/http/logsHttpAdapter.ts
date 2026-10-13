@@ -25,7 +25,7 @@ import {
   PLATFORM_LOG_LEVELS,
 } from '@elysian/contracts'
 import type { LogsAdapter } from '../../contracts/adapters'
-import { reportUnauthorized } from './unauthorized'
+import { fetchWithSession, reportUnauthorized } from './unauthorized'
 
 /*
  * 浏览器侧同源平台日志（Docker 运行时）。服务端把运行日志与操作日志写进部署机器的
@@ -260,7 +260,7 @@ function requestJson(url: string, init?: RequestInit): Promise<unknown> {
 async function readJson(url: string, init?: RequestInit): Promise<unknown> {
   let response: Response
   try {
-    response = await fetch(url, init)
+    response = await fetchWithSession(url, init)
   } catch {
     throw new Error('日志请求网络失败')
   }

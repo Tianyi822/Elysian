@@ -2,7 +2,7 @@ import { withRequestDeadline } from './requestDeadline'
 import type { HostUser, HostUserLoginMethod, HostUserStatus } from '@elysian/contracts'
 import { HOST_USER_LOGIN_METHODS, HOST_USER_STATUSES } from '@elysian/contracts'
 import type { UserAdapter } from '../../contracts/adapters'
-import { reportUnauthorized } from './unauthorized'
+import { fetchWithSession, reportUnauthorized } from './unauthorized'
 
 /*
  * 浏览器侧同源主机账号管理（Docker 运行时）。useradd/usermod/userdel/gpasswd/chpasswd
@@ -91,7 +91,7 @@ function requestJson(url: string, init?: RequestInit): Promise<unknown> {
 async function readJson(url: string, init?: RequestInit): Promise<unknown> {
   let response: Response
   try {
-    response = await fetch(url, init)
+    response = await fetchWithSession(url, init)
   } catch {
     throw new Error('主机账号请求网络失败')
   }

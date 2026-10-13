@@ -1,6 +1,6 @@
 import { withRequestDeadline } from './requestDeadline'
 import { parsePlatformMemoryResponse, type PlatformMemorySample } from '../platformMemory/types'
-import { reportUnauthorized } from './unauthorized'
+import { fetchWithSession, reportUnauthorized } from './unauthorized'
 
 export type { PlatformMemorySample }
 
@@ -18,7 +18,7 @@ async function readPlatformMemory(
 ): Promise<PlatformMemorySample> {
   let response: Response
   try {
-    response = await fetch(url, { cache: 'no-store', signal })
+    response = await fetchWithSession(url, { cache: 'no-store', signal })
   } catch {
     throw new Error('平台内存采集失败')
   }
