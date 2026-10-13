@@ -98,7 +98,7 @@ describe('真实任务运行共享契约', () => {
     const endedAt = '2026-10-10T00:00:05Z'
     const seq = '9007199254740993'
     const model: AgentModelProfile = {
-      id: 'profile-1', revision: 2, name: '测试模型', baseUrl: 'https://model.example.test/v1',
+      id: 'profile-1', revision: 2, baseUrl: 'https://model.example.test/v1',
       model: 'test-model', provider: 'openai-compatible' as const, apiFormat: 'chat-completions' as const, contextTokens: 65536, outputTokens: 4096,
       capabilities: { text: true, tools: true, source: '用户配置' }, active: true, hasCredential: true,
     }
@@ -202,7 +202,7 @@ describe('真实任务运行共享契约', () => {
     expect(agentFixture.run.usage).not.toHaveProperty('cachedTokens')
     expect(agentFixture.modelRequest.response.usage).not.toHaveProperty('cachedTokens')
     const input: AgentModelProfileInput = {
-      name: '测试模型', baseUrl: 'https://model.example.test/v1', model: 'test-model',
+      baseUrl: 'https://model.example.test/v1', model: 'test-model',
       provider: 'openai-compatible' as const, apiFormat: 'chat-completions' as const, contextTokens: 65536, outputTokens: 4096, capabilities: { text: true, tools: true, source: '用户配置' }, active: true,
     }
     const clearCredential: AgentUpdateModelProfileInput = { ...input, expectedRevision: 2, credential: '' }
