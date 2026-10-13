@@ -137,6 +137,8 @@ export type AgentSwitchModelInput = { modelProfileId: string; modelRevision: num
 export type AgentInput = {
   requestId: string
   content: string
+  /** 本轮主循环的思考等级；省略时沿用模型默认，必须属于固定模型修订声明的档位。 */
+  reasoningLevel?: AgentModelReasoningLevel
   skills?: readonly AgentRevisionRef[]
   resources?: readonly AgentResourceRef[]
   prompts?: readonly AgentPromptRef[]
@@ -188,12 +190,16 @@ export type AgentModelUsage = {
   cachedTokens?: number
 }
 export type AgentModelResponse = {
+  /** 供应商显式返回的思考文本或公开摘要，与最终答复分开显示。 */
+  reasoning?: string
   content: string
   toolCalls?: readonly AgentModelToolCall[]
   finishReason: string
   usage: AgentModelUsage
 }
 export type AgentModelRequestRecord = {
+  /** 运行中的思考文本快照，不表示已确认模型响应。 */
+  reasoning?: string
   /** 本次请求随上下文送入的 Wiki 页面修订。 */
   wikiSources?: readonly AgentWikiRef[]
   /** 本次请求实际载入的资料条目（技能正文、MCP 资源等 ContextItem 的 ID）。 */
@@ -212,4 +218,12 @@ export type AgentModelRequestRecord = {
   estimatedTokens: number
   eventSeq?: string
   historySeq: string
+}
+/** 运行中可替换的展示快照；公开消息与历史仍以会话消息接口为准。 */
+export interface AgentChatOutput {
+  runId: string
+  responseId: string
+  reasoning: string
+  content: string
+  done: boolean
 }

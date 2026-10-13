@@ -39,7 +39,7 @@ func testProfile(base string) Profile {
 	}
 }
 
-func TestDeepSeekProviderDisablesThinkingForEveryRequest(t *testing.T) {
+func TestDeepSeekProviderDisablesThinkingWithoutDisplayCallback(t *testing.T) {
 	for _, choice := range []string{"", "auto", "required", "checkpoint", "workflow_finish"} {
 		t.Run("choice="+choice, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -104,7 +104,7 @@ func requireCode(t *testing.T, err error, code string) {
 	}
 }
 
-func TestCompleteUsesFunctionProtocolAndDiscardsPrivateReasoning(t *testing.T) {
+func TestCompleteUsesFunctionProtocolAndKeepsOnlyExplicitReasoning(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/chat/completions" || r.Header.Get("Authorization") != "Bearer test-secret" {
 			t.Errorf("模型请求路径、方法或鉴权错误")
@@ -128,7 +128,7 @@ func TestCompleteUsesFunctionProtocolAndDiscardsPrivateReasoning(t *testing.T) {
 		if len(request.Messages) != 4 || request.Messages[1].ToolCalls[0].Function.Arguments != `{}` || request.Messages[2].ToolCallID != "call-old" {
 			t.Errorf("历史函数调用与结果未完整转换")
 		}
-		io.WriteString(w, `{"choices":[{"index":0,"message":{"role":"assistant","content":null,"reasoning_content":"不能保存的私有推理","tool_calls":[{"id":"call-new","type":"function","function":{"name":"docker_containers_list","arguments":"{}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":123,"completion_tokens":12,"total_tokens":135,"prompt_tokens_details":{"cached_tokens":100}}}`)
+		io.WriteString(w, `{"choices":[{"index":0,"message":{"role":"assistant","content":null,"reasoning_content":"检查容器状态", "debug":"不可保存的调试内容", "encrypted_content":"不可保存的加密内容","tool_calls":[{"id":"call-new","type":"function","function":{"name":"docker_containers_list","arguments":"{}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":123,"completion_tokens":12,"total_tokens":135,"prompt_tokens_details":{"cached_tokens":100}}}`)
 	}))
 	defer server.Close()
 	p := testProfile(server.URL + "/v1")
@@ -148,7 +148,7 @@ func TestCompleteUsesFunctionProtocolAndDiscardsPrivateReasoning(t *testing.T) {
 		t.Fatalf("公开响应或实际用量错误：%+v", response)
 	}
 	encoded, _ := json.Marshal(response)
-	if strings.Contains(string(encoded), "私有推理") || strings.Contains(string(encoded), "reasoning") || strings.Contains(string(encoded), "test-secret") {
+	if response.Reasoning != "检查容器状态" || strings.Contains(string(encoded), "不可保存") || strings.Contains(string(encoded), "test-secret") {
 		t.Fatal("响应包含私有字段或凭据")
 	}
 }

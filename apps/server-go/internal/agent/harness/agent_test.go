@@ -658,12 +658,15 @@ func TestAgentChatCompletionsWireLoop(t *testing.T) {
 			ToolChoice json.RawMessage   `json:"tool_choice"`
 			Stream     bool              `json:"stream"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil || input.Stream {
-			t.Error("非流式请求格式错误")
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Error("模型请求格式错误")
 			w.WriteHeader(400)
 			return
 		}
 		index := requests.Add(1)
+		if input.Stream != (index < 3) {
+			t.Error("只有推理请求应开启流式展示")
+		}
 		message := map[string]any{"role": "assistant"}
 		reason := "stop"
 		switch index {
@@ -679,7 +682,8 @@ func TestAgentChatCompletionsWireLoop(t *testing.T) {
 				t.Error("工具提议与结果未完整重建")
 			}
 			message["content"] = "HTTP 模型闭环完成"
-			message["reasoning_content"] = "不得保存的供应商私有推理"
+			message["reasoning_content"] = "已读取镜像，准备结论"
+			message["debug"] = "不得保存的供应商内部诊断"
 		case 3:
 			if len(input.Tools) != 1 || !strings.Contains(string(input.ToolChoice), "store_working_memory") {
 				t.Error("记忆整理错误开放域工具")
@@ -714,7 +718,7 @@ func TestAgentChatCompletionsWireLoop(t *testing.T) {
 	}
 	records, _ := m.ModelRequests(context.Background(), run.ID, "", 50)
 	raw, _ := json.Marshal(records)
-	if strings.Contains(string(raw), "供应商私有推理") || strings.Contains(string(raw), secret) {
+	if len(records.Items) != 3 || records.Items[1].Response.Reasoning != "已读取镜像，准备结论" || strings.Contains(string(raw), "供应商内部诊断") || strings.Contains(string(raw), secret) {
 		t.Fatal("私有字段或凭据进入公开模型记录")
 	}
 }

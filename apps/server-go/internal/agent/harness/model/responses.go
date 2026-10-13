@@ -21,17 +21,20 @@ type responseTool struct {
 	Parameters  json.RawMessage `json:"parameters"`
 	Strict      bool            `json:"strict"`
 }
+type responsesReasoning struct {
+	Effort  string `json:"effort,omitempty"`
+	Summary string `json:"summary,omitempty"`
+}
+
 type responsesRequest struct {
 	Model           string              `json:"model"`
 	Input           []responseInputItem `json:"input"`
 	Tools           []responseTool      `json:"tools,omitempty"`
 	MaxOutputTokens int                 `json:"max_output_tokens"`
 	ToolChoice      any                 `json:"tool_choice,omitempty"`
-	Reasoning       *struct {
-		Effort string `json:"effort"`
-	} `json:"reasoning,omitempty"`
-	Store  bool `json:"store"`
-	Stream bool `json:"stream"`
+	Reasoning       *responsesReasoning `json:"reasoning,omitempty"`
+	Store           bool                `json:"store"`
+	Stream          bool                `json:"stream"`
 }
 
 func (responsesProtocol) prepare(p Profile, input Request) (preparedRequest, error) {
@@ -39,11 +42,18 @@ func (responsesProtocol) prepare(p Profile, input Request) (preparedRequest, err
 	if err != nil {
 		return preparedRequest{}, err
 	}
-	wire := responsesRequest{Model: p.Model, Input: []responseInputItem{}, MaxOutputTokens: input.MaxTokens}
+	wire := responsesRequest{Stream: input.OnReasoning != nil || input.OnContent != nil, Model: p.Model, Input: []responseInputItem{}, MaxOutputTokens: input.MaxTokens}
 	if p.Provider == ProviderDeepSeek {
-		wire.Reasoning = &struct {
-			Effort string `json:"effort"`
-		}{Effort: "none"}
+		wire.Reasoning = &responsesReasoning{Effort: "none"}
+	}
+	if input.OnReasoning != nil && len(p.Capabilities.ReasoningLevels) > 0 {
+		wire.Reasoning = &responsesReasoning{Summary: "auto"}
+	}
+	if input.ReasoningLevel != "" {
+		wire.Reasoning = &responsesReasoning{Effort: reasoningEffort(input.ReasoningLevel)}
+		if input.OnReasoning != nil && wire.Reasoning.Effort != "none" {
+			wire.Reasoning.Summary = "auto"
+		}
 	}
 	for _, t := range input.Tools {
 		wire.Tools = append(wire.Tools, responseTool{Type: "function", Name: t.Name, Description: t.Description, Parameters: t.Parameters, Strict: false})
@@ -91,7 +101,11 @@ func parseResponsesResponse(body []byte, names map[string]bool, choice string) (
 			CallID    string `json:"call_id"`
 			Name      string `json:"name"`
 			Arguments string `json:"arguments"`
-			Content   []struct {
+			Summary   []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"summary"`
+			Content []struct {
 				Type    string `json:"type"`
 				Text    string `json:"text"`
 				Refusal string `json:"refusal"`
@@ -112,7 +126,15 @@ func parseResponsesResponse(body []byte, names map[string]bool, choice string) (
 	response := Response{FinishReason: "stop"}
 	for _, item := range wire.Output {
 		switch item.Type {
-		case "reasoning": // 私有推理不进入公开记录；后续请求回传完整公开历史。
+		case "reasoning": // 只使用供应商公开摘要；不读取加密内容。
+			for _, part := range item.Summary {
+				if part.Type == "summary_text" {
+					if response.Reasoning != "" {
+						response.Reasoning += "\n"
+					}
+					response.Reasoning += part.Text
+				}
+			}
 		case "message":
 			if item.Role != "assistant" || (item.Status != "" && item.Status != "completed" && item.Status != "incomplete") {
 				return Response{}, invalidResponse()

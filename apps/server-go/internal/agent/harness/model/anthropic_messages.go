@@ -7,6 +7,7 @@ import (
 )
 
 type anthropicBlock struct {
+	Thinking  string          `json:"thinking,omitempty"`
 	Type      string          `json:"type"`
 	Text      string          `json:"text,omitempty"`
 	ID        string          `json:"id,omitempty"`
@@ -25,14 +26,15 @@ type anthropicTool struct {
 	InputSchema json.RawMessage `json:"input_schema"`
 }
 type anthropicRequest struct {
-	Model      string             `json:"model"`
-	MaxTokens  int                `json:"max_tokens"`
-	System     []anthropicBlock   `json:"system,omitempty"`
-	Messages   []anthropicMessage `json:"messages"`
-	Tools      []anthropicTool    `json:"tools,omitempty"`
-	ToolChoice any                `json:"tool_choice,omitempty"`
-	Thinking   wireThinking       `json:"thinking"`
-	Stream     bool               `json:"stream"`
+	OutputConfig map[string]string  `json:"output_config,omitempty"`
+	Model        string             `json:"model"`
+	MaxTokens    int                `json:"max_tokens"`
+	System       []anthropicBlock   `json:"system,omitempty"`
+	Messages     []anthropicMessage `json:"messages"`
+	Tools        []anthropicTool    `json:"tools,omitempty"`
+	ToolChoice   any                `json:"tool_choice,omitempty"`
+	Thinking     *wireThinking      `json:"thinking,omitempty"`
+	Stream       bool               `json:"stream"`
 }
 
 func (anthropicMessagesProtocol) prepare(p Profile, input Request) (preparedRequest, error) {
@@ -40,7 +42,21 @@ func (anthropicMessagesProtocol) prepare(p Profile, input Request) (preparedRequ
 	if err != nil {
 		return preparedRequest{}, err
 	}
-	wire := anthropicRequest{Model: p.Model, MaxTokens: input.MaxTokens, Messages: []anthropicMessage{}, Thinking: wireThinking{Type: "disabled"}}
+	wire := anthropicRequest{Stream: input.OnReasoning != nil || input.OnContent != nil, Model: p.Model, MaxTokens: input.MaxTokens, Messages: []anthropicMessage{}, Thinking: &wireThinking{Type: "disabled"}}
+	if input.OnReasoning != nil && (input.ToolChoice == "" || input.ToolChoice == "auto" || input.ToolChoice == "none") {
+		wire.Thinking = nil // 生成期间沿用服务默认，不指定供应商专属预算或等级。
+	}
+	if input.ReasoningLevel != "" {
+		if reasoningEffort(input.ReasoningLevel) == "none" {
+			wire.Thinking = &wireThinking{Type: "disabled"}
+		} else {
+			wire.OutputConfig = map[string]string{"effort": input.ReasoningLevel}
+			wire.Thinking = nil
+			if p.Provider == ProviderDeepSeek {
+				wire.Thinking = &wireThinking{Type: "enabled"}
+			}
+		}
+	}
 	for _, t := range input.Tools {
 		wire.Tools = append(wire.Tools, anthropicTool{Name: t.Name, Description: t.Description, InputSchema: t.Parameters})
 	}
@@ -118,7 +134,9 @@ func parseAnthropicResponse(body []byte, names map[string]bool, choice string) (
 			response.Content += block.Text
 		case "tool_use":
 			response.ToolCalls = append(response.ToolCalls, ToolCall{ID: block.ID, Name: block.Name, Arguments: block.Input})
-		case "thinking", "redacted_thinking": // 不返回或持久化私有推理。
+		case "thinking":
+			response.Reasoning += block.Thinking
+		case "redacted_thinking": // 不显示删节或加密内容。
 		default:
 			return Response{}, invalidResponse()
 		}

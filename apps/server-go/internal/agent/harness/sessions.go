@@ -289,6 +289,15 @@ func (m *Manager) ModelRequests(ctx context.Context, id, cursor string, limit in
 		return Page[ModelRequestRecord]{}, closedError()
 	}
 	page, err := m.store.modelRequests(ctx, id, cursor, limit)
+	if execution := m.executionLocked(id); err == nil && execution != nil && execution.agent != nil {
+		agent := execution.agent
+		for i := range page.Items {
+			if page.Items[i].ID == agent.reasoningRequestID && page.Items[i].Status == StateRunning {
+				page.Items[i].Reasoning = agent.reasoning
+				page.Items[i].Content = agent.content
+			}
+		}
+	}
 	return page, storageFailure(err)
 }
 
@@ -312,13 +321,14 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 		operation = "create-task"
 	}
 	raw, _ := json.Marshal(struct {
-		Operation string        `json:"operation"`
-		TargetID  string        `json:"targetId"`
-		Content   string        `json:"content"`
-		Skills    []RevisionRef `json:"skills"`
-		Resources []ResourceRef `json:"resources"`
-		Prompts   []PromptRef   `json:"prompts"`
-	}{operation, targetID, input.Content, input.Skills, input.Resources, input.Prompts})
+		Operation      string        `json:"operation"`
+		TargetID       string        `json:"targetId"`
+		Content        string        `json:"content"`
+		Skills         []RevisionRef `json:"skills"`
+		Resources      []ResourceRef `json:"resources"`
+		Prompts        []PromptRef   `json:"prompts"`
+		ReasoningLevel string        `json:"reasoningLevel,omitempty"`
+	}{operation, targetID, input.Content, input.Skills, input.Resources, input.Prompts, input.ReasoningLevel})
 	canonical := string(raw)
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -370,6 +380,9 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 	}
 	if !profile.Capabilities.Text || !profile.Capabilities.Tools {
 		return Run{}, false, bad("model-capability", "所选模型必须支持文本与工具调用")
+	}
+	if err = model.ValidateReasoningLevel(profile, input.ReasoningLevel); err != nil {
+		return Run{}, false, err
 	}
 	now := stamp(m.deps.Now())
 	if newTask {

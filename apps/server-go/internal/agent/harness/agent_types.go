@@ -36,11 +36,12 @@ type SwitchModelInput struct {
 }
 
 type AgentInput struct {
-	Skills    []RevisionRef `json:"skills,omitempty"`
-	Resources []ResourceRef `json:"resources,omitempty"`
-	Prompts   []PromptRef   `json:"prompts,omitempty"`
-	RequestID string        `json:"requestId"`
-	Content   string        `json:"content"`
+	ReasoningLevel string        `json:"reasoningLevel,omitempty"`
+	Skills         []RevisionRef `json:"skills,omitempty"`
+	Resources      []ResourceRef `json:"resources,omitempty"`
+	Prompts        []PromptRef   `json:"prompts,omitempty"`
+	RequestID      string        `json:"requestId"`
+	Content        string        `json:"content"`
 }
 
 // Message 只含公开用户输入和助手答复，不承载工具过程或工作记忆。
@@ -88,6 +89,9 @@ type WorkingMemory struct {
 }
 
 type ModelRequestRecord struct {
+	// Reasoning 是本次请求仍在生成的展示文本，不表示已确认响应。
+	Reasoning       string          `json:"reasoning,omitempty"`
+	Content         string          `json:"content,omitempty"`
 	WikiSources     []WikiRef       `json:"wikiSources,omitempty"`
 	ContextItemIDs  []string        `json:"contextItemIds,omitempty"`
 	ID              string          `json:"id"`

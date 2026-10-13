@@ -18,19 +18,22 @@ import (
 // agentExecution 只保存本次运行的控制状态；事实均先写入父进程数据库。
 // 字段由 Manager.mu 保护，外部操作串行推进。
 type agentExecution struct {
-	manager           *Manager
-	run               Run
-	busy              bool
-	pending           *ModelRequestRecord
-	pendingIndex      int
-	finalized         bool
-	finalAnswer       string
-	finalMemory       *WorkingMemory
-	stale             bool
-	contextItemIDs    []string
-	sharedWikiRefs    [][]WikiRef
-	inferenceWikiRefs []WikiRef
-	workflowOutput    *workflowAgentOutput
+	reasoningRequestID string
+	reasoning          string
+	content            string
+	manager            *Manager
+	run                Run
+	busy               bool
+	pending            *ModelRequestRecord
+	pendingIndex       int
+	finalized          bool
+	finalAnswer        string
+	finalMemory        *WorkingMemory
+	stale              bool
+	contextItemIDs     []string
+	sharedWikiRefs     [][]WikiRef
+	inferenceWikiRefs  []WikiRef
+	workflowOutput     *workflowAgentOutput
 }
 
 func (a *agentExecution) DriverVersion() int {
@@ -332,6 +335,9 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 		m.mu.Unlock()
 		return empty, bad("model-unavailable", "运行模型版本不存在")
 	}
+	if purpose == "inference" && run.Selection != nil {
+		request.ReasoningLevel = run.Selection.ReasoningLevel
+	}
 	profile, err := m.deps.Profiles.Resolve(run.Model.ID, run.Model.Revision, true)
 	if err != nil {
 		m.mu.Unlock()
@@ -385,9 +391,26 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 		m.mu.Unlock()
 		return empty, storageFailure(err)
 	}
-	m.mu.Unlock()
 	callCtx, cancel := context.WithTimeout(ctx, time.Duration(run.Limits.ModelTimeoutSeconds)*time.Second)
 	defer cancel()
+	if purpose == "inference" {
+		a.reasoningRequestID, a.reasoning, a.content = record.ID, "", ""
+		request.OnReasoning = func(delta string) {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			if callCtx.Err() == nil && !m.closed && m.executionLocked(run.ID) == execution && a.reasoningRequestID == record.ID && len(a.reasoning)+len(a.content)+len(delta) <= run.Limits.ModelResponseBytes {
+				a.reasoning += delta
+			}
+		}
+		request.OnContent = func(delta string) {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			if callCtx.Err() == nil && !m.closed && m.executionLocked(run.ID) == execution && a.reasoningRequestID == record.ID && len(a.reasoning)+len(a.content)+len(delta) <= run.Limits.ModelResponseBytes {
+				a.content += delta
+			}
+		}
+	}
+	m.mu.Unlock()
 	resultCh := make(chan modelOutcome, 1)
 	go func() {
 		var result modelOutcome
@@ -420,6 +443,9 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 	}
 	if callCtx.Err() != nil {
 		result.err = callCtx.Err()
+	}
+	if purpose != "inference" {
+		result.response.Reasoning = "" // 整理与 checkpoint 的内容不作为聊天思考公开。
 	}
 	record.EndedAt = stamp(m.deps.Now())
 	record.Status = StateSucceeded

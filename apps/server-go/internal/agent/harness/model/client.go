@@ -47,8 +47,14 @@ func (c *httpClient) Complete(ctx context.Context, p Profile, input Request) (Re
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	if input.OnReasoning != nil || input.OnContent != nil {
+		req.Header.Set("Accept", "text/event-stream, application/json")
+	}
 	for name, value := range prepared.headers {
 		req.Header.Set(name, value)
+	}
+	if input.OnReasoning != nil || input.OnContent != nil {
+		return c.stream(ctx, req, p.APIFormat, prepared.decode, input.OnReasoning, input.OnContent)
 	}
 	body, err := c.send(ctx, req)
 	if err != nil {

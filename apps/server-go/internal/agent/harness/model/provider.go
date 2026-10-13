@@ -41,6 +41,16 @@ func (chatCompletionsProtocol) prepare(p Profile, input Request) (preparedReques
 	}
 	if p.Provider == ProviderDeepSeek {
 		wire.Thinking = &wireThinking{Type: "disabled"}
+		if input.OnReasoning != nil && (input.ToolChoice == "" || input.ToolChoice == "auto" || input.ToolChoice == "none") {
+			wire.Thinking.Type = "enabled"
+		}
+		if input.ReasoningLevel != "" {
+			wire.Thinking.Type = "enabled"
+			if reasoningEffort(input.ReasoningLevel) == "none" {
+				wire.Thinking.Type = "disabled"
+				wire.ReasoningEffort = ""
+			}
+		}
 	}
 	return prepareWire(p, "/chat/completions", wire, false, func(body []byte) (Response, error) { return parseResponse(body, names, input.ToolChoice) })
 }

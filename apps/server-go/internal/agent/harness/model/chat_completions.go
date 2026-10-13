@@ -19,6 +19,7 @@ type wireCall struct {
 }
 
 type wireMessage struct {
+	Reasoning  string     `json:"reasoning_content,omitempty"`
 	Role       string     `json:"role"`
 	Content    string     `json:"content"`
 	ToolCalls  []wireCall `json:"tool_calls,omitempty"`
@@ -35,13 +36,14 @@ type wireTool struct {
 }
 
 type wireRequest struct {
-	Thinking   *wireThinking `json:"thinking,omitempty"`
-	Model      string        `json:"model"`
-	Messages   []wireMessage `json:"messages"`
-	Tools      []wireTool    `json:"tools,omitempty"`
-	MaxTokens  int           `json:"max_tokens"`
-	ToolChoice any           `json:"tool_choice,omitempty"`
-	Stream     bool          `json:"stream"`
+	ReasoningEffort string        `json:"reasoning_effort,omitempty"`
+	Thinking        *wireThinking `json:"thinking,omitempty"`
+	Model           string        `json:"model"`
+	Messages        []wireMessage `json:"messages"`
+	Tools           []wireTool    `json:"tools,omitempty"`
+	MaxTokens       int           `json:"max_tokens"`
+	ToolChoice      any           `json:"tool_choice,omitempty"`
+	Stream          bool          `json:"stream"`
 }
 
 type wireThinking struct {
@@ -53,7 +55,8 @@ func prepareRequest(p Profile, input Request) (wireRequest, map[string]bool, err
 	if err != nil {
 		return wireRequest{}, nil, err
 	}
-	request := wireRequest{Model: p.Model, MaxTokens: input.MaxTokens, Messages: make([]wireMessage, 0, len(input.Messages))}
+	request := wireRequest{Stream: input.OnReasoning != nil || input.OnContent != nil, Model: p.Model, MaxTokens: input.MaxTokens, Messages: make([]wireMessage, 0, len(input.Messages))}
+	request.ReasoningEffort = reasoningEffort(input.ReasoningLevel)
 	for _, tool := range input.Tools {
 		t := wireTool{Type: "function"}
 		t.Function.Name, t.Function.Description, t.Function.Parameters = tool.Name, tool.Description, tool.Parameters
@@ -68,6 +71,9 @@ func prepareRequest(p Profile, input Request) (wireRequest, map[string]bool, err
 	}
 	for _, msg := range input.Messages {
 		w := wireMessage{Role: msg.Role, Content: msg.Content, ToolCallID: msg.ToolCallID}
+		if p.Provider == ProviderDeepSeek && input.OnReasoning != nil && len(msg.ToolCalls) > 0 {
+			w.Reasoning = msg.Reasoning
+		}
 		for _, call := range msg.ToolCalls {
 			w.ToolCalls = append(w.ToolCalls, wireCall{ID: call.ID, Type: "function", Function: wireFunction{Name: call.Name, Arguments: string(call.Arguments)}})
 		}
@@ -82,12 +88,13 @@ func parseResponse(body []byte, names map[string]bool, choice string) (Response,
 		return Response{}, invalidResponse()
 	}
 	body = canonical
-	// 只声明公开标准字段；供应商私有 reasoning、debug 与错误正文不进入返回值。
+	// 仅接收明确的文本思考字段，不接收 debug、签名或错误正文。
 	var wire struct {
 		Choices []struct {
 			Index   int `json:"index"`
 			Message struct {
 				Role      string          `json:"role"`
+				Reasoning string          `json:"reasoning_content"`
 				Content   json.RawMessage `json:"content"`
 				ToolCalls []wireCall      `json:"tool_calls"`
 			} `json:"message"`
@@ -109,7 +116,7 @@ func parseResponse(body []byte, names map[string]bool, choice string) (Response,
 	if answer.Message.Role != "assistant" || len(answer.Message.ToolCalls) > maxToolCalls {
 		return Response{}, invalidResponse()
 	}
-	response := Response{FinishReason: answer.FinishReason}
+	response := Response{FinishReason: answer.FinishReason, Reasoning: answer.Message.Reasoning}
 	if len(answer.Message.Content) > 0 && string(answer.Message.Content) != "null" {
 		if json.Unmarshal(answer.Message.Content, &response.Content) != nil {
 			return Response{}, invalidResponse()

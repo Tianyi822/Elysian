@@ -4,6 +4,7 @@ import (
 	"elysian/server/internal/agent/jsonvalue"
 	"encoding/json"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -13,7 +14,25 @@ const maxToolCalls = 64
 
 var functionName = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 
+// 空值保留默认；显式值只能使用本轮固定模型修订声明的档位。
+func ValidateReasoningLevel(p Profile, level string) error {
+	if level != "" && !slices.Contains(p.Capabilities.ReasoningLevels, level) {
+		return problem(400, "unsupported-reasoning-level", "当前模型不支持所选思考等级，请重新选择")
+	}
+	return nil
+}
+
+func reasoningEffort(level string) string {
+	if level == "disabled" {
+		return "none"
+	}
+	return level
+}
+
 func validateRequest(p Profile, input Request) (map[string]bool, error) {
+	if err := ValidateReasoningLevel(p, input.ReasoningLevel); err != nil {
+		return nil, err
+	}
 	if !p.Capabilities.Text || (len(input.Tools) > 0 && !p.Capabilities.Tools) {
 		return nil, problem(400, "model-capability-unavailable", "所选模型不支持本次请求需要的能力")
 	}
@@ -47,7 +66,7 @@ func validateRequest(p Profile, input Request) (map[string]bool, error) {
 	}
 	pending, seen := make(map[string]bool), make(map[string]bool)
 	for _, msg := range input.Messages {
-		if !utf8.ValidString(msg.Content) || len(msg.ToolCalls) > maxToolCalls {
+		if !utf8.ValidString(msg.Content) || !utf8.ValidString(msg.Reasoning) || len(msg.ToolCalls) > maxToolCalls {
 			return nil, invalidRequest()
 		}
 		if msg.Role != "tool" && len(pending) > 0 {
@@ -102,7 +121,7 @@ func invalidResponse() *Error {
 
 // 所有协议都经同一公开响应校验，保证精确 JSON 参数及强制函数语义。
 func validateResponse(response Response, names map[string]bool, choice string) (Response, error) {
-	if !utf8.ValidString(response.Content) || len(response.ToolCalls) > maxToolCalls {
+	if !utf8.ValidString(response.Content) || !utf8.ValidString(response.Reasoning) || len(response.ToolCalls) > maxToolCalls {
 		return Response{}, invalidResponse()
 	}
 	switch response.FinishReason {

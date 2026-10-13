@@ -1,4 +1,4 @@
-// Package model 提供固定版本模型配置与非流式模型协议接缝。
+// Package model 提供固定版本模型配置与模型协议接缝。
 package model
 
 import (
@@ -123,6 +123,7 @@ type Input struct {
 }
 
 type Message struct {
+	Reasoning  string     `json:"reasoning,omitempty"`
 	Role       string     `json:"role"`
 	Content    string     `json:"content"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
@@ -142,6 +143,11 @@ type Tool struct {
 }
 
 type Request struct {
+	ReasoningLevel string
+	// OnReasoning 接收供应商显式返回的可展示思考文本增量，不用于派发工具。
+	OnReasoning func(string) `json:"-"`
+	// OnContent 只用于展示生成中的回答，不能作为已确认消息或工具执行依据。
+	OnContent func(string) `json:"-"`
 	Messages  []Message
 	Tools     []Tool
 	MaxTokens int
@@ -158,6 +164,7 @@ type Usage struct {
 }
 
 type Response struct {
+	Reasoning    string     `json:"reasoning,omitempty"`
 	Content      string     `json:"content"`
 	ToolCalls    []ToolCall `json:"toolCalls,omitempty"`
 	FinishReason string     `json:"finishReason"`

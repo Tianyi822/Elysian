@@ -133,6 +133,9 @@ func (a *agentExecution) contextFacts(ctx context.Context) (WorkingMemory, []fac
 			response := record.Response
 			group := factGroup{cursor: MemoryCursor{RunNumber: run.RunNumber, EventSeq: record.EventSeq}, refs: []EvidenceRef{{RunID: run.ID, EventSeq: record.EventSeq}}}
 			assistant := model.Message{Role: "assistant", Content: response.Content}
+			if run.ID == a.run.ID && run.Model != nil && run.Model.Provider == model.ProviderDeepSeek && run.Model.APIFormat == model.FormatChatCompletions && len(response.ToolCalls) > 0 {
+				assistant.Reasoning = response.Reasoning
+			}
 			var results []model.Message
 			for index, proposal := range response.ToolCalls {
 				// 不沿用供应商私有 continuation 字段；调用 ID 按已保存记录重新命名。
