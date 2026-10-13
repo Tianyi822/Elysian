@@ -33,12 +33,12 @@ const FormatAnthropicMessages = "anthropic-messages"
 const FormatResponses = "responses"
 
 // Profile 的修订不可修改；Credential 仅供父进程执行，不进入公开快照。
+// 模型只有 Model 这一个标识：它是上送供应商的模型 ID，也是界面显示与排序用的名字。
 type Profile struct {
 	Provider      string       `json:"provider"`
 	APIFormat     string       `json:"apiFormat"`
 	ID            string       `json:"id"`
 	Revision      int          `json:"revision"`
-	Name          string       `json:"name"`
 	BaseURL       string       `json:"baseUrl"`
 	Model         string       `json:"model"`
 	ContextTokens int          `json:"contextTokens"`
@@ -79,7 +79,6 @@ type Service struct {
 
 type ServiceModelInput struct {
 	ID            string       `json:"id,omitempty"`
-	Name          string       `json:"name"`
 	Model         string       `json:"model"`
 	ContextTokens int          `json:"contextTokens"`
 	OutputTokens  int          `json:"outputTokens"`
@@ -108,11 +107,10 @@ func (p Profile) Public() Profile {
 	return p
 }
 
-// Input 中省略 Credential 表示沿用旧值，显式空串表示清除；本地服务允许无凭据，携带凭据的明文 HTTP 仅限本机回环地址。
+// Input 中省略 Credential 表示沿用旧值；凭据是必填项，显式空串一律拒绝，携带凭据的明文 HTTP 仅限本机回环地址。
 type Input struct {
 	Provider      string       `json:"provider"`
 	APIFormat     string       `json:"apiFormat"`
-	Name          string       `json:"name"`
 	BaseURL       string       `json:"baseUrl"`
 	Model         string       `json:"model"`
 	ContextTokens int          `json:"contextTokens"`

@@ -34,8 +34,9 @@ func TestModelResponseRejectsDuplicateKeysAndKeepsLargeArguments(t *testing.T) {
 func testProfile(base string) Profile {
 	return Profile{
 		Provider: ProviderOpenAICompatible, APIFormat: FormatChatCompletions,
-		Name: "测试模型", BaseURL: base, Model: "test-model", ContextTokens: 8192, OutputTokens: 1024,
+		BaseURL: base, Model: "test-model", ContextTokens: 8192, OutputTokens: 1024,
 		Capabilities: Capabilities{Text: true, Tools: true, Source: "用户配置"}, Active: true,
+		Credential: "test-key", HasCredential: true,
 	}
 }
 

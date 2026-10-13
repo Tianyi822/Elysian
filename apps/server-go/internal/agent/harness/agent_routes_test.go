@@ -19,7 +19,7 @@ func sessionAPIManager(t *testing.T) (*Manager, model.Profile) {
 		t.Fatal(err)
 	}
 	secret := "profile-secret-not-in-response"
-	profile, err := profiles.Create(model.Input{Provider: model.ProviderOpenAICompatible, APIFormat: model.FormatChatCompletions, Name: "模型一", BaseURL: "https://models.invalid/v1", Model: "model-one", ContextTokens: 32000, OutputTokens: 4096, Capabilities: model.Capabilities{Text: true, Tools: true, Source: "manual"}, Active: true, Credential: &secret})
+	profile, err := profiles.Create(model.Input{Provider: model.ProviderOpenAICompatible, APIFormat: model.FormatChatCompletions, BaseURL: "https://models.invalid/v1", Model: "model-one", ContextTokens: 32000, OutputTokens: 4096, Capabilities: model.Capabilities{Text: true, Tools: true, Source: "manual"}, Active: true, Credential: &secret})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestAgentRoutesProfileRevisionsStayPinnedAndSwitchReportsImpact(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := `{"expectedRevision":1,"name":"模型二","baseUrl":"https://models.invalid/v1","model":"model-two","provider":"openai-compatible","apiFormat":"chat-completions","contextTokens":64000,"outputTokens":2048,"capabilities":{"text":true,"tools":true,"source":"manual"},"active":true}`
+	body := `{"expectedRevision":1,"baseUrl":"https://models.invalid/v1","model":"model-two","provider":"openai-compatible","apiFormat":"chat-completions","contextTokens":64000,"outputTokens":2048,"capabilities":{"text":true,"tools":true,"source":"manual"},"active":true}`
 	response := runtimeRouteRequest(handler, "PUT", "/model-profiles/"+profile.ID, body)
 	var updated model.Profile
 	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &updated) != nil || updated.Revision != 2 || strings.Contains(response.Body.String(), "profile-secret-not-in-response") {
@@ -151,7 +151,8 @@ func TestAgentRoutesRejectUntrustedFieldsAndUnsupportedModels(t *testing.T) {
 			t.Fatalf("请求守卫失败：%s %d %s", test.path, response.Code, response.Body.String())
 		}
 	}
-	unsupported, err := m.deps.Profiles.Create(model.Input{Provider: model.ProviderOpenAICompatible, APIFormat: model.FormatChatCompletions, Name: "只支持文本", BaseURL: "https://models.invalid/v1", Model: "text-only", ContextTokens: 32000, OutputTokens: 4096, Capabilities: model.Capabilities{Text: true, Tools: false, Source: "manual"}, Active: true})
+	routeKey := "route-test-key"
+	unsupported, err := m.deps.Profiles.Create(model.Input{Provider: model.ProviderOpenAICompatible, APIFormat: model.FormatChatCompletions, BaseURL: "https://models.invalid/v1", Model: "text-only", ContextTokens: 32000, OutputTokens: 4096, Capabilities: model.Capabilities{Text: true, Tools: false, Source: "manual"}, Active: true, Credential: &routeKey})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +210,7 @@ func TestAgentRoutesPinnedCapableRevisionSurvivesUnsupportedLatestRevision(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := model.Input{Provider: model.ProviderOpenAICompatible, APIFormat: model.FormatChatCompletions, Name: "最新只支持文本", BaseURL: profile.BaseURL, Model: "text-only", ContextTokens: 32000, OutputTokens: 4096, Capabilities: model.Capabilities{Text: true, Tools: false, Source: "manual"}, Active: true}
+	input := model.Input{Provider: model.ProviderOpenAICompatible, APIFormat: model.FormatChatCompletions, BaseURL: profile.BaseURL, Model: "text-only", ContextTokens: 32000, OutputTokens: 4096, Capabilities: model.Capabilities{Text: true, Tools: false, Source: "manual"}, Active: true}
 	if _, err = m.UpdateModelProfile(profile.ID, 1, input); err != nil {
 		t.Fatal(err)
 	}
@@ -236,8 +237,8 @@ func TestAgentModelServiceRoutesAtomicRevisionsAndCredentialRedaction(t *testing
 	handler := m.Router()
 	key := "fake-service-key"
 	input := model.ServiceInput{Name: "DeepSeek", Provider: model.ProviderDeepSeek, APIFormat: model.FormatAnthropicMessages, BaseURL: "https://api.deepseek.com/anthropic", Credential: &key, Active: true, Models: []model.ServiceModelInput{
-		{Name: "Flash", Model: "deepseek-flash", ContextTokens: 1000000, OutputTokens: 4096, Capabilities: model.Capabilities{Text: true, Tools: true, Source: "假服务"}, Enabled: true},
-		{Name: "Pro", Model: "deepseek-v4-pro", ContextTokens: 1000000, OutputTokens: 4096, Capabilities: model.Capabilities{Text: true, Tools: true, Source: "假服务"}, Enabled: true},
+		{Model: "deepseek-flash", ContextTokens: 1000000, OutputTokens: 4096, Capabilities: model.Capabilities{Text: true, Tools: true, Source: "假服务"}, Enabled: true},
+		{Model: "deepseek-v4-pro", ContextTokens: 1000000, OutputTokens: 4096, Capabilities: model.Capabilities{Text: true, Tools: true, Source: "假服务"}, Enabled: true},
 	}}
 	body, _ := json.Marshal(input)
 	response := runtimeRouteRequest(handler, "POST", "/model-services", string(body))

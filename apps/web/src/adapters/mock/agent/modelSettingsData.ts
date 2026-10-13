@@ -27,7 +27,7 @@ function seedModels(): void {
   modelRecords.push(
     {
       profile: {
-        id: 'mp-ely-main', revision: 1, name: '主力模型', baseUrl: 'https://api.openai.com/v1', model: 'gpt-5',
+        id: 'mp-ely-main', revision: 1, baseUrl: 'https://api.openai.com/v1', model: 'gpt-5',
         provider: 'openai-compatible' as const, apiFormat: 'chat-completions' as const, contextTokens: 128000, outputTokens: 4096, capabilities: { text: true, tools: true, source: '管理员配置' },
         active: true, hasCredential: true,
       },
@@ -35,7 +35,7 @@ function seedModels(): void {
     },
     {
       profile: {
-        id: 'mp-ely-main', revision: 2, name: '主力模型', baseUrl: 'https://api.openai.com/v1', model: 'gpt-5',
+        id: 'mp-ely-main', revision: 2, baseUrl: 'https://api.openai.com/v1', model: 'gpt-5',
         provider: 'openai-compatible' as const, apiFormat: 'chat-completions' as const, contextTokens: 160000, outputTokens: 8192, capabilities: { text: true, tools: true, source: '管理员配置' },
         active: true, hasCredential: true,
       },
@@ -43,7 +43,7 @@ function seedModels(): void {
     },
     {
       profile: {
-        id: 'mp-ely-main', revision: 3, name: '主力模型', baseUrl: 'https://api.openai.com/v1', model: 'gpt-5',
+        id: 'mp-ely-main', revision: 3, baseUrl: 'https://api.openai.com/v1', model: 'gpt-5',
         provider: 'openai-compatible' as const, apiFormat: 'chat-completions' as const, contextTokens: 200000, outputTokens: 8192, capabilities: { text: true, tools: true, source: '管理员配置' },
         active: true, hasCredential: true,
       },
@@ -51,15 +51,15 @@ function seedModels(): void {
     },
     {
       profile: {
-        id: 'mp-ollama-local', revision: 1, name: '本机 Ollama', baseUrl: 'http://127.0.0.1:11434/v1', model: 'qwen3:32b',
+        id: 'mp-ollama-local', revision: 1, baseUrl: 'http://127.0.0.1:11434/v1', model: 'qwen3:32b',
         provider: 'openai-compatible' as const, apiFormat: 'chat-completions' as const, contextTokens: 32768, outputTokens: 4096, capabilities: { text: true, tools: true, source: '本机探测' },
-        active: true, hasCredential: false,
+        active: true, hasCredential: true,
       },
-      credential: '',
+      credential,
     },
     {
       profile: {
-        id: 'mp-deepseek-backup', revision: 1, name: '备用 DeepSeek', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash',
+        id: 'mp-deepseek-backup', revision: 1, baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash',
         provider: 'deepseek', apiFormat: 'chat-completions' as const, contextTokens: 1048576, outputTokens: 393216, capabilities: getAgentModelPreset('deepseek', 'deepseek-flash')!.capabilities,
         active: true, hasCredential: true,
       },
@@ -67,7 +67,7 @@ function seedModels(): void {
     },
     {
       profile: {
-        id: 'mp-deepseek-backup', revision: 2, name: '备用 DeepSeek', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash',
+        id: 'mp-deepseek-backup', revision: 2, baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash',
         provider: 'deepseek', apiFormat: 'chat-completions' as const, contextTokens: 1048576, outputTokens: 393216, capabilities: getAgentModelPreset('deepseek', 'deepseek-flash')!.capabilities,
         active: false, hasCredential: true,
       },
@@ -92,12 +92,12 @@ function validateModelInput(input: AgentModelProfileInput, credential = input.cr
   if (input.provider !== 'openai-compatible' && input.provider !== 'deepseek') {
     throw new ModelSettingsMockError(400, 'invalid-profile', '模型供应商必须是 OpenAI 兼容接口或 DeepSeek')
   }
-  if (input.provider === 'deepseek' && input.active && credential.trim() === '') {
-    throw new ModelSettingsMockError(400, 'invalid-profile', '启用 DeepSeek 模型前请配置 API Key')
+  if (credential.trim() === '') {
+    throw new ModelSettingsMockError(400, 'invalid-profile', '请配置 API Key')
   }
-  if (!input.name.trim() || input.name.length > 120 || !input.baseUrl.trim() || input.baseUrl.length > 2048 ||
+  if (!input.baseUrl.trim() || input.baseUrl.length > 2048 ||
     !input.model.trim() || input.model.length > 200 || !input.capabilities.source.trim() || input.capabilities.source.length > 80) {
-    throw new ModelSettingsMockError(400, 'invalid-profile', '模型名称、服务地址、模型标识与能力来源必须是有效文本')
+    throw new ModelSettingsMockError(400, 'invalid-profile', '模型服务地址、模型标识与能力来源必须是有效文本')
   }
   let url: URL
   try {
@@ -122,7 +122,7 @@ function validateModelInput(input: AgentModelProfileInput, credential = input.cr
       throw new ModelSettingsMockError(400, 'invalid-profile', '模型凭据格式无效')
     }
     if (url.protocol === 'http:' && credential !== '' && !loopbackHost(url.hostname)) {
-      throw new ModelSettingsMockError(400, 'invalid-profile', 'HTTP 模型服务地址携带凭据时仅允许本机回环地址，请改用 HTTPS 或清除凭据')
+      throw new ModelSettingsMockError(400, 'invalid-profile', 'HTTP 模型服务地址携带凭据时仅允许本机回环地址，请改用 HTTPS')
     }
   }
 }
@@ -153,7 +153,7 @@ export function mockCreateModelProfile(input: AgentModelProfileInput): AgentMode
   const id = nextId('mp')
   const credential = input.credential ?? ''
   const profile: AgentModelProfile = {
-    id, revision: 1, name: input.name.trim(), baseUrl: input.baseUrl.trim().replace(/\/+$/, ''),
+    id, revision: 1, baseUrl: input.baseUrl.trim().replace(/\/+$/, ''),
     model: input.model.trim(), provider: input.provider, apiFormat: input.apiFormat, contextTokens: input.contextTokens, outputTokens: input.outputTokens,
     capabilities: { ...structuredClone(input.capabilities), source: input.capabilities.source.trim() },
     active: input.active, hasCredential: credential !== '',
@@ -177,7 +177,7 @@ export function mockUpdateModelProfile(id: string, input: AgentModelProfileInput
   const credential = input.credential === undefined ? current.credential : input.credential
   validateModelInput(input, credential)
   const profile: AgentModelProfile = {
-    id, revision: current.profile.revision + 1, name: input.name.trim(),
+    id, revision: current.profile.revision + 1,
     baseUrl: input.baseUrl.trim().replace(/\/+$/, ''), model: input.model.trim(),
     provider: input.provider, apiFormat: input.apiFormat, contextTokens: input.contextTokens, outputTokens: input.outputTokens,
     capabilities: { ...structuredClone(input.capabilities), source: input.capabilities.source.trim() },
@@ -192,7 +192,7 @@ export function mockListModelServices(): readonly AgentModelService[] {
   for (const profile of mockListModelProfiles()) {
     const ref = profile.service
     const id = ref?.id ?? profile.id
-    const service = groups.get(id) ?? { id, revision: ref?.revision ?? profile.revision, name: ref?.name ?? profile.name, provider: profile.provider, apiFormat: profile.apiFormat, baseUrl: profile.baseUrl, active: ref?.active ?? profile.active, hasCredential: profile.hasCredential, models: [] }
+    const service = groups.get(id) ?? { id, revision: ref?.revision ?? profile.revision, name: ref?.name ?? profile.model, provider: profile.provider, apiFormat: profile.apiFormat, baseUrl: profile.baseUrl, active: ref?.active ?? profile.active, hasCredential: profile.hasCredential, models: [] }
     groups.set(id, { ...service, models: [...service.models, { ...profile, enabled: ref?.enabled ?? profile.active }] })
   }
   return [...groups.values()]
@@ -217,7 +217,7 @@ export function mockSaveModelService(input: AgentModelServiceInput, id?: string,
   const revision = (old?.revision ?? 0) + 1
   const records = input.models.map(row => {
     const prior = old?.models.find(model => model.id === row.id)
-    const profile: AgentModelProfile = { id: row.id ?? nextId('mp'), revision: (prior?.revision ?? 0) + 1, name: row.name.trim(), model: row.model.trim(), baseUrl: input.baseUrl.trim().replace(/\/+$/, ''), provider: input.provider, apiFormat: input.apiFormat, contextTokens: row.contextTokens, outputTokens: row.outputTokens, capabilities: { ...structuredClone(row.capabilities), source: row.capabilities.source.trim() }, active: input.active && row.enabled, hasCredential: credential !== '', service: { id: serviceId, revision, name: input.name.trim(), active: input.active, enabled: row.enabled } }
+    const profile: AgentModelProfile = { id: row.id ?? nextId('mp'), revision: (prior?.revision ?? 0) + 1, model: row.model.trim(), baseUrl: input.baseUrl.trim().replace(/\/+$/, ''), provider: input.provider, apiFormat: input.apiFormat, contextTokens: row.contextTokens, outputTokens: row.outputTokens, capabilities: { ...structuredClone(row.capabilities), source: row.capabilities.source.trim() }, active: input.active && row.enabled, hasCredential: credential !== '', service: { id: serviceId, revision, name: input.name.trim(), active: input.active, enabled: row.enabled } }
     return { profile, credential }
   })
   const removed = (old?.models ?? []).filter(model => !seenIds.has(model.id)).map(model => ({ profile: { ...model, active: false, revision: model.revision + 1 }, credential: previous?.credential ?? '', removed: true }))

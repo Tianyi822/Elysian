@@ -35,7 +35,6 @@ export const WORKFLOW_LIMITS_FIXTURE = {
 export const WORKFLOW_MODEL_FIXTURE: AgentModelProfile = {
   id: 'model-primary',
   revision: 3,
-  name: '演示模型',
   baseUrl: 'https://model.example.internal/v1',
   model: 'demo-opus',
   provider: 'openai-compatible' as const, apiFormat: 'chat-completions' as const, contextTokens: 128_000,

@@ -94,7 +94,7 @@ func agentManager(t *testing.T, client agentTestClient, change func(*Deps)) (*Ma
 		t.Fatal(err)
 	}
 	secret := "test-only-secret-never-persist-in-runtime"
-	profile, err := profiles.Create(model.Input{Provider: model.ProviderOpenAICompatible, APIFormat: model.FormatChatCompletions, Name: "测试模型", BaseURL: "http://127.0.0.1:9/v1", Model: "test", ContextTokens: 65536, OutputTokens: 4096, Capabilities: model.Capabilities{Text: true, Tools: true, Source: "test"}, Active: true, Credential: &secret})
+	profile, err := profiles.Create(model.Input{Provider: model.ProviderOpenAICompatible, APIFormat: model.FormatChatCompletions, BaseURL: "http://127.0.0.1:9/v1", Model: "test", ContextTokens: 65536, OutputTokens: 4096, Capabilities: model.Capabilities{Text: true, Tools: true, Source: "test"}, Active: true, Credential: &secret})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +298,7 @@ func TestAgentBusyIdempotencyAndPinnedModel(t *testing.T) {
 		t.Fatalf("忙碌仍切换模型：%v", err)
 	}
 	profile, _ := m.deps.Profiles.Resolve(s.ModelProfileID, 1, true)
-	_, err = m.UpdateModelProfile(profile.ID, 1, model.Input{Provider: model.ProviderOpenAICompatible, APIFormat: model.FormatChatCompletions, Name: profile.Name, BaseURL: profile.BaseURL, Model: profile.Model, ContextTokens: profile.ContextTokens, OutputTokens: profile.OutputTokens, Capabilities: profile.Capabilities, Active: false})
+	_, err = m.UpdateModelProfile(profile.ID, 1, model.Input{Provider: model.ProviderOpenAICompatible, APIFormat: model.FormatChatCompletions, BaseURL: profile.BaseURL, Model: profile.Model, ContextTokens: profile.ContextTokens, OutputTokens: profile.OutputTokens, Capabilities: profile.Capabilities, Active: false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -460,7 +460,7 @@ func TestAgentPressureCheckpointAndSmallModelSwitch(t *testing.T) {
 		}
 	}
 	profile, _ := m.deps.Profiles.Resolve(s.ModelProfileID, 1, true)
-	revised, err := m.UpdateModelProfile(profile.ID, 1, model.Input{Provider: model.ProviderOpenAICompatible, APIFormat: model.FormatChatCompletions, Name: profile.Name, BaseURL: profile.BaseURL, Model: profile.Model, ContextTokens: 7500, OutputTokens: 512, Capabilities: profile.Capabilities, Active: true})
+	revised, err := m.UpdateModelProfile(profile.ID, 1, model.Input{Provider: model.ProviderOpenAICompatible, APIFormat: model.FormatChatCompletions, BaseURL: profile.BaseURL, Model: profile.Model, ContextTokens: 7500, OutputTokens: 512, Capabilities: profile.Capabilities, Active: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -575,7 +575,7 @@ func TestAgentTooSmallContextDoesNotSilentlyDropUncoveredHistory(t *testing.T) {
 		t.Fatal(got)
 	}
 	old, _ := m.deps.Profiles.Resolve(s.ModelProfileID, 1, true)
-	p, err := m.UpdateModelProfile(old.ID, 1, model.Input{Provider: model.ProviderOpenAICompatible, APIFormat: model.FormatChatCompletions, Name: old.Name, BaseURL: old.BaseURL, Model: old.Model, ContextTokens: 5000, OutputTokens: 256, Capabilities: old.Capabilities, Active: true})
+	p, err := m.UpdateModelProfile(old.ID, 1, model.Input{Provider: model.ProviderOpenAICompatible, APIFormat: model.FormatChatCompletions, BaseURL: old.BaseURL, Model: old.Model, ContextTokens: 5000, OutputTokens: 256, Capabilities: old.Capabilities, Active: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -703,7 +703,7 @@ func TestAgentChatCompletionsWireLoop(t *testing.T) {
 	defer server.Close()
 	m, _, _ := agentManager(t, nil, func(d *Deps) { d.ModelClient = model.NewClient(server.Client()) })
 	secret := "dedicated-wire-test"
-	profile, err := m.CreateModelProfile(model.Input{Provider: model.ProviderOpenAICompatible, APIFormat: model.FormatChatCompletions, Name: "专用 HTTP 验收模型", BaseURL: server.URL + "/v1", Model: "wire", ContextTokens: 65536, OutputTokens: 4096, Capabilities: model.Capabilities{Text: true, Tools: true, Source: "test"}, Active: true, Credential: &secret})
+	profile, err := m.CreateModelProfile(model.Input{Provider: model.ProviderOpenAICompatible, APIFormat: model.FormatChatCompletions, BaseURL: server.URL + "/v1", Model: "wire", ContextTokens: 65536, OutputTokens: 4096, Capabilities: model.Capabilities{Text: true, Tools: true, Source: "test"}, Active: true, Credential: &secret})
 	if err != nil {
 		t.Fatal(err)
 	}

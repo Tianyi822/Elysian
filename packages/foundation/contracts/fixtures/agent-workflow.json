@@ -65,7 +65,6 @@
     "model": {
       "id": "profile-1",
       "revision": 2,
-      "name": "测试模型",
       "baseUrl": "https://model.example.test/v1",
       "model": "test-model",
       "contextTokens": 65536,
@@ -181,7 +180,6 @@
     "model": {
       "id": "profile-1",
       "revision": 2,
-      "name": "测试模型",
       "baseUrl": "https://model.example.test/v1",
       "model": "test-model",
       "contextTokens": 65536,

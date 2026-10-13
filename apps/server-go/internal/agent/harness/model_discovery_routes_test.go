@@ -25,7 +25,7 @@ func TestDiscoverModelsRouteUsesDraftAndSavedCredentialWithoutWriting(t *testing
 	defer server.Close()
 	m.deps.ModelCatalog = model.NewCatalogClient(server.Client())
 	key := "saved-fake-key"
-	input := model.ServiceInput{Name: "DeepSeek", Provider: model.ProviderDeepSeek, APIFormat: model.FormatAnthropicMessages, BaseURL: server.URL + "/anthropic", Active: true, Credential: &key, Models: []model.ServiceModelInput{{Name: "Flash", Model: "deepseek-flash", ContextTokens: 1000000, OutputTokens: 4096, Capabilities: model.Capabilities{Text: true, Tools: true, Source: "测试"}, Enabled: true}}}
+	input := model.ServiceInput{Name: "DeepSeek", Provider: model.ProviderDeepSeek, APIFormat: model.FormatAnthropicMessages, BaseURL: server.URL + "/anthropic", Active: true, Credential: &key, Models: []model.ServiceModelInput{{Model: "deepseek-flash", ContextTokens: 1000000, OutputTokens: 4096, Capabilities: model.Capabilities{Text: true, Tools: true, Source: "测试"}, Enabled: true}}}
 	service, err := m.CreateModelService(input)
 	if err != nil {
 		t.Fatal(err)

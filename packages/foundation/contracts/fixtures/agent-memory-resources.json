@@ -100,7 +100,6 @@
     "model": {
       "id": "model-one",
       "revision": 1,
-      "name": "测试模型",
       "baseUrl": "https://model.example.test/v1",
       "model": "test",
       "contextTokens": 65536,

@@ -72,7 +72,7 @@ async function editMain(user: ReturnType<typeof userEvent.setup>) {
   await user.click(within(screen.getByText('gpt-5').closest('tr')!).getByRole('button', { name: /编辑/ }))
   return screen.getByRole('dialog')
 }
-const toInput = (service: Awaited<ReturnType<ModelSettingsMockAdapter['listModelServices']>>[number]) => ({ name: service.name, provider: service.provider, apiFormat: service.apiFormat, baseUrl: service.baseUrl, active: service.active, models: service.models.map(model => ({ id: model.id, name: model.name, model: model.model, contextTokens: model.contextTokens, outputTokens: model.outputTokens, capabilities: model.capabilities, enabled: model.enabled })) })
+const toInput = (service: Awaited<ReturnType<ModelSettingsMockAdapter['listModelServices']>>[number]) => ({ name: service.name, provider: service.provider, apiFormat: service.apiFormat, baseUrl: service.baseUrl, active: service.active, models: service.models.map(model => ({ id: model.id, model: model.model, contextTokens: model.contextTokens, outputTokens: model.outputTokens, capabilities: model.capabilities, enabled: model.enabled })) })
 
 describe('模型服务表单', () => {
   it('模型页不显示重复说明，刷新与新建操作同排且 DeepSeek 显示官方输出上限', async () => {
@@ -140,7 +140,7 @@ describe('模型服务表单', () => {
     await user.click(within(dialog).getByRole('button', { name: '创建模型配置' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(create).toHaveBeenCalledTimes(1)
-    expect(create).toHaveBeenCalledWith(expect.objectContaining({ apiFormat: 'responses', credential: 'fake-key', models: [expect.objectContaining({ model: 'custom-one', name: 'custom-one', enabled: true }), expect.objectContaining({ model: 'custom-two', name: 'custom-two', enabled: false })] }))
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ apiFormat: 'responses', credential: 'fake-key', models: [expect.objectContaining({ model: 'custom-one', enabled: true }), expect.objectContaining({ model: 'custom-two', enabled: false })] }))
     const services = await adapter.listModelServices()
     const saved = services.find(service => service.name === '测试服务')!
     expect(saved.models).toHaveLength(2)
@@ -212,7 +212,7 @@ describe('模型服务表单', () => {
     await user.click(screen.getByRole('menuitemradio', { name: 'Chat Completions (/chat/completions)' }))
     expect(within(dialog).getByLabelText('Base URL')).toHaveValue('https://proxy.example.com/v1')
     await user.click(within(dialog).getByRole('button', { name: '获取模型' }))
-    expect(within(dialog).getByRole('alert')).toHaveTextContent('获取 DeepSeek 模型前请配置 API Key')
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('获取模型前请先配置 API Key')
     expect(discover).not.toHaveBeenCalled()
     expect(create).not.toHaveBeenCalled()
     await user.type(within(dialog).getByLabelText('API Key'), 'fake-deepseek-key')
@@ -240,13 +240,13 @@ describe('模型服务表单', () => {
     expect(create).toHaveBeenCalledWith(expect.objectContaining({ provider: 'deepseek', models: [expect.objectContaining({ model: 'deepseek-flash', capabilities }), expect.objectContaining({ model: 'deepseek-v4-pro', capabilities })] }))
     expect(screen.queryByDisplayValue('fake-deepseek-key')).toBeNull()
   })
-  it('编辑沿用凭据获取，支持替换和清除；空目录与读取失败保留草稿', async () => {
+  it('编辑沿用凭据获取，支持替换与留空沿用；空目录与读取失败保留草稿', async () => {
     const adapter = new ModelSettingsMockAdapter()
     const discover = vi.spyOn(adapter, 'discoverModels').mockResolvedValueOnce([]).mockRejectedValueOnce(new Error('模型服务鉴权失败，请检查配置凭据')).mockResolvedValue([])
     const user = userEvent.setup()
     await renderReady('/settings', makePageGateway(adapter))
     const dialog = await editMain(user)
-    const service = (await adapter.listModelServices()).find(service => service.models.some(model => model.name === '主力模型'))!
+    const service = (await adapter.listModelServices()).find(service => service.models.some(model => model.model === 'gpt-5'))!
     await user.click(within(dialog).getByRole('button', { name: '获取模型' }))
     expect(discover.mock.calls[0]?.[0]).toEqual({ provider: service.provider, apiFormat: service.apiFormat, baseUrl: service.baseUrl, serviceId: service.id, expectedRevision: service.revision })
     expect(within(dialog).getByText('服务没有返回可用模型，可以手动添加。')).toBeDefined()
@@ -255,9 +255,9 @@ describe('模型服务表单', () => {
     expect(within(dialog).getByRole('alert')).toHaveTextContent('模型服务鉴权失败')
     expect(within(dialog).getByLabelText('API Key')).toHaveValue('fake-replacement')
     expect(discover.mock.calls[1]?.[0].credential).toBe('fake-replacement')
-    await user.click(within(dialog).getByRole('button', { name: '清除凭据' }))
+    await user.clear(within(dialog).getByLabelText('API Key'))
     await user.click(within(dialog).getByRole('button', { name: '获取模型' }))
-    expect(discover.mock.calls[2]?.[0].credential).toBe('')
+    expect(discover.mock.calls[2]?.[0]).not.toHaveProperty('credential')
   })
   it('获取期间阻止重复请求，连接信息改变后丢弃旧结果', async () => {
     const adapter = new ModelSettingsMockAdapter()
@@ -275,7 +275,7 @@ describe('模型服务表单', () => {
     await waitFor(() => expect(within(dialog).getByRole('button', { name: '获取模型' })).toBeEnabled())
     expect(within(dialog).queryByRole('region', { name: '可选模型' })).toBeNull()
   })
-  it('编辑服务保留、替换和清除共用凭据，并修改 API 格式', async () => {
+  it('编辑服务保留与替换共用凭据，留空保存不清除，并修改 API 格式', async () => {
     const adapter = new ModelSettingsMockAdapter()
     const update = vi.spyOn(adapter, 'updateModelService')
     const user = userEvent.setup()
@@ -293,13 +293,11 @@ describe('模型服务表单', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(update.mock.calls[1]?.[1].credential).toBe('fake-replacement')
     dialog = await editMain(user)
-    await user.click(within(dialog).getByRole('button', { name: '清除凭据' }))
-    await user.click(within(dialog).getByRole('button', { name: '撤销清除' }))
-    await user.click(within(dialog).getByRole('button', { name: '清除凭据' }))
+    await user.clear(within(dialog).getByLabelText('API Key'))
     await user.click(within(dialog).getByRole('button', { name: '保存模型配置' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    expect(update.mock.calls[2]?.[1].credential).toBe('')
-    expect(within(screen.getByText('gpt-5').closest('tr')!).getByText('未配置 API Key')).toBeDefined()
+    expect(update.mock.calls[2]?.[1]).not.toHaveProperty('credential')
+    expect(within(screen.getByText('gpt-5').closest('tr')!).getByText('已配置 API Key')).toBeDefined()
   })
   it('CAS 冲突保留服务与模型草稿，明确采用最新修订后再保存', async () => {
     const adapter = new ModelSettingsMockAdapter()

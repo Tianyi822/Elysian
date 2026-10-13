@@ -27,7 +27,7 @@ func TestAgentReasoningLevelPinnedToRunAndIdempotentInput(t *testing.T) {
 	}, nil)
 	ctx := context.Background()
 	credential := "test-only-key"
-	profile, err := m.CreateModelProfile(model.Input{Provider: model.ProviderDeepSeek, APIFormat: model.FormatChatCompletions, Name: "思考测试", BaseURL: "http://127.0.0.1:9", Model: "test", ContextTokens: 65536, OutputTokens: 4096, Capabilities: model.Capabilities{Text: true, Tools: true, ReasoningLevels: []string{"disabled", "low", "high"}, Source: "test"}, Active: true, Credential: &credential})
+	profile, err := m.CreateModelProfile(model.Input{Provider: model.ProviderDeepSeek, APIFormat: model.FormatChatCompletions, BaseURL: "http://127.0.0.1:9", Model: "test", ContextTokens: 65536, OutputTokens: 4096, Capabilities: model.Capabilities{Text: true, Tools: true, ReasoningLevels: []string{"disabled", "low", "high"}, Source: "test"}, Active: true, Credential: &credential})
 	if err != nil {
 		t.Fatal(err)
 	}

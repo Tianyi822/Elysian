@@ -71,8 +71,8 @@ func (s *Store) List() []Profile {
 		}
 	}
 	sort.Slice(result, func(i, j int) bool {
-		if result[i].Name != result[j].Name {
-			return result[i].Name < result[j].Name
+		if result[i].Model != result[j].Model {
+			return result[i].Model < result[j].Model
 		}
 		return result[i].ID < result[j].ID
 	})
@@ -167,8 +167,8 @@ func fromInput(in Input, oldCredential string) (Profile, error) {
 	p := Profile{
 		Provider:  in.Provider,
 		APIFormat: in.APIFormat,
-		Name:      strings.TrimSpace(in.Name), BaseURL: strings.TrimRight(strings.TrimSpace(in.BaseURL), "/"),
-		Model: strings.TrimSpace(in.Model), ContextTokens: in.ContextTokens, OutputTokens: in.OutputTokens,
+		BaseURL:   strings.TrimRight(strings.TrimSpace(in.BaseURL), "/"),
+		Model:     strings.TrimSpace(in.Model), ContextTokens: in.ContextTokens, OutputTokens: in.OutputTokens,
 		Capabilities: in.Capabilities.clone(), Active: in.Active, Credential: oldCredential,
 	}
 	if in.Credential != nil {
@@ -196,11 +196,11 @@ func validateProfile(p Profile) error {
 	if p.Provider != ProviderOpenAICompatible && p.Provider != ProviderDeepSeek {
 		return problem(400, "invalid-profile", "模型供应商必须是 OpenAI 兼容接口或 DeepSeek")
 	}
-	if p.Provider == ProviderDeepSeek && p.Active && strings.TrimSpace(p.Credential) == "" {
-		return problem(400, "invalid-profile", "启用 DeepSeek 模型前请配置 API Key")
+	if strings.TrimSpace(p.Credential) == "" {
+		return problem(400, "invalid-profile", "请配置 API Key")
 	}
-	if !cleanText(p.Name, 120) || !cleanText(p.Model, 200) || !cleanText(p.BaseURL, 2048) || !cleanText(p.Capabilities.Source, 80) {
-		return problem(400, "invalid-profile", "模型名称、服务地址、模型标识与能力来源必须是有效文本")
+	if !cleanText(p.Model, 200) || !cleanText(p.BaseURL, 2048) || !cleanText(p.Capabilities.Source, 80) {
+		return problem(400, "invalid-profile", "模型服务地址、模型标识与能力来源必须是有效文本")
 	}
 	u, err := url.Parse(p.BaseURL)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Opaque != "" {

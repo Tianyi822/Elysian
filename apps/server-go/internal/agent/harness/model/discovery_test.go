@@ -135,10 +135,8 @@ func TestDiscoveryCredentialStatesRevisionAndChangedAddress(t *testing.T) {
 	}
 	empty := ""
 	discovery.Credential = &empty
-	p, err = store.DiscoveryProfile(discovery)
-	if err != nil || p.Credential != "" {
-		t.Fatal("显式清除失败")
-	}
+	_, err = store.DiscoveryProfile(discovery)
+	requireCode(t, err, "invalid-profile")
 	discovery.ExpectedRevision++
 	_, err = store.DiscoveryProfile(discovery)
 	requireCode(t, err, "revision-conflict")

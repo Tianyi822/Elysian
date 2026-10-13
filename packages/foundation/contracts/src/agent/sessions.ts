@@ -30,13 +30,12 @@ export const AGENT_MODEL_API_FORMATS = [
 ] as const
 export type AgentModelAPIFormat = typeof AGENT_MODEL_API_FORMATS[number]['value']
 
-/** 公开的不可变模型修订，不包含 credential 字段。 */
+/** 公开的不可变模型修订，不包含 credential 字段；model 既是上送供应商的标识，也是界面显示名。 */
 export type AgentModelProfile = {
   provider: AgentModelProvider
   apiFormat: AgentModelAPIFormat
   id: string
   revision: number
-  name: string
   baseUrl: string
   model: string
   contextTokens: number
@@ -68,7 +67,6 @@ export type AgentModelServiceInput = {
   credential?: string
   models: readonly {
     id?: string
-    name: string
     model: string
     contextTokens: number
     outputTokens: number
@@ -97,7 +95,6 @@ export type AgentDiscoveredModel = {
 export type AgentModelProfileInput = {
   provider: AgentModelProvider
   apiFormat: AgentModelAPIFormat
-  name: string
   baseUrl: string
   model: string
   contextTokens: number

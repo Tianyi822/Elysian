@@ -3,7 +3,7 @@ import type { AgentInput, AgentMessage, AgentModelProfile, AgentSession } from '
 import type { AgentChatRun, AgentConversationAdapter } from '../contracts/agentChat'
 
 export const chatTestModel: AgentModelProfile = {
-  id: 'model-1', revision: 1, name: '测试模型', model: 'test-model', baseUrl: 'https://model.invalid/v1',
+  id: 'model-1', revision: 1, model: 'test-model', baseUrl: 'https://model.invalid/v1',
   provider: 'openai-compatible', apiFormat: 'chat-completions', contextTokens: 32768, outputTokens: 4096,
   capabilities: { text: true, tools: true, source: 'manual', reasoningLevels: ['disabled', 'low', 'high', 'max'] }, active: true, hasCredential: true,
 }

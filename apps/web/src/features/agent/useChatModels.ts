@@ -4,7 +4,6 @@ import { useGateway } from '../../adapters/GatewayProvider'
 
 export type ChatModelOption = {
   id: string
-  name: string
   model: string
   serviceName: string
   profile: AgentModelProfile
@@ -53,7 +52,6 @@ export function useChatModels(): ChatModelsState & { reload(): void } {
       const models = services.filter(service => service.active).flatMap(service =>
         service.models.filter(profile => profile.active && profile.enabled && profile.capabilities.text && profile.capabilities.tools).map(profile => ({
           id: profile.id,
-          name: profile.name,
           model: profile.model,
           serviceName: service.name,
           profile,

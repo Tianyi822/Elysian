@@ -32,7 +32,8 @@ func (s *Store) servicesLocked() []Service {
 		if p.Removed {
 			continue
 		}
-		id, revision, name, active, enabled := p.ID, p.Revision, p.Name, p.Active, p.Active
+		// 独立 profile 没有自己的服务记录，用模型标识合成服务名。
+		id, revision, name, active, enabled := p.ID, p.Revision, p.Model, p.Active, p.Active
 		if p.Service != nil {
 			id, revision, name, active, enabled = p.Service.ID, p.Service.Revision, p.Service.Name, p.Service.Active, p.Service.Enabled
 		}
@@ -46,8 +47,8 @@ func (s *Store) servicesLocked() []Service {
 	result := make([]Service, 0, len(groups))
 	for _, group := range groups {
 		sort.Slice(group.Models, func(i, j int) bool {
-			if group.Models[i].Name != group.Models[j].Name {
-				return group.Models[i].Name < group.Models[j].Name
+			if group.Models[i].Model != group.Models[j].Model {
+				return group.Models[i].Model < group.Models[j].Model
 			}
 			return group.Models[i].ID < group.Models[j].ID
 		})
@@ -108,9 +109,9 @@ func (s *Store) saveServiceLocked(id string, revision int, input ServiceInput, o
 	if input.Credential != nil {
 		credential = *input.Credential
 	}
-	// 服务开启时即需要有效 DeepSeek 凭据，与每个模型的开关无关。
-	if input.Provider == ProviderDeepSeek && input.Active && strings.TrimSpace(credential) == "" {
-		return Service{}, problem(400, "invalid-profile", "启用 DeepSeek 服务前请配置 API Key")
+	// 凭据是服务级必填项，与供应商和每个模型的开关无关。
+	if strings.TrimSpace(credential) == "" {
+		return Service{}, problem(400, "invalid-profile", "请为该服务配置 API Key")
 	}
 	records := make([]Profile, 0, len(input.Models)+len(oldModels))
 	result := Service{ID: id, Revision: revision, Name: name, Provider: input.Provider, APIFormat: input.APIFormat, Active: input.Active, HasCredential: credential != "", Models: []ServiceModel{}}
@@ -125,7 +126,7 @@ func (s *Store) saveServiceLocked(id string, revision int, input ServiceInput, o
 		if row.ID != "" && (!exists || seenIDs[row.ID]) {
 			return Service{}, problem(400, "invalid-service", "模型编号不属于当前服务或重复")
 		}
-		profile, err := fromInput(Input{Provider: input.Provider, APIFormat: input.APIFormat, BaseURL: input.BaseURL, Name: row.Name, Model: modelName, ContextTokens: row.ContextTokens, OutputTokens: row.OutputTokens, Capabilities: row.Capabilities, Active: input.Active && row.Enabled}, credential)
+		profile, err := fromInput(Input{Provider: input.Provider, APIFormat: input.APIFormat, BaseURL: input.BaseURL, Model: modelName, ContextTokens: row.ContextTokens, OutputTokens: row.OutputTokens, Capabilities: row.Capabilities, Active: input.Active && row.Enabled}, credential)
 		if err != nil {
 			return Service{}, err
 		}

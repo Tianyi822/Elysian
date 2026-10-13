@@ -7,7 +7,7 @@ import { createMockGateway } from '../../adapters/mock/gateway'
 import { useChatModels } from './useChatModels'
 
 const profile: AgentModelProfile & { enabled: boolean } = {
-  id: 'text-model', revision: 1, name: '文本模型', model: 'text-v1',
+  id: 'text-model', revision: 1, model: 'text-v1',
   provider: 'openai-compatible', apiFormat: 'chat-completions', baseUrl: 'https://example.test/v1',
   contextTokens: 32000, outputTokens: 4096, active: true, enabled: true, hasCredential: false,
   capabilities: { text: true, tools: true, source: '测试', reasoningLevels: ['low', 'medium', 'high'] },

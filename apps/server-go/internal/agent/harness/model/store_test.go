@@ -11,7 +11,7 @@ import (
 
 func profileInput() Input {
 	secret := "stored-test-secret"
-	return Input{Provider: ProviderOpenAICompatible, APIFormat: FormatChatCompletions, Name: "本地模型", BaseURL: "http://127.0.0.1:11434/v1/", Model: "test-model", ContextTokens: 8192, OutputTokens: 1024, Capabilities: Capabilities{Text: true, Tools: true, Source: "用户配置"}, Active: true, Credential: &secret}
+	return Input{Provider: ProviderOpenAICompatible, APIFormat: FormatChatCompletions, BaseURL: "http://127.0.0.1:11434/v1/", Model: "test-model", ContextTokens: 8192, OutputTokens: 1024, Capabilities: Capabilities{Text: true, Tools: true, Source: "用户配置"}, Active: true, Credential: &secret}
 }
 
 func TestProviderRevisionAndCredentialValidation(t *testing.T) {
@@ -41,9 +41,8 @@ func TestProviderRevisionAndCredentialValidation(t *testing.T) {
 	_, err = store.Update(created.ID, 2, in)
 	requireCode(t, err, "invalid-profile")
 	in.Active = false
-	if _, err = store.Update(created.ID, 2, in); err != nil {
-		t.Fatal(err)
-	}
+	_, err = store.Update(created.ID, 2, in)
+	requireCode(t, err, "invalid-profile")
 	in.Provider = "unknown"
 	_, err = store.Create(in)
 	requireCode(t, err, "invalid-profile")
@@ -74,13 +73,13 @@ func TestProfilesKeepImmutableRevisionsAndWriteOnlyCredentials(t *testing.T) {
 		t.Fatalf("凭据文件权限错误：%v", err)
 	}
 	input := profileInput()
-	input.Name, input.Credential = "更改后名称", nil
+	input.ContextTokens, input.Credential = 16384, nil
 	updated, err := store.Update(created.ID, 1, input)
 	if err != nil || updated.Revision != 2 {
 		t.Fatalf("新增修订失败：%+v %v", updated, err)
 	}
 	old, err := store.Resolve(created.ID, 1, false)
-	if err != nil || old.Name != "本地模型" || old.Credential != "stored-test-secret" {
+	if err != nil || old.ContextTokens != 8192 || old.Credential != "stored-test-secret" {
 		t.Fatal("旧修订被修改或凭据丢失")
 	}
 	current, _ := store.Resolve(created.ID, 2, false)
@@ -124,13 +123,11 @@ func TestDisabledProfileBlocksNewRunsButResolvesAcceptedRevision(t *testing.T) {
 	}
 	empty := ""
 	input.Credential = &empty
-	updated, err := store.Update(created.ID, 2, input)
-	if err != nil || updated.HasCredential {
-		t.Fatal("显式空凭据必须清除")
-	}
-	old, _ := store.Resolve(created.ID, 1, true)
-	if old.Credential == "" {
-		t.Fatal("清除新版本凭据不能改变旧版本")
+	_, err = store.Update(created.ID, 2, input)
+	requireCode(t, err, "invalid-profile")
+	kept, err := store.Resolve(created.ID, 1, true)
+	if err != nil || kept.Credential == "" {
+		t.Fatal("被拒绝的空凭据更新不得清掉已存凭据")
 	}
 }
 
@@ -201,7 +198,7 @@ func TestProfilesRejectUnsafeURLsAndCorruptStorageWithoutSecretInErrors(t *testi
 	}
 }
 
-func TestProfilesRejectSymlinkAndAllowCredentiallessLocalService(t *testing.T) {
+func TestProfilesRejectSymlinkAndCredentiallessService(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(root, "target.json")
 	if err := os.WriteFile(target, []byte(`{"version":1,"profiles":[]}`), 0600); err != nil {
@@ -219,8 +216,6 @@ func TestProfilesRejectSymlinkAndAllowCredentiallessLocalService(t *testing.T) {
 	}
 	input := profileInput()
 	input.Credential = nil
-	created, err := store.Create(input)
-	if err != nil || created.HasCredential {
-		t.Fatalf("本地无凭据服务应可配置：%v", err)
-	}
+	_, err = store.Create(input)
+	requireCode(t, err, "invalid-profile")
 }

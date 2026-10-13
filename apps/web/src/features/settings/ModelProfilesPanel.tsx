@@ -15,7 +15,7 @@ import { SuggestionInput } from '../../components/SuggestionInput'
 import { ScrollArea } from '../../components/ScrollArea'
 import { RefreshButton } from '../../components/RefreshState'
 import { ModelAdvancedFields } from './ModelAdvancedFields'
-import { blankModel, discoveredModelDraft, modelDraftDisplayName, modelPresetDraft, savedModelDraft, type DraftModel } from './modelDraft'
+import { blankModel, discoveredModelDraft, modelPresetDraft, savedModelDraft, type DraftModel } from './modelDraft'
 
 const formatTokens = (value: number) => value >= 1024 * 1024 ? `${Number((value / (1024 * 1024)).toFixed(2))}M` : value >= 1024 ? `${Math.round(value / 1024)}k` : String(value)
 const iconButton = 'inline-flex size-8 shrink-0 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-40'
@@ -73,7 +73,6 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
   const [name, setName] = useState(service?.name ?? '')
   const [baseUrl, setBaseUrl] = useState(service?.baseUrl ?? '')
   const [credential, setCredential] = useState('')
-  const [clear, setClear] = useState(false)
   const [showCredential, setShowCredential] = useState(false)
   const [models, setModels] = useState<DraftModel[]>(() => service?.models.map(savedModelDraft) ?? [])
   const [expanded, setExpanded] = useState<string>()
@@ -87,16 +86,16 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
   useEffect(() => {
     setCatalog(undefined); setCatalogError(undefined); setCatalogSearch(''); setSelectedModels([]); setFetchingModels(false)
     return () => { discoveryRequest.current?.abort(); discoveryRequest.current = undefined }
-  }, [provider, apiFormat, baseUrl, credential, clear, revision])
+  }, [provider, apiFormat, baseUrl, credential, revision])
   const discoverModels = async () => {
     if (discoveryRequest.current) return
     if (!baseUrl.trim()) { setCatalogError('请先填写 Base URL'); return }
-    if (provider === 'deepseek' && (clear || !(credential.trim() || service?.hasCredential))) { setCatalogError('获取 DeepSeek 模型前请配置 API Key'); return }
+    if (!(credential.trim() || service?.hasCredential)) { setCatalogError('获取模型前请先配置 API Key'); return }
     const controller = new AbortController()
     discoveryRequest.current = controller
     setFetchingModels(true); setCatalogError(undefined)
     try {
-      const rows = await gateway.modelSettings.discoverModels({ provider, apiFormat, baseUrl, ...(clear ? { credential: '' } : credential ? { credential } : {}), ...(service ? { serviceId: service.id, expectedRevision: revision } : {}) }, controller.signal)
+      const rows = await gateway.modelSettings.discoverModels({ provider, apiFormat, baseUrl, ...(credential ? { credential } : {}), ...(service ? { serviceId: service.id, expectedRevision: revision } : {}) }, controller.signal)
       if (discoveryRequest.current === controller) { setCatalog(rows); setSelectedModels([]) }
     } catch (error) {
       if (discoveryRequest.current === controller && !controller.signal.aborted) {
@@ -126,10 +125,9 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
       apiFormat,
       baseUrl,
       active: service?.active ?? true,
-      ...(clear ? { credential: '' } : credential ? { credential } : {}),
+      ...(credential ? { credential } : {}),
       models: models.map(row => ({
         ...(row.id ? { id: row.id } : {}),
-        name: modelDraftDisplayName(row),
         model: row.model,
         contextTokens: Number(row.contextTokens),
         outputTokens: Number(row.outputTokens),
@@ -148,7 +146,7 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
         enabled: row.enabled,
       })),
     }
-    if (provider === 'deepseek' && input.active && (clear || !(credential ? credential.trim() : service?.hasCredential))) { setError('启用 DeepSeek 服务前请配置 API Key'); return }
+    if (!(credential.trim() || service?.hasCredential)) { setError('请配置 API Key'); return }
     for (const row of input.models) { const invalid = validateModelInput({ ...input, ...row, active: input.active && row.enabled }, service?.hasCredential); if (invalid) { setError(invalid); return } }
     if (new Set(input.models.map(row => row.model.trim())).size !== models.length) { setError('同一服务不能重复配置相同模型 ID'); return }
     setError(undefined)
@@ -166,8 +164,8 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
             {provider === 'openai-compatible' && <div><label htmlFor="agent-service-name" className="sr-only">名称</label><input id="agent-service-name" required maxLength={120} placeholder="服务名称" value={name} onChange={event => setName(event.target.value)} className={`${CTL_FIELD} h-9 w-full font-semibold`} /></div>}
             <Field label="Base URL" id="agent-model-baseurl"><input id="agent-model-baseurl" required value={baseUrl} onChange={event => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" className={`${CTL_FIELD} h-9 w-full font-mono text-xs`} /></Field>
             <Field label="API 格式" id="agent-api-format"><SelectDropdown id="agent-api-format" ariaLabel="API 格式" value={apiFormat} onSelect={selectFormat} fullWidth disabled={submitting} items={AGENT_MODEL_API_FORMATS} /></Field>
-            <Field label="API Key" id="agent-model-credential"><div className="relative"><input id="agent-model-credential" type={showCredential ? 'text' : 'password'} value={credential} onChange={event => { setCredential(event.target.value); setClear(false) }} autoComplete="new-password" placeholder={service?.hasCredential ? '留空沿用现有 API Key' : provider === 'deepseek' ? '输入 DeepSeek API Key' : '本机无凭据服务可留空'} className={`${CTL_FIELD} h-9 w-full pr-10 font-mono text-xs`} /><button type="button" aria-label={showCredential ? '隐藏 API Key' : '显示输入的 API Key'} onClick={() => setShowCredential(value => !value)} className={`${iconButton} absolute right-1 top-0.5`}>{showCredential ? <EyeOff aria-hidden size={14} /> : <Eye aria-hidden size={14} />}</button></div>
-              <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2 text-xs text-fg-subtle"><span>{clear ? '保存后清除现有 API Key。' : service?.hasCredential ? '留空沿用，输入新值替换；已有凭据不回显。' : provider === 'deepseek' ? '启用 DeepSeek 时需要 API Key。' : '远端服务通常需要 API Key。'}</span>{service?.hasCredential && <button type="button" aria-pressed={clear} onClick={() => { setClear(value => !value); setCredential('') }} className="rounded px-1 py-1 text-fg-muted underline decoration-line underline-offset-4 hover:text-fg">{clear ? '撤销清除' : '清除凭据'}</button>}</div>
+            <Field label="API Key" id="agent-model-credential"><div className="relative"><input id="agent-model-credential" type={showCredential ? 'text' : 'password'} value={credential} onChange={event => setCredential(event.target.value)} autoComplete="new-password" placeholder={service?.hasCredential ? '留空沿用现有 API Key' : '输入 API Key'} className={`${CTL_FIELD} h-9 w-full pr-10 font-mono text-xs`} /><button type="button" aria-label={showCredential ? '隐藏 API Key' : '显示输入的 API Key'} onClick={() => setShowCredential(value => !value)} className={`${iconButton} absolute right-1 top-0.5`}>{showCredential ? <EyeOff aria-hidden size={14} /> : <Eye aria-hidden size={14} />}</button></div>
+              <div className="mt-1.5 text-xs text-fg-subtle">{service?.hasCredential ? '必填；留空沿用现有 API Key，输入新值则替换，已有凭据不回显。' : '必填；保存后只写入不回显。'}</div>
             </Field>
             <div className="flex flex-col gap-2">
               <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-medium text-fg-muted">模型列表 <span className="text-fg-subtle">({models.length})</span></span><div className="flex flex-wrap items-center gap-2"><button type="button" disabled={fetchingModels} onClick={() => void discoverModels()} className={CTL_SECONDARY}><span className="inline-flex items-center gap-1">{fetchingModels ? <Loader2 aria-hidden size={13} className="animate-spin motion-reduce:animate-none" /> : <Download aria-hidden size={13} />}{fetchingModels ? '获取中…' : '获取模型'}</span></button><button type="button" disabled={models.length >= 64} onClick={() => { const row = blankModel(); setModels(rows => [...rows, row]); setExpanded(row.key); setError(undefined) }} className={CTL_SECONDARY}><span className="inline-flex items-center gap-1"><Plus aria-hidden size={13} />添加模型</span></button></div></div>
@@ -188,7 +186,7 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
               {models.map((row, index) => <div key={row.key} className="rounded-lg border border-line">
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2"><span className="min-w-0 basis-full truncate font-mono text-sm sm:flex-1 sm:basis-auto" title={row.model}>{row.model || `新模型 ${index + 1}`}</span><span className="rounded bg-surface-raised px-1.5 py-0.5 text-[11px] tabular-nums text-fg-muted">{formatTokens(Number(row.contextTokens))}</span><StatusTag label={row.image || row.video ? '多模态' : '文本'} tone="neutral" /><div className="ml-auto flex items-center gap-1"><button type="button" aria-label={`编辑模型 ${index + 1}`} aria-expanded={expanded === row.key} aria-controls={`model-fields-${row.key}`} onClick={() => setExpanded(value => value === row.key ? undefined : row.key)} className={iconButton}><Pencil aria-hidden size={13} /></button><button type="button" aria-label={`移除模型 ${index + 1}`} disabled={Boolean(service) && models.length === 1} onClick={() => setModels(rows => rows.filter(model => model.key !== row.key))} className={iconButton}><Trash2 aria-hidden size={13} /></button><Toggle label={`启用模型 ${index + 1}`} checked={row.enabled} onChange={value => patch(row.key, { enabled: value })} /></div></div>
                 {expanded === row.key && <fieldset id={`model-fields-${row.key}`} className="grid grid-cols-1 gap-4 border-t border-line p-3 sm:grid-cols-2"><legend className="sr-only">模型 {index + 1} 参数</legend>
-                  <div className="sm:col-span-2"><Field label="模型 ID" id={`model-id-${row.key}`}><SuggestionInput id={`model-id-${row.key}`} ariaLabel="模型 ID" items={catalog?.map(model => ({ value: model.model, label: model.name })) ?? []} required maxLength={200} disabled={submitting} value={row.model} onValueChange={model => patch(row.key, { model, displayName: model.trim() === row.model.trim() ? row.displayName : catalog?.find(item => item.model === model.trim())?.name ?? '', ...modelPresetDraft(provider, model) })} className="h-9 w-full font-mono text-xs" /></Field></div>
+                  <div className="sm:col-span-2"><Field label="模型 ID" id={`model-id-${row.key}`}><SuggestionInput id={`model-id-${row.key}`} ariaLabel="模型 ID" items={catalog?.map(model => ({ value: model.model, label: model.name })) ?? []} required maxLength={200} disabled={submitting} value={row.model} onValueChange={model => patch(row.key, { model, ...modelPresetDraft(provider, model) })} className="h-9 w-full font-mono text-xs" /></Field></div>
                   <Field label="上下文上限（token）" id={`model-context-${row.key}`}><input id={`model-context-${row.key}`} type="number" required min={1} max={2000000} step={1} value={row.contextTokens} onChange={event => patch(row.key, { contextTokens: event.target.value })} className={`${CTL_FIELD} h-9 w-full tabular-nums`} /></Field>
                   <Field label="输出上限（token）" id={`model-output-${row.key}`}><input id={`model-output-${row.key}`} type="number" required min={1} max={Number(row.contextTokens) || 2000000} step={1} value={row.outputTokens} onChange={event => patch(row.key, { outputTokens: event.target.value })} className={`${CTL_FIELD} h-9 w-full tabular-nums`} /></Field>
                   {getAgentModelPreset(provider, row.model) && <div className="flex flex-wrap items-center justify-between gap-2 sm:col-span-2">

@@ -65,7 +65,7 @@ func (s *Store) DiscoveryProfile(input DiscoveryInput) (Profile, error) {
 			credential = stored.Credential
 		}
 	}
-	return fromInput(Input{Provider: input.Provider, APIFormat: input.APIFormat, BaseURL: input.BaseURL, Credential: input.Credential, Active: true, Name: "模型目录", Model: "catalog", ContextTokens: 1, OutputTokens: 1, Capabilities: Capabilities{Text: true, Source: "模型目录"}}, credential)
+	return fromInput(Input{Provider: input.Provider, APIFormat: input.APIFormat, BaseURL: input.BaseURL, Credential: input.Credential, Active: true, Model: "catalog", ContextTokens: 1, OutputTokens: 1, Capabilities: Capabilities{Text: true, Source: "模型目录"}}, credential)
 }
 
 func (c *httpClient) ListModels(ctx context.Context, p Profile) ([]DiscoveredModel, error) {

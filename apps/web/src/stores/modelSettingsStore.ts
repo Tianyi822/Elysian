@@ -15,7 +15,6 @@ export function validateModelInput(input: AgentModelProfileInput, hasCredential 
   if (input.provider !== 'openai-compatible' && input.provider !== 'deepseek') return '模型供应商无效'
   if (input.apiFormat !== 'chat-completions' && input.apiFormat !== 'anthropic-messages' && input.apiFormat !== 'responses') return '模型 API 格式无效'
   if (!input.model.trim()) return '模型 ID 不能为空'
-  if (!input.name.trim()) return '模型名称不能为空'
   if (!input.baseUrl.trim()) return '服务地址不能为空'
   if (!input.capabilities.source.trim()) return '能力来源不能为空'
   if (!Number.isSafeInteger(input.contextTokens) || input.contextTokens < 1 || input.contextTokens > 2_000_000) return '上下文上限必须是 1 到 2000000 的正整数'
@@ -23,7 +22,7 @@ export function validateModelInput(input: AgentModelProfileInput, hasCredential 
   if (input.capabilities.reasoningLevels !== undefined && !validAgentModelReasoningLevels(input.capabilities.reasoningLevels)) return '推理等级最多 16 项，名称以小写字母开头，可含数字、下划线或短横线，且不能重复'
   if (!input.capabilities.text && !input.capabilities.tools) return '文本与工具能力至少勾选一项：派发要求由二者共同决定'
   const credentialPresent = input.credential === undefined ? hasCredential : input.credential.trim() !== ''
-  if (input.provider === 'deepseek' && input.active && !credentialPresent) return '启用 DeepSeek 模型前请配置 API Key'
+  if (!credentialPresent) return '请配置 API Key'
   return undefined
 }
 
@@ -103,7 +102,7 @@ export const useModelSettingsStore = create<ModelSettingsState>((set, get) => {
           ? await gateway.modelSettings.updateModelProfile(editing.id, { ...input, expectedRevision: editing.revision })
           : await gateway.modelSettings.createModelProfile(input)
         set((state) => ({ models: [...state.models.filter((item) => item.id !== profile.id), profile] }))
-        notify(`模型配置「${profile.name}」已${editing ? '更新' : '创建'}（修订 ${profile.revision}）${isDockerRuntime() ? '' : '（演示数据）'}`)
+        notify(`模型配置「${profile.model}」已${editing ? '更新' : '创建'}（修订 ${profile.revision}）${isDockerRuntime() ? '' : '（演示数据）'}`)
         await get().refresh(gateway)
         return true
       } catch (error) {

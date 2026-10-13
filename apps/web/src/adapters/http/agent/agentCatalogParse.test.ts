@@ -12,7 +12,7 @@ describe('模型目录响应解析', () => {
   })
   it('模型 Profile 校验能力声明与凭据不回显位', () => {
     const profile = {
-      id: 'profile-1', revision: 2, name: '测试模型', baseUrl: 'https://model.example.test/v1',
+      id: 'profile-1', revision: 2, baseUrl: 'https://model.example.test/v1',
       model: 'test-model', provider: 'openai-compatible' as const, apiFormat: 'chat-completions' as const, contextTokens: 65536, outputTokens: 4096,
       capabilities: { text: true, tools: true, source: '用户配置' }, active: true, hasCredential: true,
     }

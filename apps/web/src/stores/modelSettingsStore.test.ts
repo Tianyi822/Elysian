@@ -22,13 +22,12 @@ function makeGateway(adapter = new ModelSettingsMockAdapter()): { gateway: Elysi
 }
 
 const MODEL_INPUT: AgentModelProfileInput = {
-  name: 'store 测试模型',
   baseUrl: 'https://api.example.com/v1',
   model: 'store-model',
   provider: 'openai-compatible' as const, apiFormat: 'chat-completions' as const, contextTokens: 32000,
   outputTokens: 2048,
   capabilities: { text: true, tools: true, source: 'store 测试' },
-  active: true,
+  active: true, credential: 'store-test-key',
 }
 
 beforeEach(() => { resetModelSettingsData(); useModelSettingsStore.getState().reset(); useNotificationStore.getState().clear() })
@@ -57,7 +56,7 @@ describe('模型设置保存与冲突回读', () => {
     expect(second).toBe(false)
     expect(spy).toHaveBeenCalledTimes(1)
     resolveFirst?.({
-      id: 'mp-single', revision: 1, name: MODEL_INPUT.name, baseUrl: MODEL_INPUT.baseUrl, model: MODEL_INPUT.model,
+      id: 'mp-single', revision: 1, baseUrl: MODEL_INPUT.baseUrl, model: MODEL_INPUT.model,
       provider: 'openai-compatible' as const, apiFormat: 'chat-completions' as const, contextTokens: MODEL_INPUT.contextTokens, outputTokens: MODEL_INPUT.outputTokens,
       capabilities: MODEL_INPUT.capabilities, active: MODEL_INPUT.active, hasCredential: false,
     })
@@ -70,14 +69,14 @@ describe('模型设置保存与冲突回读', () => {
     await useModelSettingsStore.getState().load(gateway)
     const model = useModelSettingsStore.getState().models[0]
     if (model === undefined) throw new Error('模型种子应存在')
-    mockUpdateModelProfile(model.id, { ...MODEL_INPUT, name: '他处改模型', baseUrl: model.baseUrl, model: model.model, provider: 'openai-compatible' as const, apiFormat: 'chat-completions' as const, contextTokens: model.contextTokens, outputTokens: model.outputTokens, capabilities: model.capabilities, active: model.active, expectedRevision: model.revision })
+    mockUpdateModelProfile(model.id, { ...MODEL_INPUT, baseUrl: 'https://other.example.test/v1', model: model.model, provider: 'openai-compatible' as const, apiFormat: 'chat-completions' as const, contextTokens: model.contextTokens, outputTokens: model.outputTokens, capabilities: model.capabilities, active: model.active, expectedRevision: model.revision })
     const result = await useModelSettingsStore.getState().saveModel(
       gateway,
-      { ...MODEL_INPUT, name: '本地改模型' },
+      { ...MODEL_INPUT, baseUrl: 'https://local.example.test/v1' },
       { id: model.id, revision: model.revision },
     )
     expect(result).toBe(false)
-    expect(useModelSettingsStore.getState().models[0]?.name).toBe('他处改模型')
+    expect(useModelSettingsStore.getState().models[0]?.baseUrl).toBe('https://other.example.test/v1')
   })
   it('模型目录读取失败后可以重试', async () => {
     const { gateway, adapter } = makeGateway()
@@ -88,12 +87,14 @@ describe('模型设置保存与冲突回读', () => {
     expect(useModelSettingsStore.getState().status).toBe('ready')
     expect(read).toHaveBeenCalledTimes(2)
   })
-  it('缺少 API Key 的启用 DeepSeek 配置在提交前拦截', async () => {
+  it('缺少 API Key 的配置在提交前拦截，停用或自定义供应商也不放行', async () => {
     const { gateway, adapter } = makeGateway()
     const create = vi.spyOn(adapter, 'createModelProfile')
-    expect(await useModelSettingsStore.getState().saveModel(gateway, { ...MODEL_INPUT, provider: 'deepseek' })).toBe(false)
+    for (const provider of ['deepseek', 'openai-compatible'] as const) {
+      expect(await useModelSettingsStore.getState().saveModel(gateway, { ...MODEL_INPUT, provider, credential: undefined })).toBe(false)
+      expect(await useModelSettingsStore.getState().saveModel(gateway, { ...MODEL_INPUT, provider, credential: undefined, active: false })).toBe(false)
+    }
     expect(create).not.toHaveBeenCalled()
-    expect(await useModelSettingsStore.getState().saveModel(gateway, { ...MODEL_INPUT, provider: 'deepseek', active: false })).toBe(true)
   })
 })
 

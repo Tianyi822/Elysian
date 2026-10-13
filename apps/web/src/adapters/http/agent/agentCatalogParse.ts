@@ -89,7 +89,6 @@ export function parseAgentModelProfile(value: unknown): AgentModelProfile {
     apiFormat,
     id: string(row.id, 'Agent 模型配置响应无效'),
     revision: positiveInteger(row.revision, 'Agent 模型配置响应无效'),
-    name: string(row.name, 'Agent 模型配置响应无效'),
     baseUrl: string(row.baseUrl, 'Agent 模型配置响应无效'),
     model: string(row.model, 'Agent 模型配置响应无效'),
     contextTokens: positiveInteger(row.contextTokens, 'Agent 模型配置响应无效'),
