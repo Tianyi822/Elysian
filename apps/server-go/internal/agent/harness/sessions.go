@@ -193,6 +193,15 @@ func (m *Manager) ListSessions(ctx context.Context, cursor string, limit int) (P
 	page, err := m.store.sessions(ctx, cursor, limit)
 	return page, storageFailure(err)
 }
+func (m *Manager) ListSessionsByActivity(ctx context.Context, cursor string, limit int) (Page[Session], error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return Page[Session]{}, closedError()
+	}
+	page, err := m.store.sessionsByActivity(ctx, cursor, limit)
+	return page, storageFailure(err)
+}
 func (m *Manager) GetTask(ctx context.Context, id string) (Task, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

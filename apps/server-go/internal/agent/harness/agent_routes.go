@@ -28,6 +28,7 @@ type agentRuntimeService interface {
 	SwitchSessionModel(context.Context, string, SwitchModelInput) (Session, error)
 	GetSession(context.Context, string) (Session, error)
 	ListSessions(context.Context, string, int) (Page[Session], error)
+	ListSessionsByActivity(context.Context, string, int) (Page[Session], error)
 	GetTask(context.Context, string) (Task, error)
 	ListTasks(context.Context, string, string, int) (Page[Task], error)
 	Messages(context.Context, string, string, int) (Page[Message], error)
@@ -183,12 +184,20 @@ func registerAgentRoutes(r chi.Router, service runtimeService) {
 		shared.SendJSON(w, 201, session)
 	}))
 	r.Get("/sessions", wrap(func(s agentRuntimeService, w http.ResponseWriter, req *http.Request) {
-		q, err := runtimeQuery(req, 50, "cursor", "limit")
+		q, err := runtimeQuery(req, 50, "cursor", "limit", "sort")
 		if err != nil {
 			writeRuntimeError(w, err)
 			return
 		}
-		page, err := s.ListSessions(req.Context(), q.Cursor, q.Limit)
+		var page Page[Session]
+		switch req.URL.Query().Get("sort") {
+		case "":
+			page, err = s.ListSessions(req.Context(), q.Cursor, q.Limit)
+		case "activity":
+			page, err = s.ListSessionsByActivity(req.Context(), q.Cursor, q.Limit)
+		default:
+			err = bad("invalid-sort", "会话排序方式无效")
+		}
 		if err != nil {
 			writeRuntimeError(w, err)
 			return
