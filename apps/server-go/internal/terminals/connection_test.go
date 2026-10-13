@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"elysian/server/internal/seam"
 )
@@ -235,6 +236,44 @@ func TestOnClose注销后revoke不重复关闭(t *testing.T) {
 	if closes := conn.closesSnapshot(); len(closes) != 0 {
 		t.Fatalf("已注销的连接不应再被 revoke 关闭：%+v", closes)
 	}
+}
+
+type delayedConnectionRegistration struct {
+	seam.SessionConnections
+	registered, resume chan struct{}
+}
+
+func (c delayedConnectionRegistration) Register(id string, closer func()) func() {
+	unregister := c.SessionConnections.Register(id, closer)
+	close(c.registered)
+	<-c.resume
+	return unregister
+}
+
+func TestOnCloseBeforeRegistrationReturnsDoesNotLeakConnection(t *testing.T) {
+	connections := newTestSessionConnections()
+	delayed := delayedConnectionRegistration{SessionConnections: connections, registered: make(chan struct{}), resume: make(chan struct{})}
+	events := newConnEvents(&fakeConnService{}, delayed, "abc")
+	conn := newFakeWsConn()
+	done := make(chan struct{})
+	go func() { defer close(done); events.OnOpen(conn) }()
+	select {
+	case <-delayed.registered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("未开始登记连接")
+	}
+	events.OnClose()
+	close(delayed.resume)
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("登记没有结束")
+	}
+	if connections.count("abc") != 0 {
+		t.Fatal("晚到的登记未被清理")
+	}
+	connections.Revoke("abc")
+	expectCloses(t, conn, nil)
 }
 
 func Test并发上限拒绝时不登记撤销closer(t *testing.T) {

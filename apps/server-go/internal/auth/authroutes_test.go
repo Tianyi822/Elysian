@@ -52,12 +52,9 @@ type spyConnections struct {
 	revokeAlls   int
 }
 
-func (s *spyConnections) Register(sessionID string, _ func()) {
+func (s *spyConnections) Register(sessionID string, _ func()) func() {
 	s.registered = append(s.registered, sessionID)
-}
-
-func (s *spyConnections) Unregister(sessionID string, _ func()) {
-	s.unregistered = append(s.unregistered, sessionID)
+	return func() { s.unregistered = append(s.unregistered, sessionID) }
 }
 
 func (s *spyConnections) Revoke(sessionID string) {

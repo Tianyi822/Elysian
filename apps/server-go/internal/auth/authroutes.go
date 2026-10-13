@@ -44,7 +44,7 @@ type Deps struct {
 	// /login 恒成功。生产恒 true；测试注 false。
 	Enabled bool
 	// SessionConns 会话连接撤销表：新登录替换/登出/改密/退出其他会话在销毁服务端
-	// 会话的同时关闭该会话名下已建立的终端连接。装配层与 terminals 片共享同一实例；
+	// 会话的同时关闭该会话名下已建立的终端和聊天流。装配层与 terminals 片共享同一实例；
 	// nil 即无撤销（独立驱动本片的行为不受影响）。
 	SessionConns seam.SessionConnections
 	// Now 可控时钟；nil 用 time.Now。

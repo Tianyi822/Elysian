@@ -1,0 +1,110 @@
+package harness
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"elysian/server/internal/agent/harness/model"
+)
+
+func TestChatOutputStreamBeforePublicMessageAndReconnect(t *testing.T) {
+	emitted, resume := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(resume) }) }
+	defer release()
+	m, session, _ := agentManager(t, func(ctx context.Context, _ model.Profile, r model.Request) (model.Response, error) {
+		if r.ToolChoice == "store_working_memory" {
+			return memoryReply(r), nil
+		}
+		r.OnReasoning("思考第一行")
+		r.OnContent("回答第一段")
+		close(emitted)
+		select {
+		case <-resume:
+			return finalReply("完整回答"), nil
+		case <-ctx.Done():
+			return model.Response{}, ctx.Err()
+		}
+	}, nil)
+	run := submitAgentTest(t, m, session, "stream-output", "测试")
+	select {
+	case <-emitted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("没有增量")
+	}
+	server := httptest.NewServer(m.Router())
+	defer server.Close()
+	client := &http.Client{Timeout: 5 * time.Second}
+	read := func() ChatOutput {
+		t.Helper()
+		response, err := client.Get(server.URL + "/runs/" + run.ID + "/output")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		if response.StatusCode != 200 || !strings.HasPrefix(response.Header.Get("Content-Type"), "text/event-stream") {
+			t.Fatal(response.Status)
+		}
+		scanner := bufio.NewScanner(response.Body)
+		for scanner.Scan() {
+			if strings.HasPrefix(scanner.Text(), "data: ") {
+				var output ChatOutput
+				if err := json.Unmarshal([]byte(strings.TrimPrefix(scanner.Text(), "data: ")), &output); err != nil {
+					t.Fatal(err)
+				}
+				return output
+			}
+		}
+		t.Fatal("未收到流式快照", scanner.Err())
+		return ChatOutput{}
+	}
+	output := read()
+	if output.Done || output.Content != "回答第一段" || output.Reasoning != "思考第一行" {
+		t.Fatalf("错误快照：%+v", output)
+	}
+	if next := read(); next != output {
+		t.Fatal("重连后快照不一致")
+	}
+	messages, err := m.Messages(context.Background(), session.ID, "", 50)
+	if err != nil || len(messages.Items) != 1 || messages.Items[0].Role != "user" {
+		t.Fatal("增量被误写为公开消息", err)
+	}
+	release()
+	runtimeFinished(t, m, run.ID)
+	if final := read(); !final.Done || final.Content != "完整回答" {
+		t.Fatalf("错误终态：%+v", final)
+	}
+}
+
+func TestChatOutputExcludesToolsAndConsolidation(t *testing.T) {
+	records := []ModelRequestRecord{
+		{ID: "tool", Purpose: "inference", Status: StateSucceeded, Response: &model.Response{Content: "工具附带文本", Reasoning: "公开思考", ToolCalls: []model.ToolCall{{ID: "t"}}}},
+		{ID: "memory", Purpose: "final-memory", Status: StateRunning, Reasoning: "整理", Content: "不公开"},
+	}
+	output := chatOutput(Run{ID: "r", Status: StateRunning}, records)
+	if output.Content != "" || output.Reasoning != "公开思考" || output.ResponseID != "tool" {
+		t.Fatal(output)
+	}
+	records = append(records, ModelRequestRecord{ID: "failed", Purpose: "inference", Status: StateRunning, Content: "未完成回答"})
+	if output := chatOutput(Run{ID: "r", Status: StateFailed}, records); output.Content != "" || !output.Done {
+		t.Fatal(output)
+	}
+}
+
+func TestChatOutputCanceledBeforeOpeningDoesNotReadOrWrite(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	rec := httptest.NewRecorder()
+	// 取消先于路由进入时，不能读取业务数据或发首帧；nil 服务确保不触达读取。
+	streamChatOutput(nil, nil, rec, httptest.NewRequest(http.MethodGet, "/runs/r/output", nil).WithContext(ctx))
+	if rec.Body.Len() != 0 || rec.Header().Get("Content-Type") != "" {
+		t.Fatal("已撤销的输出流仍写入响应")
+	}
+}

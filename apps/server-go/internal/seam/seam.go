@@ -71,11 +71,11 @@ func ParseSessionCookie(cookieHeader string) (string, bool) {
 }
 
 // SessionConnections 会话连接撤销表：新登录替换、登出、改密 pwdEpoch、退出其他
-// 会话触发撤销，终端升级时登记 closer。装配期创建一次，auth 片（触发端）与
-// terminals 片（登记端）必须共享同一实例——漏穿只有静默缺断连。
+// 会话触发撤销，终端升级与会话输出流登记 closer。装配期创建一次，auth 片与
+// terminals 片必须共享同一实例。
 type SessionConnections interface {
-	Register(sessionID string, closer func())
-	Unregister(sessionID string, closer func())
+	// Register 返回只注销本次登记的幂等回调；不同连接不得按函数代码地址识别。
+	Register(sessionID string, closer func()) (unregister func())
 	// Revoke 关闭该会话全部 closer，可重入。
 	Revoke(sessionID string)
 	RevokeOthers(keepSessionID string)

@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"reflect"
 	"sync"
 
 	"elysian/server/internal/seam"
@@ -10,15 +9,14 @@ import (
 // 会话连接撤销表（sessionConnections.ts 等价物，seam.SessionConnections 的实现）：
 // sessionId → 该会话名下已建立长连接的 closer 集合。新登录替换、登出、改密（pwdEpoch
 // 轮换）、退出其他会话在销毁服务端会话的同时，主动关闭该会话名下已建立的
-// 终端 WS 连接——否则连接层存活到自然断开，撤销只对新请求生效。纯内存结构，装配期
-// 创建一次、app 把同一实例穿给 auth 片（触发端点）与 terminals 片（登记 closer）。
+// 终端 WS 与聊天 SSE 连接。纯内存结构，装配期创建一次，auth 流鉴权与 terminals
+// 登记 closer，auth 路由触发撤销；注销句柄只指向本次登记。
 //
 // 关闭口径常量（seam 包冻结）：seam.SessionRevokedCloseCode = 1008、
 // seam.SessionRevokedCloseReason = "面板会话已失效，连接已关闭"；closer 关闭连接时使用。
 
 type closerEntry struct {
-	key uintptr // closer 函数值的 code pointer（Unregister 按它匹配；见下方限制说明）
-	fn  func()
+	fn func()
 }
 
 type sessionConnections struct {
@@ -31,30 +29,24 @@ func NewSessionConnections() seam.SessionConnections {
 	return &sessionConnections{bySession: map[string][]*closerEntry{}}
 }
 
-// Register 实现 seam.SessionConnections。Go 侧限制：closer 是不可比较的函数值，
-// 无法像 TS Set 那样按引用去重——同一 closer 重复注册会在撤销时被调用两次；消费方
-// （terminals 片）每条连接恰好 register 一次、close 时 unregister，语义不受影响。
-func (c *sessionConnections) Register(sessionID string, closer func()) {
+// Register 以独立条目标识连接，闭包来自同一函数也不会在注销时误删其他连接。
+func (c *sessionConnections) Register(sessionID string, closer func()) func() {
 	if closer == nil {
-		return
+		return func() {}
 	}
+	entry := &closerEntry{fn: closer}
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.bySession[sessionID] = append(c.bySession[sessionID], &closerEntry{key: closerKey(closer), fn: closer})
+	c.bySession[sessionID] = append(c.bySession[sessionID], entry)
+	c.mu.Unlock()
+	return sync.OnceFunc(func() { c.unregister(sessionID, entry) })
 }
 
-// Unregister 实现 seam.SessionConnections：注销第一个匹配的 closer（幂等）；
-// 集合清空后连同键一起摘除。
-func (c *sessionConnections) Unregister(sessionID string, closer func()) {
-	if closer == nil {
-		return
-	}
+func (c *sessionConnections) unregister(sessionID string, target *closerEntry) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	entries := c.bySession[sessionID]
-	key := closerKey(closer)
 	for i, entry := range entries {
-		if entry.key == key {
+		if entry == target {
 			c.bySession[sessionID] = append(entries[:i:i], entries[i+1:]...)
 			break
 		}
@@ -112,10 +104,4 @@ func closeAll(entries []*closerEntry) {
 			entry.fn()
 		}()
 	}
-}
-
-// closerKey 取函数值的 code pointer：同一函数值的多次调用结果恒定，Register 存的与
-// Unregister 传的是同一值时必然匹配。
-func closerKey(closer func()) uintptr {
-	return reflect.ValueOf(closer).Pointer()
 }

@@ -3,6 +3,7 @@ package terminals
 import (
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 
 	"elysian/server/internal/seam"
@@ -20,9 +21,11 @@ type connEvents struct {
 	revocation seam.SessionConnections // 可为 nil：不接线撤销表
 	sessionID  string
 
-	conn    seam.WsConn
-	session atomic.Pointer[sessBox] // OnOpen 建会话成功后填充；会话 goroutine 并发读
-	revoker func()
+	conn        seam.WsConn
+	session     atomic.Pointer[sessBox] // OnOpen 建会话成功后填充；会话 goroutine 并发读
+	lifecycleMu sync.Mutex
+	unregister  func()
+	closed      bool
 	// violated 水位超限后的静默丢弃闸：连接已死（回落也救不回），后续帧静默丢弃、
 	// 不重复关闭。
 	violated atomic.Bool
@@ -51,16 +54,28 @@ func (e *connEvents) OnOpen(conn seam.WsConn) {
 		conn.Close(TERMINAL_VIOLATION_CLOSE_CODE, TERMINAL_LIMIT_REASON)
 		return
 	}
+	e.lifecycleMu.Lock()
+	if e.closed {
+		e.lifecycleMu.Unlock()
+		session.dispose(disposeClientClose)
+		return
+	}
 	e.session.Store(&sessBox{h: session})
+	e.lifecycleMu.Unlock()
 	if e.revocation != nil {
-		// closer 先把自己摘出撤销表再关闭连接：撤销是一次性的，重复 revoke 不重复关闭。
-		var closer func()
-		closer = func() {
-			e.revocation.Unregister(e.sessionID, closer)
-			e.conn.Close(seam.SessionRevokedCloseCode, seam.SessionRevokedCloseReason)
+		unregister := e.revocation.Register(e.sessionID, func() {
+			conn.Close(seam.SessionRevokedCloseCode, seam.SessionRevokedCloseReason)
+		})
+		// 连接可能在 Register 返回前已关闭；迟到的登记句柄也必须回收。
+		e.lifecycleMu.Lock()
+		closed := e.closed
+		if !closed {
+			e.unregister = unregister
 		}
-		e.revocation.Register(e.sessionID, closer)
-		e.revoker = closer
+		e.lifecycleMu.Unlock()
+		if closed {
+			unregister()
+		}
 	}
 }
 
@@ -84,15 +99,18 @@ func (e *connEvents) OnMessage(_ seam.WsConn, text []byte) {
 
 // OnClose 客户端断开：撤销 closer 先于会话清理注销（连接已亡，后续 revoke 不再触碰）。
 func (e *connEvents) OnClose() {
-	if e.revoker != nil {
-		e.revocation.Unregister(e.sessionID, e.revoker)
-		e.revoker = nil
+	e.lifecycleMu.Lock()
+	e.closed = true
+	unregister := e.unregister
+	e.unregister = nil
+	box := e.session.Swap(nil)
+	e.lifecycleMu.Unlock()
+	if unregister != nil {
+		unregister()
 	}
-	box := e.session.Load()
 	if box == nil {
 		return
 	}
-	e.session.Store(nil)
 	box.h.dispose(disposeClientClose)
 }
 

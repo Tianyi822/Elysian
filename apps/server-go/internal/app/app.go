@@ -76,8 +76,8 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 		appLogs = logs.OpenService(paths.Default.LogsSqlite, nil)
 	}
 
-	// 会话撤销表：auth 片（登出/改密/退出其他会话触发撤销）与 terminals 片（/ws
-	// 升级登记 closer）必须共享同一实例（go-plan §3.6，terminals 盘点风险 10）；
+	// 会话撤销表：auth 路由触发撤销，聊天流鉴权与 terminals 的 WS 登记 closer，
+	// 三处必须共享同一实例（go-plan §3.6，terminals 盘点风险 10）；
 	// 测试注入非 nil 时以注入件为准（auth 与 terminals 穿同一注入件）。
 	sessionConns := authDeps.SessionConns
 	if sessionConns == nil {
@@ -154,7 +154,7 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 	// /api/*：审计先于鉴权（401 也落审计），鉴权先于全部域挂载（401 先于 503/403/404）。
 	r.Group(func(api chi.Router) {
 		api.Use(logs.OperationAuditMiddleware(appLogs))
-		api.Use(auth.RequireSession(authDeps))
+		api.Use(panelSessionGuard(authDeps))
 		api.Use(panelManager.WriteGuard)
 		api.Mount("/api/panel", panelManager.Router())
 		api.Mount("/api/agent", agentRouter)

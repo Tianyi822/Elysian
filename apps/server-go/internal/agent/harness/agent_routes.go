@@ -280,6 +280,9 @@ func registerAgentRoutes(r chi.Router, service runtimeService) {
 		}
 		shared.SendJSON(w, 200, memory)
 	}))
+	r.Get("/runs/{id}/output", wrap(func(s agentRuntimeService, w http.ResponseWriter, req *http.Request) {
+		streamChatOutput(service, s, w, req)
+	}))
 	r.Get("/runs/{id}/model-requests", wrap(func(s agentRuntimeService, w http.ResponseWriter, req *http.Request) {
 		q, err := runtimeQuery(req, 50, "cursor", "limit")
 		if err != nil {

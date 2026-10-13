@@ -487,32 +487,32 @@ func (s *fakeConnService) snapshot() (opened int, handled []clientFrame, disposa
 
 type testSessionConnections struct {
 	mu      sync.Mutex
-	closers map[string][]func()
+	closers map[string][]*func()
 }
 
 func newTestSessionConnections() *testSessionConnections {
-	return &testSessionConnections{closers: map[string][]func(){}}
+	return &testSessionConnections{closers: map[string][]*func(){}}
 }
 
-func (c *testSessionConnections) Register(sessionID string, closer func()) {
+func (c *testSessionConnections) Register(sessionID string, closer func()) func() {
+	entry := &closer
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.closers[sessionID] = append(c.closers[sessionID], closer)
-}
-
-func (c *testSessionConnections) Unregister(sessionID string, _ func()) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	list := c.closers[sessionID]
-	if len(list) == 0 {
-		return
-	}
-	list = list[:len(list)-1]
-	if len(list) == 0 {
-		delete(c.closers, sessionID)
-		return
-	}
-	c.closers[sessionID] = list
+	c.closers[sessionID] = append(c.closers[sessionID], entry)
+	c.mu.Unlock()
+	return sync.OnceFunc(func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		list := c.closers[sessionID]
+		for i, candidate := range list {
+			if candidate == entry {
+				c.closers[sessionID] = append(list[:i:i], list[i+1:]...)
+				break
+			}
+		}
+		if len(c.closers[sessionID]) == 0 {
+			delete(c.closers, sessionID)
+		}
+	})
 }
 
 func (c *testSessionConnections) Revoke(sessionID string) {
@@ -521,13 +521,13 @@ func (c *testSessionConnections) Revoke(sessionID string) {
 	delete(c.closers, sessionID)
 	c.mu.Unlock()
 	for _, closer := range list {
-		closer()
+		(*closer)()
 	}
 }
 
 func (c *testSessionConnections) RevokeOthers(keepSessionID string) {
 	c.mu.Lock()
-	var toClose []func()
+	var toClose []*func()
 	for id, list := range c.closers {
 		if id == keepSessionID {
 			continue
@@ -537,20 +537,20 @@ func (c *testSessionConnections) RevokeOthers(keepSessionID string) {
 	}
 	c.mu.Unlock()
 	for _, closer := range toClose {
-		closer()
+		(*closer)()
 	}
 }
 
 func (c *testSessionConnections) RevokeAll() {
 	c.mu.Lock()
-	var toClose []func()
+	var toClose []*func()
 	for id, list := range c.closers {
 		toClose = append(toClose, list...)
 		delete(c.closers, id)
 	}
 	c.mu.Unlock()
 	for _, closer := range toClose {
-		closer()
+		(*closer)()
 	}
 }
 

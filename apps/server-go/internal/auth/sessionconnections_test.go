@@ -37,16 +37,40 @@ func TestSessionConnectionsUnregister(t *testing.T) {
 	gone := closerCounter{}
 	stays := closerCounter{}
 	goneFn := func() { gone.calls++ }
-	connections.Register("s1", goneFn)
+	unregister := connections.Register("s1", goneFn)
 	connections.Register("s1", func() { stays.calls++ })
 
-	connections.Unregister("s1", goneFn)
+	unregister()
+	unregister()
 	connections.Revoke("s1")
 	if gone.calls != 0 {
 		t.Errorf("unregister 后不应再关闭该 closer（calls=%d）", gone.calls)
 	}
 	if stays.calls != 1 {
 		t.Errorf("同会话其余 closer 照常关闭（calls=%d）", stays.calls)
+	}
+}
+
+func TestSessionConnectionsUnregisterIdentifiesClosureInstance(t *testing.T) {
+	connections := NewSessionConnections()
+	var calls [3]int
+	unregister := make([]func(), len(calls))
+	for i := range calls {
+		unregister[i] = connections.Register("s1", func() { calls[i]++ })
+	}
+	// 同一闭包代码的第二个实例先结束，不能误删仍在运行的第一个实例。
+	unregister[1]()
+	unregister[1]()
+	connections.Revoke("s1")
+	if calls != [3]int{1, 0, 1} {
+		t.Fatalf("只应撤销仍登记的连接：%v", calls)
+	}
+	// 已撤销登记的迟到清理不能碰到同会话后来登记的连接。
+	connections.Register("s1", func() { calls[1]++ })
+	unregister[0]()
+	connections.Revoke("s1")
+	if calls != [3]int{1, 1, 1} {
+		t.Fatalf("迟到注销误删新连接：%v", calls)
 	}
 }
 
@@ -101,7 +125,7 @@ func TestSessionConnectionsIdempotentOnUnknownSession(t *testing.T) {
 	connections := NewSessionConnections()
 	connections.Revoke("nope")
 	connections.RevokeOthers("nope")
-	connections.Unregister("nope", func() {})
+	connections.Register("nope", nil)()
 	// 未抛错即通过。
 }
 

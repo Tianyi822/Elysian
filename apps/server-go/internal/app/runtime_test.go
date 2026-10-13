@@ -43,7 +43,7 @@ func TestAgentAssemblyIsBehindSessionGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = runtime.Close(context.Background()) })
-	for _, target := range []string{"/api/agent/runtime", "/api/agent/runs"} {
+	for _, target := range []string{"/api/agent/runtime", "/api/agent/runs", "/api/agent/sessions", "/api/agent/sessions/s/messages", "/api/agent/runs/r/model-requests", "/api/agent/runs/r/output"} {
 		rec := httptest.NewRecorder()
 		runtime.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
 		if rec.Code != http.StatusUnauthorized {
