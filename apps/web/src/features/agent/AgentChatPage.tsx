@@ -1,53 +1,126 @@
-import { useEffect, useRef, useState, type DragEvent } from 'react'
-import { Link } from 'react-router'
-import { Bot, Brain, Hand, Paperclip, Plus, Send, ShieldAlert, ShieldCheck, Upload, X, type IconComponent } from '../../components/icons'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { Link, useLocation, useSearchParams } from 'react-router'
+import * as Dialog from '@radix-ui/react-dialog'
+import { useShellLayout } from '../../app/layout/ShellLayoutContext'
+import { ChatSessionList } from './ChatSessionList'
+import { RUNTIME_RUN_STATUS_LABELS } from '@elysian/contracts'
+import { Bot, Brain, Hand, Paperclip, Plus, PanelLeftOpen, Send, ShieldAlert, ShieldCheck, X, type IconComponent } from '../../components/icons'
 import { IconButton } from '../../components/IconButton'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { RefreshButton } from '../../components/RefreshState'
+import { useGateway } from '../../adapters/GatewayProvider'
 import type { AgentChatPermissionMode } from '../../contracts/agentChat'
-import { useAgentChatStore } from '../../stores/agentChatStore'
+import { isChatRunActive, useAgentChatStore } from '../../stores/agentChatStore'
 import { ChatAttachment } from './ChatAttachment'
-import { defaultReasoningLevel, reasoningLabel, useChatModels } from './useChatModels'
+import { ChatResponse } from './ChatResponse'
+import { reasoningLabel, useChatModels } from './useChatModels'
 import './agentChat.css'
 
 const PERMISSION_MODES: readonly { value: AgentChatPermissionMode; label: string; description: string; Icon: IconComponent }[] = [
-  { value: 'ask', label: '请求批准', description: '需要批准的操作，先向你确认。', Icon: Hand },
-  { value: 'assist', label: '帮我批准', description: '智能体协助判断，必要时向你确认。', Icon: ShieldCheck },
-  { value: 'full', label: '完全开放', description: '自主处理任务，不逐项请求批准。', Icon: ShieldAlert },
+  { value: 'ask', label: '请求批准', description: '需要批准的操作，按服务端规则请求确认。', Icon: Hand },
+  { value: 'assist', label: '帮我批准', description: '自动判断审批暂未接入，目前仅保存选择。', Icon: ShieldCheck },
+  { value: 'full', label: '完全开放', description: '免逐项审批暂未接入，目前仅保存选择。', Icon: ShieldAlert },
 ]
 
-/** 本地会话原型：模型目录沿用真实配置，消息与权限选项不派发执行。 */
+/** 基本文本聊天，沿用现有会话、模型目录与任务续轮接口。 */
 export function AgentChatPage() {
   const chat = useAgentChatStore()
+  const shell = useShellLayout()
+  const location = useLocation()
+  const [params, setParams] = useSearchParams()
+  const [navigationReady, setNavigationReady] = useState<string | null>(null)
+  const [listCollapsed, setListCollapsed] = useState(false)
+  const [listRefreshing, setListRefreshing] = useState(false)
+  const requestedId = params.get('session') || undefined
+  const routeState = location.state && typeof location.state === 'object' ? location.state : {}
+  const requestedDraft = typeof routeState.agentDraftId === 'string' ? routeState.agentDraftId : undefined
+  const listTrigger = useRef<HTMLSpanElement>(null)
+  const restoreListFocus = useRef(false)
+  const { agentConversation: api } = useGateway()
   const { models, status, error, reload } = useChatModels()
   const input = useRef<HTMLTextAreaElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
-  const bottom = useRef<HTMLDivElement>(null)
-  const dragDepth = useRef(0)
+  const history = useRef<HTMLDivElement>(null)
+  const following = useRef(true)
   const composing = useRef(false)
-  const [dragging, setDragging] = useState(false)
-  const [pendingAttachments, setPendingAttachments] = useState(0)
-  const [fileError, setFileError] = useState<string | null>(null)
   const session = chat.session
   const permissionMode = PERMISSION_MODES.find(mode => mode.value === session?.permissionMode) ?? PERMISSION_MODES[0]!
   const PermissionIcon = permissionMode.Icon
-  const attaching = pendingAttachments > 0
   const model = models.find(item => item.id === session?.modelId)
-  const levels = model?.reasoningLevels ?? []
+  const busy = chat.sending || isChatRunActive(chat.run) || !!chat.remoteSession?.activeRunId || !!chat.remoteSession?.activeWorkflowId
+  const restoring = !!session?.remote && !chat.remoteSession
+  const attachmentsLocked = !session || chat.loading || busy || restoring || !!session.pending
 
-  useEffect(() => { void chat.ensureSession() }, [chat.ensureSession])
   useEffect(() => {
-    if (!session || status !== 'ready') return
-    if (!model) {
-      const nextId = models[0]?.id ?? null
-      if (session.modelId !== nextId) chat.setModel(nextId)
-      return
+    let active = true
+    setNavigationReady(null)
+    const restore = async () => {
+      await chat.initialize(api, requestedId ?? requestedDraft)
+      if (active) setNavigationReady(location.key)
     }
-    if (!session.reasoningLevel || !levels.includes(session.reasoningLevel)) {
-      const next = defaultReasoningLevel(levels) ?? null
-      if (next !== session.reasoningLevel) chat.setReasoningLevel(next)
+    void restore()
+    return () => { active = false }
+  }, [api, location.key, requestedId, requestedDraft, chat.initialize])
+  useEffect(() => {
+    if (navigationReady !== location.key || !session || chat.loading || chat.sending) return
+    const remoteId = session?.remote?.sessionId
+    const draftId = remoteId ? undefined : session.id
+    if (remoteId === requestedId && draftId === requestedDraft) return
+    const next = new URLSearchParams(params)
+    if (remoteId) next.set('session', remoteId)
+    else next.delete('session')
+    setParams(next, { replace: true, state: { ...routeState, agentDraftId: draftId } })
+  }, [navigationReady, location.key, session?.id, session?.remote?.sessionId, requestedId, requestedDraft, chat.loading, chat.sending, params, setParams])
+  useEffect(() => {
+    if (!listCollapsed || !restoreListFocus.current) return
+    restoreListFocus.current = false
+    listTrigger.current?.querySelector('button')?.focus()
+  }, [listCollapsed])
+  useEffect(() => {
+    if (!api.available) return
+    const timer = setInterval(() => {
+      const state = useAgentChatStore.getState()
+      if (document.visibilityState !== 'hidden' && !state.listLoading &&
+          (state.sessions.some(row => row.activeRunId || row.activeWorkflowId) || state.localSessions.some(row => row.pending))) void chat.loadSessions(api, false, true)
+    }, 5000)
+    return () => clearInterval(timer)
+  }, [api, chat.loadSessions])
+  useEffect(() => {
+    if (!session || status !== 'ready' || model || busy || session.pending) return
+    // 已绑定的会话不在目录刷新时静默更换模型。
+    if (!session.remote && session.modelId !== (models[0]?.id ?? null)) chat.setModel(models[0]?.id ?? null)
+  }, [session?.id, session?.modelId, session?.remote, session?.pending, model, models, status, busy, chat.setModel])
+
+  useEffect(() => {
+    if (!session?.remote || chat.loading || chat.sending || !api.available) return
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const poll = async () => {
+      await chat.refresh(api, controller.signal)
+      const latest = useAgentChatStore.getState()
+      if (!controller.signal.aborted && (isChatRunActive(latest.run) || latest.remoteSession?.activeRunId || latest.remoteSession?.activeWorkflowId || latest.session?.pending)) {
+        timer = setTimeout(() => { void poll() }, 1500)
+      }
     }
-  }, [session?.id, session?.modelId, session?.reasoningLevel, model, models, status, chat.setModel, chat.setReasoningLevel])
+    void poll()
+    return () => { controller.abort(); clearTimeout(timer) }
+  }, [api, session?.id, session?.remote?.sessionId, chat.loading, chat.sending, chat.refresh])
+
+  const liveRunId = isChatRunActive(chat.run) ? chat.run!.id : undefined
+  useEffect(() => {
+    if (!liveRunId || !api.available) return
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const connect = async () => {
+      await chat.watchOutput(api, liveRunId, controller.signal)
+      if (!controller.signal.aborted) timer = setTimeout(() => { void connect() }, 1000)
+    }
+    void connect()
+    return () => { controller.abort(); clearTimeout(timer) }
+  }, [api, liveRunId, chat.watchOutput])
+  const followContent = useCallback(() => {
+    if (following.current && history.current) history.current.scrollTop = history.current.scrollHeight
+  }, [])
 
   useEffect(() => {
     const textarea = input.current
@@ -55,106 +128,156 @@ export function AgentChatPage() {
     textarea.style.height = 'auto'
     textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`
   }, [session?.draft])
+  useEffect(() => { following.current = true }, [session?.id])
+  useEffect(() => {
+    if (following.current && history.current) history.current.scrollTop = history.current.scrollHeight
+  }, [chat.messages.length, chat.reasoning[chat.run?.id ?? ''], session?.id])
 
-  useEffect(() => { bottom.current?.scrollIntoView({ block: 'end' }) }, [session?.messages.length])
-
-  const addFiles = async (files: readonly File[]) => {
-    if (!files.length) return
-    setFileError(null)
-    setPendingAttachments(count => count + 1)
-    try { await chat.addAttachments(files) }
-    catch { setFileError('文件添加失败，请重新选择。') }
-    finally { setPendingAttachments(count => count - 1) }
-  }
+  const canSend = Boolean(api.available && session?.draft.trim() && (model || session.pending) && !session.attachments.length && !busy && !chat.loading && !restoring && (status === 'ready' || session.pending))
   const send = () => {
-    if (attaching || chat.loading) return
-    if (chat.send()) input.current?.focus()
+    if (!canSend) return
+    following.current = true
+    void chat.send(api, model?.profile).then(sent => { if (sent) input.current?.focus() })
   }
-  const isFileDrag = (event: DragEvent) => event.dataTransfer.types.includes('Files')
-  const canSend = Boolean(session && (session.draft.trim() || session.attachments.length) && !attaching && !chat.loading && session.attachments.every(file => file.available))
-  const title = session?.messages[0]?.text || (session?.messages.length ? '附件会话' : '新会话')
+  const title = chat.remoteSession?.title || chat.messages[0]?.content || '新会话'
+  const run = chat.run
 
-  return <section
-    aria-label="Ely 会话"
-    className="agent-chat"
-    onDragEnter={event => { if (isFileDrag(event)) { event.preventDefault(); dragDepth.current += 1; setDragging(true) } }}
-    onDragOver={event => { if (isFileDrag(event)) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy' } }}
-    onDragLeave={event => { if (isFileDrag(event)) { dragDepth.current -= 1; if (dragDepth.current <= 0) setDragging(false) } }}
-    onDrop={event => { if (isFileDrag(event)) { event.preventDefault(); dragDepth.current = 0; setDragging(false); void addFiles(Array.from(event.dataTransfer.files)) } }}
-  >
+  const closeList = () => {
+    restoreListFocus.current = !shell.conversationDrawerOpen
+    setListCollapsed(true)
+    shell.closeConversationDrawer()
+  }
+  const newConversation = () => {
+    if (chat.sending) return
+    setNavigationReady(null)
+    void chat.newSession().then(() => {
+      const next = new URLSearchParams(params); next.delete('session')
+      setParams(next, { state: { ...routeState, agentDraftId: useAgentChatStore.getState().session?.id } })
+      shell.closeConversationDrawer(); input.current?.focus()
+    })
+  }
+  const selectConversation = (key: string) => {
+    if (chat.sending) return
+    setNavigationReady(null)
+    if (chat.localSessions.some(row => row.id === key && !row.remote)) {
+      void chat.selectSession(api, key).then(() => {
+        const next = new URLSearchParams(params); next.delete('session')
+        setParams(next, { state: { ...routeState, agentDraftId: key } })
+      })
+    } else { const next = new URLSearchParams(params); next.set('session', key); setParams(next) }
+    shell.closeConversationDrawer()
+  }
+  const refreshList = () => { setListRefreshing(true); void chat.loadSessions(api).finally(() => setListRefreshing(false)) }
+  const list = <ChatSessionList onSelect={selectConversation} onNew={newConversation} onClose={closeList}
+    onRefresh={refreshList} onMore={() => { void chat.loadSessions(api, true) }} refreshing={listRefreshing} />
+  const showSidebar = shell.sidebarCollapsed && !listCollapsed
+
+  return <div className="agent-workspace" data-navigation-expanded={!shell.sidebarCollapsed || undefined}>
+    {showSidebar && <aside aria-label="会话列表" className="chat-session-sidebar">{list}</aside>}
+    <Dialog.Root open={shell.conversationDrawerOpen} onOpenChange={shell.setConversationDrawerOpen}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-overlay" />
+        <Dialog.Content aria-describedby={undefined} className="chat-session-drawer panel-surface fixed inset-y-0 left-0 z-50 flex rounded-none shadow-xl"
+          onCloseAutoFocus={event => { event.preventDefault(); if (!shell.navigationOpen) listTrigger.current?.querySelector('button')?.focus() }}>
+          <Dialog.Title className="sr-only">会话列表</Dialog.Title>{list}
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+    <section aria-label="Ely 会话" className="agent-chat">
+
     <header className="chat-header">
-      <div className="flex min-w-0 items-center gap-3">
-        <span className="max-w-64 truncate text-sm font-medium" title={title}>{title}</span>
-        <span className="shrink-0 rounded-md border border-panel-line px-1.5 py-0.5 text-[10px] text-fg-muted">界面预览</span>
+      <div className="flex min-w-0 items-center gap-2">
+        <span ref={listTrigger} className={showSidebar ? 'chat-list-toggle' : ''}>
+          <IconButton className="chat-list-trigger" label="打开会话列表" variant="ghost" onPress={() => {
+            if (window.matchMedia('(min-width: 1100px)').matches) { shell.setSidebarCollapsed(true); setListCollapsed(false) }
+            else shell.openConversationDrawer()
+          }}><PanelLeftOpen size={17} aria-hidden /></IconButton>
+        </span>
+        <span className="chat-title max-w-64 truncate text-sm font-medium" title={title}>{title}</span>
       </div>
-      <button type="button" className="chat-new" onClick={() => { void chat.newSession(); setFileError(null); input.current?.focus() }}><Plus size={14} aria-hidden /><span>新会话</span></button>
+      <button type="button" className="chat-new" disabled={chat.sending} onClick={newConversation}><Plus size={14} aria-hidden /><span>新会话</span></button>
     </header>
 
-    <div className="chat-history hover-scrollbar">
-      {!session?.messages.length ? <div className="chat-empty">
+    <div ref={history} className="chat-history hover-scrollbar" onScroll={event => {
+      const element = event.currentTarget
+      following.current = element.scrollHeight - element.scrollTop - element.clientHeight < 24
+    }}>
+      {!chat.messages.length ? <div className="chat-empty">
         <Bot size={38} className="mb-5 text-fg-muted" aria-hidden />
-        <h2 className="text-2xl font-medium tracking-tight sm:text-[28px]">今天想处理什么？</h2>
-        <p className="mt-3 text-sm text-fg-muted">告诉 Ely 你的目标，或添加相关文件。</p>
+        <h2 className="text-2xl font-medium tracking-tight sm:text-[28px]">今天想聊什么？</h2>
+        <p className="mt-3 text-sm text-fg-muted">选择模型，向 Ely 发送第一条消息。</p>
+        {!!session?.messages.length && <p className="mt-3 text-xs text-fg-muted">本地预览消息未发送给模型。</p>}
       </div> : <div className="chat-messages" role="log" aria-label="会话消息">
-        {session.messages.map(message => <article key={message.id} className="chat-message" aria-label="你的消息">
-          <div className="chat-message-body">
-            {message.attachments.length > 0 && <ul aria-label="消息附件" className="flex flex-wrap justify-end gap-2">{message.attachments.map(attachment => <ChatAttachment key={attachment.id} attachment={attachment} />)}</ul>}
-            {message.text && <p className="chat-message-text">{message.text}</p>}
-            <p className="mt-2 text-right text-[11px] text-fg-muted">已保存在本地</p>
-          </div>
-        </article>)}
-        <div className="flex items-start gap-3 py-5 text-sm text-fg-muted" role="status">
-          <Bot size={20} className="mt-0.5 shrink-0" aria-hidden />
-          <p className="leading-6">消息已留在当前会话。接入智能体后，Ely 将在这里回复。</p>
-        </div>
-        <div ref={bottom} />
+        {chat.messages.filter(message => message.role === 'user').map(message => {
+          const answer = chat.messages.find(item => item.runId === message.runId && item.role === 'assistant')
+          const active = liveRunId === message.runId
+          const live = active && chat.liveOutput?.runId === message.runId ? chat.liveOutput : null
+          return <Fragment key={message.id}>
+            <article className="chat-message" aria-label="你的消息">
+              <div className="chat-message-body"><p className="chat-message-text">{message.content}</p></div>
+            </article>
+            <ChatResponse content={answer?.content ?? live?.content ?? ''} reasoning={chat.reasoning[message.runId] ?? ''}
+              active={active} quarantined={answer?.quarantined} onProgress={followContent} />
+          </Fragment>
+        })}
       </div>}
     </div>
 
     <div className="chat-compose-area">
-      {(fileError || chat.notice) && <div role="status" className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning/5 px-3 py-2 text-xs text-warning">
-        <span>{fileError || chat.notice}</span><IconButton label="关闭提示" variant="ghost" onPress={() => { setFileError(null); chat.clearNotice() }}><X size={13} aria-hidden /></IconButton>
-      </div>}
+      {run && !isChatRunActive(run) && run.status !== 'succeeded' && <p role="alert" className="mb-3 text-xs text-danger">{RUNTIME_RUN_STATUS_LABELS[run.status]}{run.error ? `：${run.error.message}` : ''}</p>}
+      {chat.notice && <div role="status" className="mb-3 flex items-start gap-2 text-xs text-fg-muted"><span className="min-w-0 flex-1">{chat.notice}</span><button type="button" aria-label="关闭提示" onClick={chat.clearNotice}><X size={14} aria-hidden /></button></div>}
+      {chat.error && <p role="alert" className="mb-3 text-xs text-danger">{chat.error}</p>}
+      {chat.syncError && <div role="alert" className="mb-3 flex items-center gap-2 text-xs text-danger"><span className="min-w-0 flex-1">{chat.syncError}</span><RefreshButton label="重新读取会话" busy={chat.refreshing} onPress={() => { void chat.refresh(api) }} /></div>}
       {error && <div role="alert" className="mb-3 flex items-center gap-2 text-xs text-danger"><span className="min-w-0 flex-1">{error}</span><RefreshButton label="重新读取模型" busy={status === 'loading'} onPress={reload} /></div>}
-      {status === 'ready' && !models.length && <p className="mb-3 text-xs text-fg-muted">暂无可用模型，<Link className="underline underline-offset-4 hover:text-fg" to="/settings?tab=models">前往设置添加模型</Link>。你仍可体验本地消息发送。</p>}
+      {!api.available && <p className="mb-3 text-xs text-fg-muted">当前为本地演示，请在已连接后端的面板中使用聊天。</p>}
+      {status === 'ready' && (!models.length || (session?.remote && !model)) && <p className="mb-3 text-xs text-fg-muted">请选择支持文本与工具调用的可用模型，或<Link className="underline underline-offset-4 hover:text-fg" to="/settings?tab=models">前往设置添加模型</Link>。</p>}
+      {!!session?.attachments.length && <p className="mb-3 text-xs text-fg-muted">附件仅保存在本地，暂未接入模型；请移除附件后发送文本。</p>}
 
       <form className="chat-composer panel-surface" onSubmit={event => { event.preventDefault(); send() }} aria-label="消息输入框">
-        <input ref={fileInput} type="file" multiple className="sr-only" tabIndex={-1} aria-label="添加会话附件" onChange={event => { void addFiles(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = '' }} />
-        {session && session.attachments.length > 0 && <ul aria-label="待发送附件" className="flex max-h-44 flex-wrap gap-2 overflow-y-auto px-4 pt-4">{session.attachments.map(attachment => <ChatAttachment key={attachment.id} attachment={attachment} onRemove={() => chat.removeAttachment(attachment.id)} />)}</ul>}
+        {!!session?.attachments.length && <ul aria-label="本地附件" className="flex flex-wrap gap-2 px-4 pt-4">{session.attachments.map(attachment => <ChatAttachment key={attachment.id} attachment={attachment} onRemove={() => chat.removeAttachment(attachment.id)} />)}</ul>}
         <label htmlFor="agent-message" className="sr-only">发送给 Ely 的消息</label>
         <textarea
           id="agent-message" ref={input} value={session?.draft ?? ''} rows={2}
-          placeholder={chat.loading ? '正在恢复会话…' : '向 Ely 发送消息，描述你想完成的任务…'}
-          className="chat-textarea hover-scrollbar" disabled={!session || chat.loading}
+          placeholder={restoring ? '正在读取会话…' : '向 Ely 发送消息…'} className="chat-textarea hover-scrollbar"
+          disabled={!session || chat.loading || chat.sending || !!session.pending}
           onChange={event => chat.setDraft(event.target.value)}
           onCompositionStart={() => { composing.current = true }} onCompositionEnd={() => { composing.current = false }}
           onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && !composing.current && event.keyCode !== 229) { event.preventDefault(); send() } }}
-          onPaste={event => { const files = Array.from(event.clipboardData.files); if (files.length) { event.preventDefault(); void addFiles(files) } }}
         />
+        <input ref={fileInput} type="file" multiple hidden aria-label="选择附件" disabled={attachmentsLocked} onChange={event => {
+          const files = Array.from(event.target.files ?? [])
+          event.target.value = ''
+          if (!attachmentsLocked) void chat.addAttachments(files)
+        }} />
         <div className="chat-composer-tools">
-          <IconButton label="添加文件或图片" variant="ghost" onPress={() => fileInput.current?.click()} disabled={attaching || chat.loading} className="chat-add-file"><Paperclip size={20} aria-hidden /></IconButton>
-          <div className="chat-permission" title={`${permissionMode.label}：${permissionMode.description}（当前仅预览）`}>
-            <SelectDropdown ariaLabel="权限模式" items={PERMISSION_MODES.map(({ Icon, ...mode }) => ({ ...mode, icon: <Icon size={16} className={mode.value === 'full' && permissionMode.value === 'full' ? 'text-danger' : undefined} /> }))} value={permissionMode.value} onSelect={chat.setPermissionMode}
-              leadingIcon={<PermissionIcon size={16} className={`shrink-0${permissionMode.value === 'full' ? ' text-danger' : ''}`} aria-hidden />} triggerClassName="chat-select chat-permission-select" contentClassName="chat-composer-menu chat-permission-menu" />
+          <IconButton label="添加附件" variant="ghost" onPress={() => fileInput.current?.click()} disabled={attachmentsLocked} className="chat-add-file"><Paperclip size={20} aria-hidden /></IconButton>
+          <div className="chat-permission" data-mode={permissionMode.value} title={`${permissionMode.label}：${permissionMode.description}`}>
+            <SelectDropdown ariaLabel="权限模式" value={permissionMode.value} onSelect={chat.setPermissionMode}
+              items={PERMISSION_MODES.map(({ Icon, ...mode }) => ({ ...mode, icon: <Icon size={16} /> }))}
+              leadingIcon={<PermissionIcon size={16} aria-hidden />}
+              disabled={!session || chat.loading || busy || restoring || !!session.pending}
+              triggerClassName="chat-select chat-permission-select" contentClassName="chat-composer-menu chat-permission-menu" />
+            {permissionMode.value !== 'ask' && <span className="text-[10px] text-fg-muted">预览</span>}
           </div>
           <div className="chat-model">
             <SelectDropdown ariaLabel="选择模型" value={model?.id} onSelect={chat.setModel}
               items={models.map(item => ({ value: item.id, label: models.some(other => other.id !== item.id && other.name === item.name) ? `${item.name} · ${item.serviceName} · ${item.model}` : item.name }))}
               fallbackLabel={status === 'loading' ? '加载模型…' : status === 'error' ? '模型不可用' : '选择模型'}
-              disabled={status !== 'ready' || !models.length} triggerClassName="chat-select chat-model-select" contentClassName="chat-composer-menu"
+              disabled={status !== 'ready' || !models.length || busy || restoring || !!session?.pending} triggerClassName="chat-select chat-model-select" contentClassName="chat-composer-menu"
               search={models.length > 6 ? { ariaLabel: '搜索模型', placeholder: '搜索模型…' } : undefined} />
           </div>
-          <div className="chat-reasoning" title={levels.length ? '模型思考等级' : '此模型未配置可选思考等级'}>
-            <SelectDropdown ariaLabel="思考等级" value={session?.reasoningLevel ?? undefined} onSelect={chat.setReasoningLevel}
-              leadingIcon={<Brain size={16} className="shrink-0" aria-hidden />}
-              items={levels.map(level => ({ value: level, label: reasoningLabel(level) }))} fallbackLabel="默认"
-              disabled={!levels.length} triggerClassName="chat-select chat-reasoning-select" contentClassName="chat-composer-menu" />
+          <div className="chat-reasoning">
+            <SelectDropdown ariaLabel="选择思考等级" value={session?.reasoningLevel ?? ''}
+              items={[{ value: '', label: '默认' }, ...(model?.reasoningLevels ?? []).map(level => ({ value: level, label: reasoningLabel(level) }))]}
+              onSelect={value => chat.setReasoningLevel(value || null)} fallbackLabel="默认"
+              leadingIcon={<Brain size={16} aria-hidden />} align="end"
+              disabled={status !== 'ready' || !model || busy || restoring || !!session?.pending}
+              triggerClassName="chat-select chat-reasoning-select" contentClassName="chat-composer-menu" />
           </div>
-          <IconButton label="发送消息" onPress={send} disabled={!canSend} className="chat-send"><Send size={20} aria-hidden /></IconButton>
+          <IconButton label={session?.pending ? '重试发送' : '发送消息'} onPress={send} disabled={!canSend} className="chat-send"><Send size={20} aria-hidden /></IconButton>
         </div>
       </form>
     </div>
-
-    {dragging && <div className="chat-drop-overlay"><Upload size={30} aria-hidden /><p className="mt-4 text-base font-medium">松开以添加附件</p><p className="mt-2 text-xs text-fg-muted">图片、文档、代码、音视频及压缩包</p></div>}
-  </section>
+    </section>
+  </div>
 }

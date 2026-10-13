@@ -1,5 +1,5 @@
 import { withRequestDeadline } from '../requestDeadline'
-import { reportUnauthorized } from '../unauthorized'
+import { fetchWithSession, reportUnauthorized } from '../unauthorized'
 import { useAgentRuntimeStore } from '../../../stores/agentRuntimeStore'
 
 /** 模型设置的同源 JSON 请求：统一超时、401、服务端错误与内核不可用处理。 */
@@ -61,7 +61,7 @@ export async function requestAgentJson(
     headers.set('content-type', 'application/json')
     let response: Response
     try {
-      response = await fetch(url, { ...init, headers, cache: 'no-store', signal: bounded.signal })
+      response = await fetchWithSession(url, { ...init, headers, cache: 'no-store', signal: bounded.signal })
     } catch (error) {
       if (bounded.signal?.aborted) throw error
       throw new Error('Agent 请求网络失败')

@@ -34,6 +34,7 @@ import { createHttpModelSettingsAdapter } from '../http/agent/modelSettingsHttpA
 import { ModelSettingsMockAdapter } from './agent/modelSettingsMockAdapter'
 import { demoAgentRuntimeInfo } from './agent/agentRuntimeMock'
 import { createHttpAgentRuntimeAdapter } from '../http/agent/agentRuntimeAdapter'
+import { createHttpAgentConversationAdapter, createUnavailableAgentConversationAdapter } from '../http/agent/agentConversationHttpAdapter'
 import type { ContainerAdapter, EventsAdapter, TerminalAdapter } from '../../contracts/adapters'
 import { useContainersStore } from '../../stores/containersStore'
 import { useSessionStore } from '../../stores/sessionStore'
@@ -110,6 +111,7 @@ export function createGateway(
   const agentRuntime = options.agentRuntime === 'http' ? createHttpAgentRuntimeAdapter() : { runtime: async () => demoAgentRuntimeInfo() }
 
   return {
+    agentConversation: options.modelSettings === 'http' ? createHttpAgentConversationAdapter() : createUnavailableAgentConversationAdapter(),
     panel: options.panel === 'http' ? createHttpPanelAdapter() : mockPanelAdapter,
     session,
     containers,

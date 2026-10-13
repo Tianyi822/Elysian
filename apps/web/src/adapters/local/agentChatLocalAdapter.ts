@@ -1,6 +1,9 @@
+import { agentChatSessionKey } from '../../contracts/agentChat'
 import type { AgentChatAdapter, AgentChatAttachment, AgentChatMessage, AgentChatSession } from '../../contracts/agentChat'
 
-export const AGENT_CHAT_STORAGE_KEY = 'elysian.agent-chat.v1'
+export const AGENT_CHAT_LEGACY_KEY = 'elysian.agent-chat.v1'
+export const AGENT_CHAT_STORAGE_KEY = 'elysian.agent-chat.v2.selected'
+export const AGENT_CHAT_RECORD_PREFIX = 'elysian.agent-chat.v2.session.'
 const DATABASE_NAME = 'elysian-agent-chat'
 const FILE_STORE = 'attachments'
 
@@ -16,11 +19,19 @@ const isMessage = (value: unknown): value is AgentChatMessage => isRecord(value)
   && typeof value.createdAt === 'string' && isPermissionMode(value.permissionMode)
   && isNullableString(value.modelId) && isNullableString(value.reasoningLevel)
   && Array.isArray(value.attachments) && value.attachments.every(isAttachment)
+
 const isSession = (value: unknown): value is AgentChatSession => isRecord(value)
   && typeof value.id === 'string' && typeof value.createdAt === 'string' && typeof value.draft === 'string'
   && isPermissionMode(value.permissionMode) && isNullableString(value.modelId) && isNullableString(value.reasoningLevel)
   && Array.isArray(value.messages) && value.messages.every(isMessage)
   && Array.isArray(value.attachments) && value.attachments.every(isAttachment)
+  && (value.remote === undefined || (isRecord(value.remote) && typeof value.remote.sessionId === 'string'
+    && (value.remote.taskId === undefined || typeof value.remote.taskId === 'string')
+    && (value.remote.runId === undefined || typeof value.remote.runId === 'string')))
+  && (value.pending === undefined || (isRecord(value.pending) && isRecord(value.pending.input)
+    && typeof value.pending.input.requestId === 'string' && typeof value.pending.input.content === 'string'
+    && (value.pending.input.reasoningLevel === undefined || typeof value.pending.input.reasoningLevel === 'string')
+    && (value.pending.taskId === undefined || typeof value.pending.taskId === 'string')))
 
 /** 不把 blob URL 或“可用”状态当成持久事实，刷新后必须重新核对文件字节。 */
 const storedAttachment = ({ id, name, size, type, lastModified }: AgentChatAttachment): AgentChatAttachment => ({ id, name, size, type, lastModified, available: false })
@@ -33,8 +44,39 @@ const storedSession = (session: AgentChatSession): AgentChatSession => ({
 export function createAgentChatLocalAdapter(): AgentChatAdapter {
   const memoryFiles = new Map<string, Blob>()
   const previews = new Map<string, string>()
-  let fallback: AgentChatSession | null = null
-  let memoryOnly = false
+  const fallback = new Map<string, AgentChatSession>()
+  const memoryOnly = new Set<string>()
+  let selected: string | null = null
+  let migrated = false
+  const storageKey = (key: string) => AGENT_CHAT_RECORD_PREFIX + encodeURIComponent(key)
+  const parse = (raw: string | null): AgentChatSession | null => {
+    if (!raw) return null
+    try { const value: unknown = JSON.parse(raw); return isSession(value) ? storedSession(value) : null }
+    catch { return null }
+  }
+  const migrate = () => {
+    if (migrated) return
+    try {
+      const legacy = parse(localStorage.getItem(AGENT_CHAT_LEGACY_KEY))
+      if (legacy) {
+        const key = agentChatSessionKey(legacy)
+        // 分步失败时保留旧记录；重试不覆盖已经迁移后编辑过的内容。
+        if (!localStorage.getItem(storageKey(key))) localStorage.setItem(storageKey(key), JSON.stringify(legacy))
+        if (!localStorage.getItem(AGENT_CHAT_STORAGE_KEY)) localStorage.setItem(AGENT_CHAT_STORAGE_KEY, key)
+        localStorage.removeItem(AGENT_CHAT_LEGACY_KEY)
+      }
+      migrated = true
+    } catch { /* 存储恢复后再迁移，旧草稿和 requestId 不丢失。 */ }
+  }
+  const read = (key?: string): AgentChatSession | null => {
+    migrate()
+    try {
+      key ??= selected ?? localStorage.getItem(AGENT_CHAT_STORAGE_KEY) ?? undefined
+      if (!key) return parse(localStorage.getItem(AGENT_CHAT_LEGACY_KEY))
+      if (memoryOnly.has(key)) return fallback.get(key) ?? null
+      return parse(localStorage.getItem(storageKey(key))) ?? fallback.get(key) ?? null
+    } catch { return key ? fallback.get(key) ?? null : selected ? fallback.get(selected) ?? null : null }
+  }
   let database: Promise<IDBDatabase> | undefined
 
   const open = (): Promise<IDBDatabase> => {
@@ -84,23 +126,54 @@ export function createAgentChatLocalAdapter(): AgentChatAdapter {
   }
 
   return {
-    read() {
-      if (memoryOnly) return fallback
+    read,
+    list() {
+      migrate()
+      const records = new Map(fallback)
       try {
-        const raw = localStorage.getItem(AGENT_CHAT_STORAGE_KEY)
-        if (!raw) return fallback
-        const parsed: unknown = JSON.parse(raw)
-        return isSession(parsed) ? storedSession(parsed) : null
-      } catch { return fallback }
+        for (let index = 0; index < localStorage.length; index += 1) {
+          const key = localStorage.key(index)
+          if (!key?.startsWith(AGENT_CHAT_RECORD_PREFIX)) continue
+          const value = parse(localStorage.getItem(key))
+          if (value && !memoryOnly.has(agentChatSessionKey(value))) records.set(agentChatSessionKey(value), value)
+        }
+      } catch { /* 保留当前页内存草稿。 */ }
+      return [...records.values()]
     },
-    write(session) {
-      fallback = storedSession(session)
-      try { localStorage.setItem(AGENT_CHAT_STORAGE_KEY, JSON.stringify(fallback)); memoryOnly = false; return true }
-      catch { memoryOnly = true; return false }
+    select(key) {
+      selected = key
+      try { localStorage.setItem(AGENT_CHAT_STORAGE_KEY, key); return true }
+      catch { return false }
+    },
+    write(session, select = true) {
+      const value = storedSession(session)
+      const key = agentChatSessionKey(value)
+      fallback.set(key, value)
+      if (select) selected = key
+      try {
+        localStorage.setItem(storageKey(key), JSON.stringify(value))
+        if (select) localStorage.setItem(AGENT_CHAT_STORAGE_KEY, key)
+        memoryOnly.delete(key)
+        // 首次创建服务器会话后，草稿记录搬到服务器 ID；只有写成功才清旧键。
+        if (value.remote && value.id !== key) {
+          localStorage.removeItem(storageKey(value.id))
+          fallback.delete(value.id)
+          memoryOnly.delete(value.id)
+        }
+        return true
+      } catch { memoryOnly.add(key); return false }
     },
     subscribe(listener) {
       const onStorage = (event: StorageEvent) => {
-        if (event.key === AGENT_CHAT_STORAGE_KEY) { fallback = null; memoryOnly = false; listener() }
+        // 选中指针属于各标签的导航；其他标签切换时不强制跟随。
+        if (event.key === null || event.key.startsWith(AGENT_CHAT_RECORD_PREFIX)) {
+          if (event.key === null) {
+            for (const key of fallback.keys()) if (!memoryOnly.has(key)) fallback.delete(key)
+          } else {
+            try { const key = decodeURIComponent(event.key.slice(AGENT_CHAT_RECORD_PREFIX.length)); if (!memoryOnly.has(key)) fallback.delete(key) } catch { /* 非本适配器的键不参与同步。 */ }
+          }
+          listener()
+        }
       }
       window.addEventListener('storage', onStorage)
       return () => window.removeEventListener('storage', onStorage)

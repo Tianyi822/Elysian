@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  advanceAuthGeneration,
+  captureAuthGeneration,
+  fetchWithSession,
   reportUnauthorized,
   reportUnauthorizedStatus,
   setUnauthorizedListener,
@@ -12,6 +15,7 @@ import {
 
 afterEach(() => {
   setUnauthorizedListener(() => {})
+  vi.restoreAllMocks()
 })
 
 describe('reportUnauthorized', () => {
@@ -58,6 +62,46 @@ describe('reportUnauthorizedStatus', () => {
     expect(reportUnauthorizedStatus(401)).toBe(true)
     expect(reportUnauthorizedStatus(200)).toBe(false)
     expect(reportUnauthorizedStatus(403)).toBe(false)
+    expect(listener).toHaveBeenCalledTimes(1)
+  })
+
+  it('旧代次 401 仍返回失败，但不通知当前登录失效', () => {
+    const listener = vi.fn()
+    setUnauthorizedListener(listener)
+    const generation = captureAuthGeneration()
+    advanceAuthGeneration()
+    expect(reportUnauthorizedStatus(401, generation)).toBe(true)
+    expect(listener).not.toHaveBeenCalled()
+    expect(reportUnauthorizedStatus(401, captureAuthGeneration())).toBe(true)
+    expect(listener).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('fetchWithSession', () => {
+  it('请求发送时绑定代次，旧响应迟到不通知新的登录失效', async () => {
+    let resolve!: (response: Response) => void
+    const pending = new Promise<Response>((done) => { resolve = done })
+    const fetch = vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(pending)
+    const listener = vi.fn()
+    setUnauthorizedListener(listener)
+    const signal = new AbortController().signal
+    const request = fetchWithSession('/api/agent/sessions', { signal, cache: 'no-store' })
+    expect(fetch).toHaveBeenCalledWith('/api/agent/sessions', { signal, cache: 'no-store' })
+    advanceAuthGeneration()
+    resolve(new Response('', { status: 401 }))
+    expect(reportUnauthorized(await request)).toBe(true)
+    expect(listener).not.toHaveBeenCalled()
+  })
+
+  it('同代次的真实 401 仍通知失效，响应解析期间换代也保持原请求身份', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('', { status: 401 }))
+    const listener = vi.fn()
+    setUnauthorizedListener(listener)
+    expect(reportUnauthorized(await fetchWithSession('/api/files'))).toBe(true)
+    expect(listener).toHaveBeenCalledTimes(1)
+    const delayed = await fetchWithSession('/api/databases')
+    advanceAuthGeneration()
+    expect(reportUnauthorized(delayed)).toBe(true)
     expect(listener).toHaveBeenCalledTimes(1)
   })
 })

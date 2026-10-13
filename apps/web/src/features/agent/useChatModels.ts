@@ -38,7 +38,7 @@ export function defaultReasoningLevel(levels: readonly AgentModelReasoningLevel[
   return levels.includes('medium') ? 'medium' : levels[0]
 }
 
-/** 会话原型仅读取系统设置目录；模型调用、内核检查与会话提交不在此入口发生。 */
+/** 复用设置目录，只提供后端会话要求的文本与工具模型。 */
 export function useChatModels(): ChatModelsState & { reload(): void } {
   const { modelSettings } = useGateway()
   const [attempt, setAttempt] = useState(0)
@@ -51,7 +51,7 @@ export function useChatModels(): ChatModelsState & { reload(): void } {
     void modelSettings.listModelServices(controller.signal).then(services => {
       if (controller.signal.aborted) return
       const models = services.filter(service => service.active).flatMap(service =>
-        service.models.filter(profile => profile.active && profile.enabled && profile.capabilities.text).map(profile => ({
+        service.models.filter(profile => profile.active && profile.enabled && profile.capabilities.text && profile.capabilities.tools).map(profile => ({
           id: profile.id,
           name: profile.name,
           model: profile.model,

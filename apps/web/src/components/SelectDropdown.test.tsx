@@ -138,6 +138,30 @@ describe('自绘单选下拉', () => {
     expect(props.onSelect).toHaveBeenCalledWith('files')
   })
 
+  it.each([false, true])('鼠标选值后保留焦点但不显示键盘焦点框（搜索：%s），切回键盘时恢复提示', async (searchable) => {
+    const user = userEvent.setup()
+    renderDropdown(searchable ? { search: { ariaLabel: '搜索分类', placeholder: '输入分类' } } : {})
+    const trigger = screen.getByRole('button', { name: '操作分类筛选：全部' })
+    await user.click(trigger)
+    if (searchable) await user.type(screen.getByRole('textbox', { name: '搜索分类' }), '文件')
+    await user.click(screen.getByRole('menuitemradio', { name: '文件管理' }))
+    expect(trigger).toHaveFocus()
+    expect(trigger).toHaveAttribute('data-pointer-focus', 'true')
+    await user.keyboard('{Enter}{Escape}')
+    expect(trigger).toHaveFocus()
+    expect(trigger).not.toHaveAttribute('data-pointer-focus')
+  })
+
+  it('鼠标打开后用键盘选值，返回触发器时保留键盘焦点提示', async () => {
+    const user = userEvent.setup()
+    renderDropdown()
+    const trigger = screen.getByRole('button', { name: '操作分类筛选：全部' })
+    await user.click(trigger)
+    await user.keyboard('{ArrowDown}{Enter}')
+    expect(trigger).toHaveFocus()
+    expect(trigger).not.toHaveAttribute('data-pointer-focus')
+  })
+
   it('候选项文字靠左，选中勾跟在文字后面，未选项左侧不留空列', async () => {
     const user = userEvent.setup()
     renderDropdown()

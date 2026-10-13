@@ -557,6 +557,7 @@ export interface PanelAdapter {
 }
 
 export interface ElysianGateway {
+  agentConversation: import('./agentChat').AgentConversationAdapter
   modelSettings: ModelSettingsAdapter
   agentRuntime: AgentRuntimeAdapter
  panel: PanelAdapter

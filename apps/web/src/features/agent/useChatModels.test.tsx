@@ -26,7 +26,7 @@ function setup() {
 }
 
 describe('会话模型目录', () => {
-  it('只呈现启用的文本模型，保留真实等级声明，且不检查运行内核', async () => {
+  it('只呈现启用且支持文本与工具的模型，保留真实等级声明，且不检查运行内核', async () => {
     const { read, runtime, wrapper } = setup()
     read.mockResolvedValue([
       { ...service, models: [
@@ -40,9 +40,8 @@ describe('会话模型目录', () => {
     ])
     const { result } = renderHook(useChatModels, { wrapper })
     await waitFor(() => expect(result.current.status).toBe('ready'))
-    expect(result.current.models.map(model => model.id)).toEqual(['text-model', 'plain'])
+    expect(result.current.models.map(model => model.id)).toEqual(['text-model'])
     expect(result.current.models[0]).toMatchObject({ serviceName: '测试服务', reasoningLevels: ['low', 'medium', 'high'] })
-    expect(result.current.models[1]?.reasoningLevels).toEqual([])
     expect(read).toHaveBeenCalledTimes(1)
     expect(runtime).not.toHaveBeenCalled()
   })

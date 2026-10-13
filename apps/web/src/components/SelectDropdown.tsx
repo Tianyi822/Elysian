@@ -87,6 +87,9 @@ export function SelectDropdown<T extends string>({
   search?: { ariaLabel: string; placeholder: string }
 }) {
   const [open, setOpen] = useState(false)
+  // Radix 关闭菜单会归还焦点；鼠标选值不应因此显示键盘焦点环。
+  // 仍保留真实焦点，便于用户继续按 Tab 或方向键操作。
+  const [pointerFocus, setPointerFocus] = useState(false)
   const descriptionId = useId()
   const [searchText, setSearchText] = useState('')
   const [committedSearch, setCommittedSearch] = useState('')
@@ -166,7 +169,11 @@ export function SelectDropdown<T extends string>({
           type="button"
           disabled={disabled}
           aria-label={`${ariaLabel}：${valueLabel}`}
-          className={triggerClass}
+          data-pointer-focus={pointerFocus || undefined}
+          onPointerDownCapture={() => setPointerFocus(true)}
+          onKeyDownCapture={() => setPointerFocus(false)}
+          onBlur={() => setPointerFocus(false)}
+          className={`${triggerClass} data-[pointer-focus]:outline-none`}
         >
           {leadingIcon}
           {label && !fullWidth && !triggerClassName ? (
@@ -182,6 +189,8 @@ export function SelectDropdown<T extends string>({
           align={align}
           sideOffset={6}
           collisionPadding={8}
+          onPointerDownCapture={() => setPointerFocus(true)}
+          onKeyDownCapture={() => setPointerFocus(false)}
           onFocus={searchable ? (event) => {
             if (event.target === event.currentTarget) {
               event.preventDefault()
@@ -245,6 +254,7 @@ export function SelectDropdown<T extends string>({
                   <DropdownMenu.RadioItem
                     key={item.value}
                     value={item.value}
+                    data-value={item.value}
                     textValue={item.label}
                     aria-label={item.description ? item.label : undefined}
                     aria-describedby={item.description ? `${descriptionId}-${index}` : undefined}
