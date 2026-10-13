@@ -15,6 +15,8 @@ import {
   createInMemoryEventsAdapter,
 } from './mockAdapters'
 import { createResilientEventsAdapter } from '../sse/eventsAdapter'
+import { sharedSubscription } from '../sse/sharedSubscription'
+import type { ElysianEvent, EventStreamStatus } from '@elysian/contracts'
 import { createContainerEventsLayer } from './containerEvents'
 import { createHttpLogsAdapter } from '../http/logsHttpAdapter'
 import { MockTerminalAdapter } from './terminalAdapter'
@@ -162,19 +164,31 @@ function attachDockerContainerWatch(
   enabled: boolean,
 ): EventsAdapter {
   if (!enabled) return underlying
+  type SharedEvent = { type: 'event'; value: ElysianEvent }
+    | { type: 'status'; value: EventStreamStatus }
+    | { type: 'container-status'; value: Parameters<Parameters<ContainerAdapter['watchLive']>[0]['onStatus']>[0] }
   return {
     subscribe(handlers) {
-      const unsubscribeEvents = underlying.subscribe(handlers)
-      const unsubscribeWatch = containers.watchLive({
-        onEvent: handlers.onEvent,
-        onStatus: (status) => {
-          useContainersStore.getState().setLiveStatus(status)
-        },
+      return sharedSubscription<SharedEvent>('elysian.global-events.v1', emit => {
+        const unsubscribeEvents = underlying.subscribe({
+          onEvent: value => emit({ type: 'event', value }),
+          onStatus: value => emit({ type: 'status', value }),
+        })
+        const unsubscribeWatch = containers.watchLive({
+          onEvent: value => emit({ type: 'event', value }),
+          onStatus: value => emit({ type: 'container-status', value }),
+        })
+        return () => { unsubscribeEvents(); unsubscribeWatch() }
+      }, message => {
+        if (message.type === 'event') handlers.onEvent(message.value)
+        else if (message.type === 'status') handlers.onStatus(message.value)
+        else useContainersStore.getState().setLiveStatus(message.value)
+      }, message => {
+        if (message.type !== 'event') return message.type
+        if (message.value.name === 'resource/sample' || message.value.name === 'container/sample') {
+          return message.value.name
+        }
       })
-      return () => {
-        unsubscribeEvents()
-        unsubscribeWatch()
-      }
     },
   }
 }

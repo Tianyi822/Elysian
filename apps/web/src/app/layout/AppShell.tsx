@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Menu, PanelLeftClose, PanelLeftOpen } from '../../components/icons'
+import { PanelLeftClose, PanelLeftOpen } from '../../components/icons'
 import { Outlet, useLocation, useMatches } from 'react-router'
 import { useGateway } from '../../adapters/GatewayProvider'
+import { subscribeWhileVisible } from '../../adapters/subscribeWhileVisible'
 import { IconButton } from '../../components/IconButton'
 import { NotificationHost } from '../../components/NotificationHost'
 import { useEventStreamStore } from '../../stores/eventStreamStore'
@@ -79,13 +80,13 @@ export function AppShell() {
     titleText: pageTitle,
   })
 
-  // 整个应用只订阅一次事件流，避免每个页面各开一条连接。
-  useEffect(() => {
+  // 每个前台页面只订阅一次；后台页释放 SSE，给同源普通请求留出连接。
+  useEffect(() => subscribeWhileVisible(() => {
     connectEventStream(gateway.events)
     return () => {
       useEventStreamStore.getState().disconnect()
     }
-  }, [gateway, connectEventStream])
+  }), [gateway, connectEventStream])
 
   return (
     <ShellLayoutContext.Provider value={layout}>
@@ -120,9 +121,9 @@ export function AppShell() {
           <Dialog.Root open={layout.navigationOpen} onOpenChange={setNavigationOpen}>
             {hideHeader && (
               <Dialog.Trigger asChild>
-                <span ref={headerActionsRef} className="fixed left-3 top-0 z-30 flex h-[var(--shell-header-height)] items-center md:hidden">
+                <span ref={headerActionsRef} className="nav-float-trigger fixed left-3 top-0 z-30 flex h-[var(--shell-header-height)] items-center md:hidden">
                   <IconButton label="打开主导航">
-                    <Menu aria-hidden size={16} />
+                    <PanelLeftOpen aria-hidden size={16} />
                   </IconButton>
                 </span>
               </Dialog.Trigger>
@@ -180,7 +181,7 @@ export function AppShell() {
                     <Dialog.Trigger asChild>
                       <span ref={headerActionsRef} className="shrink-0 md:hidden">
                         <IconButton label="打开主导航" className="size-10">
-                          <Menu aria-hidden size={18} />
+                          <PanelLeftOpen aria-hidden size={18} />
                         </IconButton>
                       </span>
                     </Dialog.Trigger>
