@@ -168,7 +168,7 @@ export function Sidebar({
       <nav
         ref={listRef}
         aria-label="主导航"
-        className={`flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-3 ${collapsed ? 'items-center' : ''}`}
+        className="flex min-h-0 flex-1 flex-col gap-1 overflow-x-hidden overflow-y-auto p-3"
       >
         {items.map((item, index) => {
           const pinned = item.to === PINNED_NAV_PATH
@@ -188,7 +188,7 @@ export function Sidebar({
               dragging={draggingThis}
             >
               <item.icon aria-hidden size={17} />
-              <span className={collapsed ? 'sr-only' : undefined}>{item.label}</span>
+              <span className={`whitespace-nowrap ${collapsed ? 'sr-only' : ''}`}>{item.label}</span>
             </SidebarLink>
           )
           return (
@@ -208,20 +208,17 @@ export function Sidebar({
               onPointerEnter={() => setHoveredTo(item.to)}
               onPointerLeave={() => setHoveredTo((current) => (current === item.to ? null : current))}
             >
-              {/* 展开态标签文字就在旁边，提示是重复；折叠态才套上悬停提示。
-                  只在需要时挂载 Tooltip.Root，避免同一实例在受控与非受控之间来回跳。 */}
-              {collapsed ? (
-                <Tooltip.Root>
-                  <Tooltip.Trigger asChild>{navLink}</Tooltip.Trigger>
-                  <Tooltip.Portal>
-                    <Tooltip.Content side="right" sideOffset={10} className="z-[80] rounded-lg border border-control-line bg-surface-raised px-3 py-1.5 text-xs text-fg shadow-lg">
-                      {item.label}
-                    </Tooltip.Content>
-                  </Tooltip.Portal>
-                </Tooltip.Root>
-              ) : (
-                navLink
-              )}
+              {/* 展开态标签文字就在旁边，提示是重复，因此只有折叠态挂浮层内容。
+                  Root 与 Trigger 常驻：换挂载点会让整条链接连 DOM 一起重建，收展的 200ms 里
+                  每项都要重新首帧绘制，键盘焦点也会从当前项掉回 body。 */}
+              <Tooltip.Root>
+                <Tooltip.Trigger asChild>{navLink}</Tooltip.Trigger>
+                {collapsed && <Tooltip.Portal>
+                  <Tooltip.Content side="right" sideOffset={10} className="z-[80] rounded-lg border border-control-line bg-surface-raised px-3 py-1.5 text-xs text-fg shadow-lg">
+                    {item.label}
+                  </Tooltip.Content>
+                </Tooltip.Portal>}
+              </Tooltip.Root>
               {collapsed || pinned ? null : (
                 <span
                   data-dragging={draggingThis ? '' : undefined}

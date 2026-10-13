@@ -99,7 +99,7 @@ export function ContainerPage() {
         </p>
       ) : null}
       {view === 'grid' ? (
-        <div className={`${CTL_TOOLBAR} container-toolbar mb-4 flex flex-wrap items-center gap-4 panel-surface px-4 py-3`}>
+        <div className={`${CTL_TOOLBAR} rect-toolbar mb-4 flex flex-wrap items-center gap-4 panel-surface px-4 py-3`}>
           <div role="group" aria-label="状态筛选" className="flex flex-wrap basis-full gap-2 lg:basis-auto">
             {STATUS_FILTERS.map((filter) => (
               <button
@@ -142,7 +142,7 @@ export function ContainerPage() {
 
       {view === 'images' ? (
         <>
-          <div className={`${CTL_TOOLBAR} container-toolbar mb-4 flex flex-wrap items-center justify-between gap-4 panel-surface px-4 py-3`}>
+          <div className={`${CTL_TOOLBAR} rect-toolbar mb-4 flex flex-wrap items-center justify-between gap-4 panel-surface px-4 py-3`}>
             <p className="text-xs text-fg-muted">共 {images.length} 个镜像</p>
             <div className="flex flex-wrap items-center gap-2">
               <RefreshButton

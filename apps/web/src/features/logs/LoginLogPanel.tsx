@@ -84,7 +84,7 @@ export function LoginLogPanel() {
 
   return (
     <div>
-      <div className={`${CTL_TOOLBAR} mb-4 flex flex-wrap items-center gap-2 panel-surface px-4 py-3`}>
+      <div className={`${CTL_TOOLBAR} rect-toolbar mb-4 flex flex-wrap items-center gap-2 panel-surface px-4 py-3`}>
         {isDockerRuntime() ? null : (
           <span role="status" className="text-sm text-fg-muted">
             演示数据

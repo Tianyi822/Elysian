@@ -52,7 +52,7 @@ export function ContainerAppsPanel() {
 
   return (
     <div>
-      <div className={`${CTL_TOOLBAR} container-toolbar mb-4 flex flex-wrap items-center justify-between gap-4 panel-surface px-4 py-3`}>
+      <div className={`${CTL_TOOLBAR} rect-toolbar mb-4 flex flex-wrap items-center justify-between gap-4 panel-surface px-4 py-3`}>
         <div className="min-w-0 basis-full space-y-1.5 lg:flex-1 lg:basis-auto">
           <p className="text-xs font-medium tabular-nums">共 {apps.length} 个工作区 · {fileCount} 个文件</p>
           <p className="text-xs leading-relaxed text-fg-muted">

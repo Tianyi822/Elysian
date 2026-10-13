@@ -268,7 +268,7 @@ export function OperationLogPanel() {
         工具栏三块：筛选下拉 / 搜索 / 计数。窄屏（md 以下）一块一行，md 起回到一行三段、
         计数靠右。自由折行会把计数文字和控件混成一团，正是原来难以扫读的原因。
       */}
-      <div className={`${CTL_TOOLBAR} mb-4 flex flex-col gap-2 panel-surface px-4 py-3 md:flex-row md:items-center`}>
+      <div className={`${CTL_TOOLBAR} rect-toolbar mb-4 flex flex-col gap-2 panel-surface px-4 py-3 md:flex-row md:items-center`}>
         <div role="group" aria-label="操作日志筛选" className="flex flex-wrap items-center gap-2">
           <SelectDropdown
             ariaLabel="操作分类筛选"

@@ -20,7 +20,8 @@ const STATUS_TEXT: Record<HostTerminalSession['status'], string | undefined> = {
 
 /**
  * 终端页的标签栏：一枚浮在画布上的胶囊工具条，标签靠填充色表达选中，不再贴边压一条底边框。
- * 窄屏左侧留出浮动「打开主导航」的位置。
+ * 窄屏左侧空出 48px 给浮动「打开主导航」触发器——让位由工具条整体外移完成，
+ * 内衬只留给标签，胶囊外壳才不会从按钮底下垫过去。
  *
  * 形态按标签栏留给平铺项的宽度决定：摆得下就摊开，摆不下就只显当前项、其余收进浮层菜单。
  * 不用视口断点——同一视口下会话数量、演示标识显隐都会改变可用宽度。摊开所需宽度由隐藏探针量出，
@@ -86,7 +87,7 @@ export function TerminalTabBar({
   return (
     <div
       ref={rowRef}
-      className="relative flex h-12 shrink-0 items-center rounded-full panel-surface py-0 pl-14 pr-2 md:pl-2"
+      className="relative ml-12 flex h-12 shrink-0 items-center rounded-full panel-surface px-2 md:ml-0"
     >
       {/* 固有宽度探针：脱离布局，量出全部标签摊开需要多宽。 */}
       <div

@@ -113,7 +113,7 @@ export function WebsitesPanel() {
 
   return (
     <div>
-      <div className={`${CTL_TOOLBAR} mb-4 flex flex-wrap items-center gap-2 panel-surface px-4 py-3`}>
+      <div className={`${CTL_TOOLBAR} rect-toolbar mb-4 flex flex-wrap items-center gap-2 panel-surface px-4 py-3`}>
         <button type="button" onClick={openCreate} className={TOOL_BUTTON_CLASS}>
           添加项目
         </button>

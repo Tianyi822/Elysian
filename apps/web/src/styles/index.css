@@ -435,6 +435,14 @@
     width: var(--ctl-height, 2.25rem);
   }
 
+  /* 浮在画布上的导航触发器：静止走面板档轻描边与玻璃底，悬停才抬到控件档。
+     与聊天页头里的会话列表开关同一档位，两颗并排才读得出是一组开关。 */
+  .nav-float-trigger .icon-button-solid {
+    --icon-button-line: var(--t-panel-line);
+    --icon-button-bg: var(--t-panel-glass-overlay);
+    backdrop-filter: blur(20px);
+  }
+
   /* 胶囊组：把一组相关控件包成一个胶囊对象，边框归胶囊、成员不再各自描边。
      高度与 .ctl 同为一档，包在旁边的按钮同一基线，不会矮出一截。 */
   .ctl-group {
@@ -509,8 +517,11 @@
     --panel-radius: 9999px;
   }
 
-  /* 容器区：面板与操作控件使用圆角矩形，搜索框单独保留胶囊形状。 */
-  .container-toolbar {
+  /*
+   * 圆角矩形工具栏：外壳按面板档、控件按控件档，两档同时收圆角。
+   * 挂在带 panel-surface 外壳的工具栏上；只改外壳不改控件会一半胶囊一半矩形。
+   */
+  .rect-toolbar {
     --panel-radius: var(--radius-xl);
     --ctl-radius: var(--radius-lg);
     --icon-button-radius: var(--radius-lg);

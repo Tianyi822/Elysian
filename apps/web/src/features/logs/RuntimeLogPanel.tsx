@@ -200,7 +200,7 @@ export function RuntimeLogPanel() {
         工具栏三块：搜索 / 视图操作 / 日志大小与清空。窄屏（md 以下）一块一行，
         md 起回到一行三段、最后一块靠右——自由折行会把清空按钮孤零零甩到第二行。
       */}
-      <div className={`${CTL_TOOLBAR} flex flex-col gap-2 panel-surface px-4 py-3 md:flex-row md:items-center`}>
+      <div className={`${CTL_TOOLBAR} rect-toolbar flex flex-col gap-2 panel-surface px-4 py-3 md:flex-row md:items-center`}>
         <div className="relative w-full md:w-64">
           <Search
             aria-hidden
