@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
+import type { AgentMessage, AgentSession } from '@elysian/contracts'
 import { agentChatSessionKey } from '../contracts/agentChat'
-import type { AgentChatAdapter, AgentChatAttachment, AgentChatSession } from '../contracts/agentChat'
+import type { AgentChatAdapter, AgentChatAttachment, AgentChatRun, AgentChatSession } from '../contracts/agentChat'
 import type { ElysianGateway, SessionAdapter } from '../contracts/adapters'
 import { createAgentChatStore, useAgentChatStore } from './agentChatStore'
 import { useSessionStore } from './sessionStore'
@@ -23,6 +24,12 @@ function localMemory() {
       if (session.remote && session.id !== key) records.delete(session.id)
       if (select) selected = key
       return true
+    },
+    remove(key) {
+      const record = records.get(key)
+      records.delete(key)
+      if (record) [...record.attachments, ...record.messages.flatMap(message => message.attachments)].forEach(attachment => files.delete(attachment.id))
+      if (selected === key) selected = undefined
     },
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener) },
     async attach(input) {
@@ -498,6 +505,61 @@ describe('多会话恢复与提交隔离', () => {
     expect(store.getState().session?.attachments[0]?.available).toBe(true)
   })
 
+  it('两个远程会话并行运行互不污染，切回原会话仍是原运行', async () => {
+    const local = localMemory()
+    const store = local.makeStore()
+    const backend = chatTestApi()
+    backend.hold()
+    await store.getState().ensureSession()
+    store.getState().setDraft('检查服务')
+    await store.getState().send(backend.api, chatTestModel)
+    store.getState().setDraft('追问 A')
+    // 会话 B 是独立远程会话：路由到自己的任务、消息与运行，与 A 的服务端状态隔离。
+    const sessionB: AgentSession = { ...backend.session, id: 'session-b', title: '会话 B', activeRunId: undefined }
+    const messagesB: AgentMessage[] = []
+    const runB: AgentChatRun = { id: 'run-b1', taskId: 'task-b', sessionId: 'session-b', status: 'running', phase: 'inference' }
+    let submittedB = false
+    const original = {
+      createTask: backend.api.createTask.getMockImplementation()!,
+      getSession: backend.api.getSession.getMockImplementation()!,
+      listTasks: backend.api.listTasks.getMockImplementation()!,
+      getTask: backend.api.getTask.getMockImplementation()!,
+      messages: backend.api.messages.getMockImplementation()!,
+      reasoning: backend.api.reasoning.getMockImplementation()!,
+    }
+    backend.api.getSession.mockImplementation(async id => id === 'session-b' ? { ...sessionB } : original.getSession(id))
+    backend.api.listTasks.mockImplementation(async id => id === 'session-b'
+      ? (submittedB ? { items: [{ id: 'task-b', sessionId: 'session-b', kind: 'agent' }], nextCursor: '', hasMore: false } : { items: [], nextCursor: '', hasMore: false })
+      : original.listTasks(id))
+    backend.api.getTask.mockImplementation(async (id: string) => id === 'task-b'
+      ? { id: 'task-b', sessionId: 'session-b', kind: 'agent', latestRun: { ...runB } }
+      : original.getTask(id))
+    backend.api.messages.mockImplementation(async (id, after) => id === 'session-b'
+      ? { items: messagesB.filter(message => BigInt(message.seq) > BigInt(after)), nextCursor: String(messagesB.length), hasMore: false }
+      : original.messages(id, after))
+    backend.api.reasoning.mockImplementation(async id => id === 'run-b1' ? '' : original.reasoning(id))
+    backend.api.createTask.mockImplementation(async (id, input) => {
+      if (id !== 'session-b') return original.createTask(id, input)
+      submittedB = true
+      sessionB.activeRunId = runB.id
+      messagesB.push({ id: 'message-b1', seq: '1', role: 'user', content: input.content, taskId: runB.taskId, runId: runB.id, sessionId: 'session-b', createdAt: sessionB.createdAt })
+      return { ...runB, requestId: input.requestId }
+    })
+    await store.getState().selectSession(backend.api, 'session-b')
+    store.getState().setDraft('B 的问题')
+    expect(await store.getState().send(backend.api, chatTestModel)).toBe(true)
+    expect(store.getState().run).toMatchObject({ id: 'run-b1', sessionId: 'session-b' })
+    expect(store.getState().messages).toHaveLength(1)
+    expect(store.getState().messages[0]).toMatchObject({ sessionId: 'session-b', content: 'B 的问题' })
+    // B 的提交不触碰 A 的本地记录：草稿、任务与运行指针原样。
+    expect(local.adapter.read('server-session')).toMatchObject({ draft: '追问 A', remote: { sessionId: 'server-session', taskId: 'task-1', runId: 'run-1' } })
+    await store.getState().selectSession(backend.api, 'server-session')
+    expect(store.getState().run).toMatchObject({ id: 'run-1', status: 'running' })
+    expect(store.getState().session?.draft).toBe('追问 A')
+    expect(store.getState().messages).toHaveLength(1)
+    expect(store.getState().messages[0]).toMatchObject({ sessionId: 'server-session', content: '检查服务' })
+  })
+
   it('未确认消息切走后仍属于原会话，重试复用原 requestId', async () => {
     const store = localMemory().makeStore()
     const backend = chatTestApi()
@@ -561,5 +623,115 @@ describe('多会话恢复与提交隔离', () => {
     await store.getState().refresh(backend.api)
     expect(store.getState().session?.remote?.sessionId).toBe(backend.session.id)
     expect(store.getState().syncError).toBe('运行不存在')
+  })
+})
+
+describe('会话重命名与删除', () => {
+  async function preparedStore() {
+    const local = localMemory()
+    const store = local.makeStore()
+    const backend = chatTestApi()
+    const a = { ...backend.session, id: 'session-a', title: '会话 A' }
+    const b = { ...backend.session, id: 'session-b', title: '会话 B' }
+    backend.api.listSessions.mockResolvedValue({ items: [a, b], nextCursor: 'cursor-1', hasMore: true })
+    backend.api.getSession.mockImplementation(async (id: string) => id === 'session-a' ? { ...a } : { ...b })
+    backend.api.renameSession.mockImplementation(async (id: string, input: { title: string }) => ({ ...backend.session, id, title: input.title.trim() }))
+    await store.getState().initialize(backend.api)
+    return { local, store, backend, a, b }
+  }
+
+  it('重命名以服务端回执覆盖列表行与页头标题，提交 TrimSpace 后的标题', async () => {
+    const { store, backend } = await preparedStore()
+    expect(store.getState().remoteSession?.id).toBe('session-a')
+    await store.getState().renameSession(backend.api, 'session-a', '  新标题  ')
+    expect(backend.api.renameSession).toHaveBeenCalledExactlyOnceWith('session-a', { title: '新标题' })
+    expect(store.getState().sessions.find(row => row.id === 'session-a')?.title).toBe('新标题')
+    expect(store.getState().remoteSession?.title).toBe('新标题')
+    expect(store.getState().sessions.find(row => row.id === 'session-b')?.title).toBe('会话 B')
+  })
+
+  it('重命名404按会话消失处理，过滤行并给出提示', async () => {
+    const { store, backend } = await preparedStore()
+    backend.api.renameSession.mockRejectedValueOnce(new AgentHttpError('Agent 会话不存在', 'session-not-found', 404))
+    await store.getState().renameSession(backend.api, 'session-b', '新名')
+    expect(store.getState().sessions.map(row => row.id)).toEqual(['session-a'])
+    expect(store.getState().notice).toContain('原会话已不存在')
+  })
+
+  it('重命名其他错误原样上抛，列表不动', async () => {
+    const { store, backend } = await preparedStore()
+    backend.api.renameSession.mockRejectedValueOnce(new AgentHttpError('会话标题不能超过 200 字节', 'invalid-title', 400))
+    await expect(store.getState().renameSession(backend.api, 'session-b', 'x'.repeat(201))).rejects.toThrow('会话标题不能超过 200 字节')
+    expect(store.getState().sessions.find(row => row.id === 'session-b')?.title).toBe('会话 B')
+  })
+
+  it('删除非当前会话只移除该行，清理本地记录与附件字节，分页游标不动', async () => {
+    const { local, store, backend } = await preparedStore()
+    const attached = await local.adapter.attach([new File(['b'], 'b.txt')])
+    local.adapter.write({ id: 'draft:b', createdAt: '2026-10-12T00:00:00.000Z', draft: 'B 草稿', messages: [], attachments: attached.attachments, permissionMode: 'ask', modelId: null, reasoningLevel: null, remote: { sessionId: 'session-b' } }, false)
+    await store.getState().deleteSession(backend.api, 'session-b')
+    expect(store.getState().sessions.map(row => row.id)).toEqual(['session-a'])
+    expect(store.getState().remoteSession?.id).toBe('session-a')
+    expect(store.getState().notice).toBeNull()
+    expect(store.getState().listCursor).toBe('cursor-1')
+    expect(store.getState().listHasMore).toBe(true)
+    expect(local.adapter.read('session-b')).toBeNull()
+    expect(local.files.size).toBe(0)
+  })
+
+  it('删除当前选中会话回落到剩余第一个会话并以 notice 说明去向', async () => {
+    const { store, backend } = await preparedStore()
+    expect(store.getState().remoteSession?.id).toBe('session-a')
+    await store.getState().deleteSession(backend.api, 'session-a')
+    expect(store.getState().sessions.map(row => row.id)).toEqual(['session-b'])
+    expect(store.getState().remoteSession?.id).toBe('session-b')
+    expect(store.getState().notice).toBe('会话已删除，已切换到其他会话。')
+  })
+
+  it('删除最后一个会话回落到空白草稿并以 notice 说明去向', async () => {
+    const local = localMemory()
+    const store = local.makeStore()
+    const backend = chatTestApi()
+    backend.api.listSessions.mockResolvedValue({ items: [{ ...backend.session, id: 'only', title: '唯一会话' }], nextCursor: '', hasMore: false })
+    backend.api.getSession.mockResolvedValue({ ...backend.session, id: 'only' })
+    await store.getState().initialize(backend.api)
+    expect(store.getState().remoteSession?.id).toBe('only')
+    await store.getState().deleteSession(backend.api, 'only')
+    expect(store.getState().sessions).toEqual([])
+    expect(store.getState().session?.remote).toBeUndefined()
+    expect(store.getState().notice).toBe('会话已删除，已新建空白会话。')
+  })
+
+  it('删除404幂等视为已删，仍完成本地清理', async () => {
+    const { store, backend } = await preparedStore()
+    backend.api.deleteSession.mockRejectedValueOnce(new AgentHttpError('Agent 会话不存在', 'session-not-found', 404))
+    await store.getState().deleteSession(backend.api, 'session-b')
+    expect(store.getState().sessions.map(row => row.id)).toEqual(['session-a'])
+  })
+
+  it.each([
+    ['session-busy', 409, '会话仍有任务排队或运行，请结束后再删除'],
+    ['session-unresolved', 409, '会话存在结果未确认的执行（如面板重启时的在途操作），暂不能删除；需经执行对账接口确认停止后解除'],
+  ])('删除被 %s 拒绝时不做本地清理并透传服务端文案', async (code, status, message) => {
+    const { local, store, backend } = await preparedStore()
+    local.adapter.write({ id: 'draft:b', createdAt: '2026-10-12T00:00:00.000Z', draft: 'B 草稿', messages: [], attachments: [], permissionMode: 'ask', modelId: null, reasoningLevel: null, remote: { sessionId: 'session-b' } }, false)
+    backend.api.deleteSession.mockRejectedValueOnce(new AgentHttpError(message, code, status))
+    await expect(store.getState().deleteSession(backend.api, 'session-b')).rejects.toThrow(message)
+    expect(store.getState().sessions.map(row => row.id)).toEqual(['session-a', 'session-b'])
+    expect(local.adapter.read('session-b')).toMatchObject({ draft: 'B 草稿' })
+  })
+
+  it('发送在途时拒绝重命名与删除', async () => {
+    const store = localMemory().makeStore()
+    const backend = chatTestApi()
+    await store.getState().ensureSession()
+    store.getState().setDraft('你好')
+    backend.api.createSession.mockImplementationOnce(() => new Promise(() => {}))
+    void store.getState().send(backend.api, chatTestModel)
+    expect(store.getState().sending).toBe(true)
+    await store.getState().renameSession(backend.api, backend.session.id, '新名')
+    await store.getState().deleteSession(backend.api, backend.session.id)
+    expect(backend.api.renameSession).not.toHaveBeenCalled()
+    expect(backend.api.deleteSession).not.toHaveBeenCalled()
   })
 })

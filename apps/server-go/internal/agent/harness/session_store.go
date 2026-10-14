@@ -260,11 +260,85 @@ func (s *store) releaseSession(ctx context.Context, tx *sql.Tx, r *Run) error {
 	return saveSession(ctx, tx, session)
 }
 
-func (s *store) sweepSessions(ctx context.Context, tx *sql.Tx, cutoff string) error {
-	rows, err := tx.QueryContext(ctx, `SELECT id FROM sessions WHERE active_run_id='' AND active_workflow_id='' AND julianday(last_activity_at)<julianday(?)
+// sessionDeletableGuardSQL 是会话可删除的硬性守卫：无排队或运行中的 Run，也没有
+// 结果未确认的执行（非终态 Run、held/unknown 资源租约、dispatched/unknown 执行屏障）。
+// 保留期清理与手工删除共用同一谓词，防止两路判定漂移；屏障与租约只能经显式结果
+// 或执行对账解除，先拒删而不是留下外键失败或永久锁死派发的孤儿行。
+const sessionDeletableGuardSQL = `active_run_id='' AND active_workflow_id=''
  AND NOT EXISTS(SELECT 1 FROM runs WHERE runs.session_id=sessions.id AND state IN ('queued','running','waiting-approval','waiting-resource'))
  AND NOT EXISTS(SELECT 1 FROM resource_leases l JOIN runs r ON r.id=l.run_id WHERE r.session_id=sessions.id AND l.state IN ('held','unknown'))
- AND NOT EXISTS(SELECT 1 FROM execution_barriers b JOIN runs r ON r.id=b.run_id WHERE r.session_id=sessions.id AND b.state IN ('dispatched','unknown'))`, cutoff)
+ AND NOT EXISTS(SELECT 1 FROM execution_barriers b JOIN runs r ON r.id=b.run_id WHERE r.session_id=sessions.id AND b.state IN ('dispatched','unknown'))`
+
+func (s *store) renameSession(ctx context.Context, id, title string) (Session, error) {
+	var session Session
+	err := s.write(ctx, "rename-session", func(tx *sql.Tx) error {
+		var err error
+		session, err = readSession(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		session.Title = title
+		return saveSession(ctx, tx, session)
+	})
+	return session, err
+}
+
+func (s *store) deleteSession(ctx context.Context, id string) error {
+	return s.write(ctx, "delete-session", func(tx *sql.Tx) error {
+		session, err := readSession(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if session.ActiveRunID != "" || session.ActiveWorkflowID != "" {
+			return &Error{Status: 409, Code: "session-busy", Message: "会话仍有任务排队或运行，请结束后再删除"}
+		}
+		var deletable int
+		if err = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM sessions WHERE id=? AND "+sessionDeletableGuardSQL, id).Scan(&deletable); err != nil {
+			return err
+		}
+		if deletable == 0 {
+			return &Error{Status: 409, Code: "session-unresolved", Message: "会话存在结果未确认的执行（如面板重启时的在途操作），暂不能删除；需经执行对账接口确认停止后解除"}
+		}
+		return s.deleteSessionRows(ctx, tx, id)
+	})
+}
+
+// deleteSessionRows 按固定次序级联删除一个会话的全部行：purgeRecordOwner 先登记
+// JSONL 清理账本，dispatched/unknown 屏障刻意不删（调用方守卫已拒删这类会话），
+// workflow_instances 必须先于 tasks（V2 scope 持有 Task 引用）。
+func (s *store) deleteSessionRows(ctx context.Context, tx *sql.Tx, id string) error {
+	if err := purgeRecordOwner(ctx, tx, recordOwner{kind: "session", id: id}); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO wiki_cleared_sources(run_id,cleared_at) SELECT id,? FROM runs WHERE session_id=?", stamp(s.now()), id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM wiki_visible_pages WHERE (owner_kind='run' AND owner_id IN (SELECT id FROM runs WHERE session_id=?)) OR (owner_kind='workflow' AND owner_id IN (SELECT id FROM workflow_instances WHERE session_id=?))", id, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO workspace_cleanup(task_id) SELECT id FROM tasks WHERE session_id=?", id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM execution_barriers WHERE run_id IN (SELECT id FROM runs WHERE session_id=?) AND state NOT IN ('dispatched','unknown')", id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM runs WHERE session_id=?", id); err != nil {
+		return err
+	}
+	// V2 scopes retain Task references. Remove their owning instances first
+	// so the scope/node cascades finish before deleting session Tasks.
+	if _, err := tx.ExecContext(ctx, "DELETE FROM workflow_instances WHERE session_id=?", id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM tasks WHERE session_id=?", id); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, "DELETE FROM sessions WHERE id=?", id)
+	return err
+}
+
+func (s *store) sweepSessions(ctx context.Context, tx *sql.Tx, cutoff string) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM sessions WHERE `+sessionDeletableGuardSQL+` AND julianday(last_activity_at)<julianday(?)`, cutoff)
 	if err != nil {
 		return err
 	}
@@ -283,33 +357,7 @@ func (s *store) sweepSessions(ctx context.Context, tx *sql.Tx, cutoff string) er
 		return err
 	}
 	for _, id := range ids {
-		if err = purgeRecordOwner(ctx, tx, recordOwner{kind: "session", id: id}); err != nil {
-			return err
-		}
-		if _, err = tx.ExecContext(ctx, "INSERT OR IGNORE INTO wiki_cleared_sources(run_id,cleared_at) SELECT id,? FROM runs WHERE session_id=?", stamp(s.now()), id); err != nil {
-			return err
-		}
-		if _, err = tx.ExecContext(ctx, "DELETE FROM wiki_visible_pages WHERE (owner_kind='run' AND owner_id IN (SELECT id FROM runs WHERE session_id=?)) OR (owner_kind='workflow' AND owner_id IN (SELECT id FROM workflow_instances WHERE session_id=?))", id, id); err != nil {
-			return err
-		}
-		if _, err = tx.ExecContext(ctx, "INSERT OR IGNORE INTO workspace_cleanup(task_id) SELECT id FROM tasks WHERE session_id=?", id); err != nil {
-			return err
-		}
-		if _, err = tx.ExecContext(ctx, "DELETE FROM execution_barriers WHERE run_id IN (SELECT id FROM runs WHERE session_id=?) AND state NOT IN ('dispatched','unknown')", id); err != nil {
-			return err
-		}
-		if _, err = tx.ExecContext(ctx, "DELETE FROM runs WHERE session_id=?", id); err != nil {
-			return err
-		}
-		// V2 scopes retain Task references. Remove their owning instances first
-		// so the scope/node cascades finish before deleting session Tasks.
-		if _, err = tx.ExecContext(ctx, "DELETE FROM workflow_instances WHERE session_id=?", id); err != nil {
-			return err
-		}
-		if _, err = tx.ExecContext(ctx, "DELETE FROM tasks WHERE session_id=?", id); err != nil {
-			return err
-		}
-		if _, err = tx.ExecContext(ctx, "DELETE FROM sessions WHERE id=?", id); err != nil {
+		if err = s.deleteSessionRows(ctx, tx, id); err != nil {
 			return err
 		}
 	}

@@ -35,6 +35,10 @@ type SwitchModelInput struct {
 	ModelRevision  int    `json:"modelRevision"`
 }
 
+type RenameSessionInput struct {
+	Title string `json:"title"`
+}
+
 type AgentInput struct {
 	ReasoningLevel string        `json:"reasoningLevel,omitempty"`
 	Skills         []RevisionRef `json:"skills,omitempty"`

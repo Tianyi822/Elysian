@@ -70,6 +70,27 @@ export async function requestAgentJson(
   }, options?.timeoutMs)
 }
 
+/**
+ * 无正文写请求（如 204 删除）：超时与错误口径同 JSON 出口，
+ * 成功直接结束，不把空响应体当 JSON 解析。
+ */
+export async function requestAgentNoContent(
+  url: string,
+  init?: RequestInit,
+  options?: { timeoutMs?: number },
+): Promise<void> {
+  return withRequestDeadline(init, async (bounded) => {
+    let response: Response
+    try {
+      response = await fetchWithSession(url, { ...init, cache: 'no-store', signal: bounded.signal })
+    } catch (error) {
+      if (bounded.signal?.aborted) throw error
+      throw new Error('Agent 请求网络失败')
+    }
+    if (!response.ok) await readAgentResponse(response)
+  }, options?.timeoutMs)
+}
+
 /** 路径段编码：空标识直接抛中文错误，非空逐段 encodeURIComponent。 */
 export function agentPathPart(value: string, label = '标识'): string {
   if (!value) throw new Error(`Agent ${label}不能为空`)

@@ -1,4 +1,4 @@
-import type { AgentChatOutput, AgentCreateSessionInput, AgentInput, AgentMessage, AgentSession, AgentSwitchModelInput, RuntimeRun } from '@elysian/contracts'
+import type { AgentChatOutput, AgentCreateSessionInput, AgentInput, AgentMessage, AgentRenameSessionInput, AgentSession, AgentSwitchModelInput, RuntimeRun } from '@elysian/contracts'
 
 /** 权限选项保留为界面草稿，不授予后端权限。 */
 export type AgentChatPermissionMode = 'ask' | 'assist' | 'full'
@@ -44,6 +44,9 @@ export type AgentChatRun = Pick<RuntimeRun, 'id' | 'requestId' | 'sessionId' | '
 export type AgentChatPageResult<T> = { items: readonly T[]; nextCursor: string; hasMore: boolean }
 export type AgentChatTask = { id: string; sessionId: string; kind: string; latestRun?: AgentChatRun }
 export const agentChatSessionKey = (session: AgentChatSession) => session.remote?.sessionId ?? session.id
+/** 会话在浏览器侧登记的全部附件：会话级附件与各消息附件的合集，删除会话时按此清字节。 */
+export const agentChatAllAttachments = (session: AgentChatSession): readonly AgentChatAttachment[] =>
+  [...session.attachments, ...session.messages.flatMap(message => message.attachments)]
 
 export interface AgentConversationAdapter {
   readonly available: boolean
@@ -52,6 +55,8 @@ export interface AgentConversationAdapter {
   getTask(id: string, signal?: AbortSignal): Promise<AgentChatTask>
   createSession(input: AgentCreateSessionInput): Promise<AgentSession>
   getSession(id: string, signal?: AbortSignal): Promise<AgentSession>
+  renameSession(id: string, input: AgentRenameSessionInput): Promise<AgentSession>
+  deleteSession(id: string): Promise<void>
   switchModel(id: string, input: AgentSwitchModelInput): Promise<AgentSession>
   messages(id: string, after: string, signal?: AbortSignal): Promise<{ items: readonly AgentMessage[]; nextCursor: string; hasMore: boolean }>
   createTask(sessionId: string, input: AgentInput): Promise<AgentChatRun>
@@ -68,6 +73,8 @@ export interface AgentChatAdapter {
   select(key: string): boolean
   /** 返回是否已持久化；浏览器拒绝存储时仍可在本页继续编辑。 */
   write(session: AgentChatSession, select?: boolean): boolean
+  /** 删除一条本地会话记录：清记录键、附件字节与指向它的选中指针。 */
+  remove(key: string): void
   subscribe(listener: () => void): () => void
   attach(files: readonly File[]): Promise<{ attachments: AgentChatAttachment[]; persisted: boolean }>
   restore(attachments: readonly AgentChatAttachment[]): Promise<AgentChatAttachment[]>

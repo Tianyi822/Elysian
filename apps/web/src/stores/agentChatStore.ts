@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { AgentChatOutput, AgentMessage, AgentModelProfile, AgentSession } from '@elysian/contracts'
-import { agentChatSessionKey } from '../contracts/agentChat'
+import { agentChatAllAttachments, agentChatSessionKey } from '../contracts/agentChat'
 import { AgentHttpError } from '../adapters/http/agent/agentShared'
 import { agentChatLocalAdapter } from '../adapters/local/agentChatLocalAdapter'
 import type { AgentChatAdapter, AgentChatAttachment, AgentChatPermissionMode, AgentChatSession, AgentChatRun, AgentConversationAdapter } from '../contracts/agentChat'
@@ -16,6 +16,8 @@ type AgentChatState = {
   initialize(api: AgentConversationAdapter, requestedId?: string): Promise<void>
   selectSession(api: AgentConversationAdapter, key: string): Promise<void>
   loadSessions(api: AgentConversationAdapter, more?: boolean, quiet?: boolean): Promise<void>
+  renameSession(api: AgentConversationAdapter, id: string, title: string): Promise<void>
+  deleteSession(api: AgentConversationAdapter, id: string): Promise<void>
   clearDisplay(): void
   loading: boolean
   notice: string | null
@@ -42,7 +44,7 @@ type AgentChatState = {
   clearNotice(): void
 }
 
-const allAttachments = (session: AgentChatSession) => [...session.attachments, ...session.messages.flatMap(message => message.attachments)]
+const allAttachments = agentChatAllAttachments
 const persistenceNotice = '浏览器暂时无法保存会话，刷新后可能丢失本页内容。'
 const remoteBlank = { remoteSession: null, messages: [], reasoning: {}, liveOutput: null, run: null, sending: false, refreshing: false, error: null, syncError: null }
 export const isChatRunActive = (run: AgentChatRun | null) => !!run && ['queued', 'running', 'waiting-approval', 'waiting-resource', 'recovery-required'].includes(run.status)
@@ -209,6 +211,48 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
         if (lifetime !== lifecycle || navigation !== navigationVersion || get().session?.id !== session.id) return
         set({ localSessions: adapter.list() })
         if (session.remote && api.available) await get().refresh(api)
+      },
+      async renameSession(api, id, title) {
+        if (get().sending) return
+        let remote: AgentSession
+        try {
+          remote = await api.renameSession(id, { title: title.trim() })
+        } catch (error) {
+          if (error instanceof AgentHttpError && error.status === 404) {
+            // 会话已被别处删除：按会话消失处理，过滤行并说明，弹窗正常关闭。
+            listVersion += 1
+            set({ sessions: get().sessions.filter(row => row.id !== id), listLoading: false, notice: '原会话已不存在，列表已更新。' })
+            return
+          }
+          throw error
+        }
+        // 服务端回执为权威：列表行与聊天页头标题都展示落库值（TrimSpace 后）。
+        // 作废在途的列表读取，避免静默回读用旧标题覆盖刚确认的回执。
+        listVersion += 1
+        set({
+          listLoading: false,
+          sessions: get().sessions.map(row => row.id === id ? remote : row),
+          ...(get().remoteSession?.id === id ? { remoteSession: { ...get().remoteSession!, title: remote.title } } : {}),
+        })
+      },
+      async deleteSession(api, id) {
+        if (get().sending) return
+        try {
+          await api.deleteSession(id)
+        } catch (error) {
+          // 404 视为已删（幂等清理）；409 busy/unresolved 与其他错误不做本地清理，交给弹窗透传。
+          if (!(error instanceof AgentHttpError && error.status === 404)) throw error
+        }
+        listVersion += 1
+        const fallback = get().sessions.find(row => row.id !== id)
+        set({ sessions: get().sessions.filter(row => row.id !== id), listLoading: false })
+        adapter.remove(id)
+        set({ localSessions: adapter.list() })
+        if (get().session && agentChatSessionKey(get().session!) === id) {
+          if (fallback) await get().selectSession(api, fallback.id)
+          else await get().newSession()
+          set({ notice: fallback ? '会话已删除，已切换到其他会话。' : '会话已删除，已新建空白会话。' })
+        }
       },
       loading: false,
       notice: null,

@@ -1,4 +1,4 @@
-import { agentChatSessionKey } from '../../contracts/agentChat'
+import { agentChatAllAttachments, agentChatSessionKey } from '../../contracts/agentChat'
 import type { AgentChatAdapter, AgentChatAttachment, AgentChatMessage, AgentChatSession } from '../../contracts/agentChat'
 
 export const AGENT_CHAT_LEGACY_KEY = 'elysian.agent-chat.v1'
@@ -125,6 +125,20 @@ export function createAgentChatLocalAdapter(): AgentChatAdapter {
     return { ...storedAttachment(attachment), available: true, ...(previewUrl ? { previewUrl } : {}) }
   }
 
+  /** 附件字节的唯一释放路径：内存、预览与持久存储一起清。 */
+  const releaseAttachments = async (ids: readonly string[]): Promise<void> => {
+    for (const id of ids) {
+      memoryFiles.delete(id)
+      const preview = previews.get(id)
+      if (preview) URL.revokeObjectURL(preview)
+      previews.delete(id)
+    }
+    if (ids.length) {
+      try { await updateFiles(store => ids.forEach(id => store.delete(id))) }
+      catch { /* 无可用持久存储时，内存与预览也已经释放。 */ }
+    }
+  }
+
   return {
     read,
     list() {
@@ -163,6 +177,19 @@ export function createAgentChatLocalAdapter(): AgentChatAdapter {
         return true
       } catch { memoryOnly.add(key); return false }
     },
+    remove(key) {
+      // 服务端会话已删除后的本地清理：记录键、内存与附件字节尽力释放；
+      // 跨标签的内存驱逐由既有 storage 监听完成，这里不触碰 v1 迁移键。
+      const record = read(key)
+      try { localStorage.removeItem(storageKey(key)) } catch { /* 清理失败不回滚已删除的服务端事实。 */ }
+      fallback.delete(key)
+      memoryOnly.delete(key)
+      if (record) void releaseAttachments(agentChatAllAttachments(record).map(attachment => attachment.id))
+      if (selected === key) {
+        selected = null
+        try { localStorage.removeItem(AGENT_CHAT_STORAGE_KEY) } catch { /* 同上。 */ }
+      }
+    },
     subscribe(listener) {
       const onStorage = (event: StorageEvent) => {
         // 选中指针属于各标签的导航；其他标签切换时不强制跟随。
@@ -195,18 +222,7 @@ export function createAgentChatLocalAdapter(): AgentChatAdapter {
         catch { return storedAttachment(attachment) }
       }))
     },
-    async discard(ids) {
-      for (const id of ids) {
-        memoryFiles.delete(id)
-        const preview = previews.get(id)
-        if (preview) URL.revokeObjectURL(preview)
-        previews.delete(id)
-      }
-      if (ids.length) {
-        try { await updateFiles(store => ids.forEach(id => store.delete(id))) }
-        catch { /* 无可用持久存储时，内存与预览也已经释放。 */ }
-      }
-    },
+    discard: releaseAttachments,
   }
 }
 

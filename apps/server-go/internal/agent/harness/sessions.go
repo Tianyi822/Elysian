@@ -175,6 +175,35 @@ func (m *Manager) SwitchSessionModel(ctx context.Context, id string, input Switc
 	return session, storageFailure(err)
 }
 
+// RenameSession 只改标题：标题是纯展示字段，不进 Run 快照，运行中允许改名；
+// 不更新 LastActivityAt，保持活动排序与活动游标边界稳定。
+func (m *Manager) RenameSession(ctx context.Context, id string, input RenameSessionInput) (Session, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return Session{}, closedError()
+	}
+	title := strings.TrimSpace(input.Title)
+	if title == "" {
+		return Session{}, bad("invalid-title", "会话标题不能为空")
+	}
+	if len(input.Title) > 200 {
+		return Session{}, bad("invalid-title", "会话标题不能超过 200 字节")
+	}
+	session, err := m.store.renameSession(ctx, id, title)
+	return session, storageFailure(err)
+}
+
+// DeleteSession 拒绝忙碌与存在结果未确认执行的会话；级联删除与保留期清理共用同一模板。
+func (m *Manager) DeleteSession(ctx context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return closedError()
+	}
+	return storageFailure(m.store.deleteSession(ctx, id))
+}
+
 func (m *Manager) GetSession(ctx context.Context, id string) (Session, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

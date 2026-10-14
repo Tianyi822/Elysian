@@ -127,6 +127,7 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .chat-select, .chat-send { transition: none; }
+  .chat-session-edit, .chat-session-menu-item { transition: none; }
   .chat-thought-line, .chat-response[data-streaming] .chat-markdown > * { animation: none; }
 }
 
@@ -139,11 +140,73 @@
 .chat-session-heading > span { flex: 1; padding-left: 8px; }
 .chat-session-new { justify-content: center; margin-bottom: 12px; }
 .chat-session-rows { overflow-y: auto; min-height: 0; flex: 1; }
+/* 会话行外包一层定位容器：hover 背景随整行（含编辑图标区域）生效，编辑图标绝对定位不占布局空间。 */
+.chat-session-item { position: relative; display: flex; }
 .chat-session-row { display: flex; width: 100%; min-width: 0; flex-direction: column; gap: 4px; padding: 10px 12px; border-radius: 8px; text-align: left; font-size: 13px; }
 .chat-session-row > span { max-width: 100%; }
-.chat-session-row:hover { background: var(--t-nav-hover); }
+/* 固定预留图标覆盖区，hover 前后同一宽度，标题不与图标重叠也不跳动。 */
+.chat-session-row > .truncate { padding-right: 24px; }
+.chat-session-item:hover .chat-session-row { background: var(--t-nav-hover); }
 .chat-session-row[aria-current] { background: var(--t-nav-hover); box-shadow: inset 0 0 0 1px var(--t-panel-line); }
 .chat-session-status { color: var(--t-fg-muted); font-size: 11px; }
+/* 编辑图标：绝对定位叠放在行右缘，无 hover 且无焦点时不可见不可点；仅用 opacity 隐藏以保持可聚焦，
+   Tab 聚焦即由 focus-within 揭示——键盘与指针同一入口，行高与行宽不因此变化。 */
+.chat-session-edit {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+.chat-session-item:hover .chat-session-edit,
+.chat-session-item:focus-within .chat-session-edit { opacity: 1; pointer-events: auto; }
+/* 编辑菜单：外壳与菜单项沿用文件右键菜单的同一套面板语言。 */
+.chat-session-menu {
+  min-width: 13rem;
+  max-height: var(--radix-dropdown-menu-content-available-height);
+  overflow-y: auto;
+  padding: 0.375rem;
+  border: 1px solid var(--t-panel-line);
+  border-radius: var(--radius-xl);
+  background-color: var(--t-surface);
+  box-shadow: inset 0 1px 0 var(--t-panel-sheen), 0 8px 24px -12px var(--t-panel-shadow);
+  z-index: 70;
+}
+.chat-session-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  min-height: 2.125rem;
+  padding: 0.5rem 0.625rem;
+  border-radius: var(--radius-lg);
+  color: var(--t-fg-muted);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+  outline: none;
+  transition: background-color 160ms ease-out, color 160ms ease-out, box-shadow 160ms ease-out;
+}
+.chat-session-menu-item[data-highlighted]:not([data-disabled]) {
+  background-color: var(--t-nav-hover);
+  color: var(--t-fg);
+  box-shadow: inset 0 0 0 1px var(--t-panel-line);
+}
+.chat-session-menu-item[data-disabled] { opacity: 0.4; }
+/* 删除会话：危险色只落在可执行时；禁用态由说明文字补充成因，不只靠颜色。 */
+.chat-session-menu-remove { flex-direction: column; align-items: flex-start; gap: 2px; }
+.chat-session-menu-remove:not([data-disabled]),
+.chat-session-menu-remove[data-highlighted]:not([data-disabled]) { color: var(--t-danger); }
+.chat-session-menu-note { font-size: 11px; line-height: 1.5; color: var(--t-fg-subtle); white-space: normal; }
 .chat-session-more { width: 100%; padding: 12px; font-size: 12px; color: var(--t-fg-muted); }
 /* 会话列表开关：固定在聊天页头内，不随侧边栏状态左右移动。 */
 .chat-session-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 1px solid var(--t-panel-line); border-radius: var(--radius-lg); color: var(--t-fg-muted); background: var(--t-panel-glass-overlay); backdrop-filter: blur(20px); }

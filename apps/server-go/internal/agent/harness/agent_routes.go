@@ -25,6 +25,8 @@ type agentRuntimeService interface {
 	CreateModelProfile(model.Input) (model.Profile, error)
 	UpdateModelProfile(string, int, model.Input) (model.Profile, error)
 	CreateSession(context.Context, CreateSessionInput) (Session, error)
+	RenameSession(context.Context, string, RenameSessionInput) (Session, error)
+	DeleteSession(context.Context, string) error
 	SwitchSessionModel(context.Context, string, SwitchModelInput) (Session, error)
 	GetSession(context.Context, string) (Session, error)
 	ListSessions(context.Context, string, int) (Page[Session], error)
@@ -224,6 +226,26 @@ func registerAgentRoutes(r chi.Router, service runtimeService) {
 			return
 		}
 		shared.SendJSON(w, 200, session)
+	}))
+	r.Put("/sessions/{id}/title", wrap(func(s agentRuntimeService, w http.ResponseWriter, req *http.Request) {
+		input, err := readAgentInput[RenameSessionInput](w, req)
+		if err != nil {
+			writeRuntimeError(w, err)
+			return
+		}
+		session, err := s.RenameSession(req.Context(), chi.URLParam(req, "id"), input)
+		if err != nil {
+			writeRuntimeError(w, err)
+			return
+		}
+		shared.SendJSON(w, 200, session)
+	}))
+	r.Delete("/sessions/{id}", wrap(func(s agentRuntimeService, w http.ResponseWriter, req *http.Request) {
+		if err := s.DeleteSession(req.Context(), chi.URLParam(req, "id")); err != nil {
+			writeRuntimeError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}))
 	r.Get("/sessions/{id}/messages", wrap(func(s agentRuntimeService, w http.ResponseWriter, req *http.Request) {
 		q, err := runtimeQuery(req, 100, "after", "limit")

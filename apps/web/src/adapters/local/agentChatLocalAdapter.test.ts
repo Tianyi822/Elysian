@@ -75,4 +75,30 @@ describe('多会话存储迁移与隔离', () => {
     expect(localStorage.getItem(AGENT_CHAT_RECORD_PREFIX + encodeURIComponent('draft:a'))).toBeNull()
     expect(adapter.list().map(row => row.id).sort()).toEqual(['draft:a', 'draft:b'])
   })
+
+  it('remove 删除记录键、附件字节与选中指针，不影响其他会话记录', async () => {
+    const adapter = createAgentChatLocalAdapter()
+    const attached = await adapter.attach([new File(['b'], 'b.txt', { type: 'text/plain' })])
+    adapter.write({ ...session(), id: 'draft:a', remote: { sessionId: 'remote-a' }, attachments: attached.attachments })
+    adapter.write({ ...session(), id: 'draft:b' })
+    expect(adapter.select('remote-a')).toBe(true)
+    expect((await adapter.restore(attached.attachments))[0]?.available).toBe(true)
+    adapter.remove('remote-a')
+    expect(localStorage.getItem(AGENT_CHAT_RECORD_PREFIX + encodeURIComponent('remote-a'))).toBeNull()
+    expect(localStorage.getItem(AGENT_CHAT_STORAGE_KEY)).toBeNull()
+    expect(adapter.read('remote-a')).toBeNull()
+    expect(adapter.list().map(row => row.id)).toEqual(['draft:b'])
+    // 附件字节随记录一并释放：同一适配器内不再能恢复为可用。
+    expect((await adapter.restore(attached.attachments))[0]?.available).toBe(false)
+  })
+
+  it('remove 不触碰 v1 迁移键，迁移不变量保持', () => {
+    localStorage.setItem(AGENT_CHAT_LEGACY_KEY, JSON.stringify({ ...session(), remote: { sessionId: 'remote-legacy' } }))
+    const adapter = createAgentChatLocalAdapter()
+    expect(adapter.read()?.remote?.sessionId).toBe('remote-legacy')
+    adapter.remove('draft:other')
+    expect(localStorage.getItem(AGENT_CHAT_LEGACY_KEY)).toBeNull()
+    expect(adapter.read('remote-legacy')).not.toBeNull()
+    expect(localStorage.getItem(AGENT_CHAT_RECORD_PREFIX + encodeURIComponent('remote-legacy'))).not.toBeNull()
+  })
 })

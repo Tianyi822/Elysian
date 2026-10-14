@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
 import { GatewayProvider } from '../../adapters/GatewayProvider'
 import { createMockGateway } from '../../adapters/mock/gateway'
+import { AgentHttpError } from '../../adapters/http/agent/agentShared'
 import { useAgentChatStore } from '../../stores/agentChatStore'
 import { chatTestApi, chatTestModel } from '../../test/agentChatFixtures'
 import { AgentChatPage } from './AgentChatPage'
@@ -409,5 +410,176 @@ describe('基本聊天界面', () => {
     expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled()
     await user.upload(picker, file)
     expect(await screen.findByText('note.txt')).toBeInTheDocument()
+  })
+})
+
+describe('会话列表编辑入口', () => {
+  const longTitle = '这是一条足够长的会话标题，列表内会被截断，完整名称经右侧弹窗展示'
+
+  function setupSessions(backend = chatTestApi()) {
+    const current = { ...backend.session, id: 'server-session', title: longTitle }
+    const other = { ...backend.session, id: 'history-b', title: '历史 B' }
+    // 列表与删除做成有状态：删除后的会话不再回到列表，模拟服务端事实。
+    const deleted = new Set<string>()
+    backend.api.listSessions.mockImplementation(async () => ({
+      items: [current, other].filter(row => !deleted.has(row.id)), nextCursor: '', hasMore: false,
+    }))
+    backend.api.deleteSession.mockImplementation(async (id: string) => { deleted.add(id) })
+    backend.api.getSession.mockImplementation(async (id: string) => id === 'history-b' ? other : current)
+    const view = renderChat(backend, '/agent?session=server-session')
+    return { ...view, backend, current, other }
+  }
+
+  it('编辑入口只出现在服务端会话行上，纯草稿行不渲染', async () => {
+    setupSessions()
+    await waitFor(() => expect(useAgentChatStore.getState().remoteSession?.id).toBe('server-session'))
+    expect(screen.getAllByRole('button', { name: '编辑会话' })).toHaveLength(2)
+    fireEvent.click(within(screen.getByRole('region', { name: 'Ely 会话' })).getByRole('button', { name: '新会话' }))
+    await waitFor(() => expect(useAgentChatStore.getState().session?.id).toMatch(/^draft:/))
+    // 新草稿行加入列表后编辑入口数量不变：编辑入口不落在纯草稿行。
+    // （此前用例的本地草稿会累积在 localStorage，行数不定，编辑入口只随服务端行数变化。）
+    expect(screen.getAllByRole('button', { name: '编辑会话' })).toHaveLength(2)
+    const draftItem = document.querySelector('.chat-session-row[aria-current]')?.closest('.chat-session-item')
+    expect(draftItem).not.toBeNull()
+    expect(draftItem!.querySelector('.chat-session-edit')).toBeNull()
+  })
+
+  it('完整名称弹窗在 hover 与键盘聚焦两路可见，Tab 可达行按钮与编辑按钮', async () => {
+    const user = userEvent.setup()
+    setupSessions()
+    const row = await screen.findByRole('button', { name: longTitle })
+    // 指针路径：悬停行按钮弹出完整标题（图标显隐是纯 CSS 行为，jsdom 不计算样式，此处只验证触发器与弹窗）。
+    await user.hover(row)
+    await waitFor(() => expect(screen.getByRole('tooltip')).toHaveTextContent(longTitle))
+    // 键盘路径：Tab 走到行按钮，同一触发器经 focus 打开弹窗；再 Tab 落到编辑按钮（focus-within 揭示）。
+    for (let i = 0; i < 12 && document.activeElement !== row; i += 1) await user.tab()
+    expect(row).toHaveFocus()
+    await waitFor(() => expect(screen.getByRole('tooltip')).toHaveTextContent(longTitle))
+    await user.tab()
+    expect(screen.getAllByRole('button', { name: '编辑会话' })[0]).toHaveFocus()
+  })
+
+  it('编辑菜单向下弹出，不与行右侧的完整名称弹窗同位', async () => {
+    const user = userEvent.setup()
+    setupSessions()
+    const row = await screen.findByRole('button', { name: longTitle })
+    await user.hover(row)
+    await waitFor(() => expect(screen.getByRole('tooltip')).toHaveTextContent(longTitle))
+    await user.click(screen.getAllByRole('button', { name: '编辑会话' })[0]!)
+    // 行右侧留给完整名称弹窗，菜单挂在编辑图标下方、右缘对齐。
+    expect(await screen.findByRole('menu')).toHaveAttribute('data-side', 'bottom')
+  })
+
+  it('编辑菜单重命名会话：空值与超长先挡，成功后列表行与页头标题即时更新', async () => {
+    const user = userEvent.setup()
+    const { backend } = setupSessions()
+    await waitFor(() => expect(useAgentChatStore.getState().remoteSession?.id).toBe('server-session'))
+    await user.click(screen.getAllByRole('button', { name: '编辑会话' })[0]!)
+    await user.click(await screen.findByRole('menuitem', { name: '重命名' }))
+    const dialog = await screen.findByRole('dialog', { name: '重命名会话' })
+    const input = within(dialog).getByRole('textbox', { name: '会话名称' })
+    expect(input).toHaveValue(longTitle)
+    await user.clear(input)
+    await user.click(within(dialog).getByRole('button', { name: '确认重命名' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('名称不能为空')
+    expect(backend.api.renameSession).not.toHaveBeenCalled()
+    await user.type(input, 'x'.repeat(201))
+    await user.click(within(dialog).getByRole('button', { name: '确认重命名' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('标题不能超过 200 字节')
+    expect(backend.api.renameSession).not.toHaveBeenCalled()
+    await user.clear(input)
+    await user.type(input, '  新标题  ')
+    await user.click(within(dialog).getByRole('button', { name: '确认重命名' }))
+    await waitFor(() => expect(backend.api.renameSession).toHaveBeenCalledExactlyOnceWith('server-session', { title: '新标题' }))
+    // 弹窗关闭，列表行与页头标题以服务端落库值（TrimSpace 后）展示。
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '重命名会话' })).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('button', { name: '新标题' })).toBeInTheDocument())
+    expect(document.querySelector('.chat-title')).toHaveTextContent('新标题')
+    expect(screen.queryByRole('button', { name: longTitle })).not.toBeInTheDocument()
+  })
+
+  it('重命名被服务端拒绝时错误行内透传，弹窗保留可重试，列表不动', async () => {
+    const user = userEvent.setup()
+    const { backend } = setupSessions()
+    await waitFor(() => expect(useAgentChatStore.getState().remoteSession?.id).toBe('server-session'))
+    backend.api.renameSession.mockRejectedValueOnce(new AgentHttpError('会话标题不能为空', 'invalid-title', 400))
+    await user.click(screen.getAllByRole('button', { name: '编辑会话' })[0]!)
+    await user.click(await screen.findByRole('menuitem', { name: '重命名' }))
+    const dialog = await screen.findByRole('dialog', { name: '重命名会话' })
+    const input = within(dialog).getByRole('textbox', { name: '会话名称' })
+    await user.clear(input)
+    await user.type(input, '服务端拒绝的名字')
+    await user.click(within(dialog).getByRole('button', { name: '确认重命名' }))
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('会话标题不能为空')
+    expect(document.querySelector('.chat-title')).toHaveTextContent(longTitle)
+    await user.clear(input)
+    await user.type(input, '最终名字')
+    await user.click(within(dialog).getByRole('button', { name: '确认重命名' }))
+    await waitFor(() => expect(document.querySelector('.chat-title')).toHaveTextContent('最终名字'))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('删除会话：先删当前回落到剩余会话，再删最后一个回落到空白草稿，均出 notice', async () => {
+    const user = userEvent.setup()
+    const { backend, router } = setupSessions()
+    await waitFor(() => expect(useAgentChatStore.getState().remoteSession?.id).toBe('server-session'))
+    // 删除当前会话：确认弹窗点名会话与不可恢复后果，确认后切到剩余会话。
+    await user.click(screen.getAllByRole('button', { name: '编辑会话' })[0]!)
+    await user.click(await screen.findByRole('menuitem', { name: '删除会话' }))
+    const confirm = await screen.findByRole('dialog', { name: `删除会话「${longTitle}」？` })
+    expect(confirm).toHaveTextContent('删除后该会话的聊天记录与运行历史将一并清除，且不可恢复。')
+    await user.click(within(confirm).getByRole('button', { name: '确认删除' }))
+    await waitFor(() => expect(backend.api.deleteSession).toHaveBeenCalledExactlyOnceWith('server-session'))
+    await waitFor(() => expect(useAgentChatStore.getState().remoteSession?.id).toBe('history-b'))
+    expect(screen.getByRole('status')).toHaveTextContent('会话已删除，已切换到其他会话。')
+    await waitFor(() => expect(router.state.location.search).toBe('?session=history-b'))
+    expect(screen.queryByRole('button', { name: longTitle })).not.toBeInTheDocument()
+    // 删除最后一个会话：回落到空白草稿，URL 清空。
+    await user.click(screen.getAllByRole('button', { name: '编辑会话' })[0]!)
+    await user.click(await screen.findByRole('menuitem', { name: '删除会话' }))
+    await user.click(await screen.findByRole('button', { name: '确认删除' }))
+    await waitFor(() => expect(backend.api.deleteSession).toHaveBeenCalledTimes(2))
+    expect(backend.api.deleteSession).toHaveBeenNthCalledWith(2, 'history-b')
+    await waitFor(() => expect(useAgentChatStore.getState().session?.remote).toBeUndefined())
+    expect(screen.getByRole('status')).toHaveTextContent('会话已删除，已新建空白会话。')
+    await waitFor(() => expect(router.state.location.search).toBe(''))
+    expect(screen.queryByRole('button', { name: '历史 B' })).not.toBeInTheDocument()
+  })
+
+  it('删除被服务端拒绝时不做本地清理，错误文案在确认弹窗内行内透传', async () => {
+    const user = userEvent.setup()
+    const message = '会话存在结果未确认的执行（如面板重启时的在途操作），暂不能删除；需经执行对账接口确认停止后解除'
+    const { backend } = setupSessions()
+    await waitFor(() => expect(useAgentChatStore.getState().remoteSession?.id).toBe('server-session'))
+    backend.api.deleteSession.mockRejectedValueOnce(new AgentHttpError(message, 'session-unresolved', 409))
+    await user.click(screen.getAllByRole('button', { name: '编辑会话' })[0]!)
+    await user.click(await screen.findByRole('menuitem', { name: '删除会话' }))
+    await user.click(await screen.findByRole('button', { name: '确认删除' }))
+    const dialog = await screen.findByRole('dialog', { name: `删除会话「${longTitle}」？` })
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(message)
+    // 弹窗打开时页面被 aria-hidden，行仍在用 DOM 断言；会话指针未动。
+    expect([...document.querySelectorAll('.chat-session-row')].some(row => row.textContent?.includes(longTitle))).toBe(true)
+    expect(useAgentChatStore.getState().remoteSession?.id).toBe('server-session')
+    await user.click(within(dialog).getByRole('button', { name: '确认删除' }))
+    await waitFor(() => expect(useAgentChatStore.getState().remoteSession?.id).toBe('history-b'))
+    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('会话运行中时删除项禁用并说明原因', async () => {
+    const user = userEvent.setup()
+    const backend = chatTestApi()
+    const running = { ...backend.session, id: 'running-session', title: '运行中会话', activeRunId: 'run-x' }
+    backend.api.listSessions.mockResolvedValue({ items: [running], nextCursor: '', hasMore: false })
+    backend.api.getSession.mockResolvedValue({ ...running })
+    renderChat(backend, '/agent?session=running-session')
+    await waitFor(() => expect(useAgentChatStore.getState().remoteSession?.id).toBe('running-session'))
+    await user.click(screen.getAllByRole('button', { name: '编辑会话' })[0]!)
+    const item = await screen.findByRole('menuitem', { name: /删除会话/ })
+    expect(item).toHaveAttribute('aria-disabled', 'true')
+    expect(item).toHaveTextContent('会话运行中或执行结果未确认时不能删除')
+    await user.click(screen.getByRole('menuitem', { name: '重命名' }))
+    // 运行中仍可改名：标题是纯展示字段。
+    expect(await screen.findByRole('dialog', { name: '重命名会话' })).toBeInTheDocument()
+    expect(backend.api.deleteSession).not.toHaveBeenCalled()
   })
 })

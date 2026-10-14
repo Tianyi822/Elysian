@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"elysian/server/internal/agent/harness/model"
 )
@@ -165,6 +167,231 @@ func TestAgentRoutesRejectUntrustedFieldsAndUnsupportedModels(t *testing.T) {
 	response := runtimeRouteRequest(UnavailableRouter("本地演示不可用"), "POST", "/sessions", `{}`)
 	if response.Code != 503 {
 		t.Fatalf("演示路由接受会话：%d", response.Code)
+	}
+}
+
+func TestAgentRoutesRenameSessionTrimsTitleAndKeepsActivity(t *testing.T) {
+	m, profile := sessionAPIManager(t)
+	handler := m.Router()
+	ctx := context.Background()
+	session, err := m.CreateSession(ctx, CreateSessionInput{Title: "原始标题", ModelProfileID: profile.ID, ModelRevision: profile.Revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 运行中允许改名：标题是纯展示字段，不进 Run 快照，也不受 busy 校验限制。
+	run, _, err := m.CreateTask(ctx, session.ID, AgentInput{RequestID: "rename-running", Content: "运行中改名"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := runtimeRouteRequest(handler, "PUT", "/sessions/"+session.ID+"/title", `{"title":"  事故复盘  "}`)
+	var renamed Session
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &renamed) != nil || renamed.Title != "事故复盘" {
+		t.Fatalf("改名失败：%d %s", response.Code, response.Body.String())
+	}
+	if renamed.LastActivityAt != session.LastActivityAt || renamed.ActiveRunID != run.ID {
+		t.Fatalf("改名改动了活动时间或运行占用：%+v", renamed)
+	}
+	response = runtimeRouteRequest(handler, "GET", "/sessions/"+session.ID, "")
+	var stored Session
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &stored) != nil || stored.Title != "事故复盘" || stored.LastActivityAt != session.LastActivityAt {
+		t.Fatalf("改名未按落库口径持久化：%d %s", response.Code, response.Body.String())
+	}
+	var failure struct {
+		Error string `json:"error"`
+		Code  string `json:"code"`
+	}
+	for _, test := range []struct{ body, message string }{
+		{`{"title":"   "}`, "会话标题不能为空"},
+		{`{"title":""}`, "会话标题不能为空"},
+		{`{"title":"` + strings.Repeat("标", 67) + `"}`, "会话标题不能超过 200 字节"},
+		{`{"title":"` + strings.Repeat("a", 201) + `"}`, "会话标题不能超过 200 字节"},
+	} {
+		response = runtimeRouteRequest(handler, "PUT", "/sessions/"+session.ID+"/title", test.body)
+		if response.Code != 400 || json.Unmarshal(response.Body.Bytes(), &failure) != nil || failure.Code != "invalid-title" || failure.Error != test.message {
+			t.Fatalf("标题判据错误：%s %d %s", test.body, response.Code, response.Body.String())
+		}
+	}
+	if response = runtimeRouteRequest(handler, "PUT", "/sessions/"+session.ID+"/title", `{"title":"新名","extra":1}`); response.Code != 400 {
+		t.Fatalf("未知字段未拒绝：%d %s", response.Code, response.Body.String())
+	}
+	response = runtimeRouteRequest(handler, "PUT", "/sessions/unknown-session/title", `{"title":"新名"}`)
+	if response.Code != 404 || json.Unmarshal(response.Body.Bytes(), &failure) != nil || failure.Code != "session-not-found" || failure.Error != "Agent 会话不存在" {
+		t.Fatalf("缺失会话映射错误：%d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestAgentRoutesDeleteSessionGuardsBusyResidueAndCascade(t *testing.T) {
+	m, profile := sessionAPIManager(t)
+	handler := m.Router()
+	ctx := context.Background()
+	ids := make([]string, 0, 3)
+	for i := 0; i < 3; i++ {
+		session, err := m.CreateSession(ctx, CreateSessionInput{Title: "清理会话", ModelProfileID: profile.ID, ModelRevision: profile.Revision})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, session.ID)
+	}
+	response := runtimeRouteRequest(handler, "GET", "/sessions?sort=activity&limit=2", "")
+	var pageOne Page[Session]
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &pageOne) != nil || len(pageOne.Items) != 2 || !pageOne.HasMore || pageOne.NextCursor == "" {
+		t.Fatalf("活动分页首批错误：%d %s", response.Code, response.Body.String())
+	}
+	target := ids[0]
+	run, _, err := m.CreateTask(ctx, target, AgentInput{RequestID: "delete-busy", Content: "排队中删除被拒"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var failure struct {
+		Error string `json:"error"`
+		Code  string `json:"code"`
+	}
+	response = runtimeRouteRequest(handler, "DELETE", "/sessions/"+target, "")
+	if response.Code != 409 || json.Unmarshal(response.Body.Bytes(), &failure) != nil || failure.Code != "session-busy" || failure.Error != "会话仍有任务排队或运行，请结束后再删除" {
+		t.Fatalf("忙碌删除未拒绝：%d %s", response.Code, response.Body.String())
+	}
+	// 面板重启窗口：ActiveRunID 已清空但 runs 仍非终态 → 未决执行拒删而非忙碌。
+	if err = m.store.write(ctx, "residue-fixture", func(tx *sql.Tx) error {
+		session, err := readSession(ctx, tx, target)
+		if err != nil {
+			return err
+		}
+		session.ActiveRunID = ""
+		return saveSession(ctx, tx, session)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	response = runtimeRouteRequest(handler, "DELETE", "/sessions/"+target, "")
+	if response.Code != 409 || json.Unmarshal(response.Body.Bytes(), &failure) != nil || failure.Code != "session-unresolved" || failure.Error != "会话存在结果未确认的执行（如面板重启时的在途操作），暂不能删除；需经执行对账接口确认停止后解除" {
+		t.Fatalf("非终态残留删除未按未决执行拒绝：%d %s", response.Code, response.Body.String())
+	}
+	finishSessionTestRun(t, m.store, run.ID, "已完成", nil)
+	record, err := m.store.recordPath(recordOwner{kind: "session", id: target})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = os.Stat(record); err != nil {
+		t.Fatalf("删除前缺少会话 JSONL 副本：%v", err)
+	}
+	response = runtimeRouteRequest(handler, "DELETE", "/sessions/"+target, "")
+	if response.Code != 204 || response.Body.Len() != 0 {
+		t.Fatalf("删除响应错误：%d %s", response.Code, response.Body.String())
+	}
+	if response = runtimeRouteRequest(handler, "DELETE", "/sessions/"+target, ""); response.Code != 404 || json.Unmarshal(response.Body.Bytes(), &failure) != nil || failure.Code != "session-not-found" {
+		t.Fatalf("重复删除未按缺失会话拒绝：%d %s", response.Code, response.Body.String())
+	}
+	for _, probe := range []struct{ table, where string }{
+		{"sessions", "id=?"},
+		{"tasks", "session_id=?"},
+		{"runs", "session_id=?"},
+		{"messages", "session_id=?"},
+	} {
+		var n int
+		if err = m.store.db.QueryRow("SELECT COUNT(*) FROM "+probe.table+" WHERE "+probe.where, target).Scan(&n); err != nil || n != 0 {
+			t.Fatalf("删除残留 %s：%d %v", probe.table, n, err)
+		}
+	}
+	if _, err = os.Stat(record); !os.IsNotExist(err) {
+		t.Fatalf("删除未清理会话 JSONL 副本：%v", err)
+	}
+	response = runtimeRouteRequest(handler, "GET", "/sessions?sort=activity&limit=2&cursor="+pageOne.NextCursor, "")
+	var pageTwo Page[Session]
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &pageTwo) != nil {
+		t.Fatalf("删除后活动游标翻页失败：%d %s", response.Code, response.Body.String())
+	}
+	seen := map[string]bool{}
+	for _, item := range append(append([]Session{}, pageOne.Items...), pageTwo.Items...) {
+		seen[item.ID] = true
+	}
+	delete(seen, target)
+	for _, id := range ids[1:] {
+		if !seen[id] {
+			t.Fatalf("删除后翻页丢失会话 %s：%+v %+v", id, pageOne, pageTwo)
+		}
+	}
+	if len(seen) != 2 {
+		t.Fatalf("删除后翻页引入多余会话：%+v", seen)
+	}
+	response = runtimeRouteRequest(handler, "GET", "/sessions?sort=activity", "")
+	var remaining Page[Session]
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &remaining) != nil || len(remaining.Items) != 2 || strings.Contains(response.Body.String(), target) {
+		t.Fatalf("活动列表仍包含被删会话：%d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestAgentRoutesDeleteSessionUnresolvedLeaseAndBarrier(t *testing.T) {
+	m, profile := sessionAPIManager(t)
+	handler := m.Router()
+	ctx := context.Background()
+	terminalSession := func(requestID string) (Session, string) {
+		session, err := m.CreateSession(ctx, CreateSessionInput{Title: "终态会话", ModelProfileID: profile.ID, ModelRevision: profile.Revision})
+		if err != nil {
+			t.Fatal(err)
+		}
+		run, _, err := m.CreateTask(ctx, session.ID, AgentInput{RequestID: requestID, Content: "外部执行"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		finishSessionTestRun(t, m.store, run.ID, "已答复", nil)
+		return session, run.ID
+	}
+	leaseSession, leaseRun := terminalSession("unresolved-lease")
+	if err := m.store.write(ctx, "unknown-lease-fixture", func(tx *sql.Tx) error {
+		return saveResourceLease(ctx, tx, ResourceLease{ID: "unknown-lease", RunID: leaseRun, State: "unknown"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var failure struct {
+		Error string `json:"error"`
+		Code  string `json:"code"`
+	}
+	response := runtimeRouteRequest(handler, "DELETE", "/sessions/"+leaseSession.ID, "")
+	if response.Code != 409 || json.Unmarshal(response.Body.Bytes(), &failure) != nil || failure.Code != "session-unresolved" || failure.Error != "会话存在结果未确认的执行（如面板重启时的在途操作），暂不能删除；需经执行对账接口确认停止后解除" {
+		t.Fatalf("unknown 租约拒删错误：%d %s", response.Code, response.Body.String())
+	}
+	if err := m.store.write(ctx, "age-session-fixture", func(tx *sql.Tx) error {
+		session, err := readSession(ctx, tx, leaseSession.ID)
+		if err != nil {
+			return err
+		}
+		session.LastActivityAt = stamp(m.deps.Now().Add(-31 * 24 * time.Hour))
+		return saveSession(ctx, tx, session)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	err := m.sweep(ctx)
+	m.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = readSession(ctx, m.store.db, leaseSession.ID); err != nil {
+		t.Fatalf("保留期清理删掉了未决租约会话：%v", err)
+	}
+	if err = m.store.write(ctx, "release-lease-fixture", func(tx *sql.Tx) error {
+		return saveResourceLease(ctx, tx, ResourceLease{ID: "unknown-lease", RunID: leaseRun, State: "released", Evidence: "外部已确认停止", Decision: "confirmed-stopped"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if response = runtimeRouteRequest(handler, "DELETE", "/sessions/"+leaseSession.ID, ""); response.Code != 204 || response.Body.Len() != 0 {
+		t.Fatalf("租约确认后未允许删除：%d %s", response.Code, response.Body.String())
+	}
+	// unknown 执行屏障：屏障引用 runs 且无级联，强删会触发外键失败，必须先按未决执行拒绝。
+	barrierSession, barrierRun := terminalSession("unresolved-barrier")
+	if err = m.store.write(ctx, "unknown-barrier-fixture", func(tx *sql.Tx) error {
+		if err := saveOperation(ctx, tx, Operation{ID: "op-barrier-fixture", RunID: barrierRun, Status: "succeeded", CreatedAt: stamp(m.deps.Now())}); err != nil {
+			return err
+		}
+		return saveBarrier(ctx, tx, ExecutionBarrier{ID: "barrier-unknown", RunID: barrierRun, OperationID: "op-barrier-fixture", Status: "unknown", CreatedAt: stamp(m.deps.Now())})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	response = runtimeRouteRequest(handler, "DELETE", "/sessions/"+barrierSession.ID, "")
+	if response.Code != 409 || json.Unmarshal(response.Body.Bytes(), &failure) != nil || failure.Code != "session-unresolved" {
+		t.Fatalf("unknown 屏障未按未决执行拒绝：%d %s", response.Code, response.Body.String())
+	}
+	if _, err = readSession(ctx, m.store.db, barrierSession.ID); err != nil {
+		t.Fatalf("拒删路径误删了会话：%v", err)
 	}
 }
 

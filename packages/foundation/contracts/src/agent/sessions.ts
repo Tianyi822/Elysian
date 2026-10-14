@@ -130,6 +130,7 @@ export type AgentSession = {
 }
 
 export type AgentCreateSessionInput = { title: string; modelProfileId: string; modelRevision: number }
+export type AgentRenameSessionInput = { title: string }
 export type AgentSwitchModelInput = { modelProfileId: string; modelRevision: number }
 export type AgentInput = {
   requestId: string

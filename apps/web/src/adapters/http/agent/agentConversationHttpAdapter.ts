@@ -1,6 +1,6 @@
 import { RUNTIME_RUN_STATUSES, type AgentChatOutput, type AgentMessage, type AgentSession } from '@elysian/contracts'
 import type { AgentChatRun, AgentChatTask, AgentChatPageResult, AgentConversationAdapter } from '../../../contracts/agentChat'
-import { agentPathPart, readAgentResponse, requestAgentJson } from './agentShared'
+import { agentPathPart, readAgentResponse, requestAgentJson, requestAgentNoContent } from './agentShared'
 import { SseFrameParser } from '../../sse/parse'
 import { fetchWithSession } from '../unauthorized'
 
@@ -26,7 +26,7 @@ function parseSession(value: unknown): AgentSession {
 /** 本地演示没有运行内核，不模拟模型答复。 */
 export function createUnavailableAgentConversationAdapter(): AgentConversationAdapter {
   const unavailable = async (): Promise<never> => { throw new Error('当前为本地演示，请在已连接后端的面板中使用聊天。') }
-  return { available: false, listSessions: unavailable, listTasks: unavailable, getTask: unavailable, createSession: unavailable, getSession: unavailable, switchModel: unavailable, messages: unavailable, createTask: unavailable, continueTask: unavailable, getRun: unavailable, reasoning: unavailable, stream: unavailable }
+  return { available: false, listSessions: unavailable, listTasks: unavailable, getTask: unavailable, createSession: unavailable, getSession: unavailable, renameSession: unavailable, deleteSession: unavailable, switchModel: unavailable, messages: unavailable, createTask: unavailable, continueTask: unavailable, getRun: unavailable, reasoning: unavailable, stream: unavailable }
 }
 
 function parseRun(value: unknown): AgentChatRun {
@@ -93,6 +93,8 @@ export function createHttpAgentConversationAdapter(): AgentConversationAdapter {
     },
     createSession: async input => parseSession(await write('/sessions', input)),
     getSession: async (id, signal) => parseSession(await requestAgentJson(`/api/agent/sessions/${path(id)}`, { signal })),
+    renameSession: async (id, input) => parseSession(await write(`/sessions/${path(id)}/title`, input, 'PUT')),
+    deleteSession: async id => { await requestAgentNoContent(`/api/agent/sessions/${path(id)}`, { method: 'DELETE' }) },
     switchModel: async (id, input) => parseSession(await write(`/sessions/${path(id)}/model`, input, 'PUT')),
     async messages(id, after, signal) {
       const row = object(await requestAgentJson(`/api/agent/sessions/${path(id)}/messages?after=${cursor(after)}&limit=100`, { signal }))
