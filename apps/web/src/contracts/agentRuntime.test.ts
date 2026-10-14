@@ -129,7 +129,7 @@ describe('真实任务运行共享契约', () => {
       callTimeoutSeconds: 30, runTimeoutSeconds: 600, resultBytes: 262144,
       runResultBytes: 2097152, logBytes: 1048576, frameBytes: 524288,
       retentionDays: 30, cancelGraceSeconds: 5, maxModelRequests: 16, modelTimeoutSeconds: 60,
-      outputTokens: 4096, tokenBudget: 128000, userBytes: 32768, memoryBytes: 16384, modelResponseBytes: 524288,
+      tokenBudget: 196608, userBytes: 32768, memoryBytes: 16384, modelResponseBytes: 2097152,
     }
     const run: RuntimeRun = {
       id: 'run-agent-1', taskId: task.id, sessionId: session.id, runNumber: 1,

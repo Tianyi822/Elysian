@@ -186,7 +186,7 @@ func TestCompleteLimitsResponseAndSanitizesErrorsWithoutRetry(t *testing.T) {
 		{"限流", 429, `response-secret`, "model-rate-limited"},
 		{"服务错误", 500, `response-secret`, "model-http-failed"},
 		{"非法响应", 200, `response-secret`, "invalid-model-response"},
-		{"过大响应", 200, strings.Repeat("x", MaxResponseBytes+1), "model-response-too-large"},
+		{"过大响应", 200, strings.Repeat("x", responseLimit(testRequest().MaxTokens)+1), "model-response-too-large"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var calls atomic.Int32

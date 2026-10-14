@@ -50,11 +50,12 @@ func (a *agentExecution) finishWorkflowOutput(ctx context.Context) (*workflowAge
 		return nil, err
 	}
 	messages, refs := flattenGroups(groups)
+	// 收尾请求不启用思考（固定函数调用），按非思考模式的官方默认取值。
 	request := model.Request{
 		Messages:   append(baseContext(a, memory, workflowFinishSystem), messages...),
 		Tools:      []model.Tool{{Name: "workflow_finish", Description: "提交当前工作流步骤的结构化结果，不执行外部操作", Parameters: schema}},
 		ToolChoice: "workflow_finish",
-		MaxTokens:  a.outputLimit(),
+		MaxTokens:  a.outputLimit("disabled"),
 	}
 	if !a.fits(request) {
 		return nil, capacityError()

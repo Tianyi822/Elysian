@@ -262,12 +262,41 @@ func (a *agentExecution) tools() []model.Tool {
 	}
 	return out
 }
-func (a *agentExecution) outputLimit() int {
-	limit := a.run.Limits.OutputTokens
+
+// outputLimit 取思考模式对应的官方默认输出上限（非思考 8K、思考 64K、max 档 128K）；
+// 运行限额与模型声明的最大输出只能在其上收紧。
+func (a *agentExecution) outputLimit(level string) int {
+	limit := outputTokensNonThinking
+	switch model.ReasoningEffort(level) {
+	case "none":
+	case "max":
+		limit = outputTokensMaxEffort
+	default:
+		if a.thinkingModel() {
+			limit = outputTokensThinking
+		}
+	}
+	if a.run.Limits.OutputTokens > 0 && a.run.Limits.OutputTokens < limit {
+		limit = a.run.Limits.OutputTokens
+	}
 	if a.run.Model != nil && a.run.Model.OutputTokens < limit {
 		limit = a.run.Model.OutputTokens
 	}
 	return limit
+}
+
+// thinkingModel 判定生成请求是否按思考模式发送：DeepSeek 的生成接口默认启用思考，
+// 其他供应商以模型是否声明思考档位为准；判定为否时按非思考模式的官方默认取值。
+func (a *agentExecution) thinkingModel() bool {
+	return a.run.Model != nil && (a.run.Model.Provider == model.ProviderDeepSeek || len(a.run.Model.Capabilities.ReasoningLevels) > 0)
+}
+
+// runReasoningLevel 返回本轮固定的思考等级；未选择时为空，按模型默认档处理。
+func (a *agentExecution) runReasoningLevel() string {
+	if a.run.Selection == nil {
+		return ""
+	}
+	return a.run.Selection.ReasoningLevel
 }
 func (a *agentExecution) fits(request model.Request) bool {
 	return a.run.Model != nil && estimateRequest(request)+request.MaxTokens <= a.run.Model.ContextTokens
@@ -323,7 +352,7 @@ func (a *agentExecution) buildContext(ctx context.Context) (model.Request, []Evi
 		}
 		refs = append(refs, instructionRefs...)
 		a.contextItemIDs = itemIDs
-		request := model.Request{Tools: a.tools(), MaxTokens: a.outputLimit()}
+		request := model.Request{Tools: a.tools(), MaxTokens: a.outputLimit(a.runReasoningLevel())}
 		sharedStart := 0
 		for {
 			request.Messages = append(append(append(append([]model.Message{}, base...), wikiMessages...), shared...), taskMessages...)
@@ -447,7 +476,8 @@ func (a *agentExecution) consolidate(ctx context.Context, final bool) (*WorkingM
 	if len(groups) == 0 {
 		return nil, bad("memory-empty", "没有可整理的新增任务事实")
 	}
-	request := model.Request{Messages: baseContext(a, memory, memorySystem), Tools: []model.Tool{{Name: "store_working_memory", Description: "提交当前任务的完整工作记忆快照", Parameters: memorySchema}}, ToolChoice: "store_working_memory", MaxTokens: a.outputLimit()}
+	// 整理请求不启用思考（协议层对固定函数调用同样禁用），按非思考模式的官方默认取值。
+	request := model.Request{Messages: baseContext(a, memory, memorySystem), Tools: []model.Tool{{Name: "store_working_memory", Description: "提交当前任务的完整工作记忆快照", Parameters: memorySchema}}, ToolChoice: "store_working_memory", MaxTokens: a.outputLimit("disabled")}
 	base := append([]model.Message{}, request.Messages...)
 	var selected []factGroup
 	for _, group := range groups {

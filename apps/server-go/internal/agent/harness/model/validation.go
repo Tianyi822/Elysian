@@ -22,7 +22,8 @@ func ValidateReasoningLevel(p Profile, level string) error {
 	return nil
 }
 
-func reasoningEffort(level string) string {
+// ReasoningEffort 把运行档位名映射为协议侧强度；disabled 等价于 none（不启用思考）。
+func ReasoningEffort(level string) string {
 	if level == "disabled" {
 		return "none"
 	}

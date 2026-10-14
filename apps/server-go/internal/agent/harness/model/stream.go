@@ -13,7 +13,8 @@ import (
 )
 
 // 思考与回答作为展示增量；工具参数必须等待完整终帧并通过原有解码器校验。
-func (c *httpClient) stream(ctx context.Context, req *http.Request, format string, decode func([]byte) (Response, error), emit, emitContent func(string)) (Response, error) {
+// limit 是本次请求的原始响应上限（按输出上限放大，含分帧开销），超限即失败。
+func (c *httpClient) stream(ctx context.Context, req *http.Request, format string, decode func([]byte) (Response, error), emit, emitContent func(string), limit int) (Response, error) {
 	response, err := c.client.Do(req)
 	if err != nil {
 		return Response{}, requestError(ctx, err)
@@ -32,7 +33,7 @@ func (c *httpClient) stream(ctx context.Context, req *http.Request, format strin
 			return Response{}, problem(502, "model-http-failed", "模型服务返回异常状态，请检查模型服务")
 		}
 	}
-	reader := &io.LimitedReader{R: response.Body, N: MaxResponseBytes + 1}
+	reader := &io.LimitedReader{R: response.Body, N: int64(limit) + 1}
 	if !strings.HasPrefix(response.Header.Get("Content-Type"), "text/event-stream") {
 		raw, err := io.ReadAll(reader)
 		if err != nil {
@@ -54,7 +55,7 @@ func (c *httpClient) stream(ctx context.Context, req *http.Request, format strin
 	}
 	state := streamResponse{format: format, emit: emit, emitContent: emitContent, message: map[string]any{"role": "assistant", "content": ""}, openBlock: -1}
 	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, 4096), MaxResponseBytes+1)
+	scanner.Buffer(make([]byte, 4096), limit+1)
 	var data []string
 	consume := func() error {
 		if len(data) == 0 {

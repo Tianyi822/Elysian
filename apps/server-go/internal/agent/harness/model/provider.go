@@ -46,7 +46,7 @@ func (chatCompletionsProtocol) prepare(p Profile, input Request) (preparedReques
 		}
 		if input.ReasoningLevel != "" {
 			wire.Thinking.Type = "enabled"
-			if reasoningEffort(input.ReasoningLevel) == "none" {
+			if ReasoningEffort(input.ReasoningLevel) == "none" {
 				wire.Thinking.Type = "disabled"
 				wire.ReasoningEffort = ""
 			}

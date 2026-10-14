@@ -47,7 +47,7 @@ func (anthropicMessagesProtocol) prepare(p Profile, input Request) (preparedRequ
 		wire.Thinking = nil // 生成期间沿用服务默认，不指定供应商专属预算或等级。
 	}
 	if input.ReasoningLevel != "" {
-		if reasoningEffort(input.ReasoningLevel) == "none" {
+		if ReasoningEffort(input.ReasoningLevel) == "none" {
 			wire.Thinking = &wireThinking{Type: "disabled"}
 		} else {
 			wire.OutputConfig = map[string]string{"effort": input.ReasoningLevel}

@@ -50,7 +50,7 @@ func (responsesProtocol) prepare(p Profile, input Request) (preparedRequest, err
 		wire.Reasoning = &responsesReasoning{Summary: "auto"}
 	}
 	if input.ReasoningLevel != "" {
-		wire.Reasoning = &responsesReasoning{Effort: reasoningEffort(input.ReasoningLevel)}
+		wire.Reasoning = &responsesReasoning{Effort: ReasoningEffort(input.ReasoningLevel)}
 		if input.OnReasoning != nil && wire.Reasoning.Effort != "none" {
 			wire.Reasoning.Summary = "auto"
 		}

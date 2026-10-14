@@ -126,11 +126,10 @@
         "cancelGraceSeconds": 5,
         "maxModelRequests": 16,
         "modelTimeoutSeconds": 60,
-        "outputTokens": 4096,
-        "tokenBudget": 128000,
+        "tokenBudget": 196608,
         "userBytes": 32768,
         "memoryBytes": 16384,
-        "modelResponseBytes": 524288
+        "modelResponseBytes": 2097152
       },
       "usage": {
         "calls": 1,
@@ -202,11 +201,10 @@
       "cancelGraceSeconds": 5,
       "maxModelRequests": 16,
       "modelTimeoutSeconds": 60,
-      "outputTokens": 4096,
-      "tokenBudget": 128000,
+      "tokenBudget": 196608,
       "userBytes": 32768,
       "memoryBytes": 16384,
-      "modelResponseBytes": 524288
+      "modelResponseBytes": 2097152
     },
     "usage": {
       "calls": 1,
@@ -357,11 +355,10 @@
       "cancelGraceSeconds": 5,
       "maxModelRequests": 16,
       "modelTimeoutSeconds": 60,
-      "outputTokens": 4096,
-      "tokenBudget": 128000,
+      "tokenBudget": 196608,
       "userBytes": 32768,
       "memoryBytes": 16384,
-      "modelResponseBytes": 524288
+      "modelResponseBytes": 2097152
     },
     "queueDepth": 0,
     "batch": {

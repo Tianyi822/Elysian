@@ -423,7 +423,7 @@ func TestWorkflowAgentRunBudgetFailureCannotSucceedStale(t *testing.T) {
 			response = workflowFinishReply(workflowAgentTestOutput)
 		case "store_working_memory":
 			response = memoryReply(request)
-			tokens = 130000
+			tokens = 200000
 		default:
 			response = finalReply("状态已核对")
 		}
@@ -433,10 +433,10 @@ func TestWorkflowAgentRunBudgetFailureCannotSucceedStale(t *testing.T) {
 	w := startWorkflowAgentTest(t, m, session, nil)
 	w = workflowAgentSettled(t, m, w.ID)
 	runs := workflowAgentRuns(t, m, w.ID)
-	if w.Status != StateRecoveryRequired || w.OutputJSON != "" || w.Usage.Tokens != 130020 || len(runs) != 1 || runs[0].Status != StateFailed || runs[0].EndReason != "workflow-step-budget" || runs[0].WorkflowOutputRequestID != "" {
+	if w.Status != StateRecoveryRequired || w.OutputJSON != "" || w.Usage.Tokens != 200020 || len(runs) != 1 || runs[0].Status != StateFailed || runs[0].EndReason != "workflow-step-budget" || runs[0].WorkflowOutputRequestID != "" {
 		t.Fatalf("步骤运行预算耗尽被当作普通记忆 stale 成功：%+v %+v", w, runs)
 	}
-	if runs[0].Usage.ActualTokens == nil || *runs[0].Usage.ActualTokens != 130020 || w.Usage.Tokens >= w.Limits.Tokens {
+	if runs[0].Usage.ActualTokens == nil || *runs[0].Usage.ActualTokens != 200020 || w.Usage.Tokens >= w.Limits.Tokens {
 		t.Fatal("步骤与实例预算混淆或实际用量未保存")
 	}
 }

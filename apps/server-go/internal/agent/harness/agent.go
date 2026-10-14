@@ -57,7 +57,7 @@ func validateAgentLimits(l Limits) error {
 	if err := validateLimits(l); err != nil {
 		return err
 	}
-	if l.MaxModelRequests < 2 || l.MaxModelRequests > 16 || l.ModelTimeoutSeconds < 1 || l.OutputTokens < 1 || l.OutputTokens > 4096 || l.TokenBudget < 1 || l.TokenBudget > 128000 || l.UserBytes < 1 || l.UserBytes > 32768 || l.MemoryBytes < 1 || l.MemoryBytes > 16384 || l.ModelResponseBytes < 1 || l.ModelResponseBytes > 524288 {
+	if l.MaxModelRequests < 2 || l.MaxModelRequests > 16 || l.ModelTimeoutSeconds < 1 || l.OutputTokens < 0 || l.OutputTokens > outputTokensCeiling || l.TokenBudget < 1 || l.TokenBudget > tokenBudgetCeiling || l.UserBytes < 1 || l.UserBytes > 32768 || l.MemoryBytes < 1 || l.MemoryBytes > 16384 || l.ModelResponseBytes < 1 || l.ModelResponseBytes > 4194304 {
 		return errors.New("Agent 模型、输入和记忆限额无效")
 	}
 	return nil

@@ -56,7 +56,7 @@ func prepareRequest(p Profile, input Request) (wireRequest, map[string]bool, err
 		return wireRequest{}, nil, err
 	}
 	request := wireRequest{Stream: input.OnReasoning != nil || input.OnContent != nil, Model: p.Model, MaxTokens: input.MaxTokens, Messages: make([]wireMessage, 0, len(input.Messages))}
-	request.ReasoningEffort = reasoningEffort(input.ReasoningLevel)
+	request.ReasoningEffort = ReasoningEffort(input.ReasoningLevel)
 	for _, tool := range input.Tools {
 		t := wireTool{Type: "function"}
 		t.Function.Name, t.Function.Description, t.Function.Parameters = tool.Name, tool.Description, tool.Parameters

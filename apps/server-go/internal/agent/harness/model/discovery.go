@@ -96,7 +96,7 @@ func (c *httpClient) ListModels(ctx context.Context, p Profile) ([]DiscoveredMod
 	} else if p.Credential != "" {
 		req.Header.Set("Authorization", "Bearer "+p.Credential)
 	}
-	body, err := c.send(ctx, req)
+	body, err := c.send(ctx, req, MaxResponseBytes)
 	if err != nil {
 		return nil, err
 	}

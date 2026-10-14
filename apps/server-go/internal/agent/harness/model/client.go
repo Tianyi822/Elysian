@@ -12,6 +12,19 @@ import (
 const MaxResponseBytes = 512 * 1024
 const maxRequestBytes = 8 * 1024 * 1024
 
+// responseBytesPerToken 每个输出 token 预留的原始响应字节：供应商按小段增量逐帧发送，
+// SSE 与 JSON 分帧的包装开销远大于正文本身。
+const responseBytesPerToken = 512
+
+// responseLimit 原始响应字节上限：基础上限加按输出上限预留的分帧开销，
+// 思考模式的长回答不因逐帧包装被判超限；目录与未声明输出上限的读取沿用基础上限。
+func responseLimit(maxTokens int) int {
+	if maxTokens < 1 {
+		return MaxResponseBytes
+	}
+	return MaxResponseBytes + maxTokens*responseBytesPerToken
+}
+
 type httpClient struct{ client *http.Client }
 
 // NewClient 复制传入客户端，强制禁止重定向与 Cookie；请求只发送一次，不重试。
@@ -53,10 +66,11 @@ func (c *httpClient) Complete(ctx context.Context, p Profile, input Request) (Re
 	for name, value := range prepared.headers {
 		req.Header.Set(name, value)
 	}
+	limit := responseLimit(input.MaxTokens)
 	if input.OnReasoning != nil || input.OnContent != nil {
-		return c.stream(ctx, req, p.APIFormat, prepared.decode, input.OnReasoning, input.OnContent)
+		return c.stream(ctx, req, p.APIFormat, prepared.decode, input.OnReasoning, input.OnContent, limit)
 	}
-	body, err := c.send(ctx, req)
+	body, err := c.send(ctx, req, limit)
 	if err != nil {
 		return Response{}, err
 	}
@@ -64,7 +78,7 @@ func (c *httpClient) Complete(ctx context.Context, p Profile, input Request) (Re
 }
 
 // send 是生成与目录读取共用的传输边界，错误不包含上游正文或凭据。
-func (c *httpClient) send(ctx context.Context, req *http.Request) ([]byte, error) {
+func (c *httpClient) send(ctx context.Context, req *http.Request, limit int) ([]byte, error) {
 	response, err := c.client.Do(req)
 	if err != nil {
 		return nil, requestError(ctx, err)
@@ -83,11 +97,11 @@ func (c *httpClient) send(ctx context.Context, req *http.Request) ([]byte, error
 			return nil, problem(502, "model-http-failed", "模型服务返回异常状态，请检查模型服务")
 		}
 	}
-	body, err := io.ReadAll(io.LimitReader(response.Body, MaxResponseBytes+1))
+	body, err := io.ReadAll(io.LimitReader(response.Body, int64(limit)+1))
 	if err != nil {
 		return nil, requestError(ctx, err)
 	}
-	if len(body) > MaxResponseBytes {
+	if len(body) > limit {
 		return nil, problem(502, "model-response-too-large", "模型响应超过允许的大小")
 	}
 	return body, nil

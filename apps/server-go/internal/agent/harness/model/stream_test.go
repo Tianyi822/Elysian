@@ -154,8 +154,37 @@ func TestStreamRejectsIncompleteAndAmbiguousResponses(t *testing.T) {
 }
 
 func TestStreamLimitIncludesFramingAndComments(t *testing.T) {
-	_, err := completeStream(t, FormatChatCompletions, strings.Repeat(": keep-alive\n\n", MaxResponseBytes/14+1))
+	_, err := completeStream(t, FormatChatCompletions, strings.Repeat(": keep-alive\n\n", responseLimit(testRequest().MaxTokens)/14+1))
 	requireCode(t, err, "model-response-too-large")
+}
+
+// 思考模式长回答：逐小段分帧让原始流远超 512 KiB 基础上限，仍必须在输出上限对应的字节预算内被接受。
+func TestStreamAcceptsFramedResponseWithinOutputAllowance(t *testing.T) {
+	chunk := `{"choices":[{"delta":{"content":"` + strings.Repeat("完成", 60) + `"}}]}`
+	frames := make([]string, 0, 4200)
+	for i := 0; i < 4200; i++ {
+		frames = append(frames, chunk)
+	}
+	frames = append(frames, `{"choices":[{"delta":{},"finish_reason":"stop"}]}`, "[DONE]")
+	body := eventFrames(frames...)
+	if len(body) <= MaxResponseBytes {
+		t.Fatalf("测试流未超过基础上限：%d", len(body))
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, body)
+	}))
+	defer server.Close()
+	p, input := testProfile(server.URL), testRequest()
+	p.OutputTokens = 8192
+	input.MaxTokens, input.OnReasoning, input.OnContent = 8192, func(string) {}, func(string) {}
+	response, err := NewClient(nil).Complete(context.Background(), p, input)
+	if err != nil {
+		t.Fatalf("输出上限内的分帧响应被拒绝：%v", err)
+	}
+	if response.FinishReason != "stop" || len(response.Content) == 0 {
+		t.Fatalf("分帧响应未完整解码：%+v", response)
+	}
 }
 
 func TestStreamJSONFallbackAndErrorsDoNotRetry(t *testing.T) {
@@ -168,7 +197,7 @@ func TestStreamJSONFallbackAndErrorsDoNotRetry(t *testing.T) {
 		{"鉴权", 401, `不可回显`, "model-auth-failed"},
 		{"限流", 429, `不可回显`, "model-rate-limited"},
 		{"跳转", 307, `不可回显`, "model-redirect-refused"},
-		{"过大 JSON", 200, strings.Repeat("x", MaxResponseBytes+1), "model-response-too-large"},
+		{"过大 JSON", 200, strings.Repeat("x", responseLimit(testRequest().MaxTokens)+1), "model-response-too-large"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var calls atomic.Int32
