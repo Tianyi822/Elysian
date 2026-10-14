@@ -4,7 +4,7 @@ import type { AgentModelProfile, AgentModelService } from '@elysian/contracts'
 import { describe, expect, it, vi } from 'vitest'
 import { GatewayProvider } from '../../adapters/GatewayProvider'
 import { createMockGateway } from '../../adapters/mock/gateway'
-import { useChatModels } from './useChatModels'
+import { defaultReasoningLevel, useChatModels } from './useChatModels'
 
 const profile: AgentModelProfile & { enabled: boolean } = {
   id: 'text-model', revision: 1, model: 'text-v1',
@@ -24,6 +24,15 @@ function setup() {
   const wrapper = ({ children }: { children: ReactNode }) => <GatewayProvider gateway={gateway}>{children}</GatewayProvider>
   return { read, runtime, wrapper }
 }
+
+describe('思考等级默认档', () => {
+  it('优先「高」，其次 medium，否则取声明列表首项，未声明档位时不补默认', () => {
+    expect(defaultReasoningLevel(['disabled', 'low', 'high', 'max'])).toBe('high')
+    expect(defaultReasoningLevel(['low', 'medium'])).toBe('medium')
+    expect(defaultReasoningLevel(['low'])).toBe('low')
+    expect(defaultReasoningLevel([])).toBeUndefined()
+  })
+})
 
 describe('会话模型目录', () => {
   it('只呈现启用且支持文本与工具的模型，保留真实等级声明，且不检查运行内核', async () => {

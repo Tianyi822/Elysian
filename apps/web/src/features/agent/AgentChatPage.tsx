@@ -15,7 +15,7 @@ import type { AgentChatPermissionMode } from '../../contracts/agentChat'
 import { isChatRunActive, useAgentChatStore } from '../../stores/agentChatStore'
 import { ChatAttachment } from './ChatAttachment'
 import { ChatResponse } from './ChatResponse'
-import { reasoningLabel, useChatModels } from './useChatModels'
+import { defaultReasoningLevel, reasoningLabel, useChatModels } from './useChatModels'
 import './agentChat.css'
 
 const PERMISSION_MODES: readonly { value: AgentChatPermissionMode; label: string; description: string; Icon: IconComponent }[] = [
@@ -86,6 +86,9 @@ export function AgentChatPage() {
     description: item.serviceName,
   }))
   const busy = chat.sending || isChatRunActive(chat.run) || !!chat.remoteSession?.activeRunId || !!chat.remoteSession?.activeWorkflowId
+  /** 思考等级只提供模型声明的档位：未选择或与当前模型不符时，取模型声明的默认档（优先「高」）。 */
+  const reasoningLevels = model?.reasoningLevels ?? []
+  const reasoningLevel = session?.reasoningLevel && reasoningLevels.includes(session.reasoningLevel) ? session.reasoningLevel : defaultReasoningLevel(reasoningLevels) ?? ''
   const restoring = !!session?.remote && !chat.remoteSession
   const attachmentsLocked = !session || chat.loading || busy || restoring || !!session.pending
   const readError = chat.syncError && error && chat.syncError !== error
@@ -155,6 +158,11 @@ export function AgentChatPage() {
     // 已绑定的会话不在目录刷新时静默更换模型。
     if (!session.remote && session.modelId !== (models[0]?.id ?? null)) chat.setModel(models[0]?.id ?? null)
   }, [session?.id, session?.modelId, session?.remote, session?.pending, model, models, status, busy, chat.setModel])
+  useEffect(() => {
+    // 选择器不提供「默认」项：未选择或旧选择失效时把模型声明的默认档落进会话记录，提交与展示同一来源。
+    if (!model || chat.loading || chat.sending || session?.pending) return
+    if ((session?.reasoningLevel ?? '') !== reasoningLevel) chat.setReasoningLevel(reasoningLevel || null)
+  }, [model, reasoningLevel, session?.reasoningLevel, session?.pending, chat.loading, chat.sending, chat.setReasoningLevel])
 
   useEffect(() => {
     if (!session?.remote || chat.loading || chat.sending || !api.available) return
@@ -345,14 +353,14 @@ export function AgentChatPage() {
               mono
               search={models.length > 6 ? { ariaLabel: '搜索模型', placeholder: '搜索模型 ID…' } : undefined} />
           </div>
-          <div className="chat-reasoning">
-            <SelectDropdown ariaLabel="选择思考等级" value={session?.reasoningLevel ?? ''}
-              items={[{ value: '', label: '默认' }, ...(model?.reasoningLevels ?? []).map(level => ({ value: level, label: reasoningLabel(level) }))]}
-              onSelect={value => chat.setReasoningLevel(value || null)} fallbackLabel="默认"
+          {reasoningLevels.length > 0 && <div className="chat-reasoning">
+            <SelectDropdown ariaLabel="选择思考等级" value={reasoningLevel}
+              items={reasoningLevels.map(level => ({ value: level, label: reasoningLabel(level) }))}
+              onSelect={value => chat.setReasoningLevel(value)} fallbackLabel="思考等级"
               leadingIcon={<Brain size={16} aria-hidden />} align="end"
               disabled={status !== 'ready' || !model || busy || restoring || !!session?.pending}
               triggerClassName="chat-select chat-reasoning-select" contentClassName="chat-composer-menu" />
-          </div>
+          </div>}
           <IconButton label={session?.pending ? '重试发送' : '发送消息'} onPress={send} disabled={!canSend} className="chat-send"><Send size={20} aria-hidden /></IconButton>
         </div>
       </form>

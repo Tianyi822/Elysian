@@ -32,9 +32,9 @@ export function reasoningLabel(level: AgentModelReasoningLevel): string {
   return Object.hasOwn(REASONING_LABELS, level) ? REASONING_LABELS[level]! : level
 }
 
-/** 只从模型声明的档位中选择，不替未声明推理能力的模型补档位。 */
+/** 只从模型声明的档位中选择，不替未声明推理能力的模型补档位；默认档优先「高」，其次 medium，否则取首项。 */
 export function defaultReasoningLevel(levels: readonly AgentModelReasoningLevel[]): AgentModelReasoningLevel | undefined {
-  return levels.includes('medium') ? 'medium' : levels[0]
+  return levels.includes('high') ? 'high' : levels.includes('medium') ? 'medium' : levels[0]
 }
 
 /** 复用设置目录，只提供后端会话要求的文本与工具模型。 */

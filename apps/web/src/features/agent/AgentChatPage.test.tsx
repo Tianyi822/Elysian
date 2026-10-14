@@ -21,12 +21,12 @@ function TestShell({ children }: { children: ReactNode }) {
   </ShellLayoutContext.Provider>
 }
 
-function renderChat(backend = chatTestApi(), initialEntry = '/agent', modelError?: string) {
+function renderChat(backend = chatTestApi(), initialEntry = '/agent', modelError?: string, models: (typeof chatTestModel)[] = [chatTestModel]) {
   const gateway = createMockGateway({ eventStream: 'memory' })
   gateway.agentConversation = backend.api
   const readModels = vi.spyOn(gateway.modelSettings, 'listModelServices').mockResolvedValue([{
     id: 'service-1', revision: 1, name: '测试服务', provider: 'openai-compatible', apiFormat: 'chat-completions',
-    baseUrl: chatTestModel.baseUrl, active: true, hasCredential: true, models: [{ ...chatTestModel, enabled: true }],
+    baseUrl: chatTestModel.baseUrl, active: true, hasCredential: true, models: models.map(model => ({ ...model, enabled: true })),
   }])
   if (modelError) readModels.mockRejectedValueOnce(new Error(modelError))
   const router = createMemoryRouter([{ path: '*', element: <Tooltip.Provider><GatewayProvider gateway={gateway}><TestShell><AgentChatPage /></TestShell></GatewayProvider></Tooltip.Provider> }], { initialEntries: [initialEntry] })
@@ -254,16 +254,41 @@ describe('基本聊天界面', () => {
     const backend = chatTestApi()
     backend.hold()
     renderChat(backend)
-    const selector = await screen.findByRole('button', { name: '选择思考等级：默认' })
+    // 选择器不提供「默认」项，未选择时落到模型声明的默认档（声明含「高」，优先取「高」）。
+    const selector = await screen.findByRole('button', { name: '选择思考等级：高' })
     await waitFor(() => expect(selector).toBeEnabled())
     await user.click(selector)
-    expect(screen.getAllByRole('menuitemradio').map(item => item.textContent)).toEqual(['默认', '关闭', '低', '高', '最高'])
+    expect(screen.getAllByRole('menuitemradio').map(item => item.textContent)).toEqual(['关闭', '低', '高', '最高'])
     await user.click(screen.getByRole('menuitemradio', { name: '高' }))
     expect(useAgentChatStore.getState().session?.reasoningLevel).toBe('high')
     await user.type(screen.getByRole('textbox'), '检查状态')
     await user.click(screen.getByRole('button', { name: '发送消息' }))
     await waitFor(() => expect(backend.api.createTask).toHaveBeenCalledWith('server-session', expect.objectContaining({ reasoningLevel: 'high' })))
     expect(screen.getByRole('button', { name: '选择思考等级：高' })).toBeDisabled()
+  })
+
+  it('未声明思考档位的模型不显示思考等级选择器', async () => {
+    const backend = chatTestApi()
+    renderChat(backend, '/agent', undefined, [{ ...chatTestModel, capabilities: { ...chatTestModel.capabilities, reasoningLevels: [] } }])
+    await waitFor(() => expect(screen.getByRole('button', { name: '选择模型：test-model' })).toBeEnabled())
+    expect(screen.queryByRole('button', { name: /选择思考等级/ })).not.toBeInTheDocument()
+  })
+
+  it('切换模型把旧选择重置为新模型声明的默认档', async () => {
+    const user = userEvent.setup()
+    const backend = chatTestApi()
+    const other = { ...chatTestModel, id: 'model-2', model: 'other-model', capabilities: { ...chatTestModel.capabilities, reasoningLevels: ['low', 'medium'] } }
+    renderChat(backend, '/agent', undefined, [chatTestModel, other])
+    const selector = await screen.findByRole('button', { name: '选择思考等级：高' })
+    await waitFor(() => expect(selector).toBeEnabled())
+    await user.click(selector)
+    await user.click(screen.getByRole('menuitemradio', { name: '低' }))
+    expect(useAgentChatStore.getState().session?.reasoningLevel).toBe('low')
+    await user.click(screen.getByRole('button', { name: '选择模型：test-model' }))
+    await user.click(await screen.findByRole('menuitemradio', { name: 'other-model' }))
+    // 旧选择「低」在新模型里仍有效，但切换仍重置为新模型的默认档（新模型未声明「高」，取 medium）。
+    await waitFor(() => expect(useAgentChatStore.getState().session?.reasoningLevel).toBe('medium'))
+    expect(screen.getByRole('button', { name: '选择思考等级：中' })).toBeInTheDocument()
   })
 
   it('输入法确认和 Shift+Enter 不发送，Enter 发送并显示模型答复，追问保留上下文', async () => {
@@ -375,7 +400,7 @@ describe('基本聊天界面', () => {
   it('权限菜单可选择并恢复本地偏好，明确标注自动审批仍为预览', async () => {
     const user = userEvent.setup()
     const view = renderChat()
-    await waitFor(() => expect(screen.getByRole('button', { name: '选择思考等级：默认' })).toBeEnabled())
+    await waitFor(() => expect(screen.getByRole('button', { name: '选择思考等级：高' })).toBeEnabled())
     await user.click(screen.getByRole('button', { name: '权限模式：请求批准' }))
     expect(screen.getAllByRole('menuitemradio')).toHaveLength(3)
     expect(screen.getByRole('menuitemradio', { name: '完全开放' })).toHaveAccessibleDescription('免逐项审批暂未接入，目前仅保存选择。')
