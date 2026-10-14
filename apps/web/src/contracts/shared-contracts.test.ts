@@ -155,18 +155,12 @@ const ENUM_TABLES: ReadonlyArray<{
 ]
 
 describe('枚举与中文标签表', () => {
-  it.each(ENUM_TABLES)('$name 的取值与标签一一对应，没有多余也没有遗漏', ({ values, labels }) => {
-    expect(Object.keys(labels).sort()).toEqual([...values].sort())
-  })
-
-  it.each(ENUM_TABLES)('$name 的每个取值都有非空标签', ({ values, labels }) => {
+  it.each(ENUM_TABLES)('$name 的取值不重复且与非空中文标签一一对应', ({ name, values, labels }) => {
+    expect(Object.keys(labels).sort(), `${name} 的标签键与取值不一致`).toEqual([...values].sort())
     for (const value of values) {
-      expect(labels[value]?.trim(), `${value} 缺少标签`).toBeTruthy()
+      expect(labels[value]?.trim(), `${name}.${value} 缺少非空标签`).toBeTruthy()
     }
-  })
-
-  it.each(ENUM_TABLES)('$name 的取值不重复', ({ values }) => {
-    expect(new Set(values).size).toBe(values.length)
+    expect(new Set(values).size, `${name} 的取值重复`).toBe(values.length)
   })
 
   it('严重等级与风险等级是两套独立枚举，不互相赋值', () => {
@@ -249,21 +243,15 @@ describe('类型化事件', () => {
 /**
  * 类型层断言：`Context` 上确实挂上了服务键。若 `context-services.ts` 里的
  * `declare module './context'` 扩展失效，`keyof Context` 会是 never，
- * 下面这个常量就会编译报错，不需要等到运行时才发现。
+ * 下面的 satisfies 检查就会编译报错，不需要运行时长度断言。
  */
-const CONTEXT_KEYS: ReadonlyArray<keyof contracts.Context> = [
+void ([
   'skills',
   'approvals',
   'audit',
   'incidents',
   'runs',
-]
-
-describe('服务容器', () => {
-  it('按 Cordis 的 declare module 方式挂载了服务键', () => {
-    expect(CONTEXT_KEYS).toHaveLength(5)
-  })
-})
+] satisfies ReadonlyArray<keyof contracts.Context>)
 
 /** 从当前工作目录向上找到契约包源码，测试无论从仓库根还是从 apps/web 运行都能定位。 */
 function findContractsSrc(): string {
@@ -304,7 +292,6 @@ describe('容器域类型', () => {
   it('状态与策略枚举、类型、标签表一一对应', () => {
     expect(contracts.CONTAINER_STATUSES).toEqual(['running', 'stopped', 'restarting', 'paused'])
     expect(contracts.CONTAINER_STATUS_LABELS.running).toBe('运行中')
-    expect(contracts.CONTAINER_STATUS_LABELS.paused).toBe('已暂停')
     expect(contracts.RESTART_POLICIES).toEqual(['no', 'always', 'on-failure', 'unless-stopped'])
     expect(contracts.RESTART_POLICY_LABELS['unless-stopped']).toBe('除非手动停止')
   })
@@ -577,13 +564,6 @@ describe('网站域词典', () => {
     expect(contracts.WEBSITE_RUN_STATE_LABELS.stopped).toBe('已停止')
   })
 
-  it('运行时目录由后端提供，HTML 使用固定的官方镜像', () => {
-    expect('WEBSITE_RUNTIME_CATALOG' in contracts).toBe(false)
-    expect(contracts.isWebsiteRuntimeReleaseVersion('node', '24.21.0')).toBe(true)
-    expect(contracts.isWebsiteRuntimeReleaseVersion('node', '24.21.0-rc.1')).toBe(false)
-    expect(contracts.websiteRuntimeImageRef('html', null)).toBe('nginx:1.30.4-alpine3.24')
-  })
-
   it('分类是生产、测试、开发三档，全部分类只是界面的不过滤态，不入枚举', () => {
     expect([...contracts.WEBSITE_CATEGORIES]).toEqual(['production', 'testing', 'development'])
     expect(contracts.WEBSITE_CATEGORY_LABELS.production).toBe('生产环境')
@@ -602,11 +582,6 @@ describe('网站域词典', () => {
   it('运行时版本：四种语言需要，HTML 不需要', () => {
     expect(contracts.websiteProjectUsesRuntime('java')).toBe(true)
     expect(contracts.websiteProjectUsesRuntime('html')).toBe(false)
-  })
-
-  it('根目录由固定前缀与项目名推导', () => {
-    expect(contracts.WEBSITE_ROOT_BASE).toBe('/www/wwwroot')
-    expect(contracts.websiteProjectRootDir('订单中心-api')).toBe('/www/wwwroot/订单中心-api')
   })
 
   it('从 Git URL 解析仓库名；非法地址返回 null', () => {
@@ -628,15 +603,6 @@ describe('网站域词典', () => {
     expect(contracts.isValidWebsitePort(0)).toBe(false)
     expect(contracts.isValidWebsitePort(65536)).toBe(false)
     expect(contracts.isValidWebsitePort(80.5)).toBe(false)
-  })
-
-  it('网站项目名判据：去空白后非空，最长 64 字符', () => {
-    expect(contracts.WEBSITE_PROJECT_NAME_MAX_LENGTH).toBe(64)
-    expect(contracts.isValidWebsiteProjectName('订单中心-api')).toBe(true)
-    expect(contracts.isValidWebsiteProjectName('  blog  ')).toBe(true)
-    expect(contracts.isValidWebsiteProjectName('   ')).toBe(false)
-    expect(contracts.isValidWebsiteProjectName('x'.repeat(64))).toBe(true)
-    expect(contracts.isValidWebsiteProjectName('x'.repeat(65))).toBe(false)
   })
 })
 

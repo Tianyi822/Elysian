@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { autoContainerName } from './containers.ts'
-import { parseShellWords } from './shellWords.ts'
+import { autoContainerName, parseShellWords } from '../index.ts'
 
 describe('parseShellWords', () => {
   it('redis-server --appendonly yes 分为三个参数', () => {

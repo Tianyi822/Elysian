@@ -10,6 +10,12 @@
     }
   },
   "scripts": {
+    "test": "vitest run --config vitest.config.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.2",
+    "vite": "^8.3.0",
+    "vitest": "^5.0.0"
   }
 }

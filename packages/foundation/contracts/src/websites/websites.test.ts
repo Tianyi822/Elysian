@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
+import * as contracts from '../index.ts'
 import {
   OPERATION_LOG_CATEGORIES,
   OPERATION_LOG_CATEGORY_LABELS,
-} from '../logs/platformLogs.ts'
-import {
   WEBSITE_PROXY_STATES,
   WEBSITE_PROXY_STATE_LABELS,
   WEBSITE_ROOT_BASE,
+  WEBSITE_PROJECT_NAME_MAX_LENGTH,
   isValidWebsiteDomain,
   isValidWebsiteProjectName,
   websiteDefaultDeployCommand,
@@ -15,10 +15,11 @@ import {
   parseWebsiteRuntimeCatalogReport,
   isWebsiteRuntimeReleaseVersion,
   type WebsiteRuntimeCatalogReport,
-} from './websites.ts'
+} from '../index.ts'
 
 describe('isValidWebsiteProjectName 收紧为路径段判据', () => {
   it('保留原有口径：去空白后 1–64 字符', () => {
+    expect(WEBSITE_PROJECT_NAME_MAX_LENGTH).toBe(64)
     expect(isValidWebsiteProjectName('订单中心-api')).toBe(true)
     expect(isValidWebsiteProjectName('  blog  ')).toBe(true)
     expect(isValidWebsiteProjectName('   ')).toBe(false)
@@ -97,6 +98,8 @@ describe('动态运行时目录', () => {
     },
   }
   it('从提供的目录解析镜像，不依赖固定版本表', () => {
+    expect('WEBSITE_RUNTIME_CATALOG' in contracts).toBe(false)
+    expect(isWebsiteRuntimeReleaseVersion('node', '24.21.0')).toBe(true)
     const parsed = parseWebsiteRuntimeCatalogReport(report)
     expect(websiteRuntimeImageRef('java', '17.0.1+12', parsed.catalog)).toBe('eclipse-temurin:17.0.1_12-jre')
     expect(websiteRuntimeImageRef('node', '24.21.0', parsed.catalog)).toBe('node:24.21.0')
@@ -107,6 +110,7 @@ describe('动态运行时目录', () => {
     expect(websiteRuntimeImageRef('java', '17.0.0+35', parseWebsiteRuntimeCatalogReport(initial).catalog)).toBe('eclipse-temurin:17_35-jre')
   })
   it('拒绝预发布、浮动标签、重复版本和版本／镜像不匹配', () => {
+    expect(isWebsiteRuntimeReleaseVersion('node', '24.21.0-rc.1')).toBe(false)
     for (const change of [
       { version: '24.21.0-rc.1' }, { image: 'node:latest' }, { image: 'node:23.0.0' },
     ]) {

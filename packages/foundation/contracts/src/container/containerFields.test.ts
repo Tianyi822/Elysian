@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CONTAINER_STATUS_LABELS } from './containers.ts'
-import { classifyPortBind, isSensitiveEnvKey } from './containerFields.ts'
+import { CONTAINER_STATUS_LABELS, classifyPortBind, isSensitiveEnvKey } from '../index.ts'
 
 describe('classifyPortBind', () => {
   it('回环、通配、具体地址与缺省', () => {
