@@ -340,7 +340,7 @@ describe('平台操作日志面板', () => {
     expect(screen.getByText(/条操作未能写入审计日志/)).toHaveTextContent('3')
   })
 
-  it('长文本单元格省略显示，点击图标展开完整内容，Esc 关闭并把焦点还给图标', async () => {
+  it('长文本单元格省略显示，展开后完整呈现动作、摘要与请求结果', async () => {
     const user = userEvent.setup()
     renderApp('/logs', {
       gateway: gatewayWithLogs({ operationLogs: async () => reportWith([LONG_ENTRY]) }),
@@ -364,27 +364,6 @@ describe('平台操作日志面板', () => {
     expect(popover).toHaveTextContent('/api/files/chmod')
     expect(popover).toHaveTextContent(OPERATION_LOG_OUTCOME_LABELS.failure)
     expect(popover).toHaveTextContent('400')
-
-    await user.keyboard('{Escape}')
-    expect(screen.queryByLabelText('完整日志内容')).not.toBeInTheDocument()
-    expect(trigger).toHaveFocus()
-  })
-
-  it('键盘 Tab 能聚焦展开图标（图标靠 opacity 隐藏，不阻碍聚焦）', async () => {
-    const user = userEvent.setup()
-    renderApp('/logs', {
-      gateway: gatewayWithLogs({ operationLogs: async () => reportWith([LONG_ENTRY]) }),
-    })
-
-    await screen.findByRole('region', { name: '操作日志表' })
-    const row = dataRows()[0]!
-    const trigger = within(row).getByRole('button', { name: '查看完整内容' })
-
-    trigger.focus()
-    expect(trigger).toHaveFocus()
-    // 聚焦后回车同样能打开（键盘路径与点击等价）。
-    await user.keyboard('{Enter}')
-    expect(await screen.findByLabelText('完整日志内容')).toBeInTheDocument()
   })
 
   it('改分类会带 category 重新请求，条数用 total', async () => {

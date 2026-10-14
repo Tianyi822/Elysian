@@ -54,21 +54,13 @@ func depsOf(t *testing.T, pkg string) []string {
 	return deps
 }
 
-func TestRootPackageHasNoDomainDependency(t *testing.T) {
+func TestRootPackageHasNoDomainOrAssemblyDependency(t *testing.T) {
 	for _, dep := range depsOf(t, "./internal/agent/tools") {
 		for _, domain := range domains {
 			if dep == domain {
 				t.Errorf("根包 tools 依赖了域包 %s（根包只允许 kardia 与公共层）", domain)
 			}
 		}
-		if dep == "elysian/server/internal/app" {
-			t.Error("根包 tools 不得依赖 internal/app")
-		}
-	}
-}
-
-func TestRootPackageDoesNotImportAppOrCmd(t *testing.T) {
-	for _, dep := range depsOf(t, "./internal/agent/tools") {
 		if strings.HasPrefix(dep, "elysian/server/cmd") || dep == "elysian/server/internal/app" {
 			t.Errorf("库层不得依赖装配层或入口：%s", dep)
 		}

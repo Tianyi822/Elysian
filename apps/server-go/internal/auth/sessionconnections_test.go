@@ -32,25 +32,6 @@ func TestSessionConnectionsRevokeClearsAndReentrant(t *testing.T) {
 	}
 }
 
-func TestSessionConnectionsUnregister(t *testing.T) {
-	connections := NewSessionConnections()
-	gone := closerCounter{}
-	stays := closerCounter{}
-	goneFn := func() { gone.calls++ }
-	unregister := connections.Register("s1", goneFn)
-	connections.Register("s1", func() { stays.calls++ })
-
-	unregister()
-	unregister()
-	connections.Revoke("s1")
-	if gone.calls != 0 {
-		t.Errorf("unregister 后不应再关闭该 closer（calls=%d）", gone.calls)
-	}
-	if stays.calls != 1 {
-		t.Errorf("同会话其余 closer 照常关闭（calls=%d）", stays.calls)
-	}
-}
-
 func TestSessionConnectionsUnregisterIdentifiesClosureInstance(t *testing.T) {
 	connections := NewSessionConnections()
 	var calls [3]int

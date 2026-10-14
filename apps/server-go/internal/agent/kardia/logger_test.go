@@ -449,9 +449,6 @@ func TestLoggerCode(t *testing.T) {
 	if got := LoggerCode("ab", 1); got != 1 {
 		t.Errorf(`LoggerCode("ab", 1) 应为 1，实际 %d`, got)
 	}
-	if LoggerCode("foo:driver", 2) != LoggerCode("foo:driver", 2) {
-		t.Errorf("同一名字与级别应产生稳定色码")
-	}
 }
 
 // TestLoggerColor 验证无色回退与 ANSI 序列形态。

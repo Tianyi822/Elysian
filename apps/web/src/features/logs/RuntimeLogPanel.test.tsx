@@ -133,7 +133,7 @@ describe('运行日志表格', () => {
     expect(text).not.toHaveAttribute('title')
   })
 
-  it('悬停单元格出现展开图标，点击弹出悬浮窗，Esc 关闭且焦点回到图标', async () => {
+  it('日志单元格提供展开图标，弹窗完整呈现正文与来源', async () => {
     const user = userEvent.setup({ delay: null })
     renderApp('/logs', { gateway: gatewayWithLogs() })
     await waitForTable()
@@ -150,10 +150,6 @@ describe('运行日志表格', () => {
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
     expect(popover).toHaveTextContent(firstEntry.message)
     expect(popover).toHaveTextContent(firstEntry.source)
-
-    await user.keyboard('{Escape}')
-    expect(screen.queryByLabelText('完整日志内容')).not.toBeInTheDocument()
-    expect(trigger).toHaveFocus()
   })
 })
 

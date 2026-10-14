@@ -45,22 +45,8 @@ func TestCompleteRejectsCredentialOverNonLoopbackHTTPBeforeNetwork(t *testing.T)
 	}
 }
 
-// 历史文件中的非回环明文凭据记录整体拒载，保持失败关闭。
+// 历史文件中的非回环明文凭据记录整体拒载，保持失败关闭；报错指明条目与原因但不泄露凭据。
 func TestStoredNonLoopbackHTTPCredentialFailsClosed(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "models.json")
-	stored := `{"version":1,"profiles":[{"id":"model-` + strings.Repeat("0", 32) + `","revision":1,"name":"明文模型","baseUrl":"http://192.168.1.10:11434/v1","model":"test-model","provider":"openai-compatible","apiFormat":"chat-completions","contextTokens":8192,"outputTokens":1024,"capabilities":{"text":true,"tools":true,"source":"用户配置"},"active":true,"credential":"legacy-secret"}]}`
-	if err := os.WriteFile(path, []byte(stored), 0600); err != nil {
-		t.Fatal(err)
-	}
-	_, err := Open(path)
-	requireCode(t, err, "profile-storage")
-	if strings.Contains(err.Error(), "legacy-secret") {
-		t.Fatal("存储错误泄露凭据")
-	}
-}
-
-// 拒载报错必须指明具体条目与原因（ID 定位＋校验结论），手工修复存量配置不用翻文件。
-func TestStoredProfileErrorNamesRecordAndReason(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "models.json")
 	id := "model-" + strings.Repeat("7", 32)
 	stored := `{"version":1,"profiles":[{"id":"` + id + `","revision":1,"name":"明文模型","baseUrl":"http://192.168.1.10:11434/v1","model":"test-model","provider":"openai-compatible","apiFormat":"chat-completions","contextTokens":8192,"outputTokens":1024,"capabilities":{"text":true,"tools":true,"source":"用户配置"},"active":true,"credential":"legacy-secret"}]}`
@@ -69,6 +55,9 @@ func TestStoredProfileErrorNamesRecordAndReason(t *testing.T) {
 	}
 	_, err := Open(path)
 	requireCode(t, err, "profile-storage")
+	if strings.Contains(err.Error(), "legacy-secret") {
+		t.Fatal("存储错误泄露凭据")
+	}
 	if !strings.Contains(err.Error(), id) || !strings.Contains(err.Error(), "回环") {
 		t.Fatalf("报错未指明条目与原因：%v", err)
 	}

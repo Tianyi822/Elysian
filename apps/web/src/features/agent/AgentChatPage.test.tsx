@@ -211,6 +211,43 @@ describe('基本聊天界面', () => {
     expect(screen.getByRole('article', { name: '助手回复' })).toBe(article)
   })
 
+  it('运行中切到其他会话释放输出流，切回后以原运行重连并衔接内容', async () => {
+    const backend = chatTestApi()
+    backend.hold()
+    const watches: { runId: string; onOutput: Parameters<typeof backend.api.stream>[1]; signal: AbortSignal }[] = []
+    backend.api.stream.mockImplementation(async (id, onOutput, signal) => {
+      watches.push({ runId: id, onOutput, signal })
+      await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }))
+    })
+    const sessionA = { ...backend.session, title: '会话 A' }
+    const historyB = { ...backend.session, id: 'history-b', title: '历史 B', activeRunId: undefined }
+    backend.api.listSessions.mockResolvedValue({ items: [historyB, sessionA], nextCursor: '', hasMore: false })
+    backend.api.getSession.mockImplementation(async id => id === 'history-b' ? historyB : { ...backend.session })
+    backend.api.listTasks.mockImplementation(async id => id === 'history-b'
+      ? { items: [], nextCursor: '', hasMore: false }
+      : { items: [{ id: 'task-1', sessionId: 'server-session', kind: 'agent' }], nextCursor: '', hasMore: false })
+    renderChat(backend)
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: '检查服务' } })
+    await waitFor(() => expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: '发送消息' }))
+    await waitFor(() => expect(watches).toHaveLength(1))
+    expect(watches[0]!.runId).toBe('run-1')
+    // 切到空闲会话：原会话的输出流订阅随展示释放断开，运行仍在服务端继续。
+    fireEvent.click(screen.getByRole('button', { name: '历史 B' }))
+    await waitFor(() => expect(useAgentChatStore.getState().remoteSession?.id).toBe('history-b'))
+    await waitFor(() => expect(watches[0]!.signal.aborted).toBe(true))
+    expect(watches).toHaveLength(1)
+    // 切回运行中的会话：以原 Run 重新订阅，快照增量原位衔接、不重复用户消息。
+    fireEvent.click(screen.getByRole('button', { name: '会话 A' }))
+    await waitFor(() => expect(useAgentChatStore.getState().remoteSession?.id).toBe('server-session'))
+    await waitFor(() => expect(watches).toHaveLength(2))
+    expect(watches[1]!.runId).toBe('run-1')
+    await waitFor(() => expect(useAgentChatStore.getState().run?.id).toBe('run-1'))
+    act(() => watches[1]!.onOutput({ runId: 'run-1', responseId: 'm1', reasoning: '继续排查', content: '重连后的回答', done: false }))
+    expect(await screen.findByText('重连后的回答')).toBeInTheDocument()
+    expect(screen.getAllByText('检查服务')).toHaveLength(1)
+  })
+
   it('选择模型声明的思考等级并随消息提交，运行时锁定选择', async () => {
     const user = userEvent.setup()
     const backend = chatTestApi()
