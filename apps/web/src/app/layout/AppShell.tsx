@@ -108,8 +108,9 @@ export function AppShell() {
             <IconButton
               onPress={() => setSidebarCollapsed(!sidebarCollapsed)}
               label={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
+              tooltip={false}
               variant="ghost"
-              className="ml-auto size-9 rounded-lg text-nav-muted hover:bg-nav-hover hover:text-nav-fg"
+              className="ml-auto mr-1 size-7 rounded-lg text-nav-muted hover:bg-nav-hover hover:text-nav-fg"
             >
               {sidebarCollapsed ? <PanelLeftOpen aria-hidden size={17} /> : <PanelLeftClose aria-hidden size={17} />}
             </IconButton>
