@@ -7,7 +7,7 @@ import { useSecurityStore } from '../../stores/securityStore'
 
 /**
  * 只测安全域自己的部分：页签表、选中态与 store 联动、HeaderTabs 的呈现样式。
- * 摊开/收起的宽度自适应与自绘下拉机制与数据库类型切换同构，
+ * 摊开/收起的宽度自适应、窄屏（<768px）强制收起与自绘下拉机制与数据库类型切换同构，
  * 在 DatabaseEngineSwitch.test 一处覆盖，不在这里重复。
  */
 
@@ -29,7 +29,7 @@ describe('安全页签切换', () => {
     expect(items[0]).toHaveAttribute('aria-pressed', 'true')
   })
 
-  it('页签组带统一容器边框，按钮不带分割线，选中态由亮色指示条表达', () => {
+  it('页签组带统一容器边框，按钮不带分割线，选中态由滑块底色承担', () => {
     renderApp('/security')
 
     const group = segmentGroup()
@@ -39,9 +39,10 @@ describe('安全页签切换', () => {
       expect(item).not.toHaveClass('border-l')
       expect(item).not.toHaveClass('border')
     }
-    // 指示条常驻 DOM，位置在真实浏览器里量出，jsdom 中只验证存在与样式挂载点。
-    const indicator = group.querySelector('span[aria-hidden]')
-    expect(indicator).toHaveClass('bg-accent')
+    // 滑块不占布局，位置在真实浏览器里量出：这里只验证它存在、带选中底色，且选中按钮不是自己上底色。
+    expect(group.querySelector('span[aria-hidden="true"]')).toHaveClass('bg-nav-selected', 'absolute')
+    expect(items[0]).toHaveClass('text-accent-fg')
+    expect(items[0]).not.toHaveClass('bg-nav-selected')
   })
 
   it('点击平铺项切换当前页签，选中态随点击移动并同步 store', async () => {
