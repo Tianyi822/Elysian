@@ -68,6 +68,7 @@ export const routes: RouteObject[] = [
     children: [
       {
         index: true,
+        handle: { hideHeader: true, flushMain: true } satisfies RouteHandle,
         element: (
           <RequireArea area="dashboard" title="仪表盘">
             <DashboardPage />
