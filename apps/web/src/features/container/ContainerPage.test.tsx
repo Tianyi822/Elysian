@@ -9,6 +9,7 @@ import { resolveViewTab, writeStoredViewTab } from '../../app/theme/themePrefere
 import { useContainersStore } from '../../stores/containersStore'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { renderApp } from '../../test/renderApp'
+import { stubNarrowViewport } from '../../test/viewport'
 
 /**
  * 页面测试网关：内存事件源 + 慢节拍，动作类接口按需覆盖。
@@ -73,6 +74,11 @@ beforeEach(() => {
     terminal: undefined, busyActions: [], createOpen: false, creating: false, removingImageIds: [],
     pullingImage: undefined,
   })
+})
+
+afterEach(() => {
+  // 窄屏视口是打桩出来的：用完收回，免得串到下一条用例。
+  vi.unstubAllGlobals()
 })
 
 describe('容器页骨架', () => {
@@ -202,6 +208,27 @@ describe('容器卡片', () => {
 })
 
 describe('镜像视图', () => {
+  it('视口窄于 768px 时视图切换收进下拉：选中后切到该视图', async () => {
+    const user = userEvent.setup()
+    stubNarrowViewport()
+
+    renderApp('/docker', { gateway: pageGateway() })
+    await screen.findByRole('list', { name: '容器列表' })
+
+    const trigger = screen.getByRole('button', { name: '视图切换：容器' })
+    expect(trigger).not.toHaveClass('hidden')
+    expect(
+      within(screen.getByRole('main')).getByRole('group', { name: '视图切换' }).parentElement,
+    ).toHaveClass('hidden')
+
+    await user.click(trigger)
+    await user.click(await screen.findByRole('menuitemradio', { name: '镜像' }))
+
+    expect(useContainersStore.getState().view).toBe('images')
+    expect(await screen.findByRole('table', { name: '镜像列表' })).toBeInTheDocument()
+    expect(trigger).toHaveTextContent('镜像')
+  })
+
   it('切换到镜像视图显示 8 行镜像与引用数', async () => {
     const user = userEvent.setup()
     renderApp('/docker', { gateway: pageGateway() })

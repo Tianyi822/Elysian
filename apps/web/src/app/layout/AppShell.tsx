@@ -15,6 +15,7 @@ import {
 } from './headerAccessoryWidth'
 import { Sidebar } from './Sidebar'
 import { ShellLayoutContext, type ShellLayout } from './ShellLayoutContext'
+import './headerControls.css'
 
 export function AppShell() {
   const [openDrawer, setOpenDrawer] = useState<'navigation' | 'conversation' | null>(null)
@@ -74,6 +75,9 @@ export function AppShell() {
   const HeaderAccessory = matches
     .map((match) => (match.handle as RouteHandle | undefined)?.headerAccessory)
     .find((accessory) => accessory !== undefined)
+  const headerClassName = matches
+    .map((match) => (match.handle as RouteHandle | undefined)?.headerClassName)
+    .find((className) => className !== undefined)
 
   const accessoryWidth = useHeaderAccessoryWidthMeasurement({
     row: headerRowRef,
@@ -179,7 +183,7 @@ export function AppShell() {
                 {!hideHeader && (
                   <div
                     ref={headerRowRef}
-                    className={`mb-4 flex min-w-0 items-center gap-3 ${HeaderAccessory ? '' : 'md:hidden'}`}
+                    className={`mb-4 flex min-w-0 items-center gap-3 ${HeaderAccessory ? '' : 'md:hidden'} ${headerClassName ?? ''}`}
                   >
                     <Dialog.Trigger asChild>
                       <span ref={headerActionsRef} className="shrink-0 md:hidden">

@@ -1,0 +1,47 @@
+.aligned-header {
+  min-height: var(--shell-header-height);
+  margin-top: -16px;
+  margin-inline: -4px;
+}
+.aligned-header .icon-button { width: 28px; height: 28px; }
+.aligned-header .icon-button > svg { width: 16px; height: 16px; }
+.aligned-header .icon-button-solid {
+  --icon-button-line: var(--t-panel-line);
+  --icon-button-bg: var(--t-panel-glass-overlay);
+  backdrop-filter: blur(20px);
+}
+.aligned-header [role="group"] { height: 36px; padding: 3px; }
+.aligned-header [role="group"] > button { border-radius: 4px; }
+/* 选中滑块量的是按钮的盒子，圆角不跟按钮一起降档的话四角会露出滑块。 */
+.aligned-header .header-tabs-thumb { border-radius: 4px; }
+@media (min-width: 768px) {
+  .aligned-header { margin-top: -24px; margin-inline: 0; }
+}
+@media (max-width: 767.98px) {
+  .aligned-header { --ctl-height: 1.75rem; }
+  .aligned-header [role="group"] { height: 28px; padding: 2px; }
+  .aligned-header [role="group"] > button { padding-inline: 8px; font-size: 12px; }
+}
+
+.header-select-menu {
+  width: var(--radix-dropdown-menu-trigger-width);
+  border-radius: var(--radius-lg);
+  border-color: var(--t-control-line);
+  background-color: var(--t-surface-raised);
+  font-size: 14px;
+}
+.header-select-menu [role="menuitemradio"] {
+  min-height: 32px;
+  padding: 6px 10px;
+  border-radius: 4px;
+}
+.header-select-menu [role="menuitemradio"] + [role="menuitemradio"] { margin-top: 4px; }
+.header-select-menu [role="menuitemradio"]:hover,
+.header-select-menu [role="menuitemradio"][data-highlighted] {
+  background-color: var(--t-nav-hover);
+  color: var(--t-fg);
+}
+.header-select-menu [role="menuitemradio"][data-state="checked"] {
+  background-color: color-mix(in srgb, var(--t-accent) 12%, transparent);
+  color: var(--t-accent-fg);
+}

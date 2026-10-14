@@ -1,12 +1,13 @@
 import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DATABASE_ENGINES } from '@elysian/contracts'
 import type { ElysianGateway } from '../../contracts/adapters'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { resolveViewTab, writeStoredViewTab } from '../../app/theme/themePreferences'
 import { useDatabaseStore } from '../../stores/databaseStore'
 import { renderApp } from '../../test/renderApp'
+import { stubNarrowViewport } from '../../test/viewport'
 
 /**
  * 数据库域在 gateway 里固定走 http adapter，jsdom 下 fetch 不可达；
@@ -33,6 +34,10 @@ function trigger(): HTMLElement {
 
 beforeEach(() => {
   useDatabaseStore.setState({ engine: 'MariaDB' })
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
 })
 
 describe('数据库类型切换', () => {
@@ -110,7 +115,7 @@ describe('数据库类型切换', () => {
   })
 
   it('内容区放得下六个类型时保持平铺，只藏下拉', () => {
-    // jsdom 量不出任何宽度，按「放得下」处理：平铺参与布局，下拉只在收起时出场。
+    // jsdom 量不出任何宽度、也没有媒体查询，按「宽屏且放得下」处理：平铺参与布局，下拉只在收起时出场。
     renderApp('/databases', { gateway: switchGateway() })
 
     expect(segmentSlot()).not.toHaveClass('hidden')
@@ -118,7 +123,7 @@ describe('数据库类型切换', () => {
   })
 
   it('六个类型超出窄屏可用宽度时收起，改显自绘下拉', () => {
-    // 判断依据是真实宽度，jsdom 里一切尺寸都是 0：把窄屏导航触发器量成工具行装不下的宽度，
+    // 判断依据是真实宽度，jsdom 里一切尺寸都是 0（视口按宽屏算）：把窄屏导航触发器量成工具行装不下的宽度，
     // 类型切换的可用宽度不足时应收成下拉。
     const original = Element.prototype.getBoundingClientRect
     vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
@@ -139,5 +144,21 @@ describe('数据库类型切换', () => {
     } finally {
       vi.restoreAllMocks()
     }
+  })
+
+  it('视口窄于 768px 时一律收进下拉：顶栏放得下也不平铺', async () => {
+    const user = userEvent.setup()
+    stubNarrowViewport()
+
+    renderApp('/databases', { gateway: switchGateway() })
+
+    expect(segmentSlot()).toHaveClass('hidden')
+    expect(trigger()).not.toHaveClass('hidden')
+
+    await user.click(trigger())
+    await user.click(await screen.findByRole('menuitemradio', { name: 'Redis' }))
+
+    expect(useDatabaseStore.getState().engine).toBe('Redis')
+    expect(trigger()).toHaveTextContent('Redis')
   })
 })

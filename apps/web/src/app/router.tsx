@@ -26,6 +26,8 @@ import { RequireSession } from './RequireSession'
 /** 路由级外壳插槽：页面经 handle 向顶栏贡献控件与标题行为，外壳不硬编码具体页面。 */
 export type RouteHandle = {
   headerAccessory?: ComponentType
+  /** 页头的局部布局与控件样式。 */
+  headerClassName?: string
   /** 页面自带页签式标题时置 true：顶栏不再渲染可视标题，页签占据标题位。 */
   hideHeaderTitle?: boolean
   /** 全屏型页面（如终端）置 true：整条顶栏不渲染，页面吃掉顶栏以下全部高度。 */
@@ -79,6 +81,7 @@ export const routes: RouteObject[] = [
         path: 'security',
         handle: {
           headerAccessory: SecurityTabSwitch,
+          headerClassName: 'aligned-header',
           hideHeaderTitle: true,
         } satisfies RouteHandle,
         element: (
@@ -91,6 +94,7 @@ export const routes: RouteObject[] = [
         path: 'docker',
         handle: {
           headerAccessory: ContainerViewSwitch,
+          headerClassName: 'aligned-header',
           hideHeaderTitle: true,
         } satisfies RouteHandle,
         element: (
@@ -103,6 +107,7 @@ export const routes: RouteObject[] = [
         path: 'databases',
         handle: {
           headerAccessory: DatabaseEngineSwitch,
+          headerClassName: 'aligned-header',
           hideHeaderTitle: true,
         } satisfies RouteHandle,
         element: (
@@ -127,6 +132,7 @@ export const routes: RouteObject[] = [
         path: 'logs',
         handle: {
           headerAccessory: LogsTabSwitch,
+          headerClassName: 'aligned-header',
           hideHeaderTitle: true,
         } satisfies RouteHandle,
         element: (
@@ -186,7 +192,7 @@ export const routes: RouteObject[] = [
       },
       {
         path: 'settings',
-        handle: { headerAccessory: SettingsTabSwitch, hideHeaderTitle: true } satisfies RouteHandle,
+        handle: { headerAccessory: SettingsTabSwitch, headerClassName: 'aligned-header', hideHeaderTitle: true } satisfies RouteHandle,
         element: (
           <RequireArea area="settings" title="设置">
             <SettingsPage />

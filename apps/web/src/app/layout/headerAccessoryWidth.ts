@@ -8,6 +8,8 @@ import type { RefObject } from 'react'
  * 剩下的才是附属控件能占的位置。控件拿自己的摊开宽度与预算比较，摆得下就摊开、摆不下才收起。
  * 量而不设断点，是因为同一视口宽度下可用宽度并不固定——侧边栏收展与窄屏导航触发器都会改变它，而断点只看视口。
  *
+ * 这条预算只管宽屏：视口窄于 768px 时由 app/layout/narrowViewport.ts 直接判定收进下拉，不再比宽度。
+ *
  * 未量出时（测试环境里一切尺寸都是 0）取无限，按摊开呈现。
  */
 export const HeaderAccessoryWidthContext = createContext(Number.POSITIVE_INFINITY)

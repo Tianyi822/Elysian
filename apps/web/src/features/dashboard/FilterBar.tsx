@@ -4,6 +4,7 @@ import {
 } from '../../adapters/mock/resourceMetrics'
 import type { TimeRange } from '../../adapters/mock/resourceMetrics'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
+import { useNarrowViewport } from '../../app/layout/narrowViewport'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { RefreshButton } from '../../components/RefreshState'
 import { CTL_CHIP, CTL_GROUP, CTL_TOOLBAR } from '../../components/formControl'
@@ -24,6 +25,12 @@ export function FilterBar({
   onRefresh: () => void
   refreshing: boolean
 }) {
+  // 窄屏（<768px）一律收进下拉，与顶栏页签同一条线；宽屏由容器查询决定：放得下才把标签与分段控件摊开。
+  const narrow = useNarrowViewport()
+  const labelSlot = narrow ? 'hidden' : 'hidden @min-[39rem]:inline'
+  const dropdownSlot = narrow ? 'block' : '@min-[39rem]:hidden'
+  const flatSlot = narrow ? 'hidden' : 'hidden @min-[39rem]:flex'
+
   return (
     <section
       aria-label="筛选栏"
@@ -35,19 +42,19 @@ export function FilterBar({
             {DEMO_DATA_STATUS_LABEL}
           </span>
         ) : null}
-        <span className="hidden shrink-0 text-sm text-fg-muted @min-[39rem]:inline">时间范围</span>
-        <div className="@min-[39rem]:hidden">
+        <span className={`shrink-0 text-sm text-fg-muted ${labelSlot}`}>时间范围</span>
+        <div className={dropdownSlot}>
           <SelectDropdown
             ariaLabel="时间范围"
             label="时间"
             items={RANGES.map((value) => ({ value, label: TIME_RANGE_LABELS[value] }))}
             value={range}
             onSelect={onRangeChange}
-            contentClassName="dashboard-time-menu"
+            contentClassName="header-select-menu"
           />
         </div>
         {/* 分段控件走控件层：胶囊 + 芯片，高度与同行刷新按钮同档。 */}
-        <div role="group" aria-label="时间范围" className={`${CTL_GROUP} hidden max-w-full @min-[39rem]:flex`}>
+        <div role="group" aria-label="时间范围" className={`${CTL_GROUP} max-w-full ${flatSlot}`}>
           {RANGES.map((candidate) => (
             <button
               key={candidate}

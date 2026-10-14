@@ -1,6 +1,6 @@
 import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import {
   createResourceMetrics,
@@ -12,6 +12,7 @@ import type { ElysianGateway } from '../../contracts/adapters'
 import { useDashboardStore } from '../../stores/dashboardStore'
 import { useEventStreamStore } from '../../stores/eventStreamStore'
 import { renderApp } from '../../test/renderApp'
+import { stubNarrowViewport } from '../../test/viewport'
 import { formatResourceMetricValue } from './formatMetricDisplay'
 
 const METRIC_KEYS: ResourceMetricKey[] = ['cpu', 'memory', 'networkIo', 'diskIo']
@@ -27,6 +28,11 @@ beforeEach(() => {
   useEventStreamStore.getState().disconnect()
   useEventStreamStore.setState({ status: 'connecting', recent: [], receivedCount: 0 })
   vi.restoreAllMocks()
+})
+
+afterEach(() => {
+  // 窄屏视口是打桩出来的：用完收回，免得串到下一条用例。
+  vi.unstubAllGlobals()
 })
 
 async function renderReady() {
@@ -104,6 +110,19 @@ describe('仪表盘筛选栏', () => {
       'false',
     )
     expect(screen.queryByRole('button', { name: '复位' })).not.toBeInTheDocument()
+  })
+
+  it('视口窄于 768px 时改显下拉：分段控件与「时间范围」标签让位', async () => {
+    stubNarrowViewport()
+    await renderReady()
+
+    const trigger = screen.getByRole('button', { name: '时间范围：近 5 分钟' })
+    expect(trigger).not.toHaveClass('hidden')
+    expect(trigger.parentElement).not.toHaveClass('@min-[39rem]:hidden')
+
+    const group = screen.getByRole('group', { name: '时间范围' })
+    expect(group).toHaveClass('hidden')
+    expect(group).not.toHaveClass('@min-[39rem]:flex')
   })
 
   it('刷新期间有反馈且保留内容；刷新失败保留内容并出错误横幅', async () => {
