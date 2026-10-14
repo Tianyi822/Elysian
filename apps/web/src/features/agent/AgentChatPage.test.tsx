@@ -291,6 +291,23 @@ describe('基本聊天界面', () => {
     expect(screen.getByRole('button', { name: '选择思考等级：中' })).toBeInTheDocument()
   })
 
+  it('用户消息与助手回复各带复制按钮，点击复制原文', async () => {
+    const user = userEvent.setup()
+    renderChat()
+    await user.type(screen.getByRole('textbox', { name: '发送给 Ely 的消息' }), '检查容器状态')
+    await user.click(screen.getByRole('button', { name: '发送消息' }))
+    await screen.findByRole('article', { name: '助手回复' })
+    // 一轮对话只有两枚复制按钮：用户消息与助手回复各一，思考过程与工具调用不提供复制。
+    expect(screen.getAllByRole('button', { name: /复制/ })).toHaveLength(2)
+    // 提示浮层固定在图标下方，不遮挡上方气泡内容（点击后 Radix 会先关闭提示，故在点击前断言）。
+    await user.hover(screen.getByRole('button', { name: '复制这条消息' }))
+    expect(await screen.findByRole('tooltip')).toHaveAttribute('data-side', 'bottom')
+    await user.click(screen.getByRole('button', { name: '复制这条消息' }))
+    await expect(navigator.clipboard.readText()).resolves.toBe('检查容器状态')
+    await user.click(screen.getByRole('button', { name: '复制回复内容' }))
+    await expect(navigator.clipboard.readText()).resolves.toBe('你好，我是 Ely。')
+  })
+
   it('输入法确认和 Shift+Enter 不发送，Enter 发送并显示模型答复，追问保留上下文', async () => {
     const { api } = renderChat()
     const textbox = screen.getByRole('textbox', { name: '发送给 Ely 的消息' })

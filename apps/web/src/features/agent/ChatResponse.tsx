@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef } from 'react'
 import { ChatMarkdown } from './ChatMarkdown'
+import { ChatMessageCopy } from './ChatMessageCopy'
 import { ChatReasoning } from './ChatReasoning'
 import { useSmoothedText } from './useSmoothedText'
 
@@ -24,6 +25,7 @@ export function ChatResponse({ content, reasoning, active, quarantined, onProgre
         <ChatMarkdown text={answer} />
         {quarantined && <p className="mt-2 text-xs text-danger">此回复包含未核实或已撤回的资料。</p>}
       </div>
+      <ChatMessageCopy value={content} noun="回复内容" />
     </article>}
   </div>
 }

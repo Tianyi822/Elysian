@@ -52,6 +52,7 @@ export function IconButton({
   onKeyDown,
   onFocus,
   onBlur,
+  tooltipSide,
 }: {
   label: string
   onPress?: () => void
@@ -60,6 +61,8 @@ export function IconButton({
   variant?: Variant
   /** 视觉提示开关；aria-label 始终保留。按钮旁已有文字说明动作时可关掉。 */
   tooltip?: boolean
+  /** 提示浮层出现的方位；缺省由 Radix 决定（通常在上方）。 */
+  tooltipSide?: 'top' | 'right' | 'bottom' | 'left'
   /** 忙碌中的动作禁用按钮；tooltip 与 aria-label 保持可及。 */
   disabled?: boolean
   /** 读屏播报「忙」：动作仍在途，与 disabled 分开表达——有些忙碌态并不禁止点击。 */
@@ -99,6 +102,7 @@ export function IconButton({
       <Tooltip.Trigger asChild>{button}</Tooltip.Trigger>
       <Tooltip.Portal>
         <Tooltip.Content
+          side={tooltipSide}
           sideOffset={6}
           className="z-[80] rounded border border-control-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg"
         >

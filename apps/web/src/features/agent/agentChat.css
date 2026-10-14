@@ -31,11 +31,29 @@
 .chat-history { flex: 1; min-height: 0; overflow-y: auto; padding: 0 24px; }
 .chat-empty { display: flex; height: 100%; min-height: 220px; align-items: center; justify-content: center; flex-direction: column; padding-bottom: 36px; text-align: center; }
 .chat-messages { max-width: 800px; margin: 0 auto; padding: 36px 0 24px; }
-.chat-message { display: flex; justify-content: flex-end; margin: 0 0 28px; }
+/* 下间距用 padding 而非 margin：复制按钮的条带在行盒内部，鼠标从内容移向按钮
+   全程都处于 :hover 范围，不存在离开内容按钮即消失的死区。
+   条带 32px 高（按钮 24px 贴底 2px）：按钮上方留 6px 不贴正文，下方 6px 后接下一轮消息。 */
+.chat-message { display: flex; position: relative; justify-content: flex-end; margin: 0 0 4px; padding: 0 0 32px; }
 .chat-message-body { max-width: min(88%, 660px); min-width: 0; }
 .chat-message-text { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 8px; padding: 12px 18px; border: 1px solid var(--t-panel-line); border-radius: 16px 16px 4px 16px; background: var(--t-panel-glass); font-size: 14px; line-height: 1.8; }
 .chat-message-assistant { justify-content: flex-start; }
 .chat-message-assistant .chat-message-body { max-width: 100%; }
+/* 消息复制按钮：悬停或键盘聚焦消息行时在气泡下方的条带内浮现，绝对定位不占布局空间；
+   用户消息贴气泡右缘、助手回复贴左缘。仅用 opacity 隐藏以保持可聚焦，
+   Tab 聚焦即由 focus-within 揭示——与编辑图标同一模式。 */
+.chat-copy {
+  position: absolute;
+  bottom: 2px;
+  right: 0;
+  z-index: 5;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+.chat-message-assistant .chat-copy { right: auto; left: 0; }
+.chat-message:hover .chat-copy,
+.chat-message:focus-within .chat-copy { opacity: 1; pointer-events: auto; }
 .chat-markdown { min-width: 0; margin-top: 8px; font-size: 14px; line-height: 1.8; overflow-wrap: anywhere; }
 .chat-markdown > :first-child { margin-top: 0; }
 .chat-markdown > :last-child { margin-bottom: 0; }
@@ -67,7 +85,7 @@
 .chat-thought-toggle > svg { flex-shrink: 0; }
 .chat-thought-preview { display: block; flex: 1; min-width: 0; height: 1.7em; overflow: hidden; white-space: nowrap; }
 .chat-thought-line { display: block; width: max-content; min-width: 100%; animation: chat-thought-roll 180ms ease-out; }
-.chat-response { display: flex; flex-direction: column; gap: 6px; margin-bottom: 28px; }
+.chat-response { display: flex; flex-direction: column; gap: 6px; margin-bottom: 4px; }
 .chat-response .chat-message { margin: 0; }
 .chat-response .chat-markdown { margin-top: 0; }
 .chat-response[data-streaming] .chat-markdown > * { animation: chat-text-appear 160ms ease-out; }
@@ -127,7 +145,7 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .chat-select, .chat-send { transition: none; }
-  .chat-session-edit, .chat-session-menu-item { transition: none; }
+  .chat-session-edit, .chat-session-menu-item, .chat-copy { transition: none; }
   .chat-thought-line, .chat-response[data-streaming] .chat-markdown > * { animation: none; }
 }
 

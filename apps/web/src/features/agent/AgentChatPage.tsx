@@ -14,6 +14,7 @@ import { subscribeWhileVisible } from '../../adapters/subscribeWhileVisible'
 import type { AgentChatPermissionMode } from '../../contracts/agentChat'
 import { isChatRunActive, useAgentChatStore } from '../../stores/agentChatStore'
 import { ChatAttachment } from './ChatAttachment'
+import { ChatMessageCopy } from './ChatMessageCopy'
 import { ChatResponse } from './ChatResponse'
 import { defaultReasoningLevel, reasoningLabel, useChatModels } from './useChatModels'
 import './agentChat.css'
@@ -299,6 +300,7 @@ export function AgentChatPage() {
           return <Fragment key={message.id}>
             <article className="chat-message" aria-label="你的消息">
               <div className="chat-message-body"><p className="chat-message-text">{message.content}</p></div>
+              <ChatMessageCopy value={message.content} noun="这条消息" />
             </article>
             <ChatResponse content={answer?.content ?? live?.content ?? ''} reasoning={chat.reasoning[message.runId] ?? ''}
               active={active} quarantined={answer?.quarantined} onProgress={followContent} />
