@@ -33,27 +33,38 @@ function renderShell(path = '/') {
 afterEach(() => { useEventStreamStore.getState().disconnect() })
 
 describe('业务页与外壳布局接缝', () => {
-  it('仅聊天自动收起主导航，离开恢复原状态，再进入恢复图标栏', async () => {
+  it('聊天页不折叠主导航，继承进入前收展，聊天内改动离开后还原', async () => {
     const router = renderShell()
     expect(screen.getByRole('complementary', { name: '桌面主导航' })).toHaveClass('w-60')
     await act(() => router.navigate('/agent'))
     expect(currentLayout.isAgentChat).toBe(true)
-    expect(screen.getByRole('complementary', { name: '桌面主导航' })).toHaveClass('w-16')
-    act(() => currentLayout.setSidebarCollapsed(false))
-    expect(currentLayout.sidebarCollapsed).toBe(false)
+    expect(screen.getByRole('complementary', { name: '桌面主导航' })).toHaveClass('w-60')
+    act(() => currentLayout.setSidebarCollapsed(true))
+    expect(currentLayout.sidebarCollapsed).toBe(true)
     await act(() => router.navigate('/agent?session=another'))
-    expect(currentLayout.sidebarCollapsed).toBe(false)
+    expect(currentLayout.sidebarCollapsed).toBe(true)
     await act(() => router.navigate('/agent/approvals'))
     expect(currentLayout.isAgentChat).toBe(false)
     expect(screen.getByRole('complementary', { name: '桌面主导航' })).toHaveClass('w-60')
     await act(() => router.navigate('/agent'))
-    expect(screen.getByRole('complementary', { name: '桌面主导航' })).toHaveClass('w-16')
+    expect(screen.getByRole('complementary', { name: '桌面主导航' })).toHaveClass('w-60')
   })
 
-  it('聊天里的临时展开不覆盖用户进入前已收起的主导航', async () => {
+  it('聊天里的临时收起不覆盖用户进入前展开的主导航', async () => {
+    const router = renderShell()
+    expect(currentLayout.sidebarCollapsed).toBe(false)
+    await act(() => router.navigate('/agent'))
+    act(() => currentLayout.setSidebarCollapsed(true))
+    await act(() => router.navigate('/'))
+    expect(currentLayout.sidebarCollapsed).toBe(false)
+    expect(screen.getByRole('complementary', { name: '桌面主导航' })).toHaveClass('w-60')
+  })
+
+  it('用户进入前已收起的主导航在聊天页保持收起', async () => {
     const router = renderShell()
     act(() => currentLayout.setSidebarCollapsed(true))
     await act(() => router.navigate('/agent'))
+    expect(screen.getByRole('complementary', { name: '桌面主导航' })).toHaveClass('w-16')
     act(() => currentLayout.setSidebarCollapsed(false))
     await act(() => router.navigate('/'))
     expect(currentLayout.sidebarCollapsed).toBe(true)

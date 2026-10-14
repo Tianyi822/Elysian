@@ -21,7 +21,8 @@ export function AppShell() {
   const openDrawerRef = useRef(openDrawer)
   openDrawerRef.current = openDrawer
   const [globalSidebarCollapsed, setGlobalSidebarCollapsed] = useState(false)
-  const [agentSidebarCollapsed, setAgentSidebarCollapsed] = useState(true)
+  // 聊天页的收展独立记账：进入时不折叠，继承当前全局状态；聊天内的改动不写回其他页面。
+  const [agentSidebarCollapsed, setAgentSidebarCollapsed] = useState(false)
   const headerRowRef = useRef<HTMLDivElement>(null)
   const headerTitleRef = useRef<HTMLHeadingElement>(null)
   const headerActionsRef = useRef<HTMLSpanElement>(null)
@@ -61,9 +62,10 @@ export function AppShell() {
 
   useEffect(() => {
     setOpenDrawer(null)
-    // Agent 内的临时展开不改写其他页面的收展状态；再次进入默认回到图标栏。
-    if (!isAgentChat) setAgentSidebarCollapsed(true)
-  }, [location.pathname, isAgentChat])
+    // Agent 内的收展不改写其他页面的状态；进入聊天页继承当前收展，离开后回到默认展开。
+    if (isAgentChat) setAgentSidebarCollapsed(globalSidebarCollapsed)
+    else setAgentSidebarCollapsed(false)
+  }, [location.pathname, isAgentChat, globalSidebarCollapsed])
   const pageTitle =
     NAV_ITEMS.find((item) =>
       item.end ? location.pathname === item.to : location.pathname.startsWith(item.to),
