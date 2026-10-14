@@ -26,7 +26,7 @@ function parseSession(value: unknown): AgentSession {
 /** 本地演示没有运行内核，不模拟模型答复。 */
 export function createUnavailableAgentConversationAdapter(): AgentConversationAdapter {
   const unavailable = async (): Promise<never> => { throw new Error('当前为本地演示，请在已连接后端的面板中使用聊天。') }
-  return { available: false, listSessions: unavailable, listTasks: unavailable, getTask: unavailable, createSession: unavailable, getSession: unavailable, renameSession: unavailable, deleteSession: unavailable, switchModel: unavailable, messages: unavailable, createTask: unavailable, continueTask: unavailable, getRun: unavailable, reasoning: unavailable, stream: unavailable }
+  return { available: false, listSessions: unavailable, listTasks: unavailable, getTask: unavailable, createSession: unavailable, getSession: unavailable, renameSession: unavailable, deleteSession: unavailable, switchModel: unavailable, messages: unavailable, createTask: unavailable, continueTask: unavailable, getRun: unavailable, cancelRun: unavailable, reasoning: unavailable, stream: unavailable }
 }
 
 function parseRun(value: unknown): AgentChatRun {
@@ -66,6 +66,7 @@ function parseMessage(value: unknown): AgentMessage {
     id: string(row.id), sessionId: string(row.sessionId), taskId: string(row.taskId), runId: string(row.runId), seq: cursor(row.seq),
     role: row.role, content: string(row.content), createdAt: string(row.createdAt), quarantined: row.quarantined as boolean | undefined,
     runStatus: row.runStatus as AgentMessage['runStatus'],
+    replacesMessageId: optional(row.replacesMessageId),
   }
 }
 
@@ -112,6 +113,7 @@ export function createHttpAgentConversationAdapter(): AgentConversationAdapter {
     createTask: async (id, input) => parseRun(await write(`/sessions/${path(id)}/tasks`, input)),
     continueTask: async (id, input) => parseRun(await write(`/tasks/${path(id)}/runs`, input)),
     getRun: async (id, signal) => parseRun(await requestAgentJson(`/api/agent/runs/${path(id)}`, { signal })),
+    cancelRun: async id => parseRun(await requestAgentJson(`/api/agent/runs/${path(id)}/cancel`, { method: 'POST' })),
     async stream(id, onOutput, signal) {
       // 复用帧解析器与 401 处理，流断开只重连读取，不重新提交消息。
       const timeout = AbortSignal.timeout(45000)

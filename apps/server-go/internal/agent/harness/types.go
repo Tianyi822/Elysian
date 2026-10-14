@@ -50,6 +50,7 @@ type Failure struct {
 
 // Run 的取消请求与终态分开：提出取消不表示执行已停止。
 type Run struct {
+	SupersededByRunID        string `json:"supersededByRunId,omitempty"`
 	ScopeID                  string `json:"scopeId,omitempty"`
 	NodeID                   string `json:"nodeId,omitempty"`
 	WorkflowFrozenFrom       string `json:"workflowFrozenFrom,omitempty"`

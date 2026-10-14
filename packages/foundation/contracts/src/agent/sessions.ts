@@ -135,6 +135,8 @@ export type AgentSwitchModelInput = { modelProfileId: string; modelRevision: num
 export type AgentInput = {
   requestId: string
   content: string
+  /** 仅续轮使用：替换会话最后一条用户消息及其回复。 */
+  replaceMessageId?: string
   /** 本轮主循环的思考等级；省略时沿用模型默认，必须属于固定模型修订声明的档位。 */
   reasoningLevel?: AgentModelReasoningLevel
   skills?: readonly AgentRevisionRef[]
@@ -144,6 +146,8 @@ export type AgentInput = {
 
 /** 公开对话只包含用户输入和助手答复，不承载工具结果、工作记忆或隐藏推理。 */
 export type AgentMessage = {
+  /** 被替换的原始消息；连续编辑保持此标识，便于增量读取移除旧轮。 */
+  replacesMessageId?: string
   /** 服务端判定该消息引用了不可信或未核实内容，展示时须与普通答复区分。 */
   quarantined?: boolean
   /** 消息成文时引用的 Wiki 页面修订；由父进程核验，不在前端补全。 */

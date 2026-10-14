@@ -52,6 +52,10 @@
   transition: opacity 120ms ease;
 }
 .chat-message-assistant .chat-copy { right: auto; left: 0; }
+.chat-edit { right: 30px; }
+.chat-message-editor { width: min(100%, 660px); min-width: 0; margin-top: 8px; border-radius: 16px; }
+.chat-edit-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 0 12px 12px; }
+.chat-edit-actions .icon-button { width: 34px; height: 34px; padding: 0; }
 .chat-message:hover .chat-copy,
 .chat-message:focus-within .chat-copy { opacity: 1; pointer-events: auto; }
 .chat-markdown { min-width: 0; margin-top: 8px; font-size: 14px; line-height: 1.8; overflow-wrap: anywhere; }
@@ -123,6 +127,7 @@
 .chat-send.icon-button { --icon-button-radius: 50%; width: 36px; height: 36px; padding: 0; color: var(--t-fg); flex-shrink: 0; transition: background 120ms ease, opacity 120ms ease; }
 /* 纸飞机的视觉重心偏右上，向左下微调以居中于圆形按钮。 */
 .chat-send > svg { transform: translate(-1px, 1px); }
+.chat-stop > svg { transform: none; }
 .chat-send.icon-button:hover:not(:disabled) { background: var(--t-nav-hover); }
 .chat-send.icon-button:disabled { opacity: 0.35; cursor: not-allowed; }
 .chat-attachment { display: flex; align-items: center; gap: 9px; width: 206px; max-width: 100%; padding: 7px; border: 1px solid var(--t-panel-line); border-radius: 12px; background: var(--t-panel-glass); }

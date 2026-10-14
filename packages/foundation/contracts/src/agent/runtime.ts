@@ -87,6 +87,7 @@ export type RuntimeRun = {
   driverVersion?: string
   snapshot?: AgentCapabilitySnapshot
   selection?: AgentInput
+  supersededByRunId?: string
   resume?: AgentRecoveryCursor
   activeMilliseconds?: number
   id: string

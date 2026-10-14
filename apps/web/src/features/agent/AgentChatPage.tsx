@@ -1,11 +1,10 @@
-import { Fragment, useCallback, useEffect, useRef, useState, type Ref, type RefObject } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState, type Ref } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router'
 import * as Dialog from '@radix-ui/react-dialog'
-import * as Tooltip from '@radix-ui/react-tooltip'
 import { useShellLayout } from '../../app/layout/ShellLayoutContext'
 import { ChatSessionList } from './ChatSessionList'
 import { RUNTIME_RUN_STATUS_LABELS } from '@elysian/contracts'
-import { Bot, Brain, Hand, List, Paperclip, Plus, Send, ShieldAlert, ShieldCheck, X, type IconComponent } from '../../components/icons'
+import { Bot, Brain, Hand, List, Paperclip, Pencil, Plus, Send, Square, ShieldAlert, ShieldCheck, X, type IconComponent } from '../../components/icons'
 import { IconButton } from '../../components/IconButton'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { RefreshButton } from '../../components/RefreshState'
@@ -25,31 +24,18 @@ const PERMISSION_MODES: readonly { value: AgentChatPermissionMode; label: string
   { value: 'full', label: '完全开放', description: '免逐项审批暂未接入，目前仅保存选择。', Icon: ShieldAlert },
 ]
 
-/**
- * 会话列表开关：固定在聊天页头内，不再随侧边栏状态左右移动。
- * 焦点由代码归还时压掉提示：Radix 的提示只在失焦或指针离开触发器时收起，
- * 而程序化聚焦时指针往往不在把手上，提示因此会留在画面上无人关闭。
- */
-function SessionToggle({ expanded, controls, onClick, buttonRef, focusReturnsByCode }: {
+/** 会话列表开关固定在聊天页头内，仅保留读屏标签。 */
+function SessionToggle({ expanded, controls, onClick, buttonRef }: {
   expanded: boolean
   controls: string
   onClick: () => void
   buttonRef?: Ref<HTMLButtonElement>
-  focusReturnsByCode?: RefObject<boolean>
 }) {
   const label = expanded ? '收起会话列表' : '打开会话列表'
-  return <Tooltip.Root>
-    <Tooltip.Trigger asChild onFocus={event => { if (focusReturnsByCode?.current) event.preventDefault() }}>
-      <button ref={buttonRef} type="button" className="chat-session-toggle" aria-label={label}
-        aria-expanded={expanded} aria-controls={controls} onClick={onClick}>
-        <List size={16} aria-hidden />
-      </button>
-    </Tooltip.Trigger>
-    <Tooltip.Portal><Tooltip.Content side="bottom" sideOffset={6}
-      className="z-[80] rounded border border-control-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg">
-      {label}<Tooltip.Arrow className="fill-surface-raised" />
-    </Tooltip.Content></Tooltip.Portal>
-  </Tooltip.Root>
+  return <button ref={buttonRef} type="button" className="chat-session-toggle" aria-label={label}
+    aria-expanded={expanded} aria-controls={controls} onClick={onClick}>
+    <List size={16} aria-hidden />
+  </button>
 }
 
 /** 基本文本聊天，沿用现有会话、模型目录与任务续轮接口。 */
@@ -68,10 +54,10 @@ export function AgentChatPage() {
   const listTrigger = useRef<HTMLButtonElement>(null)
   const listDrawer = useRef<HTMLDivElement>(null)
   const restoreListFocus = useRef(false)
-  const returnListFocusByCode = useRef(false)
   const { agentConversation: api } = useGateway()
   const { models, status, error, reload } = useChatModels()
   const input = useRef<HTMLTextAreaElement>(null)
+  const editInput = useRef<HTMLTextAreaElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const history = useRef<HTMLDivElement>(null)
   const following = useRef(true)
@@ -86,7 +72,9 @@ export function AgentChatPage() {
     label: models.some(other => other.id !== item.id && other.model === item.model) ? `${item.model} · ${item.serviceName}` : item.model,
     description: item.serviceName,
   }))
-  const busy = chat.sending || isChatRunActive(chat.run) || !!chat.remoteSession?.activeRunId || !!chat.remoteSession?.activeWorkflowId
+  const busy = chat.sending || chat.stopping || isChatRunActive(chat.run) || !!chat.remoteSession?.activeRunId || !!chat.remoteSession?.activeWorkflowId
+  const stopping = chat.stopping || (isChatRunActive(chat.run) && !!chat.run?.cancelRequestedAt)
+  const lastUserMessage = chat.messages.filter(message => message.role === 'user').at(-1)
   /** 思考等级只提供模型声明的档位：未选择或与当前模型不符时，取模型声明的默认档（优先「高」）。 */
   const reasoningLevels = model?.reasoningLevels ?? []
   const reasoningLevel = session?.reasoningLevel && reasoningLevels.includes(session.reasoningLevel) ? session.reasoningLevel : defaultReasoningLevel(reasoningLevels) ?? ''
@@ -101,13 +89,7 @@ export function AgentChatPage() {
     if (error) reload()
   }
 
-  const focusListTrigger = () => {
-    const trigger = listTrigger.current
-    if (!trigger) return
-    returnListFocusByCode.current = true
-    trigger.focus()
-    returnListFocusByCode.current = false
-  }
+  const focusListTrigger = () => listTrigger.current?.focus()
 
   useEffect(() => {
     let active = true
@@ -207,11 +189,19 @@ export function AgentChatPage() {
     textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`
   }, [session?.draft])
   useEffect(() => { following.current = true }, [session?.id])
+  useEffect(() => { if (session?.editing) editInput.current?.focus() }, [session?.editing?.messageId])
   useEffect(() => {
     if (following.current && history.current) history.current.scrollTop = history.current.scrollHeight
   }, [chat.messages.length, chat.reasoning[chat.run?.id ?? ''], session?.id])
 
-  const canSend = Boolean(api.available && session?.draft.trim() && (model || session.pending) && !session.attachments.length && !busy && !chat.loading && !restoring && (status === 'ready' || session.pending))
+  const canSubmit = Boolean(api.available && (model || session?.pending) && !busy && !chat.loading && !restoring && (status === 'ready' || session?.pending))
+  const canSend = Boolean(canSubmit && !session?.editing && !session?.pending?.input.replaceMessageId && session?.draft.trim() && !session.attachments.length)
+  const canResend = Boolean(canSubmit && (session?.pending?.input.replaceMessageId || session?.editing?.text.trim()))
+  const resend = () => {
+    if (!canResend) return
+    following.current = true
+    void chat.send(api, model?.profile)
+  }
   const send = () => {
     if (!canSend) return
     following.current = true
@@ -252,7 +242,6 @@ export function AgentChatPage() {
   const showSidebar = wide && shell.sidebarCollapsed && !listCollapsed
   const expanded = showSidebar || shell.conversationDrawerOpen
   const toggle = <SessionToggle expanded={expanded} buttonRef={listTrigger}
-    focusReturnsByCode={returnListFocusByCode}
     controls={wide ? 'chat-session-sidebar' : 'chat-session-drawer'} onClick={() => {
       if (expanded) closeList()
       else if (wide) { shell.setSidebarCollapsed(true); setListCollapsed(false) }
@@ -296,21 +285,47 @@ export function AgentChatPage() {
         {chat.messages.filter(message => message.role === 'user').map(message => {
           const answer = chat.messages.find(item => item.runId === message.runId && item.role === 'assistant')
           const active = liveRunId === message.runId
-          const live = active && chat.liveOutput?.runId === message.runId ? chat.liveOutput : null
+          const stopped = (chat.run?.id === message.runId ? chat.run.status : message.runStatus) === 'cancelled'
+          const editing = session?.editing?.messageId === message.id
+          const live = (active || stopped) && chat.liveOutput?.runId === message.runId ? chat.liveOutput : null
           return <Fragment key={message.id}>
             <article className="chat-message" aria-label="你的消息">
-              <div className="chat-message-body"><p className="chat-message-text">{message.content}</p></div>
-              <ChatMessageCopy value={message.content} noun="这条消息" />
+              {editing ? <form className="chat-message-editor panel-surface" aria-label="编辑最后一条消息" onSubmit={event => { event.preventDefault(); resend() }}
+                onKeyDown={event => {
+                  if (event.key === 'Escape' && !event.nativeEvent.isComposing && !composing.current && event.keyCode !== 229) {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    chat.cancelEdit()
+                  }
+                }}>
+                <label htmlFor="agent-edit-message" className="sr-only">编辑消息内容</label>
+                <textarea id="agent-edit-message" ref={editInput} value={session.editing!.text} rows={4} className="chat-textarea hover-scrollbar"
+                  disabled={chat.sending || !!session.pending} onChange={event => chat.setEditText(event.target.value)}
+                  onCompositionStart={() => { composing.current = true }} onCompositionEnd={() => { composing.current = false }}
+                  onKeyDown={event => {
+                    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && !composing.current && event.keyCode !== 229) { event.preventDefault(); resend() }
+                  }} />
+                <div className="chat-edit-actions">
+                  <IconButton label="取消编辑" disabled={chat.sending || !!session.pending} onPress={chat.cancelEdit}><X size={18} aria-hidden /></IconButton>
+                  <IconButton label={session.pending ? '重试发送' : '发送'} disabled={!canResend} onPress={resend}><Send size={18} aria-hidden /></IconButton>
+                </div>
+              </form> : <>
+                <div className="chat-message-body"><p className="chat-message-text">{message.content}</p></div>
+                <ChatMessageCopy value={message.content} noun="这条消息" />
+                {lastUserMessage?.id === message.id && <IconButton label="编辑这条消息" variant="ghost" tooltipSide="bottom" className="chat-copy chat-edit"
+                  disabled={busy || restoring || !!session?.pending} onPress={() => chat.editMessage(message.id)}><Pencil size={13} aria-hidden /></IconButton>}
+              </>}
             </article>
-            <ChatResponse content={answer?.content ?? live?.content ?? ''} reasoning={chat.reasoning[message.runId] ?? ''}
-              active={active} quarantined={answer?.quarantined} onProgress={followContent} />
+            <ChatResponse key={message.runId} content={answer?.content ?? live?.content ?? ''} reasoning={chat.reasoning[message.runId] ?? ''}
+              active={active} stopped={stopped} stopping={active && stopping} quarantined={answer?.quarantined} onProgress={followContent} />
           </Fragment>
         })}
       </div>}
     </div>
 
     <div className="chat-compose-area">
-      {run && !isChatRunActive(run) && run.status !== 'succeeded' && <p role="alert" className="mb-3 text-xs text-danger">{RUNTIME_RUN_STATUS_LABELS[run.status]}{run.error ? `：${run.error.message}` : ''}</p>}
+      {run && !isChatRunActive(run) && run.status !== 'succeeded' && run.status !== 'cancelled' && <p role="alert" className="mb-3 text-xs text-danger">{RUNTIME_RUN_STATUS_LABELS[run.status]}{run.error ? `：${run.error.message}` : ''}</p>}
+      {stopping && <p role="status" className="mb-3 text-xs text-fg-muted">正在停止…</p>}
       {chat.notice && <div role="status" className="mb-3 flex items-start gap-2 text-xs text-fg-muted"><span className="min-w-0 flex-1">{chat.notice}</span><button type="button" aria-label="关闭提示" onClick={chat.clearNotice}><X size={14} aria-hidden /></button></div>}
       {chat.error && <p role="alert" className="mb-3 text-xs text-danger">{chat.error}</p>}
       {readError && <div role="alert" className="mb-3 flex items-center gap-2 text-xs text-danger">
@@ -363,7 +378,9 @@ export function AgentChatPage() {
               disabled={status !== 'ready' || !model || busy || restoring || !!session?.pending}
               triggerClassName="chat-select chat-reasoning-select" contentClassName="chat-composer-menu" />
           </div>}
-          <IconButton label={session?.pending ? '重试发送' : '发送消息'} onPress={send} disabled={!canSend} className="chat-send"><Send size={20} aria-hidden /></IconButton>
+          {liveRunId && !chat.remoteSession?.activeWorkflowId
+            ? <IconButton label={stopping ? '正在停止' : '停止回复'} onPress={() => void chat.stop(api)} disabled={stopping} className="chat-send chat-stop"><Square size={16} fill="currentColor" aria-hidden /></IconButton>
+            : <IconButton label={session?.pending && !session.pending.input.replaceMessageId ? '重试发送' : '发送消息'} onPress={send} disabled={!canSend} className="chat-send"><Send size={20} aria-hidden /></IconButton>}
         </div>
       </form>
     </div>

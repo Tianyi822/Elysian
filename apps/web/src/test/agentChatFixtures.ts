@@ -13,6 +13,7 @@ export function chatTestApi() {
   const session: AgentSession = { id: 'server-session', title: '会话', createdAt: '2026-10-12T00:00:00Z', lastActivityAt: '2026-10-12T00:00:00Z', modelProfileId: chatTestModel.id, modelRevision: 1, lastSeq: '0' }
   const messages: AgentMessage[] = []
   const runs = new Map<string, AgentChatRun>()
+  const replacedRuns = new Set<string>()
   const reasoning = new Map<string, string>()
   let hold = false
   const append = (run: AgentChatRun, role: AgentMessage['role'], content: string) => {
@@ -31,9 +32,14 @@ export function chatTestApi() {
     const prior = [...runs.values()].find(run => run.requestId === input.requestId)
     if (prior) return { ...prior }
     const run: AgentChatRun = { id: `run-${runs.size + 1}`, taskId: 'task-1', sessionId: session.id, status: 'running', phase: 'inference', requestId: input.requestId }
+    if (input.replaceMessageId) {
+      const old = messages.find(message => message.id === input.replaceMessageId)
+      if (old) replacedRuns.add(old.runId)
+    }
     runs.set(run.id, run)
     session.activeRunId = run.id
     append(run, 'user', input.content)
+    if (input.replaceMessageId) messages.at(-1)!.replacesMessageId = messages.find(message => message.id === input.replaceMessageId)?.replacesMessageId ?? input.replaceMessageId
     if (!hold) complete()
     return { ...run }
   }
@@ -47,9 +53,16 @@ export function chatTestApi() {
     renameSession: vi.fn(async (_id: string, input: { title: string }) => { session.title = input.title.trim(); return { ...session } }),
     deleteSession: vi.fn(async (_id: string) => {}),
     switchModel: vi.fn(async (_id, input) => { session.modelProfileId = input.modelProfileId; session.modelRevision = input.modelRevision; return { ...session } }),
-    messages: vi.fn(async (_id, after) => ({ items: messages.filter(message => BigInt(message.seq) > BigInt(after)), nextCursor: session.lastSeq, hasMore: false })),
+    messages: vi.fn(async (_id, after) => ({ items: messages.filter(message => !replacedRuns.has(message.runId) && BigInt(message.seq) > BigInt(after)).map((message): AgentMessage => ({ ...message, runStatus: runs.get(message.runId)?.status })), nextCursor: session.lastSeq, hasMore: false })),
     createTask: vi.fn(submit), continueTask: vi.fn(submit),
     getRun: vi.fn(async id => ({ ...runs.get(id)! })),
+    cancelRun: vi.fn(async id => {
+      const run = runs.get(id)!
+      run.status = 'cancelled'
+      run.cancelRequestedAt = session.createdAt
+      session.activeRunId = undefined
+      return { ...run }
+    }),
     reasoning: vi.fn(async id => reasoning.get(id) ?? ''),
     stream: vi.fn(async (_id, _onOutput, signal) => {
       if (!signal.aborted) await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }))

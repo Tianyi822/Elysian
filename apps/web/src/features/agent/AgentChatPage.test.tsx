@@ -43,6 +43,65 @@ beforeEach(async () => {
 })
 
 describe('基本聊天界面', () => {
+  it('最后一条消息原位编辑、取消及重发，不覆盖底部草稿', async () => {
+    const backend = chatTestApi()
+    await backend.api.createTask('server-session', { requestId: 'original', content: '原消息' })
+    renderChat(backend, '/agent?session=server-session')
+    const edit = await screen.findByRole('button', { name: '编辑这条消息' })
+    await waitFor(() => expect(edit).toBeEnabled())
+    const composer = screen.getByRole('textbox', { name: '发送给 Ely 的消息' })
+    fireEvent.change(composer, { target: { value: '底部草稿' } })
+    fireEvent.click(edit)
+    const editor = screen.getByRole('textbox', { name: '编辑消息内容' })
+    expect(editor).toHaveFocus()
+    fireEvent.change(editor, { target: { value: '' } })
+    expect(screen.getByRole('button', { name: '发送' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '取消编辑' }))
+    expect(composer).toHaveValue('底部草稿')
+    expect(screen.getByText('原消息')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '编辑这条消息' }))
+    fireEvent.keyDown(screen.getByRole('textbox', { name: '编辑消息内容' }), { key: 'Escape' })
+    expect(screen.queryByRole('textbox', { name: '编辑消息内容' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '编辑这条消息' }))
+    fireEvent.keyDown(screen.getByRole('button', { name: '取消编辑' }), { key: 'Escape' })
+    expect(screen.queryByRole('textbox', { name: '编辑消息内容' })).not.toBeInTheDocument()
+    expect(composer).toHaveValue('底部草稿')
+    fireEvent.click(screen.getByRole('button', { name: '编辑这条消息' }))
+    const nextEditor = screen.getByRole('textbox', { name: '编辑消息内容' })
+    fireEvent.change(nextEditor, { target: { value: '改后的消息' } })
+    fireEvent.compositionStart(nextEditor)
+    fireEvent.keyDown(nextEditor, { key: 'Escape' })
+    expect(nextEditor).toBeInTheDocument()
+    fireEvent.keyDown(nextEditor, { key: 'Enter' })
+    expect(backend.api.continueTask).not.toHaveBeenCalled()
+    fireEvent.compositionEnd(nextEditor)
+    backend.hold()
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+    await screen.findByText('改后的消息')
+    expect(screen.queryByText('原消息')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('助手回复')).not.toBeInTheDocument()
+    expect(composer).toHaveValue('底部草稿')
+    expect(screen.getByRole('button', { name: '编辑这条消息' })).toBeDisabled()
+  })
+
+  it('回复期间提供停止按钮，服务端确认后显示已停止并允许编辑', async () => {
+    const backend = chatTestApi()
+    backend.hold()
+    await backend.api.createTask('server-session', { requestId: 'running', content: '请回答' })
+    renderChat(backend, '/agent?session=server-session')
+    const stop = await screen.findByRole('button', { name: '停止回复' })
+    let resolve!: (run: Awaited<ReturnType<typeof backend.api.cancelRun>>) => void
+    const cancel = backend.api.cancelRun.getMockImplementation()!
+    backend.api.cancelRun.mockImplementationOnce(() => new Promise(done => { resolve = done }))
+    fireEvent.click(stop)
+    expect(screen.getByRole('button', { name: '正在停止' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '编辑这条消息' })).toBeDisabled()
+    await act(async () => { resolve(await cancel('run-1')) })
+    await screen.findByText('已停止')
+    expect(screen.getByRole('button', { name: '编辑这条消息' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '发送消息' })).toBeInTheDocument()
+  })
+
   it.each([
     ['相同错误只显示一次', '读取超时，请检查面板连接后重试'],
     ['不同错误保留各自原因', '模型目录读取失败'],
@@ -175,7 +234,7 @@ describe('基本聊天界面', () => {
     await user.click(within(drawer).getByRole('button', { name: '关闭会话列表' }))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(trigger).toHaveFocus()
-    // Radix 的提示只在失焦或指针离开触发器时收起，指针不在把手上时程序化聚焦弹出的提示没人关。
+    // 关闭抽屉后焦点回到开关，不显示文字提示。
     expect(document.querySelector('[role="tooltip"]')).toBeNull()
     await user.click(trigger)
     await user.keyboard('{Escape}')
@@ -338,7 +397,8 @@ describe('基本聊天界面', () => {
     fireEvent.click(screen.getByRole('button', { name: '发送消息' }))
     await waitFor(() => expect(useAgentChatStore.getState().run?.status).toBe('running'))
     expect(screen.queryByText(/Ely 正在|正在整理会话|正在发送/)).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: '发送消息' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '停止回复' })).toBeEnabled()
     expect(screen.getByRole('button', { name: '选择模型：test-model' })).toBeDisabled()
     vi.useFakeTimers()
     try {

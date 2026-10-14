@@ -168,6 +168,12 @@ func (s *store) acceptAgent(ctx context.Context, task Task, run Run, canonical, 
 				return bad("invalid-task", "该任务不支持会话续轮")
 			}
 		}
+		msg := Message{ID: messageID, SessionID: session.ID, TaskID: task.ID, RunID: run.ID, Role: "user", Content: run.Input, CreatedAt: run.CreatedAt}
+		if run.Selection != nil && run.Selection.ReplaceMessageID != "" {
+			if err = s.replaceLastMessage(ctx, tx, &task, &run, &msg); err != nil {
+				return err
+			}
+		}
 		if err = tx.QueryRowContext(ctx, "SELECT COALESCE(MAX(run_number),0)+1 FROM runs WHERE task_id=?", task.ID).Scan(&run.RunNumber); err != nil {
 			return err
 		}
@@ -191,7 +197,6 @@ func (s *store) acceptAgent(ctx context.Context, task Task, run Run, canonical, 
 		if err = saveSession(ctx, tx, session); err != nil {
 			return err
 		}
-		msg := Message{ID: messageID, SessionID: session.ID, TaskID: task.ID, RunID: run.ID, Role: "user", Content: run.Input, CreatedAt: run.CreatedAt}
 		if err = s.appendMessage(ctx, tx, &msg); err != nil {
 			return err
 		}
@@ -372,6 +377,23 @@ func saveModelRequest(ctx context.Context, tx *sql.Tx, record ModelRequestRecord
 	_, err = tx.ExecContext(ctx, `INSERT INTO model_requests(id,run_id,request_index,state,document) VALUES(?,?,?,?,?)
  ON CONFLICT(id) DO UPDATE SET state=excluded.state,document=excluded.document`, record.ID, record.RunID, record.Index, record.Status, string(raw))
 	return err
+}
+
+// 取消保留已接收的公开片段，既不提交成功终答，也不触发记忆整理。
+func (s *store) saveStoppedReply(ctx context.Context, tx *sql.Tx, run Run) error {
+	records, err := readDocuments[ModelRequestRecord](ctx, tx, "SELECT document FROM model_requests WHERE run_id=? ORDER BY request_index", run.ID)
+	if err != nil {
+		return err
+	}
+	output := chatOutput(run, records)
+	if output.Content == "" {
+		return nil
+	}
+	message := Message{ID: randomID(), SessionID: run.SessionID, TaskID: run.TaskID, RunID: run.ID, Role: "assistant", Content: output.Content, RunStatus: StateCancelled}
+	if err = s.appendMessage(ctx, tx, &message); err != nil {
+		return err
+	}
+	return recordWikiRunArtifact(ctx, tx, run, "message", message.ID)
 }
 
 func interruptModelRequests(ctx context.Context, tx *sql.Tx, runID string, now time.Time) error {

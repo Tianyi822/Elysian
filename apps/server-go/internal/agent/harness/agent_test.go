@@ -317,7 +317,7 @@ func TestAgentBusyIdempotencyAndPinnedModel(t *testing.T) {
 	}
 }
 
-func TestAgentCancellationDuringModelAndMemoryHasNoFinalMessage(t *testing.T) {
+func TestAgentCancellationPreservesReplyWithoutFinalMemory(t *testing.T) {
 	for _, phase := range []string{"inference", "final-memory"} {
 		t.Run(phase, func(t *testing.T) {
 			entered := make(chan struct{})
@@ -325,6 +325,10 @@ func TestAgentCancellationDuringModelAndMemoryHasNoFinalMessage(t *testing.T) {
 			m, s, _ := agentManager(t, func(ctx context.Context, _ model.Profile, r model.Request) (model.Response, error) {
 				waiting := phase == "inference" || r.ToolChoice == "store_working_memory"
 				if waiting {
+					if phase == "inference" {
+						r.OnReasoning("已生成思考")
+						r.OnContent("部分回答")
+					}
 					once.Do(func() { close(entered) })
 					<-ctx.Done()
 					return model.Response{}, ctx.Err()
@@ -341,8 +345,26 @@ func TestAgentCancellationDuringModelAndMemoryHasNoFinalMessage(t *testing.T) {
 				t.Fatalf("取消被成功覆盖：%+v", got)
 			}
 			history, _ := m.Messages(context.Background(), s.ID, "", 50)
-			if len(history.Items) != 1 {
-				t.Fatalf("取消后提交了助手终答：%+v", history)
+			if len(history.Items) != 2 || history.Items[1].RunStatus != StateCancelled {
+				t.Fatalf("取消后没有保留带停止状态的回复：%+v", history)
+			}
+			want := "部分回答"
+			if phase == "final-memory" {
+				want = "仅候选答复"
+			}
+			if history.Items[1].Content != want {
+				t.Fatalf("错误的停止片段：%+v", history.Items[1])
+			}
+			records, err := m.ModelRequests(context.Background(), run.ID, "", 50)
+			if err != nil {
+				t.Fatal(err)
+			}
+			output := chatOutput(got, records.Items)
+			if output.Content != want || !output.Done {
+				t.Fatalf("停止后流式回读错误：%+v", output)
+			}
+			if phase == "inference" && output.Reasoning != "已生成思考" {
+				t.Fatal("停止丢失思考")
 			}
 			memory, _ := m.Memory(context.Background(), run.TaskID, 0)
 			if memory.Revision != 0 {

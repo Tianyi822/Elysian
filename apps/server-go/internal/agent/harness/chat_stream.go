@@ -26,7 +26,7 @@ func chatOutput(run Run, records []ModelRequestRecord) ChatOutput {
 			continue
 		}
 		out.ResponseID, out.Content = record.ID, ""
-		if record.Status == StateRunning {
+		if record.Status == StateRunning || record.Status == StateCancelled {
 			reasoning = append(reasoning, record.Reasoning)
 			out.Content = record.Content
 		} else if record.Response != nil {
@@ -37,7 +37,7 @@ func chatOutput(run Run, records []ModelRequestRecord) ChatOutput {
 		}
 	}
 	out.Reasoning = strings.TrimSpace(strings.Join(reasoning, "\n\n"))
-	if out.Done && run.Status != StateSucceeded {
+	if out.Done && run.Status != StateSucceeded && run.Status != StateCancelled {
 		out.Content = ""
 	}
 	return out

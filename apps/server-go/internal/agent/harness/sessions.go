@@ -359,14 +359,15 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 		operation = "create-task"
 	}
 	raw, _ := json.Marshal(struct {
-		Operation      string        `json:"operation"`
-		TargetID       string        `json:"targetId"`
-		Content        string        `json:"content"`
-		Skills         []RevisionRef `json:"skills"`
-		Resources      []ResourceRef `json:"resources"`
-		Prompts        []PromptRef   `json:"prompts"`
-		ReasoningLevel string        `json:"reasoningLevel,omitempty"`
-	}{operation, targetID, input.Content, input.Skills, input.Resources, input.Prompts, input.ReasoningLevel})
+		Operation        string        `json:"operation"`
+		TargetID         string        `json:"targetId"`
+		Content          string        `json:"content"`
+		Skills           []RevisionRef `json:"skills"`
+		Resources        []ResourceRef `json:"resources"`
+		Prompts          []PromptRef   `json:"prompts"`
+		ReasoningLevel   string        `json:"reasoningLevel,omitempty"`
+		ReplaceMessageID string        `json:"replaceMessageId,omitempty"`
+	}{operation, targetID, input.Content, input.Skills, input.Resources, input.Prompts, input.ReasoningLevel, input.ReplaceMessageID})
 	canonical := string(raw)
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -382,6 +383,9 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 			return Run{}, false, &Error{Status: 409, Code: "request-conflict", Message: "请求标识已用于不同的任务输入"}
 		}
 		return prior, true, nil
+	}
+	if newTask && input.ReplaceMessageID != "" {
+		return Run{}, false, bad("invalid-replacement", "编辑重发必须使用原聊天任务续轮")
 	}
 	if err = m.agentAvailableLocked(); err != nil {
 		return Run{}, false, err

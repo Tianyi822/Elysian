@@ -40,27 +40,29 @@ type RenameSessionInput struct {
 }
 
 type AgentInput struct {
-	ReasoningLevel string        `json:"reasoningLevel,omitempty"`
-	Skills         []RevisionRef `json:"skills,omitempty"`
-	Resources      []ResourceRef `json:"resources,omitempty"`
-	Prompts        []PromptRef   `json:"prompts,omitempty"`
-	RequestID      string        `json:"requestId"`
-	Content        string        `json:"content"`
+	ReplaceMessageID string        `json:"replaceMessageId,omitempty"`
+	ReasoningLevel   string        `json:"reasoningLevel,omitempty"`
+	Skills           []RevisionRef `json:"skills,omitempty"`
+	Resources        []ResourceRef `json:"resources,omitempty"`
+	Prompts          []PromptRef   `json:"prompts,omitempty"`
+	RequestID        string        `json:"requestId"`
+	Content          string        `json:"content"`
 }
 
 // Message 只含公开用户输入和助手答复，不承载工具过程或工作记忆。
 type Message struct {
-	Quarantined bool      `json:"quarantined,omitempty"`
-	WikiSources []WikiRef `json:"wikiSources,omitempty"`
-	ID          string    `json:"id"`
-	SessionID   string    `json:"sessionId"`
-	TaskID      string    `json:"taskId"`
-	RunID       string    `json:"runId"`
-	Seq         string    `json:"seq"`
-	Role        string    `json:"role"`
-	Content     string    `json:"content"`
-	CreatedAt   string    `json:"createdAt"`
-	RunStatus   string    `json:"runStatus,omitempty"`
+	ReplacesMessageID string    `json:"replacesMessageId,omitempty"`
+	Quarantined       bool      `json:"quarantined,omitempty"`
+	WikiSources       []WikiRef `json:"wikiSources,omitempty"`
+	ID                string    `json:"id"`
+	SessionID         string    `json:"sessionId"`
+	TaskID            string    `json:"taskId"`
+	RunID             string    `json:"runId"`
+	Seq               string    `json:"seq"`
+	Role              string    `json:"role"`
+	Content           string    `json:"content"`
+	CreatedAt         string    `json:"createdAt"`
+	RunStatus         string    `json:"runStatus,omitempty"`
 }
 
 type MemoryCursor struct {

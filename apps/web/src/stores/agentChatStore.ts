@@ -27,12 +27,17 @@ type AgentChatState = {
   liveOutput: AgentChatOutput | null
   run: AgentChatRun | null
   sending: boolean
+  stopping: boolean
   refreshing: boolean
   error: string | null
   syncError: string | null
   ensureSession(): Promise<void>
   newSession(): Promise<void>
   setDraft(draft: string): void
+  editMessage(messageId: string): void
+  setEditText(text: string): void
+  cancelEdit(): void
+  stop(api: AgentConversationAdapter): Promise<void>
   setPermissionMode(permissionMode: AgentChatPermissionMode): void
   setModel(modelId: string | null): void
   setReasoningLevel(reasoningLevel: string | null): void
@@ -46,7 +51,7 @@ type AgentChatState = {
 
 const allAttachments = agentChatAllAttachments
 const persistenceNotice = '浏览器暂时无法保存会话，刷新后可能丢失本页内容。'
-const remoteBlank = { remoteSession: null, messages: [], reasoning: {}, liveOutput: null, run: null, sending: false, refreshing: false, error: null, syncError: null }
+const remoteBlank = { remoteSession: null, messages: [], reasoning: {}, liveOutput: null, run: null, sending: false, stopping: false, refreshing: false, error: null, syncError: null }
 export const isChatRunActive = (run: AgentChatRun | null) => !!run && ['queued', 'running', 'waiting-approval', 'waiting-resource', 'recovery-required'].includes(run.status)
 const failureMessage = (error: unknown) => error instanceof Error ? error.message : '会话请求失败'
 // 这些业务拒绝发生在 submitAgent 核对 requestId 之后，可确认该请求未被接受。
@@ -55,6 +60,7 @@ const confirmedRejections: Readonly<Record<string, number>> = {
   'invalid-task': 400, 'model-capability': 400, 'unsupported-reasoning-level': 400,
   'session-not-found': 404, 'task-not-found': 404, 'profile-not-found': 404, 'profile-revision-not-found': 404,
   'session-busy': 409, 'model-changed': 409, 'profile-inactive': 409, 'queue-full': 429,
+  'invalid-replacement': 400, 'message-changed': 409,
 }
 const isConfirmedRejection = (error: unknown) => error instanceof AgentHttpError &&
   !!error.code && Object.hasOwn(confirmedRejections, error.code) && confirmedRejections[error.code] === error.status
@@ -110,13 +116,32 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
     const current = (): AgentChatSession => get().session ?? adapter.read() ?? blankSession()
     const update = (patch: Partial<AgentChatSession>) => persist({ ...current(), ...patch })
     const stillCurrent = (localId: string) => get().session?.id === localId
+    const removeReplacedMessage = (messages: readonly AgentMessage[], messageId: string) => {
+      const replaced = messages.find(message => message.id === messageId || message.replacesMessageId === messageId)
+      return replaced ? messages.filter(message => message.runId !== replaced.runId) : [...messages]
+    }
+    const setMessages = (messages: readonly AgentMessage[]) => {
+      const ids = new Set(messages.map(message => message.runId))
+      for (const id of completedReasoning) if (!ids.has(id)) completedReasoning.delete(id)
+      set(state => ({ messages, reasoning: Object.fromEntries(Object.entries(state.reasoning).filter(([id]) => ids.has(id))),
+        liveOutput: state.liveOutput && ids.has(state.liveOutput.runId) ? state.liveOutput : null }))
+      const session = current()
+      if (session.editing && !session.pending && messages.filter(message => message.role === 'user').at(-1)?.id !== session.editing.messageId) update({ editing: undefined })
+    }
     const acceptRun = (run: AgentChatRun, owner = current(), display = true) => {
       const session = get().session?.id === owner.id ? current() : adapter.read(agentChatSessionKey(owner)) ?? owner
       const pending = session.pending
       const next = { ...session, remote: { sessionId: run.sessionId ?? session.remote!.sessionId, taskId: run.taskId, runId: run.id },
-        ...(pending && pending.input.requestId === run.requestId ? { pending: undefined, draft: session.draft.trim() === pending.input.content ? '' : session.draft } : {}) }
+        ...(pending && pending.input.requestId === run.requestId ? { pending: undefined,
+          ...(pending.input.replaceMessageId ? { editing: undefined } : { draft: session.draft.trim() === pending.input.content ? '' : session.draft }) } : {}) }
       if (!display || get().session?.id !== owner.id) { adapter.write(next, false); if (get().session) set({ localSessions: adapter.list() }); return }
       persist(next)
+      if (pending && pending.input.requestId === run.requestId && pending.input.replaceMessageId) {
+        const replaced = get().messages.find(message => message.id === pending.input.replaceMessageId)
+        if (replaced) setMessages(get().messages
+          .filter(message => message.runId !== replaced.runId || message.id === replaced.id)
+          .map(message => message.id === replaced.id ? { ...message, content: pending.input.content, runId: run.id, runStatus: run.status } : message))
+      }
       set({ run, ...(pending && pending.input.requestId === run.requestId ? { error: null } : {}) })
     }
     const dispatchPending = async (api: AgentConversationAdapter, localId: string, lifecycleAtStart: number): Promise<boolean> => {
@@ -278,6 +303,28 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
         persist(blankSession())
       },
       setDraft: draft => { if (!current().pending) update({ draft }) },
+      editMessage(messageId) {
+        if (get().sending || get().stopping || isChatRunActive(get().run) || current().pending || get().remoteSession?.activeRunId || get().remoteSession?.activeWorkflowId) return
+        const last = get().messages.filter(message => message.role === 'user').at(-1)
+        if (last?.id === messageId) update({ editing: { messageId, taskId: last.taskId, text: last.content } })
+      },
+      setEditText(text) { if (current().editing && !get().sending && !current().pending) update({ editing: { ...current().editing!, text } }) },
+      cancelEdit() { if (!get().sending && !current().pending) update({ editing: undefined }) },
+      async stop(api) {
+        const run = get().run
+        if (!run || !isChatRunActive(run) || get().stopping || run.cancelRequestedAt) return
+        const localId = current().id
+        const lifetime = lifecycle
+        const valid = () => lifetime === lifecycle && stillCurrent(localId) && get().run?.id === run.id
+        set({ stopping: true, error: null })
+        try {
+          const stopped = await api.cancelRun(run.id)
+          if (valid()) { remoteVersion += 1; set({ run: stopped }) }
+        } catch (error) { if (valid()) set({ error: failureMessage(error) }) }
+        finally {
+          if (valid()) { await get().refresh(api); if (valid()) set({ stopping: false }) }
+        }
+      },
       setPermissionMode: permissionMode => { if (!get().sending && !isChatRunActive(get().run) && !current().pending) update({ permissionMode }) },
       setModel: modelId => { if (!get().sending && !isChatRunActive(get().run) && !current().pending) update({ modelId, reasoningLevel: null }) },
       setReasoningLevel: reasoningLevel => { if (!get().sending && !isChatRunActive(get().run) && !current().pending) update({ reasoningLevel }) },
@@ -303,9 +350,9 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
         const session = current()
         const lifetime = lifecycle
         const valid = () => lifetime === lifecycle && stillCurrent(session.id)
-        const text = session.draft.trim()
-        if (!api.available || !text || get().loading || get().sending || isChatRunActive(get().run)) return false
-        if (session.attachments.length) {
+        const text = session.pending?.input.content ?? (session.editing?.text ?? session.draft).trim()
+        if (!api.available || !text || get().loading || get().sending || get().stopping || isChatRunActive(get().run)) return false
+        if (!session.editing && !session.pending?.input.replaceMessageId && session.attachments.length) {
           set({ error: '当前聊天仅支持文本，请移除附件后发送。' })
           return false
         }
@@ -337,7 +384,9 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
           }
           if (!valid()) return false
           set({ remoteSession: remote })
-          const saved = update({ remote: { ...current().remote, sessionId: remote.id }, pending: { input: { requestId: id(), content: text, ...(session.reasoningLevel ? { reasoningLevel: session.reasoningLevel } : {}) }, taskId: current().remote?.taskId } })
+          const saved = update({ remote: { ...current().remote, sessionId: remote.id }, pending: { input: { requestId: id(), content: text,
+            ...(session.editing ? { replaceMessageId: session.editing.messageId } : {}),
+            ...(session.reasoningLevel ? { reasoningLevel: session.reasoningLevel } : {}) }, taskId: session.editing?.taskId ?? current().remote?.taskId } })
           if (!saved) { update({ pending: undefined }); set({ error: '无法保存发送标识，请恢复浏览器存储后再发送。' }); return false }
           return await dispatchPending(api, session.id, lifetime)
         } catch (error) {
@@ -395,17 +444,22 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
           let run = runId ? latestRun?.id === runId ? latestRun : await api.getRun(runId, signal) : null
           if (!valid()) return
           if (remote.activeRunId && run && !isChatRunActive(run)) remote = await api.getSession(remote.id, signal)
-          const messages = [...get().messages]
+          let messages = [...get().messages]
           let after = messages.at(-1)?.seq ?? '0'
           for (;;) {
             const page = await api.messages(remote.id, after, signal)
             if (!valid()) return
-            messages.push(...page.items)
+            for (const message of page.items) {
+              if (message.replacesMessageId) messages = removeReplacedMessage(messages, message.replacesMessageId)
+              messages.push(message)
+            }
             after = page.nextCursor
             if (!page.hasMore) break
           }
           if (!valid()) return
-          set({ remoteSession: remote, messages, run, syncError: null })
+          if (run) messages = messages.map(message => message.runId === run.id ? { ...message, runStatus: run.status } : message)
+          setMessages(messages)
+          set({ remoteSession: remote, run, syncError: null })
           // 从历史新打开的会话，以服务端模型初始化本地偏好。
           if (!current().modelId) update({ modelId: remote.modelProfileId })
           if (latestRun) acceptRun(latestRun)

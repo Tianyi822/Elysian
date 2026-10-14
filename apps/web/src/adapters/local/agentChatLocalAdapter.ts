@@ -25,12 +25,15 @@ const isSession = (value: unknown): value is AgentChatSession => isRecord(value)
   && isPermissionMode(value.permissionMode) && isNullableString(value.modelId) && isNullableString(value.reasoningLevel)
   && Array.isArray(value.messages) && value.messages.every(isMessage)
   && Array.isArray(value.attachments) && value.attachments.every(isAttachment)
+  && (value.editing === undefined || (isRecord(value.editing) && typeof value.editing.messageId === 'string'
+    && typeof value.editing.taskId === 'string' && typeof value.editing.text === 'string'))
   && (value.remote === undefined || (isRecord(value.remote) && typeof value.remote.sessionId === 'string'
     && (value.remote.taskId === undefined || typeof value.remote.taskId === 'string')
     && (value.remote.runId === undefined || typeof value.remote.runId === 'string')))
   && (value.pending === undefined || (isRecord(value.pending) && isRecord(value.pending.input)
     && typeof value.pending.input.requestId === 'string' && typeof value.pending.input.content === 'string'
     && (value.pending.input.reasoningLevel === undefined || typeof value.pending.input.reasoningLevel === 'string')
+    && (value.pending.input.replaceMessageId === undefined || typeof value.pending.input.replaceMessageId === 'string')
     && (value.pending.taskId === undefined || typeof value.pending.taskId === 'string')))
 
 /** 不把 blob URL 或“可用”状态当成持久事实，刷新后必须重新核对文件字节。 */

@@ -871,6 +871,11 @@ func (m *Manager) finishLocked(id, state, reason, message string) {
 			}
 		}
 		r.Status = state
+		if state == StateCancelled && r.SessionID != "" && r.WorkflowID == "" {
+			if err := m.store.saveStoppedReply(ctx, tx, *r); err != nil {
+				return err
+			}
+		}
 		if state != StateSucceeded && r.SessionID != "" {
 			r.MemoryStatus = "stale"
 		}

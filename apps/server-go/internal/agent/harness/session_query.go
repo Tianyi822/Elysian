@@ -90,7 +90,7 @@ func (s *store) messages(ctx context.Context, sessionID, after string, n int) (P
 	if cursor > last {
 		return Page[Message]{}, bad("future-cursor", "消息游标超过当前会话进度")
 	}
-	rows, err := s.db.QueryContext(ctx, "SELECT seq,document FROM messages WHERE session_id=? AND seq>? ORDER BY seq LIMIT ?", sessionID, cursor, limit+1)
+	rows, err := s.db.QueryContext(ctx, "SELECT m.seq,json_set(m.document,'$.runStatus',r.state) FROM messages m JOIN runs r ON r.id=m.run_id WHERE m.session_id=? AND m.seq>? AND "+visibleRunSQL+" ORDER BY m.seq LIMIT ?", sessionID, cursor, limit+1)
 	if err != nil {
 		return Page[Message]{}, err
 	}

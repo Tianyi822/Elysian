@@ -515,6 +515,9 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 		if r.Status != StateRunning {
 			return context.Canceled
 		}
+		if record.Status == StateCancelled && purpose == "inference" && a.reasoningRequestID == record.ID {
+			record.Reasoning, record.Content = a.reasoning, a.content
+		}
 		workflowCharge := estimate + request.MaxTokens
 		if record.Response != nil {
 			normalized, _ := json.Marshal(record.Response)

@@ -48,11 +48,20 @@ describe('聊天 HTTP 接口', () => {
     const input = { ...fixture.input, reasoningLevel: 'high' }
     await api.createSession(fixture.createSession)
     await api.createTask('session-1', input)
-    await api.continueTask('task-1', input)
+    await api.continueTask('task-1', { ...input, replaceMessageId: 'message-1' })
     expect(fetcher.mock.calls.map(call => call[0])).toEqual(['/api/agent/sessions', '/api/agent/sessions/session-1/tasks', '/api/agent/tasks/task-1/runs'])
     expect(JSON.parse(fetcher.mock.calls[0]![1].body)).toEqual(fixture.createSession)
     expect(JSON.parse(fetcher.mock.calls[1]![1].body)).toEqual(input)
-    expect(JSON.parse(fetcher.mock.calls[2]![1].body)).toEqual(input)
+    expect(JSON.parse(fetcher.mock.calls[2]![1].body)).toEqual({ ...input, replaceMessageId: 'message-1' })
+  })
+
+  it('停止通过现有取消接口读取真实运行状态', async () => {
+    const fetcher = vi.fn().mockResolvedValue(json({ ...fixture.run, status: 'running', cancelRequestedAt: '2026-10-14T00:00:00Z' }, 202))
+    vi.stubGlobal('fetch', fetcher)
+    const run = await createHttpAgentConversationAdapter().cancelRun('run-1')
+    expect(run.status).toBe('running')
+    expect(run.cancelRequestedAt).toBeDefined()
+    expect(fetcher).toHaveBeenCalledWith('/api/agent/runs/run-1/cancel', expect.objectContaining({ method: 'POST' }))
   })
 
   it('消息分页保留大整数游标与隔离标记，拒绝回退游标', async () => {

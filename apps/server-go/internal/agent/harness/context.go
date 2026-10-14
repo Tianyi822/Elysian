@@ -83,6 +83,9 @@ func (a *agentExecution) contextFacts(ctx context.Context) (WorkingMemory, []fac
 	}
 	var groups []factGroup
 	for _, run := range runs {
+		if run.SupersededByRunID != "" {
+			continue
+		}
 		invalid, e := wikiArtifactInvalid(ctx, m.store.db, "run", run.ID)
 		if e != nil {
 			return memory, nil, nil, e
@@ -219,7 +222,7 @@ func (a *agentExecution) contextFacts(ctx context.Context) (WorkingMemory, []fac
 	}
 	sort.SliceStable(groups, func(i, j int) bool { return cursorAfter(groups[j].cursor, groups[i].cursor) })
 	// 读取时固定接受输入时的 Session 边界，排除其他任务的工具/记忆。
-	messages, err := readDocuments[Message](ctx, m.store.db, "SELECT document FROM messages WHERE session_id=? AND task_id<>? AND seq<=? ORDER BY seq DESC LIMIT 64", a.run.SessionID, a.run.TaskID, a.run.HistorySeq)
+	messages, err := readDocuments[Message](ctx, m.store.db, "SELECT m.document FROM messages m JOIN runs r ON r.id=m.run_id WHERE m.session_id=? AND m.task_id<>? AND m.seq<=? AND "+visibleRunSQL+" ORDER BY m.seq DESC LIMIT 64", a.run.SessionID, a.run.TaskID, a.run.HistorySeq)
 	if err != nil {
 		return memory, nil, nil, m.contextStoreErrorLocked(err)
 	}
@@ -241,7 +244,11 @@ func (a *agentExecution) contextFacts(ctx context.Context) (WorkingMemory, []fac
 			return memory, nil, nil, e
 		}
 		a.sharedWikiRefs = append(a.sharedWikiRefs, refs)
-		shared = append(shared, model.Message{Role: messages[i].Role, Content: "其他任务公开对话：\n" + messages[i].Content})
+		prefix := "其他任务公开对话：\n"
+		if messages[i].RunStatus == StateCancelled {
+			prefix += "（回复已停止，以下为未完成内容）\n"
+		}
+		shared = append(shared, model.Message{Role: messages[i].Role, Content: prefix + messages[i].Content})
 	}
 	return memory, groups, shared, nil
 }

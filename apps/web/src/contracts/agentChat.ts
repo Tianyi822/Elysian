@@ -36,6 +36,7 @@ export type AgentChatSession = {
   reasoningLevel: string | null
   /** 浏览器只保存服务端指针；真实消息由 API 回读。 */
   remote?: { sessionId: string; taskId?: string; runId?: string }
+  editing?: { messageId: string; taskId: string; text: string }
   /** 未收到明确回执时保留精确输入，人工确认沿用同一 requestId。 */
   pending?: { input: AgentInput; taskId?: string }
 }
@@ -62,6 +63,7 @@ export interface AgentConversationAdapter {
   createTask(sessionId: string, input: AgentInput): Promise<AgentChatRun>
   continueTask(taskId: string, input: AgentInput): Promise<AgentChatRun>
   getRun(id: string, signal?: AbortSignal): Promise<AgentChatRun>
+  cancelRun(id: string): Promise<AgentChatRun>
   /** 仅返回本轮推理请求明确提供的思考文本或公开摘要。 */
   reasoning(id: string, signal?: AbortSignal): Promise<string>
   stream(id: string, onOutput: (output: AgentChatOutput) => void, signal: AbortSignal): Promise<void>
