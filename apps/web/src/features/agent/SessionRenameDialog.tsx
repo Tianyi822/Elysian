@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { useGateway } from '../../adapters/GatewayProvider'
+import { captureAuthGeneration } from '../../adapters/http/unauthorized'
 import { useAgentChatStore } from '../../stores/agentChatStore'
 
 /**
  * 会话重命名弹窗：预填当前标题，空值与超长在前端先挡（均按 TrimSpace 后口径）；
- * 提交以服务端 200 回执为权威，失败留在弹窗内行内展示、可修改后重试。
+ * 提交以服务端 200 回执为权威，失败经全局通知反馈、保留输入以便重试。
  */
 export function SessionRenameDialog({ target, onClose }: {
   target: { id: string; title: string }
@@ -13,35 +14,56 @@ export function SessionRenameDialog({ target, onClose }: {
 }) {
   const { agentConversation: api } = useGateway()
   const renameSession = useAgentChatStore(state => state.renameSession)
+  const reportOperation = useAgentChatStore(state => state.reportOperation)
   const [name, setName] = useState(target.title)
   const [submitting, setSubmitting] = useState(false)
-  const [errorMessage, setErrorMessage] = useState<string>()
+  const [invalid, setInvalid] = useState(false)
+  const input = useRef<HTMLInputElement>(null)
+  const activeTarget = useRef<string | null>(target.id)
+  const requestVersion = useRef(0)
 
   useEffect(() => {
     // 换了目标会话就重置表单：弹窗复用同一份组件状态。
+    activeTarget.current = target.id
+    requestVersion.current += 1
     setName(target.title)
-    setErrorMessage(undefined)
+    setInvalid(false)
+    setSubmitting(false)
+    return () => { activeTarget.current = null; requestVersion.current += 1 }
   }, [target.id, target.title])
 
   const submit = async () => {
+    if (submitting) return
     const trimmed = name.trim()
     if (!trimmed) {
-      setErrorMessage('名称不能为空')
+      setInvalid(true)
+      reportOperation('名称不能为空')
+      input.current?.focus()
       return
     }
     if (new TextEncoder().encode(trimmed).length > 200) {
-      setErrorMessage('标题不能超过 200 字节')
+      setInvalid(true)
+      reportOperation('标题不能超过 200 字节')
+      input.current?.focus()
       return
     }
+    const targetId = target.id
+    const owner = useAgentChatStore.getState().session?.id
+    const version = ++requestVersion.current
+    const authGeneration = captureAuthGeneration()
+    const valid = () => activeTarget.current === targetId && requestVersion.current === version && captureAuthGeneration() === authGeneration
     setSubmitting(true)
-    setErrorMessage(undefined)
+    setInvalid(false)
     try {
-      await renameSession(api, target.id, trimmed)
-      onClose()
+      await renameSession(api, targetId, trimmed)
+      if (valid()) onClose()
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : '重命名失败')
+      if (valid() && useAgentChatStore.getState().session?.id === owner) {
+        reportOperation(error instanceof Error ? error.message : '重命名失败')
+        input.current?.focus()
+      }
     } finally {
-      setSubmitting(false)
+      if (valid()) setSubmitting(false)
     }
   }
 
@@ -59,13 +81,14 @@ export function SessionRenameDialog({ target, onClose }: {
               会话名称
             </label>
             <input
+              ref={input}
               id="agent-session-rename-input"
               value={name}
-              onChange={event => setName(event.target.value)}
+              aria-invalid={invalid || undefined}
+              onChange={event => { setName(event.target.value); setInvalid(false) }}
               autoFocus
               className="mt-1 h-9 w-full rounded-lg border border-line bg-surface px-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle"
             />
-            {errorMessage ? <p role="alert" className="mt-2 text-xs text-danger">{errorMessage}</p> : null}
             <div className="mt-4 flex justify-end gap-2">
               <button
                 type="button"

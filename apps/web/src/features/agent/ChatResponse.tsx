@@ -18,9 +18,13 @@ export function ChatResponse({ content, reasoning, active, stopped, stopping, qu
   if (active) animate.current = true
   const answer = useSmoothedText(content, animate.current && !stopped && !stopping)
   const thought = useSmoothedText(reasoning, animate.current && !stopped && !stopping)
-  useLayoutEffect(onProgress, [answer, thought, onProgress])
-  if (!answer && !thought && !stopped) return null
+  const waiting = active && !answer && !thought && !stopped && !stopping
+  useLayoutEffect(onProgress, [answer, thought, waiting, onProgress])
+  if (!answer && !thought && !stopped && !waiting) return null
   return <div className="chat-response" data-streaming={active || answer !== content || undefined}>
+    {waiting && <div className="chat-response-waiting" role="status" aria-label="等待模型回复">
+      <span aria-hidden /><span aria-hidden /><span aria-hidden />
+    </div>}
     <ChatReasoning text={thought} />
     {!!answer && <article className="chat-message chat-message-assistant" aria-label="助手回复">
       <div className="chat-message-body">

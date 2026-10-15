@@ -4,14 +4,14 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { useShellLayout } from '../../app/layout/ShellLayoutContext'
 import { ChatSessionList } from './ChatSessionList'
 import { RUNTIME_RUN_STATUS_LABELS } from '@elysian/contracts'
-import { Bot, Brain, Hand, Image as ImageIcon, List, Paperclip, Pencil, Plus, Send, Square, ShieldAlert, ShieldCheck, X, type IconComponent } from '../../components/icons'
+import { Bot, Brain, Hand, Image as ImageIcon, List, Loader2, Paperclip, Pencil, Plus, Send, Square, ShieldAlert, ShieldCheck, X, type IconComponent } from '../../components/icons'
 import { IconButton } from '../../components/IconButton'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { RefreshButton } from '../../components/RefreshState'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { subscribeWhileVisible } from '../../adapters/subscribeWhileVisible'
 import type { AgentChatPermissionMode } from '../../contracts/agentChat'
-import { isChatRunActive, useAgentChatStore } from '../../stores/agentChatStore'
+import { isChatReplyActive, isChatRunActive, useAgentChatStore } from '../../stores/agentChatStore'
 import { ChatAttachment } from './ChatAttachment'
 import { ChatMessageAttachments } from './ChatMessageAttachments'
 import { ChatMessageCopy } from './ChatMessageCopy'
@@ -75,6 +75,8 @@ export function AgentChatPage() {
   }))
   const busy = chat.sending || chat.stopping || isChatRunActive(chat.run) || !!chat.remoteSession?.activeRunId || !!chat.remoteSession?.activeWorkflowId
   const stopping = chat.stopping || (isChatRunActive(chat.run) && !!chat.run?.cancelRequestedAt)
+  const finalizing = isChatRunActive(chat.run) && !isChatReplyActive(chat.run) && !chat.remoteSession?.activeWorkflowId
+  const preferencesLocked = chat.sending || chat.uploadingAttachments || stopping || (busy && !finalizing)
   const lastUserMessage = chat.messages.filter(message => message.role === 'user').at(-1)
   /** 思考等级只提供模型声明的档位：未选择或与当前模型不符时，取模型声明的默认档（官方预设按文档填入），未声明时优先「高」。 */
   const reasoningLevels = model?.reasoningLevels ?? []
@@ -166,6 +168,7 @@ export function AgentChatPage() {
   }, [api, session?.id, session?.remote?.sessionId, chat.loading, chat.sending, chat.refresh])
 
   const liveRunId = isChatRunActive(chat.run) ? chat.run!.id : undefined
+  const waitingForMessage = chat.sending || (!!liveRunId && !finalizing && !chat.messages.some(message => message.role === 'user' && message.runId === liveRunId))
   useEffect(() => {
     if (!liveRunId || !api.available) return
     return subscribeWhileVisible(() => {
@@ -236,9 +239,9 @@ export function AgentChatPage() {
     } else { const next = new URLSearchParams(params); next.set('session', key); setParams(next) }
     shell.closeConversationDrawer()
   }
-  const refreshList = () => { setListRefreshing(true); void chat.loadSessions(api).finally(() => setListRefreshing(false)) }
+  const refreshList = () => { setListRefreshing(true); void chat.loadSessions(api, false, false, true).finally(() => setListRefreshing(false)) }
   const list = <ChatSessionList onSelect={selectConversation} onNew={newConversation}
-    onRefresh={refreshList} onMore={() => { void chat.loadSessions(api, true) }} refreshing={listRefreshing}
+    onRefresh={refreshList} onMore={() => { void chat.loadSessions(api, true, false, true) }} refreshing={listRefreshing}
     onClose={closeList} />
   const showSidebar = wide && shell.sidebarCollapsed && !listCollapsed
   const expanded = showSidebar || shell.conversationDrawerOpen
@@ -277,7 +280,7 @@ export function AgentChatPage() {
       const element = event.currentTarget
       following.current = element.scrollHeight - element.scrollTop - element.clientHeight < 24
     }}>
-      {!chat.messages.length ? <div className="chat-empty">
+      {!chat.messages.length && !waitingForMessage ? <div className="chat-empty">
         <Bot size={38} className="mb-5 text-fg-muted" aria-hidden />
         <h2 className="text-2xl font-medium tracking-tight sm:text-[28px]">今天想聊什么？</h2>
         <p className="mt-3 text-sm text-fg-muted">选择模型，向 Ely 发送第一条消息。</p>
@@ -310,7 +313,7 @@ export function AgentChatPage() {
                   const editing = session.editing!
                   const original = chat.messages.find(message => message.id === editing.messageId)
                   return <ul aria-label="随重发发送的图片" className="flex flex-wrap gap-2 px-1 pt-2">
-                    <li className="w-full text-xs text-fg-muted">原图片将随重发一并发送</li>
+                    <li className="w-full text-xs text-fg-muted">图片将随重发一并发送</li>
                     {editing.attachments!.map(ref => <li key={ref.id} className="flex items-center gap-2 rounded-lg border border-border px-2 py-1 text-xs text-fg-muted">
                       <ImageIcon size={14} aria-hidden /><span className="max-w-40 truncate">{original?.attachments?.find(attachment => attachment.id === ref.id)?.name ?? '图片'}</span>
                     </li>)}
@@ -334,17 +337,17 @@ export function AgentChatPage() {
               </>}
             </article>
             <ChatResponse key={message.runId} content={answer?.content ?? live?.content ?? ''} reasoning={chat.reasoning[message.runId] ?? ''}
-              active={active} stopped={stopped} stopping={active && stopping} quarantined={answer?.quarantined} onProgress={followContent} />
+              active={active && !finalizing} stopped={stopped} stopping={active && stopping} quarantined={answer?.quarantined} onProgress={followContent} />
           </Fragment>
         })}
+        {waitingForMessage && <ChatResponse content="" reasoning="" active onProgress={followContent} />}
       </div>}
     </div>
 
     <div className="chat-compose-area">
       {run && !isChatRunActive(run) && run.status !== 'succeeded' && run.status !== 'cancelled' && <p role="alert" className="mb-3 text-xs text-danger">{RUNTIME_RUN_STATUS_LABELS[run.status]}{run.error ? `：${run.error.message}` : ''}</p>}
       {stopping && <p role="status" className="mb-3 text-xs text-fg-muted">正在停止…</p>}
-      {chat.notice && <div role="status" className="mb-3 flex items-start gap-2 text-xs text-fg-muted"><span className="min-w-0 flex-1">{chat.notice}</span><button type="button" aria-label="关闭提示" onClick={chat.clearNotice}><X size={14} aria-hidden /></button></div>}
-      {chat.error && <p role="alert" className="mb-3 text-xs text-danger">{chat.error}</p>}
+      {chat.uploadingAttachments && <p role="status" className="mb-3 flex items-center gap-2 text-xs text-fg-muted"><Loader2 size={13} className="animate-spin motion-reduce:animate-none" aria-hidden />正在处理并上传图片…</p>}
       {readError && <div role="alert" className="mb-3 flex items-center gap-2 text-xs text-danger">
         <span className="min-w-0 flex-1 whitespace-pre-line break-words">{readError}</span>
         <RefreshButton label={retryReadLabel} busy={chat.refreshing || status === 'loading'} onPress={retryReads} />
@@ -355,7 +358,7 @@ export function AgentChatPage() {
       {!!session?.attachments.filter(attachment => !attachment.serverId).length && <p className="mb-3 text-xs text-fg-muted">存在旧版本添加、尚未上传的附件，请移除后重新添加。</p>}
 
       <form className="chat-composer panel-surface" onSubmit={event => { event.preventDefault(); send() }} aria-label="消息输入框">
-        {!!session?.attachments.length && <ul aria-label="本地附件" className="flex flex-wrap gap-2 px-4 pt-4">{session.attachments.map(attachment => <ChatAttachment key={attachment.id} attachment={attachment} onRemove={() => chat.removeAttachment(attachment.id)} />)}</ul>}
+        {!!session?.attachments.length && <ul aria-label="本地附件" className="hover-scrollbar flex max-h-52 flex-wrap gap-2 overflow-y-auto px-4 pt-4">{session.attachments.map(attachment => <ChatAttachment key={attachment.id} attachment={attachment} onRemove={() => chat.removeAttachment(attachment.id)} />)}</ul>}
         <label htmlFor="agent-message" className="sr-only">发送给 Ely 的消息</label>
         <textarea
           id="agent-message" ref={input} value={session?.draft ?? ''} rows={2}
@@ -376,7 +379,7 @@ export function AgentChatPage() {
             <SelectDropdown ariaLabel="权限模式" value={permissionMode.value} onSelect={chat.setPermissionMode}
               items={PERMISSION_MODES.map(({ Icon, ...mode }) => ({ ...mode, icon: <Icon size={16} /> }))}
               leadingIcon={<PermissionIcon size={16} aria-hidden />}
-              disabled={!session || chat.loading || busy || restoring || !!session.pending}
+              disabled={!session || chat.loading || preferencesLocked || restoring || !!session.pending}
               triggerClassName="chat-select chat-permission-select" contentClassName="chat-composer-menu chat-permission-menu" />
             {permissionMode.value !== 'ask' && <span className="text-[10px] text-fg-muted">预览</span>}
           </div>
@@ -384,7 +387,7 @@ export function AgentChatPage() {
             <SelectDropdown ariaLabel="选择模型" value={model?.id} onSelect={chat.setModel}
               items={modelOptions}
               fallbackLabel={status === 'loading' ? '加载模型…' : status === 'error' ? '模型不可用' : '选择模型'}
-              disabled={status !== 'ready' || !models.length || busy || restoring || !!session?.pending} triggerClassName="chat-select chat-model-select" contentClassName="chat-composer-menu"
+              disabled={status !== 'ready' || !models.length || preferencesLocked || restoring || !!session?.pending} triggerClassName="chat-select chat-model-select" contentClassName="chat-composer-menu"
               mono
               search={models.length > 6 ? { ariaLabel: '搜索模型', placeholder: '搜索模型 ID…' } : undefined} />
           </div>
@@ -393,10 +396,12 @@ export function AgentChatPage() {
               items={reasoningLevels.map(level => ({ value: level, label: reasoningLabel(level) }))}
               onSelect={value => chat.setReasoningLevel(value)} fallbackLabel="思考等级"
               leadingIcon={<Brain size={16} aria-hidden />} align="end"
-              disabled={status !== 'ready' || !model || busy || restoring || !!session?.pending}
+              disabled={status !== 'ready' || !model || preferencesLocked || restoring || !!session?.pending}
               triggerClassName="chat-select chat-reasoning-select" contentClassName="chat-composer-menu" />
           </div>}
-          {liveRunId && !chat.remoteSession?.activeWorkflowId
+          {chat.sending || (finalizing && !stopping)
+            ? <IconButton label={chat.sending ? '正在发送消息' : '正在保存回复'} disabled busy className="chat-send chat-pending"><Loader2 size={18} className="animate-spin motion-reduce:animate-none" aria-hidden /></IconButton>
+            : liveRunId && !chat.remoteSession?.activeWorkflowId
             ? <IconButton label={stopping ? '正在停止' : '停止回复'} onPress={() => void chat.stop(api)} disabled={stopping} className="chat-send chat-stop"><Square size={16} fill="currentColor" aria-hidden /></IconButton>
             : <IconButton label={session?.pending && !session.pending.input.replaceMessageId ? '重试发送' : '发送消息'} onPress={send} disabled={!canSend} className="chat-send"><Send size={20} aria-hidden /></IconButton>}
         </div>

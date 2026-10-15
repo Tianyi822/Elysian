@@ -1,6 +1,7 @@
 import { CircleCheck, Info, TriangleAlert, X } from './icons'
 import type { IconComponent } from './icons'
 import { useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import type { AppNotification, NotificationTone } from '../stores/notificationStore'
 import { useNotificationStore } from '../stores/notificationStore'
 import { useContainersStore } from '../stores/containersStore'
@@ -35,7 +36,7 @@ function NotificationItem({ notification }: { notification: AppNotification }) {
   }, [dismiss, notification.id, notification.tone])
 
   return (
-    <li className="pointer-events-auto">
+    <li className="pointer-events-auto" onPointerDown={event => event.stopPropagation()}>
       <div
         // 成功与提示用 status（礼貌播报），失败用 alert（立即打断）；
         // 角色放在内层，外层 li 保留列表语义。
@@ -61,7 +62,7 @@ function NotificationItem({ notification }: { notification: AppNotification }) {
 }
 
 /**
- * 页面右上角的通知区，由外壳挂在内容行上，因此顶部偏移自动跟随顶栏高度。
+ * 页面右上角的通知区，Portal 避开外壳的独立层叠上下文，保证位于弹窗之上。
  * 容器本身不接收点击，避免盖住下面内容的操作。
  *
  * 右侧详情面板（max-w-md）打开时整体左移让位，靠 right 过渡呈现动画；
@@ -71,21 +72,22 @@ export function NotificationHost() {
   const notifications = useNotificationStore((state) => state.notifications)
   const detailOpen = useContainersStore((state) => state.detailContainerId !== undefined)
 
-  if (notifications.length === 0) return null
-
-  return (
+  // 空节点也常驻：Radix 打开弹窗时会为已有 aria-live 区域保留读屏访问。
+  return createPortal(
     <section
-      aria-label="通知"
+      aria-label={notifications.length ? '通知' : undefined}
+      aria-live="polite"
       className={[
-        'pointer-events-none absolute right-4 top-4 z-[60] w-[min(22rem,calc(100vw-2rem))] transition-[right] duration-200 ease-out motion-reduce:transition-none',
+        'pointer-events-none fixed right-4 top-4 z-[70] w-[min(22rem,calc(100vw-2rem))] transition-[right] duration-200 ease-out motion-reduce:transition-none',
         detailOpen ? 'lg:right-[calc(28rem+1rem)]' : '',
       ].join(' ')}
     >
-      <ol className="flex flex-col gap-2">
+      {notifications.length > 0 && <ol className="flex flex-col gap-2">
         {notifications.map((notification) => (
           <NotificationItem key={notification.id} notification={notification} />
         ))}
-      </ol>
-    </section>
+      </ol>}
+    </section>,
+    document.body,
   )
 }

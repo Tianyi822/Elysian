@@ -1,4 +1,5 @@
 import * as Tooltip from '@radix-ui/react-tooltip'
+import * as Dialog from '@radix-ui/react-dialog'
 import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -27,6 +28,7 @@ describe('通知宿主', () => {
   it('没有通知时不占位', () => {
     renderHost()
     expect(screen.queryByLabelText('通知')).not.toBeInTheDocument()
+    expect(document.querySelector('[aria-live="polite"]')).toBeEmptyDOMElement()
   })
 
   it('成功与失败分别用 status 与 alert 表达，文案与颜色之外还有图标与关闭按钮', () => {
@@ -99,6 +101,8 @@ describe('通知宿主', () => {
 
     const region = screen.getByLabelText('通知')
     expect(region).toHaveClass('right-4')
+    expect(region).toHaveClass('fixed', 'top-4', 'z-[70]')
+    expect(region.parentElement).toBe(document.body)
     expect(region).not.toHaveClass('lg:right-[calc(28rem+1rem)]')
     // 让位靠 right 过渡呈现动画，motion-reduce 下关闭。
     expect(region).toHaveClass('transition-[right]')
@@ -113,6 +117,32 @@ describe('通知宿主', () => {
       useContainersStore.setState({ detailContainerId: undefined })
     })
     expect(region).not.toHaveClass('lg:right-[calc(28rem+1rem)]')
+  })
+
+  it('弹窗打开后产生的通知可见且不被读屏隐藏，关闭通知不关闭弹窗', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    render(<Tooltip.Provider>
+      <NotificationHost />
+      <Dialog.Root>
+        <Dialog.Trigger>打开确认窗口</Dialog.Trigger>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-[60]" />
+          <Dialog.Content aria-describedby={undefined} className="fixed z-[61]">
+            <Dialog.Title>确认操作</Dialog.Title>
+            <button type="button" onClick={() => useNotificationStore.getState().notify({ tone: 'danger', message: '操作失败，请重试' })}>执行操作</button>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+    </Tooltip.Provider>)
+    await user.click(screen.getByRole('button', { name: '打开确认窗口' }))
+    await user.click(screen.getByRole('button', { name: '执行操作' }))
+    const region = screen.getByLabelText('通知')
+    expect(region.closest('[aria-hidden="true"]')).toBeNull()
+    expect(within(region).getByRole('alert')).toHaveTextContent('操作失败，请重试')
+    await user.click(within(region).getByRole('button', { name: '关闭通知' }))
+    expect(screen.queryByLabelText('通知')).not.toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: '确认操作' })).toBeInTheDocument()
+    expect(screen.getByRole('dialog')).toContainElement(document.activeElement as HTMLElement)
   })
 
   it('到时自动消失，失败类留得更久', () => {

@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { useGateway } from '../../adapters/GatewayProvider'
+import { captureAuthGeneration } from '../../adapters/http/unauthorized'
 import { useAgentChatStore } from '../../stores/agentChatStore'
 
 /**
  * 删除会话确认弹窗：标题点名会话，说明聊天记录与运行历史一并清除且不可恢复；
- * 服务端拒绝（如结果未确认的执行）时错误行内透传中文文案，不做任何本地清理。
+ * 服务端拒绝时经全局通知透传中文文案，保留确认弹窗、不做本地清理。
  */
 export function SessionRemoveDialog({ target, onClose }: {
   target: { id: string; title: string }
@@ -13,21 +14,33 @@ export function SessionRemoveDialog({ target, onClose }: {
 }) {
   const { agentConversation: api } = useGateway()
   const deleteSession = useAgentChatStore(state => state.deleteSession)
+  const reportOperation = useAgentChatStore(state => state.reportOperation)
   const [removing, setRemoving] = useState(false)
-  const [errorMessage, setErrorMessage] = useState<string>()
+  const activeTarget = useRef<string | null>(target.id)
+  const requestVersion = useRef(0)
 
-  useEffect(() => { setErrorMessage(undefined) }, [target.id])
+  useEffect(() => {
+    activeTarget.current = target.id
+    requestVersion.current += 1
+    setRemoving(false)
+    return () => { activeTarget.current = null; requestVersion.current += 1 }
+  }, [target.id])
 
   const submit = async () => {
+    if (removing) return
+    const targetId = target.id
+    const owner = useAgentChatStore.getState().session?.id
+    const version = ++requestVersion.current
+    const authGeneration = captureAuthGeneration()
+    const valid = () => activeTarget.current === targetId && requestVersion.current === version && captureAuthGeneration() === authGeneration
     setRemoving(true)
-    setErrorMessage(undefined)
     try {
-      await deleteSession(api, target.id)
-      onClose()
+      await deleteSession(api, targetId)
+      if (valid()) onClose()
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : '删除失败')
+      if (valid() && useAgentChatStore.getState().session?.id === owner) reportOperation(error instanceof Error ? error.message : '删除失败')
     } finally {
-      setRemoving(false)
+      if (valid()) setRemoving(false)
     }
   }
 
@@ -41,7 +54,6 @@ export function SessionRemoveDialog({ target, onClose }: {
         >
           <Dialog.Title className="text-sm font-semibold">删除会话「{target.title}」？</Dialog.Title>
           <p className="mt-1.5 text-xs text-fg-muted">删除后该会话的聊天记录与运行历史将一并清除，且不可恢复。</p>
-          {errorMessage ? <p role="alert" className="mt-2 text-xs text-danger">{errorMessage}</p> : null}
           <div className="mt-4 flex justify-end gap-2">
             <button
               type="button"
