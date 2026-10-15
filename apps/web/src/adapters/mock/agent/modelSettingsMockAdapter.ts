@@ -25,11 +25,11 @@ export class ModelSettingsMockAdapter implements ModelSettingsAdapter {
     const service = mockListModelServices().find(service => service.id === input.serviceId)
     if (input.serviceId && !service) throw new ModelSettingsMockError(404, 'service-not-found', '模型服务不存在')
     if (service && service.revision !== input.expectedRevision) throw new ModelSettingsMockError(409, 'revision-conflict', '模型服务已被修改，请重新读取后重试')
-    if (input.provider === 'deepseek' && !(input.credential === undefined ? service?.hasCredential : input.credential.trim())) throw new Error('获取 DeepSeek 模型前请配置 API Key')
+    if ((input.provider === 'deepseek' || input.provider === 'zhipu') && !(input.credential === undefined ? service?.hasCredential : input.credential.trim())) throw new Error(input.provider === 'deepseek' ? '获取 DeepSeek 模型前请配置 API Key' : '获取智谱模型前请配置 API Key')
     if (input.credential === undefined && service?.hasCredential && (input.provider !== service.provider || input.baseUrl.replace(/\/+$/, '') !== service.baseUrl)) throw new Error('服务地址已修改，请输入 API Key 后再获取模型')
-    return input.provider === 'deepseek'
-      ? [{ model: 'deepseek-flash', name: 'DeepSeek-V4.1-Flash', contextTokens: 1048576, outputTokens: 393216 }, { model: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', contextTokens: 1048576, outputTokens: 393216 }]
-      : [{ model: 'demo-model', name: '演示模型' }]
+    if (input.provider === 'deepseek') return [{ model: 'deepseek-flash', name: 'DeepSeek-V4.1-Flash', contextTokens: 1048576, outputTokens: 393216 }, { model: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', contextTokens: 1048576, outputTokens: 393216 }]
+    if (input.provider === 'zhipu') return [{ model: 'glm-5.3', name: 'GLM-5.3', contextTokens: 1048576, outputTokens: 131072 }, { model: 'glm-5.3-flash', name: 'GLM-5.3-Flash', contextTokens: 1048576, outputTokens: 131072 }]
+    return [{ model: 'demo-model', name: '演示模型' }]
   }
   async listModelServices() { return mockListModelServices() }
   async createModelService(input: import('@elysian/contracts').AgentModelServiceInput) { return mockSaveModelService(input) }

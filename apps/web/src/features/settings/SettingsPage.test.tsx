@@ -181,7 +181,7 @@ describe('设置页签与模型入口', () => {
     await act(async () => { await router.navigate('/settings?tab=models') })
     expect(screen.getByRole('dialog')).toBeInTheDocument()
     expect(screen.getByLabelText('名称')).toHaveValue('尚未保存的模型草稿')
-    expect(screen.getByLabelText('配置方式')).toHaveTextContent('自定义（兼容 API）')
+    expect(screen.getByLabelText('提供商')).toHaveTextContent('自定义（兼容 API）')
     expect(read).toHaveBeenCalledTimes(1)
   })
   it('默认进入模型配置，切换页签保留账号输入与查询参数', async () => {

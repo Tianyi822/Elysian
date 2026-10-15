@@ -6,6 +6,7 @@ import type {
 import type { ElysianGateway } from '../contracts/adapters'
 import { ModelSettingsMockAdapter } from '../adapters/mock/agent/modelSettingsMockAdapter'
 import {
+  mockCreateModelProfile,
   mockUpdateModelProfile,
   resetModelSettingsData,
 } from '../adapters/mock/agent/modelSettingsData'
@@ -90,11 +91,22 @@ describe('模型设置保存与冲突回读', () => {
   it('缺少 API Key 的配置在提交前拦截，停用或自定义供应商也不放行', async () => {
     const { gateway, adapter } = makeGateway()
     const create = vi.spyOn(adapter, 'createModelProfile')
-    for (const provider of ['deepseek', 'openai-compatible'] as const) {
+    for (const provider of ['deepseek', 'openai-compatible', 'zhipu'] as const) {
       expect(await useModelSettingsStore.getState().saveModel(gateway, { ...MODEL_INPUT, provider, credential: undefined })).toBe(false)
       expect(await useModelSettingsStore.getState().saveModel(gateway, { ...MODEL_INPUT, provider, credential: undefined, active: false })).toBe(false)
     }
     expect(create).not.toHaveBeenCalled()
+  })
+  it('智谱供应商仅接受 Chat Completions 格式，且不能声明 disabled 档', async () => {
+    const { gateway, adapter } = makeGateway()
+    const create = vi.spyOn(adapter, 'createModelProfile')
+    expect(await useModelSettingsStore.getState().saveModel(gateway, { ...MODEL_INPUT, provider: 'zhipu', apiFormat: 'anthropic-messages' })).toBe(false)
+    expect(await useModelSettingsStore.getState().saveModel(gateway, { ...MODEL_INPUT, provider: 'zhipu', apiFormat: 'responses' })).toBe(false)
+    expect(await useModelSettingsStore.getState().saveModel(gateway, { ...MODEL_INPUT, provider: 'zhipu', capabilities: { ...MODEL_INPUT.capabilities, reasoningLevels: ['low', 'disabled'] } })).toBe(false)
+    expect(await useModelSettingsStore.getState().saveModel(gateway, { ...MODEL_INPUT, capabilities: { ...MODEL_INPUT.capabilities, reasoningLevels: ['low', 'high'], defaultReasoningLevel: 'max' } })).toBe(false)
+    expect(create).not.toHaveBeenCalled()
+    expect(() => mockCreateModelProfile({ ...MODEL_INPUT, provider: 'zhipu', capabilities: { ...MODEL_INPUT.capabilities, reasoningLevels: ['low', 'disabled'] } })).toThrow('智谱模型的思考无法关闭')
+    expect(() => mockCreateModelProfile({ ...MODEL_INPUT, provider: 'zhipu', apiFormat: 'anthropic-messages' })).toThrow('智谱服务当前仅支持 Chat Completions 格式')
   })
 })
 

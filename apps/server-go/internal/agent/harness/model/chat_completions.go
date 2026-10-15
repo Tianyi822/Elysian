@@ -116,6 +116,10 @@ func parseResponse(body []byte, names map[string]bool, choice string) (Response,
 	if answer.Message.Role != "assistant" || len(answer.Message.ToolCalls) > maxToolCalls {
 		return Response{}, invalidResponse()
 	}
+	// 智谱以 sensitive 表示内容被安全审核拦截，与 content_filter 同义。
+	if answer.FinishReason == "sensitive" {
+		answer.FinishReason = "content_filter"
+	}
 	response := Response{FinishReason: answer.FinishReason, Reasoning: answer.Message.Reasoning}
 	if len(answer.Message.Content) > 0 && string(answer.Message.Content) != "null" {
 		if json.Unmarshal(answer.Message.Content, &response.Content) != nil {
@@ -131,6 +135,10 @@ func parseResponse(body []byte, names map[string]bool, choice string) (Response,
 		if len(answer.Message.ToolCalls) == 0 || choice == "none" {
 			return Response{}, invalidResponse()
 		}
+	case "network_error":
+		return Response{}, problem(502, "model-inference-failed", "模型推理异常，请重试")
+	case "model_context_window_exceeded":
+		return Response{}, problem(502, "model-context-exceeded", "请求超出模型上下文窗口")
 	default:
 		return Response{}, invalidResponse()
 	}

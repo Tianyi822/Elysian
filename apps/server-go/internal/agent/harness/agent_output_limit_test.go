@@ -18,7 +18,7 @@ import (
 
 // 单次输出上限按思考模式取官方默认：非思考 8K、思考 64K、max 档 128K；
 // 未声明思考档位的模型按非思考取值，运行限额与模型声明的最大输出只能收紧；
-// 整理请求（固定函数调用、不启用思考）按非思考取值。
+// 整理请求（固定函数调用、不启用思考）按非思考取值，智谱 GLM 关不掉思考、整理同样按思考取值。
 func TestAgentOutputLimitFollowsThinkingMode(t *testing.T) {
 	type captured struct {
 		level  string
@@ -26,6 +26,7 @@ func TestAgentOutputLimitFollowsThinkingMode(t *testing.T) {
 		memory bool
 	}
 	levels := []string{"disabled", "low", "high", "max"}
+	zhipuLevels := []string{"low", "high", "max"}
 	cases := []struct {
 		name      string
 		level     string
@@ -43,6 +44,10 @@ func TestAgentOutputLimitFollowsThinkingMode(t *testing.T) {
 		{name: "未声明思考档位的其他模型按非思考", level: "", levels: nil, provider: model.ProviderOpenAICompatible, output: 65536, wantLimit: outputTokensNonThinking},
 		{name: "模型声明的最大输出收紧", level: "high", levels: levels, provider: model.ProviderDeepSeek, output: 4096, wantLimit: 4096},
 		{name: "运行限额收紧", level: "high", levels: levels, provider: model.ProviderDeepSeek, output: 393216, runLimit: 8192, wantLimit: 8192},
+		{name: "智谱默认档按思考 64K", level: "", levels: zhipuLevels, provider: model.ProviderZhipu, output: 131072, wantLimit: outputTokensThinking},
+		{name: "智谱明确思考档同样 64K", level: "high", levels: zhipuLevels, provider: model.ProviderZhipu, output: 131072, wantLimit: outputTokensThinking},
+		{name: "智谱 max 档 128K", level: "max", levels: zhipuLevels, provider: model.ProviderZhipu, output: 131072, wantLimit: outputTokensMaxEffort},
+		{name: "智谱未声明档位仍按思考取值", level: "", levels: nil, provider: model.ProviderZhipu, output: 131072, wantLimit: outputTokensThinking},
 	}
 	for index, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -82,6 +87,9 @@ func TestAgentOutputLimitFollowsThinkingMode(t *testing.T) {
 				t.Fatalf("运行未成功：%+v", got)
 			}
 			wantMemory := outputTokensNonThinking
+			if tc.provider == model.ProviderZhipu {
+				wantMemory = outputTokensThinking
+			}
 			if tc.output < wantMemory {
 				wantMemory = tc.output
 			}

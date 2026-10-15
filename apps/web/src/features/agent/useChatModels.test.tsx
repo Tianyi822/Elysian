@@ -10,7 +10,7 @@ const profile: AgentModelProfile & { enabled: boolean } = {
   id: 'text-model', revision: 1, model: 'text-v1',
   provider: 'openai-compatible', apiFormat: 'chat-completions', baseUrl: 'https://example.test/v1',
   contextTokens: 32000, outputTokens: 4096, active: true, enabled: true, hasCredential: false,
-  capabilities: { text: true, tools: true, source: '测试', reasoningLevels: ['low', 'medium', 'high'] },
+  capabilities: { text: true, tools: true, source: '测试', reasoningLevels: ['low', 'medium', 'high'], defaultReasoningLevel: 'low' },
 }
 const service: AgentModelService = {
   id: 'test-service', revision: 1, name: '测试服务', provider: profile.provider, apiFormat: profile.apiFormat,
@@ -26,7 +26,10 @@ function setup() {
 }
 
 describe('思考等级默认档', () => {
-  it('优先「高」，其次 medium，否则取声明列表首项，未声明档位时不补默认', () => {
+  it('模型声明的默认档优先；未声明或声明不在列表时回落通用策略', () => {
+    expect(defaultReasoningLevel(['low', 'high', 'max'], 'max')).toBe('max')
+    expect(defaultReasoningLevel(['low', 'high', 'max'], 'high')).toBe('high')
+    expect(defaultReasoningLevel(['low', 'high', 'max'], 'medium')).toBe('high')
     expect(defaultReasoningLevel(['disabled', 'low', 'high', 'max'])).toBe('high')
     expect(defaultReasoningLevel(['low', 'medium'])).toBe('medium')
     expect(defaultReasoningLevel(['low'])).toBe('low')
@@ -50,7 +53,7 @@ describe('会话模型目录', () => {
     const { result } = renderHook(useChatModels, { wrapper })
     await waitFor(() => expect(result.current.status).toBe('ready'))
     expect(result.current.models.map(model => model.id)).toEqual(['text-model'])
-    expect(result.current.models[0]).toMatchObject({ serviceName: '测试服务', reasoningLevels: ['low', 'medium', 'high'] })
+    expect(result.current.models[0]).toMatchObject({ serviceName: '测试服务', reasoningLevels: ['low', 'medium', 'high'], defaultReasoningLevel: 'low' })
     expect(read).toHaveBeenCalledTimes(1)
     expect(runtime).not.toHaveBeenCalled()
   })

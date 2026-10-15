@@ -81,3 +81,53 @@ func TestReasoningLevelMustBeDeclaredByModelRevision(t *testing.T) {
 		requireCode(t, err, "unsupported-reasoning-level")
 	}
 }
+
+// 智谱 GLM 的思考只能开启：chat-completions 下只直传 reasoning_effort，绝不发送 thinking 开关。
+func TestZhipuChatCompletionsSendsEffortOnly(t *testing.T) {
+	adapter, err := resolveProtocol(FormatChatCompletions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := testProfile("https://open.bigmodel.cn/api/coding/paas/v4")
+	p.Provider = ProviderZhipu
+	p.Capabilities.ReasoningLevels = []string{"low", "high", "max"}
+	for _, level := range []string{"", "low", "high", "max"} {
+		input := testRequest()
+		input.ReasoningLevel, input.OnReasoning = level, func(string) {}
+		prepared, err := adapter.prepare(p, input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var body struct {
+			Effort   string        `json:"reasoning_effort"`
+			Thinking *wireThinking `json:"thinking"`
+		}
+		if err := json.Unmarshal(prepared.body, &body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Effort != level {
+			t.Fatalf("思考强度 %q 未直传：%s", level, prepared.body)
+		}
+		if body.Thinking != nil {
+			t.Fatalf("智谱不应发送思考开关（GLM 只能开启）：%s", prepared.body)
+		}
+		if prepared.endpoint != "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions" {
+			t.Fatalf("Coding Plan 地址拼接错误：%s", prepared.endpoint)
+		}
+	}
+}
+
+// 智谱的结束原因归一：sensitive 视作内容拦截，network_error 与超窗给出明确错误而非协议无效。
+func TestChatCompletionsNormalizesZhipuFinishReasons(t *testing.T) {
+	body := func(reason string) []byte {
+		return []byte(`{"choices":[{"index":0,"message":{"role":"assistant","content":"内容"},"finish_reason":"` + reason + `"}]}`)
+	}
+	response, err := parseResponse(body("sensitive"), map[string]bool{}, "")
+	if err != nil || response.FinishReason != "content_filter" {
+		t.Fatalf("sensitive 未归一为 content_filter：%+v %v", response, err)
+	}
+	_, err = parseResponse(body("network_error"), map[string]bool{}, "")
+	requireCode(t, err, "model-inference-failed")
+	_, err = parseResponse(body("model_context_window_exceeded"), map[string]bool{}, "")
+	requireCode(t, err, "model-context-exceeded")
+}

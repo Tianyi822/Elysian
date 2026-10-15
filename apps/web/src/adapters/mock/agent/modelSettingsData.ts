@@ -1,4 +1,4 @@
-import { getAgentModelPreset, validAgentModelReasoningLevels } from '@elysian/contracts'
+import { getAgentModelPreset, validAgentModelDefaultReasoningLevel, validAgentModelReasoningLevels } from '@elysian/contracts'
 import type { AgentModelProfile, AgentModelService, AgentModelServiceInput, AgentModelProfileInput } from '@elysian/contracts'
 
 /** 系统设置的确定性模型演示数据；凭据只写不回显，更新核对修订。 */
@@ -89,8 +89,16 @@ function validateModelInput(input: AgentModelProfileInput, credential = input.cr
   if (input.apiFormat !== 'chat-completions' && input.apiFormat !== 'anthropic-messages' && input.apiFormat !== 'responses') {
     throw new ModelSettingsMockError(400, 'invalid-profile', '模型 API 格式无效')
   }
-  if (input.provider !== 'openai-compatible' && input.provider !== 'deepseek') {
-    throw new ModelSettingsMockError(400, 'invalid-profile', '模型供应商必须是 OpenAI 兼容接口或 DeepSeek')
+  if (input.provider !== 'openai-compatible' && input.provider !== 'deepseek' && input.provider !== 'zhipu') {
+    throw new ModelSettingsMockError(400, 'invalid-profile', '模型供应商必须是 OpenAI 兼容接口、DeepSeek 或智谱')
+  }
+  if (input.provider === 'zhipu') {
+    if (input.apiFormat !== 'chat-completions') {
+      throw new ModelSettingsMockError(400, 'invalid-profile', '智谱服务当前仅支持 Chat Completions 格式')
+    }
+    if ((input.capabilities.reasoningLevels ?? []).includes('disabled')) {
+      throw new ModelSettingsMockError(400, 'invalid-profile', '智谱模型的思考无法关闭，不能声明 disabled 推理档位')
+    }
   }
   if (credential.trim() === '') {
     throw new ModelSettingsMockError(400, 'invalid-profile', '请配置 API Key')
@@ -116,6 +124,9 @@ function validateModelInput(input: AgentModelProfileInput, credential = input.cr
   const reasoningLevels = input.capabilities.reasoningLevels ?? []
   if (!validAgentModelReasoningLevels(reasoningLevels)) {
     throw new ModelSettingsMockError(400, 'invalid-profile', '模型推理等级无效或重复')
+  }
+  if (!validAgentModelDefaultReasoningLevel(reasoningLevels, input.capabilities.defaultReasoningLevel)) {
+    throw new ModelSettingsMockError(400, 'invalid-profile', '模型默认推理档位必须是已声明的档位')
   }
   {
     if (credential.length > 8192 || /[\u0000-\u001f\u007f]/.test(credential)) {
@@ -205,7 +216,7 @@ export function mockSaveModelService(input: AgentModelServiceInput, id?: string,
   if (!input.name.trim() || input.name.length > 120 || input.models.length < 1 || input.models.length > 64) throw new ModelSettingsMockError(400, 'invalid-service', '请填写服务名称，并配置 1 至 64 个模型')
   const previous = [...modelRecords].reverse().find(record => record.profile.id === old?.models[0]?.id)
   const credential = input.credential ?? previous?.credential ?? ''
-  if (input.provider === 'deepseek' && input.active && !credential.trim()) throw new ModelSettingsMockError(400, 'invalid-profile', '启用 DeepSeek 服务前请配置 API Key')
+  if ((input.provider === 'deepseek' || input.provider === 'zhipu') && input.active && !credential.trim()) throw new ModelSettingsMockError(400, 'invalid-profile', input.provider === 'deepseek' ? '启用 DeepSeek 服务前请配置 API Key' : '启用智谱服务前请配置 API Key')
   const seenIds = new Set<string>(), seenModels = new Set<string>()
   for (const row of input.models) {
     if (row.id && (!old?.models.some(model => model.id === row.id) || seenIds.has(row.id))) throw new ModelSettingsMockError(400, 'invalid-service', '模型编号不属于当前服务或重复')

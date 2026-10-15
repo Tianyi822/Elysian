@@ -55,6 +55,38 @@ func TestProviderRevisionAndCredentialValidation(t *testing.T) {
 	}
 }
 
+func TestZhipuProviderOnlyAcceptsChatCompletions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "models.json")
+	store, _ := Open(path)
+	in := profileInput()
+	in.Provider, in.Model = ProviderZhipu, "glm-5.3"
+	created, err := store.Create(in)
+	if err != nil || created.Provider != ProviderZhipu {
+		t.Fatalf("智谱供应商未保存：%+v %v", created, err)
+	}
+	in.APIFormat = FormatAnthropicMessages
+	_, err = store.Create(in)
+	requireCode(t, err, "invalid-profile")
+	in.APIFormat = FormatResponses
+	_, err = store.Create(in)
+	requireCode(t, err, "invalid-profile")
+	in.APIFormat = FormatChatCompletions
+	in.Capabilities.ReasoningLevels = []string{"low", "disabled"}
+	_, err = store.Create(in)
+	requireCode(t, err, "invalid-profile")
+	in.Capabilities.ReasoningLevels = []string{"low", "high", "max"}
+	if _, err = store.Create(in); err != nil {
+		t.Fatalf("low/high/max 档位应被接受：%v", err)
+	}
+	in.Capabilities.DefaultReasoningLevel = "medium"
+	_, err = store.Create(in)
+	requireCode(t, err, "invalid-profile")
+	in.Capabilities.DefaultReasoningLevel = "max"
+	if _, err = store.Create(in); err != nil {
+		t.Fatalf("声明的默认档应被接受：%v", err)
+	}
+}
+
 func TestProfilesKeepImmutableRevisionsAndWriteOnlyCredentials(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config", "models.json")
 	store, err := Open(path)

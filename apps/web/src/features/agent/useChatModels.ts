@@ -8,6 +8,7 @@ export type ChatModelOption = {
   serviceName: string
   profile: AgentModelProfile
   reasoningLevels: readonly AgentModelReasoningLevel[]
+  defaultReasoningLevel?: AgentModelReasoningLevel
 }
 
 type ChatModelsState = {
@@ -32,8 +33,9 @@ export function reasoningLabel(level: AgentModelReasoningLevel): string {
   return Object.hasOwn(REASONING_LABELS, level) ? REASONING_LABELS[level]! : level
 }
 
-/** 只从模型声明的档位中选择，不替未声明推理能力的模型补档位；默认档优先「高」，其次 medium，否则取首项。 */
-export function defaultReasoningLevel(levels: readonly AgentModelReasoningLevel[]): AgentModelReasoningLevel | undefined {
+/** 只从模型声明的档位中选择，不替未声明推理能力的模型补档位；默认档优先模型声明（官方预设按文档填入），未声明时优先「高」，其次 medium，否则取首项。 */
+export function defaultReasoningLevel(levels: readonly AgentModelReasoningLevel[], declared?: AgentModelReasoningLevel): AgentModelReasoningLevel | undefined {
+  if (declared && levels.includes(declared)) return declared
   return levels.includes('high') ? 'high' : levels.includes('medium') ? 'medium' : levels[0]
 }
 
@@ -56,6 +58,7 @@ export function useChatModels(): ChatModelsState & { reload(): void } {
           serviceName: service.name,
           profile,
           reasoningLevels: profile.capabilities.reasoningLevels ?? [],
+          defaultReasoningLevel: (profile.capabilities.reasoningLevels ?? []).includes(profile.capabilities.defaultReasoningLevel ?? '') ? profile.capabilities.defaultReasoningLevel : undefined,
         })),
       )
       setState({ models, status: 'ready' })

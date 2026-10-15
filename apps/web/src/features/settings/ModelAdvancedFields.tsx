@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import * as Checkbox from '@radix-ui/react-checkbox'
 import { validAgentModelReasoningLevels } from '@elysian/contracts'
+import { SelectDropdown } from '../../components/SelectDropdown'
 import { Check, ChevronDown, Plus, X } from '../../components/icons'
 import { CTL_FIELD, CTL_SECONDARY } from '../../components/formControl'
 import type { DraftModel } from './modelDraft'
@@ -41,16 +42,20 @@ export function ModelAdvancedFields({ row, onChange }: { row: DraftModel; onChan
         <p className="mb-2 text-xs text-fg-muted">推理等级（从低到高）</p>
         <div className="flex flex-wrap items-center gap-2">
           {row.reasoningLevels.map(item => <span key={item} className="inline-flex h-8 items-center gap-1 rounded-md border border-control-line bg-surface-raised pl-2.5 pr-1 text-xs text-fg">
-            {item}<button type="button" aria-label={`移除推理等级 ${item}`} onClick={() => onChange({ reasoningLevels: row.reasoningLevels.filter(value => value !== item) })} className="flex size-6 items-center justify-center rounded text-fg-subtle hover:bg-surface hover:text-fg focus-visible:outline-2 focus-visible:outline-accent"><X aria-hidden size={12} /></button>
+            {item}<button type="button" aria-label={`移除推理等级 ${item}`} onClick={() => onChange({ reasoningLevels: row.reasoningLevels.filter(value => value !== item), ...(row.defaultReasoningLevel === item ? { defaultReasoningLevel: '' } : {}) })} className="flex size-6 items-center justify-center rounded text-fg-subtle hover:bg-surface hover:text-fg focus-visible:outline-2 focus-visible:outline-accent"><X aria-hidden size={12} /></button>
           </span>)}
           {!adding && <button type="button" aria-label="添加推理等级" disabled={row.reasoningLevels.length >= 16} onClick={() => setAdding(true)} className="flex size-8 items-center justify-center rounded-md border border-line text-fg-muted hover:border-control-line focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-40"><Plus aria-hidden size={14} /></button>}
         </div>
         {adding && <div className="mt-2 flex flex-wrap items-center gap-2">
           <input aria-label="新的推理等级" value={level} maxLength={32} autoFocus onChange={event => { setLevel(event.target.value); setError(undefined) }} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); addLevel() } }} placeholder="例如 low、high、max" className={`${CTL_FIELD} h-8 min-w-0 flex-1 text-xs`} />
           <button type="button" onClick={addLevel} className={CTL_SECONDARY}>添加等级</button>
-          <button type="button" aria-label="取消添加推理等级" onClick={() => { setAdding(false); setLevel(''); setError(undefined) }} className="flex size-8 items-center justify-center rounded-md text-fg-muted hover:bg-surface-raised"><X aria-hidden size={14} /></button>
+          <button type="button" aria-label="取消添加推理等级" onClick={() => { setAdding(false); setLevel(''); setError(undefined) }} className="flex size-8 items-center justify-center rounded-md text-fg-muted hover:bg-surface-raised"><X aria-hidden size={12} /></button>
         </div>}
         {error && <p role="alert" className="mt-2 text-xs text-danger">{error}</p>}
+        {row.reasoningLevels.length > 0 && <div className="mt-2 flex items-center gap-2">
+          <span className="text-xs text-fg-muted">默认档</span>
+          <div className="w-48"><SelectDropdown ariaLabel="默认推理档" value={row.defaultReasoningLevel} onSelect={value => onChange({ defaultReasoningLevel: value })} disabled={false} items={[{ value: '', label: '自动（优先「高」）' }, ...row.reasoningLevels.map(item => ({ value: item, label: item }))]} /></div>
+        </div>}
       </div>
     </div>
   </details>

@@ -271,11 +271,14 @@ func (a *agentExecution) tools() []model.Tool {
 }
 
 // outputLimit 取思考模式对应的官方默认输出上限（非思考 8K、思考 64K、max 档 128K）；
-// 运行限额与模型声明的最大输出只能在其上收紧。
+// 智谱 GLM 关不掉思考，显式关思考的档位也按思考上限取值；运行限额与模型声明的最大输出只能在其上收紧。
 func (a *agentExecution) outputLimit(level string) int {
 	limit := outputTokensNonThinking
 	switch model.ReasoningEffort(level) {
 	case "none":
+		if a.run.Model != nil && a.run.Model.Provider == model.ProviderZhipu {
+			limit = outputTokensThinking
+		}
 	case "max":
 		limit = outputTokensMaxEffort
 	default:
@@ -292,10 +295,10 @@ func (a *agentExecution) outputLimit(level string) int {
 	return limit
 }
 
-// thinkingModel 判定生成请求是否按思考模式发送：DeepSeek 的生成接口默认启用思考，
-// 其他供应商以模型是否声明思考档位为准；判定为否时按非思考模式的官方默认取值。
+// thinkingModel 判定生成请求是否按思考模式发送：DeepSeek 与智谱 GLM 的生成接口始终启用思考
+// （智谱 GLM 无法关闭），其他供应商以模型是否声明思考档位为准；判定为否时按非思考模式的官方默认取值。
 func (a *agentExecution) thinkingModel() bool {
-	return a.run.Model != nil && (a.run.Model.Provider == model.ProviderDeepSeek || len(a.run.Model.Capabilities.ReasoningLevels) > 0)
+	return a.run.Model != nil && (a.run.Model.Provider == model.ProviderDeepSeek || a.run.Model.Provider == model.ProviderZhipu || len(a.run.Model.Capabilities.ReasoningLevels) > 0)
 }
 
 // runReasoningLevel 返回本轮固定的思考等级；未选择时为空，按模型默认档处理。

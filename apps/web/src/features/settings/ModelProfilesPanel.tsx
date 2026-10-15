@@ -37,7 +37,7 @@ export function ModelProfilesPanel({ active = true, refreshing = false, onRefres
       </div>
       {onRefresh ? <RefreshButton label="刷新模型配置" busy={refreshing} onPress={onRefresh} /> : null}
     </div>
-    {rows.length === 0 ? <EmptyState title={search.trim() ? '没有匹配的模型配置' : '还没有模型配置'} description={search.trim() ? '换个关键词，或清空过滤查看全部模型配置。' : '添加 DeepSeek 或自定义模型服务，同一服务可配置多个模型。'} /> : <div role="region" aria-label="模型配置列表" tabIndex={0} className="table-scrollbar min-w-0 overflow-x-auto panel-surface">
+    {rows.length === 0 ? <EmptyState title={search.trim() ? '没有匹配的模型配置' : '还没有模型配置'} description={search.trim() ? '换个关键词，或清空过滤查看全部模型配置。' : '添加 DeepSeek、智谱或自定义模型服务，同一服务可配置多个模型。'} /> : <div role="region" aria-label="模型配置列表" tabIndex={0} className="table-scrollbar min-w-0 overflow-x-auto panel-surface">
       <table className="w-full min-w-[54rem] table-fixed border-separate border-spacing-0 text-left text-sm">
         <colgroup>{['30%', '28%', '8%', '8%', '10%', '9%', '7%'].map((width, index) => <col key={index} style={{ width }} />)}</colgroup>
         <thead><tr>{['模型 ID', '服务地址', '上下文', '输出', '能力', '状态', '操作'].map((label, index) => <th key={label} scope="col" className={`border-b border-line bg-surface px-3 py-2.5 text-xs font-medium text-fg-muted ${index === 0 ? 'sticky left-0 z-20 border-r' : ''}`}>{label}</th>)}</tr></thead>
@@ -69,7 +69,7 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
   const { submitting, inFlightOnly } = useInFlightSubmit()
   const [revision, setRevision] = useState(service?.revision ?? 0)
   const [provider, setProvider] = useState<AgentModelProvider>(service?.provider ?? 'openai-compatible')
-  const [apiFormat, setAPIFormat] = useState<AgentModelAPIFormat>(service?.apiFormat ?? 'chat-completions')
+  const [apiFormat, setAPIFormat] = useState<AgentModelAPIFormat>(service?.apiFormat ?? 'anthropic-messages')
   const [name, setName] = useState(service?.name ?? '')
   const [baseUrl, setBaseUrl] = useState(service?.baseUrl ?? '')
   const [credential, setCredential] = useState('')
@@ -141,6 +141,7 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
           webSearch: row.webSearch,
           systemMessages: row.systemMessages,
           reasoningLevels: row.reasoningLevels,
+          ...(row.defaultReasoningLevel ? { defaultReasoningLevel: row.defaultReasoningLevel } : {}),
           source: row.source,
         },
         enabled: row.enabled,
@@ -160,7 +161,7 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
         <form onSubmit={event => { event.preventDefault(); void submit() }} className="flex min-h-0 flex-col">
           <ScrollArea label="模型配置表单"><fieldset disabled={submitting} className="flex min-w-0 flex-col gap-4 px-5 py-4">
             <Dialog.Description id="model-service-description" className="text-xs leading-relaxed text-fg-subtle">同一服务下的模型共用地址、API 格式与凭据，保存后统一生效。</Dialog.Description>
-            {!service && <Field label="配置方式" id="model-provider"><SelectDropdown id="model-provider" ariaLabel="配置方式" value={provider} onSelect={next => { setProvider(next); setName(next === 'deepseek' ? 'DeepSeek' : ''); setError(undefined); if (next === 'deepseek') setBaseUrl(apiFormat === 'anthropic-messages' ? 'https://api.deepseek.com/anthropic' : 'https://api.deepseek.com') }} fullWidth disabled={submitting} items={[{ value: 'openai-compatible', label: '自定义（兼容 API）' }, { value: 'deepseek', label: 'DeepSeek' }]} /></Field>}
+            {!service && <Field label="提供商" id="model-provider"><SelectDropdown id="model-provider" ariaLabel="提供商" value={provider} onSelect={next => { setProvider(next); setName(next === 'deepseek' ? 'DeepSeek' : next === 'zhipu' ? '智谱 BigModel' : ''); setError(undefined); if (next === 'deepseek') setBaseUrl(apiFormat === 'anthropic-messages' ? 'https://api.deepseek.com/anthropic' : 'https://api.deepseek.com'); if (next === 'zhipu') { setAPIFormat('chat-completions'); setBaseUrl('https://open.bigmodel.cn/api/coding/paas/v4'); if (models.length === 0) setModels([discoveredModelDraft('zhipu', { model: 'glm-5.3', name: 'GLM-5.3' }), discoveredModelDraft('zhipu', { model: 'glm-5.3-flash', name: 'GLM-5.3-Flash' })]) } }} fullWidth disabled={submitting} items={[{ value: 'openai-compatible', label: '自定义（兼容 API）' }, { value: 'deepseek', label: 'DeepSeek' }, { value: 'zhipu', label: '智谱 BigModel Coding Plan（国内）' }]} /></Field>}
             {provider === 'openai-compatible' && <div><label htmlFor="agent-service-name" className="sr-only">名称</label><input id="agent-service-name" required maxLength={120} placeholder="服务名称" value={name} onChange={event => setName(event.target.value)} className={`${CTL_FIELD} h-9 w-full font-semibold`} /></div>}
             <Field label="Base URL" id="agent-model-baseurl"><input id="agent-model-baseurl" required value={baseUrl} onChange={event => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" className={`${CTL_FIELD} h-9 w-full font-mono text-xs`} /></Field>
             <Field label="API 格式" id="agent-api-format"><SelectDropdown id="agent-api-format" ariaLabel="API 格式" value={apiFormat} onSelect={selectFormat} fullWidth disabled={submitting} items={AGENT_MODEL_API_FORMATS} /></Field>
@@ -198,6 +199,7 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
               </div>)}
             </div>
             {provider === 'deepseek' && <p className="text-xs text-fg-subtle">DeepSeek 使用非思考模式；获取或手动添加后，模型参数均可编辑。</p>}
+            {provider === 'zhipu' && <p className="text-xs text-fg-subtle">智谱 BigModel Coding Plan 须使用套餐 API Key 与专属地址，仅支持 Chat Completions；已按官方文档带出 GLM-5.3 与 GLM-5.3-Flash，两者始终启用思考，档位 low／high／max（默认最高），可按需增删。</p>}
             {error && <p role="alert" className="text-xs text-danger">{error}</p>}
             {service && <RevisionConflictNotice latest={latest} baseRevision={revision} onAccept={setRevision} />}
           </fieldset></ScrollArea>

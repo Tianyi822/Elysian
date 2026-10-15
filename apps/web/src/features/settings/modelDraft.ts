@@ -15,6 +15,7 @@ export type DraftModel = {
   webSearch: boolean
   systemMessages: boolean
   reasoningLevels: string[]
+  defaultReasoningLevel: string
   source: string
   enabled: boolean
 }
@@ -29,6 +30,7 @@ function capabilityDraft(capabilities: AgentModelCapabilities) {
     webSearch: capabilities.webSearch ?? false,
     systemMessages: capabilities.systemMessages ?? false,
     reasoningLevels: [...(capabilities.reasoningLevels ?? [])],
+    defaultReasoningLevel: capabilities.defaultReasoningLevel ?? '',
   }
 }
 

@@ -350,6 +350,15 @@ describe('基本聊天界面', () => {
     expect(screen.getByRole('button', { name: '选择思考等级：中' })).toBeInTheDocument()
   })
 
+  it('模型声明的默认档优先于通用回落策略', async () => {
+    const backend = chatTestApi()
+    const glm = { ...chatTestModel, id: 'glm', model: 'glm-5.3', capabilities: { ...chatTestModel.capabilities, reasoningLevels: ['low', 'high', 'max'], defaultReasoningLevel: 'max' } }
+    renderChat(backend, '/agent', undefined, [glm])
+    // 官方预设按文档声明默认档（智谱 max）：未选择时直接落「最高」，不按「优先高」回落。
+    await waitFor(() => expect(useAgentChatStore.getState().session?.reasoningLevel).toBe('max'))
+    expect(screen.getByRole('button', { name: '选择思考等级：最高' })).toBeInTheDocument()
+  })
+
   it('用户消息与助手回复各带复制按钮，点击复制原文', async () => {
     const user = userEvent.setup()
     renderChat()

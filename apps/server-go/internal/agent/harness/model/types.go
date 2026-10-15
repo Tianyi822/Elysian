@@ -17,7 +17,9 @@ type Capabilities struct {
 	WebSearch        bool     `json:"webSearch,omitempty"`
 	SystemMessages   bool     `json:"systemMessages,omitempty"`
 	ReasoningLevels  []string `json:"reasoningLevels,omitempty"`
-	Source           string   `json:"source"`
+	// DefaultReasoningLevel 是声明的默认推理档，官方预设按文档填入；必须是 ReasoningLevels 之一。
+	DefaultReasoningLevel string `json:"defaultReasoningLevel,omitempty"`
+	Source                string `json:"source"`
 }
 
 func (c Capabilities) clone() Capabilities {
@@ -27,6 +29,7 @@ func (c Capabilities) clone() Capabilities {
 
 const ProviderOpenAICompatible = "openai-compatible"
 const ProviderDeepSeek = "deepseek"
+const ProviderZhipu = "zhipu"
 
 const FormatChatCompletions = "chat-completions"
 const FormatAnthropicMessages = "anthropic-messages"

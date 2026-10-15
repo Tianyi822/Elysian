@@ -46,6 +46,13 @@ export function parseAgentModelCapabilities(value: unknown): AgentModelCapabilit
     }
     reasoningLevels = row.reasoningLevels
   }
+  let defaultReasoningLevel: AgentModelReasoningLevel | undefined
+  if (row.defaultReasoningLevel !== undefined) {
+    if (typeof row.defaultReasoningLevel !== 'string' || !/^[a-z][a-z0-9_-]{0,31}$/.test(row.defaultReasoningLevel)) {
+      throw new Error('Agent 模型默认推理档位无效')
+    }
+    defaultReasoningLevel = row.defaultReasoningLevel
+  }
   const image = optionalBoolean('image')
   const video = optionalBoolean('video')
   const pdf = optionalBoolean('pdf')
@@ -63,6 +70,7 @@ export function parseAgentModelCapabilities(value: unknown): AgentModelCapabilit
     ...(webSearch === undefined ? {} : { webSearch }),
     ...(systemMessages === undefined ? {} : { systemMessages }),
     ...(reasoningLevels === undefined ? {} : { reasoningLevels }),
+    ...(defaultReasoningLevel === undefined ? {} : { defaultReasoningLevel }),
   }
 }
 
@@ -80,7 +88,7 @@ export function parseAgentModelService(value: unknown): AgentModelService {
 
 export function parseAgentModelProfile(value: unknown): AgentModelProfile {
   const row = object(value, 'Agent 模型配置响应无效')
-  const provider: AgentModelProvider = row.provider === 'openai-compatible' || row.provider === 'deepseek' ? row.provider
+  const provider: AgentModelProvider = row.provider === 'openai-compatible' || row.provider === 'deepseek' || row.provider === 'zhipu' ? row.provider
       : (() => { throw new Error('Agent 模型供应商无效') })()
   const apiFormat: AgentModelAPIFormat = row.apiFormat === 'chat-completions' || row.apiFormat === 'anthropic-messages' || row.apiFormat === 'responses' ? row.apiFormat
       : (() => { throw new Error('Agent 模型 API 格式无效') })()

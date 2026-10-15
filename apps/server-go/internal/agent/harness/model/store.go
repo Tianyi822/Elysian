@@ -193,8 +193,20 @@ func validateProfile(p Profile) error {
 	if p.APIFormat != FormatChatCompletions && p.APIFormat != FormatAnthropicMessages && p.APIFormat != FormatResponses {
 		return problem(400, "invalid-profile", "模型 API 格式必须是 Chat Completions、Anthropic Messages 或 Responses")
 	}
-	if p.Provider != ProviderOpenAICompatible && p.Provider != ProviderDeepSeek {
-		return problem(400, "invalid-profile", "模型供应商必须是 OpenAI 兼容接口或 DeepSeek")
+	if p.Provider != ProviderOpenAICompatible && p.Provider != ProviderDeepSeek && p.Provider != ProviderZhipu {
+		return problem(400, "invalid-profile", "模型供应商必须是 OpenAI 兼容接口、DeepSeek 或智谱")
+	}
+	// 智谱 GLM 的思考无法关闭：anthropic/responses 的 wire 会显式关思考或映射未知档位，先在配置层挡住；
+	// disabled 档会被映射成 reasoning_effort:none，上游必拒，同样拒绝声明。
+	if p.Provider == ProviderZhipu {
+		if p.APIFormat != FormatChatCompletions {
+			return problem(400, "invalid-profile", "智谱服务当前仅支持 Chat Completions 格式")
+		}
+		for _, level := range p.Capabilities.ReasoningLevels {
+			if level == "disabled" {
+				return problem(400, "invalid-profile", "智谱模型的思考无法关闭，不能声明 disabled 推理档位")
+			}
+		}
 	}
 	if strings.TrimSpace(p.Credential) == "" {
 		return problem(400, "invalid-profile", "请配置 API Key")
@@ -213,6 +225,7 @@ func validateProfile(p Profile) error {
 		return problem(400, "invalid-profile", "模型推理等级不能超过 16 项")
 	}
 	seenReasoning := make(map[string]bool, len(p.Capabilities.ReasoningLevels))
+	declaredDefault := false
 	for _, level := range p.Capabilities.ReasoningLevels {
 		if !reasoningLevel.MatchString(level) {
 			return problem(400, "invalid-profile", "模型推理等级无效")
@@ -220,7 +233,13 @@ func validateProfile(p Profile) error {
 		if seenReasoning[level] {
 			return problem(400, "invalid-profile", "模型推理等级不能重复")
 		}
+		if level == p.Capabilities.DefaultReasoningLevel {
+			declaredDefault = true
+		}
 		seenReasoning[level] = true
+	}
+	if p.Capabilities.DefaultReasoningLevel != "" && !declaredDefault {
+		return problem(400, "invalid-profile", "模型默认推理档位必须是已声明的档位")
 	}
 	if len(p.Credential) > 8192 || !utf8.ValidString(p.Credential) || strings.IndexFunc(p.Credential, unicode.IsControl) >= 0 {
 		return problem(400, "invalid-profile", "模型凭据格式无效")

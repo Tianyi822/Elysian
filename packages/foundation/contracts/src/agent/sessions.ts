@@ -18,10 +18,12 @@ export type AgentModelCapabilities = {
   systemMessages?: boolean
   /** 支持的推理等级，按用户指定的低到高顺序保存；不选择本次运行的强度。 */
   reasoningLevels?: readonly AgentModelReasoningLevel[]
+  /** 声明的默认推理档，必须是 reasoningLevels 之一；官方预设按文档填入，未声明时界面回落到通用策略。 */
+  defaultReasoningLevel?: AgentModelReasoningLevel
   source: string
 }
 
-export type AgentModelProvider = 'openai-compatible' | 'deepseek'
+export type AgentModelProvider = 'openai-compatible' | 'deepseek' | 'zhipu'
 
 export const AGENT_MODEL_API_FORMATS = [
   { value: 'anthropic-messages', label: 'Anthropic Messages (/v1/messages)' },

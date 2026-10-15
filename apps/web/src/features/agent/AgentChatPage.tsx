@@ -75,9 +75,9 @@ export function AgentChatPage() {
   const busy = chat.sending || chat.stopping || isChatRunActive(chat.run) || !!chat.remoteSession?.activeRunId || !!chat.remoteSession?.activeWorkflowId
   const stopping = chat.stopping || (isChatRunActive(chat.run) && !!chat.run?.cancelRequestedAt)
   const lastUserMessage = chat.messages.filter(message => message.role === 'user').at(-1)
-  /** 思考等级只提供模型声明的档位：未选择或与当前模型不符时，取模型声明的默认档（优先「高」）。 */
+  /** 思考等级只提供模型声明的档位：未选择或与当前模型不符时，取模型声明的默认档（官方预设按文档填入），未声明时优先「高」。 */
   const reasoningLevels = model?.reasoningLevels ?? []
-  const reasoningLevel = session?.reasoningLevel && reasoningLevels.includes(session.reasoningLevel) ? session.reasoningLevel : defaultReasoningLevel(reasoningLevels) ?? ''
+  const reasoningLevel = session?.reasoningLevel && reasoningLevels.includes(session.reasoningLevel) ? session.reasoningLevel : defaultReasoningLevel(reasoningLevels, model?.defaultReasoningLevel) ?? ''
   const restoring = !!session?.remote && !chat.remoteSession
   const attachmentsLocked = !session || chat.loading || busy || restoring || !!session.pending
   const readError = chat.syncError && error && chat.syncError !== error
