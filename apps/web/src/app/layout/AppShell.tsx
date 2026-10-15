@@ -129,7 +129,7 @@ export function AppShell() {
             {hideHeader && (
               <Dialog.Trigger asChild>
                 <span ref={headerActionsRef} className="nav-float-trigger fixed left-3 top-0 z-30 flex h-[var(--shell-header-height)] items-center md:hidden">
-                  <IconButton label="打开主导航">
+                  <IconButton label="打开主导航" tooltip={false}>
                     <PanelLeftOpen aria-hidden size={16} />
                   </IconButton>
                 </span>
@@ -187,7 +187,7 @@ export function AppShell() {
                   >
                     <Dialog.Trigger asChild>
                       <span ref={headerActionsRef} className="shrink-0 md:hidden">
-                        <IconButton label="打开主导航" className="size-10">
+                        <IconButton label="打开主导航" tooltip={false} className="size-10">
                           <PanelLeftOpen aria-hidden size={18} />
                         </IconButton>
                       </span>
