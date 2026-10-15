@@ -23,6 +23,6 @@ export function SettingsTabSwitch() {
     </div>
     <div className={expanded ? 'flex' : 'hidden'}><HeaderTabs items={SETTINGS_TABS} value={tab} onSelect={setTab} groupLabel="设置页签" /></div>
     <SelectDropdown ariaLabel="设置页签" align="end" items={SETTINGS_TABS} value={tab} onSelect={setTab} valueClassName="font-medium text-fg"
-      triggerClassName={`${CTL_SELECT} ${expanded ? 'hidden' : 'inline-flex'}`} contentClassName="header-select-menu" />
+      triggerClassName={`${CTL_SELECT} ${expanded ? 'hidden' : 'inline-flex'}`} contentClassName="select-menu" />
   </>
 }

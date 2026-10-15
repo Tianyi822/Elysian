@@ -134,9 +134,13 @@ export function TerminalTabBar({
           value={active ? activeId : undefined}
           onSelect={onSelect}
           valueClassName="truncate font-medium text-fg"
+          // 收起形态仍留在同一枚胶囊里：触发器做成当前会话那枚选中胶囊，尾部多一个箭头。
           triggerClassName={`${
             expanded ? 'hidden' : 'inline-flex'
-          } min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-line px-2 py-1.5 text-xs text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg`}
+          } min-w-0 max-w-full items-center gap-1.5 rounded-full py-1 pl-3 text-sm font-medium transition-colors ${
+            active ? 'bg-nav-selected text-fg' : 'text-fg-muted hover:bg-nav-hover hover:text-fg'
+          }`}
+          contentClassName="select-menu"
         />
         {active ? (
           <span hidden={expanded}>

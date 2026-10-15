@@ -53,7 +53,7 @@ export function SecurityTabSwitch() {
         onSelect={setTab}
         valueClassName="font-medium text-fg"
         triggerClassName={`${CTL_SELECT} ${expanded ? 'hidden' : 'inline-flex'}`}
-        contentClassName="header-select-menu"
+        contentClassName="select-menu"
       />
     </>
   )

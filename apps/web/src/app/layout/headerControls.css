@@ -1,7 +1,11 @@
+/* 页头带：与侧栏品牌区同高 64px，附属控件在带内居中，因此控件顶底各留一段对称余量。
+   行本身不再叠外层行距：带底到控件底已有 14px（桌面档控件 36px）/18px（窄屏档 28px），
+   再叠 AppShell 行上的 mb-4 会把页签条与第一个组件之间撑到 30px。 */
 .aligned-header {
   min-height: var(--shell-header-height);
   margin-top: -16px;
   margin-inline: -4px;
+  margin-bottom: 0;
 }
 .aligned-header .icon-button { width: 28px; height: 28px; }
 .aligned-header .icon-button > svg { width: 16px; height: 16px; }
@@ -23,25 +27,4 @@
   .aligned-header [role="group"] > button { padding-inline: 8px; font-size: 12px; }
 }
 
-.header-select-menu {
-  width: var(--radix-dropdown-menu-trigger-width);
-  border-radius: var(--radius-lg);
-  border-color: var(--t-control-line);
-  background-color: var(--t-surface-raised);
-  font-size: 14px;
-}
-.header-select-menu [role="menuitemradio"] {
-  min-height: 32px;
-  padding: 6px 10px;
-  border-radius: 4px;
-}
-.header-select-menu [role="menuitemradio"] + [role="menuitemradio"] { margin-top: 4px; }
-.header-select-menu [role="menuitemradio"]:hover,
-.header-select-menu [role="menuitemradio"][data-highlighted] {
-  background-color: var(--t-nav-hover);
-  color: var(--t-fg);
-}
-.header-select-menu [role="menuitemradio"][data-state="checked"] {
-  background-color: color-mix(in srgb, var(--t-accent) 12%, transparent);
-  color: var(--t-accent-fg);
-}
+/* 下拉菜单的统一皮肤在控件层：src/styles/index.css 的 .select-menu。 */
