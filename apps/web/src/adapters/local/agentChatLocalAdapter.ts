@@ -31,7 +31,9 @@ const isSession = (value: unknown): value is AgentChatSession => isRecord(value)
   && Array.isArray(value.attachments) && value.attachments.every(isAttachment)
   && (value.editing === undefined || (isRecord(value.editing) && typeof value.editing.messageId === 'string'
     && typeof value.editing.taskId === 'string' && typeof value.editing.text === 'string'
-    && (value.editing.attachments === undefined || (Array.isArray(value.editing.attachments) && value.editing.attachments.every(isAttachmentRef)))))
+    && (value.editing.attachments === undefined || (Array.isArray(value.editing.attachments) && value.editing.attachments.every(isAttachmentRef)))
+    && (value.editing.preparedAttachments === undefined || (Array.isArray(value.editing.preparedAttachments)
+      && value.editing.preparedAttachments.every(item => isRecord(item) && typeof item.sourceId === 'string' && isAttachment(item.attachment))))))
   && (value.remote === undefined || (isRecord(value.remote) && typeof value.remote.sessionId === 'string'
     && (value.remote.taskId === undefined || typeof value.remote.taskId === 'string')
     && (value.remote.runId === undefined || typeof value.remote.runId === 'string')))
@@ -50,6 +52,9 @@ const storedSession = (session: AgentChatSession): AgentChatSession => ({
   ...session,
   attachments: session.attachments.map(storedAttachment),
   messages: session.messages.map(message => ({ ...message, attachments: message.attachments.map(storedAttachment) })),
+  ...(session.editing ? { editing: { ...session.editing,
+    ...(session.editing.preparedAttachments ? { preparedAttachments: session.editing.preparedAttachments.map(item => ({ ...item, attachment: storedAttachment(item.attachment) })) } : {}),
+  } } : {}),
 })
 
 export function createAgentChatLocalAdapter(): AgentChatAdapter {

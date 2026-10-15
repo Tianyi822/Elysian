@@ -61,9 +61,8 @@ func validateAgentLimits(l Limits) error {
 	if l.MaxModelRequests < 2 || l.MaxModelRequests > 16 || l.ModelTimeoutSeconds < 1 || l.OutputTokens < 0 || l.OutputTokens > outputTokensCeiling || l.TokenBudget < 1 || l.TokenBudget > tokenBudgetCeiling || l.UserBytes < 1 || l.UserBytes > 32768 || l.MemoryBytes < 1 || l.MemoryBytes > 16384 || l.ModelResponseBytes < 1 || l.ModelResponseBytes > 4194304 {
 		return errors.New("Agent 模型、输入和记忆限额无效")
 	}
-	// Agent 通道必须显式开放图片附件（聊天附件是功能面）；「0 表示不开放」只属于
-	// 批处理通道的 validateLimits。字节上限 5 MiB 保证 base64 后仍在 wire 上限内。
-	if l.ImageCountPerMessage < 1 || l.ImageCountPerMessage > 50 || l.ImageBytesPerFile < 1 || l.ImageBytesPerFile > maxImageAttachmentBytes || l.ImageBytesPerMessage < 1 || l.ImageBytesPerMessage > maxImageAttachmentBytes {
+	// 新 Agent 配置始终有总字节预算，张数为 0 表示不设置数量限制。
+	if l.ImageBytesPerFile < 1 || l.ImageBytesPerMessage < 1 {
 		return errors.New("Agent 图片附件限额无效")
 	}
 	return nil

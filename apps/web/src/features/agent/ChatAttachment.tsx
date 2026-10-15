@@ -14,8 +14,8 @@ function fileIcon(attachment: AgentChatAttachment) {
 
 function fileSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${Math.ceil(bytes / 1024)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  if (bytes < 1024 * 1024) return `${Math.ceil(bytes / 1024)} KiB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MiB`
 }
 
 export function ChatAttachment({ attachment, onRemove }: { attachment: AgentChatAttachment; onRemove?: () => void }) {

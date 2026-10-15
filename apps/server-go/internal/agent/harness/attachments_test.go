@@ -92,17 +92,44 @@ func TestAttachmentCreateLimits(t *testing.T) {
 	if len(items) != 2 || items[0].MimeType != "image/png" || items[1].MimeType != "image/jpeg" || items[0].Bytes != len(png) || items[0].Width != 1 {
 		t.Fatalf("上传回执错误：%+v", items)
 	}
-	if _, err = m.CreateAttachments(ctx, []AttachmentUpload{{Name: "c.png", Content: png}, {Name: "d.jpg", Content: jpeg}, {Name: "e.png", Content: png}, {Name: "f.jpg", Content: jpeg}, {Name: "g.png", Content: png}}); err == nil || err.(*Error).Code != "attachment-too-many" {
-		t.Fatalf("张数未拦截：%v", err)
+	uploads := make([]AttachmentUpload, 51)
+	for i := range uploads {
+		uploads[i] = AttachmentUpload{Name: "small.png", Content: png}
 	}
-	if _, err = m.CreateAttachments(ctx, []AttachmentUpload{{Name: "big.png", Content: paddedImage(t, png, 4194305)}}); err == nil || err.(*Error).Code != "attachment-too-large" {
+	if items, err = m.CreateAttachments(ctx, uploads); err != nil || len(items) != len(uploads) {
+		t.Fatalf("总字节合规的 51 张图片应可上传：%d %v", len(items), err)
+	}
+	if _, err = m.CreateAttachments(ctx, []AttachmentUpload{{Name: "big.png", Content: paddedImage(t, png, 1048577)}}); err == nil || err.(*Error).Code != "attachment-too-large" {
 		t.Fatalf("单文件字节未拦截：%v", err)
 	}
+	full := paddedImage(t, png, 1048576)
+	uploads = make([]AttachmentUpload, 8)
+	for i := range uploads {
+		uploads[i] = AttachmentUpload{Name: "full.png", Content: full}
+	}
+	if items, err = m.CreateAttachments(ctx, uploads); err != nil || len(items) != 8 {
+		t.Fatalf("合计等于 8 MiB 的图片应可上传：%d %v", len(items), err)
+	}
+	uploads[7].Content = paddedImage(t, png, 1048576-len(png)+1)
+	uploads = append(uploads, AttachmentUpload{Name: "extra.png", Content: png})
+	if _, err = m.CreateAttachments(ctx, uploads); err == nil || err.(*Error).Code != "attachment-message-too-large" || err.Error() != "本条消息附件合计超过 8 MiB，请分批发送。" {
+		t.Fatalf("合计超过 8 MiB 一个字节应提示分批发送：%v", err)
+	}
+	// 旧正数总量策略仍可复检历史快照，不改变已保存限额的语义。
+	m.deps.AgentLimits.ImageCountPerMessage = 4
+	m.deps.AgentLimits.ImageBytesPerFile = 4194304
+	m.deps.AgentLimits.ImageBytesPerMessage = 4194304
 	if _, err = m.CreateAttachments(ctx, []AttachmentUpload{
 		{Name: "half1.png", Content: paddedImage(t, png, 2202009)},
 		{Name: "half2.png", Content: paddedImage(t, png, 2202009)},
 	}); err == nil || err.(*Error).Code != "attachment-message-too-large" {
 		t.Fatalf("总字节未拦截：%v", err)
+	}
+	if _, err = m.CreateAttachments(ctx, []AttachmentUpload{
+		{Name: "a.png", Content: png}, {Name: "b.png", Content: png}, {Name: "c.png", Content: png},
+		{Name: "d.png", Content: png}, {Name: "e.png", Content: png},
+	}); err == nil || err.(*Error).Code != "attachment-too-many" {
+		t.Fatalf("旧正数张数策略未保留：%v", err)
 	}
 }
 
@@ -262,9 +289,13 @@ func TestAttachmentUploadRoute(t *testing.T) {
 	if response = send(req, boundary); response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "invalid-upload") {
 		t.Fatalf("part 名错误未被拒绝：%d %s", response.Code, response.Body.String())
 	}
-	req, boundary = buildMultipart([2]string{"file", "a.png"}, [2]string{"file", "b.png"}, [2]string{"file", "c.png"}, [2]string{"file", "d.png"}, [2]string{"file", "e.png"})
-	if response = send(req, boundary); response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "attachment-too-many") {
-		t.Fatalf("单请求张数未拦截：%d %s", response.Code, response.Body.String())
+	parts := make([][2]string, 51)
+	for i := range parts {
+		parts[i] = [2]string{"file", "small.png"}
+	}
+	req, boundary = buildMultipart(parts...)
+	if response = send(req, boundary); response.Code != http.StatusCreated || strings.Count(response.Body.String(), `"mimeType":"image/png"`) != len(parts) {
+		t.Fatalf("总字节合规的 51 张图片上传回执错误：%d %s", response.Code, response.Body.String())
 	}
 	req = httptest.NewRequest(http.MethodPost, "http://localhost/api/agent/attachments", strings.NewReader("not multipart"))
 	req.Header.Set("Origin", "http://localhost")
@@ -280,17 +311,46 @@ func TestAttachmentUploadRoute(t *testing.T) {
 
 func TestAgentImageLimitCeiling(t *testing.T) {
 	agent := DefaultAgentLimits()
-	agent.ImageBytesPerFile = maxImageAttachmentBytes + 1
+	if agent.ImageCountPerMessage != 0 || agent.ImageBytesPerFile != 1048576 || agent.ImageBytesPerMessage != 8388608 {
+		t.Fatalf("默认图片策略错误：%+v", agent)
+	}
+	if err := validateAgentLimits(agent); err != nil {
+		t.Fatalf("总字节有界时应允许不设置张数限制：%v", err)
+	}
+	agent.ImageBytesPerFile = maxImageAttachmentFileBytes + 1
 	if err := validateAgentLimits(agent); err == nil {
 		t.Fatal("Agent 单文件字节越过 5 MiB 上限未被拒绝")
 	}
 	agent = DefaultAgentLimits()
-	agent.ImageBytesPerMessage = 0
-	if err := validateAgentLimits(agent); err == nil {
-		t.Fatal("Agent 通道未显式设置图片限额未被拒绝")
+	agent.ImageCountPerMessage = 51
+	if err := validateAgentLimits(agent); err != nil {
+		t.Fatalf("总字节有界时不应按张数乘单张上限拒绝：%v", err)
+	}
+	agent = DefaultAgentLimits()
+	agent.ImageCountPerMessage = 4
+	agent.ImageBytesPerFile = 4194304
+	agent.ImageBytesPerMessage = 4194304
+	if err := validateAgentLimits(agent); err != nil {
+		t.Fatalf("旧正数图片总量策略应保持兼容：%v", err)
+	}
+	for _, field := range []string{"count-negative", "file", "total", "total-too-large"} {
+		agent = DefaultAgentLimits()
+		switch field {
+		case "count-negative":
+			agent.ImageCountPerMessage = -1
+		case "file":
+			agent.ImageBytesPerFile = 0
+		case "total":
+			agent.ImageBytesPerMessage = 0
+		case "total-too-large":
+			agent.ImageBytesPerMessage = maxImageAttachmentSetBytes + 1
+		}
+		if err := validateAgentLimits(agent); err == nil {
+			t.Fatalf("Agent 通道无效的 %s 限额未被拒绝", field)
+		}
 	}
 	batch := DefaultLimits()
-	batch.ImageBytesPerFile = maxImageAttachmentBytes + 1
+	batch.ImageBytesPerFile = maxImageAttachmentFileBytes + 1
 	if err := validateLimits(batch); err == nil {
 		t.Fatal("批处理通道字节上限未同步收紧")
 	}

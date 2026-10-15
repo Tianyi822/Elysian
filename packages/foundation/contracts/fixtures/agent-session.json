@@ -130,9 +130,8 @@
         "userBytes": 32768,
         "memoryBytes": 16384,
         "modelResponseBytes": 2097152,
-        "imageCountPerMessage": 4,
-        "imageBytesPerFile": 4194304,
-        "imageBytesPerMessage": 4194304
+        "imageBytesPerFile": 1048576,
+        "imageBytesPerMessage": 8388608
       },
       "usage": {
         "calls": 1,
@@ -208,9 +207,8 @@
       "userBytes": 32768,
       "memoryBytes": 16384,
       "modelResponseBytes": 2097152,
-      "imageCountPerMessage": 4,
-      "imageBytesPerFile": 4194304,
-      "imageBytesPerMessage": 4194304
+      "imageBytesPerFile": 1048576,
+      "imageBytesPerMessage": 8388608
     },
     "usage": {
       "calls": 1,

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentMessage, AgentSession } from '@elysian/contracts'
 import { agentChatSessionKey } from '../contracts/agentChat'
 import type { AgentChatAdapter, AgentChatAttachment, AgentChatRun, AgentChatSession } from '../contracts/agentChat'
@@ -7,6 +7,16 @@ import { createAgentChatStore, useAgentChatStore } from './agentChatStore'
 import { useSessionStore } from './sessionStore'
 import { chatTestApi, chatTestModel, chatVisionTestModel } from '../test/agentChatFixtures'
 import { AgentHttpError } from '../adapters/http/agent/agentShared'
+import { prepareAgentImage } from '../adapters/local/agentImagePreparation'
+import { useNotificationStore } from './notificationStore'
+
+vi.mock('../adapters/local/agentImagePreparation', () => ({ prepareAgentImage: vi.fn(async (file: File) => file) }))
+beforeEach(() => {
+  useNotificationStore.getState().clear()
+  vi.mocked(prepareAgentImage).mockReset().mockImplementation(async file => file)
+})
+
+const notificationMessage = () => useNotificationStore.getState().notifications.at(-1)?.message
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void
@@ -151,7 +161,7 @@ describe('智能体本地会话', () => {
     expect(store.getState().session?.editing).toBeUndefined()
     backend.api.cancelRun.mockRejectedValueOnce(new Error('取消请求失败'))
     await store.getState().stop(backend.api)
-    expect(store.getState().error).toBe('取消请求失败')
+    expect(notificationMessage()).toBe('取消请求失败')
     expect(store.getState().stopping).toBe(false)
     await store.getState().stop(backend.api)
     expect(store.getState().run?.status).toBe('cancelled')
@@ -188,8 +198,8 @@ describe('智能体本地会话', () => {
     store.getState().setDraft('分析图片')
     expect(await store.getState().send(api, chatVisionTestModel)).toBe(false)
     expect(api.createTask).not.toHaveBeenCalled()
-    expect(store.getState().error).toContain('存在未上传的附件')
-    expect(store.getState().error).toContain('diagram.png')
+    expect(notificationMessage()).toContain('存在未上传的附件')
+    expect(notificationMessage()).toContain('diagram.png')
     // 被拦截的输入不写 pending，重试也不会产出空引用。
     expect(store.getState().session?.pending).toBeUndefined()
   })
@@ -213,6 +223,291 @@ describe('智能体本地会话', () => {
     // 确认接受后草稿附件清空并释放本地字节。
     expect(store.getState().session?.attachments).toEqual([])
     expect(local.files.size).toBe(0)
+  })
+
+  it('八张大图压缩后恰好 8 MiB 接受，本地保存与上传使用同一份文件', async () => {
+    const local = localMemory()
+    const store = local.makeStore()
+    const backend = chatTestApi()
+    const originals = Array.from({ length: 8 }, (_, index) => new File([new ArrayBuffer(2 * 1048576)], `${index}.png`, { type: 'image/png' }))
+    const prepared = originals.map((file, index) => new File([new ArrayBuffer(1048576)], `${index}.jpg`, { type: 'image/jpeg', lastModified: file.lastModified }))
+    prepared.forEach(file => vi.mocked(prepareAgentImage).mockResolvedValueOnce(file))
+    await store.getState().addAttachments(backend.api, originals)
+    expect(prepareAgentImage).toHaveBeenCalledTimes(8)
+    expect(backend.api.uploadAttachments).toHaveBeenCalledWith(prepared, expect.any(AbortSignal))
+    expect([...local.files.values()]).toEqual(prepared)
+    expect(store.getState().session?.attachments.map(item => ({ size: item.size, type: item.type })))
+      .toEqual(prepared.map(() => ({ size: 1048576, type: 'image/jpeg' })))
+  })
+
+  it('超过 50 张小图可加入草稿并携带全部引用发送', async () => {
+    const store = localMemory().makeStore()
+    const backend = chatTestApi()
+    const files = Array.from({ length: 51 }, (_, index) => new File(['x'], `${index}.png`, { type: 'image/png' }))
+    await store.getState().addAttachments(backend.api, files)
+    expect(store.getState().session?.attachments).toHaveLength(51)
+    expect(backend.api.uploadAttachments).toHaveBeenCalledWith(files, expect.any(AbortSignal))
+    store.getState().setDraft('分析这组图片')
+    expect(await store.getState().send(backend.api, chatVisionTestModel)).toBe(true)
+    expect(backend.api.createTask.mock.lastCall?.[1].attachments).toEqual(
+      files.map((_, index) => ({ id: `server-attachment-${index + 1}` })),
+    )
+  })
+
+  it('压缩后合计超过 8 MiB 一个字节时整批拒绝，保留草稿且不上传', async () => {
+    const local = localMemory()
+    const store = local.makeStore()
+    const backend = chatTestApi()
+    await store.getState().ensureSession()
+    store.getState().setDraft('保留输入')
+    const files = Array.from({ length: 8 }, (_, index) => new File([new ArrayBuffer(1048576)], `${index}.png`, { type: 'image/png' }))
+    files.push(new File(['x'], 'extra.png', { type: 'image/png' }))
+    await store.getState().addAttachments(backend.api, files)
+    expect(notificationMessage()).toBe('本条消息附件合计超过 8 MiB，请分批发送。')
+    expect(backend.api.uploadAttachments).not.toHaveBeenCalled()
+    expect(store.getState().session?.attachments).toEqual([])
+    expect(store.getState().session?.draft).toBe('保留输入')
+    expect(store.getState().uploadingAttachments).toBe(false)
+    expect(local.files.size).toBe(0)
+  })
+
+  it.each([0, 1])('累计既有图片和本批压缩后字节，8 MiB 边界额外 %s 字节', async extra => {
+    const local = localMemory()
+    const store = local.makeStore()
+    const backend = chatTestApi()
+    const existing = Array.from({ length: 7 }, (_, index) => new File([new ArrayBuffer(1048576)], `${index}.png`, { type: 'image/png' }))
+    await store.getState().addAttachments(backend.api, existing)
+    const before = store.getState().session!.attachments
+    backend.api.uploadAttachments.mockClear()
+    const original = new File([new ArrayBuffer(2 * 1048576)], 'new.png', { type: 'image/png' })
+    const compressed = new File([new ArrayBuffer(1048576)], 'new.jpg', { type: 'image/jpeg' })
+    vi.mocked(prepareAgentImage).mockResolvedValueOnce(compressed)
+    await store.getState().addAttachments(backend.api, [original, ...(extra ? [new File(['x'], 'extra.png', { type: 'image/png' })] : [])])
+    if (extra) {
+      expect(notificationMessage()).toBe('本条消息附件合计超过 8 MiB，请分批发送。')
+      expect(backend.api.uploadAttachments).not.toHaveBeenCalled()
+      expect(store.getState().session?.attachments).toEqual(before)
+      expect(local.files.size).toBe(7)
+    } else {
+      expect(backend.api.uploadAttachments).toHaveBeenCalledWith([compressed], expect.any(AbortSignal))
+      expect(store.getState().session?.attachments).toHaveLength(8)
+      expect([...local.files.values()].at(-1)).toBe(compressed)
+      expect(useNotificationStore.getState().notifications).toEqual([])
+    }
+  })
+
+  it('旧草稿单图均合规但总量超限时发送被拦截，不创建会话或 pending', async () => {
+    const store = localMemory().makeStore()
+    const backend = chatTestApi()
+    await store.getState().ensureSession()
+    store.getState().setDraft('旧图草稿')
+    const attachments = Array.from({ length: 9 }, (_, index) => ({
+      id: `local-${index}`, serverId: `server-${index}`, name: `${index}.png`, size: 1048576,
+      type: 'image/png', lastModified: 0, available: false, width: 1, height: 1,
+    }))
+    store.getState().session!.attachments = attachments
+    expect(await store.getState().send(backend.api, chatVisionTestModel)).toBe(false)
+    expect(notificationMessage()).toBe('本条消息附件合计超过 8 MiB，请分批发送。')
+    expect(store.getState().session?.pending).toBeUndefined()
+    expect(store.getState().session?.attachments).toEqual(attachments)
+    expect(store.getState().session?.draft).toBe('旧图草稿')
+    expect(backend.api.createSession).not.toHaveBeenCalled()
+    expect(backend.api.createTask).not.toHaveBeenCalled()
+    expect(backend.api.attachmentBlob).not.toHaveBeenCalled()
+    expect(backend.api.uploadAttachments).not.toHaveBeenCalled()
+  })
+
+  it('升级前未确认 pending 超过新总量时原样重试，跳过压缩、模型与新总量校验', async () => {
+    const local = localMemory()
+    const store = local.makeStore()
+    const backend = chatTestApi()
+    await store.getState().ensureSession()
+    const attachments = Array.from({ length: 9 }, (_, index) => ({
+      id: `local-${index}`, serverId: `server-${index}`, name: `${index}.png`, size: 1048576,
+      type: 'image/png', lastModified: 0, available: false, width: 1, height: 1,
+    }))
+    const input = { requestId: 'old-pending-request', content: '旧输入', attachments: attachments.map(item => ({ id: item.serverId })) }
+    local.adapter.write({ ...store.getState().session!, draft: '旧输入', attachments, remote: { sessionId: backend.session.id }, pending: { input } })
+    store.getState().clearDisplay()
+    await store.getState().ensureSession()
+    useNotificationStore.getState().clear()
+    expect(await store.getState().send(backend.api)).toBe(true)
+    expect(backend.api.createTask).toHaveBeenCalledExactlyOnceWith(backend.session.id, input)
+    expect(prepareAgentImage).not.toHaveBeenCalled()
+    expect(backend.api.attachmentBlob).not.toHaveBeenCalled()
+    expect(backend.api.uploadAttachments).not.toHaveBeenCalled()
+    expect(store.getState().session?.pending).toBeUndefined()
+    expect(useNotificationStore.getState().notifications).toEqual([])
+  })
+
+  it('整批图片处理失败时不上传任何图片，草稿和既有附件保留', async () => {
+    const store = localMemory().makeStore()
+    const backend = chatTestApi()
+    await store.getState().ensureSession()
+    store.getState().setDraft('保留输入')
+    const first = new File(['png'], 'a.png', { type: 'image/png' })
+    await store.getState().addAttachments(backend.api, [first])
+    const prior = store.getState().session?.attachments
+    backend.api.uploadAttachments.mockClear()
+    vi.mocked(prepareAgentImage).mockResolvedValueOnce(first).mockRejectedValueOnce(new Error('图片“bad.png”无法解码'))
+    await store.getState().addAttachments(backend.api, [first, new File(['invalid'], 'bad.png', { type: 'image/png' })])
+    expect(backend.api.uploadAttachments).not.toHaveBeenCalled()
+    expect(store.getState().session?.attachments).toEqual(prior)
+    expect(store.getState().session?.draft).toBe('保留输入')
+    expect(notificationMessage()).toContain('bad.png')
+  })
+
+  it('旧草稿超限图片发送前压缩，刷新后的重试固定新附件且释放旧本地字节', async () => {
+    const local = localMemory()
+    const store = local.makeStore()
+    const backend = chatTestApi()
+    await store.getState().ensureSession()
+    const oldFile = new File([new ArrayBuffer(2 * 1048576)], 'old.png', { type: 'image/png' })
+    const uploaded = await backend.api.uploadAttachments([oldFile])
+    const attached = await local.adapter.attach([oldFile])
+    local.adapter.write({ ...store.getState().session!, draft: '旧图', attachments: [{ ...attached.attachments[0]!, serverId: uploaded.items[0]!.id }] })
+    await store.getState().clearDisplay()
+    await store.getState().ensureSession()
+    backend.api.uploadAttachments.mockClear()
+    const compressed = new File(['jpeg'], 'old.jpg', { type: 'image/jpeg' })
+    vi.mocked(prepareAgentImage).mockResolvedValueOnce(compressed)
+    backend.api.createTask.mockRejectedValueOnce(new Error('回执丢失'))
+    expect(await store.getState().send(backend.api, chatVisionTestModel)).toBe(false)
+    const pending = store.getState().session!.pending!
+    expect(pending.input.attachments).toEqual([{ id: 'server-attachment-2' }])
+    expect(backend.api.attachmentBlob).toHaveBeenCalledWith('server-attachment-1', expect.any(AbortSignal))
+    expect([...local.files.values()]).toEqual([compressed])
+    const refreshed = local.makeStore()
+    await refreshed.getState().ensureSession()
+    expect(await refreshed.getState().send(backend.api, chatVisionTestModel)).toBe(true)
+    expect(backend.api.createTask).toHaveBeenLastCalledWith('server-session', pending.input)
+    expect(prepareAgentImage).toHaveBeenCalledOnce()
+    expect(backend.api.uploadAttachments).toHaveBeenCalledOnce()
+    expect(local.files.size).toBe(0)
+  })
+
+  it('编辑重发压缩超限旧图，明确拒绝后刷新复用处理结果，不改原历史或底部附件', async () => {
+    const local = localMemory()
+    const store = local.makeStore()
+    const backend = chatTestApi()
+    const old = await backend.api.uploadAttachments([new File([new ArrayBuffer(2 * 1048576)], 'old.png', { type: 'image/png' })])
+    await backend.api.createTask('server-session', { requestId: 'old', content: '原消息', attachments: [{ id: old.items[0]!.id }] })
+    await store.getState().initialize(backend.api, 'server-session')
+    const original = backend.messages[0]!
+    const originalAttachments = structuredClone(original.attachments)
+    await store.getState().addAttachments(backend.api, [new File(['draft'], 'draft.png', { type: 'image/png' })])
+    const bottom = store.getState().session!.attachments
+    store.getState().editMessage(original.id)
+    store.getState().setEditText('修改消息')
+    backend.api.uploadAttachments.mockClear()
+    vi.mocked(prepareAgentImage).mockClear().mockResolvedValueOnce(new File(['jpeg'], 'old.jpg', { type: 'image/jpeg' }))
+    backend.api.continueTask.mockRejectedValueOnce(new AgentHttpError('暂时繁忙', 'queue-full', 429))
+    expect(await store.getState().send(backend.api, chatVisionTestModel)).toBe(false)
+    expect(store.getState().session?.pending).toBeUndefined()
+    expect(store.getState().session?.editing?.preparedAttachments?.[0]?.sourceId).toBe(old.items[0]!.id)
+    const refreshed = local.makeStore()
+    await refreshed.getState().ensureSession()
+    await refreshed.getState().refresh(backend.api)
+    expect(await refreshed.getState().send(backend.api, chatVisionTestModel)).toBe(true)
+    expect(backend.api.continueTask).toHaveBeenLastCalledWith('task-1', expect.objectContaining({ attachments: [{ id: 'server-attachment-3' }] }))
+    expect(backend.api.uploadAttachments).toHaveBeenCalledOnce()
+    expect(prepareAgentImage).toHaveBeenCalledOnce()
+    expect(original.attachments).toEqual(originalAttachments)
+    expect(refreshed.getState().session?.attachments).toEqual(bottom)
+    expect(local.files.size).toBe(1)
+  })
+
+  it('编辑图片缓存失效的明确拒绝清理缓存，刷新后重新压缩且保留编辑文本', async () => {
+    const local = localMemory()
+    const store = local.makeStore()
+    const backend = chatTestApi()
+    const old = await backend.api.uploadAttachments([new File([new ArrayBuffer(2 * 1048576)], 'old.png', { type: 'image/png' })])
+    await backend.api.createTask('server-session', { requestId: 'old', content: '原消息', attachments: [{ id: old.items[0]!.id }] })
+    await store.getState().initialize(backend.api, 'server-session')
+    const original = backend.messages[0]!
+    store.getState().editMessage(original.id)
+    store.getState().setEditText('保留修改后的问题')
+    backend.api.uploadAttachments.mockClear()
+    vi.mocked(prepareAgentImage).mockResolvedValueOnce(new File(['first'], 'first.jpg', { type: 'image/jpeg' }))
+    backend.api.continueTask.mockRejectedValueOnce(new AgentHttpError('暂时繁忙', 'queue-full', 429))
+    expect(await store.getState().send(backend.api, chatVisionTestModel)).toBe(false)
+    const cached = store.getState().session!.editing!.preparedAttachments![0]!.attachment
+    expect(local.files.has(cached.id)).toBe(true)
+    expect(cached.serverId).toBe('server-attachment-2')
+    backend.attachments.delete(cached.serverId!)
+    backend.api.continueTask.mockRejectedValueOnce(new AgentHttpError('附件不存在或已被使用', 'attachment-invalid', 400))
+
+    expect(await store.getState().send(backend.api, chatVisionTestModel)).toBe(false)
+    const invalidInput = backend.api.continueTask.mock.calls[1]![1]
+    const exactInvalidInput = structuredClone(invalidInput)
+    expect(invalidInput.attachments).toEqual([{ id: cached.serverId }])
+    expect(store.getState().session?.pending).toBeUndefined()
+    expect(store.getState().session?.editing).toMatchObject({
+      messageId: original.id, text: '保留修改后的问题', attachments: [{ id: old.items[0]!.id }],
+    })
+    expect(store.getState().session?.editing?.preparedAttachments).toBeUndefined()
+    expect(local.files.has(cached.id)).toBe(false)
+    expect(prepareAgentImage).toHaveBeenCalledOnce()
+
+    const restored = local.makeStore()
+    await restored.getState().ensureSession()
+    await restored.getState().refresh(backend.api)
+    vi.mocked(prepareAgentImage).mockResolvedValueOnce(new File(['fresh'], 'fresh.jpg', { type: 'image/jpeg' }))
+    expect(await restored.getState().send(backend.api, chatVisionTestModel)).toBe(true)
+    expect(backend.api.continueTask).toHaveBeenLastCalledWith('task-1', expect.objectContaining({
+      content: '保留修改后的问题', replaceMessageId: original.id, attachments: [{ id: 'server-attachment-3' }],
+    }))
+    expect(prepareAgentImage).toHaveBeenCalledTimes(2)
+    expect(backend.api.uploadAttachments).toHaveBeenCalledTimes(2)
+    expect(invalidInput).toEqual(exactInvalidInput)
+    expect(local.files.size).toBe(0)
+  })
+
+  it('旧图处理期间刷新到其他标签的新消息，中止过期编辑且不上传或写坏本地会话', async () => {
+    const local = localMemory()
+    const store = local.makeStore()
+    const backend = chatTestApi()
+    const old = await backend.api.uploadAttachments([new File([new ArrayBuffer(2 * 1048576)], 'old.png', { type: 'image/png' })])
+    await backend.api.createTask('server-session', { requestId: 'old', content: '原消息', attachments: [{ id: old.items[0]!.id }] })
+    await store.getState().initialize(backend.api, 'server-session')
+    store.getState().setDraft('底部草稿')
+    store.getState().editMessage(backend.messages[0]!.id)
+    store.getState().setEditText('过期的修改')
+    const preparing = deferred<File>()
+    vi.mocked(prepareAgentImage).mockReturnValueOnce(preparing.promise)
+    backend.api.uploadAttachments.mockClear()
+    backend.api.continueTask.mockClear()
+    const sending = store.getState().send(backend.api, chatVisionTestModel)
+    await vi.waitFor(() => expect(prepareAgentImage).toHaveBeenCalledOnce())
+
+    await backend.api.continueTask('task-1', { requestId: 'other-tab', content: '其他标签的新消息' })
+    await store.getState().refresh(backend.api)
+    expect(store.getState().session?.editing).toBeUndefined()
+    preparing.resolve(new File(['jpeg'], 'prepared.jpg', { type: 'image/jpeg' }))
+    expect(await sending).toBe(false)
+    expect(backend.api.uploadAttachments).not.toHaveBeenCalled()
+    expect(backend.api.continueTask).toHaveBeenCalledOnce()
+    expect(store.getState().session?.editing).toBeUndefined()
+    expect(store.getState().session?.pending).toBeUndefined()
+    expect(store.getState().session?.draft).toBe('底部草稿')
+    expect(store.getState().sending).toBe(false)
+    expect(notificationMessage()).toBe('原消息已变化，请重新选择需要编辑的消息。')
+    expect(local.files.size).toBe(0)
+    const restored = local.makeStore()
+    await restored.getState().ensureSession()
+    expect(restored.getState().session).toMatchObject({ draft: '底部草稿', remote: { sessionId: 'server-session' } })
+    expect(restored.getState().session?.editing).toBeUndefined()
+  })
+
+  it('附件超限的明确拒绝清除 pending，允许按新限制重新准备', async () => {
+    const store = localMemory().makeStore()
+    const backend = chatTestApi()
+    await store.getState().ensureSession()
+    store.getState().setDraft('消息')
+    backend.api.createTask.mockRejectedValueOnce(new AgentHttpError('单张图片不能超过 1 MiB。', 'attachment-too-large', 400))
+    expect(await store.getState().send(backend.api, chatTestModel)).toBe(false)
+    expect(store.getState().session?.pending).toBeUndefined()
+    expect(notificationMessage()).toBe('单张图片不能超过 1 MiB。')
   })
 
   it('上传和本地保存完成前阻止发送与重叠选图，完成后附图发送', async () => {
@@ -269,7 +564,7 @@ describe('智能体本地会话', () => {
     uploaded.reject(new Error('上传失败'))
     await adding
     expect(store.getState().uploadingAttachments).toBe(false)
-    expect(store.getState().error).toBe('上传失败')
+    expect(notificationMessage()).toBe('上传失败')
     expect(store.getState().session?.draft).toBe('分析图片')
     expect(store.getState().session?.attachments).toEqual([])
     await store.getState().addAttachments(backend.api, [file])
@@ -284,7 +579,7 @@ describe('智能体本地会话', () => {
     vi.spyOn(local.adapter, 'attach').mockRejectedValueOnce(new Error('本地保存失败'))
     await store.getState().addAttachments(backend.api, [new File(['png'], 'diagram.png', { type: 'image/png' })])
     expect(store.getState().uploadingAttachments).toBe(false)
-    expect(store.getState().error).toBe('本地保存失败')
+    expect(notificationMessage()).toBe('本地保存失败')
     expect(store.getState().session?.attachments).toEqual([])
   })
 
@@ -322,47 +617,153 @@ describe('智能体本地会话', () => {
     expect(local.files.size).toBe(1)
   })
 
-  it('尺寸检测期间阻止发送，离开会话后不再上传', async () => {
+  it('图片处理期间阻止发送和模型切换，离开会话后中止处理且不再上传', async () => {
     const store = localMemory().makeStore()
     const backend = chatTestApi()
-    const probeStarted = deferred<void>()
-    let finishProbe!: () => void
-    vi.stubGlobal('URL', class extends URL {
-      static override createObjectURL = vi.fn(() => 'blob:probe')
-      static override revokeObjectURL = vi.fn()
-    })
-    vi.stubGlobal('Image', class {
-      naturalWidth = 1
-      naturalHeight = 1
-      onload?: () => void
-      set src(_value: string) { finishProbe = () => this.onload?.(); probeStarted.resolve() }
-    })
-    try {
-      await store.getState().ensureSession()
-      store.getState().setDraft('分析图片')
-      const adding = store.getState().addAttachments(backend.api, [new File(['png'], 'diagram.png', { type: 'image/png' })])
-      await probeStarted.promise
-      expect(store.getState().uploadingAttachments).toBe(true)
-      expect(await store.getState().send(backend.api, chatVisionTestModel)).toBe(false)
-      await store.getState().newSession()
-      finishProbe()
-      await adding
-      expect(backend.api.uploadAttachments).not.toHaveBeenCalled()
-      expect(store.getState().uploadingAttachments).toBe(false)
-    } finally { vi.unstubAllGlobals() }
+    const prepared = deferred<File>()
+    vi.mocked(prepareAgentImage).mockReturnValueOnce(prepared.promise)
+    await store.getState().ensureSession()
+    store.getState().setModel('old-model')
+    store.getState().setDraft('分析图片')
+    const file = new File(['png'], 'diagram.png', { type: 'image/png' })
+    const adding = store.getState().addAttachments(backend.api, [file])
+    await vi.waitFor(() => expect(prepareAgentImage).toHaveBeenCalledOnce())
+    const signal = vi.mocked(prepareAgentImage).mock.calls[0]![1]!
+    expect(store.getState().uploadingAttachments).toBe(true)
+    expect(await store.getState().send(backend.api, chatVisionTestModel)).toBe(false)
+    store.getState().setModel('new-model')
+    expect(store.getState().session?.modelId).toBe('old-model')
+    await store.getState().newSession()
+    expect(signal.aborted).toBe(true)
+    prepared.resolve(file)
+    await adding
+    expect(backend.api.uploadAttachments).not.toHaveBeenCalled()
+    expect(store.getState().uploadingAttachments).toBe(false)
   })
 
-  it('格式、大小与张数在前端预检拒绝，失败文件不进会话', async () => {
+  it('格式与处理失败在上传前拒绝，失败文件不进会话', async () => {
     const store = localMemory().makeStore()
     const backend = chatTestApi()
     await store.getState().ensureSession()
     await store.getState().addAttachments(backend.api, [new File(['x'], 'a.txt', { type: 'text/plain' })])
-    expect(store.getState().error).toContain('图片仅支持 JPEG 与 PNG')
+    expect(notificationMessage()).toContain('图片仅支持 JPEG 与 PNG')
+    vi.mocked(prepareAgentImage).mockRejectedValueOnce(new Error('无法读取图片“big.png”，请重新选择。'))
     await store.getState().addAttachments(backend.api, [new File([new ArrayBuffer(4194305)], 'big.png', { type: 'image/png' })])
-    expect(store.getState().error).toContain('单张图片不能超过 4 MiB')
+    expect(notificationMessage()).toContain('big.png')
     expect(backend.api.uploadAttachments).not.toHaveBeenCalled()
     expect(store.getState().session?.attachments).toEqual([])
     expect(store.getState().uploadingAttachments).toBe(false)
+  })
+
+  it('会话存储连续失败只提示一次，成功写入后再次失败开启新的提示周期', async () => {
+    const local = localMemory()
+    const store = local.makeStore()
+    await store.getState().ensureSession()
+    const originalWrite = local.adapter.write
+    const write = vi.spyOn(local.adapter, 'write').mockReturnValue(false)
+    store.getState().setDraft('第一次输入')
+    store.getState().setDraft('第二次输入')
+    store.getState().setModel(chatTestModel.id)
+    expect(useNotificationStore.getState().notifications).toEqual([
+      expect.objectContaining({ tone: 'info', message: '浏览器暂时无法保存会话，刷新后可能丢失本页内容。' }),
+    ])
+    expect(store.getState().session?.draft).toBe('第二次输入')
+    write.mockImplementation(originalWrite)
+    store.getState().setDraft('存储恢复')
+    write.mockReturnValue(false)
+    store.getState().setDraft('再次失败')
+    expect(useNotificationStore.getState().notifications).toHaveLength(2)
+    expect(notificationMessage()).toBe('浏览器暂时无法保存会话，刷新后可能丢失本页内容。')
+  })
+
+  it('手动重试保存发送标识失败会再次提示，通用存储警告仍按故障周期去重', async () => {
+    const local = localMemory()
+    const store = local.makeStore()
+    const backend = chatTestApi()
+    await store.getState().ensureSession()
+    store.getState().setDraft('保留待发送消息')
+    vi.spyOn(local.adapter, 'write').mockReturnValue(false)
+    expect(await store.getState().send(backend.api, chatTestModel)).toBe(false)
+    expect(await store.getState().send(backend.api, chatTestModel)).toBe(false)
+    const notifications = useNotificationStore.getState().notifications
+    expect(notifications.filter(item => item.message === '浏览器暂时无法保存会话，刷新后可能丢失本页内容。')).toHaveLength(1)
+    expect(notifications.filter(item => item.message === '无法保存发送标识，请恢复浏览器存储后再发送。')).toHaveLength(2)
+    expect(backend.api.createTask).not.toHaveBeenCalled()
+    expect(store.getState().session?.draft).toBe('保留待发送消息')
+    expect(store.getState().session?.pending).toBeUndefined()
+  })
+
+  it('附件持久化连续失败只提示一次，成功保存后再次失败重新提示', async () => {
+    const local = localMemory()
+    const store = local.makeStore()
+    const backend = chatTestApi()
+    const originalAttach = local.adapter.attach
+    let persisted = false
+    vi.spyOn(local.adapter, 'attach').mockImplementation(async files => ({ ...await originalAttach(files), persisted }))
+    const add = (index: number) => store.getState().addAttachments(backend.api, [new File(['x'], `${index}.png`, { type: 'image/png' })])
+    await add(1)
+    await add(2)
+    expect(useNotificationStore.getState().notifications).toEqual([
+      expect.objectContaining({ tone: 'info', message: '附件仅在当前页面可用，浏览器暂时无法保存文件；刷新后请重新选择。' }),
+    ])
+    persisted = true
+    await add(3)
+    persisted = false
+    await add(4)
+    expect(useNotificationStore.getState().notifications).toHaveLength(2)
+    expect(store.getState().session?.attachments).toHaveLength(4)
+  })
+
+  it('恢复相同缺失附件集合时不重复提示，缺失集合变化后再次提示', async () => {
+    const local = localMemory()
+    const store = local.makeStore()
+    const backend = chatTestApi()
+    await store.getState().addAttachments(backend.api, [new File(['x'], 'missing.png', { type: 'image/png' })])
+    local.files.clear()
+    store.getState().clearDisplay()
+    await store.getState().ensureSession()
+    expect(useNotificationStore.getState().notifications).toHaveLength(1)
+    expect(notificationMessage()).toContain('无法从浏览器恢复')
+    local.publish()
+    await Promise.resolve()
+    local.publish()
+    await Promise.resolve()
+    expect(useNotificationStore.getState().notifications).toHaveLength(1)
+    const saved = local.adapter.read()!
+    local.adapter.write({ ...saved, attachments: [...saved.attachments, {
+      id: 'missing-2', serverId: 'server-2', name: 'second.png', size: 1, type: 'image/png', lastModified: 0, available: true,
+    }] })
+    local.publish()
+    await Promise.resolve()
+    expect(useNotificationStore.getState().notifications).toHaveLength(2)
+    local.publish()
+    await Promise.resolve()
+    expect(useNotificationStore.getState().notifications).toHaveLength(2)
+  })
+
+  it('clearDisplay 只清 Ely 自己的消息，迟到压缩错误不污染重新登录的展示', async () => {
+    const store = localMemory().makeStore()
+    const backend = chatTestApi()
+    const externalId = useNotificationStore.getState().notify({ tone: 'success', message: '其他页面的操作反馈' })
+    store.getState().reportOperation('Ely 旧操作失败')
+    const preparation = deferred<File>()
+    vi.mocked(prepareAgentImage).mockReturnValueOnce(preparation.promise)
+    const adding = store.getState().addAttachments(backend.api, [new File(['x'], 'old.png', { type: 'image/png' })])
+    await vi.waitFor(() => expect(prepareAgentImage).toHaveBeenCalledOnce())
+    const signal = vi.mocked(prepareAgentImage).mock.calls[0]![1]!
+    store.getState().clearDisplay()
+    expect(signal.aborted).toBe(true)
+    expect(useNotificationStore.getState().notifications).toEqual([
+      { id: externalId, tone: 'success', message: '其他页面的操作反馈' },
+    ])
+    await store.getState().ensureSession()
+    store.getState().reportOperation('Ely 新操作反馈', 'info')
+    preparation.reject(new Error('旧图片压缩失败'))
+    await adding
+    expect(useNotificationStore.getState().notifications.map(item => item.message)).toEqual(['其他页面的操作反馈', 'Ely 新操作反馈'])
+    expect(store.getState().session?.attachments).toEqual([])
+    expect(store.getState().uploadingAttachments).toBe(false)
+    expect(backend.api.uploadAttachments).not.toHaveBeenCalled()
   })
 
   it('无图能力模型的会话拒绝带附件发送并提示切换', async () => {
@@ -373,7 +774,7 @@ describe('智能体本地会话', () => {
     store.getState().setDraft('分析图片')
     expect(await store.getState().send(backend.api, chatTestModel)).toBe(false)
     expect(backend.api.createTask).not.toHaveBeenCalled()
-    expect(store.getState().error).toBe('当前模型不支持图片输入，请移除附件或切换支持图片的模型。')
+    expect(notificationMessage()).toBe('当前模型不支持图片输入，请移除附件或切换支持图片的模型。')
   })
 
   it('回执丢失后 pending 保留附件引用，重试按原输入复用同一批 id', async () => {
@@ -409,7 +810,7 @@ describe('智能体本地会话', () => {
     // 编辑中途切换到无图模型：send 拦截且不写 pending（覆盖入口预挡的时序缝隙）。
     expect(await store.getState().send(backend.api, chatTestModel)).toBe(false)
     expect(store.getState().session?.pending).toBeUndefined()
-    expect(store.getState().error).toBe('当前模型不支持图片输入，无法重发带图消息，请切换支持图片的模型。')
+    expect(notificationMessage()).toBe('当前模型不支持图片输入，无法重发带图消息，请切换支持图片的模型。')
     // 切回有图模型后重发沿用原轮附件 id。
     expect(await store.getState().send(backend.api, chatVisionTestModel)).toBe(true)
     expect(backend.api.continueTask).toHaveBeenLastCalledWith('task-1', expect.objectContaining({
@@ -430,7 +831,7 @@ describe('智能体本地会话', () => {
     store.getState().editMessage('message-1')
     expect(store.getState().session?.editing?.attachments).toBeUndefined()
     await store.getState().addAttachments(backend.api, [new File(['image'], 'another.png', { type: 'image/png' })])
-    expect(store.getState().error).toBe('正在编辑消息，完成后才能添加附件。')
+    expect(notificationMessage()).toBe('正在编辑消息，完成后才能添加附件。')
     expect(store.getState().session?.attachments).toHaveLength(1)
     store.getState().setEditText('改写纯文本')
     expect(await store.getState().send(backend.api, chatVisionTestModel)).toBe(true)
@@ -438,6 +839,35 @@ describe('智能体本地会话', () => {
     expect(input).not.toHaveProperty('attachments')
     // 草稿附件不被编辑重发消耗，仍留在草稿。
     expect(store.getState().session?.attachments.map(attachment => attachment.name)).toEqual(['draft.png'])
+  })
+
+  it.each([false, true])('编辑重发不受底部未上传旧附件阻挡，原轮含图片：%s', async originalHasImage => {
+    const local = localMemory()
+    const store = local.makeStore()
+    const backend = chatTestApi()
+    const model = originalHasImage ? chatVisionTestModel : chatTestModel
+    await store.getState().ensureSession()
+    if (originalHasImage) await store.getState().addAttachments(backend.api, [new File(['original'], 'original.png', { type: 'image/png' })])
+    store.getState().setDraft('原消息')
+    expect(await store.getState().send(backend.api, model)).toBe(true)
+    const legacy = await local.adapter.attach([new File(['legacy'], 'legacy.png', { type: 'image/png' })])
+    store.getState().session!.attachments = legacy.attachments
+    store.getState().setDraft('底部独立草稿')
+    store.getState().editMessage('message-1')
+    store.getState().setEditText('改写原消息')
+    backend.api.uploadAttachments.mockClear()
+    vi.mocked(prepareAgentImage).mockClear()
+    expect(await store.getState().send(backend.api, model)).toBe(true)
+    const input = backend.api.continueTask.mock.lastCall?.[1]
+    expect(input).toMatchObject({ content: '改写原消息', replaceMessageId: 'message-1' })
+    if (originalHasImage) expect(input?.attachments).toEqual([{ id: 'server-attachment-1' }])
+    else expect(input).not.toHaveProperty('attachments')
+    expect(store.getState().session?.attachments).toEqual(legacy.attachments)
+    expect(store.getState().session?.draft).toBe('底部独立草稿')
+    expect(local.files.has(legacy.attachments[0]!.id)).toBe(true)
+    expect(backend.api.uploadAttachments).not.toHaveBeenCalled()
+    expect(prepareAgentImage).not.toHaveBeenCalled()
+    expect(useNotificationStore.getState().notifications).toEqual([])
   })
 
   it('重试成功只清本次发送引用的附件，窗口内新增的草稿附件保留', async () => {
@@ -480,7 +910,7 @@ describe('智能体本地会话', () => {
     await restored.getState().ensureSession()
     expect(restored.getState().session?.attachments[0]?.available).toBe(false)
     expect(restored.getState().session?.attachments[0]?.serverId).toBe('server-attachment-1')
-    expect(restored.getState().notice).toContain('无法从浏览器恢复')
+    expect(notificationMessage()).toContain('无法从浏览器恢复')
     expect(await restored.getState().send(backend.api, chatVisionTestModel)).toBe(true)
     expect(restored.getState().session?.messages).toEqual([])
   })
@@ -537,6 +967,37 @@ describe('智能体本地会话', () => {
 })
 
 describe('基本聊天', () => {
+  it('收尾阶段可保存下一轮偏好，但仍等待本轮终态才接受发送', async () => {
+    const store = localMemory().makeStore()
+    const backend = chatTestApi()
+    backend.hold()
+    await store.getState().ensureSession()
+    store.getState().setModel(chatTestModel.id)
+    store.getState().setReasoningLevel('high')
+    store.getState().setDraft('请回答')
+    await store.getState().send(backend.api, chatTestModel)
+    store.getState().setModel(chatVisionTestModel.id)
+    store.getState().setReasoningLevel('low')
+    store.getState().setPermissionMode('assist')
+    expect(store.getState().session).toMatchObject({ modelId: chatTestModel.id, reasoningLevel: 'high', permissionMode: 'ask' })
+
+    backend.runs.get('run-1')!.phase = 'final-memory'
+    await store.getState().refresh(backend.api)
+    store.getState().setModel(chatVisionTestModel.id)
+    store.getState().setReasoningLevel('low')
+    store.getState().setPermissionMode('assist')
+    store.getState().setDraft('下一轮')
+    expect(store.getState().session).toMatchObject({ modelId: chatVisionTestModel.id, reasoningLevel: 'low', permissionMode: 'assist' })
+    expect(await store.getState().send(backend.api, chatVisionTestModel)).toBe(false)
+    expect(backend.api.switchModel).not.toHaveBeenCalled()
+    expect(store.getState().run).toMatchObject({ status: 'running', phase: 'final-memory' })
+
+    backend.complete()
+    await store.getState().refresh(backend.api)
+    expect(await store.getState().send(backend.api, chatVisionTestModel)).toBe(true)
+    expect(backend.api.continueTask).toHaveBeenCalledWith('task-1', expect.objectContaining({ content: '下一轮', reasoningLevel: 'low' }))
+  })
+
   it('流式预览不写历史，最终回读原位确认，离开会话后忽略迟到增量', async () => {
     const store = localMemory().makeStore()
     const backend = chatTestApi()
@@ -648,10 +1109,44 @@ describe('基本聊天', () => {
     await store.getState().ensureSession()
     store.getState().setDraft('你好')
     expect(await store.getState().send(api, chatTestModel)).toBe(false)
-    expect(store.getState().error).toBe('模型不可用')
+    expect(notificationMessage()).toBe('模型不可用')
     expect(store.getState().session?.draft).toBe('你好')
     expect(store.getState().messages).toEqual([])
     expect(store.getState().session?.pending).toBeUndefined()
+  })
+
+  it('同会话第二轮发送期间，第一轮迟到的思考读取不能解除发送锁或刷新列表', async () => {
+    const store = localMemory().makeStore()
+    const backend = chatTestApi()
+    const firstReasoning = deferred<string>()
+    backend.api.reasoning.mockReturnValueOnce(firstReasoning.promise)
+    await store.getState().ensureSession()
+    store.getState().setDraft('第一轮')
+    const firstSending = store.getState().send(backend.api, chatTestModel)
+    await vi.waitFor(() => expect(backend.api.reasoning).toHaveBeenCalledOnce())
+    expect(store.getState().run?.status).toBe('succeeded')
+    expect(store.getState().sending).toBe(false)
+    expect(store.getState().session?.pending).toBeUndefined()
+    const secondReading = deferred<AgentSession>()
+    backend.api.getSession.mockReturnValueOnce(secondReading.promise)
+    store.getState().setDraft('第二轮')
+    const secondSending = store.getState().send(backend.api, chatTestModel)
+    await vi.waitFor(() => expect(backend.api.getSession).toHaveBeenCalledTimes(2))
+    expect(store.getState().sending).toBe(true)
+    firstReasoning.resolve('第一轮迟到的思考')
+    expect(await firstSending).toBe(false)
+    expect(store.getState().sending).toBe(true)
+    expect(store.getState().reasoning).toEqual({})
+    expect(backend.api.listSessions).not.toHaveBeenCalled()
+    expect(await store.getState().send(backend.api, chatTestModel)).toBe(false)
+    expect(backend.api.continueTask).not.toHaveBeenCalled()
+    secondReading.resolve({ ...backend.session })
+    expect(await secondSending).toBe(true)
+    expect(store.getState().sending).toBe(false)
+    expect(backend.api.continueTask).toHaveBeenCalledExactlyOnceWith('task-1', expect.objectContaining({ content: '第二轮' }))
+    expect(backend.api.listSessions).toHaveBeenCalledOnce()
+    expect(store.getState().messages.filter(message => message.role === 'user').map(message => message.content)).toEqual(['第一轮', '第二轮'])
+    expect(useNotificationStore.getState().notifications).toEqual([])
   })
 
   it('响应丢失后手动重试沿用原请求，刷新和轮询不会重新提交', async () => {
@@ -694,7 +1189,7 @@ describe('基本聊天', () => {
 
     expect(await store.getState().send(backend.api, chatTestModel)).toBe(false)
     expect(store.getState().session?.pending).toEqual(pending)
-    expect(store.getState().error).toContain('发送结果尚未确认')
+    expect(notificationMessage()).toContain('发送结果尚未确认')
     store.getState().setDraft('不能替换尚未确认的输入')
     expect(store.getState().session?.draft).toBe('只执行一次')
 
@@ -715,7 +1210,7 @@ describe('基本聊天', () => {
     store.getState().setDraft('原输入')
     expect(await store.getState().send(backend.api, chatTestModel)).toBe(false)
     expect(store.getState().session?.pending).toBeUndefined()
-    expect(store.getState().error).toBe('业务条件不满足')
+    expect(notificationMessage()).toBe('业务条件不满足')
     expect(backend.runs.size).toBe(0)
     store.getState().setDraft('已修正输入')
     expect(store.getState().session?.draft).toBe('已修正输入')
@@ -745,6 +1240,7 @@ describe('基本聊天', () => {
     await store.getState().ensureSession()
     store.getState().setDraft('旧输入')
     const sending = store.getState().send(api, chatTestModel)
+    await vi.waitFor(() => expect(resolve).toBeDefined())
     store.getState().clearDisplay()
     await store.getState().ensureSession()
     resolve(session)
@@ -752,6 +1248,31 @@ describe('基本聊天', () => {
     expect(store.getState().session?.remote).toBeUndefined()
     expect(store.getState().messages).toEqual([])
     expect(api.createTask).not.toHaveBeenCalled()
+  })
+
+  it('POST 已确认后的回读期间登出，旧回读结束不再刷新列表或发送消息', async () => {
+    const local = localMemory()
+    const store = local.makeStore()
+    const backend = chatTestApi()
+    const reading = deferred<AgentSession>()
+    backend.api.getSession.mockReturnValueOnce(reading.promise)
+    await store.getState().ensureSession()
+    store.getState().setDraft('已被接受的消息')
+    const sending = store.getState().send(backend.api, chatTestModel)
+    await vi.waitFor(() => expect(backend.api.getSession).toHaveBeenCalledOnce())
+    expect(backend.api.createTask).toHaveBeenCalledOnce()
+    expect(store.getState().session?.pending).toBeUndefined()
+    expect(store.getState().run?.id).toBe('run-1')
+    store.getState().clearDisplay()
+    reading.resolve({ ...backend.session })
+    expect(await sending).toBe(false)
+    expect(backend.api.listSessions).not.toHaveBeenCalled()
+    expect(backend.api.messages).not.toHaveBeenCalled()
+    expect(useNotificationStore.getState().notifications).toEqual([])
+    expect(store.getState().session).toBeNull()
+    expect(store.getState().messages).toEqual([])
+    expect(store.getState().sessions).toEqual([])
+    expect(local.adapter.read(backend.session.id)?.remote?.runId).toBe('run-1')
   })
 })
 
@@ -852,6 +1373,48 @@ describe('多会话恢复与提交隔离', () => {
     await store.getState().loadSessions(backend.api, false, true)
     expect(store.getState().listCursor).toBe('next-page')
     expect(store.getState().listHasMore).toBe(true)
+  })
+
+  it('静默会话列表读取失败保留页面状态而不弹消息，手动刷新失败才提示', async () => {
+    const store = localMemory().makeStore()
+    const backend = chatTestApi()
+    backend.api.listSessions.mockResolvedValueOnce({ items: [backend.session], nextCursor: '', hasMore: false })
+    await store.getState().loadSessions(backend.api)
+    backend.api.listSessions.mockRejectedValue(new Error('会话列表连接失败'))
+    await store.getState().loadSessions(backend.api, false, true)
+    expect(useNotificationStore.getState().notifications).toEqual([])
+    expect(store.getState().listError).toBe('会话列表连接失败')
+    expect(store.getState().sessions).toEqual([backend.session])
+    await store.getState().loadSessions(backend.api, false, false, true)
+    expect(notificationMessage()).toBe('会话列表连接失败')
+    expect(store.getState().listError).toBeNull()
+    expect(store.getState().sessions).toEqual([backend.session])
+    expect(store.getState().listLoading).toBe(false)
+  })
+
+  it('手动首次读取失败同时提供消息与页面重试状态', async () => {
+    const store = localMemory().makeStore()
+    const backend = chatTestApi()
+    backend.api.listSessions.mockRejectedValueOnce(new Error('首次连接失败'))
+    await store.getState().loadSessions(backend.api, false, false, true)
+    expect(notificationMessage()).toBe('首次连接失败')
+    expect(store.getState().listError).toBe('首次连接失败')
+    expect(store.getState().listLoading).toBe(false)
+  })
+
+  it('退出登录后旧会话列表失败不会新增消息或恢复页面错误', async () => {
+    const store = localMemory().makeStore()
+    const backend = chatTestApi()
+    const page = deferred<Awaited<ReturnType<typeof backend.api.listSessions>>>()
+    backend.api.listSessions.mockReturnValueOnce(page.promise)
+    const loading = store.getState().loadSessions(backend.api, false, false, true)
+    store.getState().clearDisplay()
+    page.reject(new Error('旧列表请求失败'))
+    await loading
+    expect(useNotificationStore.getState().notifications).toEqual([])
+    expect(store.getState().listError).toBeNull()
+    expect(store.getState().listLoading).toBe(false)
+    expect(store.getState().session).toBeNull()
   })
 
   it('URL切换后，先前初始化的迟到响应不能改变新选择', async () => {
@@ -1002,7 +1565,7 @@ describe('多会话恢复与提交隔离', () => {
     backend.api.getSession.mockRejectedValueOnce(new AgentHttpError('会话不存在', 'session-not-found', 404))
     await store.getState().refresh(backend.api)
     expect(store.getState().session?.remote).toBeUndefined()
-    expect(store.getState().notice).toContain('原会话已不存在')
+    expect(notificationMessage()).toContain('原会话已不存在')
   })
 
   it('工作流活动运行不会成为聊天续轮指针，消息读取404也不会丢会话', async () => {
@@ -1050,7 +1613,7 @@ describe('会话重命名与删除', () => {
     backend.api.renameSession.mockRejectedValueOnce(new AgentHttpError('Agent 会话不存在', 'session-not-found', 404))
     await store.getState().renameSession(backend.api, 'session-b', '新名')
     expect(store.getState().sessions.map(row => row.id)).toEqual(['session-a'])
-    expect(store.getState().notice).toContain('原会话已不存在')
+    expect(notificationMessage()).toContain('原会话已不存在')
   })
 
   it('重命名其他错误原样上抛，列表不动', async () => {
@@ -1067,23 +1630,23 @@ describe('会话重命名与删除', () => {
     await store.getState().deleteSession(backend.api, 'session-b')
     expect(store.getState().sessions.map(row => row.id)).toEqual(['session-a'])
     expect(store.getState().remoteSession?.id).toBe('session-a')
-    expect(store.getState().notice).toBeNull()
+    expect(useNotificationStore.getState().notifications).toEqual([])
     expect(store.getState().listCursor).toBe('cursor-1')
     expect(store.getState().listHasMore).toBe(true)
     expect(local.adapter.read('session-b')).toBeNull()
     expect(local.files.size).toBe(0)
   })
 
-  it('删除当前选中会话回落到剩余第一个会话并以 notice 说明去向', async () => {
+  it('删除当前选中会话回落到剩余第一个会话并以消息说明去向', async () => {
     const { store, backend } = await preparedStore()
     expect(store.getState().remoteSession?.id).toBe('session-a')
     await store.getState().deleteSession(backend.api, 'session-a')
     expect(store.getState().sessions.map(row => row.id)).toEqual(['session-b'])
     expect(store.getState().remoteSession?.id).toBe('session-b')
-    expect(store.getState().notice).toBe('会话已删除，已切换到其他会话。')
+    expect(notificationMessage()).toBe('会话已删除，已切换到其他会话。')
   })
 
-  it('删除最后一个会话回落到空白草稿并以 notice 说明去向', async () => {
+  it('删除最后一个会话回落到空白草稿并以消息说明去向', async () => {
     const local = localMemory()
     const store = local.makeStore()
     const backend = chatTestApi()
@@ -1094,7 +1657,7 @@ describe('会话重命名与删除', () => {
     await store.getState().deleteSession(backend.api, 'only')
     expect(store.getState().sessions).toEqual([])
     expect(store.getState().session?.remote).toBeUndefined()
-    expect(store.getState().notice).toBe('会话已删除，已新建空白会话。')
+    expect(notificationMessage()).toBe('会话已删除，已新建空白会话。')
   })
 
   it('删除404幂等视为已删，仍完成本地清理', async () => {

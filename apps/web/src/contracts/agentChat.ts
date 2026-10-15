@@ -40,8 +40,14 @@ export type AgentChatSession = {
   reasoningLevel: string | null
   /** 浏览器只保存服务端指针；真实消息由 API 回读。 */
   remote?: { sessionId: string; taskId?: string; runId?: string }
-  /** 编辑重发沿用原轮附件 id；编辑模式不提供移除，重发时原样携带。 */
-  editing?: { messageId: string; taskId: string; text: string; attachments?: readonly AgentAttachmentRef[] }
+  /** 编辑只改文本；超限旧图在提交前另存新附件，原历史和未确认请求不改。 */
+  editing?: {
+    messageId: string
+    taskId: string
+    text: string
+    attachments?: readonly AgentAttachmentRef[]
+    preparedAttachments?: readonly { sourceId: string; attachment: AgentChatAttachment }[]
+  }
   /** 未收到明确回执时保留精确输入，人工确认沿用同一 requestId。 */
   pending?: { input: AgentInput; taskId?: string }
 }
@@ -52,7 +58,8 @@ export type AgentChatTask = { id: string; sessionId: string; kind: string; lates
 export const agentChatSessionKey = (session: AgentChatSession) => session.remote?.sessionId ?? session.id
 /** 会话在浏览器侧登记的全部附件：会话级附件与各消息附件的合集，删除会话时按此清字节。 */
 export const agentChatAllAttachments = (session: AgentChatSession): readonly AgentChatAttachment[] =>
-  [...session.attachments, ...session.messages.flatMap(message => message.attachments)]
+  [...session.attachments, ...session.messages.flatMap(message => message.attachments),
+    ...(session.editing?.preparedAttachments?.map(item => item.attachment) ?? [])]
 
 /** 上传回执：服务端按魔数判定 MIME 并返回描述符，id 即随消息提交的引用。 */
 export type AgentChatUploadedAttachment = AgentMessageAttachment & { createdAt?: string }
@@ -68,8 +75,8 @@ export interface AgentConversationAdapter {
   deleteSession(id: string): Promise<void>
   switchModel(id: string, input: AgentSwitchModelInput): Promise<AgentSession>
   messages(id: string, after: string, signal?: AbortSignal): Promise<{ items: readonly AgentMessage[]; nextCursor: string; hasMore: boolean }>
-  /** multipart 上传图片字节，每个文件一个名为 file 的 part。 */
-  uploadAttachments(files: readonly File[]): Promise<{ items: readonly AgentChatUploadedAttachment[] }>
+  /** 按序逐张 multipart 上传，每个请求一个名为 file 的 part；全部成功后返回整组回执。 */
+  uploadAttachments(files: readonly File[], signal?: AbortSignal): Promise<{ items: readonly AgentChatUploadedAttachment[] }>
   /** 按附件 id 读取已上传图片字节，用于历史消息缩略图。 */
   attachmentBlob(id: string, signal?: AbortSignal): Promise<Blob>
   createTask(sessionId: string, input: AgentInput): Promise<AgentChatRun>

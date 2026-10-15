@@ -66,7 +66,7 @@ func readAgentInput[T any](w http.ResponseWriter, req *http.Request) (T, error) 
 }
 
 // maxUploadPartBytes 是单个 multipart part 的 wire 硬顶，与模型客户端请求上限同源；
-// 业务单文件限额（默认 4 MiB）由域层按运行时 AgentLimits 判定。
+// 业务单文件限额（默认 1 MiB）由域层按运行时 AgentLimits 判定。
 const maxUploadPartBytes = 8 * 1024 * 1024
 
 // readAttachmentUploads 解析 multipart 图片上传：仅接受名为 file 的 part。这里只做

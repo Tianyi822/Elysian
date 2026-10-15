@@ -130,7 +130,7 @@ describe('真实任务运行共享契约', () => {
       runResultBytes: 2097152, logBytes: 1048576, frameBytes: 524288,
       retentionDays: 30, cancelGraceSeconds: 5, maxModelRequests: 16, modelTimeoutSeconds: 60,
       tokenBudget: 196608, userBytes: 32768, memoryBytes: 16384, modelResponseBytes: 2097152,
-      imageCountPerMessage: 4, imageBytesPerFile: 4194304, imageBytesPerMessage: 4194304,
+      imageBytesPerFile: 1048576, imageBytesPerMessage: 8388608,
     }
     // 运行能力报告的限额走批处理通道默认值，不携带 Agent 图片附件限额。
     const { imageCountPerMessage: _imageCount, imageBytesPerFile: _imageFile, imageBytesPerMessage: _imageMessage, ...infoLimits } = limits

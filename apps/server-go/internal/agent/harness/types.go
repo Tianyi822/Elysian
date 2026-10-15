@@ -144,10 +144,9 @@ type Limits struct {
 	UserBytes          int `json:"userBytes,omitempty"`
 	MemoryBytes        int `json:"memoryBytes,omitempty"`
 	ModelResponseBytes int `json:"modelResponseBytes,omitempty"`
-	// 图片附件限额：每消息张数、单文件字节与单消息总字节。0 表示本通道不开放图片
-	//（仅批处理通道可用 0；Agent 通道由 validateAgentLimits 强制显式设置且 ≥1）。
-	// 字节上限统一为 5242880（5 MiB）：base64 编码后约 6.67 MiB，保证叠加文本后仍在
-	// 模型客户端 8 MiB wire 上限内；放宽到 8 MiB 会让单条带图消息整单 413。
+	// 单文件字节为 0 表示不开放图片；张数为 0 表示不设置数量限制。
+	// Agent 新配置必须设置正数总字节上限，最多 8 MiB；旧快照的正数张数与总量
+	// 继续按原值校验，总量为 0 的旧快照保留不设置独立总量限制的语义。
 	ImageCountPerMessage int `json:"imageCountPerMessage,omitempty"`
 	ImageBytesPerFile    int `json:"imageBytesPerFile,omitempty"`
 	ImageBytesPerMessage int `json:"imageBytesPerMessage,omitempty"`
@@ -199,11 +198,10 @@ func DefaultAgentLimits() Limits {
 	l.TokenBudget = 196608
 	l.UserBytes = 32768
 	l.MemoryBytes = 16384
-	// 图片限额取两家供应商约束的保守交集：4 张、单张 4 MiB、单消息合计 4 MiB，
-	// 保证 wire 层 base64 后仍在 8 MiB 模型请求上限内。
-	l.ImageCountPerMessage = 4
-	l.ImageBytesPerFile = 4194304
-	l.ImageBytesPerMessage = 4194304
+	// 前端按图片独立压缩至 1 MiB，不限制张数，处理后的图片合计最多 8 MiB。
+	l.ImageCountPerMessage = 0
+	l.ImageBytesPerFile = 1048576
+	l.ImageBytesPerMessage = maxImageAttachmentSetBytes
 	// 校验后的响应上限覆盖 128K 档长回答的正文（含思考），原始流转上限由模型客户端按输出上限单独放大。
 	l.ModelResponseBytes = 2097152
 	return l

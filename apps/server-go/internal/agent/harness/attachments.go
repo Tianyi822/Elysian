@@ -22,9 +22,9 @@ const (
 	maxImageEdge       = 6000
 	// orphanAttachmentAge 是未绑定附件的保留期：上传后从未随消息发送的字节按此清理。
 	orphanAttachmentAge = 24 * time.Hour
-	// maxImageAttachmentBytes 是单文件与单消息图片字节的装配上限：base64 后约 6.67 MiB，
-	// 保证叠加文本仍在模型客户端 8 MiB wire 上限内（模型客户端 maxRequestBytes 同源）。
-	maxImageAttachmentBytes = 5242880
+	// 单文件配置上限保留旧策略的兼容范围；新消息图片总预算独立于单文件策略。
+	maxImageAttachmentFileBytes = 5 * 1024 * 1024
+	maxImageAttachmentSetBytes  = 8 * 1024 * 1024
 )
 
 // imageLimitLabel 把字节限额渲染成中文可读文案：整 MiB 用 MiB，否则按字节。
@@ -142,7 +142,7 @@ func readAttachmentRows(ctx context.Context, q interface {
 
 // validateAttachmentSet 按 Limits 复检附件集合：张数、单文件字节与总字节。
 // 附件行上传后不可变，提交侧复检无竞态，堵住分批上传攒出超限集合再一次提交的绕过；
-// 限额为 0 表示不限制（批处理通道语义），Agent 通道装配校验保证 ≥1。
+// 张数为 0 表示不限制数量；旧快照总量为 0 表示不设置独立总量限制。
 func validateAttachmentSet(rows []attachmentRow, limits Limits) error {
 	if len(rows) == 0 {
 		return nil
@@ -158,7 +158,10 @@ func validateAttachmentSet(rows []attachmentRow, limits Limits) error {
 		total += row.Bytes
 	}
 	if limits.ImageBytesPerMessage > 0 && total > limits.ImageBytesPerMessage {
-		return bad("attachment-message-too-large", "图片总大小不能超过 "+imageLimitLabel(limits.ImageBytesPerMessage)+"。")
+		if limits.ImageBytesPerMessage == maxImageAttachmentSetBytes {
+			return bad("attachment-message-too-large", "本条消息附件合计超过 8 MiB，请分批发送。")
+		}
+		return bad("attachment-message-too-large", "图片总大小不能超过 "+imageLimitLabel(limits.ImageBytesPerMessage)+"，请分批发送。")
 	}
 	return nil
 }

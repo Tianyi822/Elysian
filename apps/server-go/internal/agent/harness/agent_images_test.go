@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"strings"
@@ -85,10 +86,11 @@ func TestAgentImageGateAndSubmitRecheck(t *testing.T) {
 	}
 	vision := visionSession(t, m)
 	png := testPNGBytes(t, 1, 1)
-	// 分批上传绕过单请求限额：两批各 3 张小图，一次提交 5 个引用仍被提交侧复检拦截。
+	full := paddedImage(t, png, 1048576)
+	// 分批上传不能绕过提交总量复检：三批各 3 MiB，一次提交合计 9 MiB。
 	var refs []AttachmentRef
-	for batch := 0; batch < 2; batch++ {
-		uploads := []AttachmentUpload{{Name: "图.png", Content: png}, {Name: "图.png", Content: png}, {Name: "图.png", Content: png}}
+	for batch := 0; batch < 3; batch++ {
+		uploads := []AttachmentUpload{{Name: "图.png", Content: full}, {Name: "图.png", Content: full}, {Name: "图.png", Content: full}}
 		items, err := m.CreateAttachments(ctx, uploads)
 		if err != nil {
 			t.Fatal(err)
@@ -97,14 +99,19 @@ func TestAgentImageGateAndSubmitRecheck(t *testing.T) {
 			refs = append(refs, AttachmentRef{ID: item.ID})
 		}
 	}
-	if _, _, err := m.CreateTask(ctx, vision.ID, AgentInput{RequestID: "split-batch", Content: "五张图", Attachments: refs}); err == nil || err.(*Error).Code != "attachment-too-many" {
-		t.Fatalf("分批攒图未拦截：%v", err)
+	if _, _, err := m.CreateTask(ctx, vision.ID, AgentInput{RequestID: "split-batch", Content: "九张图", Attachments: refs}); err == nil || err.(*Error).Code != "attachment-message-too-large" {
+		t.Fatalf("分批攒出超总量图片未拦截：%v", err)
 	}
-	// 分批上传两张各 2.5 MiB（单批一张合法），一次提交合计超 4 MiB 被拒。
-	big1 := uploadOne(t, m, paddedImage(t, png, 2621440))
-	big2 := uploadOne(t, m, paddedImage(t, png, 2621440))
-	if _, _, err := m.CreateTask(ctx, vision.ID, AgentInput{RequestID: "split-bytes", Content: "两张大图", Attachments: []AttachmentRef{big1, big2}}); err == nil || err.(*Error).Code != "attachment-message-too-large" {
-		t.Fatalf("分批攒字节未拦截：%v", err)
+	// 升级前的附件字节保留可读，新提交仍按 1 MiB 单张限额复检。
+	legacy := paddedImage(t, png, 1048577)
+	if _, err := m.store.db.ExecContext(ctx, "INSERT INTO agent_attachments(id,session_id,mime_type,bytes,width,height,name,created_at,content) VALUES('legacy-image',NULL,'image/png',?,1,1,'old.png',?,?)", len(legacy), stamp(m.deps.Now()), legacy); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := m.CreateTask(ctx, vision.ID, AgentInput{RequestID: "legacy-bytes", Content: "旧大图", Attachments: []AttachmentRef{{ID: "legacy-image"}}}); err == nil || err.(*Error).Code != "attachment-too-large" {
+		t.Fatalf("旧大图引用未按当前单文件限额复检：%v", err)
+	}
+	if _, content, err := m.AttachmentContent(ctx, "legacy-image"); err != nil || !bytes.Equal(content, legacy) {
+		t.Fatalf("旧图片回读改变了原字节：%v", err)
 	}
 	if _, _, err := m.CreateTask(ctx, vision.ID, AgentInput{RequestID: "missing", Content: "引用不存在", Attachments: []AttachmentRef{{ID: "no-such-attachment"}}}); err == nil || err.(*Error).Code != "attachment-invalid" {
 		t.Fatalf("不存在引用未拒绝：%v", err)
@@ -130,6 +137,70 @@ func TestAgentImageGateAndSubmitRecheck(t *testing.T) {
 	}
 	if _, _, err := m.CreateTask(ctx, vision.ID, AgentInput{RequestID: "dedup", Content: "重复引用", Attachments: []AttachmentRef{ref, uploadOne(t, m, png)}}); err == nil || err.(*Error).Code != "request-conflict" {
 		t.Fatalf("附件集合变化未冲突：%v", err)
+	}
+}
+
+func TestAgentImageSubmissionWithoutCountLimit(t *testing.T) {
+	client := &imagesTestClient{}
+	m, _, _ := agentManager(t, client.complete, nil)
+	ctx := context.Background()
+	vision := visionSession(t, m)
+	png := testPNGBytes(t, 1, 1)
+	uploads := make([]AttachmentUpload, 51)
+	for i := range uploads {
+		uploads[i] = AttachmentUpload{Name: "small.png", Content: png}
+	}
+	items, err := m.CreateAttachments(ctx, uploads)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refs := make([]AttachmentRef, len(items))
+	for i, item := range items {
+		refs[i] = AttachmentRef{ID: item.ID}
+	}
+	run, _, err := m.CreateTask(ctx, vision.ID, AgentInput{RequestID: "many-images", Content: "查看这些图片", Attachments: refs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished := runtimeFinished(t, m, run.ID); finished.Status != StateSucceeded {
+		t.Fatalf("51 张小图任务未成功：%+v", finished.Error)
+	}
+	if got := imagesIn(client.last()); got != len(refs) {
+		t.Fatalf("51 张图片未完整派发：%d", got)
+	}
+	page, err := m.Messages(ctx, vision.ID, "0", 100)
+	if err != nil || len(page.Items) != 2 || len(page.Items[0].Attachments) != len(refs) {
+		t.Fatalf("51 张图片的消息历史未完整保留：%+v %v", page.Items, err)
+	}
+}
+
+func TestAgentImageSubmissionTotalBudget(t *testing.T) {
+	client := &imagesTestClient{}
+	m, _, _ := agentManager(t, client.complete, nil)
+	ctx := context.Background()
+	vision := visionSession(t, m)
+	png := paddedImage(t, testPNGBytes(t, 1, 1), 1048576)
+	refs := make([]AttachmentRef, 8)
+	for i := range refs {
+		refs[i] = uploadOne(t, m, png)
+	}
+	run, _, err := m.CreateTask(ctx, vision.ID, AgentInput{RequestID: "eight-mib", Content: "图片合计 8 MiB", Attachments: refs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished := runtimeFinished(t, m, run.ID); finished.Status != StateSucceeded {
+		t.Fatalf("合计 8 MiB 的图片任务未成功：%+v", finished.Error)
+	}
+	if got := imagesIn(client.last()); got != len(refs) {
+		t.Fatalf("本轮 8 MiB 图片未完整派发：%d", got)
+	}
+	refs = append(refs, uploadOne(t, m, testPNGBytes(t, 1, 1)))
+	if _, _, err = m.ContinueTask(ctx, run.TaskID, AgentInput{RequestID: "over-eight-mib", Content: "超总量图片", Attachments: refs}); err == nil || err.(*Error).Code != "attachment-message-too-large" || !strings.Contains(err.Error(), "分批发送") {
+		t.Fatalf("续轮超总量未在接受前提示分批：%v", err)
+	}
+	page, err := m.Messages(ctx, vision.ID, "0", 100)
+	if err != nil || len(page.Items) != 2 {
+		t.Fatalf("被拒绝的超总量提交改变了公开历史：%+v %v", page.Items, err)
 	}
 }
 
@@ -205,36 +276,52 @@ func TestAgentImageHistoryReplayBudget(t *testing.T) {
 	m, _, _ := agentManager(t, client.complete, nil)
 	ctx := context.Background()
 	vision := visionSession(t, m)
-	png := paddedImage(t, testPNGBytes(t, 1, 1), 3145728)
-	older := uploadOne(t, m, png)
-	first, _, err := m.CreateTask(ctx, vision.ID, AgentInput{RequestID: "budget-first", Content: "第一轮大图", Attachments: []AttachmentRef{older}})
+	png := paddedImage(t, testPNGBytes(t, 1, 1), 1048576)
+	refs := func(count int) []AttachmentRef {
+		out := make([]AttachmentRef, count)
+		for i := range out {
+			out[i] = uploadOne(t, m, png)
+		}
+		return out
+	}
+	first, _, err := m.CreateTask(ctx, vision.ID, AgentInput{RequestID: "budget-first", Content: "第一轮五张图", Attachments: refs(5)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	runtimeFinished(t, m, first.ID)
-	second, _, err := m.ContinueTask(ctx, first.TaskID, AgentInput{RequestID: "budget-second", Content: "第二轮大图", Attachments: []AttachmentRef{uploadOne(t, m, png)}})
+	second, _, err := m.ContinueTask(ctx, first.TaskID, AgentInput{RequestID: "budget-second", Content: "第二轮五张图", Attachments: refs(5)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	runtimeFinished(t, m, second.ID)
-	next, _, err := m.ContinueTask(ctx, first.TaskID, AgentInput{RequestID: "budget-third", Content: "第三轮纯文本"})
+	next, _, err := m.ContinueTask(ctx, first.TaskID, AgentInput{RequestID: "budget-third", Content: "第三轮两张图", Attachments: refs(2)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	runtimeFinished(t, m, next.ID)
 	request := client.last()
-	// 两轮各 3 MiB：本轮无图，历史最近优先占满 5 MiB 预算，较早一轮只剩容量注记。
-	if got := imagesIn(request); got != 1 {
-		t.Fatalf("预算内应只重挂一张图：%d", got)
+	// 本轮两张优先，随后重挂最近一轮五张，最早一轮仅留一张，共 8 MiB。
+	if got := imagesIn(request); got != 8 {
+		t.Fatalf("预算内应重挂八张图：%d", got)
 	}
+	if len(request.Messages) < 2 || len(request.Messages[1].Images) != 2 {
+		t.Fatal("本轮图片未优先完整保留")
+	}
+	oldest, latest := 0, 0
 	found := false
 	for _, msg := range request.Messages {
-		if strings.Contains(msg.Content, "（该轮附图 1 张因容量未重发）") {
+		if strings.Contains(msg.Content, first.ID+":1") && len(msg.Images) > oldest {
+			oldest = len(msg.Images)
+		}
+		if strings.Contains(msg.Content, second.ID+":1") && len(msg.Images) > latest {
+			latest = len(msg.Images)
+		}
+		if strings.Contains(msg.Content, "（该轮附图 4 张因容量未重发）") {
 			found = true
 		}
 	}
-	if !found {
-		t.Fatal("超预算历史未注记")
+	if !found || oldest != 1 || latest != 5 {
+		t.Fatalf("历史未按最近优先保留并注记：oldest=%d latest=%d note=%v", oldest, latest, found)
 	}
 }
 

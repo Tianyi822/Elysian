@@ -10,7 +10,7 @@ import (
 )
 
 const MaxResponseBytes = 512 * 1024
-const maxRequestBytes = 8 * 1024 * 1024
+const maxRequestBytes = 16 * 1024 * 1024
 
 // responseBytesPerToken 每个输出 token 预留的原始响应字节：供应商按小段增量逐帧发送，
 // SSE 与 JSON 分帧的包装开销远大于正文本身。

@@ -11,7 +11,6 @@ import (
 )
 
 const maxToolCalls = 64
-const maxImagesPerMessage = 50
 
 var functionName = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 
@@ -89,9 +88,6 @@ func validateRequest(p Profile, input Request) (map[string]bool, error) {
 				return nil, invalidRequest()
 			}
 			// 图片仅允许 user 消息：与 DeepSeek「非 user 消息携带图片即 400」对齐，智谱同构。
-			if len(msg.Images) > maxImagesPerMessage {
-				return nil, invalidRequest()
-			}
 			for _, image := range msg.Images {
 				if image.MimeType != "image/jpeg" && image.MimeType != "image/png" || len(image.Data) == 0 {
 					return nil, invalidRequest()

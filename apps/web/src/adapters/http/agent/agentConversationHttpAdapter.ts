@@ -127,23 +127,28 @@ export function createHttpAgentConversationAdapter(): AgentConversationAdapter {
       if (BigInt(nextCursor) !== previous || (row.hasMore && !items.length)) throw invalid()
       return { items, nextCursor, hasMore: row.hasMore }
     },
-    async uploadAttachments(files) {
+    async uploadAttachments(files, signal) {
       // multipart 不经 JSON 出口（浏览器自动生成含 boundary 的 Content-Type）；
-      // 上传时限显式放宽到 120 秒。
-      return withRequestDeadline({}, async bounded => {
-        const form = new FormData()
-        for (const file of files) form.append('file', file, file.name)
-        let response: Response
-        try {
-          response = await fetchWithSession('/api/agent/attachments', { method: 'POST', body: form, cache: 'no-store', signal: bounded.signal })
-        } catch (error) {
-          if (bounded.signal?.aborted) throw error
-          throw new Error('Agent 请求网络失败')
-        }
-        const row = object(await readAgentResponse(response))
-        if (!Array.isArray(row.items) || !row.items.length) throw invalid()
-        return { items: row.items.map(parseUploaded) }
-      }, 120000)
+      // 每张单独请求与计时，避免 multipart part 数量上限影响消息图片数量。
+      const items: AgentChatUploadedAttachment[] = []
+      for (const file of files) {
+        const uploaded = await withRequestDeadline({ method: 'POST', signal }, async bounded => {
+          const form = new FormData()
+          form.append('file', file, file.name)
+          let response: Response
+          try {
+            response = await fetchWithSession('/api/agent/attachments', { method: 'POST', body: form, cache: 'no-store', signal: bounded.signal })
+          } catch (error) {
+            if (bounded.signal?.aborted) throw error
+            throw new Error('Agent 请求网络失败')
+          }
+          const row = object(await readAgentResponse(response))
+          if (!Array.isArray(row.items) || row.items.length !== 1) throw invalid()
+          return parseUploaded(row.items[0])
+        }, 120000)
+        items.push(uploaded)
+      }
+      return { items }
     },
     async attachmentBlob(id, signal) {
       const response = await fetchWithSession(`/api/agent/attachments/${path(id)}`, { cache: 'no-store', signal })

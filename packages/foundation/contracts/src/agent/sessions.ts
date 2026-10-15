@@ -141,9 +141,8 @@ export type AgentAttachmentRef = { id: string }
 /** 附件前端预检常量：与服务端 Agent Limits 默认值一致，服务端仍是权威。 */
 export const AGENT_ATTACHMENT_LIMITS = {
   acceptMimeTypes: ['image/jpeg', 'image/png'],
-  maxFileBytes: 4194304,
-  maxFilesPerMessage: 4,
-  maxMessageBytes: 4194304,
+  maxFileBytes: 1048576,
+  maxMessageBytes: 8388608,
 } as const
 
 export type AgentInput = {
@@ -156,7 +155,7 @@ export type AgentInput = {
   skills?: readonly AgentRevisionRef[]
   resources?: readonly AgentResourceRef[]
   prompts?: readonly AgentPromptRef[]
-  /** 随消息发送的图片附件引用（去重后最多 4 个）；模型必须声明 image 能力。 */
+  /** 随消息发送的图片附件引用；不限制张数，受压缩后单图与消息总字节限额约束，模型必须声明 image 能力。 */
   attachments?: readonly AgentAttachmentRef[]
 }
 

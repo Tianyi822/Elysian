@@ -3,7 +3,10 @@ import fixture from '../../../../../../packages/foundation/contracts/fixtures/ag
 import { createHttpAgentConversationAdapter, createUnavailableAgentConversationAdapter } from './agentConversationHttpAdapter'
 
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } })
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
+
+const attachment = (index: number) => ({ id: `attach-${index}`, name: `${index}.png`, mimeType: 'image/png', bytes: 1, width: 1, height: 1 })
+const images = (count: number) => Array.from({ length: count }, (_, index) => new File(['x'], `${index}.png`, { type: 'image/png' }))
 
 describe('聊天 HTTP 接口', () => {
   it('在连接结束前交付增量，支持跨分片中文，终帧关闭读取且不提交模型请求', async () => {
@@ -110,6 +113,102 @@ describe('聊天 HTTP 接口', () => {
     expect(blob.mock.calls[0]![0]).toBe('/api/agent/attachments/attach-1')
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('x', { status: 200, headers: { 'content-type': 'text/plain' } })))
     await expect(api.attachmentBlob('attach-1')).rejects.toThrow('格式无效')
+  })
+
+  it('超过 50 张图片时依次单张上传，并按原顺序返回全部回执', async () => {
+    let active = 0
+    let maximumActive = 0
+    const fetcher = vi.fn().mockImplementation(async (_url: string, init: RequestInit) => {
+      active += 1
+      maximumActive = Math.max(maximumActive, active)
+      const files = (init.body as FormData).getAll('file') as File[]
+      expect(files).toHaveLength(1)
+      const index = Number(files[0]!.name.replace('.png', ''))
+      await Promise.resolve()
+      active -= 1
+      return json({ items: [attachment(index)] }, 201)
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const result = await createHttpAgentConversationAdapter().uploadAttachments(images(51))
+    expect(fetcher).toHaveBeenCalledTimes(51)
+    expect(maximumActive).toBe(1)
+    expect(result.items.map(item => item.id)).toEqual(Array.from({ length: 51 }, (_, index) => `attach-${index}`))
+    expect(fetcher.mock.calls.map(call => ((call[1] as RequestInit).body as FormData).getAll('file').map(file => (file as File).name))).toEqual(
+      Array.from({ length: 51 }, (_, index) => [`${index}.png`]),
+    )
+  })
+
+  it('上传中途失败立即停止，不上传剩余图片或返回部分回执', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(json({ items: [attachment(0)] }, 201))
+      .mockResolvedValueOnce(json({ error: '附件超过总量限制', code: 'attachment-limit' }, 413))
+    vi.stubGlobal('fetch', fetcher)
+    await expect(createHttpAgentConversationAdapter().uploadAttachments(images(3))).rejects.toMatchObject({ message: '附件超过总量限制', status: 413 })
+    expect(fetcher).toHaveBeenCalledTimes(2)
+  })
+
+  it('单张上传回执不是恰好一项时拒绝并停止后续上传', async () => {
+    const fetcher = vi.fn().mockResolvedValue(json({ items: [attachment(0), attachment(1)] }, 201))
+    vi.stubGlobal('fetch', fetcher)
+    await expect(createHttpAgentConversationAdapter().uploadAttachments(images(2))).rejects.toThrow('格式无效')
+    expect(fetcher).toHaveBeenCalledOnce()
+  })
+
+  it('取消上传会中止当前请求且不再发起后续图片', async () => {
+    let currentSignal: AbortSignal | undefined
+    const fetcher = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      currentSignal = init.signal ?? undefined
+      return new Promise((_, reject) => currentSignal?.addEventListener('abort', () => reject(new DOMException('已取消', 'AbortError')), { once: true }))
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const controller = new AbortController()
+    const result = createHttpAgentConversationAdapter().uploadAttachments(images(2), controller.signal)
+    const rejected = expect(result).rejects.toMatchObject({ name: 'AbortError' })
+    controller.abort()
+    await rejected
+    expect(currentSignal?.aborted).toBe(true)
+    expect(fetcher).toHaveBeenCalledOnce()
+  })
+
+  it('预先取消时不发起请求，空文件组无需网络请求', async () => {
+    const fetcher = vi.fn()
+    vi.stubGlobal('fetch', fetcher)
+    const controller = new AbortController()
+    controller.abort()
+    const api = createHttpAgentConversationAdapter()
+    await expect(api.uploadAttachments(images(1), controller.signal)).rejects.toMatchObject({ name: 'AbortError' })
+    expect(await api.uploadAttachments([])).toEqual({ items: [] })
+    expect(fetcher).not.toHaveBeenCalled()
+  })
+
+  it('每张图片独立获得 120 秒时限，整批耗时可超过两分钟', async () => {
+    vi.useFakeTimers()
+    let index = 0
+    const fetcher = vi.fn().mockImplementation(() => new Promise(resolve => {
+      const current = index++
+      setTimeout(() => resolve(json({ items: [attachment(current)] }, 201)), 90000)
+    }))
+    vi.stubGlobal('fetch', fetcher)
+    const result = createHttpAgentConversationAdapter().uploadAttachments(images(2))
+    await vi.advanceTimersByTimeAsync(180000)
+    expect((await result).items.map(item => item.id)).toEqual(['attach-0', 'attach-1'])
+    expect(fetcher).toHaveBeenCalledTimes(2)
+  })
+
+  it('单张上传超过 120 秒按写操作超时退出，不重发或继续', async () => {
+    vi.useFakeTimers()
+    let currentSignal: AbortSignal | undefined
+    const fetcher = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      currentSignal = init.signal ?? undefined
+      return new Promise(() => {})
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const result = createHttpAgentConversationAdapter().uploadAttachments(images(2))
+    const rejected = expect(result).rejects.toMatchObject({ name: 'RequestTimeoutError', uncertain: true })
+    await vi.advanceTimersByTimeAsync(120000)
+    await rejected
+    expect(currentSignal?.aborted).toBe(true)
+    expect(fetcher).toHaveBeenCalledOnce()
   })
 
   it('服务端错误原样显示且不重发请求；演示不请求模型', async () => {

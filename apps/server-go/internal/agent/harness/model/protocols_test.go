@@ -245,12 +245,59 @@ func TestImageValidationRules(t *testing.T) {
 	if _, err := adapter.prepare(p, emptyData); err == nil {
 		t.Fatal("空字节图片被接收")
 	}
-	tooMany := testRequest()
-	tooMany.Messages = []Message{{Role: "user", Content: "看图"}}
-	for i := 0; i < 51; i++ {
-		tooMany.Messages[0].Images = append(tooMany.Messages[0].Images, ImagePart{MimeType: "image/png", Data: []byte{1}})
+}
+
+func TestProtocolsAcceptManyImagesAndEightMiBImageBytes(t *testing.T) {
+	for _, format := range []string{FormatChatCompletions, FormatAnthropicMessages, FormatResponses} {
+		t.Run(format, func(t *testing.T) {
+			p := testProfile("https://example.test/v1")
+			p.APIFormat = format
+			p.Capabilities.Image = true
+			adapter, err := resolveProtocol(format)
+			if err != nil {
+				t.Fatal(err)
+			}
+			input := testRequest()
+			input.Messages[0].Images = make([]ImagePart, 51)
+			for i := range input.Messages[0].Images {
+				input.Messages[0].Images[i] = ImagePart{MimeType: "image/png", Data: []byte{1}}
+			}
+			wire, err := adapter.prepare(p, input)
+			if err != nil {
+				t.Fatalf("51 张小图被协议层拒绝：%v", err)
+			}
+			marker := `"type":"image_url"`
+			if format == FormatResponses {
+				marker = `"type":"input_image"`
+			} else if format == FormatAnthropicMessages {
+				marker = `"type":"image"`
+			}
+			if got := strings.Count(string(wire.body), marker); got != 51 {
+				t.Fatalf("协议请求丢失图片：%d", got)
+			}
+			input.Messages[0].Images = make([]ImagePart, 8)
+			data := make([]byte, 1024*1024)
+			for i := range input.Messages[0].Images {
+				input.Messages[0].Images[i] = ImagePart{MimeType: "image/png", Data: data}
+			}
+			wire, err = adapter.prepare(p, input)
+			if err != nil || len(wire.body) <= 8*1024*1024 || len(wire.body) > 16*1024*1024 {
+				t.Fatalf("8 MiB 图片的 base64 请求未落在新 wire 预算内：%d %v", len(wire.body), err)
+			}
+		})
 	}
-	if _, err := adapter.prepare(p, tooMany); err == nil {
-		t.Fatal("单消息超过 50 张图被接收")
+}
+
+func TestModelWireRequestByteLimit(t *testing.T) {
+	p := testProfile("https://example.test/v1")
+	text := strings.Repeat("x", 16*1024*1024-2)
+	wire, err := prepareWire(p, "/chat/completions", text, false, nil)
+	if err != nil || len(wire.body) != 16*1024*1024 {
+		t.Fatalf("等于 16 MiB 的模型请求应放行：%d %v", len(wire.body), err)
+	}
+	if _, err = prepareWire(p, "/chat/completions", text+"x", false, nil); err == nil {
+		t.Fatal("超过 16 MiB 一个字节的模型请求未拒绝")
+	} else {
+		requireCode(t, err, "model-request-too-large")
 	}
 }

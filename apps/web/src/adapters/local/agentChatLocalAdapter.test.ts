@@ -64,6 +64,25 @@ describe('浏览器会话存储', () => {
     expect(restored[0]?.serverId).toBeUndefined()
     expect(restored[0]?.previewUrl).toContain('blob:')
   })
+
+  it('编辑图片处理缓存持久化引用和字节，刷新剥离预览但保留精确 pending', async () => {
+    const adapter = createAgentChatLocalAdapter()
+    const result = await adapter.attach([new File(['jpeg'], 'old.jpg', { type: 'image/jpeg' })])
+    const attachment = { ...result.attachments[0]!, serverId: 'compressed-1', width: 1200, height: 800 }
+    adapter.write({ ...session(),
+      editing: { messageId: 'message-1', taskId: 'task-1', text: '重发', attachments: [{ id: 'original-1' }], preparedAttachments: [{ sourceId: 'original-1', attachment }] },
+      pending: { input: { requestId: 'request-1', content: '重发', replaceMessageId: 'message-1', attachments: [{ id: 'compressed-1' }] } },
+    })
+    const saved = adapter.read()!
+    const cached = saved.editing!.preparedAttachments![0]!
+    expect(cached.sourceId).toBe('original-1')
+    expect(cached.attachment).toMatchObject({ serverId: 'compressed-1', width: 1200, height: 800, size: 4, available: false })
+    expect(cached.attachment.previewUrl).toBeUndefined()
+    expect((await adapter.restore([cached.attachment]))[0]?.available).toBe(true)
+    const refreshed = createAgentChatLocalAdapter().read()!
+    expect(refreshed.editing?.preparedAttachments).toEqual(saved.editing?.preparedAttachments)
+    expect(refreshed.pending?.input.attachments).toEqual([{ id: 'compressed-1' }])
+  })
 })
 
 
