@@ -103,12 +103,12 @@
 .chat-textarea::placeholder { color: var(--t-fg-subtle); }
 .chat-textarea:focus-visible { outline: none; box-shadow: none; }
 .chat-composer-tools { display: flex; align-items: center; gap: 4px; padding: 6px 12px 12px; }
-.chat-add-file.icon-button { --icon-button-radius: 50%; width: 36px; height: 36px; padding: 0; flex-shrink: 0; }
+.chat-add-file.icon-button { --icon-button-radius: 50%; width: 32px; height: 32px; padding: 0; flex-shrink: 0; }
 .chat-add-file.icon-button:hover:not(:disabled) { background: var(--t-nav-hover); }
 /* 回形针路径略偏左上，补偿 SVG 留白以保持视觉居中。 */
 .chat-add-file > svg { display: block; transform: translate(0.5px, 0.5px); }
 .chat-composer-tools svg { flex-shrink: 0; }
-.chat-select { display: inline-flex; min-width: 0; align-items: center; justify-content: space-between; gap: 6px; height: 36px; border-radius: 8px; padding: 0 8px; color: var(--t-fg-muted); font-size: 14px; line-height: 20px; transition: background-color 120ms ease; }
+.chat-select { display: inline-flex; min-width: 0; align-items: center; justify-content: space-between; gap: 6px; height: 32px; border-radius: 8px; padding: 0 8px; color: var(--t-fg-muted); font-size: 14px; line-height: 20px; transition: background-color 120ms ease; }
 .chat-select:hover:not(:disabled) { background: var(--t-nav-hover); color: var(--t-fg); }
 .chat-select:disabled { cursor: default; }
 .chat-model { min-width: 0; margin-left: auto; }
@@ -124,8 +124,9 @@
 .chat-permission[data-mode="full"] .chat-permission-select,
 .chat-permission[data-mode="full"] * { color: #ef4444; }
 .chat-reasoning { display: flex; align-items: center; gap: 0; flex-shrink: 0; }
-.chat-send.icon-button { --icon-button-radius: 50%; width: 36px; height: 36px; padding: 0; color: var(--t-fg); flex-shrink: 0; transition: background 120ms ease, opacity 120ms ease; }
-/* 纸飞机的视觉重心偏右上，向左下微调以居中于圆形按钮。 */
+/* 发送/停止与工具条控件统一 32px 高、8px 圆角；margin-left 与思考等级拉开间距。 */
+.chat-send.icon-button { --icon-button-radius: var(--radius-lg); width: 32px; height: 32px; padding: 0; margin-left: 8px; color: var(--t-fg); flex-shrink: 0; transition: background 120ms ease, opacity 120ms ease; }
+/* 纸飞机的视觉重心偏右上，向左下微调以居中于按钮。 */
 .chat-send > svg { transform: translate(-1px, 1px); }
 .chat-stop > svg { transform: none; }
 .chat-send.icon-button:hover:not(:disabled) { background: var(--t-nav-hover); }
@@ -141,7 +142,10 @@
   .chat-empty { padding-bottom: 12px; }
   .chat-composer-tools { padding: 4px 8px 10px; gap: 2px; }
   .chat-model-select { max-width: 190px; }
-  .chat-permission-select { width: 36px; padding: 0; justify-content: center; }
+}
+/* 权限按钮只在极窄屏收成图标：宽度放得下时保留「请求批准」文字，避免过早丢失语义。 */
+@media (max-width: 520px) {
+  .chat-permission-select { width: 32px; padding: 0; justify-content: center; }
   .chat-permission-select > span,
   .chat-permission-select > svg:last-child { display: none; }
 }
