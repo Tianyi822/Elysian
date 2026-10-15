@@ -84,6 +84,16 @@
   --t-info: #95bdeb;
   --t-focus: #95c6f8;
 
+  --t-code-bg: #172032;
+  --t-code-fg: #e6edf3;
+  --t-code-comment: #a4b1c2;
+  --t-code-keyword: #ffabb7;
+  --t-code-string: #a3dfb0;
+  --t-code-number: #f0ca92;
+  --t-code-title: #d4b5fa;
+  --t-code-attribute: #9ed8f2;
+  --t-code-deletion: #ffa4a4;
+
   --t-nav-bg: rgb(46 71 115 / 68%);
   --t-nav-opaque: #243853;
   --t-nav-fg: #eaecf5;
@@ -151,6 +161,16 @@
   --t-danger: #a7344e;
   --t-info: #405d8b;
   --t-focus: #795a9c;
+
+  --t-code-bg: #f7f8fa;
+  --t-code-fg: #263342;
+  --t-code-comment: #596575;
+  --t-code-keyword: #a92540;
+  --t-code-string: #216238;
+  --t-code-number: #805113;
+  --t-code-title: #70429a;
+  --t-code-attribute: #075f80;
+  --t-code-deletion: #a32424;
 
   --t-nav-bg: rgb(232 205 225 / 72%);
   --t-nav-opaque: #edd7e7;

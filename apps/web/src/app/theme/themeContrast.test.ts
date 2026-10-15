@@ -49,6 +49,17 @@ for (const theme of ['dark', 'light'] as const) {
       }
     })
 
+    it('代码正文与语法颜色在代码背景上满足 4.5:1，深浅主题分别配色', () => {
+      const otherTheme = theme === 'dark' ? 'light' : 'dark'
+      const other = css.split(`[data-theme="${otherTheme}"] {`)[1]!.split('}')[0]!
+      for (const token of ['fg', 'comment', 'keyword', 'string', 'number', 'title', 'attribute', 'deletion']) {
+        const key = `code-${token}`
+        expect(ratio(color(key), color('code-bg')), key).toBeGreaterThanOrEqual(4.5)
+        const otherHex = other.match(new RegExp(`--t-${key}:\\s*(#[\\da-f]{6});`))![1]!
+        expect(color(key)).not.toEqual(rgb(otherHex))
+      }
+    })
+
     it('必要控件边框、焦点和两条图表系列达到 3:1', () => {
       for (const bg of ['bg', 'surface', 'surface-raised']) {
         for (const fg of ['control-line', 'focus', 'accent', 'chart-secondary']) {
