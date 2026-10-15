@@ -2,17 +2,25 @@ package model
 
 import (
 	"elysian/server/internal/agent/jsonvalue"
+	"encoding/base64"
 	"encoding/json"
 )
 
 type responseInputItem struct {
 	Type      string  `json:"type"`
 	Role      string  `json:"role,omitempty"`
-	Content   *string `json:"content,omitempty"`
+	Content   any     `json:"content,omitempty"`
 	CallID    string  `json:"call_id,omitempty"`
 	Name      string  `json:"name,omitempty"`
 	Arguments string  `json:"arguments,omitempty"`
 	Output    *string `json:"output,omitempty"`
+}
+
+// responseContentPart 是带图 user 消息的 content 数组成员，按 OpenAI Responses 规格命名。
+type responseContentPart struct {
+	Type     string `json:"type"`
+	Text     string `json:"text,omitempty"`
+	ImageURL string `json:"image_url,omitempty"`
 }
 type responseTool struct {
 	Type        string          `json:"type"`
@@ -65,8 +73,19 @@ func (responsesProtocol) prepare(p Profile, input Request) (preparedRequest, err
 			continue
 		}
 		if m.Content != "" || len(m.ToolCalls) == 0 {
-			content := m.Content
-			wire.Input = append(wire.Input, responseInputItem{Type: "message", Role: m.Role, Content: &content})
+			if len(m.Images) > 0 {
+				parts := make([]responseContentPart, 0, len(m.Images)+1)
+				if m.Content != "" {
+					parts = append(parts, responseContentPart{Type: "input_text", Text: m.Content})
+				}
+				for _, image := range m.Images {
+					parts = append(parts, responseContentPart{Type: "input_image", ImageURL: "data:" + image.MimeType + ";base64," + base64.StdEncoding.EncodeToString(image.Data)})
+				}
+				wire.Input = append(wire.Input, responseInputItem{Type: "message", Role: m.Role, Content: parts})
+			} else {
+				content := m.Content
+				wire.Input = append(wire.Input, responseInputItem{Type: "message", Role: m.Role, Content: content})
+			}
 		}
 		for _, call := range m.ToolCalls {
 			wire.Input = append(wire.Input, responseInputItem{Type: "function_call", CallID: call.ID, Name: call.Name, Arguments: string(call.Arguments)})

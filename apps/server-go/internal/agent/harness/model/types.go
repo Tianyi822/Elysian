@@ -123,12 +123,20 @@ type Input struct {
 	Credential    *string      `json:"credential,omitempty"`
 }
 
+// ImagePart 是进程内持有的图片输入：仅 user 消息允许携带，字节不参与 JSON 序列化，
+// 只在协议层 prepare 阶段编码进供应商请求。
+type ImagePart struct {
+	MimeType string
+	Data     []byte
+}
+
 type Message struct {
-	Reasoning  string     `json:"reasoning,omitempty"`
-	Role       string     `json:"role"`
-	Content    string     `json:"content"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
+	Reasoning  string      `json:"reasoning,omitempty"`
+	Role       string      `json:"role"`
+	Content    string      `json:"content"`
+	Images     []ImagePart `json:"-"`
+	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
+	ToolCallID string      `json:"tool_call_id,omitempty"`
 }
 
 type ToolCall struct {

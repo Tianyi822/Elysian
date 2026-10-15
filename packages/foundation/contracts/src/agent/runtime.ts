@@ -68,6 +68,10 @@ export type RuntimeLimits = {
   userBytes?: number
   memoryBytes?: number
   modelResponseBytes?: number
+  /** 图片附件限额：每消息张数、单文件字节与单消息总字节；省略表示本通道不开放图片。 */
+  imageCountPerMessage?: number
+  imageBytesPerFile?: number
+  imageBytesPerMessage?: number
 }
 
 export type RuntimeRun = {

@@ -129,7 +129,10 @@
         "tokenBudget": 196608,
         "userBytes": 32768,
         "memoryBytes": 16384,
-        "modelResponseBytes": 2097152
+        "modelResponseBytes": 2097152,
+        "imageCountPerMessage": 4,
+        "imageBytesPerFile": 4194304,
+        "imageBytesPerMessage": 4194304
       },
       "usage": {
         "calls": 1,
@@ -204,7 +207,10 @@
       "tokenBudget": 196608,
       "userBytes": 32768,
       "memoryBytes": 16384,
-      "modelResponseBytes": 2097152
+      "modelResponseBytes": 2097152,
+      "imageCountPerMessage": 4,
+      "imageBytesPerFile": 4194304,
+      "imageBytesPerMessage": 4194304
     },
     "usage": {
       "calls": 1,

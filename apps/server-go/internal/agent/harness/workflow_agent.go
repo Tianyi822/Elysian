@@ -45,14 +45,18 @@ func (a *agentExecution) finishWorkflowOutput(ctx context.Context) (*workflowAge
 	if err != nil || object["type"] != "object" || mcp.ValidateSchema(schema) != nil {
 		return nil, bad("workflow-output-schema", "工作流 Agent 输出必须固定有效的对象 JSON Schema")
 	}
-	memory, groups, _, err := a.contextFacts(ctx)
+	memory, groups, _, err := a.contextFacts(ctx, false)
 	if err != nil {
 		return nil, err
 	}
 	messages, refs := flattenGroups(groups)
-	// 收尾请求不启用思考（固定函数调用），按非思考模式的官方默认取值。
+	// 收尾请求不启用思考（固定函数调用），按非思考模式的官方默认取值；
+	// 与记忆整理同口径剥离全部 Images，图片不进入结构化收尾请求。
+	for i := range messages {
+		messages[i].Images = nil
+	}
 	request := model.Request{
-		Messages:   append(baseContext(a, memory, workflowFinishSystem), messages...),
+		Messages:   append(baseContext(a, memory, workflowFinishSystem, nil), messages...),
 		Tools:      []model.Tool{{Name: "workflow_finish", Description: "提交当前工作流步骤的结构化结果，不执行外部操作", Parameters: schema}},
 		ToolChoice: "workflow_finish",
 		MaxTokens:  a.outputLimit("disabled"),

@@ -354,20 +354,23 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 	if strings.TrimSpace(input.Content) == "" || len(input.Content) > limits.UserBytes {
 		return Run{}, false, bad("invalid-content", "用户输入为空或超过长度限制")
 	}
+	// 附件引用保序去重：重复 id 与去重后输入视为同一幂等键，不重复计数。
+	input.Attachments = dedupeAttachmentRefs(input.Attachments)
 	operation := "continue-task"
 	if newTask {
 		operation = "create-task"
 	}
 	raw, _ := json.Marshal(struct {
-		Operation        string        `json:"operation"`
-		TargetID         string        `json:"targetId"`
-		Content          string        `json:"content"`
-		Skills           []RevisionRef `json:"skills"`
-		Resources        []ResourceRef `json:"resources"`
-		Prompts          []PromptRef   `json:"prompts"`
-		ReasoningLevel   string        `json:"reasoningLevel,omitempty"`
-		ReplaceMessageID string        `json:"replaceMessageId,omitempty"`
-	}{operation, targetID, input.Content, input.Skills, input.Resources, input.Prompts, input.ReasoningLevel, input.ReplaceMessageID})
+		Operation        string          `json:"operation"`
+		TargetID         string          `json:"targetId"`
+		Content          string          `json:"content"`
+		Skills           []RevisionRef   `json:"skills"`
+		Resources        []ResourceRef   `json:"resources"`
+		Prompts          []PromptRef     `json:"prompts"`
+		Attachments      []AttachmentRef `json:"attachments,omitempty"`
+		ReasoningLevel   string          `json:"reasoningLevel,omitempty"`
+		ReplaceMessageID string          `json:"replaceMessageId,omitempty"`
+	}{operation, targetID, input.Content, input.Skills, input.Resources, input.Prompts, input.Attachments, input.ReasoningLevel, input.ReplaceMessageID})
 	canonical := string(raw)
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -422,6 +425,24 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 	}
 	if !profile.Capabilities.Text || !profile.Capabilities.Tools {
 		return Run{}, false, bad("model-capability", "所选模型必须支持文本与工具调用")
+	}
+	// 图片门禁对新建发送与编辑重发一视同仁：编辑重发携带原轮附件 id 同样过此检查。
+	if len(input.Attachments) > 0 && !profile.Capabilities.Image {
+		return Run{}, false, bad("image-unsupported", "当前模型不支持图片输入，请移除附件后重试")
+	}
+	if len(input.Attachments) > 0 {
+		// 提交侧按 Limits 复检引用集合：逐 id 校验存在与绑定归属（未绑定或已绑定本会话，
+		// 支撑编辑重发复用原轮 id），并按附件行 bytes 复核张数与总字节。
+		rows, readErr := readAttachmentRows(ctx, m.store.db, input.Attachments, sessionID)
+		if readErr != nil {
+			if typed, ok := readErr.(*Error); ok {
+				return Run{}, false, typed
+			}
+			return Run{}, false, storageFailure(readErr)
+		}
+		if err = validateAttachmentSet(rows, limits); err != nil {
+			return Run{}, false, err
+		}
 	}
 	if err = model.ValidateReasoningLevel(profile, input.ReasoningLevel); err != nil {
 		return Run{}, false, err

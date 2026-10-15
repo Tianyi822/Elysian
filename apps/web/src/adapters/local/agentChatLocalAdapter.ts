@@ -10,10 +10,14 @@ const FILE_STORE = 'attachments'
 const isRecord = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
 const isNullableString = (value: unknown) => value === null || typeof value === 'string'
 const isPermissionMode = (value: unknown) => value === 'ask' || value === 'assist' || value === 'full'
+const isOptionalString = (value: unknown) => value === undefined || typeof value === 'string'
+const isOptionalFiniteNumber = (value: unknown) => value === undefined || (typeof value === 'number' && Number.isFinite(value))
+const isAttachmentRef = (value: unknown): value is { id: string } => isRecord(value) && typeof value.id === 'string'
 const isAttachment = (value: unknown): value is AgentChatAttachment => isRecord(value)
   && typeof value.id === 'string' && typeof value.name === 'string' && typeof value.type === 'string'
   && typeof value.size === 'number' && Number.isFinite(value.size) && value.size >= 0
   && typeof value.lastModified === 'number' && Number.isFinite(value.lastModified)
+  && isOptionalString(value.serverId) && isOptionalFiniteNumber(value.width) && isOptionalFiniteNumber(value.height)
 const isMessage = (value: unknown): value is AgentChatMessage => isRecord(value)
   && typeof value.id === 'string' && value.role === 'user' && typeof value.text === 'string'
   && typeof value.createdAt === 'string' && isPermissionMode(value.permissionMode)
@@ -26,7 +30,8 @@ const isSession = (value: unknown): value is AgentChatSession => isRecord(value)
   && Array.isArray(value.messages) && value.messages.every(isMessage)
   && Array.isArray(value.attachments) && value.attachments.every(isAttachment)
   && (value.editing === undefined || (isRecord(value.editing) && typeof value.editing.messageId === 'string'
-    && typeof value.editing.taskId === 'string' && typeof value.editing.text === 'string'))
+    && typeof value.editing.taskId === 'string' && typeof value.editing.text === 'string'
+    && (value.editing.attachments === undefined || (Array.isArray(value.editing.attachments) && value.editing.attachments.every(isAttachmentRef)))))
   && (value.remote === undefined || (isRecord(value.remote) && typeof value.remote.sessionId === 'string'
     && (value.remote.taskId === undefined || typeof value.remote.taskId === 'string')
     && (value.remote.runId === undefined || typeof value.remote.runId === 'string')))
@@ -34,10 +39,13 @@ const isSession = (value: unknown): value is AgentChatSession => isRecord(value)
     && typeof value.pending.input.requestId === 'string' && typeof value.pending.input.content === 'string'
     && (value.pending.input.reasoningLevel === undefined || typeof value.pending.input.reasoningLevel === 'string')
     && (value.pending.input.replaceMessageId === undefined || typeof value.pending.input.replaceMessageId === 'string')
+    && (value.pending.input.attachments === undefined || (Array.isArray(value.pending.input.attachments) && value.pending.input.attachments.every(isAttachmentRef)))
     && (value.pending.taskId === undefined || typeof value.pending.taskId === 'string')))
 
-/** 不把 blob URL 或“可用”状态当成持久事实，刷新后必须重新核对文件字节。 */
-const storedAttachment = ({ id, name, size, type, lastModified }: AgentChatAttachment): AgentChatAttachment => ({ id, name, size, type, lastModified, available: false })
+/** 不把 blob URL 或“可用”状态当成持久事实，刷新后必须重新核对文件字节；serverId 与尺寸是服务端事实，必须保留。 */
+const storedAttachment = ({ id, name, size, type, lastModified, serverId, width, height }: AgentChatAttachment): AgentChatAttachment => ({
+  id, name, size, type, lastModified, ...(serverId ? { serverId } : {}), ...(width !== undefined ? { width } : {}), ...(height !== undefined ? { height } : {}), available: false,
+})
 const storedSession = (session: AgentChatSession): AgentChatSession => ({
   ...session,
   attachments: session.attachments.map(storedAttachment),

@@ -8,7 +8,9 @@ import (
 
 // schemaVersion is bumped whenever a durable execution fact or a memory
 // reference changes shape. v6 adds a transactional JSONL record outbox.
-const schemaVersion = 6
+// v7 adds the agent chat attachment table; its BLOB bytes never enter the
+// JSONL record copy — only reference descriptors ride on Message/Run documents.
+const schemaVersion = 7
 
 const capabilitySchema = `
 CREATE TABLE workspace_cleanup (task_id TEXT PRIMARY KEY);
@@ -61,6 +63,25 @@ CREATE UNIQUE INDEX runs_task_number ON runs(task_id,run_number);
 CREATE INDEX tasks_session ON tasks(session_id);
 CREATE INDEX runs_session ON runs(session_id);
 CREATE INDEX sessions_activity ON sessions(last_activity_at);
+`
+
+// attachmentSchema 暂存上传后未绑定会话的图片字节；接受任务时在同一事务内置位
+// session_id，会话删除经外键级联带走，孤儿由周期 sweep 按 24 小时清理。
+// session_id 可空（NULL 表示未绑定）：外键约束下非空值必须命中 sessions 行，
+// 不能用空串充当「未绑定」，孤儿判定因此统一走 IS NULL。
+const attachmentSchema = `
+CREATE TABLE agent_attachments (
+ id TEXT PRIMARY KEY,
+ session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE,
+ mime_type TEXT NOT NULL,
+ bytes INTEGER NOT NULL,
+ width INTEGER NOT NULL,
+ height INTEGER NOT NULL,
+ name TEXT NOT NULL,
+ created_at TEXT NOT NULL,
+ content BLOB NOT NULL
+);
+CREATE INDEX agent_attachments_session ON agent_attachments(session_id);
 `
 
 func migrateStore(db *sql.DB) error {
@@ -146,7 +167,12 @@ func migrateStore(db *sql.DB) error {
 			return err
 		}
 	}
-	if _, err = tx.Exec("PRAGMA user_version=6"); err != nil {
+	if version < 7 {
+		if _, err = tx.Exec(attachmentSchema); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.Exec("PRAGMA user_version=7"); err != nil {
 		return err
 	}
 	return tx.Commit()

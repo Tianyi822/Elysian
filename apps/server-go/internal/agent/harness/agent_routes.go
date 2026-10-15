@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -38,6 +39,9 @@ type agentRuntimeService interface {
 	ModelRequests(context.Context, string, string, int) (Page[ModelRequestRecord], error)
 	CreateTask(context.Context, string, AgentInput) (Run, bool, error)
 	ContinueTask(context.Context, string, AgentInput) (Run, bool, error)
+	CreateAttachments(context.Context, []AttachmentUpload) ([]MessageAttachment, error)
+	AttachmentContent(context.Context, string) (string, []byte, error)
+	DeleteAttachment(context.Context, string) error
 }
 
 func readAgentInput[T any](w http.ResponseWriter, req *http.Request) (T, error) {
@@ -59,6 +63,50 @@ func readAgentInput[T any](w http.ResponseWriter, req *http.Request) (T, error) 
 		return input, shared.InvalidRequest("请求字段无效或含未声明的字段")
 	}
 	return input, nil
+}
+
+// maxUploadPartBytes 是单个 multipart part 的 wire 硬顶，与模型客户端请求上限同源；
+// 业务单文件限额（默认 4 MiB）由域层按运行时 AgentLimits 判定。
+const maxUploadPartBytes = 8 * 1024 * 1024
+
+// readAttachmentUploads 解析 multipart 图片上传：仅接受名为 file 的 part。这里只做
+// wire 层防护（请求体 8 MiB + 64 KiB、单 part 8 MiB 硬顶）；业务限额（张数/单文件/
+// 总字节）由运行内核按 AgentLimits 在域层复检，不在本层写死数值。
+func readAttachmentUploads(w http.ResponseWriter, req *http.Request) ([]AttachmentUpload, error) {
+	media, _, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
+	if err != nil || media != "multipart/form-data" {
+		return nil, bad("invalid-content-type", "附件上传需要 multipart/form-data")
+	}
+	req.Body = http.MaxBytesReader(w, req.Body, 8*1024*1024+65536)
+	reader, err := req.MultipartReader()
+	if err != nil {
+		return nil, bad("invalid-upload", "附件上传格式无效")
+	}
+	var uploads []AttachmentUpload
+	for {
+		part, err := reader.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, bad("invalid-upload", "附件上传格式无效")
+		}
+		if part.FormName() != "file" {
+			return nil, bad("invalid-upload", "附件上传的每个部分必须名为 file")
+		}
+		content, err := io.ReadAll(io.LimitReader(part, maxUploadPartBytes+1))
+		if err != nil {
+			return nil, &Error{413, "input-too-large", "请求体超过容量限制"}
+		}
+		if len(content) > maxUploadPartBytes {
+			return nil, bad("attachment-too-large", "单张图片不能超过 8 MiB")
+		}
+		uploads = append(uploads, AttachmentUpload{Name: part.FileName(), Content: content})
+	}
+	if len(uploads) == 0 {
+		return nil, bad("invalid-upload", "附件上传缺少文件")
+	}
+	return uploads, nil
 }
 
 func registerAgentRoutes(r chi.Router, service runtimeService) {
@@ -317,6 +365,39 @@ func registerAgentRoutes(r chi.Router, service runtimeService) {
 			return
 		}
 		shared.SendJSON(w, 200, page)
+	}))
+	r.Post("/attachments", wrap(func(s agentRuntimeService, w http.ResponseWriter, req *http.Request) {
+		uploads, err := readAttachmentUploads(w, req)
+		if err != nil {
+			writeRuntimeError(w, err)
+			return
+		}
+		items, err := s.CreateAttachments(req.Context(), uploads)
+		if err != nil {
+			writeRuntimeError(w, err)
+			return
+		}
+		shared.SendJSON(w, 201, struct {
+			Items []MessageAttachment `json:"items"`
+		}{items})
+	}))
+	r.Get("/attachments/{id}", wrap(func(s agentRuntimeService, w http.ResponseWriter, req *http.Request) {
+		mimeType, content, err := s.AttachmentContent(req.Context(), chi.URLParam(req, "id"))
+		if err != nil {
+			writeRuntimeError(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", mimeType)
+		w.Header().Set("Content-Length", strconv.Itoa(len(content)))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(content)
+	}))
+	r.Delete("/attachments/{id}", wrap(func(s agentRuntimeService, w http.ResponseWriter, req *http.Request) {
+		if err := s.DeleteAttachment(req.Context(), chi.URLParam(req, "id")); err != nil {
+			writeRuntimeError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}))
 	for _, entry := range []struct {
 		path   string

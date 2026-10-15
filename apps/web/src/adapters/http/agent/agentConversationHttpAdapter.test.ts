@@ -75,6 +75,43 @@ describe('聊天 HTTP 接口', () => {
     await expect(api.messages('session-1', page.nextCursor)).rejects.toThrow('格式无效')
   })
 
+  it('消息分页解析附件描述符，缺字段与畸形附件均按格式无效拒绝', async () => {
+    const attachment = { id: 'attach-1', name: '图.png', mimeType: 'image/png', bytes: 71, width: 1, height: 1 }
+    const good = { ...fixture.message, sessionId: 'session-1', seq: '1', attachments: [attachment] }
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(json({ items: [good], nextCursor: '1', hasMore: false }))
+      .mockResolvedValueOnce(json({ items: [{ ...good, seq: '1', attachments: [{ id: 'x', name: 'n' }] }], nextCursor: '1', hasMore: false }))
+    vi.stubGlobal('fetch', fetcher)
+    const api = createHttpAgentConversationAdapter()
+    const page = await api.messages('session-1', '0')
+    expect(page.items[0]?.attachments).toEqual([attachment])
+    await expect(api.messages('session-1', '0')).rejects.toThrow('格式无效')
+  })
+
+  it('附件上传组 multipart 且不设 JSON 头，回读字节校验图片 Content-Type', async () => {
+    const upload = vi.fn().mockResolvedValue(json({ items: [
+      { id: 'attach-1', name: 'a.png', mimeType: 'image/png', bytes: 2, width: 1, height: 1, createdAt: '2026-10-15T00:00:00Z' },
+    ] }, 201))
+    const blob = vi.fn().mockResolvedValue(new Response(new Uint8Array([0x89, 0x50]), { status: 200, headers: { 'content-type': 'image/png' } }))
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string, init?: RequestInit) => (url === '/api/agent/attachments' ? upload(url, init) : blob(url, init))))
+    const api = createHttpAgentConversationAdapter()
+    const file = new File(['png'], 'a.png', { type: 'image/png' })
+    const uploaded = await api.uploadAttachments([file])
+    expect(uploaded.items[0]).toMatchObject({ id: 'attach-1', name: 'a.png', mimeType: 'image/png', bytes: 2 })
+    const [url, init] = upload.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/agent/attachments')
+    expect(init.method).toBe('POST')
+    const form = init.body as FormData
+    expect(form.get('file')).toBeInstanceOf(File)
+    expect((form.get('file') as File).name).toBe('a.png')
+    expect(new Headers(init.headers).get('content-type')).toBeNull()
+    const content = await api.attachmentBlob('attach-1')
+    expect(content.type).toBe('image/png')
+    expect(blob.mock.calls[0]![0]).toBe('/api/agent/attachments/attach-1')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('x', { status: 200, headers: { 'content-type': 'text/plain' } })))
+    await expect(api.attachmentBlob('attach-1')).rejects.toThrow('格式无效')
+  })
+
   it('服务端错误原样显示且不重发请求；演示不请求模型', async () => {
     const fetcher = vi.fn().mockResolvedValue(json({ error: '会话忙碌', code: 'session-busy' }, 409))
     vi.stubGlobal('fetch', fetcher)

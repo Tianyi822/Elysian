@@ -40,29 +40,46 @@ type RenameSessionInput struct {
 }
 
 type AgentInput struct {
-	ReplaceMessageID string        `json:"replaceMessageId,omitempty"`
-	ReasoningLevel   string        `json:"reasoningLevel,omitempty"`
-	Skills           []RevisionRef `json:"skills,omitempty"`
-	Resources        []ResourceRef `json:"resources,omitempty"`
-	Prompts          []PromptRef   `json:"prompts,omitempty"`
-	RequestID        string        `json:"requestId"`
-	Content          string        `json:"content"`
+	ReplaceMessageID string          `json:"replaceMessageId,omitempty"`
+	ReasoningLevel   string          `json:"reasoningLevel,omitempty"`
+	Skills           []RevisionRef   `json:"skills,omitempty"`
+	Resources        []ResourceRef   `json:"resources,omitempty"`
+	Prompts          []PromptRef     `json:"prompts,omitempty"`
+	Attachments      []AttachmentRef `json:"attachments,omitempty"`
+	RequestID        string          `json:"requestId"`
+	Content          string          `json:"content"`
+}
+
+// AttachmentRef 只引用已上传附件；字节经独立上传端点先行入库。
+type AttachmentRef struct {
+	ID string `json:"id"`
+}
+
+// MessageAttachment 是公开消息携带的附件描述符，只含引用与摘要，不含字节。
+type MessageAttachment struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	MimeType string `json:"mimeType"`
+	Bytes    int    `json:"bytes"`
+	Width    int    `json:"width"`
+	Height   int    `json:"height"`
 }
 
 // Message 只含公开用户输入和助手答复，不承载工具过程或工作记忆。
 type Message struct {
-	ReplacesMessageID string    `json:"replacesMessageId,omitempty"`
-	Quarantined       bool      `json:"quarantined,omitempty"`
-	WikiSources       []WikiRef `json:"wikiSources,omitempty"`
-	ID                string    `json:"id"`
-	SessionID         string    `json:"sessionId"`
-	TaskID            string    `json:"taskId"`
-	RunID             string    `json:"runId"`
-	Seq               string    `json:"seq"`
-	Role              string    `json:"role"`
-	Content           string    `json:"content"`
-	CreatedAt         string    `json:"createdAt"`
-	RunStatus         string    `json:"runStatus,omitempty"`
+	ReplacesMessageID string              `json:"replacesMessageId,omitempty"`
+	Quarantined       bool                `json:"quarantined,omitempty"`
+	WikiSources       []WikiRef           `json:"wikiSources,omitempty"`
+	Attachments       []MessageAttachment `json:"attachments,omitempty"`
+	ID                string              `json:"id"`
+	SessionID         string              `json:"sessionId"`
+	TaskID            string              `json:"taskId"`
+	RunID             string              `json:"runId"`
+	Seq               string              `json:"seq"`
+	Role              string              `json:"role"`
+	Content           string              `json:"content"`
+	CreatedAt         string              `json:"createdAt"`
+	RunStatus         string              `json:"runStatus,omitempty"`
 }
 
 type MemoryCursor struct {

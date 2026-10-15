@@ -134,6 +134,18 @@ export type AgentSession = {
 export type AgentCreateSessionInput = { title: string; modelProfileId: string; modelRevision: number }
 export type AgentRenameSessionInput = { title: string }
 export type AgentSwitchModelInput = { modelProfileId: string; modelRevision: number }
+
+/** 已上传图片附件的引用；字节先经 multipart 上传端点入库，提交时只携带 id。 */
+export type AgentAttachmentRef = { id: string }
+
+/** 附件前端预检常量：与服务端 Agent Limits 默认值一致，服务端仍是权威。 */
+export const AGENT_ATTACHMENT_LIMITS = {
+  acceptMimeTypes: ['image/jpeg', 'image/png'],
+  maxFileBytes: 4194304,
+  maxFilesPerMessage: 4,
+  maxMessageBytes: 4194304,
+} as const
+
 export type AgentInput = {
   requestId: string
   content: string
@@ -144,6 +156,18 @@ export type AgentInput = {
   skills?: readonly AgentRevisionRef[]
   resources?: readonly AgentResourceRef[]
   prompts?: readonly AgentPromptRef[]
+  /** 随消息发送的图片附件引用（去重后最多 4 个）；模型必须声明 image 能力。 */
+  attachments?: readonly AgentAttachmentRef[]
+}
+
+/** 公开消息携带的附件描述符：只含引用与摘要，字节经专用端点按需读取。 */
+export type AgentMessageAttachment = {
+  id: string
+  name: string
+  mimeType: string
+  bytes: number
+  width: number
+  height: number
 }
 
 /** 公开对话只包含用户输入和助手答复，不承载工具结果、工作记忆或隐藏推理。 */
@@ -154,6 +178,8 @@ export type AgentMessage = {
   quarantined?: boolean
   /** 消息成文时引用的 Wiki 页面修订；由父进程核验，不在前端补全。 */
   wikiSources?: readonly AgentWikiRef[]
+  /** 该轮用户消息随文发送的图片附件描述符；旧文档缺字段按不存在兼容。 */
+  attachments?: readonly AgentMessageAttachment[]
   id: string
   sessionId: string
   taskId: string

@@ -4,7 +4,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { useShellLayout } from '../../app/layout/ShellLayoutContext'
 import { ChatSessionList } from './ChatSessionList'
 import { RUNTIME_RUN_STATUS_LABELS } from '@elysian/contracts'
-import { Bot, Brain, Hand, List, Paperclip, Pencil, Plus, Send, Square, ShieldAlert, ShieldCheck, X, type IconComponent } from '../../components/icons'
+import { Bot, Brain, Hand, Image as ImageIcon, List, Paperclip, Pencil, Plus, Send, Square, ShieldAlert, ShieldCheck, X, type IconComponent } from '../../components/icons'
 import { IconButton } from '../../components/IconButton'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { RefreshButton } from '../../components/RefreshState'
@@ -13,6 +13,7 @@ import { subscribeWhileVisible } from '../../adapters/subscribeWhileVisible'
 import type { AgentChatPermissionMode } from '../../contracts/agentChat'
 import { isChatRunActive, useAgentChatStore } from '../../stores/agentChatStore'
 import { ChatAttachment } from './ChatAttachment'
+import { ChatMessageAttachments } from './ChatMessageAttachments'
 import { ChatMessageCopy } from './ChatMessageCopy'
 import { ChatResponse } from './ChatResponse'
 import { defaultReasoningLevel, reasoningLabel, useChatModels } from './useChatModels'
@@ -79,7 +80,7 @@ export function AgentChatPage() {
   const reasoningLevels = model?.reasoningLevels ?? []
   const reasoningLevel = session?.reasoningLevel && reasoningLevels.includes(session.reasoningLevel) ? session.reasoningLevel : defaultReasoningLevel(reasoningLevels, model?.defaultReasoningLevel) ?? ''
   const restoring = !!session?.remote && !chat.remoteSession
-  const attachmentsLocked = !session || chat.loading || busy || restoring || !!session.pending
+  const attachmentsLocked = !session || chat.loading || busy || chat.uploadingAttachments || restoring || !!session.pending || !!session.editing
   const readError = chat.syncError && error && chat.syncError !== error
     ? `会话：${chat.syncError}\n模型：${error}`
     : chat.syncError || error
@@ -194,8 +195,8 @@ export function AgentChatPage() {
     if (following.current && history.current) history.current.scrollTop = history.current.scrollHeight
   }, [chat.messages.length, chat.reasoning[chat.run?.id ?? ''], session?.id])
 
-  const canSubmit = Boolean(api.available && (model || session?.pending) && !busy && !chat.loading && !restoring && (status === 'ready' || session?.pending))
-  const canSend = Boolean(canSubmit && !session?.editing && !session?.pending?.input.replaceMessageId && session?.draft.trim() && !session.attachments.length)
+  const canSubmit = Boolean(api.available && (model || session?.pending) && !busy && !chat.uploadingAttachments && !chat.loading && !restoring && (status === 'ready' || session?.pending))
+  const canSend = Boolean(canSubmit && !session?.editing && !session?.pending?.input.replaceMessageId && session?.draft.trim())
   const canResend = Boolean(canSubmit && (session?.pending?.input.replaceMessageId || session?.editing?.text.trim()))
   const resend = () => {
     if (!canResend) return
@@ -305,15 +306,31 @@ export function AgentChatPage() {
                   onKeyDown={event => {
                     if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && !composing.current && event.keyCode !== 229) { event.preventDefault(); resend() }
                   }} />
+                {!!session.editing!.attachments?.length && (() => {
+                  const editing = session.editing!
+                  const original = chat.messages.find(message => message.id === editing.messageId)
+                  return <ul aria-label="随重发发送的图片" className="flex flex-wrap gap-2 px-1 pt-2">
+                    <li className="w-full text-xs text-fg-muted">原图片将随重发一并发送</li>
+                    {editing.attachments!.map(ref => <li key={ref.id} className="flex items-center gap-2 rounded-lg border border-border px-2 py-1 text-xs text-fg-muted">
+                      <ImageIcon size={14} aria-hidden /><span className="max-w-40 truncate">{original?.attachments?.find(attachment => attachment.id === ref.id)?.name ?? '图片'}</span>
+                    </li>)}
+                  </ul>
+                })()}
                 <div className="chat-edit-actions">
                   <IconButton label="取消编辑" disabled={chat.sending || !!session.pending} onPress={chat.cancelEdit}><X size={18} aria-hidden /></IconButton>
                   <IconButton label={session.pending ? '重试发送' : '发送'} disabled={!canResend} onPress={resend}><Send size={18} aria-hidden /></IconButton>
                 </div>
               </form> : <>
-                <div className="chat-message-body"><p className="chat-message-text">{message.content}</p></div>
+                <div className="chat-message-body">
+                  <p className="chat-message-text">{message.content}</p>
+                  {!!message.attachments?.length && <ChatMessageAttachments attachments={message.attachments} fetchBlob={api.attachmentBlob} />}
+                </div>
                 <ChatMessageCopy value={message.content} noun="这条消息" />
-                {lastUserMessage?.id === message.id && <IconButton label="编辑这条消息" variant="ghost" tooltipSide="bottom" className="chat-copy chat-edit"
-                  disabled={busy || restoring || !!session?.pending} onPress={() => chat.editMessage(message.id)}><Pencil size={13} aria-hidden /></IconButton>}
+                {lastUserMessage?.id === message.id && <IconButton
+                  label={message.attachments?.length && !model?.supportsImage ? '当前模型不支持图片输入，暂不能编辑带图消息' : '编辑这条消息'}
+                  variant="ghost" tooltipSide="bottom" className="chat-copy chat-edit"
+                  disabled={busy || restoring || !!session?.pending || (!!message.attachments?.length && !model?.supportsImage)}
+                  onPress={() => chat.editMessage(message.id)}><Pencil size={13} aria-hidden /></IconButton>}
               </>}
             </article>
             <ChatResponse key={message.runId} content={answer?.content ?? live?.content ?? ''} reasoning={chat.reasoning[message.runId] ?? ''}
@@ -334,7 +351,8 @@ export function AgentChatPage() {
       </div>}
       {!api.available && <p className="mb-3 text-xs text-fg-muted">当前为本地演示，请在已连接后端的面板中使用聊天。</p>}
       {status === 'ready' && (!models.length || (session?.remote && !model)) && <p className="mb-3 text-xs text-fg-muted">请选择支持文本与工具调用的可用模型，或<Link className="underline underline-offset-4 hover:text-fg" to="/settings?tab=models">前往设置添加模型</Link>。</p>}
-      {!!session?.attachments.length && <p className="mb-3 text-xs text-fg-muted">附件仅保存在本地，暂未接入模型；请移除附件后发送文本。</p>}
+      {!!session?.attachments.length && !model?.supportsImage && <p className="mb-3 text-xs text-fg-muted">当前模型不支持图片输入，请移除附件或切换支持图片的模型。</p>}
+      {!!session?.attachments.filter(attachment => !attachment.serverId).length && <p className="mb-3 text-xs text-fg-muted">存在旧版本添加、尚未上传的附件，请移除后重新添加。</p>}
 
       <form className="chat-composer panel-surface" onSubmit={event => { event.preventDefault(); send() }} aria-label="消息输入框">
         {!!session?.attachments.length && <ul aria-label="本地附件" className="flex flex-wrap gap-2 px-4 pt-4">{session.attachments.map(attachment => <ChatAttachment key={attachment.id} attachment={attachment} onRemove={() => chat.removeAttachment(attachment.id)} />)}</ul>}
@@ -347,13 +365,13 @@ export function AgentChatPage() {
           onCompositionStart={() => { composing.current = true }} onCompositionEnd={() => { composing.current = false }}
           onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && !composing.current && event.keyCode !== 229) { event.preventDefault(); send() } }}
         />
-        <input ref={fileInput} type="file" multiple hidden aria-label="选择附件" disabled={attachmentsLocked} onChange={event => {
+        <input ref={fileInput} type="file" multiple hidden aria-label="选择图片附件" accept="image/jpeg,image/png" disabled={attachmentsLocked} onChange={event => {
           const files = Array.from(event.target.files ?? [])
           event.target.value = ''
-          if (!attachmentsLocked) void chat.addAttachments(files)
+          if (!attachmentsLocked) void chat.addAttachments(api, files)
         }} />
         <div className="chat-composer-tools">
-          <IconButton label="添加附件" tooltip={false} variant="ghost" onPress={() => fileInput.current?.click()} disabled={attachmentsLocked} className="chat-add-file"><Paperclip size={20} aria-hidden /></IconButton>
+          <IconButton label={!api.available || !model?.supportsImage ? '当前模型不支持图片输入' : '添加图片附件'} tooltip={false} variant="ghost" onPress={() => fileInput.current?.click()} disabled={attachmentsLocked || !api.available || !model?.supportsImage} className="chat-add-file"><Paperclip size={20} aria-hidden /></IconButton>
           <div className="chat-permission" data-mode={permissionMode.value} title={`${permissionMode.label}：${permissionMode.description}`}>
             <SelectDropdown ariaLabel="权限模式" value={permissionMode.value} onSelect={chat.setPermissionMode}
               items={PERMISSION_MODES.map(({ Icon, ...mode }) => ({ ...mode, icon: <Icon size={16} /> }))}

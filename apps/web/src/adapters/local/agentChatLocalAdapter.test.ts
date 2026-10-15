@@ -35,6 +35,35 @@ describe('浏览器会话存储', () => {
     const refreshed = createAgentChatLocalAdapter()
     expect((await refreshed.restore(saved.attachments))[0]?.available).toBe(false)
   })
+
+  it('storedAttachment 读写往返保留 serverId 与宽高，刷新后可发送判定不失效', () => {
+    const adapter = createAgentChatLocalAdapter()
+    const attachment = { id: 'file-1', name: '图.png', size: 71, type: 'image/png', lastModified: 0, serverId: 'server-attachment-1', width: 3, height: 4, available: true }
+    adapter.write({ ...session(), attachments: [attachment],
+      pending: { input: { requestId: 'r1', content: '看图', attachments: [{ id: 'server-attachment-1' }] } },
+      editing: { messageId: 'message-1', taskId: 'task-1', text: '改写', attachments: [{ id: 'server-attachment-1' }] } })
+    const saved = adapter.read()!
+    expect(saved.attachments[0]).toMatchObject({ serverId: 'server-attachment-1', width: 3, height: 4 })
+    expect(saved.attachments[0]?.available).toBe(false)
+    expect(saved.attachments[0]?.previewUrl).toBeUndefined()
+    expect(saved.pending?.input.attachments).toEqual([{ id: 'server-attachment-1' }])
+    expect(saved.editing?.attachments).toEqual([{ id: 'server-attachment-1' }])
+    // 二次写读同样保留：serverId 不被第一次 write/parse 剥掉。
+    const again = createAgentChatLocalAdapter()
+    expect(again.read()?.attachments[0]?.serverId).toBe('server-attachment-1')
+  })
+
+  it('无 serverId 的旧版存量附件照常恢复字节与预览，保持无 serverId 交由上层拦发送', async () => {
+    const adapter = createAgentChatLocalAdapter()
+    const result = await adapter.attach([new File(['png'], '旧图.png', { type: 'image/png' })])
+    expect(result.attachments[0]?.serverId).toBeUndefined()
+    adapter.write({ ...session(), attachments: result.attachments })
+    const saved = adapter.read()!
+    const restored = await adapter.restore(saved.attachments)
+    expect(restored[0]?.available).toBe(true)
+    expect(restored[0]?.serverId).toBeUndefined()
+    expect(restored[0]?.previewUrl).toContain('blob:')
+  })
 })
 
 

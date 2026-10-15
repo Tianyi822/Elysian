@@ -168,7 +168,28 @@ func (s *store) acceptAgent(ctx context.Context, task Task, run Run, canonical, 
 				return bad("invalid-task", "该任务不支持会话续轮")
 			}
 		}
-		msg := Message{ID: messageID, SessionID: session.ID, TaskID: task.ID, RunID: run.ID, Role: "user", Content: run.Input, CreatedAt: run.CreatedAt}
+		var attachmentDescs []MessageAttachment
+		if run.Selection != nil && len(run.Selection.Attachments) > 0 {
+			// 附件绑定与任务接受同事务：任一 id 不存在或已绑定其他会话即整体回滚；
+			// 「已绑定本会话」放行以支撑编辑重发复用原轮 id（replaceLastMessage 只标
+			// supersededByRunId，旧轮附件仍绑定本会话）。核对以本事务内 SELECT 为准，
+			// 不依赖驱动 RowsAffected 对「值未变化行」的计数口径。
+			rows, err := readAttachmentRows(ctx, tx, run.Selection.Attachments, session.ID)
+			if err != nil {
+				return err
+			}
+			if err = validateAttachmentSet(rows, run.Limits); err != nil {
+				return err
+			}
+			if err = bindAttachments(ctx, tx, session.ID, run.Selection.Attachments); err != nil {
+				return err
+			}
+			attachmentDescs = make([]MessageAttachment, 0, len(rows))
+			for _, row := range rows {
+				attachmentDescs = append(attachmentDescs, row.MessageAttachment)
+			}
+		}
+		msg := Message{Attachments: attachmentDescs, ID: messageID, SessionID: session.ID, TaskID: task.ID, RunID: run.ID, Role: "user", Content: run.Input, CreatedAt: run.CreatedAt}
 		if run.Selection != nil && run.Selection.ReplaceMessageID != "" {
 			if err = s.replaceLastMessage(ctx, tx, &task, &run, &msg); err != nil {
 				return err

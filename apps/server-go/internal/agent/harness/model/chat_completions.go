@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"unicode/utf8"
 
@@ -21,9 +22,20 @@ type wireCall struct {
 type wireMessage struct {
 	Reasoning  string     `json:"reasoning_content,omitempty"`
 	Role       string     `json:"role"`
-	Content    string     `json:"content"`
+	Content    any        `json:"content"`
 	ToolCalls  []wireCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
+}
+
+// wireContentPart 是带图 user 消息的 content 数组成员：文本段或 Data URL 图片段。
+type wireContentPart struct {
+	Type     string        `json:"type"`
+	Text     string        `json:"text,omitempty"`
+	ImageURL *wireImageURL `json:"image_url,omitempty"`
+}
+
+type wireImageURL struct {
+	URL string `json:"url"`
 }
 
 type wireTool struct {
@@ -70,7 +82,21 @@ func prepareRequest(p Profile, input Request) (wireRequest, map[string]bool, err
 		request.ToolChoice = map[string]any{"type": "function", "function": map[string]string{"name": input.ToolChoice}}
 	}
 	for _, msg := range input.Messages {
-		w := wireMessage{Role: msg.Role, Content: msg.Content, ToolCallID: msg.ToolCallID}
+		w := wireMessage{Role: msg.Role, ToolCallID: msg.ToolCallID}
+		if len(msg.Images) > 0 {
+			// 带图 user 消息序列化为 content parts：文本段在前，图片段按 Data URL 编码；
+			// 智谱与 DeepSeek 共用同一 image_url 形状，前缀按附件魔数判定的 MIME 生成。
+			parts := make([]wireContentPart, 0, len(msg.Images)+1)
+			if msg.Content != "" {
+				parts = append(parts, wireContentPart{Type: "text", Text: msg.Content})
+			}
+			for _, image := range msg.Images {
+				parts = append(parts, wireContentPart{Type: "image_url", ImageURL: &wireImageURL{URL: "data:" + image.MimeType + ";base64," + base64.StdEncoding.EncodeToString(image.Data)}})
+			}
+			w.Content = parts
+		} else {
+			w.Content = msg.Content
+		}
 		if p.Provider == ProviderDeepSeek && input.OnReasoning != nil && len(msg.ToolCalls) > 0 {
 			w.Reasoning = msg.Reasoning
 		}

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { AgentChatOutput, AgentMessage, AgentModelProfile, AgentSession } from '@elysian/contracts'
+import { AGENT_ATTACHMENT_LIMITS, type AgentChatOutput, type AgentMessage, type AgentModelProfile, type AgentSession } from '@elysian/contracts'
 import { agentChatAllAttachments, agentChatSessionKey } from '../contracts/agentChat'
 import { AgentHttpError } from '../adapters/http/agent/agentShared'
 import { agentChatLocalAdapter } from '../adapters/local/agentChatLocalAdapter'
@@ -27,6 +27,7 @@ type AgentChatState = {
   liveOutput: AgentChatOutput | null
   run: AgentChatRun | null
   sending: boolean
+  uploadingAttachments: boolean
   stopping: boolean
   refreshing: boolean
   error: string | null
@@ -41,7 +42,7 @@ type AgentChatState = {
   setPermissionMode(permissionMode: AgentChatPermissionMode): void
   setModel(modelId: string | null): void
   setReasoningLevel(reasoningLevel: string | null): void
-  addAttachments(files: readonly File[]): Promise<void>
+  addAttachments(api: AgentConversationAdapter, files: readonly File[]): Promise<void>
   removeAttachment(id: string): void
   send(api: AgentConversationAdapter, model?: AgentModelProfile): Promise<boolean>
   refresh(api: AgentConversationAdapter, signal?: AbortSignal): Promise<void>
@@ -51,7 +52,7 @@ type AgentChatState = {
 
 const allAttachments = agentChatAllAttachments
 const persistenceNotice = '浏览器暂时无法保存会话，刷新后可能丢失本页内容。'
-const remoteBlank = { remoteSession: null, messages: [], reasoning: {}, liveOutput: null, run: null, sending: false, stopping: false, refreshing: false, error: null, syncError: null }
+const remoteBlank = { remoteSession: null, messages: [], reasoning: {}, liveOutput: null, run: null, sending: false, uploadingAttachments: false, stopping: false, refreshing: false, error: null, syncError: null }
 export const isChatRunActive = (run: AgentChatRun | null) => !!run && ['queued', 'running', 'waiting-approval', 'waiting-resource', 'recovery-required'].includes(run.status)
 const failureMessage = (error: unknown) => error instanceof Error ? error.message : '会话请求失败'
 // 这些业务拒绝发生在 submitAgent 核对 requestId 之后，可确认该请求未被接受。
@@ -61,9 +62,23 @@ const confirmedRejections: Readonly<Record<string, number>> = {
   'session-not-found': 404, 'task-not-found': 404, 'profile-not-found': 404, 'profile-revision-not-found': 404,
   'session-busy': 409, 'model-changed': 409, 'profile-inactive': 409, 'queue-full': 429,
   'invalid-replacement': 400, 'message-changed': 409,
+  'image-unsupported': 400, 'attachment-invalid': 400, 'attachment-too-many': 400, 'attachment-message-too-large': 400,
 }
 const isConfirmedRejection = (error: unknown) => error instanceof AgentHttpError &&
   !!error.code && Object.hasOwn(confirmedRejections, error.code) && confirmedRejections[error.code] === error.status
+
+/** 展示级尺寸探测：读图片头部的自然尺寸；解码失败或超时返回 null 交由服务端权威判定。 */
+const imagePixelSize = (file: File): Promise<{ width: number; height: number } | null> =>
+  new Promise(resolve => {
+    if (typeof Image === 'undefined' || typeof URL?.createObjectURL !== 'function') { resolve(null); return }
+    const url = URL.createObjectURL(file)
+    const done = (size: { width: number; height: number } | null) => { URL.revokeObjectURL(url); resolve(size) }
+    const timer = setTimeout(() => done(null), 800)
+    const image = new Image()
+    image.onload = () => { clearTimeout(timer); done({ width: image.naturalWidth, height: image.naturalHeight }) }
+    image.onerror = () => { clearTimeout(timer); done(null) }
+    image.src = url
+  })
 
 export function createAgentChatStore(adapter: AgentChatAdapter, now: () => string = () => new Date().toISOString(), id: () => string = () => crypto.randomUUID()) {
   return create<AgentChatState>((set, get) => {
@@ -74,6 +89,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
     let listInitialized = false
     let lifecycle = 0
     let navigationVersion = 0
+    let attachmentUploadVersion = 0
     let initialBlank = false
     let initialized = false
     let initialization: Promise<void> | undefined
@@ -91,7 +107,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
     }
     const restore = async (session: AgentChatSession) => {
       const currentGeneration = ++generation
-      if (get().session?.id !== session.id) { remoteVersion += 1; completedReasoning.clear(); set(remoteBlank) }
+      if (get().session?.id !== session.id) { remoteVersion += 1; attachmentUploadVersion += 1; completedReasoning.clear(); set(remoteBlank) }
       set({ session, loading: true, notice: null })
       const attachments = await adapter.restore(allAttachments(session))
       if (currentGeneration !== generation || get().session?.id !== session.id) return
@@ -134,6 +150,16 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
       const next = { ...session, remote: { sessionId: run.sessionId ?? session.remote!.sessionId, taskId: run.taskId, runId: run.id },
         ...(pending && pending.input.requestId === run.requestId ? { pending: undefined,
           ...(pending.input.replaceMessageId ? { editing: undefined } : { draft: session.draft.trim() === pending.input.content ? '' : session.draft }) } : {}) }
+      // 确认接受后只清本次发送引用的草稿附件并释放其本地字节：pending 未确认窗口内
+      // 新增的草稿附件（如跨标签写入）不属于本次发送集合，保留给用户后续处置。
+      if (pending && pending.input.requestId === run.requestId && !pending.input.replaceMessageId && pending.input.attachments?.length && session.attachments.length) {
+        const sent = new Set(pending.input.attachments.map(ref => ref.id))
+        const consumed = session.attachments.filter(attachment => attachment.serverId && sent.has(attachment.serverId))
+        if (consumed.length) {
+          next.attachments = session.attachments.filter(attachment => !attachment.serverId || !sent.has(attachment.serverId))
+          void adapter.discard(consumed.map(attachment => attachment.id))
+        }
+      }
       if (!display || get().session?.id !== owner.id) { adapter.write(next, false); if (get().session) set({ localSessions: adapter.list() }); return }
       persist(next)
       if (pending && pending.input.requestId === run.requestId && pending.input.replaceMessageId) {
@@ -173,6 +199,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
       sessions: [], localSessions: [], listLoading: false, listError: null, listHasMore: false, listCursor: '',
       clearDisplay() {
         generation += 1; remoteVersion += 1; listVersion += 1; lifecycle += 1; navigationVersion += 1
+        attachmentUploadVersion += 1
         initialBlank = false
         listInitialized = false
         initialized = false; initialization = undefined; restoring = undefined
@@ -297,6 +324,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
         initialized = true
         generation += 1
         remoteVersion += 1
+        attachmentUploadVersion += 1
         completedReasoning.clear()
         restoring = undefined
         set({ ...remoteBlank, loading: false, notice: null })
@@ -306,7 +334,9 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
       editMessage(messageId) {
         if (get().sending || get().stopping || isChatRunActive(get().run) || current().pending || get().remoteSession?.activeRunId || get().remoteSession?.activeWorkflowId) return
         const last = get().messages.filter(message => message.role === 'user').at(-1)
-        if (last?.id === messageId) update({ editing: { messageId, taskId: last.taskId, text: last.content } })
+        // 原轮附件 id 随编辑状态一起保存：重发沿用同一批服务端附件，编辑模式不提供移除。
+        if (last?.id === messageId) update({ editing: { messageId, taskId: last.taskId, text: last.content,
+          ...(last.attachments?.length ? { attachments: last.attachments.map(attachment => ({ id: attachment.id })) } : {}) } })
       },
       setEditText(text) { if (current().editing && !get().sending && !current().pending) update({ editing: { ...current().editing!, text } }) },
       cancelEdit() { if (!get().sending && !current().pending) update({ editing: undefined }) },
@@ -328,18 +358,53 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
       setPermissionMode: permissionMode => { if (!get().sending && !isChatRunActive(get().run) && !current().pending) update({ permissionMode }) },
       setModel: modelId => { if (!get().sending && !isChatRunActive(get().run) && !current().pending) update({ modelId, reasoningLevel: null }) },
       setReasoningLevel: reasoningLevel => { if (!get().sending && !isChatRunActive(get().run) && !current().pending) update({ reasoningLevel }) },
-      async addAttachments(files) {
-        if (!files.length) return
+      async addAttachments(api, files) {
+        if (!files.length || get().uploadingAttachments) return
         const lifetime = lifecycle
         const ready = get().ensureSession()
         const sessionId = current().id
-        await ready
-        if (lifetime !== lifecycle || get().session?.id !== sessionId) return
-        const result = await adapter.attach(files)
-        const session = current()
-        if (lifetime !== lifecycle || get().session?.id !== sessionId) { await adapter.discard(result.attachments.map(attachment => attachment.id)); return }
-        persist({ ...session, attachments: [...session.attachments, ...result.attachments] })
-        if (!result.persisted) set({ notice: '附件仅在当前页面可用，浏览器暂时无法保存文件；刷新后请重新选择。' })
+        const version = ++attachmentUploadVersion
+        const valid = () => version === attachmentUploadVersion && lifetime === lifecycle && stillCurrent(sessionId)
+        set({ uploadingAttachments: true })
+        try {
+          await ready
+          if (!valid()) return
+          if (!api.available) { set({ error: '当前为本地演示，请在已连接后端的面板中添加附件。' }); return }
+          // 编辑只改文本：编辑期间不允许往草稿添加附件，避免编辑重发静默捎带新图。
+          if (current().editing) { set({ error: '正在编辑消息，完成后才能添加附件。' }); return }
+          const existing = current().attachments
+          // 前端预检（服务端仍是权威）：格式、单文件字节、张数与总字节、展示级尺寸提示。
+          const acceptedMime = AGENT_ATTACHMENT_LIMITS.acceptMimeTypes as readonly string[]
+          const rejected = files.filter(file => !acceptedMime.includes(file.type))
+          if (rejected.length) { set({ error: '图片仅支持 JPEG 与 PNG，其他格式暂不支持。' }); return }
+          if (files.some(file => file.size > AGENT_ATTACHMENT_LIMITS.maxFileBytes)) { set({ error: '单张图片不能超过 4 MiB。' }); return }
+          if (existing.length + files.length > AGENT_ATTACHMENT_LIMITS.maxFilesPerMessage) { set({ error: '一条消息最多 4 张图片，且总大小不超过 4 MiB。' }); return }
+          if (existing.reduce((sum, attachment) => sum + attachment.size, 0) + files.reduce((sum, file) => sum + file.size, 0) > AGENT_ATTACHMENT_LIMITS.maxMessageBytes) { set({ error: '一条消息最多 4 张图片，且总大小不超过 4 MiB。' }); return }
+          const sizes = await Promise.all(files.map(file => imagePixelSize(file)))
+          if (!valid()) return
+          if (sizes.some(size => size && Math.max(size.width, size.height) > 6000)) { set({ error: '图片单边尺寸不能超过 6000 像素。' }); return }
+          const uploaded = await api.uploadAttachments(files)
+          if (!valid()) return
+          const result = await adapter.attach(files)
+          if (!valid()) {
+            await adapter.discard(result.attachments.map(attachment => attachment.id))
+            return
+          }
+          // 上传回执与本地字节按序对应：服务端描述符的 id/尺寸补进草稿附件，可发送性以 serverId 为准。
+          const additions = result.attachments.map((attachment, index) => {
+            const item = uploaded.items[index]
+            if (!item) return { ...attachment }
+            return { ...attachment, serverId: item.id, width: item.width, height: item.height,
+              ...(item.mimeType && item.mimeType !== attachment.type ? { type: item.mimeType } : {}) }
+          })
+          const session = current()
+          persist({ ...session, attachments: [...session.attachments, ...additions] })
+          if (!result.persisted) set({ notice: '附件仅在当前页面可用，浏览器暂时无法保存文件；刷新后请重新选择。' })
+        } catch (error) {
+          if (valid()) set({ error: failureMessage(error) })
+        } finally {
+          if (version === attachmentUploadVersion) set({ uploadingAttachments: false })
+        }
       },
       removeAttachment(attachmentId) {
         const session = current()
@@ -351,10 +416,23 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
         const lifetime = lifecycle
         const valid = () => lifetime === lifecycle && stillCurrent(session.id)
         const text = session.pending?.input.content ?? (session.editing?.text ?? session.draft).trim()
-        if (!api.available || !text || get().loading || get().sending || get().stopping || isChatRunActive(get().run)) return false
-        if (!session.editing && !session.pending?.input.replaceMessageId && session.attachments.length) {
-          set({ error: '当前聊天仅支持文本，请移除附件后发送。' })
-          return false
+        if (!api.available || !text || get().loading || get().sending || get().uploadingAttachments || get().stopping || isChatRunActive(get().run)) return false
+        if (!session.pending) {
+          // 新建发送：无 serverId 的旧版存量附件显式拦截并逐个点名，绝不静默丢弃或产出空引用。
+          const stale = session.attachments.filter(attachment => !attachment.serverId)
+          if (stale.length) {
+            set({ error: `存在未上传的附件（旧版本添加），请移除后重新添加再发送：${stale.map(attachment => attachment.name).join('、')}。` })
+            return false
+          }
+          // 编辑重发：原轮附件 id 随 editing 携带；当前模型无图能力时提前拦截且不写 pending。
+          if (session.editing?.attachments?.length && !model?.capabilities.image) {
+            set({ error: '当前模型不支持图片输入，无法重发带图消息，请切换支持图片的模型。' })
+            return false
+          }
+          if (!session.editing && session.attachments.length && !model?.capabilities.image) {
+            set({ error: '当前模型不支持图片输入，请移除附件或切换支持图片的模型。' })
+            return false
+          }
         }
         if (new TextEncoder().encode(text).length > 32768) { set({ error: '消息不能超过 32 KiB，请缩短后发送。' }); return false }
         if (!session.pending && (!model?.active || !model.capabilities.text || !model.capabilities.tools)) {
@@ -384,9 +462,14 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
           }
           if (!valid()) return false
           set({ remoteSession: remote })
+          // 编辑重发只携带原轮附件 id（编辑只改文本，换图不在本期）：即使草稿仍有附件
+          // （如编辑前已添加），也绝不随编辑发送；新建发送才取草稿的 serverId。
+          const attachments = session.editing ? session.editing.attachments
+            : session.attachments.length ? session.attachments.map(attachment => ({ id: attachment.serverId! })) : undefined
           const saved = update({ remote: { ...current().remote, sessionId: remote.id }, pending: { input: { requestId: id(), content: text,
             ...(session.editing ? { replaceMessageId: session.editing.messageId } : {}),
-            ...(session.reasoningLevel ? { reasoningLevel: session.reasoningLevel } : {}) }, taskId: session.editing?.taskId ?? current().remote?.taskId } })
+            ...(session.reasoningLevel ? { reasoningLevel: session.reasoningLevel } : {}),
+            ...(attachments?.length ? { attachments } : {}) }, taskId: session.editing?.taskId ?? current().remote?.taskId } })
           if (!saved) { update({ pending: undefined }); set({ error: '无法保存发送标识，请恢复浏览器存储后再发送。' }); return false }
           return await dispatchPending(api, session.id, lifetime)
         } catch (error) {

@@ -2,6 +2,7 @@ package model
 
 import (
 	"elysian/server/internal/agent/jsonvalue"
+	"encoding/base64"
 	"encoding/json"
 	"math"
 )
@@ -15,6 +16,14 @@ type anthropicBlock struct {
 	Input     json.RawMessage `json:"input,omitempty"`
 	ToolUseID string          `json:"tool_use_id,omitempty"`
 	Content   *string         `json:"content,omitempty"`
+	Source    *anthropicImage `json:"source,omitempty"`
+}
+
+// anthropicImage 对齐 Anthropic source 对象：裸 base64 加显式 media_type。
+type anthropicImage struct {
+	Type      string `json:"type"`
+	MediaType string `json:"media_type"`
+	Data      string `json:"data"`
 }
 type anthropicMessage struct {
 	Role    string           `json:"role"`
@@ -76,6 +85,9 @@ func (anthropicMessagesProtocol) prepare(p Profile, input Request) (preparedRequ
 		} else {
 			if m.Content != "" {
 				blocks = append(blocks, anthropicBlock{Type: "text", Text: m.Content})
+			}
+			for _, image := range m.Images {
+				blocks = append(blocks, anthropicBlock{Type: "image", Source: &anthropicImage{Type: "base64", MediaType: image.MimeType, Data: base64.StdEncoding.EncodeToString(image.Data)}})
 			}
 			for _, call := range m.ToolCalls {
 				blocks = append(blocks, anthropicBlock{Type: "tool_use", ID: call.ID, Name: call.Name, Input: call.Arguments})

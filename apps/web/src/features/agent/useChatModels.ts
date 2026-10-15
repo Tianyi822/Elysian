@@ -9,6 +9,8 @@ export type ChatModelOption = {
   profile: AgentModelProfile
   reasoningLevels: readonly AgentModelReasoningLevel[]
   defaultReasoningLevel?: AgentModelReasoningLevel
+  /** 模型是否声明图片输入能力；未声明时不挡选择，仅附件功能被挡。 */
+  supportsImage: boolean
 }
 
 type ChatModelsState = {
@@ -59,6 +61,7 @@ export function useChatModels(): ChatModelsState & { reload(): void } {
           profile,
           reasoningLevels: profile.capabilities.reasoningLevels ?? [],
           defaultReasoningLevel: (profile.capabilities.reasoningLevels ?? []).includes(profile.capabilities.defaultReasoningLevel ?? '') ? profile.capabilities.defaultReasoningLevel : undefined,
+          supportsImage: profile.capabilities.image ?? false,
         })),
       )
       setState({ models, status: 'ready' })

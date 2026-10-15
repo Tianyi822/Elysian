@@ -11,6 +11,7 @@ import (
 )
 
 const maxToolCalls = 64
+const maxImagesPerMessage = 50
 
 var functionName = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 
@@ -36,6 +37,11 @@ func validateRequest(p Profile, input Request) (map[string]bool, error) {
 	}
 	if !p.Capabilities.Text || (len(input.Tools) > 0 && !p.Capabilities.Tools) {
 		return nil, problem(400, "model-capability-unavailable", "所选模型不支持本次请求需要的能力")
+	}
+	for _, msg := range input.Messages {
+		if len(msg.Images) > 0 && !p.Capabilities.Image {
+			return nil, problem(400, "model-capability-unavailable", "所选模型不支持本次请求需要的能力")
+		}
 	}
 	if len(input.Messages) == 0 || input.MaxTokens < 1 || input.MaxTokens > p.OutputTokens || len(input.Tools) > maxToolCalls {
 		return nil, invalidRequest()
@@ -74,12 +80,25 @@ func validateRequest(p Profile, input Request) (map[string]bool, error) {
 			return nil, problem(400, "incomplete-tool-history", "模型上下文包含未完成的工具调用")
 		}
 		switch msg.Role {
-		case "system", "user":
+		case "system":
+			if len(msg.ToolCalls) != 0 || msg.ToolCallID != "" || len(msg.Images) > 0 {
+				return nil, invalidRequest()
+			}
+		case "user":
 			if len(msg.ToolCalls) != 0 || msg.ToolCallID != "" {
 				return nil, invalidRequest()
 			}
+			// 图片仅允许 user 消息：与 DeepSeek「非 user 消息携带图片即 400」对齐，智谱同构。
+			if len(msg.Images) > maxImagesPerMessage {
+				return nil, invalidRequest()
+			}
+			for _, image := range msg.Images {
+				if image.MimeType != "image/jpeg" && image.MimeType != "image/png" || len(image.Data) == 0 {
+					return nil, invalidRequest()
+				}
+			}
 		case "assistant":
-			if msg.ToolCallID != "" {
+			if msg.ToolCallID != "" || len(msg.Images) > 0 {
 				return nil, invalidRequest()
 			}
 			for _, call := range msg.ToolCalls {
@@ -89,7 +108,7 @@ func validateRequest(p Profile, input Request) (map[string]bool, error) {
 				seen[call.ID], pending[call.ID] = true, true
 			}
 		case "tool":
-			if !pending[msg.ToolCallID] || len(msg.ToolCalls) != 0 {
+			if !pending[msg.ToolCallID] || len(msg.ToolCalls) != 0 || len(msg.Images) > 0 {
 				return nil, invalidRequest()
 			}
 			delete(pending, msg.ToolCallID)

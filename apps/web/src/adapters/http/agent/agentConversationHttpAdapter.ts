@@ -1,13 +1,15 @@
-import { RUNTIME_RUN_STATUSES, type AgentChatOutput, type AgentMessage, type AgentSession } from '@elysian/contracts'
-import type { AgentChatRun, AgentChatTask, AgentChatPageResult, AgentConversationAdapter } from '../../../contracts/agentChat'
+import { RUNTIME_RUN_STATUSES, type AgentChatOutput, type AgentMessage, type AgentMessageAttachment, type AgentSession } from '@elysian/contracts'
+import type { AgentChatRun, AgentChatTask, AgentChatPageResult, AgentChatUploadedAttachment, AgentConversationAdapter } from '../../../contracts/agentChat'
 import { agentPathPart, readAgentResponse, requestAgentJson, requestAgentNoContent } from './agentShared'
 import { SseFrameParser } from '../../sse/parse'
 import { fetchWithSession } from '../unauthorized'
+import { withRequestDeadline } from '../requestDeadline'
 
 const invalid = () => new Error('Agent 会话响应格式无效')
+const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
 const object = (value: unknown): Record<string, unknown> => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalid()
-  return value as Record<string, unknown>
+  if (!isRecord(value)) throw invalid()
+  return value
 }
 const string = (value: unknown): string => { if (typeof value !== 'string') throw invalid(); return value }
 const cursor = (value: unknown) => { const result = string(value); if (!/^(0|[1-9]\d*)$/.test(result)) throw invalid(); return result }
@@ -23,10 +25,10 @@ function parseSession(value: unknown): AgentSession {
   }
 }
 
-/** 本地演示没有运行内核，不模拟模型答复。 */
+/** 本地演示没有运行内核，不模拟模型答复与附件上传。 */
 export function createUnavailableAgentConversationAdapter(): AgentConversationAdapter {
   const unavailable = async (): Promise<never> => { throw new Error('当前为本地演示，请在已连接后端的面板中使用聊天。') }
-  return { available: false, listSessions: unavailable, listTasks: unavailable, getTask: unavailable, createSession: unavailable, getSession: unavailable, renameSession: unavailable, deleteSession: unavailable, switchModel: unavailable, messages: unavailable, createTask: unavailable, continueTask: unavailable, getRun: unavailable, cancelRun: unavailable, reasoning: unavailable, stream: unavailable }
+  return { available: false, listSessions: unavailable, listTasks: unavailable, getTask: unavailable, createSession: unavailable, getSession: unavailable, renameSession: unavailable, deleteSession: unavailable, switchModel: unavailable, messages: unavailable, uploadAttachments: unavailable, attachmentBlob: unavailable, createTask: unavailable, continueTask: unavailable, getRun: unavailable, cancelRun: unavailable, reasoning: unavailable, stream: unavailable }
 }
 
 function parseRun(value: unknown): AgentChatRun {
@@ -57,17 +59,32 @@ function parsePage<T>(value: unknown, parse: (value: unknown) => T): AgentChatPa
   return { items: row.items.map(parse), nextCursor, hasMore: row.hasMore }
 }
 
+const isMessageAttachment = (value: unknown): value is AgentMessageAttachment => isRecord(value)
+  && typeof value.id === 'string' && typeof value.name === 'string' && typeof value.mimeType === 'string'
+  && typeof value.bytes === 'number' && Number.isFinite(value.bytes) && value.bytes >= 0
+  && typeof value.width === 'number' && Number.isFinite(value.width)
+  && typeof value.height === 'number' && Number.isFinite(value.height)
+
 function parseMessage(value: unknown): AgentMessage {
   const row = object(value)
   if (row.role !== 'user' && row.role !== 'assistant') throw invalid()
   if (row.quarantined !== undefined && typeof row.quarantined !== 'boolean') throw invalid()
   if (row.runStatus !== undefined && !(RUNTIME_RUN_STATUSES as readonly unknown[]).includes(row.runStatus)) throw invalid()
+  if (row.attachments !== undefined && (!Array.isArray(row.attachments) || !row.attachments.every(isMessageAttachment))) throw invalid()
   return {
     id: string(row.id), sessionId: string(row.sessionId), taskId: string(row.taskId), runId: string(row.runId), seq: cursor(row.seq),
     role: row.role, content: string(row.content), createdAt: string(row.createdAt), quarantined: row.quarantined as boolean | undefined,
     runStatus: row.runStatus as AgentMessage['runStatus'],
     replacesMessageId: optional(row.replacesMessageId),
+    ...(Array.isArray(row.attachments) ? { attachments: row.attachments as readonly AgentMessageAttachment[] } : {}),
   }
+}
+
+function parseUploaded(value: unknown): AgentChatUploadedAttachment {
+  const row = object(value)
+  const createdAt = row.createdAt === undefined ? undefined : string(row.createdAt)
+  if (!isMessageAttachment(row)) throw invalid()
+  return { ...row, ...(createdAt !== undefined ? { createdAt } : {}) }
 }
 
 export function createHttpAgentConversationAdapter(): AgentConversationAdapter {
@@ -109,6 +126,33 @@ export function createHttpAgentConversationAdapter(): AgentConversationAdapter {
       }
       if (BigInt(nextCursor) !== previous || (row.hasMore && !items.length)) throw invalid()
       return { items, nextCursor, hasMore: row.hasMore }
+    },
+    async uploadAttachments(files) {
+      // multipart 不经 JSON 出口（浏览器自动生成含 boundary 的 Content-Type）；
+      // 上传时限显式放宽到 120 秒。
+      return withRequestDeadline({}, async bounded => {
+        const form = new FormData()
+        for (const file of files) form.append('file', file, file.name)
+        let response: Response
+        try {
+          response = await fetchWithSession('/api/agent/attachments', { method: 'POST', body: form, cache: 'no-store', signal: bounded.signal })
+        } catch (error) {
+          if (bounded.signal?.aborted) throw error
+          throw new Error('Agent 请求网络失败')
+        }
+        const row = object(await readAgentResponse(response))
+        if (!Array.isArray(row.items) || !row.items.length) throw invalid()
+        return { items: row.items.map(parseUploaded) }
+      }, 120000)
+    },
+    async attachmentBlob(id, signal) {
+      const response = await fetchWithSession(`/api/agent/attachments/${path(id)}`, { cache: 'no-store', signal })
+      if (!response.ok) await readAgentResponse(response)
+      const type = response.headers.get('content-type') ?? ''
+      if (!type.startsWith('image/jpeg') && !type.startsWith('image/png')) throw invalid()
+      const blob = await response.blob()
+      if (!blob.size) throw invalid()
+      return blob
     },
     createTask: async (id, input) => parseRun(await write(`/sessions/${path(id)}/tasks`, input)),
     continueTask: async (id, input) => parseRun(await write(`/tasks/${path(id)}/runs`, input)),

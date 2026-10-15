@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -147,5 +148,109 @@ func TestNewProtocolsRejectAmbiguousToolResponses(t *testing.T) {
 		if _, err := adapter.prepare(p, req); err == nil {
 			t.Fatal("未完成历史被发送")
 		}
+	}
+}
+
+func TestProtocolsEncodeImageUserMessages(t *testing.T) {
+	png := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00}
+	input := testRequest()
+	input.Messages = []Message{
+		{Role: "system", Content: "系统"},
+		{Role: "user", Content: "看图", Images: []ImagePart{{MimeType: "image/png", Data: png}}},
+		{Role: "user", Content: "纯文本"},
+	}
+	imageJSON := `"data:image/png;base64,` + base64.StdEncoding.EncodeToString(png) + `"`
+	raw := base64.StdEncoding.EncodeToString(png)
+
+	chat, err := resolveProtocol(FormatChatCompletions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chatProfile := testProfile("https://example.test/v1")
+	chatProfile.Capabilities.Image = true
+	wire, err := chat.prepare(chatProfile, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(wire.body)
+	if !strings.Contains(body, `{"role":"user","content":[{"type":"text","text":"看图"},{"type":"image_url","image_url":{"url":`+imageJSON+`}}]`) {
+		t.Fatal("chat-completions 图片 content parts 错误：" + body)
+	}
+	if !strings.Contains(body, `{"role":"user","content":"纯文本"}`) {
+		t.Fatal("无图消息未保持纯字符串：" + body)
+	}
+
+	anthropic, _ := resolveProtocol(FormatAnthropicMessages)
+	p := testProfile("https://example.test/v1")
+	p.APIFormat = FormatAnthropicMessages
+	p.Capabilities.Image = true
+	wire, err = anthropic.prepare(p, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = string(wire.body)
+	if !strings.Contains(body, `{"type":"image","source":{"type":"base64","media_type":"image/png","data":"`+raw+`"}}`) {
+		t.Fatal("anthropic 图片块错误：" + body)
+	}
+
+	responses, _ := resolveProtocol(FormatResponses)
+	respProfile := testProfile("https://example.test/v1")
+	respProfile.APIFormat = FormatResponses
+	respProfile.Capabilities.Image = true
+	wire, err = responses.prepare(respProfile, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = string(wire.body)
+	if !strings.Contains(body, `{"type":"message","role":"user","content":[{"type":"input_text","text":"看图"},{"type":"input_image","image_url":`+imageJSON+`}]}`) {
+		t.Fatal("responses 图片输入错误：" + body)
+	}
+	if !strings.Contains(body, `{"type":"message","role":"user","content":"纯文本"}`) {
+		t.Fatal("responses 无图消息未保持字符串：" + body)
+	}
+}
+
+func TestImageValidationRules(t *testing.T) {
+	p := testProfile("https://example.test/v1")
+	p.Capabilities.Image = true
+	base := testRequest()
+	base.Messages = []Message{{Role: "user", Content: "看图", Images: []ImagePart{{MimeType: "image/png", Data: []byte{1}}}}}
+	adapter, _ := resolveProtocol(FormatChatCompletions)
+	if _, err := adapter.prepare(p, base); err != nil {
+		t.Fatal("合法带图请求被拒绝", err)
+	}
+	noImage := testProfile("https://example.test/v1")
+	if _, err := adapter.prepare(noImage, base); err == nil {
+		t.Fatal("模型未声明图片能力仍接收图片")
+	} else {
+		requireCode(t, err, "model-capability-unavailable")
+	}
+	systemImages := testRequest()
+	systemImages.Messages = []Message{{Role: "system", Content: "系统", Images: []ImagePart{{MimeType: "image/png", Data: []byte{1}}}}}
+	if _, err := adapter.prepare(p, systemImages); err == nil {
+		t.Fatal("system 消息带图被接收")
+	}
+	assistantImages := testRequest()
+	assistantImages.Messages = []Message{{Role: "assistant", Content: "答", Images: []ImagePart{{MimeType: "image/png", Data: []byte{1}}}}}
+	if _, err := adapter.prepare(p, assistantImages); err == nil {
+		t.Fatal("assistant 消息带图被接收")
+	}
+	badMIME := testRequest()
+	badMIME.Messages = []Message{{Role: "user", Content: "看图", Images: []ImagePart{{MimeType: "image/webp", Data: []byte{1}}}}}
+	if _, err := adapter.prepare(p, badMIME); err == nil {
+		t.Fatal("非法 MIME 被接收")
+	}
+	emptyData := testRequest()
+	emptyData.Messages = []Message{{Role: "user", Content: "看图", Images: []ImagePart{{MimeType: "image/png"}}}}
+	if _, err := adapter.prepare(p, emptyData); err == nil {
+		t.Fatal("空字节图片被接收")
+	}
+	tooMany := testRequest()
+	tooMany.Messages = []Message{{Role: "user", Content: "看图"}}
+	for i := 0; i < 51; i++ {
+		tooMany.Messages[0].Images = append(tooMany.Messages[0].Images, ImagePart{MimeType: "image/png", Data: []byte{1}})
+	}
+	if _, err := adapter.prepare(p, tooMany); err == nil {
+		t.Fatal("单消息超过 50 张图被接收")
 	}
 }

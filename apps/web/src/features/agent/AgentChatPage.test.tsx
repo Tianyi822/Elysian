@@ -8,7 +8,7 @@ import { GatewayProvider } from '../../adapters/GatewayProvider'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { AgentHttpError } from '../../adapters/http/agent/agentShared'
 import { useAgentChatStore } from '../../stores/agentChatStore'
-import { chatTestApi, chatTestModel } from '../../test/agentChatFixtures'
+import { chatTestApi, chatTestModel, chatVisionTestModel } from '../../test/agentChatFixtures'
 import { AgentChatPage } from './AgentChatPage'
 import { ShellLayoutContext, useShellLayout } from '../../app/layout/ShellLayoutContext'
 
@@ -501,26 +501,51 @@ describe('基本聊天界面', () => {
     expect(screen.queryByText('预览')).not.toBeInTheDocument()
   })
 
-  it('附件按钮打开文件选择，可添加、移除并重新选择同一文件，明确本地附件尚未发送', async () => {
+  it('上传期间禁用发送和选图，输入与新建仍可用，完成后随消息发送', async () => {
     const user = userEvent.setup()
-    const { api } = renderChat()
-    const picker = screen.getByLabelText('选择附件') as HTMLInputElement
+    const backend = chatTestApi()
+    const upload = backend.api.uploadAttachments.getMockImplementation()!
+    let finishUpload!: (value: Awaited<ReturnType<typeof upload>>) => void
+    backend.api.uploadAttachments.mockReturnValueOnce(new Promise(resolve => { finishUpload = resolve }))
+    renderChat(backend, '/agent', undefined, [chatVisionTestModel])
+    const picker = screen.getByLabelText('选择图片附件') as HTMLInputElement
     const openPicker = vi.spyOn(picker, 'click')
-    await user.click(screen.getByRole('button', { name: '添加附件' }))
+    await user.click(await screen.findByRole('button', { name: '添加图片附件' }))
     expect(openPicker).toHaveBeenCalledOnce()
-    const file = new File(['聊天附件测试'], 'note.txt', { type: 'text/plain' })
+    const file = new File(['png'], 'diagram.png', { type: 'image/png' })
     await user.upload(picker, file)
-    expect(await screen.findByText('note.txt')).toBeInTheDocument()
-    expect(picker.value).toBe('')
-    expect(screen.getByText('附件仅保存在本地，暂未接入模型；请移除附件后发送文本。')).toBeInTheDocument()
-    await user.type(screen.getByRole('textbox'), '读取附件')
+    await waitFor(() => expect(backend.api.uploadAttachments).toHaveBeenCalledOnce())
     expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled()
-    expect(api.createTask).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('button', { name: '移除附件 note.txt' }))
-    expect(screen.queryByText('note.txt')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled()
-    await user.upload(picker, file)
-    expect(await screen.findByText('note.txt')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '添加图片附件' })).toBeDisabled()
+    expect(picker).toBeDisabled()
+    expect(screen.getByRole('textbox')).toBeEnabled()
+    expect(within(screen.getByRole('region', { name: 'Ely 会话' })).getByRole('button', { name: '新会话' })).toBeEnabled()
+    await user.type(screen.getByRole('textbox'), '读取附件')
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' })
+    expect(backend.api.createTask).not.toHaveBeenCalled()
+    await act(async () => { finishUpload(await upload([file])) })
+    expect(await screen.findByText('diagram.png')).toBeInTheDocument()
+    expect(picker.value).toBe('')
+    expect(picker).toBeEnabled()
+    // 带图片附件的发送不再被禁用：附件随消息真正发给模型。
+    const send = screen.getByRole('button', { name: '发送消息' })
+    expect(send).toBeEnabled()
+    await user.click(send)
+    await waitFor(() => expect(backend.api.createTask).toHaveBeenCalledWith('server-session', expect.objectContaining({
+      content: '读取附件', attachments: [{ id: 'server-attachment-1' }],
+    })))
+    // 确认接受后草稿附件清空。
+    await waitFor(() => expect(screen.queryByText('diagram.png')).not.toBeInTheDocument())
+  })
+
+  it('无图能力模型的附件按钮禁用并说明，有图模型下可用', async () => {
+    const backend = chatTestApi()
+    const plain = renderChat(backend)
+    expect(await screen.findByRole('button', { name: '当前模型不支持图片输入' })).toBeDisabled()
+    plain.unmount()
+    const visionBackend = chatTestApi()
+    const vision = renderChat(visionBackend, '/agent', undefined, [chatVisionTestModel])
+    await waitFor(() => expect(vision.getByRole('button', { name: '添加图片附件' })).toBeEnabled())
   })
 })
 

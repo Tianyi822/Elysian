@@ -1,4 +1,4 @@
-import type { AgentChatOutput, AgentCreateSessionInput, AgentInput, AgentMessage, AgentRenameSessionInput, AgentSession, AgentSwitchModelInput, RuntimeRun } from '@elysian/contracts'
+import type { AgentAttachmentRef, AgentChatOutput, AgentCreateSessionInput, AgentInput, AgentMessage, AgentMessageAttachment, AgentRenameSessionInput, AgentSession, AgentSwitchModelInput, RuntimeRun } from '@elysian/contracts'
 
 /** 权限选项保留为界面草稿，不授予后端权限。 */
 export type AgentChatPermissionMode = 'ask' | 'assist' | 'full'
@@ -9,7 +9,11 @@ export type AgentChatAttachment = {
   size: number
   type: string
   lastModified: number
-  /** 文件字节仍可从当前浏览器读取；恢复失败时保留文件名，并明确标为不可用。 */
+  /** 发送能力的权威：存在 serverId 即已上传可随消息发送，与本地字节是否可用正交。 */
+  serverId?: string
+  width?: number
+  height?: number
+  /** 本地文件字节仍可从当前浏览器读取；为 false 只影响预览，不影响可发送性。 */
   available: boolean
   previewUrl?: string
 }
@@ -36,7 +40,8 @@ export type AgentChatSession = {
   reasoningLevel: string | null
   /** 浏览器只保存服务端指针；真实消息由 API 回读。 */
   remote?: { sessionId: string; taskId?: string; runId?: string }
-  editing?: { messageId: string; taskId: string; text: string }
+  /** 编辑重发沿用原轮附件 id；编辑模式不提供移除，重发时原样携带。 */
+  editing?: { messageId: string; taskId: string; text: string; attachments?: readonly AgentAttachmentRef[] }
   /** 未收到明确回执时保留精确输入，人工确认沿用同一 requestId。 */
   pending?: { input: AgentInput; taskId?: string }
 }
@@ -49,6 +54,9 @@ export const agentChatSessionKey = (session: AgentChatSession) => session.remote
 export const agentChatAllAttachments = (session: AgentChatSession): readonly AgentChatAttachment[] =>
   [...session.attachments, ...session.messages.flatMap(message => message.attachments)]
 
+/** 上传回执：服务端按魔数判定 MIME 并返回描述符，id 即随消息提交的引用。 */
+export type AgentChatUploadedAttachment = AgentMessageAttachment & { createdAt?: string }
+
 export interface AgentConversationAdapter {
   readonly available: boolean
   listSessions(cursor?: string, signal?: AbortSignal): Promise<AgentChatPageResult<AgentSession>>
@@ -60,6 +68,10 @@ export interface AgentConversationAdapter {
   deleteSession(id: string): Promise<void>
   switchModel(id: string, input: AgentSwitchModelInput): Promise<AgentSession>
   messages(id: string, after: string, signal?: AbortSignal): Promise<{ items: readonly AgentMessage[]; nextCursor: string; hasMore: boolean }>
+  /** multipart 上传图片字节，每个文件一个名为 file 的 part。 */
+  uploadAttachments(files: readonly File[]): Promise<{ items: readonly AgentChatUploadedAttachment[] }>
+  /** 按附件 id 读取已上传图片字节，用于历史消息缩略图。 */
+  attachmentBlob(id: string, signal?: AbortSignal): Promise<Blob>
   createTask(sessionId: string, input: AgentInput): Promise<AgentChatRun>
   continueTask(taskId: string, input: AgentInput): Promise<AgentChatRun>
   getRun(id: string, signal?: AbortSignal): Promise<AgentChatRun>

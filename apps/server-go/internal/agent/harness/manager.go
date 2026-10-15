@@ -138,6 +138,11 @@ func validateLimits(l Limits) error {
 	if (l.Concurrency < 1 || l.Concurrency > 4) || l.QueueCapacity < 1 || l.MaxSteps < 1 || l.MaxSteps > 16 || l.InputBytes < 1 || l.InputBytes > 65536 || l.CallTimeoutSeconds < 1 || l.RunTimeoutSeconds < 1 || l.ResultBytes < 2 || l.ResultBytes > 262144 || l.RunResultBytes < 2 || l.LogBytes < 1 || l.FrameBytes != 524288 || l.RetentionDays < 1 || l.CancelGraceSeconds < 1 {
 		return errors.New("任务运行限额无效，并发须为 1 到 4 且输入输出必须有界")
 	}
+	// 图片限额为 0 表示本通道不开放图片；显式设置时不得越过上限（字节上限 5 MiB
+	// 保证 base64 后仍在模型请求 8 MiB wire 上限内，见 types.go Limits 注释）。
+	if l.ImageCountPerMessage < 0 || l.ImageCountPerMessage > 50 || l.ImageBytesPerFile < 0 || l.ImageBytesPerFile > maxImageAttachmentBytes || l.ImageBytesPerMessage < 0 || l.ImageBytesPerMessage > maxImageAttachmentBytes {
+		return errors.New("图片附件限额无效")
+	}
 	return nil
 }
 func randomID() string {

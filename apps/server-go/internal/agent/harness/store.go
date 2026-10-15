@@ -458,7 +458,9 @@ func (s *store) sweep(ctx context.Context, days int) error {
 		if _, err := tx.ExecContext(ctx, "DELETE"+expiredBatchRuns, cutoff); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, "DELETE FROM tasks WHERE session_id='' AND NOT EXISTS(SELECT 1 FROM runs WHERE runs.task_id=tasks.id)")
-		return err
+		if _, err := tx.ExecContext(ctx, "DELETE FROM tasks WHERE session_id='' AND NOT EXISTS(SELECT 1 FROM runs WHERE runs.task_id=tasks.id)"); err != nil {
+			return err
+		}
+		return s.sweepOrphanAttachments(ctx, tx)
 	})
 }

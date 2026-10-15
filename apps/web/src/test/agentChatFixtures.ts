@@ -1,11 +1,19 @@
 import { vi } from 'vitest'
-import type { AgentInput, AgentMessage, AgentModelProfile, AgentSession } from '@elysian/contracts'
+import type { AgentInput, AgentMessage, AgentMessageAttachment, AgentModelProfile, AgentSession } from '@elysian/contracts'
 import type { AgentChatRun, AgentConversationAdapter } from '../contracts/agentChat'
 
 export const chatTestModel: AgentModelProfile = {
   id: 'model-1', revision: 1, model: 'test-model', baseUrl: 'https://model.invalid/v1',
   provider: 'openai-compatible', apiFormat: 'chat-completions', contextTokens: 32768, outputTokens: 4096,
   capabilities: { text: true, tools: true, source: 'manual', reasoningLevels: ['disabled', 'low', 'high', 'max'] }, active: true, hasCredential: true,
+}
+
+/** 声明图片输入能力的测试模型：用于附件链路用例。 */
+export const chatVisionTestModel: AgentModelProfile = {
+  ...chatTestModel,
+  id: 'model-vision',
+  model: 'test-vision-model',
+  capabilities: { ...chatTestModel.capabilities, image: true },
 }
 
 /** 只在测试中模拟已存在的服务端接口，不进入产品网关。 */
@@ -39,10 +47,16 @@ export function chatTestApi() {
     runs.set(run.id, run)
     session.activeRunId = run.id
     append(run, 'user', input.content)
+    if (input.attachments?.length) {
+      const last = messages.at(-1)!
+      last.attachments = input.attachments.map(ref => attachments.get(ref.id)).filter((item): item is NonNullable<typeof item> => !!item)
+    }
     if (input.replaceMessageId) messages.at(-1)!.replacesMessageId = messages.find(message => message.id === input.replaceMessageId)?.replacesMessageId ?? input.replaceMessageId
     if (!hold) complete()
     return { ...run }
   }
+  const attachments = new Map<string, AgentMessageAttachment>()
+  let attachmentSeq = 0
   const api = {
     available: true,
     listSessions: vi.fn(async () => ({ items: runs.size ? [{ ...session }] : [], nextCursor: '', hasMore: false })),
@@ -54,6 +68,18 @@ export function chatTestApi() {
     deleteSession: vi.fn(async (_id: string) => {}),
     switchModel: vi.fn(async (_id, input) => { session.modelProfileId = input.modelProfileId; session.modelRevision = input.modelRevision; return { ...session } }),
     messages: vi.fn(async (_id, after) => ({ items: messages.filter(message => !replacedRuns.has(message.runId) && BigInt(message.seq) > BigInt(after)).map((message): AgentMessage => ({ ...message, runStatus: runs.get(message.runId)?.status })), nextCursor: session.lastSeq, hasMore: false })),
+    uploadAttachments: vi.fn(async (files: readonly File[]) => ({
+      items: files.map(file => {
+        const id = `server-attachment-${++attachmentSeq}`
+        const item: AgentMessageAttachment = { id, name: file.name, mimeType: file.type === 'image/jpeg' ? 'image/jpeg' : 'image/png', bytes: file.size, width: 1, height: 1 }
+        attachments.set(id, item)
+        return item
+      }),
+    })),
+    attachmentBlob: vi.fn(async (id: string) => {
+      if (!attachments.has(id)) throw new Error('附件不存在')
+      return new Blob([new Uint8Array([0x89, 0x50])], { type: 'image/png' })
+    }),
     createTask: vi.fn(submit), continueTask: vi.fn(submit),
     getRun: vi.fn(async id => ({ ...runs.get(id)! })),
     cancelRun: vi.fn(async id => {
@@ -68,5 +94,5 @@ export function chatTestApi() {
       if (!signal.aborted) await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }))
     }),
   } satisfies AgentConversationAdapter
-  return { api, session, messages, runs, reasoning, complete, hold: () => { hold = true } }
+  return { api, session, messages, runs, reasoning, attachments, complete, hold: () => { hold = true } }
 }
