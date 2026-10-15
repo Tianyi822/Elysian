@@ -353,7 +353,7 @@ export function AgentChatPage() {
           if (!attachmentsLocked) void chat.addAttachments(files)
         }} />
         <div className="chat-composer-tools">
-          <IconButton label="添加附件" variant="ghost" onPress={() => fileInput.current?.click()} disabled={attachmentsLocked} className="chat-add-file"><Paperclip size={20} aria-hidden /></IconButton>
+          <IconButton label="添加附件" tooltip={false} variant="ghost" onPress={() => fileInput.current?.click()} disabled={attachmentsLocked} className="chat-add-file"><Paperclip size={20} aria-hidden /></IconButton>
           <div className="chat-permission" data-mode={permissionMode.value} title={`${permissionMode.label}：${permissionMode.description}`}>
             <SelectDropdown ariaLabel="权限模式" value={permissionMode.value} onSelect={chat.setPermissionMode}
               items={PERMISSION_MODES.map(({ Icon, ...mode }) => ({ ...mode, icon: <Icon size={16} /> }))}
