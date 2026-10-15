@@ -13,7 +13,8 @@ import { useIntrinsicWidth } from '../../app/layout/headerAccessoryWidth'
 import { IconButton } from '../../components/IconButton'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { RefreshButton } from '../../components/RefreshState'
-import { CTL_CHIP, CTL_FIELD, CTL_GROUP, CTL_PRIMARY, CTL_STAT, CTL_TOOLBAR } from '../../components/formControl'
+import { CTL_FIELD, CTL_PRIMARY, CTL_STAT, CTL_TOOLBAR } from '../../components/formControl'
+import { ChipGroup } from '../../components/ChipGroup'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 import { formatDateTime } from '../../components/format'
@@ -102,7 +103,7 @@ function ToolButton({
   )
 }
 
-/** 三类规则的视图切换：分段按钮，切换时清空搜索。 */
+/** 三类规则的视图切换：分段按钮，切换时清空搜索。选中态是滑动的底色块。 */
 function ViewSwitch({
   view,
   onChange,
@@ -115,26 +116,10 @@ function ViewSwitch({
     { value: 'ip', label: 'IP 规则' },
     { value: 'forward', label: '端口转发' },
   ]
+  // shrink-0 是必需的：overflow 非 visible 的 flex 项自动最小尺寸为 0，
+  // 空间不够时整组会被压窄，里面的标签有 whitespace-nowrap 反而被裁切。
   return (
-    <div
-      role="group"
-      aria-label="规则类型"
-      // shrink-0 是必需的：overflow 非 visible 的 flex 项自动最小尺寸为 0，
-      // 空间不够时整组会被压窄，里面的标签有 whitespace-nowrap 反而被裁切。
-      className={`${CTL_GROUP} shrink-0`}
-    >
-      {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          aria-pressed={option.value === view}
-          onClick={() => onChange(option.value)}
-          className={CTL_CHIP}
-        >
-          {option.label}
-        </button>
-      ))}
-    </div>
+    <ChipGroup ariaLabel="规则类型" items={options} value={view} onSelect={onChange} className="shrink-0" />
   )
 }
 

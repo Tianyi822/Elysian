@@ -11,6 +11,4 @@
     --ctl-radius: var(--radius-lg);
     --icon-button-radius: var(--radius-lg);
   }
-  .dashboard-filters .ctl-group { border-radius: var(--radius-lg); }
-  .dashboard-filters .ctl-group .ctl { --ctl-height: 1.375rem; border-radius: 4px; }
 }

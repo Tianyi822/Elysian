@@ -5,9 +5,10 @@ import {
 import type { TimeRange } from '../../adapters/mock/resourceMetrics'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useNarrowViewport } from '../../app/layout/narrowViewport'
+import { ChipGroup } from '../../components/ChipGroup'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { RefreshButton } from '../../components/RefreshState'
-import { CTL_CHIP, CTL_GROUP, CTL_TOOLBAR } from '../../components/formControl'
+import { CTL_TOOLBAR } from '../../components/formControl'
 import './dashboard.css'
 
 export const DEMO_DATA_STATUS_LABEL = '演示数据'
@@ -34,7 +35,8 @@ export function FilterBar({
   return (
     <section
       aria-label="筛选栏"
-      className={`${CTL_TOOLBAR} dashboard-filters @container mb-4 flex min-h-[var(--shell-header-height)] shrink-0 items-center pr-4 pl-[52px] md:px-6`}
+      // 不叠行距：这条 64px 页头带与顶栏页签同一档，带底到控件底已有 14px（窄屏 18px）余量。
+      className={`${CTL_TOOLBAR} dashboard-filters @container flex min-h-[var(--shell-header-height)] shrink-0 items-center pr-4 pl-[52px] md:px-6`}
     >
       <div className="flex min-w-0 flex-1 items-center gap-3">
         {!isDockerRuntime() ? (
@@ -50,23 +52,18 @@ export function FilterBar({
             items={RANGES.map((value) => ({ value, label: TIME_RANGE_LABELS[value] }))}
             value={range}
             onSelect={onRangeChange}
-            contentClassName="header-select-menu"
+            contentClassName="select-menu"
           />
         </div>
-        {/* 分段控件走控件层：胶囊 + 芯片，高度与同行刷新按钮同档。 */}
-        <div role="group" aria-label="时间范围" className={`${CTL_GROUP} max-w-full ${flatSlot}`}>
-          {RANGES.map((candidate) => (
-            <button
-              key={candidate}
-              type="button"
-              aria-pressed={range === candidate}
-              onClick={() => onRangeChange(candidate)}
-              className={`${CTL_CHIP} sm:text-sm`}
-            >
-              {TIME_RANGE_LABELS[candidate]}
-            </button>
-          ))}
-        </div>
+        {/* 分段控件走控件层：胶囊 + 芯片，高度与同行刷新按钮同档；选中态是滑动的底色块。 */}
+        <ChipGroup
+          ariaLabel="时间范围"
+          items={RANGES.map((candidate) => ({ value: candidate, label: TIME_RANGE_LABELS[candidate] }))}
+          value={range}
+          onSelect={onRangeChange}
+          className={`max-w-full ${flatSlot}`}
+          itemClassName="sm:text-sm"
+        />
 
         {/* 刷新紧跟时间范围，不靠到行尾：它是这组读数的动作，不是整行的收尾。 */}
         <RefreshButton

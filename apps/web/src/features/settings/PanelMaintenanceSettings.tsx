@@ -7,7 +7,7 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { usePanelStore } from '../../stores/panelStore'
 import { openPanelAddress, reloadPanelPage } from './panelNavigation'
 import { PanelChangelogDialog } from './PanelChangelogDialog'
-import { CTL_CHIP, CTL_GROUP } from '../../components/formControl'
+import { ChipGroup } from '../../components/ChipGroup'
 
 const BUTTON = 'h-9 rounded-lg border border-control-line bg-surface-raised px-4 text-sm font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
 const INPUT = 'h-9 w-full rounded-lg border border-control-line bg-surface-raised px-3 text-sm tabular-nums text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
@@ -133,9 +133,14 @@ export function PanelMaintenanceSettings() {
     </section>
     <section aria-label="面板更新" className="panel-surface p-5">
       <div className="flex items-center gap-1.5"><h2 className="text-sm font-medium text-fg">面板更新</h2><SectionHelp label="面板更新说明">先下载并编译新版本，成功后重启。更新失败会恢复原版本，保留面板数据。</SectionHelp></div>
-      <div role="group" aria-label="更新策略" className={`${CTL_GROUP} mt-4 max-w-full`}>
-        {(['commit', 'release'] as const).map((value) => <button key={value} type="button" aria-pressed={channel === value} disabled={active || submitting} className={CTL_CHIP} onClick={() => selectChannel(value)}>{PANEL_UPDATE_CHANNEL_LABELS[value]}</button>)}
-      </div>
+      <ChipGroup
+        ariaLabel="更新策略"
+        items={(['commit', 'release'] as const).map((value) => ({ value, label: PANEL_UPDATE_CHANNEL_LABELS[value] }))}
+        value={channel}
+        onSelect={selectChannel}
+        className="mt-4 max-w-full"
+        disabled={active || submitting}
+      />
       <p className="mt-2 text-xs leading-5 text-fg-muted">{channel === 'commit' ? '跟随默认分支，获取最新改动。' : '使用最新正式发版，不包含预发布版本。'}</p>
       <div className="mt-3 space-y-2 text-xs leading-5 text-fg-muted"><p>更新来源：<a className="text-fg underline underline-offset-4" href="https://github.com/Tianyi822/Elysian" target="_blank" rel="noreferrer">Tianyi822/Elysian</a> · {channel === 'commit' ? '默认分支' : '正式发版'}</p><p className="break-all">当前提交：{info?.commit ?? '正在读取…'}</p>{info?.buildTime && info.buildTime !== 'unknown' ? <p>构建时间：{info.buildTime}</p> : null}</div>
       {update ? <div role="status" className="mt-4 space-y-1 break-all text-xs leading-5 text-fg">

@@ -444,9 +444,11 @@
   }
 
   /* 胶囊组：把一组相关控件包成一个胶囊对象，边框归胶囊、成员不再各自描边。
-     高度与 .ctl 同为一档，包在旁边的按钮同一基线，不会矮出一截。 */
+     高度与 .ctl 同为一档，包在旁边的按钮同一基线，不会矮出一截。
+     relative 给单选组的选中滑块（.ctl-chip-thumb）当定位基准。 */
   .ctl-group {
     --icon-button-radius: 9999px;
+    position: relative;
     display: inline-flex;
     flex-shrink: 0;
     align-items: center;
@@ -469,10 +471,25 @@
     background-color: var(--t-surface-raised);
     color: var(--t-fg);
   }
-  /* 选中态由成员自己的类负责，不能被上面那条铺底压掉（多一层选择器才赢得过它）。 */
+  /* 选中态：底色归滑块（.ctl-chip-thumb），成员只提亮文字，不再自己铺底。
+     单选组一律经 components/ChipGroup.tsx 生成，滑块与这条规则成对出现。 */
   .ctl-group .ctl-chip[aria-pressed="true"] {
-    background-color: color-mix(in srgb, var(--t-accent) 12%, transparent);
     color: var(--t-accent-fg);
+  }
+
+  /* 悬停反馈只给未选中成员：选中成员悬停时保持透明，否则会把滑块整个盖住，像选中态丢了。
+     与上面那条铺底悬停同权重，靠写在它后面赢。 */
+  .ctl-group .ctl-chip[aria-pressed="true"]:hover:not(:disabled) {
+    background-color: transparent;
+    color: var(--t-accent-fg);
+  }
+
+  /* 单选组的选中滑块：跟着选中项走的一块底色，形状与原先的选中芯片一致，
+     位置与尺寸由 components/slidingThumb.ts 量出后走内联样式。 */
+  .ctl-chip-thumb {
+    position: absolute;
+    border-radius: 9999px;
+    background-color: color-mix(in srgb, var(--t-accent) 12%, transparent);
   }
 
   /* 下拉触发器：与输入框同高同描边同圆角，只是内部两端排布。
@@ -864,6 +881,42 @@ body {
 button:not(:disabled),
 select:not(:disabled) {
   cursor: pointer;
+}
+
+/*
+ * 单选菜单的统一皮肤：与触发器齐宽，控件档描边配抬起的底色，选项一档高。
+ * 顶栏页签收起后的菜单、仪表盘时间范围、终端会话下拉都经 SelectDropdown 的 contentClassName
+ * 挂上它，全站这些下拉菜单读起来是同一个东西。
+ *
+ * 这一条与 headerControls.css、dashboard.css 同样不分层：SelectDropdown 会给菜单补
+ * bg-surface、border-line、text-xs、min-w-32 这些 utility 类，而分层规则赢不过 utilities 层，
+ * 只有未分层规则压得住它们。宽度取 Radix 给的自定义属性，菜单因此不会比触发器更宽。
+ */
+.select-menu {
+  width: var(--radix-dropdown-menu-trigger-width);
+  border-radius: var(--radius-lg);
+  border-color: var(--t-control-line);
+  background-color: var(--t-surface-raised);
+  font-size: 14px;
+}
+
+.select-menu [role="menuitemradio"] {
+  min-height: 32px;
+  padding: 6px 10px;
+  border-radius: 4px;
+}
+
+.select-menu [role="menuitemradio"] + [role="menuitemradio"] { margin-top: 4px; }
+
+.select-menu [role="menuitemradio"]:hover,
+.select-menu [role="menuitemradio"][data-highlighted] {
+  background-color: var(--t-nav-hover);
+  color: var(--t-fg);
+}
+
+.select-menu [role="menuitemradio"][data-state="checked"] {
+  background-color: color-mix(in srgb, var(--t-accent) 12%, transparent);
+  color: var(--t-accent-fg);
 }
 
 /* 自绘滚动条：原生视口保留惯性滚动，14px 命中区中的圆角滑块随主题着色。 */
