@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import fixture from '../../../../../../packages/foundation/contracts/fixtures/agent-session.json'
+import timelineFixture from '../../../../../../packages/foundation/contracts/fixtures/agent-chat-timeline.json'
 import { createHttpAgentConversationAdapter, createUnavailableAgentConversationAdapter } from './agentConversationHttpAdapter'
 
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } })
@@ -44,10 +45,8 @@ describe('聊天 HTTP 接口', () => {
     ])
   })
 
-  it('历史接口与 SSE 使用相同时间线，保留旧输出字段', async () => {
-    const timeline = { runId: 'r1', status: 'succeeded', done: true, finalResponseId: 'm1', entries: [
-      { id: 'm1:content', modelRequestId: 'm1', requestIndex: 0, kind: 'content', text: '最终正文', startedAt: '', status: 'succeeded', incomplete: false },
-    ] }
+  it('历史接口与 SSE 使用相同时间线及完整用量，保留旧输出字段', async () => {
+    const timeline = timelineFixture
     const output = { runId: 'r1', responseId: 'm1', reasoning: '', content: '最终正文', done: true, timeline }
     const fetcher = vi.fn().mockResolvedValueOnce(json(timeline)).mockResolvedValueOnce(new Response(`event: output\ndata: ${JSON.stringify(output)}\n\n`, { headers: { 'content-type': 'text/event-stream' } }))
     vi.stubGlobal('fetch', fetcher)

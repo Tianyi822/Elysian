@@ -353,7 +353,7 @@ export function AgentChatPage() {
                   onPress={() => chat.editMessage(message.id)}><Pencil size={13} aria-hidden /></IconButton>}
               </>}
             </article>
-            {chat.timelines[message.runId]?.entries.length ? <ChatTimeline key={message.runId} timeline={chat.timelines[message.runId]!} answer={answer}
+            {(chat.timelines[message.runId]?.entries.length || chat.timelines[message.runId]?.done) ? <ChatTimeline key={message.runId} timeline={chat.timelines[message.runId]!} answer={answer}
               active={active && !finalizing} stopped={stopped} stopping={active && stopping} api={api} onProgress={followContent} />
               : <ChatResponse key={message.runId} content={(chat.timelines[message.runId] || chat.syncError ? answer?.content : undefined) ?? live?.content ?? ''} reasoning={chat.reasoning[message.runId] ?? ''}
                 active={active && !finalizing} stopped={stopped} stopping={active && stopping} quarantined={answer?.quarantined} onProgress={followContent} />}

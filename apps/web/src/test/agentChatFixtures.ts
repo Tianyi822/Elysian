@@ -1,6 +1,9 @@
 import { vi } from 'vitest'
-import type { AgentChatTimelineSnapshot, AgentInput, AgentMessage, AgentMessageAttachment, AgentModelProfile, AgentSession, RuntimeCall } from '@elysian/contracts'
+import type { AgentChatTimelineSnapshot, AgentInput, AgentMessage, AgentMessageAttachment, AgentModelProfile, AgentSession, RuntimeCall, RuntimeUsage } from '@elysian/contracts'
+import timelineFixture from '../../../../packages/foundation/contracts/fixtures/agent-chat-timeline.json'
 import type { AgentChatRun, AgentConversationAdapter } from '../contracts/agentChat'
+
+export const chatTestUsage: RuntimeUsage = timelineFixture.usage
 
 export const chatTestModel: AgentModelProfile = {
   id: 'model-1', revision: 1, model: 'test-model', baseUrl: 'https://model.invalid/v1',

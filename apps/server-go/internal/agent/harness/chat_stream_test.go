@@ -21,15 +21,21 @@ func TestChatOutputStreamBeforePublicMessageAndReconnect(t *testing.T) {
 	release := func() { once.Do(func() { close(resume) }) }
 	defer release()
 	m, session, _ := agentManager(t, func(ctx context.Context, _ model.Profile, r model.Request) (model.Response, error) {
+		prompt, completion, total, cached := 15, 5, 20, 5
+		usage := model.Usage{PromptTokens: &prompt, CompletionTokens: &completion, TotalTokens: &total, CachedTokens: &cached}
 		if r.ToolChoice == "store_working_memory" {
-			return memoryReply(r), nil
+			response := memoryReply(r)
+			response.Usage = usage
+			return response, nil
 		}
 		r.OnReasoning("思考第一行")
 		r.OnContent("回答第一段")
 		close(emitted)
 		select {
 		case <-resume:
-			return finalReply("完整回答"), nil
+			response := finalReply("完整回答")
+			response.Usage = usage
+			return response, nil
 		case <-ctx.Done():
 			return model.Response{}, ctx.Err()
 		}
@@ -70,6 +76,9 @@ func TestChatOutputStreamBeforePublicMessageAndReconnect(t *testing.T) {
 	if output.Done || output.Content != "回答第一段" || output.Reasoning != "思考第一行" {
 		t.Fatalf("错误快照：%+v", output)
 	}
+	if output.Timeline == nil || output.Timeline.Usage.ModelRequests != 1 || output.Timeline.Usage.EstimatedTokens == 0 || output.Timeline.Usage.ActualTokens != nil || output.Timeline.Usage.CachedTokens != nil {
+		t.Fatalf("运行中用量快照错误：%+v", output.Timeline)
+	}
 	if next := read(); !reflect.DeepEqual(next, output) {
 		t.Fatal("重连后快照不一致")
 	}
@@ -79,8 +88,12 @@ func TestChatOutputStreamBeforePublicMessageAndReconnect(t *testing.T) {
 	}
 	release()
 	runtimeFinished(t, m, run.ID)
-	if final := read(); !final.Done || final.Content != "完整回答" {
+	final := read()
+	if !final.Done || final.Content != "完整回答" {
 		t.Fatalf("错误终态：%+v", final)
+	}
+	if final.Timeline == nil || final.Timeline.Usage.ModelRequests != 2 || final.Timeline.Usage.ActualTokens == nil || *final.Timeline.Usage.ActualTokens != 40 || final.Timeline.Usage.CachedTokens == nil || *final.Timeline.Usage.CachedTokens != 10 {
+		t.Fatalf("流式终态用量错误：%+v", final.Timeline)
 	}
 }
 

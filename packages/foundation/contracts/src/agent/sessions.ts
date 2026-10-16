@@ -1,4 +1,4 @@
-import type { RuntimeFailure, RuntimeJSONValue, RuntimeMemoryStatus, RuntimeRunStatus } from './runtime.ts'
+import type { RuntimeFailure, RuntimeJSONValue, RuntimeMemoryStatus, RuntimeRunStatus, RuntimeUsage } from './runtime.ts'
 import type { AgentPermissionMode, AgentPromptRef, AgentResourceRef, AgentRevisionRef } from './capabilities.ts'
 import type { AgentWikiRef } from './memory.ts'
 
@@ -280,6 +280,7 @@ export type AgentChatTimelineSnapshot = {
   runId: string
   status: RuntimeRunStatus
   done: boolean
+  usage?: RuntimeUsage
   finalResponseId?: string
   entries: readonly AgentChatTimelineEntry[]
 }

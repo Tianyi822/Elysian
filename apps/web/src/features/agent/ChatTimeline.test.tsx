@@ -1,8 +1,8 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AgentChatTimelineEntry, AgentChatTimelineSnapshot, AgentMessage, RuntimeCall } from '@elysian/contracts'
-import { chatTestApi } from '../../test/agentChatFixtures'
+import type { AgentChatTimelineEntry, AgentChatTimelineSnapshot, AgentMessage, RuntimeCall, RuntimeUsage } from '@elysian/contracts'
+import { chatTestApi, chatTestUsage } from '../../test/agentChatFixtures'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { ChatTimeline } from './ChatTimeline'
 
@@ -33,12 +33,13 @@ describe('分段回复过程', () => {
     expect(screen.getAllByRole('button', { name: '展开思考内容' })).toHaveLength(2)
     const process = screen.getByLabelText('回复过程')
     expect(process.textContent).toMatch(/第一轮思考.*第一段正文.*docker_images_list.*第二轮思考.*第二段正文.*末轮思考.*终答预览/)
-    view.rerender(draw(snapshot(all, true), answer))
+    view.rerender(draw({ ...snapshot(all, true), usage: chatTestUsage }, answer))
     expect(screen.getAllByRole('article', { name: '助手回复' })).toHaveLength(3)
     expect(screen.getAllByRole('article', { name: '助手回复' }).at(-1)).toBe(finalArticle)
     expect(screen.getAllByText(answer.content)).toHaveLength(1)
     expect(screen.queryByText('终答预览')).not.toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: '复制回复内容' })).toHaveLength(3)
+    expect(screen.getByText('tokens 13,364 · 缓存 8,210（占总量 61%）')).toBeInTheDocument()
     expect(api.calls).not.toHaveBeenCalled()
   })
 
@@ -86,5 +87,60 @@ describe('分段回复过程', () => {
     render(<Tooltip.Provider><ChatTimeline timeline={{ runId: 'run-1', status: 'failed', done: true, entries: [entry] }} api={api} active={false} stopped={false} onProgress={vi.fn()} /></Tooltip.Provider>)
     expect(screen.getByRole('status')).toHaveTextContent(/^未完成$/)
     expect(screen.getByText('达到输出上限前的正文')).toBeInTheDocument()
+  })
+})
+
+describe('终态运行用量', () => {
+  const draw = (usage?: RuntimeUsage, done = true) => {
+    const { api } = chatTestApi()
+    return <Tooltip.Provider><ChatTimeline timeline={{ runId: 'run-1', status: done ? 'succeeded' : 'running', done, entries: [], usage }} api={api} active={!done} stopped={false} onProgress={vi.fn()} /></Tooltip.Provider>
+  }
+
+  it.each(['succeeded', 'failed', 'cancelled', 'interrupted'] as const)('%s 后显示一行总量与缓存占比，位于回复和停止标记之后', status => {
+    const { api } = chatTestApi()
+    const stopped = status === 'cancelled'
+    render(<Tooltip.Provider><ChatTimeline timeline={{ runId: 'run-1', status, done: true, entries: [], usage: chatTestUsage }} answer={answer} api={api} active={false} stopped={stopped} onProgress={vi.fn()} /></Tooltip.Provider>)
+    const usage = screen.getByText('tokens 13,364 · 缓存 8,210（占总量 61%）')
+    expect(usage.tagName).toBe('P')
+    expect(usage).toHaveClass('tabular-nums', 'break-words')
+    expect(usage).not.toHaveAttribute('role')
+    expect(usage).not.toHaveAttribute('aria-live')
+    expect(usage).toBe(screen.getByLabelText('回复过程').lastElementChild)
+    expect(screen.getAllByText(answer.content)).toHaveLength(1)
+    expect(screen.queryByText(/12,000|18,000/)).not.toBeInTheDocument()
+    if (stopped) {
+      expect(screen.getAllByText('已停止')).toHaveLength(1)
+      expect(usage.previousElementSibling).toHaveTextContent('已停止')
+    } else expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('运行中不展示累计用量，终态后才显示', () => {
+    const view = render(draw(chatTestUsage, false))
+    expect(screen.queryByText(/tokens|缓存|占总量/)).not.toBeInTheDocument()
+    view.rerender(draw(chatTestUsage))
+    expect(screen.getByText('tokens 13,364 · 缓存 8,210（占总量 61%）')).toBeInTheDocument()
+  })
+
+  it.each([
+    [{ actualTokens: 13364 }, 'tokens 13,364'],
+    [{ cachedTokens: 8210 }, '缓存 8,210'],
+    [{ actualTokens: 0 }, 'tokens 0'],
+    [{ cachedTokens: 0 }, '缓存 0'],
+    [{ actualTokens: 0, cachedTokens: 0 }, 'tokens 0 · 缓存 0'],
+    [{ actualTokens: 0, cachedTokens: 1 }, 'tokens 0 · 缓存 1'],
+    [{ actualTokens: 1, cachedTokens: 2 }, 'tokens 1 · 缓存 2'],
+    [{ actualTokens: 100, cachedTokens: 0 }, 'tokens 100 · 缓存 0（占总量 0%）'],
+    [{ actualTokens: 100, cachedTokens: 100 }, 'tokens 100 · 缓存 100（占总量 100%）'],
+    [{ actualTokens: 3, cachedTokens: 2 }, 'tokens 3 · 缓存 2（占总量 67%）'],
+  ] satisfies readonly [Partial<RuntimeUsage>, string][])('只展示已知用量 %j，保留明确零并检查比例分母', (reported, expected) => {
+    render(draw({ calls: 0, resultBytes: 0, tokens: 12000, estimatedTokens: 18000, ...reported }))
+    expect(screen.getByText(expected)).toBeInTheDocument()
+    expect(screen.getByLabelText('回复过程')).toHaveTextContent(expected)
+    expect(screen.getByLabelText('回复过程').childElementCount).toBe(1)
+  })
+
+  it.each([undefined, { calls: 0, resultBytes: 0 }, { calls: 0, resultBytes: 0, tokens: 12000, estimatedTokens: 18000 }])('实际总量与缓存均未知时不显示统计行 %j', usage => {
+    render(draw(usage))
+    expect(screen.getByLabelText('回复过程')).toBeEmptyDOMElement()
   })
 })

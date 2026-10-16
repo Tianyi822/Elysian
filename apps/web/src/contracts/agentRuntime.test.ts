@@ -7,6 +7,7 @@ import {
 } from '@elysian/contracts'
 import type {
   AgentCreateSessionInput,
+  AgentChatTimelineSnapshot,
   AgentInput,
   AgentMessage,
   AgentModelProfile,
@@ -31,9 +32,22 @@ import type {
 } from '@elysian/contracts'
 import fixture from '../../../../packages/foundation/contracts/fixtures/agent-runtime.json'
 import agentFixture from '../../../../packages/foundation/contracts/fixtures/agent-session.json'
+import timelineFixture from '../../../../packages/foundation/contracts/fixtures/agent-chat-timeline.json'
 
 /** 与 Go harness/routes_test.go 读取同一 JSON，锚定字段、空数组和字符串序号。 */
 describe('真实任务运行共享契约', () => {
+  it('聊天时间线复用运行用量契约，允许旧响应省略用量', () => {
+    const timeline: AgentChatTimelineSnapshot = {
+      runId: 'r1', status: 'succeeded', done: true,
+      usage: { calls: 1, resultBytes: 2048, modelRequests: 3, tokens: 12000, estimatedTokens: 18000, actualTokens: 13364, cachedTokens: 8210 },
+      finalResponseId: 'm1',
+      entries: [{ id: 'm1:content', modelRequestId: 'm1', requestIndex: 0, kind: 'content', text: '最终正文', startedAt: '', status: 'succeeded', incomplete: false }],
+    }
+    expect(timelineFixture).toEqual(timeline)
+    const legacy: AgentChatTimelineSnapshot = { runId: 'legacy', status: 'succeeded', done: true, entries: [] }
+    expect(legacy).not.toHaveProperty('usage')
+  })
+
   it('活动状态不包含已中断或任何终态，全部状态有中文标签', () => {
     expect(Object.keys(RUNTIME_RUN_STATUS_LABELS)).toEqual([...RUNTIME_RUN_STATUSES])
     expect(RUNTIME_RUN_STATUSES.filter(runtimeRunIsActive)).toEqual(['queued', 'running', 'waiting-approval', 'waiting-resource', 'waiting-task', 'recovery-required'])

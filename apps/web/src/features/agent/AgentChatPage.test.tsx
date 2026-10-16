@@ -10,7 +10,7 @@ import { AgentHttpError } from '../../adapters/http/agent/agentShared'
 import { useAgentChatStore } from '../../stores/agentChatStore'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { NotificationHost } from '../../components/NotificationHost'
-import { chatTestApi, chatTestModel, chatVisionTestModel } from '../../test/agentChatFixtures'
+import { chatTestApi, chatTestModel, chatTestUsage, chatVisionTestModel } from '../../test/agentChatFixtures'
 import { AgentChatPage } from './AgentChatPage'
 import { ShellLayoutContext, useShellLayout } from '../../app/layout/ShellLayoutContext'
 
@@ -106,6 +106,26 @@ describe('基本聊天界面', () => {
     await screen.findByText('已停止')
     expect(screen.getByRole('button', { name: '编辑这条消息' })).toBeEnabled()
     expect(screen.getByRole('button', { name: '发送消息' })).toBeInTheDocument()
+  })
+
+  it.each(['succeeded', 'cancelled'] as const)('历史 %s 的空条目时间线仍展示用量，回复与停止标记各保留一次', async status => {
+    const backend = chatTestApi()
+    backend.hold()
+    await backend.api.createTask('server-session', { requestId: 'usage-only', content: '此前的问题' })
+    if (status === 'succeeded') backend.complete('已确认的最终答复')
+    else {
+      backend.runs.get('run-1')!.status = status
+      backend.session.activeRunId = undefined
+    }
+    backend.timelines.set('run-1', { runId: 'run-1', status, done: true, entries: [], usage: chatTestUsage })
+    renderChat(backend, '/agent?session=server-session')
+    const usage = await screen.findByText('tokens 13,364 · 缓存 8,210（占总量 61%）')
+    expect(usage.closest('.chat-timeline')).not.toBeNull()
+    expect(screen.queryByRole('status', { name: '等待模型回复' })).not.toBeInTheDocument()
+    if (status === 'succeeded') {
+      expect(screen.getAllByText('已确认的最终答复')).toHaveLength(1)
+      expect(screen.getAllByRole('article', { name: '助手回复' })).toHaveLength(1)
+    } else expect(screen.getAllByText('已停止')).toHaveLength(1)
   })
 
   it.each([

@@ -1,5 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useState } from 'react'
-import { RUNTIME_RUN_STATUS_LABELS, type AgentChatTimelineEntry, type AgentChatTimelineSnapshot, type AgentChatToolStatus, type AgentMessage, type RuntimeCall } from '@elysian/contracts'
+import { RUNTIME_RUN_STATUS_LABELS, type AgentChatTimelineEntry, type AgentChatTimelineSnapshot, type AgentChatToolStatus, type AgentMessage, type RuntimeCall, type RuntimeUsage } from '@elysian/contracts'
 import type { AgentConversationAdapter } from '../../contracts/agentChat'
 import { Check, ChevronRight, Loader2, RefreshCw, Terminal, X } from '../../components/icons'
 import { IconButton } from '../../components/IconButton'
@@ -16,6 +16,19 @@ const toolLabels: Record<AgentChatToolStatus, string> = {
 }
 const pending = (status: AgentChatToolStatus) => ['planned', 'waiting-approval', 'waiting-resource', 'waiting-task', 'running'].includes(status)
 const failed = (status: AgentChatToolStatus) => ['failed', 'denied', 'expired', 'revoked'].includes(status)
+const tokenNumber = new Intl.NumberFormat('en-US')
+
+function ChatUsage({ usage }: { usage?: RuntimeUsage }) {
+  const actual = usage?.actualTokens
+  const cached = usage?.cachedTokens
+  const parts: string[] = []
+  if (actual !== undefined) parts.push(`tokens ${tokenNumber.format(actual)}`)
+  if (cached !== undefined) {
+    const ratio = actual !== undefined && actual > 0 && cached <= actual ? `（占总量 ${Math.round(cached / actual * 100)}%）` : ''
+    parts.push(`缓存 ${tokenNumber.format(cached)}${ratio}`)
+  }
+  return parts.length ? <p className="break-words text-xs text-fg-muted tabular-nums">{parts.join(' · ')}</p> : null
+}
 
 function ChatTool({ entry, runId, api, onProgress }: { entry: ToolEntry; runId: string; api: AgentConversationAdapter; onProgress(): void }) {
   const [expanded, setExpanded] = useState(false)
@@ -85,6 +98,7 @@ export function ChatTimeline({ timeline, answer, active, stopped, stopping, api,
   timeline: AgentChatTimelineSnapshot; answer?: AgentMessage; active: boolean; stopped: boolean; stopping?: boolean; api: AgentConversationAdapter; onProgress(): void
 }) {
   const hasFinal = timeline.entries.some(entry => entry.kind === 'content' && entry.modelRequestId === timeline.finalResponseId)
+  useLayoutEffect(onProgress, [timeline.done, onProgress])
   return <div className="chat-timeline" aria-label="回复过程">
     {timeline.entries.map(entry => {
       if (entry.kind === 'tool') return <ChatTool key={entry.id} entry={entry} runId={timeline.runId} api={api} onProgress={onProgress} />
@@ -99,5 +113,6 @@ export function ChatTimeline({ timeline, answer, active, stopped, stopping, api,
       </div><ChatMessageCopy value={answer.content} noun="回复内容" />
     </article>}
     {stopped && <p role="status" className="text-xs text-fg-muted">已停止</p>}
+    {timeline.done && <ChatUsage usage={timeline.usage} />}
   </div>
 }

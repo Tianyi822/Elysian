@@ -1,0 +1,27 @@
+{
+  "runId": "r1",
+  "status": "succeeded",
+  "done": true,
+  "usage": {
+    "calls": 1,
+    "resultBytes": 2048,
+    "modelRequests": 3,
+    "tokens": 12000,
+    "estimatedTokens": 18000,
+    "actualTokens": 13364,
+    "cachedTokens": 8210
+  },
+  "finalResponseId": "m1",
+  "entries": [
+    {
+      "id": "m1:content",
+      "modelRequestId": "m1",
+      "requestIndex": 0,
+      "kind": "content",
+      "text": "最终正文",
+      "startedAt": "",
+      "status": "succeeded",
+      "incomplete": false
+    }
+  ]
+}

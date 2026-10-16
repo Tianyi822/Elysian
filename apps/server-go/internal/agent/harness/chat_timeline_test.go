@@ -17,9 +17,12 @@ import (
 func TestChatTimelineRetainsThreeInferencesAndToolContent(t *testing.T) {
 	count := 0
 	m, session, _ := agentManager(t, func(_ context.Context, _ model.Profile, r model.Request) (model.Response, error) {
+		prompt, completion, total, cached := 15, 5, 20, 5
+		usage := model.Usage{PromptTokens: &prompt, CompletionTokens: &completion, TotalTokens: &total, CachedTokens: &cached}
 		if r.ToolChoice == "store_working_memory" {
 			response := memoryReply(r)
 			response.Content, response.Reasoning = "内部正文", "内部整理"
+			response.Usage = usage
 			return response, nil
 		}
 		count++
@@ -29,6 +32,7 @@ func TestChatTimelineRetainsThreeInferencesAndToolContent(t *testing.T) {
 			response.Content = fmt.Sprintf("正文%d", count)
 		}
 		response.Reasoning = fmt.Sprintf("思考%d", count)
+		response.Usage = usage
 		return response, nil
 	}, nil)
 	run := submitAgentTest(t, m, session, "timeline", "查询")
@@ -56,6 +60,9 @@ func TestChatTimelineRetainsThreeInferencesAndToolContent(t *testing.T) {
 	if !reflect.DeepEqual(kinds, wantKinds) || !timeline.Done || timeline.FinalResponseID != timeline.Entries[9].ModelRequestID {
 		t.Fatalf("wrong chronology: %+v", timeline)
 	}
+	if timeline.Usage.ModelRequests != 4 || timeline.Usage.ActualTokens == nil || *timeline.Usage.ActualTokens != 80 || timeline.Usage.CachedTokens == nil || *timeline.Usage.CachedTokens != 20 {
+		t.Fatalf("run usage missing from timeline: %+v", timeline.Usage)
+	}
 	// 独立读取端点从原始记录重建相同顺序，且不夹带工具结果。
 	rec := httptest.NewRecorder()
 	m.Router().ServeHTTP(rec, httptest.NewRequest("GET", "/runs/"+run.ID+"/timeline", nil))
@@ -65,6 +72,51 @@ func TestChatTimelineRetainsThreeInferencesAndToolContent(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), `"result":`) {
 		t.Fatal("tool results leaked into snapshot")
+	}
+}
+
+func TestChatTimelineIncludesRunUsage(t *testing.T) {
+	actual, cached := 1200, 800
+	usage := Usage{Calls: 2, ResultBytes: 16, ModelRequests: 3, Tokens: 1200, EstimatedTokens: 2000, ActualTokens: &actual, CachedTokens: &cached}
+	for _, status := range []string{StateRunning, StateSucceeded, StateFailed, StateCancelled, StateInterrupted} {
+		t.Run(status, func(t *testing.T) {
+			timeline := projectChatTimeline(Run{ID: "r", Status: status, Usage: usage}, nil, nil, nil, nil)
+			if !reflect.DeepEqual(timeline.Usage, usage) || timeline.Done != terminal(status) {
+				t.Fatalf("wrong usage snapshot: %+v", timeline)
+			}
+		})
+	}
+}
+
+func TestChatTimelineUsagePreservesUnknownAndReportedZero(t *testing.T) {
+	zero := 0
+	for _, reported := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unknown", true: "reported-zero"}[reported], func(t *testing.T) {
+			usage := Usage{ModelRequests: 1, Tokens: 20, EstimatedTokens: 30}
+			if reported {
+				usage.ActualTokens, usage.CachedTokens = &zero, &zero
+			}
+			timeline := projectChatTimeline(Run{ID: "r", Status: StateSucceeded, Usage: usage}, nil, nil, nil, nil)
+			data, err := json.Marshal(timeline)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var wire struct {
+				Usage map[string]json.RawMessage `json:"usage"`
+			}
+			if err := json.Unmarshal(data, &wire); err != nil {
+				t.Fatal(err)
+			}
+			if wire.Usage == nil || string(wire.Usage["tokens"]) != "20" || string(wire.Usage["estimatedTokens"]) != "30" {
+				t.Fatalf("usage missing from wire: %s", data)
+			}
+			for _, key := range []string{"actualTokens", "cachedTokens"} {
+				value, present := wire.Usage[key]
+				if present != reported || (reported && string(value) != "0") {
+					t.Fatalf("unknown and zero usage collapsed: %s", data)
+				}
+			}
+		})
 	}
 }
 

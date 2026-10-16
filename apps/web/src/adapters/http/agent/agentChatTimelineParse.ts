@@ -1,4 +1,4 @@
-import { RUNTIME_RUN_STATUSES, type AgentChatTimelineEntry, type AgentChatTimelineSnapshot, type AgentChatToolStatus, type RuntimeCall, type RuntimeFailure, type RuntimeJSONValue, type RuntimeRunStatus } from '@elysian/contracts'
+import { RUNTIME_RUN_STATUSES, type AgentChatTimelineEntry, type AgentChatTimelineSnapshot, type AgentChatToolStatus, type RuntimeCall, type RuntimeFailure, type RuntimeJSONValue, type RuntimeRunStatus, type RuntimeUsage } from '@elysian/contracts'
 
 const invalid = () => new Error('Agent 时间线响应格式无效')
 const object = (value: unknown): Record<string, unknown> => {
@@ -17,6 +17,14 @@ const failure = (value: unknown): RuntimeFailure | undefined => {
   if (value === undefined) return undefined
   const row = object(value)
   return { code: string(row.code), message: string(row.message) }
+}
+const usage = (value: unknown): RuntimeUsage => {
+  const row = object(value)
+  const out: RuntimeUsage = { calls: integer(row.calls), resultBytes: integer(row.resultBytes) }
+  for (const key of ['modelRequests', 'tokens', 'estimatedTokens', 'actualTokens', 'cachedTokens'] as const) {
+    if (row[key] !== undefined) out[key] = integer(row[key])
+  }
+  return out
 }
 const toolStatuses: readonly AgentChatToolStatus[] = ['planned', 'waiting-approval', 'waiting-resource', 'waiting-task', 'running', 'succeeded', 'failed', 'cancelled', 'unknown', 'denied', 'expired', 'revoked', 'not-executed']
 
@@ -47,7 +55,8 @@ export function parseChatTimeline(value: unknown, runId: string): AgentChatTimel
   })
   const finalResponseId = optional(row.finalResponseId)
   if (finalResponseId && !entries.some(entry => entry.kind === 'content' && entry.modelRequestId === finalResponseId)) throw invalid()
-  return { runId, status: status(row.status), done: boolean(row.done), finalResponseId, entries }
+  return { runId, status: status(row.status), done: boolean(row.done), finalResponseId, entries,
+    ...(row.usage === undefined ? {} : { usage: usage(row.usage) }) }
 }
 
 export function parseChatCall(value: unknown, runId: string): RuntimeCall {

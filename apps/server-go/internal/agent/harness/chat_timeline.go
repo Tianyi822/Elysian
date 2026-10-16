@@ -25,6 +25,7 @@ type ChatTimelineSnapshot struct {
 	RunID           string              `json:"runId"`
 	Status          string              `json:"status"`
 	Done            bool                `json:"done"`
+	Usage           Usage               `json:"usage"`
 	FinalResponseID string              `json:"finalResponseId,omitempty"`
 	Entries         []ChatTimelineEntry `json:"entries"`
 }
@@ -72,7 +73,7 @@ func (m *Manager) ChatSnapshot(ctx context.Context, id string) (ChatOutput, erro
 }
 
 func projectChatTimeline(run Run, records []ModelRequestRecord, operations []Operation, calls []Call, approvals []Approval) ChatTimelineSnapshot {
-	out := ChatTimelineSnapshot{RunID: run.ID, Status: run.Status, Done: terminal(run.Status), Entries: []ChatTimelineEntry{}}
+	out := ChatTimelineSnapshot{RunID: run.ID, Status: run.Status, Done: terminal(run.Status), Usage: run.Usage, Entries: []ChatTimelineEntry{}}
 	ops := map[string]Operation{}
 	for _, o := range operations {
 		ops[o.ModelRequestID+":"+o.ModelCallID] = o
