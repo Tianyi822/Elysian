@@ -12,6 +12,7 @@ import { EmptyState, ErrorState, LoadingState } from '../../components/states/St
 import { RefreshButton } from '../../components/RefreshState'
 import { CTL_CHIP, CTL_FIELD, CTL_PRIMARY, CTL_TOOLBAR } from '../../components/formControl'
 import { useRuntimeLogStore } from '../../stores/runtimeLogStore'
+import { useLogReportNotifications } from './useLogReportNotifications'
 import { ClearLogsDialog } from './ClearLogsDialog'
 import { LogMessageCell } from './LogMessageCell'
 import { LogTable } from './LogTable'
@@ -143,6 +144,8 @@ export function RuntimeLogPanel() {
   const setFullscreen = useRuntimeLogStore((s) => s.setFullscreen)
   const openClear = useRuntimeLogStore((s) => s.openClear)
 
+  useLogReportNotifications('运行日志', { ready: status === 'ready', truncated, skippedLines, skippedFiles, olderError, failedWrites: storage?.failedWrites, trimmedBySize: storage?.trimmedBySize })
+
   const committedSearchRef = useRef(search.trim())
   const trimmedSearch = search.trim()
 
@@ -250,7 +253,8 @@ export function RuntimeLogPanel() {
 
       {storage.failedWrites > 0 ? (
         <p
-          role="alert"
+          role="region"
+          aria-label="运行日志写入异常"
           className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning"
         >
           {`有 ${storage.failedWrites} 条运行日志未能写入磁盘（服务端写盘失败）。`}

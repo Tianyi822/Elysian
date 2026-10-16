@@ -38,7 +38,8 @@ describe('页面级访问闸门', () => {
   it('无权限时给出明确的无权限状态，而不是空白页', async () => {
     renderApp('/', { gateway: gatewayDenying('dashboard') })
 
-    expect(await screen.findByText(/无权限查看/)).toBeInTheDocument()
+    expect(await screen.findByText('无权限查看「仪表盘」', { exact: true })).toBeInTheDocument()
+    expect(screen.getByLabelText('通知')).toHaveTextContent('无权限查看「仪表盘」')
     expect(screen.queryByText('仪表盘区块由后续票交付')).not.toBeInTheDocument()
   })
 
@@ -118,9 +119,9 @@ describe('页面级访问闸门', () => {
     const classes = ['p-4', 'md:p-6', 'pt-[calc(var(--shell-header-height)+1rem)]', 'md:pt-6']
     expect((await screen.findByText('正在校验访问权限…')).parentElement).toHaveClass(...classes)
     await act(async () => { fail(new Error('连接暂时中断')) })
-    expect(screen.getByRole('alert').parentElement).toHaveClass(...classes)
+    expect(screen.getByRole('region', { name: '无法校验访问权限' }).parentElement).toHaveClass(...classes)
     await user.click(screen.getByRole('button', { name: '重试' }))
-    expect((await screen.findByText(/无权限查看/)).parentElement?.parentElement).toHaveClass(...classes)
+    expect((await screen.findByText('无权限查看「Ely 工作台」', { exact: true })).parentElement?.parentElement).toHaveClass(...classes)
     expect(screen.queryByText(/本阶段的权限只是接口占位/)).not.toBeInTheDocument()
   })
 })

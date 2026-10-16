@@ -344,7 +344,7 @@ describe('数据库页面', () => {
     })
     renderApp('/databases', { gateway })
 
-    const alert = await screen.findByRole('alert')
+    const alert = await screen.findByRole('region', { name: '数据库数据加载失败' })
     expect(alert).toHaveTextContent('演示数据库连接失败')
     failed = false
     await user.click(within(alert).getByRole('button', { name: '重试' }))
@@ -363,7 +363,7 @@ describe('数据库页面', () => {
     await screen.findByRole('alert')
     expect(screen.queryByRole('dialog')).toBeNull()
     failed = false
-    await userEvent.setup().click(within(screen.getByRole('alert')).getByRole('button', { name: '重试' }))
+    await userEvent.setup().click(within(screen.getByRole('region', { name: '数据库数据加载失败' })).getByRole('button', { name: '重试' }))
     expect(await screen.findByRole('article', { name: 'MariaDB 数据库 mariadb-test' })).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).toBeNull()
   })

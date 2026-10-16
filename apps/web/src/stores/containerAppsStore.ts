@@ -10,6 +10,7 @@ import type {
 } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
 import { useNotificationStore } from './notificationStore'
+import { isContainerBuildActive } from '@elysian/contracts'
 
 /**
  * 容器工作区的界面状态。数据一律经 gateway.containers 的 adapter 取，
@@ -77,7 +78,7 @@ export type ContainerAppsState = {
   clearCheck(): void
   /** 任务区首次打开时加载；已有清单时等价于手动刷新。 */
   ensureBuilds(gateway: ElysianGateway, slug: string): Promise<void>
-  /** 刷新任务清单；silent 供 2s 轮询用，不驱动遮罩与错误态。 */
+  /** 刷新任务清单；silent 供 2s 轮询用，不驱动遮罩，读取失败仍进入统一反馈。 */
   refreshBuilds(gateway: ElysianGateway, slug: string, options?: { silent?: boolean }): Promise<void>
   previewBuild(gateway: ElysianGateway, slug: string, input: ContainerBuildPreviewInput): Promise<ContainerBuildPlan | null>
   /** 提交构建：成功通知「已提交构建任务」并入列；notifyOnError 供弹窗外的「重新构建」走通知。 */
@@ -105,6 +106,16 @@ export function newBuildRequestId(): string {
 }
 
 const detail = (cause: unknown) => (cause instanceof Error ? cause.message : '操作失败，请重试')
+
+function notifyBuildTransitions(previous: readonly ContainerBuildTask[], tasks: readonly ContainerBuildTask[], slug: string) {
+  for (const task of tasks) {
+    const old = previous.find((row) => row.id === task.id)
+    if (!old || !isContainerBuildActive(old.state) || isContainerBuildActive(task.state)) continue
+    const tone = task.state === 'succeeded' ? 'success' : task.state === 'failed' ? 'danger' : task.state === 'cancelled' ? 'info' : 'warning'
+    const result = task.state === 'succeeded' ? '镜像构建已完成' : task.state === 'failed' ? '镜像构建失败' : task.state === 'cancelled' ? '镜像构建已取消' : '镜像构建已中断'
+    useNotificationStore.getState().notify({ tone, message: `${slug}：${result}${task.error ? `，${task.error}` : ''}` })
+  }
+}
 /** 写动作在途的键；`*` 表示整工作区（批量上传），界面据此决定遮罩挂在哪。 */
 export const appWritingKey = (slug: string, path: string) => `${slug}/${path}`
 export const WORKSPACE_WRITING_PATH = '*'
@@ -159,6 +170,7 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
       return true
     } catch (cause) {
       set({ creating: false, createError: detail(cause) })
+      useNotificationStore.getState().notify({ tone: 'danger', message: `创建工作区失败：${detail(cause)}` })
       return false
     }
   },
@@ -255,6 +267,7 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
         ),
         check: state.check?.slug === slug && state.check.path === path ? null : state.check,
       }))
+      useNotificationStore.getState().notify({ tone: 'success', message: `已删除 ${path}` })
     } catch (cause) {
       useNotificationStore.getState().notify({ tone: 'danger', message: `删除文件失败：${detail(cause)}` })
     } finally {
@@ -302,14 +315,13 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
     if (!silent) set((state) => ({ buildsRefreshing: { ...state.buildsRefreshing, [slug]: true } }))
     try {
       const builds = await gateway.containers.listAppBuilds(slug)
+      notifyBuildTransitions(get().buildsBySlug[slug] ?? [], builds, slug)
       set((state) => ({
         buildsBySlug: { ...state.buildsBySlug, [slug]: builds },
         buildsRefreshing: { ...state.buildsRefreshing, [slug]: false },
-        ...(silent ? {} : { buildsError: { ...state.buildsError, [slug]: null } }),
+        buildsError: { ...state.buildsError, [slug]: null },
       }))
     } catch (cause) {
-      // 静默轮询失败不打扰：旧任务清单留在屏上，也不清错误重试入口之外的状态。
-      if (silent) return
       set((state) => ({
         buildsRefreshing: { ...state.buildsRefreshing, [slug]: false },
         buildsError: { ...state.buildsError, [slug]: detail(cause) },
@@ -362,8 +374,12 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
   async cancelBuild(gateway, slug, taskId) {
     try {
       await gateway.containers.cancelAppBuild(slug, taskId)
+      const previous = get().buildsBySlug[slug]?.find((task) => task.id === taskId)
       await get().refreshBuilds(gateway, slug, { silent: true })
-      useNotificationStore.getState().notify({ tone: 'success', message: '已取消构建任务' })
+      const current = get().buildsBySlug[slug]?.find((task) => task.id === taskId)
+      if (!previous || !isContainerBuildActive(previous.state) || current?.state !== 'cancelled') {
+        useNotificationStore.getState().notify({ tone: 'info', message: '已提交取消构建请求' })
+      }
     } catch (cause) {
       useNotificationStore.getState().notify({ tone: 'danger', message: `取消构建任务失败：${detail(cause)}` })
     }

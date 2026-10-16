@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { useNotificationStore } from './notificationStore'
 import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
 import {
   hostTerminalCloseMessage,
@@ -158,6 +159,7 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => ({
       }))
     } catch (error) {
       const message = error instanceof Error ? error.message : '连接本机终端失败'
+      useNotificationStore.getState().notify({ tone: 'danger', message: `本机终端连接失败：${message}` })
       set((state) => ({
         opening: false,
         sessions: state.sessions.map((session) =>
@@ -204,6 +206,7 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => ({
       }))
     } catch (error) {
       const message = error instanceof Error ? error.message : '连接本机终端失败'
+      useNotificationStore.getState().notify({ tone: 'danger', message: `本机终端连接失败：${message}` })
       set((state) => ({
         opening: false,
         sessions: state.sessions.map((session) =>
@@ -272,6 +275,7 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => ({
       await gateway.terminals.sendInput(session.id, input)
     } catch (error) {
       const text = error instanceof Error ? error.message : '命令执行失败'
+      useNotificationStore.getState().notify({ tone: 'danger', message: `终端输入发送失败：${text}` })
       set((state) => ({
         sessions: state.sessions.map((candidate) =>
           candidate.id === session.id
@@ -288,12 +292,17 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => ({
     if (!session || session.status !== 'connected') return
     try {
       await gateway.terminals.interrupt(session.id)
-    } catch {
-      // 会话已断开时错误态由关闭路径接管；本地 ^C 外观已经落定。
+    } catch (error) {
+      if (get().sessions.find(candidate => candidate.id === session.id)?.status === 'connected') {
+        useNotificationStore.getState().notify({ tone: 'danger', message: error instanceof Error ? `终端中断请求失败：${error.message}` : '终端中断请求失败' })
+      }
     }
   },
 
   applyFrame(sessionId, frame) {
+    const current = get().sessions.find(session => session.id === sessionId)
+    if (current && frame.type === 'truncated') useNotificationStore.getState().notify({ tone: 'warning', message: `本机终端：输出超出单轮上限，已丢弃 ${frame.droppedBytes} 字节` })
+    if (current && current.status !== 'error' && frame.type === 'exit') useNotificationStore.getState().notify({ tone: frame.exitCode === 0 ? 'info' : 'danger', message: `本机终端：会话已退出（退出码 ${frame.exitCode}）` })
     set((state) => ({
       sessions: state.sessions.map((session) => {
         if (session.id !== sessionId) return session
@@ -322,6 +331,8 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => ({
   },
 
   handleClose(sessionId, info) {
+    const current = get().sessions.find(session => session.id === sessionId)
+    if (current && current.status !== 'error') useNotificationStore.getState().notify({ tone: info.code === 1000 ? 'info' : 'danger', message: `本机终端：${hostTerminalCloseMessage(info.code, info.reason)}` })
     set((state) => ({
       sessions: state.sessions.map((session) =>
         session.id === sessionId && session.status !== 'error'

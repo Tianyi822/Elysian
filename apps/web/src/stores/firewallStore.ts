@@ -50,6 +50,7 @@ type FirewallState = {
   /** 防扫描弹窗：数据在首次打开时懒加载，打开期间轮询刷新。 */
   scanDialogOpen: boolean
   scanStatus: 'idle' | 'loading' | 'ready' | 'error'
+  scanError?: string
   scanProtection: FirewallScanProtection
   /** 导出方向选择弹窗。 */
   exportDialogOpen: boolean
@@ -119,6 +120,7 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
   removeTarget: undefined,
   scanDialogOpen: false,
   scanStatus: 'idle',
+  scanError: undefined,
   scanProtection: {
     enabled: false,
     config: { ports: [], windowSeconds: 60, hitCount: 8, banSeconds: 3600 },
@@ -383,12 +385,16 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
   // 防扫描数据懒加载：只在第一次打开弹窗时取。
   openScan(gateway) {
     set({ scanDialogOpen: true })
-    if (get().scanStatus !== 'idle') return
-    set({ scanStatus: 'loading' })
+    if (get().scanStatus !== 'idle' && get().scanStatus !== 'error') return
+    set({ scanStatus: 'loading', scanError: undefined })
     gateway.firewall
       .scanProtection()
-      .then((scanProtection) => set({ scanStatus: 'ready', scanProtection }))
-      .catch(() => set({ scanStatus: 'error' }))
+      .then((scanProtection) => set({ scanStatus: 'ready', scanProtection, scanError: undefined }))
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : '读取防扫描数据失败'
+        set({ scanStatus: 'error', scanError: message })
+        notify(`读取防扫描数据失败：${message}`, 'danger')
+      })
   },
 
   closeScan() {
@@ -401,14 +407,16 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
     try {
       const next = await gateway.firewall.scanProtection()
       const known = new Set(get().scanProtection.blocked.map((entry) => entry.ip))
-      set({ scanProtection: next })
+      set({ scanProtection: next, scanError: undefined })
       for (const entry of next.blocked) {
         if (!known.has(entry.ip)) {
           notify(`防扫描已封锁 IP ${entry.ip}${REAL_ACTION_LABEL}`)
         }
       }
-    } catch {
-      // 轮询失败静默跳过：下一次轮询会再试。
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '刷新防扫描数据失败'
+      if (get().scanError !== message) notify(`刷新防扫描数据失败：${message}`, 'danger')
+      set({ scanError: message })
     }
   },
 

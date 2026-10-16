@@ -25,7 +25,7 @@ export function ChatResponse({ content, reasoning, active, stopped, stopping, qu
     {waiting && <div className="chat-response-waiting" role="status" aria-label="等待模型回复">
       <span aria-hidden /><span aria-hidden /><span aria-hidden />
     </div>}
-    <ChatReasoning text={thought} />
+    <ChatReasoning text={thought} active={active} />
     {!!answer && <article className="chat-message chat-message-assistant" aria-label="助手回复">
       <div className="chat-message-body">
         <ChatMarkdown text={answer} />

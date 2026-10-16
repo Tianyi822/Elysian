@@ -40,6 +40,7 @@ import { ComposeCheckPanel } from './ComposeCheckPanel'
 import { ContainerBuildDialog } from './ContainerBuildDialog'
 import { ContainerBuildLogsSheet } from './ContainerBuildLogsSheet'
 import { formatWorkspaceSize } from './formatWorkspaceSize'
+import { useFeedbackNotification } from '../../components/useFeedbackNotification'
 
 /** 待确认的删除目标：工作区连目录一起删，单文件只删自己。 */
 type Pending = { kind: 'app' } | { kind: 'file'; path: string } | null
@@ -142,6 +143,7 @@ export function ContainerAppWorkspaceCard({
   const buildsLoading = useContainerAppsStore((s) => s.buildsLoading[app.slug]) === true
   const buildsRefreshing = useContainerAppsStore((s) => s.buildsRefreshing[app.slug]) === true
   const buildsError = useContainerAppsStore((s) => s.buildsError[app.slug]) ?? null
+  useFeedbackNotification(buildsError)
   const ensureBuilds = useContainerAppsStore((s) => s.ensureBuilds)
   const refreshBuilds = useContainerAppsStore((s) => s.refreshBuilds)
   const submitBuild = useContainerAppsStore((s) => s.submitBuild)

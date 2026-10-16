@@ -10,6 +10,7 @@ import { StatusTag } from '../../components/StatusTag'
 import { useModelSettingsStore, validateModelInput, isRevisionConflict } from '../../stores/modelSettingsStore'
 import { EmptyState } from '../../components/states/StateViews'
 import { RevisionConflictNotice } from './RevisionConflictNotice'
+import { useFeedbackNotification } from '../../components/useFeedbackNotification'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { SuggestionInput } from '../../components/SuggestionInput'
 import { ScrollArea } from '../../components/ScrollArea'
@@ -79,6 +80,8 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
   const [error, setError] = useState<string>()
   const [catalog, setCatalog] = useState<readonly AgentDiscoveredModel[]>()
   const [catalogError, setCatalogError] = useState<string>()
+  useFeedbackNotification(catalogError)
+  useFeedbackNotification(error)
   const [fetchingModels, setFetchingModels] = useState(false)
   const [catalogSearch, setCatalogSearch] = useState('')
   const [selectedModels, setSelectedModels] = useState<string[]>([])
@@ -93,7 +96,7 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
     if (!(credential.trim() || service?.hasCredential)) { setCatalogError('获取模型前请先配置 API Key'); return }
     const controller = new AbortController()
     discoveryRequest.current = controller
-    setFetchingModels(true); setCatalogError(undefined)
+    setFetchingModels(true); setCatalogError(undefined); setCatalog(undefined)
     try {
       const rows = await gateway.modelSettings.discoverModels({ provider, apiFormat, baseUrl, ...(credential ? { credential } : {}), ...(service ? { serviceId: service.id, expectedRevision: revision } : {}) }, controller.signal)
       if (discoveryRequest.current === controller) { setCatalog(rows); setSelectedModels([]) }
@@ -106,6 +109,7 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
       if (discoveryRequest.current === controller) { discoveryRequest.current = undefined; setFetchingModels(false) }
     }
   }
+  useFeedbackNotification(catalog?.length === 0 ? '服务没有返回可用模型，可以手动添加。' : null, 'info')
   const selected = catalog?.filter(row => selectedModels.includes(row.model) && !models.some(model => model.model.trim() === row.model)) ?? []
   const addSelectedModels = () => {
     if (selected.length === 0 || models.length + selected.length > 64) return
@@ -170,11 +174,10 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
             </Field>
             <div className="flex flex-col gap-2">
               <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-medium text-fg-muted">模型列表 <span className="text-fg-subtle">({models.length})</span></span><div className="flex flex-wrap items-center gap-2"><button type="button" disabled={fetchingModels} onClick={() => void discoverModels()} className={CTL_SECONDARY}><span className="inline-flex items-center gap-1">{fetchingModels ? <Loader2 aria-hidden size={13} className="animate-spin motion-reduce:animate-none" /> : <Download aria-hidden size={13} />}{fetchingModels ? '获取中…' : '获取模型'}</span></button><button type="button" disabled={models.length >= 64} onClick={() => { const row = blankModel(); setModels(rows => [...rows, row]); setExpanded(row.key); setError(undefined) }} className={CTL_SECONDARY}><span className="inline-flex items-center gap-1"><Plus aria-hidden size={13} />添加模型</span></button></div></div>
-              {catalogError && <p role="alert" className="text-xs text-danger">{catalogError}</p>}
               {fetchingModels && <p role="status" className="text-xs text-fg-subtle">正在读取服务提供的模型列表…</p>}
               {catalog !== undefined && <div role="region" aria-label="可选模型" className="flex flex-col gap-2 border-y border-line py-3">
                 <div className="flex items-center justify-between gap-2"><span className="text-xs text-fg-muted">可选模型（{catalog.length}）</span><button type="button" aria-label="收起可选模型" onClick={() => setCatalog(undefined)} className={iconButton}><X aria-hidden size={14} /></button></div>
-                {catalog.length === 0 ? <p role="status" className="text-xs text-fg-subtle">服务没有返回可用模型，可以手动添加。</p> : <>
+                {catalog.length > 0 && <>
                   <label htmlFor="model-catalog-search" className="sr-only">搜索可选模型</label><input id="model-catalog-search" type="search" value={catalogSearch} onChange={event => setCatalogSearch(event.target.value)} placeholder="搜索模型名称或 ID" className={`${CTL_FIELD} h-9 w-full`} />
                   <div className="max-h-48 overflow-y-auto">{catalog.filter(row => [row.name, row.model].some(value => value.toLowerCase().includes(catalogSearch.trim().toLowerCase()))).map(row => {
                     const added = models.some(model => model.model.trim() === row.model)

@@ -73,6 +73,7 @@ export {
   Search,
   Server,
   Settings,
+  Save,
   ShieldAlert,
   ShieldCheck,
   Siren,

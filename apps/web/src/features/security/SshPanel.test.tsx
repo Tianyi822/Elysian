@@ -930,7 +930,7 @@ describe('SSH 管理页签', () => {
     renderApp('/security', { gateway })
     await user.click(securityTab('SSH 管理'))
 
-    const alert = await screen.findByRole('alert')
+    const alert = await screen.findByRole('region', { name: 'SSH 数据加载失败' })
     expect(alert).toHaveTextContent('SSH 数据加载失败')
     expect(alert).toHaveTextContent('演示用的读取失败')
 

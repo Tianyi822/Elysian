@@ -67,7 +67,12 @@ export function createAgentChatLocalAdapter(): AgentChatAdapter {
   const storageKey = (key: string) => AGENT_CHAT_RECORD_PREFIX + encodeURIComponent(key)
   const parse = (raw: string | null): AgentChatSession | null => {
     if (!raw) return null
-    try { const value: unknown = JSON.parse(raw); return isSession(value) ? storedSession(value) : null }
+    try {
+      const value: unknown = JSON.parse(raw)
+      if (!isSession(value)) return null
+      const migrated = value.permissionVersion === 1 ? value : { ...value, permissionMode: 'ask' as const, permissionVersion: 1 as const }
+      return storedSession(migrated)
+    }
     catch { return null }
   }
   const migrate = () => {

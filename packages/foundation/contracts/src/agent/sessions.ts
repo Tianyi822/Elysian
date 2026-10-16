@@ -1,5 +1,5 @@
 import type { RuntimeFailure, RuntimeJSONValue, RuntimeMemoryStatus, RuntimeRunStatus } from './runtime.ts'
-import type { AgentPromptRef, AgentResourceRef, AgentRevisionRef } from './capabilities.ts'
+import type { AgentPermissionMode, AgentPromptRef, AgentResourceRef, AgentRevisionRef } from './capabilities.ts'
 import type { AgentWikiRef } from './memory.ts'
 
 /** 模型能力由配置声明；source 记录能力信息来源。 */
@@ -146,6 +146,7 @@ export const AGENT_ATTACHMENT_LIMITS = {
 } as const
 
 export type AgentInput = {
+  permissionMode?: AgentPermissionMode
   requestId: string
   content: string
   /** 仅续轮使用：替换会话最后一条用户消息及其回复。 */
@@ -227,8 +228,12 @@ export type AgentModelResponse = {
   usage: AgentModelUsage
 }
 export type AgentModelRequestRecord = {
+  /** 本次推理请求实际提供的工具，用于恢复后校验按需加载范围。 */
+  toolNames?: readonly string[]
   /** 运行中的思考文本快照，不表示已确认模型响应。 */
   reasoning?: string
+  /** 请求结束但未形成完整响应时保留的公开正文片段。 */
+  content?: string
   /** 本次请求随上下文送入的 Wiki 页面修订。 */
   wikiSources?: readonly AgentWikiRef[]
   /** 本次请求实际载入的资料条目（技能正文、MCP 资源等 ContextItem 的 ID）。 */
@@ -255,4 +260,26 @@ export interface AgentChatOutput {
   reasoning: string
   content: string
   done: boolean
+  timeline?: AgentChatTimelineSnapshot
+}
+
+export type AgentChatToolStatus = 'planned' | 'waiting-approval' | 'waiting-resource' | 'waiting-task' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'unknown' | 'denied' | 'expired' | 'revoked' | 'not-executed'
+type AgentChatTimelineEntryBase = {
+  id: string
+  modelRequestId: string
+  requestIndex: number
+  startedAt: string
+  endedAt?: string
+}
+export type AgentChatTimelineEntry = AgentChatTimelineEntryBase & (
+  { kind: 'reasoning' | 'content'; text: string; status: RuntimeRunStatus; incomplete: boolean }
+  | { kind: 'tool'; tool: string; modelCallId: string; callIndex: number; argumentsJson: string; callId?: string; status: AgentChatToolStatus; error?: RuntimeFailure; truncated: boolean }
+)
+/** 只读展示投影，条目按推理请求及工具调用顺序排列；终答由公开消息确认。 */
+export type AgentChatTimelineSnapshot = {
+  runId: string
+  status: RuntimeRunStatus
+  done: boolean
+  finalResponseId?: string
+  entries: readonly AgentChatTimelineEntry[]
 }

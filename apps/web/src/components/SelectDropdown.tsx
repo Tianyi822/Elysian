@@ -49,6 +49,7 @@ export function SelectDropdown<T extends string>({
   leadingIcon,
   align = 'start',
   search,
+  footerAction,
 }: {
   id?: string
   ariaLabel: string
@@ -85,6 +86,7 @@ export function SelectDropdown<T extends string>({
   align?: 'start' | 'end'
   /** 浮层内搜索；候选项由组件过滤，调用方始终提供完整集合。 */
   search?: { ariaLabel: string; placeholder: string }
+  footerAction?: { label: string; icon?: ReactNode; onSelect(): void }
 }) {
   const [open, setOpen] = useState(false)
   // Radix 关闭菜单会归还焦点；鼠标选值不应因此显示键盘焦点环。
@@ -282,6 +284,9 @@ export function SelectDropdown<T extends string>({
           {search ? <p role="status" className="border-t border-line px-3 py-1.5 text-xs text-fg-muted tabular-nums">
             {searchText.trim() !== committedSearch ? '正在筛选…' : `显示 ${visibleItems.length} / ${items.length} 项`}
           </p> : null}
+          {footerAction && <><DropdownMenu.Separator className="border-t border-line" /><DropdownMenu.Item className={`${DROPDOWN_OPTION_CLASS} m-1 text-sm`} onSelect={footerAction.onSelect}>
+            {footerAction.icon}{footerAction.label}
+          </DropdownMenu.Item></>}
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>

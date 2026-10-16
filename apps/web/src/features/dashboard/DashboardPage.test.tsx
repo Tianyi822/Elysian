@@ -11,6 +11,7 @@ import type { ResourceMetricKey } from '../../adapters/mock/resourceMetrics'
 import type { ElysianGateway } from '../../contracts/adapters'
 import { useDashboardStore } from '../../stores/dashboardStore'
 import { useEventStreamStore } from '../../stores/eventStreamStore'
+import { useNotificationStore } from '../../stores/notificationStore'
 import { renderApp } from '../../test/renderApp'
 import { stubNarrowViewport } from '../../test/viewport'
 import { formatResourceMetricValue } from './formatMetricDisplay'
@@ -18,6 +19,7 @@ import { formatResourceMetricValue } from './formatMetricDisplay'
 const METRIC_KEYS: ResourceMetricKey[] = ['cpu', 'memory', 'networkIo', 'diskIo']
 
 beforeEach(() => {
+  useNotificationStore.getState().clear()
   useDashboardStore.setState({
     status: 'idle',
     refreshing: false,
@@ -77,7 +79,7 @@ describe('仪表盘布局', () => {
 
     renderApp('/', { gateway })
 
-    const alert = await screen.findByRole('alert')
+    const alert = await screen.findByRole('region', { name: '仪表盘加载失败' })
     expect(alert).toHaveTextContent('演示用的读取失败')
 
     await user.click(within(alert).getByRole('button', { name: '重试' }))
@@ -125,7 +127,7 @@ describe('仪表盘筛选栏', () => {
     expect(group).not.toHaveClass('@min-[39rem]:flex')
   })
 
-  it('刷新期间有反馈且保留内容；刷新失败保留内容并出错误横幅', async () => {
+  it('刷新期间保留内容；刷新失败保留内容并进入通知', async () => {
     const user = userEvent.setup()
     const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
     let calls = 0
@@ -145,8 +147,7 @@ describe('仪表盘筛选栏', () => {
 
     await user.click(screen.getByRole('button', { name: '刷新' }))
 
-    const alert = await screen.findByRole('alert')
-    expect(alert).toHaveTextContent('演示用的刷新失败')
+    await waitFor(() => expect(useNotificationStore.getState().notifications).toEqual([expect.objectContaining({ tone: 'danger', message: '演示用的刷新失败' })]))
     expect(screen.getByLabelText('服务器状态')).toBeInTheDocument()
     expect(screen.queryByText('正在刷新…')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '刷新' })).toBeEnabled()

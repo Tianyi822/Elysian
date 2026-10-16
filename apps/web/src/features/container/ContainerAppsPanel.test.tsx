@@ -102,7 +102,7 @@ describe('工作区面板', () => {
       },
     })
     await openAppsView(gateway)
-    const alert = await screen.findByRole('alert')
+    const alert = await screen.findByRole('region', { name: '工作区加载失败' })
     expect(alert.textContent).toContain('工作区加载失败')
     expect(within(alert).getByRole('button', { name: '重试' })).toBeTruthy()
   })
@@ -419,7 +419,7 @@ describe('工作区构建任务区', () => {
     const confirm = await screen.findByRole('dialog', { name: /取消构建任务 app？/ })
     expect(confirm.textContent).toContain('已完成的镜像会保留')
     await user.click(within(confirm).getByRole('button', { name: '确认取消' }))
-    expect(await screen.findByText('已取消构建任务')).toBeTruthy()
+    expect(await screen.findByText('demo-app：镜像构建已取消，构建已取消')).toBeTruthy()
     // 状态标签与阶段描述同名（「已取消」），两处都在才算取消落实。
     expect((await within(card).findAllByText('已取消')).length).toBeGreaterThan(1)
   })

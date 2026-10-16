@@ -1,6 +1,7 @@
 import { Inbox, Loader2, Lock, TriangleAlert } from '../icons'
 import { CTL_SECONDARY } from '../formControl'
 import type { ReactNode } from 'react'
+import { useFeedbackNotification } from '../useFeedbackNotification'
 
 /**
  * 四种页面级状态。每个页面都必须能展示这四种状态，所以它们统一在这里，
@@ -44,16 +45,21 @@ export function ErrorState({
   description,
   onRetry,
   action,
+  notify = true,
 }: {
   title?: string
   description?: string
   onRetry?: () => void
   /** 自定义恢复动作，提供时取代默认的重试按钮——有些错误重试没有意义（如路径不存在）。 */
   action?: ReactNode
+  /** 调用方已为同一错误发出通知时关闭重复播报。 */
+  notify?: boolean
 }) {
+  useFeedbackNotification(notify ? description ? `${title}：${description}` : title : null)
   return (
     <div
-      role="alert"
+      role="region"
+      aria-label={title}
       className="flex flex-col items-center gap-1.5 panel-surface p-6 text-center"
     >
       <TriangleAlert aria-hidden size={20} className="text-danger" />
@@ -83,6 +89,7 @@ export function NoPermissionState({
   title?: string
   description?: string
 }) {
+  useFeedbackNotification(`${title}：${description}`, 'warning')
   return (
     <div className="flex flex-col items-center gap-1.5 panel-surface p-6 text-center">
       <Lock aria-hidden size={20} className="text-fg-subtle" />

@@ -5,6 +5,7 @@ import type { FormEvent } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { PasswordVisibilityButton } from '../security/passwordFieldParts'
 import { CTL_FIELD } from '../../components/formControl'
+import { useFeedbackNotification } from '../../components/useFeedbackNotification'
 import { useSessionStore } from '../../stores/sessionStore'
 import { RequireArea } from '../../app/RequireArea'
 import { ModelSettingsSection } from './ModelSettingsSection'
@@ -109,6 +110,7 @@ function AccountSecuritySettings() {
   const [submitting, setSubmitting] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [passwordError, setPasswordError] = useState<string | null>(null)
+  useFeedbackNotification(passwordError)
 
   const nextGuidance = newPasswordGuidance(newPassword)
   const againGuidance = confirmGuidance(newPassword, confirmNewPassword)
@@ -190,11 +192,6 @@ function AccountSecuritySettings() {
           hint={againGuidance.text}
           warning={againGuidance.warning}
         />
-        {passwordError ? (
-          <p role="alert" className="rounded-lg border border-danger/40 p-2.5 text-xs text-danger">
-            {passwordError}
-          </p>
-        ) : null}
         <button
           type="submit"
           disabled={submitting}

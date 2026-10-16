@@ -16,6 +16,7 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { Check } from '../../components/icons'
 import { useFilesStore } from '../../stores/filesStore'
+import { useFeedbackNotification } from '../../components/useFeedbackNotification'
 
 /*
  * 权限对话框：三类人（所有者、用户组、公共）各三项动作（读取、写入、执行），
@@ -63,6 +64,7 @@ export function PermissionDialog({
   const [ownerNames, setOwnerNames] = useState<readonly string[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string>()
+  useFeedbackNotification(errorMessage)
 
   const isDirectory = entry.kind === 'directory'
   // 解析不出账号名的属主（uid 数字串，挂载卷/overlay 文件常见）：改属主要过主机账号判据，
@@ -291,7 +293,7 @@ export function PermissionDialog({
             </div>
 
             {errorMessage ? (
-              <p role="alert" className="mt-2 text-xs text-danger">
+              <p className="mt-2 text-xs text-danger">
                 {errorMessage}
               </p>
             ) : null}

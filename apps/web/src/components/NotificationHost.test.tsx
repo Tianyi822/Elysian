@@ -63,6 +63,16 @@ describe('通知宿主', () => {
     expect(screen.getByText('留下的')).toBeInTheDocument()
   })
 
+  it('警告用 status 礼貌播报，并有警告图标与颜色', () => {
+    useNotificationStore.getState().notify({ tone: 'warning', message: '连接中断，请检查当前状态' })
+    renderHost()
+
+    const warning = screen.getByRole('status')
+    expect(warning).toHaveTextContent('连接中断，请检查当前状态')
+    expect(warning).toHaveClass('border-warning/40')
+    expect(warning.querySelector('svg')).toHaveClass('text-warning', 'lucide-triangle-alert')
+  })
+
   it('状态图标钉在左上、关闭按钮钉在右上，都不随内容撑高移动', () => {
     useNotificationStore.getState().notify({ tone: 'success', message: '已切换到浅色主题。' })
     renderHost()
@@ -145,9 +155,10 @@ describe('通知宿主', () => {
     expect(screen.getByRole('dialog')).toContainElement(document.activeElement as HTMLElement)
   })
 
-  it('到时自动消失，失败类留得更久', () => {
+  it('到时自动消失，警告和失败类留得更久', () => {
     vi.useFakeTimers()
     useNotificationStore.getState().notify({ tone: 'success', message: '成功提示' })
+    useNotificationStore.getState().notify({ tone: 'warning', message: '警告提示' })
     useNotificationStore.getState().notify({ tone: 'danger', message: '失败提示' })
     renderHost()
 
@@ -155,12 +166,14 @@ describe('通知宿主', () => {
       vi.advanceTimersByTime(5000)
     })
     expect(screen.queryByText('成功提示')).not.toBeInTheDocument()
+    expect(screen.getByText('警告提示')).toBeInTheDocument()
     expect(screen.getByText('失败提示')).toBeInTheDocument()
 
     act(() => {
       vi.advanceTimersByTime(3000)
     })
     expect(screen.queryByText('失败提示')).not.toBeInTheDocument()
+    expect(screen.queryByText('警告提示')).not.toBeInTheDocument()
     // 全部消失后通知区一起收掉。
     expect(screen.queryByLabelText('通知')).not.toBeInTheDocument()
   })

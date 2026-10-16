@@ -1,5 +1,5 @@
 import { vi } from 'vitest'
-import type { AgentInput, AgentMessage, AgentMessageAttachment, AgentModelProfile, AgentSession } from '@elysian/contracts'
+import type { AgentChatTimelineSnapshot, AgentInput, AgentMessage, AgentMessageAttachment, AgentModelProfile, AgentSession, RuntimeCall } from '@elysian/contracts'
 import type { AgentChatRun, AgentConversationAdapter } from '../contracts/agentChat'
 
 export const chatTestModel: AgentModelProfile = {
@@ -23,6 +23,7 @@ export function chatTestApi() {
   const runs = new Map<string, AgentChatRun>()
   const replacedRuns = new Set<string>()
   const reasoning = new Map<string, string>()
+  const timelines = new Map<string, AgentChatTimelineSnapshot>()
   let hold = false
   const append = (run: AgentChatRun, role: AgentMessage['role'], content: string) => {
     const seq = String(messages.length + 1)
@@ -89,10 +90,23 @@ export function chatTestApi() {
       session.activeRunId = undefined
       return { ...run }
     }),
-    reasoning: vi.fn(async id => reasoning.get(id) ?? ''),
+    reasoning: vi.fn(async (id: string, _signal?: AbortSignal) => reasoning.get(id) ?? ''),
+    timeline: vi.fn(async (id: string, signal?: AbortSignal): Promise<AgentChatTimelineSnapshot> => {
+      if (timelines.has(id)) return timelines.get(id)!
+      const text = await api.reasoning(id, signal)
+      const run = runs.get(id)
+      const response = messages.find(message => message.runId === id && message.role === 'assistant')
+      const modelRequestId = `request-${id}`
+      const base = { modelRequestId, requestIndex: 0, startedAt: session.createdAt, status: run?.status ?? 'succeeded' }
+      return { runId: id, status: base.status, done: !run || ['succeeded', 'failed', 'cancelled', 'interrupted'].includes(run.status),
+        finalResponseId: response ? modelRequestId : undefined,
+        entries: [...(text ? [{ ...base, id: `${modelRequestId}:reasoning`, kind: 'reasoning' as const, text, incomplete: false }] : []),
+          ...(response ? [{ ...base, id: `${modelRequestId}:content`, kind: 'content' as const, text: response.content, incomplete: false }] : [])] }
+    }),
+    calls: vi.fn(async (): Promise<readonly RuntimeCall[]> => []),
     stream: vi.fn(async (_id, _onOutput, signal) => {
       if (!signal.aborted) await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }))
     }),
   } satisfies AgentConversationAdapter
-  return { api, session, messages, runs, reasoning, attachments, complete, hold: () => { hold = true } }
+  return { api, session, messages, runs, reasoning, timelines, attachments, complete, hold: () => { hold = true } }
 }

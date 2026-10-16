@@ -35,6 +35,8 @@ import type { DatabaseCardView } from './projectDatabaseCard'
 import { SqlSessionWindow } from './SqlSessionWindow'
 import { DatabaseCreateDialog } from './DatabaseCreateDialog'
 import { ContainerDetailSheet } from '../container/ContainerDetailSheet'
+import { useFeedbackNotification } from '../../components/useFeedbackNotification'
+import { useNotificationStore } from '../../stores/notificationStore'
 
 const STATUS_TONE: Record<DatabaseStatus, StatusTone> = {
   running: 'success',
@@ -196,8 +198,23 @@ function DatabaseCard({
   const [confirmRemove, setConfirmRemove] = useState(false)
   const [confirmRemoveContainer, setConfirmRemoveContainer] = useState(false)
   const [credentialError, setCredentialError] = useState('')
+  useFeedbackNotification(credentialError)
+  useFeedbackNotification(database.metricsError ? `${database.name}：${database.metricsError}` : null, 'warning')
   const { copied: pathCopied, copy: copyFilePath } = useClipboardCopy()
   const { copy: copyCredential } = useClipboardCopy()
+
+  const performAction = async (action: () => Promise<unknown> | undefined, message: string, refresh?: 'load' | 'refresh') => {
+    setCredentialError('')
+    try {
+      const operation = action()
+      if (!operation) return
+      await operation
+      useNotificationStore.getState().notify({ tone: 'success', message })
+      if (refresh) await useDatabaseStore.getState()[refresh](gateway)
+    } catch (error) {
+      setCredentialError(error instanceof Error ? error.message : '数据库操作失败')
+    }
+  }
 
   const revealAndCopy = async (field: 'username' | 'password') => {
     try {
@@ -306,7 +323,7 @@ function DatabaseCard({
         )}
       </div>
       {database.metricsError ? <p role="status" className="text-xs text-warning">{database.emptyContainer ? database.metricsError : `状态核对失败：${database.metricsError}`}</p> : null}
-      {database.needsAttention ? <div className="rounded-lg border border-warning/40 p-2 text-xs text-warning"><p>{database.engine === 'SQLite' ? 'SQLite 文件不可用或操作尚未完成。可重新核对；确认放弃时可清理登记及残留文件。' : '创建或接管尚未完成。修复容器和账号后可重新核对；不再接管时可移除待处理登记。'}</p><div className="mt-2 flex gap-2"><button type="button" onClick={() => void gateway.databases.reconcile?.(database.id).then(() => useDatabaseStore.getState().refresh(gateway)).catch((error: unknown) => setCredentialError(error instanceof Error ? error.message : '核对失败'))} className="rounded border border-line px-2 py-1">重新核对</button>{database.source === 'adopted' || database.engine === 'SQLite' ? <button type="button" onClick={() => void gateway.databases.forget?.(database.id).then(() => useDatabaseStore.getState().refresh(gateway)).catch((error: unknown) => setCredentialError(error instanceof Error ? error.message : '移除失败'))} className="rounded border border-line px-2 py-1">{database.engine === 'SQLite' ? '清理待处理文件' : '移除待处理登记'}</button> : null}</div></div> : null}
+      {database.needsAttention ? <div className="rounded-lg border border-warning/40 p-2 text-xs text-warning"><p>{database.engine === 'SQLite' ? 'SQLite 文件不可用或操作尚未完成。可重新核对；确认放弃时可清理登记及残留文件。' : '创建或接管尚未完成。修复容器和账号后可重新核对；不再接管时可移除待处理登记。'}</p><div className="mt-2 flex gap-2"><button type="button" onClick={() => void performAction(() => gateway.databases.reconcile?.(database.id), `数据库 ${database.name} 已重新核对`, 'refresh')} className="rounded border border-line px-2 py-1">重新核对</button>{database.source === 'adopted' || database.engine === 'SQLite' ? <button type="button" onClick={() => void performAction(() => gateway.databases.forget?.(database.id), `已清理数据库 ${database.name} 的待处理登记`, 'refresh')} className="rounded border border-line px-2 py-1">{database.engine === 'SQLite' ? '清理待处理文件' : '移除待处理登记'}</button> : null}</div></div> : null}
 
       {/* 动作行沉底：卡片因同列内容高度不齐被拉伸时，操作区贴住卡底。 */}
       <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-line pt-3">
@@ -318,9 +335,8 @@ function DatabaseCard({
             <button type="button" onClick={() => void revealAndCopy('password')} title="从服务端读取并复制普通账号密码" className="rounded border border-line px-2 py-1 text-xs">复制密码</button>
           </>
         ) : null}
-        {credentialError ? <p role="alert" className="w-full text-xs text-danger">{credentialError}</p> : null}
         <div className="ml-auto flex shrink-0 items-center gap-2">
-          {database.engine === 'SQLite' && database.source === 'managed' && database.status === 'running' && gateway.databases.downloadSqlite ? <button type="button" onClick={() => void gateway.databases.downloadSqlite?.(database.id).catch((error: unknown) => setCredentialError(error instanceof Error ? error.message : '下载失败'))} title="下载一致性 SQLite 快照" className="action-button gap-1.5 border border-line px-3 py-1.5 text-xs"><Download aria-hidden size={13} />下载快照</button> : null}
+          {database.engine === 'SQLite' && database.source === 'managed' && database.status === 'running' && gateway.databases.downloadSqlite ? <button type="button" onClick={() => void performAction(() => gateway.databases.downloadSqlite?.(database.id), `已发起数据库 ${database.name} 的快照下载`)} title="下载一致性 SQLite 快照" className="action-button gap-1.5 border border-line px-3 py-1.5 text-xs"><Download aria-hidden size={13} />下载快照</button> : null}
           {!database.emptyContainer ? <button
             type="button"
             onClick={() => setConfirmRemove(true)}
@@ -389,7 +405,7 @@ function DatabaseCard({
           </Dialog.Portal>
         </Dialog.Root>
       ) : null}
-      {confirmRemoveContainer ? <Dialog.Root open onOpenChange={(next) => { if (!next) setConfirmRemoveContainer(false) }}><Dialog.Portal><Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" /><Dialog.Content aria-describedby={undefined} className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl"><Dialog.Title className="text-sm font-semibold">删除容器及全部数据？</Dialog.Title><p className="mt-2 text-xs text-danger">将删除面板创建的数据库容器及其专属持久卷，全部数据无法恢复。容器内有其他数据库时服务端会拒绝。</p><div className="mt-4 flex justify-end gap-2"><button type="button" onClick={() => setConfirmRemoveContainer(false)} className="rounded border border-line px-3 py-1.5 text-xs">取消</button><button type="button" onClick={() => { setConfirmRemoveContainer(false); void gateway.databases.removeContainer?.(database.id).then(() => useDatabaseStore.getState().load(gateway)).catch((error: unknown) => setCredentialError(error instanceof Error ? error.message : '删除失败')) }} className="rounded border border-danger px-3 py-1.5 text-xs text-danger">确认删除容器及数据</button></div></Dialog.Content></Dialog.Portal></Dialog.Root> : null}
+      {confirmRemoveContainer ? <Dialog.Root open onOpenChange={(next) => { if (!next) setConfirmRemoveContainer(false) }}><Dialog.Portal><Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" /><Dialog.Content aria-describedby={undefined} className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl"><Dialog.Title className="text-sm font-semibold">删除容器及全部数据？</Dialog.Title><p className="mt-2 text-xs text-danger">将删除面板创建的数据库容器及其专属持久卷，全部数据无法恢复。容器内有其他数据库时服务端会拒绝。</p><div className="mt-4 flex justify-end gap-2"><button type="button" onClick={() => setConfirmRemoveContainer(false)} className="rounded border border-line px-3 py-1.5 text-xs">取消</button><button type="button" onClick={() => { setConfirmRemoveContainer(false); void performAction(() => gateway.databases.removeContainer?.(database.id), `已删除数据库 ${database.name} 的容器及数据`, 'load') }} className="rounded border border-danger px-3 py-1.5 text-xs text-danger">确认删除容器及数据</button></div></Dialog.Content></Dialog.Portal></Dialog.Root> : null}
     </article>
   )
 }

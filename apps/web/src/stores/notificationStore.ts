@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-export type NotificationTone = 'success' | 'info' | 'danger'
+export type NotificationTone = 'success' | 'info' | 'warning' | 'danger'
 
 export type AppNotification = {
   id: string
@@ -11,6 +11,7 @@ export type AppNotification = {
 export type NotificationState = {
   notifications: readonly AppNotification[]
   notify: (input: { tone: NotificationTone; message: string }) => string
+  update: (id: string, input: { tone: NotificationTone; message: string }) => void
   dismiss: (id: string) => void
   clear: () => void
 }
@@ -29,6 +30,11 @@ export const useNotificationStore = create<NotificationState>((set) => ({
     const id = `notice-${nextId}`
     set((state) => ({ notifications: [...state.notifications, { id, tone, message }] }))
     return id
+  },
+  update(id, input) {
+    set((state) => ({
+      notifications: state.notifications.map((notification) => notification.id === id ? { ...notification, ...input } : notification),
+    }))
   },
   dismiss(id) {
     set((state) => ({

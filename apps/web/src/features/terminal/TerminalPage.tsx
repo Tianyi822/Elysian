@@ -96,6 +96,7 @@ export function TerminalPage() {
           <ErrorState
             title="本机终端连接失败"
             description={active.errorMessage}
+            notify={false}
             onRetry={() => void reconnect(gateway, active.id)}
           />
         </div>

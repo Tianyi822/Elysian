@@ -4,6 +4,9 @@ import { agentPathPart, readAgentResponse, requestAgentJson, requestAgentNoConte
 import { SseFrameParser } from '../../sse/parse'
 import { fetchWithSession } from '../unauthorized'
 import { withRequestDeadline } from '../requestDeadline'
+import { createAgentChatGovernance } from './agentChatGovernance'
+import { parseChatCall, parseChatTimeline } from './agentChatTimelineParse'
+import type { RuntimeCall } from '@elysian/contracts'
 
 const invalid = () => new Error('Agent 会话响应格式无效')
 const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
@@ -14,6 +17,8 @@ const object = (value: unknown): Record<string, unknown> => {
 const string = (value: unknown): string => { if (typeof value !== 'string') throw invalid(); return value }
 const cursor = (value: unknown) => { const result = string(value); if (!/^(0|[1-9]\d*)$/.test(result)) throw invalid(); return result }
 const optional = (value: unknown) => value === undefined ? undefined : string(value)
+// 最多 16 次请求、每次 4 MiB；快照同时含时间线、兼容字段与参数字符串转义。
+const maxOutputFrameBytes = 256 * 1024 * 1024
 
 function parseSession(value: unknown): AgentSession {
   const row = object(value)
@@ -28,14 +33,14 @@ function parseSession(value: unknown): AgentSession {
 /** 本地演示没有运行内核，不模拟模型答复与附件上传。 */
 export function createUnavailableAgentConversationAdapter(): AgentConversationAdapter {
   const unavailable = async (): Promise<never> => { throw new Error('当前为本地演示，请在已连接后端的面板中使用聊天。') }
-  return { available: false, listSessions: unavailable, listTasks: unavailable, getTask: unavailable, createSession: unavailable, getSession: unavailable, renameSession: unavailable, deleteSession: unavailable, switchModel: unavailable, messages: unavailable, uploadAttachments: unavailable, attachmentBlob: unavailable, createTask: unavailable, continueTask: unavailable, getRun: unavailable, cancelRun: unavailable, reasoning: unavailable, stream: unavailable }
+  return { available: false, listSessions: unavailable, listTasks: unavailable, getTask: unavailable, createSession: unavailable, getSession: unavailable, renameSession: unavailable, deleteSession: unavailable, switchModel: unavailable, messages: unavailable, uploadAttachments: unavailable, attachmentBlob: unavailable, createTask: unavailable, continueTask: unavailable, getRun: unavailable, cancelRun: unavailable, reasoning: unavailable, timeline: unavailable, calls: unavailable, stream: unavailable }
 }
 
 function parseRun(value: unknown): AgentChatRun {
   const row = object(value)
   if (!(RUNTIME_RUN_STATUSES as readonly unknown[]).includes(row.status)) throw invalid()
   const failure = (value: unknown) => { const entry = object(value); return { code: string(entry.code), message: string(entry.message) } }
-  const phases = ['queued', 'inference', 'checkpoint', 'final-memory', 'workflow-output', 'waiting-approval', 'waiting-resource', 'completed']
+  const phases = ['queued', 'inference', 'checkpoint', 'final-memory', 'workflow-output', 'waiting-approval', 'waiting-resource', 'waiting-task', 'completed']
   if (row.phase !== undefined && !phases.includes(string(row.phase))) throw invalid()
   return {
     id: string(row.id), requestId: optional(row.requestId), taskId: string(row.taskId), sessionId: optional(row.sessionId), status: row.status as AgentChatRun['status'],
@@ -92,6 +97,7 @@ export function createHttpAgentConversationAdapter(): AgentConversationAdapter {
   const write = (url: string, body: unknown, method = 'POST') => requestAgentJson(`/api/agent${url}`, { method, body: JSON.stringify(body) })
   return {
     available: true,
+    governance: createAgentChatGovernance(),
     async listSessions(after = '', signal) {
       const query = new URLSearchParams({ sort: 'activity', limit: '50' })
       if (after) query.set('cursor', after)
@@ -163,6 +169,24 @@ export function createHttpAgentConversationAdapter(): AgentConversationAdapter {
     continueTask: async (id, input) => parseRun(await write(`/tasks/${path(id)}/runs`, input)),
     getRun: async (id, signal) => parseRun(await requestAgentJson(`/api/agent/runs/${path(id)}`, { signal })),
     cancelRun: async id => parseRun(await requestAgentJson(`/api/agent/runs/${path(id)}/cancel`, { method: 'POST' })),
+    timeline: async (id, signal) => parseChatTimeline(await requestAgentJson(`/api/agent/runs/${path(id)}/timeline`, { signal }), id),
+    async calls(id, signal) {
+      const calls: RuntimeCall[] = []
+      const seen = new Set<string>()
+      let after = '0'
+      for (;;) {
+        const page = parsePage(await requestAgentJson(`/api/agent/runs/${path(id)}/calls?cursor=${after}&limit=100`, { signal }), value => parseChatCall(value, id))
+        for (const call of page.items) {
+          if (seen.has(call.id)) throw invalid()
+          seen.add(call.id)
+          calls.push(call)
+        }
+        if (!page.hasMore) return calls
+        const next = cursor(page.nextCursor)
+        if (BigInt(next) <= BigInt(after)) throw invalid()
+        after = next
+      }
+    },
     async stream(id, onOutput, signal) {
       // 复用帧解析器与 401 处理，流断开只重连读取，不重新提交消息。
       const timeout = AbortSignal.timeout(45000)
@@ -180,7 +204,7 @@ export function createHttpAgentConversationAdapter(): AgentConversationAdapter {
           const { value, done } = await reader.read()
           if (done) return
           unframed += value.byteLength
-          if (unframed > 8 * 1024 * 1024) throw invalid()
+          if (unframed > maxOutputFrameBytes) throw invalid()
           const frames = parser.push(decoder.decode(value, { stream: true }))
           if (frames.length) unframed = 0
           for (const frame of frames) {
@@ -188,6 +212,7 @@ export function createHttpAgentConversationAdapter(): AgentConversationAdapter {
             const row = object(JSON.parse(frame.data))
             if (row.runId !== id || typeof row.done !== 'boolean') throw invalid()
             const output: AgentChatOutput = { runId: id, responseId: string(row.responseId), reasoning: string(row.reasoning), content: string(row.content), done: row.done }
+            if (row.timeline !== undefined) output.timeline = parseChatTimeline(row.timeline, id)
             if (signal.aborted) return
             onOutput(output)
             if (output.done) return

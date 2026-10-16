@@ -124,7 +124,7 @@ describe('文件管理页', () => {
   it('不存在的目录显示错误与返回根目录动作', async () => {
     const user = userEvent.setup()
     renderApp('/files/does-not-exist')
-    const alert = await screen.findByRole('alert')
+    const alert = await screen.findByRole('region', { name: '目录读取失败' })
     expect(within(alert).getByText('目录读取失败')).toBeInTheDocument()
     expect(within(alert).getByText(/目录不存在/)).toBeInTheDocument()
 
@@ -332,12 +332,12 @@ describe('文件管理页', () => {
     await user.clear(input)
     await user.type(input, 'a/b')
     await user.click(screen.getByRole('button', { name: '确认重命名' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('名称不能为空，也不能包含 /')
+    expect(await within(screen.getByLabelText('通知')).findByText('名称不能为空，也不能包含 /')).toBeInTheDocument()
 
     await user.clear(input)
     await user.type(input, 'home')
     await user.click(screen.getByRole('button', { name: '确认重命名' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('同名条目已存在')
+    expect(await within(screen.getByLabelText('通知')).findByText(/同名条目已存在/)).toBeInTheDocument()
 
     await user.clear(input)
     await user.type(input, 'storage')
@@ -425,7 +425,7 @@ describe('文件管理页', () => {
     await user.clear(modeInput)
     await user.type(modeInput, '64')
     await user.click(screen.getByRole('button', { name: '应用' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('权限位要写三位八进制数字，例如 755')
+    expect(await within(screen.getByLabelText('通知')).findByText('权限位要写三位八进制数字，例如 755')).toBeInTheDocument()
 
     // 未落盘：关掉对话框后行内权限仍是原值。
     await user.click(screen.getByRole('button', { name: '取消' }))

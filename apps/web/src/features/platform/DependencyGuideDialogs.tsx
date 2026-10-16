@@ -5,6 +5,7 @@ import type { DependencySetupStep } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { IconButton } from '../../components/IconButton'
 import { Check, CircleHelp, Loader2, TriangleAlert, X } from '../../components/icons'
+import { useNotificationStore } from '../../stores/notificationStore'
 import {
   caddyGuideVisible,
   dockerGuideVisible,
@@ -216,6 +217,7 @@ function DependencyGuideDialog({
         if (!result.ok) {
           markStage(index, 'failed')
           patchProgress(kind, { failure: result.message })
+          if (!result.notified) useNotificationStore.getState().notify({ tone: 'danger', message: result.message })
           return
         }
         markStage(index, 'done')
@@ -223,8 +225,10 @@ function DependencyGuideDialog({
       }
     } catch (error) {
       if (runToken.current !== token) return
+      const message = error instanceof Error ? error.message : '这一步没有完成'
+      useNotificationStore.getState().notify({ tone: 'danger', message })
       patchProgress(kind, {
-        failure: error instanceof Error ? error.message : '这一步没有完成',
+        failure: message,
         statuses: useDependencyGuideStore
           .getState()
           .progress[kind].statuses.map((status) => (status === 'running' ? 'failed' : status)),
@@ -235,13 +239,13 @@ function DependencyGuideDialog({
     }
   }
 
-  const runStage = async (stage: DependencyGuideStage): Promise<{ ok: boolean; message: string }> => {
+  const runStage = async (stage: DependencyGuideStage): Promise<{ ok: boolean; message: string; notified?: boolean }> => {
     if (!isHostStep(stage.id)) {
       const before = useDependencyGuideStore.getState().report
       const became = await onVerify()
       if (became !== null) return { ok: true, message: content.successNotice }
       const after = useDependencyGuideStore.getState().report
-      if (after === before) return { ok: false, message: '依赖检测失败' }
+      if (after === before) return { ok: false, message: '依赖检测失败', notified: true }
       const probe = kind === 'docker' ? after?.docker : after?.caddy
       if (probe?.state === 'ok') return { ok: true, message: content.successNotice }
       return { ok: false, message: probe?.detail ?? '仍未接通' }

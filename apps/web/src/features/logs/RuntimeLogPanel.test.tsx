@@ -23,6 +23,7 @@ import { levelTone, matchesRuntimeSearch } from './RuntimeLogPanel'
  */
 
 beforeEach(() => {
+  useNotificationStore.getState().clear()
   resetLogsData()
   useRuntimeLogStore.setState(useRuntimeLogStore.getInitialState())
   useLogsStore.setState({ tab: 'runtime' })
@@ -315,7 +316,8 @@ describe('清空日志与其余能力', () => {
     await waitForTable()
 
     expect(screen.getByText(`仅显示最近 ${LOG_ENTRY_FETCH_LIMIT} 条；有 3 行无法解析，已跳过；有 1 个日志文件读取失败，已跳过`)).toBeInTheDocument()
-    expect(screen.getByRole('alert')).toHaveTextContent('有 2 条运行日志未能写入磁盘')
+    expect(screen.getByRole('region', { name: '运行日志写入异常' })).toHaveTextContent('有 2 条运行日志未能写入磁盘')
+    expect(useNotificationStore.getState().notifications).toEqual(expect.arrayContaining([expect.objectContaining({ tone: 'danger', message: expect.stringContaining('2 条日志未能写入磁盘') })]))
   })
 
   it('没有任何记录时给空状态，而不是一张空表', async () => {

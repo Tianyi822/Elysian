@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { usePanelStore } from '../../stores/panelStore'
+import { useNotificationStore } from '../../stores/notificationStore'
 import { renderApp } from '../../test/renderApp'
 import type { PanelInfo, PanelTask, PanelUpdate } from '@elysian/contracts'
 import { openPanelAddress } from './panelNavigation'
@@ -46,6 +47,7 @@ describe('端口与更新设置', () => {
     await user.click(screen.getByRole('button', { name: '保存并重启' }))
     await waitFor(() => expect(g.panel.ports).toHaveBeenCalledWith({ frontendPort: 49000, backendPort: 48101 }, expect.any(String)))
     expect(await screen.findByText(/等待执行/)).toBeInTheDocument()
+    expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ tone: 'info', message: '面板维护任务已提交' }))
   })
   it('真实失败显示原因，重试沿用同一提交编号', async () => {
     const g = gateway(); const submit = vi.fn().mockRejectedValue(new Error('端口已被宿主服务占用')); g.panel.ports = submit
@@ -128,6 +130,7 @@ describe('端口与更新设置', () => {
   it('刷新后恢复后台任务及回滚错误', async () => {
     const g = gateway(); g.panel.info = async () => ({ ...info, lastTask: { ...task, state: 'rolled-back', error: '健康检查失败，已恢复' } })
     renderApp('/settings?tab=maintenance', { gateway: g }); expect(await screen.findByRole('alert')).toHaveTextContent('健康检查失败，已恢复'); expect(screen.getByRole('link', { name: /打开原地址/ })).toBeInTheDocument()
+    expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ tone: 'danger', message: '健康检查失败，已恢复' }))
   })
   it('新入口确认任务提交后跳转，探测使用任务编号', async () => {
     const g = gateway(); g.panel.info = async () => ({ ...info, activeTask: task })
@@ -145,6 +148,7 @@ describe('端口与更新设置', () => {
     await user.click(await screen.findByRole('button', { name: '继续读取日志' }))
     await waitFor(() => expect(screen.getByLabelText('维护任务日志')).toHaveTextContent('已完成'))
     expect(read).toHaveBeenLastCalledWith(task.id, 20)
+    expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ tone: 'success', message: '面板维护已完成' }))
   })
   it('更新日志窗口列出上游提交并只标注命中当前提交的那一条', async () => {
     const g = gateway()
@@ -169,7 +173,8 @@ describe('端口与更新设置', () => {
     const user = userEvent.setup()
     await user.click(await screen.findByRole('button', { name: '更新日志' }))
     const dialog = await screen.findByRole('dialog', { name: '更新日志' })
-    expect(await within(dialog).findByRole('alert')).toHaveTextContent('GitHub 不可达，请检查网络或 API 限额')
+    expect(await within(dialog).findByRole('region', { name: '更新日志读取失败' })).toHaveTextContent('GitHub 不可达，请检查网络或 API 限额')
+    expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ tone: 'danger', message: '更新日志读取失败：GitHub 不可达，请检查网络或 API 限额' }))
     await user.click(within(dialog).getByRole('button', { name: '重新读取' }))
     expect(await within(dialog).findByText('没有可展示的提交')).toBeInTheDocument()
     expect(commits).toHaveBeenCalledTimes(2)

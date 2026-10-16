@@ -86,7 +86,6 @@ export function ChatSessionList({ onSelect, onNew, onRefresh, onMore, onClose, r
     </div>
     <button type="button" className="chat-new chat-session-new" disabled={chat.sending} onClick={onNew}><Plus size={15} aria-hidden />新会话</button>
     <div className="chat-session-rows hover-scrollbar">
-      {chat.listError && <div role="alert" className="px-3 py-2 text-xs text-danger">{chat.listError}</div>}
       {chat.listLoading && !rows.length ? <LoadingState label="正在读取会话…" /> : <>
         {!rows.length && <p className="px-3 py-5 text-sm text-fg-muted">暂无会话</p>}
         {rows.map(row => <div className="chat-session-item" key={row.id}>

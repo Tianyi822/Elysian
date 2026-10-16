@@ -3,11 +3,11 @@ import { Link, useLocation, useSearchParams } from 'react-router'
 import * as Dialog from '@radix-ui/react-dialog'
 import { useShellLayout } from '../../app/layout/ShellLayoutContext'
 import { ChatSessionList } from './ChatSessionList'
-import { RUNTIME_RUN_STATUS_LABELS } from '@elysian/contracts'
-import { Bot, Brain, Hand, Image as ImageIcon, List, Loader2, Paperclip, Pencil, Plus, Send, Square, ShieldAlert, ShieldCheck, X, type IconComponent } from '../../components/icons'
+import { Bot, Brain, FolderTree, Hand, Image as ImageIcon, List, Loader2, Paperclip, Pencil, Plus, Send, Square, ShieldAlert, ShieldCheck, X, type IconComponent } from '../../components/icons'
 import { IconButton } from '../../components/IconButton'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { RefreshButton } from '../../components/RefreshState'
+import { useFeedbackNotification } from '../../components/useFeedbackNotification'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { subscribeWhileVisible } from '../../adapters/subscribeWhileVisible'
 import type { AgentChatPermissionMode } from '../../contracts/agentChat'
@@ -15,14 +15,17 @@ import { isChatReplyActive, isChatRunActive, useAgentChatStore } from '../../sto
 import { ChatAttachment } from './ChatAttachment'
 import { ChatMessageAttachments } from './ChatMessageAttachments'
 import { ChatMessageCopy } from './ChatMessageCopy'
+import { ChatApprovals } from './ChatApprovals'
+import { ChatExecutionScope } from './ChatExecutionScope'
 import { ChatResponse } from './ChatResponse'
+import { ChatTimeline } from './ChatTimeline'
 import { defaultReasoningLevel, reasoningLabel, useChatModels } from './useChatModels'
 import './agentChat.css'
 
 const PERMISSION_MODES: readonly { value: AgentChatPermissionMode; label: string; description: string; Icon: IconComponent }[] = [
   { value: 'ask', label: '请求批准', description: '需要批准的操作，按服务端规则请求确认。', Icon: Hand },
-  { value: 'assist', label: '帮我批准', description: '自动判断审批暂未接入，目前仅保存选择。', Icon: ShieldCheck },
-  { value: 'full', label: '完全开放', description: '免逐项审批暂未接入，目前仅保存选择。', Icon: ShieldAlert },
+  { value: 'assist', label: '帮我批准', description: '自动批准可恢复的工作区写入，以及无宿主写权限、无出网的隔离执行。', Icon: ShieldCheck },
+  { value: 'full', label: '完全开放', description: '授权范围内免逐项审批，系统禁区与资源限制继续生效。', Icon: ShieldAlert },
 ]
 
 /** 会话列表开关固定在聊天页头内，仅保留读屏标签。 */
@@ -49,6 +52,7 @@ export function AgentChatPage() {
   const [listCollapsed, setListCollapsed] = useState(false)
   const [wide, setWide] = useState(() => window.matchMedia?.('(min-width: 1100px)').matches ?? false)
   const [listRefreshing, setListRefreshing] = useState(false)
+  const [scopeSessionId, setScopeSessionId] = useState<string | null>(null)
   const requestedId = params.get('session') || undefined
   const routeState = location.state && typeof location.state === 'object' ? location.state : {}
   const requestedDraft = typeof routeState.agentDraftId === 'string' ? routeState.agentDraftId : undefined
@@ -87,9 +91,22 @@ export function AgentChatPage() {
     ? `会话：${chat.syncError}\n模型：${error}`
     : chat.syncError || error
   const retryReadLabel = chat.syncError && error ? '重新读取会话和模型' : chat.syncError ? '重新读取会话' : '重新读取模型'
+  useFeedbackNotification(readError, !error && chat.syncError?.startsWith('实时连接暂时中断') ? 'warning' : 'danger', { replace: true })
+  const modelUnavailable = api.available && status === 'ready' && !chat.loading && !restoring && (!models.length || (session?.remote && !model))
+  useFeedbackNotification(modelUnavailable ? '请选择支持文本与工具调用的可用模型，或前往设置添加模型。' : null, 'warning')
+  useFeedbackNotification(!api.available ? '当前为本地演示，请在已连接后端的面板中使用聊天。' : null, 'info')
+  useFeedbackNotification(session?.attachments.length && model && !model.supportsImage ? '当前模型不支持图片输入，请移除附件或切换支持图片的模型。' : null, 'warning')
+  useFeedbackNotification(session?.attachments.some(attachment => !attachment.serverId) ? '存在旧版本添加、尚未上传的附件，请移除后重新添加。' : null, 'warning')
   const retryReads = () => {
     if (chat.syncError) void chat.refresh(api)
     if (error) reload()
+  }
+  const openScope = async () => {
+    if (!session) return
+    const localId = session.id
+    if (!session.remote && model) await chat.prepareRemoteSession(api, model.profile)
+    const selected = useAgentChatStore.getState().session
+    if (selected?.id === localId) setScopeSessionId(localId)
   }
 
   const focusListTrigger = () => listTrigger.current?.focus()
@@ -336,8 +353,10 @@ export function AgentChatPage() {
                   onPress={() => chat.editMessage(message.id)}><Pencil size={13} aria-hidden /></IconButton>}
               </>}
             </article>
-            <ChatResponse key={message.runId} content={answer?.content ?? live?.content ?? ''} reasoning={chat.reasoning[message.runId] ?? ''}
-              active={active && !finalizing} stopped={stopped} stopping={active && stopping} quarantined={answer?.quarantined} onProgress={followContent} />
+            {chat.timelines[message.runId]?.entries.length ? <ChatTimeline key={message.runId} timeline={chat.timelines[message.runId]!} answer={answer}
+              active={active && !finalizing} stopped={stopped} stopping={active && stopping} api={api} onProgress={followContent} />
+              : <ChatResponse key={message.runId} content={(chat.timelines[message.runId] || chat.syncError ? answer?.content : undefined) ?? live?.content ?? ''} reasoning={chat.reasoning[message.runId] ?? ''}
+                active={active && !finalizing} stopped={stopped} stopping={active && stopping} quarantined={answer?.quarantined} onProgress={followContent} />}
           </Fragment>
         })}
         {waitingForMessage && <ChatResponse content="" reasoning="" active onProgress={followContent} />}
@@ -345,17 +364,13 @@ export function AgentChatPage() {
     </div>
 
     <div className="chat-compose-area">
-      {run && !isChatRunActive(run) && run.status !== 'succeeded' && run.status !== 'cancelled' && <p role="alert" className="mb-3 text-xs text-danger">{RUNTIME_RUN_STATUS_LABELS[run.status]}{run.error ? `：${run.error.message}` : ''}</p>}
+      {run?.status === 'waiting-approval' && <ChatApprovals key={run.id} api={api.governance} runId={run.id} onChanged={() => void chat.refresh(api)} onCancel={() => void chat.stop(api)} />}
       {stopping && <p role="status" className="mb-3 text-xs text-fg-muted">正在停止…</p>}
       {chat.uploadingAttachments && <p role="status" className="mb-3 flex items-center gap-2 text-xs text-fg-muted"><Loader2 size={13} className="animate-spin motion-reduce:animate-none" aria-hidden />正在处理并上传图片…</p>}
-      {readError && <div role="alert" className="mb-3 flex items-center gap-2 text-xs text-danger">
-        <span className="min-w-0 flex-1 whitespace-pre-line break-words">{readError}</span>
+      {readError && <div className="mb-3 flex justify-end">
         <RefreshButton label={retryReadLabel} busy={chat.refreshing || status === 'loading'} onPress={retryReads} />
       </div>}
-      {!api.available && <p className="mb-3 text-xs text-fg-muted">当前为本地演示，请在已连接后端的面板中使用聊天。</p>}
-      {status === 'ready' && (!models.length || (session?.remote && !model)) && <p className="mb-3 text-xs text-fg-muted">请选择支持文本与工具调用的可用模型，或<Link className="underline underline-offset-4 hover:text-fg" to="/settings?tab=models">前往设置添加模型</Link>。</p>}
-      {!!session?.attachments.length && !model?.supportsImage && <p className="mb-3 text-xs text-fg-muted">当前模型不支持图片输入，请移除附件或切换支持图片的模型。</p>}
-      {!!session?.attachments.filter(attachment => !attachment.serverId).length && <p className="mb-3 text-xs text-fg-muted">存在旧版本添加、尚未上传的附件，请移除后重新添加。</p>}
+      {modelUnavailable && <div className="mb-3 text-right text-xs text-fg-muted"><Link className="underline underline-offset-4 hover:text-fg" to="/settings?tab=models">前往设置添加模型</Link></div>}
 
       <form className="chat-composer panel-surface" onSubmit={event => { event.preventDefault(); send() }} aria-label="消息输入框">
         {!!session?.attachments.length && <ul aria-label="本地附件" className="hover-scrollbar flex max-h-52 flex-wrap gap-2 overflow-y-auto px-4 pt-4">{session.attachments.map(attachment => <ChatAttachment key={attachment.id} attachment={attachment} onRemove={() => chat.removeAttachment(attachment.id)} />)}</ul>}
@@ -379,9 +394,9 @@ export function AgentChatPage() {
             <SelectDropdown ariaLabel="权限模式" value={permissionMode.value} onSelect={chat.setPermissionMode}
               items={PERMISSION_MODES.map(({ Icon, ...mode }) => ({ ...mode, icon: <Icon size={16} /> }))}
               leadingIcon={<PermissionIcon size={16} aria-hidden />}
-              disabled={!session || chat.loading || preferencesLocked || restoring || !!session.pending}
+              disabled={!session || chat.loading || busy || restoring || !!session.pending}
+              footerAction={{ label: '执行范围…', icon: <FolderTree size={15} aria-hidden />, onSelect: () => { void openScope() } }}
               triggerClassName="chat-select chat-permission-select" contentClassName="chat-composer-menu chat-permission-menu" />
-            {permissionMode.value !== 'ask' && <span className="text-[10px] text-fg-muted">预览</span>}
           </div>
           <div className="chat-model">
             <SelectDropdown ariaLabel="选择模型" value={model?.id} onSelect={chat.setModel}
@@ -408,5 +423,6 @@ export function AgentChatPage() {
       </form>
     </div>
     </section>
+    <ChatExecutionScope key={session?.id} open={!!session && scopeSessionId === session.id} sessionId={session?.remote?.sessionId} api={api.governance} locked={busy || !!session?.pending} onClose={() => setScopeSessionId(null)} />
   </div>
 }

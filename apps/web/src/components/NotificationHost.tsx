@@ -11,6 +11,7 @@ import { IconButton } from './IconButton'
 const DISMISS_AFTER_MS: Record<NotificationTone, number> = {
   success: 5000,
   info: 5000,
+  warning: 8000,
   danger: 8000,
 }
 
@@ -19,6 +20,7 @@ type ToneStyle = { border: string; icon: IconComponent; iconColor: string }
 const TONE_STYLE: Record<NotificationTone, ToneStyle> = {
   success: { border: 'border-success/40', icon: CircleCheck, iconColor: 'text-success' },
   info: { border: 'border-accent/40', icon: Info, iconColor: 'text-accent-fg' },
+  warning: { border: 'border-warning/40', icon: TriangleAlert, iconColor: 'text-warning' },
   danger: { border: 'border-danger/40', icon: TriangleAlert, iconColor: 'text-danger' },
 }
 
@@ -33,12 +35,12 @@ function NotificationItem({ notification }: { notification: AppNotification }) {
       DISMISS_AFTER_MS[notification.tone],
     )
     return () => clearTimeout(timer)
-  }, [dismiss, notification.id, notification.tone])
+  }, [dismiss, notification.id, notification.tone, notification.message])
 
   return (
     <li className="pointer-events-auto" onPointerDown={event => event.stopPropagation()}>
       <div
-        // 成功与提示用 status（礼貌播报），失败用 alert（立即打断）；
+        // 成功、提示与警告用 status（礼貌播报），失败用 alert（立即打断）；
         // 角色放在内层，外层 li 保留列表语义。
         role={notification.tone === 'danger' ? 'alert' : 'status'}
         className={[
@@ -49,7 +51,7 @@ function NotificationItem({ notification }: { notification: AppNotification }) {
         {/* 文字 14px、行盒 20px，图标 15px 配 3px 偏移与首行文字居中对齐，
             消息换行撑高卡片时图标留在首行不漂移。 */}
         <Icon aria-hidden size={15} className={['mt-[3px] shrink-0', style.iconColor].join(' ')} />
-        <span className="min-w-0 flex-1 text-[14px] leading-5 text-fg">{notification.message}</span>
+        <span className="min-w-0 flex-1 whitespace-pre-line text-[14px] leading-5 text-fg [overflow-wrap:anywhere]">{notification.message}</span>
         {/* 关闭按钮钉死在卡片右上角，脱离 flex 流：内容把卡片撑高也不移动。 */}
         <span className="absolute right-1.5 top-1.5">
           <IconButton variant="ghost" label="关闭通知" onPress={() => dismiss(notification.id)}>
@@ -82,7 +84,7 @@ export function NotificationHost() {
         detailOpen ? 'lg:right-[calc(28rem+1rem)]' : '',
       ].join(' ')}
     >
-      {notifications.length > 0 && <ol className="flex flex-col gap-2">
+      {notifications.length > 0 && <ol className="hover-scrollbar pointer-events-auto flex max-h-[calc(100dvh-2rem)] flex-col gap-2 overflow-y-auto">
         {notifications.map((notification) => (
           <NotificationItem key={notification.id} notification={notification} />
         ))}

@@ -19,6 +19,7 @@ import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
 import { useOperationLogStore } from '../../stores/operationLogStore'
+import { useLogReportNotifications } from './useLogReportNotifications'
 import type {
   OperationLogCategoryFilter,
   OperationLogResultFilter,
@@ -224,6 +225,8 @@ export function OperationLogPanel() {
   const setCategoryFilter = useOperationLogStore((s) => s.setCategoryFilter)
   const setResultFilter = useOperationLogStore((s) => s.setResultFilter)
   const setSearch = useOperationLogStore((s) => s.setSearch)
+
+  useLogReportNotifications('操作日志', { ready: status === 'ready', truncated, skippedLines, skippedFiles, olderError, failedWrites: storage?.failedWrites, trimmedBySize: storage?.trimmedBySize })
 
   const committedSearchRef = useRef(search.trim())
   const trimmedSearch = search.trim()

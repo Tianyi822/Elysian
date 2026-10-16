@@ -5,7 +5,7 @@ import { PANEL_PORT } from '@elysian/contracts'
 import { useEffect, useState } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
-import { LoadingState } from '../../components/states/StateViews'
+import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { formatDateTime } from '../../components/format'
 import { Search, X } from '../../components/icons'
 import { useFirewallStore } from '../../stores/firewallStore'
@@ -46,6 +46,8 @@ export function FirewallScanDialog() {
  useEffect(() => { void usePanelStore.getState().load(panelGateway) }, [panelGateway])
   const gateway = useGateway()
   const status = useFirewallStore((s) => s.scanStatus)
+  const scanError = useFirewallStore((s) => s.scanError)
+  const openScan = useFirewallStore((s) => s.openScan)
   const scan = useFirewallStore((s) => s.scanProtection)
   const closeScan = useFirewallStore((s) => s.closeScan)
   const refreshScan = useFirewallStore((s) => s.refreshScan)
@@ -230,7 +232,9 @@ export function FirewallScanDialog() {
               </div>
             </div>
 
-            {status === 'loading' || status === 'idle' || !scan ? (
+            {status === 'error' ? (
+              <ErrorState title="防扫描数据加载失败" description={scanError} onRetry={() => openScan(gateway)} notify={false} />
+            ) : status === 'loading' || status === 'idle' || !scan ? (
               <LoadingState label="正在加载防扫描数据…" />
             ) : (
               <>

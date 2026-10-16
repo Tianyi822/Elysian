@@ -2,7 +2,7 @@ import { useId, useLayoutEffect, useRef, useState } from 'react'
 import { ChevronRight } from '../../components/icons'
 
 /** 收起只显示最新一行；展开在有界区域内跟随更新，手动上滚时保留阅读位置。 */
-export function ChatReasoning({ text }: { text: string }) {
+export function ChatReasoning({ text, active = false }: { text: string; active?: boolean }) {
   const [expanded, setExpanded] = useState(false)
   const contentId = useId()
   const preview = useRef<HTMLSpanElement>(null)
@@ -22,7 +22,7 @@ export function ChatReasoning({ text }: { text: string }) {
   }, [text, expanded])
 
   if (!text.trim()) return null
-  return <div className="chat-thought">
+  return <div className="chat-thought" data-streaming={active || undefined}>
     <button
       type="button" className="chat-thought-toggle" aria-expanded={expanded} aria-controls={contentId}
       aria-label={expanded ? '收起思考内容' : '展开思考内容'}

@@ -74,7 +74,7 @@ export type AgentWorkflowLimits = {
 }
 /** tokens 为保守预算扣账；实际/估算用量仍分别读取每个 Run。 */
 export type AgentWorkflowUsage = Omit<AgentWorkflowLimits, 'attempts'> & { reservedMilliseconds: number }
-export const AGENT_WORKFLOW_STATUSES = ['ready', 'queued', 'running', 'waiting-approval', 'waiting-resource', 'recovery-required', 'succeeded', 'failed', 'cancelled', 'interrupted'] as const
+export const AGENT_WORKFLOW_STATUSES = ['ready', 'queued', 'running', 'waiting-approval', 'waiting-resource', 'waiting-task', 'recovery-required', 'succeeded', 'failed', 'cancelled', 'interrupted'] as const
 export type AgentWorkflowStatus = (typeof AGENT_WORKFLOW_STATUSES)[number]
 export const AGENT_WORKFLOW_RECOVERY_ACTIONS = ['continue', 'renew-approval', 'retry', 'accept-result'] as const
 export type AgentWorkflowRecoveryAction = (typeof AGENT_WORKFLOW_RECOVERY_ACTIONS)[number]
@@ -83,7 +83,7 @@ export const AGENT_WORKFLOW_RECOVERY_ACTION_LABELS: Record<AgentWorkflowRecovery
 }
 export const AGENT_WORKFLOW_STATUS_LABELS: Record<AgentWorkflowStatus, string> = {
   ready: '待推进', queued: '排队中', running: '运行中', 'waiting-approval': '等待审批',
-  'waiting-resource': '等待资源',
+  'waiting-resource': '等待资源', 'waiting-task': '等待平台任务',
   'recovery-required': '等待人工恢复', succeeded: '已完成', failed: '已失败', cancelled: '已取消', interrupted: '已中断',
 }
 export type AgentWorkflowInstance = {

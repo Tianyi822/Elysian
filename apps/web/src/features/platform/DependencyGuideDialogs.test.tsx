@@ -253,6 +253,7 @@ describe('分步安装', () => {
       })
       await user.click(screen.getByRole('button', { name: '开始安装' }))
       expect(await screen.findByRole('alert')).toHaveTextContent('Caddyfile 校验没有通过，已恢复原文件。')
+      expect(useNotificationStore.getState().notifications).toEqual([expect.objectContaining({ tone: 'danger', message: 'Caddyfile 校验没有通过，已恢复原文件。' })])
       expect(calls).toEqual(['install', 'configure'])
       expect(scrolled).toEqual(['install', 'configure'])
       expect(screen.getByRole('button', { name: '重试' })).toBeEnabled()

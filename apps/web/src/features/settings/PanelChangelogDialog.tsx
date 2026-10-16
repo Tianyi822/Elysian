@@ -6,6 +6,7 @@ import { formatDateTime } from '../../components/format'
 import { X } from '../../components/icons'
 import { IconButton } from '../../components/IconButton'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
+import { useNotificationStore } from '../../stores/notificationStore'
 
 const BUTTON =
   'h-9 rounded-lg border border-control-line bg-surface-raised px-4 text-sm font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
@@ -45,6 +46,7 @@ export function PanelChangelogDialog({
         if (cancelled) return
         setCommits(rows)
         setLoading(false)
+        if (rows.length === 0) useNotificationStore.getState().notify({ tone: 'info', message: channel === 'commit' ? '上游仓库没有返回提交记录。' : '上游仓库暂无正式发版或未返回提交记录。' })
       },
       (cause: unknown) => {
         if (cancelled) return

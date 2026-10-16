@@ -334,8 +334,8 @@ describe('平台操作日志面板', () => {
     })
 
     expect(await screen.findByText(`仅显示最近 ${LOG_ENTRY_FETCH_LIMIT} 条`)).toBeInTheDocument()
-    expect(screen.getByText(/行无法解析，已跳过/)).toHaveTextContent('2')
-    expect(screen.getByText(/个日志文件读取失败，已跳过/)).toHaveTextContent('1')
+    expect(screen.getAllByText(/行无法解析，已跳过/).some(element => element.textContent?.includes('2'))).toBe(true)
+    expect(screen.getAllByText(/个日志文件读取失败，已跳过/).some(element => element.textContent?.includes('1'))).toBe(true)
     expect(screen.getByText('日志已超出量上限，较早的记录被自动清理')).toBeInTheDocument()
     expect(screen.getByText(/条操作未能写入审计日志/)).toHaveTextContent('3')
   })

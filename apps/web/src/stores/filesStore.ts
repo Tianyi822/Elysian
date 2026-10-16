@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import type { FileEntry, FileSearchResult } from '@elysian/contracts'
 import type { ElysianGateway, FilePermissionInput } from '../contracts/adapters'
 import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
-import { useNotificationStore } from './notificationStore'
+import { useNotificationStore, type NotificationTone } from './notificationStore'
 import { FileTransferError, isFileUploadConflict } from '../adapters/filesTransferError'
 
 /**
@@ -105,7 +105,7 @@ export const useFilesStore = create<FilesState>((set, get) => {
     await get().load(gateway, get().path)
   }
 
-  const notify = (message: string, tone: 'success' | 'danger' = 'success') => {
+  const notify = (message: string, tone: NotificationTone = 'success') => {
     useNotificationStore.getState().notify({ tone, message })
   }
 
@@ -242,12 +242,15 @@ export const useFilesStore = create<FilesState>((set, get) => {
       set({ download: { path, name: entry.name, directory: entry.kind === 'directory', status: 'preparing' } })
       const fail = (error: Error) => {
         if (sequence !== downloadSequence || controller.signal.aborted) return
+        if (get().download?.status === 'error' && get().download?.errorMessage === error.message) return
         set((state) => ({ download: state.download && { ...state.download, status: 'error', errorMessage: error.message } }))
+        notify(`下载失败：${error.message}`, 'danger')
       }
       try {
         const download = await gateway.files.prepareDownload(path, controller.signal)
         if (controller.signal.aborted || sequence !== downloadSequence) return
         set((state) => ({ download: state.download && { ...state.download, name: download.name, status: 'started' } }))
+        notify(`已开始下载 ${download.name}，请在浏览器中查看下载进度。`, 'info')
         gateway.files.startDownload(download, (error) => {
           if (sequence === downloadSequence && get().download) fail(error)
           else notify(`下载失败：${error.message}`, 'danger')
@@ -257,9 +260,11 @@ export const useFilesStore = create<FilesState>((set, get) => {
       }
     },
     cancelDownload() {
+      if (get().download?.status !== 'preparing') return
       downloadController?.abort()
       ++downloadSequence
       set((state) => ({ download: state.download && { ...state.download, status: 'cancelled' } }))
+      notify('已取消准备下载。', 'info')
     },
     dismissDownload() {
       if (get().download?.status === 'preparing') get().cancelDownload()
@@ -285,6 +290,7 @@ export const useFilesStore = create<FilesState>((set, get) => {
               const check = await gateway.files.checkUpload(targetPath, file.name, file.size, controller.signal)
               if (controller.signal.aborted) break
               if (check.state === 'replace' || changed) {
+                if (changed) notify('上传目标已发生变化，请重新确认。', 'warning')
                 updateItem(index, { status: 'conflict', replacing: check.state === 'replace', errorMessage: changed ? '目标已发生变化，请重新确认。' : undefined })
                 const decision = await new Promise<'upload' | 'skip' | 'cancel'>((resolve) => {
                   resolveConflict = resolve
@@ -336,6 +342,11 @@ export const useFilesStore = create<FilesState>((set, get) => {
             ? { ...item, status: 'cancelled', errorMessage: item.status === 'uploading' ? '传输已取消，请刷新确认目标文件状态。' : undefined }
             : item),
         } }))
+        const items = get().upload?.items ?? []
+        const failures = items.filter((item) => item.status === 'error')
+        const complete = items.filter((item) => item.status === 'complete').length
+        if (failures.length) notify(`上传完成 ${complete} / ${items.length} 个文件；${failures.map((item) => `${item.name}：${item.errorMessage ?? '上传失败'}`).join('；')}`, 'danger')
+        else notify(controller.signal.aborted ? `上传已取消，已上传 ${complete} / ${items.length} 个文件，请刷新确认文件状态。` : `已上传 ${complete} / ${items.length} 个文件`, controller.signal.aborted ? 'info' : 'success')
         // 即使最后一项失败或取消，先前成功及结果不确定的项仍需要回读。
         if (attemptedUpload) {
           ++sizeGeneration

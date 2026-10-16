@@ -1,7 +1,10 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { EmptyState, ErrorState, LoadingState, NoPermissionState } from './StateViews'
+import { useNotificationStore } from '../../stores/notificationStore'
+
+beforeEach(() => useNotificationStore.getState().clear())
 
 describe('页面级状态容器', () => {
   it('加载状态以 status 角色播报', () => {
@@ -15,12 +18,15 @@ describe('页面级状态容器', () => {
     expect(screen.getByText('当前筛选条件下没有结果。')).toBeInTheDocument()
   })
 
-  it('错误状态以 alert 角色呈现并提供重试回调', async () => {
+  it('错误状态保留恢复区域，由统一通知播报并提供重试回调', async () => {
     const user = userEvent.setup()
     const onRetry = vi.fn()
     render(<ErrorState description="无法读取数据。" onRetry={onRetry} />)
 
-    expect(screen.getByRole('alert')).toHaveTextContent('无法读取数据。')
+    expect(screen.getByRole('region', { name: '加载失败' })).toHaveTextContent('无法读取数据。')
+    expect(useNotificationStore.getState().notifications).toEqual([
+      expect.objectContaining({ tone: 'danger', message: '加载失败：无法读取数据。' }),
+    ])
     await user.click(screen.getByRole('button', { name: '重试' }))
     expect(onRetry).toHaveBeenCalledOnce()
   })
@@ -28,5 +34,6 @@ describe('页面级状态容器', () => {
   it('无权限状态给出明确说明', () => {
     render(<NoPermissionState />)
     expect(screen.getByText('无访问权限')).toBeInTheDocument()
+    expect(useNotificationStore.getState().notifications[0]?.tone).toBe('warning')
   })
 })

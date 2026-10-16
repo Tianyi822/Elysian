@@ -3,6 +3,7 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { ShellPageFallback } from '../../app/layout/ShellLayoutContext'
 import { ErrorState, EmptyState, LoadingState } from '../../components/states/StateViews'
 import { RefreshButton } from '../../components/RefreshState'
+import { useFeedbackNotification } from '../../components/useFeedbackNotification'
 import { useDashboardStore } from '../../stores/dashboardStore'
 import { FilterBar } from './FilterBar'
 import { ResourceChartsSection } from './ResourceChartsSection'
@@ -17,6 +18,8 @@ export function DashboardPage() {
   const load = useDashboardStore((state) => state.load)
   const refresh = useDashboardStore((state) => state.refresh)
   const setRange = useDashboardStore((state) => state.setRange)
+
+  useFeedbackNotification(resources ? errorMessage : undefined)
 
   useEffect(() => {
     void load(gateway)
@@ -54,14 +57,6 @@ export function DashboardPage() {
         refreshing={refreshing}
       />
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 md:px-6 md:pb-6">
-        {errorMessage ? (
-          <p
-            role="alert"
-            className="mb-3 rounded border border-danger/40 bg-danger/10 px-2 py-1 text-xs text-danger"
-          >
-            {errorMessage}
-          </p>
-        ) : null}
         <ResourceChartsSection resources={resources} refreshing={refreshing} />
       </div>
     </div>

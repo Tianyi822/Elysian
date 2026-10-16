@@ -4,6 +4,13 @@ import type { AgentWikiRef } from './memory.ts'
 
 /** 不可变配置身份；digest 用于固定包、目录或环境内容。 */
 export type AgentRevisionRef = { id: string; revision: number; digest?: string }
+export type AgentPermissionMode = 'ask' | 'assist' | 'full'
+export type AgentToolMetadata = {
+  domain?: string; action?: string; effect?: string; exposure?: string
+  resourceType?: string; resourceKeyArgument?: string; version?: string
+  backend?: string; taskDomain?: string; taskRequestArgument?: string; taskIdArgument?: string
+  readOnly?: boolean; async?: boolean; default?: boolean
+}
 export type AgentResourceRef = { serverId: string; uri: string }
 export type AgentPromptRef = { serverId: string; name: string; arguments: Readonly<Record<string, string>> }
 
@@ -22,6 +29,7 @@ export type AgentEnvironment = {
 }
 export type AgentJSONSchema = boolean | Readonly<Record<string, RuntimeJSONValue>>
 export type AgentCapability = {
+  metadata?: AgentToolMetadata
   name: string
   description: string
   parameters: AgentJSONSchema
@@ -34,6 +42,9 @@ export type AgentCapability = {
 }
 export type AgentSkillSummary = { ref: AgentRevisionRef; name: string; description: string }
 export type AgentCapabilitySnapshot = {
+  toolLoading?: 'on-demand/v1'
+  permissionMode?: AgentPermissionMode
+  policyVersion?: string
   environment: AgentEnvironment
   tools: readonly AgentCapability[]
   materials?: readonly AgentCapability[]
@@ -46,12 +57,14 @@ export type AgentCapabilitySnapshot = {
 export type AgentExecutionPlan = { profile: AgentExecutionProfile; grant?: AgentExecutionGrant; scriptDigest: string }
 export type AgentRecoveryCursor = { responseId: string; callIndex: number }
 
-export const AGENT_OPERATION_STATUSES = ['planned', 'waiting-approval', 'waiting-resource', 'dispatched', 'completed', 'unknown'] as const
+export const AGENT_OPERATION_STATUSES = ['planned', 'waiting-approval', 'waiting-resource', 'waiting-task', 'dispatched', 'completed', 'unknown'] as const
 export type AgentOperationStatus = (typeof AGENT_OPERATION_STATUSES)[number]
 export const AGENT_OPERATION_STATUS_LABELS: Record<AgentOperationStatus, string> = {
-  planned: '已规划', 'waiting-approval': '等待审批', 'waiting-resource': '等待资源', dispatched: '已派发', completed: '已确认完成', unknown: '结果未确认',
+  planned: '已规划', 'waiting-approval': '等待审批', 'waiting-resource': '等待资源', 'waiting-task': '等待平台任务', dispatched: '已派发', completed: '已确认完成', unknown: '结果未确认',
 }
 export type AgentOperation = {
+  fileChanges?: readonly { path: string; before?: { bytes?: number; digest: string; text?: string }; after?: { bytes?: number; digest: string; text?: string } }[]
+  task?: { domain: string; id: string; requestId?: string }
   /** workflow/v2 执行树定位：所属作用域与节点；非工作流运行为空。 */
   scopeId?: string
   nodeId?: string
@@ -74,7 +87,10 @@ export type AgentOperation = {
   resourceClaims?: readonly AgentResourceClaim[]
   resourceRules?: readonly AgentRevisionRef[]
   claimsDigest?: string
-  policy: '' | 'approval-required' | 'trusted-read-only'
+  policy: '' | 'approval-required' | 'trusted-read-only' | 'assist-workspace' | 'assist-isolated' | 'full-authorized'
+  permissionMode?: AgentPermissionMode
+  policyVersion?: string
+  decisionSource?: 'human-approval' | 'trusted-read-only' | 'assist-workspace' | 'assist-isolated' | 'full-authorized'
   status: AgentOperationStatus
   approvalId?: string
   callId: string
@@ -279,6 +295,7 @@ export type AgentExecutionProfileInput = Omit<AgentExecutionProfile, 'id' | 'rev
 export type AgentDirectoryGrant = { path: string; access: 'ro' | 'rw' }
 export type AgentNetworkEndpoint = { scheme: 'http' | 'https'; host: string; port: number }
 export type AgentExecutionGrant = {
+  resources?: readonly { domain: string; id: string; access: 'read' | 'write' }[]
   id: string
   revision: number
   enabled: boolean

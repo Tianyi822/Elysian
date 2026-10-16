@@ -12,6 +12,7 @@ import { EmptyState, ErrorState, LoadingState } from '../../components/states/St
 import { BusyVeil } from '../../components/RefreshState'
 import { useLoginLogStore } from '../../stores/loginLogStore'
 import type { LoginLogStatusFilter } from '../../stores/loginLogStore'
+import { useLogReportNotifications } from './useLogReportNotifications'
 
 /** 登录状态 → 状态标签色调：成功绿、失败红，文字标签同时常驻。 */
 const STATUS_TONES: Record<LoginLogEntry['status'], StatusTone> = {
@@ -49,6 +50,8 @@ export function LoginLogPanel() {
   const loadOlder = useLoginLogStore((s) => s.loadOlder)
   const setStatusFilter = useLoginLogStore((s) => s.setStatusFilter)
   const setSearch = useLoginLogStore((s) => s.setSearch)
+
+  useLogReportNotifications('登录日志', { ready: status === 'ready', truncated, skippedLines, skippedFiles, olderError })
 
   const committedSearchRef = useRef(search.trim())
   const trimmedSearch = search.trim()

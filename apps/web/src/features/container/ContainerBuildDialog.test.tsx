@@ -121,7 +121,10 @@ describe('构建镜像弹窗', () => {
     await user.click(within(confirm).getByRole('button', { name: '确认并开始构建' }))
     // 通知 toast 不在这棵测试树里，断言落到通知 store 与弹窗关闭回调。
     await waitFor(() =>
-      expect(useNotificationStore.getState().notifications[0]?.message).toBe('已提交构建任务'),
+      expect(useNotificationStore.getState().notifications).toEqual(expect.arrayContaining([
+        expect.objectContaining({ tone: 'warning', message: expect.stringContaining('第 3 行 FROM') }),
+        expect.objectContaining({ tone: 'success', message: '已提交构建任务' }),
+      ])),
     )
     await waitFor(() => expect(onClose).toHaveBeenCalled())
   })

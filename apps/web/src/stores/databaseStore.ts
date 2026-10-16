@@ -102,10 +102,13 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       const [databases, containers, images] = await Promise.all([
         gateway.databases.list(), gateway.containers.list(), gateway.containers.listImages(),
       ])
-      set({ databases, containers, images, refreshing: false })
+      set({ databases, containers, images, refreshing: false, errorMessage: undefined })
     } catch (error) {
-      set({ refreshing: false })
-      useNotificationStore.getState().notify({ tone: 'danger', message: `数据库状态刷新失败：${error instanceof Error ? error.message : '未知错误'}` })
+      const message = error instanceof Error ? error.message : '未知错误'
+      if (get().errorMessage !== message) {
+        useNotificationStore.getState().notify({ tone: 'danger', message: `数据库状态刷新失败：${message}` })
+      }
+      set({ refreshing: false, errorMessage: message })
     }
   },
 
@@ -119,8 +122,12 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
         if (get().session?.databaseId !== databaseId) { connection.close(); return }
         liveSession = connection
         get().appendSessionOutput(['已连接数据库。'])
+        useNotificationStore.getState().notify({ tone: 'success', message: '已连接数据库。' })
       }).catch((error: unknown) => {
-        get().appendSessionOutput([`连接失败：${error instanceof Error ? error.message : '未知错误'}`])
+        if (get().session?.databaseId !== databaseId) return
+        const message = `数据库连接失败：${error instanceof Error ? error.message : '未知错误'}`
+        get().appendSessionOutput([message])
+        useNotificationStore.getState().notify({ tone: 'danger', message })
       })
     }
   },
@@ -139,7 +146,13 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       if (get().session?.databaseId !== id) { connection.close(); return }
       liveSession = connection
       get().appendSessionOutput(['已重新连接数据库。'])
-    }).catch((error: unknown) => get().appendSessionOutput([`重新连接失败：${error instanceof Error ? error.message : '未知错误'}`]))
+      useNotificationStore.getState().notify({ tone: 'success', message: '已重新连接数据库。' })
+    }).catch((error: unknown) => {
+      if (get().session?.databaseId !== id) return
+      const message = `数据库重新连接失败：${error instanceof Error ? error.message : '未知错误'}`
+      get().appendSessionOutput([message])
+      useNotificationStore.getState().notify({ tone: 'danger', message })
+    })
   },
 
   async submitStatement(gateway, line) {

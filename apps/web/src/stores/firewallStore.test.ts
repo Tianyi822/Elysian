@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { waitFor } from '@testing-library/react'
 import type { FirewallRule, FirewallToggles } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
 import { useFirewallStore } from './firewallStore'
@@ -42,6 +43,33 @@ function gatewayWith(overrides: Partial<ElysianGateway['firewall']> = {}): Elysi
 beforeEach(() => {
   useFirewallStore.setState(useFirewallStore.getInitialState())
   useNotificationStore.setState({ notifications: [] })
+})
+
+describe('防扫描读取通知', () => {
+  it('首次读取失败可重试，同一轮询错误只通知一次，恢复后再次失败重新通知', async () => {
+    let failing = true
+    const protection = useFirewallStore.getInitialState().scanProtection
+    const gateway = gatewayWith({ scanProtection: async () => {
+      if (failing) throw new Error('防扫描服务不可用')
+      return protection
+    } })
+    useFirewallStore.getState().openScan(gateway)
+    await waitFor(() => expect(useFirewallStore.getState().scanStatus).toBe('error'))
+    expect(useNotificationStore.getState().notifications).toHaveLength(1)
+    failing = false
+    useFirewallStore.getState().openScan(gateway)
+    await waitFor(() => expect(useFirewallStore.getState().scanStatus).toBe('ready'))
+    useNotificationStore.getState().clear()
+    failing = true
+    await useFirewallStore.getState().refreshScan(gateway)
+    await useFirewallStore.getState().refreshScan(gateway)
+    expect(useNotificationStore.getState().notifications).toHaveLength(1)
+    failing = false
+    await useFirewallStore.getState().refreshScan(gateway)
+    failing = true
+    await useFirewallStore.getState().refreshScan(gateway)
+    expect(useNotificationStore.getState().notifications).toHaveLength(2)
+  })
 })
 
 describe('同步与不确定结果', () => {

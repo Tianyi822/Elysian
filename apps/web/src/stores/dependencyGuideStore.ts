@@ -156,9 +156,9 @@ export const useDependencyGuideStore = create<DependencyGuideState>((set, get) =
     try {
       const report = await gateway.dependencies.probe()
       set({ report, status: 'checked', progress: progressAfterProbe(get().progress, report) })
-    } catch {
-      // 引导层静默失败：探测故障绝不伪装成依赖缺失，页面按既有业务态呈现。
+    } catch (error) {
       set({ status: 'error' })
+      notify(error instanceof Error ? `依赖检测失败：${error.message}` : '依赖检测失败', 'danger')
     }
   },
 

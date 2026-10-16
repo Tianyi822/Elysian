@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { AGENT_ATTACHMENT_LIMITS, type AgentChatOutput, type AgentMessage, type AgentModelProfile, type AgentSession } from '@elysian/contracts'
+import { AGENT_ATTACHMENT_LIMITS, RUNTIME_RUN_STATUS_LABELS, type AgentChatOutput, type AgentChatTimelineSnapshot, type AgentMessage, type AgentModelProfile, type AgentSession } from '@elysian/contracts'
 import { agentChatAllAttachments, agentChatSessionKey } from '../contracts/agentChat'
 import { AgentHttpError } from '../adapters/http/agent/agentShared'
 import { agentChatLocalAdapter } from '../adapters/local/agentChatLocalAdapter'
@@ -26,6 +26,7 @@ type AgentChatState = {
   remoteSession: AgentSession | null
   messages: readonly AgentMessage[]
   reasoning: Readonly<Record<string, string>>
+  timelines: Readonly<Record<string, AgentChatTimelineSnapshot>>
   liveOutput: AgentChatOutput | null
   run: AgentChatRun | null
   sending: boolean
@@ -34,6 +35,7 @@ type AgentChatState = {
   refreshing: boolean
   syncError: string | null
   ensureSession(): Promise<void>
+  prepareRemoteSession(api: AgentConversationAdapter, model: AgentModelProfile): Promise<void>
   newSession(): Promise<void>
   setDraft(draft: string): void
   editMessage(messageId: string): void
@@ -53,9 +55,12 @@ type AgentChatState = {
 const allAttachments = agentChatAllAttachments
 const persistenceNotice = '浏览器暂时无法保存会话，刷新后可能丢失本页内容。'
 const attachmentTotalNotice = '本条消息附件合计超过 8 MiB，请分批发送。'
-const remoteBlank = { remoteSession: null, messages: [], reasoning: {}, liveOutput: null, run: null, sending: false, uploadingAttachments: false, stopping: false, refreshing: false, syncError: null }
-export const isChatRunActive = (run: AgentChatRun | null) => !!run && ['queued', 'running', 'waiting-approval', 'waiting-resource', 'recovery-required'].includes(run.status)
+const remoteBlank = { remoteSession: null, messages: [], reasoning: {}, timelines: {}, liveOutput: null, run: null, sending: false, uploadingAttachments: false, stopping: false, refreshing: false, syncError: null }
+export const isChatRunActive = (run: AgentChatRun | null) => !!run && ['queued', 'running', 'waiting-approval', 'waiting-resource', 'waiting-task', 'recovery-required'].includes(run.status)
 export const isChatReplyActive = (run: AgentChatRun | null) => isChatRunActive(run) && run?.phase !== 'final-memory'
+export const chatRunFailure = (run: AgentChatRun | null) => run && !isChatRunActive(run) && run.status !== 'succeeded' && run.status !== 'cancelled'
+  ? `${RUNTIME_RUN_STATUS_LABELS[run.status]}${run.error ? `：${run.error.message}` : ''}`
+  : null
 const failureMessage = (error: unknown) => error instanceof Error ? error.message : '会话请求失败'
 // 这些业务拒绝发生在 submitAgent 核对 requestId 之后，可确认该请求未被接受。
 // 前置来源/请求体守卫、未知 4xx 与请求标识冲突都不能证明先前的未确认请求未执行。
@@ -86,13 +91,49 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
     let initialization: Promise<void> | undefined
     let persistenceFailed = false
     let attachmentPersistenceFailed = false
+    let listFeedback: string | null = null
     const notificationIds = new Set<string>()
+    const runNotificationIds = new Set<string>()
+    const observedActiveRuns = new Set<string>()
+    const notifiedRunFailures = new Set<string>()
+    const notifiedRunStatuses = new Map<string, string>()
     const missingAttachmentSets = new Map<string, string>()
     const notify = (message: string, tone: NotificationTone = 'danger') => {
       const notifications = useNotificationStore.getState()
       const active = new Set(notifications.notifications.map(item => item.id))
       for (const id of notificationIds) if (!active.has(id)) notificationIds.delete(id)
-      notificationIds.add(notifications.notify({ message, tone }))
+      const notificationId = notifications.notify({ message, tone })
+      notificationIds.add(notificationId)
+      return notificationId
+    }
+    const clearRunFeedback = () => {
+      for (const id of runNotificationIds) {
+        useNotificationStore.getState().dismiss(id)
+        notificationIds.delete(id)
+      }
+      runNotificationIds.clear()
+      observedActiveRuns.clear()
+      notifiedRunFailures.clear()
+      notifiedRunStatuses.clear()
+    }
+    const observeRun = (run: AgentChatRun, submitted = false) => {
+      if (submitted || isChatRunActive(run)) observedActiveRuns.add(run.id)
+      const failure = chatRunFailure(run)
+      // 历史失败也在通知区回显，轮询与重新进入同一会话不重复播报。
+      if (failure && !notifiedRunFailures.has(run.id)) {
+        notifiedRunFailures.add(run.id)
+        runNotificationIds.add(notify(failure))
+      }
+      if (observedActiveRuns.has(run.id) && notifiedRunStatuses.get(run.id) !== run.status) {
+        notifiedRunStatuses.set(run.id, run.status)
+        const feedback = run.status === 'succeeded' ? { message: '回复已完成。', tone: 'success' as const }
+          : run.status === 'cancelled' ? { message: '已停止回复。', tone: 'info' as const }
+          : run.status === 'waiting-approval' ? { message: '操作等待批准，请确认待审批操作。', tone: 'warning' as const }
+          : run.status === 'recovery-required' ? { message: '运行结果尚未确认，需要处理后才能继续。', tone: 'warning' as const }
+          : null
+        if (feedback) runNotificationIds.add(notify(feedback.message, feedback.tone))
+      }
+      if (!isChatRunActive(run)) observedActiveRuns.delete(run.id)
     }
     const checkAttachmentTotal = (bytes: number) => {
       if (bytes > AGENT_ATTACHMENT_LIMITS.maxMessageBytes) throw new Error(attachmentTotalNotice)
@@ -100,7 +141,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
     const completedReasoning = new Set<string>()
     const blankSession = (): AgentChatSession => ({
       id: `draft:${id()}`, createdAt: now(), draft: '', messages: [], attachments: [],
-      permissionMode: 'ask', modelId: null, reasoningLevel: null,
+      permissionMode: 'ask', permissionVersion: 1, modelId: null, reasoningLevel: null,
     })
     const persist = (session: AgentChatSession) => {
       set({ session })
@@ -209,6 +250,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
       const ids = new Set(messages.map(message => message.runId))
       for (const id of completedReasoning) if (!ids.has(id)) completedReasoning.delete(id)
       set(state => ({ messages, reasoning: Object.fromEntries(Object.entries(state.reasoning).filter(([id]) => ids.has(id))),
+        timelines: Object.fromEntries(Object.entries(state.timelines).filter(([id]) => ids.has(id))),
         liveOutput: state.liveOutput && ids.has(state.liveOutput.runId) ? state.liveOutput : null }))
       const session = current()
       if (session.editing && !session.pending && messages.filter(message => message.role === 'user').at(-1)?.id !== session.editing.messageId) {
@@ -258,6 +300,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
           : await api.createTask(session.remote!.sessionId, pending.input)
         acceptRun(run, session, lifecycleAtStart === lifecycle && version === submissionVersion)
         if (!valid()) return false
+        observeRun(run, true)
         remoteVersion += 1
         set({ sending: false })
         // POST 回执已经确认接受；后续读取失败不把提交标成失败。
@@ -284,6 +327,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
       sessions: [], localSessions: [], listLoading: false, listError: null, listHasMore: false, listCursor: '',
       reportOperation: notify,
       clearDisplay() {
+        listFeedback = null
         attachmentPreparation?.abort()
         generation += 1; remoteVersion += 1; listVersion += 1; lifecycle += 1; navigationVersion += 1
         attachmentUploadVersion += 1
@@ -291,6 +335,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
         listInitialized = false
         initialized = false; initialization = undefined; restoring = undefined
         completedReasoning.clear()
+        clearRunFeedback()
         for (const id of notificationIds) useNotificationStore.getState().dismiss(id)
         notificationIds.clear()
         missingAttachmentSets.clear()
@@ -307,6 +352,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
           const page = await api.listSessions(cursor)
           if (version !== listVersion) return
           if (page.hasMore && page.nextCursor === cursor) throw new Error('会话列表分页未前进，请重新读取')
+          listFeedback = null
           if (quiet && listInitialized) {
             // 静默回读只更新列表内容，保留最后已加载页的游标和结束标记。
             // 显式刷新才重置分页；活动时间变化带来的重复由后续加载按 ID 去重。
@@ -321,7 +367,8 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
           set({ sessions: [...records.values()], listCursor: page.nextCursor, listHasMore: page.hasMore })
         } catch (error) {
           if (version === listVersion) {
-            if (userInitiated) notify(failureMessage(error))
+            if (userInitiated || listFeedback !== failureMessage(error)) notify(failureMessage(error))
+            listFeedback = failureMessage(error)
             set({ listError: userInitiated && listInitialized ? null : failureMessage(error) })
           }
         }
@@ -387,6 +434,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
           sessions: get().sessions.map(row => row.id === id ? remote : row),
           ...(get().remoteSession?.id === id ? { remoteSession: { ...get().remoteSession!, title: remote.title } } : {}),
         })
+        notify('会话已重命名。', 'success')
       },
       async deleteSession(api, id) {
         if (get().sending) return
@@ -409,7 +457,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
           if (fallback) await get().selectSession(api, fallback.id)
           else await get().newSession()
           if (lifetime === lifecycle && navigation === navigationVersion) notify(fallback ? '会话已删除，已切换到其他会话。' : '会话已删除，已新建空白会话。', 'info')
-        }
+        } else notify('会话已删除。', 'success')
       },
       loading: false,
       async ensureSession() {
@@ -435,6 +483,21 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
         set({ ...remoteBlank, loading: false })
         persist(blankSession())
       },
+      async prepareRemoteSession(api, model) {
+        if (get().sending || get().loading || !api.available || !model.active || !model.capabilities.text || !model.capabilities.tools) return
+        const session = current()
+        if (session.remote || session.pending) return
+        const lifetime = lifecycle
+        set({ sending: true })
+        try {
+          const remote = await api.createSession({ title: [...session.draft.trim()].slice(0, 40).join('') || '新会话', modelProfileId: model.id, modelRevision: model.revision })
+          if (lifetime !== lifecycle || !stillCurrent(session.id)) return
+          update({ remote: { sessionId: remote.id } })
+          set({ remoteSession: remote })
+          void get().loadSessions(api, false, true)
+        } catch (cause) { if (lifetime === lifecycle && stillCurrent(session.id)) notify(failureMessage(cause)) }
+        finally { if (lifetime === lifecycle && stillCurrent(session.id)) set({ sending: false }) }
+      },
       setDraft: draft => { if (!current().pending) update({ draft }) },
       editMessage(messageId) {
         if (get().sending || get().uploadingAttachments || get().stopping || isChatRunActive(get().run) || current().pending || get().remoteSession?.activeRunId || get().remoteSession?.activeWorkflowId) return
@@ -454,13 +517,13 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
         set({ stopping: true })
         try {
           const stopped = await api.cancelRun(run.id)
-          if (valid()) { remoteVersion += 1; set({ run: stopped }) }
+          if (valid()) { remoteVersion += 1; observeRun(stopped, true); set({ run: stopped }) }
         } catch (error) { if (valid()) notify(failureMessage(error)) }
         finally {
           if (valid()) { await get().refresh(api); if (valid()) set({ stopping: false }) }
         }
       },
-      setPermissionMode: permissionMode => { if (!get().sending && !isChatReplyActive(get().run) && !current().pending) update({ permissionMode }) },
+      setPermissionMode: permissionMode => { if (!get().sending && !isChatRunActive(get().run) && !get().remoteSession?.activeRunId && !get().remoteSession?.activeWorkflowId && !current().pending) update({ permissionMode, permissionVersion: 1 }) },
       setModel: modelId => { if (!get().sending && !get().uploadingAttachments && !isChatReplyActive(get().run) && !current().pending) update({ modelId, reasoningLevel: null }) },
       setReasoningLevel: reasoningLevel => { if (!get().sending && !isChatReplyActive(get().run) && !current().pending) update({ reasoningLevel }) },
       async addAttachments(api, files) {
@@ -579,7 +642,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
           const attachments = preparedSession.editing ? preparedSession.editing.attachments?.map(ref => ({
             id: preparedSession.editing!.preparedAttachments?.find(item => item.sourceId === ref.id)?.attachment.serverId ?? ref.id,
           })) : preparedSession.attachments.length ? preparedSession.attachments.map(attachment => ({ id: attachment.serverId! })) : undefined
-          const saved = update({ remote: { ...current().remote, sessionId: remote.id }, pending: { input: { requestId: id(), content: text,
+          const saved = update({ remote: { ...current().remote, sessionId: remote.id }, pending: { input: { requestId: id(), content: text, permissionMode: session.permissionMode,
             ...(session.editing ? { replaceMessageId: session.editing.messageId } : {}),
             ...(session.reasoningLevel ? { reasoningLevel: session.reasoningLevel } : {}),
             ...(attachments?.length ? { attachments } : {}) }, taskId: session.editing?.taskId ?? current().remote?.taskId } })
@@ -595,11 +658,14 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
       },
       async watchOutput(api, runId, signal) {
         const localId = current().id
-        const valid = () => !signal.aborted && stillCurrent(localId) && get().run?.id === runId
+        const lifetime = lifecycle
+        const valid = () => lifetime === lifecycle && !signal.aborted && stillCurrent(localId) && get().run?.id === runId
         try {
           await api.stream(runId, output => {
             if (!valid() || !isChatRunActive(get().run)) return
-            set(state => ({ liveOutput: output, reasoning: { ...state.reasoning, [runId]: output.reasoning } }))
+            if (get().timelines[runId]?.done && !output.done) return
+            set(state => ({ liveOutput: output, reasoning: { ...state.reasoning, [runId]: output.reasoning },
+              ...(output.timeline ? { timelines: { ...state.timelines, [runId]: output.timeline } } : {}) }))
           }, signal)
           if (valid()) await get().refresh(api, signal)
         } catch {
@@ -664,16 +730,20 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
           if (!current().modelId) update({ modelId: remote.modelProfileId })
           if (latestRun) acceptRun(latestRun)
           if (run) set({ run })
+          if (run) observeRun(run)
           // 只有成功读过终态的旧轮才跳过；生成中快照仍需补齐，以服务端快照替换而非累加。
           const runIds = [...new Set([...messages.map(message => message.runId), ...(run ? [run.id] : [])])]
           for (const id of runIds) {
             if (id !== run?.id && completedReasoning.has(id)) continue
             if (id === run?.id && isChatRunActive(run) && get().liveOutput?.runId === id) continue
-            const text = await api.reasoning(id, signal)
+            const before = get().timelines[id]
+            const timeline = await api.timeline(id, signal)
             if (!valid()) return
-            if (id === run?.id && isChatRunActive(run) && get().liveOutput?.runId === id) continue
-            if (id !== run?.id || !isChatRunActive(run)) completedReasoning.add(id)
-            set(state => ({ reasoning: { ...state.reasoning, [id]: text } }))
+            // 读取期间若有 SSE 到达，以更新的流式快照为准；终态稍后重新回读确认。
+            if (get().timelines[id] !== before || (before?.done && !timeline.done)) continue
+            if (timeline.done) completedReasoning.add(id)
+            const text = timeline.entries.flatMap(entry => entry.kind === 'reasoning' ? [entry.text] : []).join('\n\n')
+            set(state => ({ reasoning: { ...state.reasoning, [id]: text }, timelines: { ...state.timelines, [id]: timeline } }))
           }
         } catch (error) {
           if (valid()) {

@@ -44,6 +44,56 @@ describe('聊天 HTTP 接口', () => {
     ])
   })
 
+  it('历史接口与 SSE 使用相同时间线，保留旧输出字段', async () => {
+    const timeline = { runId: 'r1', status: 'succeeded', done: true, finalResponseId: 'm1', entries: [
+      { id: 'm1:content', modelRequestId: 'm1', requestIndex: 0, kind: 'content', text: '最终正文', startedAt: '', status: 'succeeded', incomplete: false },
+    ] }
+    const output = { runId: 'r1', responseId: 'm1', reasoning: '', content: '最终正文', done: true, timeline }
+    const fetcher = vi.fn().mockResolvedValueOnce(json(timeline)).mockResolvedValueOnce(new Response(`event: output\ndata: ${JSON.stringify(output)}\n\n`, { headers: { 'content-type': 'text/event-stream' } }))
+    vi.stubGlobal('fetch', fetcher)
+    const api = createHttpAgentConversationAdapter()
+    expect(await api.timeline('r1')).toEqual(timeline)
+    const seen = vi.fn()
+    await api.stream('r1', seen, new AbortController().signal)
+    expect(seen).toHaveBeenCalledExactlyOnceWith(output)
+    expect(fetcher.mock.calls.map(call => call[0])).toEqual(['/api/agent/runs/r1/timeline', '/api/agent/runs/r1/output'])
+  })
+
+  it('完整时间线与兼容字段超过单次响应容量时仍接收快照', async () => {
+    const text = 'x'.repeat(2 * 1024 * 1024 - 512)
+    const timeline = { runId: 'r1', status: 'succeeded', done: true, entries: Array.from({ length: 3 }, (_, requestIndex) => ({
+      id: `m${requestIndex}:reasoning`, modelRequestId: `m${requestIndex}`, requestIndex, kind: 'reasoning', text, startedAt: '', status: 'succeeded', incomplete: false,
+    })) }
+    const output = { runId: 'r1', responseId: 'm2', reasoning: [text, text, text].join('\n\n'), content: '', done: true, timeline }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(`event: output\ndata: ${JSON.stringify(output)}\n\n`, { headers: { 'content-type': 'text/event-stream' } })))
+    const seen = vi.fn()
+    await createHttpAgentConversationAdapter().stream('r1', seen, new AbortController().signal)
+    expect(seen).toHaveBeenCalledOnce()
+    expect(seen.mock.calls[0]![0].timeline.entries).toHaveLength(3)
+    expect(seen.mock.calls[0]![0].timeline.entries[0].text.length).toBe(text.length)
+  })
+
+  it('按 Calls 分页读取工具结果，保留参数原文与错误和截断标记', async () => {
+    const first = { id: 'c1', runId: 'r1', tool: 'tool_a', modelRequestId: 'm1', modelCallId: 't1', status: 'succeeded', stepIndex: 0, argumentsJson: '{"n":9007199254740993}', result: { text: '脱敏后的结果' }, truncated: true }
+    const second = { id: 'c2', runId: 'r1', tool: 'tool_b', modelRequestId: 'm1', modelCallId: 't2', status: 'failed', stepIndex: 1, error: { code: 'tool-failed', message: '执行失败' }, truncated: false }
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(json({ items: [first], nextCursor: '1', hasMore: true }))
+      .mockResolvedValueOnce(json({ items: [second], nextCursor: '', hasMore: false }))
+    vi.stubGlobal('fetch', fetcher)
+    expect(await createHttpAgentConversationAdapter().calls('r1')).toEqual([{ ...first, args: {} }, { ...second, args: {} }])
+    expect(fetcher.mock.calls.map(call => call[0])).toEqual(['/api/agent/runs/r1/calls?cursor=0&limit=100', '/api/agent/runs/r1/calls?cursor=1&limit=100'])
+  })
+
+  it.each(['重复记录', '游标回退', '串轮记录'])('工具详情拒绝%s且停止分页', async failure => {
+    const call = { id: 'c1', runId: 'r1', tool: 'test', status: 'succeeded', stepIndex: 0, truncated: false }
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(json({ items: [call], nextCursor: '1', hasMore: true }))
+      .mockResolvedValueOnce(json({ items: [{ ...call, id: failure === '重复记录' ? 'c1' : 'c2', runId: failure === '串轮记录' ? 'other' : 'r1' }], nextCursor: '1', hasMore: failure === '游标回退' }))
+    vi.stubGlobal('fetch', fetcher)
+    await expect(createHttpAgentConversationAdapter().calls('r1')).rejects.toThrow('格式无效')
+    expect(fetcher).toHaveBeenCalledTimes(2)
+  })
+
   it('创建会话、首轮和续轮复用现有端点，传递文本与思考等级', async () => {
     const fetcher = vi.fn().mockResolvedValueOnce(json(fixture.session, 201)).mockResolvedValueOnce(json(fixture.run, 202)).mockResolvedValueOnce(json(fixture.run, 200))
     vi.stubGlobal('fetch', fetcher)

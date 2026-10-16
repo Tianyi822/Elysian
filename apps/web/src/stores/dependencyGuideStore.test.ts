@@ -84,12 +84,13 @@ describe('check', () => {
     expect(probe).toHaveBeenCalledTimes(1)
   })
 
-  it('抛错置 error 且 report 保持 undefined（静默，不伪装成依赖缺失）', async () => {
+  it('抛错置 error、通知原因且 report 保持 undefined', async () => {
     const gateway = gatewayWith(() => Promise.reject(new Error('依赖检测请求网络失败')))
     await useDependencyGuideStore.getState().check(gateway)
     const state = useDependencyGuideStore.getState()
     expect(state.status).toBe('error')
     expect(state.report).toBeUndefined()
+    expect(useNotificationStore.getState().notifications).toEqual([expect.objectContaining({ tone: 'danger', message: '依赖检测失败：依赖检测请求网络失败' })])
   })
 })
 

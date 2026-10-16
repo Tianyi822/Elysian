@@ -4,6 +4,7 @@ import { validAgentModelReasoningLevels } from '@elysian/contracts'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { Check, ChevronDown, Plus, X } from '../../components/icons'
 import { CTL_FIELD, CTL_SECONDARY } from '../../components/formControl'
+import { useFeedbackNotification } from '../../components/useFeedbackNotification'
 import type { DraftModel } from './modelDraft'
 
 const multimodalInputs = [['image', '图片'], ['video', '视频']] as const
@@ -21,6 +22,7 @@ export function ModelAdvancedFields({ row, onChange }: { row: DraftModel; onChan
   const [adding, setAdding] = useState(false)
   const [level, setLevel] = useState('')
   const [error, setError] = useState<string>()
+  useFeedbackNotification(error)
   const addLevel = () => {
     const next = level.trim()
     if (!validAgentModelReasoningLevels([...row.reasoningLevels, next])) {

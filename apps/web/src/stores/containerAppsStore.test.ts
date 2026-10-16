@@ -178,7 +178,7 @@ describe('工作区构建状态', () => {
     // 静默回读不置刷新遮罩（false 不驱动 BusyVeil）。
     expect(useContainerAppsStore.getState().buildsRefreshing['demo-app']).toBeFalsy()
     expect(listAppBuilds).toHaveBeenCalledWith('demo-app')
-    expect(useNotificationStore.getState().notifications[0]?.message).toBe('已取消构建任务')
+    expect(useNotificationStore.getState().notifications[0]?.message).toBe('已提交取消构建请求')
   })
 
   it('openBuildLogs 拉全量，loadBuildLogs 按已读字节增量追加', async () => {
@@ -212,7 +212,7 @@ describe('工作区构建状态', () => {
     expect(first).not.toBe(second)
   })
 
-  it('refreshBuilds 静默失败不清空旧清单也不置错误，手动失败保留中文错误', async () => {
+  it('refreshBuilds 轮询失败保留旧清单并记录中文错误，恢复后清除', async () => {
     const gateway = createMockGateway({ eventStream: 'memory', eventIntervalMs: 60_000 })
     useContainerAppsStore.setState({
       buildsBySlug: { 'demo-app': [{ id: 't1', slug: 'demo-app', mode: 'dockerfile', requestId: 'r', state: 'succeeded', stage: '构建成功', createdAt: '2026-10-04T07:30:00Z', updatedAt: '2026-10-04T07:31:00Z', input: { mode: 'dockerfile', requestId: 'r', dockerfile: 'Dockerfile' }, results: [], error: '' }] },
@@ -227,10 +227,33 @@ describe('工作区构建状态', () => {
     }
     await useContainerAppsStore.getState().refreshBuilds(failing, 'demo-app', { silent: true })
     expect(useContainerAppsStore.getState().buildsBySlug['demo-app']).toHaveLength(1)
-    expect(useContainerAppsStore.getState().buildsError['demo-app']).toBeUndefined()
+    expect(useContainerAppsStore.getState().buildsError['demo-app']).toBe('构建任务读取失败')
 
     await useContainerAppsStore.getState().refreshBuilds(failing, 'demo-app')
     expect(useContainerAppsStore.getState().buildsError['demo-app']).toBe('构建任务读取失败')
     expect(useContainerAppsStore.getState().buildsBySlug['demo-app']).toHaveLength(1)
+    vi.spyOn(gateway.containers, 'listAppBuilds').mockResolvedValue([])
+    await useContainerAppsStore.getState().refreshBuilds(gateway, 'demo-app', { silent: true })
+    expect(useContainerAppsStore.getState().buildsError['demo-app']).toBeNull()
+  })
+
+  it('运行中的构建失败只通知一次，再次轮询和历史初次载入不重复通知', async () => {
+    const task: ContainerBuildTask = {
+      id: 'build-1', slug: 'demo-app', mode: 'dockerfile', requestId: 'request-1',
+      state: 'building', stage: '构建中', createdAt: '2026-10-04T07:30:00Z', updatedAt: '2026-10-04T07:30:00Z',
+      input: { mode: 'dockerfile', requestId: 'request-1', dockerfile: 'Dockerfile' }, results: [], error: '',
+    }
+    const gateway = createMockGateway({ eventStream: 'memory', eventIntervalMs: 60_000 })
+    vi.spyOn(gateway.containers, 'listAppBuilds').mockResolvedValue([{ ...task, state: 'failed', error: '镜像下载失败' }])
+    useContainerAppsStore.setState({ buildsBySlug: { 'demo-app': [task] } })
+    await useContainerAppsStore.getState().refreshBuilds(gateway, 'demo-app', { silent: true })
+    await useContainerAppsStore.getState().refreshBuilds(gateway, 'demo-app', { silent: true })
+    expect(useNotificationStore.getState().notifications).toEqual([
+      expect.objectContaining({ tone: 'danger', message: 'demo-app：镜像构建失败，镜像下载失败' }),
+    ])
+    useNotificationStore.getState().clear()
+    useContainerAppsStore.setState({ buildsBySlug: {} })
+    await useContainerAppsStore.getState().ensureBuilds(gateway, 'demo-app')
+    expect(useNotificationStore.getState().notifications).toHaveLength(0)
   })
 })

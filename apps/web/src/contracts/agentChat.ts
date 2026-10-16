@@ -1,7 +1,6 @@
-import type { AgentAttachmentRef, AgentChatOutput, AgentCreateSessionInput, AgentInput, AgentMessage, AgentMessageAttachment, AgentRenameSessionInput, AgentSession, AgentSwitchModelInput, RuntimeRun } from '@elysian/contracts'
+import type { AgentApproval, AgentAttachmentRef, AgentCapability, AgentChatOutput, AgentChatTimelineSnapshot, AgentCreateSessionInput, AgentEnvironment, AgentExecutionGrant, AgentExecutionProfile, AgentInput, AgentMessage, AgentMessageAttachment, AgentPermissionMode, AgentRenameSessionInput, AgentSession, AgentSwitchModelInput, RuntimeCall, RuntimeRun } from '@elysian/contracts'
 
-/** 权限选项保留为界面草稿，不授予后端权限。 */
-export type AgentChatPermissionMode = 'ask' | 'assist' | 'full'
+export type AgentChatPermissionMode = AgentPermissionMode
 
 export type AgentChatAttachment = {
   id: string
@@ -30,6 +29,8 @@ export type AgentChatMessage = {
 }
 
 export type AgentChatSession = {
+  /** 已迁离旧预览偏好，后续选择随每轮输入提交。 */
+  permissionVersion?: 1
   id: string
   createdAt: string
   draft: string
@@ -65,6 +66,7 @@ export const agentChatAllAttachments = (session: AgentChatSession): readonly Age
 export type AgentChatUploadedAttachment = AgentMessageAttachment & { createdAt?: string }
 
 export interface AgentConversationAdapter {
+  readonly governance?: AgentChatGovernance
   readonly available: boolean
   listSessions(cursor?: string, signal?: AbortSignal): Promise<AgentChatPageResult<AgentSession>>
   listTasks(sessionId: string, cursor?: string, signal?: AbortSignal): Promise<AgentChatPageResult<AgentChatTask>>
@@ -75,6 +77,8 @@ export interface AgentConversationAdapter {
   deleteSession(id: string): Promise<void>
   switchModel(id: string, input: AgentSwitchModelInput): Promise<AgentSession>
   messages(id: string, after: string, signal?: AbortSignal): Promise<{ items: readonly AgentMessage[]; nextCursor: string; hasMore: boolean }>
+  timeline(id: string, signal?: AbortSignal): Promise<AgentChatTimelineSnapshot>
+  calls(id: string, signal?: AbortSignal): Promise<readonly RuntimeCall[]>
   /** 按序逐张 multipart 上传，每个请求一个名为 file 的 part；全部成功后返回整组回执。 */
   uploadAttachments(files: readonly File[], signal?: AbortSignal): Promise<{ items: readonly AgentChatUploadedAttachment[] }>
   /** 按附件 id 读取已上传图片字节，用于历史消息缩略图。 */
@@ -86,6 +90,16 @@ export interface AgentConversationAdapter {
   /** 仅返回本轮推理请求明确提供的思考文本或公开摘要。 */
   reasoning(id: string, signal?: AbortSignal): Promise<string>
   stream(id: string, onOutput: (output: AgentChatOutput) => void, signal: AbortSignal): Promise<void>
+}
+
+export interface AgentChatGovernance {
+  approvals(runId: string, signal?: AbortSignal): Promise<readonly AgentApproval[]>
+  decide(id: string, decision: 'approved' | 'denied'): Promise<AgentApproval>
+  environment(sessionId: string, signal?: AbortSignal): Promise<AgentEnvironment>
+  updateEnvironment(sessionId: string, expectedRevision: number, environment: AgentEnvironment): Promise<AgentEnvironment>
+  profiles(signal?: AbortSignal): Promise<readonly AgentExecutionProfile[]>
+  grants(signal?: AbortSignal): Promise<readonly AgentExecutionGrant[]>
+  tools(sessionId: string, signal?: AbortSignal): Promise<readonly AgentCapability[]>
 }
 
 export interface AgentChatAdapter {

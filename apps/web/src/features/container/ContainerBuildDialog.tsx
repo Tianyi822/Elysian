@@ -10,6 +10,7 @@ import { SuggestionInput } from '../../components/SuggestionInput'
 import { newBuildRequestId, useContainerAppsStore } from '../../stores/containerAppsStore'
 import { isComposeFile } from '../../stores/containerAppsStore'
 import { formatWorkspaceSize } from './formatWorkspaceSize'
+import { useFeedbackNotification } from '../../components/useFeedbackNotification'
 
 /** 上下文超限的判定句：与契约警告逐字同源，前端据此在确认前禁用开始按钮。 */
 const CONTEXT_LIMIT_WARNING = '构建上下文超过上限'
@@ -50,6 +51,9 @@ export function ContainerBuildDialog({ app, onClose }: { app: ContainerApp; onCl
 
   const state = preview?.slug === app.slug ? preview : null
   const plan = state?.plan ?? null
+  useFeedbackNotification(state?.error)
+  useFeedbackNotification(state?.submitError)
+  useFeedbackNotification(plan ? [...plan.warnings, ...(plan.mode === 'compose' ? plan.services.flatMap((service) => service.warnings) : [])].join('\n') : null, 'warning')
 
   const switchMode = (next: 'dockerfile' | 'compose') => {
     if (next === mode) return

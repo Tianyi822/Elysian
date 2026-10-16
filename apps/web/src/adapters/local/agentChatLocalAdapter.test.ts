@@ -2,11 +2,20 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AgentChatSession } from '../../contracts/agentChat'
 import { AGENT_CHAT_STORAGE_KEY, AGENT_CHAT_LEGACY_KEY, AGENT_CHAT_RECORD_PREFIX, createAgentChatLocalAdapter } from './agentChatLocalAdapter'
 
-const session = (): AgentChatSession => ({ id: 'session-1', createdAt: '2026-10-12T00:00:00.000Z', draft: '草稿', messages: [], attachments: [], permissionMode: 'ask', modelId: null, reasoningLevel: null })
+const session = (): AgentChatSession => ({ id: 'session-1', createdAt: '2026-10-12T00:00:00.000Z', draft: '草稿', messages: [], attachments: [], permissionMode: 'ask', permissionVersion: 1, modelId: null, reasoningLevel: null })
 
 afterEach(() => { localStorage.clear(); vi.restoreAllMocks() })
 
 describe('浏览器会话存储', () => {
+  it.each(['assist', 'full'] as const)('旧版 %s 预览迁回 ask，保留草稿附件和精确重试', mode => {
+    const legacy = { ...session(), permissionVersion: undefined, permissionMode: mode, pending: { input: { requestId: 'original', content: '原输入' } }, attachments: [{ id: 'local', name: 'a.png', size: 10, type: 'image/png', lastModified: 0, available: false }] }
+    localStorage.setItem(AGENT_CHAT_RECORD_PREFIX + 'session-1', JSON.stringify(legacy))
+    const adapter = createAgentChatLocalAdapter()
+    const restored = adapter.read('session-1')!
+    expect(restored).toMatchObject({ permissionMode: 'ask', permissionVersion: 1, draft: '草稿', pending: legacy.pending, attachments: legacy.attachments })
+    adapter.write({ ...restored, permissionMode: 'full' })
+    expect(createAgentChatLocalAdapter().read('session-1')?.permissionMode).toBe('full')
+  })
   it('损坏或不兼容的数据安全回落，不阻止创建新会话', () => {
     const adapter = createAgentChatLocalAdapter()
     localStorage.setItem(AGENT_CHAT_STORAGE_KEY, '{broken')

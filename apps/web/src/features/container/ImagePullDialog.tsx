@@ -6,6 +6,7 @@ import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { useContainersStore } from '../../stores/containersStore'
+import { useFeedbackNotification } from '../../components/useFeedbackNotification'
 import {
   DEFAULT_IMAGE_REGISTRY,
   parseImageReference,
@@ -54,6 +55,10 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
   const customRegistry = registryAddress.trim() !== ''
   const parsed = parseImageReference(reference)
   const tagRepository = parsed.ok && !parsed.reference.name.includes(':') ? parsed.reference.name : ''
+  useFeedbackNotification(suggestionStatus === 'unavailable'
+    ? customRegistry ? '无法从此镜像源搜索，请直接输入镜像引用' : '镜像搜索暂不可用，请直接输入镜像引用'
+    : null, 'warning')
+  useFeedbackNotification(tagStatus === 'unavailable' ? '无法列出此镜像的版本，可在镜像引用中手动输入标签' : null, 'warning')
 
   useEffect(() => {
     const serial = ++tagRequestSerial.current

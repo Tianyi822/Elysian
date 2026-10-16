@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AgentMessage, AgentSession } from '@elysian/contracts'
+import type { AgentChatTimelineSnapshot, AgentMessage, AgentSession } from '@elysian/contracts'
 import { agentChatSessionKey } from '../contracts/agentChat'
 import type { AgentChatAdapter, AgentChatAttachment, AgentChatRun, AgentChatSession } from '../contracts/agentChat'
 import type { ElysianGateway, SessionAdapter } from '../contracts/adapters'
@@ -65,6 +65,161 @@ function localMemory() {
 }
 
 describe('智能体本地会话', () => {
+  it('迟到轮询不覆盖更新的时间线，登出后忽略迟到流式和历史结果', async () => {
+    const store = localMemory().makeStore()
+    const backend = chatTestApi()
+    backend.hold()
+    await store.getState().ensureSession()
+    store.getState().setDraft('查询')
+    await store.getState().send(backend.api, chatTestModel)
+    const late = deferred<AgentChatTimelineSnapshot>()
+    backend.api.timeline.mockReturnValueOnce(late.promise)
+    const reading = store.getState().refresh(backend.api)
+    await vi.waitFor(() => expect(backend.api.timeline).toHaveBeenCalledTimes(2))
+    let emit!: Parameters<typeof backend.api.stream>[1]
+    backend.api.stream.mockImplementation(async (_id, callback, signal) => {
+      emit = callback
+      await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }))
+    })
+    const controller = new AbortController()
+    const watching = store.getState().watchOutput(backend.api, 'run-1', controller.signal)
+    const timeline: AgentChatTimelineSnapshot = { runId: 'run-1', status: 'running', done: false, entries: [
+      { id: 'm:content', modelRequestId: 'm', requestIndex: 0, startedAt: '', kind: 'content', text: '更新的片段', status: 'running', incomplete: false },
+    ] }
+    emit({ runId: 'run-1', responseId: 'm', reasoning: '', content: '更新的片段', done: false, timeline })
+    late.resolve({ ...timeline, entries: [] })
+    await reading
+    expect(store.getState().timelines['run-1']).toBe(timeline)
+    store.getState().clearDisplay()
+    emit({ runId: 'run-1', responseId: 'm', reasoning: '', content: '迟到', done: false, timeline })
+    expect(store.getState().timelines).toEqual({})
+    expect(store.getState().liveOutput).toBeNull()
+    controller.abort()
+    await watching
+  })
+  it.each([
+    ['succeeded', 'success', '回复已完成。'],
+    ['cancelled', 'info', '已停止回复。'],
+    ['waiting-approval', 'warning', '操作等待批准，请确认待审批操作。'],
+    ['recovery-required', 'warning', '运行结果尚未确认，需要处理后才能继续。'],
+  ] as const)('已接受运行进入 %s 时通知一次，轮询和关闭后不重复', async (status, tone, message) => {
+    const store = localMemory().makeStore()
+    const backend = chatTestApi()
+    backend.hold()
+    await store.getState().ensureSession()
+    store.getState().setDraft('检查服务')
+    await store.getState().send(backend.api, chatTestModel)
+    backend.runs.get('run-1')!.status = status
+    if (status === 'succeeded' || status === 'cancelled') backend.session.activeRunId = undefined
+    await store.getState().refresh(backend.api)
+    await store.getState().refresh(backend.api)
+    expect(useNotificationStore.getState().notifications).toEqual([expect.objectContaining({ tone, message })])
+    useNotificationStore.getState().clear()
+    await store.getState().refresh(backend.api)
+    expect(useNotificationStore.getState().notifications).toEqual([])
+  })
+
+  it('轮询发现运行失败只通知一次，切换会话保留通知，返回历史不重复弹出', async () => {
+    const store = localMemory().makeStore()
+    const backend = chatTestApi()
+    backend.hold()
+    await store.getState().ensureSession()
+    store.getState().setDraft('分析故障')
+    await store.getState().send(backend.api, chatTestModel)
+    const run = backend.runs.get('run-1')!
+    run.status = 'failed'
+    run.error = { code: 'invalid-model-request', message: '模型请求的消息、工具或输出上限无效' }
+    backend.session.activeRunId = undefined
+    await store.getState().refresh(backend.api)
+    await store.getState().refresh(backend.api)
+    expect(useNotificationStore.getState().notifications).toEqual([
+      expect.objectContaining({ tone: 'danger', message: '已失败：模型请求的消息、工具或输出上限无效' }),
+    ])
+    const externalId = useNotificationStore.getState().notify({ tone: 'info', message: '其他页面反馈' })
+    await store.getState().newSession()
+    expect(useNotificationStore.getState().notifications).toEqual([
+      expect.objectContaining({ tone: 'danger', message: '已失败：模型请求的消息、工具或输出上限无效' }),
+      { id: externalId, tone: 'info', message: '其他页面反馈' },
+    ])
+    await store.getState().selectSession(backend.api, backend.session.id)
+    expect(store.getState().run?.status).toBe('failed')
+    expect(useNotificationStore.getState().notifications).toHaveLength(2)
+  })
+
+  it('提交回执已是失败终态时也通知，退出登录移除该反馈', async () => {
+    const store = localMemory().makeStore()
+    const backend = chatTestApi()
+    backend.hold()
+    const submit = backend.api.createTask.getMockImplementation()!
+    backend.api.createTask.mockImplementationOnce(async (...args) => {
+      const run = await submit(...args)
+      const failed = { ...run, status: 'failed' as const, error: { code: 'model-failed', message: '模型连接失败' } }
+      backend.runs.set(run.id, failed)
+      backend.session.activeRunId = undefined
+      return failed
+    })
+    await store.getState().ensureSession()
+    store.getState().setDraft('立即失败')
+    expect(await store.getState().send(backend.api, chatTestModel)).toBe(true)
+    expect(notificationMessage()).toBe('已失败：模型连接失败')
+    expect(useNotificationStore.getState().notifications).toHaveLength(1)
+    store.getState().clearDisplay()
+    expect(useNotificationStore.getState().notifications).toEqual([])
+  })
+
+  it('切换会话后迟到的失败运行回读不会通知或回灌旧状态', async () => {
+    const store = localMemory().makeStore()
+    const backend = chatTestApi()
+    backend.hold()
+    await store.getState().ensureSession()
+    store.getState().setDraft('旧会话')
+    await store.getState().send(backend.api, chatTestModel)
+    const task = deferred<Awaited<ReturnType<typeof backend.api.getTask>>>()
+    backend.api.getTask.mockReturnValueOnce(task.promise)
+    const refresh = store.getState().refresh(backend.api)
+    await vi.waitFor(() => expect(backend.api.getTask).toHaveBeenCalledTimes(2))
+    await store.getState().newSession()
+    task.resolve({ id: 'task-1', sessionId: backend.session.id, kind: 'agent', latestRun: {
+      ...backend.runs.get('run-1')!, status: 'failed', error: { code: 'model-failed', message: '旧会话失败' },
+    } })
+    await refresh
+    expect(useNotificationStore.getState().notifications).toEqual([])
+    expect(store.getState().run).toBeNull()
+  })
+
+  it('打开执行范围只创建服务端会话，保留草稿、附件和权限选择', async () => {
+    const local = localMemory()
+    const store = local.makeStore()
+    const backend = chatTestApi()
+    await store.getState().ensureSession()
+    store.getState().setDraft('部署之前先设置执行范围')
+    store.getState().setPermissionMode('assist')
+    await store.getState().addAttachments(backend.api, [new File(['image'], 'scope.png', { type: 'image/png' })])
+    const attachments = store.getState().session!.attachments
+    await store.getState().prepareRemoteSession(backend.api, chatTestModel)
+    expect(store.getState().session).toMatchObject({ draft: '部署之前先设置执行范围', permissionMode: 'assist', remote: { sessionId: 'server-session' }, attachments })
+    expect(store.getState().session?.pending).toBeUndefined()
+    expect(backend.api.createTask).not.toHaveBeenCalled()
+    await store.getState().prepareRemoteSession(backend.api, chatTestModel)
+    expect(backend.api.createSession).toHaveBeenCalledOnce()
+  })
+
+  it('真实权限模式随精确请求提交，回执丢失后不可改变重试模式', async () => {
+    const local = localMemory()
+    const store = local.makeStore()
+    const backend = chatTestApi()
+    await store.getState().ensureSession()
+    store.getState().setPermissionMode('full')
+    store.getState().setDraft('检查工作区')
+    backend.api.createTask.mockRejectedValueOnce(new Error('网络断开'))
+    expect(await store.getState().send(backend.api, chatTestModel)).toBe(false)
+    const pending = store.getState().session?.pending
+    expect(pending?.input.permissionMode).toBe('full')
+    store.getState().setPermissionMode('ask')
+    expect(store.getState().session?.permissionMode).toBe('full')
+    await store.getState().send(backend.api, chatTestModel)
+    expect(backend.api.createTask).toHaveBeenLastCalledWith(expect.any(String), pending?.input)
+  })
   it('编辑替换最后一轮并清除旧思考，其他标签和刷新读取一致，底部草稿保留', async () => {
     const local = localMemory()
     const store = local.makeStore()
@@ -337,7 +492,9 @@ describe('智能体本地会话', () => {
     expect(backend.api.attachmentBlob).not.toHaveBeenCalled()
     expect(backend.api.uploadAttachments).not.toHaveBeenCalled()
     expect(store.getState().session?.pending).toBeUndefined()
-    expect(useNotificationStore.getState().notifications).toEqual([])
+    expect(useNotificationStore.getState().notifications).toEqual([
+      expect.objectContaining({ tone: 'success', message: '回复已完成。' }),
+    ])
   })
 
   it('整批图片处理失败时不上传任何图片，草稿和既有附件保留', async () => {
@@ -867,7 +1024,8 @@ describe('智能体本地会话', () => {
     expect(local.files.has(legacy.attachments[0]!.id)).toBe(true)
     expect(backend.api.uploadAttachments).not.toHaveBeenCalled()
     expect(prepareAgentImage).not.toHaveBeenCalled()
-    expect(useNotificationStore.getState().notifications).toEqual([])
+    expect(useNotificationStore.getState().notifications).toHaveLength(2)
+    expect(useNotificationStore.getState().notifications.every(item => item.tone === 'success')).toBe(true)
   })
 
   it('重试成功只清本次发送引用的附件，窗口内新增的草稿附件保留', async () => {
@@ -987,7 +1145,7 @@ describe('基本聊天', () => {
     store.getState().setReasoningLevel('low')
     store.getState().setPermissionMode('assist')
     store.getState().setDraft('下一轮')
-    expect(store.getState().session).toMatchObject({ modelId: chatVisionTestModel.id, reasoningLevel: 'low', permissionMode: 'assist' })
+    expect(store.getState().session).toMatchObject({ modelId: chatVisionTestModel.id, reasoningLevel: 'low', permissionMode: 'ask' })
     expect(await store.getState().send(backend.api, chatVisionTestModel)).toBe(false)
     expect(backend.api.switchModel).not.toHaveBeenCalled()
     expect(store.getState().run).toMatchObject({ status: 'running', phase: 'final-memory' })
@@ -1146,7 +1304,8 @@ describe('基本聊天', () => {
     expect(backend.api.continueTask).toHaveBeenCalledExactlyOnceWith('task-1', expect.objectContaining({ content: '第二轮' }))
     expect(backend.api.listSessions).toHaveBeenCalledOnce()
     expect(store.getState().messages.filter(message => message.role === 'user').map(message => message.content)).toEqual(['第一轮', '第二轮'])
-    expect(useNotificationStore.getState().notifications).toEqual([])
+    expect(useNotificationStore.getState().notifications).toHaveLength(2)
+    expect(useNotificationStore.getState().notifications.every(item => item.tone === 'success')).toBe(true)
   })
 
   it('响应丢失后手动重试沿用原请求，刷新和轮询不会重新提交', async () => {
@@ -1375,18 +1534,21 @@ describe('多会话恢复与提交隔离', () => {
     expect(store.getState().listHasMore).toBe(true)
   })
 
-  it('静默会话列表读取失败保留页面状态而不弹消息，手动刷新失败才提示', async () => {
+  it('后台会话列表读取失败通知一次，手动刷新失败再次提示', async () => {
     const store = localMemory().makeStore()
     const backend = chatTestApi()
     backend.api.listSessions.mockResolvedValueOnce({ items: [backend.session], nextCursor: '', hasMore: false })
     await store.getState().loadSessions(backend.api)
     backend.api.listSessions.mockRejectedValue(new Error('会话列表连接失败'))
     await store.getState().loadSessions(backend.api, false, true)
-    expect(useNotificationStore.getState().notifications).toEqual([])
+    expect(notificationMessage()).toBe('会话列表连接失败')
+    await store.getState().loadSessions(backend.api, false, true)
+    expect(useNotificationStore.getState().notifications).toHaveLength(1)
     expect(store.getState().listError).toBe('会话列表连接失败')
     expect(store.getState().sessions).toEqual([backend.session])
     await store.getState().loadSessions(backend.api, false, false, true)
     expect(notificationMessage()).toBe('会话列表连接失败')
+    expect(useNotificationStore.getState().notifications).toHaveLength(2)
     expect(store.getState().listError).toBeNull()
     expect(store.getState().sessions).toEqual([backend.session])
     expect(store.getState().listLoading).toBe(false)
@@ -1630,7 +1792,7 @@ describe('会话重命名与删除', () => {
     await store.getState().deleteSession(backend.api, 'session-b')
     expect(store.getState().sessions.map(row => row.id)).toEqual(['session-a'])
     expect(store.getState().remoteSession?.id).toBe('session-a')
-    expect(useNotificationStore.getState().notifications).toEqual([])
+    expect(notificationMessage()).toBe('会话已删除。')
     expect(store.getState().listCursor).toBe('cursor-1')
     expect(store.getState().listHasMore).toBe(true)
     expect(local.adapter.read('session-b')).toBeNull()

@@ -102,10 +102,21 @@
 .chat-thought-toggle:hover { color: var(--t-fg); }
 .chat-thought-toggle > svg { flex-shrink: 0; }
 .chat-thought-preview { display: block; flex: 1; min-width: 0; height: 1.7em; overflow: hidden; white-space: nowrap; }
-.chat-thought-line { display: block; width: max-content; min-width: 100%; animation: chat-thought-roll 180ms ease-out; }
+.chat-thought-line { display: block; width: max-content; min-width: 100%; }
+.chat-thought[data-streaming] .chat-thought-line { animation: chat-thought-roll 180ms ease-out; }
 .chat-response { display: flex; flex-direction: column; gap: 6px; margin-bottom: 4px; }
 .chat-response .chat-message { margin: 0; }
 .chat-response .chat-markdown { margin-top: 0; }
+.chat-timeline { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.chat-tool { min-width: 0; color: var(--t-fg-muted); font-size: 12px; }
+.chat-tool-toggle { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 32px; text-align: left; }
+.chat-tool-toggle > svg { flex-shrink: 0; }
+.chat-tool-toggle:hover { color: var(--t-fg); }
+.chat-tool-name { min-width: 0; overflow-wrap: anywhere; font-family: var(--font-mono, monospace); }
+.chat-tool-status { margin-left: auto; flex-shrink: 0; }
+.chat-tool[data-status="failed"] .chat-tool-status, .chat-tool[data-status="denied"] .chat-tool-status { color: var(--t-danger); }
+.chat-tool-details { display: flex; flex-direction: column; align-items: stretch; gap: 6px; padding: 8px 0 8px 22px; }
+.chat-tool-data { max-height: 256px; min-width: 0; overflow: auto; overscroll-behavior: contain; white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 10px; border-left: 1px solid var(--t-panel-line); font-size: 12px; line-height: 1.6; }
 .chat-response[data-streaming] .chat-markdown > * { animation: chat-text-appear 160ms ease-out; }
 .chat-response-waiting { display: flex; align-items: center; gap: 5px; height: 28px; color: var(--t-fg-muted); }
 .chat-response-waiting > span { width: 5px; height: 5px; border-radius: 50%; background: currentColor; animation: chat-waiting-pulse 1.2s ease-in-out infinite; }

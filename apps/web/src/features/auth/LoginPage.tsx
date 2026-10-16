@@ -6,13 +6,15 @@ import { PasswordVisibilityButton } from '../security/passwordFieldParts'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { Info, TriangleAlert } from '../../components/icons'
 import { useSessionStore } from '../../stores/sessionStore'
+import { NotificationHost } from '../../components/NotificationHost'
+import { useFeedbackNotification } from '../../components/useFeedbackNotification'
+import { useNotificationStore } from '../../stores/notificationStore'
 
 /*
  * 登录页（/login，顶层平级路由，不进 AppShell、不包 RequireArea）。
  * 真实会话（Docker 运行时）经 /api/auth/login 登录；服务端中文错误（如「用户名或密码错误」）
- * 显示在 role="alert" 的错误框——不区分用户名错还是密码错，与服务端一致。
- * 会话 store 的一次性提示（如改密成功的「需用新密码重新登录」）在表单上方以 role="status" 展示，
- * 与开发账号提示同位、互不排斥；登录成功由 store 清除。
+ * 经全局通知显示——不区分用户名错还是密码错，与服务端一致。
+ * 会话 store 的一次性提示（如改密成功的「需用新密码重新登录」）经通知展示，登录成功由 store 清除。
  * 演示模式（本地无后端）不强制登录：访问 /login 直接回仪表盘。
  * 回跳由服务端裁决（GET /api/auth/session?returnTo=），本组件只执行 assign，不自行判定地址可否使用。
  * 裁决须绑回它裁决的那次请求：store 里的 returnToFor 与当前 URL 的 returnTo 不一致即当作尚未裁决——
@@ -38,7 +40,7 @@ const FIELD_CLASS =
  * app-canvas 提供色雾与细颗粒背景，卡片与侧栏的毛玻璃才有东西可糊。
  */
 function CenteredShell({ children }: { children: ReactNode }) {
-  return <main className="app-canvas flex min-h-dvh items-center justify-center p-4 text-fg">{children}</main>
+  return <><main className="app-canvas flex min-h-dvh items-center justify-center p-4 text-fg">{children}</main><NotificationHost /></>
 }
 
 /** 卡片内的提示条：图标 + 文字 + 色调三者同时表达，不只靠颜色。 */
@@ -81,7 +83,7 @@ export function LoginPage() {
   const [password, setPassword] = useState('')
   const [passwordVisible, setPasswordVisible] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  useFeedbackNotification(notice, 'info')
 
   const requestedReturnTo = new URLSearchParams(location.search).get('returnTo') ?? undefined
 
@@ -99,6 +101,7 @@ export function LoginPage() {
   // 就当尚未裁决（不跳转、不渲染裁决派生的提示）。这里只比请求值串，不做 origin 比对或再裁决。
   const verdictIsFresh = returnToFor === requestedReturnTo
   const adjudicated = verdictIsFresh && typeof returnTo === 'string' ? returnTo : null
+  useFeedbackNotification(phase === 'anonymous' && verdictIsFresh && requestedReturnTo !== undefined && returnTo === null ? '登录回跳：回跳地址不在允许名单，登录后将留在面板。' : null, 'warning')
 
   // 离开 SPA 的唯一出口：phase 到位且本次裁决可用时把浏览器送回来源应用。只在 effect 里 assign 一次，
   // 提交路径不重复调用——phase 变化自然走到这里。
@@ -150,17 +153,17 @@ export function LoginPage() {
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (submitting) return
-    setError(null)
     setSubmitting(true)
     try {
       await login(gateway, username, password)
+      useNotificationStore.getState().notify({ tone: 'success', message: '已登录 Elysian' })
       // 只有「没有可用的服务端裁决」才走站内导航：有裁决时 phase 变 authed 后由上面的 effect 离开 SPA。
       // 两条路径必须互斥，否则站内 navigate 与外站 assign 抢同一次跳转，用户会被先送回面板首页。
       if (adjudicated === null) {
         navigate(target, { replace: true })
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '登录失败')
+      useNotificationStore.getState().notify({ tone: 'danger', message: cause instanceof Error ? cause.message : '登录失败' })
       setSubmitting(false)
     }
   }
@@ -190,8 +193,6 @@ export function LoginPage() {
         ) : requestedReturnTo !== undefined && returnTo === null ? (
           <Notice role="alert" tone="warning">回跳地址不在允许名单，登录后将留在面板。</Notice>
         ) : null}
-
-        {notice ? <Notice role="status" tone="muted">{notice}</Notice> : null}
 
         <form className="mt-5 flex flex-col gap-4" onSubmit={(event) => void onSubmit(event)}>
           <div className="flex flex-col gap-1.5">
@@ -230,13 +231,6 @@ export function LoginPage() {
               <PasswordVisibilityButton visible={passwordVisible} onToggle={setPasswordVisible} />
             </div>
           </div>
-
-          {error ? (
-            <p role="alert" className="flex items-start gap-2 rounded-lg border border-danger/35 bg-danger/10 px-3 py-2.5 text-xs leading-5 text-danger">
-              <TriangleAlert aria-hidden size={14} className="mt-0.5 shrink-0" />
-              <span className="min-w-0">{error}</span>
-            </p>
-          ) : null}
 
           {/* 主按钮中性描边，动作写进文字（红线：不靠图标表意、不做强调填充底）。 */}
           <button

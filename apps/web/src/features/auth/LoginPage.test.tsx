@@ -152,7 +152,7 @@ describe('LoginPage', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
-  it('登录失败把服务端中文错误显示在 role="alert"', async () => {
+  it('登录失败把服务端中文错误放入通知区，表单可再次提交', async () => {
     const user = userEvent.setup()
     renderApp('/login', {
       gateway: gatewayWithSession(
@@ -168,6 +168,7 @@ describe('LoginPage', () => {
 
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('用户名或密码错误')
+    expect(screen.getByLabelText('通知')).toContainElement(alert)
     // 失败后表单可再次提交（登录中状态解除）。
     expect(screen.getByRole('button', { name: '登录' })).toBeEnabled()
   })
@@ -236,7 +237,7 @@ describe('LoginPage', () => {
     expect(await screen.findByRole('heading', { level: 1, name: '仪表盘' })).toBeInTheDocument()
   })
 
-  it('store 携带一次性提示时，登录页在表单上方以 role="status" 展示，且与开发账号提示互不排斥', async () => {
+  it('store 携带一次性提示时放入通知区，并保留开发账号提示', async () => {
     const gateway = gatewayWithSession({
       ...anonymousSession(),
       status: async () => ({ mode: 'real', authenticated: false, devAccount: true }),
@@ -246,6 +247,7 @@ describe('LoginPage', () => {
 
     const status = await screen.findByRole('status')
     expect(status).toHaveTextContent('密码已修改，请使用新密码重新登录')
+    expect(screen.getByLabelText('通知')).toContainElement(status)
     expect(screen.getByText(/开发模式已启用固定账号：dev \/ dev-elysian/)).toBeInTheDocument()
     expect(screen.getByLabelText('用户名')).toBeInTheDocument()
   })

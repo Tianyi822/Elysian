@@ -7,6 +7,7 @@ import { useAgentRuntimeStore } from '../../stores/agentRuntimeStore'
 import { useModelSettingsStore } from '../../stores/modelSettingsStore'
 import { demoAgentRuntimeInfo } from '../../adapters/mock/agent/agentRuntimeMock'
 import { useSessionStore } from '../../stores/sessionStore'
+import { useNotificationStore } from '../../stores/notificationStore'
 import { renderApp } from '../../test/renderApp'
 
 /*
@@ -102,7 +103,7 @@ describe('修改面板密码', () => {
     expect(screen.getByText('与新密码一致')).toBeInTheDocument()
   })
 
-  it('提交失败把中文错误显示在 role="alert"', async () => {
+  it('提交失败把中文错误放入通知区并保留密码草稿', async () => {
     const gateway = baseGateway(
       realSession({
         changePassword: async () => {
@@ -118,6 +119,8 @@ describe('修改面板密码', () => {
     await user.click(screen.getByRole('button', { name: '确认修改' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('当前密码不正确')
+    expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ tone: 'danger', message: '当前密码不正确' }))
+    expect(screen.getByLabelText('新密码')).toHaveValue('brand-new-pw')
     expect(screen.getByRole('button', { name: '修改密码' })).toBeEnabled()
   })
 

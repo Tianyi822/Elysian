@@ -5,6 +5,7 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { X } from '../../components/icons'
 import { useDependencyGuideStore } from '../../stores/dependencyGuideStore'
 import { useWebsitesStore } from '../../stores/websitesStore'
+import { useFeedbackNotification } from '../../components/useFeedbackNotification'
 
 const SECTION = 'panel-surface p-4'
 const ACTION = 'rounded-lg border border-line bg-surface px-3 py-2 text-xs font-medium text-fg hover:border-fg-subtle disabled:opacity-50'
@@ -46,6 +47,7 @@ export function CaddyConfigDialog({ onClose, onAddProject }: { onClose: () => vo
   const changed = selected !== null && (mode !== selected.accessMode || (mode === 'domain' && (normalized !== selected.domain || !!certificatePem)))
   const invalid = mode === 'domain' && !isValidWebsiteDomain(normalized)
   const needsCaddyToSave = mode === 'domain' || selected?.accessMode === 'domain'
+  useFeedbackNotification(error)
 
   function select(project: WebsiteProject) {
     certificateReadVersion.current += 1

@@ -67,7 +67,7 @@ describe('文件上传与下载交互', () => {
     expect(prepare.mock.calls[0]?.[1]?.aborted).toBe(true)
     await act(async () => finish({ ...download, name: 'etc.tar.gz' }))
     expect(start).not.toHaveBeenCalled()
-    expect(screen.getByText('已取消准备下载。')).toBeInTheDocument()
+    expect(within(screen.getByRole('dialog')).getByText('已取消准备下载。')).toBeInTheDocument()
   })
 
   it('目录右键上传固定到该目录，多选文件逐项展示上传结果', async () => {

@@ -44,6 +44,7 @@ beforeEach(async () => {
     addListener: vi.fn(), removeListener: vi.fn(), addEventListener: vi.fn(), removeEventListener: vi.fn(), dispatchEvent: () => false,
   }))
   useAgentChatStore.getState().clearDisplay()
+  useNotificationStore.getState().clear()
   await useAgentChatStore.getState().newSession()
 })
 
@@ -119,9 +120,9 @@ describe('基本聊天界面', () => {
     await waitFor(() => expect(retry).toBeEnabled())
     const alert = screen.getByRole('alert')
     expect(alert).toHaveTextContent(sessionError)
-    expect(within(alert).getAllByRole('button')).toHaveLength(1)
+    expect(within(alert).getByRole('button', { name: '关闭通知' })).toBeInTheDocument()
     expect(screen.getAllByText(sessionError, { exact: false })).toHaveLength(1)
-    expect(screen.queryByLabelText('通知')).not.toBeInTheDocument()
+    expect(within(screen.getByLabelText('通知')).getAllByRole('alert')).toHaveLength(1)
     if (modelError !== sessionError) {
       expect(alert).toHaveTextContent(`会话：${sessionError}`)
       expect(alert).toHaveTextContent(`模型：${modelError}`)
@@ -136,15 +137,14 @@ describe('基本聊天界面', () => {
     // 模型先恢复时，同一提示继续承载未完成的会话读取，防止重复点击。
     await waitFor(() => expect(retry).toHaveAccessibleName('重新读取会话'))
     expect(retry).toBeDisabled()
-    expect(screen.getByRole('alert')).toBe(alert)
     await act(async () => { finishSession(backend.session) })
-    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole('button', { name: '重新读取会话' })).not.toBeInTheDocument())
     expect(screen.getByRole('button', { name: '选择模型：test-model' })).toBeEnabled()
     expect(backend.api.createTask).not.toHaveBeenCalled()
     expect(backend.api.continueTask).not.toHaveBeenCalled()
   })
 
-  it('历史运行失败保留为可回读的页面状态，不弹操作通知', async () => {
+  it('历史运行失败在通知区显示原因，不在输入框附近重复显示', async () => {
     const backend = chatTestApi()
     backend.hold()
     await backend.api.createTask('server-session', { requestId: 'failed-run', content: '此前的问题' })
@@ -155,8 +155,36 @@ describe('基本聊天界面', () => {
     backend.session.activeRunId = undefined
     renderChat(backend, '/agent?session=server-session')
     expect(await screen.findByRole('alert')).toHaveTextContent('历史模型请求失败')
-    expect(document.querySelector('.chat-compose-area [role="alert"]')).toHaveTextContent('历史模型请求失败')
+    expect(screen.queryByRole('status', { name: '运行结果' })).not.toBeInTheDocument()
+    expect(within(screen.getByLabelText('通知')).getAllByRole('alert')).toHaveLength(1)
+  })
+
+  it('已接受任务异步失败使用统一消息组件，通知关闭后不重复弹出且可编辑重发', async () => {
+    const backend = chatTestApi()
+    backend.hold()
+    renderChat(backend)
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: '请检查服务' } })
+    await waitFor(() => expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: '发送消息' }))
+    await screen.findByRole('article', { name: '你的消息' })
+    await waitFor(() => expect(useAgentChatStore.getState().sending).toBe(false))
+    const run = backend.runs.get('run-1')!
+    run.status = 'failed'
+    run.phase = 'completed'
+    run.error = { code: 'invalid-model-request', message: '模型请求的消息、工具或输出上限无效' }
+    backend.session.activeRunId = undefined
+    await act(async () => { await useAgentChatStore.getState().refresh(backend.api) })
+    const notice = within(screen.getByLabelText('通知'))
+    expect(notice.getAllByRole('alert')).toHaveLength(1)
+    expect(notice.getByRole('alert')).toHaveTextContent('已失败：模型请求的消息、工具或输出上限无效')
+    expect(screen.queryByRole('status', { name: '运行结果' })).not.toBeInTheDocument()
+    fireEvent.click(notice.getByRole('button', { name: '关闭通知' }))
+    await act(async () => { await useAgentChatStore.getState().refresh(backend.api) })
     expect(screen.queryByLabelText('通知')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '编辑这条消息' }))
+    expect(screen.getByRole('textbox', { name: '编辑消息内容' })).toHaveValue('请检查服务')
+    expect(screen.getByRole('button', { name: '发送' })).toBeEnabled()
+    expect(screen.queryByRole('article', { name: '助手回复' })).not.toBeInTheDocument()
   })
 
   it.each(['会话', '模型'] as const)('仅%s读取失败时只重试对应读取', async source => {
@@ -169,7 +197,7 @@ describe('基本聊天界面', () => {
     backend.api.getSession.mockClear().mockResolvedValue(backend.session)
     readModels.mockClear()
     fireEvent.click(retry)
-    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole('button', { name: `重新读取${source}` })).not.toBeInTheDocument())
     expect(backend.api.getSession).toHaveBeenCalledTimes(source === '会话' ? 1 : 0)
     expect(readModels).toHaveBeenCalledTimes(source === '模型' ? 1 : 0)
   })
@@ -278,17 +306,22 @@ describe('基本聊天界面', () => {
     fireEvent.click(screen.getByRole('button', { name: '发送消息' }))
     await waitFor(() => expect(backend.api.stream).toHaveBeenCalled())
     expect(screen.getByRole('status', { name: '等待模型回复' })).toBeInTheDocument()
-    act(() => emit({ runId: 'run-1', responseId: 'm1', reasoning: '检查问题', content: '**先显示第一段**', done: false }))
+    const timeline = (text: string, done = false) => ({ runId: 'run-1', status: done ? 'succeeded' as const : 'running' as const, done, finalResponseId: done ? 'm1' : undefined, entries: [
+      { id: 'm1:reasoning', kind: 'reasoning' as const, modelRequestId: 'm1', requestIndex: 0, startedAt: '', status: done ? 'succeeded' as const : 'running' as const, text: '检查问题', incomplete: false },
+      { id: 'm1:content', kind: 'content' as const, modelRequestId: 'm1', requestIndex: 0, startedAt: '', status: done ? 'succeeded' as const : 'running' as const, text, incomplete: false },
+    ] })
+    act(() => emit({ runId: 'run-1', responseId: 'm1', reasoning: '检查问题', content: '**先显示第一段**', done: false, timeline: timeline('**先显示第一段**') }))
     expect(await screen.findByText('先显示第一段')).toHaveProperty('tagName', 'STRONG')
     expect(screen.queryByRole('status', { name: '等待模型回复' })).not.toBeInTheDocument()
     expect(useAgentChatStore.getState().run?.status).toBe('running')
     expect(useAgentChatStore.getState().messages).toHaveLength(1)
     const article = screen.getByRole('article', { name: '助手回复' })
     expect(article.parentElement).toHaveClass('chat-response')
-    expect(article.parentElement?.querySelector('.chat-thought')).not.toBeNull()
-    act(() => emit({ runId: 'run-1', responseId: 'm1', reasoning: '检查问题', content: '**先显示第一段**\n\n接着显示第二段', done: false }))
+    expect(article.closest('.chat-timeline')?.querySelector('.chat-thought')).not.toBeNull()
+    act(() => emit({ runId: 'run-1', responseId: 'm1', reasoning: '检查问题', content: '**先显示第一段**\n\n接着显示第二段', done: false, timeline: timeline('**先显示第一段**\n\n接着显示第二段') }))
     expect(await screen.findByText('接着显示第二段')).toBeInTheDocument()
     backend.complete('**先显示第一段**\n\n接着显示第二段')
+    backend.timelines.set('run-1', timeline('**先显示第一段**\n\n接着显示第二段', true))
     await act(async () => { await useAgentChatStore.getState().refresh(backend.api) })
     expect(screen.getAllByRole('article', { name: '助手回复' })).toHaveLength(1)
     expect(screen.getByRole('article', { name: '助手回复' })).toBe(article)
@@ -321,9 +354,7 @@ describe('基本聊天界面', () => {
     expect(screen.getByRole('button', { name: '正在保存回复' })).toHaveAttribute('aria-busy', 'true')
     expect(screen.getByRole('button', { name: '选择模型：test-model' })).toBeEnabled()
     expect(screen.getByRole('button', { name: '选择思考等级：高' })).toBeEnabled()
-    expect(screen.getByRole('button', { name: '权限模式：请求批准' })).toBeEnabled()
-    await user.click(screen.getByRole('button', { name: '权限模式：请求批准' }))
-    await user.click(screen.getByRole('menuitemradio', { name: '帮我批准' }))
+    expect(screen.getByRole('button', { name: '权限模式：请求批准' })).toBeDisabled()
     await user.click(screen.getByRole('button', { name: '选择模型：test-model' }))
     await user.click(screen.getByRole('menuitemradio', { name: 'test-vision-model' }))
     await user.click(screen.getByRole('button', { name: '选择思考等级：高' }))
@@ -344,7 +375,7 @@ describe('基本聊天界面', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled())
     expect(screen.queryByRole('button', { name: '正在保存回复' })).not.toBeInTheDocument()
     expect(useAgentChatStore.getState().remoteSession?.activeRunId).toBeUndefined()
-    expect(useAgentChatStore.getState().session).toMatchObject({ modelId: chatVisionTestModel.id, reasoningLevel: 'low', permissionMode: 'assist' })
+    expect(useAgentChatStore.getState().session).toMatchObject({ modelId: chatVisionTestModel.id, reasoningLevel: 'low', permissionMode: 'ask' })
     await user.click(screen.getByRole('button', { name: '发送消息' }))
     await waitFor(() => expect(backend.api.continueTask).toHaveBeenCalledWith('task-1', expect.objectContaining({ content: '下一轮', reasoningLevel: 'low' })))
     expect(backend.api.switchModel).toHaveBeenCalledWith('server-session', { modelProfileId: chatVisionTestModel.id, modelRevision: chatVisionTestModel.revision })
@@ -589,16 +620,17 @@ describe('基本聊天界面', () => {
     expect(history.scrollTop).toBe(1000)
   })
 
-  it('权限菜单可选择并恢复本地偏好，明确标注自动审批仍为预览', async () => {
+  it('权限菜单可选择真实模式并恢复偏好，提供执行范围入口', async () => {
     const user = userEvent.setup()
     const view = renderChat()
     await waitFor(() => expect(screen.getByRole('button', { name: '选择思考等级：高' })).toBeEnabled())
     await user.click(screen.getByRole('button', { name: '权限模式：请求批准' }))
     expect(screen.getAllByRole('menuitemradio')).toHaveLength(3)
-    expect(screen.getByRole('menuitemradio', { name: '完全开放' })).toHaveAccessibleDescription('免逐项审批暂未接入，目前仅保存选择。')
+    expect(screen.getByRole('menuitemradio', { name: '完全开放' })).toHaveAccessibleDescription('授权范围内免逐项审批，系统禁区与资源限制继续生效。')
+    expect(screen.getByRole('menuitem', { name: '执行范围…' })).toBeInTheDocument()
     await user.click(screen.getByRole('menuitemradio', { name: '帮我批准' }))
     expect(useAgentChatStore.getState().session?.permissionMode).toBe('assist')
-    expect(screen.getByText('预览')).toBeInTheDocument()
+    expect(screen.queryByText('预览')).not.toBeInTheDocument()
     view.unmount()
     renderChat()
     expect(screen.getByRole('button', { name: '权限模式：帮我批准' })).toBeEnabled()

@@ -19,6 +19,8 @@ import { WebsitesRemoveDialog } from './WebsitesRemoveDialog'
 import { WebsitesSettingsDialog } from './WebsitesSettingsDialog'
 import { CaddyConfigDialog } from './CaddyConfigDialog'
 import { filterWebsiteProjects } from './websitesListing'
+import { useFeedbackNotification } from '../../components/useFeedbackNotification'
+import { useNotificationStore } from '../../stores/notificationStore'
 
 /**
  * 网站项目面板：工具栏（添加项目 + 分类/搜索/刷新）、代理通道横幅、Docker 区
@@ -43,6 +45,9 @@ function ProxyStatusBanner({
   reconciling: boolean
   onReconcile: () => void
 }) {
+  useFeedbackNotification(unavailable
+    ? `反向代理通道不可用${detail ? `：${detail}` : ''}。当前无法核对域名路由或证书状态。`
+    : `反向代理配置未完全生效：${detail ?? '请重新下发配置'}`, 'warning')
   if (unavailable) {
     return (
       <p
@@ -81,6 +86,8 @@ export function WebsitesPanel() {
   const tasks = useWebsiteDeploymentsStore((s) => s.tasks)
   const taskError = useWebsiteDeploymentsStore((s) => s.error)
   const [operationError, setOperationError] = useState<string>()
+  useFeedbackNotification(operationError)
+  useFeedbackNotification(taskError)
   const [rollbackIds, setRollbackIds] = useState<readonly string[]>([])
   const hasActiveTask = tasks.some((task) => websiteDeploymentIsActive(task.state))
   useEffect(() => { void useWebsiteDeploymentsStore.getState().refresh(gateway) }, [gateway])
@@ -162,7 +169,6 @@ export function WebsitesPanel() {
         </div>
       </div>
 
-      {operationError && <p role="alert" className="mb-4 text-xs text-danger">{operationError}</p>}
       {taskListOpen && <div className="mb-4 space-y-2 panel-surface p-4" aria-label="部署任务列表">
         {taskError ? <p role="alert" className="text-xs text-danger">{taskError}</p> : tasks.length === 0 ? <p className="text-xs text-fg-muted">暂无部署任务</p> : tasks.map((task) => <button type="button" key={task.id} onClick={() => setSelectedTask(task)} className="flex w-full flex-wrap items-center justify-between gap-2 rounded-lg border border-line p-3 text-left text-xs hover:bg-surface-raised"><span className="min-w-0 break-all">{task.name}</span><span className="flex flex-col gap-1 text-right"><span>{deploymentTaskSummary(task)}</span>{!websiteDeploymentIsActive(task.state) && task.state !== 'awaiting-config' ? <time dateTime={task.updatedAt} className="text-fg-muted">完成于 {formatDateTime(task.updatedAt)}</time> : null}</span></button>)}
       </div>}
@@ -207,7 +213,7 @@ export function WebsitesPanel() {
                     .setRunning(gateway, project, project.runState !== 'running')
                 }
                 onRedeploy={() => setRedeployTarget(project)}
-                onRollback={project.previousRelease ? () => { setOperationError(undefined); setRollbackIds((ids) => [...ids, project.id]); void gateway.websites.deployment?.rollback(project.id).then((task) => { useWebsiteDeploymentsStore.getState().put(task); setSelectedTask(task) }).catch((error: unknown) => setOperationError(error instanceof Error ? error.message : '回滚提交失败')).finally(() => setRollbackIds((ids) => ids.filter((id) => id !== project.id))) } : undefined}
+                onRollback={project.previousRelease ? () => { setOperationError(undefined); setRollbackIds((ids) => [...ids, project.id]); void gateway.websites.deployment?.rollback(project.id).then((task) => { useWebsiteDeploymentsStore.getState().put(task); setSelectedTask(task); useNotificationStore.getState().notify({ tone: 'info', message: `已提交项目 ${project.name} 的回滚任务` }) }).catch((error: unknown) => setOperationError(error instanceof Error ? error.message : '回滚提交失败')).finally(() => setRollbackIds((ids) => ids.filter((id) => id !== project.id))) } : undefined}
                 onOpenSettings={() => useWebsitesStore.getState().openSettings(project)}
                 onOpenRemove={() => useWebsitesStore.getState().openRemove(project)}
               />
