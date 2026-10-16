@@ -71,31 +71,42 @@ Docker 环境中的 SQLite 使用面板持久卷 `~/.Elysian/data/sqlite`：可�
 
 Docker 页的「工作区」集中保存 compose、`.env`、Dockerfile 和挂载配置，支持上传文件或目录、编辑文本、复制真实绝对路径、检查 compose 引用与构建镜像。文件保存在 `<mountRoot>/elysian/apps/<slug>`，登记表位于 `~/.Elysian/config/container-apps.json`；文件管理不依赖 Docker Engine 就绪，镜像构建需要引擎可用。compose 自检只检查可识别的路径引用，界面同时显示判定范围与未能判定的项目。面板不会执行 `docker compose up`，启动整套服务需在宿主机执行；本地演示模式仅使用内存数据。机制见 [工作区约定](docs/adr/0020-container-app-workspaces.md) 与 [镜像构建约定](docs/adr/0021-container-image-build.md)。
 
+镜像构建派发前持久记录 `mayStillRun` 与派发阶段，仅收到 Docker Engine 完整结束响应后清除。派发后的取消、超时、断流或面板重启不能确认 daemon 已停止时，任务显示「构建停止结果未确认，资源保持占用」，保留工作区与镜像预留、阻止新的镜像构建，Agent 继续保留执行屏障；同名或同摘要镜像存在不能作为停止证明。尚未派发的取消和失败可正常收口。旧失败、取消或中断记录缺少派发证明时也保守保留，未确认记录不按 30 天清理；当前没有自动解除此状态的入口，需要运维核实 Docker 的实际执行状态后处理持久任务记录，不会自动重跑或根据镜像反推成功。
+
 ## Agent 能力封装
 
-[agent/kardia](apps/server-go/internal/agent/kardia/) 提供 Go 插件底座，[agent/tools](apps/server-go/internal/agent/tools/) 独立封装现有能力，由宿主注入域对象后交给 Kardia 管理。两者是进程内库层；[agent/harness](apps/server-go/internal/agent/harness/) 通过装配层消费其中四条 Docker 只读工具，提供顺序工具批次与模型驱动的单 Agent 任务 API，并在固定会话环境中装配技能、MCP 和经审批的容器脚本。九个能力子包共提供 28 条工具，其中 3 条构建任务工具按依赖是否注入登记；终端子包只提供可被插件注入的会话工具箱，库中登记的工具不自动向运行 API 开放。
+[agent/kardia](apps/server-go/internal/agent/kardia/) 管理插件、依赖、工具登记、事件和调用生命周期；[agent/tools](apps/server-go/internal/agent/tools/) 提供统一 Registry，[agent/harness](apps/server-go/internal/agent/harness/) 管理固定能力快照、授权、审批、资源锁、审计及恢复。平台工具、任务文件、Bash、技能脚本和 MCP 调用均经过 Registry；父进程先持久化派发决定，再签发绑定 operation、参数摘要、快照和 dispatchId 的内部单次授权，Registry 和域执行后端分别核验，直接调用与重复消费均拒绝。`internal/app` 为页面和插件注入同一组域实例，不向模型开放宿主 shell 或 Docker 传输器。平台能力与权限边界见本地 [ADR-0033](docs/adr/0033-agent-platform-tools-and-permissions.md)。
 
 | 能力子包 | 已封装入口 |
 | --- | --- |
-| docker | 容器、镜像、策略、自身容器查询与镜像仓库地址校验 |
-| accounts | 系统账号列举、按名查询与托管 UID 判定 |
-| auth | 会话计数、凭据初始化状态与回跳白名单 |
-| websites | 网站登记摘要与 Caddy 配置摘要 |
-| containerapps | 工作区列举、查询、路径、文件列表、文本读取、compose 自检，以及构建任务列举、查询、取消 |
-| firewall | 幂等放行端口，返回 opened／skipped／failed 的真实状态 |
-| logs | 运行日志与操作日志写入 |
-| panel | 面板状态、更新检查与提交历史 |
-| terminals | `seam.TerminalKit` 命名服务 |
+| files／workspace | 授权业务目录文本列举、读写、复制、移动、删除；Task 工作区使用不可变候选版本和事务 CAS |
+| Bash／scripts | 命令文本、工作区脚本及已加载技能脚本，经固定摘要镜像的受限容器执行 |
+| docker | 脱敏摘要、镜像查询和拉取、安全模板创建、精确授权的容器启停重启与删除 |
+| security／firewall | SSH、账号与安全状态、精确业务端口规则和 IP 解封；不开放管理入口变更 |
+| database | 版本与实例发现、固定元数据和指标、逻辑库创建删除、受管容器及专属卷生命周期；不开放凭据或任意协议终端 |
+| websites | 来源分析、构建部署、状态日志、启停、访问配置、回滚、删除和任务取消 |
+| containerapps | 工作区文件、自检、内容快照、构建预览、提交、状态日志和取消；不执行 compose up |
+| logs／platform／panel | 有界结构化日志、依赖状态、面板信息及更新检查；不开放日志伪造、依赖安装或面板维护写操作 |
 
 调用顺序为 `tools.Install(ctx, root, tools.Plugin, 能力插件...)` → `tools.RegistryFrom(root)` → `registry.Schemas()`／`registry.Execute(root, name, args)`；插件须按依赖顺序传入，装载失败会逆序回滚，宿主退出时逆序销毁返回的 fiber。工具登记跟随提供者的激活代，撤销后旧处理器不可调用；参数模式与调用参数均使用独立快照。接入示例见 [example_test.go](apps/server-go/internal/agent/tools/example_test.go)，边界与设计见本地 [ADR-0023](docs/adr/0023-agent-capability-tool-layer.md)。
 
-工具层不裁决风险与审批，只透传 `tools/pre-execute` 的拒绝。Caddy 工具返回监听地址、路由数量与 TLS 配置状态，不返回配置原文；会话 ID、密码哈希和网站来源令牌不进入状态摘要。文件管理、平台依赖安装、数据库管理以及删除、重启、发布、改密、构建提交、容器应用工作区写文件尚未开放为内置 Agent 工具；Agent Task 自有文件工作区另由运行内核管理。门禁为 `bash apps/server-go/dev-check.sh ./internal/agent/... ./internal/app ./cmd/elysian`，临时测试文件使用 `t.TempDir()` 自动清理；真实域对象由宿主持有和释放。
+审批策略由 harness 集中决定，工具的只读声明不能自行取得免审批权限。默认开放已确认的脱敏查询；变更必须命中管理员预先建立的目录或精确平台资源 grant，发现资源不构成纳管授权。登录身份、审批和执行配置、模型/MCP 配置、审计事实、系统目录和凭据路径始终禁止通过 Agent 修改。业务文件仅支持无链接、单硬链接的普通文本文件；复制与移动要求同授权根且目标不存在，写删要求原内容摘要。宿主 `rw` 是真实修改，不承诺自动回滚。Bash 的 `rm`、`mv`、重定向及脚本间接删除由容器、挂载权限与系统权限约束，不依赖命令黑名单。长任务采用持久任务引用、状态和分页日志；等待释放 Worker，资源锁与执行屏障保留到终态。提交超时按原 requestId 核实，不重投；停止聊天回复不会取消已接受的部署或构建任务。协议层每次模型请求最多提供 128 个工具定义，单条消息或模型响应最多包含 64 次工具调用；新 Run 的大目录通过按需加载保持更小的可见集，固定目录最多 512 项，超限明确拒绝。门禁为 `bash apps/server-go/dev-check.sh ./internal/agent/... ./internal/app ./cmd/elysian`，临时测试文件使用 `t.TempDir()` 自动清理。
+
+聊天权限菜单每轮提交 `permissionMode` 并固定策略版本与决定来源：`ask` 对变更、Bash 和脚本逐项审批；`assist` 自动批准可恢复的 Task 工作区写入，以及无宿主写权限、无出网授权的隔离执行；`full` 免除已授权范围内的逐项审批，硬性禁区、资源身份、撤销和执行限额继续生效。MCP 仍按原有显式信任规则执行。旧浏览器预览偏好统一迁回 `ask`，保留草稿、附件与未确认的精确请求。「执行范围…」选择既有执行配置、目录／网络／平台目标 grant，显示真实路径、容器映射和 ro/rw；授权创建仍走管理员 API。待审批操作在聊天中恢复完整参数、命令、目标、工作区版本和挂载范围，可批准、拒绝或取消本轮。
+
+文件审批按固定工作区版本显示修改前后；宿主文件仅复用同一 Run 内摘要完全匹配的已确认读取回执，不为预览增加宿主读取。较大或非文本内容显示大小与摘要，缺少原文回执时明确标记仅摘要。宿主文件根还固定设备号和 inode，根被替换后拒绝继续操作；已有文件替换要求能够确认扩展 ACL 不会丢失，无法核验的平台保守拒绝替换。数据库创建／对账与镜像拉取使用独立持久任务；状态和日志使用观察锁、取消使用控制锁，不被原任务的资源锁阻塞。数据库取消后不能确认完成时仍保留未知状态及屏障。Agent 日志仅开放固定阶段、时间、状态或脱敏结构化投影，不把可能含源码秘密及应用凭据的自由输出送入模型。
 
 ## Agent 任务运行
 
-真实部署保留 `tool-batch/v1` 与旧 `agent/v1` 的读取、排队执行兼容；新建和继续的单 Agent Run 使用 `agent/v2`。内置工具仍只有 `docker_containers_list`、`docker_images_list`、`docker_policy_view`、`docker_self_container` 四条空参数 Docker 只读工具。v2 可按会话环境额外启用技能包、MCP 工具与资料、经审批的容器脚本。全部入口要求管理员会话与同源请求，浏览器断连、退出登录或登录会话替换不取消已接受任务。Web 的「Ely 智能体」在 `/agent` 提供文本与图片聊天：选择已配置且支持文本与工具调用的模型，首条消息创建服务端会话与 Task，后续消息续用该 Task，公开用户消息和模型答复经现有 API 分页回读，模型答复按 Markdown 渲染标题、列表、代码、引用、链接与表格，运行期间轮询状态并禁用重复发送。回答增量约 40ms 按词块平滑展示，新文本块短暂淡入，减少动态效果偏好关闭动画；思考与答复组内间距 6px。模型返回的思考文本默认折叠，只显示最新一行并平滑跟随尾部，换行时滚动切换；展开后在最高 192px 的区域内滚动更新，手动上滚时保留阅读位置，不显示“Ely 正在思考／回复”等占位组件。刷新、返回与重新登录均恢复上次选中的会话；URL 的 `?session=` 优先于浏览器上次选择，未创建的草稿用浏览器历史状态保存本地 ID 以支持前进和后退，没有可恢复指针时选择最近活动的服务端会话，列表为空才打开新会话。浏览器按会话分别保存草稿、附件、选择与未确认请求，真实历史由服务端持久化；退出登录清空展示内容，不删除历史或取消已接受任务。请求失败显示错误并保留草稿，未确认的提交在手动重试时沿用原 requestId，不自动重新执行。图片附件支持浏览器保存、预览与移除，经同源 API 上传后由声明支持图片输入的模型接收；不支持图片的模型会明确拦截带图发送。权限菜单恢复“请求批准／帮我批准／完全开放”的本地选择与保存；自动批准和免逐项审批尚未接入，菜单说明与预览标识明确提示，实际操作仍按服务端规则审批。思考等级只提供模型声明的档位，未选择时取模型声明的默认档（模型修订的 defaultReasoningLevel，官方预设按文档填入，如 DeepSeek high、智谱 max；未声明时优先「高」），随本轮消息的 reasoningLevel 提交；运行与未确认提交期间锁定选择，切换模型回到新模型的默认档。其余六个 Agent 路由保持空白，所有入口均不显示顶部 tab 栏。模型目录与设置复用 `modelSettings`，聊天复用会话和运行 API；思考和回答通过只读 SSE 快照流实时显示，短连接重连不会重新提交模型请求；不提供自动重发或多 Agent 调度。本地无后端演示禁用发送，不模拟模型回复。`GET /api/agent/runtime` 分别报告 `batch`、`agent`、`skills`、`mcp`、`containerExecution`、`approvals`、`workflow` 的装配可用性；配置和服务的具体连通性仍由创建、探测与执行结果确认。未配置模型不影响顺序批次。
+Bash 的宿主目录挂载额外要求所有祖先由 root 持有且不可被组或其他用户写入，派发前有界遍历拒绝敏感文件名、链接、硬链接及特殊文件。授权根本身可由业务 UID 写入，实际访问仍受 UNIX 权限约束；目录不满足时拒绝执行。管理员应使用独立普通业务目录，并负责不在已授权目录中随后放入凭据。文件根目录取自启动时已有执行 grant，新增根目录后须重启面板装配；每轮仍固定 grant 修订并检查停用及撤销。
+
+真实部署保留 `tool-batch/v1` 与旧 `agent/v1` 的四条 Docker 只读工具兼容；新建和继续的单 Agent Run 使用 `agent/v2`。新 v2 会话默认选入已装配的 Agent 平台工具和 Task 工作区工具，已有显式环境通过「执行范围…」更新。工作区支持列举、读取、写入、复制、移动和删除；`task_bash_command` 接受完整 Bash 命令文本，`task_bash_script` 执行固定摘要的工作区脚本，二者均须选择已有 Bash profile。执行器固定 UID 65532、只读根文件系统、无特权、CPU／内存／PID／时间限额；可选目录和网络 grant，出网仅经精确授权代理。全部入口要求管理员会话与同源请求，浏览器断连、退出登录或登录会话替换不取消已接受任务。
+
+Web 的「Ely 智能体」在 `/agent` 提供文本与图片聊天。模型须声明文本与工具调用能力；首条消息创建服务端 Task，后续续用，公开历史以服务端为准。答复按 Markdown 渲染，回答增量约 40ms 按词块平滑展示；思考默认折叠一行，展开后在最高 192px 内滚动。刷新、返回与重新登录恢复选中会话，URL `?session=` 优先；浏览器按会话保存草稿、附件、选择和精确 pending 请求，退出登录清空展示而保留历史。失败保留输入，手动重试沿用 requestId。图片上传与模型输入规则保持不变。权限模式与思考等级随每轮提交，在运行及未确认期间锁定；模式与策略版本进入 Run 快照和幂等核对。其余六个 Agent 路由保持空白，所有入口不显示顶部 tab 栏；设置仍复用 `modelSettings`，输出 SSE 仅回读事实，不自动重新提交。本地无后端演示禁用发送，不模拟回复。`GET /api/agent/runtime` 报告各项装配状态，具体可用性由配置和执行结果确认。
 
 回复中的代码块按声明语言高亮，深浅主题分别配色，并提供语言名称与逐块复制按钮；支持常用运维和开发语言（含 JSX、TSX、TOML 及常见别名）。未知语言、未注明语言或单块超过 64 KiB 时完整显示纯文本，不猜测语言、不解析原始 HTML；代码与宽表格可横向滚动，流式追加保留代码块的滚动位置。
+
+回复过程按模型推理请求顺序保留思考、正文与工具调用，后续请求追加到下方；各段思考独立折叠，工具行显示真实状态，展开后读取参数与分页调用结果，长内容在有界区域内滚动。`GET /api/agent/runs/{id}/timeline` 从原始记录恢复时间线，`/output` SSE 的 `timeline` 字段传输同结构快照并保留旧字段；工作记忆与其他内部整理请求不进入聊天。终答公开消息原位确认对应正文，每段正文可复制，思考与工具过程不提供复制。失败、超时和停止确认后保留已收到的未完成片段，刷新可恢复；旧记录中未保存的片段无法补回。仅当前生成段播放逐词动画，向上阅读时暂停自动跟随，迟到读取不得覆盖更新的流式快照。
 
 图片仅支持 JPEG／PNG，不限制每条消息的图片张数，压缩后的图片合计不得超过 8 MiB；每张在浏览器独立处理至不超过 1 MiB、单边不超过 6000 像素。已合规图片保留原字节；超限时优先保留尺寸与细节，PNG 先尝试无损重编码，透明图片保留 PNG；不透明图片按 JPEG 质量 0.95 至 0.80 寻找可用最高档，仍超限才逐步缩小尺寸，每次都从原图绘制。整批处理并核对总量成功后才按序逐张上传，每张独立提供 120 秒上传时限，中途失败或取消停止后续上传，后端继续校验格式、尺寸与限额；失败保留草稿。
 
@@ -118,6 +129,7 @@ Ely 采用左侧会话列表：进入聊天页不自动折叠主导航，继承�
 | `POST /runs` | 提交 `{requestId,kind:"tool-batch",steps:[{tool,args:{}}]}`；落盘返回 202，同 requestId 和输入回读 200，冲突 409 |
 | `GET /runs?status=&requestId=&sessionId=&taskId=&workflowId=&cursor=&limit=`、`GET /runs/:id` | 分页查询或读取运行详情、固定快照、预算与状态 |
 | `GET /runs/:id/calls?cursor=&limit=`、`GET /runs/:id/events?after=&limit=` | 工具结果与事实事件；after、seq 为十进制字符串 |
+| `GET /runs/:id/timeline`、`GET /runs/:id/output` | 推理请求、思考、正文和工具状态的只读时间线；输出 SSE 附带同结构 timeline，工具结果展开时经 Calls 分页读取 |
 | `POST /runs/:id/cancel` | 请求取消，响应中的状态才是停止事实 |
 | `GET/POST /model-services`、`PUT /model-services/:id` | 共享服务信息与多模型列表；整组保存须 expectedRevision，一次原子写入 |
 | `POST /model-services/discover` | 以表单连接信息读取远端模型目录；可按 serviceId/expectedRevision 沿用同地址的凭据，不保存配置 |
@@ -125,14 +137,15 @@ Ely 采用左侧会话列表：进入聊天页不自动折叠主导航，继承�
 | `GET/POST /sessions`、`GET /sessions/:id` | 创建 `{title,modelProfileId,modelRevision}` 或查询会话；列表可加 `sort=activity` 按活动时间分页，后续页透传返回的 cursor，并可设置 limit；活动游标与缺省创建顺序的数字游标不能混用 |
 | `PUT /sessions/:id/model` | 空闲时提交 `{modelProfileId,modelRevision}` 切换模型，返回能力与缓存提示 |
 | `GET /sessions/:id/messages?after=&limit=`、`GET /sessions/:id/tasks` | 公开对话和任务分页 |
-| `POST /sessions/:id/tasks`、`POST /tasks/:id/runs` | 新任务或继续输入：`{requestId,content,reasoningLevel?,skills?,resources?,prompts?}` |
+| `POST /sessions/:id/tasks`、`POST /tasks/:id/runs` | 新任务或继续输入：`{requestId,content,permissionMode?,reasoningLevel?,skills?,resources?,prompts?}` |
+| `GET /tools?sessionId=&domain=&available=` | 鉴权工具目录，返回元数据、选择状态与可用性 |
 | `GET /tasks/:id`、`GET /tasks/:id/memory?revision=`、`GET /runs/:id/model-requests` | 任务、工作记忆和模型过程；推理请求包含供应商返回的思考文本或公开摘要，不含签名、加密内容与 debug |
 | `GET/PUT /sessions/:id/environment` | 读取或以 `{expectedRevision,environment}` 更新会话环境，首次 expectedRevision 为 0，仅空闲时允许修改 |
 | `GET /runs/:id/operations`、`GET /runs/:id/context-items` | 读取本轮的规范化操作与实际载入资料 |
-| `GET /approvals`、`POST /approvals/:id/decision` | 最多 200 条，pending/approved 优先再按新近排序；决定为 `{decision:"approved"}` 或 `{decision:"denied"}` |
+| `GET /approvals?runId=`、`POST /approvals/:id/decision` | 最多 200 条，可精确过滤 Run；决定为 `{decision:"approved"}` 或 `{decision:"denied"}` |
 | `GET /execution-barriers`、`POST /execution-barriers/:id/reconcile` | 最近 200 条执行屏障；核实提交 `{decision:"confirmed-completed"或"confirmed-stopped",evidence}` |
 
-一个 Session 包含多个 Task，一个 Task 可有多轮 Run。排队、执行、等待审批或整理期间会话保持忙碌，拒绝新输入、模型和环境切换；已接受的同一请求可幂等回读。环境包含 `skills`、`servers`、`executionProfiles`、`grants` 的 `{id,revision,digest?}` 引用，以及 `tools`、`resources:[{serverId,uri}]`、`trustedReadOnly`。所有配置固定具体 revision，MCP 目录固定 digest；Run 保存完整公开快照，后续配置修改不改变已接受 Run。技能和服务器未选入环境就不可使用，用户本轮的 `skills`、`resources`、`prompts:[{serverId,name,arguments}]` 只能在该范围内显式选取资料。MCP 提示仅能由用户选择，不作为模型自主可调用工具；它的 role 作为资料来源保留，不变成系统指令。
+一个 Session 包含多个 Task，一个 Task 可有多轮 Run。排队、执行、等待审批、资源或域任务以及整理期间会话保持忙碌，拒绝新输入与环境切换；已接受的同一请求可幂等回读。环境包含 `skills`、`servers`、`executionProfiles`、`grants` 的 `{id,revision,digest?}` 引用，以及 `tools`、`resources:[{serverId,uri}]`、`trustedReadOnly`。Bash 的 `profileId` 必须对应环境内已启用的 Bash 配置，`grantId` 只能引用本轮固定 grant；grant 的 `resources:[{domain,id,access}]` 授予精确平台目标，目录 grant 不授予平台管理权限。所有配置固定具体修订，MCP 目录固定 digest，后续修改不改变已接受 Run；派发前仍复核最新停用与撤销状态。技能和服务器未选入环境即不可使用；本轮资料选取也只能在固定范围内。MCP 提示仅由用户选择，其内容不成为系统指令。
 
 模型设置按服务管理：名称、`provider`（`openai-compatible`、`deepseek` 或 `zhipu`）、`apiFormat`、`baseUrl`、`active` 与可选 `credential` 共用，每个服务可配置 1–64 个模型，各模型独立设置 `name`、`model`、`contextTokens`、`outputTokens`、`capabilities`（文本、工具调用、图片/视频/PDF 输入、JSON 结构化输出、原生联网搜索、系统消息、支持的推理等级与来源） 与 `enabled`。API 格式由用户选择 `chat-completions`、`anthropic-messages` 或 `responses`，均须显式声明；不迁移旧配置。整组新增、编辑、移除和共享凭据以一次 CAS 原子写入 `config/agent/models.json`，为各模型追加不可变修订。服务停用保留各模型开关，移除模型阻止新运行并保留历史修订。
 
@@ -142,7 +155,7 @@ DeepSeek 预设只填写服务名称和 `https://api.deepseek.com`；Anthropic �
 
 模型访问层通过 `model.Client` 隔离内核，协议适配器负责请求编码、鉴权头和公开响应解码，统一 HTTP 传输负责大小限制、超时、跳转与错误处理。Chat 在 baseUrl 后追加 `/chat/completions`，Responses 追加 `/responses`；Anthropic 追加 `/v1/messages`，已以 `/v1` 结尾则只追加 `/messages`，使用 `x-api-key` 与 `anthropic-version:2023-06-01`。主循环 inference 使用流式响应，兼容服务返回普通 JSON；Chat 读取 `reasoning_content`、Messages 读取 `thinking` 文本、Responses 读取公开 `reasoning.summary`。未显式选择等级时，DeepSeek Chat 自动工具选择启用思考，强制函数输出关闭；Messages 主循环遵循服务默认设置，Responses 对声明推理能力的模型请求 `summary:auto`。显式等级须属于固定模型修订声明的档位，并参与提交幂等校验与 Run 快照；仅主循环及其工具续轮使用，整理不继承。Chat 发送 `reasoning_effort`，Responses 发送 `reasoning.effort`，Messages 发送 `output_config.effort`；关闭档位在 Chat/Responses 兼容接口映射为 none，DeepSeek Chat 与 Messages 则显式关闭 thinking。DeepSeek Messages 选择强度时显式开启 thinking，其他 Messages 服务沿用自身思考机制，不额外编造 token 预算。整理请求保留原非流式行为。思考增量只保留在内存快照，完整响应校验成功后保存 `response.reasoning`，失败增量不落盘，签名、加密推理与 debug 不保存；浏览器在生成期间通过输出 SSE 读取思考和回答增量，并用 model-requests JSON 接口回读历史思考。Responses 使用完整公开历史和 `store:false`。三种格式均支持文本、工具结果往返、强制函数输出和用量映射。Agent 要求文本与工具能力；HTTP 禁止跳转、Cookie 与自动重试，原始响应上限为基础 512 KiB 加按输出上限预留的分帧开销（每个输出 token 512 字节，思考模式的长回答不被逐帧包装判为超限），目录读取沿用基础上限。模型 JSON 和工具参数拒绝重复键，参数保留数值精度；审批和执行使用字符串 `argumentsJson`，不能经浏览器 `JSON.parse` 后重序列化决定执行内容。实际 token 与缓存用量未报告时保持未知，保守估算单独记录。Go 有 OpenAI 与 Anthropic 官方 SDK，本项目保留 Go 1.23 和标准库访问层，以维持精确 JSON 与无重试的既有边界。
 
-父进程用原始目标、任务记忆、未整理完整事实组和近期公开 user/assistant 对话组装上下文；工具过程与工作记忆按 Task 隔离；思考文本独立展示，不写入工作记忆或跨 Run 上下文，仅 DeepSeek Chat 在同一 Run 的工具续轮回传成功响应的 `reasoning_content`。压力 checkpoint 和正常答复后的单次整理共用 Run 预算，记忆有证据引用、revision 和覆盖游标，不能静默丢弃当前任务未整理事实。可恢复整理失败保留旧记忆和原始事实，正常答复可成功并标记 stale；取消、时限、存储失效与执行结果未确认仍走终止路径。
+父进程用原始目标、任务记忆、未整理完整事实组和近期公开 user/assistant 对话组装上下文；工具过程与工作记忆按 Task 隔离；思考文本独立展示，不写入工作记忆或跨 Run 上下文，仅 DeepSeek 在同一 Run 的工具续轮回传成功响应的公开思考（Chat 使用 `reasoning_content`，Messages 使用 `thinking` 内容块）。压力 checkpoint 和正常答复后的单次整理共用 Run 预算，记忆有证据引用、revision 和覆盖游标，不能静默丢弃当前任务未整理事实。可恢复整理失败保留旧记忆和原始事实，正常答复可成功并标记 stale；取消、时限、存储失效与执行结果未确认仍走终止路径。
 
 ### 技能、MCP 与执行配置
 
@@ -160,7 +173,9 @@ DeepSeek 预设只填写服务名称和 `https://api.deepseek.com`；Anthropic �
 
 技能支持面板进程可见的绝对目录、ZIP 上传和 HTTPS Git。JSON 导入为 `{requestId,source:{kind:"directory",path},enabled}` 或 `{requestId,source:{kind:"git",url,ref,subdirectory?},enabled,credential?}`；Git 必须显式指定分支、标签或提交，服务端锁定完整提交。ZIP 使用 multipart/form-data，依次为 `metadata` JSON（source 为 `{kind:"zip"}`）和 `archive` 文件，拒绝第三部分。包根目录必须有带 YAML frontmatter 的 `SKILL.md`，必填 name、description，可含 license、compatibility、metadata、allowed-tools；名称采用小写字母数字和连字符。包在 `data/skills/packages/<digest>` 按内容保存，拒绝越界路径、链接、特殊文件和重复路径。导入只复制和校验，不执行技能代码、Git hooks 或 submodule；Git 需要面板运行环境安装 git，不支持 SSH Git、Git LFS 内容下载或依赖自动安装。导入任务重启后标 interrupted，不自动重做。
 
-Run 最初只得到技能名称、描述与读取工具；可逐步加载 `SKILL.md` 和参考文件。脚本必须位于包内 `scripts/`，执行前本 Task 已加载同修订 `SKILL.md`；脚本内容、镜像摘要、命令、目录/网络授权与工作区版本一并固定进审批。技能正文、MCP annotations 和输出都是资料，不会自行扩大权限；`allowed-tools` 仅是技能自述。启停阻止新 Run 选择该能力；永久撤销在派发前再次核对，旧快照和旧审批也不能绕过，已发生的外部副作用不因撤销而回滚。MCP 探测也核对持久撤销；启动在开放入口前恢复执行器拒绝表，撤销 MCP 服务或 grant 会关闭已有相关 stdio 容器和代理隧道，停止未确认时暂停派发。
+Run 最初只得到技能名称与描述，可逐步加载 `SKILL.md` 和参考文件。新 Run 的固定工具目录超过 16 项时标记 `on-demand/v1`，首轮只提供内核 `tool_search`；按中文或英文关键词、领域、精确名称搜索，每次默认加载 3 项、最多 5 项并支持分页，从下一次推理请求起提供匹配工具的完整定义。模型最多看到最近加载的 16 项及搜索入口，较旧定义可重新搜索；精确名称只匹配该名称。目录不超过 16 项时直接提供定义。成功搜索回执与每次请求的 `toolNames` 落盘，审批挂起、重启与工作记忆整理后保持一致，未加载工具不能被猜名调用。加载只影响定义可见性，实际调用继续核对固定快照、资源授权、停用撤销与审批；显式选取的技能、资源及提示模板仍由父端加载。旧快照保持原可见性语义，继续会话的新 Run 重新按需加载。机制参考 deepseek-harness 的 [progressive disclosure](https://github.com/deepseek-ai/deepseek-harness/blob/86a402200d95fecef4529d969836f1fe13c6cb0d/docs/cookbook/extension-cookbook.md)，细节见本地 [ADR-0034](docs/adr/0034-agent-on-demand-tools.md)。脚本必须位于包内 `scripts/`，执行前本 Task 已加载同修订 `SKILL.md`；脚本内容、镜像摘要、命令、目录/网络授权与工作区版本一并固定进审批。技能正文、MCP annotations 和输出都是资料，不会自行扩大权限；`allowed-tools` 仅是技能自述。启停阻止新 Run 选择该能力；永久撤销在派发前再次核对，旧快照和旧审批也不能绕过，已发生的外部副作用不因撤销而回滚。MCP 探测也核对持久撤销；启动在开放入口前恢复执行器拒绝表，撤销 MCP 服务或 grant 会关闭已有相关 stdio 容器和代理隧道，停止未确认时暂停派发。
+
+主循环按当前固定目录提供工具总数与领域计数，历史答复和工作记忆中的能力描述不作为当前范围；目录摘要不注入完整工具定义。最新输入保留用户问题原文，避免引用任务头部的占位句被当成用户没有新问题。整理与结构化收尾仅提供各自专用函数，不注入工具发现说明。
 
 MCP 固定协议版本 `2025-11-25`，支持 Streamable HTTP 的 JSON/SSE 响应及专属容器 stdio，分页发现 tools/resources/prompts，提供 tools/call、resources/read、prompts/get；拒绝服务器反向 sampling、elicitation、roots 等请求。模型工具使用目录返回的稳定 `modelAliases`，资源和提示的 `trustedReadOnly` 使用对应 aliases，不能直接填远端原始名称。参数和结构化结果校验使用 JSON Schema 2020-12，仅允许文档内引用，不下载外部 schema；不支持的约束直接拒绝。派发前重新探测并比较固定目录 digest，目录变化停止旧操作。凭据与 stdio 环境变量只写不回显；HTTP 禁止跳转与重试。`isError` 属于可反馈给模型的业务错误；连接中断或取消不能当作远端已停止，也不能重发同一调用。
 
@@ -172,7 +187,7 @@ MCP 当前不含旧 HTTP+SSE 传输、其他协议版本、OAuth 自动发现、
 
 ### 审批、恢复与工作区
 
-内置只读和技能资料加载可直接执行；MCP 工具默认需逐调用审批，只有管理员在 `trustedReadOnly` 明确授予的能力可直接执行。MCP 资源和提示即使是读取，也需显式只读信任才跳过审批。脚本总需审批。父进程先持久化模型提议，再生成完整 Operation；同一模型响应中的多条调用按顺序处理，一次只等待当前调用。审批或资源等待释放本次 Worker 执行槽，会话仍保持忙碌；审批同意将同一 Run 排回队列，从已保存 responseId/callIndex 继续，不重问模型、不重放已完成调用、不重置次数、token 和已消耗运行时间。等待审批或资源的时间不计入 10 分钟活动执行预算。
+已确认的内置只读和技能资料加载可直接执行；变更及脚本按本轮 permissionMode 决定审批。MCP 工具默认需逐调用审批，只有显式 `trustedReadOnly` 授权可跳过，资源与提示同样适用。父进程先持久化模型提议，再生成完整 Operation；同一响应的多条调用顺序执行。审批、资源或域任务等待释放 Worker，会话仍保持忙碌；恢复从已保存 responseId/callIndex 继续，不重问模型、不重放已完成调用、不重置预算。等待时间不计入 10 分钟活动执行预算。
 
 审批期限 24 小时，最多 32 个待审批；重复相同决定幂等，不同决定冲突。拒绝和到期结束 Run，取消撤销未消费审批；同意后仍须重新校验版本、撤销、目录摘要、参数和工作区版本，并在派发事务内一次消费。参数、脚本、运行环境或工作区发生变化不能沿用旧审批。面板重启保留 queued、waiting-approval 和 waiting-resource；遗留 running 中断，已派发调用的未知结果不自动补做。
 
