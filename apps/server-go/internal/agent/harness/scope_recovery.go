@@ -395,7 +395,7 @@ func (m *Manager) recoverWorkflowV2Startup(ctx context.Context, tx *sql.Tx, w *W
 	}
 	w.GateClosed, w.Status = true, StateRecoveryRequired
 	w.Error = &Failure{Code: "maintenance-recovery", Message: "面板数据经过维护恢复，工作流需逐节点核实后继续"}
-	nodes, err := readDocuments[WorkflowNodeExecution](ctx, tx, "SELECT document FROM workflow_nodes WHERE workflow_id=? AND state IN ('ready','queued','running','waiting-approval','waiting-resource') ORDER BY rowid", w.ID)
+	nodes, err := readDocuments[WorkflowNodeExecution](ctx, tx, "SELECT document FROM workflow_nodes WHERE workflow_id=? AND state IN ('ready','queued','running','waiting-approval','waiting-resource','waiting-task') ORDER BY rowid", w.ID)
 	if err != nil {
 		return err
 	}
@@ -447,7 +447,7 @@ func (s *store) failWorkflowV2Budget(ctx context.Context, tx *sql.Tx, w *Workflo
 			return err
 		}
 	}
-	runs, err := readDocuments[Run](ctx, tx, "SELECT document FROM runs WHERE workflow_id=? AND state IN ('queued','running','waiting-approval','waiting-resource','recovery-required')", w.ID)
+	runs, err := readDocuments[Run](ctx, tx, "SELECT document FROM runs WHERE workflow_id=? AND state IN ('queued','running','waiting-approval','waiting-resource','waiting-task','recovery-required')", w.ID)
 	if err != nil {
 		return err
 	}

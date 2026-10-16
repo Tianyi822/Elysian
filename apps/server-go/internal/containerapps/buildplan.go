@@ -42,13 +42,14 @@ const (
 
 // BuildPlanInput 构建请求体（preview 与提交共用形状；两模式字段互斥）。
 type BuildPlanInput struct {
-	Mode       string   `json:"mode"`
-	RequestID  string   `json:"requestId"`
-	Target     string   `json:"target"`
-	Dockerfile string   `json:"dockerfile"`
-	Context    string   `json:"context"`
-	Compose    string   `json:"compose"`
-	Services   []string `json:"services"`
+	ExpectedDigest string   `json:"expectedDigest,omitempty"`
+	Mode           string   `json:"mode"`
+	RequestID      string   `json:"requestId"`
+	Target         string   `json:"target"`
+	Dockerfile     string   `json:"dockerfile"`
+	Context        string   `json:"context"`
+	Compose        string   `json:"compose"`
+	Services       []string `json:"services"`
 }
 
 // buildInputInvalid 构建请求字段无效（模式取值与两模式互斥字段共用这一句）。
@@ -57,6 +58,9 @@ func buildInputInvalid() error { return shared.InvalidRequest("构建请求字�
 // validateBuildInputShape 校验请求体的模式与互斥字段；forSubmit 区分 preview（不带
 // requestId）与提交（带 requestId）两种允许的字段面。
 func (in BuildPlanInput) validateBuildInputShape(forSubmit bool) error {
+	if in.ExpectedDigest != "" && !validWorkspaceDigest(in.ExpectedDigest) {
+		return buildInputInvalid()
+	}
 	switch in.Mode {
 	case buildModeDockerfile:
 		if in.Compose != "" || len(in.Services) > 0 {

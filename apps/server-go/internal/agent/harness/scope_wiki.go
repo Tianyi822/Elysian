@@ -142,7 +142,7 @@ func (m *Manager) withdrawWorkflowV2WikiSources(ctx context.Context, tx *sql.Tx,
 	}
 	for _, w := range list {
 		failure := &Failure{Code: "wiki-context-invalidated", Message: "工作流来源已撤回，原上下文和派生结果不能继续使用"}
-		nodes, err := readDocuments[WorkflowNodeExecution](ctx, tx, `SELECT n.document FROM workflow_nodes n WHERE n.workflow_id=? AND n.state IN ('ready','queued','running','waiting-approval','waiting-resource') AND json_extract(n.document,'$.taskId') IN (SELECT a.task_id FROM wiki_artifacts a JOIN wiki_dependencies d ON d.kind=a.kind AND d.id=a.id WHERE d.page_id=? AND a.invalidated=1) ORDER BY n.rowid`, w.ID, pageID)
+		nodes, err := readDocuments[WorkflowNodeExecution](ctx, tx, `SELECT n.document FROM workflow_nodes n WHERE n.workflow_id=? AND n.state IN ('ready','queued','running','waiting-approval','waiting-resource','waiting-task') AND json_extract(n.document,'$.taskId') IN (SELECT a.task_id FROM wiki_artifacts a JOIN wiki_dependencies d ON d.kind=a.kind AND d.id=a.id WHERE d.page_id=? AND a.invalidated=1) ORDER BY n.rowid`, w.ID, pageID)
 		// TaskID is stored in the node document, not a redundant SQL column.
 		if err != nil {
 			return err

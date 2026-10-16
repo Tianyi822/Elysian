@@ -17,7 +17,9 @@ import (
 	"elysian/server/internal/agent/harness/skills"
 	"elysian/server/internal/agent/harness/toolbridge"
 	"elysian/server/internal/agent/harness/workspace"
+	"elysian/server/internal/agent/kardia"
 	"elysian/server/internal/agent/mcp"
+	"elysian/server/internal/agent/tools"
 	"elysian/server/internal/config"
 	"elysian/server/internal/panel"
 	"elysian/server/internal/paths"
@@ -66,10 +68,13 @@ func newProductionHarness(cfg *config.Config, views seam.DockerViews) (http.Hand
 }
 
 type harnessAssemblyOptions struct {
-	Paths      paths.ElysianPaths
-	Home       string
-	NewManager func(harness.Deps) (http.Handler, func(context.Context) error, error)
-	Recover    func(context.Context, *execution.Executor) error
+	Paths       paths.ElysianPaths
+	Home        string
+	NewManager  func(harness.Deps) (http.Handler, func(context.Context) error, error)
+	Recover     func(context.Context, *execution.Executor) error
+	Plugins     []*kardia.Plugin
+	InspectTask func(context.Context, tools.TaskReference) (tools.TaskStatus, error)
+	LookupTask  func(context.Context, tools.TaskReference) (tools.TaskReference, error)
 }
 
 func assembleProductionHarness(cfg *config.Config, views seam.DockerViews, options harnessAssemblyOptions) (_ http.Handler, _ func(context.Context) error, resultErr error) {
@@ -101,13 +106,15 @@ func assembleProductionHarness(cfg *config.Config, views seam.DockerViews, optio
 			resultErr = errors.Join(resultErr, resources.Close(context.Background()))
 		}
 	}()
-	bridge, err := toolbridge.New(views)
+	bridge, err := toolbridge.NewWithPlugins(views, options.Plugins...)
 	if err != nil {
 		return nil, nil, err
 	}
 	register(bridge.Close)
 	profiles, profileErr := model.Open(options.Paths.AgentModels)
 	deps := harness.Deps{Path: options.Paths.HarnessSqlite, EmbeddingConfigPath: options.Paths.AgentEmbeddings, Tools: bridge, Profiles: profiles, WorkflowRecoveryFence: panel.WorkflowRecoveryFencePath(options.Home)}
+	deps.InspectTask = options.InspectTask
+	deps.LookupTask = options.LookupTask
 	deps.Limits = harness.DefaultLimits()
 	deps.AgentLimits = harness.DefaultAgentLimits()
 	deps.Limits.Concurrency = concurrency
@@ -153,6 +160,15 @@ func assembleProductionHarness(cfg *config.Config, views seam.DockerViews, optio
 	binary, binErr := os.Executable()
 	if binErr == nil {
 		extensions.Executor, err = execution.New(execution.Options{SocketPath: cfg.DockerSocket, SupervisorPath: binary, MountRoot: cfg.MountRoot,
+			Authorize:     tools.ConsumeBackend,
+			MCPDispatchID: tools.DispatchID,
+			ResolveProfile: func(id string, revision int) (*execconfig.Profile, error) {
+				if extensions.Config == nil {
+					return nil, errors.New("执行配置不可用")
+				}
+				profile, err := extensions.Config.GetProfile(id, revision, false)
+				return &profile, err
+			},
 			ResolveGrant: func(id string, revision int) (*execconfig.Grant, error) {
 				return resolveExecutionGrant(extensions.Config, id, revision)
 			},

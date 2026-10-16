@@ -26,7 +26,14 @@ type Options struct {
 	MountRoot      string
 	// ResolveGrant 按修订解析执行授权；revision 为 0 时解析最新修订，
 	// 供派发前回查停用状态。未装配时跳过停用回查。
-	ResolveGrant func(string, int) (*config.Grant, error)
+	ResolveGrant   func(string, int) (*config.Grant, error)
+	ResolveProfile func(string, int) (*config.Profile, error)
+	// Authorize consumes the backend stage of a dispatched tool authorization.
+	// Production assembly supplies it; callers cannot mint authorization by ID.
+	Authorize func(context.Context, string) error
+	// MCPDispatchID preserves the separate durable dispatch identity while the
+	// stdio connection remains keyed by its operation scope.
+	MCPDispatchID func(context.Context) string
 	// 注入仅供测试；生产使用系统 DNS 和 TCP 拨号。
 	LookupIP    func(context.Context, string) ([]net.IPAddr, error)
 	DialContext func(context.Context, string, string) (net.Conn, error)
@@ -43,6 +50,30 @@ type ScriptRequest struct {
 	// 宿主只在 RunScript 成功且数据库 CAS 成功后发布该内容。
 	WorkspaceOutput io.Writer
 }
+
+// CommandRequest runs shell text through Bash inside the isolated workspace.
+type CommandRequest struct {
+	ID               string
+	Profile          config.Profile
+	Grant            *config.Grant
+	Command          string
+	WorkspaceArchive io.Reader
+	WorkspaceOutput  io.Writer
+}
+
+// WorkspaceScriptRequest runs a script already present in the task workspace.
+// The path is resolved inside /workspace after archive extraction; absolute
+// paths and traversal are rejected before the container is created.
+type WorkspaceScriptRequest struct {
+	ID               string
+	Profile          config.Profile
+	Grant            *config.Grant
+	ScriptPath       string
+	Args             []string
+	WorkspaceArchive io.Reader
+	WorkspaceOutput  io.Writer
+}
+
 type ScriptResult struct {
 	ContainerID    string `json:"containerId"`
 	ExitCode       int    `json:"exitCode"`
@@ -50,6 +81,11 @@ type ScriptResult struct {
 	Stderr         string `json:"stderr"`
 	WorkspaceBytes int64  `json:"workspaceBytes"`
 }
+
+// CommandResult is the same bounded process result shape used by skill
+// scripts. Keep the alias so callers can describe the operation accurately
+// without duplicating result handling or serialization rules.
+type CommandResult = ScriptResult
 type StdioRequest struct {
 	ID             string
 	Profile        config.Profile

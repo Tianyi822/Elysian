@@ -96,6 +96,7 @@ type serviceDeps struct {
 
 // databaseService 服务实现。
 type databaseService struct {
+	mutationMu sync.Mutex
 	deps       serviceDeps
 	mu         sync.Mutex
 	inProgress map[string]bool
@@ -512,7 +513,13 @@ func (s *databaseService) Create(ctx context.Context, input createRequest) (crea
 		delete(s.inProgress, key)
 		s.mu.Unlock()
 	}()
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
 
+	return s.create(ctx, input)
+}
+
+func (s *databaseService) create(ctx context.Context, input createRequest) (createResponse, error) {
 	rows, err := s.deps.registry.list()
 	if err != nil {
 		return createResponse{}, err
@@ -745,6 +752,11 @@ func (s *databaseService) Reveal(ctx context.Context, id string) (databaseSecret
 
 // Remove 删除逻辑库 / 清空 Redis DB 0；容器已被外部删时清理登记。
 func (s *databaseService) Remove(ctx context.Context, id string) error {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
+	return s.remove(ctx, id)
+}
+func (s *databaseService) remove(ctx context.Context, id string) error {
 	row, err := s.record(id)
 	if err != nil {
 		return err
@@ -824,6 +836,11 @@ func (s *databaseService) Remove(ctx context.Context, id string) error {
 
 // RemoveContainer 删除面板创建的数据库容器与专属卷。
 func (s *databaseService) RemoveContainer(ctx context.Context, id string) error {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
+	return s.removeContainer(ctx, id)
+}
+func (s *databaseService) removeContainer(ctx context.Context, id string) error {
 	row, err := s.record(id)
 	if err != nil {
 		return err
@@ -893,6 +910,11 @@ func (s *databaseService) OpenSession(ctx context.Context, id string) (Session, 
 
 // Reconcile 重新核对并激活登记。
 func (s *databaseService) Reconcile(ctx context.Context, id string) (serviceInstance, error) {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
+	return s.reconcile(ctx, id)
+}
+func (s *databaseService) reconcile(ctx context.Context, id string) (serviceInstance, error) {
 	row, err := s.record(id)
 	if err != nil {
 		return serviceInstance{}, err
@@ -912,6 +934,8 @@ func (s *databaseService) Reconcile(ctx context.Context, id string) (serviceInst
 
 // Forget 移除接管失败的待处理登记。
 func (s *databaseService) Forget(ctx context.Context, id string) error {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
 	row, err := s.record(id)
 	if err != nil {
 		return err

@@ -316,4 +316,61 @@ func (e *Executor) RunScript(ctx context.Context, request ScriptRequest) (Script
 	return result, nil
 }
 
+// RunCommand executes shell text in the container, never in the host process.
+func (e *Executor) RunCommand(ctx context.Context, request CommandRequest) (ScriptResult, error) {
+	if request.Profile.Runtime != "bash" || strings.TrimSpace(request.Command) == "" || len(request.Command) > 16<<10 || strings.ContainsRune(request.Command, 0) || request.WorkspaceOutput == nil {
+		return ScriptResult{}, problem(400, "execution-command", "Bash 命令必须是非空文本并提供工作区输出接收器")
+	}
+	command := []string{"bash", "--noprofile", "--norc", "-c", request.Command, "elysian-command"}
+	return e.runCommand(ctx, request.ID, request.Profile, request.Grant, command, nil, request.WorkspaceArchive, request.WorkspaceOutput)
+}
+
+// RunWorkspaceScript executes a relative path from the task workspace. The
+// script itself is supplied by the workspace archive, so it is pinned by the
+// caller's workspace revision and never read from a host path.
+func (e *Executor) RunWorkspaceScript(ctx context.Context, request WorkspaceScriptRequest) (ScriptResult, error) {
+	if request.Profile.Runtime != "bash" || !relativePath(request.ScriptPath) || request.WorkspaceArchive == nil || request.WorkspaceOutput == nil {
+		return ScriptResult{}, problem(400, "execution-script", "工作区脚本必须使用安全相对路径并提供输入、输出工作区")
+	}
+	command := []string{"bash", "--noprofile", "--norc", "--"}
+	command = append(command, "/workspace/"+request.ScriptPath)
+	command = append(command, request.Args...)
+	return e.runCommand(ctx, request.ID, request.Profile, request.Grant, command, nil, request.WorkspaceArchive, request.WorkspaceOutput)
+}
+
+func (e *Executor) runCommand(ctx context.Context, id string, profile config.Profile, grant *config.Grant, command []string, skill, workspace io.Reader, output io.Writer) (ScriptResult, error) {
+	var result ScriptResult
+	p, err := e.start(ctx, id, profile, grant, frame{Kind: "start", Mode: "script", Command: command}, skill, workspace, output)
+	if err != nil {
+		return result, err
+	}
+	result.ContainerID = p.Identity()
+	outDone := make(chan error, 1)
+	errDone := make(chan error, 1)
+	var out, diagnostics strings.Builder
+	go func() { _, err := io.Copy(&out, p.Stdout()); outDone <- err }()
+	go func() { _, err := io.Copy(&diagnostics, p.Stderr()); errDone <- err }()
+	result.ExitCode, result.WorkspaceBytes, err = p.Wait(ctx)
+	stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	stopErr := p.Close(stopCtx)
+	cancel()
+	<-outDone
+	<-errDone
+	result.Stdout = out.String()
+	result.Stderr = diagnostics.String()
+	if stopErr != nil {
+		return result, stopErr
+	}
+	if err != nil {
+		var known *Error
+		if errors.As(err, &known) {
+			copy := *known
+			copy.OutcomeUnknown = true
+			return result, &copy
+		}
+		return result, &Error{Status: 502, Code: "execution-outcome-unknown", Message: "执行已派发但未获得完整结果", OutcomeUnknown: true}
+	}
+	return result, nil
+}
+
 var _ mcp.Duplex = (*Process)(nil)

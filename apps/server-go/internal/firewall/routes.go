@@ -1,6 +1,7 @@
 package firewall
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -44,8 +45,9 @@ type Service interface {
 
 // Deps 路由工厂的注入形状（go-plan §3.8 跨域字段 + 域内测试注入口）。
 type Deps struct {
-	Ports config.PanelNetwork
-	Mode  config.RuntimeMode
+	AgentAuthorize func(context.Context) error
+	Ports          config.PanelNetwork
+	Mode           config.RuntimeMode
 
 	// Available 为 false 时一切请求 503（非容器/非裸机的强制保护）。
 	Available bool

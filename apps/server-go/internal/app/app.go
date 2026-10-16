@@ -15,6 +15,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"mime"
@@ -24,7 +25,20 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	execconfig "elysian/server/internal/agent/execution/config"
 	"elysian/server/internal/agent/harness"
+	"elysian/server/internal/agent/kardia"
+	"elysian/server/internal/agent/tools"
+	toolapps "elysian/server/internal/agent/tools/containerapps"
+	tooldatabase "elysian/server/internal/agent/tools/database"
+	tooldocker "elysian/server/internal/agent/tools/docker"
+	toolfiles "elysian/server/internal/agent/tools/files"
+	toolfirewall "elysian/server/internal/agent/tools/firewall"
+	toollogs "elysian/server/internal/agent/tools/logs"
+	toolpanel "elysian/server/internal/agent/tools/panel"
+	toolplatform "elysian/server/internal/agent/tools/platform"
+	toolsecurity "elysian/server/internal/agent/tools/security"
+	toolwebsites "elysian/server/internal/agent/tools/websites"
 	"elysian/server/internal/auth"
 	"elysian/server/internal/config"
 	"elysian/server/internal/containerapps"
@@ -92,13 +106,15 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 	}
 
 	// 容器管理片最先装配：database/websites 的可用性与引擎事实由它分发。
+	agentAuthorize := func(ctx context.Context) error { return tools.ConsumeBackend(ctx, tools.DispatchID(ctx)) }
 	stack, err := docker.Assemble(docker.Deps{
-		ReservedPorts: []int{22, cfg.PanelPorts().FrontendPort, cfg.PanelPorts().BackendPort},
-		Mode:          cfg.Mode(),
-		SocketPath:    cfg.DockerSocket,
-		MountRoot:     cfg.MountRoot,
-		Logs:          appLogs,
-		Kit:           terminals.NewKit(),
+		AgentAuthorize: agentAuthorize,
+		ReservedPorts:  []int{22, cfg.PanelPorts().FrontendPort, cfg.PanelPorts().BackendPort},
+		Mode:           cfg.Mode(),
+		SocketPath:     cfg.DockerSocket,
+		MountRoot:      cfg.MountRoot,
+		Logs:           appLogs,
+		Kit:            terminals.NewKit(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("装配容器管理片失败：%w", err)
@@ -107,29 +123,75 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 	// 防火墙片：可用性统一取 cfg.HostOpsAvailable()；端口自动开放接缝与防火墙片
 	// 同源（防火墙不可用时恒 skipped，行为与装配层注入 NoopPortOpener 一致）。
 	firewallDeps := firewall.Deps{
-		Available: cfg.HostOpsAvailable(),
-		Ports:     cfg.PanelPorts(),
-		Mode:      cfg.Mode(),
-		DBPath:    paths.Default.FirewallSqlite,
+		AgentAuthorize: agentAuthorize,
+		Available:      cfg.HostOpsAvailable(),
+		Ports:          cfg.PanelPorts(),
+		Mode:           cfg.Mode(),
+		DBPath:         paths.Default.FirewallSqlite,
 	}
-	firewallRouter, err := firewall.NewRouterChecked(firewallDeps)
+	firewallRouter, firewallAgent, err := firewall.AssembleAgent(firewallDeps)
 	if err != nil {
 		return nil, fmt.Errorf("防火墙入口恢复失败：%w", err)
 	}
 	portOpener := firewall.NewPortOpener(firewallDeps)
 
-	securityDeps := security.Deps{Available: cfg.HostOpsAvailable()}
-	platformRouter := platform.NewRouter(platform.Deps{
-		Transports:   docker.NewTransportFactory(),
-		CaddyAdmins:  websites.NewCaddyAdminFactory(),
-		InContainer:  cfg.InContainer(),
-		DockerSocket: cfg.DockerSocket,
-		CaddySocket:  cfg.CaddySocket,
-	})
+	securityDeps := security.Deps{Available: cfg.HostOpsAvailable(), AgentAuthorize: agentAuthorize}
+	securityDeps.AgentFacade = security.NewAgentFacade(securityDeps)
+	platformDeps := platform.Deps{
+		AgentAuthorize: agentAuthorize,
+		Transports:     docker.NewTransportFactory(),
+		CaddyAdmins:    websites.NewCaddyAdminFactory(),
+		InContainer:    cfg.InContainer(),
+		DockerSocket:   cfg.DockerSocket,
+		CaddySocket:    cfg.CaddySocket,
+	}
+	platformDeps.AgentFacade = platform.NewAgentFacade(platformDeps)
+	platformRouter := platform.NewRouter(platformDeps)
 
 	panelStore := panel.Store{Root: paths.ElysianHome}
 	panelManager := panel.Manager{Store: panelStore, Host: panel.SystemHost{Store: panelStore, DockerSocket: cfg.DockerSocket}, Source: panel.GitHubSource{}, Ports: cfg.PanelPorts(), Enabled: cfg.BareMetal}
-	factory := harnessFactory(newProductionHarness)
+	containerAppsRegistry := &containerapps.Registry{MountRoot: cfg.MountRoot}
+	appBuilds := containerapps.NewProductionBuildManager(containerapps.BuildDeps{Engine: stack.Engine, Policy: docker.CheckRegistryHost, Registry: containerAppsRegistry})
+	appHandler := containerapps.Handler{Registry: containerAppsRegistry, EngineAvailable: stack.Ready, Engine: stack.Engine, Policy: docker.CheckRegistryHost, Logs: appLogs, Builds: appBuilds}
+	appAgent := containerapps.NewAgentFacade(appHandler, agentAuthorize)
+	websiteDeps := websites.Deps{EngineAvailable: stack.Ready, Engine: stack.Engine, Views: stack.Views, SelfID: stack.SelfID, PortOpener: portOpener, Logs: appLogs, Cfg: cfg, AgentAuthorize: agentAuthorize}
+	websiteDeps.AgentFacade = websites.NewAgentFacade(websiteDeps)
+	plugins := []*kardia.Plugin{toolapps.Plugin(toolapps.Deps{Workspace: containerAppsRegistry, Builds: appBuilds, Facade: appAgent}, toolapps.Config{})}
+	plugins = append(plugins, toolplatform.Plugin(toolplatform.Deps{Facade: platformDeps.AgentFacade}, toolplatform.Config{}))
+	plugins = append(plugins, toolpanel.Plugin(toolpanel.Deps{Manager: panelManager, Authorize: agentAuthorize}, toolpanel.Config{}))
+	if securityDeps.AgentFacade.Available() {
+		plugins = append(plugins, toolsecurity.Plugin(toolsecurity.Deps{Facade: securityDeps.AgentFacade}, toolsecurity.Config{}))
+	}
+	if firewallAgent.Available() {
+		plugins = append(plugins, toolfirewall.Plugin(toolfirewall.Deps{Facade: firewallAgent}, toolfirewall.Config{}))
+	}
+	logsAgent := logs.NewAgentFacade(appLogs, agentAuthorize)
+	if logsAgent.Available() {
+		plugins = append(plugins, toollogs.Plugin(toollogs.Deps{Facade: logsAgent}, toollogs.Config{}))
+	}
+	databaseDeps := database.Deps{EngineAvailable: stack.Ready, SqliteAvailable: cfg.HostOpsAvailable(), Engine: stack.Engine, Views: stack.Views, SelfID: stack.SelfID, PortOpener: portOpener, Logs: appLogs, AgentAuthorize: agentAuthorize}
+	databaseDeps.AgentFacade = database.NewAgentFacade(databaseDeps)
+	if databaseDeps.AgentFacade.Available() {
+		plugins = append(plugins, tooldatabase.Plugin(tooldatabase.Deps{Facade: databaseDeps.AgentFacade}, tooldatabase.Config{}))
+	}
+	filesDeps := files.Deps{Available: cfg.HostOpsAvailable(), Accounts: security.NewSystemAccounts()}
+	filesAgent, filesAgentErr := files.NewAgentFacade(filesDeps, files.AgentOptions{Authorize: agentAuthorize, Roots: configuredAgentFileRoots(cfg)})
+	if filesAgentErr != nil {
+		appLogs.Runtime("error", "server.agent", "Agent 文件范围不可用")
+	}
+	filesDeps.AgentFacade = filesAgent
+	if filesAgent != nil && filesAgent.Available() {
+		plugins = append(plugins, toolfiles.Plugin(toolfiles.Deps{Facade: filesAgent}, toolfiles.Config{}))
+	}
+	if stack.Views != nil {
+		plugins = append(plugins, tooldocker.Plugin(tooldocker.Deps{Views: stack.Views, Agent: stack.Agent}, tooldocker.Config{}))
+	}
+	if websiteDeps.AgentFacade != nil {
+		plugins = append(plugins, toolwebsites.Plugin(toolwebsites.Deps{Facade: websiteDeps.AgentFacade}, toolwebsites.Config{}))
+	}
+	factory := harnessFactory(func(config *config.Config, views seam.DockerViews) (http.Handler, func(context.Context) error, error) {
+		return assembleProductionHarness(config, views, harnessAssemblyOptions{Paths: paths.Default, Home: paths.ElysianHome, Plugins: plugins, InspectTask: agentTaskInspector(websiteDeps.AgentFacade, appAgent, stack.Agent, databaseDeps.AgentFacade), LookupTask: agentTaskLookup(websiteDeps.AgentFacade, appAgent, stack.Agent, databaseDeps.AgentFacade)})
+	})
 	if len(factories) > 0 && factories[0] != nil {
 		factory = factories[0]
 	}
@@ -139,14 +201,24 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 		agentRouter = harness.UnavailableRouter("Agent 任务存储或工具装配不可用，请查看面板运行日志")
 	}
 	runtime := &Runtime{closeDone: make(chan struct{})}
+	if closeAgent != nil {
+		runtime.closeFuncs = append(runtime.closeFuncs, closeAgent)
+	}
+	if firewallAgent != nil {
+		runtime.closeFuncs = append(runtime.closeFuncs, firewallAgent.Close)
+	}
+	if databaseDeps.AgentFacade != nil {
+		runtime.closeFuncs = append(runtime.closeFuncs, databaseDeps.AgentFacade.Close)
+	}
+	if stack.Agent != nil {
+		runtime.closeFuncs = append(runtime.closeFuncs, stack.Agent.Close)
+	}
 	var fileTransfers *files.TransferManager
 	if cfg.HostOpsAvailable() {
 		fileTransfers = files.NewTransferManager(paths.TmpDir+"/files-downloads", security.NewSystemAccounts())
 		runtime.closeFuncs = append(runtime.closeFuncs, fileTransfers.Close)
 	}
-	if closeAgent != nil {
-		runtime.closeFuncs = append(runtime.closeFuncs, closeAgent)
-	}
+	filesDeps.Transfers = fileTransfers
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.StripTailSlash)
@@ -174,11 +246,7 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 		api.Mount(shared.FirewallMount, firewallRouter)
 		api.Mount(shared.SshMount, security.NewSshRouter(securityDeps))
 		api.Mount(shared.UsersMount, security.NewUsersRouter(securityDeps))
-		api.Mount(shared.FilesMount, files.NewRouter(files.Deps{
-			Available: cfg.HostOpsAvailable(),
-			Accounts:  security.NewSystemAccounts(),
-			Transfers: fileTransfers,
-		}))
+		api.Mount(shared.FilesMount, files.NewRouter(filesDeps))
 		api.Mount(shared.TerminalMount, terminals.NewRouter(terminals.Deps{
 			Available:    cfg.HostOpsAvailable(),
 			Logs:         appLogs,
@@ -188,38 +256,9 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 		api.Mount(shared.DockerMount, stack.Router)
 		// 容器应用工作区：配置文件的存放、内容读写、compose 路径自检与镜像构建
 		//（构建按 ADR-0021：引擎 /build classic 构建器，任务模型同 websites）。
-		containerAppsRegistry := &containerapps.Registry{MountRoot: cfg.MountRoot}
-		appBuilds := containerapps.NewProductionBuildManager(containerapps.BuildDeps{
-			Engine:   stack.Engine,
-			Policy:   docker.CheckRegistryHost,
-			Registry: containerAppsRegistry,
-		})
-		api.Mount(shared.ContainerAppsMount, containerapps.Handler{
-			Registry:        containerAppsRegistry,
-			EngineAvailable: stack.Ready,
-			Engine:          stack.Engine,
-			Policy:          docker.CheckRegistryHost,
-			Logs:            appLogs,
-			Builds:          appBuilds,
-		}.Router())
-		api.Mount(shared.DatabaseMount, database.NewRouter(database.Deps{
-			EngineAvailable: stack.Ready,
-			SqliteAvailable: cfg.HostOpsAvailable(),
-			Engine:          stack.Engine,
-			Views:           stack.Views,
-			SelfID:          stack.SelfID,
-			PortOpener:      portOpener,
-			Logs:            appLogs,
-		}))
-		api.Mount(shared.WebsitesMount, websites.NewRouter(websites.Deps{
-			EngineAvailable: stack.Ready,
-			Engine:          stack.Engine,
-			Views:           stack.Views,
-			SelfID:          stack.SelfID,
-			PortOpener:      portOpener,
-			Logs:            appLogs,
-			Cfg:             cfg,
-		}))
+		api.Mount(shared.ContainerAppsMount, appHandler.Router())
+		api.Mount(shared.DatabaseMount, database.NewRouter(databaseDeps))
+		api.Mount(shared.WebsitesMount, websites.NewRouter(websiteDeps))
 
 		// 全局 /api 404：会话有效而未匹配任何域挂载的请求回纯文本正文（对齐 Hono
 		// 缺省 404；正文不承诺逐字、前端不消费）。各域内 404 才是
@@ -236,6 +275,35 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 	//（TS app.onError 等价物；各片内部错误由片自身映射与审计中间件记录，不到这里）。
 	runtime.handler = parentErrorHandler(r, appLogs)
 	return runtime, nil
+}
+
+func configuredAgentFileRoots(cfg *config.Config) []files.AgentRoot {
+	if !cfg.HostOpsAvailable() {
+		return nil
+	}
+	store, err := execconfig.Open(paths.Default.AgentExecution, execconfig.Options{MountRoot: cfg.MountRoot})
+	if err != nil {
+		return nil
+	}
+	defer store.Close()
+	grants, err := store.ListGrants()
+	if err != nil {
+		return nil
+	}
+	byPath := map[string]bool{}
+	for _, grant := range grants {
+		if !grant.Enabled {
+			continue
+		}
+		for _, directory := range grant.Directories {
+			byPath[directory.Path] = byPath[directory.Path] || directory.Access == "rw"
+		}
+	}
+	roots := make([]files.AgentRoot, 0, len(byPath))
+	for path, writable := range byPath {
+		roots = append(roots, files.AgentRoot{Path: path, Writable: writable})
+	}
+	return roots
 }
 
 // parentErrorHandler 父层错误边界：只有「公共中间件或装配层抛出」的错误（Go 语义

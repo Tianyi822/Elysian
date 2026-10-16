@@ -247,7 +247,7 @@ func (m *deploymentManager) publish(ctx context.Context, id, app, artifact strin
 			err = m.service.deps.docker.Start(ctx, container)
 		}
 		if err == nil {
-			err = m.ready(ctx, row)
+			err = m.ready(ctx, row, id)
 		}
 		if err == nil {
 			err = m.service.deps.registry.Put(ctx, row)
@@ -266,6 +266,8 @@ func (m *deploymentManager) publish(ctx context.Context, id, app, artifact strin
 			latest, _ := m.getTask(id)
 			if e := m.restoreInterrupted(restoreCtx, &latest); e != nil {
 				err = fmt.Errorf("%w；恢复上一版本失败，需要处理：%s", err, e.Error())
+			} else if e := m.mutate(id, func(t *deploymentTask) { t.Pending, t.Previous = nil, nil }); e != nil {
+				err = errors.Join(err, e)
 			}
 		}
 	})
@@ -355,7 +357,7 @@ func copySingleFile(ctx context.Context, src, dest string) error {
 	}
 	return ce
 }
-func (m *deploymentManager) ready(ctx context.Context, row WebsiteRecord) error {
+func (m *deploymentManager) ready(ctx context.Context, row WebsiteRecord, taskID string) (result error) {
 	port := row.Port
 	if runtimeRecordKind(row) == KindHTML {
 		port = 80
@@ -363,13 +365,24 @@ func (m *deploymentManager) ready(ctx context.Context, row WebsiteRecord) error 
 	if err := m.engine.pull(ctx, WEBSITE_HTML_IMAGE); err != nil {
 		return err
 	}
-	body := map[string]any{"Image": WEBSITE_HTML_IMAGE, "Cmd": []string{"sh", "-c", fmt.Sprintf("addr=$(ip -4 -o addr show dev eth0 | awk '{print $4}' | cut -d/ -f1); for i in $(seq 1 60); do if nc -w 1 $addr %d </dev/null; then exit 0; fi; sleep 1; done; exit 1", port)}, "Entrypoint": []string{}, "Labels": map[string]string{"elysian.managed": "true", "elysian.website.probe": "true", "elysian.website.deployment-owner": m.engine.owner}, "HostConfig": map[string]any{"NetworkMode": "container:" + stringOrEmpty(row.ContainerID), "CapDrop": []string{"ALL"}, "SecurityOpt": []string{"no-new-privileges:true"}, "Memory": 64 << 20, "PidsLimit": 64}}
+	body := map[string]any{"Image": WEBSITE_HTML_IMAGE, "User": "65532:65532", "Cmd": []string{"sh", "-c", fmt.Sprintf("addr=$(ip -4 -o addr show dev eth0 | awk '{print $4}' | cut -d/ -f1); for i in $(seq 1 60); do if nc -w 1 $addr %d </dev/null; then exit 0; fi; sleep 1; done; exit 1", port)}, "Entrypoint": []string{}, "Labels": map[string]string{"elysian.managed": "true", "elysian.website.probe": "true", "elysian.website.deployment-owner": m.engine.owner}, "HostConfig": map[string]any{"NetworkMode": "container:" + stringOrEmpty(row.ContainerID), "CapDrop": []string{"ALL"}, "SecurityOpt": []string{"no-new-privileges:true"}, "Memory": 64 << 20, "PidsLimit": 64}}
 	out, err := m.engine.json(ctx, "POST", "/containers/create", body)
 	if err != nil {
 		return err
 	}
 	id, _ := out["Id"].(string)
-	defer m.engine.remove(id)
+	if !containerIDPattern.MatchString(id) {
+		return errors.New("探测容器 ID 无效")
+	}
+	if err = m.trackAuxContainer(taskID, id); err != nil {
+		_ = m.engine.remove(id)
+		return err
+	}
+	defer func() {
+		if err := m.removeTaskContainer(taskID, id); err != nil {
+			result = errors.Join(result, err)
+		}
+	}()
 	probeCtx, cancel := context.WithTimeout(ctx, 75*time.Second)
 	defer cancel()
 	if err = m.engine.run(probeCtx, id, io.Discard); err != nil {

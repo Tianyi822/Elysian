@@ -347,6 +347,9 @@ func (m *Manager) ContinueTask(ctx context.Context, taskID string, input AgentIn
 }
 
 func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentInput, newTask bool) (Run, bool, error) {
+	if _, err := normalizePermissionMode(input.PermissionMode); err != nil {
+		return Run{}, false, err
+	}
 	if !requestPattern.MatchString(input.RequestID) {
 		return Run{}, false, bad("invalid-request-id", "请求标识必须为 1 到 128 位字母、数字或 ._:-")
 	}
@@ -370,7 +373,8 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 		Attachments      []AttachmentRef `json:"attachments,omitempty"`
 		ReasoningLevel   string          `json:"reasoningLevel,omitempty"`
 		ReplaceMessageID string          `json:"replaceMessageId,omitempty"`
-	}{operation, targetID, input.Content, input.Skills, input.Resources, input.Prompts, input.Attachments, input.ReasoningLevel, input.ReplaceMessageID})
+		PermissionMode   PermissionMode  `json:"permissionMode,omitempty"`
+	}{operation, targetID, input.Content, input.Skills, input.Resources, input.Prompts, input.Attachments, input.ReasoningLevel, input.ReplaceMessageID, canonicalPermissionMode(input.PermissionMode)})
 	canonical := string(raw)
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -464,6 +468,10 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 	if err = m.validateSelection(snapshot, input); err != nil {
 		return Run{}, false, err
 	}
+	snapshot.PermissionMode, _ = normalizePermissionMode(input.PermissionMode)
+	snapshot.PolicyVersion = PermissionPolicyVersion
+	snapshot.Digest = ""
+	snapshot.Digest = digestJSON(snapshot)
 	run.DriverVersion = "v2"
 	run.Snapshot = &snapshot
 	run.Selection = &input
@@ -479,7 +487,7 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 }
 
 func publicMemoryStatus(run *Run) string {
-	if run.Status == StateQueued || run.Status == StateRunning || run.Status == StateWaitingApproval || run.Status == StateWaitingResource {
+	if run.Status == StateQueued || run.Status == StateRunning || run.Status == StateWaitingApproval || run.Status == StateWaitingResource || run.Status == StateWaitingTask {
 		run.MemoryStatus = "stale"
 	}
 	return run.MemoryStatus

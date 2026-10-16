@@ -12,11 +12,20 @@
 //	registry, err := tools.RegistryFrom(root)
 //	value, err := registry.Execute(root, "docker_containers_list", nil)
 //
+// 对需要统一持有 root 与生命周期的宿主接缝，也可直接使用 Runtime：
+//
+//	runtime, err := tools.NewRuntime(ctx, docker.Plugin(deps, cfg))
+//	value, err := runtime.Execute(ctx, "docker_containers_list", nil)
+//	defer runtime.Close(context.Background())
+//
 // Install 按依赖顺序装载并检查 FiberActive，失败逆序回滚。直接 Register 的条目
 // 归注册表所有，RegisterAll 的条目归能力插件所有；撤销或卸载后，保留的处理器
 // 引用也不可继续执行。已经进入域对象的请求依靠调用方 Lifetime 协作取消。
 // 参数与模式以独立快照传递；JSON Schema 显式导出 additionalProperties=false。
 // Caddy 工具只返回配置摘要，构建任务通过可注入的最小 BuildTasks 接口调用。
+// Runtime 只管理进入 tools.Registry 的插件；任务工作区与 Bash 需要审批、
+// 工作区版本和受限执行容器，因此由 harness 固定快照后调用 execution.Executor，
+// 不把宿主路径或 Docker socket 注入工具处理器。
 //
 // 三条约定贯穿全部能力子包：
 //

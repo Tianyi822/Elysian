@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"elysian/server/internal/agent/execution"
+	"elysian/server/internal/agent/kardia"
 	"elysian/server/internal/agent/mcp"
+	"elysian/server/internal/agent/tools"
 )
 
 // Administrative probes have no Run or model approval, but starting a stdio
@@ -52,7 +54,7 @@ func (m *Manager) probeServer(ctx context.Context, e *Extensions, server mcp.Ser
 	var catalog mcp.Catalog
 	probeErr := m.store.recordsFault()
 	if probeErr == nil {
-		catalog, probeErr = e.MCP.Probe(pctx, server)
+		catalog, probeErr = m.executeProbe(pctx, e, server, lease)
 	}
 	lease.ContainerID = e.MCP.StdioIdentity(pctx, server.ID, server.Revision)
 	closeCtx, closeCancel := context.WithTimeout(mcp.WithScope(context.Background(), lease.ScopeID), 5*time.Second)
@@ -96,6 +98,55 @@ func (m *Manager) probeServer(ctx context.Context, e *Extensions, server mcp.Ser
 		return mcp.Catalog{}, err
 	}
 	return e.Servers.SaveCatalog(server.ID, server.Revision, catalog)
+}
+
+func (m *Manager) executeProbe(ctx context.Context, e *Extensions, server mcp.Server, lease ResourceLease) (catalog mcp.Catalog, resultErr error) {
+	const name = "mcp_admin_probe"
+	args := tools.Arguments{"serverId": server.ID, "revision": server.Revision}
+	descriptor := tools.Descriptor{Name: name, Description: "管理员显式探测固定 MCP 服务目录", Parameters: tools.Schema{Type: tools.SchemaObject, Required: []string{"serverId", "revision"}, Properties: map[string]tools.Schema{"serverId": {Type: tools.SchemaString}, "revision": {Type: tools.SchemaInteger}}}, Metadata: tools.Metadata{Domain: "mcp", Action: "probe", Effect: "execute", Exposure: "admin", Backend: "mcp", Version: "1"}, Handler: func(access *kardia.Context, _ tools.Arguments) (any, error) {
+		callCtx := tools.Lifetime(access)
+		if server.Stdio == nil {
+			if err := tools.ConsumeBackend(callCtx, lease.ID); err != nil {
+				return nil, err
+			}
+		}
+		return e.MCP.Probe(callCtx, server)
+	}}
+	if err := m.toolRuntime.RegisterCatalog(lease.ID, []tools.Descriptor{descriptor}); err != nil {
+		return catalog, err
+	}
+	defer func() { resultErr = errors.Join(resultErr, m.toolRuntime.ReleaseCatalog(lease.ID)) }()
+	authorized, err := m.toolAuthority.Authorize(ctx, tools.AuthorizationBinding{OperationID: lease.ID, DispatchID: lease.ID, Tool: name, ArgumentsDigest: tools.ArgumentsDigest(args), CatalogID: lease.ID}, nil, func(checkCtx context.Context) error {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if err := m.checkProbeLocked(checkCtx, server); err != nil {
+			return err
+		}
+		var raw string
+		if err := m.store.db.QueryRowContext(checkCtx, "SELECT document FROM resource_leases WHERE id=?", lease.ID).Scan(&raw); err != nil {
+			return err
+		}
+		var stored ResourceLease
+		if err := json.Unmarshal([]byte(raw), &stored); err != nil {
+			return err
+		}
+		if stored.State != "held" || digestJSON(stored) != digestJSON(lease) {
+			return bad("probe-lease-changed", "MCP 探测授权与持久化租约不符")
+		}
+		return nil
+	})
+	if err != nil {
+		return catalog, err
+	}
+	value, err := m.toolRuntime.Execute(authorized, name, args)
+	if err != nil {
+		return catalog, err
+	}
+	var ok bool
+	if catalog, ok = value.(mcp.Catalog); !ok {
+		return catalog, bad("invalid-probe-result", "MCP 探测结果类型无效")
+	}
+	return catalog, nil
 }
 
 // ReconcileProbeLease only releases administrator probe leases. Run operations

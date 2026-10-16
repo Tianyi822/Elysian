@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -50,7 +51,7 @@ func newFakeExecutor(t *testing.T) (*Executor, *fakeEngine) {
 	if err = os.WriteFile(binaryPath, []byte("\x7fELF-test"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	e, err := New(Options{SocketPath: socket, SupervisorPath: binaryPath, MountRoot: root})
+	e, err := New(Options{SocketPath: socket, SupervisorPath: binaryPath, MountRoot: root, Authorize: func(context.Context, string) error { return nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,6 +263,68 @@ func testTar(name, content string) []byte {
 }
 func testProfile() config.Profile {
 	return config.Profile{Name: "测试运行时", Image: "python@sha256:" + strings.Repeat("a", 64), Runtime: "python", Command: []string{"python3"}, Enabled: true, TimeoutSeconds: 30, CPUMillis: 1000, MemoryBytes: 512 << 20, PIDs: 128}
+}
+
+func bashProfile() config.Profile {
+	p := testProfile()
+	p.Runtime = "bash"
+	p.Command = []string{"bash", "--noprofile", "--norc"}
+	return p
+}
+
+func TestBashCommandKeepsFixedEntrypointAndWorkspaceIsolation(t *testing.T) {
+	e, f := newFakeExecutor(t)
+	var started frame
+	f.protocol = func(start frame) []frame {
+		started = start
+		return []frame{{Kind: "stdout", Data: []byte("ok\n")}, {Kind: "exit", ExitCode: 0}}
+	}
+	var output bytes.Buffer
+	result, err := e.RunCommand(context.Background(), CommandRequest{
+		ID:               "bash-command",
+		Profile:          bashProfile(),
+		Command:          "rm -f input.txt; printf ok",
+		WorkspaceArchive: bytes.NewReader(testTar("input.txt", "input")),
+		WorkspaceOutput:  &output,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ExitCode != 0 || result.Stdout != "ok\n" {
+		t.Fatalf("result=%+v", result)
+	}
+	if started.Mode != "script" || !reflect.DeepEqual(started.Command, []string{"bash", "--noprofile", "--norc", "-c", "rm -f input.txt; printf ok", "elysian-command"}) {
+		t.Fatalf("command escaped profile entrypoint: %#v", started.Command)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.creates) != 2 || len(f.labels) != 0 || len(f.volumes) != 0 {
+		t.Fatalf("lifecycle creates=%d containers=%d volumes=%d", len(f.creates), len(f.labels), len(f.volumes))
+	}
+	host := f.creates[1]["HostConfig"].(map[string]any)
+	if host["NetworkMode"] != "none" || host["ReadonlyRootfs"] != true {
+		t.Fatalf("unsafe command container: %#v", host)
+	}
+}
+
+func TestWorkspaceScriptRejectsTraversalBeforeContainer(t *testing.T) {
+	e, f := newFakeExecutor(t)
+	var output bytes.Buffer
+	_, err := e.RunWorkspaceScript(context.Background(), WorkspaceScriptRequest{
+		ID:               "workspace-script",
+		Profile:          bashProfile(),
+		ScriptPath:       "../outside.sh",
+		WorkspaceArchive: bytes.NewReader(testTar("run.sh", "echo ok")),
+		WorkspaceOutput:  &output,
+	})
+	if err == nil {
+		t.Fatal("workspace traversal accepted")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.creates) != 0 || len(f.volumes) != 0 {
+		t.Fatal("unsafe workspace script created execution resources")
+	}
 }
 func TestScriptContainerPoliciesAndCopyOut(t *testing.T) {
 	e, f := newFakeExecutor(t)

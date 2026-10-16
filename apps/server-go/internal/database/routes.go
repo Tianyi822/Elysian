@@ -28,6 +28,8 @@ import (
 
 // Deps 跨域依赖（go-plan §3.8 冻结形状）。
 type Deps struct {
+	AgentFacade    *AgentFacade
+	AgentAuthorize func(context.Context) error
 	// EngineAvailable docker.Stack.Ready（socket 就绪事实）。
 	EngineAvailable bool
 	// SqliteAvailable cfg.HostOpsAvailable()（容器/裸机门禁事实）。
@@ -46,7 +48,11 @@ const sqliteWorkerUID = 2001
 // 非容器/裸机环境整片 503，容器内 socket 未就绪仅剩 SQLite 片。
 func NewRouter(deps Deps) chi.Router {
 	var svc Service
-	if deps.EngineAvailable && deps.Engine != nil && deps.Views != nil {
+	if deps.AgentFacade != nil {
+		if deps.AgentFacade.service != nil {
+			svc = deps.AgentFacade.service
+		}
+	} else if deps.EngineAvailable && deps.Engine != nil && deps.Views != nil {
 		svc = newDatabaseService(serviceDeps{
 			registry:        newFileDatabaseRegistry(filepath.Join(paths.ConfigDir, "databases.json")),
 			docker:          newDockerAPI(deps.Engine, deps.Views.ListImages, deps.Views.Policy().ReservedPorts),

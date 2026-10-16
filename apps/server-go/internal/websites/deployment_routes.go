@@ -3,6 +3,8 @@ package websites
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -289,6 +291,31 @@ func mountDeploymentRoutes(r chi.Router, m *deploymentManager) {
 	})
 }
 func (m *deploymentManager) rollback(ctx context.Context, id string) (deploymentTask, error) {
+	return m.rollbackRequest(ctx, id, "", "")
+}
+
+func (m *deploymentManager) rollbackRequest(ctx context.Context, id, requestID, releaseID string) (deploymentTask, error) {
+	digest := ""
+	if requestID != "" {
+		if !safeDeploymentID(requestID) || !safeDeploymentID(releaseID) {
+			return deploymentTask{}, shared.InvalidRequest("回滚需要固定请求标识和上一版本标识")
+		}
+		encoded, _ := json.Marshal([]string{"rollback", id, requestID, releaseID})
+		sum := sha256.Sum256(encoded)
+		digest = hex.EncodeToString(sum[:])
+		m.mu.Lock()
+		for _, task := range m.tasks {
+			if task.Input.RequestID == requestID {
+				copy := *task
+				m.mu.Unlock()
+				if task.RequestDigest != digest {
+					return deploymentTask{}, shared.InvalidRequest("请求标识已用于其他部署")
+				}
+				return copy, nil
+			}
+		}
+		m.mu.Unlock()
+	}
 	row, err := m.service.record(ctx, id)
 	if err != nil {
 		return deploymentTask{}, err
@@ -296,12 +323,15 @@ func (m *deploymentManager) rollback(ctx context.Context, id string) (deployment
 	if row.PreviousRelease == nil {
 		return deploymentTask{}, shared.InvalidRequest("没有上一成功版本可回滚")
 	}
+	if releaseID != "" && row.PreviousRelease.ID != releaseID {
+		return deploymentTask{}, shared.InvalidRequest("上一成功版本已变化，请重新读取并审批")
+	}
 	if !m.service.inProgress.acquire(id) {
 		return deploymentTask{}, shared.InvalidRequest("项目正在执行其他操作")
 	}
 	taskID := newDeploymentID()
 	now := time.Now().UTC().Format(time.RFC3339)
-	t := deploymentTask{Port: row.Port, ID: taskID, SourceID: row.PreviousRelease.SourceID, ProjectID: id, Name: row.Name, State: "queued", Stage: "等待回滚", CreatedAt: now, UpdatedAt: now, TestResult: "skipped", Input: deploymentInput{ProjectID: id}, Config: buildConfig{CandidateID: "rollback", Target: row.PreviousRelease.Target, Command: row.PreviousRelease.Command, RuntimeVersion: row.PreviousRelease.RuntimeVersion, BuildVersion: row.PreviousRelease.BuildVersion, SkipTests: true}}
+	t := deploymentTask{RequestDigest: digest, Port: row.Port, ID: taskID, SourceID: row.PreviousRelease.SourceID, ProjectID: id, Name: row.Name, State: "queued", Stage: "等待回滚", CreatedAt: now, UpdatedAt: now, TestResult: "skipped", Input: deploymentInput{ProjectID: id, RequestID: requestID}, Config: buildConfig{CandidateID: "rollback", Target: row.PreviousRelease.Target, Command: row.PreviousRelease.Command, RuntimeVersion: row.PreviousRelease.RuntimeVersion, BuildVersion: row.PreviousRelease.BuildVersion, SkipTests: true}}
 	parent, cancelTask := context.WithCancel(context.Background())
 	m.mu.Lock()
 	m.cancel[taskID] = cancelTask
@@ -366,7 +396,7 @@ func (m *deploymentManager) rollback(ctx context.Context, id string) (deployment
 				err = m.service.deps.docker.Start(ctx, container)
 			}
 			if err == nil {
-				err = m.ready(ctx, updated)
+				err = m.ready(ctx, updated, taskID)
 			}
 			if err == nil {
 				err = m.service.deps.registry.Put(ctx, updated)
@@ -377,6 +407,8 @@ func (m *deploymentManager) rollback(ctx context.Context, id string) (deployment
 				current, _ := m.getTask(taskID)
 				if e := m.restoreInterrupted(restoreCtx, &current); e != nil {
 					err = errors.New(err.Error() + "；恢复失败：" + e.Error())
+				} else if e := m.mutate(taskID, func(t *deploymentTask) { t.Pending, t.Previous = nil, nil }); e != nil {
+					err = errors.Join(err, e)
 				}
 			}
 		})

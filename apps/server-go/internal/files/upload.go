@@ -45,7 +45,7 @@ type uploadFingerprint struct {
 }
 
 func uploadVersion(st *unix.Stat_t) uploadFingerprint {
-	return uploadFingerprint{uint64(st.Dev), st.Ino, st.Size, st.Mode, st.Uid, st.Gid, st.Mtim, st.Ctim}
+	return uploadFingerprint{uint64(st.Dev), st.Ino, st.Size, uint32(st.Mode), st.Uid, st.Gid, st.Mtim, st.Ctim}
 }
 
 type uploadCheckToken struct {
@@ -62,16 +62,17 @@ type uploadTargetLock struct {
 }
 
 type uploadManager struct {
-	home     string
-	accounts seam.SystemAccounts
-	maxBytes int64
-	now      func() time.Time
-	ctx      context.Context
-	cancel   context.CancelFunc
-	mu       sync.Mutex
-	closed   bool
-	tokens   map[string]uploadCheckToken
-	locks    map[string]*uploadTargetLock
+	mutationMu *sync.Mutex
+	home       string
+	accounts   seam.SystemAccounts
+	maxBytes   int64
+	now        func() time.Time
+	ctx        context.Context
+	cancel     context.CancelFunc
+	mu         sync.Mutex
+	closed     bool
+	tokens     map[string]uploadCheckToken
+	locks      map[string]*uploadTargetLock
 }
 
 func newUploadManager(home string, accounts seam.SystemAccounts) *uploadManager {
@@ -406,6 +407,10 @@ func (m *uploadManager) Upload(ctx context.Context, session, dirPath, name, id s
 	}
 	if err := file.Sync(); err != nil {
 		return fileEntry{}, fsErrorInChinese("同步上传文件失败", err)
+	}
+	if m.mutationMu != nil {
+		m.mutationMu.Lock()
+		defer m.mutationMu.Unlock()
 	}
 	if err := m.verifyTarget(dir, token); err != nil {
 		return fileEntry{}, err

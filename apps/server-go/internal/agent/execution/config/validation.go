@@ -71,10 +71,25 @@ func fromProfile(in ProfileInput) (Profile, error) {
 }
 
 func validateGrantShape(g Grant, mountRoot string) error {
-	if !cleanText(g.Name, 120) || len(g.Directories) > 32 || len(g.Network) > 64 || len(g.PrivateCIDRs) > 32 {
+	if !cleanText(g.Name, 120) || len(g.Directories) > 32 || len(g.Network) > 64 || len(g.PrivateCIDRs) > 32 || len(g.Resources) > 128 {
 		return problem(400, "execution_invalid_grant", "授权名称无效或授权条目数量超过上限")
 	}
 	seen := make(map[string]bool)
+	for _, resource := range g.Resources {
+		switch resource.Domain {
+		case "docker-container", "docker-image", "website", "container-app", "database", "system-user", "firewall", "panel", "platform":
+		default:
+			return problem(400, "execution_invalid_resource", "平台资源授权的领域无效")
+		}
+		if !cleanText(resource.ID, 256) || strings.TrimSpace(resource.ID) != resource.ID || strings.ContainsAny(resource.ID, "*?\\") || (resource.Access != "read" && resource.Access != "write") {
+			return problem(400, "execution_invalid_resource", "平台资源授权必须固定精确标识和 read 或 write 权限")
+		}
+		key := "resource:" + resource.Domain + ":" + resource.ID
+		if seen[key] {
+			return problem(400, "execution_duplicate_resource", "平台资源授权存在重复目标")
+		}
+		seen[key] = true
+	}
 	for _, directory := range g.Directories {
 		if err := validateDirectoryPath(directory, mountRoot); err != nil {
 			return err
@@ -126,7 +141,7 @@ func ValidateGrant(g Grant, mountRoot string) error {
 }
 
 func fromGrant(in GrantInput, mountRoot string) (Grant, error) {
-	g := Grant{Enabled: in.Enabled, Name: strings.TrimSpace(in.Name), Directories: append([]Directory{}, in.Directories...), Network: append([]NetworkEndpoint{}, in.Network...), PrivateCIDRs: append([]string{}, in.PrivateCIDRs...)}
+	g := Grant{Enabled: in.Enabled, Name: strings.TrimSpace(in.Name), Directories: append([]Directory{}, in.Directories...), Network: append([]NetworkEndpoint{}, in.Network...), PrivateCIDRs: append([]string{}, in.PrivateCIDRs...), Resources: append([]Resource{}, in.Resources...)}
 	for i := range g.Network {
 		g.Network[i].Host = strings.ToLower(g.Network[i].Host)
 	}
@@ -148,9 +163,9 @@ func validateDirectoryPath(directory Directory, mountRoot string) error {
 	if !cleanText(p, 4096) || !filepath.IsAbs(p) || filepath.Clean(p) != p || !strings.HasPrefix(p, mountRoot+string(filepath.Separator)) {
 		return problem(400, "execution_invalid_directory", "授权目录必须是业务挂载根下的真实子目录")
 	}
-	for _, forbidden := range []string{"/etc", "/proc", "/sys", "/dev", "/run", "/root", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/boot", "/var/run", "/var/lib/docker", "/var/lib/containerd", "/var/lib/elysian"} {
-		if p == forbidden || strings.HasPrefix(p, forbidden+"/") {
-			return problem(400, "execution_unsafe_directory", "系统目录不能授予执行容器")
+	for _, forbidden := range []string{"/etc", "/proc", "/sys", "/dev", "/run", "/root", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/boot", "/var/run", "/var/log", "/var/cache", "/var/spool", "/var/lib/docker", "/var/lib/containerd", "/var/lib/elysian", "/var/lib/apt", "/var/lib/dpkg", "/var/lib/systemd"} {
+		if p == forbidden || strings.HasPrefix(p, forbidden+"/") || strings.HasPrefix(forbidden, p+"/") {
+			return problem(400, "execution_unsafe_directory", "系统目录及包含它的上级目录不能授予执行容器")
 		}
 	}
 	for _, component := range strings.Split(p, "/") {

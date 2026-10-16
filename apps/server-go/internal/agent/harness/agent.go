@@ -166,6 +166,9 @@ func (a *agentExecution) NextModel(ctx context.Context) (worker.ModelResponse, e
 			return out, bad("model-protocol", "工具提议缺少完整结束标记")
 		}
 		for _, call := range response.ToolCalls {
+			if err := a.validateVisibleProposal(record, call.Name); err != nil {
+				return out, err
+			}
 			if err := a.validateProposal(call.Name, call.Arguments); err != nil {
 				return out, bad("tool-denied", "模型请求了未获准的工具或参数")
 			}
@@ -355,6 +358,11 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 		return empty, bad("model-budget", "模型请求次数或 token 预算已耗尽")
 	}
 	record := ModelRequestRecord{ID: m.deps.NewID(), RunID: run.ID, Index: run.Usage.ModelRequests, Purpose: purpose, Status: StateRunning, StartedAt: stamp(m.deps.Now()), ContextRefs: refs, MemoryRevision: revision, EstimatedTokens: estimate, HistorySeq: run.HistorySeq}
+	if a.onDemandTools() && purpose == "inference" {
+		for _, tool := range request.Tools {
+			record.ToolNames = append(record.ToolNames, tool.Name)
+		}
+	}
 	record.WikiSources, err = a.modelWikiSourcesLocked(ctx, purpose, refs, revision)
 	if err != nil {
 		m.mu.Unlock()
@@ -520,7 +528,7 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 		if r.Status != StateRunning {
 			return context.Canceled
 		}
-		if record.Status == StateCancelled && purpose == "inference" && a.reasoningRequestID == record.ID {
+		if record.Response == nil && purpose == "inference" && a.reasoningRequestID == record.ID {
 			record.Reasoning, record.Content = a.reasoning, a.content
 		}
 		workflowCharge := estimate + request.MaxTokens

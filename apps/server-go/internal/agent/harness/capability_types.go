@@ -5,11 +5,13 @@ import (
 	execconfig "elysian/server/internal/agent/execution/config"
 	"elysian/server/internal/agent/harness/model"
 	"elysian/server/internal/agent/harness/workspace"
+	"elysian/server/internal/agent/tools"
 	"encoding/json"
 )
 
 const StateWaitingApproval = "waiting-approval"
 const StateWaitingResource = "waiting-resource"
+const StateWaitingTask = "waiting-task"
 
 type RevisionRef struct {
 	ID       string `json:"id"`
@@ -38,6 +40,7 @@ type Environment struct {
 	ResourceRules     []RevisionRef `json:"resourceRules,omitempty"`
 }
 type Capability struct {
+	Metadata      tools.Metadata  `json:"metadata,omitempty"`
 	Name          string          `json:"name"`
 	Description   string          `json:"description"`
 	Parameters    json.RawMessage `json:"parameters"`
@@ -48,7 +51,24 @@ type Capability struct {
 	OutputSchema  json.RawMessage `json:"outputSchema,omitempty"`
 	ReadOnly      bool            `json:"readOnly"`
 }
+
+func (c Capability) MarshalJSON() ([]byte, error) {
+	type plain Capability
+	var metadata *tools.Metadata
+	if c.Metadata != (tools.Metadata{}) {
+		value := c.Metadata
+		metadata = &value
+	}
+	return json.Marshal(struct {
+		plain
+		Metadata *tools.Metadata `json:"metadata,omitempty"`
+	}{plain(c), metadata})
+}
+
 type CapabilitySnapshot struct {
+	PermissionMode PermissionMode       `json:"permissionMode,omitempty"`
+	PolicyVersion  string               `json:"policyVersion,omitempty"`
+	ToolLoading    string               `json:"toolLoading,omitempty"`
 	Environment    Environment          `json:"environment"`
 	Tools          []Capability         `json:"tools"`
 	Materials      []Capability         `json:"materials,omitempty"`
@@ -72,13 +92,26 @@ type RecoveryCursor struct {
 	ResponseID string `json:"responseId"`
 	CallIndex  int    `json:"callIndex"`
 }
+type OperationFileContent struct {
+	Bytes  *int    `json:"bytes,omitempty"`
+	Digest string  `json:"digest"`
+	Text   *string `json:"text,omitempty"`
+}
+type OperationFileChange struct {
+	Path   string                `json:"path"`
+	Before *OperationFileContent `json:"before,omitempty"`
+	After  *OperationFileContent `json:"after,omitempty"`
+}
 type Operation struct {
-	ScopeID         string `json:"scopeId,omitempty"`
-	NodeID          string `json:"nodeId,omitempty"`
-	Source          string `json:"source,omitempty"`
-	WorkflowID      string `json:"workflowId,omitempty"`
-	WorkflowStepID  string `json:"workflowStepId,omitempty"`
-	WorkflowAttempt int    `json:"workflowAttempt,omitempty"`
+	FileChanges     []OperationFileChange `json:"fileChanges,omitempty"`
+	Task            *tools.TaskReference  `json:"task,omitempty"`
+	PendingResult   json.RawMessage       `json:"pendingResult,omitempty"`
+	ScopeID         string                `json:"scopeId,omitempty"`
+	NodeID          string                `json:"nodeId,omitempty"`
+	Source          string                `json:"source,omitempty"`
+	WorkflowID      string                `json:"workflowId,omitempty"`
+	WorkflowStepID  string                `json:"workflowStepId,omitempty"`
+	WorkflowAttempt int                   `json:"workflowAttempt,omitempty"`
 
 	ID                string          `json:"id"`
 	RunID             string          `json:"runId"`
@@ -95,6 +128,9 @@ type Operation struct {
 	ResourceRules     []RevisionRef   `json:"resourceRules,omitempty"`
 	ClaimsDigest      string          `json:"claimsDigest,omitempty"`
 	Policy            string          `json:"policy"`
+	PermissionMode    PermissionMode  `json:"permissionMode,omitempty"`
+	PolicyVersion     string          `json:"policyVersion,omitempty"`
+	DecisionSource    string          `json:"decisionSource,omitempty"`
 	Status            string          `json:"status"`
 	ApprovalID        string          `json:"approvalId,omitempty"`
 	CallID            string          `json:"callId"`
@@ -152,6 +188,7 @@ type ContextItem struct {
 	CallID    string      `json:"callId,omitempty"`
 }
 type CapabilityResult struct {
+	Task          *tools.TaskReference
 	Value         json.RawMessage
 	BusinessError *Failure
 	Unknown       bool
@@ -180,8 +217,15 @@ type CapabilityCatalog interface {
 }
 
 func (s CapabilitySnapshot) modelTools() []model.Tool {
+	return s.visibleModelTools(nil)
+}
+
+func (s CapabilitySnapshot) visibleModelTools(loaded map[string]bool) []model.Tool {
 	out := make([]model.Tool, 0, len(s.Tools))
 	for _, c := range s.Tools {
+		if s.ToolLoading == onDemandTools && c.Source != toolDiscoverySource && !loaded[c.Name] {
+			continue
+		}
 		out = append(out, model.Tool{Name: c.Name, Description: c.Description, Parameters: c.Parameters})
 	}
 	return out

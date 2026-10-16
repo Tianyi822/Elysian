@@ -25,6 +25,7 @@ const ServiceName = "containerapps"
 // Deps 是宿主注入的域对象。两项都可为空：Workspace 为空时按 Config 自造，
 // Builds 为空时不登记构建类工具。
 type Deps struct {
+	Facade *domainapps.AgentFacade
 	// Workspace 是工作区登记表。
 	Workspace *domainapps.Registry
 	// Builds 是镜像构建任务机，带常驻定时器，只能由宿主构造并注入。
@@ -64,6 +65,7 @@ type Service struct {
 
 	workspace *domainapps.Registry
 	builds    BuildTasks
+	facade    *domainapps.AgentFacade
 }
 
 // New 构造工作区能力服务，提供服务并登记描述符。
@@ -78,7 +80,7 @@ func New(c *kardia.Context, deps Deps, cfg Config) (*Service, error) {
 	if tools.IsNil(deps.Builds) {
 		deps.Builds = nil
 	}
-	service := &Service{workspace: workspace, builds: deps.Builds}
+	service := &Service{workspace: workspace, builds: deps.Builds, facade: deps.Facade}
 	base, err := kardia.NewService(c, ServiceName, service, nil)
 	if err != nil {
 		return nil, err
@@ -137,6 +139,9 @@ func (s *Service) ListWorkspaceFiles(access *kardia.Context, slug string) ([]dom
 // ReadWorkspaceFile 读工作区里的一个文本文件。二进制、超大与越界路径都由域侧
 // 拒绝，本层不放宽。
 func (s *Service) ReadWorkspaceFile(access *kardia.Context, slug, rel string) (WorkspaceFile, error) {
+	if !domainapps.AgentReadablePath(rel) {
+		return WorkspaceFile{}, errors.New("秘密配置与凭据文件不进入 Agent 上下文")
+	}
 	dir, err := s.AppDirectory(access, slug)
 	if err != nil {
 		return WorkspaceFile{}, err
@@ -144,6 +149,9 @@ func (s *Service) ReadWorkspaceFile(access *kardia.Context, slug, rel string) (W
 	content, entry, err := domainapps.ReadContent(dir, rel)
 	if err != nil {
 		return WorkspaceFile{}, err
+	}
+	if !domainapps.AgentReadableContent(content) {
+		return WorkspaceFile{}, errors.New("配置含敏感字段，不能进入 Agent 上下文")
 	}
 	return WorkspaceFile{
 		Slug:       slug,
@@ -215,6 +223,70 @@ func (s *Service) requireBuilds() error {
 }
 
 func (s *Service) descriptors() []tools.Descriptor {
+	descriptors := s.baseDescriptors()
+	for i := range descriptors {
+		metadata := tools.Metadata{Domain: "container-app", Action: descriptors[i].Name, Effect: "read", Exposure: "agent", ReadOnly: true, Version: "1", ResourceType: "container-app", ResourceKeyArgument: "slug"}
+		if descriptors[i].Name == "build_list" {
+			metadata.Action, metadata.TaskDomain = "task_list", "container-app-build"
+		}
+		if descriptors[i].Name == "build_get" {
+			metadata.Action, metadata.TaskDomain, metadata.TaskIDArgument = "task_status", "container-app-build", "task"
+		}
+		if descriptors[i].Name == "app_list" {
+			metadata.ResourceType, metadata.ResourceKeyArgument = "", ""
+			metadata.Default = true
+		}
+		if descriptors[i].Name == "build_cancel" {
+			metadata.Action, metadata.TaskDomain, metadata.TaskIDArgument = "cancel", "container-app-build", "task"
+			metadata.ReadOnly = false
+			metadata.Effect = "write"
+			metadata.Async = true
+			if s.facade == nil {
+				metadata.Exposure = "system"
+			}
+		}
+		descriptors[i].Metadata = metadata
+		if s.facade != nil {
+			if descriptors[i].Name == "build_cancel" {
+				descriptors[i].Handler = func(c *kardia.Context, args tools.Arguments) (any, error) {
+					slug, _ := tools.StringArg(args, "slug")
+					id, _ := tools.StringArg(args, "task")
+					task, err := s.facade.Cancel(tools.Lifetime(c), slug, id)
+					if err != nil {
+						return nil, err
+					}
+					return tools.Submission{Value: map[string]any{"id": task.ID, "cancelRequested": true}, Task: tools.TaskReference{Domain: "container-app-build", ID: task.ID, RequestID: task.RequestID}}, nil
+				}
+				continue
+			}
+			handler := descriptors[i].Handler
+			descriptors[i].Handler = func(c *kardia.Context, args tools.Arguments) (any, error) {
+				if err := s.facade.Authorize(tools.Lifetime(c)); err != nil {
+					return nil, err
+				}
+				value, err := handler(c, args)
+				if err != nil {
+					return nil, err
+				}
+				switch typed := value.(type) {
+				case domainapps.BuildTask:
+					return domainapps.AgentBuildSummary(typed), nil
+				case []domainapps.BuildTask:
+					out := make([]any, 0, len(typed))
+					for _, task := range typed {
+						out = append(out, domainapps.AgentBuildSummary(task))
+					}
+					return out, nil
+				default:
+					return value, nil
+				}
+			}
+		}
+	}
+	return append(descriptors, s.agentDescriptors()...)
+}
+
+func (s *Service) baseDescriptors() []tools.Descriptor {
 	slugSchema := tools.Schema{Type: tools.SchemaString, Description: "工作区标识"}
 	descriptors := []tools.Descriptor{
 		{

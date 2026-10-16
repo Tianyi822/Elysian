@@ -16,6 +16,7 @@ import (
 	"elysian/server/internal/agent/kardia"
 	"elysian/server/internal/agent/tools"
 	"elysian/server/internal/contract"
+	domain "elysian/server/internal/firewall"
 	"elysian/server/internal/seam"
 )
 
@@ -29,6 +30,7 @@ const DefaultNote = "agent 请求放行"
 type Deps struct {
 	// Opener 是端口放行接缝，由宿主构造后注入。
 	Opener seam.PortOpener
+	Facade *domain.AgentFacade
 }
 
 // Config 是本能力自身的开关。
@@ -46,7 +48,7 @@ type Service struct {
 }
 
 func (d Deps) validate() error {
-	if tools.IsNil(d.Opener) {
+	if tools.IsNil(d.Opener) && (d.Facade == nil || !d.Facade.Available()) {
 		return errors.New("防火墙能力缺少 seam.PortOpener 实现：放行器由宿主构造并注入，不可用时请显式注入 seam.NoopPortOpener()")
 	}
 	return nil
@@ -96,9 +98,13 @@ func (s *Service) EnsurePortRule(access *kardia.Context, port int, note string) 
 }
 
 func (s *Service) descriptors() []tools.Descriptor {
+	if s.deps.Facade != nil {
+		return s.agentDescriptors()
+	}
 	return []tools.Descriptor{
 		{
 			Name:        "port_rule_ensure",
+			Metadata:    tools.Metadata{Domain: "firewall", Action: "port-ensure", Effect: "write", Exposure: "system", Version: "1"},
 			Description: "幂等补一条 ufw 端口放行规则；返回 opened、skipped 或 failed 与中文说明",
 			Parameters: tools.Schema{
 				Type:     tools.SchemaObject,

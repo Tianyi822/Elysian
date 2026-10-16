@@ -25,6 +25,8 @@ type ToolInvoker interface {
 }
 
 type Deps struct {
+	InspectTask           func(context.Context, tools.TaskReference) (tools.TaskStatus, error)
+	LookupTask            func(context.Context, tools.TaskReference) (tools.TaskReference, error)
 	WorkflowRecoveryFence string
 	DispatchGuard         func() error
 	Workspaces            *workspace.Store
@@ -45,27 +47,31 @@ type Deps struct {
 
 // Manager 是父进程的唯一状态写入者。Worker 的消息只能提出请求，不能指定终态。
 type Manager struct {
-	executions   map[string]*executionState
-	workers      []*workerSlot
-	probes       sync.WaitGroup
-	mu           sync.Mutex
-	store        *store
-	deps         Deps
-	ctx          context.Context
-	cancel       context.CancelFunc
-	wake         chan struct{}
-	done         chan struct{}
-	wikiDone     chan struct{}
-	closed       bool
-	workerState  string
-	activeID     string
-	finishing    bool
-	blocked      string
-	storageError bool
-	unresponsive bool
-	closeOnce    sync.Once
-	closeDone    chan struct{}
-	closeErr     error
+	executions     map[string]*executionState
+	workers        []*workerSlot
+	probes         sync.WaitGroup
+	mu             sync.Mutex
+	store          *store
+	deps           Deps
+	ctx            context.Context
+	cancel         context.CancelFunc
+	wake           chan struct{}
+	done           chan struct{}
+	wikiDone       chan struct{}
+	closed         bool
+	workerState    string
+	activeID       string
+	finishing      bool
+	blocked        string
+	storageError   bool
+	unresponsive   bool
+	closeOnce      sync.Once
+	closeDone      chan struct{}
+	closeErr       error
+	toolRuntime    *tools.Runtime
+	toolAuthority  *tools.Authority
+	ownToolRuntime bool
+	taskDone       chan struct{}
 }
 
 // executionLocked returns the in-memory execution projection for a run.
@@ -124,7 +130,12 @@ func New(deps Deps) (*Manager, error) {
 		return nil, fmt.Errorf("恢复运行记录失败：%w", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	m := &Manager{store: s, deps: deps, ctx: ctx, cancel: cancel, wake: make(chan struct{}, 1), done: make(chan struct{}), wikiDone: make(chan struct{}), closeDone: make(chan struct{}), workerState: "starting", executions: make(map[string]*executionState)}
+	m := &Manager{store: s, deps: deps, ctx: ctx, cancel: cancel, wake: make(chan struct{}, 1), done: make(chan struct{}), wikiDone: make(chan struct{}), taskDone: make(chan struct{}), closeDone: make(chan struct{}), workerState: "starting", executions: make(map[string]*executionState)}
+	if err = m.initializeToolRuntime(); err != nil {
+		cancel()
+		_ = s.close()
+		return nil, err
+	}
 	if err = m.restoreExecutionRevocations(ctx); err != nil {
 		cancel()
 		_ = s.close()
@@ -132,6 +143,7 @@ func New(deps Deps) (*Manager, error) {
 	}
 	go m.loop()
 	go m.wikiJobLoop()
+	go m.taskMonitorLoop()
 	return m, nil
 }
 func validateLimits(l Limits) error {
@@ -207,6 +219,12 @@ func (m *Manager) validateSteps(steps []Step) error {
 	for _, step := range steps {
 		if !allowed(step.Tool) {
 			return bad("tool-denied", "任务包含未获准的工具")
+		}
+		if _, workspaceTool := taskWorkspaceCapability(step.Tool); workspaceTool {
+			return bad("tool-denied", "任务工作区工具只能由 Agent v2 运行调用")
+		}
+		if step.Tool == BashExec || step.Tool == BashScript {
+			return bad("tool-denied", "Bash 工具只能由 Agent v2 在审批后运行")
 		}
 		if len(step.Args) != 0 {
 			return bad("invalid-arguments", "首版只读工具不接受参数")
@@ -430,7 +448,7 @@ func (m *Manager) Cancel(ctx context.Context, id string) (Run, error) {
 			return nil
 		}
 		r.CancelRequestedAt = stamp(m.deps.Now())
-		if r.Status == StateQueued || r.Status == StateWaitingApproval || r.Status == StateWaitingResource || r.Status == StateRecoveryRequired {
+		if r.Status == StateQueued || r.Status == StateWaitingApproval || r.Status == StateWaitingResource || r.Status == StateWaitingTask || r.Status == StateRecoveryRequired {
 			r.Status = StateCancelled
 			r.EndReason = "cancelled"
 			r.EndedAt = r.CancelRequestedAt
@@ -785,7 +803,7 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 				m.storageFailedLocked()
 			} else {
 				state, reason, message := StateSucceeded, "completed", ""
-				if (current.Status == StateWaitingApproval || current.Status == StateWaitingResource || current.Status == StateQueued || current.Status == StateRecoveryRequired) && (errors.Is(err, worker.ErrSuspended) || stoppedDuringShutdown) && current.CancelRequestedAt == "" && !execution.unresponsive {
+				if (current.Status == StateWaitingApproval || current.Status == StateWaitingResource || current.Status == StateWaitingTask || current.Status == StateQueued || current.Status == StateRecoveryRequired) && (errors.Is(err, worker.ErrSuspended) || stoppedDuringShutdown) && current.CancelRequestedAt == "" && !execution.unresponsive {
 					delete(m.executions, r.ID)
 					m.refreshLegacyLocked()
 					m.signal()
@@ -920,7 +938,11 @@ func (m *Manager) Close(ctx context.Context) error {
 		go func() {
 			<-m.done
 			<-m.wikiDone
+			<-m.taskDone
 			m.probes.Wait()
+			if m.ownToolRuntime {
+				m.closeErr = errors.Join(m.closeErr, m.toolRuntime.Close(context.Background()))
+			}
 			m.mu.Lock()
 			m.closeErr = errors.Join(m.closeErr, m.store.close())
 			m.mu.Unlock()

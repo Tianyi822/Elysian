@@ -16,6 +16,11 @@ func Lifetime(access *kardia.Context) context.Context {
 	if access == nil {
 		return context.Background()
 	}
+	if value, ok := access.Prop(invocationContextKey{}); ok {
+		if ctx, ok := value.(context.Context); ok {
+			return ctx
+		}
+	}
 	return access.Lifetime()
 }
 

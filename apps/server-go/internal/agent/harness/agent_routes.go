@@ -37,6 +37,7 @@ type agentRuntimeService interface {
 	Messages(context.Context, string, string, int) (Page[Message], error)
 	Memory(context.Context, string, int) (WorkingMemory, error)
 	ModelRequests(context.Context, string, string, int) (Page[ModelRequestRecord], error)
+	ChatSnapshot(context.Context, string) (ChatOutput, error)
 	CreateTask(context.Context, string, AgentInput) (Run, bool, error)
 	ContinueTask(context.Context, string, AgentInput) (Run, bool, error)
 	CreateAttachments(context.Context, []AttachmentUpload) ([]MessageAttachment, error)
@@ -352,6 +353,14 @@ func registerAgentRoutes(r chi.Router, service runtimeService) {
 	}))
 	r.Get("/runs/{id}/output", wrap(func(s agentRuntimeService, w http.ResponseWriter, req *http.Request) {
 		streamChatOutput(service, s, w, req)
+	}))
+	r.Get("/runs/{id}/timeline", wrap(func(s agentRuntimeService, w http.ResponseWriter, req *http.Request) {
+		output, err := s.ChatSnapshot(req.Context(), chi.URLParam(req, "id"))
+		if err != nil {
+			writeRuntimeError(w, err)
+			return
+		}
+		shared.SendJSON(w, 200, output.Timeline)
 	}))
 	r.Get("/runs/{id}/model-requests", wrap(func(s agentRuntimeService, w http.ResponseWriter, req *http.Request) {
 		q, err := runtimeQuery(req, 50, "cursor", "limit")

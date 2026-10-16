@@ -44,7 +44,28 @@ func registerCapabilityRoutes(r chi.Router, service runtimeService) {
 		respond(w, v, e)
 	}))
 	r.Get("/approvals", wrap(func(m *Manager, w http.ResponseWriter, req *http.Request) {
-		v, e := m.ApprovalsFiltered(req.Context(), req.URL.Query().Get("workflowId"))
+		if _, e := runtimeQuery(req, 50, "workflowId", "runId"); e != nil {
+			writeRuntimeError(w, e)
+			return
+		}
+		v, e := m.ApprovalsByRun(req.Context(), req.URL.Query().Get("workflowId"), req.URL.Query().Get("runId"))
+		respond(w, v, e)
+	}))
+	r.Get("/tools", wrap(func(m *Manager, w http.ResponseWriter, req *http.Request) {
+		if _, e := runtimeQuery(req, 50, "sessionId", "domain", "available"); e != nil {
+			writeRuntimeError(w, e)
+			return
+		}
+		var available *bool
+		if raw := req.URL.Query().Get("available"); raw != "" {
+			value, e := strconv.ParseBool(raw)
+			if e != nil {
+				writeRuntimeError(w, bad("invalid-filter", "available 必须为 true 或 false"))
+				return
+			}
+			available = &value
+		}
+		v, e := m.ToolCatalog(req.Context(), req.URL.Query().Get("sessionId"), req.URL.Query().Get("domain"), available)
 		respond(w, v, e)
 	}))
 	r.Post("/approvals/{id}/decision", wrap(func(m *Manager, w http.ResponseWriter, req *http.Request) {

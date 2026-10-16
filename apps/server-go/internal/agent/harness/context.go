@@ -252,7 +252,7 @@ func (a *agentExecution) contextFacts(ctx context.Context, loadImages bool) (Wor
 			ref := EvidenceRef{RunID: run.ID, EventSeq: "1"}
 			content := "任务输入（来源 " + refKey(ref) + "）：\n" + run.Input
 			if run.ID == a.run.ID {
-				content = "本轮输入已列于任务头部；来源 " + refKey(ref)
+				content = "本轮用户输入（来源 " + refKey(ref) + "）：\n" + run.Input
 			} else if run.RunNumber == 1 && run.Input == a.run.Task.Goal {
 				content = "原始目标已列于任务头部；来源 " + refKey(ref)
 			}
@@ -295,7 +295,9 @@ func (a *agentExecution) contextFacts(ctx context.Context, loadImages bool) (Wor
 			response := record.Response
 			group := factGroup{cursor: MemoryCursor{RunNumber: run.RunNumber, EventSeq: record.EventSeq}, refs: []EvidenceRef{{RunID: run.ID, EventSeq: record.EventSeq}}}
 			assistant := model.Message{Role: "assistant", Content: response.Content}
-			if run.ID == a.run.ID && run.Model != nil && run.Model.Provider == model.ProviderDeepSeek && run.Model.APIFormat == model.FormatChatCompletions && len(response.ToolCalls) > 0 {
+			// DeepSeek 工具续轮要求回传思考；Messages 映射为公开 thinking 块。
+			// https://api-docs.deepseek.com/guides/thinking_mode
+			if run.ID == a.run.ID && run.Model != nil && run.Model.Provider == model.ProviderDeepSeek && (run.Model.APIFormat == model.FormatChatCompletions || run.Model.APIFormat == model.FormatAnthropicMessages) && len(response.ToolCalls) > 0 {
 				assistant.Reasoning = response.Reasoning
 			}
 			var results []model.Message
@@ -412,9 +414,16 @@ func (a *agentExecution) contextFacts(ctx context.Context, loadImages bool) (Wor
 	return memory, groups, shared, nil
 }
 
-func (a *agentExecution) tools() []model.Tool {
+func (a *agentExecution) tools(ctx context.Context) ([]model.Tool, error) {
 	if a.run.Snapshot != nil {
-		return a.run.Snapshot.modelTools()
+		if a.onDemandTools() {
+			loaded, err := a.loadedToolNames(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return a.run.Snapshot.visibleModelTools(loaded), nil
+		}
+		return a.run.Snapshot.modelTools(), nil
 	}
 	m := a.manager
 	var out []model.Tool
@@ -426,7 +435,7 @@ func (a *agentExecution) tools() []model.Tool {
 			}
 		}
 	}
-	return out
+	return out, nil
 }
 
 // outputLimit 取思考模式对应的官方默认输出上限（非思考 8K、思考 64K、max 档 128K）；
@@ -471,6 +480,16 @@ func (a *agentExecution) fits(request model.Request) bool {
 	return a.run.Model != nil && estimateRequest(request)+request.MaxTokens <= a.run.Model.ContextTokens
 }
 func baseContext(a *agentExecution, memory WorkingMemory, system string, images []model.ImagePart) []model.Message {
+	if system == agentSystem {
+		system += "\n直接回应本轮用户输入。原始目标提供任务背景，不能将用户的新问题视为没有输入。工具范围以本轮固定目录和实际提供的定义为准，历史回复与工作记忆中的工具数量、工具名称及能力限制可能已经过期，不能用来裁定当前能力。"
+		if a.run.Snapshot != nil {
+			inventory, _ := json.Marshal(a.run.Snapshot.toolInventory())
+			system += "\n本轮可用工具目录摘要（服务端事实，total 不含内部搜索入口，domains 为各领域工具数量）：" + string(inventory)
+		}
+		if a.onDemandTools() {
+			system += "\n工具按需加载：当前仅展示已加载工具的定义，不能把当前定义数量当作完整目录数量。需要具体能力时先调用 tool_search，以任务关键词、领域或精确工具名查找已授权能力；回答可用工具问题时依据本轮目录摘要，需要列举具体工具时先搜索核实。每次最多加载 5 项，从下一次请求起可调用；最多保留最近加载的 16 项，需要时可重新搜索。未出现在本次工具定义中的名称不可调用，不可在同一响应中搜索并调用尚未加载的工具。搜索只加载定义，不执行实际操作，也不扩大权限。"
+		}
+	}
 	memory.Objective = "" // 原始目标已由 Task 单独注入，不复制到摘要数据。
 	b, _ := json.Marshal(memory)
 	header := "当前任务原始目标（不可改写）：\n" + a.run.Task.Goal
@@ -522,7 +541,11 @@ func (a *agentExecution) buildContext(ctx context.Context) (model.Request, []Evi
 		}
 		refs = append(refs, instructionRefs...)
 		a.contextItemIDs = itemIDs
-		request := model.Request{Tools: a.tools(), MaxTokens: a.outputLimit(a.runReasoningLevel())}
+		visibleTools, err := a.tools(ctx)
+		if err != nil {
+			return model.Request{}, nil, memory.Revision, err
+		}
+		request := model.Request{Tools: visibleTools, MaxTokens: a.outputLimit(a.runReasoningLevel())}
 		sharedStart := 0
 		for {
 			request.Messages = append(append(append(append([]model.Message{}, base...), wikiMessages...), shared...), taskMessages...)

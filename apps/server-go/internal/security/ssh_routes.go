@@ -10,6 +10,7 @@ package security
 // → 端点 → 未知端点 404（文案剥挂载前缀，方法不匹配同样走 404 兜底）。
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"net/http"
@@ -23,6 +24,8 @@ import (
 
 // Deps security 域的装配入参（go-plan §3.8 冻结的跨域字段 + 域内测试注入位）。
 type Deps struct {
+	AgentFacade    *AgentFacade
+	AgentAuthorize func(context.Context) error
 	// Available 容器门禁事实（cfg.HostOpsAvailable()）：false 时两片整片 503。
 	Available bool
 	// Now 时间源；nil 用 time.Now（服务层经 nowIso 落时间戳）。
@@ -48,6 +51,9 @@ func NewSshRouter(deps Deps) chi.Router {
 	}
 
 	svc := deps.ssh
+	if deps.AgentFacade != nil {
+		svc = deps.AgentFacade.ssh
+	}
 	if svc == nil {
 		svc = newSshService(newRealSshDepsWithWorkspace(deps.Now, nil))
 	}

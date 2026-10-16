@@ -4,6 +4,8 @@
 package tools
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -73,6 +75,40 @@ type PublicSchema struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
 	Parameters  map[string]any `json:"parameters"`
+	Metadata    Metadata       `json:"metadata,omitempty"`
+}
+
+func (s PublicSchema) MarshalJSON() ([]byte, error) {
+	type publicAlias PublicSchema
+	var metadata *Metadata
+	if s.Metadata != (Metadata{}) {
+		copy := s.Metadata
+		metadata = &copy
+	}
+	return json.Marshal(struct {
+		Name        string         `json:"name"`
+		Description string         `json:"description"`
+		Parameters  map[string]any `json:"parameters"`
+		Metadata    *Metadata      `json:"metadata,omitempty"`
+	}{s.Name, s.Description, s.Parameters, metadata})
+}
+
+// Metadata is server-owned capability policy input, never model arguments.
+type Metadata struct {
+	Domain              string `json:"domain,omitempty"`
+	Action              string `json:"action,omitempty"`
+	Effect              string `json:"effect,omitempty"`
+	Exposure            string `json:"exposure,omitempty"`
+	ResourceType        string `json:"resourceType,omitempty"`
+	ResourceKeyArgument string `json:"resourceKeyArgument,omitempty"`
+	Backend             string `json:"backend,omitempty"`
+	Version             string `json:"version,omitempty"`
+	TaskDomain          string `json:"taskDomain,omitempty"`
+	TaskRequestArgument string `json:"taskRequestArgument,omitempty"`
+	TaskIDArgument      string `json:"taskIdArgument,omitempty"`
+	ReadOnly            bool   `json:"readOnly"`
+	Async               bool   `json:"async,omitempty"`
+	Default             bool   `json:"default,omitempty"`
 }
 
 // Descriptor 声明一条工具。
@@ -83,8 +119,16 @@ type Descriptor struct {
 	Description string
 	// Parameters 是参数模式；无参数的工具写 Schema{Type: SchemaObject}。
 	Parameters Schema
+	Metadata   Metadata
+	// JSONParameters supports externally discovered schemas. Its validator is
+	// mandatory so unsupported schema keywords can never silently disappear.
+	JSONParameters    map[string]any
+	ValidateArguments func(Arguments) error
+	// Catalog isolates immutable run catalogs while retaining model tool names.
+	Catalog string
 	// Handler 是执行体，不得为空。
 	Handler Handler
+	Await   func(context.Context, any) (any, error)
 }
 
 // descriptorNamePattern 限定工具名形状，避免把命名冲突带进事件名与日志。
@@ -107,6 +151,12 @@ func (d Descriptor) validate() error {
 	if d.Handler == nil {
 		return fmt.Errorf("工具 %q 的处理器不得为空", d.Name)
 	}
+	if d.JSONParameters != nil {
+		if d.JSONParameters["type"] != SchemaObject || d.ValidateArguments == nil {
+			return fmt.Errorf("工具 %q 的外部模式必须是 object 且提供校验器", d.Name)
+		}
+		return nil
+	}
 	if err := d.Parameters.checkShape(d.Name); err != nil {
 		return fmt.Errorf("工具 %q 的参数模式非法：%w", d.Name, err)
 	}
@@ -118,6 +168,9 @@ func (d Descriptor) validate() error {
 
 func (d Descriptor) clone() Descriptor {
 	d.Parameters = d.Parameters.clone()
+	if d.JSONParameters != nil {
+		d.JSONParameters = kardia.CloneConfig(d.JSONParameters).(map[string]any)
+	}
 	return d
 }
 
@@ -128,9 +181,21 @@ func (c Call) snapshot() Call {
 
 // Public 返回对外投影。
 func (d Descriptor) Public() PublicSchema {
+	parameters := d.Parameters.JSONSchema()
+	if d.JSONParameters != nil {
+		parameters = kardia.CloneConfig(d.JSONParameters).(map[string]any)
+	}
 	return PublicSchema{
 		Name:        d.Name,
 		Description: d.Description,
-		Parameters:  d.Parameters.JSONSchema(),
+		Parameters:  parameters,
+		Metadata:    d.Metadata,
 	}
+}
+
+func (d Descriptor) validateArguments(args Arguments) error {
+	if d.ValidateArguments != nil {
+		return d.ValidateArguments(args)
+	}
+	return d.Parameters.Validate(args)
 }

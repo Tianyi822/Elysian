@@ -38,6 +38,8 @@ const serviceUnavailableMsg = "网站服务不可用"
 // Deps 网站片的依赖注入。前七个字段是 go-plan §3.8 冻结的跨域形状；其余为域内
 // 可注入项（测试用；nil/空落生产实现）。
 type Deps struct {
+	AgentFacade    *AgentFacade
+	AgentAuthorize func(context.Context) error
 	// EngineAvailable 容器片就绪事实（docker.Stack.Ready）：false 时整片 503。
 	EngineAvailable bool
 	// Engine Engine API 传输器（HTTP-over-unix，/v1.41 由传输层拼接）。
@@ -103,7 +105,11 @@ func NewRouter(deps Deps) chi.Router {
 		r.Handle("/*", unavailable)
 		return r
 	}
-	mountService(r, newProductionService(deps))
+	if deps.AgentFacade != nil {
+		mountService(r, deps.AgentFacade.service)
+	} else {
+		mountService(r, newProductionService(deps))
+	}
 	return r
 }
 

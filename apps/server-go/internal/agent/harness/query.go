@@ -153,7 +153,7 @@ func (s *store) events(ctx context.Context, id, after string, n int) (Page[Event
 	return p, rows.Err()
 }
 func validState(s string) bool {
-	if s == StateWaitingApproval || s == StateWaitingResource || s == StateRecoveryRequired {
+	if s == StateWaitingApproval || s == StateWaitingResource || s == StateWaitingTask || s == StateRecoveryRequired {
 		return true
 	}
 	switch s {

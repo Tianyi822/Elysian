@@ -73,20 +73,20 @@ var capabilityDomains = map[string]string{
 	"./internal/agent/tools/auth":          "elysian/server/internal/auth",
 	"./internal/agent/tools/containerapps": "elysian/server/internal/containerapps",
 	"./internal/agent/tools/docker":        "elysian/server/internal/docker",
-	"./internal/agent/tools/firewall":      "",
-	"./internal/agent/tools/logs":          "",
+	"./internal/agent/tools/firewall":      "elysian/server/internal/firewall",
+	"./internal/agent/tools/logs":          "elysian/server/internal/logs",
 	"./internal/agent/tools/panel":         "elysian/server/internal/panel",
 	"./internal/agent/tools/terminals":     "",
 	"./internal/agent/tools/websites":      "elysian/server/internal/websites",
+	"./internal/agent/tools/files":         "elysian/server/internal/files",
+	"./internal/agent/tools/security":      "elysian/server/internal/security",
+	"./internal/agent/tools/database":      "elysian/server/internal/database",
+	"./internal/agent/tools/platform":      "elysian/server/internal/platform",
 }
 
 // unwrappedDomains 是本轮刻意不封装的三个域：能力面全部未导出，任何子包都不该
 // 悄悄依赖它们（ADR-0023 后续项）。
-var unwrappedDomains = map[string]bool{
-	"elysian/server/internal/files":    true,
-	"elysian/server/internal/platform": true,
-	"elysian/server/internal/database": true,
-}
+var unwrappedDomains = map[string]bool{}
 
 func TestCapabilityPackagesImportAtMostOneDomain(t *testing.T) {
 	for pkg, allowed := range capabilityDomains {

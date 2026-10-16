@@ -87,11 +87,12 @@ func (e deploymentEngine) pull(ctx context.Context, image string) error {
 	return nil
 }
 func (e deploymentEngine) create(ctx context.Context, image string, cmd []string, env []string, tmpfs bool) (string, error) {
-	host := map[string]any{"Memory": e.limits.Memory, "NanoCpus": e.limits.CPUs * 1e9, "PidsLimit": 512, "CapDrop": []string{"ALL"}, "SecurityOpt": []string{"no-new-privileges:true"}, "RestartPolicy": map[string]string{"Name": "no"}, "LogConfig": map[string]any{"Type": "json-file", "Config": map[string]string{"max-size": "10m", "max-file": "1"}}}
+	host := map[string]any{"Memory": e.limits.Memory, "NanoCpus": e.limits.CPUs * 1e9, "PidsLimit": 512, "Tmpfs": map[string]string{"/tmp": "rw,exec,nosuid,nodev,size=536870912,mode=1777"}, "CapDrop": []string{"ALL"}, "SecurityOpt": []string{"no-new-privileges:true"}, "RestartPolicy": map[string]string{"Name": "no"}, "LogConfig": map[string]any{"Type": "json-file", "Config": map[string]string{"max-size": "10m", "max-file": "1"}}}
 	if tmpfs {
-		host["Tmpfs"] = map[string]string{"/run/credentials": "rw,noexec,nosuid,size=64k,mode=0700"}
+		host["Tmpfs"].(map[string]string)["/run/credentials"] = "rw,noexec,nosuid,nodev,size=64k,mode=0700,uid=65532,gid=65532"
 	}
-	r, err := e.json(ctx, "POST", "/containers/create", map[string]any{"Image": image, "Cmd": cmd, "Env": env, "WorkingDir": "/app", "Labels": map[string]string{"elysian.managed": "true", "elysian.website.build": "true", "elysian.website.deployment-owner": e.owner}, "HostConfig": host})
+	env = append(env, "HOME=/tmp", "NPM_CONFIG_PREFIX=/app/.elysian-tools/npm", "GOCACHE=/tmp/go-cache", "GOMODCACHE=/tmp/go-mod", "GRADLE_USER_HOME=/tmp/gradle", "MAVEN_CONFIG=/tmp/.m2")
+	r, err := e.json(ctx, "POST", "/containers/create", map[string]any{"Image": image, "User": "65532:65532", "Cmd": cmd, "Env": env, "WorkingDir": "/app", "Labels": map[string]string{"elysian.managed": "true", "elysian.website.build": "true", "elysian.website.deployment-owner": e.owner}, "HostConfig": host})
 	if err != nil {
 		return "", err
 	}
@@ -101,19 +102,33 @@ func (e deploymentEngine) create(ctx context.Context, image string, cmd []string
 	}
 	return id, nil
 }
-func (e deploymentEngine) remove(id string) {
+func (e deploymentEngine) remove(id string) error {
 	if id == "" {
-		return
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	_, _ = e.transport.Request(ctx, seam.EngineRequest{Method: "DELETE", Path: "/containers/" + id, Query: url.Values{"force": {"true"}, "v": {"true"}}})
+	if e.transport == nil {
+		return errors.New("构建容器清理通道不可用")
+	}
+	response, err := e.transport.Request(ctx, seam.EngineRequest{Method: "DELETE", Path: "/containers/" + id, Query: url.Values{"force": {"true"}, "v": {"true"}}})
+	if err != nil {
+		return err
+	}
+	if response.Status != 204 && response.Status != 404 {
+		return errors.New("构建容器清理结果未确认")
+	}
+	response, err = e.transport.Request(ctx, seam.EngineRequest{Method: "GET", Path: "/containers/" + id + "/json"})
+	if err != nil || response.Status != 404 {
+		return errors.New("构建容器移除尚未确认")
+	}
+	return nil
 }
 func (e deploymentEngine) put(ctx context.Context, id, root string) error {
 	r, w := io.Pipe()
 	done := make(chan error, 1)
 	go func() { err := tarDirectory(ctx, root, w); _ = w.CloseWithError(err); done <- err }()
-	resp, err := e.transport.Request(ctx, seam.EngineRequest{Method: "PUT", Path: "/containers/" + id + "/archive", Query: url.Values{"path": {"/app"}}, BodyReader: r, Timeout: e.limits.Timeout, ContentType: "application/x-tar"})
+	resp, err := e.transport.Request(ctx, seam.EngineRequest{Method: "PUT", Path: "/containers/" + id + "/archive", Query: url.Values{"path": {"/"}, "copyUIDGID": {"true"}}, BodyReader: r, Timeout: e.limits.Timeout, ContentType: "application/x-tar"})
 	_ = r.Close()
 	writeErr := <-done
 	if err != nil {
@@ -123,7 +138,7 @@ func (e deploymentEngine) put(ctx context.Context, id, root string) error {
 		return writeErr
 	}
 	if resp.Status >= 300 {
-		return errors.New("无法传入构建工作区")
+		return fmt.Errorf("无法传入构建工作区（HTTP %d）：%s", resp.Status, strings.TrimSpace(string(resp.Body)))
 	}
 	return nil
 }
@@ -136,7 +151,7 @@ func (e deploymentEngine) secret(ctx context.Context, id, token string) error {
 		if name == "askpass" {
 			mode = 0700
 		}
-		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: mode, Size: int64(len(text)), Typeflag: tar.TypeReg}); err != nil {
+		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: mode, Uid: 65532, Gid: 65532, Size: int64(len(text)), Typeflag: tar.TypeReg}); err != nil {
 			return err
 		}
 		if _, err := tw.Write([]byte(text)); err != nil {
@@ -144,7 +159,7 @@ func (e deploymentEngine) secret(ctx context.Context, id, token string) error {
 		}
 	}
 	_ = tw.Close()
-	r, err := e.transport.Request(ctx, seam.EngineRequest{Method: "PUT", Path: "/containers/" + id + "/archive", Query: url.Values{"path": {"/run/credentials"}}, Body: b.Bytes()})
+	r, err := e.transport.Request(ctx, seam.EngineRequest{Method: "PUT", Path: "/containers/" + id + "/archive", Query: url.Values{"path": {"/run/credentials"}, "copyUIDGID": {"true"}}, Body: b.Bytes()})
 	if err != nil {
 		return err
 	}

@@ -144,6 +144,26 @@ func operationResourceClaims(snapshot CapabilitySnapshot, o Operation) ([]Resour
 	if err != nil {
 		return canonicalResourceClaims([]ResourceClaim{{Kind: "global"}}), refs
 	}
+	meta := o.Capability.Metadata
+	if o.Capability.Source == "builtin" && o.Capability.ReadOnly && meta.TaskDomain != "" {
+		if meta.Action == "task_list" {
+			return canonicalResourceClaims([]ResourceClaim{{Kind: "task-control", Authority: meta.TaskDomain, Key: "/", Access: "read", Subtree: true}}), refs
+		}
+		if meta.Action == "task_status" || meta.Action == "task_logs" {
+			if object, ok := args.(map[string]any); ok {
+				if id := taskArgument(object, meta.TaskIDArgument); id != "" {
+					return canonicalResourceClaims([]ResourceClaim{{Kind: "task-control", Authority: meta.TaskDomain, Key: id, Access: "read"}}), refs
+				}
+			}
+		}
+	}
+	if o.Capability.Source == "builtin" && meta.Async && meta.Action == "cancel" && meta.TaskDomain != "" && meta.TaskIDArgument != "" {
+		if object, ok := args.(map[string]any); ok {
+			if id := taskArgument(object, meta.TaskIDArgument); id != "" {
+				return canonicalResourceClaims([]ResourceClaim{{Kind: "task-control", Authority: meta.TaskDomain, Key: id, Access: "write"}}), refs
+			}
+		}
+	}
 	for _, rule := range snapshot.ResourceRules {
 		if !resourceRuleMatches(rule, o.Capability) {
 			continue
@@ -177,12 +197,70 @@ func operationResourceClaims(snapshot CapabilitySnapshot, o Operation) ([]Resour
 	}
 	switch o.Capability.Source {
 	case "builtin":
-		claims = append(claims, ResourceClaim{Kind: "docker", Authority: "local", Key: "/", Access: "read", Subtree: true})
+		meta := o.Capability.Metadata
+		kind, key, access := meta.ResourceType, "/", "read"
+		if kind == "" {
+			kind = "docker"
+		}
+		if !o.Capability.ReadOnly {
+			access = "write"
+		}
+		if meta.ResourceKeyArgument != "" {
+			if object, ok := args.(map[string]any); ok {
+				if value, ok := object[meta.ResourceKeyArgument].(string); ok && resourceText(value, 4000) {
+					key = "/" + value
+					if kind == "filesystem" && strings.HasPrefix(value, "/") {
+						key = value
+					}
+				}
+			}
+		}
+		claims = append(claims, ResourceClaim{Kind: kind, Authority: "local", Key: key, Access: access, Subtree: key == "/"})
+		// These domains own content under host directories. Their public
+		// resource IDs cannot identify every backing path, so serialize them
+		// against all granted host filesystem access.
+		if meta.Domain == "website" || meta.Domain == "container-app" || kind == "website" || kind == "container-app" {
+			claims = append(claims, ResourceClaim{Kind: "filesystem", Authority: "local", Key: "/", Access: access, Subtree: true})
+		}
 		complete = true
-	case "skill-load", "wiki":
+	case "workspace":
+		// Scope the lease to the task and relative path. Independent files can
+		// proceed concurrently while read/write and write/write collisions wait
+		// on the existing resource lease machinery.
+		value, decodeErr := jsonvalue.Decode(json.RawMessage(o.ArgumentsJSON))
+		pathValue := ""
+		if decodeErr == nil {
+			if object, ok := value.(map[string]any); ok {
+				pathValue, _ = object["path"].(string)
+			}
+		}
+		if o.Capability.Name == TaskWorkspaceList {
+			claims = append(claims, ResourceClaim{Kind: "workspace", Authority: "local", Key: "/" + o.TaskID, Access: "read", Subtree: true})
+			complete = true
+			break
+		}
+		if pathValue == "" || !utf8.ValidString(pathValue) {
+			claims = append(claims, ResourceClaim{Kind: "global"})
+		} else {
+			access := "read"
+			if !o.Capability.ReadOnly {
+				access = "write"
+			}
+			claims = append(claims, ResourceClaim{Kind: "workspace", Authority: "local", Key: "/" + o.TaskID + "/" + pathValue, Access: access})
+			if object, ok := args.(map[string]any); ok {
+				if target, ok := object["target"].(string); ok && target != "" {
+					claims = append(claims, ResourceClaim{Kind: "workspace", Authority: "local", Key: "/" + o.TaskID + "/" + target, Access: "write"})
+				}
+			}
+		}
 		complete = true
-	case "script":
-		claims = append(claims, ResourceClaim{Kind: "workspace", Authority: "local", Key: o.TaskID, Access: "write"})
+	case "skill-load", "wiki", toolDiscoverySource:
+		complete = true
+	case "script", BashSource, BashExec, BashScript:
+		// Script and Bash execution always exports and replaces the complete
+		// task workspace, so the claim must share the same rooted namespace as
+		// per-file workspace operations and cover the whole subtree.
+		claims = append(claims, ResourceClaim{Kind: "workspace", Authority: "local", Key: "/" + o.TaskID, Access: "write", Subtree: true})
 		if o.Execution != nil && (o.Execution.Grant == nil || len(o.Execution.Grant.Network) == 0) {
 			complete = true
 		}
@@ -191,7 +269,12 @@ func operationResourceClaims(snapshot CapabilitySnapshot, o Operation) ([]Resour
 		// stdio 的启动和后台代码拥有整个 grant，不能用工具参数缩小这个范围。
 		if o.Capability.Source != "script" {
 			complete = o.Execution.Grant == nil || len(o.Execution.Grant.Network) == 0
-			claims = append(claims, ResourceClaim{Kind: "runtime", Authority: "local", Key: o.ID, Access: "write"})
+			// Persisted operations always have an ID. Synthetic callers used by
+			// catalog tests may omit it; do not turn an otherwise precise
+			// workspace claim into a global lock solely because of that omission.
+			if o.ID != "" {
+				claims = append(claims, ResourceClaim{Kind: "runtime", Authority: "local", Key: o.ID, Access: "write"})
+			}
 		}
 		if grant := o.Execution.Grant; grant != nil {
 			for _, directory := range grant.Directories {

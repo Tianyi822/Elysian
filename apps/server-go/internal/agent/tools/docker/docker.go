@@ -1,11 +1,6 @@
-// Package docker 把容器与镜像的只读视图封装成 kardia 插件。
-//
-// 只包 seam.DockerViews 与 docker.CheckRegistryHost 这一个纯函数：容器视图由
-// 宿主经 docker.Assemble 构造后注入——Assemble 会起事件流 goroutine 与采样定时
-// 器且没有导出 Close，本包不代为构造（所有权契约见上级包 doc.go）。
-//
-// 启停、删除、重启这类写操作本轮不暴露：它们是不可逆动作，必须等审批层落地后
-// 再开（AGENTS.md 把「哪些动作必须人为干预」推迟给 harness 层）。
+// Package docker exposes host-injected Docker views and a restricted Agent
+// facade. Mutations require Registry dispatch authorization and exact grants;
+// the domain facade enforces container templates and image task idempotence.
 package docker
 
 import (
@@ -29,6 +24,7 @@ const DefaultListLimit = 200
 
 // Deps 是宿主注入的域对象。
 type Deps struct {
+	Agent *domaindocker.AgentFacade
 	// Views 是镜像与容器视图，由宿主经 docker.Assemble 构造后注入。
 	Views seam.DockerViews
 }
@@ -115,6 +111,11 @@ func From(c *kardia.Context) (*Service, error) {
 
 // ListContainers 返回容器视图，按 ListLimit 截断。
 func (s *Service) ListContainers(access *kardia.Context) ([]contract.Container, error) {
+	if s.deps.Agent != nil {
+		if err := s.deps.Agent.Authorize(tools.Lifetime(access)); err != nil {
+			return nil, err
+		}
+	}
 	containers, err := s.deps.Views.ListContainers(tools.Lifetime(access))
 	if err != nil {
 		return nil, err
@@ -124,6 +125,11 @@ func (s *Service) ListContainers(access *kardia.Context) ([]contract.Container, 
 
 // ListImages 返回镜像视图，按 ListLimit 截断。
 func (s *Service) ListImages(access *kardia.Context) ([]contract.ContainerImage, error) {
+	if s.deps.Agent != nil {
+		if err := s.deps.Agent.Authorize(tools.Lifetime(access)); err != nil {
+			return nil, err
+		}
+	}
 	images, err := s.deps.Views.ListImages(tools.Lifetime(access))
 	if err != nil {
 		return nil, err
@@ -144,12 +150,17 @@ func (s *Service) SelfContainerID(access *kardia.Context) string {
 // CheckRegistryHost 校验镜像源主机名是否合法且解析为公网地址。它会做一次 DNS
 // 解析（上游自带 3 秒超时），因此不是纯本地调用。
 func (s *Service) CheckRegistryHost(access *kardia.Context, raw string) error {
+	if s.deps.Agent != nil {
+		if err := s.deps.Agent.Authorize(tools.Lifetime(access)); err != nil {
+			return err
+		}
+	}
 	return domaindocker.CheckRegistryHost(tools.Lifetime(access), raw)
 }
 
 func (s *Service) descriptors() []tools.Descriptor {
 	empty := tools.Schema{Type: tools.SchemaObject}
-	return []tools.Descriptor{
+	descriptors := []tools.Descriptor{
 		{
 			Name:        "docker_containers_list",
 			Description: fmt.Sprintf("列出容器视图，最多 %d 条", s.cfg.ListLimit),
@@ -187,6 +198,33 @@ func (s *Service) descriptors() []tools.Descriptor {
 			Handler: s.handleRegistryHostCheck,
 		},
 	}
+	for i := range descriptors {
+		descriptors[i].Metadata = tools.Metadata{Domain: "docker", Action: descriptors[i].Name, Effect: "read", Exposure: "agent", ReadOnly: true, Default: true, Version: "1"}
+	}
+	if s.deps.Agent == nil {
+		return descriptors
+	}
+	text := tools.Schema{Type: tools.SchemaString}
+	for _, action := range []string{"start", "stop", "restart", "remove"} {
+		action := action
+		descriptors = append(descriptors, tools.Descriptor{Name: "docker_container_" + action, Description: "审批后对已授权的安全容器执行 " + action, Parameters: tools.Schema{Type: tools.SchemaObject, Required: []string{"id"}, Properties: map[string]tools.Schema{"id": text}}, Metadata: tools.Metadata{Domain: "docker", Action: action, Effect: "write", Exposure: "agent", ResourceType: "docker-container", ResourceKeyArgument: "id", Version: "1"}, Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
+			id, _ := tools.StringArg(args, "id")
+			if action == "remove" {
+				if err := s.deps.Agent.Remove(tools.Lifetime(c), id); err != nil {
+					return nil, err
+				}
+				return map[string]bool{"removed": true}, nil
+			}
+			return s.deps.Agent.Action(tools.Lifetime(c), id, action)
+		}})
+	}
+	descriptors = append(descriptors, tools.Descriptor{Name: "docker_container_create_restricted", Description: "审批后用固定安全模板创建容器：非 root、无网络、只读根、无宿主挂载、无额外权限；镜像必须已存在且固定摘要", Parameters: tools.Schema{Type: tools.SchemaObject, Required: []string{"name", "image", "requestId"}, Properties: map[string]tools.Schema{"name": text, "image": text, "requestId": text}}, Metadata: tools.Metadata{Domain: "docker", Action: "create", Effect: "write", Exposure: "agent", ResourceType: "docker-container", ResourceKeyArgument: "name", Version: "1"}, Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
+		name, _ := tools.StringArg(args, "name")
+		image, _ := tools.StringArg(args, "image")
+		requestID, _ := tools.StringArg(args, "requestId")
+		return s.deps.Agent.CreateRestricted(tools.Lifetime(c), domaindocker.AgentCreateInput{Name: name, Image: image, RequestID: requestID})
+	}})
+	return append(descriptors, s.imageDescriptors()...)
 }
 
 func (s *Service) handleListContainers(access *kardia.Context, _ tools.Arguments) (any, error) {
@@ -229,6 +267,11 @@ func (s *Service) handleListImages(access *kardia.Context, _ tools.Arguments) (a
 }
 
 func (s *Service) handlePolicy(access *kardia.Context, _ tools.Arguments) (any, error) {
+	if s.deps.Agent != nil {
+		if err := s.deps.Agent.Authorize(tools.Lifetime(access)); err != nil {
+			return nil, err
+		}
+	}
 	policy := s.Policy(access)
 	return map[string]any{
 		"mount_root":     policy.MountRoot,
@@ -237,6 +280,11 @@ func (s *Service) handlePolicy(access *kardia.Context, _ tools.Arguments) (any, 
 }
 
 func (s *Service) handleSelfContainer(access *kardia.Context, _ tools.Arguments) (any, error) {
+	if s.deps.Agent != nil {
+		if err := s.deps.Agent.Authorize(tools.Lifetime(access)); err != nil {
+			return nil, err
+		}
+	}
 	id := s.SelfContainerID(access)
 	return map[string]any{"id": id, "identified": id != ""}, nil
 }

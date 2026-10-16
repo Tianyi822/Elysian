@@ -174,6 +174,12 @@ func (h Handler) create(w http.ResponseWriter, r *http.Request) {
 
 func (h Handler) remove(w http.ResponseWriter, r *http.Request) {
 	slug := chi.URLParam(r, "slug")
+	release, lockErr := h.lockEditable(r.Context(), slug)
+	if lockErr != nil {
+		writeError(w, lockErr)
+		return
+	}
+	defer release()
 	// 工作区有进行中的构建任务时拒绝删除：任务还引用着目录里的上下文。
 	if h.Builds != nil && h.Builds.HasActive(slug) {
 		shared.SendError(w, http.StatusConflict, "工作区有进行中的构建任务，请先取消或等待完成")
@@ -223,6 +229,12 @@ func (h Handler) listFiles(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handler) uploadFile(w http.ResponseWriter, r *http.Request) {
+	release, lockErr := h.lockEditable(r.Context(), chi.URLParam(r, "slug"))
+	if lockErr != nil {
+		writeError(w, lockErr)
+		return
+	}
+	defer release()
 	dir, rel, err := h.workspaceDir(r)
 	if err != nil {
 		writeError(w, err)
@@ -242,6 +254,12 @@ func (h Handler) uploadFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handler) deleteFile(w http.ResponseWriter, r *http.Request) {
+	release, lockErr := h.lockEditable(r.Context(), chi.URLParam(r, "slug"))
+	if lockErr != nil {
+		writeError(w, lockErr)
+		return
+	}
+	defer release()
 	dir, rel, err := h.workspaceDir(r)
 	if err != nil {
 		writeError(w, err)
@@ -269,6 +287,12 @@ func (h Handler) readContent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handler) writeContent(w http.ResponseWriter, r *http.Request) {
+	release, lockErr := h.lockEditable(r.Context(), chi.URLParam(r, "slug"))
+	if lockErr != nil {
+		writeError(w, lockErr)
+		return
+	}
+	defer release()
 	dir, rel, err := h.workspaceDir(r)
 	if err != nil {
 		writeError(w, err)
@@ -293,6 +317,18 @@ func (h Handler) writeContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	shared.SendJSON(w, http.StatusOK, entry)
+}
+
+func (h Handler) lockEditable(ctx context.Context, slug string) (func(), error) {
+	release, err := h.Registry.LockWorkspace(ctx, slug)
+	if err != nil {
+		return nil, err
+	}
+	if h.Builds != nil && h.Builds.HasActive(slug) {
+		release()
+		return nil, &shared.InvalidRequestError{Status: http.StatusConflict, Message: "工作区有进行中的构建任务，请先取消或等待完成"}
+	}
+	return release, nil
 }
 
 func (h Handler) checkCompose(w http.ResponseWriter, r *http.Request) {

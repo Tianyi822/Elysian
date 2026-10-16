@@ -103,7 +103,32 @@ func (m *Manager) invoke(ctx context.Context, run Run, index int, name string, a
 		if m.deps.Tools == nil || !m.deps.Tools.Available() {
 			result.err = errors.New("工具依赖不可用")
 		} else {
-			result.value, result.err = m.deps.Tools.Execute(callCtx, name, parameters)
+			authorized, err := m.toolAuthority.Authorize(callCtx, tools.AuthorizationBinding{OperationID: call.ID, DispatchID: call.ID, Tool: name, ArgumentsDigest: tools.ArgumentsDigest(parameters)}, nil, func(ctx context.Context) error {
+				var raw string
+				var stored Call
+				if err := m.store.db.QueryRowContext(ctx, "SELECT document FROM calls WHERE id=?", call.ID).Scan(&raw); err != nil {
+					return err
+				}
+				if err := json.Unmarshal([]byte(raw), &stored); err != nil {
+					return err
+				}
+				if stored.Status != StateRunning || stored.Tool != name || !reflect.DeepEqual(stored.Args, parameters) {
+					return bad("dispatch-changed", "旧版工具调用与持久化派发不符")
+				}
+				current, err := m.store.get(ctx, run.ID)
+				if err != nil {
+					return err
+				}
+				if current.Status != StateRunning || current.CancelRequestedAt != "" {
+					return context.Canceled
+				}
+				return nil
+			})
+			if err != nil {
+				result.err = err
+				return
+			}
+			result.value, result.err = m.deps.Tools.Execute(authorized, name, parameters)
 		}
 	}()
 	var result toolResponse

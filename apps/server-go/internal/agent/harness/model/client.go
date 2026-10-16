@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -84,18 +85,8 @@ func (c *httpClient) send(ctx context.Context, req *http.Request, limit int) ([]
 		return nil, requestError(ctx, err)
 	}
 	defer response.Body.Close()
-	if response.StatusCode >= 300 && response.StatusCode <= 399 {
-		return nil, problem(502, "model-redirect-refused", "模型服务要求跳转，已阻止请求以保护凭据")
-	}
-	if response.StatusCode != http.StatusOK {
-		switch response.StatusCode {
-		case http.StatusUnauthorized, http.StatusForbidden:
-			return nil, problem(502, "model-auth-failed", "模型服务鉴权失败，请检查配置凭据")
-		case http.StatusTooManyRequests:
-			return nil, problem(502, "model-rate-limited", "模型服务请求受到限流，请稍后重试")
-		default:
-			return nil, problem(502, "model-http-failed", "模型服务返回异常状态，请检查模型服务")
-		}
+	if err := responseStatusError(response.StatusCode); err != nil {
+		return nil, err
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, int64(limit)+1))
 	if err != nil {
@@ -105,6 +96,36 @@ func (c *httpClient) send(ctx context.Context, req *http.Request, limit int) ([]
 		return nil, problem(502, "model-response-too-large", "模型响应超过允许的大小")
 	}
 	return body, nil
+}
+
+// responseStatusError 只回显 HTTP 状态与本地排查提示，不读取上游错误正文。
+func responseStatusError(status int) error {
+	if status == http.StatusOK {
+		return nil
+	}
+	if status >= 300 && status < 400 {
+		return problem(502, "model-redirect-refused", "模型服务要求跳转，已阻止请求以保护凭据")
+	}
+	switch status {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return problem(502, "model-auth-failed", "模型服务鉴权失败，请检查配置凭据")
+	case http.StatusTooManyRequests:
+		return problem(502, "model-rate-limited", "模型服务请求受到限流，请稍后重试")
+	}
+	guidance := "请检查模型服务和请求配置"
+	switch {
+	case status == http.StatusBadRequest || status == http.StatusUnprocessableEntity:
+		guidance = "模型服务拒绝请求参数，请检查协议、模型能力与请求配置"
+	case status == http.StatusNotFound:
+		guidance = "模型接口或模型不存在，请检查服务地址、协议与模型名称"
+	case status == http.StatusRequestTimeout:
+		guidance = "模型服务处理请求超时，请稍后重试"
+	case status == http.StatusRequestEntityTooLarge:
+		guidance = "模型服务拒绝过大的请求，请减少消息或附件内容"
+	case status >= 500:
+		guidance = "模型服务或其网关暂时异常，请稍后重试"
+	}
+	return problem(502, "model-http-failed", fmt.Sprintf("模型服务返回异常状态（HTTP %d）：%s", status, guidance))
 }
 
 func requestError(ctx context.Context, err error) error {

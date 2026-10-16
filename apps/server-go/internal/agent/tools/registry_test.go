@@ -92,6 +92,30 @@ func TestRegistryListIsSortedAndPublicSchemaHidesHandler(t *testing.T) {
 	}
 }
 
+func TestRegistryDefaultsAgentImplementationMetadata(t *testing.T) {
+	_, registry, _ := newRegistryCtx(t)
+	for _, test := range []struct {
+		name     string
+		metadata Metadata
+		backend  string
+		version  string
+	}{
+		{"legacy", Metadata{}, "", ""},
+		{"agent", Metadata{Exposure: "agent"}, "domain", "1"},
+		{"explicit", Metadata{Exposure: "agent", Backend: "custom", Version: "4"}, "custom", "4"},
+	} {
+		descriptor := echoDescriptor(test.name, nil)
+		descriptor.Metadata = test.metadata
+		if _, err := registry.Register(descriptor); err != nil {
+			t.Fatal(err)
+		}
+		registered, ok := registry.Lookup(test.name)
+		if !ok || registered.Metadata.Backend != test.backend || registered.Metadata.Version != test.version {
+			t.Fatalf("metadata for %s=%+v", test.name, registered.Metadata)
+		}
+	}
+}
+
 func TestRegistryRejectsDuplicateAndInvalidDescriptor(t *testing.T) {
 	_, registry, _ := newRegistryCtx(t)
 	if _, err := registry.Register(echoDescriptor("dup_tool", 1)); err != nil {

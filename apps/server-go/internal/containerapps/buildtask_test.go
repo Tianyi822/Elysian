@@ -50,6 +50,7 @@ type fakeBuildScript struct {
 	Lines          []string
 	Block          bool
 	DisablePersist bool // 成功后不把产物镜像写进 fake 引擎（测 inspect 回查失败用）
+	Err            error
 }
 
 // fakeBuildEngine 面板视角的最小引擎替身：镜像列表/inspect/删除 + /build 流。
@@ -176,6 +177,9 @@ func (f *fakeBuildEngine) Stream(ctx context.Context, req seam.EngineRequest, on
 	if script.Block {
 		<-ctx.Done()
 		return seam.EngineResponse{}, ctx.Err()
+	}
+	if script.Err != nil {
+		return seam.EngineResponse{}, script.Err
 	}
 	for _, line := range script.Lines {
 		payload, _ := json.Marshal(map[string]string{"stream": line + "\n"})
@@ -602,6 +606,7 @@ func TestSubmitWorkspaceActiveConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForState(t, env.manager, "busy", first.ID, BuildStateBuilding)
+	waitForBuildDispatch(t, env.engine, 1)
 	if _, _, err = env.manager.Submit(context.Background(), dir, "busy", BuildPlanInput{
 		Mode:       buildModeDockerfile,
 		RequestID:  "bbbbbbbb-1111-2222-3333-444444444444",
@@ -614,9 +619,21 @@ func TestSubmitWorkspaceActiveConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	final := waitForBuildTerminal(t, env.manager, "busy", first.ID)
-	if final.State != BuildStateCancelled || final.Stage != "已取消" || final.Error != "构建已取消" {
+	if final.State != BuildStateInterrupted || final.Stage != buildStageUnconfirmed || !final.MayStillRun || !strings.Contains(final.Error, buildErrCancelled) {
 		t.Fatalf("取消收口不符：%+v", final)
 	}
+}
+
+func waitForBuildDispatch(t *testing.T, engine *fakeBuildEngine, count int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(engine.recordedStreams()) >= count {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("build was not dispatched")
 }
 
 func waitForState(t *testing.T, m *BuildManager, slug, id, state string) {
@@ -825,7 +842,7 @@ func TestBuildImageTimeoutFailsTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	final := waitForBuildTerminal(t, env.manager, "slow", task.ID)
-	if final.State != BuildStateFailed || final.Error != "构建超时（2 秒），已中止" {
+	if final.State != BuildStateInterrupted || !final.MayStillRun || final.Error != "构建超时（2 秒）；"+buildStageUnconfirmed {
 		t.Fatalf("单镜像超时应按注入时限渲染文案：%+v", final)
 	}
 }
@@ -848,10 +865,10 @@ func TestFormatDurationLimit(t *testing.T) {
 			t.Errorf("formatDurationLimit(%v) = %q，期望 %q", tc.d, got, tc.want)
 		}
 	}
-	if got := envLimitsTaskTimeoutText(); got != "构建任务超时（60 分钟），已中止" {
+	if got := envLimitsTaskTimeoutText(); got != "构建任务超时（60 分钟）" {
 		t.Fatalf("缺省任务时限文案应逐字不变：%q", got)
 	}
-	if got := envLimitsImageTimeoutText(); got != "构建超时（20 分钟），已中止" {
+	if got := envLimitsImageTimeoutText(); got != "构建超时（20 分钟）" {
 		t.Fatalf("缺省镜像时限文案应逐字不变：%q", got)
 	}
 }
@@ -1043,17 +1060,18 @@ func TestInterruptActiveAfterWorkspaceDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForState(t, env.manager, "gone", task.ID, BuildStateBuilding)
+	waitForBuildDispatch(t, env.engine, 1)
 	// 模拟 remove 的后半段：登记删除成功后中断残留任务。
 	if err = env.registry.Delete("gone"); err != nil {
 		t.Fatal(err)
 	}
 	env.manager.InterruptActive("gone", workspaceDeletedMessage)
 	final := waitForBuildTerminal(t, env.manager, "gone", task.ID)
-	if final.State != BuildStateFailed || final.Error != workspaceDeletedMessage || final.Stage != buildStageFailed {
-		t.Fatalf("删除后残留任务应落 failed 固定句：%+v", final)
+	if final.State != BuildStateInterrupted || !strings.Contains(final.Error, workspaceDeletedMessage) || final.Stage != buildStageUnconfirmed || !final.MayStillRun {
+		t.Fatalf("删除后停止未确认的构建必须保留屏障：%+v", final)
 	}
 	// worker 的取消竞态不得把首个终态覆盖成 cancelled。
-	if final.State != BuildStateFailed {
+	if final.State != BuildStateInterrupted {
 		t.Fatalf("首个终态为准：%+v", final)
 	}
 	// 无任务的工作区调用静默无事。
@@ -1138,7 +1156,7 @@ func TestRecoveryMarksInterrupted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if recovered.State != BuildStateInterrupted || recovered.Stage != "面板重启中断，未自动重新构建" {
+	if recovered.State != BuildStateInterrupted || recovered.Stage != buildStageUnconfirmed || !recovered.MayStillRun || !manager.HasActive("a") {
 		t.Fatalf("活跃任务应标 interrupted：%+v", recovered)
 	}
 	if _, err = os.Stat(spool); !os.IsNotExist(err) {

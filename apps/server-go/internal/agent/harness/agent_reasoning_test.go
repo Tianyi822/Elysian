@@ -68,8 +68,8 @@ func TestAgentReasoningSnapshotAndConfirmedPersistence(t *testing.T) {
 				t.Fatal("请求记录缺失", err)
 			}
 			if fail {
-				if finished.Status != StateFailed || page.Items[0].Response != nil || page.Items[0].Reasoning != "" || page.Items[0].Content != "" {
-					t.Fatal("失败后仍公开未确认的思考")
+				if finished.Status != StateFailed || page.Items[0].Response != nil || page.Items[0].Reasoning != "检查\n容器状态" || page.Items[0].Content != "正在生成的回答" {
+					t.Fatal("失败后未保留未完成片段")
 				}
 			} else {
 				if finished.Status != StateSucceeded || page.Items[0].Response == nil || page.Items[0].Response.Reasoning != "检查\n容器状态" || page.Items[0].Reasoning != "" || page.Items[0].Content != "" {

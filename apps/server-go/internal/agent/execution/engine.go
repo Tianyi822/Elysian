@@ -37,6 +37,11 @@ type Executor struct {
 }
 
 func New(options Options) (*Executor, error) {
+	if options.Authorize == nil {
+		options.Authorize = func(context.Context, string) error {
+			return problem(403, "execution-authorization", "执行器未装配派发授权门禁")
+		}
+	}
 	if options.SocketPath == "" {
 		options.SocketPath = "/var/run/docker.sock"
 	}
@@ -100,6 +105,9 @@ func (e *Executor) call(ctx context.Context, method, path string, body any, resu
 	return nil
 }
 func validateProfile(p config.Profile) error {
+	if !p.Enabled {
+		return problem(403, "execution-profile-disabled", "执行配置已停用")
+	}
 	if !digestImage.MatchString(p.Image) || p.TimeoutSeconds < 1 || p.TimeoutSeconds > 300 || p.CPUMillis < 1 || p.CPUMillis > 1000 || p.MemoryBytes < 1 || p.MemoryBytes > 512<<20 || p.PIDs < 1 || p.PIDs > 128 {
 		return problem(400, "execution-profile", "执行配置的镜像摘要或资源限额无效")
 	}
@@ -164,14 +172,35 @@ func (e *Executor) start(ctx context.Context, id string, p config.Profile, grant
 	if !identityPattern.MatchString(id) {
 		return nil, problem(400, "execution-id", "执行编号无效")
 	}
+	if e.options.Authorize != nil {
+		authorizationID := id
+		if start.Mode == "stdio" && start.serverID != "" && e.options.MCPDispatchID != nil {
+			authorizationID = e.options.MCPDispatchID(ctx)
+		}
+		if authorizationID == "" {
+			return nil, problem(403, "execution-authorization", "MCP 执行缺少匹配的单次派发身份")
+		}
+		if err := e.options.Authorize(ctx, authorizationID); err != nil {
+			return nil, problem(403, "execution-authorization", "执行缺少匹配的一次性派发授权")
+		}
+	}
 	if err := validateProfile(p); err != nil {
 		return nil, err
+	}
+	if p.ID != "" && e.options.ResolveProfile != nil {
+		latest, err := e.options.ResolveProfile(p.ID, 0)
+		if err != nil || latest == nil || latest.ID != p.ID || !latest.Enabled {
+			return nil, problem(403, "execution-profile-disabled", "执行配置已停用，不能用于新的操作")
+		}
 	}
 	if err := validateCommand(start.Command, start.Environment); err != nil {
 		return nil, err
 	}
 	// 停用是紧急切断语义：停用只追加 Enabled=false 的新修订，固定修订快照本身仍为启用，
 	// 必须回查配置里的最新修订，禁止停用授权继续挂载业务目录或启动执行容器。
+	if grant != nil && !grant.Enabled {
+		return nil, problem(403, "execution-grant-disabled", "执行授权已停用，不能用于新的操作")
+	}
 	if grant != nil && e.options.ResolveGrant != nil {
 		if latest, err := e.options.ResolveGrant(grant.ID, 0); err != nil || latest == nil || latest.ID != grant.ID || !latest.Enabled {
 			return nil, problem(403, "execution-grant-disabled", "执行授权已停用，不能用于新的操作")
@@ -186,6 +215,7 @@ func (e *Executor) start(ctx context.Context, id string, p config.Profile, grant
 		copied.Directories = append([]config.Directory(nil), grant.Directories...)
 		copied.Network = append([]config.NetworkEndpoint(nil), grant.Network...)
 		copied.PrivateCIDRs = append([]string(nil), grant.PrivateCIDRs...)
+		copied.Resources = append([]config.Resource(nil), grant.Resources...)
 		grant = &copied
 	}
 	e.mu.Lock()
@@ -411,6 +441,9 @@ func (e *Executor) binds(grant *config.Grant) ([]string, error) {
 		info, err := os.Stat(clean)
 		if err != nil || !info.IsDir() {
 			return nil, problem(400, "execution-directory", "执行目录必须已存在")
+		}
+		if err := validateGrantDirectory(clean); err != nil {
+			return nil, problem(400, "execution-directory", err.Error())
 		}
 		result = append(result, clean+":/grants/"+strconv.Itoa(i)+":"+d.Access+",rprivate")
 	}

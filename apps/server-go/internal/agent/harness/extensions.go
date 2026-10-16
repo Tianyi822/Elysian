@@ -19,16 +19,19 @@ import (
 	"elysian/server/internal/agent/harness/workspace"
 	"elysian/server/internal/agent/jsonvalue"
 	"elysian/server/internal/agent/mcp"
+	"elysian/server/internal/agent/tools"
 )
 
 // Extensions 的资源由装配层构造并注入；Worker 永远不接触这些对象。
 type Extensions struct {
-	Skills     *skills.Store
-	Servers    *mcp.Store
-	MCP        *mcp.Client
-	Config     *execconfig.Store
-	Executor   *execution.Executor
-	Workspaces *workspace.Store
+	registry       *tools.Runtime
+	BuiltinSchemas func() []tools.PublicSchema
+	Skills         *skills.Store
+	Servers        *mcp.Store
+	MCP            *mcp.Client
+	Config         *execconfig.Store
+	Executor       *execution.Executor
+	Workspaces     *workspace.Store
 	// 仅保存可公开的装配诊断，不包含配置正文或凭据。
 	SkillsReason    string
 	MCPReason       string
@@ -53,6 +56,14 @@ func emptyParameters() json.RawMessage {
 
 func (e *Extensions) Snapshot(ctx context.Context, env Environment) (CapabilitySnapshot, error) {
 	s := CapabilitySnapshot{Environment: env, Tools: []Capability{}}
+	builtinNames := map[string]bool{}
+	if e.BuiltinSchemas != nil {
+		for _, schema := range e.BuiltinSchemas() {
+			if schema.Metadata.Exposure == "agent" || allowed(schema.Name) {
+				builtinNames[schema.Name] = true
+			}
+		}
+	}
 	if len(env.Skills) > 0 && e.SkillsReason != "" {
 		return s, bad("skill-unavailable", e.SkillsReason)
 	}
@@ -120,6 +131,19 @@ func (e *Extensions) Snapshot(ctx context.Context, env Environment) (CapabilityS
 			return s, bad("revision-required", "授权必须固定具体修订")
 		}
 		s.Grants = append(s.Grants, g)
+	}
+	for _, name := range env.Tools {
+		if name != BashExec && name != BashScript {
+			continue
+		}
+		if e.Executor == nil || e.Workspaces == nil {
+			return s, bad("execution-unavailable", "Bash 能力需要受管执行器与任务工作区服务")
+		}
+		capability, ok := bashCapability(name, s.Profiles, s.Grants, e.Executor != nil)
+		if !ok {
+			return s, bad("execution-unavailable", "Bash 能力必须绑定已启用的 Bash 执行配置与执行器")
+		}
+		s.Tools = append(s.Tools, capability)
 	}
 	for _, ref := range env.Skills {
 		if e.Skills == nil {
@@ -218,8 +242,25 @@ func (e *Extensions) Snapshot(ctx context.Context, env Environment) (CapabilityS
 			s.Materials = append(s.Materials, Capability{Name: capabilityAlias("prompt", ref.ID, p.Name), Description: p.Description, Parameters: params, Source: "mcp-prompt", Ref: ref, OriginalName: p.Name, CatalogDigest: catalog.Digest, ReadOnly: true})
 		}
 	}
+	// These capabilities are implemented by the harness itself. Register them
+	// before validating the selected names so they follow the same fixed
+	// snapshot path as MCP and skill capabilities.
 	for _, name := range env.Tools {
-		if allowed(name) {
+		if capability, ok := taskWorkspaceCapability(name); ok {
+			if e.Workspaces == nil {
+				return s, bad("workspace-unavailable", "任务工作区服务未装配")
+			}
+			found := false
+			for _, existing := range s.Tools {
+				found = found || existing.Name == capability.Name
+			}
+			if !found {
+				s.Tools = append(s.Tools, capability)
+			}
+		}
+	}
+	for _, name := range env.Tools {
+		if allowed(name) || builtinNames[name] {
 			continue
 		}
 		found := false
@@ -231,7 +272,7 @@ func (e *Extensions) Snapshot(ctx context.Context, env Environment) (CapabilityS
 		}
 	}
 	for _, name := range env.TrustedReadOnly {
-		found := allowed(name) && contains(env.Tools, name)
+		found := (allowed(name) || builtinNames[name]) && contains(env.Tools, name)
 		for _, c := range append(append([]Capability{}, s.Tools...), s.Materials...) {
 			found = found || c.Name == name
 		}
@@ -246,6 +287,15 @@ func (e *Extensions) Snapshot(ctx context.Context, env Environment) (CapabilityS
 	return s, nil
 }
 func (e *Extensions) Validate(c Capability, args json.RawMessage) error {
+	if c.Source == "workspace" {
+		if err := mcp.Validate(c.Parameters, args); err != nil {
+			return err
+		}
+		return validateTaskWorkspaceArgs(c, args)
+	}
+	if isBashSource(c.Source) {
+		return e.validateBashArguments(c, args)
+	}
 	return mcp.Validate(c.Parameters, args)
 }
 
@@ -257,6 +307,9 @@ type scriptArguments struct {
 }
 
 func (e *Extensions) Prepare(ctx context.Context, s CapabilitySnapshot, o Operation) (Operation, error) {
+	if isBashSource(o.Capability.Source) {
+		return e.prepareBash(ctx, s, o)
+	}
 	if o.Capability.Source != "script" {
 		if o.Capability.Source == "mcp-tool" || o.Capability.Source == "mcp-resource" || o.Capability.Source == "mcp-prompt" {
 			server, err := e.Servers.Resolve(o.Capability.Ref.ID, o.Capability.Ref.Revision, true)
@@ -324,6 +377,7 @@ func copyExecutionGrant(g execconfig.Grant) *execconfig.Grant {
 	g.Directories = append([]execconfig.Directory(nil), g.Directories...)
 	g.Network = append([]execconfig.NetworkEndpoint(nil), g.Network...)
 	g.PrivateCIDRs = append([]string(nil), g.PrivateCIDRs...)
+	g.Resources = append([]execconfig.Resource(nil), g.Resources...)
 	return &g
 }
 func (e *Extensions) Check(ctx context.Context, s CapabilitySnapshot, o Operation) error {
@@ -331,6 +385,23 @@ func (e *Extensions) Check(ctx context.Context, s CapabilitySnapshot, o Operatio
 	c := o.Capability
 	switch c.Source {
 	case "builtin":
+		return nil
+	case "workspace":
+		if e.Workspaces == nil {
+			return bad("workspace-unavailable", "任务工作区服务不可用")
+		}
+		return e.Validate(c, json.RawMessage(o.ArgumentsJSON))
+	case BashSource, BashExec, BashScript:
+		if e.Executor == nil || e.Workspaces == nil {
+			return bad("execution-unavailable", "Bash 执行器或工作区不可用")
+		}
+		prepared, err := e.Prepare(ctx, s, o)
+		if err != nil {
+			return err
+		}
+		if digestJSON(prepared.Execution) != digestJSON(o.Execution) {
+			return bad("execution-changed", "Bash 执行配置与审批快照不符")
+		}
 		return nil
 	case "skill-load", "script":
 		p, err := e.Skills.Get(c.Ref.ID, c.Ref.Revision, true)
@@ -363,6 +434,11 @@ func (e *Extensions) Check(ctx context.Context, s CapabilitySnapshot, o Operatio
 		}
 		if digestJSON(prepared.Execution) != digestJSON(o.Execution) {
 			return bad("execution-changed", "MCP stdio 容器配置与审批快照不符")
+		}
+		if server.Stdio != nil {
+			if err := tools.Revalidate(ctx); err != nil {
+				return err
+			}
 		}
 		return e.MCP.CheckCatalog(ctx, server, c.CatalogDigest)
 	default:
@@ -401,11 +477,40 @@ func readableBlocks(blocks []json.RawMessage) []any {
 	return out
 }
 func (e *Extensions) Execute(ctx context.Context, s CapabilitySnapshot, o Operation) (CapabilityResult, error) {
+	if e.registry == nil {
+		return CapabilityResult{}, bad("dispatch-required", "扩展能力必须经已授权的工具注册表派发")
+	}
+	args, err := jsonvalue.Object([]byte(o.ArgumentsJSON))
+	if err != nil {
+		return CapabilityResult{}, err
+	}
+	value, err := e.registry.Execute(ctx, o.Capability.Name, args)
+	if err != nil {
+		return CapabilityResult{}, err
+	}
+	result, ok := value.(CapabilityResult)
+	if !ok {
+		return CapabilityResult{}, bad("invalid-result", "扩展能力结果类型无效")
+	}
+	return result, nil
+}
+
+func (e *Extensions) executeBackend(ctx context.Context, s CapabilitySnapshot, o Operation) (CapabilityResult, error) {
 	ctx = mcp.WithScope(ctx, o.ID)
 	var result CapabilityResult
 	c := o.Capability
 	switch c.Source {
+	case "workspace":
+		if err := tools.ConsumeBackend(ctx, o.DispatchID); err != nil {
+			return result, err
+		}
+		return e.executeTaskWorkspace(ctx, o)
+	case BashSource, BashExec, BashScript:
+		return e.executeBash(ctx, o)
 	case "skill-load":
+		if err := tools.ConsumeBackend(ctx, o.DispatchID); err != nil {
+			return result, err
+		}
 		var args struct {
 			Path string `json:"path"`
 		}
@@ -427,6 +532,11 @@ func (e *Extensions) Execute(ctx context.Context, s CapabilitySnapshot, o Operat
 		server, err := e.Servers.Resolve(c.Ref.ID, c.Ref.Revision, true)
 		if err != nil {
 			return result, err
+		}
+		if server.Stdio == nil {
+			if err := tools.ConsumeBackend(ctx, o.DispatchID); err != nil {
+				return result, err
+			}
 		}
 		switch c.Source {
 		case "mcp-tool":

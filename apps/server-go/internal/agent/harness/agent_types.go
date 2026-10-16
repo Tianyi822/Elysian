@@ -40,6 +40,7 @@ type RenameSessionInput struct {
 }
 
 type AgentInput struct {
+	PermissionMode   PermissionMode  `json:"permissionMode,omitempty"`
 	ReplaceMessageID string          `json:"replaceMessageId,omitempty"`
 	ReasoningLevel   string          `json:"reasoningLevel,omitempty"`
 	Skills           []RevisionRef   `json:"skills,omitempty"`
@@ -112,6 +113,7 @@ type WorkingMemory struct {
 }
 
 type ModelRequestRecord struct {
+	ToolNames []string `json:"toolNames,omitempty"`
 	// Reasoning 是本次请求仍在生成的展示文本，不表示已确认响应。
 	Reasoning       string          `json:"reasoning,omitempty"`
 	Content         string          `json:"content,omitempty"`

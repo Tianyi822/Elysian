@@ -77,6 +77,7 @@ type releaseRecord struct {
 	ContainerName  string `json:"containerName"`
 }
 type deploymentTask struct {
+	RequestDigest     string                 `json:"requestDigest,omitempty"`
 	ProjectStatus     string                 `json:"projectStatus,omitempty"`
 	Port              int                    `json:"port"`
 	PreviousRunning   bool                   `json:"previousRunning"`
@@ -99,6 +100,7 @@ type deploymentTask struct {
 	StagedCertificate *WebsiteCertificateRef `json:"stagedCertificate,omitempty"`
 	Input             deploymentInput        `json:"input"`
 	BuildContainer    string                 `json:"buildContainer,omitempty"`
+	AuxContainers     []string               `json:"auxContainers,omitempty"`
 	Previous          *WebsiteRecord         `json:"previous,omitempty"`
 	Pending           *WebsiteRecord         `json:"pending,omitempty"`
 }
@@ -115,5 +117,9 @@ func defaultDeploymentLimits() deploymentLimits {
 	return deploymentLimits{512 << 20, 2 << 30, 100000, 2, 2 << 30, 20 * time.Minute, 1}
 }
 func activeDeployment(state string) bool {
-	return state == "queued" || state == "building" || state == "publishing"
+	return state == "queued" || state == "building" || state == "publishing" || state == "unknown"
+}
+
+func unsettledDeployment(t deploymentTask) bool {
+	return t.BuildContainer != "" || len(t.AuxContainers) > 0 || t.Pending != nil
 }

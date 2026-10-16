@@ -39,7 +39,14 @@ func resourceSetsConflict(a, b []ResourceClaim) bool {
 }
 
 func externalOperation(o Operation) bool {
-	return o.Capability.Source != "builtin" && o.Capability.Source != "skill-load" && o.Capability.Source != "wiki"
+	if o.Capability.Source == "builtin" {
+		return !o.Capability.ReadOnly
+	}
+	// Workspace reads/writes are committed through the task workspace CAS in
+	// the same parent transaction, so they do not represent an external system
+	// side effect. A workspace write still gets a barrier from ReadOnly=false;
+	// reads must not become unknown external operations on cancellation.
+	return o.Capability.Source != "builtin" && o.Capability.Source != "skill-load" && o.Capability.Source != "wiki" && o.Capability.Source != "workspace" && o.Capability.Source != toolDiscoverySource
 }
 
 func saveResourceLease(ctx context.Context, tx *sql.Tx, lease ResourceLease) error {
@@ -56,7 +63,8 @@ ON CONFLICT(id) DO UPDATE SET state=excluded.state,document=excluded.document`, 
 // deliberately has no write side effects so a waiter can be promoted back to
 // queued without reserving its call budget or consuming its approval.
 func resourceLeaseAvailable(ctx context.Context, tx *sql.Tx, o Operation, lease ResourceLease) (bool, error) {
-	if externalOperation(o) {
+	taskControl := o.Capability.Metadata.Async && o.Capability.Metadata.Action == "cancel" && o.Capability.Metadata.TaskDomain != "" && o.Capability.Metadata.TaskIDArgument != ""
+	if externalOperation(o) && !taskControl {
 		var barrierCount, leaseCount int
 		if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM execution_barriers WHERE state='unknown'").Scan(&barrierCount); err != nil {
 			return false, err
@@ -226,7 +234,7 @@ func releaseWaitingResourceLeases(ctx context.Context, tx *sql.Tx, runID, now st
 }
 
 func recoverResourceLeases(ctx context.Context, tx *sql.Tx) error {
-	leases, err := readDocuments[ResourceLease](ctx, tx, "SELECT document FROM resource_leases WHERE state='held'")
+	leases, err := readDocuments[ResourceLease](ctx, tx, "SELECT document FROM resource_leases WHERE state='held' AND operation_id NOT IN (SELECT id FROM operations WHERE state='waiting-task')")
 	if err != nil {
 		return err
 	}

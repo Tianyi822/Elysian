@@ -14,6 +14,7 @@ import (
 
 	"elysian/server/internal/agent/kardia"
 	"elysian/server/internal/agent/tools"
+	domain "elysian/server/internal/logs"
 	"elysian/server/internal/seam"
 )
 
@@ -37,7 +38,8 @@ var minLengthOne = 1
 // Deps 是宿主注入的域对象。本包不构造其中任何一项。
 type Deps struct {
 	// Logs 是日志服务接缝，由宿主经 logs.OpenService 构造后注入。
-	Logs seam.Logs
+	Logs   seam.Logs
+	Facade *domain.AgentFacade
 }
 
 // Config 是本能力自身的开关。
@@ -56,7 +58,7 @@ type Service struct {
 
 // validate 在装载前裁决依赖是否齐备，缺项即失败（失败闭合）。
 func (d Deps) validate() error {
-	if tools.IsNil(d.Logs) {
+	if tools.IsNil(d.Logs) && (d.Facade == nil || !d.Facade.Available()) {
 		return errors.New("日志能力缺少 seam.Logs 实现：日志服务由宿主构造并注入")
 	}
 	return nil
@@ -136,9 +138,13 @@ func (s *Service) RecordOperation(access *kardia.Context, record seam.OperationR
 }
 
 func (s *Service) descriptors() []tools.Descriptor {
+	if s.deps.Facade != nil {
+		return s.agentDescriptors()
+	}
 	return []tools.Descriptor{
 		{
 			Name:        "log_runtime_write",
+			Metadata:    tools.Metadata{Domain: "logs", Action: "runtime-write", Effect: "write", Exposure: "system", Version: "1"},
 			Description: "写一条运行日志；级别取 debug|info|warning|error，来源缺省为 " + s.cfg.Source,
 			Parameters: tools.Schema{
 				Type:     tools.SchemaObject,
@@ -153,6 +159,7 @@ func (s *Service) descriptors() []tools.Descriptor {
 		},
 		{
 			Name:        "log_operation_write",
+			Metadata:    tools.Metadata{Domain: "logs", Action: "operation-write", Effect: "write", Exposure: "system", Version: "1"},
 			Description: "写一条操作日志，同时落运行日志镜像",
 			Parameters: tools.Schema{
 				Type:     tools.SchemaObject,

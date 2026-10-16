@@ -16,6 +16,7 @@ import (
 	"elysian/server/internal/agent/harness/skills"
 	"elysian/server/internal/agent/harness/worker"
 	"elysian/server/internal/agent/harness/workspace"
+	"elysian/server/internal/agent/tools"
 )
 
 // 真实容器复用同一个受信测试二进制作为 supervisor，不依赖面板生产文件。
@@ -97,7 +98,7 @@ else:
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.extensions.Executor, err = execution.New(execution.Options{SocketPath: "/var/run/docker.sock", SupervisorPath: binary, MountRoot: root})
+	f.extensions.Executor, err = execution.New(execution.Options{SocketPath: "/var/run/docker.sock", SupervisorPath: binary, MountRoot: root, Authorize: tools.ConsumeBackend, MCPDispatchID: tools.DispatchID})
 	if err != nil {
 		t.Fatal(err)
 	}

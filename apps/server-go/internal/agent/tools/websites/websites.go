@@ -1,12 +1,7 @@
-// Package websites 把网站登记与宿主 Caddy 通道的只读面封装成 kardia 插件。
-//
-// 只包 websites.Registry 的列举与 seam.CaddyAdmin 的当前配置读取。网站主服务的
-// 九个操作（创建、更新、切换访问方式、启停、日志、删除、代理调和、运行时目录）
-// 因 websiteServiceInterface 与 serviceDeps 未导出而不可达；证书存诸的读取会返回
-// PEM 材料，一律不封装（ADR-0023 后续项）。
-//
-// 登记表与 Caddy 通道都由宿主注入：文件版登记表指向 ~/.Elysian/config 下的真实
-// 文件，Caddy 通道连的是宿主 unix socket，本包都不代为构造。
+// Package websites exposes host-injected website views and Agent operations.
+// Mutations enter the shared domain service after exact grants and dispatch
+// approval; certificate material and raw application/build logs stay outside
+// model context. This package never constructs a separate task manager.
 package websites
 
 import (
@@ -27,6 +22,7 @@ const ServiceName = "websites"
 
 // Deps 是宿主注入的域对象。
 type Deps struct {
+	Facade *domainwebsites.AgentFacade
 	// Sites 是网站登记表。
 	Sites domainwebsites.Registry
 	// Caddy 是宿主 Caddy 管理通道。
@@ -81,6 +77,10 @@ func (d Deps) validate() error {
 
 // New 构造网站能力服务，提供服务并登记描述符。
 func New(c *kardia.Context, deps Deps, cfg Config) (*Service, error) {
+	if deps.Facade != nil {
+		deps.Sites = deps.Facade.Registry()
+		deps.Caddy = deps.Facade.Caddy()
+	}
 	if err := deps.validate(); err != nil {
 		return nil, err
 	}
@@ -115,6 +115,11 @@ func From(c *kardia.Context) (*Service, error) {
 
 // List 返回网站投影列表，按 ListLimit 截断。
 func (s *Service) List(access *kardia.Context) ([]WebsiteSummary, error) {
+	if s.deps.Facade != nil {
+		if err := s.deps.Facade.Authorize(tools.Lifetime(access)); err != nil {
+			return nil, err
+		}
+	}
 	records, err := s.deps.Sites.List(tools.Lifetime(access))
 	if err != nil {
 		return nil, err
@@ -145,6 +150,11 @@ type CaddyServerSummary struct {
 
 // CaddyConfig 返回宿主 Caddy 的当前配置摘要；只解码白名单字段。
 func (s *Service) CaddyConfig(access *kardia.Context) (CaddySummary, error) {
+	if s.deps.Facade != nil {
+		if err := s.deps.Facade.Authorize(tools.Lifetime(access)); err != nil {
+			return CaddySummary{}, err
+		}
+	}
 	config, channelErr := s.deps.Caddy.CurrentConfig(tools.Lifetime(access))
 	if channelErr != nil {
 		return CaddySummary{}, channelErr
@@ -192,7 +202,7 @@ func summarize(record domainwebsites.WebsiteRecord) WebsiteSummary {
 }
 
 func (s *Service) descriptors() []tools.Descriptor {
-	return []tools.Descriptor{
+	descriptors := []tools.Descriptor{
 		{
 			Name:        "website_list",
 			Description: "列出已登记的网站项目（不含来源地址与部署命令）",
@@ -206,6 +216,10 @@ func (s *Service) descriptors() []tools.Descriptor {
 			Handler:     s.handleCaddyConfig,
 		},
 	}
+	for i := range descriptors {
+		descriptors[i].Metadata = tools.Metadata{Domain: "website", Action: descriptors[i].Name, Effect: "read", Exposure: "agent", ReadOnly: true, Default: true, Version: "1"}
+	}
+	return append(descriptors, s.agentDescriptors()...)
 }
 
 func (s *Service) handleList(access *kardia.Context, _ tools.Arguments) (any, error) {

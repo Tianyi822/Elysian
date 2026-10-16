@@ -10,6 +10,10 @@ import (
 	"unicode/utf8"
 )
 
+// MaxToolDefinitions limits the advertised catalog separately from the number
+// of calls in one response. Keep the shared protocols within 128 functions.
+const MaxToolDefinitions = 128
+
 const maxToolCalls = 64
 
 var functionName = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
@@ -42,7 +46,10 @@ func validateRequest(p Profile, input Request) (map[string]bool, error) {
 			return nil, problem(400, "model-capability-unavailable", "所选模型不支持本次请求需要的能力")
 		}
 	}
-	if len(input.Messages) == 0 || input.MaxTokens < 1 || input.MaxTokens > p.OutputTokens || len(input.Tools) > maxToolCalls {
+	if len(input.Tools) > MaxToolDefinitions {
+		return nil, problem(400, "model-tool-limit", "本次模型请求的工具目录超过 128 项，请在执行范围中减少工具后重试")
+	}
+	if len(input.Messages) == 0 || input.MaxTokens < 1 || input.MaxTokens > p.OutputTokens {
 		return nil, invalidRequest()
 	}
 	names := make(map[string]bool)

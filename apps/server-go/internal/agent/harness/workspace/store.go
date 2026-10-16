@@ -440,8 +440,8 @@ func (s *Store) prepare(ctx context.Context, taskID string, baseRevision int, tr
 			return Version{}, exposeError(err)
 		}
 	}
-	// 锁内选择未用过的数字版本，并使用 RENAME_NOREPLACE 保证永不覆盖。
-	err = unix.Renameat2(int(s.root.Fd()), name, int(s.root.Fd()), archiveName(taskID, version.Revision), unix.RENAME_NOREPLACE)
+	// 锁内选择未用过的数字版本，并使用平台对应的 no-replace 重命名保证永不覆盖。
+	err = renameNoReplace(s.root, name, archiveName(taskID, version.Revision))
 	if err != nil {
 		return Version{}, exposeError(err)
 	}

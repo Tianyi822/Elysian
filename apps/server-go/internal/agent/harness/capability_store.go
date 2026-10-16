@@ -4,9 +4,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	execconfig "elysian/server/internal/agent/execution/config"
+	"elysian/server/internal/agent/tools"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strconv"
 	"time"
 )
@@ -21,7 +24,21 @@ func (m *Manager) environment(ctx context.Context, id string) (Environment, erro
 	var raw string
 	err := m.store.db.QueryRowContext(ctx, "SELECT document FROM environments WHERE session_id=? ORDER BY revision DESC LIMIT 1", id).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Environment{SessionID: id, Skills: []RevisionRef{}, Servers: []RevisionRef{}, Tools: []string{"docker_containers_list", "docker_images_list", "docker_policy_view", "docker_self_container"}, Resources: []ResourceRef{}, ExecutionProfiles: []RevisionRef{}, Grants: []RevisionRef{}, TrustedReadOnly: []string{}}, nil
+		names := []string{}
+		if m.deps.Tools != nil {
+			for _, schema := range m.deps.Tools.Schemas() {
+				if allowed(schema.Name) || schema.Metadata.Exposure == "agent" {
+					names = append(names, schema.Name)
+				}
+			}
+		}
+		if len(names) == 0 && m.deps.Tools != nil {
+			names = []string{"docker_containers_list", "docker_images_list", "docker_policy_view", "docker_self_container"}
+		}
+		if m.deps.Workspaces != nil {
+			names = append(names, TaskWorkspaceList, TaskWorkspaceRead, TaskWorkspaceWrite, TaskWorkspaceCopy, TaskWorkspaceMove, TaskWorkspaceDelete)
+		}
+		return Environment{SessionID: id, Skills: []RevisionRef{}, Servers: []RevisionRef{}, Tools: names, Resources: []ResourceRef{}, ExecutionProfiles: []RevisionRef{}, Grants: []RevisionRef{}, TrustedReadOnly: []string{}}, nil
 	}
 	var e Environment
 	if err == nil {
@@ -115,10 +132,27 @@ func (m *Manager) snapshot(ctx context.Context, e Environment) (CapabilitySnapsh
 	if m.deps.Tools != nil {
 		for _, t := range m.deps.Tools.Schemas() {
 			for _, name := range e.Tools {
-				if name == t.Name && allowed(name) {
+				if name == t.Name && (allowed(name) || t.Metadata.Exposure == "agent") {
 					raw, _ := json.Marshal(t.Parameters)
-					s.Tools = append(s.Tools, Capability{Name: name, Description: t.Description, Parameters: raw, Source: "builtin", ReadOnly: true})
+					s.Tools = append(s.Tools, Capability{Name: name, Description: t.Description, Parameters: raw, Source: "builtin", ReadOnly: t.Metadata.ReadOnly || allowed(name), Metadata: t.Metadata, CatalogDigest: digestJSON(t)})
 				}
+			}
+		}
+	}
+	// Task workspace capabilities are supplied by the harness itself rather
+	// than the Docker bridge. The environment still explicitly selects them so
+	// the immutable capability snapshot records the user's choice.
+	for _, name := range e.Tools {
+		if capability, ok := taskWorkspaceCapability(name); ok {
+			if m.deps.Workspaces == nil {
+				return s, bad("workspace-unavailable", "任务工作区服务未装配")
+			}
+			found := false
+			for _, existing := range s.Tools {
+				found = found || existing.Name == capability.Name
+			}
+			if !found {
+				s.Tools = append(s.Tools, capability)
 			}
 		}
 	}
@@ -130,11 +164,27 @@ func (m *Manager) snapshot(ctx context.Context, e Environment) (CapabilitySnapsh
 	if len(spaces) > 0 {
 		s.Tools = append(s.Tools, wikiCapabilities()...)
 	}
+	for _, c := range s.Materials {
+		if c.Name == toolSearchName || c.Source == toolDiscoverySource {
+			return s, bad("reserved-capability", "资料目录使用了内核保留的工具发现名称")
+		}
+	}
 	for _, c := range s.Tools {
+		if c.Name == toolSearchName || c.Source == toolDiscoverySource {
+			return s, bad("reserved-capability", "工具目录使用了内核保留的工具发现名称")
+		}
 		if seen[c.Name] {
 			return s, bad("duplicate-capability", "能力别名重复")
 		}
 		seen[c.Name] = true
+	}
+	if len(s.Tools) > maxDiscoveryCatalog {
+		return s, bad("capability-limit", "运行固定工具目录不能超过 512 项，请减少执行范围后重试")
+	}
+	s.ToolLoading = ""
+	if len(s.Tools) > eagerToolLimit {
+		s.ToolLoading = onDemandTools
+		s.Tools = append(s.Tools, toolSearchCapability())
 	}
 	s.Digest = ""
 	s.Digest = digestJSON(s)
@@ -200,6 +250,9 @@ func (m *Manager) Approvals(ctx context.Context) ([]Approval, error) {
 	return m.ApprovalsFiltered(ctx, "")
 }
 func (m *Manager) ApprovalsFiltered(ctx context.Context, workflowID string) ([]Approval, error) {
+	return m.ApprovalsByRun(ctx, workflowID, "")
+}
+func (m *Manager) ApprovalsByRun(ctx context.Context, workflowID, runID string) ([]Approval, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
@@ -208,8 +261,174 @@ func (m *Manager) ApprovalsFiltered(ctx context.Context, workflowID string) ([]A
 	if err := m.expireApprovals(ctx); err != nil {
 		return nil, storageFailure(err)
 	}
-	o, e := readDocuments[Approval](ctx, m.store.db, "SELECT document FROM approvals WHERE (?='' OR run_id IN (SELECT id FROM runs WHERE workflow_id=?)) ORDER BY CASE WHEN state IN ('pending','approved') THEN 0 ELSE 1 END, rowid DESC LIMIT 200", workflowID, workflowID)
+	o, e := readDocuments[Approval](ctx, m.store.db, "SELECT document FROM approvals WHERE (?='' OR run_id IN (SELECT id FROM runs WHERE workflow_id=?)) AND (?='' OR run_id=?) ORDER BY CASE WHEN state IN ('pending','approved') THEN 0 ELSE 1 END, rowid DESC LIMIT 200", workflowID, workflowID, runID, runID)
 	return o, storageFailure(e)
+}
+
+type ToolCatalogEntry struct {
+	tools.PublicSchema
+	Source    string      `json:"source"`
+	ReadOnly  bool        `json:"readOnly"`
+	Selected  bool        `json:"selected"`
+	Available bool        `json:"available"`
+	Reason    string      `json:"reason,omitempty"`
+	Ref       RevisionRef `json:"ref"`
+}
+
+func (entry ToolCatalogEntry) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Name        string         `json:"name"`
+		Description string         `json:"description"`
+		Parameters  map[string]any `json:"parameters"`
+		Metadata    tools.Metadata `json:"metadata"`
+		Source      string         `json:"source"`
+		ReadOnly    bool           `json:"readOnly"`
+		Selected    bool           `json:"selected"`
+		Available   bool           `json:"available"`
+		Reason      string         `json:"reason,omitempty"`
+		Ref         RevisionRef    `json:"ref"`
+	}{entry.Name, entry.Description, entry.Parameters, entry.Metadata, entry.Source, entry.ReadOnly, entry.Selected, entry.Available, entry.Reason, entry.Ref})
+}
+
+type ToolCatalog struct {
+	Items          []ToolCatalogEntry `json:"items"`
+	SnapshotDigest string             `json:"snapshotDigest,omitempty"`
+}
+
+func (m *Manager) ToolCatalog(ctx context.Context, sessionID, domain string, available *bool) (ToolCatalog, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := ToolCatalog{Items: []ToolCatalogEntry{}}
+	if m.closed {
+		return result, closedError()
+	}
+	selected := map[string]Capability{}
+	var currentSnapshot CapabilitySnapshot
+	var environment Environment
+	if sessionID != "" {
+		if _, err := readSession(ctx, m.store.db, sessionID); err != nil {
+			return result, storageFailure(err)
+		}
+		env, err := m.environment(ctx, sessionID)
+		if err != nil {
+			return result, storageFailure(err)
+		}
+		snapshot, err := m.snapshot(ctx, env)
+		if err != nil {
+			var limit *Error
+			if !errors.As(err, &limit) || limit.Code != "capability-limit" {
+				return result, err
+			}
+			// Keep oversized existing selections editable without treating this
+			// read-only catalog as a valid execution snapshot.
+			snapshot.Digest = ""
+		}
+		result.SnapshotDigest = snapshot.Digest
+		currentSnapshot = snapshot
+		environment = env
+		for _, c := range snapshot.Tools {
+			if c.Source == toolDiscoverySource {
+				continue
+			}
+			selected[c.Name] = c
+		}
+	}
+	entries := map[string]ToolCatalogEntry{}
+	if m.deps.Tools != nil {
+		for _, schema := range m.deps.Tools.Schemas() {
+			if schema.Metadata.Exposure != "agent" && !allowed(schema.Name) {
+				continue
+			}
+			_, chosen := selected[schema.Name]
+			entry := ToolCatalogEntry{PublicSchema: schema, Source: "builtin", ReadOnly: schema.Metadata.ReadOnly || allowed(schema.Name), Selected: chosen, Available: true, Ref: RevisionRef{ID: "builtin", Revision: 1}}
+			entries[schema.Name] = entry
+		}
+	}
+	for name, c := range selected {
+		if _, ok := entries[name]; ok {
+			continue
+		}
+		var params map[string]any
+		_ = json.Unmarshal(c.Parameters, &params)
+		entries[name] = ToolCatalogEntry{PublicSchema: tools.PublicSchema{Name: c.Name, Description: c.Description, Parameters: params, Metadata: capabilityMetadata(c)}, Source: c.Source, ReadOnly: c.ReadOnly, Selected: true, Available: true, Ref: c.Ref}
+	}
+	if extensions, ok := m.deps.Catalog.(*Extensions); ok {
+		broader := environment
+		broader.Tools = append([]string(nil), environment.Tools...)
+		if extensions.Servers != nil {
+			for _, server := range environment.Servers {
+				catalog, err := extensions.Servers.Catalog(server.ID, server.Revision, server.Digest)
+				if err != nil {
+					continue
+				}
+				for _, tool := range catalog.Tools {
+					name := capabilityAlias("mcp", server.ID, tool.Name)
+					if !contains(broader.Tools, name) {
+						broader.Tools = append(broader.Tools, name)
+					}
+				}
+			}
+		}
+		if broaderSnapshot, err := extensions.Snapshot(ctx, broader); err == nil {
+			for _, c := range broaderSnapshot.Tools {
+				if _, found := entries[c.Name]; found {
+					continue
+				}
+				var params map[string]any
+				_ = json.Unmarshal(c.Parameters, &params)
+				_, chosen := selected[c.Name]
+				entries[c.Name] = ToolCatalogEntry{PublicSchema: tools.PublicSchema{Name: c.Name, Description: c.Description, Parameters: params, Metadata: capabilityMetadata(c)}, Source: c.Source, ReadOnly: c.ReadOnly, Selected: chosen, Available: true, Ref: c.Ref}
+			}
+		}
+		for _, name := range []string{BashExec, BashScript} {
+			if _, found := entries[name]; found {
+				continue
+			}
+			c, ready := bashCapability(name, currentSnapshot.Profiles, currentSnapshot.Grants, extensions.Executor != nil && extensions.Workspaces != nil)
+			if !ready {
+				c, _ = bashCapability(name, []execconfig.Profile{{ID: "profile-required", Runtime: "bash", Enabled: true}}, nil, true)
+			}
+			var params map[string]any
+			_ = json.Unmarshal(c.Parameters, &params)
+			if !ready {
+				if props, ok := params["properties"].(map[string]any); ok {
+					if profile, ok := props["profileId"].(map[string]any); ok {
+						delete(profile, "enum")
+					}
+				}
+			}
+			entry := ToolCatalogEntry{PublicSchema: tools.PublicSchema{Name: c.Name, Description: c.Description, Parameters: params, Metadata: capabilityMetadata(c)}, Source: c.Source, Available: ready, Ref: RevisionRef{ID: "execution", Revision: 1}}
+			if !ready {
+				entry.Reason = "先在会话环境中固定已启用的 Bash 执行配置，并准备受控执行器"
+			}
+			entries[name] = entry
+		}
+	}
+	if m.deps.Workspaces != nil {
+		for _, name := range []string{TaskWorkspaceList, TaskWorkspaceRead, TaskWorkspaceWrite, TaskWorkspaceCopy, TaskWorkspaceMove, TaskWorkspaceDelete} {
+			if _, found := entries[name]; found {
+				continue
+			}
+			c, ok := taskWorkspaceCapability(name)
+			if !ok {
+				continue
+			}
+			var params map[string]any
+			_ = json.Unmarshal(c.Parameters, &params)
+			entries[name] = ToolCatalogEntry{PublicSchema: tools.PublicSchema{Name: c.Name, Description: c.Description, Parameters: params, Metadata: capabilityMetadata(c)}, Source: c.Source, ReadOnly: c.ReadOnly, Available: true, Ref: RevisionRef{ID: "workspace", Revision: 1}}
+		}
+	}
+	for _, entry := range entries {
+		if domain != "" && entry.Metadata.Domain != domain {
+			continue
+		}
+		if available != nil && entry.Available != *available {
+			continue
+		}
+		result.Items = append(result.Items, entry)
+	}
+	sort.Slice(result.Items, func(i, j int) bool { return result.Items[i].Name < result.Items[j].Name })
+	return result, nil
 }
 func (m *Manager) Barriers(ctx context.Context) ([]ExecutionBarrier, error) {
 	return m.BarriersFiltered(ctx, "")
@@ -424,6 +643,13 @@ func recoverOperations(ctx context.Context, tx *sql.Tx, now time.Time) error {
 		return err
 	}
 	for _, b := range barriers {
+		var state string
+		if err := tx.QueryRowContext(ctx, "SELECT state FROM operations WHERE id=?", b.OperationID).Scan(&state); err != nil {
+			return err
+		}
+		if state == StateWaitingTask {
+			continue
+		}
 		b.Status = "unknown"
 		if err = saveBarrier(ctx, tx, b); err != nil {
 			return err

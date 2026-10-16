@@ -67,6 +67,28 @@ func TestDisabledGrantLatestRevisionBlocksStart(t *testing.T) {
 	}
 }
 
+func TestDisabledGrantBlocksStartWithoutResolver(t *testing.T) {
+	e, f := newFakeExecutor(t)
+	var out bytes.Buffer
+	_, err := e.RunScript(context.Background(), ScriptRequest{
+		ID:              "script-disabled-direct",
+		Profile:         testProfile(),
+		Grant:           &config.Grant{ID: "grant-disabled", Revision: 1, Enabled: false},
+		ScriptPath:      "scripts/main.py",
+		SkillArchive:    bytes.NewReader(testTar("scripts/main.py", "pass")),
+		WorkspaceOutput: &out,
+	})
+	var known *Error
+	if !errors.As(err, &known) || known.Code != "execution-grant-disabled" {
+		t.Fatalf("err=%v", err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.creates) != 0 || len(f.volumes) != 0 {
+		t.Fatalf("停用授权仍创建了容器或卷 creates=%d volumes=%d", len(f.creates), len(f.volumes))
+	}
+}
+
 // 最新修订保持启用的授权不受回查影响，正常派发不被误伤。
 func TestEnabledGrantLatestRevisionStillStarts(t *testing.T) {
 	e, f := newFakeExecutor(t)
@@ -74,7 +96,7 @@ func TestEnabledGrantLatestRevisionStillStarts(t *testing.T) {
 	if err := os.Mkdir(biz, 0755); err != nil {
 		t.Fatal(err)
 	}
-	pinned := &config.Grant{ID: "grant-x", Revision: 1, Name: "业务目录授权", Enabled: true, Directories: []config.Directory{{Path: biz, Access: "ro"}}}
+	pinned := &config.Grant{ID: "grant-x", Revision: 1, Name: "业务目录授权", Enabled: true}
 	e.options.ResolveGrant = func(id string, revision int) (*config.Grant, error) {
 		copied := *pinned
 		if revision == 0 {

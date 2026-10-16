@@ -20,18 +20,8 @@ func (c *httpClient) stream(ctx context.Context, req *http.Request, format strin
 		return Response{}, requestError(ctx, err)
 	}
 	defer response.Body.Close()
-	if response.StatusCode >= 300 && response.StatusCode < 400 {
-		return Response{}, problem(502, "model-redirect-refused", "模型服务要求跳转，已阻止请求以保护凭据")
-	}
-	if response.StatusCode != http.StatusOK {
-		switch response.StatusCode {
-		case http.StatusUnauthorized, http.StatusForbidden:
-			return Response{}, problem(502, "model-auth-failed", "模型服务鉴权失败，请检查配置凭据")
-		case http.StatusTooManyRequests:
-			return Response{}, problem(502, "model-rate-limited", "模型服务请求受到限流，请稍后重试")
-		default:
-			return Response{}, problem(502, "model-http-failed", "模型服务返回异常状态，请检查模型服务")
-		}
+	if err := responseStatusError(response.StatusCode); err != nil {
+		return Response{}, err
 	}
 	reader := &io.LimitedReader{R: response.Body, N: int64(limit) + 1}
 	if !strings.HasPrefix(response.Header.Get("Content-Type"), "text/event-stream") {

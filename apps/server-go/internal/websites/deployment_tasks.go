@@ -3,6 +3,9 @@ package websites
 import (
 	"archive/tar"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -17,10 +20,18 @@ func (m *deploymentManager) submit(ctx context.Context, in deploymentInput) (dep
 	if !safeDeploymentID(in.RequestID) {
 		return deploymentTask{}, shared.InvalidRequest("请求标识无效")
 	}
+	// Hash the caller's complete input before defaulting or removing PEM fields.
+	// The digest permits exact retries without persisting certificate material.
+	rawInput, err := json.Marshal(in)
+	if err != nil {
+		return deploymentTask{}, shared.InvalidRequest("部署请求格式无效")
+	}
+	hash := sha256.Sum256(rawInput)
+	requestDigest := hex.EncodeToString(hash[:])
 	m.mu.Lock()
 	for _, t := range m.tasks {
 		if t.Input.RequestID == in.RequestID {
-			if t.SourceID != in.SourceID || t.Name != in.Name {
+			if t.RequestDigest == "" || t.RequestDigest != requestDigest {
 				m.mu.Unlock()
 				return deploymentTask{}, shared.InvalidRequest("请求标识已用于其他部署")
 			}
@@ -90,7 +101,7 @@ func (m *deploymentManager) submit(ctx context.Context, in deploymentInput) (dep
 	in.Access.PrivateKeyPEM = nil
 	id := newDeploymentID()
 	now := time.Now().UTC().Format(time.RFC3339)
-	t := deploymentTask{Port: in.Port, ID: id, SourceID: src.ID, ProjectID: in.ProjectID, Name: in.Name, State: "queued", Stage: "等待构建资源", CreatedAt: now, UpdatedAt: now, Config: in.Config, BuildImage: build, RuntimeImage: runtime, TestResult: "pending", Input: in, StagedCertificate: certificate}
+	t := deploymentTask{RequestDigest: requestDigest, Port: in.Port, ID: id, SourceID: src.ID, ProjectID: in.ProjectID, Name: in.Name, State: "queued", Stage: "等待构建资源", CreatedAt: now, UpdatedAt: now, Config: in.Config, BuildImage: build, RuntimeImage: runtime, TestResult: "pending", Input: in, StagedCertificate: certificate}
 	if src.Mode == "artifact" || in.Config.SkipTests {
 		t.TestResult = "skipped"
 	} else if len(c.TestSteps) == 0 && in.Config.TestSteps == nil {
@@ -100,6 +111,9 @@ func (m *deploymentManager) submit(ctx context.Context, in deploymentInput) (dep
 	defer m.mu.Unlock()
 	for _, existing := range m.tasks {
 		if existing.Input.RequestID == in.RequestID {
+			if existing.RequestDigest == "" || existing.RequestDigest != requestDigest {
+				return deploymentTask{}, shared.InvalidRequest("请求标识已用于其他部署")
+			}
 			return *existing, nil
 		}
 		if (activeDeployment(existing.State) || existing.State == "awaiting-config") && ((in.ProjectID != "" && existing.ProjectID == in.ProjectID) || (in.ProjectID == "" && existing.Name == in.Name)) {
@@ -185,7 +199,7 @@ func (m *deploymentManager) execute(parent context.Context, id string) {
 						_ = m.mutate(id, func(t *deploymentTask) { t.BuildContainer = container; t.Stage = "安装依赖、测试与构建" })
 						err = m.engine.put(ctx, container, filepath.Join(m.sourceDir(src.ID), c.Directory))
 						if err == nil {
-							err = m.stageTool(ctx, c, container, t.Config)
+							err = m.stageTool(ctx, c, container, id, t.Config)
 						}
 						if err == nil {
 							f, e := os.OpenFile(filepath.Join(m.logRoot, id+".log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
@@ -199,8 +213,9 @@ func (m *deploymentManager) execute(parent context.Context, id string) {
 						if err == nil {
 							err = m.exportBuild(ctx, container, filepath.Join(workspace, "app"))
 						}
-						m.engine.remove(container)
-						_ = m.mutate(id, func(t *deploymentTask) { t.BuildContainer = "" })
+						if cleanupErr := m.removeTaskContainer(id, container); cleanupErr != nil {
+							err = errors.Join(err, cleanupErr)
+						}
 					}
 				}
 			}
@@ -271,7 +286,7 @@ func (m *deploymentManager) exportBuild(ctx context.Context, container, dest str
 		return err
 	}
 	defer os.RemoveAll(tmp)
-	if err = m.engine.export(ctx, container, "/tmp/elysian-export", tmp); err != nil {
+	if err = m.engine.export(ctx, container, "/app/.elysian-export", tmp); err != nil {
 		return err
 	}
 	f, err := os.Open(filepath.Join(tmp, "app.tar"))
@@ -292,6 +307,9 @@ func (m *deploymentManager) fail(id string, err error, cancelled bool) {
 	}
 	_ = m.mutate(id, func(t *deploymentTask) {
 		t.State = state
+		if unsettledDeployment(*t) {
+			t.State = "unknown"
+		}
 		t.Error = err.Error()
 		t.Stage = "部署停止"
 		if t.TestResult == "pending" {

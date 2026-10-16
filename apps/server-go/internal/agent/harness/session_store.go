@@ -291,7 +291,7 @@ func (s *store) releaseSession(ctx context.Context, tx *sql.Tx, r *Run) error {
 // 保留期清理与手工删除共用同一谓词，防止两路判定漂移；屏障与租约只能经显式结果
 // 或执行对账解除，先拒删而不是留下外键失败或永久锁死派发的孤儿行。
 const sessionDeletableGuardSQL = `active_run_id='' AND active_workflow_id=''
- AND NOT EXISTS(SELECT 1 FROM runs WHERE runs.session_id=sessions.id AND state IN ('queued','running','waiting-approval','waiting-resource'))
+ AND NOT EXISTS(SELECT 1 FROM runs WHERE runs.session_id=sessions.id AND state IN ('queued','running','waiting-approval','waiting-resource','waiting-task'))
  AND NOT EXISTS(SELECT 1 FROM resource_leases l JOIN runs r ON r.id=l.run_id WHERE r.session_id=sessions.id AND l.state IN ('held','unknown'))
  AND NOT EXISTS(SELECT 1 FROM execution_barriers b JOIN runs r ON r.id=b.run_id WHERE r.session_id=sessions.id AND b.state IN ('dispatched','unknown'))`
 

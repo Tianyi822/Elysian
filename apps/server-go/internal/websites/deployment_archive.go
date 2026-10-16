@@ -183,6 +183,9 @@ func extractTar(ctx context.Context, tr *tar.Reader, root string, b *extractBudg
 // 归档输出从磁盘逐文件流式读取，拒绝构建程序生成的逃逸链接。
 func tarDirectory(ctx context.Context, root string, w io.Writer) error {
 	tw := tar.NewWriter(w)
+	if err := tw.WriteHeader(&tar.Header{Name: "app", Typeflag: tar.TypeDir, Mode: 0700, Uid: 65532, Gid: 65532}); err != nil {
+		return err
+	}
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, e error) error {
 		if e != nil {
 			return e
@@ -214,7 +217,12 @@ func tarDirectory(ctx context.Context, root string, w io.Writer) error {
 		if e != nil {
 			return e
 		}
-		h.Name = filepath.ToSlash(rel)
+		h.Name = "app/" + filepath.ToSlash(rel)
+		h.Uid, h.Gid, h.Uname, h.Gname = 65532, 65532, "", ""
+		h.Mode = h.Mode&0777 | 0600
+		if info.IsDir() {
+			h.Mode |= 0700
+		}
 		if e = tw.WriteHeader(h); e != nil {
 			return e
 		}

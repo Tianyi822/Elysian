@@ -83,6 +83,9 @@ func (anthropicMessagesProtocol) prepare(p Profile, input Request) (preparedRequ
 			content := m.Content
 			blocks = append(blocks, anthropicBlock{Type: "tool_result", ToolUseID: m.ToolCallID, Content: &content})
 		} else {
+			if p.Provider == ProviderDeepSeek && input.OnReasoning != nil && m.Role == "assistant" && len(m.ToolCalls) > 0 && m.Reasoning != "" {
+				blocks = append(blocks, anthropicBlock{Type: "thinking", Thinking: m.Reasoning})
+			}
 			if m.Content != "" {
 				blocks = append(blocks, anthropicBlock{Type: "text", Text: m.Content})
 			}

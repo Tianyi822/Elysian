@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -69,7 +70,7 @@ func TestChatOutputStreamBeforePublicMessageAndReconnect(t *testing.T) {
 	if output.Done || output.Content != "回答第一段" || output.Reasoning != "思考第一行" {
 		t.Fatalf("错误快照：%+v", output)
 	}
-	if next := read(); next != output {
+	if next := read(); !reflect.DeepEqual(next, output) {
 		t.Fatal("重连后快照不一致")
 	}
 	messages, err := m.Messages(context.Background(), session.ID, "", 50)

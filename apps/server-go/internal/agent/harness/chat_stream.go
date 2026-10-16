@@ -11,11 +11,12 @@ import (
 
 // ChatOutput 是可替换的展示快照，最终消息仍以 Messages 为准。
 type ChatOutput struct {
-	RunID      string `json:"runId"`
-	ResponseID string `json:"responseId"`
-	Reasoning  string `json:"reasoning"`
-	Content    string `json:"content"`
-	Done       bool   `json:"done"`
+	RunID      string                `json:"runId"`
+	ResponseID string                `json:"responseId"`
+	Reasoning  string                `json:"reasoning"`
+	Content    string                `json:"content"`
+	Done       bool                  `json:"done"`
+	Timeline   *ChatTimelineSnapshot `json:"timeline,omitempty"`
 }
 
 func chatOutput(run Run, records []ModelRequestRecord) ChatOutput {
@@ -45,21 +46,13 @@ func chatOutput(run Run, records []ModelRequestRecord) ChatOutput {
 
 // 短连接只读流：合并 100ms 内的变化，重连发送当前快照，不重放模型请求。
 // 每 30 秒重连；装配层绑定登录撤销与被动复验，写入超时及页面离开也会回收连接。
-func streamChatOutput(service runtimeService, agent agentRuntimeService, w http.ResponseWriter, req *http.Request) {
+func streamChatOutput(_ runtimeService, agent agentRuntimeService, w http.ResponseWriter, req *http.Request) {
 	if req.Context().Err() != nil {
 		return
 	}
 	id := chi.URLParam(req, "id")
 	read := func() (ChatOutput, error) {
-		run, err := service.Get(req.Context(), id)
-		if err != nil {
-			return ChatOutput{}, err
-		}
-		page, err := agent.ModelRequests(req.Context(), id, "", 50)
-		if err != nil {
-			return ChatOutput{}, err
-		}
-		return chatOutput(run, page.Items), nil
+		return agent.ChatSnapshot(req.Context(), id)
 	}
 	output, err := read()
 	if err != nil {

@@ -169,6 +169,12 @@ func (m *Manager) checkRevocations(ctx context.Context, s CapabilitySnapshot, o 
 			}{"grant", RevisionRef{ID: o.Execution.Grant.ID, Revision: o.Execution.Grant.Revision}})
 		}
 	}
+	for _, grant := range s.Environment.Grants {
+		refs = append(refs, struct {
+			kind string
+			ref  RevisionRef
+		}{"grant", grant})
+	}
 	for _, entry := range refs {
 		if entry.ref.ID == "" {
 			continue
@@ -199,6 +205,24 @@ func (m *Manager) Revoke(ctx context.Context, kind, id string, revision int, rea
 		_, err := tx.ExecContext(ctx, "INSERT INTO capability_revocations(kind,id,revision,reason,created_at) VALUES(?,?,?,?,?) ON CONFLICT DO NOTHING", kind, id, revision, reason, stamp(m.deps.Now()))
 		return err
 	}))
+	if err == nil && kind == "grant" {
+		for _, active := range m.executions {
+			run, readErr := m.store.get(ctx, active.runID)
+			if readErr != nil {
+				err = storageFailure(readErr)
+				break
+			}
+			if run.Snapshot == nil {
+				continue
+			}
+			for _, grant := range run.Snapshot.Environment.Grants {
+				if grant.ID == id && (revision == 0 || grant.Revision == revision) {
+					active.cancel()
+					break
+				}
+			}
+		}
+	}
 	m.mu.Unlock()
 	if err != nil {
 		return err

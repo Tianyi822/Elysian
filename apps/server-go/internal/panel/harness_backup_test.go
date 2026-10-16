@@ -89,12 +89,12 @@ func TestMaintenancePreservesCurrentAgentSessionsMemoryAndModelRevisions(t *test
 		t.Fatal(err)
 	}
 	secret := "backup-test-credential"
-	input := model.Input{Name: "备份测试模型", BaseURL: "http://127.0.0.1:1/v1", Model: "fixture-model", ContextTokens: 8192, OutputTokens: 1024, Capabilities: model.Capabilities{Text: true, Tools: true, Source: "manual"}, Credential: &secret, Active: true}
+	input := model.Input{Provider: model.ProviderOpenAICompatible, APIFormat: model.FormatChatCompletions, BaseURL: "http://127.0.0.1:1/v1", Model: "fixture-model", ContextTokens: 8192, OutputTokens: 1024, Capabilities: model.Capabilities{Text: true, Tools: true, Source: "manual"}, Credential: &secret, Active: true}
 	created, err := profiles.Create(input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	input.Name, input.Credential = "备份测试模型第二版", nil
+	input.Model, input.Credential = "fixture-model-v2", nil
 	if _, err := profiles.Update(created.ID, 1, input); err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestMaintenancePreservesCurrentAgentSessionsMemoryAndModelRevisions(t *test
 	}
 	assertRestoreFixture(t, record.Snapshot, "data/agent-records/sessions/session-backup.jsonl", `{"seq":"1","kind":"message"}`+"\n")
 	// 模拟候选版本继续产生模型修订与任务事实；旧快照不能倒退这些事实。
-	input.Name = "候选版本模型第三版"
+	input.Model = "fixture-model-v3"
 	if _, err := profiles.Update(created.ID, 2, input); err != nil {
 		t.Fatal(err)
 	}

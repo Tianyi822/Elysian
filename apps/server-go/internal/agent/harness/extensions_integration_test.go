@@ -16,7 +16,9 @@ import (
 	execconfig "elysian/server/internal/agent/execution/config"
 	"elysian/server/internal/agent/harness/model"
 	"elysian/server/internal/agent/harness/skills"
+	"elysian/server/internal/agent/kardia"
 	"elysian/server/internal/agent/mcp"
+	"elysian/server/internal/agent/tools"
 )
 
 type extensionFixture struct {
@@ -249,7 +251,7 @@ func TestExtensionsMaterialRolesAndStructuralRedaction(t *testing.T) {
 			prompt = c
 		}
 	}
-	result, err := f.extensions.Execute(context.Background(), snapshot, Operation{Capability: tool, DispatchID: "call-redact", ArgumentsJSON: `{}`})
+	result, err := executeExtensionTest(t, f.extensions, snapshot, Operation{Capability: tool, DispatchID: "call-redact", ArgumentsJSON: `{}`})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,10 +267,40 @@ func TestExtensionsMaterialRolesAndStructuralRedaction(t *testing.T) {
 	if !strings.Contains(string(result.Value), "凭据已隐藏") {
 		t.Fatal("凭据未隐藏")
 	}
-	result, err = f.extensions.Execute(context.Background(), snapshot, Operation{Capability: prompt, DispatchID: "prompt-material", ArgumentsJSON: `{"subject":"本地测试"}`})
+	result, err = executeExtensionTest(t, f.extensions, snapshot, Operation{Capability: prompt, DispatchID: "prompt-material", ArgumentsJSON: `{"subject":"本地测试"}`})
 	if err != nil || result.Context == nil || !strings.Contains(string(result.Value), `"sourceRole":"assistant"`) || !strings.Contains(string(result.Value), "templateMaterials") {
 		t.Fatalf("提示模板未作为资料返回 value=%s err=%v", result.Value, err)
 	}
+}
+
+func executeExtensionTest(t *testing.T, e *Extensions, s CapabilitySnapshot, o Operation) (CapabilityResult, error) {
+	t.Helper()
+	r, err := tools.NewManagedRuntime(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close(context.Background())
+	authority := tools.NewAuthority()
+	if err := r.SetAuthority(authority); err != nil {
+		t.Fatal(err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(o.Capability.Parameters, &schema); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.RegisterCatalog("fixture", []tools.Descriptor{{Name: o.Capability.Name, Description: "已授权扩展测试", JSONParameters: schema, ValidateArguments: func(args tools.Arguments) error { raw, _ := json.Marshal(args); return e.Validate(o.Capability, raw) }, Handler: func(c *kardia.Context, _ tools.Arguments) (any, error) {
+		return e.executeBackend(tools.Lifetime(c), s, o)
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	var args tools.Arguments
+	_ = json.Unmarshal([]byte(o.ArgumentsJSON), &args)
+	ctx, err := authority.Authorize(context.Background(), tools.AuthorizationBinding{OperationID: "fixture-operation", DispatchID: o.DispatchID, Tool: o.Capability.Name, ArgumentsDigest: tools.ArgumentsDigest(args), CatalogID: "fixture"}, nil, func(context.Context) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.registry = r
+	return e.Execute(ctx, s, o)
 }
 
 func TestExtensionsStdioGrantIsPinnedIntoApprovalPlan(t *testing.T) {

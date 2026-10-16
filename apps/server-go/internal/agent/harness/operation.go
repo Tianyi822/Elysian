@@ -11,6 +11,7 @@ import (
 	"elysian/server/internal/agent/harness/workspace"
 	"elysian/server/internal/agent/jsonvalue"
 	"elysian/server/internal/agent/mcp"
+	"elysian/server/internal/agent/tools"
 	"encoding/json"
 	"errors"
 	"strconv"
@@ -38,6 +39,9 @@ func (a *agentExecution) validateProposal(name string, args json.RawMessage) err
 		return bad("invalid-arguments", "工具参数必须是无重复键的 JSON 对象")
 	}
 	if a.run.DriverVersion != "v2" {
+		if _, workspaceTool := taskWorkspaceCapability(name); workspaceTool || name == BashExec || name == BashScript {
+			return bad("tool-denied", "该能力只允许 Agent v2 运行调用")
+		}
 		if !allowed(name) || len(obj) != 0 {
 			return bad("tool-denied", "工具未获准")
 		}
@@ -63,13 +67,14 @@ func (a *agentExecution) validateProposal(name string, args json.RawMessage) err
 		}
 	}
 	if c.Source == "builtin" {
-		if len(obj) != 0 || !allowed(name) {
-			return bad("invalid-arguments", "内置只读工具不接受参数")
-		}
-		return nil
+		return mcp.Validate(c.Parameters, args)
 	}
 	if c.Source == "wiki" {
 		return mcp.Validate(c.Parameters, args)
+	}
+	if c.Source == toolDiscoverySource {
+		_, err := parseToolSearch(args)
+		return err
 	}
 	if a.manager.deps.Catalog == nil {
 		return bad("capability-unavailable", "扩展能力不可用")
@@ -116,8 +121,17 @@ func (m *Manager) validateSelection(s CapabilitySnapshot, input AgentInput) erro
 	return nil
 }
 func trusted(s CapabilitySnapshot, c Capability) bool {
+	if c.Source == toolDiscoverySource {
+		return c.Name == toolSearchName && c.ReadOnly
+	}
 	if c.Source == "builtin" {
-		return true
+		return confirmedPlatformRead(c)
+	}
+	// Task workspace reads are local immutable reads. They do not need the
+	// explicit trustedReadOnly opt-in required for external MCP capabilities;
+	// writes remain approval-gated because ReadOnly is false.
+	if c.Source == "workspace" {
+		return c.Name == TaskWorkspaceList || c.Name == TaskWorkspaceRead
 	}
 	if !c.ReadOnly || c.Source == "script" {
 		return false
@@ -139,6 +153,11 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 	}
 	if err := a.validateProposal(proposal.Name, args); err != nil {
 		return err
+	}
+	if a.pending != nil {
+		if err := a.validateVisibleProposal(*a.pending, proposal.Name); err != nil {
+			return err
+		}
 	}
 	m.mu.Lock()
 	execution := m.executionLocked(a.run.ID)
@@ -171,8 +190,8 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		}
 		return scopeCloseError
 	}
-	// Catalogue checks may open a stdio process before dispatch. Reap that
-	// scope on every early return, including cancellation and storage errors.
+	// The admitted catalogue check may open a stdio process. Reap its scope
+	// on every return, including cancellation and storage errors.
 	defer func() {
 		if closeErr := closeScope(); closeErr != nil {
 			m.mu.Lock()
@@ -214,6 +233,11 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 				m.mu.Unlock()
 				return err
 			}
+		}
+		o.FileChanges, err = m.prepareOperationChanges(ctx, o)
+		if err != nil {
+			m.mu.Unlock()
+			return err
 		}
 		// Resource identity is derived from the immutable capability snapshot and
 		// the exact JSON argument string before an approval can be created.
@@ -283,7 +307,14 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		}
 	}
 
-	direct := c.Source == "wiki" || trusted(*a.run.Snapshot, c)
+	if err = authorizeOperationScope(*a.run.Snapshot, o); err != nil {
+		m.mu.Unlock()
+		return err
+	}
+	direct, decisionSource := operationDecision(*a.run.Snapshot, o)
+	o.PolicyVersion = a.run.Snapshot.PolicyVersion
+	o.PermissionMode = a.run.Snapshot.PermissionMode
+	o.DecisionSource = decisionSource
 	if m.deps.DispatchGuard != nil {
 		if err = m.deps.DispatchGuard(); err != nil {
 			m.mu.Unlock()
@@ -341,6 +372,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 			return bad("approval-invalid", "审批已失效或操作发生变化")
 		}
 		approval = &aa
+		o.DecisionSource = "human-approval"
 	}
 	dispatchedAt := stamp(m.deps.Now())
 	call := Call{ID: o.CallID, RunID: run.ID, OperationID: o.ID, ModelRequestID: o.ModelRequestID, ModelCallID: o.ModelCallID, Tool: c.Name, ArgumentsJSON: o.ArgumentsJSON, Status: StateRunning, StartedAt: dispatchedAt, StepIndex: run.Usage.Calls}
@@ -384,9 +416,15 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		}
 		o.Status = "dispatched"
 		o.DispatchID = m.deps.NewID()
+		if c.Metadata.Async && c.Metadata.TaskDomain != "" {
+			arguments, _ := jsonvalue.Object([]byte(o.ArgumentsJSON))
+			requestID := taskArgument(arguments, c.Metadata.TaskRequestArgument)
+			taskID := taskArgument(arguments, c.Metadata.TaskIDArgument)
+			o.Task = &tools.TaskReference{Domain: c.Metadata.TaskDomain, ID: taskID, RequestID: requestID}
+		}
 		o.DispatchedAt = dispatchedAt
 		if direct {
-			o.Policy = "trusted-read-only"
+			o.Policy = decisionSource
 		}
 		if err := saveOperation(dbCtx, tx, o); err != nil {
 			return err
@@ -437,15 +475,6 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		if result.e = m.store.recordsFault(); result.e != nil {
 			return
 		}
-		// Resource ownership, approval consumption and the dispatch barrier
-		// have committed before a stdio catalogue check can start container
-		// code. A failed check settles through the same bounded cleanup path
-		// without sending a business request.
-		if m.deps.Catalog != nil && c.Source != "wiki" {
-			if result.e = m.deps.Catalog.Check(callCtx, *a.run.Snapshot, o); result.e != nil {
-				return
-			}
-		}
 		m.mu.Lock()
 		if m.closed || execution.finishing || m.storageError || callCtx.Err() != nil {
 			result.e = context.Canceled
@@ -458,24 +487,12 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		if result.e != nil {
 			return
 		}
-		if c.Source == "builtin" {
-			if m.deps.Tools == nil {
-				result.e = bad("tool-unavailable", "工具依赖不可用")
-			} else {
-				value, e := m.deps.Tools.Execute(callCtx, c.Name, map[string]any{})
-				result.e = e
-				if e == nil {
-					result.r.Value, _, result.e = projectResult(value, run.Limits.ResultBytes)
-				} else {
-					result.r.BusinessError = &Failure{Code: "tool-failed", Message: "只读工具执行失败"}
-					result.e = nil
-				}
-			}
-		} else if c.Source == "wiki" {
-			result.r, result.e = m.executeWikiOperation(callCtx, run, o)
-		} else {
-			result.r, result.e = m.deps.Catalog.Execute(callCtx, *a.run.Snapshot, o)
+		authorized, authErr := m.authorizeDispatch(callCtx, *a.run.Snapshot, o)
+		if authErr != nil {
+			result.e = authErr
+			return
 		}
+		result.r, result.e = m.executeRegistryOperation(authorized, *a.run.Snapshot, o, run.Limits.ResultBytes)
 	}()
 	var result outcome
 	select {
@@ -520,6 +537,28 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 	defer m.mu.Unlock()
 	if m.storageError {
 		return storageFailure(errors.New("存储失败"))
+	}
+	if result.r.Task != nil {
+		o.Task = result.r.Task
+		o.PendingResult = append(json.RawMessage(nil), result.r.Value...)
+		o.Status = StateWaitingTask
+		_, err = m.store.change(dbCtx, run.ID, "operation-task-accepted", func(tx *sql.Tx, r *Run) error {
+			if err := saveOperation(dbCtx, tx, o); err != nil {
+				return err
+			}
+			if err := saveCall(dbCtx, tx, call); err != nil {
+				return err
+			}
+			r.Status = StateWaitingTask
+			r.Phase = StateWaitingTask
+			r.Resume = &RecoveryCursor{ResponseID: o.ModelRequestID, CallIndex: index}
+			return m.store.event(dbCtx, tx, r, "operation/task-accepted", call.ID, &call.StepIndex, map[string]any{"operationId": o.ID, "task": o.Task})
+		})
+		if err != nil {
+			m.storageFailedLocked()
+			return storageFailure(err)
+		}
+		return worker.ErrSuspended
 	}
 	o.EndedAt = stamp(m.deps.Now())
 	call.EndedAt = o.EndedAt

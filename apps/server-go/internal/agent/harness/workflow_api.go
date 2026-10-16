@@ -254,7 +254,7 @@ func (m *Manager) workflowDefinitionForRun(ctx context.Context, r Run) (Workflow
 	return w, s, e
 }
 func (m *Manager) promoteWorkflows(ctx context.Context) error {
-	list, err := readDocuments[WorkflowInstance](ctx, m.store.db, "SELECT document FROM workflow_instances WHERE state='ready' OR (json_extract(document,'$.languageVersion')='workflow/v2' AND state IN ('queued','running','waiting-approval','waiting-resource')) ORDER BY ready_at,rowid")
+	list, err := readDocuments[WorkflowInstance](ctx, m.store.db, "SELECT document FROM workflow_instances WHERE state='ready' OR (json_extract(document,'$.languageVersion')='workflow/v2' AND state IN ('queued','running','waiting-approval','waiting-resource','waiting-task')) ORDER BY ready_at,rowid")
 	if err != nil {
 		return err
 	}

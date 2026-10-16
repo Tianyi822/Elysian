@@ -50,8 +50,9 @@ func newDeploymentManager(s *websiteService, e deploymentEngine, root, sourceRoo
 		if json.Unmarshal([]byte(smallText(f)), &src) == nil && safeDeploymentID(src.ID) {
 			if src.State == "preparing" {
 				if src.FetchContainer != "" {
-					e.remove(src.FetchContainer)
-					src.FetchContainer = ""
+					if e.remove(src.FetchContainer) == nil {
+						src.FetchContainer = ""
+					}
 				}
 				src.State = "interrupted"
 				src.Error = "面板重启中断了来源准备，请重新提交"
@@ -64,7 +65,7 @@ func newDeploymentManager(s *websiteService, e deploymentEngine, root, sourceRoo
 	for _, f := range files {
 		var t deploymentTask
 		if json.Unmarshal([]byte(smallText(f)), &t) == nil && safeDeploymentID(t.ID) {
-			if activeDeployment(t.State) {
+			if activeDeployment(t.State) || unsettledDeployment(t) {
 				t.State = "interrupted"
 				t.Stage = "面板重启中断"
 				t.Error = "任务因面板重启中断，未自动重新发布"
@@ -72,12 +73,28 @@ func newDeploymentManager(s *websiteService, e deploymentEngine, root, sourceRoo
 					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 					if err := m.restoreInterrupted(ctx, &t); err != nil {
 						t.Error += "；恢复失败，需要处理：" + err.Error()
+					} else {
+						t.Pending, t.Previous = nil, nil
 					}
 					cancel()
 				}
 				if t.BuildContainer != "" {
-					e.remove(t.BuildContainer)
-					t.BuildContainer = ""
+					if err := e.remove(t.BuildContainer); err != nil {
+						t.Error += "；构建容器清理未确认"
+					} else {
+						t.BuildContainer = ""
+					}
+				}
+				remaining := t.AuxContainers[:0]
+				for _, container := range t.AuxContainers {
+					if err := e.remove(container); err != nil {
+						remaining = append(remaining, container)
+					}
+				}
+				t.AuxContainers = remaining
+				if unsettledDeployment(t) {
+					t.State = "unknown"
+					t.Stage = "清理或恢复结果未确认"
 				}
 				_ = writeDeploymentJSON(f, &t)
 			}
@@ -306,6 +323,9 @@ func (m *deploymentManager) prepareGit(ctx context.Context, id, raw, ref, token 
 		m.mu.Unlock()
 	}
 	if err == nil {
+		err = m.engine.put(ctx, container, m.sourceDir(id))
+	}
+	if err == nil {
 		_, err = m.engine.json(ctx, "POST", "/containers/"+container+"/start", nil)
 	}
 	if err == nil {
@@ -397,6 +417,28 @@ func (m *deploymentManager) getTask(id string) (deploymentTask, error) {
 	var copy deploymentTask
 	_ = json.Unmarshal(b, &copy)
 	return copy, nil
+}
+
+func (m *deploymentManager) trackAuxContainer(taskID, container string) error {
+	return m.mutate(taskID, func(t *deploymentTask) { t.AuxContainers = append(t.AuxContainers, container) })
+}
+
+func (m *deploymentManager) removeTaskContainer(taskID, container string) error {
+	if err := m.engine.remove(container); err != nil {
+		return err
+	}
+	return m.mutate(taskID, func(t *deploymentTask) {
+		if t.BuildContainer == container {
+			t.BuildContainer = ""
+		}
+		remaining := t.AuxContainers[:0]
+		for _, existing := range t.AuxContainers {
+			if existing != container {
+				remaining = append(remaining, existing)
+			}
+		}
+		t.AuxContainers = remaining
+	})
 }
 func (m *deploymentManager) log(id, text string) {
 	f, e := os.OpenFile(filepath.Join(m.logRoot, id+".log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)

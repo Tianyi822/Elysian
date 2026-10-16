@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"strconv"
 	"strings"
+	"sync"
 
 	"elysian/server/internal/seam"
 	"elysian/server/internal/shared"
@@ -111,6 +112,7 @@ type fileService interface {
 // filesService 服务编排实现：写禁区与剪枝清单在装配时按注入的 homeDir 建好，
 // 操作内不再重复解析。
 type filesService struct {
+	mutationMu          sync.Mutex
 	deps                hostDeps
 	accounts            seam.SystemAccounts
 	forbiddenPrefixes   []string
@@ -637,6 +639,8 @@ func (s *filesService) Size(ctx context.Context, nodePath string) (int64, error)
 // CopyEntry 深拷贝进目标目录：cp -a 保留权限/属主/时间戳，目标重名自动派生副本名。
 // 校验顺序即契约（逐条对齐盘点 §4.6），不得重排。
 func (s *filesService) CopyEntry(ctx context.Context, srcPath, destDirPath string) (fileEntry, error) {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
 	src, err := normalizeServerFilePath(srcPath)
 	if err != nil {
 		return fileEntry{}, err
@@ -722,6 +726,8 @@ func (s *filesService) CopyEntry(ctx context.Context, srcPath, destDirPath strin
 // MoveEntry 移动进目标目录：mv -T 封死「目标意外是目录时把源挪进去」；重名同样派生
 // 副本名。源的移动自带删除语义，与复制的只读源不同：源与目标都查完整写禁区。
 func (s *filesService) MoveEntry(ctx context.Context, srcPath, destDirPath string) (fileEntry, error) {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
 	src, err := normalizeServerFilePath(srcPath)
 	if err != nil {
 		return fileEntry{}, err
@@ -791,6 +797,8 @@ func (s *filesService) MoveEntry(ctx context.Context, srcPath, destDirPath strin
 
 // RenameEntry 重命名：名称非法或同级重名报错；名字没变不执行任何命令，原样回读返回。
 func (s *filesService) RenameEntry(ctx context.Context, path, newName string) (fileEntry, error) {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
 	trimmed := jsTrim(newName)
 	if !isValidFileName(trimmed) {
 		return fileEntry{}, shared.InvalidRequest("无效的名称：" + newName)
@@ -872,6 +880,8 @@ func (s *filesService) RenameEntry(ctx context.Context, path, newName string) (f
 
 // CompressEntry 压缩成同级的「名称.tar.gz」：tar 打包符号链接成员本身、不跟随。
 func (s *filesService) CompressEntry(ctx context.Context, path string) (fileEntry, error) {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
 	normalized, err := normalizeServerFilePath(path)
 	if err != nil {
 		return fileEntry{}, err
@@ -952,6 +962,8 @@ func (s *filesService) CompressEntry(ctx context.Context, path string) (fileEntr
 // 绝不半改。收集/过滤段的拒绝保证零命令；执行段中途某项失败会留部分已改
 // （每项 chmod 后 chown，两原语非原子）。
 func (s *filesService) Chmod(ctx context.Context, path string, input filePermissionInput) error {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
 	normalized, err := normalizeServerFilePath(path)
 	if err != nil {
 		return err

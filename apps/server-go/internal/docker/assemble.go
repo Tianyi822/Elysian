@@ -15,7 +15,8 @@ import (
 
 // Deps 装配入参（go-plan §3.8）：模式事实经 config 产出、装配层注入，本包不读 env。
 type Deps struct {
-	ReservedPorts []int
+	AgentAuthorize func(context.Context) error
+	ReservedPorts  []int
 
 	Mode       config.RuntimeMode
 	SocketPath string // cfg.DockerSocket
@@ -27,6 +28,7 @@ type Deps struct {
 
 // Stack 装配产出：路由器与向 database/websites 分发的事实。
 type Stack struct {
+	Agent  *AgentFacade
 	Router chi.Router
 	Engine seam.DockerTransport
 	Views  seam.DockerViews // ListImages/ListContainers/Policy/SelfContainerID
@@ -115,6 +117,7 @@ func Assemble(deps Deps) (Stack, error) {
 		logs:         deps.Logs,
 	})
 	return Stack{
+		Agent:  &AgentFacade{service: service, authorize: deps.AgentAuthorize},
 		Router: router,
 		Engine: transport,
 		Views:  service,

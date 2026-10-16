@@ -1,6 +1,7 @@
 package containerapps
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,7 +46,24 @@ type Registry struct {
 	// RegistryPath 覆盖登记表文件路径；测试用。
 	RegistryPath string
 
-	mu sync.Mutex
+	mu             sync.Mutex
+	workspaceLocks sync.Map
+}
+
+// LockWorkspace serializes HTTP edits, Agent edits, deletion and build submission.
+func (r *Registry) LockWorkspace(ctx context.Context, slug string) (func(), error) {
+	if err := ValidateSlug(slug); err != nil {
+		return nil, err
+	}
+	value, _ := r.workspaceLocks.LoadOrStore(slug, make(chan struct{}, 1))
+	gate := value.(chan struct{})
+	select {
+	case gate <- struct{}{}:
+		var once sync.Once
+		return func() { once.Do(func() { <-gate }) }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // registryPath 解析登记表位置。

@@ -57,6 +57,13 @@ type NetworkEndpoint struct {
 	Port   int    `json:"port"`
 }
 
+// Resource identifies one platform object; wildcards never grant new targets.
+type Resource struct {
+	Domain string `json:"domain"`
+	ID     string `json:"id"`
+	Access string `json:"access"`
+}
+
 type Grant struct {
 	ID           string            `json:"id"`
 	Revision     int               `json:"revision"`
@@ -65,6 +72,7 @@ type Grant struct {
 	Directories  []Directory       `json:"directories"`
 	Network      []NetworkEndpoint `json:"network"`
 	PrivateCIDRs []string          `json:"privateCidrs"`
+	Resources    []Resource        `json:"resources,omitempty"`
 	CreatedAt    string            `json:"createdAt"`
 }
 
@@ -76,6 +84,7 @@ type GrantInput struct {
 	Directories      []Directory       `json:"directories"`
 	Network          []NetworkEndpoint `json:"network"`
 	PrivateCIDRs     []string          `json:"privateCidrs"`
+	Resources        []Resource        `json:"resources,omitempty"`
 }
 
 type Error struct {

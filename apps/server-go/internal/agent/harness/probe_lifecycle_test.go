@@ -16,7 +16,9 @@ import (
 	"time"
 
 	"elysian/server/internal/agent/execution"
+	"elysian/server/internal/agent/harness/model"
 	"elysian/server/internal/agent/mcp"
+	"elysian/server/internal/agent/tools"
 )
 
 type probeFactory func(context.Context, mcp.Server) (mcp.Duplex, error)
@@ -104,6 +106,9 @@ func TestProbeLifecycleLocksBeforeStartupAndClosesBeforeCatalogPublication(t *te
 		leases, err := m.ResourceLeases(ctx)
 		if err != nil || len(leases) != 1 || leases[0].State != "held" || leases[0].ScopeID != observedScope || observedScope == "" {
 			t.Errorf("probe started without persistent scope lease: %+v %v", leases, err)
+		}
+		if err := tools.ConsumeBackend(ctx, observedScope); err != nil {
+			t.Errorf("probe was not admitted by the managed registry: %v", err)
 		}
 		return d, nil
 	})
@@ -225,7 +230,11 @@ func TestProbeRealDockerScopedLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	executor, err := execution.New(execution.Options{SupervisorPath: binary, MountRoot: t.TempDir()})
+	var authorizations atomic.Int32
+	executor, err := execution.New(execution.Options{SupervisorPath: binary, MountRoot: t.TempDir(), Authorize: func(ctx context.Context, id string) error {
+		authorizations.Add(1)
+		return tools.ConsumeBackend(ctx, id)
+	}, MCPDispatchID: tools.DispatchID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +250,11 @@ assert not pathlib.Path('/var/run/docker.sock').exists()
 for line in sys.stdin:
     req=json.loads(line)
     if 'id' not in req: continue
-    result={'protocolVersion':'2025-11-25','capabilities':{},'serverInfo':{'name':'real-probe-fixture','version':'1'}}
+    result={'protocolVersion':'2025-11-25','capabilities':{'tools':{}},'serverInfo':{'name':'real-probe-fixture','version':'1'}}
+    if req['method']=='tools/list':
+        result={'tools':[{'name':'inspect','description':'Inspect fixture','inputSchema':{'type':'object','properties':{},'additionalProperties':False}}]}
+    elif req['method']=='tools/call':
+        result={'content':[{'type':'text','text':'real-stdio-call-complete'}]}
     print(json.dumps({'jsonrpc':'2.0','id':req['id'],'result':result}),flush=True)
 `
 	server, err = e.Servers.Update(server.ID, server.Revision, mcp.Input{Name: server.Name, Transport: "stdio", Active: true, Stdio: &mcp.ContainerInput{Image: image, Command: []string{"python3", "-u", "-c", script}}})
@@ -259,5 +272,49 @@ for line in sys.stdin:
 	}
 	if runtimes := executor.Runtimes(); len(runtimes) != 0 {
 		t.Fatalf("real probe left running containers: %+v", runtimes)
+	}
+	profile := m.deps.Profiles.List()[0]
+	session, err := m.CreateSession(context.Background(), CreateSessionInput{Title: "stdio dispatch", ModelProfileID: profile.ID, ModelRevision: profile.Revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := e.Servers.Catalog(server.ID, server.Revision, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	alias := capabilityAlias("mcp", server.ID, "inspect")
+	var inference atomic.Int32
+	m.mu.Lock()
+	m.deps.ModelClient = agentTestClient(func(_ context.Context, _ model.Profile, request model.Request) (model.Response, error) {
+		if request.ToolChoice == "store_working_memory" {
+			return memoryReply(request), nil
+		}
+		if inference.Add(1) == 1 {
+			return toolReply(alias), nil
+		}
+		raw, _ := json.Marshal(request.Messages)
+		if !strings.Contains(string(raw), "real-stdio-call-complete") {
+			t.Error("stdio result did not reach the model")
+		}
+		return finalReply("stdio completed"), nil
+	})
+	m.mu.Unlock()
+	_, err = m.PutEnvironment(context.Background(), session.ID, 0, Environment{Servers: []RevisionRef{{ID: server.ID, Revision: server.Revision, Digest: catalog.Digest}}, Tools: []string{alias}, TrustedReadOnly: []string{alias}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := submitAgentTest(t, m, session, "stdio-production-gate", "inspect")
+	if finished := runtimeFinished(t, m, run.ID); finished.Status != StateSucceeded {
+		t.Fatalf("real stdio dispatch failed: %+v", finished)
+	}
+	operations, err := m.Operations(context.Background(), run.ID)
+	if err != nil || len(operations) != 1 || operations[0].Status != "completed" || operations[0].ID == operations[0].DispatchID {
+		t.Fatalf("stdio dispatch identity or result invalid: %+v %v", operations, err)
+	}
+	if authorizations.Load() != 2 {
+		t.Fatalf("CheckCatalog and CallTool did not share one authorized process: authorizations=%d", authorizations.Load())
+	}
+	if runtimes := executor.Runtimes(); len(runtimes) != 0 {
+		t.Fatalf("real stdio dispatch left running containers: %+v", runtimes)
 	}
 }

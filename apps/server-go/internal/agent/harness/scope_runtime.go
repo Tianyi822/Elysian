@@ -772,7 +772,7 @@ func (s *store) refreshWorkflowV2(ctx context.Context, tx *sql.Tx, w *WorkflowIn
 	// A failure is a gate: already dispatched siblings may record facts but can
 	// never reopen the instance by subsequently succeeding.
 	if !terminal(w.Status) && !w.GateClosed {
-		nodes, err := readDocuments[WorkflowNodeExecution](ctx, tx, "SELECT document FROM workflow_nodes WHERE workflow_id=? AND state IN ('ready','queued','running','waiting-approval','waiting-resource') ORDER BY rowid", w.ID)
+		nodes, err := readDocuments[WorkflowNodeExecution](ctx, tx, "SELECT document FROM workflow_nodes WHERE workflow_id=? AND state IN ('ready','queued','running','waiting-approval','waiting-resource','waiting-task') ORDER BY rowid", w.ID)
 		if err != nil {
 			return err
 		}

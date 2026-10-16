@@ -5,7 +5,6 @@ package toolbridge
 import (
 	"context"
 	"errors"
-	"sync"
 
 	"elysian/server/internal/agent/kardia"
 	"elysian/server/internal/agent/tools"
@@ -13,7 +12,7 @@ import (
 	"elysian/server/internal/seam"
 )
 
-var allowedTools = map[string]bool{
+var legacyTools = map[string]bool{
 	"docker_containers_list": true,
 	"docker_images_list":     true,
 	"docker_policy_view":     true,
@@ -22,54 +21,72 @@ var allowedTools = map[string]bool{
 
 // Bridge 持有工具插件与调用作用域；真实域对象仍归宿主所有。
 type Bridge struct {
-	mu        sync.Mutex
-	root      *kardia.Context
-	registry  *tools.Registry
-	closed    bool
-	closeOnce sync.Once
-	closeDone chan struct{}
-	closeErr  error
+	runtime *tools.Runtime
+	legacy  bool
 }
 
 // New 允许无 Docker 视图时构造不可用接缝，历史读取不依赖 Docker 就绪。
 func New(views seam.DockerViews) (*Bridge, error) {
-	b := &Bridge{closeDone: make(chan struct{})}
+	b := &Bridge{legacy: true}
 	if tools.IsNil(views) {
 		return b, nil
 	}
-	b.root = kardia.NewContext()
 	// 多读一条用于上层判定是否截断；内核持久化与公开结果至多 200 条。
-	if _, err := tools.Install(context.Background(), b.root, tools.Plugin,
-		dockertools.Plugin(dockertools.Deps{Views: views}, dockertools.Config{ListLimit: 201})); err != nil {
-		_ = b.root.Fiber().Dispose(context.Background())
+	runtime, err := tools.NewRuntime(context.Background(),
+		dockertools.Plugin(dockertools.Deps{Views: views}, dockertools.Config{ListLimit: 201}))
+	if err != nil {
 		return nil, errors.New("装载 Agent Docker 工具失败")
 	}
-	registry, err := tools.RegistryFrom(b.root)
-	if err != nil {
-		_ = b.root.Fiber().Dispose(context.Background())
-		return nil, errors.New("Agent 工具注册表未就绪")
-	}
-	b.registry = registry
+	b.runtime = runtime
 	return b, nil
+}
+
+// NewWithPlugins is the production catalog. Each injected domain plugin owns
+// its resource lifecycle; availability is evaluated by the individual handler.
+func NewWithPlugins(views seam.DockerViews, plugins ...*kardia.Plugin) (*Bridge, error) {
+	hasDocker := false
+	for _, plugin := range plugins {
+		if plugin != nil && plugin.Name == dockertools.ServiceName {
+			hasDocker = true
+		}
+	}
+	if !hasDocker && !tools.IsNil(views) {
+		plugins = append([]*kardia.Plugin{dockertools.Plugin(dockertools.Deps{Views: views}, dockertools.Config{ListLimit: 201})}, plugins...)
+	}
+	runtime, err := tools.NewManagedRuntime(context.Background(), plugins...)
+	if err != nil {
+		return nil, err
+	}
+	return &Bridge{runtime: runtime}, nil
+}
+
+func (b *Bridge) Runtime() *tools.Runtime {
+	if b == nil {
+		return nil
+	}
+	return b.runtime
+}
+
+func (b *Bridge) SetAuthority(authority *tools.Authority) error {
+	if b == nil || b.runtime == nil {
+		return nil
+	}
+	return b.runtime.SetAuthority(authority)
 }
 
 // Available 只报告接缝是否装载；每次 Docker 请求仍核验实际引擎状态。
 func (b *Bridge) Available() bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return !b.closed && b.registry != nil
+	return b != nil && b.runtime != nil && b.runtime.Available()
 }
 
 // Schemas 只公开四条允许的工具，返回独立的模式快照。
 func (b *Bridge) Schemas() []tools.PublicSchema {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	result := []tools.PublicSchema{}
-	if b.closed || b.registry == nil {
-		return result
+	if b == nil || b.runtime == nil {
+		return []tools.PublicSchema{}
 	}
-	for _, schema := range b.registry.Schemas() {
-		if allowedTools[schema.Name] {
+	result := []tools.PublicSchema{}
+	for _, schema := range b.runtime.Schemas() {
+		if (b.legacy && legacyTools[schema.Name]) || (!b.legacy && schema.Metadata.Exposure == "agent") {
 			switch schema.Name {
 			case "docker_containers_list":
 				schema.Description = "列出容器摘要，最多 200 条；超限时标记截断"
@@ -82,6 +99,8 @@ func (b *Bridge) Schemas() []tools.PublicSchema {
 	return result
 }
 
+// callResult is kept for package-level bridge tests that coordinate a call
+// goroutine; runtime execution itself uses tools.Runtime's private result.
 type callResult struct {
 	value any
 	err   error
@@ -96,73 +115,24 @@ func (b *Bridge) Execute(ctx context.Context, name string, args map[string]any) 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if !allowedTools[name] {
+	if b != nil && b.legacy && !legacyTools[name] {
 		return nil, errors.New("该工具不在 Agent 只读允许清单内")
 	}
-	b.mu.Lock()
-	if b.closed || b.registry == nil {
-		b.mu.Unlock()
+	if b == nil || b.runtime == nil {
 		return nil, errors.New("Agent Docker 工具不可用")
 	}
-	completed := make(chan callResult, 1)
-	handle, err := b.root.Scope().Iter("harness.tool-call", func(_ context.Context, scope *kardia.EffectScope) error {
-		outcome := callResult{}
-		defer func() {
-			if recover() != nil {
-				outcome = callResult{err: errors.New("工具执行发生内部错误")}
-			}
-			completed <- outcome
-		}()
-		access, bindErr := scope.Bind(b.root)
-		if bindErr != nil {
-			outcome.err = errors.New("工具调用作用域不可用")
-			return nil
-		}
-		outcome.value, outcome.err = b.registry.Execute(access, name, args)
-		if outcome.err != nil && !errors.Is(outcome.err, context.Canceled) && !errors.Is(outcome.err, context.DeadlineExceeded) {
-			// 域错误可能含引擎原始响应，不进入任务库或跨进程协议。
-			outcome.err = errors.New("Docker 工具执行失败，请检查引擎状态与调用参数")
-		}
-		return nil
-	})
-	b.mu.Unlock()
-	if err != nil {
-		return nil, errors.New("无法创建工具调用作用域")
+	value, err := b.runtime.Execute(ctx, name, args)
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		// 域错误可能含引擎原始响应，不进入任务库或跨进程协议。
+		return nil, errors.New("Docker 工具执行失败，请检查引擎状态与调用参数")
 	}
-	stopCancellation := context.AfterFunc(ctx, func() {
-		cancelled, cancel := context.WithCancel(context.Background())
-		cancel()
-		// Dispose 先取消 scope，再等待清理；已取消的等待上下文让回调及时返回。
-		_ = handle.Dispose(cancelled)
-	})
-	defer stopCancellation()
-	outcome := <-completed
-	if disposeErr := handle.Dispose(context.Background()); disposeErr != nil {
-		outcome.err = errors.Join(outcome.err, errors.New("回收工具调用作用域失败"))
-	}
-	return outcome.value, outcome.err
+	return value, err
 }
 
 // Close 停止新调用并取消所有在途 scope；ctx 只限定等待时间，重复关闭可继续等待。
 func (b *Bridge) Close(ctx context.Context) error {
-	if ctx == nil {
-		return errors.New("关闭工具接缝必须提供上下文")
+	if b == nil || b.runtime == nil {
+		return nil
 	}
-	b.closeOnce.Do(func() {
-		b.mu.Lock()
-		b.closed = true
-		b.mu.Unlock()
-		go func() {
-			if b.root != nil {
-				b.closeErr = b.root.Fiber().Dispose(context.Background())
-			}
-			close(b.closeDone)
-		}()
-	})
-	select {
-	case <-b.closeDone:
-		return b.closeErr
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return b.runtime.Close(ctx)
 }

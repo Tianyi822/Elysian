@@ -243,7 +243,7 @@ jar cfe app.jar ` + q(entry) + " -C .elysian/classes ."
 				toolVersion = map[string]string{"pnpm": "10.17.1", "yarn": "1.22.22", "bun": "1.2.22"}[tool]
 			}
 			if tool == "yarn" && versionMajor(toolVersion) >= 2 {
-				install = "npm install -g corepack@0.34.0\ncorepack enable\ncorepack prepare " + q("yarn@"+toolVersion) + " --activate\n"
+				install = "npm install -g corepack@0.34.0\ncorepack enable --install-directory /app/.elysian-tools/npm/bin\ncorepack prepare " + q("yarn@"+toolVersion) + " --activate\n"
 			} else {
 				install = "npm install -g " + q(tool+"@"+toolVersion) + "\n"
 			}
@@ -317,15 +317,15 @@ jar cfe app.jar ` + q(entry) + " -C .elysian/classes ."
 	if cfg.SkipTests {
 		tests = ""
 	}
-	script := "set -eu\ncd /app\n" + install + "\n"
+	script := "set -eu\nexport PATH=/app/.elysian-tools/npm/bin:$PATH\ncd /app\n" + install + "\n"
 	if tests != "" {
 		script += "printf '\\n[测试开始]\\n'\n" + tests + "\nprintf '\\n[测试完成]\\n'\n"
 	}
 	script += "printf '\\n[构建开始]\\n'\n" + build + "\nprintf '\\n[构建完成]\\n'\n"
-	script += "mkdir -p /tmp/elysian-export\ntar --hard-dereference -chf /tmp/elysian-export/app.tar -C /app .\n"
+	script += "mkdir -p /app/.elysian-export\ntar --hard-dereference --exclude=./.elysian-export -chf /app/.elysian-export/app.tar -C /app .\n"
 	return script, artifact
 }
-func (m *deploymentManager) stageTool(ctx context.Context, c projectCandidate, id string, cfg buildConfig) error {
+func (m *deploymentManager) stageTool(ctx context.Context, c projectCandidate, id, taskID string, cfg buildConfig) (result error) {
 	if c.Wrapper || (c.Tool != "maven" && c.Tool != "gradle") {
 		return nil
 	}
@@ -357,7 +357,15 @@ func (m *deploymentManager) stageTool(ctx context.Context, c projectCandidate, i
 	if err != nil {
 		return err
 	}
-	defer m.engine.remove(toolContainer)
+	if err = m.trackAuxContainer(taskID, toolContainer); err != nil {
+		_ = m.engine.remove(toolContainer)
+		return err
+	}
+	defer func() {
+		if err := m.removeTaskContainer(taskID, toolContainer); err != nil {
+			result = errors.Join(result, err)
+		}
+	}()
 	tmp, err := os.MkdirTemp(m.sourceRoot, "tool-*")
 	if err != nil {
 		return err

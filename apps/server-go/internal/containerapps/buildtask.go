@@ -57,6 +57,11 @@ const (
 	buildStageCancelled   = "已取消"
 	buildStageInterrupted = "面板重启中断，未自动重新构建"
 	buildStageFailed      = "构建失败"
+	buildStageUnconfirmed = "构建停止结果未确认，资源保持占用"
+
+	buildDispatchPending  = "not-dispatched"
+	buildDispatchStarted  = "dispatched"
+	buildDispatchFinished = "finished"
 
 	buildErrCancelled = "构建已取消"
 	buildErrNoImage   = "构建完成但未找到产物镜像"
@@ -100,6 +105,11 @@ func activeBuild(state string) bool {
 	return state == BuildStateQueued || state == BuildStateBuilding
 }
 
+// A locally interrupted task still holds reservations until stop is confirmed.
+func blocksBuild(task *BuildTask) bool {
+	return activeBuild(task.State) || task.MayStillRun
+}
+
 // formatDurationLimit 限额时长的中文渲染：整分钟显示「N 分钟」，不足一分钟显示
 // 「N 秒」。缺省 1200s/3600s 渲染为「20 分钟」「60 分钟」，与 ADR-0021 引用的缺省
 // 值逐字一致；环境变量覆盖后终态文案随事实变化。
@@ -112,23 +122,24 @@ func formatDurationLimit(d time.Duration) string {
 
 // imageTimeoutError 单镜像超时的任务内文案（按注入时限渲染）。
 func (m *BuildManager) imageTimeoutError() string {
-	return fmt.Sprintf("构建超时（%s），已中止", formatDurationLimit(m.limits.ImageTimeout))
+	return fmt.Sprintf("构建超时（%s）", formatDurationLimit(m.limits.ImageTimeout))
 }
 
 // taskTimeoutError 整任务超时的任务内文案（按注入时限渲染）。
 func (m *BuildManager) taskTimeoutError() string {
-	return fmt.Sprintf("构建任务超时（%s），已中止", formatDurationLimit(m.limits.TaskTimeout))
+	return fmt.Sprintf("构建任务超时（%s）", formatDurationLimit(m.limits.TaskTimeout))
 }
 
 // BuildTaskInput 原样存档的提交请求体（preview 校验通过后的规范化形态）。
 type BuildTaskInput struct {
-	Mode       string   `json:"mode"`
-	RequestID  string   `json:"requestId"`
-	Target     string   `json:"target,omitempty"`
-	Dockerfile string   `json:"dockerfile,omitempty"`
-	Context    string   `json:"context,omitempty"`
-	Compose    string   `json:"compose,omitempty"`
-	Services   []string `json:"services,omitempty"`
+	ExpectedDigest string   `json:"expectedDigest,omitempty"`
+	Mode           string   `json:"mode"`
+	RequestID      string   `json:"requestId"`
+	Target         string   `json:"target,omitempty"`
+	Dockerfile     string   `json:"dockerfile,omitempty"`
+	Context        string   `json:"context,omitempty"`
+	Compose        string   `json:"compose,omitempty"`
+	Services       []string `json:"services,omitempty"`
 }
 
 // BuildResult 单个构建目标的产物事实（按构建次序追加）。
@@ -143,17 +154,19 @@ type BuildResult struct {
 
 // BuildTask 构建任务（持久化与响应同形，键序即 JSON 输出序）。
 type BuildTask struct {
-	ID        string         `json:"id"`
-	Slug      string         `json:"slug"`
-	Mode      string         `json:"mode"`
-	RequestID string         `json:"requestId"`
-	State     string         `json:"state"`
-	Stage     string         `json:"stage"`
-	CreatedAt string         `json:"createdAt"`
-	UpdatedAt string         `json:"updatedAt"`
-	Input     BuildTaskInput `json:"input"`
-	Results   []BuildResult  `json:"results"`
-	Error     string         `json:"error"`
+	ID             string         `json:"id"`
+	Slug           string         `json:"slug"`
+	Mode           string         `json:"mode"`
+	RequestID      string         `json:"requestId"`
+	State          string         `json:"state"`
+	Stage          string         `json:"stage"`
+	CreatedAt      string         `json:"createdAt"`
+	UpdatedAt      string         `json:"updatedAt"`
+	Input          BuildTaskInput `json:"input"`
+	Results        []BuildResult  `json:"results"`
+	MayStillRun    bool           `json:"mayStillRun,omitempty"`
+	DispatchStatus string         `json:"dispatchStatus,omitempty"`
+	Error          string         `json:"error"`
 }
 
 // BuildLimits 构建限额（超时、并发与日志保留经环境变量可调，资源配额固定）。
@@ -288,10 +301,27 @@ func newBuildManager(deps BuildDeps, limits BuildLimits) *BuildManager {
 		if json.Unmarshal(raw, &task) != nil || !safeBuildID(task.ID) {
 			continue
 		}
-		if activeBuild(task.State) {
+		// Legacy failures and interrupted builds lack dispatch evidence. Keep their
+		// reservations until a trustworthy completion record can establish stop.
+		if task.DispatchStatus == "" {
+			switch task.State {
+			case BuildStateQueued:
+				task.DispatchStatus = buildDispatchPending
+			case BuildStateBuilding, BuildStateFailed, BuildStateCancelled, BuildStateInterrupted:
+				task.DispatchStatus, task.MayStillRun = buildDispatchStarted, true
+			}
+		}
+		if task.DispatchStatus == buildDispatchStarted {
+			task.MayStillRun = true
+		}
+		if activeBuild(task.State) || task.MayStillRun {
 			task.State = BuildStateInterrupted
 			task.Stage = buildStageInterrupted
 			task.Error = buildStageInterrupted
+			if task.MayStillRun {
+				task.Stage = buildStageUnconfirmed
+				task.Error += "；" + buildStageUnconfirmed
+			}
 			_ = config.AtomicJSON(file, &task)
 			_ = os.Remove(spoolTarPath(deps.SpoolRoot, task.ID))
 		}
@@ -331,7 +361,7 @@ func (m *BuildManager) cleanupExpired() {
 	defer m.mu.Unlock()
 	current := m.now()
 	for id, task := range m.tasks {
-		if activeBuild(task.State) {
+		if blocksBuild(task) {
 			continue
 		}
 		created, err := time.Parse(time.RFC3339, task.CreatedAt)
@@ -396,7 +426,7 @@ func (m *BuildManager) mutate(taskID string, fn func(*BuildTask)) error {
 	if task == nil {
 		return errors.New("构建任务不存在：" + taskID)
 	}
-	if !activeBuild(task.State) {
+	if !blocksBuild(task) {
 		return errBuildTaskTerminal
 	}
 	updated := *task
@@ -433,7 +463,7 @@ func (m *BuildManager) HasActive(slug string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, task := range m.tasks {
-		if task.Slug == slug && activeBuild(task.State) {
+		if task.Slug == slug && blocksBuild(task) {
 			return true
 		}
 	}
@@ -484,11 +514,12 @@ func (m *BuildManager) resolvePlansForInput(ctx context.Context, workspaceDir, s
 			return nil, BuildTaskInput{}, err
 		}
 		archive := BuildTaskInput{
-			Mode:       buildModeDockerfile,
-			RequestID:  input.RequestID,
-			Target:     plan.Target,
-			Dockerfile: plan.DockerfileRel,
-			Context:    plan.ContextRel,
+			ExpectedDigest: input.ExpectedDigest,
+			Mode:           buildModeDockerfile,
+			RequestID:      input.RequestID,
+			Target:         plan.Target,
+			Dockerfile:     plan.DockerfileRel,
+			Context:        plan.ContextRel,
 		}
 		return []buildServicePlan{plan}, archive, nil
 	case buildModeCompose:
@@ -509,10 +540,11 @@ func (m *BuildManager) resolvePlansForInput(ctx context.Context, workspaceDir, s
 			services = append(services, plan.Service)
 		}
 		archive := BuildTaskInput{
-			Mode:      buildModeCompose,
-			RequestID: input.RequestID,
-			Compose:   input.Compose,
-			Services:  services,
+			ExpectedDigest: input.ExpectedDigest,
+			Mode:           buildModeCompose,
+			RequestID:      input.RequestID,
+			Compose:        input.Compose,
+			Services:       services,
 		}
 		return plans, archive, nil
 	default:
@@ -523,6 +555,20 @@ func (m *BuildManager) resolvePlansForInput(ctx context.Context, workspaceDir, s
 // Submit 提交构建任务：幂等（requestId 同参返回原任务）、互斥（同工作区活跃唯一）、
 // 占用回查（非面板镜像占仓即拒）通过后建 queued 任务并派发 worker。
 func (m *BuildManager) Submit(ctx context.Context, workspaceDir, slug string, input BuildPlanInput) (BuildTask, bool, error) {
+	release, lockErr := m.deps.Registry.LockWorkspace(ctx, slug)
+	if lockErr != nil {
+		return BuildTask{}, false, lockErr
+	}
+	defer release()
+	if input.ExpectedDigest != "" {
+		digest, err := WorkspaceDigest(workspaceDir)
+		if err != nil {
+			return BuildTask{}, false, err
+		}
+		if digest != input.ExpectedDigest {
+			return BuildTask{}, false, &shared.InvalidRequestError{Status: http.StatusConflict, Message: "工作区内容已变化，请重新预览并审批"}
+		}
+	}
 	if !safeBuildID(input.RequestID) {
 		return BuildTask{}, false, shared.InvalidRequest("请求标识无效")
 	}
@@ -547,7 +593,11 @@ func (m *BuildManager) Submit(ctx context.Context, workspaceDir, slug string, in
 		return BuildTask{}, false, shared.InvalidRequest("请求标识已用于其他构建")
 	}
 	for _, task := range m.tasks {
-		if task.Slug == slug && activeBuild(task.State) {
+		if task.MayStillRun && !activeBuild(task.State) {
+			m.mu.Unlock()
+			return BuildTask{}, false, &shared.InvalidRequestError{Status: http.StatusConflict, Message: buildStageUnconfirmed}
+		}
+		if task.Slug == slug && blocksBuild(task) {
 			m.mu.Unlock()
 			return BuildTask{}, false, &shared.InvalidRequestError{Status: http.StatusConflict, Message: "工作区已有进行中的构建任务"}
 		}
@@ -566,16 +616,17 @@ func (m *BuildManager) Submit(ctx context.Context, workspaceDir, slug string, in
 	now := m.now()
 	taskID := m.deps.NewID()
 	task := BuildTask{
-		ID:        taskID,
-		Slug:      slug,
-		Mode:      input.Mode,
-		RequestID: input.RequestID,
-		State:     BuildStateQueued,
-		Stage:     buildStageQueued,
-		CreatedAt: now.UTC().Format(time.RFC3339),
-		UpdatedAt: now.UTC().Format(time.RFC3339),
-		Input:     archive,
-		Results:   []BuildResult{},
+		ID:             taskID,
+		Slug:           slug,
+		Mode:           input.Mode,
+		RequestID:      input.RequestID,
+		State:          BuildStateQueued,
+		Stage:          buildStageQueued,
+		CreatedAt:      now.UTC().Format(time.RFC3339),
+		UpdatedAt:      now.UTC().Format(time.RFC3339),
+		Input:          archive,
+		Results:        []BuildResult{},
+		DispatchStatus: buildDispatchPending,
 	}
 	parent, cancel := context.WithCancel(context.Background())
 	m.mu.Lock()
@@ -596,7 +647,12 @@ func (m *BuildManager) Submit(ctx context.Context, workspaceDir, slug string, in
 		return BuildTask{}, false, shared.InvalidRequest("请求标识已用于其他构建")
 	}
 	for _, existing := range m.tasks {
-		if existing.Slug == slug && activeBuild(existing.State) {
+		if existing.MayStillRun && !activeBuild(existing.State) {
+			m.mu.Unlock()
+			cancel()
+			return BuildTask{}, false, &shared.InvalidRequestError{Status: http.StatusConflict, Message: buildStageUnconfirmed}
+		}
+		if existing.Slug == slug && blocksBuild(existing) {
 			m.mu.Unlock()
 			cancel()
 			return BuildTask{}, false, &shared.InvalidRequestError{Status: http.StatusConflict, Message: "工作区已有进行中的构建任务"}
@@ -631,8 +687,8 @@ func (m *BuildManager) Submit(ctx context.Context, workspaceDir, slug string, in
 	return copied, false, nil
 }
 
-// InterruptActive 把工作区全部活跃任务落 failed 终态并取消其 context（删除工作区
-// 后的残留清理，固定中文句见 workspaceDeletedMessage）。窗口内更晚创建的任务不做
+// InterruptActive 取消工作区残留任务；已派发且停止未确认时保留资源屏障。
+// 窗口内更晚创建的任务不做
 // 联合锁，由打包阶段的 statBuildContext 自然失败收场。
 func (m *BuildManager) InterruptActive(slug, message string) {
 	m.mu.Lock()
@@ -642,7 +698,7 @@ func (m *BuildManager) InterruptActive(slug, message string) {
 	}
 	interrupted := []pending{}
 	for id, task := range m.tasks {
-		if task.Slug != slug || !activeBuild(task.State) {
+		if task.Slug != slug || !blocksBuild(task) {
 			continue
 		}
 		updated := *task
@@ -650,6 +706,10 @@ func (m *BuildManager) InterruptActive(slug, message string) {
 		updated.State = BuildStateFailed
 		updated.Stage = buildStageFailed
 		updated.Error = message
+		if updated.MayStillRun {
+			updated.State, updated.Stage = BuildStateInterrupted, buildStageUnconfirmed
+			updated.Error += "；" + buildStageUnconfirmed
+		}
 		updated.UpdatedAt = m.now().UTC().Format(time.RFC3339)
 		if err := config.AtomicJSON(m.taskPath(id), &updated); err == nil {
 			m.tasks[id] = &updated
@@ -794,6 +854,13 @@ func (m *BuildManager) buildTarget(taskCtx, parent context.Context, taskID, slug
 	if _, err = writeContextTar(plan.ContextAbs, tarPath); err != nil {
 		return fail(err.Error())
 	}
+	if task, ok := m.snapshotTask(taskID); ok && task.Input.ExpectedDigest != "" {
+		digest, digestErr := WorkspaceDigest(workspaceDir)
+		if digestErr != nil || digest != task.Input.ExpectedDigest {
+			_ = os.Remove(tarPath)
+			return fail("工作区内容已变化，未派发未经审批的构建上下文")
+		}
+	}
 	if message := m.contextCause(parent, taskCtx); message != "" {
 		_ = os.Remove(tarPath)
 		return message
@@ -848,13 +915,19 @@ func (m *BuildManager) finishWith(taskID, state, stage, message string) {
 		if message != "" {
 			t.Error = message
 		}
+		if t.MayStillRun {
+			t.State, t.Stage = BuildStateInterrupted, buildStageUnconfirmed
+			t.Error = message + "；" + buildStageUnconfirmed
+		}
 	})
 	_ = os.Remove(spoolTarPath(m.deps.SpoolRoot, taskID))
 	if err == nil {
-		if message != "" {
-			m.log(taskID, "任务终态："+state+"："+message)
-		} else {
-			m.log(taskID, "任务终态："+state)
+		if latest, ok := m.snapshotTask(taskID); ok {
+			label := "任务终态："
+			if latest.MayStillRun {
+				label = "任务停止未确认："
+			}
+			m.log(taskID, label+latest.State+"："+latest.Error)
 		}
 	}
 	m.mu.Lock()
@@ -883,13 +956,14 @@ func parseTaskTime(value string) time.Time {
 // taskInputToPlan 把存档输入还原成解析入参。
 func taskInputToPlan(archive BuildTaskInput) BuildPlanInput {
 	return BuildPlanInput{
-		Mode:       archive.Mode,
-		RequestID:  archive.RequestID,
-		Target:     archive.Target,
-		Dockerfile: archive.Dockerfile,
-		Context:    archive.Context,
-		Compose:    archive.Compose,
-		Services:   archive.Services,
+		ExpectedDigest: archive.ExpectedDigest,
+		Mode:           archive.Mode,
+		RequestID:      archive.RequestID,
+		Target:         archive.Target,
+		Dockerfile:     archive.Dockerfile,
+		Context:        archive.Context,
+		Compose:        archive.Compose,
+		Services:       archive.Services,
 	}
 }
 
@@ -938,6 +1012,24 @@ func (m *BuildManager) buildImage(taskCtx, parent context.Context, taskID, slug 
 	decoder := newBuildStreamDecoder(func(line string) { m.log(taskID, line) })
 	imageCtx, cancel := context.WithTimeout(taskCtx, m.limits.ImageTimeout)
 	defer cancel()
+	if message := m.contextCause(parent, taskCtx); message != "" {
+		return "", errors.New(message)
+	}
+	blocked := false
+	if err = m.mutate(taskID, func(t *BuildTask) {
+		for otherID, other := range m.tasks {
+			if otherID != taskID && other.MayStillRun && !activeBuild(other.State) {
+				blocked = true
+				return
+			}
+		}
+		t.MayStillRun, t.DispatchStatus = true, buildDispatchStarted
+	}); err != nil {
+		return "", err
+	}
+	if blocked {
+		return "", errors.New(buildStageUnconfirmed)
+	}
 	response, err := m.deps.Engine.Stream(imageCtx, seam.EngineRequest{
 		Method:      http.MethodPost,
 		Path:        "/build",
@@ -950,6 +1042,11 @@ func (m *BuildManager) buildImage(taskCtx, parent context.Context, taskID, slug 
 	}, decoder.onChunk)
 	if err != nil {
 		return "", m.translateBuildStreamError(parent, taskCtx, imageCtx, err)
+	}
+	if err = m.mutate(taskID, func(t *BuildTask) {
+		t.MayStillRun, t.DispatchStatus = false, buildDispatchFinished
+	}); err != nil {
+		return "", err
 	}
 	if message := decoder.errorMessage(); message != "" {
 		return "", fmt.Errorf("构建失败：%s", message)

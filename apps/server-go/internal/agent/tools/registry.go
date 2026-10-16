@@ -30,10 +30,12 @@ type entry struct {
 type Registry struct {
 	kardia.Service
 
-	mu      sync.Mutex
-	items   map[string]*entry
-	nextID  int64
-	counter atomic.Int64
+	mu        sync.Mutex
+	items     map[string]*entry
+	nextID    int64
+	counter   atomic.Int64
+	managed   bool
+	authority *Authority
 }
 
 // New 构造注册表并在 c 的 fiber 上以服务名 "tools" 提供。
@@ -70,8 +72,17 @@ func (r *Registry) register(owner *kardia.Context, descriptor Descriptor) (kardi
 		return nil, err
 	}
 	descriptor = descriptor.clone()
+	if descriptor.Metadata.Exposure == "agent" {
+		if descriptor.Metadata.Version == "" {
+			descriptor.Metadata.Version = "1"
+		}
+		if descriptor.Metadata.Backend == "" {
+			descriptor.Metadata.Backend = "domain"
+		}
+	}
 	handler := descriptor.Handler
 	var done atomic.Bool
+	registrationCtx, revoke := context.WithCancel(owner.Lifetime())
 	descriptor.Handler = func(access *kardia.Context, args Arguments) (any, error) {
 		if done.Load() {
 			return nil, fmt.Errorf("工具 %q 的登记已撤销", descriptor.Name)
@@ -88,10 +99,35 @@ func (r *Registry) register(owner *kardia.Context, descriptor Descriptor) (kardi
 		if err := Lifetime(access).Err(); err != nil {
 			return nil, fmt.Errorf("工具 %q 的调用已取消：%w", descriptor.Name, err)
 		}
-		return handler(access.Shadow(owner), args)
+		if err := descriptor.validateArguments(args); err != nil {
+			return nil, err
+		}
+		r.mu.Lock()
+		managed, authority := r.managed, r.authority
+		r.mu.Unlock()
+		if managed {
+			if err := consumeRegistry(Lifetime(access), authority, descriptor.Catalog, descriptor.Name, args); err != nil {
+				return nil, err
+			}
+		}
+		callCtx, cancel := context.WithCancel(Lifetime(access))
+		stopOwner := context.AfterFunc(registrationCtx, cancel)
+		stopScope := context.AfterFunc(access.Lifetime(), cancel)
+		stopRegistry := context.AfterFunc(r.Ctx.Lifetime(), cancel)
+		defer cancel()
+		defer stopOwner()
+		defer stopRegistry()
+		defer stopScope()
+		access = access.Extend(kardia.ExtendMeta{Props: map[any]any{invocationContextKey{}: callCtx}})
+		value, err := handler(access.Shadow(owner), args)
+		if err == nil && descriptor.Await != nil {
+			return descriptor.Await(callCtx, value)
+		}
+		return value, err
 	}
 	record, err := r.insert(descriptor)
 	if err != nil {
+		revoke()
 		return nil, err
 	}
 	cleanup := func(ctx context.Context) error {
@@ -101,6 +137,7 @@ func (r *Registry) register(owner *kardia.Context, descriptor Descriptor) (kardi
 		if !done.CompareAndSwap(false, true) {
 			return nil
 		}
+		revoke()
 		r.remove(record)
 		return r.emitChange(ChangeRemoved, descriptor.Name)
 	}
@@ -124,20 +161,22 @@ func (r *Registry) register(owner *kardia.Context, descriptor Descriptor) (kardi
 func (r *Registry) insert(descriptor Descriptor) (*entry, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, exists := r.items[descriptor.Name]; exists {
+	key := descriptor.Catalog + "\x00" + descriptor.Name
+	if _, exists := r.items[key]; exists {
 		return nil, fmt.Errorf("工具 %q 已注册", descriptor.Name)
 	}
 	r.nextID++
 	record := &entry{descriptor: descriptor, id: r.nextID}
-	r.items[descriptor.Name] = record
+	r.items[key] = record
 	return record, nil
 }
 
 func (r *Registry) remove(record *entry) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if current, ok := r.items[record.descriptor.Name]; ok && current == record {
-		delete(r.items, record.descriptor.Name)
+	key := record.descriptor.Catalog + "\x00" + record.descriptor.Name
+	if current, ok := r.items[key]; ok && current == record {
+		delete(r.items, key)
 	}
 }
 
@@ -147,9 +186,16 @@ func (r *Registry) emitChange(kind ChangeKind, name string) error {
 
 // Lookup 按名取描述符。
 func (r *Registry) Lookup(name string) (Descriptor, bool) {
+	return r.lookup("", name)
+}
+
+func (r *Registry) lookup(catalog, name string) (Descriptor, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	record, ok := r.items[name]
+	record, ok := r.items[catalog+"\x00"+name]
+	if !ok && catalog != "" {
+		record, ok = r.items["\x00"+name]
+	}
 	if !ok {
 		return Descriptor{}, false
 	}
@@ -191,7 +237,13 @@ func (r *Registry) Execute(c *kardia.Context, name string, args Arguments) (any,
 	if err := r.Ctx.Lifetime().Err(); err != nil {
 		return nil, fmt.Errorf("工具注册表已停用：%w", err)
 	}
-	descriptor, ok := r.Lookup(name)
+	catalog := ""
+	if c != nil {
+		if t := ticket(Lifetime(c)); t != nil {
+			catalog = t.binding.CatalogID
+		}
+	}
+	descriptor, ok := r.lookup(catalog, name)
 	if !ok {
 		return nil, fmt.Errorf("工具 %q 未注册", name)
 	}
@@ -199,7 +251,7 @@ func (r *Registry) Execute(c *kardia.Context, name string, args Arguments) (any,
 		args = Arguments{}
 	}
 	args = kardia.CloneConfig(args).(Arguments)
-	if err := descriptor.Parameters.Validate(args); err != nil {
+	if err := descriptor.validateArguments(args); err != nil {
 		return nil, fmt.Errorf("工具 %q 的参数不合法：%w", name, err)
 	}
 	call := Call{ID: r.nextCallID(), Name: name, Args: args}

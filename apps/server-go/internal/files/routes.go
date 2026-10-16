@@ -28,9 +28,10 @@ import (
 // 503；Accounts 缺失同样 503（有可用性没账号通道也不许答）。host 与 service 为域内
 // 测试注入位（包内可见，不破坏跨域字段形状）。
 type Deps struct {
-	Available bool
-	Accounts  seam.SystemAccounts
-	Transfers *TransferManager
+	Available   bool
+	Accounts    seam.SystemAccounts
+	Transfers   *TransferManager
+	AgentFacade *AgentFacade
 
 	// host 让真实服务编排跑在注入的宿主原语上（对齐 TS filesHostDeps 测试的注入路径）。
 	host hostDeps
@@ -45,7 +46,9 @@ func NewRouter(deps Deps) chi.Router {
 	r := chi.NewRouter()
 	var svc fileService
 	if deps.Available {
-		if deps.service != nil {
+		if deps.AgentFacade != nil && deps.AgentFacade.service != nil {
+			svc = deps.AgentFacade.service
+		} else if deps.service != nil {
 			svc = deps.service
 		} else if deps.Accounts != nil {
 			host := deps.host
@@ -67,6 +70,9 @@ func NewRouter(deps Deps) chi.Router {
 	//（未知路径同样先 403 后 404）。
 	r.Use(middleware.SameOriginGuard())
 	if deps.Transfers != nil {
+		if deps.AgentFacade != nil && deps.Transfers.uploads != nil {
+			deps.Transfers.uploads.mutationMu = deps.AgentFacade.mu
+		}
 		deps.Transfers.mount(r)
 	}
 

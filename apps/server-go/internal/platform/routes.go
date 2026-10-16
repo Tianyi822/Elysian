@@ -47,6 +47,8 @@ const (
 // /.dockerenv：socket 路径与容器事实由装配层从 config 注入。带注释的未导出字段是
 // 域内测试注入位（包内测试可设，装配层不触及）。
 type Deps struct {
+	AgentFacade    *AgentFacade
+	AgentAuthorize func(context.Context) error
 	// Transports 探测/宿主安装每次新建传输器（不缓存结果、不缓存连接状态）。
 	// nil 回落 seam 桩。
 	Transports seam.DockerTransportFactory
@@ -116,6 +118,9 @@ func NewRouter(deps Deps) chi.Router {
 		})
 	}
 	readUsage := deps.readUsage
+	if deps.AgentFacade != nil {
+		proberSrv, readUsage = deps.AgentFacade.prober, deps.AgentFacade.usage
+	}
 	if readUsage == nil {
 		readUsage = processMemoryUsage
 	}

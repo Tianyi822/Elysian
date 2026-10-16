@@ -31,6 +31,9 @@ func NewUsersRouter(deps Deps) chi.Router {
 	}
 
 	svc := deps.users
+	if deps.AgentFacade != nil {
+		svc = deps.AgentFacade.users
+	}
 	if svc == nil {
 		svc = newUsersService(newRealUsersDeps(deps.Now))
 	}

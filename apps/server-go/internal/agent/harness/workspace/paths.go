@@ -41,6 +41,12 @@ func validatePath(name string) error {
 	return nil
 }
 
+// ValidatePath exposes the same path policy used by every workspace storage
+// operation. Callers can reject invalid model arguments before creating a
+// candidate revision without duplicating the traversal and control-character
+// checks in another package.
+func ValidatePath(name string) error { return validatePath(name) }
+
 // openRoot 从 / 的目录描述符逐段打开，任何父目录符号链接都会被拒绝。
 // 调用方负责在可信路径配置层解析部署中明确允许的 ~/.Elysian 链接。
 func openRoot(root string) (*os.File, error) {

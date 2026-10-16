@@ -109,12 +109,15 @@ func TestWorkspaceToolsOverRealFiles(t *testing.T) {
 		t.Fatalf("文件清单不符：%v", files)
 	}
 
-	content, err := toolset.Execute(root, "workspace_read_file", tools.Arguments{"slug": "demo-app", "path": ".env"})
+	if _, err := toolset.Execute(root, "workspace_read_file", tools.Arguments{"slug": "demo-app", "path": ".env"}); err == nil {
+		t.Fatal("secret file reached model context")
+	}
+	content, err := toolset.Execute(root, "workspace_read_file", tools.Arguments{"slug": "demo-app", "path": "compose.yaml"})
 	if err != nil {
 		t.Fatalf("读文件失败：%v", err)
 	}
 	file, ok := content.(WorkspaceFile)
-	if !ok || file.Content != "DEMO=1\n" || file.Slug != "demo-app" {
+	if !ok || file.Content == "" || file.Slug != "demo-app" {
 		t.Fatalf("文件内容不符：%v", content)
 	}
 }

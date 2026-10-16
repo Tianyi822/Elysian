@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"elysian/server/internal/agent/kardia"
 	"elysian/server/internal/agent/tools"
@@ -27,6 +28,7 @@ var Channels = []string{string(domainpanel.ChannelCommit), string(domainpanel.Ch
 
 // Deps 是宿主注入的域对象。
 type Deps struct {
+	Authorize func(context.Context) error
 	// Manager 是面板维护管理器。Store、Host、Source、Ports、Enabled 与 Executable
 	// 全部由宿主按装配层的口径填好。
 	Manager domainpanel.Manager
@@ -92,26 +94,53 @@ func From(c *kardia.Context) (*Service, error) {
 
 // Info 返回面板信息：端口、当前提交、构建时间、维护可用性与最近任务。
 func (s *Service) Info(access *kardia.Context) (domainpanel.Info, error) {
-	return s.deps.Manager.Info()
+	if s.deps.Authorize != nil {
+		if err := s.deps.Authorize(tools.Lifetime(access)); err != nil {
+			return domainpanel.Info{}, err
+		}
+	}
+	info, err := s.deps.Manager.Info()
+	if s.deps.Authorize != nil {
+		info.ActiveTask, info.LastTask = nil, nil
+	}
+	return info, err
 }
 
 // CheckUpdate 按更新策略查一次上游，返回可更新到的目标提交或标签。
 func (s *Service) CheckUpdate(access *kardia.Context, channel string) (domainpanel.Update, error) {
+	if s.deps.Authorize != nil {
+		if err := s.deps.Authorize(tools.Lifetime(access)); err != nil {
+			return domainpanel.Update{}, err
+		}
+	}
 	picked, err := s.channel(channel)
 	if err != nil {
 		return domainpanel.Update{}, err
+	}
+	if s.deps.Authorize != nil {
+		ctx, cancel := context.WithTimeout(tools.Lifetime(access), 20*time.Second)
+		defer cancel()
+		return s.deps.Manager.Source.Check(ctx, picked)
 	}
 	return s.deps.Manager.Check(tools.Lifetime(access), picked)
 }
 
 // History 返回所选策略下的上游提交列表，limit<=0 时取配置缺省值。
 func (s *Service) History(access *kardia.Context, channel string, limit int) ([]domainpanel.CommitLog, error) {
+	if s.deps.Authorize != nil {
+		if err := s.deps.Authorize(tools.Lifetime(access)); err != nil {
+			return nil, err
+		}
+	}
 	picked, err := s.channel(channel)
 	if err != nil {
 		return nil, err
 	}
 	if limit <= 0 {
 		limit = s.cfg.HistoryLimit
+	}
+	if limit > 100 {
+		return nil, errors.New("更新历史最多读取 100 条")
 	}
 	return s.deps.Manager.Source.History(tools.Lifetime(access), picked, limit)
 }
@@ -126,7 +155,7 @@ func (s *Service) channel(channel string) (domainpanel.UpdateChannel, error) {
 }
 
 func (s *Service) descriptors() []tools.Descriptor {
-	return []tools.Descriptor{
+	descriptors := []tools.Descriptor{
 		{
 			Name:        "panel_info",
 			Description: "返回面板信息：端口、当前提交、构建时间、维护能力是否可用与最近任务",
@@ -159,6 +188,10 @@ func (s *Service) descriptors() []tools.Descriptor {
 			Handler: s.handleHistory,
 		},
 	}
+	for i := range descriptors {
+		descriptors[i].Metadata = tools.Metadata{Domain: "panel", Action: descriptors[i].Name, Effect: "read", Exposure: "agent", ReadOnly: true, Default: true, Version: "1"}
+	}
+	return descriptors
 }
 
 func (s *Service) handleInfo(access *kardia.Context, _ tools.Arguments) (any, error) {
