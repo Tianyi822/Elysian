@@ -10,7 +10,7 @@ import { AgentHttpError } from '../../adapters/http/agent/agentShared'
 import { useAgentChatStore } from '../../stores/agentChatStore'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { NotificationHost } from '../../components/NotificationHost'
-import { chatTestApi, chatTestModel, chatTestUsage, chatVisionTestModel } from '../../test/agentChatFixtures'
+import { chatTestApi, chatTestCacheHitUsage, chatTestContextUsage, chatTestModel, chatTestUsage, chatVisionTestModel } from '../../test/agentChatFixtures'
 import { AgentChatPage } from './AgentChatPage'
 import { ShellLayoutContext, useShellLayout } from '../../app/layout/ShellLayoutContext'
 
@@ -108,7 +108,8 @@ describe('基本聊天界面', () => {
     expect(screen.getByRole('button', { name: '发送消息' })).toBeInTheDocument()
   })
 
-  it.each(['succeeded', 'cancelled'] as const)('历史 %s 的空条目时间线仍展示用量，回复与停止标记各保留一次', async status => {
+  it.each(['succeeded', 'cancelled'] as const)('历史 %s 的空条目时间线在输入区提供用量，回复与停止标记各保留一次', async status => {
+    const user = userEvent.setup()
     const backend = chatTestApi()
     backend.hold()
     await backend.api.createTask('server-session', { requestId: 'usage-only', content: '此前的问题' })
@@ -117,15 +118,106 @@ describe('基本聊天界面', () => {
       backend.runs.get('run-1')!.status = status
       backend.session.activeRunId = undefined
     }
-    backend.timelines.set('run-1', { runId: 'run-1', status, done: true, entries: [], usage: chatTestUsage })
+    backend.timelines.set('run-1', { runId: 'run-1', status, done: true, entries: [], usage: chatTestUsage, contextUsage: chatTestContextUsage, cacheHitUsage: chatTestCacheHitUsage })
     renderChat(backend, '/agent?session=server-session')
-    const usage = await screen.findByText('tokens 13,364 · 缓存 8,210（占总量 61%）')
-    expect(usage.closest('.chat-timeline')).not.toBeNull()
+    await waitFor(() => expect(useAgentChatStore.getState().timelines['run-1']).toMatchObject({ usage: chatTestUsage }))
+    const usage = screen.getByRole('button', { name: '上下文用量' })
+    expect(usage.closest('.chat-composer-tools')).not.toBeNull()
+    expect(screen.queryByText(/tokens 13,364|缓存 8,210/)).not.toBeInTheDocument()
+    await user.hover(usage)
+    const details = within(await screen.findByRole('dialog', { name: '上下文用量明细' }))
+    expect(details.getByText('36,200 / 100,000（36.2%）')).toBeInTheDocument()
+    expect(details.getByText('13,364')).toBeInTheDocument()
+    expect(details.getByText('8,210')).toBeInTheDocument()
+    expect(details.getByText('82.1%')).toBeInTheDocument()
+    expect(details.getByText('平均缓存命中率')).toBeInTheDocument()
+    expect(details.getByText('≈ 6,500')).toBeInTheDocument()
+    expect(details.getByText('65.0%')).toBeInTheDocument()
+    expect(details.queryByText('缓存占总量')).not.toBeInTheDocument()
     expect(screen.queryByRole('status', { name: '等待模型回复' })).not.toBeInTheDocument()
     if (status === 'succeeded') {
       expect(screen.getAllByText('已确认的最终答复')).toHaveLength(1)
       expect(screen.getAllByRole('article', { name: '助手回复' })).toHaveLength(1)
     } else expect(screen.getAllByText('已停止')).toHaveLength(1)
+  })
+
+  it('输入区用量只取当前聊天 Run，切换下轮模型仍使用已完成推理的模型与上下文容量', async () => {
+    const user = userEvent.setup()
+    const backend = chatTestApi()
+    await backend.api.createTask('server-session', { requestId: 'old-usage', content: '旧问题' })
+    await backend.api.continueTask('task-1', { requestId: 'latest-usage', content: '新问题' })
+    backend.timelines.set('run-1', { runId: 'run-1', status: 'succeeded', done: true, entries: [], usage: { calls: 0, resultBytes: 0, actualTokens: 99999, cachedTokens: 88888 }, contextUsage: { ...chatTestContextUsage, model: 'old-model', totalTokens: 90000 } })
+    backend.timelines.set('run-2', { runId: 'run-2', status: 'succeeded', done: true, entries: [], usage: chatTestUsage, contextUsage: chatTestContextUsage, cacheHitUsage: chatTestCacheHitUsage })
+    renderChat(backend, '/agent?session=server-session', undefined, [chatTestModel, chatVisionTestModel])
+    await waitFor(() => expect(useAgentChatStore.getState().session?.remote?.runId).toBe('run-2'))
+    await user.hover(screen.getByRole('button', { name: '上下文用量' }))
+    let details = within(await screen.findByRole('dialog', { name: '上下文用量明细' }))
+    expect(details.getByText('13,364')).toBeInTheDocument()
+    expect(details.getByText('36,200 / 100,000（36.2%）')).toBeInTheDocument()
+    expect(details.getByText('82.1%')).toBeInTheDocument()
+    expect(details.queryByText(/99,999|88,888|old-model/)).not.toBeInTheDocument()
+    await user.unhover(screen.getByRole('button', { name: '上下文用量' }))
+    await user.click(screen.getByRole('button', { name: '选择模型：test-model' }))
+    await user.click(screen.getByRole('menuitemradio', { name: 'test-vision-model' }))
+    await user.hover(screen.getByRole('button', { name: '上下文用量' }))
+    details = within(await screen.findByRole('dialog', { name: '上下文用量明细' }))
+    expect(details.getByText('test-model')).toBeInTheDocument()
+    expect(details.getByText('36,200 / 100,000（36.2%）')).toBeInTheDocument()
+    expect(details.queryByText('test-vision-model')).not.toBeInTheDocument()
+    await user.unhover(screen.getByRole('button', { name: '上下文用量' }))
+    await user.click(screen.getByRole('button', { name: '选择模型：test-vision-model' }))
+    await user.click(screen.getByRole('menuitemradio', { name: 'test-model' }))
+  })
+
+  it('新一轮尚无已确认推理时用量保持中性，不沿用上一轮上下文或缓存均值', async () => {
+    const user = userEvent.setup()
+    const backend = chatTestApi()
+    await backend.api.createTask('server-session', { requestId: 'finished-usage', content: '旧问题' })
+    backend.timelines.set('run-1', { runId: 'run-1', status: 'succeeded', done: true, entries: [], usage: chatTestUsage, contextUsage: chatTestContextUsage, cacheHitUsage: chatTestCacheHitUsage })
+    backend.hold()
+    await backend.api.continueTask('task-1', { requestId: 'new-pending-usage', content: '新问题' })
+    renderChat(backend, '/agent?session=server-session')
+    await waitFor(() => expect(useAgentChatStore.getState().session?.remote?.runId).toBe('run-2'))
+    await waitFor(() => expect(useAgentChatStore.getState().timelines['run-1']).toMatchObject({ cacheHitUsage: chatTestCacheHitUsage }))
+    const trigger = screen.getByRole('button', { name: '上下文用量' })
+    expect(trigger.querySelector('.chat-usage-ring')).not.toHaveAttribute('data-known')
+    await user.hover(trigger)
+    const details = within(await screen.findByRole('dialog', { name: '上下文用量明细' }))
+    expect(details.getByText('暂无推理用量')).toBeInTheDocument()
+    expect(details.queryByText(/36,200|13,364|8,210|82\.1%|≈ /)).not.toBeInTheDocument()
+  })
+
+  it('运行中接收时间线增量后，同一用量浮层更新最近推理与本轮累计', async () => {
+    const user = userEvent.setup()
+    const backend = chatTestApi()
+    backend.hold()
+    await backend.api.createTask('server-session', { requestId: 'live-usage', content: '检查服务' })
+    const timeline = { runId: 'run-1', status: 'running' as const, done: false, entries: [], usage: chatTestUsage, contextUsage: chatTestContextUsage, cacheHitUsage: chatTestCacheHitUsage }
+    backend.timelines.set('run-1', timeline)
+    let emit!: Parameters<typeof backend.api.stream>[1]
+    backend.api.stream.mockImplementation(async (_id, onOutput, signal) => {
+      emit = onOutput
+      await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }))
+    })
+    renderChat(backend, '/agent?session=server-session')
+    await waitFor(() => expect(backend.api.stream).toHaveBeenCalled())
+    await user.hover(screen.getByRole('button', { name: '上下文用量' }))
+    const panel = await screen.findByRole('dialog', { name: '上下文用量明细' })
+    expect(within(panel).getByText('36,200 / 100,000（36.2%）')).toBeInTheDocument()
+    expect(within(panel).getByText('82.1%')).toBeInTheDocument()
+    const pending = { ...timeline, usage: { calls: 0, resultBytes: 0, modelRequests: 4, tokens: 99999 } }
+    act(() => emit({ runId: 'run-1', responseId: 'm2', reasoning: '', content: '', done: false, timeline: pending }))
+    expect(within(panel).getByText('82.1%')).toBeInTheDocument()
+    expect(within(panel).getByText('36,200 / 100,000（36.2%）')).toBeInTheDocument()
+    const updated = { ...timeline, usage: { ...chatTestUsage, actualTokens: 16000, cachedTokens: 9000 }, contextUsage: { ...chatTestContextUsage, modelRequestId: 'm2', totalTokens: 48200 }, cacheHitUsage: { inputTokens: 12000, cachedTokens: 9000 } }
+    act(() => emit({ runId: 'run-1', responseId: 'm2', reasoning: '', content: '', done: false, timeline: updated }))
+    expect(screen.getByRole('dialog', { name: '上下文用量明细' })).toBe(panel)
+    expect(within(panel).getByText('48,200 / 100,000（48.2%）')).toBeInTheDocument()
+    expect(within(panel).getByText('16,000')).toBeInTheDocument()
+    expect(within(panel).getByText('9,000')).toBeInTheDocument()
+    expect(within(panel).getByText('75.0%')).toBeInTheDocument()
+    expect(screen.getByRole('status', { name: '等待模型回复' })).toBeInTheDocument()
+    expect(screen.queryByText(/tokens 16,000|缓存 9,000/)).not.toBeInTheDocument()
   })
 
   it.each([
@@ -402,6 +494,7 @@ describe('基本聊天界面', () => {
   })
 
   it('运行中切到其他会话释放输出流，切回后以原运行重连并衔接内容', async () => {
+    const user = userEvent.setup()
     const backend = chatTestApi()
     backend.hold()
     const watches: { runId: string; onOutput: Parameters<typeof backend.api.stream>[1]; signal: AbortSignal }[] = []
@@ -416,23 +509,34 @@ describe('基本聊天界面', () => {
     backend.api.listTasks.mockImplementation(async id => id === 'history-b'
       ? { items: [], nextCursor: '', hasMore: false }
       : { items: [{ id: 'task-1', sessionId: 'server-session', kind: 'agent' }], nextCursor: '', hasMore: false })
+    backend.timelines.set('run-1', { runId: 'run-1', status: 'running', done: false, entries: [], usage: chatTestUsage, contextUsage: chatTestContextUsage, cacheHitUsage: chatTestCacheHitUsage })
     renderChat(backend)
     fireEvent.change(screen.getByRole('textbox'), { target: { value: '检查服务' } })
     await waitFor(() => expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: '发送消息' }))
     await waitFor(() => expect(watches).toHaveLength(1))
     expect(watches[0]!.runId).toBe('run-1')
+    await user.hover(screen.getByRole('button', { name: '上下文用量' }))
+    expect(within(await screen.findByRole('dialog', { name: '上下文用量明细' })).getByText('36,200 / 100,000（36.2%）')).toBeInTheDocument()
+    await user.unhover(screen.getByRole('button', { name: '上下文用量' }))
     // 切到空闲会话：原会话的输出流订阅随展示释放断开，运行仍在服务端继续。
     fireEvent.click(screen.getByRole('button', { name: '历史 B' }))
     await waitFor(() => expect(useAgentChatStore.getState().remoteSession?.id).toBe('history-b'))
     await waitFor(() => expect(watches[0]!.signal.aborted).toBe(true))
     expect(watches).toHaveLength(1)
+    await user.hover(screen.getByRole('button', { name: '上下文用量' }))
+    const emptyUsage = within(await screen.findByRole('dialog', { name: '上下文用量明细' }))
+    expect(emptyUsage.getByText('暂无推理用量')).toBeInTheDocument()
+    expect(emptyUsage.queryByText('36,200 / 100,000（36.2%）')).not.toBeInTheDocument()
+    await user.unhover(screen.getByRole('button', { name: '上下文用量' }))
     // 切回运行中的会话：以原 Run 重新订阅，快照增量原位衔接、不重复用户消息。
     fireEvent.click(screen.getByRole('button', { name: '会话 A' }))
     await waitFor(() => expect(useAgentChatStore.getState().remoteSession?.id).toBe('server-session'))
     await waitFor(() => expect(watches).toHaveLength(2))
     expect(watches[1]!.runId).toBe('run-1')
     await waitFor(() => expect(useAgentChatStore.getState().run?.id).toBe('run-1'))
+    await user.hover(screen.getByRole('button', { name: '上下文用量' }))
+    expect(within(await screen.findByRole('dialog', { name: '上下文用量明细' })).getByText('36,200 / 100,000（36.2%）')).toBeInTheDocument()
     act(() => watches[1]!.onOutput({ runId: 'run-1', responseId: 'm1', reasoning: '继续排查', content: '重连后的回答', done: false }))
     expect(await screen.findByText('重连后的回答')).toBeInTheDocument()
     expect(screen.getAllByText('检查服务')).toHaveLength(1)

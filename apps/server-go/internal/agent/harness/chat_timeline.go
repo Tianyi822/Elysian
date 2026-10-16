@@ -1,6 +1,11 @@
 package harness
 
-import "context"
+import (
+	"context"
+	"math"
+
+	"elysian/server/internal/agent/harness/model"
+)
 
 type ChatTimelineEntry struct {
 	ID             string   `json:"id"`
@@ -21,11 +26,26 @@ type ChatTimelineEntry struct {
 	Truncated      bool     `json:"truncated"`
 }
 
+type ChatContextUsage struct {
+	ModelRequestID     string                  `json:"modelRequestId"`
+	Model              string                  `json:"model"`
+	TotalTokens        *int                    `json:"totalTokens,omitempty"`
+	ContextTokens      int                     `json:"contextTokens"`
+	EstimatedBreakdown *model.ContextBreakdown `json:"estimatedBreakdown,omitempty"`
+}
+
+type ChatCacheHitUsage struct {
+	InputTokens  int `json:"inputTokens"`
+	CachedTokens int `json:"cachedTokens"`
+}
+
 type ChatTimelineSnapshot struct {
 	RunID           string              `json:"runId"`
 	Status          string              `json:"status"`
 	Done            bool                `json:"done"`
 	Usage           Usage               `json:"usage"`
+	ContextUsage    *ChatContextUsage   `json:"contextUsage,omitempty"`
+	CacheHitUsage   *ChatCacheHitUsage  `json:"cacheHitUsage,omitempty"`
 	FinalResponseID string              `json:"finalResponseId,omitempty"`
 	Entries         []ChatTimelineEntry `json:"entries"`
 }
@@ -73,7 +93,7 @@ func (m *Manager) ChatSnapshot(ctx context.Context, id string) (ChatOutput, erro
 }
 
 func projectChatTimeline(run Run, records []ModelRequestRecord, operations []Operation, calls []Call, approvals []Approval) ChatTimelineSnapshot {
-	out := ChatTimelineSnapshot{RunID: run.ID, Status: run.Status, Done: terminal(run.Status), Usage: run.Usage, Entries: []ChatTimelineEntry{}}
+	out := ChatTimelineSnapshot{RunID: run.ID, Status: run.Status, Done: terminal(run.Status), Usage: run.Usage, ContextUsage: projectChatContextUsage(run, records), CacheHitUsage: projectChatCacheHitUsage(records), Entries: []ChatTimelineEntry{}}
 	ops := map[string]Operation{}
 	for _, o := range operations {
 		ops[o.ModelRequestID+":"+o.ModelCallID] = o
@@ -165,6 +185,70 @@ func projectChatTimeline(run Run, records []ModelRequestRecord, operations []Ope
 		if legacy.Content != "" {
 			out.FinalResponseID = legacy.ResponseID
 		}
+	}
+	return out
+}
+
+func projectChatContextUsage(run Run, records []ModelRequestRecord) *ChatContextUsage {
+	if run.Model == nil {
+		return nil
+	}
+	var latest *ModelRequestRecord
+	for i := range records {
+		record := &records[i]
+		if record.Purpose == "inference" && record.Status == StateSucceeded && record.Response != nil && (latest == nil || record.Index > latest.Index) {
+			latest = record
+		}
+	}
+	if latest == nil {
+		return nil
+	}
+	out := &ChatContextUsage{ModelRequestID: latest.ID, Model: run.Model.Model, ContextTokens: run.Model.ContextTokens, EstimatedBreakdown: projectContextBreakdown(*latest)}
+	usage := latest.Response.Usage
+	const maxSafeTokens int64 = 1<<53 - 1
+	if usage.TotalTokens != nil {
+		if *usage.TotalTokens >= 0 && int64(*usage.TotalTokens) <= maxSafeTokens {
+			out.TotalTokens = usage.TotalTokens
+		}
+	} else if usage.PromptTokens != nil && usage.CompletionTokens != nil && *usage.PromptTokens >= 0 && *usage.CompletionTokens >= 0 && *usage.PromptTokens <= math.MaxInt-*usage.CompletionTokens && int64(*usage.PromptTokens) <= maxSafeTokens-int64(*usage.CompletionTokens) {
+		total := *usage.PromptTokens + *usage.CompletionTokens
+		out.TotalTokens = &total
+	}
+	return out
+}
+
+func projectChatCacheHitUsage(records []ModelRequestRecord) *ChatCacheHitUsage {
+	if len(records) == 0 {
+		return nil
+	}
+	const maxSafeTokens int64 = 1<<53 - 1
+	maxTokens := int64(math.MaxInt)
+	if maxTokens > maxSafeTokens {
+		maxTokens = maxSafeTokens
+	}
+	out := &ChatCacheHitUsage{}
+	completed := 0
+	for _, record := range records {
+		if record.Status == StateQueued || record.Status == StateRunning {
+			continue
+		}
+		if record.Status != StateSucceeded || record.Response == nil {
+			return nil
+		}
+		usage := record.Response.Usage
+		if usage.PromptTokens == nil || usage.CachedTokens == nil {
+			return nil
+		}
+		input, cached := int64(*usage.PromptTokens), int64(*usage.CachedTokens)
+		if input < 0 || cached < 0 || cached > input || input > maxTokens-int64(out.InputTokens) || cached > maxTokens-int64(out.CachedTokens) {
+			return nil
+		}
+		out.InputTokens += *usage.PromptTokens
+		out.CachedTokens += *usage.CachedTokens
+		completed++
+	}
+	if completed == 0 {
+		return nil
 	}
 	return out
 }

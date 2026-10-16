@@ -79,6 +79,12 @@ func TestChatOutputStreamBeforePublicMessageAndReconnect(t *testing.T) {
 	if output.Timeline == nil || output.Timeline.Usage.ModelRequests != 1 || output.Timeline.Usage.EstimatedTokens == 0 || output.Timeline.Usage.ActualTokens != nil || output.Timeline.Usage.CachedTokens != nil {
 		t.Fatalf("运行中用量快照错误：%+v", output.Timeline)
 	}
+	if output.Timeline.ContextUsage != nil {
+		t.Fatalf("未确认推理不应产生上下文用量：%+v", output.Timeline.ContextUsage)
+	}
+	if output.Timeline.CacheHitUsage != nil {
+		t.Fatalf("未完成请求不应产生缓存均值：%+v", output.Timeline.CacheHitUsage)
+	}
 	if next := read(); !reflect.DeepEqual(next, output) {
 		t.Fatal("重连后快照不一致")
 	}
@@ -94,6 +100,13 @@ func TestChatOutputStreamBeforePublicMessageAndReconnect(t *testing.T) {
 	}
 	if final.Timeline == nil || final.Timeline.Usage.ModelRequests != 2 || final.Timeline.Usage.ActualTokens == nil || *final.Timeline.Usage.ActualTokens != 40 || final.Timeline.Usage.CachedTokens == nil || *final.Timeline.Usage.CachedTokens != 10 {
 		t.Fatalf("流式终态用量错误：%+v", final.Timeline)
+	}
+	contextUsage := final.Timeline.ContextUsage
+	if contextUsage == nil || contextUsage.ModelRequestID != final.Timeline.FinalResponseID || contextUsage.Model != "test" || contextUsage.ContextTokens != 65536 || contextUsage.TotalTokens == nil || *contextUsage.TotalTokens != 20 {
+		t.Fatalf("流式上下文用量未取最后推理：%+v", contextUsage)
+	}
+	if final.Timeline.CacheHitUsage == nil || final.Timeline.CacheHitUsage.InputTokens != 30 || final.Timeline.CacheHitUsage.CachedTokens != 10 {
+		t.Fatalf("流式缓存均值未覆盖全部完成请求：%+v", final.Timeline.CacheHitUsage)
 	}
 }
 

@@ -11,6 +11,24 @@
     "actualTokens": 13364,
     "cachedTokens": 8210
   },
+  "contextUsage": {
+    "modelRequestId": "m1",
+    "model": "test-model",
+    "totalTokens": 12500,
+    "contextTokens": 65536,
+    "estimatedBreakdown": {
+      "messages": 6500,
+      "systemTools": 2100,
+      "other": 400,
+      "skills": 300,
+      "systemPrompt": 500,
+      "mcpTools": 200
+    }
+  },
+  "cacheHitUsage": {
+    "inputTokens": 10000,
+    "cachedTokens": 8210
+  },
   "finalResponseId": "m1",
   "entries": [
     {

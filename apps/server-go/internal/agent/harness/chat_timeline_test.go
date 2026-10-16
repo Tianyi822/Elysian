@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http/httptest"
 	"reflect"
 	"strings"
@@ -36,8 +37,13 @@ func TestChatTimelineRetainsThreeInferencesAndToolContent(t *testing.T) {
 		return response, nil
 	}, nil)
 	run := submitAgentTest(t, m, session, "timeline", "查询")
-	if finished := runtimeFinished(t, m, run.ID); finished.Status != StateSucceeded {
+	finished := runtimeFinished(t, m, run.ID)
+	if finished.Status != StateSucceeded {
 		t.Fatalf("run failed: %+v", finished)
+	}
+	profile := *finished.Model
+	if _, err := m.UpdateModelProfile(profile.ID, profile.Revision, model.Input{Provider: profile.Provider, APIFormat: profile.APIFormat, BaseURL: profile.BaseURL, Model: "updated-model", ContextTokens: 131072, OutputTokens: profile.OutputTokens, Capabilities: profile.Capabilities, Active: true}); err != nil {
+		t.Fatal(err)
 	}
 	output, err := m.ChatSnapshot(context.Background(), run.ID)
 	if err != nil {
@@ -63,6 +69,12 @@ func TestChatTimelineRetainsThreeInferencesAndToolContent(t *testing.T) {
 	if timeline.Usage.ModelRequests != 4 || timeline.Usage.ActualTokens == nil || *timeline.Usage.ActualTokens != 80 || timeline.Usage.CachedTokens == nil || *timeline.Usage.CachedTokens != 20 {
 		t.Fatalf("run usage missing from timeline: %+v", timeline.Usage)
 	}
+	if timeline.ContextUsage == nil || timeline.ContextUsage.ModelRequestID != timeline.FinalResponseID || timeline.ContextUsage.Model != profile.Model || timeline.ContextUsage.ContextTokens != profile.ContextTokens || timeline.ContextUsage.TotalTokens == nil || *timeline.ContextUsage.TotalTokens != 20 {
+		t.Fatalf("latest inference or fixed model missing from timeline: %+v", timeline.ContextUsage)
+	}
+	if timeline.CacheHitUsage == nil || timeline.CacheHitUsage.InputTokens != 60 || timeline.CacheHitUsage.CachedTokens != 20 {
+		t.Fatalf("input-weighted cache usage missing from timeline: %+v", timeline.CacheHitUsage)
+	}
 	// 独立读取端点从原始记录重建相同顺序，且不夹带工具结果。
 	rec := httptest.NewRecorder()
 	m.Router().ServeHTTP(rec, httptest.NewRequest("GET", "/runs/"+run.ID+"/timeline", nil))
@@ -83,6 +95,83 @@ func TestChatTimelineIncludesRunUsage(t *testing.T) {
 			timeline := projectChatTimeline(Run{ID: "r", Status: status, Usage: usage}, nil, nil, nil, nil)
 			if !reflect.DeepEqual(timeline.Usage, usage) || timeline.Done != terminal(status) {
 				t.Fatalf("wrong usage snapshot: %+v", timeline)
+			}
+		})
+	}
+}
+
+func TestChatTimelineContextUsageSelectsLatestConfirmedInference(t *testing.T) {
+	first, latest, internal := 100, 40, 900
+	response := func(total *int) *model.Response { return &model.Response{Usage: model.Usage{TotalTokens: total}} }
+	modelSnapshot := &model.Profile{Model: "fixed-model", ContextTokens: 65536}
+	records := []ModelRequestRecord{
+		{ID: "latest", Index: 4, Purpose: "inference", Status: StateSucceeded, Response: response(&latest)},
+		{ID: "checkpoint", Index: 5, Purpose: "checkpoint", Status: StateSucceeded, Response: response(&internal)},
+		{ID: "final-memory", Index: 6, Purpose: "final-memory", Status: StateSucceeded, Response: response(&internal)},
+		{ID: "running", Index: 7, Purpose: "inference", Status: StateRunning, Response: response(&internal)},
+		{ID: "failed", Index: 8, Purpose: "inference", Status: StateFailed, Response: response(&internal)},
+		{ID: "missing-response", Index: 9, Purpose: "inference", Status: StateSucceeded},
+		{ID: "first", Index: 0, Purpose: "inference", Status: StateSucceeded, Response: response(&first)},
+	}
+	for _, status := range []string{StateRunning, StateSucceeded, StateFailed, StateCancelled, StateInterrupted} {
+		t.Run(status, func(t *testing.T) {
+			timeline := projectChatTimeline(Run{ID: "r", Status: status, Model: modelSnapshot, Usage: Usage{ActualTokens: &internal}}, records, nil, nil, nil)
+			contextUsage := timeline.ContextUsage
+			if contextUsage == nil || contextUsage.ModelRequestID != "latest" || contextUsage.Model != "fixed-model" || contextUsage.ContextTokens != 65536 || contextUsage.TotalTokens == nil || *contextUsage.TotalTokens != latest {
+				t.Fatalf("wrong confirmed inference: %+v", contextUsage)
+			}
+		})
+	}
+	withoutModel := projectChatTimeline(Run{ID: "r", Status: StateSucceeded}, records, nil, nil, nil)
+	if withoutModel.ContextUsage != nil {
+		t.Fatalf("missing model snapshot became known: %+v", withoutModel.ContextUsage)
+	}
+	withoutInference := projectChatTimeline(Run{ID: "r", Status: StateRunning, Model: modelSnapshot}, records[1:6], nil, nil, nil)
+	if withoutInference.ContextUsage != nil {
+		t.Fatalf("internal or unconfirmed request became context usage: %+v", withoutInference.ContextUsage)
+	}
+}
+
+func TestChatTimelineContextUsagePreservesReportedAndUnknownTotals(t *testing.T) {
+	zero, prompt, completion, total, sum, negative, max := 0, 10, 5, 20, 15, -1, math.MaxInt
+	for _, tc := range []struct {
+		name     string
+		usage    model.Usage
+		expected *int
+	}{
+		{name: "reported-total", usage: model.Usage{TotalTokens: &total, PromptTokens: &prompt, CompletionTokens: &completion}, expected: &total},
+		{name: "reported-zero", usage: model.Usage{TotalTokens: &zero, PromptTokens: &prompt, CompletionTokens: &completion}, expected: &zero},
+		{name: "sum-input-and-output", usage: model.Usage{PromptTokens: &prompt, CompletionTokens: &completion}, expected: &sum},
+		{name: "sum-zero", usage: model.Usage{PromptTokens: &zero, CompletionTokens: &zero}, expected: &zero},
+		{name: "unknown", usage: model.Usage{}},
+		{name: "prompt-only", usage: model.Usage{PromptTokens: &prompt}},
+		{name: "completion-only", usage: model.Usage{CompletionTokens: &completion}},
+		{name: "negative-total", usage: model.Usage{TotalTokens: &negative}},
+		{name: "negative-input", usage: model.Usage{PromptTokens: &negative, CompletionTokens: &completion}},
+		{name: "sum-overflow", usage: model.Usage{PromptTokens: &max, CompletionTokens: &completion}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			previousTotal := 200
+			records := []ModelRequestRecord{
+				{ID: "previous", Index: 0, Purpose: "inference", Status: StateSucceeded, Response: &model.Response{Usage: model.Usage{TotalTokens: &previousTotal}}},
+				{ID: "latest", Index: 1, Purpose: "inference", Status: StateSucceeded, Response: &model.Response{Usage: tc.usage}},
+			}
+			timeline := projectChatTimeline(Run{ID: "r", Status: StateSucceeded, Model: &model.Profile{Model: "fixed-model", ContextTokens: 0}}, records, nil, nil, nil)
+			contextUsage := timeline.ContextUsage
+			if contextUsage == nil || contextUsage.ModelRequestID != "latest" || contextUsage.ContextTokens != 0 || !reflect.DeepEqual(contextUsage.TotalTokens, tc.expected) {
+				t.Fatalf("wrong latest usage: %+v", contextUsage)
+			}
+			data, err := json.Marshal(contextUsage)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var wire map[string]json.RawMessage
+			if err := json.Unmarshal(data, &wire); err != nil {
+				t.Fatal(err)
+			}
+			_, present := wire["totalTokens"]
+			if present != (tc.expected != nil) || string(wire["contextTokens"]) != "0" {
+				t.Fatalf("unknown or explicit zero collapsed: %s", data)
 			}
 		})
 	}
@@ -117,6 +206,116 @@ func TestChatTimelineUsagePreservesUnknownAndReportedZero(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestChatTimelineContextUsageJavaScriptIntegerBounds(t *testing.T) {
+	maxSafeValue := int64(1<<53 - 1)
+	if int64(math.MaxInt) <= maxSafeValue {
+		t.Skip("native int cannot exceed JavaScript safe integers")
+	}
+	maxSafe, aboveSafe, beforeSafe, one, five := int(maxSafeValue), int(maxSafeValue+1), int(maxSafeValue-5), 1, 5
+	for _, tc := range []struct {
+		name     string
+		usage    model.Usage
+		expected *int
+	}{
+		{name: "reported-limit", usage: model.Usage{TotalTokens: &maxSafe}, expected: &maxSafe},
+		{name: "reported-over-limit", usage: model.Usage{TotalTokens: &aboveSafe, PromptTokens: &one, CompletionTokens: &one}},
+		{name: "sum-limit", usage: model.Usage{PromptTokens: &beforeSafe, CompletionTokens: &five}, expected: &maxSafe},
+		{name: "sum-over-limit", usage: model.Usage{PromptTokens: &maxSafe, CompletionTokens: &one}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			contextUsage := projectChatContextUsage(Run{Model: &model.Profile{Model: "fixed-model", ContextTokens: 65536}}, []ModelRequestRecord{{ID: "latest", Purpose: "inference", Status: StateSucceeded, Response: &model.Response{Usage: tc.usage}}})
+			if contextUsage == nil || contextUsage.ModelRequestID != "latest" || contextUsage.Model != "fixed-model" || contextUsage.ContextTokens != 65536 || !reflect.DeepEqual(contextUsage.TotalTokens, tc.expected) {
+				t.Fatalf("unsafe total or lost latest request: %+v", contextUsage)
+			}
+			data, err := json.Marshal(contextUsage)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(data), `"totalTokens":`) != (tc.expected != nil) {
+				t.Fatalf("unsafe total should remain unknown: %s", data)
+			}
+		})
+	}
+}
+
+func TestChatTimelineCacheHitUsageWeightsAllCompletedRequests(t *testing.T) {
+	firstInput, firstCached, secondInput, secondCached := 10, 10, 90, 0
+	checkpointInput, checkpointCached, finalInput, finalCached := 100, 25, 200, 100
+	records := []ModelRequestRecord{
+		{ID: "first", Purpose: "inference", Status: StateSucceeded, Response: &model.Response{Usage: model.Usage{PromptTokens: &firstInput, CachedTokens: &firstCached}}},
+		{ID: "second", Purpose: "inference", Status: StateSucceeded, Response: &model.Response{Usage: model.Usage{PromptTokens: &secondInput, CachedTokens: &secondCached}}},
+		{ID: "checkpoint", Purpose: "checkpoint", Status: StateSucceeded, Response: &model.Response{Usage: model.Usage{PromptTokens: &checkpointInput, CachedTokens: &checkpointCached}}},
+		{ID: "final", Purpose: "final-memory", Status: StateSucceeded, Response: &model.Response{Usage: model.Usage{PromptTokens: &finalInput, CachedTokens: &finalCached}}},
+		{ID: "pending", Purpose: "inference", Status: StateRunning},
+		{ID: "queued", Purpose: "inference", Status: StateQueued},
+	}
+	timeline := projectChatTimeline(Run{ID: "r", Status: StateRunning}, records, nil, nil, nil)
+	if !reflect.DeepEqual(timeline.CacheHitUsage, &ChatCacheHitUsage{InputTokens: 400, CachedTokens: 135}) {
+		t.Fatalf("wrong input-weighted cache usage: %+v", timeline.CacheHitUsage)
+	}
+}
+
+func TestChatTimelineCacheHitUsageUnknownAndExplicitZero(t *testing.T) {
+	zero, one, input, cached, negative := 0, 1, 10, 5, -1
+	known := ModelRequestRecord{Status: StateSucceeded, Response: &model.Response{Usage: model.Usage{PromptTokens: &input, CachedTokens: &cached}}}
+	for _, tc := range []struct {
+		name     string
+		records  []ModelRequestRecord
+		expected *ChatCacheHitUsage
+	}{
+		{name: "no-requests"},
+		{name: "pending-only", records: []ModelRequestRecord{{Status: StateRunning}}},
+		{name: "missing-response", records: []ModelRequestRecord{known, {Status: StateSucceeded}}},
+		{name: "missing-input", records: []ModelRequestRecord{known, {Status: StateSucceeded, Response: &model.Response{Usage: model.Usage{CachedTokens: &zero}}}}},
+		{name: "missing-cache", records: []ModelRequestRecord{known, {Status: StateSucceeded, Response: &model.Response{Usage: model.Usage{PromptTokens: &input}}}}},
+		{name: "failed", records: []ModelRequestRecord{known, {Status: StateFailed, Response: known.Response}}},
+		{name: "cancelled", records: []ModelRequestRecord{known, {Status: StateCancelled, Response: known.Response}}},
+		{name: "interrupted", records: []ModelRequestRecord{known, {Status: StateInterrupted, Response: known.Response}}},
+		{name: "negative-input", records: []ModelRequestRecord{known, {Status: StateSucceeded, Response: &model.Response{Usage: model.Usage{PromptTokens: &negative, CachedTokens: &zero}}}}},
+		{name: "negative-cache", records: []ModelRequestRecord{known, {Status: StateSucceeded, Response: &model.Response{Usage: model.Usage{PromptTokens: &input, CachedTokens: &negative}}}}},
+		{name: "cache-exceeds-input", records: []ModelRequestRecord{known, {Status: StateSucceeded, Response: &model.Response{Usage: model.Usage{PromptTokens: &zero, CachedTokens: &one}}}}},
+		{name: "reported-zero", records: []ModelRequestRecord{{Status: StateSucceeded, Response: &model.Response{Usage: model.Usage{PromptTokens: &zero, CachedTokens: &zero}}}}, expected: &ChatCacheHitUsage{}},
+		{name: "zero-cache", records: []ModelRequestRecord{{Status: StateSucceeded, Response: &model.Response{Usage: model.Usage{PromptTokens: &input, CachedTokens: &zero}}}}, expected: &ChatCacheHitUsage{InputTokens: input}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			timeline := projectChatTimeline(Run{ID: "r", Status: StateSucceeded}, tc.records, nil, nil, nil)
+			if !reflect.DeepEqual(timeline.CacheHitUsage, tc.expected) {
+				t.Fatalf("wrong cache reporting completeness: %+v", timeline.CacheHitUsage)
+			}
+			data, err := json.Marshal(timeline)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(data), `"cacheHitUsage":`) != (tc.expected != nil) {
+				t.Fatalf("unknown cache usage should be omitted: %s", data)
+			}
+		})
+	}
+}
+
+func TestChatTimelineCacheHitUsageIntegerBounds(t *testing.T) {
+	limitValue := int64(1<<53 - 1)
+	if int64(math.MaxInt) < limitValue {
+		limitValue = int64(math.MaxInt)
+	}
+	limit, one, zero := int(limitValue), 1, 0
+	request := func(input, cached *int) ModelRequestRecord {
+		return ModelRequestRecord{Status: StateSucceeded, Response: &model.Response{Usage: model.Usage{PromptTokens: input, CachedTokens: cached}}}
+	}
+	if usage := projectChatCacheHitUsage([]ModelRequestRecord{request(&limit, &limit)}); !reflect.DeepEqual(usage, &ChatCacheHitUsage{InputTokens: limit, CachedTokens: limit}) {
+		t.Fatalf("safe boundary was discarded: %+v", usage)
+	}
+	if usage := projectChatCacheHitUsage([]ModelRequestRecord{request(&limit, &zero), request(&one, &zero)}); usage != nil {
+		t.Fatalf("unsafe aggregate became known: %+v", usage)
+	}
+	if int64(math.MaxInt) > limitValue {
+		above := int(limitValue + 1)
+		if usage := projectChatCacheHitUsage([]ModelRequestRecord{request(&above, &zero)}); usage != nil {
+			t.Fatalf("unsafe request became known: %+v", usage)
+		}
 	}
 }
 

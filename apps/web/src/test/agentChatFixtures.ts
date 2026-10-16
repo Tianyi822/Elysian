@@ -1,15 +1,18 @@
 import { vi } from 'vitest'
-import type { AgentChatTimelineSnapshot, AgentInput, AgentMessage, AgentMessageAttachment, AgentModelProfile, AgentSession, RuntimeCall, RuntimeUsage } from '@elysian/contracts'
+import type { AgentChatCacheHitUsage, AgentChatContextUsage, AgentChatTimelineSnapshot, AgentInput, AgentMessage, AgentMessageAttachment, AgentModelProfile, AgentSession, RuntimeCall, RuntimeUsage } from '@elysian/contracts'
 import timelineFixture from '../../../../packages/foundation/contracts/fixtures/agent-chat-timeline.json'
 import type { AgentChatRun, AgentConversationAdapter } from '../contracts/agentChat'
 
 export const chatTestUsage: RuntimeUsage = timelineFixture.usage
+export const chatTestCacheHitUsage: AgentChatCacheHitUsage = timelineFixture.cacheHitUsage
 
 export const chatTestModel: AgentModelProfile = {
   id: 'model-1', revision: 1, model: 'test-model', baseUrl: 'https://model.invalid/v1',
   provider: 'openai-compatible', apiFormat: 'chat-completions', contextTokens: 32768, outputTokens: 4096,
   capabilities: { text: true, tools: true, source: 'manual', reasoningLevels: ['disabled', 'low', 'high', 'max'] }, active: true, hasCredential: true,
 }
+
+export const chatTestContextUsage: AgentChatContextUsage = { ...timelineFixture.contextUsage, modelRequestId: 'm1', model: chatTestModel.model, totalTokens: 36200, contextTokens: 100000 }
 
 /** 声明图片输入能力的测试模型：用于附件链路用例。 */
 export const chatVisionTestModel: AgentModelProfile = {

@@ -358,6 +358,10 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 		return empty, bad("model-budget", "模型请求次数或 token 预算已耗尽")
 	}
 	record := ModelRequestRecord{ID: m.deps.NewID(), RunID: run.ID, Index: run.Usage.ModelRequests, Purpose: purpose, Status: StateRunning, StartedAt: stamp(m.deps.Now()), ContextRefs: refs, MemoryRevision: revision, EstimatedTokens: estimate, HistorySeq: run.HistorySeq}
+	if purpose == "inference" && request.EstimatedBreakdown != nil {
+		breakdown := *request.EstimatedBreakdown
+		record.EstimatedBreakdown = &breakdown
+	}
 	if a.onDemandTools() && purpose == "inference" {
 		for _, tool := range request.Tools {
 			record.ToolNames = append(record.ToolNames, tool.Name)

@@ -275,12 +275,37 @@ export type AgentChatTimelineEntry = AgentChatTimelineEntryBase & (
   { kind: 'reasoning' | 'content'; text: string; status: RuntimeRunStatus; incomplete: boolean }
   | { kind: 'tool'; tool: string; modelCallId: string; callIndex: number; argumentsJson: string; callId?: string; status: AgentChatToolStatus; error?: RuntimeFailure; truncated: boolean }
 )
+/** 最近一次推理输入及输出组成的近似 token 数，不作为供应商计费或实测用量。 */
+export type AgentChatContextBreakdown = {
+  messages: number
+  systemTools: number
+  other: number
+  skills: number
+  systemPrompt: number
+  mcpTools: number
+}
+/** 同一 Run 全部已完成请求的输入与缓存量之和；任一缺报时省略，命中率按输入 token 加权。 */
+export type AgentChatCacheHitUsage = {
+  inputTokens: number
+  cachedTokens: number
+}
+/** 最近一次已确认推理请求的用量；模型与上下文容量来自该 Run 固定的模型修订。 */
+export type AgentChatContextUsage = {
+  modelRequestId: string
+  model: string
+  /** 输入加输出总量；供应商未报告且无法完整求和时省略，不把未知视为零。 */
+  totalTokens?: number
+  contextTokens: number
+  estimatedBreakdown?: AgentChatContextBreakdown
+}
 /** 只读展示投影，条目按推理请求及工具调用顺序排列；终答由公开消息确认。 */
 export type AgentChatTimelineSnapshot = {
   runId: string
   status: RuntimeRunStatus
   done: boolean
   usage?: RuntimeUsage
+  contextUsage?: AgentChatContextUsage
+  cacheHitUsage?: AgentChatCacheHitUsage
   finalResponseId?: string
   entries: readonly AgentChatTimelineEntry[]
 }

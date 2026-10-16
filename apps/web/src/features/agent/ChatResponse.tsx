@@ -5,12 +5,13 @@ import { ChatReasoning } from './ChatReasoning'
 import { useSmoothedText } from './useSmoothedText'
 
 /** 同一轮的思考与答复共享容器，流式预览原位衔接服务端确认消息。 */
-export function ChatResponse({ content, reasoning, active, stopped, stopping, quarantined, onProgress }: {
+export function ChatResponse({ content, reasoning, active, stopped, stopping, copyable = !active, quarantined, onProgress }: {
   content: string
   reasoning: string
   active: boolean
   stopped?: boolean
   stopping?: boolean
+  copyable?: boolean
   quarantined?: boolean
   onProgress(): void
 }) {
@@ -26,12 +27,12 @@ export function ChatResponse({ content, reasoning, active, stopped, stopping, qu
       <span aria-hidden /><span aria-hidden /><span aria-hidden />
     </div>}
     <ChatReasoning text={thought} active={active} />
-    {!!answer && <article className="chat-message chat-message-assistant" aria-label="助手回复">
+    {!!answer && <article className={`chat-message chat-message-assistant${copyable ? '' : ' chat-message-intermediate'}`} aria-label="助手回复">
       <div className="chat-message-body">
         <ChatMarkdown text={answer} />
         {quarantined && <p className="mt-2 text-xs text-danger">此回复包含未核实或已撤回的资料。</p>}
       </div>
-      <ChatMessageCopy value={content} noun="回复内容" />
+      {copyable && <ChatMessageCopy value={content} noun="回复内容" />}
     </article>}
     {stopped && <p role="status" className="text-xs text-fg-muted">已停止</p>}
   </div>

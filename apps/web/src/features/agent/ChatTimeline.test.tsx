@@ -1,7 +1,8 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import * as Tooltip from '@radix-ui/react-tooltip'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AgentChatTimelineEntry, AgentChatTimelineSnapshot, AgentMessage, RuntimeCall, RuntimeUsage } from '@elysian/contracts'
+import type { AgentChatTimelineEntry, AgentChatTimelineSnapshot, AgentMessage, RuntimeCall } from '@elysian/contracts'
 import { chatTestApi, chatTestUsage } from '../../test/agentChatFixtures'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { ChatTimeline } from './ChatTimeline'
@@ -22,6 +23,8 @@ describe('分段回复过程', () => {
     const draw = (timeline: AgentChatTimelineSnapshot, final?: AgentMessage) => <Tooltip.Provider><ChatTimeline timeline={timeline} answer={final} api={api} active={!timeline.done} stopped={false} onProgress={onProgress} /></Tooltip.Provider>
     const view = render(draw(snapshot(first)))
     const firstArticle = screen.getByRole('article', { name: '助手回复' })
+    expect(firstArticle).toHaveClass('chat-message-intermediate')
+    expect(screen.queryByRole('button', { name: '复制回复内容' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '展开思考内容' }))
     expect(screen.getByRole('region', { name: '思考内容' })).toHaveTextContent('第一轮思考')
     const all = [...first, text(1, 'reasoning', '第二轮思考'), text(1, 'content', '第二段正文'), text(2, 'reasoning', '末轮思考'), text(2, 'content', '终答预览')]
@@ -31,6 +34,8 @@ describe('分段回复过程', () => {
     expect(articles[0]).toBe(firstArticle)
     expect(screen.getByRole('region', { name: '思考内容' })).toHaveTextContent('第一轮思考')
     expect(screen.getAllByRole('button', { name: '展开思考内容' })).toHaveLength(2)
+    expect(articles.every(article => article.classList.contains('chat-message-intermediate'))).toBe(true)
+    expect(screen.queryByRole('button', { name: '复制回复内容' })).not.toBeInTheDocument()
     const process = screen.getByLabelText('回复过程')
     expect(process.textContent).toMatch(/第一轮思考.*第一段正文.*docker_images_list.*第二轮思考.*第二段正文.*末轮思考.*终答预览/)
     view.rerender(draw({ ...snapshot(all, true), usage: chatTestUsage }, answer))
@@ -38,8 +43,11 @@ describe('分段回复过程', () => {
     expect(screen.getAllByRole('article', { name: '助手回复' }).at(-1)).toBe(finalArticle)
     expect(screen.getAllByText(answer.content)).toHaveLength(1)
     expect(screen.queryByText('终答预览')).not.toBeInTheDocument()
-    expect(screen.getAllByRole('button', { name: '复制回复内容' })).toHaveLength(3)
-    expect(screen.getByText('tokens 13,364 · 缓存 8,210（占总量 61%）')).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: '复制回复内容' })).toHaveLength(1)
+    expect(within(finalArticle!).getByRole('button', { name: '复制回复内容' })).toBeInTheDocument()
+    expect(finalArticle).not.toHaveClass('chat-message-intermediate')
+    expect(firstArticle).toHaveClass('chat-message-intermediate')
+    expect(screen.queryByText(/tokens|缓存|占总量/)).not.toBeInTheDocument()
     expect(api.calls).not.toHaveBeenCalled()
   })
 
@@ -90,57 +98,51 @@ describe('分段回复过程', () => {
   })
 })
 
-describe('终态运行用量', () => {
-  const draw = (usage?: RuntimeUsage, done = true) => {
-    const { api } = chatTestApi()
-    return <Tooltip.Provider><ChatTimeline timeline={{ runId: 'run-1', status: done ? 'succeeded' : 'running', done, entries: [], usage }} api={api} active={!done} stopped={false} onProgress={vi.fn()} /></Tooltip.Provider>
-  }
-
-  it.each(['succeeded', 'failed', 'cancelled', 'interrupted'] as const)('%s 后显示一行总量与缓存占比，位于回复和停止标记之后', status => {
+describe('过程文本与公开答复', () => {
+  it.each(['succeeded', 'failed', 'cancelled', 'interrupted'] as const)('%s 后仅保留公开答复及停止标记，时间线不再显示用量', status => {
     const { api } = chatTestApi()
     const stopped = status === 'cancelled'
     render(<Tooltip.Provider><ChatTimeline timeline={{ runId: 'run-1', status, done: true, entries: [], usage: chatTestUsage }} answer={answer} api={api} active={false} stopped={stopped} onProgress={vi.fn()} /></Tooltip.Provider>)
-    const usage = screen.getByText('tokens 13,364 · 缓存 8,210（占总量 61%）')
-    expect(usage.tagName).toBe('P')
-    expect(usage).toHaveClass('tabular-nums', 'break-words')
-    expect(usage).not.toHaveAttribute('role')
-    expect(usage).not.toHaveAttribute('aria-live')
-    expect(usage).toBe(screen.getByLabelText('回复过程').lastElementChild)
     expect(screen.getAllByText(answer.content)).toHaveLength(1)
-    expect(screen.queryByText(/12,000|18,000/)).not.toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: '复制回复内容' })).toHaveLength(1)
+    expect(screen.getByRole('article', { name: '助手回复' })).not.toHaveClass('chat-message-intermediate')
+    expect(screen.queryByText(/tokens|缓存|占总量/)).not.toBeInTheDocument()
     if (stopped) {
       expect(screen.getAllByText('已停止')).toHaveLength(1)
-      expect(usage.previousElementSibling).toHaveTextContent('已停止')
     } else expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 
-  it('运行中不展示累计用量，终态后才显示', () => {
-    const view = render(draw(chatTestUsage, false))
-    expect(screen.queryByText(/tokens|缓存|占总量/)).not.toBeInTheDocument()
-    view.rerender(draw(chatTestUsage))
-    expect(screen.getByText('tokens 13,364 · 缓存 8,210（占总量 61%）')).toBeInTheDocument()
+  it('只有 finalResponseId 而尚未确认公开答复时，不给过程正文复制按钮', () => {
+    const { api } = chatTestApi()
+    render(<Tooltip.Provider><ChatTimeline timeline={{ runId: 'run-1', status: 'succeeded', done: true, finalResponseId: 'm0', entries: [text(0, 'content', '终答预览')] }} api={api} active={false} stopped={false} onProgress={vi.fn()} /></Tooltip.Provider>)
+    expect(screen.getByRole('article', { name: '助手回复' })).toHaveClass('chat-message-intermediate')
+    expect(screen.queryByRole('button', { name: '复制回复内容' })).not.toBeInTheDocument()
   })
 
-  it.each([
-    [{ actualTokens: 13364 }, 'tokens 13,364'],
-    [{ cachedTokens: 8210 }, '缓存 8,210'],
-    [{ actualTokens: 0 }, 'tokens 0'],
-    [{ cachedTokens: 0 }, '缓存 0'],
-    [{ actualTokens: 0, cachedTokens: 0 }, 'tokens 0 · 缓存 0'],
-    [{ actualTokens: 0, cachedTokens: 1 }, 'tokens 0 · 缓存 1'],
-    [{ actualTokens: 1, cachedTokens: 2 }, 'tokens 1 · 缓存 2'],
-    [{ actualTokens: 100, cachedTokens: 0 }, 'tokens 100 · 缓存 0（占总量 0%）'],
-    [{ actualTokens: 100, cachedTokens: 100 }, 'tokens 100 · 缓存 100（占总量 100%）'],
-    [{ actualTokens: 3, cachedTokens: 2 }, 'tokens 3 · 缓存 2（占总量 67%）'],
-  ] satisfies readonly [Partial<RuntimeUsage>, string][])('只展示已知用量 %j，保留明确零并检查比例分母', (reported, expected) => {
-    render(draw({ calls: 0, resultBytes: 0, tokens: 12000, estimatedTokens: 18000, ...reported }))
-    expect(screen.getByText(expected)).toBeInTheDocument()
-    expect(screen.getByLabelText('回复过程')).toHaveTextContent(expected)
-    expect(screen.getByLabelText('回复过程').childElementCount).toBe(1)
+  it('停止的中间片段没有复制条带，服务端确认的部分答复可复制一次', async () => {
+    const user = userEvent.setup()
+    const { api } = chatTestApi()
+    const entry = { ...text(0, 'content', '停止前的预览'), status: 'cancelled' as const, incomplete: true }
+    const timeline: AgentChatTimelineSnapshot = { runId: 'run-1', status: 'cancelled', done: true, finalResponseId: 'm0', entries: [entry] }
+    const draw = (final?: AgentMessage) => <Tooltip.Provider><ChatTimeline timeline={timeline} answer={final} api={api} active={false} stopped onProgress={vi.fn()} /></Tooltip.Provider>
+    const view = render(draw())
+    expect(screen.getByRole('article', { name: '助手回复' })).toHaveClass('chat-message-intermediate')
+    expect(screen.queryByRole('button', { name: '复制回复内容' })).not.toBeInTheDocument()
+    const partial = { ...answer, content: '**服务端保留的部分答复**' }
+    view.rerender(draw(partial))
+    expect(screen.getByRole('article', { name: '助手回复' })).not.toHaveClass('chat-message-intermediate')
+    expect(screen.getAllByText('已停止')).toHaveLength(1)
+    await user.click(screen.getByRole('button', { name: '复制回复内容' }))
+    await expect(navigator.clipboard.readText()).resolves.toBe(partial.content)
   })
 
-  it.each([undefined, { calls: 0, resultBytes: 0 }, { calls: 0, resultBytes: 0, tokens: 12000, estimatedTokens: 18000 }])('实际总量与缓存均未知时不显示统计行 %j', usage => {
-    render(draw(usage))
-    expect(screen.getByLabelText('回复过程')).toBeEmptyDOMElement()
+  it('过程正文仍保留代码块复制，不提供整段正文复制', async () => {
+    const user = userEvent.setup()
+    const { api } = chatTestApi()
+    render(<Tooltip.Provider><ChatTimeline timeline={snapshot([text(0, 'content', '检查命令：\n\n```sh\ndocker ps\n```')])} api={api} active stopped={false} onProgress={vi.fn()} /></Tooltip.Provider>)
+    expect(screen.queryByRole('button', { name: '复制回复内容' })).not.toBeInTheDocument()
+    expect(screen.getByRole('article', { name: '助手回复' })).toHaveClass('chat-message-intermediate')
+    await user.click(screen.getByRole('button', { name: '复制代码' }))
+    await expect(navigator.clipboard.readText()).resolves.toBe('docker ps\n')
   })
 })

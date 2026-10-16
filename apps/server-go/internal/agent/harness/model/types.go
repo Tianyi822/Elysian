@@ -137,6 +137,18 @@ type Message struct {
 	Images     []ImagePart `json:"-"`
 	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
 	ToolCallID string      `json:"tool_call_id,omitempty"`
+	// EstimatedBreakdown 仅携带本地来源计数，不参与请求正文或准入估算。
+	EstimatedBreakdown *ContextBreakdown `json:"-"`
+}
+
+// ContextBreakdown 是本地近似组成，不表示供应商按类别报告的 token。
+type ContextBreakdown struct {
+	Messages     int `json:"messages"`
+	SystemTools  int `json:"systemTools"`
+	Other        int `json:"other"`
+	Skills       int `json:"skills"`
+	SystemPrompt int `json:"systemPrompt"`
+	MCPTools     int `json:"mcpTools"`
 }
 
 type ToolCall struct {
@@ -161,7 +173,8 @@ type Request struct {
 	Tools     []Tool
 	MaxTokens int
 	// ToolChoice 可为空、auto、none、required，或本次声明的函数名。
-	ToolChoice string
+	ToolChoice         string
+	EstimatedBreakdown *ContextBreakdown `json:"-"`
 }
 
 // Usage 的 nil 表示服务端未报告，尤其不能把未知缓存命中记为零。

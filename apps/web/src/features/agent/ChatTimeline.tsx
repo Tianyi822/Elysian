@@ -1,5 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useState } from 'react'
-import { RUNTIME_RUN_STATUS_LABELS, type AgentChatTimelineEntry, type AgentChatTimelineSnapshot, type AgentChatToolStatus, type AgentMessage, type RuntimeCall, type RuntimeUsage } from '@elysian/contracts'
+import { RUNTIME_RUN_STATUS_LABELS, type AgentChatTimelineEntry, type AgentChatTimelineSnapshot, type AgentChatToolStatus, type AgentMessage, type RuntimeCall } from '@elysian/contracts'
 import type { AgentConversationAdapter } from '../../contracts/agentChat'
 import { Check, ChevronRight, Loader2, RefreshCw, Terminal, X } from '../../components/icons'
 import { IconButton } from '../../components/IconButton'
@@ -16,20 +16,6 @@ const toolLabels: Record<AgentChatToolStatus, string> = {
 }
 const pending = (status: AgentChatToolStatus) => ['planned', 'waiting-approval', 'waiting-resource', 'waiting-task', 'running'].includes(status)
 const failed = (status: AgentChatToolStatus) => ['failed', 'denied', 'expired', 'revoked'].includes(status)
-const tokenNumber = new Intl.NumberFormat('en-US')
-
-function ChatUsage({ usage }: { usage?: RuntimeUsage }) {
-  const actual = usage?.actualTokens
-  const cached = usage?.cachedTokens
-  const parts: string[] = []
-  if (actual !== undefined) parts.push(`tokens ${tokenNumber.format(actual)}`)
-  if (cached !== undefined) {
-    const ratio = actual !== undefined && actual > 0 && cached <= actual ? `（占总量 ${Math.round(cached / actual * 100)}%）` : ''
-    parts.push(`缓存 ${tokenNumber.format(cached)}${ratio}`)
-  }
-  return parts.length ? <p className="break-words text-xs text-fg-muted tabular-nums">{parts.join(' · ')}</p> : null
-}
-
 function ChatTool({ entry, runId, api, onProgress }: { entry: ToolEntry; runId: string; api: AgentConversationAdapter; onProgress(): void }) {
   const [expanded, setExpanded] = useState(false)
   const [result, setResult] = useState<RuntimeCall | null>(null)
@@ -63,7 +49,7 @@ function ChatTool({ entry, runId, api, onProgress }: { entry: ToolEntry; runId: 
     <button type="button" className="chat-tool-toggle" aria-expanded={expanded} aria-controls={regionId}
       aria-label={`${expanded ? '收起' : '展开'}工具 ${entry.tool} 详情`} onClick={() => setExpanded(value => !value)}>
       <ChevronRight size={14} aria-hidden className={expanded ? 'rotate-90' : undefined} />
-      <Icon size={14} aria-hidden className={entry.status === 'running' || entry.status === 'waiting-task' ? 'animate-spin motion-reduce:animate-none' : undefined} />
+      <Icon size={14} aria-hidden className={`chat-tool-status-icon${entry.status === 'running' || entry.status === 'waiting-task' ? ' animate-spin motion-reduce:animate-none' : ''}`} />
       <span className="chat-tool-name">{entry.tool}</span><span className="chat-tool-status">{toolLabels[entry.status]}</span>
     </button>
     {expanded && <div id={regionId} role="region" aria-label={`${entry.tool} 详情`} className="chat-tool-details">
@@ -78,17 +64,17 @@ function ChatTool({ entry, runId, api, onProgress }: { entry: ToolEntry; runId: 
   </div>
 }
 
-function ChatTextSegment({ entry, text, active, quarantined, showIncomplete, onProgress }: {
-  entry: Exclude<AgentChatTimelineEntry, { kind: 'tool' }>; text: string; active: boolean; quarantined?: boolean; showIncomplete: boolean; onProgress(): void
+function ChatTextSegment({ entry, text, active, copyable, quarantined, showIncomplete, onProgress }: {
+  entry: Exclude<AgentChatTimelineEntry, { kind: 'tool' }>; text: string; active: boolean; copyable: boolean; quarantined?: boolean; showIncomplete: boolean; onProgress(): void
 }) {
   const shown = useSmoothedText(text, active && entry.status === 'running')
   useLayoutEffect(onProgress, [shown, onProgress])
   return <div className="chat-response" data-streaming={active && entry.status === 'running' || undefined}>
-    {entry.kind === 'reasoning' ? <ChatReasoning text={shown} active={active && entry.status === 'running'} /> : !!shown && <article className="chat-message chat-message-assistant" aria-label="助手回复">
+    {entry.kind === 'reasoning' ? <ChatReasoning text={shown} active={active && entry.status === 'running'} /> : !!shown && <article className={`chat-message chat-message-assistant${copyable ? '' : ' chat-message-intermediate'}`} aria-label="助手回复">
       <div className="chat-message-body"><ChatMarkdown text={shown} />
         {quarantined && <p className="mt-2 text-xs text-danger">此回复包含未核实或已撤回的资料。</p>}
       </div>
-      <ChatMessageCopy value={text} noun="回复内容" />
+      {copyable && <ChatMessageCopy value={text} noun="回复内容" />}
     </article>}
     {showIncomplete && <p role="status" className="text-xs text-fg-muted">未完成{entry.status !== 'succeeded' && ` · ${RUNTIME_RUN_STATUS_LABELS[entry.status]}`}</p>}
   </div>
@@ -104,7 +90,7 @@ export function ChatTimeline({ timeline, answer, active, stopped, stopping, api,
       if (entry.kind === 'tool') return <ChatTool key={entry.id} entry={entry} runId={timeline.runId} api={api} onProgress={onProgress} />
       const final = entry.kind === 'content' && entry.modelRequestId === timeline.finalResponseId && answer
       const hasBody = timeline.entries.some(item => item.kind === 'content' && item.modelRequestId === entry.modelRequestId)
-      return <ChatTextSegment key={entry.id} entry={entry} text={final ? answer.content : entry.text} active={active && !stopping}
+      return <ChatTextSegment key={entry.id} entry={entry} text={final ? answer.content : entry.text} active={active && !stopping} copyable={!!final}
         quarantined={final ? answer.quarantined : undefined} showIncomplete={entry.incomplete && !stopped && (entry.kind === 'content' || !hasBody)} onProgress={onProgress} />
     })}
     {answer && !hasFinal && timeline.done && <article className="chat-message chat-message-assistant" aria-label="助手回复">
@@ -113,6 +99,5 @@ export function ChatTimeline({ timeline, answer, active, stopped, stopping, api,
       </div><ChatMessageCopy value={answer.content} noun="回复内容" />
     </article>}
     {stopped && <p role="status" className="text-xs text-fg-muted">已停止</p>}
-    {timeline.done && <ChatUsage usage={timeline.usage} />}
   </div>
 }

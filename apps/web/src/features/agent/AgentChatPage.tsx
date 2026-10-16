@@ -19,6 +19,7 @@ import { ChatApprovals } from './ChatApprovals'
 import { ChatExecutionScope } from './ChatExecutionScope'
 import { ChatResponse } from './ChatResponse'
 import { ChatTimeline } from './ChatTimeline'
+import { ChatUsageIndicator } from './ChatUsageIndicator'
 import { defaultReasoningLevel, reasoningLabel, useChatModels } from './useChatModels'
 import './agentChat.css'
 
@@ -68,6 +69,7 @@ export function AgentChatPage() {
   const following = useRef(true)
   const composing = useRef(false)
   const session = chat.session
+  const usageTimeline = session?.remote?.runId ? chat.timelines[session.remote.runId] : undefined
   const permissionMode = PERMISSION_MODES.find(mode => mode.value === session?.permissionMode) ?? PERMISSION_MODES[0]!
   const PermissionIcon = permissionMode.Icon
   const model = models.find(item => item.id === session?.modelId)
@@ -356,7 +358,7 @@ export function AgentChatPage() {
             {(chat.timelines[message.runId]?.entries.length || chat.timelines[message.runId]?.done) ? <ChatTimeline key={message.runId} timeline={chat.timelines[message.runId]!} answer={answer}
               active={active && !finalizing} stopped={stopped} stopping={active && stopping} api={api} onProgress={followContent} />
               : <ChatResponse key={message.runId} content={(chat.timelines[message.runId] || chat.syncError ? answer?.content : undefined) ?? live?.content ?? ''} reasoning={chat.reasoning[message.runId] ?? ''}
-                active={active && !finalizing} stopped={stopped} stopping={active && stopping} quarantined={answer?.quarantined} onProgress={followContent} />}
+                active={active && !finalizing} stopped={stopped} stopping={active && stopping} copyable={!!answer} quarantined={answer?.quarantined} onProgress={followContent} />}
           </Fragment>
         })}
         {waitingForMessage && <ChatResponse content="" reasoning="" active onProgress={followContent} />}
@@ -399,6 +401,7 @@ export function AgentChatPage() {
               triggerClassName="chat-select chat-permission-select" contentClassName="chat-composer-menu chat-permission-menu" />
           </div>
           <div className="chat-model">
+            <ChatUsageIndicator key={session?.id} timeline={usageTimeline} />
             <SelectDropdown ariaLabel="选择模型" value={model?.id} onSelect={chat.setModel}
               items={modelOptions}
               fallbackLabel={status === 'loading' ? '加载模型…' : status === 'error' ? '模型不可用' : '选择模型'}

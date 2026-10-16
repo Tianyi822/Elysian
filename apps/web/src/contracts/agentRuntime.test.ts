@@ -7,6 +7,9 @@ import {
 } from '@elysian/contracts'
 import type {
   AgentCreateSessionInput,
+  AgentChatCacheHitUsage,
+  AgentChatContextBreakdown,
+  AgentChatContextUsage,
   AgentChatTimelineSnapshot,
   AgentInput,
   AgentMessage,
@@ -36,16 +39,31 @@ import timelineFixture from '../../../../packages/foundation/contracts/fixtures/
 
 /** 与 Go harness/routes_test.go 读取同一 JSON，锚定字段、空数组和字符串序号。 */
 describe('真实任务运行共享契约', () => {
-  it('聊天时间线复用运行用量契约，允许旧响应省略用量', () => {
+  it('聊天时间线区分累计用量与最新推理上下文，允许旧响应省略用量', () => {
     const timeline: AgentChatTimelineSnapshot = {
       runId: 'r1', status: 'succeeded', done: true,
       usage: { calls: 1, resultBytes: 2048, modelRequests: 3, tokens: 12000, estimatedTokens: 18000, actualTokens: 13364, cachedTokens: 8210 },
+      contextUsage: { modelRequestId: 'm1', model: 'test-model', totalTokens: 12500, contextTokens: 65536,
+        estimatedBreakdown: { messages: 6500, systemTools: 2100, other: 400, skills: 300, systemPrompt: 500, mcpTools: 200 } },
+      cacheHitUsage: { inputTokens: 10000, cachedTokens: 8210 },
       finalResponseId: 'm1',
       entries: [{ id: 'm1:content', modelRequestId: 'm1', requestIndex: 0, kind: 'content', text: '最终正文', startedAt: '', status: 'succeeded', incomplete: false }],
     }
     expect(timelineFixture).toEqual(timeline)
     const legacy: AgentChatTimelineSnapshot = { runId: 'legacy', status: 'succeeded', done: true, entries: [] }
     expect(legacy).not.toHaveProperty('usage')
+    expect(legacy).not.toHaveProperty('contextUsage')
+    expect(legacy).not.toHaveProperty('cacheHitUsage')
+    const unknown: AgentChatContextUsage = { modelRequestId: 'm1', model: 'test-model', contextTokens: 65536 }
+    const zero: AgentChatContextUsage = { ...unknown, totalTokens: 0, contextTokens: 0 }
+    expect(unknown).not.toHaveProperty('totalTokens')
+    expect(unknown).not.toHaveProperty('estimatedBreakdown')
+    expect(zero.totalTokens).toBe(0)
+    expect(zero.contextTokens).toBe(0)
+    const cacheHitUsage: AgentChatCacheHitUsage = { inputTokens: 0, cachedTokens: 0 }
+    const estimatedBreakdown: AgentChatContextBreakdown = { messages: 0, systemTools: 0, other: 0, skills: 0, systemPrompt: 0, mcpTools: 0 }
+    expect(cacheHitUsage).toEqual({ inputTokens: 0, cachedTokens: 0 })
+    expect(Object.values(estimatedBreakdown)).toEqual([0, 0, 0, 0, 0, 0])
   })
 
   it('活动状态不包含已中断或任何终态，全部状态有中文标签', () => {

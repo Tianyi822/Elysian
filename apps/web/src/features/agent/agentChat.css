@@ -38,6 +38,7 @@
 .chat-message-body { max-width: min(88%, 660px); min-width: 0; }
 .chat-message-text { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 8px; padding: 12px 18px; border: 1px solid var(--t-panel-line); border-radius: 16px 16px 4px 16px; background: var(--t-panel-glass); font-size: 14px; line-height: 1.8; }
 .chat-message-assistant { justify-content: flex-start; }
+.chat-message-intermediate { padding-bottom: 0; }
 .chat-message-assistant .chat-message-body { max-width: 100%; }
 /* 消息复制按钮：悬停或键盘聚焦消息行时在气泡下方的条带内浮现，绝对定位不占布局空间；
    用户消息贴气泡右缘、助手回复贴左缘。仅用 opacity 隐藏以保持可聚焦，
@@ -113,8 +114,9 @@
 .chat-tool-toggle > svg { flex-shrink: 0; }
 .chat-tool-toggle:hover { color: var(--t-fg); }
 .chat-tool-name { min-width: 0; overflow-wrap: anywhere; font-family: var(--font-mono, monospace); }
-.chat-tool-status { margin-left: auto; flex-shrink: 0; }
-.chat-tool[data-status="failed"] .chat-tool-status, .chat-tool[data-status="denied"] .chat-tool-status { color: var(--t-danger); }
+.chat-tool-status { flex-shrink: 0; }
+.chat-tool[data-status="succeeded"] :is(.chat-tool-status, .chat-tool-status-icon) { color: var(--t-success); }
+.chat-tool:is([data-status="failed"], [data-status="denied"], [data-status="expired"], [data-status="revoked"]) :is(.chat-tool-status, .chat-tool-status-icon) { color: var(--t-danger); }
 .chat-tool-details { display: flex; flex-direction: column; align-items: stretch; gap: 6px; padding: 8px 0 8px 22px; }
 .chat-tool-data { max-height: 256px; min-width: 0; overflow: auto; overscroll-behavior: contain; white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 10px; border-left: 1px solid var(--t-panel-line); font-size: 12px; line-height: 1.6; }
 .chat-response[data-streaming] .chat-markdown > * { animation: chat-text-appear 160ms ease-out; }
@@ -141,8 +143,8 @@
 .chat-select { display: inline-flex; min-width: 0; align-items: center; justify-content: space-between; gap: 6px; height: 32px; border-radius: 8px; padding: 0 8px; color: var(--t-fg-muted); font-size: 14px; line-height: 20px; transition: background-color 120ms ease; }
 .chat-select:hover:not(:disabled) { background: var(--t-nav-hover); color: var(--t-fg); }
 .chat-select:disabled { cursor: default; }
-.chat-model { min-width: 0; margin-left: auto; }
-.chat-model-select { max-width: 260px; width: 100%; color: var(--t-fg); }
+.chat-model { display: flex; min-width: 0; align-items: center; gap: 4px; margin-left: auto; }
+.chat-model-select { max-width: 260px; min-width: 0; color: var(--t-fg); }
 .chat-permission { display: flex; align-items: center; gap: 1px; flex-shrink: 0; color: var(--t-fg-muted); }
 .chat-composer-menu,
 .chat-composer-menu [role="menuitemradio"] { border-radius: var(--radius-xl); }

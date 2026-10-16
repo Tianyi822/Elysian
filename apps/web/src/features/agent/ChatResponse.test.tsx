@@ -28,4 +28,17 @@ describe('回复过渡', () => {
     expect(screen.getByRole('status')).toHaveTextContent('已停止')
     expect(screen.queryByRole('status', { name: '等待模型回复' })).not.toBeInTheDocument()
   })
+
+  it('流式回落正文不提供复制条带，公开回复确认后才可复制', async () => {
+    const onProgress = vi.fn()
+    const draw = (copyable: boolean) => <Tooltip.Provider><ChatResponse content="已显示的正文" reasoning="" active={false} copyable={copyable} onProgress={onProgress} /></Tooltip.Provider>
+    const view = render(draw(false))
+    const article = screen.getByRole('article', { name: '助手回复' })
+    expect(article).toHaveClass('chat-message-intermediate')
+    expect(screen.queryByRole('button', { name: '复制回复内容' })).not.toBeInTheDocument()
+    view.rerender(draw(true))
+    expect(screen.getByRole('article', { name: '助手回复' })).toBe(article)
+    expect(article).not.toHaveClass('chat-message-intermediate')
+    expect(screen.getByRole('button', { name: '复制回复内容' })).toBeInTheDocument()
+  })
 })

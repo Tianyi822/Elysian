@@ -45,7 +45,7 @@ describe('聊天 HTTP 接口', () => {
     ])
   })
 
-  it('历史接口与 SSE 使用相同时间线及完整用量，保留旧输出字段', async () => {
+  it('历史接口与 SSE 使用相同时间线、累计用量、加权缓存与六类上下文估算，保留旧输出字段', async () => {
     const timeline = timelineFixture
     const output = { runId: 'r1', responseId: 'm1', reasoning: '', content: '最终正文', done: true, timeline }
     const fetcher = vi.fn().mockResolvedValueOnce(json(timeline)).mockResolvedValueOnce(new Response(`event: output\ndata: ${JSON.stringify(output)}\n\n`, { headers: { 'content-type': 'text/event-stream' } }))
@@ -56,6 +56,36 @@ describe('聊天 HTTP 接口', () => {
     await api.stream('r1', seen, new AbortController().signal)
     expect(seen).toHaveBeenCalledExactlyOnceWith(output)
     expect(fetcher.mock.calls.map(call => call[0])).toEqual(['/api/agent/runs/r1/timeline', '/api/agent/runs/r1/output'])
+  })
+
+  it('HTTP 与 SSE 兼容旧快照，并保留缓存与六类估算的明确零', async () => {
+    const { cacheHitUsage: _cache, contextUsage: _context, ...legacy } = timelineFixture
+    const timelines = [legacy, { ...legacy, cacheHitUsage: { inputTokens: 0, cachedTokens: 0 },
+      contextUsage: { modelRequestId: 'm1', model: 'fixed-model', contextTokens: 65536,
+        estimatedBreakdown: { messages: 0, systemTools: 0, other: 0, skills: 0, systemPrompt: 0, mcpTools: 0 } } }]
+    for (const timeline of timelines) {
+      const output = { runId: 'r1', responseId: 'm1', reasoning: '', content: '最终正文', done: true, timeline }
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(json(timeline)).mockResolvedValueOnce(new Response(`event: output\ndata: ${JSON.stringify(output)}\n\n`, { headers: { 'content-type': 'text/event-stream' } })))
+      const api = createHttpAgentConversationAdapter()
+      expect(await api.timeline('r1')).toEqual(timeline)
+      const seen = vi.fn()
+      await api.stream('r1', seen, new AbortController().signal)
+      expect(seen).toHaveBeenCalledExactlyOnceWith(output)
+    }
+  })
+
+  it.each([
+    { modelRequestId: 'm1', model: 'fixed-model', contextTokens: 65536 },
+    { modelRequestId: 'm1', model: 'fixed-model', totalTokens: 0, contextTokens: 0 },
+  ])('HTTP 与 SSE 保留上下文的未知总量和明确零值 %j', async contextUsage => {
+    const timeline = { ...timelineFixture, contextUsage }
+    const output = { runId: 'r1', responseId: 'm1', reasoning: '', content: '最终正文', done: true, timeline }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(json(timeline)).mockResolvedValueOnce(new Response(`event: output\ndata: ${JSON.stringify(output)}\n\n`, { headers: { 'content-type': 'text/event-stream' } })))
+    const api = createHttpAgentConversationAdapter()
+    expect((await api.timeline('r1')).contextUsage).toEqual(contextUsage)
+    const seen = vi.fn()
+    await api.stream('r1', seen, new AbortController().signal)
+    expect(seen).toHaveBeenCalledExactlyOnceWith(output)
   })
 
   it('完整时间线与兼容字段超过单次响应容量时仍接收快照', async () => {

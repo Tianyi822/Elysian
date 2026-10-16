@@ -1,4 +1,4 @@
-import { RUNTIME_RUN_STATUSES, type AgentChatTimelineEntry, type AgentChatTimelineSnapshot, type AgentChatToolStatus, type RuntimeCall, type RuntimeFailure, type RuntimeJSONValue, type RuntimeRunStatus, type RuntimeUsage } from '@elysian/contracts'
+import { RUNTIME_RUN_STATUSES, type AgentChatCacheHitUsage, type AgentChatContextBreakdown, type AgentChatContextUsage, type AgentChatTimelineEntry, type AgentChatTimelineSnapshot, type AgentChatToolStatus, type RuntimeCall, type RuntimeFailure, type RuntimeJSONValue, type RuntimeRunStatus, type RuntimeUsage } from '@elysian/contracts'
 
 const invalid = () => new Error('Agent 时间线响应格式无效')
 const object = (value: unknown): Record<string, unknown> => {
@@ -25,6 +25,30 @@ const usage = (value: unknown): RuntimeUsage => {
     if (row[key] !== undefined) out[key] = integer(row[key])
   }
   return out
+}
+const cacheHitUsage = (value: unknown): AgentChatCacheHitUsage => {
+  const row = object(value)
+  const inputTokens = integer(row.inputTokens)
+  const cachedTokens = integer(row.cachedTokens)
+  if (cachedTokens > inputTokens) throw invalid()
+  return { inputTokens, cachedTokens }
+}
+const contextBreakdown = (value: unknown): AgentChatContextBreakdown => {
+  const row = object(value)
+  const out = { messages: integer(row.messages), systemTools: integer(row.systemTools), other: integer(row.other),
+    skills: integer(row.skills), systemPrompt: integer(row.systemPrompt), mcpTools: integer(row.mcpTools) }
+  if (!Number.isSafeInteger(Object.values(out).reduce((sum, count) => sum + count, 0))) throw invalid()
+  return out
+}
+const contextUsage = (value: unknown): AgentChatContextUsage => {
+  const row = object(value)
+  const modelRequestId = string(row.modelRequestId)
+  const model = string(row.model)
+  const contextTokens = integer(row.contextTokens)
+  if (!modelRequestId || !model) throw invalid()
+  return { modelRequestId, model, contextTokens,
+    ...(row.totalTokens === undefined ? {} : { totalTokens: integer(row.totalTokens) }),
+    ...(row.estimatedBreakdown === undefined ? {} : { estimatedBreakdown: contextBreakdown(row.estimatedBreakdown) }) }
 }
 const toolStatuses: readonly AgentChatToolStatus[] = ['planned', 'waiting-approval', 'waiting-resource', 'waiting-task', 'running', 'succeeded', 'failed', 'cancelled', 'unknown', 'denied', 'expired', 'revoked', 'not-executed']
 
@@ -56,7 +80,9 @@ export function parseChatTimeline(value: unknown, runId: string): AgentChatTimel
   const finalResponseId = optional(row.finalResponseId)
   if (finalResponseId && !entries.some(entry => entry.kind === 'content' && entry.modelRequestId === finalResponseId)) throw invalid()
   return { runId, status: status(row.status), done: boolean(row.done), finalResponseId, entries,
-    ...(row.usage === undefined ? {} : { usage: usage(row.usage) }) }
+    ...(row.usage === undefined ? {} : { usage: usage(row.usage) }),
+    ...(row.contextUsage === undefined ? {} : { contextUsage: contextUsage(row.contextUsage) }),
+    ...(row.cacheHitUsage === undefined ? {} : { cacheHitUsage: cacheHitUsage(row.cacheHitUsage) }) }
 }
 
 export function parseChatCall(value: unknown, runId: string): RuntimeCall {
