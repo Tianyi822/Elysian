@@ -8,15 +8,20 @@ import (
 )
 
 type anthropicBlock struct {
-	Thinking  string          `json:"thinking,omitempty"`
-	Type      string          `json:"type"`
-	Text      string          `json:"text,omitempty"`
-	ID        string          `json:"id,omitempty"`
-	Name      string          `json:"name,omitempty"`
-	Input     json.RawMessage `json:"input,omitempty"`
-	ToolUseID string          `json:"tool_use_id,omitempty"`
-	Content   *string         `json:"content,omitempty"`
-	Source    *anthropicImage `json:"source,omitempty"`
+	Thinking     string                 `json:"thinking,omitempty"`
+	Type         string                 `json:"type"`
+	Text         string                 `json:"text,omitempty"`
+	ID           string                 `json:"id,omitempty"`
+	Name         string                 `json:"name,omitempty"`
+	Input        json.RawMessage        `json:"input,omitempty"`
+	ToolUseID    string                 `json:"tool_use_id,omitempty"`
+	Content      *string                `json:"content,omitempty"`
+	Source       *anthropicImage        `json:"source,omitempty"`
+	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
+}
+
+type anthropicCacheControl struct {
+	Type string `json:"type"`
 }
 
 // anthropicImage 对齐 Anthropic source 对象：裸 base64 加显式 media_type。
@@ -30,9 +35,10 @@ type anthropicMessage struct {
 	Content []anthropicBlock `json:"content"`
 }
 type anthropicTool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	InputSchema json.RawMessage `json:"input_schema"`
+	Name         string                 `json:"name"`
+	Description  string                 `json:"description,omitempty"`
+	InputSchema  json.RawMessage        `json:"input_schema"`
+	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
 }
 type anthropicRequest struct {
 	OutputConfig map[string]string  `json:"output_config,omitempty"`
@@ -109,6 +115,17 @@ func (anthropicMessagesProtocol) prepare(p Profile, input Request) (preparedRequ
 	}
 	if len(wire.Messages) == 0 {
 		return preparedRequest{}, invalidRequest()
+	}
+	// 合并后再定位缓存前缀，保留最后一条变化中的消息不打断点。
+	if len(wire.System) > 0 {
+		wire.System[len(wire.System)-1].CacheControl = &anthropicCacheControl{Type: "ephemeral"}
+	}
+	if len(wire.Tools) > 0 {
+		wire.Tools[len(wire.Tools)-1].CacheControl = &anthropicCacheControl{Type: "ephemeral"}
+	}
+	if len(wire.Messages) >= 2 {
+		message := &wire.Messages[len(wire.Messages)-2]
+		message.Content[len(message.Content)-1].CacheControl = &anthropicCacheControl{Type: "ephemeral"}
 	}
 	switch input.ToolChoice {
 	case "":

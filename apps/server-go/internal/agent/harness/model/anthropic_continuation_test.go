@@ -49,6 +49,15 @@ func TestAnthropicDeepSeekToolContinuationReplaysThinking(t *testing.T) {
 			if len(blocks) != 1 || blocks[0].Type != "tool_use" || blocks[0].ID != "c1" || body.Messages[2].Content[0].ToolUseID != "c1" {
 				t.Fatal("工具与结果关联丢失")
 			}
+			if blocks[0].CacheControl == nil || blocks[0].CacheControl.Type != "ephemeral" || body.Messages[1].Content[0].Type == "thinking" && body.Messages[1].Content[0].CacheControl != nil {
+				t.Fatal("缓存断点必须落在 tool_use 上，不能标记 thinking 块")
+			}
+			blockIndex := len(body.Messages[1].Content) - 1
+			messagePath := "messages[1].content[0]"
+			if blockIndex == 1 {
+				messagePath = "messages[1].content[1]"
+			}
+			requireAnthropicCacheLocations(t, prepared.body, []string{messagePath, "tools[0]"})
 			if strings.Contains(string(prepared.body), `"signature"`) || strings.Contains(string(prepared.body), `"reasoning_content"`) {
 				t.Fatal("Messages 续轮不应伪造签名或使用 Chat 字段")
 			}
