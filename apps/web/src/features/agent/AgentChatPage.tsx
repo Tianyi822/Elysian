@@ -18,6 +18,7 @@ import { ChatMessageCopy } from './ChatMessageCopy'
 import { ChatApprovals } from './ChatApprovals'
 import { ChatExecutionScope } from './ChatExecutionScope'
 import { ChatResponse } from './ChatResponse'
+import { ChatPlan } from './ChatPlan'
 import { ChatTimeline } from './ChatTimeline'
 import { ChatUserInput } from './ChatUserInput'
 import { ChatUsageIndicator } from './ChatUsageIndicator'
@@ -361,7 +362,7 @@ export function AgentChatPage() {
                   onPress={() => chat.editMessage(message.id)}><Pencil size={13} aria-hidden /></IconButton>}
               </>}
             </article>
-            {(chat.timelines[message.runId]?.entries.length || chat.timelines[message.runId]?.done) ? <ChatTimeline key={message.runId} timeline={chat.timelines[message.runId]!} answer={answer}
+            {(chat.timelines[message.runId]?.entries.length || chat.timelines[message.runId]?.done || chat.timelines[message.runId]?.plan) ? <ChatTimeline key={message.runId} timeline={chat.timelines[message.runId]!} answer={answer} showPlan={message.runId !== session?.remote?.runId}
               active={active && !finalizing && !waitingInput} stopped={stopped} stopping={active && stopping} api={api} onProgress={followContent} />
               : <ChatResponse key={message.runId} content={(chat.timelines[message.runId] || chat.syncError ? answer?.content : undefined) ?? live?.content ?? ''} reasoning={chat.reasoning[message.runId] ?? ''}
                 active={active && !finalizing} stopped={stopped} stopping={active && stopping} copyable={!!answer} quarantined={answer?.quarantined} onProgress={followContent} />}
@@ -380,6 +381,8 @@ export function AgentChatPage() {
       </div>}
       {modelUnavailable && <div className="mb-3 text-right text-xs text-fg-muted"><Link className="underline underline-offset-4 hover:text-fg" to="/settings?tab=models">前往设置添加模型</Link></div>}
 
+      <ChatPlan key={`${session?.id}:${session?.remote?.runId}`} plan={usageTimeline?.plan ?? (run?.id === session?.remote?.runId ? run?.plan : undefined)}
+        status={usageTimeline?.status ?? run?.status ?? 'queued'} stopping={stopping} onProgress={followContent} />
       {inputRequest ? <ChatUserInput key={`${session?.id}:${inputRequest.id}`} request={inputRequest} answers={inputDraft?.answers ?? {}}
         submitting={chat.sending || stopping} pending={!!inputDraft?.pending}
         onAnswer={(questionId, answer) => chat.setUserInputAnswer(inputRequest, questionId, answer)}

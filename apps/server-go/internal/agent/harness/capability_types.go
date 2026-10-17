@@ -223,7 +223,7 @@ func (s CapabilitySnapshot) modelTools() []model.Tool {
 func (s CapabilitySnapshot) visibleModelTools(loaded map[string]bool) []model.Tool {
 	out := make([]model.Tool, 0, len(s.Tools))
 	for _, c := range s.Tools {
-		if s.ToolLoading == onDemandTools && c.Source != toolDiscoverySource && c.Source != userInputSource && !loaded[c.Name] {
+		if s.ToolLoading == onDemandTools && c.Source != toolDiscoverySource && c.Source != userInputSource && c.Source != planSource && !loaded[c.Name] {
 			continue
 		}
 		out = append(out, model.Tool{Name: c.Name, Description: c.Description, Parameters: c.Parameters})

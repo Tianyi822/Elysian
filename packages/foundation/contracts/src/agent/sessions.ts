@@ -313,8 +313,13 @@ export type AgentChatContextUsage = {
   contextTokens: number
   estimatedBreakdown?: AgentChatContextBreakdown
 }
+/** 每轮独立的模型任务计划；步骤完成只来自确认后的计划工具回执。 */
+export type AgentPlanStep = { id: string; title: string; status: 'pending' | 'in_progress' | 'completed' }
+export type AgentRunPlan = { revision: number; updatedAt: string; steps: readonly AgentPlanStep[] }
+
 /** 只读展示投影，条目按推理请求及工具调用顺序排列；终答由公开消息确认。 */
 export type AgentChatTimelineSnapshot = {
+  plan?: AgentRunPlan
   runId: string
   status: RuntimeRunStatus
   done: boolean

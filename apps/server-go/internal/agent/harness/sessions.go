@@ -469,7 +469,7 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 		return Run{}, false, err
 	}
 	snapshot.PermissionMode, _ = normalizePermissionMode(input.PermissionMode)
-	snapshot.Tools = append(snapshot.Tools, userInputCapability())
+	snapshot.Tools = append(snapshot.Tools, userInputCapability(), planCapability())
 	snapshot.PolicyVersion = PermissionPolicyVersion
 	snapshot.Digest = ""
 	snapshot.Digest = digestJSON(snapshot)

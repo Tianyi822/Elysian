@@ -1,0 +1,20 @@
+.chat-plan { min-width: 0; overflow: hidden; border-radius: 12px; color: var(--t-fg-muted); font-size: 12px; }
+.chat-compose-area > .chat-plan { margin-bottom: 8px; }
+.chat-plan-toggle { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; min-height: 40px; padding: 10px 14px; text-align: left; }
+.chat-plan-toggle:hover { background: var(--t-nav-hover); }
+.chat-plan-toggle > svg, .chat-plan-label, .chat-plan-count { flex-shrink: 0; }
+.chat-plan-label { color: var(--t-fg); }
+.chat-plan-summary { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-plan[data-status="failed"] .chat-plan-summary { color: var(--t-danger); }
+.chat-plan-details { max-height: 192px; overflow-y: auto; overscroll-behavior: contain; padding: 0 14px 12px; }
+.chat-plan-details li { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; line-height: 20px; }
+.chat-plan-details li > svg { flex-shrink: 0; margin-top: 3px; }
+.chat-plan-title { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--t-fg); }
+.chat-plan-step-status { flex-shrink: 0; }
+.chat-plan-details [data-status="completed"] > :is(svg, .chat-plan-step-status) { color: var(--t-success); }
+.chat-plan-note { margin-top: 8px; line-height: 1.6; }
+@media (max-width: 479px) {
+  .chat-plan-toggle { flex-wrap: wrap; gap: 6px; padding: 10px 12px; }
+  .chat-plan-summary { flex-basis: calc(100% - 24px); order: 1; }
+  .chat-plan-toggle > svg:last-child { margin-left: auto; }
+}

@@ -160,3 +160,14 @@ describe('过程文本与公开答复', () => {
     await expect(navigator.clipboard.readText()).resolves.toBe('docker ps\n')
   })
 })
+
+
+it('正常计划更新隐藏原始工具条目，失败仍可查看详情', () => {
+  const { api } = chatTestApi()
+  const draw = (status: 'succeeded' | 'failed') => <Tooltip.Provider><ChatTimeline
+    timeline={snapshot([{ ...tool, tool: 'update_plan', status }])} api={api} active stopped={false} onProgress={vi.fn()} /></Tooltip.Provider>
+  const view = render(draw('succeeded'))
+  expect(screen.queryByRole('button', { name: /update_plan/ })).not.toBeInTheDocument()
+  view.rerender(draw('failed'))
+  expect(screen.getByRole('button', { name: '展开工具 update_plan 详情' })).toBeInTheDocument()
+})

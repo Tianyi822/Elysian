@@ -60,7 +60,7 @@ func TestContextUsesCurrentToolInventoryAndLatestInputAfterLegacyConversation(t 
 			if !strings.Contains(system, `"total":25`) || !strings.Contains(system, `"database":1`) || !strings.Contains(system, "可能已经过期") {
 				t.Errorf("current inventory did not override historical limits: %s", system)
 			}
-			if names := toolNames(request); len(names) != 2 || !contains(names, toolSearchName) || !contains(names, userInputTool) {
+			if names := toolNames(request); len(names) != 3 || !contains(names, toolSearchName) || !contains(names, userInputTool) || !contains(names, planTool) {
 				t.Errorf("inventory summary eagerly injected definitions: %v", names)
 			}
 			return searchReply("database_list"), nil

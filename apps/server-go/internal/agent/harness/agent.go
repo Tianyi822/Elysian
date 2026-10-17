@@ -190,6 +190,13 @@ func (a *agentExecution) NextModel(ctx context.Context) (worker.ModelResponse, e
 				out.ToolCalls = append(out.ToolCalls, worker.AgentToolCall{ID: call.ID, Name: call.Name, Args: call.Arguments})
 				continue
 			}
+			if call.Name == planTool {
+				if err := a.validatePlanAccess(record); err != nil {
+					return out, err
+				}
+				out.ToolCalls = append(out.ToolCalls, worker.AgentToolCall{ID: call.ID, Name: call.Name, Args: call.Arguments})
+				continue
+			}
 			if err := a.validateVisibleProposal(record, call.Name); err != nil {
 				return out, err
 			}
@@ -240,6 +247,8 @@ func (a *agentExecution) ExecuteAgent(ctx context.Context, responseID string, in
 	var err error
 	if a.userInputError != "" || name == userInputTool {
 		err = a.executeUserInput(ctx, index, proposal, a.userInputError)
+	} else if name == planTool {
+		err = a.executePlan(ctx, index, proposal)
 	} else if a.run.DriverVersion == "v2" {
 		err = a.executeOperation(ctx, index, proposal, gb)
 	} else {

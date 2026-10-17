@@ -8,6 +8,7 @@ import { ChatMarkdown } from './ChatMarkdown'
 import { ChatMessageCopy } from './ChatMessageCopy'
 import { ChatReasoning } from './ChatReasoning'
 import { useSmoothedText } from './useSmoothedText'
+import { ChatPlan } from './ChatPlan'
 import { ChatUserInputSummary } from './ChatUserInput'
 
 type ToolEntry = Extract<AgentChatTimelineEntry, { kind: 'tool' }>
@@ -81,14 +82,15 @@ function ChatTextSegment({ entry, text, active, copyable, quarantined, showIncom
   </div>
 }
 
-export function ChatTimeline({ timeline, answer, active, stopped, stopping, api, onProgress }: {
-  timeline: AgentChatTimelineSnapshot; answer?: AgentMessage; active: boolean; stopped: boolean; stopping?: boolean; api: AgentConversationAdapter; onProgress(): void
+export function ChatTimeline({ timeline, answer, active, stopped, stopping, api, onProgress, showPlan = true }: {
+  timeline: AgentChatTimelineSnapshot; showPlan?: boolean; answer?: AgentMessage; active: boolean; stopped: boolean; stopping?: boolean; api: AgentConversationAdapter; onProgress(): void
 }) {
   const hasFinal = timeline.entries.some(entry => entry.kind === 'content' && entry.modelRequestId === timeline.finalResponseId)
   useLayoutEffect(onProgress, [timeline.done, onProgress])
   return <div className="chat-timeline" aria-label="回复过程">
     {timeline.entries.map(entry => {
       if (entry.kind === 'user-input') return <ChatUserInputSummary key={entry.id} request={entry.userInput} />
+      if (entry.kind === 'tool' && entry.tool === 'update_plan' && entry.status !== 'failed') return null
       if (entry.kind === 'tool') return <ChatTool key={entry.id} entry={entry} runId={timeline.runId} api={api} onProgress={onProgress} />
       const final = entry.kind === 'content' && entry.modelRequestId === timeline.finalResponseId && answer
       const hasBody = timeline.entries.some(item => item.kind === 'content' && item.modelRequestId === entry.modelRequestId)
@@ -103,5 +105,6 @@ export function ChatTimeline({ timeline, answer, active, stopped, stopping, api,
     {timeline.done && (timeline.status === 'failed' || timeline.status === 'interrupted') && !!timeline.error?.message &&
       <p role="status" className={`text-xs ${timeline.status === 'failed' ? 'text-danger' : 'text-fg-muted'}`}>运行未完成：{timeline.error.message}</p>}
     {stopped && <p role="status" className="text-xs text-fg-muted">已停止</p>}
+    {showPlan && <ChatPlan plan={timeline.plan} status={timeline.status} stopping={stopping} onProgress={onProgress} />}
   </div>
 }

@@ -10,7 +10,8 @@ import { AgentHttpError } from '../../adapters/http/agent/agentShared'
 import { useAgentChatStore } from '../../stores/agentChatStore'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { NotificationHost } from '../../components/NotificationHost'
-import { chatTestApi, chatTestCacheHitUsage, chatTestContextUsage, chatTestModel, chatTestUsage, chatVisionTestModel } from '../../test/agentChatFixtures'
+import { chatTestApi, chatTestUserInput, chatTestCacheHitUsage, chatTestContextUsage, chatTestModel, chatTestUsage, chatVisionTestModel } from '../../test/agentChatFixtures'
+import type { AgentRunPlan, AgentChatOutput } from '@elysian/contracts'
 import { AgentChatPage } from './AgentChatPage'
 import { ShellLayoutContext, useShellLayout } from '../../app/layout/ShellLayoutContext'
 
@@ -996,4 +997,88 @@ describe('会话列表编辑入口', () => {
     expect(await screen.findByRole('dialog', { name: '重命名会话' })).toBeInTheDocument()
     expect(backend.api.deleteSession).not.toHaveBeenCalled()
   })
+})
+
+
+const testPlan: AgentRunPlan = { revision: 1, updatedAt: '2026-10-17T00:00:00Z', steps: [
+  { id: 'inspect', title: '检查配置', status: 'completed' }, { id: 'verify', title: '验证结果', status: 'in_progress' },
+] }
+it('当前计划仅在输入区，未确认发送保留；接受新轮移入历史，刷新恢复且登出隐藏', async () => {
+  const backend = chatTestApi()
+  await backend.api.createTask('server-session', { requestId: 'planned', content: '检查配置' })
+  backend.timelines.set('run-1', { runId: 'run-1', status: 'succeeded', done: true, entries: [], plan: testPlan })
+  const view = renderChat(backend, '/agent?session=server-session')
+  let panel = await screen.findByRole('region', { name: '任务进度' })
+  expect(panel.closest('.chat-compose-area')).not.toBeNull()
+  expect(screen.getAllByRole('region', { name: '任务进度' })).toHaveLength(1)
+  fireEvent.click(within(panel).getByRole('button'))
+  expect(within(panel).getByText('验证结果')).toBeInTheDocument()
+  backend.api.continueTask.mockRejectedValueOnce(new Error('连接中断，结果未确认'))
+  fireEvent.change(screen.getByRole('textbox', { name: '发送给 Ely 的消息' }), { target: { value: '继续查询' } })
+  fireEvent.click(screen.getByRole('button', { name: '发送消息' }))
+  await screen.findByRole('button', { name: '重试发送' })
+  expect(panel.closest('.chat-compose-area')).not.toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: '重试发送' }))
+  await screen.findByText('继续查询')
+  await waitFor(() => expect(screen.getByRole('region', { name: '任务进度' }).closest('.chat-messages')).not.toBeNull())
+  expect(screen.getAllByRole('region', { name: '任务进度' })).toHaveLength(1)
+  view.unmount()
+  act(() => useAgentChatStore.getState().clearDisplay())
+  renderChat(backend, '/agent?session=server-session')
+  panel = await screen.findByRole('region', { name: '任务进度' })
+  expect(panel.closest('.chat-messages')).not.toBeNull()
+  expect(within(panel).getByRole('button')).toHaveAttribute('aria-expanded', 'false')
+  act(() => useAgentChatStore.getState().clearDisplay())
+  expect(screen.queryByRole('region', { name: '任务进度' })).not.toBeInTheDocument()
+})
+
+it('编辑重发排除旧轮计划，新建会话不带入旧计划', async () => {
+  const backend = chatTestApi()
+  await backend.api.createTask('server-session', { requestId: 'planned-edit', content: '检查配置' })
+  backend.timelines.set('run-1', { runId: 'run-1', status: 'succeeded', done: true, entries: [], plan: testPlan })
+  renderChat(backend, '/agent?session=server-session')
+  await screen.findByRole('region', { name: '任务进度' })
+  const edit = screen.getByRole('button', { name: '编辑这条消息' })
+  await waitFor(() => expect(edit).toBeEnabled())
+  fireEvent.click(edit)
+  fireEvent.change(screen.getByRole('textbox', { name: '编辑消息内容' }), { target: { value: '改为查询日志' } })
+  fireEvent.click(screen.getByRole('button', { name: '发送' }))
+  await screen.findByText('改为查询日志')
+  expect(screen.queryByRole('region', { name: '任务进度' })).not.toBeInTheDocument()
+  fireEvent.click(within(screen.getByRole('region', { name: 'Ely 会话' })).getByRole('button', { name: '新会话' }))
+  expect(screen.queryByRole('region', { name: '任务进度' })).not.toBeInTheDocument()
+})
+
+it('实时计划更新保持展开，等待回答时进度留在选择卡片上方，切换会话隔离迟到输出', async () => {
+  const backend = chatTestApi()
+  backend.hold()
+  await backend.api.createTask('server-session', { requestId: 'live-plan', content: '检查并验证' })
+  let output!: (event: AgentChatOutput) => void
+  backend.api.stream.mockImplementation(async (_id, onOutput, signal) => {
+    output = onOutput
+    if (!signal.aborted) await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }))
+  })
+  renderChat(backend, '/agent?session=server-session')
+  await waitFor(() => expect(output).toBeDefined())
+  const timeline = { runId: 'run-1', status: 'running' as const, done: false, entries: [], plan: testPlan }
+  act(() => output({ runId: 'run-1', responseId: 'm1', content: '', reasoning: '', done: false, timeline }))
+  const panel = screen.getByRole('region', { name: '任务进度' })
+  fireEvent.click(within(panel).getByRole('button'))
+  const updated = { ...testPlan, revision: 2, steps: testPlan.steps.map(step => ({ ...step, status: 'completed' as const })) }
+  act(() => output({ runId: 'run-1', responseId: 'm1', content: '', reasoning: '', done: false, timeline: { ...timeline, plan: updated } }))
+  expect(within(panel).getByRole('button')).toHaveAttribute('aria-expanded', 'true')
+  expect(within(panel).getByText('2/2 已完成')).toBeInTheDocument()
+  backend.runs.get('run-1')!.status = 'waiting-input'
+  act(() => output({ runId: 'run-1', responseId: 'm1', content: '', reasoning: '', done: false, timeline: {
+    ...timeline, status: 'waiting-input', entries: [{ id: 'question', kind: 'user-input', modelRequestId: 'm1', requestIndex: 1, startedAt: '', userInput: chatTestUserInput }],
+  } }))
+  await act(async () => { await useAgentChatStore.getState().refresh(backend.api) })
+  expect(within(panel).getByRole('status')).toHaveTextContent('等待回答')
+  expect(screen.queryByRole('textbox', { name: '发送给 Ely 的消息' })).not.toBeInTheDocument()
+  expect(within(screen.getByRole('region', { name: '回答 Ely 的问题' })).getByText('需要查看哪个范围？')).toBeInTheDocument()
+  expect(panel.closest('.chat-compose-area')).not.toBeNull()
+  fireEvent.click(within(screen.getByRole('region', { name: 'Ely 会话' })).getByRole('button', { name: '新会话' }))
+  await waitFor(() => expect(screen.queryByRole('region', { name: '任务进度' })).not.toBeInTheDocument())
+  act(() => output({ runId: 'run-1', responseId: 'm1', content: '', reasoning: '', done: false, timeline }))
+  expect(screen.queryByRole('region', { name: '任务进度' })).not.toBeInTheDocument()
 })

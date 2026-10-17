@@ -165,13 +165,13 @@ func (m *Manager) snapshot(ctx context.Context, e Environment) (CapabilitySnapsh
 		s.Tools = append(s.Tools, wikiCapabilities()...)
 	}
 	for _, c := range s.Materials {
-		if c.Name == toolSearchName || c.Source == toolDiscoverySource || c.Name == userInputTool || c.Source == userInputSource {
-			return s, bad("reserved-capability", "资料目录使用了内核保留的工具发现名称")
+		if c.Name == toolSearchName || c.Source == toolDiscoverySource || c.Name == userInputTool || c.Source == userInputSource || c.Name == planTool || c.Source == planSource {
+			return s, bad("reserved-capability", "资料目录使用了内核保留的工具名称或来源")
 		}
 	}
 	for _, c := range s.Tools {
-		if c.Name == toolSearchName || c.Source == toolDiscoverySource || c.Name == userInputTool || c.Source == userInputSource {
-			return s, bad("reserved-capability", "工具目录使用了内核保留的工具发现名称")
+		if c.Name == toolSearchName || c.Source == toolDiscoverySource || c.Name == userInputTool || c.Source == userInputSource || c.Name == planTool || c.Source == planSource {
+			return s, bad("reserved-capability", "工具目录使用了内核保留的工具名称或来源")
 		}
 		if seen[c.Name] {
 			return s, bad("duplicate-capability", "能力别名重复")

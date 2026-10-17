@@ -489,7 +489,7 @@ func TestAgentPressureCheckpointAndSmallModelSwitch(t *testing.T) {
 		}
 	}
 	profile, _ := m.deps.Profiles.Resolve(s.ModelProfileID, 1, true)
-	revised, err := m.UpdateModelProfile(profile.ID, 1, model.Input{Provider: model.ProviderOpenAICompatible, APIFormat: model.FormatChatCompletions, BaseURL: profile.BaseURL, Model: profile.Model, ContextTokens: 7500, OutputTokens: 512, Capabilities: profile.Capabilities, Active: true})
+	revised, err := m.UpdateModelProfile(profile.ID, 1, model.Input{Provider: model.ProviderOpenAICompatible, APIFormat: model.FormatChatCompletions, BaseURL: profile.BaseURL, Model: profile.Model, ContextTokens: 9500, OutputTokens: 512, Capabilities: profile.Capabilities, Active: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -756,7 +756,7 @@ func TestAgentChatCompletionsWireLoop(t *testing.T) {
 		reason := "stop"
 		switch index {
 		case 1:
-			if len(input.Tools) != 5 {
+			if len(input.Tools) != 6 {
 				t.Error("域工具白名单错误")
 			}
 			message["content"] = nil

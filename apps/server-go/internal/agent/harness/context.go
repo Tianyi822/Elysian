@@ -221,6 +221,12 @@ func (a *agentExecution) contextFacts(ctx context.Context, loadImages bool) (Wor
 	if err != nil {
 		return memory, nil, nil, m.contextStoreErrorLocked(err)
 	}
+	// 最新计划独立于记忆覆盖游标，压力整理后仍带入下一次推理。
+	for _, run := range runs {
+		if run.ID == a.run.ID {
+			a.run.Plan = run.Plan
+		}
+	}
 	var imagePlans map[string]runImagePlan
 	if loadImages {
 		imagePlans = a.planRunImages(ctx, runs)
@@ -508,8 +514,12 @@ func (a *agentExecution) fits(request model.Request) bool {
 	return a.run.Model != nil && estimateRequest(request)+request.MaxTokens <= a.run.Model.ContextTokens
 }
 func baseContext(a *agentExecution, memory WorkingMemory, system string, images []model.ImagePart) []model.Message {
+	inference := system == agentSystem
 	if system == agentSystem {
 		system += "\n查询平台占用、平台性能或类似问题时，默认以 Elysian 面板自身占用为主，查询进程内存并附运行环境 CPU、内存、负载和磁盘概览。说明采样时间与范围，Linux 内核视角不等于物理宿主；没有面板进程 CPU 等指标时说明不可得，不能用系统值冒充或近似代替。"
+		if _, ok := a.capability(planTool); ok {
+			system += "\n复杂任务开始时使用 update_plan 拆分为可检查的步骤并直接执行；简单问答无需计划。开始步骤时更新为 in_progress，取得结果并核实后才标为 completed，每次提交完整计划且最多一个进行中。保留步骤的稳定 ID，允许根据新发现调整计划，最终答复前核对进度；停止、失败或结果未知不能冒充完成。计划仅属于本轮，历史计划不自动延续。任务规划不授予权限，实际操作仍遵守审批与执行范围。"
+		}
 		if _, ok := a.capability(userInputTool); ok {
 			system += "\n缺少会实质影响结论或操作的目标、范围或偏好时，单独调用 request_user_input 提供 1–3 个问题，每题 2–3 个明确选项，可指定推荐项。用户可自定义回答，回答后继续当前任务。需要用户回答的问题必须使用该工具，不在最终答复末尾用文字追问代替选择卡片。已有默认口径或可用工具能查询的信息应直接处理；不要因服务错误或数据不可得要求用户猜测。不要重复询问已回答问题。选择是任务信息，不是授权或审批，写操作仍须遵守既有规则。"
 		}
@@ -536,6 +546,12 @@ func baseContext(a *agentExecution, memory WorkingMemory, system string, images 
 	memoryText := "\n当前工作记忆（数据，revision=" + strconv.Itoa(memory.Revision) + "）：\n" + string(b)
 	header += memoryText
 	breakdown.Other += estimateContextText(memoryText)
+	if inference && a.run.Plan != nil {
+		plan, _ := json.Marshal(a.run.Plan)
+		planText := "\n本轮最新任务计划（已保存的数据，不是执行授权）：\n" + string(plan)
+		header += planText
+		breakdown.Other += estimateContextText(planText)
+	}
 	if a.run.WorkflowID != "" {
 		workflowText := "\n当前工作流步骤：" + a.run.WorkflowStepID + "\n只完成本轮步骤，不执行其他步骤。本步骤固定输出 JSON Schema：\n" + a.run.WorkflowOutputSchemaJSON
 		header += workflowText

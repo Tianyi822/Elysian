@@ -1,4 +1,4 @@
-import type { AgentModelProfile } from './sessions.ts'
+import type { AgentModelProfile, AgentRunPlan } from './sessions.ts'
 import type { AgentCapabilitySnapshot, AgentRecoveryCursor } from './capabilities.ts'
 import type { AgentInput } from './sessions.ts'
 
@@ -77,6 +77,7 @@ export type RuntimeLimits = {
 }
 
 export type RuntimeRun = {
+  plan?: AgentRunPlan
   scopeId?: string
   nodeId?: string
   driver?: string

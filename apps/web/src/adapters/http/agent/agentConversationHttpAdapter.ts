@@ -1,5 +1,6 @@
 import { RUNTIME_RUN_STATUSES, type AgentChatOutput, type AgentMessage, type AgentMessageAttachment, type AgentSession } from '@elysian/contracts'
 import type { AgentChatRun, AgentChatTask, AgentChatPageResult, AgentChatUploadedAttachment, AgentConversationAdapter } from '../../../contracts/agentChat'
+import { parseRunPlan } from './agentPlanParse'
 import { parseUserInput } from './agentUserInputParse'
 import { agentPathPart, readAgentResponse, requestAgentJson, requestAgentNoContent } from './agentShared'
 import { SseFrameParser } from '../../sse/parse'
@@ -46,6 +47,7 @@ function parseRun(value: unknown): AgentChatRun {
   return {
     id: string(row.id), requestId: optional(row.requestId), taskId: string(row.taskId), sessionId: optional(row.sessionId), status: row.status as AgentChatRun['status'],
     phase: row.phase as AgentChatRun['phase'], cancelRequestedAt: optional(row.cancelRequestedAt),
+    ...(row.plan === undefined ? {} : { plan: parseRunPlan(row.plan) }),
     error: row.error === undefined ? undefined : failure(row.error), warning: row.warning === undefined ? undefined : failure(row.warning),
   }
 }
