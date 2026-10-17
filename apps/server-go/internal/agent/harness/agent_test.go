@@ -87,6 +87,13 @@ func toolReply(names ...string) model.Response {
 	}
 	return r
 }
+
+// usageReply 给假响应附上供应商用量；Run 累计按供应商报告的 totalTokens 计费。
+func usageReply(response model.Response, prompt, completion int) model.Response {
+	total := prompt + completion
+	response.Usage = model.Usage{PromptTokens: &prompt, CompletionTokens: &completion, TotalTokens: &total}
+	return response
+}
 func agentManager(t *testing.T, client agentTestClient, change func(*Deps)) (*Manager, Session, *agentTestTools) {
 	t.Helper()
 	profiles, err := model.Open(filepath.Join(t.TempDir(), "agent-models.json"))
@@ -556,6 +563,62 @@ func TestAgentRequestBudgetReservesFinalConsolidation(t *testing.T) {
 	history, _ := m.Messages(context.Background(), s.ID, "", 50)
 	if len(history.Items) != 1 {
 		t.Fatal("预算耗尽仍发布终答")
+	}
+}
+
+// 预算低于单次最大输出上限时不能按上限整份预留：max 思考档输出上限 128K，
+// 旧口径让真实累计仅 2.5 万的多轮运行也被预算拒（2026-10-16 事故形态），本回归固定修复后的语义。
+func TestAgentRequestBudgetDoesNotReserveOutputCeiling(t *testing.T) {
+	var calls atomic.Int32
+	m, s, _ := agentManager(t, func(_ context.Context, _ model.Profile, r model.Request) (model.Response, error) {
+		if r.ToolChoice == "store_working_memory" {
+			return memoryReply(r), nil
+		}
+		if calls.Add(1) == 1 {
+			return usageReply(toolReply("docker_images_list"), 5000, 3000), nil
+		}
+		return usageReply(finalReply("平台进程内存 49.9 MB"), 3000, 2000), nil
+	}, func(d *Deps) { d.AgentLimits.TokenBudget = 60000 })
+	profile, _ := m.deps.Profiles.Resolve(s.ModelProfileID, 1, true)
+	revised, err := m.UpdateModelProfile(profile.ID, 1, model.Input{Provider: profile.Provider, APIFormat: profile.APIFormat, BaseURL: profile.BaseURL, Model: profile.Model,
+		ContextTokens: 262144, OutputTokens: 262144, Capabilities: model.Capabilities{Text: true, Tools: true, ReasoningLevels: []string{"low", "high", "max"}, Source: "test"}, Active: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = m.SwitchSessionModel(context.Background(), s.ID, SwitchModelInput{ModelProfileID: revised.ID, ModelRevision: revised.Revision}); err != nil {
+		t.Fatal(err)
+	}
+	run, _, err := m.CreateTask(context.Background(), s.ID, AgentInput{RequestID: "ceiling-budget", Content: "现在平台占用有多少", ReasoningLevel: "max"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := runtimeFinished(t, m, run.ID)
+	if got.Status != StateSucceeded || calls.Load() != 2 || got.Usage.ModelRequests != 3 {
+		t.Fatalf("输出上限被整份预留导致多轮请求被预算拒：%+v calls=%d", got, calls.Load())
+	}
+}
+
+func TestAgentRequestBudgetRejectsPromptBeyondBudget(t *testing.T) {
+	var calls atomic.Int32
+	m, s, _ := agentManager(t, func(context.Context, model.Profile, model.Request) (model.Response, error) {
+		calls.Add(1)
+		return finalReply("不应被调用"), nil
+	}, func(d *Deps) { d.AgentLimits.TokenBudget = 1 })
+	run := submitAgentTest(t, m, s, "prompt-over-budget", "超预算提示词")
+	got := runtimeFinished(t, m, run.ID)
+	if got.Status != StateFailed || got.EndReason != "model-budget" || got.Usage.ModelRequests != 0 || calls.Load() != 0 {
+		t.Fatalf("提示词超出预算仍被发送：%+v", got)
+	}
+}
+
+func TestAgentRequestBudgetStopsOvershootWithPendingTools(t *testing.T) {
+	m, s, _ := agentManager(t, func(_ context.Context, _ model.Profile, _ model.Request) (model.Response, error) {
+		return usageReply(toolReply("docker_images_list"), 129000, 2000), nil
+	}, func(d *Deps) { d.AgentLimits.TokenBudget = 130000 })
+	run := submitAgentTest(t, m, s, "overshoot-budget", "越过预算仍要工具")
+	got := runtimeFinished(t, m, run.ID)
+	if got.Status != StateFailed || got.EndReason != "model-budget" || got.Usage.Calls != 0 {
+		t.Fatalf("超预算仍继续调工具：%+v", got)
 	}
 }
 

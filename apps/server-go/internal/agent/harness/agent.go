@@ -353,7 +353,10 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 	}
 	maxRequests := run.Limits.MaxModelRequests - a.modelRequestReserve(purpose)
 	estimate := estimateRequest(request)
-	if run.Usage.ModelRequests >= maxRequests || run.Usage.Tokens+estimate+request.MaxTokens > run.Limits.TokenBudget {
+	// 预算按累计实际用量封顶：这里只拒绝「本轮提示词都装不下」的请求，不按单次最大输出上限整份预留——
+	// 最大输出上限是供应商允许值而非预期消耗，整份预留会让 max 思考档在多轮工具循环里提前耗尽预算。
+	// 输出导致的超支由响应后判定接管：超预算且仍需继续调工具时失败，最终答复允许过线完成。
+	if run.Usage.ModelRequests >= maxRequests || run.Usage.Tokens+estimate > run.Limits.TokenBudget {
 		m.mu.Unlock()
 		return empty, bad("model-budget", "模型请求次数或 token 预算已耗尽")
 	}
