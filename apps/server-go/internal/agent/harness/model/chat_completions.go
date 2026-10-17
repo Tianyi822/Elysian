@@ -20,7 +20,7 @@ type wireCall struct {
 }
 
 type wireMessage struct {
-	Reasoning  string     `json:"reasoning_content,omitempty"`
+	Reasoning  *string    `json:"reasoning_content,omitempty"`
 	Role       string     `json:"role"`
 	Content    any        `json:"content"`
 	ToolCalls  []wireCall `json:"tool_calls,omitempty"`
@@ -97,8 +97,9 @@ func prepareRequest(p Profile, input Request) (wireRequest, map[string]bool, err
 		} else {
 			w.Content = msg.Content
 		}
-		if p.Provider == ProviderDeepSeek && input.OnReasoning != nil && len(msg.ToolCalls) > 0 {
-			w.Reasoning = msg.Reasoning
+		if deepSeekThinking(p, input) && msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
+			thinking := msg.Reasoning
+			w.Reasoning = &thinking
 		}
 		for _, call := range msg.ToolCalls {
 			w.ToolCalls = append(w.ToolCalls, wireCall{ID: call.ID, Type: "function", Function: wireFunction{Name: call.Name, Arguments: string(call.Arguments)}})

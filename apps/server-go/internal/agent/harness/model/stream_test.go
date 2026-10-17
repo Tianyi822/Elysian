@@ -266,10 +266,10 @@ func TestReasoningRequestPreservesDeepSeekToolContinuationOnly(t *testing.T) {
 			t.Fatal("请求无法解码")
 		}
 		if provider == ProviderDeepSeek {
-			if body.Thinking == nil || body.Thinking.Type != "enabled" || body.Messages[1].Reasoning == "" {
+			if body.Thinking == nil || body.Thinking.Type != "enabled" || body.Messages[1].Reasoning == nil || *body.Messages[1].Reasoning == "" {
 				t.Fatal("DeepSeek 工具续轮未带思考")
 			}
-		} else if body.Thinking != nil || body.Messages[1].Reasoning != "" {
+		} else if body.Thinking != nil || body.Messages[1].Reasoning != nil {
 			t.Fatal("通用服务混入供应商专用字段")
 		}
 	}

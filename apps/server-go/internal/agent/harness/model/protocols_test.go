@@ -16,6 +16,10 @@ func TestDeepSeekProtocolsTextToolsAndForcedWorkflowOutput(t *testing.T) {
 	for _, format := range []string{FormatChatCompletions, FormatAnthropicMessages, FormatResponses} {
 		for _, choice := range []string{"", "auto", "required", "checkpoint", "workflow_finish"} {
 			t.Run(format+"/"+choice, func(t *testing.T) {
+				thinking := `{"type":"disabled"}`
+				if choice == "" || choice == "auto" {
+					thinking = `{"type":"enabled"}`
+				}
 				name := "docker_containers_list"
 				if choice == "checkpoint" || choice == "workflow_finish" {
 					name = choice
@@ -27,7 +31,7 @@ func TestDeepSeekProtocolsTextToolsAndForcedWorkflowOutput(t *testing.T) {
 					}
 					switch format {
 					case FormatChatCompletions:
-						if r.URL.Path != "/chat/completions" || r.Header.Get("Authorization") != "Bearer fake-key" || string(body["thinking"]) != `{"type":"disabled"}` {
+						if r.URL.Path != "/chat/completions" || r.Header.Get("Authorization") != "Bearer fake-key" || string(body["thinking"]) != thinking {
 							t.Error("Chat 路径/鉴权/思考设置错误")
 						}
 						if choice == "" {
@@ -36,7 +40,7 @@ func TestDeepSeekProtocolsTextToolsAndForcedWorkflowOutput(t *testing.T) {
 							fmt.Fprintf(w, `{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"call-new","type":"function","function":{"name":%q,"arguments":"{\"n\":9007199254740993}"}}]},"finish_reason":"tool_calls"}]}`, name)
 						}
 					case FormatAnthropicMessages:
-						if r.URL.Path != "/anthropic/v1/messages" || r.Header.Get("x-api-key") != "fake-key" || r.Header.Get("anthropic-version") != "2023-06-01" || r.Header.Get("Authorization") != "" || string(body["thinking"]) != `{"type":"disabled"}` {
+						if r.URL.Path != "/anthropic/v1/messages" || r.Header.Get("x-api-key") != "fake-key" || r.Header.Get("anthropic-version") != "2023-06-01" || r.Header.Get("Authorization") != "" || string(body["thinking"]) != thinking {
 							t.Error("Messages 路径/鉴权/思考设置错误")
 						}
 						if choice == "required" && string(body["tool_choice"]) != `{"type":"any"}` {

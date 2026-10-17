@@ -8,7 +8,7 @@ import (
 )
 
 type anthropicBlock struct {
-	Thinking     string                 `json:"thinking,omitempty"`
+	Thinking     *string                `json:"thinking,omitempty"`
 	Type         string                 `json:"type"`
 	Text         string                 `json:"text,omitempty"`
 	ID           string                 `json:"id,omitempty"`
@@ -72,6 +72,12 @@ func (anthropicMessagesProtocol) prepare(p Profile, input Request) (preparedRequ
 			}
 		}
 	}
+	if p.Provider == ProviderDeepSeek {
+		wire.Thinking = &wireThinking{Type: "disabled"}
+		if deepSeekThinking(p, input) {
+			wire.Thinking.Type = "enabled"
+		}
+	}
 	for _, t := range input.Tools {
 		wire.Tools = append(wire.Tools, anthropicTool{Name: t.Name, Description: t.Description, InputSchema: t.Parameters})
 	}
@@ -89,8 +95,9 @@ func (anthropicMessagesProtocol) prepare(p Profile, input Request) (preparedRequ
 			content := m.Content
 			blocks = append(blocks, anthropicBlock{Type: "tool_result", ToolUseID: m.ToolCallID, Content: &content})
 		} else {
-			if p.Provider == ProviderDeepSeek && input.OnReasoning != nil && m.Role == "assistant" && len(m.ToolCalls) > 0 && m.Reasoning != "" {
-				blocks = append(blocks, anthropicBlock{Type: "thinking", Thinking: m.Reasoning})
+			if deepSeekThinking(p, input) && m.Role == "assistant" && len(m.ToolCalls) > 0 {
+				thinking := m.Reasoning
+				blocks = append(blocks, anthropicBlock{Type: "thinking", Thinking: &thinking})
 			}
 			if m.Content != "" {
 				blocks = append(blocks, anthropicBlock{Type: "text", Text: m.Content})
@@ -167,7 +174,9 @@ func parseAnthropicResponse(body []byte, names map[string]bool, choice string) (
 		case "tool_use":
 			response.ToolCalls = append(response.ToolCalls, ToolCall{ID: block.ID, Name: block.Name, Arguments: block.Input})
 		case "thinking":
-			response.Reasoning += block.Thinking
+			if block.Thinking != nil {
+				response.Reasoning += *block.Thinking
+			}
 		case "redacted_thinking": // 不显示删节或加密内容。
 		default:
 			return Response{}, invalidResponse()

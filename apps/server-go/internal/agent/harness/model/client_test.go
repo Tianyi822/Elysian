@@ -40,12 +40,16 @@ func testProfile(base string) Profile {
 	}
 }
 
-func TestDeepSeekProviderDisablesThinkingWithoutDisplayCallback(t *testing.T) {
+func TestDeepSeekProviderThinkingDoesNotDependOnDisplayCallback(t *testing.T) {
 	for _, choice := range []string{"", "auto", "required", "checkpoint", "workflow_finish"} {
 		t.Run("choice="+choice, func(t *testing.T) {
+			want := `{"type":"disabled"}`
+			if choice == "" || choice == "auto" {
+				want = `{"type":"enabled"}`
+			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var body map[string]json.RawMessage
-				if json.NewDecoder(r.Body).Decode(&body) != nil || string(body["thinking"]) != `{"type":"disabled"}` || string(body["stream"]) != "false" || r.URL.Path != "/chat/completions" {
+				if json.NewDecoder(r.Body).Decode(&body) != nil || string(body["thinking"]) != want || string(body["stream"]) != "false" || r.URL.Path != "/chat/completions" {
 					t.Error("DeepSeek 请求未关闭思考或使用了错误协议")
 				}
 				if choice == "" {

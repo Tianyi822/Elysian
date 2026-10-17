@@ -15,7 +15,7 @@ func TestAnthropicDeepSeekToolContinuationReplaysThinking(t *testing.T) {
 	}{
 		{"DeepSeek 工具续轮", ProviderDeepSeek, true, true},
 		{"通用 Messages", ProviderOpenAICompatible, true, false},
-		{"非生成请求", ProviderDeepSeek, false, false},
+		{"无展示回调的生成请求", ProviderDeepSeek, false, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			profile := testProfile("https://example.test/anthropic")
@@ -39,7 +39,7 @@ func TestAnthropicDeepSeekToolContinuationReplaysThinking(t *testing.T) {
 			}
 			blocks := body.Messages[1].Content
 			if test.replay {
-				if len(blocks) != 2 || blocks[0].Type != "thinking" || blocks[0].Thinking != "当前工具轮次的思考" {
+				if len(blocks) != 2 || blocks[0].Type != "thinking" || blocks[0].Thinking == nil || *blocks[0].Thinking != "当前工具轮次的思考" {
 					t.Fatalf("tool_use 前缺少已确认思考：%+v", blocks)
 				}
 				blocks = blocks[1:]

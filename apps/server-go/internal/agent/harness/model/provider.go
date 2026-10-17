@@ -21,6 +21,18 @@ type chatCompletionsProtocol struct{}
 type anthropicMessagesProtocol struct{}
 type responsesProtocol struct{}
 
+// 空思考也是续接协议的一部分；显式档位优先于默认生成模式。
+func deepSeekThinking(p Profile, input Request) bool {
+	if p.Provider != ProviderDeepSeek {
+		return false
+	}
+	if input.ReasoningLevel != "" {
+		return ReasoningEffort(input.ReasoningLevel) != "none"
+	}
+	// 固定函数请求用于整理与工作流收尾，默认关闭；生成请求与展示回调无关。
+	return input.ToolChoice == "" || input.ToolChoice == "auto" || input.ToolChoice == "none"
+}
+
 func resolveProtocol(format string) (protocolAdapter, error) {
 	switch format {
 	case FormatChatCompletions:
@@ -41,15 +53,11 @@ func (chatCompletionsProtocol) prepare(p Profile, input Request) (preparedReques
 	}
 	if p.Provider == ProviderDeepSeek {
 		wire.Thinking = &wireThinking{Type: "disabled"}
-		if input.OnReasoning != nil && (input.ToolChoice == "" || input.ToolChoice == "auto" || input.ToolChoice == "none") {
+		if deepSeekThinking(p, input) {
 			wire.Thinking.Type = "enabled"
 		}
-		if input.ReasoningLevel != "" {
-			wire.Thinking.Type = "enabled"
-			if ReasoningEffort(input.ReasoningLevel) == "none" {
-				wire.Thinking.Type = "disabled"
-				wire.ReasoningEffort = ""
-			}
+		if wire.Thinking.Type == "disabled" {
+			wire.ReasoningEffort = ""
 		}
 	}
 	return prepareWire(p, "/chat/completions", wire, false, func(body []byte) (Response, error) { return parseResponse(body, names, input.ToolChoice) })
