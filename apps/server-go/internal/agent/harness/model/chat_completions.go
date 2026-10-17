@@ -133,6 +133,8 @@ func parseResponse(body []byte, names map[string]bool, choice string) (Response,
 			PromptDetails    *struct {
 				CachedTokens *int `json:"cached_tokens"`
 			} `json:"prompt_tokens_details"`
+			// DeepSeek 等供应商以扁平字段回报缓存命中，与 prompt_tokens_details.cached_tokens 同值。
+			CacheHit *int `json:"prompt_cache_hit_tokens"`
 		} `json:"usage"`
 	}
 	if !utf8.Valid(body) || json.Unmarshal(body, &wire) != nil || len(wire.Choices) != 1 || wire.Choices[0].Index != 0 {
@@ -191,6 +193,9 @@ func parseResponse(body []byte, names map[string]bool, choice string) (Response,
 		response.Usage = Usage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens, TotalTokens: u.TotalTokens}
 		if u.PromptDetails != nil {
 			response.Usage.CachedTokens = u.PromptDetails.CachedTokens
+		}
+		if response.Usage.CachedTokens == nil {
+			response.Usage.CachedTokens = u.CacheHit
 		}
 		for _, count := range []*int{response.Usage.PromptTokens, response.Usage.CompletionTokens, response.Usage.TotalTokens, response.Usage.CachedTokens} {
 			if count != nil && *count < 0 {

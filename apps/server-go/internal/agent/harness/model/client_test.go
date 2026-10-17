@@ -260,6 +260,43 @@ func TestResponseValidatesToolProtocolAndPreservesUnknownUsage(t *testing.T) {
 	}
 }
 
+// DeepSeek 等供应商把缓存命中放在 usage 的扁平字段，与 prompt_tokens_details.cached_tokens 同值；
+// 嵌套字段优先，缺失回落扁平，两者都缺失时保持未知。
+func TestResponseReadsFlatPromptCacheTokens(t *testing.T) {
+	base := `{"choices":[{"message":{"role":"assistant","content":"已完成"},"finish_reason":"stop"}],"usage":%s}`
+	for _, test := range []struct {
+		name    string
+		usage   string
+		cached  int
+		known   bool
+		invalid bool
+	}{
+		{"嵌套字段", `{"prompt_tokens":100,"completion_tokens":10,"total_tokens":110,"prompt_tokens_details":{"cached_tokens":40}}`, 40, true, false},
+		{"扁平字段回落", `{"prompt_tokens":100,"completion_tokens":10,"total_tokens":110,"prompt_cache_hit_tokens":40,"prompt_cache_miss_tokens":60}`, 40, true, false},
+		{"嵌套优先", `{"prompt_tokens":100,"completion_tokens":10,"total_tokens":110,"prompt_tokens_details":{"cached_tokens":40},"prompt_cache_hit_tokens":55}`, 40, true, false},
+		{"都缺保持未知", `{"prompt_tokens":100,"completion_tokens":10,"total_tokens":110}`, 0, false, false},
+		{"扁平超出输入仍判无效", `{"prompt_tokens":100,"completion_tokens":10,"total_tokens":110,"prompt_cache_hit_tokens":150}`, 0, false, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response, err := parseResponse([]byte(fmt.Sprintf(base, test.usage)), nil, "")
+			if test.invalid {
+				requireCode(t, err, "invalid-model-response")
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.known {
+				if response.Usage.CachedTokens == nil || *response.Usage.CachedTokens != test.cached {
+					t.Fatalf("缓存命中未按预期解析：%+v", response.Usage)
+				}
+			} else if response.Usage.CachedTokens != nil {
+				t.Fatalf("缺报缓存必须保持未知：%+v", response.Usage)
+			}
+		})
+	}
+}
+
 func TestRequestRejectsIncompleteHistoryBeforeNetwork(t *testing.T) {
 	request := testRequest()
 	request.Messages = append(request.Messages, Message{Role: "assistant", ToolCalls: []ToolCall{{ID: "unfinished", Name: "docker_containers_list", Arguments: json.RawMessage(`{}`)}}})
