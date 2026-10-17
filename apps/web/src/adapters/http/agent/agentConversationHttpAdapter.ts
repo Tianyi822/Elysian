@@ -1,5 +1,6 @@
 import { RUNTIME_RUN_STATUSES, type AgentChatOutput, type AgentMessage, type AgentMessageAttachment, type AgentSession } from '@elysian/contracts'
 import type { AgentChatRun, AgentChatTask, AgentChatPageResult, AgentChatUploadedAttachment, AgentConversationAdapter } from '../../../contracts/agentChat'
+import { parseUserInput } from './agentUserInputParse'
 import { agentPathPart, readAgentResponse, requestAgentJson, requestAgentNoContent } from './agentShared'
 import { SseFrameParser } from '../../sse/parse'
 import { fetchWithSession } from '../unauthorized'
@@ -33,14 +34,14 @@ function parseSession(value: unknown): AgentSession {
 /** 本地演示没有运行内核，不模拟模型答复与附件上传。 */
 export function createUnavailableAgentConversationAdapter(): AgentConversationAdapter {
   const unavailable = async (): Promise<never> => { throw new Error('当前为本地演示，请在已连接后端的面板中使用聊天。') }
-  return { available: false, listSessions: unavailable, listTasks: unavailable, getTask: unavailable, createSession: unavailable, getSession: unavailable, renameSession: unavailable, deleteSession: unavailable, switchModel: unavailable, messages: unavailable, uploadAttachments: unavailable, attachmentBlob: unavailable, createTask: unavailable, continueTask: unavailable, getRun: unavailable, cancelRun: unavailable, reasoning: unavailable, timeline: unavailable, calls: unavailable, stream: unavailable }
+  return { available: false, answerUserInput: unavailable, listSessions: unavailable, listTasks: unavailable, getTask: unavailable, createSession: unavailable, getSession: unavailable, renameSession: unavailable, deleteSession: unavailable, switchModel: unavailable, messages: unavailable, uploadAttachments: unavailable, attachmentBlob: unavailable, createTask: unavailable, continueTask: unavailable, getRun: unavailable, cancelRun: unavailable, reasoning: unavailable, timeline: unavailable, calls: unavailable, stream: unavailable }
 }
 
 function parseRun(value: unknown): AgentChatRun {
   const row = object(value)
   if (!(RUNTIME_RUN_STATUSES as readonly unknown[]).includes(row.status)) throw invalid()
   const failure = (value: unknown) => { const entry = object(value); return { code: string(entry.code), message: string(entry.message) } }
-  const phases = ['queued', 'inference', 'checkpoint', 'final-memory', 'workflow-output', 'waiting-approval', 'waiting-resource', 'waiting-task', 'completed']
+  const phases = ['queued', 'inference', 'checkpoint', 'final-memory', 'workflow-output', 'waiting-input', 'waiting-approval', 'waiting-resource', 'waiting-task', 'completed']
   if (row.phase !== undefined && !phases.includes(string(row.phase))) throw invalid()
   return {
     id: string(row.id), requestId: optional(row.requestId), taskId: string(row.taskId), sessionId: optional(row.sessionId), status: row.status as AgentChatRun['status'],
@@ -97,6 +98,13 @@ export function createHttpAgentConversationAdapter(): AgentConversationAdapter {
   const write = (url: string, body: unknown, method = 'POST') => requestAgentJson(`/api/agent${url}`, { method, body: JSON.stringify(body) })
   return {
     available: true,
+    async answerUserInput(runId, inputId, input) {
+      const row = object(await write(`/runs/${path(runId)}/user-inputs/${path(inputId)}/answer`, input))
+      const userInput = parseUserInput(row.userInput, runId)
+      const run = parseRun(row.run)
+      if (userInput.id !== inputId || run.id !== runId || userInput.answerRequestId !== input.requestId) throw invalid()
+      return { userInput, run }
+    },
     governance: createAgentChatGovernance(),
     async listSessions(after = '', signal) {
       const query = new URLSearchParams({ sort: 'activity', limit: '50' })

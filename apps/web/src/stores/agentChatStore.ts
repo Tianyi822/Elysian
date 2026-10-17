@@ -6,8 +6,11 @@ import { agentChatLocalAdapter } from '../adapters/local/agentChatLocalAdapter'
 import { prepareAgentImage } from '../adapters/local/agentImagePreparation'
 import { useNotificationStore, type NotificationTone } from './notificationStore'
 import type { AgentChatAdapter, AgentChatAttachment, AgentChatPermissionMode, AgentChatSession, AgentChatRun, AgentConversationAdapter } from '../contracts/agentChat'
+import type { AgentUserInputAnswer, AgentUserInputRequest } from '@elysian/contracts'
 
 type AgentChatState = {
+  setUserInputAnswer(request: AgentUserInputRequest, questionId: string, answer: AgentUserInputAnswer): void
+  answerUserInput(api: AgentConversationAdapter, request: AgentUserInputRequest): Promise<void>
   session: AgentChatSession | null
   sessions: readonly AgentSession[]
   localSessions: readonly AgentChatSession[]
@@ -56,7 +59,7 @@ const allAttachments = agentChatAllAttachments
 const persistenceNotice = '浏览器暂时无法保存会话，刷新后可能丢失本页内容。'
 const attachmentTotalNotice = '本条消息附件合计超过 8 MiB，请分批发送。'
 const remoteBlank = { remoteSession: null, messages: [], reasoning: {}, timelines: {}, liveOutput: null, run: null, sending: false, uploadingAttachments: false, stopping: false, refreshing: false, syncError: null }
-export const isChatRunActive = (run: AgentChatRun | null) => !!run && ['queued', 'running', 'waiting-approval', 'waiting-resource', 'waiting-task', 'recovery-required'].includes(run.status)
+export const isChatRunActive = (run: AgentChatRun | null) => !!run && ['queued', 'running', 'waiting-input', 'waiting-approval', 'waiting-resource', 'waiting-task', 'recovery-required'].includes(run.status)
 export const isChatReplyActive = (run: AgentChatRun | null) => isChatRunActive(run) && run?.phase !== 'final-memory'
 export const chatRunFailure = (run: AgentChatRun | null) => run && !isChatRunActive(run) && run.status !== 'succeeded' && run.status !== 'cancelled'
   ? `${RUNTIME_RUN_STATUS_LABELS[run.status]}${run.error ? `：${run.error.message}` : ''}`
@@ -129,6 +132,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
         const feedback = run.status === 'succeeded' ? { message: '回复已完成。', tone: 'success' as const }
           : run.status === 'cancelled' ? { message: '已停止回复。', tone: 'info' as const }
           : run.status === 'waiting-approval' ? { message: '操作等待批准，请确认待审批操作。', tone: 'warning' as const }
+          : run.status === 'waiting-input' ? { message: 'Ely 需要你回答问题后继续。', tone: 'info' as const }
           : run.status === 'recovery-required' ? { message: '运行结果尚未确认，需要处理后才能继续。', tone: 'warning' as const }
           : null
         if (feedback) runNotificationIds.add(notify(feedback.message, feedback.tone))
@@ -499,6 +503,46 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
         finally { if (lifetime === lifecycle && stillCurrent(session.id)) set({ sending: false }) }
       },
       setDraft: draft => { if (!current().pending) update({ draft }) },
+      setUserInputAnswer(request, questionId, answer) {
+        if (get().sending || get().stopping || get().run?.id !== request.runId || get().run?.status !== 'waiting-input' || request.status !== 'pending') return
+        const draft = current().userInput
+        if (draft?.id === request.id && draft.pending) return
+        update({ userInput: { id: request.id, runId: request.runId, answers: { ...(draft?.id === request.id ? draft.answers : {}), [questionId]: answer } } })
+      },
+      async answerUserInput(api, request) {
+        const session = current()
+        const draft = session.userInput
+        if (!api.available || get().sending || get().stopping || get().run?.id !== request.runId || get().run?.status !== 'waiting-input' || !draft || draft.id !== request.id) return
+        const lifetime = lifecycle
+        const valid = () => lifetime === lifecycle && stillCurrent(session.id)
+        const input = draft.pending ?? { requestId: id(), answers: draft.answers }
+        if (!draft.pending && !update({ userInput: { ...draft, pending: input } })) {
+          update({ userInput: draft }); notify('无法保存回答标识，请恢复浏览器存储后再提交。'); return
+        }
+        set({ sending: true })
+        try {
+          const receipt = await api.answerUserInput(request.runId, request.id, input)
+          if (!valid()) return
+          update({ userInput: undefined })
+          set({ run: receipt.run })
+        } catch (error) {
+          if (!valid()) return
+          // 只回读确认，不自动重发；结果未知时保留精确回答和请求编号。
+          try {
+            const timeline = await api.timeline(request.runId)
+            if (!valid()) return
+            set({ timelines: { ...get().timelines, [request.runId]: timeline } })
+            const confirmed = timeline.entries.find(entry => entry.kind === 'user-input' && entry.userInput.id === request.id)
+            if (confirmed?.kind === 'user-input' && confirmed.userInput.status !== 'pending') update({ userInput: undefined })
+          } catch { /* 保留未确认回答，供人工重试。 */ }
+          if (valid()) {
+            if (error instanceof AgentHttpError && ['invalid-user-input-answer', 'queue-full'].includes(error.code ?? '') && current().userInput?.id === request.id) update({ userInput: { ...draft, pending: undefined } })
+            notify(failureMessage(error))
+          }
+        } finally {
+          if (valid()) { set({ sending: false }); await get().refresh(api) }
+        }
+      },
       editMessage(messageId) {
         if (get().sending || get().uploadingAttachments || get().stopping || isChatRunActive(get().run) || current().pending || get().remoteSession?.activeRunId || get().remoteSession?.activeWorkflowId) return
         const last = get().messages.filter(message => message.role === 'user').at(-1)

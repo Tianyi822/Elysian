@@ -174,7 +174,7 @@ func TestContextUsageClippedSharedConversationDoesNotLeaveWeights(t *testing.T) 
 	}
 	a := &agentExecution{manager: m, run: run}
 	a.run.Limits.OutputTokens = 128
-	a.run.Model.ContextTokens = 4000
+	a.run.Model.ContextTokens = 6000
 	request, _, _, err := a.buildContext(context.Background())
 	if err != nil {
 		t.Fatal(err)

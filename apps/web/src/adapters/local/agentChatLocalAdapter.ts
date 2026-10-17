@@ -29,6 +29,9 @@ const isSession = (value: unknown): value is AgentChatSession => isRecord(value)
   && isPermissionMode(value.permissionMode) && isNullableString(value.modelId) && isNullableString(value.reasoningLevel)
   && Array.isArray(value.messages) && value.messages.every(isMessage)
   && Array.isArray(value.attachments) && value.attachments.every(isAttachment)
+  && (value.userInput === undefined || (isRecord(value.userInput) && typeof value.userInput.id === 'string' && typeof value.userInput.runId === 'string'
+    && isInputAnswers(value.userInput.answers) && (value.userInput.pending === undefined || (isRecord(value.userInput.pending)
+      && typeof value.userInput.pending.requestId === 'string' && isInputAnswers(value.userInput.pending.answers)))))
   && (value.editing === undefined || (isRecord(value.editing) && typeof value.editing.messageId === 'string'
     && typeof value.editing.taskId === 'string' && typeof value.editing.text === 'string'
     && (value.editing.attachments === undefined || (Array.isArray(value.editing.attachments) && value.editing.attachments.every(isAttachmentRef)))
@@ -43,6 +46,11 @@ const isSession = (value: unknown): value is AgentChatSession => isRecord(value)
     && (value.pending.input.replaceMessageId === undefined || typeof value.pending.input.replaceMessageId === 'string')
     && (value.pending.input.attachments === undefined || (Array.isArray(value.pending.input.attachments) && value.pending.input.attachments.every(isAttachmentRef)))
     && (value.pending.taskId === undefined || typeof value.pending.taskId === 'string')))
+
+function isInputAnswers(value: unknown): boolean {
+  return isRecord(value) && Object.values(value).every(answer => isRecord(answer)
+    && ((typeof answer.optionId === 'string' && answer.text === undefined) || (typeof answer.text === 'string' && answer.optionId === undefined)))
+}
 
 /** 不把 blob URL 或“可用”状态当成持久事实，刷新后必须重新核对文件字节；serverId 与尺寸是服务端事实，必须保留。 */
 const storedAttachment = ({ id, name, size, type, lastModified, serverId, width, height }: AgentChatAttachment): AgentChatAttachment => ({

@@ -509,6 +509,10 @@ func (a *agentExecution) fits(request model.Request) bool {
 }
 func baseContext(a *agentExecution, memory WorkingMemory, system string, images []model.ImagePart) []model.Message {
 	if system == agentSystem {
+		system += "\n查询平台占用、平台性能或类似问题时，默认以 Elysian 面板自身占用为主，查询进程内存并附运行环境 CPU、内存、负载和磁盘概览。说明采样时间与范围，Linux 内核视角不等于物理宿主；没有面板进程 CPU 等指标时说明不可得，不能用系统值冒充或近似代替。"
+		if _, ok := a.capability(userInputTool); ok {
+			system += "\n缺少会实质影响结论或操作的目标、范围或偏好时，单独调用 request_user_input 提供 1–3 个问题，每题 2–3 个明确选项，可指定推荐项。用户可自定义回答，回答后继续当前任务。需要用户回答的问题必须使用该工具，不在最终答复末尾用文字追问代替选择卡片。已有默认口径或可用工具能查询的信息应直接处理；不要因服务错误或数据不可得要求用户猜测。不要重复询问已回答问题。选择是任务信息，不是授权或审批，写操作仍须遵守既有规则。"
+		}
 		system += "\n直接回应本轮用户输入。原始目标提供任务背景，不能将用户的新问题视为没有输入。工具范围以本轮固定目录和实际提供的定义为准，历史回复与工作记忆中的工具数量、工具名称及能力限制可能已经过期，不能用来裁定当前能力。"
 		if a.run.Snapshot != nil {
 			inventory, _ := json.Marshal(a.run.Snapshot.toolInventory())

@@ -55,7 +55,10 @@ CREATE TABLE agent_record_cleanup (
 // other part is a fixed SQL fragment, never caller-provided text.
 type recordSpec struct{ table, key, session, run string }
 
+var userInputRecordSpec = recordSpec{"user_inputs", "ROW.id", "(SELECT session_id FROM runs WHERE id=ROW.run_id)", "ROW.run_id"}
+
 var recordSpecs = []recordSpec{
+	userInputRecordSpec,
 	{"sessions", "ROW.id", "ROW.id", "''"},
 	{"tasks", "ROW.id", "ROW.session_id", "(SELECT id FROM runs WHERE task_id=ROW.id ORDER BY run_number LIMIT 1)"},
 	{"environments", "ROW.session_id || ':' || ROW.revision", "ROW.session_id", "''"},
@@ -127,12 +130,8 @@ func migrateRecordOutbox(tx *sql.Tx) error {
 		if _, err := tx.Exec(recordInsertSQL(spec, "x", "snapshot", "FROM "+spec.table+" AS x") + " ORDER BY x.rowid"); err != nil {
 			return fmt.Errorf("记录旧 %s 状态快照失败：%w", spec.table, err)
 		}
-		for _, action := range []string{"insert", "update"} {
-			trigger := fmt.Sprintf("agent_record_%s_%s", spec.table, action)
-			statement := fmt.Sprintf("CREATE TRIGGER %s AFTER %s ON %s BEGIN %s; END", trigger, strings.ToUpper(action), spec.table, recordInsertSQL(spec, "NEW", action, ""))
-			if _, err := tx.Exec(statement); err != nil {
-				return fmt.Errorf("安装 %s 记录触发器失败：%w", spec.table, err)
-			}
+		if err := installRecordTriggers(tx, spec); err != nil {
+			return err
 		}
 	}
 	// A batch Task is inserted before its Run, so its owner cannot be resolved
@@ -148,6 +147,17 @@ func migrateRecordOutbox(tx *sql.Tx) error {
 }
 
 type recordOwner struct{ kind, id string }
+
+func installRecordTriggers(tx *sql.Tx, spec recordSpec) error {
+	for _, action := range []string{"insert", "update"} {
+		trigger := fmt.Sprintf("agent_record_%s_%s", spec.table, action)
+		statement := fmt.Sprintf("CREATE TRIGGER %s AFTER %s ON %s BEGIN %s; END", trigger, strings.ToUpper(action), spec.table, recordInsertSQL(spec, "NEW", action, ""))
+		if _, err := tx.Exec(statement); err != nil {
+			return fmt.Errorf("安装 %s 记录触发器失败：%w", spec.table, err)
+		}
+	}
+	return nil
+}
 
 type recordLine struct {
 	Version  int             `json:"version"`

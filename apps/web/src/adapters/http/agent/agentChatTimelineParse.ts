@@ -1,4 +1,5 @@
 import { RUNTIME_RUN_STATUSES, type AgentChatCacheHitUsage, type AgentChatContextBreakdown, type AgentChatContextUsage, type AgentChatTimelineEntry, type AgentChatTimelineSnapshot, type AgentChatToolStatus, type RuntimeCall, type RuntimeFailure, type RuntimeJSONValue, type RuntimeRunStatus, type RuntimeUsage } from '@elysian/contracts'
+import { parseUserInput } from './agentUserInputParse'
 
 const invalid = () => new Error('Agent 时间线响应格式无效')
 const object = (value: unknown): Record<string, unknown> => {
@@ -50,7 +51,7 @@ const contextUsage = (value: unknown): AgentChatContextUsage => {
     ...(row.totalTokens === undefined ? {} : { totalTokens: integer(row.totalTokens) }),
     ...(row.estimatedBreakdown === undefined ? {} : { estimatedBreakdown: contextBreakdown(row.estimatedBreakdown) }) }
 }
-const toolStatuses: readonly AgentChatToolStatus[] = ['planned', 'waiting-approval', 'waiting-resource', 'waiting-task', 'running', 'succeeded', 'failed', 'cancelled', 'unknown', 'denied', 'expired', 'revoked', 'not-executed']
+const toolStatuses: readonly AgentChatToolStatus[] = ['planned', 'waiting-input', 'waiting-approval', 'waiting-resource', 'waiting-task', 'running', 'succeeded', 'failed', 'cancelled', 'unknown', 'denied', 'expired', 'revoked', 'not-executed']
 
 export function parseChatTimeline(value: unknown, runId: string): AgentChatTimelineSnapshot {
   const row = object(value)
@@ -72,6 +73,11 @@ export function parseChatTimeline(value: unknown, runId: string): AgentChatTimel
     previousOrder = order
     if (entry.kind === 'reasoning' || entry.kind === 'content') {
       return { ...base, kind: entry.kind, text: string(entry.text), status: status(entry.status), incomplete: boolean(entry.incomplete) }
+    }
+    if (entry.kind === 'user-input') {
+      const userInput = parseUserInput(entry.userInput, runId)
+      if (userInput.modelRequestId !== base.modelRequestId || userInput.modelCallId !== entry.modelCallId || userInput.callId !== entry.callId) throw invalid()
+      return { ...base, kind: 'user-input', userInput }
     }
     if (entry.kind !== 'tool' || !(toolStatuses as readonly unknown[]).includes(entry.status)) throw invalid()
     return { ...base, kind: 'tool', tool: string(entry.tool), modelCallId: string(entry.modelCallId), callIndex: integer(entry.callIndex),

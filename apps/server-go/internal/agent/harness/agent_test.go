@@ -756,7 +756,7 @@ func TestAgentChatCompletionsWireLoop(t *testing.T) {
 		reason := "stop"
 		switch index {
 		case 1:
-			if len(input.Tools) != 4 {
+			if len(input.Tools) != 5 {
 				t.Error("域工具白名单错误")
 			}
 			message["content"] = nil

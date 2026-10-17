@@ -43,6 +43,7 @@ type agentRuntimeService interface {
 	CreateAttachments(context.Context, []AttachmentUpload) ([]MessageAttachment, error)
 	AttachmentContent(context.Context, string) (string, []byte, error)
 	DeleteAttachment(context.Context, string) error
+	AnswerUserInput(context.Context, string, string, AnswerUserInput) (UserInputReceipt, error)
 }
 
 func readAgentInput[T any](w http.ResponseWriter, req *http.Request) (T, error) {
@@ -374,6 +375,19 @@ func registerAgentRoutes(r chi.Router, service runtimeService) {
 			return
 		}
 		shared.SendJSON(w, 200, page)
+	}))
+	r.Post("/runs/{id}/user-inputs/{inputId}/answer", wrap(func(s agentRuntimeService, w http.ResponseWriter, req *http.Request) {
+		input, err := readAgentInput[AnswerUserInput](w, req)
+		if err != nil {
+			writeRuntimeError(w, err)
+			return
+		}
+		receipt, err := s.AnswerUserInput(req.Context(), chi.URLParam(req, "id"), chi.URLParam(req, "inputId"), input)
+		if err != nil {
+			writeRuntimeError(w, err)
+			return
+		}
+		shared.SendJSON(w, 200, receipt)
 	}))
 	r.Post("/attachments", wrap(func(s agentRuntimeService, w http.ResponseWriter, req *http.Request) {
 		uploads, err := readAttachmentUploads(w, req)

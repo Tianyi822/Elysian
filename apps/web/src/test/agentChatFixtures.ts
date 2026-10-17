@@ -2,6 +2,19 @@ import { vi } from 'vitest'
 import type { AgentChatCacheHitUsage, AgentChatContextUsage, AgentChatTimelineSnapshot, AgentInput, AgentMessage, AgentMessageAttachment, AgentModelProfile, AgentSession, RuntimeCall, RuntimeUsage } from '@elysian/contracts'
 import timelineFixture from '../../../../packages/foundation/contracts/fixtures/agent-chat-timeline.json'
 import type { AgentChatRun, AgentConversationAdapter } from '../contracts/agentChat'
+import type { AgentUserInputRequest } from '@elysian/contracts'
+
+export const chatTestUserInput: AgentUserInputRequest = {
+  id: 'question-1', runId: 'run-1', modelRequestId: 'm1', modelCallId: 'c1', callId: 'call-1', status: 'pending', createdAt: '2026-10-17T00:00:00Z',
+  questions: [
+    { id: 'scope', header: '查询范围', question: '需要查看哪个范围？', recommendedOptionId: 'panel', options: [
+      { id: 'panel', label: '面板自身', description: '查看 Elysian 进程内存。' }, { id: 'system', label: '系统整体', description: '查看系统 CPU 和内存。' },
+    ] },
+    { id: 'period', header: '采样时间', question: '查看哪个时间？', options: [
+      { id: 'now', label: '现在', description: '读取最新采样。' }, { id: 'history', label: '历史', description: '查看已有采样。' },
+    ] },
+  ],
+}
 
 export const chatTestUsage: RuntimeUsage = timelineFixture.usage
 export const chatTestCacheHitUsage: AgentChatCacheHitUsage = timelineFixture.cacheHitUsage
@@ -66,6 +79,7 @@ export function chatTestApi() {
   let attachmentSeq = 0
   const api = {
     available: true,
+    answerUserInput: vi.fn<AgentConversationAdapter['answerUserInput']>(async () => { throw new Error('测试尚未提供待答问题') }),
     listSessions: vi.fn(async () => ({ items: runs.size ? [{ ...session }] : [], nextCursor: '', hasMore: false })),
     listTasks: vi.fn(async (_id: string) => ({ items: runs.size ? [{ id: 'task-1', sessionId: session.id, kind: 'agent' }] : [], nextCursor: '', hasMore: false })),
     getTask: vi.fn(async (_id: string) => ({ id: 'task-1', sessionId: session.id, kind: 'agent', latestRun: runs.size ? { ...[...runs.values()].at(-1)! } : undefined })),

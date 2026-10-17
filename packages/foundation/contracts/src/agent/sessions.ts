@@ -263,7 +263,21 @@ export interface AgentChatOutput {
   timeline?: AgentChatTimelineSnapshot
 }
 
-export type AgentChatToolStatus = 'planned' | 'waiting-approval' | 'waiting-resource' | 'waiting-task' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'unknown' | 'denied' | 'expired' | 'revoked' | 'not-executed'
+export type AgentUserInputQuestion = {
+  id: string; header: string; question: string
+  options: readonly { id: string; label: string; description: string }[]
+  recommendedOptionId?: string
+}
+export type AgentUserInputAnswer = { optionId: string; text?: never } | { text: string; optionId?: never }
+export type AgentUserInputSubmission = { requestId: string; answers: Readonly<Record<string, AgentUserInputAnswer>> }
+export type AgentUserInputRequest = {
+  id: string; runId: string; modelRequestId: string; modelCallId: string; callId: string
+  status: 'pending' | 'answered' | 'cancelled'
+  questions: readonly AgentUserInputQuestion[]
+  answers?: Readonly<Record<string, AgentUserInputAnswer>>
+  answerRequestId?: string; createdAt: string; endedAt?: string
+}
+export type AgentChatToolStatus = 'planned' | 'waiting-input' | 'waiting-approval' | 'waiting-resource' | 'waiting-task' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'unknown' | 'denied' | 'expired' | 'revoked' | 'not-executed'
 type AgentChatTimelineEntryBase = {
   id: string
   modelRequestId: string
@@ -274,6 +288,7 @@ type AgentChatTimelineEntryBase = {
 export type AgentChatTimelineEntry = AgentChatTimelineEntryBase & (
   { kind: 'reasoning' | 'content'; text: string; status: RuntimeRunStatus; incomplete: boolean }
   | { kind: 'tool'; tool: string; modelCallId: string; callIndex: number; argumentsJson: string; callId?: string; status: AgentChatToolStatus; error?: RuntimeFailure; truncated: boolean }
+  | { kind: 'user-input'; userInput: AgentUserInputRequest }
 )
 /** 最近一次推理输入及输出组成的近似 token 数，不作为供应商计费或实测用量。 */
 export type AgentChatContextBreakdown = {

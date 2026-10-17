@@ -8,22 +8,23 @@ import (
 )
 
 type ChatTimelineEntry struct {
-	ID             string   `json:"id"`
-	Kind           string   `json:"kind"`
-	ModelRequestID string   `json:"modelRequestId"`
-	RequestIndex   int      `json:"requestIndex"`
-	StartedAt      string   `json:"startedAt"`
-	EndedAt        string   `json:"endedAt,omitempty"`
-	Status         string   `json:"status"`
-	Text           string   `json:"text,omitempty"`
-	Incomplete     bool     `json:"incomplete"`
-	Tool           string   `json:"tool,omitempty"`
-	ModelCallID    string   `json:"modelCallId,omitempty"`
-	CallIndex      int      `json:"callIndex"`
-	ArgumentsJSON  string   `json:"argumentsJson,omitempty"`
-	CallID         string   `json:"callId,omitempty"`
-	Error          *Failure `json:"error,omitempty"`
-	Truncated      bool     `json:"truncated"`
+	UserInput      *UserInputRequest `json:"userInput,omitempty"`
+	ID             string            `json:"id"`
+	Kind           string            `json:"kind"`
+	ModelRequestID string            `json:"modelRequestId"`
+	RequestIndex   int               `json:"requestIndex"`
+	StartedAt      string            `json:"startedAt"`
+	EndedAt        string            `json:"endedAt,omitempty"`
+	Status         string            `json:"status"`
+	Text           string            `json:"text,omitempty"`
+	Incomplete     bool              `json:"incomplete"`
+	Tool           string            `json:"tool,omitempty"`
+	ModelCallID    string            `json:"modelCallId,omitempty"`
+	CallIndex      int               `json:"callIndex"`
+	ArgumentsJSON  string            `json:"argumentsJson,omitempty"`
+	CallID         string            `json:"callId,omitempty"`
+	Error          *Failure          `json:"error,omitempty"`
+	Truncated      bool              `json:"truncated"`
 }
 
 type ChatContextUsage struct {
@@ -89,6 +90,19 @@ func (m *Manager) ChatSnapshot(ctx context.Context, id string) (ChatOutput, erro
 	}
 	out := chatOutput(run, records)
 	timeline := projectChatTimeline(run, records, operations, calls, approvals)
+	questions, err := readDocuments[UserInputRequest](ctx, m.store.db, "SELECT document FROM user_inputs WHERE run_id=? ORDER BY rowid", id)
+	if err != nil {
+		return ChatOutput{}, storageFailure(err)
+	}
+	for i := range timeline.Entries {
+		entry := &timeline.Entries[i]
+		for _, question := range questions {
+			if entry.Kind == "tool" && entry.ModelRequestID == question.ModelRequestID && entry.ModelCallID == question.ModelCallID {
+				copy := question
+				entry.Kind, entry.UserInput = "user-input", &copy
+			}
+		}
+	}
 	out.Timeline = &timeline
 	return out, nil
 }

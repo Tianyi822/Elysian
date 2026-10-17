@@ -68,7 +68,7 @@ describe('真实任务运行共享契约', () => {
 
   it('活动状态不包含已中断或任何终态，全部状态有中文标签', () => {
     expect(Object.keys(RUNTIME_RUN_STATUS_LABELS)).toEqual([...RUNTIME_RUN_STATUSES])
-    expect(RUNTIME_RUN_STATUSES.filter(runtimeRunIsActive)).toEqual(['queued', 'running', 'waiting-approval', 'waiting-resource', 'waiting-task', 'recovery-required'])
+    expect(RUNTIME_RUN_STATUSES.filter(runtimeRunIsActive)).toEqual(['queued', 'running', 'waiting-input', 'waiting-approval', 'waiting-resource', 'waiting-task', 'recovery-required'])
     expect(RUNTIME_RUN_STATUSES.filter((state) => !runtimeRunIsActive(state)))
       .toEqual(['succeeded', 'failed', 'cancelled', 'interrupted'])
     for (const label of Object.values(RUNTIME_RUN_STATUS_LABELS)) expect(label).toMatch(/[\u4e00-\u9fff]/)

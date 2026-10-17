@@ -469,6 +469,7 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 		return Run{}, false, err
 	}
 	snapshot.PermissionMode, _ = normalizePermissionMode(input.PermissionMode)
+	snapshot.Tools = append(snapshot.Tools, userInputCapability())
 	snapshot.PolicyVersion = PermissionPolicyVersion
 	snapshot.Digest = ""
 	snapshot.Digest = digestJSON(snapshot)
@@ -487,7 +488,7 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 }
 
 func publicMemoryStatus(run *Run) string {
-	if run.Status == StateQueued || run.Status == StateRunning || run.Status == StateWaitingApproval || run.Status == StateWaitingResource || run.Status == StateWaitingTask {
+	if run.Status == StateQueued || run.Status == StateRunning || run.Status == StateWaitingInput || run.Status == StateWaitingApproval || run.Status == StateWaitingResource || run.Status == StateWaitingTask {
 		run.MemoryStatus = "stale"
 	}
 	return run.MemoryStatus

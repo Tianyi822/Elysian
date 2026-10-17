@@ -10,7 +10,8 @@ import (
 // reference changes shape. v6 adds a transactional JSONL record outbox.
 // v7 adds the agent chat attachment table; its BLOB bytes never enter the
 // JSONL record copy — only reference descriptors ride on Message/Run documents.
-const schemaVersion = 7
+// v8 保存可恢复的用户澄清请求。
+const schemaVersion = 8
 
 const capabilitySchema = `
 CREATE TABLE workspace_cleanup (task_id TEXT PRIMARY KEY);
@@ -162,6 +163,16 @@ func migrateStore(db *sql.DB) error {
 	if _, err = tx.Exec(workflowV2Schema); err != nil {
 		return err
 	}
+	if version < 8 {
+		if _, err = tx.Exec(userInputSchema); err != nil {
+			return err
+		}
+		if version >= 6 {
+			if err = installRecordTriggers(tx, userInputRecordSpec); err != nil {
+				return err
+			}
+		}
+	}
 	if version < 6 {
 		if err = migrateRecordOutbox(tx); err != nil {
 			return err
@@ -172,7 +183,7 @@ func migrateStore(db *sql.DB) error {
 			return err
 		}
 	}
-	if _, err = tx.Exec("PRAGMA user_version=7"); err != nil {
+	if _, err = tx.Exec("PRAGMA user_version=8"); err != nil {
 		return err
 	}
 	return tx.Commit()

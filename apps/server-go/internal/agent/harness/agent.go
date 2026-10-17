@@ -35,6 +35,7 @@ type agentExecution struct {
 	sharedWikiRefs     [][]WikiRef
 	inferenceWikiRefs  []WikiRef
 	workflowOutput     *workflowAgentOutput
+	userInputError     string
 }
 
 func (a *agentExecution) DriverVersion() int {
@@ -161,11 +162,34 @@ func (a *agentExecution) NextModel(ctx context.Context) (worker.ModelResponse, e
 		return worker.ModelResponse{}, bad("model-protocol", "模型未返回完整响应")
 	}
 	out := worker.ModelResponse{ID: record.ID}
+	a.userInputError = ""
+	for _, call := range response.ToolCalls {
+		if call.Name == userInputTool {
+			if a.run.DriverVersion != "v2" || a.run.WorkflowID != "" {
+				return out, bad("tool-denied", "该运行不支持用户澄清")
+			}
+			if _, ok := a.capability(userInputTool); !ok {
+				return out, bad("tool-denied", "用户澄清不在本轮能力中")
+			}
+			if err := a.validateVisibleProposal(record, userInputTool); err != nil {
+				return out, err
+			}
+			if len(response.ToolCalls) != 1 {
+				a.userInputError = "request_user_input 必须单独调用；本批所有工具均未执行，请分开重新提议"
+			} else if _, err := parseUserInput(call.Arguments); err != nil {
+				a.userInputError = err.Error()
+			}
+		}
+	}
 	if len(response.ToolCalls) > 0 {
 		if response.FinishReason != "tool_calls" {
 			return out, bad("model-protocol", "工具提议缺少完整结束标记")
 		}
 		for _, call := range response.ToolCalls {
+			if a.userInputError != "" || call.Name == userInputTool {
+				out.ToolCalls = append(out.ToolCalls, worker.AgentToolCall{ID: call.ID, Name: call.Name, Args: call.Arguments})
+				continue
+			}
 			if err := a.validateVisibleProposal(record, call.Name); err != nil {
 				return out, err
 			}
@@ -214,7 +238,9 @@ func (a *agentExecution) ExecuteAgent(ctx context.Context, responseID string, in
 	step := execution.nextStep
 	m.mu.Unlock()
 	var err error
-	if a.run.DriverVersion == "v2" {
+	if a.userInputError != "" || name == userInputTool {
+		err = a.executeUserInput(ctx, index, proposal, a.userInputError)
+	} else if a.run.DriverVersion == "v2" {
 		err = a.executeOperation(ctx, index, proposal, gb)
 	} else {
 		_, err = m.invoke(ctx, a.run, step, name, args)

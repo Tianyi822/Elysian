@@ -6,11 +6,11 @@ export * from './sessions.ts'
 
 /** 真实任务的运行协议，与仪表盘 AgentRun 演示模型分别维护。 */
 export const RUNTIME_RUN_STATUSES = [
-  'queued', 'running', 'waiting-approval', 'waiting-resource', 'waiting-task', 'recovery-required', 'succeeded', 'failed', 'cancelled', 'interrupted',
+  'queued', 'running', 'waiting-input', 'waiting-approval', 'waiting-resource', 'waiting-task', 'recovery-required', 'succeeded', 'failed', 'cancelled', 'interrupted',
 ] as const
 export type RuntimeRunStatus = (typeof RUNTIME_RUN_STATUSES)[number]
 export const RUNTIME_RUN_STATUS_LABELS: Record<RuntimeRunStatus, string> = {
-  queued: '排队中', running: '执行中', 'waiting-approval': '等待审批', 'waiting-resource': '等待资源', 'waiting-task': '等待平台任务', 'recovery-required': '等待人工恢复', succeeded: '已成功', failed: '已失败',
+  queued: '排队中', running: '执行中', 'waiting-input': '等待回答', 'waiting-approval': '等待审批', 'waiting-resource': '等待资源', 'waiting-task': '等待平台任务', 'recovery-required': '等待人工恢复', succeeded: '已成功', failed: '已失败',
   cancelled: '已取消', interrupted: '运行中断',
 }
 
@@ -119,7 +119,7 @@ export type RuntimeRun = {
   model?: AgentModelProfile
   historySeq?: string
   initialMemoryRevision?: number
-  phase?: 'queued' | 'inference' | 'checkpoint' | 'final-memory' | 'workflow-output' | 'waiting-approval' | 'waiting-resource' | 'waiting-task' | 'completed'
+  phase?: 'queued' | 'inference' | 'checkpoint' | 'final-memory' | 'workflow-output' | 'waiting-input' | 'waiting-approval' | 'waiting-resource' | 'waiting-task' | 'completed'
   memoryStatus?: RuntimeMemoryStatus
   warning?: RuntimeFailure
 }
@@ -220,5 +220,5 @@ export type RuntimeListQuery = {
 export type RuntimeAPIError = { error: string; code: string }
 
 export function runtimeRunIsActive(status: RuntimeRunStatus): boolean {
-  return status === 'queued' || status === 'running' || status === 'waiting-approval' || status === 'waiting-resource' || status === 'waiting-task' || status === 'recovery-required'
+  return status === 'queued' || status === 'running' || status === 'waiting-input' || status === 'waiting-approval' || status === 'waiting-resource' || status === 'waiting-task' || status === 'recovery-required'
 }

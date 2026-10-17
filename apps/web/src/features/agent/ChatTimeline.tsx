@@ -8,10 +8,11 @@ import { ChatMarkdown } from './ChatMarkdown'
 import { ChatMessageCopy } from './ChatMessageCopy'
 import { ChatReasoning } from './ChatReasoning'
 import { useSmoothedText } from './useSmoothedText'
+import { ChatUserInputSummary } from './ChatUserInput'
 
 type ToolEntry = Extract<AgentChatTimelineEntry, { kind: 'tool' }>
 const toolLabels: Record<AgentChatToolStatus, string> = {
-  planned: '等待执行', 'waiting-approval': '等待批准', 'waiting-resource': '等待资源', 'waiting-task': '执行中', running: '执行中',
+  planned: '等待执行', 'waiting-input': '等待回答', 'waiting-approval': '等待批准', 'waiting-resource': '等待资源', 'waiting-task': '执行中', running: '执行中',
   succeeded: '成功', failed: '失败', cancelled: '已取消', unknown: '结果未确认', denied: '已拒绝', expired: '审批已过期', revoked: '审批已撤销', 'not-executed': '未执行',
 }
 const pending = (status: AgentChatToolStatus) => ['planned', 'waiting-approval', 'waiting-resource', 'waiting-task', 'running'].includes(status)
@@ -65,7 +66,7 @@ function ChatTool({ entry, runId, api, onProgress }: { entry: ToolEntry; runId: 
 }
 
 function ChatTextSegment({ entry, text, active, copyable, quarantined, showIncomplete, onProgress }: {
-  entry: Exclude<AgentChatTimelineEntry, { kind: 'tool' }>; text: string; active: boolean; copyable: boolean; quarantined?: boolean; showIncomplete: boolean; onProgress(): void
+  entry: Extract<AgentChatTimelineEntry, { kind: 'reasoning' | 'content' }>; text: string; active: boolean; copyable: boolean; quarantined?: boolean; showIncomplete: boolean; onProgress(): void
 }) {
   const shown = useSmoothedText(text, active && entry.status === 'running')
   useLayoutEffect(onProgress, [shown, onProgress])
@@ -87,6 +88,7 @@ export function ChatTimeline({ timeline, answer, active, stopped, stopping, api,
   useLayoutEffect(onProgress, [timeline.done, onProgress])
   return <div className="chat-timeline" aria-label="回复过程">
     {timeline.entries.map(entry => {
+      if (entry.kind === 'user-input') return <ChatUserInputSummary key={entry.id} request={entry.userInput} />
       if (entry.kind === 'tool') return <ChatTool key={entry.id} entry={entry} runId={timeline.runId} api={api} onProgress={onProgress} />
       const final = entry.kind === 'content' && entry.modelRequestId === timeline.finalResponseId && answer
       const hasBody = timeline.entries.some(item => item.kind === 'content' && item.modelRequestId === entry.modelRequestId)

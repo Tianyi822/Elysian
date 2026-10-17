@@ -1,4 +1,5 @@
 import type { AgentApproval, AgentAttachmentRef, AgentCapability, AgentChatOutput, AgentChatTimelineSnapshot, AgentCreateSessionInput, AgentEnvironment, AgentExecutionGrant, AgentExecutionProfile, AgentInput, AgentMessage, AgentMessageAttachment, AgentPermissionMode, AgentRenameSessionInput, AgentSession, AgentSwitchModelInput, RuntimeCall, RuntimeRun } from '@elysian/contracts'
+import type { AgentUserInputAnswer, AgentUserInputRequest, AgentUserInputSubmission } from '@elysian/contracts'
 
 export type AgentChatPermissionMode = AgentPermissionMode
 
@@ -29,6 +30,7 @@ export type AgentChatMessage = {
 }
 
 export type AgentChatSession = {
+  userInput?: { id: string; runId: string; answers: Readonly<Record<string, AgentUserInputAnswer>>; pending?: AgentUserInputSubmission }
   /** 已迁离旧预览偏好，后续选择随每轮输入提交。 */
   permissionVersion?: 1
   id: string
@@ -66,6 +68,7 @@ export const agentChatAllAttachments = (session: AgentChatSession): readonly Age
 export type AgentChatUploadedAttachment = AgentMessageAttachment & { createdAt?: string }
 
 export interface AgentConversationAdapter {
+  answerUserInput(runId: string, inputId: string, input: AgentUserInputSubmission): Promise<{ userInput: AgentUserInputRequest; run: AgentChatRun }>
   readonly governance?: AgentChatGovernance
   readonly available: boolean
   listSessions(cursor?: string, signal?: AbortSignal): Promise<AgentChatPageResult<AgentSession>>

@@ -53,7 +53,7 @@ var domainBoundaries = map[string]string{
 func (s CapabilitySnapshot) toolInventory() toolInventory {
 	result := toolInventory{Domains: map[string]int{}, Notes: map[string]string{}}
 	for _, c := range s.Tools {
-		if c.Source == toolDiscoverySource {
+		if c.Source == toolDiscoverySource || c.Source == userInputSource {
 			continue
 		}
 		domain := c.Metadata.Domain
@@ -133,13 +133,13 @@ func searchTools(snapshot CapabilitySnapshot, raw json.RawMessage) (CapabilityRe
 	terms := searchTerms(query)
 	exact := false
 	for _, c := range snapshot.Tools {
-		if c.Source != toolDiscoverySource && (strings.ToLower(c.Name) == query || strings.ToLower(c.OriginalName) == query) {
+		if c.Source != toolDiscoverySource && c.Source != userInputSource && (strings.ToLower(c.Name) == query || strings.ToLower(c.OriginalName) == query) {
 			exact = true
 			break
 		}
 	}
 	for _, c := range snapshot.Tools {
-		if c.Source == toolDiscoverySource {
+		if c.Source == toolDiscoverySource || c.Source == userInputSource {
 			continue
 		}
 		if exact && strings.ToLower(c.Name) != query && strings.ToLower(c.OriginalName) != query {

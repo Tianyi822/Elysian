@@ -19,6 +19,7 @@ import { ChatApprovals } from './ChatApprovals'
 import { ChatExecutionScope } from './ChatExecutionScope'
 import { ChatResponse } from './ChatResponse'
 import { ChatTimeline } from './ChatTimeline'
+import { ChatUserInput } from './ChatUserInput'
 import { ChatUsageIndicator } from './ChatUsageIndicator'
 import { defaultReasoningLevel, reasoningLabel, useChatModels } from './useChatModels'
 import './agentChat.css'
@@ -70,6 +71,10 @@ export function AgentChatPage() {
   const composing = useRef(false)
   const session = chat.session
   const usageTimeline = session?.remote?.runId ? chat.timelines[session.remote.runId] : undefined
+  const waitingInput = chat.run?.status === 'waiting-input'
+  const inputEntry = waitingInput ? chat.timelines[chat.run!.id]?.entries.find(entry => entry.kind === 'user-input' && entry.userInput.status === 'pending') : undefined
+  const inputRequest = inputEntry?.kind === 'user-input' ? inputEntry.userInput : undefined
+  const inputDraft = session?.userInput?.id === inputRequest?.id ? session?.userInput : undefined
   const permissionMode = PERMISSION_MODES.find(mode => mode.value === session?.permissionMode) ?? PERMISSION_MODES[0]!
   const PermissionIcon = permissionMode.Icon
   const model = models.find(item => item.id === session?.modelId)
@@ -187,20 +192,21 @@ export function AgentChatPage() {
   }, [api, session?.id, session?.remote?.sessionId, chat.loading, chat.sending, chat.refresh])
 
   const liveRunId = isChatRunActive(chat.run) ? chat.run!.id : undefined
+  const streamingRunId = waitingInput ? undefined : liveRunId
   const waitingForMessage = chat.sending || (!!liveRunId && !finalizing && !chat.messages.some(message => message.role === 'user' && message.runId === liveRunId))
   useEffect(() => {
-    if (!liveRunId || !api.available) return
+    if (!streamingRunId || !api.available) return
     return subscribeWhileVisible(() => {
       const controller = new AbortController()
       let timer: ReturnType<typeof setTimeout> | undefined
       const connect = async () => {
-        await chat.watchOutput(api, liveRunId, controller.signal)
+        await chat.watchOutput(api, streamingRunId, controller.signal)
         if (!controller.signal.aborted) timer = setTimeout(() => { void connect() }, 1000)
       }
       void connect()
       return () => { controller.abort(); clearTimeout(timer) }
     })
-  }, [api, liveRunId, chat.watchOutput])
+  }, [api, streamingRunId, chat.watchOutput])
   const followContent = useCallback(() => {
     if (following.current && history.current) history.current.scrollTop = history.current.scrollHeight
   }, [])
@@ -356,7 +362,7 @@ export function AgentChatPage() {
               </>}
             </article>
             {(chat.timelines[message.runId]?.entries.length || chat.timelines[message.runId]?.done) ? <ChatTimeline key={message.runId} timeline={chat.timelines[message.runId]!} answer={answer}
-              active={active && !finalizing} stopped={stopped} stopping={active && stopping} api={api} onProgress={followContent} />
+              active={active && !finalizing && !waitingInput} stopped={stopped} stopping={active && stopping} api={api} onProgress={followContent} />
               : <ChatResponse key={message.runId} content={(chat.timelines[message.runId] || chat.syncError ? answer?.content : undefined) ?? live?.content ?? ''} reasoning={chat.reasoning[message.runId] ?? ''}
                 active={active && !finalizing} stopped={stopped} stopping={active && stopping} copyable={!!answer} quarantined={answer?.quarantined} onProgress={followContent} />}
           </Fragment>
@@ -374,6 +380,10 @@ export function AgentChatPage() {
       </div>}
       {modelUnavailable && <div className="mb-3 text-right text-xs text-fg-muted"><Link className="underline underline-offset-4 hover:text-fg" to="/settings?tab=models">前往设置添加模型</Link></div>}
 
+      {inputRequest ? <ChatUserInput key={`${session?.id}:${inputRequest.id}`} request={inputRequest} answers={inputDraft?.answers ?? {}}
+        submitting={chat.sending || stopping} pending={!!inputDraft?.pending}
+        onAnswer={(questionId, answer) => chat.setUserInputAnswer(inputRequest, questionId, answer)}
+        onSubmit={() => void chat.answerUserInput(api, inputRequest)} onCancel={() => void chat.stop(api)} /> :
       <form className="chat-composer panel-surface" onSubmit={event => { event.preventDefault(); send() }} aria-label="消息输入框">
         {!!session?.attachments.length && <ul aria-label="本地附件" className="hover-scrollbar flex max-h-52 flex-wrap gap-2 overflow-y-auto px-4 pt-4">{session.attachments.map(attachment => <ChatAttachment key={attachment.id} attachment={attachment} onRemove={() => chat.removeAttachment(attachment.id)} />)}</ul>}
         <label htmlFor="agent-message" className="sr-only">发送给 Ely 的消息</label>
@@ -423,7 +433,7 @@ export function AgentChatPage() {
             ? <IconButton label={stopping ? '正在停止' : '停止回复'} onPress={() => void chat.stop(api)} disabled={stopping} className="chat-send chat-stop"><Square size={16} fill="currentColor" aria-hidden /></IconButton>
             : <IconButton label={session?.pending && !session.pending.input.replaceMessageId ? '重试发送' : '发送消息'} onPress={send} disabled={!canSend} className="chat-send"><Send size={20} aria-hidden /></IconButton>}
         </div>
-      </form>
+      </form>}
     </div>
     </section>
     <ChatExecutionScope key={session?.id} open={!!session && scopeSessionId === session.id} sessionId={session?.remote?.sessionId} api={api.governance} locked={busy || !!session?.pending} onClose={() => setScopeSessionId(null)} />

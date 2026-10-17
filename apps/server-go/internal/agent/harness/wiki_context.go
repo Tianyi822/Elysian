@@ -407,7 +407,7 @@ func (m *Manager) withdrawWikiSourcesTx(ctx context.Context, tx *sql.Tx, pageID 
 			return err
 		}
 	}
-	runs, err := readDocuments[Run](ctx, tx, `SELECT r.document FROM runs r WHERE r.task_id IN (SELECT a.task_id FROM wiki_artifacts a JOIN wiki_dependencies d ON d.kind=a.kind AND d.id=a.id WHERE a.invalidated=1 AND d.page_id=?) AND r.state IN ('queued','running','waiting-approval','waiting-resource','waiting-task','recovery-required')`, pageID)
+	runs, err := readDocuments[Run](ctx, tx, `SELECT r.document FROM runs r WHERE r.task_id IN (SELECT a.task_id FROM wiki_artifacts a JOIN wiki_dependencies d ON d.kind=a.kind AND d.id=a.id WHERE a.invalidated=1 AND d.page_id=?) AND r.state IN ('queued','running','waiting-input','waiting-approval','waiting-resource','waiting-task','recovery-required')`, pageID)
 	if err != nil {
 		return err
 	}

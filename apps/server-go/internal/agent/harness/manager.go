@@ -448,12 +448,15 @@ func (m *Manager) Cancel(ctx context.Context, id string) (Run, error) {
 			return nil
 		}
 		r.CancelRequestedAt = stamp(m.deps.Now())
-		if r.Status == StateQueued || r.Status == StateWaitingApproval || r.Status == StateWaitingResource || r.Status == StateWaitingTask || r.Status == StateRecoveryRequired {
+		if r.Status == StateQueued || r.Status == StateWaitingInput || r.Status == StateWaitingApproval || r.Status == StateWaitingResource || r.Status == StateWaitingTask || r.Status == StateRecoveryRequired {
 			r.Status = StateCancelled
 			r.EndReason = "cancelled"
 			r.EndedAt = r.CancelRequestedAt
 		}
 		if r.Status == StateCancelled {
+			if err := cancelUserInputs(ctx, tx, id, r.CancelRequestedAt); err != nil {
+				return err
+			}
 			if err := releaseWaitingResourceLeases(ctx, tx, id, r.CancelRequestedAt); err != nil {
 				return err
 			}
@@ -803,7 +806,7 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 				m.storageFailedLocked()
 			} else {
 				state, reason, message := StateSucceeded, "completed", ""
-				if (current.Status == StateWaitingApproval || current.Status == StateWaitingResource || current.Status == StateWaitingTask || current.Status == StateQueued || current.Status == StateRecoveryRequired) && (errors.Is(err, worker.ErrSuspended) || stoppedDuringShutdown) && current.CancelRequestedAt == "" && !execution.unresponsive {
+				if (current.Status == StateWaitingInput || current.Status == StateWaitingApproval || current.Status == StateWaitingResource || current.Status == StateWaitingTask || current.Status == StateQueued || current.Status == StateRecoveryRequired) && (errors.Is(err, worker.ErrSuspended) || stoppedDuringShutdown) && current.CancelRequestedAt == "" && !execution.unresponsive {
 					delete(m.executions, r.ID)
 					m.refreshLegacyLocked()
 					m.signal()
