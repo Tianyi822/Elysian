@@ -10,6 +10,7 @@ import (
 type AgentFacade struct {
 	prober    probeService
 	usage     func() memoryUsage
+	metrics   func() platformMetricsSample
 	authorize func(context.Context) error
 }
 
@@ -26,12 +27,15 @@ func NewAgentFacade(deps Deps) *AgentFacade {
 	if deps.CaddySocket == "" {
 		deps.CaddySocket = defaultCaddySocketPath
 	}
-	f := &AgentFacade{prober: deps.prober, usage: deps.readUsage, authorize: deps.AgentAuthorize}
+	f := &AgentFacade{prober: deps.prober, usage: deps.readUsage, metrics: deps.readMetrics, authorize: deps.AgentAuthorize}
 	if f.prober == nil {
 		f.prober = prober{createTransport: deps.Transports.New, createCaddy: deps.CaddyAdmins.New, dockerSocket: deps.DockerSocket, caddySocket: deps.CaddySocket}
 	}
 	if f.usage == nil {
 		f.usage = processMemoryUsage
+	}
+	if f.metrics == nil {
+		f.metrics = func() platformMetricsSample { return readHostMetrics(defaultHostMetricsSource()) }
 	}
 	return f
 }

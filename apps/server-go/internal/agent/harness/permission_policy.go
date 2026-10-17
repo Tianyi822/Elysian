@@ -44,7 +44,7 @@ func confirmedPlatformRead(c Capability) bool {
 	switch c.Name {
 	case "file_list", "file_read", "security_snapshot", "security_users", "security_login_records",
 		"firewall_snapshot", "firewall_connections", "firewall_stats", "database_list", "database_metadata", "database_discover", "database_metrics", "database_task_status", "database_task_logs",
-		"logs_read", "platform_memory", "platform_dependencies", "panel_info", "panel_update_check", "panel_update_history",
+		"logs_read", "platform_memory", "platform_metrics", "platform_dependencies", "panel_info", "panel_update_check", "panel_update_history",
 		"registry_host_check", "docker_image_search", "docker_image_tags", "docker_image_pull_get", "docker_image_pull_logs", "website_list", "caddy_config_current", "website_runtimes", "website_source_get", "website_source_analysis",
 		"website_deployments_list", "website_deployment_get", "website_deployment_logs", "website_logs",
 		"app_list", "app_lookup", "app_directory", "workspace_list_files", "workspace_read_file", "compose_check",

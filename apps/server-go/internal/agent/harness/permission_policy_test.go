@@ -17,6 +17,7 @@ func TestPermissionMatrix(t *testing.T) {
 		{"workspace-read", Operation{Capability: Capability{Name: TaskWorkspaceRead, Source: "workspace", ReadOnly: true}}, true, true, true},
 		{"workspace-write", Operation{Capability: Capability{Name: TaskWorkspaceWrite, Source: "workspace"}}, false, true, true},
 		{"platform-confirmed-read", Operation{Capability: Capability{Name: "database_metrics", Source: "builtin", ReadOnly: true, Metadata: tools.Metadata{Exposure: "agent", ReadOnly: true}}}, true, true, true},
+		{"platform-metrics-read", Operation{Capability: Capability{Name: "platform_metrics", Source: "builtin", ReadOnly: true, Metadata: tools.Metadata{Exposure: "agent", ReadOnly: true}}}, true, true, true},
 		{"platform-unconfirmed-read", Operation{Capability: Capability{Name: "unreviewed_read", Source: "builtin", ReadOnly: true, Metadata: tools.Metadata{Exposure: "agent", ReadOnly: true}}}, false, false, true},
 		{"platform-write", Operation{Capability: Capability{Name: "database_remove", Source: "builtin", Metadata: tools.Metadata{Exposure: "agent"}}}, false, false, true},
 		{"human-only", Operation{Capability: Capability{Name: "panel_update", Source: "builtin", Metadata: tools.Metadata{Exposure: "human"}}}, false, false, false},

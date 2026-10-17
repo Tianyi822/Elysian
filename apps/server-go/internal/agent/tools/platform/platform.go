@@ -34,6 +34,7 @@ func New(c *kardia.Context, deps Deps, _ Config) (*Service, error) {
 		call                      func(context.Context) (any, error)
 	}{
 		{"platform_memory", "memory", "读取面板进程内存采样", deps.Facade.Memory},
+		{"platform_metrics", "metrics", "读取本机内存、CPU 使用率与负载、磁盘挂载占用的只读采样；读数为 Linux 内核视角，容器内不代表物理宿主", deps.Facade.Metrics},
 		{"platform_dependencies", "dependencies", "现场读取 Docker 与 Caddy 依赖状态，不执行安装", deps.Facade.Dependencies},
 	} {
 		spec := spec

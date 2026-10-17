@@ -65,12 +65,13 @@ type Deps struct {
 	CaddySocket string
 
 	// —— 域内测试注入位（包内测试可设）——
-	prober     probeService // 缺省现场探测
-	setup      setupService // 缺省真实编排
-	readUsage  func() memoryUsage
-	probeLimit int           // 0 取缺省 30
-	rateWindow time.Duration // 0 取缺省 60s
-	execFn     execCommand   // nil 用真实本机执行
+	prober      probeService // 缺省现场探测
+	setup       setupService // 缺省真实编排
+	readUsage   func() memoryUsage
+	readMetrics func() platformMetricsSample
+	probeLimit  int           // 0 取缺省 30
+	rateWindow  time.Duration // 0 取缺省 60s
+	execFn      execCommand   // nil 用真实本机执行
 }
 
 // NewRouter 构造 /api/platform 子路由器（memory 与 dependencies 同挂此处）；由装配层
