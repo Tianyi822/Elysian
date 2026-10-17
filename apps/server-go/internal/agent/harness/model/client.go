@@ -85,7 +85,7 @@ func (c *httpClient) send(ctx context.Context, req *http.Request, limit int) ([]
 		return nil, requestError(ctx, err)
 	}
 	defer response.Body.Close()
-	if err := responseStatusError(response.StatusCode); err != nil {
+	if err := responseError(response); err != nil {
 		return nil, err
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, int64(limit)+1))

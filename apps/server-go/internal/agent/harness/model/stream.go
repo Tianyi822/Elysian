@@ -20,7 +20,7 @@ func (c *httpClient) stream(ctx context.Context, req *http.Request, format strin
 		return Response{}, requestError(ctx, err)
 	}
 	defer response.Body.Close()
-	if err := responseStatusError(response.StatusCode); err != nil {
+	if err := responseError(response); err != nil {
 		return Response{}, err
 	}
 	reader := &io.LimitedReader{R: response.Body, N: int64(limit) + 1}
