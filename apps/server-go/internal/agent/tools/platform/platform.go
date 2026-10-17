@@ -33,8 +33,8 @@ func New(c *kardia.Context, deps Deps, _ Config) (*Service, error) {
 		name, action, description string
 		call                      func(context.Context) (any, error)
 	}{
-		{"platform_memory", "memory", "读取面板进程内存采样", deps.Facade.Memory},
-		{"platform_metrics", "metrics", "读取本机内存、CPU 使用率与负载、磁盘挂载占用的只读采样；读数为 Linux 内核视角，容器内不代表物理宿主", deps.Facade.Metrics},
+		{"platform_memory", "memory", "读取 Elysian 面板进程内存占用：RSS、Go 堆与 GC 采样；查询平台占用或平台性能时优先使用，并可结合 platform_metrics 补充系统概览。不提供面板进程 CPU 使用率", deps.Facade.Memory},
+		{"platform_metrics", "metrics", "读取运行环境内存、CPU 使用率与负载、磁盘挂载占用的只读采样；查询平台占用时配合 platform_memory。读数为 Linux 内核视角，容器内不代表物理宿主；这里的 CPU 不是面板进程 CPU，也不能近似代替", deps.Facade.Metrics},
 		{"platform_dependencies", "dependencies", "现场读取 Docker 与 Caddy 依赖状态，不执行安装", deps.Facade.Dependencies},
 	} {
 		spec := spec

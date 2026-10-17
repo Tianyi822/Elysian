@@ -55,7 +55,7 @@ type diskUsage struct {
 	TotalBytes uint64
 	UsedBytes  uint64
 	FreeBytes  uint64
-	// Device 用于识别两个挂载点是否同盘；不同平台用各自可比的标识（statfs.Dev / Fsid）。
+	// Device 是 statfs 返回的文件系统标识（Fsid），用于优先去重。
 	Device string
 }
 
@@ -207,11 +207,12 @@ func readLoadAverage(readFile func(string) ([]byte, error)) (float64, float64, f
 	return values[0], values[1], values[2], true
 }
 
-// 磁盘只报根与面板数据目录；数据目录与根同盘时不重复报（statfs 跟随符号链接，
-// 数据目录指向持久卷时读到的是卷本身）。单项不可读只跳过该项，不伪造读数。
+// 磁盘只报根与面板数据目录；非空设备标识相同，或原始容量三项完全相同时仅保留根目录。
+// 容量相同仅用于展示去重，不代表已确认是同一物理设备；statfs 跟随符号链接。
+// 单项不可读或总容量为零时只跳过该项，不伪造读数。
 func readMetricsDisks(statfs func(string) (diskUsage, error)) []metricsDisk {
 	out := []metricsDisk{}
-	rootDevice := ""
+	var rootUsage diskUsage
 	for _, mount := range []struct{ role, path string }{
 		{"根文件系统", "/"},
 		{"面板数据目录", paths.ElysianHome},
@@ -220,11 +221,14 @@ func readMetricsDisks(statfs func(string) (diskUsage, error)) []metricsDisk {
 		if err != nil || usage.TotalBytes == 0 {
 			continue
 		}
-		if mount.path != "/" && rootDevice != "" && usage.Device == rootDevice {
-			continue
-		}
 		if mount.path == "/" {
-			rootDevice = usage.Device
+			rootUsage = usage
+		} else if rootUsage.TotalBytes > 0 {
+			sameDevice := rootUsage.Device != "" && usage.Device == rootUsage.Device
+			sameUsage := usage.TotalBytes == rootUsage.TotalBytes && usage.UsedBytes == rootUsage.UsedBytes && usage.FreeBytes == rootUsage.FreeBytes
+			if sameDevice || sameUsage {
+				continue
+			}
 		}
 		disk := metricsDisk{
 			Mount:   mount.path,

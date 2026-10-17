@@ -123,6 +123,64 @@ func TestHostMetricsSkipsInvalidCounterAndDuplicateMount(t *testing.T) {
 	}
 }
 
+func TestMetricsDisksDeduplicatesRootAndData(t *testing.T) {
+	root := diskUsage{TotalBytes: 100 * bytesPerMiB, UsedBytes: 40 * bytesPerMiB, FreeBytes: 50 * bytesPerMiB, Device: "root"}
+	data := root
+	data.Device = "data"
+	totalDiff, usedDiff, freeDiff := data, data, data
+	totalDiff.TotalBytes++
+	usedDiff.UsedBytes++
+	freeDiff.FreeBytes++
+	rootUnknown, dataUnknown := root, data
+	rootUnknown.Device, dataUnknown.Device = "", ""
+	dataUnknownDiff := totalDiff
+	dataUnknownDiff.Device = ""
+	zeroRoot := root
+	zeroRoot.TotalBytes = 0
+	zeroData := data
+	zeroData.TotalBytes = 0
+	both := []string{"/", paths.ElysianHome}
+	for _, test := range []struct {
+		name        string
+		root, data  diskUsage
+		rootMissing bool
+		dataMissing bool
+		wantMounts  []string
+	}{
+		{name: "same-device-different-capacity", root: root, data: diskUsage{TotalBytes: 200 * bytesPerMiB, UsedBytes: 50 * bytesPerMiB, FreeBytes: 140 * bytesPerMiB, Device: "root"}, wantMounts: []string{"/"}},
+		{name: "different-device-identical-capacity", root: root, data: data, wantMounts: []string{"/"}},
+		{name: "unknown-device-identical-capacity", root: rootUnknown, data: dataUnknown, wantMounts: []string{"/"}},
+		{name: "unknown-device-different-capacity", root: rootUnknown, data: dataUnknownDiff, wantMounts: both},
+		{name: "total-differs-by-one-byte", root: root, data: totalDiff, wantMounts: both},
+		{name: "used-differs-by-one-byte", root: root, data: usedDiff, wantMounts: both},
+		{name: "free-differs-by-one-byte", root: root, data: freeDiff, wantMounts: both},
+		{name: "root-unreadable", rootMissing: true, data: data, wantMounts: []string{paths.ElysianHome}},
+		{name: "root-zero-capacity", root: zeroRoot, data: data, wantMounts: []string{paths.ElysianHome}},
+		{name: "data-unreadable", root: root, dataMissing: true, wantMounts: []string{"/"}},
+		{name: "data-zero-capacity", root: root, data: zeroData, wantMounts: []string{"/"}},
+		{name: "both-unreadable", rootMissing: true, dataMissing: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			devices := map[string]diskUsage{}
+			if !test.rootMissing {
+				devices["/"] = test.root
+			}
+			if !test.dataMissing {
+				devices[paths.ElysianHome] = test.data
+			}
+			disks := readMetricsDisks(metricsTestStatfs(devices))
+			if len(disks) != len(test.wantMounts) {
+				t.Fatalf("磁盘条目数错误：得到 %+v，期望挂载 %v", disks, test.wantMounts)
+			}
+			for i, want := range test.wantMounts {
+				if disks[i].Mount != want {
+					t.Errorf("磁盘条目 %d 应保留 %s：得到 %+v", i, want, disks[i])
+				}
+			}
+		})
+	}
+}
+
 func TestAgentFacadeMetricsRequiresAuthorization(t *testing.T) {
 	facade := &AgentFacade{metrics: func() platformMetricsSample { return platformMetricsSample{} }}
 	if _, err := facade.Metrics(context.Background()); err == nil {

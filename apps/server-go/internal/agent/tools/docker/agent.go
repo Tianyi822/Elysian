@@ -12,8 +12,16 @@ func (s *Service) imageDescriptors() []tools.Descriptor {
 	}
 	text := tools.Schema{Type: tools.SchemaString}
 	var descriptors []tools.Descriptor
-	for _, action := range []string{"search", "tags", "pull", "pull_get", "pull_logs", "pull_cancel", "remove"} {
-		action := action
+	for _, spec := range []struct{ action, description string }{
+		{"search", "按关键词搜索 Docker 镜像名称，可指定镜像源；只读，不拉取镜像"},
+		{"tags", "查询 Docker 镜像仓库的可用版本标签，可指定镜像源；只读，不拉取镜像"},
+		{"pull", "审批后按精确镜像名称和标签提交异步拉取任务；需精确资源授权，重试复用原 requestId"},
+		{"pull_get", "只读查询指定 Docker 镜像拉取任务的状态和结果；结果未知不代表可以重新拉取"},
+		{"pull_logs", "分页读取 Docker 镜像拉取任务的结构化状态日志和时间；只读，不提供 Docker 原始输出"},
+		{"pull_cancel", "审批后请求取消指定 Docker 镜像拉取任务；需精确资源授权，回执不代表任务已停止或变更已回滚"},
+		{"remove", "审批后删除本地指定 ID 的 Docker 镜像；需精确资源授权"},
+	} {
+		action := spec.action
 		properties := map[string]tools.Schema{}
 		required := []string{}
 		metadata := tools.Metadata{Domain: "docker", Action: action, Effect: "read", Exposure: "agent", ReadOnly: true, Default: true, Version: "1"}
@@ -52,7 +60,7 @@ func (s *Service) imageDescriptors() []tools.Descriptor {
 				metadata.Action, metadata.Effect, metadata.ReadOnly, metadata.Async, metadata.TaskDomain, metadata.TaskIDArgument = "cancel", "write", false, true, "docker-image-pull", "taskId"
 			}
 		}
-		descriptors = append(descriptors, tools.Descriptor{Name: "docker_image_" + action, Description: "Docker 镜像" + action + "，写操作需精确资源授权和审批", Parameters: tools.Schema{Type: tools.SchemaObject, Required: required, Properties: properties}, Metadata: metadata, Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
+		descriptors = append(descriptors, tools.Descriptor{Name: "docker_image_" + action, Description: spec.description, Parameters: tools.Schema{Type: tools.SchemaObject, Required: required, Properties: properties}, Metadata: metadata, Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
 			ctx := tools.Lifetime(c)
 			id, _ := tools.StringArg(args, "id")
 			registry, _ := tools.StringArg(args, "registry")
