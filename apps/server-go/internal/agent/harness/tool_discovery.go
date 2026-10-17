@@ -3,6 +3,7 @@ package harness
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 	"unicode"
@@ -22,12 +23,35 @@ const (
 )
 
 type toolInventory struct {
-	Total   int            `json:"total"`
-	Domains map[string]int `json:"domains"`
+	Total   int               `json:"total"`
+	Domains map[string]int    `json:"domains"`
+	Notes   map[string]string `json:"notes"`
+}
+
+// domainBoundaries 是各域能力的固定边界说明，供模型判断某项能力是否存在，避免在目录中
+// 反复搜索不提供的能力。只写领域级能力与不提供的能力，不含工具名或描述明细；未登记的域只报数量。
+var domainBoundaries = map[string]string{
+	"workspace":     "任务工作区文件清单与文本读写",
+	"docker":        "容器与镜像的列表及快照操作；不含逐容器资源统计（stats）",
+	"database":      "受管数据库实例与逻辑库的登记、状态、固定指标与写操作",
+	"files":         "面板文件页的文件与目录读写",
+	"security":      "SSH 状态、账号、登录记录与密钥指纹",
+	"firewall":      "防火墙规则、连接与统计快照、业务端口放行",
+	"logs":          "平台日志读取",
+	"platform":      "面板进程内存、本机内存/CPU 使用率/负载/磁盘挂载采样、Docker 与 Caddy 依赖状态",
+	"panel":         "面板自身信息与上游更新检查",
+	"website":       "网站项目的登记、运行时版本、来源分析、部署与启停",
+	"container-app": "容器应用工作区与镜像构建",
+	"skill-load":    "已选技能的资料加载",
+	"mcp-tool":      "已接入 MCP 工具的搜索与调用",
+	"mcp-resource":  "MCP 资源读取",
+	"wiki":          "知识库页面检索",
+	"script":        "技能脚本执行（非只读）",
+	"bash":          "受控命令执行（非只读）",
 }
 
 func (s CapabilitySnapshot) toolInventory() toolInventory {
-	result := toolInventory{Domains: map[string]int{}}
+	result := toolInventory{Domains: map[string]int{}, Notes: map[string]string{}}
 	for _, c := range s.Tools {
 		if c.Source == toolDiscoverySource {
 			continue
@@ -39,13 +63,18 @@ func (s CapabilitySnapshot) toolInventory() toolInventory {
 		result.Total++
 		result.Domains[domain]++
 	}
+	for domain := range result.Domains {
+		if note, ok := domainBoundaries[domain]; ok {
+			result.Notes[domain] = note
+		}
+	}
 	return result
 }
 
 func toolSearchCapability() Capability {
 	return Capability{
 		Name: toolSearchName, Source: toolDiscoverySource, ReadOnly: true,
-		Description: "按任务关键词、领域或精确工具名搜索并加载已授权工具。支持中文和英文，如容器列表、数据库、文件、日志、网站、技能、MCP、Bash。每次最多 5 项，匹配工具从下一次模型请求起可调用；搜索不执行实际操作。无匹配时换用更短关键词；用 nextOffset 继续分页。",
+		Description: "按任务关键词、领域或精确工具名搜索并加载已授权工具。支持中文和英文，如容器列表、数据库、文件、日志、网站、技能、MCP、Bash。每次最多 5 项，匹配工具从下一次模型请求起可调用；搜索不执行实际操作。同一子目标最多连续搜索两次；无匹配或结果不适用时按目录摘要的 notes 能力边界判断，不要反复换词，用 nextOffset 继续分页。",
 		Parameters:  json.RawMessage(`{"type":"object","properties":{"query":{"type":"string","minLength":1,"maxLength":256},"limit":{"type":"integer","minimum":1,"maximum":5},"offset":{"type":"integer","minimum":0,"maximum":512}},"required":["query"],"additionalProperties":false}`),
 		Metadata:    tools.Metadata{Domain: "tools", Action: "search", Effect: "read", Exposure: "agent", Backend: "store", Version: "1", ReadOnly: true},
 	}
@@ -81,6 +110,8 @@ type toolSearchResult struct {
 	Matches        []toolSearchMatch `json:"matches"`
 	Total          int               `json:"total"`
 	NextOffset     *int              `json:"nextOffset,omitempty"`
+	// Note 在结果已穷尽时给出停止搜索的明确信号，避免模型换关键词反复搜索同一目标。
+	Note string `json:"note,omitempty"`
 }
 
 // 搜索只读取本轮固定目录；技能内容、模型参数和外部结果不能扩展候选集。
@@ -154,6 +185,10 @@ func searchTools(snapshot CapabilitySnapshot, raw json.RawMessage) (CapabilityRe
 	}
 	if end < len(candidates) {
 		result.NextOffset = &end
+	} else if len(candidates) == 0 {
+		result.Note = "该关键词没有任何匹配；按目录摘要的 notes 能力边界判断该能力是否提供，不要换关键词反复搜索同一目标，必要时用现有工具作答并明确说明该能力或数据不可得。"
+	} else {
+		result.Note = fmt.Sprintf("已返回该关键词的全部 %d 项匹配；若都不能回答当前问题，请按目录摘要的 notes 判断该能力是否提供，不要换关键词反复搜索同一目标，必要时用现有工具作答并明确说明该能力或数据不可得。", len(candidates))
 	}
 	value, err := json.Marshal(result)
 	return CapabilityResult{Value: value}, err

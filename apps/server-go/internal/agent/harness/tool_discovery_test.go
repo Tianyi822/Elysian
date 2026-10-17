@@ -61,15 +61,24 @@ func TestToolDiscoverySearchLoadsOnlyBoundedAuthorizedMatches(t *testing.T) {
 	if err != nil || json.Unmarshal(first.Value, &page) != nil || len(page.Matches) != 5 || page.Total != 20 || page.NextOffset == nil || *page.NextOffset != 5 {
 		t.Fatalf("unbounded search: %s %v", first.Value, err)
 	}
+	if page.Note != "" {
+		t.Fatalf("还有下一页时不得给停止提示：%s", first.Value)
+	}
 	second, _ := searchTools(snapshot, json.RawMessage(`{"query":"extra","limit":5,"offset":5}`))
 	var next toolSearchResult
 	_ = json.Unmarshal(second.Value, &next)
 	if len(next.Matches) != 5 || page.Matches[0].Name == next.Matches[0].Name || strings.Contains(string(first.Value), "parameters") {
 		t.Fatalf("search leaked definitions or repeated its page: %s", second.Value)
 	}
+	last, _ := searchTools(snapshot, json.RawMessage(`{"query":"extra","limit":5,"offset":15}`))
+	var lastPage toolSearchResult
+	_ = json.Unmarshal(last.Value, &lastPage)
+	if lastPage.NextOffset != nil || !strings.Contains(lastPage.Note, "全部 20 项匹配") || !strings.Contains(lastPage.Note, "不要换关键词反复搜索") {
+		t.Fatalf("穷尽页缺少停止提示：%s", last.Value)
+	}
 	empty, err := searchTools(snapshot, json.RawMessage(`{"query":"not_authorized_anywhere"}`))
 	var noMatch toolSearchResult
-	if err != nil || json.Unmarshal(empty.Value, &noMatch) != nil || len(noMatch.Matches) != 0 || noMatch.Total != 0 {
+	if err != nil || json.Unmarshal(empty.Value, &noMatch) != nil || len(noMatch.Matches) != 0 || noMatch.Total != 0 || !strings.Contains(noMatch.Note, "没有任何匹配") {
 		t.Fatalf("no match exposed catalog: %s %v", empty.Value, err)
 	}
 	for _, raw := range []string{`{}`, `{"query":"  "}`, `{"query":"x","query":"y"}`, `{"query":"x","limit":0}`, `{"query":"x","limit":6}`, `{"query":"x","offset":-1}`, `{"query":"x","offset":1.5}`, `{"query":"x","names":["test_write"]}`} {

@@ -101,6 +101,9 @@ func TestToolInventorySummaryIsBoundedToCurrentSnapshot(t *testing.T) {
 	if inventory.Total != 2 || inventory.Domains["database"] != 1 || inventory.Domains["skill-load"] != 1 || len(inventory.Domains) != 2 {
 		t.Fatalf("inventory counts include hidden material/search: %+v", inventory)
 	}
+	if inventory.Notes["database"] == "" || inventory.Notes["skill-load"] == "" || len(inventory.Notes) != 2 {
+		t.Fatalf("inventory notes must cover present domains only: %+v", inventory)
+	}
 	a := &agentExecution{run: Run{DriverVersion: "v2", Snapshot: &snapshot, Task: &Task{}}}
 	system := baseContext(a, WorkingMemory{}, agentSystem, nil)[0].Content
 	for _, hidden := range []string{"database_list", "PRIVATE_DESCRIPTION", "selected_skill", "user_selected_prompt", "parameters"} {
@@ -112,5 +115,23 @@ func TestToolInventorySummaryIsBoundedToCurrentSnapshot(t *testing.T) {
 		if got := baseContext(a, WorkingMemory{}, fixedSystem, nil)[0].Content; got != fixedSystem {
 			t.Errorf("fixed-function system was changed: %s", got)
 		}
+	}
+}
+
+func TestContextToolSearchDisciplineAndDomainBoundaries(t *testing.T) {
+	snapshot := CapabilitySnapshot{ToolLoading: onDemandTools, Tools: []Capability{
+		toolSearchCapability(),
+		{Name: "platform_metrics", Source: "builtin", ReadOnly: true, Metadata: tools.Metadata{Domain: "platform"}},
+		{Name: "docker_containers_list", Source: "builtin", ReadOnly: true, Metadata: tools.Metadata{Domain: "docker"}},
+	}}
+	a := &agentExecution{run: Run{DriverVersion: "v2", Snapshot: &snapshot, Task: &Task{}}}
+	system := baseContext(a, WorkingMemory{}, agentSystem, nil)[0].Content
+	for _, want := range []string{"同一子目标连续搜索不超过两次", `"notes"`, "不含逐容器资源统计", "该能力或数据不可得"} {
+		if !strings.Contains(system, want) {
+			t.Errorf("按需加载系统提示词缺少 %q：%s", want, system)
+		}
+	}
+	if !strings.Contains(toolSearchCapability().Description, "最多连续搜索两次") || !strings.Contains(toolSearchCapability().Description, "notes") {
+		t.Error("tool_search 描述缺少搜索纪律")
 	}
 }
