@@ -23,6 +23,15 @@ describe('时间线响应校验', () => {
     for (const key of ['modelRequests', 'tokens', 'estimatedTokens', 'actualTokens', 'cachedTokens']) expect(unknown).not.toHaveProperty(key)
     expect(parseChatTimeline({ ...snapshot, usage: { calls: 0, resultBytes: 0, actualTokens: Number.MAX_SAFE_INTEGER } }, 'r').usage?.actualTokens).toBe(Number.MAX_SAFE_INTEGER)
   })
+  it('保留运行终态失败原因，缺失时保持未知', () => {
+    const failure = { code: 'model-budget', message: '模型请求次数或 token 预算已耗尽' }
+    expect(parseChatTimeline({ ...snapshot, error: failure }, 'r').error).toEqual(failure)
+    expect(parseChatTimeline(snapshot, 'r')).not.toHaveProperty('error')
+    expect(parseChatTimeline(timelineFixture, 'r1')).not.toHaveProperty('error')
+  })
+  it.each([{ code: 'model-budget' }, { message: '缺编号' }, null, [], 'failed'])('拒绝不完整的失败原因 %j', error => {
+    expect(() => parseChatTimeline({ ...snapshot, error }, 'r')).toThrow('格式无效')
+  })
   it('保留最后推理的模型快照、未知总量与明确零容量，不依赖可见条目', () => {
     const known = { modelRequestId: 'tool-only', model: 'fixed-model', totalTokens: 12345, contextTokens: 65536 }
     expect(parseChatTimeline({ ...snapshot, entries: [], contextUsage: known }, 'r').contextUsage).toEqual(known)

@@ -87,6 +87,18 @@ func TestChatTimelineRetainsThreeInferencesAndToolContent(t *testing.T) {
 	}
 }
 
+// 终态失败原因要随快照交给前端：failed/interrupted 运行时聊天需要显示「运行未完成：原因」。
+func TestChatTimelineCarriesTerminalFailure(t *testing.T) {
+	failed := projectChatTimeline(Run{ID: "r", Status: StateFailed, Error: &Failure{Code: "model-budget", Message: "模型请求次数或 token 预算已耗尽"}}, nil, nil, nil, nil)
+	if failed.Error == nil || failed.Error.Code != "model-budget" || failed.Error.Message != "模型请求次数或 token 预算已耗尽" {
+		t.Fatalf("失败原因未随快照携带：%+v", failed.Error)
+	}
+	ok := projectChatTimeline(Run{ID: "r", Status: StateSucceeded}, nil, nil, nil, nil)
+	if ok.Error != nil {
+		t.Fatalf("成功运行不应携带失败原因：%+v", ok.Error)
+	}
+}
+
 func TestChatTimelineIncludesRunUsage(t *testing.T) {
 	actual, cached := 1200, 800
 	usage := Usage{Calls: 2, ResultBytes: 16, ModelRequests: 3, Tokens: 1200, EstimatedTokens: 2000, ActualTokens: &actual, CachedTokens: &cached}

@@ -98,6 +98,8 @@ export function ChatTimeline({ timeline, answer, active, stopped, stopping, api,
         {answer.quarantined && <p className="mt-2 text-xs text-danger">此回复包含未核实或已撤回的资料。</p>}
       </div><ChatMessageCopy value={answer.content} noun="回复内容" />
     </article>}
+    {timeline.done && (timeline.status === 'failed' || timeline.status === 'interrupted') && !!timeline.error?.message &&
+      <p role="status" className={`text-xs ${timeline.status === 'failed' ? 'text-danger' : 'text-fg-muted'}`}>运行未完成：{timeline.error.message}</p>}
     {stopped && <p role="status" className="text-xs text-fg-muted">已停止</p>}
   </div>
 }

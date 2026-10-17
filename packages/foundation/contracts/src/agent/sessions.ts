@@ -303,6 +303,8 @@ export type AgentChatTimelineSnapshot = {
   runId: string
   status: RuntimeRunStatus
   done: boolean
+  /** 运行终态失败/中断的原因；成功与取消的运行不携带。 */
+  error?: RuntimeFailure
   usage?: RuntimeUsage
   contextUsage?: AgentChatContextUsage
   cacheHitUsage?: AgentChatCacheHitUsage

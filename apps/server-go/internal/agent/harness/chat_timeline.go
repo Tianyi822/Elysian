@@ -43,6 +43,7 @@ type ChatTimelineSnapshot struct {
 	RunID           string              `json:"runId"`
 	Status          string              `json:"status"`
 	Done            bool                `json:"done"`
+	Error           *Failure            `json:"error,omitempty"`
 	Usage           Usage               `json:"usage"`
 	ContextUsage    *ChatContextUsage   `json:"contextUsage,omitempty"`
 	CacheHitUsage   *ChatCacheHitUsage  `json:"cacheHitUsage,omitempty"`
@@ -93,7 +94,7 @@ func (m *Manager) ChatSnapshot(ctx context.Context, id string) (ChatOutput, erro
 }
 
 func projectChatTimeline(run Run, records []ModelRequestRecord, operations []Operation, calls []Call, approvals []Approval) ChatTimelineSnapshot {
-	out := ChatTimelineSnapshot{RunID: run.ID, Status: run.Status, Done: terminal(run.Status), Usage: run.Usage, ContextUsage: projectChatContextUsage(run, records), CacheHitUsage: projectChatCacheHitUsage(records), Entries: []ChatTimelineEntry{}}
+	out := ChatTimelineSnapshot{RunID: run.ID, Status: run.Status, Done: terminal(run.Status), Error: run.Error, Usage: run.Usage, ContextUsage: projectChatContextUsage(run, records), CacheHitUsage: projectChatCacheHitUsage(records), Entries: []ChatTimelineEntry{}}
 	ops := map[string]Operation{}
 	for _, o := range operations {
 		ops[o.ModelRequestID+":"+o.ModelCallID] = o

@@ -112,6 +112,20 @@ describe('过程文本与公开答复', () => {
     } else expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 
+  it('终态失败与中断显示运行原因，成功与取消不显示', () => {
+    const { api } = chatTestApi()
+    const draw = (timeline: AgentChatTimelineSnapshot, stopped = false) => <Tooltip.Provider><ChatTimeline timeline={timeline} api={api} active={false} stopped={stopped} onProgress={vi.fn()} /></Tooltip.Provider>
+    const failed: AgentChatTimelineSnapshot = { runId: 'run-1', status: 'failed', done: true, error: { code: 'model-budget', message: '模型请求次数或 token 预算已耗尽' }, entries: [] }
+    const view = render(draw(failed))
+    expect(screen.getByText('运行未完成：模型请求次数或 token 预算已耗尽')).toHaveClass('text-danger')
+    view.rerender(draw({ ...failed, status: 'interrupted', error: { code: 'panel-restarted', message: '面板重启中断了运行，未自动重跑' } }))
+    expect(screen.getByText('运行未完成：面板重启中断了运行，未自动重跑')).toHaveClass('text-fg-muted')
+    view.rerender(draw({ ...failed, status: 'cancelled', error: { code: 'cancelled', message: '已取消' } }, true))
+    expect(screen.queryByText(/运行未完成/)).not.toBeInTheDocument()
+    view.rerender(draw({ runId: 'run-1', status: 'succeeded', done: true, entries: [] }))
+    expect(screen.queryByText(/运行未完成/)).not.toBeInTheDocument()
+  })
+
   it('只有 finalResponseId 而尚未确认公开答复时，不给过程正文复制按钮', () => {
     const { api } = chatTestApi()
     render(<Tooltip.Provider><ChatTimeline timeline={{ runId: 'run-1', status: 'succeeded', done: true, finalResponseId: 'm0', entries: [text(0, 'content', '终答预览')] }} api={api} active={false} stopped={false} onProgress={vi.fn()} /></Tooltip.Provider>)

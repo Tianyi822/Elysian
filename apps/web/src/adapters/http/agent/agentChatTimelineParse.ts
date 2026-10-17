@@ -80,6 +80,7 @@ export function parseChatTimeline(value: unknown, runId: string): AgentChatTimel
   const finalResponseId = optional(row.finalResponseId)
   if (finalResponseId && !entries.some(entry => entry.kind === 'content' && entry.modelRequestId === finalResponseId)) throw invalid()
   return { runId, status: status(row.status), done: boolean(row.done), finalResponseId, entries,
+    ...(row.error === undefined ? {} : { error: failure(row.error) }),
     ...(row.usage === undefined ? {} : { usage: usage(row.usage) }),
     ...(row.contextUsage === undefined ? {} : { contextUsage: contextUsage(row.contextUsage) }),
     ...(row.cacheHitUsage === undefined ? {} : { cacheHitUsage: cacheHitUsage(row.cacheHitUsage) }) }
