@@ -1,3 +1,4 @@
+import type { RuntimePage } from '@elysian/contracts'
 import { withRequestDeadline } from '../requestDeadline'
 import { fetchWithSession, reportUnauthorized } from '../unauthorized'
 import { useAgentRuntimeStore } from '../../../stores/agentRuntimeStore'
@@ -96,3 +97,36 @@ export function agentPathPart(value: string, label = '标识'): string {
   if (!value) throw new Error(`Agent ${label}不能为空`)
   return encodeURIComponent(value)
 }
+
+export function assertRequestId(value: string): string {
+  if (!AGENT_REQUEST_ID_PATTERN.test(value)) {
+    throw new Error('requestId 必须以字母或数字开头，仅含字母、数字与 . _ : -，长度 1 到 128')
+  }
+  return value
+}
+
+export function parseAgentPage<T>(
+  value: unknown,
+  parseItem: (item: unknown) => T,
+  label = '分页',
+): RuntimePage<T> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`Agent ${label}响应无效`)
+  }
+  const row = value as Record<string, unknown>
+  if (!Array.isArray(row.items) || typeof row.nextCursor !== 'string' || typeof row.hasMore !== 'boolean') {
+    throw new Error(`Agent ${label}响应无效`)
+  }
+  return { items: row.items.map(parseItem), nextCursor: row.nextCursor, hasMore: row.hasMore }
+}
+
+export function agentQueryString(params: Readonly<Record<string, string | number | undefined>>): string {
+  const parts: string[] = []
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined) continue
+    parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
+  }
+  return parts.join('&')
+}
+
+export const AGENT_REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/

@@ -1,3 +1,5 @@
+import { ExtensionSettingsSection } from './ExtensionSettingsSection'
+import { useAgentExtensionsStore } from '../../stores/agentExtensionsStore'
 import * as Dialog from '@radix-ui/react-dialog'
 import { PanelMaintenanceSettings } from './PanelMaintenanceSettings'
 import { useEffect, useId, useState } from 'react'
@@ -12,7 +14,7 @@ import { ModelSettingsSection } from './ModelSettingsSection'
 import { SETTINGS_TABS, useSettingsTab, type SettingsTab } from './settingsTabs'
 
 /*
- * 设置页按模型配置、账号安全与面板维护分区。主题在侧边栏切换。
+ * 设置页按面板维护、账号安全、模型、MCP 与 Skill 配置分区。主题在侧边栏切换。
  * 表单是一条竖列：标签在输入框正上方，规则紧贴在框下，随输入更新；
  * 密码通过表单校验后确认会话退出，再提交接口。
  * 页面不渲染自己的 h1：顶栏标题由导航项给出。
@@ -221,12 +223,19 @@ function AccountSecuritySettings() {
 /** 访问过的页签保持挂载：保存表单草稿，维护任务切换页签后继续轮询。 */
 export function SettingsPage() {
   const { tab } = useSettingsTab()
+  useEffect(() => {
+    const unsubscribe = useSessionStore.subscribe((state, previous) => {
+      if (state.phase !== previous.phase && state.phase !== 'authed') useAgentExtensionsStore.getState().reset()
+    })
+    return () => { unsubscribe(); useAgentExtensionsStore.getState().reset() }
+  }, [])
   const [visited, setVisited] = useState<ReadonlySet<SettingsTab>>(() => new Set([tab]))
   useEffect(() => { setVisited((current) => current.has(tab) ? current : new Set([...current, tab])) }, [tab])
   return <div className="min-w-0">
     {SETTINGS_TABS.map((item) => (visited.has(item.value) || tab === item.value) ? (
       <div key={item.value} className={tab === item.value ? 'block' : 'hidden'}>
         {item.value === 'models' ? <RequireArea area="agent" title="模型配置"><ModelSettingsSection active={tab === 'models'} /></RequireArea> : null}
+        {item.value === 'mcp' || item.value === 'skills' ? <RequireArea area="agent" title={item.label}><ExtensionSettingsSection kind={item.value} active={tab === item.value} /></RequireArea> : null}
         {item.value === 'account' ? <AccountSecuritySettings /> : null}
         {item.value === 'maintenance' ? <div className="max-w-3xl space-y-5"><PanelMaintenanceSettings /></div> : null}
       </div>

@@ -44,6 +44,7 @@ export function GatewayProvider({
         // 系统设置的模型配置与内核就绪检查。
         modelSettings: isDockerRuntime() ? 'http' : 'mock',
         agentRuntime: isDockerRuntime() ? 'http' : 'mock',
+        agentExtensions: isDockerRuntime() ? 'http' : 'mock',
       }),
     [gateway],
   )

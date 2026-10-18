@@ -1,3 +1,4 @@
+import type { AgentMCPCatalogProjection, AgentCapabilityRevocationQuery, AgentCapabilityRevocationPage, AgentMCPServer, AgentMCPServerInput, AgentUpdateMCPServerInput, AgentSkill, AgentSkillFilePreview, AgentSkillImportInput, AgentSkillImportTask, RuntimePage } from '@elysian/contracts'
 import type {
   PanelCommit,
   PanelInfo,
@@ -556,7 +557,35 @@ export interface PanelAdapter {
  ready(origin: string, id: string, signal?: AbortSignal): Promise<boolean>
 }
 
+export interface AgentExtensionsAdapter {
+  listSkills(signal?: AbortSignal): Promise<readonly AgentSkill[]>
+  getSkill(skillId: string, revision?: number, signal?: AbortSignal): Promise<AgentSkill>
+  /** Immutable revision only; binary and over-limit files return a descriptive preview state. */
+  getSkillFile(skillId: string, revision: number, path: string, signal?: AbortSignal): Promise<AgentSkillFilePreview>
+  listCapabilityRevocations(query?: AgentCapabilityRevocationQuery, signal?: AbortSignal): Promise<AgentCapabilityRevocationPage>
+  setSkillEnabled(skillId: string, expectedRevision: number, enabled: boolean): Promise<AgentSkill>
+  /** 删除技能（revision 走查询参数；登记容量触顶后的板内自助清理入口）。 */
+  deleteSkill(skillId: string, revision: number): Promise<void>
+  listSkillImports(query?: { cursor?: string; limit?: number }, signal?: AbortSignal): Promise<RuntimePage<AgentSkillImportTask>>
+  /** 导入异步任务：JSON 来源直接提交；archive 存在时按 multipart（metadata+archive 两段）。 */
+  createSkillImport(input: AgentSkillImportInput, archive?: Blob): Promise<AgentSkillImportTask>
+  getSkillImport(importId: string, signal?: AbortSignal): Promise<AgentSkillImportTask>
+  cancelSkillImport(importId: string): Promise<AgentSkillImportTask>
+  /** 删除已达终态的导入记录。 */
+  deleteSkillImportRecord(importId: string): Promise<void>
+  listMcpServers(signal?: AbortSignal): Promise<readonly AgentMCPServer[]>
+  createMcpServer(input: AgentMCPServerInput): Promise<AgentMCPServer>
+  /** 详情（revision 必填正整数）。 */
+  getMcpServer(serverId: string, revision: number, signal?: AbortSignal): Promise<AgentMCPServer>
+  updateMcpServer(serverId: string, input: AgentUpdateMCPServerInput): Promise<AgentMCPServer>
+  /** 现场探测（revision 必填）：受撤销表与派发守卫约束；结果未知的租约走审批域核实。 */
+  probeMcpServer(serverId: string, revision: number): Promise<AgentMCPCatalogProjection>
+  /** 读取已固定目录（revision 必填，digest 可选校验）。 */
+  getMcpCatalog(serverId: string, revision: number, digest?: string, signal?: AbortSignal): Promise<AgentMCPCatalogProjection>
+}
+
 export interface ElysianGateway {
+  agentExtensions: AgentExtensionsAdapter
   agentConversation: import('./agentChat').AgentConversationAdapter
   modelSettings: ModelSettingsAdapter
   agentRuntime: AgentRuntimeAdapter

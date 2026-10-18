@@ -1,3 +1,5 @@
+import { createHttpAgentExtensionsAdapter } from '../http/agent/agentExtensionsHttpAdapter'
+import { AgentExtensionsMockAdapter } from './agent/agentExtensionsMockAdapter'
 import { mockPanelAdapter } from './panelMock'
 import { createHttpPanelAdapter } from '../http/panelHttpAdapter'
 import type { ElysianGateway } from '../../contracts/adapters'
@@ -71,6 +73,7 @@ export function createGateway(
     panel?: 'mock' | 'http'
     modelSettings?: 'mock' | 'http'
     agentRuntime?: 'mock' | 'http'
+    agentExtensions?: 'mock' | 'http'
   } = {},
 ): ElysianGateway {
   const dataset = createMockDataset()
@@ -129,6 +132,7 @@ export function createGateway(
     dependencies,
     modelSettings,
     agentRuntime,
+    agentExtensions: options.agentExtensions === 'http' ? createHttpAgentExtensionsAdapter() : new AgentExtensionsMockAdapter(),
     events: attachDockerContainerWatch(
       useHttpContainers
         ? options.eventStream === 'memory'

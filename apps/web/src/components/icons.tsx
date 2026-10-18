@@ -58,6 +58,7 @@ export {
   MessagesSquare,
   Minus,
   Monitor,
+  MoreHorizontal,
   Moon,
   Music2,
   Package,

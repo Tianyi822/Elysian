@@ -4,6 +4,8 @@ export const SETTINGS_TABS = [
   { value: 'maintenance', label: '面板维护' },
   { value: 'account', label: '账号安全' },
   { value: 'models', label: '模型配置' },
+  { value: 'mcp', label: 'MCP 配置' },
+  { value: 'skills', label: 'Skill 配置' },
 ] as const
 export type SettingsTab = (typeof SETTINGS_TABS)[number]['value']
 
