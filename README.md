@@ -173,6 +173,10 @@ DeepSeek Chat 与 Messages 的思考开关及续接与展示回调无关，思�
 
 ### 技能、MCP 与执行配置
 
+Web 管理入口位于设置页「MCP 配置」与「Skill 配置」页签（`/settings?tab=mcp`、`/settings?tab=skills`）。页面管理服务与导入包，但不替某个聊天会话选用能力；MCP 探测显式发起，Skill 内容更新通过固定修订重新导入。非 Docker 开发使用确定性内存演示。
+
+MCP 表单支持 Streamable HTTP 与容器 stdio，已有 Token／环境变量不回显，保存时可保留、替换或显式清除；保存不连接服务，stdio 探测会启动容器。Skill 支持不超过 64 MiB 的 ZIP、HTTPS Git 与面板进程可见的绝对目录（Docker 下须已挂载），更新保留启用状态。导入记录支持取消和终态记录删除，每三秒同步活动任务；提交结果未知时保留原请求和输入，手动核对后复用请求编号。详情提供固定修订文件预览，二进制及超过 256 KiB 的文件不预览。Skill 删除移除全部修订登记、保留磁盘包和导入记录；界面不提供永久撤销操作。
+
 | 管理接口 | 用途 |
 | --- | --- |
 | `GET /skills`、`GET /skills/:id?revision=` | 技能最新公开修订或指定历史版本 |
