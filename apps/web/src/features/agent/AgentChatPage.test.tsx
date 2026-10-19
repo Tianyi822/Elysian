@@ -1082,3 +1082,14 @@ it('实时计划更新保持展开，等待回答时进度留在选择卡片上�
   act(() => output({ runId: 'run-1', responseId: 'm1', content: '', reasoning: '', done: false, timeline }))
   expect(screen.queryByRole('region', { name: '任务进度' })).not.toBeInTheDocument()
 })
+
+it('轮次之间显示模型与思考等级切换', async () => {
+  const backend = chatTestApi()
+  await backend.api.createTask('server-session', { requestId: 'switch-first', content: '第一轮' })
+  await backend.api.switchModel('server-session', { modelProfileId: chatVisionTestModel.id, modelRevision: chatVisionTestModel.revision })
+  await backend.api.createTask('server-session', { requestId: 'switch-second', content: '第二轮' })
+  backend.messages[0]!.runConfig = { modelName: 'test-model', modelService: '测试服务', modelProfileId: chatTestModel.id, modelRevision: 1, reasoningLevel: 'high' }
+  backend.messages[2]!.runConfig = { modelName: 'test-vision-model', modelService: '测试服务', modelProfileId: chatVisionTestModel.id, modelRevision: 1, reasoningLevel: 'low' }
+  renderChat(backend, '/agent?session=server-session', undefined, [chatTestModel, chatVisionTestModel])
+  expect(await screen.findByText('模型已切换 test-model（测试服务） → test-vision-model（测试服务） · 思考等级已切换 高 → 低')).toBeInTheDocument()
+})

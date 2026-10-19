@@ -67,12 +67,23 @@ type MessageAttachment struct {
 	Height   int    `json:"height"`
 }
 
+// MessageRunConfig 是消息所属 Run 固定下来的模型与思考等级快照，用于在公开历史中
+// 展示轮次边界上的切换；它只是展示事实，不参与会话续轮或能力判定。
+type MessageRunConfig struct {
+	ModelName      string `json:"modelName"`
+	ModelService   string `json:"modelService,omitempty"`
+	ModelProfileID string `json:"modelProfileId"`
+	ModelRevision  int    `json:"modelRevision"`
+	ReasoningLevel string `json:"reasoningLevel,omitempty"`
+}
+
 // Message 只含公开用户输入和助手答复，不承载工具过程或工作记忆。
 type Message struct {
 	ReplacesMessageID string              `json:"replacesMessageId,omitempty"`
 	Quarantined       bool                `json:"quarantined,omitempty"`
 	WikiSources       []WikiRef           `json:"wikiSources,omitempty"`
 	Attachments       []MessageAttachment `json:"attachments,omitempty"`
+	RunConfig         *MessageRunConfig   `json:"runConfig,omitempty"`
 	ID                string              `json:"id"`
 	SessionID         string              `json:"sessionId"`
 	TaskID            string              `json:"taskId"`

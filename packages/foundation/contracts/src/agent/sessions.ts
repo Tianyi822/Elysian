@@ -172,6 +172,16 @@ export type AgentMessageAttachment = {
   height: number
 }
 
+/** 消息所属 Run 固定的模型与思考等级快照，用于展示轮次边界上的切换；旧消息可能没有此字段。 */
+export type AgentMessageRunConfig = {
+  modelName: string
+  /** 模型所属服务名；独立配置的模型可能没有服务。 */
+  modelService?: string
+  modelProfileId: string
+  modelRevision: number
+  reasoningLevel?: string
+}
+
 /** 公开对话只包含用户输入和助手答复，不承载工具结果、工作记忆或隐藏推理。 */
 export type AgentMessage = {
   /** 被替换的原始消息；连续编辑保持此标识，便于增量读取移除旧轮。 */
@@ -182,6 +192,8 @@ export type AgentMessage = {
   wikiSources?: readonly AgentWikiRef[]
   /** 该轮用户消息随文发送的图片附件描述符；旧文档缺字段按不存在兼容。 */
   attachments?: readonly AgentMessageAttachment[]
+  /** 服务端按 Run 快照回填的模型与思考等级；旧记录缺少快照时回填空值，界面按未知处理。 */
+  runConfig?: AgentMessageRunConfig
   id: string
   sessionId: string
   taskId: string

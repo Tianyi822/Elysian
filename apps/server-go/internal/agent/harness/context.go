@@ -222,9 +222,11 @@ func (a *agentExecution) contextFacts(ctx context.Context, loadImages bool) (Wor
 		return memory, nil, nil, m.contextStoreErrorLocked(err)
 	}
 	// 最新计划独立于记忆覆盖游标，压力整理后仍带入下一次推理。
+	// 同时刷新本 Run 的用量：主动压缩要按剩余 token 预算判断有效容量，不能使用入队时的旧快照。
 	for _, run := range runs {
 		if run.ID == a.run.ID {
 			a.run.Plan = run.Plan
+			a.run.Usage = run.Usage
 		}
 	}
 	var imagePlans map[string]runImagePlan
@@ -520,6 +522,76 @@ func (a *agentExecution) runReasoningLevel() string {
 func (a *agentExecution) fits(request model.Request) bool {
 	return a.run.Model != nil && estimateRequest(request)+request.MaxTokens <= a.run.Model.ContextTokens
 }
+
+// autoCompactPercent 是主动上下文压缩的触发比例。有效容量取模型声明容量与剩余 Run token 预算
+// 的较小者：1M 上下文模型受默认 196608 token 预算约束，只看模型容量会让主动压缩永远无法触发；
+// 小模型则由自身 ContextTokens 先触发。触发发生在请求仍可容纳时，保留余量给整理请求与整理后的推理。
+const autoCompactPercent = 80
+
+// effectiveContextTokens 返回本轮还能承载的上下文估算上限。预算是按保守估算记账的，所以与
+// estimateRequest 使用同一单位；模型容量大于剩余预算时，Run 预算才是实际约束。
+func (a *agentExecution) effectiveContextTokens() int {
+	if a.run.Model == nil || a.run.Model.ContextTokens <= 0 {
+		return 0
+	}
+	capacity := a.run.Model.ContextTokens
+	if remaining := a.run.Limits.TokenBudget - a.run.Usage.Tokens; remaining < capacity {
+		capacity = remaining
+	}
+	if capacity < 1 {
+		return 0
+	}
+	return capacity
+}
+
+func (a *agentExecution) contextPressure(request model.Request) bool {
+	capacity := a.effectiveContextTokens()
+	if capacity == 0 {
+		return false
+	}
+	// Run 预算成为约束时，准入只按提示词估算记账，不预留 MaxTokens；此时把输出上限算进
+	// 压力会把「输出上限大于剩余预算」的普通多轮请求误判成满容量。模型容量成为约束时，
+	// 输出仍占用模型上下文，按 estimate+MaxTokens 判断。
+	if remaining := a.run.Limits.TokenBudget - a.run.Usage.Tokens; remaining < a.run.Model.ContextTokens {
+		return int64(estimateRequest(request))*100 >= int64(capacity)*autoCompactPercent
+	}
+	return int64(estimateRequest(request)+request.MaxTokens)*100 >= int64(capacity)*autoCompactPercent
+}
+
+// proactiveCompactionEligible 限定主动压缩只用于普通聊天 v2 Run。工作流实例有独立的步骤与实例
+// 预算，旧 v1 保持原行为；二者都不因这次优化多出模型请求。
+func (a *agentExecution) proactiveCompactionEligible() bool {
+	return a.DriverVersion() == 2 && a.run.WorkflowID == ""
+}
+
+// canProactivelyCompact 在真正压缩前确认压缩请求与随后的推理都还有预算。否则宁可本轮不压缩：
+// 压缩成功后才发现推理没有请求槽或 token，会把一个本来能完成的运行变成失败。
+func (a *agentExecution) canProactivelyCompact(request model.Request, baseEstimate, taskEstimate int) bool {
+	if a.run.Usage.ModelRequests+2 > a.run.Limits.MaxModelRequests-a.modelRequestReserve("checkpoint") {
+		return false
+	}
+	checkpoint := estimateRequest(request)
+	postCompact := checkpoint - taskEstimate
+	if postCompact < baseEstimate {
+		postCompact = baseEstimate
+	}
+	postCompact += a.run.Limits.MemoryBytes
+	return a.run.Usage.Tokens+checkpoint+postCompact <= a.run.Limits.TokenBudget
+}
+
+// compactableFacts 判定待整理事实是否包含模型答复或工具结果。只有本轮用户输入时不做主动整理：
+// 输入已完整位于上下文头部，压缩既腾不出空间，又会多消耗一次模型请求。
+func compactableFacts(groups []factGroup) bool {
+	for _, group := range groups {
+		for _, message := range group.messages {
+			if message.Role == "assistant" || message.Role == "tool" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func baseContext(a *agentExecution, memory WorkingMemory, system string, images []model.ImagePart) []model.Message {
 	inference := system == agentSystem
 	if system == agentSystem {
@@ -591,7 +663,17 @@ func capacityError() error {
 	return bad("context-capacity", "当前模型上下文容量不足以容纳原始目标、工作记忆与未整理事实，请切换到容量更大的模型")
 }
 
+type contextFallback struct {
+	request        model.Request
+	refs           []EvidenceRef
+	revision       int
+	wikiRefs       []WikiRef
+	contextItemIDs []string
+}
+
 func (a *agentExecution) buildContext(ctx context.Context) (model.Request, []EvidenceRef, int, error) {
+	compacted := false
+	var fallback *contextFallback
 	for {
 		memory, groups, shared, err := a.contextFacts(ctx, true)
 		if err != nil {
@@ -621,6 +703,7 @@ func (a *agentExecution) buildContext(ctx context.Context) (model.Request, []Evi
 		}
 		request := model.Request{Tools: visibleTools, MaxTokens: a.outputLimit(a.runReasoningLevel())}
 		sharedStart := 0
+		rebuild := false
 		for {
 			request.Messages = append(append(append(append([]model.Message{}, base...), wikiMessages...), shared...), taskMessages...)
 			if a.fits(request) {
@@ -634,6 +717,31 @@ func (a *agentExecution) buildContext(ctx context.Context) (model.Request, []Evi
 					a.inferenceWikiRefs = mergeWikiRefs(a.inferenceWikiRefs, sources)
 				}
 				request.EstimatedBreakdown = estimateFittedContext(request, a.run.Snapshot)
+				if !compacted && a.proactiveCompactionEligible() && a.contextPressure(request) && compactableFacts(groups) {
+					baseEstimate := estimateRequest(model.Request{Messages: base, Tools: visibleTools, MaxTokens: request.MaxTokens})
+					taskEstimate := estimateRequest(model.Request{Messages: taskMessages})
+					if a.canProactivelyCompact(request, baseEstimate, taskEstimate) {
+						saved := contextFallback{
+							request: request, refs: append([]EvidenceRef(nil), refs...), revision: memory.Revision,
+							wikiRefs: append([]WikiRef(nil), a.inferenceWikiRefs...), contextItemIDs: append([]string(nil), a.contextItemIDs...),
+						}
+						if request.EstimatedBreakdown != nil {
+							breakdown := *request.EstimatedBreakdown
+							saved.request.EstimatedBreakdown = &breakdown
+						}
+						updated, compactErr := a.consolidate(ctx, false)
+						if compactErr != nil && (ctx.Err() != nil || a.mustStop(compactErr)) {
+							return model.Request{}, nil, memory.Revision, compactErr
+						}
+						// 主动整理失败不推翻仍可容纳的本轮请求；下一轮达到阈值时会再次尝试。
+						if compactErr == nil && updated != nil && cursorAfter(updated.Coverage, memory.Coverage) {
+							fallback = &saved
+							compacted = true
+							rebuild = true
+							break
+						}
+					}
+				}
 				return request, refs, memory.Revision, nil
 			}
 			if len(shared) > 0 {
@@ -647,6 +755,16 @@ func (a *agentExecution) buildContext(ctx context.Context) (model.Request, []Evi
 			}
 			break
 		}
+		if rebuild {
+			continue
+		}
+		if fallback != nil {
+			// 整理已成功，但新的工作记忆比被替换的事实更大，重建请求装不下；
+			// 本轮回退到压缩前已验证可容纳的上下文，下一轮再使用新记忆。
+			a.inferenceWikiRefs = fallback.wikiRefs
+			a.contextItemIDs = fallback.contextItemIDs
+			return fallback.request, fallback.refs, fallback.revision, nil
+		}
 		if len(groups) == 0 {
 			return request, nil, memory.Revision, capacityError()
 		}
@@ -657,6 +775,7 @@ func (a *agentExecution) buildContext(ctx context.Context) (model.Request, []Evi
 		if updated == nil || !cursorAfter(updated.Coverage, memory.Coverage) {
 			return request, nil, memory.Revision, capacityError()
 		}
+		compacted = true
 	}
 }
 

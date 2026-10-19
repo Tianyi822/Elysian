@@ -31,6 +31,11 @@
 .chat-history { flex: 1; min-height: 0; overflow-y: auto; padding: 0 24px; }
 .chat-empty { display: flex; height: 100%; min-height: 220px; align-items: center; justify-content: center; flex-direction: column; padding-bottom: 36px; text-align: center; }
 .chat-messages { max-width: 800px; margin: 0 auto; padding: 36px 0 24px; }
+/* 轮次之间的模型/思考等级切换：居中细线说明，不占气泡布局。 */
+.chat-switch-notice { display: flex; align-items: center; gap: 12px; margin: 18px 0 8px; color: var(--t-fg-muted); font-size: 12px; line-height: 1.5; }
+.chat-switch-notice::before, .chat-switch-notice::after { content: ""; flex: 1 1 24px; min-width: 16px; height: 1px; background: var(--t-panel-line); }
+.chat-switch-notice > span { display: inline-flex; align-items: center; gap: 6px; min-width: 0; text-align: center; overflow-wrap: anywhere; }
+.chat-switch-notice svg { flex-shrink: 0; }
 /* 下间距用 padding 而非 margin：复制按钮的条带在行盒内部，鼠标从内容移向按钮
    全程都处于 :hover 范围，不存在离开内容按钮即消失的死区。
    条带 32px 高（按钮 24px 贴底 2px）：按钮上方留 6px 不贴正文，下方 6px 后接下一轮消息。 */

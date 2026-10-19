@@ -19,6 +19,7 @@ import { ChatApprovals } from './ChatApprovals'
 import { ChatExecutionScope } from './ChatExecutionScope'
 import { ChatResponse } from './ChatResponse'
 import { ChatPlan } from './ChatPlan'
+import { ChatSwitchNotice, chatSwitchNotice } from './ChatSwitchNotice'
 import { ChatTimeline } from './ChatTimeline'
 import { ChatUserInput } from './ChatUserInput'
 import { ChatUsageIndicator } from './ChatUsageIndicator'
@@ -312,13 +313,15 @@ export function AgentChatPage() {
         <p className="mt-3 text-sm text-fg-muted">选择模型，向 Ely 发送第一条消息。</p>
         {!!session?.messages.length && <p className="mt-3 text-xs text-fg-muted">本地预览消息未发送给模型。</p>}
       </div> : <div className="chat-messages" role="log" aria-label="会话消息">
-        {chat.messages.filter(message => message.role === 'user').map(message => {
+        {chat.messages.filter(message => message.role === 'user').map((message, index, users) => {
           const answer = chat.messages.find(item => item.runId === message.runId && item.role === 'assistant')
           const active = liveRunId === message.runId
           const stopped = (chat.run?.id === message.runId ? chat.run.status : message.runStatus) === 'cancelled'
           const editing = session?.editing?.messageId === message.id
           const live = (active || stopped) && chat.liveOutput?.runId === message.runId ? chat.liveOutput : null
+          const switchText = chatSwitchNotice(users[index - 1], message)
           return <Fragment key={message.id}>
+            {switchText && <ChatSwitchNotice text={switchText} />}
             <article className="chat-message" aria-label="你的消息">
               {editing ? <form className="chat-message-editor panel-surface" aria-label="编辑最后一条消息" onSubmit={event => { event.preventDefault(); resend() }}
                 onKeyDown={event => {

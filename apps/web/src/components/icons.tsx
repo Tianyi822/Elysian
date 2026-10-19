@@ -9,6 +9,7 @@ import { forwardRef, type SVGProps } from 'react'
 export type IconComponent = LucideIcon
 
 export {
+  ArrowLeftRight,
   ArrowUp,
   ArrowUpFromLine,
   BadgeCheck,

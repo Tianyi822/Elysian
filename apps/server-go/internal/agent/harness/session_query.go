@@ -90,7 +90,15 @@ func (s *store) messages(ctx context.Context, sessionID, after string, n int) (P
 	if cursor > last {
 		return Page[Message]{}, bad("future-cursor", "消息游标超过当前会话进度")
 	}
-	rows, err := s.db.QueryContext(ctx, "SELECT m.seq,json_set(m.document,'$.runStatus',r.state) FROM messages m JOIN runs r ON r.id=m.run_id WHERE m.session_id=? AND m.seq>? AND "+visibleRunSQL+" ORDER BY m.seq LIMIT ?", sessionID, cursor, limit+1)
+	// runConfig 从 Run 固定快照回填，旧消息无需迁移即可获得所属轮次的模型与思考等级；
+	// 模型已被删除或旧记录没有快照时字段为空，前端按未知处理。
+	rows, err := s.db.QueryContext(ctx, `SELECT m.seq,json_set(m.document,'$.runStatus',r.state,'$.runConfig',json_object(
+		'modelName',json_extract(r.document,'$.model.model'),
+		'modelService',json_extract(r.document,'$.model.service.name'),
+		'modelProfileId',json_extract(r.document,'$.model.id'),
+		'modelRevision',json_extract(r.document,'$.model.revision'),
+		'reasoningLevel',json_extract(r.document,'$.selection.reasoningLevel')
+	)) FROM messages m JOIN runs r ON r.id=m.run_id WHERE m.session_id=? AND m.seq>? AND `+visibleRunSQL+` ORDER BY m.seq LIMIT ?`, sessionID, cursor, limit+1)
 	if err != nil {
 		return Page[Message]{}, err
 	}
