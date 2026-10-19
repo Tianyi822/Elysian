@@ -139,7 +139,7 @@ Ely 采用左侧会话列表：进入聊天页不自动折叠主导航，继承�
 | `GET/POST /sessions`、`GET /sessions/:id` | 创建 `{title,modelProfileId,modelRevision}` 或查询会话；列表可加 `sort=activity` 按活动时间分页，后续页透传返回的 cursor，并可设置 limit；活动游标与缺省创建顺序的数字游标不能混用 |
 | `PUT /sessions/:id/model` | 空闲时提交 `{modelProfileId,modelRevision}` 切换模型，返回能力与缓存提示 |
 | `GET /sessions/:id/messages?after=&limit=`、`GET /sessions/:id/tasks` | 公开对话和任务分页 |
-| `POST /sessions/:id/tasks`、`POST /tasks/:id/runs` | 新任务或继续输入：`{requestId,content,permissionMode?,reasoningLevel?,skills?,resources?,prompts?}` |
+| `POST /sessions/:id/tasks`、`POST /tasks/:id/runs` | 新任务或继续输入：`{requestId,content,extensionMode?:"enabled",permissionMode?,reasoningLevel?,skills?,resources?,prompts?}` |
 | `GET /tools?sessionId=&domain=&available=` | 鉴权工具目录，返回元数据、选择状态与可用性 |
 | `GET /tasks/:id`、`GET /tasks/:id/memory?revision=`、`GET /runs/:id/model-requests` | 任务、工作记忆和模型过程；推理请求包含供应商返回的思考文本或公开摘要，不含签名、加密内容与 debug |
 | `GET/PUT /sessions/:id/environment` | 读取或以 `{expectedRevision,environment}` 更新会话环境，首次 expectedRevision 为 0，仅空闲时允许修改 |
@@ -147,7 +147,7 @@ Ely 采用左侧会话列表：进入聊天页不自动折叠主导航，继承�
 | `GET /approvals?runId=`、`POST /approvals/:id/decision` | 最多 200 条，可精确过滤 Run；决定为 `{decision:"approved"}` 或 `{decision:"denied"}` |
 | `GET /execution-barriers`、`POST /execution-barriers/:id/reconcile` | 最近 200 条执行屏障；核实提交 `{decision:"confirmed-completed"或"confirmed-stopped",evidence}` |
 
-一个 Session 包含多个 Task，一个 Task 可有多轮 Run。排队、执行、等待审批、资源或域任务以及整理期间会话保持忙碌，拒绝新输入与环境切换；已接受的同一请求可幂等回读。环境包含 `skills`、`servers`、`executionProfiles`、`grants` 的 `{id,revision,digest?}` 引用，以及 `tools`、`resources:[{serverId,uri}]`、`trustedReadOnly`。Bash 的 `profileId` 必须对应环境内已启用的 Bash 配置，`grantId` 只能引用本轮固定 grant；grant 的 `resources:[{domain,id,access}]` 授予精确平台目标，目录 grant 不授予平台管理权限。所有配置固定具体修订，MCP 目录固定 digest，后续修改不改变已接受 Run；派发前仍复核最新停用与撤销状态。技能和服务器未选入环境即不可使用；本轮资料选取也只能在固定范围内。MCP 提示仅由用户选择，其内容不成为系统指令。
+一个 Session 包含多个 Task，一个 Task 可有多轮 Run。排队、执行、等待审批、资源或域任务以及整理期间会话保持忙碌，拒绝新输入与环境切换；已接受的同一请求可幂等回读。环境包含 `skills`、`servers`、`executionProfiles`、`grants` 的 `{id,revision,digest?}` 引用，以及 `tools`、`resources:[{serverId,uri}]`、`trustedReadOnly`。Bash 的 `profileId` 必须对应环境内已启用的 Bash 配置，`grantId` 只能引用本轮固定 grant；grant 的 `resources:[{domain,id,access}]` 授予精确平台目标，目录 grant 不授予平台管理权限。所有配置固定具体修订，MCP 目录固定 digest，后续修改不改变已接受 Run；派发前仍复核最新停用与撤销状态。省略 `extensionMode` 时，技能和服务器仍须显式选入环境；普通聊天新建、续聊和编辑重发提交 `extensionMode:"enabled"`，在接受下一轮时自动固定最新已启用 Skill 和已有探测目录的 MCP 工具，覆盖手选旧工具修订，不写回会话环境。资源和提示模板继续显式选择并绑定原服务修订，工作流继续使用实例固定环境。本轮显式技能引用须匹配最终修订，MCP 提示内容不成为系统指令。浏览器 pending 保存精确请求；旧 pending 不补字段，相同 requestId 重试与审批恢复沿用原快照。
 
 模型设置按服务管理：名称、`provider`（`openai-compatible`、`deepseek` 或 `zhipu`）、`apiFormat`、`baseUrl`、`active` 与可选 `credential` 共用，每个服务可配置 1–64 个模型，各模型独立设置 `name`、`model`、`contextTokens`、`outputTokens`、`capabilities`（文本、工具调用、图片/视频/PDF 输入、JSON 结构化输出、原生联网搜索、系统消息、支持的推理等级与来源） 与 `enabled`。API 格式由用户选择 `chat-completions`、`anthropic-messages` 或 `responses`，均须显式声明；不迁移旧配置。整组新增、编辑、移除和共享凭据以一次 CAS 原子写入 `config/agent/models.json`，为各模型追加不可变修订。服务停用保留各模型开关，移除模型阻止新运行并保留历史修订。
 
@@ -173,7 +173,7 @@ DeepSeek Chat 与 Messages 的思考开关及续接与展示回调无关，思�
 
 ### 技能、MCP 与执行配置
 
-Web 管理入口位于设置页「MCP 配置」与「Skill 配置」页签（`/settings?tab=mcp`、`/settings?tab=skills`）。页面管理服务与导入包，但不替某个聊天会话选用能力；MCP 探测显式发起，Skill 内容更新通过固定修订重新导入。非 Docker 开发使用确定性内存演示。
+Web 管理入口位于设置页「MCP 配置」与「Skill 配置」页签（`/settings?tab=mcp`、`/settings?tab=skills`）。启用后的可用能力从普通聊天下一轮起进入自动目录，无需会话勾选；MCP 探测仍由管理员显式发起，发送消息只读本地配置和已保存目录，不连接服务或启动容器。Skill 内容更新通过固定修订重新导入。自动接入不添加执行配置、目录或网络授权，缺必要授权的 stdio 服务不进入可调用集合。不可用候选在 Run 快照 `automatic.unavailable` 保存脱敏原因，其他候选继续工作；显式指定的失效能力拒绝提交。非 Docker 开发使用确定性内存演示。
 
 MCP 表单支持 Streamable HTTP 与容器 stdio，已有 Token／环境变量不回显，保存时可保留、替换或显式清除；保存不连接服务，stdio 探测会启动容器。Skill 支持不超过 64 MiB 的 ZIP、HTTPS Git 与面板进程可见的绝对目录（Docker 下须已挂载），更新保留启用状态。导入记录支持取消和终态记录删除，每三秒同步活动任务；提交结果未知时保留原请求和输入，手动核对后复用请求编号。详情提供固定修订文件预览，二进制及超过 256 KiB 的文件不预览。Skill 删除移除全部修订登记、保留磁盘包和导入记录；界面不提供永久撤销操作。
 
@@ -191,7 +191,13 @@ MCP 表单支持 Streamable HTTP 与容器 stdio，已有 Token／环境变量�
 
 技能支持面板进程可见的绝对目录、ZIP 上传和 HTTPS Git。JSON 导入为 `{requestId,source:{kind:"directory",path},enabled}` 或 `{requestId,source:{kind:"git",url,ref,subdirectory?},enabled,credential?}`；Git 必须显式指定分支、标签或提交，服务端锁定完整提交。ZIP 使用 multipart/form-data，依次为 `metadata` JSON（source 为 `{kind:"zip"}`）和 `archive` 文件，拒绝第三部分。包根目录必须有带 YAML frontmatter 的 `SKILL.md`，必填 name、description，可含 license、compatibility、metadata、allowed-tools；名称采用小写字母数字和连字符。包在 `data/skills/packages/<digest>` 按内容保存，拒绝越界路径、链接、特殊文件和重复路径。导入只复制和校验，不执行技能代码、Git hooks 或 submodule；Git 需要面板运行环境安装 git，不支持 SSH Git、Git LFS 内容下载或依赖自动安装。导入任务重启后标 interrupted，不自动重做。
 
-Run 最初只得到技能名称与描述，可逐步加载 `SKILL.md` 和参考文件。新 Run 的固定工具目录超过 16 项时标记 `on-demand/v1`，首轮提供内核 `tool_search`，普通聊天同时常驻 `request_user_input` 与 `update_plan`；按中文或英文关键词、领域、精确名称搜索，每次默认加载 3 项、最多 5 项并支持分页，从下一次推理请求起提供匹配工具的完整定义。模型最多看到最近加载的 16 项及常驻内核入口，较旧定义可重新搜索；精确名称只匹配该名称。目录不超过 16 项时直接提供定义。主循环系统上下文给出工具总数、各域数量与各域能力边界（含明确不提供的能力），并对搜索设纪律：同一子目标连续搜索不超过两次，结果已穷尽时回执提示按能力边界判断、不要换关键词反复搜索，必要时用现有工具作答并说明该能力或数据不可得。成功搜索回执与每次请求的 `toolNames` 落盘，审批挂起、重启与工作记忆整理后保持一致，未加载工具不能被猜名调用。加载只影响定义可见性，实际调用继续核对固定快照、资源授权、停用撤销与审批；显式选取的技能、资源及提示模板仍由父端加载。旧快照保持原可见性语义，继续会话的新 Run 重新按需加载。机制参考 deepseek-harness 的 [progressive disclosure](https://github.com/deepseek-ai/deepseek-harness/blob/86a402200d95fecef4529d969836f1fe13c6cb0d/docs/cookbook/extension-cookbook.md)，细节见本地 [ADR-0034](docs/adr/0034-agent-on-demand-tools.md)。脚本必须位于包内 `scripts/`，执行前本 Task 已加载同修订 `SKILL.md`；脚本内容、镜像摘要、命令、目录/网络授权与工作区版本一并固定进审批。技能正文、MCP annotations 和输出都是资料，不会自行扩大权限；`allowed-tools` 仅是技能自述。启停阻止新 Run 选择该能力；永久撤销在派发前再次核对，旧快照和旧审批也不能绕过，已发生的外部副作用不因撤销而回滚。MCP 探测也核对持久撤销；启动在开放入口前恢复执行器拒绝表，撤销 MCP 服务或 grant 会关闭已有相关 stdio 容器和代理隧道，停止未确认时暂停派发。
+新 Run 使用 `on-demand/v2`，MCP 与技能工具始终搜索后加载；普通聊天常驻 `tool_search`、`request_user_input`、`update_plan`。内置工具不超过 16 项且完整定义符合预算时直接提供，否则也经搜索加载。搜索支持中英文关键词、领域、服务名、技能名、工具原名和精确名称，每次默认 3 项、最多 5 项并支持分页。从下一次推理请求起提供完整定义；先装入本批高排名结果，再保留可容纳的旧定义，动态集合最多 16 项且同时受大小预算限制。搜索回执说明实际加载、最终保留、淘汰、跳过原因及下一页，巨大 Schema 明确跳过而不截断。最终集合随成功回执落盘，审批、重启和整理后按原集合恢复；每次请求保存实际 `toolNames`，隐藏工具及同一响应“搜索后立即调用”均被拦截。主循环给出目录数量和领域边界，同一子目标连续搜索不超过两次；已穷尽时按能力边界说明不可得。
+
+预算按固定模型容量减去本次实际输出预留得到输入空间 `I`，复用思考等级和输出限额计算：技能索引 `min(2048,floor(I/16))`、完整工具定义（含常驻入口）`min(8192,floor(I/8))`、常驻技能正文 `min(16384,floor(I/4))`。快照记录 `local-text/v1` 本地估算版本与有效预算，最终请求继续经过保守容量检查；常驻入口无法容纳或合并目录超过既有条目／字节限额时，整个提交明确失败。没有新增配置页调参项。上下文浮层只统计实际发送的索引、正文和可见定义，本地估算不替代供应商实际用量。
+
+技能索引仅发送名称、修订及最多 160 个 Unicode 字符的描述，按本轮相关性、稳定 ID 排序，只放入能完整容纳的条目，未展示项仍可搜索。v2 读取工具使用 `action:list|read`：目录按路径分页，默认 50、最多 100 项；参考文件按字节 offset 分段，默认 16 KiB、最多 64 KiB，保持 UTF-8 边界并返回下一偏移，受工具回执字节限额约束；二进制明确不可读。每次读取验证完整文件摘要，Schema 不枚举全量路径，后端核对固定技能包清单。`SKILL.md` 必须完整读取，按 ID、修订和包摘要去重，重复读取返回已加载引用；超正文或结果预算返回可纠正错误，不写已加载事实。原文在 Task 内保留，整理后独立恢复一份；参考片段不成为常驻正文。续轮提交核算仍适用正文，小模型容纳不下时拒绝提交；编辑重发排除被替换轮次的加载事实。旧无标记及 `on-demand/v1` 快照、已接受操作仍按原语义执行，细节见本地 [ADR-0038](docs/adr/0038-agent-enabled-extensions-and-context-budgets.md) 与历史 [ADR-0034](docs/adr/0034-agent-on-demand-tools.md)。
+
+脚本必须位于包内 `scripts/`，执行前本 Task 已加载同 ID、修订和包摘要的 `SKILL.md`；路径、文件摘要、执行配置与 grant 由固定清单校验，脚本内容、镜像摘要、命令、目录／网络授权与工作区版本一并固定进审批。技能正文、MCP annotations 和输出不会扩大权限；`allowed-tools` 仅是技能自述。MCP 免审批信任须同时匹配别名、服务修订和目录摘要；旧环境缺摘要不推断信任，管理员显式保存环境时固定摘要，服务更新不继承旧信任。启停在下一轮更新目录，永久撤销在派发前核对，旧快照和审批不能绕过，已发生副作用不回滚。MCP 探测同样核对撤销；启动先恢复执行器拒绝表，撤销服务或 grant 会关闭相关 stdio 容器和代理隧道，停止未确认时暂停派发。
 
 普通聊天新 `agent/v2` Run 常驻 `update_plan`，复杂任务自动拆分并在执行中更新，简单问答无需计划。工具提交完整步骤列表（1–20 步，稳定 ID、最多 200 字名称及 pending / in_progress / completed 状态，最多一个进行中），由父进程在同一事务内保存 Run 的可选 `plan`、工具回执和恢复游标，沿用 SQLite schema8 与 JSONL 账本。最新计划独立于工作记忆注入后续推理，不扩大执行授权；无效参数可纠正，完成只依据确认结果，失败或停止不自动完成剩余步骤。时间线与输出 SSE 同步计划，输入框上方默认折叠显示完成数和当前步骤，点击原位展开最高 192px 的列表；等待回答时保留在选择卡片上方。每轮独立，新消息接受后旧计划转入对应历史，刷新和重新登录回读服务端事实；编辑重发排除旧轮公开计划，原记录保留。细节见本地 [ADR-0037](docs/adr/0037-agent-task-planning-and-progress.md)。
 
