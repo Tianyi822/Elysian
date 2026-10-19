@@ -104,7 +104,11 @@ func (a *agentExecution) selectedMaterials(ctx context.Context) (*worker.ModelRe
 	for _, ref := range input.Skills {
 		for _, c := range a.run.Snapshot.Tools {
 			if c.Source == "skill-load" && c.Ref.ID == ref.ID && c.Ref.Revision == ref.Revision {
-				add(c, json.RawMessage(`{"path":"SKILL.md"}`))
+				if a.run.Snapshot.ToolLoading == onDemandToolsV2 {
+					add(c, json.RawMessage(`{"action":"read","path":"SKILL.md"}`))
+				} else {
+					add(c, json.RawMessage(`{"path":"SKILL.md"}`))
+				}
 			}
 		}
 	}

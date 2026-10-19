@@ -40,6 +40,7 @@ type RenameSessionInput struct {
 }
 
 type AgentInput struct {
+	ExtensionMode    string          `json:"extensionMode,omitempty"`
 	PermissionMode   PermissionMode  `json:"permissionMode,omitempty"`
 	ReplaceMessageID string          `json:"replaceMessageId,omitempty"`
 	ReasoningLevel   string          `json:"reasoningLevel,omitempty"`

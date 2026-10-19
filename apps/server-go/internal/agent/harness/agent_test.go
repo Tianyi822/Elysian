@@ -667,13 +667,9 @@ func TestAgentTooSmallContextDoesNotSilentlyDropUncoveredHistory(t *testing.T) {
 	if _, err = m.SwitchSessionModel(context.Background(), s.ID, SwitchModelInput{ModelProfileID: p.ID, ModelRevision: p.Revision}); err != nil {
 		t.Fatal(err)
 	}
-	second, _, err := m.ContinueTask(context.Background(), first.TaskID, AgentInput{RequestID: "too-small-next", Content: "继续"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := runtimeFinished(t, m, second.ID)
-	if got.Status != StateFailed || inference.Load() != 1 {
-		t.Fatalf("容量不足却缺失事实继续推理：%+v count=%d", got, inference.Load())
+	_, _, err = m.ContinueTask(context.Background(), first.TaskID, AgentInput{RequestID: "too-small-next", Content: "继续"})
+	if err == nil || err.(*Error).Code != "tool-definition-budget" || inference.Load() != 1 {
+		t.Fatalf("容量不足仍接受新轮: %v count=%d", err, inference.Load())
 	}
 	memory, _ := m.Memory(context.Background(), first.TaskID, 0)
 	if memory.Revision != 0 {
@@ -756,7 +752,7 @@ func TestAgentChatCompletionsWireLoop(t *testing.T) {
 		reason := "stop"
 		switch index {
 		case 1:
-			if len(input.Tools) != 6 {
+			if len(input.Tools) != 7 {
 				t.Error("域工具白名单错误")
 			}
 			message["content"] = nil

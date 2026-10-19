@@ -66,8 +66,11 @@ func TestApprovalShutdownBeforeSuspensionAcknowledged(t *testing.T) {
 						case "workflow_finish":
 							return workflowFinishReply(workflowAgentTestOutput), nil
 						}
+						if missingOperationTools(request, "test_write") {
+							return searchReply("test"), nil
+						}
 						for _, message := range request.Messages {
-							if message.Role == "tool" {
+							if businessToolResult(request, message) {
 								return finalReply("操作已确认完成"), nil
 							}
 						}
@@ -135,7 +138,7 @@ func TestApprovalShutdownBeforeSuspensionAcknowledged(t *testing.T) {
 					before, readErr := persisted.get(ctx, runID)
 					closeErr := persisted.close()
 					expected := map[string]string{"pending": StateWaitingApproval, "approved": StateQueued, "cancelled": StateCancelled}[decision]
-					if readErr != nil || closeErr != nil || before.Status != expected || before.Resume == nil || before.Resume.ResponseID == "" || requests.Load() != 1 || proposals.Load() != 1 || calls.Load() != 0 {
+					if readErr != nil || closeErr != nil || before.Status != expected || before.Resume == nil || before.Resume.ResponseID == "" || requests.Load() != 2 || proposals.Load() != 1 || calls.Load() != 0 {
 						t.Fatalf("关机改写了已持久审批边界：%+v read=%v close=%v requests=%d proposals=%d calls=%d", before, readErr, closeErr, requests.Load(), proposals.Load(), calls.Load())
 					}
 					m, err = New(deps)
@@ -145,7 +148,7 @@ func TestApprovalShutdownBeforeSuspensionAcknowledged(t *testing.T) {
 					t.Cleanup(func() { _ = m.Close(context.Background()) })
 					if decision == "cancelled" {
 						got := runtimeFinished(t, m, runID)
-						if got.Status != StateCancelled || calls.Load() != 0 || requests.Load() != 1 {
+						if got.Status != StateCancelled || calls.Load() != 0 || requests.Load() != 2 {
 							t.Fatal("用户取消被挂起保留逻辑覆盖")
 						}
 						if workflow {
@@ -163,9 +166,9 @@ func TestApprovalShutdownBeforeSuspensionAcknowledged(t *testing.T) {
 						}
 					}
 					got := runtimeFinished(t, m, runID)
-					expectedRequests := int32(3)
+					expectedRequests := int32(4)
 					if workflow {
-						expectedRequests = 4
+						expectedRequests = 5
 						workflowWait(t, m, workflowID, StateSucceeded)
 					}
 					if got.Status != StateSucceeded || calls.Load() != 1 || proposals.Load() != 1 || requests.Load() != expectedRequests {

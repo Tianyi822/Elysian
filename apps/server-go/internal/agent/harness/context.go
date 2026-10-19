@@ -297,8 +297,12 @@ func (a *agentExecution) contextFacts(ctx context.Context, loadImages bool) (Wor
 			return memory, nil, nil, m.contextStoreErrorLocked(readErr)
 		}
 		materialSources := map[string]string{}
+		skillBodies := map[string]bool{}
 		for _, item := range items {
 			materialSources[item.CallID] = item.Source
+			if item.Source == "skill-load" && item.Path == "SKILL.md" {
+				skillBodies[item.CallID] = true
+			}
 		}
 		events, err := readDocuments[Event](ctx, m.store.db, "SELECT document FROM run_events WHERE run_id=? ORDER BY seq", run.ID)
 		if err != nil {
@@ -352,6 +356,9 @@ func (a *agentExecution) contextFacts(ctx context.Context, loadImages bool) (Wor
 					}
 				} else if run.ID == a.run.ID {
 					return memory, nil, nil, bad("invalid-agent-operation", "当前工具调用组尚未闭合")
+				}
+				if a.run.Snapshot != nil && a.run.Snapshot.ToolLoading == onDemandToolsV2 && found != nil && skillBodies[found.ID] {
+					content = `{"status":"skill-instruction-recorded","note":"适用于本轮的完整正文由独立技能上下文提供"}`
 				}
 				result := model.Message{Role: "tool", ToolCallID: callID, Content: content}
 				if found != nil {
@@ -529,7 +536,7 @@ func baseContext(a *agentExecution, memory WorkingMemory, system string, images 
 			system += "\n本轮可用工具目录摘要（服务端事实，total 不含内部搜索入口，domains 为各领域工具数量，notes 为各域能力边界（含不提供的能力））：" + string(inventory)
 		}
 		if a.onDemandTools() {
-			system += "\n工具按需加载：当前仅展示已加载工具的定义，不能把当前定义数量当作完整目录数量。需要具体能力时先调用 tool_search，以任务关键词、领域或精确工具名查找已授权能力；回答可用工具问题时依据本轮目录摘要，需要列举具体工具时先搜索核实。每次最多加载 5 项，从下一次请求起可调用；最多保留最近加载的 16 项，需要时可重新搜索。未出现在本次工具定义中的名称不可调用，不可在同一响应中搜索并调用尚未加载的工具。搜索只加载定义，不执行实际操作，也不扩大权限。同一子目标连续搜索不超过两次；搜索回执已注明该关键词是否已穷尽，目录摘要的 notes 说明某项能力不提供时，直接用已取到的工具结果作答并明确说明该能力或数据不可得，不要换关键词反复搜索同一目标。"
+			system += "\n工具按需加载：当前仅展示已加载工具的定义，不能把当前定义数量当作完整目录数量。需要具体能力时先调用 tool_search，以任务关键词、领域或精确工具名查找已授权能力；回答可用工具问题时依据本轮目录摘要，需要列举具体工具时先搜索核实。每次最多加载 5 项，从下一次请求起可调用；动态定义最多保留最近加载的 16 项，并受工具定义预算限制；搜索回执说明实际加载结果及未加载原因，需要时可重新搜索。未出现在本次工具定义中的名称不可调用，不可在同一响应中搜索并调用尚未加载的工具。搜索只加载定义，不执行实际操作，也不扩大权限。同一子目标连续搜索不超过两次；搜索回执已注明该关键词是否已穷尽，目录摘要的 notes 说明某项能力不提供时，直接用已取到的工具结果作答并明确说明该能力或数据不可得，不要换关键词反复搜索同一目标。"
 		}
 	}
 	memory.Objective = "" // 原始目标已由 Task 单独注入，不复制到摘要数据。
@@ -558,7 +565,7 @@ func baseContext(a *agentExecution, memory WorkingMemory, system string, images 
 		breakdown.Other += estimateContextText(workflowText)
 	}
 	if a.run.Snapshot != nil {
-		summaries, _ := json.Marshal(a.run.Snapshot.SkillSummaries)
+		summaries := a.run.Snapshot.skillIndex(a.run.Input)
 		prefix = "\n可用技能摘要（按需加载 SKILL.md，allowed-tools 不授予权限）："
 		header += prefix + string(summaries)
 		breakdown.Other += estimateContextText(prefix)
@@ -655,6 +662,9 @@ func (a *agentExecution) buildContext(ctx context.Context) (model.Request, []Evi
 
 // 技能正文是已加载的任务指令材料，记忆覆盖后仍保持原文；容量不足明确失败。
 func (a *agentExecution) loadedInstructions(ctx context.Context, factRefs []EvidenceRef) ([]model.Message, []EvidenceRef, []string, error) {
+	if a.run.Snapshot != nil && a.run.Snapshot.ToolLoading == onDemandToolsV2 {
+		return a.loadedInstructionsV2(ctx)
+	}
 	if a.run.Snapshot == nil {
 		return nil, nil, nil, nil
 	}

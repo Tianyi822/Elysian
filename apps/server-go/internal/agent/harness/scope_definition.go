@@ -197,6 +197,18 @@ func (m *Manager) validateWorkflowCapabilities(snapshot CapabilitySnapshot, prof
 	visit = func(body WorkflowBody) error {
 		for _, step := range body.Steps {
 			if step.Selection != nil {
+				if step.Selection.ExtensionMode != "" {
+					return bad("workflow-extension-mode", "工作流仅使用固定环境，不支持自动扩展模式")
+				}
+				if err := model.ValidateReasoningLevel(profile, step.Selection.ReasoningLevel); err != nil {
+					return err
+				}
+				if snapshot.ToolLoading == onDemandToolsV2 {
+					copy := snapshot
+					if err := configureLoadingBudget(&copy, Run{Model: &profile, Limits: m.deps.AgentLimits}, step.Selection.ReasoningLevel); err != nil {
+						return err
+					}
+				}
 				if err := m.validateSelection(snapshot, *step.Selection); err != nil {
 					return err
 				}

@@ -40,6 +40,7 @@ type Environment struct {
 	ResourceRules     []RevisionRef `json:"resourceRules,omitempty"`
 }
 type Capability struct {
+	SearchNames   []string        `json:"searchNames,omitempty"`
 	Metadata      tools.Metadata  `json:"metadata,omitempty"`
 	Name          string          `json:"name"`
 	Description   string          `json:"description"`
@@ -66,6 +67,9 @@ func (c Capability) MarshalJSON() ([]byte, error) {
 }
 
 type CapabilitySnapshot struct {
+	Automatic      *AutomaticExtensions `json:"automatic,omitempty"`
+	LoadingBudget  *LoadingBudget       `json:"loadingBudget,omitempty"`
+	EagerTools     []string             `json:"eagerTools,omitempty"`
 	PermissionMode PermissionMode       `json:"permissionMode,omitempty"`
 	PolicyVersion  string               `json:"policyVersion,omitempty"`
 	ToolLoading    string               `json:"toolLoading,omitempty"`
@@ -223,6 +227,9 @@ func (s CapabilitySnapshot) modelTools() []model.Tool {
 func (s CapabilitySnapshot) visibleModelTools(loaded map[string]bool) []model.Tool {
 	out := make([]model.Tool, 0, len(s.Tools))
 	for _, c := range s.Tools {
+		if s.ToolLoading == onDemandToolsV2 && !residentCapability(c) && !contains(s.EagerTools, c.Name) && !loaded[c.Name] {
+			continue
+		}
 		if s.ToolLoading == onDemandTools && c.Source != toolDiscoverySource && c.Source != userInputSource && c.Source != planSource && !loaded[c.Name] {
 			continue
 		}

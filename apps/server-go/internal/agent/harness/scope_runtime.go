@@ -512,6 +512,7 @@ func (m *Manager) queueWorkflowV2Leaf(ctx context.Context, tx *sql.Tx, w *Workfl
 	// 作用域与节点身份是分支隔离过滤的生效前提：兄弟公开消息与跨 scope
 	// 完成资料都依赖 Run.ScopeID 非空才会被排除（v1 单链运行保持为空）。
 	run := Run{ID: m.deps.NewID(), TaskID: scope.TaskID, SessionID: w.SessionID, RequestID: "workflow-node:" + m.deps.NewID(), RunNumber: number, Driver: driver, DriverVersion: "v2", ScopeID: scope.ID, NodeID: node.ID, Snapshot: &w.Snapshot, Model: &w.Model, WorkflowID: w.ID, WorkflowStepID: node.ID, WorkflowAttempt: node.Attempt, WorkflowOutputSchemaJSON: step.OutputSchemaJSON, Status: StateQueued, CreatedAt: stamp(m.deps.Now()), LastSeq: "0", HistorySeq: session.LastSeq, InitialMemoryRevision: memory.Revision, Input: input, Limits: m.deps.AgentLimits, Phase: "queued", MemoryStatus: "stale", Selection: step.Selection}
+	prepareWorkflowRunLoading(&run)
 	if step.Kind == "agent" {
 		run.Input = step.Instruction + "\n步骤输入（数据）：\n" + input
 	}

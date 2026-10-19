@@ -105,11 +105,17 @@ type toolSearchMatch struct {
 }
 
 type toolSearchResult struct {
-	Version        string            `json:"version"`
-	SnapshotDigest string            `json:"snapshotDigest"`
-	Matches        []toolSearchMatch `json:"matches"`
-	Total          int               `json:"total"`
-	NextOffset     *int              `json:"nextOffset,omitempty"`
+	Loaded          []string            `json:"loaded"`
+	Retained        []string            `json:"retained"`
+	Skipped         []toolSearchSkipped `json:"skipped,omitempty"`
+	Evicted         []string            `json:"evicted,omitempty"`
+	BudgetTokens    int                 `json:"budgetTokens,omitempty"`
+	EstimatedTokens int                 `json:"estimatedTokens,omitempty"`
+	Version         string              `json:"version"`
+	SnapshotDigest  string              `json:"snapshotDigest"`
+	Matches         []toolSearchMatch   `json:"matches"`
+	Total           int                 `json:"total"`
+	NextOffset      *int                `json:"nextOffset,omitempty"`
 	// Note 在结果已穷尽时给出停止搜索的明确信号，避免模型换关键词反复搜索同一目标。
 	Note string `json:"note,omitempty"`
 }
@@ -145,7 +151,7 @@ func searchTools(snapshot CapabilitySnapshot, raw json.RawMessage) (CapabilityRe
 		if exact && strings.ToLower(c.Name) != query && strings.ToLower(c.OriginalName) != query {
 			continue
 		}
-		name := strings.ToLower(c.Name + " " + c.OriginalName)
+		name := strings.ToLower(c.Name + " " + c.OriginalName + " " + strings.Join(c.SearchNames, " "))
 		text := strings.ToLower(c.Description)
 		domain := strings.ToLower(c.Metadata.Domain + " " + c.Source + " " + discoveryDomainKeywords(c.Metadata.Domain, c.Source))
 		score := 0
@@ -227,12 +233,19 @@ func discoveryDomainKeywords(domain, source string) string {
 }
 
 func (a *agentExecution) onDemandTools() bool {
-	return a.run.DriverVersion == "v2" && a.run.Snapshot != nil && a.run.Snapshot.ToolLoading == onDemandTools
+	return a.run.DriverVersion == "v2" && a.run.Snapshot != nil && (a.run.Snapshot.ToolLoading == onDemandTools || a.run.Snapshot.ToolLoading == onDemandToolsV2)
 }
 
 // 从已确认的内核搜索回执恢复可见集，不依赖会被整理的消息窗口或模型工作记忆。
 func (a *agentExecution) loadedToolNames(ctx context.Context) (map[string]bool, error) {
 	loaded := map[string]bool{}
+	if a.run.Snapshot.ToolLoading == onDemandToolsV2 {
+		names, err := a.manager.loadedToolsV2(ctx, a.run.ID, *a.run.Snapshot)
+		for _, name := range names {
+			loaded[name] = true
+		}
+		return loaded, err
+	}
 	rows, err := a.manager.store.db.QueryContext(ctx, `SELECT c.document FROM calls c JOIN operations o ON o.id=json_extract(c.document,'$.operationId') WHERE c.run_id=? AND c.state='succeeded' AND o.state='completed' AND json_extract(o.document,'$.capability.source')=? AND json_extract(o.document,'$.snapshotDigest')=? ORDER BY c.rowid DESC`, a.run.ID, toolDiscoverySource, a.run.Snapshot.Digest)
 	if err != nil {
 		return nil, storageFailure(err)

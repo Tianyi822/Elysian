@@ -215,6 +215,7 @@ describe('智能体本地会话', () => {
     expect(await store.getState().send(backend.api, chatTestModel)).toBe(false)
     const pending = store.getState().session?.pending
     expect(pending?.input.permissionMode).toBe('full')
+    expect(pending?.input.extensionMode).toBe('enabled')
     store.getState().setPermissionMode('ask')
     expect(store.getState().session?.permissionMode).toBe('full')
     await store.getState().send(backend.api, chatTestModel)
@@ -259,7 +260,7 @@ describe('智能体本地会话', () => {
     expect(store.getState().session?.editing).toBeUndefined()
     expect(store.getState().messages.map(message => message.content)).toEqual(['第一问', '你好，我是 Ely。', '修改第二问'])
     expect(store.getState().reasoning['run-2']).toBeUndefined()
-    expect(backend.api.continueTask).toHaveBeenLastCalledWith('task-1', expect.objectContaining({ content: '修改第二问', replaceMessageId: 'message-3' }))
+    expect(backend.api.continueTask).toHaveBeenLastCalledWith('task-1', expect.objectContaining({ content: '修改第二问', replaceMessageId: 'message-3', extensionMode: 'enabled' }))
     await other.getState().refresh(backend.api)
     expect(other.getState().messages).toEqual(store.getState().messages)
     const restored = local.makeStore()
@@ -1153,7 +1154,7 @@ describe('基本聊天', () => {
     backend.complete()
     await store.getState().refresh(backend.api)
     expect(await store.getState().send(backend.api, chatVisionTestModel)).toBe(true)
-    expect(backend.api.continueTask).toHaveBeenCalledWith('task-1', expect.objectContaining({ content: '下一轮', reasoningLevel: 'low' }))
+    expect(backend.api.continueTask).toHaveBeenCalledWith('task-1', expect.objectContaining({ content: '下一轮', reasoningLevel: 'low', extensionMode: 'enabled' }))
   })
 
   it('流式预览不写历史，最终回读原位确认，离开会话后忽略迟到增量', async () => {

@@ -55,11 +55,11 @@ func TestOperationApprovesAndLocksBeforeStartingCatalogueCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := runtimeFinished(t, m, run.ID)
-	if got.EndReason != "mcp-catalog-changed" || got.Usage.Calls != 1 || checks.Load() != 1 || business.Load() != 0 {
+	if got.EndReason != "mcp-catalog-changed" || got.Usage.Calls != 2 || checks.Load() != 1 || business.Load() != 0 {
 		t.Fatalf("failed catalogue check executed business or reset budget: %+v", got)
 	}
 	leases, err := m.ResourceLeases(ctx)
-	if err != nil || len(leases) != 1 || leases[0].State != "released" {
+	if err != nil || len(leases) != 2 || leases[0].State != "released" || leases[1].State != "released" {
 		t.Fatalf("confirmed process stop did not release lease: %+v %v", leases, err)
 	}
 	barriers, err := m.Barriers(ctx)
@@ -111,7 +111,7 @@ func TestResourceConflictDoesNotStartAnotherCatalogueGeneration(t *testing.T) {
 	if got := runtimeFinished(t, m, first.ID); got.Status != StateSucceeded {
 		t.Fatalf("holder failed: %+v", got)
 	}
-	if got := runtimeFinished(t, m, second.ID); got.Status != StateSucceeded || got.Usage.Calls != 1 {
+	if got := runtimeFinished(t, m, second.ID); got.Status != StateSucceeded || got.Usage.Calls != 2 {
 		t.Fatalf("waiter did not resume exactly once: %+v", got)
 	}
 	if checks.Load() != 2 {

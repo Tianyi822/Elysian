@@ -84,8 +84,12 @@ func (a *agentExecution) validateProposal(name string, args json.RawMessage) err
 func (m *Manager) validateSelection(s CapabilitySnapshot, input AgentInput) error {
 	for _, r := range input.Skills {
 		ok := false
-		for _, allowed := range s.Environment.Skills {
-			if r.ID == allowed.ID && r.Revision == allowed.Revision {
+		allowedSkills := s.Environment.Skills
+		if s.Automatic != nil {
+			allowedSkills = s.Automatic.Skills
+		}
+		for _, allowed := range allowedSkills {
+			if r.ID == allowed.ID && r.Revision == allowed.Revision && (r.Digest == "" || r.Digest == allowed.Digest) {
 				ok = true
 			}
 		}
@@ -135,6 +139,9 @@ func trusted(s CapabilitySnapshot, c Capability) bool {
 	}
 	if !c.ReadOnly || c.Source == "script" {
 		return false
+	}
+	if s.ToolLoading == onDemandToolsV2 && (c.Source == "mcp-tool" || c.Source == "mcp-resource" || c.Source == "mcp-prompt") {
+		return c.ReadOnly
 	}
 	for _, name := range s.Environment.TrustedReadOnly {
 		if name == c.Name {
@@ -299,6 +306,19 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		for _, item := range items {
 			if item.Source == "skill-load" && item.Path == "SKILL.md" && item.Ref == c.Ref {
 				loaded = true
+			}
+		}
+		if a.run.Snapshot.ToolLoading == onDemandToolsV2 {
+			valid, readErr := m.effectiveSkills(ctx, run)
+			if readErr != nil {
+				m.mu.Unlock()
+				return readErr
+			}
+			loaded = false
+			for _, item := range valid {
+				if item.Item.Ref == c.Ref {
+					loaded = true
+				}
 			}
 		}
 		if !loaded {
@@ -654,7 +674,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		if err := saveCall(dbCtx, tx, call); err != nil {
 			return err
 		}
-		if result.r.Context != nil && !result.r.Unknown && result.e == nil {
+		if result.r.Context != nil && !result.r.Unknown && result.e == nil && call.Status == StateSucceeded && call.Error == nil {
 			item := *result.r.Context
 			item.ID = m.deps.NewID()
 			item.RunID = r.ID

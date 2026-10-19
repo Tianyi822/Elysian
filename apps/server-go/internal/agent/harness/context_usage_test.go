@@ -164,7 +164,7 @@ func TestContextUsageClippedSharedConversationDoesNotLeaveWeights(t *testing.T) 
 		}
 		return finalReply("完成"), nil
 	}, nil)
-	first := runtimeFinished(t, m, submitAgentTest(t, m, session, "context-usage-first", strings.Repeat(marker, 300)).ID)
+	first := runtimeFinished(t, m, submitAgentTest(t, m, session, "context-usage-first", strings.Repeat(marker, 600)).ID)
 	if first.Status != StateSucceeded {
 		t.Fatalf("first=%+v", first.Error)
 	}
@@ -174,7 +174,7 @@ func TestContextUsageClippedSharedConversationDoesNotLeaveWeights(t *testing.T) 
 	}
 	a := &agentExecution{manager: m, run: run}
 	a.run.Limits.OutputTokens = 128
-	a.run.Model.ContextTokens = 8000
+	a.run.Model.ContextTokens = 10000
 	request, _, _, err := a.buildContext(context.Background())
 	if err != nil {
 		t.Fatal(err)

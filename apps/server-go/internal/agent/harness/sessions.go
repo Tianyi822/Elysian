@@ -347,6 +347,9 @@ func (m *Manager) ContinueTask(ctx context.Context, taskID string, input AgentIn
 }
 
 func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentInput, newTask bool) (Run, bool, error) {
+	if input.ExtensionMode != "" && input.ExtensionMode != "enabled" {
+		return Run{}, false, bad("invalid-extension-mode", "扩展模式只能为 enabled 或省略")
+	}
 	if _, err := normalizePermissionMode(input.PermissionMode); err != nil {
 		return Run{}, false, err
 	}
@@ -364,6 +367,7 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 		operation = "create-task"
 	}
 	raw, _ := json.Marshal(struct {
+		ExtensionMode    string          `json:"extensionMode,omitempty"`
 		Operation        string          `json:"operation"`
 		TargetID         string          `json:"targetId"`
 		Content          string          `json:"content"`
@@ -374,7 +378,7 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 		ReasoningLevel   string          `json:"reasoningLevel,omitempty"`
 		ReplaceMessageID string          `json:"replaceMessageId,omitempty"`
 		PermissionMode   PermissionMode  `json:"permissionMode,omitempty"`
-	}{operation, targetID, input.Content, input.Skills, input.Resources, input.Prompts, input.Attachments, input.ReasoningLevel, input.ReplaceMessageID, canonicalPermissionMode(input.PermissionMode)})
+	}{input.ExtensionMode, operation, targetID, input.Content, input.Skills, input.Resources, input.Prompts, input.Attachments, input.ReasoningLevel, input.ReplaceMessageID, canonicalPermissionMode(input.PermissionMode)})
 	canonical := string(raw)
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -461,7 +465,7 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 	if err != nil {
 		return Run{}, false, storageFailure(err)
 	}
-	snapshot, err := m.snapshot(ctx, env)
+	snapshot, err := m.snapshotForAgent(ctx, env, input.ExtensionMode)
 	if err != nil {
 		return Run{}, false, err
 	}
@@ -471,6 +475,14 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 	snapshot.PermissionMode, _ = normalizePermissionMode(input.PermissionMode)
 	snapshot.Tools = append(snapshot.Tools, userInputCapability(), planCapability())
 	snapshot.PolicyVersion = PermissionPolicyVersion
+	if err = finalizeLoading(&snapshot, run, input.ReasoningLevel, env); err != nil {
+		return Run{}, false, err
+	}
+	run.Selection = &input
+	run.Snapshot = &snapshot
+	if err = m.checkRetainedSkillBudget(ctx, run); err != nil {
+		return Run{}, false, err
+	}
 	snapshot.Digest = ""
 	snapshot.Digest = digestJSON(snapshot)
 	run.DriverVersion = "v2"

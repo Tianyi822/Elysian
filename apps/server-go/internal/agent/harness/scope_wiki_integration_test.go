@@ -152,6 +152,9 @@ func TestWorkflowV2WikiParallelForeachApprovalSubworkflowAndPublishedRecall(t *t
 			return finalReply("已读取规则并固定两项检查输入"), nil
 		}
 		if isVerify {
+			if missingOperationTools(request, "test_read") {
+				return searchReply("test_read"), nil
+			}
 			if !strings.Contains(header, "child-verifier-v1") || strings.Contains(header, "child-verifier-v2") || !strings.Contains(header, orderedItems) || !strings.Contains(header, `"applied":true`) || !strings.Contains(header, "combo-plan-memory") {
 				t.Errorf("child lost accepted definition, ordered inputs, action or inherited memory: %s", header)
 			}
@@ -197,6 +200,7 @@ func TestWorkflowV2WikiParallelForeachApprovalSubworkflowAndPublishedRecall(t *t
 		t.Fatal(err)
 	}
 	env.TrustedReadOnly = []string{"test_read"}
+	env.Servers = []RevisionRef{{ID: "fixture-server", Revision: 1, Digest: strings.Repeat("a", 64)}}
 	env.ResourceRules = []RevisionRef{{ID: rule.ID, Revision: rule.Revision, Digest: rule.Digest}}
 	if _, err = m.PutEnvironment(ctx, source.ID, env.Revision, env); err != nil {
 		t.Fatal(err)

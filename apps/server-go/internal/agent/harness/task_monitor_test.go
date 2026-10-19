@@ -63,13 +63,13 @@ func TestUnknownSubmissionReconcilesByStableRequestWithoutReplay(t *testing.T) {
 	}
 	runtimeEventually(t, func() bool {
 		operations, err := m.Operations(ctx, run.ID)
-		return err == nil && len(operations) == 1 && operations[0].Task != nil && *operations[0].Task == reference
+		return err == nil && len(operations) == 2 && operations[1].Task != nil && *operations[1].Task == reference
 	})
 	m = reopenOperationManager(t, m)
 	complete.Store(true)
 	runtimeEventually(t, func() bool {
 		operations, err := m.Operations(ctx, run.ID)
-		return err == nil && len(operations) == 1 && operations[0].Status == "completed"
+		return err == nil && len(operations) == 2 && operations[1].Status == "completed"
 	})
 	if submissions.Load() != 1 {
 		t.Fatalf("unknown submission replayed %d times", submissions.Load())
@@ -170,13 +170,13 @@ func TestCancelledRunKeepsAcceptedDomainTaskUntilTerminal(t *testing.T) {
 		t.Fatal(err)
 	}
 	operations, err := m.Operations(ctx, run.ID)
-	if err != nil || len(operations) != 1 || operations[0].Status != StateWaitingTask {
+	if err != nil || len(operations) != 2 || operations[1].Status != StateWaitingTask {
 		t.Fatalf("run stop lost domain tracking: %+v %v", operations, err)
 	}
 	complete.Store(true)
 	runtimeEventually(t, func() bool {
 		operations, err := m.Operations(ctx, run.ID)
-		return err == nil && len(operations) == 1 && operations[0].Status == "completed"
+		return err == nil && len(operations) == 2 && operations[1].Status == "completed"
 	})
 	current, err := m.Get(ctx, run.ID)
 	if err != nil || current.Status != StateCancelled {
@@ -278,7 +278,9 @@ func TestUnknownCancellationReconcilesFromKnownTaskID(t *testing.T) {
 	m, session, _ := agentManager(t, func(ctx context.Context, profile model.Profile, request model.Request) (model.Response, error) {
 		response, err := client(ctx, profile, request)
 		for i := range response.ToolCalls {
-			response.ToolCalls[i].Arguments = json.RawMessage(`{"taskId":"cancel-target-task"}`)
+			if response.ToolCalls[i].Name == "test_write" {
+				response.ToolCalls[i].Arguments = json.RawMessage(`{"taskId":"cancel-target-task"}`)
+			}
 		}
 		return response, err
 	}, func(d *Deps) {
@@ -302,7 +304,7 @@ func TestUnknownCancellationReconcilesFromKnownTaskID(t *testing.T) {
 	runtimeFinished(t, m, run.ID)
 	runtimeEventually(t, func() bool {
 		operations, err := m.Operations(ctx, run.ID)
-		return err == nil && len(operations) == 1 && operations[0].Status == "completed" && operations[0].Task != nil && *operations[0].Task == reference
+		return err == nil && len(operations) == 2 && operations[1].Status == "completed" && operations[1].Task != nil && *operations[1].Task == reference
 	})
 	if lookups.Load() != 1 {
 		t.Fatalf("known cancellation target lookup count=%d", lookups.Load())

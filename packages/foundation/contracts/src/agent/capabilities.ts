@@ -29,6 +29,7 @@ export type AgentEnvironment = {
 }
 export type AgentJSONSchema = boolean | Readonly<Record<string, RuntimeJSONValue>>
 export type AgentCapability = {
+  searchNames?: readonly string[]
   metadata?: AgentToolMetadata
   name: string
   description: string
@@ -42,7 +43,20 @@ export type AgentCapability = {
 }
 export type AgentSkillSummary = { ref: AgentRevisionRef; name: string; description: string }
 export type AgentCapabilitySnapshot = {
-  toolLoading?: 'on-demand/v1'
+  toolLoading?: 'on-demand/v1' | 'on-demand/v2'
+  automatic?: {
+    source: 'enabled'
+    skills: readonly AgentRevisionRef[]
+    servers: readonly AgentRevisionRef[]
+    unavailable: readonly { kind: 'skill' | 'mcp'; id?: string; revision?: number; code: string; reason: string }[]
+  }
+  loadingBudget?: {
+    estimator: 'local-text/v1'
+    skillIndexTokens: number
+    toolDefinitionTokens: number
+    skillBodyTokens: number
+  }
+  eagerTools?: readonly string[]
   permissionMode?: AgentPermissionMode
   policyVersion?: string
   environment: AgentEnvironment

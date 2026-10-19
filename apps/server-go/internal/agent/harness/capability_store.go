@@ -93,17 +93,32 @@ func (m *Manager) PutEnvironment(ctx context.Context, id string, expected int, e
 	return e, storageFailure(err)
 }
 func (m *Manager) snapshot(ctx context.Context, e Environment) (CapabilitySnapshot, error) {
+	return m.snapshotWithMode(ctx, e, false)
+}
+
+func (m *Manager) snapshotWithMode(ctx context.Context, e Environment, modern bool) (CapabilitySnapshot, error) {
 	var s CapabilitySnapshot
 	var err error
 	if m.deps.Catalog != nil {
-		s, err = m.deps.Catalog.Snapshot(ctx, e)
+		if extensions, ok := m.deps.Catalog.(*Extensions); ok {
+			s, err = extensions.snapshot(ctx, e, modern)
+		} else {
+			s, err = m.deps.Catalog.Snapshot(ctx, e)
+		}
 		if err != nil {
 			return s, err
 		}
 	} else if len(e.Skills)+len(e.Servers)+len(e.ExecutionProfiles)+len(e.Grants) > 0 {
 		return s, bad("capability-unavailable", "扩展能力尚未配置")
 	}
+	fixedSkills, fixedServers := s.Environment.Skills, s.Environment.Servers
 	s.Environment = e
+	if fixedSkills != nil {
+		s.Environment.Skills = fixedSkills
+	}
+	if fixedServers != nil {
+		s.Environment.Servers = fixedServers
+	}
 	if len(e.ResourceRules) > 128 {
 		return s, bad("environment-limit", "资源规则不能超过 128 条")
 	}

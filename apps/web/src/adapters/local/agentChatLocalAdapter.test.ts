@@ -7,6 +7,18 @@ const session = (): AgentChatSession => ({ id: 'session-1', createdAt: '2026-10-
 afterEach(() => { localStorage.clear(); vi.restoreAllMocks() })
 
 describe('浏览器会话存储', () => {
+  it.each([undefined, 'enabled'] as const)('pending 原样保留扩展模式 %s，刷新不补写旧请求', extensionMode => {
+    const input = { requestId: 'fixed-request', content: '原消息', ...(extensionMode ? { extensionMode } : {}) }
+    const adapter = createAgentChatLocalAdapter()
+    adapter.write({ ...session(), pending: { input } })
+    expect(createAgentChatLocalAdapter().read()?.pending?.input).toEqual(input)
+  })
+
+  it('拒绝未知扩展模式的持久化请求', () => {
+    localStorage.setItem(AGENT_CHAT_RECORD_PREFIX + 'session-1', JSON.stringify({ ...session(), pending: { input: { requestId: 'fixed', content: '输入', extensionMode: 'invalid' } } }))
+    expect(createAgentChatLocalAdapter().read('session-1')).toBeNull()
+  })
+
   it.each(['assist', 'full'] as const)('旧版 %s 预览迁回 ask，保留草稿附件和精确重试', mode => {
     const legacy = { ...session(), permissionVersion: undefined, permissionMode: mode, pending: { input: { requestId: 'original', content: '原输入' } }, attachments: [{ id: 'local', name: 'a.png', size: 10, type: 'image/png', lastModified: 0, available: false }] }
     localStorage.setItem(AGENT_CHAT_RECORD_PREFIX + 'session-1', JSON.stringify(legacy))

@@ -104,7 +104,7 @@ func TestToolDiscoveryApprovalRestartRestoresVisibilityWithoutReplay(t *testing.
 		names := toolNames(request)
 		switch inference.Add(1) {
 		case 1, 4:
-			if len(names) != 3 || !contains(names, toolSearchName) || !contains(names, userInputTool) || !contains(names, planTool) {
+			if len(names) != 7 || !contains(names, toolSearchName) || !contains(names, userInputTool) || !contains(names, planTool) {
 				t.Errorf("initial request injected full catalog: %v", names)
 			}
 			if inference.Load() == 4 {
@@ -112,12 +112,12 @@ func TestToolDiscoveryApprovalRestartRestoresVisibilityWithoutReplay(t *testing.
 			}
 			return searchReply("test_write"), nil
 		case 2:
-			if len(names) != 4 || !contains(names, "test_write") {
+			if len(names) != 8 || !contains(names, "test_write") {
 				t.Errorf("search did not load exact tool: %v", names)
 			}
 			return toolReply("test_write"), nil
 		default:
-			if len(names) != 4 || !contains(names, "test_write") {
+			if len(names) != 8 || !contains(names, "test_write") {
 				t.Errorf("restart lost loaded tools: %v", names)
 			}
 			return finalReply("操作完成"), nil
@@ -194,6 +194,10 @@ func TestToolDiscoveryRestoresOnlyConfirmedCurrentRunLoadsAndCapsDefinitions(t *
 	}, func(d *Deps) { d.Catalog = &discoveryTestCatalog{} })
 	run := submitAgentTest(t, m, session, "restore-tools", "无需调用")
 	run = runtimeFinished(t, m, run.ID)
+	// v1 已保存回执保留原恢复算法。
+	run.Snapshot.ToolLoading = onDemandTools
+	run.Snapshot.EagerTools = nil
+	run.Snapshot.LoadingBudget = nil
 	a := &agentExecution{manager: m, run: run}
 	ctx := context.Background()
 	writeLoad := func(index int, names []string, change func(*Call, *Operation, *toolSearchResult)) {
@@ -280,9 +284,9 @@ func (c *discoveryMaterialsCatalog) Snapshot(ctx context.Context, env Environmen
 	snapshot, err := c.discoveryTestCatalog.Snapshot(ctx, env)
 	snapshot.Tools = append(snapshot.Tools,
 		Capability{Name: "selected_skill", Source: "skill-load", Ref: RevisionRef{ID: "skill-one", Revision: 1}, ReadOnly: true, Parameters: json.RawMessage(`{"type":"object"}`)},
-		Capability{Name: "selected_resource", Source: "mcp-resource", Ref: RevisionRef{ID: "server-one", Revision: 1}, OriginalName: "resource://selected", ReadOnly: true, Parameters: json.RawMessage(`{"type":"object"}`)},
+		Capability{Name: "selected_resource", Source: "mcp-resource", Ref: RevisionRef{ID: "server-one", Revision: 1, Digest: "selected-catalog"}, CatalogDigest: "selected-catalog", OriginalName: "resource://selected", ReadOnly: true, Parameters: json.RawMessage(`{"type":"object"}`)},
 	)
-	snapshot.Materials = []Capability{{Name: "selected_prompt", Source: "mcp-prompt", Ref: RevisionRef{ID: "server-one", Revision: 1}, OriginalName: "selected", ReadOnly: true, Parameters: json.RawMessage(`{"type":"object"}`)}}
+	snapshot.Materials = []Capability{{Name: "selected_prompt", Source: "mcp-prompt", Ref: RevisionRef{ID: "server-one", Revision: 1, Digest: "selected-catalog"}, CatalogDigest: "selected-catalog", OriginalName: "selected", ReadOnly: true, Parameters: json.RawMessage(`{"type":"object"}`)}}
 	return snapshot, err
 }
 
@@ -300,7 +304,7 @@ func TestToolDiscoveryPreservesExplicitSelectedMaterials(t *testing.T) {
 			t.Errorf("inference started before explicit material loading: %d", reads.Load())
 		}
 		names := toolNames(request)
-		if len(names) != 3 || !contains(names, toolSearchName) || !contains(names, userInputTool) || !contains(names, planTool) {
+		if len(names) != 7 || !contains(names, toolSearchName) || !contains(names, userInputTool) || !contains(names, planTool) {
 			t.Errorf("selected materials implicitly loaded callable schemas: %v", names)
 		}
 		return finalReply("读取完毕"), nil
@@ -311,7 +315,7 @@ func TestToolDiscoveryPreservesExplicitSelectedMaterials(t *testing.T) {
 		t.Fatal(err)
 	}
 	env.Skills = []RevisionRef{{ID: "skill-one", Revision: 1}}
-	env.Servers = []RevisionRef{{ID: "server-one", Revision: 1}}
+	env.Servers = []RevisionRef{{ID: "server-one", Revision: 1, Digest: "selected-catalog"}}
 	env.Resources = []ResourceRef{{ServerID: "server-one", URI: "resource://selected"}}
 	env.TrustedReadOnly = []string{"selected_resource", "selected_prompt"}
 	if _, err = m.PutEnvironment(ctx, session.ID, env.Revision, env); err != nil {

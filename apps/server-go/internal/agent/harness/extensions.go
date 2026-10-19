@@ -55,7 +55,13 @@ func emptyParameters() json.RawMessage {
 }
 
 func (e *Extensions) Snapshot(ctx context.Context, env Environment) (CapabilitySnapshot, error) {
+	return e.snapshot(ctx, env, false)
+}
+
+func (e *Extensions) snapshot(ctx context.Context, env Environment, modern bool) (CapabilitySnapshot, error) {
 	s := CapabilitySnapshot{Environment: env, Tools: []Capability{}}
+	s.Environment.Skills = append([]RevisionRef(nil), env.Skills...)
+	s.Environment.Servers = append([]RevisionRef(nil), env.Servers...)
 	builtinNames := map[string]bool{}
 	if e.BuiltinSchemas != nil {
 		for _, schema := range e.BuiltinSchemas() {
@@ -145,7 +151,7 @@ func (e *Extensions) Snapshot(ctx context.Context, env Environment) (CapabilityS
 		}
 		s.Tools = append(s.Tools, capability)
 	}
-	for _, ref := range env.Skills {
+	for index, ref := range env.Skills {
 		if e.Skills == nil {
 			return s, bad("skill-unavailable", "技能存储未就绪")
 		}
@@ -157,6 +163,7 @@ func (e *Extensions) Snapshot(ctx context.Context, env Environment) (CapabilityS
 			return s, bad("skill-revision", "技能修订或摘要无效")
 		}
 		ref.Digest = p.Digest
+		s.Environment.Skills[index] = ref
 		s.SkillSummaries = append(s.SkillSummaries, SkillSummary{Ref: ref, Name: p.Manifest.Name, Description: p.Manifest.Description})
 		paths := []string{}
 		scripts := []string{}
@@ -167,7 +174,10 @@ func (e *Extensions) Snapshot(ctx context.Context, env Environment) (CapabilityS
 			}
 		}
 		parameters, _ := json.Marshal(map[string]any{"type": "object", "additionalProperties": false, "required": []string{"path"}, "properties": map[string]any{"path": map[string]any{"type": "string", "enum": paths}}})
-		s.Tools = append(s.Tools, Capability{Name: capabilityAlias("skill", ref.ID, "load"), Description: "加载技能 " + p.Manifest.Name + " 的 SKILL.md 或参考文件。" + p.Manifest.Description, Parameters: parameters, Source: "skill-load", Ref: ref, ReadOnly: true})
+		if modern {
+			parameters = skillReadParameters()
+		}
+		s.Tools = append(s.Tools, Capability{SearchNames: []string{p.Manifest.Name}, Name: capabilityAlias("skill", ref.ID, "load"), Description: "加载技能 " + p.Manifest.Name + " 的 SKILL.md 或参考文件。" + p.Manifest.Description, Parameters: parameters, Source: "skill-load", Ref: ref, ReadOnly: true})
 		if len(scripts) > 0 && len(s.Profiles) > 0 && e.Executor != nil {
 			profileIDs := []string{}
 			grantIDs := []string{""}
@@ -178,10 +188,16 @@ func (e *Extensions) Snapshot(ctx context.Context, env Environment) (CapabilityS
 				grantIDs = append(grantIDs, g.ID)
 			}
 			params, _ := json.Marshal(map[string]any{"type": "object", "additionalProperties": false, "required": []string{"path", "profileId", "grantId", "argv"}, "properties": map[string]any{"path": map[string]any{"type": "string", "enum": scripts}, "profileId": map[string]any{"type": "string", "enum": profileIDs}, "grantId": map[string]any{"type": "string", "enum": grantIDs}, "argv": map[string]any{"type": "array", "maxItems": 64, "items": map[string]any{"type": "string", "maxLength": 4096}}}})
-			s.Tools = append(s.Tools, Capability{Name: capabilityAlias("script", ref.ID, "run"), Description: "审批后在受限容器执行已加载技能 " + p.Manifest.Name + " 的脚本；文件保留在当前任务工作区。", Parameters: params, Source: "script", Ref: ref})
+			if modern {
+				var schema map[string]any
+				_ = json.Unmarshal(params, &schema)
+				schema["properties"].(map[string]any)["path"] = map[string]any{"type": "string", "minLength": 1, "maxLength": 4096}
+				params, _ = json.Marshal(schema)
+			}
+			s.Tools = append(s.Tools, Capability{SearchNames: []string{p.Manifest.Name}, Name: capabilityAlias("script", ref.ID, "run"), Description: "审批后在受限容器执行已加载技能 " + p.Manifest.Name + " 的脚本；文件保留在当前任务工作区。", Parameters: params, Source: "script", Ref: ref})
 		}
 	}
-	for _, ref := range env.Servers {
+	for index, ref := range env.Servers {
 		if e.Servers == nil || e.MCP == nil {
 			return s, bad("mcp-unavailable", "MCP 尚未就绪")
 		}
@@ -206,13 +222,14 @@ func (e *Extensions) Snapshot(ctx context.Context, env Environment) (CapabilityS
 			return s, err
 		}
 		ref.Digest = catalog.Digest
+		s.Environment.Servers[index] = ref
 		for _, t := range catalog.Tools {
 			alias := capabilityAlias("mcp", ref.ID, t.Name)
 			if !contains(env.Tools, alias) {
 				continue
 			}
 			// 只读权限必须由管理员本地声明，远端 annotations 不构成授权。
-			s.Tools = append(s.Tools, Capability{Name: alias, Description: t.Description, Parameters: t.InputSchema, OutputSchema: t.OutputSchema, Source: "mcp-tool", Ref: ref, OriginalName: t.Name, CatalogDigest: catalog.Digest, ReadOnly: contains(env.TrustedReadOnly, alias)})
+			s.Tools = append(s.Tools, Capability{SearchNames: []string{server.Name, t.Name}, Name: alias, Description: t.Description, Parameters: t.InputSchema, OutputSchema: t.OutputSchema, Source: "mcp-tool", Ref: ref, OriginalName: t.Name, CatalogDigest: catalog.Digest, ReadOnly: contains(env.TrustedReadOnly, alias)})
 		}
 		for _, r := range env.Resources {
 			if r.ServerID != ref.ID {

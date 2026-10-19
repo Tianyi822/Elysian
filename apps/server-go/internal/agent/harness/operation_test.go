@@ -25,8 +25,8 @@ type operationCatalog struct {
 
 func (*operationCatalog) Snapshot(_ context.Context, e Environment) (CapabilitySnapshot, error) {
 	return CapabilitySnapshot{Environment: e, Tools: []Capability{
-		{Name: "test_read", Source: "mcp-tool", Ref: RevisionRef{ID: "fixture-server", Revision: 1}, ReadOnly: true, Parameters: json.RawMessage(`{"type":"object"}`)},
-		{Name: "test_write", Source: "mcp-tool", Ref: RevisionRef{ID: "fixture-server", Revision: 1}, Parameters: json.RawMessage(`{"type":"object"}`)},
+		{Name: "test_read", Source: "mcp-tool", Ref: RevisionRef{ID: "fixture-server", Revision: 1, Digest: "fixture-catalog"}, CatalogDigest: "fixture-catalog", ReadOnly: true, Parameters: json.RawMessage(`{"type":"object"}`)},
+		{Name: "test_write", Source: "mcp-tool", Ref: RevisionRef{ID: "fixture-server", Revision: 1, Digest: "fixture-catalog"}, CatalogDigest: "fixture-catalog", Parameters: json.RawMessage(`{"type":"object"}`)},
 	}}, nil
 }
 func (*operationCatalog) Validate(_ Capability, args json.RawMessage) error {
@@ -52,6 +52,7 @@ func approveEnvironment(t *testing.T, m *Manager, s Session) {
 		t.Fatal(err)
 	}
 	e.TrustedReadOnly = []string{"test_read"}
+	e.Servers = []RevisionRef{{ID: "fixture-server", Revision: 1, Digest: "fixture-catalog"}}
 	if _, err = m.PutEnvironment(context.Background(), s.ID, e.Revision, e); err != nil {
 		t.Fatal(err)
 	}
@@ -74,13 +75,39 @@ func waitingApproval(t *testing.T, m *Manager, id string) Approval {
 	})
 	return found
 }
+
+// 假模型也遵守先搜索再调用；搜索回执不当作业务完成结果。
+func missingOperationTools(r model.Request, names ...string) bool {
+	for _, name := range names {
+		if !contains(toolNames(r), name) {
+			return true
+		}
+	}
+	return false
+}
+func businessToolResult(_ model.Request, message model.Message) bool {
+	if message.Role != "tool" {
+		return false
+	}
+	var result toolSearchResult
+	var envelope struct {
+		Result json.RawMessage `json:"result"`
+	}
+	if json.Unmarshal([]byte(message.Content), &envelope) != nil {
+		return true
+	}
+	return json.Unmarshal(envelope.Result, &result) != nil || (result.Version != onDemandTools && result.Version != onDemandToolsV2)
+}
 func operationClient() agentTestClient {
 	return func(_ context.Context, _ model.Profile, r model.Request) (model.Response, error) {
 		if r.ToolChoice == "store_working_memory" {
 			return memoryReply(r), nil
 		}
+		if missingOperationTools(r, "test_write") {
+			return searchReply("test"), nil
+		}
 		for _, msg := range r.Messages {
-			if msg.Role == "tool" {
+			if businessToolResult(r, msg) {
 				return finalReply("已核实本次操作"), nil
 			}
 		}
@@ -125,11 +152,14 @@ func TestOperationApprovalResumesRealWorkerWithoutReplayingTools(t *testing.T) {
 			return memoryReply(r), nil
 		}
 		inferences.Add(1)
+		if missingOperationTools(r, "test_read", "test_write") {
+			return searchReply("test"), nil
+		}
 		for _, msg := range r.Messages {
 			if strings.Contains(msg.Content, "另一会话") {
 				return finalReply("另一会话可运行"), nil
 			}
-			if msg.Role == "tool" {
+			if businessToolResult(r, msg) {
 				return finalReply("串行完成"), nil
 			}
 		}
@@ -174,11 +204,11 @@ func TestOperationApprovalResumesRealWorkerWithoutReplayingTools(t *testing.T) {
 	_, err = m.Decide(ctx, a.ID, "denied")
 	runtimeErrorCode(t, err, "decision-conflict")
 	got := runtimeFinished(t, m, run.ID)
-	if got.Status != StateSucceeded || got.Usage.Calls != 2 || got.Usage.ModelRequests != 3 || reads.Load() != 1 || writes.Load() != 1 || inferences.Load() != 3 {
+	if got.Status != StateSucceeded || got.Usage.Calls != 3 || got.Usage.ModelRequests != 4 || reads.Load() != 1 || writes.Load() != 1 || inferences.Load() != 5 {
 		t.Fatalf("恢复重放或预算重置：%+v read=%d write=%d inference=%d", got, reads.Load(), writes.Load(), inferences.Load())
 	}
 	ops, err := m.Operations(ctx, run.ID)
-	if err != nil || len(ops) != 2 || ops[1].Status != "completed" {
+	if err != nil || len(ops) != 3 || ops[2].Status != "completed" {
 		t.Fatalf("操作结果未落盘：%+v %v", ops, err)
 	}
 }
@@ -344,7 +374,7 @@ func TestOperationUnknownBarrierPersistsAndReconciliationDoesNotRewriteResult(t 
 		got, err := m.Get(ctx, run2.ID)
 		return err == nil && got.Status == StateWaitingResource
 	})
-	if got, err := m.Get(ctx, run2.ID); err != nil || got.Usage.Calls != 0 || executions.Load() != 1 {
+	if got, err := m.Get(ctx, run2.ID); err != nil || got.Usage.Calls != 1 || executions.Load() != 1 {
 		t.Fatalf("屏障未阻止派发或资源等待消耗工具预算：%+v %v", got, err)
 	}
 	b := barriers[0]
@@ -360,7 +390,7 @@ func TestOperationUnknownBarrierPersistsAndReconciliationDoesNotRewriteResult(t 
 	_, err = m.Reconcile(ctx, b.ID, "另一个结论", "confirmed-completed")
 	runtimeErrorCode(t, err, "decision-conflict")
 	ops, err := m.Operations(ctx, run.ID)
-	if err != nil || ops[0].Status != "unknown" {
+	if err != nil || ops[1].Status != "unknown" {
 		t.Fatalf("核实篡改原结果：%+v %v", ops, err)
 	}
 }
@@ -434,15 +464,20 @@ func TestOperationResultCommittedBeforeWorkerLossIsNeverReplayed(t *testing.T) {
 		}}
 		d.Spawn = func(context.Context) (worker.Process, error) {
 			return &agentTestProcess{runAgent: func(ctx context.Context, _ string, b worker.AgentBroker) error {
-				r, err := b.NextModel(ctx)
-				if err != nil {
-					return err
+				for {
+					r, err := b.NextModel(ctx)
+					if err != nil {
+						return err
+					}
+					call := r.ToolCalls[r.StartIndex]
+					if err = b.ExecuteAgent(ctx, r.ID, r.StartIndex, call.ID, call.Name, call.Args); err != nil {
+						return err
+					}
+					if call.Name == toolSearchName {
+						continue
+					}
+					return &worker.InterruptedError{Err: errors.New("结果落盘后Worker崩溃")}
 				}
-				call := r.ToolCalls[r.StartIndex]
-				if err = b.ExecuteAgent(ctx, r.ID, r.StartIndex, call.ID, call.Name, call.Args); err != nil {
-					return err
-				}
-				return &worker.InterruptedError{Err: errors.New("结果落盘后Worker崩溃")}
 			}}, nil
 		}
 	})
@@ -456,7 +491,7 @@ func TestOperationResultCommittedBeforeWorkerLossIsNeverReplayed(t *testing.T) {
 	}
 	m = reopenOperationManager(t, m)
 	ops, err := m.Operations(context.Background(), run.ID)
-	if err != nil || len(ops) != 1 || ops[0].Status != "completed" || calls.Load() != 1 {
+	if err != nil || len(ops) != 2 || ops[1].Status != "completed" || calls.Load() != 1 {
 		t.Fatalf("已保存结果被重复执行：%+v %v", ops, err)
 	}
 }
@@ -476,7 +511,7 @@ func TestOperationApprovalWaitDoesNotConsumeActiveTime(t *testing.T) {
 	a := waitingApproval(t, m, run.ID)
 	runtimeEventually(t, func() bool { m.mu.Lock(); defer m.mu.Unlock(); return m.activeID == "" })
 	before, _ := m.Get(context.Background(), run.ID)
-	if before.ActiveMilliseconds != 1000 {
+	if before.ActiveMilliseconds != 2000 {
 		t.Fatalf("首段活动时间错误：%d", before.ActiveMilliseconds)
 	}
 	nanos.Add(int64(12 * time.Hour))
@@ -484,7 +519,7 @@ func TestOperationApprovalWaitDoesNotConsumeActiveTime(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := runtimeFinished(t, m, run.ID)
-	if got.Status != StateSucceeded || got.ActiveMilliseconds != 3000 || got.Usage.ModelRequests != 3 {
+	if got.Status != StateSucceeded || got.ActiveMilliseconds != 4000 || got.Usage.ModelRequests != 4 {
 		t.Fatalf("暂停时间或预算不正确：%+v", got)
 	}
 }

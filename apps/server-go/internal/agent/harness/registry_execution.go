@@ -165,7 +165,16 @@ func (m *Manager) registerRunCatalog(s CapabilitySnapshot) error {
 				if err := tools.ConsumeBackend(ctx, o.DispatchID); err != nil {
 					return nil, err
 				}
+				if s.ToolLoading == onDemandToolsV2 {
+					return m.searchToolsV2(ctx, s, o)
+				}
 				return searchTools(s, json.RawMessage(o.ArgumentsJSON))
+			}
+			if _, localSkills := m.deps.Catalog.(*Extensions); localSkills && c.Source == "skill-load" && s.ToolLoading == onDemandToolsV2 {
+				if err := tools.ConsumeBackend(ctx, o.DispatchID); err != nil {
+					return nil, err
+				}
+				return m.executeSkillLoadV2(ctx, s, o)
 			}
 			if c.Source == "builtin" {
 				if m.deps.Tools == nil {

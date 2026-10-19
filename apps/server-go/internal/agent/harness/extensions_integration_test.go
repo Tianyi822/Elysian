@@ -22,12 +22,14 @@ import (
 )
 
 type extensionFixture struct {
-	extensions *Extensions
-	skill      skills.Skill
-	server     mcp.Server
-	catalog    mcp.Catalog
-	drift      atomic.Bool
-	calls      atomic.Int32
+	packageRoot string
+	extensions  *Extensions
+	skill       skills.Skill
+	server      mcp.Server
+	catalog     mcp.Catalog
+	drift       atomic.Bool
+	calls       atomic.Int32
+	requests    atomic.Int32
 }
 
 func newExtensionFixture(t *testing.T) *extensionFixture {
@@ -58,8 +60,9 @@ func newExtensionFixture(t *testing.T) *extensionFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &extensionFixture{skill: skill}
+	f := &extensionFixture{skill: skill, packageRoot: filepath.Join(root, "packages")}
 	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.requests.Add(1)
 		if r.Method == http.MethodDelete {
 			w.WriteHeader(204)
 			return
@@ -156,8 +159,10 @@ func TestExtensionsSkillPreloadMCPAndNextRunRetainsInstructions(t *testing.T) {
 		}
 		switch inference.Add(1) {
 		case 1:
-			return toolReply(alias), nil
+			return searchReply(alias), nil
 		case 2:
+			return toolReply(alias), nil
+		case 3:
 			if !strings.Contains(string(raw), "mcp-evidence") || !strings.Contains(string(raw), "凭据已隐藏") {
 				t.Error("MCP结果未进入上下文或未脱敏")
 			}
@@ -174,7 +179,7 @@ func TestExtensionsSkillPreloadMCPAndNextRunRetainsInstructions(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := runtimeFinished(t, m, run.ID)
-	if got.Status != StateSucceeded || got.Usage.Calls != 2 || f.calls.Load() != 1 {
+	if got.Status != StateSucceeded || got.Usage.Calls != 3 || f.calls.Load() != 1 {
 		t.Fatalf("run=%+v calls=%d", got, f.calls.Load())
 	}
 	items, err := m.ContextItems(context.Background(), run.ID)
@@ -188,7 +193,7 @@ func TestExtensionsSkillPreloadMCPAndNextRunRetainsInstructions(t *testing.T) {
 	if got = runtimeFinished(t, m, next.ID); got.Status != StateSucceeded {
 		t.Fatalf("next run=%+v", got)
 	}
-	if inference.Load() != 3 || f.calls.Load() != 1 {
+	if inference.Load() != 4 || f.calls.Load() != 1 {
 		t.Fatalf("unexpected repeated execution inference=%d tools=%d", inference.Load(), f.calls.Load())
 	}
 }

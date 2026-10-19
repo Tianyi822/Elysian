@@ -42,6 +42,7 @@ const isSession = (value: unknown): value is AgentChatSession => isRecord(value)
     && (value.remote.runId === undefined || typeof value.remote.runId === 'string')))
   && (value.pending === undefined || (isRecord(value.pending) && isRecord(value.pending.input)
     && typeof value.pending.input.requestId === 'string' && typeof value.pending.input.content === 'string'
+    && (value.pending.input.extensionMode === undefined || value.pending.input.extensionMode === 'enabled')
     && (value.pending.input.reasoningLevel === undefined || typeof value.pending.input.reasoningLevel === 'string')
     && (value.pending.input.replaceMessageId === undefined || typeof value.pending.input.replaceMessageId === 'string')
     && (value.pending.input.attachments === undefined || (Array.isArray(value.pending.input.attachments) && value.pending.input.attachments.every(isAttachmentRef)))

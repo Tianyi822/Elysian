@@ -686,7 +686,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
           const attachments = preparedSession.editing ? preparedSession.editing.attachments?.map(ref => ({
             id: preparedSession.editing!.preparedAttachments?.find(item => item.sourceId === ref.id)?.attachment.serverId ?? ref.id,
           })) : preparedSession.attachments.length ? preparedSession.attachments.map(attachment => ({ id: attachment.serverId! })) : undefined
-          const saved = update({ remote: { ...current().remote, sessionId: remote.id }, pending: { input: { requestId: id(), content: text, permissionMode: session.permissionMode,
+          const saved = update({ remote: { ...current().remote, sessionId: remote.id }, pending: { input: { requestId: id(), content: text, permissionMode: session.permissionMode, extensionMode: 'enabled',
             ...(session.editing ? { replaceMessageId: session.editing.messageId } : {}),
             ...(session.reasoningLevel ? { reasoningLevel: session.reasoningLevel } : {}),
             ...(attachments?.length ? { attachments } : {}) }, taskId: session.editing?.taskId ?? current().remote?.taskId } })

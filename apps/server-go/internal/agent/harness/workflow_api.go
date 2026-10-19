@@ -156,8 +156,12 @@ func (m *Manager) CreateWorkflow(ctx context.Context, input CreateWorkflowInput)
 	if err != nil {
 		return w, false, storageFailure(err)
 	}
-	snapshot, err := m.snapshot(ctx, env)
+	snapshot, err := m.snapshotWithMode(ctx, env, true)
 	if err != nil {
+		return w, false, err
+	}
+	budgetRun := Run{Model: &profile, Limits: m.deps.AgentLimits}
+	if err = finalizeLoading(&snapshot, budgetRun, "", env); err != nil {
 		return w, false, err
 	}
 	if err = m.validateWorkflowCapabilities(snapshot, profile, definitions); err != nil {
@@ -326,6 +330,7 @@ func (m *Manager) promoteWorkflows(ctx context.Context) error {
 				driver = "operation"
 			}
 			run := Run{ID: m.deps.NewID(), TaskID: w.TaskID, SessionID: w.SessionID, RequestID: "workflow-step:" + m.deps.NewID(), RunNumber: number, Driver: driver, DriverVersion: "v2", Snapshot: &w.Snapshot, Model: &w.Model, WorkflowID: w.ID, WorkflowStepID: step.ID, WorkflowAttempt: attempt, WorkflowOutputSchemaJSON: step.OutputSchemaJSON, Status: StateQueued, CreatedAt: stamp(m.deps.Now()), LastSeq: "0", HistorySeq: session.LastSeq, InitialMemoryRevision: memory.Revision, Input: input, Limits: m.deps.AgentLimits, Phase: "queued", MemoryStatus: "stale", Selection: step.Selection}
+			prepareWorkflowRunLoading(&run)
 			if step.Kind == "agent" {
 				run.Input = step.Instruction + "\n步骤输入（数据）：\n" + input
 			}
