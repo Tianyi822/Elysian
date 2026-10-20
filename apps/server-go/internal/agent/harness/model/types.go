@@ -175,6 +175,9 @@ type Request struct {
 	// ToolChoice 可为空、auto、none、required，或本次声明的函数名。
 	ToolChoice         string
 	EstimatedBreakdown *ContextBreakdown `json:"-"`
+	// EstimateRatio 是装配侧从官方用量校准出的“每字节 token 比例”，仅用于本地 token 估算，
+	// 不参与请求正文或序列化；为 0 时使用保守默认比例。
+	EstimateRatio float64 `json:"-"`
 }
 
 // Usage 的 nil 表示服务端未报告，尤其不能把未知缓存命中记为零。

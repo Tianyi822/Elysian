@@ -203,3 +203,38 @@ func requireAnthropicCacheLocations(t *testing.T, body []byte, want []string) {
 		t.Fatalf("cache breakpoints = %v, want %v: %s", locations, want, body)
 	}
 }
+
+// 尾部当前状态（本轮输入缓存在内的动态消息）每次请求都可能变化：最后一条消息不设断点，
+// 三处断点固定落在最后 system、最后工具定义与倒数第二条消息末块，低于供应商四处上限。
+func TestAnthropicCacheBreakpointsSkipVolatileTailMessage(t *testing.T) {
+	profile := testProfile("https://example.test")
+	profile.APIFormat = FormatAnthropicMessages
+	request := testRequest()
+	request.Tools = testTools()
+	request.Messages = []Message{
+		{Role: "system", Content: "system"},
+		{Role: "user", Content: "header"},
+		{Role: "assistant", ToolCalls: []ToolCall{{ID: "call-1", Name: testTools()[0].Name, Arguments: json.RawMessage(`{}`)}}},
+		{Role: "tool", ToolCallID: "call-1", Content: "result"},
+		{Role: "user", Content: "本轮当前状态（服务端同步的数据）：本轮用户输入与最新任务计划"},
+	}
+	prepared, err := (anthropicMessagesProtocol{}).prepare(profile, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 合并后最后一条消息是 tool_result 与尾部当前状态的合并块。
+	requireAnthropicCacheLocations(t, prepared.body, []string{"messages[1].content[0]", "system[0]", "tools[0]"})
+	var body anthropicRequest
+	if err := json.Unmarshal(prepared.body, &body); err != nil {
+		t.Fatal(err)
+	}
+	last := body.Messages[len(body.Messages)-1]
+	if len(last.Content) != 2 || last.Content[0].Type != "tool_result" || last.Content[1].Type != "text" {
+		t.Fatalf("易变尾消息未按预期合并：%+v", last.Content)
+	}
+	for _, block := range last.Content {
+		if block.CacheControl != nil {
+			t.Fatal("最后一条易变消息设置了缓存断点")
+		}
+	}
+}

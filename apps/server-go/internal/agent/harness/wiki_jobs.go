@@ -284,7 +284,9 @@ func (m *Manager) runNextWikiJob() bool {
 	if profile.OutputTokens > 0 && profile.OutputTokens < request.MaxTokens {
 		request.MaxTokens = profile.OutputTokens
 	}
-	job.EstimatedTokens = estimateRequest(request)
+	// 后台提炼与推理共用 token 单位：用已确认 usage 校准的比例估算，官方计数网络调用只发生在
+	// 用户可见推理请求上，后台任务不额外占用分词器配额。
+	job.EstimatedTokens = m.calibratedRequestTokens(&profile, request)
 	if err == nil && (len(job.Input) > wikiExtractionBytes || job.EstimatedTokens+request.MaxTokens > profile.ContextTokens) {
 		err = bad("memory-extraction-capacity", "长期记忆提炼超过模型上下文容量")
 	}

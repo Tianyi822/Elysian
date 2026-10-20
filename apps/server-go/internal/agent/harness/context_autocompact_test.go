@@ -19,12 +19,14 @@ func TestAgentProactiveCompactionBeforeContextPressure(t *testing.T) {
 			return memoryReply(request), nil
 		}
 		if inferences.Add(1) == 1 {
-			return toolReply("docker_images_list"), nil
+			return toolReply("docker_images_list", "docker_containers_list"), nil
 		}
 		return finalReply("已完成"), nil
 	}, func(deps *Deps) { deps.AgentLimits.TokenBudget = tokenBudgetCeiling })
 	invoker.execute = func(context.Context, string) (any, error) {
-		return strings.Repeat("x", 250000), nil
+		// 两个工具结果合计约 520k 字节，按 token 单位约 260k，超过 300000 容量的 80% 阈值；
+		// 单结果受 256 KiB 上限约束，因此拆成两次调用。
+		return strings.Repeat("x", 260000), nil
 	}
 	profile, err := m.deps.Profiles.Resolve(session.ModelProfileID, 1, true)
 	if err != nil {
@@ -71,14 +73,19 @@ func TestAgentSkipsProactiveCompactionWhenFallbackBudgetIsTight(t *testing.T) {
 			return memoryReply(request), nil
 		}
 		if inferences.Add(1) == 1 {
-			return toolReply("docker_images_list"), nil
+			return toolReply("docker_images_list", "docker_containers_list"), nil
 		}
-		if !strings.Contains(request.Messages[len(request.Messages)-1].Content, strings.Repeat("x", 150000)) {
+		if !strings.Contains(allRequestText(request), strings.Repeat("x", 150000)) {
 			t.Error("跳过整理后丢失了原始工具事实")
 		}
 		return finalReply("已完成"), nil
 	}, nil)
-	invoker.execute = func(context.Context, string) (any, error) {
+	invoker.execute = func(_ context.Context, name string) (any, error) {
+		// 事实总量约 310k 字节（约 155k token），超过默认 196608 预算的 80% 阈值，
+		// 而整理预检还要再容纳一次同样大小的 checkpoint，因此必须跳过。
+		if name == "docker_containers_list" {
+			return strings.Repeat("y", 160000), nil
+		}
 		return strings.Repeat("x", 150000), nil
 	}
 	profile, err := m.deps.Profiles.Resolve(session.ModelProfileID, 1, true)
@@ -119,14 +126,18 @@ func TestAgentProactiveCompactionWithinRunBudgetOnLargeModel(t *testing.T) {
 		}
 		switch inferences.Add(1) {
 		case 1:
-			return usageReply(finalReply(strings.Repeat("h", 111000)), 20, 28000), nil
+			return usageReply(finalReply(strings.Repeat("h", 231000)), 20, 28000), nil
 		case 2:
-			return usageReply(toolReply("docker_images_list"), 38000, 20), nil
+			// prompt 视为不可参数量级的 20，避免把假 response 反推成校准比例；
+			// 大 completion 仍会推进 Run 预算，构造 1M 模型受默认预算约束的场景。
+			return usageReply(toolReply("docker_images_list"), 20, 38000), nil
 		default:
 			return finalReply("已完成"), nil
 		}
 	}, nil)
-	invoker.execute = func(context.Context, string) (any, error) { return strings.Repeat("x", 8000), nil }
+	// 共享历史约 231k 字节（约 120k token）使固定上下文接近但未达有效容量的 80%；本轮 14k 字节
+	// 工具事实把完整请求推过阈值，而整理请求不含共享历史，因此 1M 模型受默认 196608 预算约束时预检仍可通过。
+	invoker.execute = func(context.Context, string) (any, error) { return strings.Repeat("x", 14000), nil }
 	profile, err := m.deps.Profiles.Resolve(session.ModelProfileID, 1, true)
 	if err != nil {
 		t.Fatal(err)
@@ -169,7 +180,7 @@ func TestAgentSkipsProactiveCompactionWhenRequestsAreTight(t *testing.T) {
 			return memoryReply(request), nil
 		}
 		if inferences.Add(1) == 1 {
-			return toolReply("docker_images_list"), nil
+			return toolReply("docker_images_list", "docker_containers_list"), nil
 		}
 		return finalReply("已完成"), nil
 	}, func(deps *Deps) {
@@ -177,7 +188,8 @@ func TestAgentSkipsProactiveCompactionWhenRequestsAreTight(t *testing.T) {
 		deps.AgentLimits.TokenBudget = tokenBudgetCeiling
 	})
 	invoker.execute = func(context.Context, string) (any, error) {
-		return strings.Repeat("x", 250000), nil
+		// 与容量阈值用例一致：两次 260k 字节事实按 token 单位超过 300000 容量的 80%。
+		return strings.Repeat("x", 260000), nil
 	}
 	profile, err := m.deps.Profiles.Resolve(session.ModelProfileID, 1, true)
 	if err != nil {
@@ -359,8 +371,10 @@ func TestAgentDoesNotRepeatCompactionForFixedContext(t *testing.T) {
 	if got := runtimeFinished(t, m, initial.ID); got.Status != StateSucceeded {
 		t.Fatalf("首轮失败：%+v", got)
 	}
+	// 固定上下文（原始目标 30000 字节约 17.5k token）自身达到 22000 容量的 80% 阈值；
+	// contextPressure 在模型容量成为约束时计入 MaxTokens，因此容量需低于原始目标的字节数。
 	second, err := m.UpdateModelProfile(profile.ID, first.Revision, model.Input{Provider: profile.Provider, APIFormat: profile.APIFormat,
-		BaseURL: profile.BaseURL, Model: profile.Model, ContextTokens: 45000, OutputTokens: 512,
+		BaseURL: profile.BaseURL, Model: profile.Model, ContextTokens: 22000, OutputTokens: 512,
 		Capabilities: profile.Capabilities, Active: true})
 	if err != nil {
 		t.Fatal(err)
@@ -396,10 +410,14 @@ func TestAgentProactiveCompactionFallsBackWhenMemoryGrows(t *testing.T) {
 		memoryFails   bool
 		checkpoint    bool
 	}{
-		{"window fallback", 23000, 196608, false, true},
-		{"budget fallback", 26000, 64000, false, true},
-		{"insufficient fallback budget", 23000, 60000, false, false},
-		{"failed checkpoint", 23000, 64000, true, true},
+		// token 单位下重建请求（固定上下文约 4.7k + 15800 字记忆摘要约 7.9k）约 12.6k token，
+		// 因此把容量压到 12500 才能验证「重建装不下时回退」；容量再低会因工具定义预算不足
+		// 无法展示内置工具。整理预检同时预留整理请求、输出余量与完整原请求，token 单位下
+		// 默认 MemoryBytes=16384 的 outputReserve 使纯预算回退分支在 80% 压力下不可达，
+		// 该公式由 TestCanProactivelyCompactReservesOriginalRequestForFallback 单独覆盖。
+		{"window fallback", 12500, 196608, false, true},
+		{"insufficient fallback budget", 12500, 30000, false, false},
+		{"failed checkpoint", 12500, 196608, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var inferences, memories atomic.Int32
@@ -428,7 +446,9 @@ func TestAgentProactiveCompactionFallsBackWhenMemoryGrows(t *testing.T) {
 					return finalReply("续轮完成"), nil
 				}
 			}, func(deps *Deps) { deps.AgentLimits.TokenBudget = tc.budget })
-			invoker.execute = func(context.Context, string) (any, error) { return strings.Repeat("e", 12000), nil }
+			// 10k 事实字节在 token 单位下约 5k token：12500 容量的 80% 阈值由事实组触发，
+			// 而整理后的记忆摘要（15800 字）会让重建请求超过容量，从而验证回退路径。
+			invoker.execute = func(context.Context, string) (any, error) { return strings.Repeat("e", 10000), nil }
 			profile, err := m.deps.Profiles.Resolve(session.ModelProfileID, 1, true)
 			if err != nil {
 				t.Fatal(err)

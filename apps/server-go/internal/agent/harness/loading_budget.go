@@ -16,6 +16,10 @@ type LoadingBudget struct {
 	SkillBodyTokens      int    `json:"skillBodyTokens"`
 }
 
+// loadingBudget 以模型声明容量减去输出上限后的输入空间（token）按固定比例切分。
+// 工具定义与技能材料的计量仍用 estimateContextText 的 local-text/v1 本地近似：
+// 它直接按文本字符估算 token，与提示词字节比例（token_estimate.go 的官方锚点校准）
+// 口径不同，不能把 prompt 反推比例套到 JSON Schema 上，否则会随请求内容变化而漂移。
 func loadingBudget(run Run, level string) LoadingBudget {
 	a := agentExecution{run: run}
 	input := 0

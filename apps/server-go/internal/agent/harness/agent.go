@@ -36,6 +36,9 @@ type agentExecution struct {
 	inferenceWikiRefs  []WikiRef
 	workflowOutput     *workflowAgentOutput
 	userInputError     string
+	// tokenizerFailures 记录本次运行内官方分词器的连续失败次数：连续失败后不再尝试，
+	// 避免每次推理都等满超时；成功一次即清零。只影响估算精度，不阻断推理。
+	tokenizerFailures int
 }
 
 func (a *agentExecution) DriverVersion() int {
@@ -346,6 +349,10 @@ type modelOutcome struct {
 
 // requestModel 的返回只可能来自已持久化响应；HTTP 错误不携带供应商正文或凭据。
 func (a *agentExecution) requestModel(ctx context.Context, purpose string, request model.Request, refs []EvidenceRef, revision int) (ModelRequestRecord, error) {
+	// token 估算优先使用官方分词器/官方 usage 校准；网络调用必须在持有 Manager.mu 之前完成，
+	// 失败与超时静默回退本地估算，不阻断推理。图片请求不参与比例反推（官方 prompt 含图片 token）。
+	estimate := a.estimatePromptTokens(ctx, request)
+	localPayloadBytes, localImageTokens := requestEstimateParts(request)
 	m := a.manager
 	m.mu.Lock()
 	empty := ModelRequestRecord{}
@@ -387,7 +394,9 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 		return empty, bad("model-unavailable", "运行固定的模型版本不可用")
 	}
 	maxRequests := run.Limits.MaxModelRequests - a.modelRequestReserve(purpose)
-	estimate := estimateRequest(request)
+	if estimate < 1 {
+		estimate = estimateRequestTokens(request)
+	}
 	// 预算按累计实际用量封顶：这里只拒绝「本轮提示词都装不下」的请求，不按单次最大输出上限整份预留——
 	// 最大输出上限是供应商允许值而非预期消耗，整份预留会让 max 思考档在多轮工具循环里提前耗尽预算。
 	// 输出导致的超支由响应后判定接管：超预算且仍需继续调工具时失败，最终答复允许过线完成。
@@ -534,6 +543,10 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 			}
 		}
 	}
+	if result.err == nil && result.response.Usage.PromptTokens != nil && localImageTokens == 0 {
+		// 已确认响应的 prompt_tokens 是官方实测：反推本地字节估算比例，供后续请求与压缩边界使用。
+		a.manager.notePromptUsage(a.run.Model, localPayloadBytes, *result.response.Usage.PromptTokens)
+	}
 	if result.err == nil {
 		normalized, marshalErr := json.Marshal(result.response)
 		if marshalErr != nil || len(normalized) > run.Limits.ModelResponseBytes {
@@ -653,16 +666,4 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 		return record, bad("model-budget", "模型累计 token 用量超过预算")
 	}
 	return record, nil
-}
-
-// UTF-8 字节数加结构开销是与模型无关的保守估算，不宣称等于供应商用量。
-// 图片按 DeepSeek 官方单图计费上限口径每张 1024 token 计：序列化剥离图片
-// （Message.Images 不参与 JSON），避免 base64 进入估算与 buildContext fits 循环的大额重复分配。
-func estimateRequest(request model.Request) int {
-	b, _ := json.Marshal(request)
-	images := 0
-	for _, msg := range request.Messages {
-		images += len(msg.Images)
-	}
-	return len(b) + 256 + 128*len(request.Tools) + 64*len(request.Messages) + 1024*images
 }

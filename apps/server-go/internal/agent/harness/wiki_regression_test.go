@@ -250,7 +250,8 @@ func TestWikiFullTextChineseTagsAndAliases(t *testing.T) {
 func TestWikiCapacityTrimDoesNotRecordUnusedPage(t *testing.T) {
 	m, session := wikiTestManager(t)
 	ctx := context.Background()
-	profile, err := m.deps.Profiles.Update(session.ModelProfileID, 1, model.Input{Provider: model.ProviderOpenAICompatible, APIFormat: model.FormatChatCompletions, BaseURL: "http://127.0.0.1:9/v1", Model: "test", ContextTokens: 18000, OutputTokens: 4096, Capabilities: model.Capabilities{Text: true, Tools: true, Source: "test"}, Active: true})
+	// 容量按 token 记：页面正文约 7.5k token 加固定上下文后必须装不下，fixture 才能验证裁剪。
+	profile, err := m.deps.Profiles.Update(session.ModelProfileID, 1, model.Input{Provider: model.ProviderOpenAICompatible, APIFormat: model.FormatChatCompletions, BaseURL: "http://127.0.0.1:9/v1", Model: "test", ContextTokens: 14000, OutputTokens: 4096, Capabilities: model.Capabilities{Text: true, Tools: true, Source: "test"}, Active: true})
 	if err != nil {
 		t.Fatal(err)
 	}

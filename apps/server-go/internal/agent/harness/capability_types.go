@@ -225,15 +225,73 @@ func (s CapabilitySnapshot) modelTools() []model.Tool {
 }
 
 func (s CapabilitySnapshot) visibleModelTools(loaded map[string]bool) []model.Tool {
-	out := make([]model.Tool, 0, len(s.Tools))
-	for _, c := range s.Tools {
-		if s.ToolLoading == onDemandToolsV2 && !residentCapability(c) && !contains(s.EagerTools, c.Name) && !loaded[c.Name] {
-			continue
-		}
-		if s.ToolLoading == onDemandTools && c.Source != toolDiscoverySource && c.Source != userInputSource && c.Source != planSource && !loaded[c.Name] {
-			continue
-		}
-		out = append(out, model.Tool{Name: c.Name, Description: c.Description, Parameters: c.Parameters})
+	return s.visibleModelToolsInOrder(loaded, nil)
+}
+
+// toolFixed 判定定义不依赖动态加载集合：常驻入口与 eager 内置定义始终在前，按目录顺序稳定排列。
+func (s CapabilitySnapshot) toolFixed(c Capability) bool {
+	if residentCapability(c) {
+		return true
 	}
-	return out
+	return s.ToolLoading == onDemandToolsV2 && contains(s.EagerTools, c.Name)
+}
+
+// visibleModelToolsInOrder 按“常驻与 eager 稳定前缀 + 动态定义尾部追加”返回最终可见定义。
+// tool_search 新增定义只追加到尾部、淘汰只移除尾部集合，已加载定义保持加载顺序；
+// 供应商自动前缀缓存（DeepSeek、智谱要求完全一致前缀）不会因一次动态加载打断整个工具段。
+// order 为空时动态定义按快照目录顺序追加，保证重启、旧快照与未记录加载顺序时输出确定。
+func (s CapabilitySnapshot) visibleModelToolsInOrder(loaded map[string]bool, order []string) []model.Tool {
+	if s.ToolLoading != onDemandTools && s.ToolLoading != onDemandToolsV2 {
+		out := make([]model.Tool, 0, len(s.Tools))
+		for _, c := range s.Tools {
+			out = append(out, model.Tool{Name: c.Name, Description: c.Description, Parameters: c.Parameters})
+		}
+		return out
+	}
+	// on-demand/v1 保持旧快照原有的按目录顺序过滤语义，不引入 v2 的分组重排。
+	if s.ToolLoading == onDemandTools {
+		out := make([]model.Tool, 0, len(s.Tools))
+		for _, c := range s.Tools {
+			if !residentCapability(c) && !loaded[c.Name] {
+				continue
+			}
+			out = append(out, model.Tool{Name: c.Name, Description: c.Description, Parameters: c.Parameters})
+		}
+		return out
+	}
+	fixed := make([]model.Tool, 0, len(s.Tools))
+	dynamic := make(map[string]model.Tool, len(order))
+	for _, c := range s.Tools {
+		if s.ToolLoading == onDemandToolsV2 && !s.toolFixed(c) && !loaded[c.Name] {
+			continue
+		}
+		if s.ToolLoading == onDemandTools && !residentCapability(c) && !loaded[c.Name] {
+			continue
+		}
+		tool := model.Tool{Name: c.Name, Description: c.Description, Parameters: c.Parameters}
+		if s.toolFixed(c) {
+			fixed = append(fixed, tool)
+			continue
+		}
+		dynamic[c.Name] = tool
+	}
+	added := make(map[string]bool, len(dynamic))
+	for _, name := range order {
+		tool, ok := dynamic[name]
+		if !ok || added[name] {
+			continue
+		}
+		added[name] = true
+		fixed = append(fixed, tool)
+	}
+	// 没有加载顺序记录的动态定义按快照目录顺序兜底，输出与进程重启无关。
+	for _, c := range s.Tools {
+		tool, ok := dynamic[c.Name]
+		if !ok || added[c.Name] {
+			continue
+		}
+		added[c.Name] = true
+		fixed = append(fixed, tool)
+	}
+	return fixed
 }

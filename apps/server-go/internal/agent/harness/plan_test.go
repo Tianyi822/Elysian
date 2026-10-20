@@ -61,7 +61,7 @@ func TestPlanAtomicReplayCheckpointAndRoundIsolation(t *testing.T) {
 			}
 			return planReply(planFixture), nil
 		case 2:
-			if !strings.Contains(r.Messages[1].Content, `本轮最新任务计划`) || !strings.Contains(r.Messages[1].Content, `"revision":1`) {
+			if !strings.Contains(allRequestText(r), `本轮最新任务计划`) || !strings.Contains(allRequestText(r), `"revision":1`) {
 				t.Error("整理后最新计划丢失")
 			}
 			return planReply(planUpdated), nil
@@ -153,7 +153,7 @@ func TestPlanCorrectableErrorAndWaitingInputRestart(t *testing.T) {
 		case 3:
 			return userInputReply(questionFixture), nil
 		case 4:
-			if !strings.Contains(r.Messages[1].Content, `"revision":1`) {
+			if !strings.Contains(allRequestText(r), `"revision":1`) {
 				t.Error("等待恢复丢失计划")
 			}
 			return planReply(strings.ReplaceAll(planUpdated, `"in_progress"`, `"completed"`)), nil

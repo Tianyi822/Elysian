@@ -123,7 +123,10 @@ func (anthropicMessagesProtocol) prepare(p Profile, input Request) (preparedRequ
 	if len(wire.Messages) == 0 {
 		return preparedRequest{}, invalidRequest()
 	}
-	// 合并后再定位缓存前缀，保留最后一条变化中的消息不打断点。
+	// 合并后再定位缓存前缀：最后 system 与最后工具保住工具集合变化时仍可命中的固定前缀，
+	// 倒数第二条消息末块覆盖已确认历史；最后一条消息是本轮新增内容，断点只有在下一次请求
+	// 仍以它为前缀时才会被读取，而上一次请求的尾部当前状态随计划与输入变化，因此不打断点。
+	// 供应商上限四处，这里刻意只用三处；不发送 beta 头、TTL 参数或缓存控制扩展。
 	if len(wire.System) > 0 {
 		wire.System[len(wire.System)-1].CacheControl = &anthropicCacheControl{Type: "ephemeral"}
 	}

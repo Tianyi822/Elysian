@@ -334,10 +334,16 @@ func TestEstimateRequestExcludesImageBytes(t *testing.T) {
 	if strings.Contains(string(b), "iVBOR") || strings.Contains(string(b), "\"images\"") {
 		t.Fatal("图片字节泄入估算 JSON")
 	}
-	if got, want := estimateRequest(request), len(b)+256+64*2+1024*1; got != want {
+	if got, want := estimateRequestBytes(request), len(b)+256+64*2+1024*1; got != want {
 		t.Fatalf("估算口径错误：got=%d want=%d", got, want)
 	}
-	if estimateRequest(request) > len(b)+4096 {
+	if estimateRequestBytes(request) > len(b)+4096 {
 		t.Fatal("估算被图片字节放大")
+	}
+	// token 估算只把文本字节按比例折算，图片保持每张 1024 token 的既有保守口径。
+	request.EstimateRatio = 0.5
+	payload := len(b) + 256 + 64*2
+	if got := estimateRequestTokens(request); got != (payload+1)/2+1024 {
+		t.Fatalf("token 估算未按比例折算文本或丢失图片补偿：got=%d", got)
 	}
 }
