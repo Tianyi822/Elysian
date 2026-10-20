@@ -239,8 +239,61 @@ func registerExtensionRoutes(r chi.Router, service runtimeService) {
 			return
 		}
 		m := service.(*Manager)
+		if server.Stdio != nil {
+			writeRuntimeError(w, &Error{409, "probe-authorization-required", "容器 MCP 探测须先申请并确认本次运行范围"})
+			return
+		}
 		catalog, err := m.probeServer(req.Context(), e, server)
 		sendExtension(w, 200, publicMCPCatalog(id, catalog), err)
+	}))
+	r.Post("/mcp-servers/{id}/probe-request", wrap("mcp", func(e *Extensions, w http.ResponseWriter, req *http.Request) {
+		in, err := readAgentInput[struct {
+			Revision  int    `json:"revision"`
+			RequestID string `json:"requestId"`
+		}](w, req)
+		if err != nil {
+			writeRuntimeError(w, err)
+			return
+		}
+		if in.Revision < 1 {
+			writeRuntimeError(w, bad("invalid-revision", "探测必须固定服务修订"))
+			return
+		}
+		server, err := e.Servers.Resolve(chi.URLParam(req, "id"), in.Revision, false)
+		if err != nil {
+			writeRuntimeError(w, err)
+			return
+		}
+		result, err := service.(*Manager).RequestProbeAccess(req.Context(), e, server, in.RequestID)
+		sendExtension(w, 200, result, err)
+	}))
+	r.Get("/mcp-probe-requests/{id}", wrap("mcp", func(e *Extensions, w http.ResponseWriter, req *http.Request) {
+		result, err := service.(*Manager).ProbeAccess(req.Context(), chi.URLParam(req, "id"))
+		sendExtension(w, 200, result, err)
+	}))
+	r.Post("/mcp-probe-requests/{id}/decision", wrap("mcp", func(e *Extensions, w http.ResponseWriter, req *http.Request) {
+		in, err := readAgentInput[ProbeAccessDecision](w, req)
+		if err != nil {
+			writeRuntimeError(w, err)
+			return
+		}
+		result, err := service.(*Manager).DecideProbeAccess(req.Context(), e, chi.URLParam(req, "id"), in)
+		status := 200
+		if result.State == "preparing" || result.State == "running" {
+			status = 202
+		}
+		sendExtension(w, status, result, err)
+	}))
+	r.Post("/mcp-probe-requests/{id}/cancel", wrap("mcp", func(e *Extensions, w http.ResponseWriter, req *http.Request) {
+		in, err := readAgentInput[struct {
+			RequestID string `json:"requestId"`
+		}](w, req)
+		if err != nil {
+			writeRuntimeError(w, err)
+			return
+		}
+		result, err := service.(*Manager).CancelProbeAccess(req.Context(), chi.URLParam(req, "id"), in.RequestID)
+		sendExtension(w, 200, result, err)
 	}))
 	r.Get("/mcp-servers/{id}/catalog", wrap("mcp", func(e *Extensions, w http.ResponseWriter, req *http.Request) {
 		if _, err := runtimeQuery(req, 50, "revision", "digest"); err != nil {

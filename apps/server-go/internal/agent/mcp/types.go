@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"io"
 	"time"
+
+	"elysian/server/internal/agent/execution/config"
 )
 
 const ProtocolVersion = "2025-11-25"
@@ -15,12 +17,13 @@ const MaxCatalogEntries = 512
 const MaxCatalogBytes = 4 << 20
 
 type ContainerSpec struct {
-	Image          string            `json:"image"`
-	Command        []string          `json:"command"`
-	GrantID        string            `json:"grantId,omitempty"`
-	GrantRevision  int               `json:"grantRevision,omitempty"`
-	Environment    map[string]string `json:"-"`
-	HasEnvironment bool              `json:"hasEnvironment"`
+	Image           string              `json:"image"`
+	Command         []string            `json:"command"`
+	GrantID         string              `json:"grantId,omitempty"`
+	GrantRevision   int                 `json:"grantRevision,omitempty"`
+	RequestedAccess *config.AccessScope `json:"requestedAccess,omitempty"`
+	Environment     map[string]string   `json:"-"`
+	HasEnvironment  bool                `json:"hasEnvironment"`
 }
 
 type Server struct {
@@ -42,6 +45,7 @@ func (s Server) Public() Server {
 	if s.Stdio != nil {
 		copy := *s.Stdio
 		copy.Command = append([]string(nil), copy.Command...)
+		copy.RequestedAccess = config.CloneAccessScope(copy.RequestedAccess)
 		copy.HasEnvironment = copy.HasEnvironment || len(copy.Environment) > 0
 		copy.Environment = nil
 		s.Stdio = &copy
@@ -50,10 +54,11 @@ func (s Server) Public() Server {
 }
 
 type ContainerInput struct {
-	Image         string   `json:"image"`
-	Command       []string `json:"command"`
-	GrantID       string   `json:"grantId,omitempty"`
-	GrantRevision int      `json:"grantRevision,omitempty"`
+	Image           string              `json:"image"`
+	Command         []string            `json:"command"`
+	GrantID         string              `json:"grantId,omitempty"`
+	GrantRevision   int                 `json:"grantRevision,omitempty"`
+	RequestedAccess *config.AccessScope `json:"requestedAccess,omitempty"`
 	// nil 沿用旧环境，空对象清除；所有值均按凭据处理。
 	Environment *map[string]string `json:"environment,omitempty"`
 }

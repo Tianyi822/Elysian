@@ -277,6 +277,18 @@ func (m *Manager) ApprovalsByRun(ctx context.Context, workflowID, runID string) 
 		return nil, storageFailure(err)
 	}
 	o, e := readDocuments[Approval](ctx, m.store.db, "SELECT document FROM approvals WHERE (?='' OR run_id IN (SELECT id FROM runs WHERE workflow_id=?)) AND (?='' OR run_id=?) ORDER BY CASE WHEN state IN ('pending','approved') THEN 0 ELSE 1 END, rowid DESC LIMIT 200", workflowID, workflowID, runID, runID)
+
+	if e == nil {
+		for i := range o {
+			if o[i].Access != nil {
+				current, err := readOperation(ctx, m.store.db, o[i].OperationID)
+				if err != nil {
+					return nil, storageFailure(err)
+				}
+				o[i].Operation.Preparation = current.Preparation
+			}
+		}
+	}
 	return o, storageFailure(e)
 }
 
@@ -526,6 +538,9 @@ func (m *Manager) Decide(ctx context.Context, id, decision string) (Approval, er
 		}
 		if err := json.Unmarshal([]byte(raw), &a); err != nil {
 			return err
+		}
+		if a.Access != nil {
+			return bad("access-decision-required", "请通过运行时授权接口提交决定")
 		}
 		if a.Decision == decision {
 			return nil

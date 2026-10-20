@@ -2,7 +2,7 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AgentApproval, AgentEnvironment, AgentExecutionGrant, AgentExecutionProfile } from '@elysian/contracts'
+import type { AgentApproval, AgentEnvironment, AgentExecutionGrant, AgentExecutionProfile, AgentRuntimeAccess, AgentSessionAuthorization } from '@elysian/contracts'
 import type { AgentChatGovernance } from '../../contracts/agentChat'
 import { ChatApprovals } from './ChatApprovals'
 import { ChatExecutionScope } from './ChatExecutionScope'
@@ -16,9 +16,11 @@ const approval: AgentApproval = { id: 'approval', runId: 'run', operationId: 'op
   capability: { name: 'task_bash_command', description: '受限 Bash', parameters: {}, source: 'bash', ref: { id: 'bash', revision: 3 }, readOnly: false }, snapshotDigest: 'digest', workspaceRevision: 7,
   execution: { profile, grant, scriptDigest: '' }, policy: 'approval-required', status: 'waiting-approval', approvalId: 'approval', callId: 'call', createdAt: profile.createdAt,
 } }
-const governance = (): AgentChatGovernance => ({ approvals: vi.fn(async () => [approval]), decide: vi.fn(async (_id, decision) => ({ ...approval, status: decision, decision })), environment: vi.fn(async () => environment), updateEnvironment: vi.fn(async (_id, _revision, env) => env), profiles: vi.fn(async () => [profile]), grants: vi.fn(async () => [grant]), tools: vi.fn(async () => [{ ...approval.operation!.capability, name: 'task_workspace_read' }]) })
+const access: AgentRuntimeAccess = { revision: 1, digest: 'scope-digest', scopeKey: 'scope', kind: 'script', directories: grant.directories, network: [], privateCidrs: [], resources: grant.resources, sessionAllowed: true, runtime: { name: 'Bash', image: profile.image, platform: 'linux/amd64', requiresDownload: true } }
+const authorization: AgentSessionAuthorization = { id: 'authorization', sessionId: 'session', revision: 1, status: 'active', createdAt: profile.createdAt, tool: 'task_bash_command', access }
+const governance = (): AgentChatGovernance => ({ decideAccess: vi.fn(async () => ({ ...approval, status: 'approved' as const, access })), authorizations: vi.fn(async () => [authorization]), revokeAuthorization: vi.fn(async () => ({ ...authorization, status: 'revoked' as const, revision: 2 })), approvals: vi.fn(async () => [approval]), decide: vi.fn(async (_id, decision) => ({ ...approval, status: decision, decision })), environment: vi.fn(async () => environment), updateEnvironment: vi.fn(async (_id, _revision, env) => env), profiles: vi.fn(async () => [profile]), grants: vi.fn(async () => [grant]), tools: vi.fn(async () => [{ ...approval.operation!.capability, name: 'task_workspace_read' }]) })
 
-beforeEach(() => useNotificationStore.getState().clear())
+beforeEach(() => { useNotificationStore.getState().clear(); sessionStorage.clear() })
 
 describe('聊天审批和执行范围', () => {
   it('审批恢复完整命令、工作区版本与真实挂载，批准只作用于精确审批', async () => {
@@ -64,29 +66,97 @@ describe('聊天审批和执行范围', () => {
     expect(screen.getByLabelText('文件变更 removed.txt')).toHaveTextContent('不存在')
   })
 
-  it('选择已有配置和精确授权，保存使用原环境修订', async () => {
-    const api = governance()
-    const user = userEvent.setup()
-    const close = vi.fn()
-    render(<Tooltip.Provider><ChatExecutionScope open sessionId="session" api={api} locked={false} onClose={close} /></Tooltip.Provider>)
-    await screen.findByRole('checkbox', { name: /受限 Bash v3/ })
-    await user.click(screen.getByRole('checkbox', { name: /受限 Bash v3/ }))
-    await user.click(screen.getByRole('checkbox', { name: /网站目录/ }))
-    expect(screen.getByText('/srv/projects/shop → /grants/0 · rw')).toBeInTheDocument()
-    expect(screen.getByText('website / shop · write')).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: '保存' }))
-    expect(api.updateEnvironment).toHaveBeenCalledWith('session', 4, expect.objectContaining({ executionProfiles: [{ id: 'bash', revision: 3 }], grants: [{ id: 'business', revision: 2 }] }))
-    await waitFor(() => expect(close).toHaveBeenCalledOnce())
-    expect(useNotificationStore.getState().notifications).toEqual([expect.objectContaining({ tone: 'success', message: '执行范围已保存。' })])
+  it('运行时权限默认仅本次，确认一次即提交范围与批准', async () => {
+    const api = governance(), user = userEvent.setup(), changed = vi.fn()
+    vi.mocked(api.approvals).mockResolvedValue([{ ...approval, access }])
+    render(<ChatApprovals api={api} runId="run" onChanged={changed} onCancel={vi.fn()} />)
+    expect(await screen.findByRole('radio', { name: '仅本次允许' })).toBeChecked()
+    expect(screen.getByRole('radio', { name: '本会话允许' })).not.toBeChecked()
+    expect(screen.getByText(/确认后下载镜像/)).toBeInTheDocument()
+    expect(api.decideAccess).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('radio', { name: '本会话允许' }))
+    await user.click(screen.getByRole('button', { name: '确认并继续' }))
+    expect(api.decideAccess).toHaveBeenCalledWith('approval', { requestId: expect.any(String), expectedRevision: 1, expectedDigest: 'scope-digest', decision: 'session' })
+    expect(api.decide).not.toHaveBeenCalled()
+    expect(changed).toHaveBeenCalledOnce()
   })
 
-  it('执行范围读取失败进入通知区，保留重试入口', async () => {
+  it('结果未知先回读，人工重试复用原请求和选择', async () => {
+    const api = governance(), user = userEvent.setup()
+    vi.mocked(api.approvals).mockResolvedValue([{ ...approval, access }])
+    vi.mocked(api.decideAccess).mockRejectedValueOnce(new Error('连接中断'))
+    render(<ChatApprovals api={api} runId="run" onChanged={vi.fn()} onCancel={vi.fn()} />)
+    await user.click(await screen.findByRole('button', { name: '确认并继续' }))
+    const input = vi.mocked(api.decideAccess).mock.calls[0]![1]
+    await user.click(await screen.findByRole('button', { name: '按原选择重试' }))
+    expect(api.decideAccess).toHaveBeenNthCalledWith(2, 'approval', input)
+  })
+
+  it('拒绝权限和停止任务是独立操作', async () => {
+    const api = governance(), user = userEvent.setup(), cancel = vi.fn()
+    vi.mocked(api.approvals).mockResolvedValue([{ ...approval, access }])
+    render(<ChatApprovals api={api} runId="run" onChanged={vi.fn()} onCancel={cancel} />)
+    await user.click(await screen.findByRole('button', { name: '拒绝' }))
+    expect(api.decideAccess).toHaveBeenCalledWith('approval', expect.objectContaining({ decision: 'denied' }))
+    expect(cancel).not.toHaveBeenCalled()
+  })
+
+  it('准备镜像期间显示下载进度，并可独立停止任务', async () => {
+    const api = governance(), cancel = vi.fn(), user = userEvent.setup()
+    vi.mocked(api.approvals).mockResolvedValue([{ ...approval, status: 'approved', access, operation: { ...approval.operation!, preparation: { state: 'pulling', current: 30, total: 100 } } }])
+    render(<ChatApprovals api={api} runId="run" onChanged={vi.fn()} onCancel={cancel} />)
+    expect(await screen.findByRole('progressbar', { name: '镜像下载进度' })).toHaveAttribute('value', '30')
+    await user.click(screen.getByRole('button', { name: '停止任务' }))
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(api.decideAccess).not.toHaveBeenCalled()
+  })
+
+  it('准备结果未知的新申请保留原因，键盘确认只核实并继续', async () => {
+    const api = governance(), user = userEvent.setup()
+    vi.mocked(api.approvals).mockResolvedValue([{ ...approval, id: 'retry', access: { ...access, revision: 2, digest: 'retry' }, operation: { ...approval.operation!, preparation: { state: 'unknown', error: '仅核实本机镜像，尚未确认不会再次下载。' } } }])
+    render(<ChatApprovals api={api} runId="run" onChanged={vi.fn()} onCancel={vi.fn()} />)
+    const button = await screen.findByRole('button', { name: '重新核实并继续' })
+    expect(screen.getByText('仅核实本机镜像，尚未确认不会再次下载。')).toBeInTheDocument()
+    button.focus(); await user.keyboard('{Enter}')
+    expect(api.decideAccess).toHaveBeenCalledWith('retry', expect.objectContaining({ expectedRevision: 2, expectedDigest: 'retry', decision: 'once' }))
+  })
+
+  it('MCP 申请显示原始工具名和完整启动参数，散列别名只放详情', async () => {
+    const api = governance(), user = userEvent.setup()
+    vi.mocked(api.approvals).mockResolvedValue([{ ...approval, access: { ...access, kind: 'mcp' }, operation: { ...approval.operation!, capability: { ...approval.operation!.capability, source: 'mcp', name: 'mcp_53e2b4_read', originalName: 'read_config' }, execution: { ...approval.operation!.execution!, profile: { ...profile, command: ['node', '/app/mcp.js', '--project', '/grants/0'] } } } }])
+    render(<ChatApprovals api={api} runId="run" onChanged={vi.fn()} onCancel={vi.fn()} />)
+    expect(await screen.findByRole('heading', { name: 'read_config' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'mcp_53e2b4_read' })).not.toBeInTheDocument()
+    await user.click(screen.getByText('命令、镜像、挂载与限额'))
+    expect(screen.getByLabelText('运行环境启动命令')).toHaveTextContent('["node","/app/mcp.js","--project","/grants/0"]')
+    expect(screen.getByText('工具别名：mcp_53e2b4_read')).toBeInTheDocument()
+  })
+
+  it('内置文件操作解释实际动作，宿主目录不冒充容器挂载', async () => {
+    const api = governance(), user = userEvent.setup()
+    vi.mocked(api.approvals).mockResolvedValue([{ ...approval, access: { ...access, kind: 'file', runtime: undefined }, operation: { ...approval.operation!, execution: undefined, capability: { ...approval.operation!.capability, source: 'builtin', name: 'files_remove', description: '删除指定业务目录中的文件。' } } }])
+    render(<ChatApprovals api={api} runId="run" onChanged={vi.fn()} onCancel={vi.fn()} />)
+    expect(await screen.findByLabelText('操作说明')).toHaveTextContent('删除指定业务目录中的文件。')
+    await user.click(screen.getByText('命令、镜像、挂载与限额'))
+    expect(screen.getByText('/srv/projects/shop（宿主业务目录） · rw')).toBeInTheDocument()
+    expect(screen.queryByText(/→ \/grants/)).not.toBeInTheDocument()
+  })
+
+  it('会话授权由服务端恢复，可在运行中撤回', async () => {
+    const api = governance(), user = userEvent.setup()
+    render(<Tooltip.Provider><ChatExecutionScope open sessionId="session" api={api} onClose={vi.fn()} /></Tooltip.Provider>)
+    expect(await screen.findByText('task_bash_command')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '撤回授权' }))
+    expect(api.revokeAuthorization).toHaveBeenCalledWith('session', 'authorization', { requestId: expect.any(String), expectedRevision: 1 })
+    expect(api.updateEnvironment).not.toHaveBeenCalled()
+  })
+
+  it('会话授权读取失败保留重读入口且不允许撤回', async () => {
     const api = governance()
-    vi.mocked(api.environment).mockRejectedValue(new Error('执行范围读取失败'))
-    render(<Tooltip.Provider><ChatExecutionScope open sessionId="session" api={api} locked={false} onClose={vi.fn()} /></Tooltip.Provider>)
-    await screen.findByRole('button', { name: '重新读取执行范围' })
-    expect(useNotificationStore.getState().notifications).toEqual([expect.objectContaining({ tone: 'danger', message: '执行范围读取失败' })])
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    vi.mocked(api.authorizations).mockRejectedValue(new Error('会话授权读取失败'))
+    render(<Tooltip.Provider><ChatExecutionScope open sessionId="session" api={api} onClose={vi.fn()} /></Tooltip.Provider>)
+    expect(await screen.findByRole('button', { name: '重新读取本会话授权' })).toBeInTheDocument()
+    expect(useNotificationStore.getState().notifications).toEqual([expect.objectContaining({ tone: 'danger', message: '会话授权读取失败' })])
   })
 
   it('审批提交后切换会话，迟到回执不发布通知', async () => {

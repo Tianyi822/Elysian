@@ -34,6 +34,9 @@ type Options struct {
 	// MCPDispatchID preserves the separate durable dispatch identity while the
 	// stdio connection remains keyed by its operation scope.
 	MCPDispatchID func(context.Context) string
+	// ResolveRuntimeAuthorization reads the immutable authorization attached to
+	// this exact host-issued dispatch. A nil result keeps the legacy path.
+	ResolveRuntimeAuthorization func(context.Context, string) (*RuntimeAuthorization, error)
 	// 注入仅供测试；生产使用系统 DNS 和 TCP 拨号。
 	LookupIP    func(context.Context, string) ([]net.IPAddr, error)
 	DialContext func(context.Context, string, string) (net.Conn, error)
@@ -131,7 +134,7 @@ type frame struct {
 }
 
 func defaultProfile(image string) config.Profile {
-	return config.Profile{Image: image, Runtime: "bash", TimeoutSeconds: 300, CPUMillis: 1000, MemoryBytes: 512 << 20, PIDs: 128, Enabled: true}
+	return config.Profile{Image: image, Runtime: "bash", TimeoutSeconds: 300, CPUMillis: 500, MemoryBytes: 256 << 20, PIDs: 64, Enabled: true}
 }
 func timeoutFor(profile config.Profile) time.Duration {
 	return time.Duration(profile.TimeoutSeconds) * time.Second

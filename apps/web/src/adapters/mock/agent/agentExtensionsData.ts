@@ -298,7 +298,7 @@ function validateMcpInput(input: AgentMCPServerInput): void {
     }
     const hasGrantId = stdio.grantId !== undefined && stdio.grantId !== ''
     const hasRevision = stdio.grantRevision !== undefined && stdio.grantRevision > 0
-    if (hasGrantId !== hasRevision) {
+    if (hasGrantId !== hasRevision || (stdio.requestedAccess !== undefined && (hasGrantId || hasRevision))) {
       throw new AgentHttpError('MCP 容器授权必须同时固定有效编号和具体修订', 'invalid-mcp-grant', 400)
     }
   } else {
@@ -514,6 +514,7 @@ export const agentExtensionsDemo = {
             image: input.stdio.image,
             command: [...input.stdio.command],
             hasEnvironment: Object.keys(environment).length > 0,
+            ...(input.stdio.requestedAccess === undefined ? {} : { requestedAccess: structuredClone(input.stdio.requestedAccess) }),
             ...(input.stdio.grantId !== undefined && input.stdio.grantId !== '' ? { grantId: input.stdio.grantId } : {}),
             ...(input.stdio.grantRevision !== undefined ? { grantRevision: input.stdio.grantRevision } : {}),
           },
@@ -555,7 +556,8 @@ export const agentExtensionsDemo = {
           image: input.stdio.image,
           command: [...input.stdio.command],
           hasEnvironment: Object.keys(stored.environment).length > 0,
-          ...(input.stdio.grantId !== undefined && input.stdio.grantId !== '' ? { grantId: input.stdio.grantId } : {}),
+          ...(input.stdio.requestedAccess === undefined ? {} : { requestedAccess: structuredClone(input.stdio.requestedAccess) }),
+            ...(input.stdio.grantId !== undefined && input.stdio.grantId !== '' ? { grantId: input.stdio.grantId } : {}),
           ...(input.stdio.grantRevision !== undefined ? { grantRevision: input.stdio.grantRevision } : {}),
         },
       } : {}),

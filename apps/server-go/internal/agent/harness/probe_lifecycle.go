@@ -46,7 +46,10 @@ func (m *Manager) probeServer(ctx context.Context, e *Extensions, server mcp.Ser
 	m.probes.Add(1) // Serialized with Close setting closed before Wait.
 	m.mu.Unlock()
 	defer m.probes.Done()
+	return m.runProbe(ctx, e, server, lease)
+}
 
+func (m *Manager) runProbe(ctx context.Context, e *Extensions, server mcp.Server, lease ResourceLease) (mcp.Catalog, error) {
 	pctx, cancel := context.WithTimeout(mcp.WithScope(ctx, lease.ScopeID), 60*time.Second)
 	stop := context.AfterFunc(m.ctx, cancel)
 	defer stop()
@@ -70,12 +73,40 @@ func (m *Manager) probeServer(ctx context.Context, e *Extensions, server mcp.Ser
 	}
 	m.mu.Lock()
 	settleCtx, settleCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	err = m.store.write(settleCtx, "probe-stop", func(tx *sql.Tx) error {
+	err := m.store.write(settleCtx, "probe-stop", func(tx *sql.Tx) error {
+		// A cancellation may have been committed while the external call was
+		// closing. Preserve its request identity so response-loss retries stay
+		// idempotent after the final stop receipt replaces this lease document.
+		if lease.Probe != nil {
+			stored, readErr := readProbeLease(settleCtx, tx, lease.ID)
+			if readErr != nil {
+				return readErr
+			}
+			lease.Probe.CancelRequestID = stored.Probe.CancelRequestID
+		}
 		lease.State = "released"
 		lease.EndedAt = stamp(m.deps.Now())
 		if unknown {
 			lease.State = "unknown"
 			lease.EndedAt = ""
+		}
+		if lease.Probe != nil {
+			// A confirmed stop is not yet a completed probe: SaveCatalog and
+			// the final request projection must both succeed before polling can
+			// observe completed together with its catalog.
+			lease.Probe.State = "running"
+			if probeErr != nil {
+				lease.Probe.State = "failed"
+				lease.Probe.Error = "MCP 探测失败"
+			}
+			if ctx.Err() != nil {
+				lease.Probe.State = "cancelled"
+				lease.Probe.Error = "MCP 探测已取消"
+			}
+			if unknown {
+				lease.Probe.State = "unknown"
+				lease.Probe.Error = "探测容器停止结果未确认，需要核实"
+			}
 		}
 		return saveResourceLease(settleCtx, tx, lease)
 	})
@@ -94,7 +125,12 @@ func (m *Manager) probeServer(ctx context.Context, e *Extensions, server mcp.Ser
 	if probeErr != nil {
 		return mcp.Catalog{}, probeErr
 	}
-	if err = m.checkProbe(ctx, server); err != nil {
+	if lease.Probe != nil {
+		err = m.checkRuntimeProbe(ctx, server)
+	} else {
+		err = m.checkProbe(ctx, server)
+	}
+	if err != nil {
 		return mcp.Catalog{}, err
 	}
 	return e.Servers.SaveCatalog(server.ID, server.Revision, catalog)
@@ -116,11 +152,17 @@ func (m *Manager) executeProbe(ctx context.Context, e *Extensions, server mcp.Se
 		return catalog, err
 	}
 	defer func() { resultErr = errors.Join(resultErr, m.toolRuntime.ReleaseCatalog(lease.ID)) }()
-	authorized, err := m.toolAuthority.Authorize(ctx, tools.AuthorizationBinding{OperationID: lease.ID, DispatchID: lease.ID, Tool: name, ArgumentsDigest: tools.ArgumentsDigest(args), CatalogID: lease.ID}, nil, func(checkCtx context.Context) error {
+	authorized, err := m.toolAuthority.Authorize(ctx, tools.AuthorizationBinding{OperationID: lease.ID, DispatchID: lease.ID, Tool: name, ArgumentsDigest: tools.ArgumentsDigest(args), CatalogID: lease.ID}, probeAuthorizationPayload(lease), func(checkCtx context.Context) error {
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		if err := m.checkProbeLocked(checkCtx, server); err != nil {
-			return err
+		var checkErr error
+		if lease.Probe != nil {
+			checkErr = m.checkRuntimeProbeLocked(checkCtx, server)
+		} else {
+			checkErr = m.checkProbeLocked(checkCtx, server)
+		}
+		if checkErr != nil {
+			return checkErr
 		}
 		var raw string
 		if err := m.store.db.QueryRowContext(checkCtx, "SELECT document FROM resource_leases WHERE id=?", lease.ID).Scan(&raw); err != nil {

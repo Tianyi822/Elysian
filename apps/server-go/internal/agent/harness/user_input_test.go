@@ -258,7 +258,7 @@ func TestUserInputSchemaMigrationAndRoutes(t *testing.T) {
 	}, nil)
 	// 将空数据库恢复为真实 schema7 的结构，再执行升级，验证新表与记录触发器一起安装。
 	m.mu.Lock()
-	_, err := m.store.db.Exec("DROP TABLE user_inputs; PRAGMA user_version=7")
+	_, err := m.store.db.Exec("DROP TABLE user_inputs; DROP TABLE session_authorizations; PRAGMA user_version=7")
 	if err == nil {
 		err = migrateStore(m.store.db)
 	}
@@ -267,7 +267,7 @@ func TestUserInputSchemaMigrationAndRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	var version int
-	if err := m.store.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 8 {
+	if err := m.store.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != schemaVersion {
 		t.Fatalf("版本 %d: %v", version, err)
 	}
 	run := submitAgentTest(t, m, session, "route-question", "请澄清")

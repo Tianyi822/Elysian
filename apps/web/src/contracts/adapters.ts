@@ -558,6 +558,10 @@ export interface PanelAdapter {
 }
 
 export interface AgentExtensionsAdapter {
+  createMcpProbeRequest(serverId: string, input: { revision: number; requestId: string }): Promise<import('@elysian/contracts').AgentMCPProbeRequest>
+  getMcpProbeRequest(id: string, signal?: AbortSignal): Promise<import('@elysian/contracts').AgentMCPProbeRequest>
+  decideMcpProbeRequest(id: string, input: import('@elysian/contracts').AgentMCPProbeDecision): Promise<import('@elysian/contracts').AgentMCPProbeRequest>
+  cancelMcpProbeRequest(id: string, input: { requestId: string }): Promise<import('@elysian/contracts').AgentMCPProbeRequest>
   listSkills(signal?: AbortSignal): Promise<readonly AgentSkill[]>
   getSkill(skillId: string, revision?: number, signal?: AbortSignal): Promise<AgentSkill>
   /** Immutable revision only; binary and over-limit files return a descriptive preview state. */
@@ -585,6 +589,7 @@ export interface AgentExtensionsAdapter {
 }
 
 export interface ElysianGateway {
+  agentExecution: import('./agentExecution').AgentExecutionAdapter
   agentExtensions: AgentExtensionsAdapter
   agentConversation: import('./agentChat').AgentConversationAdapter
   modelSettings: ModelSettingsAdapter

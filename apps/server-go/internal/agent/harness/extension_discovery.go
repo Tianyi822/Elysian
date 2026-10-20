@@ -23,7 +23,18 @@ type AutomaticExtensions struct {
 }
 
 // 自动目录不写回会话环境；原环境仍是执行配置、grant、资料和信任的唯一来源。
-func (m *Manager) snapshotForAgent(ctx context.Context, env Environment, mode string) (CapabilitySnapshot, error) {
+func (m *Manager) snapshotForAgent(ctx context.Context, env Environment, mode string, authorizationModes ...string) (CapabilitySnapshot, error) {
+	if len(authorizationModes) > 0 && authorizationModes[0] == AuthorizationOnDemand {
+		ctx = context.WithValue(ctx, runtimeAccessContextKey{}, true)
+		env.ExecutionProfiles, env.Grants = nil, nil
+		if e, ok := m.deps.Catalog.(*Extensions); ok {
+			for _, name := range []string{BashExec, BashScript} {
+				if e.Executor != nil && e.Workspaces != nil && !contains(env.Tools, name) {
+					env.Tools = append(append([]string{}, env.Tools...), name)
+				}
+			}
+		}
+	}
 	selected := env
 	if _, local := m.deps.Catalog.(*Extensions); local && mode == "enabled" {
 		// 技能和工具按最新修订组装；旧服务引用仅用于显式资料和提示模板。
@@ -53,6 +64,9 @@ func (m *Manager) snapshotForAgent(ctx context.Context, env Environment, mode st
 		}
 	}
 	s, err := m.snapshotWithMode(ctx, selected, true)
+	if runtimeAccessEnabled(ctx) {
+		s.AuthorizationMode = AuthorizationOnDemand
+	}
 	if err != nil || mode != "enabled" {
 		return s, err
 	}
@@ -145,7 +159,7 @@ func (m *Manager) snapshotForAgent(ctx context.Context, env Environment, mode st
 					unavailable("mcp", ref, "execution-unavailable", "stdio 执行器不可用")
 					continue
 				}
-				if server.Stdio.GrantID != "" {
+				if server.Stdio.GrantID != "" && !runtimeAccessEnabled(ctx) {
 					granted := false
 					for _, g := range s.Grants {
 						if g.ID == server.Stdio.GrantID && g.Revision == server.Stdio.GrantRevision {

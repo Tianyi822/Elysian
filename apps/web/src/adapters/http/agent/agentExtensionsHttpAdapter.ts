@@ -1,5 +1,8 @@
+import { parseRuntimeAccess } from './agentChatGovernance'
+import { parseProfile } from './executionParse'
 import type {
   AgentJSONSchema,
+  AgentMCPProbeRequest,
   AgentMCPCatalogProjection,
   AgentCapabilityRevocationPage,
   AgentCapabilityKind,
@@ -349,6 +352,24 @@ function positiveRevision(value: number, label: string): number {
   return value
 }
 
+const nonNegativeInteger = (value: unknown, label: string): number => { if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw new Error(`${label}无效`); return value }
+
+function parseProbeRequest(value: unknown): AgentMCPProbeRequest {
+  const r = object(value, 'MCP 探测申请无效')
+  if (!['waiting', 'preparing', 'running', 'completed', 'denied', 'failed', 'unknown', 'cancelled'].includes(String(r.state))) throw new Error('MCP 探测状态无效')
+  const e = r.environment === undefined ? undefined : object(r.environment, 'MCP 探测环境无效')
+  const p = r.progress === undefined ? undefined : object(r.progress, 'MCP 探测进度无效')
+  if (p && p.state !== 'pulling' && p.state !== 'ready') throw new Error('MCP 探测进度无效')
+  if (e && typeof e.requiresDownload !== 'boolean') throw new Error('MCP 探测环境无效')
+  const access = parseRuntimeAccess(r.access)
+  if (access.sessionAllowed) throw new Error('MCP 探测不能使用会话授权')
+  return { id: string(r.id, '探测编号'), version: positiveRevision(Number(r.version), '申请版本'), requestId: string(r.requestId, '请求编号'), serverId: string(r.serverId, '服务编号'), serverRevision: positiveRevision(Number(r.serverRevision), '服务修订'), serverName: string(r.serverName, '服务名称'), state: r.state as AgentMCPProbeRequest['state'], digest: string(r.digest, '申请摘要'), createdAt: string(r.createdAt, '创建时间'), access,
+    command: Array.isArray(r.command) ? r.command.map(item => string(item, '启动命令')) : [],
+    ...(e ? { environment: { profile: parseProfile(e.profile), version: string(e.version, '环境版本'), platform: string(e.platform, '环境架构'), requiresDownload: e.requiresDownload as boolean } } : {}),
+    ...(p ? { progress: { state: p.state as 'pulling' | 'ready', ...(p.current === undefined ? {} : { current: nonNegativeInteger(p.current, '下载进度') }), ...(p.total === undefined ? {} : { total: nonNegativeInteger(p.total, '下载总量') }) } } : {}),
+    ...(r.error === undefined ? {} : { error: string(r.error, '探测错误') }), ...(r.catalog === undefined ? {} : { catalog: parseMCPCatalogProjection(r.catalog) }) }
+}
+
 /** MCP 输入体：只输出服务端 mcp.Input（+PUT 的 expectedRevision）声明的字段。 */
 function mcpServerRequestBody(input: AgentMCPServerInput | AgentUpdateMCPServerInput): Record<string, unknown> {
   const body: Record<string, unknown> = {
@@ -357,6 +378,7 @@ function mcpServerRequestBody(input: AgentMCPServerInput | AgentUpdateMCPServerI
     ...(input.transport === 'streamable-http' && input.url !== undefined ? { url: input.url } : {}),
     ...(input.stdio !== undefined ? {
       stdio: {
+        ...(input.stdio.requestedAccess === undefined ? {} : { requestedAccess: input.stdio.requestedAccess }),
         image: input.stdio.image,
         command: input.stdio.command,
         ...(input.stdio.grantId !== undefined && input.stdio.grantId !== '' ? { grantId: input.stdio.grantId } : {}),
@@ -459,6 +481,10 @@ export function createHttpAgentExtensionsAdapter(baseUrl = '/api/agent'): AgentE
         body: JSON.stringify(mcpServerRequestBody(input)),
       }))
     },
+    async createMcpProbeRequest(serverId, input) { const request = parseProbeRequest(await requestAgentJson(`${mcpUrl(serverId)}/probe-request`, { method: 'POST', body: JSON.stringify(input) })); if (request.serverId !== serverId || request.serverRevision !== input.revision || request.requestId !== input.requestId) throw new Error('MCP 探测申请不匹配'); return request },
+    async getMcpProbeRequest(id, signal) { const request = parseProbeRequest(await requestAgentJson(`${baseUrl}/mcp-probe-requests/${agentPathPart(id)}`, { signal })); if (request.id !== id) throw new Error('MCP 探测申请不匹配'); return request },
+    async decideMcpProbeRequest(id, input) { const request = parseProbeRequest(await requestAgentJson(`${baseUrl}/mcp-probe-requests/${agentPathPart(id)}/decision`, { method: 'POST', body: JSON.stringify(input) })); if (request.id !== id) throw new Error('MCP 探测申请不匹配'); return request },
+    async cancelMcpProbeRequest(id, input) { const request = parseProbeRequest(await requestAgentJson(`${baseUrl}/mcp-probe-requests/${agentPathPart(id)}/cancel`, { method: 'POST', body: JSON.stringify(input) })); if (request.id !== id) throw new Error('MCP 探测申请不匹配'); return request },
     async probeMcpServer(serverId, revision) {
       positiveRevision(revision, 'MCP 服务修订')
       // 请求体仅 {revision}，无 requestId（服务端只声明 Revision 一个字段）。

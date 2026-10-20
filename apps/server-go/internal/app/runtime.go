@@ -21,6 +21,7 @@ import (
 	"elysian/server/internal/agent/mcp"
 	"elysian/server/internal/agent/tools"
 	"elysian/server/internal/config"
+	"elysian/server/internal/files"
 	"elysian/server/internal/panel"
 	"elysian/server/internal/paths"
 	"elysian/server/internal/seam"
@@ -119,7 +120,10 @@ func assembleProductionHarness(cfg *config.Config, views seam.DockerViews, optio
 	deps.AgentLimits = harness.DefaultAgentLimits()
 	deps.Limits.Concurrency = concurrency
 	deps.AgentLimits.Concurrency = concurrency
-	extensions := &harness.Extensions{}
+	extensions := &harness.Extensions{MountRoot: cfg.MountRoot, InspectFileRoot: func(ctx context.Context, root string, write bool) (harness.FileRootIdentity, error) {
+		identity, err := files.InspectAgentRoot(files.AgentRoot{Path: root, Writable: write})
+		return harness.FileRootIdentity{Path: identity.Path, Writable: identity.Writable, Device: identity.Device, Inode: identity.Inode}, err
+	}}
 	// 仅解析面板自己已知的持久目录链接；包内容与授权路径仍逐层禁止链接。
 	if err = os.MkdirAll(filepath.Dir(options.Paths.AgentModels), 0700); err != nil {
 		return nil, nil, err
@@ -160,8 +164,9 @@ func assembleProductionHarness(cfg *config.Config, views seam.DockerViews, optio
 	binary, binErr := os.Executable()
 	if binErr == nil {
 		extensions.Executor, err = execution.New(execution.Options{SocketPath: cfg.DockerSocket, SupervisorPath: binary, MountRoot: cfg.MountRoot,
-			Authorize:     tools.ConsumeBackend,
-			MCPDispatchID: tools.DispatchID,
+			Authorize:                   tools.ConsumeBackend,
+			MCPDispatchID:               tools.DispatchID,
+			ResolveRuntimeAuthorization: harness.RuntimeExecutionAuthorization,
 			ResolveProfile: func(id string, revision int) (*execconfig.Profile, error) {
 				if extensions.Config == nil {
 					return nil, errors.New("执行配置不可用")

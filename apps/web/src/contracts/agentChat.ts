@@ -1,5 +1,6 @@
-import type { AgentApproval, AgentAttachmentRef, AgentCapability, AgentChatOutput, AgentChatTimelineSnapshot, AgentCreateSessionInput, AgentEnvironment, AgentExecutionGrant, AgentExecutionProfile, AgentInput, AgentMessage, AgentMessageAttachment, AgentPermissionMode, AgentRenameSessionInput, AgentSession, AgentSwitchModelInput, RuntimeCall, RuntimeRun } from '@elysian/contracts'
+import type { AgentApproval, AgentAttachmentRef, AgentChatOutput, AgentChatTimelineSnapshot, AgentCreateSessionInput, AgentEnvironment, AgentExecutionGrant, AgentExecutionProfile, AgentInput, AgentMessage, AgentMessageAttachment, AgentPermissionMode, AgentRenameSessionInput, AgentSession, AgentSwitchModelInput, RuntimeCall, RuntimeRun } from '@elysian/contracts'
 import type { AgentUserInputAnswer, AgentUserInputRequest, AgentUserInputSubmission } from '@elysian/contracts'
+import type { AgentAccessDecisionInput, AgentAuthorizationRevokeInput, AgentSessionAuthorization } from '@elysian/contracts'
 
 export type AgentChatPermissionMode = AgentPermissionMode
 
@@ -96,13 +97,16 @@ export interface AgentConversationAdapter {
 }
 
 export interface AgentChatGovernance {
+  decideAccess(id: string, input: AgentAccessDecisionInput): Promise<AgentApproval>
+  authorizations(sessionId: string, signal?: AbortSignal): Promise<readonly AgentSessionAuthorization[]>
+  revokeAuthorization(sessionId: string, id: string, input: AgentAuthorizationRevokeInput): Promise<AgentSessionAuthorization>
   approvals(runId: string, signal?: AbortSignal): Promise<readonly AgentApproval[]>
   decide(id: string, decision: 'approved' | 'denied'): Promise<AgentApproval>
   environment(sessionId: string, signal?: AbortSignal): Promise<AgentEnvironment>
   updateEnvironment(sessionId: string, expectedRevision: number, environment: AgentEnvironment): Promise<AgentEnvironment>
   profiles(signal?: AbortSignal): Promise<readonly AgentExecutionProfile[]>
   grants(signal?: AbortSignal): Promise<readonly AgentExecutionGrant[]>
-  tools(sessionId: string, signal?: AbortSignal): Promise<readonly AgentCapability[]>
+  tools(sessionId: string, signal?: AbortSignal): Promise<readonly import('./agentExecution').AgentToolCatalogEntry[]>
 }
 
 export interface AgentChatAdapter {

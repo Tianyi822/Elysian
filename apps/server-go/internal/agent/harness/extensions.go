@@ -24,14 +24,16 @@ import (
 
 // Extensions 的资源由装配层构造并注入；Worker 永远不接触这些对象。
 type Extensions struct {
-	registry       *tools.Runtime
-	BuiltinSchemas func() []tools.PublicSchema
-	Skills         *skills.Store
-	Servers        *mcp.Store
-	MCP            *mcp.Client
-	Config         *execconfig.Store
-	Executor       *execution.Executor
-	Workspaces     *workspace.Store
+	MountRoot       string
+	InspectFileRoot func(context.Context, string, bool) (FileRootIdentity, error)
+	registry        *tools.Runtime
+	BuiltinSchemas  func() []tools.PublicSchema
+	Skills          *skills.Store
+	Servers         *mcp.Store
+	MCP             *mcp.Client
+	Config          *execconfig.Store
+	Executor        *execution.Executor
+	Workspaces      *workspace.Store
 	// 仅保存可公开的装配诊断，不包含配置正文或凭据。
 	SkillsReason    string
 	MCPReason       string
@@ -60,6 +62,9 @@ func (e *Extensions) Snapshot(ctx context.Context, env Environment) (CapabilityS
 
 func (e *Extensions) snapshot(ctx context.Context, env Environment, modern bool) (CapabilitySnapshot, error) {
 	s := CapabilitySnapshot{Environment: env, Tools: []Capability{}}
+	if runtimeAccessEnabled(ctx) {
+		s.AuthorizationMode = AuthorizationOnDemand
+	}
 	s.Environment.Skills = append([]RevisionRef(nil), env.Skills...)
 	s.Environment.Servers = append([]RevisionRef(nil), env.Servers...)
 	builtinNames := map[string]bool{}
@@ -146,6 +151,9 @@ func (e *Extensions) snapshot(ctx context.Context, env Environment, modern bool)
 			return s, bad("execution-unavailable", "Bash 能力需要受管执行器与任务工作区服务")
 		}
 		capability, ok := bashCapability(name, s.Profiles, s.Grants, e.Executor != nil)
+		if runtimeAccessEnabled(ctx) {
+			capability, ok = demandBashCapability(name), true
+		}
 		if !ok {
 			return s, bad("execution-unavailable", "Bash 能力必须绑定已启用的 Bash 执行配置与执行器")
 		}
@@ -178,7 +186,7 @@ func (e *Extensions) snapshot(ctx context.Context, env Environment, modern bool)
 			parameters = skillReadParameters()
 		}
 		s.Tools = append(s.Tools, Capability{SearchNames: []string{p.Manifest.Name}, Name: capabilityAlias("skill", ref.ID, "load"), Description: "加载技能 " + p.Manifest.Name + " 的 SKILL.md 或参考文件。" + p.Manifest.Description, Parameters: parameters, Source: "skill-load", Ref: ref, ReadOnly: true})
-		if len(scripts) > 0 && len(s.Profiles) > 0 && e.Executor != nil {
+		if len(scripts) > 0 && (len(s.Profiles) > 0 || runtimeAccessEnabled(ctx)) && e.Executor != nil {
 			profileIDs := []string{}
 			grantIDs := []string{""}
 			for _, p := range s.Profiles {
@@ -194,6 +202,9 @@ func (e *Extensions) snapshot(ctx context.Context, env Environment, modern bool)
 				schema["properties"].(map[string]any)["path"] = map[string]any{"type": "string", "minLength": 1, "maxLength": 4096}
 				params, _ = json.Marshal(schema)
 			}
+			if runtimeAccessEnabled(ctx) {
+				params = demandScriptParameters()
+			}
 			s.Tools = append(s.Tools, Capability{SearchNames: []string{p.Manifest.Name}, Name: capabilityAlias("script", ref.ID, "run"), Description: "审批后在受限容器执行已加载技能 " + p.Manifest.Name + " 的脚本；文件保留在当前任务工作区。", Parameters: params, Source: "script", Ref: ref})
 		}
 	}
@@ -208,7 +219,7 @@ func (e *Extensions) snapshot(ctx context.Context, env Environment, modern bool)
 		if err != nil {
 			return s, err
 		}
-		if server.Stdio != nil && server.Stdio.GrantID != "" {
+		if server.Stdio != nil && server.Stdio.GrantID != "" && !runtimeAccessEnabled(ctx) {
 			bound := false
 			for _, g := range s.Grants {
 				bound = bound || (g.ID == server.Stdio.GrantID && g.Revision == server.Stdio.GrantRevision)
@@ -324,6 +335,9 @@ type scriptArguments struct {
 }
 
 func (e *Extensions) Prepare(ctx context.Context, s CapabilitySnapshot, o Operation) (Operation, error) {
+	if s.AuthorizationMode == AuthorizationOnDemand {
+		return e.prepareDemandOperation(ctx, s, o)
+	}
 	if isBashSource(o.Capability.Source) {
 		return e.prepareBash(ctx, s, o)
 	}

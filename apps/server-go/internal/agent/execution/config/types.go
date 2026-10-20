@@ -57,6 +57,14 @@ type NetworkEndpoint struct {
 	Port   int    `json:"port"`
 }
 
+// AccessScope is a declaration of required access, never an authorization.
+// The harness turns a confirmed operation into its own immutable grant.
+type AccessScope struct {
+	Directories  []Directory       `json:"directories"`
+	Network      []NetworkEndpoint `json:"network"`
+	PrivateCIDRs []string          `json:"privateCidrs"`
+}
+
 // Resource identifies one platform object; wildcards never grant new targets.
 type Resource struct {
 	Domain string `json:"domain"`

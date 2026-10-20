@@ -145,24 +145,45 @@ func (e *Executor) Open(ctx context.Context, server mcp.Server) (mcp.Duplex, err
 		return nil, problem(400, "execution-stdio", "MCP 缺少容器 stdio 配置")
 	}
 	var grant *config.Grant
-	if server.Stdio.GrantID != "" {
+	profile := defaultProfile(server.Stdio.Image)
+	dispatch := ""
+	if e.options.MCPDispatchID != nil {
+		dispatch = e.options.MCPDispatchID(ctx)
+	}
+	authorization, err := e.runtimeAuthorization(ctx, dispatch)
+	if err != nil {
+		return nil, err
+	}
+	if authorization != nil {
+		if authorization.ServerID != server.ID || authorization.ServerRevision != server.Revision || authorization.ScopeID != mcp.Scope(ctx) || authorization.Profile.Image != server.Stdio.Image {
+			return nil, problem(403, "execution-runtime-authorization", "MCP 服务与已确认运行时授权不符")
+		}
+		profile, grant = authorization.Profile, authorization.Grant
+	} else if server.Stdio.RequestedAccess != nil {
+		return nil, problem(403, "execution-runtime-authorization", "MCP 运行需求须先经管理员确认")
+	}
+	if authorization == nil && server.Stdio.GrantID != "" {
 		if e.options.ResolveGrant == nil {
 			return nil, problem(503, "execution-grant-unavailable", "MCP 容器网络授权未装配")
 		}
 		var err error
-		grant, err = e.options.ResolveGrant(server.Stdio.GrantID, server.Stdio.GrantRevision)
+		legacy, resolveErr := e.options.ResolveGrant(server.Stdio.GrantID, server.Stdio.GrantRevision)
+		err = resolveErr
 		if err != nil {
 			return nil, err
 		}
-		if grant == nil || grant.ID != server.Stdio.GrantID || grant.Revision != server.Stdio.GrantRevision {
+		if legacy == nil || legacy.ID != server.Stdio.GrantID || legacy.Revision != server.Stdio.GrantRevision {
 			return nil, problem(409, "execution-grant-changed", "MCP 容器授权修订不符")
+		}
+		if authorization == nil {
+			grant = legacy
 		}
 	}
 	id := server.ID
 	if scope := mcp.Scope(ctx); scope != "" {
 		id = scope
 	}
-	return e.OpenStdio(ctx, StdioRequest{ID: id, Profile: defaultProfile(server.Stdio.Image), Grant: grant, Command: server.Stdio.Command, Environment: server.Stdio.Environment, ServerID: server.ID, ServerRevision: server.Revision})
+	return e.OpenStdio(ctx, StdioRequest{ID: id, Profile: profile, Grant: grant, Command: server.Stdio.Command, Environment: server.Stdio.Environment, ServerID: server.ID, ServerRevision: server.Revision})
 }
 func (e *Executor) OpenStdio(ctx context.Context, request StdioRequest) (*Process, error) {
 	return e.start(ctx, request.ID, request.Profile, request.Grant, frame{Kind: "start", Mode: "stdio", Command: request.Command, Environment: request.Environment, serverID: request.ServerID, serverRevision: request.ServerRevision}, nil, nil, nil)
@@ -172,8 +193,8 @@ func (e *Executor) start(ctx context.Context, id string, p config.Profile, grant
 	if !identityPattern.MatchString(id) {
 		return nil, problem(400, "execution-id", "执行编号无效")
 	}
+	authorizationID := id
 	if e.options.Authorize != nil {
-		authorizationID := id
 		if start.Mode == "stdio" && start.serverID != "" && e.options.MCPDispatchID != nil {
 			authorizationID = e.options.MCPDispatchID(ctx)
 		}
@@ -184,10 +205,17 @@ func (e *Executor) start(ctx context.Context, id string, p config.Profile, grant
 			return nil, problem(403, "execution-authorization", "执行缺少匹配的一次性派发授权")
 		}
 	}
+	runtimeAuth, err := e.runtimeAuthorization(ctx, authorizationID)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateRuntimeBinding(runtimeAuth, ctx, id, p, grant, start); err != nil {
+		return nil, err
+	}
 	if err := validateProfile(p); err != nil {
 		return nil, err
 	}
-	if p.ID != "" && e.options.ResolveProfile != nil {
+	if p.ID != "" && !strings.HasPrefix(p.ID, "runtime-") && e.options.ResolveProfile != nil {
 		latest, err := e.options.ResolveProfile(p.ID, 0)
 		if err != nil || latest == nil || latest.ID != p.ID || !latest.Enabled {
 			return nil, problem(403, "execution-profile-disabled", "执行配置已停用，不能用于新的操作")
@@ -201,7 +229,7 @@ func (e *Executor) start(ctx context.Context, id string, p config.Profile, grant
 	if grant != nil && !grant.Enabled {
 		return nil, problem(403, "execution-grant-disabled", "执行授权已停用，不能用于新的操作")
 	}
-	if grant != nil && e.options.ResolveGrant != nil {
+	if grant != nil && !strings.HasPrefix(grant.ID, "authorization-") && e.options.ResolveGrant != nil {
 		if latest, err := e.options.ResolveGrant(grant.ID, 0); err != nil || latest == nil || latest.ID != grant.ID || !latest.Enabled {
 			return nil, problem(403, "execution-grant-disabled", "执行授权已停用，不能用于新的操作")
 		}
@@ -220,7 +248,7 @@ func (e *Executor) start(ctx context.Context, id string, p config.Profile, grant
 	}
 	e.mu.Lock()
 	closed := e.closed
-	revoked := e.revokedSource(grant, start.serverID, start.serverRevision)
+	revoked := e.revokedSource(grant, start.serverID, start.serverRevision) || e.runtimeAuthorizationRevoked(runtimeAuth)
 	e.mu.Unlock()
 	if closed {
 		return nil, problem(503, "execution-closed", "执行器已关闭")
@@ -232,7 +260,11 @@ func (e *Executor) start(ctx context.Context, id string, p config.Profile, grant
 	if start.Mode == "stdio" {
 		baseContext = e.lifetime
 	}
-	rctx, cancel := context.WithTimeout(baseContext, timeoutFor(p))
+	timeout := timeoutFor(p)
+	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < timeout {
+		timeout = time.Until(deadline)
+	}
+	rctx, cancel := context.WithTimeout(baseContext, timeout)
 	stopStartup := context.AfterFunc(ctx, cancel)
 	defer stopStartup()
 	accepted := false
@@ -247,14 +279,18 @@ func (e *Executor) start(ctx context.Context, id string, p config.Profile, grant
 		labels["elysian.agent.execution.server-revision"] = strconv.Itoa(start.serverRevision)
 	}
 	var image struct {
-		OS     string `json:"Os"`
-		Config struct{ Volumes map[string]any }
+		OS           string `json:"Os"`
+		Architecture string
+		Config       struct{ Volumes map[string]any }
 	}
 	if err = e.call(rctx, "GET", "/images/"+url.PathEscape(p.Image)+"/json", nil, &image); err != nil {
 		return nil, err
 	}
 	if image.OS != "linux" || len(image.Config.Volumes) > 0 {
 		return nil, problem(400, "execution-image", "执行镜像必须为 Linux 镜像且不能声明额外可写卷")
+	}
+	if runtimeAuth != nil && runtimeAuth.Platform != "" && image.OS+"/"+image.Architecture != runtimeAuth.Platform {
+		return nil, problem(409, "execution-runtime-platform", "本机镜像架构与已批准运行环境不符")
 	}
 	body := map[string]any{"Image": p.Image, "User": "65532:65532", "WorkingDir": "/workspace", "Entrypoint": []string{"/bundle/elysian/supervisor"}, "Cmd": []string{"agent-exec-supervisor"}, "Env": []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME=/tmp", "TMPDIR=/tmp"}, "Labels": labels, "OpenStdin": true, "StdinOnce": false, "AttachStdin": true, "AttachStdout": true, "AttachStderr": true, "Tty": false, "StopSignal": "SIGKILL", "HostConfig": map[string]any{"NetworkMode": "none", "ReadonlyRootfs": true, "Privileged": false, "CapDrop": []string{"ALL"}, "SecurityOpt": []string{"no-new-privileges:true"}, "Memory": p.MemoryBytes, "MemorySwap": p.MemoryBytes, "NanoCpus": int64(p.CPUMillis) * 1000000, "PidsLimit": p.PIDs, "Binds": binds, "Tmpfs": map[string]string{"/tmp": "rw,nosuid,nodev,noexec,size=67108864,mode=1777", "/workspace": "rw,nosuid,nodev,size=134217728,mode=0700,uid=65532,gid=65532"}, "RestartPolicy": map[string]string{"Name": "no"}, "LogConfig": map[string]string{"Type": "none"}}}
 	body["Healthcheck"] = map[string]any{"Test": []string{"NONE"}}
@@ -305,8 +341,11 @@ func (e *Executor) start(ctx context.Context, id string, p config.Profile, grant
 	// Runtime identity is immutable after publishing to active under e.mu.
 	process.serverID = start.serverID
 	process.serverRevision = start.serverRevision
+	if runtimeAuth != nil {
+		process.authorizationID = runtimeAuth.ID
+	}
 	e.mu.Lock()
-	if e.closed || e.revokedSource(grant, start.serverID, start.serverRevision) {
+	if e.closed || e.revokedSource(grant, start.serverID, start.serverRevision) || e.runtimeAuthorizationRevoked(runtimeAuth) {
 		e.mu.Unlock()
 		conn.Close()
 		if cleanup() != nil {

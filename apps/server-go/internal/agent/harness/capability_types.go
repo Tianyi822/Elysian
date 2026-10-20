@@ -67,20 +67,21 @@ func (c Capability) MarshalJSON() ([]byte, error) {
 }
 
 type CapabilitySnapshot struct {
-	Automatic      *AutomaticExtensions `json:"automatic,omitempty"`
-	LoadingBudget  *LoadingBudget       `json:"loadingBudget,omitempty"`
-	EagerTools     []string             `json:"eagerTools,omitempty"`
-	PermissionMode PermissionMode       `json:"permissionMode,omitempty"`
-	PolicyVersion  string               `json:"policyVersion,omitempty"`
-	ToolLoading    string               `json:"toolLoading,omitempty"`
-	Environment    Environment          `json:"environment"`
-	Tools          []Capability         `json:"tools"`
-	Materials      []Capability         `json:"materials,omitempty"`
-	SkillSummaries []SkillSummary       `json:"skillSummaries,omitempty"`
-	Profiles       []execconfig.Profile `json:"executionProfiles,omitempty"`
-	Grants         []execconfig.Grant   `json:"grants,omitempty"`
-	ResourceRules  []ResourceRule       `json:"resourceRules,omitempty"`
-	Digest         string               `json:"digest"`
+	AuthorizationMode string               `json:"authorizationMode,omitempty"`
+	Automatic         *AutomaticExtensions `json:"automatic,omitempty"`
+	LoadingBudget     *LoadingBudget       `json:"loadingBudget,omitempty"`
+	EagerTools        []string             `json:"eagerTools,omitempty"`
+	PermissionMode    PermissionMode       `json:"permissionMode,omitempty"`
+	PolicyVersion     string               `json:"policyVersion,omitempty"`
+	ToolLoading       string               `json:"toolLoading,omitempty"`
+	Environment       Environment          `json:"environment"`
+	Tools             []Capability         `json:"tools"`
+	Materials         []Capability         `json:"materials,omitempty"`
+	SkillSummaries    []SkillSummary       `json:"skillSummaries,omitempty"`
+	Profiles          []execconfig.Profile `json:"executionProfiles,omitempty"`
+	Grants            []execconfig.Grant   `json:"grants,omitempty"`
+	ResourceRules     []ResourceRule       `json:"resourceRules,omitempty"`
+	Digest            string               `json:"digest"`
 }
 type SkillSummary struct {
 	Ref         RevisionRef `json:"ref"`
@@ -107,15 +108,19 @@ type OperationFileChange struct {
 	After  *OperationFileContent `json:"after,omitempty"`
 }
 type Operation struct {
-	FileChanges     []OperationFileChange `json:"fileChanges,omitempty"`
-	Task            *tools.TaskReference  `json:"task,omitempty"`
-	PendingResult   json.RawMessage       `json:"pendingResult,omitempty"`
-	ScopeID         string                `json:"scopeId,omitempty"`
-	NodeID          string                `json:"nodeId,omitempty"`
-	Source          string                `json:"source,omitempty"`
-	WorkflowID      string                `json:"workflowId,omitempty"`
-	WorkflowStepID  string                `json:"workflowStepId,omitempty"`
-	WorkflowAttempt int                   `json:"workflowAttempt,omitempty"`
+	Preparation     *RuntimePreparation     `json:"preparation,omitempty"`
+	Access          *AccessRequest          `json:"access,omitempty"`
+	Authorization   *OperationAuthorization `json:"authorization,omitempty"`
+	FileRoot        *FileRootIdentity       `json:"fileRoot,omitempty"`
+	FileChanges     []OperationFileChange   `json:"fileChanges,omitempty"`
+	Task            *tools.TaskReference    `json:"task,omitempty"`
+	PendingResult   json.RawMessage         `json:"pendingResult,omitempty"`
+	ScopeID         string                  `json:"scopeId,omitempty"`
+	NodeID          string                  `json:"nodeId,omitempty"`
+	Source          string                  `json:"source,omitempty"`
+	WorkflowID      string                  `json:"workflowId,omitempty"`
+	WorkflowStepID  string                  `json:"workflowStepId,omitempty"`
+	WorkflowAttempt int                     `json:"workflowAttempt,omitempty"`
 
 	ID                string          `json:"id"`
 	RunID             string          `json:"runId"`
@@ -145,15 +150,17 @@ type Operation struct {
 	Error             *Failure        `json:"error,omitempty"`
 }
 type Approval struct {
-	ScopeID         string `json:"scopeId,omitempty"`
-	NodeID          string `json:"nodeId,omitempty"`
-	Kind            string `json:"kind,omitempty"`
-	WorkflowID      string `json:"workflowId,omitempty"`
-	WorkflowStepID  string `json:"workflowStepId,omitempty"`
-	WorkflowAttempt int    `json:"workflowAttempt,omitempty"`
-	ContentDigest   string `json:"contentDigest,omitempty"`
-	Instruction     string `json:"instruction,omitempty"`
-	InputJSON       string `json:"inputJson,omitempty"`
+	Access          *AccessRequest  `json:"access,omitempty"`
+	AccessDecision  *AccessDecision `json:"accessDecision,omitempty"`
+	ScopeID         string          `json:"scopeId,omitempty"`
+	NodeID          string          `json:"nodeId,omitempty"`
+	Kind            string          `json:"kind,omitempty"`
+	WorkflowID      string          `json:"workflowId,omitempty"`
+	WorkflowStepID  string          `json:"workflowStepId,omitempty"`
+	WorkflowAttempt int             `json:"workflowAttempt,omitempty"`
+	ContentDigest   string          `json:"contentDigest,omitempty"`
+	Instruction     string          `json:"instruction,omitempty"`
+	InputJSON       string          `json:"inputJson,omitempty"`
 
 	ID          string    `json:"id"`
 	RunID       string    `json:"runId"`

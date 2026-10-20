@@ -24,6 +24,7 @@ type Process struct {
 	volume          string
 	serverID        string
 	serverRevision  int
+	authorizationID string
 	conn            net.Conn
 	reader          *bufio.Reader
 	grant           *config.Grant

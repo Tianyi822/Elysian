@@ -1,3 +1,5 @@
+import { McpProbeDialog } from './McpProbeDialog'
+import { EMPTY_MCP_ACCESS, McpRequestedAccess } from './McpRequestedAccess'
 import { useEffect, useRef, useState } from 'react'
 import type { AgentMCPCatalogProjection, AgentMCPServer, AgentMCPServerInput } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
@@ -25,6 +27,7 @@ export function McpSection({ active }: { active: boolean }) {
   const [search, setSearch] = useState('')
   const [editing, setEditing] = useState<AgentMCPServer | 'new'>()
   const [detail, setDetail] = useState<AgentMCPServer>()
+  const [probing, setProbing] = useState<AgentMCPServer>()
   useEffect(() => { void state.loadMcpServers(gateway) }, [gateway, state.loadMcpServers])
   useFeedbackNotification(active && state.mcpStatus === 'ready' ? state.mcpErrorMessage : null)
   const rows = state.mcpServers.filter(server => [server.name, server.url, server.stdio?.image].some(value => value?.toLowerCase().includes(search.trim().toLowerCase())))
@@ -37,9 +40,10 @@ export function McpSection({ active }: { active: boolean }) {
           <td className={`${cell} text-xs text-fg-muted`}>{server.transport === 'stdio' ? '容器 stdio' : 'Streamable HTTP'}</td>
           <td className={cell}><span className="block truncate font-mono text-xs" title={server.url ?? server.stdio?.image}>{server.url ?? server.stdio?.image}</span><span className="text-xs text-fg-subtle">{server.transport === 'stdio' ? server.stdio?.hasEnvironment ? '已配置环境变量' : '无环境变量' : server.hasCredential ? '已配置 Bearer Token' : '无身份验证'}</span></td>
           <td className={cell}><StatusTag label={server.revoked ? '已永久撤销' : server.active ? '已启用' : '已停用'} tone={server.revoked ? 'danger' : server.active ? 'success' : 'neutral'} /></td>
-          <td className={cell}><div className="flex flex-wrap items-center gap-1"><IconAction label={`编辑 ${server.name}`} disabled={server.revoked} onClick={() => setEditing(server)}><Pencil aria-hidden size={14} /></IconAction><button type="button" className="rounded-md px-1.5 py-1 text-xs text-fg-muted hover:bg-surface-raised" onClick={() => setDetail(server)}>详情</button><button type="button" className="rounded-md px-1.5 py-1 text-xs text-fg-muted hover:bg-surface-raised disabled:opacity-40" disabled={!server.active || server.revoked || state.probe?.status === 'loading'} onClick={() => void state.probeMcpServer(gateway, server.id, server.revision)}>探测</button></div>{server.transport === 'stdio' && <p className="mt-1 text-[11px] text-fg-subtle">探测会启动容器</p>}</td>
+          <td className={cell}><div className="flex flex-wrap items-center gap-1"><IconAction label={`编辑 ${server.name}`} disabled={server.revoked} onClick={() => setEditing(server)}><Pencil aria-hidden size={14} /></IconAction><button type="button" className="rounded-md px-1.5 py-1 text-xs text-fg-muted hover:bg-surface-raised" onClick={() => setDetail(server)}>详情</button><button type="button" className="rounded-md px-1.5 py-1 text-xs text-fg-muted hover:bg-surface-raised disabled:opacity-40" disabled={!server.active || server.revoked || state.probe?.status === 'loading'} onClick={() => server.transport === 'stdio' ? setProbing(server) : void state.probeMcpServer(gateway, server.id, server.revision)}>探测</button></div>{server.transport === 'stdio' && <p className="mt-1 text-[11px] text-fg-subtle">确认后启动探测容器</p>}</td>
         </tr>)}</ExtensionTable></>}
     </div>
+    {probing && <McpProbeDialog key={`${probing.id}:${probing.revision}`} server={probing} visible={active} onClose={() => setProbing(undefined)} />}
     {editing !== undefined && <McpServerDialog server={editing === 'new' ? undefined : editing} visible={active} onClose={() => setEditing(undefined)} />}
     {detail && <McpDetailDialog initial={detail} visible={active} onClose={() => { setDetail(undefined); state.closeCatalog() }} />}
     <ExtensionDialog title="MCP 探测结果" open={active && state.probe !== null} onClose={state.closeProbe} wide>
@@ -68,8 +72,8 @@ function McpServerDialog({ server, visible, onClose }: { server?: AgentMCPServer
   const [command, setCommand] = useState<string[]>([...(server?.stdio?.command ?? [''])])
   const [environmentMode, setEnvironmentMode] = useState<'keep' | 'replace' | 'clear'>('keep')
   const [environment, setEnvironment] = useState<{ key: string; value: string }[]>([{ key: '', value: '' }])
-  const [grantId, setGrantId] = useState(server?.stdio?.grantId ?? '')
-  const [grantRevision, setGrantRevision] = useState(server?.stdio?.grantRevision?.toString() ?? '')
+  const [requestedAccess, setRequestedAccess] = useState(server?.stdio?.requestedAccess ?? EMPTY_MCP_ACCESS)
+  const [replaceLegacyAccess, setReplaceLegacyAccess] = useState(!server?.stdio?.grantId)
   const [enabled, setEnabled] = useState(server?.active ?? true)
   const [error, setError] = useState<string>()
   useEffect(() => { state.clearMcpSaveError() }, [state.clearMcpSaveError])
@@ -83,7 +87,6 @@ function McpServerDialog({ server, visible, onClose }: { server?: AgentMCPServer
     } else {
       if (!image.trim() || !command[0]?.trim()) { setError('请填写容器镜像与可执行文件'); return }
       if (command.length > 64 || command.some(arg => arg.includes('\0') || new TextEncoder().encode(arg).length > 4096)) { setError('命令最多 64 项，单项不能超过 4096 字节或包含 NUL'); return }
-      if ((grantId.trim() === '') !== (grantRevision.trim() === '') || (grantId.trim() && (!Number.isSafeInteger(Number(grantRevision)) || Number(grantRevision) < 1))) { setError('授权编号和正整数修订须一起填写，或一起留空'); return }
       if (environmentMode === 'clear') env = {}
       if (environmentMode === 'replace') {
         env = Object.create(null) as Record<string, string>
@@ -95,7 +98,7 @@ function McpServerDialog({ server, visible, onClose }: { server?: AgentMCPServer
       }
     }
     const input: AgentMCPServerInput = { name: name.trim(), transport, active: enabled, revoked: server?.revoked ?? false,
-      ...(transport === 'streamable-http' ? { url: url.trim(), ...(clearCredential ? { credential: '' } : credential ? { credential } : {}) } : { stdio: { image: image.trim(), command, ...(env !== undefined ? { environment: env } : {}), ...(grantId.trim() ? { grantId: grantId.trim(), grantRevision: Number(grantRevision) } : {}) } }),
+      ...(transport === 'streamable-http' ? { url: url.trim(), ...(clearCredential ? { credential: '' } : credential ? { credential } : {}) } : { stdio: { image: image.trim(), command, ...(env !== undefined ? { environment: env } : {}), ...(replaceLegacyAccess ? { requestedAccess: { ...requestedAccess, directories: requestedAccess.directories.map(item => ({ ...item, path: item.path.trim() })), network: requestedAccess.network.map(item => ({ ...item, host: item.host.trim() })), privateCidrs: requestedAccess.privateCidrs.map(item => item.trim()).filter(Boolean) } } : { grantId: server?.stdio?.grantId, grantRevision: server?.stdio?.grantRevision }) } }),
     }
     const ok = await inFlightOnly(() => server ? state.updateMcpServer(gateway, server.id, { ...input, expectedRevision: revision }) : state.createMcpServer(gateway, input))
     if (ok && alive.current) onClose()
@@ -109,12 +112,12 @@ function McpServerDialog({ server, visible, onClose }: { server?: AgentMCPServer
         <Field label="服务地址" id="mcp-url"><input id="mcp-url" type="url" required value={url} onChange={event => setUrl(event.target.value)} placeholder="https://mcp.example.com/mcp" className={`${CTL_FIELD} font-mono text-xs`} /></Field>
         <Field label="Bearer Token（可选）" id="mcp-token"><div className="relative"><input id="mcp-token" type={showCredential ? 'text' : 'password'} autoComplete="new-password" value={credential} onChange={event => { setCredential(event.target.value); setClearCredential(false) }} placeholder={server?.hasCredential ? '留空沿用已保存的 Token' : '无身份验证时留空'} className={`${CTL_FIELD} w-full pr-9 font-mono text-xs`} /><div className="absolute right-1 top-0.5"><IconAction label={showCredential ? '隐藏 Token' : '显示输入的 Token'} onClick={() => setShowCredential(!showCredential)}>{showCredential ? <EyeOff size={14} /> : <Eye size={14} />}</IconAction></div></div>{server?.hasCredential && <button type="button" className={`${CTL_SECONDARY} mt-2 self-start`} onClick={() => { setClearCredential(!clearCredential); setCredential('') }}>{clearCredential ? '撤销清除 Token' : '清除已保存的 Token'}</button>}<p className="mt-1 text-xs text-fg-subtle">{clearCredential ? '保存后清除现有 Token。' : '已有凭据不回显；输入新值替换，留空沿用。'}</p></Field>
       </> : <>
-        <Field label="容器镜像" id="mcp-image"><input id="mcp-image" required value={image} onChange={event => setImage(event.target.value)} placeholder="registry.example.com/mcp/server:1.0" className={`${CTL_FIELD} font-mono text-xs`} /></Field>
+        <Field label="容器镜像" id="mcp-image"><input id="mcp-image" required value={image} onChange={event => setImage(event.target.value)} placeholder="registry.example.com/mcp/server@sha256:…" className={`${CTL_FIELD} font-mono text-xs`} /><p className="mt-1 text-xs text-fg-subtle">容器探测要求仓库名与完整 SHA-256 摘要，确认后按此镜像启动。</p></Field>
         <fieldset className="space-y-2"><legend className="mb-2 text-xs font-medium">启动命令</legend>{command.map((arg, index) => <div key={index} className="flex items-end gap-2"><div className="min-w-0 flex-1"><Field label={index === 0 ? '可执行文件' : `参数 ${index}`} id={`mcp-arg-${index}`}><input id={`mcp-arg-${index}`} required={index === 0} value={arg} onChange={event => setCommand(rows => rows.map((row, i) => i === index ? event.target.value : row))} className={`${CTL_FIELD} font-mono text-xs`} /></Field></div>{index > 0 && <IconAction label={`移除参数 ${index}`} onClick={() => setCommand(rows => rows.filter((_, i) => i !== index))}><Trash2 size={14} /></IconAction>}</div>)}<button type="button" className={CTL_SECONDARY} disabled={command.length >= 64} onClick={() => setCommand([...command, ''])}>添加参数</button></fieldset>
         <div className="space-y-2"><Field label="环境变量" id="mcp-env-mode"><SelectDropdown id="mcp-env-mode" ariaLabel="环境变量处理方式" value={environmentMode} onSelect={setEnvironmentMode} fullWidth items={[{ value: 'keep', label: server?.stdio?.hasEnvironment ? '保留已保存的环境变量' : '不设置环境变量' }, { value: 'replace', label: '整体替换环境变量' }, { value: 'clear', label: '清除全部环境变量' }]} /></Field>
           {environmentMode === 'replace' && <>{environment.map((row, index) => <div key={index} className="flex items-end gap-2"><div className="min-w-0 flex-1"><Field label={`变量名 ${index + 1}`} id={`mcp-env-key-${index}`}><input id={`mcp-env-key-${index}`} value={row.key} onChange={event => setEnvironment(rows => rows.map((item, i) => i === index ? { ...item, key: event.target.value } : item))} className={`${CTL_FIELD} font-mono text-xs`} /></Field></div><div className="min-w-0 flex-1"><Field label={`变量值 ${index + 1}`} id={`mcp-env-value-${index}`}><input id={`mcp-env-value-${index}`} type="password" autoComplete="new-password" value={row.value} onChange={event => setEnvironment(rows => rows.map((item, i) => i === index ? { ...item, value: event.target.value } : item))} className={`${CTL_FIELD} font-mono text-xs`} /></Field></div><IconAction label={`移除环境变量 ${index + 1}`} onClick={() => setEnvironment(rows => rows.filter((_, i) => i !== index))}><Trash2 size={14} /></IconAction></div>)}<button type="button" className={CTL_SECONDARY} onClick={() => setEnvironment([...environment, { key: '', value: '' }])}>添加环境变量</button><p className="text-xs text-fg-subtle">保存后整体替换；已有变量值不回显。</p></>}
         </div>
-        <details className="border-t border-line pt-3"><summary className="cursor-pointer text-xs font-medium">高级设置</summary><div className="mt-3 grid grid-cols-2 gap-3"><Field label="授权编号（可选）" id="mcp-grant"><input id="mcp-grant" value={grantId} onChange={event => setGrantId(event.target.value)} className={CTL_FIELD} /></Field><Field label="授权修订" id="mcp-grant-revision"><input id="mcp-grant-revision" type="number" min={1} step={1} value={grantRevision} onChange={event => setGrantRevision(event.target.value)} className={CTL_FIELD} /></Field></div><p className="mt-2 text-xs text-fg-subtle">引用已有授权及其具体修订。留空表示无目录挂载和网络授权。</p></details>
+        {!replaceLegacyAccess ? <div className="space-y-2 text-xs"><p className="text-fg-subtle">此历史配置仍引用固定授权。保留连接配置时沿用原引用；改用运行需求后，由每次使用时确认。</p><button type="button" className={CTL_SECONDARY} onClick={() => setReplaceLegacyAccess(true)}>改用运行时授权</button></div> : <McpRequestedAccess value={requestedAccess} onChange={setRequestedAccess} />}
       </>}
       <ExtensionToggle label="启用服务" checked={enabled} onChange={setEnabled} />
       {(error || state.mcpSaveError) && <p role="alert" className="text-xs text-danger">{error ?? state.mcpSaveError}</p>}
@@ -147,7 +150,7 @@ function McpDetailDialog({ initial, visible, onClose }: { initial: AgentMCPServe
   </ExtensionDialog>
 }
 
-function McpCatalog({ catalog }: { catalog: AgentMCPCatalogProjection }) {
+export function McpCatalog({ catalog }: { catalog: AgentMCPCatalogProjection }) {
   const [tab, setTab] = useState<'tools' | 'resources' | 'prompts'>('tools')
   return <div className="space-y-3"><p className="text-xs text-fg-subtle">目录获取于 {formatDateTime(catalog.fetchedAt)}</p><ChipGroup ariaLabel="MCP 目录分类" value={tab} onSelect={setTab} items={[{ value: 'tools', label: `工具 ${catalog.tools.length}` }, { value: 'resources', label: `资源 ${catalog.resources.length}` }, { value: 'prompts', label: `提示词 ${catalog.prompts.length}` }]} />
     {catalog[tab].length === 0 ? <p className="py-3 text-xs text-fg-subtle">此目录没有{tab === 'tools' ? '工具' : tab === 'resources' ? '资源' : '提示词'}。</p> : catalog[tab].map((item, index) => <details key={`${tab}-${index}`} className="rounded-lg border border-line p-3"><summary className="cursor-pointer break-words text-xs font-medium">{'title' in item && item.title ? item.title : item.name}</summary><p className="mt-2 whitespace-pre-wrap break-words text-xs text-fg-muted">{item.description ?? '无描述'}</p><div className="mt-3"><JsonView label="目录条目" text={JSON.stringify(item, null, 2)} /></div></details>)}

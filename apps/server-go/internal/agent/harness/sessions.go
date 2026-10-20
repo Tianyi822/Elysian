@@ -347,6 +347,9 @@ func (m *Manager) ContinueTask(ctx context.Context, taskID string, input AgentIn
 }
 
 func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentInput, newTask bool) (Run, bool, error) {
+	if input.AuthorizationMode != "" && input.AuthorizationMode != AuthorizationOnDemand {
+		return Run{}, false, bad("invalid-authorization-mode", "授权模式只能为 on-demand 或省略")
+	}
 	if input.ExtensionMode != "" && input.ExtensionMode != "enabled" {
 		return Run{}, false, bad("invalid-extension-mode", "扩展模式只能为 enabled 或省略")
 	}
@@ -367,18 +370,19 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 		operation = "create-task"
 	}
 	raw, _ := json.Marshal(struct {
-		ExtensionMode    string          `json:"extensionMode,omitempty"`
-		Operation        string          `json:"operation"`
-		TargetID         string          `json:"targetId"`
-		Content          string          `json:"content"`
-		Skills           []RevisionRef   `json:"skills"`
-		Resources        []ResourceRef   `json:"resources"`
-		Prompts          []PromptRef     `json:"prompts"`
-		Attachments      []AttachmentRef `json:"attachments,omitempty"`
-		ReasoningLevel   string          `json:"reasoningLevel,omitempty"`
-		ReplaceMessageID string          `json:"replaceMessageId,omitempty"`
-		PermissionMode   PermissionMode  `json:"permissionMode,omitempty"`
-	}{input.ExtensionMode, operation, targetID, input.Content, input.Skills, input.Resources, input.Prompts, input.Attachments, input.ReasoningLevel, input.ReplaceMessageID, canonicalPermissionMode(input.PermissionMode)})
+		AuthorizationMode string          `json:"authorizationMode,omitempty"`
+		ExtensionMode     string          `json:"extensionMode,omitempty"`
+		Operation         string          `json:"operation"`
+		TargetID          string          `json:"targetId"`
+		Content           string          `json:"content"`
+		Skills            []RevisionRef   `json:"skills"`
+		Resources         []ResourceRef   `json:"resources"`
+		Prompts           []PromptRef     `json:"prompts"`
+		Attachments       []AttachmentRef `json:"attachments,omitempty"`
+		ReasoningLevel    string          `json:"reasoningLevel,omitempty"`
+		ReplaceMessageID  string          `json:"replaceMessageId,omitempty"`
+		PermissionMode    PermissionMode  `json:"permissionMode,omitempty"`
+	}{input.AuthorizationMode, input.ExtensionMode, operation, targetID, input.Content, input.Skills, input.Resources, input.Prompts, input.Attachments, input.ReasoningLevel, input.ReplaceMessageID, canonicalPermissionMode(input.PermissionMode)})
 	canonical := string(raw)
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -465,7 +469,7 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 	if err != nil {
 		return Run{}, false, storageFailure(err)
 	}
-	snapshot, err := m.snapshotForAgent(ctx, env, input.ExtensionMode)
+	snapshot, err := m.snapshotForAgent(ctx, env, input.ExtensionMode, input.AuthorizationMode)
 	if err != nil {
 		return Run{}, false, err
 	}

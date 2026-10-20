@@ -120,7 +120,7 @@ export type RuntimeRun = {
   model?: AgentModelProfile
   historySeq?: string
   initialMemoryRevision?: number
-  phase?: 'queued' | 'inference' | 'checkpoint' | 'final-memory' | 'workflow-output' | 'waiting-input' | 'waiting-approval' | 'waiting-resource' | 'waiting-task' | 'completed'
+  phase?: 'running' | 'preparing-runtime' | 'queued' | 'inference' | 'checkpoint' | 'final-memory' | 'workflow-output' | 'waiting-input' | 'waiting-approval' | 'waiting-resource' | 'waiting-task' | 'completed'
   memoryStatus?: RuntimeMemoryStatus
   warning?: RuntimeFailure
 }

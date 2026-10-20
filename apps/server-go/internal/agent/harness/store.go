@@ -345,6 +345,9 @@ func (s *store) recover(ctx context.Context) error {
 		if err := recoverOperations(ctx, tx, s.now()); err != nil {
 			return err
 		}
+		if err := s.recoverRuntimePreparations(ctx, tx); err != nil {
+			return err
+		}
 		rows, err := tx.QueryContext(ctx, "SELECT document FROM runs WHERE state='running'")
 		if err != nil {
 			return err
@@ -427,6 +430,9 @@ func (s *store) sweep(ctx context.Context, days int) error {
 	cutoff := stamp(s.now().Add(-time.Duration(days) * 24 * time.Hour))
 	return s.write(ctx, "sweep", func(tx *sql.Tx) error {
 		if err := s.sweepSessions(ctx, tx, cutoff); err != nil {
+			return err
+		}
+		if err := sweepProbeRecords(ctx, tx, cutoff); err != nil {
 			return err
 		}
 		const expiredBatchRuns = ` FROM runs WHERE session_id='' AND state IN ('succeeded','failed','cancelled','interrupted') AND ended_at<>'' AND julianday(ended_at)<julianday(?)

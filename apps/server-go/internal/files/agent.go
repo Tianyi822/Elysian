@@ -25,9 +25,23 @@ type AgentRoot struct {
 	Path     string
 	Writable bool
 }
+
+// AgentRootAuthorization is the identity of a business directory captured by
+// the trusted authorizer. It is not an input accepted from the model.
+type AgentRootAuthorization struct {
+	Path     string `json:"path"`
+	Writable bool   `json:"writable"`
+	Device   uint64 `json:"device"`
+	Inode    uint64 `json:"inode"`
+	// Only ConfiguredRoot can mark the explicit legacy startup path. Dynamic
+	// dispatch facts reconstructed by the app always recheck trusted ancestors.
+	legacy bool
+}
+
 type AgentOptions struct {
-	Roots     []AgentRoot
-	Authorize func(context.Context) error
+	Roots       []AgentRoot
+	Authorize   func(context.Context) error
+	ResolveRoot func(context.Context, string, bool) (AgentRootAuthorization, error)
 }
 
 type agentRootGrant struct {
@@ -38,14 +52,15 @@ type agentRootGrant struct {
 // AgentFacade shares the HTTP service, but its public methods use descriptor-
 // anchored IO instead of shell commands and never follow symbolic links.
 type AgentFacade struct {
-	service   fileService
-	roots     map[string]agentRootGrant
-	authorize func(context.Context) error
-	mu        *sync.Mutex
+	service     fileService
+	roots       map[string]agentRootGrant
+	authorize   func(context.Context) error
+	resolveRoot func(context.Context, string, bool) (AgentRootAuthorization, error)
+	mu          *sync.Mutex
 }
 
 func NewAgentFacade(deps Deps, options AgentOptions) (*AgentFacade, error) {
-	f := &AgentFacade{roots: map[string]agentRootGrant{}, authorize: options.Authorize, mu: &sync.Mutex{}}
+	f := &AgentFacade{roots: map[string]agentRootGrant{}, authorize: options.Authorize, resolveRoot: options.ResolveRoot, mu: &sync.Mutex{}}
 	if deps.Available && (deps.Accounts != nil || deps.service != nil) {
 		host := deps.host
 		if host == nil {
@@ -121,7 +136,22 @@ func agentSecretName(name string) bool {
 }
 
 func (f *AgentFacade) Available() bool {
-	return f != nil && f.service != nil && len(f.roots) > 0 && f.authorize != nil
+	return f != nil && f.service != nil && (len(f.roots) > 0 || f.resolveRoot != nil) && f.authorize != nil
+}
+
+// DynamicRoots reports whether roots are selected from the current dispatch.
+// It affects tool discovery only; it never grants access to any path.
+func (f *AgentFacade) DynamicRoots() bool { return f != nil && f.resolveRoot != nil }
+
+// ConfiguredRoot exposes an immutable startup identity for the app's explicit
+// legacy dispatch path. Dynamic authorization never falls back to this map.
+func (f *AgentFacade) ConfiguredRoot(root string, write bool) (AgentRootAuthorization, error) {
+	if f != nil {
+		if grant, ok := f.roots[root]; ok && (!write || grant.Writable) {
+			return AgentRootAuthorization{Path: root, Writable: grant.Writable, Device: uint64(grant.identity.Dev), Inode: uint64(grant.identity.Ino), legacy: true}, nil
+		}
+	}
+	return AgentRootAuthorization{}, errors.New("业务目录未授权")
 }
 func (f *AgentFacade) Roots() []string {
 	roots := []string{}
@@ -151,6 +181,29 @@ func agentRelative(path string, directory bool) ([]string, error) {
 }
 
 func openAgentAbsoluteDirectory(path string) (int, error) {
+	return openAgentRootDirectory(path, false)
+}
+
+// InspectAgentRoot captures an approval-time identity without retaining a
+// descriptor or changing the facade's configured roots. Ancestors must be
+// trusted, matching the execution mount boundary.
+func InspectAgentRoot(root AgentRoot) (AgentRootAuthorization, error) {
+	if !filepath.IsAbs(root.Path) || filepath.Clean(root.Path) != root.Path || forbiddenAgentRoot(root.Path) {
+		return AgentRootAuthorization{}, errors.New("Agent 文件根必须是独立业务目录")
+	}
+	fd, err := openAgentRootDirectory(root.Path, true)
+	if err != nil {
+		return AgentRootAuthorization{}, err
+	}
+	defer unix.Close(fd)
+	var identity unix.Stat_t
+	if err := unix.Fstat(fd, &identity); err != nil {
+		return AgentRootAuthorization{}, errors.New("Agent 文件根身份无法核实")
+	}
+	return AgentRootAuthorization{Path: root.Path, Writable: root.Writable, Device: uint64(identity.Dev), Inode: uint64(identity.Ino)}, nil
+}
+
+func openAgentRootDirectory(path string, trustedAncestors bool) (int, error) {
 	fd, err := unix.Open("/", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return -1, err
@@ -158,6 +211,13 @@ func openAgentAbsoluteDirectory(path string) (int, error) {
 	for _, part := range strings.Split(strings.TrimPrefix(path, "/"), "/") {
 		if part == "" {
 			continue
+		}
+		if trustedAncestors {
+			var stat unix.Stat_t
+			if unix.Fstat(fd, &stat) != nil || stat.Uid != 0 || stat.Mode&0022 != 0 {
+				unix.Close(fd)
+				return -1, errors.New("授权目录的所有祖先必须由 root 持有且不可被组或其他用户写入")
+			}
 		}
 		next, e := unix.Openat(fd, part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 		unix.Close(fd)
@@ -170,38 +230,74 @@ func openAgentAbsoluteDirectory(path string) (int, error) {
 }
 
 func (f *AgentFacade) parent(ctx context.Context, root, path string, write, directory bool) (int, string, error) {
-	if err := ctx.Err(); err != nil {
-		return -1, "", err
-	}
-	if !f.Available() {
-		return -1, "", errors.New("业务文件能力未配置")
-	}
-	if err := f.authorize(ctx); err != nil {
-		return -1, "", err
-	}
-	return f.openParent(root, path, write, directory)
-}
-
-func (f *AgentFacade) openParent(root, path string, write, directory bool) (int, string, error) {
-	grant, ok := f.roots[root]
-	if !ok || (write && !grant.Writable) {
-		return -1, "", errors.New("业务目录未授权")
-	}
-	parts, err := agentRelative(path, directory)
-	if err != nil {
+	if _, err := agentRelative(path, directory); err != nil {
 		return -1, "", err
 	}
 	if agentProtectedPath(filepath.Join(root, path)) {
 		return -1, "", errAgentProtectedPath
 	}
-	fd, err := openAgentAbsoluteDirectory(root)
+	scope, err := f.openRoot(ctx, root, write)
 	if err != nil {
-		return -1, "", errors.New("业务目录不可访问")
+		return -1, "", err
+	}
+	defer unix.Close(scope.fd)
+	return scope.parent(path, directory)
+}
+
+type agentRootScope struct {
+	fd   int
+	path string
+}
+
+func (f *AgentFacade) openRoot(ctx context.Context, root string, write bool) (*agentRootScope, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if !f.Available() {
+		return nil, errors.New("业务文件能力未配置")
+	}
+	if err := f.authorize(ctx); err != nil {
+		return nil, err
+	}
+	var grant AgentRootAuthorization
+	var err error
+	if f.resolveRoot != nil {
+		grant, err = f.resolveRoot(ctx, root, write)
+	} else {
+		grant, err = f.ConfiguredRoot(root, write)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if grant.Path != root || write && !grant.Writable || !filepath.IsAbs(root) || filepath.Clean(root) != root || forbiddenAgentRoot(root) || grant.Inode == 0 {
+		return nil, errors.New("业务目录未授权")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	fd, err := openAgentRootDirectory(root, f.resolveRoot != nil && !grant.legacy)
+	if err != nil {
+		return nil, errors.New("业务目录不可访问")
 	}
 	var identity unix.Stat_t
-	if unix.Fstat(fd, &identity) != nil || identity.Dev != grant.identity.Dev || identity.Ino != grant.identity.Ino {
+	if unix.Fstat(fd, &identity) != nil || uint64(identity.Dev) != grant.Device || uint64(identity.Ino) != grant.Inode {
 		unix.Close(fd)
-		return -1, "", errors.New("授权业务根目录身份已变化，须重新配置授权")
+		return nil, errors.New("授权业务根目录身份已变化，须重新申请授权")
+	}
+	return &agentRootScope{fd: fd, path: root}, nil
+}
+
+func (scope *agentRootScope) parent(path string, directory bool) (int, string, error) {
+	parts, err := agentRelative(path, directory)
+	if err != nil {
+		return -1, "", err
+	}
+	if agentProtectedPath(filepath.Join(scope.path, path)) {
+		return -1, "", errAgentProtectedPath
+	}
+	fd, err := unix.Openat(scope.fd, ".", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return -1, "", errors.New("业务目录不可访问")
 	}
 	count := len(parts)
 	name := "."
@@ -422,9 +518,20 @@ func (f *AgentFacade) Change(ctx context.Context, root, path, target, expected, 
 	if expected == "" || expected == "missing" {
 		return nil, errors.New("必须提供源文件的精确内容版本")
 	}
+	if _, err := agentRelative(path, false); err != nil {
+		return nil, err
+	}
+	if agentProtectedPath(filepath.Join(root, path)) {
+		return nil, errAgentProtectedPath
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	parent, name, err := f.parent(ctx, root, path, true, false)
+	scope, err := f.openRoot(ctx, root, true)
+	if err != nil {
+		return nil, err
+	}
+	defer unix.Close(scope.fd)
+	parent, name, err := scope.parent(path, false)
 	if err != nil {
 		return nil, err
 	}
@@ -458,7 +565,7 @@ func (f *AgentFacade) Change(ctx context.Context, root, path, target, expected, 
 	if path == target {
 		return nil, errors.New("源文件与目标不能相同")
 	}
-	dest, destName, err := f.openParent(root, target, true, false)
+	dest, destName, err := scope.parent(target, false)
 	if err != nil {
 		return nil, err
 	}

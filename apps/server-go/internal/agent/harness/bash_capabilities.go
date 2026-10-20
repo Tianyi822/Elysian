@@ -89,7 +89,7 @@ func (e *Extensions) validateBashArguments(c Capability, args json.RawMessage) e
 		return err
 	}
 	var input bashArguments
-	if err := json.Unmarshal(args, &input); err != nil || input.ProfileID == "" {
+	if err := json.Unmarshal(args, &input); err != nil || (input.ProfileID == "" && !strings.Contains(string(c.Parameters), `"access"`)) {
 		return bad("invalid-bash", "Bash 参数无效")
 	}
 	if isBashScript(c) {

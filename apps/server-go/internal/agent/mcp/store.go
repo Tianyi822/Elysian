@@ -18,6 +18,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"elysian/server/internal/agent/execution/config"
 	"elysian/server/internal/agent/jsonvalue"
 )
 
@@ -278,7 +279,7 @@ func fromInput(in Input, old Server) (Server, error) {
 	}
 	p.HasCredential = p.Credential != ""
 	if in.Stdio != nil {
-		p.Stdio = &ContainerSpec{Image: in.Stdio.Image, Command: append([]string(nil), in.Stdio.Command...), GrantID: in.Stdio.GrantID, GrantRevision: in.Stdio.GrantRevision}
+		p.Stdio = &ContainerSpec{Image: in.Stdio.Image, Command: append([]string(nil), in.Stdio.Command...), GrantID: in.Stdio.GrantID, GrantRevision: in.Stdio.GrantRevision, RequestedAccess: config.CloneAccessScope(in.Stdio.RequestedAccess)}
 		if old.Stdio != nil {
 			p.Stdio.Environment = cloneMap(old.Stdio.Environment)
 		}
@@ -311,6 +312,14 @@ func validateServer(p Server) error {
 		}
 		if (p.Stdio.GrantID == "" && p.Stdio.GrantRevision != 0) || (p.Stdio.GrantID != "" && (!grantID.MatchString(p.Stdio.GrantID) || p.Stdio.GrantRevision < 1)) {
 			return problem(400, "invalid-mcp-grant", "MCP 容器授权必须同时固定有效编号和具体修订")
+		}
+		if p.Stdio.RequestedAccess != nil {
+			if p.Stdio.GrantID != "" || p.Stdio.GrantRevision != 0 {
+				return problem(400, "invalid-mcp-access", "运行需求不能与旧授权引用同时设置")
+			}
+			if err := config.ValidateAccessDeclaration(*p.Stdio.RequestedAccess); err != nil {
+				return err
+			}
 		}
 		for _, arg := range p.Stdio.Command {
 			if len(arg) > 4096 || !utf8.ValidString(arg) || strings.IndexByte(arg, 0) >= 0 {
@@ -348,6 +357,7 @@ func cloneServer(s Server) Server {
 		c := *s.Stdio
 		c.Command = append([]string(nil), c.Command...)
 		c.Environment = cloneMap(c.Environment)
+		c.RequestedAccess = config.CloneAccessScope(c.RequestedAccess)
 		s.Stdio = &c
 	}
 	return s

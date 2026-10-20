@@ -1,3 +1,4 @@
+import { parseGrant } from './executionParse'
 import type { AgentWorkspaceFile, AgentSkillSource, AgentSkill, AgentMCPServer } from '@elysian/contracts'
 
 function object(value: unknown, message: string): Record<string, unknown> {
@@ -96,7 +97,9 @@ export function parseAgentMCPServer(value: unknown): AgentMCPServer {
   let stdio: AgentMCPServer['stdio']
   if (row.stdio !== undefined) {
     const spec = object(row.stdio, 'Agent MCP 容器规格无效')
+    const requested = spec.requestedAccess === undefined ? undefined : parseGrant({ ...object(spec.requestedAccess, 'Agent MCP 运行需求无效'), id: '', revision: 0, enabled: true, name: '', createdAt: '' })
     stdio = {
+      ...(requested ? { requestedAccess: { directories: requested.directories, network: requested.network, privateCidrs: requested.privateCidrs } } : {}),
       image: string(spec.image, 'Agent MCP 容器规格无效'),
       command: strings(spec.command, 'Agent MCP 容器规格无效'),
       hasEnvironment: boolean(spec.hasEnvironment, 'Agent MCP 容器规格无效'),

@@ -745,14 +745,14 @@ describe('基本聊天界面', () => {
     expect(history.scrollTop).toBe(1000)
   })
 
-  it('权限菜单可选择真实模式并恢复偏好，提供执行范围入口', async () => {
+  it('权限菜单可选择真实模式并恢复偏好，提供本会话授权入口', async () => {
     const user = userEvent.setup()
     const view = renderChat()
     await waitFor(() => expect(screen.getByRole('button', { name: '选择思考等级：高' })).toBeEnabled())
     await user.click(screen.getByRole('button', { name: '权限模式：请求批准' }))
     expect(screen.getAllByRole('menuitemradio')).toHaveLength(3)
     expect(screen.getByRole('menuitemradio', { name: '完全开放' })).toHaveAccessibleDescription('授权范围内免逐项审批，系统禁区与资源限制继续生效。')
-    expect(screen.getByRole('menuitem', { name: '执行范围…' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: '本会话授权…' })).toBeInTheDocument()
     await user.click(screen.getByRole('menuitemradio', { name: '帮我批准' }))
     expect(useAgentChatStore.getState().session?.permissionMode).toBe('assist')
     expect(screen.queryByText('预览')).not.toBeInTheDocument()

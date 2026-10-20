@@ -20,7 +20,7 @@ type Service struct {
 
 func New(c *kardia.Context, deps Deps, _ Config) (*Service, error) {
 	if deps.Facade == nil || !deps.Facade.Available() {
-		return nil, errors.New("业务文件能力缺少明确授权根目录")
+		return nil, errors.New("业务文件能力缺少授权校验入口")
 	}
 	s := &Service{deps: deps}
 	base, err := kardia.NewService(c, ServiceName, s, nil)
@@ -29,7 +29,10 @@ func New(c *kardia.Context, deps Deps, _ Config) (*Service, error) {
 	}
 	s.Service = base
 	text := tools.Schema{Type: tools.SchemaString}
-	root := tools.Schema{Type: tools.SchemaString, Enum: tools.EnumOf(deps.Facade.Roots()...)}
+	root := tools.Schema{Type: tools.SchemaString}
+	if !deps.Facade.DynamicRoots() {
+		root.Enum = tools.EnumOf(deps.Facade.Roots()...)
+	}
 	var descriptors []tools.Descriptor
 	for _, spec := range []struct {
 		name, action, description string

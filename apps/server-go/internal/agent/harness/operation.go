@@ -235,11 +235,42 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 			}
 		}
 		if preparer, ok := m.deps.Catalog.(operationPreparer); ok {
-			o, err = preparer.Prepare(ctx, *a.run.Snapshot, o)
+			if a.run.Snapshot.AuthorizationMode == AuthorizationOnDemand {
+				m.mu.Unlock()
+				o, err = preparer.Prepare(ctx, *a.run.Snapshot, o)
+				m.mu.Lock()
+				current, readErr := m.store.get(dbCtx, run.ID)
+				if readErr != nil {
+					m.mu.Unlock()
+					return storageFailure(readErr)
+				}
+				if m.closed || current.CancelRequestedAt != "" || current.Status != StateRunning || ctx.Err() != nil {
+					m.mu.Unlock()
+					return context.Canceled
+				}
+			} else {
+				o, err = preparer.Prepare(ctx, *a.run.Snapshot, o)
+			}
 			if err != nil {
 				m.mu.Unlock()
 				return err
 			}
+		}
+
+		if o.Access != nil && o.Execution != nil {
+			seconds := run.Limits.CallTimeoutSeconds
+			remaining := run.Limits.RunTimeoutSeconds - int(run.ActiveMilliseconds/1000)
+			if remaining < seconds {
+				seconds = remaining
+			}
+			if seconds < 1 {
+				seconds = 1
+			}
+			if o.Execution.Profile.TimeoutSeconds > seconds {
+				o.Execution.Profile.TimeoutSeconds = seconds
+			}
+			o.Access.ScopeKey = accessScopeKey(o)
+			o.Access.Digest = accessDigest(o)
 		}
 		o.FileChanges, err = m.prepareOperationChanges(ctx, o)
 		if err != nil {
@@ -327,11 +358,36 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		}
 	}
 
-	if err = authorizeOperationScope(*a.run.Snapshot, o); err != nil {
+	if err = authorizeOperationScope(accessSnapshot(*a.run.Snapshot, o), o); err != nil {
 		m.mu.Unlock()
 		return err
 	}
+
 	direct, decisionSource := operationDecision(*a.run.Snapshot, o)
+	if o.Access != nil {
+		direct, decisionSource = false, "human-approval"
+		if o.ApprovalID == "" {
+			denied, readErr := m.accessWasDenied(dbCtx, run, o)
+			if readErr != nil {
+				m.mu.Unlock()
+				return storageFailure(readErr)
+			}
+			if denied {
+				err = m.finishAccessDenied(dbCtx, run, o)
+				m.mu.Unlock()
+				return err
+			}
+			remembered, readErr := m.matchingAuthorization(dbCtx, run, o)
+			if readErr != nil {
+				m.mu.Unlock()
+				return readErr
+			}
+			if remembered != nil {
+				direct, decisionSource = true, "session-authorization"
+				o.Authorization = &OperationAuthorization{ID: o.ID, Digest: o.Access.Digest, Decision: "session", SessionAuthorizationID: remembered.ID, CreatedAt: stamp(m.deps.Now())}
+			}
+		}
+	}
 	o.PolicyVersion = a.run.Snapshot.PolicyVersion
 	o.PermissionMode = a.run.Snapshot.PermissionMode
 	o.DecisionSource = decisionSource
@@ -356,6 +412,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		o.ApprovalID = m.deps.NewID()
 		approval := Approval{Kind: "operation", WorkflowID: run.WorkflowID, WorkflowStepID: run.WorkflowStepID, WorkflowAttempt: run.WorkflowAttempt, ID: o.ApprovalID, RunID: o.RunID, OperationID: o.ID, Status: "pending", CreatedAt: o.CreatedAt, ExpiresAt: stamp(m.deps.Now().Add(24 * time.Hour)), Operation: o}
 		approval.ScopeID, approval.NodeID = run.ScopeID, run.NodeID
+		approval.Access = o.Access
 		_, err = m.store.change(dbCtx, run.ID, "approval-intent", func(tx *sql.Tx, r *Run) error {
 			if err := saveOperation(dbCtx, tx, o); err != nil {
 				return err
@@ -387,12 +444,39 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 			m.mu.Unlock()
 			return storageFailure(err)
 		}
+		if o.Access != nil && aa.Status == "denied" {
+			err = m.finishAccessDenied(dbCtx, run, o)
+			m.mu.Unlock()
+			return err
+		}
 		if aa.Status != "approved" || approvalExpired(aa, m.deps.Now()) || !approvedOperationMatches(aa.Operation, o) {
 			m.mu.Unlock()
 			return bad("approval-invalid", "审批已失效或操作发生变化")
 		}
 		approval = &aa
 		o.DecisionSource = "human-approval"
+	}
+
+	if o.Access != nil {
+		if err = m.checkOperationAuthorization(dbCtx, o); err != nil {
+			m.mu.Unlock()
+			return err
+		}
+		if o.Execution != nil && o.Access.Runtime != nil {
+			// Approval is durable before downloading; no user code is dispatched by preparation.
+			m.mu.Unlock()
+			prepared, prepareErr := m.prepareAuthorizedRuntime(ctx, run, o)
+			m.mu.Lock()
+			if prepareErr != nil {
+				m.mu.Unlock()
+				return prepareErr
+			}
+			o = prepared
+			if err = m.checkOperationAuthorization(dbCtx, o); err != nil {
+				m.mu.Unlock()
+				return err
+			}
+		}
 	}
 	dispatchedAt := stamp(m.deps.Now())
 	call := Call{ID: o.CallID, RunID: run.ID, OperationID: o.ID, ModelRequestID: o.ModelRequestID, ModelCallID: o.ModelCallID, Tool: c.Name, ArgumentsJSON: o.ArgumentsJSON, Status: StateRunning, StartedAt: dispatchedAt, StepIndex: run.Usage.Calls}

@@ -1,3 +1,5 @@
+import { createHttpAgentExecutionAdapter } from '../http/agent/agentExecutionHttpAdapter'
+import { AgentExecutionMockAdapter } from './agent/agentExecutionMockAdapter'
 import { createHttpAgentExtensionsAdapter } from '../http/agent/agentExtensionsHttpAdapter'
 import { AgentExtensionsMockAdapter } from './agent/agentExtensionsMockAdapter'
 import { mockPanelAdapter } from './panelMock'
@@ -74,6 +76,7 @@ export function createGateway(
     modelSettings?: 'mock' | 'http'
     agentRuntime?: 'mock' | 'http'
     agentExtensions?: 'mock' | 'http'
+    agentExecution?: 'mock' | 'http'
   } = {},
 ): ElysianGateway {
   const dataset = createMockDataset()
@@ -116,6 +119,7 @@ export function createGateway(
   const agentRuntime = options.agentRuntime === 'http' ? createHttpAgentRuntimeAdapter() : { runtime: async () => demoAgentRuntimeInfo() }
 
   return {
+    agentExecution: options.agentExecution === 'http' ? createHttpAgentExecutionAdapter() : new AgentExecutionMockAdapter(),
     agentConversation: options.modelSettings === 'http' ? createHttpAgentConversationAdapter() : createUnavailableAgentConversationAdapter(),
     panel: options.panel === 'http' ? createHttpPanelAdapter() : mockPanelAdapter,
     session,

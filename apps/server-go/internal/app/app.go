@@ -16,6 +16,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"mime"
@@ -175,7 +176,21 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 		plugins = append(plugins, tooldatabase.Plugin(tooldatabase.Deps{Facade: databaseDeps.AgentFacade}, tooldatabase.Config{}))
 	}
 	filesDeps := files.Deps{Available: cfg.HostOpsAvailable(), Accounts: security.NewSystemAccounts()}
-	filesAgent, filesAgentErr := files.NewAgentFacade(filesDeps, files.AgentOptions{Authorize: agentAuthorize, Roots: configuredAgentFileRoots(cfg)})
+	var filesAgent *files.AgentFacade
+	filesAgent, filesAgentErr := files.NewAgentFacade(filesDeps, files.AgentOptions{Authorize: agentAuthorize, Roots: configuredAgentFileRoots(cfg), ResolveRoot: func(ctx context.Context, root string, write bool) (files.AgentRootAuthorization, error) {
+		operation, ok := tools.Payload(ctx).(harness.Operation)
+		if !ok {
+			return files.AgentRootAuthorization{}, errors.New("文件操作缺少已确认派发授权")
+		}
+		if operation.Access == nil {
+			return filesAgent.ConfiguredRoot(root, write)
+		}
+		if operation.FileRoot == nil || operation.Authorization == nil {
+			return files.AgentRootAuthorization{}, errors.New("业务目录尚未授权")
+		}
+		identity := operation.FileRoot
+		return files.AgentRootAuthorization{Path: identity.Path, Writable: identity.Writable, Device: identity.Device, Inode: identity.Inode}, nil
+	}})
 	if filesAgentErr != nil {
 		appLogs.Runtime("error", "server.agent", "Agent 文件范围不可用")
 	}

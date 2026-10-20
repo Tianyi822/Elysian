@@ -1,3 +1,4 @@
+import { createMcpProbeMock } from './agentMcpProbeMock'
 import type {
   AgentMCPServerInput,
   AgentSkillImportInput,
@@ -17,6 +18,12 @@ import { agentExtensionsDemo } from './agentExtensionsData'
 export { resetAgentExtensionsData } from './agentExtensionsData'
 
 export class AgentExtensionsMockAdapter implements AgentExtensionsAdapter {
+  private probes = createMcpProbeMock()
+  createMcpProbeRequest: AgentExtensionsAdapter['createMcpProbeRequest'] = (...args) => this.probes.createMcpProbeRequest(...args)
+  getMcpProbeRequest: AgentExtensionsAdapter['getMcpProbeRequest'] = id => this.probes.getMcpProbeRequest(id)
+  decideMcpProbeRequest: AgentExtensionsAdapter['decideMcpProbeRequest'] = (...args) => this.probes.decideMcpProbeRequest(...args)
+  cancelMcpProbeRequest: AgentExtensionsAdapter['cancelMcpProbeRequest'] = id => this.probes.cancelMcpProbeRequest(id)
+
   async listSkills() {
     return agentExtensionsDemo.listSkills()
   }

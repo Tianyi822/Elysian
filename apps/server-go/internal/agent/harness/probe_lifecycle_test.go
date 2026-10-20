@@ -113,8 +113,11 @@ func TestProbeLifecycleLocksBeforeStartupAndClosesBeforeCatalogPublication(t *te
 		return d, nil
 	})
 	response := runtimeRouteRequest(m.Router(), http.MethodPost, "/mcp-servers/"+server.ID+"/probe", `{"revision":1}`)
-	if response.Code != 200 || d.closed.Load() != 1 {
-		t.Fatalf("probe was not closed: %d %s closes=%d", response.Code, response.Body, d.closed.Load())
+	if response.Code != 409 || d.closed.Load() != 0 {
+		t.Fatalf("stdio probe bypassed runtime confirmation: %d %s closes=%d", response.Code, response.Body, d.closed.Load())
+	}
+	if _, err := m.probeServer(context.Background(), e, server); err != nil || d.closed.Load() != 1 {
+		t.Fatalf("probe was not closed: %v closes=%d", err, d.closed.Load())
 	}
 	leases, err := m.ResourceLeases(context.Background())
 	if err != nil || len(leases) != 1 || leases[0].State != "released" || leases[0].ContainerID != d.Identity() || leases[0].ServerID != server.ID || leases[0].Source != "mcp-probe" {
@@ -234,7 +237,7 @@ func TestProbeRealDockerScopedLifecycle(t *testing.T) {
 	executor, err := execution.New(execution.Options{SupervisorPath: binary, MountRoot: t.TempDir(), Authorize: func(ctx context.Context, id string) error {
 		authorizations.Add(1)
 		return tools.ConsumeBackend(ctx, id)
-	}, MCPDispatchID: tools.DispatchID})
+	}, MCPDispatchID: tools.DispatchID, ResolveRuntimeAuthorization: RuntimeExecutionAuthorization})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,9 +265,27 @@ for line in sys.stdin:
 		t.Fatal(err)
 	}
 	e.Executor = executor
-	response := runtimeRouteRequest(m.Router(), http.MethodPost, "/mcp-servers/"+server.ID+"/probe", `{"revision":2}`)
-	if response.Code != 200 {
-		t.Fatalf("real scoped probe failed: %d %s", response.Code, response.Body)
+	request, err := m.RequestProbeAccess(context.Background(), e, server, "real-probe-request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = m.DecideProbeAccess(context.Background(), e, request.ID, ProbeAccessDecision{RequestID: "real-probe-decision", ExpectedVersion: request.Version, ExpectedDigest: request.Digest, Decision: "allow-once"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		request, err = m.ProbeAccess(context.Background(), request.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if request.State != "preparing" && request.State != "running" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if request.State != "completed" {
+		t.Fatalf("real scoped probe failed: %+v", request)
 	}
 	leases, err := m.ResourceLeases(context.Background())
 	if err != nil || len(leases) != 1 || leases[0].State != "released" || len(leases[0].ContainerID) != 64 || leases[0].ServerRevision != 2 {

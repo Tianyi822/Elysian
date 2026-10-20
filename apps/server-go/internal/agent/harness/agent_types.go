@@ -40,16 +40,17 @@ type RenameSessionInput struct {
 }
 
 type AgentInput struct {
-	ExtensionMode    string          `json:"extensionMode,omitempty"`
-	PermissionMode   PermissionMode  `json:"permissionMode,omitempty"`
-	ReplaceMessageID string          `json:"replaceMessageId,omitempty"`
-	ReasoningLevel   string          `json:"reasoningLevel,omitempty"`
-	Skills           []RevisionRef   `json:"skills,omitempty"`
-	Resources        []ResourceRef   `json:"resources,omitempty"`
-	Prompts          []PromptRef     `json:"prompts,omitempty"`
-	Attachments      []AttachmentRef `json:"attachments,omitempty"`
-	RequestID        string          `json:"requestId"`
-	Content          string          `json:"content"`
+	AuthorizationMode string          `json:"authorizationMode,omitempty"`
+	ExtensionMode     string          `json:"extensionMode,omitempty"`
+	PermissionMode    PermissionMode  `json:"permissionMode,omitempty"`
+	ReplaceMessageID  string          `json:"replaceMessageId,omitempty"`
+	ReasoningLevel    string          `json:"reasoningLevel,omitempty"`
+	Skills            []RevisionRef   `json:"skills,omitempty"`
+	Resources         []ResourceRef   `json:"resources,omitempty"`
+	Prompts           []PromptRef     `json:"prompts,omitempty"`
+	Attachments       []AttachmentRef `json:"attachments,omitempty"`
+	RequestID         string          `json:"requestId"`
+	Content           string          `json:"content"`
 }
 
 // AttachmentRef 只引用已上传附件；字节经独立上传端点先行入库。

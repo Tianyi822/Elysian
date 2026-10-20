@@ -42,20 +42,21 @@ type ResourceRule struct {
 }
 
 type ResourceLease struct {
-	Source         string          `json:"source,omitempty"`
-	ServerID       string          `json:"serverId,omitempty"`
-	ServerRevision int             `json:"serverRevision,omitempty"`
-	ContainerID    string          `json:"containerId,omitempty"`
-	ID             string          `json:"id"`
-	RunID          string          `json:"runId,omitempty"`
-	OperationID    string          `json:"operationId,omitempty"`
-	ScopeID        string          `json:"scopeId"`
-	State          string          `json:"state"`
-	Claims         []ResourceClaim `json:"claims"`
-	CreatedAt      string          `json:"createdAt"`
-	EndedAt        string          `json:"endedAt,omitempty"`
-	Evidence       string          `json:"evidence,omitempty"`
-	Decision       string          `json:"decision,omitempty"`
+	Probe          *ProbeAccessRequest `json:"probe,omitempty"`
+	Source         string              `json:"source,omitempty"`
+	ServerID       string              `json:"serverId,omitempty"`
+	ServerRevision int                 `json:"serverRevision,omitempty"`
+	ContainerID    string              `json:"containerId,omitempty"`
+	ID             string              `json:"id"`
+	RunID          string              `json:"runId,omitempty"`
+	OperationID    string              `json:"operationId,omitempty"`
+	ScopeID        string              `json:"scopeId"`
+	State          string              `json:"state"`
+	Claims         []ResourceClaim     `json:"claims"`
+	CreatedAt      string              `json:"createdAt"`
+	EndedAt        string              `json:"endedAt,omitempty"`
+	Evidence       string              `json:"evidence,omitempty"`
+	Decision       string              `json:"decision,omitempty"`
 }
 
 const resourceSchema = `

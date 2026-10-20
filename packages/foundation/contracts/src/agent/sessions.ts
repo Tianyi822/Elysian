@@ -146,6 +146,8 @@ export const AGENT_ATTACHMENT_LIMITS = {
 } as const
 
 export type AgentInput = {
+  /** 普通聊天在运行时申请缺少的执行环境与资源权限。 */
+  authorizationMode?: 'on-demand'
 	/** 普通聊天读取最新已启用扩展；省略时使用显式环境。 */
 	extensionMode?: 'enabled'
   permissionMode?: AgentPermissionMode

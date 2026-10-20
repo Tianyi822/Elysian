@@ -77,6 +77,7 @@ export const AGENT_OPERATION_STATUS_LABELS: Record<AgentOperationStatus, string>
   planned: '已规划', 'waiting-approval': '等待审批', 'waiting-resource': '等待资源', 'waiting-task': '等待平台任务', dispatched: '已派发', completed: '已确认完成', unknown: '结果未确认',
 }
 export type AgentOperation = {
+  preparation?: { state: 'pulling' | 'ready' | 'failed' | 'unknown'; current?: number; total?: number; error?: string }
   fileChanges?: readonly { path: string; before?: { bytes?: number; digest: string; text?: string }; after?: { bytes?: number; digest: string; text?: string } }[]
   task?: { domain: string; id: string; requestId?: string }
   /** workflow/v2 执行树定位：所属作用域与节点；非工作流运行为空。 */
@@ -139,6 +140,8 @@ type AgentApprovalCommon = {
   decision?: AgentApprovalDecision
 }
 export type AgentOperationApproval = AgentApprovalCommon & {
+  /** 运行时申请；确认同时授予范围与批准本次操作。旧审批不携带。 */
+  access?: AgentRuntimeAccess
   kind?: '' | 'operation'
   operationId: string
   operation: AgentOperation
@@ -321,8 +324,34 @@ export type AgentExecutionGrant = {
 }
 export type AgentExecutionGrantInput = Omit<AgentExecutionGrant, 'id' | 'revision' | 'createdAt'> & { id?: string; expectedRevision: number }
 
+export type AgentRequestedAccess = Pick<AgentExecutionGrant, 'directories' | 'network' | 'privateCidrs' | 'resources'>
+export type AgentRuntimeAccess = AgentRequestedAccess & {
+  revision: number
+  digest: string
+  scopeKey: string
+  kind: 'platform' | 'file' | 'script' | 'mcp'
+  runtime?: { name: string; image: string; platform: string; requiresDownload: boolean }
+  sessionAllowed: boolean
+  reason?: string
+}
+export type AgentAccessDecisionInput = { requestId: string; expectedRevision: number; expectedDigest: string; decision: 'once' | 'session' | 'denied' }
+export type AgentSessionAuthorization = {
+  executionProfile?: AgentExecutionProfile
+  id: string
+  sessionId: string
+  revision: number
+  status: 'active' | 'revoked'
+  createdAt: string
+  revokedAt?: string
+  tool: string
+  access: AgentRuntimeAccess
+}
+export type AgentAuthorizationRevokeInput = { requestId: string; expectedRevision: number }
+
 export const AGENT_MCP_PROTOCOL_VERSION = '2025-11-25' as const
 export type AgentMCPContainerSpec = {
+  /** 仅声明需求；实际探测与调用仍须管理员确认。 */
+  requestedAccess?: Omit<AgentRequestedAccess, 'resources'>
   image: string
   command: readonly string[]
   hasEnvironment: boolean
@@ -347,6 +376,7 @@ export type AgentMCPServerInput = {
   transport: 'streamable-http' | 'stdio'
   url?: string
   stdio?: {
+    requestedAccess?: Omit<AgentRequestedAccess, 'resources'>
     image: string
     command: readonly string[]
     environment?: Readonly<Record<string, string>>
@@ -385,6 +415,16 @@ export type AgentMCPCatalogProjection = AgentMCPCatalog & {
   resourceAliases: Readonly<Record<string, string>>
   promptAliases: Readonly<Record<string, string>>
 }
+export type AgentMCPProbeRequest = {
+  id: string; version: number; requestId: string; serverId: string; serverRevision: number; serverName: string
+  state: 'waiting' | 'preparing' | 'running' | 'completed' | 'denied' | 'failed' | 'unknown' | 'cancelled'
+  digest: string; createdAt: string; access: AgentRuntimeAccess; command: readonly string[]
+  environment?: { profile: AgentExecutionProfile; version: string; platform: string; requiresDownload: boolean }
+  progress?: { state: 'pulling' | 'ready'; current?: number; total?: number }
+  error?: string; catalog?: AgentMCPCatalogProjection
+}
+export type AgentMCPProbeDecision = { requestId: string; expectedVersion: number; expectedDigest: string; decision: 'allow-once' | 'deny' }
+
 export type AgentMCPResourceContent = { uri: string; mimeType?: string } & ({ text: string; blob?: never } | { blob: string; text?: never })
 export type AgentMCPContent =
   | { type: 'text'; text: string }

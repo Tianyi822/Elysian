@@ -11,7 +11,8 @@ import (
 // v7 adds the agent chat attachment table; its BLOB bytes never enter the
 // JSONL record copy — only reference descriptors ride on Message/Run documents.
 // v8 保存可恢复的用户澄清请求。
-const schemaVersion = 8
+// v9 保存运行时授权，并为独立 MCP 探测补齐独立 JSONL 归属。
+const schemaVersion = 9
 
 const capabilitySchema = `
 CREATE TABLE workspace_cleanup (task_id TEXT PRIMARY KEY);
@@ -173,6 +174,16 @@ func migrateStore(db *sql.DB) error {
 			}
 		}
 	}
+	if version < 9 {
+		if _, err = tx.Exec(sessionAuthorizationSchema); err != nil {
+			return err
+		}
+		if version >= 6 {
+			if err = migrateProbeRecordOwners(tx); err != nil {
+				return err
+			}
+		}
+	}
 	if version < 6 {
 		if err = migrateRecordOutbox(tx); err != nil {
 			return err
@@ -183,7 +194,7 @@ func migrateStore(db *sql.DB) error {
 			return err
 		}
 	}
-	if _, err = tx.Exec("PRAGMA user_version=8"); err != nil {
+	if _, err = tx.Exec("PRAGMA user_version=9"); err != nil {
 		return err
 	}
 	return tx.Commit()

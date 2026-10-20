@@ -24,7 +24,7 @@ import (
 const recordSchema = `
 CREATE TABLE agent_record_outbox (
  seq INTEGER PRIMARY KEY AUTOINCREMENT,
- owner_kind TEXT NOT NULL CHECK(owner_kind IN ('session','batch-run')),
+ owner_kind TEXT NOT NULL CHECK(owner_kind IN ('session','batch-run','mcp-probe')),
  owner_id TEXT NOT NULL,
  fact_type TEXT NOT NULL,
  fact_key TEXT NOT NULL,
@@ -55,9 +55,13 @@ CREATE TABLE agent_record_cleanup (
 // other part is a fixed SQL fragment, never caller-provided text.
 type recordSpec struct{ table, key, session, run string }
 
+var sessionAuthorizationRecordSpec = recordSpec{"session_authorizations", "ROW.id", "ROW.session_id", "''"}
+
 var userInputRecordSpec = recordSpec{"user_inputs", "ROW.id", "(SELECT session_id FROM runs WHERE id=ROW.run_id)", "ROW.run_id"}
+var resourceLeaseRecordSpec = recordSpec{"resource_leases", "ROW.id", "(SELECT session_id FROM runs WHERE id=ROW.run_id)", "ROW.run_id"}
 
 var recordSpecs = []recordSpec{
+	sessionAuthorizationRecordSpec,
 	userInputRecordSpec,
 	{"sessions", "ROW.id", "ROW.id", "''"},
 	{"tasks", "ROW.id", "ROW.session_id", "(SELECT id FROM runs WHERE task_id=ROW.id ORDER BY run_number LIMIT 1)"},
@@ -71,7 +75,7 @@ var recordSpecs = []recordSpec{
 	{"approvals", "ROW.id", "(SELECT session_id FROM runs WHERE id=ROW.run_id)", "ROW.run_id"},
 	{"execution_barriers", "ROW.id", "(SELECT session_id FROM runs WHERE id=ROW.run_id)", "ROW.run_id"},
 	{"context_items", "ROW.id", "(SELECT session_id FROM runs WHERE id=ROW.run_id)", "ROW.run_id"},
-	{"resource_leases", "ROW.id", "(SELECT session_id FROM runs WHERE id=ROW.run_id)", "ROW.run_id"},
+	resourceLeaseRecordSpec,
 	{"workspace_versions", "ROW.task_id || ':' || ROW.revision", "(SELECT session_id FROM tasks WHERE id=ROW.task_id)", "''"},
 	{"working_memories", "ROW.task_id || ':' || ROW.revision", "(SELECT session_id FROM tasks WHERE id=ROW.task_id)", "''"},
 	{"workflow_instances", "ROW.id", "ROW.session_id", "''"},
@@ -113,12 +117,16 @@ func recordInsertSQL(spec recordSpec, row, action, from string) string {
 	session := recordExpr(spec.session, row)
 	run := recordExpr(spec.run, row)
 	key := recordExpr(spec.key, row)
+	probe := "0"
+	if spec.table == "resource_leases" {
+		probe = fmt.Sprintf("%s.run_id='' AND %s.operation_id='' AND json_extract(%s.document,'$.source')='mcp-probe'", row, row, row)
+	}
 	return fmt.Sprintf(`INSERT INTO agent_record_outbox(owner_kind,owner_id,fact_type,fact_key,action,document)
- SELECT CASE WHEN COALESCE(%s,'')<>'' THEN 'session' ELSE 'batch-run' END,
- CASE WHEN COALESCE(%s,'')<>'' THEN %s ELSE %s END,
+ SELECT CASE WHEN %s THEN 'mcp-probe' WHEN COALESCE(%s,'')<>'' THEN 'session' ELSE 'batch-run' END,
+ CASE WHEN %s THEN %s ELSE CASE WHEN COALESCE(%s,'')<>'' THEN %s ELSE %s END END,
  '%s',%s,'%s',%s %s
  WHERE (COALESCE(%s,'')<>'' AND EXISTS(SELECT 1 FROM sessions WHERE id=%s))
- OR (COALESCE(%s,'')='' AND EXISTS(SELECT 1 FROM runs WHERE id=%s AND session_id=''))`, session, session, session, run, spec.table, key, action, recordDocument(spec.table, row), from, session, session, session, run)
+ OR (COALESCE(%s,'')='' AND EXISTS(SELECT 1 FROM runs WHERE id=%s AND session_id='')) OR (%s)`, probe, session, probe, key, session, session, run, spec.table, key, action, recordDocument(spec.table, row), from, session, session, session, run, probe)
 }
 
 func migrateRecordOutbox(tx *sql.Tx) error {
@@ -136,6 +144,10 @@ func migrateRecordOutbox(tx *sql.Tx) error {
 	}
 	// A batch Task is inserted before its Run, so its owner cannot be resolved
 	// in the Task trigger. Bind it when the first batch Run is inserted.
+	return installBatchTaskRecordTrigger(tx)
+}
+
+func installBatchTaskRecordTrigger(tx *sql.Tx) error {
 	_, err := tx.Exec(`CREATE TRIGGER agent_record_batch_task AFTER INSERT ON runs WHEN NEW.session_id='' BEGIN
  INSERT INTO agent_record_outbox(owner_kind,owner_id,fact_type,fact_key,action,document)
  SELECT 'batch-run',NEW.id,'tasks',id,'insert',document FROM tasks WHERE id=NEW.task_id;
@@ -144,6 +156,59 @@ func migrateRecordOutbox(tx *sql.Tx) error {
 		return err
 	}
 	return nil
+}
+
+// v9 widens the outbox owner CHECK without modifying existing sequences or
+// documents. JSONL bytes and watermarks remain valid; only previously omitted
+// standalone probe leases receive current-state snapshots.
+func migrateProbeRecordOwners(tx *sql.Tx) error {
+	var previousSequence int64
+	if err := tx.QueryRow("SELECT COALESCE(MAX(seq),0) FROM sqlite_sequence WHERE name='agent_record_outbox'").Scan(&previousSequence); err != nil {
+		return err
+	}
+	for _, spec := range recordSpecs {
+		for _, action := range []string{"insert", "update"} {
+			if _, err := tx.Exec("DROP TRIGGER IF EXISTS agent_record_" + spec.table + "_" + action); err != nil {
+				return err
+			}
+		}
+	}
+	if _, err := tx.Exec(`DROP TRIGGER IF EXISTS agent_record_batch_task;
+DROP TRIGGER IF EXISTS agent_record_mark_dirty;
+CREATE TABLE agent_record_outbox_v9 (
+ seq INTEGER PRIMARY KEY AUTOINCREMENT,
+ owner_kind TEXT NOT NULL CHECK(owner_kind IN ('session','batch-run','mcp-probe')),
+ owner_id TEXT NOT NULL, fact_type TEXT NOT NULL, fact_key TEXT NOT NULL,
+ action TEXT NOT NULL CHECK(action IN ('snapshot','insert','update')), document TEXT NOT NULL);
+INSERT INTO agent_record_outbox_v9 SELECT * FROM agent_record_outbox ORDER BY seq;
+DROP TABLE agent_record_outbox;
+ALTER TABLE agent_record_outbox_v9 RENAME TO agent_record_outbox;
+CREATE INDEX agent_record_owner ON agent_record_outbox(owner_kind,owner_id,seq);
+CREATE TRIGGER agent_record_mark_dirty AFTER INSERT ON agent_record_outbox BEGIN
+ INSERT INTO agent_record_dirty(owner_kind,owner_id)
+ SELECT NEW.owner_kind,NEW.owner_id WHERE NOT EXISTS(
+  SELECT 1 FROM agent_record_dirty WHERE owner_kind=NEW.owner_kind AND owner_id=NEW.owner_id);
+END;`); err != nil {
+		return err
+	}
+	for _, spec := range recordSpecs {
+		if err := installRecordTriggers(tx, spec); err != nil {
+			return err
+		}
+	}
+	if err := installBatchTaskRecordTrigger(tx); err != nil {
+		return err
+	}
+	from := `FROM (SELECT * FROM resource_leases l WHERE l.run_id='' AND l.operation_id='' AND json_extract(l.document,'$.source')='mcp-probe'
+AND NOT EXISTS(SELECT 1 FROM agent_record_outbox o WHERE o.owner_kind='mcp-probe' AND o.owner_id=l.id)) AS x`
+	if _, err := tx.Exec("UPDATE sqlite_sequence SET seq=MAX(seq,?) WHERE name='agent_record_outbox'", previousSequence); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("INSERT INTO sqlite_sequence(name,seq) SELECT 'agent_record_outbox',? WHERE NOT EXISTS(SELECT 1 FROM sqlite_sequence WHERE name='agent_record_outbox')", previousSequence); err != nil {
+		return err
+	}
+	_, err := tx.Exec(recordInsertSQL(resourceLeaseRecordSpec, "x", "snapshot", from))
+	return err
 }
 
 type recordOwner struct{ kind, id string }
@@ -205,7 +270,7 @@ func (s *store) prepareRecords() error {
 	if err := recordDirectory(s.recordsRoot); err != nil {
 		return err
 	}
-	for _, name := range []string{"sessions", "batch-runs"} {
+	for _, name := range []string{"sessions", "batch-runs", "mcp-probes"} {
 		if err := recordDirectory(filepath.Join(s.recordsRoot, name)); err != nil {
 			return err
 		}
@@ -223,6 +288,8 @@ func (s *store) recordPath(owner recordOwner) (string, error) {
 		dir = "sessions"
 	case "batch-run":
 		dir = "batch-runs"
+	case "mcp-probe":
+		dir = "mcp-probes"
 	default:
 		return "", errors.New("记录归属类型无效")
 	}

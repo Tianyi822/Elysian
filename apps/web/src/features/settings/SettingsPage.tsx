@@ -1,3 +1,4 @@
+import { Navigate, useSearchParams } from 'react-router'
 import { ExtensionSettingsSection } from './ExtensionSettingsSection'
 import { useAgentExtensionsStore } from '../../stores/agentExtensionsStore'
 import * as Dialog from '@radix-ui/react-dialog'
@@ -223,14 +224,16 @@ function AccountSecuritySettings() {
 /** 访问过的页签保持挂载：保存表单草稿，维护任务切换页签后继续轮询。 */
 export function SettingsPage() {
   const { tab } = useSettingsTab()
+  const [params] = useSearchParams()
   useEffect(() => {
     const unsubscribe = useSessionStore.subscribe((state, previous) => {
-      if (state.phase !== previous.phase && state.phase !== 'authed') useAgentExtensionsStore.getState().reset()
+      if (state.phase !== previous.phase && state.phase !== 'authed') { useAgentExtensionsStore.getState().reset() }
     })
     return () => { unsubscribe(); useAgentExtensionsStore.getState().reset() }
   }, [])
   const [visited, setVisited] = useState<ReadonlySet<SettingsTab>>(() => new Set([tab]))
   useEffect(() => { setVisited((current) => current.has(tab) ? current : new Set([...current, tab])) }, [tab])
+  if (params.get('tab') === 'execution' || params.get('tab') === 'grants') return <Navigate to="/agent" replace />
   return <div className="min-w-0">
     {SETTINGS_TABS.map((item) => (visited.has(item.value) || tab === item.value) ? (
       <div key={item.value} className={tab === item.value ? 'block' : 'hidden'}>

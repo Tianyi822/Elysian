@@ -216,6 +216,7 @@ describe('智能体本地会话', () => {
     const pending = store.getState().session?.pending
     expect(pending?.input.permissionMode).toBe('full')
     expect(pending?.input.extensionMode).toBe('enabled')
+    expect(pending?.input.authorizationMode).toBe('on-demand')
     store.getState().setPermissionMode('ask')
     expect(store.getState().session?.permissionMode).toBe('full')
     await store.getState().send(backend.api, chatTestModel)
@@ -260,7 +261,7 @@ describe('智能体本地会话', () => {
     expect(store.getState().session?.editing).toBeUndefined()
     expect(store.getState().messages.map(message => message.content)).toEqual(['第一问', '你好，我是 Ely。', '修改第二问'])
     expect(store.getState().reasoning['run-2']).toBeUndefined()
-    expect(backend.api.continueTask).toHaveBeenLastCalledWith('task-1', expect.objectContaining({ content: '修改第二问', replaceMessageId: 'message-3', extensionMode: 'enabled' }))
+    expect(backend.api.continueTask).toHaveBeenLastCalledWith('task-1', expect.objectContaining({ content: '修改第二问', replaceMessageId: 'message-3', extensionMode: 'enabled', authorizationMode: 'on-demand' }))
     await other.getState().refresh(backend.api)
     expect(other.getState().messages).toEqual(store.getState().messages)
     const restored = local.makeStore()

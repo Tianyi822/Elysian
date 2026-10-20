@@ -1,4 +1,6 @@
-import type { AgentApproval, AgentCapability, AgentEnvironment, AgentExecutionGrant, AgentExecutionProfile } from '@elysian/contracts'
+import { parseGrant, parseProfile } from './executionParse'
+export { parseGrant, parseProfile } from './executionParse'
+import type { AgentApproval, AgentCapability, AgentEnvironment, AgentRuntimeAccess, AgentSessionAuthorization } from '@elysian/contracts'
 import type { AgentChatGovernance } from '../../../contracts/agentChat'
 import { agentPathPart, requestAgentJson } from './agentShared'
 
@@ -11,6 +13,22 @@ const list = <T>(value: unknown, parse: (item: unknown) => T): T[] => { if (!Arr
 const ref = (value: unknown) => { const r = row(value); return { id: text(r.id), revision: integer(r.revision), ...(r.digest === undefined ? {} : { digest: text(r.digest) }) } }
 const enabled = (value: unknown): boolean => { if (typeof value !== 'boolean') throw invalid(); return value }
 
+export function parseRuntimeAccess(value: unknown): AgentRuntimeAccess {
+  const r = row(value)
+  if (!['platform', 'file', 'script', 'mcp'].includes(text(r.kind))) throw invalid()
+  const grant = parseGrant({ ...r, id: '', revision: 0, enabled: true, name: '', createdAt: '' })
+  const runtime = r.runtime === undefined ? undefined : row(r.runtime)
+  return { revision: integer(r.revision), digest: text(r.digest), scopeKey: text(r.scopeKey), kind: r.kind as AgentRuntimeAccess['kind'], directories: grant.directories, network: grant.network, privateCidrs: grant.privateCidrs, resources: grant.resources,
+    sessionAllowed: enabled(r.sessionAllowed), ...(r.reason === undefined ? {} : { reason: text(r.reason) }),
+    ...(runtime ? { runtime: { name: text(runtime.name), image: text(runtime.image), platform: text(runtime.platform), requiresDownload: enabled(runtime.requiresDownload) } } : {}) }
+}
+
+export function parseSessionAuthorization(value: unknown): AgentSessionAuthorization {
+  const r = row(value)
+  if (r.status !== 'active' && r.status !== 'revoked') throw invalid()
+  return { id: text(r.id), sessionId: text(r.sessionId), revision: integer(r.revision), status: r.status, createdAt: text(r.createdAt), tool: text(r.tool), access: parseRuntimeAccess(r.access), ...(r.executionProfile === undefined ? {} : { executionProfile: parseProfile(r.executionProfile) }), ...(r.revokedAt === undefined ? {} : { revokedAt: text(r.revokedAt) }) }
+}
+
 export function parseEnvironment(value: unknown): AgentEnvironment {
   const r = row(value)
   return { sessionId: text(r.sessionId), revision: integer(r.revision), skills: list(r.skills, ref), servers: list(r.servers, ref), tools: list(r.tools, text),
@@ -19,23 +37,7 @@ export function parseEnvironment(value: unknown): AgentEnvironment {
     ...(r.resourceRules === undefined ? {} : { resourceRules: list(r.resourceRules, ref) }) }
 }
 
-export function parseProfile(value: unknown): AgentExecutionProfile {
-  const r = row(value)
-  if (!['python', 'node', 'bash'].includes(text(r.runtime))) throw invalid()
-  return { id: text(r.id), revision: integer(r.revision), enabled: enabled(r.enabled), name: text(r.name), image: text(r.image), runtime: r.runtime as AgentExecutionProfile['runtime'],
-    command: list(r.command, text), timeoutSeconds: integer(r.timeoutSeconds), cpuMillis: integer(r.cpuMillis), memoryBytes: integer(r.memoryBytes), pids: integer(r.pids), createdAt: text(r.createdAt) }
-}
-
-export function parseGrant(value: unknown): AgentExecutionGrant {
-  const r = row(value)
-  return { id: text(r.id), revision: integer(r.revision), enabled: enabled(r.enabled), name: text(r.name), createdAt: text(r.createdAt),
-    directories: list(r.directories ?? [], item => { const v = row(item); if (v.access !== 'ro' && v.access !== 'rw') throw invalid(); return { path: text(v.path), access: v.access } }),
-    network: list(r.network ?? [], item => { const v = row(item); if (v.scheme !== 'http' && v.scheme !== 'https') throw invalid(); return { scheme: v.scheme, host: text(v.host), port: integer(v.port) } }),
-    privateCidrs: list(r.privateCidrs ?? [], text),
-    resources: list(r.resources ?? [], item => { const v = row(item); if (v.access !== 'read' && v.access !== 'write') throw invalid(); return { domain: text(v.domain), id: text(v.id), access: v.access } }) }
-}
-
-export function parseCapability(value: unknown): AgentCapability {
+export function parseCapability(value: unknown): import('../../../contracts/agentExecution').AgentToolCatalogEntry {
   const r = row(value)
   if (typeof r.parameters !== 'boolean') row(r.parameters)
   const metadata = r.metadata === undefined ? undefined : row(r.metadata)
@@ -43,7 +45,7 @@ export function parseCapability(value: unknown): AgentCapability {
     for (const key of ['domain', 'action', 'effect', 'exposure', 'resourceType', 'resourceKeyArgument', 'version', 'backend', 'taskDomain', 'taskRequestArgument', 'taskIdArgument']) if (metadata[key] !== undefined) text(metadata[key])
     for (const key of ['readOnly', 'async', 'default']) if (metadata[key] !== undefined) enabled(metadata[key])
   }
-  return { name: text(r.name), description: text(r.description), parameters: r.parameters as AgentCapability['parameters'], source: text(r.source), ref: ref(r.ref), readOnly: enabled(r.readOnly), ...(metadata ? { metadata } : {}) }
+  return { ...(r.available === undefined ? {} : { available: enabled(r.available) }), ...(r.selected === undefined ? {} : { selected: enabled(r.selected) }), ...(r.reason === undefined ? {} : { reason: text(r.reason) }), ...(r.originalName === undefined ? {} : { originalName: text(r.originalName) }), ...(r.catalogDigest === undefined ? {} : { catalogDigest: text(r.catalogDigest) }), name: text(r.name), description: text(r.description), parameters: r.parameters as AgentCapability['parameters'], source: text(r.source), ref: ref(r.ref), readOnly: enabled(r.readOnly), ...(metadata ? { metadata } : {}) }
 }
 
 export function parseApproval(value: unknown): AgentApproval {
@@ -52,6 +54,11 @@ export function parseApproval(value: unknown): AgentApproval {
   const o = row(r.operation)
   const operation: Row = { ...o, id: text(o.id), runId: text(o.runId), taskId: text(o.taskId), argumentsJson: text(o.argumentsJson), capability: parseCapability(o.capability), workspaceRevision: integer(o.workspaceRevision) }
   if (r.runId !== operation.runId || r.operationId !== operation.id) throw invalid()
+  if (o.preparation !== undefined) {
+    const p = row(o.preparation)
+    if (!['pulling', 'ready', 'failed', 'unknown'].includes(text(p.state))) throw invalid()
+    operation.preparation = { state: p.state, ...(p.current === undefined ? {} : { current: integer(p.current) }), ...(p.total === undefined ? {} : { total: integer(p.total) }), ...(p.error === undefined ? {} : { error: text(p.error) }) }
+  }
   if (o.resourceClaims !== undefined) operation.resourceClaims = list(o.resourceClaims, item => {
     const claim = row(item)
     if (claim.access !== 'read' && claim.access !== 'write') throw invalid()
@@ -66,12 +73,15 @@ export function parseApproval(value: unknown): AgentApproval {
     const e = row(o.execution)
     operation.execution = { profile: parseProfile(e.profile), ...(e.grant ? { grant: parseGrant(e.grant) } : {}), scriptDigest: text(e.scriptDigest) }
   }
-  return { ...r, id: text(r.id), runId: text(r.runId), operationId: text(r.operationId), createdAt: text(r.createdAt), expiresAt: text(r.expiresAt), operation } as AgentApproval
+  return { ...r, id: text(r.id), runId: text(r.runId), operationId: text(r.operationId), createdAt: text(r.createdAt), expiresAt: text(r.expiresAt), operation, ...(r.access === undefined ? {} : { access: parseRuntimeAccess(r.access) }) } as AgentApproval
 }
 
 export function createAgentChatGovernance(): AgentChatGovernance {
   const path = agentPathPart
   return {
+    async decideAccess(id, input) { const item = parseApproval(await requestAgentJson(`/api/agent/approvals/${path(id)}/access-decision`, { method: 'POST', body: JSON.stringify(input) })); if (item.id !== id) throw invalid(); return item },
+    async authorizations(id, signal) { const result = row(await requestAgentJson(`/api/agent/sessions/${path(id)}/authorizations`, { signal })); const items = list(result.items, parseSessionAuthorization); if (items.some(item => item.sessionId !== id)) throw invalid(); return items },
+    async revokeAuthorization(sessionId, id, input) { const item = parseSessionAuthorization(await requestAgentJson(`/api/agent/sessions/${path(sessionId)}/authorizations/${path(id)}`, { method: 'DELETE', body: JSON.stringify(input) })); if (item.id !== id || item.sessionId !== sessionId) throw invalid(); return item },
     async approvals(runId, signal) {
       const items = list(await requestAgentJson(`/api/agent/approvals?runId=${path(runId)}`, { signal }), parseApproval)
       if (items.some(item => item.runId !== runId)) throw invalid()

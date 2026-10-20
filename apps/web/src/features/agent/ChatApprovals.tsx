@@ -1,10 +1,13 @@
+import { readAuthorizationPending, saveAuthorizationPending } from './authorizationPending'
 import { useEffect, useRef, useState } from 'react'
-import type { AgentApproval } from '@elysian/contracts'
+import type { AgentAccessDecisionInput, AgentApproval } from '@elysian/contracts'
 import type { AgentChatGovernance } from '../../contracts/agentChat'
 import { Check, ShieldAlert, Square, X } from '../../components/icons'
 import { subscribeWhileVisible } from '../../adapters/subscribeWhileVisible'
 import { useFeedbackNotification } from '../../components/useFeedbackNotification'
 import { useNotificationStore } from '../../stores/notificationStore'
+import { captureAuthGeneration } from '../../adapters/http/unauthorized'
+import { RuntimeAccessCard } from './RuntimeAccessCard'
 
 const BUTTON = 'inline-flex min-h-8 items-center justify-center gap-1.5 rounded-md border border-control-line px-3 text-xs hover:bg-surface-hover disabled:opacity-50'
 
@@ -14,6 +17,8 @@ export function ChatApprovals({ api, runId, onChanged, onCancel }: { api?: Agent
   const [acting, setActing] = useState(false)
   const [attempt, setAttempt] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [pending, setPending] = useState<Record<string, AgentAccessDecisionInput>>(() => readAuthorizationPending(runId))
+  useEffect(() => saveAuthorizationPending(runId, pending), [runId, pending])
   const lifetime = useRef(0)
   useEffect(() => { lifetime.current += 1; return () => { lifetime.current += 1 } }, [api, runId])
   useFeedbackNotification(error)
@@ -21,12 +26,12 @@ export function ChatApprovals({ api, runId, onChanged, onCancel }: { api?: Agent
     setApprovals([]); setError(null); setLoading(true)
     if (!api) { setLoading(false); return }
     return subscribeWhileVisible(() => {
-      const controller = new AbortController()
+      const controller = new AbortController(), auth = captureAuthGeneration()
       let timer: ReturnType<typeof setTimeout>
       const read = async () => {
-        try { const rows = await api.approvals(runId, controller.signal); if (!controller.signal.aborted) { setApprovals(rows.filter(a => a.kind !== 'workflow-gate' && (a.status === 'pending' || a.status === 'approved'))); setError(null) } }
-        catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '读取审批失败') }
-        finally { if (!controller.signal.aborted) { setLoading(false); timer = setTimeout(() => void read(), 2000) } }
+        try { const rows = await api.approvals(runId, controller.signal); if (!controller.signal.aborted && auth === captureAuthGeneration()) { setApprovals(rows.filter(a => a.kind !== 'workflow-gate' && (a.status === 'pending' || a.status === 'approved'))); setPending(previous => Object.fromEntries(Object.entries(previous).filter(([id, input]) => rows.some(row => row.id === id && row.status === 'pending' && row.kind !== 'workflow-gate' && row.access?.revision === input.expectedRevision && row.access.digest === input.expectedDigest)))); setError(null) } }
+        catch (cause) { if (!controller.signal.aborted && auth === captureAuthGeneration()) setError(cause instanceof Error ? cause.message : '读取审批失败') }
+        finally { if (!controller.signal.aborted && auth === captureAuthGeneration()) { setLoading(false); timer = setTimeout(() => void read(), 2000) } }
       }
       void read()
       return () => { controller.abort(); clearTimeout(timer) }
@@ -34,17 +39,31 @@ export function ChatApprovals({ api, runId, onChanged, onCancel }: { api?: Agent
   }, [api, runId, attempt])
   const decide = async (id: string, decision: 'approved' | 'denied') => {
     if (!api || acting) return
-    const owner = lifetime.current
+    const owner = lifetime.current, auth = captureAuthGeneration()
     setActing(true); setError(null)
     try {
       const result = await api.decide(id, decision)
-      if (owner !== lifetime.current) return
+      if (owner !== lifetime.current || auth !== captureAuthGeneration()) return
       setApprovals(items => items.map(item => item.id === id ? result : item))
       useNotificationStore.getState().notify({ tone: 'success', message: result.status === 'approved' ? '操作已批准，等待执行。' : '操作已拒绝。' })
       onChanged()
     }
-    catch (cause) { if (owner === lifetime.current) setError(cause instanceof Error ? cause.message : '审批结果未确认，请重新读取') }
-    finally { if (owner === lifetime.current) { setActing(false); setAttempt(value => value + 1) } }
+    catch (cause) { if (owner === lifetime.current && auth === captureAuthGeneration()) setError(cause instanceof Error ? cause.message : '审批结果未确认，请重新读取') }
+    finally { if (owner === lifetime.current && auth === captureAuthGeneration()) { setActing(false); setAttempt(value => value + 1) } }
+  }
+  const decideAccess = async (approval: AgentApproval, decision: AgentAccessDecisionInput['decision']) => {
+    if (!api || acting || approval.kind === 'workflow-gate' || !approval.access) return
+    const owner = lifetime.current, auth = captureAuthGeneration()
+    const input = pending[approval.id] ?? { requestId: crypto.randomUUID(), expectedRevision: approval.access.revision, expectedDigest: approval.access.digest, decision }
+    setPending(previous => ({ ...previous, [approval.id]: input })); setActing(true); setError(null)
+    try {
+      const receipt = await api.decideAccess(approval.id, input)
+      if (owner !== lifetime.current || auth !== captureAuthGeneration()) return
+      setApprovals(rows => rows.map(row => row.id === approval.id ? receipt : row))
+      setPending(previous => { const next = { ...previous }; delete next[approval.id]; return next })
+      onChanged()
+    } catch (cause) { if (owner === lifetime.current && auth === captureAuthGeneration()) setError(cause instanceof Error ? cause.message : '确认结果未知，请重新读取') }
+    finally { if (owner === lifetime.current && auth === captureAuthGeneration()) { setActing(false); setAttempt(value => value + 1) } }
   }
   return <section aria-label="待审批操作" className="mb-3 max-h-[50dvh] overflow-y-auto border-y border-line py-3 text-xs">
     <div className="mb-2 flex items-center gap-2 font-medium"><ShieldAlert size={15} aria-hidden />待审批操作</div>
@@ -55,6 +74,8 @@ export function ChatApprovals({ api, runId, onChanged, onCancel }: { api?: Agent
       if (approval.kind === 'workflow-gate') return null
       const operation = approval.operation
       const grant = operation.execution?.grant
+      if (approval.access) return <RuntimeAccessCard key={approval.id} title={operation.capability.source === 'mcp' ? operation.capability.originalName ?? operation.capability.name : operation.capability.name} access={approval.access} operation={operation}
+        busy={acting || loading || !!error} confirmed={approval.status === 'approved'} pending={pending[approval.id]} onDecision={decision => void decideAccess(approval, decision)} onCancel={onCancel} />
       return <div key={approval.id} className="border-b border-line py-2 last:border-0">
         <div className="break-all font-medium">{operation.capability.name}</div>
         <pre aria-label="完整操作参数" className="hover-scrollbar my-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-md bg-surface-raised p-2 font-mono text-xs">{operation.argumentsJson}</pre>

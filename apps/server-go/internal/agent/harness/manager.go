@@ -50,6 +50,7 @@ type Manager struct {
 	executions     map[string]*executionState
 	workers        []*workerSlot
 	probes         sync.WaitGroup
+	probeCancels   map[string]context.CancelFunc
 	mu             sync.Mutex
 	store          *store
 	deps           Deps

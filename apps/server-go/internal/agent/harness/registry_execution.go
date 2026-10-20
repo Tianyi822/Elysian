@@ -67,6 +67,9 @@ func (m *Manager) authorizeDispatch(ctx context.Context, s CapabilitySnapshot, o
 		if m.closed || m.storageError {
 			return context.Canceled
 		}
+		if err := m.checkOperationAuthorization(checkCtx, o); err != nil {
+			return err
+		}
 		if err := m.checkRevocations(checkCtx, s, o); err != nil {
 			return err
 		}
@@ -223,7 +226,7 @@ func (m *Manager) executeRegistryOperation(ctx context.Context, s CapabilitySnap
 		matched := false
 		if m.deps.Tools != nil {
 			for _, schema := range m.deps.Tools.Schemas() {
-				if schema.Name == o.Capability.Name && digestJSON(schema) == o.Capability.CatalogDigest {
+				if schema.Name == o.Capability.Name && (digestJSON(schema) == o.Capability.CatalogDigest || legacyFileCatalogCompatible(s, o, schema)) {
 					matched = true
 				}
 			}

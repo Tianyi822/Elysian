@@ -113,7 +113,6 @@ export function AgentChatPage() {
   const openScope = async () => {
     if (!session) return
     const localId = session.id
-    if (!session.remote && model) await chat.prepareRemoteSession(api, model.profile)
     const selected = useAgentChatStore.getState().session
     if (selected?.id === localId) setScopeSessionId(localId)
   }
@@ -194,7 +193,7 @@ export function AgentChatPage() {
   }, [api, session?.id, session?.remote?.sessionId, chat.loading, chat.sending, chat.refresh])
 
   const liveRunId = isChatRunActive(chat.run) ? chat.run!.id : undefined
-  const streamingRunId = waitingInput ? undefined : liveRunId
+  const streamingRunId = waitingInput || chat.run?.status === 'waiting-approval' ? undefined : liveRunId
   const waitingForMessage = chat.sending || (!!liveRunId && !finalizing && !chat.messages.some(message => message.role === 'user' && message.runId === liveRunId))
   useEffect(() => {
     if (!streamingRunId || !api.available) return
@@ -300,6 +299,7 @@ export function AgentChatPage() {
       <div className="flex min-w-0 flex-1 items-center gap-2">
         <span className="chat-title max-w-64 truncate text-sm font-medium" title={title}>{title}</span>
       </div>
+      {session?.remote && <IconButton label="本会话授权" variant="ghost" onPress={() => void openScope()}><FolderTree size={16} aria-hidden /></IconButton>}
       <button type="button" className="chat-new" disabled={chat.sending} onClick={newConversation}><Plus size={14} aria-hidden /><span>新会话</span></button>
     </header>
 
@@ -376,7 +376,6 @@ export function AgentChatPage() {
     </div>
 
     <div className="chat-compose-area">
-      {run?.status === 'waiting-approval' && <ChatApprovals key={run.id} api={api.governance} runId={run.id} onChanged={() => void chat.refresh(api)} onCancel={() => void chat.stop(api)} />}
       {stopping && <p role="status" className="mb-3 text-xs text-fg-muted">正在停止…</p>}
       {chat.uploadingAttachments && <p role="status" className="mb-3 flex items-center gap-2 text-xs text-fg-muted"><Loader2 size={13} className="animate-spin motion-reduce:animate-none" aria-hidden />正在处理并上传图片…</p>}
       {readError && <div className="mb-3 flex justify-end">
@@ -386,7 +385,7 @@ export function AgentChatPage() {
 
       <ChatPlan key={`${session?.id}:${session?.remote?.runId}`} plan={usageTimeline?.plan ?? (run?.id === session?.remote?.runId ? run?.plan : undefined)}
         status={usageTimeline?.status ?? run?.status ?? 'queued'} stopping={stopping} onProgress={followContent} />
-      {inputRequest ? <ChatUserInput key={`${session?.id}:${inputRequest.id}`} request={inputRequest} answers={inputDraft?.answers ?? {}}
+      {run && (run.status === 'waiting-approval' || run.phase === 'preparing-runtime') ? <ChatApprovals key={run.id} api={api.governance} runId={run.id} onChanged={() => void chat.refresh(api)} onCancel={() => void chat.stop(api)} /> : inputRequest ? <ChatUserInput key={`${session?.id}:${inputRequest.id}`} request={inputRequest} answers={inputDraft?.answers ?? {}}
         submitting={chat.sending || stopping} pending={!!inputDraft?.pending}
         onAnswer={(questionId, answer) => chat.setUserInputAnswer(inputRequest, questionId, answer)}
         onSubmit={() => void chat.answerUserInput(api, inputRequest)} onCancel={() => void chat.stop(api)} /> :
@@ -413,7 +412,7 @@ export function AgentChatPage() {
               items={PERMISSION_MODES.map(({ Icon, ...mode }) => ({ ...mode, icon: <Icon size={16} /> }))}
               leadingIcon={<PermissionIcon size={16} aria-hidden />}
               disabled={!session || chat.loading || busy || restoring || !!session.pending}
-              footerAction={{ label: '执行范围…', icon: <FolderTree size={15} aria-hidden />, onSelect: () => { void openScope() } }}
+              footerAction={{ label: '本会话授权…', icon: <FolderTree size={15} aria-hidden />, onSelect: () => { void openScope() } }}
               triggerClassName="chat-select chat-permission-select" contentClassName="chat-composer-menu chat-permission-menu" />
           </div>
           <div className="chat-model">
@@ -442,6 +441,6 @@ export function AgentChatPage() {
       </form>}
     </div>
     </section>
-    <ChatExecutionScope key={session?.id} open={!!session && scopeSessionId === session.id} sessionId={session?.remote?.sessionId} api={api.governance} locked={busy || !!session?.pending} onClose={() => setScopeSessionId(null)} />
+    <ChatExecutionScope key={session?.id} open={!!session && scopeSessionId === session.id} sessionId={session?.remote?.sessionId} api={api.governance} onClose={() => setScopeSessionId(null)} />
   </div>
 }
