@@ -558,25 +558,28 @@ func (a *agentExecution) contextPressure(request model.Request) bool {
 	return int64(estimateRequest(request)+request.MaxTokens)*100 >= int64(capacity)*autoCompactPercent
 }
 
+// proactiveCompactionUseful 只在整理能够降低阈值压力时返回 true。固定的系统提示、工具目录、
+// 技能和共享资料不会被工作记忆整理移除；如果它们单独已经达到阈值，后续每一轮都会重复
+// 消耗 checkpoint 请求，却不会改善可用上下文。
+func (a *agentExecution) proactiveCompactionUseful(request, fixed model.Request) bool {
+	return a.contextPressure(request) && !a.contextPressure(fixed)
+}
+
 // proactiveCompactionEligible 限定主动压缩只用于普通聊天 v2 Run。工作流实例有独立的步骤与实例
 // 预算，旧 v1 保持原行为；二者都不因这次优化多出模型请求。
 func (a *agentExecution) proactiveCompactionEligible() bool {
 	return a.DriverVersion() == 2 && a.run.WorkflowID == ""
 }
 
-// canProactivelyCompact 在真正压缩前确认压缩请求与随后的推理都还有预算。否则宁可本轮不压缩：
-// 压缩成功后才发现推理没有请求槽或 token，会把一个本来能完成的运行变成失败。
-func (a *agentExecution) canProactivelyCompact(request model.Request, baseEstimate, taskEstimate int) bool {
+// canProactivelyCompact 按实际整理请求预检，并为整理响应与完整原请求留出预算。
+// 不依赖模型一定能缩小记忆：失败或重建变大时仍能继续原请求。
+func (a *agentExecution) canProactivelyCompact(request, checkpoint model.Request) bool {
 	if a.run.Usage.ModelRequests+2 > a.run.Limits.MaxModelRequests-a.modelRequestReserve("checkpoint") {
 		return false
 	}
-	checkpoint := estimateRequest(request)
-	postCompact := checkpoint - taskEstimate
-	if postCompact < baseEstimate {
-		postCompact = baseEstimate
-	}
-	postCompact += a.run.Limits.MemoryBytes
-	return a.run.Usage.Tokens+checkpoint+postCompact <= a.run.Limits.TokenBudget
+	// 有供应商用量时预留输出上限；缺失时按完整记忆字节与响应封装开销预留。
+	outputReserve := max(checkpoint.MaxTokens, a.run.Limits.MemoryBytes+1024)
+	return a.run.Usage.Tokens+estimateRequest(checkpoint)+outputReserve+estimateRequest(request) <= a.run.Limits.TokenBudget
 }
 
 // compactableFacts 判定待整理事实是否包含模型答复或工具结果。只有本轮用户输入时不做主动整理：
@@ -701,12 +704,15 @@ func (a *agentExecution) buildContext(ctx context.Context) (model.Request, []Evi
 		if err != nil {
 			return model.Request{}, nil, memory.Revision, err
 		}
-		request := model.Request{Tools: visibleTools, MaxTokens: a.outputLimit(a.runReasoningLevel())}
+		request := model.Request{Tools: visibleTools, ReasoningLevel: a.runReasoningLevel(), MaxTokens: a.outputLimit(a.runReasoningLevel())}
 		sharedStart := 0
 		rebuild := false
 		for {
 			request.Messages = append(append(append(append([]model.Message{}, base...), wikiMessages...), shared...), taskMessages...)
 			if a.fits(request) {
+				if fallback != nil && a.run.Usage.Tokens+estimateRequest(request) > a.run.Limits.TokenBudget {
+					return a.restoreContextFallback(fallback)
+				}
 				a.manager.mu.Lock()
 				a.inferenceWikiRefs, err = a.wikiRecallSourcesLocked(ctx, len(wikiMessages))
 				a.manager.mu.Unlock()
@@ -717,10 +723,14 @@ func (a *agentExecution) buildContext(ctx context.Context) (model.Request, []Evi
 					a.inferenceWikiRefs = mergeWikiRefs(a.inferenceWikiRefs, sources)
 				}
 				request.EstimatedBreakdown = estimateFittedContext(request, a.run.Snapshot)
-				if !compacted && a.proactiveCompactionEligible() && a.contextPressure(request) && compactableFacts(groups) {
-					baseEstimate := estimateRequest(model.Request{Messages: base, Tools: visibleTools, MaxTokens: request.MaxTokens})
-					taskEstimate := estimateRequest(model.Request{Messages: taskMessages})
-					if a.canProactivelyCompact(request, baseEstimate, taskEstimate) {
+				fixed := request
+				fixed.Messages = append(append(append([]model.Message{}, base...), wikiMessages...), shared...)
+				if !compacted && a.proactiveCompactionEligible() && a.proactiveCompactionUseful(request, fixed) && compactableFacts(groups) {
+					prepared, compactErr := a.prepareConsolidation(ctx, false)
+					if compactErr != nil && (ctx.Err() != nil || a.mustStop(compactErr)) {
+						return model.Request{}, nil, memory.Revision, compactErr
+					}
+					if compactErr == nil && a.canProactivelyCompact(request, prepared.request) {
 						saved := contextFallback{
 							request: request, refs: append([]EvidenceRef(nil), refs...), revision: memory.Revision,
 							wikiRefs: append([]WikiRef(nil), a.inferenceWikiRefs...), contextItemIDs: append([]string(nil), a.contextItemIDs...),
@@ -729,7 +739,7 @@ func (a *agentExecution) buildContext(ctx context.Context) (model.Request, []Evi
 							breakdown := *request.EstimatedBreakdown
 							saved.request.EstimatedBreakdown = &breakdown
 						}
-						updated, compactErr := a.consolidate(ctx, false)
+						updated, compactErr := a.consolidatePrepared(ctx, false, prepared)
 						if compactErr != nil && (ctx.Err() != nil || a.mustStop(compactErr)) {
 							return model.Request{}, nil, memory.Revision, compactErr
 						}
@@ -761,9 +771,7 @@ func (a *agentExecution) buildContext(ctx context.Context) (model.Request, []Evi
 		if fallback != nil {
 			// 整理已成功，但新的工作记忆比被替换的事实更大，重建请求装不下；
 			// 本轮回退到压缩前已验证可容纳的上下文，下一轮再使用新记忆。
-			a.inferenceWikiRefs = fallback.wikiRefs
-			a.contextItemIDs = fallback.contextItemIDs
-			return fallback.request, fallback.refs, fallback.revision, nil
+			return a.restoreContextFallback(fallback)
 		}
 		if len(groups) == 0 {
 			return request, nil, memory.Revision, capacityError()
@@ -777,6 +785,12 @@ func (a *agentExecution) buildContext(ctx context.Context) (model.Request, []Evi
 		}
 		compacted = true
 	}
+}
+
+func (a *agentExecution) restoreContextFallback(fallback *contextFallback) (model.Request, []EvidenceRef, int, error) {
+	a.inferenceWikiRefs = fallback.wikiRefs
+	a.contextItemIDs = fallback.contextItemIDs
+	return fallback.request, fallback.refs, fallback.revision, nil
 }
 
 // 技能正文是已加载的任务指令材料，记忆覆盖后仍保持原文；容量不足明确失败。
@@ -858,7 +872,23 @@ type memoryProposal struct {
 	Summary          string       `json:"summary"`
 }
 
+type memoryConsolidation struct {
+	memory   WorkingMemory
+	request  model.Request
+	refs     []EvidenceRef
+	coverage MemoryCursor
+}
+
 func (a *agentExecution) consolidate(ctx context.Context, final bool) (*WorkingMemory, error) {
+	prepared, err := a.prepareConsolidation(ctx, final)
+	if err != nil {
+		return nil, err
+	}
+	return a.consolidatePrepared(ctx, final, prepared)
+}
+
+// 先准备后派发，让主动整理预检使用将要发送的同一份请求及完整事实组。
+func (a *agentExecution) prepareConsolidation(ctx context.Context, final bool) (*memoryConsolidation, error) {
 	memory, groups, _, err := a.contextFacts(ctx, false)
 	if err != nil {
 		return nil, err
@@ -891,6 +921,11 @@ func (a *agentExecution) consolidate(ctx context.Context, final bool) (*WorkingM
 		messages[i].Images = nil
 	}
 	request.Messages = append(base, messages...)
+	return &memoryConsolidation{memory: memory, request: request, refs: refs, coverage: selected[len(selected)-1].cursor}, nil
+}
+
+func (a *agentExecution) consolidatePrepared(ctx context.Context, final bool, prepared *memoryConsolidation) (*WorkingMemory, error) {
+	memory, request, refs := prepared.memory, prepared.request, prepared.refs
 	purpose := "checkpoint"
 	if final {
 		purpose = "final-memory"
@@ -948,7 +983,7 @@ func (a *agentExecution) consolidate(ctx context.Context, final bool) (*WorkingM
 			}
 		}
 	}
-	result := WorkingMemory{TaskID: a.run.TaskID, Revision: memory.Revision + 1, UpdatedAt: stamp(a.manager.deps.Now()), Coverage: selected[len(selected)-1].cursor, Objective: a.run.Task.Goal, Constraints: proposal.Constraints, Facts: proposal.Facts, Todos: proposal.Todos, OpenQuestions: proposal.OpenQuestions, Summary: proposal.Summary}
+	result := WorkingMemory{TaskID: a.run.TaskID, Revision: memory.Revision + 1, UpdatedAt: stamp(a.manager.deps.Now()), Coverage: prepared.coverage, Objective: a.run.Task.Goal, Constraints: proposal.Constraints, Facts: proposal.Facts, Todos: proposal.Todos, OpenQuestions: proposal.OpenQuestions, Summary: proposal.Summary}
 	snapshot := result
 	snapshot.Objective = ""
 	encoded, _ := json.Marshal(snapshot)
