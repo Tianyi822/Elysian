@@ -10,7 +10,7 @@ cd Elysian
 sudo bash scripts/install.sh
 ```
 
-仓库须公开或通过部署者自己的 Git 凭据取得源码。脚本安装缺少的工具链及 UFW，以 `elysian-build` 无特权账号在临时源码副本构建，不在面板凭据目录执行源码脚本。Go 工具链固定 1.23.12，bun 固定 1.4.2，下载按官方索引的 SHA256 校验；官方源不可用时自动回退 golang.google.cn、阿里云或 npmmirror 镜像，但仍校验官方摘要；依赖按 bun.lock 和 go.sum 锁定。安装与在线更新共用 [build-release.sh](build-release.sh)。构建失败时旧服务继续运行；安装切换前预检并备份，启动或健康检查失败时恢复原程序、数据、单元与本次涉及的面板规则。环境文件 `/etc/default/elysian` 保留。
+GitHub 不可达时可改用镜像：`git clone https://gitee.com/Chentyit/Elysian.git`，镜像需与主仓库保持同步。仓库须公开或通过部署者自己的 Git 凭据取得源码。脚本安装缺少的工具链及 UFW，以 `elysian-build` 无特权账号在临时源码副本构建，不在面板凭据目录执行源码脚本。Go 工具链固定 1.23.12，bun 固定 1.4.2，下载按官方索引的 SHA256 校验；官方源不可用时自动回退 golang.google.cn、阿里云或 npmmirror 镜像，但仍校验官方摘要；依赖按 bun.lock 和 go.sum 锁定。Go 模块构建默认使用 goproxy.cn，失败再尝试阿里云 goproxy 和 direct；可用 `ELYSIAN_GOPROXY` 或已有 `GOPROXY` 覆盖。Bun 依赖默认使用 `https://registry.npmmirror.com`，可用 `ELYSIAN_BUN_REGISTRY` 或已有 `BUN_CONFIG_REGISTRY` 覆盖；锁文件本身也已固定到该镜像的 tarball。安装脚本会把这两个变量显式传给无特权构建进程，因此系统预装的 Go/Bun 也会在构建时使用镜像；同时写入 `/etc/profile.d/elysian-mirrors.sh`，并在 Go 可用时执行 `go env -w GOPROXY=…`，让新登录 shell 和 root 的手动 Go 命令也使用镜像。卸载会移除 profile 文件，但不会回滚 go env，可用 `go env -u GOPROXY` 自行恢复。安装与在线更新共用 [build-release.sh](build-release.sh)。构建失败时旧服务继续运行；安装切换前预检并备份，启动或健康检查失败时恢复原程序、数据、单元与本次涉及的面板规则。环境文件 `/etc/default/elysian` 保留。
 
 默认前端 `http://<服务器 IP>:48100`，后端 `127.0.0.1:48101`。前端提供页面、静态资源和同源 `/api` 代理，支持 Cookie、上传、SSE 和 WebSocket。正式入口接受 IP 或本机 Host，跨源业务写请求及未允许的域名被拒绝。面板仅管理宿主 UFW 的面板 TCP 规则，保持 UFW 原启停状态，并核验启用的 IPv6；部署者需自行配置云安全组。此部署方式不配置域名反代、HTTPS 或证书。
 
@@ -36,7 +36,7 @@ systemctl restart elysian
 
 设置页展示当前端口和提交。修改端口前显示新旧地址，提交后显示阶段和日志；新入口完成事务后自动跳转，等待超时保留新旧地址供手动打开。刷新页面从服务端恢复活动／最后任务。端口或版本变化保留登录会话，修改密码使会话失效。
 
-更新固定查询仓库 [Tianyi822/Elysian](https://github.com/Tianyi822/Elysian)，可选「最新提交」跟随默认分支，或「最新发版」使用最新正式 Release 的标签。正式发版排除草稿和预发布，轻量或附注标签都解析为完整提交 SHA；暂无正式发版时不回落默认分支。切换策略后需重新检查，两种策略都锁定已检查 SHA 下载源码，以无特权账号构建。旧程序在下载与构建期间继续服务。构建上限 30 分钟，切换后健康等待 60 秒，检查两个入口、静态资源与提交。失败恢复旧版本与数据，成功保留当前和上一成功版本。仓库未公开、GitHub 限流、下载或构建失败会显示具体错误。
+更新主源为 [Tianyi822/Elysian](https://github.com/Tianyi822/Elysian)，GitHub 不可达时回退 [Chentyit/Elysian Gitee 镜像](https://gitee.com/Chentyit/Elysian)；可选「最新提交」跟随默认分支，或「最新发版」使用最新正式 Release 的标签。Gitee 回退的发版策略要求镜像同步 Releases，缺少时明确失败，不回落默认分支。正式发版排除草稿和预发布，轻量或附注标签都解析为完整提交 SHA；暂无正式发版时不回落默认分支。切换策略后需重新检查，两种策略都锁定已检查 SHA 下载源码，以无特权账号构建。旧程序在下载与构建期间继续服务。构建上限 30 分钟，切换后健康等待 60 秒，检查两个入口、静态资源与提交。失败恢复旧版本与数据，成功保留当前和上一成功版本。仓库未公开、GitHub 限流、下载或构建失败会显示具体错误。
 
 任务及日志在 `state/panel-maintenance/<任务 ID>.json` 和 `.log`，日志最多 2 MiB、API 分页读取；事务备份在 `backups/panel-maintenance/<任务 ID>`，安装引导备份在 `backups/install-*`。备份含凭据，目录权限为 0700；确认不再需要恢复后由管理员清理备份。切换时复制 config/data/state 并保留权限和属主，不将版本更新误当成密码重置。
 

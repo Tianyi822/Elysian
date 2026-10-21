@@ -363,7 +363,7 @@ func (m Manager) Health(w http.ResponseWriter, r *http.Request) {
 func RunCLI(ctx context.Context, command string, args []string, root, socket string) error {
 	s := Store{Root: root}
 	host := SystemHost{Store: s, DockerSocket: socket}
-	worker := Worker{Store: s, Host: host, Source: GitHubSource{}}
+	worker := Worker{Store: s, Host: host, Source: DefaultSource()}
 	if command == "maintenance-recover" && len(args) == 0 {
 		return worker.Recover(ctx)
 	}

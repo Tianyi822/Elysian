@@ -150,7 +150,7 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 	platformRouter := platform.NewRouter(platformDeps)
 
 	panelStore := panel.Store{Root: paths.ElysianHome}
-	panelManager := panel.Manager{Store: panelStore, Host: panel.SystemHost{Store: panelStore, DockerSocket: cfg.DockerSocket}, Source: panel.GitHubSource{}, Ports: cfg.PanelPorts(), Enabled: cfg.BareMetal}
+	panelManager := panel.Manager{Store: panelStore, Host: panel.SystemHost{Store: panelStore, DockerSocket: cfg.DockerSocket}, Source: panel.DefaultSource(), Ports: cfg.PanelPorts(), Enabled: cfg.BareMetal}
 	containerAppsRegistry := &containerapps.Registry{MountRoot: cfg.MountRoot}
 	appBuilds := containerapps.NewProductionBuildManager(containerapps.BuildDeps{Engine: stack.Engine, Policy: docker.CheckRegistryHost, Registry: containerAppsRegistry})
 	appHandler := containerapps.Handler{Registry: containerAppsRegistry, EngineAvailable: stack.Ready, Engine: stack.Engine, Policy: docker.CheckRegistryHost, Logs: appLogs, Builds: appBuilds}

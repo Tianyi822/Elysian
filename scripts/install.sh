@@ -47,11 +47,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 SMOKE="${ELYSIAN_SMOKE:-}"
+
+# 构建依赖镜像：系统已预装 Go/Bun 时也强制传给构建进程；可显式覆盖。
+GO_PROXY_DEFAULT="https://goproxy.cn|https://mirrors.aliyun.com/goproxy/|direct"
+BUN_REGISTRY_DEFAULT="https://registry.npmmirror.com"
+export GOPROXY="${ELYSIAN_GOPROXY:-${GOPROXY:-$GO_PROXY_DEFAULT}}"
+export BUN_CONFIG_REGISTRY="${ELYSIAN_BUN_REGISTRY:-${BUN_CONFIG_REGISTRY:-$BUN_REGISTRY_DEFAULT}}"
+
 STEP=0
 if [ -n "$SMOKE" ]; then
-  TOTAL_STEPS=6
+  TOTAL_STEPS=7
 else
-  TOTAL_STEPS=8
+  TOTAL_STEPS=9
 fi
 
 if [ -t 1 ] && [ -t 2 ]; then
@@ -253,6 +260,29 @@ install_bun() {
   ok "bun 就绪：$(bun --version)"
 }
 
+# ---------- 全局镜像配置 ----------
+
+configure_mirrors() {
+  if [ -n "$SMOKE" ]; then
+    ok "冒烟模式跳过全局镜像配置"
+    return 0
+  fi
+  local profile="/etc/profile.d/elysian-mirrors.sh" tmp
+  tmp="$(mktemp)"
+  cat >"$tmp" <<EOF
+# 由 Elysian 安装脚本生成；仅在未显式设置时提供国内镜像默认值。
+export GOPROXY="\${GOPROXY:-$GOPROXY}"
+export BUN_CONFIG_REGISTRY="\${BUN_CONFIG_REGISTRY:-$BUN_CONFIG_REGISTRY}"
+EOF
+  install -m 0644 "$tmp" "$profile" || { rm -f "$tmp"; die "写入 ${profile} 失败。"; }
+  rm -f "$tmp"
+  if command -v go >/dev/null 2>&1; then
+    go env -w GOPROXY="$GOPROXY" \
+      || info "警告：写入 Go 全局 GOPROXY 失败；构建仍使用当前环境变量"
+  fi
+  ok "全局镜像配置已写入 ${profile}（新登录 shell 生效）"
+}
+
 # ---------- 构建与版本安装 ----------
 
 build_release() {
@@ -273,7 +303,9 @@ build_release() {
     tar -C "$REPO_ROOT" --exclude=.git --exclude=node_modules --exclude=dist --exclude=.env --exclude='.env.*' --exclude=.codex --exclude=.zcode --exclude=.agents --exclude=.Elysian -cf - . | tar -C "$BUILD_SOURCE" -xf -
     install -m 0644 "$REPO_ROOT/scripts/build-release.sh" "$BUILD_DIR/build-release.sh"
     chown -R elysian-build:elysian-build "$BUILD_SOURCE" "$BUILD_DIR"
-    runuser -u elysian-build -- env HOME="$BUILD_SOURCE" PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin bash "$BUILD_DIR/build-release.sh" "$BUILD_SOURCE" "$BUILD_DIR" "$BUILD_COMMIT" || die "源码构建失败，原面板未停服。"
+    runuser -u elysian-build -- env HOME="$BUILD_SOURCE" PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin \
+      GOPROXY="$GOPROXY" BUN_CONFIG_REGISTRY="$BUN_CONFIG_REGISTRY" \
+      bash "$BUILD_DIR/build-release.sh" "$BUILD_SOURCE" "$BUILD_DIR" "$BUILD_COMMIT" || die "源码构建失败，原面板未停服。"
   fi
   ok "构建完成"
 }
@@ -394,6 +426,9 @@ print_summary() {
   echo "  面板地址：http://<服务器 IP>:${FRONTEND_PORT}（前端入口）"
   echo "  后端地址：127.0.0.1:${PANEL_PORT}（不对外开放）"
   echo "  面板更新与改端口：登录后进入系统设置"
+  echo "  Go 模块代理：${GOPROXY}"
+  echo "  Bun registry：${BUN_CONFIG_REGISTRY}"
+  echo "  全局镜像配置文件：/etc/profile.d/elysian-mirrors.sh（新登录 shell 生效）"
   echo "  查看首启初始密码（仅第一次启动打印）：journalctl -u $SERVICE_NAME -b --no-pager | grep '初始密码'"
   echo "  忘记密码时重置：HOME=${STATE_DIR} $PANEL_BIN resetpwd"
   echo "  服务管理：systemctl status/restart/stop $SERVICE_NAME"
@@ -409,6 +444,7 @@ uninstall() {
     return 0
   fi
   info "停止并注销服务"
+  rm -f /etc/profile.d/elysian-mirrors.sh
   systemctl disable --now "$SERVICE_NAME" >/dev/null 2>&1 || true
   rm -f "$UNIT_FILE"
   systemctl daemon-reload || true
@@ -427,6 +463,7 @@ uninstall() {
   echo
   echo "已卸载。面板数据目录 ${STATE_DIR}（凭据、SQLite、日志）已保留；"
   echo "彻底清除请执行：rm -rf ${STATE_DIR}。Go 与 bun 工具链一并保留。"
+  echo "全局镜像 profile 已移除；root 的 go env GOPROXY 如需恢复，请执行 go env -u GOPROXY。"
 }
 
 # ---------- 冒烟模式（干净容器内：装工具链 → 构建 → 起进程 → 健康检查 → 清理） ----------
@@ -539,6 +576,8 @@ main() {
   install_go
   section "准备 Bun 工具链"
   install_bun
+  section "配置国内镜像"
+  configure_mirrors
   section "构建 Elysian"
   build_release
   if [ -n "$SMOKE" ]; then
