@@ -115,14 +115,15 @@ func TestWikiExtractionRevisionCandidatesKeepFixedBase(t *testing.T) {
 					return finalReply("已核对容器健康状态"), nil
 				}
 				var input struct {
-					ExistingPages []WikiPage `json:"existingPages"`
+					ExistingPages []WikiPage     `json:"existingPages"`
+					Evidence      []WikiEvidence `json:"evidence"`
 				}
 				if err := json.Unmarshal([]byte(request.Messages[1].Content), &input); err != nil || len(input.ExistingPages) != 1 {
 					t.Errorf("提炼输入未固定已有页面：%+v %v", input, err)
 					return model.Response{}, errors.New("固定页面缺失")
 				}
 				old := input.ExistingPages[0]
-				args, _ := json.Marshal(map[string]any{"pages": []map[string]any{{"pageId": old.ID, "expectedRevision": old.Revision, "slug": old.Slug, "title": old.Title, "markdown": old.Markdown + "\n确认健康后再继续。", "kind": old.Kind}}})
+				args, _ := json.Marshal(map[string]any{"pages": []map[string]any{{"pageId": old.ID, "expectedRevision": old.Revision, "slug": old.Slug, "title": old.Title, "markdown": old.Markdown + "\n确认健康后再继续。", "kind": old.Kind, "evidenceIds": []string{input.Evidence[0].ID}}}})
 				return model.Response{FinishReason: "tool_calls", ToolCalls: []model.ToolCall{{ID: "revision", Name: "propose_wiki_pages", Arguments: args}}}, nil
 			}, nil)
 			space, err := m.CreateWikiSpace(ctx, "修订知识", "business")
@@ -146,7 +147,7 @@ func TestWikiExtractionRevisionCandidatesKeepFixedBase(t *testing.T) {
 				return err == nil && len(candidates) == 1
 			})
 			proposal := candidates[0]
-			if proposal.PageID != page.ID || proposal.Page.ExpectedRevision != page.Revision || len(proposal.Page.Evidence) != 1 || proposal.Page.Evidence[0].Text != "已核对容器健康状态" {
+			if proposal.PageID != page.ID || proposal.Page.ExpectedRevision != page.Revision || len(proposal.Page.Evidence) != 1 || proposal.Page.Evidence[0].Text != "容器检查" || proposal.Reason != "manual-protection" {
 				t.Fatalf("修订候选丢失基准或真实证据：%+v", proposal)
 			}
 			if len(proposal.Page.Tags) != 1 || proposal.Page.Tags[0] != "Docker" || len(proposal.Page.Aliases) != 1 || proposal.Page.Aliases[0] != "容器体检" {

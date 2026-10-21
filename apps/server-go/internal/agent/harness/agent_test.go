@@ -128,6 +128,10 @@ func agentManager(t *testing.T, client agentTestClient, change func(*Deps)) (*Ma
 	if err != nil {
 		t.Fatal(err)
 	}
+	// 通用运行测试显式不选记忆；默认全局绑定由独立记忆测试验证。
+	if _, err = m.SetWikiSessionSpace(context.Background(), session.ID, "", false); err != nil {
+		t.Fatal(err)
+	}
 	return m, session, invoker
 }
 func submitAgentTest(t *testing.T, m *Manager, s Session, key, content string) Run {
@@ -790,6 +794,9 @@ func TestAgentChatCompletionsWireLoop(t *testing.T) {
 	}
 	session, err := m.CreateSession(context.Background(), CreateSessionInput{ModelProfileID: profile.ID, ModelRevision: profile.Revision})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = m.SetWikiSessionSpace(context.Background(), session.ID, "", false); err != nil {
 		t.Fatal(err)
 	}
 	run := submitAgentTest(t, m, session, "wire-loop", "读取镜像后给出结论")

@@ -9,6 +9,7 @@ import { DatabasePage } from '../features/database/DatabasePage'
 import { FilesPage } from '../features/files/FilesPage'
 import { FilesPathTitle } from '../features/files/FilesPathTitle'
 import { LoginPage } from '../features/auth/LoginPage'
+import { MemoryPage } from '../features/memory/MemoryPage'
 import { AgentChatPage } from '../features/agent/AgentChatPage'
 import { LogsPage } from '../features/logs/LogsPage'
 import { LogsTabSwitch } from '../features/logs/LogsTabSwitch'
@@ -188,7 +189,7 @@ export const routes: RouteObject[] = [
       },
       {
         path: 'agent/memory',
-        element: agentPage('长期记忆'),
+        element: <RequireArea area="agent" title="知识 Wiki"><MemoryPage /></RequireArea>,
       },
       {
         path: 'settings',

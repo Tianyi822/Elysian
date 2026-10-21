@@ -3,7 +3,7 @@ import { Link, useLocation, useSearchParams } from 'react-router'
 import * as Dialog from '@radix-ui/react-dialog'
 import { useShellLayout } from '../../app/layout/ShellLayoutContext'
 import { ChatSessionList } from './ChatSessionList'
-import { Bot, Brain, FolderTree, Hand, Image as ImageIcon, List, Loader2, Paperclip, Pencil, Plus, Send, Square, ShieldAlert, ShieldCheck, X, type IconComponent } from '../../components/icons'
+import { BookOpen, Bot, Brain, FolderTree, Hand, Image as ImageIcon, List, Loader2, Paperclip, Pencil, Plus, Send, Square, ShieldAlert, ShieldCheck, X, type IconComponent } from '../../components/icons'
 import { IconButton } from '../../components/IconButton'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { RefreshButton } from '../../components/RefreshState'
@@ -17,6 +17,7 @@ import { ChatMessageAttachments } from './ChatMessageAttachments'
 import { ChatMessageCopy } from './ChatMessageCopy'
 import { ChatApprovals } from './ChatApprovals'
 import { ChatExecutionScope } from './ChatExecutionScope'
+import { ChatMemorySelection, ChatMemorySources } from './ChatMemory'
 import { ChatResponse } from './ChatResponse'
 import { ChatPlan } from './ChatPlan'
 import { ChatSwitchNotice, chatSwitchNotice } from './ChatSwitchNotice'
@@ -57,13 +58,14 @@ export function AgentChatPage() {
   const [wide, setWide] = useState(() => window.matchMedia?.('(min-width: 1100px)').matches ?? false)
   const [listRefreshing, setListRefreshing] = useState(false)
   const [scopeSessionId, setScopeSessionId] = useState<string | null>(null)
+  const [memorySessionId, setMemorySessionId] = useState<string | null>(null)
   const requestedId = params.get('session') || undefined
   const routeState = location.state && typeof location.state === 'object' ? location.state : {}
   const requestedDraft = typeof routeState.agentDraftId === 'string' ? routeState.agentDraftId : undefined
   const listTrigger = useRef<HTMLButtonElement>(null)
   const listDrawer = useRef<HTMLDivElement>(null)
   const restoreListFocus = useRef(false)
-  const { agentConversation: api } = useGateway()
+  const { agentConversation: api, agentMemory } = useGateway()
   const { models, status, error, reload } = useChatModels()
   const input = useRef<HTMLTextAreaElement>(null)
   const editInput = useRef<HTMLTextAreaElement>(null)
@@ -115,6 +117,13 @@ export function AgentChatPage() {
     const localId = session.id
     const selected = useAgentChatStore.getState().session
     if (selected?.id === localId) setScopeSessionId(localId)
+  }
+  const openMemory = async () => {
+    if (!session || !api.available) return
+    const localId = session.id
+    if (!session.remote && model) await chat.prepareRemoteSession(api, model.profile)
+    const selected = useAgentChatStore.getState().session
+    if (selected?.id === localId && selected.remote) setMemorySessionId(localId)
   }
 
   const focusListTrigger = () => listTrigger.current?.focus()
@@ -299,6 +308,7 @@ export function AgentChatPage() {
       <div className="flex min-w-0 flex-1 items-center gap-2">
         <span className="chat-title max-w-64 truncate text-sm font-medium" title={title}>{title}</span>
       </div>
+      <IconButton label="本会话记忆" variant="ghost" disabled={!api.available || !session || chat.loading || chat.sending || !!session.pending || (!session.remote && !model)} onPress={() => void openMemory()}><BookOpen size={16} aria-hidden /></IconButton>
       {session?.remote && <IconButton label="本会话授权" variant="ghost" onPress={() => void openScope()}><FolderTree size={16} aria-hidden /></IconButton>}
       <button type="button" className="chat-new" disabled={chat.sending} onClick={newConversation}><Plus size={14} aria-hidden /><span>新会话</span></button>
     </header>
@@ -369,6 +379,7 @@ export function AgentChatPage() {
               active={active && !finalizing && !waitingInput} stopped={stopped} stopping={active && stopping} api={api} onProgress={followContent} />
               : <ChatResponse key={message.runId} content={(chat.timelines[message.runId] || chat.syncError ? answer?.content : undefined) ?? live?.content ?? ''} reasoning={chat.reasoning[message.runId] ?? ''}
                 active={active && !finalizing} stopped={stopped} stopping={active && stopping} copyable={!!answer} quarantined={answer?.quarantined} onProgress={followContent} />}
+            {!!answer?.wikiSources?.length && <ChatMemorySources sources={answer.wikiSources} api={agentMemory} />}
           </Fragment>
         })}
         {waitingForMessage && <ChatResponse content="" reasoning="" active onProgress={followContent} />}
@@ -442,5 +453,6 @@ export function AgentChatPage() {
     </div>
     </section>
     <ChatExecutionScope key={session?.id} open={!!session && scopeSessionId === session.id} sessionId={session?.remote?.sessionId} api={api.governance} onClose={() => setScopeSessionId(null)} />
+    {session?.remote && memorySessionId === session.id && <ChatMemorySelection key={session.id} sessionId={session.remote.sessionId} api={agentMemory} disabled={busy || !!session.pending} onClose={() => setMemorySessionId(null)} />}
   </div>
 }

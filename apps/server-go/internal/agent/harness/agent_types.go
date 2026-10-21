@@ -4,6 +4,7 @@ import "elysian/server/internal/agent/harness/model"
 
 // Session 固定用户选择的模型版本；登录 Cookie 不属于会话历史。
 type Session struct {
+	WikiStrategy     string       `json:"wikiStrategy,omitempty"`
 	ActiveWorkflowID string       `json:"activeWorkflowId,omitempty"`
 	ID               string       `json:"id"`
 	Title            string       `json:"title"`

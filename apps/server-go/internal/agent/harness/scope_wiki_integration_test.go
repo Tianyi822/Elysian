@@ -35,6 +35,7 @@ func TestWorkflowV2WikiParallelForeachApprovalSubworkflowAndPublishedRecall(t *t
 	const verifiedOutput = `{"ordered":[9007199254740993,2],"verified":true}`
 	const verifiedSchema = `{"type":"object","properties":{"ordered":{"type":"array","items":{"type":"integer"}},"verified":{"const":true}},"required":["ordered","verified"],"additionalProperties":false}`
 	var sourcePageID atomic.Value
+	var publishedPageID atomic.Value
 	var planRequests, verifyRequests, rootExtractions, finishRequests, memoryRequests, recalls, writes atomic.Int32
 	leftStarted, releaseLeft := make(chan struct{}), make(chan struct{})
 	var startLeftOnce, releaseLeftOnce sync.Once
@@ -166,7 +167,14 @@ func TestWorkflowV2WikiParallelForeachApprovalSubworkflowAndPublishedRecall(t *t
 			return finalReply("已独立验证顺序、人工确认和操作结果"), nil
 		}
 		if strings.Contains(header, "fresh-recall-session") {
-			recalls.Add(1)
+			if recalls.Add(1) == 1 {
+				if strings.Contains(string(raw), "combo-published-lesson") {
+					t.Error("navigation injected page body before a read")
+				}
+				response := toolReply("wiki_read")
+				response.ToolCalls[0].Arguments, _ = json.Marshal(map[string]string{"pageId": publishedPageID.Load().(string)})
+				return response, nil
+			}
 			if !strings.Contains(string(raw), "combo-published-lesson") || strings.Contains(string(raw), "sibling-private-") {
 				t.Error("new session did not recall only published knowledge")
 			}
@@ -345,6 +353,7 @@ func TestWorkflowV2WikiParallelForeachApprovalSubworkflowAndPublishedRecall(t *t
 	if err != nil || learned.Status != "active" || len(learned.Sources) != 1 || learned.Sources[0] != ref {
 		t.Fatalf("published page lost original source: %+v %v", learned, err)
 	}
+	publishedPageID.Store(learned.ID)
 	fresh, err := m.CreateSession(ctx, CreateSessionInput{Title: "独立召回会话", ModelProfileID: source.ModelProfileID, ModelRevision: source.ModelRevision})
 	if err != nil {
 		t.Fatal(err)
@@ -353,7 +362,7 @@ func TestWorkflowV2WikiParallelForeachApprovalSubworkflowAndPublishedRecall(t *t
 		t.Fatal(err)
 	}
 	recall := submitAgentTest(t, m, fresh, "combo-fresh-recall", "fresh-recall-session：数据库巡检 已验证经验")
-	if got := runtimeFinished(t, m, recall.ID); got.Status != StateSucceeded || recalls.Load() != 1 || tasks[got.TaskID] {
+	if got := runtimeFinished(t, m, recall.ID); got.Status != StateSucceeded || recalls.Load() != 2 || tasks[got.TaskID] {
 		t.Fatalf("new session recall failed or reused task: %+v", got)
 	}
 	m.mu.Lock()

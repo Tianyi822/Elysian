@@ -45,7 +45,7 @@ export function GatewayProvider({
         modelSettings: isDockerRuntime() ? 'http' : 'mock',
         agentRuntime: isDockerRuntime() ? 'http' : 'mock',
         agentExtensions: isDockerRuntime() ? 'http' : 'mock',
-        agentExecution: isDockerRuntime() ? 'http' : 'mock',
+        agentMemory: isDockerRuntime() ? 'http' : 'mock',
       }),
     [gateway],
   )

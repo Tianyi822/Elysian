@@ -795,7 +795,7 @@ func (a *agentExecution) buildContext(ctx context.Context) (model.Request, []Evi
 		}
 		base = append(base, instructions...)
 		a.manager.mu.Lock()
-		wikiMessages, _, wikiErr := a.wikiRecallLocked(ctx)
+		wikiMessages, navigationRefs, wikiErr := a.wikiRecallLocked(ctx)
 		a.manager.mu.Unlock()
 		if wikiErr != nil {
 			return model.Request{}, nil, memory.Revision, wikiErr
@@ -826,7 +826,14 @@ func (a *agentExecution) buildContext(ctx context.Context) (model.Request, []Evi
 					return a.restoreContextFallback(fallback)
 				}
 				a.manager.mu.Lock()
-				a.inferenceWikiRefs, err = a.wikiRecallSourcesLocked(ctx, len(wikiMessages))
+				if a.run.WikiStrategy == wikiNavigationStrategy {
+					a.inferenceWikiRefs = nil
+					if len(wikiMessages) != 0 {
+						a.inferenceWikiRefs = navigationRefs
+					}
+				} else {
+					a.inferenceWikiRefs, err = a.wikiRecallSourcesLocked(ctx, len(wikiMessages))
+				}
 				a.manager.mu.Unlock()
 				if err != nil {
 					return model.Request{}, nil, memory.Revision, err

@@ -269,6 +269,9 @@ func validateWikiGeneration(ctx context.Context, q rowReader, taskID string, gen
 
 func (a *agentExecution) wikiRecallLocked(ctx context.Context) ([]model.Message, []WikiRef, error) {
 	m := a.manager
+	if a.run.WikiStrategy == wikiNavigationStrategy {
+		return a.wikiNavigationLocked(ctx)
+	}
 	var raw string
 	var recall wikiRecall
 	err := m.store.db.QueryRowContext(ctx, "SELECT document FROM wiki_recalls WHERE run_id=?", a.run.ID).Scan(&raw)

@@ -247,7 +247,7 @@ func TestWikiFullTextChineseTagsAndAliases(t *testing.T) {
 	}
 }
 
-func TestWikiCapacityTrimDoesNotRecordUnusedPage(t *testing.T) {
+func TestWikiNavigationDoesNotInjectLargeBody(t *testing.T) {
 	m, session := wikiTestManager(t)
 	ctx := context.Background()
 	// 容量按 token 记：页面正文约 7.5k token 加固定上下文后必须装不下，fixture 才能验证裁剪。
@@ -276,8 +276,8 @@ func TestWikiCapacityTrimDoesNotRecordUnusedPage(t *testing.T) {
 	m.mu.Lock()
 	refs, err := wikiArtifactRefs(ctx, m.store.db, "run", r.ID)
 	m.mu.Unlock()
-	if err != nil || len(refs) != 0 {
-		t.Fatalf("被裁剪页面不应记作已使用: %+v %v", refs, err)
+	if err != nil || len(refs) != 1 || refs[0].PageID != page.ID {
+		t.Fatalf("导航标题来源没有固定: %+v %v", refs, err)
 	}
 	if _, err = m.WithdrawWikiPage(ctx, page.ID, page.Revision); err != nil {
 		t.Fatal(err)
@@ -285,8 +285,8 @@ func TestWikiCapacityTrimDoesNotRecordUnusedPage(t *testing.T) {
 	m.mu.Lock()
 	invalid, err := wikiArtifactInvalid(ctx, m.store.db, "run", r.ID)
 	m.mu.Unlock()
-	if err != nil || invalid {
-		t.Fatalf("未使用页面撤回不应隔离Run: %v", err)
+	if err != nil || !invalid {
+		t.Fatalf("导航来源撤回应隔离 Run: %v", err)
 	}
 }
 

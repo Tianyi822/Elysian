@@ -302,7 +302,13 @@ func TestManagerCallerCancellationDoesNotDisableStorage(t *testing.T) {
 	r := runtimeSubmit(t, m, "accepted", "docker_images_list")
 	runtimeFinished(t, m, r.ID)
 	m.mu.Lock()
-	m.store.beforeWrite = func(string) error { return context.Canceled }
+	// 只模拟当前 HTTP 取消请求，避免误伤终态后仍会运行的后台维护事务。
+	m.store.beforeWrite = func(op string) error {
+		if op == "cancel" {
+			return context.Canceled
+		}
+		return nil
+	}
 	m.mu.Unlock()
 	_, err = m.Cancel(context.Background(), r.ID)
 	runtimeErrorCode(t, err, "request-cancelled")

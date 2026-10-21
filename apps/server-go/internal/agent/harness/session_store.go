@@ -58,7 +58,21 @@ func saveSession(ctx context.Context, tx *sql.Tx, session Session) error {
 }
 
 func (s *store) createSession(ctx context.Context, session Session) error {
-	return s.write(ctx, "create-session", func(tx *sql.Tx) error { return saveSession(ctx, tx, session) })
+	return s.write(ctx, "create-session", func(tx *sql.Tx) error {
+		if err := saveSession(ctx, tx, session); err != nil {
+			return err
+		}
+		if session.WikiStrategy != wikiNavigationStrategy {
+			return nil
+		}
+		space, err := ensureGlobalWikiSpace(ctx, tx, stamp(s.now()))
+		if err != nil {
+			return err
+		}
+		raw, _ := json.Marshal(WikiSpaceSelection{SpaceID: space.ID})
+		_, err = tx.ExecContext(ctx, "INSERT INTO wiki_session_spaces(session_id,document) VALUES(?,?)", session.ID, string(raw))
+		return err
+	})
 }
 
 func (s *store) switchModel(ctx context.Context, id, profile string, revision int) (Session, error) {

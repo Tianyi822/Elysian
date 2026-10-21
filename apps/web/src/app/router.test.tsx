@@ -10,7 +10,6 @@ const agentRoutes = [
   ['/agent/workflows', '工作流'],
   ['/agent/capabilities', '执行配置'],
   ['/agent/extensions', '技能与 MCP'],
-  ['/agent/memory', '长期记忆'],
 ] as const
 
 beforeEach(() => {
@@ -89,6 +88,12 @@ describe('路由表', () => {
     expect(runtime).not.toHaveBeenCalled()
     expect(models).not.toHaveBeenCalled()
     expect(screen.getByRole('link', { name: 'Ely 智能体' })).toHaveAttribute('aria-current', 'page')
+  })
+
+  it('长期记忆入口渲染知识 Wiki 工作台', async () => {
+    renderApp('/agent/memory')
+    expect(await screen.findByRole('region', { name: '知识 Wiki 工作台' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '导入资料' })).toBeInTheDocument()
   })
 
   it('智能体入口打开本地会话，仅加载模型目录且不检查运行时', async () => {

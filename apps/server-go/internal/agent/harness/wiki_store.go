@@ -31,6 +31,9 @@ func validateWikiInput(in WikiPageInput) error {
 	if !wikiSlugPattern.MatchString(in.Slug) || strings.Contains(in.Slug, "..") || strings.Contains(in.Slug, "//") || !wikiValidText(in.Title, 512) || len(in.Markdown) > wikiPageBytes || !utf8.ValidString(in.Markdown) || strings.ContainsRune(in.Markdown, '\x00') {
 		return bad("invalid-wiki-page", "Wiki 页面 slug、标题或正文无效")
 	}
+	if in.Maintenance != "" && in.Maintenance != "automatic" && in.Maintenance != "manual" {
+		return bad("invalid-wiki-maintenance", "Wiki 维护模式必须为 automatic 或 manual")
+	}
 	kind := in.Kind
 	if kind == "" {
 		kind = "reference"
@@ -68,6 +71,9 @@ func validateWikiInput(in WikiPageInput) error {
 func normalizeWikiInput(in WikiPageInput) WikiPageInput {
 	if in.Kind == "" {
 		in.Kind = "reference"
+	}
+	if in.Maintenance == "" {
+		in.Maintenance = "manual"
 	}
 	return in
 }
@@ -179,9 +185,6 @@ func (m *Manager) SetWikiSessionSpace(ctx context.Context, sessionID, spaceID st
 	if err != nil {
 		return s, err
 	}
-	if includeGlobal && s.Kind == "global" {
-		includeGlobal = true
-	}
 	doc := struct {
 		SpaceID       string `json:"spaceId"`
 		IncludeGlobal bool   `json:"includeGlobal"`
@@ -241,6 +244,7 @@ func (m *Manager) createWikiPageLocked(ctx context.Context, spaceID string, in W
 		in.ExpiresAt = stamp(m.deps.Now().Add(30 * 24 * time.Hour))
 	}
 	p := WikiPage{ID: m.deps.NewID(), SpaceID: spaceID, Slug: in.Slug, Revision: 1, Title: in.Title, Markdown: in.Markdown, Kind: in.Kind, Status: "active", Digest: wikiDigest(in.Title, in.Markdown), CreatedAt: now, UpdatedAt: now, ExpiresAt: in.ExpiresAt, Evidence: in.Evidence, Sources: in.Sources, Links: wikiLinks(in.Markdown)}
+	p.Maintenance = in.Maintenance
 	p.Tags, p.Aliases = in.Tags, in.Aliases
 	if p.Evidence == nil {
 		p.Evidence = []WikiEvidence{}
@@ -302,11 +306,6 @@ func (m *Manager) listWikiPagesLocked(ctx context.Context, spaceID string, inclu
 	if !includeWithdrawn {
 		q += ` AND status<>'withdrawn'`
 	}
-	q += ` ORDER BY updated_at` // updated_at lives in JSON; deterministic rowid is preferable
-	q = `SELECT document FROM wiki_pages WHERE (?='' OR space_id=?)`
-	if !includeWithdrawn {
-		q += ` AND status<>'withdrawn'`
-	}
 	q += ` ORDER BY rowid DESC`
 	rows, err := m.store.db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -351,6 +350,9 @@ func (m *Manager) updateWikiPageLocked(ctx context.Context, id string, in WikiPa
 	if err != nil {
 		return old, err
 	}
+	if old.Kind == "sources" && status != "withdrawn" {
+		return old, &Error{409, "wiki-source-immutable", "导入原文不可改写；请导入新的来源"}
+	}
 	if in.ExpectedRevision != old.Revision {
 		return old, &Error{409, "revision-conflict", "Wiki 页面版本已变化，请重新读取"}
 	}
@@ -371,6 +373,7 @@ func (m *Manager) updateWikiPageLocked(ctx context.Context, id string, in WikiPa
 	}
 	p.Evidence = in.Evidence
 	p.Sources = in.Sources
+	p.Maintenance = in.Maintenance
 	p.Tags, p.Aliases = in.Tags, in.Aliases
 	p.Links = wikiLinks(in.Markdown)
 	if status == "withdrawn" {
@@ -678,9 +681,25 @@ func (m *Manager) ListWikiCandidates(ctx context.Context, spaceID, status string
 		}
 		out = append(out, c)
 	}
-	return out, rows.Err()
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	if err = rows.Close(); err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].CurrentPage = nil
+		if out[i].PageID != "" {
+			page, err := m.getWikiPageLocked(ctx, out[i].PageID)
+			if err != nil {
+				return nil, err
+			}
+			out[i].CurrentPage = &page
+		}
+	}
+	return out, nil
 }
-func (m *Manager) DecideWikiCandidate(ctx context.Context, id, decision string) (WikiCandidate, error) {
+func (m *Manager) DecideWikiCandidate(ctx context.Context, id, decision string, revisions ...int) (WikiCandidate, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.workflowWritable(); err != nil {
@@ -688,6 +707,9 @@ func (m *Manager) DecideWikiCandidate(ctx context.Context, id, decision string) 
 	}
 	if decision != "approved" && decision != "rejected" {
 		return WikiCandidate{}, bad("invalid-decision", "候选决定必须为 approved 或 rejected")
+	}
+	if len(revisions) > 1 || len(revisions) == 1 && revisions[0] < 0 {
+		return WikiCandidate{}, bad("invalid-revision", "确认修订必须为非负整数")
 	}
 	var raw string
 	err := m.store.db.QueryRowContext(ctx, "SELECT document FROM wiki_candidates WHERE id=?", id).Scan(&raw)
@@ -701,6 +723,7 @@ func (m *Manager) DecideWikiCandidate(ctx context.Context, id, decision string) 
 	if json.Unmarshal([]byte(raw), &c) != nil {
 		return c, errors.New("Wiki 候选记录无效")
 	}
+	c.CurrentPage = nil
 	if c.Status != "pending" {
 		if c.Status == decision {
 			return c, nil
@@ -708,15 +731,18 @@ func (m *Manager) DecideWikiCandidate(ctx context.Context, id, decision string) 
 		return c, &Error{409, "wiki-candidate-decided", "Wiki 候选已处理"}
 	}
 	err = m.store.write(ctx, "wiki-candidate-decision", func(tx *sql.Tx) error {
-		invalid, err := wikiArtifactInvalid(ctx, tx, "candidate", c.ID)
-		if err != nil {
-			return err
-		}
-		if invalid {
-			return &Error{409, "wiki-source-withdrawn", "候选来源已撤回，不能发布"}
-		}
 		if decision == "approved" {
+			invalid, err := wikiArtifactInvalid(ctx, tx, "candidate", c.ID)
+			if err != nil {
+				return err
+			}
+			if invalid {
+				return &Error{409, "wiki-source-withdrawn", "候选来源已撤回，不能发布"}
+			}
 			in := normalizeWikiInput(c.Page)
+			if len(revisions) == 1 {
+				in.ExpectedRevision = revisions[0]
+			}
 			if err := validateWikiInput(in); err != nil {
 				return err
 			}
@@ -725,6 +751,7 @@ func (m *Manager) DecideWikiCandidate(ctx context.Context, id, decision string) 
 				in.ExpiresAt = stamp(m.deps.Now().Add(30 * 24 * time.Hour))
 			}
 			p := WikiPage{ID: c.PageID, SpaceID: c.SpaceID, Slug: in.Slug, Revision: in.ExpectedRevision + 1, Title: in.Title, Markdown: in.Markdown, Kind: in.Kind, Status: "active", Digest: wikiDigest(in.Title, in.Markdown), CreatedAt: now, UpdatedAt: now, ExpiresAt: in.ExpiresAt, Evidence: in.Evidence, Sources: in.Sources, Links: wikiLinks(in.Markdown)}
+			p.Maintenance = in.Maintenance
 			p.Tags, p.Aliases = in.Tags, in.Aliases
 			if c.PageID == "" {
 				if in.ExpectedRevision != 0 {
@@ -740,6 +767,16 @@ func (m *Manager) DecideWikiCandidate(ctx context.Context, id, decision string) 
 				if e := decodeWiki(oldRaw, &old); e != nil {
 					return e
 				}
+				if old.Status != "active" || old.Kind == "sources" {
+					return &Error{409, "wiki-page-protected", "来源原文或已撤回页面不能通过候选覆盖"}
+				}
+				if old.Revision != in.ExpectedRevision {
+					return &Error{409, "revision-conflict", "Wiki 页面版本已变化，请重新读取并复核"}
+				}
+				if e := validateWikiSources(ctx, tx, mergeWikiRefs(old.Sources, []WikiRef{{old.ID, old.Revision, old.Digest}})); e != nil {
+					return e
+				}
+				p.Sources = mergeWikiRefs(p.Sources, old.Sources)
 				p.CreatedAt = old.CreatedAt
 				p.Slug = old.Slug
 			}
@@ -747,6 +784,7 @@ func (m *Manager) DecideWikiCandidate(ctx context.Context, id, decision string) 
 				return e
 			}
 			c.PageID = p.ID
+			c.Page.ExpectedRevision = in.ExpectedRevision
 		}
 		c.Status = decision
 		c.DecidedAt = wikiNow(m)

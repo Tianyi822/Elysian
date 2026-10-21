@@ -79,11 +79,20 @@ function parseMessage(value: unknown): AgentMessage {
   if (row.quarantined !== undefined && typeof row.quarantined !== 'boolean') throw invalid()
   if (row.runStatus !== undefined && !(RUNTIME_RUN_STATUSES as readonly unknown[]).includes(row.runStatus)) throw invalid()
   if (row.attachments !== undefined && (!Array.isArray(row.attachments) || !row.attachments.every(isMessageAttachment))) throw invalid()
+  const wikiSources = row.wikiSources === undefined ? undefined : (() => {
+    if (!Array.isArray(row.wikiSources)) throw invalid()
+    return row.wikiSources.map(value => {
+      const ref = object(value)
+      if (!Number.isSafeInteger(ref.revision) || Number(ref.revision) < 1) throw invalid()
+      return { pageId: string(ref.pageId), revision: Number(ref.revision), digest: string(ref.digest) }
+    })
+  })()
   return {
     id: string(row.id), sessionId: string(row.sessionId), taskId: string(row.taskId), runId: string(row.runId), seq: cursor(row.seq),
     role: row.role, content: string(row.content), createdAt: string(row.createdAt), quarantined: row.quarantined as boolean | undefined,
     runStatus: row.runStatus as AgentMessage['runStatus'],
     replacesMessageId: optional(row.replacesMessageId),
+    ...(wikiSources === undefined ? {} : { wikiSources }),
     ...(Array.isArray(row.attachments) ? { attachments: row.attachments as readonly AgentMessageAttachment[] } : {}),
   }
 }

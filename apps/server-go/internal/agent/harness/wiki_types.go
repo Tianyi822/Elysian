@@ -34,6 +34,7 @@ type WikiEvidence struct {
 }
 
 type WikiPage struct {
+	Maintenance string         `json:"maintenance,omitempty"`
 	ID          string         `json:"id"`
 	SpaceID     string         `json:"spaceId"`
 	Slug        string         `json:"slug"`
@@ -55,6 +56,7 @@ type WikiPage struct {
 }
 
 type WikiPageInput struct {
+	Maintenance      string         `json:"maintenance,omitempty"`
 	ExpectedRevision int            `json:"expectedRevision"`
 	Slug             string         `json:"slug"`
 	Title            string         `json:"title"`
@@ -68,15 +70,17 @@ type WikiPageInput struct {
 }
 
 type WikiCandidate struct {
-	ID         string        `json:"id"`
-	SpaceID    string        `json:"spaceId"`
-	PageID     string        `json:"pageId,omitempty"`
-	Status     string        `json:"status"`
-	OriginKind string        `json:"originKind"`
-	OriginID   string        `json:"originId"`
-	CreatedAt  string        `json:"createdAt"`
-	DecidedAt  string        `json:"decidedAt,omitempty"`
-	Page       WikiPageInput `json:"page"`
+	CurrentPage *WikiPage     `json:"currentPage,omitempty"`
+	Reason      string        `json:"reason,omitempty"`
+	ID          string        `json:"id"`
+	SpaceID     string        `json:"spaceId"`
+	PageID      string        `json:"pageId,omitempty"`
+	Status      string        `json:"status"`
+	OriginKind  string        `json:"originKind"`
+	OriginID    string        `json:"originId"`
+	CreatedAt   string        `json:"createdAt"`
+	DecidedAt   string        `json:"decidedAt,omitempty"`
+	Page        WikiPageInput `json:"page"`
 }
 
 type WikiSearchHit struct {
@@ -103,6 +107,8 @@ type WikiExport struct {
 }
 
 type WikiJob struct {
+	Strategy         string            `json:"strategy,omitempty"`
+	PublishedRefs    []WikiRef         `json:"publishedRefs,omitempty"`
 	ID               string            `json:"id"`
 	Kind             string            `json:"kind"`
 	OriginKind       string            `json:"originKind"`

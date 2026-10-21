@@ -147,14 +147,21 @@ describe('聊天 HTTP 接口', () => {
   })
 
   it('消息分页保留大整数游标与隔离标记，拒绝回退游标', async () => {
-    const message = { ...fixture.message, sessionId: 'session-1', seq: '9007199254740994', quarantined: true }
+    const wikiSources = [{ pageId: 'wiki-1', revision: 2, digest: 'fixed-digest' }]
+    const message = { ...fixture.message, sessionId: 'session-1', seq: '9007199254740994', quarantined: true, wikiSources }
     const fetcher = vi.fn().mockResolvedValueOnce(json({ items: [message], nextCursor: message.seq, hasMore: true })).mockResolvedValueOnce(json({ items: [], nextCursor: '0', hasMore: true }))
     vi.stubGlobal('fetch', fetcher)
     const api = createHttpAgentConversationAdapter()
     const page = await api.messages('session-1', '9007199254740993')
     expect(page.nextCursor).toBe(message.seq)
     expect(page.items[0]?.quarantined).toBe(true)
+    expect(page.items[0]?.wikiSources).toEqual(wikiSources)
     await expect(api.messages('session-1', page.nextCursor)).rejects.toThrow('格式无效')
+  })
+
+  it.each([{ revision: 0 }, { revision: 1.5 }, { digest: 12 }])('消息拒绝畸形记忆引用 %j', async malformed => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ items: [{ ...fixture.message, sessionId: 'session-1', seq: '1', wikiSources: [{ pageId: 'wiki-1', revision: 1, digest: 'fixed', ...malformed }] }], nextCursor: '1', hasMore: false })))
+    await expect(createHttpAgentConversationAdapter().messages('session-1', '0')).rejects.toThrow('格式无效')
   })
 
   it('消息分页解析附件描述符，缺字段与畸形附件均按格式无效拒绝', async () => {

@@ -3,6 +3,7 @@ package harness
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"strconv"
 
 	"elysian/server/internal/shared"
@@ -18,10 +19,100 @@ func registerMemoryRoutes(r chi.Router, s wikiRuntimeService) {
 		}
 		shared.SendJSON(w, status, value)
 	}
+	pageInSpace := func(ctx context.Context, req *http.Request) (WikiPage, error) {
+		p, e := s.GetWikiPage(ctx, chi.URLParam(req, "id"))
+		if e != nil {
+			return p, e
+		}
+		if p.SpaceID != chi.URLParam(req, "spaceId") {
+			return WikiPage{}, &Error{404, "wiki-page-not-found", "Wiki 页面不属于当前空间"}
+		}
+		return p, nil
+	}
 	if m, ok := s.(*Manager); ok {
 		r.Get("/sessions/{id}/memory", func(w http.ResponseWriter, req *http.Request) {
 			v, e := m.WikiSessionSelection(req.Context(), chi.URLParam(req, "id"))
 			respond(w, 200, v, e)
+		})
+		r.Put("/sessions/{id}/memory-space", func(w http.ResponseWriter, req *http.Request) {
+			if _, e := memoryRouteQuery(req); e != nil {
+				writeRuntimeError(w, e)
+				return
+			}
+			in, e := readAgentInput[WikiSpaceSelection](w, req)
+			if e != nil {
+				writeRuntimeError(w, e)
+				return
+			}
+			if _, e = m.SetWikiSessionSpace(req.Context(), chi.URLParam(req, "id"), in.SpaceID, in.IncludeGlobal); e != nil {
+				writeRuntimeError(w, e)
+				return
+			}
+			v, e := m.WikiSessionSelection(req.Context(), chi.URLParam(req, "id"))
+			respond(w, 200, v, e)
+		})
+		r.Get("/memory-spaces/{spaceId}/directory", func(w http.ResponseWriter, req *http.Request) {
+			q, e := memoryRouteQuery(req, "cursor", "limit")
+			if e != nil {
+				writeRuntimeError(w, e)
+				return
+			}
+			limit, e := memoryRouteInt(q.Get("limit"), 50, 1, 200)
+			if e != nil {
+				writeRuntimeError(w, e)
+				return
+			}
+			v, e := m.WikiDirectory(req.Context(), chi.URLParam(req, "spaceId"), q.Get("cursor"), limit)
+			respond(w, 200, v, e)
+		})
+		r.Get("/memory-spaces/{spaceId}/pages/{id}/revisions", func(w http.ResponseWriter, req *http.Request) {
+			if _, e := memoryRouteQuery(req); e != nil {
+				writeRuntimeError(w, e)
+				return
+			}
+			v, e := m.WikiPageRevisions(req.Context(), chi.URLParam(req, "spaceId"), chi.URLParam(req, "id"))
+			respond(w, 200, v, e)
+		})
+		r.Get("/memory-spaces/{spaceId}/pages/{id}/read", func(w http.ResponseWriter, req *http.Request) {
+			q, e := memoryRouteQuery(req, "offset", "limit")
+			if e != nil {
+				writeRuntimeError(w, e)
+				return
+			}
+			offset, e := memoryRouteInt(q.Get("offset"), 0, 0, int(^uint(0)>>1))
+			if e != nil {
+				writeRuntimeError(w, e)
+				return
+			}
+			limit, e := memoryRouteInt(q.Get("limit"), 4096, 1, 4096)
+			if e != nil {
+				writeRuntimeError(w, e)
+				return
+			}
+			page, e := pageInSpace(req.Context(), req)
+			if e != nil {
+				writeRuntimeError(w, e)
+				return
+			}
+			v, e := wikiReadSlice(page, offset, limit)
+			respond(w, 200, v, e)
+		})
+		r.Post("/memory-spaces/{spaceId}/sources", func(w http.ResponseWriter, req *http.Request) {
+			if _, e := memoryRouteQuery(req); e != nil {
+				writeRuntimeError(w, e)
+				return
+			}
+			in, e := readAgentInput[WikiSourceInput](w, req)
+			if e != nil {
+				writeRuntimeError(w, e)
+				return
+			}
+			v, duplicate, e := m.CreateWikiSource(req.Context(), chi.URLParam(req, "spaceId"), in)
+			status := http.StatusAccepted
+			if duplicate {
+				status = http.StatusOK
+			}
+			respond(w, status, v, e)
 		})
 		r.Put("/memory-spaces/{spaceId}", func(w http.ResponseWriter, req *http.Request) {
 			in, e := readAgentInput[struct {
@@ -36,12 +127,34 @@ func registerMemoryRoutes(r chi.Router, s wikiRuntimeService) {
 			respond(w, 200, v, e)
 		})
 		r.Get("/memory-spaces/{spaceId}/pages/{id}/revisions/{revision}", func(w http.ResponseWriter, req *http.Request) {
-			rev, e := strconv.Atoi(chi.URLParam(req, "revision"))
-			if e != nil || rev < 1 {
-				writeRuntimeError(w, bad("invalid-revision", "Wiki 修订必须是正整数"))
+			if _, e := memoryRouteQuery(req); e != nil {
+				writeRuntimeError(w, e)
+				return
+			}
+			rev, e := memoryRouteInt(chi.URLParam(req, "revision"), 0, 1, int(^uint(0)>>1))
+			if e != nil {
+				writeRuntimeError(w, e)
 				return
 			}
 			v, e := m.WikiPageRevision(req.Context(), chi.URLParam(req, "spaceId"), chi.URLParam(req, "id"), rev)
+			respond(w, 200, v, e)
+		})
+		r.Get("/memory-pages/{id}/revisions/{revision}", func(w http.ResponseWriter, req *http.Request) {
+			if _, e := memoryRouteQuery(req); e != nil {
+				writeRuntimeError(w, e)
+				return
+			}
+			rev, e := memoryRouteInt(chi.URLParam(req, "revision"), 0, 1, int(^uint(0)>>1))
+			if e != nil {
+				writeRuntimeError(w, e)
+				return
+			}
+			page, e := s.GetWikiPage(req.Context(), chi.URLParam(req, "id"))
+			if e != nil {
+				writeRuntimeError(w, e)
+				return
+			}
+			v, e := m.WikiPageRevision(req.Context(), page.SpaceID, page.ID, rev)
 			respond(w, 200, v, e)
 		})
 	}
@@ -78,16 +191,6 @@ func registerMemoryRoutes(r chi.Router, s wikiRuntimeService) {
 		v, e := s.CreateWikiPage(req.Context(), chi.URLParam(req, "spaceId"), in)
 		respond(w, 201, v, e)
 	})
-	pageInSpace := func(ctx context.Context, req *http.Request) (WikiPage, error) {
-		p, e := s.GetWikiPage(ctx, chi.URLParam(req, "id"))
-		if e != nil {
-			return p, e
-		}
-		if p.SpaceID != chi.URLParam(req, "spaceId") {
-			return WikiPage{}, &Error{404, "wiki-page-not-found", "Wiki 页面不属于当前空间"}
-		}
-		return p, nil
-	}
 	r.Get("/memory-spaces/{spaceId}/pages/{id}", func(w http.ResponseWriter, req *http.Request) {
 		v, e := pageInSpace(req.Context(), req)
 		respond(w, 200, v, e)
@@ -171,13 +274,18 @@ func registerMemoryRoutes(r chi.Router, s wikiRuntimeService) {
 	})
 	r.Post("/memory-proposals/{id}/decision", func(w http.ResponseWriter, req *http.Request) {
 		in, e := readAgentInput[struct {
-			Decision string `json:"decision"`
+			Decision         string `json:"decision"`
+			ExpectedRevision *int   `json:"expectedRevision,omitempty"`
 		}](w, req)
 		if e != nil {
 			writeRuntimeError(w, e)
 			return
 		}
-		v, e := s.DecideWikiCandidate(req.Context(), chi.URLParam(req, "id"), in.Decision)
+		var revisions []int
+		if in.ExpectedRevision != nil {
+			revisions = append(revisions, *in.ExpectedRevision)
+		}
+		v, e := s.DecideWikiCandidate(req.Context(), chi.URLParam(req, "id"), in.Decision, revisions...)
 		respond(w, 200, v, e)
 	})
 	r.Get("/memory-extractions", func(w http.ResponseWriter, req *http.Request) {
@@ -240,4 +348,33 @@ func registerMemoryRoutes(r chi.Router, s wikiRuntimeService) {
 		v, e := s.UpdateEmbeddingProfile(req.Context(), chi.URLParam(req, "id"), in.ExpectedRevision, in.EmbeddingProfileInput)
 		respond(w, 200, v, e)
 	})
+}
+
+// 新记忆入口只接收显式声明且单值的参数，避免宽松 URL 解析悄悄丢弃歧义。
+func memoryRouteQuery(req *http.Request, allowed ...string) (url.Values, error) {
+	values, err := url.ParseQuery(req.URL.RawQuery)
+	if err != nil {
+		return nil, shared.InvalidRequest("查询参数编码无效")
+	}
+	for key, entries := range values {
+		known := false
+		for _, name := range allowed {
+			known = known || key == name
+		}
+		if !known || len(entries) != 1 || entries[0] == "" || len(entries[0]) > 256 {
+			return nil, shared.InvalidRequest("查询参数无效或重复")
+		}
+	}
+	return values, nil
+}
+
+func memoryRouteInt(raw string, fallback, minimum, maximum int) (int, error) {
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || strconv.Itoa(value) != raw || value < minimum || value > maximum {
+		return 0, shared.InvalidRequest("记忆分页参数或修订必须是范围内的规范整数")
+	}
+	return value, nil
 }

@@ -24,7 +24,7 @@ type wikiRuntimeService interface {
 	ExportWiki(context.Context, string) (WikiExport, error)
 	ImportWiki(context.Context, string, map[string]string) ([]WikiCandidate, error)
 	ListWikiCandidates(context.Context, string, string) ([]WikiCandidate, error)
-	DecideWikiCandidate(context.Context, string, string) (WikiCandidate, error)
+	DecideWikiCandidate(context.Context, string, string, ...int) (WikiCandidate, error)
 	ListEmbeddingProfiles(context.Context) ([]EmbeddingProfile, error)
 	CreateEmbeddingProfile(context.Context, EmbeddingProfileInput) (EmbeddingProfile, error)
 	UpdateEmbeddingProfile(context.Context, string, int, EmbeddingProfileInput) (EmbeddingProfile, error)

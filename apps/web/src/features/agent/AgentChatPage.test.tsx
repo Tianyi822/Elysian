@@ -36,7 +36,7 @@ function renderChat(backend = chatTestApi(), initialEntry = '/agent', modelError
   if (modelError) readModels.mockRejectedValueOnce(new Error(modelError))
   const router = createMemoryRouter([{ path: '*', element: <Tooltip.Provider><GatewayProvider gateway={gateway}><TestShell><AgentChatPage /></TestShell><NotificationHost /></GatewayProvider></Tooltip.Provider> }], { initialEntries: [initialEntry] })
   const view = render(<RouterProvider router={router} />)
-  return { ...view, ...backend, router, readModels }
+  return { ...view, ...backend, router, readModels, gateway }
 }
 
 beforeEach(async () => {
@@ -50,6 +50,29 @@ beforeEach(async () => {
 })
 
 describe('基本聊天界面', () => {
+  it('首条消息前可选择记忆空间，只创建会话而不提交任务，并保留消息草稿', async () => {
+    const backend = chatTestApi()
+    backend.session.id = 'server-memory-preflight'
+    const { api, gateway } = renderChat(backend)
+    const trigger = await screen.findByRole('button', { name: '本会话记忆' })
+    await waitFor(() => expect(trigger).toBeEnabled())
+    const composer = screen.getByRole('textbox', { name: '发送给 Ely 的消息' })
+    fireEvent.change(composer, { target: { value: '稍后发送的草稿' } })
+    fireEvent.click(trigger)
+    await screen.findByRole('dialog', { name: '本会话记忆' })
+    await screen.findByRole('button', { name: '记忆空间：共享知识库' })
+    expect(api.createSession).toHaveBeenCalledOnce()
+    expect(api.createTask).not.toHaveBeenCalled()
+    expect(api.continueTask).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '本会话记忆' })).not.toBeInTheDocument())
+    expect(composer).toHaveValue('稍后发送的草稿')
+    expect(await gateway.agentMemory.getSelection(backend.session.id)).toMatchObject({ includeGlobal: true })
+    fireEvent.click(screen.getByRole('button', { name: '本会话记忆' }))
+    await screen.findByRole('button', { name: '记忆空间：共享知识库' })
+    expect(api.createSession).toHaveBeenCalledOnce()
+  })
+
   it('最后一条消息原位编辑、取消及重发，不覆盖底部草稿', async () => {
     const backend = chatTestApi()
     await backend.api.createTask('server-session', { requestId: 'original', content: '原消息' })

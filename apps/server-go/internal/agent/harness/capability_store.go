@@ -177,7 +177,11 @@ func (m *Manager) snapshotWithMode(ctx context.Context, e Environment, modern bo
 		return s, e2
 	}
 	if len(spaces) > 0 {
-		s.Tools = append(s.Tools, wikiCapabilities()...)
+		if modern {
+			s.Tools = append(s.Tools, wikiNavigationCapabilities()...)
+		} else {
+			s.Tools = append(s.Tools, wikiCapabilities()...)
+		}
 	}
 	for _, c := range s.Materials {
 		if c.Name == toolSearchName || c.Source == toolDiscoverySource || c.Name == userInputTool || c.Source == userInputSource || c.Name == planTool || c.Source == planSource {

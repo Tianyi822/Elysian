@@ -28,7 +28,12 @@ func TestWikiExtractionOutboxIsDurableAndIdempotent(t *testing.T) {
 			if len(request.Tools) != 1 || request.Tools[0].Name != "propose_wiki_pages" || request.MaxTokens > 4096 {
 				t.Error("提炼不能获得工具或额外输出预算")
 			}
-			return model.Response{FinishReason: "tool_calls", ToolCalls: []model.ToolCall{{ID: "wiki", Name: "propose_wiki_pages", Arguments: json.RawMessage(`{"pages":[{"slug":"docker-check","title":"容器检查","markdown":"先核验容器状态。","kind":"runbook"}]}`)}}}, nil
+			var input wikiCompileInput
+			if err := json.Unmarshal([]byte(request.Messages[1].Content), &input); err != nil || len(input.Evidence) == 0 {
+				t.Fatal("原始证据缺失", err)
+			}
+			args, _ := json.Marshal(map[string]any{"pages": []map[string]any{{"slug": "docker-check", "title": "容器检查", "markdown": "先核验容器状态。", "kind": "runbook", "evidenceIds": []string{input.Evidence[0].ID}}}})
+			return model.Response{FinishReason: "tool_calls", ToolCalls: []model.ToolCall{{ID: "wiki", Name: "propose_wiki_pages", Arguments: args}}}, nil
 		}
 		return finalReply("容器检查完成"), nil
 	}, nil)
@@ -60,16 +65,16 @@ func TestWikiExtractionOutboxIsDurableAndIdempotent(t *testing.T) {
 		return err == nil && len(jobs.Items) == 1 && terminal(jobs.Items[0].Status)
 	})
 	job := jobs.Items[0]
-	if job.Status != StateSucceeded || len(job.CandidateIDs) != 1 || extractionCalls.Load() != 1 {
+	if job.Status != StateSucceeded || len(job.CandidateIDs) != 0 || len(job.PublishedRefs) != 1 || extractionCalls.Load() != 1 {
 		t.Fatalf("提炼不是至多一次：%+v calls=%d", job, extractionCalls.Load())
 	}
 	proposals, err := m.ListWikiCandidates(context.Background(), space.ID, "pending")
-	if err != nil || len(proposals) != 1 {
+	if err != nil || len(proposals) != 0 {
 		t.Fatalf("候选未落盘：%+v %v", proposals, err)
 	}
 	pages, err := m.ListWikiPages(context.Background(), space.ID, false)
-	if err != nil || len(pages) != 0 {
-		t.Fatalf("未确认候选不能成为有效页面：%+v %v", pages, err)
+	if err != nil || len(pages) != 1 || pages[0].Maintenance != "automatic" {
+		t.Fatalf("正常提炼未自动发布：%+v %v", pages, err)
 	}
 	full, err := m.GetWikiJob(context.Background(), job.ID)
 	if err != nil || full.Response == nil || full.Input == "" {

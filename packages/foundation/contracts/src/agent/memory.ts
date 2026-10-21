@@ -22,7 +22,9 @@ export type AgentMemoryEvidence = {
   digest: string
   originalCleared: boolean
 }
+export type AgentMemoryMaintenance = 'automatic' | 'manual'
 export type AgentMemoryPage = {
+  maintenance?: AgentMemoryMaintenance
   id: string
   spaceId: string
   slug: string
@@ -43,6 +45,7 @@ export type AgentMemoryPage = {
   aliases?: readonly string[]
 }
 export type AgentMemoryPageInput = {
+  maintenance?: AgentMemoryMaintenance
   expectedRevision?: number
   slug: string
   title: string
@@ -60,6 +63,8 @@ export const AGENT_MEMORY_PROPOSAL_STATUS_LABELS: Record<AgentMemoryProposalStat
   pending: '待确认', approved: '已采纳', rejected: '已拒绝', invalidated: '来源失效',
 }
 export type AgentMemoryProposal = {
+  currentPage?: AgentMemoryPage
+  reason?: string
   id: string
   spaceId: string
   pageId?: string
@@ -70,7 +75,7 @@ export type AgentMemoryProposal = {
   decidedAt?: string
   page: AgentMemoryPageInput
 }
-export type AgentMemoryProposalDecisionInput = { decision: 'approved' | 'rejected' }
+export type AgentMemoryProposalDecisionInput = { decision: 'approved' | 'rejected'; expectedRevision?: number }
 export type AgentMemorySearchHit = { page: AgentMemoryPage; score: number; method: 'sqlite-text' | 'hybrid-rrf' }
 export type AgentMemorySearchResult = { items: readonly AgentMemorySearchHit[]; degraded: boolean; reason?: string }
 export type AgentMemoryChecks = { orphanPages: readonly string[]; brokenLinks: readonly string[]; expiredPages: readonly string[]; invalidSources: readonly string[] }
@@ -112,6 +117,8 @@ export type AgentEmbeddingRequest = {
 export type AgentMemoryExtraction = {
   id: string
   kind: 'extraction' | 'embedding'
+  strategy?: 'navigation/v1'
+  publishedRefs?: readonly AgentWikiRef[]
   originKind: string
   originId: string
   spaceId: string
@@ -132,3 +139,9 @@ export type AgentMemoryExtraction = {
   candidateIds: readonly string[]
   sources: readonly AgentWikiRef[]
 }
+
+export type AgentMemoryPageSummary = Omit<AgentMemoryPage, 'markdown' | 'evidence'> & { summary: string }
+export type AgentMemoryDirectory = { items: readonly AgentMemoryPageSummary[]; nextCursor?: string }
+export type AgentMemoryPageRead = { page: AgentMemoryPageSummary; markdown: string; offset: number; nextOffset?: number; totalBytes: number }
+export type AgentMemorySourceInput = { requestId: string; title: string; filename?: string; text: string; modelProfileId: string; modelProfileRevision: number }
+export type AgentMemorySourceResult = { source: AgentMemoryPage; job: AgentMemoryExtraction }

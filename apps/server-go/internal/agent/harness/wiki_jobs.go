@@ -60,6 +60,9 @@ func (m *Manager) enqueueWikiRunExtraction(ctx context.Context, tx *sql.Tx, run 
 	if run.WorkflowID != "" || run.Model == nil {
 		return nil
 	}
+	if run.WikiStrategy == wikiNavigationStrategy {
+		return m.enqueueWikiNavigationExtraction(ctx, tx, run)
+	}
 	return m.enqueueWikiExtraction(ctx, tx, "run", run.ID, run.TaskID, run.ID, run.SessionID, *run.Model, answer)
 }
 
@@ -280,7 +283,11 @@ func (m *Manager) runNextWikiJob() bool {
 		profile, err = m.deps.Profiles.Resolve(job.Model.ID, job.Model.Revision, true)
 	}
 	m.mu.Unlock()
-	request := model.Request{Messages: []model.Message{{Role: "system", Content: wikiExtractionSystem}, {Role: "user", Content: job.Input}}, Tools: []model.Tool{{Name: "propose_wiki_pages", Description: "提交有来源的长期记忆候选，不执行外部操作", Parameters: wikiExtractionSchema}}, ToolChoice: "propose_wiki_pages", MaxTokens: 4096}
+	system, schema := wikiExtractionSystem, wikiExtractionSchema
+	if job.Strategy == wikiNavigationStrategy {
+		system, schema = wikiCompileSystem, wikiCompileSchema
+	}
+	request := model.Request{Messages: []model.Message{{Role: "system", Content: system}, {Role: "user", Content: job.Input}}, Tools: []model.Tool{{Name: "propose_wiki_pages", Description: "提交有来源的长期记忆候选，不执行外部操作", Parameters: schema}}, ToolChoice: "propose_wiki_pages", MaxTokens: 4096}
 	if profile.OutputTokens > 0 && profile.OutputTokens < request.MaxTokens {
 		request.MaxTokens = profile.OutputTokens
 	}
@@ -391,6 +398,9 @@ func (m *Manager) completeWikiExtraction(ctx context.Context, profile model.Prof
 }
 
 func (m *Manager) publishWikiExtractionLocked(ctx context.Context, job *WikiJob) error {
+	if job.Strategy == wikiNavigationStrategy {
+		return m.publishWikiCompilation(ctx, job)
+	}
 	if job.Response == nil || len(job.Response.ToolCalls) != 1 {
 		return bad("memory-extraction-response", "长期记忆提炼响应缺失")
 	}
@@ -566,7 +576,7 @@ func (m *Manager) CreateWikiExtraction(ctx context.Context, input WikiExtraction
 	job.ID, job.OriginKind, job.OriginID = m.deps.NewID(), "manual", input.RequestID
 	job.RunID, job.WorkflowID = input.RunID, input.WorkflowID
 	job.Status, job.MemoryStatus, job.CreatedAt, job.StartedAt, job.EndedAt = StateQueued, "unchanged", wikiNow(m), "", ""
-	job.Error, job.Response, job.Usage, job.EstimatedTokens, job.CandidateIDs = nil, nil, model.Usage{}, 0, []string{}
+	job.Error, job.Response, job.Usage, job.EstimatedTokens, job.CandidateIDs, job.PublishedRefs = nil, nil, model.Usage{}, 0, []string{}, nil
 	err = m.store.write(ctx, "wiki-extraction-manual", func(tx *sql.Tx) error {
 		if err := validateWikiGeneration(ctx, tx, job.TaskID, job.Generation, job.Sources); err != nil {
 			return err

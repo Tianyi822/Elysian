@@ -17,6 +17,9 @@ func wikiCapabilities() []Capability {
 }
 
 func (m *Manager) executeWikiOperation(ctx context.Context, r Run, o Operation) (CapabilityResult, error) {
+	if r.WikiStrategy == wikiNavigationStrategy {
+		return m.executeWikiNavigation(ctx, r, o)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var in struct {

@@ -50,7 +50,8 @@ type Failure struct {
 
 // Run 的取消请求与终态分开：提出取消不表示执行已停止。
 type Run struct {
-	Plan *RunPlan `json:"plan,omitempty"`
+	WikiStrategy string   `json:"wikiStrategy,omitempty"`
+	Plan         *RunPlan `json:"plan,omitempty"`
 
 	SupersededByRunID        string `json:"supersededByRunId,omitempty"`
 	ScopeID                  string `json:"scopeId,omitempty"`
