@@ -458,7 +458,13 @@ func spawnChpasswdPipe() (chpasswdChild, error) {
 func newRealSshDeps(now func() time.Time, override *sshPaths) *sshHostDeps {
 	return &sshHostDeps{
 		runSshKeygen: func(args []string) (string, error) { return execToStdout("ssh-keygen", args) },
-		runSshd:      func(args []string) (string, error) { return execToStdout("/usr/sbin/sshd", args) },
+		runSshd: func(args []string) (string, error) {
+			// sshd -t 与 -T 同样要求特权分离目录存在，配置校验前先补建。
+			if err := ensureSshdPrivSepDir("/run/sshd"); err != nil {
+				return "", err
+			}
+			return execToStdout("/usr/sbin/sshd", args)
+		},
 		startSshd: func() error {
 			// 带 -E 启动：sshd 自行 daemonize 并写 pidfile，日志持续落到面板读取的文件。
 			// 不走 service ssh start——容器里 /etc/default/ssh 的 SSHD_OPTS 为空，那样丢 -E 日志。

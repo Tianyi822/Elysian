@@ -73,6 +73,15 @@ func (h SystemHost) Start(ctx context.Context) error {
 	return err
 }
 
+// ensureSshdPrivSepDir 确保 sshd 特权分离目录存在：/run 是 tmpfs，sshd 未随开机
+// 启动时目录可能缺失，sshd -T 会以 exit 255 失败（预检与配置校验都过不去）。
+func ensureSshdPrivSepDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("创建 %s 特权分离目录失败：%w", dir, err)
+	}
+	return nil
+}
+
 func (h SystemHost) Preflight(ctx context.Context, old, next config.PanelNetwork) error {
 	if err := next.Validate(); err != nil {
 		return err
@@ -81,6 +90,9 @@ func (h SystemHost) Preflight(ctx context.Context, old, next config.PanelNetwork
 		return err
 	}
 	if _, err := exec.LookPath("sshd"); err == nil {
+		if err := ensureSshdPrivSepDir("/run/sshd"); err != nil {
+			return fmt.Errorf("无法核对 SSH 配置：%w", err)
+		}
 		ssh, err := h.command(ctx, "sshd", "-T")
 		if err != nil {
 			return fmt.Errorf("无法核对 SSH 配置：%w", err)
