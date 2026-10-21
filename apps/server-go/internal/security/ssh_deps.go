@@ -107,6 +107,81 @@ func execToStdout(name string, args []string) (string, error) {
 	return stdout.String(), nil
 }
 
+// ---------- sshd 启动辅助（真实接线专用；均幂等、失败不 panic） ----------
+
+// ensureSshdPrivSepDir 确保 sshd 特权分离目录存在（0755 为发行版惯例）。
+func ensureSshdPrivSepDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("创建 %s 特权分离目录失败：%w", dir, err)
+	}
+	return nil
+}
+
+// fileSizeOf 取文件当前大小；不存在按 0。
+func fileSizeOf(path string) int64 {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+
+// readPidFilePid 读 pidfile 里的整数 pid；读不出按 0。
+func readPidFilePid(path string) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	pid, valid := jsParseInt(strings.TrimSpace(string(data)))
+	if !valid {
+		return 0
+	}
+	return pid
+}
+
+// readLogDeltaLines 读 offset 之后的日志增量（≤maxBytes），取末尾至多两行以
+// 「；」连接成单行——sshd 的致命原因通常就是最后一两行（如
+// "Cannot bind any address."、"Missing privilege separation directory: /run/sshd"）。
+func readLogDeltaLines(path string, offset int64, maxBytes int64) string {
+	file, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+	if offset < 0 {
+		offset = 0
+	}
+	buf := make([]byte, maxBytes)
+	n, readErr := file.ReadAt(buf, offset)
+	if n <= 0 && readErr != nil {
+		return ""
+	}
+	lines := strings.Split(strings.TrimSpace(string(buf[:n])), "\n")
+	kept := make([]string, 0, 2)
+	for i := len(lines) - 1; i >= 0 && len(kept) < 2; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line != "" {
+			kept = append([]string{line}, kept...)
+		}
+	}
+	return strings.Join(kept, "；")
+}
+
+// waitNewSshdPid 轮询 pidfile 出现与 before 不同的新 pid（sshd daemonize 完成、
+// 监听就绪后写入）；预算内出现才算启动成功。
+func waitNewSshdPid(pidFile string, before int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if pid := readPidFilePid(pidFile); pid > 0 && pid != before {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 // ---------- pidfile 与进程身份核实 ----------
 
 // sshdPidProbe pidfile 与进程身份核实的注入面：测试用内存实现驱动。
@@ -388,8 +463,32 @@ func newRealSshDeps(now func() time.Time, override *sshPaths) *sshHostDeps {
 			// 带 -E 启动：sshd 自行 daemonize 并写 pidfile，日志持续落到面板读取的文件。
 			// 不走 service ssh start——容器里 /etc/default/ssh 的 SSHD_OPTS 为空，那样丢 -E 日志。
 			p := sshDepsPaths(override)
+			// /run/sshd 是 Debian/Ubuntu 的特权分离目录；/run 是 tmpfs、随开机清空，
+			// 只有系统 sshd 启动过才会重建。缺它时 sshd 以 exit 255 立即死亡且
+			// stderr 为空（-E 把原因写进了日志文件），裸机上必须由面板补建。
+			if err := ensureSshdPrivSepDir("/run/sshd"); err != nil {
+				return err
+			}
+			logBefore := fileSizeOf(p.sshdLog)
+			pidBefore := readPidFilePid(p.sshdPidFile)
 			_, err := execToStdout("/usr/sbin/sshd", []string{"-E", p.sshdLog})
-			return err
+			if err != nil {
+				// 父进程退出非 0：原因只在日志增量里（stderr 恒空），带上它才可诊断。
+				if detail := readLogDeltaLines(p.sshdLog, logBefore, 1024); detail != "" {
+					return fmt.Errorf("%v；sshd 日志：%s", err, detail)
+				}
+				return err
+			}
+			// 父进程 exit 0 不代表起来了：端口被占（系统 sshd、ssh.socket）时 bind
+			// 失败发生在 daemonize 之后的子进程里，父进程照样退 0。短窗内等 pidfile
+			// 出现新 pid；等不到就把日志增量当失败原因，如实报错而不是误报成功。
+			if waitNewSshdPid(p.sshdPidFile, pidBefore, 2*time.Second) {
+				return nil
+			}
+			if detail := readLogDeltaLines(p.sshdLog, logBefore, 1024); detail != "" {
+				return fmt.Errorf("sshd 未能监听：%s", detail)
+			}
+			return errors.New("sshd 未能监听：服务状态未在预期时间内确认")
 		},
 		stopSshd: func() error {
 			// pid 复用防线：TERM 只发给核实过身份（/proc/<pid>/comm 为 sshd）的进程；

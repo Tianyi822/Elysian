@@ -714,15 +714,29 @@ func (s *sshService) RootAuth() (SshRootAuth, error) {
 
 // SetServiceEnabled 启停自管：start 带 -E 保证日志源不丢，stop 对 pidfile 发 TERM；
 // 都不依赖 service 命令。预算内未收敛如实报错；成功后写 changedAt 时间戳。
+// 启动幂等：sshd 已在跑（系统服务或先前面板启动，pidfile＋comm 双核实）时不再
+// spawn 第二个实例——同端口必败且注定往 sshd.log 里写失败行，直接视为已达成。
 func (s *sshService) SetServiceEnabled(enabled bool) (SshOverview, error) {
 	action := "停止"
-	start := s.deps.stopSshd
 	if enabled {
 		action = "启动"
-		start = s.deps.startSshd
-	}
-	if err := start(); err != nil {
-		return SshOverview{}, fmt.Errorf("%s sshd 失败：%v", action, err)
+		running, err := s.serviceRunning()
+		if err != nil {
+			return SshOverview{}, err
+		}
+		if running {
+			if err := s.writeStamp(s.paths.changedAtStamp, s.deps.nowIso()); err != nil {
+				return SshOverview{}, err
+			}
+			return s.Overview()
+		}
+		if err := s.deps.startSshd(); err != nil {
+			return SshOverview{}, fmt.Errorf("启动 sshd 失败：%v", err)
+		}
+	} else {
+		if err := s.deps.stopSshd(); err != nil {
+			return SshOverview{}, fmt.Errorf("停止 sshd 失败：%v", err)
+		}
 	}
 	converged, err := s.waitForServiceState(enabled)
 	if err != nil {

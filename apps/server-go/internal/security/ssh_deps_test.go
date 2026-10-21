@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestResolveVerifiedSshdPid(t *testing.T) {
@@ -299,5 +300,97 @@ func TestSystemAccounts接缝(t *testing.T) {
 	rec, err = hit.PasswdByName(ctx, "elysian")
 	if err != nil || rec == nil || rec.Name != "elysian" || rec.UID != 1000 {
 		t.Errorf("按名反查失败：(%v, %v)", rec, err)
+	}
+}
+
+// ---------- sshd 启动辅助（真实接线专用） ----------
+
+func TestEnsureSshdPrivSepDirIdempotent(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "nested", "run", "sshd")
+	if err := ensureSshdPrivSepDir(dir); err != nil {
+		t.Fatalf("首次创建：%v", err)
+	}
+	if err := ensureSshdPrivSepDir(dir); err != nil {
+		t.Fatalf("已存在应幂等：%v", err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		t.Fatalf("应为目录：%v", err)
+	}
+}
+
+func TestFileSizeOf(t *testing.T) {
+	dir := t.TempDir()
+	if fileSizeOf(filepath.Join(dir, "none")) != 0 {
+		t.Fatal("不存在应按 0")
+	}
+	path := filepath.Join(dir, "f")
+	if err := os.WriteFile(path, []byte("12345"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if fileSizeOf(path) != 5 {
+		t.Fatalf("应为 5：%d", fileSizeOf(path))
+	}
+}
+
+func TestReadPidFilePid(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sshd.pid")
+	if readPidFilePid(path) != 0 {
+		t.Fatal("不存在应按 0")
+	}
+	if err := os.WriteFile(path, []byte(" 4242\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if readPidFilePid(path) != 4242 {
+		t.Fatalf("应解析 4242：%d", readPidFilePid(path))
+	}
+	if err := os.WriteFile(path, []byte("abc"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if readPidFilePid(path) != 0 {
+		t.Fatal("非数字应按 0")
+	}
+}
+
+func TestReadLogDeltaLines(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sshd.log")
+	if err := os.WriteFile(path, []byte("old line\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	offset := fileSizeOf(path)
+	if err := os.WriteFile(path, []byte("old line\nBind to port 22 on 0.0.0.0 failed: Address already in use.\nCannot bind any address.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	detail := readLogDeltaLines(path, offset, 1024)
+	if !strings.Contains(detail, "Address already in use") || !strings.Contains(detail, "Cannot bind any address") {
+		t.Fatalf("增量应含失败原因：%q", detail)
+	}
+	if strings.Contains(detail, "old line") {
+		t.Fatalf("不应包含 offset 之前的旧内容：%q", detail)
+	}
+	if got := readLogDeltaLines(path, fileSizeOf(path), 1024); got != "" {
+		t.Fatalf("无增量应空串：%q", got)
+	}
+	if got := readLogDeltaLines(path+".none", 0, 1024); got != "" {
+		t.Fatalf("文件不存在应空串：%q", got)
+	}
+}
+
+func TestWaitNewSshdPid(t *testing.T) {
+	pidPath := filepath.Join(t.TempDir(), "sshd.pid")
+	if err := os.WriteFile(pidPath, []byte("100\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if waitNewSshdPid(pidPath, 100, 150*time.Millisecond) {
+		t.Fatal("pid 未变化应超时返回 false")
+	}
+	if err := os.WriteFile(pidPath, []byte("200\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !waitNewSshdPid(pidPath, 100, time.Second) {
+		t.Fatal("出现新 pid 应返回 true")
+	}
+	if !waitNewSshdPid(pidPath, 0, time.Second) {
+		t.Fatal("先前无 pid、现在出现也应返回 true")
 	}
 }

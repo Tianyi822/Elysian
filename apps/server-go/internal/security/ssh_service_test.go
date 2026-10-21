@@ -892,3 +892,38 @@ func Test符号链接防线(t *testing.T) {
 		t.Errorf("配置应原样：%q", config)
 	}
 }
+
+func TestSetServiceEnabledStartIdempotentWhenRunning(t *testing.T) {
+	svc, fake, fs := newTestSshService()
+	fake.writeRunningPid()
+
+	overview, err := svc.SetServiceEnabled(true)
+	if err != nil {
+		t.Fatalf("sshd 已在跑时启用应成功：%v", err)
+	}
+	if fake.starts != 0 {
+		t.Fatalf("已在跑不应再 spawn 第二个 sshd（同端口必败），实际 spawn %d 次", fake.starts)
+	}
+	if !overview.Enabled || overview.Status != "running" {
+		t.Fatalf("应保持运行态：%+v", overview)
+	}
+	if _, ok := fs.file(testSshPaths().changedAtStamp); !ok {
+		t.Fatal("幂等启用也应写 changedAt 时间戳")
+	}
+}
+
+func TestSetServiceEnabledStartSpawnsWhenStopped(t *testing.T) {
+	svc, fake, _ := newTestSshService()
+
+	if _, err := svc.SetServiceEnabled(true); err != nil {
+		t.Fatalf("停机状态启用应成功：%v", err)
+	}
+	if fake.starts != 1 {
+		t.Fatalf("停机状态应 spawn 一次，实际 %d 次", fake.starts)
+	}
+	overview, err := svc.Overview()
+	mustNoError(t, "Overview", err)
+	if !overview.Enabled || overview.Status != "running" {
+		t.Fatalf("启动后应运行中：%+v", overview)
+	}
+}
