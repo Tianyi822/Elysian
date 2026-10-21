@@ -89,7 +89,6 @@ export {
   Upload,
   UserRound,
   Video,
-  Workflow,
   X,
   ZoomIn,
   ZoomOut,
