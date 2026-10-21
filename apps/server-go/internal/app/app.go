@@ -22,6 +22,7 @@ import (
 	"mime"
 	"net/http"
 	"path"
+	"runtime/debug"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -40,6 +41,7 @@ import (
 	toolplatform "elysian/server/internal/agent/tools/platform"
 	toolsecurity "elysian/server/internal/agent/tools/security"
 	toolwebsites "elysian/server/internal/agent/tools/websites"
+	"elysian/server/internal/applog"
 	"elysian/server/internal/auth"
 	"elysian/server/internal/config"
 	"elysian/server/internal/containerapps"
@@ -48,6 +50,7 @@ import (
 	"elysian/server/internal/files"
 	"elysian/server/internal/firewall"
 	"elysian/server/internal/logs"
+	"elysian/server/internal/metrics"
 	"elysian/server/internal/middleware"
 	"elysian/server/internal/panel"
 	"elysian/server/internal/paths"
@@ -234,9 +237,26 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 		runtime.closeFuncs = append(runtime.closeFuncs, fileTransfers.Close)
 	}
 	filesDeps.Transfers = fileTransfers
+
+	// metrics 域（仪表盘真实资源采样）：存储打开失败仅降级（实时事件流照常、
+	// 历史恒空），不阻断面板启动；采样失败由服务自身经 Warn 落进程文本日志。
+	metricsStore, metricsStoreErr := metrics.OpenStore(paths.Default.MetricsSqlite)
+	if metricsStoreErr != nil {
+		appLogs.Runtime("error", "server.metrics", "指标库不可用（历史查询恒空，实时读数不受影响）："+metricsStoreErr.Error())
+		metricsStore = nil
+	}
+	metricsService := metrics.NewService(metrics.Deps{
+		Store: metricsStore,
+		Warn:  func(message string) { applog.Default().Printf("server.metrics: %s", message) },
+	})
+	runtime.closeFuncs = append(runtime.closeFuncs, metricsService.Close)
+
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.StripTailSlash)
+	// 失败请求（/api/* 且 ≥400）落进程文本日志 panel.log：面板自身故障时（页面不可用、
+	// 端点 404/5xx）运维能在文件系统上直接定位，不依赖面板页面与 journalctl。
+	r.Use(applog.FailureLogMiddleware)
 
 	// /api/*：审计先于鉴权（401 也落审计），鉴权先于全部域挂载（401 先于 503/403/404）。
 	r.Group(func(api chi.Router) {
@@ -274,6 +294,8 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 		api.Mount(shared.ContainerAppsMount, appHandler.Router())
 		api.Mount(shared.DatabaseMount, database.NewRouter(databaseDeps))
 		api.Mount(shared.WebsitesMount, websites.NewRouter(websiteDeps))
+		// metrics 域两个根级端点（无共同前缀，不走 Mount）：仪表盘历史查询与事件流。
+		metrics.Register(api, metricsService)
 
 		// 全局 /api 404：会话有效而未匹配任何域挂载的请求回纯文本正文（对齐 Hono
 		// 缺省 404；正文不承诺逐字、前端不消费）。各域内 404 才是
@@ -339,6 +361,8 @@ func parentErrorHandler(next http.Handler, appLogs seam.Logs) http.Handler {
 			if !ok {
 				err = fmt.Errorf("%v", rec)
 			}
+			// panic 栈先落进程文本日志（panel.log），SQLite 运行日志只留一行消息。
+			applog.Default().PanicStack(debug.Stack())
 			if appLogs != nil {
 				appLogs.Runtime("error", "server.http",
 					fmt.Sprintf("请求处理失败：%s %s — %s", r.Method, r.URL.Path, err.Error()))

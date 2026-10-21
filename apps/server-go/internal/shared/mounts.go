@@ -30,4 +30,9 @@ const (
 	WebsitesMount = "/api/websites"
 	// HealthPath 存活检查端点（鉴权豁免清单之首，无守卫）。
 	HealthPath = "/api/health"
+	// ResourcesHistoryPath 仪表盘资源历史端点（metrics 域；dev/preview 由 Vite mock
+	// 插件提供同路径，生产由 Go 提供，前端零改动切换）。
+	ResourcesHistoryPath = "/api/resources/history"
+	// EventsStreamPath 仪表盘事件流端点（metrics 域 resource/sample；同上双实现）。
+	EventsStreamPath = "/api/events"
 )
