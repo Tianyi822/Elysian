@@ -1,14 +1,10 @@
 package harness
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
-	"elysian/server/internal/agent/jsonvalue"
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"time"
 )
 
@@ -374,40 +370,11 @@ func (m *Manager) RecoverWorkflow(ctx context.Context, id string, input Workflow
 	return w, false, storageFailure(err)
 }
 func (m *Manager) recoverWorkflows(ctx context.Context) error {
-	fence := false
-	if m.deps.WorkflowRecoveryFence != "" {
-		info, err := os.Lstat(m.deps.WorkflowRecoveryFence)
-		if err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		if err == nil {
-			if !info.Mode().IsRegular() || info.Mode().Perm() != 0600 || info.Size() > 4096 {
-				return errors.New("工作流维护冻结标记无效")
-			}
-			raw, e := os.ReadFile(m.deps.WorkflowRecoveryFence)
-			if e != nil {
-				return e
-			}
-			var record struct {
-				Version   int    `json:"version"`
-				Reason    string `json:"reason"`
-				CreatedAt string `json:"createdAt"`
-			}
-			if _, e = jsonvalue.Object(raw); e != nil {
-				return errors.New("工作流维护冻结标记 JSON 无效")
-			}
-			decoder := json.NewDecoder(bytes.NewReader(raw))
-			decoder.DisallowUnknownFields()
-			if e = decoder.Decode(&record); e != nil || record.Version != 1 || record.Reason != "panel-rollback" {
-				return errors.New("工作流维护冻结标记无效")
-			}
-			if _, e = time.Parse(time.RFC3339Nano, record.CreatedAt); e != nil {
-				return errors.New("工作流维护冻结标记时间无效")
-			}
-			fence = true
-		}
+	fence, err := readWorkflowRecoveryFence(m.deps.WorkflowRecoveryFence)
+	if err != nil {
+		return err
 	}
-	err := m.store.write(ctx, "workflow-startup", func(tx *sql.Tx) error {
+	err = m.store.write(ctx, "workflow-startup", func(tx *sql.Tx) error {
 		if fence {
 			if err := m.freezeWikiJobsForMaintenance(ctx, tx); err != nil {
 				return err
@@ -484,15 +451,7 @@ func (m *Manager) recoverWorkflows(ctx context.Context) error {
 		return err
 	}
 	if fence {
-		if err = os.Remove(m.deps.WorkflowRecoveryFence); err != nil {
-			return err
-		}
-		dir, e := os.Open(filepath.Dir(m.deps.WorkflowRecoveryFence))
-		if e != nil {
-			return e
-		}
-		defer dir.Close()
-		return dir.Sync()
+		return removeWorkflowRecoveryFence(m.deps.WorkflowRecoveryFence)
 	}
 	return nil
 }
