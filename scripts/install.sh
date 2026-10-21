@@ -52,8 +52,15 @@ info() { echo "==> $*"; }
 die()  { echo "安装失败：$*" >&2; exit 1; }
 
 try_fetch() { # try_fetch <url> <输出文件>；IPv6 路由异常时再强制 IPv4 试一次
-  curl -fL --retry 3 --retry-delay 2 --connect-timeout 20 -sS -o "$2" "$1" && return 0
-  curl -4 -fL --retry 3 --retry-delay 2 --connect-timeout 20 -sS -o "$2" "$1"
+  local opts=(-fL --retry 3 --retry-delay 2 --connect-timeout 20)
+  # 交互终端显示下载进度；重定向到日志时保持安静，只保留错误。
+  if [ -t 2 ]; then
+    opts+=(--progress-bar)
+  else
+    opts+=(-sS)
+  fi
+  curl "${opts[@]}" -o "$2" "$1" && return 0
+  curl -4 "${opts[@]}" -o "$2" "$1"
 }
 
 fetch_from() { # fetch_from <输出文件> <url>...
