@@ -2,8 +2,6 @@ package harness
 
 import (
 	"bytes"
-	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"os"
@@ -63,20 +61,4 @@ func removeWorkflowRecoveryFence(path string) error {
 	}
 	defer dir.Close()
 	return dir.Sync()
-}
-
-// recoverMaintenance 只消费维护冻结标记并冻结 Wiki/Embedding 任务。工作流引擎
-// 仍存在时，启动路径必须先由 recoverWorkflows 在同一事务内处理工作流冻结；
-// 不能先调用本函数，否则标记会在工作流冻结前被删除。
-func (m *Manager) recoverMaintenance(ctx context.Context) error {
-	fence, err := readWorkflowRecoveryFence(m.deps.WorkflowRecoveryFence)
-	if err != nil || !fence {
-		return err
-	}
-	if err := m.store.write(ctx, "maintenance-recovery", func(tx *sql.Tx) error {
-		return m.freezeWikiJobsForMaintenance(ctx, tx)
-	}); err != nil {
-		return err
-	}
-	return removeWorkflowRecoveryFence(m.deps.WorkflowRecoveryFence)
 }

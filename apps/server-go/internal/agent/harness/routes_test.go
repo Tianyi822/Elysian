@@ -89,10 +89,20 @@ func TestRuntimeRoutesSubmitAndIdempotentResponse(t *testing.T) {
 
 func TestWorkflowRoutesAreRetired(t *testing.T) {
 	handler := newRuntimeRouter(&routeRuntimeStub{}, "")
-	for _, path := range []string{"/workflow-definitions", "/workflow-instances"} {
-		response := runtimeRouteRequest(handler, http.MethodGet, path, "")
+	requests := []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{http.MethodGet, "/workflow-definitions", ""},
+		{http.MethodPost, "/workflow-instances", `{"requestId":"retired"}`},
+		{http.MethodGet, "/workflow-instances/retired/execution-tree", ""},
+		{http.MethodPost, "/workflow-instances/retired/recover", `{}`},
+	}
+	for _, request := range requests {
+		response := runtimeRouteRequest(handler, request.method, request.path, request.body)
 		if response.Code != http.StatusNotFound {
-			t.Fatalf("%s 仍可访问：%d %s", path, response.Code, response.Body.String())
+			t.Fatalf("%s %s 仍可访问：%d %s", request.method, request.path, response.Code, response.Body.String())
 		}
 	}
 }
