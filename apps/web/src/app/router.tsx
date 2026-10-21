@@ -52,7 +52,7 @@ function AgentCapabilitiesRoute() {
   const [params] = useSearchParams()
   return params.get('tab') === 'models'
     ? <Navigate to="/settings?tab=models" replace />
-    : agentPage('执行配置')
+    : <Navigate to="/agent" replace />
 }
 
 /**
@@ -167,18 +167,6 @@ export const routes: RouteObject[] = [
         path: 'agent',
         handle: { hideHeader: true, flushMain: true } satisfies RouteHandle,
         element: <RequireArea area="agent" title="Ely 工作台"><AgentChatPage /></RequireArea>,
-      },
-      {
-        path: 'agent/approvals',
-        element: agentPage('审批与治理'),
-      },
-      {
-        path: 'agent/runs',
-        element: agentPage('运行记录'),
-      },
-      {
-        path: 'agent/workflows',
-        element: agentPage('工作流'),
       },
       {
         path: 'agent/capabilities',

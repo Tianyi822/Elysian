@@ -5,10 +5,6 @@ import { useTerminalsStore } from '../stores/terminalsStore'
 import { createMockGateway } from '../adapters/mock/gateway'
 
 const agentRoutes = [
-  ['/agent/approvals', '审批与治理'],
-  ['/agent/runs', '运行记录'],
-  ['/agent/workflows', '工作流'],
-  ['/agent/capabilities', '执行配置'],
   ['/agent/extensions', '技能与 MCP'],
 ] as const
 
@@ -88,6 +84,19 @@ describe('路由表', () => {
     expect(runtime).not.toHaveBeenCalled()
     expect(models).not.toHaveBeenCalled()
     expect(screen.getByRole('link', { name: 'Ely 智能体' })).toHaveAttribute('aria-current', 'page')
+  })
+
+  it.each(['/agent/approvals', '/agent/runs', '/agent/workflows'])(
+    '%s 已退役并显示未找到页面',
+    async (path) => {
+      renderApp(path)
+      expect(await screen.findByRole('heading', { level: 1, name: '未找到页面' })).toBeInTheDocument()
+    },
+  )
+
+  it('/agent/capabilities 未指定模型页签时回到聊天', async () => {
+    const { router } = renderApp('/agent/capabilities')
+    await waitFor(() => expect(router.state.location.pathname).toBe('/agent'))
   })
 
   it('长期记忆入口渲染知识 Wiki 工作台', async () => {
