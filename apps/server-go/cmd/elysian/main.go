@@ -25,6 +25,7 @@ import (
 	"elysian/server/internal/agent/execution"
 	"elysian/server/internal/agent/harness/worker"
 	"elysian/server/internal/app"
+	"elysian/server/internal/applog"
 	"elysian/server/internal/auth"
 	"elysian/server/internal/config"
 	"elysian/server/internal/database"
@@ -119,6 +120,14 @@ func run() (runErr error) {
 		}
 		cfg.ListenHost = "127.0.0.1"
 	}
+
+	// 进程文本诊断日志（~/.Elysian/logs/panel.log＋stdout 双写、10 MiB 轮转）：
+	// 生命周期、失败请求与 panic 栈。打开失败只降级为 stdout（journal），不阻断启动。
+	panelLog, panelLogErr := applog.Open(paths.LogsDir)
+	if panelLogErr != nil {
+		fmt.Fprintf(os.Stderr, "Elysian 文本日志不可用：%v（继续以 journal 为准）\n", panelLogErr)
+	}
+	defer func() { _ = panelLog.Close() }()
 
 	// 启动序列第一步：打开日志（建表 + 分片导入；打开失败内部降级为不可用实现）。
 	appLogs := logs.OpenService(paths.Default.LogsSqlite, nil)
@@ -220,9 +229,12 @@ func run() (runErr error) {
 	}()
 
 	// 终端上的可读性保留：监听确认行照旧打在 stdout（运行日志文件是它的存档，
-	// 不是它的替代）；随后补「服务已启动」lifecycle 运行日志。
+	// 不是它的替代）；随后补「服务已启动」lifecycle 运行日志与进程文本日志横幅
+	//（模式、端口与数据目录——面板故障时运维在 panel.log 里能直接对上环境）。
 	fmt.Printf("Elysian server 已监听 http://%s\n", addr)
 	appLogs.Runtime("info", "server.lifecycle", fmt.Sprintf("Elysian 服务已启动：http://%s", addr))
+	panelLog.Printf("Elysian 运行：模式=%s，后端监听=%s，数据目录=%s，文本日志=%s",
+		runModeLabel(cfg), addr, paths.ElysianHome, filepath.Join(paths.LogsDir, applog.PanelLogName))
 
 	if publicServer != nil {
 		appLogs.Runtime("info", "server.lifecycle", fmt.Sprintf("面板前端端口：%d；后端回环端口：%d", cfg.PanelPorts().FrontendPort, cfg.PanelPorts().BackendPort))
@@ -244,4 +256,16 @@ func run() (runErr error) {
 	}
 	log.Print("Elysian Go 后端已退出")
 	return nil
+}
+
+// runModeLabel 运行模式的中文横幅标签（仅诊断文本用，不进契约）。
+func runModeLabel(cfg *config.Config) string {
+	switch cfg.Mode() {
+	case config.ModeDocker:
+		return "docker"
+	case config.ModeBareMetal:
+		return "bare-metal"
+	default:
+		return "local-demo"
+	}
 }

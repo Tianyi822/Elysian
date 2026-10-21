@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"runtime/debug"
 
+	"elysian/server/internal/applog"
 	"elysian/server/internal/shared"
 )
 
@@ -14,7 +16,8 @@ import (
 // EndpointErrorHandler，panic 经 recover 兜底同路径。
 
 // EndpointErrorHandler 错误映射中间件：拦截 handler panic，按错误类型映射响应；
-// 正常路径直接放行（handler 侧主动写错误用 WriteError）。
+// 正常路径直接放行（handler 侧主动写错误用 WriteError）。panic 栈落进程文本日志
+// panel.log（applog 未打开时 no-op），给面板故障留磁盘证据。
 func EndpointErrorHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
@@ -22,6 +25,7 @@ func EndpointErrorHandler(next http.Handler) http.Handler {
 			if rec == nil {
 				return
 			}
+			applog.Default().PanicStack(debug.Stack())
 			var err error
 			if e, ok := rec.(error); ok {
 				err = e
