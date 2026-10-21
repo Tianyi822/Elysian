@@ -16,9 +16,21 @@ set -euo pipefail
 # ---------- 版本锁定（下载一律带官方校验，版本不随行漂移） ----------
 GO_VERSION="1.23.12"   # 与 apps/server-go/go.mod 的 go 1.23 对齐；sha256 取自 go.dev 官方下载索引
 BUN_VERSION="1.4.2"    # sha256 取自 GitHub Release（oven-sh/bun）官方 asset digest
-GO_RELEASE_HOST="https://go.dev/dl/?mode=json&include=all"
+GO_INDEX_URLS=(
+  "https://go.dev/dl/?mode=json&include=all"
+  "https://golang.google.cn/dl/?mode=json&include=all"
+)
+GO_DOWNLOAD_BASES=(
+  "https://go.dev/dl"
+  "https://golang.google.cn/dl"
+  "https://mirrors.aliyun.com/golang"
+)
 BUN_RELEASE_API="https://api.github.com/repos/oven-sh/bun/releases/tags/bun-v${BUN_VERSION}"
 BUN_RELEASE_URL="https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}"
+BUN_MIRROR_URL="https://registry.npmmirror.com/-/binary/bun/bun-v${BUN_VERSION}"
+# BUN_VERSION 固定时这两枚摘要同时作为 GitHub API 不可达时的校验回退。
+BUN_SHA256_X64="36368faef7527875d5ffa52e53cd48021741f2a83eb6208a8dd64068d422a913"
+BUN_SHA256_AARCH64="54328bbc2d9c8e0c9f892c544d66c57a83b84139e34909e5ee81758f1ac8fda7"
 
 # ---------- 安装落点 ----------
 SERVICE_NAME="elysian"
@@ -39,9 +51,21 @@ SMOKE="${ELYSIAN_SMOKE:-}"
 info() { echo "==> $*"; }
 die()  { echo "安装失败：$*" >&2; exit 1; }
 
-fetch() { # fetch <url> <输出文件>
-  curl -fL --retry 3 --retry-delay 2 --connect-timeout 20 -sS -o "$2" "$1" \
-    || die "下载失败：$1（请检查虚拟机出网；重跑本脚本即可续装）"
+try_fetch() { # try_fetch <url> <输出文件>；IPv6 路由异常时再强制 IPv4 试一次
+  curl -fL --retry 3 --retry-delay 2 --connect-timeout 20 -sS -o "$2" "$1" && return 0
+  curl -4 -fL --retry 3 --retry-delay 2 --connect-timeout 20 -sS -o "$2" "$1"
+}
+
+fetch_from() { # fetch_from <输出文件> <url>...
+  local out="$1" url
+  shift
+  for url in "$@"; do
+    if try_fetch "$url" "$out"; then
+      return 0
+    fi
+    info "下载源不可用，尝试下一个：$url"
+  done
+  return 1
 }
 
 # ---------- 环境检测 ----------
@@ -116,15 +140,19 @@ install_go() {
     info "现有 Go（${v:-未知版本}）低于 1.23，改用官方锁定版本 ${GO_VERSION}"
   fi
   local tgz="go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
-  local work index want digest
+  local work index want digest base tgz_urls=()
   work="$(mktemp -d)"
   index="$work/index.json"
-  info "下载 Go ${GO_VERSION}（linux/${GO_ARCH}）并按 go.dev 官方索引校验 sha256"
-  fetch "$GO_RELEASE_HOST" "$index"
+  info "下载 Go ${GO_VERSION}（linux/${GO_ARCH}）版本索引并按官方 sha256 校验"
+  fetch_from "$index" "${GO_INDEX_URLS[@]}" \
+    || die "无法下载 Go 版本索引（已尝试 go.dev 与 golang.google.cn），请检查出网后重跑。"
   want="\"filename\": \"${tgz}\""
   digest="$(grep -A8 "$want" "$index" | grep -m1 -o '"sha256": "[0-9a-f]*"' | grep -o '[0-9a-f]\{64\}')"
-  [ -n "$digest" ] || die "未在 go.dev 官方索引中找到 ${tgz} 的 sha256（版本可能已归档，请更新脚本内 GO_VERSION）。"
-  fetch "https://go.dev/dl/${tgz}" "$work/$tgz"
+  [ -n "$digest" ] || die "未在官方索引中找到 ${tgz} 的 sha256（版本可能已归档，请更新脚本内 GO_VERSION）。"
+  for base in "${GO_DOWNLOAD_BASES[@]}"; do tgz_urls+=("$base/$tgz"); done
+  info "下载 Go 安装包；官方源失败时自动切换国内镜像，仍按官方 sha256 校验"
+  fetch_from "$work/$tgz" "${tgz_urls[@]}" \
+    || die "Go 安装包下载失败（已尝试 go.dev、golang.google.cn 与阿里云镜像），请检查出网后重跑。"
   echo "$digest  $work/$tgz" | sha256sum -c --quiet - \
     || die "Go 安装包 sha256 校验失败，已中止。请重跑本脚本重新下载。"
   rm -rf /usr/local/go
@@ -149,15 +177,26 @@ install_bun() {
   local work meta digest
   work="$(mktemp -d)"
   meta="$work/release.json"
-  info "下载 bun ${BUN_VERSION}（linux/${BUN_ARCH}）并按 GitHub Release 官方 digest 校验 sha256"
-  fetch "$BUN_RELEASE_API" "$meta"
-  # digest 字段在 uploader 对象之后，与所属 asset 的 "name" 相距数十行：按「最近的 name」配对提取。
-  digest="$(awk -v asset="$asset" '
-    /"name": "/ { line=$0; sub(/^.*"name": "/, "", line); sub(/".*$/, "", line); name=line }
-    /"digest": "sha256:/ && name == asset { line=$0; sub(/^.*"digest": "sha256:/, "", line); sub(/".*$/, "", line); print line; exit }
-  ' "$meta")"
-  [ -n "$digest" ] || die "未在 GitHub Release 元数据中找到 ${asset} 的 sha256 digest（请更新脚本内 BUN_VERSION）。"
-  fetch "${BUN_RELEASE_URL}/${asset}" "$work/$asset"
+  info "下载 bun ${BUN_VERSION}（linux/${BUN_ARCH}）元数据并按官方 digest 校验 sha256"
+  # GitHub API 不可达时使用脚本内固定的同版本官方摘要，仍保持完整性校验。
+  if try_fetch "$BUN_RELEASE_API" "$meta"; then
+    # digest 字段在 uploader 对象之后，与所属 asset 的 "name" 相距数十行：按「最近的 name」配对提取。
+    digest="$(awk -v asset="$asset" '
+      /"name": "/ { line=$0; sub(/^.*"name": "/, "", line); sub(/".*$/, "", line); name=line }
+      /"digest": "sha256:/ && name == asset { line=$0; sub(/^.*"digest": "sha256:/, "", line); sub(/".*$/, "", line); print line; exit }
+    ' "$meta")"
+  fi
+  if [ -z "$digest" ]; then
+    case "$BUN_ARCH" in
+      x64) digest="$BUN_SHA256_X64" ;;
+      aarch64) digest="$BUN_SHA256_AARCH64" ;;
+    esac
+    info "GitHub API 不可用或缺少摘要，改用脚本内固定的 bun ${BUN_VERSION} 官方摘要"
+  fi
+  [ -n "$digest" ] || die "未取得 ${asset} 的官方 sha256 digest（请更新脚本内 BUN_VERSION 与固定摘要）。"
+  info "下载 bun 安装包；GitHub 失败时切换 npmmirror 镜像"
+  fetch_from "$work/$asset" "${BUN_RELEASE_URL}/${asset}" "${BUN_MIRROR_URL}/${asset}" \
+    || die "bun 安装包下载失败（已尝试 GitHub 与 npmmirror 镜像），请检查出网后重跑。"
   echo "$digest  $work/$asset" | sha256sum -c --quiet - \
     || die "bun 安装包 sha256 校验失败，已中止。请重跑本脚本重新下载。"
   unzip -q -o "$work/$asset" -d "$work/unzipped" || die "解压 bun 失败（缺 unzip？）。"
