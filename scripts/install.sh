@@ -47,14 +47,31 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 SMOKE="${ELYSIAN_SMOKE:-}"
+STEP=0
+if [ -n "$SMOKE" ]; then
+  TOTAL_STEPS=6
+else
+  TOTAL_STEPS=8
+fi
 
-info() { echo "==> $*"; }
-die()  { echo "安装失败：$*" >&2; exit 1; }
+if [ -t 1 ] && [ -t 2 ]; then
+  C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'; C_GREEN=$'\033[32m'; C_RED=$'\033[31m'
+else
+  C_RESET=''; C_BOLD=''; C_GREEN=''; C_RED=''
+fi
 
-try_fetch() { # try_fetch <url> <输出文件>；IPv6 路由异常时再强制 IPv4 试一次
+info() { printf '%s==>%s %s\n' "$C_BOLD" "$C_RESET" "$*"; }
+ok() { printf '%s✓%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
+section() {
+  STEP=$((STEP + 1))
+  printf '\n%s[%d/%d] %s%s\n' "$C_BOLD" "$STEP" "$TOTAL_STEPS" "$*" "$C_RESET"
+}
+die() { printf '%s安装失败：%s%s\n' "$C_RED" "$*" "$C_RESET" >&2; exit 1; }
+
+try_fetch() { # try_fetch <url> <输出文件> [progress]；IPv6 异常时再强制 IPv4 试一次
   local opts=(-fL --retry 3 --retry-delay 2 --connect-timeout 20)
-  # 交互终端显示下载进度；重定向到日志时保持安静，只保留错误。
-  if [ -t 2 ]; then
+  # 元数据静默下载；大文件在交互终端显示进度条，重定向日志时仍保持安静。
+  if [ "${3:-}" = progress ] && [ -t 2 ]; then
     opts+=(--progress-bar)
   else
     opts+=(-sS)
@@ -68,6 +85,18 @@ fetch_from() { # fetch_from <输出文件> <url>...
   shift
   for url in "$@"; do
     if try_fetch "$url" "$out"; then
+      return 0
+    fi
+    info "下载源不可用，尝试下一个：$url"
+  done
+  return 1
+}
+
+fetch_file() { # fetch_file <输出文件> <url>...
+  local out="$1" url
+  shift
+  for url in "$@"; do
+    if try_fetch "$url" "$out" progress; then
       return 0
     fi
     info "下载源不可用，尝试下一个：$url"
@@ -120,13 +149,22 @@ apt_install_deps() {
   command -v ss >/dev/null 2>&1 || need+=(iproute2)
   command -v runuser >/dev/null 2>&1 || need+=(util-linux)
   if [ "${#need[@]}" -eq 0 ]; then
-    info "系统依赖（curl / ca-certificates / unzip）已齐备"
+    ok "系统依赖（curl / ca-certificates / unzip）已齐备"
     return 0
   fi
-  info "安装系统依赖：${need[*]}"
-  apt-get update -qq || die "apt-get update 失败，请检查虚拟机的 apt 源与网络后重跑。"
-  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "${need[@]}" \
-    || die "apt-get install ${need[*]} 失败，请排查后重跑。"
+  local log
+  log="$(mktemp /tmp/elysian-apt.XXXXXX)"
+  info "安装系统依赖：${need[*]}（详细输出写入 ${log}，失败时回显并保留日志）"
+  if ! apt-get update -qq >"$log" 2>&1; then
+    tail -n 40 "$log" >&2
+    die "apt-get update 失败，请检查虚拟机的 apt 源与网络后重跑（完整日志：${log}）。"
+  fi
+  if ! DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "${need[@]}" >>"$log" 2>&1; then
+    tail -n 40 "$log" >&2
+    die "apt-get install ${need[*]} 失败，请排查后重跑（完整日志：${log}）。"
+  fi
+  rm -f "$log"
+  ok "系统依赖已就绪：${need[*]}"
 }
 
 # ---------- 工具链（缺则官方渠道安装；已有且满足版本则复用） ----------
@@ -141,7 +179,7 @@ install_go() {
     [ -n "$v" ] || v="$("$go_bin" version 2>/dev/null | awk '{print $3}' || true)"
     minor="${v#go1.}"; minor="${minor%%.*}"
     if [ "${v#go1.}" != "$v" ] && [ "${minor:-0}" -ge 23 ] 2>/dev/null; then
-      info "复用现有 Go：$v（$go_bin）"
+      ok "复用现有 Go：$v（$go_bin）"
       return 0
     fi
     info "现有 Go（${v:-未知版本}）低于 1.23，改用官方锁定版本 ${GO_VERSION}"
@@ -157,16 +195,17 @@ install_go() {
   digest="$(grep -A8 "$want" "$index" | grep -m1 -o '"sha256": "[0-9a-f]*"' | grep -o '[0-9a-f]\{64\}')"
   [ -n "$digest" ] || die "未在官方索引中找到 ${tgz} 的 sha256（版本可能已归档，请更新脚本内 GO_VERSION）。"
   for base in "${GO_DOWNLOAD_BASES[@]}"; do tgz_urls+=("$base/$tgz"); done
-  info "下载 Go 安装包；官方源失败时自动切换国内镜像，仍按官方 sha256 校验"
-  fetch_from "$work/$tgz" "${tgz_urls[@]}" \
+  info "下载 Go 安装包（约 70 MiB）；官方源失败时自动切换国内镜像，仍按官方 sha256 校验"
+  fetch_file "$work/$tgz" "${tgz_urls[@]}" \
     || die "Go 安装包下载失败（已尝试 go.dev、golang.google.cn 与阿里云镜像），请检查出网后重跑。"
   echo "$digest  $work/$tgz" | sha256sum -c --quiet - \
     || die "Go 安装包 sha256 校验失败，已中止。请重跑本脚本重新下载。"
+  ok "Go 安装包校验通过"
   rm -rf /usr/local/go
   tar -C /usr/local -xzf "$work/$tgz" || die "解压 Go 到 /usr/local 失败。"
   rm -rf "$work"
   export PATH="/usr/local/go/bin:$PATH"
-  info "Go 就绪：$(go env GOVERSION)"
+  ok "Go 就绪：$(go env GOVERSION)"
 }
 
 install_bun() {
@@ -175,7 +214,7 @@ install_bun() {
     v="$(bun --version 2>/dev/null || true)"
     major="${v%%.*}"; minor="$(echo "$v" | awk -F. '{print $2}')"
     if [ "${major:-0}" -ge 2 ] || { [ "$major" = 1 ] && [ "${minor:-0}" -ge 2 ]; } 2>/dev/null; then
-      info "复用现有 bun：${v}"
+      ok "复用现有 bun：${v}"
       return 0
     fi
     info "现有 bun（${v:-未知版本}）低于 1.2（读不了 bun.lock 文本格式），改用官方锁定版本 ${BUN_VERSION}"
@@ -201,21 +240,23 @@ install_bun() {
     info "GitHub API 不可用或缺少摘要，改用脚本内固定的 bun ${BUN_VERSION} 官方摘要"
   fi
   [ -n "$digest" ] || die "未取得 ${asset} 的官方 sha256 digest（请更新脚本内 BUN_VERSION 与固定摘要）。"
-  info "下载 bun 安装包；GitHub 失败时切换 npmmirror 镜像"
-  fetch_from "$work/$asset" "${BUN_RELEASE_URL}/${asset}" "${BUN_MIRROR_URL}/${asset}" \
+  info "下载 bun 安装包（约 35 MiB）；GitHub 失败时切换 npmmirror 镜像"
+  fetch_file "$work/$asset" "${BUN_RELEASE_URL}/${asset}" "${BUN_MIRROR_URL}/${asset}" \
     || die "bun 安装包下载失败（已尝试 GitHub 与 npmmirror 镜像），请检查出网后重跑。"
   echo "$digest  $work/$asset" | sha256sum -c --quiet - \
     || die "bun 安装包 sha256 校验失败，已中止。请重跑本脚本重新下载。"
+  ok "bun 安装包校验通过"
   unzip -q -o "$work/$asset" -d "$work/unzipped" || die "解压 bun 失败（缺 unzip？）。"
   install -m 0755 "$work/unzipped/bun-linux-${BUN_ARCH}/bun" /usr/local/bin/bun \
     || die "安装 bun 到 /usr/local/bin 失败。"
   rm -rf "$work"
-  info "bun 就绪：$(bun --version)"
+  ok "bun 就绪：$(bun --version)"
 }
 
 # ---------- 构建与版本安装 ----------
 
 build_release() {
+  info "构建需要下载依赖并编译前后端，可能需要几分钟"
   BUILD_DIR="$(mktemp -d)"
   BUILD_COMMIT="unknown"
   if command -v git >/dev/null 2>&1; then
@@ -234,6 +275,7 @@ build_release() {
     chown -R elysian-build:elysian-build "$BUILD_SOURCE" "$BUILD_DIR"
     runuser -u elysian-build -- env HOME="$BUILD_SOURCE" PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin bash "$BUILD_DIR/build-release.sh" "$BUILD_SOURCE" "$BUILD_DIR" "$BUILD_COMMIT" || die "源码构建失败，原面板未停服。"
   fi
+  ok "构建完成"
 }
 
 install_binary() {
@@ -251,6 +293,7 @@ install_binary() {
   HOME="$STATE_DIR" "$PANEL_BIN" panel-init || die "面板端口配置损坏，安装已中止。"
   read -r FRONTEND_PORT PANEL_PORT < <(HOME="$STATE_DIR" "$PANEL_BIN" panel-ports)
   HEALTH_URL="http://127.0.0.1:${PANEL_PORT}/api/health"
+  ok "当前版本已切换到 ${BUILD_COMMIT}"
 }
 
 # ---------- 系统账号与 systemd 单元 ----------
@@ -322,6 +365,7 @@ start_service() {
   info "启动并使能服务（systemctl enable + restart）"
   systemctl enable "$SERVICE_NAME" >/dev/null 2>&1 || die "systemctl enable $SERVICE_NAME 失败。"
   systemctl restart "$SERVICE_NAME" || die "systemctl restart $SERVICE_NAME 失败，请查看：journalctl -u $SERVICE_NAME -n 50 --no-pager"
+  ok "服务进程已启动"
 }
 
 wait_health() {
@@ -329,7 +373,7 @@ wait_health() {
   local i
   for i in $(seq 1 60); do
     if curl -fsS --max-time 3 "$HEALTH_URL" >/dev/null 2>&1 && curl -fsS --max-time 3 "http://127.0.0.1:${FRONTEND_PORT}/" | grep -q '<title>Elysian</title>'; then
-      info "健康检查通过（/api/health 200）"
+      ok "健康检查通过（/api/health 200）"
       return 0
     fi
     if [ -n "$SMOKE" ]; then
@@ -337,14 +381,16 @@ wait_health() {
     else
       systemctl is-active --quiet "$SERVICE_NAME" || { journalctl -u "$SERVICE_NAME" -n 40 --no-pager >&2 || true; die "服务已退出，详见上方日志。"; }
     fi
+    if [ $((i % 5)) -eq 0 ]; then
+      printf '    等待健康检查… %d/60 秒\n' "$i"
+    fi
     sleep 1
   done
   die "等待 ${HEALTH_URL} 就绪超时（60 秒）。排查：journalctl -u $SERVICE_NAME -n 50 --no-pager（或确认 ${PANEL_PORT} 端口未被占用）。"
 }
 
 print_summary() {
-  echo
-  echo "Elysian 部署完成。"
+  printf '\n%sElysian 部署完成%s\n' "$C_BOLD$C_GREEN" "$C_RESET"
   echo "  面板地址：http://<服务器 IP>:${FRONTEND_PORT}（前端入口）"
   echo "  后端地址：127.0.0.1:${PANEL_PORT}（不对外开放）"
   echo "  面板更新与改端口：登录后进入系统设置"
@@ -484,19 +530,30 @@ main() {
   fi
   [ "${1:-}" = "" ] || die "未知参数：$1。用法：bash scripts/install.sh [--uninstall]（环境变量 ELYSIAN_SMOKE=1 进入冒烟模式）。"
   trap install_exit EXIT
+  printf '\n%sElysian 安装程序%s\n  源码目录：%s\n' "$C_BOLD" "$C_RESET" "$REPO_ROOT"
+  section "检查运行环境"
   require_preflight
+  section "安装系统依赖"
   apt_install_deps
+  section "准备 Go 工具链"
   install_go
+  section "准备 Bun 工具链"
   install_bun
+  section "构建 Elysian"
   build_release
   if [ -n "$SMOKE" ]; then
+    section "冒烟验证"
     smoke_run
   else
+    section "安装并切换版本"
     prepare_install_switch
     install_binary
     write_unit
     HOME="$STATE_DIR" "$PANEL_BIN" maintenance-bootstrap || die "前端防火墙规则核对失败，请处理冲突后重跑安装脚本。"
+    ok "面板前端防火墙规则已核对"
+    section "启动服务"
     start_service
+    section "等待健康检查"
     wait_health
     INSTALL_COMMITTED=1
     print_summary
