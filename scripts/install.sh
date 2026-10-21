@@ -59,7 +59,7 @@ STEP=0
 if [ -n "$SMOKE" ]; then
   TOTAL_STEPS=7
 else
-  TOTAL_STEPS=9
+  TOTAL_STEPS=10
 fi
 
 if [ -t 1 ] && [ -t 2 ]; then
@@ -154,10 +154,11 @@ apt_install_deps() {
   [ -e /etc/ssl/certs/ca-certificates.crt ] || need+=(ca-certificates)
   command -v unzip >/dev/null 2>&1 || need+=(unzip)
   command -v ufw >/dev/null 2>&1 || need+=(ufw)
+  [ -x /usr/sbin/sshd ] || need+=(openssh-server)
   command -v ss >/dev/null 2>&1 || need+=(iproute2)
   command -v runuser >/dev/null 2>&1 || need+=(util-linux)
   if [ "${#need[@]}" -eq 0 ]; then
-    ok "系统依赖（curl / ca-certificates / unzip）已齐备"
+    ok "系统依赖（curl / ca-certificates / unzip / ufw / OpenSSH）已齐备"
     return 0
   fi
   local log
@@ -394,6 +395,40 @@ UNIT
   systemctl daemon-reload || die "systemctl daemon-reload 失败。"
 }
 
+# ---------- 默认开启 SSH 与防火墙 ----------
+
+# 安装时声明默认值：启用 sshd 开机自启，放行 SSH 实际端口与面板前端端口后启用 UFW。
+# 只在安装时生效；之后面板安全页的启停开关与规则是权威，重启不会把用户关掉的再拉起来。
+enable_ssh_and_firewall() {
+  info "启用 SSH 服务（systemctl enable --now）"
+  mkdir -p /run/sshd
+  if ! systemctl enable --now ssh >/dev/null 2>&1; then
+    systemctl enable --now sshd >/dev/null 2>&1 \
+      || die "启用 SSH 服务失败，请检查 openssh-server 安装与 sshd 配置。"
+  fi
+  local ssh_ports port status_out
+  ssh_ports="$(/usr/sbin/sshd -T 2>/dev/null | awk '$1 == "port" { print $2 }' | sort -u)"
+  [ -n "$ssh_ports" ] || ssh_ports="22"
+  for port in $ssh_ports; do
+    ufw allow "${port}/tcp" >/dev/null || die "放行 SSH 端口 ${port}/tcp 失败。"
+  done
+  ok "SSH 已启用（端口：$(echo $ssh_ports)）"
+
+  info "启用系统防火墙（UFW）"
+  ufw --force enable >/dev/null || die "启用 UFW 失败，请检查 /etc/ufw 配置。"
+  status_out="$(ufw status)" || die "读取 UFW 状态失败。"
+  printf '%s\n' "$status_out" | grep -q '^Status: active' \
+    || die "UFW 未处于激活状态，请检查 /etc/ufw 配置后重跑安装脚本。"
+  printf '%s\n' "$status_out" | grep -Eq "^${FRONTEND_PORT}/tcp[[:space:]]+ALLOW" \
+    || die "面板前端端口 ${FRONTEND_PORT}/tcp 未在 UFW 中放行。"
+  for port in $ssh_ports; do
+    printf '%s\n' "$status_out" | grep -Eq "^${port}/tcp[[:space:]]+ALLOW" \
+      || die "SSH 端口 ${port}/tcp 未在 UFW 中放行。"
+  done
+  systemctl enable ufw >/dev/null 2>&1 || true
+  ok "防火墙已启用，已放行 SSH 与面板端口 ${FRONTEND_PORT}/tcp"
+}
+
 start_service() {
   info "启动并使能服务（systemctl enable + restart）"
   systemctl enable "$SERVICE_NAME" >/dev/null 2>&1 || die "systemctl enable $SERVICE_NAME 失败。"
@@ -435,6 +470,7 @@ print_summary() {
   echo "  服务管理：systemctl status/restart/stop $SERVICE_NAME"
   echo "  数据目录：${STATE_DIR}/.Elysian（data/logs/state/backups/tmp/config 分类目录）"
   echo "  进程日志：${STATE_DIR}/.Elysian/logs/panel.log（失败请求与 panic 栈；也可 journalctl -u $SERVICE_NAME）"
+  echo "  SSH 与防火墙：安装时已默认启用；后续启停与规则在安全页管理"
 }
 
 # ---------- 卸载 ----------
@@ -593,6 +629,8 @@ main() {
     write_unit
     HOME="$STATE_DIR" "$PANEL_BIN" maintenance-bootstrap || die "前端防火墙规则核对失败，请处理冲突后重跑安装脚本。"
     ok "面板前端防火墙规则已核对"
+    section "启用 SSH 与防火墙"
+    enable_ssh_and_firewall
     section "启动服务"
     start_service
     section "等待健康检查"
