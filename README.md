@@ -94,7 +94,7 @@ Docker 页的「工作区」集中保存 compose、`.env`、Dockerfile 和挂载
 
 聊天权限菜单每轮提交 `permissionMode` 并固定策略版本与决定来源：`ask` 对变更、Bash 和脚本逐项审批；`assist` 自动批准可恢复的 Task 工作区写入，以及无宿主写权限、无出网授权的隔离执行；`full` 免除已授权范围内的逐项审批，硬性禁区、资源身份、撤销和执行限额继续生效。MCP 的旧运行仍按原有显式信任规则执行。旧浏览器预览偏好统一迁回 `ask`，保留草稿、附件与未确认的精确请求。新聊天每轮提交 `authorizationMode:"on-demand"`，缺失范围必须显式确认，权限模式不能自行补充授权。输入区的运行时卡片显示操作、目标、权限及运行环境，展开可查看命令、镜像摘要、挂载和实际限额；默认「仅本次允许」，也可选择「本会话允许」或「拒绝」，点击确认后继续原 Run，一次决定同时完成授权与该次操作审批。拒绝成为工具结果，同一 Run 不重复申请等价权限，停止任务保持独立。
 
-系统设置移除「执行配置」「资源授权」，旧 `?tab=execution`／`?tab=grants` 链接转向聊天页。聊天「本会话授权」查看和撤回已记住的允许项：平台权限绑定工具动作和精确对象，文件权限绑定工具动作、业务目录身份和读写方式；脚本允许在同一运行环境、目录和网络范围内执行不同命令，扩大范围须重新确认。MCP 绑定服务修订、目录摘要及工具；不能可靠识别目标时按完整参数匹配。允许项由服务端保存，刷新和重新登录后恢复，不跨会话继承；撤回阻止后续派发并停止相关执行容器与代理，停止未确认保留屏障。旧 profile/grant API 与历史修订继续兼容，不自动变成新会话免确认授权。设计见本地 [ADR-0041](docs/adr/0041-agent-runtime-authorization.md)。
+系统设置移除「执行配置」「资源授权」，旧 `?tab=execution`／`?tab=grants` 链接转向聊天页。聊天「本会话授权」查看和撤回已记住的允许项：平台权限绑定工具动作和精确对象，文件权限绑定工具动作、业务目录身份和读写方式；脚本允许在同一运行环境、目录和网络范围内执行不同命令，扩大范围须重新确认。MCP 绑定服务修订、目录摘要及工具；不能可靠识别目标时按完整参数匹配。允许项由服务端保存，刷新和重新登录后恢复，不跨会话继承；撤回阻止后续派发并停止相关执行容器与代理，停止未确认保留屏障。旧 profile/grant API 与历史修订继续兼容，不自动变成新会话免确认授权；对应的旧设置组件、专属 store 和 CRUD adapter 已移除。设计见本地 [ADR-0041](docs/adr/0041-agent-runtime-authorization.md)。
 
 服务端提供固定官方版本、架构和完整镜像摘要的 Bash、Python、Node 环境，默认 0.5 CPU、256 MiB、64 PID；实际执行时限取环境配置、工具限制与 Run 剩余时间的最小值。优先复用本机匹配镜像，缺失时在授权卡片明确列出下载动作；批准后异步准备并展示进度，可取消，失败后由管理员明确重试，结果未知先核实。环境准备不运行项目代码。
 
@@ -106,7 +106,7 @@ Bash 的宿主目录挂载额外要求所有祖先由 root 持有且不可被组
 
 真实部署保留 `tool-batch/v1` 与旧 `agent/v1` 的四条 Docker 只读工具兼容；新建和继续的单 Agent Run 使用 `agent/v2`。新 v2 会话默认选入已装配的 Agent 平台工具和 Task 工作区工具，旧显式环境继续由兼容 API 固定管理。工作区支持列举、读取、写入、复制、移动和删除；`task_bash_command` 接受完整 Bash 命令文本，`task_bash_script` 执行固定摘要的工作区脚本，新模式按需申请官方 Bash 环境，旧模式仍须选择已有 Bash profile。执行器固定 UID 65532、只读根文件系统、无特权、CPU／内存／PID／时间限额；目录和网络必须被明确授权，出网仅经精确授权代理。全部入口要求管理员会话与同源请求，浏览器断连、退出登录或登录会话替换不取消已接受任务。
 
-Web 的「Ely 智能体」在 `/agent` 提供文本与图片聊天。模型须声明文本与工具调用能力；首条消息创建服务端 Task，后续续用，公开历史以服务端为准；消息接口按 Run 快照回填每轮模型、服务与思考等级，相邻轮次之间显示居中的「模型已切换」「思考等级已切换」分隔线，旧记录缺快照时不显示。答复按 Markdown 渲染，回答增量约 40ms 按词块平滑展示；思考默认折叠一行，展开后在最高 192px 内滚动。刷新、返回与重新登录恢复选中会话，URL `?session=` 优先；浏览器按会话保存草稿、附件、选择和精确 pending 请求，退出登录清空展示而保留历史。失败保留输入，手动重试沿用 requestId。图片上传与模型输入规则保持不变。权限模式与思考等级随每轮提交，在运行及未确认期间锁定；模式与策略版本进入 Run 快照和幂等核对。其余六个 Agent 路由保持空白，所有入口不显示顶部 tab 栏；设置仍复用 `modelSettings`，输出 SSE 仅回读事实，不自动重新提交。本地无后端演示禁用发送，不模拟回复。`GET /api/agent/runtime` 报告各项装配状态，具体可用性由配置和执行结果确认。
+Web 的「Ely 智能体」在 `/agent` 提供文本与图片聊天。模型须声明文本与工具调用能力；首条消息创建服务端 Task，后续续用，公开历史以服务端为准；消息接口按 Run 快照回填每轮模型、服务与思考等级，相邻轮次之间显示居中的「模型已切换」「思考等级已切换」分隔线，旧记录缺快照时不显示。答复按 Markdown 渲染，回答增量约 40ms 按词块平滑展示；思考默认折叠一行，展开后在最高 192px 内滚动。刷新、返回与重新登录恢复选中会话，URL `?session=` 优先；浏览器按会话保存草稿、附件、选择和精确 pending 请求，退出登录清空展示而保留历史。失败保留输入，手动重试沿用 requestId。图片上传与模型输入规则保持不变。权限模式与思考等级随每轮提交，在运行及未确认期间锁定；模式与策略版本进入 Run 快照和幂等核对。`/agent/memory` 提供长期记忆工作台，其余五个 Agent 路由保持空白，所有入口不显示顶部 tab 栏；设置仍复用 `modelSettings`，输出 SSE 仅回读事实，不自动重新提交。本地无后端演示禁用发送，不模拟回复。`GET /api/agent/runtime` 报告各项装配状态，具体可用性由配置和执行结果确认。
 
 回复中的代码块按声明语言高亮，深浅主题分别配色，并提供语言名称与逐块复制按钮；支持常用运维和开发语言（含 JSX、TSX、TOML 及常见别名）。未知语言、未注明语言或单块超过 64 KiB 时完整显示纯文本，不猜测语言、不解析原始 HTML；代码与宽表格可横向滚动，流式追加保留代码块的滚动位置。
 
@@ -256,35 +256,40 @@ MCP 当前不含旧 HTTP+SSE 传输、其他协议版本、OAuth 自动发现、
 
 ### 长期 Wiki 记忆
 
-长期记忆采用有链接、有证据的 Markdown Wiki 组织方式，以 SQLite 为权威存储，支持候选式导入和整空间导出。`harness.sqlite` 显式升级至 schema v5，保留旧批次、会话和活动 `workflow/v1` 的语义。长期记忆按业务空间隔离，可显式选择附带全局空间；`PUT /sessions/:id/memory` 提交 `{spaceId,includeGlobal}`，新会话默认不关联空间。Run 接受时固定空间及页面修订，父进程按原始目标与本轮输入召回有来源的整页内容，最多 8 页、16 KiB。页面和来源都是资料，不能授予工具权限、改变预算或充当系统指令。工作记忆仍属于单个 Task，长期 Wiki 页面与它分别保存。
+长期记忆采用有链接、有证据的 Markdown Wiki，以现有 SQLite、页面修订、后台任务和来源依赖为基础。新会话默认使用共享知识库，聊天页「本会话记忆」可切换项目空间、附带共享空间或关闭记忆；已有会话保留原选择。新普通聊天 Run 固定可见页面修订，先提供有界标题目录，再由模型搜索摘要、分段读页和查询链接；已接受的旧 Run 保留原召回方式。页面与来源是资料，不能授予工具权限或充当系统指令。工作记忆仍属于单个 Task，与长期 Wiki 分开保存。
 
 | 长期记忆接口 | 用途 |
 | --- | --- |
 | `GET/POST /memory-spaces` | 列出或创建业务／全局空间 |
-| `PUT /memory-spaces/:spaceId`、`GET /sessions/:id/memory` | 以 `expectedRevision` 修订空间名称；查询会话的空间选择 |
+| `PUT /memory-spaces/:spaceId`、`GET /sessions/:id/memory`、`PUT /sessions/:id/memory-space` | 以 `expectedRevision` 修订空间名称；查询／保存会话空间选择 |
 | `GET/POST /memory-spaces/:spaceId/pages` | 列出或创建页面；`includeWithdrawn=1` 包含撤回页 |
 | `GET/PUT/DELETE /memory-spaces/:spaceId/pages/:id` | 读取、产生新修订或撤回；修改提交 `expectedRevision` |
-| `GET /memory-spaces/:spaceId/pages/:id/revisions/:revision` | 查询保留的不可变历史修订 |
+| `GET /memory-spaces/:spaceId/pages/:id/revisions`、`GET .../revisions/:revision` | 版本列表及不可变历史修订 |
+| `GET /memory-pages/:id/revisions/:revision` | 按回答引用读取固定修订，客户端核对 digest |
+| `GET /memory-spaces/:spaceId/directory`、`GET .../pages/:id/read` | 分页目录；按 revision、offset、limit 分段读取 |
+| `POST /memory-spaces/:spaceId/sources` | `{requestId,title,filename?,text,modelProfileId,modelProfileRevision}` 保存原文并提交整理，返回来源页和任务 |
 | `GET /memory-spaces/:spaceId/search?q=&limit=` | 中文双字文本与可用向量索引融合，返回 `degraded` 与回落原因 |
 | `POST /memory-spaces/:spaceId/imports`、`GET /memory-spaces/:spaceId/export`、`GET /memory-spaces/:spaceId/checks` | Markdown 导入为待确认候选、导出页面与来源、自检断链／孤立页／过期页／无效来源 |
-| `GET /memory-proposals`、`POST /memory-proposals/:id/decision` | 查询候选；提交 `{decision:"approved"}` 或 `rejected` 后原子发布或拒绝 |
+| `GET /memory-proposals`、`POST /memory-proposals/:id/decision` | 查询候选及当前页；提交 `{decision:"approved",expectedRevision?}` 或 `rejected`，冲突复核传入已查看的当前修订并在发布时再次校验 |
 | `GET /memory-extractions?cursor=&limit=`、`GET /memory-extractions/:id` | 回读异步提炼状态、固定模型版本、用量及候选编号 |
 | `POST /memory-extractions` | `{requestId,runId}` 或 `{requestId,workflowId}`；对成功来源的固定快照发起一次人工提炼，相同请求幂等回读 |
 | `GET /embedding-requests?cursor=&limit=` | 索引和查询的独立用量记录；含固定配置修订、估算和供应商实际用量，缺失保持未知，不返回输入正文 |
 | `GET/POST /embedding-profiles`、`PUT /embedding-profiles/:id` | 独立 Embedding 服务配置；更新需 `expectedRevision`，凭据只写 |
 | `GET/POST /memory-spaces/:spaceId/indexes` | 读取索引覆盖情况；以 `{requestId,profileId,profileRevision}` 提交异步重建，任务状态经 `/memory-extractions/:id` 回读 |
 
-成功普通 Agent Run 与成功根工作流在发布事务中最多入队一次长期记忆提炼；子步骤不重复入队。提炼及索引任务仅在前台没有活动或排队 Run 时开始。提炼固定当次模型版本，最多 60 秒、32 KiB 输入和 4096 token 输出，只允许一次 `propose_wiki_pages` 结构函数，不获得域工具或执行权限；最多生成 4 个待确认候选。模型响应先落盘，再验证并发布候选。失败保留既有页面，任务标记 `stale`；重启将执行中的提炼标为 `interrupted`，不自动重试。需要再次提炼时使用新的人工请求标识，沿用成功来源的固定输入快照，不混入后续任务事实。输入与完整响应仅保存在父端，公开提炼接口不返回它们或凭据。
+成功普通 Agent Run 与成功根工作流在发布事务中最多入队一次整理，子步骤不重复入队。新聊天整理使用用户原文和成功工具事实，证据摘录逐条核对保存的原文；模型答复、计划与已生成记忆不作为新的事实证据。旧运行与工作流保持其已固定的整理行为。粘贴文本与 Markdown/TXT 导入复用 `sources` 页面保存原文，单页上限 16 KiB，导入时选择现有模型。历史聊天不批量重新整理。
 
-提炼可建议新页，也可修订固定输入中实际携带的已有页面；修订候选保留准确的 `pageId` 和基准 revision，人工采纳时页面若已变化则拒绝覆盖。运行或工作流证据必须逐字匹配保存的公开答复或成功结果，不能仅凭一个成功编号接受任意文字。维护回滚标记在同一恢复事务内中断所有排队和执行中的提炼／索引任务及未完成向量请求，然后才能移除；原输入和已保存响应保留，核验后显式提交新任务。
+整理与索引仅在前台没有活动或排队 Run 时开始，固定来源模型修订，继续使用 60 秒、32 KiB 输入、4096 token 输出和每任务最多四页的限额。生成前检索同空间主题，模型可合并已有页面或新增页面，并通过 `[[页面ID]]` 关联。模型响应先保存再验证；来源有效、基准修订未变且页面允许自动维护时自动发布。模型报告矛盾、人工保护或版本竞争时进入待确认候选，采纳仍须检查当前版本与来源。失败保留原页面，重启中断执行中的整理，不自动重放模型请求；显式重新整理使用新请求编号。
+
+人工修改默认将页面设为人工维护，暂停自动改写，可显式恢复自动维护。旧页面默认人工维护。回退以历史内容发布新修订，保留全部历史并复核来源；撤回是独立操作，不等同回退。后台结果经整理记录显示已发布的固定引用和待确认候选。
 
 页面保存不可变 revision 与 digest，召回、工作记忆、模型过程及后续候选保留来源依赖。撤回会使相关上下文 generation 失效，并取消依赖旧资料的活动运行、撤销未消费审批；新模型请求与结果发布边界继续检查，不能靠旧快照绕过撤回。页面正文最多 16 KiB、全局最多 10000 页。
 
-全文索引由汉字双字片段、英文和标识符词项组成，可额外设置各最多 32 项的 `tags`、`aliases`。观察类页面默认 30 天到期，过期页退出自动召回；偏好、约定和经验默认长期保留。模型可调用 `wiki_search`、`wiki_read` 和 `wiki_follow_links`，只能读取本轮固定的可见修订，调用与返回内容均计入原有限额。被上下文容量裁掉的页面不会记录成已使用来源。
+全文索引由汉字双字片段、英文和标识符词项组成，可额外设置各最多 32 项的 `tags`、`aliases`。观察类页面默认 30 天到期，过期页退出自动召回；偏好、约定和经验默认长期保留。模型可调用 `wiki_search`、`wiki_read` 和 `wiki_follow_links`，只能读取本轮固定的可见修订；新 Run 搜索返回摘要、读取按 UTF-8 字节分段、链接查询返回关联条目，调用与返回内容计入原有限额。实际发送的目录、摘要与正文均登记对应的固定来源。
 
-公开消息及工作区查询会标出 `quarantined` 和 `wikiSources`。撤回保留历史内容和文件，隔离版本不能作为脚本输入；人工覆盖单个文件仍继承原工作区的隔离状态，清空工作区后可从有效事实重新生成。证据摘录必须来自已保存的成功公开答复或结果，来源会话清理后保留有界摘录并标记 `originalCleared`；撤回不等于删除审计或彻底遗忘。
+公开消息及工作区查询会标出 `quarantined` 和 `wikiSources`。撤回保留历史内容和文件，隔离版本不能作为脚本输入；人工覆盖单个文件仍继承原工作区的隔离状态，清空工作区后可从有效事实重新生成。新整理的证据摘录来自已保存的用户原文、成功工具事实或导入来源页；旧证据继续核验其原公开答复或执行结果。来源会话清理后保留有界摘录并标记 `originalCleared`；撤回不等于删除审计或彻底遗忘。
 
-Embedding 使用独立的 `config/agent/embeddings.json`，采用 0600 文件、原子替换与同步，保留不可变修订。索引以页面修订／digest 与 Embedding 修订为键，更新页面不会误用旧向量；显式重建受单任务 60 秒限制，未完成时保留已确认索引并显示回落。查询使用余弦相似度与文本名次 RRF 合并；索引缺失、部分过期或供应商失败时继续提供中文双字文本结果。HTTP 不重试、不跟随跳转，响应上限 512 KiB，查询向量请求另限 3 秒。Web 经 `/agent/memory` 页（agentMemory 域）消费正式 memory-spaces 接口；旧 `/wiki/*` 入口保留为同一状态的兼容接口，但前端不消费。设计见本地 [ADR-0029](docs/adr/0029-agent-wiki-memory-and-embeddings.md)。
+Embedding 使用独立的 `config/agent/embeddings.json`，采用 0600 文件、原子替换与同步，保留不可变修订。索引以页面修订／digest 与 Embedding 修订为键，更新页面不会误用旧向量；显式重建受单任务 60 秒限制，未完成时保留已确认索引并显示回落。查询使用余弦相似度与文本名次 RRF 合并；索引缺失、部分过期或供应商失败时继续提供中文双字文本结果。HTTP 不重试、不跟随跳转，响应上限 512 KiB，查询向量请求另限 3 秒。Web 经 `gateway.agentMemory` 消费正式 `/api/agent/memory-*` 接口；`/agent/memory` 提供空间、搜索、页面阅读与编辑，来源、版本、整理记录和待确认内容使用辅助面板。聊天引用打开回答当时使用的固定修订。旧 `/wiki/*` 入口保留为同一状态的兼容接口，但前端不消费。设计见本地 [ADR-0029](docs/adr/0029-agent-wiki-memory-and-embeddings.md) 与 [ADR-0042](docs/adr/0042-agent-wiki-memory-restoration.md)。
 
 启用 Embedding 后，索引重建会向该配置地址发送页面标题和正文，混合检索会发送查询文本（自动召回时包含任务目标／当前输入）；供应商按自己的规则处理这些内容。每次索引或查询先写入独立请求记录再发送，估算与供应商报告的实际 token、缓存 token 分开保存，不并入 Agent 对话预算；未报告的字段不补零，失败响应中已报告的用量仍保留。公开账本只含输入字节数与摘要，不含正文、查询原文、向量或凭据，终态记录保留 30 天。维护期间直接服务调用也禁止修改 Embedding 配置和发起新请求。
 
