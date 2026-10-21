@@ -16,7 +16,7 @@ func (m *Manager) CancelWorkflow(ctx context.Context, id string) (WorkflowInstan
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var w WorkflowInstance
-	if err := m.workflowWritable(); err != nil {
+	if err := m.agentWritable(); err != nil {
 		return w, err
 	}
 	err := m.store.write(ctx, "workflow-cancel", func(tx *sql.Tx) error {
@@ -117,7 +117,7 @@ func (m *Manager) RecoverWorkflow(ctx context.Context, id string, input Workflow
 	if !errors.Is(err, sql.ErrNoRows) {
 		return w, false, storageFailure(err)
 	}
-	if err = m.workflowWritable(); err != nil {
+	if err = m.agentWritable(); err != nil {
 		return w, false, err
 	}
 	if err = recoveryEvidence(input); err != nil {

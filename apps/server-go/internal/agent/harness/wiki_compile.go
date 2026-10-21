@@ -182,7 +182,7 @@ func (m *Manager) enqueueWikiNavigationExtraction(ctx context.Context, tx *sql.T
 func (m *Manager) CreateWikiSource(ctx context.Context, space string, in WikiSourceInput) (WikiSourceResult, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.workflowWritable(); err != nil {
+	if err := m.agentWritable(); err != nil {
 		return WikiSourceResult{}, false, err
 	}
 	if !requestPattern.MatchString(in.RequestID) || !wikiValidText(in.Title, 512) || !wikiValidText(in.Text, wikiPageBytes) || len(in.Filename) > 255 {

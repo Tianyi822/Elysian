@@ -517,7 +517,7 @@ func (m *Manager) wikiBackgroundReadyLocked() bool {
 func (m *Manager) CreateWikiExtraction(ctx context.Context, input WikiExtractionInput) (WikiJob, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.workflowWritable(); err != nil {
+	if err := m.agentWritable(); err != nil {
 		return WikiJob{}, false, err
 	}
 	if !requestPattern.MatchString(input.RequestID) || (input.RunID == "") == (input.WorkflowID == "") {

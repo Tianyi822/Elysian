@@ -146,7 +146,7 @@ func (m *Manager) createEmbeddingProfile(ctx context.Context, in EmbeddingProfil
 func (m *Manager) CreateEmbeddingProfile(ctx context.Context, in EmbeddingProfileInput) (EmbeddingProfile, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.workflowWritable(); err != nil {
+	if err := m.agentWritable(); err != nil {
 		return EmbeddingProfile{}, err
 	}
 	return m.createEmbeddingProfile(ctx, in)
@@ -181,7 +181,7 @@ func (m *Manager) updateEmbeddingProfile(ctx context.Context, id string, expecte
 func (m *Manager) UpdateEmbeddingProfile(ctx context.Context, id string, expected int, in EmbeddingProfileInput) (EmbeddingProfile, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.workflowWritable(); err != nil {
+	if err := m.agentWritable(); err != nil {
 		return EmbeddingProfile{}, err
 	}
 	return m.updateEmbeddingProfile(ctx, id, expected, in)

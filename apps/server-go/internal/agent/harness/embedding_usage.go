@@ -39,7 +39,7 @@ func saveEmbeddingRequest(ctx context.Context, tx *sql.Tx, record EmbeddingReque
 // 调用时不持有 Manager 锁；网络前后持久化均在锁内完成。
 func (m *Manager) embeddingComplete(ctx context.Context, profile EmbeddingProfile, input string, record EmbeddingRequest) ([]float64, error) {
 	m.mu.Lock()
-	if err := m.workflowWritable(); err != nil {
+	if err := m.agentWritable(); err != nil {
 		m.mu.Unlock()
 		return nil, err
 	}

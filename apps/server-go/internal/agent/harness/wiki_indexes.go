@@ -54,7 +54,7 @@ func (m *Manager) ListWikiIndexes(ctx context.Context, spaceID string) ([]WikiIn
 func (m *Manager) RebuildWikiIndex(ctx context.Context, spaceID string, input WikiIndexInput) (WikiJob, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.workflowWritable(); err != nil {
+	if err := m.agentWritable(); err != nil {
 		return WikiJob{}, err
 	}
 	if !requestPattern.MatchString(input.RequestID) {
