@@ -72,6 +72,7 @@ func readWorkflowBody[T any](w http.ResponseWriter, req *http.Request) (T, error
 	}
 	return v, nil
 }
+// registerWorkflowRoutes 保留一轮用于回滚；入口已退役，newRuntimeRouter 不再调用。
 func registerWorkflowRoutes(r chi.Router, service runtimeService) {
 	wrap := func(fn func(*Manager, http.ResponseWriter, *http.Request)) http.HandlerFunc {
 		return func(w http.ResponseWriter, req *http.Request) {

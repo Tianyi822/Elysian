@@ -295,7 +295,7 @@ Embedding 使用独立的 `config/agent/embeddings.json`，采用 0600 文件、
 
 ### 工作流与隔离分支
 
-工作流 Web 入口与 `/workflow-*` HTTP API 已退役，管理员不再能创建新模板或实例；工作流引擎、旧数据、`active_workflow_id` 与 `runs.workflow_id` 按本地 [ADR-0043](docs/adr/0043-agent-workflow-retirement.md) 只读保留，供旧记录恢复与删除守卫使用。审批、执行屏障、资源租约、Run 快照和运行记录继续工作。
+工作流 Web 入口与 `/workflow-*` HTTP API 已退役，管理员不再能创建新模板或实例；工作流引擎、旧数据、`active_workflow_id` 与 `runs.workflow_id` 按本地 [ADR-0043](docs/adr/0043-agent-workflow-retirement.md) 只读保留，供旧记录恢复与删除守卫使用。停用入口不等于停止引擎推进，存量非终态实例必须在退役前处理完毕。审批、执行屏障、资源租约、Run 快照和运行记录继续工作。
 
 | 默认限额 | 值 |
 | --- | --- |
