@@ -347,7 +347,7 @@ func TestAgentRecordsFaultPreservesOtherInflightReceipts(t *testing.T) {
 			t.Fatalf("replica failure lost confirmed receipt: %+v %+v %v", finished, calls, err)
 		}
 	}
-	if info := m.Info(); info.Storage != "unavailable" || info.Available || info.Workflow.Available || info.Approvals.Available {
+	if info := m.Info(); info.Storage != "unavailable" || info.Available || info.Wiki.Available || info.ResourceLocks.Available || info.Approvals.Available {
 		t.Fatalf("replica fault not visible in runtime diagnostics: %+v", info)
 	}
 }
