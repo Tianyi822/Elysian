@@ -295,34 +295,7 @@ Embedding 使用独立的 `config/agent/embeddings.json`，采用 0600 文件、
 
 ### 工作流与隔离分支
 
-管理员可保存不可变模板修订，将 Agent 分析、直接能力操作、人工确认和条件分支组成流程。`workflow/v1` 保留顺序执行；显式指定 `languageVersion:"workflow/v2"` 可加入有界并行、数组迭代和固定修订的子流程。每个实例创建专用 Session 与根 Task，从来源会话复制模型修订及能力环境，不复制来源历史或文件；接受时固定完整子流程模板闭包，并检查全部嵌套步骤的能力。非终态实例占用专用会话，普通任务输入、切换配置和人工工作区编辑均拒绝；等待审批或资源释放执行槽。Web 的 `/agent/workflows` 提供模板表单及高级 JSON 编辑、实例执行树和人工恢复入口；不提供定时触发或自动重试。
-
-| 工作流接口 | 用途 |
-| --- | --- |
-| `GET/POST /workflow-definitions` | 最新模板列表；创建模板返回 201 |
-| `GET /workflow-definitions/:id?revision=`、`PUT /workflow-definitions/:id` | 读取最新或历史修订；更新提交完整模板字段及 expectedRevision，创建新修订 |
-| `POST /workflow-instances` | `{requestId,definitionId,definitionRevision,sourceSessionId,inputJson}`；必须明确模板修订，新实例 202、幂等回读 200 |
-| `GET /workflow-instances?status=&cursor=&limit=`、`GET /workflow-instances/:id` | 查询实例状态、固定快照、累计预算与 allowedActions |
-| `GET /workflow-instances/:id/execution-tree` | v2 的作用域、稳定节点身份、尝试、当前状态与节点 allowedActions |
-| `GET /workflow-instances/:id/steps?cursor=&limit=`、`GET /workflow-instances/:id/events?cursor=&limit=` | 阶段尝试和工作流事实分页；cursor、seq 为十进制字符串 |
-| `POST /workflow-instances/:id/cancel` | 保存取消请求，状态回读确认收尾 |
-| `POST /workflow-instances/:id/recover` | `{requestId,expectedRevision,nodeId?,action,evidence,outputJson?}`；v2 必须指明 nodeId；明确恢复 202、相同请求回读 200 |
-
-模板字段为 `name`、`enabled`、`goal`、`inputSchemaJson`、`outputSchemaJson`、`entry`、`steps`。每步包含 `id`、`kind`、`input` 和 `outputSchemaJson`。`agent` 需要 instruction，可用 selection 显式选择技能/MCP 资料；`operation` 需要固定环境内的 capability 别名；`approval` 需要人工确认说明 instruction；这三种步骤必须二选一指定 next 或 finish。`condition` 使用 condition、then、else 选择分支。最多 32 步，必须全部可达且无循环，前序结果引用必须在所有到达路径上都已完成。
-
-v2 新增 `parallel`（`parallel:{join:"all",branches:[{id,input,body}]}`）、`foreach`（`foreach:{items,body}`）和 `subworkflow`（`subworkflow:{definitionId,definitionRevision}`）。`body` 为含 `entry`、`steps`、`outputSchemaJson` 的局部有向无环图；每个局部图最多 32 步，最多嵌套 4 层、展开 256 节点、单次 8 分支或 32 个数组项。空数组直接产出 `[]`；并行结果按分支 ID 组成对象，迭代结果按原数组顺序组成数组，子流程直接返回其输出。绑定只读取本作用域输入及前序节点，不跨分支读取未完成结果。
-
-每个子作用域有独立 Task，展开时复制父工作记忆及工作区的固定版本；分支后续记忆、工具事实和文件互不污染。汇合保留父文件，把分支新增或修改文件放到 `.workflow/<nodeId>/<ordinal>/`，不把分支删除应用到父目录；归档准备完成后以数据库版本 CAS 与输出、后继 ready 一起提交。展开与汇合有持久回执，重启不重复执行已完成分支。分支失败关闭整个实例的新派发入口，已派发分支仍保存真实结果；恢复指定失败节点，成功兄弟分支不重跑。Wiki 来源随输入、工作记忆、文件和结构化结果穿过分支及汇合；撤回同时隔离后续消费者和无活动 Run 的阶段边界，不能通过恢复沿用失效来源。
-
-input/finish 绑定严格五选一：`{literalJson:"精确 JSON 字符串"}`、`{input:"JSON Pointer"}`、`{step:{stepId,pointer}}`、`{object:{字段名:绑定}}`、`{array:[绑定]}`；finish 可以读取本步结果。条件 op 为 eq/ne/lt/lte/gt/gte/exists/and/or/not，使用 left/right 或 children 组合，不执行表达式代码。Schema 使用 JSON Schema 2020-12 的已支持范围，拒绝外部引用与未知约束。JSON 字符串保留数值精度；实例 inputJson 不超过 32 KiB，工作流请求体 1 MiB、结果值 256 KiB，绑定深度 32、节点 4096。
-
-Agent 步骤在公开答复后经专用 `workflow_finish` 函数提交结构化对象结果，计入原有预算；校验通过并随成功事实落盘后才推进下一步。直接能力操作复用现有审批、撤销、执行屏障和工作区检查。人工确认输出固定 `{approved:true}`，不替代后续写操作的独立审批；条件步骤输出 `{matched:布尔值}`。阶段输出、证据引用与工作区版本可以在 steps 中回读。
-
-失败或中断进入 recovery-required，禁止自动重试。输入绑定缺失也保存失败 Run 与尝试，可凭外部证据补录 Agent 或操作步骤的结果，不派发缺少参数的操作。恢复 action 为 continue（维护冻结的确认边界）、renew-approval（未派发操作重新申请审批）、retry（新 Run 明确重试）或 accept-result（补录通过 Schema 校验的外部结果），以 allowedActions 为当前提示，提交时再次校验。恢复需要 1 至 8192 字节证据，不能重置预算、改变固定环境或绕过永久撤销。未知执行必须先人工核实屏障；confirmed-completed 可支持结果补录，confirmed-stopped 之后只能明确重试。补录保留独立人工完成证据，不把原 Run/Call 的失败或中断终态改成成功。
-
-工作流恢复只能继续使用仍然有效的资料来源。Wiki 页面撤回后，依赖该页的输入、记忆、文件与结果永久失效；更新页面或恢复历史修订不会解除旧快照的失效，continue、retry、renew-approval 和 accept-result 均不能绕过。需要继续业务时，应结束原实例，以有效来源重新创建任务或流程；原实例保留审计事实。
-
-非终态实例上限 32；每实例累计活动执行 60 分钟、模型请求 64 次、工具调用 64 次、256000 token、结果 8 MiB，每步最多 3 次尝试，单 Run 仍受下表更小的限额约束。v2 的全部子作用域共用根实例预算，并发运行先预留额度、收尾时结算，不能各自获得一份额度；每个根实例最多同时运行 2 个 Run。审批等待不计活动时间，恢复和重试不获得新额度。取消、预算耗尽或拒绝审批会撤销全部未消费分支审批，等待已派发运行确认停止后才释放会话。设计见本地 [ADR-0028](docs/adr/0028-agent-workflow-scopes-and-resource-concurrency.md)。
+工作流 Web 入口与 `/workflow-*` HTTP API 已退役，管理员不再能创建新模板或实例；工作流引擎、旧数据、`active_workflow_id` 与 `runs.workflow_id` 按本地 [ADR-0043](docs/adr/0043-agent-workflow-retirement.md) 只读保留，供旧记录恢复与删除守卫使用。审批、执行屏障、资源租约、Run 快照和运行记录继续工作。
 
 | 默认限额 | 值 |
 | --- | --- |
@@ -335,7 +308,7 @@ Agent 步骤在公开答复后经专用 `workflow_finish` 函数提交结构化�
 | 执行环境 | 新模式默认 0.5 CPU、256 MiB、64 PID；旧配置最多 1 CPU、512 MiB、128 PID、5 分钟；harness 脚本仍受更短的工具 30 秒和 Run 剩余时限约束，配置只能进一步收紧 |
 | 容器输出与工作区 | stdout/stderr 合计 2 MiB；工作区每版本 128 MiB/4096 文件、归档总量 2 GiB；旧版本也计入容量 |
 
-既有分页接口返回 `{items,nextCursor,hasMore}`，普通分页默认 50、Run 事件默认 100、工作流事件默认 50，上限 200；operations/context-items 和审批/屏障为数组，不承诺分页。环境最多 32 技能、32 MCP 服务、128 工具选择、64 资源、16 执行配置、32 授权、256 只读信任别名。队列满返回 429，非法或超前事件游标返回 400。
+既有分页接口返回 `{items,nextCursor,hasMore}`，普通分页默认 50、Run 事件默认 100，上限 200；operations/context-items 和审批/屏障为数组，不承诺分页。环境最多 32 技能、32 MCP 服务、128 工具选择、64 资源、16 执行配置、32 授权、256 只读信任别名。队列满返回 429，非法或超前事件游标返回 400。
 
 父进程独占 `~/.Elysian/data/harness.sqlite`，状态及事实事件在同一 SQLite WAL 事务提交；`data/agent-records` 按会话或独立批次保存已持久化运行事实的 JSONL 副本，SQLite 仍是查询与事务的权威来源。副本通过同事务待写队列提交后同步落盘，重启先补写核对再开放派发；副本故障停止派发，不把已提交事务重做，也不采集原始 HTTP 或凭据。Worker 只经受限匿名 JSONL 管道请求模型和工具，不持有数据库、凭据、Docker socket 或域对象。Worker 继承系统权限，不是安全沙箱；脚本与 stdio MCP 才使用受限容器。stderr 仅保留前 4 KiB 内存诊断，无任务日志 API，logBytes 为预留字段。Agent 配置集中在 `config/agent/` 的 `models.json`、`skills.json`、`mcp-servers.json`、`execution.json`、`embeddings.json`、`runtime.json`；旧 `config/agent-*.json` 不迁移也不再读取。包与工作区在 `data/skills`、`data/agent-workspaces`；凭据配置采用 0600 原子写入和同步。会话无活动 30 天且无活动 Run、无非终态工作流、无未决执行屏障时级联清理所属事实、工作区与 JSONL；批次终态保留 30 天，幂等记录随数据保留，配置历史和技能包不随会话删除。会话删除事务先写入持久清理记录，文件删除成功才移除记录；清理失败或进程中断后继续清理。JSONL 待写账本保留到所属会话或批次清理，可用于缺失文件或截断尾部的重建；完整行错改及额外内容会阻止派发，须修复后重启核对。设计见本地 [ADR-0030](docs/adr/0030-agent-config-and-jsonl-records.md)。
 
