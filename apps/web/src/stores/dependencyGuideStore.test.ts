@@ -7,6 +7,7 @@ import {
   caddyGuideVisible,
   caddyInstallEntryVisible,
   dockerGuideVisible,
+  dockerInstallEntryVisible,
   useDependencyGuideStore,
 } from './dependencyGuideStore'
 
@@ -231,6 +232,26 @@ describe('dismiss 语义', () => {
     ).toBe(true)
     localStorage.clear()
   })
+
+  it('reopenDocker 清掉 Docker 关闭标记与不再提示偏好', async () => {
+    localStorage.clear()
+    const gateway = gatewayWith(async () => DOCKER_MISSING)
+    await useDependencyGuideStore.getState().check(gateway)
+    useDependencyGuideStore.getState().muteGuide('docker')
+    expect(readMutedDependencyGuide(localStorage, 'docker')).toBe(true)
+    expect(
+      dockerGuideVisible(
+        useDependencyGuideStore.getState().report,
+        useDependencyGuideStore.getState().dismissedDocker,
+      ),
+    ).toBe(false)
+    useDependencyGuideStore.getState().reopenDocker()
+    const state = useDependencyGuideStore.getState()
+    expect(readMutedDependencyGuide(localStorage, 'docker')).toBe(false)
+    expect(dockerGuideVisible(state.report, state.dismissedDocker)).toBe(true)
+    expect(state.dismissedCaddy).toBe(false)
+    localStorage.clear()
+  })
 })
 
 describe('优先级派生选择器', () => {
@@ -269,6 +290,19 @@ describe('优先级派生选择器', () => {
   it('双 ok 时两个弹窗都不可见', () => {
     expect(dockerGuideVisible(ALL_OK, false)).toBe(false)
     expect(caddyGuideVisible(ALL_OK, false)).toBe(false)
+  })
+})
+
+describe('Docker 页安装入口可见性', () => {
+  it('docker 非 ok 时入口可见，ok 或报告缺失时不可见', () => {
+    const dockerError: DependencyProbeReport = {
+      docker: { state: 'error', detail: 'Docker Engine API 版本过低，需要 1.41 及以上' },
+      caddy: { state: 'ok', detail: null },
+    }
+    expect(dockerInstallEntryVisible(DOCKER_MISSING)).toBe(true)
+    expect(dockerInstallEntryVisible(dockerError)).toBe(true)
+    expect(dockerInstallEntryVisible(ALL_OK)).toBe(false)
+    expect(dockerInstallEntryVisible(undefined)).toBe(false)
   })
 })
 

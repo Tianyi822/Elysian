@@ -8,6 +8,7 @@ import { EmptyState, ErrorState, LoadingState } from '../../components/states/St
 import { RefreshButton } from '../../components/RefreshState'
 import { CTL_CHIP, CTL_FIELD, CTL_PRIMARY, CTL_TOOLBAR } from '../../components/formControl'
 import { DependencyGuideDialogs } from '../platform/DependencyGuideDialogs'
+import { DockerDependencyEntry } from './DockerDependencyEntry'
 import { CONTAINER_LIVE_RECONNECT_MESSAGE } from './containerCopy'
 import { useContainersStore } from '../../stores/containersStore'
 import { useDependencyGuideStore } from '../../stores/dependencyGuideStore'
@@ -57,6 +58,7 @@ export function ContainerPage() {
   if (view === 'apps') {
     return (
       <div className="mb-6">
+        <DockerDependencyEntry className="mb-4" />
         <ContainerAppsPanel />
         <DependencyGuideDialogs scope="docker-dependent" reload={() => void load(gateway)} />
       </div>
@@ -66,6 +68,7 @@ export function ContainerPage() {
   if (status !== 'ready') {
     return (
       <>
+        <DockerDependencyEntry className="mb-4" />
         {status === 'error' ? (
           <ErrorState
             title="容器数据加载失败"
@@ -137,6 +140,7 @@ export function ContainerPage() {
           >
             创建容器
           </button>
+          <DockerDependencyEntry />
         </div>
       ) : null}
 
@@ -154,6 +158,7 @@ export function ContainerPage() {
               <button type="button" onClick={() => setPullOpen(true)} className={CTL_PRIMARY}>
                 <Download aria-hidden size={14} />拉取镜像
               </button>
+              <DockerDependencyEntry />
             </div>
           </div>
           <ImageTable images={images} containers={containers} busy={imageRefreshStatus === 'loading'} />

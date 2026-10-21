@@ -64,6 +64,8 @@ type DependencyGuideState = {
   muteGuide: (kind: DependencyGuideMuteKey) => void
   /** 网站页工具栏「安装 Caddy」的重开动作：清掉关闭标记和「不再提示」。 */
   reopenCaddy: () => void
+  /** Docker 页工具栏「安装 Docker」的重开动作：清掉关闭标记和「不再提示」。 */
+  reopenDocker: () => void
   /** 弹窗写入某个依赖的步骤进度。 */
   patchProgress: (
     kind: DependencyGuideKind,
@@ -132,6 +134,14 @@ export function caddyGuideVisible(
  */
 export function caddyInstallEntryVisible(report: DependencyProbeReport | undefined): boolean {
   return report !== undefined && report.docker.state === 'ok' && report.caddy.state === 'missing'
+}
+
+/**
+ * Docker 页工具栏「安装 Docker / 检查 Docker」入口的可见性：
+ * 报告已就绪且 Docker 非 ok 时常驻，与弹窗关闭标记无关。
+ */
+export function dockerInstallEntryVisible(report: DependencyProbeReport | undefined): boolean {
+  return report !== undefined && report.docker.state !== 'ok'
 }
 
 /**
@@ -206,6 +216,11 @@ export const useDependencyGuideStore = create<DependencyGuideState>((set, get) =
   reopenCaddy() {
     writeMuted('caddy', false)
     set({ dismissedCaddy: false })
+  },
+
+  reopenDocker() {
+    writeMuted('docker', false)
+    set({ dismissedDocker: false })
   },
 
   patchProgress(kind, patch) {

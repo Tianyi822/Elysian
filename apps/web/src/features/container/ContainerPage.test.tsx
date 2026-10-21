@@ -1,12 +1,13 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Container, ContainerCreateInput, ContainerImage } from '@elysian/contracts'
+import type { Container, ContainerCreateInput, ContainerImage, DependencyProbeReport } from '@elysian/contracts'
 import type { ElysianGateway } from '../../contracts/adapters'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { CONTAINERS } from '../../adapters/mock/containersData'
 import { resolveViewTab, writeStoredViewTab } from '../../app/theme/themePreferences'
 import { useContainersStore } from '../../stores/containersStore'
+import { useDependencyGuideStore } from '../../stores/dependencyGuideStore'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { renderApp } from '../../test/renderApp'
 import { stubNarrowViewport } from '../../test/viewport'
@@ -68,6 +69,13 @@ function pageGateway(overrides: Partial<ElysianGateway['containers']> = {}): Ely
 beforeEach(() => {
   // 通知是模块级共享态：镜像刷新等操作现在也走通知，不清会跨用例串台。
   useNotificationStore.getState().clear()
+  useDependencyGuideStore.setState({
+    report: undefined,
+    status: 'idle',
+    rechecking: false,
+    dismissedDocker: false,
+    dismissedCaddy: false,
+  })
   useContainersStore.setState({
     status: 'idle', errorMessage: undefined, containers: [], images: [], imageRefreshStatus: 'idle', samples: {},
     view: 'grid', statusFilter: 'all', search: '', detailContainerId: undefined,
@@ -88,10 +96,52 @@ describe('容器页骨架', () => {
     expect(within(list).getAllByRole('listitem')).toHaveLength(10)
   })
 
-  it('mock 网关依赖恒 ok：页面成功态不出现安装引导弹窗', async () => {
+  it('mock 网关依赖恒 ok：页面成功态不出现安装引导弹窗与 Docker 安装入口', async () => {
     renderApp('/docker', { gateway: pageGateway() })
     await screen.findByRole('list', { name: '容器列表' })
     expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.queryByRole('button', { name: '安装 Docker' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '检查 Docker' })).toBeNull()
+  })
+
+  it('Docker 引导被关闭后，工具栏提供安装入口并可重开弹窗', async () => {
+    const gateway = pageGateway()
+    useDependencyGuideStore.setState({
+      report: { docker: { state: 'missing', detail: '未安装' }, caddy: { state: 'missing', detail: null } },
+      status: 'checked',
+      dismissedDocker: true,
+      dismissedCaddy: false,
+    })
+    renderApp('/docker', { gateway })
+    await screen.findByRole('list', { name: '容器列表' })
+    await userEvent.click(await screen.findByRole('button', { name: '安装 Docker' }))
+    expect(await screen.findByRole('dialog', { name: '安装 Docker' })).toBeInTheDocument()
+  })
+
+  it('依赖探测失败时提供重新检测入口，成功后重开安装弹窗', async () => {
+    let fail = true
+    const probe = vi.fn(async (): Promise<DependencyProbeReport> => {
+      if (fail) throw new Error('网络失败')
+      return { docker: { state: 'missing', detail: '未安装' }, caddy: { state: 'missing', detail: null } }
+    })
+    const gateway: ElysianGateway = {
+      ...pageGateway(),
+      dependencies: { probe, setup: async () => ({ ok: true, message: '已完成' }) },
+    }
+    useDependencyGuideStore.setState({
+      report: undefined,
+      status: 'error',
+      dismissedDocker: true,
+      dismissedCaddy: false,
+    })
+    renderApp('/docker', { gateway })
+    await screen.findByRole('list', { name: '容器列表' })
+    const retry = await screen.findByRole('button', { name: '重新检测 Docker' })
+    fail = false
+    await userEvent.click(retry)
+    await waitFor(() => expect(useDependencyGuideStore.getState().report).toBeDefined())
+    expect(useDependencyGuideStore.getState().dismissedDocker).toBe(false)
+    expect(await screen.findByRole('dialog', { name: '安装 Docker' })).toBeInTheDocument()
   })
 
   it('状态筛选只保留所选状态的容器', async () => {
