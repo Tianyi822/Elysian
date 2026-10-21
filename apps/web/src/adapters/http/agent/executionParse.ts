@@ -22,5 +22,3 @@ export function parseGrant(value: unknown): AgentExecutionGrant {
     privateCidrs: list(r.privateCidrs ?? [], text),
     resources: list(r.resources ?? [], item => { const v = row(item); if (v.access !== 'read' && v.access !== 'write') throw invalid(); return { domain: text(v.domain), id: text(v.id), access: v.access } }) }
 }
-
-export function parseExecutionList<T>(value: unknown, parse: (item: unknown) => T): T[] { return list(value, parse) }

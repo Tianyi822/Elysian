@@ -1,6 +1,5 @@
 import { parseGrant, parseProfile } from './executionParse'
-export { parseGrant, parseProfile } from './executionParse'
-import type { AgentApproval, AgentCapability, AgentEnvironment, AgentRuntimeAccess, AgentSessionAuthorization } from '@elysian/contracts'
+import type { AgentApproval, AgentCapability, AgentRuntimeAccess, AgentSessionAuthorization } from '@elysian/contracts'
 import type { AgentChatGovernance } from '../../../contracts/agentChat'
 import { agentPathPart, requestAgentJson } from './agentShared'
 
@@ -29,15 +28,7 @@ export function parseSessionAuthorization(value: unknown): AgentSessionAuthoriza
   return { id: text(r.id), sessionId: text(r.sessionId), revision: integer(r.revision), status: r.status, createdAt: text(r.createdAt), tool: text(r.tool), access: parseRuntimeAccess(r.access), ...(r.executionProfile === undefined ? {} : { executionProfile: parseProfile(r.executionProfile) }), ...(r.revokedAt === undefined ? {} : { revokedAt: text(r.revokedAt) }) }
 }
 
-export function parseEnvironment(value: unknown): AgentEnvironment {
-  const r = row(value)
-  return { sessionId: text(r.sessionId), revision: integer(r.revision), skills: list(r.skills, ref), servers: list(r.servers, ref), tools: list(r.tools, text),
-    resources: list(r.resources, item => { const v = row(item); return { serverId: text(v.serverId), uri: text(v.uri) } }),
-    executionProfiles: list(r.executionProfiles, ref), grants: list(r.grants, ref), trustedReadOnly: list(r.trustedReadOnly, text),
-    ...(r.resourceRules === undefined ? {} : { resourceRules: list(r.resourceRules, ref) }) }
-}
-
-export function parseCapability(value: unknown): import('../../../contracts/agentExecution').AgentToolCatalogEntry {
+function parseCapability(value: unknown): AgentCapability {
   const r = row(value)
   if (typeof r.parameters !== 'boolean') row(r.parameters)
   const metadata = r.metadata === undefined ? undefined : row(r.metadata)
@@ -45,7 +36,7 @@ export function parseCapability(value: unknown): import('../../../contracts/agen
     for (const key of ['domain', 'action', 'effect', 'exposure', 'resourceType', 'resourceKeyArgument', 'version', 'backend', 'taskDomain', 'taskRequestArgument', 'taskIdArgument']) if (metadata[key] !== undefined) text(metadata[key])
     for (const key of ['readOnly', 'async', 'default']) if (metadata[key] !== undefined) enabled(metadata[key])
   }
-  return { ...(r.available === undefined ? {} : { available: enabled(r.available) }), ...(r.selected === undefined ? {} : { selected: enabled(r.selected) }), ...(r.reason === undefined ? {} : { reason: text(r.reason) }), ...(r.originalName === undefined ? {} : { originalName: text(r.originalName) }), ...(r.catalogDigest === undefined ? {} : { catalogDigest: text(r.catalogDigest) }), name: text(r.name), description: text(r.description), parameters: r.parameters as AgentCapability['parameters'], source: text(r.source), ref: ref(r.ref), readOnly: enabled(r.readOnly), ...(metadata ? { metadata } : {}) }
+  return { ...(r.originalName === undefined ? {} : { originalName: text(r.originalName) }), ...(r.catalogDigest === undefined ? {} : { catalogDigest: text(r.catalogDigest) }), name: text(r.name), description: text(r.description), parameters: r.parameters as AgentCapability['parameters'], source: text(r.source), ref: ref(r.ref), readOnly: enabled(r.readOnly), ...(metadata ? { metadata } : {}) }
 }
 
 export function parseApproval(value: unknown): AgentApproval {
@@ -88,13 +79,5 @@ export function createAgentChatGovernance(): AgentChatGovernance {
       return items
     },
     async decide(id, decision) { return parseApproval(await requestAgentJson(`/api/agent/approvals/${path(id)}/decision`, { method: 'POST', body: JSON.stringify({ decision }) })) },
-    async environment(id, signal) { const env = parseEnvironment(await requestAgentJson(`/api/agent/sessions/${path(id)}/environment`, { signal })); if (env.sessionId !== id) throw invalid(); return env },
-    async updateEnvironment(id, expectedRevision, environment) { const env = parseEnvironment(await requestAgentJson(`/api/agent/sessions/${path(id)}/environment`, { method: 'PUT', body: JSON.stringify({ expectedRevision, environment }) })); if (env.sessionId !== id) throw invalid(); return env },
-    async profiles(signal) { return list(await requestAgentJson('/api/agent/execution-profiles', { signal }), parseProfile) },
-    async grants(signal) { return list(await requestAgentJson('/api/agent/grants', { signal }), parseGrant) },
-    async tools(id, signal) {
-      const value = await requestAgentJson(`/api/agent/tools?sessionId=${path(id)}`, { signal })
-      return list(Array.isArray(value) ? value : row(value).items, parseCapability)
-    },
   }
 }

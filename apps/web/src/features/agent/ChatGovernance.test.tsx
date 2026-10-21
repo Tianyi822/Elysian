@@ -2,7 +2,7 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AgentApproval, AgentEnvironment, AgentExecutionGrant, AgentExecutionProfile, AgentRuntimeAccess, AgentSessionAuthorization } from '@elysian/contracts'
+import type { AgentApproval, AgentExecutionGrant, AgentExecutionProfile, AgentRuntimeAccess, AgentSessionAuthorization } from '@elysian/contracts'
 import type { AgentChatGovernance } from '../../contracts/agentChat'
 import { ChatApprovals } from './ChatApprovals'
 import { ChatExecutionScope } from './ChatExecutionScope'
@@ -10,7 +10,6 @@ import { useNotificationStore } from '../../stores/notificationStore'
 
 const profile: AgentExecutionProfile = { id: 'bash', revision: 3, enabled: true, name: '受限 Bash', image: `bash@sha256:${'a'.repeat(64)}`, runtime: 'bash', command: ['/bin/bash'], timeoutSeconds: 60, cpuMillis: 1000, memoryBytes: 134217728, pids: 64, createdAt: '2026-10-16T00:00:00Z' }
 const grant: AgentExecutionGrant = { id: 'business', revision: 2, enabled: true, name: '网站目录', directories: [{ path: '/srv/projects/shop', access: 'rw' }], network: [], privateCidrs: [], resources: [{ domain: 'website', id: 'shop', access: 'write' }], createdAt: profile.createdAt }
-const environment: AgentEnvironment = { sessionId: 'session', revision: 4, tools: [], skills: [], servers: [], grants: [], executionProfiles: [], resources: [], trustedReadOnly: [] }
 const approval: AgentApproval = { id: 'approval', runId: 'run', operationId: 'operation', status: 'pending', createdAt: profile.createdAt, expiresAt: '2026-10-17T00:00:00Z', operation: {
   id: 'operation', runId: 'run', taskId: 'task', modelRequestId: 'request', callIndex: 0, modelCallId: 'call', argumentsJson: '{"command":"rm -f old.txt; mv new.txt live.txt"}',
   capability: { name: 'task_bash_command', description: '受限 Bash', parameters: {}, source: 'bash', ref: { id: 'bash', revision: 3 }, readOnly: false }, snapshotDigest: 'digest', workspaceRevision: 7,
@@ -18,7 +17,7 @@ const approval: AgentApproval = { id: 'approval', runId: 'run', operationId: 'op
 } }
 const access: AgentRuntimeAccess = { revision: 1, digest: 'scope-digest', scopeKey: 'scope', kind: 'script', directories: grant.directories, network: [], privateCidrs: [], resources: grant.resources, sessionAllowed: true, runtime: { name: 'Bash', image: profile.image, platform: 'linux/amd64', requiresDownload: true } }
 const authorization: AgentSessionAuthorization = { id: 'authorization', sessionId: 'session', revision: 1, status: 'active', createdAt: profile.createdAt, tool: 'task_bash_command', access }
-const governance = (): AgentChatGovernance => ({ decideAccess: vi.fn(async () => ({ ...approval, status: 'approved' as const, access })), authorizations: vi.fn(async () => [authorization]), revokeAuthorization: vi.fn(async () => ({ ...authorization, status: 'revoked' as const, revision: 2 })), approvals: vi.fn(async () => [approval]), decide: vi.fn(async (_id, decision) => ({ ...approval, status: decision, decision })), environment: vi.fn(async () => environment), updateEnvironment: vi.fn(async (_id, _revision, env) => env), profiles: vi.fn(async () => [profile]), grants: vi.fn(async () => [grant]), tools: vi.fn(async () => [{ ...approval.operation!.capability, name: 'task_workspace_read' }]) })
+const governance = (): AgentChatGovernance => ({ decideAccess: vi.fn(async () => ({ ...approval, status: 'approved' as const, access })), authorizations: vi.fn(async () => [authorization]), revokeAuthorization: vi.fn(async () => ({ ...authorization, status: 'revoked' as const, revision: 2 })), approvals: vi.fn(async () => [approval]), decide: vi.fn(async (_id, decision) => ({ ...approval, status: decision, decision })) })
 
 beforeEach(() => { useNotificationStore.getState().clear(); sessionStorage.clear() })
 
@@ -148,7 +147,6 @@ describe('聊天审批和执行范围', () => {
     expect(await screen.findByText('task_bash_command')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '撤回授权' }))
     expect(api.revokeAuthorization).toHaveBeenCalledWith('session', 'authorization', { requestId: expect.any(String), expectedRevision: 1 })
-    expect(api.updateEnvironment).not.toHaveBeenCalled()
   })
 
   it('会话授权读取失败保留重读入口且不允许撤回', async () => {
