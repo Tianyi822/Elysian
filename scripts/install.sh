@@ -3,7 +3,8 @@
 #
 # 用法：
 #   bash scripts/install.sh             完整安装/升级（幂等，可重复执行）
-#   bash scripts/install.sh --uninstall 卸载服务与二进制（保留 /var/lib/elysian 数据）
+#   bash scripts/uninstall.sh           整机卸载（独立脚本：服务、账号、工具链与面板规则；--purge-data 连数据一并删）
+#   bash scripts/install.sh --uninstall 轻量卸载：仅服务与二进制（保留工具链与数据）
 #   ELYSIAN_SMOKE=1 bash scripts/install.sh
 #                                       冒烟模式：跳过 systemd 与系统用户，仅装工具链、
 #                                       构建、起进程、curl /api/health、清理（供
@@ -433,6 +434,7 @@ print_summary() {
   echo "  忘记密码时重置：HOME=${STATE_DIR} $PANEL_BIN resetpwd"
   echo "  服务管理：systemctl status/restart/stop $SERVICE_NAME"
   echo "  数据目录：${STATE_DIR}/.Elysian（data/logs/state/backups/tmp/config 分类目录）"
+  echo "  进程日志：${STATE_DIR}/.Elysian/logs/panel.log（失败请求与 panic 栈；也可 journalctl -u $SERVICE_NAME）"
 }
 
 # ---------- 卸载 ----------
@@ -464,6 +466,7 @@ uninstall() {
   echo "已卸载。面板数据目录 ${STATE_DIR}（凭据、SQLite、日志）已保留；"
   echo "彻底清除请执行：rm -rf ${STATE_DIR}。Go 与 bun 工具链一并保留。"
   echo "全局镜像 profile 已移除；root 的 go env GOPROXY 如需恢复，请执行 go env -u GOPROXY。"
+  echo "如需整机卸载（含系统账号、工具链与 UFW 面板规则），请执行：sudo bash scripts/uninstall.sh"
 }
 
 # ---------- 冒烟模式（干净容器内：装工具链 → 构建 → 起进程 → 健康检查 → 清理） ----------
