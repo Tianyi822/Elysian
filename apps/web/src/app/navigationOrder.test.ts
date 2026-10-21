@@ -34,6 +34,7 @@ describe('导航顺序合并', () => {
       '/logs',
       '/terminals',
       '/agent',
+      '/wiki',
       '/settings',
     ])
   })

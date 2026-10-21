@@ -96,6 +96,12 @@ describe('路由表', () => {
     expect(screen.getByRole('button', { name: '导入资料' })).toBeInTheDocument()
   })
 
+  it('知识 Wiki 独立浏览页可达，主导航高亮', async () => {
+    renderApp('/wiki')
+    expect(await screen.findByRole('region', { name: 'Wiki 页面浏览' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '知识 Wiki' })).toHaveAttribute('aria-current', 'page')
+  })
+
   it('智能体入口打开本地会话，仅加载模型目录且不检查运行时', async () => {
     const gateway = createMockGateway({ eventStream: 'memory' })
     const runtime = vi.spyOn(gateway.agentRuntime, 'runtime')

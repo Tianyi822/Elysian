@@ -10,6 +10,7 @@ import { FilesPage } from '../features/files/FilesPage'
 import { FilesPathTitle } from '../features/files/FilesPathTitle'
 import { LoginPage } from '../features/auth/LoginPage'
 import { MemoryPage } from '../features/memory/MemoryPage'
+import { WikiPage } from '../features/memory/WikiPage'
 import { AgentChatPage } from '../features/agent/AgentChatPage'
 import { LogsPage } from '../features/logs/LogsPage'
 import { LogsTabSwitch } from '../features/logs/LogsTabSwitch'
@@ -190,6 +191,10 @@ export const routes: RouteObject[] = [
       {
         path: 'agent/memory',
         element: <RequireArea area="agent" title="知识 Wiki"><MemoryPage /></RequireArea>,
+      },
+      {
+        path: 'wiki',
+        element: <RequireArea area="agent" title="知识 Wiki"><WikiPage /></RequireArea>,
       },
       {
         path: 'settings',

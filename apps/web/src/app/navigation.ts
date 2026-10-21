@@ -1,4 +1,4 @@
-import { Bot, Container, Database, FolderTree, Globe, LayoutDashboard, ScrollText, Settings, ShieldCheck, Terminal } from '../components/icons'
+import { Bot, BookOpen, Container, Database, FolderTree, Globe, LayoutDashboard, ScrollText, Settings, ShieldCheck, Terminal } from '../components/icons'
 import type { IconComponent } from '../components/icons'
 
 export type NavItem = {
@@ -23,5 +23,6 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { to: '/terminals', label: '终端', icon: Terminal },
   { to: '/websites', label: '网站', icon: Globe },
   { to: '/agent', label: 'Ely 智能体', icon: Bot },
+  { to: '/wiki', label: '知识 Wiki', icon: BookOpen },
   { to: '/settings', label: '设置', icon: Settings },
 ]
