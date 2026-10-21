@@ -200,7 +200,6 @@ func newRuntimeRouter(service runtimeService, unavailableReason string) http.Han
 			}
 			shared.SendJSON(w, status, run)
 		})
-		registerWorkflowRoutes(r, service)
 		registerAgentRoutes(r, service)
 		registerCapabilityRoutes(r, service)
 		registerExtensionRoutes(r, service)

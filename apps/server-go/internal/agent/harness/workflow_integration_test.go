@@ -6,11 +6,8 @@ import (
 	"elysian/server/internal/agent/harness/model"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -261,27 +258,13 @@ func TestWorkflowConcurrentIdempotencyAndHTTP(t *testing.T) {
 	if created.Load() != 1 {
 		t.Fatal("幂等接受不原子")
 	}
-	w := workflowWait(t, m, id, StateWaitingApproval)
+	workflowWait(t, m, id, StateWaitingApproval)
 	d.Enabled = false
 	if _, e = m.PutWorkflowDefinition(ctx, d.ID, d.Revision, d); e != nil {
 		t.Fatal(e)
 	}
 	if same, dup, e := m.CreateWorkflow(ctx, input); e != nil || !dup || same.ID != id {
 		t.Fatal("停用优先于幂等")
-	}
-	req := httptest.NewRequest(http.MethodGet, "/workflow-instances/"+w.ID+"/steps?limit=1", nil)
-	rec := httptest.NewRecorder()
-	m.Router().ServeHTTP(rec, req)
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "workflowId") {
-		t.Fatalf("查询失败 %d %s", rec.Code, rec.Body.String())
-	}
-	req = httptest.NewRequest(http.MethodPost, "http://localhost/workflow-instances", strings.NewReader(`{"requestId":"x","requestId":"y"}`))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", "http://localhost")
-	rec = httptest.NewRecorder()
-	m.Router().ServeHTTP(rec, req)
-	if rec.Code != 400 {
-		t.Fatalf("重复键未拒绝 %d %s", rec.Code, rec.Body.String())
 	}
 }
 func TestWorkflowMaintenanceFenceRevokesApprovalAndSurvivesRestart(t *testing.T) {

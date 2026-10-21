@@ -294,20 +294,22 @@ func (m *Manager) Info() RuntimeInfo {
 		i.Available, i.Reason = false, recordErr.Error()
 	}
 	i.Batch = RuntimeCapability{Available: i.Available, Reason: i.Reason}
-	i.Workflow.Available = !m.closed && !m.storageError && dispatchError == nil
-	if dispatchError != nil {
-		i.Workflow.Reason = dispatchError.Error()
-	}
-	i.Wiki = i.Workflow
+	runtimeReady := !m.closed && !m.storageError && dispatchError == nil
+	i.Workflow = RuntimeCapability{Available: false, Reason: "工作流功能已退役"}
 	i.WorkflowV2 = i.Workflow
-	i.ResourceLocks = i.Workflow
+	i.Wiki = RuntimeCapability{Available: runtimeReady}
+	i.ResourceLocks = i.Wiki
+	if dispatchError != nil {
+		i.Wiki.Reason = dispatchError.Error()
+		i.ResourceLocks.Reason = dispatchError.Error()
+	}
 	i.Embedding = RuntimeCapability{Reason: "尚未配置独立 Embedding 服务，本地全文检索可用"}
 	if !m.closed {
 		profiles, err := m.listEmbeddingProfiles(context.Background())
 		if err == nil {
 			for _, p := range profiles {
 				if p.Active {
-					i.Embedding = i.Workflow
+					i.Embedding = i.Wiki
 					break
 				}
 			}

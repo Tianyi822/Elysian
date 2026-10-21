@@ -87,6 +87,16 @@ func TestRuntimeRoutesSubmitAndIdempotentResponse(t *testing.T) {
 	}
 }
 
+func TestWorkflowRoutesAreRetired(t *testing.T) {
+	handler := newRuntimeRouter(&routeRuntimeStub{}, "")
+	for _, path := range []string{"/workflow-definitions", "/workflow-instances"} {
+		response := runtimeRouteRequest(handler, http.MethodGet, path, "")
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("%s 仍可访问：%d %s", path, response.Code, response.Body.String())
+		}
+	}
+}
+
 func TestRuntimeRoutesRejectMalformedBodiesBeforeSubmission(t *testing.T) {
 	for _, body := range []string{
 		`null`, `[]`, `true`, `{"kind":`,
