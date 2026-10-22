@@ -1,6 +1,5 @@
 import type { Container, ContainerAction, ContainerCreateInput, ContainerImage, ContainerSample, ContainerStatus, ImagePullProgress, Unsubscribe } from '@elysian/contracts'
 import { create } from 'zustand'
-import { resolveViewTab, writeStoredViewTab } from '../app/theme/themePreferences'
 import type {
   ElysianGateway,
   HostTerminalCloseInfo,
@@ -225,7 +224,7 @@ export const useContainersStore = create<{
   images: [],
   imageRefreshStatus: 'idle',
   samples: {},
-  view: resolveViewTab(window.localStorage, 'containers', ['grid', 'images', 'apps'] as const, 'grid'),
+  view: 'grid',
   statusFilter: 'all',
   search: '',
   busyActions: [],
@@ -288,7 +287,6 @@ export const useContainersStore = create<{
   },
 
   setView(view) {
-    writeStoredViewTab(window.localStorage, 'containers', view)
     set({ view })
   },
   setStatusFilter(statusFilter) {

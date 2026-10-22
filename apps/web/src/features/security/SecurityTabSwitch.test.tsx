@@ -1,8 +1,8 @@
-import { screen, within } from '@testing-library/react'
+import { act, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { renderApp } from '../../test/renderApp'
-import { resolveViewTab, readStoredViewTab, writeStoredViewTab } from '../../app/theme/themePreferences'
+import { UI_PREFERENCES_KEY } from '../../app/theme/themePreferences'
 import { useSecurityStore } from '../../stores/securityStore'
 
 /**
@@ -59,7 +59,8 @@ describe('安全页签切换', () => {
       within(segmentGroup()).getByRole('button', { name: '系统防火墙' }),
     ).toHaveAttribute('aria-pressed', 'false')
     expect(useSecurityStore.getState().tab).toBe('ssh')
-    expect(readStoredViewTab(window.localStorage, 'security')).toBe('ssh')
+    // 页签只作会话内记忆，不再写进界面偏好。
+    expect(localStorage.getItem(UI_PREFERENCES_KEY)).toBeNull()
   })
 
   it('切到用户管理页签：内容区换成该页签的面板，不再显示防火墙', async () => {
@@ -73,21 +74,26 @@ describe('安全页签切换', () => {
     expect(screen.queryByRole('region', { name: '端口规则表' })).not.toBeInTheDocument()
   })
 
-  it('刷新后仍选中上次的页签', () => {
-    writeStoredViewTab(window.localStorage, 'security', 'ssh')
-    useSecurityStore.setState({
-      tab: resolveViewTab(window.localStorage, 'security', ['firewall', 'ssh', 'users'] as const, 'firewall'),
-    })
+  it('页面未关闭时往返其他页面仍停在上次页签，重新打开面板回到第一个', async () => {
+    const user = userEvent.setup()
+    const { router } = renderApp('/security')
 
-    renderApp('/security')
+    await user.click(within(segmentGroup()).getByRole('button', { name: 'SSH 管理' }))
 
+    // 会话内记忆：切到别的页面再回来，store 单例保留上次页签。
+    await act(async () => { await router.navigate('/') })
+    await act(async () => { await router.navigate('/security') })
     expect(within(segmentGroup()).getByRole('button', { name: 'SSH 管理' })).toHaveAttribute(
       'aria-pressed',
       'true',
     )
+    expect(useSecurityStore.getState().tab).toBe('ssh')
+
+    // 关闭页面后重新打开等于新的页面会话：内存回到初始值，页签回到第一个。
+    act(() => { useSecurityStore.setState({ tab: 'firewall' }) })
     expect(within(segmentGroup()).getByRole('button', { name: '系统防火墙' })).toHaveAttribute(
       'aria-pressed',
-      'false',
+      'true',
     )
   })
 })

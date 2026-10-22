@@ -8,6 +8,7 @@ import { useModelSettingsStore } from '../../stores/modelSettingsStore'
 import { demoAgentRuntimeInfo } from '../../adapters/mock/agent/agentRuntimeMock'
 import { useSessionStore } from '../../stores/sessionStore'
 import { useNotificationStore } from '../../stores/notificationStore'
+import { useSettingsTabStore } from '../../stores/settingsTabStore'
 import { renderApp } from '../../test/renderApp'
 
 /*
@@ -156,7 +157,8 @@ describe('修改面板密码', () => {
     await user.click(screen.getByRole('button', { name: '确认修改' }))
 
     await waitFor(() => expect(router.state.location.pathname).toBe('/login'))
-    expect(router.state.location.state).toMatchObject({ from: '/settings?tab=account' })
+    // ?tab= 深链在落地时已从地址摘除，回跳记录的是干净地址；页签由会话记忆负责恢复。
+    expect(router.state.location.state).toMatchObject({ from: '/settings' })
     expect(useSessionStore.getState()).toMatchObject({
       phase: 'anonymous',
       notice: PASSWORD_CHANGE_NOTICE,
@@ -187,19 +189,35 @@ describe('设置页签与模型入口', () => {
     expect(screen.getByLabelText('提供商')).toHaveTextContent('自定义（兼容 API）')
     expect(read).toHaveBeenCalledTimes(1)
   })
-  it('默认进入模型配置，切换页签保留账号输入与查询参数', async () => {
-    const { router } = renderApp('/settings?source=workbench')
+  it('默认进入第一个页签（面板维护），页面未关闭时往返记住上次页签，重新打开面板回到第一个', async () => {
     const user = userEvent.setup()
-    expect(await screen.findByRole('region', { name: '模型配置列表' })).toBeInTheDocument()
-    expect(screen.queryByLabelText('当前密码')).not.toBeInTheDocument()
+    const { router } = renderApp('/settings?source=workbench')
+    expect(await screen.findByLabelText('前端端口')).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: '模型配置列表' })).not.toBeInTheDocument()
+
     const tabs = screen.getByRole('group', { name: '设置页签' })
     await user.click(within(tabs).getByRole('button', { name: '账号安全' }))
     await user.type(await screen.findByLabelText('当前密码'), 'unsaved-draft')
+    // 切页签不动其他查询参数。
     await user.click(within(tabs).getByRole('button', { name: '面板维护' }))
-    expect(await screen.findByLabelText('前端端口')).toBeInTheDocument()
-    await user.click(within(tabs).getByRole('button', { name: '账号安全' }))
-    expect(screen.getByLabelText('当前密码')).toHaveValue('unsaved-draft')
     expect(router.state.location.search).toContain('source=workbench')
+
+    // 以账号安全作为「上次的页签」离开设置页，会话记忆应在回来时恢复它。
+    await user.click(within(tabs).getByRole('button', { name: '账号安全' }))
+    await act(async () => { await router.navigate('/') })
+    await act(async () => { await router.navigate('/settings') })
+    expect(await screen.findByLabelText('当前密码')).toBeInTheDocument()
+    expect(
+      within(screen.getByRole('group', { name: '设置页签' })).getByRole('button', { name: '账号安全' }),
+    ).toHaveAttribute('aria-pressed', 'true')
+
+    // 关闭页面后重新打开等于新的页面会话：页签回到第一个。
+    // 已访问过的页签仍保持挂载（保草稿），但选中态回到面板维护。
+    act(() => { useSettingsTabStore.setState({ tab: 'maintenance' }) })
+    expect(await screen.findByLabelText('前端端口')).toBeInTheDocument()
+    const reopened = screen.getByRole('group', { name: '设置页签' })
+    expect(within(reopened).getByRole('button', { name: '面板维护' })).toHaveAttribute('aria-pressed', 'true')
+    expect(within(reopened).getByRole('button', { name: '账号安全' })).toHaveAttribute('aria-pressed', 'false')
   })
   it('维护回跳直接显示面板维护', async () => {
     renderApp('/settings?maintenanceTask=test-task')
@@ -212,7 +230,11 @@ describe('设置页签与模型入口', () => {
     const { router } = renderApp('/agent/capabilities?tab=models', { gateway })
     expect(await screen.findByText('测试内核未就绪')).toBeInTheDocument()
     expect(router.state.location.pathname).toBe('/settings')
-    expect(router.state.location.search).toBe('?tab=models')
+    // ?tab= 是一次性深链：记进会话记忆后即从地址摘除，刷新与再次进入回落记忆。
+    await waitFor(() => expect(router.state.location.search).toBe(''))
+    expect(
+      within(screen.getByRole('group', { name: '设置页签' })).getByRole('button', { name: '模型配置' }),
+    ).toHaveAttribute('aria-pressed', 'true')
     const user = userEvent.setup()
     await user.click(within(screen.getByRole('group', { name: '设置页签' })).getByRole('button', { name: '账号安全' }))
     expect(await screen.findByLabelText('当前密码')).toBeInTheDocument()
@@ -220,7 +242,7 @@ describe('设置页签与模型入口', () => {
   it('模型设置保留 Agent 权限检查，拒绝后不读取模型目录', async () => {
     const gateway = baseGateway(realSession({ canView: async (area) => area !== 'agent' }))
     const read = vi.spyOn(gateway.modelSettings, 'listModelServices')
-    renderApp('/settings', { gateway })
+    renderApp('/settings?tab=models', { gateway })
     expect(await screen.findByText('无权限查看「模型配置」')).toBeInTheDocument()
     expect(read).not.toHaveBeenCalled()
   })

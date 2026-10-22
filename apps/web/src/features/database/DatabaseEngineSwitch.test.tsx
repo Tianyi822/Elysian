@@ -1,10 +1,9 @@
-import { screen, within } from '@testing-library/react'
+import { act, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DATABASE_ENGINES } from '@elysian/contracts'
 import type { ElysianGateway } from '../../contracts/adapters'
 import { createMockGateway } from '../../adapters/mock/gateway'
-import { resolveViewTab, writeStoredViewTab } from '../../app/theme/themePreferences'
 import { useDatabaseStore } from '../../stores/databaseStore'
 import { renderApp } from '../../test/renderApp'
 import { stubNarrowViewport } from '../../test/viewport'
@@ -72,21 +71,26 @@ describe('数据库类型切换', () => {
     expect(useDatabaseStore.getState().engine).toBe('Redis')
   })
 
-  it('刷新后仍选中上次的类型', () => {
-    writeStoredViewTab(window.localStorage, 'database', 'SQLite')
-    useDatabaseStore.setState({
-      engine: resolveViewTab(window.localStorage, 'database', DATABASE_ENGINES, 'MariaDB'),
-    })
+  it('页面未关闭时往返其他页面仍停在上次类型，重新打开面板回到第一个', async () => {
+    const user = userEvent.setup()
+    const { router } = renderApp('/databases', { gateway: switchGateway() })
 
-    renderApp('/databases', { gateway: switchGateway() })
+    await user.click(within(segmentGroup()).getByRole('button', { name: 'SQLite' }))
 
+    // 会话内记忆：切到别的页面再回来，store 单例保留上次类型。
+    await act(async () => { await router.navigate('/') })
+    await act(async () => { await router.navigate('/databases') })
     expect(within(segmentGroup()).getByRole('button', { name: 'SQLite' })).toHaveAttribute(
       'aria-pressed',
       'true',
     )
+    expect(useDatabaseStore.getState().engine).toBe('SQLite')
+
+    // 关闭页面后重新打开等于新的页面会话：内存回到初始值，类型回到第一个。
+    act(() => { useDatabaseStore.setState({ engine: 'MariaDB' }) })
     expect(within(segmentGroup()).getByRole('button', { name: 'MariaDB' })).toHaveAttribute(
       'aria-pressed',
-      'false',
+      'true',
     )
   })
 

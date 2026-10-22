@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { readStoredViewTab } from '../app/theme/themePreferences'
+import { UI_PREFERENCES_KEY } from '../app/theme/themePreferences'
 import { LOGS_TABS, useLogsStore } from './logsStore'
 
 describe('日志区页签状态', () => {
@@ -19,8 +19,8 @@ describe('日志区页签状态', () => {
     expect(useLogsStore.getState().tab).toBe('operation')
   })
 
-  it('setTab 把选中写入界面偏好', () => {
+  it('setTab 只改会话内状态，不写界面偏好', () => {
     useLogsStore.getState().setTab('login')
-    expect(readStoredViewTab(window.localStorage, 'logs')).toBe('login')
+    expect(localStorage.getItem(UI_PREFERENCES_KEY)).toBeNull()
   })
 })

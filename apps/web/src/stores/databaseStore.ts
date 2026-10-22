@@ -1,7 +1,6 @@
 import { create } from 'zustand'
 import { DATABASE_ENGINES, type Container, type ContainerImage, type DatabaseEngine, type DatabaseInstance } from '@elysian/contracts'
 import type { ElysianGateway, DatabaseCreateInput } from '../contracts/adapters'
-import { resolveViewTab, writeStoredViewTab } from '../app/theme/themePreferences'
 import { pushHistory, type TerminalLine } from '../components/terminal/terminalSession'
 import { useNotificationStore } from './notificationStore'
 import { notifyFirewallPortSync } from './firewallPortNotice'
@@ -58,9 +57,9 @@ export type DatabaseState = {
   removeDatabase(gateway: ElysianGateway, databaseId: string): Promise<void>
 }
 
-/** 数据库区的界面状态：类型筛选不进 URL，选中写入界面偏好，刷新后仍停在上次类型。 */
+/** 数据库区的界面状态：类型筛选不进 URL、不写界面偏好——store 是模块单例，页面未关闭时记住上次类型，重新打开面板回到第一个。 */
 export const useDatabaseStore = create<DatabaseState>((set, get) => ({
-  engine: resolveViewTab(window.localStorage, 'database', DATABASE_ENGINES, 'MariaDB'),
+  engine: DATABASE_ENGINES[0],
   status: 'idle',
   databases: [],
   containers: [],
@@ -73,7 +72,6 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   uploadPercent: undefined,
   removingDatabaseIds: [],
   setEngine: (engine) => {
-    writeStoredViewTab(window.localStorage, 'database', engine)
     set({ engine })
   },
   async load(gateway) {

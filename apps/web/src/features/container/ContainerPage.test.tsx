@@ -5,7 +5,6 @@ import type { Container, ContainerCreateInput, ContainerImage, DependencyProbeRe
 import type { ElysianGateway } from '../../contracts/adapters'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { CONTAINERS } from '../../adapters/mock/containersData'
-import { resolveViewTab, writeStoredViewTab } from '../../app/theme/themePreferences'
 import { useContainersStore } from '../../stores/containersStore'
 import { useDependencyGuideStore } from '../../stores/dependencyGuideStore'
 import { useNotificationStore } from '../../stores/notificationStore'
@@ -303,17 +302,25 @@ describe('镜像视图', () => {
     expect(screen.getByRole('list', { name: '容器列表' })).toBeInTheDocument()
   })
 
-  it('刷新后仍停在上次的视图', async () => {
-    writeStoredViewTab(window.localStorage, 'containers', 'images')
-    useContainersStore.setState({
-      view: resolveViewTab(window.localStorage, 'containers', ['grid', 'images'] as const, 'grid'),
-    })
+  it('页面未关闭时往返其他页面仍停在上次视图，重新打开面板回到第一个', async () => {
+    const user = userEvent.setup()
+    const { router } = renderApp('/docker', { gateway: pageGateway() })
+    await screen.findByRole('list', { name: '容器列表' })
+    await user.click(screen.getByRole('button', { name: '镜像' }))
+    await screen.findByRole('table', { name: '镜像列表' })
 
-    renderApp('/docker', { gateway: pageGateway() })
-
+    // 会话内记忆：切到别的页面再回来，store 单例保留上次视图。
+    await act(async () => { await router.navigate('/') })
+    await act(async () => { await router.navigate('/docker') })
     expect(await screen.findByRole('table', { name: '镜像列表' })).toBeInTheDocument()
     expect(
       within(screen.getByRole('main')).getByRole('button', { name: '镜像' }),
+    ).toHaveAttribute('aria-pressed', 'true')
+
+    // 关闭页面后重新打开等于新的页面会话：内存回到初始值，视图回到第一个。
+    act(() => { useContainersStore.setState({ view: 'grid' }) })
+    expect(
+      within(screen.getByRole('main')).getByRole('button', { name: '容器' }),
     ).toHaveAttribute('aria-pressed', 'true')
   })
 

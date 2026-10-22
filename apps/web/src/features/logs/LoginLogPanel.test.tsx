@@ -6,7 +6,6 @@ import { createMockGateway } from '../../adapters/mock/gateway'
 import { SEED_LOGIN_LOGS } from '../../adapters/mock/logsData'
 import type { ElysianGateway } from '../../contracts/adapters'
 import { formatLoginTime } from '../../components/format'
-import { resolveViewTab, writeStoredViewTab } from '../../app/theme/themePreferences'
 import { useLoginLogStore } from '../../stores/loginLogStore'
 import { useLogsStore } from '../../stores/logsStore'
 import { renderApp } from '../../test/renderApp'
@@ -211,17 +210,23 @@ describe('平台登录日志面板', () => {
     )
   })
 
-  it('刷新后仍停在上次的日志页签', async () => {
-    writeStoredViewTab(window.localStorage, 'logs', 'login')
-    useLogsStore.setState({
-      tab: resolveViewTab(window.localStorage, 'logs', ['runtime', 'login'] as const, 'runtime'),
-    })
+  it('页面未关闭时往返其他页面仍停在上次页签，重新打开面板回到第一个', async () => {
+    const { router } = renderApp('/logs')
+    await openLoginTab()
+    await screen.findByRole('region', { name: '登录日志表' })
 
-    renderApp('/logs')
-
+    // 会话内记忆：切到别的页面再回来，store 单例保留上次页签。
+    await act(async () => { await router.navigate('/') })
+    await act(async () => { await router.navigate('/logs') })
     expect(await screen.findByRole('region', { name: '登录日志表' })).toBeInTheDocument()
     expect(
       within(screen.getByRole('main')).getByRole('button', { name: '登录日志' }),
+    ).toHaveAttribute('aria-pressed', 'true')
+
+    // 关闭页面后重新打开等于新的页面会话：内存回到初始值，页签回到第一个。
+    act(() => { useLogsStore.setState({ tab: 'runtime' }) })
+    expect(
+      within(screen.getByRole('main')).getByRole('button', { name: '运行日志' }),
     ).toHaveAttribute('aria-pressed', 'true')
   })
 

@@ -1,5 +1,4 @@
 import { create } from 'zustand'
-import { resolveViewTab, writeStoredViewTab } from '../app/theme/themePreferences'
 
 /** 安全区页签取值。 */
 export type SecurityTab = 'firewall' | 'ssh' | 'users'
@@ -11,16 +10,11 @@ export const SECURITY_TABS: readonly { value: SecurityTab; label: string }[] = [
   { value: 'users', label: '用户管理' },
 ]
 
-const SECURITY_TAB_VALUES = SECURITY_TABS.map(({ value }) => value)
-
-/** 安全区页签状态：视图状态不进 URL，选中写入界面偏好，刷新后仍停在上次页签。 */
+/** 安全区页签状态：视图状态不进 URL、不写界面偏好——store 是模块单例，页面未关闭时记住上次页签，重新打开面板回到第一个。 */
 export const useSecurityStore = create<{
   tab: SecurityTab
   setTab: (tab: SecurityTab) => void
 }>((set) => ({
-  tab: resolveViewTab(window.localStorage, 'security', SECURITY_TAB_VALUES, 'firewall'),
-  setTab: (tab) => {
-    writeStoredViewTab(window.localStorage, 'security', tab)
-    set({ tab })
-  },
+  tab: 'firewall',
+  setTab: (tab) => set({ tab }),
 }))
