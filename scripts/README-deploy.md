@@ -12,6 +12,8 @@ sudo bash scripts/install.sh
 
 GitHub 不可达时可改用镜像：`git clone https://gitee.com/Chentyit/Elysian.git`，镜像需与主仓库保持同步。仓库须公开或通过部署者自己的 Git 凭据取得源码。脚本安装缺少的工具链、OpenSSH 与 UFW，并自动检测安装 Docker 与 Caddy（详见「Docker 与网站」），以 `elysian-build` 无特权账号在临时源码副本构建，不在面板凭据目录执行源码脚本。Go 工具链固定 1.23.12，bun 固定 1.4.2，下载按官方索引的 SHA256 校验；官方源不可用时自动回退 golang.google.cn、阿里云或 npmmirror 镜像，但仍校验官方摘要；依赖按 bun.lock 和 go.sum 锁定。Go 模块构建默认使用 goproxy.cn，失败再尝试阿里云 goproxy 和 direct；可用 `ELYSIAN_GOPROXY` 或已有 `GOPROXY` 覆盖。Bun 依赖默认使用 `https://registry.npmmirror.com`，可用 `ELYSIAN_BUN_REGISTRY` 或已有 `BUN_CONFIG_REGISTRY` 覆盖；锁文件本身也已固定到该镜像的 tarball。安装脚本会把这两个变量显式传给无特权构建进程，因此系统预装的 Go/Bun 也会在构建时使用镜像；同时写入 `/etc/profile.d/elysian-mirrors.sh`，并在 Go 可用时执行 `go env -w GOPROXY=…`，让新登录 shell 和 root 的手动 Go 命令也使用镜像。`scripts/uninstall.sh` 会移除 profile 文件并执行 `go env -u GOPROXY` 复位；轻量卸载（install.sh `--uninstall`）只移除 profile、不回滚 go env，可用 `go env -u GOPROXY` 自行恢复。安装与在线更新共用 [build-release.sh](build-release.sh)。构建失败时旧服务继续运行；安装切换前预检并备份，启动或健康检查失败时恢复原程序、数据、单元与本次涉及的面板规则。环境文件 `/etc/default/elysian` 保留。
 
+Bun 本体安装包按 GitHub → npmmirror 顺序下载，curl 持续监测传输速度，连续 15 秒低于 100 KiB/s、请求超时或失败即回退备用源，清除失败下载的残留文件；每次连接最多 10 秒、传输最多 600 秒，不对低速或 HTTP 错误重复下载同一源，仅连接类故障保留一次 IPv4 回退。GitHub Release 元数据总请求预算 10 秒，连续 5 秒低于 1 KiB/s 也提前退出，失败后使用脚本内固定版本的官方 SHA256。镜像下载同样验证官方摘要，校验失败不解压、不安装。此策略用于 Bun 工具链安装，构建阶段的 `bun install` 继续使用配置的 npm registry。
+
 默认前端 `http://<服务器 IP>:48100`，后端 `127.0.0.1:48101`。前端提供页面、静态资源和同源 `/api` 代理，支持 Cookie、上传、SSE 和 WebSocket。正式入口接受 IP 或本机 Host，跨源业务写请求及未允许的域名被拒绝。安装脚本默认启用 OpenSSH（sshd 开机自启），按 `sshd -T` 的实际端口放行 SSH，并在放行面板前端 TCP 规则后启用 UFW；已存在的 UFW 规则保持不动。默认值只在安装时声明，重跑安装脚本会重新声明，之后以安全页的启停与规则为准。面板管理宿主 UFW 的面板 TCP 规则与安全页规则，并核验启用的 IPv6；部署者需自行配置云安全组。此部署方式不配置域名反代、HTTPS 或证书。
 
 既有安装需先运行此脚本完成维护能力引导；此后可在系统设置中改端口、重启与更新。Docker 开发环境保留既有回环端口映射，设置页维护功能不可执行。
@@ -88,7 +90,8 @@ docker build -f scripts/Dockerfile.install-test -t elysian-install-test:local sc
 docker run --rm --network none \
   --mount "type=bind,src=$PWD,dst=/workspace,readonly" \
   elysian-install-test:local -c 'set -e
-    bash -n scripts/install.sh scripts/uninstall.sh scripts/build-release.sh scripts/install-platform.test.sh scripts/install-caddy-config.test.sh
+    bash -n scripts/install.sh scripts/uninstall.sh scripts/build-release.sh scripts/install-platform.test.sh scripts/install-caddy-config.test.sh scripts/install-download.test.sh
+    bash scripts/install-download.test.sh
     bash scripts/install-caddy-config.test.sh
     bash scripts/install-helpers.test.sh
     bash scripts/install-platform.test.sh'

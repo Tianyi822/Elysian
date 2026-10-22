@@ -171,15 +171,25 @@ clear_progress_line() { # 擦掉当前单行进度（按终端宽度回车覆盖
   fi
 }
 
-try_fetch() { # try_fetch <url> <输出文件> [progress]；IPv6 异常时再强制 IPv4 试一次
+try_fetch() { # try_fetch <url> <输出文件> [progress] [bun-metadata|bun-package]
+  local policy="${4:-default}" rc
   local opts=(-fL --retry 3 --retry-delay 2 --connect-timeout 20)
+  case "$policy" in
+    bun-metadata) opts=(-fL --retry 0 --connect-timeout 5 --max-time 10 --speed-limit 1024 --speed-time 5) ;;
+    bun-package) opts=(-fL --retry 0 --connect-timeout 10 --max-time 600 --speed-limit 102400 --speed-time 15) ;;
+  esac
   # 元数据静默下载；大文件在交互终端显示进度条，重定向日志时仍保持安静。
   if [ "${3:-}" = progress ] && [ -t 2 ]; then
     opts+=(--progress-bar)
   else
     opts+=(-sS)
   fi
-  curl "${opts[@]}" -o "$2" "$1" && return 0
+  if curl "${opts[@]}" -o "$2" "$1"; then return 0; else rc=$?; fi
+  # Bun 慢速、超时和 HTTP 错误直接交给镜像回退；仅连接类故障再尝试 IPv4。
+  case "$policy" in
+    bun-metadata) return "$rc" ;;
+    bun-package) case "$rc" in 5|6|7|35) : ;; *) return "$rc" ;; esac ;;
+  esac
   curl -4 "${opts[@]}" -o "$2" "$1"
 }
 
@@ -203,6 +213,22 @@ fetch_file() { # fetch_file <输出文件> <url>...
       return 0
     fi
     info "下载源不可用，尝试下一个：$url"
+  done
+  return 1
+}
+
+fetch_bun_file() {
+  local out="$1" url rc
+  shift
+  for url in "$@"; do
+    info "尝试下载 bun：$url"
+    if try_fetch "$url" "$out" progress bun-package; then return 0; else rc=$?; fi
+    rm -f "$out" || return 1
+    if [ "$rc" = 28 ]; then
+      warn "bun 下载过慢或超时，切换下载源：$url"
+    else
+      warn "bun 下载源不可用（curl 退出码 ${rc}），切换下载源：$url"
+    fi
   done
   return 1
 }
@@ -943,12 +969,12 @@ install_bun() {
     info "现有 bun（${v:-未知版本}）低于 1.2（读不了 bun.lock 文本格式），改用官方锁定版本 ${BUN_VERSION}"
   fi
   local asset="bun-linux-${BUN_ARCH}.zip"
-  local work meta digest
+  local work meta digest=""
   work="$(mktemp -d)"
   meta="$work/release.json"
   info "下载 bun ${BUN_VERSION}（linux/${BUN_ARCH}）元数据并按官方 digest 校验 sha256"
   # GitHub API 不可达时使用脚本内固定的同版本官方摘要，仍保持完整性校验。
-  if try_fetch "$BUN_RELEASE_API" "$meta"; then
+  if try_fetch "$BUN_RELEASE_API" "$meta" '' bun-metadata; then
     # digest 字段在 uploader 对象之后，与所属 asset 的 "name" 相距数十行：按「最近的 name」配对提取。
     digest="$(awk -v asset="$asset" '
       /"name": "/ { line=$0; sub(/^.*"name": "/, "", line); sub(/".*$/, "", line); name=line }
@@ -963,8 +989,8 @@ install_bun() {
     info "GitHub API 不可用或缺少摘要，改用脚本内固定的 bun ${BUN_VERSION} 官方摘要"
   fi
   [ -n "$digest" ] || die "未取得 ${asset} 的官方 sha256 digest（请更新脚本内 BUN_VERSION 与固定摘要）。"
-  info "下载 bun 安装包（约 35 MiB）；GitHub 失败时切换 npmmirror 镜像"
-  fetch_file "$work/$asset" "${BUN_RELEASE_URL}/${asset}" "${BUN_MIRROR_URL}/${asset}" \
+  info "下载 bun 安装包（约 35 MiB）；连续 15 秒低于 100 KiB/s、超时或失败时切换 npmmirror 镜像"
+  fetch_bun_file "$work/$asset" "${BUN_RELEASE_URL}/${asset}" "${BUN_MIRROR_URL}/${asset}" \
     || die "bun 安装包下载失败（已尝试 GitHub 与 npmmirror 镜像），请检查出网后重跑。"
   echo "$digest  $work/$asset" | sha256sum -c --quiet - \
     || die "bun 安装包 sha256 校验失败，已中止。请重跑本脚本重新下载。"
