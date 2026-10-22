@@ -43,9 +43,6 @@ import type {
   DatabaseEngine,
   DatabaseInstance,
   DependencyProbeReport,
-  DependencySetupResult,
-  DependencySetupStep,
-  DependencySetupTarget,
   ElysianEvent,
   EventStreamHandlers,
   FileEntry,
@@ -515,17 +512,12 @@ export interface ResourceHistoryAdapter {
 /**
  * 宿主依赖检测接缝：现场探测宿主 Docker Engine 与 Caddy 管理通道的就绪性。
  * Docker 运行时经同源 HTTP（/api/platform/dependencies，服务端每次请求现场探测、
- * 结果不吃缓存）；mock 实现恒双 ok（本地开发是演示模式，宿主依赖引导只属于
- * Docker 运行时的真实场景）。探测失败时引导层静默降级，不伪装成依赖缺失。
+ * 结果不吃缓存）；mock 实现恒双 ok（本地开发是演示模式，宿主依赖状态只属于
+ * Docker 运行时的真实场景）。探测失败由消费方静默降级，不伪装成依赖缺失。
  */
 export interface DependenciesAdapter {
-  /** 现场探测宿主 Docker 与 Caddy 通道；mock 实现恒双 ok（演示模式不引导）。 */
+  /** 现场探测宿主 Docker 与 Caddy 通道；mock 实现恒双 ok（演示模式）。 */
   probe(): Promise<DependencyProbeReport>
-  /**
-   * 在宿主上执行安装的一步。脚本由服务端固定，这里只传目标与步骤名。
-   * mock 立即成功：演示模式不弹引导；测试注入缺失报告时用它走完分步而不碰宿主。
-   */
-  setup(target: DependencySetupTarget, step: DependencySetupStep): Promise<DependencySetupResult>
 }
 
 /** 模型设置所需的 Agent 内核就绪报告。 */

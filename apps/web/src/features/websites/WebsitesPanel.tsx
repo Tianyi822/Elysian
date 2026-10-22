@@ -9,7 +9,7 @@ import { RefreshCw, Search } from '../../components/icons'
 import { EmptyState } from '../../components/states/StateViews'
 import { RefreshButton } from '../../components/RefreshState'
 import { useWebsitesStore } from '../../stores/websitesStore'
-import { accessConfigEntryVisible, caddyInstallEntryVisible, useDependencyGuideStore } from '../../stores/dependencyGuideStore'
+import { accessConfigEntryVisible, useDependencyProbeStore } from '../../stores/dependencyProbeStore'
 import { CTL_FIELD, CTL_PRIMARY, CTL_TOOLBAR } from '../../components/formControl'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { WebsiteDetailSheet } from './WebsiteDetailSheet'
@@ -112,9 +112,8 @@ export function WebsitesPanel() {
   const openCreate = useWebsitesStore((s) => s.openCreate)
   const refresh = useWebsitesStore((s) => s.refresh)
   const reconcileProxy = useWebsitesStore((s) => s.reconcileProxy)
-  // Caddy 缺失期间工具栏常驻「安装 Caddy」重开入口：弹窗可关，入口不消失，装好即随报告消失。
-  const dependencyReport = useDependencyGuideStore((s) => s.report)
-  const reopenCaddy = useDependencyGuideStore((s) => s.reopenCaddy)
+  // 「访问配置」入口由探测报告驱动：Docker 与 Caddy 都就绪才出现，缺 Caddy 时不显示入口。
+  const dependencyReport = useDependencyProbeStore((s) => s.report)
 
   const filtered = filterWebsiteProjects(projects, { category, search })
 
@@ -125,11 +124,6 @@ export function WebsitesPanel() {
           添加项目
         </button>
         <button type="button" className={TOOL_BUTTON_CLASS} aria-expanded={taskListOpen} onClick={() => setTaskListOpen((value) => !value)}>部署任务{tasks.some((task) => websiteDeploymentIsActive(task.state) || task.state === 'awaiting-config') ? `（${tasks.filter((task) => websiteDeploymentIsActive(task.state) || task.state === 'awaiting-config').length}）` : ''}</button>
-        {caddyInstallEntryVisible(dependencyReport) ? (
-          <button type="button" onClick={reopenCaddy} className={TOOL_BUTTON_CLASS}>
-            安装 Caddy
-          </button>
-        ) : null}
         {accessConfigEntryVisible(dependencyReport) ? (
           <button type="button" onClick={() => setCaddyConfigOpen(true)} className={TOOL_BUTTON_CLASS}>
             访问配置

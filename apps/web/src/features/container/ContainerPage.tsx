@@ -7,11 +7,10 @@ import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
 import { RefreshButton } from '../../components/RefreshState'
 import { CTL_CHIP, CTL_FIELD, CTL_PRIMARY, CTL_TOOLBAR } from '../../components/formControl'
-import { DependencyGuideDialogs } from '../platform/DependencyGuideDialogs'
 import { DockerDependencyEntry } from './DockerDependencyEntry'
 import { CONTAINER_LIVE_RECONNECT_MESSAGE } from './containerCopy'
 import { useContainersStore } from '../../stores/containersStore'
-import { useDependencyGuideStore } from '../../stores/dependencyGuideStore'
+import { useDependencyProbeStore } from '../../stores/dependencyProbeStore'
 import { ContainerAppsPanel } from './ContainerAppsPanel'
 import { ContainerCard } from './ContainerCard'
 import { ContainerCreateDialog } from './ContainerCreateDialog'
@@ -41,7 +40,7 @@ export function ContainerPage() {
   const imageRefreshStatus = useContainersStore((s) => s.imageRefreshStatus)
   const refreshImages = useContainersStore((s) => s.refreshImages)
   const load = useContainersStore((s) => s.load)
-  const check = useDependencyGuideStore((s) => s.check)
+  const check = useDependencyProbeStore((s) => s.check)
   const setStatusFilter = useContainersStore((s) => s.setStatusFilter)
   const setSearch = useContainersStore((s) => s.setSearch)
   const openCreate = useContainersStore((s) => s.openCreate)
@@ -50,7 +49,7 @@ export function ContainerPage() {
 
   useEffect(() => {
     void load(gateway)
-    // 依赖检测幂等：切页重挂不重探，报告由引导层消费。
+    // 依赖检测幂等：切页重挂不重探，报告由探测层消费。
     void check(gateway)
   }, [gateway, load, check])
 
@@ -60,7 +59,6 @@ export function ContainerPage() {
       <div className="mb-6">
         <DockerDependencyEntry className="mb-4" />
         <ContainerAppsPanel />
-        <DependencyGuideDialogs scope="docker-dependent" reload={() => void load(gateway)} />
       </div>
     )
   }
@@ -78,8 +76,6 @@ export function ContainerPage() {
         ) : (
           <LoadingState label="正在加载容器数据…" />
         )}
-        {/* Docker 未就绪时弹窗叠加在错误态 / 加载态之上，引导层与状态层各说各的。 */}
-        <DependencyGuideDialogs scope="docker-dependent" reload={() => void load(gateway)} />
       </>
     )
   }
@@ -188,7 +184,6 @@ export function ContainerPage() {
       {pullOpen ? <ImagePullDialog onClose={() => setPullOpen(false)} /> : null}
       <ContainerDetailSheet />
       <TerminalWindow />
-      <DependencyGuideDialogs scope="docker-dependent" reload={() => void load(gateway)} />
     </div>
   )
 }

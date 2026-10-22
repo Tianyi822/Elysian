@@ -3,7 +3,7 @@ import { useRef, useState } from 'react'
 import { isValidWebsiteDomain, type WebsiteAccessInput, type WebsiteProject } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { X } from '../../components/icons'
-import { useDependencyGuideStore } from '../../stores/dependencyGuideStore'
+import { useDependencyProbeStore } from '../../stores/dependencyProbeStore'
 import { useWebsitesStore } from '../../stores/websitesStore'
 import { useFeedbackNotification } from '../../components/useFeedbackNotification'
 
@@ -24,9 +24,9 @@ export function CaddyConfigDialog({ onClose, onAddProject }: { onClose: () => vo
   const proxy = useWebsitesStore((s) => s.proxyStatus)
   const saveAccess = useWebsitesStore((s) => s.saveAccess)
   const refresh = useWebsitesStore((s) => s.refresh)
-  const report = useDependencyGuideStore((s) => s.report)
-  const rechecking = useDependencyGuideStore((s) => s.rechecking)
-  const recheck = useDependencyGuideStore((s) => s.recheck)
+  const report = useDependencyProbeStore((s) => s.report)
+  const rechecking = useDependencyProbeStore((s) => s.rechecking)
+  const recheck = useDependencyProbeStore((s) => s.recheck)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [mode, setMode] = useState<'direct' | 'domain'>('direct')
   const [domain, setDomain] = useState('')

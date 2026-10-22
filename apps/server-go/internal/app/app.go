@@ -145,7 +145,6 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 		AgentAuthorize: agentAuthorize,
 		Transports:     docker.NewTransportFactory(),
 		CaddyAdmins:    websites.NewCaddyAdminFactory(),
-		InContainer:    cfg.InContainer(),
 		DockerSocket:   cfg.DockerSocket,
 		CaddySocket:    cfg.CaddySocket,
 	}

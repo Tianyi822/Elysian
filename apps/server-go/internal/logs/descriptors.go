@@ -164,23 +164,6 @@ func ipRuleSummary(body map[string]any) *string {
 	return sp(fmt.Sprintf("来源 %s %s", *source, *label))
 }
 
-// setupStepTarget 依赖安装步骤的对象名：只认固定步骤，其余不进日志对象。
-func setupStepTarget(name string, step *string) *string {
-	if step == nil {
-		return nil
-	}
-	switch *step {
-	case "install":
-		return sp(name + " 安装")
-	case "configure":
-		return sp(name + " 配置管理通道")
-	case "enable":
-		return sp(name + " 启动并常驻")
-	default:
-		return nil
-	}
-}
-
 // targetOfID 路径参数直接作对象（target: param(params, 'id') 的简写）。
 func targetOfID(input *opInput) *string {
 	return paramValue(input.params, "id")
@@ -576,20 +559,6 @@ var operationDescriptors = map[string]*opDescriptor{
 	},
 	"POST /api/logs/operation/clear": {
 		category: "logs", action: "清空操作日志",
-	},
-
-	// 宿主依赖安装：一步一个写请求；目标只取路径里的步骤名，不读请求体。
-	"POST /api/platform/dependencies/setup/docker/:step": {
-		category: "containers", action: "安装 Docker",
-		targetFn: func(input *opInput) *string {
-			return setupStepTarget("Docker", paramValue(input.params, "step"))
-		},
-	},
-	"POST /api/platform/dependencies/setup/caddy/:step": {
-		category: "websites", action: "安装 Caddy",
-		targetFn: func(input *opInput) *string {
-			return setupStepTarget("Caddy", paramValue(input.params, "step"))
-		},
 	},
 
 	// 登录鉴权：登录/改密体含密码——不声明 summarize；登出无会话也记 success。

@@ -72,7 +72,7 @@ afterEach(() => {
   cleanup()
   // 通知是全局单例状态：不清空的话，上一条用例留下的提示会出现在下一条用例的界面里。
   useNotificationStore.getState().clear()
-  // 界面偏好（主题、导航顺序、不再提示）与页签的会话内单例状态：用例之间都复位到默认，避免选中态串到下一条。
+  // 界面偏好（主题、导航顺序）与页签的会话内单例状态：用例之间都复位到默认，避免选中态串到下一条。
   localStorage.removeItem(UI_PREFERENCES_KEY)
   useSecurityStore.setState({ tab: 'firewall' })
   useLogsStore.setState({ tab: 'runtime' })

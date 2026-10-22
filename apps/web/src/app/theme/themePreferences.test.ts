@@ -2,10 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   UI_PREFERENCES_KEY,
   clearStoredTheme,
-  readMutedDependencyGuide,
   readStoredNavOrder,
   readStoredTheme,
-  writeMutedDependencyGuide,
   writeStoredNavOrder,
   writeStoredTheme,
 } from './themePreferences'
@@ -49,10 +47,10 @@ describe('界面偏好存储', () => {
     expect(readStoredTheme(storage)).toBeNull()
   })
 
-  it('旧版本遗留的页签字段被忽略：主题与导航顺序照常可读，再写入时整体消失', () => {
+  it('旧版本遗留的页签与依赖引导字段被忽略：主题与导航顺序照常可读，再写入时整体消失', () => {
     const storage = fakeStorage({
       [UI_PREFERENCES_KEY]:
-        '{"version":1,"theme":"dark","savedAt":"2026-09-15T00:00:00.000Z","tabs":{"security":"ssh"},"nav":["/logs"]}',
+        '{"version":1,"theme":"dark","savedAt":"2026-09-15T00:00:00.000Z","tabs":{"security":"ssh"},"guides":{"docker":true,"caddy":true},"nav":["/logs"]}',
     })
 
     expect(readStoredTheme(storage)).toBe('dark')
@@ -60,6 +58,7 @@ describe('界面偏好存储', () => {
 
     writeStoredTheme(storage, 'light', '2026-10-22T00:00:00.000Z')
     expect(JSON.parse(storage.map.get(UI_PREFERENCES_KEY) ?? '{}')).not.toHaveProperty('tabs')
+    expect(JSON.parse(storage.map.get(UI_PREFERENCES_KEY) ?? '{}')).not.toHaveProperty('guides')
   })
 })
 
@@ -102,26 +101,5 @@ describe('导航顺序存储', () => {
     expect(
       readStoredNavOrder(fakeStorage({ [UI_PREFERENCES_KEY]: '{"version":1,"nav":["/",1]}' })),
     ).toEqual(['/'])
-  })
-})
-
-describe('依赖引导不再提示', () => {
-  it('记下之后刷新仍在，改主题或跟随系统都不会丢掉', () => {
-    const storage = fakeStorage()
-    writeMutedDependencyGuide(storage, 'caddy', true, '2026-09-29T00:00:00.000Z')
-    expect(readMutedDependencyGuide(storage, 'caddy')).toBe(true)
-    expect(readMutedDependencyGuide(storage, 'docker')).toBe(false)
-
-    writeStoredTheme(storage, 'dark', '2026-09-29T01:00:00.000Z')
-    expect(readMutedDependencyGuide(storage, 'caddy')).toBe(true)
-    expect(readStoredTheme(storage)).toBe('dark')
-
-    clearStoredTheme(storage)
-    expect(readStoredTheme(storage)).toBeNull()
-    expect(readMutedDependencyGuide(storage, 'caddy')).toBe(true)
-
-    writeMutedDependencyGuide(storage, 'caddy', false, '2026-09-29T02:00:00.000Z')
-    expect(readMutedDependencyGuide(storage, 'caddy')).toBe(false)
-    expect(storage.map.has(UI_PREFERENCES_KEY)).toBe(false)
   })
 })

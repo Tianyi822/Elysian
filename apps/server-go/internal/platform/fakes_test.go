@@ -2,7 +2,6 @@ package platform
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -58,17 +57,6 @@ func (t *fakeTransport) requestCount() int {
 	return len(t.requests)
 }
 
-func (t *fakeTransport) hasDeleteCall() bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	for _, req := range t.requests {
-		if req.Method == http.MethodDelete {
-			return true
-		}
-	}
-	return false
-}
-
 // fakeTransportFactory 恒回同一假件的工厂。
 type fakeTransportFactory struct{ transport seam.DockerTransport }
 
@@ -105,29 +93,6 @@ type fakeCaddyFactory struct{ admin seam.CaddyAdmin }
 
 func (f fakeCaddyFactory) New(string) seam.CaddyAdmin { return f.admin }
 
-// fakeHostRunner 记录脚本的宿主执行器假件；runFn 缺省回已完成。
-type fakeHostRunner struct {
-	mu      sync.Mutex
-	scripts []string
-	runFn   func(script string, timeout time.Duration) (hostCommandResult, error)
-}
-
-func (h *fakeHostRunner) run(script string, timeout time.Duration) (hostCommandResult, error) {
-	h.mu.Lock()
-	h.scripts = append(h.scripts, script)
-	h.mu.Unlock()
-	if h.runFn != nil {
-		return h.runFn(script, timeout)
-	}
-	return hostCommandResult{Code: 0, Output: "ELYSIAN_DONE\n"}, nil
-}
-
-func (h *fakeHostRunner) scriptCount() int {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return len(h.scripts)
-}
-
 // fakeProber 计数的探测假件。
 type fakeProber struct {
 	mu     sync.Mutex
@@ -146,29 +111,6 @@ func (p *fakeProber) callCount() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.calls
-}
-
-// fakeSetup 记录调用的安装编排假件。
-type fakeSetup struct {
-	mu    sync.Mutex
-	calls []string
-	runFn func(target, step string) setupResult
-}
-
-func (s *fakeSetup) Run(target, step string) setupResult {
-	s.mu.Lock()
-	s.calls = append(s.calls, target+":"+step)
-	s.mu.Unlock()
-	if s.runFn != nil {
-		return s.runFn(target, step)
-	}
-	return setupResult{OK: true, Message: "已完成"}
-}
-
-func (s *fakeSetup) callSnapshot() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]string(nil), s.calls...)
 }
 
 // fakeClock 可拨动的时钟（限流窗口确定性测试）。
@@ -297,11 +239,6 @@ func assertJSONEqual(t *testing.T, rec *httptest.ResponseRecorder, want string) 
 	if got := rec.Body.String(); got != want {
 		t.Fatalf("响应体不符：\n got %s\nwant %s", got, want)
 	}
-}
-
-// base64Encode 测试用的标准 base64 编码。
-func base64Encode(value string) string {
-	return base64.StdEncoding.EncodeToString([]byte(value))
 }
 
 // assertStatus 断言状态码。

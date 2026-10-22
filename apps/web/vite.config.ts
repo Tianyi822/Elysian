@@ -33,12 +33,8 @@ const apiProxy = {
   '/api/panel': { target: apiOrigin },
   '/api/health': { target: apiOrigin },
   '/api/security': { target: apiOrigin, timeout: 65_000, proxyTimeout: 65_000 },
-  '/api/platform': {
-    target: apiOrigin,
-    // 依赖安装含 apt 与官方安装脚本，一步可能要数分钟。
-    timeout: 400_000,
-    proxyTimeout: 400_000,
-  },
+  // 与 memory 采样共用同前缀：探测自身受 3s/5s 超时约束，走常规代理时限。
+  '/api/platform': { target: apiOrigin },
   '/api/auth': { target: apiOrigin },
   '/api/files': { target: apiOrigin },
   '/api/logs': { target: apiOrigin },

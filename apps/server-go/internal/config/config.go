@@ -78,8 +78,8 @@ type Config struct {
 	// 宿主回环」保证）。
 	ListenHost string
 
-	// dockerEnvFile 是 Load 时刻 /.dockerenv 是否存在的事实快照；Mode 与
-	// InContainer 都以它为据，避免判定中途文件系统变化。
+	// dockerEnvFile 是 Load 时刻 /.dockerenv 是否存在的事实快照；Mode 以它为据，
+	// 避免判定中途文件系统变化。
 	dockerEnvFile bool
 	// Agent runtime.json 在装配时只读一次，随后所有 Run 共用这一快照。
 	agentRuntime       AgentRuntime
@@ -159,7 +159,3 @@ func (c *Config) HostOpsAvailable() bool {
 	m := c.Mode()
 	return m == ModeDocker || m == ModeBareMetal
 }
-
-// InContainer 报告 /.dockerenv 是否实存（只看文件，不看 env）；platform 域
-// hostShell 分支判据，由装配层算好以 Deps 字段注入，platform 包内不自测文件。
-func (c *Config) InContainer() bool { return c.dockerEnvFile }

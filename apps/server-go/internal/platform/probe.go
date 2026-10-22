@@ -72,7 +72,7 @@ type probeService interface {
 }
 
 // prober 探测实现：两探测并行（最坏耗时 5 秒，串行会放大到 8 秒）；报告只含事实，
-// 前端按「Docker 高于 Caddy」的优先级编排引导。
+// 探测结果只驱动前端状态展示与入口可见性，安装由安装脚本代为完成。
 type prober struct {
 	createTransport func(socketPath string) seam.DockerTransport
 	createCaddy     func(socketPath string) seam.CaddyAdmin

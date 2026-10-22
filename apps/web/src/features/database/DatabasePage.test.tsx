@@ -351,7 +351,7 @@ describe('数据库页面', () => {
     expect(await screen.findByRole('article', { name: 'MariaDB 数据库 mariadb-test' })).toBeInTheDocument()
   })
 
-  it('mock 网关依赖恒 ok：错误态与成功态都不出现安装引导弹窗', async () => {
+  it('mock 网关依赖恒 ok：错误态与成功态都不叠加依赖弹窗', async () => {
     let failed = true
     const gateway = pageGateway({
       list: async () => {

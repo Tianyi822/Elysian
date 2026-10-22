@@ -1,26 +1,17 @@
 import { useGateway } from '../../adapters/GatewayProvider'
 import { CTL_SECONDARY } from '../../components/formControl'
-import { dockerInstallEntryVisible, useDependencyGuideStore } from '../../stores/dependencyGuideStore'
+import { useDependencyProbeStore } from '../../stores/dependencyProbeStore'
 
 /**
- * Docker 页的常驻依赖入口：弹窗可关、可「不再提示」，但入口随探测报告常驻，
- * 与网站页「安装 Caddy」保持同一交互；探测失败时提供重新检测。
+ * Docker 页的依赖重检入口：探测失败时提供「重新检测 Docker」，成功后报告由
+ * 页面状态层与 Caddy 通道展示消费。
  */
 export function DockerDependencyEntry({ className = '' }: { className?: string }) {
   const gateway = useGateway()
-  const report = useDependencyGuideStore((s) => s.report)
-  const status = useDependencyGuideStore((s) => s.status)
-  const rechecking = useDependencyGuideStore((s) => s.rechecking)
-  const recheck = useDependencyGuideStore((s) => s.recheck)
-  const reopenDocker = useDependencyGuideStore((s) => s.reopenDocker)
-
-  if (dockerInstallEntryVisible(report)) {
-    return (
-      <button type="button" className={`${CTL_SECONDARY} ${className}`.trim()} onClick={reopenDocker}>
-        {report?.docker.state === 'error' ? '检查 Docker' : '安装 Docker'}
-      </button>
-    )
-  }
+  const report = useDependencyProbeStore((s) => s.report)
+  const status = useDependencyProbeStore((s) => s.status)
+  const rechecking = useDependencyProbeStore((s) => s.rechecking)
+  const recheck = useDependencyProbeStore((s) => s.recheck)
 
   if (report !== undefined || status !== 'error') return null
 
@@ -29,7 +20,7 @@ export function DockerDependencyEntry({ className = '' }: { className?: string }
       type="button"
       className={`${CTL_SECONDARY} ${className}`.trim()}
       disabled={rechecking}
-      onClick={() => { void recheck(gateway).then(() => reopenDocker()) }}
+      onClick={() => { void recheck(gateway) }}
     >
       {rechecking ? '正在检测 Docker…' : '重新检测 Docker'}
     </button>

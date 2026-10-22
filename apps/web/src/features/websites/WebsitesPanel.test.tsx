@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { resetWebsitesData } from '../../adapters/mock/websitesData'
-import { useDependencyGuideStore } from '../../stores/dependencyGuideStore'
+import { useDependencyProbeStore } from '../../stores/dependencyProbeStore'
 import { useWebsitesStore } from '../../stores/websitesStore'
 import { useWebsiteDeploymentsStore } from '../../stores/websiteDeploymentsStore'
 import { renderApp } from '../../test/renderApp'
@@ -14,7 +14,7 @@ beforeEach(() => {
   resetWebsitesData()
   useWebsitesStore.setState({ status: 'idle', projects: [], createDialogOpen: false, detailTarget: undefined, settingsTarget: undefined, removeTarget: undefined, proxyStatus: { state: 'active', detail: null }, busyProjectIds: [] })
   useWebsiteDeploymentsStore.setState({ tasks: [], loading: false, error: undefined })
-  useDependencyGuideStore.setState({ report: undefined, status: 'idle', dismissedDocker: false, dismissedCaddy: false })
+  useDependencyProbeStore.setState({ report: undefined, status: 'idle', rechecking: false })
 })
 async function open() {
   const gateway = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
@@ -38,7 +38,7 @@ describe('三步构建与部署', () => {
   })
   it.each(['missing', 'error'] as const)('Caddy %s 时隐藏访问区域，提交固定直连', async (state) => {
     const user = userEvent.setup(); const gateway = await open()
-    act(() => useDependencyGuideStore.setState({ report: { docker: { state: 'ok', detail: null }, caddy: { state, detail: '通道不可用' } }, dismissedCaddy: true }))
+    act(() => useDependencyProbeStore.setState({ report: { docker: { state: 'ok', detail: null }, caddy: { state, detail: '通道不可用' } }, status: 'checked' }))
     const submit = vi.spyOn(gateway.websites.deployment!, 'submit')
     await prepare('html', user)
     expect(screen.queryByRole('button', { name: /访问方式：/ })).not.toBeInTheDocument()
