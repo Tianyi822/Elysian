@@ -807,9 +807,9 @@ connect_caddy_safely() {
      ! caddy validate --config "$temporary" --adapter caddyfile >"$PLATFORM_TXN/validate.log" 2>&1 ||
      ! caddy adapt --config "$temporary" --adapter caddyfile >"$PLATFORM_TXN/disk.candidate.json" 2>>"$PLATFORM_TXN/validate.log" ||
      ! platform_helper connect "$PLATFORM_TXN/preflight/disk.json" "$CADDY_ADMIN_SOCKET" "$PLATFORM_TXN/disk.expected.json" ||
-     ! platform_helper equal "$PLATFORM_TXN/disk.expected.json" "$PLATFORM_TXN/disk.candidate.json" >>"$PLATFORM_TXN/validate.log" 2>&1; then
+     ! platform_helper equal-caddyfile "$PLATFORM_TXN/disk.expected.json" "$PLATFORM_TXN/disk.candidate.json" "$CADDYFILE_PATH" "$temporary" >>"$PLATFORM_TXN/validate.log" 2>&1; then
     rm -f "$temporary"
-    warn "Caddy 候选配置校验失败；原文件与运行配置未改动，诊断记录：$PLATFORM_TXN/validate.log"
+    warn "Caddy 候选配置校验或配置保留核对失败；原文件与运行配置未改动，诊断记录：$PLATFORM_TXN/validate.log"
     return 1
   fi
   rm -f "$temporary"
@@ -869,7 +869,7 @@ install_platform_deps() {
   install_caddy
   if ! connect_caddy_safely; then
     restore_platform_transaction || die "Caddy 接入失败且恢复未完成，请先按上方备份指引修复。"
-    die "Caddy 接入或真实 API 验证失败，已恢复原配置；请检查 journalctl -u caddy -n 50 --no-pager 后重跑。"
+    die "Caddy 接入或真实 API 验证失败，已恢复原配置；请检查上方私有恢复记录中的 validate.log 及 journalctl -u caddy -n 50 --no-pager 后重跑。"
   fi
   # 安装时默认声明口径：仅本次新装 Caddy 时放行域名 HTTPS 端口；复用已有 Caddy 不动任何 UFW 规则。
   if [ "${CADDY_INSTALLED_THIS_RUN:-0}" = 1 ]; then

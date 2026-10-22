@@ -74,7 +74,15 @@ fixture_case() (
             printf '{"apps":{}}' >"$FIXTURE/altered.json"
             platform_helper connect "$FIXTURE/altered.json" "$CADDY_ADMIN_SOCKET" "$FIXTURE/adapted.json"
           else platform_helper connect "$FIXTURE/disk.json" "$CADDY_ADMIN_SOCKET" "$FIXTURE/adapted.json"; fi
-          cat "$FIXTURE/adapted.json"
+          bun -e '
+            const config = JSON.parse(await Bun.file(process.argv[1]).text())
+            const handler = config.apps?.http?.servers?.disk?.routes[0]?.handle[0]
+            if (handler) {
+              handler.hide[0] = process.argv[2]
+              if (await Bun.file(process.argv[3]).exists()) handler.hide[1] = "/srv/public"
+            }
+            console.log(JSON.stringify(config))
+          ' "$FIXTURE/adapted.json" "$3" "$FIXTURE/adapt-hide-alter"
         else cat "$FIXTURE/disk.json"; fi ;;
       validate)
         if [ -f "$FIXTURE/marker-fail" ]; then mkdir -p "$PLATFORM_TXN/changed/caddyfile"; fi
@@ -232,6 +240,14 @@ test_disk_route_changes_refused() {
   ! grep -q '^POST ' "$FIXTURE/requests"
 }
 
+test_hidden_path_changes_refused() {
+  : >"$FIXTURE/adapt-hide-alter"
+  if connect_caddy_safely; then return 1; fi
+  restore_platform_transaction || return 1
+  cmp -s "$CADDYFILE_PATH" "$FIXTURE/Caddyfile.original" || return 1
+  ! grep -q '^POST ' "$FIXTURE/requests"
+}
+
 test_failed_marker_prevents_publish() {
   : >"$FIXTURE/marker-fail"
   if connect_caddy_safely; then return 1; fi
@@ -340,7 +356,7 @@ test_lock_order() {
   release_install_locks
 }
 
-for test in test_active_preserves_runtime test_ready_manual_reuse test_manual_unready_refused test_failed_target_rolls_back test_missing_socket_restores_runtime test_apply_failure_restores_runtime test_validation_keeps_original test_restart_failure_restores_stopped test_fresh_invocation_recovers test_restore_failure_retains_backup test_corrupt_json_rejected test_environment_parser_preserves_multiline test_environment_failure_restores_files test_disk_route_changes_refused test_failed_marker_prevents_publish test_linked_unit_refused test_total_verification_deadline test_pending_maintenance_prevents_dependency_mutation test_both_socket_overrides_persist_and_restore test_failed_docker_leaves_caddy_and_environment test_local_caddy_ignores_proxy_environment test_all_configuration_snapshots test_ufw_rollback_keeps_existing_rule test_ufw_rollback_removes_only_new_rule test_lock_order; do
+for test in test_active_preserves_runtime test_ready_manual_reuse test_manual_unready_refused test_failed_target_rolls_back test_missing_socket_restores_runtime test_apply_failure_restores_runtime test_validation_keeps_original test_restart_failure_restores_stopped test_fresh_invocation_recovers test_restore_failure_retains_backup test_corrupt_json_rejected test_environment_parser_preserves_multiline test_environment_failure_restores_files test_disk_route_changes_refused test_hidden_path_changes_refused test_failed_marker_prevents_publish test_linked_unit_refused test_total_verification_deadline test_pending_maintenance_prevents_dependency_mutation test_both_socket_overrides_persist_and_restore test_failed_docker_leaves_caddy_and_environment test_local_caddy_ignores_proxy_environment test_all_configuration_snapshots test_ufw_rollback_keeps_existing_rule test_ufw_rollback_removes_only_new_rule test_lock_order; do
   if fixture_case "$test"; then
     PASS=$((PASS + 1)); printf 'PASS %s\n' "$test"
   else

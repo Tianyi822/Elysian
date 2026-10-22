@@ -103,6 +103,15 @@ function canonical(value) {
   return value
 }
 
+function normalizeCaddyfileSource(value, temporary, original) {
+  if (!value || typeof value !== 'object') return
+  // Caddy 的 file_server 会自动隐藏正在适配的配置文件；临时校验文件不是最终配置路径。
+  if (value.handler === 'file_server' && Array.isArray(value.hide)) {
+    value.hide = value.hide.map(entry => entry === temporary ? original : entry)
+  }
+  for (const entry of Object.values(value)) normalizeCaddyfileSource(entry, temporary, original)
+}
+
 async function waitForCaddy([address, output, expected, attemptsText, intervalText, timeoutText]) {
   const attempts = Number(attemptsText)
   const interval = Number(intervalText) * 1000
@@ -165,11 +174,21 @@ try {
       fs.writeFileSync(args[2], `${JSON.stringify(config)}\n`, { mode: 0o600 })
       break
     }
-    case 'equal':
-      if (JSON.stringify(canonical(readConfig(args[0]))) !== JSON.stringify(canonical(readConfig(args[1])))) {
-        throw new Error('Caddy 实际运行配置与待应用配置不同，不能确认路由及证书保持完整')
+    case 'equal-caddyfile':
+    case 'equal': {
+      const expected = readConfig(args[0])
+      const actual = readConfig(args[1])
+      if (operation === 'equal-caddyfile') {
+        if (!args[2]?.startsWith('/') || !args[3]?.startsWith('/')) throw new Error('Caddyfile 比对需要原文件与临时文件的绝对路径')
+        normalizeCaddyfileSource(actual?.apps?.http?.servers, args[3], args[2])
+      }
+      if (JSON.stringify(canonical(expected)) !== JSON.stringify(canonical(actual))) {
+        throw new Error(operation === 'equal-caddyfile'
+          ? 'Caddy 候选配置改变了管理监听以外的配置，拒绝应用'
+          : 'Caddy 实际运行配置与待应用配置不同，不能确认路由及证书保持完整')
       }
       break
+    }
     case 'service': {
       const match = args[0].match(/argv\[\]=(.*?) ;/)
       const command = match?.[1].split(/\s+/) ?? []

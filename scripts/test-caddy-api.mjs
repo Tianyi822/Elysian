@@ -30,14 +30,17 @@ function handler(channel) {
 
 const tcp = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: handler('tcp') })
 const unix = Bun.serve({ unix: socket, fetch: handler('unix') })
-const disk = { admin: { listen: `127.0.0.1:${tcp.port}` }, apps: { http: { servers: { disk: { listen: [':8080'] } } } } }
+const disk = { admin: { listen: `127.0.0.1:${tcp.port}` }, apps: { http: { servers: { disk: {
+  listen: [':8080'],
+  routes: [{ handle: [{ handler: 'file_server', hide: [path.join(root, 'Caddyfile'), '/srv/private'] }] }],
+} } } } }
 const runtime = structuredClone(disk)
 runtime.apps.http.servers.live = { listen: [':8443'], routes: [{ handle: [{ handler: 'static_response', body: 'existing dynamic route' }] }] }
 runtime.apps.tls = { certificates: { load_pem: [{ certificate: 'private fixture certificate', key: 'private fixture key' }] } }
 fs.writeFileSync(path.join(root, 'disk.json'), JSON.stringify(disk))
 fs.writeFileSync(state, JSON.stringify(runtime))
 fs.writeFileSync(path.join(root, 'runtime.original.json'), JSON.stringify(runtime))
-fs.writeFileSync(path.join(root, 'Caddyfile'), `{\n\tadmin 127.0.0.1:${tcp.port}\n}\n:8080 {\n\trespond disk\n}\n`)
+fs.writeFileSync(path.join(root, 'Caddyfile'), `{\n\tadmin 127.0.0.1:${tcp.port}\n}\n:8080 {\n\troot * /srv\n\tfile_server {\n\t\thide /srv/private\n\t}\n}\n`)
 fs.writeFileSync(path.join(root, 'ready'), '')
 
 function close() {

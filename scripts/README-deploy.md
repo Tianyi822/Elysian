@@ -71,7 +71,9 @@ Docker 与 Caddy 通道分别按安装环境变量 `ELYSIAN_DOCKER_SOCKET`／`EL
 
 目标 Unix socket 的 `GET /config/` 已返回 HTTP 200 和有效 JSON 时直接复用，Caddyfile 不改写、服务不重启；手工管理的 Caddy 也可按此方式复用。目标未就绪时，安装器只自动接入能核对标准 systemd 启动命令、`caddy` 运行身份及真实 Caddyfile，且自启状态为 `enabled`、`disabled` 或 `enabled-runtime` 的服务；其他链接、别名或静态单元由管理员先准备管理通道。从磁盘配置识别旧的本机 Unix 或回环 TCP 管理端点，读取真实运行 JSON，保留动态路由、证书及其余设置，仅调整管理监听。磁盘候选配置须通过 `caddy validate` 和适配后 JSON 比对；活跃服务通过 `POST /load` 原子应用，不重启，原本停止的服务才启动。最终验证目标 API，并将实际运行 JSON 与候选逐项比对；单次请求限 5 秒、响应限 4 MiB、就绪验证总预算 30 秒，包含请求、重试等待、JSON 解析与配置比较。本机管理 API 请求强制绕过终端 HTTP/ALL_PROXY 代理，确保回环 TCP 和 Unix socket 始终直连。无法读取旧运行配置、识别服务或安全解析超过 256 KiB 等配置时在写入前中止，保留原服务，由管理员用既有管理方式准备通道后重跑。API 原文及证书不会输出到终端。
 
-接入事务暂存在 `/var/lib/elysian/.Elysian/backups/platform-install-active` 的 0700 私有目录，记录 Caddyfile、Elysian 专属 systemd drop-in、tmpfiles 和环境文件的原内容、权限、属主及存在性，同时保存原运行 JSON 和服务启停、自启状态。任意应用或验证失败恢复原文件和运行 JSON；管理端点均不可达时尝试恢复文件后重启旧服务并回灌原运行 JSON。恢复失败保留未提交记录并阻止后续安装，修复后重跑；安装启动会在取得同一组维护锁后先恢复未提交事务。恢复成功归档私有恢复记录，依赖成功提交后清理活动事务；后续面板切换失败不拆散已验证的 Caddy 与环境配置。仅本次新装 Caddy 时声明 `80,443/tcp`；复用 Caddy 不动既有 UFW 规则，未提交依赖事务只撤销可确认由本事务新增的精确规则。摘要分别核对 80、443 及 UFW 已启用的 IPv6，受限来源不会误报为公开放行。IP＋端口网站无需 Caddy，面板不申请、签发或续期证书。
+候选 Caddyfile 的适配比对仅将 HTTP `file_server.hide` 中精确等于本次临时配置文件的路径替换为最终 Caddyfile 路径，以处理 Caddy 自动隐藏输入配置文件的行为；显式隐藏项、路由、证书与其他字段仍须逐项一致。真实运行配置比对不做此替换，保持完整 JSON 核对。
+
+接入事务暂存在 `/var/lib/elysian/.Elysian/backups/platform-install-active` 的 0700 私有目录，记录 Caddyfile、Elysian 专属 systemd drop-in、tmpfiles 和环境文件的原内容、权限、属主及存在性，同时保存原运行 JSON 和服务启停、自启状态。任意应用或验证失败恢复原文件和运行 JSON；管理端点均不可达时尝试恢复文件后重启旧服务并回灌原运行 JSON。恢复失败保留未提交记录并阻止后续安装，修复后重跑；安装启动会在取得同一组维护锁后先恢复未提交事务。恢复成功归档私有恢复记录，候选校验详情保存在归档内的 `validate.log`，该日志与 `journalctl -u caddy` 分别用于检查安装器校验和服务运行；依赖成功提交后清理活动事务。后续面板切换失败不拆散已验证的 Caddy 与环境配置。仅本次新装 Caddy 时声明 `80,443/tcp`；复用 Caddy 不动既有 UFW 规则，未提交依赖事务只撤销可确认由本事务新增的精确规则。摘要分别核对 80、443 及 UFW 已启用的 IPv6，受限来源不会误报为公开放行。IP＋端口网站无需 Caddy，面板不申请、签发或续期证书。
 
 安装阶段统一输出状态及真实进度；构建详细输出保存在终端回显的 `/tmp/elysian-build.*` 私有日志，失败回显末 40 行并保留完整日志。双 TTY 且终端支持刷新时显示单行进度，`NO_COLOR` 关闭颜色，`TERM=dumb` 与输出重定向降级为纯文本；无可靠百分比的命令仅使用不定进度。
 
