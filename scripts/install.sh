@@ -53,6 +53,10 @@ FRONTEND_PORT="48100"
 INSTALL_ROOT="/opt/elysian"
 HEALTH_URL="http://127.0.0.1:${PANEL_PORT}/api/health"
 ENV_FILE="/etc/default/elysian"
+PLATFORM_TXN="${STATE_DIR}/.Elysian/backups/platform-install-active"
+CADDY_RUNTIME_DROPIN="/etc/systemd/system/caddy.service.d/elysian-runtime.conf"
+CADDY_TMPFILES="/etc/tmpfiles.d/elysian-caddy.conf"
+UFW_DEFAULTS_FILE="/etc/default/ufw"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -73,14 +77,14 @@ TOTAL_STEPS=0
 
 init_output() { # init_output <stdout 是否 TTY 0|1> <stderr 是否 TTY 0|1>
   local out_tty="$1" err_tty="$2"
-  if [ "$out_tty" = 1 ] && [ "$err_tty" = 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  if [ "$out_tty" = 1 ] && [ "$err_tty" = 1 ] && [ "${TERM:-dumb}" != dumb ] && [ -z "${NO_COLOR:-}" ]; then
     C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'
     C_GREEN=$'\033[32m'; C_RED=$'\033[31m'; C_CYAN=$'\033[36m'; C_YELLOW=$'\033[33m'; C_GRAY=$'\033[90m'
   else
     C_RESET=''; C_BOLD=''; C_GREEN=''; C_RED=''; C_CYAN=''; C_YELLOW=''; C_GRAY=''
   fi
   # 单行刷新（转圈、秒表）只在双 TTY 下启用；NO_COLOR 只关颜色，不关进度指示。
-  if [ "$out_tty" = 1 ] && [ "$err_tty" = 1 ]; then
+  if [ "$out_tty" = 1 ] && [ "$err_tty" = 1 ] && [ "${TERM:-dumb}" != dumb ]; then
     SPINNER_ENABLED=1
   else
     SPINNER_ENABLED=0
@@ -130,15 +134,16 @@ register_stages() {
 }
 
 # 长命令统一出口：输出全部追加进日志文件；TTY 下用单行转圈表示进行中（同一时刻只有这一行在
-# 刷新），非 TTY 保持静默，由调用方按结果打 ✓/✗ 行。调用方须以 if ! run_stage_command … 形式接住返回码。
+# 刷新），非 TTY 保持静默，由调用方按结果打 ✓/✗ 行。退出码同时保留供失败摘要使用。
 run_stage_command() { # run_stage_command <描述> <日志文件> <命令…>
-  local desc="$1" log="$2"
+  local desc="$1" log="$2" rc
   shift 2
   if [ "${SPINNER_ENABLED:-0}" != 1 ]; then
-    "$@" >>"$log" 2>&1
-    return
+    if { "$@"; } >>"$log" 2>&1; then rc=0; else rc=$?; fi
+    RUN_STAGE_EXIT_CODE="$rc"
+    return "$rc"
   fi
-  local pid rc frame_idx=0 spin='|/-\'
+  local pid frame_idx=0 spin='|/-\'
   "$@" >>"$log" 2>&1 &
   pid=$!
   while kill -0 "$pid" 2>/dev/null; do
@@ -146,10 +151,18 @@ run_stage_command() { # run_stage_command <描述> <日志文件> <命令…>
     frame_idx=$((frame_idx + 1))
     sleep 0.3
   done
-  wait "$pid"
-  rc=$?
+  if wait "$pid" 2>>"$log"; then rc=0; else rc=$?; fi
+  RUN_STAGE_EXIT_CODE="$rc"
   clear_progress_line
   return "$rc"
+}
+
+stage_failure_reason() {
+  local rc="${RUN_STAGE_EXIT_CODE:-1}" signal
+  printf '退出码 %s' "$rc"
+  if [ "$rc" -gt 128 ] && signal="$(kill -l "$((rc - 128))" 2>/dev/null)"; then
+    printf '（信号 SIG%s）' "${signal#SIG}"
+  fi
 }
 
 clear_progress_line() { # 擦掉当前单行进度（按终端宽度回车覆盖），非 TTY 不输出
@@ -250,7 +263,7 @@ apt_install_deps() {
   command -v ufw >/dev/null 2>&1 || need+=(ufw)
   [ -x /usr/sbin/sshd ] || need+=(openssh-server)
   command -v ss >/dev/null 2>&1 || need+=(iproute2)
-  command -v runuser >/dev/null 2>&1 || need+=(util-linux)
+  if ! command -v runuser >/dev/null 2>&1 || ! command -v flock >/dev/null 2>&1; then need+=(util-linux); fi
   if [ "${#need[@]}" -eq 0 ]; then
     ok "系统依赖（curl / ca-certificates / unzip / ufw / OpenSSH）已齐备"
     return 0
@@ -296,22 +309,37 @@ docker_api_version_ok() { # docker_api_version_ok <Engine ApiVersion 串>：≥ 
   return 1
 }
 
+docker_engine_socket() {
+  local sock="${ELYSIAN_DOCKER_SOCKET:-}"
+  if [ -z "$sock" ] && [ -r "$ENV_FILE" ]; then
+    sock="$(platform_helper env-read "$ENV_FILE" ELYSIAN_DOCKER_SOCKET)" || return 1
+  fi
+  platform_helper socket "${sock:-/var/run/docker.sock}"
+}
+
+docker_engine() {
+  DOCKER_HOST= DOCKER_CONTEXT= DOCKER_TLS= DOCKER_TLS_VERIFY= DOCKER_CERT_PATH= DOCKER_API_VERSION= \
+    docker --host "unix://${DOCKER_ENGINE_SOCKET:-/var/run/docker.sock}" "$@"
+}
+
 docker_install_or_reuse() {
+  DOCKER_INSTALLED_THIS_RUN=0
   if command -v docker >/dev/null 2>&1; then
-    if docker info >/dev/null 2>&1; then
+    if docker_engine info >/dev/null 2>&1; then
       ok "已安装 Docker（$(docker --version 2>/dev/null || echo 版本未知)），守护进程在响应，复用现有安装"
       return 0
     fi
     info "检测到 docker 命令但守护进程未响应，先尝试直接拉起服务（不改动既有安装）"
     systemctl start docker >/dev/null 2>&1 || true
-    if docker info >/dev/null 2>&1; then
+    if docker_engine info >/dev/null 2>&1; then
       ok "已拉起既有 Docker 守护进程，复用现有安装（未改动任何配置）"
       return 0
     fi
     die "Docker 已安装但守护进程未响应（docker info 失败）。为不破坏既有安装，脚本不会在其上重装；请先排查：journalctl -u docker -n 50 --no-pager，修复后重跑本脚本。"
   fi
   command -v curl >/dev/null 2>&1 || die "缺少 curl，无法下载 Docker 官方安装脚本。"
-  local log tmp="/tmp/elysian-get-docker.sh"
+  local log tmp
+  tmp="$(mktemp /tmp/elysian-get-docker.XXXXXX)" || die "无法创建 Docker 安装脚本暂存文件。"
   log="$(mktemp /tmp/elysian-docker-install.XXXXXX)"
   info "经官方脚本安装 Docker（${DOCKER_INSTALL_URL}；详细输出写入 ${log}）"
   if ! curl -fsSL "$DOCKER_INSTALL_URL" -o "$tmp" >>"$log" 2>&1; then
@@ -325,6 +353,7 @@ docker_install_or_reuse() {
     die "Docker 安装失败，请查看上方日志排查（完整日志：${log}）。常见原因：网络中断、apt 源异常或磁盘空间不足；修复后重跑本脚本，已完成的步骤会自动跳过。"
   fi
   rm -f "$tmp" "$log"
+  DOCKER_INSTALLED_THIS_RUN=1
   ok "Docker 官方安装脚本执行完成"
 }
 
@@ -338,10 +367,10 @@ enable_docker() {
 }
 
 verify_docker() { # 真实验证：守护进程响应 + Engine API ≥ 1.41（面板探测同口径），只认命令存在不算通过
-  docker info >/dev/null 2>&1 \
-    || die "Docker 守护进程未响应（docker info 失败）。排查：journalctl -u docker -n 50 --no-pager；确认 /var/run/docker.sock 存在后重跑。"
+  docker_engine info >/dev/null 2>&1 \
+    || die "Docker 守护进程未响应（目标 ${DOCKER_ENGINE_SOCKET:-/var/run/docker.sock} 的 docker info 失败）。排查：journalctl -u docker -n 50 --no-pager；确认目标 socket 存在后重跑。"
   local api
-  api="$(docker version --format '{{.Server.APIVersion}}' 2>/dev/null || true)"
+  api="$(docker_engine version --format '{{.Server.APIVersion}}' 2>/dev/null || true)"
   if ! docker_api_version_ok "$api"; then
     die "Docker Engine API 版本过低（${api:-未知}），面板要求 ≥ 1.41；请升级 Docker 后重跑本脚本。"
   fi
@@ -351,12 +380,12 @@ verify_docker() { # 真实验证：守护进程响应 + Engine API ≥ 1.41（�
 caddy_admin_socket() { # 面板同款覆盖次序：环境变量 → /etc/default/elysian（EnvironmentFile）→ 缺省 /run/caddy/admin.sock
   local sock="${ELYSIAN_CADDY_SOCKET:-}"
   if [ -z "$sock" ] && [ -r "$ENV_FILE" ]; then
-    sock="$(sed -n 's/^ELYSIAN_CADDY_SOCKET=//p' "$ENV_FILE" 2>/dev/null | tail -n 1 || true)"
-    sock="${sock%\"}"; sock="${sock#\"}"
-    sock="${sock%\'}"; sock="${sock#\'}"
+    sock="$(platform_helper env-read "$ENV_FILE")" || return 1
   fi
-  printf '%s' "${sock:-/run/caddy/admin.sock}"
+  platform_helper socket "${sock:-/run/caddy/admin.sock}"
 }
+
+platform_helper() { bun "$REPO_ROOT/scripts/install-platform.mjs" "$@"; }
 
 trim_line() { # 去除首尾空白（空格与制表符）
   local s="$1"
@@ -443,63 +472,30 @@ caddyfile_ensure_admin() { # caddyfile_ensure_admin <文件内容> <socket 路�
   return 0
 }
 
-configure_caddy_admin() { # configure_caddy_admin <socket 绝对路径> [Caddyfile 路径，缺省 /etc/caddy/Caddyfile]
-  local socket="$1"
-  local file="${2:-$CADDYFILE_PATH}"
-  local bytes content rc tmp backup log
-  # 本次是否实际改写了 Caddyfile（新建或替换都算）：enable_caddy 只在必要时重启服务。
-  CADDYFILE_REWRITTEN=0
-  if [ ! -f "$file" ]; then
-    info "未发现 ${file}，创建仅含管理通道指令的最小 Caddyfile"
-    tmp="$(mktemp)"
-    printf '{\n\tadmin unix/%s\n}\n' "$socket" >"$tmp"
-    if command -v caddy >/dev/null 2>&1 && ! caddy validate --config "$tmp" --adapter caddyfile >/dev/null 2>&1; then
-      rm -f "$tmp"
-      die "新生成的最小 Caddyfile 未通过 caddy validate（管理通道：unix/${socket}），请检查路径后重跑。"
+prepare_caddy_admin_file() { # 只生成候选文件；发布与恢复由平台依赖事务负责。
+  local socket="$1" file="$2" output="$3" content="" bytes rc=0
+  if [ -L "$file" ]; then
+    warn "Caddyfile 是符号链接，无法保证只修改预期文件；请用既有方式配置管理通道后重试"
+    return 1
+  fi
+  if [ -e "$file" ]; then
+    bytes="$(wc -c <"$file" | tr -d '[:space:]')" || return 1
+    if [ "$bytes" -gt "$CADDYFILE_MAX_BYTES" ]; then
+      warn "Caddyfile 过大（${bytes} 字节），拒绝自动改写"
+      return 1
     fi
-    mkdir -p "$(dirname "$file")"
-    install -m 0644 "$tmp" "$file" || { rm -f "$tmp"; die "写入 ${file} 失败。"; }
-    rm -f "$tmp"
-    CADDYFILE_REWRITTEN=1
-    ok "已创建 ${file}（管理通道：unix/${socket}）"
-    return 0
+    content="$(cat "$file")" || return 1
   fi
-  bytes="$(wc -c <"$file" | tr -d '[:space:]')"
-  case "$bytes" in ''|*[!0-9]*) bytes=0 ;; esac
-  if [ "$bytes" -gt "$CADDYFILE_MAX_BYTES" ]; then
-    warn "Caddyfile 过大（${bytes} 字节 > ${CADDYFILE_MAX_BYTES}），拒绝改写，保持原样；如需面板管理通道请人工在全局段声明 admin unix/${socket}"
-    return 0
-  fi
-  content="$(cat "$file")"
-  rc=0
   caddyfile_ensure_admin "$content" "$socket" || rc=$?
-  if [ "$rc" -eq 1 ]; then
-    ok "Caddyfile 已声明管理通道（admin unix/${socket}），零改动"
-    return 0
-  fi
   if [ "$rc" -ge 2 ]; then
-    warn "Caddyfile 全局段没有结束括号，拒绝改写，保持原样；请人工修复后重跑本脚本"
-    return 0
+    warn "Caddyfile 全局段无法可靠解析，拒绝自动改写"
+    return 1
   fi
-  info "改写 Caddyfile：全局段收成恰好一条 admin unix/${socket}（先备份，校验失败恢复原文件）"
-  backup="${file}.elysian.bak"
-  tmp="$(mktemp)"
-  printf '%s' "$CADDYFILE_RESULT" >"$tmp"
-  cp -f "$file" "$backup" || { rm -f "$tmp"; die "备份 ${file} 到 ${backup} 失败。"; }
-  install -m 0644 "$tmp" "$file" || { rm -f "$tmp"; die "写入 ${file} 失败（原文件备份：${backup}）。"; }
-  rm -f "$tmp"
-  if command -v caddy >/dev/null 2>&1; then
-    log="$(mktemp /tmp/elysian-caddy-validate.XXXXXX)"
-    if ! caddy validate --config "$file" --adapter caddyfile >"$log" 2>&1; then
-      mv -f "$backup" "$file"
-      tail -n 40 "$log" >&2
-      die "Caddyfile 校验没有通过，已恢复原文件（校验日志：${log}）。"
-    fi
-    rm -f "$log"
+  if [ "$rc" = 1 ]; then
+    cp -p "$file" "$output"
+  else
+    printf '%s' "$CADDYFILE_RESULT" >"$output"
   fi
-  rm -f "$backup"
-  CADDYFILE_REWRITTEN=1
-  ok "Caddyfile 已更新（管理通道：unix/${socket}），caddy validate 通过"
 }
 
 caddy_install_step() { # caddy_install_step <描述> <命令…>：输出并入 Caddy 安装日志，失败回显后停止
@@ -513,6 +509,17 @@ caddy_install_step() { # caddy_install_step <描述> <命令…>：输出并入 
 }
 
 install_caddy() {
+  local existing_probe
+  if [ -n "${CADDY_ADMIN_SOCKET:-}" ]; then
+    existing_probe="$(mktemp /tmp/elysian-caddy-probe.XXXXXX)" || return 1
+    if platform_caddy_request "unix:$CADDY_ADMIN_SOCKET" GET "$existing_probe"; then
+      rm -f "$existing_probe"
+      CADDY_INSTALLED_THIS_RUN=0
+      ok "既有 Caddy 管理 API 可用，复用已有运行时"
+      return 0
+    fi
+    rm -f "$existing_probe"
+  fi
   if command -v caddy >/dev/null 2>&1; then
     ok "已安装 Caddy（$(caddy version 2>/dev/null || echo 版本未知)），复用现有安装"
     CADDY_INSTALLED_THIS_RUN=0
@@ -520,7 +527,7 @@ install_caddy() {
   fi
   command -v apt-get >/dev/null 2>&1 || die "当前系统没有 apt-get，只能在 Debian 或 Ubuntu 上代为安装 Caddy。"
   CADDY_DEPS_LOG="$(mktemp /tmp/elysian-caddy-install.XXXXXX)"
-  CADDY_DEPS_GPG="/tmp/elysian-caddy.gpg"
+  CADDY_DEPS_GPG="$(mktemp /tmp/elysian-caddy-gpg.XXXXXX)" || die "无法创建 Caddy 公钥暂存文件。"
   info "经 Caddy 官方 cloudsmith apt 源安装（详细输出写入 ${CADDY_DEPS_LOG}）"
   caddy_install_step "刷新 apt 索引" apt-get update
   caddy_install_step "安装签名与传输工具（debian-keyring / gpg 等）" env DEBIAN_FRONTEND=noninteractive apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl gpg
@@ -541,61 +548,338 @@ install_caddy() {
   ok "Caddy 安装完成：$(caddy version 2>/dev/null || echo 版本未知)"
 }
 
-caddy_needs_restart() { # caddy_needs_restart <本次新装 0/1> <Caddyfile 实际改写 0/1> <服务当前 active 0/1>
-  # 复用中的 Caddy 可能正在对外服务网站 HTTPS：只有新装、配置改写或服务未运行时才允许重启。
-  if [ "$1" = 1 ] || [ "$2" = 1 ] || [ "$3" != 1 ]; then return 0; else return 1; fi
+acquire_install_locks() {
+  [ "${INSTALL_LOCKS_HELD:-0}" = 1 ] && return 0
+  local tasks="$STATE_DIR/.Elysian/state/panel-maintenance"
+  mkdir -p "$tasks" || return 1
+  chmod 0700 "$tasks" || return 1
+  exec 9>"$tasks/worker.lock"
+  flock -w 25 -x 9 || { warn "另一项面板维护任务正在执行（等待已达 25 秒）"; return 1; }
+  exec 8>"$tasks/operations.lock"
+  if ! flock -w 90 -x 8; then
+    exec 9>&-
+    warn "面板业务写操作仍在执行（等待已达 90 秒）"
+    return 1
+  fi
+  INSTALL_LOCKS_HELD=1
 }
 
-enable_caddy() { # runtime 目录 drop-in、tmpfiles、daemon-reload、enable；restart 仅在必要时发生
-  command -v systemctl >/dev/null 2>&1 || die "当前系统没有 systemctl，无法设置 Caddy 开机自启。"
-  if ! systemctl cat caddy.service >/dev/null 2>&1; then
-    # 没有 caddy.service 单元：本次新装属异常必须停；复用的手工部署不接管也不中止安装。
-    if [ "${CADDY_INSTALLED_THIS_RUN:-0}" = 1 ]; then
-      die "Caddy 已安装但找不到 caddy.service 系统单元，无法设置开机自启。排查：dpkg -L caddy | grep service 后重跑。"
+release_install_locks() {
+  exec 8>&- 9>&-
+  INSTALL_LOCKS_HELD=0
+}
+
+platform_file_path() {
+  case "$1" in
+    caddyfile) printf '%s' "$CADDYFILE_PATH" ;;
+    runtime) printf '%s' "$CADDY_RUNTIME_DROPIN" ;;
+    tmpfiles) printf '%s' "$CADDY_TMPFILES" ;;
+    environment) printf '%s' "$ENV_FILE" ;;
+    *) return 1 ;;
+  esac
+}
+
+begin_platform_transaction() {
+  [ ! -e "$PLATFORM_TXN" ] || { warn "平台依赖事务尚未恢复：$PLATFORM_TXN"; return 1; }
+  (umask 077; mkdir -p "$PLATFORM_TXN/snapshots" "$PLATFORM_TXN/changed") || return 1
+  chmod 0700 "$PLATFORM_TXN" || return 1
+  local active="unknown" enabled="unknown"
+  if [ "${1:-1}" = 1 ]; then
+    active="$(systemctl show -p ActiveState --value caddy)" || return 1
+    enabled="$(systemctl show -p UnitFileState --value caddy)" || return 1
+    case "$active" in active|inactive|failed) : ;; *) warn "Caddy 服务处于过渡或未知状态，暂不接入"; return 1 ;; esac
+    case "$enabled" in
+      enabled|disabled|enabled-runtime) : ;;
+      *) warn "Caddy 自启状态 ${enabled:-未知} 无法精确恢复，暂不自动接入；请先手工准备管理 API"; return 1 ;;
+    esac
+  fi
+  if [ "$active" = active ]; then active=1; elif [ "$active" != unknown ]; then active=0; fi
+  printf '%s\n' "$active" >"$PLATFORM_TXN/was-active" || return 1
+  printf '%s\n' "$enabled" >"$PLATFORM_TXN/was-enabled" || return 1
+  printf '%s\n' "$CADDY_ADMIN_SOCKET" >"$PLATFORM_TXN/target-socket" || return 1
+  : >"$PLATFORM_TXN/pending" || return 1
+}
+
+platform_make_directory() {
+  local directory="$1"
+  [ -d "$directory" ] && return 0
+  [ ! -e "$directory" ] && [ ! -L "$directory" ] && [ -d "$(dirname "$directory")" ] || return 1
+  printf '%s\n' "$directory" >>"$PLATFORM_TXN/new-directories" || return 1
+  mkdir -m 0755 "$directory"
+}
+
+platform_write_file() { # 原文件快照先于变更标记，标记先于原子发布，便于任意中断点恢复。
+  local key="$1" source="$2" mode="$3" file snapshot temporary
+  file="$(platform_file_path "$key")" || return 1
+  if [ -f "$file" ] && cmp -s "$file" "$source"; then return 0; fi
+  [ ! -L "$file" ] && { [ ! -e "$file" ] || [ -f "$file" ]; } || return 1
+  snapshot="$PLATFORM_TXN/snapshots/$key"
+  mkdir -p "$snapshot" || return 1
+  if [ ! -f "$snapshot/ready" ]; then
+    if [ -f "$file" ]; then
+      cp -p "$file" "$snapshot/original" || return 1
+      : >"$snapshot/present" || return 1
     fi
-    if [ "${CADDYFILE_REWRITTEN:-0}" = 1 ]; then
-      warn "复用的 Caddy 无 systemd 单元且 Caddyfile 已改写：请用既有管理方式重启或 caddy reload 使管理通道生效"
-    else
-      skip "复用非 systemd 管理的 Caddy，不接管服务（开机自启与重启由既有方式负责）"
-    fi
+    : >"$snapshot/ready" || return 1
+  fi
+  platform_make_directory "$(dirname "$file")" || return 1
+  temporary="$(mktemp "$(dirname "$file")/.elysian-platform.XXXXXX")" || return 1
+  if [ -f "$file" ]; then
+    cp -p "$file" "$temporary" || { rm -f "$temporary"; return 1; }
+  else
+    chmod "$mode" "$temporary" || { rm -f "$temporary"; return 1; }
+  fi
+  if ! cat "$source" >"$temporary"; then rm -f "$temporary"; return 1; fi
+  if ! : >"$PLATFORM_TXN/changed/$key"; then rm -f "$temporary"; return 1; fi
+  mv -f "$temporary" "$file" || { rm -f "$temporary"; return 1; }
+}
+
+platform_caddy_request() { # 响应正文可能含证书，永不写入终端或普通安装日志。
+  local endpoint="$1" method="$2" output="$3" input="${4:-}" status
+  local -a options=(-sS --noproxy '*' --connect-timeout 2 --max-time 5 --max-filesize 4194304 -X "$method" -o "$output" -w '%{http_code}')
+  case "$endpoint" in
+    unix:/*) options+=(--unix-socket "${endpoint#unix:}" 'http://localhost/config/') ;;
+    tcp:*) options+=("http://${endpoint#tcp:}/config/") ;;
+    *) return 1 ;;
+  esac
+  if [ "$method" = POST ]; then
+    options[${#options[@]}-1]="${options[${#options[@]}-1]%config/}load"
+    options+=(-H 'Content-Type: application/json' --data-binary "@$input")
+  fi
+  status="$(curl "${options[@]}" 2>/dev/null)" || return 1
+  if [ "$method" = GET ]; then
+    [ "$status" = 200 ] || return 1
+    platform_helper validate "$output" 2>/dev/null
+  else
+    case "$status" in 2??) return 0 ;; *) return 1 ;; esac
+  fi
+}
+
+wait_caddy_api() {
+  platform_helper wait "$1" "$2" "${3:-}" "${CADDY_VERIFY_ATTEMPTS:-10}" "${CADDY_VERIFY_INTERVAL:-1}" "${CADDY_VERIFY_TIMEOUT:-30}"
+}
+
+restore_platform_transaction() {
+  [ -d "$PLATFORM_TXN" ] || return 0
+  if [ -f "$PLATFORM_TXN/committed" ] || [ ! -f "$PLATFORM_TXN/pending" ]; then
+    rm -rf "$PLATFORM_TXN"
     return 0
   fi
-  mkdir -p /etc/systemd/system/caddy.service.d /etc/tmpfiles.d
-  printf '%s\n' '[Service]' 'RuntimeDirectory=caddy' 'RuntimeDirectoryMode=0755' >/etc/systemd/system/caddy.service.d/elysian-runtime.conf
-  printf '%s\n' 'd /run/caddy 0755 caddy caddy -' >/etc/tmpfiles.d/elysian-caddy.conf
-  if command -v systemd-tmpfiles >/dev/null 2>&1; then
-    systemd-tmpfiles --create /etc/tmpfiles.d/elysian-caddy.conf || true
+  warn "恢复未提交的平台依赖配置事务：$PLATFORM_TXN"
+  local key file snapshot temporary result=0 old_endpoint target_socket was_enabled directory
+  for key in caddyfile runtime tmpfiles environment; do
+    [ -f "$PLATFORM_TXN/changed/$key" ] || continue
+    file="$(platform_file_path "$key")" || { result=1; continue; }
+    snapshot="$PLATFORM_TXN/snapshots/$key"
+    if [ ! -f "$snapshot/ready" ]; then result=1; continue; fi
+    if [ -f "$snapshot/present" ]; then
+      temporary="$(mktemp "$(dirname "$file")/.elysian-restore.XXXXXX")" || { result=1; continue; }
+      if cp -p "$snapshot/original" "$temporary" && mv -f "$temporary" "$file"; then :; else rm -f "$temporary"; result=1; fi
+    else
+      rm -f "$file" || result=1
+    fi
+  done
+  if [ -f "$PLATFORM_TXN/changed/runtime" ] || [ -f "$PLATFORM_TXN/changed/tmpfiles" ]; then
+    systemctl daemon-reload || result=1
   fi
-  systemctl daemon-reload || die "systemctl daemon-reload 失败。"
-  systemctl enable caddy >/dev/null 2>&1 || die "设置 Caddy 开机自启失败（systemctl enable caddy）。"
-  local active=0
-  systemctl is-active --quiet caddy && active=1
-  if caddy_needs_restart "${CADDY_INSTALLED_THIS_RUN:-0}" "${CADDYFILE_REWRITTEN:-0}" "$active"; then
-    systemctl restart caddy >/dev/null 2>&1 || die "重启 Caddy 服务失败。排查：journalctl -u caddy -n 50 --no-pager。"
-    systemctl is-active --quiet caddy || die "Caddy 服务未处于 active 状态。排查：journalctl -u caddy -n 50 --no-pager。"
-    ok "Caddy 已启动并设为开机自启（管理通道目录 /run/caddy 由 systemd RuntimeDirectory 与 tmpfiles 维护）"
+  if [ -f "$PLATFORM_TXN/runtime-changed" ]; then
+    old_endpoint="$(cat "$PLATFORM_TXN/old-endpoint")"
+    target_socket="$(cat "$PLATFORM_TXN/target-socket")"
+    if ! platform_caddy_request "$old_endpoint" POST "$PLATFORM_TXN/restore-response" "$PLATFORM_TXN/runtime.original.json" &&
+       ! platform_caddy_request "unix:$target_socket" POST "$PLATFORM_TXN/restore-response" "$PLATFORM_TXN/runtime.original.json"; then
+      systemctl restart caddy >/dev/null 2>&1 || result=1
+      if ! wait_caddy_api "$old_endpoint" "$PLATFORM_TXN/restored.json" ||
+         ! platform_caddy_request "$old_endpoint" POST "$PLATFORM_TXN/restore-response" "$PLATFORM_TXN/runtime.original.json"; then result=1; fi
+    fi
+    wait_caddy_api "$old_endpoint" "$PLATFORM_TXN/restored.json" "$PLATFORM_TXN/runtime.original.json" || result=1
+  fi
+  if [ -f "$PLATFORM_TXN/service-changed" ]; then
+    if [ "$(cat "$PLATFORM_TXN/was-active")" = 0 ]; then systemctl stop caddy >/dev/null 2>&1 || result=1; fi
+    was_enabled="$(cat "$PLATFORM_TXN/was-enabled")"
+    case "$was_enabled" in
+      enabled) systemctl enable caddy >/dev/null 2>&1 || result=1 ;;
+      enabled-runtime) systemctl disable caddy >/dev/null 2>&1 && systemctl enable --runtime caddy >/dev/null 2>&1 || result=1 ;;
+      disabled) systemctl disable caddy >/dev/null 2>&1 || result=1 ;;
+      *) result=1 ;;
+    esac
+  fi
+  if [ -f "$PLATFORM_TXN/new-https-rule" ]; then
+    local current_rules
+    if current_rules="$(ufw show added)"; then
+      if printf '%s\n' "$current_rules" | grep -Eq '^ufw allow 80,443/tcp( comment .*)?$'; then
+        ufw --force delete allow 80,443/tcp >/dev/null 2>&1 || result=1
+      fi
+    else
+      result=1
+    fi
+  fi
+  if [ -f "$PLATFORM_TXN/new-directories" ]; then
+    while IFS= read -r directory; do rmdir "$directory" 2>/dev/null || true; done <"$PLATFORM_TXN/new-directories"
+  fi
+  if [ "$result" != 0 ]; then
+    warn "平台依赖恢复未完成；备份已保留。请核对 Caddy 日志与 ${PLATFORM_TXN}，修复后重跑安装程序"
+    return 1
+  fi
+  local restored_record="${PLATFORM_TXN}-restored-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  mv "$PLATFORM_TXN" "$restored_record" || return 1
+  ok "原 Caddy 配置、运行路由与环境设置已恢复（私有恢复记录：${restored_record}）"
+}
+
+commit_platform_transaction() {
+  : >"$PLATFORM_TXN/committed" || return 1
+  rm -rf "$PLATFORM_TXN"
+}
+
+persist_platform_sockets() {
+  local key value
+  for key in ELYSIAN_DOCKER_SOCKET ELYSIAN_CADDY_SOCKET; do
+    value="${!key:-}"
+    [ -n "$value" ] || continue
+    platform_helper env-write "$ENV_FILE" "$value" "$PLATFORM_TXN/environment.candidate" "$key" || return 1
+    platform_write_file environment "$PLATFORM_TXN/environment.candidate" 0600 || return 1
+  done
+}
+
+connect_caddy_safely() {
+  local work exec_start service_user service_group old_endpoint parent temporary active
+  work="$(mktemp -d /tmp/elysian-caddy-check.XXXXXX)" || return 1
+  chmod 0700 "$work" || { rm -rf "$work"; return 1; }
+  if platform_caddy_request "unix:$CADDY_ADMIN_SOCKET" GET "$work/ready.json"; then
+    rm -rf "$work"
+    begin_platform_transaction 0 || return 1
+    persist_platform_sockets || return 1
+    CADDY_API_VERIFIED=1
+    ok "Caddy 管理 API 已可用，复用现有运行配置（未改写 Caddyfile、未重启）"
+    return 0
+  fi
+  if ! systemctl cat caddy.service >/dev/null 2>&1; then
+    rm -rf "$work"
+    warn "Caddy 目标管理 API 未就绪，且没有可核对的 systemd 单元；请用既有管理方式配置并启动 unix/${CADDY_ADMIN_SOCKET} 后重跑"
+    return 1
+  fi
+  if [ -L "$CADDY_ADMIN_SOCKET" ] || { [ -e "$CADDY_ADMIN_SOCKET" ] && [ ! -S "$CADDY_ADMIN_SOCKET" ]; }; then
+    rm -rf "$work"
+    warn "目标 Caddy socket 路径已被其他文件或符号链接占用，拒绝覆盖"
+    return 1
+  fi
+  exec_start="$(systemctl show -p ExecStart --value caddy)" || { rm -rf "$work"; return 1; }
+  service_user="$(systemctl show -p User --value caddy)" || { rm -rf "$work"; return 1; }
+  service_group="$(systemctl show -p Group --value caddy)" || { rm -rf "$work"; return 1; }
+  if [ "$service_user" != caddy ] || { [ -n "$service_group" ] && [ "$service_group" != caddy ]; } ||
+     ! platform_helper service "$exec_start" "$CADDYFILE_PATH"; then
+    rm -rf "$work"
+    warn "无法保证既有 Caddy 的启动方式、运行身份与配置文件一致，未改动任何配置；请先手工准备管理 API"
+    return 1
+  fi
+  if [ -L "$CADDYFILE_PATH" ] || [ ! -f "$CADDYFILE_PATH" ] ||
+     [ "$(wc -c <"$CADDYFILE_PATH" | tr -d '[:space:]')" -gt "$CADDYFILE_MAX_BYTES" ] ||
+     ! caddy adapt --config "$CADDYFILE_PATH" --adapter caddyfile >"$work/disk.json" 2>"$work/adapt.log" ||
+     ! old_endpoint="$(platform_helper endpoint "$work/disk.json")"; then
+    rm -rf "$work"
+    warn "无法安全识别磁盘 Caddyfile 的旧管理端点，拒绝自动接入"
+    return 1
+  fi
+  active="$(systemctl show -p ActiveState --value caddy)" || { rm -rf "$work"; return 1; }
+  case "$active" in active|inactive|failed) : ;; *) rm -rf "$work"; return 1 ;; esac
+  if [ "$active" = active ]; then
+    if ! platform_caddy_request "$old_endpoint" GET "$work/runtime.json"; then
+      rm -rf "$work"
+      warn "无法读取已有 Caddy 的真实运行配置，不能保证保留路由及证书；请先修复旧管理 API 后重试"
+      return 1
+    fi
+  fi
+  begin_platform_transaction || { rm -rf "$work"; return 1; }
+  if { [ "$active" = active ] && [ "$(cat "$PLATFORM_TXN/was-active")" != 1 ]; } ||
+     { [ "$active" != active ] && [ "$(cat "$PLATFORM_TXN/was-active")" != 0 ]; }; then
+    rm -rf "$work"
+    warn "Caddy 服务状态在预检期间发生变化，请稍后重试"
+    return 1
+  fi
+  mv "$work" "$PLATFORM_TXN/preflight" || return 1
+  printf '%s\n' "$old_endpoint" >"$PLATFORM_TXN/old-endpoint" || return 1
+  if [ -f "$PLATFORM_TXN/preflight/runtime.json" ]; then
+    cp -p "$PLATFORM_TXN/preflight/runtime.json" "$PLATFORM_TXN/runtime.original.json" || return 1
+    platform_helper connect "$PLATFORM_TXN/runtime.original.json" "$CADDY_ADMIN_SOCKET" "$PLATFORM_TXN/runtime.candidate.json" || return 1
+  fi
+  prepare_caddy_admin_file "$CADDY_ADMIN_SOCKET" "$CADDYFILE_PATH" "$PLATFORM_TXN/Caddyfile.candidate" || return 1
+  temporary="$(mktemp "$(dirname "$CADDYFILE_PATH")/.elysian-validate.XXXXXX")" || return 1
+  if ! cp "$PLATFORM_TXN/Caddyfile.candidate" "$temporary" ||
+     ! caddy validate --config "$temporary" --adapter caddyfile >"$PLATFORM_TXN/validate.log" 2>&1 ||
+     ! caddy adapt --config "$temporary" --adapter caddyfile >"$PLATFORM_TXN/disk.candidate.json" 2>>"$PLATFORM_TXN/validate.log" ||
+     ! platform_helper connect "$PLATFORM_TXN/preflight/disk.json" "$CADDY_ADMIN_SOCKET" "$PLATFORM_TXN/disk.expected.json" ||
+     ! platform_helper equal "$PLATFORM_TXN/disk.expected.json" "$PLATFORM_TXN/disk.candidate.json" >>"$PLATFORM_TXN/validate.log" 2>&1; then
+    rm -f "$temporary"
+    warn "Caddy 候选配置校验失败；原文件与运行配置未改动，诊断记录：$PLATFORM_TXN/validate.log"
+    return 1
+  fi
+  rm -f "$temporary"
+  parent="$(dirname "$CADDY_ADMIN_SOCKET")"
+  if [ ! -d "$parent" ]; then
+    platform_make_directory "$parent" || return 1
+    chown caddy:caddy "$parent" || return 1
+  fi
+  runuser -u caddy -- test -w "$parent" || { warn "Caddy 无权写入目标 socket 目录：$parent"; return 1; }
+  if [[ "$parent" == /run/* ]]; then
+    printf '[Service]\nRuntimeDirectory=%s\nRuntimeDirectoryMode=0755\n' "${parent#/run/}" >"$PLATFORM_TXN/runtime.candidate" || return 1
+    if [ -f "$CADDY_RUNTIME_DROPIN" ] && ! cmp -s "$CADDY_RUNTIME_DROPIN" "$PLATFORM_TXN/runtime.candidate" &&
+       [ "$(cat "$CADDY_RUNTIME_DROPIN")" != "$(printf '[Service]\nRuntimeDirectory=caddy\nRuntimeDirectoryMode=0755\n')" ]; then
+      warn "既有 Elysian Caddy drop-in 包含自定义内容，拒绝覆盖：$CADDY_RUNTIME_DROPIN"
+      return 1
+    fi
+    platform_write_file runtime "$PLATFORM_TXN/runtime.candidate" 0644 || return 1
+  fi
+  printf 'd %s 0755 caddy caddy -\n' "$parent" >"$PLATFORM_TXN/tmpfiles.candidate" || return 1
+  if [ -f "$CADDY_TMPFILES" ] && ! cmp -s "$CADDY_TMPFILES" "$PLATFORM_TXN/tmpfiles.candidate" &&
+     [ "$(cat "$CADDY_TMPFILES")" != 'd /run/caddy 0755 caddy caddy -' ]; then
+    warn "既有 Elysian Caddy tmpfiles 包含自定义内容，拒绝覆盖：$CADDY_TMPFILES"
+    return 1
+  fi
+  platform_write_file tmpfiles "$PLATFORM_TXN/tmpfiles.candidate" 0644 || return 1
+  platform_write_file caddyfile "$PLATFORM_TXN/Caddyfile.candidate" 0644 || return 1
+  persist_platform_sockets || return 1
+  systemctl daemon-reload || return 1
+  : >"$PLATFORM_TXN/service-changed" || return 1
+  if [ -f "$PLATFORM_TXN/runtime.original.json" ]; then
+    : >"$PLATFORM_TXN/runtime-changed" || return 1
+    platform_caddy_request "$old_endpoint" POST "$PLATFORM_TXN/load-response" "$PLATFORM_TXN/runtime.candidate.json" || return 1
+    wait_caddy_api "unix:$CADDY_ADMIN_SOCKET" "$PLATFORM_TXN/verified.json" "$PLATFORM_TXN/runtime.candidate.json" || return 1
   else
-    ok "复用已有 Caddy：服务保持运行未重启，开机自启已确认（drop-in 与 tmpfiles 幂等就位）"
+    systemctl start caddy >/dev/null 2>&1 || return 1
+    wait_caddy_api "unix:$CADDY_ADMIN_SOCKET" "$PLATFORM_TXN/verified.json" || return 1
   fi
+  systemctl enable caddy >/dev/null 2>&1 || return 1
+  systemctl is-active --quiet caddy || return 1
+  CADDY_API_VERIFIED=1
+  ok "Caddy 管理 API 验证通过，原运行路由与证书保持完整，已确认开机自启"
 }
 
 install_platform_deps() {
+  HOME="$STATE_DIR" "$BUILD_DIR/elysian" maintenance-install-check || die "平台依赖安装预检失败，原服务与平台依赖未改动。"
   info "Docker：容器、数据库与网站功能的运行时依赖"
+  DOCKER_ENGINE_SOCKET="$(docker_engine_socket)" || die "无法解析 Docker socket，请检查 ELYSIAN_DOCKER_SOCKET 与 $ENV_FILE。"
   docker_install_or_reuse
-  enable_docker
+  if [ "${DOCKER_INSTALLED_THIS_RUN:-0}" = 1 ]; then
+    enable_docker
+  else
+    info "既有 Docker 自启状态：$(systemctl is-enabled docker 2>/dev/null || true)（仅核对，未修改）"
+  fi
   verify_docker
   info "Caddy：网站域名 HTTPS 的反代依赖"
-  local socket
-  socket="$(caddy_admin_socket)"
+  CADDY_ADMIN_SOCKET="$(caddy_admin_socket)" || die "无法解析 Caddy 管理 socket，请检查 ELYSIAN_CADDY_SOCKET 与 $ENV_FILE。"
   install_caddy
-  case "$socket" in
-    /*) configure_caddy_admin "$socket" ;;
-    *) warn "管理通道路径无效（ELYSIAN_CADDY_SOCKET=${socket}，须为绝对路径），已跳过 Caddyfile 改写；修正后重跑本脚本" ;;
-  esac
-  CADDY_ADMIN_SOCKET="$socket"
+  if ! connect_caddy_safely; then
+    restore_platform_transaction || die "Caddy 接入失败且恢复未完成，请先按上方备份指引修复。"
+    die "Caddy 接入或真实 API 验证失败，已恢复原配置；请检查 journalctl -u caddy -n 50 --no-pager 后重跑。"
+  fi
   # 安装时默认声明口径：仅本次新装 Caddy 时放行域名 HTTPS 端口；复用已有 Caddy 不动任何 UFW 规则。
   if [ "${CADDY_INSTALLED_THIS_RUN:-0}" = 1 ]; then
     command -v ufw >/dev/null 2>&1 || die "未找到 ufw，无法声明 Caddy 网站 HTTPS 端口放行。"
+    local added_rules
+    added_rules="$(ufw show added)" || die "无法读取既有 UFW 规则，拒绝未经备份地放行 Caddy 端口。"
+    printf '%s\n' "$added_rules" >"$PLATFORM_TXN/ufw.added.original" || die "无法保存 Caddy 端口规则核对记录。"
+    if ! printf '%s\n' "$added_rules" | grep -Eq '^ufw allow 80,443/tcp( comment .*)?$'; then
+      : >"$PLATFORM_TXN/new-https-rule" || die "无法保存 Caddy 端口规则变更记录。"
+    fi
     ufw allow 80,443/tcp >/dev/null 2>&1 \
       || die "放行 Caddy 网站 HTTPS 端口（80,443/tcp）失败，请检查 UFW 后重跑。"
     CADDY_HTTPS_DECLARED=1
@@ -603,7 +887,7 @@ install_platform_deps() {
   else
     skip "复用已有 Caddy，未改动任何 UFW 规则（域名 HTTPS 需自行确认 80,443/tcp 可达）"
   fi
-  enable_caddy
+  commit_platform_transaction || die "提交平台依赖配置事务失败。"
 }
 
 # ---------- 工具链（缺则官方渠道安装；已有且满足版本则复用） ----------
@@ -719,6 +1003,8 @@ EOF
 
 build_release() {
   info "构建需要下载依赖并编译前后端，可能需要几分钟"
+  BUILD_LOG="$(mktemp /tmp/elysian-build.XXXXXX)"
+  info "构建完整日志：$BUILD_LOG"
   BUILD_DIR="$(mktemp -d)"
   BUILD_COMMIT="unknown"
   if command -v git >/dev/null 2>&1; then
@@ -728,18 +1014,24 @@ build_release() {
     fi
   fi
   if [ -n "$SMOKE" ]; then
-    bash "$REPO_ROOT/scripts/build-release.sh" "$REPO_ROOT" "$BUILD_DIR" "$BUILD_COMMIT" || die "源码构建失败，原面板未停服。"
+    if ! run_stage_command "构建 Elysian" "$BUILD_LOG" bash "$REPO_ROOT/scripts/build-release.sh" "$REPO_ROOT" "$BUILD_DIR" "$BUILD_COMMIT"; then
+      tail -n 40 "$BUILD_LOG" >&2
+      die "源码构建失败，$(stage_failure_reason)，原面板未停服（完整日志：$BUILD_LOG）。"
+    fi
   else
     ensure_accounts
     BUILD_SOURCE="$(mktemp -d /var/tmp/elysian-install-source.XXXXXX)"
     tar -C "$REPO_ROOT" --exclude=.git --exclude=node_modules --exclude=dist --exclude=.env --exclude='.env.*' --exclude=.codex --exclude=.zcode --exclude=.agents --exclude=.Elysian -cf - . | tar -C "$BUILD_SOURCE" -xf -
     install -m 0644 "$REPO_ROOT/scripts/build-release.sh" "$BUILD_DIR/build-release.sh"
     chown -R elysian-build:elysian-build "$BUILD_SOURCE" "$BUILD_DIR"
-    runuser -u elysian-build -- env HOME="$BUILD_SOURCE" PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin \
+    if ! run_stage_command "构建 Elysian" "$BUILD_LOG" runuser -u elysian-build -- env HOME="$BUILD_SOURCE" PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin \
       GOPROXY="$GOPROXY" BUN_CONFIG_REGISTRY="$BUN_CONFIG_REGISTRY" \
-      bash "$BUILD_DIR/build-release.sh" "$BUILD_SOURCE" "$BUILD_DIR" "$BUILD_COMMIT" || die "源码构建失败，原面板未停服。"
+      bash "$BUILD_DIR/build-release.sh" "$BUILD_SOURCE" "$BUILD_DIR" "$BUILD_COMMIT"; then
+      tail -n 40 "$BUILD_LOG" >&2
+      die "源码构建失败，$(stage_failure_reason)，原面板未停服（完整日志：$BUILD_LOG）。"
+    fi
   fi
-  ok "构建完成"
+  ok "构建完成（完整日志：$BUILD_LOG）"
 }
 
 install_binary() {
@@ -913,6 +1205,45 @@ summary_section() { # 摘要分区标题：对齐的短分隔线，窄终端可�
   printf '\n%s── %s ──────────────────────%s\n' "${C_BOLD:-}" "$1" "${C_RESET:-}"
 }
 
+ufw_public_tcp_rule() { # 只认明确公开入站规则；受限来源、范围或未知格式不推断为全网放行。
+  local status="$1" port="$2" family="$3"
+  printf '%s\n' "$status" | awk -v port="$port" -v family="$family" '
+    {
+      ipv6 = ($2 == "(v6)")
+      if ((family == "6") != ipv6) next
+      action = ipv6 ? 3 : 2
+      if ($action != "ALLOW" || $(action + 1) == "OUT") next
+      source = action + 1
+      if ($source == "IN") source++
+      if ($source != "Anywhere") next
+      split($1, target, "/")
+      if (target[2] != "tcp") next
+      count = split(target[1], ports, ",")
+      for (entry = 1; entry <= count; entry++) if (ports[entry] == port) found = 1
+    }
+    END { exit !found }
+  '
+}
+
+ufw_https_summary() {
+  local status="$1" port state="" ipv6=""
+  if [ -r "$UFW_DEFAULTS_FILE" ]; then
+    ipv6="$(sed -n 's/^[[:space:]]*IPV6=//p' "$UFW_DEFAULTS_FILE" | tail -n 1)"
+  fi
+  for port in 80 443; do
+    [ -z "$state" ] || state+="；"
+    state+="${port}/tcp IPv4 "
+    if ufw_public_tcp_rule "$status" "$port" 4; then state+="已放行"; else state+="未确认公开放行"; fi
+    case "$ipv6" in
+      yes)
+        if ufw_public_tcp_rule "$status" "$port" 6; then state+="、IPv6 已放行"; else state+="、IPv6 未确认公开放行"; fi ;;
+      no) state+="、UFW IPv6 未启用" ;;
+      *) state+="、UFW IPv6 配置未知" ;;
+    esac
+  done
+  printf '%s' "$state"
+}
+
 print_summary() {
   # 事实全部现场实测；未验证或不可得的一律如实标注，绝不把占位写成「已启用」。
   local server_ip svc_state svc_enabled ssh_state ufw_out ufw_state https_state
@@ -929,19 +1260,15 @@ print_summary() {
   fi
   if command -v caddy >/dev/null 2>&1; then
     caddy_line="$(caddy version 2>/dev/null || echo 已安装)；服务 $(systemctl is-active caddy 2>/dev/null || echo 未知)"
+  elif [ "${CADDY_API_VERIFIED:-0}" = 1 ]; then
+    caddy_line="管理 API 已验证可用（外部管理，未发现 caddy CLI）"
   else
     caddy_line="未安装"
   fi
   ufw_out="$(ufw status 2>/dev/null || true)"
   ufw_state="$(printf '%s\n' "$ufw_out" | sed -n 's/^Status: //p')"
   ufw_state="${ufw_state:-未知}"
-  if printf '%s\n' "$ufw_out" | grep -Eq '^(80,443/tcp|80/tcp|443/tcp)( \(v6\))?[[:space:]]+ALLOW'; then
-    https_state="80,443/tcp 已放行（ufw status 实测）"
-  elif [ "${CADDY_HTTPS_DECLARED:-0}" = 1 ]; then
-    https_state="安装时已声明放行 80,443/tcp，但 ufw status 未见该规则，请人工核对：ufw status | grep -E '80|443'"
-  else
-    https_state="本脚本未放行（复用已有 Caddy 时不动 UFW 规则）；域名 HTTPS 需 80/443 可达"
-  fi
+  https_state="$(ufw_https_summary "$ufw_out")"
 
   printf '\n%s%s✓ Elysian 部署完成%s（构建版本：%s）\n' "${C_GREEN:-}" "${C_BOLD:-}" "${C_RESET:-}" "${BUILD_COMMIT:-unknown}"
   summary_section "部署状态"
@@ -1029,6 +1356,9 @@ smoke_run() {
 
 install_exit() {
   local result=$?
+  if [ "${INSTALL_LOCKS_HELD:-0}" = 1 ] && [ -d "$PLATFORM_TXN" ]; then
+    restore_platform_transaction || result=1
+  fi
   if [ "${INSTALL_ACTIVATED:-0}" = 1 ] && [ "${INSTALL_COMMITTED:-0}" != 1 ]; then
     info "安装未完成，恢复原程序、数据与本次涉及的面板规则"
     systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
@@ -1060,13 +1390,8 @@ install_exit() {
 }
 
 prepare_install_switch() {
-  local tasks="$STATE_DIR/.Elysian/state/panel-maintenance"
-  mkdir -p "$tasks" "$INSTALL_ROOT/releases"
-  chmod 0700 "$tasks"
-  exec 9>"$tasks/worker.lock"
-  flock -n 9 || die "另一项面板维护任务正在执行。"
-  exec 8>"$tasks/operations.lock"
-  flock -x 8
+  acquire_install_locks || die "无法取得安装切换维护锁。"
+  mkdir -p "$INSTALL_ROOT/releases"
   HOME="$STATE_DIR" "$BUILD_DIR/elysian" maintenance-install-check || die "安装切换预检失败，原面板继续运行。"
   INSTALL_BACKUP="$STATE_DIR/.Elysian/backups/install-$(date -u +%Y%m%dT%H%M%SZ)-$$"
   mkdir -p "$INSTALL_BACKUP/data"
@@ -1111,11 +1436,21 @@ main() {
   fi
   [ "${1:-}" = "" ] || die "未知参数：$1。用法：bash scripts/install.sh [--uninstall]（环境变量 ELYSIAN_SMOKE=1 进入冒烟模式）。"
   trap install_exit EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   printf '\n%sElysian 安装程序%s\n  源码目录：%s\n' "${C_BOLD:-}" "${C_RESET:-}" "$REPO_ROOT"
   section "检查运行环境"
   require_preflight
   section "安装系统依赖"
   apt_install_deps
+  if [ -z "$SMOKE" ]; then
+    acquire_install_locks || die "无法取得平台依赖恢复维护锁。"
+    if [ -d "$PLATFORM_TXN" ]; then
+      command -v bun >/dev/null 2>&1 || die "存在待恢复的平台依赖事务，但找不到 Bun；请先恢复原 Bun 后重跑（备份：$PLATFORM_TXN）。"
+      restore_platform_transaction || die "平台依赖事务恢复未完成，请先按备份指引修复。"
+    fi
+    release_install_locks
+  fi
   section "准备 Go 工具链"
   install_go
   section "准备 Bun 工具链"
@@ -1129,6 +1464,7 @@ main() {
     smoke_run
   else
     section "检测并安装平台依赖"
+    acquire_install_locks || die "无法取得平台依赖安装维护锁。"
     install_platform_deps
     section "安装并切换版本"
     prepare_install_switch

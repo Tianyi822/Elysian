@@ -38,11 +38,14 @@ SMOKE=""
 echo "== 终端能力降级 =="
 if (
   set -e
+  unset NO_COLOR
+  TERM=xterm-256color
   init_output 1 1
   [ -n "$C_GREEN" ] && [ "$SPINNER_ENABLED" = 1 ] && [ -n "$TERM_COLS" ]
 ); then pass "双 TTY 开启颜色与单行刷新"; else fail "双 TTY 未开启颜色或单行刷新"; fi
 if (
   set -e
+  TERM=xterm-256color
   NO_COLOR=1 init_output 1 1
   [ -z "$C_GREEN" ] && [ "$SPINNER_ENABLED" = 1 ]
 ); then pass "NO_COLOR 只关颜色、不关单行刷新"; else fail "NO_COLOR 行为不符"; fi
@@ -51,6 +54,11 @@ if (
   init_output 0 1
   [ -z "$C_GREEN" ] && [ "$SPINNER_ENABLED" = 0 ]
 ); then pass "非 TTY 纯文本降级（颜色与刷新全关）"; else fail "非 TTY 降级不符"; fi
+if (
+  set -e
+  TERM=dumb init_output 1 1
+  [ -z "$C_GREEN" ] && [ "$SPINNER_ENABLED" = 0 ]
+); then pass "TERM=dumb 不输出 ANSI 或单行刷新"; else fail "TERM=dumb 未降级"; fi
 
 echo "== 阶段行与输出标记 =="
 # 计数与格式分开断言：命令替换 $() 会把 section 的 STEP 递增隔离在子 shell 内。
@@ -138,48 +146,33 @@ caddyfile_ensure_admin "$(printf '{\r\n\tadmin unix/old.sock\r\n}\r\nsite {\r\n}
 assert_rc 0 "$rc" "CRLF 输入按 LF 归一后替换"
 assert_eq "$(printf '{\n\t%s\n}\nsite {\n}' "$DIRECTIVE")" "$(result_text)" "CRLF 归一结果"
 
-echo "== Caddyfile 落盘（configure_caddy_admin，指向临时目录） =="
+echo "== Caddyfile 候选生成（不修改原文件） =="
 TMPDIR_TEST="$(mktemp -d)"
 CFG="$TMPDIR_TEST/Caddyfile"
-configure_caddy_admin "$SOCK" "$CFG" >/dev/null; rc=$?
-assert_rc 0 "$rc" "文件缺失时创建最小 Caddyfile"
-assert_eq "$(printf '{\n\t%s\n}' "$DIRECTIVE")" "$(cat "$CFG")" "新建文件内容"
-assert_eq 1 "${CADDYFILE_REWRITTEN:-}" "新建文件记为本次改写"
+prepare_caddy_admin_file "$SOCK" "$CFG" "$TMPDIR_TEST/candidate"; rc=$?
+assert_rc 0 "$rc" "文件缺失时生成最小候选"
+assert_eq "$(printf '{\n\t%s\n}' "$DIRECTIVE")" "$(cat "$TMPDIR_TEST/candidate")" "最小候选内容"
+if [ ! -e "$CFG" ]; then pass "生成候选不创建原文件"; else fail "候选阶段写了原文件"; fi
 
 printf '{\n\t%s\n}\n' "$DIRECTIVE" >"$CFG"
 BEFORE="$(cat "$CFG")"
-configure_caddy_admin "$SOCK" "$CFG" >/dev/null; rc=$?
+prepare_caddy_admin_file "$SOCK" "$CFG" "$TMPDIR_TEST/candidate"; rc=$?
 assert_rc 0 "$rc" "已是目标时正常返回"
 assert_eq "$BEFORE" "$(cat "$CFG")" "已是目标时零写（内容不变）"
-if [ ! -e "${CFG}.elysian.bak" ]; then pass "零写不产生备份"; else fail "零写不应产生备份"; fi
-assert_eq 0 "${CADDYFILE_REWRITTEN:-}" "零写不改写标记"
 
 printf '{\n\tadmin unix/old.sock\n}\n' >"$CFG"
-configure_caddy_admin "$SOCK" "$CFG" >/dev/null; rc=$?
+prepare_caddy_admin_file "$SOCK" "$CFG" "$TMPDIR_TEST/candidate"; rc=$?
 assert_rc 0 "$rc" "替换改写成功"
-assert_eq "$(printf '{\n\t%s\n}' "$DIRECTIVE")" "$(cat "$CFG")" "替换后内容"
-if [ ! -e "${CFG}.elysian.bak" ]; then pass "成功后清理备份"; else fail "成功后应清理备份"; fi
-assert_eq 1 "${CADDYFILE_REWRITTEN:-}" "替换改写记为本次改写"
+assert_eq "$(printf '{\n\t%s\n}' "$DIRECTIVE")" "$(cat "$TMPDIR_TEST/candidate")" "替换后的候选内容"
+assert_eq "$(printf '{\n\tadmin unix/old.sock\n}')" "$(cat "$CFG")" "原配置保留到事务发布阶段"
 
 head -c 262145 /dev/zero | tr '\0' 'x' >"$CFG"
 BEFORE="$(cat "$CFG")"
-# 不用 $() 捕获：子 shell 里设置的 CADDYFILE_REWRITTEN 不回传，与主流程同口径在当前 shell 执行。
-configure_caddy_admin "$SOCK" "$CFG" >"$TMPDIR_TEST/out.txt" 2>&1; rc=$?
+prepare_caddy_admin_file "$SOCK" "$CFG" "$TMPDIR_TEST/candidate" >"$TMPDIR_TEST/out.txt" 2>&1; rc=$?
 OUT="$(cat "$TMPDIR_TEST/out.txt")"
-assert_rc 0 "$rc" "超过 256 KiB 按警告跳过（不中断）"
+assert_rc 1 "$rc" "超过 256 KiB 拒绝自动接入"
 assert_eq "$BEFORE" "$(cat "$CFG")" "超大文件零改动"
 if printf '%s' "$OUT" | grep -q 'Caddyfile 过大'; then pass "超大文件输出中文警告"; else fail "缺少「Caddyfile 过大」警告"; fi
-assert_eq 0 "${CADDYFILE_REWRITTEN:-}" "超大文件拒绝改写不改写标记"
-
-echo "== Caddy 重启判定（caddy_needs_restart） =="
-caddy_needs_restart 1 0 1; rc=$?
-assert_rc 0 "$rc" "本次新装：active 也重启"
-caddy_needs_restart 0 1 1; rc=$?
-assert_rc 0 "$rc" "Caddyfile 已改写：active 也重启"
-caddy_needs_restart 0 0 0; rc=$?
-assert_rc 0 "$rc" "服务未运行：需要重启拉起"
-caddy_needs_restart 0 0 1; rc=$?
-assert_rc 1 "$rc" "复用＋零改写＋active：不重启（避免打断对外 HTTPS）"
 
 echo "== 管理通道路径解析 =="
 assert_eq "/run/caddy/admin.sock" "$(caddy_admin_socket)" "缺省路径"
@@ -191,6 +184,26 @@ GOT="$(ENV_FILE="$DEFAULTS_FILE" caddy_admin_socket)"
 assert_eq "/custom/sock" "$GOT" "EnvironmentFile 覆盖（含引号剥离）"
 GOT="$(ENV_FILE="$DEFAULTS_FILE" ELYSIAN_CADDY_SOCKET=/env/wins.sock caddy_admin_socket)"
 assert_eq "/env/wins.sock" "$GOT" "环境变量优先于 EnvironmentFile"
+if ELYSIAN_CADDY_SOCKET=relative.sock caddy_admin_socket >/dev/null 2>&1; then fail "相对路径应拒绝"; else pass "相对路径明确拒绝"; fi
+assert_eq '/var/run/docker.sock' "$(ELYSIAN_DOCKER_SOCKET= ENV_FILE="$TMPDIR_TEST/absent" docker_engine_socket)" "Docker 缺省本机通道"
+printf 'ELYSIAN_DOCKER_SOCKET="/custom/docker.sock"\n' >"$DEFAULTS_FILE"
+assert_eq '/custom/docker.sock' "$(ELYSIAN_DOCKER_SOCKET= ENV_FILE="$DEFAULTS_FILE" docker_engine_socket)" "Docker 读取 EnvironmentFile 覆盖"
+assert_eq '/override/docker.sock' "$(ELYSIAN_DOCKER_SOCKET=/override/docker.sock ENV_FILE="$DEFAULTS_FILE" docker_engine_socket)" "Docker 显式环境覆盖优先"
+if ELYSIAN_DOCKER_SOCKET=tcp://remote:2375 docker_engine_socket >/dev/null 2>&1; then fail "Docker 远端地址误通过"; else pass "Docker 通道拒绝远端地址"; fi
+
+echo "== HTTPS 规则摘要 =="
+printf 'IPV6=yes\n' >"$TMPDIR_TEST/ufw-defaults"
+UFW_DEFAULTS_FILE="$TMPDIR_TEST/ufw-defaults"
+OUT="$(ufw_https_summary "$(printf '80/tcp ALLOW Anywhere\n80/tcp (v6) ALLOW Anywhere (v6)\n')")"
+case "$OUT" in *'80/tcp IPv4 已放行、IPv6 已放行；443/tcp IPv4 未确认公开放行、IPv6 未确认公开放行'*) pass "仅80不误报443" ;; *) fail "单端口摘要错误：$OUT" ;; esac
+OUT="$(ufw_https_summary "$(printf '443/tcp ALLOW Anywhere\n443/tcp (v6) ALLOW Anywhere (v6)\n')")"
+case "$OUT" in *'80/tcp IPv4 未确认公开放行、IPv6 未确认公开放行；443/tcp IPv4 已放行、IPv6 已放行'*) pass "仅443不误报80" ;; *) fail "仅443摘要错误：$OUT" ;; esac
+OUT="$(ufw_https_summary '80,443/tcp ALLOW Anywhere')"
+case "$OUT" in *'80/tcp IPv4 已放行、IPv6 未确认公开放行；443/tcp IPv4 已放行、IPv6 未确认公开放行'*) pass "IPv4放行不误报IPv6" ;; *) fail "IPv6缺失摘要错误：$OUT" ;; esac
+OUT="$(ufw_https_summary '443/tcp ALLOW 10.0.0.1')"
+case "$OUT" in *'443/tcp IPv4 未确认公开放行'*) pass "受限来源不误报公开放行" ;; *) fail "受限来源摘要错误" ;; esac
+OUT="$(ufw_https_summary "$(printf '80,443/tcp ALLOW Anywhere\n80,443/tcp (v6) ALLOW Anywhere (v6)\n')")"
+case "$OUT" in *'443/tcp IPv4 已放行、IPv6 已放行'*) pass "组合规则分别核对IPv4和IPv6" ;; *) fail "组合规则摘要错误" ;; esac
 
 echo "== 服务器地址探测 =="
 hostname() { echo "10.0.0.2 192.168.1.1"; }
@@ -211,11 +224,18 @@ assert_rc 0 "$rc" "成功命令返回 0"
 if grep -q hello "$LOG"; then pass "stdout 收进日志"; else fail "stdout 未收进日志"; fi
 run_stage_command "测试命令" "$LOG" sh -c 'echo boom >&2; exit 3'; rc=$?
 assert_rc 3 "$rc" "失败命令透传退出码"
+assert_eq 3 "$RUN_STAGE_EXIT_CODE" "失败摘要保留真实退出码"
+assert_eq '退出码 3' "$(stage_failure_reason)" "失败原因显示实际退出码"
+if run_stage_command "被信号终止" "$LOG" sh -c 'kill -KILL $$'; then fail "信号终止误报成功"; else
+  assert_eq 137 "$RUN_STAGE_EXIT_CODE" "信号终止保留退出码"
+  assert_eq '退出码 137（信号 SIGKILL）' "$(stage_failure_reason)" "失败原因显示终止信号"
+fi
 if grep -q boom "$LOG"; then pass "stderr 收进日志"; else fail "stderr 未收进日志"; fi
 SPINNER_ENABLED=0
 
 echo "== 已装依赖的复用短路（函数桩模拟 docker / caddy / systemctl，不写系统） =="
 docker() {
+  if [ "${1:-}" = --host ]; then shift 2; fi
   case "$1" in
     info) return 0 ;;
     --version) echo "Docker version 26.1.4, build stub" ;;
@@ -232,12 +252,17 @@ systemctl() {
 OUT="$(docker_install_or_reuse)"; rc=$?
 assert_rc 0 "$rc" "Docker 复用分支返回成功"
 if printf '%s' "$OUT" | grep -q '复用现有安装'; then pass "Docker 复用分支输出「复用现有安装」"; else fail "Docker 复用分支缺少复用提示"; fi
+DOCKER_INSTALLED_THIS_RUN=1
+docker_install_or_reuse >/dev/null
+assert_eq 0 "$DOCKER_INSTALLED_THIS_RUN" "既有 Docker 不进入新装自启分支"
 if enable_docker >/dev/null; then pass "enable_docker（stub active）通过"; else fail "enable_docker 异常"; fi
 if OUT="$(verify_docker)" && printf '%s' "$OUT" | grep -q 'Engine API 1.44'; then
   pass "verify_docker 实测 API 版本 1.44（≥ 1.41）"
 else
   fail "verify_docker 未输出实测 Engine API"
 fi
+docker() { printf '%s|%s|%s|%s\n' "${DOCKER_HOST:-}" "${DOCKER_CONTEXT:-}" "${DOCKER_TLS_VERIFY:-}" "$*"; }
+assert_eq '|||--host unix:///custom/docker.sock info' "$(DOCKER_ENGINE_SOCKET=/custom/docker.sock DOCKER_HOST=tcp://remote:2375 DOCKER_CONTEXT=remote DOCKER_TLS_VERIFY=1 docker_engine info)" "Docker 固定本机目标并忽略远端 context 与 TLS 环境"
 OUT="$(install_caddy)"; rc=$?
 assert_rc 0 "$rc" "Caddy 复用分支返回成功"
 install_caddy >/dev/null   # 不经命令替换，让标记落在当前 shell
@@ -245,6 +270,7 @@ assert_eq 0 "${CADDY_INSTALLED_THIS_RUN:-1}" "复用时不标记新装（UFW 80/
 if printf '%s' "$OUT" | grep -q '复用现有安装'; then pass "Caddy 复用分支输出「复用现有安装」"; else fail "Caddy 复用分支缺少复用提示"; fi
 # docker 已装但守护进程不响应：拉起失败必须 die（不在既有安装上重装）
 docker() {
+  if [ "${1:-}" = --host ]; then shift 2; fi
   case "$1" in
     info) return 1 ;;
     --version) echo "Docker version 20.10.0, build broken" ;;
@@ -258,6 +284,8 @@ else
   fail "守护进程无响应分支行为不符（rc=$rc）"
 fi
 unset -f docker caddy systemctl
+
+if platform_helper socket '/run/caddy:admin/api.sock' >/dev/null 2>&1; then fail "socket 冒号路径误通过"; else pass "拒绝 systemd RuntimeDirectory 有歧义的冒号路径"; fi
 
 rm -rf "$TMPDIR_TEST"
 printf '\n结果：%d 通过，%d 失败\n' "$PASS" "$FAIL"
