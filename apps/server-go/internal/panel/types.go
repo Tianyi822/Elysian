@@ -33,6 +33,14 @@ func validChannel(channel UpdateChannel) bool {
 	return channel == ChannelCommit || channel == ChannelRelease
 }
 
+type WorkerStatus string
+
+const (
+	WorkerAlive   WorkerStatus = "alive"
+	WorkerDead    WorkerStatus = "dead"
+	WorkerUnknown WorkerStatus = "unknown"
+)
+
 type Task struct {
 	ID            string              `json:"id"`
 	Kind          string              `json:"kind"`
@@ -46,9 +54,9 @@ type Task struct {
 	UpdateChannel UpdateChannel       `json:"updateChannel,omitempty"`
 	ReleaseTag    string              `json:"releaseTag,omitempty"`
 	Error         string              `json:"error"`
-	// WorkerDead 由服务端读路径派生：任务仍在活动态但维护单元已不可达（疑似中断），
-	// 供前端区分「还在执行」与「疑似中断」；只在确认转终态时才随记录落盘。
-	WorkerDead bool `json:"workerDead,omitempty"`
+	// WorkerDead 保留旧客户端兼容，仅在明确探测到进程退出时为真。
+	WorkerDead   bool         `json:"workerDead,omitempty"`
+	WorkerStatus WorkerStatus `json:"workerStatus,omitempty"`
 }
 
 type taskRecord struct {
@@ -96,7 +104,7 @@ type Host interface {
 	Available() bool
 	Preflight(context.Context, config.PanelNetwork, config.PanelNetwork) error
 	Dispatch(context.Context, string, string) error
-	WorkerActive(context.Context, string) bool
+	ProbeWorker(context.Context, string) WorkerStatus
 	Build(context.Context, string, string, string) (string, error)
 	Stop(context.Context) error
 	Start(context.Context) error

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createHttpPanelAdapter, PanelNetworkError, parsePanelInfo, parsePanelTask, probeSameOriginHealth } from './panelHttpAdapter'
+import { createHttpPanelAdapter, PanelHttpError, PanelNetworkError, parsePanelInfo, parsePanelTask, probeSameOriginHealth } from './panelHttpAdapter'
 const task = { id: 'a'.repeat(32), kind: 'ports', state: 'queued', phase: 'checking', createdAt: '2026-10-03T00:00:00Z', updatedAt: '2026-10-03T00:00:00Z', oldPorts: { frontendPort: 48100, backendPort: 48101 }, newPorts: { frontendPort: 49000, backendPort: 49001 }, targetCommit: '', error: '' }
 afterEach(() => vi.unstubAllGlobals())
 describe('面板维护 HTTP 契约', () => {
@@ -12,6 +12,37 @@ describe('面板维护 HTTP 契约', () => {
     expect(parsePanelTask({ ...task, workerDead: true }).workerDead).toBe(true)
     expect(parsePanelTask({ ...task }).workerDead).toBeUndefined()
     expect(() => parsePanelTask({ ...task, workerDead: 'yes' })).toThrow('维护进程状态无效')
+    expect(parsePanelTask({ ...task, workerStatus: 'unknown' }).workerStatus).toBe('unknown')
+    expect(() => parsePanelTask({ ...task, workerStatus: 'timeout' })).toThrow('维护进程状态无效')
+  })
+  it('按请求编号精确查询，404仅表示尚未找到', async () => {
+    const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ error: '尚未找到' }), { status: 404 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(task)))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: '服务忙' }), { status: 503 }))
+    vi.stubGlobal('fetch', fetch)
+    const adapter = createHttpPanelAdapter()
+    expect(await adapter.taskByRequest('request-1')).toBeNull()
+    expect(await adapter.taskByRequest('request-1')).toEqual(task)
+    expect(fetch.mock.calls[1]?.[0]).toBe('/api/panel/tasks/by-request/request-1')
+    await expect(adapter.taskByRequest('request-1')).rejects.toBeInstanceOf(PanelHttpError)
+  })
+  it.each(['fetch', 'body'] as const)('同源健康探测对挂起的%s有三秒上限，之后仍可重试', async (phase) => {
+    vi.useFakeTimers()
+    try {
+      vi.stubGlobal('fetch', phase === 'fetch' ? vi.fn(() => new Promise(() => {})) : vi.fn(async () => ({ ok: true, json: () => new Promise(() => {}) })))
+      const pending = probeSameOriginHealth()
+      await vi.advanceTimersByTimeAsync(3000)
+      expect(await pending).toBeNull()
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ok: true, commit: 'c' }))))
+      expect(await probeSameOriginHealth()).toEqual({ commit: 'c' })
+    } finally { vi.useRealTimers() }
+  })
+  it('同源健康探测响应调用方取消', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})))
+    const cancel = new AbortController()
+    const pending = probeSameOriginHealth(cancel.signal)
+    cancel.abort()
+    expect(await pending).toBeNull()
   })
   it('端口提交携带稳定提交编号，并返回异步任务', async () => {
     const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(task), { status: 202 }))

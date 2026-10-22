@@ -47,7 +47,7 @@ func (h SystemHost) command(ctx context.Context, name string, args ...string) (s
 	c.Env = []string{"PATH=/usr/local/go/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C.UTF-8", "HOME=/var/lib/elysian"}
 	b, err := c.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("%s 执行失败：%s %w", name, strings.TrimSpace(string(b)), err)
+		return string(b), fmt.Errorf("%s 执行失败：%s %w", name, strings.TrimSpace(string(b)), err)
 	}
 	return string(b), nil
 }
@@ -56,9 +56,47 @@ func (h SystemHost) Dispatch(ctx context.Context, worker, id string) error {
 	_, err := h.command(ctx, "systemd-run", "--unit=elysian-maintenance-"+id, "--collect", "--property=Type=exec", "--setenv=HOME="+filepath.Dir(h.Store.Root), "--setenv=ELYSIAN_DOCKER_SOCKET="+h.DockerSocket, worker, "maintenance-worker", id)
 	return err
 }
-func (h SystemHost) WorkerActive(ctx context.Context, id string) bool {
-	_, err := h.command(ctx, "systemctl", "is-active", "--quiet", "elysian-maintenance-"+id)
-	return err == nil
+func (h SystemHost) ProbeWorker(ctx context.Context, id string) WorkerStatus {
+	out, err := h.command(ctx, "systemctl", "show", "--property=LoadState", "--property=ActiveState", "--", "elysian-maintenance-"+id)
+	if ctx.Err() != nil {
+		return WorkerUnknown
+	}
+	status := parseWorkerStatus(out)
+	// 已被 --collect 清理的单元可能以非零退出码返回明确的 not-found 属性。
+	if err != nil && !(status == WorkerDead && strings.Contains("\n"+strings.TrimSpace(out)+"\n", "\nLoadState=not-found\n")) {
+		return WorkerUnknown
+	}
+	return status
+}
+
+func parseWorkerStatus(out string) WorkerStatus {
+	fields := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if _, duplicate := fields[key]; !ok || duplicate {
+			return WorkerUnknown
+		}
+		fields[key] = value
+	}
+	load, active := fields["LoadState"], fields["ActiveState"]
+	if load == "" || active == "" {
+		return WorkerUnknown
+	}
+	if load == "not-found" {
+		if active == "inactive" || active == "failed" {
+			return WorkerDead
+		}
+		return WorkerUnknown
+	}
+	switch active {
+	case "active", "activating", "reloading", "deactivating":
+		return WorkerAlive
+	case "inactive", "failed":
+		if load == "loaded" || load == "masked" {
+			return WorkerDead
+		}
+	}
+	return WorkerUnknown
 }
 func (h SystemHost) Stop(ctx context.Context) error {
 	_, err := h.command(ctx, "systemctl", "stop", ServiceName)

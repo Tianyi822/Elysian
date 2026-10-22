@@ -25,6 +25,27 @@ const rollbackBudget = 10 * time.Minute
 // startFallbackBudget 是回滚失败后的兜底拉起预算（启动命令 30 秒 + 健康检查 60 秒）。
 const startFallbackBudget = 2 * time.Minute
 
+const preflightBudget = 3 * time.Minute
+
+// preflightBudgetState tracks one maintenance execution's cumulative host-preflight time.
+// Downloading and building do not consume this budget; each required check shares it.
+type preflightBudgetState struct {
+	remaining time.Duration
+}
+
+// consume charges only time spent inside Host.Preflight. A check that uses the last
+// available instant is considered exhausted so later checks cannot run without budget.
+func (b *preflightBudgetState) consume(elapsed time.Duration) bool {
+	if b.remaining <= 0 || elapsed >= b.remaining {
+		b.remaining = 0
+		return false
+	}
+	if elapsed > 0 {
+		b.remaining -= elapsed
+	}
+	return true
+}
+
 func (w Worker) install() string {
 	if w.Install != "" {
 		return w.Install
@@ -34,6 +55,7 @@ func (w Worker) install() string {
 func (w Worker) phase(r *taskRecord, phase string) error {
 	r.Phase = phase
 	r.UpdatedAt = time.Now().UTC()
+	r.WorkerStatus, r.WorkerDead = "", false
 	labels := map[string]string{"checking": "检查部署环境", "downloading": "下载源码", "building": "构建新版本", "firewall": "调整防火墙", "stopping": "停止面板", "activating": "切换配置与版本", "verifying": "检查服务健康", "finished": "任务已结束"}
 	w.Store.appendLog(r.ID, r.UpdatedAt.Format(time.RFC3339)+" "+labels[phase]+"\n")
 	return w.Store.lock(func() error { return w.Store.save(*r) })
@@ -43,14 +65,11 @@ func (w Worker) Run(ctx context.Context, id string) (retErr error) {
 	if !idPattern.MatchString(id) {
 		return fmt.Errorf("任务编号无效")
 	}
-	f, err := os.OpenFile(filepath.Join(w.Store.tasksDir(), "worker.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	f, err := w.Store.tryWorkerLock()
 	if err != nil {
-		return err
+		return fmt.Errorf("无法取得维护执行锁：%w", err)
 	}
 	defer f.Close()
-	if err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		return fmt.Errorf("另一项维护任务正在执行")
-	}
 	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 	r, err := w.Store.read(id)
 	if err != nil {
@@ -94,6 +113,13 @@ func (w Worker) Run(ctx context.Context, id string) (retErr error) {
 func (w Worker) finishFailure(r *taskRecord, cause error) error {
 	r.Error = cause.Error()
 	w.Store.appendLog(r.ID, "维护失败："+r.Error+"\n")
+	if !r.Activated && !r.FirewallCaptured {
+		r.State = "failed"
+		if e := w.phase(r, "finished"); e != nil {
+			return fmt.Errorf("%w；任务结果保存失败：%v", cause, e)
+		}
+		return cause
+	}
 	recoverCtx, cancel := context.WithTimeout(context.Background(), rollbackBudget)
 	defer cancel()
 	if e := w.rollback(recoverCtx, r, true); e != nil {
@@ -134,7 +160,25 @@ func recoveryHint(id string) string {
 	return "。请在服务器执行 systemctl restart elysian（启动前会自动恢复原版本与配置），并用 journalctl -u elysian-maintenance-" + id + " 查看维护现场"
 }
 
+func (w Worker) preflight(ctx context.Context, old, next config.PanelNetwork, budget *preflightBudgetState) error {
+	if budget.remaining <= 0 {
+		return fmt.Errorf("面板宿主预检累计总预算已耗尽（%s）: %w", preflightBudget, context.DeadlineExceeded)
+	}
+	started := time.Now()
+	ctx, cancel := context.WithTimeout(ctx, budget.remaining)
+	defer cancel()
+	err := w.Host.Preflight(ctx, old, next)
+	if !budget.consume(time.Since(started)) {
+		return fmt.Errorf("面板宿主预检累计总预算已耗尽（%s）: %w", preflightBudget, context.DeadlineExceeded)
+	}
+	if err == nil {
+		return ctx.Err()
+	}
+	return err
+}
+
 func (w Worker) execute(ctx context.Context, r *taskRecord) error {
+	preflight := preflightBudgetState{remaining: preflightBudget}
 	current, err := config.ReadPanelNetwork(w.Store.networkPath())
 	if err != nil {
 		return err
@@ -142,7 +186,7 @@ func (w Worker) execute(ctx context.Context, r *taskRecord) error {
 	if current != r.OldPorts {
 		return fmt.Errorf("端口配置已变化，请刷新后重试")
 	}
-	if err = w.Host.Preflight(ctx, r.OldPorts, r.NewPorts); err != nil {
+	if err = w.preflight(ctx, r.OldPorts, r.NewPorts, &preflight); err != nil {
 		return err
 	}
 	r.PreviousBinary, err = filepath.EvalSymlinks(filepath.Join(w.install(), "current", "elysian"))
@@ -180,7 +224,7 @@ func (w Worker) execute(ctx context.Context, r *taskRecord) error {
 			return err
 		}
 	}
-	if err = w.Host.Preflight(ctx, r.OldPorts, r.NewPorts); err != nil {
+	if err = w.preflight(ctx, r.OldPorts, r.NewPorts, &preflight); err != nil {
 		return err
 	}
 	rules, err := w.Host.Rules(ctx)
@@ -213,7 +257,7 @@ func (w Worker) execute(ctx context.Context, r *taskRecord) error {
 	if err = w.Host.Stop(ctx); err != nil {
 		return err
 	}
-	if err = w.Host.Preflight(ctx, r.OldPorts, r.NewPorts); err != nil {
+	if err = w.preflight(ctx, r.OldPorts, r.NewPorts, &preflight); err != nil {
 		return err
 	}
 	r.Snapshot = filepath.Join(w.Store.Root, "backups", "panel-maintenance", r.ID)
@@ -326,20 +370,14 @@ func (w Worker) rollback(ctx context.Context, r *taskRecord, start bool) error {
 
 // Recover 在 systemd ExecStartPre 执行；活动 worker 自己负责事务，不与它竞争。
 func (w Worker) Recover(ctx context.Context) error {
-	if err := os.MkdirAll(w.Store.tasksDir(), 0700); err != nil {
-		return err
-	}
-	f, err := os.OpenFile(filepath.Join(w.Store.tasksDir(), "worker.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	f, err := w.Store.tryWorkerLock()
 	if err != nil {
-		return err
-	}
-	defer f.Close()
-	if err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		if err == syscall.EWOULDBLOCK {
 			return nil
 		}
 		return err
 	}
+	defer f.Close()
 	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 	rows, err := w.Store.records()
 	if err != nil {
@@ -358,8 +396,11 @@ func (w Worker) Recover(ctx context.Context) error {
 			_ = os.Remove(r.Worker)
 			continue
 		}
-		if w.Host.WorkerActive(ctx, r.ID) {
+		switch probeWorker(ctx, w.Host, r.ID) {
+		case WorkerAlive:
 			continue
+		case WorkerUnknown:
+			return fmt.Errorf("无法确认维护任务 %s 的进程状态，未执行恢复；请检查 systemd 后重试", r.ID)
 		}
 		if err = w.rollback(ctx, &r, false); err != nil {
 			return fmt.Errorf("中断任务 %s 恢复失败：%w", r.ID, err)

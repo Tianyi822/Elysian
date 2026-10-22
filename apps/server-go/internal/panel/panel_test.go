@@ -33,14 +33,14 @@ type fakeHost struct {
 
 func (h *fakeHost) Available() bool { return true }
 func (h *fakeHost) Preflight(ctx context.Context, old, next config.PanelNetwork) error {
-	// 感知请求上下文：预检解耦（客户端中止后服务端继续）需要靠它验证。
+	// worker 预检遵循自己的运行上下文与预算。
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return validateRules(h.rules, old, next)
 }
-func (h *fakeHost) Dispatch(context.Context, string, string) error { h.dispatched++; return nil }
-func (h *fakeHost) WorkerActive(context.Context, string) bool      { return false }
+func (h *fakeHost) Dispatch(context.Context, string, string) error   { h.dispatched++; return nil }
+func (h *fakeHost) ProbeWorker(context.Context, string) WorkerStatus { return WorkerDead }
 func (h *fakeHost) Build(context.Context, string, string, string) (string, error) {
 	if h.failBuild {
 		return "", fmt.Errorf("构建失败")

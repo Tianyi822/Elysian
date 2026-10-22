@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 )
@@ -46,13 +47,22 @@ type submitInput struct {
 	ReleaseTag   string        `json:"releaseTag"`
 }
 
-// 维护单元存活性核对节奏：记录刚写入时先假定单元存活（单元 activation 阶段
-// systemctl is-active 会短暂返回非 active，且不必每次轮询都派生子进程）；单元已
-// 不可达且记录长期未推进时判为进程意外退出，转终态。
+// 新记录暂缓探测；只有明确退出且长期未推进的任务才允许转终态。
 const (
-	workerProbeAfter = time.Minute
-	workerStaleAfter = 10 * time.Minute
+	workerProbeAfter  = time.Minute
+	workerStaleAfter  = 10 * time.Minute
+	workerProbeBudget = 5 * time.Second
 )
+
+func probeWorker(ctx context.Context, host Host, id string) WorkerStatus {
+	probeCtx, cancel := context.WithTimeout(ctx, workerProbeBudget)
+	defer cancel()
+	status := host.ProbeWorker(probeCtx, id)
+	if probeCtx.Err() != nil || (status != WorkerAlive && status != WorkerDead) {
+		return WorkerUnknown
+	}
+	return status
+}
 
 func (m Manager) Info() (Info, error) {
 	i := Info{Ports: m.Ports, Commit: Commit, BuildTime: BuildTime, Repository: Repository, Available: m.Enabled && m.Host.Available()}
@@ -70,8 +80,15 @@ func (m Manager) Info() (Info, error) {
 	for _, row := range rows {
 		if Active(row.State) {
 			supervised := m.superviseActive(row)
-			i.ActiveTask = &supervised.Task
-			break
+			if i.LastTask != nil && i.LastTask.ID == supervised.ID {
+				task := supervised.Task
+				i.LastTask = &task
+			}
+			if Active(supervised.State) || supervised.State == "recovery-failed" {
+				i.ActiveTask = &supervised.Task
+				break
+			}
+			continue
 		}
 		if row.State == "recovery-failed" {
 			task := row.Task
@@ -82,12 +99,8 @@ func (m Manager) Info() (Info, error) {
 	return i, nil
 }
 
-// superviseActive 对活动任务核对维护单元存活性（systemctl is-active，Submit 派发后
-// 核实用的同一通道）：单元还在跑就原样返回；单元已退出时先在返回值上标注 workerDead
-// 让前端可区分「还在执行」与「疑似中断」，记录又长期未推进才转终态——未进入切换
-// 阶段直接判失败；已动过配置、数据或防火墙的，面板进程自己无法安全回滚（需要停掉
-// 自身），保持 recovery-failed 锁定并附服务器侧恢复指引，交给下次服务重启时的
-// ExecStartPre 恢复。转终态在 store.lock 内重读校验，避免与 worker 的最后一次保存竞争。
+// 转终态必须同时确认单元退出、worker 锁空闲和最新记录超时。锁顺序与 worker
+// 及启动恢复一致：worker.lock 在前，store.lock 在后；未知状态保持维护保护。
 func (m Manager) superviseActive(row taskRecord) taskRecord {
 	if !Active(row.State) || !m.Enabled || !m.Host.Available() {
 		return row
@@ -95,21 +108,35 @@ func (m Manager) superviseActive(row taskRecord) taskRecord {
 	if time.Since(row.UpdatedAt) < workerProbeAfter {
 		return row
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	if m.Host.WorkerActive(ctx, row.ID) {
+	row.WorkerStatus = probeWorker(context.Background(), m.Host, row.ID)
+	row.WorkerDead = row.WorkerStatus == WorkerDead
+	if row.WorkerStatus != WorkerDead || time.Since(row.UpdatedAt) < workerStaleAfter {
 		return row
 	}
-	row.WorkerDead = true
-	if time.Since(row.UpdatedAt) < workerStaleAfter {
+	workerLock, err := m.Store.tryWorkerLock()
+	if err != nil {
+		row.WorkerStatus, row.WorkerDead = WorkerUnknown, false
 		return row
 	}
-	_ = m.Store.lock(func() error {
+	defer workerLock.Close()
+	defer syscall.Flock(int(workerLock.Fd()), syscall.LOCK_UN)
+	err = m.Store.lock(func() error {
 		fresh, err := m.Store.read(row.ID)
-		if err != nil || !Active(fresh.State) {
+		if err != nil {
+			return err
+		}
+		row = fresh
+		if !Active(fresh.State) {
 			return nil
 		}
-		if m.Host.WorkerActive(ctx, fresh.ID) {
+		if time.Since(fresh.UpdatedAt) < workerStaleAfter {
+			row.WorkerStatus, row.WorkerDead = WorkerUnknown, false
+			return nil
+		}
+		fresh.WorkerStatus = probeWorker(context.Background(), m.Host, fresh.ID)
+		fresh.WorkerDead = fresh.WorkerStatus == WorkerDead
+		row = fresh
+		if fresh.WorkerStatus != WorkerDead {
 			return nil
 		}
 		fresh.WorkerDead = true
@@ -125,14 +152,15 @@ func (m Manager) superviseActive(row taskRecord) taskRecord {
 		if err := m.Store.save(fresh); err != nil {
 			return err
 		}
+		row = fresh
 		m.Store.appendLog(fresh.ID, fresh.UpdatedAt.Format(time.RFC3339)+" "+fresh.Error+"\n")
 		if fresh.Worker != "" {
 			_ = os.Remove(fresh.Worker)
 		}
 		return nil
 	})
-	if updated, err := m.Store.read(row.ID); err == nil {
-		return updated
+	if err != nil {
+		row.WorkerStatus, row.WorkerDead = WorkerUnknown, false
 	}
 	return row
 }
@@ -202,14 +230,6 @@ func (m Manager) Submit(ctx context.Context, kind string, input submitInput, ori
 					return shared.InvalidRequest("请先检查更新，再提交已检查的目标版本")
 				}
 			}
-			// 预检与请求生命周期解耦：前端 30 秒中止或网络断开不该让服务端预检半途而
-			// 废；互斥锁等待期间客户端可能已断开，任务创建仍要完成，前端凭 requestId
-			// 幂等重挂。预检内部每条命令各有 30 秒上限，总预算 3 分钟兜底。
-			preflightCtx, preflightCancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Minute)
-			defer preflightCancel()
-			if err = m.Host.Preflight(preflightCtx, m.Ports, next); err != nil {
-				return shared.InvalidRequest(err.Error())
-			}
 			id, err := newID()
 			if err != nil {
 				return err
@@ -238,15 +258,30 @@ func (m Manager) Submit(ctx context.Context, kind string, input submitInput, ori
 			dispatchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			defer cancel()
 			if err = m.Host.Dispatch(dispatchCtx, r.Worker, id); err != nil {
-				if m.Host.WorkerActive(dispatchCtx, id) {
+				r.WorkerStatus = probeWorker(context.WithoutCancel(ctx), m.Host, id)
+				if r.WorkerStatus == WorkerAlive {
+					result = r.Task
+					return nil
+				}
+				if r.WorkerStatus == WorkerUnknown {
+					m.Store.appendLog(id, "维护服务派发结果暂未确认，保留任务等待核实："+err.Error()+"\n")
+					if err = m.Store.save(r); err != nil {
+						return err
+					}
 					result = r.Task
 					return nil
 				}
 				r.State = "failed"
+				r.Phase = "finished"
+				r.UpdatedAt = time.Now().UTC()
+				r.WorkerDead = true
 				r.Error = "维护服务启动失败：" + err.Error()
-				_ = m.Store.save(r)
+				if err = m.Store.save(r); err != nil {
+					return err
+				}
 				_ = os.Remove(r.Worker)
-				return err
+				result = r.Task
+				return nil
 			}
 			result = r.Task
 			return nil
@@ -332,6 +367,26 @@ func (m Manager) Router() chi.Router {
 			shared.SendJSON(w, 202, task)
 		})
 	}
+	r.Get("/tasks/by-request/{requestId}", func(w http.ResponseWriter, r *http.Request) {
+		requestID := chi.URLParam(r, "requestId")
+		if !requestPattern.MatchString(requestID) {
+			shared.SendError(w, 400, "提交编号无效")
+			return
+		}
+		rows, err := m.Store.records()
+		if err != nil {
+			middleware.WriteError(w, err)
+			return
+		}
+		for _, row := range rows {
+			if row.RequestID == requestID {
+				row = m.superviseActive(row)
+				shared.SendJSON(w, 200, row.Task)
+				return
+			}
+		}
+		shared.SendError(w, 404, "维护请求尚未找到对应任务")
+	})
 	r.Get("/tasks/{id}", func(w http.ResponseWriter, r *http.Request) {
 		row, err := m.Store.read(chi.URLParam(r, "id"))
 		if err != nil {

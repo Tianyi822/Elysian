@@ -21,6 +21,7 @@ export function parsePanelTask(value: unknown): PanelTask {
   if (row.updateChannel !== undefined && row.updateChannel !== 'commit' && row.updateChannel !== 'release') throw new Error('面板任务更新策略无效')
   if (row.releaseTag !== undefined && typeof row.releaseTag !== 'string') throw new Error('面板任务发版标签无效')
   if (row.workerDead !== undefined && typeof row.workerDead !== 'boolean') throw new Error('面板任务维护进程状态无效')
+  if (row.workerStatus !== undefined && !['alive', 'dead', 'unknown'].includes(String(row.workerStatus))) throw new Error('面板任务维护进程状态无效')
   return { ...row, oldPorts: ports(row.oldPorts), newPorts: ports(row.newPorts) } as PanelTask
 }
 export function parsePanelInfo(value: unknown): PanelInfo {
@@ -40,20 +41,26 @@ export function parsePanelCommits(value: unknown): PanelCommit[] {
 }
 /** 网络层失败（连不上、30 秒中止、响应体损坏）的标记：调用方据此区分「断连」与「HTTP 错误响应」。 */
 export class PanelNetworkError extends Error {}
-async function request(path: string, method = 'GET', body?: unknown): Promise<unknown> {
+export class PanelHttpError extends Error {
+  constructor(message: string, readonly status: number) { super(message) }
+}
+async function request(path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<unknown> {
   const abort = new AbortController(); const timer = setTimeout(() => abort.abort(), 30000)
+  const cancel = () => abort.abort()
+  signal?.addEventListener('abort', cancel, { once: true })
+  if (signal?.aborted) cancel()
   try {
-  const response = await fetchWithSession(path, { method, signal: abort.signal, credentials: 'same-origin', cache: 'no-store', ...(body === undefined ? {} : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }) })
-  if (response.status === 401) { reportUnauthorized(response); throw new Error('登录状态已失效，请重新登录') }
-  const data: unknown = await response.json()
-  if (!response.ok) { const row = object(data); throw new Error(typeof row.error === 'string' ? row.error : `面板维护请求失败：HTTP ${response.status}`) }
-  return data
+    const response = await fetchWithSession(path, { method, signal: abort.signal, credentials: 'same-origin', cache: 'no-store', ...(body === undefined ? {} : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }) })
+    if (response.status === 401) { reportUnauthorized(response); throw new PanelHttpError('登录状态已失效，请重新登录', 401) }
+    const data: unknown = await response.json()
+    if (!response.ok) { const row = object(data); throw new PanelHttpError(typeof row.error === 'string' ? row.error : `面板维护请求失败：HTTP ${response.status}`, response.status) }
+    return data
   } catch (cause) {
     // 网络失败与 HTTP 错误响应分流：后者已在上面抛出服务端中文错误，原样透传；
     // 只有网络层失败才归类为「面板连接失败」，供轮询侧计入断连预算。
     if (cause instanceof TypeError || cause instanceof SyntaxError || cause instanceof DOMException) throw new PanelNetworkError('面板连接失败或响应无效，请稍后重试')
     throw cause
-  } finally { clearTimeout(timer) }
+  } finally { clearTimeout(timer); signal?.removeEventListener('abort', cancel) }
 }
 export function createHttpPanelAdapter(base = '/api/panel'): PanelAdapter {
   return {
@@ -75,6 +82,10 @@ export function createHttpPanelAdapter(base = '/api/panel'): PanelAdapter {
       if (typeof row.logs !== 'string' || !Number.isSafeInteger(row.nextOffset) || Number(row.nextOffset) < 0) throw new Error('维护日志响应无效')
       return { task: parsePanelTask(row.task), logs: row.logs, nextOffset: row.nextOffset, hasMore: row.hasMore === true } as PanelTaskReport
     },
+    async taskByRequest(requestId, signal) {
+      try { return parsePanelTask(await request(`${base}/tasks/by-request/${encodeURIComponent(requestId)}`, 'GET', undefined, signal)) }
+      catch (cause) { if (cause instanceof PanelHttpError && cause.status === 404) return null; throw cause }
+    },
     async ready(origin, id, signal) {
       const response = await fetch(`${origin}/api/health?maintenanceTask=${encodeURIComponent(id)}`, { credentials: 'omit', cache: 'no-store', signal })
       const row = object(await response.json()); return response.ok && row.ok === true && row.ready === true
@@ -87,13 +98,23 @@ export function createHttpPanelAdapter(base = '/api/panel'): PanelAdapter {
  * 任何失败都回 null——探测本就是「面板可能还不可达」场景下的尝试，不抛错打扰调用方。
  */
 export async function probeSameOriginHealth(signal?: AbortSignal): Promise<{ commit: string } | null> {
+  const abort = new AbortController()
+  const cancel = () => abort.abort()
+  signal?.addEventListener('abort', cancel, { once: true })
+  const timer = setTimeout(cancel, 3000)
+  let settleAbort: () => void = () => {}
+  const interrupted = new Promise<null>((resolve) => { settleAbort = () => resolve(null); abort.signal.addEventListener('abort', settleAbort, { once: true }) })
+  if (signal?.aborted) cancel()
   try {
-    const response = await fetchWithSession('/api/health', { signal, credentials: 'same-origin', cache: 'no-store' })
-    if (!response.ok) return null
-    const row = object(await response.json())
-    if (row.ok !== true) return null
-    return { commit: typeof row.commit === 'string' ? row.commit : '' }
+    return await Promise.race([interrupted, (async () => {
+      if (abort.signal.aborted) return null
+      const response = await fetchWithSession('/api/health', { signal: abort.signal, credentials: 'same-origin', cache: 'no-store' })
+      if (!response.ok) return null
+      const row = object(await response.json())
+      if (row.ok !== true) return null
+      return { commit: typeof row.commit === 'string' ? row.commit : '' }
+    })()])
   } catch {
     return null
-  }
+  } finally { clearTimeout(timer); signal?.removeEventListener('abort', cancel); abort.signal.removeEventListener('abort', settleAbort) }
 }

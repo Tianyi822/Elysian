@@ -79,6 +79,21 @@ func (s Store) networkPath() string       { return filepath.Join(s.Root, "config
 func (s Store) taskPath(id string) string { return filepath.Join(s.tasksDir(), id+".json") }
 func (s Store) logPath(id string) string  { return filepath.Join(s.tasksDir(), id+".log") }
 
+func (s Store) tryWorkerLock() (*os.File, error) {
+	if err := os.MkdirAll(s.tasksDir(), 0700); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(filepath.Join(s.tasksDir(), "worker.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
 func (s Store) lock(fn func() error) error {
 	if err := os.MkdirAll(s.tasksDir(), 0700); err != nil {
 		return err

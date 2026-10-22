@@ -14,6 +14,7 @@ export type PanelTask = {
   updateChannel?: PanelUpdateChannel; releaseTag?: string
   /** 服务端核对的派生标志：任务仍在活动态但维护单元已退出（疑似中断），终态由服务端判定后回传。 */
   workerDead?: boolean
+  workerStatus?: 'alive' | 'dead' | 'unknown'
 }
 export type PanelInfo = {
   ports: PanelPorts; commit: string; buildTime: string; repository: string

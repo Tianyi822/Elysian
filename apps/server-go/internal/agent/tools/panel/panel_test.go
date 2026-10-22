@@ -26,7 +26,9 @@ func (f *fakeHost) Preflight(context.Context, config.PanelNetwork, config.PanelN
 
 func (f *fakeHost) Dispatch(context.Context, string, string) error { return nil }
 
-func (f *fakeHost) WorkerActive(context.Context, string) bool { return false }
+func (f *fakeHost) ProbeWorker(context.Context, string) domainpanel.WorkerStatus {
+	return domainpanel.WorkerDead
+}
 
 func (f *fakeHost) Build(context.Context, string, string, string) (string, error) {
 	return "", nil

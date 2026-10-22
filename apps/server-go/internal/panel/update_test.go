@@ -281,14 +281,14 @@ func TestReleaseWorkerUsesPersistedCommit(t *testing.T) {
 	}
 }
 
-func TestSubmitPreflightSurvivesClientAbort(t *testing.T) {
+func TestSubmitDispatchSurvivesClientAbort(t *testing.T) {
 	worker, original, host := setupWorker(t, "ports")
 	if err := os.Remove(worker.Store.taskPath(original.ID)); err != nil {
 		t.Fatal(err)
 	}
 	m := Manager{Store: worker.Store, Host: host, Source: fakeSource{}, Ports: config.DefaultPanelNetwork(), Enabled: true, Executable: filepath.Join(worker.install(), "releases", "old", "elysian")}
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // 模拟前端 30 秒中止：请求上下文已死，服务端仍要完成预检并创建任务。
+	cancel() // 请求上下文已死，服务端仍要持久化任务并派发 worker。
 	task, err := m.Submit(ctx, "ports", submitInput{RequestID: "request-abort", FrontendPort: 49000, BackendPort: 49001}, "")
 	if err != nil || task.ID == "" || host.dispatched != 1 {
 		t.Fatalf("客户端中止不应中断任务创建：%+v %v %d", task, err, host.dispatched)
