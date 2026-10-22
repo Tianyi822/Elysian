@@ -46,6 +46,14 @@ type submitInput struct {
 	ReleaseTag   string        `json:"releaseTag"`
 }
 
+// 维护单元存活性核对节奏：记录刚写入时先假定单元存活（单元 activation 阶段
+// systemctl is-active 会短暂返回非 active，且不必每次轮询都派生子进程）；单元已
+// 不可达且记录长期未推进时判为进程意外退出，转终态。
+const (
+	workerProbeAfter = time.Minute
+	workerStaleAfter = 10 * time.Minute
+)
+
 func (m Manager) Info() (Info, error) {
 	i := Info{Ports: m.Ports, Commit: Commit, BuildTime: BuildTime, Repository: Repository, Available: m.Enabled && m.Host.Available()}
 	if !i.Available {
@@ -60,13 +68,73 @@ func (m Manager) Info() (Info, error) {
 		i.LastTask = &task
 	}
 	for _, row := range rows {
-		if Active(row.State) || row.State == "recovery-failed" {
+		if Active(row.State) {
+			supervised := m.superviseActive(row)
+			i.ActiveTask = &supervised.Task
+			break
+		}
+		if row.State == "recovery-failed" {
 			task := row.Task
 			i.ActiveTask = &task
 			break
 		}
 	}
 	return i, nil
+}
+
+// superviseActive 对活动任务核对维护单元存活性（systemctl is-active，Submit 派发后
+// 核实用的同一通道）：单元还在跑就原样返回；单元已退出时先在返回值上标注 workerDead
+// 让前端可区分「还在执行」与「疑似中断」，记录又长期未推进才转终态——未进入切换
+// 阶段直接判失败；已动过配置、数据或防火墙的，面板进程自己无法安全回滚（需要停掉
+// 自身），保持 recovery-failed 锁定并附服务器侧恢复指引，交给下次服务重启时的
+// ExecStartPre 恢复。转终态在 store.lock 内重读校验，避免与 worker 的最后一次保存竞争。
+func (m Manager) superviseActive(row taskRecord) taskRecord {
+	if !Active(row.State) || !m.Enabled || !m.Host.Available() {
+		return row
+	}
+	if time.Since(row.UpdatedAt) < workerProbeAfter {
+		return row
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if m.Host.WorkerActive(ctx, row.ID) {
+		return row
+	}
+	row.WorkerDead = true
+	if time.Since(row.UpdatedAt) < workerStaleAfter {
+		return row
+	}
+	_ = m.Store.lock(func() error {
+		fresh, err := m.Store.read(row.ID)
+		if err != nil || !Active(fresh.State) {
+			return nil
+		}
+		if m.Host.WorkerActive(ctx, fresh.ID) {
+			return nil
+		}
+		fresh.WorkerDead = true
+		fresh.Phase = "finished"
+		fresh.UpdatedAt = time.Now().UTC()
+		if !fresh.Activated && !fresh.FirewallCaptured {
+			fresh.State = "failed"
+			fresh.Error = "维护进程意外退出；未进入切换阶段，配置与数据未被改动。可在服务器执行 journalctl -u elysian-maintenance-" + fresh.ID + " 查看现场"
+		} else {
+			fresh.State = "recovery-failed"
+			fresh.Error = "维护进程意外退出，原版本与配置尚未恢复" + recoveryHint(fresh.ID)
+		}
+		if err := m.Store.save(fresh); err != nil {
+			return err
+		}
+		m.Store.appendLog(fresh.ID, fresh.UpdatedAt.Format(time.RFC3339)+" "+fresh.Error+"\n")
+		if fresh.Worker != "" {
+			_ = os.Remove(fresh.Worker)
+		}
+		return nil
+	})
+	if updated, err := m.Store.read(row.ID); err == nil {
+		return updated
+	}
+	return row
 }
 func (m Manager) Check(ctx context.Context, channel UpdateChannel) (Update, error) {
 	channel = normalizeChannel(channel)
@@ -134,7 +202,12 @@ func (m Manager) Submit(ctx context.Context, kind string, input submitInput, ori
 					return shared.InvalidRequest("请先检查更新，再提交已检查的目标版本")
 				}
 			}
-			if err = m.Host.Preflight(ctx, m.Ports, next); err != nil {
+			// 预检与请求生命周期解耦：前端 30 秒中止或网络断开不该让服务端预检半途而
+			// 废；互斥锁等待期间客户端可能已断开，任务创建仍要完成，前端凭 requestId
+			// 幂等重挂。预检内部每条命令各有 30 秒上限，总预算 3 分钟兜底。
+			preflightCtx, preflightCancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Minute)
+			defer preflightCancel()
+			if err = m.Host.Preflight(preflightCtx, m.Ports, next); err != nil {
 				return shared.InvalidRequest(err.Error())
 			}
 			id, err := newID()
@@ -265,6 +338,8 @@ func (m Manager) Router() chi.Router {
 			shared.SendError(w, 404, "维护任务不存在或记录损坏")
 			return
 		}
+		// 轮询路径同时承担存活监管：维护单元死掉的任务不会永远停在 queued/running。
+		row = m.superviseActive(row)
 		offset := int64(0)
 		if raw := r.URL.Query().Get("offset"); raw != "" {
 			offset, err = strconv.ParseInt(raw, 10, 64)
@@ -360,7 +435,14 @@ func (m Manager) Health(w http.ResponseWriter, r *http.Request) {
 	}{true, ready, Commit, m.Ports})
 }
 
-func RunCLI(ctx context.Context, command string, args []string, root, socket string) error {
+func RunCLI(ctx context.Context, command string, args []string, root, socket string) (err error) {
+	// 维护命令以 systemd 瞬态单元或 ExecStartPre 运行，没有 HTTP 层的 panic 兜底：
+	// 这里兜住异常并转成错误返回，让 systemd 记录失败而不是静默冻结任务。
+	defer func() {
+		if p := recover(); p != nil {
+			err = fmt.Errorf("维护命令异常退出：%v", p)
+		}
+	}()
 	s := Store{Root: root}
 	host := SystemHost{Store: s, DockerSocket: socket}
 	worker := Worker{Store: s, Host: host, Source: DefaultSource()}

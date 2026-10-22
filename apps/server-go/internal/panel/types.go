@@ -46,6 +46,9 @@ type Task struct {
 	UpdateChannel UpdateChannel       `json:"updateChannel,omitempty"`
 	ReleaseTag    string              `json:"releaseTag,omitempty"`
 	Error         string              `json:"error"`
+	// WorkerDead 由服务端读路径派生：任务仍在活动态但维护单元已不可达（疑似中断），
+	// 供前端区分「还在执行」与「疑似中断」；只在确认转终态时才随记录落盘。
+	WorkerDead bool `json:"workerDead,omitempty"`
 }
 
 type taskRecord struct {

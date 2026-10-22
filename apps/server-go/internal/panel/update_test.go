@@ -2,13 +2,18 @@ package panel
 
 import (
 	"context"
+	"elysian/server/internal/config"
+	"elysian/server/internal/shared"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestReleaseResolvesTagAndPinsDownloadAndHistory(t *testing.T) {
@@ -273,5 +278,51 @@ func TestReleaseWorkerUsesPersistedCommit(t *testing.T) {
 	logs, err := os.ReadFile(worker.Store.logPath(record.ID))
 	if err != nil || !strings.Contains(string(logs), "最新发版 v1.2.0") {
 		t.Fatalf("日志未记录策略：%s %v", logs, err)
+	}
+}
+
+func TestSubmitPreflightSurvivesClientAbort(t *testing.T) {
+	worker, original, host := setupWorker(t, "ports")
+	if err := os.Remove(worker.Store.taskPath(original.ID)); err != nil {
+		t.Fatal(err)
+	}
+	m := Manager{Store: worker.Store, Host: host, Source: fakeSource{}, Ports: config.DefaultPanelNetwork(), Enabled: true, Executable: filepath.Join(worker.install(), "releases", "old", "elysian")}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // 模拟前端 30 秒中止：请求上下文已死，服务端仍要完成预检并创建任务。
+	task, err := m.Submit(ctx, "ports", submitInput{RequestID: "request-abort", FrontendPort: 49000, BackendPort: 49001}, "")
+	if err != nil || task.ID == "" || host.dispatched != 1 {
+		t.Fatalf("客户端中止不应中断任务创建：%+v %v %d", task, err, host.dispatched)
+	}
+}
+
+func TestMutationGateWaitsAreBounded(t *testing.T) {
+	s := Store{Root: t.TempDir()}
+	if err := os.MkdirAll(s.tasksDir(), 0700); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(filepath.Join(s.tasksDir(), "operations.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	// 模拟另一个进程（或长写请求）持有互斥锁：等待必须按上限及时返回中文错误。
+	if err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	previous := exclusiveGateWait
+	exclusiveGateWait = 150 * time.Millisecond
+	t.Cleanup(func() { exclusiveGateWait = previous })
+	start := time.Now()
+	err = s.mutationGate(false, func() error { return nil })
+	if err == nil || !strings.Contains(err.Error(), "面板正忙") {
+		t.Fatalf("独占等待超时未返回中文错误：%v", err)
+	}
+	var typed *shared.InvalidRequestError
+	if !errors.As(err, &typed) || typed.Status != 503 {
+		t.Fatalf("独占等待超时未带状态码：%v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("独占等待未按上限及时返回：%v", elapsed)
 	}
 }

@@ -20,6 +20,7 @@ export function parsePanelTask(value: unknown): PanelTask {
   if (!['ports', 'restart', 'update'].includes(String(row.kind)) || !['queued', 'running', 'succeeded', 'failed', 'rolled-back', 'recovery-failed'].includes(String(row.state))) throw new Error('面板任务状态无效')
   if (row.updateChannel !== undefined && row.updateChannel !== 'commit' && row.updateChannel !== 'release') throw new Error('面板任务更新策略无效')
   if (row.releaseTag !== undefined && typeof row.releaseTag !== 'string') throw new Error('面板任务发版标签无效')
+  if (row.workerDead !== undefined && typeof row.workerDead !== 'boolean') throw new Error('面板任务维护进程状态无效')
   return { ...row, oldPorts: ports(row.oldPorts), newPorts: ports(row.newPorts) } as PanelTask
 }
 export function parsePanelInfo(value: unknown): PanelInfo {
@@ -37,6 +38,8 @@ export function parsePanelCommits(value: unknown): PanelCommit[] {
     return { sha, message, time }
   })
 }
+/** 网络层失败（连不上、30 秒中止、响应体损坏）的标记：调用方据此区分「断连」与「HTTP 错误响应」。 */
+export class PanelNetworkError extends Error {}
 async function request(path: string, method = 'GET', body?: unknown): Promise<unknown> {
   const abort = new AbortController(); const timer = setTimeout(() => abort.abort(), 30000)
   try {
@@ -46,7 +49,9 @@ async function request(path: string, method = 'GET', body?: unknown): Promise<un
   if (!response.ok) { const row = object(data); throw new Error(typeof row.error === 'string' ? row.error : `面板维护请求失败：HTTP ${response.status}`) }
   return data
   } catch (cause) {
-    if (cause instanceof TypeError || cause instanceof SyntaxError || cause instanceof DOMException) throw new Error('面板连接失败或响应无效，请稍后重试')
+    // 网络失败与 HTTP 错误响应分流：后者已在上面抛出服务端中文错误，原样透传；
+    // 只有网络层失败才归类为「面板连接失败」，供轮询侧计入断连预算。
+    if (cause instanceof TypeError || cause instanceof SyntaxError || cause instanceof DOMException) throw new PanelNetworkError('面板连接失败或响应无效，请稍后重试')
     throw cause
   } finally { clearTimeout(timer) }
 }
@@ -74,5 +79,21 @@ export function createHttpPanelAdapter(base = '/api/panel'): PanelAdapter {
       const response = await fetch(`${origin}/api/health?maintenanceTask=${encodeURIComponent(id)}`, { credentials: 'omit', cache: 'no-store', signal })
       const row = object(await response.json()); return response.ok && row.ok === true && row.ready === true
     },
+  }
+}
+
+/**
+ * 同源轻量健康探测：断连预算耗尽后探测面板是否恢复（health 端点豁免登录）。
+ * 任何失败都回 null——探测本就是「面板可能还不可达」场景下的尝试，不抛错打扰调用方。
+ */
+export async function probeSameOriginHealth(signal?: AbortSignal): Promise<{ commit: string } | null> {
+  try {
+    const response = await fetchWithSession('/api/health', { signal, credentials: 'same-origin', cache: 'no-store' })
+    if (!response.ok) return null
+    const row = object(await response.json())
+    if (row.ok !== true) return null
+    return { commit: typeof row.commit === 'string' ? row.commit : '' }
+  } catch {
+    return null
   }
 }

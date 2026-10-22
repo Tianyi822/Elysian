@@ -3,6 +3,7 @@ package panel
 import (
 	"crypto/rand"
 	"elysian/server/internal/config"
+	"elysian/server/internal/shared"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"syscall"
+	"time"
 )
 
 var idPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
@@ -27,8 +29,17 @@ func (s Store) updateCheckPath(channel UpdateChannel) string {
 	return filepath.Join(s.Root, "state", name)
 }
 
-// 请求写操作持共享锁，维护提交持独占锁，等待已经开始的写请求结束。
-func (s Store) mutationGate(shared bool, fn func() error) error {
+// 互斥等待上限：独占等待（维护提交）25 秒——低于前端 30 秒中止，「面板正忙」能回到
+// 浏览器而不是让用户只看到连接超时；共享等待（普通写请求）90 秒——只需覆盖一次维护
+// 提交或安装脚本的独占持有。并发长写（如上传全程持共享锁）不再把提交无限期挂起。
+var (
+	exclusiveGateWait = 25 * time.Second
+	sharedGateWait    = 90 * time.Second
+)
+
+// 请求写操作持共享锁，维护提交持独占锁，等待已经开始的写请求结束；等待按上面的
+// 上限及时以中文错误拒绝，由前端提示稍后重试。
+func (s Store) mutationGate(sharedLock bool, fn func() error) error {
 	if err := os.MkdirAll(s.tasksDir(), 0700); err != nil {
 		return err
 	}
@@ -38,11 +49,26 @@ func (s Store) mutationGate(shared bool, fn func() error) error {
 	}
 	defer f.Close()
 	mode := syscall.LOCK_EX
-	if shared {
+	wait := exclusiveGateWait
+	busy := &shared.InvalidRequestError{Status: 503, Message: "面板正忙，请稍后重试"}
+	if sharedLock {
 		mode = syscall.LOCK_SH
+		wait = sharedGateWait
+		busy = &shared.InvalidRequestError{Status: 409, Message: "面板正在维护，暂不能修改配置或执行部署，请稍后重试"}
 	}
-	if err = syscall.Flock(int(f.Fd()), mode); err != nil {
-		return err
+	deadline := time.Now().Add(wait)
+	for {
+		err = syscall.Flock(int(f.Fd()), mode|syscall.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if err == syscall.EINTR {
+			continue
+		}
+		if err != syscall.EWOULDBLOCK || time.Now().After(deadline) {
+			return busy
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 	return fn()

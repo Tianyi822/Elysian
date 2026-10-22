@@ -26,11 +26,17 @@ type fakeHost struct {
 	failHealth  bool
 	failBuild   bool
 	failStart   bool
+	failStopOn  int
+	panicHealth bool
 	candidate   string
 }
 
 func (h *fakeHost) Available() bool { return true }
-func (h *fakeHost) Preflight(_ context.Context, old, next config.PanelNetwork) error {
+func (h *fakeHost) Preflight(ctx context.Context, old, next config.PanelNetwork) error {
+	// 感知请求上下文：预检解耦（客户端中止后服务端继续）需要靠它验证。
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return validateRules(h.rules, old, next)
 }
 func (h *fakeHost) Dispatch(context.Context, string, string) error { h.dispatched++; return nil }
@@ -41,7 +47,13 @@ func (h *fakeHost) Build(context.Context, string, string, string) (string, error
 	}
 	return h.candidate, nil
 }
-func (h *fakeHost) Stop(context.Context) error { h.stops++; return nil }
+func (h *fakeHost) Stop(context.Context) error {
+	h.stops++
+	if h.failStopOn != 0 && h.stops == h.failStopOn {
+		return fmt.Errorf("停止失败")
+	}
+	return nil
+}
 func (h *fakeHost) Start(context.Context) error {
 	h.starts++
 	if h.failStart && h.starts == 1 {
@@ -51,6 +63,10 @@ func (h *fakeHost) Start(context.Context) error {
 }
 func (h *fakeHost) Healthy(context.Context, config.PanelNetwork, string) error {
 	h.healthCalls++
+	// 只崩一次：panic 兜底后的回滚还要调用健康检查。
+	if h.panicHealth && h.healthCalls == 1 {
+		panic("健康检查崩溃")
+	}
 	if h.failHealth && h.healthCalls == 1 {
 		return fmt.Errorf("健康检查失败")
 	}
@@ -384,12 +400,15 @@ func TestUpdateCommitsCandidateOrRestoresOldBinary(t *testing.T) {
 			err := w.Run(context.Background(), r.ID)
 			row, _ := w.Store.read(r.ID)
 			binary, _ := filepath.EvalSymlinks(filepath.Join(w.install(), "current", "elysian"))
+			// 候选路径两侧都经 EvalSymlinks：macOS 的 /var → /private/var 下，未解析
+			// 的临时目录字面量与解析后的运行路径不是同一字符串。
+			candidate, _ := filepath.EvalSymlinks(h.candidate)
 			if fail {
 				if err == nil || row.State != "rolled-back" || filepath.Base(filepath.Dir(binary)) != "old" {
 					t.Fatalf("更新失败未恢复程序：%v %+v %s", err, row, binary)
 				}
 			} else {
-				if err != nil || row.State != "succeeded" || binary != h.candidate {
+				if err != nil || row.State != "succeeded" || binary != candidate {
 					t.Fatalf("更新未提交：%v %+v %s", err, row, binary)
 				}
 				if _, err := os.Stat(filepath.Join(w.install(), "releases", "old", "elysian")); err != nil {
@@ -471,6 +490,183 @@ func TestStartupFailureRestoresOldPortsAndRules(t *testing.T) {
 	ports, _ := config.ReadPanelNetwork(w.Store.networkPath())
 	if row.State != "rolled-back" || ports != r.OldPorts || h.starts != 2 || len(h.rules) != 2 {
 		t.Fatalf("启动失败未回滚：%+v %v", row, ports)
+	}
+}
+
+func TestWorkerPanicWritesTerminalState(t *testing.T) {
+	w, r, h := setupWorker(t, "ports")
+	h.panicHealth = true
+	err := w.Run(context.Background(), r.ID)
+	if err == nil || !strings.Contains(err.Error(), "维护进程异常退出") {
+		t.Fatalf("panic 未转为错误：%v", err)
+	}
+	row, _ := w.Store.read(r.ID)
+	if row.State != "rolled-back" || !strings.Contains(row.Error, "维护进程异常退出") {
+		t.Fatalf("panic 后任务未收敛终态：%+v", row)
+	}
+	if ports, _ := config.ReadPanelNetwork(w.Store.networkPath()); ports != r.OldPorts {
+		t.Fatalf("panic 后配置未恢复：%v", ports)
+	}
+}
+
+func TestRollbackFailureStillStartsOldService(t *testing.T) {
+	w, r, h := setupWorker(t, "ports")
+	h.failHealth = true // execute 的健康检查失败，进入回滚。
+	h.failStopOn = 2    // 回滚阶段的停止失败，模拟回滚中断。
+	if err := w.Run(context.Background(), r.ID); err == nil {
+		t.Fatal("预期回滚失败")
+	}
+	row, _ := w.Store.read(r.ID)
+	if row.State != "recovery-failed" || !strings.Contains(row.Error, "systemctl restart elysian") || !strings.Contains(row.Error, "journalctl -u elysian-maintenance-") {
+		t.Fatalf("恢复失败未附服务器侧指引：%+v", row)
+	}
+	if h.starts != 2 {
+		t.Fatalf("回滚失败后未兜底拉起旧服务：%d", h.starts)
+	}
+}
+
+func TestRollbackBudgetCoversWorstCase(t *testing.T) {
+	// 快照原位恢复 + 逐条防火墙规则 + 启动 + 60 秒健康等待的最坏情况远超 2 分钟；
+	// 预算不足会让本可恢复的任务被打成 recovery-failed。
+	if rollbackBudget < 8*time.Minute {
+		t.Fatalf("回滚预算不足以覆盖最坏情况：%v", rollbackBudget)
+	}
+}
+
+func TestSwitchBinaryResolvesSymlinkedInstallRoot(t *testing.T) {
+	root := t.TempDir()
+	alias := filepath.Join(filepath.Dir(root), "alias-"+filepath.Base(root))
+	if err := os.Symlink(root, alias); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"v1", "v2"} {
+		binary := filepath.Join(root, "releases", name, "elysian")
+		if err := os.MkdirAll(filepath.Dir(binary), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(binary, []byte(name), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// PreviousBinary 一侧来自 EvalSymlinks（已解析），与未解析安装根混用必须可用。
+	if err := switchBinary(alias, filepath.Join(root, "releases", "v1", "elysian"), strings.Repeat("1", 32)); err != nil {
+		t.Fatalf("已解析版本路径被拒绝：%v", err)
+	}
+	// 候选二进制（构建产物路径，未解析）也必须可用。
+	if err := switchBinary(alias, filepath.Join(alias, "releases", "v2", "elysian"), strings.Repeat("2", 32)); err != nil {
+		t.Fatalf("符号链接安装根拒绝合法版本：%v", err)
+	}
+	target, err := os.Readlink(filepath.Join(root, "current"))
+	if err != nil || filepath.Base(target) != "v2" {
+		t.Fatalf("current 未指向新版本：%s %v", target, err)
+	}
+	outside := filepath.Join(filepath.Dir(root), "outside", "elysian")
+	if err := os.MkdirAll(filepath.Dir(outside), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(outside, []byte("x"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := switchBinary(alias, outside, strings.Repeat("3", 32)); err == nil {
+		t.Fatal("接受发布目录外的二进制")
+	}
+}
+
+func TestSuperviseMarksStaleDeadWorkerTerminal(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		activated bool
+		want      string
+	}{
+		{"未进入切换阶段判失败", false, "failed"},
+		{"已进入切换阶段等待服务器恢复", true, "recovery-failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w, r, h := setupWorker(t, "update")
+			r.State = "running"
+			r.Phase = "building"
+			r.UpdatedAt = time.Now().UTC().Add(-11 * time.Minute)
+			if tc.activated {
+				r.Activated = true
+				r.FirewallCaptured = true
+			}
+			if err := w.Store.save(r); err != nil {
+				t.Fatal(err)
+			}
+			m := Manager{Store: w.Store, Host: h, Source: fakeSource{}, Ports: r.OldPorts, Enabled: true}
+			router := m.Router()
+			rr := httptest.NewRecorder()
+			router.ServeHTTP(rr, httptest.NewRequest("GET", "/tasks/"+r.ID, nil))
+			if rr.Code != 200 {
+				t.Fatalf("读取任务失败：%d %s", rr.Code, rr.Body.String())
+			}
+			var result struct {
+				Task Task `json:"task"`
+			}
+			if err := json.Unmarshal(rr.Body.Bytes(), &result); err != nil {
+				t.Fatal(err)
+			}
+			if result.Task.State != tc.want || !strings.Contains(result.Task.Error, "意外退出") {
+				t.Fatalf("未按维护单元存活性收敛终态：%+v", result.Task)
+			}
+			if tc.activated && !strings.Contains(result.Task.Error, "systemctl restart elysian") {
+				t.Fatalf("恢复失败缺少服务器侧指引：%s", result.Task.Error)
+			}
+			row, err := w.Store.read(r.ID)
+			if err != nil || row.State != tc.want {
+				t.Fatalf("终态未落盘：%+v %v", row, err)
+			}
+		})
+	}
+}
+
+func TestSuperviseFlagsFreshDeadWorkerWithoutTerminal(t *testing.T) {
+	w, r, h := setupWorker(t, "update")
+	r.State = "running"
+	r.UpdatedAt = time.Now().UTC().Add(-2 * time.Minute) // 已过探测窗口、未过判定窗口。
+	if err := w.Store.save(r); err != nil {
+		t.Fatal(err)
+	}
+	m := Manager{Store: w.Store, Host: h, Source: fakeSource{}, Ports: r.OldPorts, Enabled: true}
+	router := m.Router()
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, httptest.NewRequest("GET", "/tasks/"+r.ID, nil))
+	var result struct {
+		Task Task `json:"task"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Task.State != "running" || !result.Task.WorkerDead {
+		t.Fatalf("应只标注疑似中断而不转终态：%+v", result.Task)
+	}
+	row, err := w.Store.read(r.ID)
+	if err != nil || row.State != "running" {
+		t.Fatalf("读路径派生不应提前落终态：%+v %v", row, err)
+	}
+}
+
+func TestSuperviseSkipsFreshRecordsAndDisabledManagers(t *testing.T) {
+	w, r, h := setupWorker(t, "update")
+	r.State = "running"
+	r.UpdatedAt = time.Now().UTC().Add(-11 * time.Minute)
+	if err := w.Store.save(r); err != nil {
+		t.Fatal(err)
+	}
+	// 未启用维护能力的 Manager 只读记录，不做存活监管。
+	disabled := Manager{Store: w.Store, Host: h, Source: fakeSource{}, Ports: r.OldPorts}
+	info, err := disabled.Info()
+	if err != nil || info.ActiveTask == nil || info.ActiveTask.State != "running" || info.ActiveTask.WorkerDead {
+		t.Fatalf("禁用维护时不应派生存活标志：%+v %v", info.ActiveTask, err)
+	}
+	r.UpdatedAt = time.Now().UTC() // 刚写入的记录假定单元存活，不派生子进程探测。
+	if err := w.Store.save(r); err != nil {
+		t.Fatal(err)
+	}
+	enabled := Manager{Store: w.Store, Host: h, Source: fakeSource{}, Ports: r.OldPorts, Enabled: true}
+	info, err = enabled.Info()
+	if err != nil || info.ActiveTask == nil || info.ActiveTask.WorkerDead {
+		t.Fatalf("新记录不应标注疑似中断：%+v %v", info.ActiveTask, err)
 	}
 }
 func TestLogPaginationPreservesChineseAcrossBoundary(t *testing.T) {

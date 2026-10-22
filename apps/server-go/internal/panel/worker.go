@@ -18,6 +18,13 @@ type Worker struct {
 	Install string
 }
 
+// 回滚预算按最坏情况给足：数据快照原位恢复 + 逐条防火墙规则命令 + 启动 + 60 秒健康
+// 等待；预算不足会在恢复数据或加规则途中超时，把任务打成 recovery-failed。
+const rollbackBudget = 10 * time.Minute
+
+// startFallbackBudget 是回滚失败后的兜底拉起预算（启动命令 30 秒 + 健康检查 60 秒）。
+const startFallbackBudget = 2 * time.Minute
+
 func (w Worker) install() string {
 	if w.Install != "" {
 		return w.Install
@@ -32,7 +39,7 @@ func (w Worker) phase(r *taskRecord, phase string) error {
 	return w.Store.lock(func() error { return w.Store.save(*r) })
 }
 
-func (w Worker) Run(ctx context.Context, id string) error {
+func (w Worker) Run(ctx context.Context, id string) (retErr error) {
 	if !idPattern.MatchString(id) {
 		return fmt.Errorf("任务编号无效")
 	}
@@ -54,6 +61,12 @@ func (w Worker) Run(ctx context.Context, id string) error {
 			_ = os.Remove(r.Worker)
 		}
 	}()
+	// panic 兜底：异常退出也走与普通失败相同的回滚与终态收敛，任务不冻结在 running。
+	defer func() {
+		if p := recover(); p != nil {
+			retErr = w.finishFailure(&r, fmt.Errorf("维护进程异常退出：%v", p))
+		}
+	}()
 	if !Active(r.State) {
 		return nil
 	}
@@ -72,22 +85,53 @@ func (w Worker) Run(ctx context.Context, id string) error {
 	if err = w.execute(ctx, &r); err == nil {
 		return nil
 	}
-	r.Error = err.Error()
-	w.Store.appendLog(id, "维护失败："+r.Error+"\n")
-	recoverCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	return w.finishFailure(&r, err)
+}
+
+// finishFailure 把失败任务收敛为终态：先按快照与捕获的规则回滚；回滚失败时尽力把旧
+// 服务拉起（杜绝恢复失败后面板停留在停止态）、落 recovery-failed 并附服务器侧恢复
+// 指引；未动过配置、数据或防火墙的失败不再回滚，直接判 failed。
+func (w Worker) finishFailure(r *taskRecord, cause error) error {
+	r.Error = cause.Error()
+	w.Store.appendLog(r.ID, "维护失败："+r.Error+"\n")
+	recoverCtx, cancel := context.WithTimeout(context.Background(), rollbackBudget)
 	defer cancel()
-	if e := w.rollback(recoverCtx, &r, true); e != nil {
+	if e := w.rollback(recoverCtx, r, true); e != nil {
 		r.State = "recovery-failed"
-		r.Error += "；恢复失败：" + e.Error()
+		r.Error += "；恢复失败：" + e.Error() + recoveryHint(r.ID)
+		w.ensureStarted(r)
 	} else if r.Activated || r.FirewallCaptured {
 		r.State = "rolled-back"
 	} else {
 		r.State = "failed"
 	}
-	if e := w.phase(&r, "finished"); e != nil {
-		return fmt.Errorf("%w；任务结果保存失败：%v", err, e)
+	if e := w.phase(r, "finished"); e != nil {
+		return fmt.Errorf("%w；任务结果保存失败：%v", cause, e)
 	}
-	return err
+	return cause
+}
+
+// ensureStarted 在回滚失败后尽力把面板服务拉起：面板进程自身停着比配置未完全恢复
+// 更糟——用户会彻底失去面板入口。使用独立短预算，不占用回滚预算。
+func (w Worker) ensureStarted(r *taskRecord) {
+	if !r.Activated {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), startFallbackBudget)
+	defer cancel()
+	if err := w.Host.Start(ctx); err != nil {
+		w.Store.appendLog(r.ID, "恢复后面板启动失败："+err.Error()+"\n")
+		return
+	}
+	if err := w.Host.Healthy(ctx, r.OldPorts, ""); err != nil {
+		w.Store.appendLog(r.ID, "恢复后面板健康检查未通过："+err.Error()+"\n")
+	}
+}
+
+// recoveryHint 是恢复失败任务的服务器侧固定指引：回滚需要停掉面板自身，面板进程内
+// 无法安全执行，恢复动作收敛在服务重启时的 ExecStartPre（maintenance-recover）。
+func recoveryHint(id string) string {
+	return "。请在服务器执行 systemctl restart elysian（启动前会自动恢复原版本与配置），并用 journalctl -u elysian-maintenance-" + id + " 查看维护现场"
 }
 
 func (w Worker) execute(ctx context.Context, r *taskRecord) error {
@@ -331,30 +375,50 @@ func (w Worker) Recover(ctx context.Context) error {
 }
 
 func switchBinary(root, binary, id string) error {
+	// 安装根可能含符号链接（如 macOS 的 /var → /private/var）：PreviousBinary 一侧来自
+	// EvalSymlinks 已解析，根与候选二进制也先解析再比较，否则同一版本目录会被当成
+	// 两个不可比较的路径，切换与回滚全部失败。
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return fmt.Errorf("面板安装目录无效：%w", err)
+	}
+	binary, err = filepath.EvalSymlinks(binary)
+	if err != nil {
+		return err
+	}
 	release := filepath.Dir(binary)
-	relative, err := filepath.Rel(filepath.Join(root, "releases"), release)
+	relative, err := filepath.Rel(filepath.Join(resolved, "releases"), release)
 	if err != nil || relative == "." || relative == ".." || filepath.IsAbs(relative) || len(relative) >= 3 && relative[:3] == "../" {
 		return fmt.Errorf("版本路径不在面板发布目录中")
 	}
 	if st, err := os.Lstat(binary); err != nil || !st.Mode().IsRegular() {
 		return fmt.Errorf("面板二进制无效")
 	}
-	tmp := filepath.Join(root, ".current-"+id)
+	tmp := filepath.Join(resolved, ".current-"+id)
 	_ = os.Remove(tmp)
 	if err = os.Symlink(release, tmp); err != nil {
 		return err
 	}
 	defer os.Remove(tmp)
-	return os.Rename(tmp, filepath.Join(root, "current"))
+	return os.Rename(tmp, filepath.Join(resolved, "current"))
 }
 func (w Worker) pruneReleases(current, previous string) {
+	// 比较前统一解析符号链接：/var 与 /private/var 指向同一目录时不算两个版本目录，
+	// 否则上一成功版本会被当成多余产物清掉。
+	resolve := func(p string) string {
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			return r
+		}
+		return p
+	}
+	keep := map[string]bool{resolve(filepath.Dir(current)): true, resolve(filepath.Dir(previous)): true}
 	entries, err := os.ReadDir(filepath.Join(w.install(), "releases"))
 	if err != nil {
 		return
 	}
 	for _, e := range entries {
 		p := filepath.Join(w.install(), "releases", e.Name())
-		if e.IsDir() && p != filepath.Dir(current) && p != filepath.Dir(previous) {
+		if e.IsDir() && !keep[resolve(p)] {
 			_ = os.RemoveAll(p)
 		}
 	}

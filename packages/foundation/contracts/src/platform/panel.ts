@@ -12,6 +12,8 @@ export type PanelTask = {
   targetCommit: string; error: string
   /** 旧任务未记录更新策略；缺省按最新提交解释。 */
   updateChannel?: PanelUpdateChannel; releaseTag?: string
+  /** 服务端核对的派生标志：任务仍在活动态但维护单元已退出（疑似中断），终态由服务端判定后回传。 */
+  workerDead?: boolean
 }
 export type PanelInfo = {
   ports: PanelPorts; commit: string; buildTime: string; repository: string
@@ -37,5 +39,6 @@ export const PANEL_TASK_PHASE_LABELS: Record<string, string> = {
 }
 export const PANEL_TASK_STATE_LABELS: Record<PanelTaskState, string> = {
   queued: '等待执行', running: '正在执行', succeeded: '已完成', failed: '执行失败',
-  'rolled-back': '已恢复原配置或版本', 'recovery-failed': '恢复失败，需要在服务器处理',
+  'rolled-back': '已恢复原配置或版本',
+  'recovery-failed': '恢复失败，需要在服务器处理：执行 systemctl restart elysian 触发自动恢复，并用 journalctl -u elysian-maintenance-<任务编号> 查看现场',
 }

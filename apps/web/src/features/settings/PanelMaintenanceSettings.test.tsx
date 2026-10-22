@@ -2,11 +2,12 @@ import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockGateway } from '../../adapters/mock/gateway'
+import { PanelNetworkError } from '../../adapters/http/panelHttpAdapter'
 import { usePanelStore } from '../../stores/panelStore'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { renderApp } from '../../test/renderApp'
 import type { PanelInfo, PanelTask, PanelUpdate } from '@elysian/contracts'
-import { openPanelAddress } from './panelNavigation'
+import { openPanelAddress, reloadPanelPage } from './panelNavigation'
 vi.mock('./panelNavigation', () => ({ openPanelAddress: vi.fn(), reloadPanelPage: vi.fn() }))
 const ports = { frontendPort: 48100, backendPort: 48101 }
 const info: PanelInfo = { ports, commit: 'a'.repeat(40), buildTime: '', repository: 'Tianyi822/Elysian', available: true, reason: '', activeTask: null, lastTask: null }
@@ -130,7 +131,6 @@ describe('端口与更新设置', () => {
   it('刷新后恢复后台任务及回滚错误', async () => {
     const g = gateway(); g.panel.info = async () => ({ ...info, lastTask: { ...task, state: 'rolled-back', error: '健康检查失败，已恢复' } })
     renderApp('/settings?tab=maintenance', { gateway: g }); expect(await screen.findByRole('alert')).toHaveTextContent('健康检查失败，已恢复'); expect(screen.getByRole('link', { name: /打开原地址/ })).toBeInTheDocument()
-    expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ tone: 'danger', message: '健康检查失败，已恢复' }))
   })
   it('新入口确认任务提交后跳转，探测使用任务编号', async () => {
     const g = gateway(); g.panel.info = async () => ({ ...info, activeTask: task })
@@ -193,5 +193,114 @@ describe('端口与更新设置', () => {
     expect(screen.getByRole('dialog', { name: '更新日志' })).toBeInTheDocument()
     await user.keyboard('{Escape}')
     expect(screen.queryByRole('dialog', { name: '更新日志' })).not.toBeInTheDocument()
+  })
+  const commitUpdate = { channel: 'commit' as const, releaseTag: '', repository: info.repository, branch: 'main', currentCommit: info.commit, targetCommit: 'c'.repeat(40), available: true, message: '修复说明' }
+  it('提交更新期间按钮立即进入提交中并阻止重复提交', async () => {
+    const g = gateway()
+    g.panel.checkUpdate = vi.fn(async () => commitUpdate)
+    let resolveUpdate!: (value: PanelTask) => void
+    g.panel.update = vi.fn(() => new Promise<PanelTask>((done) => { resolveUpdate = done }))
+    renderApp('/settings?tab=maintenance', { gateway: g }); const user = userEvent.setup()
+    await waitFor(() => expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: '检查更新' }))
+    expect(await screen.findByText(`目标提交：${commitUpdate.targetCommit}`)).toBeInTheDocument()
+    const submitButton = screen.getByRole('button', { name: '更新并重启' })
+    await user.click(submitButton)
+    expect(submitButton).toBeDisabled()
+    expect(submitButton).toHaveTextContent('正在提交…')
+    expect(screen.getByRole('button', { name: '检查更新' })).toBeDisabled()
+    expect(g.panel.update).toHaveBeenCalledTimes(1)
+    await act(async () => { resolveUpdate({ ...task, kind: 'update' as const, newPorts: ports, targetCommit: commitUpdate.targetCommit }) })
+    expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ tone: 'info', message: '面板维护任务已提交' }))
+  })
+  it('提交失败在更新区块留下持久错误行并重读配置重挂任务', async () => {
+    const g = gateway()
+    g.panel.checkUpdate = vi.fn(async () => commitUpdate)
+    g.panel.info = vi.fn(async () => info)
+    g.panel.update = vi.fn().mockRejectedValue(new Error('面板正忙，请稍后重试'))
+    renderApp('/settings?tab=maintenance', { gateway: g }); const user = userEvent.setup()
+    await waitFor(() => expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: '检查更新' }))
+    expect(await screen.findByText(`目标提交：${commitUpdate.targetCommit}`)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '更新并重启' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('面板正忙，请稍后重试')
+    expect(useNotificationStore.getState().notifications).not.toContainEqual(expect.objectContaining({ tone: 'danger', message: '面板正忙，请稍后重试' }))
+    // 失败分支重读一次配置：服务端凭 requestId 幂等创建的任务会被重新挂回页面。
+    expect(g.panel.info).toHaveBeenCalledTimes(2)
+  })
+  it('轮询收到 HTTP 错误立即显示服务端原因，不计断连预算', async () => {
+    const g = gateway()
+    g.panel.info = async () => ({ ...info, activeTask: { ...task, kind: 'update' as const, newPorts: ports } })
+    g.panel.task = vi.fn().mockRejectedValue(new Error('维护任务记录损坏'))
+    renderApp('/settings?tab=maintenance', { gateway: g })
+    expect(await screen.findByRole('alert')).toHaveTextContent('维护任务记录损坏')
+    expect(screen.queryByText(/等待面板恢复连接超时/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '重新等待连接' })).not.toBeInTheDocument()
+  })
+  it('维护进程已退出的活动任务提示疑似中断', async () => {
+    const g = gateway()
+    const interrupted = { ...task, kind: 'update' as const, newPorts: ports, workerDead: true }
+    g.panel.info = async () => ({ ...info, activeTask: interrupted })
+    g.panel.task = vi.fn().mockResolvedValue({ task: interrupted, logs: '', nextOffset: 0 })
+    renderApp('/settings?tab=maintenance', { gateway: g })
+    expect(await screen.findByText(/维护进程已退出/)).toBeInTheDocument()
+  })
+  it('更新成功先核对运行版本，不一致不自动刷新并提供手动重载', async () => {
+    const g = gateway(); const sha = commitUpdate.targetCommit
+    const updateTask = { ...task, kind: 'update' as const, newPorts: ports, targetCommit: sha }
+    g.panel.info = async () => ({ ...info, activeTask: updateTask })
+    // 页面挂载会读取数次任务，先保持活动；轮询确认执行中之后才放行终态。
+    let finished = false
+    g.panel.task = vi.fn(async () => finished
+      ? { task: { ...updateTask, state: 'succeeded' as const }, logs: '', nextOffset: 0 }
+      : { task: updateTask, logs: '', nextOffset: 0 })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ok: true, commit: 'f'.repeat(40) }))))
+    renderApp('/settings?tab=maintenance', { gateway: g })
+    await screen.findByText(/等待执行|正在执行/)
+    finished = true
+    expect(await screen.findByRole('alert', {}, { timeout: 4000 })).toHaveTextContent('与目标提交不一致')
+    expect(vi.mocked(reloadPanelPage)).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: '重新加载面板' })).toBeInTheDocument()
+    vi.unstubAllGlobals()
+  })
+  it('运行版本与目标提交一致时自动刷新页面', async () => {
+    const g = gateway(); const sha = commitUpdate.targetCommit
+    const updateTask = { ...task, kind: 'update' as const, newPorts: ports, targetCommit: sha }
+    g.panel.info = async () => ({ ...info, activeTask: updateTask })
+    let finished = false
+    g.panel.task = vi.fn(async () => finished
+      ? { task: { ...updateTask, state: 'succeeded' as const }, logs: '', nextOffset: 0 }
+      : { task: updateTask, logs: '', nextOffset: 0 })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ok: true, commit: sha }))))
+    renderApp('/settings?tab=maintenance', { gateway: g })
+    await screen.findByText(/等待执行|正在执行/)
+    finished = true
+    await waitFor(() => expect(vi.mocked(reloadPanelPage)).toHaveBeenCalled(), { timeout: 4000 })
+    vi.unstubAllGlobals()
+  })
+  it('断连超时后转健康探测自动重连，更新任务不引导新地址', async () => {
+    vi.useFakeTimers()
+    try {
+      const g = gateway(); const sha = commitUpdate.targetCommit
+      const updateTask = { ...task, kind: 'update' as const, newPorts: ports, targetCommit: sha }
+      g.panel.info = vi.fn(async () => ({ ...info, activeTask: updateTask }))
+      g.panel.task = vi.fn().mockRejectedValue(new PanelNetworkError('面板连接失败或响应无效，请稍后重试'))
+      renderApp('/settings?tab=maintenance', { gateway: g })
+      await act(async () => { await vi.advanceTimersByTimeAsync(1500) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(121000) })
+      expect(screen.getByText(/等待面板恢复连接超时/)).toBeInTheDocument()
+      expect(screen.queryByText(/打开下方新地址/)).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: '重新加载面板' })).toBeInTheDocument()
+      // 面板恢复（健康探测返回目标版本）→ 自动重连轮询 → 亲见 succeeded 且版本一致才刷新。
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ok: true, commit: sha }))))
+      g.panel.task = vi.fn().mockResolvedValue({ task: { ...updateTask, state: 'succeeded' as const }, logs: '', nextOffset: 0 })
+      await act(async () => { await vi.advanceTimersByTimeAsync(6000) })
+      // 恢复触发的重渲染在上一段 act 结束时完成，重连轮询的定时器在这段推进里触发。
+      await act(async () => { await vi.advanceTimersByTimeAsync(4000) })
+      expect(vi.mocked(reloadPanelPage)).toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
   })
 })
