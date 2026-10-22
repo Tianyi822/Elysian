@@ -6,7 +6,7 @@ import type { WebsiteSource, WebsiteBuildConfig, WebsiteDeploymentTask, WebsiteP
 import { useGateway } from '../../adapters/GatewayProvider'
 import { useWebsitesStore } from '../../stores/websitesStore'
 import { useWebsiteDeploymentsStore } from '../../stores/websiteDeploymentsStore'
-import { useDependencyProbeStore } from '../../stores/dependencyProbeStore'
+import { accessConfigEntryVisible, useDependencyProbeStore } from '../../stores/dependencyProbeStore'
 import { IconButton } from '../../components/IconButton'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { X } from '../../components/icons'
@@ -30,7 +30,7 @@ function configurationWarning(source: WebsiteSource | undefined, candidateId: st
 export function WebsitesCreateDialog({ project, existingTask, onClose }: { project?: WebsiteProject; existingTask?: WebsiteDeploymentTask; onClose?: () => void } = {}) {
   const gateway = useGateway()
   const api = gateway.websites.deployment
-  const caddyReady = useDependencyProbeStore((s) => s.report?.caddy.state === 'ok')
+  const caddyReady = useDependencyProbeStore((s) => accessConfigEntryVisible(s.report, s.status))
   const close = onClose ?? useWebsitesStore.getState().closeCreate
   const [step, setStep] = useState(1)
   const [sourceType, setSourceType] = useState<'archive' | 'git'>('archive')

@@ -68,11 +68,7 @@ function pageGateway(overrides: Partial<ElysianGateway['containers']> = {}): Ely
 beforeEach(() => {
   // 通知是模块级共享态：镜像刷新等操作现在也走通知，不清会跨用例串台。
   useNotificationStore.getState().clear()
-  useDependencyProbeStore.setState({
-    report: undefined,
-    status: 'idle',
-    rechecking: false,
-  })
+  useDependencyProbeStore.getState().reset()
   useContainersStore.setState({
     status: 'idle', errorMessage: undefined, containers: [], images: [], imageRefreshStatus: 'idle', samples: {},
     view: 'grid', statusFilter: 'all', search: '', detailContainerId: undefined,
@@ -122,8 +118,64 @@ describe('容器页骨架', () => {
     await userEvent.click(retry)
     await waitFor(() => expect(useDependencyProbeStore.getState().report).toBeDefined())
     expect(useDependencyProbeStore.getState().status).toBe('checked')
-    // 报告落库后重检入口随错误态一起消失。
+    // 已取得报告但 Docker 仍缺失时，保留重检入口。
+    expect(screen.getByRole('button', { name: '重新检测 Docker' })).toBeInTheDocument()
+  })
+
+  it.each(['missing', 'error', 'http'] as const)('Docker %s 后重检恢复，自动重新加载容器数据', async (failure) => {
+    let ready = false
+    const list = vi.fn(async () => {
+      if (!ready) throw new Error('Docker 暂不可用')
+      return [...CONTAINERS]
+    })
+    const probe = vi.fn(async (): Promise<DependencyProbeReport> => {
+      if (!ready && failure === 'http') throw new Error('探测网络失败')
+      return {
+        docker: { state: ready ? 'ok' : failure === 'http' ? 'missing' : failure, detail: ready ? null : 'Docker 暂不可用' },
+        caddy: { state: 'ok', detail: null },
+      }
+    })
+    const gateway = { ...pageGateway({ list }), dependencies: { probe } }
+    renderApp('/docker', { gateway })
+    await screen.findByText('容器数据加载失败')
+    const retry = await screen.findByRole('button', { name: '重新检测 Docker' })
+    ready = true
+    await userEvent.click(retry)
+    expect(await screen.findByRole('list', { name: '容器列表' })).toBeInTheDocument()
+    expect(list).toHaveBeenCalledTimes(2)
+    expect(probe).toHaveBeenCalledTimes(2)
     expect(screen.queryByRole('button', { name: '重新检测 Docker' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '安装 Docker' })).toBeNull()
+  })
+
+  it('重检仍不可用或请求失败时不重读容器数据', async () => {
+    const list = vi.fn(async () => { throw new Error('Docker 暂不可用') })
+    const probe = vi.fn<() => Promise<DependencyProbeReport>>()
+      .mockResolvedValueOnce({ docker: { state: 'missing', detail: 'Docker 暂不可用' }, caddy: { state: 'ok', detail: null } })
+      .mockResolvedValueOnce({ docker: { state: 'error', detail: 'API 版本过低' }, caddy: { state: 'ok', detail: null } })
+      .mockRejectedValueOnce(new Error('探测网络失败'))
+    renderApp('/docker', { gateway: { ...pageGateway({ list }), dependencies: { probe } } })
+    await screen.findByText('容器数据加载失败')
+    await userEvent.click(await screen.findByRole('button', { name: '重新检测 Docker' }))
+    await waitFor(() => expect(useDependencyProbeStore.getState().report?.docker.state).toBe('error'))
+    await userEvent.click(screen.getByRole('button', { name: '重新检测 Docker' }))
+    await waitFor(() => expect(useDependencyProbeStore.getState().status).toBe('error'))
+    expect(list).toHaveBeenCalledTimes(1)
+    expect(probe).toHaveBeenCalledTimes(3)
+  })
+
+  it('离开容器页后迟到的重检结果不启动容器加载', async () => {
+    let finish: ((report: DependencyProbeReport) => void) | undefined
+    const list = vi.fn(async () => [...CONTAINERS])
+    const probe = vi.fn<() => Promise<DependencyProbeReport>>()
+      .mockResolvedValueOnce({ docker: { state: 'missing', detail: '未接通' }, caddy: { state: 'ok', detail: null } })
+      .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    const { router } = renderApp('/docker', { gateway: { ...pageGateway({ list }), dependencies: { probe } } })
+    await screen.findByRole('list', { name: '容器列表' })
+    await userEvent.click(await screen.findByRole('button', { name: '重新检测 Docker' }))
+    await act(async () => { await router.navigate('/') })
+    await act(async () => { finish?.({ docker: { state: 'ok', detail: null }, caddy: { state: 'ok', detail: null } }) })
+    expect(list).toHaveBeenCalledTimes(1)
   })
 
   it('状态筛选只保留所选状态的容器', async () => {

@@ -57,7 +57,7 @@ export function ContainerPage() {
   if (view === 'apps') {
     return (
       <div className="mb-6">
-        <DockerDependencyEntry className="mb-4" />
+        <DockerDependencyEntry className="mb-4" onReady={() => load(gateway)} />
         <ContainerAppsPanel />
       </div>
     )
@@ -66,7 +66,7 @@ export function ContainerPage() {
   if (status !== 'ready') {
     return (
       <>
-        <DockerDependencyEntry className="mb-4" />
+        <DockerDependencyEntry className="mb-4" onReady={() => load(gateway)} />
         {status === 'error' ? (
           <ErrorState
             title="容器数据加载失败"
@@ -136,7 +136,7 @@ export function ContainerPage() {
           >
             创建容器
           </button>
-          <DockerDependencyEntry />
+          <DockerDependencyEntry onReady={() => load(gateway)} />
         </div>
       ) : null}
 
@@ -154,7 +154,7 @@ export function ContainerPage() {
               <button type="button" onClick={() => setPullOpen(true)} className={CTL_PRIMARY}>
                 <Download aria-hidden size={14} />拉取镜像
               </button>
-              <DockerDependencyEntry />
+              <DockerDependencyEntry onReady={() => load(gateway)} />
             </div>
           </div>
           <ImageTable images={images} containers={containers} busy={imageRefreshStatus === 'loading'} />

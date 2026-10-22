@@ -1,5 +1,6 @@
 import type { DependencyProbeReport } from '@elysian/contracts'
 import { create } from 'zustand'
+import { captureAuthGeneration } from '../adapters/http/unauthorized'
 import type { ElysianGateway } from '../contracts/adapters'
 import { useNotificationStore } from './notificationStore'
 
@@ -18,11 +19,9 @@ type DependencyProbeStoreState = {
   rechecking: boolean
   /** 页面挂载触发；checking / checked 时跳过（幂等），导航切页不重探。 */
   check: (gateway: ElysianGateway) => Promise<void>
-  /**
-   * 「重新检测」触发；强制重探，返回本次转就绪的依赖（becameReady），
-   * 组件据此调页面的 reload 重入业务加载；无依赖转就绪时为 null。
-   */
-  recheck: (gateway: ElysianGateway) => Promise<'docker' | 'caddy' | null>
+  /** 返回本次报告；请求失败或所属网关、登录代次已失效时返回 null。 */
+  recheck: (gateway: ElysianGateway) => Promise<DependencyProbeReport | null>
+  reset: () => void
 }
 
 function notify(message: string, tone: 'success' | 'danger' = 'success'): void {
@@ -34,46 +33,73 @@ function notify(message: string, tone: 'success' | 'danger' = 'success'): void {
  * 而不是让人点进去再在保存处吃错误。随之一起关闭的还有改成 IP 直连、把域名项目切回直连
  * 这两条不依赖 Caddy 的路径——它们要等 Caddy 装好才可达。
  */
-export function accessConfigEntryVisible(report: DependencyProbeReport | undefined): boolean {
-  return report !== undefined && report.docker.state === 'ok' && report.caddy.state === 'ok'
+export function accessConfigEntryVisible(report: DependencyProbeReport | undefined, status: DependencyProbeStatus): boolean {
+  return status === 'checked' && report !== undefined && report.docker.state === 'ok' && report.caddy.state === 'ok'
 }
 
-export const useDependencyProbeStore = create<DependencyProbeStoreState>((set, get) => ({
+const initial = {
   report: undefined,
-  status: 'idle',
+  status: 'idle' as const,
   rechecking: false,
+}
 
-  async check(gateway) {
-    if (get().status === 'checking' || get().status === 'checked') return
-    set({ status: 'checking' })
-    try {
-      const report = await gateway.dependencies.probe()
-      set({ report, status: 'checked' })
-    } catch (error) {
-      set({ status: 'error' })
-      notify(error instanceof Error ? `依赖检测失败：${error.message}` : '依赖检测失败', 'danger')
+export const useDependencyProbeStore = create<DependencyProbeStoreState>((set, get) => {
+  // 导航复用同一请求；更换网关或登录后，旧请求不能回灌状态、通知或后续业务加载。
+  let sequence = 0
+  let owner: { gateway: ElysianGateway; auth: number } | undefined
+  let pending: { manual: boolean; promise: Promise<DependencyProbeReport | null> } | undefined
+
+  function probe(gateway: ElysianGateway, manual: boolean): Promise<DependencyProbeReport | null> {
+    const auth = captureAuthGeneration()
+    if (owner?.gateway !== gateway || owner.auth !== auth) {
+      sequence += 1
+      owner = { gateway, auth }
+      pending = undefined
+      set(initial)
     }
-  },
-
-  async recheck(gateway) {
+    if (pending) {
+      if (manual) {
+        pending.manual = true
+        set({ rechecking: true })
+      }
+      return pending.promise
+    }
+    if (!manual && get().status === 'checked') return Promise.resolve(get().report ?? null)
     const previous = get().report
-    set({ rechecking: true })
-    try {
-      const report = await gateway.dependencies.probe()
-      const dockerBecameReady =
-        previous !== undefined && previous.docker.state !== 'ok' && report.docker.state === 'ok'
-      const caddyBecameReady =
-        previous !== undefined && previous.caddy.state !== 'ok' && report.caddy.state === 'ok'
+    const request = ++sequence
+    const isCurrent = () => request === sequence && owner?.gateway === gateway && owner.auth === auth && auth === captureAuthGeneration()
+    const operation = { manual, promise: Promise.resolve<DependencyProbeReport | null>(null) }
+    pending = operation
+    set({ status: 'checking', rechecking: manual })
+    operation.promise = Promise.resolve().then(() => gateway.dependencies.probe()).then((report) => {
+      if (!isCurrent()) return null
       set({ report, status: 'checked', rechecking: false })
-      if (dockerBecameReady) notify('Docker 已就绪')
-      if (caddyBecameReady) notify('Caddy 管理通道已就绪')
-      // 两个同时转就绪时 Docker 优先：它就绪是 Caddy 维度出现的前提。
-      return dockerBecameReady ? 'docker' : caddyBecameReady ? 'caddy' : null
-    } catch (error) {
-      // 重新检测是显式动作：失败要留下可见反馈，旧报告保留。
-      set({ rechecking: false })
-      notify(error instanceof Error ? error.message : '依赖检测失败', 'danger')
+      if (operation.manual && previous !== undefined) {
+        if (previous.docker.state !== 'ok' && report.docker.state === 'ok') notify('Docker 已就绪')
+        if (previous.caddy.state !== 'ok' && report.caddy.state === 'ok') notify('Caddy 管理通道已就绪')
+      }
+      return report
+    }).catch((error: unknown) => {
+      if (!isCurrent()) return null
+      set({ status: 'error', rechecking: false })
+      const message = error instanceof Error ? error.message : '依赖检测失败'
+      notify(operation.manual ? message : `依赖检测失败：${message}`, 'danger')
       return null
-    }
-  },
-}))
+    }).finally(() => {
+      if (isCurrent() && pending === operation) pending = undefined
+    })
+    return operation.promise
+  }
+
+  return {
+    ...initial,
+    async check(gateway) { await probe(gateway, false) },
+    recheck(gateway) { return probe(gateway, true) },
+    reset() {
+      sequence += 1
+      owner = undefined
+      pending = undefined
+      set(initial)
+    },
+  }
+})

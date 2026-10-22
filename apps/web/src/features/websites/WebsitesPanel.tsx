@@ -114,6 +114,9 @@ export function WebsitesPanel() {
   const reconcileProxy = useWebsitesStore((s) => s.reconcileProxy)
   // 「访问配置」入口由探测报告驱动：Docker 与 Caddy 都就绪才出现，缺 Caddy 时不显示入口。
   const dependencyReport = useDependencyProbeStore((s) => s.report)
+  const dependencyStatus = useDependencyProbeStore((s) => s.status)
+  const rechecking = useDependencyProbeStore((s) => s.rechecking)
+  const recheck = useDependencyProbeStore((s) => s.recheck)
 
   const filtered = filterWebsiteProjects(projects, { category, search })
 
@@ -124,7 +127,7 @@ export function WebsitesPanel() {
           添加项目
         </button>
         <button type="button" className={TOOL_BUTTON_CLASS} aria-expanded={taskListOpen} onClick={() => setTaskListOpen((value) => !value)}>部署任务{tasks.some((task) => websiteDeploymentIsActive(task.state) || task.state === 'awaiting-config') ? `（${tasks.filter((task) => websiteDeploymentIsActive(task.state) || task.state === 'awaiting-config').length}）` : ''}</button>
-        {accessConfigEntryVisible(dependencyReport) ? (
+        {accessConfigEntryVisible(dependencyReport, dependencyStatus) ? (
           <button type="button" onClick={() => setCaddyConfigOpen(true)} className={TOOL_BUTTON_CLASS}>
             访问配置
           </button>
@@ -159,7 +162,7 @@ export function WebsitesPanel() {
               className={`${CTL_FIELD} pl-8`}
             />
           </div>
-          <RefreshButton onPress={() => void refresh(gateway)} busy={refreshing} formControl />
+          <RefreshButton onPress={() => { void Promise.all([refresh(gateway), recheck(gateway)]) }} busy={refreshing || rechecking} formControl />
         </div>
       </div>
 

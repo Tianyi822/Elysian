@@ -14,7 +14,7 @@ beforeEach(() => {
   resetWebsitesData()
   useWebsitesStore.setState({ status: 'idle', projects: [], createDialogOpen: false, detailTarget: undefined, settingsTarget: undefined, removeTarget: undefined, proxyStatus: { state: 'active', detail: null }, busyProjectIds: [] })
   useWebsiteDeploymentsStore.setState({ tasks: [], loading: false, error: undefined })
-  useDependencyProbeStore.setState({ report: undefined, status: 'idle', rechecking: false })
+  useDependencyProbeStore.getState().reset()
 })
 async function open() {
   const gateway = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
@@ -47,6 +47,12 @@ describe('三步构建与部署', () => {
     expect(submit).toHaveBeenCalledWith(expect.objectContaining({ access: { mode: 'direct' }, config: expect.objectContaining({ target: 'static', command: '' }) }))
     await user.click(screen.getByRole('button', { name: '关闭弹窗' }))
     expect(await screen.findByRole('article', { name: 'docs' })).toBeInTheDocument()
+  })
+  it('旧就绪报告失效后创建项目不开放域名选项', async () => {
+    const user = userEvent.setup(); await open()
+    act(() => useDependencyProbeStore.setState({ report: { docker: { state: 'ok', detail: null }, caddy: { state: 'ok', detail: null } }, status: 'error' }))
+    await prepare('html', user)
+    expect(screen.queryByRole('button', { name: /访问方式：/ })).not.toBeInTheDocument()
   })
   it('多个候选必须选择，版本搜索位于下拉中', async () => {
     const user = userEvent.setup(); await open()

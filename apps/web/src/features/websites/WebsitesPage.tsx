@@ -18,6 +18,7 @@ export function WebsitesPage() {
   const errorMessage = useWebsitesStore((s) => s.errorMessage)
   const load = useWebsitesStore((s) => s.load)
   const check = useDependencyProbeStore((s) => s.check)
+  const recheck = useDependencyProbeStore((s) => s.recheck)
 
   useEffect(() => {
     void load(gateway)
@@ -34,7 +35,7 @@ export function WebsitesPage() {
       <ErrorState
         title="网站数据加载失败"
         description={errorMessage}
-        onRetry={() => void load(gateway)}
+        onRetry={() => { void Promise.all([load(gateway), recheck(gateway)]) }}
       />
     )
   }
