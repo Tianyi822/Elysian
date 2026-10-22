@@ -4,12 +4,8 @@ import type { PanelCommit, PanelUpdateChannel } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { formatDateTime } from '../../components/format'
 import { X } from '../../components/icons'
-import { IconButton } from '../../components/IconButton'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
 import { useNotificationStore } from '../../stores/notificationStore'
-
-const BUTTON =
-  'h-9 rounded-lg border border-control-line bg-surface-raised px-4 text-sm font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
 
 /**
  * 更新日志窗口：列所选更新来源最近的提交标题，从新到旧。
@@ -65,13 +61,13 @@ export function PanelChangelogDialog({
     <Dialog.Root open={open} onOpenChange={(next) => (next ? undefined : onClose())}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-[61] flex max-h-[calc(100dvh-2rem)] w-[min(38rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col panel-surface shadow-xl">
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-[61] flex max-h-[min(36rem,calc(100dvh-3rem))] w-[min(38rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col panel-surface shadow-xl">
           <div className="flex shrink-0 items-center justify-between gap-3 px-5 pt-5">
             <Dialog.Title className="text-sm font-semibold text-fg">更新日志</Dialog.Title>
             <Dialog.Close asChild>
-              <IconButton label="关闭更新日志" variant="ghost" tooltip={false}>
+              <button type="button" aria-label="关闭更新日志" className="rounded-lg p-1.5 text-fg-muted hover:bg-surface-raised hover:text-fg">
                 <X aria-hidden size={16} />
-              </IconButton>
+              </button>
             </Dialog.Close>
           </div>
           <Dialog.Description className="shrink-0 px-5 pt-1 text-xs leading-5 text-fg-muted">
@@ -113,17 +109,6 @@ export function PanelChangelogDialog({
                 })}
               </ol>
             )}
-          </div>
-
-          <div className="flex shrink-0 justify-end gap-2 px-5 py-4">
-            <button type="button" className={BUTTON} disabled={loading} onClick={read}>
-              {loading ? '正在读取…' : '重新读取'}
-            </button>
-            <Dialog.Close asChild>
-              <button type="button" className={BUTTON} onClick={onClose}>
-                关闭
-              </button>
-            </Dialog.Close>
           </div>
         </Dialog.Content>
       </Dialog.Portal>
