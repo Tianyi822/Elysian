@@ -81,4 +81,17 @@ Docker 与 Caddy 通道分别按安装环境变量 `ELYSIAN_DOCKER_SOCKET`／`EL
 
 `sudo bash scripts/uninstall.sh` 整机卸载：停止并注销服务与自启、删除程序版本与维护工具（`/opt/elysian`）、三个系统账号（elysian／elysian-build／elysian-sqlite）、`/etc/profile.d/elysian-mirrors.sh`、`/etc/default/elysian`、构建残留（`/var/lib/elysian-build` 与 `/var/tmp/elysian-install-source.*`）、面板自己加的 UFW 前端端口规则（按 `panel-network.json` 精确匹配），并删除本脚本安装路径上的 Go（`/usr/local/go`，含 `go env -u GOPROXY` 复位）与 bun（`/usr/local/bin/bun`）；其它位置的 Go/bun 保持不动。默认保留 `/var/lib/elysian` 数据与源码仓库，`--purge-data` 连数据一并删、`--keep-tools` 保留工具链、`--yes` 免交互；系统 SSH 与面板自管 sshd、用户自加的 UFW 规则绝不动；安装脚本代装的 Docker 与 Caddy 属系统组件一并保留（`--purge-data` 也不删，含既有 Caddyfile、cloudsmith keyring、apt 源与安装时声明的 `80,443/tcp` 放行），确认弃用请自行卸载。`sudo bash scripts/install.sh --uninstall` 是轻量变体：仅删服务与二进制，保留工具链、数据与 UFW 规则。
 
-前端验证为 `bun run typecheck`、`bun run test`、`bun run build`；Go 门禁为 `bash apps/server-go/dev-check.sh ./...`，全部 Go 检查在开发容器内运行。脚本语法检查为 `bash -n scripts/install.sh scripts/uninstall.sh scripts/build-release.sh scripts/install-platform.test.sh`；纯逻辑自测为 `bash scripts/install-helpers.test.sh`，事务故障测试为 `bash scripts/install-platform.test.sh`，后者仅在临时目录运行命令桩和本机 Unix/TCP HTTP fixture，覆盖动态路由保留、零重启复用、服务缺失、校验和 API 失败、环境持久化失败、跨进程恢复与恢复失败保留记录。`ELYSIAN_SMOKE=1 bash scripts/install.sh` 仅供一次性容器冒烟，跳过 systemd、系统账号与平台依赖阶段，验证两入口、嵌入页面与首启密码；正式验收需要一次性 Ubuntu/Debian VM，核对远端前端、后端回环、规则迁移、配置持久化、会话、SSE 与 WebSocket，以及 Docker/Caddy 自动安装、已有运行路由及证书保留、依赖失败停止与重跑幂等；命令桩不能替代真实 apt、systemd 和 Caddy 验收。
+前端验证为 `bun run typecheck`、`bun run test`、`bun run build`；Go 门禁为 `bash apps/server-go/dev-check.sh ./...`，全部 Go 检查在开发容器内运行。安装脚本测试通过专用 Docker 镜像运行，源码只读挂载，不挂 Docker socket、不发布宿主端口、运行期断网；工具安装、临时文件、Unix/TCP fixture 和真实 Caddy 进程全部在容器内，容器退出后自动删除。纯逻辑自测覆盖 TUI 与依赖辅助函数，事务故障测试覆盖动态路由保留、零重启复用、服务缺失、校验和 API 失败、显式隐藏规则变化、环境持久化失败、跨进程恢复与恢复失败保留记录；真实 Caddy 测试覆盖静态站点自动隐藏配置文件、嵌套路由、热迁移到 Unix 管理端点及原运行配置恢复。
+
+```bash
+docker build -f scripts/Dockerfile.install-test -t elysian-install-test:local scripts
+docker run --rm --network none \
+  --mount "type=bind,src=$PWD,dst=/workspace,readonly" \
+  elysian-install-test:local -c 'set -e
+    bash -n scripts/install.sh scripts/uninstall.sh scripts/build-release.sh scripts/install-platform.test.sh scripts/install-caddy-config.test.sh
+    bash scripts/install-caddy-config.test.sh
+    bash scripts/install-helpers.test.sh
+    bash scripts/install-platform.test.sh'
+```
+
+`ELYSIAN_SMOKE=1 bash scripts/install.sh` 仅供一次性容器冒烟，跳过 systemd、系统账号与平台依赖阶段，验证两入口、嵌入页面与首启密码；正式验收需要一次性 Ubuntu/Debian VM，核对远端前端、后端回环、规则迁移、配置持久化、会话、SSE 与 WebSocket，以及 Docker/Caddy 自动安装、已有运行路由及证书保留、依赖失败停止与重跑幂等；命令桩和容器内 Caddy 测试不能替代真实 apt、systemd 的完整安装验收。

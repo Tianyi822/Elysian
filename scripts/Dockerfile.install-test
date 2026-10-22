@@ -1,0 +1,11 @@
+FROM caddy:2.11.7 AS caddy
+FROM oven/bun:1.4.2-debian
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends bash ca-certificates curl util-linux \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --from=caddy /usr/bin/caddy /usr/local/bin/caddy
+WORKDIR /workspace
+ENTRYPOINT ["bash"]
+CMD ["scripts/install-platform.test.sh"]
