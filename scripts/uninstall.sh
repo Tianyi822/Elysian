@@ -18,6 +18,8 @@
 #   - 源码仓库（本脚本不感知克隆位置，绝不删除）
 #   - 面板数据 /var/lib/elysian（默认保留；--purge-data 才删）
 #   - install.sh 顺带安装的系统包（curl/ufw/iproute2 等，属系统基件）
+#   - 安装脚本代装的 Docker 与 Caddy（属系统组件；--purge-data 也不删，含既有 Caddyfile、
+#     cloudsmith keyring 与 apt 源、以及安装时声明的 80,443/tcp 放行）
 #   - 面板自管的 sshd 进程与系统 SSH 配置（卸载不该断运维的登录通道）
 #   - 用户经面板为业务端口自加的 UFW 规则
 set -euo pipefail
@@ -39,20 +41,30 @@ for arg in "$@"; do
     --purge-data) PURGE_DATA=1 ;;
     --keep-tools) KEEP_TOOLS=1 ;;
     --yes|-y) ASSUME_YES=1 ;;
-    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
     *) echo "未知参数：$arg（支持 --purge-data / --keep-tools / --yes）" >&2; exit 1 ;;
   esac
 done
 
-if [ -t 1 ] && [ -t 2 ]; then
-  C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'; C_GREEN=$'\033[32m'; C_YELLOW=$'\033[33m'; C_RED=$'\033[31m'
+# ---------- 终端输出层（与 install.sh 同款：双 TTY + NO_COLOR 判定，标记统一） ----------
+if [ -t 1 ] && [ -t 2 ] && [ -z "${NO_COLOR:-}" ]; then
+  C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'
+  C_GREEN=$'\033[32m'; C_RED=$'\033[31m'; C_YELLOW=$'\033[33m'; C_GRAY=$'\033[90m'
 else
-  C_RESET=''; C_BOLD=''; C_GREEN=''; C_YELLOW=''; C_RED=''
+  C_RESET=''; C_BOLD=''; C_GREEN=''; C_RED=''; C_YELLOW=''; C_GRAY=''
 fi
 info() { printf '%s==>%s %s\n' "$C_BOLD" "$C_RESET" "$*"; }
 ok()   { printf '%s✓%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
-warn() { printf '%s注意：%s%s\n' "$C_YELLOW" "$C_RESET" "$*"; }
-die()  { printf '%s卸载失败：%s%s\n' "$C_RED" "$*" "$C_RESET" >&2; exit 1; }
+skip() { printf '%s−%s %s\n' "$C_GRAY" "$C_RESET" "$*"; }
+warn() { printf '%s!%s %s\n' "$C_YELLOW" "$C_RESET" "$*"; }
+die()  { printf '%s✗ 卸载失败：%s%s\n' "$C_RED" "$*" "$C_RESET" >&2; exit 1; }
+
+STAGE=0
+TOTAL_STAGES=6
+usection() { # 卸载阶段行：编号计数与 install.sh 的 section 同款格式
+  STAGE=$((STAGE + 1))
+  printf '\n%s[%d/%d] %s%s\n' "$C_BOLD" "$STAGE" "$TOTAL_STAGES" "$1" "$C_RESET"
+}
 
 [ "$(id -u)" -eq 0 ] || die "请以 root 执行（sudo bash scripts/uninstall.sh）。"
 
@@ -87,7 +99,8 @@ if [ "$PURGE_DATA" = 1 ]; then
 else
   echo "  将保留：面板数据目录 $STATE_DIR（--purge-data 可一并删除）"
 fi
-echo "  绝不动：源码仓库、系统包（curl/ufw 等）、系统 SSH 与面板自管 sshd、用户自加的 UFW 规则"
+echo "  绝不动：源码仓库、系统包（curl/ufw 等）、Docker 与 Caddy（系统组件，--purge-data 也不删）、"
+echo "          系统 SSH 与面板自管 sshd、用户自加的 UFW 规则"
 echo
 
 if [ "$ASSUME_YES" != 1 ]; then
@@ -99,6 +112,7 @@ if [ "$ASSUME_YES" != 1 ]; then
 fi
 
 # ---------- 1. 停止并注销服务 ----------
+usection "停止并注销服务"
 if systemctl list-unit-files "$SERVICE_NAME.service" >/dev/null 2>&1 && [ -e "$UNIT_FILE" ]; then
   info "停止并注销服务 $SERVICE_NAME"
   systemctl disable --now "$SERVICE_NAME" >/dev/null 2>&1 || true
@@ -107,10 +121,11 @@ if systemctl list-unit-files "$SERVICE_NAME.service" >/dev/null 2>&1 && [ -e "$U
   systemctl reset-failed "$SERVICE_NAME" >/dev/null 2>&1 || true
   ok "服务已停止、禁用并移除"
 else
-  ok "未发现 systemd 单元，跳过"
+  skip "未发现 systemd 单元，跳过"
 fi
 
 # ---------- 2. 删除 UFW 面板前端规则（精确端口，不动其他规则） ----------
+usection "移除面板 UFW 前端规则"
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qE "^Status: active"; then
   info "移除 UFW 面板前端端口规则（${FRONTEND_PORT}/tcp）"
   if ufw status | grep -qE "[[:space:]]${FRONTEND_PORT}/tcp[[:space:]]+ALLOW"; then
@@ -118,13 +133,14 @@ if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qE "^Status:
       || warn "UFW 规则删除失败，请手动检查：ufw status | grep ${FRONTEND_PORT}"
     ok "规则已移除（或本就不存在）"
   else
-    ok "UFW 中无面板规则，跳过"
+    skip "UFW 中无面板规则"
   fi
 else
-  ok "UFW 未安装或未启用，跳过"
+  skip "UFW 未安装或未启用"
 fi
 
 # ---------- 3. 删除安装产物 ----------
+usection "删除安装产物"
 info "删除安装产物"
 rm -f "$PANEL_BIN"
 rm -rf "$INSTALL_ROOT"
@@ -135,6 +151,7 @@ rm -rf /var/tmp/elysian-install-source.* 2>/dev/null || true
 ok "已删除：$PANEL_BIN、$INSTALL_ROOT、$ENV_FILE、$MIRROR_PROFILE、构建残留"
 
 # ---------- 4. 工具链与 go env ----------
+usection "清理工具链与 go env"
 if [ "$KEEP_TOOLS" = 0 ]; then
   info "清理工具链"
   # configure_mirrors 写入过 root 的 go env GOPROXY：先复位再删工具链。
@@ -154,10 +171,11 @@ if [ "$KEEP_TOOLS" = 0 ]; then
   command -v go >/dev/null 2>&1 && warn "检测到其它位置的 Go（$(command -v go)），非本面板安装路径，已保留"
   command -v bun >/dev/null 2>&1 && warn "检测到其它位置的 bun（$(command -v bun)），非本面板安装路径，已保留"
 else
-  ok "按参数保留 Go 与 bun 工具链（go env GOPROXY 亦未复位）"
+  skip "按参数保留 Go 与 bun 工具链（go env GOPROXY 亦未复位）"
 fi
 
 # ---------- 5. 系统账号 ----------
+usection "删除系统账号"
 info "删除系统账号 elysian / elysian-build / elysian-sqlite"
 userdel elysian-build  >/dev/null 2>&1 || true
 groupdel elysian-build >/dev/null 2>&1 || true
@@ -167,6 +185,7 @@ groupdel elysian-sqlite >/dev/null 2>&1 || true
 ok "账号已删除（数据文件属主退化为纯数字 UID 属正常现象）"
 
 # ---------- 6. 面板数据 ----------
+usection "处理面板数据"
 if [ "$PURGE_DATA" = 1 ]; then
   info "删除面板数据目录 $STATE_DIR"
   rm -rf "$STATE_DIR"
@@ -175,6 +194,8 @@ else
   warn "面板数据目录已保留：$STATE_DIR（凭据、SQLite、日志与备份；彻底清除可重跑 --purge-data 或手动 rm -rf）"
 fi
 
-printf '\n%sElysian 已卸载%s\n' "$C_BOLD$C_GREEN" "$C_RESET"
+printf '\n%s%s✓ Elysian 已卸载%s\n' "$C_GREEN" "$C_BOLD" "$C_RESET"
 echo "  源码仓库未做任何改动；install.sh 顺带安装的系统包（curl/ufw/iproute2 等）按惯例保留。"
+echo "  安装脚本代装的 Docker 与 Caddy 属系统组件，一并保留（含 Caddyfile、keyring、apt 源与 80,443/tcp 放行）；"
+echo "  如确认不再使用请自行卸载（apt-get purge caddy 等）。"
 echo "  面板自管的 sshd 与系统 SSH 配置未触碰；如需停用请自行处理。"
