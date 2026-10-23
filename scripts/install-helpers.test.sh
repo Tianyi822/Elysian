@@ -121,7 +121,18 @@ if (
   printf '%s' "$out" | grep -q '\[ 1/11\]' &&
     printf '%s' "$out" | grep -q '█' &&
     printf '%s' "$out" | grep -q '░'
-); then pass "TTY 阶段行带进度条"; else fail "TTY 进度条缺失"; fi
+); then pass "TTY 底部状态行带进度条"; else fail "TTY 进度条缺失"; fi
+if (
+  set -e
+  SMOKE=""
+  register_stages
+  STEP=0
+  TERM=xterm-256color
+  init_output 1 1
+  out="$(section "检查运行环境")"
+  header="$(printf '%s' "$out" | sed -n '2p')"
+  ! printf '%s' "$header" | grep -q '█'
+); then pass "阶段头不再重复画进度条"; else fail "阶段头仍带进度条"; fi
 if (
   set -e
   SMOKE=""

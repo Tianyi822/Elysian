@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # scripts/tui.sh —— install.sh / uninstall.sh 共用的终端渲染层（source 使用，无副作用）。
-# 只负责颜色判定、显示宽度、阶段进度、摘要排版与状态标记；不执行任何安装或清理动作。
+# 只负责颜色判定、显示宽度、阶段耗时、底部单条总体进度条、摘要排版与状态标记；不执行任何安装或清理动作。
 
 TUI_KV_WIDTH="${TUI_KV_WIDTH:-12}"
+TUI_STATUS_ACTIVE=0
+TUI_STATUS_TEXT=""
+TUI_STATUS_BASE=""
 
 init_output() { # init_output <stdout 是否 TTY 0|1> <stderr 是否 TTY 0|1>
   local out_tty="$1" err_tty="$2" cols
@@ -24,13 +27,56 @@ init_output() { # init_output <stdout 是否 TTY 0|1> <stderr 是否 TTY 0|1>
   case "$cols" in ''|*[!0-9]*) cols=72 ;; esac
   [ "$cols" -ge 20 ] || cols=72
   TERM_COLS="$cols"
+  TUI_STATUS_ACTIVE=0
+  TUI_STATUS_TEXT=""
+  TUI_STATUS_BASE=""
 }
 
-info() { printf '    %s→%s %s\n' "${C_CYAN:-}" "${C_RESET:-}" "$*"; }
-ok()   { printf '    %s✓%s %s\n' "${C_GREEN:-}" "${C_RESET:-}" "$*"; }
-skip() { printf '    %s−%s %s\n' "${C_GRAY:-}" "${C_RESET:-}" "$*"; }
-warn() { printf '    %s!%s %s\n' "${C_YELLOW:-}" "${C_RESET:-}" "$*"; }
-die()  { printf '\n  %s✗ %s：%s%s\n' "${C_RED:-}" "${TUI_FAIL_LABEL:-操作失败}" "$*" "${C_RESET:-}" >&2; exit 1; }
+tui_status_erase() {
+  [ "${TUI_LIVE:-0}" = 1 ] || return 0
+  printf '\r\033[K'
+}
+
+tui_status_draw() {
+  [ "${TUI_LIVE:-0}" = 1 ] || return 0
+  [ "${TUI_STATUS_ACTIVE:-0}" = 1 ] || return 0
+  printf '\r%s\033[K' "$TUI_STATUS_TEXT"
+}
+
+tui_status_update() { # <后缀>：在底部单行进度条后追加当前动作
+  local suffix="${1:-}"
+  [ "${TUI_LIVE:-0}" = 1 ] || return 0
+  [ "${TUI_STATUS_ACTIVE:-0}" = 1 ] || return 0
+  # 窄终端只保留总体进度条，不追加动作详情，避免换行破坏单行状态。
+  [ "${TERM_COLS:-72}" -ge 80 ] || suffix=""
+  if [ -n "$suffix" ]; then
+    TUI_STATUS_TEXT="${TUI_STATUS_BASE}  · ${suffix}"
+  else
+    TUI_STATUS_TEXT="$TUI_STATUS_BASE"
+  fi
+  tui_status_draw
+}
+
+tui_write_line() { # <整行文本>：输出前擦掉底部进度条，输出后在同一位置重绘
+  local line="$1"
+  if [ "${TUI_LIVE:-0}" = 1 ]; then
+    tui_status_erase
+    printf '%s\n' "$line"
+    tui_status_draw
+  else
+    printf '%s\n' "$line"
+  fi
+}
+
+info() { tui_write_line "    ${C_CYAN:-}→${C_RESET:-} $*"; }
+ok()   { tui_write_line "    ${C_GREEN:-}✓${C_RESET:-} $*"; }
+skip() { tui_write_line "    ${C_GRAY:-}−${C_RESET:-} $*"; }
+warn() { tui_write_line "    ${C_YELLOW:-}!${C_RESET:-} $*"; }
+die()  {
+  if [ "${TUI_LIVE:-0}" = 1 ]; then tui_status_erase; fi
+  printf '\n  %s✗ %s：%s%s\n' "${C_RED:-}" "${TUI_FAIL_LABEL:-操作失败}" "$*" "${C_RESET:-}" >&2
+  exit 1
+}
 
 tui_wide_cp() { # <Unicode 码点>：东亚宽字符返回 0
   local cp="$1"
@@ -101,22 +147,24 @@ tui_rule() { # <字符> [宽度]
   printf '%s' "$line"
 }
 
-tui_stage() { # <当前> <总数> <名称>
+tui_stage() { # <当前> <总数> <名称>：阶段头不画进度条，底部只维护一条总体进度条
   local current="$1" total="$2" name="$3" bar_width filled empty filled_bar empty_bar
-  if [ "${TUI_LIVE:-0}" = 1 ] && [ "$total" -gt 0 ] && [ "${TERM_COLS:-72}" -ge 48 ]; then
-    bar_width=20
-    [ "${TERM_COLS:-72}" -lt 64 ] && bar_width=12
-    filled=$((current * bar_width / total))
-    empty=$((bar_width - filled))
-    filled_bar="$(tui_rule '█' "$filled")"
-    empty_bar="$(tui_rule '░' "$empty")"
-    printf '\n%s[%2d/%d]%s %s%s%s%s%s %s%s%s\n' \
-      "${C_CYAN:-}" "$current" "$total" "${C_RESET:-}" \
-      "${C_GREEN:-}" "$filled_bar" "${C_RESET:-}" \
-      "${C_GRAY:-}" "$empty_bar" "${C_RESET:-}${C_BOLD:-}" "$name" "${C_RESET:-}"
+  TUI_STATUS_ACTIVE=0
+  tui_status_erase
+  printf '\n%s[%2d/%d] %s%s\n' "${C_BOLD:-}" "$current" "$total" "$name" "${C_RESET:-}"
+  if [ "${TUI_LIVE:-0}" != 1 ] || [ "$total" -le 0 ] || [ "${TERM_COLS:-72}" -lt 48 ]; then
     return 0
   fi
-  printf '\n[%2d/%d] %s\n' "$current" "$total" "$name"
+  bar_width=20
+  [ "${TERM_COLS:-72}" -lt 64 ] && bar_width=12
+  filled=$((current * bar_width / total))
+  empty=$((bar_width - filled))
+  filled_bar="$(tui_rule '█' "$filled")"
+  empty_bar="$(tui_rule '░' "$empty")"
+  TUI_STATUS_BASE="${C_GREEN:-}${filled_bar}${C_GRAY:-}${empty_bar}${C_RESET:-}  ${name}"
+  TUI_STATUS_TEXT="$TUI_STATUS_BASE"
+  TUI_STATUS_ACTIVE=1
+  tui_status_draw
 }
 
 tui_section() { # <标题>
@@ -159,13 +207,13 @@ tui_begin_stage() {
 
 tui_finish_stage() {
   [ -n "${STAGE_STARTED_AT:-}" ] || return 0
-  [ "${STAGE_FINISHED:-0}" = 1 ] && return 0
+  if [ "${STAGE_FINISHED:-0}" = 1 ]; then return 0; fi
+  TUI_STATUS_ACTIVE=0
+  tui_status_erase
   tui_footer "$((SECONDS - STAGE_STARTED_AT))"
   STAGE_FINISHED=1
 }
 
 clear_progress_line() {
-  if [ "${TUI_LIVE:-0}" = 1 ]; then
-    printf '\r%*s\r' "${TERM_COLS:-72}" ''
-  fi
+  tui_status_erase
 }

@@ -17,9 +17,9 @@
 # Engine API ≥ 1.41、systemctl is-active），失败打印中文原因与排查建议后非零退出；该阶段先于
 # 切换事务，失败不回滚已部署面板。
 #
-# 终端输出：阶段计数由登记表自动派生；进度条、耗时、状态标记与收尾摘要由 scripts/tui.sh 统一
-# 渲染；标记统一为 ✓ 成功 / ✗ 失败 / ◉ 进行中 / ! 警告 / − 跳过；双 TTY 才启用颜色、单行进度与
-# 进度条，NO_COLOR 非空时只关颜色；重定向、非 TTY 或 TERM=dumb 自动退化为纯文本逐行日志。
+# 终端输出：阶段计数由登记表自动派生；阶段头只显示编号与名称，双 TTY 下在终端底部维护
+# 单条总体进度条，显示当前动作、转圈与实测耗时；标记统一为 ✓ 成功 / ✗ 失败 / ◉ 进行中 /
+# ! 警告 / − 跳过；NO_COLOR 非空时只关颜色；重定向、非 TTY 或 TERM=dumb 自动退化为纯文本。
 #
 # 设计依据：AGENTS.md（前端 IP 直连、后端回环、~/.Elysian 分类目录、首启初始密码打 stdout）、
 # apps/server-go/go-plan §8（发布构建：bun run build → 清空并拷贝 dist → CGO_ENABLED=0 单二进制）。
@@ -118,8 +118,8 @@ register_stages() {
   TOTAL_STEPS=${#STAGES[@]}
 }
 
-# 长命令统一出口：输出全部追加进日志文件；TTY 下用单行转圈表示进行中（同一时刻只有这一行在
-# 刷新），非 TTY 保持静默，由调用方按结果打 ✓/✗ 行。退出码同时保留供失败摘要使用。
+# 长命令统一出口：输出全部追加进日志文件；TTY 下在底部单条进度条中显示转圈与耗时，
+# 非 TTY 保持静默，由调用方按结果打 ✓/✗ 行。退出码同时保留供失败摘要使用。
 run_stage_command() { # run_stage_command <描述> <日志文件> <命令…>
   local desc="$1" log="$2" rc start=$SECONDS
   shift 2
@@ -132,13 +132,13 @@ run_stage_command() { # run_stage_command <描述> <日志文件> <命令…>
   "$@" >>"$log" 2>&1 &
   pid=$!
   while kill -0 "$pid" 2>/dev/null; do
-    printf '\r    %s◉%s %s … %s  %s' "${C_CYAN:-}" "${C_RESET:-}" "$desc" "${spin:$((frame_idx % 4)):1}" "$(tui_duration $((SECONDS - start)))"
+    tui_status_update "$desc … ${spin:$((frame_idx % 4)):1}  $(tui_duration $((SECONDS - start)))"
     frame_idx=$((frame_idx + 1))
     sleep 0.3
   done
   if wait "$pid" 2>>"$log"; then rc=0; else rc=$?; fi
   RUN_STAGE_EXIT_CODE="$rc"
-  clear_progress_line
+  tui_status_update ""
   return "$rc"
 }
 
@@ -150,19 +150,15 @@ stage_failure_reason() {
   fi
 }
 
-try_fetch() { # try_fetch <url> <输出文件> [progress] [bun-metadata|bun-package]
-  local policy="${4:-default}" rc
+try_fetch() { # try_fetch <url> <输出文件> [policy]
+  local policy="${3:-default}" rc
   local opts=(-fL --retry 3 --retry-delay 2 --connect-timeout 20)
   case "$policy" in
     bun-metadata) opts=(-fL --retry 0 --connect-timeout 5 --max-time 10 --speed-limit 1024 --speed-time 5) ;;
     bun-package) opts=(-fL --retry 0 --connect-timeout 10 --max-time 600 --speed-limit 102400 --speed-time 15) ;;
   esac
-  # 元数据静默下载；大文件在交互终端显示进度条，重定向日志时仍保持安静。
-  if [ "${3:-}" = progress ] && [ -t 2 ]; then
-    opts+=(--progress-bar)
-  else
-    opts+=(-sS)
-  fi
+  # 所有下载静默进行，进度由安装阶段底部的单条进度条表示；-S 保留错误信息。
+  opts+=(-sS)
   if curl "${opts[@]}" -o "$2" "$1"; then return 0; else rc=$?; fi
   # Bun 慢速、超时和 HTTP 错误直接交给镜像回退；仅连接类故障再尝试 IPv4。
   case "$policy" in
@@ -188,7 +184,7 @@ fetch_file() { # fetch_file <输出文件> <url>...
   local out="$1" url
   shift
   for url in "$@"; do
-    if try_fetch "$url" "$out" progress; then
+    if try_fetch "$url" "$out"; then
       return 0
     fi
     info "下载源不可用，尝试下一个：$url"
@@ -201,7 +197,7 @@ fetch_bun_file() {
   shift
   for url in "$@"; do
     info "尝试下载 bun：$url"
-    if try_fetch "$url" "$out" progress bun-package; then return 0; else rc=$?; fi
+    if try_fetch "$url" "$out" bun-package; then return 0; else rc=$?; fi
     rm -f "$out" || return 1
     if [ "$rc" = 28 ]; then
       warn "bun 下载过慢或超时，切换下载源：$url"
@@ -280,7 +276,7 @@ apt_install_deps() {
     tail -n 40 "$log" >&2
     die "apt-get update 失败，请检查虚拟机的 apt 源与网络后重跑（完整日志：${log}）。"
   fi
-  if ! run_stage_command "安装系统依赖 ${need[*]}" "$log" env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "${need[@]}"; then
+  if ! run_stage_command "安装系统依赖" "$log" env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "${need[@]}"; then
     tail -n 40 "$log" >&2
     die "apt-get install ${need[*]} 失败，请排查后重跑（完整日志：${log}）。"
   fi
@@ -953,7 +949,7 @@ install_bun() {
   meta="$work/release.json"
   info "下载 bun ${BUN_VERSION}（linux/${BUN_ARCH}）元数据并按官方 digest 校验 sha256"
   # GitHub API 不可达时使用脚本内固定的同版本官方摘要，仍保持完整性校验。
-  if try_fetch "$BUN_RELEASE_API" "$meta" '' bun-metadata; then
+  if try_fetch "$BUN_RELEASE_API" "$meta" bun-metadata; then
     # digest 字段在 uploader 对象之后，与所属 asset 的 "name" 相距数十行：按「最近的 name」配对提取。
     digest="$(awk -v asset="$asset" '
       /"name": "/ { line=$0; sub(/^.*"name": "/, "", line); sub(/".*$/, "", line); name=line }
@@ -1169,24 +1165,23 @@ wait_health() {
   local i
   for i in $(seq 1 60); do
     if curl -fsS --max-time 3 "$HEALTH_URL" >/dev/null 2>&1 && curl -fsS --max-time 3 "http://127.0.0.1:${FRONTEND_PORT}/" | grep -q '<title>Elysian</title>'; then
-      clear_progress_line
+      tui_status_update ""
       ok "健康检查通过（/api/health 200，用时 ${i} 秒）"
       return 0
     fi
     if [ -n "$SMOKE" ]; then
-      kill -0 "$SMOKE_PID" 2>/dev/null || { clear_progress_line; tail -n 40 "$SMOKE_LOG" >&2 || true; die "面板进程已退出，详见上方日志。"; }
+      kill -0 "$SMOKE_PID" 2>/dev/null || { tui_status_erase; tail -n 40 "$SMOKE_LOG" >&2 || true; die "面板进程已退出，详见上方日志。"; }
     else
-      systemctl is-active --quiet "$SERVICE_NAME" || { clear_progress_line; journalctl -u "$SERVICE_NAME" -n 40 --no-pager >&2 || true; die "服务已退出，详见上方日志。"; }
+      systemctl is-active --quiet "$SERVICE_NAME" || { tui_status_erase; journalctl -u "$SERVICE_NAME" -n 40 --no-pager >&2 || true; die "服务已退出，详见上方日志。"; }
     fi
-    # TTY 下单行秒表刷新；非 TTY 每 5 秒落一行纯文本。
+    # TTY 下在底部单条进度条中刷新秒表；非 TTY 每 5 秒落一行纯文本。
     if [ "${SPINNER_ENABLED:-0}" = 1 ]; then
-      printf '\r    %s◉%s 等待健康检查 %d/60 秒' "${C_CYAN:-}" "${C_RESET:-}" "$i"
+      tui_status_update "等待健康检查 ${i}/60 秒"
     elif [ $((i % 5)) -eq 0 ]; then
-      printf '    等待健康检查 %d/60 秒\n' "$i"
+      tui_write_line "    等待健康检查 ${i}/60 秒"
     fi
     sleep 1
   done
-  clear_progress_line
   die "等待 ${HEALTH_URL} 就绪超时（60 秒）。排查：journalctl -u $SERVICE_NAME -n 50 --no-pager（或确认 ${PANEL_PORT} 端口未被占用）。"
 }
 
