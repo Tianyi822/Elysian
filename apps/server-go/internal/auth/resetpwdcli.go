@@ -9,22 +9,11 @@ import (
 
 	"elysian/server/internal/config"
 	"elysian/server/internal/paths"
+	"elysian/server/internal/shared"
 )
 
-// 改密 CLI 入口（resetPasswordCli.ts 等价物）：`elysian resetpwd` 子命令（非 HTTP 端点
-// ——「改密只能在命令行进行」，面板不提供改密界面端点，也少一个高价值攻击面）。
-//
-// 交互全中文，退出码非 0 即失败：
-//  1. 提示输入新密码（至少 8 位）：真 TTY 用 termios raw mode 逐字节读、不回显、支持
-//     退格、回车结束、Ctrl-C 中止；非 TTY（管道/脚本）改逐行读并事前提示输入将明文回显。
-//  2. 再次输入新密码，同法读入。
-//  3. 两次明文交给 ChangePanelPassword 纯函数校验并写盘（只写凭据文件、不触碰会话
-//     文件——既有会话靠 epoch 机制在下一次请求时失效）。
-//  4. 打印改密结果；ELYSIAN_AUTH_DEV=1 时追加开发固定账号不受影响的说明。
-//
-// 落点纪律：校验与写盘逻辑全在 passwordchange.go；本文件只做 stdin 交互与打印。
-// runResetPasswordCli 是可注入 IO 的核心流程（测试驱动），RunResetPasswordCLI 绑真实
-// stdin/stdout 与 config.Load 产出的 dev 开关。
+// resetpwd 提供无会话可用时的本机改密入口，与设置页共用 ChangePanelPassword。
+// 交互终端隐藏输入并允许校验失败后重试；管道和文件输入只消费两行，失败立即退出。
 
 // resetPasswordIO CLI 的 IO 出口：测试注入 fake（不真起交互）。
 type resetPasswordIO struct {
@@ -32,7 +21,7 @@ type resetPasswordIO struct {
 	isTTY func() bool
 	// readHidden 交互式无回显读一行（termios raw mode）。
 	readHidden func(prompt string) (string, error)
-	// readLine 明文读一行（非 TTY：管道/脚本，带跨调用行缓冲）。
+	// readLine 逐行读取（非 TTY：管道/脚本，带跨调用行缓冲）。
 	readLine func(prompt string) (string, error)
 	// print 打印一行。
 	print func(text string)
@@ -45,28 +34,53 @@ var errPasswordResetCancelled = errors.New("已取消改密")
 var errPasswordInputEnded = errors.New("输入已结束，未读到密码")
 
 // runResetPasswordCli CLI 主流程（IO 与改密依赖全部经注入出口）：读两次密码 → 纯函数
-// 改密 → 打印结果。校验失败向上抛中文错误；ELYSIAN_AUTH_DEV=1 时追加 dev 说明行。
+// 改密 → 打印结果。TTY 校验失败可重试；ELYSIAN_AUTH_DEV=1 时追加 dev 说明行。
 func runResetPasswordCli(io_ resetPasswordIO, credentials CredentialsStore, hasher PasswordHasher, authDev bool) error {
 	tty := io_.isTTY()
 	read := io_.readLine
 	if tty {
 		read = io_.readHidden
 	}
-	if !tty {
-		io_.print("当前不是交互终端，输入将明文回显")
+	io_.print("Elysian | 重置密码")
+	io_.print("")
+	io_.print("管理员：" + PanelUsername)
+	if tty {
+		io_.print("密码至少 8 位，输入不回显。")
+		io_.print("保存后全部登录会话失效；Ctrl+C 取消。")
+	} else {
+		io_.print("非交互输入：按顺序读取新密码和确认密码，共两行。")
+		io_.print("密码至少 8 位，保存后全部登录会话失效。")
 	}
-	first, err := read("请输入新密码（至少 8 位）：")
-	if err != nil {
-		return err
+	io_.print("")
+	for {
+		first, err := read("新密码：")
+		if err != nil {
+			return err
+		}
+		if tty && utf16Length(first) < PasswordMinLength {
+			io_.print("! 密码至少需要 8 位，请重新输入。")
+			io_.print("")
+			continue
+		}
+		second, err := read("确认密码：")
+		if err != nil {
+			return err
+		}
+		if _, err := ChangePanelPassword(credentials, hasher, first, second); err != nil {
+			var invalid *shared.InvalidRequestError
+			if tty && errors.As(err, &invalid) {
+				io_.print("! " + err.Error() + "，请重新输入。")
+				io_.print("")
+				continue
+			}
+			return err
+		}
+		break
 	}
-	second, err := read("请再次输入新密码：")
-	if err != nil {
-		return err
-	}
-	if _, err := ChangePanelPassword(credentials, hasher, first, second); err != nil {
-		return err
-	}
-	io_.print("面板密码已修改；全部现有登录会话已失效，请重新登录。")
+	io_.print("")
+	io_.print("✓ 密码已重置")
+	io_.print("全部现有登录会话已失效。")
+	io_.print("请使用新密码重新登录。")
 	if authDev {
 		io_.print("开发固定账号不受影响（仅开发环境可用）。")
 	}
@@ -90,12 +104,17 @@ func RunResetPasswordCLI(stdin io.Reader, stdout io.Writer) int {
 		},
 		readLine: func(prompt string) (string, error) {
 			fmt.Fprint(stdout, prompt)
+			defer fmt.Fprintln(stdout)
 			return lines.next()
 		},
 		print: func(text string) { fmt.Fprintln(stdout, text) },
 	}
 	if err := runResetPasswordCli(io_, credentials, hasher, config.Load().AuthDev); err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
+		if errors.Is(err, errPasswordResetCancelled) {
+			fmt.Fprintln(stdout, "\n− 已取消，密码未修改。")
+		} else {
+			fmt.Fprintln(os.Stderr, "\n✗ 重置失败："+err.Error())
+		}
 		return 1
 	}
 	return 0

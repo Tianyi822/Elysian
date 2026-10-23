@@ -29,7 +29,7 @@ func TestResetPasswordCliNonTTYHappyPath(t *testing.T) {
 		isTTY:      func() bool { return false },
 		readHidden: func(string) (string, error) { return "", errors.New("不应走无回显读") },
 		readLine: func(prompt string) (string, error) {
-			stdout.WriteString(prompt)
+			stdout.WriteString(prompt + "\n")
 			return lines.next()
 		},
 		print: func(text string) { stdout.WriteString(text + "\n") },
@@ -38,13 +38,13 @@ func TestResetPasswordCliNonTTYHappyPath(t *testing.T) {
 		t.Fatalf("CLI 失败：%v", err)
 	}
 	out := stdout.String()
-	if !strings.HasPrefix(out, "当前不是交互终端，输入将明文回显") {
-		t.Errorf("先提示明文回显：%q", out)
+	if !strings.Contains(out, "非交互输入") {
+		t.Errorf("提示非交互输入：%q", out)
 	}
-	if !strings.Contains(out, "面板密码已修改；全部现有登录会话已失效，请重新登录。") {
+	if !strings.Contains(out, "✓ 密码已重置\n全部现有登录会话已失效。\n请使用新密码重新登录。") {
 		t.Errorf("成功文案缺失：%q", out)
 	}
-	if !strings.Contains(out, "请输入新密码（至少 8 位）：") || !strings.Contains(out, "请再次输入新密码：") {
+	if !strings.Contains(out, "新密码：\n确认密码：\n") {
 		t.Errorf("两次提示缺失：%q", out)
 	}
 	current, err := credentials.Current()

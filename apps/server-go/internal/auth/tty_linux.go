@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"syscall"
+	"unicode/utf8"
 	"unsafe"
 )
 
@@ -25,12 +26,11 @@ func isTerminal(file *os.File) bool {
 	return errno == 0
 }
 
-// readHiddenFromTTY 交互式无回显读一行：写提示 → 进入 raw mode（关回显与行编辑、
-// Ctrl-C 以字节到达由本函数处理）→ 逐字节缓冲；回车（0x0d/0x0a）结束并输出换行；
-// 退格（0x7f/0x08）弹出一个字节；Ctrl-C（0x03）输出换行后中止「已取消改密」。
-// 结束后恢复原 termios。UTF-8 输入按字节缓冲、按原样回放（与 TS 字节数组等价）。
+// readHiddenFromTTY 交互式无回显读一行：进入 raw mode（关回显与行编辑、
+// Ctrl-C 以字节到达由本函数处理）→ 写提示 → 逐字节缓冲；回车结束输入；
+// 退格删除一个 UTF-8 字符；Ctrl-C 中止，Ctrl-D 结束输入。
+// 结束时显式回车换行，再恢复原 termios，避免 raw mode 下只有换行导致后续提示右移。
 func readHiddenFromTTY(file *os.File, stdout io.Writer, prompt string) (string, error) {
-	fmt.Fprint(stdout, prompt)
 	var original syscall.Termios
 	if _, _, errno := syscall.Syscall6(syscall.SYS_IOCTL, file.Fd(), syscall.TCGETS,
 		uintptr(unsafe.Pointer(&original)), 0, 0, 0); errno != 0 {
@@ -43,9 +43,12 @@ func readHiddenFromTTY(file *os.File, stdout io.Writer, prompt string) (string, 
 		return "", fmt.Errorf("设置终端 raw mode 失败：%v", errno)
 	}
 	defer func() {
+		// OPOST 在 raw mode 下关闭，必须同时复位列位置与换行。
+		fmt.Fprint(stdout, "\r\n")
 		_, _, _ = syscall.Syscall6(syscall.SYS_IOCTL, file.Fd(), syscall.TCSETS,
 			uintptr(unsafe.Pointer(&original)), 0, 0, 0)
 	}()
+	fmt.Fprint(stdout, prompt)
 
 	var buf []byte
 	chunk := make([]byte, 1)
@@ -59,14 +62,15 @@ func readHiddenFromTTY(file *os.File, stdout io.Writer, prompt string) (string, 
 		}
 		switch chunk[0] {
 		case 0x03: // Ctrl-C：中止。
-			fmt.Fprint(stdout, "\n")
 			return "", errPasswordResetCancelled
+		case 0x04: // Ctrl-D：输入结束。
+			return "", errPasswordInputEnded
 		case 0x0d, 0x0a: // 回车：结束。
-			fmt.Fprint(stdout, "\n")
 			return string(buf), nil
-		case 0x7f, 0x08: // 退格：弹出一个字节。
+		case 0x7f, 0x08: // 退格：删除一个字符。
 			if len(buf) > 0 {
-				buf = buf[:len(buf)-1]
+				_, size := utf8.DecodeLastRune(buf)
+				buf = buf[:len(buf)-size]
 			}
 		default:
 			buf = append(buf, chunk[0])

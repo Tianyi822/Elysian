@@ -170,7 +170,7 @@ func (io_ *scriptedIO) asResetPasswordIO() resetPasswordIO {
 		readHidden: func(prompt string) (string, error) {
 			io_.prompts = append(io_.prompts, prompt)
 			if len(io_.queue) == 0 {
-				return "", nil
+				return "", errPasswordInputEnded
 			}
 			next := io_.queue[0]
 			io_.queue = io_.queue[1:]
@@ -179,7 +179,7 @@ func (io_ *scriptedIO) asResetPasswordIO() resetPasswordIO {
 		readLine: func(prompt string) (string, error) {
 			io_.prompts = append(io_.prompts, prompt)
 			if len(io_.queue) == 0 {
-				return "", nil
+				return "", errPasswordInputEnded
 			}
 			next := io_.queue[0]
 			io_.queue = io_.queue[1:]
@@ -196,11 +196,12 @@ func TestRunResetPasswordCliTTYFlow(t *testing.T) {
 	if err := runResetPasswordCli(io_.asResetPasswordIO(), credentials, NewScryptHasher(), false); err != nil {
 		t.Fatalf("CLI 失败：%v", err)
 	}
-	if len(io_.prompts) != 2 || io_.prompts[0] != "请输入新密码（至少 8 位）：" || io_.prompts[1] != "请再次输入新密码：" {
+	if len(io_.prompts) != 2 || io_.prompts[0] != "新密码：" || io_.prompts[1] != "确认密码：" {
 		t.Errorf("提示文案：%v", io_.prompts)
 	}
-	if len(io_.printed) != 1 || io_.printed[0] != "面板密码已修改；全部现有登录会话已失效，请重新登录。" {
-		t.Errorf("成功打印（无 dev 说明行）：%v", io_.printed)
+	output := strings.Join(io_.printed, "\n")
+	if !strings.Contains(output, "Elysian | 重置密码") || !strings.Contains(output, "输入不回显") || !strings.Contains(output, "✓ 密码已重置\n全部现有登录会话已失效。\n请使用新密码重新登录。") || strings.Contains(output, "开发固定账号") {
+		t.Errorf("标题、要求与成功结果应分行展示：%s", output)
 	}
 	current, _ := credentials.Current()
 	if current == nil || current.Username != "admin" {
@@ -214,12 +215,13 @@ func TestRunResetPasswordCliNonTTYFlow(t *testing.T) {
 	if err := runResetPasswordCli(io_.asResetPasswordIO(), NewMemoryCredentialsStore(nil), NewScryptHasher(), false); err != nil {
 		t.Fatalf("CLI 失败：%v", err)
 	}
-	if len(io_.printed) == 0 || io_.printed[0] != "当前不是交互终端，输入将明文回显" {
-		t.Errorf("非 TTY 先提示明文回显：%v", io_.printed)
+	output := strings.Join(io_.printed, "\n")
+	if !strings.Contains(output, "非交互输入") || strings.Contains(output, "输入不回显") || strings.Contains(output, "Ctrl+C") {
+		t.Errorf("非 TTY 应展示管道输入说明：%v", io_.printed)
 	}
 	found := false
 	for _, line := range io_.printed {
-		if line == "面板密码已修改；全部现有登录会话已失效，请重新登录。" {
+		if line == "✓ 密码已重置" {
 			found = true
 		}
 	}
@@ -229,23 +231,56 @@ func TestRunResetPasswordCliNonTTYFlow(t *testing.T) {
 }
 
 func TestRunResetPasswordCliMismatchThrows(t *testing.T) {
-	io_ := makeScriptedIO(true)
+	io_ := makeScriptedIO(false)
 	io_.reset("new-password-1", "different-pwd")
 	err := runResetPasswordCli(io_.asResetPasswordIO(), NewMemoryCredentialsStore(nil), NewScryptHasher(), false)
 	if err == nil || err.Error() != "两次输入的密码不一致" {
 		t.Fatalf("err = %v，期望「两次输入的密码不一致」", err)
 	}
-	if len(io_.printed) != 0 {
+	if strings.Contains(strings.Join(io_.printed, "\n"), "✓") {
 		t.Errorf("失败不打印成功文案：%v", io_.printed)
 	}
 }
 
 func TestRunResetPasswordCliTooShortThrows(t *testing.T) {
-	io_ := makeScriptedIO(true)
+	io_ := makeScriptedIO(false)
 	io_.reset("short", "short")
 	err := runResetPasswordCli(io_.asResetPasswordIO(), NewMemoryCredentialsStore(nil), NewScryptHasher(), false)
 	if err == nil || err.Error() != "密码至少需要 8 位" {
 		t.Fatalf("err = %v，期望「密码至少需要 8 位」", err)
+	}
+}
+
+func TestRunResetPasswordCliTTYRetriesValidationWithoutWriting(t *testing.T) {
+	io_ := makeScriptedIO(true)
+	io_.reset("short", "new-password-1", "different-password", "new-password-2", "new-password-2")
+	credentials := &recordingCredentialsStore{inner: NewMemoryCredentialsStore(nil)}
+	hasher := scriptedHasher()
+	if err := runResetPasswordCli(io_.asResetPasswordIO(), credentials, hasher, false); err != nil {
+		t.Fatal(err)
+	}
+	output := strings.Join(io_.printed, "\n")
+	if !strings.Contains(output, "! 密码至少需要 8 位") || !strings.Contains(output, "! 两次输入的密码不一致") || !strings.Contains(output, "✓ 密码已重置") {
+		t.Fatalf("重试过程缺少结果提示：%s", output)
+	}
+	if strings.Join(io_.prompts, ",") != "新密码：,新密码：,确认密码：,新密码：,确认密码：" {
+		t.Errorf("过短密码不应再要求确认：%v", io_.prompts)
+	}
+	if hasher.hashCalls != 1 || credentials.writes != 1 || credentials.lastWrite != "hash:new-password-2" {
+		t.Errorf("仅最终有效密码允许写入：hashCalls=%d store=%+v", hasher.hashCalls, credentials)
+	}
+}
+
+func TestRunResetPasswordCliTTYWriteFailureDoesNotRetry(t *testing.T) {
+	io_ := makeScriptedIO(true)
+	io_.reset("new-password-1", "new-password-1")
+	credentials := &failingCredentialsStore{}
+	err := runResetPasswordCli(io_.asResetPasswordIO(), credentials, scriptedHasher(), false)
+	if err == nil || !strings.Contains(err.Error(), "EACCES") || len(io_.prompts) != 2 || len(credentials.written) != 1 {
+		t.Fatalf("存储失败应直接上抛，不继续消费密码：err=%v prompts=%v", err, io_.prompts)
+	}
+	if strings.Contains(strings.Join(io_.printed, "\n"), "✓") {
+		t.Fatal("存储失败不能显示成功")
 	}
 }
 
