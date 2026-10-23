@@ -9,9 +9,11 @@
 package applog
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -177,14 +179,18 @@ func FailureLogMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// failureStatusRecorder 记录最终状态码的响应写出器；Flush/Unwrap 透传，
-// SSE 等流式端点不受包装影响（与 logs.statusRecorder 同形）。
+// failureStatusRecorder 记录最终状态码，并透传流式响应与 WebSocket 升级接口。
 type failureStatusRecorder struct {
 	http.ResponseWriter
 	status int
 }
 
 func (r *failureStatusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
+// gorilla/websocket 直接断言 http.Hijacker，不会沿 Unwrap 查找底层连接。
+func (r *failureStatusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return http.NewResponseController(r.ResponseWriter).Hijack()
+}
 
 func (r *failureStatusRecorder) WriteHeader(code int) {
 	if r.status == 0 {
