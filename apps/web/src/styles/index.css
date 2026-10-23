@@ -779,6 +779,11 @@ textarea {
   caret-color: var(--t-accent);
 }
 
+/* 自带密码切换按钮的输入框隐藏 Edge 原生按钮，避免出现两个眼睛。 */
+.password-input-with-toggle::-ms-reveal {
+  display: none;
+}
+
 html {
   font-size: 16px;
 }

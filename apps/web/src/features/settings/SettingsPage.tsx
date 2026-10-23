@@ -28,7 +28,7 @@ const PASSWORD_CHANGE_NOTICE = '密码已修改，请使用新密码重新登录
 const PASSWORD_MIN_LENGTH = 8
 
 const INPUT_CLASS =
-  `${CTL_FIELD} pr-9 disabled:cursor-not-allowed aria-invalid:border-warning`
+  `password-input-with-toggle ${CTL_FIELD} pr-9 disabled:cursor-not-allowed aria-invalid:border-warning`
 
 function newPasswordGuidance(value: string): { text: string; warning: boolean } {
   if (value.length === 0) return { text: '至少 8 位', warning: false }
