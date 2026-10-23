@@ -10,11 +10,11 @@ cd Elysian
 sudo bash scripts/install.sh
 ```
 
-GitHub 不可达时可改用镜像：`git clone https://gitee.com/Chentyit/Elysian.git`，镜像需与主仓库保持同步。仓库须公开或通过部署者自己的 Git 凭据取得源码。脚本安装缺少的工具链、OpenSSH 与 UFW，并自动检测安装 Docker 与 Caddy（详见「Docker 与网站」），以 `elysian-build` 无特权账号在临时源码副本构建，不在面板凭据目录执行源码脚本。Go 工具链固定 1.23.12，bun 固定 1.4.2，下载按官方索引的 SHA256 校验；官方源不可用时自动回退 golang.google.cn、阿里云或 npmmirror 镜像，但仍校验官方摘要；依赖按 bun.lock 和 go.sum 锁定。Go 模块构建默认使用 goproxy.cn，失败再尝试阿里云 goproxy 和 direct；可用 `ELYSIAN_GOPROXY` 或已有 `GOPROXY` 覆盖。Bun 依赖默认使用 `https://registry.npmmirror.com`，可用 `ELYSIAN_BUN_REGISTRY` 或已有 `BUN_CONFIG_REGISTRY` 覆盖；锁文件本身也已固定到该镜像的 tarball。安装脚本会把这两个变量显式传给无特权构建进程，因此系统预装的 Go/Bun 也会在构建时使用镜像；同时写入 `/etc/profile.d/elysian-mirrors.sh`，并在 Go 可用时执行 `go env -w GOPROXY=…`，让新登录 shell 和 root 的手动 Go 命令也使用镜像。`scripts/uninstall.sh` 会移除 profile 文件并执行 `go env -u GOPROXY` 复位；轻量卸载（install.sh `--uninstall`）只移除 profile、不回滚 go env，可用 `go env -u GOPROXY` 自行恢复。安装与在线更新共用 [build-release.sh](build-release.sh)。构建失败时旧服务继续运行；安装切换前预检并备份，启动或健康检查失败时恢复原程序、数据、单元与本次涉及的面板规则。环境文件 `/etc/default/elysian` 保留。
+GitHub 不可达时可改用镜像：`git clone https://gitee.com/Chentyit/Elysian.git`，镜像需与主仓库保持同步。仓库须公开或通过部署者自己的 Git 凭据取得源码。脚本安装缺少的工具链、OpenSSH 与 UFW，并自动检测安装 Docker 与 Caddy（详见「Docker 与网站」），以 `elysian-build` 无特权账号在临时源码副本构建，不在面板凭据目录执行源码脚本。Go 工具链固定 1.23.12，bun 固定 1.4.2，下载按官方索引的 SHA256 校验；官方源不可用时自动回退 golang.google.cn、阿里云或 npmmirror 镜像，但仍校验官方摘要；依赖按 bun.lock 和 go.sum 锁定。Go 模块构建默认使用 goproxy.cn，失败再尝试阿里云 goproxy 和 direct；可用 `ELYSIAN_GOPROXY` 或已有 `GOPROXY` 覆盖。Bun 依赖默认使用 `https://registry.npmmirror.com`，可用 `ELYSIAN_BUN_REGISTRY` 或已有 `BUN_CONFIG_REGISTRY` 覆盖；锁文件本身也已固定到该镜像的 tarball。安装脚本会把这两个变量显式传给无特权构建进程，因此系统预装的 Go/Bun 也会在构建时使用镜像；同时写入 `/etc/profile.d/elysian-mirrors.sh`，并在 Go 可用时执行 `go env -w GOPROXY=…`，让新登录 shell 和 root 的手动 Go 命令也使用镜像。`scripts/uninstall.sh` 会移除 profile 文件，并在删除本面板安装路径的 Go 时执行 `go env -u GOPROXY` 复位；`--keep-tools` 保留工具链与 go env 设置。安装与在线更新共用 [build-release.sh](build-release.sh)。构建失败时旧服务继续运行；安装切换前预检并备份，启动或健康检查失败时恢复原程序、数据、单元与本次涉及的面板规则。环境文件 `/etc/default/elysian` 保留。
 
 Bun 本体安装包按 GitHub → npmmirror 顺序下载，curl 持续监测传输速度，连续 15 秒低于 100 KiB/s、请求超时或失败即回退备用源，清除失败下载的残留文件；每次连接最多 10 秒、传输最多 600 秒，不对低速或 HTTP 错误重复下载同一源，仅连接类故障保留一次 IPv4 回退。GitHub Release 元数据总请求预算 10 秒，连续 5 秒低于 1 KiB/s 也提前退出，失败后使用脚本内固定版本的官方 SHA256。镜像下载同样验证官方摘要，校验失败不解压、不安装。此策略用于 Bun 工具链安装，构建阶段的 `bun install` 继续使用配置的 npm registry。
 
-默认前端 `http://<服务器 IP>:48100`，后端 `127.0.0.1:48101`。前端提供页面、静态资源和同源 `/api` 代理，支持 Cookie、上传、SSE 和 WebSocket。正式入口接受 IP 或本机 Host，跨源业务写请求及未允许的域名被拒绝。安装脚本默认启用 OpenSSH（sshd 开机自启），按 `sshd -T` 的实际端口放行 SSH，并在放行面板前端 TCP 规则后启用 UFW；已存在的 UFW 规则保持不动。默认值只在安装时声明，重跑安装脚本会重新声明，之后以安全页的启停与规则为准。面板管理宿主 UFW 的面板 TCP 规则与安全页规则，并核验启用的 IPv6；部署者需自行配置云安全组。此部署方式不配置域名反代、HTTPS 或证书。
+默认前端 `http://<服务器公网 IP 或域名>:48100`，后端 `127.0.0.1:48101`。前端提供页面、静态资源和同源 `/api` 代理，支持 Cookie、上传、SSE 和 WebSocket。正式入口接受 IP 或本机 Host，跨源业务写请求及未允许的域名被拒绝。安装脚本默认启用 OpenSSH（sshd 开机自启），按 `sshd -T` 的实际端口放行 SSH，并在放行面板前端 TCP 规则后启用 UFW；已存在的 UFW 规则保持不动。默认值只在安装时声明，重跑安装脚本会重新声明，之后以安全页的启停与规则为准。面板管理宿主 UFW 的面板 TCP 规则与安全页规则，并核验启用的 IPv6；部署者需自行配置云安全组。此部署方式不配置域名反代、HTTPS 或证书。
 
 既有安装需先运行此脚本完成维护能力引导；此后可在系统设置中改端口、重启与更新。Docker 开发环境保留既有回环端口映射，设置页维护功能不可执行。
 
@@ -77,11 +77,11 @@ Docker 与 Caddy 通道分别按安装环境变量 `ELYSIAN_DOCKER_SOCKET`／`EL
 
 接入事务暂存在 `/var/lib/elysian/.Elysian/backups/platform-install-active` 的 0700 私有目录，记录 Caddyfile、Elysian 专属 systemd drop-in、tmpfiles 和环境文件的原内容、权限、属主及存在性，同时保存原运行 JSON 和服务启停、自启状态。任意应用或验证失败恢复原文件和运行 JSON；管理端点均不可达时尝试恢复文件后重启旧服务并回灌原运行 JSON。恢复失败保留未提交记录并阻止后续安装，修复后重跑；安装启动会在取得同一组维护锁后先恢复未提交事务。恢复成功归档私有恢复记录，候选校验详情保存在归档内的 `validate.log`，该日志与 `journalctl -u caddy` 分别用于检查安装器校验和服务运行；依赖成功提交后清理活动事务。后续面板切换失败不拆散已验证的 Caddy 与环境配置。仅本次新装 Caddy 时声明 `80,443/tcp`；复用 Caddy 不动既有 UFW 规则，未提交依赖事务只撤销可确认由本事务新增的精确规则。摘要分别核对 80、443 及 UFW 已启用的 IPv6，受限来源不会误报为公开放行。IP＋端口网站无需 Caddy，面板不申请、签发或续期证书。
 
-安装阶段统一输出状态及真实进度；构建详细输出保存在终端回显的 `/tmp/elysian-build.*` 私有日志，失败回显末 40 行并保留完整日志。双 TTY 且终端支持刷新时显示单行进度，`NO_COLOR` 关闭颜色，`TERM=dumb` 与输出重定向降级为纯文本；无可靠百分比的命令仅使用不定进度。
+安装阶段统一输出状态、阶段进度条与实测耗时；构建详细输出保存在终端回显的 `/tmp/elysian-build.*` 私有日志，失败回显末 40 行并保留完整日志。双 TTY 且终端支持刷新时显示阶段进度条与单行转圈，`NO_COLOR` 只关闭颜色，`TERM=dumb` 与输出重定向降级为纯文本；无可靠百分比的命令仅使用不定进度。收尾摘要使用自适应终端宽度的分区横线与对齐键值，全部取实测值。
 
 ## 卸载与验证
 
-`sudo bash scripts/uninstall.sh` 整机卸载：停止并注销服务与自启、删除程序版本与维护工具（`/opt/elysian`）、三个系统账号（elysian／elysian-build／elysian-sqlite）、`/etc/profile.d/elysian-mirrors.sh`、`/etc/default/elysian`、构建残留（`/var/lib/elysian-build` 与 `/var/tmp/elysian-install-source.*`）、面板自己加的 UFW 前端端口规则（按 `panel-network.json` 精确匹配），并删除本脚本安装路径上的 Go（`/usr/local/go`，含 `go env -u GOPROXY` 复位）与 bun（`/usr/local/bin/bun`）；其它位置的 Go/bun 保持不动。默认保留 `/var/lib/elysian` 数据与源码仓库，`--purge-data` 连数据一并删、`--keep-tools` 保留工具链、`--yes` 免交互；系统 SSH 与面板自管 sshd、用户自加的 UFW 规则绝不动；安装脚本代装的 Docker 与 Caddy 属系统组件一并保留（`--purge-data` 也不删，含既有 Caddyfile、cloudsmith keyring、apt 源与安装时声明的 `80,443/tcp` 放行），确认弃用请自行卸载。`sudo bash scripts/install.sh --uninstall` 是轻量变体：仅删服务与二进制，保留工具链、数据与 UFW 规则。
+`sudo bash scripts/uninstall.sh` 是唯一卸载入口：先展示删除计划与四类数据大小，再逐项询问是否删除「数据（SQLite 与 Agent 记录）」「配置与凭据」「日志」「备份/状态/临时」，默认全部保留；`--purge-data` 删除全部数据（含未分类文件），`--keep-tools` 保留 Go/bun，`--yes` 免交互（默认保留数据与 Caddy 配置），`--dry-run` 只预览。确认后停止并注销服务、删除程序与版本目录、`/etc/default/elysian`（先备份到 `/var/backups/elysian-uninstall-<时间戳>`）、镜像 profile、构建残留与面板前端 UFW 精确规则；Caddy 管理通道配置默认保留，交互确认后只移除内容完全一致的 drop-in/tmpfiles 与 Caddyfile 全局段精确 admin 行（先备份、`caddy validate` 通过才替换，reload 失败恢复原文件）。只要保留任一数据类别就保留 `elysian` 账号，保留「数据」时同时保留 `elysian-sqlite`；全删时删除三个账号与组。结尾执行残留检查，列出已删除、已保留、未改动与残留项。源码仓库、系统 SSH、Docker/Caddy 系统包（含 Caddy apt 源与 keyring）与容器、UFW 服务状态、用户自加规则均不动。`install.sh --uninstall` 已移除，执行会提示改用 `uninstall.sh`。
 
 前端验证为 `bun run typecheck`、`bun run test`、`bun run build`；Go 门禁为 `bash apps/server-go/dev-check.sh ./...`，全部 Go 检查在开发容器内运行。安装脚本测试通过专用 Docker 镜像运行，源码只读挂载，不挂 Docker socket、不发布宿主端口、运行期断网；工具安装、临时文件、Unix/TCP fixture 和真实 Caddy 进程全部在容器内，容器退出后自动删除。纯逻辑自测覆盖 TUI 与依赖辅助函数，事务故障测试覆盖动态路由保留、零重启复用、服务缺失、校验和 API 失败、显式隐藏规则变化、环境持久化失败、跨进程恢复与恢复失败保留记录；真实 Caddy 测试覆盖静态站点自动隐藏配置文件、嵌套路由、热迁移到 Unix 管理端点及原运行配置恢复。
 
@@ -90,10 +90,11 @@ docker build -f scripts/Dockerfile.install-test -t elysian-install-test:local sc
 docker run --rm --network none \
   --mount "type=bind,src=$PWD,dst=/workspace,readonly" \
   elysian-install-test:local -c 'set -e
-    bash -n scripts/install.sh scripts/uninstall.sh scripts/build-release.sh scripts/install-platform.test.sh scripts/install-caddy-config.test.sh scripts/install-download.test.sh
+    bash -n scripts/tui.sh scripts/install.sh scripts/uninstall.sh scripts/build-release.sh scripts/install-platform.test.sh scripts/install-caddy-config.test.sh scripts/install-download.test.sh scripts/install-helpers.test.sh scripts/uninstall-helpers.test.sh
     bash scripts/install-download.test.sh
     bash scripts/install-caddy-config.test.sh
     bash scripts/install-helpers.test.sh
+    bash scripts/uninstall-helpers.test.sh
     bash scripts/install-platform.test.sh'
 ```
 
