@@ -1,6 +1,6 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { useCallback, useEffect, useState } from 'react'
-import type { PanelCommit, PanelUpdateChannel } from '@elysian/contracts'
+import type { PanelCommit, PanelUpdateChannel, PanelUpdateSource } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { formatDateTime } from '../../components/format'
 import { X } from '../../components/icons'
@@ -18,12 +18,14 @@ export function PanelChangelogDialog({
   open,
   currentCommit,
   channel,
+  source,
   onClose,
 }: {
   open: boolean
   /** 正在运行的构建提交；命中列表里的某条时标为当前版本。 */
   currentCommit: string
   channel: PanelUpdateChannel
+  source: PanelUpdateSource
   onClose: () => void
 }) {
   const gateway = useGateway()
@@ -37,7 +39,7 @@ export function PanelChangelogDialog({
     let cancelled = false
     setLoading(true)
     setError(null)
-    void gateway.panel.commits(channel).then(
+    void gateway.panel.commits(channel, source).then(
       (rows) => {
         if (cancelled) return
         setCommits(rows)
@@ -53,7 +55,7 @@ export function PanelChangelogDialog({
     return () => {
       cancelled = true
     }
-  }, [open, gateway, attempt, channel])
+  }, [open, gateway, attempt, channel, source])
 
   const read = useCallback(() => setAttempt((value) => value + 1), [])
 
@@ -71,7 +73,7 @@ export function PanelChangelogDialog({
             </Dialog.Close>
           </div>
           <Dialog.Description className="shrink-0 px-5 pt-1 text-xs leading-5 text-fg-muted">
-            {channel === 'commit' ? '上游仓库默认分支的提交记录，从新到旧。' : '最新正式发版对应的提交记录，从新到旧。'}
+            {source === 'github' ? 'GitHub' : 'Gitee'} · {channel === 'commit' ? '上游仓库默认分支的提交记录，从新到旧。' : '最新正式发版对应的提交记录，从新到旧。'}
           </Dialog.Description>
 
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">

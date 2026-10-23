@@ -7,6 +7,7 @@ import type {
   PanelTaskReport,
   PanelUpdate,
   PanelUpdateChannel,
+  PanelUpdateSource,
   PanelUpdateTarget,
 } from '@elysian/contracts'
 import type {
@@ -539,9 +540,9 @@ export interface ModelSettingsAdapter {
 
 export interface PanelAdapter {
  info(): Promise<PanelInfo>
- checkUpdate(channel: PanelUpdateChannel): Promise<PanelUpdate>
+ checkUpdate(channel: PanelUpdateChannel, source: PanelUpdateSource): Promise<PanelUpdate>
  /** 更新日志：列所选更新来源最近的提交，只读上游，不改动面板状态。 */
- commits(channel: PanelUpdateChannel): Promise<PanelCommit[]>
+ commits(channel: PanelUpdateChannel, source: PanelUpdateSource): Promise<PanelCommit[]>
  ports(value: PanelPorts, requestId: string): Promise<PanelTask>
  restart(requestId: string): Promise<PanelTask>
  update(target: PanelUpdateTarget, requestId: string): Promise<PanelTask>

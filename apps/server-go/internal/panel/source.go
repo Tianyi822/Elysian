@@ -84,7 +84,7 @@ func firstLine(message string) string { return strings.SplitN(message, "\n", 2)[
 
 func (s GitHubSource) Check(ctx context.Context, channel UpdateChannel) (Update, error) {
 	channel = normalizeChannel(channel)
-	u := Update{Repository: Repository, CurrentCommit: Commit, Channel: channel}
+	u := Update{Repository: Repository, CurrentCommit: Commit, Channel: channel, Source: SourceGitHub}
 	if !validChannel(channel) {
 		return u, fmt.Errorf("更新策略无效")
 	}

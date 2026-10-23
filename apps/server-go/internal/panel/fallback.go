@@ -21,6 +21,22 @@ type FallbackSource struct {
 	Fallback Source
 }
 
+func (s FallbackSource) SelectSource(source UpdateSource) (Source, error) {
+	source = normalizeSource(source)
+	if !validSource(source) {
+		return nil, fmt.Errorf("更新来源无效")
+	}
+	primary, fallback := s.sources()
+	switch source {
+	case SourceGitHub:
+		return primary, nil
+	case SourceGitee:
+		return fallback, nil
+	default:
+		return s, nil
+	}
+}
+
 func (s FallbackSource) sources() (Source, Source) {
 	primary, fallback := s.Primary, s.Fallback
 	if primary == nil {

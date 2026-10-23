@@ -12,8 +12,7 @@ import (
 	"time"
 )
 
-// GiteeRepository 是 GitHub 仓库的只读镜像；更新检查与源码下载在 GitHub
-// 不可达时回退到这里。镜像由仓库所有者维护，必须与主仓库保持同源提交。
+// GiteeRepository 是仓库所有者维护的镜像，可显式选择，也供旧调用自动回退使用。
 const GiteeRepository = "Chentyit/Elysian"
 
 type GiteeSource struct {
@@ -112,7 +111,7 @@ func (s GiteeSource) commits(ctx context.Context, ref string, limit int) ([]gite
 
 func (s GiteeSource) Check(ctx context.Context, channel UpdateChannel) (Update, error) {
 	channel = normalizeChannel(channel)
-	u := Update{Repository: Repository, CurrentCommit: Commit, Channel: channel}
+	u := Update{Repository: Repository, CurrentCommit: Commit, Channel: channel, Source: SourceGitee}
 	if !validChannel(channel) {
 		return u, fmt.Errorf("更新策略无效")
 	}

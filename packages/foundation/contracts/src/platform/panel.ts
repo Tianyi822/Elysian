@@ -5,13 +5,17 @@ export type PanelUpdateChannel = 'commit' | 'release'
 export const PANEL_UPDATE_CHANNEL_LABELS: Record<PanelUpdateChannel, string> = {
   commit: '最新提交', release: '最新发版',
 }
+export type PanelUpdateSource = 'github' | 'gitee'
+export const PANEL_UPDATE_SOURCE_LABELS: Record<PanelUpdateSource, string> = {
+  github: 'GitHub', gitee: 'Gitee',
+}
 export type PanelTaskState = 'queued' | 'running' | 'succeeded' | 'failed' | 'rolled-back' | 'recovery-failed'
 export type PanelTask = {
   id: string; kind: 'ports' | 'restart' | 'update'; state: PanelTaskState; phase: string
   createdAt: string; updatedAt: string; oldPorts: PanelPorts; newPorts: PanelPorts
   targetCommit: string; error: string
-  /** 旧任务未记录更新策略；缺省按最新提交解释。 */
-  updateChannel?: PanelUpdateChannel; releaseTag?: string
+  /** 旧任务未记录更新来源或策略；缺省按历史自动回退行为解释。 */
+  updateChannel?: PanelUpdateChannel; updateSource?: PanelUpdateSource; releaseTag?: string
   /** 服务端核对的派生标志：任务仍在活动态但维护单元已退出（疑似中断），终态由服务端判定后回传。 */
   workerDead?: boolean
   workerStatus?: 'alive' | 'dead' | 'unknown'
@@ -22,9 +26,10 @@ export type PanelInfo = {
 }
 export type PanelUpdate = {
   repository: string; branch: string; currentCommit: string; targetCommit: string
-  channel: PanelUpdateChannel; releaseTag: string; message: string; available: boolean
+  channel: PanelUpdateChannel; source: PanelUpdateSource; releaseTag: string; message: string; available: boolean
 }
-export type PanelUpdateTarget = Pick<PanelUpdate, 'channel' | 'targetCommit' | 'releaseTag'>
+/** source 在旧标签页保存的待确认请求中可以缺省；新请求始终携带明确来源。 */
+export type PanelUpdateTarget = Pick<PanelUpdate, 'channel' | 'targetCommit' | 'releaseTag'> & { source?: PanelUpdateSource }
 export type PanelTaskReport = { task: PanelTask; logs: string; nextOffset: number; hasMore?: boolean }
 /** 所选更新来源的一条提交，从新到旧排列，供面板的更新日志窗口呈现。 */
 export type PanelCommit = { sha: string; message: string; time: string }

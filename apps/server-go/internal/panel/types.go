@@ -33,6 +33,25 @@ func validChannel(channel UpdateChannel) bool {
 	return channel == ChannelCommit || channel == ChannelRelease
 }
 
+type UpdateSource string
+
+const (
+	SourceAuto   UpdateSource = "auto"
+	SourceGitHub UpdateSource = "github"
+	SourceGitee  UpdateSource = "gitee"
+)
+
+func normalizeSource(source UpdateSource) UpdateSource {
+	if source == "" {
+		return SourceAuto
+	}
+	return source
+}
+
+func validSource(source UpdateSource) bool {
+	return source == SourceAuto || source == SourceGitHub || source == SourceGitee
+}
+
 type WorkerStatus string
 
 const (
@@ -52,6 +71,7 @@ type Task struct {
 	NewPorts      config.PanelNetwork `json:"newPorts"`
 	TargetCommit  string              `json:"targetCommit"`
 	UpdateChannel UpdateChannel       `json:"updateChannel,omitempty"`
+	UpdateSource  UpdateSource        `json:"updateSource,omitempty"`
 	ReleaseTag    string              `json:"releaseTag,omitempty"`
 	Error         string              `json:"error"`
 	// WorkerDead 保留旧客户端兼容，仅在明确探测到进程退出时为真。
@@ -78,6 +98,7 @@ func Active(state string) bool { return state == "queued" || state == "running" 
 
 type Update struct {
 	Channel       UpdateChannel `json:"channel"`
+	Source        UpdateSource  `json:"source"`
 	ReleaseTag    string        `json:"releaseTag"`
 	Repository    string        `json:"repository"`
 	Branch        string        `json:"branch"`

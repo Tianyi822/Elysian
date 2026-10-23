@@ -44,6 +44,7 @@ type submitInput struct {
 	BackendPort  int           `json:"backendPort"`
 	TargetCommit string        `json:"targetCommit"`
 	Channel      UpdateChannel `json:"channel"`
+	Source       UpdateSource  `json:"source"`
 	ReleaseTag   string        `json:"releaseTag"`
 }
 
@@ -165,17 +166,45 @@ func (m Manager) superviseActive(row taskRecord) taskRecord {
 	return row
 }
 func (m Manager) Check(ctx context.Context, channel UpdateChannel) (Update, error) {
+	return m.CheckFrom(ctx, channel, SourceAuto)
+}
+
+func selectSource(source Source, choice UpdateSource) (Source, error) {
+	choice = normalizeSource(choice)
+	if !validSource(choice) {
+		return nil, shared.InvalidRequest("更新来源无效")
+	}
+	if selector, ok := source.(interface {
+		SelectSource(UpdateSource) (Source, error)
+	}); ok {
+		return selector.SelectSource(choice)
+	}
+	return source, nil
+}
+
+func (m Manager) CheckFrom(ctx context.Context, channel UpdateChannel, source UpdateSource) (Update, error) {
 	channel = normalizeChannel(channel)
+	source = normalizeSource(source)
 	if !validChannel(channel) {
 		return Update{}, shared.InvalidRequest("更新策略无效")
 	}
+	if !validSource(source) {
+		return Update{}, shared.InvalidRequest("更新来源无效")
+	}
+	selected, err := selectSource(m.Source, source)
+	if err != nil {
+		return Update{}, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	u, err := m.Source.Check(ctx, channel)
+	u, err := selected.Check(ctx, channel)
 	if err != nil {
 		return u, err
 	}
-	err = config.AtomicJSON(m.Store.updateCheckPath(channel), u)
+	if u.Source == "" {
+		u.Source = source
+	}
+	err = config.AtomicJSON(m.Store.updateCheckPath(channel, source), u)
 	return u, err
 }
 
@@ -189,8 +218,12 @@ func (m Manager) Submit(ctx context.Context, kind string, input submitInput, ori
 	}
 	if kind == "update" {
 		input.Channel = normalizeChannel(input.Channel)
+		input.Source = normalizeSource(input.Source)
 		if !validChannel(input.Channel) {
 			return result, shared.InvalidRequest("更新策略无效")
+		}
+		if !validSource(input.Source) {
+			return result, shared.InvalidRequest("更新来源无效")
 		}
 		if input.Channel == ChannelCommit && input.ReleaseTag != "" {
 			return result, shared.InvalidRequest("最新提交策略不能指定发版标签")
@@ -211,7 +244,7 @@ func (m Manager) Submit(ctx context.Context, kind string, input submitInput, ori
 			}
 			for _, row := range rows {
 				if row.RequestID == input.RequestID {
-					if row.Kind != kind || (kind == "ports" && row.NewPorts != next) || row.TargetCommit != input.TargetCommit || (kind == "update" && (normalizeChannel(row.UpdateChannel) != input.Channel || row.ReleaseTag != input.ReleaseTag)) {
+					if row.Kind != kind || (kind == "ports" && row.NewPorts != next) || row.TargetCommit != input.TargetCommit || (kind == "update" && (normalizeChannel(row.UpdateChannel) != input.Channel || normalizeSource(row.UpdateSource) != input.Source || row.ReleaseTag != input.ReleaseTag)) {
 						return shared.InvalidRequest("提交编号已用于不同操作")
 					}
 					result = row.Task
@@ -225,8 +258,8 @@ func (m Manager) Submit(ctx context.Context, kind string, input submitInput, ori
 			}
 			if kind == "update" {
 				var u Update
-				b, err := os.ReadFile(m.Store.updateCheckPath(input.Channel))
-				if err != nil || json.Unmarshal(b, &u) != nil || u.Repository != Repository || normalizeChannel(u.Channel) != input.Channel || !u.Available || !commitPattern.MatchString(input.TargetCommit) || u.TargetCommit != input.TargetCommit || u.ReleaseTag != input.ReleaseTag || (input.Channel == ChannelRelease && u.ReleaseTag == "") {
+				b, err := os.ReadFile(m.Store.updateCheckPath(input.Channel, input.Source))
+				if err != nil || json.Unmarshal(b, &u) != nil || u.Repository != Repository || normalizeChannel(u.Channel) != input.Channel || (input.Source != SourceAuto && normalizeSource(u.Source) != input.Source) || !u.Available || !commitPattern.MatchString(input.TargetCommit) || u.TargetCommit != input.TargetCommit || u.ReleaseTag != input.ReleaseTag || (input.Channel == ChannelRelease && u.ReleaseTag == "") {
 					return shared.InvalidRequest("请先检查更新，再提交已检查的目标版本")
 				}
 			}
@@ -238,6 +271,9 @@ func (m Manager) Submit(ctx context.Context, kind string, input submitInput, ori
 			r := taskRecord{Task: Task{ID: id, Kind: kind, State: "queued", Phase: "checking", CreatedAt: now, UpdatedAt: now, OldPorts: m.Ports, NewPorts: next, TargetCommit: input.TargetCommit}, RequestID: input.RequestID, Origin: origin}
 			if kind == "update" {
 				r.UpdateChannel = input.Channel
+				if input.Source != SourceAuto {
+					r.UpdateSource = input.Source
+				}
 				r.ReleaseTag = input.ReleaseTag
 			}
 			r.Worker = filepath.Join(m.Store.tasksDir(), id+".worker")
@@ -304,15 +340,20 @@ func (m Manager) Router() chi.Router {
 	})
 	r.Get("/update", func(w http.ResponseWriter, r *http.Request) {
 		channel := normalizeChannel(UpdateChannel(r.URL.Query().Get("channel")))
+		source := normalizeSource(UpdateSource(r.URL.Query().Get("source")))
 		if !validChannel(channel) {
 			shared.SendError(w, 400, "更新策略无效")
+			return
+		}
+		if !validSource(source) {
+			shared.SendError(w, 400, "更新来源无效")
 			return
 		}
 		if !m.Enabled || !m.Host.Available() {
 			shared.SendError(w, 503, "仅支持 systemd 安装版")
 			return
 		}
-		u, err := m.Check(r.Context(), channel)
+		u, err := m.CheckFrom(r.Context(), channel, source)
 		if err != nil {
 			shared.SendError(w, 502, err.Error())
 			return
@@ -322,8 +363,13 @@ func (m Manager) Router() chi.Router {
 	// 更新日志：列所选来源最近的提交。只读上游，不写状态，因此不经维护事务与互斥。
 	r.Get("/commits", func(w http.ResponseWriter, r *http.Request) {
 		channel := normalizeChannel(UpdateChannel(r.URL.Query().Get("channel")))
+		source := normalizeSource(UpdateSource(r.URL.Query().Get("source")))
 		if !validChannel(channel) {
 			shared.SendError(w, 400, "更新策略无效")
+			return
+		}
+		if !validSource(source) {
+			shared.SendError(w, 400, "更新来源无效")
 			return
 		}
 		if !m.Enabled || !m.Host.Available() {
@@ -332,7 +378,12 @@ func (m Manager) Router() chi.Router {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 		defer cancel()
-		commits, err := m.Source.History(ctx, channel, 50)
+		selected, err := selectSource(m.Source, source)
+		if err != nil {
+			shared.SendError(w, 400, err.Error())
+			return
+		}
+		commits, err := selected.History(ctx, channel, 50)
 		if err != nil {
 			shared.SendError(w, 502, err.Error())
 			return

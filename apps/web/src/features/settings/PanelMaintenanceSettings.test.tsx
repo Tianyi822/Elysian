@@ -14,7 +14,7 @@ vi.mock('./panelNavigation', () => ({ openPanelAddress: vi.fn(), reloadPanelPage
 const ports = { frontendPort: 48100, backendPort: 48101 }
 const info: PanelInfo = { ports, commit: 'a'.repeat(40), buildTime: '', repository: 'Tianyi822/Elysian', available: true, reason: '', activeTask: null, lastTask: null }
 const task: PanelTask = { id: 'b'.repeat(32), kind: 'ports', state: 'queued', phase: 'checking', createdAt: '2026-10-03T00:00:00Z', updatedAt: '2026-10-03T00:00:00Z', oldPorts: ports, newPorts: { frontendPort: 49000, backendPort: 49001 }, targetCommit: '', error: '' }
-const releaseUpdate: PanelUpdate = { channel: 'release', releaseTag: 'v1.2.0', repository: info.repository, branch: '', currentCommit: info.commit, targetCommit: 'd'.repeat(40), available: true, message: '正式版说明' }
+const releaseUpdate: PanelUpdate = { channel: 'release', source: 'github', releaseTag: 'v1.2.0', repository: info.repository, branch: '', currentCommit: info.commit, targetCommit: 'd'.repeat(40), available: true, message: '正式版说明' }
 beforeEach(() => { vi.clearAllMocks(); sessionStorage.removeItem(PANEL_PENDING_KEY); usePanelStore.getState().clearDisplay() })
 function gateway() {
   const result = createMockGateway({ eventStream: 'memory', eventIntervalMs: 60000 })
@@ -117,30 +117,31 @@ describe('端口与更新设置', () => {
     await user.click(screen.getByRole('button', { name: '保存并重启' })); await waitFor(() => expect(submit).toHaveBeenCalledTimes(2)); expect(submit.mock.calls[0]?.[1]).toBe(submit.mock.calls[1]?.[1])
   })
   it('检查默认分支更新，再以锁定提交执行', async () => {
-    const g = gateway(); const sha = 'c'.repeat(40); g.panel.checkUpdate = vi.fn(async () => ({ channel: 'commit' as const, releaseTag: '', repository: info.repository, branch: 'release-track', currentCommit: info.commit, targetCommit: sha, available: true, message: '修复说明' })); const update = vi.fn(async () => ({ ...task, kind: 'update' as const, newPorts: ports, targetCommit: sha })); g.panel.update = update
+    const g = gateway(); const sha = 'c'.repeat(40); g.panel.checkUpdate = vi.fn(async () => ({ channel: 'commit' as const, source: 'github' as const, releaseTag: '', repository: info.repository, branch: 'release-track', currentCommit: info.commit, targetCommit: sha, available: true, message: '修复说明' })); const update = vi.fn(async () => ({ ...task, kind: 'update' as const, newPorts: ports, targetCommit: sha })); g.panel.update = update
     renderApp('/settings?tab=maintenance', { gateway: g }); const user = userEvent.setup(); await waitFor(() => expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled())
-    await user.click(screen.getByRole('button', { name: '检查更新' })); expect(await screen.findByText(`目标提交：${sha}`)).toBeInTheDocument(); await user.click(screen.getByRole('button', { name: '更新并重启' })); await waitFor(() => expect(update).toHaveBeenCalledWith({ channel: 'commit', targetCommit: sha, releaseTag: '' }, expect.any(String)))
+    await user.click(screen.getByRole('button', { name: '检查更新' })); expect(await screen.findByText(`目标提交：${sha}`)).toBeInTheDocument(); await user.click(screen.getByRole('button', { name: '更新并重启' })); await waitFor(() => expect(update).toHaveBeenCalledWith({ channel: 'commit', source: 'github', targetCommit: sha, releaseTag: '' }, expect.any(String)))
   })
   it('最新发版按标签检查、展示并提交，更新日志使用相同策略', async () => {
     const g = gateway()
-    g.panel.checkUpdate = vi.fn(async () => releaseUpdate)
+    g.panel.checkUpdate = vi.fn(async (_channel, selectedSource) => ({ ...releaseUpdate, source: selectedSource }))
     g.panel.commits = vi.fn(async () => [])
     g.panel.update = vi.fn(async () => ({ ...task, kind: 'update' as const, newPorts: ports, targetCommit: releaseUpdate.targetCommit, updateChannel: 'release' as const, releaseTag: releaseUpdate.releaseTag }))
     renderApp('/settings?tab=maintenance', { gateway: g })
     const user = userEvent.setup()
     await waitFor(() => expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: 'Gitee' }))
     expect(screen.getByRole('button', { name: '最新提交' })).toHaveAttribute('aria-pressed', 'true')
     await user.click(screen.getByRole('button', { name: '最新发版' }))
     await user.click(screen.getByRole('button', { name: '检查更新' }))
     expect(await screen.findByText('可切换至最新正式发版 · v1.2.0')).toBeInTheDocument()
-    expect(g.panel.checkUpdate).toHaveBeenCalledWith('release')
+    expect(g.panel.checkUpdate).toHaveBeenCalledWith('release', 'gitee')
     await user.click(screen.getByRole('button', { name: '更新日志' }))
     const dialog = await screen.findByRole('dialog', { name: '更新日志' })
-    expect(g.panel.commits).toHaveBeenCalledWith('release')
-    expect(dialog).toHaveTextContent('最新正式发版对应的提交记录')
+    expect(g.panel.commits).toHaveBeenCalledWith('release', 'gitee')
+    expect(dialog).toHaveTextContent('Gitee · 最新正式发版对应的提交记录')
     await user.click(within(dialog).getByRole('button', { name: '关闭更新日志' }))
     await user.click(screen.getByRole('button', { name: '更新并重启' }))
-    await waitFor(() => expect(g.panel.update).toHaveBeenCalledWith({ channel: 'release', releaseTag: 'v1.2.0', targetCommit: releaseUpdate.targetCommit }, expect.any(String)))
+    await waitFor(() => expect(g.panel.update).toHaveBeenCalledWith({ channel: 'release', source: 'gitee', releaseTag: 'v1.2.0', targetCommit: releaseUpdate.targetCommit }, expect.any(String)))
   })
   it.each([false, true])('切换策略丢弃旧请求的迟到结果，旧请求失败=%s', async (failed) => {
     const g = gateway()
@@ -163,6 +164,28 @@ describe('端口与更新设置', () => {
     expect(screen.queryByText('旧策略请求失败')).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '最新提交' }))
     expect(screen.queryByText('可切换至最新正式发版 · v1.2.0')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '更新并重启' })).toBeDisabled()
+  })
+  it.each([false, true])('切换来源清空目标并丢弃旧来源迟到的响应，失败=%s', async (failed) => {
+    const g = gateway()
+    let resolve!: (value: PanelUpdate) => void
+    let reject!: (error: Error) => void
+    g.panel.checkUpdate = vi.fn().mockImplementationOnce(() => new Promise<PanelUpdate>((done, error) => { resolve = done; reject = error })).mockResolvedValueOnce({ ...releaseUpdate, source: 'gitee', channel: 'commit', branch: 'gitee-main', releaseTag: '' })
+    renderApp('/settings?tab=maintenance', { gateway: g }); const user = userEvent.setup()
+    await waitFor(() => expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled())
+    expect(screen.getByRole('button', { name: 'GitHub' })).toHaveAttribute('aria-pressed', 'true')
+    await user.click(screen.getByRole('button', { name: '检查更新' }))
+    await user.click(screen.getByRole('button', { name: 'Gitee' }))
+    expect(screen.getByRole('link', { name: 'Chentyit/Elysian' })).toHaveAttribute('href', 'https://gitee.com/Chentyit/Elysian')
+    expect(screen.getByRole('button', { name: '更新并重启' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: '检查更新' }))
+    expect(await screen.findByText('发现可更新的提交 · gitee-main')).toBeInTheDocument()
+    expect(g.panel.checkUpdate).toHaveBeenLastCalledWith('commit', 'gitee')
+    await act(async () => { if (failed) reject(new Error('旧来源失败')); else resolve({ ...releaseUpdate, channel: 'commit', branch: 'github-main', releaseTag: '' }) })
+    expect(screen.queryByText(/旧来源失败|github-main/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '更新并重启' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: 'GitHub' }))
+    expect(screen.queryByText('发现可更新的提交 · gitee-main')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '更新并重启' })).toBeDisabled()
   })
   it.each([
@@ -254,7 +277,7 @@ describe('端口与更新设置', () => {
     await user.keyboard('{Escape}')
     expect(screen.queryByRole('dialog', { name: '更新日志' })).not.toBeInTheDocument()
   })
-  const commitUpdate = { channel: 'commit' as const, releaseTag: '', repository: info.repository, branch: 'main', currentCommit: info.commit, targetCommit: 'c'.repeat(40), available: true, message: '修复说明' }
+  const commitUpdate = { channel: 'commit' as const, source: 'github' as const, releaseTag: '', repository: info.repository, branch: 'main', currentCommit: info.commit, targetCommit: 'c'.repeat(40), available: true, message: '修复说明' }
   it('提交更新期间按钮立即进入提交中并阻止重复提交', async () => {
     const g = gateway()
     g.panel.checkUpdate = vi.fn(async () => commitUpdate)
