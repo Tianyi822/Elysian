@@ -3,12 +3,13 @@
 #
 # 用法：
 #   bash scripts/install.sh             完整安装/升级（幂等，可重复执行）
-#   bash scripts/uninstall.sh           整机卸载（独立脚本：服务、账号、工具链与面板规则；--purge-data 连数据一并删）
-#   bash scripts/install.sh --uninstall 轻量卸载：仅服务与二进制（保留工具链与数据）
 #   ELYSIAN_SMOKE=1 bash scripts/install.sh
 #                                       冒烟模式：跳过 systemd 与系统用户，仅装工具链、
 #                                       构建、起进程、curl /api/health、清理（供
 #                                       .zcode/go-migration/script-smoke.sh 在干净容器内调用）
+#
+# 卸载入口只有 scripts/uninstall.sh：默认保留面板数据，执行前会逐项询问 SQLite 数据、配置与凭据、
+# 日志、备份/状态/临时文件是否删除，并可选移除 Elysian 写入的 Caddy 管理通道配置。
 #
 # 平台依赖：正式安装在「构建 Elysian」之后、安装切换事务之前自动检测并安装 Docker 与 Caddy——
 # 已安装且可用则复用（不重装、不改动既有 daemon.json / Caddyfile），缺失则按经验证的官方命令
@@ -16,9 +17,9 @@
 # Engine API ≥ 1.41、systemctl is-active），失败打印中文原因与排查建议后非零退出；该阶段先于
 # 切换事务，失败不回滚已部署面板。
 #
-# 终端输出：阶段计数由登记表自动派生；状态标记统一为 ✓ 成功 / ✗ 失败 / ◉ 进行中 / ! 警告 /
-# − 跳过；同时满足 stdout 与 stderr 为 TTY 才启用颜色与单行进度，NO_COLOR 非空时关闭颜色；
-# 重定向或非 TTY 自动退化为纯文本逐行日志。
+# 终端输出：阶段计数由登记表自动派生；进度条、耗时、状态标记与收尾摘要由 scripts/tui.sh 统一
+# 渲染；标记统一为 ✓ 成功 / ✗ 失败 / ◉ 进行中 / ! 警告 / − 跳过；双 TTY 才启用颜色、单行进度与
+# 进度条，NO_COLOR 非空时只关颜色；重定向、非 TTY 或 TERM=dumb 自动退化为纯文本逐行日志。
 #
 # 设计依据：AGENTS.md（前端 IP 直连、后端回环、~/.Elysian 分类目录、首启初始密码打 stdout）、
 # apps/server-go/go-plan §8（发布构建：bun run build → 清空并拷贝 dist → CGO_ENABLED=0 单二进制）。
@@ -69,44 +70,28 @@ BUN_REGISTRY_DEFAULT="https://registry.npmmirror.com"
 export GOPROXY="${ELYSIAN_GOPROXY:-${GOPROXY:-$GO_PROXY_DEFAULT}}"
 export BUN_CONFIG_REGISTRY="${ELYSIAN_BUN_REGISTRY:-${BUN_CONFIG_REGISTRY:-$BUN_REGISTRY_DEFAULT}}"
 
+# 终端渲染层（颜色、显示宽度、阶段进度、摘要排版）与卸载脚本共用。
+if [ ! -r "$SCRIPT_DIR/tui.sh" ]; then
+  printf '缺少 scripts/tui.sh，无法渲染安装界面。\n' >&2
+  exit 1
+fi
+# shellcheck source=tui.sh
+. "$SCRIPT_DIR/tui.sh"
+TUI_FAIL_LABEL="安装失败"
+
 STEP=0
 STAGES=()
 TOTAL_STEPS=0
 
-# ---------- 终端输出层（唯一的能力判定出口；颜色、单行进度与纯文本降级都从这里派生） ----------
-
-init_output() { # init_output <stdout 是否 TTY 0|1> <stderr 是否 TTY 0|1>
-  local out_tty="$1" err_tty="$2"
-  if [ "$out_tty" = 1 ] && [ "$err_tty" = 1 ] && [ "${TERM:-dumb}" != dumb ] && [ -z "${NO_COLOR:-}" ]; then
-    C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'
-    C_GREEN=$'\033[32m'; C_RED=$'\033[31m'; C_CYAN=$'\033[36m'; C_YELLOW=$'\033[33m'; C_GRAY=$'\033[90m'
-  else
-    C_RESET=''; C_BOLD=''; C_GREEN=''; C_RED=''; C_CYAN=''; C_YELLOW=''; C_GRAY=''
-  fi
-  # 单行刷新（转圈、秒表）只在双 TTY 下启用；NO_COLOR 只关颜色，不关进度指示。
-  if [ "$out_tty" = 1 ] && [ "$err_tty" = 1 ] && [ "${TERM:-dumb}" != dumb ]; then
-    SPINNER_ENABLED=1
-  else
-    SPINNER_ENABLED=0
-  fi
-  TERM_COLS="$(tput cols 2>/dev/null || printf '72')"
-  case "$TERM_COLS" in ''|*[!0-9]*) TERM_COLS=72 ;; esac
-  [ "$TERM_COLS" -ge 20 ] || TERM_COLS=72
-}
-
-info() { printf '%s==>%s %s\n' "${C_BOLD:-}" "${C_RESET:-}" "$*"; }
-ok()   { printf '%s✓%s %s\n' "${C_GREEN:-}" "${C_RESET:-}" "$*"; }
-skip() { printf '%s−%s %s\n' "${C_GRAY:-}" "${C_RESET:-}" "$*"; }
-warn() { printf '%s!%s %s\n' "${C_YELLOW:-}" "${C_RESET:-}" "$*"; }
-die()  { printf '%s✗ 安装失败：%s%s\n' "${C_RED:-}" "$*" "${C_RESET:-}" >&2; exit 1; }
-
 section() { # section <阶段名>：计数来自登记表；名字与登记不符时提示而不中断
+  tui_finish_stage
   STEP=$((STEP + 1))
   local registered="${STAGES[$((STEP - 1))]:-}"
   if [ -n "$registered" ] && [ "$registered" != "$1" ]; then
     warn "阶段名与登记表不一致：传入「$1」，登记为「$registered」（请同步 register_stages）"
   fi
-  printf '\n%s[%s/%s] %s%s\n' "${C_BOLD:-}" "$STEP" "${TOTAL_STEPS:-?}" "$1" "${C_RESET:-}"
+  tui_stage "$STEP" "${TOTAL_STEPS:-0}" "$1"
+  tui_begin_stage
 }
 
 # 阶段登记表：总数由此自动派生，新增阶段只改这里与 main 的调用序列，杜绝漏改计数的错位。
@@ -136,7 +121,7 @@ register_stages() {
 # 长命令统一出口：输出全部追加进日志文件；TTY 下用单行转圈表示进行中（同一时刻只有这一行在
 # 刷新），非 TTY 保持静默，由调用方按结果打 ✓/✗ 行。退出码同时保留供失败摘要使用。
 run_stage_command() { # run_stage_command <描述> <日志文件> <命令…>
-  local desc="$1" log="$2" rc
+  local desc="$1" log="$2" rc start=$SECONDS
   shift 2
   if [ "${SPINNER_ENABLED:-0}" != 1 ]; then
     if { "$@"; } >>"$log" 2>&1; then rc=0; else rc=$?; fi
@@ -147,7 +132,7 @@ run_stage_command() { # run_stage_command <描述> <日志文件> <命令…>
   "$@" >>"$log" 2>&1 &
   pid=$!
   while kill -0 "$pid" 2>/dev/null; do
-    printf '\r  %s◉%s %s … %s' "${C_CYAN:-}" "${C_RESET:-}" "$desc" "${spin:$((frame_idx % 4)):1}"
+    printf '\r    %s◉%s %s … %s  %s' "${C_CYAN:-}" "${C_RESET:-}" "$desc" "${spin:$((frame_idx % 4)):1}" "$(tui_duration $((SECONDS - start)))"
     frame_idx=$((frame_idx + 1))
     sleep 0.3
   done
@@ -162,12 +147,6 @@ stage_failure_reason() {
   printf '退出码 %s' "$rc"
   if [ "$rc" -gt 128 ] && signal="$(kill -l "$((rc - 128))" 2>/dev/null)"; then
     printf '（信号 SIG%s）' "${signal#SIG}"
-  fi
-}
-
-clear_progress_line() { # 擦掉当前单行进度（按终端宽度回车覆盖），非 TTY 不输出
-  if [ "${SPINNER_ENABLED:-0}" = 1 ]; then
-    printf '\r%*s\r' "${TERM_COLS:-72}" ''
   fi
 }
 
@@ -1030,7 +1009,6 @@ EOF
 build_release() {
   info "构建需要下载依赖并编译前后端，可能需要几分钟"
   BUILD_LOG="$(mktemp /tmp/elysian-build.XXXXXX)"
-  info "构建完整日志：$BUILD_LOG"
   BUILD_DIR="$(mktemp -d)"
   BUILD_COMMIT="unknown"
   if command -v git >/dev/null 2>&1; then
@@ -1202,33 +1180,14 @@ wait_health() {
     fi
     # TTY 下单行秒表刷新；非 TTY 每 5 秒落一行纯文本。
     if [ "${SPINNER_ENABLED:-0}" = 1 ]; then
-      printf '\r  %s◉%s 等待健康检查 %d/60 秒' "${C_CYAN:-}" "${C_RESET:-}" "$i"
+      printf '\r    %s◉%s 等待健康检查 %d/60 秒' "${C_CYAN:-}" "${C_RESET:-}" "$i"
     elif [ $((i % 5)) -eq 0 ]; then
-      printf '  等待健康检查 %d/60 秒\n' "$i"
+      printf '    等待健康检查 %d/60 秒\n' "$i"
     fi
     sleep 1
   done
   clear_progress_line
   die "等待 ${HEALTH_URL} 就绪超时（60 秒）。排查：journalctl -u $SERVICE_NAME -n 50 --no-pager（或确认 ${PANEL_PORT} 端口未被占用）。"
-}
-
-detect_server_ip() { # 真实地址探测：hostname -I 首地址 → ip route get 1 的 src → 保留占位符
-  local ip=""
-  if command -v hostname >/dev/null 2>&1; then
-    ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
-  fi
-  if [ -z "$ip" ] && command -v ip >/dev/null 2>&1; then
-    ip="$(ip route get 1 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i == "src") { print $(i + 1); exit }}' || true)"
-  fi
-  if [ -n "$ip" ]; then
-    printf '%s' "$ip"
-  else
-    printf '%s' "<服务器 IP>"
-  fi
-}
-
-summary_section() { # 摘要分区标题：对齐的短分隔线，窄终端可读
-  printf '\n%s── %s ──────────────────────%s\n' "${C_BOLD:-}" "$1" "${C_RESET:-}"
 }
 
 ufw_public_tcp_rule() { # 只认明确公开入站规则；受限来源、范围或未知格式不推断为全网放行。
@@ -1251,41 +1210,41 @@ ufw_public_tcp_rule() { # 只认明确公开入站规则；受限来源、范围
   '
 }
 
-ufw_https_summary() {
-  local status="$1" port state="" ipv6=""
+ufw_port_summary() { # <ufw status 输出> <端口>
+  local status="$1" port="$2" state ipv6=""
   if [ -r "$UFW_DEFAULTS_FILE" ]; then
     ipv6="$(sed -n 's/^[[:space:]]*IPV6=//p' "$UFW_DEFAULTS_FILE" | tail -n 1)"
   fi
-  for port in 80 443; do
-    [ -z "$state" ] || state+="；"
-    state+="${port}/tcp IPv4 "
-    if ufw_public_tcp_rule "$status" "$port" 4; then state+="已放行"; else state+="未确认公开放行"; fi
-    case "$ipv6" in
-      yes)
-        if ufw_public_tcp_rule "$status" "$port" 6; then state+="、IPv6 已放行"; else state+="、IPv6 未确认公开放行"; fi ;;
-      no) state+="、UFW IPv6 未启用" ;;
-      *) state+="、UFW IPv6 配置未知" ;;
-    esac
-  done
+  state="IPv4 "
+  if ufw_public_tcp_rule "$status" "$port" 4; then state+="已放行"; else state+="未确认公开放行"; fi
+  case "$ipv6" in
+    yes)
+      if ufw_public_tcp_rule "$status" "$port" 6; then state+="、IPv6 已放行"; else state+="、IPv6 未确认公开放行"; fi ;;
+    no) state+="、UFW IPv6 未启用" ;;
+    *) state+="、UFW IPv6 配置未知" ;;
+  esac
   printf '%s' "$state"
 }
 
 print_summary() {
   # 事实全部现场实测；未验证或不可得的一律如实标注，绝不把占位写成「已启用」。
-  local server_ip svc_state svc_enabled ssh_state ufw_out ufw_state https_state
-  local docker_line caddy_line
-  server_ip="$(detect_server_ip)"
+  local svc_state svc_enabled ssh_state ufw_out ufw_state elapsed=0
+  local docker_line caddy_line docker_ver caddy_ver
+  tui_finish_stage
+  [ -n "${INSTALL_STARTED_AT:-}" ] && elapsed=$((SECONDS - INSTALL_STARTED_AT))
   svc_state="$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)"
   svc_enabled="$(systemctl is-enabled "$SERVICE_NAME" 2>/dev/null || true)"
   ssh_state="$(systemctl is-active ssh 2>/dev/null || true)"
   [ -n "$ssh_state" ] || ssh_state="$(systemctl is-active sshd 2>/dev/null || true)"
   if command -v docker >/dev/null 2>&1; then
-    docker_line="$(docker --version 2>/dev/null || echo 已安装)；服务 $(systemctl is-active docker 2>/dev/null || echo 未知)"
+    docker_ver="$(docker --version 2>/dev/null | sed -n 's/^Docker version \([^,]*\).*/\1/p' || true)"
+    docker_line="${docker_ver:-已安装}；服务 $(systemctl is-active docker 2>/dev/null || echo 未知)"
   else
     docker_line="未安装"
   fi
   if command -v caddy >/dev/null 2>&1; then
-    caddy_line="$(caddy version 2>/dev/null || echo 已安装)；服务 $(systemctl is-active caddy 2>/dev/null || echo 未知)"
+    caddy_ver="$(caddy version 2>/dev/null | awk '{print $1}' || true)"
+    caddy_line="${caddy_ver:-已安装}；服务 $(systemctl is-active caddy 2>/dev/null || echo 未知)"
   elif [ "${CADDY_API_VERIFIED:-0}" = 1 ]; then
     caddy_line="管理 API 已验证可用（外部管理，未发现 caddy CLI）"
   else
@@ -1294,68 +1253,34 @@ print_summary() {
   ufw_out="$(ufw status 2>/dev/null || true)"
   ufw_state="$(printf '%s\n' "$ufw_out" | sed -n 's/^Status: //p')"
   ufw_state="${ufw_state:-未知}"
-  https_state="$(ufw_https_summary "$ufw_out")"
 
-  printf '\n%s%s✓ Elysian 部署完成%s（构建版本：%s）\n' "${C_GREEN:-}" "${C_BOLD:-}" "${C_RESET:-}" "${BUILD_COMMIT:-unknown}"
-  summary_section "部署状态"
-  printf '  面板服务：systemd %s（自启：%s）\n' "${svc_state:-未知}" "${svc_enabled:-未知}"
-  printf '  Docker：%s\n' "$docker_line"
-  printf '  Caddy：%s\n' "$caddy_line"
-  summary_section "访问地址"
-  printf '  面板地址：%shttp://%s:%s%s（前端入口，浏览器打开）\n' "${C_BOLD:-}" "$server_ip" "$FRONTEND_PORT" "${C_RESET:-}"
-  printf '  后端地址：127.0.0.1:%s（仅本机回环，不对外开放）\n' "$PANEL_PORT"
-  summary_section "管理员账户"
-  echo "  首启初始密码只在第一次启动打印一次，查看："
-  printf '    %s\n' "journalctl -u $SERVICE_NAME -b --no-pager | grep '初始密码'"
-  echo "  忘记密码时重置（全部会话失效）："
-  printf '    %s\n' "HOME=$STATE_DIR $PANEL_BIN resetpwd"
-  summary_section "运行与维护"
-  printf '  服务管理：systemctl status/restart/stop %s\n' "$SERVICE_NAME"
-  echo "  面板更新与改端口：登录面板后进入「系统设置」"
-  printf '  数据目录：%s/.Elysian（data/logs/state/backups/tmp/config 分类目录）\n' "$STATE_DIR"
-  printf '  进程日志：%s/.Elysian/logs/panel.log（失败请求与 panic 栈；也可 journalctl -u %s）\n' "$STATE_DIR" "$SERVICE_NAME"
-  summary_section "网络与镜像源"
-  printf '  Go 模块代理：%s\n' "$GOPROXY"
-  printf '  Bun registry：%s\n' "$BUN_CONFIG_REGISTRY"
-  echo "  全局镜像配置文件：/etc/profile.d/elysian-mirrors.sh（新登录 shell 生效）"
-  printf '  Caddy 管理通道：unix socket %s\n' "${CADDY_ADMIN_SOCKET:-未配置}"
-  summary_section "安全状态"
-  printf '  SSH 服务：%s（端口 %s）；后续启停与规则在面板安全页管理\n' "${ssh_state:-未知}" "${SSH_PORTS:-22}"
-  printf '  防火墙：UFW %s；已放行 SSH 与面板前端端口 %s/tcp\n' "$ufw_state" "$FRONTEND_PORT"
-  printf '  网站 HTTPS 端口：%s\n' "$https_state"
-}
-
-# ---------- 卸载 ----------
-
-uninstall() {
-  [ "$(id -u)" -eq 0 ] || die "请以 root 执行卸载（sudo bash scripts/install.sh --uninstall）。"
-  if [ -n "$SMOKE" ]; then
-    info "冒烟模式无系统安装物，跳过卸载"
-    return 0
-  fi
-  info "停止并注销服务"
-  rm -f /etc/profile.d/elysian-mirrors.sh
-  systemctl disable --now "$SERVICE_NAME" >/dev/null 2>&1 || true
-  rm -f "$UNIT_FILE"
-  systemctl daemon-reload || true
-  systemctl reset-failed "$SERVICE_NAME" >/dev/null 2>&1 || true
-  if [ -f "$PANEL_BIN" ]; then
-    info "删除二进制 $PANEL_BIN"
-    rm -f "$PANEL_BIN"
-  fi
-  rm -rf "$INSTALL_ROOT"
-  info "删除系统账号 elysian / elysian-sqlite（数据文件属主将退化为纯数字 UID，属正常现象）"
-  userdel elysian-build >/dev/null 2>&1 || true
-  groupdel elysian-build >/dev/null 2>&1 || true
-  userdel elysian >/dev/null 2>&1 || true
-  userdel elysian-sqlite >/dev/null 2>&1 || true
-  groupdel elysian-sqlite >/dev/null 2>&1 || true
-  echo
-  echo "已卸载。面板数据目录 ${STATE_DIR}（凭据、SQLite、日志）已保留；"
-  echo "彻底清除请执行：rm -rf ${STATE_DIR}。Go 与 bun 工具链一并保留。"
-  echo "全局镜像 profile 已移除；root 的 go env GOPROXY 如需恢复，请执行 go env -u GOPROXY。"
-  echo "安装脚本代装的 Docker 与 Caddy 属系统组件，此轻量卸载不触碰。"
-  echo "如需整机卸载（含系统账号、工具链与 UFW 面板规则），请执行：sudo bash scripts/uninstall.sh"
+  tui_banner "✓ Elysian 部署完成" "构建版本 ${BUILD_COMMIT:-unknown} · 用时 $(tui_duration "$elapsed")"
+  tui_section "部署状态"
+  tui_kv "面板服务" "systemd ${svc_state:-未知}（自启 ${svc_enabled:-未知}）"
+  tui_kv "Docker" "$docker_line"
+  tui_kv "Caddy" "$caddy_line"
+  tui_section "访问地址"
+  tui_kv "面板端口" "$FRONTEND_PORT"
+  tui_kv "访问方式" "http://<服务器公网 IP 或域名>:${FRONTEND_PORT}"
+  tui_kv "后端地址" "127.0.0.1:${PANEL_PORT}（仅本机回环，不对外开放）"
+  tui_section "管理员账户"
+  tui_kv "初始密码" "仅首启打印一次：journalctl -u ${SERVICE_NAME} -b --no-pager | grep '初始密码'"
+  tui_kv "重置密码" "全部会话失效：HOME=${STATE_DIR} ${PANEL_BIN} resetpwd"
+  tui_section "运行与维护"
+  tui_kv "服务管理" "systemctl status/restart/stop ${SERVICE_NAME}"
+  tui_kv "面板更新" "登录面板 → 系统设置"
+  tui_kv "数据目录" "${STATE_DIR}/.Elysian（data/logs/state/backups/tmp/config）"
+  tui_kv "进程日志" "${STATE_DIR}/.Elysian/logs/panel.log"
+  tui_section "网络与镜像源"
+  tui_kv "Go 代理" "$GOPROXY"
+  tui_kv "Bun 源" "$BUN_CONFIG_REGISTRY"
+  tui_kv "镜像配置" "/etc/profile.d/elysian-mirrors.sh（新登录 shell 生效）"
+  tui_kv "Caddy 通道" "unix socket ${CADDY_ADMIN_SOCKET:-未配置}"
+  tui_section "安全状态"
+  tui_kv "SSH" "${ssh_state:-未知}（端口 ${SSH_PORTS:-22}）；后续启停与规则在面板安全页管理"
+  tui_kv "防火墙" "UFW ${ufw_state}；已放行 SSH 与面板端口 ${FRONTEND_PORT}/tcp"
+  tui_kv "80/tcp" "$(ufw_port_summary "$ufw_out" 80)"
+  tui_kv "443/tcp" "$(ufw_port_summary "$ufw_out" 443)"
 }
 
 # ---------- 冒烟模式（干净容器内：装工具链 → 构建 → 起进程 → 健康检查 → 清理） ----------
@@ -1455,16 +1380,17 @@ main() {
   if [ -t 1 ]; then out_tty=1; fi
   if [ -t 2 ]; then err_tty=1; fi
   init_output "$out_tty" "$err_tty"
-  register_stages
   if [ "${1:-}" = "--uninstall" ]; then
-    uninstall
-    return 0
+    printf '%s✗ install.sh 不再提供卸载入口。%s\n  请执行：sudo bash scripts/uninstall.sh\n' "${C_RED:-}" "${C_RESET:-}" >&2
+    exit 1
   fi
-  [ "${1:-}" = "" ] || die "未知参数：$1。用法：bash scripts/install.sh [--uninstall]（环境变量 ELYSIAN_SMOKE=1 进入冒烟模式）。"
+  register_stages
+  [ "${1:-}" = "" ] || die "未知参数：$1。用法：bash scripts/install.sh（环境变量 ELYSIAN_SMOKE=1 进入冒烟模式）。"
   trap install_exit EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
-  printf '\n%sElysian 安装程序%s\n  源码目录：%s\n' "${C_BOLD:-}" "${C_RESET:-}" "$REPO_ROOT"
+  tui_banner "Elysian 安装程序" "源码目录  $REPO_ROOT"
+  INSTALL_STARTED_AT=$SECONDS
   section "检查运行环境"
   require_preflight
   section "安装系统依赖"

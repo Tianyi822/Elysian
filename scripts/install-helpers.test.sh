@@ -60,6 +60,13 @@ if (
   [ -z "$C_GREEN" ] && [ "$SPINNER_ENABLED" = 0 ]
 ); then pass "TERM=dumb 不输出 ANSI 或单行刷新"; else fail "TERM=dumb 未降级"; fi
 
+if (
+  set -e
+  init_output 0 0
+  clear_progress_line
+  [ "$TUI_LIVE" = 0 ]
+); then pass "非 TTY 擦除进度行不返回失败"; else fail "非 TTY 擦除进度行触发 set -e"; fi
+
 echo "== 阶段行与输出标记 =="
 # 计数与格式分开断言：命令替换 $() 会把 section 的 STEP 递增隔离在子 shell 内。
 if (
@@ -76,13 +83,70 @@ if (
   register_stages
   STEP=0
   out="$(section "检查运行环境")"
-  [ "$out" = "$(printf '\n[1/11] 检查运行环境\n')" ]
-); then pass "阶段行格式 [n/N] 名称"; else fail "阶段行格式不符"; fi
+  [ "$out" = "$(printf '\n[ 1/11] 检查运行环境\n')" ]
+); then pass "阶段行格式 [ n/N] 名称"; else fail "阶段行格式不符"; fi
+if (
+  set -e
+  SMOKE=""
+  register_stages
+  STEP=0
+  STAGE_FINISHED=0
+  init_output 0 0
+  section "检查运行环境" >/dev/null
+  out="$(section "安装系统依赖")"
+  printf '%s' "$out" | grep -q '└ 用时'
+); then pass "阶段切换打印上一阶段耗时"; else fail "阶段耗时未打印"; fi
 if (
   set -e
   init_output 0 0
-  [ "$(ok "hi")" = "✓ hi" ] && [ "$(skip "s")" = "− s" ] && [ "$(warn "w")" = "! w" ]
+  [ "$(ok "hi")" = "    ✓ hi" ] && [ "$(skip "s")" = "    − s" ] && [ "$(warn "w")" = "    ! w" ]
 ); then pass "✓ / − / ! 标记在纯文本下无 ANSI 转义"; else fail "输出标记异常"; fi
+
+echo "== TUI 显示宽度与阶段头 =="
+assert_eq 8 "$(tui_width '面板服务')" "中文按双列计算"
+assert_eq 6 "$(tui_width 'Docker')" "ASCII 按单列计算"
+assert_eq 1 "$(tui_width '✓')" "状态符号按单列计算"
+assert_eq 1 "$(tui_width '…')" "省略号按单列计算"
+assert_eq 1 "$(tui_width '─')" "横线按单列计算"
+assert_eq 2 "$(tui_width '█░')" "进度块各占一列"
+assert_eq "Docker      " "$(tui_pad 'Docker' 12)" "补位到目标显示宽度"
+if (
+  set -e
+  SMOKE=""
+  register_stages
+  STEP=0
+  TERM=xterm-256color
+  init_output 1 1
+  out="$(section "检查运行环境")"
+  printf '%s' "$out" | grep -q '\[ 1/11\]' &&
+    printf '%s' "$out" | grep -q '█' &&
+    printf '%s' "$out" | grep -q '░'
+); then pass "TTY 阶段行带进度条"; else fail "TTY 进度条缺失"; fi
+if (
+  set -e
+  SMOKE=""
+  register_stages
+  STEP=0
+  init_output 0 0
+  out="$(section "检查运行环境")"
+  printf '%s' "$out" | grep -q '^\[ 1/11\] 检查运行环境$' &&
+    ! printf '%s' "$out" | grep -q '█'
+); then pass "非 TTY 阶段行无进度条"; else fail "非 TTY 阶段行异常"; fi
+
+echo "== 轻量卸载入口已移除 =="
+if ( source "$SCRIPT_DIR/install.sh"; ! type uninstall >/dev/null 2>&1 ); then
+  pass "install.sh 不再定义 uninstall"
+else
+  fail "install.sh 仍定义 uninstall"
+fi
+if OUT="$( (source "$SCRIPT_DIR/install.sh"; init_output 0 0; main --uninstall) 2>&1 )"; then
+  fail "main --uninstall 应拒绝"
+else
+  case "$OUT" in
+    *"scripts/uninstall.sh"*) pass "main --uninstall 提示新的唯一入口" ;;
+    *) fail "拒绝文案异常：$OUT" ;;
+  esac
+fi
 
 echo "== 架构与发行版判定 =="
 if (
@@ -194,27 +258,47 @@ if ELYSIAN_DOCKER_SOCKET=tcp://remote:2375 docker_engine_socket >/dev/null 2>&1;
 echo "== HTTPS 规则摘要 =="
 printf 'IPV6=yes\n' >"$TMPDIR_TEST/ufw-defaults"
 UFW_DEFAULTS_FILE="$TMPDIR_TEST/ufw-defaults"
-OUT="$(ufw_https_summary "$(printf '80/tcp ALLOW Anywhere\n80/tcp (v6) ALLOW Anywhere (v6)\n')")"
-case "$OUT" in *'80/tcp IPv4 已放行、IPv6 已放行；443/tcp IPv4 未确认公开放行、IPv6 未确认公开放行'*) pass "仅80不误报443" ;; *) fail "单端口摘要错误：$OUT" ;; esac
-OUT="$(ufw_https_summary "$(printf '443/tcp ALLOW Anywhere\n443/tcp (v6) ALLOW Anywhere (v6)\n')")"
-case "$OUT" in *'80/tcp IPv4 未确认公开放行、IPv6 未确认公开放行；443/tcp IPv4 已放行、IPv6 已放行'*) pass "仅443不误报80" ;; *) fail "仅443摘要错误：$OUT" ;; esac
-OUT="$(ufw_https_summary '80,443/tcp ALLOW Anywhere')"
-case "$OUT" in *'80/tcp IPv4 已放行、IPv6 未确认公开放行；443/tcp IPv4 已放行、IPv6 未确认公开放行'*) pass "IPv4放行不误报IPv6" ;; *) fail "IPv6缺失摘要错误：$OUT" ;; esac
-OUT="$(ufw_https_summary '443/tcp ALLOW 10.0.0.1')"
-case "$OUT" in *'443/tcp IPv4 未确认公开放行'*) pass "受限来源不误报公开放行" ;; *) fail "受限来源摘要错误" ;; esac
-OUT="$(ufw_https_summary "$(printf '80,443/tcp ALLOW Anywhere\n80,443/tcp (v6) ALLOW Anywhere (v6)\n')")"
-case "$OUT" in *'443/tcp IPv4 已放行、IPv6 已放行'*) pass "组合规则分别核对IPv4和IPv6" ;; *) fail "组合规则摘要错误" ;; esac
+OUT="$(ufw_port_summary "$(printf '80/tcp ALLOW Anywhere\n80/tcp (v6) ALLOW Anywhere (v6)\n')" 80)"
+case "$OUT" in *'IPv4 已放行、IPv6 已放行'*) pass "仅80不误报443" ;; *) fail "单端口摘要错误：$OUT" ;; esac
+OUT="$(ufw_port_summary "$(printf '443/tcp ALLOW Anywhere\n443/tcp (v6) ALLOW Anywhere (v6)\n')" 443)"
+case "$OUT" in *'IPv4 已放行、IPv6 已放行'*) pass "仅443不误报80" ;; *) fail "单端口摘要错误：$OUT" ;; esac
+OUT="$(ufw_port_summary '80,443/tcp ALLOW Anywhere' 80)"
+case "$OUT" in *'IPv4 已放行、IPv6 未确认公开放行'*) pass "IPv4放行不误报IPv6" ;; *) fail "IPv6缺失摘要错误：$OUT" ;; esac
+OUT="$(ufw_port_summary '443/tcp ALLOW 10.0.0.1' 443)"
+case "$OUT" in *'IPv4 未确认公开放行'*) pass "受限来源不误报公开放行" ;; *) fail "受限来源摘要错误：$OUT" ;; esac
+OUT="$(ufw_port_summary "$(printf '80,443/tcp ALLOW Anywhere\n80,443/tcp (v6) ALLOW Anywhere (v6)\n')" 443)"
+case "$OUT" in *'IPv4 已放行、IPv6 已放行'*) pass "组合规则分别核对IPv4和IPv6" ;; *) fail "组合规则摘要错误：$OUT" ;; esac
 
-echo "== 服务器地址探测 =="
-hostname() { echo "10.0.0.2 192.168.1.1"; }
-assert_eq "10.0.0.2" "$(detect_server_ip)" "hostname -I 取首地址"
-unset -f hostname
-hostname() { return 1; }
-ip() { echo "1.1.1.1 dev eth0 src 172.16.0.9"; }
-assert_eq "172.16.0.9" "$(detect_server_ip)" "回退 ip route 的 src 地址"
-ip() { return 1; }
-assert_eq "<服务器 IP>" "$(detect_server_ip)" "探测全失败时保留占位符"
-unset -f hostname ip
+echo "== 安装摘要不输出内网 IP =="
+if (
+  set -e
+  init_output 0 0
+  TMP_UFW="$(mktemp)"
+  trap 'rm -f "$TMP_UFW"' EXIT
+  printf 'IPV6=yes\n' >"$TMP_UFW"
+  UFW_DEFAULTS_FILE="$TMP_UFW"
+  BUILD_COMMIT=b3bf628
+  FRONTEND_PORT=48100
+  PANEL_PORT=48101
+  STATE_DIR=/var/lib/elysian
+  PANEL_BIN=/usr/local/bin/elysian
+  GOPROXY='https://goproxy.cn|direct'
+  BUN_CONFIG_REGISTRY='https://registry.npmmirror.com'
+  CADDY_ADMIN_SOCKET=/run/caddy/admin.sock
+  SSH_PORTS=22
+  STAGE_STARTED_AT=$SECONDS
+  STAGE_FINISHED=0
+  hostname() { echo "172.17.47.162"; }
+  systemctl() { case "$1" in is-active|is-enabled) echo active ;; esac; }
+  docker() { echo "Docker version 29.9.2, build abc"; }
+  caddy() { echo "v2.11.7 h1:abc"; }
+  ufw() { printf 'Status: active\n'; }
+  out="$(print_summary)"
+  printf '%s' "$out" | grep -q '面板端口' &&
+    printf '%s' "$out" | grep -q '48100' &&
+    printf '%s' "$out" | grep -Fq 'http://<服务器公网 IP 或域名>:48100' &&
+    ! printf '%s' "$out" | grep -Eq '(^|[^0-9])(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)'
+); then pass "摘要只报端口且不含 RFC1918 地址"; else fail "摘要仍输出内网 IP 或缺少端口"; fi
 
 echo "== 长命令日志出口（非 TTY 路径） =="
 LOG="$TMPDIR_TEST/run.log"
