@@ -1259,7 +1259,7 @@ print_summary() {
   tui_kv "访问方式" "http://<服务器公网 IP 或域名>:${FRONTEND_PORT}"
   tui_kv "后端地址" "127.0.0.1:${PANEL_PORT}（仅本机回环，不对外开放）"
   tui_section "管理员账户"
-  tui_kv "初始密码" "仅首启打印一次：journalctl -u ${SERVICE_NAME} -b --no-pager | grep '初始密码'"
+  tui_kv "初始密码" "最近一次生成记录：journalctl -u ${SERVICE_NAME} -b --no-pager | grep '初始密码：' | tail -n 1"
   tui_kv "重置密码" "全部会话失效：HOME=${STATE_DIR} ${PANEL_BIN} resetpwd"
   tui_section "运行与维护"
   tui_kv "服务管理" "systemctl status/restart/stop ${SERVICE_NAME}"

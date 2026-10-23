@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"sync"
+	"syscall"
 
 	"elysian/server/internal/config"
 	"elysian/server/internal/paths"
@@ -52,6 +55,50 @@ func NewFileCredentialsStore(path string) CredentialsStore {
 
 type fileCredentialsStore struct {
 	path string
+}
+
+// lockFirstBoot serializes first-boot checks across separate panel processes.
+func (s *fileCredentialsStore) lockFirstBoot() (func(), error) {
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
+		return nil, err
+	}
+	file, err := os.OpenFile(s.path+".init.lock", os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if !statTrustedFile(file, 0) {
+		_ = file.Close()
+		return nil, fmt.Errorf("首启凭据锁文件不可信")
+	}
+	for {
+		err = syscall.Flock(int(file.Fd()), syscall.LOCK_EX)
+		if err == nil {
+			return func() {
+				_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+				_ = file.Close()
+			}, nil
+		}
+		if err != syscall.EINTR {
+			_ = file.Close()
+			return nil, err
+		}
+	}
+}
+
+func (s *fileCredentialsStore) credentialFileExists() (bool, error) {
+	_, err := os.Lstat(s.path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
+}
+
+func statTrustedFile(file *os.File, maxBytes int64) bool {
+	info, err := file.Stat()
+	return err == nil && statTrusted(info, maxBytes)
 }
 
 // parseCredentials 判定解析出的 JSON 是否是合法凭据；版本与三字段缺一不可。
@@ -207,7 +254,8 @@ type firstBootOptions struct {
 
 // ensureFirstBootCredentials 首启保障（装配层副作用）：
 // dev 开 → 只打警告行（AuthDevWarning），不生成文件；凭据文件已存在 → 直接返回；
-// 否则生成 16 字符随机密码（无歧义字符集），scrypt 落盘后向 stdout 打一次性横幅。
+// 已有但无效的文件拒绝覆盖；确实缺失时才生成 16 字符随机密码（无歧义字符集），
+// scrypt 落盘后向 stdout 打一次性横幅。
 // 初始密码只显示这一次、不落任何日志文件。
 func ensureFirstBootCredentials(store CredentialsStore, options firstBootOptions) (FirstBootOutcome, error) {
 	print := options.print
@@ -218,10 +266,26 @@ func ensureFirstBootCredentials(store CredentialsStore, options firstBootOptions
 		print(AuthDevWarning)
 		return FirstBootDevSkipped, nil
 	}
+	if locker, ok := store.(interface{ lockFirstBoot() (func(), error) }); ok {
+		unlock, err := locker.lockFirstBoot()
+		if err != nil {
+			return FirstBootDevSkipped, err
+		}
+		defer unlock()
+	}
 	if existing, err := store.Current(); err != nil {
 		return FirstBootDevSkipped, err
 	} else if existing != nil {
 		return FirstBootAlreadyPresent, nil
+	}
+	if checker, ok := store.(interface{ credentialFileExists() (bool, error) }); ok {
+		exists, err := checker.credentialFileExists()
+		if err != nil {
+			return FirstBootDevSkipped, err
+		}
+		if exists {
+			return FirstBootDevSkipped, fmt.Errorf("面板凭据文件已存在但不可用，拒绝自动生成替代密码；请检查文件权限或执行 elysian resetpwd")
+		}
 	}
 
 	hasher := options.hasher

@@ -2,10 +2,13 @@ package auth
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -278,6 +281,84 @@ func TestEnsureFirstBootAlreadyPresent(t *testing.T) {
 	current, err := store.Current()
 	if err != nil || current == nil || *current != *created {
 		t.Errorf("已存在时凭据保持原样：Current() = (%v, %v)", current, err)
+	}
+}
+
+func TestEnsureFirstBootConcurrentRunsCreateOnePassword(t *testing.T) {
+	store := NewFileCredentialsStore(filepath.Join(tempDir(t), "config", "panel-credentials.json"))
+	var generated atomic.Int32
+	var printedMu sync.Mutex
+	var printed []string
+	const runs = 8
+	start := make(chan struct{})
+	results := make(chan FirstBootOutcome, runs)
+	errors := make(chan error, runs)
+	var workers sync.WaitGroup
+	for i := 0; i < runs; i++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			outcome, err := ensureFirstBootCredentials(store, firstBootOptions{
+				hasher: NewScryptHasher(),
+				generatePassword: func() string {
+					return fmt.Sprintf("Password-%02d", generated.Add(1))
+				},
+				print: func(line string) {
+					printedMu.Lock()
+					printed = append(printed, line)
+					printedMu.Unlock()
+				},
+			})
+			results <- outcome
+			errors <- err
+		}()
+	}
+	close(start)
+	workers.Wait()
+	close(results)
+	close(errors)
+	created := 0
+	for outcome := range results {
+		if outcome == FirstBootCreated {
+			created++
+		} else if outcome != FirstBootAlreadyPresent {
+			t.Errorf("并发首启 outcome = %v，期望 Created 或 AlreadyPresent", outcome)
+		}
+	}
+	for err := range errors {
+		if err != nil {
+			t.Errorf("并发首启失败：%v", err)
+		}
+	}
+	if created != 1 || generated.Load() != 1 {
+		t.Fatalf("created=%d, generated=%d；期望只生成一次", created, generated.Load())
+	}
+	passwordLines := 0
+	for _, line := range printed {
+		if strings.HasPrefix(line, "初始密码：") {
+			passwordLines++
+		}
+	}
+	if passwordLines != 1 {
+		t.Fatalf("横幅初始密码行数 = %d，期望 1", passwordLines)
+	}
+}
+
+func TestEnsureFirstBootDoesNotReplaceInvalidExistingFile(t *testing.T) {
+	path := filepath.Join(tempDir(t), "config", "panel-credentials.json")
+	writePrivate(t, path, "invalid credentials")
+	store := NewFileCredentialsStore(path)
+	var printed []string
+	if _, err := ensureFirstBootCredentials(store, firstBootOptions{print: func(line string) { printed = append(printed, line) }}); err == nil {
+		t.Fatal("已有无效凭据时应拒绝自动生成替代密码")
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil || string(contents) != "invalid credentials" {
+		t.Fatalf("无效凭据被覆盖：contents=%q err=%v", contents, err)
+	}
+	if len(printed) != 0 {
+		t.Fatalf("无效凭据时不应打印初始密码：%v", printed)
 	}
 }
 

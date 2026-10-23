@@ -21,8 +21,8 @@ Bun 本体安装包按 GitHub → npmmirror 顺序下载，curl 持续监测传�
 ## 登录与配置
 
 ```bash
-# 首次启动只打印一次初始密码
-journalctl -u elysian -b --no-pager | grep '初始密码'
+# 首次启动只打印一次初始密码；重复安装的历史记录仅显示最近一条
+journalctl -u elysian -b --no-pager | grep '初始密码：' | tail -n 1
 # 忘记密码时重置（全部会话失效）
 HOME=/var/lib/elysian /usr/local/bin/elysian resetpwd
 # 服务管理
