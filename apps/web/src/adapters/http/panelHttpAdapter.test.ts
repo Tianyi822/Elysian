@@ -104,3 +104,13 @@ describe('面板维护 HTTP 契约', () => {
     await expect(createHttpPanelAdapter().checkUpdate('commit', 'gitee')).rejects.toThrow('更新信息与所选来源不一致')
   })
 })
+
+it('校验 CLI 注册状态并复用同源重试接口', async () => {
+  expect(parsePanelTask({ ...task, cliRegistration: { status: 'failed', error: '外部命令占用' } }).cliRegistration?.status).toBe('failed')
+  expect(() => parsePanelTask({ ...task, cliRegistration: { status: 'pretend-success' } })).toThrow('CLI 注册状态无效')
+  const fetcher = vi.fn(async () => new Response(JSON.stringify({ ...task, cliRegistration: { status: 'succeeded' } }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+  vi.stubGlobal('fetch', fetcher)
+  const result = await createHttpPanelAdapter().retryCLIRegistration(task.id)
+  expect(result.cliRegistration?.status).toBe('succeeded')
+  expect(fetcher).toHaveBeenCalledWith(expect.stringContaining(`/tasks/${task.id}/cli-registration/retry`), expect.objectContaining({ method: 'POST' }))
+})

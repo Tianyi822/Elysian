@@ -412,3 +412,20 @@ describe('端口与更新设置', () => {
     }
   })
 })
+
+it('升级成功但 CLI 注册失败时显示真实状态并允许重试', async () => {
+  const g = gateway()
+  const failed: PanelTask = { ...task, kind: 'update', state: 'succeeded', phase: 'finished', cliRegistration: { status: 'failed', error: 'ely 被外部文件占用' } }
+  g.panel.info = async () => ({ ...info, lastTask: failed })
+  g.panel.task = async () => ({ task: failed, logs: '', nextOffset: 0 })
+  let resolve!: (result: PanelTask) => void
+  g.panel.retryCLIRegistration = vi.fn(() => new Promise<PanelTask>((done) => { resolve = done }))
+  renderApp('/settings?tab=maintenance', { gateway: g })
+  expect(await screen.findByText(/面板升级成功、CLI 注册失败/)).toBeInTheDocument()
+  expect(reloadPanelPage).not.toHaveBeenCalled()
+  await userEvent.click(screen.getByRole('button', { name: '重试 CLI 注册' }))
+  expect(screen.getByRole('button', { name: '正在重试…' })).toBeDisabled()
+  await act(async () => resolve({ ...failed, cliRegistration: { status: 'failed', error: '仍被占用' } }))
+  expect(await screen.findByText(/仍被占用/)).toBeInTheDocument()
+  expect(g.panel.retryCLIRegistration).toHaveBeenCalledWith(task.id)
+})

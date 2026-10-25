@@ -11,6 +11,7 @@ export const PANEL_UPDATE_SOURCE_LABELS: Record<PanelUpdateSource, string> = {
 }
 export type PanelTaskState = 'queued' | 'running' | 'succeeded' | 'failed' | 'rolled-back' | 'recovery-failed'
 export type PanelTask = {
+  cliRegistration?: { status: 'pending' | 'succeeded' | 'failed'; error?: string }
   id: string; kind: 'ports' | 'restart' | 'update'; state: PanelTaskState; phase: string
   createdAt: string; updatedAt: string; oldPorts: PanelPorts; newPorts: PanelPorts
   targetCommit: string; error: string

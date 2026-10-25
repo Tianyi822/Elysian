@@ -21,6 +21,10 @@ export function parsePanelTask(value: unknown): PanelTask {
   if (row.updateChannel !== undefined && row.updateChannel !== 'commit' && row.updateChannel !== 'release') throw new Error('面板任务更新策略无效')
   if (row.updateSource !== undefined && row.updateSource !== 'github' && row.updateSource !== 'gitee') throw new Error('面板任务更新来源无效')
   if (row.releaseTag !== undefined && typeof row.releaseTag !== 'string') throw new Error('面板任务发版标签无效')
+  if (row.cliRegistration !== undefined) {
+    const registration = object(row.cliRegistration)
+    if (!['pending', 'succeeded', 'failed'].includes(String(registration.status)) || (registration.error !== undefined && typeof registration.error !== 'string')) throw new Error('CLI 注册状态无效')
+  }
   if (row.workerDead !== undefined && typeof row.workerDead !== 'boolean') throw new Error('面板任务维护进程状态无效')
   if (row.workerStatus !== undefined && !['alive', 'dead', 'unknown'].includes(String(row.workerStatus))) throw new Error('面板任务维护进程状态无效')
   return { ...row, oldPorts: ports(row.oldPorts), newPorts: ports(row.newPorts) } as PanelTask
@@ -76,6 +80,7 @@ export function createHttpPanelAdapter(base = '/api/panel'): PanelAdapter {
       return row as PanelUpdate
     },
     commits: async (channel, source) => parsePanelCommits(await request(`${base}/commits?channel=${channel}&source=${source}`)),
+    retryCLIRegistration: async (id) => parsePanelTask(await request(`${base}/tasks/${encodeURIComponent(id)}/cli-registration/retry`, 'POST', {})),
     ports: async (value, requestId) => parsePanelTask(await request(`${base}/ports`, 'PUT', { ...value, requestId })),
     restart: async (requestId) => parsePanelTask(await request(`${base}/restart`, 'POST', { requestId })),
     update: async ({ channel, source, targetCommit, releaseTag }, requestId) => parsePanelTask(await request(`${base}/update`, 'POST', { channel, source, targetCommit, releaseTag, requestId })),

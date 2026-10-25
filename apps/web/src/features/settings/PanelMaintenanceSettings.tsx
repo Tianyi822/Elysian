@@ -41,6 +41,7 @@ export function PanelMaintenanceSettings() {
   const logs = usePanelStore((s) => s.logs)
   const hasMore = usePanelStore((s) => s.hasMore)
   const [loadingLogs, setLoadingLogs] = useState(false)
+  const [retryingCLI, setRetryingCLI] = useState(false)
   const loadError = usePanelStore((s) => s.error)
   const frontendId = useId(), backendId = useId()
   const [frontend, setFrontend] = useState('')
@@ -117,7 +118,7 @@ export function PanelMaintenanceSettings() {
   }, [gateway, pending?.requestId])
 
   useEffect(() => {
-    if (!task || panelTaskIsActive(task) || trackedTaskId !== task.id) return
+    if (!task || panelTaskIsActive(task) || task.cliRegistration?.status === 'pending' || task.cliRegistration?.status === 'failed' || trackedTaskId !== task.id) return
     let stopped = false
     const auth = captureAuthGeneration(), abort = new AbortController()
     const current = () => !stopped && auth === captureAuthGeneration() && usePanelStore.getState().task?.id === task.id && usePanelStore.getState().trackedTaskId === task.id
@@ -138,10 +139,10 @@ export function PanelMaintenanceSettings() {
       if (current()) await usePanelStore.getState().load(gateway, true)
     })()
     return () => { stopped = true; abort.abort() }
-  }, [gateway, task?.id, task?.state, trackedTaskId])
+  }, [gateway, task?.id, task?.state, task?.cliRegistration?.status, trackedTaskId])
 
   useEffect(() => {
-    if (!task || !panelTaskIsActive(task)) return
+    if (!task || (!panelTaskIsActive(task) && task.cliRegistration?.status !== 'pending')) return
     let stopped = false, timer: ReturnType<typeof setTimeout> | undefined, disconnectedAt: number | undefined
     const abort = new AbortController()
     const auth = captureAuthGeneration()
@@ -178,7 +179,7 @@ export function PanelMaintenanceSettings() {
           if (ready) { nextUrl.searchParams.set('maintenanceTask', current.id); openPanelAddress(nextUrl.toString()); return }
         }
         const report = await usePanelStore.getState().poll(gateway)
-        if (report && !panelTaskIsActive(report.task)) {
+        if (report && !panelTaskIsActive(report.task) && report.task.cliRegistration?.status !== 'pending') {
           return
         }
         if (!currentEffect()) return
@@ -209,7 +210,17 @@ export function PanelMaintenanceSettings() {
     }
     timer = setTimeout(() => void tick(), 1000)
     return () => { stopped = true; abort.abort(); if (timer) clearTimeout(timer) }
-  }, [gateway, task?.id, task?.state, retry])
+  }, [gateway, task?.id, task?.state, task?.cliRegistration?.status, retry])
+
+  const retryCLI = async () => {
+    if (!task || retryingCLI) return
+    const id = task.id, generation = lifecycle.current, auth = captureAuthGeneration()
+    const current = () => lifecycle.current === generation && captureAuthGeneration() === auth && usePanelStore.getState().task?.id === id
+    setRetryingCLI(true); setProgressError(null)
+    try { const result = await gateway.panel.retryCLIRegistration(id); if (current()) usePanelStore.getState().put(result) }
+    catch (cause) { if (current()) setProgressError(cause instanceof Error ? cause.message : 'CLI 注册重试失败') }
+    finally { if (current()) setRetryingCLI(false) }
+  }
 
   const submit = async (key: string, input: Omit<PanelPending, 'version' | 'requestId'>, retryPending?: PanelPending) => {
     if (submitting || active || (pendingRef.current && !retryPending)) return
@@ -332,6 +343,9 @@ export function PanelMaintenanceSettings() {
       {task.kind === 'update' ? <p className="mt-2 break-all text-xs leading-5 text-fg-muted">更新来源：{task.updateSource ? PANEL_UPDATE_SOURCE_LABELS[task.updateSource] : '自动选择（GitHub 优先，Gitee 回退）'}<br />更新策略：{PANEL_UPDATE_CHANNEL_LABELS[task.updateChannel ?? 'commit']}{task.releaseTag ? ` · ${task.releaseTag}` : ''}<br />目标提交：{task.targetCommit}</p> : null}
       {panelTaskIsActive(task) && task.workerDead ? <p role="status" className="mt-2 break-all text-xs leading-5 text-warning">维护进程已退出但任务尚未判定结果，等待服务器自动收敛；若长时间无变化，请在服务器执行 journalctl -u elysian-maintenance-{task.id} 查看现场。</p> : null}
       {panelTaskIsActive(task) && (task.workerStatus === 'unknown' || (task.workerStatus === undefined && !task.workerDead)) ? <p className="mt-2 text-xs leading-5 text-fg-muted">维护进程状态尚未确认，继续等待任务结果。</p> : null}
+      {task.state === 'succeeded' && task.cliRegistration?.status === 'pending' ? <p role="status" className="mt-2 text-xs text-warning">面板升级成功，正在完成 CLI 注册…</p> : null}
+      {task.state === 'succeeded' && task.cliRegistration?.status === 'failed' ? <div className="mt-3 space-y-2"><p role="alert" className="break-all text-xs text-danger">面板升级成功、CLI 注册失败：{task.cliRegistration.error}</p><button className={BUTTON} disabled={retryingCLI || active || submitting} onClick={() => void retryCLI()}>{retryingCLI ? '正在重试…' : '重试 CLI 注册'}</button></div> : null}
+      {task.cliRegistration?.status === 'succeeded' ? <p role="status" className="mt-2 text-xs text-success">CLI 命令 ely 已注册</p> : null}
       {task.error ? <p role="alert" className="mt-2 break-all text-xs leading-5 text-danger">{task.error}</p> : null}
       {progressError ? <p role="alert" className="mt-2 break-all text-xs leading-5 text-danger">{progressError}</p> : null}
       {connectionError ? <div className="mt-3 space-y-2">

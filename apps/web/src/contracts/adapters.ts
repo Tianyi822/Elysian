@@ -546,6 +546,7 @@ export interface PanelAdapter {
  ports(value: PanelPorts, requestId: string): Promise<PanelTask>
  restart(requestId: string): Promise<PanelTask>
  update(target: PanelUpdateTarget, requestId: string): Promise<PanelTask>
+ retryCLIRegistration(id: string): Promise<PanelTask>
  task(id: string, offset?: number): Promise<PanelTaskReport>
  taskByRequest(requestId: string, signal?: AbortSignal): Promise<PanelTask | null>
  ready(origin: string, id: string, signal?: AbortSignal): Promise<boolean>
