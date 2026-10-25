@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"elysian/server/internal/config"
-	"elysian/server/internal/paths"
 	"elysian/server/internal/shared"
 )
 
@@ -90,7 +90,20 @@ func runResetPasswordCli(io_ resetPasswordIO, credentials CredentialsStore, hash
 // RunResetPasswordCLI `elysian resetpwd` 子命令入口（go-plan §3.8 冻结签名）：
 // 失败打印错误消息到 stderr 并回 1，成功回 0。dev 开关经 config.Load 取得（域包不读 env）。
 func RunResetPasswordCLI(stdin io.Reader, stdout io.Writer) int {
-	credentials := NewFileCredentialsStore(paths.Default.PanelCredentials)
+	return RunResetPasswordCLIAt("", stdin, stdout)
+}
+
+// RunResetPasswordCLIAt 与 RunResetPasswordCLI 同一改密流程，凭据路径改为按注入的
+// panelHome（.Elysian 根目录，如 /var/lib/elysian/.Elysian）解析为
+// <panelHome>/config/panel-credentials.json；panelHome 传空串时回落 ~/.Elysian 缺省
+// 路径（与 RunResetPasswordCLI 等价）。ely 菜单的重置密码入口用它对准生产安装的
+// 凭据文件，授权门禁由调用方（cli 层）先行判定。
+func RunResetPasswordCLIAt(panelHome string, stdin io.Reader, stdout io.Writer) int {
+	credentialsPath := ""
+	if panelHome != "" {
+		credentialsPath = filepath.Join(panelHome, "config", "panel-credentials.json")
+	}
+	credentials := NewFileCredentialsStore(credentialsPath)
 	hasher := NewScryptHasher()
 	lines := &nonTTYLineReader{reader: stdin}
 	file, isFile := stdin.(*os.File)
@@ -157,7 +170,9 @@ func (l *nonTTYLineReader) next() (string, error) {
 	}
 }
 
-// readHiddenFromTTY 的平台差异实现：Linux 用 termios ioctl（dev-check 容器与部署目标
-// 都是 Linux）；其余平台视为不可用（明文读兜底由 RunResetPasswordCLI 的 isTTY 判定
-// 挡住，不会走到 readHidden 的平台回落分支）。
-// 固定选型不含 golang.org/x/term（auth 盘点 §12），故直接用标准库 syscall 实现。
+// readHiddenFromTTY 的平台差异实现：Linux 用标准库 syscall 的 termios ioctl（dev-check
+// 容器与部署目标都是 Linux），darwin 用 golang.org/x/sys/unix 的 TIOCGETA/TIOCSETA
+//（macOS 开发机联调用，标准库 syscall 无对应常量组）；其余平台视为不可用（明文读兜底
+// 由 RunResetPasswordCLI 的 isTTY 判定挡住，不会走到 readHidden 的平台回落分支）。
+// 固定选型不含 golang.org/x/term：auth 直接以 syscall／x/sys/unix 实现 termios，
+// CLI/TUI 生态（glamour）的 x/term 属其传递依赖，auth 不直接引用。

@@ -27,6 +27,7 @@ import (
 	"elysian/server/internal/app"
 	"elysian/server/internal/applog"
 	"elysian/server/internal/auth"
+	"elysian/server/internal/cli"
 	"elysian/server/internal/config"
 	"elysian/server/internal/database"
 	"elysian/server/internal/logs"
@@ -46,10 +47,31 @@ const shutdownTimeout = 10 * time.Second
 const connectionIdleTimeout = 255 * time.Second
 
 func main() {
-	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "启动失败：%v\n", err)
-		os.Exit(1)
+	err := run()
+	if err == nil {
+		return
 	}
+	var ec exitError
+	if errors.As(err, &ec) {
+		// ely 别名路径：以 CLI 自身退出码退出，不打印「启动失败」前缀。
+		os.Exit(ec.code)
+	}
+	fmt.Fprintf(os.Stderr, "启动失败：%v\n", err)
+	os.Exit(1)
+}
+
+// exitError 携带进程退出码的错误（ely 别名路径专用）：run 内不直接 os.Exit，保持
+// 与其余子命令一致的错误返回形态，main 统一按码退出。
+type exitError struct{ code int }
+
+func (e exitError) Error() string { return fmt.Sprintf("ely 以退出码 %d 结束", e.code) }
+
+// cliExit 把 cli.Run 的退出码转为错误返回；0 视为成功。
+func cliExit(code int) error {
+	if code == 0 {
+		return nil
+	}
+	return exitError{code}
 }
 
 func run() (runErr error) {
@@ -65,6 +87,13 @@ func run() (runErr error) {
 			return errors.New("Agent Worker 不接受额外命令行参数")
 		}
 		return worker.Serve(os.Stdin, os.Stdout, os.Stderr)
+	}
+	// ely 别名分发（CLI 方案 §2）：argv0 精确等于 ely 时进入交互 CLI，先于 config.Load，
+	// 不依赖服务端环境变量装配，也不透传 elysian 子命令语义；supervisor／Worker 等内部
+	// 子命令判定在前，不受影响。安装形态为 /usr/local/bin/ely → current/elysian 符号
+	// 链接，在线维护只切 current，ely 自动跟随版本。
+	if isElyInvocation(os.Args[0]) {
+		return cliExit(cli.Run(cli.Info{Commit: panel.Commit, BuildTime: panel.BuildTime}, os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 	}
 	cfg := config.Load()
 	// 运行模式互斥（go-plan §3.1）：Docker 与裸机直执同设即配置错误，启动即失败。
@@ -268,4 +297,11 @@ func runModeLabel(cfg *config.Config) string {
 	default:
 		return "local-demo"
 	}
+}
+
+// isElyInvocation 报告 argv0 是否为 ely 别名形态（busybox 式 argv0 分发，CLI 方案 §2）：
+// basename 必须精确等于 ely，用户改名的副本（如 ely-backup、myely）不误入 CLI 菜单，
+// 仍按 elysian 的服务端语义执行。
+func isElyInvocation(argv0 string) bool {
+	return argv0 != "" && filepath.Base(argv0) == "ely"
 }

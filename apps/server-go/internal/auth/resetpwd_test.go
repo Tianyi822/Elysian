@@ -133,3 +133,37 @@ func TestResetPasswordCliNonTTYFileInputIsNotTerminal(t *testing.T) {
 		t.Error("校验失败不应写凭据")
 	}
 }
+
+func TestRunResetPasswordCLIAtWritesToPanelHome(t *testing.T) {
+	dir := tempDir(t)
+	stdin := strings.NewReader("panel-home-pwd-1\npanel-home-pwd-1\n")
+	stdout := &bytes.Buffer{}
+	if code := RunResetPasswordCLIAt(dir, stdin, stdout); code != 0 {
+		t.Fatalf("退出码 = %d，输出 %q", code, stdout.String())
+	}
+	credentialsPath := filepath.Join(dir, "config", "panel-credentials.json")
+	credentials := NewFileCredentialsStore(credentialsPath)
+	current, err := credentials.Current()
+	if err != nil || current == nil {
+		t.Fatalf("凭据应落在注入 panelHome 下：(%v, %v)", current, err)
+	}
+	ok, err := NewScryptHasher().Verify("panel-home-pwd-1", current.PasswordHash)
+	if err != nil || !ok {
+		t.Errorf("panelHome 下的新密码可验证：(%v, %v)", ok, err)
+	}
+	if strings.Contains(stdout.String(), "panel-home-pwd-1") {
+		t.Errorf("密码明文不得出现在输出：%q", stdout.String())
+	}
+}
+
+func TestRunResetPasswordCLIAtMismatchExitsOneWithoutFile(t *testing.T) {
+	dir := tempDir(t)
+	stdin := strings.NewReader("first-password\ndifferent-pwd\n")
+	stdout := &bytes.Buffer{}
+	if code := RunResetPasswordCLIAt(dir, stdin, stdout); code != 1 {
+		t.Fatalf("两次不一致应回 1，得 %d", code)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "config", "panel-credentials.json")); !os.IsNotExist(err) {
+		t.Error("校验失败不应写凭据文件")
+	}
+}

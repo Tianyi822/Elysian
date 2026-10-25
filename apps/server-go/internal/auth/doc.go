@@ -5,7 +5,8 @@
 //
 // 导出形状（go-plan §3.8 冻结）：NewRouter（挂载 /api/auth）、RequireSession（app 级）、
 // NewSessionConnections（seam.SessionConnections 实现，装配期一次、auth 与 terminals
-// 共享实例）、FirstBootCredentials（main 启动序列）、RunResetPasswordCLI（子命令）。
+// 共享实例）、FirstBootCredentials（main 启动序列）、RunResetPasswordCLI（子命令）与
+// RunResetPasswordCLIAt（ely 菜单按注入 panelHome 对准凭据文件的同一改密线）。
 //
 // auth 域不执行任何宿主命令、不碰任何 unix socket、不访问 Docker/Caddy；全部 IO 收口
 // 在 ~/.Elysian 下三个 JSON 文件（凭据、会话、回跳白名单），三种运行模式下行为一致。

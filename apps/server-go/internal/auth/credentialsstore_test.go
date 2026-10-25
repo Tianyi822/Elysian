@@ -381,6 +381,10 @@ func TestEnsureFirstBootCreated(t *testing.T) {
 	if !strings.Contains(joined, "用户名：admin") {
 		t.Errorf("横幅缺用户名行：%v", banner)
 	}
+	// 改密指引与安装摘要同口径：ely 菜单为主入口，脚本通道带生产 HOME。
+	if !strings.Contains(joined, "修改密码：sudo ely 后选择「重置密码」（脚本通道：HOME=/var/lib/elysian elysian resetpwd）") {
+		t.Errorf("横幅改密指引不符：%v", banner)
+	}
 	password := ""
 	for _, line := range banner {
 		if len(line) > len("初始密码：") && line[:len("初始密码：")] == "初始密码：" {
