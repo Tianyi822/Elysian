@@ -110,6 +110,7 @@ func newWiringFixture(t *testing.T, mutate func(deps *Deps)) (wiringClient, Cred
 		Sessions:      NewMemorySessionStore(nil),
 		Hasher:        hasher,
 		ReturnOrigins: NewMemoryReturnOriginRegistry(nil),
+		PasswordAudit: NewMemoryPasswordAudit(),
 	}
 	if mutate != nil {
 		mutate(&deps)

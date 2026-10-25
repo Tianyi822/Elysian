@@ -97,14 +97,19 @@ func RunResetPasswordCLI(stdin io.Reader, stdout io.Writer) int {
 // panelHome（.Elysian 根目录，如 /var/lib/elysian/.Elysian）解析为
 // <panelHome>/config/panel-credentials.json；panelHome 传空串时回落 ~/.Elysian 缺省
 // 路径（与 RunResetPasswordCLI 等价）。ely 菜单的重置密码入口用它对准生产安装的
-// 凭据文件，授权门禁由调用方（cli 层）先行判定。
+// 凭据文件，授权门禁由调用方（cli 层）先行判定。改密安全审计与凭据文件同一根解析
+// （<panelHome>/logs/panel-password-audit.jsonl，来源 cli-resetpwd、执行主体取当前
+// OS 用户），成功与失败（含取消）各落一条、不含密码内容，审计失败不影响退出码。
 func RunResetPasswordCLIAt(panelHome string, stdin io.Reader, stdout io.Writer) int {
 	credentialsPath := ""
+	auditPath := ""
 	if panelHome != "" {
 		credentialsPath = filepath.Join(panelHome, "config", "panel-credentials.json")
+		auditPath = filepath.Join(panelHome, "logs", "panel-password-audit.jsonl")
 	}
 	credentials := NewFileCredentialsStore(credentialsPath)
 	hasher := NewScryptHasher()
+	audit := NewFilePasswordAudit(auditPath)
 	lines := &nonTTYLineReader{reader: stdin}
 	file, isFile := stdin.(*os.File)
 	io_ := resetPasswordIO{
@@ -122,7 +127,12 @@ func RunResetPasswordCLIAt(panelHome string, stdin io.Reader, stdout io.Writer) 
 		},
 		print: func(text string) { fmt.Fprintln(stdout, text) },
 	}
-	if err := runResetPasswordCli(io_, credentials, hasher, config.Load().AuthDev); err != nil {
+	err := runResetPasswordCli(io_, credentials, hasher, config.Load().AuthDev)
+	if err != nil {
+		audit.RecordPasswordChange(buildPasswordAuditRecord(
+			isoNowMillis(), PasswordAuditSourceCLIResetPwd, passwordAuditCLIActor(),
+			passwordAuditResultFailure, errorReason(err),
+		))
 		if errors.Is(err, errPasswordResetCancelled) {
 			fmt.Fprintln(stdout, "\n− 已取消，密码未修改。")
 		} else {
@@ -130,6 +140,10 @@ func RunResetPasswordCLIAt(panelHome string, stdin io.Reader, stdout io.Writer) 
 		}
 		return 1
 	}
+	audit.RecordPasswordChange(buildPasswordAuditRecord(
+		isoNowMillis(), PasswordAuditSourceCLIResetPwd, passwordAuditCLIActor(),
+		passwordAuditResultSuccess, "",
+	))
 	return 0
 }
 

@@ -28,7 +28,7 @@ func newStreamTestFixture(t *testing.T) *streamTestFixture {
 	f := &streamTestFixture{connections: NewSessionConnections(), ticks: make(chan time.Time)}
 	f.now.Store(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli())
 	now := func() time.Time { return time.UnixMilli(f.now.Load()) }
-	f.deps = Deps{Enabled: true, Sessions: NewMemorySessionStore(now), Credentials: NewMemoryCredentialsStore(nil), SessionConns: f.connections, Now: now, Diag: io.Discard}
+	f.deps = Deps{Enabled: true, Sessions: NewMemorySessionStore(now), Credentials: NewMemoryCredentialsStore(nil), SessionConns: f.connections, Now: now, Diag: io.Discard, PasswordAudit: NewMemoryPasswordAudit()}
 	var err error
 	f.session, _, err = f.deps.Sessions.Create("none", "")
 	if err != nil {

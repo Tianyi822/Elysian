@@ -69,6 +69,10 @@ type Deps struct {
 	LoginRateLimit int
 	// LoginRateWindow 限流窗口；0 用缺省 60 秒。
 	LoginRateWindow time.Duration
+	// PasswordAudit 改密安全审计出口；nil 用文件版（paths.Default.PanelPasswordAudit，
+	// 保留 30 天/1 MiB）。设置页改密端点经它落「执行主体（admin）、来源、结果」的持久
+	// 记录；写盘失败只诊断、不影响改密响应。测试注入内存版避免碰真实 ~/.Elysian。
+	PasswordAudit PasswordAuditSink
 }
 
 // loginLimiter 进程内固定窗口限流器（每 NewRouter 实例独立）。
@@ -398,43 +402,55 @@ func NewRouter(deps Deps) chi.Router {
 	// —— 设置页端点（RequireSession 覆盖之下，豁免清单不含任何一条）——
 
 	r.Post("/password", handle(func(w http.ResponseWriter, r *http.Request) error {
-		// 先于读体：演示语义下写凭据文件会凭空造出真凭据，也不读体。
+		// 先于读体：演示语义下写凭据文件会凭空造出真凭据，也不读体（该分支不落改密
+		// 审计——没有任何改密尝试被解析）。
 		if !resolved.enabled {
 			shared.SendError(w, http.StatusServiceUnavailable, AuthDisabledMessage)
 			return nil
 		}
-		body, ok, err := readPasswordChangeBody(w, r)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return shared.InvalidRequest("请求体不合法")
-		}
+		changeErr := func() error {
+			body, ok, err := readPasswordChangeBody(w, r)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return shared.InvalidRequest("请求体不合法")
+			}
 
-		credentials, err := resolved.credentials.Current()
-		if err != nil {
-			return err
-		}
-		// 无凭据分支：错误路径成本恒定为一次 verify（登录片的哑哈希纪律只针对用户名
-		// 命中时序）。
-		if credentials == nil {
-			return shared.InvalidRequest("面板凭据不可用，无法修改密码")
-		}
-		currentOK, err := resolved.hasher.Verify(body.CurrentPassword, credentials.PasswordHash)
-		if err != nil {
-			return err
-		}
-		if !currentOK {
-			return shared.InvalidRequest("当前密码不正确")
-		}
+			credentials, err := resolved.credentials.Current()
+			if err != nil {
+				return err
+			}
+			// 无凭据分支：错误路径成本恒定为一次 verify（登录片的哑哈希纪律只针对用户名
+			// 命中时序）。
+			if credentials == nil {
+				return shared.InvalidRequest("面板凭据不可用，无法修改密码")
+			}
+			currentOK, err := resolved.hasher.Verify(body.CurrentPassword, credentials.PasswordHash)
+			if err != nil {
+				return err
+			}
+			if !currentOK {
+				return shared.InvalidRequest("当前密码不正确")
+			}
 
-		// 纯函数内部完成校验（两次一致、≥8 位）、scrypt 哈希与 credentials.write 原子
-		// 落盘。校验失败回 InvalidRequestError(400) 原文；哈希与写盘的 IO 故障是普通
-		// 错误原样上抛——服务端故障不得伪装成客户端 400，也避免把 fs 错误原文按校验
-		// 文案回给浏览器。
-		if _, err := ChangePanelPassword(resolved.credentials, resolved.hasher, body.NewPassword, body.ConfirmNewPassword); err != nil {
-			return err
+			// 纯函数内部完成校验（两次一致、≥8 位）、scrypt 哈希与 credentials.write 原子
+			// 落盘。校验失败回 InvalidRequestError(400) 原文；哈希与写盘的 IO 故障是普通
+			// 错误原样上抛——服务端故障不得伪装成客户端 400，也避免把 fs 错误原文按校验
+			// 文案回给浏览器。
+			if _, err := ChangePanelPassword(resolved.credentials, resolved.hasher, body.NewPassword, body.ConfirmNewPassword); err != nil {
+				return err
+			}
+			return nil
+		}()
+		// 改密安全审计：生产中本端点恒在 RequireSession 之下（执行主体=已登录管理员），
+		// 成功与失败各落一条（来源 panel-http）；失败原因经 errorReason 取域内固定中文
+		// 文案或 errno 归因，不含密码内容。审计写盘失败只诊断（sink 内部），响应语义不变。
+		if changeErr != nil {
+			resolved.recordPasswordChange(passwordAuditResultFailure, errorReason(changeErr))
+			return changeErr
 		}
+		resolved.recordPasswordChange(passwordAuditResultSuccess, "")
 
 		// 会话失效不靠显式删除：新 passwordChangedAt 即新 epoch，全部既有会话在下一
 		// 次 validate 时被删除；这里只给当前浏览器清 Cookie 作 UX 收尾。连接层不等

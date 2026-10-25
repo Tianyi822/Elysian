@@ -9,5 +9,7 @@
 // RunResetPasswordCLIAt（ely 菜单按注入 panelHome 对准凭据文件的同一改密线）。
 //
 // auth 域不执行任何宿主命令、不碰任何 unix socket、不访问 Docker/Caddy；全部 IO 收口
-// 在 ~/.Elysian 下三个 JSON 文件（凭据、会话、回跳白名单），三种运行模式下行为一致。
+// 在 ~/.Elysian 下三个 JSON 文件（凭据、会话、回跳白名单）与一条改密安全审计 JSONL
+// （logs/panel-password-audit.jsonl，HTTP 与 CLI 两条改密线追加，不含密码内容），三种
+// 运行模式下行为一致。
 package auth

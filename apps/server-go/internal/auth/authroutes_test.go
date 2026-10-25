@@ -69,12 +69,13 @@ func (s *spyConnections) RevokeAll() { s.revokeAlls++ }
 
 // routesFixture 登录片测试夹具。
 type routesFixture struct {
-	deps        Deps
-	router      chi.Router
-	hasher      *recordingHasher
-	credentials CredentialsStore
-	sessions    SessionStore
-	clock       *fakeClock
+	deps          Deps
+	router        chi.Router
+	hasher        *recordingHasher
+	credentials   CredentialsStore
+	sessions      SessionStore
+	clock         *fakeClock
+	passwordAudit *memoryPasswordAudit
 }
 
 func newRoutesFixture(t *testing.T, mutate func(deps *Deps)) *routesFixture {
@@ -82,6 +83,7 @@ func newRoutesFixture(t *testing.T, mutate func(deps *Deps)) *routesFixture {
 	hasher := newRecordingHasher()
 	credentials := NewMemoryCredentialsStore(nil)
 	clock := &fakeClock{ms: time.Now().UnixMilli()}
+	audit := NewMemoryPasswordAudit()
 	deps := Deps{
 		Enabled:       true,
 		DevAccount:    false,
@@ -91,17 +93,19 @@ func newRoutesFixture(t *testing.T, mutate func(deps *Deps)) *routesFixture {
 		ReturnOrigins: NewMemoryReturnOriginRegistry(nil),
 		Now:           clock.now,
 		Diag:          &bytes.Buffer{},
+		PasswordAudit: audit,
 	}
 	if mutate != nil {
 		mutate(&deps)
 	}
 	return &routesFixture{
-		deps:        deps,
-		router:      NewRouter(deps),
-		hasher:      hasher,
-		credentials: deps.Credentials,
-		sessions:    deps.Sessions,
-		clock:       clock,
+		deps:          deps,
+		router:        NewRouter(deps),
+		hasher:        hasher,
+		credentials:   deps.Credentials,
+		sessions:      deps.Sessions,
+		clock:         clock,
+		passwordAudit: audit,
 	}
 }
 

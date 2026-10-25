@@ -51,6 +51,7 @@ type resolvedDeps struct {
 	sessions      SessionStore
 	hasher        PasswordHasher
 	returnOrigins ReturnOriginRegistry
+	passwordAudit PasswordAuditSink
 }
 
 // writerFunc 诊断出口（stderr 等价物）。
@@ -79,6 +80,10 @@ func resolveDeps(deps Deps) resolvedDeps {
 	if returnOrigins == nil {
 		returnOrigins = NewFileReturnOriginRegistry("", os.Stderr)
 	}
+	passwordAudit := deps.PasswordAudit
+	if passwordAudit == nil {
+		passwordAudit = NewFilePasswordAudit("")
+	}
 	diag := deps.Diag
 	if diag == nil {
 		diag = os.Stderr
@@ -94,6 +99,7 @@ func resolveDeps(deps Deps) resolvedDeps {
 		sessions:      sessions,
 		hasher:        hasher,
 		returnOrigins: returnOrigins,
+		passwordAudit: passwordAudit,
 	}
 }
 

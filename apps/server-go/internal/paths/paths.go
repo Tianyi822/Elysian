@@ -63,6 +63,9 @@ type ElysianPaths struct {
 	AgentWorkspaces string
 	// SshdLog 面板托管的 sshd 定向日志。
 	SshdLog string
+	// PanelPasswordAudit 改密安全审计 JSONL（auth 域 HTTP 与 CLI 两条改密线追加，0600，
+	// 保留 30 天/1 MiB）：执行主体、来源与结果，不含密码内容。
+	PanelPasswordAudit string
 	// PlatformLogsDir 平台日志根。
 	PlatformLogsDir string
 	// RuntimeLogsDir 运行日志目录。
@@ -103,6 +106,7 @@ func buildPaths() ElysianPaths {
 		SkillPackages:          filepath.Join(DataDir, "skills"),
 		AgentWorkspaces:        filepath.Join(DataDir, "agent-workspaces"),
 		SshdLog:                filepath.Join(LogsDir, "sshd.log"),
+		PanelPasswordAudit:     filepath.Join(LogsDir, "panel-password-audit.jsonl"),
 		PlatformLogsDir:        PlatformLogsDir,
 		RuntimeLogsDir:         filepath.Join(PlatformLogsDir, "runtime"),
 		OperationLogsDir:       filepath.Join(PlatformLogsDir, "operation"),
