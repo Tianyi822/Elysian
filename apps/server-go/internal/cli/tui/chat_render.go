@@ -58,18 +58,30 @@ func (s *chatState) renderContent(m Model) string {
 	var b strings.Builder
 	width := max(16, m.width-2)
 	if s.loading {
-		b.WriteString(metaStyle.Render("正在读取会话…"))
+		b.WriteString(metaStyle.Render("正在读取会话…（完成前暂不能发送）"))
 		b.WriteString("\n")
 		return b.String()
 	}
 	if s.loadErr != "" {
 		b.WriteString(warnStyle.Render(truncateCells(s.loadErr, width)))
 		b.WriteString("\n")
+		b.WriteString(metaStyle.Render("按 r 重新读取；读取成功前暂不能发送。"))
+		b.WriteString("\n")
 		return b.String()
 	}
 	// 历史公开消息。
 	for _, message := range s.messages {
 		s.renderMessage(&b, m, message, width)
+	}
+	if s.stream == nil && s.timeline != nil {
+		if s.showReasoning {
+			for _, entry := range s.timeline.Entries {
+				if entry.Kind == "reasoning" {
+					b.WriteString("思考：\n" + wrapPlain(entry.Text, width) + "\n")
+				}
+			}
+		}
+		b.WriteString("F3 查看完整思考与执行历史\n")
 	}
 	// 活跃 Run 的流式区（终态后保留快照展示，直至离开或新轮次）。
 	if s.stream != nil {
@@ -82,6 +94,20 @@ func (s *chatState) renderContent(m Model) string {
 	return b.String()
 }
 
+// finalConfirmed 该 Run 的公开最终消息是否已进历史（终态后增量回读确认）：确认后
+// 隐藏流式正文，避免同一答复在历史与流式区重复展示；思考与工具事实保留展示。
+func (s *chatState) finalConfirmed(runID string) bool {
+	if runID == "" {
+		return false
+	}
+	for i := range s.messages {
+		if s.messages[i].RunID == runID && s.messages[i].Role == "assistant" {
+			return true
+		}
+	}
+	return false
+}
+
 // renderMessage 单条公开消息：用户消息原文引用块、助手消息 Markdown；助手消息
 // 前缀所属轮次模型与思考档快照（缺失按未知）。
 func (s *chatState) renderMessage(b *strings.Builder, m Model, message client.Message, width int) {
@@ -90,6 +116,9 @@ func (s *chatState) renderMessage(b *strings.Builder, m Model, message client.Me
 	case "user":
 		b.WriteString(selectSty.Render("你") + metaStyle.Render(" · "+at))
 		b.WriteString("\n")
+		for _, a := range message.Attachments {
+			b.WriteString("图片：" + safeText(a.Name) + " · F4 导出\n")
+		}
 		for _, line := range strings.Split(wrapPlain(message.Content, width-2), "\n") {
 			b.WriteString("│ " + line + "\n")
 		}
@@ -107,13 +136,14 @@ func (s *chatState) renderMessage(b *strings.Builder, m Model, message client.Me
 		b.WriteString(m.markdown.render(message.Content))
 		b.WriteString("\n\n")
 	default:
-		b.WriteString(metaStyle.Render(message.Role + " · " + message.Content))
+		b.WriteString(metaStyle.Render(safeText(message.Role + " · " + message.Content)))
 		b.WriteString("\n\n")
 	}
 }
 
 // renderStream 活跃 Run 流式区：思考（默认折叠摘要行，Ctrl+T 展开）、工具条目
-// （名称＋状态＋参数摘要）、流式正文（Markdown）与运行状态行。
+// （名称＋状态＋参数摘要）、流式正文（Markdown）与运行状态行；该 Run 的公开最终
+// 消息确认进历史后不再重复渲染流式正文（思考与工具事实保留）。
 func (s *chatState) renderStream(b *strings.Builder, m Model, frame client.ChatOutput, width int) {
 	if frame.Reasoning != "" {
 		if s.showReasoning {
@@ -137,7 +167,7 @@ func (s *chatState) renderStream(b *strings.Builder, m Model, frame client.ChatO
 			s.renderToolEntry(b, entry, width)
 		}
 	}
-	if frame.Content != "" {
+	if frame.Content != "" && !s.finalConfirmed(frame.RunID) {
 		b.WriteString(okStyle.Render("Ely"))
 		if !frame.Done {
 			b.WriteString(metaStyle.Render(" · 正在回复…"))
@@ -147,7 +177,7 @@ func (s *chatState) renderStream(b *strings.Builder, m Model, frame client.ChatO
 		b.WriteString("\n\n")
 		return
 	}
-	if !frame.Done && frame.Reasoning == "" {
+	if !frame.Done && frame.Reasoning == "" && !s.finalConfirmed(frame.RunID) {
 		b.WriteString(metaStyle.Render("Ely 正在准备回复…"))
 		b.WriteString("\n")
 	}
@@ -165,7 +195,7 @@ func (s *chatState) renderToolEntry(b *strings.Builder, entry client.TimelineEnt
 	case "running", "queued", "planned":
 		style = metaStyle
 	}
-	line := style.Render(label)
+	line := style.Render(safeText(label))
 	if summary := argumentSummary(entry.ArgumentsJSON); summary != "" {
 		line += " " + metaStyle.Render(truncateCells(summary, max(10, width-displayWidth(label)-2)))
 	}
@@ -191,6 +221,12 @@ func argumentSummary(raw string) string {
 // 等待输入向导或多行输入、底部上下文快捷键栏；低于最小可用尺寸时提示调整终端
 // （方案 §6.2）。
 func (s *chatState) view(m Model) string {
+	if s.history != nil {
+		return s.history.view()
+	}
+	if s.attachmentPanel != nil {
+		return m.attachmentView()
+	}
 	var b strings.Builder
 	if m.width < 60 || m.height < 12 {
 		b.WriteString(warnStyle.Render("终端过小：请调整窗口至少 60×12 后继续。"))
@@ -198,7 +234,7 @@ func (s *chatState) view(m Model) string {
 		return b.String()
 	}
 	width := max(16, m.width-2)
-	b.WriteString(truncateCells(chatStatusBar(m), width))
+	b.WriteString(chatStatusBar(m))
 	b.WriteString("\n")
 	if s.plan != nil {
 		renderPlan(&b, s.plan, s.showPlan, width)
@@ -233,6 +269,12 @@ func (s *chatState) view(m Model) string {
 	if s.wizard != nil {
 		s.renderWizard(&b, m)
 	} else if s.panel == nil && s.tools == nil {
+		if s.editing != nil {
+			b.WriteString("正在编辑最后一条用户消息 · Esc 返回普通草稿\n")
+		}
+		if len(*m.draftAttachments()) > 0 {
+			b.WriteString("图片附件：" + strconv.Itoa(len(*m.draftAttachments())) + " 张 · F4 管理\n")
+		}
 		b.WriteString(s.editor.View())
 		b.WriteString("\n")
 	}
@@ -253,9 +295,9 @@ func runStatusLabel(status string, stopping bool) string {
 	case "queued":
 		return "排队中"
 	case "waiting-input":
-		return "等待用户输入（交互界面将在后续版本接入）"
+		return "等待用户输入"
 	case "waiting-approval":
-		return "等待审批（审批界面将在后续版本接入）"
+		return "等待审批"
 	case "waiting-resource":
 		return "等待资源"
 	case "waiting-task":
@@ -307,15 +349,25 @@ func modelLine(session client.Session, m Model) string {
 	return session.ModelProfileID + "@" + strconv.Itoa(session.ModelRevision)
 }
 
-// currentLevel 本会话当前思考档：本地选择优先，否则按模型声明推导默认档。
+// currentLevel 本会话当前思考档：本地选择须仍属于当前会话模型声明的档位表（跨模型
+// 切换或服务端目录修订后旧选择可能失配，按声明默认档回落），否则按模型声明推导默认档。
 func (m Model) currentLevel(session client.Session) string {
-	if level, ok := m.levels[session.ID]; ok && level != "" {
-		return level
-	}
-	for _, profile := range m.list.models {
-		if profile.ID == session.ModelProfileID {
-			return client.DefaultReasoningLevel(profile.Capabilities.ReasoningLevels, profile.Capabilities.DefaultReasoningLevel)
+	var profile *client.ModelProfile
+	for i := range m.list.models {
+		if m.list.models[i].ID == session.ModelProfileID {
+			profile = &m.list.models[i]
+			break
 		}
 	}
-	return ""
+	if profile == nil {
+		return ""
+	}
+	if level, ok := m.levels[session.ID]; ok && level != "" {
+		for _, declared := range profile.Capabilities.ReasoningLevels {
+			if declared == level {
+				return level
+			}
+		}
+	}
+	return client.DefaultReasoningLevel(profile.Capabilities.ReasoningLevels, profile.Capabilities.DefaultReasoningLevel)
 }

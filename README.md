@@ -138,6 +138,37 @@ sudo bash scripts/uninstall.sh             # 逐项询问数据处置
 
 完整安装、恢复与验证说明见 [部署指南](scripts/README-deploy.md)。
 
+## 原生 CLI 与 Agent 终端
+
+systemd 安装提供全局命令 `ely`，由 `/usr/local/bin/ely` 链接到同一面板二进制；无需 Node.js。运行 `ely` 打开菜单，选择 Agent 终端或重置密码；生产改密需要 `sudo ely`。`ely --help` 和 `ely --version` 可用于非交互调用，脚本改密仍用 `elysian resetpwd`。
+
+Agent 终端通过回环 HTTP 消费现有 Go Harness，与 Web 共用服务端会话、模型、公开消息、运行、授权和图片。端口读取面板数据根下 `config/panel-network.json`；面板数据根按 `ELYSIAN_PANEL_HOME`、正式安装目录、执行用户 `~/.Elysian` 的顺序查找。
+
+| 快捷键 | 操作 |
+| --- | --- |
+| F1 | 全局帮助，可滚动查看全部操作及禁用条件 |
+| F2 | 编辑最后一条服务端用户消息并重发；仅会话空闲、装配成功且无未确认提交时可用 |
+| F3 | 分页浏览 Run，查看完整思考、工具参数与结果、计划、实际用量及终态原因；`r` 重试 |
+| F4 | 添加 JPEG/PNG 图片；`a` 文件选择、`p` 路径、`d` 移除草稿、`e` 导出、`o` 显式外部打开 |
+| Enter / Ctrl+J | 发送（未确认时重试原完整请求）/ 换行 |
+| Shift+Tab | 切换本轮权限模式，运行中和提交未确认时禁用 |
+| Ctrl+S / Ctrl+T / Ctrl+P | 停止本轮 / 展开思考 / 展开计划 |
+| Ctrl+A / Ctrl+O | 审批与本会话授权 / 工具详情和用量 |
+| PgUp、PgDn、Home、End | 滚动消息；详情使用各自滚动区域 |
+| Esc / Ctrl+C | 逐层返回 / 退出整个 CLI；退出客户端不取消服务端已受理任务 |
+
+会话列表支持新建、改名、删除、分页和模型/思考档选择。审批面板支持普通允许/拒绝、运行时仅本次/本会话授权及撤回；澄清问题回答后继续原 Run。普通草稿、编辑草稿及各自图片互相独立，编辑时 Esc 恢复普通草稿。已替换轮次不会重新混入公开对话，但原始 Run 仍可在 F3 查看。
+
+图片通过正式附件 API 上传后只提交服务端引用。准备阶段校正 JPEG 方向、将最长边限制为 6000 像素、单张处理至 1 MiB，每条消息图片合计最多 8 MiB；透明 PNG 保留透明度，合规图片保留原字节。为限制本地解码资源，原文件最多 64 MiB、8000 万像素。处理支持取消；上传结果未知时保留状态，不自动重传。已发送附件从服务端导出，不随草稿移除；无图形环境使用导出的绝对路径。模型图片能力与最终限额由服务端裁决。
+
+本地凭据和状态保存在执行用户的 `~/.elysian/cli/`（区别于面板 `~/.Elysian`），目录 0700、文件 0600，不保存密码。`state.json` 为版本 2，兼容已有纯文本草稿和草稿信封；保存完整待确认请求、普通/编辑草稿、图片引用与上传状态。发送遵循冻结请求、同步持久化、HTTP 派发的顺序，写盘失败禁止派发；文件与目录同步、跨进程文件锁及每会话修订合并防止静默覆盖。恢复只按 `sessionId` 与 `requestId` 查询 Run，同文消息不代表已受理；查不到时保留请求，由人工使用原完整请求重试。损坏或较新状态文件会报错并保留原文件。
+
+用量显示实际 `actualTokens` 与 `cachedTokens`，保留未知和明确零；平均命中率使用服务端 `cacheHitUsage`，分类占比按估算总量计算并标注本地估算，不将预算记账量展示为实际消费。
+
+安装和在线维护的 CLI 链接注册均先持久化意图、原目标与构建标识，修改后验证 `ely --version`，失败恢复原命令；外部同名文件保持原样并报错，卸载只清理本面板受管链接。新 Worker 发起升级时注册属于维护事务，失败按既有策略回滚。旧 Worker 首次升级时，新服务等待升级提交并释放执行锁后补注册；失败保留已提交的面板版本，设置页明确显示“面板升级成功、CLI 注册失败”并提供重试。
+
+维护任务的可选 `cliRegistration` 包含 `status: pending | succeeded | failed` 及 `error`；管理员经同源 `POST /api/panel/tasks/{id}/cli-registration/retry` 重试，沿用维护互斥，只允许当前构建对应的已提交更新。补注册日志放在 `state/panel-maintenance/cli-registration/`，不混入旧版任务扫描。中断的待完成注册在服务重启后恢复，明确失败等待人工重试。
+
 ## 配置与数据
 
 正式安装时服务进程 `HOME=/var/lib/elysian`，面板数据位于 `/var/lib/elysian/.Elysian/`；未使用 systemd 的本地运行位于 `~/.Elysian/`。下表路径均相对于该数据根目录。
@@ -159,6 +190,7 @@ sudo bash scripts/uninstall.sh             # 逐项询问数据处置
 | --- | --- |
 | `ELYSIAN_DOCKER_SOCKET` | 覆盖 Docker Engine socket |
 | `ELYSIAN_CADDY_SOCKET` | 覆盖 Caddy 管理 socket |
+| `ELYSIAN_PANEL_HOME` | CLI 显式指定面板数据根（不是 CLI 用户状态目录） |
 | `ELYSIAN_AUTH_DEV=1` | 开启开发账号（仅开发环境） |
 | `ELYSIAN_DOCKER_MOUNT_ROOT` | Docker 开发的工作区挂载根 |
 | `ELYSIAN_GO_STATE_VOLUME` | 浏览器联调使用的独立状态卷 |

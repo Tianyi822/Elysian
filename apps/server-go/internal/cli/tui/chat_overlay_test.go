@@ -74,11 +74,11 @@ func feedMsg(t *testing.T, m Model, msg tea.Msg) Model {
 	return model
 }
 
-// pollApprovalsOnce 手动执行一拍审批轮询（不续排）。
+// pollApprovalsOnce 手动执行一拍审批轮询（不续排；回填绑定 driveToWaiting 固定的 r-2）。
 func pollApprovalsOnce(t *testing.T, api *fakeAPI, m Model) Model {
 	t.Helper()
 	items, err := api.ListApprovalsByRun(nil, "r-2")
-	return feedMsg(t, m, approvalsMsg{items: items, err: err})
+	return feedMsg(t, m, approvalsMsg{runID: "r-2", items: items, err: err})
 }
 
 // driveToWaiting 发送并回放到指定等待帧（向导或审批）。
@@ -268,7 +268,7 @@ func TestInputWizardAnswerFlowIdempotent(t *testing.T) {
 	}
 }
 
-func TestInputWizardCancelStopsRun(t *testing.T) {
+func TestInputWizardEscapePreservesRun(t *testing.T) {
 	api := &fakeAPI{}
 	model := driveToWaiting(t, api, wizardFrame())
 	model = sendKey(t, model, keyEsc)
@@ -276,8 +276,8 @@ func TestInputWizardCancelStopsRun(t *testing.T) {
 		t.Fatal("Esc 应关闭向导")
 	}
 	// 取消＝停止本轮：fake 取消即时回 cancelled 终态（「正在停止」到终态收敛）。
-	if model.chat.runStatus != "cancelled" {
-		t.Fatalf("取消向导应停止本轮：%s", model.chat.runStatus)
+	if model.chat.runStatus != "waiting-input" {
+		t.Fatalf("Esc 不应取消服务端任务：%s", model.chat.runStatus)
 	}
 }
 

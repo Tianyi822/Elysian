@@ -1,10 +1,12 @@
 package tui
 
 import (
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/glamour"
-	"github.com/mattn/go-runewidth"
+	"github.com/charmbracelet/x/ansi"
+	"unicode"
 )
 
 // Markdown 渲染（glamour 固定选型）：按终端背景自动选风格（NO_COLOR／非彩色终端
@@ -25,6 +27,9 @@ func newMarkdownRenderer(width int) *markdownRenderer {
 	if width < 16 {
 		width = 16
 	}
+	if _, disabled := os.LookupEnv("NO_COLOR"); disabled {
+		return &markdownRenderer{width: width}
+	}
 	renderer, err := glamour.NewTermRenderer(glamour.WithAutoStyle(), glamour.WithWordWrap(width))
 	if err != nil {
 		// 构造失败不致命：渲染回落纯文本。
@@ -35,6 +40,7 @@ func newMarkdownRenderer(width int) *markdownRenderer {
 
 // render 渲染 Markdown 文本；空文本回空串，超限或失败回落原文本。
 func (r *markdownRenderer) render(text string) string {
+	text = safeText(text)
 	if text == "" {
 		return ""
 	}
@@ -48,49 +54,25 @@ func (r *markdownRenderer) render(text string) string {
 	return strings.Trim(out, "\n")
 }
 
-// wrapPlain 纯文本按显示宽度换行（CJK 不截半）。
+// safeText 在套用终端样式前去掉外部文本的控制序列与双向覆盖符。
+func safeText(text string) string {
+	text = ansi.Strip(text)
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' {
+			return r
+		}
+		if unicode.IsControl(r) || r == 0x202e || r == 0x202d || r == 0x202c || r == 0x2066 || r == 0x2067 || r == 0x2068 || r == 0x2069 {
+			return -1
+		}
+		return r
+	}, text)
+}
+
+// wrapPlain 使用 ANSI 库按字素和显示宽度折行，保留中文与组合字符。
 func wrapPlain(text string, width int) string {
+	text = safeText(text)
 	if width < 4 {
 		return text
 	}
-	var b strings.Builder
-	for _, paragraph := range strings.Split(text, "\n") {
-		if paragraph == "" {
-			b.WriteString("\n")
-			continue
-		}
-		lineWidth := 0
-		for _, word := range strings.Split(paragraph, " ") {
-			wordWidth := runewidth.StringWidth(word)
-			switch {
-			case lineWidth == 0:
-				b.WriteString(word)
-				lineWidth = wordWidth
-			case lineWidth+1+wordWidth <= width:
-				b.WriteString(" " + word)
-				lineWidth += 1 + wordWidth
-			default:
-				b.WriteString("\n")
-				// 单词本身超宽：按字符硬折。
-				if wordWidth > width {
-					cell := 0
-					for _, char := range word {
-						charWidth := runewidth.RuneWidth(char)
-						if cell+charWidth > width {
-							b.WriteString("\n")
-							cell = 0
-						}
-						b.WriteString(string(char))
-						cell += charWidth
-					}
-					lineWidth = cell
-					continue
-				}
-				b.WriteString(word)
-				lineWidth = wordWidth
-			}
-		}
-		b.WriteString("\n")
-	}
-	return strings.TrimSuffix(b.String(), "\n")
+	return ansi.Wrap(text, width, "")
 }

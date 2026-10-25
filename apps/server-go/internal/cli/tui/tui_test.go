@@ -3,7 +3,9 @@ package tui
 import (
 	"context"
 	"errors"
+	"github.com/charmbracelet/bubbles/cursor"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"elysian/server/internal/cli/client"
@@ -50,7 +52,8 @@ type fakeAPI struct {
 	timeline             *client.ChatTimeline
 	streamFrames         []client.ChatOutput
 	streamErr            error
-	streamCalls          int
+	// streamCalls 计数并发流连接（多个 openStream goroutine 同时回调，需原子递增）。
+	streamCalls atomic.Int32
 
 	submittedInputs []client.AgentInput
 
@@ -159,11 +162,9 @@ func (f *fakeAPI) GetRun(_ context.Context, id string) (client.Run, error) {
 	return client.Run{ID: id}, nil
 }
 
-// ListMessages 按 after 过滤升序消息（分页桩优先；缺省单页全量）。
+// ListMessages 按 after 过滤升序消息（分页桩优先；缺省单页全量）。序号过滤与
+// 实现同口径数值化比较（seq 为十进制数字字符串，字典序会丢跨十进制位数的增量）。
 func (f *fakeAPI) ListMessages(_ context.Context, sessionID, after string) (client.Page[client.Message], error) {
-	if f.listMessagesOverride != nil {
-		return f.listMessagesOverride(sessionID, after)
-	}
 	if f.listMessagesOverride != nil {
 		return f.listMessagesOverride(sessionID, after)
 	}
@@ -172,7 +173,7 @@ func (f *fakeAPI) ListMessages(_ context.Context, sessionID, after string) (clie
 	}
 	items := make([]client.Message, 0, len(f.messages))
 	for _, message := range f.messages {
-		if after == "" || message.Seq > after {
+		if seqGreater(message.Seq, after) {
 			items = append(items, message)
 		}
 	}
@@ -217,7 +218,7 @@ func (f *fakeAPI) TimelineSnapshot(_ context.Context, runID string) (client.Chat
 
 // StreamChatOutput 逐帧回调预置帧后自然结束（连接结束语义）。
 func (f *fakeAPI) StreamChatOutput(_ context.Context, _ string, onOutput func(client.ChatOutput) error) error {
-	f.streamCalls++
+	f.streamCalls.Add(1)
 	if f.streamErr != nil {
 		return f.streamErr
 	}
@@ -343,6 +344,13 @@ func runCmd(t *testing.T, m Model, cmd tea.Cmd) Model {
 	}
 	msg := cmd()
 	if msg == nil {
+		return m
+	}
+	plain := msg
+	if scoped, ok := msg.(scopedMsg); ok {
+		plain = scoped.msg
+	}
+	if _, ok := plain.(cursor.BlinkMsg); ok {
 		return m
 	}
 	return step(t, m, msg)
@@ -618,12 +626,15 @@ func TestCreateSessionNoModelsHonestNotice(t *testing.T) {
 
 func TestSwitchModelSameModelSkipped(t *testing.T) {
 	api := &fakeAPI{}
-	sessions := []client.Session{{ID: "s1", Title: "会话", ModelProfileID: "p1", ModelRevision: 1}}
+	sessions := []client.Session{{ID: "s1", Title: "会话", ModelProfileID: "p2", ModelRevision: 2}}
 	model := bootReady(t, api, sessions, pickerModels())
 	model = step(t, model, key("m"))
 	if model.phase != phasePicker || model.picker.mode != pickerSwitch {
 		t.Fatalf("m 应进入切换模型向导：phase=%d", model.phase)
 	}
+	// 无档位模型：同模型不重切，直接回列表提示；声明档位的模型进入档位调整步
+	//（见 TestFixSameModelSelectionAdjustsLevelWithoutSwitching）。
+	model = step(t, model, keyDown)
 	model = step(t, model, keyEnter)
 	if model.phase != phaseSessions || !strings.Contains(model.notice, "已在使用该模型") {
 		t.Fatalf("同模型不重切：phase=%d notice=%q", model.phase, model.notice)
@@ -739,3 +750,17 @@ func TestErrTextJoinsHintAndRetryAfter(t *testing.T) {
 		t.Fatal("非 client 错误应回原文")
 	}
 }
+
+func (f *fakeAPI) ListRuns(context.Context, string, string, string) (client.Page[client.Run], error) {
+	return client.Page[client.Run]{}, nil
+}
+func (f *fakeAPI) ModelRequests(context.Context, string, string) (client.Page[client.ModelRequest], error) {
+	return client.Page[client.ModelRequest]{}, nil
+}
+func (f *fakeAPI) ListSessionTasksPage(ctx context.Context, id, cursor string) (client.Page[client.Task], error) {
+	return f.ListSessionTasks(ctx, id, 200)
+}
+func (f *fakeAPI) UploadImage(context.Context, string, []byte) (client.MessageAttachment, error) {
+	return client.MessageAttachment{}, nil
+}
+func (f *fakeAPI) AttachmentContent(context.Context, string) ([]byte, error) { return nil, nil }

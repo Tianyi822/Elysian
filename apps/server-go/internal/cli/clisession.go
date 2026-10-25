@@ -1,11 +1,17 @@
 package cli
 
 import (
+	"elysian/server/internal/cli/tui"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sync"
+	"syscall"
+	"time"
 )
 
 // ely 的本地持久化（CLI 方案 §3.3／§6.3）：会话 Cookie 与后端地址存执行用户
@@ -15,7 +21,9 @@ import (
 
 // cliStore 读写本地凭据与状态。
 type cliStore struct {
-	dir string
+	mu       sync.Mutex
+	baseline *StoredState
+	dir      string
 }
 
 // StoredSession 本地凭据：后端地址与会话 Cookie（被顶／过期／登出时清除）。
@@ -28,10 +36,12 @@ type StoredSession struct {
 // 草稿（服务端会话不保存思考档、权限模式与草稿；思考档与权限模式逐轮提交时消费，
 // 草稿在返回列表／退出 TUI 时回填）。
 type StoredState struct {
-	SelectedSessionID string            `json:"selectedSessionId,omitempty"`
-	ReasoningLevels   map[string]string `json:"reasoningLevels,omitempty"`
-	PermissionModes   map[string]string `json:"permissionModes,omitempty"`
-	Drafts            map[string]string `json:"drafts,omitempty"`
+	Version           int                         `json:"version,omitempty"`
+	Sessions          map[string]tui.LocalSession `json:"sessions,omitempty"`
+	SelectedSessionID string                      `json:"selectedSessionId,omitempty"`
+	ReasoningLevels   map[string]string           `json:"reasoningLevels,omitempty"`
+	PermissionModes   map[string]string           `json:"permissionModes,omitempty"`
+	Drafts            map[string]string           `json:"drafts,omitempty"`
 }
 
 // newCLIStore 按用户主目录构造存储（dir 为空时按 $HOME/.elysian/cli 解析）。
@@ -80,20 +90,142 @@ func (s *cliStore) ClearSession() error {
 
 // ReadState 读取本地状态；文件不存在返回零值。
 func (s *cliStore) ReadState() (StoredState, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, err := s.readState()
+	if err == nil {
+		copy := cloneCLIState(state)
+		s.baseline = &copy
+	}
+	return state, err
+}
+func (s *cliStore) readState() (StoredState, error) {
 	var state StoredState
 	raw, err := readLocalFile(s.statePath())
 	if err != nil || raw == nil {
 		return state, err
 	}
-	if err := json.Unmarshal(raw, &state); err != nil {
-		return StoredState{}, nil
+	if err = json.Unmarshal(raw, &state); err != nil {
+		return state, fmt.Errorf("状态文件损坏，已保留原文件：%w", err)
+	}
+	if state.Version > 2 {
+		return state, fmt.Errorf("本地状态版本高于此 CLI 支持的版本")
 	}
 	return state, nil
 }
+func cloneCLIState(s StoredState) StoredState {
+	b, _ := json.Marshal(s)
+	var copy StoredState
+	_ = json.Unmarshal(b, &copy)
+	return copy
+}
 
-// WriteState 原子保存状态。
+// WriteState 在文件锁内仅合并此进程改动的会话，冲突保持磁盘原状态。
 func (s *cliStore) WriteState(state StoredState) error {
-	return writeLocalFile(s.statePath(), state)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := os.MkdirAll(s.dir, 0700); err != nil {
+		return err
+	}
+	lock, err := os.OpenFile(filepath.Join(s.dir, "state.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if err != syscall.EWOULDBLOCK || time.Now().After(deadline) {
+			return fmt.Errorf("本地状态正由另一 CLI 保存，请重试：%w", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	current, err := s.readState()
+	if err != nil {
+		return err
+	}
+	before := StoredState{}
+	if s.baseline != nil {
+		before = *s.baseline
+	} else {
+		before = cloneCLIState(current)
+	}
+	if current.Sessions == nil {
+		current.Sessions = map[string]tui.LocalSession{}
+	}
+	if current.Drafts == nil {
+		current.Drafts = map[string]string{}
+	}
+	if current.ReasoningLevels == nil {
+		current.ReasoningLevels = map[string]string{}
+	}
+	if current.PermissionModes == nil {
+		current.PermissionModes = map[string]string{}
+	}
+	keys := map[string]bool{}
+	for _, v := range []StoredState{before, state} {
+		for k := range v.Sessions {
+			keys[k] = true
+		}
+		for k := range v.Drafts {
+			keys[k] = true
+		}
+		for k := range v.ReasoningLevels {
+			keys[k] = true
+		}
+		for k := range v.PermissionModes {
+			keys[k] = true
+		}
+	}
+	for id := range keys {
+		if reflect.DeepEqual(localStateValue(before, id), localStateValue(state, id)) {
+			continue
+		}
+		if current.Sessions[id].Revision != before.Sessions[id].Revision || !reflect.DeepEqual(localStateValue(current, id), localStateValue(before, id)) {
+			return fmt.Errorf("会话 %s 已被另一个 CLI 修改，请重新打开以回读状态；本次请求未派发", id)
+		}
+		if local, ok := state.Sessions[id]; ok {
+			local.Revision = current.Sessions[id].Revision + 1
+			current.Sessions[id] = local
+		} else {
+			delete(current.Sessions, id)
+		}
+		copyEntry(current.Drafts, state.Drafts, id)
+		copyEntry(current.ReasoningLevels, state.ReasoningLevels, id)
+		copyEntry(current.PermissionModes, state.PermissionModes, id)
+	}
+	current.Version = 2
+	current.SelectedSessionID = state.SelectedSessionID
+	if err = writeLocalFile(s.statePath(), current); err != nil {
+		return err
+	}
+	copy := cloneCLIState(state)
+	for id, local := range copy.Sessions {
+		local.Revision = current.Sessions[id].Revision
+		copy.Sessions[id] = local
+	}
+	s.baseline = &copy
+	return nil
+}
+func localStateValue(s StoredState, id string) any {
+	local, exists := s.Sessions[id]
+	local.Revision = 0
+	return struct {
+		Local              tui.LocalSession
+		Exists             bool
+		Draft, Level, Mode string
+	}{local, exists, s.Drafts[id], s.ReasoningLevels[id], s.PermissionModes[id]}
+}
+func copyEntry(dst, src map[string]string, id string) {
+	if value, ok := src[id]; ok {
+		dst[id] = value
+	} else {
+		delete(dst, id)
+	}
 }
 
 // readLocalFile 读取本地 JSON 文件；不存在返回 (nil, nil)。
@@ -138,5 +270,13 @@ func writeLocalFile(path string, payload any) error {
 	if err := temporary.Close(); err != nil {
 		return err
 	}
-	return os.Rename(temporary.Name(), path)
+	if err := os.Rename(temporary.Name(), path); err != nil {
+		return err
+	}
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
 }

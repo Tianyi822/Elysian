@@ -82,6 +82,7 @@ type Failure struct {
 
 // Run 运行公开形状的消费子集（状态、终态归因与失败详情）。
 type Run struct {
+	RequestID string   `json:"requestId,omitempty"`
 	ID        string   `json:"id"`
 	TaskID    string   `json:"taskId,omitempty"`
 	SessionID string   `json:"sessionId,omitempty"`

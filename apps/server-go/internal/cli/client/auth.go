@@ -31,7 +31,7 @@ func (c *Client) Login(ctx context.Context, username, password string) error {
 	if !ok {
 		return &Error{Kind: KindBadResponse, Message: "登录响应缺少会话 Cookie"}
 	}
-	c.cookie = cookie
+	c.SetSessionCookie(cookie)
 	return nil
 }
 
@@ -69,6 +69,6 @@ func (c *Client) Logout(ctx context.Context) error {
 	if _, err := c.do(ctx, "POST", "/api/auth/logout", nil, struct{}{}, &out, ""); err != nil {
 		return err
 	}
-	c.cookie = ""
+	c.SetSessionCookie("")
 	return nil
 }

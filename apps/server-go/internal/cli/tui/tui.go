@@ -1,7 +1,6 @@
 // Package tui 实现 ely 的 Agent 终端（CLI 方案 §6）：仅经 internal/cli/client
-// 消费面板既有 HTTP 接口，本地只持久化凭据与指针，不私建会话存储或权限状态。
-// 本阶段（第一步）覆盖连接与登录、会话列表／创建／切换／恢复、模型与思考等级
-// 选择及会话运行状态展示；聊天收发尚未接入，界面如实说明，不冒充能力。
+// 消费面板既有 HTTP 接口。本地持久化凭据、草稿与精确待确认请求；
+// 会话、运行、授权、图片和公开历史均以同一个服务端 Harness 为权威。
 package tui
 
 import (
@@ -14,12 +13,18 @@ import (
 
 	"elysian/server/internal/cli/client"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
 // API 是 TUI 消费的面板接口（*client.Client 为唯一生产实现；测试注入 fake）。
 type API interface {
+	ListRuns(context.Context, string, string, string) (client.Page[client.Run], error)
+	ModelRequests(context.Context, string, string) (client.Page[client.ModelRequest], error)
+	ListSessionTasksPage(context.Context, string, string) (client.Page[client.Task], error)
+	UploadImage(context.Context, string, []byte) (client.MessageAttachment, error)
+	AttachmentContent(context.Context, string) ([]byte, error)
 	BaseURL() string
 	SetSessionCookie(cookie string)
 	SessionCookie() string
@@ -63,8 +68,9 @@ type Deps struct {
 	SaveCreds  func(baseURL, cookie string) error
 	ClearCreds func() error
 	// LoadState／SaveState 本地指针（上次选中会话、每会话思考档／权限模式与输入草稿）。
-	LoadState func() StoredState
-	SaveState func(StoredState) error
+	LoadState        func() StoredState
+	LoadStateChecked func() (StoredState, error)
+	SaveState        func(StoredState) error
 }
 
 // phase 屏幕状态机：boot（探测判活）→ 登录或会话列表；列表进入新建向导／切换
@@ -89,14 +95,25 @@ type bootMsg struct {
 }
 
 // Model 是 Agent 终端的 bubbletea 模型；Update 为纯状态机，全部网络与文件 IO 经
-// tea.Cmd 异步执行。
+// tea.Cmd 异步执行；发送前的小型状态写入同步完成，保证先落盘后派发。
 type Model struct {
-	deps    Deps
-	phase   phase
-	api     API
-	baseURL string
-	width   int
-	height  int
+	stateReady   bool
+	locals       map[string]LocalSession
+	epoch        uint64
+	authEpoch    uint64
+	chatContext  context.Context
+	chatCancel   context.CancelFunc
+	bootRestore  bool
+	exitAll      bool
+	life         *lifetime
+	helpViewport viewport.Model
+	help         bool
+	deps         Deps
+	phase        phase
+	api          API
+	baseURL      string
+	width        int
+	height       int
 
 	connErr *client.Error
 
@@ -118,6 +135,8 @@ type Model struct {
 
 // StoredState 是 TUI 持久化状态的本地形状（凭据之外的用户态）。
 type StoredState struct {
+	Version         int                     `json:"version,omitempty"`
+	Sessions        map[string]LocalSession `json:"sessions,omitempty"`
 	Selected        string
 	Levels          map[string]string
 	PermissionModes map[string]string
@@ -126,7 +145,7 @@ type StoredState struct {
 
 // New 构造初始模型（boot 起步）。
 func New(deps Deps) Model {
-	return Model{deps: deps, phase: phaseBoot, levels: map[string]string{}, permModes: map[string]string{}, drafts: map[string]string{}, markdown: newMarkdownRenderer(78)}
+	return Model{life: newLifetime(), locals: map[string]LocalSession{}, deps: deps, phase: phaseBoot, levels: map[string]string{}, permModes: map[string]string{}, drafts: map[string]string{}, markdown: newMarkdownRenderer(78)}
 }
 
 // chatViewportHeight 消息区高度：总高减头部／断连行余量／输入区／帮助行。
@@ -134,20 +153,55 @@ func chatViewportHeight(height int) int {
 	return max(4, height-9)
 }
 
+// quit 退出整个 TUI 前的清理：聊天屏的草稿与未确认提交落本地信封、输出流与轮询
+// 收敛（含在途 HTTP 取消），随后同步落盘本地状态——SaveState 是本地小文件写，
+// 同步完成保证退出前落定；终端恢复由 Bubble Tea 程序退出自行处理。
+func (m Model) quit() (tea.Model, tea.Cmd) {
+	if m.phase == phaseSession {
+		m.leaveChat()
+		if m.stateReady && m.deps.SaveState != nil {
+			_ = m.deps.SaveState(m.storedState())
+		}
+	}
+	if m.life != nil {
+		m.life.cancel()
+	}
+	return m, tea.Quit
+}
+
 // Run 启动 Agent 终端程序；错误由菜单层提示。Ctrl+C／Esc 退出均为正常返回。
 func Run(stdin *os.File, stdout io.Writer, deps Deps) error {
-	program := tea.NewProgram(New(deps), tea.WithInput(stdin), tea.WithOutput(stdout))
-	_, err := program.Run()
+	initial := New(deps)
+	defer initial.life.cancel()
+	program := tea.NewProgram(initial, tea.WithInput(stdin), tea.WithOutput(stdout))
+	final, err := program.Run()
+	if m, ok := final.(Model); ok {
+		m.leaveChat()
+		if saveErr := func() error {
+			if m.stateReady {
+				return m.persist()
+			}
+			return nil
+		}(); saveErr != nil {
+			return fmt.Errorf("退出时保存失败：%w", saveErr)
+		}
+		if m.exitAll {
+			return ErrExitCLI
+		}
+	}
 	if errors.Is(err, tea.ErrInterrupted) || errors.Is(err, tea.ErrProgramKilled) {
-		return nil
+		return ErrExitCLI
 	}
 	return err
 }
 
 // bootCmd 探测面板＋读取本地凭据＋被动判活，一条命令完成避免中间态闪烁。
-func bootCmd(deps Deps) tea.Cmd {
+func bootCmd(deps Deps, contexts ...context.Context) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
+		if len(contexts) > 0 {
+			ctx = contexts[0]
+		}
 		baseURL, err := deps.Discover(ctx)
 		if err != nil {
 			return bootMsg{err: err}
@@ -174,26 +228,83 @@ func bootCmd(deps Deps) tea.Cmd {
 	}
 }
 
-func (m Model) Init() tea.Cmd { return bootCmd(m.deps) }
+func (m Model) Init() tea.Cmd { return bootCmd(m.deps, m.life.ctx) }
 
 // Update 消息总分发：WindowSize 先行，各屏按键与异步结果按 phase 路由。
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		if m.help {
+			m.sizeHelp()
+		}
 		m.markdown = newMarkdownRenderer(max(16, m.width-2))
 		if m.phase == phaseSession {
 			m.chat.viewport.Width = max(16, m.width-2)
 			m.chat.viewport.Height = chatViewportHeight(m.height)
 			m.chat.editor.SetWidth(max(16, m.width-4))
+			if h := m.chat.history; h != nil {
+				h.list.SetSize(max(20, m.width-2), max(6, m.height-8))
+				h.viewport.Width = max(20, m.width-2)
+				h.viewport.Height = max(6, m.height-8)
+			}
+			if p := m.chat.attachmentPanel; p != nil {
+				p.picker.Height = max(4, m.height-8)
+				p.path.Width = max(20, m.width-4)
+			}
 			m.applyRender()
+		}
+		return m, nil
+	case tea.BatchMsg:
+		return m, nil
+	case publicReloadMsg:
+		if m.phase != phaseSession || m.chat.sessionID != msg.sessionID {
+			return m, nil
+		}
+		if msg.err != nil {
+			if connErr := asClientErr(msg.err); connErr != nil && connErr.Kind == client.KindUnauthorized {
+				m.handleUnauthorized("会话已过期或已在别处登录，请重新登录")
+				return m, nil
+			}
+			m.chat.loadErr = errText(msg.err)
+			return m, nil
+		}
+		m.chat.messages = msg.messages
+		m.chat.lastSeq = msg.seq
+		return m, m.rebuildView()
+	case historyLoadedMsg:
+		return m.updateHistoryLoaded(msg)
+	case attachmentDoneMsg:
+		return m.updateAttachmentDone(msg)
+	case pendingResolvedMsg:
+		return m.updatePendingResolved(msg)
+	case stateSavedMsg:
+		if msg.err != nil {
+			m.notice = "保存本地状态失败：" + msg.err.Error()
+			m.noticeBad = true
 		}
 		return m, nil
 	case bootMsg:
 		return m.updateBoot(msg)
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
-			return m, tea.Quit
+			m.exitAll = true
+			return m.quit()
+		}
+		if m.help {
+			if msg.String() == "esc" || msg.String() == "f1" {
+				m.help = false
+				return m, nil
+			}
+			var cmd tea.Cmd
+			m.helpViewport, cmd = m.helpViewport.Update(msg)
+			return m, cmd
+		}
+		if msg.String() == "f1" {
+			m.help = true
+			m.helpViewport = viewport.New(max(20, m.width-2), max(4, m.height-5))
+			m.sizeHelp()
+			return m, nil
 		}
 		switch m.phase {
 		case phaseLogin:
@@ -209,9 +320,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "r":
 				m.phase = phaseBoot
 				m.connErr = nil
-				return m, bootCmd(m.deps)
+				return m, bootCmd(m.deps, m.life.ctx)
 			case "esc":
-				return m, tea.Quit
+				return m.quit()
 			}
 		}
 		return m, nil
@@ -268,7 +379,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case logoutDoneMsg:
 		return m.updateLogoutDone(msg)
 	}
-	return m, nil
+	return m.updateComponents(msg)
 }
 
 // updateBoot boot 结果分派：探测失败进连接错误屏；需登录进登录屏；就绪加载目录
@@ -284,7 +395,7 @@ func (m Model) updateBoot(msg bootMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	m.api = msg.api
+	m.api = withLifetime(msg.api, m.life.ctx)
 	m.baseURL = msg.baseURL
 	if msg.needLogin {
 		m.phase = phaseLogin
@@ -293,7 +404,23 @@ func (m Model) updateBoot(msg bootMsg) (tea.Model, tea.Cmd) {
 	}
 	m.phase = phaseSessions
 	m.list = newListState()
-	if state := m.deps.LoadState(); state.Selected != "" || len(state.Levels) > 0 || len(state.PermissionModes) > 0 || len(state.Drafts) > 0 {
+	state := StoredState{}
+	if m.deps.LoadStateChecked != nil {
+		var err error
+		state, err = m.deps.LoadStateChecked()
+		if err != nil {
+			m.phase = phaseConnError
+			m.connErr = &client.Error{Message: "本地状态读取失败：" + err.Error()}
+			return m, nil
+		}
+	} else if m.deps.LoadState != nil {
+		state = m.deps.LoadState()
+	}
+	m.stateReady = true
+	if state.Sessions != nil {
+		m.locals = state.Sessions
+	}
+	if state.Selected != "" || len(state.Levels) > 0 || len(state.PermissionModes) > 0 || len(state.Drafts) > 0 {
 		if state.Selected != "" {
 			m.selected = state.Selected
 		}
@@ -307,27 +434,40 @@ func (m Model) updateBoot(msg bootMsg) (tea.Model, tea.Cmd) {
 			m.drafts = state.Drafts
 		}
 	}
+	m.startChatContext()
 	m.chat = newChatState(m.selected)
+	m.bootRestore = m.selected != ""
+	m.applyChatFocus(m.selected)
 	cmds := []tea.Cmd{loadModelsCmd(m.api), loadSessionsCmd(m.api, "")}
 	if m.selected != "" {
-		cmds = append(cmds, loadChatCmd(m.api, m.selected))
+		cmds = append(cmds, loadChatCmd(m.chatAPI(), m.selected))
 	}
 	return m, tea.Batch(cmds...)
 }
 
 // handleUnauthorized 五态无权限态的统一收敛：停聊天订阅与轮询、清本地凭据、回登录屏。
 func (m *Model) handleUnauthorized(reason string) {
+	if m.chat.sessionID != "" {
+		m.captureLocal()
+		_ = m.persist()
+	}
+	m.epoch++
+	m.bootRestore = false
 	if m.sub != nil {
 		m.sub.close()
 		m.sub = nil
 	}
-	m.chat.polling = false
-	m.chat.sending = false
+	if m.chatCancel != nil {
+		m.chatCancel()
+	}
+	m.chat = newChatState("")
+	m.list = newListState()
 	_ = m.deps.ClearCreds()
 	if m.api != nil {
 		m.api.SetSessionCookie("")
 	}
 	m.phase = phaseLogin
+	m.help = false
 	m.login = newLoginState()
 	m.notice = reason
 	m.noticeBad = true
@@ -360,11 +500,15 @@ func errText(err error) string {
 // View 总分发：连接错误屏与提示行常驻，其余按 phase。
 func (m Model) View() string {
 	var b strings.Builder
-	b.WriteString(titleStyle.Render("Agent 终端"))
+	b.WriteString(titleStyle.Render("Agent 终端 · F1 帮助"))
 	if m.baseURL != "" {
-		b.WriteString(metaStyle.Render("　" + m.baseURL))
+		b.WriteString(metaStyle.Render("　" + safeText(m.baseURL)))
 	}
 	b.WriteString("\n")
+	if m.help {
+		b.WriteString(m.helpViewport.View() + "\n↑↓/PgUp/PgDn 滚动 · F1/Esc 关闭帮助 · Ctrl+C 退出\n")
+		return b.String()
+	}
 	if m.phase == phaseConnError {
 		b.WriteString("\n")
 		if m.connErr != nil {

@@ -3,168 +3,77 @@ package tui
 import (
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/mattn/go-runewidth"
+	"github.com/charmbracelet/x/ansi"
 )
 
-// 单行输入编辑器：登录（用户名／密码）与标题输入共用；密码以 • 遮蔽；渲染做显示
-// 宽度窗口（光标附近的可见区），中文与全角字符不破版。
+// 单行输入编辑器：登录（用户名／密码）、会话标题、重命名与向导自定义回答共用。
+// 输入管理（光标、删除、遮蔽、光标可见的水平窗口）收敛到 bubbles/textinput——
+// 需求红线「不自研通用输入组件」；本类型只保留仓库侧的最小接缝（取值／预填／
+// 按键透传／按焦点渲染）。密码以 • 遮蔽。
 
 type lineEditor struct {
-	runes  []rune
-	cursor int
-	secret bool
+	input textinput.Model
 }
 
-func newLineEditor(secret bool) *lineEditor { return &lineEditor{secret: secret} }
+func newLineEditor(secret bool) *lineEditor {
+	input := textinput.New()
+	input.Prompt = ""
+	input.Placeholder = ""
+	if secret {
+		input.EchoMode = textinput.EchoPassword
+		input.EchoCharacter = '•'
+	}
+	// 恒保持聚焦：textinput 失焦即丢键，而本类型的多编辑器场景（登录双字段）由
+	// 调用方路由按键，焦点只影响渲染形态。
+	input.Focus()
+	return &lineEditor{input: input}
+}
 
 // setRunes 预填内容并把光标放到末尾（重命名场景）。
 func (e *lineEditor) setRunes(text string) {
-	e.runes = []rune(text)
-	e.cursor = len(e.runes)
+	e.input.SetValue(safeText(text))
+	e.input.CursorEnd()
 }
 
-func (e *lineEditor) text() string { return string(e.runes) }
+func (e *lineEditor) text() string { return e.input.Value() }
 
-func (e *lineEditor) empty() bool { return len(e.runes) == 0 }
+func (e *lineEditor) empty() bool { return e.input.Value() == "" }
 
-func (e *lineEditor) insert(runes []rune) {
-	if len(runes) == 0 {
-		return
-	}
-	rest := append([]rune{}, e.runes[e.cursor:]...)
-	e.runes = append(append(e.runes[:e.cursor], runes...), rest...)
-	e.cursor += len(runes)
+// updateKey 把按键交给 textinput 消费（结构键 Enter／Esc 由调用方先行处理）。
+func (e *lineEditor) updateKey(msg tea.KeyMsg) tea.Cmd { return e.update(msg) }
+func (e *lineEditor) update(msg tea.Msg) tea.Cmd {
+	var cmd tea.Cmd
+	e.input, cmd = e.input.Update(msg)
+	return cmd
 }
 
-func (e *lineEditor) backspace() {
-	if e.cursor == 0 {
-		return
-	}
-	e.runes = append(e.runes[:e.cursor-1], e.runes[e.cursor:]...)
-	e.cursor--
-}
-
-func (e *lineEditor) del() {
-	if e.cursor >= len(e.runes) {
-		return
-	}
-	e.runes = append(e.runes[:e.cursor], e.runes[e.cursor+1:]...)
-}
-
-func (e *lineEditor) left() {
-	if e.cursor > 0 {
-		e.cursor--
-	}
-}
-
-func (e *lineEditor) right() {
-	if e.cursor < len(e.runes) {
-		e.cursor++
-	}
-}
-
-func (e *lineEditor) home() { e.cursor = 0 }
-func (e *lineEditor) end()  { e.cursor = len(e.runes) }
-
-// updateKey 消费一条按键；返回是否消费（未消费的键交上层处理，如 Enter／Esc）。
-func (e *lineEditor) updateKey(msg tea.KeyMsg) bool {
-	switch msg.Type {
-	case tea.KeyRunes:
-		e.insert(msg.Runes)
-		return true
-	case tea.KeySpace:
-		e.insert([]rune{' '})
-		return true
-	case tea.KeyBackspace:
-		e.backspace()
-		return true
-	case tea.KeyDelete:
-		e.del()
-		return true
-	case tea.KeyLeft:
-		e.left()
-		return true
-	case tea.KeyRight:
-		e.right()
-		return true
-	case tea.KeyHome:
-		e.home()
-		return true
-	case tea.KeyEnd:
-		e.end()
-		return true
-	case tea.KeyCtrlU:
-		e.runes = nil
-		e.cursor = 0
-		return true
-	}
-	return false
-}
-
-// render 按显示宽度渲染输入行：遮蔽（•）、光标反色、光标可见的水平窗口。
-func (e *lineEditor) render(width int) string {
+// render 按显示宽度渲染输入行：聚焦形态带光标（textinput View），失焦纯文本不显示
+// 光标；密码以 • 遮蔽；超宽时光标可见的水平窗口由 textinput 依据 Width 处理。
+// 渲染不改焦点状态——textinput 失焦即丢键，焦点切换只属于输入路由。
+func (e *lineEditor) render(width int, focused bool) string {
 	if width < 4 {
 		return ""
 	}
-	limit := width - 2
-	shown := make([]rune, len(e.runes))
-	for i, r := range e.runes {
-		if e.secret {
-			shown[i] = '•'
-		} else {
-			shown[i] = r
-		}
+	if focused {
+		e.input.Width = width - 2
+		return e.input.View()
 	}
-	// 窗口起点从行首逐步右移，直到「起点到光标」的显示宽度可容纳，保证光标可见。
-	start := 0
-	for start < e.cursor && runeSliceWidth(shown, start, e.cursor) > limit {
-		start++
+	value := e.text()
+	if e.input.EchoMode == textinput.EchoPassword {
+		value = strings.Repeat("•", len([]rune(value)))
 	}
-	visible := shown[start:]
-	cursorAt := e.cursor - start
-	var b strings.Builder
-	for i, r := range visible {
-		if i == cursorAt {
-			b.WriteString(cursorStyle.Render(string(r)))
-			continue
-		}
-		b.WriteString(string(r))
-	}
-	if cursorAt >= len(visible) {
-		b.WriteString(cursorStyle.Render(" "))
-	}
-	return b.String()
+	return truncateCells(value, width-2)
 }
-
-// runeSliceWidth 计算 runes[from:upto) 的显示宽度。
-func runeSliceWidth(runes []rune, from, upto int) int {
-	if from < 0 {
-		from = 0
-	}
-	if upto > len(runes) {
-		upto = len(runes)
-	}
-	width := 0
-	for _, r := range runes[from:upto] {
-		width += runewidth.RuneWidth(r)
-	}
-	return width
-}
-
-var cursorStyle = lipgloss.NewStyle().Reverse(true)
 
 // truncateCells 按显示宽度截断文本（列表行不破版），超出以 … 结尾。
 func truncateCells(text string, width int) string {
 	if width <= 0 {
 		return ""
 	}
-	if runewidth.StringWidth(text) <= width {
-		return text
-	}
-	return runewidth.Truncate(text, width, "…")
+	return ansi.Truncate(safeText(text), width, "…")
 }
 
 // displayWidth 文本显示宽度（CJK／emoji 按实际列宽计）。
-func displayWidth(text string) int { return runewidth.StringWidth(text) }
+func displayWidth(text string) int { return ansi.StringWidth(safeText(text)) }

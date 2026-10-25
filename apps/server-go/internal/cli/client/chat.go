@@ -28,16 +28,18 @@ type MessageRunConfig struct {
 
 // Message 公开历史消息（用户输入与助手最终答复；工具过程经 timeline 呈现）。
 type Message struct {
-	ID        string            `json:"id"`
-	SessionID string            `json:"sessionId"`
-	TaskID    string            `json:"taskId"`
-	RunID     string            `json:"runId"`
-	Seq       string            `json:"seq"`
-	Role      string            `json:"role"`
-	Content   string            `json:"content"`
-	CreatedAt string            `json:"createdAt"`
-	RunStatus string            `json:"runStatus,omitempty"`
-	RunConfig *MessageRunConfig `json:"runConfig,omitempty"`
+	Attachments       []MessageAttachment `json:"attachments,omitempty"`
+	ReplacesMessageID string              `json:"replacesMessageId,omitempty"`
+	ID                string              `json:"id"`
+	SessionID         string              `json:"sessionId"`
+	TaskID            string              `json:"taskId"`
+	RunID             string              `json:"runId"`
+	Seq               string              `json:"seq"`
+	Role              string              `json:"role"`
+	Content           string              `json:"content"`
+	CreatedAt         string              `json:"createdAt"`
+	RunStatus         string              `json:"runStatus,omitempty"`
+	RunConfig         *MessageRunConfig   `json:"runConfig,omitempty"`
 }
 
 // TimelineEntry 运行过程条目：kind ∈ reasoning／content／tool／user-input（等待
@@ -61,24 +63,56 @@ type TimelineEntry struct {
 
 // ChatContextUsage 最近一次确认推理的上下文用量（harness.ChatContextUsage 的消费
 // 子集）：容量 ContextTokens 来自 Run 固定模型快照，TotalTokens 未报告时为 nil
-// （不补零，与 Web ChatUsageIndicator 同语义）。
+// （不补零，与 Web ChatUsageIndicator 同语义）；EstimatedBreakdown 是六项互斥来源
+// 的分类占用（本地估算，装配期计算）。
 type ChatContextUsage struct {
-	ModelRequestID string `json:"modelRequestId"`
-	Model          string `json:"model"`
-	TotalTokens    *int   `json:"totalTokens,omitempty"`
-	ContextTokens  int    `json:"contextTokens"`
+	ModelRequestID     string                `json:"modelRequestId"`
+	Model              string                `json:"model"`
+	TotalTokens        *int                  `json:"totalTokens,omitempty"`
+	ContextTokens      int                   `json:"contextTokens"`
+	EstimatedBreakdown *ChatContextBreakdown `json:"estimatedBreakdown,omitempty"`
+}
+
+// ChatContextBreakdown 实际请求装配时的分类占用估算（消息／系统工具／其他／技能／
+// 系统提示词／MCP 工具），展示须标注本地估算。
+type ChatContextBreakdown struct {
+	Messages     int `json:"messages"`
+	SystemTools  int `json:"systemTools"`
+	Other        int `json:"other"`
+	Skills       int `json:"skills"`
+	SystemPrompt int `json:"systemPrompt"`
+	MCPTools     int `json:"mcpTools"`
+}
+
+// ChatRunUsage Run 累计用量（harness.Usage 的消费子集）：Tokens 为预算计账 token，
+// ActualTokens／CachedTokens 的 nil 表示未报告；Tokens 仅供预算计账，不展示为实际用量。
+type ChatRunUsage struct {
+	ModelRequests int  `json:"modelRequests,omitempty"`
+	Tokens        int  `json:"tokens,omitempty"`
+	ActualTokens  *int `json:"actualTokens,omitempty"`
+	CachedTokens  *int `json:"cachedTokens,omitempty"`
+}
+
+// ChatCacheHitUsage 平均缓存命中（全部已完成请求按输入 token 加权；InputTokens 为 0
+// 时无有效分母，不绘制比例）。
+type ChatCacheHitUsage struct {
+	InputTokens  int `json:"inputTokens"`
+	CachedTokens int `json:"cachedTokens"`
 }
 
 // ChatTimeline 运行过程快照（GET /runs/{id}/timeline 与 SSE 帧内嵌同形）；Plan 为
-// 模型确认的计划快照（折叠条展示），ContextUsage 驱动状态栏上下文用量文本。
+// 模型确认的计划快照（折叠条展示），ContextUsage／Usage／CacheHitUsage 驱动状态栏
+// 上下文用量文本与 Ctrl+O 执行详情的分节。
 type ChatTimeline struct {
-	RunID        string            `json:"runId"`
-	Status       string            `json:"status"`
-	Done         bool              `json:"done"`
-	Plan         *RunPlan          `json:"plan,omitempty"`
-	Error        *Failure          `json:"error,omitempty"`
-	ContextUsage *ChatContextUsage `json:"contextUsage,omitempty"`
-	Entries      []TimelineEntry   `json:"entries"`
+	RunID         string             `json:"runId"`
+	Status        string             `json:"status"`
+	Done          bool               `json:"done"`
+	Plan          *RunPlan           `json:"plan,omitempty"`
+	Error         *Failure           `json:"error,omitempty"`
+	ContextUsage  *ChatContextUsage  `json:"contextUsage,omitempty"`
+	Usage         *ChatRunUsage      `json:"usage,omitempty"`
+	CacheHitUsage *ChatCacheHitUsage `json:"cacheHitUsage,omitempty"`
+	Entries       []TimelineEntry    `json:"entries"`
 }
 
 // ChatOutput 输出流帧载荷：可替换的全量展示快照（reasoning 与 content 为累计全文），
@@ -96,12 +130,20 @@ type ChatOutput struct {
 // 即服务端默认：permissionMode 缺省 ask、authorizationMode 缺省不申请、
 // extensionMode 缺省不自动接入）。
 type AgentInput struct {
-	RequestID      string `json:"requestId"`
-	Content        string `json:"content"`
-	ReasoningLevel string `json:"reasoningLevel,omitempty"`
-	ExtensionMode  string `json:"extensionMode,omitempty"`
-	PermissionMode string `json:"permissionMode,omitempty"`
+	ReplaceMessageID  string          `json:"replaceMessageId,omitempty"`
+	Attachments       []AttachmentRef `json:"attachments,omitempty"`
+	RequestID         string          `json:"requestId"`
+	Content           string          `json:"content"`
+	ReasoningLevel    string          `json:"reasoningLevel,omitempty"`
+	ExtensionMode     string          `json:"extensionMode,omitempty"`
+	PermissionMode    string          `json:"permissionMode,omitempty"`
+	AuthorizationMode string          `json:"authorizationMode,omitempty"`
 }
+
+// AuthorizationOnDemand 运行时授权开关取值（与服务端 harness.AuthorizationOnDemand
+// 同值）：普通聊天提交后按需发现 Bash／技能脚本／文件能力并走统一运行时授权路径
+// （与 Web 每轮提交同口径）。
+const AuthorizationOnDemand = "on-demand"
 
 // 权限模式取值（服务端 harness.PermissionMode 的同集）：ask 为服务端缺省，
 // assist／full 由用户显式选择并随轮提交。

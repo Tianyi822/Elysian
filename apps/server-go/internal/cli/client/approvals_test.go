@@ -14,7 +14,7 @@ import (
 
 func TestListApprovalsByRun(t *testing.T) {
 	rec := newRecordingServer(map[string]http.HandlerFunc{
-		"/api/agent/approvals": respondJSON(200, `{"items":[{"id":"ap-1","runId":"r-1","operationId":"op-1","status":"pending","createdAt":"2026-10-25T09:00:00.000Z","expiresAt":"2026-10-26T09:00:00.000Z","kind":"operation","access":{"revision":3,"digest":"d","kind":"script","sessionAllowed":false,"directories":[{"path":"/srv","access":"rw"}]},"operation":{"id":"op-1","status":"waiting-approval","argumentsJson":"{\"a\":1}","capability":{"name":"file_write","source":"builtin","readOnly":false},"workspaceRevision":2}}]}`),
+		"/api/agent/approvals": respondJSON(200, `[{"id":"ap-1","runId":"r-1","operationId":"op-1","status":"pending","createdAt":"2026-10-25T09:00:00.000Z","expiresAt":"2026-10-26T09:00:00.000Z","kind":"operation","access":{"revision":3,"digest":"d","kind":"script","sessionAllowed":false,"directories":[{"path":"/srv","access":"rw"}]},"operation":{"id":"op-1","status":"waiting-approval","argumentsJson":"{\"a\":1}","capability":{"name":"file_write","source":"builtin","readOnly":false},"workspaceRevision":2}}]`),
 	})
 	defer rec.Close()
 	c := New(rec.URL())

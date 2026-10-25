@@ -71,7 +71,7 @@ func (m Model) updateLogin(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.login.field == loginFieldPassword {
 			active = m.login.password
 		}
-		active.updateKey(msg)
+		return m, active.updateKey(msg)
 	}
 	return m, nil
 }
@@ -88,11 +88,8 @@ func (m Model) updateLoginDone(msg loginDoneMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	_ = m.deps.SaveCreds(m.baseURL, m.api.SessionCookie())
-	m.phase = phaseSessions
-	m.list = newListState()
-	m.notice = ""
-	m.noticeBad = false
-	return m, tea.Batch(loadModelsCmd(m.api), loadSessionsCmd(m.api, ""))
+	m.login = newLoginState()
+	return m.updateBoot(bootMsg{baseURL: m.baseURL, api: m.api})
 }
 
 func (s loginState) view(m Model) string {
@@ -104,7 +101,7 @@ func (s loginState) view(m Model) string {
 		fieldWidth = 12
 	}
 	render := func(label string, editor *lineEditor, focused bool) string {
-		value := editor.render(fieldWidth)
+		value := editor.render(fieldWidth, focused)
 		if focused {
 			return selectSty.Render(label) + value
 		}

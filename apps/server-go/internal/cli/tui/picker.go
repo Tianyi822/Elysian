@@ -36,12 +36,13 @@ type pickerState struct {
 	models    []client.ModelProfile
 	sessionID string // 切换模式的目标会话
 
-	title  *lineEditor
-	cursor int
-	level  int  // stepLevel 光标（档位表索引）
-	chosen int  // stepModel 已选模型索引
-	busy   bool // 创建／切换在途
-	failed string
+	title     *lineEditor
+	cursor    int
+	level     int  // stepLevel 光标（档位表索引）
+	chosen    int  // stepModel 已选模型索引
+	levelOnly bool // 同模型调整思考档：不经 SwitchSessionModel，只更新本地每轮档位
+	busy      bool // 创建／切换在途
+	failed    string
 }
 
 func newPickerState(mode pickerMode, models []client.ModelProfile, sessionID string) pickerState {
@@ -129,8 +130,7 @@ func (m Model) updatePickerTitle(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.phase = phaseSessions
 		return m, nil
 	default:
-		m.picker.title.updateKey(msg)
-		return m, nil
+		return m, m.picker.title.updateKey(msg)
 	}
 }
 
@@ -155,15 +155,27 @@ func (m Model) updatePickerModel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !ok {
 			return m, nil
 		}
+		levels := profile.Capabilities.ReasoningLevels
 		if m.picker.mode == pickerSwitch && m.isCurrentSessionModelOf(profile) {
+			// 同模型不重切；但声明档位的模型借同一入口提供思考档调整（每轮
+			// reasoningLevel 随提交生效，无须动服务端模型绑定）。
+			if len(levels) > 0 {
+				m.picker.chosen = m.picker.cursor
+				m.picker.levelOnly = true
+				m.picker.failed = ""
+				m.picker.step = stepLevel
+				m.picker.level = defaultLevelIndex(levels, profile.Capabilities.DefaultReasoningLevel)
+				return m, nil
+			}
 			m.notice = "会话已在使用该模型"
 			m.noticeBad = false
 			m.phase = phaseSessions
 			return m, nil
 		}
+		m.picker.levelOnly = false
 		m.picker.chosen = m.picker.cursor
 		m.picker.failed = ""
-		if levels := profile.Capabilities.ReasoningLevels; len(levels) > 0 {
+		if len(levels) > 0 {
 			m.picker.step = stepLevel
 			m.picker.level = defaultLevelIndex(levels, profile.Capabilities.DefaultReasoningLevel)
 			return m, nil
@@ -193,9 +205,24 @@ func (m Model) updatePickerLevel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "enter":
 		if m.picker.level < len(levels) {
+			if m.picker.levelOnly {
+				// 同模型调整：档位每轮随提交生效，直接更新本地选择。
+				m.levels[m.picker.sessionID] = levels[m.picker.level]
+				m.picker.levelOnly = false
+				m.picker.busy = false
+				m.phase = phaseSessions
+				m.notice = "思考档位已调整"
+				m.noticeBad = false
+				return m, saveStateCmd(m)
+			}
 			return m.submit(levels[m.picker.level])
 		}
 	case "esc":
+		if m.picker.levelOnly {
+			m.picker.levelOnly = false
+			m.picker.step = stepModel
+			return m, nil
+		}
 		m.picker.step = stepModel
 		return m, nil
 	}
@@ -232,6 +259,9 @@ func (m Model) updateSessionCreated(msg sessionCreatedMsg) (tea.Model, tea.Cmd) 
 	}
 	if msg.level != "" {
 		m.levels[msg.session.ID] = msg.level
+	} else {
+		// 新模型未声明思考档位：清掉旧档选择，避免按已不存在的档位提交被拒。
+		delete(m.levels, msg.session.ID)
 	}
 	m.list.sessions = append([]client.Session{msg.session}, m.list.sessions...)
 	m.list.cursor = 0
@@ -262,6 +292,9 @@ func (m Model) updateModelSwitched(msg modelSwitchedMsg) (tea.Model, tea.Cmd) {
 	}
 	if msg.level != "" {
 		m.levels[msg.session.ID] = msg.level
+	} else {
+		// 新模型未声明思考档位：清掉旧档选择，避免按已不存在的档位提交被拒。
+		delete(m.levels, msg.session.ID)
 	}
 	m.phase = phaseSessions
 	m.notice = "模型已切换"
@@ -296,7 +329,7 @@ func (s *pickerState) view(m Model) string {
 	}
 	switch s.step {
 	case stepTitle:
-		b.WriteString("标题：" + s.title.render(max(16, m.width-8)))
+		b.WriteString("标题：" + s.title.render(max(16, m.width-8), true))
 		b.WriteString("\n")
 		if s.failed != "" {
 			b.WriteString(warnStyle.Render(truncateCells(s.failed, max(20, m.width-2))))

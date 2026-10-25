@@ -14,6 +14,7 @@ import (
 // productionTUIDeps 组装 Agent 终端生产依赖：后端发现复用菜单同款探测（panelStatus
 // 映射五态错误）；凭据与指针落 $HOME/.elysian/cli/。
 func productionTUIDeps(d deps) tui.Deps {
+	store, storeErr := newCLIStore("")
 	return tui.Deps{
 		Discover: func(ctx context.Context) (string, error) {
 			return discoverBackend(ctx, d)
@@ -43,23 +44,18 @@ func productionTUIDeps(d deps) tui.Deps {
 			}
 			return store.ClearSession()
 		},
-		LoadState: func() tui.StoredState {
-			store, err := newCLIStore("")
-			if err != nil {
-				return tui.StoredState{}
+		LoadStateChecked: func() (tui.StoredState, error) {
+			if storeErr != nil {
+				return tui.StoredState{}, storeErr
 			}
 			state, err := store.ReadState()
-			if err != nil {
-				return tui.StoredState{}
-			}
-			return tui.StoredState{Selected: state.SelectedSessionID, Levels: state.ReasoningLevels, PermissionModes: state.PermissionModes, Drafts: state.Drafts}
+			return tui.StoredState{Version: state.Version, Sessions: state.Sessions, Selected: state.SelectedSessionID, Levels: state.ReasoningLevels, PermissionModes: state.PermissionModes, Drafts: state.Drafts}, err
 		},
 		SaveState: func(state tui.StoredState) error {
-			store, err := newCLIStore("")
-			if err != nil {
-				return err
+			if storeErr != nil {
+				return storeErr
 			}
-			return store.WriteState(StoredState{SelectedSessionID: state.Selected, ReasoningLevels: state.Levels, PermissionModes: state.PermissionModes, Drafts: state.Drafts})
+			return store.WriteState(StoredState{Version: 2, Sessions: state.Sessions, SelectedSessionID: state.Selected, ReasoningLevels: state.Levels, PermissionModes: state.PermissionModes, Drafts: state.Drafts})
 		},
 	}
 }

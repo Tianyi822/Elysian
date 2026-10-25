@@ -151,12 +151,22 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.list.rename.setRunes(session.Title)
 		return m, nil
 	case "d":
+		if session, ok := m.list.current(); ok && m.locals[session.ID].Pending != nil {
+			m.notice = "该会话存在未确认提交，请先进入会话核对"
+			m.noticeBad = true
+			return m, nil
+		}
 		if _, ok := m.list.current(); !ok {
 			return m, nil
 		}
 		m.list.mode = listConfirmDelete
 		return m, nil
 	case "m":
+		if session, ok := m.list.current(); ok && m.locals[session.ID].Pending != nil {
+			m.notice = "提交未确认，不能切换模型"
+			m.noticeBad = true
+			return m, nil
+		}
 		session, ok := m.list.current()
 		if !ok {
 			return m, nil
@@ -196,8 +206,7 @@ func (m Model) updateRename(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.notice = ""
 		return m, renameCmd(m.api, session.ID, title)
 	default:
-		m.list.rename.updateKey(msg)
-		return m, nil
+		return m, m.list.rename.updateKey(msg)
 	}
 }
 
@@ -303,7 +312,14 @@ func (m Model) updateDeleteDone(msg deleteDoneMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	m.list.sessions = kept
-	var cmd tea.Cmd
+	delete(m.locals, msg.id)
+	delete(m.drafts, msg.id)
+	delete(m.levels, msg.id)
+	delete(m.permModes, msg.id)
+	if m.chat.sessionID == msg.id {
+		m.chat = chatState{}
+	}
+	var cmd tea.Cmd = saveStateCmd(m)
 	if m.selected == msg.id {
 		m.selected = ""
 		cmd = saveStateCmd(m)
@@ -334,6 +350,10 @@ func (m Model) updateLogoutDone(msg logoutDoneMsg) (tea.Model, tea.Cmd) {
 		m.sub.close()
 		m.sub = nil
 	}
+	if m.chatCancel != nil {
+		m.chatCancel()
+	}
+	m.bootRestore = false
 	m.phase = phaseLogin
 	m.login = newLoginState()
 	m.list = newListState()
@@ -341,14 +361,20 @@ func (m Model) updateLogoutDone(msg logoutDoneMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// storedState 收集需要持久化的本地状态：指针、思考档、权限模式与草稿（含未确认提交
+// 信封）。
+func (m Model) storedState() StoredState {
+	m.captureLocal()
+	return cloneState(StoredState{Version: 2, Sessions: m.locals, Selected: m.selected, Levels: m.levels, PermissionModes: m.permModes, Drafts: m.drafts})
+}
+
 // saveStateCmd 持久化本地指针、思考档、权限模式与草稿。
 func saveStateCmd(m Model) tea.Cmd {
-	state := StoredState{Selected: m.selected, Levels: m.levels, PermissionModes: m.permModes, Drafts: m.drafts}
-	save := m.deps.SaveState
-	return func() tea.Msg {
-		_ = save(state)
+	err := m.persist()
+	if err == nil {
 		return nil
 	}
+	return func() tea.Msg { return stateSavedMsg{err: err} }
 }
 
 // modelsLoadedMsg 模型目录回填。
@@ -420,7 +446,7 @@ func (s *listState) view(m Model) string {
 	}
 	if s.mode == listRenaming && s.rename != nil {
 		b.WriteString("\n")
-		b.WriteString("新标题：" + s.rename.render(max(16, m.width-12)))
+		b.WriteString("新标题：" + s.rename.render(max(16, m.width-12), true))
 		b.WriteString("\n")
 		b.WriteString(hintStyle.Render("Enter 保存 · Esc 取消"))
 		b.WriteString("\n")
@@ -459,14 +485,11 @@ func modelName(m Model, session client.Session) string {
 	return fmt.Sprintf("%s@%d", session.ModelProfileID, session.ModelRevision)
 }
 
-// formatActivity 活动时间的本地简报（解析失败回原文前 19 字符）。
+// formatActivity 活动时间的本地简报（解析失败净化后按显示宽度截断）。
 func formatActivity(iso string) string {
 	parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSuffix(iso, "Z")+"Z")
 	if err != nil {
-		if len(iso) > 19 {
-			return iso[:19]
-		}
-		return iso
+		return truncateCells(iso, 19)
 	}
 	return parsed.Local().Format("01-02 15:04")
 }

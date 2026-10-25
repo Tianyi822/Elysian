@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -24,6 +25,7 @@ const (
 // 统一携带 Origin: <baseURL>（与 Host 逐字一致，通过同源守卫，CLI 方案 §3.2）；
 // 会话 Cookie 只保存在内存，持久化由调用方（cli/clisession.go）负责。
 type Client struct {
+	mu      sync.RWMutex
 	baseURL string
 	cookie  string
 	http    *http.Client
@@ -41,10 +43,10 @@ func New(baseURL string) *Client {
 func (c *Client) BaseURL() string { return c.baseURL }
 
 // SetSessionCookie 设置 elysian_session Cookie 值。
-func (c *Client) SetSessionCookie(cookie string) { c.cookie = cookie }
+func (c *Client) SetSessionCookie(cookie string) { c.mu.Lock(); defer c.mu.Unlock(); c.cookie = cookie }
 
 // SessionCookie 返回当前 Cookie 值（空串表示未登录）。
-func (c *Client) SessionCookie() string { return c.cookie }
+func (c *Client) SessionCookie() string { c.mu.RLock(); defer c.mu.RUnlock(); return c.cookie }
 
 // errClient 参数与状态错误（未发起网络请求前失败）。
 func errClient(kind Kind, message string) *Error {
@@ -60,7 +62,9 @@ func (c *Client) do(ctx context.Context, method, path string, query map[string]s
 	if len(query) > 0 {
 		values := url.Values{}
 		for key, value := range query {
-			values.Set(key, value)
+			if value != "" {
+				values.Set(key, value)
+			}
 		}
 		endpoint += "?" + values.Encode()
 	}
@@ -81,8 +85,8 @@ func (c *Client) do(ctx context.Context, method, path string, query map[string]s
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if c.cookie != "" {
-		req.Header.Set("Cookie", "elysian_session="+c.cookie)
+	if cookie := c.SessionCookie(); cookie != "" {
+		req.Header.Set("Cookie", "elysian_session="+cookie)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {

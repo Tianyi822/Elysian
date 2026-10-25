@@ -216,11 +216,9 @@ type Call struct {
 // ListApprovalsByRun 拉取运行的全部审批（pending/approved 优先；调用方过滤
 // workflow-gate 与终态）。
 func (c *Client) ListApprovalsByRun(ctx context.Context, runID string) ([]Approval, error) {
-	var out struct {
-		Items []Approval `json:"items"`
-	}
+	var out []Approval
 	_, err := c.do(ctx, "GET", "/api/agent/approvals", map[string]string{"runId": runID}, nil, &out, "")
-	return out.Items, err
+	return out, err
 }
 
 // DecideApproval 普通审批决定（approved 重新排队恢复执行／denied 终态失败）。

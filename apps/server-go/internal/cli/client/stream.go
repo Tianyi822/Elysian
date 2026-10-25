@@ -40,8 +40,8 @@ func (c *Client) StreamChatOutput(ctx context.Context, runID string, onOutput fu
 	}
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Origin", c.baseURL)
-	if c.cookie != "" {
-		req.Header.Set("Cookie", "elysian_session="+c.cookie)
+	if cookie := c.SessionCookie(); cookie != "" {
+		req.Header.Set("Cookie", "elysian_session="+cookie)
 	}
 	resp, err := (&http.Client{}).Do(req)
 	if err != nil {

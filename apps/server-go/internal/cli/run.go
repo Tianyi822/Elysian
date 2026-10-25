@@ -114,6 +114,9 @@ func runMenu(info Info, stdin *os.File, stdout, stderr io.Writer, d deps) int {
 			fmt.Fprintln(stdout)
 		case menuActionAgent:
 			if err := tui.Run(stdin, stdout, d.agentDeps()); err != nil {
+				if errors.Is(err, tui.ErrExitCLI) {
+					return 0
+				}
 				fmt.Fprintf(stderr, "Agent 终端运行失败：%v\n", err)
 				return 1
 			}

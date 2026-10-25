@@ -8,6 +8,7 @@ import (
 	"elysian/server/internal/cli/client"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // 第三步渲染：审批面板、等待输入向导、工具详情、计划折叠条、顶部状态栏与底部
@@ -66,9 +67,9 @@ func (s *chatState) renderWizard(b *strings.Builder, m Model) {
 	b.WriteString(truncateCells(question.Question, width))
 	b.WriteString("\n")
 	if wizard.textMode {
-		b.WriteString(metaStyle.Render("自定义回答：") + wizard.textEditor.render(max(16, width-8)))
+		b.WriteString(metaStyle.Render("自定义回答：") + wizard.textEditor.render(max(16, width-8), true))
 		b.WriteString("\n")
-		b.WriteString(hintStyle.Render("Enter 提交本题 · Esc 返回选项 · ←→ 换题 · Ctrl+C 退出"))
+		b.WriteString(hintStyle.Render("Enter 提交本题 · Esc／Ctrl+t 返回选项 · ←→ 换题 · Ctrl+C 退出"))
 		b.WriteString("\n")
 		return
 	}
@@ -87,7 +88,7 @@ func (s *chatState) renderWizard(b *strings.Builder, m Model) {
 		}
 		b.WriteString("\n")
 	}
-	b.WriteString(hintStyle.Render("Enter 选择 · t 自定义回答 · ←→ 换题 · Esc 取消（停止本轮）"))
+	b.WriteString(hintStyle.Render("Enter 选择 · t 自定义回答 · ←→ 换题 · Esc 返回 · Ctrl+S 停止本轮"))
 	b.WriteString("\n")
 	if wizard.err != "" {
 		b.WriteString(warnStyle.Render(truncateCells(wizard.err, width)))
@@ -209,7 +210,7 @@ func renderApprovalDetail(b *strings.Builder, approval client.Approval, width in
 				if side.content.Bytes != nil {
 					size = fmt.Sprintf("%d B · ", *side.content.Bytes)
 				}
-				b.WriteString("  " + metaStyle.Render(side.label+"："+size+side.content.Digest[:min(16, len(side.content.Digest))]+"…"))
+				b.WriteString("  " + metaStyle.Render(side.label+"："+size+safeText(side.content.Digest[:min(16, len(side.content.Digest))])+"…"))
 			}
 			b.WriteString("\n")
 		}
@@ -223,7 +224,7 @@ func renderApprovalDetail(b *strings.Builder, approval client.Approval, width in
 		b.WriteString("\n")
 	}
 	if operation.Execution != nil {
-		b.WriteString(metaStyle.Render("镜像 " + operation.Execution.Profile.Image))
+		b.WriteString(metaStyle.Render("镜像 " + safeText(operation.Execution.Profile.Image)))
 		b.WriteString("\n")
 		if operation.Execution.Grant != nil {
 			for _, directory := range operation.Execution.Grant.Directories {
@@ -252,7 +253,7 @@ func renderAccessScope(b *strings.Builder, access client.AccessReq, width int) {
 		b.WriteString("\n")
 	}
 	if access.Runtime != nil {
-		b.WriteString(metaStyle.Render("运行环境 " + access.Runtime.Image))
+		b.WriteString(metaStyle.Render("运行环境 " + safeText(access.Runtime.Image)))
 		b.WriteString("\n")
 	}
 	for _, directory := range access.Directories {
@@ -315,7 +316,7 @@ func approvalStatusLabel(approval client.Approval) string {
 	case "revoked":
 		return warnStyle.Render("已撤销")
 	}
-	return metaStyle.Render(approval.Status)
+	return metaStyle.Render(safeText(approval.Status))
 }
 
 // dangerousOperation 危险判定（与 Web ChatApprovals 同口径：非只读 builtin，或
@@ -348,12 +349,20 @@ func approvalHint(approval client.Approval) string {
 	return "y 批准 · n 拒绝 · x 取消本轮 · Enter/d 详情 · Esc 返回"
 }
 
-// renderToolDetail 工具过程详情覆盖层。
+// renderToolDetail 工具过程详情覆盖层（含上下文用量分类明细，Web 环形浮层的终端
+// 等价形态）。
 func (s *chatState) renderToolDetail(b *strings.Builder, m Model) {
 	detail := s.tools
+	if detail.err != "" {
+		b.WriteString(wrapPlain(detail.err, max(16, m.width-2)) + "\n")
+	}
 	width := max(16, m.width-2)
 	b.WriteString(titleStyle.Render("工具调用过程"))
 	b.WriteString("\n\n")
+	if usage := renderContextUsageDetail(s, m, width); usage != "" {
+		b.WriteString(usage)
+		b.WriteString("\n")
+	}
 	if len(detail.entries) == 0 {
 		b.WriteString(metaStyle.Render("本轮没有工具调用。"))
 		b.WriteString("\n")
@@ -422,6 +431,7 @@ func chatStatusBar(m Model) string {
 		if text == "" {
 			return
 		}
+		text = safeText(text)
 		tailPlain = append(tailPlain, text)
 		tailStyled = append(tailStyled, style.Render(text))
 		tailWidth += displayWidth(text)
@@ -438,10 +448,10 @@ func chatStatusBar(m Model) string {
 	}
 	pushTail(contextUsageLabel(chat.timeline), metaStyle)
 
-	title := sessionTitle(chat)
+	title := safeText(sessionTitle(chat))
 	model := ""
 	if line := modelLine(chatSessionOf(m), m); line != "" && chat.session != nil {
-		model = line
+		model = safeText(line)
 	}
 	// 分隔符 " · " 占 3 列：先按「标题＋尾部段」齐全计（N 段尾部配 N 个分隔符），
 	// 模型保留时再补其自身与一个分隔符的宽度。
@@ -473,7 +483,7 @@ func chatStatusBar(m Model) string {
 		parts = append(parts, metaStyle.Render(model))
 	}
 	parts = append(parts, tailStyled...)
-	return truncateCells(strings.Join(parts, " · "), width)
+	return ansi.Truncate(strings.Join(parts, " · "), width, "…")
 }
 
 // pendingApprovalCount 仍处待决定状态的审批数（徽标数据）。
@@ -488,22 +498,106 @@ func pendingApprovalCount(approvals []client.Approval) int {
 }
 
 // contextUsageLabel 上下文用量文本（Web ChatUsageIndicator 环形浮层的终端替代形态，
-// 方案 §6.2／§6.3 v1 裁剪）：total 未报告时如实标注不补零，容量已知且大于 0 才计
-// 占比（与 Web contextValue 同口径）；无 timeline 或无确认推理时不显示。
+// 终端展示）：total 未报告时如实标注不补零，容量已知且大于 0 才计
+// 占比（与 Web contextValue 同口径）；Run 累计与平均缓存命中随可用追加（缺失不补
+// 零、无有效分母不计比例）；无 timeline 时不显示。完整分类明细在
+// Ctrl+O 执行详情覆盖层。
 func contextUsageLabel(timeline *client.ChatTimeline) string {
-	if timeline == nil || timeline.ContextUsage == nil {
+	if timeline == nil {
 		return ""
 	}
 	usage := timeline.ContextUsage
-	total := "未报告"
-	if usage.TotalTokens != nil {
-		total = formatTokenCount(*usage.TotalTokens)
+	label := ""
+	if usage != nil {
+		total := "未报告"
+		if usage.TotalTokens != nil {
+			total = formatTokenCount(*usage.TotalTokens)
+		}
+		label = "上下文 " + total + "/" + formatTokenCount(usage.ContextTokens)
+		if usage.TotalTokens != nil && usage.ContextTokens > 0 {
+			label += fmt.Sprintf("（%.1f%%）", float64(*usage.TotalTokens)/float64(usage.ContextTokens)*100)
+		}
 	}
-	label := "上下文 " + total + "/" + formatTokenCount(usage.ContextTokens)
-	if usage.TotalTokens != nil && usage.ContextTokens > 0 {
-		label += fmt.Sprintf("（%.1f%%）", float64(*usage.TotalTokens)/float64(usage.ContextTokens)*100)
+	if timeline.Usage != nil && timeline.Usage.ActualTokens != nil {
+		label += " · 累计 " + formatTokenCount(*timeline.Usage.ActualTokens)
 	}
-	return label
+	if timeline.Usage != nil && timeline.Usage.CachedTokens != nil {
+		label += " · 缓存 token " + formatTokenCount(*timeline.Usage.CachedTokens)
+	}
+	if hit := timeline.CacheHitUsage; hit != nil && hit.InputTokens > 0 {
+		label += fmt.Sprintf(" · 缓存 %s/%s（%.0f%%）", formatTokenCount(hit.CachedTokens), formatTokenCount(hit.InputTokens), float64(hit.CachedTokens)/float64(hit.InputTokens)*100)
+	}
+	return strings.TrimPrefix(label, " · ")
+}
+
+// renderContextUsageDetail 上下文用量分类明细（Ctrl+O 覆盖层首节）：最近一次确认
+// 推理的模型、单次用量与容量占比、Run 累计、平均缓存命中，以及六项互斥来源的分类
+// 占比（装配期本地估算，明确标注）；各段只在数据存在时出现，缺失不补零。
+func renderContextUsageDetail(s *chatState, m Model, width int) string {
+	timeline := s.timeline
+	if timeline == nil {
+		return ""
+	}
+	usage := timeline.ContextUsage
+	var b strings.Builder
+	b.WriteString(metaStyle.Render("上下文用量"))
+	b.WriteString("\n")
+	if usage != nil {
+		first := truncateCells("模型 "+usage.Model, width)
+		b.WriteString(first)
+		b.WriteString("\n")
+		total := "未报告"
+		if usage.TotalTokens != nil {
+			total = formatTokenCount(*usage.TotalTokens)
+		}
+		line := "单次推理 " + total + "/" + formatTokenCount(usage.ContextTokens)
+		if usage.TotalTokens != nil && usage.ContextTokens > 0 {
+			line += fmt.Sprintf("（%.1f%%）", float64(*usage.TotalTokens)/float64(usage.ContextTokens)*100)
+		}
+		b.WriteString(truncateCells(line, width))
+		b.WriteString("\n")
+	} else {
+		b.WriteString("单次推理用量未报告\n")
+	}
+	if timeline.Usage != nil && timeline.Usage.ActualTokens != nil {
+		b.WriteString(truncateCells("本轮累计 "+formatTokenCount(*timeline.Usage.ActualTokens)+" token", width))
+		b.WriteString("\n")
+	}
+	if timeline.Usage != nil && timeline.Usage.CachedTokens != nil {
+		b.WriteString("缓存 token " + formatTokenCount(*timeline.Usage.CachedTokens) + "\n")
+	}
+	if hit := timeline.CacheHitUsage; hit != nil && hit.InputTokens > 0 {
+		b.WriteString(truncateCells(fmt.Sprintf("平均缓存命中 %s/%s（%.0f%%）", formatTokenCount(hit.CachedTokens), formatTokenCount(hit.InputTokens), float64(hit.CachedTokens)/float64(hit.InputTokens)*100), width))
+		b.WriteString("\n")
+	}
+	if usage != nil && usage.EstimatedBreakdown != nil {
+		breakdown := usage.EstimatedBreakdown
+		b.WriteString(metaStyle.Render("分类占用（本地估算）"))
+		b.WriteString("\n")
+		segments := []struct {
+			label string
+			value int
+		}{
+			{"消息", breakdown.Messages},
+			{"系统工具", breakdown.SystemTools},
+			{"其他", breakdown.Other},
+			{"技能", breakdown.Skills},
+			{"系统提示词", breakdown.SystemPrompt},
+			{"MCP 工具", breakdown.MCPTools},
+		}
+		sum := 0
+		for _, segment := range segments {
+			sum += segment.value
+		}
+		for _, segment := range segments {
+			if segment.value <= 0 {
+				continue
+			}
+			b.WriteString(truncateCells(fmt.Sprintf("· %s %s（%.1f%%）", segment.label, formatTokenCount(segment.value), float64(segment.value)/float64(sum)*100), width))
+			b.WriteString("\n")
+		}
+	}
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
 // formatTokenCount 千分位计数（与 Web 侧 en-US 数字格式一致）。
@@ -535,7 +629,7 @@ func chatShortcutBar(m Model) string {
 	chat := &m.chat
 	switch {
 	case chat.wizard != nil:
-		return hintStyle.Render("Enter 选择 · t 自定义 · ←→ 换题 · Esc 取消（停止本轮） · Ctrl+C 退出")
+		return hintStyle.Render("Enter 选择 · t 自定义 · ←→ 换题 · Esc 返回 · Ctrl+S 停止本轮 · Ctrl+C 退出")
 	case chat.runStatus == "waiting-approval" || chat.runStatus == "preparing-runtime":
 		return hintStyle.Render("Ctrl+A 审批面板 · Ctrl+S 停止 · PgUp/PgDn 滚动 · Esc 返回 · Ctrl+C 退出")
 	case activeRun(chat.runStatus):

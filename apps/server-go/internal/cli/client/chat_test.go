@@ -333,6 +333,29 @@ func TestAgentInputMarshalsPermissionMode(t *testing.T) {
 	}
 }
 
+// TestAgentInputMarshalsAuthorizationMode 运行时授权开关随轮提交（与 Web 同口径
+// on-demand）：按服务端字段名序列化，未设置时缺省不携带（服务端按不申请处理，
+// 参与 requestId 幂等校验的字段集必须精确）。
+func TestAgentInputMarshalsAuthorizationMode(t *testing.T) {
+	data, err := json.Marshal(AgentInput{RequestID: "req-1", Content: "问", AuthorizationMode: AuthorizationOnDemand})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"authorizationMode":"on-demand"`) {
+		t.Fatalf("on-demand 应按服务端字段名携带 authorizationMode：%s", data)
+	}
+	if AuthorizationOnDemand != "on-demand" {
+		t.Fatalf("取值应与服务端 harness.AuthorizationOnDemand 同值：%q", AuthorizationOnDemand)
+	}
+	data, err = json.Marshal(AgentInput{RequestID: "req-1", Content: "问"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "authorizationMode") {
+		t.Fatalf("未设置时不应携带 authorizationMode（服务端缺省不申请）：%s", data)
+	}
+}
+
 // TestTimelineSnapshotParsesContextUsage timeline.contextUsage 契约：已报告与
 // 未报告（totalTokens 缺失不补零）两种形状；容量与模型请求 ID 一并钉死。
 func TestTimelineSnapshotParsesContextUsage(t *testing.T) {

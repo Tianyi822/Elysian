@@ -82,8 +82,8 @@ func TestCLIStateRoundTripAndCorruptTolerance(t *testing.T) {
 	if err := os.WriteFile(store.statePath(), []byte("{not-json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := store.ReadState(); err != nil || got.SelectedSessionID != "" {
-		t.Fatalf("损坏状态应回落零值：%+v %v", got, err)
+	if got, err := store.ReadState(); err == nil || got.SelectedSessionID != "" {
+		t.Fatalf("损坏状态必须明确报错：%+v %v", got, err)
 	}
 	// 损坏凭据同样回落零值（进入登录流程）。
 	if err := os.WriteFile(store.sessionPath(), []byte("{not-json"), 0o600); err != nil {
@@ -91,5 +91,38 @@ func TestCLIStateRoundTripAndCorruptTolerance(t *testing.T) {
 	}
 	if stored, err := store.ReadSession(); err != nil || stored.Cookie != "" {
 		t.Fatalf("损坏凭据应回落零值：%+v %v", stored, err)
+	}
+}
+
+func TestStateMergesIndependentSessionsAndRejectsConflicts(t *testing.T) {
+	dir := t.TempDir()
+	a, _ := newCLIStore(dir)
+	b, _ := newCLIStore(dir)
+	sa, _ := a.ReadState()
+	sb, _ := b.ReadState()
+	sa.Drafts = map[string]string{"a": "第一会话"}
+	sb.Drafts = map[string]string{"b": "第二会话"}
+	if err := a.WriteState(sa); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.WriteState(sb); err != nil {
+		t.Fatal(err)
+	}
+	both, err := a.ReadState()
+	if err != nil || both.Drafts["a"] != "第一会话" || both.Drafts["b"] != "第二会话" {
+		t.Fatalf("合并失败：%+v %v", both, err)
+	}
+	other, _ := b.ReadState()
+	both.Drafts["a"] = "新版本"
+	other.Drafts["a"] = "冲突版本"
+	if err = a.WriteState(both); err != nil {
+		t.Fatal(err)
+	}
+	if err = b.WriteState(other); err == nil {
+		t.Fatal("同会话覆盖必须拒绝")
+	}
+	final, _ := a.ReadState()
+	if final.Drafts["a"] != "新版本" {
+		t.Fatal("冲突改写磁盘")
 	}
 }

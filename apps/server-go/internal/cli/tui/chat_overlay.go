@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"strings"
 	"time"
 
@@ -23,8 +22,9 @@ const approvalPollInterval = 2 * time.Second
 
 // —— 异步消息 ——
 
-// approvalsMsg 审批轮询回填。
+// approvalsMsg 审批轮询回填（runID 绑定发起轮询的运行，迟到即丢弃）。
 type approvalsMsg struct {
+	runID string
 	items []client.Approval
 	err   error
 }
@@ -37,8 +37,9 @@ type approvalDecisionMsg struct {
 
 // authorizationsMsg 会话授权列表回填。
 type authorizationsMsg struct {
-	items []client.SessionAuthorization
-	err   error
+	sessionID string
+	items     []client.SessionAuthorization
+	err       error
 }
 
 // revokeAuthMsg 撤回授权回填。
@@ -60,20 +61,22 @@ type callsMsg struct {
 	err   error
 }
 
-// approvalsPollCmd 待审批轮询（延时后拉取）。
+// approvalsPollCmd 待审批轮询（延时后拉取）；回填绑定运行，迟到回填由 Update 丢弃。
 func approvalsPollCmd(api API, runID string, delay time.Duration) tea.Cmd {
 	return func() tea.Msg {
-		time.Sleep(delay)
-		items, err := api.ListApprovalsByRun(context.Background(), runID)
-		return approvalsMsg{items: items, err: err}
+		if !waitContext(apiContext(api), delay) {
+			return nil
+		}
+		items, err := api.ListApprovalsByRun(apiContext(api), runID)
+		return approvalsMsg{runID: runID, items: items, err: err}
 	}
 }
 
 // loadAuthorizationsCmd 会话授权列表。
 func loadAuthorizationsCmd(api API, sessionID string) tea.Cmd {
 	return func() tea.Msg {
-		items, err := api.ListSessionAuthorizations(context.Background(), sessionID)
-		return authorizationsMsg{items: items, err: err}
+		items, err := api.ListSessionAuthorizations(apiContext(api), sessionID)
+		return authorizationsMsg{sessionID: sessionID, items: items, err: err}
 	}
 }
 
@@ -131,7 +134,7 @@ func (m Model) updateApprovalPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		panel.tab = 1 - panel.tab
 		panel.detail = false
 		if panel.tab == 1 && panel.auths == nil {
-			return m, loadAuthorizationsCmd(m.api, m.chat.sessionID)
+			return m, loadAuthorizationsCmd(m.chatAPI(), m.chat.sessionID)
 		}
 		return m, nil
 	case "up", "k":
@@ -179,15 +182,15 @@ func (m Model) decideApprovalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		}
 		panel.busy = true
 		panel.err = ""
-		api, id := m.api, approval.ID
+		api, id := m.chatAPI(), approval.ID
 		return m, func() tea.Msg {
-			result, err := api.DecideApproval(context.Background(), id, decision)
+			result, err := api.DecideApproval(apiContext(api), id, decision)
 			return approvalDecisionMsg{approval: result, err: err}
 		}, true
 	case "x":
 		// 取消本轮＝停止运行。
 		panel.busy = true
-		return m, cancelRunCmd(m.api, m.chat.runID), true
+		return m, cancelRunCmd(m.chatAPI(), m.chat.runID), true
 	case "1", "2", "3":
 		if approval.Access == nil || approval.Status != "pending" {
 			return m, nil, true
@@ -206,9 +209,9 @@ func (m Model) decideApprovalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		panel.pendingAccess[approval.ID] = input
 		panel.busy = true
 		panel.err = ""
-		api, id := m.api, approval.ID
+		api, id := m.chatAPI(), approval.ID
 		return m, func() tea.Msg {
-			result, err := api.DecideAccess(context.Background(), id, input)
+			result, err := api.DecideAccess(apiContext(api), id, input)
 			return approvalDecisionMsg{approval: result, err: err}
 		}, true
 	}
@@ -222,17 +225,18 @@ func (m Model) requestRevokeAuthorization() (tea.Model, tea.Cmd) {
 	panel.busy = true
 	panel.err = ""
 	input := client.RevokeAuthorizationInput{RequestID: client.NewRequestID(), ExpectedRevision: auth.Revision}
-	api, sessionID, id := m.api, m.chat.sessionID, auth.ID
+	api, sessionID, id := m.chatAPI(), m.chat.sessionID, auth.ID
 	return m, func() tea.Msg {
-		err := api.RevokeSessionAuthorization(context.Background(), sessionID, id, input)
+		err := api.RevokeSessionAuthorization(apiContext(api), sessionID, id, input)
 		return revokeAuthMsg{id: id, err: err}
 	}
 }
 
 // updateApprovals 审批轮询落地：过滤展示集、更新面板与待审批徽标；运行离开等待
-// 态时停轮询。
+// 态时停轮询。回填绑定发起轮询的运行：已切换会话或 Run 的迟到回填丢弃，不污染
+// 当前面板与徽标。
 func (m Model) updateApprovals(msg approvalsMsg) (tea.Model, tea.Cmd) {
-	if m.phase != phaseSession {
+	if m.phase != phaseSession || msg.runID != m.chat.runID {
 		return m, nil
 	}
 	if msg.err != nil {
@@ -246,7 +250,7 @@ func (m Model) updateApprovals(msg approvalsMsg) (tea.Model, tea.Cmd) {
 			m.chat.panel.err = errText(msg.err)
 		}
 		if m.chat.approvalPolling {
-			return m, approvalsPollCmd(m.api, m.chat.runID, approvalPollInterval)
+			return m, approvalsPollCmd(m.chatAPI(), m.chat.runID, approvalPollInterval)
 		}
 		return m, nil
 	}
@@ -275,7 +279,7 @@ func (m Model) updateApprovals(msg approvalsMsg) (tea.Model, tea.Cmd) {
 	}
 	m.chat.pendingApprovals = items
 	if m.chat.approvalPolling {
-		return m, approvalsPollCmd(m.api, m.chat.runID, approvalPollInterval)
+		return m, approvalsPollCmd(m.chatAPI(), m.chat.runID, approvalPollInterval)
 	}
 	return m, nil
 }
@@ -293,7 +297,7 @@ func (m Model) updateApprovalDecision(msg approvalDecisionMsg) (tea.Model, tea.C
 			return m, nil
 		}
 		panel.err = "审批结果未确认，请重新读取：" + errText(msg.err)
-		return m, approvalsPollCmd(m.api, m.chat.runID, 0)
+		return m, approvalsPollCmd(m.chatAPI(), m.chat.runID, 0)
 	}
 	panel.err = ""
 	for i := range panel.approvals {
@@ -316,6 +320,9 @@ func (m Model) updateApprovalDecision(msg approvalDecisionMsg) (tea.Model, tea.C
 
 // updateAuthorizations 授权列表落地与撤回收敛。
 func (m Model) updateAuthorizations(msg authorizationsMsg) (tea.Model, tea.Cmd) {
+	if msg.sessionID != "" && msg.sessionID != m.chat.sessionID {
+		return m, nil
+	}
 	if m.chat.panel == nil {
 		return m, nil
 	}
@@ -349,7 +356,7 @@ func (m Model) updateRevokeAuth(msg revokeAuthMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		panel.err = "撤回结果未确认，请重新读取：" + errText(msg.err)
-		return m, loadAuthorizationsCmd(m.api, m.chat.sessionID)
+		return m, loadAuthorizationsCmd(m.chatAPI(), m.chat.sessionID)
 	}
 	kept := panel.auths[:0]
 	for _, auth := range panel.auths {
@@ -390,8 +397,9 @@ func newInputWizard(request client.UserInputRequest) *inputWizard {
 	}
 }
 
-// updateInputWizard 向导按键：↑↓ 选项、Enter 确认／下一题、t 自定义文本、
-// ←→ 换题、Esc 取消（停止本轮）。
+// updateInputWizard 向导按键：↑↓ 选项、Enter 确认／下一题、t 自定义文本（文本模式
+// 下字符由编辑器消费，Esc／Ctrl+t 回到选项）、←→ 换题、Esc 取消（停止本轮，仅选项
+// 模式）。
 func (m Model) updateInputWizard(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	wizard := m.chat.wizard
 	if wizard.submitting {
@@ -403,15 +411,27 @@ func (m Model) updateInputWizard(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	question := questions[wizard.questionIdx]
+	if wizard.textMode {
+		// 文本模式优先：字符（含 h/l/t 等与导航同形的字母）由编辑器消费，只放行
+		// 明确的提交与切换组合键；Esc／Ctrl+t 回到选项模式，取消本轮仅在选项模式可达。
+		switch msg.String() {
+		case "ctrl+t", "esc":
+			wizard.textMode = false
+			return m, nil
+		case "enter", "up", "down", "left", "right":
+			// 走下方统一分支：Enter 提交本题、方向键换题／导航。
+		default:
+			return m, wizard.textEditor.updateKey(msg)
+		}
+	}
 	switch msg.String() {
 	case "esc":
-		// 取消＝停止本轮（保留已接收内容）。
 		m.chat.wizard = nil
-		if m.chat.runID != "" && activeRun(m.chat.runStatus) {
-			m.chat.stopping = true
-			return m, cancelRunCmd(m.api, m.chat.runID)
-		}
+		m.chat.wizardDismissed = true
 		return m, nil
+	case "ctrl+s":
+		return m.requestStop()
+
 	case "left", "h":
 		if wizard.questionIdx > 0 {
 			wizard.questionIdx--
@@ -458,16 +478,12 @@ func (m Model) updateInputWizard(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		wizard.submitting = true
 		wizard.err = ""
-		api, runID, inputID := m.api, wizard.request.RunID, wizard.request.ID
+		api, runID, inputID := m.chatAPI(), wizard.request.RunID, wizard.request.ID
 		input := client.AnswerUserInputInput{RequestID: wizard.requestID, Answers: wizard.answers}
 		return m, func() tea.Msg {
-			receipt, err := api.AnswerUserInput(context.Background(), runID, inputID, input)
+			receipt, err := api.AnswerUserInput(apiContext(api), runID, inputID, input)
 			return userInputAnswerMsg{receipt: receipt, err: err}
 		}
-	}
-	if wizard.textMode {
-		wizard.textEditor.updateKey(msg)
-		return m, nil
 	}
 	switch msg.String() {
 	case "up", "k":
@@ -526,6 +542,7 @@ func (m Model) updateUserInputAnswer(msg userInputAnswerMsg) (tea.Model, tea.Cmd
 
 // toolDetail 工具过程详情覆盖层：完整参数与执行结果按需加载。
 type toolDetail struct {
+	err     string
 	entries []client.TimelineEntry
 	cursor  int
 	expand  bool
@@ -554,6 +571,10 @@ func (m Model) updateToolDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			detail.cursor++
 			detail.expand = false
 		}
+	case "r":
+		detail.loading = true
+		detail.err = ""
+		return m, loadCallsCmd(m.chatAPI(), m.chat.runID)
 	case "enter", "d":
 		if detail.cursor >= len(detail.entries) {
 			return m, nil
@@ -562,7 +583,7 @@ func (m Model) updateToolDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		detail.expand = !detail.expand
 		if detail.expand && entry.CallID != "" && detail.calls[entry.CallID].ID == "" {
 			detail.loading = true
-			return m, loadCallsCmd(m.api, m.chat.runID)
+			return m, loadCallsCmd(m.chatAPI(), m.chat.runID)
 		}
 	}
 	return m, nil
@@ -571,14 +592,14 @@ func (m Model) updateToolDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // loadCallsCmd 加载运行的全部工具结果（单页 100 条；TUI 逐条展开匹配）。
 func loadCallsCmd(api API, runID string) tea.Cmd {
 	return func() tea.Msg {
-		page, err := api.ListCalls(context.Background(), runID, "")
-		return callsMsg{runID: runID, calls: page.Items, err: err}
+		calls, err := allCalls(api, runID)
+		return callsMsg{runID: runID, calls: calls, err: err}
 	}
 }
 
 // updateCalls 结果落地。
 func (m Model) updateCalls(msg callsMsg) (tea.Model, tea.Cmd) {
-	if m.chat.tools == nil {
+	if m.chat.tools == nil || (msg.runID != "" && msg.runID != m.chat.runID) {
 		return m, nil
 	}
 	m.chat.tools.loading = false
@@ -587,7 +608,8 @@ func (m Model) updateCalls(msg callsMsg) (tea.Model, tea.Cmd) {
 			m.handleUnauthorized("会话已过期或已在别处登录，请重新登录")
 			return m, nil
 		}
-		return m, nil // 结果加载失败静默：详情仍显示参数与状态。
+		m.chat.tools.err = "工具结果读取失败：" + errText(msg.err) + "；按 r 重试"
+		return m, nil
 	}
 	if m.chat.tools.calls == nil {
 		m.chat.tools.calls = map[string]client.Call{}
