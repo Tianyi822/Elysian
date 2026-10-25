@@ -153,7 +153,19 @@ func setupWorker(t *testing.T, kind string) (Worker, taskRecord, *fakeHost) {
 	if err := s.lock(func() error { return s.save(r) }); err != nil {
 		t.Fatal(err)
 	}
-	return Worker{Store: s, Host: h, Source: fakeSource{}, Install: install}, r, h
+	// CLI 命令落点注入临时目录：update 类事务会补注册 ely 链接，桩校验避免执行
+	// 假二进制（真实 --version 校验在 cli_link_test.go 用可执行桩覆盖）。
+	if err := os.MkdirAll(filepath.Join(root, "bin"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	return Worker{
+		Store:     s,
+		Host:      h,
+		Source:    fakeSource{},
+		Install:   install,
+		CLIBin:    filepath.Join(root, "bin", "ely"),
+		CLIVerify: func(context.Context, string, string) error { return nil },
+	}, r, h
 }
 
 func TestPortMigrationRemovesOldAndBackendRules(t *testing.T) {
@@ -407,12 +419,18 @@ func TestUpdateCommitsCandidateOrRestoresOldBinary(t *testing.T) {
 				if err == nil || row.State != "rolled-back" || filepath.Base(filepath.Dir(binary)) != "old" {
 					t.Fatalf("更新失败未恢复程序：%v %+v %s", err, row, binary)
 				}
+				if _, err := os.Lstat(w.CLIBin); !os.IsNotExist(err) {
+					t.Fatal("回滚后未移除本次注册的 CLI 链接")
+				}
 			} else {
 				if err != nil || row.State != "succeeded" || binary != candidate {
 					t.Fatalf("更新未提交：%v %+v %s", err, row, binary)
 				}
 				if _, err := os.Stat(filepath.Join(w.install(), "releases", "old", "elysian")); err != nil {
 					t.Fatal("上一成功版本未保留")
+				}
+				if text, err := os.Readlink(w.CLIBin); err != nil || text != filepath.Join(w.install(), "current", "elysian") {
+					t.Fatalf("update 成功后未注册 CLI 链接：%v %s", err, text)
 				}
 			}
 		})

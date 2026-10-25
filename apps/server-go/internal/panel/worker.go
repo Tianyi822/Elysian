@@ -16,6 +16,10 @@ type Worker struct {
 	Host    Host
 	Source  Source
 	Install string
+	// CLIBin／CLIVerify 是全局 ely 命令注册的可注入落点：生产缺省 /usr/local/bin/ely
+	// 与真实 --version 校验；测试注入临时路径与桩校验，避免触碰系统目录、执行假二进制。
+	CLIBin    string
+	CLIVerify func(context.Context, string, string) error
 }
 
 // 回滚预算按最坏情况给足：数据快照原位恢复 + 逐条防火墙规则命令 + 启动 + 60 秒健康
@@ -293,6 +297,10 @@ func (w Worker) execute(ctx context.Context, r *taskRecord) error {
 		if err = switchBinary(w.install(), r.Candidate, r.ID); err != nil {
 			return err
 		}
+		// 新 Worker 的 CLI 注册纳入维护事务；注册或校验失败走既有回滚。
+		if err = w.ensureCLILink(ctx, r); err != nil {
+			return err
+		}
 	}
 	if err = w.Host.Start(ctx); err != nil {
 		return err
@@ -354,6 +362,10 @@ func (w Worker) rollback(ctx context.Context, r *taskRecord, start bool) error {
 			if err := switchBinary(w.install(), r.PreviousBinary, r.ID); err != nil {
 				return err
 			}
+		}
+		// CLI 链接善后与版本切换同一事务：本次新建的移除、改指过的恢复原目标。
+		if err := w.rollbackCLILink(r); err != nil {
+			return err
 		}
 	}
 	if r.FirewallCaptured {

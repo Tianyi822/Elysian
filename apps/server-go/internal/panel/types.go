@@ -60,20 +60,26 @@ const (
 	WorkerUnknown WorkerStatus = "unknown"
 )
 
+type CLIRegistration struct {
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
+}
+
 type Task struct {
-	ID            string              `json:"id"`
-	Kind          string              `json:"kind"`
-	State         string              `json:"state"`
-	Phase         string              `json:"phase"`
-	CreatedAt     time.Time           `json:"createdAt"`
-	UpdatedAt     time.Time           `json:"updatedAt"`
-	OldPorts      config.PanelNetwork `json:"oldPorts"`
-	NewPorts      config.PanelNetwork `json:"newPorts"`
-	TargetCommit  string              `json:"targetCommit"`
-	UpdateChannel UpdateChannel       `json:"updateChannel,omitempty"`
-	UpdateSource  UpdateSource        `json:"updateSource,omitempty"`
-	ReleaseTag    string              `json:"releaseTag,omitempty"`
-	Error         string              `json:"error"`
+	CLIRegistration *CLIRegistration    `json:"cliRegistration,omitempty"`
+	ID              string              `json:"id"`
+	Kind            string              `json:"kind"`
+	State           string              `json:"state"`
+	Phase           string              `json:"phase"`
+	CreatedAt       time.Time           `json:"createdAt"`
+	UpdatedAt       time.Time           `json:"updatedAt"`
+	OldPorts        config.PanelNetwork `json:"oldPorts"`
+	NewPorts        config.PanelNetwork `json:"newPorts"`
+	TargetCommit    string              `json:"targetCommit"`
+	UpdateChannel   UpdateChannel       `json:"updateChannel,omitempty"`
+	UpdateSource    UpdateSource        `json:"updateSource,omitempty"`
+	ReleaseTag      string              `json:"releaseTag,omitempty"`
+	Error           string              `json:"error"`
 	// WorkerDead 保留旧客户端兼容，仅在明确探测到进程退出时为真。
 	WorkerDead   bool         `json:"workerDead,omitempty"`
 	WorkerStatus WorkerStatus `json:"workerStatus,omitempty"`
@@ -92,6 +98,10 @@ type taskRecord struct {
 	Committed        bool     `json:"committed"`
 	FirewallBefore   []string `json:"firewallBefore"`
 	FirewallCaptured bool     `json:"firewallCaptured"`
+	// CLI 链接事务事实：本次任务新建的 ely 链接（回滚时移除）与改指前的原目标（回滚时
+	// 恢复）；外部占用只告警、不产生记录。ensureCLILink 变更后先落账再做版本校验。
+	CLICreated      bool   `json:"cliCreated,omitempty"`
+	CLIRelinkedFrom string `json:"cliRelinkedFrom,omitempty"`
 }
 
 func Active(state string) bool { return state == "queued" || state == "running" }

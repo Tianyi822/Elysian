@@ -26,6 +26,9 @@ type Manager struct {
 	Source     Source
 	Ports      config.PanelNetwork
 	Enabled    bool
+	Install    string
+	CLIBin     string
+	CLIVerify  func(context.Context, string, string) error
 	Executable string
 }
 type Info struct {
@@ -75,7 +78,7 @@ func (m Manager) Info() (Info, error) {
 		return i, err
 	}
 	if len(rows) > 0 {
-		task := rows[0].Task
+		task := m.withCLIStatus(rows[0]).Task
 		i.LastTask = &task
 	}
 	for _, row := range rows {
@@ -418,6 +421,14 @@ func (m Manager) Router() chi.Router {
 			shared.SendJSON(w, 202, task)
 		})
 	}
+	r.Post("/tasks/{id}/cli-registration/retry", func(w http.ResponseWriter, r *http.Request) {
+		task, err := m.retryCLIRegistration(r.Context(), chi.URLParam(r, "id"))
+		if err != nil {
+			middleware.WriteError(w, err)
+			return
+		}
+		shared.SendJSON(w, 200, task)
+	})
 	r.Get("/tasks/by-request/{requestId}", func(w http.ResponseWriter, r *http.Request) {
 		requestID := chi.URLParam(r, "requestId")
 		if !requestPattern.MatchString(requestID) {
@@ -431,7 +442,7 @@ func (m Manager) Router() chi.Router {
 		}
 		for _, row := range rows {
 			if row.RequestID == requestID {
-				row = m.superviseActive(row)
+				row = m.withCLIStatus(m.superviseActive(row))
 				shared.SendJSON(w, 200, row.Task)
 				return
 			}
@@ -445,7 +456,7 @@ func (m Manager) Router() chi.Router {
 			return
 		}
 		// 轮询路径同时承担存活监管：维护单元死掉的任务不会永远停在 queued/running。
-		row = m.superviseActive(row)
+		row = m.withCLIStatus(m.superviseActive(row))
 		offset := int64(0)
 		if raw := r.URL.Query().Get("offset"); raw != "" {
 			offset, err = strconv.ParseInt(raw, 10, 64)

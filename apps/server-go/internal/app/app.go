@@ -218,6 +218,9 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 		agentRouter = harness.UnavailableRouter("Agent 任务存储或工具装配不可用，请查看面板运行日志")
 	}
 	runtime := &Runtime{closeDone: make(chan struct{})}
+	if cfg.BareMetal {
+		runtime.closeFuncs = append(runtime.closeFuncs, panelManager.StartCLIRegistration())
+	}
 	if closeAgent != nil {
 		runtime.closeFuncs = append(runtime.closeFuncs, closeAgent)
 	}
