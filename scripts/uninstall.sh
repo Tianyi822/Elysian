@@ -135,16 +135,29 @@ require_interactive() {
   die "当前不是交互终端；请加 --yes（默认保留数据）或 --yes --purge-data（彻底删除数据）。"
 }
 
-cli_link_owned() { # cli_link_owned：CLI_BIN 为本面板安装的符号链接（链接文本或解析目标落在 INSTALL_ROOT 内）时返回 0
+cli_link_owned() { # cli_link_owned：CLI_BIN 为本面板注册的受管符号链接时返回 0
+  # 受管形态仅两种：链接文本精确等于 $INSTALL_ROOT/current/elysian；或文本不含「..」
+  # 逃逸成分、且经 readlink -f 解析（与 INSTALL_ROOT 自身规范化同基）后的真实路径
+  # 精确为 current/elysian 或位于 releases/ 之下。仅按原始文本前缀匹配会把
+  # /opt/elysian/../foreign 或经安装根内符号链接跳向外部的目标误判为自家（安装将
+  # 覆盖、卸载将误删外部入口），故除精确 current 形态外先拒「..」成分再核对真实
+  # 路径；断链只接受精确受管文本形态。
   [ -L "$CLI_BIN" ] || return 1
-  local target
+  local target root
   target="$(readlink "$CLI_BIN" 2>/dev/null)" || return 1
   case "$target" in
-    "$INSTALL_ROOT"/*) return 0 ;;
+    "$INSTALL_ROOT/current/elysian") return 0 ;;
   esac
+  case "$target" in
+    ..|../*|*/../*|*/..) return 1 ;;
+  esac
+  root="$(readlink -f "$INSTALL_ROOT" 2>/dev/null)" || return 1
   target="$(readlink -f "$CLI_BIN" 2>/dev/null)" || return 1
   case "$target" in
-    "$INSTALL_ROOT"/*) return 0 ;;
+    "$root/current/elysian") return 0 ;;
+  esac
+  case "$target" in
+    "$root/releases/"*) return 0 ;;
   esac
   return 1
 }

@@ -1037,34 +1037,105 @@ build_release() {
   ok "构建完成（完整日志：$BUILD_LOG）"
 }
 
-cli_link_owned() { # cli_link_owned：CLI_BIN 为本面板注册的符号链接（链接文本或解析目标落在 INSTALL_ROOT 内）时返回 0
+cli_link_owned() { # cli_link_owned：CLI_BIN 为本面板注册的受管符号链接时返回 0
+  # 受管形态仅两种：链接文本精确等于 $INSTALL_ROOT/current/elysian；或文本不含「..」
+  # 逃逸成分、且经 readlink -f 解析（与 INSTALL_ROOT 自身规范化同基）后的真实路径
+  # 精确为 current/elysian 或位于 releases/ 之下。仅按原始文本前缀匹配会把
+  # /opt/elysian/../foreign 或经安装根内符号链接跳向外部的目标误判为自家（安装将
+  # 覆盖、卸载将误删外部入口），故除精确 current 形态外先拒「..」成分再核对真实
+  # 路径；断链只接受精确受管文本形态。
   [ -L "$CLI_BIN" ] || return 1
-  local target
+  local target root
   target="$(readlink "$CLI_BIN" 2>/dev/null)" || return 1
   case "$target" in
-    "$INSTALL_ROOT"/*) return 0 ;;
+    "$INSTALL_ROOT/current/elysian") return 0 ;;
   esac
+  case "$target" in
+    ..|../*|*/../*|*/..) return 1 ;;
+  esac
+  root="$(readlink -f "$INSTALL_ROOT" 2>/dev/null)" || return 1
   target="$(readlink -f "$CLI_BIN" 2>/dev/null)" || return 1
   case "$target" in
-    "$INSTALL_ROOT"/*) return 0 ;;
+    "$root/current/elysian") return 0 ;;
+  esac
+  case "$target" in
+    "$root/releases/"*) return 0 ;;
   esac
   return 1
 }
 
-register_cli_link() {
-  # 归属守卫：落点被普通文件或外部链接占用时安全中止（不覆盖其他软件的同名文件）；
-  # 幂等重跑对自家链接放行刷新。失败走 install_exit 回滚，恢复上一版本或移除本次链接。
-  if [ -e "$CLI_BIN" ] || [ -L "$CLI_BIN" ]; then
-    if ! cli_link_owned; then
-      die "$CLI_BIN 已被其他软件占用，安装中止；请先处理该文件后重跑。"
+cli_registration_journal() { printf '%s\n' "$INSTALL_ROOT/maintenance/cli-link-transaction"; }
+
+cli_move_link() {
+  if mv --version >/dev/null 2>&1; then mv -Tf "$1" "$2"; else mv -fh "$1" "$2"; fi
+}
+
+restore_cli_registration() {
+  local journal state previous current
+  journal="$(cli_registration_journal)"
+  [ -d "$journal" ] || return 0
+  state="$(cat "$journal/state" 2>/dev/null)" || return 1
+  [ "$state" != committed ] || return 0
+  [ "$state" = pending ] || return 1
+  previous="$(cat "$journal/previous")" || return 1
+  current="$(readlink "$CLI_BIN" 2>/dev/null || true)"
+  if [ "$current" = "$INSTALL_ROOT/current/elysian" ]; then
+    if [ -f "$journal/missing" ]; then rm -f -- "$CLI_BIN" || return 1
+    else
+      ln -s "$previous" "$CLI_BIN.restore-$$" || return 1
+      cli_move_link "$CLI_BIN.restore-$$" "$CLI_BIN" || return 1
     fi
+    sync -f "$(dirname "$CLI_BIN")" 2>/dev/null || sync
+  elif [ -e "$CLI_BIN" ] || [ -L "$CLI_BIN" ]; then
+    [ "$current" = "$previous" ] || { warn "CLI 链接已被外部修改，保留原样"; return 1; }
+  elif [ ! -f "$journal/missing" ]; then
+    warn "CLI 原链接已消失，拒绝覆盖外部变更"; return 1
   fi
-  ln -sfn "$INSTALL_ROOT/current/elysian" "$CLI_BIN" || die "注册 CLI 命令失败：无法创建符号链接 $CLI_BIN。"
-  local cli_version
+  rm -rf -- "$journal"
+}
+
+commit_cli_registration() {
+  local journal
+  journal="$(cli_registration_journal)"
+  [ -d "$journal" ] || return 0
+  printf 'committed\n' > "$journal/state.next" || return 1
+  sync -f "$journal/state.next" 2>/dev/null || sync
+  mv -f "$journal/state.next" "$journal/state" || return 1
+  sync -f "$journal" 2>/dev/null || sync
+}
+
+register_cli_link() {
+  local journal staging original cli_version
+  restore_cli_registration || die "CLI 注册中断恢复失败，请检查维护事务目录。"
+  journal="$(cli_registration_journal)"
+  if [ -d "$journal" ]; then rm -rf -- "$journal"; fi
+  if { [ -e "$CLI_BIN" ] || [ -L "$CLI_BIN" ]; } && ! cli_link_owned; then
+    die "$CLI_BIN 已被其他软件占用，安装中止；请先处理该文件后重跑。"
+  fi
+  staging="$journal.next-$$"
+  mkdir -p "$staging" || die "无法创建 CLI 注册日志目录。"
+  chmod 0700 "$staging"
+  original="$(readlink "$CLI_BIN" 2>/dev/null || true)"
+  printf '%s\n' "$original" > "$staging/previous"
+  [ -L "$CLI_BIN" ] || : > "$staging/missing"
+  printf '%s\n' "$BUILD_COMMIT" > "$staging/commit"
+  printf '%s\n' "$INSTALL_ROOT/current/elysian" > "$staging/target"
+  printf 'pending\n' > "$staging/state"
+  sync -f "$staging" 2>/dev/null || sync
+  mv "$staging" "$journal" || die "无法保存 CLI 注册意图。"
+  sync -f "$(dirname "$journal")" 2>/dev/null || sync
+  if [ -f "$journal/missing" ]; then
+    ln -s "$INSTALL_ROOT/current/elysian" "$CLI_BIN" || die "注册 CLI 命令失败。"
+  else
+    [ "$(readlink "$CLI_BIN" 2>/dev/null)" = "$original" ] || die "CLI 链接已被其他程序修改。"
+    ln -s "$INSTALL_ROOT/current/elysian" "$CLI_BIN.next-$$" || die "注册 CLI 命令失败。"
+    cli_move_link "$CLI_BIN.next-$$" "$CLI_BIN" || die "注册 CLI 命令失败。"
+  fi
+  sync -f "$(dirname "$CLI_BIN")" 2>/dev/null || sync
   cli_version="$("$CLI_BIN" --version 2>/dev/null || true)"
   case "$cli_version" in
     *"$BUILD_COMMIT"*) ;;
-    *) die "CLI 命令 ely 校验失败：--version 输出未包含构建标识 ${BUILD_COMMIT}。" ;;
+    *) restore_cli_registration || true; die "CLI 命令 ely 校验失败：--version 输出未包含构建标识 ${BUILD_COMMIT}。" ;;
   esac
   ok "CLI 命令已注册：ely（${CLI_BIN}，任意目录可用；交互菜单：sudo ely）"
 }
@@ -1370,6 +1441,7 @@ install_exit() {
   if [ "${INSTALL_ACTIVATED:-0}" = 1 ] && [ "${INSTALL_COMMITTED:-0}" != 1 ]; then
     info "安装未完成，恢复原程序、数据与本次涉及的面板规则"
     systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
+    restore_cli_registration || result=1
     local item
     for item in config data state; do
       rm -rf "$STATE_DIR/.Elysian/$item"
@@ -1381,10 +1453,10 @@ install_exit() {
       mv -Tf "$INSTALL_ROOT/.restore-$$" "$INSTALL_ROOT/current"
       ln -sfn "$INSTALL_ROOT/current/elysian" "$PANEL_BIN"
       # 仅恢复自家链接；外部占用的同名文件保持原样（与注册守卫同一归属判定）。
-      if cli_link_owned; then ln -sfn "$INSTALL_ROOT/current/elysian" "$CLI_BIN"; fi
+      # CLI 已按独立事务日志恢复精确旧目标。
     else
       rm -f "$INSTALL_ROOT/current" "$PANEL_BIN"
-      if cli_link_owned; then rm -f "$CLI_BIN"; fi
+      # CLI 原来不存在时已由独立事务恢复移除。
     fi
     rm -f "$UNIT_FILE"
     if [ -e "$INSTALL_BACKUP/unit" ]; then cp -a "$INSTALL_BACKUP/unit" "$UNIT_FILE" || result=1; fi
@@ -1402,6 +1474,7 @@ install_exit() {
 
 prepare_install_switch() {
   acquire_install_locks || die "无法取得安装切换维护锁。"
+  restore_cli_registration || die "无法恢复上次 CLI 注册事务。"
   mkdir -p "$INSTALL_ROOT/releases"
   HOME="$STATE_DIR" "$BUILD_DIR/elysian" maintenance-install-check || die "安装切换预检失败，原面板继续运行。"
   INSTALL_BACKUP="$STATE_DIR/.Elysian/backups/install-$(date -u +%Y%m%dT%H%M%SZ)-$$"
@@ -1490,6 +1563,7 @@ main() {
     start_service
     section "等待健康检查"
     wait_health
+    commit_cli_registration || die "无法提交 CLI 注册日志。"
     INSTALL_COMMITTED=1
     print_summary
   fi

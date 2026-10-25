@@ -265,6 +265,22 @@ printf 'foreign' >"$CLI_BIN"
 if cli_link_owned; then fail "普通文件误判为本面板"; else pass "普通文件不属本面板"; fi
 rm -f "$CLI_BIN"
 if cli_link_owned; then fail "不存在时误判"; else pass "落点不存在不属本面板"; fi
+ln -sfn "$INSTALL_ROOT/../foreign/ely" "$CLI_BIN"
+if cli_link_owned; then fail "「..」逃逸安装根的目标误判为本面板"; else pass "「..」逃逸安装根的目标不属本面板"; fi
+ln -s "$TMPCLI/foreign/ely" "$INSTALL_ROOT/escape-link"
+ln -sfn "$INSTALL_ROOT/escape-link" "$CLI_BIN"
+if cli_link_owned; then fail "经安装根内符号链接跳向外部的目标误判为本面板"; else pass "经安装根符号链接外跳的目标不属本面板"; fi
+rm -f "$INSTALL_ROOT/escape-link"
+ln -sfn "../foreign/ely" "$CLI_BIN"
+if cli_link_owned; then fail "相对「..」目标误判为本面板"; else pass "相对「..」目标不属本面板"; fi
+printf 'bin' >"$INSTALL_ROOT/releases/r1/elysian"
+ln -sfn "$INSTALL_ROOT/releases/r1/elysian" "$CLI_BIN"
+if cli_link_owned; then pass "指向 releases 产物的绝对链接判为本面板"; else fail "releases 产物链接被误判为外部"; fi
+ln -sfn "$INSTALL_ROOT/current/elysian" "$CLI_BIN"
+rm -f "$INSTALL_ROOT/current"
+if cli_link_owned; then pass "断链的精确受管文本形态判为本面板"; else fail "断链受管形态被误判为外部"; fi
+ln -sfn "$INSTALL_ROOT/releases/r1" "$INSTALL_ROOT/current"
+rm -f "$CLI_BIN"
 
 echo "== ely CLI 注册（register_cli_link） =="
 cat >"$INSTALL_ROOT/releases/r1/elysian" <<'STUB'
@@ -282,6 +298,7 @@ if printf '%s' "$OUT" | grep -q 'CLI 命令已注册'; then pass "注册成功�
 
 OUT="$(register_cli_link 2>&1)"; rc=$?
 assert_rc 0 "$rc" "幂等重跑对自家链接放行刷新"
+commit_cli_registration
 
 mkdir -p "$INSTALL_ROOT/releases/r0"
 cp "$INSTALL_ROOT/releases/r1/elysian" "$INSTALL_ROOT/releases/r0/elysian"
@@ -290,6 +307,10 @@ ln -s "$INSTALL_ROOT/releases/r0/elysian" "$CLI_BIN"
 OUT="$(register_cli_link 2>&1)"; rc=$?
 assert_rc 0 "$rc" "旧版本自家链接刷新通过"
 if [ "$(readlink "$CLI_BIN")" = "$INSTALL_ROOT/current/elysian" ]; then pass "刷新后指向当前版本"; else fail "刷新后链接目标异常"; fi
+restore_cli_registration
+if [ "$(readlink "$CLI_BIN")" = "$INSTALL_ROOT/releases/r0/elysian" ]; then pass "中断恢复精确旧目标"; else fail "中断恢复没有还原旧目标"; fi
+register_cli_link >/dev/null 2>&1
+commit_cli_registration
 
 rm -f "$CLI_BIN"
 printf 'foreign' >"$CLI_BIN"
