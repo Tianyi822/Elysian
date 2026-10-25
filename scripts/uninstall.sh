@@ -11,10 +11,13 @@
 # 默认删除：systemd 服务与自启、/usr/local/bin/elysian、/opt/elysian、/etc/default/elysian、
 # /etc/profile.d/elysian-mirrors.sh、构建残留、面板自己加的 UFW 前端端口规则，以及本脚本安装
 # 路径上的 Go(/usr/local/go) 与 bun(/usr/local/bin/bun)。/etc/default/elysian 删除前会备份到
-# /var/backups/elysian-uninstall-<时间戳>。
+# /var/backups/elysian-uninstall-<时间戳>。CLI 命令 /usr/local/bin/ely 仅在它是本面板注册的
+# 符号链接（指向 /opt/elysian 内）时删除；其他软件的同名普通文件或链接一律保留并提示。
 #
 # 面板数据 /var/lib/elysian/.Elysian 分四类逐项询问，默认全部保留：
 #   数据（SQLite 与 Agent 记录）、配置与凭据、日志、备份/状态/临时。
+# 「备份/状态/临时」类同时包含 root 的 ely CLI 本地数据 /root/.elysian/cli；其他用户主目录下
+# 的 ~/.elysian/cli 无法由 root 代为清理，摘要中注明由各用户自行删除。
 # 只要保留任一数据类别，就保留 elysian 账号；保留「数据」时同时保留 elysian-sqlite 账号，
 # 避免文件属主退化为数字 UID、重装无法直接复用。
 #
@@ -29,6 +32,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 SERVICE_NAME="elysian"
 PANEL_BIN="/usr/local/bin/elysian"
+# CLI 命令 ely：与面板同一单二进制的 argv0 别名链接，归属判定见 cli_link_owned。
+CLI_BIN="/usr/local/bin/ely"
 UNIT_FILE="/etc/systemd/system/elysian.service"
 STATE_DIR="/var/lib/elysian"
 PURGE_GUARD="/var/lib/elysian"
@@ -36,6 +41,8 @@ INSTALL_ROOT="/opt/elysian"
 ENV_FILE="/etc/default/elysian"
 MIRROR_PROFILE="/etc/profile.d/elysian-mirrors.sh"
 BUILD_HOME="/var/lib/elysian-build"
+# root 运行 ely 的本地数据（Cookie、指针与草稿）；归入「备份/状态/临时」类询问。
+CLI_DATA_DIR="/root/.elysian/cli"
 DEFAULT_FRONTEND_PORT="48100"
 CADDYFILE_PATH="/etc/caddy/Caddyfile"
 CADDY_RUNTIME_DROPIN="/etc/systemd/system/caddy.service.d/elysian-runtime.conf"
@@ -128,6 +135,20 @@ require_interactive() {
   die "当前不是交互终端；请加 --yes（默认保留数据）或 --yes --purge-data（彻底删除数据）。"
 }
 
+cli_link_owned() { # cli_link_owned：CLI_BIN 为本面板安装的符号链接（链接文本或解析目标落在 INSTALL_ROOT 内）时返回 0
+  [ -L "$CLI_BIN" ] || return 1
+  local target
+  target="$(readlink "$CLI_BIN" 2>/dev/null)" || return 1
+  case "$target" in
+    "$INSTALL_ROOT"/*) return 0 ;;
+  esac
+  target="$(readlink -f "$CLI_BIN" 2>/dev/null)" || return 1
+  case "$target" in
+    "$INSTALL_ROOT"/*) return 0 ;;
+  esac
+  return 1
+}
+
 panel_frontend_port() {
   local cfg="$STATE_DIR/.Elysian/config/panel-network.json" port
   if [ -r "$cfg" ]; then
@@ -182,7 +203,7 @@ data_category_paths() {
     data) printf '%s\n' "$DATA_ROOT/data" ;;
     config) printf '%s\n' "$DATA_ROOT/config" ;;
     logs) printf '%s\n' "$DATA_ROOT/logs" ;;
-    state) printf '%s\n' "$DATA_ROOT/backups" "$DATA_ROOT/state" "$DATA_ROOT/tmp" ;;
+    state) printf '%s\n' "$DATA_ROOT/backups" "$DATA_ROOT/state" "$DATA_ROOT/tmp" "$CLI_DATA_DIR" ;;
   esac
 }
 
@@ -200,7 +221,7 @@ data_category_note() {
     data) printf 'metrics/firewall/logs/harness.sqlite、data/sqlite 托管实例、Agent 记录' ;;
     config) printf '凭据、端口、数据库/网站/容器登记、SSO 白名单、站点证书、Agent 配置' ;;
     logs) printf 'panel.log 等面板日志' ;;
-    state) printf 'backups、state、tmp' ;;
+    state) printf 'backups、state、tmp、ely CLI 本地数据（%s）' "$CLI_DATA_DIR" ;;
   esac
 }
 
@@ -373,6 +394,7 @@ print_plan() {
   tui_section "将删除"
   tui_kv "服务" "systemd 单元与自启（$SERVICE_NAME）"
   tui_kv "程序" "$PANEL_BIN、$INSTALL_ROOT"
+  tui_kv "CLI 命令" "${CLI_BIN}（仅删除本面板注册的符号链接；其他软件的同名文件保留）"
   tui_kv "安装配置" "$ENV_FILE、$MIRROR_PROFILE"
   tui_kv "构建残留" "$BUILD_HOME、/var/tmp/elysian-install-source.*、/tmp/elysian-build.*"
   if [ -n "$(ufw_managed_rules)" ]; then
@@ -688,6 +710,22 @@ remove_caddy() {
 
 remove_artifacts() {
   local item
+  # ely 链接先于 INSTALL_ROOT 删除：仅删本面板注册的符号链接，其他软件的同名文件保留并提示。
+  if [ -e "$CLI_BIN" ] || [ -L "$CLI_BIN" ]; then
+    if cli_link_owned; then
+      if rm -f -- "$CLI_BIN"; then
+        ok "已删除 $CLI_BIN"
+      else
+        warn "删除失败：$CLI_BIN"
+        FAILED=1
+      fi
+    else
+      warn "$CLI_BIN 非本面板注册的符号链接（其他软件的同名文件），已保留"
+      KEPT_ITEMS+=("${CLI_BIN}（非本面板安装，已保留）")
+    fi
+  else
+    skip "$CLI_BIN 不存在，跳过"
+  fi
   for item in "$PANEL_BIN" "$INSTALL_ROOT"; do
     if [ -e "$item" ] || [ -L "$item" ]; then
       if rm -rf -- "$item"; then
@@ -757,7 +795,8 @@ safe_rm() {
   esac
   case "$path" in
     "$STATE_DIR"/*) : ;;
-    *) die "拒绝删除 $STATE_DIR 之外的路径：$path" ;;
+    "$CLI_DATA_DIR"|"$CLI_DATA_DIR"/*) : ;;
+    *) die "拒绝删除面板数据目录之外的路径：$path" ;;
   esac
   [ -e "$path" ] || [ -L "$path" ] || return 0
   rm -rf -- "$path"
@@ -776,6 +815,15 @@ remove_data() {
     else
       skip "$STATE_DIR 不存在"
     fi
+    if [ -e "$CLI_DATA_DIR" ] || [ -L "$CLI_DATA_DIR" ]; then
+      if rm -rf -- "$CLI_DATA_DIR"; then
+        ok "已删除 root 的 ely CLI 本地数据 $CLI_DATA_DIR"
+      else
+        warn "删除 $CLI_DATA_DIR 失败"
+        FAILED=1
+      fi
+    fi
+    rmdir "${CLI_DATA_DIR%/cli}" 2>/dev/null || true
     DELETED_ITEMS+=("全部面板数据")
     return 0
   fi
@@ -799,7 +847,7 @@ EOF
   done
 
   local dir
-  for dir in "$DATA_ROOT/data" "$DATA_ROOT/config" "$DATA_ROOT/logs" "$DATA_ROOT/backups" "$DATA_ROOT/state" "$DATA_ROOT/tmp" "$DATA_ROOT" "$STATE_DIR"; do
+  for dir in "$DATA_ROOT/data" "$DATA_ROOT/config" "$DATA_ROOT/logs" "$DATA_ROOT/backups" "$DATA_ROOT/state" "$DATA_ROOT/tmp" "$DATA_ROOT" "$STATE_DIR" "$CLI_DATA_DIR" "${CLI_DATA_DIR%/cli}"; do
     [ -d "$dir" ] && rmdir "$dir" 2>/dev/null || true
   done
 
@@ -872,6 +920,11 @@ verify_clean() {
   RESIDUE=()
   check_absent "$UNIT_FILE" "systemd 单元"
   check_absent "$PANEL_BIN" "面板二进制"
+  # 自家 ely 链接未删净才算残留；保留的外部同名文件是预期行为，不在此列。
+  if { [ -e "$CLI_BIN" ] || [ -L "$CLI_BIN" ]; } && cli_link_owned; then
+    RESIDUE+=("CLI 命令链接：$CLI_BIN")
+    FAILED=1
+  fi
   check_absent "$INSTALL_ROOT" "版本目录"
   if [ "$ENV_KEPT" = 0 ]; then check_absent "$ENV_FILE" "环境文件"; fi
   check_absent "$MIRROR_PROFILE" "镜像 profile"
@@ -970,6 +1023,7 @@ print_summary() {
   printf '  · 系统 SSH 与面板自管 sshd\n'
   printf '  · UFW 服务状态与用户自加规则\n'
   printf '  · Docker、Caddy 系统包、apt 源与已有容器（如需卸载请按安装方式自行处理）\n'
+  printf '  · 其他用户主目录下的 ~/.elysian/cli（ely 本地数据，由各用户自行删除）\n'
   if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR" ]; then
     tui_kv "备份" "$BACKUP_DIR（0700）"
   fi

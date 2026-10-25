@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# 仅在一次性 Docker 容器内运行；以真实低速 HTTP 响应验证 Bun 下载回退。
+# 以真实低速 HTTP 响应验证 Bun 下载回退。正式门禁在一次性 Docker 容器内运行
+# （scripts/README-deploy.md）；宿主（含 macOS，需 bun 与 curl）也可直接运行，
+# wc 计数已按 BSD/GNU 双格式兼容处理。
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/install.sh"
@@ -58,7 +60,7 @@ printf 'PASS GitHub 元数据挂起时在预算内退出（%s 秒）\n' "$elapse
 (
   curl() { printf '%s\n' "$*" >>"$FIXTURE/connection.calls"; [ -f "$FIXTURE/connected" ] && return 0; : >"$FIXTURE/connected"; return 7; }
   try_fetch https://fixture.invalid/package "$FIXTURE/retry.zip" bun-package
-  [ "$(wc -l <"$FIXTURE/connection.calls")" = 2 ]
+  [ "$(wc -l <"$FIXTURE/connection.calls" | tr -d '[:space:]')" = 2 ]
   tail -n 1 "$FIXTURE/connection.calls" | grep -q -- '^-4 '
   grep -q -- '--max-time 600 --speed-limit 102400 --speed-time 15' "$FIXTURE/connection.calls"
 )
@@ -67,7 +69,7 @@ printf 'PASS 连接故障保留一次 IPv4 回退及安装包时间限制\n'
 (
   curl() { printf '%s\n' "$*" >>"$FIXTURE/metadata.calls"; return 7; }
   if try_fetch https://fixture.invalid/metadata "$FIXTURE/metadata.json" bun-metadata; then exit 1; else rc=$?; fi
-  [ "$rc" = 7 ] && [ "$(wc -l <"$FIXTURE/metadata.calls")" = 1 ]
+  [ "$rc" = 7 ] && [ "$(wc -l <"$FIXTURE/metadata.calls" | tr -d '[:space:]')" = 1 ]
   grep -q -- '--connect-timeout 5 --max-time 10' "$FIXTURE/metadata.calls"
 )
 printf 'PASS 元数据连接失败不重复请求，不放大十秒预算\n'
@@ -75,7 +77,7 @@ printf 'PASS 元数据连接失败不重复请求，不放大十秒预算\n'
 (
   curl() { printf '%s\n' "$*" >>"$FIXTURE/default.calls"; [ -f "$FIXTURE/default-connected" ] && return 0; : >"$FIXTURE/default-connected"; return 7; }
   try_fetch https://fixture.invalid/default "$FIXTURE/default.bin"
-  [ "$(wc -l <"$FIXTURE/default.calls")" = 2 ]
+  [ "$(wc -l <"$FIXTURE/default.calls" | tr -d '[:space:]')" = 2 ]
   grep -q -- '--retry 3 --retry-delay 2 --connect-timeout 20' "$FIXTURE/default.calls"
 )
 printf 'PASS Go 等其他下载保持既有重试策略\n'

@@ -249,6 +249,130 @@ assert_rc 1 "$rc" "超过 256 KiB 拒绝自动接入"
 assert_eq "$BEFORE" "$(cat "$CFG")" "超大文件零改动"
 if printf '%s' "$OUT" | grep -q 'Caddyfile 过大'; then pass "超大文件输出中文警告"; else fail "缺少「Caddyfile 过大」警告"; fi
 
+echo "== ely CLI 链接归属判定（cli_link_owned） =="
+TMPCLI="$TMPDIR_TEST/cli"
+mkdir -p "$TMPCLI/bin" "$TMPCLI/opt/elysian/releases/r1" "$TMPCLI/foreign"
+CLI_BIN="$TMPCLI/bin/ely"
+INSTALL_ROOT="$TMPCLI/opt/elysian"
+printf 'foreign' >"$TMPCLI/foreign/ely"
+ln -sfn "$INSTALL_ROOT/releases/r1" "$INSTALL_ROOT/current"
+ln -s "$INSTALL_ROOT/current/elysian" "$CLI_BIN"
+if cli_link_owned; then pass "指向 INSTALL_ROOT 的符号链接判为本面板"; else fail "自家链接被误判为外部"; fi
+ln -sfn "$TMPCLI/foreign/ely" "$CLI_BIN"
+if cli_link_owned; then fail "外部链接误判为本面板"; else pass "指向外部的符号链接不属本面板"; fi
+rm -f "$CLI_BIN"
+printf 'foreign' >"$CLI_BIN"
+if cli_link_owned; then fail "普通文件误判为本面板"; else pass "普通文件不属本面板"; fi
+rm -f "$CLI_BIN"
+if cli_link_owned; then fail "不存在时误判"; else pass "落点不存在不属本面板"; fi
+
+echo "== ely CLI 注册（register_cli_link） =="
+cat >"$INSTALL_ROOT/releases/r1/elysian" <<'STUB'
+#!/usr/bin/env bash
+case "${1:-}" in
+  --version) printf 'Elysian CLI（ely）\n版本：deadbeef\n构建时间：2026-10-25T00:00:00Z\n' ;;
+esac
+STUB
+chmod +x "$INSTALL_ROOT/releases/r1/elysian"
+BUILD_COMMIT="deadbeef"
+OUT="$(register_cli_link 2>&1)"; rc=$?
+assert_rc 0 "$rc" "落点不存在时注册成功"
+if [ "$(readlink "$CLI_BIN")" = "$INSTALL_ROOT/current/elysian" ]; then pass "ely 链接指向 current/elysian"; else fail "ely 链接目标异常：$(readlink "$CLI_BIN")"; fi
+if printf '%s' "$OUT" | grep -q 'CLI 命令已注册'; then pass "注册成功输出确认信息"; else fail "缺少注册确认：$OUT"; fi
+
+OUT="$(register_cli_link 2>&1)"; rc=$?
+assert_rc 0 "$rc" "幂等重跑对自家链接放行刷新"
+
+mkdir -p "$INSTALL_ROOT/releases/r0"
+cp "$INSTALL_ROOT/releases/r1/elysian" "$INSTALL_ROOT/releases/r0/elysian"
+rm -f "$CLI_BIN"
+ln -s "$INSTALL_ROOT/releases/r0/elysian" "$CLI_BIN"
+OUT="$(register_cli_link 2>&1)"; rc=$?
+assert_rc 0 "$rc" "旧版本自家链接刷新通过"
+if [ "$(readlink "$CLI_BIN")" = "$INSTALL_ROOT/current/elysian" ]; then pass "刷新后指向当前版本"; else fail "刷新后链接目标异常"; fi
+
+rm -f "$CLI_BIN"
+printf 'foreign' >"$CLI_BIN"
+OUT="$(register_cli_link 2>&1)"; rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$OUT" | grep -q '已被其他软件占用'; then
+  pass "外部同名普通文件拒绝安装并中文报错"
+else
+  fail "外部普通文件分支行为不符（rc=$rc）"
+fi
+if [ "$(cat "$CLI_BIN")" = "foreign" ]; then pass "拒绝时外部文件原样保留"; else fail "外部文件被覆盖"; fi
+
+rm -f "$CLI_BIN"
+ln -s "$TMPCLI/foreign/ely" "$CLI_BIN"
+OUT="$(register_cli_link 2>&1)"; rc=$?
+if [ "$rc" -ne 0 ] && [ "$(readlink "$CLI_BIN")" = "$TMPCLI/foreign/ely" ]; then
+  pass "外部同名符号链接拒绝安装且原样保留"
+else
+  fail "外部链接分支行为不符（rc=$rc）"
+fi
+
+rm -f "$CLI_BIN"
+BUILD_COMMIT="cafebab1"
+OUT="$(register_cli_link 2>&1)"; rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$OUT" | grep -q '构建标识'; then
+  pass "--version 不含构建标识时拒绝"
+else
+  fail "版本校验分支行为不符（rc=$rc）"
+fi
+BUILD_COMMIT="deadbeef"
+
+echo "== ely CLI 冒烟（smoke_verify_cli） =="
+SMOKE_BUILD="$TMPDIR_TEST/smoke-build"
+mkdir -p "$SMOKE_BUILD"
+cat >"$SMOKE_BUILD/elysian" <<'STUB'
+#!/usr/bin/env bash
+if [ "$#" -eq 0 ]; then
+  printf '%s\n' 'ely 需要交互式终端，请在服务器终端直接运行；脚本场景请使用 elysian 子命令。' >&2
+  exit 1
+fi
+case "$1" in
+  --version) printf 'Elysian CLI（ely）\n版本：deadbeef\n' ;;
+esac
+STUB
+chmod +x "$SMOKE_BUILD/elysian"
+BUILD_DIR="$SMOKE_BUILD"
+OUT="$(smoke_verify_cli 2>&1)"; rc=$?
+assert_rc 0 "$rc" "ely 冒烟通过（--version 含构建标识、非 TTY 非零退出）"
+if printf '%s' "$OUT" | grep -q 'CLI 冒烟通过'; then pass "冒烟输出确认信息"; else fail "缺少冒烟确认：$OUT"; fi
+
+cat >"$SMOKE_BUILD/elysian" <<'STUB'
+#!/usr/bin/env bash
+if [ "$#" -eq 0 ]; then
+  printf '%s\n' 'ely 需要交互式终端，请在服务器终端直接运行；脚本场景请使用 elysian 子命令。' >&2
+  exit 0
+fi
+case "$1" in
+  --version) printf '版本：deadbeef\n' ;;
+esac
+STUB
+OUT="$(smoke_verify_cli 2>&1)"; rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$OUT" | grep -q '非零退出'; then
+  pass "非 TTY 退出码为 0 时冒烟失败"
+else
+  fail "非 TTY 退出码分支行为不符（rc=$rc）"
+fi
+
+cat >"$SMOKE_BUILD/elysian" <<'STUB'
+#!/usr/bin/env bash
+if [ "$#" -eq 0 ]; then
+  printf '%s\n' '别的错误' >&2
+  exit 1
+fi
+case "$1" in
+  --version) printf '版本：deadbeef\n' ;;
+esac
+STUB
+OUT="$(smoke_verify_cli 2>&1)"; rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$OUT" | grep -q '提示缺失'; then
+  pass "非 TTY 提示缺失时冒烟失败"
+else
+  fail "提示缺失分支行为不符（rc=$rc）"
+fi
+
 echo "== 管理通道路径解析 =="
 assert_eq "/run/caddy/admin.sock" "$(caddy_admin_socket)" "缺省路径"
 GOT="$(ELYSIAN_CADDY_SOCKET=/tmp/custom.sock caddy_admin_socket)"
@@ -293,6 +417,7 @@ if (
   PANEL_PORT=48101
   STATE_DIR=/var/lib/elysian
   PANEL_BIN=/usr/local/bin/elysian
+  CLI_BIN=/usr/local/bin/ely
   GOPROXY='https://goproxy.cn|direct'
   BUN_CONFIG_REGISTRY='https://registry.npmmirror.com'
   CADDY_ADMIN_SOCKET=/run/caddy/admin.sock
@@ -308,6 +433,9 @@ if (
   printf '%s' "$out" | grep -q '面板端口' &&
     printf '%s' "$out" | grep -q '48100' &&
     printf '%s' "$out" | grep -Fq 'http://<服务器公网 IP 或域名>:48100' &&
+    printf '%s' "$out" | grep -Fq 'sudo /usr/local/bin/ely（菜单内「重置密码」）' &&
+    printf '%s' "$out" | grep -Fq 'HOME=/var/lib/elysian /usr/local/bin/elysian resetpwd' &&
+    printf '%s' "$out" | grep -Fq 'ely — 服务器本地终端（Agent 终端／重置密码），任意目录可用' &&
     ! printf '%s' "$out" | grep -Eq '(^|[^0-9])(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)'
 ); then pass "摘要只报端口且不含 RFC1918 地址"; else fail "摘要仍输出内网 IP 或缺少端口"; fi
 

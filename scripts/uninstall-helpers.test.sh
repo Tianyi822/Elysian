@@ -61,9 +61,11 @@ new_fixture() {
   ENV_FILE="$FIXTURE/default-elysian"
   UNIT_FILE="$FIXTURE/elysian.service"
   PANEL_BIN="$FIXTURE/bin/elysian"
+  CLI_BIN="$FIXTURE/bin/ely"
   INSTALL_ROOT="$FIXTURE/opt/elysian"
   MIRROR_PROFILE="$FIXTURE/profile.sh"
   BUILD_HOME="$FIXTURE/elysian-build"
+  CLI_DATA_DIR="$FIXTURE/root-home/.elysian/cli"
   CADDYFILE_PATH="$FIXTURE/Caddyfile"
   CADDY_RUNTIME_DROPIN="$FIXTURE/dropin/elysian-runtime.conf"
   CADDY_TMPFILES="$FIXTURE/tmpfiles/elysian-caddy.conf"
@@ -71,13 +73,14 @@ new_fixture() {
   CADDY_SOCKET=/run/caddy/admin.sock
   ARTIFACT_GLOBS=("$FIXTURE/artifacts/elysian-build.*")
   mkdir -p "$DATA_ROOT/data" "$DATA_ROOT/config" "$DATA_ROOT/logs" "$DATA_ROOT/backups" "$DATA_ROOT/state" "$DATA_ROOT/tmp"
-  mkdir -p "$FIXTURE/bin" "$FIXTURE/dropin" "$FIXTURE/tmpfiles" "$FIXTURE/artifacts"
+  mkdir -p "$FIXTURE/bin" "$FIXTURE/dropin" "$FIXTURE/tmpfiles" "$FIXTURE/artifacts" "$CLI_DATA_DIR"
   printf 'metrics' >"$DATA_ROOT/data/metrics.sqlite"
   printf 'creds' >"$DATA_ROOT/config/panel-credentials.json"
   printf 'log' >"$DATA_ROOT/logs/panel.log"
   printf 'backup' >"$DATA_ROOT/backups/install-1"
   printf 'state' >"$DATA_ROOT/state/last"
   printf 'tmp' >"$DATA_ROOT/tmp/work"
+  printf 'cli-state' >"$CLI_DATA_DIR/state.json"
   reset_flags
 }
 
@@ -116,7 +119,7 @@ if ELYSIAN_CADDY_SOCKET=relative.sock resolve_caddy_socket >/dev/null 2>&1; then
 echo "== 四类数据路径与选择 =="
 new_fixture
 assert_eq "$DATA_ROOT/data" "$(data_category_paths data)" "data 路径"
-assert_eq "$(printf '%s\n' "$DATA_ROOT/backups" "$DATA_ROOT/state" "$DATA_ROOT/tmp")" "$(data_category_paths state)" "状态类多路径"
+assert_eq "$(printf '%s\n' "$DATA_ROOT/backups" "$DATA_ROOT/state" "$DATA_ROOT/tmp" "$CLI_DATA_DIR")" "$(data_category_paths state)" "状态类多路径（含 ely CLI 本地数据）"
 if data_category_exists data; then pass "data 类别存在"; else fail "data 类别应存在"; fi
 case "$(data_category_size data)" in *KiB|*MiB|*GiB) pass "data 大小可读" ;; *) fail "data 大小异常" ;; esac
 rm -rf "$DATA_ROOT/logs"
@@ -323,7 +326,7 @@ if grep -qx 'elysian' "$USERS" && grep -qx 'elysian-sqlite' "$USERS"; then pass 
 if grep -qx 'elysian-build' "$USERS"; then fail "elysian-build 未删除"; else pass "elysian-build 删除"; fi
 
 new_fixture
-rm -rf "$STATE_DIR"
+rm -rf "$STATE_DIR" "$CLI_DATA_DIR"
 DATA_ROOT="$FIXTURE/data"
 mkdir -p "$DATA_ROOT"
 printf 'elysian\nelysian-build\nelysian-sqlite\n' >"$USERS"
@@ -368,6 +371,95 @@ else
 fi
 if [ -n "$BACKUP_DIR" ] && [ -f "$BACKUP_DIR/default-elysian" ]; then pass "环境文件已备份"; else fail "环境文件未备份"; fi
 
+echo "== ely CLI 链接归属判定（cli_link_owned） =="
+new_fixture
+mkdir -p "$INSTALL_ROOT/releases/r1" "$FIXTURE/foreign"
+printf 'bin' >"$INSTALL_ROOT/releases/r1/elysian"
+ln -sfn "$INSTALL_ROOT/releases/r1" "$INSTALL_ROOT/current"
+ln -s "$INSTALL_ROOT/current/elysian" "$CLI_BIN"
+if cli_link_owned; then pass "指向 INSTALL_ROOT 的符号链接判为本面板"; else fail "自家链接被误判为外部"; fi
+printf 'foreign' >"$FIXTURE/foreign/ely"
+ln -sfn "$FIXTURE/foreign/ely" "$CLI_BIN"
+if cli_link_owned; then fail "外部链接误判为本面板"; else pass "指向外部的符号链接不属本面板"; fi
+rm -f "$CLI_BIN"
+printf 'foreign' >"$CLI_BIN"
+if cli_link_owned; then fail "普通文件误判为本面板"; else pass "普通文件不属本面板"; fi
+rm -f "$CLI_BIN"
+if cli_link_owned; then fail "不存在时误判"; else pass "落点不存在不属本面板"; fi
+
+echo "== ely CLI 链接三态清理（remove_artifacts） =="
+new_fixture
+mkdir -p "$INSTALL_ROOT/releases/r1"
+printf 'bin' >"$INSTALL_ROOT/releases/r1/elysian"
+ln -sfn "$INSTALL_ROOT/releases/r1" "$INSTALL_ROOT/current"
+ln -s "$INSTALL_ROOT/current/elysian" "$CLI_BIN"
+remove_artifacts >/dev/null 2>&1
+if [ ! -e "$CLI_BIN" ] && [ ! -L "$CLI_BIN" ]; then pass "自家 ely 链接已删除"; else fail "自家 ely 链接未删除"; fi
+
+new_fixture
+printf 'foreign' >"$CLI_BIN"
+remove_artifacts >/dev/null 2>&1
+if [ -f "$CLI_BIN" ] && [ "$(cat "$CLI_BIN")" = "foreign" ]; then pass "外部同名普通文件保留"; else fail "外部普通文件被误删"; fi
+case "${KEPT_ITEMS[*]}" in *"非本面板安装"*) pass "保留项记录 ely 外部占用" ;; *) fail "KEPT 缺少 ely 记录：${KEPT_ITEMS[*]}" ;; esac
+assert_eq 0 "$FAILED" "保留外部 ely 不算卸载失败"
+
+new_fixture
+printf 'other' >"$FIXTURE/foreign-ely"
+ln -s "$FIXTURE/foreign-ely" "$CLI_BIN"
+remove_artifacts >/dev/null 2>&1
+if [ -L "$CLI_BIN" ]; then pass "外部同名符号链接保留"; else fail "外部符号链接被误删"; fi
+
+new_fixture
+remove_artifacts >/dev/null 2>&1
+if [ ! -e "$CLI_BIN" ] && [ ! -L "$CLI_BIN" ]; then pass "ely 不存在时跳过"; else fail "ely 落点异常"; fi
+case "${KEPT_ITEMS[*]}" in *"ely"*) fail "不存在的 ely 不应记入保留项" ;; *) pass "不存在的 ely 不记保留项" ;; esac
+
+echo "== ely CLI 本地数据归入状态类 =="
+new_fixture
+DELETE_STATE=1
+remove_data >/dev/null 2>&1
+if [ ! -e "$CLI_DATA_DIR" ]; then pass "删除状态类时清理 ely CLI 本地数据"; else fail "ely CLI 本地数据未清理"; fi
+if [ ! -e "${CLI_DATA_DIR%/cli}" ]; then pass "ely 数据父目录空则一并移除"; else fail "ely 数据父目录残留"; fi
+if [ -e "$DATA_ROOT/config" ]; then pass "未选类别不受 ely 数据影响"; else fail "未选类别被误删"; fi
+
+new_fixture
+remove_data >/dev/null 2>&1
+if [ -e "$CLI_DATA_DIR" ] && [ -f "$CLI_DATA_DIR/state.json" ]; then pass "保留状态类时保留 ely CLI 本地数据"; else fail "ely 本地数据被误删"; fi
+
+new_fixture
+printf 'unknown' >"$STATE_DIR/unknown.txt"
+PURGE_DATA=1
+remove_data >/dev/null 2>&1
+if [ ! -e "$STATE_DIR" ] && [ ! -e "$CLI_DATA_DIR" ]; then pass "--purge-data 同时删除 ely CLI 本地数据"; else fail "--purge-data 未删净 ely 数据"; fi
+
+new_fixture
+if safe_rm "$CLI_DATA_DIR/state.json" 2>/dev/null; then pass "safe_rm 允许 ely 数据目录内路径"; else fail "safe_rm 误拒 ely 数据路径"; fi
+if [ ! -e "$CLI_DATA_DIR/state.json" ]; then pass "safe_rm 删除 ely 数据文件"; else fail "safe_rm 未删除 ely 数据文件"; fi
+if ( safe_rm "${CLI_DATA_DIR%/cli}" ) >/dev/null 2>&1; then fail "safe_rm 不应放行 ely 数据父目录"; else pass "safe_rm 拒绝 ely 数据父目录"; fi
+
+echo "== ely 残留断言（verify_clean） =="
+new_fixture
+ufw() { case "$1" in status) printf 'Status: inactive\n' ;; esac; }
+id() { return 1; }
+mkdir -p "$INSTALL_ROOT/releases/r1"
+printf 'bin' >"$INSTALL_ROOT/releases/r1/elysian"
+ln -sfn "$INSTALL_ROOT/releases/r1" "$INSTALL_ROOT/current"
+ln -s "$INSTALL_ROOT/current/elysian" "$CLI_BIN"
+rm -rf "$INSTALL_ROOT"
+verify_clean >/dev/null 2>&1
+case "${RESIDUE[*]}" in *"CLI 命令链接"*) pass "自家 ely 链接残留被标记" ;; *) fail "自家 ely 链接残留未标记：${RESIDUE[*]}" ;; esac
+rm -f "$CLI_BIN"
+RESIDUE=()
+FAILED=0
+verify_clean >/dev/null 2>&1
+case "${RESIDUE[*]}" in *"CLI"*) fail "ely 已清理仍报残留" ;; *) pass "ely 清理后无残留" ;; esac
+printf 'foreign' >"$CLI_BIN"
+RESIDUE=()
+FAILED=0
+verify_clean >/dev/null 2>&1
+case "${RESIDUE[*]}" in *"CLI"*) fail "保留的外部 ely 被误报残留" ;; *) pass "外部 ely 保留不算残留" ;; esac
+unset -f ufw id
+
 echo "== 残留检查 =="
 new_fixture
 KEEP_TOOLS=1
@@ -397,6 +489,8 @@ if (
   out="$(main --dry-run)"
   printf '%s' "$out" | grep -q 'Elysian 卸载计划' &&
     printf '%s' "$out" | grep -q '面板数据' &&
+    printf '%s' "$out" | grep -q 'CLI 命令' &&
+    printf '%s' "$out" | grep -Fq '仅删除本面板注册的符号链接' &&
     printf '%s' "$out" | grep -q '预览结束' &&
     [ -f "$DATA_ROOT/data/metrics.sqlite" ]
 ); then pass "dry-run 输出计划且不改文件"; else fail "dry-run 行为异常"; fi

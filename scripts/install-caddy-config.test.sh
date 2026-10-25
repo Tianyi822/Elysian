@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
-# 仅在一次性 Docker 容器内运行；用真实 Caddy 验证临时文件适配与严格配置比对。
+# 用真实 Caddy 验证临时文件适配与严格配置比对。正式门禁在一次性 Docker 容器内运行
+# （scripts/README-deploy.md）；宿主缺少 caddy 或 bun 时明确 SKIP 并以 0 退出，
+# 不伪造任何验证结果。
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if ! command -v caddy >/dev/null 2>&1 || ! command -v bun >/dev/null 2>&1; then
+  missing=""
+  command -v caddy >/dev/null 2>&1 || missing="caddy"
+  command -v bun >/dev/null 2>&1 || missing="${missing:+$missing 与 }bun"
+  printf 'SKIP 本测试需要真实 %s；请在一次性容器内运行（见 scripts/README-deploy.md 部署测试节）。\n' "${missing:-caddy 与 bun}"
+  exit 0
+fi
 source "$SCRIPT_DIR/install.sh"
 init_output 0 0
 FIXTURE="$(mktemp -d /tmp/elysian-caddy-config-test.XXXXXX)"

@@ -47,6 +47,9 @@ BUN_SHA256_AARCH64="54328bbc2d9c8e0c9f892c544d66c57a83b84139e34909e5ee81758f1ac8
 # ---------- 安装落点 ----------
 SERVICE_NAME="elysian"
 PANEL_BIN="/usr/local/bin/elysian"
+# ely 全局命令与面板同一单二进制（argv0 别名分发），注册为指向 current 的符号链接，
+# 在线维护只切 current，ely 随版本自动跟随。
+CLI_BIN="/usr/local/bin/ely"
 UNIT_FILE="/etc/systemd/system/elysian.service"
 STATE_DIR="/var/lib/elysian"
 PANEL_PORT="48101"
@@ -1034,6 +1037,38 @@ build_release() {
   ok "构建完成（完整日志：$BUILD_LOG）"
 }
 
+cli_link_owned() { # cli_link_owned：CLI_BIN 为本面板注册的符号链接（链接文本或解析目标落在 INSTALL_ROOT 内）时返回 0
+  [ -L "$CLI_BIN" ] || return 1
+  local target
+  target="$(readlink "$CLI_BIN" 2>/dev/null)" || return 1
+  case "$target" in
+    "$INSTALL_ROOT"/*) return 0 ;;
+  esac
+  target="$(readlink -f "$CLI_BIN" 2>/dev/null)" || return 1
+  case "$target" in
+    "$INSTALL_ROOT"/*) return 0 ;;
+  esac
+  return 1
+}
+
+register_cli_link() {
+  # 归属守卫：落点被普通文件或外部链接占用时安全中止（不覆盖其他软件的同名文件）；
+  # 幂等重跑对自家链接放行刷新。失败走 install_exit 回滚，恢复上一版本或移除本次链接。
+  if [ -e "$CLI_BIN" ] || [ -L "$CLI_BIN" ]; then
+    if ! cli_link_owned; then
+      die "$CLI_BIN 已被其他软件占用，安装中止；请先处理该文件后重跑。"
+    fi
+  fi
+  ln -sfn "$INSTALL_ROOT/current/elysian" "$CLI_BIN" || die "注册 CLI 命令失败：无法创建符号链接 $CLI_BIN。"
+  local cli_version
+  cli_version="$("$CLI_BIN" --version 2>/dev/null || true)"
+  case "$cli_version" in
+    *"$BUILD_COMMIT"*) ;;
+    *) die "CLI 命令 ely 校验失败：--version 输出未包含构建标识 ${BUILD_COMMIT}。" ;;
+  esac
+  ok "CLI 命令已注册：ely（${CLI_BIN}，任意目录可用；交互菜单：sudo ely）"
+}
+
 install_binary() {
   mkdir -p "$INSTALL_ROOT/releases" "$INSTALL_ROOT/maintenance" "$STATE_DIR/.Elysian/config" "$STATE_DIR/.Elysian/state/panel-maintenance"
   chmod 0755 "$INSTALL_ROOT" "$INSTALL_ROOT/releases" "$INSTALL_ROOT/maintenance"
@@ -1046,6 +1081,7 @@ install_binary() {
   ln -s "$RELEASE_DIR" "$INSTALL_ROOT/.current-$INSTALL_STAMP"
   mv -Tf "$INSTALL_ROOT/.current-$INSTALL_STAMP" "$INSTALL_ROOT/current"
   ln -sfn "$INSTALL_ROOT/current/elysian" "$PANEL_BIN"
+  register_cli_link
   HOME="$STATE_DIR" "$PANEL_BIN" panel-init || die "面板端口配置损坏，安装已中止。"
   read -r FRONTEND_PORT PANEL_PORT < <(HOME="$STATE_DIR" "$PANEL_BIN" panel-ports)
   HEALTH_URL="http://127.0.0.1:${PANEL_PORT}/api/health"
@@ -1260,9 +1296,10 @@ print_summary() {
   tui_kv "后端地址" "127.0.0.1:${PANEL_PORT}（仅本机回环，不对外开放）"
   tui_section "管理员账户"
   tui_kv "初始密码" "最近一次生成记录：journalctl -u ${SERVICE_NAME} -b --no-pager | grep '初始密码：' | tail -n 1"
-  tui_kv "重置密码" "全部会话失效：HOME=${STATE_DIR} ${PANEL_BIN} resetpwd"
+  tui_kv "重置密码" "sudo ${CLI_BIN}（菜单内「重置密码」）；脚本通道：HOME=${STATE_DIR} ${PANEL_BIN} resetpwd"
   tui_section "运行与维护"
   tui_kv "服务管理" "systemctl status/restart/stop ${SERVICE_NAME}"
+  tui_kv "CLI 命令" "ely — 服务器本地终端（Agent 终端／重置密码），任意目录可用"
   tui_kv "面板更新" "登录面板 → 系统设置"
   tui_kv "数据目录" "${STATE_DIR}/.Elysian（data/logs/state/backups/tmp/config）"
   tui_kv "进程日志" "${STATE_DIR}/.Elysian/logs/panel.log"
@@ -1280,6 +1317,30 @@ print_summary() {
 
 # ---------- 冒烟模式（干净容器内：装工具链 → 构建 → 起进程 → 健康检查 → 清理） ----------
 
+smoke_verify_cli() {
+  # 与正式安装同法的 argv0 符号链接（指向临时目录内构建产物）：验证 --version 含构建标识、
+  # 无参数非 TTY 下明确提示并以非零退出；结束清理临时链接，不注册全局命令。
+  local work out err rc=0
+  work="$(mktemp -d)"
+  ln -s "$BUILD_DIR/elysian" "$work/ely"
+  out="$("$work/ely" --version 2>/dev/null || true)"
+  case "$out" in
+    *"$BUILD_COMMIT"*) ;;
+    *) rm -rf "$work"; die "CLI 冒烟失败：ely --version 未包含构建标识 ${BUILD_COMMIT}（实际输出：${out:-空}）。" ;;
+  esac
+  err="$("$work/ely" 2>&1 >/dev/null </dev/null)" || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    rm -rf "$work"
+    die "CLI 冒烟失败：ely 无参数在非 TTY 下应以非零退出。"
+  fi
+  case "$err" in
+    *交互式终端*) ;;
+    *) rm -rf "$work"; die "CLI 冒烟失败：ely 非 TTY 提示缺失（实际 stderr：${err:-空}）。" ;;
+  esac
+  rm -rf "$work"
+  ok "CLI 冒烟通过：ely --version 含构建标识、非 TTY 明确提示并安全退出"
+}
+
 smoke_run() {
   # 与生产同 HOME 语义（跳过系统用户，目录手动创建）。
   mkdir -p "$STATE_DIR"
@@ -1295,7 +1356,8 @@ smoke_run() {
   curl -fsS --max-time 5 "http://127.0.0.1:${FRONTEND_PORT}/" | grep -q '<title>Elysian</title>' \
     || die "首页未返回嵌入的前端产物（缺 <title>Elysian</title>），嵌入 dist 可能失败。"
   grep -q '初始密码' "$SMOKE_LOG" || die "首启凭据横幅未打印（应输出「初始密码：…」）。"
-  info "冒烟检查通过：健康端点 200、嵌入首页可访问、首启初始密码已打印"
+  smoke_verify_cli
+  info "冒烟检查通过：健康端点 200、嵌入首页可访问、首启初始密码已打印、CLI ely 可用"
 }
 
 # ---------- 安装切换事务（在线更新由独立维护 worker 执行） ----------
@@ -1318,8 +1380,11 @@ install_exit() {
       ln -s "$PREVIOUS_RELEASE" "$INSTALL_ROOT/.restore-$$"
       mv -Tf "$INSTALL_ROOT/.restore-$$" "$INSTALL_ROOT/current"
       ln -sfn "$INSTALL_ROOT/current/elysian" "$PANEL_BIN"
+      # 仅恢复自家链接；外部占用的同名文件保持原样（与注册守卫同一归属判定）。
+      if cli_link_owned; then ln -sfn "$INSTALL_ROOT/current/elysian" "$CLI_BIN"; fi
     else
       rm -f "$INSTALL_ROOT/current" "$PANEL_BIN"
+      if cli_link_owned; then rm -f "$CLI_BIN"; fi
     fi
     rm -f "$UNIT_FILE"
     if [ -e "$INSTALL_BACKUP/unit" ]; then cp -a "$INSTALL_BACKUP/unit" "$UNIT_FILE" || result=1; fi
