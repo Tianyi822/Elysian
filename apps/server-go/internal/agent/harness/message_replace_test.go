@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -32,7 +33,13 @@ func TestChatHTTPStopThenEdit(t *testing.T) {
 	submit := func(path string, input AgentInput) Run {
 		t.Helper()
 		body, _ := json.Marshal(input)
-		response := runtimeRouteRequest(router, http.MethodPost, path, string(body))
+		// 停止后 Worker 槽位按设计回收重启，重启窗口内提交会收到瞬态 503
+		// worker-unavailable；重试到受理为止，不把瞬态当作提交失败。
+		var response *httptest.ResponseRecorder
+		runtimeEventually(t, func() bool {
+			response = runtimeRouteRequest(router, http.MethodPost, path, string(body))
+			return response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), `"code":"worker-unavailable"`)
+		})
 		if response.Code != http.StatusAccepted && response.Code != http.StatusOK {
 			t.Fatalf("提交失败：%d %s", response.Code, response.Body.String())
 		}

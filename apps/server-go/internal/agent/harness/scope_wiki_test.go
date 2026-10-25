@@ -159,7 +159,21 @@ func TestWorkflowV2WikiSourcesSurviveForkJoinAndFenceRecovery(t *testing.T) {
 	if _, err = m.Decide(ctx, verify.ID, "approved"); err == nil {
 		t.Fatal("撤回后仍可批准原后继")
 	}
-	_, _, err = m.RecoverWorkflow(ctx, w.ID, WorkflowRecoveryInput{RequestID: "withdrawn-retry", ExpectedRevision: w.Revision, NodeID: w.CurrentStepID, Action: "retry", Evidence: "不能通过重试绕过已撤回资料"})
+	// 挂起在审批门口的执行 goroutine 会晚一拍结算活动时间、删除执行记录（合法
+	// 并发写，会推进工作流版本）；先等执行清空，再按乐观并发契约重读新版本重试，
+	// 最终仍必须因来源已撤回被拒。失败的尝试在校验阶段被拒，不落恢复记录，同
+	// RequestID 换新版本重试不会触发 request-conflict。
+	workflowIdle(t, m)
+	runtimeEventually(t, func() bool {
+		_, _, err = m.RecoverWorkflow(ctx, w.ID, WorkflowRecoveryInput{RequestID: "withdrawn-retry", ExpectedRevision: w.Revision, NodeID: w.CurrentStepID, Action: "retry", Evidence: "不能通过重试绕过已撤回资料"})
+		if e, ok := err.(*Error); ok && (e.Code == "revision-conflict" || e.Code == "workflow-active") {
+			if fresh, e2 := m.GetWorkflow(ctx, w.ID); e2 == nil && fresh.Status == StateRecoveryRequired {
+				w = fresh
+				return false
+			}
+		}
+		return true
+	})
 	runtimeErrorCode(t, err, "wiki-context-invalidated")
 	for _, node := range w.ExecutionTree.Nodes {
 		if node.ID == w.CurrentStepID && len(node.AllowedActions) != 0 {
