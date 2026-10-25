@@ -30,7 +30,7 @@ func newStreamTestFixture(t *testing.T) *streamTestFixture {
 	now := func() time.Time { return time.UnixMilli(f.now.Load()) }
 	f.deps = Deps{Enabled: true, Sessions: NewMemorySessionStore(now), Credentials: NewMemoryCredentialsStore(nil), SessionConns: f.connections, Now: now, Diag: io.Discard}
 	var err error
-	f.session, _, err = f.deps.Sessions.Create("none")
+	f.session, _, err = f.deps.Sessions.Create("none", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ func TestSessionStreamRevokeKeepsOtherSessionAndCleansExactConnection(t *testing
 	cancel()
 	awaitStreamSignal(t, closed, "主动断开未退出")
 	oldID := f.session.ID
-	current, replaced, err := f.deps.Sessions.Create("none")
+	current, replaced, err := f.deps.Sessions.Create("none", "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -17,8 +17,12 @@ import (
 //
 // 生命周期（全部服务端权威）：空闲 12 小时（滑动窗口，严格大于才过期——差 1ms 仍有效）
 // 或绝对 7 天即过期；epoch 失效：会话记录的 pwdEpoch 与当前凭据的 passwordChangedAt
-// 不一致即删除——改密后全部既有会话在下一次请求时 401。惰性清扫：任一 validate 顺带
-// 剔除已过期会话；单用户场景会话数个位数，无需定时器。
+// 不一致即删除——改密后全部既有会话（不区分客户端类别）在下一次请求时 401。惰性清扫：
+// 任一 validate 顺带剔除已过期会话；单用户场景会话数个位数，无需定时器。
+//
+// 单会话互斥按客户端类别分道（ADR-0022 修订）：create 只替换同类别的全部会话并保留
+// 幸存异类会话——web（浏览器）与 cli（ely 终端）各一把单槽锁，浏览器之间仍互踢，
+// CLI 登录不顶掉浏览器。类别取值与归一见 authconfig.go 的 NormalizeSessionClient。
 //
 // 落盘时机（被测试逐字节锚定，不得改动）：create 与 destroy 立即写文件；lastUsedAt
 // 滑动只改内存（无删除发生时不写文件，随下一次 create/destroy 顺带落盘）；纯未命中
@@ -27,9 +31,12 @@ import (
 // 文件版首载后持内存镜像（CLI 不碰会话文件，无跨进程写竞争）；写路径互斥（TS promise
 // 链 → Go mutex）保证 destroy 与 create 不交错。
 
-// PanelSession 一条面板会话。CreatedAt/LastUsedAt 是 epoch 毫秒。
+// PanelSession 一条面板会话。CreatedAt/LastUsedAt 是 epoch 毫秒。Client 是客户端类别
+// （SessionClientWeb 空串 / SessionClientCLI），web 落盘省略 client 键——与旧版文件逐字节
+// 一致；读取时缺失或未知取值一律判 web。
 type PanelSession struct {
 	ID         string `json:"id"`
+	Client     string `json:"client,omitempty"`
 	CreatedAt  int64  `json:"createdAt"`
 	LastUsedAt int64  `json:"lastUsedAt"`
 	PwdEpoch   string `json:"pwdEpoch"`
@@ -37,9 +44,10 @@ type PanelSession struct {
 
 // SessionStore 会话存取接口。
 type SessionStore interface {
-	// Create 原子替换全部会话并立即落盘，返回新会话与被替换的 id。
-	// dev 与 admin 共用唯一管理员会话；写盘失败保留原会话。
-	Create(pwdEpoch string) (*PanelSession, []string, error)
+	// Create 原子替换同类客户端类别的全部会话并立即落盘（异类会话原样保留），返回
+	// 新会话与被替换的 id（仅同类）。dev 与 admin 共用唯一管理员会话；写盘失败保留
+	// 原会话。client 经 NormalizeSessionClient 归一，非法值回落 web。
+	Create(pwdEpoch string, client string) (*PanelSession, []string, error)
 	// Validate 校验并滑动续期；会话不存在、过期或 epoch 不匹配时删除并回 nil。
 	Validate(sessionID, pwdEpoch string) (*PanelSession, error)
 	// Check 校验但不滑动续期，供后台会话检查使用。
@@ -131,21 +139,30 @@ func (s *sessionStoreCore) commit(next []PanelSession, forceWrite bool) error {
 }
 
 // Create 实现 SessionStore。
-func (s *sessionStoreCore) Create(pwdEpoch string) (*PanelSession, []string, error) {
+func (s *sessionStoreCore) Create(pwdEpoch string, client string) (*PanelSession, []string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	loaded, err := s.load()
 	if err != nil {
 		return nil, nil, err
 	}
+	category, _ := NormalizeSessionClient(client)
 	at := s.now()
-	session := PanelSession{ID: newSessionID(), CreatedAt: at.UnixMilli(), LastUsedAt: at.UnixMilli(), PwdEpoch: pwdEpoch}
+	session := PanelSession{ID: newSessionID(), Client: category, CreatedAt: at.UnixMilli(), LastUsedAt: at.UnixMilli(), PwdEpoch: pwdEpoch}
 	replaced := make([]string, 0, len(loaded))
+	next := make([]PanelSession, 0, len(loaded)+1)
 	for _, old := range loaded {
-		replaced = append(replaced, old.ID)
+		// 只替换同类别会话；幸存异类会话与新会话一起原子写入。
+		oldCategory, _ := NormalizeSessionClient(old.Client)
+		if oldCategory == category {
+			replaced = append(replaced, old.ID)
+			continue
+		}
+		next = append(next, old)
 	}
+	next = append(next, session)
 	// 创建与失效在同一把锁、同一次原子写内完成，绝不先清旧会话再写新会话。
-	if err := s.commit([]PanelSession{session}, true); err != nil {
+	if err := s.commit(next, true); err != nil {
 		return nil, nil, err
 	}
 	copied := session
@@ -329,6 +346,7 @@ func readSessionsFile(path string) ([]PanelSession, error) {
 	}
 	// 逐条解析：单条类型不符只丢该条（对齐 TS 的 filter 语义）；时间戳非数字、id/epoch
 	// 非字符串的条目 Unmarshal 即失败。空 id（缺失或空串）一并丢弃——两者都无行为影响。
+	// client 缺失或未知取值一律归 web（旧版文件平滑升级，不派生新互斥通道）。
 	sessions := make([]PanelSession, 0, len(parsed.Sessions))
 	for _, raw := range parsed.Sessions {
 		var session PanelSession
@@ -338,6 +356,7 @@ func readSessionsFile(path string) ([]PanelSession, error) {
 		if session.ID == "" || session.PwdEpoch == "" {
 			continue
 		}
+		session.Client, _ = NormalizeSessionClient(session.Client)
 		sessions = append(sessions, session)
 	}
 	return sessions, nil

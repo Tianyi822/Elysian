@@ -57,6 +57,30 @@ const (
 	UnauthorizedMessage = "未登录或会话已过期"
 )
 
+// 会话客户端类别：单管理员身份下按客户端类别把单会话互斥分道（ADR-0022 修订）——
+// web（浏览器）与 cli（ely 终端）各自只允许一个存活会话，互相不替换；pwdEpoch 改密
+// 仍让两类会话全量失效。不新增权限面：RequireSession 不区分类别，同一管理员同一权限。
+const (
+	// SessionClientWeb 浏览器类别：缺省值，存储与落盘都用空串表达（client 键省略）。
+	SessionClientWeb = ""
+	// SessionClientCLI ely CLI/TUI 类别。
+	SessionClientCLI = "cli"
+)
+
+// NormalizeSessionClient 归一会话客户端类别：空串与 "web" 归 web（空串），"cli" 原样；
+// 其余取值非法（ok=false，登录体校验据此回 400）。存储与读取侧对非法值一律回落 web
+// （fail-safe：任何未知取值都不得派生出第三条互斥通道）。
+func NormalizeSessionClient(client string) (string, bool) {
+	switch client {
+	case SessionClientWeb, "web":
+		return SessionClientWeb, true
+	case SessionClientCLI:
+		return SessionClientCLI, true
+	default:
+		return SessionClientWeb, false
+	}
+}
+
 // AuthExemptPaths 鉴权豁免清单（精确匹配，尾斜杠先剥单个）：health 供容器存活检查；
 // login/session 是登录流程自身；logout 豁免让「会话已过期后点登出」幂等收尾而不是
 // 401 死循环。清单之外不再有任何豁免——读写全挡。

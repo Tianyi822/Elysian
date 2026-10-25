@@ -102,10 +102,12 @@ func (l *loginLimiter) take() (bool, int) {
 	return true, 0
 }
 
-// loginBody 登录请求体。
+// loginBody 登录请求体。Client 是可选的会话客户端类别（NormalizeSessionClient 归一后
+// 的空串 web 或 "cli"；缺省 web），供 ely CLI/TUI 与浏览器分道登录。
 type loginBody struct {
 	Username string
 	Password string
+	Client   string
 }
 
 // passwordChangeBody 改密请求体。
@@ -176,7 +178,8 @@ type sessionsBody struct {
 }
 
 // readLoginBody 读并校验登录请求体：{ username, password } 两者非空字符串且 ≤256 字符
-// （UTF-16 计）；Content-Type 与体积双拦由 ReadJSONBody 完成（415/413 原样映射），
+// （UTF-16 计）；可选 client 字段只接受 ""/"web"/"cli"（归一后回填），其余取值或非字符串
+// 均判体不合法；Content-Type 与体积双拦由 ReadJSONBody 完成（415/413 原样映射），
 // 这里只管形状，不合法回 false。
 func readLoginBody(w http.ResponseWriter, r *http.Request) (loginBody, bool, error) {
 	parsed, err := middleware.ReadJSONBody(w, r, 0)
@@ -198,7 +201,19 @@ func readLoginBody(w http.ResponseWriter, r *http.Request) (loginBody, bool, err
 	if utf16Length(username) > LoginFieldMaxLength || utf16Length(password) > LoginFieldMaxLength {
 		return loginBody{}, false, nil
 	}
-	return loginBody{Username: username, Password: password}, true, nil
+	body := loginBody{Username: username, Password: password}
+	if raw, hasClient := record["client"]; hasClient {
+		text, isString := raw.(string)
+		if !isString {
+			return loginBody{}, false, nil
+		}
+		client, valid := NormalizeSessionClient(text)
+		if !valid {
+			return loginBody{}, false, nil
+		}
+		body.Client = client
+	}
+	return body, true, nil
 }
 
 // readPasswordChangeBody 读并校验改密请求体：三个字段均非空字符串且 ≤256 字符。
@@ -294,13 +309,14 @@ func NewRouter(deps Deps) chi.Router {
 		if credentials != nil {
 			pwdEpoch = credentials.PasswordChangedAt
 		}
-		session, replaced, err := resolved.sessions.Create(pwdEpoch)
+		session, replaced, err := resolved.sessions.Create(pwdEpoch, body.Client)
 		if err != nil {
 			return err
 		}
 		if resolved.sessionConns != nil {
-			// 只关闭本次原子替换的会话，不能 RevokeOthers：并发登录的较早请求
-			// 可能较晚走到这里，不得误关后一个有效会话的连接。
+			// 只关闭本次原子替换的会话（同客户端类别），不能 RevokeOthers：并发登录的
+			// 较早请求可能较晚走到这里，不得误关后一个有效会话的连接；异类会话不在
+			// replaced 清单里，天然不受影响。
 			for _, id := range replaced {
 				resolved.sessionConns.Revoke(id)
 			}

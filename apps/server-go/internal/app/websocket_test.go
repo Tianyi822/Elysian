@@ -22,7 +22,7 @@ import (
 // 在完整装配链路中验证升级，避免仅测试域路由而漏掉全局响应包装器。
 func TestAssemblyPreservesAuthenticatedWebSocket(t *testing.T) {
 	store := auth.NewMemorySessionStore(nil)
-	session, _, err := store.Create("none")
+	session, _, err := store.Create("none", "")
 	if err != nil {
 		t.Fatal(err)
 	}

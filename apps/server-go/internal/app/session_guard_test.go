@@ -41,7 +41,7 @@ func TestOnlyAgentOutputUsesPassiveStreamGuard(t *testing.T) {
 	} {
 		t.Run(tc.method+tc.path, func(t *testing.T) {
 			store := &countedSessionStore{SessionStore: auth.NewMemorySessionStore(nil)}
-			session, _, err := store.Create("none")
+			session, _, err := store.Create("none", "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -59,7 +59,7 @@ func TestOnlyAgentOutputUsesPassiveStreamGuard(t *testing.T) {
 
 func TestAgentOutputAssemblySharesAuthRevocationRegistry(t *testing.T) {
 	store := auth.NewMemorySessionStore(nil)
-	session, _, err := store.Create("none")
+	session, _, err := store.Create("none", "")
 	if err != nil {
 		t.Fatal(err)
 	}

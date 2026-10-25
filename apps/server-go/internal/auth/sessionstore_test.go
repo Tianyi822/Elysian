@@ -75,7 +75,7 @@ func TestSessionStoreCreateShapeAndPermissions(t *testing.T) {
 	path := sessionFilePath(dir)
 	store := NewFileSessionStore(path, nil)
 
-	session, _, err := store.Create(testEpoch)
+	session, _, err := store.Create(testEpoch, SessionClientWeb)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
@@ -113,12 +113,12 @@ func TestSessionStoreReplacementAndSliding(t *testing.T) {
 	clock := &fakeClock{ms: 1_760_000_000_000}
 	store := NewFileSessionStore(sessionFilePath(dir), clock.now)
 
-	first, _, err := store.Create(testEpoch)
+	first, _, err := store.Create(testEpoch, SessionClientWeb)
 	if err != nil {
 		t.Fatalf("第一次 Create 失败：%v", err)
 	}
 	clock.ms += 1000
-	second, replaced, err := store.Create(testEpoch)
+	second, replaced, err := store.Create(testEpoch, SessionClientWeb)
 	if err != nil {
 		t.Fatalf("第二次 Create 失败：%v", err)
 	}
@@ -164,7 +164,7 @@ func TestSessionStoreIdleExpiryBoundary(t *testing.T) {
 	dir := tempDir(t)
 	clock := &fakeClock{ms: 1_760_000_000_000}
 	store := NewFileSessionStore(sessionFilePath(dir), clock.now)
-	session, _, err := store.Create(testEpoch)
+	session, _, err := store.Create(testEpoch, SessionClientWeb)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
@@ -196,7 +196,7 @@ func TestSessionStoreSlidingKeepsAlive(t *testing.T) {
 	dir := tempDir(t)
 	clock := &fakeClock{ms: 1_760_000_000_000}
 	store := NewFileSessionStore(sessionFilePath(dir), clock.now)
-	session, _, err := store.Create(testEpoch)
+	session, _, err := store.Create(testEpoch, SessionClientWeb)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
@@ -216,7 +216,7 @@ func TestSessionStoreAbsoluteExpiry(t *testing.T) {
 	dir := tempDir(t)
 	clock := &fakeClock{ms: 1_760_000_000_000}
 	store := NewFileSessionStore(sessionFilePath(dir), clock.now)
-	session, _, err := store.Create(testEpoch)
+	session, _, err := store.Create(testEpoch, SessionClientWeb)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
@@ -240,7 +240,7 @@ func TestSessionStoreAbsoluteExpiry(t *testing.T) {
 func TestSessionStoreEpochMismatch(t *testing.T) {
 	dir := tempDir(t)
 	store := NewFileSessionStore(sessionFilePath(dir), nil)
-	session, _, err := store.Create(testEpoch)
+	session, _, err := store.Create(testEpoch, SessionClientWeb)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
@@ -263,7 +263,7 @@ func TestSessionStoreEpochMismatch(t *testing.T) {
 func TestSessionStoreDestroy(t *testing.T) {
 	dir := tempDir(t)
 	store := NewFileSessionStore(sessionFilePath(dir), nil)
-	session, _, err := store.Create(testEpoch)
+	session, _, err := store.Create(testEpoch, SessionClientWeb)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
@@ -363,7 +363,7 @@ func TestSessionStoreDestroyOthersNoChangeNoWrite(t *testing.T) {
 	dir := tempDir(t)
 	path := sessionFilePath(dir)
 	store := NewFileSessionStore(path, nil)
-	only, _, err := store.Create(testEpoch)
+	only, _, err := store.Create(testEpoch, SessionClientWeb)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
@@ -429,7 +429,7 @@ func TestSessionStoreRestartKeepsSessions(t *testing.T) {
 	dir := tempDir(t)
 	path := sessionFilePath(dir)
 	first := NewFileSessionStore(path, nil)
-	session, _, err := first.Create(testEpoch)
+	session, _, err := first.Create(testEpoch, SessionClientWeb)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
@@ -447,7 +447,7 @@ func TestSessionStoreCorruptFileFailClosed(t *testing.T) {
 	dir := tempDir(t)
 	path := sessionFilePath(dir)
 	store := NewFileSessionStore(path, nil)
-	session, _, err := store.Create(testEpoch)
+	session, _, err := store.Create(testEpoch, SessionClientWeb)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
@@ -469,7 +469,7 @@ func TestSessionStoreCorruptFileFailClosed(t *testing.T) {
 	if validated != nil {
 		t.Error("坏 JSON 按空表 fail closed，validate 回 nil")
 	}
-	rebuilt, _, err := restarted.Create(testEpoch)
+	rebuilt, _, err := restarted.Create(testEpoch, SessionClientWeb)
 	if err != nil {
 		t.Fatalf("重建失败：%v", err)
 	}
@@ -485,7 +485,7 @@ func TestSessionStoreCorruptFileFailClosed(t *testing.T) {
 func TestMemorySessionStoreSemantics(t *testing.T) {
 	clock := &fakeClock{ms: 1_760_000_000_000}
 	store := NewMemorySessionStore(clock.now)
-	session, _, err := store.Create(testEpoch)
+	session, _, err := store.Create(testEpoch, SessionClientWeb)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
@@ -501,7 +501,7 @@ func TestMemorySessionStoreSemantics(t *testing.T) {
 		t.Fatal("滑动窗口内应有效")
 	}
 	clock.ms += int64(SessionIdleTTL/time.Millisecond) + 1
-	second, _, err := store.Create(testEpoch)
+	second, _, err := store.Create(testEpoch, SessionClientWeb)
 	if err != nil {
 		t.Fatalf("Create 失败：%v", err)
 	}
@@ -588,5 +588,226 @@ func TestMemorySessionStoreListAndDestroyOthers(t *testing.T) {
 	}
 	if validated == nil {
 		t.Error("third 保留有效")
+	}
+}
+
+// —— 会话客户端类别分道（ADR-0022 修订）：web 与 cli 各一把单槽锁 ——
+
+func TestSessionStoreClientChanneling(t *testing.T) {
+	for _, mode := range []string{"memory", "file"} {
+		t.Run(mode, func(t *testing.T) {
+			var store SessionStore
+			var path string
+			if mode == "file" {
+				path = sessionFilePath(tempDir(t))
+				store = NewFileSessionStore(path, nil)
+			} else {
+				store = NewMemorySessionStore(nil)
+			}
+			web1, replaced, err := store.Create(testEpoch, SessionClientWeb)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(replaced) != 0 {
+				t.Fatalf("首次 web 登录的替换清单应为空：%v", replaced)
+			}
+
+			// cli 登录不替换 web：清单为空、web 仍有效。
+			cli1, replaced, err := store.Create(testEpoch, SessionClientCLI)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(replaced) != 0 {
+				t.Fatalf("cli 登录不得替换 web 会话：%v", replaced)
+			}
+			if cli1.Client != SessionClientCLI {
+				t.Errorf("cli 会话的 Client = %q", cli1.Client)
+			}
+			if session, err := store.Validate(web1.ID, testEpoch); err != nil || session == nil {
+				t.Fatalf("cli 登录后 web 会话应存活：(%v, %v)", session, err)
+			}
+
+			// web 重新登录：只替换同类 web，cli 幸存。
+			web2, replaced, err := store.Create(testEpoch, SessionClientWeb)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(replaced) != 1 || replaced[0] != web1.ID {
+				t.Fatalf("web 重登的替换清单应只含旧 web：%v", replaced)
+			}
+			if session, err := store.Validate(cli1.ID, testEpoch); err != nil || session == nil {
+				t.Fatalf("web 重登后 cli 会话应存活：(%v, %v)", session, err)
+			}
+
+			// 新 cli 登录顶掉旧 cli，web 不受影响。
+			cli2, replaced, err := store.Create(testEpoch, SessionClientCLI)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(replaced) != 1 || replaced[0] != cli1.ID {
+				t.Fatalf("cli 重登的替换清单应只含旧 cli：%v", replaced)
+			}
+			if session, err := store.Validate(web2.ID, testEpoch); err != nil || session == nil {
+				t.Fatalf("cli 重登后 web 会话应存活：(%v, %v)", session, err)
+			}
+			if session, err := store.Validate(cli1.ID, testEpoch); err != nil || session != nil {
+				t.Fatalf("旧 cli 会话应已失效：(%v, %v)", session, err)
+			}
+
+			// 非法类别回落 web（fail-safe）：替换 web2，不动 cli2。
+			fallback, replaced, err := store.Create(testEpoch, "tui")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(replaced) != 1 || replaced[0] != web2.ID {
+				t.Fatalf("非法类别应按 web 替换同类：%v", replaced)
+			}
+			if fallback.Client != SessionClientWeb {
+				t.Errorf("非法类别回落 web，Client = %q", fallback.Client)
+			}
+			if session, err := store.Validate(cli2.ID, testEpoch); err != nil || session == nil {
+				t.Fatalf("非法类别登录后 cli 会话应存活：(%v, %v)", session, err)
+			}
+
+			listed, err := store.List()
+			if err != nil || len(listed) != 2 {
+				t.Fatalf("最终恰两条会话（web + cli）：%v，错误 %v", listed, err)
+			}
+			if mode == "file" {
+				onDisk := readSessionsOnDisk(t, path)
+				if len(onDisk.ids) != 2 {
+					t.Fatalf("磁盘与内存一致（两条会话）：%v", onDisk.ids)
+				}
+			}
+		})
+	}
+}
+
+// legacySessionsFile 手写旧版会话文件（无 client 键），复刻升级前的落盘形状。
+func legacySessionsFile(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("建 state 目录失败：%v", err)
+	}
+	legacy := `{
+  "version": 1,
+  "sessions": [
+    {
+      "id": "legacy-web-session-00000000000000000000000",
+      "createdAt": 1760000000000,
+      "lastUsedAt": 1760000000000,
+      "pwdEpoch": "` + testEpoch + `"
+    }
+  ]
+}`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatalf("写旧版会话文件失败：%v", err)
+	}
+}
+
+func TestSessionStoreLegacyFileReadsAsWeb(t *testing.T) {
+	const legacyID = "legacy-web-session-00000000000000000000000"
+	// 注入时钟贴合文件时间戳，避免真实时钟把旧版会话判为空闲过期。
+	clock := &fakeClock{ms: 1_760_000_060_000}
+
+	// 旧文件无 client 字段判 web：web 登录替换它。
+	path := sessionFilePath(tempDir(t))
+	legacySessionsFile(t, path)
+	webStore := NewFileSessionStore(path, clock.now)
+	_, replaced, err := webStore.Create(testEpoch, SessionClientWeb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(replaced) != 1 || replaced[0] != legacyID {
+		t.Fatalf("web 登录应替换旧版（判 web）会话：%v", replaced)
+	}
+
+	// cli 登录保留旧版会话。
+	path = sessionFilePath(tempDir(t))
+	legacySessionsFile(t, path)
+	cliStore := NewFileSessionStore(path, clock.now)
+	_, replaced, err = cliStore.Create(testEpoch, SessionClientCLI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(replaced) != 0 {
+		t.Fatalf("cli 登录不得替换旧版（判 web）会话：%v", replaced)
+	}
+	if session, err := cliStore.Validate(legacyID, testEpoch); err != nil || session == nil {
+		t.Fatalf("旧版会话应存活：(%v, %v)", session, err)
+	}
+}
+
+func TestSessionStoreUnknownClientOnDiskFailsSafeToWeb(t *testing.T) {
+	// 磁盘上出现未知 client 取值（损坏或未来版本写入）时读取归一为 web，
+	// web 登录即可替换它——不派生第三条互斥通道。
+	path := sessionFilePath(tempDir(t))
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("建 state 目录失败：%v", err)
+	}
+	raw := `{
+  "version": 1,
+  "sessions": [
+    {
+      "id": "future-client-session-0000000000000000000",
+      "client": "tui",
+      "createdAt": 1760000000000,
+      "lastUsedAt": 1760000000000,
+      "pwdEpoch": "` + testEpoch + `"
+    }
+  ]
+}`
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatalf("写会话文件失败：%v", err)
+	}
+	store := NewFileSessionStore(path, nil)
+	_, replaced, err := store.Create(testEpoch, SessionClientWeb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(replaced) != 1 || replaced[0] != "future-client-session-0000000000000000000" {
+		t.Fatalf("未知 client 取值按 web 被替换：%v", replaced)
+	}
+}
+
+func TestSessionStoreClientFieldOnDiskShape(t *testing.T) {
+	dir := tempDir(t)
+	path := sessionFilePath(dir)
+	store := NewFileSessionStore(path, nil)
+	web, _, err := store.Create(testEpoch, SessionClientWeb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli, _, err := store.Create(testEpoch, SessionClientCLI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("读会话文件失败：%v", err)
+	}
+	var parsed struct {
+		Version  int              `json:"version"`
+		Sessions []map[string]any `json:"sessions"`
+	}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("解析会话文件失败：%v", err)
+	}
+	byID := map[string]map[string]any{}
+	for _, session := range parsed.Sessions {
+		byID[session["id"].(string)] = session
+	}
+	// web 会话不写 client 键：与旧版文件逐字节一致。
+	webKeys := byID[web.ID]
+	if _, has := webKeys["client"]; has {
+		t.Errorf("web 会话不得写 client 键（omitempty）：%v", webKeys)
+	}
+	wantWebKeys := map[string]bool{"id": true, "createdAt": true, "lastUsedAt": true, "pwdEpoch": true}
+	if len(webKeys) != len(wantWebKeys) {
+		t.Errorf("web 会话键集应为旧版四键：%v", webKeys)
+	}
+	// cli 会话写 client:"cli"。
+	if byID[cli.ID]["client"] != SessionClientCLI {
+		t.Errorf("cli 会话应写 client=cli：%v", byID[cli.ID])
 	}
 }

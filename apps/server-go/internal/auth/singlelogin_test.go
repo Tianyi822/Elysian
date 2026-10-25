@@ -22,7 +22,7 @@ func TestSingleLoginReplacesLegacySessions(t *testing.T) {
 		}
 		oldIDs = append(oldIDs, old.ID)
 	}
-	current, replaced, err := store.Create(testEpoch)
+	current, replaced, err := store.Create(testEpoch, SessionClientWeb)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestSingleLoginConcurrentCreatesKeepOneSession(t *testing.T) {
 				go func() {
 					defer wg.Done()
 					<-start
-					session, replaced, err := store.Create(testEpoch)
+					session, replaced, err := store.Create(testEpoch, SessionClientWeb)
 					results <- result{session, replaced, err}
 				}()
 			}
@@ -245,8 +245,8 @@ type delayedCreateStore struct {
 	first   bool
 }
 
-func (s *delayedCreateStore) Create(epoch string) (*PanelSession, []string, error) {
-	current, replaced, err := s.SessionStore.Create(epoch)
+func (s *delayedCreateStore) Create(epoch, client string) (*PanelSession, []string, error) {
+	current, replaced, err := s.SessionStore.Create(epoch, client)
 	s.mu.Lock()
 	first := !s.first
 	s.first = true
@@ -292,5 +292,102 @@ func TestSingleLoginDelayedRevocationKeepsLatestConnections(t *testing.T) {
 	}
 	if closed || client.get("/api/logs/runtime", cookie).Code != http.StatusOK {
 		t.Fatal("较早登录的延迟撤销误伤了最新会话")
+	}
+}
+
+// —— 会话客户端类别分道（ADR-0022 修订）：web 与 cli 互不互踢、同类内互踢 ——
+
+func TestSingleLoginClientChanneling(t *testing.T) {
+	connections := NewSessionConnections()
+	client, _ := newWiringFixture(t, func(deps *Deps) { deps.SessionConns = connections })
+	adminBody := `{"username":"admin","password":"e2e-password"}`
+	cliBody := `{"username":"admin","password":"e2e-password","client":"cli"}`
+
+	// 浏览器先登录，CLI 随后登录：互不互踢。
+	webLogin := client.postJSON("/api/auth/login", adminBody, "")
+	if webLogin.Code != http.StatusOK {
+		t.Fatalf("web 登录失败：%d", webLogin.Code)
+	}
+	webCookie := cookiePair(webLogin.Header().Get("Set-Cookie"))
+	cliLogin := client.postJSON("/api/auth/login", cliBody, "")
+	if cliLogin.Code != http.StatusOK {
+		t.Fatalf("cli 登录失败：%d", cliLogin.Code)
+	}
+	cliCookie := cookiePair(cliLogin.Header().Get("Set-Cookie"))
+	webClosed := 0
+	connections.Register(strings.TrimPrefix(webCookie, "elysian_session="), func() { webClosed++ })
+	cliClosed := 0
+	connections.Register(strings.TrimPrefix(cliCookie, "elysian_session="), func() { cliClosed++ })
+	if status := client.get("/api/logs/runtime", webCookie).Code; status != http.StatusOK {
+		t.Fatalf("cli 登录后 web 会话应仍可用：%d", status)
+	}
+	if !strings.Contains(client.get("/api/auth/session", cliCookie).Body.String(), `"authenticated":true`) {
+		t.Fatal("cli 会话探测应通过")
+	}
+
+	// 第二个 CLI 登录：只顶掉旧 CLI（会话与连接），浏览器不掉线。
+	secondCLI := client.postJSON("/api/auth/login", cliBody, "")
+	if secondCLI.Code != http.StatusOK {
+		t.Fatalf("第二个 cli 登录失败：%d", secondCLI.Code)
+	}
+	if cliClosed != 1 {
+		t.Fatalf("旧 cli 会话的连接应被撤销：%d", cliClosed)
+	}
+	if webClosed != 0 {
+		t.Fatal("cli 重登不得撤销 web 连接")
+	}
+	if status := client.get("/api/logs/runtime", cliCookie).Code; status != http.StatusUnauthorized {
+		t.Fatalf("旧 cli Cookie 应失效，得 %d", status)
+	}
+	if status := client.get("/api/logs/runtime", webCookie).Code; status != http.StatusOK {
+		t.Fatalf("cli 重登后 web 会话应仍可用：%d", status)
+	}
+
+	// 浏览器重登：顶掉旧 web 会话，CLI 不掉线（新 web Cookie 可用）。
+	webRelogin := client.postJSON("/api/auth/login", adminBody, "")
+	if webRelogin.Code != http.StatusOK {
+		t.Fatalf("web 重登失败：%d", webRelogin.Code)
+	}
+	if webClosed != 1 {
+		t.Fatalf("旧 web 会话的连接应被撤销：%d", webClosed)
+	}
+	newWebCookie := cookiePair(webRelogin.Header().Get("Set-Cookie"))
+	if status := client.get("/api/logs/runtime", newWebCookie).Code; status != http.StatusOK {
+		t.Fatalf("新 web 会话应可用：%d", status)
+	}
+	secondCLICookie := cookiePair(secondCLI.Header().Get("Set-Cookie"))
+	if status := client.get("/api/logs/runtime", secondCLICookie).Code; status != http.StatusOK {
+		t.Fatalf("web 重登后 cli 会话应仍可用：%d", status)
+	}
+}
+
+func TestSingleLoginPwdEpochInvalidatesBothClients(t *testing.T) {
+	client, credentials := newWiringFixture(t, nil)
+	adminBody := `{"username":"admin","password":"e2e-password"}`
+	cliBody := `{"username":"admin","password":"e2e-password","client":"cli"}`
+	webLogin := client.postJSON("/api/auth/login", adminBody, "")
+	cliLogin := client.postJSON("/api/auth/login", cliBody, "")
+	if webLogin.Code != http.StatusOK || cliLogin.Code != http.StatusOK {
+		t.Fatalf("两类登录失败：web %d、cli %d", webLogin.Code, cliLogin.Code)
+	}
+	webCookie := cookiePair(webLogin.Header().Get("Set-Cookie"))
+	cliCookie := cookiePair(cliLogin.Header().Get("Set-Cookie"))
+
+	// CLI 改密等价于换哈希 + 新 passwordChangedAt（内存 store 直写）。
+	if _, err := credentials.Write(mustHash(t, "rotated-password")); err != nil {
+		t.Fatalf("改密失败：%v", err)
+	}
+	for name, cookie := range map[string]string{"web": webCookie, "cli": cliCookie} {
+		if status := client.get("/api/logs/runtime", cookie).Code; status != http.StatusUnauthorized {
+			t.Errorf("改密后 %s 会话下一次请求 = %d，期望 401", name, status)
+		}
+		if strings.Contains(client.get("/api/auth/session", cookie).Body.String(), `"authenticated":true`) {
+			t.Errorf("改密后 %s 会话探测不应通过", name)
+		}
+	}
+	// 新密码可再登录（cli 类别同样可用）。
+	relogin := client.postJSON("/api/auth/login", `{"username":"admin","password":"rotated-password","client":"cli"}`, "")
+	if relogin.Code != http.StatusOK {
+		t.Errorf("改密后 cli 再登录 = %d，期望 200", relogin.Code)
 	}
 }

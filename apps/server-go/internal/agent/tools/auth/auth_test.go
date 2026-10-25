@@ -48,7 +48,7 @@ func install(t *testing.T, deps Deps) (*kardia.Context, *tools.Registry) {
 
 func TestSessionCountDoesNotLeakSessionIDs(t *testing.T) {
 	deps := memoryDeps(t, nil)
-	if _, _, err := deps.Sessions.Create("epoch-1"); err != nil {
+	if _, _, err := deps.Sessions.Create("epoch-1", ""); err != nil {
 		t.Fatalf("建会话失败：%v", err)
 	}
 	root, registry := install(t, deps)

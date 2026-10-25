@@ -269,11 +269,36 @@ func TestLoginInvalidBodyShapes(t *testing.T) {
 		`{"username":1,"password":"x"}`,
 		fmt.Sprintf(`{"username":%q,"password":"x"}`, longUsername),
 		`["admin","x"]`,
+		// client 字段只接受缺省/""/"web"/"cli"，未知取值与非字符串一律 400。
+		`{"username":"admin","password":"x","client":"tui"}`,
+		`{"username":"admin","password":"x","client":1}`,
+		`{"username":"admin","password":"x","client":null}`,
 	}
 	for _, body := range bodies {
 		recorder := f.login(body)
 		wantStatusBody(t, recorder, http.StatusBadRequest, "请求体不合法")
 	}
+}
+
+func TestLoginClientFieldAccepted(t *testing.T) {
+	f := newRoutesFixture(t, nil)
+	f.setCredentialsHash(t, mustHash(t, "right-password"))
+	for name, body := range map[string]string{
+		"absent": `{"username":"admin","password":"right-password"}`,
+		"empty":  `{"username":"admin","password":"right-password","client":""}`,
+		"web":    `{"username":"admin","password":"right-password","client":"web"}`,
+		"cli":    `{"username":"admin","password":"right-password","client":"cli"}`,
+	} {
+		recorder := f.login(body)
+		if recorder.Code != http.StatusOK {
+			t.Errorf("%s 登录 = %d（%s）", name, recorder.Code, recorder.Body.String())
+			continue
+		}
+		if !strings.HasPrefix(recorder.Header().Get("Set-Cookie"), "elysian_session=") {
+			t.Errorf("%s 登录应下发会话 Cookie", name)
+		}
+	}
+	// 同类互斥与分道语义由 singlelogin/sessionstore 测试锚定。
 }
 
 func TestLoginNonJSONContentType415(t *testing.T) {
