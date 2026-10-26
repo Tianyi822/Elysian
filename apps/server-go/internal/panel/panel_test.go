@@ -7,6 +7,7 @@ import (
 	"context"
 	"elysian/server/internal/config"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -317,6 +318,28 @@ func TestSourceRejectsTraversalAndLinks(t *testing.T) {
 		t.Fatal("未解包源码")
 	}
 }
+func TestExtractSourceRejectsNonGzipBody(t *testing.T) {
+	for name, body := range map[string]string{"HTML 正文": "<!DOCTYPE html><html></html>", "空正文": ""} {
+		if err := extractSource(strings.NewReader(body), t.TempDir()); !errors.Is(err, errSourceNotArchive) {
+			t.Fatalf("%s未被拒绝：%v", name, err)
+		}
+	}
+}
+
+func TestGitHubDownloadRejectsHTMLBody(t *testing.T) {
+	sha := strings.Repeat("b", 40)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte("<!DOCTYPE html><html>rate limited</html>"))
+	}))
+	defer srv.Close()
+	s := GitHubSource{Client: srv.Client(), API: srv.URL}
+	err := s.Download(context.Background(), sha, t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "网页而非源码归档") {
+		t.Fatalf("HTML 正文未被识别：%v", err)
+	}
+}
+
 func TestGitHubUsesRepositoryDefaultBranchAndPinnedSHA(t *testing.T) {
 	sha := strings.Repeat("b", 40)
 	archivePath := ""

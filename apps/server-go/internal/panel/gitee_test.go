@@ -59,6 +59,18 @@ func TestGiteeCommitCheckHistoryAndDownload(t *testing.T) {
 	}
 }
 
+func TestGiteeDownloadRejectsHTMLBody(t *testing.T) {
+	sha := strings.Repeat("a", 40)
+	source, _ := giteeTestSource(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte("<!DOCTYPE html><html><body>下载仓库 · 登录提示</body></html>"))
+	})
+	err := source.Download(context.Background(), sha, t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "网页而非源码归档") || !strings.Contains(err.Error(), "开源审核") {
+		t.Fatalf("HTML 正文未被识别为下载受限：%v", err)
+	}
+}
+
 func TestGiteeReleaseCheckSkipsPrerelease(t *testing.T) {
 	sha := strings.Repeat("b", 40)
 	source, _ := giteeTestSource(t, func(w http.ResponseWriter, r *http.Request) {

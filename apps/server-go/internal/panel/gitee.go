@@ -247,6 +247,9 @@ func (s GiteeSource) Download(ctx context.Context, sha, destination string) erro
 	}
 	defer r.Body.Close()
 	if err = extractSource(io.LimitReader(r.Body, 128*1024*1024), destination); err != nil {
+		if errors.Is(err, errSourceNotArchive) {
+			return fmt.Errorf("源码解包失败：Gitee 返回了网页而非源码归档（该仓库源码下载可能需要登录，如尚未通过 Gitee 开源审核）")
+		}
 		return fmt.Errorf("源码解包失败：%w", err)
 	}
 	return nil
