@@ -20,6 +20,9 @@ export type DraftModel = {
   enabled: boolean
 }
 
+// 草稿 key 只用于当前表单的行身份，不提交给服务端；HTTP IP 访问也能生成。
+let draftModelSequence = 0
+
 function capabilityDraft(capabilities: AgentModelCapabilities) {
   return {
     ...capabilities,
@@ -36,7 +39,7 @@ function capabilityDraft(capabilities: AgentModelCapabilities) {
 
 export function blankModel(): DraftModel {
   return {
-    key: crypto.randomUUID(), model: '', contextTokens: '64000', outputTokens: '4096',
+    key: `model-draft-${++draftModelSequence}`, model: '', contextTokens: '64000', outputTokens: '4096',
     ...capabilityDraft({ text: true, tools: true, structuredOutput: true, systemMessages: true, source: '默认配置' }), enabled: true,
   }
 }

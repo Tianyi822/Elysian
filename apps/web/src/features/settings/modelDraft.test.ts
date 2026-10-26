@@ -1,7 +1,20 @@
-import { describe, expect, it } from 'vitest'
-import { discoveredModelDraft, modelPresetDraft } from './modelDraft'
+import { describe, expect, it, vi } from 'vitest'
+import { blankModel, discoveredModelDraft, modelPresetDraft } from './modelDraft'
 
 describe('模型目录与预设参数', () => {
+  it('HTTP IP 访问缺少 randomUUID 时，手动与目录添加仍能生成独立草稿', () => {
+    vi.stubGlobal('crypto', { getRandomValues: crypto.getRandomValues.bind(crypto) })
+    try {
+      const manual = blankModel()
+      const flash = discoveredModelDraft('deepseek', { model: 'deepseek-flash', name: 'Flash' })
+      const pro = discoveredModelDraft('deepseek', { model: 'deepseek-v4-pro', name: 'Pro' })
+      expect(new Set([manual.key, flash.key, pro.key]).size).toBe(3)
+      expect(flash).toMatchObject({ model: 'deepseek-flash', contextTokens: '1048576' })
+      expect(pro).toMatchObject({ model: 'deepseek-v4-pro', outputTokens: '393216' })
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
   it('DeepSeek Flash 与 Pro 的图片能力不同，输出容量取官方最大值', () => {
     const flash = discoveredModelDraft('deepseek', { model: 'deepseek-flash', name: 'Flash' })
     const pro = discoveredModelDraft('deepseek', { model: 'deepseek-v4-pro', name: 'Pro' })
