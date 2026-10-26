@@ -1,7 +1,7 @@
 /*
- * SSH 域类型与词典。本期只做本机 SSH 服务的演示呈现：
+ * SSH 域类型与词典。类型描述本机 SSH 服务需要呈现的事实：
  * 服务启停、登录方式、监听端口、Root 登录策略与 Root 凭据都属于系统级变更，
- * 由未来接入的执行层筛选与执行，这里的类型只描述界面需要呈现的事实。
+ * Docker 运行时由安全域服务在容器内执行，本地开发由 mock 提供演示数据。
  * Root 登录策略的取值沿用 sshd_config 的 PermitRootLogin；界面文案只取本文件的中文标签表。
  */
 
@@ -189,9 +189,8 @@ export const SSH_PASSWORD_STRENGTH_LABELS: Record<SshPasswordStrength, string> =
 }
 
 /**
- * 演示级的弱密码判定：长度与字符类别两条尺子，确定性、无随机。
- * 它只用来在重置 Root 密码时挡住明显过弱的取值；真实的强度策略与阈值属于 harness 层，接入期与策略一起定。
- * 界面用它做即时反馈，mock 侧用同一次判定拒绝弱密码，两侧不会出现两种口径。
+ * 客户端轻量弱密码判定：长度与字符类别两条尺子，确定性、无随机。
+ * 界面用它做即时反馈；Docker 运行时由服务端以同一判定复核，mock 侧同样拒绝弱密码，两侧不会出现两种口径。
  */
 export function evaluateSshPasswordStrength(password: string): SshPasswordStrength {
   const classes = characterClassCount(password)

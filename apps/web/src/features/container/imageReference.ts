@@ -2,7 +2,7 @@ export type { ParsedImageReference, ParsedImageReferenceResult } from '@elysian/
 export { parseImageReference } from '@elysian/contracts'
 
 /*
- * 拉取源：演示只记录地址、不产生真实数据流；输入留空即用默认官方地址。
+ * 拉取源：输入留空即用默认官方地址；实际拉取由当前运行时执行。
  */
 
 export const DEFAULT_IMAGE_REGISTRY = 'https://registry-1.docker.io'

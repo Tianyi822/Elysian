@@ -90,7 +90,7 @@ export function matchesOperationSearch(entry: OperationLogEntry, keyword: string
 
 /**
  * 筛选后没有命中的表格内提示。数据库槽位有专门解释：契约里的五个分类固定渲染，
- * 而本期数据库域全是演示、演示动作不写进审计（规格 10.5），空着是设计而非缺陷。
+ * 没有记录时给出说明，空着是设计而非缺陷。
  */
 export function filteredEmptyText(
   categoryFilter: OperationLogCategoryFilter,

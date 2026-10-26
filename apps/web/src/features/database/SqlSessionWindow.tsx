@@ -12,7 +12,7 @@ import { ENGINE_STATEMENTS } from './engineStatements'
 /**
  * 前缀补全，语义与容器终端一致：行首补语句，唯一命中补齐并补空格，
  * 多命中收敛到最长公共前缀，无法收敛时把候选列成输出行。
- * 行中不补目录名：表名与键名目录已随演示引擎移除，与真实会话行为一致（无候选）。
+ * 行中不补目录名：不提供表名与键名目录候选，与真实会话行为一致。
  */
 export function completeSqlStatement(
   database: DatabaseInstance,

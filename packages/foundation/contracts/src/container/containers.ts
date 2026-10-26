@@ -1,6 +1,6 @@
 /*
- * 容器域类型与词典。本期只描述本机容器的状态与配置，
- * 操作（启动/停止/重启）全部为 mock，接口形状为未来接真实运行时预留。
+ * 容器域类型与词典。描述本机容器的状态与配置；
+ * 启动、停止、重启在 Docker 运行时落到真实容器，本地开发由 mock 改写内存数据集。
  */
 
 export type ContainerStatus = 'running' | 'stopped' | 'restarting' | 'paused'
@@ -112,7 +112,7 @@ export type ContainerCreateInput = {
   restartPolicy: RestartPolicy
 }
 
-/** 容器动作：启动、停止、重启。本期均为 mock。 */
+/** 容器动作：启动、停止、重启。 */
 export type ContainerAction = 'start' | 'stop' | 'restart'
 
 /** 自动容器名：镜像名中的 / 换成 -，再追加不冲突的最小序号（从 2 起）。 */

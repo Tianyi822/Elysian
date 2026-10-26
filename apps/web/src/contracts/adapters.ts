@@ -129,8 +129,8 @@ export interface TerminalAdapter {
 }
 
 /**
- * 容器域适配接口。本期为 mock 实现：操作改写内存数据集，
- * 状态变化经 container/updated 事件推回；未来换真实运行时 adapter，页面不改。
+ * 容器域适配接口。Docker 运行时由 HTTP adapter 接 Docker Engine，
+ * 本地开发由 mock 改写内存数据集；状态变化同经 container/updated 事件推回。
  */
 export type ContainerHostPolicy = {
   mountRoot: string
@@ -162,9 +162,9 @@ export interface ContainerAdapter {
    * 连接，已 ready 会话仍走 disconnectTerminal。可选：mock 没有 pending 概念，no-op。
    */
   cancelTerminalConnect?(): void
-  /** 请求容器动作（启动/停止/重启，均为 mock）。 */
+  /** 请求容器动作（启动/停止/重启）：Docker 运行时落到真实容器，本地演示改写内存数据集。 */
   requestAction(containerId: string, action: ContainerAction): Promise<Container>
-  /** 创建容器（mock）：追加内存数据集并推 container/created。 */
+  /** 创建容器：Docker 运行时创建真实容器，本地演示追加内存数据集并推 container/created。 */
   create(input: ContainerCreateInput): Promise<Container>
   /**
    * 容器工作区：随容器一起上传的配置文件的存放、内容读写、compose 路径自检
@@ -198,9 +198,9 @@ export interface ContainerAdapter {
   getAppBuildLogs(slug: string, taskId: string, offset: number): Promise<ContainerBuildLogs>
   /** 取消活跃构建任务（排队中直接取消，构建中取消引擎流）；已终态抛中文错误。 */
   cancelAppBuild(slug: string, taskId: string): Promise<void>
-  /** 删除镜像（mock）：仅允许删除未被引用的镜像，改写内存数据集。 */
+  /** 删除镜像：仅允许删除未被引用的镜像；Docker 运行时删除真实镜像，本地演示改写内存数据集。 */
   removeImage(imageId: string): Promise<void>
-  /** 拉取镜像（mock）：确定性生成摘要与体积后追加内存数据集，同名同标签视为已存在；registry 仅记录拉取源，不产生真实数据流。 */
+  /** 拉取镜像：Docker 运行时从真实镜像仓库拉取并回报进度，本地演示确定性生成摘要与体积；同名同标签视为已存在。 */
   pullImage(input: { name: string; tag: string; registry?: string }, onProgress?: (progress: ImagePullProgress) => void): Promise<ContainerImage>
   /**
    * 容器状态 SSE：Docker 运行时订阅 /api/docker/events；mock 立即上报 live 并返回空退订
@@ -402,34 +402,34 @@ export interface FilesAdapter {
   checkUpload(dirPath: string, name: string, sizeBytes: number, signal?: AbortSignal): Promise<FileUploadCheck>
   uploadFile(dirPath: string, file: File, check: FileUploadCheck, overwrite: boolean, options?: FileUploadOptions): Promise<FileEntry>
   /**
-   * 列出一个目录的直接子项（演示）。路径须为归一化后的绝对路径；
+   * 列出一个目录的直接子项。路径须为归一化后的绝对路径；
    * 不承诺任何顺序，排序由界面决定；目录不存在时抛出中文错误。
    */
   list(dirPath: string): Promise<readonly FileEntry[]>
   /**
-   * 递归统计一个目录的总大小（字节，演示）。目录大小不在列举里给出——
+   * 递归统计一个目录的总大小（字节）。目录大小不在列举里给出——
    * 累计求和代价大，由界面按需触发；真实实现可能明显耗时，界面须有等待状态。
    */
   size(dirPath: string): Promise<number>
-  /** 复制一个条目到目标目录（演示）。目标重名时自动加「 副本」后缀，返回新条目。 */
+  /** 复制一个条目到目标目录。目标重名时自动加「 副本」后缀，返回新条目。 */
   copyEntry(srcPath: string, destDirPath: string): Promise<FileEntry>
-  /** 移动一个条目到目标目录（演示）。目标与源所在目录相同、或把目录移进它自己内部时报错。 */
+  /** 移动一个条目到目标目录。目标与源所在目录相同、或把目录移进它自己内部时报错。 */
   moveEntry(srcPath: string, destDirPath: string): Promise<FileEntry>
-  /** 重命名一个条目（演示）。名称非法或与同级条目重名时报错，返回重命名后的条目。 */
+  /** 重命名一个条目。名称非法或与同级条目重名时报错，返回重命名后的条目。 */
   renameEntry(path: string, newName: string): Promise<FileEntry>
-  /** 把一个条目压缩成同级的「名称.tar.gz」（演示），返回新条目；同级已有同名压缩包时报错。 */
+  /** 把一个条目压缩成同级的「名称.tar.gz」，返回新条目；同级已有同名压缩包时报错。 */
   compressEntry(path: string): Promise<FileEntry>
-  /** 改一个条目的权限与所有者（演示）；recursive 为真时连同全部后代一起改。 */
+  /** 改一个条目的权限与所有者；recursive 为真时连同全部后代一起改。 */
   chmod(path: string, input: FilePermissionInput): Promise<void>
   /**
-   * 按关键词在全树范围搜索目录与文件（演示）。名称与所在路径参与匹配，
+   * 按关键词在全树范围搜索目录与文件。名称与所在路径参与匹配，
    * 口径由契约的 matchesFilePath 定义；空关键词返回空数组。
-   * 本期是内存遍历，未来由服务端索引提供同形结果。
+   * 遍历方式不属于契约，由服务端实现。
    */
   search(keyword: string): Promise<readonly FileSearchResult[]>
 }
 
-/** 权限变更（演示）：模式为三位八进制，所有者为系统账号名。 */
+/** 权限变更：模式为三位八进制，所有者为系统账号名。 */
 export type FilePermissionInput = {
   mode: string
   owner: string
@@ -505,7 +505,7 @@ export type ResourceSamplePoint = {
   diskWrite: number
 }
 
-/** 按时间窗读取资源指标历史（演示内存缓冲，未来同源持久化）。 */
+/** 按时间窗读取资源指标历史；Docker 运行时由同源持久化提供，本地开发使用内存缓冲。 */
 export interface ResourceHistoryAdapter {
   list(range: ResourceHistoryTimeRange): Promise<readonly ResourceSamplePoint[]>
 }

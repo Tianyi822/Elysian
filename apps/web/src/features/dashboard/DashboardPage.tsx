@@ -41,7 +41,7 @@ export function DashboardPage() {
   if (resources.length === 0) {
     return (
       <ShellPageFallback><EmptyState
-        title="演示数据集为空"
+        title="暂无资源数据"
         description="没有可展示的资源采样。可以刷新重试。"
         action={<RefreshButton onPress={() => void load(gateway)} />}
       /></ShellPageFallback>

@@ -42,7 +42,7 @@ func IsValidSshKeyName(name string) bool {
 	return len([]rune(trimmed)) > 0 && len([]rune(trimmed)) <= SSHKeyNameMaxLength
 }
 
-// EvaluateSshPasswordStrength 演示级弱密码判定：长度与字符类别两条尺子（weak|medium|strong）。
+// EvaluateSshPasswordStrength 轻量弱密码判定：长度与字符类别两条尺子（weak|medium|strong）。
 func EvaluateSshPasswordStrength(password string) string {
 	classes := characterClassCount(password)
 	if len([]rune(password)) >= 12 && classes >= 3 {

@@ -13,7 +13,7 @@ import type { FirewallExportDirection } from './firewallRuleIO'
 
 /**
  * 导出端口规则弹窗：按方向（所有/入站/出站）筛出规则，生成 JSON 文件在本地下载。
- * 文件在浏览器本地生成，不发网络请求；导出的是演示数据集，格式与导入互通。
+ * 文件在浏览器本地生成，不发网络请求；导出的是当前规则集，格式与导入互通。
  */
 export function FirewallExportDialog() {
   const rules = useFirewallStore((s) => s.rules)

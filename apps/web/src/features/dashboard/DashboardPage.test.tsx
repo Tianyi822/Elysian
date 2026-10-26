@@ -246,7 +246,7 @@ describe('仪表盘空态', () => {
 
     renderApp('/', { gateway })
 
-    expect(await screen.findByText('演示数据集为空')).toBeInTheDocument()
+    expect(await screen.findByText('暂无资源数据')).toBeInTheDocument()
     expect(screen.queryByLabelText('服务器状态')).not.toBeInTheDocument()
   })
 })

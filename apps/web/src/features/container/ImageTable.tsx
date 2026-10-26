@@ -18,7 +18,7 @@ function formatPullBytes(bytes: number): string {
 
 /**
  * 镜像视图：固定列宽表格，行内两行布局撑起可读高度。
- * 删除为演示动作：只允许删除未被引用的镜像，经确认对话框后落实到 mock 数据集。
+ * 删除镜像只允许未被引用的镜像，经确认对话框后交给当前运行时（Docker 或演示数据集）。
  */
 export function ImageTable({
   images,
