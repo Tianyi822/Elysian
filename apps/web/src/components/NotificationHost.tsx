@@ -15,6 +15,8 @@ const DISMISS_AFTER_MS: Record<NotificationTone, number> = {
   danger: 8000,
 }
 
+const UNEXPECTED_ERROR_MESSAGE = '页面操作发生异常，请重试；若仍失败，请刷新页面。'
+
 type ToneStyle = { border: string; icon: IconComponent; iconColor: string }
 
 const TONE_STYLE: Record<NotificationTone, ToneStyle> = {
@@ -73,6 +75,23 @@ function NotificationItem({ notification }: { notification: AppNotification }) {
 export function NotificationHost() {
   const notifications = useNotificationStore((state) => state.notifications)
   const detailOpen = useContainersStore((state) => state.detailContainerId !== undefined)
+
+  useEffect(() => {
+    // 业务操作负责具体反馈；遗漏的脚本异常与 Promise 拒绝也不能静默失败。
+    // 不把异常原文、请求或堆栈送进通知，避免暴露凭据；浏览器仍保留原始诊断。
+    const reportUnexpectedError = () => {
+      const state = useNotificationStore.getState()
+      if (!state.notifications.some(item => item.tone === 'danger' && item.message === UNEXPECTED_ERROR_MESSAGE)) {
+        state.notify({ tone: 'danger', message: UNEXPECTED_ERROR_MESSAGE })
+      }
+    }
+    window.addEventListener('error', reportUnexpectedError)
+    window.addEventListener('unhandledrejection', reportUnexpectedError)
+    return () => {
+      window.removeEventListener('error', reportUnexpectedError)
+      window.removeEventListener('unhandledrejection', reportUnexpectedError)
+    }
+  }, [])
 
   // 空节点也常驻：Radix 打开弹窗时会为已有 aria-live 区域保留读屏访问。
   return createPortal(

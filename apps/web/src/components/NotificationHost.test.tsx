@@ -31,6 +31,36 @@ describe('通知宿主', () => {
     expect(document.querySelector('[aria-live="polite"]')).toBeEmptyDOMElement()
   })
 
+  it('未捕获脚本异常与 Promise 拒绝进入通知，避免重复刷屏并保留浏览器诊断', () => {
+    const addListener = vi.spyOn(window, 'addEventListener')
+    const removeListener = vi.spyOn(window, 'removeEventListener')
+    try {
+      const { unmount } = renderHost()
+      const onError = addListener.mock.calls.find(([type]) => type === 'error')![1] as EventListener
+      const onRejection = addListener.mock.calls.find(([type]) => type === 'unhandledrejection')![1] as EventListener
+      const error = new ErrorEvent('error', { cancelable: true, message: 'private-key-in-error', error: new Error('private-key-in-error') })
+      act(() => {
+        onError(error)
+        onRejection(new Event('unhandledrejection'))
+      })
+      expect(screen.getByRole('alert')).toHaveTextContent('页面操作发生异常，请重试；若仍失败，请刷新页面。')
+      expect(useNotificationStore.getState().notifications).toHaveLength(1)
+      expect(screen.queryByText(/private-key-in-error/)).toBeNull()
+      expect(error.defaultPrevented).toBe(false)
+
+      act(() => useNotificationStore.getState().clear())
+      act(() => onRejection(new Event('unhandledrejection')))
+      expect(screen.getByRole('alert')).toBeInTheDocument()
+
+      unmount()
+      expect(removeListener).toHaveBeenCalledWith('error', onError)
+      expect(removeListener).toHaveBeenCalledWith('unhandledrejection', onRejection)
+    } finally {
+      addListener.mockRestore()
+      removeListener.mockRestore()
+    }
+  })
+
   it('成功与失败分别用 status 与 alert 表达，文案与颜色之外还有图标与关闭按钮', () => {
     useNotificationStore.getState().notify({ tone: 'success', message: '已切换到浅色主题。' })
     useNotificationStore.getState().notify({ tone: 'danger', message: '重置演示数据失败' })

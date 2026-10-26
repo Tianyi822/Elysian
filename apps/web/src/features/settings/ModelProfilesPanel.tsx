@@ -10,7 +10,7 @@ import { StatusTag } from '../../components/StatusTag'
 import { useModelSettingsStore, validateModelInput, isRevisionConflict } from '../../stores/modelSettingsStore'
 import { EmptyState } from '../../components/states/StateViews'
 import { RevisionConflictNotice } from './RevisionConflictNotice'
-import { useFeedbackNotification } from '../../components/useFeedbackNotification'
+import { useNotificationStore } from '../../stores/notificationStore'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { SuggestionInput } from '../../components/SuggestionInput'
 import { ScrollArea } from '../../components/ScrollArea'
@@ -66,6 +66,7 @@ function Toggle({ label, checked, onChange }: { label: string; checked: boolean;
 function ModelServiceDialog({ service, visible, onClose }: { service?: AgentModelService; visible: boolean; onClose(): void }) {
   const gateway = useGateway()
   const saveService = useModelSettingsStore(state => state.saveService)
+  const notify = useNotificationStore(state => state.notify)
   const latest = useModelSettingsStore(state => state.services.find(item => item.id === service?.id))
   const { submitting, inFlightOnly } = useInFlightSubmit()
   const [revision, setRevision] = useState(service?.revision ?? 0)
@@ -79,42 +80,52 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
   const [expanded, setExpanded] = useState<string>()
   const [error, setError] = useState<string>()
   const [catalog, setCatalog] = useState<readonly AgentDiscoveredModel[]>()
-  const [catalogError, setCatalogError] = useState<string>()
-  useFeedbackNotification(catalogError)
-  useFeedbackNotification(error)
   const [fetchingModels, setFetchingModels] = useState(false)
   const [catalogSearch, setCatalogSearch] = useState('')
   const [selectedModels, setSelectedModels] = useState<string[]>([])
   const discoveryRequest = useRef<AbortController | undefined>(undefined)
+  const reportError = (message: string) => { setError(message); notify({ tone: 'danger', message }) }
   useEffect(() => {
-    setCatalog(undefined); setCatalogError(undefined); setCatalogSearch(''); setSelectedModels([]); setFetchingModels(false)
+    setCatalog(undefined); setCatalogSearch(''); setSelectedModels([]); setFetchingModels(false)
     return () => { discoveryRequest.current?.abort(); discoveryRequest.current = undefined }
   }, [provider, apiFormat, baseUrl, credential, revision])
   const discoverModels = async () => {
     if (discoveryRequest.current) return
-    if (!baseUrl.trim()) { setCatalogError('请先填写 Base URL'); return }
-    if (!(credential.trim() || service?.hasCredential)) { setCatalogError('获取模型前请先配置 API Key'); return }
+    if (!baseUrl.trim()) { notify({ tone: 'danger', message: '请先填写 Base URL' }); return }
+    if (!(credential.trim() || service?.hasCredential)) { notify({ tone: 'danger', message: '获取模型前请先配置 API Key' }); return }
     const controller = new AbortController()
     discoveryRequest.current = controller
-    setFetchingModels(true); setCatalogError(undefined); setCatalog(undefined)
+    setFetchingModels(true); setCatalog(undefined)
     try {
       const rows = await gateway.modelSettings.discoverModels({ provider, apiFormat, baseUrl, ...(credential ? { credential } : {}), ...(service ? { serviceId: service.id, expectedRevision: revision } : {}) }, controller.signal)
-      if (discoveryRequest.current === controller) { setCatalog(rows); setSelectedModels([]) }
+      if (discoveryRequest.current === controller) {
+        setCatalog(rows); setSelectedModels([])
+        notify({ tone: 'info', message: rows.length ? `已获取 ${rows.length} 个模型，请选择后添加。` : '服务没有返回可用模型，可以手动添加。' })
+      }
     } catch (error) {
       if (discoveryRequest.current === controller && !controller.signal.aborted) {
-        setCatalogError(error instanceof Error ? error.message : '获取模型失败，请重试或手动添加')
+        notify({ tone: 'danger', message: error instanceof Error ? error.message : '获取模型失败，请重试或手动添加' })
         if (isRevisionConflict(error)) await useModelSettingsStore.getState().refresh(gateway)
       }
     } finally {
       if (discoveryRequest.current === controller) { discoveryRequest.current = undefined; setFetchingModels(false) }
     }
   }
-  useFeedbackNotification(catalog?.length === 0 ? '服务没有返回可用模型，可以手动添加。' : null, 'info')
+  const appendDraftModels = (createRows: () => DraftModel[], expandFirst = false) => {
+    try {
+      const rows = createRows()
+      setModels(current => [...current, ...rows]); setExpanded(expandFirst ? rows[0]?.key : undefined); setError(undefined)
+      notify({ tone: 'success', message: `已添加 ${rows.length} 个模型到配置草稿，保存后生效。` })
+      return true
+    } catch {
+      reportError('添加模型失败，请重试。')
+      return false
+    }
+  }
   const selected = catalog?.filter(row => selectedModels.includes(row.model) && !models.some(model => model.model.trim() === row.model)) ?? []
   const addSelectedModels = () => {
     if (selected.length === 0 || models.length + selected.length > 64) return
-    const rows = selected.map(model => discoveredModelDraft(provider, model))
-    setModels(current => [...current, ...rows]); setSelectedModels([]); setExpanded(undefined); setError(undefined)
+    if (appendDraftModels(() => selected.map(model => discoveredModelDraft(provider, model)))) setSelectedModels([])
   }
   const patch = (key: string, values: Partial<DraftModel>) => setModels(rows => rows.map(row => row.key === key ? { ...row, ...values } : row))
   const selectFormat = (next: AgentModelAPIFormat) => {
@@ -122,7 +133,8 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
     if (provider === 'deepseek' && ['https://api.deepseek.com', 'https://api.deepseek.com/anthropic'].includes(baseUrl.replace(/\/+$/, ''))) setBaseUrl(next === 'anthropic-messages' ? 'https://api.deepseek.com/anthropic' : 'https://api.deepseek.com')
   }
   const submit = async () => {
-    if (models.length === 0) { setError('请先添加至少一个模型'); return }
+    if (models.length === 0) { reportError('请先添加至少一个模型'); return }
+    if (!name.trim()) { reportError('请填写服务名称'); return }
     const input: AgentModelServiceInput = {
       name,
       provider,
@@ -151,9 +163,9 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
         enabled: row.enabled,
       })),
     }
-    if (!(credential.trim() || service?.hasCredential)) { setError('请配置 API Key'); return }
-    for (const row of input.models) { const invalid = validateModelInput({ ...input, ...row, active: input.active && row.enabled }, service?.hasCredential); if (invalid) { setError(invalid); return } }
-    if (new Set(input.models.map(row => row.model.trim())).size !== models.length) { setError('同一服务不能重复配置相同模型 ID'); return }
+    if (!(credential.trim() || service?.hasCredential)) { reportError('请配置 API Key'); return }
+    for (const row of input.models) { const invalid = validateModelInput({ ...input, ...row, active: input.active && row.enabled }, service?.hasCredential); if (invalid) { reportError(invalid); return } }
+    if (new Set(input.models.map(row => row.model.trim())).size !== models.length) { reportError('同一服务不能重复配置相同模型 ID'); return }
     setError(undefined)
     const ok = await inFlightOnly(() => saveService(gateway, input, service ? { id: service.id, revision } : undefined))
     if (ok) onClose()
@@ -162,10 +174,10 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
     <Dialog.Portal><Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
       <Dialog.Content aria-describedby="model-service-description" className="fixed left-1/2 top-1/2 z-[61] flex max-h-[90dvh] w-[min(38rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col panel-surface shadow-xl">
         <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-3"><Dialog.Title className="text-sm font-semibold">{service ? '编辑模型配置' : '新建模型配置'}</Dialog.Title><Dialog.Close asChild><button type="button" aria-label="关闭模型配置表单" className={iconButton}><X aria-hidden size={16} /></button></Dialog.Close></div>
-        <form onSubmit={event => { event.preventDefault(); void submit() }} className="flex min-h-0 flex-col">
+        <form noValidate onSubmit={event => { event.preventDefault(); void submit() }} className="flex min-h-0 flex-col">
           <ScrollArea label="模型配置表单"><fieldset disabled={submitting} className="flex min-w-0 flex-col gap-4 px-5 py-4">
             <Dialog.Description id="model-service-description" className="text-xs leading-relaxed text-fg-subtle">同一服务下的模型共用地址、API 格式与凭据，保存后统一生效。</Dialog.Description>
-            {!service && <Field label="提供商" id="model-provider"><SelectDropdown id="model-provider" ariaLabel="提供商" value={provider} onSelect={next => { setProvider(next); setName(next === 'deepseek' ? 'DeepSeek' : next === 'zhipu' ? '智谱 BigModel' : ''); setError(undefined); if (next === 'deepseek') setBaseUrl(apiFormat === 'anthropic-messages' ? 'https://api.deepseek.com/anthropic' : 'https://api.deepseek.com'); if (next === 'zhipu') { setAPIFormat('chat-completions'); setBaseUrl('https://open.bigmodel.cn/api/coding/paas/v4'); if (models.length === 0) setModels([discoveredModelDraft('zhipu', { model: 'glm-5.3', name: 'GLM-5.3' }), discoveredModelDraft('zhipu', { model: 'glm-5.3-flash', name: 'GLM-5.3-Flash' })]) } }} fullWidth disabled={submitting} items={[{ value: 'openai-compatible', label: '自定义（兼容 API）' }, { value: 'deepseek', label: 'DeepSeek' }, { value: 'zhipu', label: '智谱 BigModel Coding Plan（国内）' }]} /></Field>}
+            {!service && <Field label="提供商" id="model-provider"><SelectDropdown id="model-provider" ariaLabel="提供商" value={provider} onSelect={next => { setProvider(next); setName(next === 'deepseek' ? 'DeepSeek' : next === 'zhipu' ? '智谱 BigModel' : ''); setError(undefined); if (next === 'deepseek') setBaseUrl(apiFormat === 'anthropic-messages' ? 'https://api.deepseek.com/anthropic' : 'https://api.deepseek.com'); if (next === 'zhipu') { setAPIFormat('chat-completions'); setBaseUrl('https://open.bigmodel.cn/api/coding/paas/v4'); if (models.length === 0) appendDraftModels(() => [discoveredModelDraft('zhipu', { model: 'glm-5.3', name: 'GLM-5.3' }), discoveredModelDraft('zhipu', { model: 'glm-5.3-flash', name: 'GLM-5.3-Flash' })]) } }} fullWidth disabled={submitting} items={[{ value: 'openai-compatible', label: '自定义（兼容 API）' }, { value: 'deepseek', label: 'DeepSeek' }, { value: 'zhipu', label: '智谱 BigModel Coding Plan（国内）' }]} /></Field>}
             {provider === 'openai-compatible' && <div><label htmlFor="agent-service-name" className="sr-only">名称</label><input id="agent-service-name" required maxLength={120} placeholder="服务名称" value={name} onChange={event => setName(event.target.value)} className={`${CTL_FIELD} h-9 w-full font-semibold`} /></div>}
             <Field label="Base URL" id="agent-model-baseurl"><input id="agent-model-baseurl" required value={baseUrl} onChange={event => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" className={`${CTL_FIELD} h-9 w-full font-mono text-xs`} /></Field>
             <Field label="API 格式" id="agent-api-format"><SelectDropdown id="agent-api-format" ariaLabel="API 格式" value={apiFormat} onSelect={selectFormat} fullWidth disabled={submitting} items={AGENT_MODEL_API_FORMATS} /></Field>
@@ -173,16 +185,30 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
               <div className="mt-1.5 text-xs text-fg-subtle">{service?.hasCredential ? '必填；留空沿用现有 API Key，输入新值则替换，已有凭据不回显。' : '必填；保存后只写入不回显。'}</div>
             </Field>
             <div className="flex flex-col gap-2">
-              <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-medium text-fg-muted">模型列表 <span className="text-fg-subtle">({models.length})</span></span><div className="flex flex-wrap items-center gap-2"><button type="button" disabled={fetchingModels} onClick={() => void discoverModels()} className={CTL_SECONDARY}><span className="inline-flex items-center gap-1">{fetchingModels ? <Loader2 aria-hidden size={13} className="animate-spin motion-reduce:animate-none" /> : <Download aria-hidden size={13} />}{fetchingModels ? '获取中…' : '获取模型'}</span></button><button type="button" disabled={models.length >= 64} onClick={() => { const row = blankModel(); setModels(rows => [...rows, row]); setExpanded(row.key); setError(undefined) }} className={CTL_SECONDARY}><span className="inline-flex items-center gap-1"><Plus aria-hidden size={13} />添加模型</span></button></div></div>
+              <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-medium text-fg-muted">模型列表 <span className="text-fg-subtle">({models.length})</span></span><div className="flex flex-wrap items-center gap-2"><button type="button" disabled={fetchingModels} onClick={() => void discoverModels()} className={CTL_SECONDARY}><span className="inline-flex items-center gap-1">{fetchingModels ? <Loader2 aria-hidden size={13} className="animate-spin motion-reduce:animate-none" /> : <Download aria-hidden size={13} />}{fetchingModels ? '获取中…' : '获取模型'}</span></button><button type="button" disabled={models.length >= 64} onClick={() => appendDraftModels(() => [blankModel()], true)} className={CTL_SECONDARY}><span className="inline-flex items-center gap-1"><Plus aria-hidden size={13} />添加模型</span></button></div></div>
               {fetchingModels && <p role="status" className="text-xs text-fg-subtle">正在读取服务提供的模型列表…</p>}
               {catalog !== undefined && <div role="region" aria-label="可选模型" className="flex flex-col gap-2 border-y border-line py-3">
                 <div className="flex items-center justify-between gap-2"><span className="text-xs text-fg-muted">可选模型（{catalog.length}）</span><button type="button" aria-label="收起可选模型" onClick={() => setCatalog(undefined)} className={iconButton}><X aria-hidden size={14} /></button></div>
                 {catalog.length > 0 && <>
                   <label htmlFor="model-catalog-search" className="sr-only">搜索可选模型</label><input id="model-catalog-search" type="search" value={catalogSearch} onChange={event => setCatalogSearch(event.target.value)} placeholder="搜索模型名称或 ID" className={`${CTL_FIELD} h-9 w-full`} />
-                  <div className="max-h-48 overflow-y-auto">{catalog.filter(row => [row.name, row.model].some(value => value.toLowerCase().includes(catalogSearch.trim().toLowerCase()))).map(row => {
+                  <ul aria-label="模型目录" className="table-scrollbar m-0 max-h-48 list-none space-y-1 overflow-y-auto p-0">{catalog.filter(row => [row.name, row.model].some(value => value.toLowerCase().includes(catalogSearch.trim().toLowerCase()))).map(row => {
                     const added = models.some(model => model.model.trim() === row.model)
-                    return <label key={row.model} className="flex min-h-11 items-center gap-2 rounded px-2 py-2 text-xs hover:bg-surface-raised"><input type="checkbox" disabled={added} checked={added || selectedModels.includes(row.model)} onChange={event => setSelectedModels(current => event.target.checked ? [...current, row.model] : current.filter(model => model !== row.model))} aria-label={`选择 ${row.model}`} /><span className="min-w-0 flex-1"><span className="block truncate text-fg" title={row.name}>{row.name}</span><span className="block truncate font-mono text-fg-subtle" title={row.model}>{row.model}</span></span>{row.contextTokens && <span className="shrink-0 tabular-nums text-fg-muted">{formatTokens(row.contextTokens)}</span>}{added && <span className="shrink-0 text-fg-subtle">已添加</span>}</label>
-                  })}{catalogSearch.trim() && !catalog.some(row => [row.name, row.model].some(value => value.toLowerCase().includes(catalogSearch.trim().toLowerCase()))) && <p className="py-2 text-xs text-fg-subtle">没有匹配的模型。</p>}</div>
+                    const isSelected = selectedModels.includes(row.model)
+                    return <li key={row.model}>
+                      <button
+                        type="button"
+                        disabled={added}
+                        aria-label={`选择 ${row.model}`}
+                        aria-pressed={added || isSelected}
+                        onClick={() => setSelectedModels(current => current.includes(row.model) ? current.filter(model => model !== row.model) : [...current, row.model])}
+                        className={`flex min-h-12 w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-xs transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent disabled:cursor-default ${isSelected && !added ? 'bg-accent/15 text-accent' : 'text-fg enabled:hover:bg-surface-raised'}`}
+                      >
+                        <span className="min-w-0 flex-1"><span className="block truncate font-medium" title={row.name}>{row.name}</span><span className="block truncate font-mono text-fg-subtle" title={row.model}>{row.model}</span></span>
+                        {row.contextTokens && <span className="shrink-0 tabular-nums text-fg-muted">{formatTokens(row.contextTokens)}</span>}
+                        {added && <span className="shrink-0 text-fg-subtle">已添加</span>}
+                      </button>
+                    </li>
+                  })}{catalogSearch.trim() && !catalog.some(row => [row.name, row.model].some(value => value.toLowerCase().includes(catalogSearch.trim().toLowerCase()))) && <li className="py-2 text-xs text-fg-subtle">没有匹配的模型。</li>}</ul>
                   <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs text-fg-subtle">{models.length + selected.length > 64 ? '每个服务最多配置 64 个模型。' : '选择后添加，参数仍可编辑。'}</span><button type="button" disabled={selected.length === 0 || models.length + selected.length > 64} onClick={addSelectedModels} className={CTL_SECONDARY}>添加选中模型{selected.length > 0 ? `（${selected.length}）` : ''}</button></div>
                 </>}
               </div>}
