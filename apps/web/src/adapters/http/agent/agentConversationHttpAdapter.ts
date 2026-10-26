@@ -208,36 +208,41 @@ export function createHttpAgentConversationAdapter(): AgentConversationAdapter {
     },
     async stream(id, onOutput, signal) {
       // 复用帧解析器与 401 处理，流断开只重连读取，不重新提交消息。
-      const timeout = AbortSignal.timeout(45000)
-      const response = await fetchWithSession(`/api/agent/runs/${path(id)}/output`, {
-        signal: AbortSignal.any([signal, timeout]), cache: 'no-store', headers: { Accept: 'text/event-stream' },
-      })
-      if (!response.ok) { await readAgentResponse(response); return }
-      if (!response.headers.get('content-type')?.startsWith('text/event-stream') || !response.body) throw invalid()
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      const parser = new SseFrameParser()
-      let unframed = 0
-      try {
-        for (;;) {
-          const { value, done } = await reader.read()
-          if (done) return
-          unframed += value.byteLength
-          if (unframed > maxOutputFrameBytes) throw invalid()
-          const frames = parser.push(decoder.decode(value, { stream: true }))
-          if (frames.length) unframed = 0
-          for (const frame of frames) {
-            if (frame.event !== 'output') continue
-            const row = object(JSON.parse(frame.data))
-            if (row.runId !== id || typeof row.done !== 'boolean') throw invalid()
-            const output: AgentChatOutput = { runId: id, responseId: string(row.responseId), reasoning: string(row.reasoning), content: string(row.content), done: row.done }
-            if (row.timeline !== undefined) output.timeline = parseChatTimeline(row.timeline, id)
-            if (signal.aborted) return
-            onOutput(output)
-            if (output.done) return
+      return withRequestDeadline({ signal }, async request => {
+        const connectionSignal = request.signal!
+        const response = await fetchWithSession(`/api/agent/runs/${path(id)}/output`, {
+          ...request, cache: 'no-store', headers: { Accept: 'text/event-stream' },
+        })
+        if (!response.ok) { await readAgentResponse(response); return }
+        if (!response.headers.get('content-type')?.startsWith('text/event-stream') || !response.body) throw invalid()
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder()
+        const parser = new SseFrameParser()
+        let unframed = 0
+        const cancelReader = () => { void reader.cancel().catch(() => {}) }
+        connectionSignal.addEventListener('abort', cancelReader, { once: true })
+        try {
+          if (connectionSignal.aborted) return
+          for (;;) {
+            const { value, done } = await reader.read()
+            if (done) return
+            unframed += value.byteLength
+            if (unframed > maxOutputFrameBytes) throw invalid()
+            const frames = parser.push(decoder.decode(value, { stream: true }))
+            if (frames.length) unframed = 0
+            for (const frame of frames) {
+              if (frame.event !== 'output') continue
+              const row = object(JSON.parse(frame.data))
+              if (row.runId !== id || typeof row.done !== 'boolean') throw invalid()
+              const output: AgentChatOutput = { runId: id, responseId: string(row.responseId), reasoning: string(row.reasoning), content: string(row.content), done: row.done }
+              if (row.timeline !== undefined) output.timeline = parseChatTimeline(row.timeline, id)
+              if (connectionSignal.aborted) return
+              onOutput(output)
+              if (output.done) return
+            }
           }
-        }
-      } finally { await reader.cancel().catch(() => {}); reader.releaseLock() }
+        } finally { connectionSignal.removeEventListener('abort', cancelReader); await reader.cancel().catch(() => {}); reader.releaseLock() }
+      }, 45000)
     },
     async reasoning(id, signal) {
       const parts: string[] = []

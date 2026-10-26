@@ -11,6 +11,8 @@ import {
   TERMINAL_FONT_SIZE_WHEEL_STEP,
 } from './terminalFontSize'
 import { TerminalText } from './TerminalText'
+import { writeClipboardText } from '../../utils/clipboardText'
+import { useNotificationStore } from '../../stores/notificationStore'
 
 /**
  * 终端交互内核的嵌入视口：没有弹窗壳，给页面内会话与弹窗壳共用。
@@ -190,7 +192,7 @@ export function TerminalViewport({
   /**
    * 复制必须在这里接管：键入焦点在 sr-only input 上，原生 Cmd+C 复制的是 input
    * 里的（不可见的）选区而不是日志区高亮。Ctrl+C 恒为中断，Cmd+C 恒为复制
-   * （macOS 习惯）；选区两端都落在日志内才复制，写失败静默降级。
+   * （macOS 习惯）；选区两端都落在日志内才复制，复用 HTTP 兼容复制与通知反馈。
    */
   const copyLogSelection = () => {
     const selection = window.getSelection()
@@ -201,7 +203,10 @@ export function TerminalViewport({
     if (!anchor || !focus || !log.contains(anchor) || !log.contains(focus)) return
     const text = selection.toString()
     if (!text) return
-    void navigator.clipboard?.writeText(text).catch(() => {})
+    void writeClipboardText(text).then(
+      () => useNotificationStore.getState().notify({ tone: 'success', message: '已复制终端选中文本' }),
+      () => useNotificationStore.getState().notify({ tone: 'danger', message: '复制终端选中文本失败，请手动复制或检查浏览器剪贴板权限。' }),
+    )
   }
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {

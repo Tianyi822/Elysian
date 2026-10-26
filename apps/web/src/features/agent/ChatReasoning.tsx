@@ -1,5 +1,6 @@
 import { useId, useLayoutEffect, useRef, useState } from 'react'
 import { ChevronRight } from '../../components/icons'
+import { mediaQuery } from '../../utils/mediaQuery'
 
 /** 收起只显示最新一行；展开在有界区域内跟随更新，手动上滚时保留阅读位置。 */
 export function ChatReasoning({ text, active = false }: { text: string; active?: boolean }) {
@@ -14,7 +15,7 @@ export function ChatReasoning({ text, active = false }: { text: string; active?:
   useLayoutEffect(() => {
     if (preview.current) {
       const element = preview.current
-      const behavior = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth'
+      const behavior = mediaQuery('(prefers-reduced-motion: reduce)')?.matches ? 'instant' : 'smooth'
       if (element.scrollTo) element.scrollTo({ left: element.scrollWidth, behavior })
       else element.scrollLeft = element.scrollWidth
     }

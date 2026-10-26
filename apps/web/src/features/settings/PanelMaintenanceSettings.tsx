@@ -1,3 +1,4 @@
+import { randomId } from '../../utils/randomId'
 import { SectionHelp } from '../../components/SectionHelp'
 import { useEffect, useId, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
@@ -228,7 +229,7 @@ export function PanelMaintenanceSettings() {
     const version = ++submissionVersion.current
     const current = () => scope === lifecycle.current && auth === captureAuthGeneration()
     setSubmitting(true); setPortsError(null); setUpdateError(null); setProgressError(null); setConnectionError(null); setNeedsManualReload(false); setVerifiedUpdate(null)
-    if (requestId.current?.key !== key) requestId.current = { key, id: crypto.randomUUID() }
+    if (requestId.current?.key !== key) requestId.current = { key, id: randomId() }
     const saved = retryPending ?? { ...input, version: 1, requestId: requestId.current.id } as PanelPending
     rememberPending(saved)
     const isPortsAction = saved.kind !== 'update'

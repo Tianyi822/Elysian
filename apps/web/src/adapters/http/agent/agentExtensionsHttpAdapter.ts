@@ -1,4 +1,5 @@
 import { parseRuntimeAccess } from './agentChatGovernance'
+import { randomId } from '../../../utils/randomId'
 import { parseProfile } from './executionParse'
 import type {
   AgentJSONSchema,
@@ -301,9 +302,7 @@ export function assertSkillImportInput(input: AgentSkillImportInput, archive?: B
 /** multipart 组包：仅 metadata、archive 两段，两段都不带 filename（服务端要求）。 */
 function buildSkillImportBody(input: AgentSkillImportInput, archive: Blob): { body: Blob; contentType: string } {
   const metadata = JSON.stringify(skillImportRequestBody(input))
-  const random = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID().replace(/-/g, '')
-    : `${Date.now().toString(16)}${Math.floor(Math.random() * 0xffffffff).toString(16)}`
+  const random = randomId().replace(/-/g, '')
   const boundary = `elysianagentskill${random}`
   const encoder = new TextEncoder()
   const prefix = encoder.encode(

@@ -1,5 +1,6 @@
 import { createContext, useContext, useLayoutEffect, useState } from 'react'
 import type { RefObject } from 'react'
+import { observeElementSize } from '../../utils/observeElementSize'
 
 /**
  * 内容区「页面附属控件」（数据库类型切换、容器/镜像切换）的宽度预算。
@@ -89,11 +90,7 @@ export function useHeaderAccessoryWidthMeasurement({
 /** 先按当前布局量一次，再在元素尺寸变化（窗口缩放、侧边栏收展、内容增减）时重量。 */
 function observeSize(elements: HTMLElement[], measure: () => void): () => void {
   measure()
-  if (typeof ResizeObserver !== 'function') return () => {}
-
-  const observer = new ResizeObserver(measure)
-  for (const element of elements) observer.observe(element)
-  return () => observer.disconnect()
+  return observeElementSize(elements, measure)
 }
 
 function toPixels(value: string): number {

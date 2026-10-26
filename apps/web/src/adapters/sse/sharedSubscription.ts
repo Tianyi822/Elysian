@@ -1,3 +1,4 @@
+import { randomId } from '../../utils/randomId'
 import type { Unsubscribe } from '@elysian/contracts'
 
 /** 同源页面由 Web Lock 选出一个连接持有者，其余页面通过 BroadcastChannel 接收。 */
@@ -7,51 +8,70 @@ export function sharedSubscription<T>(
   receive: (value: T) => void,
   snapshotKey: (value: T) => string | undefined,
 ): Unsubscribe {
-  if (!navigator.locks || typeof BroadcastChannel === 'undefined') return start(receive)
-  const channel = new BroadcastChannel(name)
+  let locks: LockManager | undefined
+  try { locks = navigator.locks }
+  catch { return start(receive) }
+  if (typeof locks?.request !== 'function' || typeof BroadcastChannel !== 'function') return start(receive)
+  let candidate: BroadcastChannel | undefined
+  let id: string
+  try {
+    candidate = new BroadcastChannel(name)
+    id = randomId()
+    candidate.postMessage({ type: 'hello', id })
+  } catch {
+    try { candidate?.close() } catch { /* 共享通道失败不阻断直接订阅。 */ }
+    return start(receive)
+  }
+  const channel = candidate
   const controller = new AbortController()
-  const id = crypto.randomUUID()
   const snapshot = new Map<string, T>()
   let disposed = false
   let owner = false
+  let direct = false
   let stop: Unsubscribe | undefined
   let release: (() => void) | undefined
 
+  const closeChannel = () => { channel.onmessage = null; try { channel.close() } catch { /* 清理失败不阻断直接订阅。 */ } }
+  const fallback = () => {
+    if (disposed || direct) return
+    direct = true
+    owner = false
+    stop?.()
+    stop = undefined
+    controller.abort()
+    release?.()
+    closeChannel()
+    stop = start(receive)
+  }
+  const broadcast = (value: unknown) => { try { channel.postMessage(value) } catch { fallback() } }
+
   channel.onmessage = ({ data }) => {
-    if (disposed || !data || typeof data !== 'object') return
+    if (disposed || direct || !data || typeof data !== 'object') return
     if (data.type === 'hello' && owner) {
-      for (const value of snapshot.values()) channel.postMessage({ type: 'value', target: data.id, value })
+      for (const value of snapshot.values()) broadcast({ type: 'value', target: data.id, value })
     } else if (data.type === 'value' && (!data.target || data.target === id)) receive(data.value as T)
   }
-  channel.postMessage({ type: 'hello', id })
-  void navigator.locks.request(name, { signal: controller.signal }, async () => {
-    if (disposed) return
+  void Promise.resolve().then(() => locks.request(name, { signal: controller.signal }, async () => {
+    if (disposed || direct) return
     owner = true
     const held = new Promise<void>(resolve => { release = resolve })
-    stop = start(value => {
-      if (disposed) return
+    const unsubscribe = start(value => {
+      if (disposed || direct) return
       const key = snapshotKey(value)
       if (key !== undefined) snapshot.set(key, value)
       receive(value)
-      channel.postMessage({ type: 'value', value })
+      broadcast({ type: 'value', value })
     })
+    if (disposed || direct) unsubscribe()
+    else stop = unsubscribe
     try { await held } finally { owner = false }
-  }).catch(() => {
-    // 不支持锁或锁服务异常时仍保留原订阅；主动退订不重新连接。
-    if (!disposed) {
-      owner = false
-      stop?.()
-      channel.onmessage = null
-      channel.close()
-      stop = start(receive)
-    }
-  })
+  })).catch(fallback)
   return () => {
     if (disposed) return
     disposed = true
     stop?.()
     controller.abort()
     release?.()
-    channel.close()
+    closeChannel()
   }
 }

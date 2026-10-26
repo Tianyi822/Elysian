@@ -7,6 +7,16 @@ const session = (): AgentChatSession => ({ id: 'session-1', createdAt: '2026-10-
 afterEach(() => { localStorage.clear(); vi.restoreAllMocks() })
 
 describe('浏览器会话存储', () => {
+  it('HTTP IP 环境下可保存和恢复图片附件，本地标识不依赖 randomUUID', async () => {
+    vi.stubGlobal('crypto', { getRandomValues: crypto.getRandomValues.bind(crypto) })
+    try {
+      const adapter = createAgentChatLocalAdapter()
+      const result = await adapter.attach([new File(['png'], 'image.png', { type: 'image/png' })])
+      expect(result.attachments[0]?.id).toMatch(/^[0-9a-f-]{36}$/)
+      adapter.write({ ...session(), attachments: result.attachments })
+      expect((await adapter.restore(adapter.read()!.attachments))[0]?.available).toBe(true)
+    } finally { vi.unstubAllGlobals() }
+  })
   it.each([undefined, 'enabled'] as const)('pending 原样保留扩展模式 %s，刷新不补写旧请求', extensionMode => {
     const input = { requestId: 'fixed-request', content: '原消息', ...(extensionMode ? { extensionMode } : {}) }
     const adapter = createAgentChatLocalAdapter()

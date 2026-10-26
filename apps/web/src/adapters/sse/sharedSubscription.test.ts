@@ -32,6 +32,46 @@ function browserChannels() {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('跨页面共用展示事件连接', () => {
+  it.each(['constructor', 'hello', 'request', 'rejection'])('共享能力在 %s 阶段失败时保留直接订阅并能退出', async failure => {
+    browserChannels()
+    const close = vi.fn()
+    if (failure === 'constructor' || failure === 'hello') {
+      vi.stubGlobal('BroadcastChannel', class {
+        onmessage = null
+        constructor() { if (failure === 'constructor') throw new DOMException('blocked', 'SecurityError') }
+        postMessage() { throw new DOMException('blocked', 'SecurityError') }
+        close = close
+      })
+    } else if (failure === 'request') vi.mocked(navigator.locks.request).mockImplementation(() => { throw new DOMException('blocked', 'SecurityError') })
+    else vi.mocked(navigator.locks.request).mockRejectedValue(new DOMException('blocked', 'SecurityError'))
+    const stop = vi.fn(), receive = vi.fn()
+    const start = vi.fn((emit: (value: string) => void) => { emit('真实采样'); return stop })
+    const dispose = sharedSubscription('blocked-events', start, receive, () => 'latest')
+    await vi.waitFor(() => expect(start).toHaveBeenCalledOnce())
+    expect(receive).toHaveBeenCalledWith('真实采样')
+    if (failure === 'hello') expect(close).toHaveBeenCalledOnce()
+    dispose()
+    expect(stop).toHaveBeenCalledOnce()
+  })
+
+  it('广播在持有连接后失败时释放旧连接，只保留一条直接订阅', async () => {
+    browserChannels()
+    let posts = 0
+    vi.stubGlobal('BroadcastChannel', class {
+      onmessage = null
+      postMessage() { if (++posts > 1) throw new DOMException('blocked', 'SecurityError') }
+      close() {}
+    })
+    const stop = vi.fn(), receive = vi.fn()
+    const start = vi.fn((emit: (value: string) => void) => { emit('首拍'); return stop })
+    const dispose = sharedSubscription('failed-broadcast', start, receive, () => 'latest')
+    await vi.waitFor(() => expect(start).toHaveBeenCalledTimes(2))
+    expect(stop).toHaveBeenCalledOnce()
+    dispose()
+    await Promise.resolve()
+    expect(stop).toHaveBeenCalledTimes(2)
+  })
+
   it('三个前台页面只开一组连接，广播状态与事件，新页面收到最近采样', async () => {
     browserChannels()
     let emit!: (value: string) => void

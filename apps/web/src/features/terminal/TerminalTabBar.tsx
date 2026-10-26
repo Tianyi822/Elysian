@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, useState } from 'react'
+import { observeElementSize } from '../../utils/observeElementSize'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useIntrinsicWidth } from '../../app/layout/headerAccessoryWidth'
 import { IconButton } from '../../components/IconButton'
@@ -71,12 +72,7 @@ export function TerminalTabBar({
     }
 
     measure()
-    if (typeof ResizeObserver !== 'function') return
-
-    const observer = new ResizeObserver(measure)
-    observer.observe(row)
-    observer.observe(trailing)
-    return () => observer.disconnect()
+    return observeElementSize([row, trailing], measure)
   }, [])
 
   // 摊开宽度一时量不出来（首帧、测试环境）按 0 算，先摊开，量到后再收。

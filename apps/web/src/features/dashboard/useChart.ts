@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import * as echarts from 'echarts/core'
 import type { EChartsCoreOption } from 'echarts/core'
 import type { ChartSize } from './chartOptions'
+import { observeElementSize } from '../../utils/observeElementSize'
 
 function readSize(el: HTMLElement | null): ChartSize {
   if (!el) return { width: 0, height: 0 }
@@ -67,15 +68,14 @@ export function useChart(
     const chart = echarts.init(containerRef.current, undefined, { renderer: 'svg' })
     chartRef.current = chart
 
-    const observer =
-      typeof ResizeObserver === 'function'
-        ? new ResizeObserver(() => {
-            chart.resize()
-            const next = readSize(containerRef.current)
-            setSize((prev) => (sameSize(prev, next) ? prev : next))
-          })
-        : undefined
-    if (observer) observer.observe(containerRef.current)
+    let measuredSize = initialSize
+    const stopObserving = observeElementSize([containerRef.current], () => {
+      const next = readSize(containerRef.current)
+      if (sameSize(measuredSize, next)) return
+      measuredSize = next
+      chart.resize()
+      setSize(next)
+    })
 
     chart.setOption(buildRef.current(initialSize), { notMerge: false, lazyUpdate: false })
     if (enableBrush) {
@@ -119,7 +119,7 @@ export function useChart(
     return () => {
       if (enableBrush) chart.off('brushEnd', onBrushEnd)
       chart.off('datazoom', onDataZoom)
-      observer?.disconnect()
+      stopObserving()
       chart.dispose()
       chartRef.current = undefined
       readyRef.current = false

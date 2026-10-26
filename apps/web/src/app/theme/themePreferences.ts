@@ -1,4 +1,6 @@
 import type { Theme } from './ThemeProvider'
+import { resilientPreferenceStorage } from '../../utils/preferenceStorage'
+import { useNotificationStore } from '../../stores/notificationStore'
 
 /**
  * 界面偏好的本地存储格式：主题与主导航顺序。
@@ -23,6 +25,11 @@ export const UI_PREFERENCES_KEY = 'elysian.ui-preferences'
 
 /** 只用到三个方法，测试因此可以传一个内存对象进来。 */
 export type PreferenceStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
+
+export const reportPreferenceStorageFailure = () => useNotificationStore.getState().notify({
+  tone: 'warning', message: '浏览器无法保存界面偏好，当前页面仍可使用；刷新后可能丢失设置。',
+})
+export const browserPreferenceStorage = resilientPreferenceStorage(() => window.localStorage, reportPreferenceStorageFailure)
 
 function parseNav(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined

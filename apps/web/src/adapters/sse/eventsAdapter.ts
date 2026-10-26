@@ -47,7 +47,9 @@ export function createSseEventsAdapter(
         return () => {}
       }
 
-      const source = factory(url)
+      let source: EventSourceLike
+      try { source = factory(url) }
+      catch { handlers.onStatus('degraded'); return () => {} }
       handlers.onStatus('connecting')
 
       for (const name of STREAMED_EVENT_NAMES) {
@@ -97,9 +99,16 @@ export function createResilientEventsAdapter(options: {
       let live = false
       let unsubscribeFallback: Unsubscribe | undefined
 
-      const source = factory(url)
+      let source: EventSourceLike
+      try { source = factory(url) }
+      catch {
+        const unsubscribe = options.fallback().subscribe({ onEvent: handlers.onEvent, onStatus: () => {} })
+        handlers.onStatus('degraded')
+        return unsubscribe
+      }
       handlers.onStatus('connecting')
 
+      let timer: ReturnType<typeof setTimeout> | undefined
       const fallbackToMemory = () => {
         if (degraded) return
         degraded = true
@@ -140,7 +149,7 @@ export function createResilientEventsAdapter(options: {
         })
       }
 
-      const timer: ReturnType<typeof setTimeout> = setTimeout(fallbackToMemory, probeMs)
+      timer = setTimeout(fallbackToMemory, probeMs)
 
       return () => {
         if (timer !== undefined) clearTimeout(timer)

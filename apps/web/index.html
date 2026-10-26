@@ -18,8 +18,11 @@
         } catch {
           // 坏掉的偏好当没有，回落到系统。
         }
-        document.documentElement.dataset.theme =
-          stored ?? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+        let system = 'dark'
+        try {
+          if (typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: light)').matches) system = 'light'
+        } catch { /* 读取不到系统偏好时使用深色。 */ }
+        document.documentElement.dataset.theme = stored ?? system
       })()
     </script>
   </head>

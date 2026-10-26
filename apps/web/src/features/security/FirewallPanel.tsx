@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { observeElementSize } from '../../utils/observeElementSize'
 import { SwitchToggle } from './sshCardParts'
 import {
   FIREWALL_DIRECTION_LABELS,
@@ -181,10 +182,7 @@ export function FirewallPanel() {
       setToolbarMetrics({ available, gap: Number.parseFloat(style.columnGap) || 0 })
     }
     measure()
-    if (typeof ResizeObserver !== 'function') return
-    const observer = new ResizeObserver(measure)
-    observer.observe(element)
-    return () => observer.disconnect()
+    return observeElementSize([element], measure)
   }, [ready])
 
   // 同行判据：可排布宽度放得下「按钮行 + 间距 + 搜索框」就同行；差一点（两者会接触）

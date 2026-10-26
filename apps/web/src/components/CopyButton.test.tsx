@@ -36,4 +36,31 @@ describe('复制按钮', () => {
     expect(useNotificationStore.getState().notifications[0]?.message).toContain('复制失败')
     writeText.mockRestore()
   })
+
+  it('HTTP IP 入口没有异步剪贴板时仍能复制完整文本，并恢复焦点', async () => {
+    const user = userEvent.setup()
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+    const command = Object.getOwnPropertyDescriptor(document, 'execCommand')
+    const value = '中文 🌏\n```ts\nconst x = "内容";\n```'
+    const exec = vi.fn(() => {
+      expect((document.activeElement as HTMLTextAreaElement).value).toBe(value)
+      return true
+    })
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: exec })
+    try {
+      render(<CopyButton label="消息" value={value} tooltip="复制消息" />)
+      const trigger = screen.getByRole('button', { name: '消息' })
+      await user.click(trigger)
+      expect(exec).toHaveBeenCalledWith('copy')
+      expect(document.querySelector('textarea')).toBeNull()
+      expect(trigger).toHaveFocus()
+      expect(useNotificationStore.getState().notifications.at(-1)).toMatchObject({ tone: 'success', message: '已复制消息' })
+    } finally {
+      if (clipboard) Object.defineProperty(navigator, 'clipboard', clipboard)
+      else Reflect.deleteProperty(navigator, 'clipboard')
+      if (command) Object.defineProperty(document, 'execCommand', command)
+      else Reflect.deleteProperty(document, 'execCommand')
+    }
+  })
 })

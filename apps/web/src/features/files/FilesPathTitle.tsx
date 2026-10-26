@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router'
 import { filesPathSegments, normalizeFilesPath, pickPathDropCount } from './filesPath'
 import { useHeaderAccessoryWidth } from '../../app/layout/headerAccessoryWidth'
+import { observeElementSize } from '../../utils/observeElementSize'
 
 /**
  * 当前路径胶囊：固定标签说明含义，绝对路径紧随其后。
@@ -48,11 +49,7 @@ export function FilesPathTitle() {
     }
 
     measure()
-    if (typeof ResizeObserver !== 'function') return
-    const observer = new ResizeObserver(measure)
-    observer.observe(probe)
-    observer.observe(label)
-    return () => observer.disconnect()
+    return observeElementSize([probe, label], measure)
   }, [path])
 
   const dropCount = metrics

@@ -10,6 +10,45 @@ const attachment = (index: number) => ({ id: `attach-${index}`, name: `${index}.
 const images = (count: number) => Array.from({ length: count }, (_, index) => new File(['x'], `${index}.png`, { type: 'image/png' }))
 
 describe('聊天 HTTP 接口', () => {
+  it('缺少 AbortSignal.any 与 timeout 时仍能接收输出且完成后不遗留计时器', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('AbortSignal', {})
+    const output = { runId: 'r1', responseId: 'm1', reasoning: '推理', content: '中文输出', done: true }
+    const fetcher = vi.fn().mockResolvedValue(new Response(`event: output\ndata: ${JSON.stringify(output)}\n\n`, { headers: { 'content-type': 'text/event-stream' } }))
+    vi.stubGlobal('fetch', fetcher)
+    const seen = vi.fn()
+    await createHttpAgentConversationAdapter().stream('r1', seen, new AbortController().signal)
+    expect(seen).toHaveBeenCalledExactlyOnceWith(output)
+    expect(fetcher).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+  it('输出流正文阻塞时仍遵守 45 秒上限并关闭读取，不重发写请求', async () => {
+    vi.useFakeTimers()
+    const cancelled = vi.fn()
+    const body = new ReadableStream<Uint8Array>({ cancel: cancelled })
+    let bounded: AbortSignal | undefined
+    const fetcher = vi.fn(async (_url, init: RequestInit) => { bounded = init.signal ?? undefined; return new Response(body, { headers: { 'content-type': 'text/event-stream' } }) })
+    vi.stubGlobal('fetch', fetcher)
+    const result = expect(createHttpAgentConversationAdapter().stream('r1', vi.fn(), new AbortController().signal)).rejects.toMatchObject({ name: 'RequestTimeoutError', uncertain: false })
+    await vi.advanceTimersByTimeAsync(45000)
+    await result
+    expect(bounded?.aborted).toBe(true)
+    expect(cancelled).toHaveBeenCalledOnce()
+    expect(fetcher).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+  it('外部取消立即关闭正在读取的输出流', async () => {
+    const cancelled = vi.fn()
+    const body = new ReadableStream<Uint8Array>({ cancel: cancelled })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(body, { headers: { 'content-type': 'text/event-stream' } })))
+    const controller = new AbortController()
+    const task = createHttpAgentConversationAdapter().stream('r1', vi.fn(), controller.signal)
+    const result = expect(task).rejects.toMatchObject({ name: 'AbortError' })
+    await Promise.resolve(); await Promise.resolve()
+    controller.abort()
+    await result
+    expect(cancelled).toHaveBeenCalledOnce()
+  })
   it('在连接结束前交付增量，支持跨分片中文，终帧关闭读取且不提交模型请求', async () => {
     let controller!: ReadableStreamDefaultController<Uint8Array>
     const body = new ReadableStream<Uint8Array>({ start(value) { controller = value } })

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Check, Copy } from './icons'
 import { useNotificationStore } from '../stores/notificationStore'
+import { writeClipboardText } from '../utils/clipboardText'
 
 /** 复制成功后的反馈时长（毫秒）。 */
 const FEEDBACK_MS = 1_500
@@ -30,7 +31,7 @@ export function useClipboardCopy(): {
 
   const copy = async (value: string, label: string) => {
     try {
-      await navigator.clipboard.writeText(value)
+      await writeClipboardText(value)
       window.clearTimeout(timerRef.current)
       setCopied(true)
       timerRef.current = window.setTimeout(() => setCopied(false), FEEDBACK_MS)

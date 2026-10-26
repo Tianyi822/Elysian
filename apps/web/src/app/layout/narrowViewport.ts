@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { mediaQuery, observeMediaQuery } from '../../utils/mediaQuery'
 
 /**
  * 窄屏线：与样式里的窄屏断点同一条（`@media (max-width: 767.98px)`，即 md 之下）。
@@ -17,17 +18,16 @@ export const NARROW_VIEWPORT_QUERY = '(max-width: 767.98px)'
  */
 export function useNarrowViewport(): boolean {
   const [narrow, setNarrow] = useState(
-    () => window.matchMedia?.(NARROW_VIEWPORT_QUERY)?.matches ?? false,
+    () => mediaQuery(NARROW_VIEWPORT_QUERY)?.matches ?? false,
   )
 
   useEffect(() => {
-    const media = window.matchMedia?.(NARROW_VIEWPORT_QUERY)
+    const media = mediaQuery(NARROW_VIEWPORT_QUERY)
     if (!media) return
     const update = () => setNarrow(media.matches)
     update()
     // 测试里的打桩可能只给 matches，没有监听接口。
-    media.addEventListener?.('change', update)
-    return () => media.removeEventListener?.('change', update)
+    return observeMediaQuery(media, update)
   }, [])
 
   return narrow

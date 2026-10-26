@@ -1,3 +1,4 @@
+import { randomId } from '../../utils/randomId'
 import { useEffect, useRef, useState } from 'react'
 import type { AgentMCPProbeDecision, AgentMCPProbeRequest, AgentMCPServer } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
@@ -11,7 +12,7 @@ type Pointer = { requestId: string; id?: string; decision?: AgentMCPProbeDecisio
 const storageKey = (server: AgentMCPServer) => `elysian:mcp-probe:v1:${server.id}:${server.revision}`
 const readPointer = (server: AgentMCPServer): Pointer => {
   try { const value = JSON.parse(sessionStorage.getItem(storageKey(server)) ?? 'null') as Pointer | null; if (value && typeof value.requestId === 'string') return value } catch { /* 浏览器禁用存储时保持当前页面内幂等。 */ }
-  return { requestId: crypto.randomUUID() }
+  return { requestId: randomId() }
 }
 
 export function McpProbeDialog({ server, visible, onClose }: { server: AgentMCPServer; visible: boolean; onClose(): void }) {
@@ -52,7 +53,7 @@ export function McpProbeDialog({ server, visible, onClose }: { server: AgentMCPS
   const decide = async (decision: 'once' | 'session' | 'denied') => {
     if (!request || busy || reading) return
     const owner = lifetime.current, auth = captureAuthGeneration()
-    const input = pointer.decision ?? { requestId: crypto.randomUUID(), expectedVersion: request.version, expectedDigest: request.digest, decision: decision === 'denied' ? 'deny' : 'allow-once' }
+    const input = pointer.decision ?? { requestId: randomId(), expectedVersion: request.version, expectedDigest: request.digest, decision: decision === 'denied' ? 'deny' : 'allow-once' }
     savePointer({ ...pointer, decision: input }); setBusy(true); setError(undefined)
     try { const value = await api.decideMcpProbeRequest(request.id, input); if (owner === lifetime.current && auth === captureAuthGeneration()) { setRequest(value); savePointer({ ...pointer, decision: undefined }) } }
     catch (cause) { if (owner === lifetime.current && auth === captureAuthGeneration()) setError(cause instanceof Error ? cause.message : '探测确认结果未知') }
@@ -60,13 +61,13 @@ export function McpProbeDialog({ server, visible, onClose }: { server: AgentMCPS
   }
   const cancel = async () => {
     if (!request || busy) return
-    const owner = lifetime.current, auth = captureAuthGeneration(), requestId = pointer.cancelRequestId ?? crypto.randomUUID()
+    const owner = lifetime.current, auth = captureAuthGeneration(), requestId = pointer.cancelRequestId ?? randomId()
     savePointer({ ...pointer, cancelRequestId: requestId }); setBusy(true)
     try { const value = await api.cancelMcpProbeRequest(request.id, { requestId }); if (owner === lifetime.current && auth === captureAuthGeneration()) setRequest(value) }
     catch (cause) { if (owner === lifetime.current && auth === captureAuthGeneration()) setError(cause instanceof Error ? cause.message : '停止结果未确认') }
     finally { if (owner === lifetime.current && auth === captureAuthGeneration()) { setBusy(false); setAttempt(value => value + 1) } }
   }
-  const restart = () => { createPromise.current = undefined; setRequest(undefined); savePointer({ requestId: crypto.randomUUID() }); setAttempt(value => value + 1) }
+  const restart = () => { createPromise.current = undefined; setRequest(undefined); savePointer({ requestId: randomId() }); setAttempt(value => value + 1) }
   return <ExtensionDialog title="MCP 探测权限" open={visible} onClose={onClose} wide>
     {!request && reading && <p role="status" className="text-xs text-fg-muted">正在准备权限申请…</p>}
     {error && <div className="space-y-2"><p role="alert" className="text-xs text-danger">{error}</p><button type="button" className={CTL_SECONDARY} disabled={busy || reading} onClick={() => { if (!pointer.id) createPromise.current = undefined; setAttempt(value => value + 1) }}>{pointer.id ? '重新读取探测状态' : '按原请求重试读取申请'}</button></div>}

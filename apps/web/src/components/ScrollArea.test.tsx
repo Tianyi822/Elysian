@@ -35,6 +35,13 @@ function pointer(element: Element, type: 'pointerDown' | 'pointerMove' | 'pointe
 }
 
 describe('自绘滚动区域', () => {
+  it('缺少 ResizeObserver 时表单仍能挂载并接受输入', () => {
+    globalThis.ResizeObserver = undefined as unknown as typeof ResizeObserver
+    render(<ScrollArea label="兼容表单"><input aria-label="可编辑名称" /></ScrollArea>)
+    const field = screen.getByLabelText('可编辑名称')
+    fireEvent.change(field, { target: { value: '仍可输入' } })
+    expect(field).toHaveValue('仍可输入')
+  })
   it('内容溢出才显示，展开、收起与视口变化后重新判断', () => {
     const { dimensions } = renderArea(100)
     expect(screen.queryByRole('scrollbar')).toBeNull()
@@ -79,6 +86,19 @@ describe('自绘滚动区域', () => {
     pointer(track, 'pointerCancel', 0)
     pointer(track, 'pointerMove', 300)
     expect(viewport.scrollTop).toBe(0)
+  })
+
+  it.each(['missing', 'blocked'])('指针捕获 %s 时拖出轨道仍可滚动，释放后停止', failure => {
+    const { viewport } = renderArea()
+    const track = screen.getByRole('scrollbar')
+    Object.defineProperty(track, 'setPointerCapture', { value: failure === 'missing' ? undefined : () => { throw new DOMException('blocked', 'NotFoundError') } })
+    pointer(track.firstElementChild!, 'pointerDown', 10)
+    pointer(document.body, 'pointerMove', 300)
+    expect(viewport.scrollTop).toBe(800)
+    pointer(document.body, 'pointerUp', 300)
+    pointer(document.body, 'pointerMove', 0)
+    expect(viewport.scrollTop).toBe(800)
+    expect(track).not.toHaveAttribute('data-dragging')
   })
 
   it('轨道接收滚轮，内容区保留原生滚动及触控板缩放', () => {

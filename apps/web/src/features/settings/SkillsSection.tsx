@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { randomId } from '../../utils/randomId'
 import type { AgentCapabilityRevocation, AgentSkill, AgentSkillImportInput, AgentSkillImportTask } from '@elysian/contracts'
 import { formatLogBytes } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
@@ -108,7 +109,7 @@ function SkillImportDialog({ target, open, onClose, onPending, onAccepted }: { t
           try { const parsed = new URL(url); valid = parsed.protocol === 'https:' && !parsed.username && !parsed.password && !parsed.search && !parsed.hash } catch { /* 在表单内提示 */ }
           if (!valid || !ref.trim()) throw new Error('请填写 HTTPS Git 地址与明确的分支、标签或提交；地址不能包含凭据或查询参数')
         }
-        const input: AgentSkillImportInput = { requestId: `skill-import-${Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('')}`, enabled, ...(target ? { skillId: target.id, expectedRevision: revision } : {}), source: kind === 'zip' ? { kind } : kind === 'directory' ? { kind, path: path.trim(), ...(subdirectory.trim() ? { subdirectory: subdirectory.trim() } : {}) } : { kind, url: url.trim(), ref: ref.trim(), ...(subdirectory.trim() ? { subdirectory: subdirectory.trim() } : {}) }, ...(kind === 'git' && credential ? { credential } : {}) }
+        const input: AgentSkillImportInput = { requestId: `skill-import-${randomId()}`, enabled, ...(target ? { skillId: target.id, expectedRevision: revision } : {}), source: kind === 'zip' ? { kind } : kind === 'directory' ? { kind, path: path.trim(), ...(subdirectory.trim() ? { subdirectory: subdirectory.trim() } : {}) } : { kind, url: url.trim(), ref: ref.trim(), ...(subdirectory.trim() ? { subdirectory: subdirectory.trim() } : {}) }, ...(kind === 'git' && credential ? { credential } : {}) }
         pending.current = { input, archive: kind === 'zip' ? file : undefined }; onPending(true)
       }
       const request = pending.current

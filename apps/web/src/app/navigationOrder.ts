@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import { NAV_ITEMS, PINNED_NAV_PATH } from './navigation'
-import { UI_PREFERENCES_KEY, readStoredNavOrder, writeStoredNavOrder } from './theme/themePreferences'
+import { mediaQuery } from '../utils/mediaQuery'
+import { UI_PREFERENCES_KEY, browserPreferenceStorage, readStoredNavOrder, writeStoredNavOrder } from './theme/themePreferences'
 
 const DEFAULT_NAV_PATHS: readonly string[] = NAV_ITEMS.map((item) => item.to)
 
@@ -95,7 +96,7 @@ export function moveNavItem(items: readonly string[], from: number, to: number):
  * 避免列表重排的那一帧直接跳过去。调用方要在浏览器绘制前执行。
  */
 export function playNavFlip(list: HTMLElement, previousTops: ReadonlyMap<string, number>): void {
-  if (typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+  if (mediaQuery('(prefers-reduced-motion: reduce)')?.matches) {
     return
   }
   const nodes = [...list.querySelectorAll<HTMLElement>('[data-nav-item]')]
@@ -132,7 +133,7 @@ let snapshot: readonly string[] = DEFAULT_NAV_PATHS
 
 function readRaw(): string | null {
   try {
-    return localStorage.getItem(UI_PREFERENCES_KEY)
+    return browserPreferenceStorage.getItem(UI_PREFERENCES_KEY)
   } catch {
     return null
   }
@@ -146,7 +147,7 @@ export function getNavOrderSnapshot(): readonly string[] {
   const raw = readRaw()
   if (raw === cachedRaw) return snapshot
   cachedRaw = raw
-  const next = mergeNavOrder(DEFAULT_NAV_PATHS, readStoredNavOrder(localStorage))
+  const next = mergeNavOrder(DEFAULT_NAV_PATHS, readStoredNavOrder(browserPreferenceStorage))
   if (samePaths(next, snapshot)) return snapshot
   snapshot = next
   return snapshot
@@ -162,9 +163,9 @@ export function subscribeNavOrder(listener: () => void): () => void {
 }
 
 export function commitNavOrder(order: readonly string[]): void {
-  writeStoredNavOrder(localStorage, order)
+  writeStoredNavOrder(browserPreferenceStorage, order)
   cachedRaw = readRaw()
-  const next = mergeNavOrder(DEFAULT_NAV_PATHS, readStoredNavOrder(localStorage))
+  const next = mergeNavOrder(DEFAULT_NAV_PATHS, readStoredNavOrder(browserPreferenceStorage))
   snapshot = samePaths(next, snapshot) ? snapshot : next
   for (const listener of listeners) listener()
 }

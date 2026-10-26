@@ -1,3 +1,4 @@
+import { randomId } from '../../utils/randomId'
 import { readAuthorizationPending, saveAuthorizationPending } from './authorizationPending'
 import { useEffect, useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
@@ -40,7 +41,7 @@ export function ChatExecutionScope({ open, sessionId, api, onClose }: {
   const revoke = async (item: AgentSessionAuthorization) => {
     if (!api || !sessionId || acting || loading) return
     const owner = lifetime.current, auth = captureAuthGeneration()
-    const input = pending[item.id] ?? { requestId: crypto.randomUUID(), expectedRevision: item.revision }
+    const input = pending[item.id] ?? { requestId: randomId(), expectedRevision: item.revision }
     setPending(previous => { const next = { ...previous, [item.id]: input }; saveAuthorizationPending(`session:${sessionId}`, next); return next }); setActing(item.id); setError(null)
     try {
       const receipt = await api.revokeAuthorization(sessionId, item.id, input)

@@ -1,11 +1,15 @@
-import { createContext, useCallback, useContext, useInsertionEffect, useMemo, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useInsertionEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   clearStoredTheme,
   readStoredTheme,
   writeStoredTheme,
+  browserPreferenceStorage,
+  reportPreferenceStorageFailure,
 } from './themePreferences'
 import type { PreferenceStorage } from './themePreferences'
+import { resilientPreferenceStorage } from '../../utils/preferenceStorage'
+import { mediaQuery, observeMediaQuery } from '../../utils/mediaQuery'
 
 export type Theme = 'dark' | 'light'
 
@@ -31,7 +35,7 @@ function readBootTheme(): Theme {
 }
 
 function readSystemTheme(): Theme {
-  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+  return mediaQuery('(prefers-color-scheme: light)')?.matches ? 'light' : 'dark'
 }
 
 /**
@@ -46,16 +50,19 @@ function readSystemTheme(): Theme {
  */
 export function ThemeProvider({
   children,
-  preferenceStorage = window.localStorage,
+  preferenceStorage,
 }: {
   children: ReactNode
   preferenceStorage?: PreferenceStorage
 }) {
+  const storage = useMemo(() => preferenceStorage
+    ? resilientPreferenceStorage(() => preferenceStorage, reportPreferenceStorageFailure)
+    : browserPreferenceStorage, [preferenceStorage])
   const [theme, setThemeState] = useState<Theme>(
-    () => readStoredTheme(preferenceStorage) ?? readBootTheme(),
+    () => readStoredTheme(storage) ?? readBootTheme(),
   )
   const [followsSystem, setFollowsSystem] = useState(
-    () => readStoredTheme(preferenceStorage) === null,
+    () => readStoredTheme(storage) === null,
   )
 
   // 渲染期同步翻转，子树若在 render 里读 computed style（如图表配色）也能拿到新主题。
@@ -68,13 +75,19 @@ export function ThemeProvider({
     document.documentElement.dataset['theme'] = theme
   }, [theme])
 
+  useEffect(() => {
+    if (!followsSystem) return
+    const media = mediaQuery('(prefers-color-scheme: light)')
+    return observeMediaQuery(media, () => setThemeState(media?.matches ? 'light' : 'dark'))
+  }, [followsSystem])
+
   const setTheme = useCallback(
     (next: Theme) => {
-      writeStoredTheme(preferenceStorage, next)
+      writeStoredTheme(storage, next)
       setFollowsSystem(false)
       setThemeState(next)
     },
-    [preferenceStorage],
+    [storage],
   )
 
   const toggleTheme = useCallback(() => {
@@ -82,10 +95,10 @@ export function ThemeProvider({
   }, [setTheme, theme])
 
   const followSystemTheme = useCallback(() => {
-    clearStoredTheme(preferenceStorage)
+    clearStoredTheme(storage)
     setFollowsSystem(true)
     setThemeState(readSystemTheme())
-  }, [preferenceStorage])
+  }, [storage])
 
   const value = useMemo<ThemeContextValue>(
     () => ({ theme, followsSystem, setTheme, toggleTheme, followSystemTheme }),

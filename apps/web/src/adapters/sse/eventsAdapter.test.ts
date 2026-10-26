@@ -32,6 +32,19 @@ function envelope(id: string, name = 'agent/status'): string {
 }
 
 describe('韧性事件流适配器', () => {
+  it('EventSource 构造被策略拒绝时立即降级，普通 SSE 则报告降级而不抛错', () => {
+    const stub = createStubAdapter()
+    const onStatus = vi.fn()
+    const createEventSource = () => { throw new DOMException('blocked', 'SecurityError') }
+    const unsubscribe = createResilientEventsAdapter({ fallback: () => stub.adapter, createEventSource }).subscribe({ onStatus, onEvent: vi.fn() })
+    expect(stub.state.subscribeCount).toBe(1)
+    expect(onStatus).toHaveBeenCalledExactlyOnceWith('degraded')
+    unsubscribe()
+    expect(stub.state.unsubscribeCount).toBe(1)
+    onStatus.mockClear()
+    expect(() => createSseEventsAdapter({ createEventSource }).subscribe({ onStatus, onEvent: vi.fn() })).not.toThrow()
+    expect(onStatus).toHaveBeenCalledExactlyOnceWith('degraded')
+  })
   beforeEach(() => {
     FakeEventSource.reset()
   })

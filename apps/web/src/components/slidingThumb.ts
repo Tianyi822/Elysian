@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, useState } from 'react'
+import { observeElementSize } from '../utils/observeElementSize'
 
 /** 滑块的内联几何：四个值都取自选中项按钮的盒子。 */
 export type SlidingThumbBox = { left: number; top: number; width: number; height: number }
@@ -41,11 +42,7 @@ export function useSlidingThumb(activeIndex: number) {
       )
     }
     measure()
-    if (typeof ResizeObserver !== 'function') return
-    const observer = new ResizeObserver(measure)
-    observer.observe(group)
-    for (const element of buttonRefs.current) if (element) observer.observe(element)
-    return () => observer.disconnect()
+    return observeElementSize([group, ...buttonRefs.current.filter((element): element is HTMLElement => element !== null)], measure)
   }, [activeIndex])
 
   return {

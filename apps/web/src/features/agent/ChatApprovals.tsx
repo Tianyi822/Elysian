@@ -1,3 +1,4 @@
+import { randomId } from '../../utils/randomId'
 import { readAuthorizationPending, saveAuthorizationPending } from './authorizationPending'
 import { useEffect, useRef, useState } from 'react'
 import type { AgentAccessDecisionInput, AgentApproval } from '@elysian/contracts'
@@ -54,7 +55,7 @@ export function ChatApprovals({ api, runId, onChanged, onCancel }: { api?: Agent
   const decideAccess = async (approval: AgentApproval, decision: AgentAccessDecisionInput['decision']) => {
     if (!api || acting || approval.kind === 'workflow-gate' || !approval.access) return
     const owner = lifetime.current, auth = captureAuthGeneration()
-    const input = pending[approval.id] ?? { requestId: crypto.randomUUID(), expectedRevision: approval.access.revision, expectedDigest: approval.access.digest, decision }
+    const input = pending[approval.id] ?? { requestId: randomId(), expectedRevision: approval.access.revision, expectedDigest: approval.access.digest, decision }
     setPending(previous => ({ ...previous, [approval.id]: input })); setActing(true); setError(null)
     try {
       const receipt = await api.decideAccess(approval.id, input)

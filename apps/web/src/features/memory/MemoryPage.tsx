@@ -1,3 +1,4 @@
+import { randomId } from '../../utils/randomId'
 import * as Dialog from '@radix-ui/react-dialog'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router'
@@ -151,7 +152,7 @@ export function MemoryPage() {
     if (!source.title.trim() || !source.text.trim() || !model) { setFormError('请填写资料标题、正文并选择整理模型'); return }
     if (bytes(source.text) > 16384) { setFormError('单份资料不能超过 16 KiB'); return }
     const key = JSON.stringify({ ...source, modelRevision: model.revision, spaceId: state.spaceId })
-    if (pendingSource.current?.key !== key) pendingSource.current = { key, requestId: crypto.randomUUID() }
+    if (pendingSource.current?.key !== key) pendingSource.current = { key, requestId: randomId() }
     const ok = await state.importSource(gateway, { requestId: pendingSource.current.requestId, title: source.title.trim(), text: source.text, ...(source.filename ? { filename: source.filename } : {}), modelProfileId: model.id, modelProfileRevision: model.revision })
     if (ok) { pendingSource.current = undefined; setDialog(undefined); setSource({ title: '', text: '', filename: '', modelId: source.modelId }); setPanel('jobs'); const current = useAgentMemoryStore.getState().current; if (current) navigatePage(current) }
   }

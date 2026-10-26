@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
+import { observeElementSize } from '../utils/observeElementSize'
 
 const TRACK_INSET = 6
 const MIN_THUMB = 32
@@ -11,6 +12,7 @@ export function ScrollArea({ children, label, className = '' }: { children: Reac
   const trackRef = useRef<HTMLDivElement>(null)
   const thumbRef = useRef<HTMLDivElement>(null)
   const drag = useRef<{ pointerId: number; offset: number } | null>(null)
+  const dragCleanup = useRef<(() => void) | undefined>(undefined)
   const [dragging, setDragging] = useState(false)
   const [metrics, setMetrics] = useState({ height: 0, content: 0, top: 0 })
   const measure = useCallback(() => {
@@ -24,11 +26,8 @@ export function ScrollArea({ children, label, className = '' }: { children: Reac
     const viewport = viewportRef.current
     const content = contentRef.current
     if (!viewport || !content) return
-    const observer = new ResizeObserver(measure)
-    observer.observe(viewport)
-    observer.observe(content)
     measure()
-    return () => observer.disconnect()
+    return observeElementSize([viewport, content], measure)
   }, [measure])
 
   const maximum = Math.max(0, metrics.content - metrics.height)
@@ -41,7 +40,7 @@ export function ScrollArea({ children, label, className = '' }: { children: Reac
 
   useEffect(() => {
     const track = trackRef.current
-    if (!track) { drag.current = null; setDragging(false); return }
+    if (!track) { drag.current = null; dragCleanup.current?.(); setDragging(false); return }
     // 轨道在视口外，仅在命中轨道时转交滚轮；内容区的原生惯性不被接管。
     const onWheel = (event: WheelEvent) => {
       const viewport = viewportRef.current
@@ -54,15 +53,25 @@ export function ScrollArea({ children, label, className = '' }: { children: Reac
     track.addEventListener('wheel', onWheel, { passive: false })
     return () => track.removeEventListener('wheel', onWheel)
   }, [overflow])
+  useEffect(() => () => dragCleanup.current?.(), [])
 
   const scrollTo = (value: number) => {
     if (!viewportRef.current) return
     viewportRef.current.scrollTop = Math.max(0, Math.min(maximum, value))
     measure()
   }
-  const movePointer = (event: PointerEvent<HTMLDivElement>, offset: number) => {
-    if (travel <= 0) return
-    scrollTo((event.clientY - event.currentTarget.getBoundingClientRect().top - offset) / travel * maximum)
+  const movePointer = (clientY: number, offset: number) => {
+    if (travel <= 0 || !trackRef.current) return
+    scrollTo((clientY - trackRef.current.getBoundingClientRect().top - offset) / travel * maximum)
+  }
+  const finishDrag = (pointerId: number) => {
+    if (drag.current?.pointerId !== pointerId) return
+    drag.current = null
+    dragCleanup.current?.()
+    setDragging(false)
+    try {
+      if (trackRef.current?.hasPointerCapture(pointerId)) trackRef.current.releasePointerCapture(pointerId)
+    } catch { /* 指针捕获失败时，窗口监听仍负责结束拖动。 */ }
   }
   const startDrag = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || !event.isPrimary) return
@@ -70,16 +79,25 @@ export function ScrollArea({ children, label, className = '' }: { children: Reac
     event.currentTarget.focus({ preventScroll: true })
     const onThumb = thumbRef.current?.contains(event.target as Node)
     const offset = onThumb ? event.clientY - event.currentTarget.getBoundingClientRect().top - thumbTop : thumbHeight / 2
+    dragCleanup.current?.()
     drag.current = { pointerId: event.pointerId, offset }
-    event.currentTarget.setPointerCapture(event.pointerId)
+    try { event.currentTarget.setPointerCapture(event.pointerId) }
+    catch { /* 不支持捕获的浏览器仍可通过窗口监听拖动。 */ }
+    const onMove = (pointer: globalThis.PointerEvent) => {
+      if (drag.current?.pointerId === pointer.pointerId) movePointer(pointer.clientY, drag.current.offset)
+    }
+    const onEnd = (pointer: globalThis.PointerEvent) => finishDrag(pointer.pointerId)
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onEnd)
+    window.addEventListener('pointercancel', onEnd)
+    dragCleanup.current = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onEnd)
+      window.removeEventListener('pointercancel', onEnd)
+      dragCleanup.current = undefined
+    }
     setDragging(true)
-    if (!onThumb) movePointer(event, offset)
-  }
-  const stopDrag = (event: PointerEvent<HTMLDivElement>) => {
-    if (drag.current?.pointerId !== event.pointerId) return
-    drag.current = null
-    setDragging(false)
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    if (!onThumb) movePointer(event.clientY, offset)
   }
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     let next: number
@@ -103,8 +121,7 @@ export function ScrollArea({ children, label, className = '' }: { children: Reac
     </div>
     {overflow && <div ref={trackRef} role="scrollbar" aria-label={`${label}滚动条`} aria-controls={viewportId} aria-orientation="vertical" aria-valuemin={0} aria-valuemax={maximum} aria-valuenow={Math.round(top)} tabIndex={0}
       className="scroll-area-track" data-dragging={dragging || undefined} style={{ top: TRACK_INSET, bottom: TRACK_INSET }}
-      onPointerDown={startDrag} onPointerMove={event => { if (drag.current?.pointerId === event.pointerId) movePointer(event, drag.current.offset) }}
-      onPointerUp={stopDrag} onPointerCancel={stopDrag} onLostPointerCapture={stopDrag} onKeyDown={onKeyDown}>
+      onPointerDown={startDrag} onLostPointerCapture={event => finishDrag(event.pointerId)} onKeyDown={onKeyDown}>
       <div ref={thumbRef} className="scroll-area-thumb" style={{ height: thumbHeight, transform: `translateY(${thumbTop}px)` }} />
     </div>}
   </div>

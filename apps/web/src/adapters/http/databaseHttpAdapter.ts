@@ -30,9 +30,11 @@ async function readJson<T>(path: string, init?: RequestInit): Promise<T> {
   return body
 }
 
-function openTerminal(id: string): Promise<{ execute(input: string): Promise<readonly string[]>; close(): void }> {
+async function openTerminal(id: string): Promise<{ execute(input: string): Promise<readonly string[]>; close(): void }> {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const socket = new WebSocket(`${protocol}//${location.host}${BASE}/${encodeURIComponent(id)}/terminal`)
+  let socket: WebSocket
+  try { socket = new WebSocket(`${protocol}//${location.host}${BASE}/${encodeURIComponent(id)}/terminal`) }
+  catch { throw new Error('浏览器无法建立数据库终端连接，请检查浏览器网络策略或更换浏览器重试') }
   const queue: ((frame: { type: string; text?: string; lines?: string[] }) => void)[] = []
   let closed = false
   let inFlight = false

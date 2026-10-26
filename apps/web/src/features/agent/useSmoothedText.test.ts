@@ -5,6 +5,20 @@ import { useSmoothedText } from './useSmoothedText'
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
 
 describe('流式文本缓冲', () => {
+  it('没有 Intl.Segmenter 时仍完整输出中文、组合 emoji 与换行', () => {
+    vi.useFakeTimers()
+    const original = Object.getOwnPropertyDescriptor(Intl, 'Segmenter')!
+    Object.defineProperty(Intl, 'Segmenter', { configurable: true, value: undefined })
+    try {
+      const text = '中文 👨‍👩‍👧‍👦 🌏\nconst x = "代码"; '.repeat(5)
+      const { result } = renderHook(() => useSmoothedText(text, true))
+      act(() => vi.advanceTimersByTime(64))
+      expect(text.startsWith(result.current)).toBe(true)
+      expect(result.current).not.toMatch(/[\uD800-\uDBFF]$/u)
+      act(() => vi.advanceTimersByTime(2000))
+      expect(result.current).toBe(text)
+    } finally { Object.defineProperty(Intl, 'Segmenter', original) }
+  })
   it('按完整词块渐进显示，最终内容不丢失，撤回立即清空', () => {
     vi.useFakeTimers()
     vi.stubGlobal('matchMedia', () => ({ matches: false }))

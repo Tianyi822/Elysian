@@ -1,8 +1,9 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { UI_PREFERENCES_KEY } from './themePreferences'
+import { UI_PREFERENCES_KEY, browserPreferenceStorage } from './themePreferences'
 import { ThemeProvider, useTheme } from './ThemeProvider'
+import { useNotificationStore } from '../../stores/notificationStore'
 
 /** 只暴露当前主题与切换动作；DOM 上的属性由用例直接读，避免在渲染期读到上一次提交的值。 */
 function ThemeProbe() {
@@ -40,6 +41,27 @@ afterEach(() => {
 })
 
 describe('主题初值', () => {
+  it('浏览器拒绝访问 localStorage 时仍可打开页面并切换主题', async () => {
+    const user = userEvent.setup()
+    const blocked = vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => { throw new DOMException('blocked', 'SecurityError') })
+    try {
+      document.documentElement.dataset['theme'] = 'dark'
+      render(<ThemeProvider><ThemeProbe /></ThemeProvider>)
+      expect(screen.getByTestId('主题状态')).toHaveTextContent('dark')
+      await user.click(screen.getByRole('button', { name: '切换主题' }))
+      expect(screen.getByTestId('主题状态')).toHaveTextContent('light')
+      expect(useNotificationStore.getState().notifications.at(-1)).toMatchObject({ tone: 'warning', message: expect.stringContaining('无法保存界面偏好') })
+    } finally { blocked.mockRestore(); browserPreferenceStorage.removeItem(UI_PREFERENCES_KEY) }
+  })
+
+  it('缺少媒体查询时跟随系统可回落深色，不影响操作', async () => {
+    const user = userEvent.setup()
+    vi.stubGlobal('matchMedia', undefined)
+    render(<ThemeProvider preferenceStorage={fakeStorage(storedLight)}><ThemeProbe /></ThemeProvider>)
+    await user.click(screen.getByRole('button', { name: '跟随系统主题' }))
+    expect(screen.getByTestId('主题状态')).toHaveTextContent('dark')
+  })
+
   it('继承启动脚本写在 html 上的浅色，不回到深色', () => {
     document.documentElement.dataset['theme'] = 'light'
     render(
@@ -80,6 +102,17 @@ describe('主题初值', () => {
 })
 
 describe('主题偏好持久化', () => {
+  it('只提供旧式监听时仍跟随系统变化，卸载后移除监听', () => {
+    const addListener = vi.fn(), removeListener = vi.fn()
+    const media = { matches: false, addListener, removeListener }
+    vi.stubGlobal('matchMedia', () => media)
+    const view = render(<ThemeProvider preferenceStorage={fakeStorage()}><ThemeProbe /></ThemeProvider>)
+    media.matches = true
+    act(() => addListener.mock.calls[0]![0]())
+    expect(screen.getByTestId('主题状态')).toHaveTextContent('light')
+    view.unmount()
+    expect(removeListener).toHaveBeenCalledWith(addListener.mock.calls[0]![0])
+  })
   it('存过偏好时初值取偏好，优先于 html 上的启动属性', () => {
     document.documentElement.dataset['theme'] = 'dark'
     render(

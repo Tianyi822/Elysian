@@ -33,6 +33,13 @@ class FakeXHR {
 }
 
 describe('createHttpDatabaseAdapter 401 拦截', () => {
+  it.each(['missing', 'blocked'])('WebSocket %s 时异步拒绝，供连接状态和通知统一收口', async failure => {
+    vi.stubGlobal('WebSocket', failure === 'missing' ? undefined : class { constructor() { throw new DOMException('blocked', 'SecurityError') } })
+    let pending: Promise<unknown> | undefined
+    expect(() => { pending = createHttpDatabaseAdapter().openTerminal?.('db-1') }).not.toThrow()
+    await expect(pending).rejects.toThrow('浏览器无法建立数据库终端连接')
+  })
+
   it('request 出口的 401：上报并抛中文登录失效错误', async () => {
     const listener = vi.fn()
     setUnauthorizedListener(listener)

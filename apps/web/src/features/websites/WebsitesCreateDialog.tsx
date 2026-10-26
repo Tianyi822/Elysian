@@ -1,3 +1,4 @@
+import { randomId } from '../../utils/randomId'
 import { deploymentTaskSummary } from './deploymentTaskSummary'
 import * as Dialog from '@radix-ui/react-dialog'
 import { useEffect, useRef, useState } from 'react'
@@ -59,7 +60,7 @@ export function WebsitesCreateDialog({ project, existingTask, onClose }: { proje
   const [logs, setLogs] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
-  const [requestId, setRequestId] = useState(() => crypto.randomUUID())
+  const [requestId, setRequestId] = useState(() => randomId())
   const abort = useRef<AbortController | null>(null)
   const offset = useRef(0)
   const completed = useRef(false)
@@ -114,7 +115,7 @@ export function WebsitesCreateDialog({ project, existingTask, onClose }: { proje
   }
   const acceptSource = (prepared: WebsiteSource) => {
     if (prepared.state !== 'ready' || !prepared.report) throw new Error(prepared.error || '项目来源未准备完成')
-    setSource(prepared); setStep(2); setRequestId(crypto.randomUUID())
+    setSource(prepared); setStep(2); setRequestId(randomId())
     if (!name) setName(prepared.type === 'git' ? parseProjectNameFromGitUrl(prepared.gitUrl ?? url) ?? prepared.name : prepared.name.replace(/\.(?:zip|tar\.gz)$/i, ''))
     if (prepared.report.candidates.length === 1) chooseCandidate(prepared.report.candidates[0]!.id, prepared)
   }
@@ -222,7 +223,7 @@ export function WebsitesCreateDialog({ project, existingTask, onClose }: { proje
         {step === 2 && <><button type="button" className={BUTTON} disabled={busy} onClick={() => setStep(1)}>返回来源</button><button type="button" className={BUTTON} disabled={busy || !candidate || (runtimeKind !== undefined && !(source?.mode === 'artifact' && config.target === 'static') && !catalog)} onClick={() => void deploy()}>{busy ? '正在提交…' : source?.mode === 'artifact' ? '部署并启动' : '构建并部署'}</button></>}
         {step === 3 && waiting && <button type="button" className={BUTTON} disabled={busy} onClick={() => void deploy(true)}>确认并继续部署</button>}
         {step === 3 && task && (websiteDeploymentIsActive(task.state) || waiting) && <button type="button" className={BUTTON} onClick={() => void api?.cancel(task.id).catch((e: unknown) => setError(errorOf(e)))}>取消任务</button>}
-        {step === 3 && task && ['failed', 'cancelled', 'interrupted'].includes(task.state) && source?.state === 'ready' && <button type="button" className={BUTTON} onClick={() => { setStep(2); setRequestId(crypto.randomUUID()); setConfig(task.config); setTask(undefined); setLogs(''); offset.current = 0 }}>重新配置并部署</button>}
+        {step === 3 && task && ['failed', 'cancelled', 'interrupted'].includes(task.state) && source?.state === 'ready' && <button type="button" className={BUTTON} onClick={() => { setStep(2); setRequestId(randomId()); setConfig(task.config); setTask(undefined); setLogs(''); offset.current = 0 }}>重新配置并部署</button>}
       </div>
     </Dialog.Content>
   </Dialog.Portal></Dialog.Root>

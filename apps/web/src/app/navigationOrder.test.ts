@@ -1,10 +1,21 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { NAV_ITEMS } from './navigation'
-import { clampMovableSlot, mergeNavOrder, moveItem, moveNavItem, slotIndexAtPoint, translateForSlot } from './navigationOrder'
+import { clampMovableSlot, commitNavOrder, getNavOrderSnapshot, mergeNavOrder, moveItem, moveNavItem, slotIndexAtPoint, translateForSlot } from './navigationOrder'
+import { browserPreferenceStorage, UI_PREFERENCES_KEY } from './theme/themePreferences'
 
 const KNOWN = ['/', '/security', '/docker', '/databases'] as const
 
 describe('导航顺序合并', () => {
+  it('存储被禁止时仍能读取导航并在页面内调整顺序', () => {
+    const known = NAV_ITEMS.map(item => item.to)
+    const blocked = vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => { throw new DOMException('blocked', 'SecurityError') })
+    try {
+      expect(() => getNavOrderSnapshot()).not.toThrow()
+      const ordered = [known[0]!, ...known.slice(1).reverse()]
+      commitNavOrder(ordered)
+      expect(getNavOrderSnapshot()).toEqual(ordered)
+    } finally { blocked.mockRestore(); browserPreferenceStorage.removeItem(UI_PREFERENCES_KEY); getNavOrderSnapshot() }
+  })
   it('没有存过顺序时沿用默认顺序', () => {
     expect(mergeNavOrder(KNOWN, null)).toEqual(['/', '/security', '/docker', '/databases'])
   })

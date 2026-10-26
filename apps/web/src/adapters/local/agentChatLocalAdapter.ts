@@ -1,3 +1,4 @@
+import { randomId } from '../../utils/randomId'
 import { agentChatAllAttachments, agentChatSessionKey } from '../../contracts/agentChat'
 import type { AgentChatAdapter, AgentChatAttachment, AgentChatMessage, AgentChatSession } from '../../contracts/agentChat'
 
@@ -237,7 +238,7 @@ export function createAgentChatLocalAdapter(): AgentChatAdapter {
     },
     async attach(files) {
       const attachments = files.map(file => {
-        const id = crypto.randomUUID()
+        const id = randomId()
         memoryFiles.set(id, file)
         return withFile({ id, name: file.name, size: file.size, type: file.type, lastModified: file.lastModified, available: true }, file)
       })

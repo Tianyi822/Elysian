@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { pushHistory, type TerminalLine } from './terminalSession'
 import { TerminalViewport } from './TerminalViewport'
+import { useNotificationStore } from '../../stores/notificationStore'
 
 function ViewportHarness({
   sessionKey = 'session-a',
@@ -44,6 +45,38 @@ function ViewportHarness({
 }
 
 describe('终端嵌入视口', () => {
+  it('复制失败进入通知，不再静默吞掉浏览器拒绝', async () => {
+    stubClipboard(vi.fn().mockRejectedValue(new DOMException('blocked', 'NotAllowedError')))
+    render(<InterruptHarness label="复制被拒" lines={[{ kind: 'output', text: 'copy-failure' }]} />)
+    selectWithinLog('copy-failure')
+    fireEvent.mouseUp(screen.getByRole('log'))
+    await vi.waitFor(() => expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ tone: 'danger', message: expect.stringContaining('复制终端选中文本失败') })))
+    expect(screen.getByRole('log')).toHaveTextContent('copy-failure')
+  })
+
+  it('HTTP IP 下没有异步剪贴板仍可复制选中文本', async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(document, 'execCommand')
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+    const exec = vi.fn(() => {
+      expect((document.activeElement as HTMLTextAreaElement).value).toBe('HTTP-copy')
+      return true
+    })
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: exec })
+    try {
+      render(<InterruptHarness label="HTTP 复制" lines={[{ kind: 'output', text: 'HTTP-copy' }]} />)
+      selectWithinLog('HTTP-copy')
+      fireEvent.keyDown(screen.getByLabelText('HTTP 复制'), { key: 'c', metaKey: true })
+      expect(exec).toHaveBeenCalledWith('copy')
+      await vi.waitFor(() => expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ tone: 'success', message: '已复制终端选中文本' })))
+      expect(document.querySelector('textarea[aria-hidden="true"]')).toBeNull()
+    } finally {
+      if (descriptor) Object.defineProperty(document, 'execCommand', descriptor)
+      else Reflect.deleteProperty(document, 'execCommand')
+      if (clipboard) Object.defineProperty(navigator, 'clipboard', clipboard)
+      else Reflect.deleteProperty(navigator, 'clipboard')
+    }
+  })
   it('不渲染 dialog，打开即聚焦命令输入', () => {
     render(<ViewportHarness />)
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
