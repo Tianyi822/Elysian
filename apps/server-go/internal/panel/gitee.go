@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,7 +9,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -16,9 +21,10 @@ import (
 const GiteeRepository = "Chentyit/Elysian"
 
 type GiteeSource struct {
-	Client  *http.Client
-	API     string
-	Archive string
+	Client *http.Client
+	API    string
+	Repo   string // git 远端地址；缺省 Gitee 镜像仓库
+	Git    string // git 可执行文件；缺省 PATH 中的 git
 }
 
 var errGiteeNotFound = errors.New("Gitee 镜像不存在或目标版本尚未同步")
@@ -42,11 +48,13 @@ func (s GiteeSource) api() string {
 	return "https://gitee.com/api/v5"
 }
 
-func (s GiteeSource) archive() string {
-	if s.Archive != "" {
-		return s.Archive
+// repo 返回 git 协议远端。Gitee 网页归档端点被行为验证码墙挡住匿名程序化下载，
+// git smart HTTP 不受该墙限制，源码改经 git fetch 锁定提交拉取。
+func (s GiteeSource) repo() string {
+	if s.Repo != "" {
+		return s.Repo
 	}
-	return "https://gitee.com/" + GiteeRepository + "/repository/archive"
+	return "https://gitee.com/" + GiteeRepository + ".git"
 }
 
 func (s GiteeSource) get(ctx context.Context, endpoint string) (*http.Response, error) {
@@ -237,41 +245,63 @@ func (s GiteeSource) tagCommit(ctx context.Context, tag string) (string, error) 
 	return commits[0].SHA, nil
 }
 
+// Download 经 git smart HTTP 按锁定提交拉取源码：init 空目录、fetch 精确 SHA、核对 FETCH_HEAD
+// 后检出工作区并移除 .git，产物与归档解包一致。git 缺失、提交不存在与超时分别给出明确错误。
 func (s GiteeSource) Download(ctx context.Context, sha, destination string) error {
 	if !commitPattern.MatchString(sha) {
 		return fmt.Errorf("目标提交无效")
 	}
-	r, err := s.download(ctx, s.archive()+"/"+sha+".tar.gz")
+	binary := s.Git
+	if binary == "" {
+		binary = "git"
+	}
+	if _, err := exec.LookPath(binary); err != nil {
+		return fmt.Errorf("面板所在机器未安装 git，无法经 Gitee 拉取源码")
+	}
+	if err := os.MkdirAll(destination, 0700); err != nil {
+		return err
+	}
+	run := func(args ...string) (string, error) {
+		cmd := exec.CommandContext(ctx, binary, args...)
+		cmd.Dir = destination
+		cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+		var out bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &out, &out
+		if err := cmd.Run(); err != nil {
+			if ctx.Err() != nil {
+				return "", ctx.Err()
+			}
+			return "", fmt.Errorf("git %s 失败：%s", strings.Join(args, " "), tailLines(out.String()))
+		}
+		return out.String(), nil
+	}
+	if _, err := run("init", "--quiet"); err != nil {
+		return err
+	}
+	if _, err := run("fetch", "--depth", "1", s.repo(), sha); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("Gitee 源码拉取超时或被取消：%w", ctx.Err())
+		}
+		return fmt.Errorf("Gitee 源码拉取失败（目标提交可能尚未同步到镜像）：%w", err)
+	}
+	head, err := run("rev-parse", "FETCH_HEAD")
 	if err != nil {
 		return err
 	}
-	defer r.Body.Close()
-	if err = extractSource(io.LimitReader(r.Body, 128*1024*1024), destination); err != nil {
-		if errors.Is(err, errSourceNotArchive) {
-			return fmt.Errorf("源码解包失败：Gitee 返回了网页而非源码归档（该仓库源码下载可能需要登录，如尚未通过 Gitee 开源审核）")
-		}
-		return fmt.Errorf("源码解包失败：%w", err)
+	if got := strings.TrimSpace(head); got != sha {
+		return fmt.Errorf("Gitee 源码拉取结果与目标提交不一致：%s", got)
 	}
-	return nil
+	if _, err := run("checkout", "--quiet", "--detach", "FETCH_HEAD"); err != nil {
+		return err
+	}
+	return os.RemoveAll(filepath.Join(destination, ".git"))
 }
 
-func (s GiteeSource) download(ctx context.Context, endpoint string) (*http.Response, error) {
-	r, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
-	if err != nil {
-		return nil, err
+// tailLines 截取命令输出的最后几行，错误信息不整段回显。
+func tailLines(output string) string {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) > 4 {
+		lines = lines[len(lines)-4:]
 	}
-	r.Header.Set("Accept", "application/x-gzip")
-	r.Header.Set("User-Agent", "Elysian-panel-updater")
-	response, err := s.client().Do(r)
-	if err != nil {
-		return nil, fmt.Errorf("Gitee 源码下载不可达：%w", err)
-	}
-	if response.StatusCode != 200 {
-		response.Body.Close()
-		if response.StatusCode == 404 {
-			return nil, errGiteeNotFound
-		}
-		return nil, fmt.Errorf("Gitee 源码下载失败：HTTP %d", response.StatusCode)
-	}
-	return response, nil
+	return strings.Join(lines, "\n")
 }

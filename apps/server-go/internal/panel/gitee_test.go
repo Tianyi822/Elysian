@@ -1,12 +1,14 @@
 package panel
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,13 +18,69 @@ func giteeTestSource(t *testing.T, handler http.HandlerFunc) (GiteeSource, strin
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	return GiteeSource{Client: srv.Client(), API: srv.URL + "/api/v5", Archive: srv.URL + "/archive"}, srv.URL
+	return GiteeSource{Client: srv.Client(), API: srv.URL + "/api/v5"}, srv.URL
 }
 
-func TestGiteeCommitCheckHistoryAndDownload(t *testing.T) {
+// giteeGitRepo 构造一个本地裸仓库，模拟 Gitee 的 git 远端。
+func giteeGitRepo(t *testing.T) (repoURL string, sha string) {
+	t.Helper()
+	work := t.TempDir()
+	gitRun := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-c", "user.email=panel@test", "-c", "user.name=panel"}, args...)...)
+		cmd.Dir = dir
+		var out bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &out, &out
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("fixture git %v 失败：%v %s", args, err, out.String())
+		}
+		return out.String()
+	}
+	if err := os.WriteFile(filepath.Join(work, "repo.txt"), []byte("ok"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(work, "init", "--quiet")
+	gitRun(work, "add", "-A")
+	gitRun(work, "commit", "--quiet", "-m", "init")
+	sha = strings.TrimSpace(gitRun(work, "rev-parse", "HEAD"))
+	bare := t.TempDir()
+	gitRun(work, "clone", "--quiet", "--bare", work, bare)
+	return "file://" + bare, sha
+}
+
+func TestGiteeDownloadViaGitProtocol(t *testing.T) {
+	repoURL, sha := giteeGitRepo(t)
+	dir := t.TempDir()
+	if err := (GiteeSource{Repo: repoURL}).Download(context.Background(), sha, dir); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, "repo.txt")); err != nil || string(b) != "ok" {
+		t.Fatalf("未检出源码文件：%v %q", err, b)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".git")); !os.IsNotExist(err) {
+		t.Fatalf("工作区残留 .git：%v", err)
+	}
+}
+
+func TestGiteeDownloadViaGitProtocolRejectsUnknownCommit(t *testing.T) {
+	repoURL, _ := giteeGitRepo(t)
+	err := (GiteeSource{Repo: repoURL}).Download(context.Background(), strings.Repeat("d", 40), t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "源码拉取失败") {
+		t.Fatalf("未知提交未被拒绝：%v", err)
+	}
+}
+
+func TestGiteeDownloadViaGitProtocolRequiresGit(t *testing.T) {
+	repoURL, sha := giteeGitRepo(t)
+	err := (GiteeSource{Repo: repoURL, Git: "/nonexistent-elysian-git"}).Download(context.Background(), sha, t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "未安装 git") {
+		t.Fatalf("缺 git 未被识别：%v", err)
+	}
+}
+
+func TestGiteeCommitCheckAndHistory(t *testing.T) {
 	sha := strings.Repeat("a", 40)
-	var archivePath string
-	source, base := giteeTestSource(t, func(w http.ResponseWriter, r *http.Request) {
+	source, _ := giteeTestSource(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("User-Agent") != "Elysian-panel-updater" {
 			t.Error("缺少 Gitee 请求头")
 		}
@@ -34,9 +92,6 @@ func TestGiteeCommitCheckHistoryAndDownload(t *testing.T) {
 				t.Errorf("提交查询未使用默认分支：%s", r.URL.RawQuery)
 			}
 			_, _ = w.Write([]byte(`[{"sha":"` + sha + `","commit":{"message":"标题\n正文不展示","author":{"date":"2026-10-21T15:06:51+08:00"}}}]`))
-		case "/archive/" + sha + ".tar.gz":
-			archivePath = r.URL.Path
-			_, _ = w.Write(archive(t, "repo/package.json", '0'))
 		default:
 			t.Errorf("请求了预期之外的路径：%s", r.URL.String())
 			http.NotFound(w, r)
@@ -50,24 +105,6 @@ func TestGiteeCommitCheckHistoryAndDownload(t *testing.T) {
 	commits, err := source.History(context.Background(), ChannelCommit, 50)
 	if err != nil || len(commits) != 1 || commits[0].SHA != sha || commits[0].Message != "标题" {
 		t.Fatalf("Gitee 提交历史失败：%+v %v", commits, err)
-	}
-	if err := source.Download(context.Background(), sha, t.TempDir()); err != nil {
-		t.Fatal(err)
-	}
-	if archivePath != "/archive/"+sha+".tar.gz" {
-		t.Fatalf("下载未锁定提交归档：%s（%s）", archivePath, base)
-	}
-}
-
-func TestGiteeDownloadRejectsHTMLBody(t *testing.T) {
-	sha := strings.Repeat("a", 40)
-	source, _ := giteeTestSource(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte("<!DOCTYPE html><html><body>下载仓库 · 登录提示</body></html>"))
-	})
-	err := source.Download(context.Background(), sha, t.TempDir())
-	if err == nil || !strings.Contains(err.Error(), "网页而非源码归档") || !strings.Contains(err.Error(), "开源审核") {
-		t.Fatalf("HTML 正文未被识别为下载受限：%v", err)
 	}
 }
 

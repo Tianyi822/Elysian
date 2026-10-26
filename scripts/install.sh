@@ -264,12 +264,14 @@ apt_install_deps() {
   command -v curl >/dev/null 2>&1 || need+=(curl)
   [ -e /etc/ssl/certs/ca-certificates.crt ] || need+=(ca-certificates)
   command -v unzip >/dev/null 2>&1 || need+=(unzip)
+  # git 供面板更新经 Gitee 来源时按锁定提交走 git smart HTTP 拉取源码（Gitee 网页归档端点需浏览器验证码，程序化不可用）。
+  command -v git >/dev/null 2>&1 || need+=(git)
   command -v ufw >/dev/null 2>&1 || need+=(ufw)
   [ -x /usr/sbin/sshd ] || need+=(openssh-server)
   command -v ss >/dev/null 2>&1 || need+=(iproute2)
   if ! command -v runuser >/dev/null 2>&1 || ! command -v flock >/dev/null 2>&1; then need+=(util-linux); fi
   if [ "${#need[@]}" -eq 0 ]; then
-    ok "系统依赖（curl / ca-certificates / unzip / ufw / OpenSSH）已齐备"
+    ok "系统依赖（curl / ca-certificates / unzip / git / ufw / OpenSSH）已齐备"
     return 0
   fi
   local log
