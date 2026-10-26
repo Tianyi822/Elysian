@@ -229,19 +229,24 @@ export function PanelMaintenanceSettings() {
     const version = ++submissionVersion.current
     const current = () => scope === lifecycle.current && auth === captureAuthGeneration()
     setSubmitting(true); setPortsError(null); setUpdateError(null); setProgressError(null); setConnectionError(null); setNeedsManualReload(false); setVerifiedUpdate(null)
-    if (requestId.current?.key !== key) requestId.current = { key, id: randomId() }
-    const saved = retryPending ?? { ...input, version: 1, requestId: requestId.current.id } as PanelPending
-    rememberPending(saved)
-    const isPortsAction = saved.kind !== 'update'
+    let saved = retryPending
+    const isPortsAction = input.kind !== 'update'
     try {
+      // 编号生成也可能失败，必须解除忙碌并显示具体原因；重试直接复用已有快照。
+      if (!saved) {
+        if (requestId.current?.key !== key) requestId.current = { key, id: randomId() }
+        saved = { ...input, version: 1, requestId: requestId.current.id } as PanelPending
+      }
+      rememberPending(saved)
       const result = await sendPanelPending(gateway.panel, saved)
       if (current()) acceptTask(result, saved)
     }
     catch (cause) {
-      if (!current() || pendingRef.current?.requestId !== saved.requestId) return
+      if (!current() || (saved && pendingRef.current?.requestId !== saved.requestId)) return
       const message = cause instanceof Error ? cause.message : '维护请求失败，请重试'
-      if (cause instanceof PanelHttpError && cause.status < 500) {
-        rememberPending(null)
+      if (!saved || (cause instanceof PanelHttpError && cause.status < 500)) {
+        // 本地准备失败尚未发送请求，不进入「结果未确认」对账。
+        if (saved) rememberPending(null)
         if (isPortsAction) setPortsError(message); else setUpdateError(message)
       } else {
         setProgressError(message)

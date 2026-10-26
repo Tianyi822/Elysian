@@ -2,7 +2,7 @@ import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockGateway } from '../../adapters/mock/gateway'
-import { PanelHttpError, PanelNetworkError } from '../../adapters/http/panelHttpAdapter'
+import { createHttpPanelAdapter, PanelHttpError, PanelNetworkError } from '../../adapters/http/panelHttpAdapter'
 import { usePanelStore } from '../../stores/panelStore'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { renderApp } from '../../test/renderApp'
@@ -278,6 +278,85 @@ describe('端口与更新设置', () => {
     expect(screen.queryByRole('dialog', { name: '更新日志' })).not.toBeInTheDocument()
   })
   const commitUpdate = { channel: 'commit' as const, source: 'github' as const, releaseTag: '', repository: info.repository, branch: 'main', currentCommit: info.commit, targetCommit: 'c'.repeat(40), available: true, message: '修复说明' }
+  it('HTTP IP 缺少 randomUUID 时，检查后仍发送真实更新请求并显示任务进度', async () => {
+    const g = gateway()
+    const updateTask = { ...task, kind: 'update' as const, newPorts: ports, targetCommit: commitUpdate.targetCommit }
+    const fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (url === '/api/panel') return Response.json(info)
+      if (url === '/api/panel/update?channel=commit&source=github') return Response.json(commitUpdate)
+      if (url === '/api/panel/update' && init?.method === 'POST') return Response.json(updateTask, { status: 202 })
+      if (String(url).startsWith('/api/panel/tasks/by-request/')) return Response.json({ error: '尚无记录' }, { status: 404 })
+      if (String(url).startsWith(`/api/panel/tasks/${task.id}?`)) return Response.json({ task: updateTask, logs: '', nextOffset: 0 })
+      throw new Error(`未预期的请求：${url}`)
+    })
+    vi.stubGlobal('crypto', { getRandomValues: crypto.getRandomValues.bind(crypto) })
+    vi.stubGlobal('fetch', fetch)
+    try {
+      g.panel = createHttpPanelAdapter()
+      renderApp('/settings?tab=maintenance', { gateway: g }); const user = userEvent.setup()
+      await waitFor(() => expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled())
+      await user.click(screen.getByRole('button', { name: '检查更新' }))
+      await user.click(screen.getByRole('button', { name: '更新并重启' }))
+      expect(await screen.findByText(/等待执行/)).toBeInTheDocument()
+      const submits = fetch.mock.calls.filter(([url, init]) => url === '/api/panel/update' && init?.method === 'POST')
+      expect(submits).toHaveLength(1)
+      expect(JSON.parse(String(submits[0]![1]!.body))).toEqual({
+        channel: 'commit', source: 'github', releaseTag: '', targetCommit: commitUpdate.targetCommit,
+        requestId: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),
+      })
+      expect(sessionStorage.getItem(PANEL_PENDING_KEY)).toBeNull()
+      expect(screen.queryByText('页面操作发生异常，请重试；若仍失败，请刷新页面。')).not.toBeInTheDocument()
+    } finally { vi.unstubAllGlobals() }
+  })
+  it.each([
+    ['update', '更新并重启', '面板更新'],
+    ['ports', '保存并重启', '面板端口'],
+    ['restart', '重启面板', '面板端口'],
+  ] as const)('安全随机源不可用时 %s 显示具体原因、解除忙碌且恢复后可重试', async (kind, label, section) => {
+    const g = gateway()
+    g.panel.checkUpdate = vi.fn(async () => commitUpdate)
+    const accepted = { ...task, kind, newPorts: ports, targetCommit: kind === 'update' ? commitUpdate.targetCommit : '' }
+    const submit = vi.fn(async () => accepted)
+    g.panel[kind] = submit
+    g.panel.taskByRequest = vi.fn(async () => null)
+    const browserCrypto = crypto
+    vi.stubGlobal('crypto', undefined)
+    try {
+      renderApp('/settings?tab=maintenance', { gateway: g }); const user = userEvent.setup()
+      await waitFor(() => expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled())
+      if (kind === 'update') await user.click(screen.getByRole('button', { name: '检查更新' }))
+      const button = screen.getByRole('button', { name: label })
+      await user.click(button)
+      expect(await within(screen.getByRole('region', { name: section })).findByRole('alert')).toHaveTextContent('当前浏览器无法生成安全请求标识')
+      expect(button).toBeEnabled()
+      expect(button).toHaveTextContent(label)
+      expect(submit).not.toHaveBeenCalled()
+      expect(g.panel.taskByRequest).not.toHaveBeenCalled()
+      expect(sessionStorage.getItem(PANEL_PENDING_KEY)).toBeNull()
+      expect(screen.queryByText(/提交结果未确认/)).not.toBeInTheDocument()
+      vi.stubGlobal('crypto', browserCrypto)
+      await user.click(button)
+      await waitFor(() => expect(submit).toHaveBeenCalledOnce())
+      expect(await screen.findByText(/等待执行/)).toBeInTheDocument()
+    } finally { vi.unstubAllGlobals() }
+  })
+  it.each([undefined, 'gitee'] as const)('恢复的更新请求不依赖随机源，重试精确保留来源 %s 和编号', async (source) => {
+    const g = gateway()
+    const saved = { version: 1 as const, requestId: 'saved-update-request', kind: 'update' as const, input: { channel: 'commit' as const, ...(source ? { source } : {}), targetCommit: commitUpdate.targetCommit, releaseTag: '' } }
+    savePanelPending(saved)
+    g.panel.taskByRequest = vi.fn(async () => null)
+    g.panel.update = vi.fn().mockRejectedValue(new PanelHttpError('暂时不可用', 503))
+    vi.stubGlobal('crypto', undefined)
+    try {
+      renderApp('/settings?tab=maintenance', { gateway: g }); const user = userEvent.setup()
+      expect(await screen.findByText(/提交结果未确认/)).toBeInTheDocument()
+      expect(g.panel.update).not.toHaveBeenCalled()
+      await user.click(screen.getByRole('button', { name: '重试原维护请求' }))
+      await waitFor(() => expect(g.panel.update).toHaveBeenCalledWith(saved.input, saved.requestId))
+      expect(JSON.parse(sessionStorage.getItem(PANEL_PENDING_KEY)!)).toEqual(saved)
+      expect(screen.getByRole('button', { name: '重试原维护请求' })).toBeEnabled()
+    } finally { vi.unstubAllGlobals() }
+  })
   it('提交更新期间按钮立即进入提交中并阻止重复提交', async () => {
     const g = gateway()
     g.panel.checkUpdate = vi.fn(async () => commitUpdate)
