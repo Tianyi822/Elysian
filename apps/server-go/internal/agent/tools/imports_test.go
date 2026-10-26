@@ -82,6 +82,7 @@ var capabilityDomains = map[string]string{
 	"./internal/agent/tools/security":      "elysian/server/internal/security",
 	"./internal/agent/tools/database":      "elysian/server/internal/database",
 	"./internal/agent/tools/platform":      "elysian/server/internal/platform",
+	"./internal/agent/tools/webfetch":      "",
 }
 
 // unwrappedDomains 是本轮刻意不封装的三个域：能力面全部未导出，任何子包都不该

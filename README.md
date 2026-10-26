@@ -148,6 +148,8 @@ systemd 安装提供全局命令 `ely`，由 `/usr/local/bin/ely` 链接到同�
 
 Agent 终端通过回环 HTTP 消费现有 Go Harness，与 Web 共用服务端会话、模型、公开消息、运行、授权和图片。端口读取面板数据根下 `config/panel-network.json`；面板数据根按 `ELYSIAN_PANEL_HOME`、正式安装目录、执行用户 `~/.Elysian` 的顺序查找。
 
+Agent 可通过内置只读工具 `web_fetch({url})` 自动读取公网 URL 的标题、正文和链接，支持 HTML、纯文本、Markdown 与 JSON，Web 和 CLI 共用调用记录。读取仅发 GET，不携带登录状态、不执行 JavaScript、不访问内网；不支持搜索引擎、PDF 或交互浏览。每次最多 20 秒、5 次重定向、解压后响应 2 MiB、正文 32 KiB、20 条链接，正文截断会明确标记；网络连接与跳转均校验公网地址，网页资料不能授予执行权限。细节见本地 [ADR-0049](docs/adr/0049-agent-public-url-reading.md)。
+
 | 快捷键 | 操作 |
 | --- | --- |
 | F1 | 全局帮助，可滚动查看全部操作及禁用条件 |

@@ -41,6 +41,7 @@ var domainBoundaries = map[string]string{
 	"platform":      "面板进程内存、本机内存/CPU 使用率/负载/磁盘挂载采样、Docker 与 Caddy 依赖状态",
 	"panel":         "面板自身信息与上游更新检查",
 	"website":       "网站项目的登记、运行时版本、来源分析、部署与启停",
+	"web":           "公网 URL 的 HTML、纯文本、Markdown 与 JSON 读取；正文有界截断，不执行 JavaScript、不登录、不访问内网、不读取 PDF、不提供搜索引擎",
 	"container-app": "容器应用工作区与镜像构建",
 	"skill-load":    "已选技能的资料加载",
 	"mcp-tool":      "已接入 MCP 工具的搜索与调用",
@@ -225,7 +226,7 @@ func discoveryDomainKeywords(domain, source string) string {
 		"docker": "容器 镜像", "database": "数据库 逻辑库 实例", "files": "文件 目录",
 		"security": "安全 用户 登录 SSH", "firewall": "防火墙 连接 端口", "logs": "日志",
 		"platform": "平台 系统 面板 占用 性能 资源 内存 RSS CPU 负载 磁盘 依赖", "panel": "面板 更新", "website": "网站 站点 部署 证书",
-		"container-app": "容器 应用 工作区 构建", "workspace": "任务 工作区 文件",
+		"container-app": "容器 应用 工作区 构建", "workspace": "任务 工作区 文件", "web": "网页 网址 URL HTTP HTTPS fetch 访问 读取 浏览",
 		"skill-load": "技能 SKILL 资料", "script": "技能 脚本", "bash": "命令 脚本 执行",
 		"mcp-tool": "MCP 扩展", "mcp-resource": "MCP 资料 资源", "wiki": "知识 记忆",
 	}

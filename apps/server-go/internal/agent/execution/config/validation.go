@@ -235,13 +235,8 @@ func CheckNetworkAddress(grant Grant, endpoint NetworkEndpoint, addr netip.Addr)
 		return problem(403, "execution_network_denied", "目标域名、协议或端口未获得授权")
 	}
 	addr = addr.Unmap()
-	if !addr.IsValid() || addr.Zone() != "" || !addr.IsGlobalUnicast() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() {
-		return problem(403, "execution_network_denied", "回环、链路本地、元数据与特殊网络地址禁止访问")
-	}
-	for _, forbidden := range forbiddenRanges {
-		if forbidden.Contains(addr) {
-			return problem(403, "execution_network_denied", "回环、链路本地、元数据与特殊网络地址禁止访问")
-		}
+	if err := checkNetworkAddress(addr); err != nil {
+		return err
 	}
 	if addr.IsPrivate() {
 		for _, raw := range grant.PrivateCIDRs {
@@ -251,6 +246,36 @@ func CheckNetworkAddress(grant Grant, endpoint NetworkEndpoint, addr netip.Addr)
 			}
 		}
 		return problem(403, "execution_private_network_denied", "目标解析到未获授权的私网地址")
+	}
+	return nil
+}
+
+// CheckPublicNetworkAddress 与执行代理共用特殊地址禁区，但不接受私网授权。
+// 调用方必须检查所有 DNS 结果，并固定实际拨号 IP，不能再次按域名解析。
+func CheckPublicNetworkAddress(addr netip.Addr) error {
+	addr = addr.Unmap()
+	if err := checkNetworkAddress(addr); err != nil {
+		return err
+	}
+	if addr.IsPrivate() {
+		return problem(403, "execution_private_network_denied", "私网地址禁止访问")
+	}
+	// IsGlobalUnicast 也会接受废弃站点本地、IPv4 兼容等非公网 IPv6。
+	// 公网读取保守限定到全球单播前缀，执行器已有的显式授权语义不变。
+	if addr.Is6() && !netip.MustParsePrefix("2000::/3").Contains(addr) {
+		return problem(403, "execution_network_denied", "非公网 IPv6 地址禁止访问")
+	}
+	return nil
+}
+
+func checkNetworkAddress(addr netip.Addr) error {
+	if !addr.IsValid() || addr.Zone() != "" || !addr.IsGlobalUnicast() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() {
+		return problem(403, "execution_network_denied", "回环、链路本地、元数据与特殊网络地址禁止访问")
+	}
+	for _, forbidden := range forbiddenRanges {
+		if forbidden.Contains(addr) {
+			return problem(403, "execution_network_denied", "回环、链路本地、元数据与特殊网络地址禁止访问")
+		}
 	}
 	return nil
 }

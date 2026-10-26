@@ -24,6 +24,15 @@ type AutomaticExtensions struct {
 
 // 自动目录不写回会话环境；原环境仍是执行配置、grant、资料和信任的唯一来源。
 func (m *Manager) snapshotForAgent(ctx context.Context, env Environment, mode string, authorizationModes ...string) (CapabilitySnapshot, error) {
+	// 新接受的普通聊天统一获得公网读取能力；不回写旧环境或已接受 Run。
+	if m.deps.Tools != nil && !contains(env.Tools, "web_fetch") {
+		for _, schema := range m.deps.Tools.Schemas() {
+			if schema.Name == "web_fetch" && schema.Metadata.Domain == "web" && schema.Metadata.Exposure == "agent" && schema.Metadata.ReadOnly {
+				env.Tools = append(append([]string{}, env.Tools...), schema.Name)
+				break
+			}
+		}
+	}
 	if len(authorizationModes) > 0 && authorizationModes[0] == AuthorizationOnDemand {
 		ctx = context.WithValue(ctx, runtimeAccessContextKey{}, true)
 		env.ExecutionProfiles, env.Grants = nil, nil

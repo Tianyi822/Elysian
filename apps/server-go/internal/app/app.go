@@ -40,7 +40,9 @@ import (
 	toolpanel "elysian/server/internal/agent/tools/panel"
 	toolplatform "elysian/server/internal/agent/tools/platform"
 	toolsecurity "elysian/server/internal/agent/tools/security"
+	toolwebfetch "elysian/server/internal/agent/tools/webfetch"
 	toolwebsites "elysian/server/internal/agent/tools/websites"
+	"elysian/server/internal/agent/webfetch"
 	"elysian/server/internal/applog"
 	"elysian/server/internal/auth"
 	"elysian/server/internal/config"
@@ -162,6 +164,7 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 	plugins := []*kardia.Plugin{toolapps.Plugin(toolapps.Deps{Workspace: containerAppsRegistry, Builds: appBuilds, Facade: appAgent}, toolapps.Config{})}
 	plugins = append(plugins, toolplatform.Plugin(toolplatform.Deps{Facade: platformDeps.AgentFacade}, toolplatform.Config{}))
 	plugins = append(plugins, toolpanel.Plugin(toolpanel.Deps{Manager: panelManager, Authorize: agentAuthorize}, toolpanel.Config{}))
+	plugins = append(plugins, toolwebfetch.Plugin(toolwebfetch.Deps{Fetcher: webfetch.New(webfetch.Options{}), Authorize: agentAuthorize}))
 	if securityDeps.AgentFacade.Available() {
 		plugins = append(plugins, toolsecurity.Plugin(toolsecurity.Deps{Facade: securityDeps.AgentFacade}, toolsecurity.Config{}))
 	}

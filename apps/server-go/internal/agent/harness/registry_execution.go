@@ -9,6 +9,7 @@ import (
 	"elysian/server/internal/agent/kardia"
 	"elysian/server/internal/agent/mcp"
 	"elysian/server/internal/agent/tools"
+	"elysian/server/internal/agent/webfetch"
 )
 
 type registryProvider interface{ Runtime() *tools.Runtime }
@@ -245,6 +246,11 @@ func (m *Manager) executeRegistryOperation(ctx context.Context, s CapabilitySnap
 	}
 	value, err := m.toolRuntime.Execute(ctx, o.Capability.Name, args)
 	if err != nil {
+		// 仅内置网页工具定义的安全业务错误可继续交给模型，不透传底层错误。
+		var webError *webfetch.Error
+		if o.Capability.Source == "builtin" && o.Capability.Name == "web_fetch" && ctx.Err() == nil && errors.As(err, &webError) {
+			return CapabilityResult{BusinessError: &Failure{Code: webError.Code, Message: webError.Message}}, nil
+		}
 		if result, ok := value.(CapabilityResult); ok {
 			return result, err
 		}
