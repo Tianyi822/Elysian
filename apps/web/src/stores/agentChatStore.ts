@@ -1,3 +1,6 @@
+import { randomId } from '../utils/randomId'
+import { AGENT_CHAT_TEXT_BYTES } from '../contracts/agentChat'
+import { agentComposerFileKind, appendAgentTextFiles, readAgentTextFiles } from '../adapters/local/agentTextFiles'
 import { create } from 'zustand'
 import { AGENT_ATTACHMENT_LIMITS, RUNTIME_RUN_STATUS_LABELS, type AgentChatOutput, type AgentChatTimelineSnapshot, type AgentMessage, type AgentModelProfile, type AgentSession } from '@elysian/contracts'
 import { agentChatAllAttachments, agentChatSessionKey } from '../contracts/agentChat'
@@ -48,7 +51,7 @@ type AgentChatState = {
   setPermissionMode(permissionMode: AgentChatPermissionMode): void
   setModel(modelId: string | null): void
   setReasoningLevel(reasoningLevel: string | null): void
-  addAttachments(api: AgentConversationAdapter, files: readonly File[]): Promise<void>
+  addAttachments(api: AgentConversationAdapter, files: readonly File[], supportsImage?: boolean): Promise<void>
   removeAttachment(id: string): void
   send(api: AgentConversationAdapter, model?: AgentModelProfile): Promise<boolean>
   refresh(api: AgentConversationAdapter, signal?: AbortSignal): Promise<void>
@@ -77,7 +80,7 @@ const confirmedRejections: Readonly<Record<string, number>> = {
 const isConfirmedRejection = (error: unknown) => error instanceof AgentHttpError &&
   !!error.code && Object.hasOwn(confirmedRejections, error.code) && confirmedRejections[error.code] === error.status
 
-export function createAgentChatStore(adapter: AgentChatAdapter, now: () => string = () => new Date().toISOString(), id: () => string = () => crypto.randomUUID()) {
+export function createAgentChatStore(adapter: AgentChatAdapter, now: () => string = () => new Date().toISOString(), id: () => string = () => randomId()) {
   return create<AgentChatState>((set, get) => {
     let restoring: Promise<void> | undefined
     let generation = 0
@@ -159,7 +162,13 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
       const currentGeneration = ++generation
       if (get().session?.id !== session.id) { attachmentPreparation?.abort(); remoteVersion += 1; attachmentUploadVersion += 1; completedReasoning.clear(); set(remoteBlank) }
       set({ session, loading: true })
-      const attachments = await adapter.restore(allAttachments(session))
+      let attachments: AgentChatAttachment[]
+      try { attachments = await adapter.restore(allAttachments(session)) }
+      catch {
+        if (currentGeneration !== generation || get().session?.id !== session.id) return
+        attachments = allAttachments(session).map(attachment => ({ ...attachment, available: false, previewUrl: undefined }))
+        notify('本地附件恢复失败，草稿已保留；无法预览的文件可移除后重新添加。', 'warning')
+      }
       if (currentGeneration !== generation || get().session?.id !== session.id) return
       const restored = new Map(attachments.map(attachment => [attachment.id, attachment]))
       const match = (attachment: AgentChatAttachment) => restored.get(attachment.id) ?? attachment
@@ -475,6 +484,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
       },
       async newSession() {
         if (get().sending) return
+        const session = blankSession()
         attachmentPreparation?.abort()
         navigationVersion += 1
         initialBlank = false
@@ -485,7 +495,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
         completedReasoning.clear()
         restoring = undefined
         set({ ...remoteBlank, loading: false })
-        persist(blankSession())
+        persist(session)
       },
       async prepareRemoteSession(api, model) {
         if (get().sending || get().loading || !api.available || !model.active || !model.capabilities.text || !model.capabilities.tools) return
@@ -570,8 +580,9 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
       setPermissionMode: permissionMode => { if (!get().sending && !isChatRunActive(get().run) && !get().remoteSession?.activeRunId && !get().remoteSession?.activeWorkflowId && !current().pending) update({ permissionMode, permissionVersion: 1 }) },
       setModel: modelId => { if (!get().sending && !get().uploadingAttachments && !isChatReplyActive(get().run) && !current().pending) update({ modelId, reasoningLevel: null }) },
       setReasoningLevel: reasoningLevel => { if (!get().sending && !isChatReplyActive(get().run) && !current().pending) update({ reasoningLevel }) },
-      async addAttachments(api, files) {
+      async addAttachments(api, files, supportsImage) {
         if (!files.length || get().uploadingAttachments) return
+        if (get().sending || get().stopping) { notify('消息正在发送或停止，请稍后再添加文件。'); return }
         const lifetime = lifecycle
         const ready = get().ensureSession()
         const sessionId = current().id
@@ -588,12 +599,17 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
           if (current().editing) { notify('正在编辑消息，完成后才能添加附件。'); return }
           const existing = current().attachments
           // 整批压缩和总量校验成功后再上传，失败保留原草稿。
-          const acceptedMime = AGENT_ATTACHMENT_LIMITS.acceptMimeTypes as readonly string[]
-          const rejected = files.filter(file => !acceptedMime.includes(file.type))
-          if (rejected.length) { notify('图片仅支持 JPEG 与 PNG，其他格式暂不支持。'); return }
+          const rejected = files.filter(file => agentComposerFileKind(file) === 'unsupported')
+          if (rejected.length) { notify(`不支持这些文件：${rejected.map(file => file.name).join('、')}。图片仅支持 JPEG 与 PNG；文本文件将读入草稿，PDF、Office、音频和视频暂不支持。`); return }
+          const images = files.filter(file => agentComposerFileKind(file) === 'image')
+          const texts = files.filter(file => agentComposerFileKind(file) === 'text')
+          if (images.length && supportsImage === false) { notify('当前模型不支持图片输入，请切换支持图片的模型后再添加。'); return }
+          const imported = await readAgentTextFiles(texts, controller.signal)
+          if (!valid()) return
+          appendAgentTextFiles(current().draft, imported)
           const prepared: File[] = []
           let total = existing.reduce((sum, attachment) => sum + attachment.size, 0)
-          for (const file of files) {
+          for (const file of images) {
             const processed = await prepareAgentImage(file, controller.signal)
             if (!valid()) return
             total += processed.size
@@ -601,14 +617,19 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
             prepared.push(processed)
           }
           checkAttachmentTotal(current().attachments.reduce((sum, attachment) => sum + attachment.size, 0) + prepared.reduce((sum, file) => sum + file.size, 0))
-          const additions = await uploadAndStore(api, prepared, valid, controller.signal)
+          const additions = prepared.length ? await uploadAndStore(api, prepared, valid, controller.signal) : []
           if (!additions) return
           const session = current()
           if (session.attachments.reduce((sum, attachment) => sum + attachment.size, 0) + additions.reduce((sum, attachment) => sum + attachment.size, 0) > AGENT_ATTACHMENT_LIMITS.maxMessageBytes) {
             await adapter.discard(additions.map(attachment => attachment.id))
             throw new Error(attachmentTotalNotice)
           }
-          persist({ ...session, attachments: [...session.attachments, ...additions] })
+          let draft: string
+          try { draft = appendAgentTextFiles(session.draft, imported) }
+          catch (error) { await adapter.discard(additions.map(attachment => attachment.id)); throw error }
+          persist({ ...session, draft, attachments: [...session.attachments, ...additions] })
+          if (texts.length) notify(`已将 ${texts.length} 个文本文件读入草稿，可编辑后发送。`, 'success')
+          if (images.length) notify(`已添加 ${images.length} 张图片${draft.trim() ? '。' : '，请输入问题或说明后发送。'}`, 'success')
         } catch (error) {
           if (valid()) notify(failureMessage(error))
         } finally {
@@ -646,7 +667,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
             return false
           }
         }
-        if (new TextEncoder().encode(text).length > 32768) { notify('消息不能超过 32 KiB，请缩短后发送。'); return false }
+        if (new TextEncoder().encode(text).length > AGENT_CHAT_TEXT_BYTES) { notify('消息不能超过 32 KiB，请缩短后发送。'); return false }
         if (!session.pending && (!model?.active || !model.capabilities.text || !model.capabilities.tools)) {
           notify('请选择已启用且支持文本和工具调用的模型。'); return false
         }

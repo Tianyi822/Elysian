@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useRef, useState, type Ref } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type Ref } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router'
 import * as Dialog from '@radix-ui/react-dialog'
 import { useShellLayout } from '../../app/layout/ShellLayoutContext'
@@ -10,6 +10,8 @@ import { RefreshButton } from '../../components/RefreshState'
 import { useFeedbackNotification } from '../../components/useFeedbackNotification'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { subscribeWhileVisible } from '../../adapters/subscribeWhileVisible'
+import { AGENT_COMPOSER_FILE_ACCEPT } from '../../adapters/local/agentTextFiles'
+import { mediaQuery, observeMediaQuery } from '../../utils/mediaQuery'
 import type { AgentChatPermissionMode } from '../../contracts/agentChat'
 import { isChatReplyActive, isChatRunActive, useAgentChatStore } from '../../stores/agentChatStore'
 import { ChatAttachment } from './ChatAttachment'
@@ -54,8 +56,10 @@ export function AgentChatPage() {
   const location = useLocation()
   const [params, setParams] = useSearchParams()
   const [navigationReady, setNavigationReady] = useState<string | null>(null)
+  const [navigationFailure, setNavigationFailure] = useState<string | null>(null)
+  const [navigationAttempt, setNavigationAttempt] = useState(0)
   const [listCollapsed, setListCollapsed] = useState(false)
-  const [wide, setWide] = useState(() => window.matchMedia?.('(min-width: 1100px)').matches ?? false)
+  const [wide, setWide] = useState(() => mediaQuery('(min-width: 1100px)')?.matches ?? false)
   const [listRefreshing, setListRefreshing] = useState(false)
   const [scopeSessionId, setScopeSessionId] = useState<string | null>(null)
   const [memorySessionId, setMemorySessionId] = useState<string | null>(null)
@@ -98,10 +102,10 @@ export function AgentChatPage() {
   const reasoningLevel = session?.reasoningLevel && reasoningLevels.includes(session.reasoningLevel) ? session.reasoningLevel : defaultReasoningLevel(reasoningLevels, model?.defaultReasoningLevel) ?? ''
   const restoring = !!session?.remote && !chat.remoteSession
   const attachmentsLocked = !session || chat.loading || busy || chat.uploadingAttachments || restoring || !!session.pending || !!session.editing
-  const readError = chat.syncError && error && chat.syncError !== error
+  const readError = navigationFailure || (chat.syncError && error && chat.syncError !== error
     ? `会话：${chat.syncError}\n模型：${error}`
-    : chat.syncError || error
-  const retryReadLabel = chat.syncError && error ? '重新读取会话和模型' : chat.syncError ? '重新读取会话' : '重新读取模型'
+    : chat.syncError || error)
+  const retryReadLabel = navigationFailure ? '重新初始化会话' : chat.syncError && error ? '重新读取会话和模型' : chat.syncError ? '重新读取会话' : '重新读取模型'
   useFeedbackNotification(readError, !error && chat.syncError?.startsWith('实时连接暂时中断') ? 'warning' : 'danger', { replace: true })
   const modelUnavailable = api.available && status === 'ready' && !chat.loading && !restoring && (!models.length || (session?.remote && !model))
   useFeedbackNotification(modelUnavailable ? '请选择支持文本与工具调用的可用模型，或前往设置添加模型。' : null, 'warning')
@@ -109,6 +113,7 @@ export function AgentChatPage() {
   useFeedbackNotification(session?.attachments.length && model && !model.supportsImage ? '当前模型不支持图片输入，请移除附件或切换支持图片的模型。' : null, 'warning')
   useFeedbackNotification(session?.attachments.some(attachment => !attachment.serverId) ? '存在旧版本添加、尚未上传的附件，请移除后重新添加。' : null, 'warning')
   const retryReads = () => {
+    if (navigationFailure) setNavigationAttempt(value => value + 1)
     if (chat.syncError) void chat.refresh(api)
     if (error) reload()
   }
@@ -131,13 +136,16 @@ export function AgentChatPage() {
   useEffect(() => {
     let active = true
     setNavigationReady(null)
+    setNavigationFailure(null)
     const restore = async () => {
       await chat.initialize(api, requestedId ?? requestedDraft)
       if (active) setNavigationReady(location.key)
     }
-    void restore()
+    void restore().catch(cause => {
+      if (active) setNavigationFailure(`会话初始化失败：${cause instanceof Error ? cause.message : '请重新读取会话。'}`)
+    })
     return () => { active = false }
-  }, [api, location.key, requestedId, requestedDraft, chat.initialize])
+  }, [api, location.key, requestedId, requestedDraft, chat.initialize, navigationAttempt])
   useEffect(() => {
     if (navigationReady !== location.key || !session || chat.loading || chat.sending) return
     const remoteId = session?.remote?.sessionId
@@ -154,12 +162,11 @@ export function AgentChatPage() {
     focusListTrigger()
   }, [listCollapsed])
   useEffect(() => {
-    const media = window.matchMedia?.('(min-width: 1100px)')
+    const media = mediaQuery('(min-width: 1100px)')
     if (!media) return
     const update = () => setWide(media.matches)
     update()
-    media.addEventListener('change', update)
-    return () => media.removeEventListener('change', update)
+    return observeMediaQuery(media, update)
   }, [])
   useEffect(() => {
     if (wide && shell.conversationDrawerOpen) shell.closeConversationDrawer()
@@ -246,6 +253,43 @@ export function AgentChatPage() {
     following.current = true
     void chat.send(api, model?.profile).then(sent => { if (sent) input.current?.focus() })
   }
+  const insertPastedText = (event: ClipboardEvent<HTMLTextAreaElement>, editing: boolean) => {
+    const text = event.clipboardData.getData('text/plain')
+    if (!text) return
+    const target = event.currentTarget
+    const start = target.selectionStart
+    const next = `${target.value.slice(0, start)}${text}${target.value.slice(target.selectionEnd)}`
+    if (editing) chat.setEditText(next)
+    else chat.setDraft(next)
+    requestAnimationFrame(() => target.setSelectionRange(start + text.length, start + text.length))
+  }
+  const addFiles = (files: File[], editing = false) => {
+    if (editing) { chat.reportOperation('编辑消息时仅可修改文本，请完成编辑后再添加文件。'); return }
+    if (attachmentsLocked) { chat.reportOperation('当前暂不能添加文件，请等待会话读取或发送完成。'); return }
+    void chat.addAttachments(api, files, model?.supportsImage ?? false)
+  }
+  const pasteFiles = (event: ClipboardEvent<HTMLTextAreaElement>, editing = false) => {
+    const files = Array.from(event.clipboardData.files ?? [])
+    if (!files.length) {
+      for (const item of Array.from(event.clipboardData.items ?? [])) {
+        if (item.kind === 'file') { const file = item.getAsFile(); if (file) files.push(file) }
+      }
+    }
+    if (!files.length) return
+    event.preventDefault()
+    insertPastedText(event, editing)
+    addFiles(files, editing)
+  }
+  const dragFiles = (event: DragEvent<HTMLElement>) => {
+    if (Array.from(event.dataTransfer.types).includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy' }
+  }
+  const dropFiles = (event: DragEvent<HTMLElement>, editing = false) => {
+    const files = Array.from(event.dataTransfer.files)
+    if (!files.length && !Array.from(event.dataTransfer.types).includes('Files')) return
+    event.preventDefault()
+    if (!files.length) { chat.reportOperation('无法添加文件夹，请选择具体文件。'); return }
+    addFiles(files, editing)
+  }
   const title = chat.remoteSession?.title || chat.messages[0]?.content || '新会话'
   const run = chat.run
 
@@ -261,7 +305,7 @@ export function AgentChatPage() {
       const next = new URLSearchParams(params); next.delete('session')
       setParams(next, { state: { ...routeState, agentDraftId: useAgentChatStore.getState().session?.id } })
       shell.closeConversationDrawer(); input.current?.focus()
-    })
+    }).catch(cause => chat.reportOperation(`新建会话失败：${cause instanceof Error ? cause.message : '请重试。'}`))
   }
   const selectConversation = (key: string) => {
     if (chat.sending) return
@@ -333,7 +377,7 @@ export function AgentChatPage() {
           return <Fragment key={message.id}>
             {switchText && <ChatSwitchNotice text={switchText} />}
             <article className="chat-message" aria-label="你的消息">
-              {editing ? <form className="chat-message-editor panel-surface" aria-label="编辑最后一条消息" onSubmit={event => { event.preventDefault(); resend() }}
+              {editing ? <form className="chat-message-editor panel-surface" aria-label="编辑最后一条消息" onSubmit={event => { event.preventDefault(); resend() }} onDragOver={dragFiles} onDrop={event => dropFiles(event, true)}
                 onKeyDown={event => {
                   if (event.key === 'Escape' && !event.nativeEvent.isComposing && !composing.current && event.keyCode !== 229) {
                     event.preventDefault()
@@ -344,6 +388,7 @@ export function AgentChatPage() {
                 <label htmlFor="agent-edit-message" className="sr-only">编辑消息内容</label>
                 <textarea id="agent-edit-message" ref={editInput} value={session.editing!.text} rows={4} className="chat-textarea hover-scrollbar"
                   disabled={chat.sending || !!session.pending} onChange={event => chat.setEditText(event.target.value)}
+                  onPaste={event => pasteFiles(event, true)}
                   onCompositionStart={() => { composing.current = true }} onCompositionEnd={() => { composing.current = false }}
                   onKeyDown={event => {
                     if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && !composing.current && event.keyCode !== 229) { event.preventDefault(); resend() }
@@ -388,7 +433,7 @@ export function AgentChatPage() {
 
     <div className="chat-compose-area">
       {stopping && <p role="status" className="mb-3 text-xs text-fg-muted">正在停止…</p>}
-      {chat.uploadingAttachments && <p role="status" className="mb-3 flex items-center gap-2 text-xs text-fg-muted"><Loader2 size={13} className="animate-spin motion-reduce:animate-none" aria-hidden />正在处理并上传图片…</p>}
+      {chat.uploadingAttachments && <p role="status" className="mb-3 flex items-center gap-2 text-xs text-fg-muted"><Loader2 size={13} className="animate-spin motion-reduce:animate-none" aria-hidden />正在处理文件…</p>}
       {readError && <div className="mb-3 flex justify-end">
         <RefreshButton label={retryReadLabel} busy={chat.refreshing || status === 'loading'} onPress={retryReads} />
       </div>}
@@ -400,7 +445,7 @@ export function AgentChatPage() {
         submitting={chat.sending || stopping} pending={!!inputDraft?.pending}
         onAnswer={(questionId, answer) => chat.setUserInputAnswer(inputRequest, questionId, answer)}
         onSubmit={() => void chat.answerUserInput(api, inputRequest)} onCancel={() => void chat.stop(api)} /> :
-      <form className="chat-composer panel-surface" onSubmit={event => { event.preventDefault(); send() }} aria-label="消息输入框">
+      <form className="chat-composer panel-surface" onSubmit={event => { event.preventDefault(); send() }} aria-label="消息输入框" onDragOver={dragFiles} onDrop={event => dropFiles(event)}>
         {!!session?.attachments.length && <ul aria-label="本地附件" className="hover-scrollbar flex max-h-52 flex-wrap gap-2 overflow-y-auto px-4 pt-4">{session.attachments.map(attachment => <ChatAttachment key={attachment.id} attachment={attachment} onRemove={() => chat.removeAttachment(attachment.id)} />)}</ul>}
         <label htmlFor="agent-message" className="sr-only">发送给 Ely 的消息</label>
         <textarea
@@ -408,16 +453,17 @@ export function AgentChatPage() {
           placeholder={restoring ? '正在读取会话…' : '向 Ely 发送消息…'} className="chat-textarea hover-scrollbar"
           disabled={!session || chat.loading || chat.sending || !!session.pending}
           onChange={event => chat.setDraft(event.target.value)}
+          onPaste={event => pasteFiles(event)}
           onCompositionStart={() => { composing.current = true }} onCompositionEnd={() => { composing.current = false }}
           onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && !composing.current && event.keyCode !== 229) { event.preventDefault(); send() } }}
         />
-        <input ref={fileInput} type="file" multiple hidden aria-label="选择图片附件" accept="image/jpeg,image/png" disabled={attachmentsLocked} onChange={event => {
+        <input ref={fileInput} type="file" multiple hidden aria-label="选择文件" accept={AGENT_COMPOSER_FILE_ACCEPT} disabled={attachmentsLocked} onChange={event => {
           const files = Array.from(event.target.files ?? [])
           event.target.value = ''
-          if (!attachmentsLocked) void chat.addAttachments(api, files)
+          if (files.length) addFiles(files)
         }} />
         <div className="chat-composer-tools">
-          <IconButton label={!api.available || !model?.supportsImage ? '当前模型不支持图片输入' : '添加图片附件'} tooltip={false} variant="ghost" onPress={() => fileInput.current?.click()} disabled={attachmentsLocked || !api.available || !model?.supportsImage} className="chat-add-file"><Paperclip size={20} aria-hidden /></IconButton>
+          <IconButton label="添加文件" tooltipSide="top" variant="ghost" onPress={() => fileInput.current?.click()} disabled={attachmentsLocked || !api.available} className="chat-add-file"><Paperclip size={20} aria-hidden /></IconButton>
           <div className="chat-permission" data-mode={permissionMode.value} title={`${permissionMode.label}：${permissionMode.description}`}>
             <SelectDropdown ariaLabel="权限模式" value={permissionMode.value} onSelect={chat.setPermissionMode}
               items={PERMISSION_MODES.map(({ Icon, ...mode }) => ({ ...mode, icon: <Icon size={16} /> }))}

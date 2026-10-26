@@ -65,6 +65,104 @@ function localMemory() {
 }
 
 describe('智能体本地会话', () => {
+  it('HTTP IP 环境下用默认标识生成完成初始化、文字发送与新建会话', async () => {
+    vi.stubGlobal('crypto', { getRandomValues: crypto.getRandomValues.bind(crypto) })
+    try {
+      const local = localMemory()
+      const store = createAgentChatStore(local.adapter)
+      const backend = chatTestApi()
+      await store.getState().initialize(backend.api)
+      const firstId = store.getState().session!.id
+      expect(firstId).toMatch(/^draft:[0-9a-f-]{36}$/)
+      expect(store.getState().loading).toBe(false)
+      store.getState().setDraft('中文 👋\n代码：`x < 1`')
+      expect(await store.getState().send(backend.api, chatTestModel)).toBe(true)
+      expect(backend.api.createTask).toHaveBeenCalledWith('server-session', expect.objectContaining({ content: '中文 👋\n代码：`x < 1`', requestId: expect.stringMatching(/^[0-9a-f-]{36}$/) }))
+      await store.getState().newSession()
+      expect(store.getState().session!.id).not.toBe(firstId)
+    } finally { vi.unstubAllGlobals() }
+  })
+
+  it('文本文件读入最新草稿，纯文本模型可发送且不走图片上传', async () => {
+    const local = localMemory()
+    const store = local.makeStore()
+    const backend = chatTestApi()
+    await store.getState().ensureSession()
+    store.getState().setDraft('原草稿')
+    const adding = store.getState().addAttachments(backend.api, [new File(['中文\n```ts\nconst a = 1\n```'], 'notes.md', { type: 'text/markdown' })], false)
+    store.getState().setDraft('读取期间继续输入')
+    await adding
+    const expected = '读取期间继续输入\n\n文件："notes.md"\n中文\n```ts\nconst a = 1\n```'
+    expect(store.getState().session?.draft).toBe(expected)
+    expect(backend.api.uploadAttachments).not.toHaveBeenCalled()
+    expect(store.getState().session?.attachments).toEqual([])
+    const restored = local.makeStore()
+    await restored.getState().ensureSession()
+    expect(restored.getState().session?.draft).toBe(expected)
+    expect(await store.getState().send(backend.api, chatTestModel)).toBe(true)
+    expect(backend.api.createTask.mock.lastCall?.[1].content).toBe(expected)
+    expect(backend.api.createTask.mock.lastCall?.[1].attachments).toBeUndefined()
+  })
+
+  it('文字文件和图片整批添加；编码、格式或图片上传失败均保留原内容', async () => {
+    const store = localMemory().makeStore()
+    const backend = chatTestApi()
+    await store.getState().ensureSession()
+    store.getState().setDraft('保留草稿')
+    const text = new File(['诊断日志'], 'server.log')
+    const image = new File(['png'], 'screen.png', { type: 'image/png' })
+    await store.getState().addAttachments(backend.api, [text, new File(['pdf'], 'bad.pdf', { type: 'application/pdf' })], true)
+    expect(store.getState().session?.draft).toBe('保留草稿')
+    expect(backend.api.uploadAttachments).not.toHaveBeenCalled()
+    await store.getState().addAttachments(backend.api, [text, image], false)
+    expect(notificationMessage()).toContain('当前模型不支持图片输入')
+    expect(store.getState().session?.draft).toBe('保留草稿')
+    backend.api.uploadAttachments.mockRejectedValueOnce(new Error('图片上传中断'))
+    await store.getState().addAttachments(backend.api, [text, image], true)
+    expect(store.getState().session?.draft).toBe('保留草稿')
+    expect(store.getState().session?.attachments).toEqual([])
+    expect(notificationMessage()).toBe('图片上传中断')
+    await store.getState().addAttachments(backend.api, [text, image], true)
+    expect(store.getState().session?.draft).toBe('保留草稿\n\n文件："server.log"\n诊断日志')
+    expect(store.getState().session?.attachments).toHaveLength(1)
+    expect(await store.getState().send(backend.api, chatVisionTestModel)).toBe(true)
+    expect(backend.api.createTask.mock.lastCall?.[1].attachments).toEqual([{ id: 'server-attachment-1' }])
+  })
+
+  it('读取文本文件时切换会话取消导入，解码失败或超限不改变原草稿', async () => {
+    const store = localMemory().makeStore()
+    const backend = chatTestApi()
+    await store.getState().ensureSession()
+    store.getState().setDraft('原草稿')
+    await store.getState().addAttachments(backend.api, [new File(['有效'], 'valid.txt'), new File(['a\0b'], 'binary.log')])
+    expect(store.getState().session?.draft).toBe('原草稿')
+    expect(notificationMessage()).toContain('二进制')
+    store.getState().setDraft('中'.repeat(10900))
+    await store.getState().addAttachments(backend.api, [new File(['还有更多内容'.repeat(10)], 'too-much.txt')])
+    expect(store.getState().session?.draft).toBe('中'.repeat(10900))
+    expect(notificationMessage()).toContain('32 KiB')
+    const adding = store.getState().addAttachments(backend.api, [new File(['旧会话的内容'], 'old.txt')])
+    await store.getState().newSession()
+    await adding
+    expect(store.getState().session?.draft).toBe('')
+    expect(store.getState().uploadingAttachments).toBe(false)
+    expect(backend.api.uploadAttachments).not.toHaveBeenCalled()
+  })
+
+  it('附件恢复失败不让输入永久禁用，文字与服务端引用仍保留', async () => {
+    const local = localMemory()
+    const first = local.makeStore()
+    await first.getState().ensureSession()
+    first.getState().setDraft('恢复后的草稿')
+    vi.spyOn(local.adapter, 'restore').mockRejectedValueOnce(new Error('IndexedDB 不可用'))
+    const restored = local.makeStore()
+    await restored.getState().ensureSession()
+    expect(restored.getState().loading).toBe(false)
+    restored.getState().setDraft('仍能输入')
+    expect(restored.getState().session?.draft).toBe('仍能输入')
+    expect(notificationMessage()).toContain('本地附件恢复失败，草稿已保留')
+  })
+
   it('迟到轮询不覆盖更新的时间线，登出后忽略迟到流式和历史结果', async () => {
     const store = localMemory().makeStore()
     const backend = chatTestApi()
@@ -449,7 +547,7 @@ describe('智能体本地会话', () => {
       expect(backend.api.uploadAttachments).toHaveBeenCalledWith([compressed], expect.any(AbortSignal))
       expect(store.getState().session?.attachments).toHaveLength(8)
       expect([...local.files.values()].at(-1)).toBe(compressed)
-      expect(useNotificationStore.getState().notifications).toEqual([])
+      expect(useNotificationStore.getState().notifications.filter(item => item.tone === 'danger')).toEqual([])
     }
   })
 
@@ -804,7 +902,7 @@ describe('智能体本地会话', () => {
     const store = localMemory().makeStore()
     const backend = chatTestApi()
     await store.getState().ensureSession()
-    await store.getState().addAttachments(backend.api, [new File(['x'], 'a.txt', { type: 'text/plain' })])
+    await store.getState().addAttachments(backend.api, [new File(['x'], 'a.pdf', { type: 'application/pdf' })])
     expect(notificationMessage()).toContain('图片仅支持 JPEG 与 PNG')
     vi.mocked(prepareAgentImage).mockRejectedValueOnce(new Error('无法读取图片“big.png”，请重新选择。'))
     await store.getState().addAttachments(backend.api, [new File([new ArrayBuffer(4194305)], 'big.png', { type: 'image/png' })])
@@ -862,14 +960,14 @@ describe('智能体本地会话', () => {
     const add = (index: number) => store.getState().addAttachments(backend.api, [new File(['x'], `${index}.png`, { type: 'image/png' })])
     await add(1)
     await add(2)
-    expect(useNotificationStore.getState().notifications).toEqual([
+    expect(useNotificationStore.getState().notifications.filter(item => item.tone === 'info')).toEqual([
       expect.objectContaining({ tone: 'info', message: '附件仅在当前页面可用，浏览器暂时无法保存文件；刷新后请重新选择。' }),
     ])
     persisted = true
     await add(3)
     persisted = false
     await add(4)
-    expect(useNotificationStore.getState().notifications).toHaveLength(2)
+    expect(useNotificationStore.getState().notifications.filter(item => item.tone === 'info')).toHaveLength(2)
     expect(store.getState().session?.attachments).toHaveLength(4)
   })
 
@@ -1026,7 +1124,7 @@ describe('智能体本地会话', () => {
     expect(local.files.has(legacy.attachments[0]!.id)).toBe(true)
     expect(backend.api.uploadAttachments).not.toHaveBeenCalled()
     expect(prepareAgentImage).not.toHaveBeenCalled()
-    expect(useNotificationStore.getState().notifications).toHaveLength(2)
+    expect(useNotificationStore.getState().notifications.filter(item => item.message === '回复已完成。')).toHaveLength(2)
     expect(useNotificationStore.getState().notifications.every(item => item.tone === 'success')).toBe(true)
   })
 

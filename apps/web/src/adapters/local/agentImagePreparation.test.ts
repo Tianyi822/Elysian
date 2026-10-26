@@ -41,6 +41,15 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('Agent 图片预处理', () => {
+  it.each([['photo.JPG', 'image/jpeg'], ['screen.png', 'image/png']])('无 MIME 的图片 %s 补齐类型后仍调用解码器', async (name, mime) => {
+    const file = new File(['bytes'], name, { lastModified: 321 })
+    const prepared = await prepareAgentImage(file)
+    expect(prepared.type).toBe(mime)
+    expect(prepared.name).toBe(name)
+    expect(prepared.size).toBe(file.size)
+    expect(prepared.lastModified).toBe(321)
+    expect(createImageBitmap).toHaveBeenCalledWith(prepared, { imageOrientation: 'from-image' })
+  })
   it.each([1, limit])('未超过字节和尺寸上限时保留同一文件及原始字节（%s 字节）', async size => {
     const file = imageFile('image/jpeg', size)
     expect(await prepareAgentImage(file)).toBe(file)

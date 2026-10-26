@@ -1,4 +1,5 @@
 import { AGENT_ATTACHMENT_LIMITS } from '@elysian/contracts'
+import { agentComposerImageMime } from './agentTextFiles'
 
 const MAX_EDGE = 6000
 const MAX_QUALITY = 0.95
@@ -132,7 +133,10 @@ function preparedFile(blob: Blob, source: File): File {
 /** 合规图片保留原字节，所有压缩候选始终从解码后的原图绘制。 */
 export async function prepareAgentImage(file: File, signal?: AbortSignal): Promise<File> {
   checkAborted(signal)
-  if (!(AGENT_ATTACHMENT_LIMITS.acceptMimeTypes as readonly string[]).includes(file.type)) throw new Error(`“${file.name}”仅支持 JPEG 或 PNG 图片。`)
+  const mime = agentComposerImageMime(file)
+  if (!mime) throw new Error(`“${file.name}”仅支持 JPEG 或 PNG 图片。`)
+  // 部分系统不给图片声明 MIME；文件名只用于补齐类型，真实字节仍须解码并由后端复核。
+  if (file.type !== mime) file = new File([file], file.name, { type: mime, lastModified: file.lastModified })
   let decoded: DecodedImage | undefined
   let canvas: HTMLCanvasElement | undefined
   try {

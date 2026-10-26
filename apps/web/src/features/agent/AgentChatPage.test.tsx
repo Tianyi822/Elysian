@@ -9,6 +9,8 @@ import { createMockGateway } from '../../adapters/mock/gateway'
 import { AgentHttpError } from '../../adapters/http/agent/agentShared'
 import { useAgentChatStore } from '../../stores/agentChatStore'
 import { useNotificationStore } from '../../stores/notificationStore'
+import { agentChatLocalAdapter } from '../../adapters/local/agentChatLocalAdapter'
+import { agentChatSessionKey } from '../../contracts/agentChat'
 import { NotificationHost } from '../../components/NotificationHost'
 import { chatTestApi, chatTestUserInput, chatTestCacheHitUsage, chatTestContextUsage, chatTestModel, chatTestUsage, chatVisionTestModel } from '../../test/agentChatFixtures'
 import type { AgentRunPlan, AgentChatOutput } from '@elysian/contracts'
@@ -45,11 +47,110 @@ beforeEach(async () => {
     addListener: vi.fn(), removeListener: vi.fn(), addEventListener: vi.fn(), removeEventListener: vi.fn(), dispatchEvent: () => false,
   }))
   useAgentChatStore.getState().clearDisplay()
+  for (const row of agentChatLocalAdapter.list()) agentChatLocalAdapter.remove(agentChatSessionKey(row))
   useNotificationStore.getState().clear()
   await useAgentChatStore.getState().newSession()
 })
 
 describe('基本聊天界面', () => {
+  it('HTTP IP 环境可新建会话并输入中文、符号和多行文本后发送', async () => {
+    vi.stubGlobal('crypto', { getRandomValues: crypto.getRandomValues.bind(crypto) })
+    try {
+      useAgentChatStore.getState().clearDisplay()
+      await useAgentChatStore.getState().newSession()
+      const user = userEvent.setup()
+      const { api } = renderChat()
+      const textbox = screen.getByRole('textbox', { name: '发送给 Ely 的消息' })
+      await waitFor(() => expect(textbox).toBeEnabled())
+      await user.click(textbox)
+      await user.paste('中文 👋\n`code` <tag> & "引号"')
+      expect(textbox).toHaveValue('中文 👋\n`code` <tag> & "引号"')
+      await waitFor(() => expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled())
+      await user.click(screen.getByRole('button', { name: '发送消息' }))
+      await waitFor(() => expect(api.createTask).toHaveBeenCalledWith('server-session', expect.objectContaining({ content: '中文 👋\n`code` <tag> & "引号"', requestId: expect.stringMatching(/^[0-9a-f-]{36}$/) })))
+    } finally { vi.unstubAllGlobals() }
+  })
+
+  it('会话初始化异常通过通知提示，可原位重试恢复输入', async () => {
+    useAgentChatStore.getState().clearDisplay()
+    const originalInitialize = useAgentChatStore.getState().initialize
+    const initialize = vi.spyOn(useAgentChatStore.getState(), 'initialize').mockRejectedValueOnce(new Error('本地会话读取失败'))
+    let view: ReturnType<typeof renderChat> | undefined
+    try {
+      view = renderChat()
+      await screen.findByText('会话初始化失败：本地会话读取失败')
+      expect(screen.getByRole('textbox', { name: '发送给 Ely 的消息' })).toBeDisabled()
+      fireEvent.click(screen.getByRole('button', { name: '重新初始化会话' }))
+      await waitFor(() => expect(screen.getByRole('textbox', { name: '发送给 Ely 的消息' })).toBeEnabled())
+    } finally { view?.unmount(); initialize.mockRestore(); useAgentChatStore.setState({ initialize: originalInitialize }) }
+  })
+
+  it('文本文件从选择入口读入草稿，发送完整内容且不调用图片上传', async () => {
+    const user = userEvent.setup()
+    const { api } = renderChat()
+    const textbox = screen.getByRole('textbox', { name: '发送给 Ely 的消息' })
+    await waitFor(() => expect(screen.getByRole('button', { name: '添加文件' })).toBeEnabled())
+    await user.upload(screen.getByLabelText('选择文件'), new File(['中文\nconst a = "代码";'], 'notes.md', { type: 'text/markdown' }))
+    await waitFor(() => expect(textbox).toHaveValue('文件："notes.md"\n中文\nconst a = "代码";'))
+    expect(screen.getByText('已将 1 个文本文件读入草稿，可编辑后发送。')).toBeInTheDocument()
+    expect(api.uploadAttachments).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: '发送消息' }))
+    await waitFor(() => expect(api.createTask.mock.lastCall?.[1].content).toBe('文件："notes.md"\n中文\nconst a = "代码";'))
+  })
+
+  it('粘贴图片连同文字保留插入位置，图片随正文发送', async () => {
+    const backend = chatTestApi()
+    renderChat(backend, '/agent', undefined, [chatVisionTestModel])
+    await screen.findByRole('button', { name: `选择模型：${chatVisionTestModel.model}` })
+    await waitFor(() => expect(screen.getByRole('button', { name: '添加文件' })).toBeEnabled())
+    const textbox = screen.getByRole('textbox', { name: '发送给 Ely 的消息' }) as HTMLTextAreaElement
+    fireEvent.change(textbox, { target: { value: '前后' } })
+    textbox.setSelectionRange(1, 1)
+    fireEvent.paste(textbox, { clipboardData: { files: [new File(['png'], 'clipboard.png', { type: 'image/png' })], getData: () => '说明' } })
+    await screen.findByText('clipboard.png')
+    expect(textbox).toHaveValue('前说明后')
+    await waitFor(() => expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: '发送消息' }))
+    await waitFor(() => expect(backend.api.createTask).toHaveBeenCalledWith('server-session', expect.objectContaining({ content: '前说明后', attachments: [{ id: 'server-attachment-1' }] })))
+  })
+
+  it('拖放混合文件统一处理，不支持格式和文件夹显示通知且保留草稿', async () => {
+    const backend = chatTestApi()
+    renderChat(backend, '/agent', undefined, [chatVisionTestModel])
+    await screen.findByRole('button', { name: `选择模型：${chatVisionTestModel.model}` })
+    await waitFor(() => expect(screen.getByRole('button', { name: '添加文件' })).toBeEnabled())
+    const form = screen.getByRole('form', { name: '消息输入框' })
+    const textbox = screen.getByRole('textbox', { name: '发送给 Ely 的消息' })
+    fireEvent.change(textbox, { target: { value: '原草稿' } })
+    fireEvent.drop(form, { dataTransfer: { files: [new File(['pdf'], 'report.pdf', { type: 'application/pdf' })], types: ['Files'] } })
+    await screen.findByText(/不支持这些文件：report.pdf/)
+    expect(textbox).toHaveValue('原草稿')
+    fireEvent.drop(form, { dataTransfer: { files: [], types: ['Files'] } })
+    await screen.findByText('无法添加文件夹，请选择具体文件。')
+    fireEvent.drop(form, { dataTransfer: { files: [new File(['诊断日志'], 'server.log'), new File(['png'], 'dropped.png', { type: 'image/png' })], types: ['Files'] } })
+    await screen.findByText('dropped.png')
+    expect(textbox).toHaveValue('原草稿\n\n文件："server.log"\n诊断日志')
+    expect(backend.api.uploadAttachments.mock.lastCall?.[0]).toHaveLength(1)
+  })
+
+  it('只添加图片时提示补充问题，重发编辑中粘贴文件会明确拒绝', async () => {
+    const backend = chatTestApi()
+    renderChat(backend, '/agent', undefined, [chatVisionTestModel])
+    await screen.findByRole('button', { name: `选择模型：${chatVisionTestModel.model}` })
+    await waitFor(() => expect(screen.getByRole('button', { name: '添加文件' })).toBeEnabled())
+    fireEvent.paste(screen.getByRole('textbox', { name: '发送给 Ely 的消息' }), { clipboardData: { files: [new File(['png'], 'only.png', { type: 'image/png' })], getData: () => '' } })
+    await screen.findByText('已添加 1 张图片，请输入问题或说明后发送。')
+    expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled()
+    fireEvent.change(screen.getByRole('textbox', { name: '发送给 Ely 的消息' }), { target: { value: '看图' } })
+    fireEvent.click(screen.getByRole('button', { name: '发送消息' }))
+    const edit = await screen.findByRole('button', { name: '编辑这条消息' })
+    await waitFor(() => expect(edit).toBeEnabled())
+    fireEvent.click(edit)
+    fireEvent.paste(screen.getByRole('textbox', { name: '编辑消息内容' }), { clipboardData: { files: [new File(['png'], 'new.png', { type: 'image/png' })], getData: () => '' } })
+    await screen.findByText('编辑消息时仅可修改文本，请完成编辑后再添加文件。')
+    expect(backend.api.uploadAttachments).toHaveBeenCalledTimes(1)
+  })
+
   it('首条消息前可选择记忆空间，只创建会话而不提交任务，并保留消息草稿', async () => {
     const backend = chatTestApi()
     backend.session.id = 'server-memory-preflight'
@@ -794,16 +895,16 @@ describe('基本聊天界面', () => {
     let finishUpload!: (value: Awaited<ReturnType<typeof upload>>) => void
     backend.api.uploadAttachments.mockReturnValueOnce(new Promise(resolve => { finishUpload = resolve }))
     renderChat(backend, '/agent', undefined, [chatVisionTestModel])
-    const picker = screen.getByLabelText('选择图片附件') as HTMLInputElement
+    const picker = screen.getByLabelText('选择文件') as HTMLInputElement
     const openPicker = vi.spyOn(picker, 'click')
-    await user.click(await screen.findByRole('button', { name: '添加图片附件' }))
+    await user.click(await screen.findByRole('button', { name: '添加文件' }))
     expect(openPicker).toHaveBeenCalledOnce()
     const file = new File(['png'], 'diagram.png', { type: 'image/png' })
     await user.upload(picker, file)
     await waitFor(() => expect(backend.api.uploadAttachments).toHaveBeenCalledOnce())
-    expect(document.querySelector('.chat-compose-area [role="status"]')).toHaveTextContent('正在处理并上传图片…')
+    expect(document.querySelector('.chat-compose-area [role="status"]')).toHaveTextContent('正在处理文件…')
     expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '添加图片附件' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '添加文件' })).toBeDisabled()
     expect(picker).toBeDisabled()
     expect(screen.getByRole('textbox')).toBeEnabled()
     expect(within(screen.getByRole('region', { name: 'Ely 会话' })).getByRole('button', { name: '新会话' })).toBeEnabled()
@@ -825,14 +926,17 @@ describe('基本聊天界面', () => {
     await waitFor(() => expect(screen.queryByText('diagram.png')).not.toBeInTheDocument())
   })
 
-  it('无图能力模型的附件按钮禁用并说明，有图模型下可用', async () => {
+  it('文本文件入口不依赖图片能力，图片在导入时按模型能力校验', async () => {
     const backend = chatTestApi()
     const plain = renderChat(backend)
-    expect(await screen.findByRole('button', { name: '当前模型不支持图片输入' })).toBeDisabled()
+    expect(await screen.findByRole('button', { name: '添加文件' })).toBeEnabled()
+    fireEvent.change(screen.getByLabelText('选择文件'), { target: { files: [new File(['png'], 'a.png', { type: 'image/png' })] } })
+    await screen.findByText('当前模型不支持图片输入，请切换支持图片的模型后再添加。')
+    expect(backend.api.uploadAttachments).not.toHaveBeenCalled()
     plain.unmount()
     const visionBackend = chatTestApi()
     const vision = renderChat(visionBackend, '/agent', undefined, [chatVisionTestModel])
-    await waitFor(() => expect(vision.getByRole('button', { name: '添加图片附件' })).toBeEnabled())
+    await waitFor(() => expect(vision.getByRole('button', { name: '添加文件' })).toBeEnabled())
   })
 })
 
@@ -860,7 +964,7 @@ describe('会话列表编辑入口', () => {
     fireEvent.click(within(screen.getByRole('region', { name: 'Ely 会话' })).getByRole('button', { name: '新会话' }))
     await waitFor(() => expect(useAgentChatStore.getState().session?.id).toMatch(/^draft:/))
     // 新草稿行加入列表后编辑入口数量不变：编辑入口不落在纯草稿行。
-    // （此前用例的本地草稿会累积在 localStorage，行数不定，编辑入口只随服务端行数变化。）
+    // 本地草稿没有编辑入口，按钮数只随服务端会话行数变化。
     expect(screen.getAllByRole('button', { name: '编辑会话' })).toHaveLength(2)
     const draftItem = document.querySelector('.chat-session-row[aria-current]')?.closest('.chat-session-item')
     expect(draftItem).not.toBeNull()

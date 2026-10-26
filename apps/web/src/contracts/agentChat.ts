@@ -4,6 +4,9 @@ import type { AgentAccessDecisionInput, AgentAuthorizationRevokeInput, AgentSess
 
 export type AgentChatPermissionMode = AgentPermissionMode
 
+/** 与服务端默认 UserBytes 一致，按 UTF-8 字节计算。 */
+export const AGENT_CHAT_TEXT_BYTES = 32768
+
 export type AgentChatAttachment = {
   id: string
   name: string
