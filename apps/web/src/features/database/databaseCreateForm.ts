@@ -1,5 +1,6 @@
 import type { DatabaseInstance } from '@elysian/contracts'
 import type { DatabaseCreateFileInput } from '../../contracts/adapters'
+import { secureRandomString } from '../../utils/secureRandom'
 
 /**
  * 添加 SQLite 数据库表单的草稿与校验：纯函数、无 React 依赖。
@@ -95,12 +96,8 @@ export function bytesToMb(bytes: number): number {
   return Math.round((bytes / (1024 * 1024)) * 10) / 10
 }
 
-/** 演示密码生成：16 位大小写字母与数字，仅用于表单快捷填充（用户触发，不进确定性数据集）。 */
-export function generateDemoPassword(length = 16): string {
+/** 数据库账号密码：16 位大小写字母与数字，经 WebCrypto 生成，仅用于表单快捷填充。 */
+export function generateDatabasePassword(length = 16): string {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789'
-  let password = ''
-  for (let i = 0; i < length; i += 1) {
-    password += alphabet[Math.floor(Math.random() * alphabet.length)]
-  }
-  return password
+  return secureRandomString(length, alphabet)
 }

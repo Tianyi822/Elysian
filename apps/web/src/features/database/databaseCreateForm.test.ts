@@ -1,13 +1,15 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DatabaseInstance } from '@elysian/contracts'
 import {
   databaseNameFromFile,
   emptyDraft,
-  generateDemoPassword,
+  generateDatabasePassword,
   hasDatabaseCreateErrors,
   toDatabaseCreateInput,
   validateDatabaseCreateDraft,
 } from './databaseCreateForm'
+
+afterEach(() => vi.unstubAllGlobals())
 
 // 重名校验只消费引擎与名称：已存在实例内联在测试里，不再依赖演示数据集。
 const EXISTING: readonly DatabaseInstance[] = [
@@ -81,9 +83,14 @@ describe('添加 SQLite 数据库表单', () => {
     expect(databaseNameFromFile('raw')).toBe('raw')
   })
 
-  it('演示密码为指定长度的字母数字混合', () => {
-    const password = generateDemoPassword()
+  it('生成密码为指定长度的字母数字混合', () => {
+    const password = generateDatabasePassword()
     expect(password).toHaveLength(16)
     expect(password).toMatch(/^[A-Za-z0-9]+$/)
+  })
+
+  it('WebCrypto 缺失时明确失败，不回退 Math.random', () => {
+    vi.stubGlobal('crypto', undefined)
+    expect(() => generateDatabasePassword()).toThrow('无法生成安全随机数')
   })
 })

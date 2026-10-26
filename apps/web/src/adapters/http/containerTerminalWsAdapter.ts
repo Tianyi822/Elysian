@@ -21,7 +21,8 @@ const CONNECT_FALLBACK_ERROR = '连接容器终端失败'
 const SOCKET_OPEN = 1
 
 function defaultSocketFactory(url: string): TerminalSocket {
-  return new WebSocket(url)
+  try { return new WebSocket(url) }
+  catch { throw new Error('浏览器无法建立容器终端连接，请检查浏览器网络策略或更换浏览器重试') }
 }
 
 type LiveSession = {

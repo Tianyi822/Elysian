@@ -140,6 +140,16 @@ function collectFrames(frames: HostTerminalFrame[]): HostTerminalHandlers {
 }
 
 describe('containerTerminalWsAdapter', () => {
+  it.each(['missing', 'blocked'] as const)('WebSocket %s 时容器终端以中文拒绝连接', async failure => {
+    vi.stubGlobal('WebSocket', failure === 'missing' ? undefined : class {
+      constructor() { throw new DOMException('blocked', 'SecurityError') }
+    })
+    try {
+      const adapter = createContainerTerminalWsAdapter()
+      await expect(adapter.connectTerminal('ctr-web', collectFrames([]))).rejects.toThrow('浏览器无法建立容器终端连接')
+    } finally { vi.unstubAllGlobals() }
+  })
+
   it('连接 /api/docker/containers/:id/terminal，containerId 经 encodeURIComponent 寻径', async () => {
     const held = heldFactory()
     const adapter = createContainerTerminalWsAdapter(held.factory)

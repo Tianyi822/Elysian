@@ -41,7 +41,8 @@ export type TerminalSocket = {
 export type TerminalSocketFactory = (url: string) => TerminalSocket
 
 function defaultSocketFactory(url: string): TerminalSocket {
-  return new WebSocket(url)
+  try { return new WebSocket(url) }
+  catch { throw new Error('浏览器无法建立终端连接，请检查浏览器网络策略或更换浏览器重试') }
 }
 
 /** 已 ready 的会话：socket、回调与补全上下文缓存（commands 来自 ready 帧，files 来自 prompt 帧）。 */

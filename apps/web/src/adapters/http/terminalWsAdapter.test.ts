@@ -131,6 +131,16 @@ function heldFactory(): { factory: (url: string) => FakeTerminalSocket; sockets:
 runTerminalAdapterContract(() => createTerminalWsAdapter(autoReadyFactory()))
 
 describe('terminalWsAdapter（协议特有行为）', () => {
+  it.each(['missing', 'blocked'] as const)('WebSocket %s 时以中文拒绝连接', async failure => {
+    vi.stubGlobal('WebSocket', failure === 'missing' ? undefined : class {
+      constructor() { throw new DOMException('blocked', 'SecurityError') }
+    })
+    try {
+      const adapter = createTerminalWsAdapter()
+      await expect(adapter.connect(collectFrames([]))).rejects.toThrow('浏览器无法建立终端连接')
+    } finally { vi.unstubAllGlobals() }
+  })
+
   it('连接同源 /api/terminals/ws；input/interrupt 以白名单帧发出', async () => {
     const sockets: FakeTerminalSocket[] = []
     const adapter = createTerminalWsAdapter(autoReadyFactory(sockets))

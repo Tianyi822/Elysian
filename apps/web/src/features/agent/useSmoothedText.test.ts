@@ -19,6 +19,23 @@ describe('流式文本缓冲', () => {
       expect(result.current).toBe(text)
     } finally { Object.defineProperty(Intl, 'Segmenter', original) }
   })
+  it('Intl.Segmenter 存在但构造抛错时回退码点并完整输出', () => {
+    vi.useFakeTimers()
+    const original = Object.getOwnPropertyDescriptor(Intl, 'Segmenter')!
+    Object.defineProperty(Intl, 'Segmenter', {
+      configurable: true,
+      value: class { constructor() { throw new Error('blocked') } },
+    })
+    try {
+      const text = '中文 👨‍👩‍👧‍👦 🌏\nconst x = "代码"; '.repeat(5)
+      const { result } = renderHook(() => useSmoothedText(text, true))
+      act(() => vi.advanceTimersByTime(64))
+      expect(text.startsWith(result.current)).toBe(true)
+      act(() => vi.advanceTimersByTime(2000))
+      expect(result.current).toBe(text)
+    } finally { Object.defineProperty(Intl, 'Segmenter', original) }
+  })
+
   it('按完整词块渐进显示，最终内容不丢失，撤回立即清空', () => {
     vi.useFakeTimers()
     vi.stubGlobal('matchMedia', () => ({ matches: false }))

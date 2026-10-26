@@ -14,7 +14,11 @@ export function observeElementSize(elements: readonly Element[], measure: () => 
     if (disposed || frame) return
     frame = requestAnimationFrame(() => { frame = 0; if (!disposed) measure() })
   }
-  const observer = typeof MutationObserver === 'function' ? new MutationObserver(schedule) : undefined
+  let observer: MutationObserver | undefined
+  if (typeof MutationObserver === 'function') {
+    try { observer = new MutationObserver(schedule) }
+    catch { observer = undefined }
+  }
   for (const element of elements) observer?.observe(element, { childList: true, subtree: true, characterData: true })
   window.addEventListener('resize', schedule)
   document.addEventListener('transitionend', schedule, true)

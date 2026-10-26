@@ -8,7 +8,7 @@ import { Loader2, X } from '../../components/icons'
 import { useDatabaseStore } from '../../stores/databaseStore'
 import { DEFAULT_IMAGE_REGISTRY, registryHost, validateRegistryUrl } from '../container/imageReference'
 import { PasswordVisibilityButton } from '../security/passwordFieldParts'
-import { generateDemoPassword } from './databaseCreateForm'
+import { generateDatabasePassword } from './databaseCreateForm'
 import { useFeedbackNotification } from '../../components/useFeedbackNotification'
 
 type Engine = Exclude<DatabaseEngine, 'SQLite'>
@@ -293,7 +293,7 @@ export function RealDatabaseCreateDialog({ engine }: { engine: Engine }) {
                     <input id="real-db-password" type={passwordVisible ? 'text' : 'password'} className={FIELD + ' pr-9'} disabled={busy} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" />
                     <PasswordVisibilityButton visible={passwordVisible} onToggle={setPasswordVisible} />
                   </div>
-                  <button type="button" disabled={busy} onClick={() => setPassword(generateDemoPassword(24))} className={BUTTON + ' min-w-16 shrink-0 whitespace-nowrap'}>生成</button>
+                  <button type="button" disabled={busy} onClick={() => setPassword(generateDatabasePassword(24))} className={BUTTON + ' min-w-16 shrink-0 whitespace-nowrap'}>生成</button>
                 </div>
               </div>
             </div>
