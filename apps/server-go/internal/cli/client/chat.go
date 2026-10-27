@@ -28,6 +28,7 @@ type MessageRunConfig struct {
 
 // Message 公开历史消息（用户输入与助手最终答复；工具过程经 timeline 呈现）。
 type Message struct {
+	Origin            string              `json:"origin,omitempty"`
 	Attachments       []MessageAttachment `json:"attachments,omitempty"`
 	ReplacesMessageID string              `json:"replacesMessageId,omitempty"`
 	ID                string              `json:"id"`
@@ -104,6 +105,10 @@ type ChatCacheHitUsage struct {
 // 模型确认的计划快照（折叠条展示），ContextUsage／Usage／CacheHitUsage 驱动状态栏
 // 上下文用量文本与 Ctrl+O 执行详情的分节。
 type ChatTimeline struct {
+	TerminalResult *struct {
+		Origin  string `json:"origin"`
+		Content string `json:"content"`
+	} `json:"terminalResult,omitempty"`
 	RunID         string             `json:"runId"`
 	Status        string             `json:"status"`
 	Done          bool               `json:"done"`

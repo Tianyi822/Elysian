@@ -64,11 +64,13 @@ func TestMenuNavigationWraps(t *testing.T) {
 		t.Fatalf("下移应到第三项，得到 %d", m.cursor)
 	}
 	m = press(t, m, keyDown())
+	m = press(t, m, keyDown())
+	m = press(t, m, keyDown())
 	if m.cursor != 0 {
 		t.Fatalf("末尾下移应回绕到第一项，得到 %d", m.cursor)
 	}
 	m = press(t, m, keyUp())
-	if m.cursor != 2 {
+	if m.cursor != 4 {
 		t.Fatalf("顶部上移应回绕到末项，得到 %d", m.cursor)
 	}
 }
@@ -117,8 +119,7 @@ func TestMenuEnterResetPasswordQuitsWithAction(t *testing.T) {
 
 func TestMenuEnterExitQuitsWithAction(t *testing.T) {
 	m := newMenuModel(testInfo, fakeDeps())
-	m = press(t, m, keyDown())
-	m = press(t, m, keyDown()) // 焦点：退出
+	m = press(t, m, keyUp()) // 焦点：退出
 	m, cmd := pressWithCmd(t, m, keyEnter())
 	if m.action != menuActionExit || !quits(t, cmd) {
 		t.Fatalf("Enter 应选中退出：action=%d quits=%v", m.action, quits(t, cmd))

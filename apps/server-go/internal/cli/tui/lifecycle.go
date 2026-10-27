@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"elysian/server/internal/cli/client"
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -56,6 +57,9 @@ func wrapCommand(cmd tea.Cmd, scope replyScope) tea.Cmd {
 		if _, ok := msg.(tea.QuitMsg); ok {
 			return msg
 		}
+		if _, ok := msg.(spinner.TickMsg); ok {
+			return msg
+		}
 		return scopedMsg{scope: scope, msg: msg}
 	}
 }
@@ -104,6 +108,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	priorPhase, priorSession := m.phase, m.chat.sessionID
 	next, cmd := m.update(msg)
 	n := next.(Model)
+	n.layoutChat()
 	if n.chat.sessionID == priorSession && n.chat.editor.Value() != priorText {
 		switch msg.(type) {
 		case tea.KeyMsg:

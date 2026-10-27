@@ -69,7 +69,7 @@ func TestAgentTerminalConnErrorRoundTripViaPty(t *testing.T) {
 	// 菜单重启以第二次「面板未启动」为安全信号（探测回填即读取器就绪，按键不被
 	// TCSAFLUSH 丢弃），随后退出菜单。
 	waitForAgent(t, out, "TUI 退出返回菜单", func(s string) bool { return strings.Count(s, "面板未启动") >= 2 })
-	if _, err := master.Write([]byte("jj\r")); err != nil {
+	if _, err := master.Write([]byte("jjjj\r")); err != nil {
 		t.Fatal(err)
 	}
 	select {

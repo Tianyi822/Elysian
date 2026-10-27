@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"elysian/server/internal/cli/client"
+	"elysian/server/internal/cli/termui"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -87,7 +88,11 @@ func (m Model) updateLoginDone(msg loginDoneMsg) (tea.Model, tea.Cmd) {
 		m.login.error = errText(msg.err)
 		return m, nil
 	}
-	_ = m.deps.SaveCreds(m.baseURL, m.api.SessionCookie())
+	if err := m.deps.SaveCreds(m.baseURL, m.api.SessionCookie()); err != nil {
+		m.login.busy = false
+		m.login.error = "保存 CLI 登录失败：" + err.Error()
+		return m, nil
+	}
 	m.login = newLoginState()
 	return m.updateBoot(bootMsg{baseURL: m.baseURL, api: m.api})
 }
@@ -96,7 +101,7 @@ func (s loginState) view(m Model) string {
 	var b strings.Builder
 	labelWidth := 10
 	userLabel, passwordLabel := padCells("用户名", labelWidth), padCells("密码", labelWidth)
-	fieldWidth := m.width - labelWidth - 4
+	fieldWidth := min(72, max(20, m.width-2)) - labelWidth - 6
 	if fieldWidth < 12 {
 		fieldWidth = 12
 	}
@@ -107,12 +112,11 @@ func (s loginState) view(m Model) string {
 		}
 		return metaStyle.Render(label) + value
 	}
-	b.WriteString(render(userLabel, s.user, s.field == loginFieldUser))
+	fields := render(userLabel, s.user, s.field == loginFieldUser) + "\n\n" + render(passwordLabel, s.password, s.field == loginFieldPassword)
+	b.WriteString(termui.Panel("管理员登录", fields, min(72, max(20, m.width-2)), true))
 	b.WriteString("\n")
-	b.WriteString(render(passwordLabel, s.password, s.field == loginFieldPassword))
-	b.WriteString("\n\n")
 	if s.busy {
-		b.WriteString(metaStyle.Render("正在登录…"))
+		b.WriteString(m.spinner.View() + metaStyle.Render("正在登录…"))
 		b.WriteString("\n")
 	} else if s.error != "" {
 		b.WriteString(warnStyle.Render(truncateCells(s.error, max(20, m.width-2))))

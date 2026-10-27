@@ -337,8 +337,15 @@ func TestOperationDenyCancelExpireAndRevoke(t *testing.T) {
 				t.Fatalf("未授权派发或伪造成功：%+v calls=%d", got, calls.Load())
 			}
 			messages, err := m.Messages(ctx, s.ID, "", 20)
-			if err != nil || len(messages.Items) != 1 {
-				t.Fatalf("失败生成公开终答：%+v %v", messages, err)
+			want := 2
+			if action == "cancel" {
+				want = 1
+			}
+			if err != nil || len(messages.Items) != want {
+				t.Fatalf("失败应生成运行结果，手动取消保留原行为：%+v %v", messages, err)
+			}
+			if action != "cancel" && (messages.Items[1].Origin != "runtime" || got.Error == nil || !strings.Contains(messages.Items[1].Content, got.Error.Message)) {
+				t.Fatalf("失败原因未公开：%+v", messages)
 			}
 		})
 	}

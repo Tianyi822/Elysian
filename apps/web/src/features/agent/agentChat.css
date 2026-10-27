@@ -65,6 +65,8 @@
 .chat-message:hover .chat-copy,
 .chat-message:focus-within .chat-copy { opacity: 1; pointer-events: auto; }
 .chat-markdown { min-width: 0; margin-top: 8px; font-size: 14px; line-height: 1.8; overflow-wrap: anywhere; }
+.chat-runtime-result { margin-top: 16px; }
+.chat-result-label { margin: 0; color: var(--t-fg-muted); font-size: 12px; line-height: 1.5; font-weight: 500; }
 .chat-markdown > :first-child { margin-top: 0; }
 .chat-markdown > :last-child { margin-bottom: 0; }
 .chat-markdown p, .chat-markdown ul, .chat-markdown ol, .chat-markdown blockquote, .chat-markdown pre, .chat-code-block, .chat-markdown-table { margin: 12px 0; }
@@ -136,7 +138,7 @@
 .chat-new:disabled { opacity: 0.5; cursor: not-allowed; }
 .chat-compose-area { width: 100%; max-width: 848px; max-height: calc(100% - 64px); overflow-y: auto; margin: 0 auto; padding: 16px 24px 20px; flex-shrink: 0; }
 .chat-composer { overflow: hidden; }
-.chat-textarea { display: block; width: 100%; min-height: 92px; max-height: 200px; padding: 18px 18px 8px; resize: none; border: 0; background: transparent; color: var(--t-fg); font-size: 14px; line-height: 1.7; }
+.chat-textarea { display: block; width: 100%; min-height: 92px; max-height: 200px; padding: 18px 18px 8px; resize: none; border: 0; background: transparent; color: var(--t-fg); font-size: 16px; line-height: 1.7; }
 .chat-textarea::placeholder { color: var(--t-fg-subtle); }
 .chat-textarea:focus-visible { outline: none; box-shadow: none; }
 .chat-composer-tools { display: flex; align-items: center; gap: 4px; padding: 6px 12px 12px; }

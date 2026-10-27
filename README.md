@@ -128,7 +128,7 @@ journalctl -u elysian -b --no-pager | grep '初始密码'
 忘记密码时重置（全部会话失效）：
 
 ```bash
-HOME=/var/lib/elysian /usr/local/bin/elysian resetpwd
+sudo ely resetpwd
 ```
 
 卸载：
@@ -144,9 +144,13 @@ sudo bash scripts/uninstall.sh             # 逐项询问数据处置
 
 ## 原生 CLI 与 Agent 终端
 
-systemd 安装提供全局命令 `ely`，由 `/usr/local/bin/ely` 链接到同一面板二进制；无需 Node.js。运行 `ely` 打开菜单，选择 Agent 终端或重置密码；生产改密需要 `sudo ely`。`ely --help` 和 `ely --version` 可用于非交互调用，脚本改密仍用 `elysian resetpwd`。
+systemd 安装提供全局命令 `ely`，由 `/usr/local/bin/ely` 链接到同一面板二进制；无需 Node.js。`ely` 打开交互菜单，`ely agent` 直接进入 Agent 终端，`sudo ely resetpwd` 直接重置生产面板密码；改密支持两次隐藏输入或标准输入的两行密码，原 `elysian resetpwd` 入口保留。`ely help`、`ely help upgrade` 和各子命令的 `-h`／`--help` 查看参数与示例，`ely --version` 显示构建版本，帮助和版本无需登录或面板运行。
+
+`ely upgrade` 复用已有 CLI 登录，缺少登录时显示登录表单；选择 GitHub／Gitee，再选择最新提交／最新正式发版，检查后确认更新。也可直接运行 `ely upgrade --source github --channel release --yes`（`--yes` 可写为 `-y`），非交互执行必须显式提供来源、策略和确认参数，并已有有效 CLI 登录。更新复用设置页的维护任务、来源锁定、日志、备份与回滚机制，不自动换源。终端显示真实阶段、耗时和可滚动日志；Ctrl+C 退出监控，已接受的服务端任务继续执行，再次运行优先恢复。请求与任务指针独立保存在执行用户的 `~/.elysian/cli/upgrade.json`（0600），不覆盖 Agent 草稿；提交结果未知时先按原请求编号核实，人工重试复用原目标与编号。面板重启后核对实际运行提交；CLI 注册失败可按 `r` 重试，非交互可用原参数与 `--yes` 再次运行。
 
 Agent 终端通过回环 HTTP 消费现有 Go Harness，与 Web 共用服务端会话、模型、公开消息、运行、授权和图片。端口读取面板数据根下 `config/panel-network.json`；面板数据根按 `ELYSIAN_PANEL_HOME`、正式安装目录、执行用户 `~/.Elysian` 的顺序查找。
+
+普通聊天的失败、系统中断和带明确错误的系统自动取消由服务端追加「运行结果」，正文说明真实失败原因；缺少原因时显示通用异常说明。结果与终态同事务保存到 SQLite／JSONL，按 Run 去重，不额外请求模型、不改变运行失败状态，刷新和重新登录可回读。旧失败轮次通过只读终态快照补齐展示；已有思考、正文片段和工具过程保留，正式结果可复制。明确的手动停止沿用保留已接收片段的行为；系统撤回资料等自动终止通过取消事件区分。发送框与编辑重发框使用 16px 字号。
 
 Agent 可通过内置只读工具 `web_fetch({url})` 自动读取公网 URL 的标题、正文和链接，支持 HTML、纯文本、Markdown 与 JSON，Web 和 CLI 共用调用记录。读取仅发 GET，不携带登录状态、不执行 JavaScript、不访问内网；不支持搜索引擎、PDF 或交互浏览。每次最多 20 秒、5 次重定向、解压后响应 2 MiB、正文 32 KiB、20 条链接，正文截断会明确标记；网络连接与跳转均校验公网地址，网页资料不能授予执行权限。细节见本地 [ADR-0049](docs/adr/0049-agent-public-url-reading.md)。
 

@@ -41,6 +41,7 @@ type ChatCacheHitUsage struct {
 }
 
 type ChatTimelineSnapshot struct {
+	TerminalResult  *TerminalResult     `json:"terminalResult,omitempty"`
 	Plan            *RunPlan            `json:"plan,omitempty"`
 	RunID           string              `json:"runId"`
 	Status          string              `json:"status"`
@@ -91,6 +92,10 @@ func (m *Manager) ChatSnapshot(ctx context.Context, id string) (ChatOutput, erro
 	}
 	out := chatOutput(run, records)
 	timeline := projectChatTimeline(run, records, operations, calls, approvals)
+	timeline.TerminalResult, err = m.store.terminalResult(ctx, m.store.db, run)
+	if err != nil {
+		return ChatOutput{}, storageFailure(err)
+	}
 	questions, err := readDocuments[UserInputRequest](ctx, m.store.db, "SELECT document FROM user_inputs WHERE run_id=? ORDER BY rowid", id)
 	if err != nil {
 		return ChatOutput{}, storageFailure(err)

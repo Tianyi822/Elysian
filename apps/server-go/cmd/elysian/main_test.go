@@ -105,12 +105,12 @@ func TestElyAliasUnknownArgReturnsExitCode(t *testing.T) {
 	}
 	defer ef.Close()
 	previousArgs, previousStdout, previousStderr := os.Args, os.Stdout, os.Stderr
-	os.Args, os.Stdout, os.Stderr = []string{"/usr/local/bin/ely", "resetpwd"}, f, ef
+	os.Args, os.Stdout, os.Stderr = []string{"/usr/local/bin/ely", "unknown-command"}, f, ef
 	t.Cleanup(func() { os.Args, os.Stdout, os.Stderr = previousArgs, previousStdout, previousStderr })
 	err = run()
 	var ec exitError
 	if !errors.As(err, &ec) || ec.code != 2 {
-		t.Fatalf("ely resetpwd 应以退出码 2 拒绝（不透传 elysian 子命令语义）：%v", err)
+		t.Fatalf("未知 ely 命令应以退出码 2 拒绝：%v", err)
 	}
 	raw, err := os.ReadFile(errFile)
 	if err != nil {

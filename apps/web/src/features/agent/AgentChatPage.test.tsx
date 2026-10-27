@@ -58,6 +58,36 @@ beforeEach(async () => {
 })
 
 describe('基本聊天界面', () => {
+  it.each(['failed', 'interrupted', 'cancelled'] as const)('历史 %s 由快照恢复正式结果，消息回读不重复，编辑重发移除旧结果', async status => {
+    const backend = chatTestApi()
+    backend.hold()
+    await backend.api.createTask('server-session', { requestId: 'runtime-failure', content: '请查看这个网站' })
+    const run = backend.runs.get('run-1')!
+    run.status = status
+    run.error = { code: 'execution-unavailable', message: '执行容器通道不可用' }
+    backend.session.activeRunId = undefined
+    const content = '本轮任务未能完成。\n\n原因：执行容器通道不可用'
+    backend.timelines.set('run-1', { runId: 'run-1', status, done: true, entries: [], terminalResult: { origin: 'runtime', content } })
+    const initial = renderChat(backend, '/agent?session=server-session')
+    expect(await screen.findByRole('article', { name: '运行结果' })).toHaveTextContent('原因：执行容器通道不可用')
+    backend.messages.push({ ...backend.messages[0]!, id: 'runtime-answer', seq: '2', role: 'assistant', origin: 'runtime', content })
+    backend.session.lastSeq = '2'
+    await act(async () => { await useAgentChatStore.getState().refresh(backend.api) })
+    expect(screen.getAllByRole('article', { name: '运行结果' })).toHaveLength(1)
+    initial.unmount()
+    useAgentChatStore.getState().clearDisplay()
+    renderChat(backend, '/agent?session=server-session')
+    expect(await screen.findByRole('article', { name: '运行结果' })).toHaveTextContent('原因：执行容器通道不可用')
+    const edit = screen.getByRole('button', { name: '编辑这条消息' })
+    await waitFor(() => expect(edit).toBeEnabled())
+    fireEvent.click(edit)
+    fireEvent.change(screen.getByRole('textbox', { name: '编辑消息内容' }), { target: { value: '重新检查网站' } })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+    await screen.findByText('重新检查网站')
+    expect(screen.queryByRole('article', { name: '运行结果' })).not.toBeInTheDocument()
+    expect(backend.api.createTask).toHaveBeenCalledTimes(1)
+    expect(backend.api.continueTask).toHaveBeenCalledTimes(1)
+  })
   it('HTTP IP 环境可新建会话并输入中文、符号和多行文本后发送', async () => {
     vi.stubGlobal('crypto', { getRandomValues: crypto.getRandomValues.bind(crypto) })
     try {

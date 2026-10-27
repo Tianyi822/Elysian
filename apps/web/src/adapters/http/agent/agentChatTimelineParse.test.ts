@@ -2,6 +2,16 @@ import { describe, expect, it } from 'vitest'
 import timelineFixture from '../../../../../../packages/foundation/contracts/fixtures/agent-chat-timeline.json'
 import { parseChatTimeline } from './agentChatTimelineParse'
 
+it('保留运行时终态结果，并拒绝生成中、成功或畸形的结果', () => {
+  const terminalResult = { origin: 'runtime', content: '本轮任务未能完成。\n\n原因：执行容器通道不可用' }
+  const value = { runId: 'failed-run', status: 'failed', done: true, entries: [], terminalResult }
+  expect(parseChatTimeline(value, 'failed-run').terminalResult).toEqual(terminalResult)
+  expect(parseChatTimeline({ ...value, status: 'cancelled' }, 'failed-run').terminalResult).toEqual(terminalResult)
+  for (const invalid of [{ ...value, done: false }, { ...value, status: 'succeeded' }, { ...value, terminalResult: null }, { ...value, terminalResult: { ...terminalResult, origin: 'model' } }, { ...value, terminalResult: { ...terminalResult, content: '  ' } }]) {
+    expect(() => parseChatTimeline(invalid, 'failed-run')).toThrow('格式无效')
+  }
+})
+
 const reasoning = { id: 'm1:reasoning', modelRequestId: 'm1', requestIndex: 0, kind: 'reasoning', text: '思考', startedAt: '', status: 'succeeded', incomplete: false }
 const content = { ...reasoning, id: 'm1:content', kind: 'content', text: '正文' }
 const tool = { id: 'm1:tool:t', modelRequestId: 'm1', requestIndex: 0, kind: 'tool', tool: 'test', modelCallId: 't', callIndex: 0, argumentsJson: '{"n":9007199254740993}', startedAt: '', status: 'waiting-approval', truncated: false }

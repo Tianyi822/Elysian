@@ -452,6 +452,9 @@ func (a *agentExecution) contextFacts(ctx context.Context, loadImages bool) (Wor
 		}
 		a.sharedWikiRefs = append(a.sharedWikiRefs, refs)
 		prefix := "其他任务公开对话：\n"
+		if messages[i].Origin == "runtime" {
+			prefix = "其他任务运行时结果（运行状态说明）：\n"
+		}
 		if messages[i].RunStatus == StateCancelled {
 			prefix += "（回复已停止，以下为未完成内容）\n"
 		}

@@ -10,6 +10,17 @@ const attachment = (index: number) => ({ id: `attach-${index}`, name: `${index}.
 const images = (count: number) => Array.from({ length: count }, (_, index) => new File(['x'], `${index}.png`, { type: 'image/png' }))
 
 describe('聊天 HTTP 接口', () => {
+  it('公开消息保留运行时来源，并拒绝错误来源或用户消息冒用运行时结果', async () => {
+    const value = { ...fixture.message, sessionId: 'session-1', seq: '1', role: 'assistant', origin: 'runtime', runStatus: 'failed', content: '本轮任务未能完成。\n\n原因：执行容器通道不可用' }
+    const fetcher = vi.fn().mockResolvedValueOnce(json({ items: [value], nextCursor: '1', hasMore: false }))
+      .mockResolvedValueOnce(json({ items: [{ ...value, origin: 'unknown' }], nextCursor: '1', hasMore: false }))
+      .mockResolvedValueOnce(json({ items: [{ ...value, role: 'user' }], nextCursor: '1', hasMore: false }))
+    vi.stubGlobal('fetch', fetcher)
+    const api = createHttpAgentConversationAdapter()
+    expect((await api.messages('session-1', '0')).items[0]).toMatchObject({ origin: 'runtime', content: value.content, runStatus: 'failed' })
+    await expect(api.messages('session-1', '0')).rejects.toThrow('格式无效')
+    await expect(api.messages('session-1', '0')).rejects.toThrow('格式无效')
+  })
   it('缺少 AbortSignal.any 与 timeout 时仍能接收输出且完成后不遗留计时器', async () => {
     vi.useFakeTimers()
     vi.stubGlobal('AbortSignal', {})

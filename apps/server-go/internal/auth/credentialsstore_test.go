@@ -382,7 +382,7 @@ func TestEnsureFirstBootCreated(t *testing.T) {
 		t.Errorf("横幅缺用户名行：%v", banner)
 	}
 	// 改密指引与安装摘要同口径：ely 菜单为主入口，脚本通道带生产 HOME。
-	if !strings.Contains(joined, "修改密码：sudo ely 后选择「重置密码」（脚本通道：HOME=/var/lib/elysian elysian resetpwd）") {
+	if !strings.Contains(joined, "修改密码：sudo ely resetpwd（脚本通道：HOME=/var/lib/elysian elysian resetpwd）") {
 		t.Errorf("横幅改密指引不符：%v", banner)
 	}
 	password := ""

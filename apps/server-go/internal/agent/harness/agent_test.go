@@ -565,8 +565,8 @@ func TestAgentRequestBudgetReservesFinalConsolidation(t *testing.T) {
 		t.Fatalf("请求预算失效：%+v", got)
 	}
 	history, _ := m.Messages(context.Background(), s.ID, "", 50)
-	if len(history.Items) != 1 {
-		t.Fatal("预算耗尽仍发布终答")
+	if len(history.Items) != 2 || history.Items[1].Origin != "runtime" || !strings.Contains(history.Items[1].Content, got.Error.Message) {
+		t.Fatalf("预算耗尽应发布真实失败结果：%+v", history)
 	}
 }
 

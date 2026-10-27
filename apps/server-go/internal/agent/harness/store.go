@@ -239,6 +239,9 @@ func (s *store) event(ctx context.Context, tx *sql.Tx, r *Run, kind, callID stri
 	if err := saveRun(ctx, tx, r); err != nil {
 		return err
 	}
+	if err := s.saveTerminalResult(ctx, tx, *r); err != nil {
+		return err
+	}
 	return s.syncWorkflowRun(ctx, tx, r)
 }
 func (s *store) change(ctx context.Context, id, op string, fn func(*sql.Tx, *Run) error) (Run, error) {

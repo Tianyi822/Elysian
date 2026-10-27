@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/charmbracelet/bubbles/cursor"
+	"github.com/charmbracelet/bubbles/spinner"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -351,6 +352,9 @@ func runCmd(t *testing.T, m Model, cmd tea.Cmd) Model {
 		plain = scoped.msg
 	}
 	if _, ok := plain.(cursor.BlinkMsg); ok {
+		return m
+	}
+	if _, ok := plain.(spinner.TickMsg); ok {
 		return m
 	}
 	return step(t, m, msg)

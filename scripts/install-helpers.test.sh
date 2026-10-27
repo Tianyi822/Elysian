@@ -454,9 +454,9 @@ if (
   printf '%s' "$out" | grep -q '面板端口' &&
     printf '%s' "$out" | grep -q '48100' &&
     printf '%s' "$out" | grep -Fq 'http://<服务器公网 IP 或域名>:48100' &&
-    printf '%s' "$out" | grep -Fq 'sudo /usr/local/bin/ely（菜单内「重置密码」）' &&
+    printf '%s' "$out" | grep -Fq 'sudo /usr/local/bin/ely resetpwd' &&
     printf '%s' "$out" | grep -Fq 'HOME=/var/lib/elysian /usr/local/bin/elysian resetpwd' &&
-    printf '%s' "$out" | grep -Fq 'ely — 服务器本地终端（Agent 终端／重置密码），任意目录可用' &&
+    printf '%s' "$out" | grep -Fq 'ely agent／ely resetpwd／ely upgrade；ely help 查看参数' &&
     ! printf '%s' "$out" | grep -Eq '(^|[^0-9])(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)'
 ); then pass "摘要只报端口且不含 RFC1918 地址"; else fail "摘要仍输出内网 IP 或缺少端口"; fi
 

@@ -10,6 +10,7 @@ import { ChatReasoning } from './ChatReasoning'
 import { useSmoothedText } from './useSmoothedText'
 import { ChatPlan } from './ChatPlan'
 import { ChatUserInputSummary } from './ChatUserInput'
+import { ChatRuntimeResult } from './ChatRuntimeResult'
 
 type ToolEntry = Extract<AgentChatTimelineEntry, { kind: 'tool' }>
 const toolLabels: Record<AgentChatToolStatus, string> = {
@@ -86,25 +87,28 @@ export function ChatTimeline({ timeline, answer, active, stopped, stopping, api,
   timeline: AgentChatTimelineSnapshot; showPlan?: boolean; answer?: AgentMessage; active: boolean; stopped: boolean; stopping?: boolean; api: AgentConversationAdapter; onProgress(): void
 }) {
   const hasFinal = timeline.entries.some(entry => entry.kind === 'content' && entry.modelRequestId === timeline.finalResponseId)
-  useLayoutEffect(onProgress, [timeline.done, onProgress])
+  const result = stopped ? undefined : answer?.origin === 'runtime' ? answer.content : timeline.done ? timeline.terminalResult?.content : undefined
+  const modelAnswer = answer?.origin === 'runtime' || result ? undefined : answer
+  useLayoutEffect(onProgress, [timeline.done, result, onProgress])
   return <div className="chat-timeline" aria-label="回复过程">
     {timeline.entries.map(entry => {
       if (entry.kind === 'user-input') return <ChatUserInputSummary key={entry.id} request={entry.userInput} />
       if (entry.kind === 'tool' && entry.tool === 'update_plan' && entry.status !== 'failed') return null
       if (entry.kind === 'tool') return <ChatTool key={entry.id} entry={entry} runId={timeline.runId} api={api} onProgress={onProgress} />
-      const final = entry.kind === 'content' && entry.modelRequestId === timeline.finalResponseId && answer
+      const final = entry.kind === 'content' && entry.modelRequestId === timeline.finalResponseId && modelAnswer
       const hasBody = timeline.entries.some(item => item.kind === 'content' && item.modelRequestId === entry.modelRequestId)
-      return <ChatTextSegment key={entry.id} entry={entry} text={final ? answer.content : entry.text} active={active && !stopping} copyable={!!final}
-        quarantined={final ? answer.quarantined : undefined} showIncomplete={entry.incomplete && !stopped && (entry.kind === 'content' || !hasBody)} onProgress={onProgress} />
+      return <ChatTextSegment key={entry.id} entry={entry} text={final ? modelAnswer.content : entry.text} active={active && !stopping} copyable={!!final}
+        quarantined={final ? modelAnswer.quarantined : undefined} showIncomplete={entry.incomplete && !stopped && (entry.kind === 'content' || !hasBody)} onProgress={onProgress} />
     })}
-    {answer && !hasFinal && timeline.done && <article className="chat-message chat-message-assistant" aria-label="助手回复">
-      <div className="chat-message-body"><ChatMarkdown text={answer.content} />
-        {answer.quarantined && <p className="mt-2 text-xs text-danger">此回复包含未核实或已撤回的资料。</p>}
-      </div><ChatMessageCopy value={answer.content} noun="回复内容" />
+    {modelAnswer && !hasFinal && timeline.done && <article className="chat-message chat-message-assistant" aria-label="助手回复">
+      <div className="chat-message-body"><ChatMarkdown text={modelAnswer.content} />
+        {modelAnswer.quarantined && <p className="mt-2 text-xs text-danger">此回复包含未核实或已撤回的资料。</p>}
+      </div><ChatMessageCopy value={modelAnswer.content} noun="回复内容" />
     </article>}
-    {timeline.done && (timeline.status === 'failed' || timeline.status === 'interrupted') && !!timeline.error?.message &&
+    {!result && timeline.done && (timeline.status === 'failed' || timeline.status === 'interrupted') && !!timeline.error?.message &&
       <p role="status" className={`text-xs ${timeline.status === 'failed' ? 'text-danger' : 'text-fg-muted'}`}>运行未完成：{timeline.error.message}</p>}
     {stopped && <p role="status" className="text-xs text-fg-muted">已停止</p>}
     {showPlan && <ChatPlan plan={timeline.plan} status={timeline.status} stopping={stopping} onProgress={onProgress} />}
+    {result && <ChatRuntimeResult content={result} />}
   </div>
 }

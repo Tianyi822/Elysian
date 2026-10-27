@@ -77,3 +77,10 @@ func truncateCells(text string, width int) string {
 
 // displayWidth 文本显示宽度（CJK／emoji 按实际列宽计）。
 func displayWidth(text string) int { return ansi.StringWidth(safeText(text)) }
+
+// listWindow 让长目录随键盘焦点滚动，不将选中项挤出可视区域。
+func listWindow(total, cursor, rows int) (int, int) {
+	rows = max(1, rows)
+	start := max(0, min(cursor-rows/2, total-rows))
+	return start, min(total, start+rows)
+}

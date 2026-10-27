@@ -5,9 +5,11 @@ import (
 	"strings"
 
 	"elysian/server/internal/cli/client"
+	"elysian/server/internal/cli/termui"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // 聊天屏渲染：历史公开消息（用户原文本／助手 Markdown）、活跃 Run 的流式区
@@ -47,7 +49,11 @@ type chatRenderMsg struct{}
 // applyRender 重建 viewport 内容并按跟随位滚动。
 func (m *Model) applyRender() {
 	model := *m
-	m.chat.viewport.SetContent(m.chat.renderContent(model))
+	lines := strings.Split(m.chat.renderContent(model), "\n")
+	for len(lines) > 0 && strings.TrimSpace(ansi.Strip(lines[len(lines)-1])) == "" {
+		lines = lines[:len(lines)-1]
+	}
+	m.chat.viewport.SetContent(strings.Join(lines, "\n"))
 	if m.chat.follow {
 		m.chat.viewport.GotoBottom()
 	}
@@ -82,6 +88,9 @@ func (s *chatState) renderContent(m Model) string {
 			}
 		}
 		b.WriteString("F3 查看完整思考与执行历史\n")
+		if s.timeline.TerminalResult != nil && !s.finalConfirmed(s.timeline.RunID) {
+			b.WriteString(warnStyle.Render("运行结果") + "\n" + wrapPlain(s.timeline.TerminalResult.Content, width) + "\n")
+		}
 	}
 	// 活跃 Run 的流式区（终态后保留快照展示，直至离开或新轮次）。
 	if s.stream != nil {
@@ -125,7 +134,10 @@ func (s *chatState) renderMessage(b *strings.Builder, m Model, message client.Me
 		b.WriteString("\n")
 	case "assistant":
 		header := "Ely"
-		if message.RunConfig != nil && message.RunConfig.ModelName != "" {
+		if message.Origin == "runtime" {
+			header = "运行结果"
+		}
+		if message.Origin != "runtime" && message.RunConfig != nil && message.RunConfig.ModelName != "" {
 			header += " · " + message.RunConfig.ModelName
 			if message.RunConfig.ReasoningLevel != "" {
 				header += " · 思考 " + client.ReasoningLabel(message.RunConfig.ReasoningLevel)
@@ -227,21 +239,32 @@ func (s *chatState) view(m Model) string {
 	if s.attachmentPanel != nil {
 		return m.attachmentView()
 	}
-	var b strings.Builder
 	if m.width < 60 || m.height < 12 {
-		b.WriteString(warnStyle.Render("终端过小：请调整窗口至少 60×12 后继续。"))
-		b.WriteString("\n")
-		return b.String()
+		return warnStyle.Render("终端过小：请调整窗口至少 60×12 后继续。") + "\n"
 	}
+	top, bottom := s.chrome(m)
+	var content strings.Builder
+	switch {
+	case s.panel != nil:
+		s.renderApprovalPanel(&content, m)
+	case s.tools != nil:
+		s.renderToolDetail(&content, m)
+	default:
+		content.WriteString(s.viewport.View())
+	}
+	return top + content.String() + "\n" + bottom
+}
+
+// chrome 同时用于渲染和高度测量，避免边框、提示和计划挤出输入区。
+func (s *chatState) chrome(m Model) (string, string) {
+	var top, bottom strings.Builder
 	width := max(16, m.width-2)
-	b.WriteString(chatStatusBar(m))
-	b.WriteString("\n")
+	top.WriteString(chatStatusBar(m) + "\n")
 	if s.plan != nil {
-		renderPlan(&b, s.plan, s.showPlan, width)
+		renderPlan(&top, s.plan, s.showPlan, width)
 	}
 	if s.runID != "" && !s.streamHealthy && activeRun(s.runStatus) {
-		b.WriteString(warnStyle.Render(truncateCells("实时连接暂时中断，正在重新连接；已接收的内容已保留", width)))
-		b.WriteString("\n")
+		top.WriteString(warnStyle.Render(truncateCells("实时连接暂时中断，正在重新连接；已接收的内容已保留", width)) + "\n")
 	}
 	if s.lastRun != nil && terminalRun(s.lastRun.Status) {
 		if outcome := client.RunOutcome(*s.lastRun); outcome.Detail != "" {
@@ -249,38 +272,44 @@ func (s *chatState) view(m Model) string {
 			if outcome.Failed {
 				style = dangerSty
 			}
-			b.WriteString(style.Render(truncateCells("最近运行："+outcome.Label+"："+outcome.Detail, width)))
-			b.WriteString("\n")
+			top.WriteString(style.Render(truncateCells("最近运行："+outcome.Label+"："+outcome.Detail, width)) + "\n")
 		}
 	}
-	switch {
-	case s.panel != nil:
-		s.renderApprovalPanel(&b, m)
-	case s.tools != nil:
-		s.renderToolDetail(&b, m)
-	default:
-		b.WriteString(s.viewport.View())
-	}
-	b.WriteString("\n")
 	if s.stopping && s.wizard == nil {
-		b.WriteString(metaStyle.Render("正在停止…"))
-		b.WriteString("\n")
+		bottom.WriteString(metaStyle.Render("正在停止…") + "\n")
 	}
 	if s.wizard != nil {
-		s.renderWizard(&b, m)
+		s.renderWizard(&bottom, m)
 	} else if s.panel == nil && s.tools == nil {
+		label := "消息 · Enter 发送 / Ctrl+J 换行"
 		if s.editing != nil {
-			b.WriteString("正在编辑最后一条用户消息 · Esc 返回普通草稿\n")
+			label = "编辑最后一条用户消息 · Esc 返回草稿"
 		}
 		if len(*m.draftAttachments()) > 0 {
-			b.WriteString("图片附件：" + strconv.Itoa(len(*m.draftAttachments())) + " 张 · F4 管理\n")
+			bottom.WriteString("图片附件：" + strconv.Itoa(len(*m.draftAttachments())) + " 张 · F4 管理\n")
 		}
-		b.WriteString(s.editor.View())
-		b.WriteString("\n")
+		bottom.WriteString(termui.Panel(label, s.editor.View(), width, true) + "\n")
 	}
-	b.WriteString(chatShortcutBar(m))
-	b.WriteString("\n")
-	return b.String()
+	bottom.WriteString(termui.Hints(chatShortcutBar(m), width) + "\n")
+	return top.String(), bottom.String()
+}
+
+func (m *Model) layoutChat() {
+	if m.phase != phaseSession {
+		return
+	}
+	m.chat.editor.SetWidth(max(16, m.width-6))
+	m.chat.editor.SetHeight(min(chatEditorHeight, max(1, (m.height-10)/2)))
+	top, bottom := m.chat.chrome(*m)
+	outside := lipgloss.Height(strings.TrimSuffix(m.header(), "\n"))
+	if m.notice != "" {
+		outside += 2
+	}
+	m.chat.viewport.Width = max(16, m.width-2)
+	m.chat.viewport.Height = max(1, m.height-outside-lipgloss.Height(strings.TrimSuffix(top+bottom, "\n"))-1)
+	if m.chat.follow {
+		m.chat.viewport.GotoBottom()
+	}
 }
 
 // runStatusLabel 运行状态行文案（运行中/等待态/终态；纯文本，样式由调用方按

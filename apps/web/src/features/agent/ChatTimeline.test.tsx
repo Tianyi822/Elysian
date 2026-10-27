@@ -13,9 +13,61 @@ const tool: Extract<AgentChatTimelineEntry, { kind: 'tool' }> = { ...base, id: '
 const snapshot = (entries: readonly AgentChatTimelineEntry[], done = false): AgentChatTimelineSnapshot => ({ runId: 'run-1', status: done ? 'succeeded' : 'running', done, finalResponseId: done ? 'm2' : undefined, entries })
 const call: RuntimeCall = { id: 'c1', runId: 'run-1', modelRequestId: 'm0', modelCallId: 'p', tool: tool.tool, status: 'succeeded', stepIndex: 0, args: {}, result: { items: ['结果内容'] }, truncated: true }
 const answer: AgentMessage = { id: 'answer', role: 'assistant', content: '最终结果已确认', runId: 'run-1', taskId: 'task-1', sessionId: 'session-1', seq: '2', createdAt: '' }
+const runtimeContent = '本轮任务未能完成。\n\n原因：执行容器通道不可用'
 beforeEach(() => useNotificationStore.getState().clear())
 
 describe('分段回复过程', () => {
+  it('失败结果在过程末尾显示，公开消息回读后只保留一次且不替换模型片段', async () => {
+    const user = userEvent.setup()
+    const { api } = chatTestApi()
+    const timeline: AgentChatTimelineSnapshot = { runId: 'run-1', status: 'failed', done: true, finalResponseId: 'm0',
+      plan: { revision: 1, updatedAt: '', steps: [{ id: 'read', title: '读取页面', status: 'in_progress' }] },
+      terminalResult: { origin: 'runtime', content: runtimeContent }, error: { code: 'execution-unavailable', message: '执行容器通道不可用' }, entries: [text(0, 'content', '已经读取部分资料')] }
+    const draw = (final?: AgentMessage) => <Tooltip.Provider><ChatTimeline timeline={timeline} answer={final} api={api} active={false} stopped={false} onProgress={vi.fn()} /></Tooltip.Provider>
+    const view = render(draw())
+    const result = screen.getByRole('article', { name: '运行结果' })
+    expect(screen.getByLabelText('回复过程').lastElementChild).toBe(result)
+    expect(result).toHaveTextContent('本轮任务未能完成。')
+    expect(screen.getByRole('article', { name: '助手回复' })).toHaveTextContent('已经读取部分资料')
+    expect(screen.queryByText(/运行未完成：/)).not.toBeInTheDocument()
+    view.rerender(draw({ ...answer, origin: 'runtime', runStatus: 'failed', content: runtimeContent }))
+    expect(screen.getAllByRole('article', { name: '运行结果' })).toEqual([result])
+    expect(screen.getByRole('article', { name: '助手回复' })).toHaveTextContent('已经读取部分资料')
+    expect(screen.queryByRole('button', { name: '复制回复内容' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '复制运行结果' }))
+    await expect(navigator.clipboard.readText()).resolves.toBe(runtimeContent)
+  })
+
+  it('历史失败空过程可展示快照结果，手动停止不补失败结果', () => {
+    const { api } = chatTestApi()
+    const timeline: AgentChatTimelineSnapshot = { runId: 'run-1', status: 'interrupted', done: true, terminalResult: { origin: 'runtime', content: runtimeContent }, entries: [] }
+    const draw = (stopped: boolean) => <Tooltip.Provider><ChatTimeline timeline={timeline} api={api} active={false} stopped={stopped} onProgress={vi.fn()} /></Tooltip.Provider>
+    const view = render(draw(false))
+    expect(screen.getByRole('article', { name: '运行结果' })).toHaveTextContent('原因：执行容器通道不可用')
+    view.rerender(draw(true))
+    expect(screen.queryByRole('article', { name: '运行结果' })).not.toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('已停止')
+  })
+
+  it('正式运行结果先回读而时间线仍旧时立即展示，随后快照不重复', () => {
+    const { api } = chatTestApi()
+    const final: AgentMessage = { ...answer, origin: 'runtime', content: runtimeContent, runStatus: 'failed' }
+    const draw = (timeline: AgentChatTimelineSnapshot) => <Tooltip.Provider><ChatTimeline timeline={timeline} answer={final} api={api} active={false} stopped={false} onProgress={vi.fn()} /></Tooltip.Provider>
+    const view = render(draw({ runId: 'run-1', status: 'running', done: false, entries: [] }))
+    expect(screen.getAllByRole('article', { name: '运行结果' })).toHaveLength(1)
+    view.rerender(draw({ runId: 'run-1', status: 'failed', done: true, entries: [], terminalResult: { origin: 'runtime', content: runtimeContent } }))
+    expect(screen.getAllByRole('article', { name: '运行结果' })).toHaveLength(1)
+  })
+
+  it('系统自动取消保留的历史片段仍是过程，最终仅运行结果提供消息复制', () => {
+    const { api } = chatTestApi()
+    const partial = { ...answer, content: '中断前的片段', runStatus: 'cancelled' as const }
+    const timeline: AgentChatTimelineSnapshot = { runId: 'run-1', status: 'cancelled', done: true, finalResponseId: 'm0', terminalResult: { origin: 'runtime', content: runtimeContent }, entries: [text(0, 'content', partial.content)] }
+    render(<Tooltip.Provider><ChatTimeline timeline={timeline} answer={partial} api={api} active={false} stopped={false} onProgress={vi.fn()} /></Tooltip.Provider>)
+    expect(screen.getByRole('article', { name: '助手回复' })).toHaveClass('chat-message-intermediate')
+    expect(screen.queryByRole('button', { name: '复制回复内容' })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: '复制运行结果' })).toHaveLength(1)
+  })
   it('三轮按顺序追加，保留前段节点和独立展开状态，终答在原节点确认一次', async () => {
     const { api } = chatTestApi()
     const onProgress = vi.fn()

@@ -153,9 +153,10 @@ type chatState struct {
 func newChatState(sessionID string) chatState {
 	editor := textarea.New()
 	editor.ShowLineNumbers = false
+	editor.Prompt = ""
 	editor.SetHeight(chatEditorHeight)
 	editor.SetWidth(64)
-	editor.Placeholder = "输入消息，Enter 发送，Ctrl+J 换行"
+	editor.Placeholder = "输入消息…"
 	vp := viewport.New(64, 10)
 	return chatState{sessionID: sessionID, loading: true, follow: true, editor: editor, viewport: vp}
 }

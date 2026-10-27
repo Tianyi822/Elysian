@@ -77,6 +77,7 @@ function parseMessage(value: unknown): AgentMessage {
   const row = object(value)
   if (row.role !== 'user' && row.role !== 'assistant') throw invalid()
   if (row.quarantined !== undefined && typeof row.quarantined !== 'boolean') throw invalid()
+  if (row.origin !== undefined && (row.origin !== 'runtime' || row.role !== 'assistant')) throw invalid()
   if (row.runStatus !== undefined && !(RUNTIME_RUN_STATUSES as readonly unknown[]).includes(row.runStatus)) throw invalid()
   if (row.attachments !== undefined && (!Array.isArray(row.attachments) || !row.attachments.every(isMessageAttachment))) throw invalid()
   const wikiSources = row.wikiSources === undefined ? undefined : (() => {
@@ -90,6 +91,7 @@ function parseMessage(value: unknown): AgentMessage {
   return {
     id: string(row.id), sessionId: string(row.sessionId), taskId: string(row.taskId), runId: string(row.runId), seq: cursor(row.seq),
     role: row.role, content: string(row.content), createdAt: string(row.createdAt), quarantined: row.quarantined as boolean | undefined,
+    ...(row.origin === 'runtime' ? { origin: 'runtime' as const } : {}),
     runStatus: row.runStatus as AgentMessage['runStatus'],
     replacesMessageId: optional(row.replacesMessageId),
     ...(wikiSources === undefined ? {} : { wikiSources }),

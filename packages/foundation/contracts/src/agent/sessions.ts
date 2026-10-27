@@ -186,6 +186,8 @@ export type AgentMessageRunConfig = {
 
 /** 公开对话只包含用户输入和助手答复，不承载工具结果、工作记忆或隐藏推理。 */
 export type AgentMessage = {
+	/** 运行内核生成的失败结果；缺省为原有用户输入或模型答复。 */
+  origin?: 'runtime'
   /** 被替换的原始消息；连续编辑保持此标识，便于增量读取移除旧轮。 */
   replacesMessageId?: string
   /** 服务端判定该消息引用了不可信或未核实内容，展示时须与普通答复区分。 */
@@ -335,6 +337,8 @@ export type AgentRunPlan = { revision: number; updatedAt: string; steps: readonl
 
 /** 只读展示投影，条目按推理请求及工具调用顺序排列；终答由公开消息确认。 */
 export type AgentChatTimelineSnapshot = {
+  /** 失败或系统中断的运行时结果，也承接缺少公开答复的历史轮次。 */
+  terminalResult?: { origin: 'runtime'; content: string }
   plan?: AgentRunPlan
   runId: string
   status: RuntimeRunStatus

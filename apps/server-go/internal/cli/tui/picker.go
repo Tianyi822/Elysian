@@ -360,7 +360,9 @@ func (s *pickerState) view(m Model) string {
 			return b.String()
 		}
 
-		for i, profile := range s.models {
+		start, end := listWindow(len(s.models), s.cursor, max(1, m.height-9))
+		for i := start; i < end; i++ {
+			profile := s.models[i]
 			marker := "  "
 			if s.mode == pickerSwitch && m.isCurrentSessionModelOf(profile) {
 				marker = metaStyle.Render("· ")

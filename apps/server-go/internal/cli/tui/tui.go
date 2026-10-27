@@ -12,10 +12,11 @@ import (
 	"strings"
 
 	"elysian/server/internal/cli/client"
+	"elysian/server/internal/cli/termui"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // API 是 TUI 消费的面板接口（*client.Client 为唯一生产实现；测试注入 fake）。
@@ -97,6 +98,9 @@ type bootMsg struct {
 // Model 是 Agent 终端的 bubbletea 模型；Update 为纯状态机，全部网络与文件 IO 经
 // tea.Cmd 异步执行；发送前的小型状态写入同步完成，保证先落盘后派发。
 type Model struct {
+	authOnly     bool
+	authReady    bool
+	spinner      spinner.Model
 	stateReady   bool
 	locals       map[string]LocalSession
 	epoch        uint64
@@ -145,7 +149,30 @@ type StoredState struct {
 
 // New 构造初始模型（boot 起步）。
 func New(deps Deps) Model {
-	return Model{life: newLifetime(), locals: map[string]LocalSession{}, deps: deps, phase: phaseBoot, levels: map[string]string{}, permModes: map[string]string{}, drafts: map[string]string{}, markdown: newMarkdownRenderer(78)}
+	s := spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(termui.Accent))
+	return Model{spinner: s, width: 80, height: 24, life: newLifetime(), locals: map[string]LocalSession{}, deps: deps, phase: phaseBoot, levels: map[string]string{}, permModes: map[string]string{}, drafts: map[string]string{}, markdown: newMarkdownRenderer(78)}
+}
+
+// Authenticate 复用 Agent 的发现、被动判活和隐藏密码表单，仅完成登录，不读取聊天数据。
+func Authenticate(stdin *os.File, stdout io.Writer, deps Deps) (string, string, error) {
+	m := New(deps)
+	m.authOnly = true
+	defer m.life.cancel()
+	final, err := tea.NewProgram(m, tea.WithInput(stdin), tea.WithOutput(stdout)).Run()
+	if err != nil {
+		if errors.Is(err, tea.ErrInterrupted) || errors.Is(err, tea.ErrProgramKilled) {
+			return "", "", ErrExitCLI
+		}
+		return "", "", err
+	}
+	result, ok := final.(Model)
+	if ok && result.exitAll {
+		return "", "", ErrExitCLI
+	}
+	if !ok || !result.authReady {
+		return "", "", context.Canceled
+	}
+	return result.baseURL, result.api.SessionCookie(), nil
 }
 
 // chatViewportHeight 消息区高度：总高减头部／断连行余量／输入区／帮助行。
@@ -217,6 +244,7 @@ func bootCmd(deps Deps, contexts ...context.Context) tea.Cmd {
 			var connErr *client.Error
 			if errors.As(probeErr, &connErr) && connErr.Kind == client.KindUnauthorized {
 				_ = deps.ClearCreds()
+				return bootMsg{baseURL: baseURL, api: api, needLogin: true}
 			}
 			return bootMsg{baseURL: baseURL, api: api, err: probeErr}
 		}
@@ -233,6 +261,10 @@ func (m Model) Init() tea.Cmd { return bootCmd(m.deps, m.life.ctx) }
 // Update 消息总分发：WindowSize 先行，各屏按键与异步结果按 phase 路由。
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		if m.help {
@@ -285,7 +317,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case bootMsg:
-		return m.updateBoot(msg)
+		next, cmd := m.updateBoot(msg)
+		return next, tea.Batch(cmd, m.spinner.Tick)
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
 			m.exitAll = true
@@ -402,6 +435,10 @@ func (m Model) updateBoot(msg bootMsg) (tea.Model, tea.Cmd) {
 		m.login = newLoginState()
 		return m, nil
 	}
+	if m.authOnly {
+		m.authReady = true
+		return m, tea.Quit
+	}
 	m.phase = phaseSessions
 	m.list = newListState()
 	state := StoredState{}
@@ -499,12 +536,12 @@ func errText(err error) string {
 
 // View 总分发：连接错误屏与提示行常驻，其余按 phase。
 func (m Model) View() string {
+	return termui.Fit(m.view(), m.width)
+}
+
+func (m Model) view() string {
 	var b strings.Builder
-	b.WriteString(titleStyle.Render("Agent 终端 · F1 帮助"))
-	if m.baseURL != "" {
-		b.WriteString(metaStyle.Render("　" + safeText(m.baseURL)))
-	}
-	b.WriteString("\n")
+	b.WriteString(m.header())
 	if m.help {
 		b.WriteString(m.helpViewport.View() + "\n↑↓/PgUp/PgDn 滚动 · F1/Esc 关闭帮助 · Ctrl+C 退出\n")
 		return b.String()
@@ -526,7 +563,7 @@ func (m Model) View() string {
 	}
 	switch m.phase {
 	case phaseBoot:
-		b.WriteString(metaStyle.Render("正在连接面板…"))
+		b.WriteString(m.spinner.View() + metaStyle.Render("正在连接面板…"))
 		b.WriteString("\n")
 	case phaseLogin:
 		b.WriteString(m.login.view(m))
@@ -549,15 +586,26 @@ func (m Model) View() string {
 	return b.String()
 }
 
+func (m Model) header() string {
+	title := "Agent 终端 · F1 帮助"
+	if m.authOnly {
+		title = "面板更新 · 登录"
+	}
+	if m.height < 18 {
+		return termui.Fit(termui.Accent.Render("Elysian")+" / "+title, m.width) + "\n"
+	}
+	return termui.Header(title, m.baseURL, m.width)
+}
+
 // 样式：与主菜单同款的中性表达（NO_COLOR／非彩色终端自动降级纯文本）。
 var (
-	titleStyle = lipgloss.NewStyle().Bold(true)
-	metaStyle  = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "8", Dark: "8"})
-	hintStyle  = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "8", Dark: "8"})
-	warnStyle  = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "3", Dark: "11"})
-	dangerSty  = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "1", Dark: "9"})
-	selectSty  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "12", Dark: "14"})
-	okStyle    = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "2", Dark: "10"})
+	titleStyle = termui.Title
+	metaStyle  = termui.Muted
+	hintStyle  = termui.Muted
+	warnStyle  = termui.Warning
+	dangerSty  = termui.Danger
+	selectSty  = termui.Accent
+	okStyle    = termui.Success
 )
 
 func max(a, b int) int {

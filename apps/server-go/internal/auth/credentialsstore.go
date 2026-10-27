@@ -309,9 +309,9 @@ func ensureFirstBootCredentials(store CredentialsStore, options firstBootOptions
 	print("用户名：" + PanelUsername)
 	print("初始密码：" + password)
 	print("密码只显示这一次，请立即登录并妥善保管。")
-	// 改密指引与安装摘要同口径（ely 菜单是主入口，脚本通道须带生产 STATE_DIR 的 HOME，
+	// 改密指引与安装摘要同口径（ely resetpwd 直达，兼容脚本通道须带生产 STATE_DIR 的 HOME，
 	// 避免 root 照横幅直接跑写错目录——面板密码实际未变）。
-	print("修改密码：sudo ely 后选择「重置密码」（脚本通道：HOME=/var/lib/elysian elysian resetpwd）")
+	print("修改密码：sudo ely resetpwd（脚本通道：HOME=/var/lib/elysian elysian resetpwd）")
 	print("==================================================")
 	return FirstBootCreated, nil
 }

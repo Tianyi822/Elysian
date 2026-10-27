@@ -1,6 +1,6 @@
 // Package cli 提供 ely 全局命令的交互入口（CLI 方案 §2／§5）：同一 elysian 单二进制
 // 经 argv0 别名分发进入（cmd/elysian 顶部判定 Base(argv0)=="ely"），提供主菜单
-// （Agent 终端／重置密码／退出）、--version／--help 与非 TTY 检测；不进入服务端装配。
+// （Agent／重置密码／更新／帮助／退出）与直接子命令；不进入服务端装配。
 //
 // CLI 与面板的通信只走 127.0.0.1 回环 HTTP（面板发现与五态区分见 panelhost.go）；
 // 重置密码复用 internal/auth 的既有安全流程，本地授权门禁收口在本包。
@@ -39,7 +39,9 @@ type deps struct {
 	// runResetAt 执行既有改密流程（生产为 auth.RunResetPasswordCLIAt）。
 	runResetAt func(panelHome string, stdin io.Reader, stdout io.Writer) int
 	// agentDeps 构造 Agent 终端依赖（生产为 productionTUIDeps；测试注入）。
-	agentDeps func() tui.Deps
+	agentDeps  func() tui.Deps
+	runAgent   func(*os.File, io.Writer) error
+	runUpgrade func(upgradeOptions, *os.File, io.Writer, io.Writer) int
 }
 
 // productionDeps 装配真实出口。
@@ -59,32 +61,66 @@ func productionDeps() deps {
 		return probePanelAt(ctx, home, defaultBackendPort)
 	}
 	d.agentDeps = func() tui.Deps { return productionTUIDeps(d) }
+	d.runAgent = func(in *os.File, out io.Writer) error { return tui.Run(in, out, d.agentDeps()) }
+	d.runUpgrade = func(opts upgradeOptions, in *os.File, out, errOut io.Writer) int {
+		return runUpgrade(opts, in, out, errOut, d)
+	}
 	return d
 }
 
-// Run ely 主入口（argv0 已由 cmd/elysian 判定为 ely），返回进程退出码。参数语义
-// （CLI 方案 §2）：无参数进交互主菜单（stdin 非 TTY 时明确提示并以 1 退出）；
-// --version／--help 打印后回 0；其余任意参数（含透传 elysian 子命令形态）打印用法
-// 并回 2，不与 `elysian resetpwd` 等脚本通道混淆。
+// Run 按显式子命令分派；无参数进入菜单，帮助与版本无需初始化终端或连接面板。
+// 参数错误回 2，业务入口保留自己的执行结果；elysian 维护内部命令不经本入口。
 func Run(info Info, args []string, stdin *os.File, stdout, stderr io.Writer) int {
+	return runWithDeps(info, args, stdin, stdout, stderr, productionDeps())
+}
+
+func runWithDeps(info Info, args []string, stdin *os.File, stdout, stderr io.Writer, d deps) int {
+	command, opts, help, err := parseCommand(args)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		printCommandHelp(stderr, command)
+		return 2
+	}
+	if help {
+		printCommandHelp(stdout, command)
+		return 0
+	}
 	if len(args) == 0 {
 		if stdin == nil || !isatty.IsTerminal(stdin.Fd()) {
-			fmt.Fprintln(stderr, "ely 需要交互式终端，请在服务器终端直接运行；脚本场景请使用 elysian 子命令。")
+			fmt.Fprintln(stderr, "ely 需要交互式终端；可用 ely help 查看直接命令，旧脚本仍可使用 elysian 子命令。")
 			return 1
 		}
-		return runMenu(info, stdin, stdout, stderr, productionDeps())
+		return runMenu(info, stdin, stdout, stderr, d)
 	}
-	if len(args) == 1 {
-		switch args[0] {
-		case "--version":
-			printVersion(stdout, info)
-			return 0
-		case "--help":
-			printUsage(stdout)
-			return 0
+	switch command {
+	case "--version":
+		printVersion(stdout, info)
+		return 0
+	case "resetpwd":
+		return runResetPassword(stdout, stdin, d)
+	case "agent":
+		if stdin == nil || !isatty.IsTerminal(stdin.Fd()) {
+			fmt.Fprintln(stderr, "ely agent 需要交互式终端；参数帮助：ely help agent")
+			return 1
 		}
+		run := d.runAgent
+		if run == nil {
+			run = func(in *os.File, out io.Writer) error { return tui.Run(in, out, d.agentDeps()) }
+		}
+		if err := run(stdin, stdout); err != nil && !errors.Is(err, tui.ErrExitCLI) {
+			fmt.Fprintln(stderr, "Agent 终端运行失败：", err)
+			return 1
+		}
+		return 0
+	case "upgrade":
+		if stdin == nil || !isatty.IsTerminal(stdin.Fd()) {
+			if opts.Source == "" || opts.Channel == "" || !opts.Yes {
+				fmt.Fprintln(stderr, "非交互更新必须提供 --source、--channel 和 --yes；用 ely help upgrade 查看示例。")
+				return 2
+			}
+		}
+		return d.runUpgrade(opts, stdin, stdout, stderr)
 	}
-	printUsage(stderr)
 	return 2
 }
 
@@ -112,6 +148,11 @@ func runMenu(info Info, stdin *os.File, stdout, stderr io.Writer, d deps) int {
 		case menuActionResetPassword:
 			runResetPassword(stdout, stdin, d)
 			fmt.Fprintln(stdout)
+		case menuActionUpgrade:
+			if d.runUpgrade(upgradeOptions{}, stdin, stdout, stderr) == 130 {
+				return 0
+			}
+			fmt.Fprintln(stdout)
 		case menuActionAgent:
 			if err := tui.Run(stdin, stdout, d.agentDeps()); err != nil {
 				if errors.Is(err, tui.ErrExitCLI) {
@@ -134,14 +175,7 @@ func printVersion(w io.Writer, info Info) {
 	fmt.Fprintf(w, "构建时间：%s\n", info.BuildTime)
 }
 
-// printUsage 输出用法；脚本与自动化一律引导到 elysian 子命令。
+// printUsage 输出全局命令与帮助入口。
 func printUsage(w io.Writer) {
-	fmt.Fprintln(w, "ely — Elysian 服务器本地终端")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "用法：")
-	fmt.Fprintln(w, "  ely              交互主菜单（Agent 终端／重置密码／退出；需要交互式终端）")
-	fmt.Fprintln(w, "  ely --version    显示 CLI 版本")
-	fmt.Fprintln(w, "  ely --help       显示本帮助")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "脚本与自动化场景请使用 elysian 子命令（如 elysian resetpwd、elysian panel-ports）。")
+	printCommandHelp(w, "")
 }

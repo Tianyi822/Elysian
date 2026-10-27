@@ -422,7 +422,9 @@ func (s *listState) view(m Model) string {
 		b.WriteString(metaStyle.Render("暂无会话：按 n 新建"))
 		b.WriteString("\n")
 	default:
-		for i, session := range s.sessions {
+		start, end := listWindow(len(s.sessions), s.cursor, max(1, m.height-9))
+		for i := start; i < end; i++ {
+			session := s.sessions[i]
 			marker := "  "
 			if session.ActiveRunID != "" || session.ActiveWorkflowID != "" {
 				marker = okStyle.Render("● ")
@@ -439,7 +441,7 @@ func (s *listState) view(m Model) string {
 			}
 			b.WriteString("\n")
 		}
-		if s.hasMore {
+		if s.hasMore || end < len(s.sessions) || start > 0 {
 			b.WriteString(metaStyle.Render("… 按 l 加载更多"))
 			b.WriteString("\n")
 		}

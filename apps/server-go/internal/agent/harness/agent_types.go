@@ -81,6 +81,7 @@ type MessageRunConfig struct {
 
 // Message 只含公开用户输入和助手答复，不承载工具过程或工作记忆。
 type Message struct {
+	Origin            string              `json:"origin,omitempty"`
 	ReplacesMessageID string              `json:"replacesMessageId,omitempty"`
 	Quarantined       bool                `json:"quarantined,omitempty"`
 	WikiSources       []WikiRef           `json:"wikiSources,omitempty"`

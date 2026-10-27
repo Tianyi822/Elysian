@@ -21,6 +21,7 @@ import { ChatApprovals } from './ChatApprovals'
 import { ChatExecutionScope } from './ChatExecutionScope'
 import { ChatMemorySelection, ChatMemorySources } from './ChatMemory'
 import { ChatResponse } from './ChatResponse'
+import { ChatRuntimeResult } from './ChatRuntimeResult'
 import { ChatPlan } from './ChatPlan'
 import { ChatSwitchNotice, chatSwitchNotice } from './ChatSwitchNotice'
 import { ChatTimeline } from './ChatTimeline'
@@ -369,9 +370,9 @@ export function AgentChatPage() {
         {!!session?.messages.length && <p className="mt-3 text-xs text-fg-muted">本地预览消息未发送给模型。</p>}
       </div> : <div className="chat-messages" role="log" aria-label="会话消息">
         {chat.messages.filter(message => message.role === 'user').map((message, index, users) => {
-          const answer = chat.messages.find(item => item.runId === message.runId && item.role === 'assistant')
+          const answer = chat.messages.find(item => item.runId === message.runId && item.role === 'assistant' && item.origin === 'runtime') ?? chat.messages.find(item => item.runId === message.runId && item.role === 'assistant')
           const active = liveRunId === message.runId
-          const stopped = (chat.run?.id === message.runId ? chat.run.status : message.runStatus) === 'cancelled'
+          const stopped = (chat.run?.id === message.runId ? chat.run.status : message.runStatus) === 'cancelled' && !chat.timelines[message.runId]?.terminalResult && answer?.origin !== 'runtime'
           const editing = session?.editing?.messageId === message.id
           const live = (active || stopped) && chat.liveOutput?.runId === message.runId ? chat.liveOutput : null
           const switchText = chatSwitchNotice(users[index - 1], message)
@@ -423,7 +424,7 @@ export function AgentChatPage() {
             </article>
             {(chat.timelines[message.runId]?.entries.length || chat.timelines[message.runId]?.done || chat.timelines[message.runId]?.plan) ? <ChatTimeline key={message.runId} timeline={chat.timelines[message.runId]!} answer={answer} showPlan={message.runId !== session?.remote?.runId}
               active={active && !finalizing && !waitingInput} stopped={stopped} stopping={active && stopping} api={api} onProgress={followContent} />
-              : <ChatResponse key={message.runId} content={(chat.timelines[message.runId] || chat.syncError ? answer?.content : undefined) ?? live?.content ?? ''} reasoning={chat.reasoning[message.runId] ?? ''}
+              : answer?.origin === 'runtime' && !stopped ? <ChatRuntimeResult key={message.runId} content={answer.content} /> : <ChatResponse key={message.runId} content={(chat.timelines[message.runId] || chat.syncError ? answer?.content : undefined) ?? live?.content ?? ''} reasoning={chat.reasoning[message.runId] ?? ''}
                 active={active && !finalizing} stopped={stopped} stopping={active && stopping} copyable={!!answer} quarantined={answer?.quarantined} onProgress={followContent} />}
             {!!answer?.wikiSources?.length && <ChatMemorySources sources={answer.wikiSources} api={agentMemory} />}
           </Fragment>

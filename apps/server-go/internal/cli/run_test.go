@@ -75,7 +75,6 @@ func TestRunHelp(t *testing.T) {
 
 func TestRunUnknownArgsExitTwo(t *testing.T) {
 	cases := [][]string{
-		{"resetpwd"},        // 不透传 elysian 子命令语义
 		{"panel-ports"},     // 同上
 		{"-v"},              // 未定义旗标
 		{"--version", "x"},  // 已知旗标带多余参数

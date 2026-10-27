@@ -63,7 +63,7 @@ func TestMenuProgramInteractiveQuitViaPty(t *testing.T) {
 		t.Fatal("菜单首帧未在时限内渲染")
 	}
 	// 首帧后再写按键：j/j 移动焦点到「退出」，Enter 确认退出。
-	if _, err := master.Write([]byte("jj\r")); err != nil {
+	if _, err := master.Write([]byte("jjjj\r")); err != nil {
 		t.Fatalf("写入按键失败：%v", err)
 	}
 	select {
@@ -137,7 +137,7 @@ func TestMenuResetPasswordRoundTripViaPty(t *testing.T) {
 	// 返回菜单后再次探测到「面板未启动」（第二次出现）再退出：确保新菜单程序已完成
 	// 原始模式切换，后续按键不被 TCSAFLUSH 丢弃。
 	waitFor(t, out, "菜单重启", func(s string) bool { return strings.Count(s, "面板未启动") >= 2 })
-	if _, err := master.Write([]byte("jj\r")); err != nil {
+	if _, err := master.Write([]byte("jjjj\r")); err != nil {
 		t.Fatal(err)
 	}
 	select {

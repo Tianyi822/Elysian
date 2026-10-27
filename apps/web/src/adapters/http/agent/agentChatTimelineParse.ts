@@ -85,8 +85,14 @@ export function parseChatTimeline(value: unknown, runId: string): AgentChatTimel
       argumentsJson: string(entry.argumentsJson), callId: optional(entry.callId), status: entry.status as AgentChatToolStatus, error: failure(entry.error), truncated: boolean(entry.truncated) }
   })
   const finalResponseId = optional(row.finalResponseId)
+  const terminalResult = row.terminalResult === undefined ? undefined : (() => {
+    const result = object(row.terminalResult)
+    if (result.origin !== 'runtime' || !string(result.content).trim() || !row.done || !['failed', 'interrupted', 'cancelled'].includes(String(row.status))) throw invalid()
+    return { origin: 'runtime' as const, content: string(result.content) }
+  })()
   if (finalResponseId && !entries.some(entry => entry.kind === 'content' && entry.modelRequestId === finalResponseId)) throw invalid()
   return { runId, status: status(row.status), done: boolean(row.done), finalResponseId, entries,
+    ...(terminalResult === undefined ? {} : { terminalResult }),
     ...(row.plan === undefined ? {} : { plan: parseRunPlan(row.plan) }),
     ...(row.error === undefined ? {} : { error: failure(row.error) }),
     ...(row.usage === undefined ? {} : { usage: usage(row.usage) }),
