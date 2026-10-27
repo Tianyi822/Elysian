@@ -1,5 +1,6 @@
 import { randomId } from '../../utils/randomId'
 import { SectionHelp } from '../../components/SectionHelp'
+import { Terminal } from '../../components/icons'
 import { useEffect, useId, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { PANEL_TASK_PHASE_LABELS, PANEL_TASK_STATE_LABELS, PANEL_UPDATE_CHANNEL_LABELS, PANEL_UPDATE_SOURCE_LABELS, panelTaskIsActive, validatePanelPorts } from '@elysian/contracts'
@@ -363,7 +364,13 @@ export function PanelMaintenanceSettings() {
       </div> : null}
       {task.kind !== 'ports' && needsManualReload ? <button className={`${BUTTON} mt-3`} onClick={() => reloadPanelPage()}>重新加载面板</button> : null}
       {task.kind === 'ports' ? <div className="mt-3 flex flex-col gap-2 break-all text-xs"><a className="text-fg underline underline-offset-4" href={panelAddress(task.newPorts.frontendPort)}>打开新地址：{panelAddress(task.newPorts.frontendPort)}</a><a className="text-fg-muted underline underline-offset-4" href={panelAddress(task.oldPorts.frontendPort)}>打开原地址：{panelAddress(task.oldPorts.frontendPort)}</a></div> : null}
-      {logs ? <pre aria-label="维护任务日志" className="mt-4 max-h-48 overflow-auto whitespace-pre-wrap break-words text-xs leading-5 text-fg-muted">{logs}</pre> : null}
+      {logs ? <div className="mt-4 overflow-hidden rounded-lg border border-line bg-[var(--t-code-bg)]">
+        <div className="flex items-center gap-2 border-b border-line bg-surface-raised px-3 py-2 text-xs font-medium text-fg-muted">
+          <Terminal aria-hidden size={14} className="shrink-0" />
+          <span>维护进程日志</span>
+        </div>
+        <pre aria-label="维护任务日志" tabIndex={0} className="hover-scrollbar max-h-48 overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-xs leading-5 text-[var(--t-code-fg)] focus-visible:-outline-offset-2">{logs}</pre>
+      </div> : null}
       {hasMore ? <button className={`${BUTTON} mt-3`} disabled={loadingLogs} onClick={() => void readMoreLogs()}>{loadingLogs ? '正在读取…' : '继续读取日志'}</button> : null}
     </section> : null}
     <PanelChangelogDialog open={changelogOpen} channel={channel} source={source} currentCommit={info?.commit ?? ''} onClose={() => setChangelogOpen(false)} />
