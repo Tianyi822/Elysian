@@ -335,7 +335,7 @@ export function AgentChatPage() {
   return <div className="agent-workspace">
     {wide && <aside id="chat-session-sidebar" aria-label="会话列表"
       className="chat-session-sidebar" data-open={showSidebar || undefined}
-      aria-hidden={!showSidebar || undefined}>{list}</aside>}
+      aria-hidden={!showSidebar || undefined} inert={!showSidebar}>{list}</aside>}
     <Dialog.Root open={shell.conversationDrawerOpen} onOpenChange={shell.setConversationDrawerOpen}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-overlay motion-reduce:animate-none data-[state=open]:animate-drawer-overlay-in data-[state=closed]:animate-drawer-overlay-out" />

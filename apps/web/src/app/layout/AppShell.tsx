@@ -16,6 +16,7 @@ import {
 import { Sidebar } from './Sidebar'
 import { ShellLayoutContext, type ShellLayout } from './ShellLayoutContext'
 import './headerControls.css'
+import './sidebar.css'
 
 export function AppShell() {
   const [openDrawer, setOpenDrawer] = useState<'navigation' | 'conversation' | null>(null)
@@ -99,28 +100,31 @@ export function AppShell() {
       <div className="app-canvas flex h-dvh overflow-hidden text-fg">
         <aside
           aria-label="桌面主导航"
-          className={`glass-navigation hidden shrink-0 flex-col transition-[width] duration-200 motion-reduce:transition-none md:flex ${
+          data-collapsed={sidebarCollapsed || undefined}
+          className={`glass-navigation desktop-navigation hidden shrink-0 flex-col md:flex ${
             sidebarCollapsed ? 'w-16' : 'w-60'
           }`}
         >
-          {/* 品牌区与收展入口固定在导航顶部；导航与内容之间不再画分割线。
-              字标左缘取 24px，与下方图标（导航 p-3 + 链接 px-3）对齐；收起后字标不显，改回等距。 */}
-          <div className={`flex h-[var(--shell-header-height)] items-center justify-between pr-3 ${sidebarCollapsed ? 'pl-3' : 'pl-6'}`}>
-            <span className={sidebarCollapsed ? 'sr-only' : 'brand-wordmark'}>
-              Elysian
-            </span>
-            <IconButton
-              onPress={() => setSidebarCollapsed(!sidebarCollapsed)}
-              label={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
-              tooltip={false}
-              variant="ghost"
-              className="ml-auto mr-1 size-7 rounded-lg text-nav-muted hover:bg-nav-hover hover:text-nav-fg"
-            >
-              {sidebarCollapsed ? <PanelLeftOpen aria-hidden size={17} /> : <PanelLeftClose aria-hidden size={17} />}
-            </IconButton>
-          </div>
-          <div className="min-h-0 flex-1">
-            <Sidebar collapsed={sidebarCollapsed} />
+          <div className="flex h-full min-h-0 w-60 shrink-0 flex-col">
+            {/* 品牌区与收展入口固定在导航顶部；导航与内容之间不再画分割线。
+                内部始终保持展开宽度，外层裁切；收展按钮以位移跟随边缘，字标只淡入淡出。 */}
+            <div className="flex h-[var(--shell-header-height)] shrink-0 items-center justify-between pl-6 pr-3">
+              <span className="brand-wordmark desktop-navigation-brand">
+                Elysian
+              </span>
+              <IconButton
+                onPress={() => setSidebarCollapsed(!sidebarCollapsed)}
+                label={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
+                tooltip={false}
+                variant="ghost"
+                className="desktop-navigation-toggle ml-auto mr-1 size-7 shrink-0 rounded-lg text-nav-muted hover:bg-nav-hover hover:text-nav-fg"
+              >
+                {sidebarCollapsed ? <PanelLeftOpen aria-hidden size={17} /> : <PanelLeftClose aria-hidden size={17} />}
+              </IconButton>
+            </div>
+            <div className="min-h-0 flex-1">
+              <Sidebar collapsed={sidebarCollapsed} />
+            </div>
           </div>
         </aside>
 

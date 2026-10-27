@@ -1,0 +1,31 @@
+/* 只改变外壳的占位宽度，固定 240px 的内部布局不参与收展重排。 */
+.desktop-navigation {
+  overflow: hidden;
+  transition: width 200ms ease-out;
+}
+
+.desktop-navigation-toggle {
+  transform: translateX(0);
+  transition: transform 200ms ease-out;
+}
+
+.desktop-navigation[data-collapsed] .desktop-navigation-toggle {
+  transform: translateX(calc(4rem - 15rem));
+}
+
+.desktop-navigation-brand {
+  white-space: nowrap;
+  transition: opacity 120ms ease-out;
+}
+
+.desktop-navigation[data-collapsed] .desktop-navigation-brand {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .desktop-navigation,
+  .desktop-navigation-toggle,
+  .desktop-navigation-brand {
+    transition: none;
+  }
+}

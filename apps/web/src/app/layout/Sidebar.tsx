@@ -187,7 +187,7 @@ export function Sidebar({
               pinned={pinned}
               dragging={draggingThis}
             >
-              <item.icon aria-hidden size={17} />
+              <item.icon aria-hidden size={17} className="shrink-0" />
               <span className={`whitespace-nowrap ${collapsed ? 'sr-only' : ''}`}>{item.label}</span>
             </SidebarLink>
           )
