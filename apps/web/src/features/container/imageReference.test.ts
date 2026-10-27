@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { invalidImageRegistries, officialImageRegistries } from '../../test/imageRegistryCases'
 import {
   DEFAULT_IMAGE_REGISTRY,
   parseImageReference,
@@ -54,12 +55,26 @@ describe('拉取源', () => {
     expect(validateRegistryUrl('')).toBeUndefined()
     expect(validateRegistryUrl('docker.m.daocloud.io')).toBeUndefined()
     expect(validateRegistryUrl('https://mirror.local:5000')).toBeUndefined()
-    expect(validateRegistryUrl('https://mirror.local:5000/')).toContain('主机名')
+    expect(validateRegistryUrl('https://mirror.local:5000/')).toBeUndefined()
     expect(validateRegistryUrl('镜像.本地')).toContain('主机名')
   })
 
-  it('主机名显示剥掉协议前缀', () => {
+  it.each(officialImageRegistries)('官方地址 %j 可以通过前端校验', (registry) => {
+    expect(validateRegistryUrl(registry)).toBeUndefined()
+  })
+
+  it.each(invalidImageRegistries)('非法地址 %j 继续被前端拦截', (registry) => {
+    expect(validateRegistryUrl(registry)).toContain('主机名')
+  })
+
+  it('只有斜杠不作为留空，仍然报错', () => {
+    expect(validateRegistryUrl('///')).toContain('主机名')
+  })
+
+  it('主机名显示剥掉协议前缀与尾斜杠', () => {
     expect(registryHost('https://docker.1ms.run')).toBe('docker.1ms.run')
     expect(registryHost('mirror.local')).toBe('mirror.local')
+    expect(registryHost(' https://registry-1.docker.io:443/// ')).toBe('registry-1.docker.io:443')
+    expect(registryHost('docker.io/')).toBe('docker.io')
   })
 })

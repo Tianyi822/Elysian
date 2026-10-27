@@ -48,7 +48,8 @@ func readyRouter() (chiRouter, *fakeEngine) {
 		deps.resolveRegistry = resolvePublicAlways
 		deps.fetchHubToken = func(context.Context, string) (string, error) { return "fixture-token", nil }
 		deps.fetchTags = func(context.Context, registryRequestTarget, string, string) (catalogResponse, error) {
-			return catalogResponse{status: 200, json: map[string]any{"tags": []any{"latest"}}}, nil
+			value, err := decodeOrderedJSON([]byte(`{"tags":["latest"]}`))
+			return catalogResponse{status: 200, json: value}, err
 		}
 	})
 	hub := newEventsHub(eventsHubConfig{transport: engine, bootID: "boot-r"})

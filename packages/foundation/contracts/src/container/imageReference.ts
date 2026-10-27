@@ -13,6 +13,16 @@ export type ParsedImageReferenceResult =
 const NAME_PATTERN = /^[a-z0-9][a-z0-9:_.\-/]*$/
 const TAG_PATTERN = /^[a-zA-Z0-9_.\-]+$/
 
+/** 识别留空与 Docker Hub 官方地址；不替代自定义镜像源的语法与公网校验。 */
+export function isOfficialImageRegistry(raw: string): boolean {
+  const trimmed = raw.trim()
+  if (!trimmed) return true
+  const host = trimmed.replace(/^https:\/\//, '').replace(/\/+$/, '')
+  if (!/^[a-zA-Z0-9.-]+(:443)?$/.test(host)) return false
+  const hostname = host.toLowerCase().replace(/:443$/, '')
+  return hostname === 'registry-1.docker.io' || hostname === 'docker.io' || hostname === 'index.docker.io'
+}
+
 export function parseImageReference(raw: string): ParsedImageReferenceResult {
   const trimmed = raw.trim()
   if (!trimmed) return { ok: false, error: '请输入镜像引用，例如 redis:8-alpine' }

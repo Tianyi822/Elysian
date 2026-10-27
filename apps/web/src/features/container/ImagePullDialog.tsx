@@ -9,6 +9,7 @@ import { useContainersStore } from '../../stores/containersStore'
 import { useFeedbackNotification } from '../../components/useFeedbackNotification'
 import {
   DEFAULT_IMAGE_REGISTRY,
+  isOfficialImageRegistry,
   parseImageReference,
   registryHost,
   validateRegistryUrl,
@@ -52,12 +53,13 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
   const registry = registryAddress.trim() || DEFAULT_IMAGE_REGISTRY
   const registryError = registryAddress.trim() ? validateRegistryUrl(registryAddress) : undefined
   const searchTerm = reference.trim().split(':')[0] ?? ''
-  const customRegistry = registryAddress.trim() !== ''
+  const hasRegistryInput = registryAddress.trim() !== ''
   const parsed = parseImageReference(reference)
   const tagRepository = parsed.ok && !parsed.reference.name.includes(':') ? parsed.reference.name : ''
-  useFeedbackNotification(suggestionStatus === 'unavailable'
-    ? customRegistry ? '无法从此镜像源搜索，请直接输入镜像引用' : '镜像搜索暂不可用，请直接输入镜像引用'
-    : null, 'warning')
+  const searchUnavailableMessage = suggestionStatus === 'unavailable'
+    ? isOfficialImageRegistry(registryAddress) ? '镜像搜索暂不可用，请直接输入镜像引用' : '无法从此镜像源搜索，请直接输入镜像引用'
+    : null
+  useFeedbackNotification(searchUnavailableMessage, 'warning')
   useFeedbackNotification(tagStatus === 'unavailable' ? '无法列出此镜像的版本，可在镜像引用中手动输入标签' : null, 'warning')
 
   useEffect(() => {
@@ -73,7 +75,7 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
     const controller = new AbortController()
     tagAbortRef.current = controller
     const timer = setTimeout(() => {
-      void gateway.containers.imageTags(tagRepository, customRegistry ? registryAddress.trim() : undefined, controller.signal)
+      void gateway.containers.imageTags(tagRepository, hasRegistryInput ? registryAddress.trim() : undefined, controller.signal)
         .then((result) => {
           if (serial !== tagRequestSerial.current || controller.signal.aborted) return
           setTags(result.tags)
@@ -86,7 +88,7 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
         })
     }, 300)
     return () => { clearTimeout(timer); controller.abort() }
-  }, [customRegistry, gateway, registryAddress, registryError, tagRepository])
+  }, [hasRegistryInput, gateway, registryAddress, registryError, tagRepository])
 
   const invalidateTags = () => {
     tagRequestSerial.current += 1
@@ -110,7 +112,7 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
     const controller = new AbortController()
     abortRef.current = controller
     const timer = setTimeout(() => {
-      void gateway.containers.searchImageNames(searchTerm, customRegistry ? registryAddress.trim() : undefined, controller.signal)
+      void gateway.containers.searchImageNames(searchTerm, hasRegistryInput ? registryAddress.trim() : undefined, controller.signal)
         .then((result) => {
           if (serial !== requestSerial.current || controller.signal.aborted) return
           setSuggestions(result.names)
@@ -129,7 +131,7 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
       clearTimeout(timer)
       controller.abort()
     }
-  }, [customRegistry, gateway, registryAddress, registryError, searchTerm, suggestionsDismissed])
+  }, [hasRegistryInput, gateway, registryAddress, registryError, searchTerm, suggestionsDismissed])
 
   const invalidateSuggestions = () => {
     requestSerial.current += 1
@@ -282,7 +284,7 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
                 </div>
               ) : null}
               {suggestionStatus === 'loading' ? <p role="status" className="mt-1 text-xs text-fg-subtle">正在搜索镜像…</p> : null}
-              {suggestionStatus === 'unavailable' ? <p role="status" className="mt-1 text-xs text-fg-muted">{customRegistry ? '无法从此镜像源搜索，请直接输入镜像引用' : '镜像搜索暂不可用，请直接输入镜像引用'}</p> : null}
+              {searchUnavailableMessage ? <p role="status" className="mt-1 text-xs text-fg-muted">{searchUnavailableMessage}</p> : null}
               {showReferenceError ? (
                 <p className={FIELD_ERROR_CLASS} id="pull-reference-error">
                   {referenceError}

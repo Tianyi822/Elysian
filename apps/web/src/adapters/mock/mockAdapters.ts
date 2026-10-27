@@ -8,6 +8,7 @@ import {
 import {
   checkComposeReferences,
   isContainerBuildActive,
+  isOfficialImageRegistry,
   normalizeWorkspaceRelativePath,
   validateContainerAppDisplayName,
   validateContainerAppSlug,
@@ -541,7 +542,7 @@ export class MockContainerAdapter implements ContainerAdapter {
   }
 
   async searchImageNames(term: string, registry?: string): Promise<{ names: readonly string[]; searchable: boolean }> {
-    if (registry?.trim() && registry.trim() !== 'https://registry-1.docker.io') {
+    if (!isOfficialImageRegistry(registry ?? '')) {
       return { names: [], searchable: false }
     }
     const repositories = [...new Set([
@@ -553,7 +554,7 @@ export class MockContainerAdapter implements ContainerAdapter {
   }
 
   async imageTags(name: string, registry?: string): Promise<{ tags: readonly string[]; searchable: boolean }> {
-    if (registry?.trim() && registry.trim() !== 'https://registry-1.docker.io') {
+    if (!isOfficialImageRegistry(registry ?? '')) {
       return { tags: [], searchable: false }
     }
     const examples: Record<string, string[]> = {

@@ -168,6 +168,24 @@ func parseRegistryInput(raw string) (string, error) {
 	return rest, nil
 }
 
+// isOfficialImageRegistry 在语法校验后识别 Docker Hub 别名；留空使用官方源。
+// 仅忽略默认 HTTPS 端口，其他端口仍须按自定义源校验和查询。
+func isOfficialImageRegistry(raw string) bool {
+	if strings.TrimSpace(raw) == "" {
+		return true
+	}
+	host, err := parseRegistryInput(raw)
+	if err != nil {
+		return false
+	}
+	switch strings.TrimSuffix(strings.ToLower(host), ":443") {
+	case "registry-1.docker.io", "docker.io", "index.docker.io":
+		return true
+	default:
+		return false
+	}
+}
+
 // validatedRegistryTarget 校验通过的镜像源目标：host 用于拼引用与 HTTPS URL，
 // addresses 用于 HTTPS 建连钉 IP。
 type validatedRegistryTarget struct {

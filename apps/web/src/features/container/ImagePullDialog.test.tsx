@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { GatewayProvider } from '../../adapters/GatewayProvider'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { useContainersStore } from '../../stores/containersStore'
+import { useNotificationStore } from '../../stores/notificationStore'
+import { customImageRegistries, invalidImageRegistries, officialImageRegistries } from '../../test/imageRegistryCases'
 import { ImagePullDialog } from './ImagePullDialog'
 import type { ElysianGateway } from '../../contracts/adapters'
 
@@ -34,6 +36,94 @@ beforeEach(() => {
 })
 
 describe('ImagePullDialog', () => {
+  it.each(officialImageRegistries)('显式官方地址 %j 保留搜索建议和版本查询，并把地址传给后端', async (registry) => {
+    vi.useFakeTimers()
+    try {
+      const adapter = createMockGateway({ eventStream: 'memory' }).containers
+      const searchImageNames = vi.fn(adapter.searchImageNames.bind(adapter))
+      const imageTags = vi.fn(adapter.imageTags.bind(adapter))
+      renderDialog({ searchImageNames, imageTags })
+      fireEvent.change(screen.getByLabelText('自定义镜像源地址'), { target: { value: registry } })
+      fireEvent.change(screen.getByRole('combobox', { name: '镜像引用' }), { target: { value: 'redis:latest' } })
+      await act(async () => { await vi.advanceTimersByTimeAsync(300) })
+      expect(searchImageNames).toHaveBeenCalledWith('redis', registry.trim() || undefined, expect.any(AbortSignal))
+      expect(imageTags).toHaveBeenCalledWith('redis', registry.trim() || undefined, expect.any(AbortSignal))
+      expect(screen.getByRole('option', { name: 'redis' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: '版本标签：latest' })).not.toBeDisabled()
+      expect(screen.queryByText('无法从此镜像源搜索，请直接输入镜像引用')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(officialImageRegistries)('官方地址 %j 搜索失败时使用官方提示及相同通知', async (registry) => {
+    vi.useFakeTimers()
+    try {
+      renderDialog({ searchImageNames: vi.fn().mockRejectedValue(new Error('搜索失败')) })
+      fireEvent.change(screen.getByLabelText('自定义镜像源地址'), { target: { value: registry } })
+      fireEvent.change(screen.getByRole('combobox', { name: '镜像引用' }), { target: { value: 'redis' } })
+      await act(async () => { await vi.advanceTimersByTimeAsync(300) })
+      const message = '镜像搜索暂不可用，请直接输入镜像引用'
+      expect(screen.getByText(message)).toBeInTheDocument()
+      expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ message, tone: 'warning' }))
+      expect(screen.queryByText('无法从此镜像源搜索，请直接输入镜像引用')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(customImageRegistries)('自定义地址 %j 不可搜索时使用自定义源提示', async (registry) => {
+    vi.useFakeTimers()
+    try {
+      renderDialog()
+      fireEvent.change(screen.getByLabelText('自定义镜像源地址'), { target: { value: registry } })
+      fireEvent.change(screen.getByRole('combobox', { name: '镜像引用' }), { target: { value: 'redis' } })
+      await act(async () => { await vi.advanceTimersByTimeAsync(300) })
+      const message = '无法从此镜像源搜索，请直接输入镜像引用'
+      expect(screen.getByText(message)).toBeInTheDocument()
+      expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ message, tone: 'warning' }))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('官方地址返回 searchable=false 时仍使用官方搜索提示', async () => {
+    vi.useFakeTimers()
+    try {
+      renderDialog({ searchImageNames: vi.fn().mockResolvedValue({ names: [], searchable: false }) })
+      fireEvent.change(screen.getByLabelText('自定义镜像源地址'), { target: { value: 'https://registry-1.docker.io' } })
+      fireEvent.change(screen.getByRole('combobox', { name: '镜像引用' }), { target: { value: 'redis' } })
+      await act(async () => { await vi.advanceTimersByTimeAsync(300) })
+      expect(screen.getByText('镜像搜索暂不可用，请直接输入镜像引用')).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(invalidImageRegistries)('非法地址 %j 不发起搜索或版本查询', async (registry) => {
+    vi.useFakeTimers()
+    try {
+      const searchImageNames = vi.fn()
+      const imageTags = vi.fn()
+      renderDialog({ searchImageNames, imageTags })
+      fireEvent.change(screen.getByLabelText('自定义镜像源地址'), { target: { value: registry } })
+      fireEvent.change(screen.getByRole('combobox', { name: '镜像引用' }), { target: { value: 'redis' } })
+      await act(async () => { await vi.advanceTimersByTimeAsync(300) })
+      expect(searchImageNames).not.toHaveBeenCalled()
+      expect(imageTags).not.toHaveBeenCalled()
+      expect(screen.getByText(/地址须为公网主机名或 HTTPS URL/)).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('带尾斜杠的官方地址预览不出现双斜杠', () => {
+    renderDialog()
+    fireEvent.change(screen.getByLabelText('自定义镜像源地址'), { target: { value: 'https://registry-1.docker.io/' } })
+    fireEvent.change(screen.getByRole('combobox', { name: '镜像引用' }), { target: { value: 'redis:8-alpine' } })
+    expect(screen.getByText('registry-1.docker.io/redis:8-alpine')).toBeInTheDocument()
+  })
+
   it('Docker 运行时无演示徽章、中部提示与页脚都是真实拉取说明', () => {
     vi.mocked(isDockerRuntime).mockReturnValue(true)
     renderDialog()

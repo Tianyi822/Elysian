@@ -651,8 +651,7 @@ func (s *dockerService) SearchImages(ctx context.Context, rawTerm, registry stri
 	if len(term) < 2 || len(term) > 64 || !searchTermPattern.MatchString(term) {
 		return namesResult{}, shared.InvalidRequest("镜像搜索词格式无效")
 	}
-	trimmedRegistry := strings.TrimSpace(registry)
-	if trimmedRegistry != "" && trimmedRegistry != officialRegistry {
+	if !isOfficialImageRegistry(registry) {
 		target, err := validateRegistryTarget(registry, func(hostname string) ([]string, error) {
 			return s.deps.resolveRegistry(ctx, hostname)
 		})
@@ -720,8 +719,7 @@ func (s *dockerService) ImageTags(ctx context.Context, rawName, registry string)
 	if len(name) == 0 || len(name) > 128 || !repoNameSegmentsValid(name) {
 		return tagsResult{}, shared.InvalidRequest("镜像仓库名格式无效")
 	}
-	trimmedRegistry := strings.TrimSpace(registry)
-	if trimmedRegistry != "" && trimmedRegistry != officialRegistry {
+	if !isOfficialImageRegistry(registry) {
 		target, err := validateRegistryTarget(registry, func(hostname string) ([]string, error) {
 			return s.deps.resolveRegistry(ctx, hostname)
 		})
