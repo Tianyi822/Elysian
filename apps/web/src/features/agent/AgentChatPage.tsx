@@ -322,16 +322,17 @@ export function AgentChatPage() {
   const list = <ChatSessionList onSelect={selectConversation} onNew={newConversation}
     onRefresh={refreshList} onMore={() => { void chat.loadSessions(api, true, false, true) }} refreshing={listRefreshing}
     onClose={closeList} />
-  const showSidebar = wide && shell.sidebarCollapsed && !listCollapsed
+  // 会话栏与主导航互不联动：宽屏默认展开、两栏可同开，开关不写主导航收展，主导航收展也不影响本栏。
+  const showSidebar = wide && !listCollapsed
   const expanded = showSidebar || shell.conversationDrawerOpen
   const toggle = <SessionToggle expanded={expanded} buttonRef={listTrigger}
     controls={wide ? 'chat-session-sidebar' : 'chat-session-drawer'} onClick={() => {
       if (expanded) closeList()
-      else if (wide) { shell.setSidebarCollapsed(true); setListCollapsed(false) }
+      else if (wide) setListCollapsed(false)
       else shell.openConversationDrawer()
     }} />
 
-  return <div className="agent-workspace" data-navigation-expanded={!shell.sidebarCollapsed || undefined}>
+  return <div className="agent-workspace">
     {wide && <aside id="chat-session-sidebar" aria-label="会话列表"
       className="chat-session-sidebar" data-open={showSidebar || undefined}
       aria-hidden={!showSidebar || undefined}>{list}</aside>}

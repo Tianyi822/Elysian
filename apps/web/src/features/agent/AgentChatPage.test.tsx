@@ -22,9 +22,14 @@ vi.mock('../../adapters/local/agentImagePreparation', () => ({ prepareAgentImage
 function TestShell({ children }: { children: ReactNode }) {
   const defaults = useShellLayout()
   const [open, setOpen] = useState(false)
-  return <ShellLayoutContext.Provider value={{ ...defaults, conversationDrawerOpen: open,
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  return <ShellLayoutContext.Provider value={{ ...defaults, sidebarCollapsed, setSidebarCollapsed, conversationDrawerOpen: open,
     setConversationDrawerOpen: setOpen, openConversationDrawer: () => setOpen(true), closeConversationDrawer: () => setOpen(false) }}>
-    {children}
+    <div data-sidebar-collapsed={sidebarCollapsed ? 'true' : 'false'}>
+      {/* 模拟主导航自身的收展入口与状态回显，验证聊天页不与会话栏互相联动。 */}
+      <button type="button" hidden data-testid="test-nav-toggle" onClick={() => setSidebarCollapsed(value => !value)}>切换主导航收展</button>
+      {children}
+    </div>
   </ShellLayoutContext.Provider>
 }
 
@@ -504,6 +509,30 @@ describe('基本聊天界面', () => {
     expect(screen.getByRole('complementary', { name: '会话列表' })).toBeInTheDocument()
     expect(toggle).toHaveFocus()
     await waitFor(() => expect(screen.getByRole('textbox')).toBeEnabled())
+  })
+
+  it('会话列表与主导航互不联动：开关不改写主导航，主导航收展不影响列表', () => {
+    renderChat()
+    const nav = document.querySelector('[data-sidebar-collapsed]')!
+    const navToggle = document.querySelector<HTMLButtonElement>('[data-testid="test-nav-toggle"]')!
+    // 进入聊天页：主导航与会话列表同时展开，互不挤占。
+    expect(nav).toHaveAttribute('data-sidebar-collapsed', 'false')
+    expect(screen.getByRole('complementary', { name: '会话列表' })).toBeInTheDocument()
+    // 收起再打开会话列表：主导航保持展开，不被联动折叠。
+    const toggle = screen.getByRole('button', { name: '收起会话列表' })
+    fireEvent.click(toggle)
+    expect(screen.queryByRole('complementary', { name: '会话列表' })).not.toBeInTheDocument()
+    expect(nav).toHaveAttribute('data-sidebar-collapsed', 'false')
+    fireEvent.click(toggle)
+    expect(screen.getByRole('complementary', { name: '会话列表' })).toBeInTheDocument()
+    expect(nav).toHaveAttribute('data-sidebar-collapsed', 'false')
+    // 主导航收起再展开：会话列表保持展开，不被联动收起。
+    fireEvent.click(navToggle)
+    expect(nav).toHaveAttribute('data-sidebar-collapsed', 'true')
+    expect(screen.getByRole('complementary', { name: '会话列表' })).toBeInTheDocument()
+    fireEvent.click(navToggle)
+    expect(nav).toHaveAttribute('data-sidebar-collapsed', 'false')
+    expect(screen.getByRole('complementary', { name: '会话列表' })).toBeInTheDocument()
   })
 
   it('窄屏边缘把手打开会话抽屉，关闭和 Escape 都归还焦点且不留下悬停提示', async () => {
