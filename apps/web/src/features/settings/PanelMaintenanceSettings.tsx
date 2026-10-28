@@ -1,7 +1,7 @@
 import { randomId } from '../../utils/randomId'
 import { SectionHelp } from '../../components/SectionHelp'
 import { Terminal } from '../../components/icons'
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { PANEL_TASK_PHASE_LABELS, PANEL_TASK_STATE_LABELS, PANEL_UPDATE_CHANNEL_LABELS, PANEL_UPDATE_SOURCE_LABELS, panelTaskIsActive, validatePanelPorts } from '@elysian/contracts'
 import type { PanelTask, PanelUpdate, PanelUpdateChannel, PanelUpdateSource } from '@elysian/contracts'
@@ -41,8 +41,9 @@ export function PanelMaintenanceSettings() {
   const task = usePanelStore((s) => s.task)
   const trackedTaskId = usePanelStore((s) => s.trackedTaskId)
   const logs = usePanelStore((s) => s.logs)
+  const logOffset = usePanelStore((s) => s.offset)
   const hasMore = usePanelStore((s) => s.hasMore)
-  const [loadingLogs, setLoadingLogs] = useState(false)
+  const logViewport = useRef<HTMLPreElement>(null)
   const [retryingCLI, setRetryingCLI] = useState(false)
   const loadError = usePanelStore((s) => s.error)
   const frontendId = useId(), backendId = useId()
@@ -76,6 +77,19 @@ export function PanelMaintenanceSettings() {
   useFeedbackNotification(info && !info.available ? `面板维护不可用：${info.reason}` : null, 'warning')
   useFeedbackNotification(task?.state === 'succeeded' && (task.kind !== 'update' || verifiedUpdate === task.id) ? '面板维护已完成' : null, 'success')
   useFeedbackNotification(update ? `检查更新：${updateSummary(update)}` : null, 'info')
+
+  // 首次展示、恢复任务及追加分页后都贴底；只滚动日志框，不移动设置页。
+  useLayoutEffect(() => {
+    const viewport = logViewport.current
+    if (!viewport) return
+    const follow = () => { viewport.scrollTop = viewport.scrollHeight }
+    follow()
+    // 设置页会保留隐藏页签；重新显示或换行宽度变化时也恢复贴底。
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(follow)
+    observer.observe(viewport)
+    return () => observer.disconnect()
+  }, [logs, logOffset, task?.id])
 
   useEffect(() => {
     lifecycle.current++
@@ -144,7 +158,7 @@ export function PanelMaintenanceSettings() {
   }, [gateway, task?.id, task?.state, task?.cliRegistration?.status, trackedTaskId])
 
   useEffect(() => {
-    if (!task || (!panelTaskIsActive(task) && task.cliRegistration?.status !== 'pending')) return
+    if (!task || (!panelTaskIsActive(task) && task.cliRegistration?.status !== 'pending' && !hasMore)) return
     let stopped = false, timer: ReturnType<typeof setTimeout> | undefined, disconnectedAt: number | undefined
     const abort = new AbortController()
     const auth = captureAuthGeneration()
@@ -167,9 +181,10 @@ export function PanelMaintenanceSettings() {
       if (!currentEffect()) return
       const current = usePanelStore.getState().task
       if (!current || current.id !== task.id) return
+      let nextDelay = 2000
       try {
         const nextUrl = new URL(panelAddress(current.newPorts.frontendPort))
-        if (nextUrl.origin !== window.location.origin) {
+        if ((panelTaskIsActive(current) || current.cliRegistration?.status === 'pending') && nextUrl.origin !== window.location.origin) {
           const probeAbort = new AbortController()
           const cancelProbe = () => probeAbort.abort()
           abort.signal.addEventListener('abort', cancelProbe, { once: true })
@@ -181,9 +196,11 @@ export function PanelMaintenanceSettings() {
           if (ready) { nextUrl.searchParams.set('maintenanceTask', current.id); openPanelAddress(nextUrl.toString()); return }
         }
         const report = await usePanelStore.getState().poll(gateway)
-        if (report && !panelTaskIsActive(report.task) && report.task.cliRegistration?.status !== 'pending') {
+        if (report && !panelTaskIsActive(report.task) && report.task.cliRegistration?.status !== 'pending' && !report.hasMore) {
           return
         }
+        // 先按顺序读完积压分页，再恢复两秒轮询；终态任务也读到最后一页。
+        if (report?.hasMore) nextDelay = 0
         if (!currentEffect()) return
         setConnectionError(null); setProgressError(null); disconnectedAt = undefined
       } catch (cause) {
@@ -208,11 +225,11 @@ export function PanelMaintenanceSettings() {
           setProgressError(cause instanceof Error ? cause.message : '读取维护任务失败')
         }
       }
-      if (!stopped) timer = setTimeout(() => void tick(), 2000)
+      if (!stopped) timer = setTimeout(() => void tick(), nextDelay)
     }
-    timer = setTimeout(() => void tick(), 1000)
+    timer = setTimeout(() => void tick(), hasMore ? 0 : 1000)
     return () => { stopped = true; abort.abort(); if (timer) clearTimeout(timer) }
-  }, [gateway, task?.id, task?.state, task?.cliRegistration?.status, retry])
+  }, [gateway, task?.id, task?.state, task?.cliRegistration?.status, hasMore, retry])
 
   const retryCLI = async () => {
     if (!task || retryingCLI) return
@@ -283,14 +300,6 @@ export function PanelMaintenanceSettings() {
     if (source === next) return
     checkVersion.current += 1
     setSource(next); setUpdate(null); setChecking(false); setUpdateError(null)
-  }
-  const readMoreLogs = async () => {
-    const scope = lifecycle.current, auth = captureAuthGeneration(), id = task?.id
-    const current = () => scope === lifecycle.current && auth === captureAuthGeneration() && usePanelStore.getState().task?.id === id
-    setLoadingLogs(true)
-    try { if (await usePanelStore.getState().poll(gateway) && current()) setProgressError(null) }
-    catch (cause) { if (current()) setProgressError(cause instanceof Error ? cause.message : '读取维护日志失败') }
-    finally { if (current()) setLoadingLogs(false) }
   }
   return <>
     <section aria-label="面板端口" className="panel-surface p-5">
@@ -369,9 +378,9 @@ export function PanelMaintenanceSettings() {
           <Terminal aria-hidden size={14} className="shrink-0" />
           <span>维护进程日志</span>
         </div>
-        <pre aria-label="维护任务日志" tabIndex={0} className="hover-scrollbar max-h-48 overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-xs leading-5 text-[var(--t-code-fg)] focus-visible:-outline-offset-2">{logs}</pre>
+        <pre ref={logViewport} aria-label="维护任务日志" tabIndex={0} className="hover-scrollbar max-h-48 overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-xs leading-5 text-[var(--t-code-fg)] focus-visible:-outline-offset-2">{logs}</pre>
       </div> : null}
-      {hasMore ? <button className={`${BUTTON} mt-3`} disabled={loadingLogs} onClick={() => void readMoreLogs()}>{loadingLogs ? '正在读取…' : '继续读取日志'}</button> : null}
+      {hasMore ? <p role="status" className="mt-3 text-xs text-fg-muted">正在读取最新日志…</p> : null}
     </section> : null}
     <PanelChangelogDialog open={changelogOpen} channel={channel} source={source} currentCommit={info?.commit ?? ''} onClose={() => setChangelogOpen(false)} />
   </>

@@ -223,15 +223,57 @@ describe('端口与更新设置', () => {
     await waitFor(() => expect(openPanelAddress).toHaveBeenCalledWith(expect.stringContaining(':49000/settings?maintenanceTask=' + task.id)), { timeout: 4000 })
     expect(g.panel.ready).toHaveBeenCalledWith(expect.stringContaining(':49000'), task.id, expect.any(AbortSignal))
   })
-  it('刷新后可读取最后任务的分页日志', async () => {
+  it('刷新后自动读完最后任务的分页日志，不要求点击或跳转历史端口', async () => {
     const g = gateway(); const finished = { ...task, state: 'succeeded' as const }
     g.panel.info = async () => ({ ...info, lastTask: finished })
     const read = vi.fn().mockResolvedValueOnce({ task: finished, logs: '检查部署环境\n', nextOffset: 20, hasMore: true }).mockResolvedValueOnce({ task: finished, logs: '已完成\n', nextOffset: 30, hasMore: false }); g.panel.task = read
-    renderApp('/settings?tab=maintenance', { gateway: g }); const user = userEvent.setup()
-    await user.click(await screen.findByRole('button', { name: '继续读取日志' }))
+    renderApp('/settings?tab=maintenance', { gateway: g })
     await waitFor(() => expect(screen.getByLabelText('维护任务日志')).toHaveTextContent('已完成'))
     expect(read).toHaveBeenLastCalledWith(task.id, 20)
+    expect(read).toHaveBeenCalledTimes(2)
+    expect(screen.queryByRole('button', { name: '继续读取日志' })).not.toBeInTheDocument()
+    expect(openPanelAddress).not.toHaveBeenCalled()
     expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ tone: 'success', message: '面板维护已完成' }))
+  })
+  it('日志初次展示和更新均贴底，支持等长窗口、任务切换及隐藏后恢复', async () => {
+    const height = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(1200)
+    let resize!: () => void
+    const disconnect = vi.fn()
+    const originalObserver = globalThis.ResizeObserver
+    globalThis.ResizeObserver = class {
+      constructor(callback: ResizeObserverCallback) { resize = () => callback([], this) }
+      observe() {}
+      unobserve() {}
+      disconnect() { disconnect() }
+    }
+    try {
+      const g = gateway(); const finished = { ...task, state: 'failed' as const }
+      g.panel.info = async () => ({ ...info, lastTask: finished })
+      g.panel.task = async () => ({ task: finished, logs: '初始日志\n', nextOffset: 20 })
+      const page = renderApp('/settings?tab=maintenance', { gateway: g })
+      const viewport = await screen.findByLabelText('维护任务日志')
+      expect(viewport.scrollTop).toBe(1200)
+
+      viewport.scrollTop = 0
+      height.mockReturnValue(1600)
+      act(() => usePanelStore.setState({ logs: '后续日志\n', offset: 40 }))
+      expect(viewport.scrollTop).toBe(1600)
+
+      viewport.scrollTop = 0
+      act(() => usePanelStore.setState({ offset: 60 }))
+      expect(viewport.scrollTop).toBe(1600)
+
+      viewport.scrollTop = 0
+      act(() => usePanelStore.setState({ task: { ...finished, id: 'c'.repeat(32) } }))
+      expect(viewport.scrollTop).toBe(1600)
+      viewport.scrollTop = 0
+      height.mockReturnValue(1800)
+      act(() => resize())
+      expect(viewport.scrollTop).toBe(1800)
+      disconnect.mockClear()
+      page.unmount()
+      expect(disconnect).toHaveBeenCalled()
+    } finally { height.mockRestore(); globalThis.ResizeObserver = originalObserver }
   })
   it('更新日志窗口列出上游提交并只标注命中当前提交的那一条', async () => {
     const g = gateway()
