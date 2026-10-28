@@ -16,6 +16,7 @@ const (
 // imagePullProgress 对应契约 ImagePullProgress；字节字段用指针保留 0 与缺省的区分。
 type imagePullProgress struct {
 	Phase        string   `json:"phase"`
+	Message      string   `json:"message,omitempty"`
 	LayerID      string   `json:"layerId,omitempty"`
 	CurrentBytes *float64 `json:"currentBytes,omitempty"`
 	TotalBytes   *float64 `json:"totalBytes,omitempty"`
@@ -145,7 +146,9 @@ func (d *pullProgressDecoder) consume(line string) error {
 		return nil
 	}
 	d.lastKey = key
-	d.onProgress(progress)
+	if d.onProgress != nil {
+		d.onProgress(progress)
+	}
 	return nil
 }
 

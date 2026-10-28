@@ -11,7 +11,6 @@ import (
 	"sync"
 
 	"elysian/server/internal/contract"
-	"elysian/server/internal/seam"
 	"elysian/server/internal/shared"
 )
 
@@ -225,6 +224,13 @@ func (s *dockerService) Pull(ctx context.Context, body any, onProgress func(imag
 		return contract.ContainerImage{}, &shared.InvalidRequestError{Status: http.StatusConflict, Message: pullBusyMessage}
 	}
 	defer s.pullInFlight.Store(false)
+	ctx, cancel := context.WithTimeout(ctx, pullTimeout)
+	defer cancel()
+	emit := func(phase, message string) {
+		if onProgress != nil {
+			onProgress(imagePullProgress{Phase: phase, Message: message})
+		}
+	}
 
 	input, err := parsePullBody(body)
 	if err != nil {
@@ -235,6 +241,7 @@ func (s *dockerService) Pull(ctx context.Context, body any, onProgress func(imag
 		return contract.ContainerImage{}, shared.InvalidRequest(registryReferenceConflictMsg)
 	}
 
+	emit("preparing", "正在检查本地镜像")
 	exists, err := s.imageExistsByTag(ctx, input.name, input.tag)
 	if err != nil {
 		return contract.ContainerImage{}, err
@@ -245,6 +252,9 @@ func (s *dockerService) Pull(ctx context.Context, body any, onProgress func(imag
 
 	fromImage := fmt.Sprintf("%s:%s", input.name, input.tag)
 	registryPullRef := ""
+	if input.hasRegistry || hasEmbedded {
+		emit("preparing", "正在校验镜像源")
+	}
 	if input.hasRegistry {
 		registryHost, err := s.assertRegistryAllowed(ctx, input.registry)
 		if err != nil {
@@ -258,49 +268,13 @@ func (s *dockerService) Pull(ctx context.Context, body any, onProgress func(imag
 		}
 	}
 
-	// 流式解码：onChunk 无错误回传通道，首个解码错误在流结束后以 400 收口
-	//（TS 在行内即时失败；引擎在 error 行后即收流，可观察结果一致）。
-	var decoder *pullProgressDecoder
-	var decoderErr error
-	var onChunk func([]byte)
-	if onProgress != nil {
-		decoder = newPullProgressDecoder(onProgress)
-		onChunk = func(chunk []byte) {
-			if decoderErr != nil {
-				return
-			}
-			if err := decoder.feed(chunk); err != nil {
-				decoderErr = err
-			}
-		}
-	}
-	response, err := s.deps.transport.Stream(ctx, seam.EngineRequest{
-		Method:   http.MethodPost,
-		Path:     "/images/create",
-		Query:    url.Values{"fromImage": {fromImage}},
-		Timeout:  pullTimeout,
-		MaxBytes: pullProgressMaxBytes,
-	}, onChunk)
-	if err != nil {
+	emit("preparing", "正在等待 Docker 返回镜像拉取进度")
+	if err := s.pullStream(ctx, fromImage, onProgress); err != nil {
 		return contract.ContainerImage{}, err
-	}
-	if decoderErr != nil {
-		return contract.ContainerImage{}, shared.InvalidRequest(decoderErr.Error())
-	}
-	if response.Status != http.StatusOK {
-		value, _ := decodeOrderedJSON(response.Body)
-		return contract.ContainerImage{}, fmt.Errorf("拉取镜像失败（HTTP %d）：%s", response.Status, engineErrorMessage(value, "Docker 未返回具体原因"))
-	}
-	if err := readPullProgress(response.Body); err != nil {
-		return contract.ContainerImage{}, shared.InvalidRequest(err.Error())
-	}
-	if decoder != nil {
-		if err := decoder.finish(); err != nil {
-			return contract.ContainerImage{}, shared.InvalidRequest(err.Error())
-		}
 	}
 
 	if registryPullRef != "" {
+		emit("finalizing", "正在写入镜像标签")
 		if err := s.tagImageRef(ctx, registryPullRef, input.name, input.tag); err != nil {
 			return contract.ContainerImage{}, err
 		}
@@ -313,6 +287,7 @@ func (s *dockerService) Pull(ctx context.Context, body any, onProgress func(imag
 		}
 	}
 
+	emit("finalizing", "正在核对本地镜像")
 	images, err := s.imagesFromList(ctx)
 	if err != nil {
 		return contract.ContainerImage{}, err

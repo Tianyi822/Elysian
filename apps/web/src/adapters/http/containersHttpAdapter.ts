@@ -693,7 +693,6 @@ async function readImagePullStream(response: Response, onProgress?: (progress: I
   const decoder = new TextDecoder()
   let buffer = ''
   let image: ContainerImage | undefined
-  let complete = false
   const cancelRead = () => { void reader.cancel().catch(() => undefined) }
   signal?.addEventListener('abort', cancelRead, { once: true })
 
@@ -717,6 +716,7 @@ async function readImagePullStream(response: Response, onProgress?: (progress: I
       }
       onProgress?.({
         phase: value.phase,
+        ...(typeof value.message === 'string' ? { message: value.message } : {}),
         ...(typeof value.layerId === 'string' ? { layerId: value.layerId } : {}),
         ...(typeof value.currentBytes === 'number' && typeof value.totalBytes === 'number' &&
           Number.isFinite(value.currentBytes) && Number.isFinite(value.totalBytes) && value.totalBytes > 0
@@ -745,20 +745,18 @@ async function readImagePullStream(response: Response, onProgress?: (progress: I
         buffer = buffer.slice(newline + 1)
         if (line.length > 128 * 1024) throw new Error('镜像拉取进度行过大')
         consume(line)
+        if (image) return image
       }
       if (buffer.length > 128 * 1024) throw new Error('镜像拉取进度行过大')
     }
     buffer += decoder.decode()
     if (buffer) consume(buffer)
     if (!image) throw new Error('镜像拉取连接提前结束，结果尚未确认，请刷新镜像列表核实后再重试')
-    complete = true
     return image
   } finally {
     signal?.removeEventListener('abort', cancelRead)
-    if (!complete) {
-      const cancelled = reader.cancel().catch(() => undefined)
-      if (!signal?.aborted) await cancelled
-    }
+    // 终帧即完成；关闭仍未结束的正文，清理不依赖服务器再发 EOF。
+    void reader.cancel().catch(() => undefined)
     reader.releaseLock()
   }
 }

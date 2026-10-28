@@ -501,6 +501,40 @@ describe('createHttpContainersAdapter', () => {
     vi.unstubAllGlobals()
   })
 
+  it.each(['result', 'error'] as const)('收到 %s 终帧立即结束，正文和清理未结束也不继续等待', async (type) => {
+    const cancel = vi.fn(() => new Promise<void>(() => undefined))
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(`${JSON.stringify(type === 'result'
+          ? { type, image: baseImage } : { type, error: '仓库拒绝访问' })}\n`))
+      },
+      cancel,
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(body)))
+    try {
+      const pending = createHttpContainersAdapter().pullImage({ name: 'redis', tag: 'latest' })
+      if (type === 'result') await expect(pending).resolves.toEqual(baseImage)
+      else await expect(pending).rejects.toThrow('仓库拒绝访问')
+      expect(cancel).toHaveBeenCalledTimes(1)
+      expect(body.locked).toBe(false)
+    } finally { vi.unstubAllGlobals() }
+  })
+
+  it('透传可选中文阶段说明，旧进度帧仍兼容', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      '{"type":"progress","progress":{"phase":"preparing","message":"正在校验镜像源"}}\n' +
+      '{"type":"progress","progress":{"phase":"downloading"}}\n' +
+      `${JSON.stringify({ type: 'result', image: baseImage })}\n`,
+    )))
+    try {
+      const onProgress = vi.fn()
+      await createHttpContainersAdapter().pullImage({ name: 'redis', tag: 'latest' }, onProgress)
+      expect(onProgress.mock.calls.map(([progress]) => progress)).toEqual([
+        { phase: 'preparing', message: '正在校验镜像源' }, { phase: 'downloading' },
+      ])
+    } finally { vi.unstubAllGlobals() }
+  })
+
   it('下载进度之后断流保留未确认提示，仓库错误帧则保留真实原因', async () => {
     const encoder = new TextEncoder()
     let stream!: ReadableStreamDefaultController<Uint8Array>

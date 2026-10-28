@@ -1,7 +1,9 @@
 package docker
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -51,6 +53,16 @@ func TestPullStreamClientDisconnectCancelsEngine(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("拉取流状态：%d", response.StatusCode)
 	}
+	reader := bufio.NewReader(response.Body)
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(line, `"phase":"downloading"`) {
+			break
+		}
+	}
 	cancel()
 	_ = response.Body.Close()
 	select {
@@ -65,5 +77,37 @@ func TestPullStreamClientDisconnectCancelsEngine(t *testing.T) {
 	}
 	if service.pullInFlight.Load() {
 		t.Fatal("取消后仍占用全局镜像拉取槽位")
+	}
+}
+
+type failingPullWriter struct{ *httptest.ResponseRecorder }
+
+func (w failingPullWriter) Write(data []byte) (int, error) {
+	if strings.Contains(string(data), `"phase":"downloading"`) {
+		return 0, errors.New("客户端已无法接收数据")
+	}
+	return w.ResponseRecorder.Write(data)
+}
+
+func (w failingPullWriter) WriteString(data string) (int, error) { return w.Write([]byte(data)) }
+
+func TestPullStreamWriteFailureCancelsEngine(t *testing.T) {
+	engine := newFakeEngine(func(call engineCall) (int, string, bool) { return 200, "[]", true })
+	engine.streamFn = func(ctx context.Context, _ engineCall, onChunk func([]byte)) (seam.EngineResponse, error) {
+		onChunk([]byte("{\"status\":\"Downloading\"}\n"))
+		select {
+		case <-ctx.Done():
+			return seam.EngineResponse{}, ctx.Err()
+		case <-time.After(time.Second):
+			t.Error("写出失败后仍在等待 Engine")
+			return seam.EngineResponse{}, errors.New("等待取消超时")
+		}
+	}
+	service := newService(engine, nil)
+	req := httptest.NewRequest(http.MethodPost, "/images/pull/stream", strings.NewReader(`{"name":"redis","tag":"latest"}`))
+	req.Header.Set("Content-Type", "application/json")
+	pullStreamHandler(service).ServeHTTP(failingPullWriter{httptest.NewRecorder()}, req)
+	if service.pullInFlight.Load() {
+		t.Fatal("写出失败后仍占用拉取槽位")
 	}
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"elysian/server/internal/applog"
 	"elysian/server/internal/contract"
 	"elysian/server/internal/middleware"
 	"elysian/server/internal/seam"
@@ -405,16 +406,31 @@ func pullStreamHandler(service *dockerService) http.HandlerFunc {
 		w.Header().Set("Cache-Control", "no-cache, no-transform")
 		w.Header().Set("X-Accel-Buffering", "no")
 		w.WriteHeader(http.StatusOK)
-		flusher, _ := w.(http.Flusher)
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		controller := http.NewResponseController(w)
+		var writeErr error
+		if err := controller.Flush(); err != nil {
+			return
+		}
 
 		writeLine := func(line string) {
-			_, _ = io.WriteString(w, line+"\n")
-			if flusher != nil {
-				flusher.Flush()
+			if writeErr != nil {
+				return
+			}
+			// 每次写出单独限时，不给整个长流设置固定写截止时间。
+			_ = controller.SetWriteDeadline(time.Now().Add(30 * time.Second))
+			_, writeErr = io.WriteString(w, line+"\n")
+			if writeErr == nil {
+				writeErr = controller.Flush()
+			}
+			_ = controller.SetWriteDeadline(time.Time{})
+			if writeErr != nil {
+				cancel()
 			}
 		}
 
-		image, err := service.Pull(req.Context(), convertJSONValue(body), func(progress imagePullProgress) {
+		image, err := service.Pull(ctx, convertJSONValue(body), func(progress imagePullProgress) {
 			data, marshalErr := shared.MarshalJSON(pullProgressFrame{Type: "progress", Progress: progress})
 			if marshalErr != nil {
 				return
@@ -422,7 +438,8 @@ func pullStreamHandler(service *dockerService) http.HandlerFunc {
 			writeLine(string(data))
 		})
 		if err != nil {
-			if req.Context().Err() == nil {
+			if req.Context().Err() == nil && writeErr == nil {
+				applog.Default().Printf("server.docker: 镜像拉取失败：%s", err)
 				message := err.Error()
 				data, marshalErr := shared.MarshalJSON(pullErrorFrame{Type: "error", Error: message})
 				if marshalErr == nil {

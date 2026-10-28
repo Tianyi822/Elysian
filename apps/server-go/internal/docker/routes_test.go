@@ -289,14 +289,14 @@ func TestRoutesPullAndStream(t *testing.T) {
 	})
 	recorder = doWrite(router, http.MethodPost, "/images/pull/stream", `{"name":"nginx","tag":"1.27"}`, sameOriginCTHeaders())
 	lines := strings.Split(strings.TrimSpace(recorder.Body.String()), "\n")
-	if recorder.Code != 200 || len(lines) != 2 {
-		t.Fatalf("ndjson 两帧：%d %d %s", recorder.Code, len(lines), recorder.Body.String())
+	if recorder.Code != 200 || len(lines) != 5 {
+		t.Fatalf("ndjson 阶段、进度和终帧：%d %d %s", recorder.Code, len(lines), recorder.Body.String())
 	}
 	if !strings.HasPrefix(lines[0], `{"type":"progress","progress":{`) {
 		t.Fatalf("progress 先于 result：%s", lines[0])
 	}
-	if !strings.Contains(lines[1], `{"type":"result","image":{`) {
-		t.Fatalf("result 帧：%s", lines[1])
+	if !strings.Contains(lines[len(lines)-1], `{"type":"result","image":{`) {
+		t.Fatalf("result 帧：%s", lines[len(lines)-1])
 	}
 	if recorder.Header().Get("Content-Type") != "application/x-ndjson; charset=utf-8" {
 		t.Fatalf("Content-Type：%q", recorder.Header().Get("Content-Type"))

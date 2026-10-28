@@ -86,6 +86,8 @@ export type ContainerImage = {
 /** Docker 拉取流中单个镜像层的实时进度；数值只来自 Engine 的 progressDetail。 */
 export type ImagePullProgress = {
   phase: 'preparing' | 'downloading' | 'extracting' | 'finalizing'
+  /** 当前阶段的中文说明；缺省时由界面按 phase 显示。 */
+  message?: string
   layerId?: string
   currentBytes?: number
   totalBytes?: number

@@ -30,6 +30,7 @@ const (
 	listTimeoutMessage   = "Docker 列表请求超时"
 	actionTimeout        = 30 * time.Second
 	pullTimeout          = 15 * 60 * time.Second
+	pullIdleTimeout      = 120 * time.Second
 	pullProgressMaxBytes = 64 * 1024 * 1024
 	registryResolveDelay = 3 * time.Second
 	searchTimeout        = 4 * time.Second
@@ -71,9 +72,13 @@ type serviceDeps struct {
 	fetchProbe      probeFetcher
 	probeSample     probeSampler
 	now             func() time.Time
+	pullIdleTimeout time.Duration // 测试可缩短等待；生产固定为两分钟无上游数据。
 }
 
 func (d *serviceDeps) fillDefaults() {
+	if d.pullIdleTimeout <= 0 {
+		d.pullIdleTimeout = pullIdleTimeout
+	}
 	if d.mkdir == nil {
 		d.mkdir = func(path string, mode os.FileMode) error {
 			return os.Mkdir(path, mode)

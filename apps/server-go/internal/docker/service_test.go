@@ -35,7 +35,7 @@ func imageInspectJSON(id string) string {
 	return `{"Id":"sha256:` + id + `","Size":1000000,"Created":"2024-05-01T08:00:00Z","RepoTags":["nginx:1.27"],"RepoDigests":["nginx@sha256:d"]}`
 }
 
-func newService(engine *fakeEngine, mutate func(*serviceDeps)) *dockerService {
+func newService(engine seam.DockerTransport, mutate func(*serviceDeps)) *dockerService {
 	deps := serviceDeps{
 		transport:     engine,
 		mountRoot:     "/srv",
@@ -638,7 +638,7 @@ func TestPullProgressBeforeFinish(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("等待分块进度超时")
 	}
-	if len(updates) != 1 || updates[0].Phase != "downloading" || updates[0].LayerID != "abc" || *updates[0].CurrentBytes != 50 || *updates[0].TotalBytes != 100 {
+	if len(updates) != 3 || updates[0].Message != "正在检查本地镜像" || updates[1].Message != "正在等待 Docker 返回镜像拉取进度" || updates[2].Phase != "downloading" || updates[2].LayerID != "abc" || *updates[2].CurrentBytes != 50 || *updates[2].TotalBytes != 100 {
 		t.Fatalf("进度应在流结束前推送：%+v", updates)
 	}
 	releasePull()
