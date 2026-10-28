@@ -23,3 +23,13 @@ export function validateRegistryUrl(raw: string): string | undefined {
 export function registryHost(registry: string): string {
   return registry.trim().replace(/^https?:\/\//, '').replace(/\/+$/, '')
 }
+
+/** 仅移除显式仓库主机，组织及多级项目路径保持原样；原始名称仍用于请求。 */
+export function displayImageName(name: string): string {
+  const slash = name.indexOf('/')
+  if (slash < 0) return name
+  const host = name.slice(0, slash)
+  return host === 'localhost' || host.includes('.') || host.includes(':')
+    ? name.slice(slash + 1)
+    : name
+}

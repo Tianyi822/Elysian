@@ -496,7 +496,8 @@ describe('拉取镜像', () => {
       useNotificationStore.getState().clear()
     })
     const alert = screen.getByRole('alert')
-    expect(alert).toHaveTextContent('docker.1ms.run/mysql:latest')
+    expect(alert).toHaveTextContent('mysql:latest')
+    expect(alert).not.toHaveTextContent('docker.1ms.run')
     expect(alert).toHaveTextContent('镜像拉取连接中断')
     expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '刷新镜像' }))
@@ -555,11 +556,11 @@ describe('拉取镜像', () => {
     await user.click(within(dialog).getByRole('button', { name: '拉取' }))
 
     expect(screen.queryByRole('dialog', { name: '拉取镜像' })).not.toBeInTheDocument()
-    expect(table.textContent).toContain('registry-1.docker.io/redis:8-alpine')
-    expect(table.textContent).toContain('拉取中')
+    expect(table).not.toContainElement(screen.getByRole('button', { name: '停止拉取' }))
+    expect(screen.getByLabelText('镜像拉取状态')).toHaveTextContent('redis:8-alpine')
 
     // 真实等待 1.5s 模拟传输完成；时序由 store 的 PULL_DELAY_MS 决定。
-    await waitFor(() => expect(table.textContent).not.toContain('拉取中'), { timeout: 3000 })
+    await waitFor(() => expect(screen.queryByRole('button', { name: '停止拉取' })).not.toBeInTheDocument(), { timeout: 3000 })
     expect(table.textContent).toContain('redis:8-alpine')
     const notifications = await screen.findByLabelText('通知')
     expect(within(notifications).getByRole('status')).toHaveTextContent(

@@ -2,12 +2,26 @@ import { describe, expect, it } from 'vitest'
 import { invalidImageRegistries, officialImageRegistries } from '../../test/imageRegistryCases'
 import {
   DEFAULT_IMAGE_REGISTRY,
+  displayImageName,
   parseImageReference,
   registryHost,
   validateRegistryUrl,
 } from './imageReference'
 
 describe('镜像引用解析', () => {
+  it.each([
+    ['redis', 'redis'],
+    ['team/app', 'team/app'],
+    ['team/sub/app', 'team/sub/app'],
+    ['dockerproxy.net/team/app', 'team/app'],
+    ['registry.example:5000/team/app', 'team/app'],
+    ['localhost/library/redis', 'library/redis'],
+    ['my.app', 'my.app'],
+    ['<none>', '<none>'],
+  ])('显示名称 %s 保留组织路径：%s', (input, expected) => {
+    expect(displayImageName(input)).toBe(expected)
+  })
+
   it('拆分名称与标签；缺标签默认 latest，名称统一转小写', () => {
     expect(parseImageReference('redis:8-alpine')).toEqual({
       ok: true,
