@@ -47,8 +47,9 @@ type catalogResponse struct {
 type catalogFetcher func(ctx context.Context, target registryRequestTarget, path string) (catalogResponse, error)
 type tagsFetcher func(ctx context.Context, target registryRequestTarget, path string, token string) (catalogResponse, error)
 
-// requestRegistryJSON 执行一次无凭证（可带 Bearer）的 HTTPS GET。
-func requestRegistryJSON(ctx context.Context, target registryRequestTarget, path string, maxBytes int64, token string, subject string) (catalogResponse, error) {
+// newRegistryTransport 建连接缝：addresses 非空时钉 IP 建连，TLS 以主机名校验证书
+// （防 DNS rebinding TOCTOU），IP 只用于建连。目录、标签与测速探针共用。
+func newRegistryTransport(target registryRequestTarget) *http.Transport {
 	hostname, _, err := net.SplitHostPort(target.host)
 	if err != nil {
 		hostname = target.host
@@ -66,9 +67,14 @@ func requestRegistryJSON(ctx context.Context, target registryRequestTarget, path
 			dialer := &net.Dialer{}
 			return dialer.DialContext(ctx, network, net.JoinHostPort(pinned, port))
 		}
-		// TLS 以主机名校验证书（防 DNS rebinding TOCTOU），IP 只用于建连。
 		transport.TLSClientConfig = &tls.Config{ServerName: hostname}
 	}
+	return transport
+}
+
+// requestRegistryJSON 执行一次无凭证（可带 Bearer）的 HTTPS GET。
+func requestRegistryJSON(ctx context.Context, target registryRequestTarget, path string, maxBytes int64, token string, subject string) (catalogResponse, error) {
+	transport := newRegistryTransport(target)
 
 	reqCtx, cancel := context.WithTimeout(ctx, catalogTimeout)
 	defer cancel()
