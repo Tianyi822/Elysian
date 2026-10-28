@@ -501,6 +501,55 @@ describe('createHttpContainersAdapter', () => {
     vi.unstubAllGlobals()
   })
 
+  it('下载进度之后断流保留未确认提示，仓库错误帧则保留真实原因', async () => {
+    const encoder = new TextEncoder()
+    let stream!: ReadableStreamDefaultController<Uint8Array>
+    const body = new ReadableStream<Uint8Array>({ start(controller) { stream = controller } })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(body)))
+    try {
+      const onProgress = vi.fn()
+      const pending = createHttpContainersAdapter().pullImage({ name: 'mysql', tag: 'latest' }, onProgress)
+      const failed = expect(pending).rejects.toThrow('镜像拉取连接中断，结果尚未确认，请刷新镜像列表核实后再重试')
+      stream.enqueue(encoder.encode('{"type":"progress","progress":{"phase":"downloading","currentBytes":50,"totalBytes":100}}\n'))
+      await vi.waitFor(() => expect(onProgress).toHaveBeenCalled())
+      stream.error(new Error('连接重置'))
+      await failed
+      vi.stubGlobal('fetch', vi.fn(async () => new Response('{"type":"progress","progress":{"phase":"downloading"}}\n{"type":"error","error":"no space left on device"}\n')))
+      await expect(createHttpContainersAdapter().pullImage({ name: 'mysql', tag: 'latest' })).rejects.toThrow('no space left on device')
+    } finally { vi.unstubAllGlobals() }
+  })
+
+  it('停止拉取传递信号并关闭进度流，返回明确取消错误', async () => {
+    const cancel = vi.fn()
+    const body = new ReadableStream<Uint8Array>({ cancel })
+    const fetchMock = vi.fn(async () => new Response(body))
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const controller = new AbortController()
+      const onProgress = vi.fn()
+      const pending = createHttpContainersAdapter().pullImage({ name: 'redis', tag: 'latest' }, onProgress, controller.signal)
+      const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+      await vi.waitFor(() => expect(body.locked).toBe(true))
+      controller.abort()
+      await rejected
+      expect(fetchMock).toHaveBeenCalledWith('/api/docker/images/pull/stream', expect.objectContaining({ signal: controller.signal }))
+      expect(cancel).toHaveBeenCalledTimes(1)
+      expect(body.locked).toBe(false)
+      expect(onProgress).not.toHaveBeenCalled()
+    } finally { vi.unstubAllGlobals() }
+  })
+
+  it('提交前已停止时不发起拉取请求', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const controller = new AbortController()
+      controller.abort()
+      await expect(createHttpContainersAdapter().pullImage({ name: 'redis', tag: 'latest' }, undefined, controller.signal)).rejects.toMatchObject({ name: 'AbortError' })
+      expect(fetchMock).not.toHaveBeenCalled()
+    } finally { vi.unstubAllGlobals() }
+  })
+
   it('removeImage() DELETE /images/:id，204 不解析 JSON', async () => {
     const fetchMock = vi.fn(async () => new Response(null, { status: 204 }))
     vi.stubGlobal('fetch', fetchMock)

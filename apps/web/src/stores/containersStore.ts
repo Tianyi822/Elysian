@@ -18,6 +18,7 @@ import {
 } from '../features/container/containerCopy'
 import { getLastContainerSample, onStreamEvent } from './eventStreamStore'
 import { useNotificationStore } from './notificationStore'
+import { abortableDelay, awaitAbortable, throwIfAborted } from '../utils/abortable'
 
 type ContainerTerminalStatus = 'connecting' | 'connected' | 'error'
 
@@ -85,6 +86,7 @@ let activeGateway: ElysianGateway | undefined
 let imageRevision = 0
 let imageRefreshSequence = 0
 let imagePullSequence = 0
+let imagePullController: AbortController | undefined
 
 async function refreshAfterResync(): Promise<void> {
   const gateway = activeGateway
@@ -194,7 +196,8 @@ export const useContainersStore = create<{
   createOpen: boolean
   creating: boolean
   removingImageIds: readonly string[]
-  pullingImage?: { name: string; tag: string; registry?: string; progress?: ImagePullProgress }
+  pullingImage?: { name: string; tag: string; registry?: string; progress?: ImagePullProgress; cancelling?: boolean }
+  imagePullError?: { name: string; tag: string; registry?: string; message: string }
   load: (gateway: ElysianGateway) => Promise<void>
   refreshImages: (gateway: ElysianGateway, options?: { notify?: boolean }) => Promise<void>
   setLiveStatus: (status: 'live' | 'connecting') => void
@@ -206,6 +209,8 @@ export const useContainersStore = create<{
   createContainer: (gateway: ElysianGateway, input: ContainerCreateInput) => Promise<void>
   removeImage: (gateway: ElysianGateway, imageId: string) => Promise<void>
   pullImage: (gateway: ElysianGateway, input: { name: string; tag: string; registry?: string }) => Promise<void>
+  cancelImagePull: () => void
+  dismissImagePullError: () => void
   openDetail: (containerId: string) => void
   closeDetail: () => void
   openTerminal: (gateway: ElysianGateway, containerId: string) => Promise<void>
@@ -372,18 +377,23 @@ export const useContainersStore = create<{
   async pullImage(gateway, input) {
     if (get().pullingImage) return
     const pullSequence = ++imagePullSequence
+    const controller = new AbortController()
+    imagePullController = controller
     imageRevision += 1
-    set({ pullingImage: { name: input.name, tag: input.tag, registry: input.registry } })
+    set({ pullingImage: { name: input.name, tag: input.tag, registry: input.registry }, imagePullError: undefined })
     try {
       if (!isDockerRuntime()) {
         // 模拟传输耗时后再落数据集；测试用假计时器推进这一段。
-        await new Promise((resolve) => setTimeout(resolve, PULL_DELAY_MS))
+        await abortableDelay(PULL_DELAY_MS, controller.signal)
       }
-      const image = await gateway.containers.pullImage(input, (progress) => {
-        set((state) => state.pullingImage && imagePullSequence === pullSequence
+      throwIfAborted(controller.signal)
+      const image = await awaitAbortable(gateway.containers.pullImage(input, (progress) => {
+        set((state) => state.pullingImage && imagePullSequence === pullSequence && !controller.signal.aborted
           ? { pullingImage: { ...state.pullingImage, progress } }
           : state)
-      })
+      }, controller.signal), controller.signal)
+      if (imagePullSequence !== pullSequence) return
+      throwIfAborted(controller.signal)
       imageRevision += 1
       useNotificationStore.getState().notify({
         tone: 'success',
@@ -401,9 +411,14 @@ export const useContainersStore = create<{
         pullingImage: undefined,
       }))
     } catch (error) {
+      if (imagePullSequence !== pullSequence) return
       const detail = error instanceof Error ? error.message : '未知错误'
-      useNotificationStore.getState().notify({ tone: 'danger', message: `拉取镜像失败：${detail}` })
-      set({ pullingImage: undefined })
+      useNotificationStore.getState().notify(controller.signal.aborted
+        ? { tone: 'info', message: `已取消镜像 ${input.name}:${input.tag} 的拉取请求` }
+        : { tone: 'danger', message: `拉取镜像失败：${detail}` })
+      imageRevision += 1
+      // 失败留在镜像列表中，避免短暂通知消失后只剩「进度突然没了」。
+      set({ pullingImage: undefined, imagePullError: controller.signal.aborted ? undefined : { ...input, message: detail } })
       try {
         const revision = imageRevision
         const images = await gateway.containers.listImages()
@@ -411,8 +426,19 @@ export const useContainersStore = create<{
       } catch {
         // 刷新失败时保留当前列表。
       }
+    } finally {
+      if (imagePullController === controller) imagePullController = undefined
     }
   },
+
+  cancelImagePull() {
+    const pulling = get().pullingImage
+    if (!pulling || pulling.cancelling || !imagePullController) return
+    set({ pullingImage: { ...pulling, cancelling: true } })
+    imagePullController.abort()
+  },
+
+  dismissImagePullError() { set({ imagePullError: undefined }) },
 
   async openTerminal(gateway, containerId) {
     const current = get().terminal

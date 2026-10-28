@@ -1,4 +1,5 @@
 import { createMockWebsiteDeployments } from './websiteDeploymentsMock'
+import { abortableDelay, throwIfAborted } from '../../utils/abortable'
 import type { FileDownload, FileUploadCheck, FileUploadOptions } from '../../contracts/adapters'
 import { MOCK_WEBSITE_RUNTIME_REPORT } from './websiteRuntimeCatalog'
 import {
@@ -1135,7 +1136,8 @@ export class MockContainerAdapter implements ContainerAdapter {
     dataset.images = dataset.images.filter((i) => i.id !== imageId)
   }
 
-  async pullImage(input: { name: string; tag: string; registry?: string }, onProgress?: (progress: ImagePullProgress) => void): Promise<ContainerImage> {
+  async pullImage(input: { name: string; tag: string; registry?: string }, onProgress?: (progress: ImagePullProgress) => void, signal?: AbortSignal): Promise<ContainerImage> {
+    throwIfAborted(signal)
     // registry 只是界面记录的拉取源：mock 不区分来源，全部走同一份确定性数据。
     const dataset = this.dataset()
     if (dataset.images.some((i) => i.name === input.name && i.tag === input.tag)) {
@@ -1144,9 +1146,10 @@ export class MockContainerAdapter implements ContainerAdapter {
     if (onProgress) {
       for (const currentBytes of [0, 25, 65, 100]) {
         onProgress({ phase: currentBytes === 100 ? 'finalizing' : 'downloading', layerId: '演示镜像层', currentBytes: currentBytes * 1024 * 1024, totalBytes: 100 * 1024 * 1024 })
-        await new Promise((resolve) => setTimeout(resolve, 100))
+        await abortableDelay(100, signal)
       }
     }
+    throwIfAborted(signal)
     const { id, digest, sizeMb } = mockImageArtifact(input.name, input.tag)
     const image: ContainerImage = {
       id,

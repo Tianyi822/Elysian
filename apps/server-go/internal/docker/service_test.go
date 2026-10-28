@@ -507,6 +507,28 @@ func TestPullBasic(t *testing.T) {
 	t.Fatal("未发 pull create")
 }
 
+func TestPullEngineFailurePreservesReason(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+		want   string
+	}{
+		{"registry", 500, `{"message":"failed to copy: unexpected EOF"}`, "拉取镜像失败（HTTP 500）：failed to copy: unexpected EOF"},
+		{"storage", 500, `{"message":"no space left on device"}`, "拉取镜像失败（HTTP 500）：no space left on device"},
+		{"empty", 502, ``, "拉取镜像失败（HTTP 502）：Docker 未返回具体原因"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			listCount := 0
+			engine := newFakeEngine(pullScript(&listCount, tc.status, tc.body))
+			_, err := newService(engine, nil).Pull(context.Background(), mustDecode(t, `{"name":"mysql","tag":"latest"}`), nil)
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("拉取错误：%v，期望 %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestPullAlreadyExists(t *testing.T) {
 	listCount := 0
 	engine := newFakeEngine(func(call engineCall) (int, string, bool) {

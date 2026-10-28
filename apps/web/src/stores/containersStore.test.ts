@@ -59,7 +59,7 @@ beforeEach(() => {
     status: 'idle', liveStatus: 'live', errorMessage: undefined, containers: [], images: [], imageRefreshStatus: 'idle', samples: {},
     view: 'grid', statusFilter: 'all', search: '', detailContainerId: undefined,
     terminal: undefined, busyActions: [], createOpen: false, creating: false, removingImageIds: [],
-    pullingImage: undefined,
+    pullingImage: undefined, imagePullError: undefined,
   })
   useNotificationStore.setState({ notifications: [] })
   const adapter: EventsAdapter = {
@@ -685,6 +685,51 @@ describe('拉取镜像', () => {
     vi.useRealTimers()
   })
 
+  it('准备阶段也能停止，不派发拉取且通知为取消', async () => {
+    vi.useFakeTimers()
+    const pullImage = vi.fn()
+    const listImages = vi.fn(async () => [...CONTAINER_IMAGES])
+    const pending = useContainersStore.getState().pullImage(gatewayWith({ pullImage, listImages }), { name: 'cancel-preparing', tag: 'latest' })
+    useContainersStore.getState().cancelImagePull()
+    useContainersStore.getState().cancelImagePull()
+    await pending
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(pullImage).not.toHaveBeenCalled()
+    expect(listImages).toHaveBeenCalledTimes(1)
+    expect(useContainersStore.getState().pullingImage).toBeUndefined()
+    expect(useContainersStore.getState().imagePullError).toBeUndefined()
+    expect(useNotificationStore.getState().notifications).toEqual([expect.objectContaining({ tone: 'info', message: '已取消镜像 cancel-preparing:latest 的拉取请求' })])
+  })
+
+  it('停止在途拉取传递信号，迟到的进度与成功不污染下一次拉取', async () => {
+    vi.useFakeTimers()
+    let oldProgress!: (progress: { phase: 'preparing' }) => void
+    let finish!: (image: ContainerImage) => void
+    const pullImage = vi.fn<ElysianGateway['containers']['pullImage']>((_input, onProgress) => {
+      oldProgress = onProgress!
+      return new Promise<ContainerImage>((resolve) => { finish = resolve })
+    })
+    const gateway = gatewayWith({ pullImage })
+    const first = useContainersStore.getState().pullImage(gateway, { name: 'cancel-old', tag: 'latest' })
+    await vi.advanceTimersByTimeAsync(1500)
+    const signal = pullImage.mock.calls[0]![2]
+    useContainersStore.getState().cancelImagePull()
+    expect(signal?.aborted).toBe(true)
+    await first
+
+    const second = useContainersStore.getState().pullImage(gatewayWith(), { name: 'new-pull', tag: 'latest' })
+    oldProgress({ phase: 'preparing' })
+    finish({ ...CONTAINER_IMAGES[0]!, id: 'cancel-late', name: 'cancel-old', tag: 'latest' })
+    await Promise.resolve()
+    expect(useContainersStore.getState().pullingImage?.name).toBe('new-pull')
+    expect(useContainersStore.getState().pullingImage?.progress).toBeUndefined()
+    await vi.advanceTimersByTimeAsync(1500)
+    await second
+    expect(useContainersStore.getState().images.some((row) => row.name === 'cancel-old')).toBe(false)
+    expect(useContainersStore.getState().images.some((row) => row.name === 'new-pull')).toBe(true)
+    expect(useNotificationStore.getState().notifications.some((row) => row.tone === 'success' && row.message.includes('cancel-old'))).toBe(false)
+  })
+
   it('接收适配器实时层进度并写入拉取中行，完成后清除进度', async () => {
     vi.useFakeTimers()
     await useContainersStore.getState().load(gatewayWith())
@@ -704,12 +749,12 @@ describe('拉取镜像', () => {
   })
 
   // 成功路径由 ContainerPage.test 的拉取全流程端到端覆盖，这里只测失败分支。
-  it('pullImage 失败发危险通知并复位拉取中状态', async () => {
+  it('pullImage 失败回读列表，并保留源地址与错误直到关闭或新拉取', async () => {
     vi.useFakeTimers()
     await useContainersStore.getState().load(gatewayWith())
     const promise = useContainersStore.getState().pullImage(
       gatewayWith({ pullImage: async () => { throw new Error('镜像已存在：redis:8-alpine') } }),
-      { name: 'redis', tag: '8-alpine' },
+      { name: 'redis', tag: '8-alpine', registry: 'https://docker.1ms.run' },
     )
     await vi.advanceTimersByTimeAsync(1500)
     await promise
@@ -717,9 +762,16 @@ describe('拉取镜像', () => {
     const state = useContainersStore.getState()
     expect(state.images).toHaveLength(8)
     expect(state.pullingImage).toBeUndefined()
+    expect(state.imagePullError).toEqual({ name: 'redis', tag: '8-alpine', registry: 'https://docker.1ms.run', message: '镜像已存在：redis:8-alpine' })
     expect(useNotificationStore.getState().notifications[0]).toMatchObject({
       tone: 'danger',
       message: '拉取镜像失败：镜像已存在：redis:8-alpine',
     })
+    useNotificationStore.getState().clear()
+    expect(useContainersStore.getState().imagePullError?.message).toBe('镜像已存在：redis:8-alpine')
+    const next = useContainersStore.getState().pullImage(gatewayWith(), { name: 'next', tag: 'latest' })
+    expect(useContainersStore.getState().imagePullError).toBeUndefined()
+    await vi.advanceTimersByTimeAsync(1500)
+    await next
   })
 })

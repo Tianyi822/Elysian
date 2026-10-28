@@ -27,6 +27,7 @@ import { createContainerTerminalWsAdapter } from './containerTerminalWsAdapter'
 import { fetchWithSession, reportUnauthorized } from './unauthorized'
 import type { EventSourceFactory, EventSourceLike } from '../sse/eventsAdapter'
 import { parseElysianEvent, SseFrameParser } from '../sse/parse'
+import { createAbortError, throwIfAborted } from '../../utils/abortable'
 
 /** 工作区上传/编辑的时限：长请求用自己的时限，不套 60 秒普通写超时（AGENTS.md 时限约定）。 */
 const APP_UPLOAD_TIMEOUT = 180_000
@@ -686,15 +687,18 @@ async function readNoContent(url: string, init?: RequestInit): Promise<void> {
   }
 }
 
-async function readImagePullStream(response: Response, onProgress?: (progress: ImagePullProgress) => void): Promise<ContainerImage> {
+async function readImagePullStream(response: Response, onProgress?: (progress: ImagePullProgress) => void, signal?: AbortSignal): Promise<ContainerImage> {
   if (!response.body) throw new Error('镜像拉取未返回进度流')
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
   let image: ContainerImage | undefined
   let complete = false
+  const cancelRead = () => { void reader.cancel().catch(() => undefined) }
+  signal?.addEventListener('abort', cancelRead, { once: true })
 
   const consume = (line: string) => {
+    throwIfAborted(signal)
     if (!line.trim()) return
     let frame: unknown
     try { frame = JSON.parse(line) } catch { throw new Error('镜像拉取进度格式无效') }
@@ -725,8 +729,13 @@ async function readImagePullStream(response: Response, onProgress?: (progress: I
 
   try {
     for (;;) {
+      throwIfAborted(signal)
       let result: ReadableStreamReadResult<Uint8Array>
-      try { result = await reader.read() } catch { throw new Error('镜像拉取连接中断') }
+      try { result = await reader.read() } catch {
+        if (signal?.aborted) throw createAbortError()
+        throw new Error('镜像拉取连接中断，结果尚未确认，请刷新镜像列表核实后再重试')
+      }
+      throwIfAborted(signal)
       if (result.done) break
       buffer += decoder.decode(result.value, { stream: true })
       for (;;) {
@@ -741,11 +750,15 @@ async function readImagePullStream(response: Response, onProgress?: (progress: I
     }
     buffer += decoder.decode()
     if (buffer) consume(buffer)
-    if (!image) throw new Error('镜像拉取连接提前结束')
+    if (!image) throw new Error('镜像拉取连接提前结束，结果尚未确认，请刷新镜像列表核实后再重试')
     complete = true
     return image
   } finally {
-    if (!complete) await reader.cancel().catch(() => undefined)
+    signal?.removeEventListener('abort', cancelRead)
+    if (!complete) {
+      const cancelled = reader.cancel().catch(() => undefined)
+      if (!signal?.aborted) await cancelled
+    }
     reader.releaseLock()
   }
 }
@@ -944,15 +957,18 @@ export function createHttpContainersAdapter(
       })
     },
 
-    async pullImage(input, onProgress) {
+    async pullImage(input, onProgress, signal) {
+      throwIfAborted(signal)
       let response: Response
       try {
         response = await fetchWithSession(`${baseUrl}/images/pull/stream`, {
           method: 'POST',
           headers: { 'content-type': 'application/json', accept: 'application/x-ndjson' },
           body: JSON.stringify(input),
+          ...(signal ? { signal } : {}),
         })
       } catch {
+        if (signal?.aborted) throw createAbortError()
         throw new Error('容器管理请求网络失败')
       }
       if (!response.ok) {
@@ -961,7 +977,7 @@ export function createHttpContainersAdapter(
         const detail = await readErrorDetail(response)
         throw new Error(detail ?? `镜像拉取请求失败：HTTP ${response.status}`)
       }
-      return readImagePullStream(response, onProgress)
+      return readImagePullStream(response, onProgress, signal)
     },
     watchLive,
   }

@@ -200,8 +200,8 @@ export interface ContainerAdapter {
   cancelAppBuild(slug: string, taskId: string): Promise<void>
   /** 删除镜像：仅允许删除未被引用的镜像；Docker 运行时删除真实镜像，本地演示改写内存数据集。 */
   removeImage(imageId: string): Promise<void>
-  /** 拉取镜像：Docker 运行时从真实镜像仓库拉取并回报进度，本地演示确定性生成摘要与体积；同名同标签视为已存在。 */
-  pullImage(input: { name: string; tag: string; registry?: string }, onProgress?: (progress: ImagePullProgress) => void): Promise<ContainerImage>
+  /** 拉取镜像并回报进度；取消信号关闭真实拉取连接，本地演示停止且不生成新镜像。 */
+  pullImage(input: { name: string; tag: string; registry?: string }, onProgress?: (progress: ImagePullProgress) => void, signal?: AbortSignal): Promise<ContainerImage>
   /**
    * 容器状态 SSE：Docker 运行时订阅 /api/docker/events；mock 立即上报 live 并返回空退订
    * （采样仍由 gateway 的 containerEvents.wrap 负责）。

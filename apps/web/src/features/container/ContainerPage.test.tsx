@@ -38,7 +38,7 @@ function pageGateway(overrides: Partial<ElysianGateway['containers']> = {}): Ely
       disconnectTerminal: (sessionId: string) => base.containers.disconnectTerminal(sessionId),
       create: (input: ContainerCreateInput) => base.containers.create(input),
       removeImage: (imageId: string) => base.containers.removeImage(imageId),
-      pullImage: (input: { name: string; tag: string }) => base.containers.pullImage(input),
+      pullImage: (...args: Parameters<ElysianGateway['containers']['pullImage']>) => base.containers.pullImage(...args),
       watchLive: (handlers: Parameters<typeof base.containers.watchLive>[0]) => base.containers.watchLive(handlers),
       requestAction: async (id: string) => CONTAINERS.find((c) => c.id === id)!,
       // 工作区直通 mock 实现：页面测试不覆盖它时也该拿到可用的演示行为。
@@ -75,7 +75,7 @@ beforeEach(() => {
     status: 'idle', errorMessage: undefined, containers: [], images: [], imageRefreshStatus: 'idle', samples: {},
     view: 'grid', statusFilter: 'all', search: '', detailContainerId: undefined,
     terminal: undefined, busyActions: [], createOpen: false, creating: false, removingImageIds: [],
-    pullingImage: undefined,
+    pullingImage: undefined, imagePullError: undefined,
   })
 })
 
@@ -461,6 +461,47 @@ describe('拉取镜像', () => {
     expect(screen.getByText(/下载镜像层 abcdef123456/)).toBeInTheDocument()
     expect(screen.getByText('5.0 MB / 10.0 MB')).toBeInTheDocument()
     expect(screen.getByText('50%')).toBeInTheDocument()
+  })
+
+  it('点击停止拉取取消在途请求并回读列表，不把停止显示为失败', async () => {
+    const user = userEvent.setup()
+    const pullImage = vi.fn<ElysianGateway['containers']['pullImage']>((_input, _progress, signal) => new Promise<ContainerImage>((_, reject) => {
+      signal?.addEventListener('abort', () => reject(new DOMException('操作已取消', 'AbortError')), { once: true })
+    }))
+    const gateway = pageGateway({ pullImage })
+    renderApp('/docker', { gateway })
+    await screen.findByRole('list', { name: '容器列表' })
+    await user.click(screen.getByRole('button', { name: '镜像' }))
+    await screen.findByRole('table', { name: '镜像列表' })
+    const pending = useContainersStore.getState().pullImage(gateway, { name: 'stop-test', tag: 'latest' })
+    const stop = await screen.findByRole('button', { name: '停止拉取' })
+    await waitFor(() => expect(pullImage).toHaveBeenCalled())
+    const signal = pullImage.mock.calls[0]![2]
+    await user.click(stop)
+    await pending
+    expect(signal?.aborted).toBe(true)
+    expect(screen.queryByRole('button', { name: '停止拉取' })).not.toBeInTheDocument()
+    expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ tone: 'info', message: '已取消镜像 stop-test:latest 的拉取请求' }))
+    expect(useNotificationStore.getState().notifications.some((row) => row.tone === 'danger')).toBe(false)
+  })
+
+  it('拉取中断后错误原因常驻列表，通知清空及刷新不会使原因消失，可以手动关闭', async () => {
+    const { user } = await openImagesView()
+    await act(async () => {
+      useContainersStore.setState({ imagePullError: {
+        name: 'mysql', tag: 'latest', registry: 'https://docker.1ms.run',
+        message: '镜像拉取连接中断，结果尚未确认，请刷新镜像列表核实后再重试',
+      } })
+      useNotificationStore.getState().clear()
+    })
+    const alert = screen.getByRole('alert')
+    expect(alert).toHaveTextContent('docker.1ms.run/mysql:latest')
+    expect(alert).toHaveTextContent('镜像拉取连接中断')
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '刷新镜像' }))
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
+    await user.click(screen.getByRole('button', { name: '关闭拉取错误' }))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it('镜像视图有拉取入口，打开弹窗见演示徽章、源地址与引用输入', async () => {

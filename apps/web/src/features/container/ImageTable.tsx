@@ -34,6 +34,9 @@ export function ImageTable({
   const removingImageIds = useContainersStore((s) => s.removingImageIds)
   const removeImage = useContainersStore((s) => s.removeImage)
   const pullingImage = useContainersStore((s) => s.pullingImage)
+  const cancelImagePull = useContainersStore((s) => s.cancelImagePull)
+  const imagePullError = useContainersStore((s) => s.imagePullError)
+  const dismissImagePullError = useContainersStore((s) => s.dismissImagePullError)
   const [pendingDelete, setPendingDelete] = useState<ContainerImage | null>(null)
 
   const docker = isDockerRuntime()
@@ -129,17 +132,44 @@ export function ImageTable({
               </tr>
             )
           })}
+          {imagePullError ? (
+            <tr>
+              <td colSpan={5} className="px-4 py-3">
+                <div role="alert" className="flex items-start gap-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-danger">拉取镜像失败</p>
+                    <p className="mt-1 break-all font-mono text-xs text-fg-muted">
+                      {imagePullError.registry ? `${registryHost(imagePullError.registry)}/` : ''}{imagePullError.name}:{imagePullError.tag}
+                    </p>
+                    <p className="mt-1 whitespace-pre-wrap break-words text-xs text-danger">{imagePullError.message}</p>
+                  </div>
+                  <button type="button" onClick={dismissImagePullError} aria-label="关闭拉取错误"
+                    className="shrink-0 rounded-lg border border-control-line px-2.5 py-1 text-xs text-fg-muted transition-colors hover:text-fg">
+                    关闭
+                  </button>
+                </div>
+              </td>
+            </tr>
+          ) : null}
           {pullingImage ? (
             <tr>
               <td colSpan={5} className="px-4 py-3">
                 <div className="flex items-center gap-2 text-sm text-fg-muted">
                   <Loader2 aria-hidden size={14} className="shrink-0 animate-spin text-accent-fg" />
-                  <span className="min-w-0 truncate font-mono text-fg">
+                  <span className="min-w-0 flex-1 truncate font-mono text-fg">
                     {/* 完整拉取路径：源主机名 + 引用，与弹窗预览同一形状。 */}
                     {pullingImage.registry ? `${registryHost(pullingImage.registry)}/` : ''}
                     {pullingImage.name}:{pullingImage.tag}
                   </span>
-                  <span className="shrink-0 text-xs">拉取中…</span>
+                  <span className="shrink-0 text-xs">{pullingImage.cancelling ? '停止中…' : '拉取中…'}</span>
+                  <button
+                    type="button"
+                    onClick={cancelImagePull}
+                    disabled={pullingImage.cancelling}
+                    className="shrink-0 rounded-lg border border-control-line px-2.5 py-1 text-xs text-fg-muted transition-colors hover:border-danger hover:text-danger disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {pullingImage.cancelling ? '正在停止…' : '停止拉取'}
+                  </button>
                 </div>
                 <div className="mt-2 flex items-center gap-3 text-xs text-fg-muted">
                   <span className="min-w-0 truncate">

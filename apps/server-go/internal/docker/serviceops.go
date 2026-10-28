@@ -288,7 +288,8 @@ func (s *dockerService) Pull(ctx context.Context, body any, onProgress func(imag
 		return contract.ContainerImage{}, shared.InvalidRequest(decoderErr.Error())
 	}
 	if response.Status != http.StatusOK {
-		return contract.ContainerImage{}, fmt.Errorf("拉取镜像失败（HTTP %d）", response.Status)
+		value, _ := decodeOrderedJSON(response.Body)
+		return contract.ContainerImage{}, fmt.Errorf("拉取镜像失败（HTTP %d）：%s", response.Status, engineErrorMessage(value, "Docker 未返回具体原因"))
 	}
 	if err := readPullProgress(response.Body); err != nil {
 		return contract.ContainerImage{}, shared.InvalidRequest(err.Error())
