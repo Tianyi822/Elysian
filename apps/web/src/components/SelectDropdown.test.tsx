@@ -256,4 +256,26 @@ describe('自绘单选下拉', () => {
       'text-accent-fg',
     )
   })
+
+  it('行尾槽里的按钮可点击且不选中该项、不关菜单', async () => {
+    const user = userEvent.setup()
+    const onTrailing = vi.fn()
+    const onSelect = vi.fn()
+    renderDropdown({
+      onSelect,
+      items: [
+        { value: 'all', label: '全部', trailing: <button type="button" aria-label="行内动作" onClick={onTrailing}>x</button> },
+        { value: 'security', label: '安全设置' },
+        { value: 'files', label: '文件管理' },
+      ],
+    })
+    await user.click(screen.getByRole('button', { name: '操作分类筛选：全部' }))
+    const option = screen.getByRole('menuitemradio', { name: '全部' })
+    await user.click(within(option).getByRole('button', { name: '行内动作' }))
+    expect(onTrailing).toHaveBeenCalledTimes(1)
+    expect(onSelect).not.toHaveBeenCalled()
+    expect(screen.getByRole('menuitemradio', { name: '全部' })).toBeInTheDocument()
+    await user.click(screen.getByRole('menuitemradio', { name: '文件管理' }))
+    expect(onSelect).toHaveBeenCalledWith('files')
+  })
 })

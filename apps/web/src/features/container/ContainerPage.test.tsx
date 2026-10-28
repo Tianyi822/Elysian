@@ -28,6 +28,7 @@ function pageGateway(overrides: Partial<ElysianGateway['containers']> = {}): Ely
         base.containers.searchImageNames(term, registry, signal),
       imageTags: (name: string, registry?: string, signal?: AbortSignal) =>
         base.containers.imageTags(name, registry, signal),
+      probeRegistry: (registry: string, signal?: AbortSignal) => base.containers.probeRegistry(registry, signal),
       createPolicy: () => base.containers.createPolicy(),
       connectTerminal: (id: string, handlers: Parameters<typeof base.containers.connectTerminal>[1]) =>
         base.containers.connectTerminal(id, handlers),
@@ -504,15 +505,14 @@ describe('拉取镜像', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
-  it('镜像视图有拉取入口，打开弹窗见演示徽章、源地址与引用输入', async () => {
+  it('镜像视图有拉取入口，打开弹窗见演示徽章、源下拉与引用输入', async () => {
     const { user } = await openImagesView()
     await user.click(screen.getByRole('button', { name: /拉取镜像/ }))
     const dialog = await screen.findByRole('dialog', { name: '拉取镜像' })
     expect(dialog.textContent).toContain('演示 · 待接入真实执行')
     expect(within(dialog).getByLabelText('镜像引用')).toBeInTheDocument()
-    // 源地址留空即默认官方：预览直接显示官方主机名。
-    const address = within(dialog).getByLabelText('自定义镜像源地址')
-    expect(address).toHaveValue('')
+    // 源默认选中官方预设：预览直接显示官方主机名。
+    expect(within(dialog).getByRole('button', { name: '镜像源：官方 Docker Hub' })).toBeInTheDocument()
     await user.type(within(dialog).getByLabelText('镜像引用'), 'redis:9')
     expect(within(dialog).getByText('registry-1.docker.io/redis:9')).toBeInTheDocument()
   })
@@ -521,6 +521,9 @@ describe('拉取镜像', () => {
     const { user } = await openImagesView()
     await user.click(screen.getByRole('button', { name: /拉取镜像/ }))
     const dialog = await screen.findByRole('dialog', { name: '拉取镜像' })
+    await user.click(within(dialog).getByRole('button', { name: /^镜像源：/ }))
+    // 菜单经 Portal 挂到 body，不在 dialog 节点内。
+    await user.click(screen.getByRole('menuitemradio', { name: '自定义地址…' }))
     await user.type(within(dialog).getByLabelText('自定义镜像源地址'), 'docker.1ms.run')
     await user.type(within(dialog).getByLabelText('镜像引用'), 'redis:9')
     expect(within(dialog).getByText('docker.1ms.run/redis:9')).toBeInTheDocument()

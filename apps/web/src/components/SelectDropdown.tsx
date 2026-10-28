@@ -57,7 +57,7 @@ export function SelectDropdown<T extends string>({
   label?: string
   /** 筛选生效中：描边、底色与文字走 accent，让「有筛选」不只在浮层里看得见。 */
   active?: boolean
-  items: readonly { value: T; label: string; icon?: ReactNode; description?: string }[]
+  items: readonly { value: T; label: string; icon?: ReactNode; description?: string; trailing?: ReactNode }[]
   /** undefined 表示尚未选择，触发器显示 fallbackLabel。 */
   value: T | undefined
   onSelect: (value: T) => void
@@ -258,7 +258,7 @@ export function SelectDropdown<T extends string>({
                     value={item.value}
                     data-value={item.value}
                     textValue={item.label}
-                    aria-label={item.description ? item.label : undefined}
+                    aria-label={item.description || item.trailing ? item.label : undefined}
                     aria-describedby={item.description ? `${descriptionId}-${index}` : undefined}
                     onPointerMove={searchable ? (event) => { if (document.activeElement === searchInput.current) event.preventDefault() } : undefined}
                     onKeyDown={searchable ? (event) => {
@@ -275,6 +275,13 @@ export function SelectDropdown<T extends string>({
                       <span className={`block text-left leading-5 ${mono ? 'font-mono' : ''}`}>{item.label}</span>
                       <span id={`${descriptionId}-${index}`} className="mt-1 block text-xs font-normal leading-5 text-fg-muted">{item.description}</span>
                     </span> : <span className={`min-w-0 truncate text-left tabular-nums ${mono ? 'font-mono' : ''}`}>{item.label}</span>}
+                    {item.trailing ? <span
+                      className="ml-auto flex shrink-0 items-center gap-1.5"
+                      onClick={(event) => event.stopPropagation()}
+                      onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') event.stopPropagation() }}
+                    >
+                      {item.trailing}
+                    </span> : null}
                     {item.value === value ? <Check aria-hidden size={detailed ? 20 : 13} className="shrink-0" /> : null}
                   </DropdownMenu.RadioItem>
                 ))}

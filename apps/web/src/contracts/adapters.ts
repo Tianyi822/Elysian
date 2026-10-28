@@ -137,6 +137,14 @@ export type ContainerHostPolicy = {
   reservedPorts: readonly number[]
 }
 
+/** 镜像源测速结果：限量下载样本的耗时与字节；ok=false 时 reason 为中文可操作原因。 */
+export type RegistryProbeResult = {
+  ok: boolean
+  elapsedMs?: number
+  bytes?: number
+  reason?: string
+}
+
 export interface ContainerAdapter {
   list(): Promise<readonly Container[]>
   listImages(): Promise<readonly ContainerImage[]>
@@ -144,6 +152,8 @@ export interface ContainerAdapter {
   searchImageNames(term: string, registry?: string, signal?: AbortSignal): Promise<{ names: readonly string[]; searchable: boolean }>
   /** 查询选定仓库的公开版本标签；不可列出时仍允许手动输入引用。 */
   imageTags(name: string, registry?: string, signal?: AbortSignal): Promise<{ tags: readonly string[]; searchable: boolean }>
+  /** 限量下载样本测镜像源带宽；只由用户点击触发，结果不持久化。 */
+  probeRegistry(registry: string, signal?: AbortSignal): Promise<RegistryProbeResult>
   /** Docker 运行时读取挂载根与保留端口；mock 返回演示策略。 */
   createPolicy(): Promise<ContainerHostPolicy>
   /** 打开容器终端流式会话；mock 在内存求值，Docker 运行时经 WebSocket 接 exec PTY。 */

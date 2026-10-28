@@ -1,5 +1,6 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { X } from '../../components/icons'
+import { Gauge, X } from '../../components/icons'
+import { IconButton } from '../../components/IconButton'
 import { useEffect, useId, useRef, useState } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
@@ -7,7 +8,9 @@ import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { useContainersStore } from '../../stores/containersStore'
 import { useFeedbackNotification } from '../../components/useFeedbackNotification'
+import type { RegistryProbeResult } from '../../contracts/adapters'
 import { readStoredImageRegistry, writeStoredImageRegistry } from './imagePullPreferences'
+import { CUSTOM_REGISTRY_ID, IMAGE_REGISTRY_PRESETS, matchRegistryPreset } from './imageRegistryPresets'
 import {
   DEFAULT_IMAGE_REGISTRY,
   isOfficialImageRegistry,
@@ -17,15 +20,21 @@ import {
 } from './imageReference'
 
 /**
- * 拉取镜像弹窗：拉取源 + 镜像引用两个输入，格式与查重行内提示，
- * 有效引用实时预览完整拉取路径。提交后弹窗立即关闭，拉取中行与
+ * 拉取镜像弹窗：镜像源预设下拉（含自定义地址兜底与逐项测速）+ 镜像引用两个输入，
+ * 格式与查重行内提示，有效引用实时预览完整拉取路径。提交后弹窗立即关闭，拉取中行与
  * 完成通知在镜像列表里呈现；Docker 运行时为真实拉取，演示模式只作记录。
+ * 测速只由点击触发、结果不持久化：速度是时点事实，持久化就是过期的谎言。
  */
 
 const INPUT_CLASS =
   `${FORM_CONTROL_HEIGHT_CLASS} w-full rounded-lg border border-control-line bg-surface-raised px-2.5 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle`
 const FIELD_LABEL_CLASS = 'mb-2 block text-xs font-medium text-fg-muted'
 const FIELD_ERROR_CLASS = 'mt-1 text-xs text-danger'
+
+/** 测速耗时展示：1 秒内给毫秒，其余保留一位小数秒。 */
+function formatProbeDuration(ms: number): string {
+  return ms < 1000 ? `${ms} 毫秒` : `${(ms / 1000).toFixed(1)} 秒`
+}
 
 export function ImagePullDialog({ onClose }: { onClose: () => void }) {
   const gateway = useGateway()
@@ -35,7 +44,8 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
 
   const docker = isDockerRuntime()
 
-  const [registryAddress, setRegistryAddress] = useState(readStoredImageRegistry)
+  const [presetId, setPresetId] = useState<string>(() => matchRegistryPreset(readStoredImageRegistry())?.id ?? CUSTOM_REGISTRY_ID)
+  const [customAddress, setCustomAddress] = useState(readStoredImageRegistry)
   const [reference, setReference] = useState('')
   const [suggestions, setSuggestions] = useState<readonly string[]>([])
   const [suggestionStatus, setSuggestionStatus] = useState<'idle' | 'loading' | 'unavailable'>('idle')
@@ -48,7 +58,15 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
   const [tagStatus, setTagStatus] = useState<'idle' | 'loading' | 'unavailable'>('idle')
   const tagRequestSerial = useRef(0)
   const tagAbortRef = useRef<AbortController | null>(null)
+  const [probes, setProbes] = useState<Record<string, { busy: boolean; result?: RegistryProbeResult }>>({})
+  const probeAbortRef = useRef<Map<string, AbortController>>(new Map())
+  const [probeNotice, setProbeNotice] = useState<string | null>(null)
   const listId = useId()
+
+  const isCustomPreset = presetId === CUSTOM_REGISTRY_ID
+  const registryAddress = isCustomPreset
+    ? customAddress
+    : IMAGE_REGISTRY_PRESETS.find((preset) => preset.id === presetId)?.url ?? ''
 
   // 留空即默认官方地址；非空才校验格式。
   const registry = registryAddress.trim() || DEFAULT_IMAGE_REGISTRY
@@ -66,6 +84,39 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
   useFeedbackNotification(tagStatus === 'unavailable' ? '无法列出此镜像的版本，可在镜像引用中手动输入标签' : null, 'warning')
 
   useEffect(() => { writeStoredImageRegistry(registryAddress) }, [registryAddress])
+
+  const stopProbe = (id: string) => {
+    probeAbortRef.current.get(id)?.abort()
+    probeAbortRef.current.delete(id)
+  }
+
+  const runProbe = (id: string, url: string) => {
+    const host = registryHost(url)
+    if (!host || validateRegistryUrl(url)) return
+    stopProbe(id)
+    const controller = new AbortController()
+    probeAbortRef.current.set(id, controller)
+    setProbes((current) => ({ ...current, [id]: { busy: true, result: current[id]?.result } }))
+    setProbeNotice(`正在测速 ${host}…`)
+    void gateway.containers.probeRegistry(host, controller.signal)
+      .then((result) => {
+        if (controller.signal.aborted) return
+        setProbes((current) => ({ ...current, [id]: { busy: false, result } }))
+        setProbeNotice(result.ok
+          ? `测速完成：${host} 下载 1 MiB 用时 ${formatProbeDuration(result.elapsedMs ?? 0)}`
+          : `测速失败：${host} ${result.reason ?? '不可达'}`)
+      })
+      .catch(() => {
+        if (controller.signal.aborted) return
+        setProbes((current) => ({ ...current, [id]: { busy: false, result: { ok: false, reason: '测速请求失败' } } }))
+        setProbeNotice(`测速失败：${host} 测速请求失败`)
+      })
+  }
+
+  useEffect(() => {
+    const pending = probeAbortRef.current
+    return () => { pending.forEach((controller) => controller.abort()) }
+  }, [])
 
   useEffect(() => {
     const serial = ++tagRequestSerial.current
@@ -183,6 +234,45 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
     void pullImage(gateway, { ...parsed.reference, registry })
   }
 
+  const probeTrailing = (id: string, url: string) => {
+    const state = probes[id]
+    const host = registryHost(url)
+    const unusable = !host || Boolean(validateRegistryUrl(url))
+    return (
+      <>
+        {state?.result ? (
+          <span className={`text-xs tabular-nums ${state.result.ok ? 'text-fg-muted' : 'text-danger'}`}>
+            {state.result.ok ? formatProbeDuration(state.result.elapsedMs ?? 0) : '不可用'}
+          </span>
+        ) : null}
+        <IconButton
+          label={unusable ? '测速：先填写有效地址' : `测速 ${host}`}
+          variant="ghost"
+          disabled={unusable}
+          busy={state?.busy}
+          onPress={() => runProbe(id, url)}
+        >
+          <Gauge aria-hidden size={13} />
+        </IconButton>
+      </>
+    )
+  }
+
+  const sourceItems = [
+    ...IMAGE_REGISTRY_PRESETS.map((preset) => ({
+      value: preset.id,
+      label: preset.label,
+      description: preset.note,
+      trailing: probeTrailing(preset.id, preset.url),
+    })),
+    {
+      value: CUSTOM_REGISTRY_ID,
+      label: '自定义地址…',
+      description: isCustomPreset && customAddress.trim() ? registryHost(customAddress) : undefined,
+      trailing: probeTrailing(CUSTOM_REGISTRY_ID, customAddress),
+    },
+  ]
+
   return (
     <Dialog.Root open onOpenChange={(open) => { if (!open) onClose() }}>
       <Dialog.Portal>
@@ -213,28 +303,50 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
 
           <div className="flex-1 overflow-y-auto px-5 py-4">
             <label htmlFor="pull-registry" className={FIELD_LABEL_CLASS}>
-              自定义镜像源地址
+              镜像源
             </label>
-            <input
+            <SelectDropdown
               id="pull-registry"
-              value={registryAddress}
-              onChange={(event) => { invalidateSuggestions(); invalidateTags(); setRegistryAddress(event.target.value) }}
-              placeholder="留空使用官方地址 registry-1.docker.io"
-              autoComplete="off"
-              spellCheck={false}
-              aria-describedby={registryError ? 'pull-registry-error' : undefined}
-              className={`${INPUT_CLASS} font-mono`}
+              ariaLabel="镜像源"
+              fullWidth
+              mono
+              items={sourceItems}
+              value={presetId}
+              onSelect={(next) => {
+                invalidateSuggestions()
+                invalidateTags()
+                setProbeNotice(null)
+                setPresetId(next)
+              }}
             />
-            {registryError ? (
-              <p className={FIELD_ERROR_CLASS} id="pull-registry-error">
-                {registryError}
-              </p>
-            ) : null}
+            {probeNotice ? <p role="status" className="mt-1.5 text-xs text-fg-muted">{probeNotice}</p> : null}
             <p className="mt-1.5 text-xs text-fg-subtle">
               {docker
-                ? '未填写时从官方 Docker Hub 拉取；只支持公开镜像与公网镜像源'
-                : '未填写时从官方 Docker Hub 地址拉取；地址仅作记录，不产生真实数据流。'}
+                ? '测速下载 1 MiB 样本计时，结果只作本次参考；只支持公开镜像与公网镜像源'
+                : '演示模式不访问真实镜像仓库，测速不可用；地址仅作记录，不产生真实数据流。'}
             </p>
+            {isCustomPreset ? (
+              <div className="mt-3">
+                <label htmlFor="pull-registry-custom" className={FIELD_LABEL_CLASS}>
+                  自定义镜像源地址
+                </label>
+                <input
+                  id="pull-registry-custom"
+                  value={customAddress}
+                  onChange={(event) => { invalidateSuggestions(); invalidateTags(); setCustomAddress(event.target.value) }}
+                  placeholder="留空使用官方地址 registry-1.docker.io"
+                  autoComplete="off"
+                  spellCheck={false}
+                  aria-describedby={registryError ? 'pull-registry-error' : undefined}
+                  className={`${INPUT_CLASS} font-mono`}
+                />
+                {registryError ? (
+                  <p className={FIELD_ERROR_CLASS} id="pull-registry-error">
+                    {registryError}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
 
             <div className="mt-4">
               <label htmlFor="pull-reference" className={FIELD_LABEL_CLASS}>
@@ -313,9 +425,9 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
                 }}
               />
               {tagStatus === 'loading' ? <p role="status" className="mt-1 text-xs text-fg-subtle">正在查询可用版本…</p> : null}
-              {tagStatus === 'unavailable' ? <p role="status" className="mt-1 text-xs text-fg-muted">无法列出此镜像的版本，可在镜像引用中手动输入标签</p> : null}
+              {tagStatus === 'unavailable' ? <p role="status" className="mt-1 text-xs text-fg-muted">无法列出此镜像的版本，可换镜像源或在镜像引用中手动输入标签</p> : null}
               {tagStatus === 'idle' && tags.length > 0 ? <p className="mt-1 text-xs text-fg-subtle">已查询到版本，可选择后拉取，也可手动修改标签。</p> : null}
-              {tagStatus === 'idle' && tagRepository.length >= 2 && tags.length === 0 ? <p className="mt-1 text-xs text-fg-subtle">暂无可选版本，可在镜像引用中手动输入标签。</p> : null}
+              {tagStatus === 'idle' && tagRepository.length >= 2 && tags.length === 0 ? <p className="mt-1 text-xs text-fg-subtle">此源未返回版本，可换镜像源或在镜像引用中手动输入标签。</p> : null}
             </div>
 
             {preview ? (

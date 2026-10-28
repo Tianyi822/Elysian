@@ -22,7 +22,7 @@ import type {
 } from '@elysian/contracts'
 import { CONTAINER_STATUSES, RESTART_POLICIES } from '@elysian/contracts'
 import type { Unsubscribe } from '@elysian/contracts'
-import type { ContainerAdapter, ContainerHostPolicy } from '../../contracts/adapters'
+import type { ContainerAdapter, ContainerHostPolicy, RegistryProbeResult } from '../../contracts/adapters'
 import { createContainerTerminalWsAdapter } from './containerTerminalWsAdapter'
 import { fetchWithSession, reportUnauthorized } from './unauthorized'
 import type { EventSourceFactory, EventSourceLike } from '../sse/eventsAdapter'
@@ -799,6 +799,18 @@ export function createHttpContainersAdapter(
         throw new Error('镜像版本响应格式无效')
       }
       return { tags: result.tags as string[], searchable: result.searchable }
+    },
+
+    async probeRegistry(registry, signal) {
+      const params = new URLSearchParams({ registry: registry.trim() })
+      const result = await requestJson(`${baseUrl}/registry-probe?${params}`, { signal })
+      if (!result || typeof result !== 'object' || !('ok' in result) || typeof result.ok !== 'boolean' ||
+        ('elapsedMs' in result && typeof result.elapsedMs !== 'number') ||
+        ('bytes' in result && typeof result.bytes !== 'number') ||
+        ('reason' in result && typeof result.reason !== 'string')) {
+        throw new Error('镜像源测速响应格式无效')
+      }
+      return result as RegistryProbeResult
     },
 
     async createPolicy() {

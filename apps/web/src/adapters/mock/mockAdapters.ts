@@ -568,6 +568,11 @@ export class MockContainerAdapter implements ContainerAdapter {
     return { tags: [...new Set([...tags, ...this.dataset().images.filter((image) => image.name === name).map((image) => image.tag)])], searchable: true }
   }
 
+  async probeRegistry(): Promise<{ ok: boolean; reason?: string }> {
+    // 演示模式不访问真实镜像仓库；给出明确原因，不把假耗时伪装成实测。
+    return { ok: false, reason: '演示模式不访问真实镜像仓库，测速不可用' }
+  }
+
   async createPolicy(): Promise<{ mountRoot: string; reservedPorts: readonly number[] }> {
     return { mountRoot: '/srv/elysian', reservedPorts: [48100] }
   }

@@ -40,6 +40,18 @@ export function runContainerAdapterContract(make: () => ContainerAdapter): void 
       expect(result.tags.every((tag) => typeof tag === 'string' && !tag.includes(':'))).toBe(true)
     })
 
+    it('probeRegistry 返回测速形状且失败带中文原因', async () => {
+      const result = await make().probeRegistry('https://mirror.example.com')
+      expect(typeof result.ok).toBe('boolean')
+      if (result.ok) {
+        expect(typeof result.elapsedMs).toBe('number')
+        expect(typeof result.bytes).toBe('number')
+      } else {
+        expect(typeof result.reason).toBe('string')
+        expect(result.reason!.length).toBeGreaterThan(0)
+      }
+    })
+
     it('connectTerminal 后 sendTerminalInput help 收到含可用命令的 output 帧', async () => {
       const adapter = make()
       const containers = await adapter.list()
