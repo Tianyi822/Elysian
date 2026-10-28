@@ -105,6 +105,14 @@ func newRouter(deps routerDeps) chi.Router {
 		}
 		shared.SendJSON(w, http.StatusOK, result)
 	})
+	r.Get("/registry-probe", func(w http.ResponseWriter, req *http.Request) {
+		result, err := service.ProbeRegistry(req.Context(), req.URL.Query().Get("registry"))
+		if err != nil {
+			middleware.WriteError(w, err)
+			return
+		}
+		shared.SendJSON(w, http.StatusOK, result)
+	})
 	r.Get("/policy", func(w http.ResponseWriter, _ *http.Request) {
 		policy := service.Policy()
 		shared.SendJSON(w, http.StatusOK, policyBody{MountRoot: policy.MountRoot, ReservedPorts: policy.ReservedPorts})

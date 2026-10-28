@@ -68,6 +68,8 @@ type serviceDeps struct {
 	fetchCatalog    catalogFetcher
 	fetchTags       tagsFetcher
 	fetchHubToken   func(ctx context.Context, repository string) (string, error)
+	fetchProbe      probeFetcher
+	probeSample     probeSampler
 	now             func() time.Time
 }
 
@@ -91,6 +93,12 @@ func (d *serviceDeps) fillDefaults() {
 	}
 	if d.fetchHubToken == nil {
 		d.fetchHubToken = requestDockerHubToken
+	}
+	if d.fetchProbe == nil {
+		d.fetchProbe = requestProbe
+	}
+	if d.probeSample == nil {
+		d.probeSample = downloadProbeSample
 	}
 	if d.now == nil {
 		d.now = time.Now
