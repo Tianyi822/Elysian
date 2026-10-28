@@ -1,8 +1,10 @@
 import * as Popover from '@radix-ui/react-popover'
 import * as Tooltip from '@radix-ui/react-tooltip'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import { fetchPlatformMemory } from '../adapters/http/platformMemoryAdapter'
+import { createPlatformMemorySource } from '../adapters/platformMemory/platformMemorySource'
+import type { PlatformMemoryView } from '../adapters/platformMemory/platformMemorySource'
 import type { PlatformMemorySample } from '../adapters/platformMemory/types'
 import type { SystemLoad } from '../adapters/mock/resourceMetrics'
 import { formatDateTime } from './format'
@@ -12,51 +14,24 @@ import { getLastResourceSample, onStreamEvent } from '../stores/eventStreamStore
 /**
  * 系统负载指示器：合并这台机器的忙闲（load average）与面板自身内存。
  *
- * 负载随事件流每拍到达，内存每 5 秒采一次后端进程；两个口径不同，常驻读数只给
+ * 负载随事件流每拍到达，内存在前台每 5 秒共享采一次后端进程；两个口径不同，常驻读数只给
  * 1 分钟负载与内存用量，三档负载与内存明细收在点击浮层里分节列出。
  * 采不到时如实显示失败或占位，不伪造数字。
  */
 
 export const SAMPLE_INTERVAL_MS = 5_000
 
-type MemoryView =
-  | { status: 'loading' }
-  | { status: 'ready'; sample: PlatformMemorySample }
-  | { status: 'error' }
+const platformMemorySource = createPlatformMemorySource(readPlatformMemory, SAMPLE_INTERVAL_MS)
 
-/** 周期读取服务端进程内存；失败时保持 error，不把旧值伪装成当前事实。 */
+/** 周期读取服务端进程内存，后台暂停、恢复立即读取；同页默认订阅共用一个采样器。 */
 export function usePlatformMemory(
   intervalMs = SAMPLE_INTERVAL_MS,
   read: (signal?: AbortSignal) => Promise<PlatformMemorySample> = readPlatformMemory,
-): MemoryView {
-  const [view, setView] = useState<MemoryView>({ status: 'loading' })
-
-  useEffect(() => {
-    let cancelled = false
-    let pending = false
-    const controller = new AbortController()
-    const tick = async () => {
-      if (pending) return
-      pending = true
-      try {
-        const sample = await read(controller.signal)
-        if (!cancelled) setView({ status: 'ready', sample })
-      } catch {
-        if (!cancelled) setView({ status: 'error' })
-      } finally {
-        pending = false
-      }
-    }
-    void tick()
-    const timer = setInterval(() => void tick(), intervalMs)
-    return () => {
-      cancelled = true
-      clearInterval(timer)
-      controller.abort()
-    }
-  }, [intervalMs, read])
-
-  return view
+): PlatformMemoryView {
+  const source = useMemo(() => read === readPlatformMemory && intervalMs === SAMPLE_INTERVAL_MS
+    ? platformMemorySource
+    : createPlatformMemorySource(read, intervalMs), [intervalMs, read])
+  return useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot)
 }
 
 function readPlatformMemory(signal?: AbortSignal): Promise<PlatformMemorySample> {

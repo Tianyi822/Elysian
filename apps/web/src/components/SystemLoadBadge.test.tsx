@@ -69,6 +69,7 @@ async function renderReady(
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
   vi.useRealTimers()
   useEventStreamStore.getState().disconnect()
 })
@@ -230,5 +231,113 @@ describe('顶栏系统负载', () => {
     expect(signal?.aborted).toBe(true)
     await act(async () => { vi.advanceTimersByTime(15_000); resolve(platformMemorySample({ rssMb: 120 })) })
     expect(read).toHaveBeenCalledTimes(2)
+  })
+
+  it('后台挂载不采样，回到前台立即读取且只恢复一个定时器', async () => {
+    vi.useFakeTimers()
+    let visibility: DocumentVisibilityState = 'hidden'
+    vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility)
+    const read = vi.fn(async () => platformMemorySample())
+    const { result } = renderHook(() => usePlatformMemory(5_000, read))
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
+    expect(read).not.toHaveBeenCalled()
+
+    visibility = 'visible'
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'))
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(result.current.status).toBe('ready')
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    expect(read).toHaveBeenCalledTimes(2)
+  })
+
+  it('切到后台暂停采样，切回前台立即刷新', async () => {
+    vi.useFakeTimers()
+    let visibility: DocumentVisibilityState = 'visible'
+    vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility)
+    const read = vi.fn(async () => platformMemorySample())
+    renderHook(() => usePlatformMemory(5_000, read))
+    await act(async () => { await Promise.resolve() })
+    expect(read).toHaveBeenCalledTimes(1)
+
+    visibility = 'hidden'
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'))
+      await vi.advanceTimersByTimeAsync(60_000)
+    })
+    expect(read).toHaveBeenCalledTimes(1)
+
+    visibility = 'visible'
+    await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
+    expect(read).toHaveBeenCalledTimes(2)
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    expect(read).toHaveBeenCalledTimes(3)
+  })
+
+  it('切后台取消在途请求，旧结果不能覆盖恢复后的新采样', async () => {
+    vi.useFakeTimers()
+    let visibility: DocumentVisibilityState = 'visible'
+    vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility)
+    let resolveOld!: (sample: ReturnType<typeof platformMemorySample>) => void
+    const read = vi.fn((_signal?: AbortSignal) => Promise.resolve(platformMemorySample({ rssMb: 120 })))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve }))
+    const { result } = renderHook(() => usePlatformMemory(5_000, read))
+    const oldSignal = read.mock.calls[0]?.[0]
+
+    visibility = 'hidden'
+    await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
+    expect(oldSignal?.aborted).toBe(true)
+    await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
+    expect(read).toHaveBeenCalledTimes(1)
+
+    visibility = 'visible'
+    await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
+    expect(read).toHaveBeenCalledTimes(2)
+    expect(result.current).toMatchObject({ status: 'ready', sample: { rssMb: 120 } })
+    await act(async () => { resolveOld(platformMemorySample({ rssMb: 80 })) })
+    expect(result.current).toMatchObject({ status: 'ready', sample: { rssMb: 120 } })
+  })
+
+  it('页面离开暂停采样，往返缓存恢复时立即读取', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    const read = vi.fn(async () => platformMemorySample())
+    renderHook(() => usePlatformMemory(5_000, read))
+    await act(async () => { await Promise.resolve() })
+    await act(async () => {
+      window.dispatchEvent(new Event('pagehide'))
+      await vi.advanceTimersByTimeAsync(15_000)
+    })
+    expect(read).toHaveBeenCalledTimes(1)
+    await act(async () => { window.dispatchEvent(new Event('pageshow')) })
+    expect(read).toHaveBeenCalledTimes(2)
+  })
+
+  it('同一页面的多个徽标共享采样，最后一个卸载后才停止并清除旧值', async () => {
+    vi.useFakeTimers()
+    stubFetch(platformMemorySample())
+    const first = renderHook(() => usePlatformMemory())
+    await act(async () => { await Promise.resolve() })
+    const second = renderHook(() => usePlatformMemory())
+    await act(async () => { await Promise.resolve() })
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(second.result.current).toEqual(first.result.current)
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    expect(fetch).toHaveBeenCalledTimes(2)
+
+    first.unmount()
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    expect(fetch).toHaveBeenCalledTimes(3)
+    second.unmount()
+    await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
+    expect(fetch).toHaveBeenCalledTimes(3)
+
+    const third = renderHook(() => usePlatformMemory())
+    expect(third.result.current.status).toBe('loading')
+    await act(async () => { await Promise.resolve() })
+    expect(fetch).toHaveBeenCalledTimes(4)
+    expect(third.result.current.status).toBe('ready')
   })
 })
