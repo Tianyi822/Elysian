@@ -6,6 +6,7 @@ import type { ElysianGateway } from '../../contracts/adapters'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { CONTAINERS } from '../../adapters/mock/containersData'
 import { useContainersStore } from '../../stores/containersStore'
+import { writeStoredImageRegistry } from './imagePullPreferences'
 import { useDependencyProbeStore } from '../../stores/dependencyProbeStore'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { renderApp } from '../../test/renderApp'
@@ -66,6 +67,7 @@ function pageGateway(overrides: Partial<ElysianGateway['containers']> = {}): Ely
 }
 
 beforeEach(() => {
+  writeStoredImageRegistry('')
   // 通知是模块级共享态：镜像刷新等操作现在也走通知，不清会跨用例串台。
   useNotificationStore.getState().clear()
   useDependencyProbeStore.getState().reset()

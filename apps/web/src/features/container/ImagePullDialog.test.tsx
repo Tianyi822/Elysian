@@ -7,6 +7,7 @@ import { useContainersStore } from '../../stores/containersStore'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { customImageRegistries, invalidImageRegistries, officialImageRegistries } from '../../test/imageRegistryCases'
 import { ImagePullDialog } from './ImagePullDialog'
+import { readStoredImageRegistry, writeStoredImageRegistry } from './imagePullPreferences'
 import type { ElysianGateway } from '../../contracts/adapters'
 
 vi.mock('../../app/runtime/isDockerRuntime', () => ({
@@ -33,9 +34,51 @@ function renderDialog(overrides: Partial<ElysianGateway['containers']> = {}) {
 
 beforeEach(() => {
   vi.mocked(isDockerRuntime).mockReturnValue(false)
+  writeStoredImageRegistry('')
 })
 
 describe('ImagePullDialog', () => {
+  it('名称搜索不可用仍可独立查询版本并提交拉取，不将版本成功当成名称搜索成功', async () => {
+    vi.useFakeTimers()
+    const pullImage = vi.fn().mockResolvedValue(undefined)
+    const originalPull = useContainersStore.getState().pullImage
+    useContainersStore.setState({ pullImage })
+    try {
+      renderDialog({
+        searchImageNames: vi.fn().mockResolvedValue({ names: [], searchable: false }),
+        imageTags: vi.fn().mockResolvedValue({ tags: ['latest', '8.4'], searchable: true }),
+      })
+      fireEvent.change(screen.getByLabelText('自定义镜像源地址'), { target: { value: 'https://docker.1ms.run' } })
+      fireEvent.change(screen.getByRole('combobox', { name: '镜像引用' }), { target: { value: 'mysql' } })
+      await act(async () => { await vi.advanceTimersByTimeAsync(300) })
+      expect(screen.getByText('此镜像源的名称搜索不可用，请直接输入镜像名；版本列表会单独查询。')).toBeInTheDocument()
+      expect(screen.getByText('已查询到版本，可选择后拉取，也可手动修改标签。')).toBeInTheDocument()
+      vi.useRealTimers()
+      const user = userEvent.setup()
+      await user.click(screen.getByRole('button', { name: '版本标签：latest' }))
+      await user.click(screen.getByRole('menuitemradio', { name: '8.4' }))
+      await user.click(screen.getByRole('button', { name: '拉取' }))
+      expect(pullImage).toHaveBeenCalledWith(expect.anything(), { name: 'mysql', tag: '8.4', registry: 'https://docker.1ms.run' })
+    } finally {
+      useContainersStore.setState({ pullImage: originalPull })
+      vi.useRealTimers()
+    }
+  })
+
+  it('填写源后即保存，关闭再打开自动填充；清空会清除记忆', () => {
+    const first = renderDialog()
+    fireEvent.change(screen.getByLabelText('自定义镜像源地址'), { target: { value: 'https://docker.1ms.run' } })
+    expect(readStoredImageRegistry()).toBe('https://docker.1ms.run')
+    first.unmount()
+
+    const second = renderDialog()
+    expect(screen.getByLabelText('自定义镜像源地址')).toHaveValue('https://docker.1ms.run')
+    fireEvent.change(screen.getByLabelText('自定义镜像源地址'), { target: { value: '' } })
+    second.unmount()
+    renderDialog()
+    expect(screen.getByLabelText('自定义镜像源地址')).toHaveValue('')
+  })
+
   it.each(officialImageRegistries)('显式官方地址 %j 保留搜索建议和版本查询，并把地址传给后端', async (registry) => {
     vi.useFakeTimers()
     try {
@@ -50,7 +93,7 @@ describe('ImagePullDialog', () => {
       expect(imageTags).toHaveBeenCalledWith('redis', registry.trim() || undefined, expect.any(AbortSignal))
       expect(screen.getByRole('option', { name: 'redis' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: '版本标签：latest' })).not.toBeDisabled()
-      expect(screen.queryByText('无法从此镜像源搜索，请直接输入镜像引用')).not.toBeInTheDocument()
+      expect(screen.queryByText('此镜像源的名称搜索不可用，请直接输入镜像名；版本列表会单独查询。')).not.toBeInTheDocument()
     } finally {
       vi.useRealTimers()
     }
@@ -63,10 +106,10 @@ describe('ImagePullDialog', () => {
       fireEvent.change(screen.getByLabelText('自定义镜像源地址'), { target: { value: registry } })
       fireEvent.change(screen.getByRole('combobox', { name: '镜像引用' }), { target: { value: 'redis' } })
       await act(async () => { await vi.advanceTimersByTimeAsync(300) })
-      const message = '镜像搜索暂不可用，请直接输入镜像引用'
+      const message = '镜像名称搜索暂不可用，请直接输入镜像名；版本列表会单独查询。'
       expect(screen.getByText(message)).toBeInTheDocument()
       expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ message, tone: 'warning' }))
-      expect(screen.queryByText('无法从此镜像源搜索，请直接输入镜像引用')).not.toBeInTheDocument()
+      expect(screen.queryByText('此镜像源的名称搜索不可用，请直接输入镜像名；版本列表会单独查询。')).not.toBeInTheDocument()
     } finally {
       vi.useRealTimers()
     }
@@ -79,7 +122,7 @@ describe('ImagePullDialog', () => {
       fireEvent.change(screen.getByLabelText('自定义镜像源地址'), { target: { value: registry } })
       fireEvent.change(screen.getByRole('combobox', { name: '镜像引用' }), { target: { value: 'redis' } })
       await act(async () => { await vi.advanceTimersByTimeAsync(300) })
-      const message = '无法从此镜像源搜索，请直接输入镜像引用'
+      const message = '此镜像源的名称搜索不可用，请直接输入镜像名；版本列表会单独查询。'
       expect(screen.getByText(message)).toBeInTheDocument()
       expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ message, tone: 'warning' }))
     } finally {
@@ -94,7 +137,7 @@ describe('ImagePullDialog', () => {
       fireEvent.change(screen.getByLabelText('自定义镜像源地址'), { target: { value: 'https://registry-1.docker.io' } })
       fireEvent.change(screen.getByRole('combobox', { name: '镜像引用' }), { target: { value: 'redis' } })
       await act(async () => { await vi.advanceTimersByTimeAsync(300) })
-      expect(screen.getByText('镜像搜索暂不可用，请直接输入镜像引用')).toBeInTheDocument()
+      expect(screen.getByText('镜像名称搜索暂不可用，请直接输入镜像名；版本列表会单独查询。')).toBeInTheDocument()
     } finally {
       vi.useRealTimers()
     }
@@ -195,7 +238,7 @@ describe('ImagePullDialog', () => {
       await act(async () => { settle({ names: ['redis'], searchable: true }); await Promise.resolve() })
       expect(searchImageNames).toHaveBeenLastCalledWith('red', 'mirror.example.com', expect.any(AbortSignal))
       expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
-      expect(screen.getByText('无法从此镜像源搜索，请直接输入镜像引用')).toBeInTheDocument()
+      expect(screen.getByText('此镜像源的名称搜索不可用，请直接输入镜像名；版本列表会单独查询。')).toBeInTheDocument()
     } finally {
       vi.useRealTimers()
     }

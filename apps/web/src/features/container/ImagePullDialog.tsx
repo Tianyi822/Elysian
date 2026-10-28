@@ -7,6 +7,7 @@ import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { useContainersStore } from '../../stores/containersStore'
 import { useFeedbackNotification } from '../../components/useFeedbackNotification'
+import { readStoredImageRegistry, writeStoredImageRegistry } from './imagePullPreferences'
 import {
   DEFAULT_IMAGE_REGISTRY,
   isOfficialImageRegistry,
@@ -34,7 +35,7 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
 
   const docker = isDockerRuntime()
 
-  const [registryAddress, setRegistryAddress] = useState('')
+  const [registryAddress, setRegistryAddress] = useState(readStoredImageRegistry)
   const [reference, setReference] = useState('')
   const [suggestions, setSuggestions] = useState<readonly string[]>([])
   const [suggestionStatus, setSuggestionStatus] = useState<'idle' | 'loading' | 'unavailable'>('idle')
@@ -57,10 +58,14 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
   const parsed = parseImageReference(reference)
   const tagRepository = parsed.ok && !parsed.reference.name.includes(':') ? parsed.reference.name : ''
   const searchUnavailableMessage = suggestionStatus === 'unavailable'
-    ? isOfficialImageRegistry(registryAddress) ? '镜像搜索暂不可用，请直接输入镜像引用' : '无法从此镜像源搜索，请直接输入镜像引用'
+    ? isOfficialImageRegistry(registryAddress)
+      ? '镜像名称搜索暂不可用，请直接输入镜像名；版本列表会单独查询。'
+      : '此镜像源的名称搜索不可用，请直接输入镜像名；版本列表会单独查询。'
     : null
   useFeedbackNotification(searchUnavailableMessage, 'warning')
   useFeedbackNotification(tagStatus === 'unavailable' ? '无法列出此镜像的版本，可在镜像引用中手动输入标签' : null, 'warning')
+
+  useEffect(() => { writeStoredImageRegistry(registryAddress) }, [registryAddress])
 
   useEffect(() => {
     const serial = ++tagRequestSerial.current
@@ -309,7 +314,7 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
               />
               {tagStatus === 'loading' ? <p role="status" className="mt-1 text-xs text-fg-subtle">正在查询可用版本…</p> : null}
               {tagStatus === 'unavailable' ? <p role="status" className="mt-1 text-xs text-fg-muted">无法列出此镜像的版本，可在镜像引用中手动输入标签</p> : null}
-              {tagStatus === 'idle' && tags.length > 0 ? <p className="mt-1 text-xs text-fg-subtle">选择版本后仍可在镜像引用中修改标签。</p> : null}
+              {tagStatus === 'idle' && tags.length > 0 ? <p className="mt-1 text-xs text-fg-subtle">已查询到版本，可选择后拉取，也可手动修改标签。</p> : null}
               {tagStatus === 'idle' && tagRepository.length >= 2 && tags.length === 0 ? <p className="mt-1 text-xs text-fg-subtle">暂无可选版本，可在镜像引用中手动输入标签。</p> : null}
             </div>
 
