@@ -4,6 +4,7 @@ import type { PanelCommit, PanelUpdateChannel, PanelUpdateSource } from '@elysia
 import { useGateway } from '../../adapters/GatewayProvider'
 import { formatDateTime } from '../../components/format'
 import { X } from '../../components/icons'
+import { ScrollArea } from '../../components/ScrollArea'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
 import { useMessageStore } from '../../stores/messageStore'
 
@@ -76,42 +77,44 @@ export function PanelChangelogDialog({
             {source === 'github' ? 'GitHub' : 'Gitee'} · {channel === 'commit' ? '上游仓库默认分支的提交记录，从新到旧。' : '最新正式发版对应的提交记录，从新到旧。'}
           </Dialog.Description>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-            {loading ? (
-              <LoadingState label="正在读取更新日志…" />
-            ) : error ? (
-              <ErrorState title="更新日志读取失败" description={error} onRetry={read} />
-            ) : commits.length === 0 ? (
-              <EmptyState title="没有可展示的提交" description={channel === 'commit' ? '上游仓库没有返回提交记录。' : '上游仓库暂无正式发版或未返回提交记录。'} />
-            ) : (
-              <ol className="flex flex-col gap-2">
-                {commits.map((commit) => {
-                  const isCurrent = currentCommit !== '' && commit.sha === currentCommit
-                  return (
-                    <li
-                      key={commit.sha}
-                      className={`flex flex-col gap-1 rounded-lg border px-3 py-2.5 ${
-                        isCurrent ? 'border-accent/50 bg-accent/10' : 'border-line'
-                      }`}
-                    >
-                      <div className="flex items-start gap-2">
-                        <p className="min-w-0 flex-1 text-xs leading-5 text-fg">{commit.message}</p>
-                        {isCurrent ? (
-                          <span className="shrink-0 rounded bg-accent/15 px-1.5 py-0.5 text-[0.625rem] font-medium text-accent-fg">
-                            当前版本
-                          </span>
-                        ) : null}
-                      </div>
-                      <div className="flex flex-wrap items-center gap-x-2 text-[0.625rem] leading-4 text-fg-muted">
-                        <code className="break-all font-mono">{commit.sha.slice(0, 7)}</code>
-                        <span className="tabular-nums">{formatDateTime(commit.time)}</span>
-                      </div>
-                    </li>
-                  )
-                })}
-              </ol>
-            )}
-          </div>
+          <ScrollArea label="更新日志内容">
+            <div className="min-w-0 px-5 py-4">
+              {loading ? (
+                <LoadingState label="正在读取更新日志…" />
+              ) : error ? (
+                <ErrorState title="更新日志读取失败" description={error} onRetry={read} />
+              ) : commits.length === 0 ? (
+                <EmptyState title="没有可展示的提交" description={channel === 'commit' ? '上游仓库没有返回提交记录。' : '上游仓库暂无正式发版或未返回提交记录。'} />
+              ) : (
+                <ol className="flex flex-col gap-2">
+                  {commits.map((commit) => {
+                    const isCurrent = currentCommit !== '' && commit.sha === currentCommit
+                    return (
+                      <li
+                        key={commit.sha}
+                        className={`flex flex-col gap-1 rounded-lg border px-3 py-2.5 ${
+                          isCurrent ? 'border-accent/50 bg-accent/10' : 'border-line'
+                        }`}
+                      >
+                        <div className="flex items-start gap-2">
+                          <p className="min-w-0 flex-1 text-xs leading-5 text-fg">{commit.message}</p>
+                          {isCurrent ? (
+                            <span className="shrink-0 rounded bg-accent/15 px-1.5 py-0.5 text-[0.625rem] font-medium text-accent-fg">
+                              当前版本
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-x-2 text-[0.625rem] leading-4 text-fg-muted">
+                          <code className="break-all font-mono">{commit.sha.slice(0, 7)}</code>
+                          <span className="tabular-nums">{formatDateTime(commit.time)}</span>
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ol>
+              )}
+            </div>
+          </ScrollArea>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

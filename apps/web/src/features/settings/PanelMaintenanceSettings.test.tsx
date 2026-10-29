@@ -290,6 +290,7 @@ describe('端口与更新设置', () => {
     expect(within(dialog).getByText('部署任务标注项目状态')).toBeInTheDocument()
     expect(within(dialog).getAllByText('当前版本')).toHaveLength(1)
     expect(within(dialog).getByText(info.commit.slice(0, 7))).toBeInTheDocument()
+    expect(within(dialog).getByRole('region', { name: '更新日志内容' })).toHaveClass('scroll-area-viewport')
   })
   it('更新日志读取失败把原因留在窗口内，重试再次拉取', async () => {
     const g = gateway()
