@@ -23,7 +23,6 @@
 .message-unread { position: absolute; top: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--t-accent-fg); }
 .message-panel {
   --message-feather: clamp(12px, 3.5vw, 24px);
-  --message-field-blur: 10px;
   position: fixed;
   inset-block: 0;
   right: 0;
@@ -41,17 +40,19 @@
   box-shadow: none;
   outline: none;
 }
-/* 场底只做很淡的一层模糊，靠左侧窄幅渐入与页面衔接；材质由每条消息自己的玻璃承担。 */
+/* 场底只做很淡的一层模糊，靠左侧窄幅渐入与页面衔接；材质由每条消息自己的玻璃承担。
+   模糊半径必须写字面量：值里出现 var() 时构建压缩会丢掉标准 backdrop-filter 声明，只剩 -webkit- 前缀那条；
+   mask-image 里的 var() 不受影响，渐入宽度仍可随视口收放。 */
 .message-panel::before {
   content: '';
   position: absolute;
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  backdrop-filter: blur(var(--message-field-blur));
-  -webkit-backdrop-filter: blur(var(--message-field-blur));
-  mask-image: linear-gradient(to right, transparent, #000 var(--message-feather));
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
   -webkit-mask-image: linear-gradient(to right, transparent, #000 var(--message-feather));
+  mask-image: linear-gradient(to right, transparent, #000 var(--message-feather));
 }
 .message-panel[data-state="open"] { animation: message-panel-in 220ms cubic-bezier(0.22, 1, 0.36, 1); }
 .message-panel[data-state="closed"] { animation: message-panel-out 160ms ease-in both; }
