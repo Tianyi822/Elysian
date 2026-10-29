@@ -919,7 +919,7 @@ select:not(:disabled) {
  */
 .select-menu {
   width: var(--radix-dropdown-menu-trigger-width);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
   border-color: var(--t-control-line);
   background-color: var(--t-surface-raised);
   font-size: 14px;
@@ -928,7 +928,7 @@ select:not(:disabled) {
 .select-menu [role="menuitemradio"] {
   min-height: 32px;
   padding: 6px 10px;
-  border-radius: 4px;
+  border-radius: 9999px;
 }
 
 .select-menu [role="menuitemradio"] + [role="menuitemradio"] { margin-top: 4px; }

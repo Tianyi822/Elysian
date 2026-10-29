@@ -1,14 +1,6 @@
-@container (width < 39rem) {
-  .dashboard-filters > div {
-    --ctl-radius: var(--radius-lg);
-    --icon-button-radius: var(--radius-lg);
-  }
-}
-/* 窄屏控件高度与圆角降档：与 app/layout/narrowViewport.ts 的 768px 线同一条。 */
+/* 窄屏只收紧控件高度，时间选择器与刷新仍沿用工具栏的胶囊／圆形。 */
 @media (max-width: 767.98px) {
   .dashboard-filters {
     --ctl-height: 1.75rem;
-    --ctl-radius: var(--radius-lg);
-    --icon-button-radius: var(--radius-lg);
   }
 }

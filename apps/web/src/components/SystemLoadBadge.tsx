@@ -210,9 +210,6 @@ export function SystemLoadBadge({ navigation = false, collapsed = false }: { nav
           className="panel-surface z-50 w-80 max-w-[calc(100vw-2rem)] p-3 text-xs shadow-lg"
         >
           <p className="border-b border-line pb-2 text-sm font-medium text-fg">系统负载</p>
-          <p className="pt-2 leading-relaxed text-fg-subtle">
-            负载是这台机器的忙闲读数，面板内存只统计 Elysian 后端进程自身占用的内存。
-          </p>
 
           <Section title="机器负载（load average）">
             {load ? (
@@ -275,10 +272,11 @@ export function SystemLoadBadge({ navigation = false, collapsed = false }: { nav
             </Section>
           )}
 
-          <p className="mt-3 border-t border-line pt-2 text-fg-subtle">
-            负载每拍随事件流更新 · 内存每 {SAMPLE_INTERVAL_MS / 1000} 秒采样一次
-            {sample ? ` · 采样于 ${formatDateTime(sample.sampledAt)}` : ''}
-          </p>
+          {sample && (
+            <p className="mt-3 border-t border-line pt-2 text-fg-subtle">
+              采样于 {formatDateTime(sample.sampledAt)}
+            </p>
+          )}
           <Popover.Arrow className="fill-surface-raised" />
         </Popover.Content>
       </Popover.Portal>
