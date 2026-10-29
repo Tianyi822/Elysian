@@ -25,6 +25,7 @@ type AutomaticExtensions struct {
 // 自动目录不写回会话环境；原环境仍是执行配置、grant、资料和信任的唯一来源。
 func (m *Manager) snapshotForAgent(ctx context.Context, env Environment, mode string, authorizationModes ...string) (CapabilitySnapshot, error) {
 	ctx = context.WithValue(ctx, wikiDisabledContextKey{}, true)
+	env = m.withDockerTools(env)
 	// 新接受的普通聊天统一获得公网读取能力；不回写旧环境或已接受 Run。
 	if m.deps.Tools != nil && !contains(env.Tools, "web_fetch") {
 		for _, schema := range m.deps.Tools.Schemas() {

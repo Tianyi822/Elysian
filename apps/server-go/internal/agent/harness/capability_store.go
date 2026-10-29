@@ -149,7 +149,7 @@ func (m *Manager) snapshotWithMode(ctx context.Context, e Environment, modern bo
 			for _, name := range e.Tools {
 				if name == t.Name && (allowed(name) || t.Metadata.Exposure == "agent") {
 					raw, _ := json.Marshal(t.Parameters)
-					s.Tools = append(s.Tools, Capability{Name: name, Description: t.Description, Parameters: raw, Source: "builtin", ReadOnly: t.Metadata.ReadOnly || allowed(name), Metadata: t.Metadata, CatalogDigest: digestJSON(t)})
+					s.Tools = append(s.Tools, Capability{Name: name, SearchNames: append([]string(nil), t.SearchNames...), Description: t.Description, Parameters: raw, Source: "builtin", ReadOnly: t.Metadata.ReadOnly || allowed(name), Metadata: t.Metadata, CatalogDigest: digestJSON(t)})
 				}
 			}
 		}

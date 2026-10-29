@@ -16,14 +16,15 @@ func TestImagePublicDescriptionsMatchActionsAndPolicy(t *testing.T) {
 			schemas[schema.Name] = schema
 		}
 	}
-	if len(schemas) != 7 {
-		t.Fatalf("应公开七个镜像工具，得到 %d 个", len(schemas))
+	if len(schemas) != 8 {
+		t.Fatalf("应公开八个镜像工具，得到 %d 个", len(schemas))
 	}
 	for _, test := range []struct {
 		name     string
 		keywords []string
 		metadata tools.Metadata
 	}{
+		{"docker_image_inspect", []string{"只读", "本机", "完整 ID", "标签", "大小"}, tools.Metadata{Domain: "docker", Action: "inspect", Effect: "read", Exposure: "agent", Backend: "domain", ResourceType: "docker-image", ResourceKeyArgument: "id", ReadOnly: true, Default: true, Version: "1"}},
 		{"docker_image_search", []string{"搜索", "镜像名称", "镜像源", "只读"}, tools.Metadata{Domain: "docker", Action: "search", Effect: "read", Exposure: "agent", Backend: "domain", ReadOnly: true, Default: true, Version: "1"}},
 		{"docker_image_tags", []string{"查询", "版本标签", "镜像源", "只读"}, tools.Metadata{Domain: "docker", Action: "tags", Effect: "read", Exposure: "agent", Backend: "domain", ReadOnly: true, Default: true, Version: "1"}},
 		{"docker_image_pull", []string{"拉取", "异步", "审批", "精确资源授权", "requestId"}, tools.Metadata{Domain: "docker", Action: "pull", Effect: "write", Exposure: "agent", Backend: "domain", ResourceType: "docker-image", ResourceKeyArgument: "id", Async: true, TaskDomain: "docker-image-pull", TaskRequestArgument: "requestId", Version: "1"}},

@@ -79,7 +79,7 @@ func (b *Bridge) Available() bool {
 	return b != nil && b.runtime != nil && b.runtime.Available()
 }
 
-// Schemas 只公开四条允许的工具，返回独立的模式快照。
+// Schemas 返回独立的模式快照；旧桥接只公开四条只读工具，生产目录按 agent 可见性筛选。
 func (b *Bridge) Schemas() []tools.PublicSchema {
 	if b == nil || b.runtime == nil {
 		return []tools.PublicSchema{}

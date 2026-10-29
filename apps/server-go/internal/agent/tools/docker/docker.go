@@ -200,6 +200,12 @@ func (s *Service) descriptors() []tools.Descriptor {
 	}
 	for i := range descriptors {
 		descriptors[i].Metadata = tools.Metadata{Domain: "docker", Action: descriptors[i].Name, Effect: "read", Exposure: "agent", ReadOnly: true, Default: true, Version: "1"}
+		switch descriptors[i].Name {
+		case "docker_containers_list":
+			descriptors[i].SearchNames = []string{"本地容器列表", "容器清单", "查看所有容器", "docker ps", "docker container ls", "containers list"}
+		case "docker_images_list":
+			descriptors[i].SearchNames = []string{"本地镜像列表", "镜像清单", "已安装镜像", "docker images", "docker image ls", "images list"}
+		}
 	}
 	if s.deps.Agent == nil {
 		return descriptors
@@ -215,15 +221,24 @@ func (s *Service) descriptors() []tools.Descriptor {
 				}
 				return map[string]bool{"removed": true}, nil
 			}
-			return s.deps.Agent.Action(tools.Lifetime(c), id, action)
+			container, err := s.deps.Agent.Action(tools.Lifetime(c), id, action)
+			if err != nil {
+				return nil, err
+			}
+			return containerSummary(container), nil
 		}})
 	}
 	descriptors = append(descriptors, tools.Descriptor{Name: "docker_container_create_restricted", Description: "审批后用固定安全模板创建容器：非 root、无网络、只读根、无宿主挂载、无额外权限；镜像必须已存在且固定摘要", Parameters: tools.Schema{Type: tools.SchemaObject, Required: []string{"name", "image", "requestId"}, Properties: map[string]tools.Schema{"name": text, "image": text, "requestId": text}}, Metadata: tools.Metadata{Domain: "docker", Action: "create", Effect: "write", Exposure: "agent", ResourceType: "docker-container", ResourceKeyArgument: "name", Version: "1"}, Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
 		name, _ := tools.StringArg(args, "name")
 		image, _ := tools.StringArg(args, "image")
 		requestID, _ := tools.StringArg(args, "requestId")
-		return s.deps.Agent.CreateRestricted(tools.Lifetime(c), domaindocker.AgentCreateInput{Name: name, Image: image, RequestID: requestID})
+		container, err := s.deps.Agent.CreateRestricted(tools.Lifetime(c), domaindocker.AgentCreateInput{Name: name, Image: image, RequestID: requestID})
+		if err != nil {
+			return nil, err
+		}
+		return containerSummary(container), nil
 	}})
+	descriptors = append(descriptors, s.inspectionDescriptors()...)
 	return append(descriptors, s.imageDescriptors()...)
 }
 
@@ -234,13 +249,7 @@ func (s *Service) handleListContainers(access *kardia.Context, _ tools.Arguments
 	}
 	summaries := make([]ContainerSummary, len(containers))
 	for i, container := range containers {
-		summaries[i] = ContainerSummary{
-			ID: container.ID, Name: container.Name, Status: container.Status,
-			ImageID: container.ImageID, ImageRef: container.ImageRef,
-			Ports:     append([]contract.PortBindingView{}, container.Ports...),
-			CreatedAt: container.CreatedAt, StartedAt: container.StartedAt,
-			RestartPolicy: container.RestartPolicy,
-		}
+		summaries[i] = containerSummary(container)
 	}
 	return summaries, nil
 }
@@ -252,16 +261,7 @@ func (s *Service) handleListImages(access *kardia.Context, _ tools.Arguments) (a
 	}
 	summaries := make([]ImageSummary, len(images))
 	for i, image := range images {
-		var pulledAt *string
-		if image.PulledAt != nil {
-			value := *image.PulledAt
-			pulledAt = &value
-		}
-		summaries[i] = ImageSummary{
-			ID: image.ID, Name: image.Name, Tag: image.Tag, Digest: image.Digest,
-			SizeMB: image.SizeMB, PulledAt: pulledAt,
-			OtherTags: append([]string{}, image.OtherTags...),
-		}
+		summaries[i] = imageSummary(image)
 	}
 	return summaries, nil
 }

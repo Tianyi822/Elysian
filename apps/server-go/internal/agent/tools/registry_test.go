@@ -3,6 +3,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -112,6 +113,39 @@ func TestRegistryDefaultsAgentImplementationMetadata(t *testing.T) {
 		registered, ok := registry.Lookup(test.name)
 		if !ok || registered.Metadata.Backend != test.backend || registered.Metadata.Version != test.version {
 			t.Fatalf("metadata for %s=%+v", test.name, registered.Metadata)
+		}
+	}
+}
+
+func TestRegistrySearchAliasesAreBoundedAndIsolated(t *testing.T) {
+	_, registry, _ := newRegistryCtx(t)
+	d := echoDescriptor("images", nil)
+	d.SearchNames = []string{"本地镜像列表", "docker images"}
+	if _, err := registry.Register(d); err != nil {
+		t.Fatal(err)
+	}
+	d.SearchNames[0] = "mutated-input"
+	first := registry.Schemas()
+	if first[0].SearchNames[0] != "本地镜像列表" {
+		t.Fatal("输入别名被共享")
+	}
+	first[0].SearchNames[0] = "mutated-output"
+	lookup, _ := registry.Lookup("images")
+	lookup.SearchNames[1] = "mutated-lookup"
+	if got := registry.Schemas()[0].SearchNames; got[0] != "本地镜像列表" || got[1] != "docker images" {
+		t.Fatalf("注册表别名被修改: %v", got)
+	}
+	public := registry.Schemas()[0]
+	withAliases, _ := json.Marshal(public)
+	public.SearchNames = nil
+	withoutAliases, _ := json.Marshal(public)
+	if string(withAliases) != string(withoutAliases) || strings.Contains(string(withAliases), "searchNames") {
+		t.Fatal("检索别名改变了执行模式或公开目录")
+	}
+	for _, names := range [][]string{{" "}, {strings.Repeat("x", 257)}, make([]string, 17)} {
+		d.Name, d.SearchNames = "invalid_alias", names
+		if _, err := registry.Register(d); err == nil {
+			t.Fatalf("无效别名被接受: %v", names)
 		}
 	}
 }

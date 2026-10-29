@@ -32,7 +32,7 @@ type toolInventory struct {
 // 反复搜索不提供的能力。只写领域级能力与不提供的能力，不含工具名或描述明细；未登记的域只报数量。
 var domainBoundaries = map[string]string{
 	"workspace":     "任务工作区文件清单与文本读写",
-	"docker":        "容器与镜像的列表及快照操作；不含逐容器资源统计（stats）",
+	"docker":        "本机容器和镜像清单、单项详情、受控容器创建与启停删除、镜像检索和拉取删除；不含逐容器资源统计（stats）",
 	"database":      "受管数据库实例与逻辑库的登记、状态、固定指标与写操作",
 	"files":         "面板文件页的文件与目录读写",
 	"security":      "SSH 状态、账号、登录记录与密钥指纹",
@@ -159,6 +159,10 @@ func searchTools(snapshot CapabilitySnapshot, raw json.RawMessage) (CapabilityRe
 		if exact {
 			score += 10000
 		}
+		// 只给领域泛查的本地清单入口提权重，避免先返回异步任务观察工具。
+		if query == strings.ToLower(c.Metadata.Domain) && discoveryReadList(c) {
+			score += 16
+		}
 		for _, term := range terms {
 			if strings.Contains(name, term) {
 				score += 20
@@ -177,6 +181,10 @@ func searchTools(snapshot CapabilitySnapshot, raw json.RawMessage) (CapabilityRe
 	sort.Slice(candidates, func(i, j int) bool {
 		if candidates[i].score != candidates[j].score {
 			return candidates[i].score > candidates[j].score
+		}
+		// 同等相关时先给只读清单入口，泛问“有什么镜像”无需先知道单项 ID。
+		if left, right := discoveryReadList(candidates[i].capability), discoveryReadList(candidates[j].capability); left != right {
+			return left
 		}
 		return candidates[i].capability.Name < candidates[j].capability.Name
 	})
@@ -199,6 +207,10 @@ func searchTools(snapshot CapabilitySnapshot, raw json.RawMessage) (CapabilityRe
 	}
 	value, err := json.Marshal(result)
 	return CapabilityResult{Value: value}, err
+}
+
+func discoveryReadList(c Capability) bool {
+	return c.ReadOnly && (c.Metadata.Action == "list" || strings.HasSuffix(c.Name, "_list"))
 }
 
 func searchTerms(query string) []string {

@@ -72,6 +72,8 @@ type Change struct {
 // PublicSchema 是对外可见的描述符投影：只含名字、说明与参数模式，处理器与
 // 内部字段不外泄。
 type PublicSchema struct {
+	// SearchNames is server-side discovery data, excluded from public schemas and execution digests.
+	SearchNames []string       `json:"-"`
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
 	Parameters  map[string]any `json:"parameters"`
@@ -113,6 +115,8 @@ type Metadata struct {
 
 // Descriptor 声明一条工具。
 type Descriptor struct {
+	// SearchNames 仅用于服务端目录检索，不发送为模型工具定义。
+	SearchNames []string
 	// Name 是唯一标识，只允许小写字母、数字与下划线，最长 64 字符。
 	Name string
 	// Description 是给调用方看的中文说明，不得为空。
@@ -148,6 +152,14 @@ func (d Descriptor) validate() error {
 	if strings.TrimSpace(d.Description) == "" {
 		return fmt.Errorf("工具 %q 的说明不得为空", d.Name)
 	}
+	if len(d.SearchNames) > 16 {
+		return fmt.Errorf("工具 %q 的检索别名不能超过 16 个", d.Name)
+	}
+	for _, name := range d.SearchNames {
+		if strings.TrimSpace(name) == "" || len(name) > 256 {
+			return fmt.Errorf("工具 %q 的检索别名不能为空且不能超过 256 字节", d.Name)
+		}
+	}
 	if d.Handler == nil {
 		return fmt.Errorf("工具 %q 的处理器不得为空", d.Name)
 	}
@@ -167,6 +179,7 @@ func (d Descriptor) validate() error {
 }
 
 func (d Descriptor) clone() Descriptor {
+	d.SearchNames = append([]string(nil), d.SearchNames...)
 	d.Parameters = d.Parameters.clone()
 	if d.JSONParameters != nil {
 		d.JSONParameters = kardia.CloneConfig(d.JSONParameters).(map[string]any)
@@ -186,6 +199,7 @@ func (d Descriptor) Public() PublicSchema {
 		parameters = kardia.CloneConfig(d.JSONParameters).(map[string]any)
 	}
 	return PublicSchema{
+		SearchNames: append([]string(nil), d.SearchNames...),
 		Name:        d.Name,
 		Description: d.Description,
 		Parameters:  parameters,
