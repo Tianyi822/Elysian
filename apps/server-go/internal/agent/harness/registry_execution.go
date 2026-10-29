@@ -188,7 +188,14 @@ func (m *Manager) registerRunCatalog(s CapabilitySnapshot) error {
 				result := CapabilityResult{}
 				if err == nil {
 					result.Value, _, err = projectResult(value, DefaultLimits().ResultBytes)
+				} else if business, ok := tools.AsBusinessError(err); ok && ctx.Err() == nil && c.ReadOnly && !c.Metadata.Async {
+					result.BusinessError = &Failure{Code: business.Code, Message: business.Message}
+					err = nil
 				} else if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+					var business *tools.BusinessError
+					if errors.As(err, &business) || ctx.Err() != nil {
+						return result, err
+					}
 					result.BusinessError = &Failure{Code: "tool-failed", Message: "工具执行失败，请检查对应域状态"}
 					err = nil
 				}
@@ -227,7 +234,7 @@ func (m *Manager) executeRegistryOperation(ctx context.Context, s CapabilitySnap
 		matched := false
 		if m.deps.Tools != nil {
 			for _, schema := range m.deps.Tools.Schemas() {
-				if schema.Name == o.Capability.Name && (digestJSON(schema) == o.Capability.CatalogDigest || legacyFileCatalogCompatible(s, o, schema)) {
+				if schema.Name == o.Capability.Name && (digestJSON(schema) == o.Capability.CatalogDigest || legacyFileCatalogCompatible(s, o, schema) || legacyDatabaseDiscoverCatalogCompatible(o, schema)) {
 					matched = true
 				}
 			}
@@ -246,6 +253,9 @@ func (m *Manager) executeRegistryOperation(ctx context.Context, s CapabilitySnap
 	}
 	value, err := m.toolRuntime.Execute(ctx, o.Capability.Name, args)
 	if err != nil {
+		if business, ok := tools.AsBusinessError(err); ok && o.Capability.Source == "builtin" && o.Capability.ReadOnly && !o.Capability.Metadata.Async && ctx.Err() == nil {
+			return CapabilityResult{BusinessError: &Failure{Code: business.Code, Message: business.Message}}, nil
+		}
 		// 仅内置网页工具定义的安全业务错误可继续交给模型，不透传底层错误。
 		var webError *webfetch.Error
 		if o.Capability.Source == "builtin" && o.Capability.Name == "web_fetch" && ctx.Err() == nil && errors.As(err, &webError) {

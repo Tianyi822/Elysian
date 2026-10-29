@@ -138,16 +138,33 @@ func (f *AgentFacade) Metrics(ctx context.Context, id string) (any, error) {
 	return map[string]any{"id": id, "status": value.Status, "storage": value.Storage, "memory": value.Memory, "connections": value.Connections, "needsAttention": value.NeedsAttention, "version": agentRecordDigest(row)}, nil
 }
 
+// AgentDiscoveryError 的文本是固定公开诊断，不携带底层引擎错误。
+type AgentDiscoveryError struct {
+	Code    string
+	Message string
+}
+
+func (e *AgentDiscoveryError) Error() string { return e.Message }
+
 func (f *AgentFacade) Discover(ctx context.Context, engine, version string) (any, error) {
 	if err := f.check(ctx); err != nil {
 		return nil, err
 	}
-	if engineRepository[engine] == "" || !validDatabaseVersion(version) {
-		return nil, errors.New("必须指定支持的数据库引擎和精确版本")
+	if engineRepository[engine] == "" {
+		return nil, &AgentDiscoveryError{Code: "database-engine-invalid", Message: "数据库引擎必须为 MySQL、MariaDB 或 Redis"}
+	}
+	if !validDatabaseVersion(version) {
+		return nil, &AgentDiscoveryError{Code: "database-version-invalid", Message: "必须指定明确的数据库版本标签，不能使用 latest；请先查询本地 Docker 镜像列表，使用对应官方镜像的实际版本标签"}
 	}
 	result, err := f.service.Discover(ctx, engine, &version)
 	if err != nil {
-		return nil, errors.New("读取数据库镜像和实例失败")
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
+		return nil, &AgentDiscoveryError{Code: "database-discovery-failed", Message: "读取数据库镜像和实例失败，请检查 Docker 可用性后重新查询"}
 	}
 	images := []map[string]string{}
 	for i, row := range result.Images {

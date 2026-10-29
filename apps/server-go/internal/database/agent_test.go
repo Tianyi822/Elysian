@@ -3,9 +3,49 @@ package database
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
+
+	"elysian/server/internal/contract"
 )
+
+func TestAgentDiscoverErrorsAreSafeAndCorrectable(t *testing.T) {
+	fixture := newServiceFixture("8.4.2")
+	facade := &AgentFacade{service: fixture.service, authorize: func(context.Context) error { return nil }}
+	for _, version := range []string{"latest", "LATEST", "", "8.0; rm -rf /"} {
+		_, err := facade.Discover(context.Background(), "MySQL", version)
+		var failure *AgentDiscoveryError
+		if !errors.As(err, &failure) || failure.Code != "database-version-invalid" || !strings.Contains(failure.Message, "latest") || !strings.Contains(failure.Message, "镜像列表") {
+			t.Fatalf("非法版本应返回可纠正错误：%+v", err)
+		}
+	}
+	value, err := facade.Discover(context.Background(), "MySQL", "8.0")
+	raw, _ := json.Marshal(value)
+	if err != nil || !strings.Contains(string(raw), `"images":[]`) || !strings.Contains(string(raw), `"containers":[]`) {
+		t.Fatalf("无匹配项必须成功返回空列表：%s %v", raw, err)
+	}
+	secret := "ENGINE_PRIVATE_RESPONSE"
+	fixture.service.deps.listImages = func(context.Context) ([]contract.ContainerImage, error) { return nil, errors.New(secret) }
+	_, err = facade.Discover(context.Background(), "MySQL", "8.0")
+	var failure *AgentDiscoveryError
+	if !errors.As(err, &failure) || failure.Code != "database-discovery-failed" || strings.Contains(err.Error(), secret) || errors.Unwrap(err) != nil {
+		t.Fatalf("引擎响应不得进入公开错误：%v", err)
+	}
+	for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
+		fixture.service.deps.listImages = func(context.Context) ([]contract.ContainerImage, error) { return nil, cause }
+		_, err = facade.Discover(context.Background(), "MySQL", "8.0")
+		if !errors.Is(err, cause) || errors.As(err, &failure) {
+			t.Fatalf("取消与超时不得变为业务错误：%v", err)
+		}
+	}
+	denied := errors.New("授权撤销")
+	facade.authorize = func(context.Context) error { return denied }
+	_, err = facade.Discover(context.Background(), "MySQL", "latest")
+	if !errors.Is(err, denied) {
+		t.Fatalf("参数错误不得掩盖授权拒绝：%v", err)
+	}
+}
 
 func TestAgentDatabaseRequiresManagedExactRegistrationAndAuthority(t *testing.T) {
 	fixture := newServiceFixture("8.4.2")

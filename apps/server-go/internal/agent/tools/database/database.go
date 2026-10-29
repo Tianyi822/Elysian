@@ -57,6 +57,9 @@ func New(c *kardia.Context, deps Deps, _ Config) (*Service, error) {
 			properties["versionTag"] = tools.Schema{Type: tools.SchemaString}
 			required = append(required, "engine", "versionTag")
 		}
+		if spec.action == "discover" {
+			properties["versionTag"] = tools.Schema{Type: tools.SchemaString, Description: "对应官方镜像的明确版本标签，禁止 latest；无匹配项表示本地没有该版本，请先查询 Docker 镜像列表确认实际版本标签"}
+		}
 		if spec.action == "create" {
 			for _, key := range []string{"name", "imageId", "containerName", "charset"} {
 				properties[key] = tools.Schema{Type: tools.SchemaString}
@@ -90,7 +93,11 @@ func New(c *kardia.Context, deps Deps, _ Config) (*Service, error) {
 			if spec.action == "discover" {
 				engine, _ := tools.StringArg(args, "engine")
 				version, _ := tools.StringArg(args, "versionTag")
-				return deps.Facade.Discover(tools.Lifetime(c), engine, version)
+				value, err := deps.Facade.Discover(tools.Lifetime(c), engine, version)
+				if discovery, ok := err.(*domain.AgentDiscoveryError); ok {
+					return nil, &tools.BusinessError{Code: discovery.Code, Message: discovery.Message}
+				}
+				return value, err
 			}
 			if spec.action == "create" {
 				raw, err := json.Marshal(args)
