@@ -24,13 +24,14 @@ export function ChatUserInput({ request, answers, submitting, pending, onAnswer,
   const prefix = useId()
   const locked = submitting || pending
   const complete = request.questions.every(q => answered(answers[q.id]))
-  const choose = (next: number) => {
+  const choose = (next: number, confirm = false) => {
     if (locked) return
     const option = question.options[next]
     onAnswer(question.id, option ? { optionId: option.id } : { text: custom ? answer.text : '' })
+    if (confirm && option && index < request.questions.length - 1) setIndex(index + 1)
   }
   useEffect(() => { heading.current?.focus() }, [index])
-  useEffect(() => { if (custom && !locked) text.current?.focus() }, [custom, locked])
+  useEffect(() => { if (custom && !locked) text.current?.focus() }, [custom, locked, index])
   const advance = () => {
     if (submitting) return
     if (pending) { onSubmit(); return }
@@ -46,13 +47,16 @@ export function ChatUserInput({ request, answers, submitting, pending, onAnswer,
         key={`${question.id}:${position}`} type="button" role="radio" aria-checked={selected === position} disabled={locked}
         tabIndex={selected === position || selected < 0 && position === 0 ? 0 : -1}
         ref={element => { radios.current[position] = element }} className="chat-question-option"
-        onClick={() => choose(position)} onKeyDown={event => {
+        onClick={() => choose(position, true)} onKeyDown={event => {
           if (['ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowLeft', 'Home', 'End'].includes(event.key)) {
             event.preventDefault()
             const length = question.options.length + 1
             const next = event.key === 'Home' ? 0 : event.key === 'End' ? length - 1 : (position + (event.key === 'ArrowDown' || event.key === 'ArrowRight' ? 1 : -1) + length) % length
             choose(next); radios.current[next]?.focus()
-          } else if (event.key === 'Enter') { event.preventDefault(); if (selected !== position) choose(position); else advance() }
+          } else if (event.key === 'Enter') {
+            event.preventDefault()
+            if (!event.repeat && !event.nativeEvent.isComposing && event.keyCode !== 229) choose(position, true)
+          }
         }}>
         <span className="chat-question-number">{selected === position ? <Check size={14} aria-hidden /> : position + 1}</span>
         <span className="chat-question-option-copy"><span className="chat-question-label">{option.label}{question.recommendedOptionId === option.id && <span className="chat-question-recommended">推荐</span>}</span><span className="chat-question-description">{option.description}</span></span>
