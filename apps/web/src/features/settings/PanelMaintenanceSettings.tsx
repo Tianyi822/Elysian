@@ -72,6 +72,10 @@ export function PanelMaintenanceSettings() {
   const [verifiedUpdate, setVerifiedUpdate] = useState<string | null>(null)
   const submissionVersion = useRef(0)
   const active = task !== null && (panelTaskIsActive(task) || task.state === 'recovery-failed')
+  // 成功更新不常驻进度卡；当前跟踪的任务须先核对版本，并保留未完成的 CLI 注册入口。
+  const updateCompleted = task?.kind === 'update' && task.state === 'succeeded'
+    && task.cliRegistration?.status !== 'pending' && task.cliRegistration?.status !== 'failed'
+    && (trackedTaskId !== task.id || verifiedUpdate === task.id)
   const unavailable = !info?.available || active || submitting || pending !== null
   useFeedbackNotification(loadError ? `面板配置读取失败：${loadError}` : null)
   useFeedbackNotification(info && !info.available ? `面板维护不可用：${info.reason}` : null, 'warning')
@@ -353,7 +357,7 @@ export function PanelMaintenanceSettings() {
       {progressError ? <p role="alert" className="mt-2 text-xs text-danger">{progressError}</p> : null}
       <button className={`${BUTTON} mt-3`} disabled={submitting} onClick={() => void submit(pending.kind, { kind: pending.kind, input: pending.input }, pending)}>重试原维护请求</button>
     </section> : null}
-    {task ? <section aria-label="面板维护进度" className="panel-surface p-5">
+    {task && !updateCompleted ? <section aria-label="面板维护进度" className="panel-surface p-5">
       <h2 className="text-sm font-medium text-fg">面板维护进度</h2>
       <p role="status" className="mt-3 text-xs leading-5 text-fg">{task.state === 'succeeded' && task.kind === 'update' && trackedTaskId === task.id && verifiedUpdate !== task.id ? '运行版本待确认' : PANEL_TASK_STATE_LABELS[task.state]} · {PANEL_TASK_PHASE_LABELS[task.phase] ?? task.phase}</p>
       {task.kind === 'update' ? <p className="mt-2 break-all text-xs leading-5 text-fg-muted">更新来源：{task.updateSource ? PANEL_UPDATE_SOURCE_LABELS[task.updateSource] : '自动选择（GitHub 优先，Gitee 回退）'}<br />更新策略：{PANEL_UPDATE_CHANNEL_LABELS[task.updateChannel ?? 'commit']}{task.releaseTag ? ` · ${task.releaseTag}` : ''}<br />目标提交：{task.targetCommit}</p> : null}

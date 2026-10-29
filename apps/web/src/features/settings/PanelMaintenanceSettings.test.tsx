@@ -86,14 +86,15 @@ describe('端口与更新设置', () => {
     expect(screen.queryByText('旧请求错误')).not.toBeInTheDocument()
     expect(sessionStorage.getItem(PANEL_PENDING_KEY)).toBeNull()
   })
-  it('历史更新成功不触发健康探测或自动刷新', async () => {
-    const g = gateway(); const finished = { ...task, kind: 'update' as const, state: 'succeeded' as const, targetCommit: releaseUpdate.targetCommit }
+  it('历史更新成功隐藏维护进度，不触发健康探测或自动刷新', async () => {
+    const g = gateway(); const finished: PanelTask = { ...task, kind: 'update', state: 'succeeded', phase: 'finished', targetCommit: releaseUpdate.targetCommit, cliRegistration: { status: 'succeeded', error: '' } }
     g.panel.info = async () => ({ ...info, lastTask: finished })
     g.panel.task = async () => ({ task: finished, logs: '', nextOffset: 0 })
     const fetch = vi.fn(); vi.stubGlobal('fetch', fetch)
     try {
       renderApp('/settings?tab=maintenance', { gateway: g })
-      expect(await screen.findByText(/已完成/)).toBeInTheDocument()
+      await waitFor(() => expect(usePanelStore.getState().task).toEqual(finished))
+      expect(screen.queryByRole('region', { name: '面板维护进度' })).not.toBeInTheDocument()
       expect(reloadPanelPage).not.toHaveBeenCalled()
       expect(fetch.mock.calls.some(([url]) => url === '/api/health')).toBe(false)
       expect(useNotificationStore.getState().notifications).not.toContainEqual(expect.objectContaining({ tone: 'success', message: '面板维护已完成' }))
@@ -492,7 +493,7 @@ describe('端口与更新设置', () => {
     expect(screen.getByRole('button', { name: '重新加载面板' })).toBeInTheDocument()
     vi.unstubAllGlobals()
   })
-  it('运行版本与目标提交一致时自动刷新页面', async () => {
+  it('运行版本与目标提交一致时隐藏维护进度并自动刷新页面', async () => {
     const g = gateway(); const sha = commitUpdate.targetCommit
     const updateTask = { ...task, kind: 'update' as const, newPorts: ports, targetCommit: sha }
     g.panel.info = async () => ({ ...info, activeTask: updateTask })
@@ -505,6 +506,7 @@ describe('端口与更新设置', () => {
     await screen.findByText(/等待执行|正在执行/)
     finished = true
     await waitFor(() => expect(vi.mocked(reloadPanelPage)).toHaveBeenCalled(), { timeout: 4000 })
+    expect(screen.queryByRole('region', { name: '面板维护进度' })).not.toBeInTheDocument()
     vi.unstubAllGlobals()
   })
   it('断连超时后转健康探测自动重连，更新任务不引导新地址', async () => {
