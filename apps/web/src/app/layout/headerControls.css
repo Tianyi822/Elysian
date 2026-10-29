@@ -28,3 +28,6 @@
 }
 
 /* 下拉菜单的统一皮肤在控件层：src/styles/index.css 的 .select-menu。 */
+
+/* 固定消息入口的占位只作用于页头，不压缩下面的业务内容。 */
+.shell-header-actions { padding-right: var(--shell-action-space); }

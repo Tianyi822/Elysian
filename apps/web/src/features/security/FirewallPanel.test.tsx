@@ -1,3 +1,4 @@
+import { messageHistoryText } from '../../test/messageHistory'
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -5,6 +6,7 @@ import type { ElysianGateway } from '../../contracts/adapters'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { SEED_FORWARDS, SEED_IP_RULES, SEED_RULES } from '../../adapters/mock/firewallData'
 import { useFirewallStore, FIREWALL_PAGE_SIZE } from '../../stores/firewallStore'
+import { useMessageStore } from '../../stores/messageStore'
 import { renderApp } from '../../test/renderApp'
 
 /**
@@ -84,6 +86,25 @@ beforeEach(() => {
 })
 
 describe('防火墙面板', () => {
+  it('校验提示只留在表单，真实保存失败同时保留行内原因和消息', async () => {
+    const user = userEvent.setup()
+    const create = vi.fn().mockRejectedValue(new Error('防火墙暂不可写'))
+    await openFirewallPage(sessionGateway({ create }))
+    await user.click(screen.getByRole('button', { name: '添加端口规则' }))
+    const dialog = await screen.findByRole('dialog', { name: '添加端口规则' })
+    const previousCount = useMessageStore.getState().messages.length
+    await user.click(within(dialog).getByRole('button', { name: '添加规则' }))
+    expect(create).not.toHaveBeenCalled()
+    expect(useMessageStore.getState().messages).toHaveLength(previousCount)
+    await user.type(within(dialog).getByLabelText(/端口/), '3388')
+    await user.click(within(dialog).getByRole('button', { name: '添加规则' }))
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('保存失败：防火墙暂不可写')
+    expect(within(dialog).getByLabelText(/端口/)).toHaveValue('3388')
+    expect(useMessageStore.getState().messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ tone: 'danger', message: '保存失败：防火墙暂不可写' }),
+    ]))
+  })
+
   it('种子规则跨两页：首页 20 行，下一页看剩余，共 N 条随搜索变化', async () => {
     const user = userEvent.setup()
     await openFirewallPage()
@@ -125,8 +146,7 @@ describe('防火墙面板', () => {
       'aria-checked',
       'false',
     )
-    const notifications = await screen.findByLabelText('通知')
-    expect(within(notifications).getByRole('status')).toHaveTextContent(
+    expect(messageHistoryText('status')).toContain(
       '禁 ping 已关闭（mock，待接入真实执行）',
     )
   })
@@ -158,7 +178,7 @@ describe('防火墙面板', () => {
     release?.()
     await waitFor(() => expect(screen.getByRole('switch', { name: '禁ping' })).toBeEnabled())
     // 那一次点击确实到了 adapter（不是被忙碌分支吞掉），并且切换完成后开关恢复可用。
-    expect(within(await screen.findByLabelText('通知')).getByRole('status')).toHaveTextContent(
+    expect(messageHistoryText('status')).toContain(
       `禁 ping 已${wasChecked ? '关闭' : '开启'}（mock，待接入真实执行）`,
     )
   })
@@ -182,8 +202,7 @@ describe('防火墙面板', () => {
     expect(screen.queryByRole('dialog', { name: '添加端口规则' })).not.toBeInTheDocument()
     await user.type(screen.getByLabelText('搜索端口、来源或备注'), '8443')
     expect(await screen.findByText(/共 1 条/)).toBeInTheDocument()
-    const notifications = await screen.findByLabelText('通知')
-    expect(within(notifications).getByRole('status')).toHaveTextContent(
+    expect(messageHistoryText('status')).toContain(
       '端口规则 tcp 8443 已添加（mock，待接入真实执行）',
     )
   })
@@ -224,8 +243,7 @@ describe('防火墙面板', () => {
       ),
     )
     await waitFor(() => expect(screen.getByText(new RegExp(`共 ${SEED_RULE_COUNT} 条`))).toBeInTheDocument())
-    const notifications = await screen.findByLabelText('通知')
-    expect(within(notifications).getByRole('status')).toHaveTextContent(
+    expect(messageHistoryText('status')).toContain(
       '端口规则 tcp 2234 已删除（mock，待接入真实执行）',
     )
   })
@@ -273,10 +291,9 @@ describe('防火墙面板', () => {
     expect(within(dialog).getByText('暂无数据')).toBeInTheDocument()
     // 关掉开关留 mock 通知。弹窗开着时通知区被 Radix 标记 aria-hidden，role 查询要带 hidden。
     await user.click(within(dialog).getByRole('switch', { name: '防扫描开关' }))
-    const notifications = await screen.findByLabelText('通知')
     expect(
-      within(notifications).getByRole('status', { hidden: true }),
-    ).toHaveTextContent('端口防扫描已关闭')
+      messageHistoryText('status'),
+    ).toContain('端口防扫描已关闭')
   })
 
   it('防扫描封锁列表：IP 搜索框只收 IP 格式字符并模糊过滤', async () => {
@@ -328,8 +345,7 @@ describe('防火墙面板', () => {
 
     // 坏文件：只给危险通知（danger → alert），不加规则
     await user.upload(input, new File(['{ not json'], 'bad.json', { type: 'application/json' }))
-    let notifications = await screen.findByLabelText('通知')
-    expect(within(notifications).getByRole('alert')).toHaveTextContent('导入失败：不是有效的规则 JSON')
+    expect(messageHistoryText('alert')).toContain('导入失败：不是有效的规则 JSON')
     expect(screen.getByText(new RegExp(`共 ${SEED_RULE_COUNT} 条`))).toBeInTheDocument()
 
     // 好文件：1 条新增 + 1 条与现有数据重复跳过（8443 是此前添加用例建出的）。
@@ -345,9 +361,9 @@ describe('防火墙面板', () => {
       input,
       new File([JSON.stringify(payload)], 'rules.json', { type: 'application/json' }),
     )
-    notifications = await screen.findByLabelText('通知')
+
     await waitFor(() =>
-      expect(within(notifications).getByRole('status')).toHaveTextContent(
+      expect(messageHistoryText('status')).toContain(
         '导入完成：新增 1 条，跳过重复 1 条（mock，待接入真实执行）',
       ),
     )
@@ -376,15 +392,14 @@ describe('防火墙面板', () => {
     )
 
     // 被拒的两条逐条给出序号与原因，不静默丢弃
-    const notifications = await screen.findByLabelText('通知')
-    const rejected = within(notifications).getByRole('alert')
-    expect(rejected).toHaveTextContent('导入：2 条被拒')
-    expect(rejected).toHaveTextContent('第 2 条：备注不能包含单引号')
-    expect(rejected).toHaveTextContent('第 3 条：协议、端口、地址族、策略或方向不合法')
+    const rejected = messageHistoryText('alert')
+    expect(rejected).toContain('导入：2 条被拒')
+    expect(rejected).toContain('第 2 条：备注不能包含单引号')
+    expect(rejected).toContain('第 3 条：协议、端口、地址族、策略或方向不合法')
 
     // 合法的那条照常导入
     await waitFor(() =>
-      expect(within(notifications).getByRole('status')).toHaveTextContent('导入完成：新增 1 条'),
+      expect(messageHistoryText('status')).toContain('导入完成：新增 1 条'),
     )
     await user.type(screen.getByLabelText('搜索端口、来源或备注'), '9091')
     expect(screen.getByRole('region', { name: '端口规则表' }).textContent).toContain('合法行')
@@ -415,11 +430,8 @@ describe('防火墙面板', () => {
       expect(clicks[0]).toContain('-inbound-')
       // 弹窗即关，下载动作本身经通知条留痕
       expect(screen.queryByRole('dialog', { name: '导出规则' })).not.toBeInTheDocument()
-      const notifications = screen.getByLabelText('通知')
       expect(
-        within(notifications).getAllByRole('status', { hidden: true }).some((item) =>
-          item.textContent?.includes('已导出'),
-        ),
+        messageHistoryText('status').includes('已导出'),
       ).toBe(true)
     } finally {
       vi.restoreAllMocks()
@@ -443,9 +455,7 @@ describe('防火墙面板', () => {
       const chipCount = (label: string) =>
         Number(screen.getByText(label, { selector: 'span' }).parentElement?.textContent?.match(/(\d+)/)?.[1] ?? '0')
       const expected = chipCount('端口规则') + chipCount('IP 规则') + chipCount('端口转发')
-
-      const notifications = screen.getByLabelText('通知')
-      expect(within(notifications).getByRole('status')).toHaveTextContent(
+      expect(messageHistoryText('status')).toContain(
         `已从操作系统同步防火墙规则，当前共 ${expected} 条（mock，待接入真实执行）`,
       )
       expect(screen.getByRole('button', { name: '同步规则' })).toBeEnabled()
@@ -545,8 +555,7 @@ describe('防火墙面板', () => {
     await user.click(within(dialog).getByRole('button', { name: '添加规则' }))
 
     await waitFor(() => expect(within(region).getByText('198.51.100.0/24')).toBeInTheDocument())
-    const notifications = await screen.findByLabelText('通知')
-    expect(within(notifications).getByRole('status')).toHaveTextContent(
+    expect(messageHistoryText('status')).toContain(
       'IP 规则 198.51.100.0/24 已添加（mock，待接入真实执行）',
     )
   })
@@ -573,8 +582,7 @@ describe('防火墙面板', () => {
     await user.click(within(dialog).getByRole('button', { name: '添加转发' }))
 
     await waitFor(() => expect(within(region).getByText('10.0.0.20:80')).toBeInTheDocument())
-    const notifications = await screen.findByLabelText('通知')
-    expect(within(notifications).getByRole('status')).toHaveTextContent(
+    expect(messageHistoryText('status')).toContain(
       '端口转发 tcp 9090 → 10.0.0.20:80 已添加（mock，待接入真实执行）',
     )
   })

@@ -36,7 +36,7 @@ export function FilterBar({
     <section
       aria-label="筛选栏"
       // 不叠行距：这条 64px 页头带与顶栏页签同一档，带底到控件底已有 14px（窄屏 18px）余量。
-      className={`${CTL_TOOLBAR} dashboard-filters @container flex min-h-[var(--shell-header-height)] shrink-0 items-center pr-4 pl-[52px] md:px-6`}
+      className={`${CTL_TOOLBAR} dashboard-filters shell-own-header @container flex min-h-[var(--shell-header-height)] shrink-0 items-center pr-4 pl-[52px] md:px-6`}
     >
       <div className="flex min-w-0 flex-1 items-center gap-3">
         {!isDockerRuntime() ? (

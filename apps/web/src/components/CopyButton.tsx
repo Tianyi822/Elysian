@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Check, Copy } from './icons'
-import { useNotificationStore } from '../stores/notificationStore'
+import { useMessageStore } from '../stores/messageStore'
 import { writeClipboardText } from '../utils/clipboardText'
 
 /** 复制成功后的反馈时长（毫秒）。 */
 const FEEDBACK_MS = 1_500
 
 function notifyCopyFailed(error: unknown): void {
-  useNotificationStore.getState().notify({
+  useMessageStore.getState().notify({
     tone: 'danger',
     message: `复制失败：浏览器拒绝了剪贴板访问（${error instanceof Error ? error.message : '未知原因'}）`,
   })
@@ -17,8 +17,8 @@ function notifyCopyFailed(error: unknown): void {
 /**
  * 复制到剪贴板并给出反馈的共用逻辑：
  * - `copied` 是行内反馈窗口（按钮短暂显示「已复制」）；
- * - 同时发一条右上角成功通知，因为行内反馈在窄卡上可能只剩一枚勾，说不清复制了什么；
- * - 连点时清掉上一个定时器重新计时；失败走通知，不静默；卸载时清定时器。
+ * - 同时记录一条成功消息，供之后查看复制结果；
+ * - 连点时清掉上一个定时器重新计时；失败记录消息，不静默；卸载时清定时器。
  */
 export function useClipboardCopy(): {
   copied: boolean
@@ -35,7 +35,7 @@ export function useClipboardCopy(): {
       window.clearTimeout(timerRef.current)
       setCopied(true)
       timerRef.current = window.setTimeout(() => setCopied(false), FEEDBACK_MS)
-      useNotificationStore.getState().notify({ tone: 'success', message: `已复制${label}` })
+      useMessageStore.getState().notify({ tone: 'success', message: `已复制${label}` })
     } catch (error) {
       notifyCopyFailed(error)
     }

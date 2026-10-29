@@ -1,0 +1,88 @@
+:root {
+  --message-button-size: 28px;
+  --message-edge: 16px;
+  --shell-action-space: 36px;
+}
+@media (min-width: 768px) {
+  :root { --message-button-size: 36px; --message-edge: 24px; --shell-action-space: 48px; }
+}
+.message-trigger {
+  position: fixed;
+  top: calc((var(--shell-header-height) - var(--message-button-size)) / 2);
+  right: var(--message-edge);
+  z-index: 73;
+  width: var(--message-button-size);
+  height: var(--message-button-size);
+  --icon-button-radius: 9999px;
+  --icon-button-line: var(--t-panel-line);
+  --icon-button-bg: var(--t-panel-glass-overlay);
+  pointer-events: auto;
+  backdrop-filter: blur(12px);
+}
+.message-trigger:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 3px; }
+.message-unread { position: absolute; top: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--t-accent-fg); }
+.message-panel {
+  --message-feather: clamp(12px, 3.5vw, 24px);
+  --message-field-blur: 10px;
+  position: fixed;
+  inset-block: 0;
+  right: 0;
+  z-index: 72;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  width: min(360px, 100vw);
+  height: 100dvh;
+  padding: 0 var(--message-edge);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--t-fg);
+  box-shadow: none;
+  outline: none;
+}
+/* 场底只做很淡的一层模糊，靠左侧窄幅渐入与页面衔接；材质由每条消息自己的玻璃承担。 */
+.message-panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  backdrop-filter: blur(var(--message-field-blur));
+  -webkit-backdrop-filter: blur(var(--message-field-blur));
+  mask-image: linear-gradient(to right, transparent, #000 var(--message-feather));
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 var(--message-feather));
+}
+.message-panel[data-state="open"] { animation: message-panel-in 220ms cubic-bezier(0.22, 1, 0.36, 1); }
+.message-panel[data-state="closed"] { animation: message-panel-out 160ms ease-in both; }
+.message-heading { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 12px; height: var(--shell-header-height); padding: 0 calc(var(--message-button-size) + 12px) 0 0; }
+.message-clear, .message-more { border-radius: 8px; padding: 4px 6px; font-size: 12px; color: var(--t-fg-muted); }
+.message-clear:hover:not(:disabled), .message-more:hover { background: var(--t-nav-hover); color: var(--t-fg); }
+.message-clear:focus-visible, .message-more:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.message-clear:disabled { cursor: not-allowed; opacity: 0.45; }
+.message-list { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 0 0 16px; }
+.message-list:empty { display: none; }
+.message-list[data-frozen] { overflow-y: hidden; }
+/* 材质由 MessageCenter.tsx 挂上的共用 panel-surface 提供：本文件不重描边、不铺底色，
+   未分层规则优先级高于 @layer components，写了会把共用材质整体盖掉。 */
+.message-item { display: flex; gap: 10px; padding: 12px 14px; }
+.message-item + .message-item { margin-top: 12px; }
+.message-item:hover { border-color: var(--t-fg-subtle); }
+.message-item[data-clearing] { animation: message-item-out 180ms ease-in var(--message-delay) both; }
+.message-more { flex-shrink: 0; margin: 0 12px 8px; }
+.message-empty { display: grid; flex: 1; place-items: center; padding-bottom: var(--shell-header-height); }
+/* 只做位移：祖先带 opacity 动画会被提升为独立合成层，场底模糊与条目玻璃只能采到这个空层，
+   表现为整段动画全透明、动画结束才突然出现模糊。 */
+@keyframes message-panel-in { from { transform: translateX(calc(100% + var(--message-edge))); } }
+@keyframes message-panel-out { to { transform: translateX(calc(100% + var(--message-edge))); } }
+@keyframes message-item-out { to { transform: translateX(24px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .message-panel[data-state], .message-item[data-clearing] { animation: none; }
+}
+
+.shell-own-header { padding-right: calc(var(--message-edge) + var(--shell-action-space)); }
+.shell-terminal-header { margin-right: calc(var(--shell-action-space) + var(--message-edge) - 16px); }
+
+.shell-detail-header { padding-right: calc(var(--shell-action-space) + var(--message-edge) - 20px); }
+@media (min-width: 768px) { .shell-first-row { margin-right: var(--shell-action-space); } }
+@media (max-width: 767px) { .shell-terminal-dialog-header { padding-right: calc(var(--shell-action-space) + 16px); } }

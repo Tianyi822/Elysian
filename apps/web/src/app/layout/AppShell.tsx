@@ -5,7 +5,7 @@ import { Outlet, useLocation, useMatches } from 'react-router'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { subscribeWhileVisible } from '../../adapters/subscribeWhileVisible'
 import { IconButton } from '../../components/IconButton'
-import { NotificationHost } from '../../components/NotificationHost'
+import { MessageCenter } from '../../components/MessageCenter'
 import { useEventStreamStore } from '../../stores/eventStreamStore'
 import { NAV_ITEMS } from '../navigation'
 import type { RouteHandle } from '../router'
@@ -187,7 +187,7 @@ export function AppShell() {
                 {!hideHeader && (
                   <div
                     ref={headerRowRef}
-                    className={`mb-4 flex min-w-0 items-center gap-3 ${HeaderAccessory ? '' : 'md:hidden'} ${headerClassName ?? ''}`}
+                    className={`shell-header-actions mb-4 flex min-w-0 items-center gap-3 ${HeaderAccessory ? '' : 'md:hidden'} ${headerClassName ?? ''}`}
                   >
                     <Dialog.Trigger asChild>
                       <span ref={headerActionsRef} className="shrink-0 md:hidden">
@@ -203,7 +203,7 @@ export function AppShell() {
                 )}
                 <Outlet />
               </main>
-              <NotificationHost />
+              <MessageCenter />
             </div>
           </Dialog.Root>
         </div>

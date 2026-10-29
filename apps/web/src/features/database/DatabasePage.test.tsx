@@ -6,7 +6,7 @@ import type { ElysianGateway } from '../../contracts/adapters'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { useContainersStore } from '../../stores/containersStore'
 import { useDatabaseStore } from '../../stores/databaseStore'
-import { useNotificationStore } from '../../stores/notificationStore'
+import { useMessageStore } from '../../stores/messageStore'
 import { renderApp } from '../../test/renderApp'
 
 const MARIADB: DatabaseInstance = {
@@ -397,7 +397,7 @@ describe('数据库页面', () => {
 
     // 创建成功：弹窗关闭、通知不带 mock/演示 标注、新卡片入列（经服务端刷新）。
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
-    expect(await screen.findByText('数据库 orders_replica 已创建')).toBeInTheDocument()
+    await waitFor(() => expect(useMessageStore.getState().messages).toContainEqual(expect.objectContaining({ tone: 'success', message: '数据库 orders_replica 已创建' })))
     expect(screen.queryByText(/mock，待接入真实执行/)).not.toBeInTheDocument()
     expect(
       await screen.findByRole('article', { name: 'MariaDB 数据库 orders_replica' }),
@@ -517,7 +517,7 @@ describe('数据库页面', () => {
     // 反馈与复制按钮同款：行内短暂显示「已复制」，路径不消失，并另发一条成功通知。
     expect(await within(card).findByText('已复制')).toBeInTheDocument()
     expect(card).toHaveTextContent('/root/.Elysian/data/sqlite/elysian-notes.db')
-    expect(useNotificationStore.getState().notifications[0]).toMatchObject({
+    expect(useMessageStore.getState().messages[0]).toMatchObject({
       tone: 'success',
       message: '已复制文件路径',
     })
@@ -548,7 +548,7 @@ describe('数据库页面', () => {
     await waitFor(() =>
       expect(screen.queryByRole('article', { name: 'MariaDB 数据库 mariadb-primary' })).not.toBeInTheDocument(),
     )
-    expect(await screen.findByText('数据库 mariadb-primary 已删除')).toBeInTheDocument()
+    await waitFor(() => expect(useMessageStore.getState().messages).toContainEqual(expect.objectContaining({ tone: 'success', message: '数据库 mariadb-primary 已删除' })))
     expect(screen.queryByText(/mock，待接入真实执行/)).not.toBeInTheDocument()
     expect(screen.queryByText(/（演示）/)).not.toBeInTheDocument()
     expect(listSpy.mock.calls.length).toBeGreaterThan(1)

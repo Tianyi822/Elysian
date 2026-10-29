@@ -8,10 +8,10 @@ import { GatewayProvider } from '../../adapters/GatewayProvider'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { AgentHttpError } from '../../adapters/http/agent/agentShared'
 import { useAgentChatStore } from '../../stores/agentChatStore'
-import { useNotificationStore } from '../../stores/notificationStore'
+import { useMessageStore } from '../../stores/messageStore'
 import { agentChatLocalAdapter } from '../../adapters/local/agentChatLocalAdapter'
 import { agentChatSessionKey } from '../../contracts/agentChat'
-import { NotificationHost } from '../../components/NotificationHost'
+import { MessageCenter } from '../../components/MessageCenter'
 import { chatTestApi, chatTestUserInput, chatTestCacheHitUsage, chatTestContextUsage, chatTestModel, chatTestUsage, chatVisionTestModel } from '../../test/agentChatFixtures'
 import type { AgentRunPlan, AgentChatOutput } from '@elysian/contracts'
 import { AgentChatPage } from './AgentChatPage'
@@ -41,7 +41,7 @@ function renderChat(backend = chatTestApi(), initialEntry = '/agent', modelError
     baseUrl: chatTestModel.baseUrl, active: true, hasCredential: true, models: models.map(model => ({ ...model, enabled: true })),
   }])
   if (modelError) readModels.mockRejectedValueOnce(new Error(modelError))
-  const router = createMemoryRouter([{ path: '*', element: <Tooltip.Provider><GatewayProvider gateway={gateway}><TestShell><AgentChatPage /></TestShell><NotificationHost /></GatewayProvider></Tooltip.Provider> }], { initialEntries: [initialEntry] })
+  const router = createMemoryRouter([{ path: '*', element: <Tooltip.Provider><GatewayProvider gateway={gateway}><TestShell><AgentChatPage /></TestShell><MessageCenter /></GatewayProvider></Tooltip.Provider> }], { initialEntries: [initialEntry] })
   const view = render(<RouterProvider router={router} />)
   return { ...view, ...backend, router, readModels, gateway }
 }
@@ -53,7 +53,7 @@ beforeEach(async () => {
   }))
   useAgentChatStore.getState().clearDisplay()
   for (const row of agentChatLocalAdapter.list()) agentChatLocalAdapter.remove(agentChatSessionKey(row))
-  useNotificationStore.getState().clear()
+  await useMessageStore.getState().clear()
   await useAgentChatStore.getState().newSession()
 })
 
@@ -370,9 +370,9 @@ describe('基本聊天界面', () => {
     await waitFor(() => expect(retry).toBeEnabled())
     const alert = screen.getByRole('alert')
     expect(alert).toHaveTextContent(sessionError)
-    expect(within(alert).getByRole('button', { name: '关闭通知' })).toBeInTheDocument()
-    expect(screen.getAllByText(sessionError, { exact: false })).toHaveLength(1)
-    expect(within(screen.getByLabelText('通知')).getAllByRole('alert')).toHaveLength(1)
+    expect(within(alert).queryByRole('button', { name: '关闭通知' })).not.toBeInTheDocument()
+    expect(document.querySelector('.chat-compose-area')).toHaveTextContent(sessionError)
+    expect(useMessageStore.getState().messages.filter(item => item.tone === 'danger')).toHaveLength(1)
     if (modelError !== sessionError) {
       expect(alert).toHaveTextContent(`会话：${sessionError}`)
       expect(alert).toHaveTextContent(`模型：${modelError}`)
@@ -404,9 +404,9 @@ describe('基本聊天界面', () => {
     run.error = { code: 'model-failed', message: '历史模型请求失败' }
     backend.session.activeRunId = undefined
     renderChat(backend, '/agent?session=server-session')
-    expect(await screen.findByRole('alert')).toHaveTextContent('历史模型请求失败')
+    await waitFor(() => expect(useMessageStore.getState().messages.at(-1)?.message).toContain('历史模型请求失败'))
     expect(screen.queryByRole('status', { name: '运行结果' })).not.toBeInTheDocument()
-    expect(within(screen.getByLabelText('通知')).getAllByRole('alert')).toHaveLength(1)
+    expect(useMessageStore.getState().messages.filter(item => item.tone === 'danger')).toHaveLength(1)
   })
 
   it('已接受任务异步失败使用统一消息组件，通知关闭后不重复弹出且可编辑重发', async () => {
@@ -424,13 +424,11 @@ describe('基本聊天界面', () => {
     run.error = { code: 'invalid-model-request', message: '模型请求的消息、工具或输出上限无效' }
     backend.session.activeRunId = undefined
     await act(async () => { await useAgentChatStore.getState().refresh(backend.api) })
-    const notice = within(screen.getByLabelText('通知'))
-    expect(notice.getAllByRole('alert')).toHaveLength(1)
-    expect(notice.getByRole('alert')).toHaveTextContent('已失败：模型请求的消息、工具或输出上限无效')
-    expect(screen.queryByRole('status', { name: '运行结果' })).not.toBeInTheDocument()
-    fireEvent.click(notice.getByRole('button', { name: '关闭通知' }))
-    await act(async () => { await useAgentChatStore.getState().refresh(backend.api) })
-    expect(screen.queryByLabelText('通知')).not.toBeInTheDocument()
+    expect(useMessageStore.getState().messages.filter(item => item.tone === 'danger')).toHaveLength(1)
+    expect(useMessageStore.getState().messages.at(-1)?.message).toBe('已失败：模型请求的消息、工具或输出上限无效')
+    expect(screen.queryByRole('dialog', { name: '消息' })).not.toBeInTheDocument()
+    await act(async () => { await useMessageStore.getState().clear(); await useAgentChatStore.getState().refresh(backend.api) })
+    expect(useMessageStore.getState().messages).toEqual([])
     fireEvent.click(screen.getByRole('button', { name: '编辑这条消息' }))
     expect(screen.getByRole('textbox', { name: '编辑消息内容' })).toHaveValue('请检查服务')
     expect(screen.getByRole('button', { name: '发送' })).toBeEnabled()
@@ -846,8 +844,8 @@ describe('基本聊天界面', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: '发送消息' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('模型服务不可用')
-    expect(within(screen.getByLabelText('通知')).getAllByRole('alert')).toHaveLength(1)
-    expect(document.querySelector('.chat-compose-area [role="alert"]')).toBeNull()
+    expect(useMessageStore.getState().messages.filter(item => item.tone === 'danger')).toHaveLength(1)
+    expect(document.querySelector('.chat-compose-area [role="alert"]')).toHaveTextContent('模型服务不可用')
     expect(textbox).toHaveValue('你好')
     expect(screen.queryByRole('article', { name: '助手回复' })).not.toBeInTheDocument()
   })
@@ -1046,14 +1044,15 @@ describe('会话列表编辑入口', () => {
     await user.clear(input)
     await user.click(within(dialog).getByRole('button', { name: '确认重命名' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('名称不能为空')
-    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
+    expect(within(dialog).getByRole('alert')).toBeInTheDocument()
     expect(input).toHaveAttribute('aria-invalid', 'true')
     expect(input).toHaveFocus()
     expect(backend.api.renameSession).not.toHaveBeenCalled()
     await user.type(input, 'x'.repeat(201))
     await user.click(within(dialog).getByRole('button', { name: '确认重命名' }))
-    expect(await within(screen.getByLabelText('通知')).findByText('标题不能超过 200 字节')).toBeInTheDocument()
-    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('标题不能超过 200 字节')
+    expect(useMessageStore.getState().messages).toEqual([])
+    expect(within(dialog).getByRole('alert')).toBeInTheDocument()
     expect(input).toHaveAttribute('aria-invalid', 'true')
     expect(input).toHaveFocus()
     expect(backend.api.renameSession).not.toHaveBeenCalled()
@@ -1081,16 +1080,16 @@ describe('会话列表编辑入口', () => {
     await user.clear(input)
     await user.type(input, '服务端拒绝的名字')
     await user.click(within(dialog).getByRole('button', { name: '确认重命名' }))
-    expect(await within(screen.getByLabelText('通知')).findByRole('alert')).toHaveTextContent('会话标题不能为空')
-    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
-    expect(useNotificationStore.getState().notifications.filter(item => item.message === '会话标题不能为空')).toHaveLength(1)
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('会话标题不能为空')
+    expect(within(dialog).getByRole('alert')).toBeInTheDocument()
+    expect(useMessageStore.getState().messages.filter(item => item.message === '会话标题不能为空')).toHaveLength(1)
     expect(input).toHaveFocus()
     expect(document.querySelector('.chat-title')).toHaveTextContent(longTitle)
     await user.clear(input)
     await user.type(input, '最终名字')
     await user.click(within(dialog).getByRole('button', { name: '确认重命名' }))
     await waitFor(() => expect(document.querySelector('.chat-title')).toHaveTextContent('最终名字'))
-    expect(screen.getAllByText('会话标题不能为空')).toHaveLength(1)
+    expect(useMessageStore.getState().messages.filter(item => item.message === '会话标题不能为空')).toHaveLength(1)
     expect(document.querySelector('.chat-compose-area [role="alert"]')).toBeNull()
   })
 
@@ -1106,8 +1105,8 @@ describe('会话列表编辑入口', () => {
     await user.click(within(confirm).getByRole('button', { name: '确认删除' }))
     await waitFor(() => expect(backend.api.deleteSession).toHaveBeenCalledExactlyOnceWith('server-session'))
     await waitFor(() => expect(useAgentChatStore.getState().remoteSession?.id).toBe('history-b'))
-    expect(within(screen.getByLabelText('通知')).getByText('会话已删除，已切换到其他会话。')).toBeInTheDocument()
-    expect(screen.getAllByText('会话已删除，已切换到其他会话。')).toHaveLength(1)
+    expect(useMessageStore.getState().messages.at(-1)?.message).toBe('会话已删除，已切换到其他会话。')
+    expect(useMessageStore.getState().messages.filter(item => item.message === '会话已删除，已切换到其他会话。')).toHaveLength(1)
     await waitFor(() => expect(router.state.location.search).toBe('?session=history-b'))
     expect(screen.queryByRole('button', { name: longTitle })).not.toBeInTheDocument()
     // 删除最后一个会话：回落到空白草稿，URL 清空。
@@ -1117,8 +1116,8 @@ describe('会话列表编辑入口', () => {
     await waitFor(() => expect(backend.api.deleteSession).toHaveBeenCalledTimes(2))
     expect(backend.api.deleteSession).toHaveBeenNthCalledWith(2, 'history-b')
     await waitFor(() => expect(useAgentChatStore.getState().session?.remote).toBeUndefined())
-    expect(within(screen.getByLabelText('通知')).getByText('会话已删除，已新建空白会话。')).toBeInTheDocument()
-    expect(screen.getAllByText('会话已删除，已新建空白会话。')).toHaveLength(1)
+    expect(useMessageStore.getState().messages.at(-1)?.message).toBe('会话已删除，已新建空白会话。')
+    expect(useMessageStore.getState().messages.filter(item => item.message === '会话已删除，已新建空白会话。')).toHaveLength(1)
     await waitFor(() => expect(router.state.location.search).toBe(''))
     expect(screen.queryByRole('button', { name: '历史 B' })).not.toBeInTheDocument()
   })
@@ -1133,9 +1132,9 @@ describe('会话列表编辑入口', () => {
     await user.click(await screen.findByRole('menuitem', { name: '删除会话' }))
     await user.click(await screen.findByRole('button', { name: '确认删除' }))
     const dialog = await screen.findByRole('dialog', { name: `删除会话「${longTitle}」？` })
-    expect(await within(screen.getByLabelText('通知')).findByRole('alert')).toHaveTextContent(message)
-    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
-    expect(useNotificationStore.getState().notifications.filter(item => item.message === message)).toHaveLength(1)
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(message)
+    expect(within(dialog).getByRole('alert')).toBeInTheDocument()
+    expect(useMessageStore.getState().messages.filter(item => item.message === message)).toHaveLength(1)
     // 弹窗打开时页面被 aria-hidden，行仍在用 DOM 断言；会话指针未动。
     expect([...document.querySelectorAll('.chat-session-row')].some(row => row.textContent?.includes(longTitle))).toBe(true)
     expect(useAgentChatStore.getState().remoteSession?.id).toBe('server-session')

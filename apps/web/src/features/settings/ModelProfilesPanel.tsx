@@ -10,7 +10,6 @@ import { StatusTag } from '../../components/StatusTag'
 import { useModelSettingsStore, validateModelInput, isRevisionConflict } from '../../stores/modelSettingsStore'
 import { EmptyState } from '../../components/states/StateViews'
 import { RevisionConflictNotice } from './RevisionConflictNotice'
-import { useNotificationStore } from '../../stores/notificationStore'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { SuggestionInput } from '../../components/SuggestionInput'
 import { ScrollArea } from '../../components/ScrollArea'
@@ -66,7 +65,7 @@ function Toggle({ label, checked, onChange }: { label: string; checked: boolean;
 function ModelServiceDialog({ service, visible, onClose }: { service?: AgentModelService; visible: boolean; onClose(): void }) {
   const gateway = useGateway()
   const saveService = useModelSettingsStore(state => state.saveService)
-  const notify = useNotificationStore(state => state.notify)
+  const [catalogNotice, setCatalogNotice] = useState<string>()
   const latest = useModelSettingsStore(state => state.services.find(item => item.id === service?.id))
   const { submitting, inFlightOnly } = useInFlightSubmit()
   const [revision, setRevision] = useState(service?.revision ?? 0)
@@ -84,15 +83,15 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
   const [catalogSearch, setCatalogSearch] = useState('')
   const [selectedModels, setSelectedModels] = useState<string[]>([])
   const discoveryRequest = useRef<AbortController | undefined>(undefined)
-  const reportError = (message: string) => { setError(message); notify({ tone: 'danger', message }) }
+  const reportError = (message: string) => { setError(message) }
   useEffect(() => {
     setCatalog(undefined); setCatalogSearch(''); setSelectedModels([]); setFetchingModels(false)
     return () => { discoveryRequest.current?.abort(); discoveryRequest.current = undefined }
   }, [provider, apiFormat, baseUrl, credential, revision])
   const discoverModels = async () => {
     if (discoveryRequest.current) return
-    if (!baseUrl.trim()) { notify({ tone: 'danger', message: '请先填写 Base URL' }); return }
-    if (!(credential.trim() || service?.hasCredential)) { notify({ tone: 'danger', message: '获取模型前请先配置 API Key' }); return }
+    if (!baseUrl.trim()) { setError('请先填写 Base URL'); return }
+    if (!(credential.trim() || service?.hasCredential)) { setError('获取模型前请先配置 API Key'); return }
     const controller = new AbortController()
     discoveryRequest.current = controller
     setFetchingModels(true); setCatalog(undefined)
@@ -100,11 +99,11 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
       const rows = await gateway.modelSettings.discoverModels({ provider, apiFormat, baseUrl, ...(credential ? { credential } : {}), ...(service ? { serviceId: service.id, expectedRevision: revision } : {}) }, controller.signal)
       if (discoveryRequest.current === controller) {
         setCatalog(rows); setSelectedModels([])
-        notify({ tone: 'info', message: rows.length ? `已获取 ${rows.length} 个模型，请选择后添加。` : '服务没有返回可用模型，可以手动添加。' })
+        setCatalogNotice(rows.length ? `已获取 ${rows.length} 个模型，请选择后添加。` : '服务没有返回可用模型，可以手动添加。')
       }
     } catch (error) {
       if (discoveryRequest.current === controller && !controller.signal.aborted) {
-        notify({ tone: 'danger', message: error instanceof Error ? error.message : '获取模型失败，请重试或手动添加' })
+        setError(error instanceof Error ? error.message : '获取模型失败，请重试或手动添加')
         if (isRevisionConflict(error)) await useModelSettingsStore.getState().refresh(gateway)
       }
     } finally {
@@ -115,7 +114,7 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
     try {
       const rows = createRows()
       setModels(current => [...current, ...rows]); setExpanded(expandFirst ? rows[0]?.key : undefined); setError(undefined)
-      notify({ tone: 'success', message: `已添加 ${rows.length} 个模型到配置草稿，保存后生效。` })
+      setCatalogNotice(`已添加 ${rows.length} 个模型到配置草稿，保存后生效。`)
       return true
     } catch {
       reportError('添加模型失败，请重试。')
@@ -169,6 +168,7 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
     setError(undefined)
     const ok = await inFlightOnly(() => saveService(gateway, input, service ? { id: service.id, revision } : undefined))
     if (ok) onClose()
+    else setError(useModelSettingsStore.getState().errorMessage ?? '保存模型服务失败，请重试。')
   }
   return <Dialog.Root open={visible} onOpenChange={next => !next && onClose()}>
     <Dialog.Portal><Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
@@ -229,6 +229,7 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
             </div>
             {provider === 'deepseek' && <p className="text-xs text-fg-subtle">DeepSeek 使用非思考模式；获取或手动添加后，模型参数均可编辑。</p>}
             {provider === 'zhipu' && <p className="text-xs text-fg-subtle">智谱 BigModel Coding Plan 须使用套餐 API Key 与专属地址，仅支持 Chat Completions；已按官方文档带出 GLM-5.3 与 GLM-5.3-Flash，两者始终启用思考，档位 low／high／max（默认最高），可按需增删。</p>}
+            {catalogNotice && <p role="status" className="text-xs text-fg-muted">{catalogNotice}</p>}
             {error && <p role="alert" className="text-xs text-danger">{error}</p>}
             {service && <RevisionConflictNotice latest={latest} baseRevision={revision} onAccept={setRevision} />}
           </fieldset></ScrollArea>

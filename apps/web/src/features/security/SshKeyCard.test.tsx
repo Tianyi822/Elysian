@@ -1,3 +1,4 @@
+import { messageHistoryText } from '../../test/messageHistory'
 import { screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { SEED_LOGIN_KEYS } from '../../adapters/mock/sshData'
@@ -9,8 +10,8 @@ import { openSshTab, resetSshPanel, sshSessions } from '../../test/sshPanel'
  * 数据走默认 mock 数据集（四把种子密钥），不另造假数据。
  */
 
-beforeEach(() => {
-  resetSshPanel()
+beforeEach(async () => {
+  await resetSshPanel()
 })
 
 function keyCard(): HTMLElement {
@@ -160,9 +161,7 @@ describe('SSH 密钥表', () => {
     // 归属账号落到行里：这把密钥记在 wangwu 名下
     const created = userRows().find((row) => row.textContent?.includes('运维笔记本'))
     expect(created?.textContent).toContain('wangwu')
-
-    const notifications = await screen.findByLabelText('通知')
-    expect(within(notifications).getByRole('status')).toHaveTextContent(
+    expect(messageHistoryText('status')).toContain(
       'SSH 密钥「运维笔记本」已创建（mock，待接入真实执行）',
     )
   })
@@ -198,9 +197,7 @@ describe('SSH 密钥表', () => {
     // 少了一把，第二页的第一把补进首页，首页仍是 20 行
     expect(userRows()).toHaveLength(SSH_PAGE_SIZE)
     expect(keyCard().textContent).not.toContain('部署机')
-
-    const notifications = await screen.findByLabelText('通知')
-    expect(within(notifications).getByRole('status')).toHaveTextContent(
+    expect(messageHistoryText('status')).toContain(
       'SSH 密钥「部署机」已删除（mock，待接入真实执行）',
     )
   })

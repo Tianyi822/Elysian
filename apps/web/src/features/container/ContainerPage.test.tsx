@@ -1,3 +1,4 @@
+import { messageHistoryText } from '../../test/messageHistory'
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -8,7 +9,7 @@ import { CONTAINERS } from '../../adapters/mock/containersData'
 import { useContainersStore } from '../../stores/containersStore'
 import { writeStoredImageRegistry } from './imagePullPreferences'
 import { useDependencyProbeStore } from '../../stores/dependencyProbeStore'
-import { useNotificationStore } from '../../stores/notificationStore'
+import { useMessageStore } from '../../stores/messageStore'
 import { renderApp } from '../../test/renderApp'
 import { stubNarrowViewport } from '../../test/viewport'
 
@@ -67,10 +68,10 @@ function pageGateway(overrides: Partial<ElysianGateway['containers']> = {}): Ely
   return { ...base, containers }
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   writeStoredImageRegistry('')
   // 通知是模块级共享态：镜像刷新等操作现在也走通知，不清会跨用例串台。
-  useNotificationStore.getState().clear()
+  await useMessageStore.getState().clear()
   useDependencyProbeStore.getState().reset()
   useContainersStore.setState({
     status: 'idle', errorMessage: undefined, containers: [], images: [], imageRefreshStatus: 'idle', samples: {},
@@ -80,7 +81,7 @@ beforeEach(() => {
   })
 })
 
-afterEach(() => {
+afterEach(async () => {
   // 窄屏视口是打桩出来的：用完收回，免得串到下一条用例。
   vi.unstubAllGlobals()
 })
@@ -280,8 +281,7 @@ describe('容器卡片', () => {
 
     await user.click(within(card).getByRole('button', { name: '停止' }))
     await user.click(await screen.findByRole('button', { name: '确认停止' }))
-    const notifications = await screen.findByLabelText('通知')
-    expect(within(notifications).getByRole('status')).toHaveTextContent('容器 nginx-proxy 已停止')
+    expect(messageHistoryText('status')).toContain('容器 nginx-proxy 已停止')
   })
 
   it('重启中的卡片操作全部禁用；卡片显示运行时长', async () => {
@@ -409,8 +409,7 @@ describe('镜像视图', () => {
     )
 
     await waitFor(() => expect(table.textContent).not.toContain('grafana/grafana'))
-    const notifications = await screen.findByLabelText('通知')
-    expect(within(notifications).getByRole('status')).toHaveTextContent(
+    expect(messageHistoryText('status')).toContain(
       '镜像 grafana/grafana:11.3.0 已删除（mock，待接入真实执行）',
     )
     // 数据落实到共享 mock 数据集：重新 listImages 也不再返回。
@@ -420,7 +419,7 @@ describe('镜像视图', () => {
 })
 
 describe('拉取镜像', () => {
-  afterEach(() => {
+  afterEach(async () => {
     vi.useRealTimers()
   })
 
@@ -445,8 +444,7 @@ describe('拉取镜像', () => {
     await user.click(screen.getByRole('button', { name: '刷新镜像' }))
     await waitFor(() => expect(listImages).toHaveBeenCalledTimes(4))
     // 刷新结果走全局通知组件，页面内不再有单独的反馈条。
-    const notifications = await screen.findByLabelText('通知')
-    expect(within(notifications).getByRole('status')).toHaveTextContent('镜像列表已刷新')
+    expect(messageHistoryText('status')).toContain('镜像列表已刷新')
   })
 
   it('镜像拉取行显示 Engine 提供的层进度与真实百分比', async () => {
@@ -482,8 +480,8 @@ describe('拉取镜像', () => {
     await pending
     expect(signal?.aborted).toBe(true)
     expect(screen.queryByRole('button', { name: '停止拉取' })).not.toBeInTheDocument()
-    expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ tone: 'info', message: '已取消镜像 stop-test:latest 的拉取请求' }))
-    expect(useNotificationStore.getState().notifications.some((row) => row.tone === 'danger')).toBe(false)
+    expect(useMessageStore.getState().messages).toContainEqual(expect.objectContaining({ tone: 'info', message: '已取消镜像 stop-test:latest 的拉取请求' }))
+    expect(useMessageStore.getState().messages.some((row) => row.tone === 'danger')).toBe(false)
   })
 
   it('拉取中断后错误原因常驻列表，通知清空及刷新不会使原因消失，可以手动关闭', async () => {
@@ -493,7 +491,7 @@ describe('拉取镜像', () => {
         name: 'mysql', tag: 'latest', registry: 'https://docker.1ms.run',
         message: '镜像拉取连接中断，结果尚未确认，请刷新镜像列表核实后再重试',
       } })
-      useNotificationStore.getState().clear()
+      await useMessageStore.getState().clear()
     })
     const alert = screen.getByRole('alert')
     expect(alert).toHaveTextContent('mysql:latest')
@@ -562,8 +560,7 @@ describe('拉取镜像', () => {
     // 真实等待 1.5s 模拟传输完成；时序由 store 的 PULL_DELAY_MS 决定。
     await waitFor(() => expect(screen.queryByRole('button', { name: '停止拉取' })).not.toBeInTheDocument(), { timeout: 3000 })
     expect(table.textContent).toContain('redis:8-alpine')
-    const notifications = await screen.findByLabelText('通知')
-    expect(within(notifications).getByRole('status')).toHaveTextContent(
+    expect(messageHistoryText('status')).toContain(
       '镜像 redis:8-alpine 已拉取（mock，待接入真实执行）',
     )
   })
@@ -727,9 +724,7 @@ describe('容器操作联动', () => {
 
     await user.click(within(card).getByRole('button', { name: '停止' }))
     await user.click(await screen.findByRole('button', { name: '确认停止' }))
-
-    const notifications = await screen.findByLabelText('通知')
-    expect(within(notifications).getByRole('status')).toHaveTextContent('容器 nginx-proxy 已停止')
+    expect(messageHistoryText('status')).toContain('容器 nginx-proxy 已停止')
     const stopped = await screen.findByRole('listitem', { name: 'nginx-proxy' })
     expect(stopped.textContent).toContain('已停止')
     expect(within(stopped).getByRole('button', { name: '终端' })).toBeDisabled()
@@ -745,9 +740,7 @@ describe('容器操作联动', () => {
 
     await user.click(within(card).getByRole('button', { name: '重启' }))
     await user.click(await screen.findByRole('button', { name: '确认重启' }))
-
-    const notifications = await screen.findByLabelText('通知')
-    expect(within(notifications).getByRole('status')).toHaveTextContent(
+    expect(messageHistoryText('status')).toContain(
       '已请求重启 redis-cache（mock，待接入真实执行）',
     )
     await waitFor(() => {
@@ -825,8 +818,7 @@ describe('创建容器', () => {
     const card = await screen.findByRole('listitem', { name: 'redis-echo' })
     expect(within(card).getByText('redis:7.4-alpine')).toBeInTheDocument()
     expect(screen.queryByRole('dialog', { name: '创建容器' })).not.toBeInTheDocument()
-    const notifications = await screen.findByLabelText('通知')
-    expect(within(notifications).getByRole('status')).toHaveTextContent(
+    expect(messageHistoryText('status')).toContain(
       '容器 redis-echo 已创建（mock，待接入真实执行）',
     )
   })

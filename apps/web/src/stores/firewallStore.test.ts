@@ -3,7 +3,7 @@ import { waitFor } from '@testing-library/react'
 import type { FirewallRule, FirewallToggles } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
 import { useFirewallStore } from './firewallStore'
-import { useNotificationStore } from './notificationStore'
+import { useMessageStore } from './messageStore'
 import { RequestTimeoutError } from '../adapters/http/requestDeadline'
 
 /*
@@ -40,9 +40,9 @@ function gatewayWith(overrides: Partial<ElysianGateway['firewall']> = {}): Elysi
   } as unknown as ElysianGateway
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   useFirewallStore.setState(useFirewallStore.getInitialState())
-  useNotificationStore.setState({ notifications: [] })
+  useMessageStore.setState({ messages: [] })
 })
 
 describe('防扫描读取通知', () => {
@@ -55,20 +55,20 @@ describe('防扫描读取通知', () => {
     } })
     useFirewallStore.getState().openScan(gateway)
     await waitFor(() => expect(useFirewallStore.getState().scanStatus).toBe('error'))
-    expect(useNotificationStore.getState().notifications).toHaveLength(1)
+    expect(useMessageStore.getState().messages).toHaveLength(1)
     failing = false
     useFirewallStore.getState().openScan(gateway)
     await waitFor(() => expect(useFirewallStore.getState().scanStatus).toBe('ready'))
-    useNotificationStore.getState().clear()
+    await useMessageStore.getState().clear()
     failing = true
     await useFirewallStore.getState().refreshScan(gateway)
     await useFirewallStore.getState().refreshScan(gateway)
-    expect(useNotificationStore.getState().notifications).toHaveLength(1)
+    expect(useMessageStore.getState().messages).toHaveLength(1)
     failing = false
     await useFirewallStore.getState().refreshScan(gateway)
     failing = true
     await useFirewallStore.getState().refreshScan(gateway)
-    expect(useNotificationStore.getState().notifications).toHaveLength(2)
+    expect(useMessageStore.getState().messages).toHaveLength(2)
   })
 })
 
@@ -78,7 +78,7 @@ describe('同步与不确定结果', () => {
     await useFirewallStore.getState().syncFromSystem(gateway)
     expect(useFirewallStore.getState().syncing).toBe(false)
     expect(useFirewallStore.getState().operationError).toContain('读取超时')
-    expect(useNotificationStore.getState().notifications.every((n) => n.tone === 'danger')).toBe(true)
+    expect(useMessageStore.getState().messages.every((n) => n.tone === 'danger')).toBe(true)
   })
   it('开关写超时不重放，重新读取实际状态后解除忙碌', async () => {
     const setToggles = vi.fn(async () => { throw new RequestTimeoutError(true) })
@@ -127,7 +127,7 @@ describe('开关切换的并发保护', () => {
     const rolledBack = useFirewallStore.getState()
     expect(rolledBack.toggles).toEqual(TOGGLES)
     expect(rolledBack.toggling).toBe(false)
-    expect(useNotificationStore.getState().notifications.at(-1)).toMatchObject({ tone: 'danger' })
+    expect(useMessageStore.getState().messages.at(-1)).toMatchObject({ tone: 'danger' })
 
     await useFirewallStore.getState().toggle(gateway, { ...TOGGLES, firewallEnabled: false })
     const state = useFirewallStore.getState()

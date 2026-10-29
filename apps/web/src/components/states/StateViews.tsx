@@ -1,7 +1,7 @@
 import { Inbox, Loader2, Lock, TriangleAlert } from '../icons'
 import { CTL_SECONDARY } from '../formControl'
 import type { ReactNode } from 'react'
-import { useFeedbackNotification } from '../useFeedbackNotification'
+import { useFeedbackMessage } from '../useFeedbackMessage'
 
 /**
  * 四种页面级状态。每个页面都必须能展示这四种状态，所以它们统一在这里，
@@ -55,7 +55,7 @@ export function ErrorState({
   /** 调用方已为同一错误发出通知时关闭重复播报。 */
   notify?: boolean
 }) {
-  useFeedbackNotification(notify ? description ? `${title}：${description}` : title : null)
+  useFeedbackMessage(notify ? description ? `${title}：${description}` : title : null)
   return (
     <div
       role="region"
@@ -64,7 +64,7 @@ export function ErrorState({
     >
       <TriangleAlert aria-hidden size={20} className="text-danger" />
       <p className="text-sm font-medium">{title}</p>
-      {description ? <p className="max-w-prose text-xs text-fg-muted">{description}</p> : null}
+      <p role="alert" className="max-w-prose text-xs text-fg-muted">{description ?? title}</p>
       {action
         ? action
         : onRetry
@@ -89,7 +89,7 @@ export function NoPermissionState({
   title?: string
   description?: string
 }) {
-  useFeedbackNotification(`${title}：${description}`, 'warning')
+  useFeedbackMessage(`${title}：${description}`, 'warning')
   return (
     <div className="flex flex-col items-center gap-1.5 panel-surface p-6 text-center">
       <Lock aria-hidden size={20} className="text-fg-subtle" />

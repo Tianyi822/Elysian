@@ -6,7 +6,7 @@ import type { ElysianGateway } from '../../contracts/adapters'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { useContainerAppsStore } from '../../stores/containerAppsStore'
 import { useContainersStore } from '../../stores/containersStore'
-import { useNotificationStore } from '../../stores/notificationStore'
+import { useMessageStore } from '../../stores/messageStore'
 import { renderApp } from '../../test/renderApp'
 
 /**
@@ -58,8 +58,8 @@ const composeYaml = [
   '',
 ].join('\n')
 
-beforeEach(() => {
-  useNotificationStore.getState().clear()
+beforeEach(async () => {
+  await useMessageStore.getState().clear()
   useContainersStore.setState({ view: 'grid' })
   useContainerAppsStore.setState({
     status: 'idle',
@@ -143,7 +143,7 @@ describe('工作区面板', () => {
     await within(card).findByText('.env')
 
     expect(card.textContent).toContain('/srv/elysian/apps/demo-app/.env')
-    expect(await screen.findByText('已上传 .env')).toBeTruthy()
+    await waitFor(() => expect(useMessageStore.getState().messages).toContainEqual(expect.objectContaining({ message: '已上传 .env' })))
     expect(within(card).getByRole('button', { name: '复制文件真实路径' })).toBeTruthy()
   })
 
@@ -188,7 +188,7 @@ describe('工作区面板', () => {
     await user.type(editor, 'A=2')
     expect(await within(sheet).findByText('有未保存的修改。')).toBeTruthy()
     await user.click(within(sheet).getByRole('button', { name: '保存' }))
-    expect(await screen.findByText('已保存 .env')).toBeTruthy()
+    await waitFor(() => expect(useMessageStore.getState().messages).toContainEqual(expect.objectContaining({ message: '已保存 .env' })))
     expect(written).toEqual(['demo-app/.env:A=2'])
     await waitFor(() => expect(within(sheet).getByText('内容与磁盘一致。')).toBeTruthy())
 
@@ -234,7 +234,7 @@ describe('工作区面板', () => {
     const second = await screen.findByRole('dialog')
     await user.click(within(second).getByRole('button', { name: '确认删除' }))
     await waitFor(() => expect(screen.queryByRole('listitem', { name: '工作区 demo-app' })).toBeNull())
-    expect(await screen.findByText('已删除工作区 demo-app 及其目录')).toBeTruthy()
+    await waitFor(() => expect(useMessageStore.getState().messages).toContainEqual(expect.objectContaining({ message: '已删除工作区 demo-app 及其目录' })))
   })
 
   it('刷新时旧清单留在屏上并只盖一层组件遮罩', async () => {
@@ -419,7 +419,7 @@ describe('工作区构建任务区', () => {
     const confirm = await screen.findByRole('dialog', { name: /取消构建任务 app？/ })
     expect(confirm.textContent).toContain('已完成的镜像会保留')
     await user.click(within(confirm).getByRole('button', { name: '确认取消' }))
-    expect(await screen.findByText('demo-app：镜像构建已取消，构建已取消')).toBeTruthy()
+    await waitFor(() => expect(useMessageStore.getState().messages).toContainEqual(expect.objectContaining({ message: 'demo-app：镜像构建已取消，构建已取消' })))
     // 状态标签与阶段描述同名（「已取消」），两处都在才算取消落实。
     expect((await within(card).findAllByText('已取消')).length).toBeGreaterThan(1)
   })
@@ -435,7 +435,7 @@ describe('工作区构建任务区', () => {
     const { user, card } = await openBuildArea(gateway)
     await within(card).findAllByText('构建成功')
     await user.click(within(card).getByRole('button', { name: '重新构建' }))
-    expect(await screen.findByText('已提交构建任务')).toBeTruthy()
+    await waitFor(() => expect(useMessageStore.getState().messages).toContainEqual(expect.objectContaining({ message: '已提交构建任务' })))
     expect(submitCalls).toHaveLength(1)
     expect(submitCalls[0]!.requestId).not.toBe(succeededBuildTask.requestId)
     expect(submitCalls[0]!.requestId).toMatch(/^[a-f0-9-]{36}$/)

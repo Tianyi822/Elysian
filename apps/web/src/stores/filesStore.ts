@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import type { FileEntry, FileSearchResult } from '@elysian/contracts'
 import type { ElysianGateway, FilePermissionInput } from '../contracts/adapters'
 import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
-import { useNotificationStore, type NotificationTone } from './notificationStore'
+import { useMessageStore, type MessageTone } from './messageStore'
 import { FileTransferError, isFileUploadConflict } from '../adapters/filesTransferError'
 
 /**
@@ -105,8 +105,8 @@ export const useFilesStore = create<FilesState>((set, get) => {
     await get().load(gateway, get().path)
   }
 
-  const notify = (message: string, tone: NotificationTone = 'success') => {
-    useNotificationStore.getState().notify({ tone, message })
+  const notify = (message: string, tone: MessageTone = 'success') => {
+    useMessageStore.getState().notify({ tone, message })
   }
 
   return {

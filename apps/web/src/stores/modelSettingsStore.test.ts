@@ -10,7 +10,7 @@ import {
   mockUpdateModelProfile,
   resetModelSettingsData,
 } from '../adapters/mock/agent/modelSettingsData'
-import { useNotificationStore } from './notificationStore'
+import { useMessageStore } from './messageStore'
 import { useModelSettingsStore } from './modelSettingsStore'
 
 /*
@@ -31,7 +31,7 @@ const MODEL_INPUT: AgentModelProfileInput = {
   active: true, credential: 'store-test-key',
 }
 
-beforeEach(() => { resetModelSettingsData(); useModelSettingsStore.getState().reset(); useNotificationStore.getState().clear() })
+beforeEach(async () => { resetModelSettingsData(); useModelSettingsStore.getState().reset(); useMessageStore.getState().clear() })
 describe('模型设置保存与冲突回读', () => {
   it('新建模型（提交凭据）后列表回显 hasCredential=true 且凭据不回显', async () => {
     const { gateway } = makeGateway()

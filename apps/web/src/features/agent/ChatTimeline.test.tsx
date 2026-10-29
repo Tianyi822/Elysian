@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentChatTimelineEntry, AgentChatTimelineSnapshot, AgentMessage, RuntimeCall } from '@elysian/contracts'
 import { chatTestApi, chatTestUsage } from '../../test/agentChatFixtures'
-import { useNotificationStore } from '../../stores/notificationStore'
+import { useMessageStore } from '../../stores/messageStore'
 import { ChatTimeline } from './ChatTimeline'
 
 const base = { startedAt: '', status: 'succeeded' as const, incomplete: false }
@@ -14,7 +14,7 @@ const snapshot = (entries: readonly AgentChatTimelineEntry[], done = false): Age
 const call: RuntimeCall = { id: 'c1', runId: 'run-1', modelRequestId: 'm0', modelCallId: 'p', tool: tool.tool, status: 'succeeded', stepIndex: 0, args: {}, result: { items: ['结果内容'] }, truncated: true }
 const answer: AgentMessage = { id: 'answer', role: 'assistant', content: '最终结果已确认', runId: 'run-1', taskId: 'task-1', sessionId: 'session-1', seq: '2', createdAt: '' }
 const runtimeContent = '本轮任务未能完成。\n\n原因：执行容器通道不可用'
-beforeEach(() => useNotificationStore.getState().clear())
+beforeEach(() => useMessageStore.getState().clear())
 
 describe('分段回复过程', () => {
   it('失败结果在过程末尾显示，公开消息回读后只保留一次且不替换模型片段', async () => {
@@ -112,7 +112,7 @@ describe('分段回复过程', () => {
     expect(screen.getByText(tool.argumentsJson)).toBeInTheDocument()
     fireEvent.click(await screen.findByRole('button', { name: '重试读取工具详情' }))
     expect(await screen.findByText(/结果内容/)).toBeInTheDocument()
-    expect(useNotificationStore.getState().notifications).toEqual([expect.objectContaining({ message: '详情读取失败', tone: 'danger' })])
+    expect(useMessageStore.getState().messages).toEqual([expect.objectContaining({ message: '详情读取失败', tone: 'danger' })])
     expect(screen.getByText('结果已截断')).toBeInTheDocument()
     expect(api.calls).toHaveBeenCalledTimes(2)
     expect(screen.queryByRole('button', { name: /复制/ })).not.toBeInTheDocument()

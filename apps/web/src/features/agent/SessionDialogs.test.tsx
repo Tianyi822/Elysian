@@ -55,7 +55,7 @@ describe.each([
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: button })) })
     expect(report).toHaveBeenCalledExactlyOnceWith('请稍后重试')
     expect(screen.getByRole('dialog')).toBeInTheDocument()
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('请稍后重试')
     expect(screen.getByRole('button', { name: button })).toBeEnabled()
     expect(onClose).not.toHaveBeenCalled()
   })

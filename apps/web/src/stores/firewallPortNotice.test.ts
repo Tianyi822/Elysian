@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { notifyFirewallPortSync } from './firewallPortNotice'
-import { useNotificationStore } from './notificationStore'
+import { useMessageStore } from './messageStore'
 
-afterEach(() => {
-  useNotificationStore.getState().clear()
+afterEach(async () => {
+  await useMessageStore.getState().clear()
 })
 
 describe('防火墙端口开放结果通知', () => {
@@ -13,7 +13,7 @@ describe('防火墙端口开放结果通知', () => {
     notifyFirewallPortSync(null)
     notifyFirewallPortSync({ state: 'failed', port: 18080, detail: '端口规则已达上限（最多 200 条）' })
 
-    const messages = useNotificationStore.getState().notifications.map((item) => `${item.tone}:${item.message}`)
+    const messages = useMessageStore.getState().messages.map((item) => `${item.tone}:${item.message}`)
     expect(messages).toEqual([
       'success:防火墙端口 8080 已开放',
       'danger:防火墙端口 18080 未能开放：端口规则已达上限（最多 200 条）。项目已创建，请到安全页手动开放端口',

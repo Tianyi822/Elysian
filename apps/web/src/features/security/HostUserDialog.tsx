@@ -49,6 +49,7 @@ export function HostUserDialog() {
   const dialogUser = useUsersStore((s) => s.dialogUser)
   const users = useUsersStore((s) => s.users)
   const saving = useUsersStore((s) => s.saving)
+  const operationError = useUsersStore((s) => s.operationError)
   const closeDialog = useUsersStore((s) => s.closeDialog)
   const saveUser = useUsersStore((s) => s.saveUser)
 
@@ -292,6 +293,7 @@ export function HostUserDialog() {
             </div>
           </div>
 
+          {operationError ? <p role="alert" className="px-4 py-2 text-xs text-danger">{operationError}</p> : null}
           <div className="flex items-center justify-between gap-2 border-t border-line px-4 py-2.5">
             <p className="text-xs text-fg-subtle">{footerNote}</p>
             <div className="flex gap-2">

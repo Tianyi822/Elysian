@@ -289,3 +289,5 @@
 @media (max-width: 767.98px) {
   .chat-header { padding-left: 52px; }
 }
+
+.chat-header { padding-right: calc(var(--message-edge) + var(--shell-action-space)); }

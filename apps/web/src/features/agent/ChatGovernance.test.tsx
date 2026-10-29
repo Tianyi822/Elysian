@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentApproval, AgentExecutionGrant, AgentExecutionProfile, AgentRuntimeAccess } from '@elysian/contracts'
 import type { AgentChatGovernance } from '../../contracts/agentChat'
 import { ChatApprovals } from './ChatApprovals'
-import { useNotificationStore } from '../../stores/notificationStore'
+import { useMessageStore } from '../../stores/messageStore'
 
 const profile: AgentExecutionProfile = { id: 'bash', revision: 3, enabled: true, name: '受限 Bash', image: `bash@sha256:${'a'.repeat(64)}`, runtime: 'bash', command: ['/bin/bash'], timeoutSeconds: 60, cpuMillis: 1000, memoryBytes: 134217728, pids: 64, createdAt: '2026-10-16T00:00:00Z' }
 const grant: AgentExecutionGrant = { id: 'business', revision: 2, enabled: true, name: '网站目录', directories: [{ path: '/srv/projects/shop', access: 'rw' }], network: [], privateCidrs: [], resources: [{ domain: 'website', id: 'shop', access: 'write' }], createdAt: profile.createdAt }
@@ -16,7 +16,7 @@ const approval: AgentApproval = { id: 'approval', runId: 'run', operationId: 'op
 const access: AgentRuntimeAccess = { revision: 1, digest: 'scope-digest', scopeKey: 'scope', kind: 'script', directories: grant.directories, network: [], privateCidrs: [], resources: grant.resources, sessionAllowed: true, runtime: { name: 'Bash', image: profile.image, platform: 'linux/amd64', requiresDownload: true } }
 const governance = (): AgentChatGovernance => ({ decideAccess: vi.fn(async () => ({ ...approval, status: 'approved' as const, access })), approvals: vi.fn(async () => [approval]), decide: vi.fn(async (_id, decision) => ({ ...approval, status: decision, decision })) })
 
-beforeEach(() => { useNotificationStore.getState().clear(); sessionStorage.clear() })
+beforeEach(async () => { useMessageStore.getState().clear(); sessionStorage.clear() })
 
 describe('聊天审批和执行范围', () => {
   it('审批恢复完整命令、工作区版本与真实挂载，批准只作用于精确审批', async () => {
@@ -32,7 +32,7 @@ describe('聊天审批和执行范围', () => {
     await user.click(screen.getByRole('button', { name: '批准' }))
     expect(api.decide).toHaveBeenCalledWith('approval', 'approved')
     expect(changed).toHaveBeenCalledOnce()
-    expect(useNotificationStore.getState().notifications).toEqual([expect.objectContaining({ tone: 'success', message: '操作已批准，等待执行。' })])
+    expect(useMessageStore.getState().messages).toEqual([expect.objectContaining({ tone: 'success', message: '操作已批准，等待执行。' })])
     expect(api.approvals).toHaveBeenCalledWith('run', expect.any(AbortSignal))
   })
 
@@ -149,6 +149,6 @@ describe('聊天审批和执行范围', () => {
     view.unmount()
     await act(async () => resolve({ ...approval, status: 'approved' }))
     expect(changed).not.toHaveBeenCalled()
-    expect(useNotificationStore.getState().notifications).toEqual([])
+    expect(useMessageStore.getState().messages).toEqual([])
   })
 })

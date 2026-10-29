@@ -11,15 +11,15 @@ import type { ResourceMetricKey } from '../../adapters/mock/resourceMetrics'
 import type { ElysianGateway } from '../../contracts/adapters'
 import { useDashboardStore } from '../../stores/dashboardStore'
 import { useEventStreamStore } from '../../stores/eventStreamStore'
-import { useNotificationStore } from '../../stores/notificationStore'
+import { useMessageStore } from '../../stores/messageStore'
 import { renderApp } from '../../test/renderApp'
 import { stubNarrowViewport } from '../../test/viewport'
 import { formatResourceMetricValue } from './formatMetricDisplay'
 
 const METRIC_KEYS: ResourceMetricKey[] = ['cpu', 'memory', 'networkIo', 'diskIo']
 
-beforeEach(() => {
-  useNotificationStore.getState().clear()
+beforeEach(async () => {
+  await useMessageStore.getState().clear()
   useDashboardStore.setState({
     status: 'idle',
     refreshing: false,
@@ -32,7 +32,7 @@ beforeEach(() => {
   vi.restoreAllMocks()
 })
 
-afterEach(() => {
+afterEach(async () => {
   // 窄屏视口是打桩出来的：用完收回，免得串到下一条用例。
   vi.unstubAllGlobals()
 })
@@ -147,7 +147,7 @@ describe('仪表盘筛选栏', () => {
 
     await user.click(screen.getByRole('button', { name: '刷新' }))
 
-    await waitFor(() => expect(useNotificationStore.getState().notifications).toEqual([expect.objectContaining({ tone: 'danger', message: '演示用的刷新失败' })]))
+    await waitFor(() => expect(useMessageStore.getState().messages).toEqual([expect.objectContaining({ tone: 'danger', message: '演示用的刷新失败' })]))
     expect(screen.getByLabelText('服务器状态')).toBeInTheDocument()
     expect(screen.queryByText('正在刷新…')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '刷新' })).toBeEnabled()

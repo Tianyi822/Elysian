@@ -152,7 +152,7 @@ export function TerminalShell({
           className="fixed left-1/2 top-1/2 z-[55] flex h-[min(44rem,calc(100vh-3rem))] w-[min(72rem,calc(100vw-3rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden panel-surface shadow-2xl focus-visible:outline-none"
         >
           <Dialog.Title className="sr-only">{title}</Dialog.Title>
-          <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
+          <div className="shell-terminal-dialog-header flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
             <div className="flex items-center gap-2 text-xs">
               <span className="rounded bg-warning/15 px-1.5 py-0.5 font-medium text-warning">
                 {banner}

@@ -142,7 +142,9 @@ describe('RequireSession 会话闸门', () => {
     })
     renderApp('/', { gateway })
 
-    expect(await screen.findByLabelText('通知')).toHaveTextContent('登录状态检查失败')
+    expect(await screen.findByRole('region', { name: '登录状态检查失败' })).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('无法连接面板服务')
+    expect(screen.queryByRole('button', { name: '消息' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '重试' }))
     // 重试成功后闸门放行，仪表盘出现。
     expect(await screen.findByRole('heading', { level: 1, name: '仪表盘' })).toBeInTheDocument()

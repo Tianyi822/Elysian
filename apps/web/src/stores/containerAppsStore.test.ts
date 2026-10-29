@@ -6,7 +6,7 @@ import {
   newBuildRequestId,
   useContainerAppsStore,
 } from './containerAppsStore'
-import { useNotificationStore } from './notificationStore'
+import { useMessageStore } from './messageStore'
 
 /**
  * 构建任务区的 store 行为：提交入列、取消后的静默回读、日志增量与 requestId 生成。
@@ -37,8 +37,8 @@ async function seedWorkspace(gateway: ElysianGateway) {
   await gateway.containers.uploadAppFile('demo-app', 'Dockerfile', new Blob(['FROM alpine:3.20\n']))
 }
 
-beforeEach(() => {
-  useNotificationStore.getState().clear()
+beforeEach(async () => {
+  await useMessageStore.getState().clear()
   resetStore()
 })
 
@@ -68,7 +68,7 @@ describe('工作区文件状态', () => {
     expect(listApps).toHaveBeenCalledTimes(1)
     expect(state.apps[0]?.files.map((file) => file.path)).toEqual(['first.txt'])
     expect(state.writing).toBeNull()
-    expect(useNotificationStore.getState().notifications[0]?.message)
+    expect(useMessageStore.getState().messages[0]?.message)
       .toBe('上传文件失败：上传连接中断（已有 1 个文件上传成功）')
   })
 
@@ -106,7 +106,7 @@ describe('工作区构建状态', () => {
     const builds = useContainerAppsStore.getState().buildsBySlug['demo-app']
     expect(builds).toHaveLength(1)
     expect(builds![0]!.state).toBe('queued')
-    expect(useNotificationStore.getState().notifications[0]?.message).toBe('已提交构建任务')
+    expect(useMessageStore.getState().messages[0]?.message).toBe('已提交构建任务')
   })
 
   it('submitBuild 失败把服务端错误留在弹窗状态里，notifyOnError 时走通知', async () => {
@@ -130,7 +130,7 @@ describe('工作区构建状态', () => {
     })
     expect(ok).toBe(false)
     expect(useContainerAppsStore.getState().buildPreview?.submitError).toContain('服务不存在')
-    expect(useNotificationStore.getState().notifications).toHaveLength(0)
+    expect(useMessageStore.getState().messages).toHaveLength(0)
 
     const okAgain = await useContainerAppsStore.getState().submitBuild(
       gateway,
@@ -144,7 +144,7 @@ describe('工作区构建状态', () => {
       { notifyOnError: true },
     )
     expect(okAgain).toBe(false)
-    expect(useNotificationStore.getState().notifications[0]?.tone).toBe('danger')
+    expect(useMessageStore.getState().messages[0]?.tone).toBe('danger')
   })
 
   it('cancelBuild 取消后静默回读任务清单', async () => {
@@ -178,7 +178,7 @@ describe('工作区构建状态', () => {
     // 静默回读不置刷新遮罩（false 不驱动 BusyVeil）。
     expect(useContainerAppsStore.getState().buildsRefreshing['demo-app']).toBeFalsy()
     expect(listAppBuilds).toHaveBeenCalledWith('demo-app')
-    expect(useNotificationStore.getState().notifications[0]?.message).toBe('已提交取消构建请求')
+    expect(useMessageStore.getState().messages[0]?.message).toBe('已提交取消构建请求')
   })
 
   it('openBuildLogs 拉全量，loadBuildLogs 按已读字节增量追加', async () => {
@@ -248,12 +248,12 @@ describe('工作区构建状态', () => {
     useContainerAppsStore.setState({ buildsBySlug: { 'demo-app': [task] } })
     await useContainerAppsStore.getState().refreshBuilds(gateway, 'demo-app', { silent: true })
     await useContainerAppsStore.getState().refreshBuilds(gateway, 'demo-app', { silent: true })
-    expect(useNotificationStore.getState().notifications).toEqual([
+    expect(useMessageStore.getState().messages).toEqual([
       expect.objectContaining({ tone: 'danger', message: 'demo-app：镜像构建失败，镜像下载失败' }),
     ])
-    useNotificationStore.getState().clear()
+    await useMessageStore.getState().clear()
     useContainerAppsStore.setState({ buildsBySlug: {} })
     await useContainerAppsStore.getState().ensureBuilds(gateway, 'demo-app')
-    expect(useNotificationStore.getState().notifications).toHaveLength(0)
+    expect(useMessageStore.getState().messages).toHaveLength(0)
   })
 })

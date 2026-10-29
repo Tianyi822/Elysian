@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { UI_PREFERENCES_KEY, browserPreferenceStorage } from './themePreferences'
 import { ThemeProvider, useTheme } from './ThemeProvider'
-import { useNotificationStore } from '../../stores/notificationStore'
+import { useMessageStore } from '../../stores/messageStore'
 
 /** 只暴露当前主题与切换动作；DOM 上的属性由用例直接读，避免在渲染期读到上一次提交的值。 */
 function ThemeProbe() {
@@ -50,7 +50,7 @@ describe('主题初值', () => {
       expect(screen.getByTestId('主题状态')).toHaveTextContent('dark')
       await user.click(screen.getByRole('button', { name: '切换主题' }))
       expect(screen.getByTestId('主题状态')).toHaveTextContent('light')
-      expect(useNotificationStore.getState().notifications.at(-1)).toMatchObject({ tone: 'warning', message: expect.stringContaining('无法保存界面偏好') })
+      expect(useMessageStore.getState().messages.at(-1)).toMatchObject({ tone: 'warning', message: expect.stringContaining('无法保存界面偏好') })
     } finally { blocked.mockRestore(); browserPreferenceStorage.removeItem(UI_PREFERENCES_KEY) }
   })
 

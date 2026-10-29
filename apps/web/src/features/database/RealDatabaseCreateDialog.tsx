@@ -9,7 +9,7 @@ import { useDatabaseStore } from '../../stores/databaseStore'
 import { DEFAULT_IMAGE_REGISTRY, registryHost, validateRegistryUrl } from '../container/imageReference'
 import { PasswordVisibilityButton } from '../security/passwordFieldParts'
 import { generateDatabasePassword } from './databaseCreateForm'
-import { useFeedbackNotification } from '../../components/useFeedbackNotification'
+import { useFeedbackMessage } from '../../components/useFeedbackMessage'
 
 type Engine = Exclude<DatabaseEngine, 'SQLite'>
 type Candidate = { id: string; name: string; accessScope: string; managed: boolean; versionTag: string }
@@ -79,10 +79,8 @@ export function RealDatabaseCreateDialog({ engine }: { engine: Engine }) {
   const [scope, setScope] = useState<Scope>('localhost')
   const [hostPort, setHostPort] = useState('')
   const [confirmPublic, setConfirmPublic] = useState(false)
-  useFeedbackNotification(discoverError)
-  useFeedbackNotification(pullError)
-  useFeedbackNotification(pullComplete ? '镜像已拉取，可以继续创建。' : null, 'success')
-  useFeedbackNotification(tagStatus === 'unavailable' ? '无法查询数据库镜像版本，请手动输入明确版本标签。' : null, 'warning')
+  useFeedbackMessage(pullError)
+  useFeedbackMessage(pullComplete ? '镜像已拉取，可以继续创建。' : null, 'success')
 
   const repo = engine.toLowerCase()
   const selectedContainer = candidates.find((candidate) => candidate.id === containerId)

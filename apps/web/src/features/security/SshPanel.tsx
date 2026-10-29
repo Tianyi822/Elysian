@@ -396,6 +396,7 @@ export function sshPortConfirmConsequences(
 function SshPortConfirmDialog() {
   const gateway = useGateway()
   const pendingPort = useSshStore((s) => s.pendingPort)
+  const operationError = useSshStore((s) => s.operationError)
   const currentPort = useSshStore((s) => s.settings?.port)
   const savingPort = useSshStore((s) => s.savingPort)
   const confirmPortSave = useSshStore((s) => s.confirmPortSave)
@@ -436,6 +437,7 @@ function SshPortConfirmDialog() {
               </li>
             ))}
           </ul>
+          {operationError ? <p role="alert" className="mt-3 text-xs text-danger">{operationError}</p> : null}
           <div className="mt-4 flex justify-end gap-2">
             <button
               type="button"

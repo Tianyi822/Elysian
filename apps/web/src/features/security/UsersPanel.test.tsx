@@ -1,3 +1,4 @@
+import { messageHistoryText } from '../../test/messageHistory'
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -12,8 +13,8 @@ import { openSshTab, resetSshPanel, securityTab, userSessions } from '../../test
  * 数据走默认 mock 数据集（五个种子账号），不另造假数据。
  */
 
-beforeEach(() => {
-  resetSshPanel()
+beforeEach(async () => {
+  await resetSshPanel()
 })
 
 function usersPanel(): HTMLElement {
@@ -102,9 +103,7 @@ describe('用户管理页签', () => {
     // 同步中按钮换成忙碌态，完成后列表按同步结果重新读回来
     expect(await screen.findByRole('button', { name: '正在从系统同步账号' })).toBeInTheDocument()
     await waitFor(() => expect(userRows()).toHaveLength(SEED_HOST_USERS.length))
-
-    const notifications = await screen.findByLabelText('通知')
-    expect(within(notifications).getByRole('status')).toHaveTextContent(
+    expect(messageHistoryText('status')).toContain(
       `已从系统同步账号，当前共 ${SEED_HOST_USERS.length} 个（mock，待接入真实执行）`,
     )
   })
@@ -141,9 +140,7 @@ describe('用户管理页签', () => {
     expect(
       screen.getByText(`共 ${SEED_HOST_USERS.length + 1} 个主机账号`),
     ).toBeInTheDocument()
-
-    const notifications = await screen.findByLabelText('通知')
-    expect(within(notifications).getByRole('status')).toHaveTextContent(
+    expect(messageHistoryText('status')).toContain(
       '账号 chenyi 已创建（mock，待接入真实执行）',
     )
   })
@@ -165,9 +162,7 @@ describe('用户管理页签', () => {
     const backupRow = userRows().find((row) => row.children[0]?.textContent === 'backup')
     expect(backupRow?.textContent).toContain('密码或密钥')
     expect(within(backupRow as HTMLElement).getByText('已停用')).toBeInTheDocument()
-
-    const notifications = await screen.findByLabelText('通知')
-    expect(within(notifications).getByRole('status')).toHaveTextContent(
+    expect(messageHistoryText('status')).toContain(
       '账号 backup 已改为「密码或密钥」· 已停用（mock，待接入真实执行）',
     )
   })
@@ -291,9 +286,7 @@ describe('用户管理页签', () => {
 
     await waitFor(() => expect(userRows()).toHaveLength(SEED_HOST_USERS.length - 1))
     expect(within(usersPanel()).queryByText('zhangsan')).not.toBeInTheDocument()
-
-    const notifications = await screen.findByLabelText('通知')
-    expect(within(notifications).getByRole('status')).toHaveTextContent(
+    expect(messageHistoryText('status')).toContain(
       '账号 zhangsan 已删除（mock，待接入真实执行）',
     )
   })

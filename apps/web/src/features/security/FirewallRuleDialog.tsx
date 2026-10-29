@@ -23,7 +23,7 @@ import { firewallRuleNoteProblem } from './firewallRuleIO'
 
 /**
  * 添加/修改端口规则弹窗：协议、地址族、策略、方向用分段按钮，端口（单值或冒号段）、来源、备注用输入框。
- * 保存失败（如端口规则重复）保留弹窗，错误经通知条呈现。
+ * 保存失败（如端口规则重复）保留弹窗与行内原因，并记录消息。
  */
 
 type Draft = {
@@ -40,6 +40,7 @@ export function FirewallRuleDialog() {
   const gateway = useGateway()
   const dialogRule = useFirewallStore((s) => s.dialogRule)
   const saving = useFirewallStore((s) => s.saving)
+  const operationError = useFirewallStore((s) => s.operationError)
   const closeDialog = useFirewallStore((s) => s.closeDialog)
   const saveRule = useFirewallStore((s) => s.saveRule)
 
@@ -209,6 +210,7 @@ export function FirewallRuleDialog() {
           </div>
 
           {/* ml-auto 保证按钮组恒靠右：演示态左侧有说明文字、真实态没有，布局都不变。 */}
+          {operationError ? <p role="alert" className="px-4 py-2 text-xs text-danger">{operationError}</p> : null}
           <div className="flex items-center justify-between gap-2 border-t border-line px-4 py-2.5">
             {!isDockerRuntime() ? (
               <p className="text-xs text-fg-subtle">只改演示内存，不触碰真实防火墙。</p>

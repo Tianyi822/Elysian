@@ -2,7 +2,7 @@ import { render, screen, within } from '@testing-library/react'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { useNotificationStore } from '../../stores/notificationStore'
+import { useMessageStore } from '../../stores/messageStore'
 import { ChatMarkdown } from './ChatMarkdown'
 import * as codeHighlight from './codeHighlight'
 
@@ -10,8 +10,8 @@ function markdown(text: string) {
   return <Tooltip.Provider><ChatMarkdown text={text} /></Tooltip.Provider>
 }
 
-beforeEach(() => {
-  useNotificationStore.getState().clear()
+beforeEach(async () => {
+  await useMessageStore.getState().clear()
 })
 
 describe('回复 Markdown', () => {
@@ -62,7 +62,7 @@ describe('回复 Markdown', () => {
     await user.keyboard('{Enter}')
     await expect(navigator.clipboard.readText()).resolves.toBe('  print("你好")\n\n')
     expect(screen.getByRole('button', { name: '已复制代码' })).toBeInTheDocument()
-    expect(useNotificationStore.getState().notifications[0]?.message).toBe('已复制代码')
+    expect(useMessageStore.getState().messages[0]?.message).toBe('已复制代码')
     await user.click(screen.getByRole('button', { name: '复制代码' }))
     await expect(navigator.clipboard.readText()).resolves.toBe('echo second\n')
   })
@@ -72,7 +72,7 @@ describe('回复 Markdown', () => {
     vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValueOnce(new Error('denied'))
     render(markdown('```sh\necho safe\n```'))
     await user.click(screen.getByRole('button', { name: '复制代码' }))
-    expect(useNotificationStore.getState().notifications[0]?.message).toContain('复制失败')
+    expect(useMessageStore.getState().messages[0]?.message).toContain('复制失败')
   })
 
   it('流式未闭合围栏增量更新不重新挂载，后续文字不重复着色已完成代码', () => {

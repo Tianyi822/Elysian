@@ -7,7 +7,7 @@ import { Bot, Brain, Hand, Image as ImageIcon, List, Loader2, Paperclip, Pencil,
 import { IconButton } from '../../components/IconButton'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { RefreshButton } from '../../components/RefreshState'
-import { useFeedbackNotification } from '../../components/useFeedbackNotification'
+import { useFeedbackMessage } from '../../components/useFeedbackMessage'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { subscribeWhileVisible } from '../../adapters/subscribeWhileVisible'
 import { AGENT_COMPOSER_FILE_ACCEPT } from '../../adapters/local/agentTextFiles'
@@ -104,12 +104,14 @@ export function AgentChatPage() {
     ? `会话：${chat.syncError}\n模型：${error}`
     : chat.syncError || error)
   const retryReadLabel = navigationFailure ? '重新初始化会话' : chat.syncError && error ? '重新读取会话和模型' : chat.syncError ? '重新读取会话' : '重新读取模型'
-  useFeedbackNotification(readError, !error && chat.syncError?.startsWith('实时连接暂时中断') ? 'warning' : 'danger', { replace: true })
+  useFeedbackMessage(readError, !error && chat.syncError?.startsWith('实时连接暂时中断') ? 'warning' : 'danger', { replace: true })
   const modelUnavailable = api.available && status === 'ready' && !chat.loading && !restoring && (!models.length || (session?.remote && !model))
-  useFeedbackNotification(modelUnavailable ? '请选择支持文本与工具调用的可用模型，或前往设置添加模型。' : null, 'warning')
-  useFeedbackNotification(!api.available ? '当前为本地演示，请在已连接后端的面板中使用聊天。' : null, 'info')
-  useFeedbackNotification(session?.attachments.length && model && !model.supportsImage ? '当前模型不支持图片输入，请移除附件或切换支持图片的模型。' : null, 'warning')
-  useFeedbackNotification(session?.attachments.some(attachment => !attachment.serverId) ? '存在旧版本添加、尚未上传的附件，请移除后重新添加。' : null, 'warning')
+  const inputHints = [
+    modelUnavailable ? '请选择支持文本与工具调用的可用模型，或前往设置添加模型。' : null,
+    !api.available ? '当前为本地演示，请在已连接后端的面板中使用聊天。' : null,
+    session?.attachments.length && model && !model.supportsImage ? '当前模型不支持图片输入，请移除附件或切换支持图片的模型。' : null,
+    session?.attachments.some(attachment => !attachment.serverId) ? '存在旧版本添加、尚未上传的附件，请移除后重新添加。' : null,
+  ].filter(Boolean)
   const retryReads = () => {
     if (navigationFailure) setNavigationAttempt(value => value + 1)
     if (chat.syncError) void chat.refresh(api)
@@ -248,8 +250,8 @@ export function AgentChatPage() {
     requestAnimationFrame(() => target.setSelectionRange(start + text.length, start + text.length))
   }
   const addFiles = (files: File[], editing = false) => {
-    if (editing) { chat.reportOperation('编辑消息时仅可修改文本，请完成编辑后再添加文件。'); return }
-    if (attachmentsLocked) { chat.reportOperation('当前暂不能添加文件，请等待会话读取或发送完成。'); return }
+    if (editing) { chat.reportInput('编辑消息时仅可修改文本，请完成编辑后再添加文件。'); return }
+    if (attachmentsLocked) { chat.reportInput('当前暂不能添加文件，请等待会话读取或发送完成。'); return }
     void chat.addAttachments(api, files, model?.supportsImage ?? false)
   }
   const pasteFiles = (event: ClipboardEvent<HTMLTextAreaElement>, editing = false) => {
@@ -271,7 +273,7 @@ export function AgentChatPage() {
     const files = Array.from(event.dataTransfer.files)
     if (!files.length && !Array.from(event.dataTransfer.types).includes('Files')) return
     event.preventDefault()
-    if (!files.length) { chat.reportOperation('无法添加文件夹，请选择具体文件。'); return }
+    if (!files.length) { chat.reportInput('无法添加文件夹，请选择具体文件。'); return }
     addFiles(files, editing)
   }
   const title = chat.remoteSession?.title || chat.messages[0]?.content || '新会话'
@@ -415,9 +417,12 @@ export function AgentChatPage() {
     </div>
 
     <div className="chat-compose-area">
+      {chat.inputError && <p role="alert" className="mb-3 text-xs text-danger">{chat.inputError}</p>}
+      {inputHints.length > 0 && <div role="status" className="mb-3 space-y-1 text-xs text-fg-muted">{[...new Set(inputHints)].map(hint => <p key={hint}>{hint}</p>)}</div>}
       {stopping && <p role="status" className="mb-3 text-xs text-fg-muted">正在停止…</p>}
       {chat.uploadingAttachments && <p role="status" className="mb-3 flex items-center gap-2 text-xs text-fg-muted"><Loader2 size={13} className="animate-spin motion-reduce:animate-none" aria-hidden />正在处理文件…</p>}
-      {readError && <div className="mb-3 flex justify-end">
+      {readError && <div className="mb-3 flex items-start justify-between gap-3 text-xs text-danger">
+        <p role="alert">{readError}</p>
         <RefreshButton label={retryReadLabel} busy={chat.refreshing || status === 'loading'} onPress={retryReads} />
       </div>}
       {modelUnavailable && <div className="mb-3 text-right text-xs text-fg-muted"><Link className="underline underline-offset-4 hover:text-fg" to="/settings?tab=models">前往设置添加模型</Link></div>}

@@ -13,7 +13,7 @@ import type {
 import type { ElysianGateway } from '../contracts/adapters'
 import { AgentHttpError } from '../adapters/http/agent/agentShared'
 import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
-import { useNotificationStore } from './notificationStore'
+import { useMessageStore } from './messageStore'
 
 /*
  * 技能与 MCP 域界面状态。数据一律经 gateway.agentExtensions 的 adapter 取，
@@ -34,7 +34,7 @@ function messageOf(error: unknown): string {
 }
 
 function notify(tone: 'success' | 'info' | 'danger', message: string): void {
-  useNotificationStore.getState().notify({ tone, message })
+  useMessageStore.getState().notify({ tone, message })
 }
 
 /** 首页轮询合并：服务端首页（最新在前）覆盖同 ID 旧项，旧页里不在首页的项保序保留。 */
@@ -496,6 +496,7 @@ export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) =
       } catch (error) {
         if (!isCurrent()) return false
         set({ mcpSaving: false, mcpSaveError: messageOf(error) })
+        notify('danger', messageOf(error))
         if (error instanceof AgentHttpError && error.status === 409) void get().loadMcpServers(gateway, { silent: true })
         return false
       }
@@ -518,6 +519,7 @@ export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) =
       } catch (error) {
         if (!isCurrent()) return false
         set({ mcpSaving: false, mcpSaveError: messageOf(error) })
+        notify('danger', messageOf(error))
         if (error instanceof AgentHttpError && error.status === 409) void get().loadMcpServers(gateway, { silent: true })
         return false
       }

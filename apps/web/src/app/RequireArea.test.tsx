@@ -1,3 +1,4 @@
+import { messageHistoryText } from '../test/messageHistory'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
@@ -39,7 +40,7 @@ describe('页面级访问闸门', () => {
     renderApp('/', { gateway: gatewayDenying('dashboard') })
 
     expect(await screen.findByText('无权限查看「仪表盘」', { exact: true })).toBeInTheDocument()
-    expect(screen.getByLabelText('通知')).toHaveTextContent('无权限查看「仪表盘」')
+    expect(messageHistoryText()).toContain('无权限查看「仪表盘」')
     expect(screen.queryByText('仪表盘区块由后续票交付')).not.toBeInTheDocument()
   })
 

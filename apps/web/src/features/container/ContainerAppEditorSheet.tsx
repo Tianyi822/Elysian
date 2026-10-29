@@ -9,7 +9,7 @@ import { CopyButton } from '../../components/CopyButton'
 import { CTL_DANGER, CTL_PRIMARY, CTL_SECONDARY } from '../../components/formControl'
 import { useContainerAppsStore } from '../../stores/containerAppsStore'
 import { isComposeFile } from '../../stores/containerAppsStore'
-import { useFeedbackNotification } from '../../components/useFeedbackNotification'
+import { useFeedbackMessage } from '../../components/useFeedbackMessage'
 
 /** 编辑抽屉的读取状态；失败要在抽屉里说清楚并能重试，不能只留一个空框。 */
 type Loaded = { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ready'; content: string }
@@ -38,7 +38,7 @@ export function ContainerAppEditorSheet({
   const [draft, setDraft] = useState('')
   const [attempt, setAttempt] = useState(0)
   const [discardOpen, setDiscardOpen] = useState(false)
-  useFeedbackNotification(loaded.kind === 'error' ? loaded.message : null)
+  useFeedbackMessage(loaded.kind === 'error' ? loaded.message : null)
 
   const file: ContainerAppFile | undefined = app?.files.find((candidate) => candidate.path === path)
   const dirty = loaded.kind === 'ready' && draft !== loaded.content

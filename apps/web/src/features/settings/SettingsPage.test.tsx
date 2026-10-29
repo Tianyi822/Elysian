@@ -7,7 +7,7 @@ import { useAgentRuntimeStore } from '../../stores/agentRuntimeStore'
 import { useModelSettingsStore } from '../../stores/modelSettingsStore'
 import { demoAgentRuntimeInfo } from '../../adapters/mock/agent/agentRuntimeMock'
 import { useSessionStore } from '../../stores/sessionStore'
-import { useNotificationStore } from '../../stores/notificationStore'
+import { useMessageStore } from '../../stores/messageStore'
 import { useSettingsTabStore } from '../../stores/settingsTabStore'
 import { renderApp } from '../../test/renderApp'
 
@@ -120,7 +120,7 @@ describe('修改面板密码', () => {
     await user.click(screen.getByRole('button', { name: '确认修改' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('当前密码不正确')
-    expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ tone: 'danger', message: '当前密码不正确' }))
+    expect(useMessageStore.getState().messages).toContainEqual(expect.objectContaining({ tone: 'danger', message: '当前密码不正确' }))
     expect(screen.getByLabelText('新密码')).toHaveValue('brand-new-pw')
     expect(screen.getByRole('button', { name: '修改密码' })).toBeEnabled()
   })

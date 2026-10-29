@@ -19,8 +19,8 @@ import { WebsitesRemoveDialog } from './WebsitesRemoveDialog'
 import { WebsitesSettingsDialog } from './WebsitesSettingsDialog'
 import { CaddyConfigDialog } from './CaddyConfigDialog'
 import { filterWebsiteProjects } from './websitesListing'
-import { useFeedbackNotification } from '../../components/useFeedbackNotification'
-import { useNotificationStore } from '../../stores/notificationStore'
+import { useFeedbackMessage } from '../../components/useFeedbackMessage'
+import { useMessageStore } from '../../stores/messageStore'
 
 /**
  * 网站项目面板：工具栏（添加项目 + 分类/搜索/刷新）、代理通道横幅、Docker 区
@@ -45,7 +45,7 @@ function ProxyStatusBanner({
   reconciling: boolean
   onReconcile: () => void
 }) {
-  useFeedbackNotification(unavailable
+  useFeedbackMessage(unavailable
     ? `反向代理通道不可用${detail ? `：${detail}` : ''}。当前无法核对域名路由或证书状态。`
     : `反向代理配置未完全生效：${detail ?? '请重新下发配置'}`, 'warning')
   if (unavailable) {
@@ -86,8 +86,8 @@ export function WebsitesPanel() {
   const tasks = useWebsiteDeploymentsStore((s) => s.tasks)
   const taskError = useWebsiteDeploymentsStore((s) => s.error)
   const [operationError, setOperationError] = useState<string>()
-  useFeedbackNotification(operationError)
-  useFeedbackNotification(taskError)
+  useFeedbackMessage(operationError)
+  useFeedbackMessage(taskError)
   const [rollbackIds, setRollbackIds] = useState<readonly string[]>([])
   const hasActiveTask = tasks.some((task) => websiteDeploymentIsActive(task.state))
   useEffect(() => { void useWebsiteDeploymentsStore.getState().refresh(gateway) }, [gateway])
@@ -122,7 +122,7 @@ export function WebsitesPanel() {
 
   return (
     <div>
-      <div className={`${CTL_TOOLBAR} rect-toolbar mb-4 flex flex-wrap items-center gap-2 panel-surface px-4 py-3`}>
+      <div className={`${CTL_TOOLBAR} rect-toolbar shell-first-row mb-4 flex flex-wrap items-center gap-2 panel-surface px-4 py-3`}>
         <button type="button" onClick={openCreate} className={TOOL_BUTTON_CLASS}>
           添加项目
         </button>
@@ -210,7 +210,7 @@ export function WebsitesPanel() {
                     .setRunning(gateway, project, project.runState !== 'running')
                 }
                 onRedeploy={() => setRedeployTarget(project)}
-                onRollback={project.previousRelease ? () => { setOperationError(undefined); setRollbackIds((ids) => [...ids, project.id]); void gateway.websites.deployment?.rollback(project.id).then((task) => { useWebsiteDeploymentsStore.getState().put(task); setSelectedTask(task); useNotificationStore.getState().notify({ tone: 'info', message: `已提交项目 ${project.name} 的回滚任务` }) }).catch((error: unknown) => setOperationError(error instanceof Error ? error.message : '回滚提交失败')).finally(() => setRollbackIds((ids) => ids.filter((id) => id !== project.id))) } : undefined}
+                onRollback={project.previousRelease ? () => { setOperationError(undefined); setRollbackIds((ids) => [...ids, project.id]); void gateway.websites.deployment?.rollback(project.id).then((task) => { useWebsiteDeploymentsStore.getState().put(task); setSelectedTask(task); useMessageStore.getState().notify({ tone: 'info', message: `已提交项目 ${project.name} 的回滚任务` }) }).catch((error: unknown) => setOperationError(error instanceof Error ? error.message : '回滚提交失败')).finally(() => setRollbackIds((ids) => ids.filter((id) => id !== project.id))) } : undefined}
                 onOpenSettings={() => useWebsitesStore.getState().openSettings(project)}
                 onOpenRemove={() => useWebsitesStore.getState().openRemove(project)}
               />

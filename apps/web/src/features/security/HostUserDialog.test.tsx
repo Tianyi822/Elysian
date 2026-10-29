@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import type { HostUser, HostUserInput } from '@elysian/contracts'
 import { SEED_HOST_USERS } from '../../adapters/mock/usersData'
 import { openSshTab, resetSshPanel, userSessions } from '../../test/sshPanel'
+import { useMessageStore } from '../../stores/messageStore'
 
 /**
  * 主机账号弹窗的备注前置校验：逗号是 GECOS 的字段分隔符，控制字符写不进
@@ -10,8 +11,8 @@ import { openSshTab, resetSshPanel, userSessions } from '../../test/sshPanel'
  * 输入时就提示，而不是提交后才被服务端拒绝。
  */
 
-beforeEach(() => {
-  resetSshPanel()
+beforeEach(async () => {
+  await resetSshPanel()
 })
 
 function usersPanel(): HTMLElement {
@@ -23,6 +24,24 @@ async function openUsersTab(gateway = userSessions().gateway) {
 }
 
 describe('主机账号弹窗备注校验', () => {
+  it('实际提交失败保留行内原因与草稿，并记录消息；重新打开清除旧错误', async () => {
+    const { gateway } = userSessions({ create: async () => { throw new Error('账号目录不可写') } })
+    const user = await openUsersTab(gateway)
+    await user.click(screen.getByRole('button', { name: '创建用户' }))
+    const dialog = await screen.findByRole('dialog', { name: '创建用户' })
+    const name = within(dialog).getByLabelText(/用户名/)
+    await user.type(name, 'newoperator')
+    await user.click(within(dialog).getByRole('button', { name: '创建用户' }))
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('账号目录不可写')
+    expect(name).toHaveValue('newoperator')
+    expect(useMessageStore.getState().messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ tone: 'danger', message: '保存失败：账号目录不可写' }),
+    ]))
+    await user.click(within(dialog).getByRole('button', { name: '取消' }))
+    await user.click(screen.getByRole('button', { name: '创建用户' }))
+    expect(within(screen.getByRole('dialog', { name: '创建用户' })).queryByRole('alert')).not.toBeInTheDocument()
+  })
+
   it('创建用户：备注含逗号或控制字符时输入即提示（与服务端同一句），提交被拦不发请求；改好后可创建', async () => {
     const creates: ({ name: string } & HostUserInput)[] = []
     const { gateway, users: base } = userSessions({

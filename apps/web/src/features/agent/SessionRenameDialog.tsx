@@ -17,7 +17,7 @@ export function SessionRenameDialog({ target, onClose }: {
   const reportOperation = useAgentChatStore(state => state.reportOperation)
   const [name, setName] = useState(target.title)
   const [submitting, setSubmitting] = useState(false)
-  const [invalid, setInvalid] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const input = useRef<HTMLInputElement>(null)
   const activeTarget = useRef<string | null>(target.id)
   const requestVersion = useRef(0)
@@ -27,7 +27,7 @@ export function SessionRenameDialog({ target, onClose }: {
     activeTarget.current = target.id
     requestVersion.current += 1
     setName(target.title)
-    setInvalid(false)
+    setError(null)
     setSubmitting(false)
     return () => { activeTarget.current = null; requestVersion.current += 1 }
   }, [target.id, target.title])
@@ -36,14 +36,12 @@ export function SessionRenameDialog({ target, onClose }: {
     if (submitting) return
     const trimmed = name.trim()
     if (!trimmed) {
-      setInvalid(true)
-      reportOperation('名称不能为空')
+      setError('名称不能为空')
       input.current?.focus()
       return
     }
     if (new TextEncoder().encode(trimmed).length > 200) {
-      setInvalid(true)
-      reportOperation('标题不能超过 200 字节')
+      setError('标题不能超过 200 字节')
       input.current?.focus()
       return
     }
@@ -53,13 +51,15 @@ export function SessionRenameDialog({ target, onClose }: {
     const authGeneration = captureAuthGeneration()
     const valid = () => activeTarget.current === targetId && requestVersion.current === version && captureAuthGeneration() === authGeneration
     setSubmitting(true)
-    setInvalid(false)
+    setError(null)
     try {
       await renameSession(api, targetId, trimmed)
       if (valid()) onClose()
     } catch (error) {
       if (valid() && useAgentChatStore.getState().session?.id === owner) {
-        reportOperation(error instanceof Error ? error.message : '重命名失败')
+        const message = error instanceof Error ? error.message : '重命名失败'
+        setError(message)
+        reportOperation(message)
         input.current?.focus()
       }
     } finally {
@@ -84,11 +84,12 @@ export function SessionRenameDialog({ target, onClose }: {
               ref={input}
               id="agent-session-rename-input"
               value={name}
-              aria-invalid={invalid || undefined}
-              onChange={event => { setName(event.target.value); setInvalid(false) }}
+              aria-invalid={!!error || undefined} aria-describedby={error ? 'session-rename-error' : undefined}
+              onChange={event => { setName(event.target.value); setError(null) }}
               autoFocus
               className="mt-1 h-9 w-full rounded-lg border border-line bg-surface px-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle"
             />
+            {error && <p id="session-rename-error" role="alert" className="mt-2 text-xs text-danger">{error}</p>}
             <div className="mt-4 flex justify-end gap-2">
               <button
                 type="button"

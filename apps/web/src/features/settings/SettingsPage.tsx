@@ -1,3 +1,4 @@
+import { useMessageStore } from '../../stores/messageStore'
 import { Navigate, useSearchParams } from 'react-router'
 import { ExtensionSettingsSection } from './ExtensionSettingsSection'
 import { useAgentExtensionsStore } from '../../stores/agentExtensionsStore'
@@ -8,7 +9,6 @@ import type { FormEvent } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { PasswordVisibilityButton } from '../security/passwordFieldParts'
 import { CTL_FIELD } from '../../components/formControl'
-import { useFeedbackNotification } from '../../components/useFeedbackNotification'
 import { useSessionStore } from '../../stores/sessionStore'
 import { RequireArea } from '../../app/RequireArea'
 import { ModelSettingsSection } from './ModelSettingsSection'
@@ -113,7 +113,6 @@ function AccountSecuritySettings() {
   const [submitting, setSubmitting] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [passwordError, setPasswordError] = useState<string | null>(null)
-  useFeedbackNotification(passwordError)
 
   const nextGuidance = newPasswordGuidance(newPassword)
   const againGuidance = confirmGuidance(newPassword, confirmNewPassword)
@@ -150,7 +149,9 @@ function AccountSecuritySettings() {
       setNotice(PASSWORD_CHANGE_NOTICE)
       expire()
     } catch (cause) {
-      setPasswordError(cause instanceof Error ? cause.message : '修改密码失败')
+      const message = cause instanceof Error ? cause.message : '修改密码失败'
+      setPasswordError(message)
+      useMessageStore.getState().notify({ tone: 'danger', message })
       setSubmitting(false)
     }
   }
@@ -195,6 +196,7 @@ function AccountSecuritySettings() {
           hint={againGuidance.text}
           warning={againGuidance.warning}
         />
+        {passwordError && <p role="alert" className="text-xs text-danger">{passwordError}</p>}
         <button
           type="submit"
           disabled={submitting}

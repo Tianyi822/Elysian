@@ -1,3 +1,4 @@
+import { useMessageStore } from '../../stores/messageStore'
 import * as Dialog from '@radix-ui/react-dialog'
 import { useRef, useState } from 'react'
 import { isValidWebsiteDomain, type WebsiteAccessInput, type WebsiteProject } from '@elysian/contracts'
@@ -5,7 +6,6 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { X } from '../../components/icons'
 import { accessConfigEntryVisible, useDependencyProbeStore } from '../../stores/dependencyProbeStore'
 import { useWebsitesStore } from '../../stores/websitesStore'
-import { useFeedbackNotification } from '../../components/useFeedbackNotification'
 
 const SECTION = 'panel-surface p-4'
 const ACTION = 'rounded-lg border border-line bg-surface px-3 py-2 text-xs font-medium text-fg hover:border-fg-subtle disabled:opacity-50'
@@ -48,7 +48,6 @@ export function CaddyConfigDialog({ onClose, onAddProject }: { onClose: () => vo
   const changed = selected !== null && (mode !== selected.accessMode || (mode === 'domain' && (normalized !== selected.domain || !!certificatePem)))
   const invalid = mode === 'domain' && !isValidWebsiteDomain(normalized)
   const needsCaddyToSave = mode === 'domain' || selected?.accessMode === 'domain'
-  useFeedbackNotification(error)
 
   function select(project: WebsiteProject) {
     certificateReadVersion.current += 1
@@ -88,7 +87,7 @@ export function CaddyConfigDialog({ onClose, onAddProject }: { onClose: () => vo
       setPrivateKeyPem('')
       setCertificateName('')
       setPrivateKeyName('')
-    } catch (cause) { setError(cause instanceof Error ? cause.message : '访问配置保存失败') }
+    } catch (cause) { const message = cause instanceof Error ? cause.message : '访问配置保存失败'; setError(message); useMessageStore.getState().notify({ tone: 'danger', message }) }
     finally { setSaving(false) }
   }
 

@@ -4,14 +4,14 @@ import type { FileEntry } from '@elysian/contracts'
 import { createMockGateway } from '../adapters/mock/gateway'
 import { FileTransferError } from '../adapters/filesTransferError'
 import { useFilesStore } from './filesStore'
-import { useNotificationStore } from './notificationStore'
+import { useMessageStore } from './messageStore'
 
 const entry = (name: string): FileEntry => ({ name, kind: 'file', sizeBytes: 3, mode: '644', owner: 'root', modifiedAt: '2026-10-11T00:00:00Z' })
 
-beforeEach(() => {
+beforeEach(async () => {
   useFilesStore.getState().cancelDownload()
   useFilesStore.getState().cancelUpload()
-  useNotificationStore.getState().clear()
+  await useMessageStore.getState().clear()
   useFilesStore.setState({ status: 'ready', path: '/tmp', entries: [], sizes: { '/tmp': 0 }, computingPaths: [], searchKeyword: '', searchResults: [], searching: false, download: undefined, upload: undefined })
 })
 
@@ -68,7 +68,7 @@ describe('文件传输状态', () => {
     expect(search).toHaveBeenCalledWith('.txt')
     expect(useFilesStore.getState().sizes).toEqual({})
     expect(useFilesStore.getState().entries[0]?.name).toBe('one.txt')
-    expect(useNotificationStore.getState().notifications).toEqual([
+    expect(useMessageStore.getState().messages).toEqual([
       expect.objectContaining({ tone: 'danger', message: expect.stringContaining('two.txt：网络连接失败，上传结果未确认') }),
     ])
   })
@@ -116,7 +116,7 @@ describe('文件传输状态', () => {
     expect(upload).not.toHaveBeenCalled()
     expect(useFilesStore.getState().upload?.items.map((item) => item.status)).toEqual(['cancelled', 'cancelled'])
     expect(useFilesStore.getState().upload?.busy).toBe(false)
-    expect(useNotificationStore.getState().notifications).toEqual([
+    expect(useMessageStore.getState().messages).toEqual([
       expect.objectContaining({ tone: 'info', message: expect.stringContaining('上传已取消') }),
     ])
   })
@@ -125,17 +125,17 @@ describe('文件传输状态', () => {
     const gateway = createMockGateway({ eventStream: 'memory' })
     vi.spyOn(gateway.files, 'prepareDownload').mockRejectedValueOnce(new Error('归档空间不足'))
     await useFilesStore.getState().downloadEntry(gateway, '/tmp/data.txt', entry('data.txt'))
-    expect(useNotificationStore.getState().notifications).toEqual([
+    expect(useMessageStore.getState().messages).toEqual([
       expect.objectContaining({ tone: 'danger', message: '下载失败：归档空间不足' }),
     ])
 
-    useNotificationStore.getState().clear()
+    await useMessageStore.getState().clear()
     vi.spyOn(gateway.files, 'prepareDownload').mockResolvedValue({ id: 'd1', name: 'data.txt', sizeBytes: 3, expiresAt: '2026-10-11T01:00:00Z' })
     vi.spyOn(gateway.files, 'startDownload').mockImplementation((_download, onError) => {
       onError?.(new Error('传输中断'))
       onError?.(new Error('传输中断'))
     })
     await useFilesStore.getState().downloadEntry(gateway, '/tmp/data.txt', entry('data.txt'))
-    expect(useNotificationStore.getState().notifications.map((notice) => notice.tone)).toEqual(['info', 'danger'])
+    expect(useMessageStore.getState().messages.map((notice) => notice.tone)).toEqual(['info', 'danger'])
   })
 })

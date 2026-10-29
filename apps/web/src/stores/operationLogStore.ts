@@ -10,7 +10,7 @@ import { PLATFORM_LOG_CATEGORY_LABELS, formatLogBytes, logNumericSortKey } from 
 import { create } from 'zustand'
 import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
 import type { ElysianGateway } from '../contracts/adapters'
-import { useNotificationStore } from './notificationStore'
+import { useMessageStore } from './messageStore'
 
 type OperationLogStatus = 'idle' | 'loading' | 'ready' | 'error'
 
@@ -176,14 +176,14 @@ export const useOperationLogStore = create<OperationLogState>((set, get) => ({
     set({ clearing: true })
     try {
       const report = await gateway.logs.clearLogs(category)
-      useNotificationStore.getState().notify({
+      useMessageStore.getState().notify({
         tone: 'success',
         message: `${PLATFORM_LOG_CATEGORY_LABELS[report.category]}已清空：删除 ${report.rowCount} 条记录，释放 ${formatLogBytes(report.totalBytes)}${MOCK_SUFFIX}`,
       })
       set({ clearTarget: null, clearing: false })
       await get().load(gateway)
     } catch (error) {
-      useNotificationStore.getState().notify({
+      useMessageStore.getState().notify({
         tone: 'danger',
         message: `清空失败：${error instanceof Error ? error.message : '未知错误'}`,
       })

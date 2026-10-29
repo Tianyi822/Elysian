@@ -12,8 +12,8 @@ import { usePanelStore } from '../../stores/panelStore'
 import { openPanelAddress, reloadPanelPage } from './panelNavigation'
 import { PanelChangelogDialog } from './PanelChangelogDialog'
 import { ChipGroup } from '../../components/ChipGroup'
-import { useFeedbackNotification } from '../../components/useFeedbackNotification'
-import { useNotificationStore } from '../../stores/notificationStore'
+import { useFeedbackMessage } from '../../components/useFeedbackMessage'
+import { useMessageStore } from '../../stores/messageStore'
 import { readPanelPending, savePanelPending, sendPanelPending } from './panelPending'
 import type { PanelPending } from './panelPending'
 
@@ -77,10 +77,10 @@ export function PanelMaintenanceSettings() {
     && task.cliRegistration?.status !== 'pending' && task.cliRegistration?.status !== 'failed'
     && (trackedTaskId !== task.id || verifiedUpdate === task.id)
   const unavailable = !info?.available || active || submitting || pending !== null
-  useFeedbackNotification(loadError ? `面板配置读取失败：${loadError}` : null)
-  useFeedbackNotification(info && !info.available ? `面板维护不可用：${info.reason}` : null, 'warning')
-  useFeedbackNotification(task?.state === 'succeeded' && (task.kind !== 'update' || verifiedUpdate === task.id) ? '面板维护已完成' : null, 'success')
-  useFeedbackNotification(update ? `检查更新：${updateSummary(update)}` : null, 'info')
+  useFeedbackMessage(loadError ? `面板配置读取失败：${loadError}` : null)
+  useFeedbackMessage(info && !info.available ? `面板维护不可用：${info.reason}` : null, 'warning')
+  useFeedbackMessage(task?.state === 'succeeded' && (task.kind !== 'update' || verifiedUpdate === task.id) ? '面板维护已完成' : null, 'success')
+  useFeedbackMessage(update ? `检查更新：${updateSummary(update)}` : null, 'info')
 
   // 首次展示、恢复任务及追加分页后都贴底；只滚动日志框，不移动设置页。
   useLayoutEffect(() => {
@@ -114,7 +114,7 @@ export function PanelMaintenanceSettings() {
     setProgressError(null); setConnectionError(null); setPortsError(null); setUpdateError(null)
     usePanelStore.getState().put(result)
     if (!usePanelStore.getState().info) void usePanelStore.getState().load(gateway, true)
-    useNotificationStore.getState().notify({ tone: 'info', message: '面板维护任务已提交' })
+    useMessageStore.getState().notify({ tone: 'info', message: '面板维护任务已提交' })
   }
   useEffect(() => {
     if (!pending) return

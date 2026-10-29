@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { GatewayProvider } from '../../adapters/GatewayProvider'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { useContainersStore } from '../../stores/containersStore'
-import { useNotificationStore } from '../../stores/notificationStore'
+import { useMessageStore } from '../../stores/messageStore'
 import { customImageRegistries, invalidImageRegistries, officialImageRegistries } from '../../test/imageRegistryCases'
 import { ImagePullDialog } from './ImagePullDialog'
 import { readStoredImageRegistry, writeStoredImageRegistry } from './imagePullPreferences'
@@ -53,10 +53,10 @@ async function selectPreset(label: string) {
   await user.click(screen.getByRole('menuitemradio', { name: label }))
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.mocked(isDockerRuntime).mockReturnValue(false)
   writeStoredImageRegistry('')
-  useNotificationStore.getState().clear()
+  await useMessageStore.getState().clear()
 })
 
 describe('ImagePullDialog', () => {
@@ -124,7 +124,7 @@ describe('ImagePullDialog', () => {
     }
   })
 
-  it.each(officialImageRegistries)('官方地址 %j 搜索失败时使用官方提示及相同通知', async (registry) => {
+  it.each(officialImageRegistries)('官方地址 %j 搜索失败时使用官方就地提示且不进入历史', async (registry) => {
     renderDialog({ searchImageNames: vi.fn().mockRejectedValue(new Error('搜索失败')) })
     await setRegistry(registry)
     vi.useFakeTimers()
@@ -133,7 +133,7 @@ describe('ImagePullDialog', () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(300) })
       const message = '镜像名称搜索暂不可用，请直接输入镜像名；版本列表会单独查询。'
       expect(screen.getByText(message)).toBeInTheDocument()
-      expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ message, tone: 'warning' }))
+      expect(useMessageStore.getState().messages).toEqual([])
       expect(screen.queryByText('此镜像源的名称搜索不可用，请直接输入镜像名；版本列表会单独查询。')).not.toBeInTheDocument()
     } finally {
       vi.useRealTimers()
@@ -149,7 +149,7 @@ describe('ImagePullDialog', () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(300) })
       const message = '此镜像源的名称搜索不可用，请直接输入镜像名；版本列表会单独查询。'
       expect(screen.getByText(message)).toBeInTheDocument()
-      expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ message, tone: 'warning' }))
+      expect(useMessageStore.getState().messages).toEqual([])
     } finally {
       vi.useRealTimers()
     }

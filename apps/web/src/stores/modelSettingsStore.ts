@@ -3,7 +3,7 @@ import type { AgentModelProfile, AgentModelProfileInput, AgentModelService, Agen
 import { create } from 'zustand'
 import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
 import type { ElysianGateway } from '../contracts/adapters'
-import { useNotificationStore } from './notificationStore'
+import { useMessageStore } from './messageStore'
 
 /** 模型配置的修订冲突保留表单草稿，由用户确认最新修订后提交。 */
 export function isRevisionConflict(error: unknown): boolean {
@@ -48,7 +48,7 @@ type ModelSettingsState = {
 }
 
 const messageOf = (error: unknown) => error instanceof Error ? error.message : '读取模型配置失败'
-const notify = (message: string, tone: 'success' | 'danger' = 'success') => useNotificationStore.getState().notify({ message, tone })
+const notify = (message: string, tone: 'success' | 'danger' = 'success') => useMessageStore.getState().notify({ message, tone })
 const initial = { status: 'idle' as const, models: [], services: [], reloading: false, saving: false, search: '', errorMessage: undefined }
 
 export const useModelSettingsStore = create<ModelSettingsState>((set, get) => {
@@ -71,17 +71,17 @@ export const useModelSettingsStore = create<ModelSettingsState>((set, get) => {
     async refresh(gateway) { await read(gateway, true) },
     async saveService(gateway, input, editing) {
       const current = get().services.find(service => service.id === editing?.id)
-      if (!input.name.trim() || input.models.length < 1 || input.models.length > 64) { notify('请填写服务名称，并配置 1 至 64 个模型', 'danger'); return false }
+      if (!input.name.trim() || input.models.length < 1 || input.models.length > 64) { set({ errorMessage: '请填写服务名称，并配置 1 至 64 个模型' }); return false }
       const duplicates = new Set<string>()
       for (const row of input.models) {
         const invalid = validateModelInput({ ...input, ...row, active: input.active && row.enabled }, current?.hasCredential)
-        if (invalid) { notify(invalid, 'danger'); return false }
-        if (duplicates.has(row.model.trim())) { notify('同一服务不能重复配置相同模型 ID', 'danger'); return false }
+        if (invalid) { set({ errorMessage: invalid }); return false }
+        if (duplicates.has(row.model.trim())) { set({ errorMessage: '同一服务不能重复配置相同模型 ID' }); return false }
         duplicates.add(row.model.trim())
       }
-      if ((input.provider === 'deepseek' || input.provider === 'zhipu') && input.active && !(input.credential === undefined ? current?.hasCredential : input.credential.trim())) { notify(input.provider === 'deepseek' ? '启用 DeepSeek 服务前请配置 API Key' : '启用智谱服务前请配置 API Key', 'danger'); return false }
+      if ((input.provider === 'deepseek' || input.provider === 'zhipu') && input.active && !(input.credential === undefined ? current?.hasCredential : input.credential.trim())) { set({ errorMessage: input.provider === 'deepseek' ? '启用 DeepSeek 服务前请配置 API Key' : '启用智谱服务前请配置 API Key' }); return false }
       if (get().saving) return false
-      set({ saving: true })
+      set({ saving: true, errorMessage: undefined })
       try {
         const service = editing
           ? await gateway.modelSettings.updateModelService(editing.id, { ...input, expectedRevision: editing.revision })
@@ -91,17 +91,19 @@ export const useModelSettingsStore = create<ModelSettingsState>((set, get) => {
         await get().refresh(gateway)
         return true
       } catch (error) {
-        if (isRevisionConflict(error)) { await get().refresh(gateway); notify('模型服务已被其他修改更新，已读取最新修订，表单草稿已保留', 'danger') }
-        else notify(messageOf(error), 'danger')
+        const message = isRevisionConflict(error) ? '模型服务已被其他修改更新，已读取最新修订，表单草稿已保留' : messageOf(error)
+        if (isRevisionConflict(error)) await get().refresh(gateway)
+        set({ errorMessage: message })
+        notify(message, 'danger')
         return false
       } finally { set({ saving: false }) }
     },
     async saveModel(gateway, input, editing) {
       const current = get().models.find((item) => item.id === editing?.id)
       const invalid = validateModelInput(input, current?.hasCredential)
-      if (invalid) { notify(invalid, 'danger'); return false }
+      if (invalid) { set({ errorMessage: invalid }); return false }
       if (get().saving) return false
-      set({ saving: true })
+      set({ saving: true, errorMessage: undefined })
       try {
         const profile = editing
           ? await gateway.modelSettings.updateModelProfile(editing.id, { ...input, expectedRevision: editing.revision })
@@ -111,10 +113,10 @@ export const useModelSettingsStore = create<ModelSettingsState>((set, get) => {
         await get().refresh(gateway)
         return true
       } catch (error) {
-        if (isRevisionConflict(error)) {
-          await get().refresh(gateway)
-          notify('模型配置已被其他修改更新，已重新读取最新修订，请基于最新内容重试', 'danger')
-        } else notify(messageOf(error), 'danger')
+        const message = isRevisionConflict(error) ? '模型配置已被其他修改更新，已重新读取最新修订，请基于最新内容重试' : messageOf(error)
+        if (isRevisionConflict(error)) await get().refresh(gateway)
+        set({ errorMessage: message })
+        notify(message, 'danger')
         return false
       } finally { set({ saving: false }) }
     },

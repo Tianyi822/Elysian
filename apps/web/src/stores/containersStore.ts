@@ -17,7 +17,7 @@ import {
   CONTAINER_TERMINAL_CLOSE_FALLBACK,
 } from '../features/container/containerCopy'
 import { getLastContainerSample, onStreamEvent } from './eventStreamStore'
-import { useNotificationStore } from './notificationStore'
+import { useMessageStore } from './messageStore'
 import { abortableDelay, awaitAbortable, throwIfAborted } from '../utils/abortable'
 
 type ContainerTerminalStatus = 'connecting' | 'connected' | 'error'
@@ -195,6 +195,7 @@ export const useContainersStore = create<{
   busyActions: readonly string[]
   createOpen: boolean
   creating: boolean
+  createError?: string
   removingImageIds: readonly string[]
   pullingImage?: { name: string; tag: string; registry?: string; progress?: ImagePullProgress; cancelling?: boolean }
   imagePullError?: { name: string; tag: string; registry?: string; message: string }
@@ -277,17 +278,17 @@ export const useContainersStore = create<{
       if (sequence !== imageRefreshSequence) return
       if (revision !== imageRevision) {
         set({ imageRefreshStatus: 'idle' })
-        if (notifyOutcome) useNotificationStore.getState().notify({ tone: 'success', message: '镜像列表已由其他操作更新' })
+        if (notifyOutcome) useMessageStore.getState().notify({ tone: 'success', message: '镜像列表已由其他操作更新' })
         return
       }
       imageRevision += 1
       set({ images, imageRefreshStatus: 'idle' })
-      if (notifyOutcome) useNotificationStore.getState().notify({ tone: 'success', message: '镜像列表已刷新' })
+      if (notifyOutcome) useMessageStore.getState().notify({ tone: 'success', message: '镜像列表已刷新' })
     } catch (error) {
       if (sequence !== imageRefreshSequence) return
       const detail = error instanceof Error ? error.message : '未知错误'
       set({ imageRefreshStatus: 'idle' })
-      useNotificationStore.getState().notify({ tone: 'danger', message: `刷新镜像失败：${detail}` })
+      useMessageStore.getState().notify({ tone: 'danger', message: `刷新镜像失败：${detail}` })
     }
   },
 
@@ -301,17 +302,17 @@ export const useContainersStore = create<{
     set({ search })
   },
   openCreate() {
-    set({ createOpen: true })
+    set({ createOpen: true, createError: undefined })
   },
   closeCreate() {
     set({ createOpen: false })
   },
 
   async createContainer(gateway, input) {
-    set({ creating: true })
+    set({ creating: true, createError: undefined })
     try {
       const created = await gateway.containers.create(input)
-      useNotificationStore
+      useMessageStore
         .getState()
         .notify({
           tone: 'success',
@@ -328,7 +329,8 @@ export const useContainersStore = create<{
       }))
     } catch (error) {
       const detail = error instanceof Error ? error.message : '未知错误'
-      useNotificationStore.getState().notify({ tone: 'danger', message: `创建容器失败：${detail}` })
+      set({ createError: `创建容器失败：${detail}` })
+      useMessageStore.getState().notify({ tone: 'danger', message: `创建容器失败：${detail}` })
     } finally {
       set({ creating: false })
     }
@@ -354,7 +356,7 @@ export const useContainersStore = create<{
         removingImageIds: state.removingImageIds.filter((id) => id !== imageId),
       }))
       const label = image ? `${image.name}:${image.tag}` : imageId
-      useNotificationStore.getState().notify({
+      useMessageStore.getState().notify({
         tone: 'success',
         message: isDockerRuntime()
           ? `镜像 ${label} 已删除`
@@ -363,7 +365,7 @@ export const useContainersStore = create<{
     } catch (error) {
       const detail = error instanceof Error ? error.message : '未知错误'
       set((state) => ({ removingImageIds: state.removingImageIds.filter((id) => id !== imageId) }))
-      useNotificationStore.getState().notify({ tone: 'danger', message: `删除镜像失败：${detail}` })
+      useMessageStore.getState().notify({ tone: 'danger', message: `删除镜像失败：${detail}` })
       try {
         const revision = imageRevision
         const images = await gateway.containers.listImages()
@@ -395,7 +397,7 @@ export const useContainersStore = create<{
       if (imagePullSequence !== pullSequence) return
       throwIfAborted(controller.signal)
       imageRevision += 1
-      useNotificationStore.getState().notify({
+      useMessageStore.getState().notify({
         tone: 'success',
         message: isDockerRuntime()
           ? `镜像 ${image.name}:${image.tag} 已拉取`
@@ -413,7 +415,7 @@ export const useContainersStore = create<{
     } catch (error) {
       if (imagePullSequence !== pullSequence) return
       const detail = error instanceof Error ? error.message : '未知错误'
-      useNotificationStore.getState().notify(controller.signal.aborted
+      useMessageStore.getState().notify(controller.signal.aborted
         ? { tone: 'info', message: `已取消镜像 ${input.name}:${input.tag} 的拉取请求` }
         : { tone: 'danger', message: `拉取镜像失败：${detail}` })
       imageRevision += 1
@@ -654,13 +656,13 @@ export const useContainersStore = create<{
     set((state) => ({ busyActions: [...state.busyActions, key] }))
     try {
       await gateway.containers.requestAction(containerId, action)
-      useNotificationStore.getState().notify({
+      useMessageStore.getState().notify({
         tone: 'success',
         message: containerActionSuccessMessage(action, name, isDockerRuntime()),
       })
     } catch (error) {
       const detail = error instanceof Error ? error.message : '未知错误'
-      useNotificationStore
+      useMessageStore
         .getState()
         .notify({ tone: 'danger', message: `容器 ${name} 操作失败：${detail}` })
     } finally {

@@ -1,5 +1,5 @@
 import type { FirewallPortSync } from '@elysian/contracts'
-import { useNotificationStore } from './notificationStore'
+import { useMessageStore } from './messageStore'
 
 /*
  * 直连端口自动开放的结果通知：创建网站/数据库与切换为直连后按结果发声。
@@ -8,7 +8,7 @@ import { useNotificationStore } from './notificationStore'
  */
 export function notifyFirewallPortSync(result: FirewallPortSync | null): void {
   if (result === null || result.state === 'skipped') return
-  const notify = useNotificationStore.getState().notify
+  const notify = useMessageStore.getState().notify
   if (result.state === 'opened') {
     notify({ message: `防火墙端口 ${result.port} 已开放`, tone: 'success' })
     return

@@ -3,7 +3,7 @@ import type { LogListQuery } from '@elysian/contracts'
 import { createMockGateway } from '../adapters/mock/gateway'
 import { SEED_RUNTIME_LOGS, resetLogsData } from '../adapters/mock/logsData'
 import type { ElysianGateway } from '../contracts/adapters'
-import { useNotificationStore } from './notificationStore'
+import { useMessageStore } from './messageStore'
 import { useRuntimeLogStore } from './runtimeLogStore'
 
 /*
@@ -36,7 +36,7 @@ function gatewayWith(overrides: Partial<ElysianGateway['logs']> = {}): ElysianGa
 beforeEach(() => {
   resetLogsData()
   useRuntimeLogStore.setState(useRuntimeLogStore.getInitialState())
-  useNotificationStore.setState({ notifications: [] })
+  useMessageStore.setState({ messages: [] })
 })
 
 describe('运行日志 store', () => {
@@ -122,7 +122,7 @@ describe('运行日志 store', () => {
     expect(state.entries).toHaveLength(1)
     expect(state.entries[0]!.source).toBe('logs.clear')
 
-    const notice = useNotificationStore.getState().notifications[0]
+    const notice = useMessageStore.getState().messages[0]
     expect(notice?.tone).toBe('success')
     expect(notice?.message).toContain('运行日志已清空')
     expect(notice?.message).toContain('条记录')
@@ -140,7 +140,7 @@ describe('运行日志 store', () => {
 
     expect(useRuntimeLogStore.getState().clearTarget).toBe('runtime')
     expect(useRuntimeLogStore.getState().clearing).toBe(false)
-    const notice = useNotificationStore.getState().notifications[0]
+    const notice = useMessageStore.getState().messages[0]
     expect(notice?.tone).toBe('danger')
     expect(notice?.message).toContain('清空端点不可用')
   })

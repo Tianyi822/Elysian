@@ -1,10 +1,10 @@
+import { useMessageStore } from '../../stores/messageStore'
 import { useEffect, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { isValidFileName } from '@elysian/contracts'
 import type { FileEntry } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { useFilesStore } from '../../stores/filesStore'
-import { useFeedbackNotification } from '../../components/useFeedbackNotification'
 
 /**
  * 重命名对话框：预填现名，名称判据在前端先挡一道（非空、不含斜杠），
@@ -24,7 +24,6 @@ export function RenameDialog({
   const [name, setName] = useState(entry.name)
   const [submitting, setSubmitting] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string>()
-  useFeedbackNotification(errorMessage)
 
   useEffect(() => {
     // 换了待重命名的条目就重置表单：对话框复用同一份组件状态。
@@ -45,6 +44,7 @@ export function RenameDialog({
       onClose()
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : '重命名失败')
+      useMessageStore.getState().notify({ tone: 'danger', message: error instanceof Error ? error.message : '重命名失败' })
     } finally {
       setSubmitting(false)
     }
@@ -76,7 +76,7 @@ export function RenameDialog({
               className="mt-1 h-9 w-full rounded-lg border border-line bg-surface px-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle"
             />
             {errorMessage ? (
-              <p className="mt-2 text-xs text-danger">
+              <p role="alert" className="mt-2 text-xs text-danger">
                 {errorMessage}
               </p>
             ) : null}

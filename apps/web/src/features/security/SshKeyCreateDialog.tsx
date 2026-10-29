@@ -22,6 +22,7 @@ export function SshKeyCreateDialog() {
   const keys = useSshStore((s) => s.keys)
   const keyAccounts = useSshStore((s) => s.keyAccounts)
   const creating = useSshStore((s) => s.creatingKey)
+  const operationError = useSshStore((s) => s.operationError)
   const closeCreateKey = useSshStore((s) => s.closeCreateKey)
   const createKey = useSshStore((s) => s.createKey)
   const [name, setName] = useState('')
@@ -143,6 +144,7 @@ export function SshKeyCreateDialog() {
             </div>
           </div>
 
+          {operationError ? <p role="alert" className="px-4 py-2 text-xs text-danger">{operationError}</p> : null}
           <div className="flex items-center justify-between gap-2 border-t border-line px-4 py-2.5">
             {/* ml-auto 保证按钮组恒靠右：演示态左侧有说明文字、真实态没有，布局都不变。 */}
             {!isDockerRuntime() ? <p className="text-xs text-fg-subtle">只改演示数据集。</p> : null}

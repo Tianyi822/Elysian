@@ -1,3 +1,4 @@
+import { messageHistoryText } from '../../test/messageHistory'
 import { fireEvent, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -258,9 +259,7 @@ describe('文件管理页', () => {
     const region = await screen.findByRole('region', { name: '文件列表' })
 
     await user.click(within(rowOf(region, '^bin ')).getByRole('button', { name: '计算 bin 的目录大小' }))
-
-    const notifications = await screen.findByLabelText('通知')
-    expect(within(notifications).getByText(/磁盘不可达/)).toBeInTheDocument()
+    expect(messageHistoryText()).toMatch(/磁盘不可达/)
     expect(
       await within(rowOf(region, '^bin ')).findByRole('button', { name: '计算 bin 的目录大小' }),
     ).toBeInTheDocument()
@@ -290,7 +289,7 @@ describe('文件管理页', () => {
 
     fireEvent.contextMenu(rowOf(region, '^bin '))
     await user.click(await screen.findByRole('menuitem', { name: '复制' }))
-    expect(screen.getByLabelText('通知')).toHaveTextContent('（mock，待接入真实执行）')
+    expect(messageHistoryText()).toContain('（mock，待接入真实执行）')
 
     await user.click(screen.getByRole('button', { name: '粘贴' }))
 
@@ -332,12 +331,14 @@ describe('文件管理页', () => {
     await user.clear(input)
     await user.type(input, 'a/b')
     await user.click(screen.getByRole('button', { name: '确认重命名' }))
-    expect(await within(screen.getByLabelText('通知')).findByText('名称不能为空，也不能包含 /')).toBeInTheDocument()
+    expect(await screen.findByText('名称不能为空，也不能包含 /')).toBeInTheDocument()
+    expect(messageHistoryText()).not.toContain('名称不能为空，也不能包含 /')
 
     await user.clear(input)
     await user.type(input, 'home')
     await user.click(screen.getByRole('button', { name: '确认重命名' }))
-    expect(await within(screen.getByLabelText('通知')).findByText(/同名条目已存在/)).toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent('同名条目已存在')
+    expect(messageHistoryText()).toContain('同名条目已存在')
 
     await user.clear(input)
     await user.type(input, 'storage')
@@ -360,7 +361,7 @@ describe('文件管理页', () => {
     const archiveRow = rowOf(reloaded, 'auth.log.tar.gz')
     expect(archiveRow).toBeInTheDocument()
     expect(within(archiveRow).getByText('214.4 KB')).toBeInTheDocument()
-    expect(screen.getByLabelText('通知')).toHaveTextContent('已压缩为 auth.log.tar.gz')
+    expect(messageHistoryText()).toContain('已压缩为 auth.log.tar.gz')
   })
 
   it('权限对话框：勾选即时改写模式值，模式值也即时回写勾选', async () => {
@@ -401,7 +402,7 @@ describe('文件管理页', () => {
 
     region = await screen.findByRole('region', { name: '文件列表' })
     expect(within(rowOf(region, '^etc ')).getByText('750/root')).toBeInTheDocument()
-    expect(screen.getByLabelText('通知')).toHaveTextContent('已把权限改为 750、所有者改为 root（含子目录）')
+    expect(messageHistoryText()).toContain('已把权限改为 750、所有者改为 root（含子目录）')
 
     // 进 /etc 看后代：ssh 目录也被改成 750，而 /var 这类同级不受影响。
     await user.dblClick(rowOf(region, '^etc '))
@@ -425,7 +426,8 @@ describe('文件管理页', () => {
     await user.clear(modeInput)
     await user.type(modeInput, '64')
     await user.click(screen.getByRole('button', { name: '应用' }))
-    expect(await within(screen.getByLabelText('通知')).findByText('权限位要写三位八进制数字，例如 755')).toBeInTheDocument()
+    expect(await screen.findByText('权限位要写三位八进制数字，例如 755')).toBeInTheDocument()
+    expect(messageHistoryText()).not.toContain('权限位要写三位八进制数字，例如 755')
 
     // 未落盘：关掉对话框后行内权限仍是原值。
     await user.click(screen.getByRole('button', { name: '取消' }))

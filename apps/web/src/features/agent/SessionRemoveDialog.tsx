@@ -16,6 +16,7 @@ export function SessionRemoveDialog({ target, onClose }: {
   const deleteSession = useAgentChatStore(state => state.deleteSession)
   const reportOperation = useAgentChatStore(state => state.reportOperation)
   const [removing, setRemoving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const activeTarget = useRef<string | null>(target.id)
   const requestVersion = useRef(0)
 
@@ -23,6 +24,7 @@ export function SessionRemoveDialog({ target, onClose }: {
     activeTarget.current = target.id
     requestVersion.current += 1
     setRemoving(false)
+    setError(null)
     return () => { activeTarget.current = null; requestVersion.current += 1 }
   }, [target.id])
 
@@ -34,11 +36,16 @@ export function SessionRemoveDialog({ target, onClose }: {
     const authGeneration = captureAuthGeneration()
     const valid = () => activeTarget.current === targetId && requestVersion.current === version && captureAuthGeneration() === authGeneration
     setRemoving(true)
+    setError(null)
     try {
       await deleteSession(api, targetId)
       if (valid()) onClose()
     } catch (error) {
-      if (valid() && useAgentChatStore.getState().session?.id === owner) reportOperation(error instanceof Error ? error.message : '删除失败')
+      if (valid() && useAgentChatStore.getState().session?.id === owner) {
+        const message = error instanceof Error ? error.message : '删除失败'
+        setError(message)
+        reportOperation(message)
+      }
     } finally {
       if (valid()) setRemoving(false)
     }
@@ -54,6 +61,7 @@ export function SessionRemoveDialog({ target, onClose }: {
         >
           <Dialog.Title className="text-sm font-semibold">删除会话「{target.title}」？</Dialog.Title>
           <p className="mt-1.5 text-xs text-fg-muted">删除后该会话的聊天记录与运行历史将一并清除，且不可恢复。</p>
+          {error && <p role="alert" className="mt-2 text-xs text-danger">{error}</p>}
           <div className="mt-4 flex justify-end gap-2">
             <button
               type="button"

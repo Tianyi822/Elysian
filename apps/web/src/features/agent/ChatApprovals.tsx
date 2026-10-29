@@ -5,8 +5,8 @@ import type { AgentAccessDecisionInput, AgentApproval } from '@elysian/contracts
 import type { AgentChatGovernance } from '../../contracts/agentChat'
 import { Check, ShieldAlert, Square, X } from '../../components/icons'
 import { subscribeWhileVisible } from '../../adapters/subscribeWhileVisible'
-import { useFeedbackNotification } from '../../components/useFeedbackNotification'
-import { useNotificationStore } from '../../stores/notificationStore'
+import { useFeedbackMessage } from '../../components/useFeedbackMessage'
+import { useMessageStore } from '../../stores/messageStore'
 import { captureAuthGeneration } from '../../adapters/http/unauthorized'
 import { RuntimeAccessCard } from './RuntimeAccessCard'
 
@@ -22,7 +22,7 @@ export function ChatApprovals({ api, runId, onChanged, onCancel }: { api?: Agent
   useEffect(() => saveAuthorizationPending(runId, pending), [runId, pending])
   const lifetime = useRef(0)
   useEffect(() => { lifetime.current += 1; return () => { lifetime.current += 1 } }, [api, runId])
-  useFeedbackNotification(error)
+  useFeedbackMessage(error)
   useEffect(() => {
     setApprovals([]); setError(null); setLoading(true)
     if (!api) { setLoading(false); return }
@@ -46,7 +46,7 @@ export function ChatApprovals({ api, runId, onChanged, onCancel }: { api?: Agent
       const result = await api.decide(id, decision)
       if (owner !== lifetime.current || auth !== captureAuthGeneration()) return
       setApprovals(items => items.map(item => item.id === id ? result : item))
-      useNotificationStore.getState().notify({ tone: 'success', message: result.status === 'approved' ? '操作已批准，等待执行。' : '操作已拒绝。' })
+      useMessageStore.getState().notify({ tone: 'success', message: result.status === 'approved' ? '操作已批准，等待执行。' : '操作已拒绝。' })
       onChanged()
     }
     catch (cause) { if (owner === lifetime.current && auth === captureAuthGeneration()) setError(cause instanceof Error ? cause.message : '审批结果未确认，请重新读取') }

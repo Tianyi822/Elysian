@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentMCPCatalogProjection } from '@elysian/contracts'
 import { createMockGateway } from '../adapters/mock/gateway'
 import { resetAgentExtensionsData } from '../adapters/mock/agent/agentExtensionsMockAdapter'
-import { useNotificationStore } from './notificationStore'
+import { useMessageStore } from './messageStore'
 import { useAgentExtensionsStore, selectImportsActive } from './agentExtensionsStore'
 
 /*
@@ -13,11 +13,11 @@ import { useAgentExtensionsStore, selectImportsActive } from './agentExtensionsS
 
 const gateway = createMockGateway({ eventStream: 'memory' })
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.restoreAllMocks()
   resetAgentExtensionsData()
   useAgentExtensionsStore.getState().reset()
-  useNotificationStore.getState().clear()
+  await useMessageStore.getState().clear()
 })
 
 describe('技能目录', () => {
@@ -45,7 +45,7 @@ describe('技能目录', () => {
     await useAgentExtensionsStore.getState().setSkillEnabled(gateway, skill!.id, skill!.revision, true)
     const stillSame = useAgentExtensionsStore.getState().skills.find((item) => item.id === skill!.id)
     expect(stillSame?.revision).toBe(skill!.revision + 1)
-    expect(useNotificationStore.getState().notifications.at(-1)?.message).toBe('技能修订已变化，请重新读取')
+    expect(useMessageStore.getState().messages.at(-1)?.message).toBe('技能修订已变化，请重新读取')
   })
 
   it('删除确认走 deleteTarget，成功后从列表消失', async () => {
@@ -99,7 +99,7 @@ describe('导入任务', () => {
     expect(useAgentExtensionsStore.getState().imports.find((item) => item.requestId === 'store-import-1')?.state).toBe('succeeded')
     expect(useAgentExtensionsStore.getState().skills.length).toBe(before + 1)
     expect(selectImportsActive(useAgentExtensionsStore.getState())).toBe(false)
-    expect(useNotificationStore.getState().notifications.at(-1)?.tone).toBe('success')
+    expect(useMessageStore.getState().messages.at(-1)?.tone).toBe('success')
   })
 
   it('同 requestId 不同输入的 409 错误留在 importSubmitError，不抛出到调用方', async () => {
@@ -205,7 +205,7 @@ describe('扩展配置的异步边界', () => {
     resolveList(servers); resolveProbe(catalog)
     await Promise.all([list, probe])
     expect(useAgentExtensionsStore.getState()).toMatchObject({ mcpServers: [], mcpStatus: 'idle', probe: null })
-    expect(useNotificationStore.getState().notifications).toEqual([])
+    expect(useMessageStore.getState().messages).toEqual([])
   })
 
   it('刷新失败仍保留上次 MCP 和 Skill 表格', async () => {
@@ -241,6 +241,6 @@ describe('扩展配置的异步边界', () => {
     await useAgentExtensionsStore.getState().cancelSkillImport(gateway, active.id)
     expect(skills).toHaveBeenCalledTimes(1)
     expect(selectImportsActive(useAgentExtensionsStore.getState())).toBe(false)
-    expect(useNotificationStore.getState().notifications.at(-1)?.message).toContain('已结束')
+    expect(useMessageStore.getState().messages.at(-1)?.message).toContain('已结束')
   })
 })

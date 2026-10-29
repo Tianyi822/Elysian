@@ -4,7 +4,6 @@ import { Navigate, useLocation } from 'react-router'
 import { useGateway } from '../adapters/GatewayProvider'
 import { ErrorState, LoadingState } from '../components/states/StateViews'
 import { useSessionStore } from '../stores/sessionStore'
-import { NotificationHost } from '../components/NotificationHost'
 
 /**
  * 会话闸门：包住 AppShell 路由，未登录（真实会话模式）一律重定向 /login 并记住
@@ -50,11 +49,12 @@ export function RequireSession({ children }: { children: ReactNode }) {
 
   if (phase === 'error') {
     return (
-      <><ErrorState
+      <ErrorState
         title="登录状态检查失败"
         description="无法连接面板服务，请确认服务已启动。"
+        notify={false}
         onRetry={() => void probe(gateway)}
-      /><NotificationHost /></>
+      />
     )
   }
 

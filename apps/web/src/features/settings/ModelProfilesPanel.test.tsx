@@ -8,7 +8,7 @@ import { GatewayProvider } from '../../adapters/GatewayProvider'
 import { ModelSettingsMockAdapter, resetModelSettingsData } from '../../adapters/mock/agent/modelSettingsMockAdapter'
 import { demoAgentRuntimeInfo } from '../../adapters/mock/agent/agentRuntimeMock'
 import type { ElysianGateway } from '../../contracts/adapters'
-import { useNotificationStore } from '../../stores/notificationStore'
+import { useMessageStore } from '../../stores/messageStore'
 import { useModelSettingsStore } from '../../stores/modelSettingsStore'
 import { useAgentRuntimeStore } from '../../stores/agentRuntimeStore'
 import { ModelSettingsSection } from './ModelSettingsSection'
@@ -61,11 +61,11 @@ async function renderReady(path = '/settings', gateway?: ElysianGateway) {
   return view
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   resetModelSettingsData()
   useAgentRuntimeStore.getState().reset()
   useModelSettingsStore.getState().reset()
-  useNotificationStore.getState().clear()
+  await useMessageStore.getState().clear()
 })
 
 
@@ -104,10 +104,10 @@ describe('模型服务表单', () => {
     await user.click(within(dialog).getByRole('button', { name: '创建模型配置' }))
     expect(within(dialog).getByRole('alert')).toHaveTextContent('请先添加至少一个模型')
     await user.click(within(dialog).getByRole('button', { name: '创建模型配置' }))
-    expect(useNotificationStore.getState().notifications.filter(item => item.tone === 'danger' && item.message === '请先添加至少一个模型')).toHaveLength(2)
+    expect(useMessageStore.getState().messages).toEqual([])
     expect(create).not.toHaveBeenCalled()
     await user.click(within(dialog).getByRole('button', { name: '添加模型' }))
-    expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ tone: 'success', message: '已添加 1 个模型到配置草稿，保存后生效。' }))
+    expect(within(dialog).getByText('已添加 1 个模型到配置草稿，保存后生效。')).toBeInTheDocument()
     expect(within(dialog).getByLabelText('模型 ID')).toHaveValue('')
     expect(within(dialog).queryByRole('alert')).toBeNull()
     await user.click(within(dialog).getByRole('button', { name: '移除模型 1' }))
@@ -115,7 +115,7 @@ describe('模型服务表单', () => {
     expect(within(dialog).getByText('尚未添加模型，可获取模型或手动添加。')).toBeDefined()
     expect(create).not.toHaveBeenCalled()
   })
-  it('必填项与参数范围校验统一通过通知提示，失败保留表单', async () => {
+  it('必填项与参数范围校验就地提示且不进入历史，失败保留表单', async () => {
     const adapter = new ModelSettingsMockAdapter()
     const create = vi.spyOn(adapter, 'createModelService')
     const user = userEvent.setup()
@@ -123,7 +123,7 @@ describe('模型服务表单', () => {
     await user.click(screen.getByRole('button', { name: '新建模型配置' }))
     const dialog = screen.getByRole('dialog')
     const submit = within(dialog).getByRole('button', { name: '创建模型配置' })
-    const expectError = (message: string) => expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ tone: 'danger', message }))
+    const expectError = (message: string) => { expect(within(dialog).getByRole('alert')).toHaveTextContent(message); expect(useMessageStore.getState().messages).toEqual([]) }
     await user.click(within(dialog).getByRole('button', { name: '添加模型' }))
     await user.click(submit)
     expectError('请填写服务名称')
@@ -145,14 +145,14 @@ describe('模型服务表单', () => {
     expect(create).not.toHaveBeenCalled()
   })
 
-  it('批量添加异常显示通知且不部分添加，保留选择后可原样重试', async () => {
+  it('批量添加异常就地提示且不部分添加，保留选择后可原样重试', async () => {
     const adapter = new ModelSettingsMockAdapter()
     vi.spyOn(adapter, 'discoverModels').mockResolvedValue([{ model: 'new-one', name: '新模型一' }, { model: 'new-two', name: '新模型二' }])
     const user = userEvent.setup()
     await renderReady('/settings', makePageGateway(adapter))
     const dialog = await editMain(user)
     await user.click(within(dialog).getByRole('button', { name: '获取模型' }))
-    expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ tone: 'info', message: '已获取 2 个模型，请选择后添加。' }))
+    expect(within(dialog).getByText('已获取 2 个模型，请选择后添加。')).toBeInTheDocument()
     const choices = within(dialog).getByRole('region', { name: '可选模型' })
     await user.click(within(choices).getByRole('button', { name: '选择 new-one' }))
     await user.click(within(choices).getByRole('button', { name: '选择 new-two' }))
@@ -160,7 +160,7 @@ describe('模型服务表单', () => {
     const convert = vi.spyOn(modelDraft, 'discoveredModelDraft').mockImplementationOnce(originalConvert).mockImplementationOnce(() => { throw new Error('internal-draft-error') })
     try {
       await user.click(within(choices).getByRole('button', { name: '添加选中模型（2）' }))
-      expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ tone: 'danger', message: '添加模型失败，请重试。' }))
+      expect(within(dialog).getByText('添加模型失败，请重试。')).toBeInTheDocument()
       expect(within(choices).getByRole('button', { name: '选择 new-one', pressed: true })).toBeEnabled()
       expect(within(choices).getByRole('button', { name: '选择 new-two', pressed: true })).toBeEnabled()
       expect(within(dialog).queryByRole('button', { name: '编辑模型 2' })).toBeNull()
@@ -172,7 +172,7 @@ describe('模型服务表单', () => {
     await user.click(within(choices).getByRole('button', { name: '添加选中模型（2）' }))
     expect(within(choices).getAllByText('已添加')).toHaveLength(2)
     expect(within(dialog).getByRole('button', { name: '编辑模型 3' })).toBeInTheDocument()
-    expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ tone: 'success', message: '已添加 2 个模型到配置草稿，保存后生效。' }))
+    expect(within(dialog).getByText('已添加 2 个模型到配置草稿，保存后生效。')).toBeInTheDocument()
     expect(within(dialog).queryByRole('alert')).toBeNull()
   })
   it('自定义服务选择 Responses 并一次创建两个模型，共用 API Key', async () => {
@@ -277,8 +277,8 @@ describe('模型服务表单', () => {
     await user.click(screen.getByRole('menuitemradio', { name: 'Chat Completions (/chat/completions)' }))
     expect(within(dialog).getByLabelText('Base URL')).toHaveValue('https://proxy.example.com/v1')
     await user.click(within(dialog).getByRole('button', { name: '获取模型' }))
-    expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ tone: 'danger', message: '获取模型前请先配置 API Key' }))
-    expect(within(dialog).queryByRole('alert')).toBeNull()
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('获取模型前请先配置 API Key')
+    expect(useMessageStore.getState().messages).toEqual([])
     expect(discover).not.toHaveBeenCalled()
     expect(create).not.toHaveBeenCalled()
     await user.type(within(dialog).getByLabelText('API Key'), 'fake-deepseek-key')
@@ -390,11 +390,11 @@ describe('模型服务表单', () => {
     const service = (await adapter.listModelServices()).find(service => service.models.some(model => model.model === 'gpt-5'))!
     await user.click(within(dialog).getByRole('button', { name: '获取模型' }))
     expect(discover.mock.calls[0]?.[0]).toEqual({ provider: service.provider, apiFormat: service.apiFormat, baseUrl: service.baseUrl, serviceId: service.id, expectedRevision: service.revision })
-    expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ tone: 'info', message: '服务没有返回可用模型，可以手动添加。' }))
+    expect(within(dialog).getByText('服务没有返回可用模型，可以手动添加。')).toBeInTheDocument()
     await user.type(within(dialog).getByLabelText('API Key'), 'fake-replacement')
     await user.click(within(dialog).getByRole('button', { name: '获取模型' }))
-    expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ tone: 'danger', message: '模型服务鉴权失败，请检查配置凭据' }))
-    expect(within(dialog).queryByRole('alert')).toBeNull()
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('模型服务鉴权失败，请检查配置凭据')
+    expect(useMessageStore.getState().messages).toEqual([])
     expect(within(dialog).getByLabelText('API Key')).toHaveValue('fake-replacement')
     expect(discover.mock.calls[1]?.[0].credential).toBe('fake-replacement')
     await user.clear(within(dialog).getByLabelText('API Key'))

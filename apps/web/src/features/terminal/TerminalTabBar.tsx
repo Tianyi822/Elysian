@@ -83,7 +83,7 @@ export function TerminalTabBar({
   return (
     <div
       ref={rowRef}
-      className="relative ml-12 flex h-12 shrink-0 items-center rounded-full panel-surface px-2 md:ml-0"
+      className="shell-terminal-header relative ml-12 flex h-12 shrink-0 items-center rounded-full panel-surface px-2 md:ml-0"
     >
       {/* 固有宽度探针：脱离布局，量出全部标签摊开需要多宽。 */}
       <div

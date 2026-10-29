@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { DATABASE_ENGINES, type Container, type ContainerImage, type DatabaseEngine, type DatabaseInstance } from '@elysian/contracts'
 import type { ElysianGateway, DatabaseCreateInput } from '../contracts/adapters'
 import { pushHistory, type TerminalLine } from '../components/terminal/terminalSession'
-import { useNotificationStore } from './notificationStore'
+import { useMessageStore } from './messageStore'
 import { notifyFirewallPortSync } from './firewallPortNotice'
 
 /** SQL 会话的界面状态：输出行与历史只存内存，关闭即清空（不伪装成持久会话）。 */
@@ -104,7 +104,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     } catch (error) {
       const message = error instanceof Error ? error.message : '未知错误'
       if (get().errorMessage !== message) {
-        useNotificationStore.getState().notify({ tone: 'danger', message: `数据库状态刷新失败：${message}` })
+        useMessageStore.getState().notify({ tone: 'danger', message: `数据库状态刷新失败：${message}` })
       }
       set({ refreshing: false, errorMessage: message })
     }
@@ -120,12 +120,12 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
         if (get().session?.databaseId !== databaseId) { connection.close(); return }
         liveSession = connection
         get().appendSessionOutput(['已连接数据库。'])
-        useNotificationStore.getState().notify({ tone: 'success', message: '已连接数据库。' })
+        useMessageStore.getState().notify({ tone: 'success', message: '已连接数据库。' })
       }).catch((error: unknown) => {
         if (get().session?.databaseId !== databaseId) return
         const message = `数据库连接失败：${error instanceof Error ? error.message : '未知错误'}`
         get().appendSessionOutput([message])
-        useNotificationStore.getState().notify({ tone: 'danger', message })
+        useMessageStore.getState().notify({ tone: 'danger', message })
       })
     }
   },
@@ -144,12 +144,12 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       if (get().session?.databaseId !== id) { connection.close(); return }
       liveSession = connection
       get().appendSessionOutput(['已重新连接数据库。'])
-      useNotificationStore.getState().notify({ tone: 'success', message: '已重新连接数据库。' })
+      useMessageStore.getState().notify({ tone: 'success', message: '已重新连接数据库。' })
     }).catch((error: unknown) => {
       if (get().session?.databaseId !== id) return
       const message = `数据库重新连接失败：${error instanceof Error ? error.message : '未知错误'}`
       get().appendSessionOutput([message])
-      useNotificationStore.getState().notify({ tone: 'danger', message })
+      useMessageStore.getState().notify({ tone: 'danger', message })
     })
   },
 
@@ -175,7 +175,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       void get().refresh(gateway)
     } catch (error) {
       get().appendSessionOutput([`错误：${error instanceof Error ? error.message : '未知错误'}`])
-      useNotificationStore.getState().notify({
+      useMessageStore.getState().notify({
         tone: 'danger',
         message: `数据库会话执行失败：${error instanceof Error ? error.message : '未知错误'}`,
       })
@@ -210,7 +210,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       const { instance: created, firewallPort } = input.kind === 'file' && input.origin === 'uploaded'
         ? await gateway.databases.create(input, (percent) => set({ uploadPercent: percent }))
         : await gateway.databases.create(input)
-      useNotificationStore
+      useMessageStore
         .getState()
         .notify({ tone: 'success', message: `数据库 ${created.name} 已创建` })
       notifyFirewallPortSync(firewallPort)
@@ -223,7 +223,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     } catch (error) {
       const detail = error instanceof Error ? error.message : '未知错误'
       set({ createError: detail })
-      useNotificationStore.getState().notify({ tone: 'danger', message: `创建数据库失败：${detail}` })
+      useMessageStore.getState().notify({ tone: 'danger', message: `创建数据库失败：${detail}` })
     } finally {
       set({ creating: false, uploadPercent: undefined })
     }
@@ -236,7 +236,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     set((state) => ({ removingDatabaseIds: [...state.removingDatabaseIds, databaseId] }))
     try {
       await gateway.databases.remove(databaseId)
-      useNotificationStore
+      useMessageStore
         .getState()
         .notify({ tone: 'success', message: database.engine === 'Redis' ? 'Redis DB 0 已清空，容器与持久卷仍保留' : `数据库 ${database.name} 已删除` })
       // 删除是真实变更：关掉关联会话并向服务端核对，列表以服务端状态为准。
@@ -245,7 +245,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       set((state) => ({ removingDatabaseIds: state.removingDatabaseIds.filter((id) => id !== databaseId) }))
     } catch (error) {
       const detail = error instanceof Error ? error.message : '未知错误'
-      useNotificationStore.getState().notify({ tone: 'danger', message: `删除数据库失败：${detail}` })
+      useMessageStore.getState().notify({ tone: 'danger', message: `删除数据库失败：${detail}` })
       set((state) => ({
         removingDatabaseIds: state.removingDatabaseIds.filter((id) => id !== databaseId),
       }))

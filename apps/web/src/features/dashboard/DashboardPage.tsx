@@ -3,7 +3,7 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { ShellPageFallback } from '../../app/layout/ShellLayoutContext'
 import { ErrorState, EmptyState, LoadingState } from '../../components/states/StateViews'
 import { RefreshButton } from '../../components/RefreshState'
-import { useFeedbackNotification } from '../../components/useFeedbackNotification'
+import { useFeedbackMessage } from '../../components/useFeedbackMessage'
 import { useDashboardStore } from '../../stores/dashboardStore'
 import { FilterBar } from './FilterBar'
 import { ResourceChartsSection } from './ResourceChartsSection'
@@ -19,7 +19,7 @@ export function DashboardPage() {
   const refresh = useDashboardStore((state) => state.refresh)
   const setRange = useDashboardStore((state) => state.setRange)
 
-  useFeedbackNotification(resources ? errorMessage : undefined)
+  useFeedbackMessage(resources ? errorMessage : undefined)
 
   useEffect(() => {
     void load(gateway)

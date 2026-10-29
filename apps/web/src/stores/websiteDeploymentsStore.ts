@@ -2,13 +2,13 @@ import { create } from 'zustand'
 import { websiteDeploymentIsActive } from '@elysian/contracts'
 import type { WebsiteDeploymentTask } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
-import { useNotificationStore } from './notificationStore'
+import { useMessageStore } from './messageStore'
 
 function notifyTransition(previous: WebsiteDeploymentTask | undefined, task: WebsiteDeploymentTask) {
   if (!previous || (!websiteDeploymentIsActive(previous.state) && previous.state !== 'awaiting-config') || previous.state === task.state || websiteDeploymentIsActive(task.state)) return
   const tone = task.state === 'succeeded' ? 'success' : task.state === 'failed' ? 'danger' : task.state === 'cancelled' ? 'info' : 'warning'
   const result = task.state === 'succeeded' ? '部署已完成' : task.state === 'failed' ? '部署失败' : task.state === 'cancelled' ? '部署已取消' : task.state === 'awaiting-config' ? '部署需要补充配置' : '部署已中断'
-  useNotificationStore.getState().notify({ tone, message: `项目 ${task.name}：${result}${task.error ? `，${task.error}` : ''}` })
+  useMessageStore.getState().notify({ tone, message: `项目 ${task.name}：${result}${task.error ? `，${task.error}` : ''}` })
 }
 
 type DeploymentState = {

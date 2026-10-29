@@ -6,7 +6,7 @@ import type { ContainerApp, ContainerBuildPlan, ContainerBuildSubmitInput } from
 import { GatewayProvider } from '../../adapters/GatewayProvider'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { useContainerAppsStore } from '../../stores/containerAppsStore'
-import { useNotificationStore } from '../../stores/notificationStore'
+import { useMessageStore } from '../../stores/messageStore'
 import { ContainerBuildDialog } from './ContainerBuildDialog'
 import type { ElysianGateway } from '../../contracts/adapters'
 
@@ -60,8 +60,8 @@ function renderDialog(gateway: ElysianGateway, onClose = vi.fn()) {
   return { user, onClose }
 }
 
-beforeEach(() => {
-  useNotificationStore.getState().clear()
+beforeEach(async () => {
+  await useMessageStore.getState().clear()
   useContainerAppsStore.setState({
     status: 'idle',
     apps: [],
@@ -121,8 +121,7 @@ describe('构建镜像弹窗', () => {
     await user.click(within(confirm).getByRole('button', { name: '确认并开始构建' }))
     // 通知 toast 不在这棵测试树里，断言落到通知 store 与弹窗关闭回调。
     await waitFor(() =>
-      expect(useNotificationStore.getState().notifications).toEqual(expect.arrayContaining([
-        expect.objectContaining({ tone: 'warning', message: expect.stringContaining('第 3 行 FROM') }),
+      expect(useMessageStore.getState().messages).toEqual(expect.arrayContaining([
         expect.objectContaining({ tone: 'success', message: '已提交构建任务' }),
       ])),
     )

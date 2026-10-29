@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ElysianEvent } from '@elysian/contracts'
 import type { Container, ContainerImage } from '@elysian/contracts'
 import type { ElysianGateway, EventsAdapter, HostTerminalHandlers } from '../contracts/adapters'
-import { useNotificationStore } from './notificationStore'
+import { useMessageStore } from './messageStore'
 import { useEventStreamStore } from './eventStreamStore'
 import {
   containerActionSuccessMessage,
@@ -54,14 +54,14 @@ function gatewayWith(overrides: Partial<ElysianGateway['containers']> = {}): Ely
 /** 事件投递入口：经真实 eventStreamStore 连接注入，测试不直接触内部监听集合。 */
 let emitToStore: ((event: ElysianEvent) => void) | undefined
 
-beforeEach(() => {
+beforeEach(async () => {
   useContainersStore.setState({
     status: 'idle', liveStatus: 'live', errorMessage: undefined, containers: [], images: [], imageRefreshStatus: 'idle', samples: {},
     view: 'grid', statusFilter: 'all', search: '', detailContainerId: undefined,
     terminal: undefined, busyActions: [], createOpen: false, creating: false, removingImageIds: [],
     pullingImage: undefined, imagePullError: undefined,
   })
-  useNotificationStore.setState({ notifications: [] })
+  useMessageStore.setState({ messages: [] })
   const adapter: EventsAdapter = {
     subscribe(handlers) {
       emitToStore = handlers.onEvent
@@ -74,7 +74,7 @@ beforeEach(() => {
   useEventStreamStore.getState().connect(adapter)
 })
 
-afterEach(() => {
+afterEach(async () => {
   useEventStreamStore.getState().disconnect()
 })
 
@@ -283,10 +283,10 @@ describe('containersStore', () => {
     await useContainersStore.getState().load(gateway)
 
     await useContainersStore.getState().runAction(gateway, 'ctr-backup-agent', 'start')
-    expect(useNotificationStore.getState().notifications[0]?.message).toContain('已启动')
+    expect(useMessageStore.getState().messages[0]?.message).toContain('已启动')
 
     await useContainersStore.getState().runAction(gateway, 'ctr-nginx-proxy', 'restart')
-    const notifications = useNotificationStore.getState().notifications
+    const notifications = useMessageStore.getState().messages
     expect(notifications[notifications.length - 1]?.tone).toBe('danger')
     expect(notifications[notifications.length - 1]?.message).toContain('演示环境不支持')
   })
@@ -545,10 +545,13 @@ describe('创建容器', () => {
     const state = useContainersStore.getState()
     expect(state.createOpen).toBe(true)
     expect(state.creating).toBe(false)
-    expect(useNotificationStore.getState().notifications[0]).toMatchObject({
+    expect(state.createError).toBe('创建容器失败：镜像不存在，无法创建容器')
+    expect(useMessageStore.getState().messages[0]).toMatchObject({
       tone: 'danger',
       message: '创建容器失败：镜像不存在，无法创建容器',
     })
+    useContainersStore.getState().openCreate()
+    expect(useContainersStore.getState().createError).toBeUndefined()
   })
 
   it('container/created 事件把新容器追加进列表且按 id 去重', async () => {
@@ -571,7 +574,7 @@ describe('删除镜像', () => {
     const state = useContainersStore.getState()
     expect(state.images.map((image) => image.id)).toContain('img-nginx')
     expect(state.removingImageIds).toHaveLength(0)
-    expect(useNotificationStore.getState().notifications[0]).toMatchObject({
+    expect(useMessageStore.getState().messages[0]).toMatchObject({
       tone: 'danger',
       message: '删除镜像失败：镜像仍被容器引用，删除失败',
     })
@@ -596,31 +599,31 @@ describe('删除镜像', () => {
 
 describe('镜像列表刷新', () => {
   it('失败保留旧列表并走通知，成功更新列表并走通知', async () => {
-    useNotificationStore.getState().clear()
+    await useMessageStore.getState().clear()
     await useContainersStore.getState().load(gatewayWith())
     const oldImages = useContainersStore.getState().images
     await useContainersStore.getState().refreshImages(gatewayWith({ listImages: async () => { throw new Error('断线') } }))
     expect(useContainersStore.getState()).toMatchObject({ images: oldImages, imageRefreshStatus: 'idle' })
-    expect(useNotificationStore.getState().notifications.at(-1)).toMatchObject({ tone: 'danger', message: '刷新镜像失败：断线' })
+    expect(useMessageStore.getState().messages.at(-1)).toMatchObject({ tone: 'danger', message: '刷新镜像失败：断线' })
     await useContainersStore.getState().refreshImages(gatewayWith({ listImages: async () => [...CONTAINER_IMAGES].slice(0, 2) }))
     expect(useContainersStore.getState()).toMatchObject({ imageRefreshStatus: 'idle' })
-    expect(useNotificationStore.getState().notifications.at(-1)).toMatchObject({ tone: 'success', message: '镜像列表已刷新' })
+    expect(useMessageStore.getState().messages.at(-1)).toMatchObject({ tone: 'success', message: '镜像列表已刷新' })
     expect(useContainersStore.getState().images).toHaveLength(2)
   })
 
   it('页签自动刷新（notify:false）成功静默、失败仍发危险通知', async () => {
-    useNotificationStore.getState().clear()
+    await useMessageStore.getState().clear()
     await useContainersStore.getState().load(gatewayWith())
     await useContainersStore.getState().refreshImages(
       gatewayWith({ listImages: async () => [...CONTAINER_IMAGES] }),
       { notify: false },
     )
-    expect(useNotificationStore.getState().notifications).toHaveLength(0)
+    expect(useMessageStore.getState().messages).toHaveLength(0)
     await useContainersStore.getState().refreshImages(
       gatewayWith({ listImages: async () => { throw new Error('断线') } }),
       { notify: false },
     )
-    expect(useNotificationStore.getState().notifications.at(-1)).toMatchObject({ tone: 'danger', message: '刷新镜像失败：断线' })
+    expect(useMessageStore.getState().messages.at(-1)).toMatchObject({ tone: 'danger', message: '刷新镜像失败：断线' })
   })
 
   it('晚到的刷新不得覆盖删除和下一次刷新', async () => {
@@ -681,7 +684,7 @@ describe('镜像列表刷新', () => {
 })
 
 describe('拉取镜像', () => {
-  afterEach(() => {
+  afterEach(async () => {
     vi.useRealTimers()
   })
 
@@ -698,7 +701,7 @@ describe('拉取镜像', () => {
     expect(listImages).toHaveBeenCalledTimes(1)
     expect(useContainersStore.getState().pullingImage).toBeUndefined()
     expect(useContainersStore.getState().imagePullError).toBeUndefined()
-    expect(useNotificationStore.getState().notifications).toEqual([expect.objectContaining({ tone: 'info', message: '已取消镜像 cancel-preparing:latest 的拉取请求' })])
+    expect(useMessageStore.getState().messages).toEqual([expect.objectContaining({ tone: 'info', message: '已取消镜像 cancel-preparing:latest 的拉取请求' })])
   })
 
   it('停止在途拉取传递信号，迟到的进度与成功不污染下一次拉取', async () => {
@@ -727,7 +730,7 @@ describe('拉取镜像', () => {
     await second
     expect(useContainersStore.getState().images.some((row) => row.name === 'cancel-old')).toBe(false)
     expect(useContainersStore.getState().images.some((row) => row.name === 'new-pull')).toBe(true)
-    expect(useNotificationStore.getState().notifications.some((row) => row.tone === 'success' && row.message.includes('cancel-old'))).toBe(false)
+    expect(useMessageStore.getState().messages.some((row) => row.tone === 'success' && row.message.includes('cancel-old'))).toBe(false)
   })
 
   it('接收适配器实时层进度并写入拉取中行，完成后清除进度', async () => {
@@ -763,11 +766,11 @@ describe('拉取镜像', () => {
     expect(state.images).toHaveLength(8)
     expect(state.pullingImage).toBeUndefined()
     expect(state.imagePullError).toEqual({ name: 'redis', tag: '8-alpine', registry: 'https://docker.1ms.run', message: '镜像已存在：redis:8-alpine' })
-    expect(useNotificationStore.getState().notifications[0]).toMatchObject({
+    expect(useMessageStore.getState().messages[0]).toMatchObject({
       tone: 'danger',
       message: '拉取镜像失败：镜像已存在：redis:8-alpine',
     })
-    useNotificationStore.getState().clear()
+    await useMessageStore.getState().clear()
     expect(useContainersStore.getState().imagePullError?.message).toBe('镜像已存在：redis:8-alpine')
     const next = useContainersStore.getState().pullImage(gatewayWith(), { name: 'next', tag: 'latest' })
     expect(useContainersStore.getState().imagePullError).toBeUndefined()

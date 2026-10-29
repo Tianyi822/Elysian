@@ -4,7 +4,7 @@ import { HOST_USER_LOGIN_METHOD_LABELS, HOST_USER_STATUS_LABELS } from '@elysian
 import { create } from 'zustand'
 import type { ElysianGateway } from '../contracts/adapters'
 import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
-import { useNotificationStore } from './notificationStore'
+import { useMessageStore } from './messageStore'
 
 /** 用户管理页签的状态：主机账号列表与两个弹窗。 */
 type UsersStatus = 'idle' | 'loading' | 'ready' | 'error'
@@ -36,7 +36,7 @@ type UsersState = {
 }
 
 function notify(message: string, tone: 'success' | 'danger' = 'success'): void {
-  useNotificationStore.getState().notify({ message, tone })
+  useMessageStore.getState().notify({ message, tone })
 }
 
 /**
@@ -96,11 +96,11 @@ export const useUsersStore = create<UsersState>((set, get) => {
   },
 
   openCreate() {
-    set({ dialogUser: 'new' })
+    set({ dialogUser: 'new', operationError: undefined })
   },
 
   openEdit(user) {
-    set({ dialogUser: user })
+    set({ dialogUser: user, operationError: undefined })
   },
 
   closeDialog() {
@@ -111,7 +111,7 @@ export const useUsersStore = create<UsersState>((set, get) => {
   async saveUser(gateway, input) {
     const editing = get().dialogUser
     if (editing === undefined || get().saving) return false
-    set({ saving: true })
+    set({ saving: true, operationError: undefined })
     try {
       if (editing === 'new') {
         if (!input.name) {

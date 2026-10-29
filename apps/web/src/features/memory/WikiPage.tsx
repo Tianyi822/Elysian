@@ -92,7 +92,7 @@ export function WikiPage() {
   const spaceItems = state.spaces.map(space => ({ value: space.id, label: space.kind === 'global' ? `${space.name} · 共享` : space.name }))
   return <section aria-label="Wiki 页面浏览" className="flex flex-col gap-4">
     {state.loading && !state.spaces.length ? <LoadingState label="正在读取知识空间…" /> : <>
-      <div className={`${CTL_TOOLBAR} rect-toolbar flex flex-wrap items-center gap-2 panel-surface px-4 py-3`}>
+      <div className={`${CTL_TOOLBAR} rect-toolbar shell-first-row flex flex-wrap items-center gap-2 panel-surface px-4 py-3`}>
         <SelectDropdown ariaLabel="知识空间" items={spaceItems} value={state.spaceId || undefined} onSelect={id => { setFormError(undefined); void useAgentMemoryStore.getState().selectSpace(gateway, id) }} fallbackLabel="选择知识空间" emptyLabel="尚无知识空间" disabled={!state.spaces.length || state.loading} />
         <RefreshButton onPress={() => void runRefresh()} busy={refreshing} formControl />
       </div>

@@ -4,7 +4,7 @@ import type { OperationLogListQuery } from '@elysian/contracts'
 import { createMockGateway } from '../adapters/mock/gateway'
 import { SEED_OPERATION_LOGS, resetLogsData } from '../adapters/mock/logsData'
 import type { ElysianGateway } from '../contracts/adapters'
-import { useNotificationStore } from './notificationStore'
+import { useMessageStore } from './messageStore'
 import { useOperationLogStore } from './operationLogStore'
 
 /*
@@ -29,7 +29,7 @@ function gatewayWith(overrides: Partial<ElysianGateway['logs']> = {}): ElysianGa
 beforeEach(() => {
   resetLogsData()
   useOperationLogStore.setState(useOperationLogStore.getInitialState())
-  useNotificationStore.setState({ notifications: [] })
+  useMessageStore.setState({ messages: [] })
 })
 
 describe('操作日志 store', () => {
@@ -73,7 +73,7 @@ describe('操作日志 store', () => {
     expect(state.clearTarget).toBeNull()
     expect(state.entries).toHaveLength(1)
     expect(state.entries[0]!.category).toBe('logs')
-    const notice = useNotificationStore.getState().notifications[0]
+    const notice = useMessageStore.getState().messages[0]
     expect(notice?.tone).toBe('success')
     expect(notice?.message).toContain('操作日志已清空')
     expect(notice?.message).toContain('条记录')

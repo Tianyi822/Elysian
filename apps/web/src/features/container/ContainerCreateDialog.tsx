@@ -37,6 +37,7 @@ export function ContainerCreateDialog() {
   const gateway = useGateway()
   const open = useContainersStore((s) => s.createOpen)
   const creating = useContainersStore((s) => s.creating)
+  const createError = useContainersStore((s) => s.createError)
   const containers = useContainersStore((s) => s.containers)
   const images = useContainersStore((s) => s.images)
   const closeCreate = useContainersStore((s) => s.closeCreate)
@@ -452,6 +453,7 @@ export function ContainerCreateDialog() {
             ) : null}
           </div>
 
+          {createError ? <p role="alert" className="px-4 py-2 text-xs text-danger">{createError}</p> : null}
           <div className="flex flex-col items-stretch gap-3 border-t border-line px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-xs text-fg-subtle">
               {docker ? '创建后立即启动。' : '创建后立即运行；所有数据仅存在于演示内存。'}

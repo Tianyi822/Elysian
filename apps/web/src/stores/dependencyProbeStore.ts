@@ -2,7 +2,7 @@ import type { DependencyProbeReport } from '@elysian/contracts'
 import { create } from 'zustand'
 import { captureAuthGeneration } from '../adapters/http/unauthorized'
 import type { ElysianGateway } from '../contracts/adapters'
-import { useNotificationStore } from './notificationStore'
+import { useMessageStore } from './messageStore'
 
 /**
  * 依赖探测层的状态机：持有最近一份探测报告，供容器页、数据库页、网站页与
@@ -25,7 +25,7 @@ type DependencyProbeStoreState = {
 }
 
 function notify(message: string, tone: 'success' | 'danger' = 'success'): void {
-  useNotificationStore.getState().notify({ message, tone })
+  useMessageStore.getState().notify({ message, tone })
 }
 
 /**

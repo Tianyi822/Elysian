@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { JsonView } from './JsonView'
-import { useNotificationStore } from '../../stores/notificationStore'
+import { useMessageStore } from '../../stores/messageStore'
 
 describe('JsonView 原文呈现', () => {
   it('原文逐字节显示：大整数与键序不经 JSON 往返改变', () => {
@@ -24,7 +24,7 @@ describe('JsonView 原文呈现', () => {
   })
 
   it('复制按钮复制的是原文本身', async () => {
-    useNotificationStore.getState().clear()
+    await useMessageStore.getState().clear()
     const writeText = vi.fn(async () => {})
     Object.assign(navigator, { clipboard: { writeText } })
     const text = '{"ok":true}'

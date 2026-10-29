@@ -7,7 +7,6 @@ import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { useContainersStore } from '../../stores/containersStore'
-import { useFeedbackNotification } from '../../components/useFeedbackNotification'
 import type { RegistryProbeResult } from '../../contracts/adapters'
 import { readStoredImageRegistry, writeStoredImageRegistry } from './imagePullPreferences'
 import { CUSTOM_REGISTRY_ID, IMAGE_REGISTRY_PRESETS, matchRegistryPreset } from './imageRegistryPresets'
@@ -80,8 +79,6 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
       ? '镜像名称搜索暂不可用，请直接输入镜像名；版本列表会单独查询。'
       : '此镜像源的名称搜索不可用，请直接输入镜像名；版本列表会单独查询。'
     : null
-  useFeedbackNotification(searchUnavailableMessage, 'warning')
-  useFeedbackNotification(tagStatus === 'unavailable' ? '无法列出此镜像的版本，可在镜像引用中手动输入标签' : null, 'warning')
 
   useEffect(() => { writeStoredImageRegistry(registryAddress) }, [registryAddress])
 

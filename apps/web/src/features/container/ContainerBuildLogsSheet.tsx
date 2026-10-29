@@ -6,7 +6,7 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { IconButton } from '../../components/IconButton'
 import { CTL_SECONDARY } from '../../components/formControl'
 import { useContainerAppsStore } from '../../stores/containerAppsStore'
-import { useFeedbackNotification } from '../../components/useFeedbackNotification'
+import { useFeedbackMessage } from '../../components/useFeedbackMessage'
 
 /**
  * 构建日志抽屉：打开即从 0 拉全量；任务仍活跃时每 2 秒按已读字节增量续读。
@@ -27,7 +27,7 @@ export function ContainerBuildLogsSheet({
   const closeBuildLogs = useContainerAppsStore((s) => s.closeBuildLogs)
   const logs = useContainerAppsStore((s) => s.buildLogs[taskId])
   const task = useContainerAppsStore((s) => s.buildsBySlug[slug]?.find((row) => row.id === taskId))
-  useFeedbackNotification(logs?.error)
+  useFeedbackMessage(logs?.error)
 
   useEffect(() => {
     void openBuildLogs(gateway, slug, taskId)

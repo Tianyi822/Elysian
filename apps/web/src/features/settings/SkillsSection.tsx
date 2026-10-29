@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useMessageStore } from '../../stores/messageStore'
 import { randomId } from '../../utils/randomId'
 import type { AgentCapabilityRevocation, AgentSkill, AgentSkillImportInput, AgentSkillImportTask } from '@elysian/contracts'
 import { formatLogBytes } from '@elysian/contracts'
@@ -14,7 +15,7 @@ import { EmptyState, ErrorState, LoadingState } from '../../components/states/St
 import { ChipGroup } from '../../components/ChipGroup'
 import { CopyButton } from '../../components/CopyButton'
 import { formatDateTime } from '../../components/format'
-import { useFeedbackNotification } from '../../components/useFeedbackNotification'
+import { useFeedbackMessage } from '../../components/useFeedbackMessage'
 import { ExtensionDialog, ExtensionSearch, ExtensionTable, ExtensionToggle, ExtensionMenu, Field, extensionCell as cell } from './extensionUi'
 import { RevisionConflictNotice } from './RevisionConflictNotice'
 import { useSilentPolling } from './useSilentPolling'
@@ -38,8 +39,8 @@ export function SkillsSection({ active }: { active: boolean }) {
   const [recordsOpen, setRecordsOpen] = useState(false)
   useEffect(() => { void state.loadSkills(gateway); void state.loadImports(gateway) }, [gateway, state.loadSkills, state.loadImports])
   const { degraded } = useSilentPolling(signal => state.pollImports(gateway, signal), { intervalMs: 3000, enabled: importsActive })
-  useFeedbackNotification(active && degraded ? '导入状态连接中断，正在重试' : null, 'warning')
-  useFeedbackNotification(active && state.skillsStatus === 'ready' ? state.skillsErrorMessage : null)
+  useFeedbackMessage(active && degraded ? '导入状态连接中断，正在重试' : null, 'warning')
+  useFeedbackMessage(active && state.skillsStatus === 'ready' ? state.skillsErrorMessage : null)
   const startImport = (target: AgentSkill | 'new') => { if (!pendingImport && (target !== 'new' || importTarget !== 'new')) setImportTarget(target); setImportOpen(true) }
   const rows = state.skills.filter(skill => [skill.manifest.name, skill.manifest.description, sourceText(skill.source)].some(value => value.toLowerCase().includes(search.trim().toLowerCase())))
   const running = state.imports.filter(task => !terminal(task)).length
@@ -88,12 +89,13 @@ function SkillImportDialog({ target, open, onClose, onPending, onAccepted }: { t
   const alive = useRef(true)
   useEffect(() => { alive.current = true; return () => { alive.current = false; pending.current = null } }, [])
   const { submitting, inFlightOnly } = useInFlightSubmit()
-  useFeedbackNotification(open ? error : null)
   const submit = () => inFlightOnly(async () => {
     const auth = captureAuthGeneration()
     const current = () => alive.current && auth === captureAuthGeneration()
     setError(undefined)
+    let dispatched = false
     try {
+      if (pending.current) { dispatched = true }
       if (pending.current) {
         const found = await findImportByRequestId(gateway, pending.current.input.requestId, auth)
         if (!current()) return
@@ -113,6 +115,7 @@ function SkillImportDialog({ target, open, onClose, onPending, onAccepted }: { t
         pending.current = { input, archive: kind === 'zip' ? file : undefined }; onPending(true)
       }
       const request = pending.current
+      dispatched = true
       const task = await gateway.agentExtensions.createSkillImport(request.input, request.archive)
       if (!current()) return
       pending.current = null; setCredential(''); setFile(undefined); setUncertain(false); onPending(false)
@@ -126,7 +129,9 @@ function SkillImportDialog({ target, open, onClose, onPending, onAccepted }: { t
         if (error.status === 409) void useAgentExtensionsStore.getState().loadSkills(gateway, { silent: true })
       }
       setUncertain(pending.current !== null)
-      setError(error instanceof Error ? error.message : '导入结果尚未确认')
+      const message = error instanceof Error ? error.message : '导入结果尚未确认'
+      setError(message)
+      if (dispatched) useMessageStore.getState().notify({ tone: 'danger', message })
     }
   })
   return <ExtensionDialog title={target ? `更新 Skill · ${target.manifest.name}` : '导入 Skill'} open={open} onClose={onClose} footer={<><button type="button" className={CTL_SECONDARY} onClick={onClose}>关闭</button><button type="submit" form="skill-import-form" disabled={submitting} className={CTL_PRIMARY}>{submitting ? '正在提交…' : uncertain ? '核对并重试' : '开始导入'}</button></>}>
@@ -141,6 +146,7 @@ function SkillImportDialog({ target, open, onClose, onPending, onAccepted }: { t
       <ExtensionToggle label="导入后启用" checked={enabled} onChange={setEnabled} disabled={!!target || submitting || uncertain} />
       {target && <p className="text-xs text-fg-subtle">更新保留当前启用状态；需要切换时请使用列表中的启用／停用操作。</p>}
       {target && <RevisionConflictNotice latest={latest} baseRevision={revision} onAccept={next => { setRevision(next); setEnabled(latest?.enabled ?? enabled); setError(undefined) }} />}
+      {error && <p role="alert" className="text-xs text-danger">{error}</p>}
     </fieldset></form>
   </ExtensionDialog>
 }

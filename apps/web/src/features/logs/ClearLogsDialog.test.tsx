@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { GatewayProvider } from '../../adapters/GatewayProvider'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import type { ElysianGateway } from '../../contracts/adapters'
-import { useNotificationStore } from '../../stores/notificationStore'
+import { useMessageStore } from '../../stores/messageStore'
 import { useRuntimeLogStore } from '../../stores/runtimeLogStore'
 import { ClearLogsDialog } from './ClearLogsDialog'
 
@@ -112,7 +112,7 @@ describe('清空日志的二次确认', () => {
 
     await waitFor(() => expect(clearLogs).toHaveBeenCalledWith('runtime'))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
-    const notice = useNotificationStore.getState().notifications[0]
+    const notice = useMessageStore.getState().messages[0]
     expect(notice?.tone).toBe('success')
     expect(notice?.message).toContain(`释放 ${formatLogBytes(STORAGE.runtimeBytes)}`)
     expect(notice?.message).toContain('条记录')
@@ -132,7 +132,7 @@ describe('清空日志的二次确认', () => {
     await user.click(within(dialog).getByRole('button', { name: '确认清空' }))
 
     await waitFor(() =>
-      expect(useNotificationStore.getState().notifications[0]?.message).toContain('清空端点不可用'),
+      expect(useMessageStore.getState().messages[0]?.message).toContain('清空端点不可用'),
     )
     expect(screen.getByRole('dialog')).toBeInTheDocument()
     expect(useRuntimeLogStore.getState().clearTarget).toBe('runtime')

@@ -2,12 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { waitFor } from '@testing-library/react'
 import { createMockGateway } from '../adapters/mock/gateway'
 import { useDatabaseStore } from './databaseStore'
-import { useNotificationStore } from './notificationStore'
+import { useMessageStore } from './messageStore'
 
-beforeEach(() => {
+beforeEach(async () => {
   useDatabaseStore.getState().closeSession()
   useDatabaseStore.setState({ status: 'ready', databases: [], containers: [], images: [], errorMessage: undefined, refreshing: false })
-  useNotificationStore.getState().clear()
+  await useMessageStore.getState().clear()
 })
 
 describe('数据库反馈', () => {
@@ -16,11 +16,11 @@ describe('数据库反馈', () => {
     const list = vi.spyOn(gateway.databases, 'list').mockRejectedValue(new Error('引擎连接中断'))
     await useDatabaseStore.getState().refresh(gateway)
     await useDatabaseStore.getState().refresh(gateway)
-    expect(useNotificationStore.getState().notifications).toHaveLength(1)
+    expect(useMessageStore.getState().messages).toHaveLength(1)
     list.mockResolvedValueOnce([])
     await useDatabaseStore.getState().refresh(gateway)
     await useDatabaseStore.getState().refresh(gateway)
-    expect(useNotificationStore.getState().notifications).toHaveLength(2)
+    expect(useMessageStore.getState().messages).toHaveLength(2)
   })
 
   it('已关闭会话的迟到连接错误不污染新会话或弹通知', async () => {
@@ -34,6 +34,6 @@ describe('数据库反馈', () => {
     await waitFor(() => expect(gateway.databases.openTerminal).toHaveBeenCalledOnce())
     await Promise.resolve()
     expect(useDatabaseStore.getState().session?.lines).toEqual([])
-    expect(useNotificationStore.getState().notifications).toHaveLength(0)
+    expect(useMessageStore.getState().messages).toHaveLength(0)
   })
 })

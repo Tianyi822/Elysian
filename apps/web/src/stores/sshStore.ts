@@ -15,7 +15,7 @@ import { FIREWALL_POLICY_LABELS, isValidSshPort } from '@elysian/contracts'
 import { create } from 'zustand'
 import type { ElysianGateway, SshKeyAccount } from '../contracts/adapters'
 import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
-import { useNotificationStore } from './notificationStore'
+import { useMessageStore } from './messageStore'
 
 /** SSH 管理页签的状态：服务概况、登录方式与端口、Root 凭据、登录密钥，以及各分区自己的忙碌态。 */
 type SshStatus = 'idle' | 'loading' | 'ready' | 'error'
@@ -109,7 +109,7 @@ type SshState = {
 }
 
 function notify(message: string, tone: 'success' | 'info' | 'danger' = 'success'): void {
-  useNotificationStore.getState().notify({ message, tone })
+  useMessageStore.getState().notify({ message, tone })
 }
 
 /** 入档与查看弹窗的材料不带私钥：私钥只保留在一次性弹窗的那份材料里，列表与查看一律取不到它。 */
@@ -311,7 +311,7 @@ export const useSshStore = create<SshState>((set, get) => {
   async confirmPortSave(gateway) {
     const next = get().pendingPort
     if (next === undefined || get().savingPort) return
-    set({ savingPort: true })
+    set({ savingPort: true, operationError: undefined })
     let savedPort: number
     try {
       const confirmed = await gateway.ssh.setPort(next)
@@ -324,7 +324,7 @@ export const useSshStore = create<SshState>((set, get) => {
       })
       notify(`SSH 端口已改为 ${confirmed.port}${MOCK_SUFFIX}`)
     } catch (error) {
-      // 端口没改成：保留确认对话让用户能重试，原因走通知。
+      // 端口没改成：保留确认对话与行内原因，同时记录失败消息。
       set({ savingPort: false })
       notify(error instanceof Error ? `保存失败：${error.message}` : '保存失败', 'danger')
       await recordFailure(error, gateway)
@@ -358,15 +358,15 @@ export const useSshStore = create<SshState>((set, get) => {
   async resetPassword(gateway) {
     const password = get().passwordDraft
     if (!password) {
-      notify('请输入新的 Root 密码', 'danger')
+      set({ operationError: '请输入新的 Root 密码' })
       return
     }
     if (get().resettingPassword) return
-    set({ resettingPassword: true })
+    set({ resettingPassword: true, operationError: undefined })
     try {
       const result = await gateway.ssh.resetRootPassword(password)
-      // 成功改走弹窗提醒（下一次 SSH 登录用新密码），不再叠一条通知。
       set({ rootAuth: result.auth, passwordDraft: '', resettingPassword: false, passwordResetNotice: true })
+      notify(`Root 密码已重置${MOCK_SUFFIX}`)
     } catch (error) {
       set({ resettingPassword: false })
       notify(error instanceof Error ? `重置失败：${error.message}` : '重置失败', 'danger')
@@ -431,7 +431,7 @@ export const useSshStore = create<SshState>((set, get) => {
   },
 
   openCreateKey() {
-    set({ createKeyOpen: true })
+    set({ createKeyOpen: true, operationError: undefined })
   },
 
   closeCreateKey() {
@@ -441,7 +441,7 @@ export const useSshStore = create<SshState>((set, get) => {
   // 创建成功返回 true，弹窗据此关闭；失败保留弹窗与已填名称。
   async createKey(gateway, input) {
     if (get().creatingKey) return false
-    set({ creatingKey: true })
+    set({ creatingKey: true, operationError: undefined })
     try {
       const created = await gateway.ssh.createKey(input)
       set((state) => ({

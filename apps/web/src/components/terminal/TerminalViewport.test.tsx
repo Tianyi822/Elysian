@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { pushHistory, type TerminalLine } from './terminalSession'
 import { TerminalViewport } from './TerminalViewport'
-import { useNotificationStore } from '../../stores/notificationStore'
+import { useMessageStore } from '../../stores/messageStore'
 
 function ViewportHarness({
   sessionKey = 'session-a',
@@ -50,7 +50,7 @@ describe('终端嵌入视口', () => {
     render(<InterruptHarness label="复制被拒" lines={[{ kind: 'output', text: 'copy-failure' }]} />)
     selectWithinLog('copy-failure')
     fireEvent.mouseUp(screen.getByRole('log'))
-    await vi.waitFor(() => expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ tone: 'danger', message: expect.stringContaining('复制终端选中文本失败') })))
+    await vi.waitFor(() => expect(useMessageStore.getState().messages).toContainEqual(expect.objectContaining({ tone: 'danger', message: expect.stringContaining('复制终端选中文本失败') })))
     expect(screen.getByRole('log')).toHaveTextContent('copy-failure')
   })
 
@@ -68,7 +68,7 @@ describe('终端嵌入视口', () => {
       selectWithinLog('HTTP-copy')
       fireEvent.keyDown(screen.getByLabelText('HTTP 复制'), { key: 'c', metaKey: true })
       expect(exec).toHaveBeenCalledWith('copy')
-      await vi.waitFor(() => expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ tone: 'success', message: '已复制终端选中文本' })))
+      await vi.waitFor(() => expect(useMessageStore.getState().messages).toContainEqual(expect.objectContaining({ tone: 'success', message: '已复制终端选中文本' })))
       expect(document.querySelector('textarea[aria-hidden="true"]')).toBeNull()
     } finally {
       if (descriptor) Object.defineProperty(document, 'execCommand', descriptor)

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockGateway } from '../adapters/mock/gateway'
 import type { ElysianGateway } from '../contracts/adapters'
-import { useNotificationStore } from './notificationStore'
+import { useMessageStore } from './messageStore'
 import {
   hostTerminalBanner,
   hostTerminalEmptyDescription,
@@ -21,9 +21,9 @@ function gatewayWith(overrides: Partial<ElysianGateway['terminals']> = {}): Elys
   return { ...base, terminals: Object.assign(terminals, overrides) }
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   useTerminalsStore.getState().resetLocal()
-  useNotificationStore.getState().clear()
+  await useMessageStore.getState().clear()
 })
 
 describe('terminalsStore', () => {
@@ -83,7 +83,7 @@ describe('terminalsStore', () => {
     const session = useTerminalsStore.getState().sessions[0]!
     expect(session.lines.map((line) => line.text)).toEqual(['whoami', '终端会话不存在 term-x'])
     expect(session.awaitingPrompt).toBe(false)
-    expect(useNotificationStore.getState().notifications).toEqual([expect.objectContaining({ tone: 'danger', message: '终端输入发送失败：终端会话不存在 term-x' })])
+    expect(useMessageStore.getState().messages).toEqual([expect.objectContaining({ tone: 'danger', message: '终端输入发送失败：终端会话不存在 term-x' })])
   })
 
   it('关闭最后一条后 sessions 为空且 hasUserDismissed，resetLocal 后可再开', async () => {
@@ -247,7 +247,7 @@ describe('terminalsStore 流式帧与关闭映射', () => {
     useTerminalsStore.getState().applyFrame(id, { type: 'exit', exitCode: 1 })
     useTerminalsStore.getState().handleClose(id, { code: 1000, reason: '' })
     expect(useTerminalsStore.getState().sessions[0]!.errorMessage).toBe('会话已退出（退出码 1）')
-    expect(useNotificationStore.getState().notifications).toEqual([expect.objectContaining({ tone: 'danger', message: '本机终端：会话已退出（退出码 1）' })])
+    expect(useMessageStore.getState().messages).toEqual([expect.objectContaining({ tone: 'danger', message: '本机终端：会话已退出（退出码 1）' })])
   })
 
   it('后台终端截断与断开通知不依赖活动标签，重复关闭不重复通知', async () => {
@@ -258,7 +258,7 @@ describe('terminalsStore 流式帧与关闭映射', () => {
     useTerminalsStore.getState().applyFrame(firstId, { type: 'truncated', droppedBytes: 10 })
     useTerminalsStore.getState().handleClose(firstId, { code: 1006, reason: '' })
     useTerminalsStore.getState().handleClose(firstId, { code: 1000, reason: '' })
-    expect(useNotificationStore.getState().notifications.map(({ tone, message }) => ({ tone, message }))).toEqual([
+    expect(useMessageStore.getState().messages.map(({ tone, message }) => ({ tone, message }))).toEqual([
       { tone: 'warning', message: '本机终端：输出超出单轮上限，已丢弃 10 字节' },
       { tone: 'danger', message: '本机终端：本机终端连接中断' },
     ])

@@ -9,7 +9,7 @@ import {
 } from '@elysian/contracts'
 import type { FirewallForwardRule, FirewallIpRule, FirewallRule } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { useNotificationStore } from '../../stores/notificationStore'
+import { useMessageStore } from '../../stores/messageStore'
 import { useIntrinsicWidth } from '../../app/layout/headerAccessoryWidth'
 import { IconButton } from '../../components/IconButton'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
@@ -298,7 +298,7 @@ export function FirewallPanel() {
                     const parsed = parseFirewallRulesJson(text)
                     // 文件本身的问题（不是 JSON / 结构不对）属于界面层反馈，直接走通知。
                     if (!parsed) {
-                      useNotificationStore.getState().notify({
+                      useMessageStore.getState().notify({
                         tone: 'danger',
                         message: '导入失败：不是有效的规则 JSON',
                       })
@@ -306,7 +306,7 @@ export function FirewallPanel() {
                     }
                     // 被拒条目逐条标出（第几条、为什么），不静默丢弃；合法条目照常导入。
                     if (parsed.invalid > 0) {
-                      useNotificationStore.getState().notify({
+                      useMessageStore.getState().notify({
                         tone: 'danger',
                         message: `导入：${parsed.invalid} 条被拒（${formatFirewallImportProblems(parsed.problems)}）`,
                       })
@@ -314,7 +314,7 @@ export function FirewallPanel() {
                     if (parsed.rules.length === 0) {
                       // 一条合法条目都没有时不发导入请求，避免「导入完成：没有新增」把被拒说成没事发生。
                       if (parsed.invalid === 0) {
-                        useNotificationStore.getState().notify({
+                        useMessageStore.getState().notify({
                           tone: 'info',
                           message: '导入：文件里没有规则条目',
                         })

@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { createHttpPanelAdapter, PanelHttpError, PanelNetworkError } from '../../adapters/http/panelHttpAdapter'
 import { usePanelStore } from '../../stores/panelStore'
-import { useNotificationStore } from '../../stores/notificationStore'
+import { useMessageStore } from '../../stores/messageStore'
 import { renderApp } from '../../test/renderApp'
 import type { PanelInfo, PanelTask, PanelUpdate } from '@elysian/contracts'
 import { openPanelAddress, reloadPanelPage } from './panelNavigation'
@@ -97,7 +97,7 @@ describe('端口与更新设置', () => {
       expect(screen.queryByRole('region', { name: '面板维护进度' })).not.toBeInTheDocument()
       expect(reloadPanelPage).not.toHaveBeenCalled()
       expect(fetch.mock.calls.some(([url]) => url === '/api/health')).toBe(false)
-      expect(useNotificationStore.getState().notifications).not.toContainEqual(expect.objectContaining({ tone: 'success', message: '面板维护已完成' }))
+      expect(useMessageStore.getState().messages).not.toContainEqual(expect.objectContaining({ tone: 'success', message: '面板维护已完成' }))
     } finally { vi.unstubAllGlobals() }
   })
   it('表单不常驻地址，校验相同端口并保留输入', async () => {
@@ -109,7 +109,7 @@ describe('端口与更新设置', () => {
     await user.click(screen.getByRole('button', { name: '保存并重启' }))
     await waitFor(() => expect(g.panel.ports).toHaveBeenCalledWith({ frontendPort: 49000, backendPort: 48101 }, expect.any(String)))
     expect(await screen.findByText(/等待执行/)).toBeInTheDocument()
-    expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ tone: 'info', message: '面板维护任务已提交' }))
+    expect(useMessageStore.getState().messages).toContainEqual(expect.objectContaining({ tone: 'info', message: '面板维护任务已提交' }))
   })
   it('真实失败显示原因，重试沿用同一提交编号', async () => {
     const g = gateway(); const submit = vi.fn().mockRejectedValue(new PanelHttpError('端口已被宿主服务占用', 400)); g.panel.ports = submit
@@ -234,7 +234,7 @@ describe('端口与更新设置', () => {
     expect(read).toHaveBeenCalledTimes(2)
     expect(screen.queryByRole('button', { name: '继续读取日志' })).not.toBeInTheDocument()
     expect(openPanelAddress).not.toHaveBeenCalled()
-    expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ tone: 'success', message: '面板维护已完成' }))
+    expect(useMessageStore.getState().messages).toContainEqual(expect.objectContaining({ tone: 'success', message: '面板维护已完成' }))
   })
   it('日志初次展示和更新均贴底，支持等长窗口、任务切换及隐藏后恢复', async () => {
     const height = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(1200)
@@ -300,7 +300,7 @@ describe('端口与更新设置', () => {
     await user.click(await screen.findByRole('button', { name: '更新日志' }))
     const dialog = await screen.findByRole('dialog', { name: '更新日志' })
     expect(await within(dialog).findByRole('region', { name: '更新日志读取失败' })).toHaveTextContent('GitHub 不可达，请检查网络或 API 限额')
-    expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ tone: 'danger', message: '更新日志读取失败：GitHub 不可达，请检查网络或 API 限额' }))
+    expect(useMessageStore.getState().messages).toContainEqual(expect.objectContaining({ tone: 'danger', message: '更新日志读取失败：GitHub 不可达，请检查网络或 API 限额' }))
     await user.click(within(dialog).getByRole('button', { name: '重试' }))
     expect(await within(dialog).findByText('没有可展示的提交')).toBeInTheDocument()
     expect(commits).toHaveBeenCalledTimes(2)
@@ -416,7 +416,7 @@ describe('端口与更新设置', () => {
     expect(screen.getByRole('button', { name: '检查更新' })).toBeDisabled()
     expect(g.panel.update).toHaveBeenCalledTimes(1)
     await act(async () => { resolveUpdate({ ...task, kind: 'update' as const, newPorts: ports, targetCommit: commitUpdate.targetCommit }) })
-    expect(useNotificationStore.getState().notifications).toContainEqual(expect.objectContaining({ tone: 'info', message: '面板维护任务已提交' }))
+    expect(useMessageStore.getState().messages).toContainEqual(expect.objectContaining({ tone: 'info', message: '面板维护任务已提交' }))
   })
   it('明确拒绝在更新区块留下持久错误行', async () => {
     const g = gateway()
@@ -429,7 +429,7 @@ describe('端口与更新设置', () => {
     expect(await screen.findByText(`目标提交：${commitUpdate.targetCommit}`)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '更新并重启' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('请求与当前任务冲突')
-    expect(useNotificationStore.getState().notifications).not.toContainEqual(expect.objectContaining({ tone: 'danger', message: '面板正忙，请稍后重试' }))
+    expect(useMessageStore.getState().messages).not.toContainEqual(expect.objectContaining({ tone: 'danger', message: '面板正忙，请稍后重试' }))
     expect(g.panel.info).toHaveBeenCalledTimes(1)
   })
   it('轮询收到 HTTP 错误立即显示服务端原因，不计断连预算', async () => {
@@ -472,7 +472,7 @@ describe('端口与更新设置', () => {
       advanceAuthGeneration()
       await act(async () => { resolve(new Response(JSON.stringify({ ok: true, commit: updateTask.targetCommit }))) })
       expect(reloadPanelPage).not.toHaveBeenCalled()
-      expect(useNotificationStore.getState().notifications).not.toContainEqual(expect.objectContaining({ tone: 'success', message: '面板维护已完成' }))
+      expect(useMessageStore.getState().messages).not.toContainEqual(expect.objectContaining({ tone: 'success', message: '面板维护已完成' }))
     } finally { vi.unstubAllGlobals() }
   })
   it('更新成功先核对运行版本，不一致不自动刷新并提供手动重载', async () => {

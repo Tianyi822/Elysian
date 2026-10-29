@@ -2,7 +2,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { useState } from 'react'
 import { X } from '../../components/icons'
 import { useFirewallStore } from '../../stores/firewallStore'
-import { useNotificationStore } from '../../stores/notificationStore'
+import { useMessageStore } from '../../stores/messageStore'
 import {
   buildExportFilename,
   buildExportPayload,
@@ -25,7 +25,7 @@ export function FirewallExportDialog() {
   const submit = () => {
     const exportedAt = new Date().toISOString()
     downloadJson(buildExportFilename(direction, exportedAt), buildExportPayload(rules, direction, exportedAt))
-    useNotificationStore.getState().notify({
+    useMessageStore.getState().notify({
       tone: 'info',
       message: `已导出${FIREWALL_EXPORT_DIRECTIONS.find((item) => item.value === direction)?.label}的 ${count} 条规则，文件已开始下载`,
     })

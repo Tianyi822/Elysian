@@ -4,7 +4,7 @@ import { createMockGateway } from '../adapters/mock/gateway'
 import { resetSshData } from '../adapters/mock/sshData'
 import { resetHostUsers } from '../adapters/mock/usersData'
 import type { ElysianGateway } from '../contracts/adapters'
-import { useNotificationStore } from '../stores/notificationStore'
+import { useMessageStore } from '../stores/messageStore'
 import { useSshStore } from '../stores/sshStore'
 import { useUsersStore } from '../stores/usersStore'
 import { renderApp } from './renderApp'
@@ -47,12 +47,12 @@ export const INITIAL_SSH_STATE = {
 }
 
 /** 演示数据集是模块级内存状态：每个用例前推回种子，并清掉上一轮的 store 与通知。 */
-export function resetSshPanel(): void {
+export async function resetSshPanel(): Promise<void> {
   resetSshData()
   resetHostUsers()
   useSshStore.setState(INITIAL_SSH_STATE)
   useUsersStore.setState(INITIAL_USERS_STATE)
-  useNotificationStore.getState().clear()
+  await useMessageStore.getState().clear()
 }
 
 export const INITIAL_USERS_STATE = {

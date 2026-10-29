@@ -9,7 +9,7 @@ import type {
 import { create } from 'zustand'
 import type { ElysianGateway } from '../contracts/adapters'
 import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
-import { useNotificationStore } from './notificationStore'
+import { useMessageStore } from './messageStore'
 import { notifyFirewallPortSync } from './firewallPortNotice'
 
 /**
@@ -63,6 +63,7 @@ type WebsitesState = {
     input: WebsiteProjectCreateInput,
   ) => Promise<boolean>
   saveAccess: (gateway: ElysianGateway, projectId: string, access: WebsiteAccessInput) => Promise<WebsiteProject>
+  settingsError?: string
   openSettings: (project: WebsiteProject) => void
   closeSettings: () => void
   saveSettings: (
@@ -81,7 +82,7 @@ type WebsitesState = {
 }
 
 function notify(message: string, tone: 'success' | 'danger' = 'success'): void {
-  useNotificationStore.getState().notify({ message, tone })
+  useMessageStore.getState().notify({ message, tone })
 }
 
 function errorMessageOf(error: unknown, fallback: string): string {
@@ -216,7 +217,7 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
     },
 
     openSettings(project) {
-      set({ settingsTarget: project })
+      set({ settingsTarget: project, settingsError: undefined })
     },
 
     closeSettings() {
@@ -225,7 +226,7 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
 
     async saveSettings(gateway, projectId, input) {
       if (get().saving) return false
-      set({ saving: true })
+      set({ saving: true, settingsError: undefined })
       try {
         const updated = await gateway.websites.update(projectId, input)
         set((state) => ({
@@ -236,7 +237,7 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
         notify(`项目 ${updated.name} 已修改${NOTICE_SUFFIX}`)
         return true
       } catch (error) {
-        set({ saving: false })
+        set({ saving: false, settingsError: errorMessageOf(error, '保存失败') })
         notify(errorMessageOf(error, '保存失败'), 'danger')
         return false
       }

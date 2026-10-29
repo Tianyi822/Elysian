@@ -14,7 +14,7 @@ import { create } from 'zustand'
 import { hasUncertainOutcome } from '../adapters/http/requestDeadline'
 import type { ElysianGateway } from '../contracts/adapters'
 import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
-import { useNotificationStore } from './notificationStore'
+import { useMessageStore } from './messageStore'
 
 /** 每页行数与参照产品的默认值一致；演示数据约 27 条，正好跨两页。 */
 export const FIREWALL_PAGE_SIZE = 20
@@ -93,7 +93,7 @@ type FirewallState = {
 }
 
 function notify(message: string, tone: 'success' | 'danger' = 'success'): void {
-  useNotificationStore.getState().notify({ message, tone })
+  useMessageStore.getState().notify({ message, tone })
 }
 
 async function readFirewall(gateway: ElysianGateway) {
@@ -210,27 +210,27 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
   },
 
   openCreate() {
-    set({ dialogRule: 'new' })
+    set({ dialogRule: 'new', operationError: undefined })
   },
 
   openCreateIp() {
-    set({ dialogIpRule: 'new' })
+    set({ dialogIpRule: 'new', operationError: undefined })
   },
 
   openCreateForward() {
-    set({ dialogForward: 'new' })
+    set({ dialogForward: 'new', operationError: undefined })
   },
 
   openEdit(rule) {
-    set({ dialogRule: rule })
+    set({ dialogRule: rule, operationError: undefined })
   },
 
   openEditIp(rule) {
-    set({ dialogIpRule: rule })
+    set({ dialogIpRule: rule, operationError: undefined })
   },
 
   openEditForward(rule) {
-    set({ dialogForward: rule })
+    set({ dialogForward: rule, operationError: undefined })
   },
 
   closeDialog() {
@@ -248,7 +248,7 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
   async saveRule(gateway, input) {
     const editing = get().dialogRule
     if (editing === undefined || get().saving) return false
-    set({ saving: true })
+    set({ saving: true, operationError: undefined })
     try {
       if (editing === 'new') {
         const created = await gateway.firewall.create(input)
@@ -263,8 +263,9 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
       await get().refreshLists(gateway)
       return true
     } catch (error) {
-      set({ saving: false })
-      notify(error instanceof Error ? `保存失败：${error.message}` : '保存失败', 'danger')
+      const message = error instanceof Error ? `保存失败：${error.message}` : '保存失败'
+      set({ saving: false, operationError: message })
+      notify(message, 'danger')
       return false
     }
   },
@@ -272,7 +273,7 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
   async saveIpRule(gateway, input) {
     const editing = get().dialogIpRule
     if (editing === undefined || get().saving) return false
-    set({ saving: true })
+    set({ saving: true, operationError: undefined })
     try {
       if (editing === 'new') {
         const created = await gateway.firewall.createIpRule(input)
@@ -286,8 +287,9 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
       await get().refreshLists(gateway)
       return true
     } catch (error) {
-      set({ saving: false })
-      notify(error instanceof Error ? `保存失败：${error.message}` : '保存失败', 'danger')
+      const message = error instanceof Error ? `保存失败：${error.message}` : '保存失败'
+      set({ saving: false, operationError: message })
+      notify(message, 'danger')
       return false
     }
   },
@@ -295,7 +297,7 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
   async saveForward(gateway, input) {
     const editing = get().dialogForward
     if (editing === undefined || get().saving) return false
-    set({ saving: true })
+    set({ saving: true, operationError: undefined })
     try {
       if (editing === 'new') {
         const created = await gateway.firewall.createForward(input)
@@ -309,8 +311,9 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
       await get().refreshLists(gateway)
       return true
     } catch (error) {
-      set({ saving: false })
-      notify(error instanceof Error ? `保存失败：${error.message}` : '保存失败', 'danger')
+      const message = error instanceof Error ? `保存失败：${error.message}` : '保存失败'
+      set({ saving: false, operationError: message })
+      notify(message, 'danger')
       return false
     }
   },

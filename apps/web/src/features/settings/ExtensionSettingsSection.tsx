@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { useAgentRuntimeStore } from '../../stores/agentRuntimeStore'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
-import { useFeedbackNotification } from '../../components/useFeedbackNotification'
+import { useFeedbackMessage } from '../../components/useFeedbackMessage'
 import { useSessionStore } from '../../stores/sessionStore'
 import { AgentUnavailableState } from './AgentUnavailableState'
 import { useSilentPolling } from './useSilentPolling'
@@ -17,7 +17,7 @@ export function ExtensionSettingsSection({ kind, active }: { kind: 'mcp' | 'skil
   const demo = useSessionStore(state => state.mode === 'demo')
   useEffect(() => { if (runtime.status === 'idle') void runtime.load(gateway) }, [gateway, runtime.status, runtime.load])
   const { degraded } = useSilentPolling(signal => runtime.load(gateway, { silent: true, signal }), { intervalMs: 15000, enabled: active })
-  useFeedbackNotification(active && degraded ? '运行时连接中断，正在重试' : null, 'warning')
+  useFeedbackMessage(active && degraded ? '运行时连接中断，正在重试' : null, 'warning')
   if (phase !== 'authed') return null
   if (runtime.status === 'idle' || runtime.status === 'loading') return <LoadingState />
   if (runtime.status === 'error' && !runtime.info) return <ErrorState title="Agent 运行时读取失败" description={runtime.errorMessage} onRetry={() => void runtime.load(gateway)} />

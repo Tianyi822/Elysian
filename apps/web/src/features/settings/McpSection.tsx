@@ -12,7 +12,7 @@ import { EmptyState, ErrorState, LoadingState } from '../../components/states/St
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { ChipGroup } from '../../components/ChipGroup'
 import { formatDateTime } from '../../components/format'
-import { useFeedbackNotification } from '../../components/useFeedbackNotification'
+import { useFeedbackMessage } from '../../components/useFeedbackMessage'
 import { JsonView } from './JsonView'
 import { RevisionConflictNotice } from './RevisionConflictNotice'
 import { useInFlightSubmit } from './useInFlightSubmit'
@@ -29,7 +29,7 @@ export function McpSection({ active }: { active: boolean }) {
   const [detail, setDetail] = useState<AgentMCPServer>()
   const [probing, setProbing] = useState<AgentMCPServer>()
   useEffect(() => { void state.loadMcpServers(gateway) }, [gateway, state.loadMcpServers])
-  useFeedbackNotification(active && state.mcpStatus === 'ready' ? state.mcpErrorMessage : null)
+  useFeedbackMessage(active && state.mcpStatus === 'ready' ? state.mcpErrorMessage : null)
   const rows = state.mcpServers.filter(server => [server.name, server.url, server.stdio?.image].some(value => value?.toLowerCase().includes(search.trim().toLowerCase())))
   return <div className="flex flex-col gap-3">
     <div className="flex flex-wrap items-center gap-2"><button type="button" className={CTL_PRIMARY} onClick={() => setEditing('new')}><Plus aria-hidden size={14} />新建 MCP 服务</button><ExtensionSearch label="搜索服务名称、地址或镜像" value={search} onChange={setSearch} /><RefreshButton label="刷新 MCP 服务" busy={state.mcpRefreshing} onPress={() => void state.loadMcpServers(gateway)} /></div>
@@ -77,7 +77,6 @@ function McpServerDialog({ server, visible, onClose }: { server?: AgentMCPServer
   const [enabled, setEnabled] = useState(server?.active ?? true)
   const [error, setError] = useState<string>()
   useEffect(() => { state.clearMcpSaveError() }, [state.clearMcpSaveError])
-  useFeedbackNotification(visible ? error ?? state.mcpSaveError : null)
   const submit = async () => {
     setError(undefined)
     if (!name.trim()) { setError('请填写服务名称'); return }

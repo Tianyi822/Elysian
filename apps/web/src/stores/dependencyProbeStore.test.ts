@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DependencyProbeReport } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
-import { useNotificationStore } from './notificationStore'
+import { useMessageStore } from './messageStore'
 import { accessConfigEntryVisible, useDependencyProbeStore } from './dependencyProbeStore'
 import { advanceAuthGeneration } from '../adapters/http/unauthorized'
 
@@ -33,9 +33,9 @@ function gatewayWith(probe: () => Promise<DependencyProbeReport>): ElysianGatewa
   return { dependencies: base } as unknown as ElysianGateway
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   useDependencyProbeStore.getState().reset()
-  useNotificationStore.getState().clear()
+  await useMessageStore.getState().clear()
 })
 
 describe('check', () => {
@@ -78,7 +78,7 @@ describe('check', () => {
     const state = useDependencyProbeStore.getState()
     expect(state.status).toBe('error')
     expect(state.report).toBeUndefined()
-    expect(useNotificationStore.getState().notifications).toEqual([expect.objectContaining({ tone: 'danger', message: '依赖检测失败：依赖检测请求网络失败' })])
+    expect(useMessageStore.getState().messages).toEqual([expect.objectContaining({ tone: 'danger', message: '依赖检测失败：依赖检测请求网络失败' })])
   })
 })
 
@@ -102,7 +102,7 @@ describe('recheck', () => {
     report = ALL_OK
     const result = await useDependencyProbeStore.getState().recheck(gateway)
     expect(result).toEqual(ALL_OK)
-    expect(useNotificationStore.getState().notifications.map((n) => n.message)).toContain('Docker 已就绪')
+    expect(useMessageStore.getState().messages.map((n) => n.message)).toContain('Docker 已就绪')
   })
 
   it('caddy 由缺失转就绪：返回报告、发对应通知', async () => {
@@ -112,7 +112,7 @@ describe('recheck', () => {
     report = ALL_OK
     const result = await useDependencyProbeStore.getState().recheck(gateway)
     expect(result).toEqual(ALL_OK)
-    expect(useNotificationStore.getState().notifications.map((n) => n.message)).toContain('Caddy 管理通道已就绪')
+    expect(useMessageStore.getState().messages.map((n) => n.message)).toContain('Caddy 管理通道已就绪')
   })
 
   it('docker 转就绪但 caddy 仍缺失：返回完整报告，只发 docker 通知', async () => {
@@ -122,7 +122,7 @@ describe('recheck', () => {
     report = CADDY_MISSING
     const result = await useDependencyProbeStore.getState().recheck(gateway)
     expect(result).toEqual(CADDY_MISSING)
-    const messages = useNotificationStore.getState().notifications.map((n) => n.message)
+    const messages = useMessageStore.getState().messages.map((n) => n.message)
     expect(messages).toContain('Docker 已就绪')
     expect(messages).not.toContain('Caddy 管理通道已就绪')
   })
@@ -132,7 +132,7 @@ describe('recheck', () => {
     await useDependencyProbeStore.getState().check(gateway)
     const result = await useDependencyProbeStore.getState().recheck(gateway)
     expect(result).toEqual(DOCKER_MISSING)
-    expect(useNotificationStore.getState().notifications).toHaveLength(0)
+    expect(useMessageStore.getState().messages).toHaveLength(0)
   })
 
   it('探测失败：旧报告保留、状态失效、发危险通知、返回 null', async () => {
@@ -147,7 +147,7 @@ describe('recheck', () => {
     expect(useDependencyProbeStore.getState().report).toEqual(DOCKER_MISSING)
     expect(useDependencyProbeStore.getState().status).toBe('error')
     expect(useDependencyProbeStore.getState().rechecking).toBe(false)
-    const notifications = useNotificationStore.getState().notifications
+    const notifications = useMessageStore.getState().messages
     expect(notifications).toHaveLength(1)
     expect(notifications[0]).toMatchObject({ tone: 'danger', message: '依赖检测请求网络失败' })
   })
@@ -187,7 +187,7 @@ describe('recheck', () => {
     reject?.(new Error('探测中断'))
     await Promise.all([initial, manual, duplicate])
     expect(useDependencyProbeStore.getState()).toMatchObject({ status: 'error', rechecking: false })
-    expect(useNotificationStore.getState().notifications).toHaveLength(1)
+    expect(useMessageStore.getState().messages).toHaveLength(1)
   })
 
   it.each(['success', 'failure'] as const)('切换网关后旧请求 %s 不覆盖新请求忙碌或结果', async (outcome) => {
@@ -204,7 +204,7 @@ describe('recheck', () => {
     else rejectOld?.(new Error('旧请求失败'))
     expect(await old).toBeNull()
     expect(useDependencyProbeStore.getState()).toMatchObject({ report: undefined, status: 'checking', rechecking: true })
-    expect(useNotificationStore.getState().notifications).toHaveLength(0)
+    expect(useMessageStore.getState().messages).toHaveLength(0)
     resolveNew?.(CADDY_MISSING)
     expect(await next).toEqual(CADDY_MISSING)
     expect(useDependencyProbeStore.getState()).toMatchObject({ report: CADDY_MISSING, status: 'checked', rechecking: false })
@@ -223,7 +223,7 @@ describe('recheck', () => {
     expect(await old).toBeNull()
     expect(probe).toHaveBeenCalledTimes(2)
     expect(useDependencyProbeStore.getState().report).toEqual(CADDY_MISSING)
-    expect(useNotificationStore.getState().notifications).toHaveLength(0)
+    expect(useMessageStore.getState().messages).toHaveLength(0)
   })
 
   it('登录代次变化后不复用已经完成的 checked 报告', async () => {

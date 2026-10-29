@@ -5,7 +5,7 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { formatDateTime } from '../../components/format'
 import { X } from '../../components/icons'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
-import { useNotificationStore } from '../../stores/notificationStore'
+import { useMessageStore } from '../../stores/messageStore'
 
 /**
  * 更新日志窗口：列所选更新来源最近的提交标题，从新到旧。
@@ -44,7 +44,7 @@ export function PanelChangelogDialog({
         if (cancelled) return
         setCommits(rows)
         setLoading(false)
-        if (rows.length === 0) useNotificationStore.getState().notify({ tone: 'info', message: channel === 'commit' ? '上游仓库没有返回提交记录。' : '上游仓库暂无正式发版或未返回提交记录。' })
+        if (rows.length === 0) useMessageStore.getState().notify({ tone: 'info', message: channel === 'commit' ? '上游仓库没有返回提交记录。' : '上游仓库暂无正式发版或未返回提交记录。' })
       },
       (cause: unknown) => {
         if (cancelled) return

@@ -1,15 +1,15 @@
 import { useEffect, useRef } from 'react'
-import { useNotificationStore } from '../stores/notificationStore'
-import type { NotificationTone } from '../stores/notificationStore'
+import { useMessageStore } from '../stores/messageStore'
+import type { MessageTone } from '../stores/messageStore'
 
 /** 同一反馈持续展示时只通知一次，清空后再次出现仍会通知。 */
-export function useFeedbackNotification(
+export function useFeedbackMessage(
   message: string | null | undefined,
-  tone: NotificationTone = 'danger',
+  tone: MessageTone = 'danger',
   options?: { replace?: boolean },
 ) {
-  const notify = useNotificationStore((state) => state.notify)
-  const previous = useRef<{ id: string; message: string; tone: NotificationTone } | undefined>(undefined)
+  const notify = useMessageStore((state) => state.notify)
+  const previous = useRef<{ id: string; message: string; tone: MessageTone } | undefined>(undefined)
   const replace = options?.replace ?? false
 
   useEffect(() => {
@@ -19,8 +19,8 @@ export function useFeedbackNotification(
     }
     if (previous.current?.message === message && previous.current.tone === tone) return
 
-    const state = useNotificationStore.getState()
-    const existing = replace && previous.current && state.notifications.some(item => item.id === previous.current?.id)
+    const state = useMessageStore.getState()
+    const existing = replace && previous.current && state.messages.some(item => item.id === previous.current?.id)
     const id = existing ? previous.current!.id : notify({ message, tone })
     if (existing) state.update(id, { message, tone })
     previous.current = { id, message, tone }

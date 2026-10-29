@@ -1,3 +1,4 @@
+import { messageHistoryText } from '../../test/messageHistory'
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -5,7 +6,7 @@ import type { FirewallRule, FirewallRuleInput, FirewallToggles } from '@elysian/
 import { SEED_LOGIN_RECORDS, SEED_SSH_PORT, SEED_SSH_STATS } from '../../adapters/mock/sshData'
 import { resetFirewallData } from '../../adapters/mock/firewallData'
 import type { ElysianGateway } from '../../contracts/adapters'
-import { useNotificationStore } from '../../stores/notificationStore'
+import { useMessageStore } from '../../stores/messageStore'
 import { SSH_PAGE_SIZE, useSshStore } from '../../stores/sshStore'
 import { renderApp } from '../../test/renderApp'
 import { INITIAL_SSH_STATE, openSshTab, resetSshPanel, securityTab, sshSessions } from '../../test/sshPanel'
@@ -17,8 +18,8 @@ import { sshPortConfirmConsequences } from './SshPanel'
  * 密钥表的用例在 SshKeyCard.test.tsx 一处覆盖，不在这里重复。
  */
 
-beforeEach(() => {
-  resetSshPanel()
+beforeEach(async () => {
+  await resetSshPanel()
   // 改端口会联动写防火墙规则：演示数据集是模块级内存状态，这里一并推回种子。
   resetFirewallData()
 })
@@ -316,9 +317,7 @@ describe('SSH 管理页签', () => {
 
     expect(within(service).queryByText('已停止')).not.toBeInTheDocument()
     expect(within(service).getByRole('switch', { name: 'SSH 服务' })).not.toBeChecked()
-
-    const notifications = await screen.findByLabelText('通知')
-    expect(within(notifications).getByRole('status')).toHaveTextContent(
+    expect(messageHistoryText('status')).toContain(
       'SSH 服务已停用（mock，待接入真实执行）',
     )
 
@@ -333,8 +332,7 @@ describe('SSH 管理页签', () => {
     await user.click(within(service).getByRole('switch', { name: '密码登录' }))
 
     expect(within(service).getByRole('switch', { name: '密码登录' })).toBeChecked()
-    const notifications = await screen.findByLabelText('通知')
-    expect(within(notifications).getByRole('status')).toHaveTextContent(
+    expect(messageHistoryText('status')).toContain(
       'SSH 密码登录已开启（mock，待接入真实执行）',
     )
   })
@@ -373,11 +371,8 @@ describe('SSH 管理页签', () => {
     await user.click(within(confirm).getByRole('button', { name: '确认保存' }))
 
     await waitFor(() => expect(savedPorts).toEqual([2222]))
-    const notifications = await screen.findByLabelText('通知')
     // 端口变更与防火墙联动各留一条通知（种子 2222 已有限连规则），这里认端口变更那条。
-    expect(
-      within(notifications).getByText('SSH 端口已改为 2222（mock，待接入真实执行）'),
-    ).toBeInTheDocument()
+    expect(messageHistoryText()).toMatch('SSH 端口已改为 2222（mock，待接入真实执行）')
     expect(input).toHaveValue('2222')
   })
 
@@ -472,7 +467,7 @@ describe('SSH 管理页签', () => {
       note: 'SSH 端口联动放行',
     } satisfies FirewallRuleInput)
     await waitFor(() =>
-      expect(useNotificationStore.getState().notifications.map((item) => item.message)).toContain(
+      expect(useMessageStore.getState().messages.map((item) => item.message)).toContain(
         '已为新端口 2260 添加防火墙 tcp 放行规则（mock，待接入真实执行）',
       ),
     )
@@ -484,7 +479,7 @@ describe('SSH 管理页签', () => {
     await user.click(within(screen.getByRole('dialog', { name: '确认修改 SSH 监听端口' })).getByRole('button', { name: '确认保存' }))
 
     await waitFor(() =>
-      expect(useNotificationStore.getState().notifications.map((item) => item.message)).toContain(
+      expect(useMessageStore.getState().messages.map((item) => item.message)).toContain(
         '防火墙已有 2222/tcp 的限连规则，无需重复添加',
       ),
     )
@@ -514,7 +509,7 @@ describe('SSH 管理页签', () => {
     await user.click(within(screen.getByRole('dialog', { name: '确认修改 SSH 监听端口' })).getByRole('button', { name: '确认保存' }))
 
     await waitFor(() =>
-      expect(useNotificationStore.getState().notifications.map((item) => item.message)).toContain(
+      expect(useMessageStore.getState().messages.map((item) => item.message)).toContain(
         '防火墙当前未启用：新端口未联动放行，启用防火墙前请自行确认放行',
       ),
     )
@@ -552,7 +547,7 @@ describe('SSH 管理页签', () => {
     await user.click(within(screen.getByRole('dialog', { name: '确认修改 SSH 监听端口' })).getByRole('button', { name: '确认保存' }))
 
     await waitFor(() =>
-      expect(useNotificationStore.getState().notifications.map((item) => item.message)).toContain(
+      expect(useMessageStore.getState().messages.map((item) => item.message)).toContain(
         '端口已改为 2260，但防火墙上该端口已有拒绝规则，未添加放行：请先到防火墙页处理，否则 SSH 无法连接',
       ),
     )
@@ -577,7 +572,7 @@ describe('SSH 管理页签', () => {
     await user.click(within(screen.getByRole('dialog', { name: '确认修改 SSH 监听端口' })).getByRole('button', { name: '确认保存' }))
 
     await waitFor(() =>
-      expect(useNotificationStore.getState().notifications.map((item) => item.message)).toContain(
+      expect(useMessageStore.getState().messages.map((item) => item.message)).toContain(
         '端口已改为 2261，但防火墙放行失败：演示用的放行失败。请到防火墙页手动放行，否则 SSH 无法连接',
       ),
     )
@@ -609,11 +604,11 @@ describe('SSH 管理页签', () => {
 
     // 联动读失败有自己的说法与指引；端口已改成功这一事实照旧报出。
     await waitFor(() =>
-      expect(useNotificationStore.getState().notifications.map((item) => item.message)).toContain(
+      expect(useMessageStore.getState().messages.map((item) => item.message)).toContain(
         '端口已改为 2263，但防火墙联动检查失败：防火墙读接口 503。请到防火墙页确认 2263/tcp 已放行，否则 SSH 无法连接',
       ),
     )
-    const messages = useNotificationStore.getState().notifications.map((item) => item.message)
+    const messages = useMessageStore.getState().messages.map((item) => item.message)
     expect(messages).toContain('SSH 端口已改为 2263（mock，待接入真实执行）')
     expect(messages.some((message) => message.startsWith('保存失败'))).toBe(false)
     // 端口确实保存成功：确认对话已关、输入框落在新端口上。
@@ -631,14 +626,13 @@ describe('SSH 管理页签', () => {
 
     await user.click(rootSwitch())
     expect(rootSwitch()).not.toBeChecked()
-    const notifications = await screen.findByLabelText('通知')
-    expect(within(notifications).getByRole('status')).toHaveTextContent(
+    expect(messageHistoryText('status')).toContain(
       'Root 登录已禁止（mock，待接入真实执行）',
     )
 
-    await waitFor(() => expect(within(notifications).getAllByRole('status').length).toBeGreaterThanOrEqual(1))
+    await waitFor(() => expect(messageHistoryText('status')).toContain('Root 登录'))
     await user.click(rootSwitch())
-    expect(useNotificationStore.getState().notifications.map((item) => item.message)).toContain(
+    expect(useMessageStore.getState().messages.map((item) => item.message)).toContain(
       'Root 登录已允许（mock，待接入真实执行）',
     )
   })
@@ -755,8 +749,7 @@ describe('SSH 管理页签', () => {
     expect(within(root).queryByText('强度：弱')).not.toBeInTheDocument()
 
     await user.click(within(root).getByRole('button', { name: '重置密码' }))
-    const notifications = await screen.findByLabelText('通知')
-    expect(within(notifications).getByRole('alert')).toHaveTextContent('重置失败：密码强度不足')
+    expect(messageHistoryText('alert')).toContain('重置失败：密码强度不足')
     expect(within(root).getByText('上次重置：—')).toBeInTheDocument()
     expect(input).toHaveValue('abcdefgh')
 
@@ -853,9 +846,7 @@ describe('SSH 管理页签', () => {
       expect(screen.queryByRole('dialog', { name: 'Root 密钥已生成' })).not.toBeInTheDocument(),
     )
     expect(useSshStore.getState().revealKey).toBeUndefined()
-
-    const notifications = await screen.findByLabelText('通知')
-    expect(within(notifications).getByRole('status')).toHaveTextContent(
+    expect(messageHistoryText('status')).toContain(
       'Root 密钥已重新生成（mock，待接入真实执行）',
     )
   })
@@ -902,7 +893,7 @@ describe('SSH 管理页签', () => {
     expect(within(dialog).getByText(/BEGIN OPENSSH PRIVATE KEY/)).toBeInTheDocument()
     // 通知断言读 store（与 Root 密码用例同款）：渲染提交的时序不影响判定。
     await waitFor(() =>
-      expect(useNotificationStore.getState().notifications.map((item) => item.message)).toContain(
+      expect(useMessageStore.getState().messages.map((item) => item.message)).toContain(
         'Root 密钥已生成（mock，待接入真实执行）',
       ),
     )

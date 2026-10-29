@@ -16,6 +16,7 @@ const INPUT_CLASS =
 export function WebsitesSettingsDialog() {
   const gateway = useGateway()
   const settingsTarget = useWebsitesStore((s) => s.settingsTarget)
+  const error = useWebsitesStore(s => s.settingsError)
   const saving = useWebsitesStore((s) => s.saving)
   const closeSettings = useWebsitesStore((s) => s.closeSettings)
   const saveSettings = useWebsitesStore((s) => s.saveSettings)
@@ -89,6 +90,7 @@ export function WebsitesSettingsDialog() {
             </div>
           </div>
 
+          {error && <p role="alert" className="px-4 pb-3 text-xs text-danger">{error}</p>}
           <div className="flex items-center justify-end gap-2 border-t border-line px-4 py-2.5">
             <div className="flex gap-2">
               <button

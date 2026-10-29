@@ -10,7 +10,7 @@ import type {
   ContainerBuildTask,
 } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
-import { useNotificationStore } from './notificationStore'
+import { useMessageStore } from './messageStore'
 import { isContainerBuildActive } from '@elysian/contracts'
 
 /**
@@ -104,7 +104,7 @@ function notifyBuildTransitions(previous: readonly ContainerBuildTask[], tasks: 
     if (!old || !isContainerBuildActive(old.state) || isContainerBuildActive(task.state)) continue
     const tone = task.state === 'succeeded' ? 'success' : task.state === 'failed' ? 'danger' : task.state === 'cancelled' ? 'info' : 'warning'
     const result = task.state === 'succeeded' ? '镜像构建已完成' : task.state === 'failed' ? '镜像构建失败' : task.state === 'cancelled' ? '镜像构建已取消' : '镜像构建已中断'
-    useNotificationStore.getState().notify({ tone, message: `${slug}：${result}${task.error ? `，${task.error}` : ''}` })
+    useMessageStore.getState().notify({ tone, message: `${slug}：${result}${task.error ? `，${task.error}` : ''}` })
   }
 }
 /** 写动作在途的键；`*` 表示整工作区（批量上传），界面据此决定遮罩挂在哪。 */
@@ -146,7 +146,7 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
       set({ apps: await gateway.containers.listApps(), status: 'ready', errorMessage: undefined })
     } catch (cause) {
       set({ errorMessage: detail(cause) })
-      useNotificationStore.getState().notify({ tone: 'danger', message: `读取工作区失败：${detail(cause)}` })
+      useMessageStore.getState().notify({ tone: 'danger', message: `读取工作区失败：${detail(cause)}` })
     } finally {
       if (!options?.silent) set({ refreshing: false })
     }
@@ -157,11 +157,11 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
     try {
       const created = await gateway.containers.createApp(input)
       set((state) => ({ creating: false, apps: [...state.apps, created].sort((a, b) => a.slug.localeCompare(b.slug)) }))
-      useNotificationStore.getState().notify({ tone: 'success', message: `已创建工作区 ${created.slug}` })
+      useMessageStore.getState().notify({ tone: 'success', message: `已创建工作区 ${created.slug}` })
       return true
     } catch (cause) {
       set({ creating: false, createError: detail(cause) })
-      useNotificationStore.getState().notify({ tone: 'danger', message: `创建工作区失败：${detail(cause)}` })
+      useMessageStore.getState().notify({ tone: 'danger', message: `创建工作区失败：${detail(cause)}` })
       return false
     }
   },
@@ -189,10 +189,10 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
           buildPreview: state.buildPreview?.slug === slug ? null : state.buildPreview,
         }
       })
-      useNotificationStore.getState().notify({ tone: 'success', message: `已删除工作区 ${slug} 及其目录` })
+      useMessageStore.getState().notify({ tone: 'success', message: `已删除工作区 ${slug} 及其目录` })
     } catch (cause) {
       // 409（活跃构建任务拦截）等服务端错误原文在这里原样透出。
-      useNotificationStore.getState().notify({ tone: 'danger', message: `删除工作区失败：${detail(cause)}` })
+      useMessageStore.getState().notify({ tone: 'danger', message: `删除工作区失败：${detail(cause)}` })
     }
   },
 
@@ -212,12 +212,12 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
         const saved = await gateway.containers.uploadAppFile(slug, relative, file)
         uploaded.push(saved.path)
       }
-      useNotificationStore.getState().notify({
+      useMessageStore.getState().notify({
         tone: 'success',
         message: uploaded.length === 1 ? `已上传 ${uploaded[0]}` : `已上传 ${uploaded.length} 个文件`,
       })
     } catch (cause) {
-      useNotificationStore.getState().notify({
+      useMessageStore.getState().notify({
         tone: 'danger',
         message: `上传文件失败：${detail(cause)}${uploaded.length > 0 ? `（已有 ${uploaded.length} 个文件上传成功）` : ''}`,
       })
@@ -235,11 +235,11 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
     try {
       await gateway.containers.writeAppContent(slug, path, content)
       await get().refresh(gateway, { silent: true })
-      useNotificationStore.getState().notify({ tone: 'success', message: `已保存 ${path}` })
+      useMessageStore.getState().notify({ tone: 'success', message: `已保存 ${path}` })
       if (isComposeFile(path)) void get().runCheck(gateway, slug, path)
       return true
     } catch (cause) {
-      useNotificationStore.getState().notify({ tone: 'danger', message: `保存失败：${detail(cause)}` })
+      useMessageStore.getState().notify({ tone: 'danger', message: `保存失败：${detail(cause)}` })
       return false
     } finally {
       set({ writing: null })
@@ -258,9 +258,9 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
         ),
         check: state.check?.slug === slug && state.check.path === path ? null : state.check,
       }))
-      useNotificationStore.getState().notify({ tone: 'success', message: `已删除 ${path}` })
+      useMessageStore.getState().notify({ tone: 'success', message: `已删除 ${path}` })
     } catch (cause) {
-      useNotificationStore.getState().notify({ tone: 'danger', message: `删除文件失败：${detail(cause)}` })
+      useMessageStore.getState().notify({ tone: 'danger', message: `删除文件失败：${detail(cause)}` })
     } finally {
       set({ writing: null })
     }
@@ -346,7 +346,7 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
           ? { ...state.buildPreview, submitting: false }
           : state.buildPreview,
       }))
-      useNotificationStore.getState().notify({ tone: 'success', message: '已提交构建任务' })
+      useMessageStore.getState().notify({ tone: 'success', message: '已提交构建任务' })
       return true
     } catch (cause) {
       const message = detail(cause)
@@ -356,7 +356,7 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
           : state.buildPreview,
       }))
       if (options?.notifyOnError) {
-        useNotificationStore.getState().notify({ tone: 'danger', message: `提交构建任务失败：${message}` })
+        useMessageStore.getState().notify({ tone: 'danger', message: `提交构建任务失败：${message}` })
       }
       return false
     }
@@ -369,10 +369,10 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
       await get().refreshBuilds(gateway, slug, { silent: true })
       const current = get().buildsBySlug[slug]?.find((task) => task.id === taskId)
       if (!previous || !isContainerBuildActive(previous.state) || current?.state !== 'cancelled') {
-        useNotificationStore.getState().notify({ tone: 'info', message: '已提交取消构建请求' })
+        useMessageStore.getState().notify({ tone: 'info', message: '已提交取消构建请求' })
       }
     } catch (cause) {
-      useNotificationStore.getState().notify({ tone: 'danger', message: `取消构建任务失败：${detail(cause)}` })
+      useMessageStore.getState().notify({ tone: 'danger', message: `取消构建任务失败：${detail(cause)}` })
     }
   },
 

@@ -93,7 +93,7 @@ export function ContainerDetailSheet() {
           aria-describedby={undefined}
           className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col overflow-y-auto panel-surface rounded-none p-5 shadow-xl will-change-transform motion-reduce:animate-none data-[state=open]:animate-sheet-panel-in data-[state=closed]:animate-sheet-panel-out"
         >
-          <div className="flex items-start justify-between gap-3">
+          <div className="shell-detail-header flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <Dialog.Title className="text-base font-semibold">{container.name}</Dialog.Title>

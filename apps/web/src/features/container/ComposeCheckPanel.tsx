@@ -5,7 +5,7 @@ import { IconButton } from '../../components/IconButton'
 import { RefreshButton } from '../../components/RefreshState'
 import { useClipboardCopy } from '../../components/CopyButton'
 import type { ComposeCheckState } from '../../stores/containerAppsStore'
-import { useFeedbackNotification } from '../../components/useFeedbackNotification'
+import { useFeedbackMessage } from '../../components/useFeedbackMessage'
 
 /**
  * compose 引用路径自检结果。
@@ -75,8 +75,8 @@ export function ComposeCheckPanel({
   onClose: () => void
 }) {
   const missing = check.result?.references.filter((ref) => !ref.exists) ?? []
-  useFeedbackNotification(check.error ? `自检失败：${check.error}` : null)
-  useFeedbackNotification(check.result ? missing.length > 0 ? `${check.path}：${missing.length} 条路径引用在工作区内找不到对应文件。` : check.result.undetermined.length > 0 ? `${check.path}：${check.result.undetermined.length} 项引用需要人工核对。` : `${check.path}：路径自检已完成。` : null, missing.length > 0 || (check.result?.undetermined.length ?? 0) > 0 ? 'warning' : 'success')
+  useFeedbackMessage(check.error ? `自检失败：${check.error}` : null)
+  useFeedbackMessage(check.result ? missing.length > 0 ? `${check.path}：${missing.length} 条路径引用在工作区内找不到对应文件。` : check.result.undetermined.length > 0 ? `${check.path}：${check.result.undetermined.length} 项引用需要人工核对。` : `${check.path}：路径自检已完成。` : null, missing.length > 0 || (check.result?.undetermined.length ?? 0) > 0 ? 'warning' : 'success')
 
   return (
     <section

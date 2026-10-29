@@ -12,8 +12,7 @@ import { IconButton } from '../../components/IconButton'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { X } from '../../components/icons'
 import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
-import { useFeedbackNotification } from '../../components/useFeedbackNotification'
-import { useNotificationStore } from '../../stores/notificationStore'
+import { useMessageStore } from '../../stores/messageStore'
 
 const INPUT = `${FORM_CONTROL_HEIGHT_CLASS} w-full rounded-lg border border-control-line bg-surface-raised px-2.5 text-sm text-fg placeholder:text-fg-subtle disabled:opacity-60`
 const BUTTON = 'rounded-lg border border-control-line bg-surface-raised px-3 py-2 text-xs font-medium text-fg hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
@@ -68,10 +67,6 @@ export function WebsitesCreateDialog({ project, existingTask, onClose }: { proje
   const runtimeKind = candidate?.kind === 'html' ? undefined : candidate?.kind
   const entries = runtimeKind ? catalog?.catalog[runtimeKind] ?? [] : []
   const finalAccessMode = project ? project.accessMode : caddyReady ? accessMode : 'direct'
-  useFeedbackNotification(error)
-  useFeedbackNotification(catalogError)
-  useFeedbackNotification(configurationWarning(source, config.candidateId), 'warning')
-  useFeedbackNotification(catalog?.stale ? catalog.detail || '使用已获取的版本目录缓存' : null, 'warning')
 
   useEffect(() => () => abort.current?.abort(), [])
   useEffect(() => {
@@ -146,8 +141,8 @@ export function WebsitesCreateDialog({ project, existingTask, onClose }: { proje
     try {
       const started = resume && task ? await api.resume(task.id, chosen) : await api.submit({ sourceId: source.id, projectId: project?.id, requestId, name: name.trim(), port, note: note.trim() || undefined, access: finalAccessMode === 'direct' ? { mode: 'direct' } : { mode: 'domain', domain: domain.trim(), certificatePem: certificate, privateKeyPem: privateKey }, config: chosen })
       setTask(started); useWebsiteDeploymentsStore.getState().put(started); setStep(3); completed.current = false
-      useNotificationStore.getState().notify({ tone: 'info', message: resume ? '部署任务已继续' : `已提交项目 ${started.name} 的部署任务` })
-    } catch (e) { setError(errorOf(e)) } finally { setBusy(false) }
+      useMessageStore.getState().notify({ tone: 'info', message: resume ? '部署任务已继续' : `已提交项目 ${started.name} 的部署任务` })
+    } catch (e) { setError(errorOf(e)); useMessageStore.getState().notify({ tone: 'danger', message: errorOf(e) }) } finally { setBusy(false) }
   }
   const readCertificate = async (file: File | undefined, key: boolean) => { if (!file) return; if (file.size > 256 * 1024) { setError('证书文件不能超过 256 KiB'); return }; try { const text = await file.text(); if (key) setPrivateKey(text); else setCertificate(text) } catch (e) { setError(errorOf(e)) } }
   const closeDialog = () => { abort.current?.abort(); if (source?.state === 'preparing') void api?.discardSource(source.id).catch(() => {}); close() }
@@ -214,6 +209,7 @@ export function WebsitesCreateDialog({ project, existingTask, onClose }: { proje
           <p className="text-xs text-fg-subtle">任务记录与日志保留 30 天。关闭窗口后，可从「部署任务」重新进入；页面刷新不会重新提交任务。</p>
         </>}
         {error && <p role="alert" className="text-xs text-danger">{error}</p>}
+        {configuration && configurationWarning(source, config.candidateId) && <p role="status" className="text-xs text-warning">{configurationWarning(source, config.candidateId)}</p>}
         {configuration && catalog?.stale && <p role="status" className="text-xs text-warning">{catalog.detail || '使用已获取的版本目录缓存'}</p>}
         {configuration && runtimeKind && catalogError && <div role="alert" className="text-xs text-danger">{catalogError}<button type="button" className={`${BUTTON} ml-2`} onClick={() => setCatalogAttempt((old) => old + 1)}>重试版本目录</button></div>}
       </div>

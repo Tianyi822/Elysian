@@ -34,8 +34,8 @@ import type { DatabaseCardView } from './projectDatabaseCard'
 import { SqlSessionWindow } from './SqlSessionWindow'
 import { DatabaseCreateDialog } from './DatabaseCreateDialog'
 import { ContainerDetailSheet } from '../container/ContainerDetailSheet'
-import { useFeedbackNotification } from '../../components/useFeedbackNotification'
-import { useNotificationStore } from '../../stores/notificationStore'
+import { useFeedbackMessage } from '../../components/useFeedbackMessage'
+import { useMessageStore } from '../../stores/messageStore'
 
 const STATUS_TONE: Record<DatabaseStatus, StatusTone> = {
   running: 'success',
@@ -187,8 +187,8 @@ function DatabaseCard({
   const [confirmRemove, setConfirmRemove] = useState(false)
   const [confirmRemoveContainer, setConfirmRemoveContainer] = useState(false)
   const [credentialError, setCredentialError] = useState('')
-  useFeedbackNotification(credentialError)
-  useFeedbackNotification(database.metricsError ? `${database.name}：${database.metricsError}` : null, 'warning')
+  useFeedbackMessage(credentialError)
+  useFeedbackMessage(database.metricsError ? `${database.name}：${database.metricsError}` : null, 'warning')
   const { copied: pathCopied, copy: copyFilePath } = useClipboardCopy()
   const { copy: copyCredential } = useClipboardCopy()
 
@@ -198,7 +198,7 @@ function DatabaseCard({
       const operation = action()
       if (!operation) return
       await operation
-      useNotificationStore.getState().notify({ tone: 'success', message })
+      useMessageStore.getState().notify({ tone: 'success', message })
       if (refresh) await useDatabaseStore.getState()[refresh](gateway)
     } catch (error) {
       setCredentialError(error instanceof Error ? error.message : '数据库操作失败')

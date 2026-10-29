@@ -1,11 +1,11 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { useNotificationStore } from '../stores/notificationStore'
+import { useMessageStore } from '../stores/messageStore'
 import { CopyButton } from './CopyButton'
 
-beforeEach(() => {
-  useNotificationStore.getState().clear()
+beforeEach(async () => {
+  await useMessageStore.getState().clear()
 })
 
 describe('复制按钮', () => {
@@ -18,7 +18,7 @@ describe('复制按钮', () => {
     await expect(navigator.clipboard.readText()).resolves.toBe('ops')
     expect(screen.getByRole('button', { name: '已复制' })).toBeInTheDocument()
     // 行内反馈在窄卡上可能只剩一枚勾，成功提示另发一条通知说清复制了什么。
-    expect(useNotificationStore.getState().notifications[0]).toMatchObject({
+    expect(useMessageStore.getState().messages[0]).toMatchObject({
       tone: 'success',
       message: '已复制用户名',
     })
@@ -33,7 +33,7 @@ describe('复制按钮', () => {
 
     await user.click(screen.getByRole('button', { name: '密码' }))
 
-    expect(useNotificationStore.getState().notifications[0]?.message).toContain('复制失败')
+    expect(useMessageStore.getState().messages[0]?.message).toContain('复制失败')
     writeText.mockRestore()
   })
 
@@ -55,7 +55,7 @@ describe('复制按钮', () => {
       expect(exec).toHaveBeenCalledWith('copy')
       expect(document.querySelector('textarea')).toBeNull()
       expect(trigger).toHaveFocus()
-      expect(useNotificationStore.getState().notifications.at(-1)).toMatchObject({ tone: 'success', message: '已复制消息' })
+      expect(useMessageStore.getState().messages.at(-1)).toMatchObject({ tone: 'success', message: '已复制消息' })
     } finally {
       if (clipboard) Object.defineProperty(navigator, 'clipboard', clipboard)
       else Reflect.deleteProperty(navigator, 'clipboard')

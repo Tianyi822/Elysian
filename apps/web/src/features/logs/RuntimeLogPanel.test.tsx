@@ -7,7 +7,7 @@ import { createMockGateway } from '../../adapters/mock/gateway'
 import { SEED_RUNTIME_LOGS, resetLogsData } from '../../adapters/mock/logsData'
 import type { ElysianGateway } from '../../contracts/adapters'
 import { useLogsStore } from '../../stores/logsStore'
-import { useNotificationStore } from '../../stores/notificationStore'
+import { useMessageStore } from '../../stores/messageStore'
 import { useRuntimeLogStore } from '../../stores/runtimeLogStore'
 import { renderApp } from '../../test/renderApp'
 import { TIMESTAMP_CHARS } from './LogTable'
@@ -22,14 +22,14 @@ import { levelTone, matchesRuntimeSearch } from './RuntimeLogPanel'
  * 只减少等待轮次，事件序列（keydown/input/keyup、pointer）与断言不变。
  */
 
-beforeEach(() => {
-  useNotificationStore.getState().clear()
+beforeEach(async () => {
+  await useMessageStore.getState().clear()
   resetLogsData()
   useRuntimeLogStore.setState(useRuntimeLogStore.getInitialState())
   useLogsStore.setState({ tab: 'runtime' })
 })
 
-afterEach(() => {
+afterEach(async () => {
   vi.useRealTimers()
 })
 
@@ -260,7 +260,7 @@ describe('清空日志与其余能力', () => {
     await waitFor(() => expect(bodyRows()).toHaveLength(1))
     expect(within(region()).getByText(/运行日志已清空/)).toBeInTheDocument()
 
-    const notice = useNotificationStore.getState().notifications[0]
+    const notice = useMessageStore.getState().messages[0]
     expect(notice?.tone).toBe('success')
     expect(notice?.message).toContain('运行日志已清空')
   })
@@ -291,7 +291,7 @@ describe('清空日志与其余能力', () => {
 
     expect(screen.getByText(`仅显示最近 ${LOG_ENTRY_FETCH_LIMIT} 条；有 3 行无法解析，已跳过；有 1 个日志文件读取失败，已跳过`)).toBeInTheDocument()
     expect(screen.getByRole('region', { name: '运行日志写入异常' })).toHaveTextContent('有 2 条运行日志未能写入磁盘')
-    expect(useNotificationStore.getState().notifications).toEqual(expect.arrayContaining([expect.objectContaining({ tone: 'danger', message: expect.stringContaining('2 条日志未能写入磁盘') })]))
+    expect(useMessageStore.getState().messages).toEqual(expect.arrayContaining([expect.objectContaining({ tone: 'danger', message: expect.stringContaining('2 条日志未能写入磁盘') })]))
   })
 
   it('没有任何记录时给空状态，而不是一张空表', async () => {
