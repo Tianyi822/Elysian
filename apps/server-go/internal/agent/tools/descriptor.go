@@ -72,7 +72,7 @@ type Change struct {
 // PublicSchema 是对外可见的描述符投影：只含名字、说明与参数模式，处理器与
 // 内部字段不外泄。
 type PublicSchema struct {
-	// SearchNames is server-side discovery data, excluded from public schemas and execution digests.
+	// SearchNames 仅用于服务端目录检索，不出现在公开模式与执行目录摘要里。
 	SearchNames []string       `json:"-"`
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
