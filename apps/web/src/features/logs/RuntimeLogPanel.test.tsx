@@ -14,7 +14,7 @@ import { TIMESTAMP_CHARS } from './LogTable'
 import { levelTone, matchesRuntimeSearch } from './RuntimeLogPanel'
 
 /*
- * 运行日志面板：日期时间｜等级｜日志信息三列表格 + 全屏 + 搜索 + 日志大小 + 清空。
+ * 运行日志面板：日期时间｜等级｜日志信息三列表格 + 搜索 + 日志大小 + 清空。
  * 行数与文案都从种子数据推出来，不硬编码具体条数；悬浮窗的细节另有 LogMessageCell.test.tsx。
  *
  * userEvent 一律 delay: null：本文件是全量跑里最长的（15 次整树渲染 + 数十次按键），
@@ -154,7 +154,7 @@ describe('运行日志表格', () => {
   })
 })
 
-describe('搜索与全屏', () => {
+describe('搜索与刷新', () => {
   it('搜索 300 毫秒后请求带 q', async () => {
     const calls: LogListQuery[] = []
     const gateway = gatewayWithLogs({
@@ -222,32 +222,6 @@ describe('搜索与全屏', () => {
     await waitForTable()
   })
 
-  it('全屏展示里同样是一张完整表格，退出全屏后弹窗关闭', async () => {
-    const user = userEvent.setup({ delay: null })
-    renderApp('/logs', { gateway: gatewayWithLogs() })
-    await waitForTable()
-
-    await user.click(screen.getByRole('button', { name: '全屏展示' }))
-    const dialog = await screen.findByRole('dialog')
-    expect(
-      within(within(dialog).getByRole('region', { name: '运行日志表' })).getAllByRole('row'),
-    ).toHaveLength(SEED_RUNTIME_LOGS.length + 1)
-
-    // 搜索关键字在全屏里同样生效（两个容器共用同一份过滤结果）。
-    act(() => useRuntimeLogStore.getState().setSearch('轮询公告列表'))
-    await waitFor(
-      () =>
-        expect(
-          within(within(dialog).getByRole('region', { name: '运行日志表' })).getAllByRole('row'),
-        ).toHaveLength(
-          SEED_RUNTIME_LOGS.filter((entry) => entry.message.includes('轮询公告列表')).length + 1,
-        ),
-      { timeout: 3000 },
-    )
-
-    await user.click(within(dialog).getByRole('button', { name: '退出全屏' }))
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-  })
 })
 
 describe('清空日志与其余能力', () => {
@@ -349,17 +323,17 @@ describe('清空日志与其余能力', () => {
 })
 
 describe('工具栏分组', () => {
-  it('视图操作三个按钮成一组，清空日志与事实说明各在别处', async () => {
+  it('视图操作仅保留刷新，清空日志与事实说明各在别处', async () => {
     renderApp('/logs', { gateway: gatewayWithLogs() })
     await waitForTable()
 
     const viewGroup = screen.getByRole('group', { name: '日志视图操作' })
-    // 刷新是纯图标按钮，名字长在 aria-label 上；全屏仍是文字按钮。
+    // 刷新是纯图标按钮，名字长在 aria-label 上。
     expect(
       within(viewGroup)
         .getAllByRole('button')
         .map((btn) => btn.getAttribute('aria-label') ?? btn.textContent),
-    ).toEqual(['刷新日志', '全屏展示'])
+    ).toEqual(['刷新日志'])
     // 清空是破坏性动作，不与视图开关混在同一组里；窄屏下它与日志大小同占第三行。
     expect(within(viewGroup).queryByRole('button', { name: '清空日志' })).not.toBeInTheDocument()
     // 保留口径与演示态是关于数据来源的事实，放工具栏外的说明行，不占控件位。

@@ -33,8 +33,6 @@ type RuntimeLogState = {
   storage: LogStorageStats | undefined
   /** 搜索匹配 message 与 source，大小写不敏感；只改状态，由面板触发 load。 */
   search: string
-  /** 全屏展示开合。 */
-  fullscreen: boolean
   /** 刷新忙碌态：刷新期间按钮置灰；首屏加载走 status。 */
   refreshing: boolean
   loadingOlder: boolean
@@ -46,7 +44,6 @@ type RuntimeLogState = {
   load: (gateway: ElysianGateway) => Promise<void>
   loadOlder: (gateway: ElysianGateway) => Promise<void>
   setSearch: (search: string) => void
-  setFullscreen: (fullscreen: boolean) => void
   openClear: (category: PlatformLogCategory) => void
   closeClear: () => void
   clear: (gateway: ElysianGateway) => Promise<void>
@@ -62,7 +59,6 @@ export const useRuntimeLogStore = create<RuntimeLogState>((set, get) => ({
   skippedFiles: 0,
   storage: undefined,
   search: '',
-  fullscreen: false,
   refreshing: false,
   loadingOlder: false,
   olderError: undefined,
@@ -127,10 +123,6 @@ export const useRuntimeLogStore = create<RuntimeLogState>((set, get) => ({
 
   setSearch(search) {
     set({ search })
-  },
-
-  setFullscreen(fullscreen) {
-    set({ fullscreen })
   },
 
   openClear(category) {

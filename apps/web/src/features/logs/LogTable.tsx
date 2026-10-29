@@ -74,7 +74,6 @@ export function LogTable<T>({
   rows,
   rowKey,
   emptyMessage,
-  shellClassName,
   busy = false,
 }: {
   /** 滚动容器的可访问名，如「运行日志表」。 */
@@ -86,13 +85,11 @@ export function LogTable<T>({
   rowKey: (row: T) => string
   /** 表格内一行的空提示（数据为空或搜索无命中）。 */
   emptyMessage: ReactNode
-  /** 外框的高度类；内嵌用默认，全屏弹窗里传 `min-h-0 flex-1` 免得撑破视口。 */
-  shellClassName?: string
   /** 查询在途：旧行留在表里，只由表格自身盖一层浅色遮罩，不换成加载占位。 */
   busy?: boolean
 }) {
   return (
-    <div className={shellClassName ?? DEFAULT_SHELL_CLASS}>
+    <div className={DEFAULT_SHELL_CLASS}>
       <BusyVeil busy={busy} />
       <div role="region" aria-label={label} className={SCROLL_CLASS}>
         <table className={`w-full ${minWidthClass} table-fixed border-separate border-spacing-0 text-left text-sm`}>

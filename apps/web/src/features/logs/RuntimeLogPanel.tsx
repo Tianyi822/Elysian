@@ -1,5 +1,4 @@
 import { useEffect, useRef } from 'react'
-import * as Dialog from '@radix-ui/react-dialog'
 import { LOG_ENTRY_FETCH_LIMIT, formatLogBytes, logRetentionText } from '@elysian/contracts'
 import type { PlatformLogLevel, RuntimeLogEntry } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
@@ -10,7 +9,7 @@ import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
 import { RefreshButton } from '../../components/RefreshState'
-import { CTL_CHIP, CTL_FIELD, CTL_PRIMARY, CTL_TOOLBAR } from '../../components/formControl'
+import { CTL_FIELD, CTL_PRIMARY, CTL_TOOLBAR } from '../../components/formControl'
 import { useRuntimeLogStore } from '../../stores/runtimeLogStore'
 import { useLogReportNotifications } from './useLogReportNotifications'
 import { ClearLogsDialog } from './ClearLogsDialog'
@@ -21,34 +20,9 @@ import type { LogColumn } from './LogTable'
 /**
  * 平台运行日志面板：日期时间｜等级｜日志信息三列固定宽度表格（超出省略、点击展开悬浮窗），
  * 条目按时间倒序（新 → 旧），最新一条在最上，与操作日志同一口径。
- * 工具栏三块为搜索、视图操作（刷新日志 / 全屏展示）与日志大小 + 清空日志
+ * 工具栏三块为搜索、刷新日志与日志大小 + 清空日志
  * （破坏性动作走二次确认），窄屏按块各占一行。搜索走服务端筛选并防抖。
  */
-
-/** 工具按钮：与全站工具栏同一控件形状；给 pressed 时按筛选芯片形态高亮。 */
-function ToolButton({
-  label,
-  onClick,
-  disabled = false,
-  pressed,
-}: {
-  label: string
-  onClick?: () => void
-  disabled?: boolean
-  pressed?: boolean
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      aria-pressed={pressed}
-      className={pressed === undefined ? CTL_PRIMARY : CTL_CHIP}
-    >
-      {label}
-    </button>
-  )
-}
 
 /** 等级 → 语义色调：等级列用 StatusTag 呈现（文字 + 颜色同时表达，不只靠颜色）；文字用原英文等级值，不译成中文。 */
 export function levelTone(level: PlatformLogLevel): StatusTone {
@@ -134,14 +108,12 @@ export function RuntimeLogPanel() {
   const skippedFiles = useRuntimeLogStore((s) => s.skippedFiles)
   const storage = useRuntimeLogStore((s) => s.storage)
   const search = useRuntimeLogStore((s) => s.search)
-  const fullscreen = useRuntimeLogStore((s) => s.fullscreen)
   const refreshing = useRuntimeLogStore((s) => s.refreshing)
   const loadingOlder = useRuntimeLogStore((s) => s.loadingOlder)
   const olderError = useRuntimeLogStore((s) => s.olderError)
   const load = useRuntimeLogStore((s) => s.load)
   const loadOlder = useRuntimeLogStore((s) => s.loadOlder)
   const setSearch = useRuntimeLogStore((s) => s.setSearch)
-  const setFullscreen = useRuntimeLogStore((s) => s.setFullscreen)
   const openClear = useRuntimeLogStore((s) => s.openClear)
 
   useLogReportNotifications('运行日志', { ready: status === 'ready', truncated, skippedLines, skippedFiles, olderError, failedWrites: storage?.failedWrites, trimmedBySize: storage?.trimmedBySize })
@@ -227,15 +199,13 @@ export function RuntimeLogPanel() {
             label="刷新日志"
             formControl
           />
-          {/* 文案固定「全屏展示」，避免与弹窗内的「退出全屏」按钮重名；开合靠 pressed 高亮表达。 */}
-          <ToolButton label="全屏展示" pressed={fullscreen} onClick={() => setFullscreen(!fullscreen)} />
         </div>
         <div className="flex items-center justify-between gap-2 md:ml-auto">
           <span className="text-xs text-fg-muted">
             日志大小：<span className="tabular-nums text-fg">{formatLogBytes(storage.totalBytes)}</span>
           </span>
           {/* 危险感只在确认弹窗里呈现：工具栏按钮与其它按钮同款中性描边。 */}
-          <ToolButton label="清空日志" onClick={() => openClear('runtime')} />
+          <button type="button" className={CTL_PRIMARY} onClick={() => openClear('runtime')}>清空日志</button>
         </div>
       </div>
 
@@ -285,39 +255,6 @@ export function RuntimeLogPanel() {
           更早的记录加载失败
         </p>
       ) : null}
-
-      <Dialog.Root open={fullscreen} onOpenChange={setFullscreen}>
-        <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay-strong" />
-          <Dialog.Content
-            aria-describedby={undefined}
-            className="fixed inset-0 z-[55] flex flex-col gap-3 bg-bg p-4"
-          >
-            <div className="flex items-center justify-between">
-              <Dialog.Title className="text-sm font-medium text-fg">平台运行日志（全屏）</Dialog.Title>
-              <Dialog.Close asChild>
-                <button
-                  type="button"
-                  className="rounded-lg border border-line px-2 py-1 text-xs text-fg-muted transition-colors hover:text-fg"
-                >
-                  退出全屏
-                </button>
-              </Dialog.Close>
-            </div>
-            {/* 全屏容器里不给 min-h：矮视口下表格自己滚动，不撑破弹窗。 */}
-            <LogTable
-              label="运行日志表"
-              minWidthClass={TABLE_MIN_WIDTH_CLASS}
-              columns={RUNTIME_LOG_COLUMNS}
-              rows={entries}
-              rowKey={(entry) => entry.id}
-              emptyMessage={emptyMessage}
-              shellClassName="min-h-0 flex-1 overflow-hidden panel-surface"
-              busy={querying}
-            />
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
 
       <ClearLogsDialog />
     </div>
