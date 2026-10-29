@@ -268,6 +268,9 @@ func validateWikiGeneration(ctx context.Context, q rowReader, taskID string, gen
 }
 
 func (a *agentExecution) wikiRecallLocked(ctx context.Context) ([]model.Message, []WikiRef, error) {
+	if a.run.WikiStrategy == wikiDisabledStrategy {
+		return nil, nil, nil
+	}
 	m := a.manager
 	if a.run.WikiStrategy == wikiNavigationStrategy {
 		return a.wikiNavigationLocked(ctx)

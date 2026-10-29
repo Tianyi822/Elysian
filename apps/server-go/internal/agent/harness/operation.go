@@ -364,7 +364,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 	}
 
 	direct, decisionSource := operationDecision(*a.run.Snapshot, o)
-	if o.Access != nil {
+	if o.Access != nil && a.run.Snapshot.PolicyVersion != PermissionPolicyVersion {
 		direct, decisionSource = false, "human-approval"
 		if o.ApprovalID == "" {
 			denied, readErr := m.accessWasDenied(dbCtx, run, o)
@@ -388,6 +388,25 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 			}
 		}
 	}
+	if o.Access != nil && a.run.Snapshot.PolicyVersion == PermissionPolicyVersion {
+		// 已人工决定或准备失败的操作继续沿用精确审批，不因自动模式绕过拒绝或未知结果。
+		if o.ApprovalID != "" {
+			direct, decisionSource = false, "human-approval"
+		}
+		if o.ApprovalID == "" {
+			denied, readErr := m.accessWasDenied(dbCtx, run, o)
+			if readErr != nil {
+				m.mu.Unlock()
+				return readErr
+			}
+			if denied {
+				err = m.finishAccessDenied(dbCtx, run, o)
+				m.mu.Unlock()
+				return err
+			}
+		}
+	}
+
 	o.PolicyVersion = a.run.Snapshot.PolicyVersion
 	o.PermissionMode = a.run.Snapshot.PermissionMode
 	o.DecisionSource = decisionSource
@@ -455,6 +474,28 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		}
 		approval = &aa
 		o.DecisionSource = "human-approval"
+	}
+
+	if o.Access != nil && direct && o.Authorization == nil && a.run.Snapshot.PolicyVersion == PermissionPolicyVersion {
+		o.Authorization = &OperationAuthorization{ID: o.ID, Digest: o.Access.Digest, Decision: "once", CreatedAt: stamp(m.deps.Now())}
+		// 自动决定先落 SQLite/JSONL，镜像准备及外部派发只消费已持久化的操作授权。
+		_, err = m.store.change(dbCtx, run.ID, "access-auto-decision", func(tx *sql.Tx, r *Run) error {
+			if r.CancelRequestedAt != "" || r.Status != StateRunning {
+				return context.Canceled
+			}
+			if err := saveOperation(dbCtx, tx, o); err != nil {
+				return err
+			}
+			return m.store.event(dbCtx, tx, r, "access/automatic", "", nil, map[string]string{"operationId": o.ID, "source": decisionSource})
+		})
+		if err == nil {
+			err = m.store.recordsFault()
+		}
+		if err != nil {
+			m.storageFailedLocked()
+			m.mu.Unlock()
+			return storageFailure(err)
+		}
 	}
 
 	if o.Access != nil {

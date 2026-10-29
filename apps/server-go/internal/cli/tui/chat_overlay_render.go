@@ -104,27 +104,12 @@ func (s *chatState) renderWizard(b *strings.Builder, m Model) {
 func (s *chatState) renderApprovalPanel(b *strings.Builder, m Model) {
 	panel := s.panel
 	width := max(16, m.width-2)
-	tabs := []string{"待审批", "本会话授权"}
-	for i, tab := range tabs {
-		if i == panel.tab {
-			b.WriteString(selectSty.Render("❯ " + tab))
-		} else {
-			b.WriteString(metaStyle.Render("  " + tab))
-		}
-		if i == 0 {
-			b.WriteString("  ")
-		}
-	}
-	b.WriteString("\n\n")
+	b.WriteString(selectSty.Render("待审批") + "\n\n")
 	if panel.err != "" {
 		b.WriteString(warnStyle.Render(truncateCells(panel.err, width)))
 		b.WriteString("\n\n")
 	}
-	if panel.tab == 0 {
-		s.renderApprovalList(b, m)
-		return
-	}
-	s.renderAuthorizationList(b, m)
+	s.renderApprovalList(b, m)
 }
 
 // renderApprovalList 待审批列表与详情。
@@ -134,7 +119,7 @@ func (s *chatState) renderApprovalList(b *strings.Builder, m Model) {
 	if len(panel.approvals) == 0 {
 		b.WriteString(metaStyle.Render("暂无待审批操作。"))
 		b.WriteString("\n\n")
-		b.WriteString(hintStyle.Render("Esc 返回 · Tab 查看本会话授权"))
+		b.WriteString(hintStyle.Render("Esc 返回"))
 		b.WriteString("\n")
 		return
 	}
@@ -266,42 +251,6 @@ func renderAccessScope(b *strings.Builder, access client.AccessReq, width int) {
 	}
 }
 
-// renderAuthorizationList 本会话授权列表（可撤回）。
-func (s *chatState) renderAuthorizationList(b *strings.Builder, m Model) {
-	panel := s.panel
-	width := max(16, m.width-2)
-	if panel.authLoading {
-		b.WriteString(metaStyle.Render("正在读取授权…"))
-		b.WriteString("\n\n")
-		b.WriteString(hintStyle.Render("Esc 返回 · Tab 返回待审批"))
-		b.WriteString("\n")
-		return
-	}
-	if len(panel.auths) == 0 {
-		b.WriteString(metaStyle.Render("本会话没有已允许的授权。"))
-		b.WriteString("\n\n")
-		b.WriteString(hintStyle.Render("Esc 返回 · Tab 返回待审批"))
-		b.WriteString("\n")
-		return
-	}
-	for i, auth := range panel.auths {
-		line := auth.Tool + " · " + auth.Status + " · " + formatActivity(auth.CreatedAt)
-		if i == panel.authCursor {
-			b.WriteString(selectSty.Render("❯ " + truncateCells(line, width-2)))
-		} else {
-			b.WriteString("  " + truncateCells(line, width-2))
-		}
-		b.WriteString("\n")
-	}
-	b.WriteString("\n")
-	if auth := panel.auths[panel.authCursor]; auth.ID != "" {
-		renderAccessScope(b, auth.Access, width)
-	}
-	b.WriteString("\n")
-	b.WriteString(hintStyle.Render("r 撤回该授权 · Esc 返回 · Tab 返回待审批"))
-	b.WriteString("\n")
-}
-
 // approvalStatusLabel 审批状态标签。
 func approvalStatusLabel(approval client.Approval) string {
 	switch approval.Status {
@@ -339,12 +288,12 @@ func dangerousOperation(operation client.Operation) bool {
 func approvalHint(approval client.Approval) string {
 	if approval.Access != nil {
 		if approval.Status != "pending" {
-			return "Esc 返回 · Tab 切换"
+			return "Esc 返回"
 		}
-		return "1 仅本次 · 2 本会话允许 · 3 拒绝 · x 取消本轮 · Enter/d 详情 · Esc 返回"
+		return "1 仅本次 · 3 拒绝 · x 取消本轮 · Enter/d 详情 · Esc 返回"
 	}
 	if approval.Status != "pending" {
-		return "Esc 返回 · x 取消本轮 · Tab 切换"
+		return "Esc 返回 · x 取消本轮"
 	}
 	return "y 批准 · n 拒绝 · x 取消本轮 · Enter/d 详情 · Esc 返回"
 }

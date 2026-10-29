@@ -14,6 +14,9 @@ import (
 )
 
 const wikiNavigationStrategy = "navigation/v1"
+const wikiDisabledStrategy = "disabled/v1"
+
+type wikiDisabledContextKey struct{}
 
 // 唯一全局空间与新会话绑定在同一事务；旧会话不补写选择。
 func ensureGlobalWikiSpace(ctx context.Context, tx *sql.Tx, now string) (WikiSpace, error) {

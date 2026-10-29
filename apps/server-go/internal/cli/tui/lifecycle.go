@@ -81,7 +81,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if reply.scope.sub != m.sub || reply.scope.runID != m.chat.runID {
 				return m, nil
 			}
-		case authorizationsMsg, approvalDecisionMsg, revokeAuthMsg:
+		case approvalDecisionMsg:
 			if reply.scope.panel != m.chat.panel || reply.scope.runID != m.chat.runID {
 				return m, nil
 			}

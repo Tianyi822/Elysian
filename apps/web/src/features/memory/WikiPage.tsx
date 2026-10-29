@@ -1,6 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router'
 import { AGENT_MEMORY_PAGE_KIND_LABELS } from '@elysian/contracts'
 import type { AgentMemoryPage, AgentMemoryPageKind } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
@@ -17,16 +16,12 @@ import './memory.css'
 
 const bytes = (value: string) => new TextEncoder().encode(value).length
 const date = (value: string) => new Date(value).toLocaleString('zh-CN', { hour12: false })
-/** 编辑表单的类型候选与工作台同源，排除只读的导入原文。 */
+/** 编辑表单排除只读的导入原文。 */
 const KIND_OPTIONS = (Object.entries(AGENT_MEMORY_PAGE_KIND_LABELS) as [AgentMemoryPageKind, string][])
   .filter(([kind]) => kind !== 'sources')
   .map(([value, label]) => ({ value, label }))
 
-/**
- * 知识 Wiki 独立浏览页：侧边栏直达的单列页面目录，供快速翻阅与人工修订。
- * 数据层与工作台共用 useAgentMemoryStore，不新增接缝；导入、新建、撤回、
- * 回退与整理记录都留在 /agent/memory 完整工作台，本页只读目录加锁定弹窗。
- */
+/** 知识 Wiki 独立浏览与人工编辑页。 */
 export function WikiPage() {
   const gateway = useGateway()
   const state = useAgentMemoryStore()
@@ -58,7 +53,7 @@ export function WikiPage() {
     useAgentMemoryStore.getState().clearError()
     void useAgentMemoryStore.getState().openPage(gateway, page.id)
   }
-  // 关闭与工作台同口径：保存在途时不关，避免「放弃修改」抢在保存回执之前把弹窗关掉。
+  // 保存在途时不关，避免「放弃修改」抢在保存回执之前把弹窗关掉。
   const close = () => {
     if (useAgentMemoryStore.getState().saving) return
     setOpenId(undefined); setSelected(undefined); setEditing(false); setDiscard(false); setFormError(undefined); setBaseline(undefined)
@@ -100,14 +95,13 @@ export function WikiPage() {
       <div className={`${CTL_TOOLBAR} rect-toolbar flex flex-wrap items-center gap-2 panel-surface px-4 py-3`}>
         <SelectDropdown ariaLabel="知识空间" items={spaceItems} value={state.spaceId || undefined} onSelect={id => { setFormError(undefined); void useAgentMemoryStore.getState().selectSpace(gateway, id) }} fallbackLabel="选择知识空间" emptyLabel="尚无知识空间" disabled={!state.spaces.length || state.loading} />
         <RefreshButton onPress={() => void runRefresh()} busy={refreshing} formControl />
-        <Link className={CTL_SECONDARY} to="/agent/memory">打开完整工作台</Link>
       </div>
       {state.error && openId === undefined && <div role="alert" className="memory-error">{state.error}<button type="button" className={CTL_SECONDARY} onClick={() => void runRefresh()}>重试</button></div>}
       <div className="panel-surface overflow-hidden">
         <BusyVeil busy={refreshing} />
         {state.loading ? <p role="status" className="memory-empty">正在读取空间…</p>
-          : !state.spaces.length ? <EmptyState title="尚无知识空间" description="知识空间在完整工作台中创建，用于归集同一项目或业务的知识。" action={<Link className={`${CTL_SECONDARY} mt-1`} to="/agent/memory">去工作台创建空间</Link>} />
-          : !state.pages.length ? <EmptyState title="当前空间还没有页面" description="可以在完整工作台导入资料，或新建人工维护的页面。" action={<Link className={`${CTL_SECONDARY} mt-1`} to="/agent/memory">去工作台导入或新建</Link>} />
+          : !state.spaces.length ? <EmptyState title="尚无知识空间" />
+          : !state.pages.length ? <EmptyState title="当前空间还没有页面" />
           : <ul aria-label="Wiki 页面列表" className="divide-y divide-line">
             {state.pages.map(item => <li key={item.id}>
               <button type="button" onClick={() => open(item)} className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-left transition-colors hover:bg-surface-raised">

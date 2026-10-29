@@ -193,44 +193,20 @@ func TestApprovalPanelAccessDecisionIdempotentRetry(t *testing.T) {
 	if model.chat.panel.pendingAccess["ap-1"].RequestID != firstRequestID {
 		t.Fatalf("失败应保留未确认决定供重试：%+v", model.chat.panel.pendingAccess)
 	}
-	// 重试同卡：复用同 requestId 与原选择（2 修改为 session）。
+	// 重试同卡：复用同 requestId 与原选择。
 	api.accessErr = nil
-	model = pressKey(t, model, key("2"))
+	model = pressKey(t, model, key("1"))
 	retry := model.chat.panel.pendingAccess["ap-1"]
 	decidedRetry, err := api.DecideAccess(nil, "ap-1", retry)
 	model = feedMsg(t, model, approvalDecisionMsg{approval: decidedRetry, err: err})
 	if len(api.accessDecided) != 2 {
 		t.Fatal("重试应再次提交")
 	}
-	if got := api.accessDecided[1]; got.RequestID != firstRequestID || got.Decision != "session" {
-		t.Fatalf("重试应复用幂等键并应用新选择：%+v", got)
+	if got := api.accessDecided[1]; got.RequestID != firstRequestID || got.Decision != "once" {
+		t.Fatalf("重试应复用幂等键与原选择：%+v", got)
 	}
 	if _, kept := model.chat.panel.pendingAccess["ap-1"]; kept {
 		t.Fatal("成功后应清理未确认决定")
-	}
-}
-
-func TestAuthorizationListAndRevoke(t *testing.T) {
-	api := &fakeAPI{}
-	api.approvals = []client.Approval{pendingApproval(false)}
-	api.authorizations = []client.SessionAuthorization{{
-		ID: "auth-1", SessionID: "s1", Revision: 5, Status: "allowed", Tool: "bash", CreatedAt: "2026-10-25T09:00:00.000Z",
-		Access: client.AccessReq{Revision: 2, Digest: "d", Kind: "script"},
-	}}
-	model := driveToWaiting(t, api, approvalFrame())
-	model = pressKey(t, model, tea.KeyMsg{Type: tea.KeyCtrlA})
-	model = pressKey(t, model, tea.KeyMsg{Type: tea.KeyTab})
-	model = runCmd(t, model, loadAuthorizationsCmd(api, "s1"))
-	if view := model.View(); !strings.Contains(view, "bash") || !strings.Contains(view, "allowed") {
-		t.Fatalf("授权列表应展示允许项：%q", view)
-	}
-	// r 撤回（幂等键与修订随请求提交）。
-	model = sendKey(t, model, key("r"))
-	if len(api.revoked) != 1 || api.revoked[0] != "auth-1" {
-		t.Fatalf("r 应撤回光标授权：%v", api.revoked)
-	}
-	if len(model.chat.panel.auths) != 0 {
-		t.Fatal("撤回成功应从列表移除")
 	}
 }
 

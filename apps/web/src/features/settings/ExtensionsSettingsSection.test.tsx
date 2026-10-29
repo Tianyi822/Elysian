@@ -276,8 +276,9 @@ describe('MCP 容器运行时权限', () => {
     const row = (await screen.findByText('演示文件系统（stdio）')).closest('tr')!
     await user.click(within(row).getByRole('button', { name: '探测' }))
     expect(await screen.findByRole('dialog', { name: 'MCP 探测权限' })).toBeInTheDocument()
-    expect(await screen.findByRole('radio', { name: '仅本次允许' })).toBeChecked()
-    expect(screen.queryByRole('radio', { name: '本会话允许' })).not.toBeInTheDocument()
+    // 会话授权已退役：申请不再提供允许范围单选，确认即本次允许。
+    expect(screen.queryByRole('radio')).not.toBeInTheDocument()
+    expect(screen.getByText('只允许本次探测，不授予聊天会话权限。')).toBeInTheDocument()
     expect(decide).not.toHaveBeenCalled()
     expect(oldProbe).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: '确认并继续' }))

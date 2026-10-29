@@ -186,28 +186,6 @@ describe('基本聊天界面', () => {
     expect(backend.api.uploadAttachments).toHaveBeenCalledTimes(1)
   })
 
-  it('首条消息前可选择记忆空间，只创建会话而不提交任务，并保留消息草稿', async () => {
-    const backend = chatTestApi()
-    backend.session.id = 'server-memory-preflight'
-    const { api, gateway } = renderChat(backend)
-    const trigger = await screen.findByRole('button', { name: '本会话记忆' })
-    await waitFor(() => expect(trigger).toBeEnabled())
-    const composer = screen.getByRole('textbox', { name: '发送给 Ely 的消息' })
-    fireEvent.change(composer, { target: { value: '稍后发送的草稿' } })
-    fireEvent.click(trigger)
-    await screen.findByRole('dialog', { name: '本会话记忆' })
-    await screen.findByRole('button', { name: '记忆空间：共享知识库' })
-    expect(api.createSession).toHaveBeenCalledOnce()
-    expect(api.createTask).not.toHaveBeenCalled()
-    expect(api.continueTask).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: '保存' }))
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: '本会话记忆' })).not.toBeInTheDocument())
-    expect(composer).toHaveValue('稍后发送的草稿')
-    expect(await gateway.agentMemory.getSelection(backend.session.id)).toMatchObject({ includeGlobal: true })
-    fireEvent.click(screen.getByRole('button', { name: '本会话记忆' }))
-    await screen.findByRole('button', { name: '记忆空间：共享知识库' })
-    expect(api.createSession).toHaveBeenCalledOnce()
-  })
 
   it('最后一条消息原位编辑、取消及重发，不覆盖底部草稿', async () => {
     const backend = chatTestApi()
@@ -928,14 +906,14 @@ describe('基本聊天界面', () => {
     expect(history.scrollTop).toBe(1000)
   })
 
-  it('权限菜单可选择真实模式并恢复偏好，提供本会话授权入口', async () => {
+  it('权限菜单仅保留三种模式并恢复偏好', async () => {
     const user = userEvent.setup()
     const view = renderChat()
     await waitFor(() => expect(screen.getByRole('button', { name: '选择思考等级：高' })).toBeEnabled())
     await user.click(screen.getByRole('button', { name: '权限模式：请求批准' }))
     expect(screen.getAllByRole('menuitemradio')).toHaveLength(3)
-    expect(screen.getByRole('menuitemradio', { name: '完全开放' })).toHaveAccessibleDescription('授权范围内免逐项审批，系统禁区与资源限制继续生效。')
-    expect(screen.getByRole('menuitem', { name: '本会话授权…' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitemradio', { name: '完全开放' })).toHaveAccessibleDescription('自动批准已启用能力所需的操作与运行时权限，系统禁区与资源限制继续生效。')
+    expect(screen.queryByRole('menuitem', { name: '本会话授权…' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('menuitemradio', { name: '帮我批准' }))
     expect(useAgentChatStore.getState().session?.permissionMode).toBe('assist')
     expect(screen.queryByText('预览')).not.toBeInTheDocument()

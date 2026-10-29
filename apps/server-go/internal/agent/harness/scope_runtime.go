@@ -687,9 +687,6 @@ func (s *store) advanceWorkflowV2Scope(ctx context.Context, tx *sql.Tx, w *Workf
 		if scope.ParentNodeID == "" {
 			w.OutputJSON, w.Status, w.EndedAt, w.ActiveRunID = output, StateSucceeded, scope.EndedAt, ""
 			w.Error = nil
-			if err = s.enqueueWikiWorkflowExtraction(ctx, tx, w); err != nil {
-				return err
-			}
 		}
 	} else {
 		if step.Kind != "condition" {

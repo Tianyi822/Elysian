@@ -195,7 +195,7 @@ func TestHelpAvailableOutsideChatAndScrolls(t *testing.T) {
 
 func TestOverlayRepliesFromPreviousRunAreDiscarded(t *testing.T) {
 	late := errors.New("旧运行的错误")
-	for _, msg := range []tea.Msg{authorizationsMsg{err: late}, approvalDecisionMsg{err: late}, revokeAuthMsg{err: late}, userInputAnswerMsg{err: late}, callsMsg{err: late}} {
+	for _, msg := range []tea.Msg{approvalDecisionMsg{err: late}, userInputAnswerMsg{err: late}, callsMsg{err: late}} {
 		m := regressionChatReady(t, &fakeAPI{})
 		m.chat.runID = "current"
 		m.chat.panel = newApprovalPanel(map[string]client.AccessDecisionInput{})

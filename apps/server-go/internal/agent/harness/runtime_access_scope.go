@@ -37,7 +37,7 @@ func demandBashCapability(name string) Capability {
 		schema["required"] = []string{"command"}
 	}
 	c.Parameters, _ = json.Marshal(schema)
-	c.Description = "在受限 Bash 容器执行；缺少环境或目录、网络权限时自动暂停请用户确认。access 只声明需求，不授予权限。宿主路径会映射为 /grants/0 等；默认只使用任务工作区。"
+	c.Description = "在受限 Bash 容器执行；运行环境及目录、网络权限由本轮权限模式裁决。access 只声明需求，不授予权限。宿主路径会映射为 /grants/0 等；默认只使用任务工作区。"
 	return c
 }
 func demandScriptParameters() json.RawMessage {
@@ -64,7 +64,7 @@ func (e *Extensions) prepareDemandOperation(ctx context.Context, s CapabilitySna
 	if c.Metadata.Exposure != "" && c.Metadata.Exposure != "agent" {
 		return o, bad("tool-human-required", "该操作必须通过人工管理入口执行")
 	}
-	a := &AccessRequest{Revision: 1, Kind: "platform", Directories: []execconfig.Directory{}, Network: []execconfig.NetworkEndpoint{}, PrivateCIDRs: []string{}, Resources: []execconfig.Resource{}, SessionAllowed: true}
+	a := &AccessRequest{Revision: 1, Kind: "platform", Directories: []execconfig.Directory{}, Network: []execconfig.NetworkEndpoint{}, PrivateCIDRs: []string{}, Resources: []execconfig.Resource{}, SessionAllowed: s.PolicyVersion != PermissionPolicyVersion}
 	args, err := jsonvalue.Object([]byte(o.ArgumentsJSON))
 	if err != nil {
 		return o, err

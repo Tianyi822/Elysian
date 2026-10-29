@@ -1,5 +1,5 @@
 import { parseGrant, parseProfile } from './executionParse'
-import type { AgentApproval, AgentCapability, AgentRuntimeAccess, AgentSessionAuthorization } from '@elysian/contracts'
+import type { AgentApproval, AgentCapability, AgentRuntimeAccess } from '@elysian/contracts'
 import type { AgentChatGovernance } from '../../../contracts/agentChat'
 import { agentPathPart, requestAgentJson } from './agentShared'
 
@@ -20,12 +20,6 @@ export function parseRuntimeAccess(value: unknown): AgentRuntimeAccess {
   return { revision: integer(r.revision), digest: text(r.digest), scopeKey: text(r.scopeKey), kind: r.kind as AgentRuntimeAccess['kind'], directories: grant.directories, network: grant.network, privateCidrs: grant.privateCidrs, resources: grant.resources,
     sessionAllowed: enabled(r.sessionAllowed), ...(r.reason === undefined ? {} : { reason: text(r.reason) }),
     ...(runtime ? { runtime: { name: text(runtime.name), image: text(runtime.image), platform: text(runtime.platform), requiresDownload: enabled(runtime.requiresDownload) } } : {}) }
-}
-
-export function parseSessionAuthorization(value: unknown): AgentSessionAuthorization {
-  const r = row(value)
-  if (r.status !== 'active' && r.status !== 'revoked') throw invalid()
-  return { id: text(r.id), sessionId: text(r.sessionId), revision: integer(r.revision), status: r.status, createdAt: text(r.createdAt), tool: text(r.tool), access: parseRuntimeAccess(r.access), ...(r.executionProfile === undefined ? {} : { executionProfile: parseProfile(r.executionProfile) }), ...(r.revokedAt === undefined ? {} : { revokedAt: text(r.revokedAt) }) }
 }
 
 function parseCapability(value: unknown): AgentCapability {
@@ -71,8 +65,6 @@ export function createAgentChatGovernance(): AgentChatGovernance {
   const path = agentPathPart
   return {
     async decideAccess(id, input) { const item = parseApproval(await requestAgentJson(`/api/agent/approvals/${path(id)}/access-decision`, { method: 'POST', body: JSON.stringify(input) })); if (item.id !== id) throw invalid(); return item },
-    async authorizations(id, signal) { const result = row(await requestAgentJson(`/api/agent/sessions/${path(id)}/authorizations`, { signal })); const items = list(result.items, parseSessionAuthorization); if (items.some(item => item.sessionId !== id)) throw invalid(); return items },
-    async revokeAuthorization(sessionId, id, input) { const item = parseSessionAuthorization(await requestAgentJson(`/api/agent/sessions/${path(sessionId)}/authorizations/${path(id)}`, { method: 'DELETE', body: JSON.stringify(input) })); if (item.id !== id || item.sessionId !== sessionId) throw invalid(); return item },
     async approvals(runId, signal) {
       const items = list(await requestAgentJson(`/api/agent/approvals?runId=${path(runId)}`, { signal }), parseApproval)
       if (items.some(item => item.runId !== runId)) throw invalid()

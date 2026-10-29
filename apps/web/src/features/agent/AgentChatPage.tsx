@@ -3,7 +3,7 @@ import { Link, useLocation, useSearchParams } from 'react-router'
 import * as Dialog from '@radix-ui/react-dialog'
 import { useShellLayout } from '../../app/layout/ShellLayoutContext'
 import { ChatSessionList } from './ChatSessionList'
-import { BookOpen, Bot, Brain, FolderTree, Hand, Image as ImageIcon, List, Loader2, Paperclip, Pencil, Plus, Send, Square, ShieldAlert, ShieldCheck, X, type IconComponent } from '../../components/icons'
+import { Bot, Brain, Hand, Image as ImageIcon, List, Loader2, Paperclip, Pencil, Plus, Send, Square, ShieldAlert, ShieldCheck, X, type IconComponent } from '../../components/icons'
 import { IconButton } from '../../components/IconButton'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { RefreshButton } from '../../components/RefreshState'
@@ -18,8 +18,7 @@ import { ChatAttachment } from './ChatAttachment'
 import { ChatMessageAttachments } from './ChatMessageAttachments'
 import { ChatMessageCopy } from './ChatMessageCopy'
 import { ChatApprovals } from './ChatApprovals'
-import { ChatExecutionScope } from './ChatExecutionScope'
-import { ChatMemorySelection, ChatMemorySources } from './ChatMemory'
+import { ChatMemorySources } from './ChatMemory'
 import { ChatResponse } from './ChatResponse'
 import { ChatRuntimeResult } from './ChatRuntimeResult'
 import { ChatPlan } from './ChatPlan'
@@ -33,7 +32,7 @@ import './agentChat.css'
 const PERMISSION_MODES: readonly { value: AgentChatPermissionMode; label: string; description: string; Icon: IconComponent }[] = [
   { value: 'ask', label: '请求批准', description: '需要批准的操作，按服务端规则请求确认。', Icon: Hand },
   { value: 'assist', label: '帮我批准', description: '自动批准可恢复的工作区写入，以及无宿主写权限、无出网的隔离执行。', Icon: ShieldCheck },
-  { value: 'full', label: '完全开放', description: '授权范围内免逐项审批，系统禁区与资源限制继续生效。', Icon: ShieldAlert },
+  { value: 'full', label: '完全开放', description: '自动批准已启用能力所需的操作与运行时权限，系统禁区与资源限制继续生效。', Icon: ShieldAlert },
 ]
 
 /** 会话列表开关固定在聊天页头内，仅保留读屏标签。 */
@@ -62,8 +61,6 @@ export function AgentChatPage() {
   const [listCollapsed, setListCollapsed] = useState(false)
   const [wide, setWide] = useState(() => mediaQuery('(min-width: 1100px)')?.matches ?? false)
   const [listRefreshing, setListRefreshing] = useState(false)
-  const [scopeSessionId, setScopeSessionId] = useState<string | null>(null)
-  const [memorySessionId, setMemorySessionId] = useState<string | null>(null)
   const requestedId = params.get('session') || undefined
   const routeState = location.state && typeof location.state === 'object' ? location.state : {}
   const requestedDraft = typeof routeState.agentDraftId === 'string' ? routeState.agentDraftId : undefined
@@ -118,20 +115,6 @@ export function AgentChatPage() {
     if (chat.syncError) void chat.refresh(api)
     if (error) reload()
   }
-  const openScope = async () => {
-    if (!session) return
-    const localId = session.id
-    const selected = useAgentChatStore.getState().session
-    if (selected?.id === localId) setScopeSessionId(localId)
-  }
-  const openMemory = async () => {
-    if (!session || !api.available) return
-    const localId = session.id
-    if (!session.remote && model) await chat.prepareRemoteSession(api, model.profile)
-    const selected = useAgentChatStore.getState().session
-    if (selected?.id === localId && selected.remote) setMemorySessionId(localId)
-  }
-
   const focusListTrigger = () => listTrigger.current?.focus()
 
   useEffect(() => {
@@ -354,8 +337,6 @@ export function AgentChatPage() {
       <div className="flex min-w-0 flex-1 items-center gap-2">
         <span className="chat-title max-w-64 truncate text-sm font-medium" title={title}>{title}</span>
       </div>
-      <IconButton label="本会话记忆" variant="ghost" disabled={!api.available || !session || chat.loading || chat.sending || !!session.pending || (!session.remote && !model)} onPress={() => void openMemory()}><BookOpen size={16} aria-hidden /></IconButton>
-      {session?.remote && <IconButton label="本会话授权" variant="ghost" onPress={() => void openScope()}><FolderTree size={16} aria-hidden /></IconButton>}
       <button type="button" className="chat-new" disabled={chat.sending} onClick={newConversation}><Plus size={14} aria-hidden /><span>新会话</span></button>
     </header>
 
@@ -471,7 +452,6 @@ export function AgentChatPage() {
               items={PERMISSION_MODES.map(({ Icon, ...mode }) => ({ ...mode, icon: <Icon size={16} /> }))}
               leadingIcon={<PermissionIcon size={16} aria-hidden />}
               disabled={!session || chat.loading || busy || restoring || !!session.pending}
-              footerAction={{ label: '本会话授权…', icon: <FolderTree size={15} aria-hidden />, onSelect: () => { void openScope() } }}
               triggerClassName="chat-select chat-permission-select" contentClassName="chat-composer-menu chat-permission-menu" />
           </div>
           <div className="chat-model">
@@ -500,7 +480,5 @@ export function AgentChatPage() {
       </form>}
     </div>
     </section>
-    <ChatExecutionScope key={session?.id} open={!!session && scopeSessionId === session.id} sessionId={session?.remote?.sessionId} api={api.governance} onClose={() => setScopeSessionId(null)} />
-    {session?.remote && memorySessionId === session.id && <ChatMemorySelection key={session.id} sessionId={session.remote.sessionId} api={agentMemory} disabled={busy || !!session.pending} onClose={() => setMemorySessionId(null)} />}
   </div>
 }

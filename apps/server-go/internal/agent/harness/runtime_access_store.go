@@ -117,7 +117,7 @@ func (m *Manager) DecideAccess(ctx context.Context, id string, in AccessDecision
 		if r.Status != StateWaitingApproval || r.CancelRequestedAt != "" || r.WorkflowID != "" || r.Snapshot == nil || r.Snapshot.AuthorizationMode != AuthorizationOnDemand {
 			return &Error{409, "run-state-conflict", "运行已不在授权等待状态"}
 		}
-		if in.Decision == "session" && !a.Access.SessionAllowed {
+		if in.Decision == "session" && (r.Snapshot.PolicyVersion == PermissionPolicyVersion || !a.Access.SessionAllowed) {
 			return bad("session-authorization-denied", "该操作只能授权本次")
 		}
 		var queued int

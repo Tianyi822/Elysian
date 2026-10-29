@@ -172,17 +172,20 @@ func (m *Manager) snapshotWithMode(ctx context.Context, e Environment, modern bo
 		}
 	}
 	seen := map[string]bool{}
-	spaces, e2 := m.wikiSessionSpacesLocked(ctx, e.SessionID)
-	if e2 != nil {
-		return s, e2
-	}
-	if len(spaces) > 0 {
-		if modern {
-			s.Tools = append(s.Tools, wikiNavigationCapabilities()...)
-		} else {
-			s.Tools = append(s.Tools, wikiCapabilities()...)
+	if disabled, _ := ctx.Value(wikiDisabledContextKey{}).(bool); !disabled {
+		spaces, err := m.wikiSessionSpacesLocked(ctx, e.SessionID)
+		if err != nil {
+			return s, err
+		}
+		if len(spaces) > 0 {
+			if modern {
+				s.Tools = append(s.Tools, wikiNavigationCapabilities()...)
+			} else {
+				s.Tools = append(s.Tools, wikiCapabilities()...)
+			}
 		}
 	}
+
 	for _, c := range s.Materials {
 		if c.Name == toolSearchName || c.Source == toolDiscoverySource || c.Name == userInputTool || c.Source == userInputSource || c.Name == planTool || c.Source == planSource {
 			return s, bad("reserved-capability", "资料目录使用了内核保留的工具名称或来源")

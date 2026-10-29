@@ -55,22 +55,6 @@ func readWikiJob(ctx context.Context, q rowReader, id string) (WikiJob, error) {
 	return stored.WikiJob, nil
 }
 
-// 提炼意图与成功发布处于同一事务；唯一来源键保证恢复和重复收尾都不会重复请求模型。
-func (m *Manager) enqueueWikiRunExtraction(ctx context.Context, tx *sql.Tx, run *Run, answer string) error {
-	if run.WorkflowID != "" || run.Model == nil {
-		return nil
-	}
-	if run.WikiStrategy == wikiNavigationStrategy {
-		return m.enqueueWikiNavigationExtraction(ctx, tx, run)
-	}
-	return m.enqueueWikiExtraction(ctx, tx, "run", run.ID, run.TaskID, run.ID, run.SessionID, *run.Model, answer)
-}
-
-func (s *store) enqueueWikiWorkflowExtraction(ctx context.Context, tx *sql.Tx, workflow *WorkflowInstance) error {
-	m := &Manager{store: s, deps: Deps{Now: s.now, NewID: randomID}}
-	return m.enqueueWikiExtraction(ctx, tx, "workflow", workflow.ID, workflow.TaskID, "", workflow.SessionID, workflow.Model, workflow.OutputJSON)
-}
-
 func (m *Manager) enqueueWikiExtraction(ctx context.Context, tx *sql.Tx, originKind, originID, taskID, runID, sessionID string, profile model.Profile, answer string) error {
 	var exists int
 	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM wiki_jobs WHERE kind='extraction' AND origin_kind=? AND origin_id=?", originKind, originID).Scan(&exists); err != nil {
@@ -182,10 +166,10 @@ func (m *Manager) enqueueWikiExtraction(ctx context.Context, tx *sql.Tx, originK
 
 func (m *Manager) recoverWikiJobs(ctx context.Context) error {
 	return m.store.write(ctx, "wiki-extraction-recovery", func(tx *sql.Tx) error {
-		if err := m.recoverEmbeddingRequests(ctx, tx, false); err != nil {
+		if err := m.recoverEmbeddingRequests(ctx, tx, false, &Failure{Code: "memory-retired", Message: "长期记忆整理与索引功能已退役，任务不再执行或重试"}); err != nil {
 			return err
 		}
-		jobs, err := readDocuments[storedWikiJob](ctx, tx, "SELECT document FROM wiki_jobs WHERE state='running'")
+		jobs, err := readDocuments[storedWikiJob](ctx, tx, "SELECT document FROM wiki_jobs WHERE state IN ('queued','running')")
 		if err != nil {
 			return err
 		}
@@ -193,7 +177,7 @@ func (m *Manager) recoverWikiJobs(ctx context.Context) error {
 			job := stored.WikiJob
 			job.Response = stored.Response
 			job.Status, job.MemoryStatus, job.EndedAt = StateInterrupted, "stale", wikiNow(m)
-			job.Error = &Failure{Code: "panel-restarted", Message: "面板重启中断了长期记忆提炼，未自动重试"}
+			job.Error = &Failure{Code: "memory-retired", Message: "长期记忆整理与索引功能已退役，任务不再执行或重试"}
 			if err = saveWikiJob(ctx, tx, job); err != nil {
 				return err
 			}
@@ -221,23 +205,6 @@ func (m *Manager) freezeWikiJobsForMaintenance(ctx context.Context, tx *sql.Tx) 
 		}
 	}
 	return nil
-}
-
-func (m *Manager) wikiJobLoop() {
-	defer close(m.wikiDone)
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-m.ctx.Done():
-			return
-		case <-ticker.C:
-		}
-		for m.runNextWikiJob() {
-		}
-		for m.runNextWikiIndexJob() {
-		}
-	}
 }
 
 func (m *Manager) runNextWikiJob() bool {

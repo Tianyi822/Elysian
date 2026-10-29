@@ -58,23 +58,22 @@ type fakeAPI struct {
 
 	submittedInputs []client.AgentInput
 
-	approvals      []client.Approval
-	approvalsErr   error
-	decided        []string
-	decideErr      error
-	accessDecided  []client.AccessDecisionInput
-	accessErr      error
-	authorizations []client.SessionAuthorization
-	authErr        error
-	revoked        []string
-	revokeErr      error
-	answerReceipt  *client.UserInputReceipt
-	answerErr      error
-	answerInputs   []client.AnswerUserInputInput
-	callsPage      client.Page[client.Call]
-	callsErr       error
-	switchInput    *client.SwitchModelInput
-	createInput    *client.CreateSessionInput
+	approvals     []client.Approval
+	approvalsErr  error
+	decided       []string
+	decideErr     error
+	accessDecided []client.AccessDecisionInput
+	accessErr     error
+	authErr       error
+	revoked       []string
+	revokeErr     error
+	answerReceipt *client.UserInputReceipt
+	answerErr     error
+	answerInputs  []client.AnswerUserInputInput
+	callsPage     client.Page[client.Call]
+	callsErr      error
+	switchInput   *client.SwitchModelInput
+	createInput   *client.CreateSessionInput
 }
 
 func (f *fakeAPI) BaseURL() string                { return "http://127.0.0.1:48101" }
@@ -270,15 +269,6 @@ func (f *fakeAPI) DecideAccess(_ context.Context, id string, input client.Access
 		}
 	}
 	return client.Approval{ID: id}, nil
-}
-
-func (f *fakeAPI) ListSessionAuthorizations(context.Context, string) ([]client.SessionAuthorization, error) {
-	return f.authorizations, f.authErr
-}
-
-func (f *fakeAPI) RevokeSessionAuthorization(_ context.Context, _, id string, _ client.RevokeAuthorizationInput) error {
-	f.revoked = append(f.revoked, id)
-	return f.revokeErr
 }
 
 func (f *fakeAPI) AnswerUserInput(_ context.Context, _, _ string, input client.AnswerUserInputInput) (client.UserInputReceipt, error) {

@@ -1,6 +1,6 @@
-import type { AgentAccessDecisionInput, AgentAuthorizationRevokeInput } from '@elysian/contracts'
+import type { AgentAccessDecisionInput } from '@elysian/contracts'
 
-type Pending = AgentAccessDecisionInput | AgentAuthorizationRevokeInput
+type Pending = AgentAccessDecisionInput
 const key = (scope: string) => `elysian:agent-authorization-pending:v1:${scope}`
 /** 仅保存未确认请求的编号与选择；显示和执行始终以鉴权后的服务端回读为准。 */
 export function readAuthorizationPending<T extends Pending>(scope: string): Record<string, T> {

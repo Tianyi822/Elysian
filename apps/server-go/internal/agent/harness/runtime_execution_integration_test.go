@@ -260,7 +260,7 @@ func TestRuntimeExecutionFullApprovalDownloadAndDispatchBinding(t *testing.T) {
 	if beforePull != 0 || beforeCreate != 0 {
 		t.Fatal("runtime mutated Docker before confirmation")
 	}
-	if _, err := m.DecideAccess(context.Background(), approval.ID, accessInput(approval, "session", "runtime-approve")); err != nil {
+	if _, err := m.DecideAccess(context.Background(), approval.ID, accessInput(approval, "once", "runtime-approve")); err != nil {
 		t.Fatal(err)
 	}
 	finished := runtimeFinished(t, m, run.ID)
@@ -362,29 +362,33 @@ func TestRuntimeExecutionUnknownPreparationOnlyInspectsUntilConfirmedInstalled(t
 	}
 }
 
-func TestRuntimeExecutionSessionReuseRequiresNewDownloadAndNewScopeConsent(t *testing.T) {
+func TestRuntimeExecutionEveryNewRunConfirmsDownloadAndScope(t *testing.T) {
 	m, session, fake, args := newRuntimeIntegration(t, true, "")
 	first := submitDemand(t, m, session, "runtime-local-first")
 	a := waitingApproval(t, m, first.ID)
 	if a.Access.Runtime.RequiresDownload {
 		t.Fatal("installed environment requested download")
 	}
-	if _, err := m.DecideAccess(context.Background(), a.ID, accessInput(a, "session", "allow-installed-session")); err != nil {
+	if _, err := m.DecideAccess(context.Background(), a.ID, accessInput(a, "once", "allow-installed-session")); err != nil {
 		t.Fatal(err)
 	}
 	if finished := runtimeFinished(t, m, first.ID); finished.Status != StateSucceeded {
 		t.Fatalf("first run failed: %+v", finished)
 	}
 	second := submitDemand(t, m, session, "runtime-local-reuse")
+	secondApproval := waitingApproval(t, m, second.ID)
+	if _, err := m.DecideAccess(context.Background(), secondApproval.ID, accessInput(secondApproval, "once", "second-once")); err != nil {
+		t.Fatal(err)
+	}
 	if finished := runtimeFinished(t, m, second.ID); finished.Status != StateSucceeded {
-		t.Fatalf("same-scope session grant was not reused: %+v", finished)
+		t.Fatalf("second run approval failed: %+v", finished)
 	}
 	fake.mu.Lock()
 	fake.installed = false
 	pulls, creates := fake.pulls, len(fake.creates)
 	fake.mu.Unlock()
 	if pulls != 0 || creates != 4 {
-		t.Fatalf("same-scope reuse wrong: pulls=%d creates=%d", pulls, creates)
+		t.Fatalf("per-run confirmation wrong: pulls=%d creates=%d", pulls, creates)
 	}
 	third := submitDemand(t, m, session, "runtime-local-disappeared")
 	missing := waitingApproval(t, m, third.ID)
@@ -395,7 +399,7 @@ func TestRuntimeExecutionSessionReuseRequiresNewDownloadAndNewScopeConsent(t *te
 	pulls = fake.pulls
 	fake.mu.Unlock()
 	if pulls != 0 {
-		t.Fatal("download happened under local-only session consent")
+		t.Fatal("download happened under per-run confirmation")
 	}
 	if _, err := m.DecideAccess(context.Background(), missing.ID, accessInput(missing, "once", "allow-missing-image-download")); err != nil {
 		t.Fatal(err)
@@ -411,5 +415,29 @@ func TestRuntimeExecutionSessionReuseRequiresNewDownloadAndNewScopeConsent(t *te
 	}
 	if _, err := m.Cancel(context.Background(), fourth.ID); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRuntimeExecutionModesAutomaticallyPrepareIsolatedEnvironment(t *testing.T) {
+	for _, mode := range []PermissionMode{PermissionAssist, PermissionFull} {
+		t.Run(string(mode), func(t *testing.T) {
+			m, session, engine, _ := newRuntimeIntegration(t, false, "")
+			run, _, err := m.CreateTask(context.Background(), session.ID, AgentInput{RequestID: "automatic-runtime-" + string(mode), Content: "执行隔离命令", AuthorizationMode: AuthorizationOnDemand, PermissionMode: mode})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if done := runtimeFinished(t, m, run.ID); done.Status != StateSucceeded {
+				t.Fatalf("自动准备执行失败: %+v", done)
+			}
+			approvals, err := m.Approvals(context.Background())
+			if err != nil || len(approvals) != 0 {
+				t.Fatalf("自动模式仍需批准: %+v %v", approvals, err)
+			}
+			engine.mu.Lock()
+			defer engine.mu.Unlock()
+			if engine.pulls != 1 || len(engine.creates) != 2 {
+				t.Fatalf("未实际准备并运行环境: pulls=%d creates=%d", engine.pulls, len(engine.creates))
+			}
+		})
 	}
 }

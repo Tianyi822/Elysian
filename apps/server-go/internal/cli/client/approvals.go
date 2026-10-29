@@ -10,7 +10,7 @@ import (
 // runtime_access_types.go、user_input.go 的公开形状子集；宽松解析忽略未消费字段）。
 
 // Approval 待审批操作（pending/approved/denied/expired/revoked；kind=workflow-gate
-// 属已退役工作流，TUI 过滤不展示）。Access 非空即运行时授权卡（once/session/denied
+// 属已退役工作流，TUI 过滤不展示）。Access 非空即运行时授权卡（once/denied；旧决定保留 session 兼容
 // 三选），否则为普通审批（approved/denied）。
 type Approval struct {
 	ID          string     `json:"id"`
@@ -118,30 +118,13 @@ type AccessRuntime struct {
 	RequiresDownload bool   `json:"requiresDownload"`
 }
 
-// AccessDecisionInput 运行时授权决定（once/session/denied；requestId 与
+// AccessDecisionInput 运行时授权决定（once/denied；旧决定保留 session 兼容；requestId 与
 // expectedRevision/expectedDigest 幂等重试）。
 type AccessDecisionInput struct {
 	RequestID        string `json:"requestId"`
 	ExpectedRevision int    `json:"expectedRevision"`
 	ExpectedDigest   string `json:"expectedDigest"`
 	Decision         string `json:"decision"`
-}
-
-// SessionAuthorization 会话允许项（「本会话允许」的授权记录，可撤回）。
-type SessionAuthorization struct {
-	ID        string    `json:"id"`
-	SessionID string    `json:"sessionId"`
-	Revision  int       `json:"revision"`
-	Status    string    `json:"status"`
-	Tool      string    `json:"tool"`
-	CreatedAt string    `json:"createdAt"`
-	Access    AccessReq `json:"access"`
-}
-
-// RevokeAuthorizationInput 撤回会话授权（幂等键与修订裁决）。
-type RevokeAuthorizationInput struct {
-	RequestID        string `json:"requestId"`
-	ExpectedRevision int    `json:"expectedRevision"`
 }
 
 // PlanStep 计划步骤（pending/in_progress/completed，最多一个进行中）。
@@ -231,27 +214,11 @@ func (c *Client) DecideApproval(ctx context.Context, id, decision string) (Appro
 	return approval, err
 }
 
-// DecideAccess 运行时授权决定（once/session/denied；幂等键防重复决定）。
+// DecideAccess 运行时授权决定（once/denied；旧决定保留 session 兼容；幂等键防重复决定）。
 func (c *Client) DecideAccess(ctx context.Context, id string, input AccessDecisionInput) (Approval, error) {
 	var approval Approval
 	_, err := c.do(ctx, "POST", "/api/agent/approvals/"+url.PathEscape(id)+"/access-decision", nil, input, &approval, "")
 	return approval, err
-}
-
-// ListSessionAuthorizations 会话允许项回读。
-func (c *Client) ListSessionAuthorizations(ctx context.Context, sessionID string) ([]SessionAuthorization, error) {
-	var out struct {
-		Items []SessionAuthorization `json:"items"`
-	}
-	_, err := c.do(ctx, "GET", "/api/agent/sessions/"+url.PathEscape(sessionID)+"/authorizations", nil, nil, &out, "")
-	return out.Items, err
-}
-
-// RevokeSessionAuthorization 撤回会话授权（停止后续派发；幂等键与修订裁决）。
-func (c *Client) RevokeSessionAuthorization(ctx context.Context, sessionID, authorizationID string, input RevokeAuthorizationInput) error {
-	var out SessionAuthorization
-	_, err := c.do(ctx, "DELETE", "/api/agent/sessions/"+url.PathEscape(sessionID)+"/authorizations/"+url.PathEscape(authorizationID), nil, input, &out, "")
-	return err
 }
 
 // AnswerUserInput 回答等待输入的问题组（原子完成工具结果并重新入队原 Run）。

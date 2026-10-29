@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import type { AgentAccessDecisionInput, AgentExecutionProfile, AgentOperation, AgentRuntimeAccess } from '@elysian/contracts'
 import { Check, Square, X } from '../../components/icons'
 
@@ -13,7 +13,6 @@ export function RuntimeAccessDetails({ access, operation, profile = operation?.e
     {access.resources?.map(resource => <p key={`${resource.domain}:${resource.id}`} className="break-all">{resource.domain} / {resource.id} · {resource.access === 'write' ? '修改' : '读取'}</p>)}
     {access.network.map(endpoint => <p key={`${endpoint.scheme}:${endpoint.host}:${endpoint.port}`} className="break-all">网络：{endpoint.scheme}://{endpoint.host}:{endpoint.port}</p>)}
     {!!access.privateCidrs.length && <p className="break-all">私有网络：{access.privateCidrs.join('、')}</p>}
-    {access.kind === 'script' && <p className="leading-5 text-fg-muted">本会话允许后，可在相同运行环境、目录和网络范围内执行不同命令；扩大范围时会再次询问。</p>}
     {access.kind === 'mcp' && <p className="leading-5 text-fg-muted">授权绑定当前服务修订、目录与工具。无法识别目标范围时，仅匹配完全相同的参数。</p>}
     <details className="border-t border-line pt-2"><summary className="cursor-pointer text-fg-muted">命令、镜像、挂载与限额</summary>
       <div className="mt-2 space-y-2">
@@ -34,7 +33,6 @@ export function RuntimeAccessCard({ title, access, operation, profile, busy = fa
   profile?: AgentExecutionProfile
   pending?: AgentAccessDecisionInput; onDecision(decision: AgentAccessDecisionInput['decision']): void; onCancel(): void; children?: ReactNode
 }) {
-  const [choice, setChoice] = useState<'once' | 'session'>('once')
   return <section aria-label={`权限申请 ${title}`} className="space-y-3 rounded-lg border border-line bg-surface p-3">
     <h3 className="break-all text-sm font-medium">{title}</h3>
     <RuntimeAccessDetails access={access} operation={operation} profile={profile} />
@@ -48,13 +46,9 @@ export function RuntimeAccessCard({ title, access, operation, profile, busy = fa
       {operation?.preparation?.state === 'pulling' && <progress className="w-full accent-[var(--color-accent)]" aria-label="镜像下载进度" max={operation.preparation.total || undefined} value={operation.preparation.total ? operation.preparation.current ?? 0 : undefined} />}
       <button type="button" className={BUTTON} disabled={busy} onClick={onCancel}><Square size={12} aria-hidden />停止任务</button>
     </> : <>
-      <fieldset disabled={busy || !!pending} className="flex flex-wrap gap-4 text-xs"><legend className="sr-only">允许范围</legend>
-        <label className="flex items-center gap-2"><input type="radio" name={`access-${access.digest}`} checked={(pending?.decision ?? choice) === 'once'} onChange={() => setChoice('once')} />仅本次允许</label>
-        {access.sessionAllowed && <label className="flex items-center gap-2"><input type="radio" name={`access-${access.digest}`} checked={(pending?.decision ?? choice) === 'session'} onChange={() => setChoice('session')} />本会话允许</label>}
-      </fieldset>
       {pending && <p role="status" className="text-xs text-warning">结果尚未确认。重新读取后，可按原选择重试。</p>}
       <div className="flex flex-wrap gap-2">
-        <button type="button" className={BUTTON} disabled={busy} onClick={() => onDecision(pending?.decision ?? choice)}><Check size={14} aria-hidden />{pending ? '按原选择重试' : operation?.preparation?.state === 'unknown' ? '重新核实并继续' : operation?.preparation?.state === 'failed' ? '确认并重试准备' : '确认并继续'}</button>
+        <button type="button" className={BUTTON} disabled={busy} onClick={() => onDecision(pending?.decision ?? 'once')}><Check size={14} aria-hidden />{pending ? '按原选择重试' : operation?.preparation?.state === 'unknown' ? '重新核实并继续' : operation?.preparation?.state === 'failed' ? '确认并重试准备' : '确认并继续'}</button>
         <button type="button" className={`${BUTTON} text-danger`} disabled={busy || !!pending} onClick={() => onDecision('denied')}><X size={14} aria-hidden />拒绝</button>
         <button type="button" className={BUTTON} disabled={busy} onClick={onCancel}><Square size={12} aria-hidden />停止任务</button>
       </div>

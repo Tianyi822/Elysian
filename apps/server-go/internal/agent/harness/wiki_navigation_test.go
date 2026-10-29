@@ -17,8 +17,8 @@ func TestWikiNewSessionDefaultAndOldSelectionPreserved(t *testing.T) {
 		t.Fatal(err)
 	}
 	selection, err := m.WikiSessionSelection(ctx, first.ID)
-	if err != nil || selection.SpaceID == "" || selection.IncludeGlobal {
-		t.Fatalf("未默认选中唯一全局空间：%+v %v", selection, err)
+	if err != nil || selection.SpaceID != "" || selection.IncludeGlobal {
+		t.Fatalf("新会话不应绑定知识空间：%+v %v", selection, err)
 	}
 	second, err := m.CreateSession(ctx, CreateSessionInput{ModelProfileID: profile.ID, ModelRevision: profile.Revision})
 	if err != nil {
@@ -52,9 +52,22 @@ func TestWikiNewSessionDefaultAndOldSelectionPreserved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if run.WikiStrategy != wikiNavigationStrategy {
-		t.Fatal("旧会话新运行没有固定新策略")
+	assertDisabled := func(run Run) {
+		t.Helper()
+		if run.WikiStrategy != wikiDisabledStrategy {
+			t.Fatal("新运行没有关闭长期记忆")
+		}
+		for _, capability := range run.Snapshot.Tools {
+			if capability.Source == "wiki" {
+				t.Fatalf("新运行仍提供知识工具: %s", capability.Name)
+			}
+		}
+		var snapshots int
+		if err := m.store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM wiki_run_spaces WHERE run_id=?", run.ID).Scan(&snapshots); err != nil || snapshots != 0 {
+			t.Fatalf("新运行仍固定旧空间: %d %v", snapshots, err)
+		}
 	}
+	assertDisabled(run)
 	selected, _ := m.WikiSessionSelection(ctx, first.ID)
 	if selected.SpaceID != business.ID || !selected.IncludeGlobal {
 		t.Fatalf("旧会话选择被改写：%+v", selected)
@@ -64,9 +77,23 @@ func TestWikiNewSessionDefaultAndOldSelectionPreserved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if continuation.WikiStrategy != wikiNavigationStrategy {
-		t.Fatal("续轮没有固定新策略")
+	assertDisabled(continuation)
+	finishSessionTestRun(t, m.store, continuation.ID, "完成", nil)
+	messages, err := m.Messages(ctx, first.ID, "", 50)
+	if err != nil {
+		t.Fatal(err)
 	}
+	var lastUser string
+	for _, message := range messages.Items {
+		if message.Role == "user" {
+			lastUser = message.ID
+		}
+	}
+	edited, _, err := m.ContinueTask(ctx, continuation.TaskID, AgentInput{RequestID: "memory-disabled-edit", Content: "编辑后再发送", ReplaceMessageID: lastUser})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertDisabled(edited)
 }
 
 func TestWikiNavigationAndAcceptedLegacyKeepDifferentContracts(t *testing.T) {
@@ -76,8 +103,14 @@ func TestWikiNavigationAndAcceptedLegacyKeepDifferentContracts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	selection, _ := m.WikiSessionSelection(ctx, s.ID)
-	page, err := m.CreateWikiPage(ctx, selection.SpaceID, WikiPageInput{Slug: "test", Title: "容器知识", Markdown: "此正文必须按需读取"})
+	space, err := m.CreateWikiSpace(ctx, "存量知识", "business")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = m.SetWikiSessionSpace(ctx, s.ID, space.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	page, err := m.CreateWikiPage(ctx, space.ID, WikiPageInput{Slug: "test", Title: "容器知识", Markdown: "此正文必须按需读取"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,9 +118,24 @@ func TestWikiNavigationAndAcceptedLegacyKeepDifferentContracts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if run.WikiStrategy != wikiDisabledStrategy {
+		t.Fatal("新运行未关闭知识记忆")
+	}
 	a := &agentExecution{manager: m, run: run}
-	m.mu.Lock()
 	messages, refs, err := a.wikiRecallLocked(ctx)
+	if err != nil || len(messages) != 0 || len(refs) != 0 {
+		t.Fatalf("新运行仍召回: %+v %+v %v", messages, refs, err)
+	}
+	// 恢复固定的存量导航快照，保留按需读取与旧版本兼容。
+	run.WikiStrategy = wikiNavigationStrategy
+	run.Snapshot.Tools = wikiNavigationCapabilities()
+	if err := m.store.write(ctx, "legacy-wiki-fixture", func(tx *sql.Tx) error { return snapshotWikiRunSpaces(ctx, tx, run.ID, s.ID) }); err != nil {
+		t.Fatal(err)
+	}
+	a.run = run
+
+	m.mu.Lock()
+	messages, refs, err = a.wikiRecallLocked(ctx)
 	m.mu.Unlock()
 	if err != nil || len(messages) != 1 || len(refs) != 1 || strings.Contains(messages[0].Content, page.Markdown) {
 		t.Fatalf("导航注入正文或缺来源：%+v %+v %v", messages, refs, err)
@@ -169,7 +217,7 @@ func TestWikiSourceImportIdempotenceCompilationAndImmutableOriginal(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	selected, _ := m.WikiSessionSelection(ctx, s.ID)
+	selected := legacyWikiSelection(t, m, s)
 	in := WikiSourceInput{RequestID: "source-one", Title: "生产约定", Filename: "rules.md", Text: "所有生产更新都先检查健康状态。", ModelProfileID: profile.ID, ModelProfileRevision: profile.Revision}
 	result, duplicate, err := m.CreateWikiSource(ctx, selected.SpaceID, in)
 	if err != nil || duplicate {
@@ -220,7 +268,7 @@ func TestWikiCompilationConflictAndCASRemainPending(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			selected, _ := m.WikiSessionSelection(ctx, s.ID)
+			selected := legacyWikiSelection(t, m, s)
 			mode := "automatic"
 			if reason == "manual-protection" {
 				mode = "manual"
@@ -288,7 +336,7 @@ func TestWikiSlugConflictCanBeReviewedButCannotReviveWithdrawnPage(t *testing.T)
 		if err != nil {
 			t.Fatal(err)
 		}
-		selection, _ := m.WikiSessionSelection(ctx, s.ID)
+		selection := legacyWikiSelection(t, m, s)
 		imported, _, err := m.CreateWikiSource(ctx, selection.SpaceID, WikiSourceInput{RequestID: "slug-race", Title: "生产资料", Text: "必须检查健康状态。", ModelProfileID: profile.ID, ModelProfileRevision: profile.Revision})
 		if err != nil {
 			t.Fatal(err)
@@ -406,4 +454,18 @@ func TestWikiCompileSourceUTF8ChunksRetainWholeMaximumInput(t *testing.T) {
 	if restored.String() != text {
 		t.Fatal("16 KiB UTF-8 来源尾部丢失")
 	}
+}
+
+// 存量编译和引用测试显式准备旧选择，不依赖新会话自动绑定。
+func legacyWikiSelection(t *testing.T, m *Manager, s Session) WikiSpaceSelection {
+	t.Helper()
+	ctx := context.Background()
+	space, err := m.CreateWikiSpace(ctx, "存量测试空间", "business")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = m.SetWikiSessionSpace(ctx, s.ID, space.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	return WikiSpaceSelection{SpaceID: space.ID}
 }

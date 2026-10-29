@@ -230,9 +230,6 @@ func (s *store) advanceWorkflow(ctx context.Context, tx *sql.Tx, w *WorkflowInst
 		w.Status = StateSucceeded
 		w.EndedAt = stamp(s.now())
 		w.ActiveRunID = ""
-		if err = s.enqueueWikiWorkflowExtraction(ctx, tx, w); err != nil {
-			return err
-		}
 	} else {
 		if step.Kind != "condition" {
 			next = step.Next

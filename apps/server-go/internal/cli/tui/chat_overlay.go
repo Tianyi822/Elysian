@@ -11,7 +11,7 @@ import (
 
 // 聊天屏覆盖层与等待输入向导（CLI 方案 §6.3 第三步）：
 //   - 审批面板（Ctrl+A）：普通审批（批准 y／拒绝 n／取消本轮 x）、运行时授权卡
-//     （1 仅本次／2 本会话／3 拒绝，幂等键防重复决定）与本会话授权回读／撤回；
+//     （1 仅本次／3 拒绝，幂等键防重复决定）；
 //   - 工具详情（Ctrl+O）：工具条目完整参数与执行结果按需加载（calls）；
 //   - 等待用户输入向导（run 转 waiting-input 自动接管）：单选＋自定义文本，
 //     逐题作答统一提交（requestId 幂等），Esc 取消即停止本轮；
@@ -33,19 +33,6 @@ type approvalsMsg struct {
 type approvalDecisionMsg struct {
 	approval client.Approval
 	err      error
-}
-
-// authorizationsMsg 会话授权列表回填。
-type authorizationsMsg struct {
-	sessionID string
-	items     []client.SessionAuthorization
-	err       error
-}
-
-// revokeAuthMsg 撤回授权回填。
-type revokeAuthMsg struct {
-	id  string
-	err error
 }
 
 // userInputAnswerMsg 等待输入回答回填。
@@ -72,33 +59,21 @@ func approvalsPollCmd(api API, runID string, delay time.Duration) tea.Cmd {
 	}
 }
 
-// loadAuthorizationsCmd 会话授权列表。
-func loadAuthorizationsCmd(api API, sessionID string) tea.Cmd {
-	return func() tea.Msg {
-		items, err := api.ListSessionAuthorizations(apiContext(api), sessionID)
-		return authorizationsMsg{sessionID: sessionID, items: items, err: err}
-	}
-}
-
 // —— 审批面板 ——
 
-// approvalPanel 审批面板覆盖层：待审批与本会话授权两个标签页。
+// approvalPanel 审批面板覆盖层：仅包含待审批操作。
 type approvalPanel struct {
-	tab         int // 0 待审批；1 本会话授权
-	approvals   []client.Approval
-	cursor      int
-	detail      bool // 详情视图（完整参数／文件变更／授权范围）
-	auths       []client.SessionAuthorization
-	authCursor  int
-	authLoading bool
-	busy        bool
-	err         string
+	approvals []client.Approval
+	cursor    int
+	detail    bool // 详情视图（完整参数／文件变更／授权范围）
+	busy      bool
+	err       string
 	// pendingAccess 未确认的授权决定（同卡重试复用同 requestId）。
 	pendingAccess map[string]client.AccessDecisionInput
 }
 
 func newApprovalPanel(pending map[string]client.AccessDecisionInput) *approvalPanel {
-	return &approvalPanel{pendingAccess: pending, authLoading: true}
+	return &approvalPanel{pendingAccess: pending}
 }
 
 // visibleApprovals 面板展示集：pending 与 approved（已批待执行），过滤 workflow-gate。
@@ -115,8 +90,8 @@ func visibleApprovals(items []client.Approval) []client.Approval {
 	return out
 }
 
-// updateApprovalPanel 面板按键：Tab 切页、↑↓ 导航、Enter 详情、y/n/x 审批、
-// 1/2/3 授权、r 撤回、Esc 关闭。
+// updateApprovalPanel 面板按键：↑↓ 导航、Enter 详情、y/n/x 审批、
+// 1/3 授权、Esc 关闭。
 func (m Model) updateApprovalPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	panel := m.chat.panel
 	if panel.busy {
@@ -130,39 +105,23 @@ func (m Model) updateApprovalPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.chat.panel = nil
 		return m, nil
-	case "tab":
-		panel.tab = 1 - panel.tab
-		panel.detail = false
-		if panel.tab == 1 && panel.auths == nil {
-			return m, loadAuthorizationsCmd(m.chatAPI(), m.chat.sessionID)
-		}
-		return m, nil
 	case "up", "k":
-		if panel.tab == 0 && panel.cursor > 0 {
+		if panel.cursor > 0 {
 			panel.cursor--
 		}
-		if panel.tab == 1 && panel.authCursor > 0 {
-			panel.authCursor--
-		}
 	case "down", "j":
-		if panel.tab == 0 && panel.cursor < len(panel.approvals)-1 {
+		if panel.cursor < len(panel.approvals)-1 {
 			panel.cursor++
 		}
-		if panel.tab == 1 && panel.authCursor < len(panel.auths)-1 {
-			panel.authCursor++
-		}
 	case "enter", "d":
-		if panel.tab == 0 && len(panel.approvals) > 0 {
+		if len(panel.approvals) > 0 {
 			panel.detail = !panel.detail
 		}
 	}
-	if panel.tab == 0 && len(panel.approvals) > 0 {
+	if len(panel.approvals) > 0 {
 		if next, cmd, handled := m.decideApprovalKey(msg); handled {
 			return next, cmd
 		}
-	}
-	if panel.tab == 1 && len(panel.auths) > 0 && msg.String() == "r" {
-		return m.requestRevokeAuthorization()
 	}
 	return m, nil
 }
@@ -191,11 +150,11 @@ func (m Model) decideApprovalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		// 取消本轮＝停止运行。
 		panel.busy = true
 		return m, cancelRunCmd(m.chatAPI(), m.chat.runID), true
-	case "1", "2", "3":
+	case "1", "3":
 		if approval.Access == nil || approval.Status != "pending" {
 			return m, nil, true
 		}
-		decision := map[string]string{"1": "once", "2": "session", "3": "denied"}[msg.String()]
+		decision := map[string]string{"1": "once", "3": "denied"}[msg.String()]
 		input, exists := panel.pendingAccess[approval.ID]
 		if !exists {
 			input = client.AccessDecisionInput{
@@ -205,7 +164,9 @@ func (m Model) decideApprovalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			}
 			panel.pendingAccess[approval.ID] = input
 		}
-		input.Decision = decision
+		if !exists {
+			input.Decision = decision
+		}
 		panel.pendingAccess[approval.ID] = input
 		panel.busy = true
 		panel.err = ""
@@ -216,20 +177,6 @@ func (m Model) decideApprovalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		}, true
 	}
 	return m, nil, false
-}
-
-// requestRevokeAuthorization 撤回当前光标的会话授权（幂等键一次生成）。
-func (m Model) requestRevokeAuthorization() (tea.Model, tea.Cmd) {
-	panel := m.chat.panel
-	auth := panel.auths[panel.authCursor]
-	panel.busy = true
-	panel.err = ""
-	input := client.RevokeAuthorizationInput{RequestID: client.NewRequestID(), ExpectedRevision: auth.Revision}
-	api, sessionID, id := m.chatAPI(), m.chat.sessionID, auth.ID
-	return m, func() tea.Msg {
-		err := api.RevokeSessionAuthorization(apiContext(api), sessionID, id, input)
-		return revokeAuthMsg{id: id, err: err}
-	}
 }
 
 // updateApprovals 审批轮询落地：过滤展示集、更新面板与待审批徽标；运行离开等待
@@ -314,61 +261,6 @@ func (m Model) updateApprovalDecision(msg approvalDecisionMsg) (tea.Model, tea.C
 	case "denied":
 		m.notice = "操作已拒绝。"
 		m.noticeBad = false
-	}
-	return m, nil
-}
-
-// updateAuthorizations 授权列表落地与撤回收敛。
-func (m Model) updateAuthorizations(msg authorizationsMsg) (tea.Model, tea.Cmd) {
-	if msg.sessionID != "" && msg.sessionID != m.chat.sessionID {
-		return m, nil
-	}
-	if m.chat.panel == nil {
-		return m, nil
-	}
-	panel := m.chat.panel
-	panel.authLoading = false
-	if msg.err != nil {
-		if connErr := asClientErr(msg.err); connErr != nil && connErr.Kind == client.KindUnauthorized {
-			m.handleUnauthorized("会话已过期或已在别处登录，请重新登录")
-			return m, nil
-		}
-		panel.err = "读取授权失败：" + errText(msg.err)
-		return m, nil
-	}
-	panel.auths = msg.items
-	panel.err = ""
-	if panel.authCursor >= len(panel.auths) {
-		panel.authCursor = max(0, len(panel.auths)-1)
-	}
-	return m, nil
-}
-
-func (m Model) updateRevokeAuth(msg revokeAuthMsg) (tea.Model, tea.Cmd) {
-	if m.chat.panel == nil {
-		return m, nil
-	}
-	panel := m.chat.panel
-	panel.busy = false
-	if msg.err != nil {
-		if connErr := asClientErr(msg.err); connErr != nil && connErr.Kind == client.KindUnauthorized {
-			m.handleUnauthorized("会话已过期或已在别处登录，请重新登录")
-			return m, nil
-		}
-		panel.err = "撤回结果未确认，请重新读取：" + errText(msg.err)
-		return m, loadAuthorizationsCmd(m.chatAPI(), m.chat.sessionID)
-	}
-	kept := panel.auths[:0]
-	for _, auth := range panel.auths {
-		if auth.ID != msg.id {
-			kept = append(kept, auth)
-		}
-	}
-	panel.auths = kept
-	m.notice = "已撤回会话授权，相关派发将被阻止。"
-	m.noticeBad = false
-	if panel.authCursor >= len(panel.auths) {
-		panel.authCursor = max(0, len(panel.auths)-1)
 	}
 	return m, nil
 }

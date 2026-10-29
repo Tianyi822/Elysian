@@ -91,7 +91,7 @@ func (m *Manager) embeddingComplete(ctx context.Context, profile EmbeddingProfil
 	return vector, err
 }
 
-func (m *Manager) recoverEmbeddingRequests(ctx context.Context, tx *sql.Tx, maintenance bool) error {
+func (m *Manager) recoverEmbeddingRequests(ctx context.Context, tx *sql.Tx, maintenance bool, reason ...*Failure) error {
 	records, err := readDocuments[EmbeddingRequest](ctx, tx, "SELECT document FROM wiki_embedding_requests WHERE state='running'")
 	if err != nil {
 		return err
@@ -101,6 +101,9 @@ func (m *Manager) recoverEmbeddingRequests(ctx context.Context, tx *sql.Tx, main
 		record.Error = &Failure{Code: "panel-restarted", Message: "面板重启中断了 Embedding 请求，未自动重试"}
 		if maintenance {
 			record.Error = &Failure{Code: "maintenance-recovery", Message: "面板数据经过维护恢复，Embedding 请求已隔离"}
+		}
+		if len(reason) > 0 {
+			record.Error = reason[0]
 		}
 		if err = saveEmbeddingRequest(ctx, tx, record); err != nil {
 			return err

@@ -27,7 +27,7 @@ func (c *wikiWorkflowIntegrationCatalog) Snapshot(ctx context.Context, env Envir
 // Worker broker, Wiki store, workflow/v2 scheduler, approvals, memory functions,
 // extraction outbox and publication APIs all participate. Container and file
 // isolation are covered separately by the real Docker integration tests.
-func TestWorkflowV2WikiParallelForeachApprovalSubworkflowAndPublishedRecall(t *testing.T) {
+func TestWorkflowV2WikiParallelForeachApprovalWithoutNewExtraction(t *testing.T) {
 	ctx := context.Background()
 	const goal = "数据库巡检：依据 Wiki 并行检查、依次汇总并验证变更"
 	const planOutput = `{"alpha":{"id":9007199254740993,"phase":"parallel"},"beta":{"id":2,"phase":"parallel"}}`
@@ -325,58 +325,11 @@ func TestWorkflowV2WikiParallelForeachApprovalSubworkflowAndPublishedRecall(t *t
 		}
 	}
 	callsMu.Unlock()
-	runtimeEventually(t, func() bool {
-		jobs, err = m.ListWikiJobs(ctx, "", 50)
-		return err == nil && len(jobs.Items) == 1 && terminal(jobs.Items[0].Status)
-	})
-	job := jobs.Items[0]
-	if job.Status != StateSucceeded || job.OriginKind != "workflow" || job.OriginID != w.ID || len(job.CandidateIDs) != 1 || rootExtractions.Load() != 1 || len(job.Sources) != 1 || job.Sources[0] != ref {
-		t.Fatalf("root extraction was not unique or lost sources: %+v calls=%d", job, rootExtractions.Load())
+	jobs, err = m.ListWikiJobs(ctx, "", 50)
+	if err != nil || len(jobs.Items) != 0 || rootExtractions.Load() != 0 {
+		t.Fatalf("退役后工作流仍派生记忆整理: %+v %v", jobs, err)
 	}
-	candidates, err := m.ListWikiCandidates(ctx, space.ID, "pending")
-	if err != nil || len(candidates) != 1 {
-		t.Fatalf("missing reviewable candidate: %+v %v", candidates, err)
-	}
-	candidate := candidates[0]
-	if len(candidate.Page.Sources) != 1 || candidate.Page.Sources[0] != ref || len(candidate.Page.Evidence) != 1 || candidate.Page.Evidence[0].Kind != "workflow" || candidate.Page.Evidence[0].ID != w.ID {
-		t.Fatalf("candidate lost root provenance: %+v", candidate)
-	}
-	pages, err := m.ListWikiPages(ctx, space.ID, false)
-	if err != nil || len(pages) != 1 {
-		t.Fatalf("unapproved candidate was published: %+v %v", pages, err)
-	}
-	published, err := m.DecideWikiCandidate(ctx, candidate.ID, "approved")
-	if err != nil {
-		t.Fatal(err)
-	}
-	learned, err := m.GetWikiPage(ctx, published.PageID)
-	if err != nil || learned.Status != "active" || len(learned.Sources) != 1 || learned.Sources[0] != ref {
-		t.Fatalf("published page lost original source: %+v %v", learned, err)
-	}
-	publishedPageID.Store(learned.ID)
-	fresh, err := m.CreateSession(ctx, CreateSessionInput{Title: "独立召回会话", ModelProfileID: source.ModelProfileID, ModelRevision: source.ModelRevision})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = m.SetWikiSessionSpace(ctx, fresh.ID, space.ID, false); err != nil {
-		t.Fatal(err)
-	}
-	recall := submitAgentTest(t, m, fresh, "combo-fresh-recall", "fresh-recall-session：数据库巡检 已验证经验")
-	if got := runtimeFinished(t, m, recall.ID); got.Status != StateSucceeded || recalls.Load() != 2 || tasks[got.TaskID] {
-		t.Fatalf("new session recall failed or reused task: %+v", got)
-	}
-	m.mu.Lock()
-	recallRefs, err := wikiArtifactRefs(ctx, m.store.db, "run", recall.ID)
-	m.mu.Unlock()
-	foundPublished, foundOrigin := false, false
-	for _, source := range recallRefs {
-		foundPublished = foundPublished || source.PageID == learned.ID && source.Revision == learned.Revision && source.Digest == learned.Digest
-		foundOrigin = foundOrigin || source == ref
-	}
-	if err != nil || !foundPublished || !foundOrigin {
-		t.Fatalf("recall did not retain published and transitive sources: %+v %v", recallRefs, err)
-	}
-	if memoryRequests.Load() < 4 || rootExtractions.Load() != 1 {
-		t.Fatal(fmt.Sprintf("missing memory function or duplicate root extraction: memory=%d root=%d", memoryRequests.Load(), rootExtractions.Load()))
+	if memoryRequests.Load() < 3 {
+		t.Fatal(fmt.Sprintf("missing working memory calls: %d", memoryRequests.Load()))
 	}
 }

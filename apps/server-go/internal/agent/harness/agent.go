@@ -339,7 +339,7 @@ func (a *agentExecution) commitFinal(ctx context.Context, tx *sql.Tx, r *Run) er
 	if err := recordWikiFinal(ctx, tx, *r, a.finalMemory); err != nil {
 		return err
 	}
-	return a.manager.enqueueWikiRunExtraction(ctx, tx, r, a.finalAnswer)
+	return nil
 }
 
 type modelOutcome struct {

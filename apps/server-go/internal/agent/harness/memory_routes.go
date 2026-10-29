@@ -2,15 +2,14 @@ package harness
 
 import (
 	"context"
+	"elysian/server/internal/shared"
+	"github.com/go-chi/chi/v5"
 	"net/http"
 	"net/url"
 	"strconv"
-
-	"elysian/server/internal/shared"
-	"github.com/go-chi/chi/v5"
 )
 
-// 正式 memory API 与原 /wiki 入口共用同一份持久状态。
+// Wiki 仅开放浏览、人工编辑和历史引用，其他记忆管理接口退役。
 func registerMemoryRoutes(r chi.Router, s wikiRuntimeService) {
 	respond := func(w http.ResponseWriter, status int, value any, err error) {
 		if err != nil {
@@ -20,334 +19,97 @@ func registerMemoryRoutes(r chi.Router, s wikiRuntimeService) {
 		shared.SendJSON(w, status, value)
 	}
 	pageInSpace := func(ctx context.Context, req *http.Request) (WikiPage, error) {
-		p, e := s.GetWikiPage(ctx, chi.URLParam(req, "id"))
-		if e != nil {
-			return p, e
+		p, err := s.GetWikiPage(ctx, chi.URLParam(req, "id"))
+		if err != nil {
+			return p, err
 		}
 		if p.SpaceID != chi.URLParam(req, "spaceId") {
 			return WikiPage{}, &Error{404, "wiki-page-not-found", "Wiki 页面不属于当前空间"}
 		}
 		return p, nil
 	}
-	if m, ok := s.(*Manager); ok {
-		r.Get("/sessions/{id}/memory", func(w http.ResponseWriter, req *http.Request) {
-			v, e := m.WikiSessionSelection(req.Context(), chi.URLParam(req, "id"))
-			respond(w, 200, v, e)
-		})
-		r.Put("/sessions/{id}/memory-space", func(w http.ResponseWriter, req *http.Request) {
-			if _, e := memoryRouteQuery(req); e != nil {
-				writeRuntimeError(w, e)
-				return
-			}
-			in, e := readAgentInput[WikiSpaceSelection](w, req)
-			if e != nil {
-				writeRuntimeError(w, e)
-				return
-			}
-			if _, e = m.SetWikiSessionSpace(req.Context(), chi.URLParam(req, "id"), in.SpaceID, in.IncludeGlobal); e != nil {
-				writeRuntimeError(w, e)
-				return
-			}
-			v, e := m.WikiSessionSelection(req.Context(), chi.URLParam(req, "id"))
-			respond(w, 200, v, e)
-		})
-		r.Get("/memory-spaces/{spaceId}/directory", func(w http.ResponseWriter, req *http.Request) {
-			q, e := memoryRouteQuery(req, "cursor", "limit")
-			if e != nil {
-				writeRuntimeError(w, e)
-				return
-			}
-			limit, e := memoryRouteInt(q.Get("limit"), 50, 1, 200)
-			if e != nil {
-				writeRuntimeError(w, e)
-				return
-			}
-			v, e := m.WikiDirectory(req.Context(), chi.URLParam(req, "spaceId"), q.Get("cursor"), limit)
-			respond(w, 200, v, e)
-		})
-		r.Get("/memory-spaces/{spaceId}/pages/{id}/revisions", func(w http.ResponseWriter, req *http.Request) {
-			if _, e := memoryRouteQuery(req); e != nil {
-				writeRuntimeError(w, e)
-				return
-			}
-			v, e := m.WikiPageRevisions(req.Context(), chi.URLParam(req, "spaceId"), chi.URLParam(req, "id"))
-			respond(w, 200, v, e)
-		})
-		r.Get("/memory-spaces/{spaceId}/pages/{id}/read", func(w http.ResponseWriter, req *http.Request) {
-			q, e := memoryRouteQuery(req, "offset", "limit")
-			if e != nil {
-				writeRuntimeError(w, e)
-				return
-			}
-			offset, e := memoryRouteInt(q.Get("offset"), 0, 0, int(^uint(0)>>1))
-			if e != nil {
-				writeRuntimeError(w, e)
-				return
-			}
-			limit, e := memoryRouteInt(q.Get("limit"), 4096, 1, 4096)
-			if e != nil {
-				writeRuntimeError(w, e)
-				return
-			}
-			page, e := pageInSpace(req.Context(), req)
-			if e != nil {
-				writeRuntimeError(w, e)
-				return
-			}
-			v, e := wikiReadSlice(page, offset, limit)
-			respond(w, 200, v, e)
-		})
-		r.Post("/memory-spaces/{spaceId}/sources", func(w http.ResponseWriter, req *http.Request) {
-			if _, e := memoryRouteQuery(req); e != nil {
-				writeRuntimeError(w, e)
-				return
-			}
-			in, e := readAgentInput[WikiSourceInput](w, req)
-			if e != nil {
-				writeRuntimeError(w, e)
-				return
-			}
-			v, duplicate, e := m.CreateWikiSource(req.Context(), chi.URLParam(req, "spaceId"), in)
-			status := http.StatusAccepted
-			if duplicate {
-				status = http.StatusOK
-			}
-			respond(w, status, v, e)
-		})
-		r.Put("/memory-spaces/{spaceId}", func(w http.ResponseWriter, req *http.Request) {
-			in, e := readAgentInput[struct {
-				ExpectedRevision int    `json:"expectedRevision"`
-				Name             string `json:"name"`
-			}](w, req)
-			if e != nil {
-				writeRuntimeError(w, e)
-				return
-			}
-			v, e := m.UpdateWikiSpace(req.Context(), chi.URLParam(req, "spaceId"), in.ExpectedRevision, in.Name)
-			respond(w, 200, v, e)
-		})
-		r.Get("/memory-spaces/{spaceId}/pages/{id}/revisions/{revision}", func(w http.ResponseWriter, req *http.Request) {
-			if _, e := memoryRouteQuery(req); e != nil {
-				writeRuntimeError(w, e)
-				return
-			}
-			rev, e := memoryRouteInt(chi.URLParam(req, "revision"), 0, 1, int(^uint(0)>>1))
-			if e != nil {
-				writeRuntimeError(w, e)
-				return
-			}
-			v, e := m.WikiPageRevision(req.Context(), chi.URLParam(req, "spaceId"), chi.URLParam(req, "id"), rev)
-			respond(w, 200, v, e)
-		})
-		r.Get("/memory-pages/{id}/revisions/{revision}", func(w http.ResponseWriter, req *http.Request) {
-			if _, e := memoryRouteQuery(req); e != nil {
-				writeRuntimeError(w, e)
-				return
-			}
-			rev, e := memoryRouteInt(chi.URLParam(req, "revision"), 0, 1, int(^uint(0)>>1))
-			if e != nil {
-				writeRuntimeError(w, e)
-				return
-			}
-			page, e := s.GetWikiPage(req.Context(), chi.URLParam(req, "id"))
-			if e != nil {
-				writeRuntimeError(w, e)
-				return
-			}
-			v, e := m.WikiPageRevision(req.Context(), page.SpaceID, page.ID, rev)
-			respond(w, 200, v, e)
-		})
-	}
 	r.Get("/memory-spaces", func(w http.ResponseWriter, req *http.Request) {
-		v, e := s.ListWikiSpaces(req.Context())
-		respond(w, 200, v, e)
-	})
-	r.Post("/memory-spaces", func(w http.ResponseWriter, req *http.Request) {
-		in, e := readAgentInput[struct {
-			Name string `json:"name"`
-			Kind string `json:"kind"`
-		}](w, req)
-		if e != nil {
-			writeRuntimeError(w, e)
-			return
-		}
-		v, e := s.CreateWikiSpace(req.Context(), in.Name, in.Kind)
-		respond(w, 201, v, e)
+		value, err := s.ListWikiSpaces(req.Context())
+		respond(w, 200, value, err)
 	})
 	r.Get("/memory-spaces/{spaceId}/pages", func(w http.ResponseWriter, req *http.Request) {
-		if _, e := runtimeQuery(req, 50, "includeWithdrawn"); e != nil {
-			writeRuntimeError(w, e)
+		if _, err := runtimeQuery(req, 50, "includeWithdrawn"); err != nil {
+			writeRuntimeError(w, err)
 			return
 		}
-		v, e := s.ListWikiPages(req.Context(), chi.URLParam(req, "spaceId"), req.URL.Query().Get("includeWithdrawn") == "1")
-		respond(w, 200, v, e)
-	})
-	r.Post("/memory-spaces/{spaceId}/pages", func(w http.ResponseWriter, req *http.Request) {
-		in, e := readAgentInput[WikiPageInput](w, req)
-		if e != nil {
-			writeRuntimeError(w, e)
-			return
-		}
-		v, e := s.CreateWikiPage(req.Context(), chi.URLParam(req, "spaceId"), in)
-		respond(w, 201, v, e)
+		value, err := s.ListWikiPages(req.Context(), chi.URLParam(req, "spaceId"), req.URL.Query().Get("includeWithdrawn") == "1")
+		respond(w, 200, value, err)
 	})
 	r.Get("/memory-spaces/{spaceId}/pages/{id}", func(w http.ResponseWriter, req *http.Request) {
-		v, e := pageInSpace(req.Context(), req)
-		respond(w, 200, v, e)
+		value, err := pageInSpace(req.Context(), req)
+		respond(w, 200, value, err)
 	})
 	r.Put("/memory-spaces/{spaceId}/pages/{id}", func(w http.ResponseWriter, req *http.Request) {
-		if _, e := pageInSpace(req.Context(), req); e != nil {
-			writeRuntimeError(w, e)
+		if _, err := pageInSpace(req.Context(), req); err != nil {
+			writeRuntimeError(w, err)
 			return
 		}
-		in, e := readAgentInput[WikiPageInput](w, req)
-		if e != nil {
-			writeRuntimeError(w, e)
+		input, err := readAgentInput[WikiPageInput](w, req)
+		if err != nil {
+			writeRuntimeError(w, err)
 			return
 		}
-		v, e := s.UpdateWikiPage(req.Context(), chi.URLParam(req, "id"), in)
-		respond(w, 200, v, e)
+		// 浏览页保存固定为人工维护。
+		input.Maintenance = "manual"
+		value, err := s.UpdateWikiPage(req.Context(), chi.URLParam(req, "id"), input)
+		respond(w, 200, value, err)
 	})
-	r.Delete("/memory-spaces/{spaceId}/pages/{id}", func(w http.ResponseWriter, req *http.Request) {
-		if _, e := pageInSpace(req.Context(), req); e != nil {
-			writeRuntimeError(w, e)
-			return
+	if m, ok := s.(*Manager); ok {
+		revision := func(w http.ResponseWriter, req *http.Request) {
+			if _, err := memoryRouteQuery(req); err != nil {
+				writeRuntimeError(w, err)
+				return
+			}
+			rev, err := memoryRouteInt(chi.URLParam(req, "revision"), 0, 1, int(^uint(0)>>1))
+			if err != nil {
+				writeRuntimeError(w, err)
+				return
+			}
+			page, err := s.GetWikiPage(req.Context(), chi.URLParam(req, "id"))
+			if err != nil {
+				writeRuntimeError(w, err)
+				return
+			}
+			if sid := chi.URLParam(req, "spaceId"); sid != "" && sid != page.SpaceID {
+				http.NotFound(w, req)
+				return
+			}
+			value, err := m.WikiPageRevision(req.Context(), page.SpaceID, page.ID, rev)
+			respond(w, 200, value, err)
 		}
-		in, e := readAgentInput[struct {
-			ExpectedRevision int `json:"expectedRevision"`
-		}](w, req)
-		if e != nil {
-			writeRuntimeError(w, e)
-			return
-		}
-		v, e := s.WithdrawWikiPage(req.Context(), chi.URLParam(req, "id"), in.ExpectedRevision)
-		respond(w, 200, v, e)
-	})
-	r.Get("/memory-spaces/{spaceId}/search", func(w http.ResponseWriter, req *http.Request) {
-		q, e := runtimeQuery(req, 8, "q", "limit")
-		if e != nil {
-			writeRuntimeError(w, e)
-			return
-		}
-		v, e := s.SearchWiki(req.Context(), chi.URLParam(req, "spaceId"), req.URL.Query().Get("q"), q.Limit)
-		respond(w, 200, v, e)
-	})
-	r.Post("/memory-spaces/{spaceId}/imports", func(w http.ResponseWriter, req *http.Request) {
-		in, e := readAgentInput[struct {
-			Files map[string]string `json:"files"`
-		}](w, req)
-		if e != nil {
-			writeRuntimeError(w, e)
-			return
-		}
-		v, e := s.ImportWiki(req.Context(), chi.URLParam(req, "spaceId"), in.Files)
-		respond(w, 202, v, e)
-	})
-	r.Get("/memory-spaces/{spaceId}/export", func(w http.ResponseWriter, req *http.Request) {
-		v, e := s.ExportWiki(req.Context(), chi.URLParam(req, "spaceId"))
-		respond(w, 200, v, e)
-	})
-	r.Get("/memory-spaces/{spaceId}/checks", func(w http.ResponseWriter, req *http.Request) {
-		v, e := s.WikiCheck(req.Context(), chi.URLParam(req, "spaceId"))
-		respond(w, 200, v, e)
-	})
-	r.Get("/memory-spaces/{spaceId}/indexes", func(w http.ResponseWriter, req *http.Request) {
-		v, e := s.ListWikiIndexes(req.Context(), chi.URLParam(req, "spaceId"))
-		respond(w, 200, v, e)
-	})
-	r.Post("/memory-spaces/{spaceId}/indexes", func(w http.ResponseWriter, req *http.Request) {
-		in, e := readAgentInput[WikiIndexInput](w, req)
-		if e != nil {
-			writeRuntimeError(w, e)
-			return
-		}
-		v, e := s.RebuildWikiIndex(req.Context(), chi.URLParam(req, "spaceId"), in)
-		respond(w, 202, v, e)
-	})
-	r.Get("/memory-proposals", func(w http.ResponseWriter, req *http.Request) {
-		if _, e := runtimeQuery(req, 50, "spaceId", "status"); e != nil {
-			writeRuntimeError(w, e)
-			return
-		}
-		v, e := s.ListWikiCandidates(req.Context(), req.URL.Query().Get("spaceId"), req.URL.Query().Get("status"))
-		respond(w, 200, v, e)
-	})
-	r.Post("/memory-proposals/{id}/decision", func(w http.ResponseWriter, req *http.Request) {
-		in, e := readAgentInput[struct {
-			Decision         string `json:"decision"`
-			ExpectedRevision *int   `json:"expectedRevision,omitempty"`
-		}](w, req)
-		if e != nil {
-			writeRuntimeError(w, e)
-			return
-		}
-		var revisions []int
-		if in.ExpectedRevision != nil {
-			revisions = append(revisions, *in.ExpectedRevision)
-		}
-		v, e := s.DecideWikiCandidate(req.Context(), chi.URLParam(req, "id"), in.Decision, revisions...)
-		respond(w, 200, v, e)
-	})
-	r.Get("/memory-extractions", func(w http.ResponseWriter, req *http.Request) {
-		q, e := runtimeQuery(req, 50, "cursor", "limit")
-		if e != nil {
-			writeRuntimeError(w, e)
-			return
-		}
-		v, e := s.ListWikiJobs(req.Context(), q.Cursor, q.Limit)
-		respond(w, 200, v, e)
-	})
-	r.Post("/memory-extractions", func(w http.ResponseWriter, req *http.Request) {
-		in, e := readAgentInput[WikiExtractionInput](w, req)
-		if e != nil {
-			writeRuntimeError(w, e)
-			return
-		}
-		v, duplicate, e := s.CreateWikiExtraction(req.Context(), in)
-		status := http.StatusAccepted
-		if duplicate {
-			status = http.StatusOK
-		}
-		respond(w, status, v, e)
-	})
-	r.Get("/memory-extractions/{id}", func(w http.ResponseWriter, req *http.Request) {
-		v, e := s.GetWikiJob(req.Context(), chi.URLParam(req, "id"))
-		respond(w, 200, v, e)
-	})
-	r.Get("/embedding-profiles", func(w http.ResponseWriter, req *http.Request) {
-		v, e := s.ListEmbeddingProfiles(req.Context())
-		respond(w, 200, v, e)
-	})
-	r.Get("/embedding-requests", func(w http.ResponseWriter, req *http.Request) {
-		q, e := runtimeQuery(req, 50, "cursor", "limit")
-		if e != nil {
-			writeRuntimeError(w, e)
-			return
-		}
-		v, e := s.ListEmbeddingRequests(req.Context(), q.Cursor, q.Limit)
-		respond(w, 200, v, e)
-	})
-	r.Post("/embedding-profiles", func(w http.ResponseWriter, req *http.Request) {
-		in, e := readAgentInput[EmbeddingProfileInput](w, req)
-		if e != nil {
-			writeRuntimeError(w, e)
-			return
-		}
-		v, e := s.CreateEmbeddingProfile(req.Context(), in)
-		respond(w, 201, v, e)
-	})
-	r.Put("/embedding-profiles/{id}", func(w http.ResponseWriter, req *http.Request) {
-		in, e := readAgentInput[struct {
-			ExpectedRevision int `json:"expectedRevision"`
-			EmbeddingProfileInput
-		}](w, req)
-		if e != nil {
-			writeRuntimeError(w, e)
-			return
-		}
-		v, e := s.UpdateEmbeddingProfile(req.Context(), chi.URLParam(req, "id"), in.ExpectedRevision, in.EmbeddingProfileInput)
-		respond(w, 200, v, e)
-	})
+		r.Get("/memory-pages/{id}/revisions/{revision}", revision)
+		r.Get("/memory-spaces/{spaceId}/pages/{id}/revisions/{revision}", revision)
+	}
+	r.Get("/sessions/{id}/memory", http.NotFound)
+	r.Put("/sessions/{id}/memory-space", http.NotFound)
+	r.Get("/memory-spaces/{spaceId}/directory", http.NotFound)
+	r.Get("/memory-spaces/{spaceId}/pages/{id}/revisions", http.NotFound)
+	r.Get("/memory-spaces/{spaceId}/pages/{id}/read", http.NotFound)
+	r.Post("/memory-spaces/{spaceId}/sources", http.NotFound)
+	r.Put("/memory-spaces/{spaceId}", http.NotFound)
+	r.Post("/memory-spaces", http.NotFound)
+	r.Post("/memory-spaces/{spaceId}/pages", http.NotFound)
+	r.Delete("/memory-spaces/{spaceId}/pages/{id}", http.NotFound)
+	r.Get("/memory-spaces/{spaceId}/search", http.NotFound)
+	r.Post("/memory-spaces/{spaceId}/imports", http.NotFound)
+	r.Get("/memory-spaces/{spaceId}/export", http.NotFound)
+	r.Get("/memory-spaces/{spaceId}/checks", http.NotFound)
+	r.Get("/memory-spaces/{spaceId}/indexes", http.NotFound)
+	r.Post("/memory-spaces/{spaceId}/indexes", http.NotFound)
+	r.Get("/memory-proposals", http.NotFound)
+	r.Post("/memory-proposals/{id}/decision", http.NotFound)
+	r.Get("/memory-extractions", http.NotFound)
+	r.Post("/memory-extractions", http.NotFound)
+	r.Get("/memory-extractions/{id}", http.NotFound)
+	r.Get("/embedding-profiles", http.NotFound)
+	r.Get("/embedding-requests", http.NotFound)
+	r.Post("/embedding-profiles", http.NotFound)
+	r.Put("/embedding-profiles/{id}", http.NotFound)
 }
 
 // 新记忆入口只接收显式声明且单值的参数，避免宽松 URL 解析悄悄丢弃歧义。

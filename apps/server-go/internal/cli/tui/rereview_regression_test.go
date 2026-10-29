@@ -90,22 +90,6 @@ func TestRecheckTerminalReasoningRestored(t *testing.T) {
 	}
 }
 
-func TestRecheckStaleAuthorizationsCannotPopulateOtherSession(t *testing.T) {
-	api := &fakeAPI{authorizations: []client.SessionAuthorization{{ID: "auth-a", SessionID: "s1", Status: "allowed"}}}
-	m := regressionChatReady(t, api)
-	m.chat.panel = newApprovalPanel(map[string]client.AccessDecisionInput{})
-	oldReply := loadAuthorizationsCmd(api, "s1")()
-	m = pressKey(t, m, keyEsc) // 关面板
-	m = pressKey(t, m, keyEsc) // 返回列表
-	next, _ := m.enterChat("s2")
-	m = next.(Model)
-	m.chat.panel = newApprovalPanel(map[string]client.AccessDecisionInput{})
-	m = feedMsg(t, m, oldReply)
-	if len(m.chat.panel.auths) != 0 {
-		t.Fatalf("s1 授权迟到回填到 s2 面板：%+v", m.chat.panel.auths)
-	}
-}
-
 func TestRecheckLateLoadMustRespectEsc(t *testing.T) {
 	api := &fakeAPI{}
 	m := regressionChatReady(t, api)

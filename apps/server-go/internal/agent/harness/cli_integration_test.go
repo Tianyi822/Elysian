@@ -232,73 +232,83 @@ func cliFileIntegrationTools(t *testing.T) (*toolbridge.Bridge, *Extensions, str
 	return bridge, extensions, root
 }
 
-func TestCLIApprovalDispatchesRealFileToolAndSharesAuthorization(t *testing.T) {
-	ctx := context.Background()
-	bridge, extensions, root := cliFileIntegrationTools(t)
-	var count atomic.Int32
-	m, s, _ := agentManager(t, func(_ context.Context, _ model.Profile, r model.Request) (model.Response, error) {
-		if r.ToolChoice == "store_working_memory" {
-			return memoryReply(r), nil
-		}
-		if missingOperationTools(r, "file_write") {
-			return searchReply("file_write"), nil
-		}
-		if count.Add(1) == 1 {
-			args, _ := json.Marshal(map[string]string{"root": root, "path": "approved.txt", "content": "只在明确批准后写入", "expected": "missing"})
-			return model.Response{FinishReason: "tool_calls", ToolCalls: []model.ToolCall{{ID: "write", Name: "file_write", Arguments: args}}}, nil
-		}
-		return finalReply("文件已写入"), nil
-	}, func(d *Deps) {
-		d.Tools, d.Catalog = bridge, extensions
-		d.Spawn = func(ctx context.Context) (worker.Process, error) {
-			return worker.Spawn(ctx, worker.Options{Path: os.Args[0], Args: []string{"-test.run=^TestRuntimeWorkerHelper$"}, Env: []string{"HOME=/tmp", "ELYSIAN_RUNTIME_TEST_CHILD=1"}})
-		}
-	})
-	server := httptest.NewServer(http.StripPrefix("/api/agent", m.Router()))
-	defer server.Close()
-	cli := cliclient.New(server.URL)
-	run, err := cli.CreateTask(ctx, s.ID, cliclient.AgentInput{RequestID: "cli-real-approval", Content: "写入隔离测试文件", AuthorizationMode: "on-demand", ExtensionMode: "enabled"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	approval := waitingApproval(t, m, run.ID)
-	if _, err = os.Stat(filepath.Join(root, "approved.txt")); !os.IsNotExist(err) {
-		t.Fatal("批准前已执行写操作")
-	}
-	approvals, err := cli.ListApprovalsByRun(ctx, run.ID)
-	if err != nil || len(approvals) != 1 || approvals[0].Access == nil {
-		t.Fatalf("CLI 未读到授权卡：%+v %v", approvals, err)
-	}
-	a := approvals[0]
-	_, err = cli.DecideAccess(ctx, approval.ID, cliclient.AccessDecisionInput{RequestID: "cli-allow-file", ExpectedRevision: a.Access.Revision, ExpectedDigest: a.Access.Digest, Decision: "session"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if done := runtimeFinished(t, m, run.ID); done.Status != StateSucceeded {
-		t.Fatalf("真实工具未完成：%+v", done)
-	}
-	raw, err := os.ReadFile(filepath.Join(root, "approved.txt"))
-	if err != nil || string(raw) != "只在明确批准后写入" {
-		t.Fatalf("真实文件结果错误：%q %v", raw, err)
-	}
-	auths, err := cli.ListSessionAuthorizations(ctx, s.ID)
-	if err != nil || len(auths) != 1 {
-		t.Fatalf("会话授权未共享：%+v %v", auths, err)
-	}
-	if err = cli.RevokeSessionAuthorization(ctx, s.ID, auths[0].ID, cliclient.RevokeAuthorizationInput{RequestID: "cli-revoke-file", ExpectedRevision: auths[0].Revision}); err != nil {
-		t.Fatal(err)
-	}
-	calls, err := cli.ListCalls(ctx, run.ID, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	for _, call := range calls.Items {
-		if call.Tool == "file_write" && call.Status == "succeeded" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("工具回执不可回读：%+v", calls)
+func TestCLIApprovalDispatchesRealFileToolWithoutSessionAuthorization(t *testing.T) {
+	for _, mode := range []string{"ask", "assist", "full"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx := context.Background()
+			bridge, extensions, root := cliFileIntegrationTools(t)
+			var count atomic.Int32
+			m, s, _ := agentManager(t, func(_ context.Context, _ model.Profile, r model.Request) (model.Response, error) {
+				if r.ToolChoice == "store_working_memory" {
+					return memoryReply(r), nil
+				}
+				if missingOperationTools(r, "file_write") {
+					return searchReply("file_write"), nil
+				}
+				if count.Add(1) == 1 {
+					args, _ := json.Marshal(map[string]string{"root": root, "path": "approved.txt", "content": "只在明确批准后写入", "expected": "missing"})
+					return model.Response{FinishReason: "tool_calls", ToolCalls: []model.ToolCall{{ID: "write", Name: "file_write", Arguments: args}}}, nil
+				}
+				return finalReply("文件已写入"), nil
+			}, func(d *Deps) {
+				d.Tools, d.Catalog = bridge, extensions
+				d.Spawn = func(ctx context.Context) (worker.Process, error) {
+					return worker.Spawn(ctx, worker.Options{Path: os.Args[0], Args: []string{"-test.run=^TestRuntimeWorkerHelper$"}, Env: []string{"HOME=/tmp", "ELYSIAN_RUNTIME_TEST_CHILD=1"}})
+				}
+			})
+			server := httptest.NewServer(http.StripPrefix("/api/agent", m.Router()))
+			defer server.Close()
+			cli := cliclient.New(server.URL)
+			run, err := cli.CreateTask(ctx, s.ID, cliclient.AgentInput{RequestID: "cli-real-approval", Content: "写入隔离测试文件", AuthorizationMode: "on-demand", ExtensionMode: "enabled", PermissionMode: mode})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mode != "full" {
+				approval := waitingApproval(t, m, run.ID)
+				if _, err = os.Stat(filepath.Join(root, "approved.txt")); !os.IsNotExist(err) {
+					t.Fatal("批准前已执行写操作")
+				}
+				approvals, err := cli.ListApprovalsByRun(ctx, run.ID)
+				if err != nil || len(approvals) != 1 || approvals[0].Access == nil {
+					t.Fatalf("CLI 未读到授权卡：%+v %v", approvals, err)
+				}
+				a := approvals[0]
+				_, err = cli.DecideAccess(ctx, approval.ID, cliclient.AccessDecisionInput{RequestID: "cli-allow-file", ExpectedRevision: a.Access.Revision, ExpectedDigest: a.Access.Digest, Decision: "once"})
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if done := runtimeFinished(t, m, run.ID); done.Status != StateSucceeded {
+					t.Fatalf("完全开放未执行: %+v", done)
+				}
+				approvals, err := cli.ListApprovalsByRun(ctx, run.ID)
+				if err != nil || len(approvals) != 0 {
+					t.Fatalf("完全开放仍询问: %+v %v", approvals, err)
+				}
+			}
+			if done := runtimeFinished(t, m, run.ID); done.Status != StateSucceeded {
+				t.Fatalf("真实工具未完成：%+v", done)
+			}
+			raw, err := os.ReadFile(filepath.Join(root, "approved.txt"))
+			if err != nil || string(raw) != "只在明确批准后写入" {
+				t.Fatalf("真实文件结果错误：%q %v", raw, err)
+			}
+			if rows, err := m.SessionAuthorizations(ctx, s.ID); err != nil || len(rows) != 0 {
+				t.Fatalf("逐次审批不应创建会话授权: %+v %v", rows, err)
+			}
+			calls, err := cli.ListCalls(ctx, run.ID, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, call := range calls.Items {
+				if call.Tool == "file_write" && call.Status == "succeeded" {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("工具回执不可回读：%+v", calls)
+			}
+		})
 	}
 }

@@ -225,8 +225,10 @@ func (s *store) acceptAgent(ctx context.Context, task Task, run Run, canonical, 
 		if _, err = tx.ExecContext(ctx, "INSERT INTO runs(id,task_id,state,created_at,document,session_id,request_id,canonical_input,run_number) VALUES(?,?,?,?,?,?,?,?,?)", run.ID, task.ID, run.Status, run.CreatedAt, string(raw), session.ID, run.RequestID, canonical, run.RunNumber); err != nil {
 			return err
 		}
-		if err = snapshotWikiRunSpaces(ctx, tx, run.ID, session.ID); err != nil {
-			return err
+		if run.WikiStrategy != wikiDisabledStrategy {
+			if err = snapshotWikiRunSpaces(ctx, tx, run.ID, session.ID); err != nil {
+				return err
+			}
 		}
 		session.ActiveRunID, session.Notices = run.ID, nil
 		if err = saveSession(ctx, tx, session); err != nil {

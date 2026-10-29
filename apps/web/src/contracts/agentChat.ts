@@ -1,6 +1,6 @@
 import type { AgentApproval, AgentAttachmentRef, AgentChatOutput, AgentChatTimelineSnapshot, AgentCreateSessionInput, AgentInput, AgentMessage, AgentMessageAttachment, AgentPermissionMode, AgentRenameSessionInput, AgentSession, AgentSwitchModelInput, RuntimeCall, RuntimeRun } from '@elysian/contracts'
 import type { AgentUserInputAnswer, AgentUserInputRequest, AgentUserInputSubmission } from '@elysian/contracts'
-import type { AgentAccessDecisionInput, AgentAuthorizationRevokeInput, AgentSessionAuthorization } from '@elysian/contracts'
+import type { AgentAccessDecisionInput } from '@elysian/contracts'
 
 export type AgentChatPermissionMode = AgentPermissionMode
 
@@ -101,8 +101,6 @@ export interface AgentConversationAdapter {
 
 export interface AgentChatGovernance {
   decideAccess(id: string, input: AgentAccessDecisionInput): Promise<AgentApproval>
-  authorizations(sessionId: string, signal?: AbortSignal): Promise<readonly AgentSessionAuthorization[]>
-  revokeAuthorization(sessionId: string, id: string, input: AgentAuthorizationRevokeInput): Promise<AgentSessionAuthorization>
   approvals(runId: string, signal?: AbortSignal): Promise<readonly AgentApproval[]>
   decide(id: string, decision: 'approved' | 'denied'): Promise<AgentApproval>
 }

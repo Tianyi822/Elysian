@@ -37,19 +37,8 @@ func registerCapabilityRoutes(r chi.Router, service runtimeService) {
 		v, e := m.DecideAccess(req.Context(), chi.URLParam(req, "id"), in)
 		respond(w, v, e)
 	}))
-	r.Get("/sessions/{id}/authorizations", wrap(func(m *Manager, w http.ResponseWriter, req *http.Request) {
-		rows, e := m.SessionAuthorizations(req.Context(), chi.URLParam(req, "id"))
-		respond(w, map[string]any{"items": rows}, e)
-	}))
-	r.Delete("/sessions/{id}/authorizations/{authorizationId}", wrap(func(m *Manager, w http.ResponseWriter, req *http.Request) {
-		in, e := readAgentInput[RevokeAuthorizationInput](w, req)
-		if e != nil {
-			writeRuntimeError(w, e)
-			return
-		}
-		v, e := m.RevokeSessionAuthorization(req.Context(), chi.URLParam(req, "id"), chi.URLParam(req, "authorizationId"), in)
-		respond(w, v, e)
-	}))
+	r.Get("/sessions/{id}/authorizations", http.NotFound)
+	r.Delete("/sessions/{id}/authorizations/{authorizationId}", http.NotFound)
 	r.Get("/sessions/{id}/environment", wrap(func(m *Manager, w http.ResponseWriter, req *http.Request) {
 		v, e := m.GetEnvironment(req.Context(), chi.URLParam(req, "id"))
 		respond(w, v, e)

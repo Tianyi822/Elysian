@@ -76,35 +76,6 @@ func TestDecideAccessBodyExact(t *testing.T) {
 	}
 }
 
-func TestSessionAuthorizationsListAndRevoke(t *testing.T) {
-	authsHandler := func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
-			_, _ = io.WriteString(w, `{"items":[{"id":"auth-1","sessionId":"s1","revision":5,"status":"allowed","tool":"bash","createdAt":"2026-10-25T09:00:00.000Z","access":{"revision":2,"digest":"d","kind":"script","sessionAllowed":true,"directories":[]}}]}`)
-			return
-		}
-		raw, _ := io.ReadAll(r.Body)
-		if r.Method != http.MethodDelete || string(raw) != `{"requestId":"req-9","expectedRevision":5}` {
-			w.WriteHeader(400)
-			return
-		}
-		w.WriteHeader(200)
-		_, _ = io.WriteString(w, `{"id":"auth-1","sessionId":"s1","revision":6,"status":"revoked","tool":"bash","createdAt":"2026-10-25T09:00:00.000Z","revokedAt":"2026-10-25T10:00:00.000Z","access":{"revision":2,"digest":"d","kind":"script","sessionAllowed":true,"directories":[]}}`)
-	}
-	rec := newRecordingServer(map[string]http.HandlerFunc{
-		"/api/agent/sessions/s1/authorizations":        authsHandler,
-		"/api/agent/sessions/s1/authorizations/auth-1": authsHandler,
-	})
-	defer rec.Close()
-	c := New(rec.URL())
-	items, err := c.ListSessionAuthorizations(context.Background(), "s1")
-	if err != nil || len(items) != 1 || items[0].Revision != 5 {
-		t.Fatalf("授权列表解析不符：%+v %v", items, err)
-	}
-	if err := c.RevokeSessionAuthorization(context.Background(), "s1", "auth-1", RevokeAuthorizationInput{RequestID: "req-9", ExpectedRevision: 5}); err != nil {
-		t.Fatalf("撤回应成功：%v", err)
-	}
-}
-
 func TestAnswerUserInputPathAndBody(t *testing.T) {
 	rec := newRecordingServer(map[string]http.HandlerFunc{
 		"/api/agent/runs/r-1/user-inputs/ui-1/answer": func(w http.ResponseWriter, r *http.Request) {

@@ -28,8 +28,8 @@ func TestPermissionMatrix(t *testing.T) {
 		{"bash-write-mount", Operation{Capability: Capability{Name: BashExec, Source: BashSource}, Execution: &ExecutionPlan{Grant: &execconfig.Grant{Directories: []execconfig.Directory{{Path: "/business", Access: "rw"}}}}}, false, false, true},
 		{"bash-network", Operation{Capability: Capability{Name: BashExec, Source: BashSource}, Execution: &ExecutionPlan{Grant: &execconfig.Grant{Network: []execconfig.NetworkEndpoint{{Scheme: "https", Host: "example.com", Port: 443}}}}}, false, false, true},
 		{"skill-script", Operation{Capability: Capability{Name: "script_run", Source: "script"}, Execution: &ExecutionPlan{}}, false, true, true},
-		{"mcp-write", Operation{Capability: Capability{Name: "mcp_anything", Source: "mcp-tool"}}, false, false, false},
-		{"mcp-untrusted-read", Operation{Capability: Capability{Name: "mcp_read", Source: "mcp-tool", ReadOnly: true}}, false, false, false},
+		{"mcp-write", Operation{Capability: Capability{Name: "mcp_anything", Source: "mcp-tool"}}, false, false, true},
+		{"mcp-untrusted-read", Operation{Capability: Capability{Name: "mcp_read", Source: "mcp-tool", ReadOnly: true}}, false, false, true},
 	}
 	for _, test := range cases {
 		for _, mode := range []struct {
@@ -79,5 +79,14 @@ func TestPermissionModePinnedAndIdempotent(t *testing.T) {
 	again, duplicate, err := m.CreateTask(ctx, session.ID, input)
 	if err != nil || !duplicate || again.ID != run.ID {
 		t.Fatalf("exact retry failed: %v", err)
+	}
+}
+
+func TestLegacyPermissionModeKeepsMCPApproval(t *testing.T) {
+	for _, version := range []string{"", "platform-tools/v1"} {
+		direct, _ := operationDecision(CapabilitySnapshot{PermissionMode: PermissionFull, PolicyVersion: version}, Operation{Capability: Capability{Name: "mcp_read", Source: "mcp-tool", ReadOnly: true}})
+		if direct {
+			t.Fatalf("旧快照被新版权限策略扩大: %q", version)
+		}
 	}
 }

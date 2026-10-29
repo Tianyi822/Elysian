@@ -1,3 +1,4 @@
+import { memoryFixture } from '../../test/memoryFixture'
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -10,7 +11,7 @@ import { useSessionStore } from '../../stores/sessionStore'
 beforeEach(() => { useAgentMemoryStore.getState().reset(); useSessionStore.setState({ phase: 'authed', mode: 'demo' }) })
 
 async function seedPage(gateway: ReturnType<typeof createMockGateway>, input: { slug: string; title: string; markdown: string; kind?: 'runbook' | 'reference' | 'sources' }) {
-  return gateway.agentMemory.createPage('wiki-global', input)
+  return memoryFixture(gateway.agentMemory).seedPage('wiki-global', input)
 }
 
 describe('知识 Wiki 独立浏览页', () => {
@@ -108,7 +109,7 @@ describe('知识 Wiki 独立浏览页', () => {
     const user = userEvent.setup(), gateway = createMockGateway({ eventStream: 'memory' })
     await seedPage(gateway, { slug: 'source-1', title: '交接资料', markdown: '导入原文内容', kind: 'sources' })
     const page = await seedPage(gateway, { slug: 'old', title: '旧文档', markdown: '旧内容' })
-    await gateway.agentMemory.withdrawPage(page.spaceId, page.id, page.revision)
+    await memoryFixture(gateway.agentMemory).seedWithdrawal(page.spaceId, page.id, page.revision)
     renderApp('/wiki', { gateway })
     await user.click(await screen.findByRole('button', { name: /交接资料/ }))
     const sourceDialog = await screen.findByRole('dialog')
@@ -141,11 +142,11 @@ describe('知识 Wiki 独立浏览页', () => {
     vi.spyOn(gateway.agentMemory, 'listSpaces').mockResolvedValueOnce([])
     renderApp('/wiki', { gateway })
     expect(await screen.findByText('尚无知识空间')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: '去工作台创建空间' })).toHaveAttribute('href', '/agent/memory')
-    expect(screen.getByRole('link', { name: '打开完整工作台' })).toHaveAttribute('href', '/agent/memory')
+    expect(screen.queryByRole('link', { name: /工作台/ })).not.toBeInTheDocument()
+    expect(screen.queryByText('打开完整工作台')).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '刷新' }))
     expect(await screen.findByText('当前空间还没有页面')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: '去工作台导入或新建' })).toHaveAttribute('href', '/agent/memory')
+    expect(screen.queryByRole('link', { name: /工作台/ })).not.toBeInTheDocument()
   })
 
   it('读取失败显示错误并提供重试，重试清掉错误', async () => {
@@ -161,8 +162,8 @@ describe('知识 Wiki 独立浏览页', () => {
 
   it('自绘下拉切换知识空间', async () => {
     const user = userEvent.setup(), gateway = createMockGateway({ eventStream: 'memory' })
-    const space = await gateway.agentMemory.createSpace({ name: '项目知识', kind: 'business' })
-    await gateway.agentMemory.createPage(space.id, { slug: 'guide', title: '项目指南', markdown: '内容' })
+    const space = await memoryFixture(gateway.agentMemory).seedSpace({ name: '项目知识', kind: 'business' })
+    await memoryFixture(gateway.agentMemory).seedPage(space.id, { slug: 'guide', title: '项目指南', markdown: '内容' })
     renderApp('/wiki', { gateway })
     expect(await screen.findByText('当前空间还没有页面')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /知识空间/ }))

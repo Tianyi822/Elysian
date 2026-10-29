@@ -1,12 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { AgentOperationApproval, AgentRuntimeAccess, AgentSessionAuthorization } from '@elysian/contracts'
+import type { AgentOperationApproval, AgentRuntimeAccess } from '@elysian/contracts'
 import { createAgentChatGovernance, parseApproval, parseRuntimeAccess } from './agentChatGovernance'
 import { createHttpAgentExtensionsAdapter } from './agentExtensionsHttpAdapter'
 
 const access: AgentRuntimeAccess = { revision: 2, digest: 'digest', scopeKey: 'scope', kind: 'file', directories: [{ path: '/srv/project', access: 'rw' }], network: [], privateCidrs: [], resources: [], sessionAllowed: true }
 const approval: AgentOperationApproval = { id: 'approval/a', runId: 'run', operationId: 'op', status: 'pending', createdAt: '', expiresAt: '', access,
   operation: { id: 'op', runId: 'run', taskId: 'task', modelRequestId: 'model', callIndex: 0, modelCallId: 'tool', argumentsJson: '{"path":"/srv/project/config"}', capability: { name: 'files_read', description: '读取文件', parameters: {}, source: 'builtin', ref: { id: 'files_read', revision: 1 }, readOnly: true }, snapshotDigest: 'snapshot', workspaceRevision: 1, policy: 'approval-required', status: 'waiting-approval', callId: 'call', createdAt: '' } }
-const authorization: AgentSessionAuthorization = { id: 'authorization/a', sessionId: 'session/a', revision: 3, status: 'active', tool: 'files_read', createdAt: '', access }
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -20,20 +19,16 @@ describe('运行时授权 HTTP 契约', () => {
     expect(() => parseRuntimeAccess({ ...access, runtime: { name: 'Bash', image: 'image', platform: 'linux/amd64', requiresDownload: 'yes' } })).toThrow()
   })
 
-  it('确认与撤回透传精确幂等请求，不能跨会话接受回执', async () => {
-    const fetch = vi.fn().mockResolvedValueOnce(Response.json(approval)).mockResolvedValueOnce(Response.json({ items: [authorization] })).mockResolvedValueOnce(Response.json({ ...authorization, status: 'revoked', revision: 4 })).mockResolvedValueOnce(Response.json({ items: [{ ...authorization, sessionId: 'other' }] }))
+  it('逐次确认透传精确幂等请求，不提供会话授权管理', async () => {
+    const fetch = vi.fn().mockResolvedValueOnce(Response.json(approval))
     vi.stubGlobal('fetch', fetch)
     const api = createAgentChatGovernance()
     const decision = { requestId: 'decision', expectedRevision: 2, expectedDigest: 'digest', decision: 'once' as const }
     await api.decideAccess(approval.id, decision)
     expect(fetch.mock.calls[0]?.[0]).toBe('/api/agent/approvals/approval%2Fa/access-decision')
     expect(JSON.parse(fetch.mock.calls[0]?.[1].body)).toEqual(decision)
-    expect(await api.authorizations(authorization.sessionId)).toEqual([authorization])
-    const revoke = { requestId: 'revoke', expectedRevision: 3 }
-    expect(await api.revokeAuthorization(authorization.sessionId, authorization.id, revoke)).toMatchObject({ status: 'revoked' })
-    expect(fetch.mock.calls[2]?.[1].method).toBe('DELETE')
-    expect(JSON.parse(fetch.mock.calls[2]?.[1].body)).toEqual(revoke)
-    await expect(api.authorizations(authorization.sessionId)).rejects.toThrow('响应格式无效')
+    expect(api).not.toHaveProperty('authorizations')
+    expect(api).not.toHaveProperty('revokeAuthorization')
   })
 
   it('MCP 探测请求与决定独立于聊天，要求仅本次权限', async () => {

@@ -92,7 +92,7 @@ func TestWikiAcceptedRevisionAndWithdrawalIsolation(t *testing.T) {
 	if _, err = m.SetWikiSessionSpace(ctx, s.ID, space.ID, false); err != nil {
 		t.Fatal(err)
 	}
-	run := submitAgentTest(t, m, s, "wiki-revision", "容器检查")
+	run := submitLegacyWikiTest(t, m, s, "wiki-revision", "容器检查")
 	finished := runtimeFinished(t, m, run.ID)
 	if finished.Status != StateSucceeded {
 		t.Fatalf("%+v", finished)
@@ -134,7 +134,7 @@ func TestWikiAcceptedRevisionAndWithdrawalIsolation(t *testing.T) {
 func TestWikiEvidenceSurvivesWholeSessionCleanup(t *testing.T) {
 	m, s := wikiTestManager(t)
 	ctx := context.Background()
-	run := submitAgentTest(t, m, s, "wiki-evidence", "容器检查")
+	run := submitLegacyWikiTest(t, m, s, "wiki-evidence", "容器检查")
 	finished := runtimeFinished(t, m, run.ID)
 	if finished.Status != StateSucceeded {
 		t.Fatalf("%+v", finished)
@@ -189,7 +189,7 @@ func TestWikiWithdrawalQuarantinesDerivedPagesAfterSourceSessionCleanup(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := submitAgentTest(t, m, s, "wiki-source-cleanup", "容器检查")
+	r := submitLegacyWikiTest(t, m, s, "wiki-source-cleanup", "容器检查")
 	if done := runtimeFinished(t, m, r.ID); done.Status != StateSucceeded {
 		t.Fatalf("%+v", done)
 	}
@@ -269,7 +269,7 @@ func TestWikiNavigationDoesNotInjectLargeBody(t *testing.T) {
 	if _, err = m.SetWikiSessionSpace(ctx, session.ID, space.ID, false); err != nil {
 		t.Fatal(err)
 	}
-	r := submitAgentTest(t, m, session, "wiki-trim", "容器检查")
+	r := submitLegacyWikiTest(t, m, session, "wiki-trim", "容器检查")
 	if done := runtimeFinished(t, m, r.ID); done.Status != StateSucceeded {
 		t.Fatalf("%+v", done)
 	}
@@ -303,7 +303,7 @@ func TestWikiWorkspaceQuarantinePersistsUntilEmpty(t *testing.T) {
 		return finalReply("检查已完成"), nil
 	}, func(d *Deps) { d.Workspaces = files })
 	ctx := context.Background()
-	r := submitAgentTest(t, m, session, "workspace-wiki", "检查")
+	r := submitLegacyWikiTest(t, m, session, "workspace-wiki", "检查")
 	runtimeFinished(t, m, r.ID)
 	space, err := m.CreateWikiSpace(ctx, "业务", "business")
 	if err != nil {
@@ -352,4 +352,41 @@ func TestWikiWorkspaceQuarantinePersistsUntilEmpty(t *testing.T) {
 	if err != nil || view.Quarantined || v.FileCount != 0 {
 		t.Fatal("空工作区仍继承旧来源", err)
 	}
+}
+
+// 构造升级前已经接受的固定快照，验证存量运行恢复；不通过新聊天接受入口。
+func submitLegacyWikiTest(t *testing.T, m *Manager, session Session, id, content string) Run {
+	t.Helper()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ctx := context.Background()
+	stored, err := readSession(ctx, m.store.db, session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile, err := m.deps.Profiles.Resolve(stored.ModelProfileID, stored.ModelRevision, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := m.environment(ctx, session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := m.snapshotWithMode(ctx, env, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot.PolicyVersion = "platform-tools/v1"
+	snapshot.Digest = digestJSON(snapshot)
+	now := stamp(m.deps.Now())
+	task := Task{ID: m.deps.NewID(), SessionID: session.ID, RequestID: id, Kind: "agent", DriverVersion: "v2", CreatedAt: now, Goal: content}
+	public := profile.Public()
+	input := AgentInput{RequestID: id, Content: content}
+	run := Run{ID: m.deps.NewID(), TaskID: task.ID, SessionID: session.ID, RequestID: id, Input: content, Model: &public, Status: StateQueued, CreatedAt: now, Limits: m.deps.AgentLimits, LastSeq: "0", Phase: StateQueued, MemoryStatus: "stale", DriverVersion: "v2", WikiStrategy: wikiNavigationStrategy, Selection: &input, Snapshot: &snapshot}
+	run, _, err = m.store.acceptAgent(ctx, task, run, digestJSON(input), m.deps.NewID(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.signal()
+	return run
 }

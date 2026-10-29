@@ -150,16 +150,7 @@ func (a contextAPI) DecideAccess(ctx context.Context, id string, in client.Acces
 	defer done()
 	return a.API.DecideAccess(ctx, id, in)
 }
-func (a contextAPI) ListSessionAuthorizations(ctx context.Context, id string) ([]client.SessionAuthorization, error) {
-	ctx, done := a.bound(ctx)
-	defer done()
-	return a.API.ListSessionAuthorizations(ctx, id)
-}
-func (a contextAPI) RevokeSessionAuthorization(ctx context.Context, sessionID, id string, in client.RevokeAuthorizationInput) error {
-	ctx, done := a.bound(ctx)
-	defer done()
-	return a.API.RevokeSessionAuthorization(ctx, sessionID, id, in)
-}
+
 func (a contextAPI) AnswerUserInput(ctx context.Context, runID, id string, in client.AnswerUserInputInput) (client.UserInputReceipt, error) {
 	ctx, done := a.bound(ctx)
 	defer done()

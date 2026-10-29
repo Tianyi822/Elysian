@@ -49,8 +49,6 @@ type API interface {
 	ListApprovalsByRun(ctx context.Context, runID string) ([]client.Approval, error)
 	DecideApproval(ctx context.Context, id, decision string) (client.Approval, error)
 	DecideAccess(ctx context.Context, id string, input client.AccessDecisionInput) (client.Approval, error)
-	ListSessionAuthorizations(ctx context.Context, sessionID string) ([]client.SessionAuthorization, error)
-	RevokeSessionAuthorization(ctx context.Context, sessionID, authorizationID string, input client.RevokeAuthorizationInput) error
 	AnswerUserInput(ctx context.Context, runID, inputID string, input client.AnswerUserInputInput) (client.UserInputReceipt, error)
 	ListCalls(ctx context.Context, runID, cursor string) (client.Page[client.Call], error)
 	// StreamChatOutput 建立一次 SSE 连接逐帧回调全量快照；契约见 client 包。
@@ -395,10 +393,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateApprovals(msg)
 	case approvalDecisionMsg:
 		return m.updateApprovalDecision(msg)
-	case authorizationsMsg:
-		return m.updateAuthorizations(msg)
-	case revokeAuthMsg:
-		return m.updateRevokeAuth(msg)
 	case userInputAnswerMsg:
 		return m.updateUserInputAnswer(msg)
 	case callsMsg:

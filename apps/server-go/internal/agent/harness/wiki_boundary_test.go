@@ -141,6 +141,20 @@ func TestWikiExtractionRevisionCandidatesKeepFixedBase(t *testing.T) {
 			if finished := runtimeFinished(t, m, run.ID); finished.Status != StateSucceeded {
 				t.Fatalf("运行失败：%+v", finished)
 			}
+			// 仅直接驱动兼容编译实现，生产不会再派生或调度这些任务。
+			finished, err := m.Get(ctx, run.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = m.store.write(ctx, "legacy-extraction-fixture", func(tx *sql.Tx) error {
+				if err := snapshotWikiRunSpaces(ctx, tx, run.ID, session.ID); err != nil {
+					return err
+				}
+				return m.enqueueWikiNavigationExtraction(ctx, tx, &finished)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			m.runNextWikiJob()
 			var candidates []WikiCandidate
 			runtimeEventually(t, func() bool {
 				candidates, err = m.ListWikiCandidates(ctx, space.ID, "pending")

@@ -72,7 +72,7 @@ func TestRuntimeAccessQueueFullPreservesPendingRequest(t *testing.T) {
 	}, func(d *Deps) { d.Catalog = cat; d.Limits.QueueCapacity = 1; d.AgentLimits.QueueCapacity = 1 })
 	run := submitDemand(t, m, session, "waiting-for-capacity")
 	a := waitingApproval(t, m, run.ID)
-	in := accessInput(a, "session", "capacity-decision")
+	in := accessInput(a, "once", "capacity-decision")
 	newSession := func() Session {
 		s, err := m.CreateSession(ctx, CreateSessionInput{ModelProfileID: session.ModelProfileID, ModelRevision: session.ModelRevision})
 		if err != nil {
@@ -136,7 +136,7 @@ func TestRuntimeAccessRecordsFaultBlocksDecisionsAndDispatch(t *testing.T) {
 				}
 			}
 			m.mu.Unlock()
-			_, err := m.DecideAccess(ctx, a.ID, accessInput(a, "session", "fault-decision"))
+			_, err := m.DecideAccess(ctx, a.ID, accessInput(a, "once", "fault-decision"))
 			if stage == "before-decision" {
 				runtimeErrorCode(t, err, "storage-unavailable")
 				still := waitingApproval(t, m, run.ID)
@@ -157,7 +157,7 @@ func TestRuntimeAccessRecordsFaultBlocksDecisionsAndDispatch(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if stage == "before-decision" && len(remembered) != 0 || stage == "decision-replica" && len(remembered) != 1 {
+			if len(remembered) != 0 {
 				t.Fatalf("durable decision fact mismatch after %s: %+v", stage, remembered)
 			}
 		})

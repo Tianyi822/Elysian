@@ -119,7 +119,7 @@ func (m *Manager) CreateSession(ctx context.Context, input CreateSessionInput) (
 		return Session{}, bad("model-capability", "所选模型必须支持文本与工具调用")
 	}
 	now := stamp(m.deps.Now())
-	session := Session{WikiStrategy: wikiNavigationStrategy, ID: m.deps.NewID(), Title: strings.TrimSpace(input.Title), CreatedAt: now, LastActivityAt: now, ModelProfileID: profile.ID, ModelRevision: profile.Revision, LastSeq: "0"}
+	session := Session{WikiStrategy: wikiDisabledStrategy, ID: m.deps.NewID(), Title: strings.TrimSpace(input.Title), CreatedAt: now, LastActivityAt: now, ModelProfileID: profile.ID, ModelRevision: profile.Revision, LastSeq: "0"}
 	if session.Title == "" {
 		session.Title = "新会话"
 	}
@@ -490,7 +490,7 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 	snapshot.Digest = ""
 	snapshot.Digest = digestJSON(snapshot)
 	run.DriverVersion = "v2"
-	run.WikiStrategy = wikiNavigationStrategy
+	run.WikiStrategy = wikiDisabledStrategy
 	run.Snapshot = &snapshot
 	run.Selection = &input
 	run, duplicate, err := m.store.acceptAgent(ctx, task, run, canonical, m.deps.NewID(), newTask)

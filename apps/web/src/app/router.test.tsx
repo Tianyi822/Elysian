@@ -99,10 +99,10 @@ describe('路由表', () => {
     await waitFor(() => expect(router.state.location.pathname).toBe('/agent'))
   })
 
-  it('长期记忆入口渲染知识 Wiki 工作台', async () => {
+  it('退役的长期记忆工作台返回未找到', async () => {
     renderApp('/agent/memory')
-    expect(await screen.findByRole('region', { name: '知识 Wiki 工作台' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '导入资料' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { level: 1, name: '未找到页面' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '导入资料' })).not.toBeInTheDocument()
   })
 
   it('知识 Wiki 独立浏览页可达，主导航高亮', async () => {

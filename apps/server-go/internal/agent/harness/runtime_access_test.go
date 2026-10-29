@@ -2,7 +2,9 @@ package harness
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"sync/atomic"
 	"testing"
 
@@ -35,91 +37,55 @@ func submitDemand(t *testing.T, m *Manager, s Session, id string) Run {
 	}
 	return r
 }
-func TestRuntimeAccessRestoresAndRemembersOnlyExactSessionScope(t *testing.T) {
+func TestRuntimeAccessNewRunsNeverRememberSessionScope(t *testing.T) {
 	ctx := context.Background()
 	var calls atomic.Int32
 	cat := &demandTestCatalog{operationCatalog{execute: func(_ context.Context, o Operation) (CapabilityResult, error) {
-		if o.Capability.Name == "test_write" {
-			calls.Add(1)
-			if o.Authorization == nil {
-				t.Error("未授权就派发")
-			}
+		calls.Add(1)
+		if o.Authorization == nil || o.Authorization.SessionAuthorizationID != "" {
+			t.Error("派发缺少逐次授权或复用旧会话授权")
 		}
 		return CapabilityResult{Value: json.RawMessage(`{"ok":true}`)}, nil
 	}}}
 	m, s, _ := agentManager(t, operationClient(), func(d *Deps) { d.Catalog = cat })
 	first := submitDemand(t, m, s, "access-first")
-	a := waitingApproval(t, m, first.ID)
-	if a.Access == nil || calls.Load() != 0 {
-		t.Fatal("缺少运行时请求或提前派发")
-	}
-	original := first.Snapshot.Digest
-	_, err := m.Decide(ctx, a.ID, "approved")
-	runtimeErrorCode(t, err, "access-decision-required")
-	in := accessInput(a, "session", "approve-first")
-	wrong := in
-	wrong.ExpectedDigest = "wrong"
-	_, err = m.DecideAccess(ctx, a.ID, wrong)
-	runtimeErrorCode(t, err, "access-conflict")
+	approval := waitingApproval(t, m, first.ID)
+	_, err := m.DecideAccess(ctx, approval.ID, accessInput(approval, "session", "reject-session"))
+	runtimeErrorCode(t, err, "session-authorization-denied")
+	input := accessInput(approval, "once", "allow-once")
 	m = reopenOperationManager(t, m)
-	if _, err = m.DecideAccess(ctx, a.ID, in); err != nil {
+	if _, err := m.DecideAccess(ctx, approval.ID, input); err != nil {
 		t.Fatal(err)
 	}
-	got := runtimeFinished(t, m, first.ID)
-	if got.Status != StateSucceeded || got.Snapshot.Digest != original || calls.Load() != 1 {
-		t.Fatalf("恢复失败或改写快照: %+v calls=%d", got, calls.Load())
+	if done := runtimeFinished(t, m, first.ID); done.Status != StateSucceeded || calls.Load() != 1 {
+		t.Fatalf("逐次授权恢复失败: %+v", done)
 	}
-	if _, err = m.DecideAccess(ctx, a.ID, in); err != nil {
-		t.Fatal("确认重试不幂等", err)
+	if _, err := m.DecideAccess(ctx, approval.ID, input); err != nil {
+		t.Fatal("重试不幂等", err)
 	}
-	conflict := in
-	conflict.Decision = "once"
-	_, err = m.DecideAccess(ctx, a.ID, conflict)
-	runtimeErrorCode(t, err, "decision-conflict")
-	remembered, err := m.SessionAuthorizations(ctx, s.ID)
-	if err != nil || len(remembered) != 1 {
-		t.Fatalf("会话授权未保存: %+v %v", remembered, err)
+	// 持久化存量允许项，新运行也必须重新询问。
+	if err := m.store.write(ctx, "legacy-authorization-fixture", func(tx *sql.Tx) error {
+		return saveSessionAuthorization(ctx, tx, SessionAuthorization{ID: "legacy-allow", SessionID: s.ID, Revision: 1, Status: "active", Access: *approval.Access})
+	}); err != nil {
+		t.Fatal(err)
 	}
 	second := submitDemand(t, m, s, "access-second")
-	if got = runtimeFinished(t, m, second.ID); got.Status != StateSucceeded || calls.Load() != 2 {
-		t.Fatalf("相同范围未复用: %+v", got)
+	again := waitingApproval(t, m, second.ID)
+	if calls.Load() != 1 {
+		t.Fatal("新运行复用了旧会话允许项")
 	}
-	other, err := m.CreateSession(ctx, CreateSessionInput{Title: "隔离会话", ModelProfileID: s.ModelProfileID, ModelRevision: s.ModelRevision})
-	if err != nil {
+	if _, err := m.DecideAccess(ctx, again.ID, accessInput(again, "denied", "deny-again")); err != nil {
 		t.Fatal(err)
 	}
-	third := submitDemand(t, m, other, "access-other")
-	otherApproval := waitingApproval(t, m, third.ID)
-	if otherApproval.Access == nil || calls.Load() != 2 {
-		t.Fatal("跨会话复用授权")
+	if done := runtimeFinished(t, m, second.ID); done.Status != StateSucceeded || calls.Load() != 1 {
+		t.Fatalf("拒绝后仍执行: %+v", done)
 	}
-	if _, err = m.Cancel(ctx, third.ID); err != nil {
-		t.Fatal(err)
-	}
-	_, err = m.DecideAccess(ctx, otherApproval.ID, accessInput(otherApproval, "once", "cancelled-answer"))
-	if err == nil {
-		t.Fatal("取消后仍允许授权")
-	}
-	revoke := RevokeAuthorizationInput{RequestID: "revoke-one", ExpectedRevision: remembered[0].Revision}
-	if _, err = m.RevokeSessionAuthorization(ctx, s.ID, remembered[0].ID, revoke); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = m.RevokeSessionAuthorization(ctx, s.ID, remembered[0].ID, revoke); err != nil {
-		t.Fatal("撤回重试不幂等", err)
-	}
-	fourth := submitDemand(t, m, s, "access-after-revoke")
-	again := waitingApproval(t, m, fourth.ID)
-	if _, err = m.DecideAccess(ctx, again.ID, accessInput(again, "denied", "refuse-after-revoke")); err != nil {
-		t.Fatal(err)
-	}
-	if got = runtimeFinished(t, m, fourth.ID); got.Status != StateSucceeded || calls.Load() != 2 {
-		t.Fatalf("拒绝未交回模型或发生执行: %+v", got)
-	}
-	lines := readRecordCount(t, m.store, remembered[0].ID)
-	if lines < 2 {
-		t.Fatal("授权与撤回缺少同事务记录")
+	rows, err := m.SessionAuthorizations(ctx, s.ID)
+	if err != nil || len(rows) != 1 || rows[0].ID != "legacy-allow" {
+		t.Fatalf("改写旧授权或创建新授权: %+v %v", rows, err)
 	}
 }
+
 func readRecordCount(t *testing.T, s *store, id string) int {
 	t.Helper()
 	var n int
@@ -212,5 +178,78 @@ func TestRuntimeAccessScopeSeparatesActionsResourcesAndScripts(t *testing.T) {
 	mcp.Capability.CatalogDigest = "two"
 	if accessScopeKey(mcp) == mcpKey {
 		t.Fatal("MCP 目录变化仍复用")
+	}
+}
+
+func TestFullModePersistsExactRuntimeAuthorizationBeforeDispatch(t *testing.T) {
+	var m *Manager
+	var calls atomic.Int32
+	cat := &demandTestCatalog{operationCatalog{execute: func(ctx context.Context, o Operation) (CapabilityResult, error) {
+		stored, err := readOperation(ctx, m.store.db, o.ID)
+		if err != nil || stored.Authorization == nil || stored.Authorization.Digest != o.Access.Digest || stored.Authorization.SessionAuthorizationID != "" {
+			t.Errorf("授权未精确落盘: %+v %v", stored.Authorization, err)
+		}
+		var records int
+		if err := m.store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM agent_record_outbox WHERE fact_type='operations' AND fact_key=?", o.ID).Scan(&records); err != nil || records == 0 {
+			t.Errorf("缺少同事务 JSONL 账本: %d %v", records, err)
+		}
+		calls.Add(1)
+		return CapabilityResult{Value: json.RawMessage(`{"ok":true}`)}, nil
+	}}}
+	var s Session
+	m, s, _ = agentManager(t, operationClient(), func(d *Deps) { d.Catalog = cat })
+	run, _, err := m.CreateTask(context.Background(), s.ID, AgentInput{RequestID: "full-runtime", Content: "执行操作", AuthorizationMode: AuthorizationOnDemand, PermissionMode: PermissionFull})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done := runtimeFinished(t, m, run.ID); done.Status != StateSucceeded || calls.Load() == 0 {
+		t.Fatalf("完全开放未自动执行: %+v", done)
+	}
+	approvals, err := m.Approvals(context.Background())
+	if err != nil || len(approvals) != 0 {
+		t.Fatalf("完全开放仍创建手动审批: %+v %v", approvals, err)
+	}
+}
+
+func TestAutomaticRuntimeAuthorizationReplicaFailureBlocksDispatch(t *testing.T) {
+	var calls atomic.Int32
+	cat := &demandTestCatalog{operationCatalog{execute: func(context.Context, Operation) (CapabilityResult, error) {
+		calls.Add(1)
+		return CapabilityResult{}, nil
+	}}}
+	m, session, _ := agentManager(t, operationClient(), func(d *Deps) { d.Catalog = cat })
+	m.mu.Lock()
+	m.store.beforeWrite = func(op string) error {
+		if op == "access-auto-decision" {
+			m.store.recordHook = func(stage string) error {
+				if stage == "append" {
+					return errors.New("injected auto authorization replica failure")
+				}
+				return nil
+			}
+		}
+		return nil
+	}
+	m.mu.Unlock()
+	run, _, err := m.CreateTask(context.Background(), session.ID, AgentInput{RequestID: "automatic-replica-fault", Content: "执行操作", AuthorizationMode: AuthorizationOnDemand, PermissionMode: PermissionFull})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeEventually(t, func() bool { return m.store.recordsFault() != nil })
+	operations, err := m.Operations(context.Background(), run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, operation := range operations {
+		if operation.Access != nil {
+			found = true
+			if operation.Authorization == nil || operation.DispatchID != "" {
+				t.Fatalf("自动授权回执丢失或已经派发: %+v", operation)
+			}
+		}
+	}
+	if !found || calls.Load() != 0 {
+		t.Fatalf("副本故障后仍派发: found=%v calls=%d", found, calls.Load())
 	}
 }

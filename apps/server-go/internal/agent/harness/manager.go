@@ -58,7 +58,6 @@ type Manager struct {
 	cancel         context.CancelFunc
 	wake           chan struct{}
 	done           chan struct{}
-	wikiDone       chan struct{}
 	closed         bool
 	workerState    string
 	activeID       string
@@ -133,7 +132,7 @@ func New(deps Deps) (*Manager, error) {
 		return nil, fmt.Errorf("恢复运行记录失败：%w", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	m := &Manager{store: s, deps: deps, ctx: ctx, cancel: cancel, wake: make(chan struct{}, 1), done: make(chan struct{}), wikiDone: make(chan struct{}), taskDone: make(chan struct{}), closeDone: make(chan struct{}), workerState: "starting", executions: make(map[string]*executionState)}
+	m := &Manager{store: s, deps: deps, ctx: ctx, cancel: cancel, wake: make(chan struct{}, 1), done: make(chan struct{}), taskDone: make(chan struct{}), closeDone: make(chan struct{}), workerState: "starting", executions: make(map[string]*executionState)}
 	if err = m.initializeToolRuntime(); err != nil {
 		cancel()
 		_ = s.close()
@@ -145,7 +144,6 @@ func New(deps Deps) (*Manager, error) {
 		return nil, fmt.Errorf("恢复执行授权撤销状态失败：%w", err)
 	}
 	go m.loop()
-	go m.wikiJobLoop()
 	go m.taskMonitorLoop()
 	return m, nil
 }
@@ -945,7 +943,6 @@ func (m *Manager) Close(ctx context.Context) error {
 		m.mu.Unlock()
 		go func() {
 			<-m.done
-			<-m.wikiDone
 			<-m.taskDone
 			m.probes.Wait()
 			if m.ownToolRuntime {

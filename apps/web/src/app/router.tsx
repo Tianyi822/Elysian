@@ -9,7 +9,6 @@ import { DatabasePage } from '../features/database/DatabasePage'
 import { FilesPage } from '../features/files/FilesPage'
 import { FilesPathTitle } from '../features/files/FilesPathTitle'
 import { LoginPage } from '../features/auth/LoginPage'
-import { MemoryPage } from '../features/memory/MemoryPage'
 import { WikiPage } from '../features/memory/WikiPage'
 import { AgentChatPage } from '../features/agent/AgentChatPage'
 import { LogsPage } from '../features/logs/LogsPage'
@@ -175,10 +174,6 @@ export const routes: RouteObject[] = [
       {
         path: 'agent/extensions',
         element: agentPage('技能与 MCP'),
-      },
-      {
-        path: 'agent/memory',
-        element: <RequireArea area="agent" title="知识 Wiki"><MemoryPage /></RequireArea>,
       },
       {
         path: 'wiki',

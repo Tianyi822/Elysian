@@ -119,7 +119,7 @@ export function createGateway(
   const agentRuntime = options.agentRuntime === 'http' ? createHttpAgentRuntimeAdapter() : { runtime: async () => demoAgentRuntimeInfo() }
 
   return {
-    agentMemory: options.agentMemory === 'http' ? createHttpAgentMemoryAdapter() : new AgentMemoryMockAdapter(modelSettings),
+    agentMemory: options.agentMemory === 'http' ? createHttpAgentMemoryAdapter() : new AgentMemoryMockAdapter(),
     agentConversation: options.modelSettings === 'http' ? createHttpAgentConversationAdapter() : createUnavailableAgentConversationAdapter(),
     panel: options.panel === 'http' ? createHttpPanelAdapter() : mockPanelAdapter,
     session,

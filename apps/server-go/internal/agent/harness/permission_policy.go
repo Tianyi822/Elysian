@@ -1,12 +1,14 @@
 package harness
 
+import "strings"
+
 type PermissionMode string
 
 const (
 	PermissionAsk           PermissionMode = "ask"
 	PermissionAssist        PermissionMode = "assist"
 	PermissionFull          PermissionMode = "full"
-	PermissionPolicyVersion                = "platform-tools/v1"
+	PermissionPolicyVersion                = "permission-modes/v2"
 )
 
 func normalizePermissionMode(mode PermissionMode) (PermissionMode, error) {
@@ -63,7 +65,7 @@ func operationDecision(s CapabilitySnapshot, o Operation) (bool, string) {
 		return true, "trusted-read-only"
 	}
 	// External capabilities keep their independent explicit trust/approval rules.
-	managed := c.Source == "workspace" || isBashSource(c.Source) || c.Source == "script" || c.Source == "builtin"
+	managed := s.PolicyVersion == PermissionPolicyVersion && strings.HasPrefix(c.Source, "mcp-") || c.Source == "workspace" || isBashSource(c.Source) || c.Source == "script" || c.Source == "builtin"
 	if !managed {
 		return false, "human-approval"
 	}
