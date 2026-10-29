@@ -132,8 +132,8 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
       }
       if (observedActiveRuns.has(run.id) && notifiedRunStatuses.get(run.id) !== run.status) {
         notifiedRunStatuses.set(run.id, run.status)
-        const feedback = run.status === 'succeeded' ? { message: '回复已完成。', tone: 'success' as const }
-          : run.status === 'cancelled' ? { message: '已停止回复。', tone: 'info' as const }
+        // 成功回复已在聊天正文中呈现，不再额外弹出完成通知。
+        const feedback = run.status === 'cancelled' ? { message: '已停止回复。', tone: 'info' as const }
           : run.status === 'waiting-approval' ? { message: '操作等待批准，请确认待审批操作。', tone: 'warning' as const }
           : run.status === 'waiting-input' ? { message: 'Ely 需要你回答问题后继续。', tone: 'info' as const }
           : run.status === 'recovery-required' ? { message: '运行结果尚未确认，需要处理后才能继续。', tone: 'warning' as const }
