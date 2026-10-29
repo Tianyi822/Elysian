@@ -46,6 +46,12 @@ function renderChat(backend = chatTestApi(), initialEntry = '/agent', modelError
   return { ...view, ...backend, router, readModels, gateway }
 }
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  const promise = new Promise<T>(done => { resolve = done })
+  return { promise, resolve }
+}
+
 beforeEach(async () => {
   vi.stubGlobal('matchMedia', (query: string) => ({
     matches: query === '(min-width: 1100px)', media: query, onchange: null,
@@ -850,7 +856,49 @@ describe('基本聊天界面', () => {
     expect(screen.queryByRole('article', { name: '助手回复' })).not.toBeInTheDocument()
   })
 
-  it('发送请求等待回执时立即显示忙碌状态，失败后恢复发送', async () => {
+  it.each([{ label: '首条消息', existing: false }, { label: '历史续聊', existing: true }])('$label：Enter 在会话检查、提交和消息回读完成前即时回显，确认后不重复', async ({ existing }) => {
+    const backend = chatTestApi()
+    if (existing) await backend.api.createTask('server-session', { requestId: 'previous', content: '上一轮' })
+    backend.hold()
+    renderChat(backend, existing ? '/agent?session=server-session' : '/agent')
+    const composer = screen.getByRole('textbox', { name: '发送给 Ely 的消息' })
+    fireEvent.change(composer, { target: { value: '立即显示这条消息' } })
+    await waitFor(() => expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled())
+    await waitFor(() => expect(useAgentChatStore.getState().refreshing).toBe(false))
+    const preflight = deferred<typeof backend.session>()
+    if (existing) backend.api.getSession.mockImplementationOnce(() => preflight.promise)
+    else backend.api.createSession.mockImplementationOnce(() => preflight.promise)
+    const submission = deferred<void>()
+    const submitApi = existing ? backend.api.continueTask : backend.api.createTask
+    const submit = submitApi.getMockImplementation()!
+    submitApi.mockImplementationOnce(async (...args) => {
+      await submission.promise
+      return submit(...args)
+    })
+    const messageRead = deferred<void>()
+    const readMessages = backend.api.messages.getMockImplementation()!
+    backend.api.messages.mockImplementation(async (...args) => { await messageRead.promise; return readMessages(...args) })
+
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    // 同一次键盘事件内可见，不等待任何服务端 Promise 或轮询计时器。
+    expect(screen.getAllByRole('article', { name: '你的消息' }).at(-1)).toHaveTextContent('立即显示这条消息')
+    expect(screen.getByText('正在发送…')).toBeInTheDocument()
+    expect(useAgentChatStore.getState().messages.some(message => message.content === '立即显示这条消息')).toBe(false)
+    expect(screen.getByRole('button', { name: '正在发送消息' })).toBeDisabled()
+    await act(async () => { preflight.resolve({ ...backend.session }) })
+    await waitFor(() => expect(existing ? backend.api.continueTask : backend.api.createTask).toHaveBeenCalled())
+    expect(within(screen.getByRole('log')).getAllByText('立即显示这条消息')).toHaveLength(1)
+    await act(async () => { submission.resolve() })
+    await screen.findByText('已发送')
+    expect(within(screen.getByRole('log')).getAllByText('立即显示这条消息')).toHaveLength(1)
+    expect(composer).toHaveValue('')
+    await act(async () => { messageRead.resolve() })
+    await waitFor(() => expect(useAgentChatStore.getState().outgoingMessage).toBeNull())
+    expect(within(screen.getByRole('log')).getAllByText('立即显示这条消息')).toHaveLength(1)
+    expect(screen.queryByText('已发送')).not.toBeInTheDocument()
+  })
+
+  it('发送请求等待回执时立即显示消息，失败后移除临时气泡并保留草稿', async () => {
     const backend = chatTestApi()
     let reject!: (error: Error) => void
     backend.api.createSession.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail }))
@@ -859,6 +907,8 @@ describe('基本聊天界面', () => {
     fireEvent.change(composer, { target: { value: '你好' } })
     await waitFor(() => expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: '发送消息' }))
+    expect(screen.getByRole('article', { name: '你的消息' })).toHaveTextContent('你好')
+    expect(screen.getByText('正在发送…')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '正在发送消息' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '正在发送消息' })).toHaveAttribute('aria-busy', 'true')
     expect(screen.getByRole('status', { name: '等待模型回复' })).toBeInTheDocument()
@@ -869,6 +919,8 @@ describe('基本聊天界面', () => {
     expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled()
     expect(screen.queryByRole('status', { name: '等待模型回复' })).not.toBeInTheDocument()
     expect(composer).toHaveValue('你好')
+    expect(screen.queryByRole('article', { name: '你的消息' })).not.toBeInTheDocument()
+    expect(useAgentChatStore.getState().outgoingMessage).toBeNull()
   })
 
   it('异步出现的思考跟随聊天底部，手动上滚阅读后不抢走位置', async () => {

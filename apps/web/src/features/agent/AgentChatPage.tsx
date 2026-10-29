@@ -224,7 +224,7 @@ export function AgentChatPage() {
   useEffect(() => { if (session?.editing) editInput.current?.focus() }, [session?.editing?.messageId])
   useEffect(() => {
     if (following.current && history.current) history.current.scrollTop = history.current.scrollHeight
-  }, [chat.messages.length, chat.reasoning[chat.run?.id ?? ''], session?.id])
+  }, [chat.messages.length, chat.outgoingMessage, chat.reasoning[chat.run?.id ?? ''], session?.id])
 
   const canSubmit = Boolean(api.available && (model || session?.pending) && !busy && !chat.uploadingAttachments && !chat.loading && !restoring && (status === 'ready' || session?.pending))
   const canSend = Boolean(canSubmit && !session?.editing && !session?.pending?.input.replaceMessageId && session?.draft.trim())
@@ -346,7 +346,7 @@ export function AgentChatPage() {
       const element = event.currentTarget
       following.current = element.scrollHeight - element.scrollTop - element.clientHeight < 24
     }}>
-      {!chat.messages.length && !waitingForMessage ? <div className="chat-empty">
+      {!chat.messages.length && !chat.outgoingMessage && !waitingForMessage ? <div className="chat-empty">
         <Bot size={38} className="mb-5 text-fg-muted" aria-hidden />
         <h2 className="text-2xl font-medium tracking-tight sm:text-[28px]">今天想聊什么？</h2>
         <p className="mt-3 text-sm text-fg-muted">选择模型，向 Ely 发送第一条消息。</p>
@@ -412,6 +412,13 @@ export function AgentChatPage() {
             {!!answer?.wikiSources?.length && <ChatMemorySources sources={answer.wikiSources} api={agentMemory} />}
           </Fragment>
         })}
+        {chat.outgoingMessage && <article className="chat-message" aria-label="你的消息">
+          <div className="chat-message-body">
+            <p className="chat-message-text">{chat.outgoingMessage.content}</p>
+            {!!chat.outgoingMessage.attachments.length && <ChatMessageAttachments attachments={chat.outgoingMessage.attachments} fetchBlob={api.attachmentBlob} />}
+            <p role="status" className="mt-1 text-right text-xs text-fg-muted">{chat.outgoingMessage.runId ? '已发送' : chat.sending ? '正在发送…' : '发送结果待确认'}</p>
+          </div>
+        </article>}
         {waitingForMessage && <ChatResponse content="" reasoning="" active onProgress={followContent} />}
       </div>}
     </div>

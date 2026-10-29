@@ -315,10 +315,16 @@ describe('智能体本地会话', () => {
     expect(pending?.input.permissionMode).toBe('full')
     expect(pending?.input.extensionMode).toBe('enabled')
     expect(pending?.input.authorizationMode).toBe('on-demand')
+    expect(store.getState().outgoingMessage).toMatchObject({ content: '检查工作区' })
+    expect(store.getState().messages).toEqual([])
+    const restored = local.makeStore()
+    await restored.getState().ensureSession()
+    expect(restored.getState().outgoingMessage).toMatchObject({ content: '检查工作区' })
     store.getState().setPermissionMode('ask')
     expect(store.getState().session?.permissionMode).toBe('full')
     await store.getState().send(backend.api, chatTestModel)
     expect(backend.api.createTask).toHaveBeenLastCalledWith(expect.any(String), pending?.input)
+    expect(store.getState().outgoingMessage).toBeNull()
   })
   it('编辑替换最后一轮并清除旧思考，其他标签和刷新读取一致，底部草稿保留', async () => {
     const local = localMemory()
@@ -1446,6 +1452,7 @@ describe('基本聊天', () => {
 
     expect(await store.getState().send(backend.api, chatTestModel)).toBe(false)
     expect(store.getState().session?.pending).toEqual(pending)
+    expect(store.getState().outgoingMessage).toMatchObject({ content: '只执行一次' })
     expect(notificationMessage()).toContain('发送结果尚未确认')
     store.getState().setDraft('不能替换尚未确认的输入')
     expect(store.getState().session?.draft).toBe('只执行一次')
@@ -1455,6 +1462,7 @@ describe('基本聊天', () => {
     expect(backend.runs.size).toBe(1)
     expect(store.getState().session?.pending).toBeUndefined()
     expect(store.getState().messages).toHaveLength(2)
+    expect(store.getState().outgoingMessage).toBeNull()
   })
 
   it.each([
@@ -1468,6 +1476,7 @@ describe('基本聊天', () => {
     expect(await store.getState().send(backend.api, chatTestModel)).toBe(false)
     expect(store.getState().session?.pending).toBeUndefined()
     expect(notificationMessage()).toBe('业务条件不满足')
+    expect(store.getState().outgoingMessage).toBeNull()
     expect(backend.runs.size).toBe(0)
     store.getState().setDraft('已修正输入')
     expect(store.getState().session?.draft).toBe('已修正输入')
@@ -1528,6 +1537,7 @@ describe('基本聊天', () => {
     expect(useMessageStore.getState().messages).toEqual([])
     expect(store.getState().session).toBeNull()
     expect(store.getState().messages).toEqual([])
+    expect(store.getState().outgoingMessage).toBeNull()
     expect(store.getState().sessions).toEqual([])
     expect(local.adapter.read(backend.session.id)?.remote?.runId).toBe('run-1')
   })
