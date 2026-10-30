@@ -107,7 +107,7 @@ func TestSetPort预检失败回滚原文(t *testing.T) {
 	if err == nil {
 		t.Fatalf("预检失败应报错")
 	}
-	wantPrefix := "sshd 配置预检未通过，已回滚原配置：sshd 执行失败（sshd -t -f /etc/ssh/sshd_config）：sshd: bad configuration"
+	wantPrefix := "sshd 配置预检未通过，原配置未改动：sshd: bad configuration"
 	if !strings.HasPrefix(err.Error(), wantPrefix) {
 		t.Errorf("预检失败文案不符：%q", err.Error())
 	}
@@ -124,8 +124,8 @@ func TestSetPort预检失败回滚原文(t *testing.T) {
 			renameCount++
 		}
 	}
-	if renameCount != 2 {
-		t.Errorf("预检失败应回滚（共两次 rename）：%d", renameCount)
+	if renameCount != 0 {
+		t.Errorf("预检失败不得发布配置：%d", renameCount)
 	}
 	config, _ := fs.file("/etc/ssh/sshd_config")
 	if config != defaultConfig() {
@@ -143,7 +143,7 @@ func TestSetPort重载后死亡回滚(t *testing.T) {
 	fake.mu.Unlock()
 
 	_, err := svc.SetPort(2202)
-	want := "配置已写入并通过预检，但重载后 sshd 进程退出（本次修改：Port=2202）。已回滚为原配置，服务现在处于停止状态需手动重新启用；新取值可能只在真实监听时暴露问题（如端口已被占用），请排查后重试"
+	want := "重载后 sshd 进程退出；已恢复 SSH 原配置和服务状态"
 	mustErrorText(t, "重载后死亡", err, want)
 	config, _ := fs.file("/etc/ssh/sshd_config")
 	if config != defaultConfig() {
@@ -152,8 +152,8 @@ func TestSetPort重载后死亡回滚(t *testing.T) {
 	// 服务 stopped 如实呈现。
 	overview, err := svc.Overview()
 	mustNoError(t, "Overview", err)
-	if overview.Enabled || overview.Status != "stopped" {
-		t.Errorf("服务已死应如实 stopped：%+v", overview)
+	if !overview.Enabled || overview.Status != "running" {
+		t.Errorf("回滚后应恢复原运行状态：%+v", overview)
 	}
 }
 
@@ -421,7 +421,7 @@ func Test启停收敛与未收敛(t *testing.T) {
 	_, err = svc2.SetServiceEnabled(true)
 	mustErrorText(t, "永不收敛",
 		err,
-		"启动 sshd 未生效：服务状态未在预期时间内收敛，请稍后刷新查看实际状态")
+		"SSH 启停未生效：服务状态未在预期时间内收敛，请刷新核对实际状态")
 	if _, ok := fake2.fs.file(testSshPaths().changedAtStamp); ok {
 		t.Errorf("未收敛不应写时间戳")
 	}
@@ -563,7 +563,7 @@ func TestCreateRootKey首行替换与权限(t *testing.T) {
 		if c.Path == "/root/.ssh" && c.Mode == 0o700 {
 			hasDir = true
 		}
-		if c.Path == "/root/.ssh/authorized_keys" && c.Mode == 0o600 {
+		if c.Path == "/root/.ssh/authorized_keys.elysian-tmp" && c.Mode == 0o600 {
 			hasFile = true
 		}
 	}
@@ -571,7 +571,7 @@ func TestCreateRootKey首行替换与权限(t *testing.T) {
 		t.Errorf("权限应收紧：%v", chmods)
 	}
 	for _, c := range chowns {
-		if (c.Path == "/root/.ssh" || c.Path == "/root/.ssh/authorized_keys") && (c.UID != 0 || c.GID != 0) {
+		if (c.Path == "/root/.ssh" || c.Path == "/root/.ssh/authorized_keys.elysian-tmp") && (c.UID != 0 || c.GID != 0) {
 			t.Errorf("root 属主应为 0:0：%v", c)
 		}
 	}
@@ -648,12 +648,12 @@ func TestCreateKey生成参数与落盘与权限(t *testing.T) {
 		if c.Path == "/home/elysian/.ssh" && c.Mode != 0o700 {
 			t.Errorf(".ssh 应 0700：%v", c)
 		}
-		if c.Path == "/home/elysian/.ssh/authorized_keys" && c.Mode != 0o600 {
+		if c.Path == "/home/elysian/.ssh/authorized_keys.elysian-tmp" && c.Mode != 0o600 {
 			t.Errorf("authorized_keys 应 0600：%v", c)
 		}
 	}
 	for _, c := range chowns {
-		if (c.Path == "/home/elysian/.ssh" || c.Path == "/home/elysian/.ssh/authorized_keys") && (c.UID != 1000 || c.GID != 1000) {
+		if (c.Path == "/home/elysian/.ssh" || c.Path == "/home/elysian/.ssh/authorized_keys.elysian-tmp") && (c.UID != 1000 || c.GID != 1000) {
 			t.Errorf("属主应落到账号名下：%v", c)
 		}
 	}

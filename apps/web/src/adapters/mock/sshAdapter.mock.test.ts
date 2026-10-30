@@ -56,8 +56,9 @@ describe('SSH mock adapter', () => {
     })
 
     const afterPort = await ssh.setPort(2222)
-    expect(afterPort).toEqual({ passwordAuthEnabled: true, keyAuthEnabled: true, port: 2222 })
-    expect(await ssh.settings()).toEqual(afterPort)
+    expect(afterPort).toMatchObject({ passwordAuthEnabled: true, keyAuthEnabled: true, port: 2222 })
+    expect(await ssh.settings()).toEqual({ passwordAuthEnabled: true, keyAuthEnabled: true, port: 2222 })
+    expect(afterPort.firewallPort).toBeDefined()
   })
 
   it('端口判据与契约同源：非法端口被拒绝，数据集不变', async () => {

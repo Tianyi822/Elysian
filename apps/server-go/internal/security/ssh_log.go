@@ -31,10 +31,10 @@ type ParsedLoginLine struct {
 
 // syslogPrefixRe `Sep 20 08:12:04 host sshd[123]:` syslog 前缀；捕获组 1-5 为时间、
 // 组 6 为消息正文。
-var syslogPrefixRe = regexp.MustCompile(`^([A-Z][a-z]{2})\s+(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})\s+\S+\s+sshd\[\d+\]:\s+(.*)$`)
+var syslogPrefixRe = regexp.MustCompile(`^([A-Z][a-z]{2})\s+(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})\s+\S+\s+(?:sshd|sshd-session)\[\d+\]:\s+(.*)$`)
 
 // loginMessageRe 登录事实消息正文：`Accepted publickey for root from 1.2.3.4 port 51234 ssh2 …`。
-var loginMessageRe = regexp.MustCompile(`^(Accepted\s+(?:publickey|password)|Failed\s+password)\s+for\s+(?:invalid\s+user\s+)?(\S+)\s+from\s+(\S+)\s+port\s+(\d+)`)
+var loginMessageRe = regexp.MustCompile(`^(Accepted\s+(?:publickey|password|keyboard-interactive(?:/pam)?)|Failed\s+(?:password|publickey|keyboard-interactive(?:/pam)?))\s+for\s+(?:invalid\s+user\s+)?(\S+)\s+from\s+(\S+)\s+port\s+(\d+)`)
 
 // sshLogMonths syslog 月份缩写表（Jan..Dec）。
 var sshLogMonths = []string{"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"}
@@ -53,9 +53,13 @@ func TailLines(text string, limit int) string {
 
 // ParseSshLog 解析日志全文（先按 SSH_LOG_TAIL_LINES 截尾），按日志书写顺序返回。
 func ParseSshLog(text string, nowIso string) []ParsedLoginLine {
+	return parseSshLogLines(TailLines(text, SSH_LOG_TAIL_LINES), nowIso)
+}
+
+func parseSshLogLines(text string, nowIso string) []ParsedLoginLine {
 	now := parseIsoTime(nowIso)
 	parsed := []ParsedLoginLine{}
-	lines := strings.Split(TailLines(text, SSH_LOG_TAIL_LINES), "\n")
+	lines := strings.Split(text, "\n")
 
 	for _, rawLine := range lines {
 		source := strings.TrimSpace(rawLine)
@@ -63,6 +67,14 @@ func ParseSshLog(text string, nowIso string) []ParsedLoginLine {
 			continue
 		}
 		// 先剥 syslog 前缀（有则取消息正文与时间），没有前缀则整行就是消息正文（sshd -E 裸行）。
+		var isoAt *string
+		if fields := strings.Fields(source); len(fields) >= 4 {
+			if stamp, err := time.Parse(time.RFC3339Nano, fields[0]); err == nil && (strings.HasPrefix(fields[2], "sshd[") || strings.HasPrefix(fields[2], "sshd-session[")) {
+				at := formatIsoMillis(stamp)
+				isoAt = &at
+				source = strings.Join(fields[3:], " ")
+			}
+		}
 		prefixed := syslogPrefixRe.FindStringSubmatch(source)
 		message := source
 		if prefixed != nil {
@@ -74,7 +86,7 @@ func ParseSshLog(text string, nowIso string) []ParsedLoginLine {
 		}
 		eventText, user, ip, portText := match[1], match[2], match[3], match[4]
 
-		var at *string
+		at := isoAt
 		if prefixed != nil {
 			monthText, dayText := prefixed[1], prefixed[2]
 			hourText, minuteText, secondText := prefixed[3], prefixed[4], prefixed[5]
@@ -104,7 +116,7 @@ func ParseSshLog(text string, nowIso string) []ParsedLoginLine {
 			result = "succeeded"
 		}
 		parsed = append(parsed, ParsedLoginLine{
-			Source: source,
+			Source: strings.TrimSpace(rawLine),
 			User:   user,
 			IP:     ip,
 			Port:   port,
@@ -123,8 +135,8 @@ func SummarizeSshLog(records []SshLoginRecord, nowIso string) SshLoginStats {
 	now := parseIsoTime(nowIso)
 	local := now.Local()
 	todayStart := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, time.Local)
-	yesterdayStart := todayStart.Add(-24 * time.Hour)
-	weekStart := todayStart.Add(-6 * 24 * time.Hour)
+	yesterdayStart := todayStart.AddDate(0, 0, -1)
+	weekStart := todayStart.AddDate(0, 0, -6)
 	nowMs := now.UnixMilli()
 	stats := SshLoginStats{}
 

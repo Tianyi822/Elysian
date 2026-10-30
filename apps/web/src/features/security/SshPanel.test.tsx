@@ -1,11 +1,9 @@
 import { messageHistoryText } from '../../test/messageHistory'
-import { fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it } from 'vitest'
-import type { FirewallRule, FirewallRuleInput, FirewallToggles } from '@elysian/contracts'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SEED_LOGIN_RECORDS, SEED_SSH_PORT, SEED_SSH_STATS } from '../../adapters/mock/sshData'
 import { resetFirewallData } from '../../adapters/mock/firewallData'
-import type { ElysianGateway } from '../../contracts/adapters'
 import { useMessageStore } from '../../stores/messageStore'
 import { SSH_PAGE_SIZE, useSshStore } from '../../stores/sshStore'
 import { renderApp } from '../../test/renderApp'
@@ -23,40 +21,6 @@ beforeEach(async () => {
   // 改端口会联动写防火墙规则：演示数据集是模块级内存状态，这里一并推回种子。
   resetFirewallData()
 })
-
-/** 在 SSH 替身网关上再叠防火墙覆盖项：委托清单与防火墙面板测试同款穷举，方法在原型上不能展开。 */
-function withFirewallOverrides(
-  gateway: ElysianGateway,
-  overrides: Partial<ElysianGateway['firewall']>,
-): ElysianGateway {
-  const firewall = gateway.firewall
-  return {
-    ...gateway,
-    firewall: {
-      list: () => firewall.list(),
-      toggles: () => firewall.toggles(),
-      setToggles: (next) => firewall.setToggles(next),
-      create: (input) => firewall.create(input),
-      update: (ruleId, input) => firewall.update(ruleId, input),
-      remove: (ruleId) => firewall.remove(ruleId),
-      importRules: (inputs) => firewall.importRules(inputs),
-      listIpRules: () => firewall.listIpRules(),
-      createIpRule: (input) => firewall.createIpRule(input),
-      updateIpRule: (ruleId, input) => firewall.updateIpRule(ruleId, input),
-      removeIpRule: (ruleId) => firewall.removeIpRule(ruleId),
-      listForwards: () => firewall.listForwards(),
-      createForward: (input) => firewall.createForward(input),
-      updateForward: (ruleId, input) => firewall.updateForward(ruleId, input),
-      removeForward: (ruleId) => firewall.removeForward(ruleId),
-      scanProtection: () => firewall.scanProtection(),
-      setScanProtection: (enabled) => firewall.setScanProtection(enabled),
-      setScanConfig: (config) => firewall.setScanConfig(config),
-      unblockIp: (ip) => firewall.unblockIp(ip),
-      syncFromSystem: () => firewall.syncFromSystem(),
-      ...overrides,
-    },
-  }
-}
 
 describe('SSH 管理页签', () => {
   it('切到页签后渲染四张分区卡：两列瀑布，卡片随内容取高度', async () => {
@@ -77,7 +41,7 @@ describe('SSH 管理页签', () => {
     // 两列瀑布：左列设置（服务→Root）、右列数据（密钥→登录记录）；列独立堆叠，矮卡不被邻列拉高。
     // 窄屏单列时 DOM 顺序即视觉顺序：服务 → Root → 密钥 → 记录。
     const masonry = service.parentElement?.parentElement
-    expect(masonry).toHaveClass('md:grid-cols-2', 'items-start')
+    expect(masonry).toHaveClass('@min-[44rem]:grid-cols-2', 'items-start')
     expect(service.parentElement).toContainElement(root)
     expect(keys.parentElement).toContainElement(records)
     expect(service.parentElement).not.toBe(keys.parentElement)
@@ -254,17 +218,19 @@ describe('SSH 管理页签', () => {
     expect(todayCells[0]).not.toHaveClass('text-danger')
   })
 
-  it('服务未启用时登录统计给空态说明，不渲染零值统计', async () => {
-    const { gateway } = sshSessions({
-      overview: async () => ({ enabled: false, status: 'stopped', changedAt: null, stats: SEED_SSH_STATS }),
-    })
+  it('服务停用保留统计与记录，收起设置和密钥管理', async () => {
+    const { gateway, ssh } = sshSessions()
+    await ssh.setServiceEnabled(false)
     await openSshTab(gateway)
-
     const service = screen.getByRole('region', { name: 'SSH 服务' })
-    expect(within(service).getByText('SSH 服务未启用，没有登录记录可统计。')).toBeInTheDocument()
-    // 契约约定：没有服务就没有登录记录，界面不给零值统计
-    expect(within(service).queryByText('今日')).not.toBeInTheDocument()
-    expect(within(service).queryByText('近 7 天')).not.toBeInTheDocument()
+    expect(within(service).getByRole('switch', { name: 'SSH 服务' })).not.toBeChecked()
+    expect(within(service).queryByLabelText('监听端口')).not.toBeInTheDocument()
+    expect(within(service).queryByRole('switch', { name: '密码登录' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Root 设置' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'SSH 密钥' })).not.toBeInTheDocument()
+    expect(within(service).getByText('登录统计')).toBeInTheDocument()
+    expect(within(service).getByRole('table')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'SSH 登录记录' })).toBeInTheDocument()
   })
 
   it('种子数据上屏：服务运行中、端口 73、密码登录关闭、密钥登录开启', async () => {
@@ -423,197 +389,72 @@ describe('SSH 管理页签', () => {
     expect(savedPorts).toEqual([])
   })
 
-  it('确认保存后防火墙已启用则联动放行新端口；同端口已有规则则不重复添加', async () => {
-    const createdRules: FirewallRuleInput[] = []
-    const session = sshSessions({
-      setPort: async (port) => ({ passwordAuthEnabled: false, keyAuthEnabled: true, port }),
-    })
-    const gateway = withFirewallOverrides(session.gateway, {
-      create: async (input) => {
-        createdRules.push(input)
-        return {
-          id: `fw-${input.protocol}-${input.port}-${input.family}`,
-          protocol: input.protocol,
-          port: input.port,
-          portTo: null,
-          family: input.family,
-          status: 'unused',
-          policy: input.policy,
-          direction: 'inbound',
-          source: input.source,
-          note: input.note,
-          updatedAt: null,
-        } satisfies FirewallRule
-      },
-    })
+  it('端口联动使用服务端回执，浏览器不再写防火墙', async () => {
+    const { gateway } = sshSessions({ setPort: async (port) => ({ passwordAuthEnabled: false, keyAuthEnabled: true, port, firewallPort: { state: 'opened', port, detail: null } }) })
+    const create = vi.spyOn(gateway.firewall, 'create')
     const user = await openSshTab(gateway)
-    const service = screen.getByRole('region', { name: 'SSH 服务' })
-    const input = within(service).getByLabelText('监听端口')
-
-    // 新端口没有覆盖它的规则：自动补一条 tcp 放行，来源所有 IP、带联动备注。
-    await user.clear(input)
-    await user.type(input, '2260')
-    await user.click(within(service).getByRole('button', { name: '保存端口' }))
-    await user.click(within(screen.getByRole('dialog', { name: '确认修改 SSH 监听端口' })).getByRole('button', { name: '确认保存' }))
-
-    await waitFor(() => expect(createdRules).toHaveLength(1))
-    expect(createdRules[0]).toEqual({
-      protocol: 'tcp',
-      port: 2260,
-      family: 'ipv4',
-      policy: 'allow',
-      direction: 'inbound',
-      source: '所有IP',
-      note: 'SSH 端口联动放行',
-    } satisfies FirewallRuleInput)
-    await waitFor(() =>
-      expect(useMessageStore.getState().messages.map((item) => item.message)).toContain(
-        '已为新端口 2260 添加防火墙 tcp 放行规则（mock，待接入真实执行）',
-      ),
-    )
-
-    // 种子里 2222 已有限连规则（limit 即限速的放行）：不重复创建，如实提示。
-    await user.clear(input)
-    await user.type(input, '2222')
-    await user.click(within(service).getByRole('button', { name: '保存端口' }))
-    await user.click(within(screen.getByRole('dialog', { name: '确认修改 SSH 监听端口' })).getByRole('button', { name: '确认保存' }))
-
-    await waitFor(() =>
-      expect(useMessageStore.getState().messages.map((item) => item.message)).toContain(
-        '防火墙已有 2222/tcp 的限连规则，无需重复添加',
-      ),
-    )
-    expect(createdRules).toHaveLength(1)
+    const input = screen.getByLabelText('监听端口')
+    await user.clear(input); await user.type(input, '2260')
+    await user.click(screen.getByRole('button', { name: '保存端口' }))
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: '确认保存' }))
+    expect(create).not.toHaveBeenCalled()
+    expect(useSshStore.getState().settings?.port).toBe(2260)
+    expect(useMessageStore.getState().messages.some((entry) => entry.message.includes('已为新端口 2260'))).toBe(true)
   })
 
-  it('防火墙未启用时只提示不联动，不发任何规则请求', async () => {
-    const createdRules: FirewallRuleInput[] = []
-    const session = sshSessions({
-      setPort: async (port) => ({ passwordAuthEnabled: false, keyAuthEnabled: true, port }),
-    })
-    const gateway = withFirewallOverrides(session.gateway, {
-      toggles: async () =>
-        ({ firewallEnabled: false, pingBlocked: true, defaultIncoming: null, defaultOutgoing: null }) satisfies FirewallToggles,
-      create: async (input) => {
-        createdRules.push(input)
-        throw new Error('不应该走到创建规则')
-      },
-    })
+  it('防火墙预检失败保留旧端口和确认弹窗，允许重试', async () => {
+    const { gateway } = sshSessions({ setPort: async () => { throw new Error('SSH 端口未修改：存在拒绝规则') } })
     const user = await openSshTab(gateway)
-    const service = screen.getByRole('region', { name: 'SSH 服务' })
-    const input = within(service).getByLabelText('监听端口')
-
-    await user.clear(input)
-    await user.type(input, '2260')
-    await user.click(within(service).getByRole('button', { name: '保存端口' }))
-    await user.click(within(screen.getByRole('dialog', { name: '确认修改 SSH 监听端口' })).getByRole('button', { name: '确认保存' }))
-
-    await waitFor(() =>
-      expect(useMessageStore.getState().messages.map((item) => item.message)).toContain(
-        '防火墙当前未启用：新端口未联动放行，启用防火墙前请自行确认放行',
-      ),
-    )
-    expect(createdRules).toEqual([])
+    const input = screen.getByLabelText('监听端口')
+    await user.clear(input); await user.type(input, '2261')
+    await user.click(screen.getByRole('button', { name: '保存端口' }))
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: '确认保存' }))
+    expect(useSshStore.getState().settings?.port).toBe(SEED_SSH_PORT)
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(useSshStore.getState().operationError).toContain('存在拒绝规则')
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: '取消' }))
   })
 
-  it('端口已有拒绝规则时不覆盖创建，明确报出锁死风险', async () => {
-    const denySession = sshSessions({
-      setPort: async (port) => ({ passwordAuthEnabled: false, keyAuthEnabled: true, port }),
-    })
-    const denyGateway = withFirewallOverrides(denySession.gateway, {
-      list: async () => [
-        {
-          id: 'fw-2260-ipv4',
-          protocol: 'tcp',
-          port: 2260,
-          portTo: null,
-          family: 'ipv4',
-          status: 'unused',
-          policy: 'deny',
-          direction: 'inbound',
-          source: '所有IP',
-          note: null,
-          updatedAt: null,
-        } satisfies FirewallRule,
-      ],
-    })
-    const user = await openSshTab(denyGateway)
-    const service = screen.getByRole('region', { name: 'SSH 服务' })
-    const input = within(service).getByLabelText('监听端口')
-
-    await user.clear(input)
-    await user.type(input, '2260')
-    await user.click(within(service).getByRole('button', { name: '保存端口' }))
-    await user.click(within(screen.getByRole('dialog', { name: '确认修改 SSH 监听端口' })).getByRole('button', { name: '确认保存' }))
-
-    await waitFor(() =>
-      expect(useMessageStore.getState().messages.map((item) => item.message)).toContain(
-        '端口已改为 2260，但防火墙上该端口已有拒绝规则，未添加放行：请先到防火墙页处理，否则 SSH 无法连接',
-      ),
-    )
+  it('旧服务端没有防火墙回执时提示核对，不追加浏览器写请求', async () => {
+    const { gateway } = sshSessions({ setPort: async (port) => ({ passwordAuthEnabled: false, keyAuthEnabled: true, port }) })
+    const create = vi.spyOn(gateway.firewall, 'create')
+    await useSshStore.getState().load(gateway)
+    useSshStore.getState().setPortDraft('2263'); useSshStore.getState().requestPortSave()
+    await useSshStore.getState().confirmPortSave(gateway)
+    expect(create).not.toHaveBeenCalled()
+    expect(useMessageStore.getState().messages.some((entry) => entry.message.includes('服务端未返回防火墙联动结果'))).toBe(true)
   })
 
-  it('联动放行失败不回滚端口，给出手动放行指引', async () => {
-    const failSession = sshSessions({
-      setPort: async (port) => ({ passwordAuthEnabled: false, keyAuthEnabled: true, port }),
-    })
-    const failGateway = withFirewallOverrides(failSession.gateway, {
-      create: async () => {
-        throw new Error('演示用的放行失败')
-      },
-    })
-    const user = await openSshTab(failGateway)
-    const service = screen.getByRole('region', { name: 'SSH 服务' })
-    const input = within(service).getByLabelText('监听端口')
-
-    await user.clear(input)
-    await user.type(input, '2261')
-    await user.click(within(service).getByRole('button', { name: '保存端口' }))
-    await user.click(within(screen.getByRole('dialog', { name: '确认修改 SSH 监听端口' })).getByRole('button', { name: '确认保存' }))
-
-    await waitFor(() =>
-      expect(useMessageStore.getState().messages.map((item) => item.message)).toContain(
-        '端口已改为 2261，但防火墙放行失败：演示用的放行失败。请到防火墙页手动放行，否则 SSH 无法连接',
-      ),
-    )
-    // 端口保存本身成功了：失败的是联动，不回滚端口。
-    expect(input).toHaveValue('2261')
+  it('页面五秒静默刷新，隐藏时暂停，重新可见时回读', async () => {
+    const session = sshSessions()
+    const intervals = vi.spyOn(window, 'setInterval')
+    const refresh = vi.spyOn(useSshStore.getState(), 'refresh')
+    const load = vi.spyOn(useSshStore.getState(), 'load')
+    const visible = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    try {
+      await openSshTab(session.gateway)
+      const calls = intervals.mock.calls.filter((call) => call[1] === 5000)
+      const callback = calls[calls.length - 1]?.[0]
+      expect(typeof callback).toBe('function')
+      await act(async () => { if (typeof callback === 'function') callback() })
+      expect(refresh).toHaveBeenCalled()
+      refresh.mockClear(); visible.mockReturnValue('hidden')
+      await act(async () => { if (typeof callback === 'function') callback() })
+      expect(refresh).not.toHaveBeenCalled()
+      load.mockClear(); visible.mockReturnValue('visible')
+      await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
+      expect(load).toHaveBeenCalled()
+    } finally { intervals.mockRestore(); refresh.mockRestore(); load.mockRestore(); visible.mockRestore() }
   })
 
-  it('防火墙状态读不出来也只报联动失败：不把已经保存成功的端口报成「保存失败」', async () => {
-    const failSession = sshSessions({
-      setPort: async (port) => ({ passwordAuthEnabled: false, keyAuthEnabled: true, port }),
-    })
-    const failGateway = withFirewallOverrides(failSession.gateway, {
-      toggles: async () => {
-        throw new Error('防火墙读接口 503')
-      },
-    })
-    const user = await openSshTab(failGateway)
+  it('日志不可用显示原因，不展示零值统计', async () => {
+    const session = sshSessions()
+    const overview = await session.ssh.overview()
+    await openSshTab({ ...session.gateway, ssh: { ...session.gateway.ssh, listLoginRecords: async () => [], overview: async () => ({ ...overview, runtimeMode: 'bare-metal', logInfo: { source: 'journal', status: 'unavailable', sampledAt: '2026-10-30T10:00:00Z', warning: '系统日志权限不足' } }) } })
     const service = screen.getByRole('region', { name: 'SSH 服务' })
-    const input = within(service).getByLabelText('监听端口')
-
-    await user.clear(input)
-    await user.type(input, '2263')
-    await user.click(within(service).getByRole('button', { name: '保存端口' }))
-    await user.click(
-      within(screen.getByRole('dialog', { name: '确认修改 SSH 监听端口' })).getByRole('button', {
-        name: '确认保存',
-      }),
-    )
-
-    // 联动读失败有自己的说法与指引；端口已改成功这一事实照旧报出。
-    await waitFor(() =>
-      expect(useMessageStore.getState().messages.map((item) => item.message)).toContain(
-        '端口已改为 2263，但防火墙联动检查失败：防火墙读接口 503。请到防火墙页确认 2263/tcp 已放行，否则 SSH 无法连接',
-      ),
-    )
-    const messages = useMessageStore.getState().messages.map((item) => item.message)
-    expect(messages).toContain('SSH 端口已改为 2263（mock，待接入真实执行）')
-    expect(messages.some((message) => message.startsWith('保存失败'))).toBe(false)
-    // 端口确实保存成功：确认对话已关、输入框落在新端口上。
-    expect(screen.queryByRole('dialog', { name: '确认修改 SSH 监听端口' })).not.toBeInTheDocument()
-    expect(input).toHaveValue('2263')
+    expect(within(service).queryByRole('table')).not.toBeInTheDocument()
+    expect(within(service).getByText('系统日志权限不足')).toBeInTheDocument()
+    expect(screen.getByText('登录日志不可用，请检查系统日志服务与读取权限')).toBeInTheDocument()
   })
 
   it('Root 登录开关：关写 no 收起两区，开写 yes 按全局登录方式呈现，各留通知', async () => {

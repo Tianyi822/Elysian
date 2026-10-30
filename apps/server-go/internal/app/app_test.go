@@ -229,7 +229,7 @@ func Test容器门禁域非容器环境整片503文案(t *testing.T) {
 	handler := newTestHandler(t)
 	// path 与期望文案对（TS app.test.ts 同表）；未知路径与带尾斜杠形同样整片 503。
 	expects := [][2]string{
-		{"/api/security/ssh/overview", "真实 SSH 管理仅在 Docker 容器内可用"},
+		{"/api/security/ssh/overview", "真实 SSH 管理仅在 Docker 容器内或正式安装中可用"},
 		{"/api/security/users", "真实用户管理仅在 Docker 容器内可用"},
 		{"/api/security/users/", "真实用户管理仅在 Docker 容器内可用"},
 		{"/api/security/users/nowhere", "真实用户管理仅在 Docker 容器内可用"},

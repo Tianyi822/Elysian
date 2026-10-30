@@ -1,3 +1,5 @@
+import type { FirewallPortSync } from './firewall'
+
 /*
  * SSH 域类型与词典。类型描述本机 SSH 服务需要呈现的事实：
  * 服务启停、登录方式、监听端口、Root 登录策略与 Root 凭据都属于系统级变更，
@@ -24,8 +26,7 @@ export type SshLoginCounts = {
 }
 
 /**
- * 登录统计的三个窗口。服务未启用时界面不给统计——没有服务就没有登录记录，
- * 空态由界面按 `SshOverview.enabled` 决定，而不是把统计置成一份零值。
+ * 登录统计的三个窗口；服务停用后仍保留可用历史。
  */
 export type SshLoginStats = {
   today: SshLoginCounts
@@ -85,6 +86,13 @@ export type SshOverview = {
   /** 上次启停时间（ISO）；从未由面板启停过时为 null，界面显示 —。 */
   changedAt: string | null
   stats: SshLoginStats
+  runtimeMode?: 'bare-metal' | 'docker' | 'local-demo'
+  logInfo?: {
+    source: 'journal' | 'auth-file' | 'panel-file'
+    status: 'ready' | 'partial' | 'unavailable'
+    sampledAt: string
+    warning: string | null
+  }
 }
 
 /** 登录方式开关。 */
@@ -96,6 +104,7 @@ export type SshAuthMethods = {
 /** 登录方式与监听端口。 */
 export type SshAuthSettings = SshAuthMethods & {
   port: number
+  firewallPort?: FirewallPortSync
 }
 
 export const SSH_DEFAULT_PORT = 22

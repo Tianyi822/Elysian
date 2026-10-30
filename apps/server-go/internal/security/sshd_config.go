@@ -15,14 +15,15 @@ import (
 )
 
 // SSHD_DIRECTIVE_NAMES 面板允许读写的四个指令名（规范大小写，顺序即补丁追加顺序）。
-var SSHD_DIRECTIVE_NAMES = []string{"Port", "PasswordAuthentication", "PubkeyAuthentication", "PermitRootLogin"}
+var SSHD_DIRECTIVE_NAMES = []string{"Port", "PasswordAuthentication", "PubkeyAuthentication", "PermitRootLogin", "KbdInteractiveAuthentication"}
 
 // sshdDirectives 四个指令的解析结果；指令未在全局段出现（或取值无法辨认）时为 nil，
 // 由调用方按 sshd 默认值兜底。
 type sshdDirectives struct {
-	port                   *int
-	passwordAuthentication *bool
-	pubkeyAuthentication   *bool
+	port                         *int
+	passwordAuthentication       *bool
+	kbdInteractiveAuthentication *bool
+	pubkeyAuthentication         *bool
 	// permitRootLogin 存小写归一后的原始取值（含无法识别的值，由调用方裁决）。
 	permitRootLogin *string
 }
@@ -124,6 +125,8 @@ func parseSshdConfig(text string) sshdDirectives {
 		case "PasswordAuthentication":
 			v := parseYesNo(value)
 			directives.passwordAuthentication = v
+		case "KbdInteractiveAuthentication":
+			directives.kbdInteractiveAuthentication = parseYesNo(value)
 		case "PubkeyAuthentication":
 			v := parseYesNo(value)
 			directives.pubkeyAuthentication = v
@@ -143,6 +146,9 @@ func parseSshdConfig(text string) sshdDirectives {
 
 // sshdDirectiveName 规范指令名（规范大小写）；不在白名单返回空串。
 func sshdDirectiveName(keyword string) string {
+	if strings.EqualFold(keyword, "ChallengeResponseAuthentication") {
+		return "KbdInteractiveAuthentication"
+	}
 	for _, name := range SSHD_DIRECTIVE_NAMES {
 		if strings.ToLower(name) == keyword {
 			return name

@@ -1,5 +1,7 @@
 package security
 
+import "elysian/server/internal/contract"
+
 // security 域的 HTTP 响应视图模型（@elysian/contracts 的 security/ssh.ts 与 users.ts
 // 等价物）。字段声明序即 JSON 键序（shared.MarshalJSON 的约定），privateKey 仅在
 // 创建/生成响应里一次性携带（指针 nil 时省略），列表与查看永不返回。
@@ -22,17 +24,28 @@ type SshLoginStats struct {
 
 // SshOverview 服务概况：开关、状态、上次启停时间与登录统计。
 type SshOverview struct {
-	Enabled   bool          `json:"enabled"`
-	Status    string        `json:"status"`
-	ChangedAt *string       `json:"changedAt"`
-	Stats     SshLoginStats `json:"stats"`
+	Enabled     bool          `json:"enabled"`
+	Status      string        `json:"status"`
+	ChangedAt   *string       `json:"changedAt"`
+	Stats       SshLoginStats `json:"stats"`
+	RuntimeMode string        `json:"runtimeMode,omitempty"`
+	LogInfo     *SshLogInfo   `json:"logInfo,omitempty"`
+}
+
+// SshLogInfo 统计来源及可用性；不可用时数字不应作为真实零值展示。
+type SshLogInfo struct {
+	Source    string  `json:"source"`
+	Status    string  `json:"status"`
+	SampledAt string  `json:"sampledAt"`
+	Warning   *string `json:"warning"`
 }
 
 // SshAuthSettings 登录方式开关与监听端口。
 type SshAuthSettings struct {
-	PasswordAuthEnabled bool `json:"passwordAuthEnabled"`
-	KeyAuthEnabled      bool `json:"keyAuthEnabled"`
-	Port                int  `json:"port"`
+	PasswordAuthEnabled bool                       `json:"passwordAuthEnabled"`
+	KeyAuthEnabled      bool                       `json:"keyAuthEnabled"`
+	Port                int                        `json:"port"`
+	FirewallPort        *contract.FirewallPortSync `json:"firewallPort,omitempty"`
 }
 
 // SshRootKey Root 密钥材料；PrivateKey 仅随创建/生成响应一次性携带。

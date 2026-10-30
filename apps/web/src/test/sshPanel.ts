@@ -48,6 +48,7 @@ export const INITIAL_SSH_STATE = {
 
 /** 演示数据集是模块级内存状态：每个用例前推回种子，并清掉上一轮的 store 与通知。 */
 export async function resetSshPanel(): Promise<void> {
+  useSshStore.getState().clearDisplay()
   resetSshData()
   resetHostUsers()
   useSshStore.setState(INITIAL_SSH_STATE)

@@ -7,9 +7,10 @@ import {
   SSH_LOGIN_WINDOW_LABELS,
   evaluateSshPasswordStrength,
 } from '@elysian/contracts'
-import type { SshLoginStats, SshRootLoginPolicy } from '@elysian/contracts'
+import type { SshLoginStats, SshRootLoginPolicy, SshOverview } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
+import { BusyVeil, RefreshButton } from '../../components/RefreshState'
 import { IconButton } from '../../components/IconButton'
 import { StatusTag } from '../../components/StatusTag'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
@@ -89,16 +90,26 @@ export function SshPanel() {
   const passwordResetNotice = useSshStore((s) => s.passwordResetNotice)
   const closePasswordResetNotice = useSshStore((s) => s.closePasswordResetNotice)
   const load = useSshStore((s) => s.load)
+  const refresh = useSshStore((s) => s.refresh)
+  const overview = useSshStore((s) => s.overview)
+  const refreshing = useSshStore((s) => s.refreshing)
+  const refreshError = useSshStore((s) => s.refreshError)
 
   useEffect(() => {
     void load(gateway)
-  }, [gateway, load])
+    const tick = () => { if (document.visibilityState !== 'hidden') void refresh(gateway) }
+    const focus = () => { if (document.visibilityState !== 'hidden') void load(gateway) }
+    const interval = window.setInterval(tick, 5_000)
+    window.addEventListener('focus', focus)
+    document.addEventListener('visibilitychange', focus)
+    return () => { window.clearInterval(interval); window.removeEventListener('focus', focus); document.removeEventListener('visibilitychange', focus) }
+  }, [gateway, load, refresh])
 
-  if (status === 'loading' || status === 'idle') {
+  if (!overview && (status === 'loading' || status === 'idle')) {
     return <LoadingState label="正在加载 SSH 配置…" />
   }
 
-  if (status === 'error') {
+  if (!overview && status === 'error') {
     return (
       <ErrorState
         title="SSH 数据加载失败"
@@ -110,10 +121,11 @@ export function SshPanel() {
 
   return (
     <>
+      {refreshError ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{refreshError}。已保留上次读取结果，请重新刷新。</p> : null}
       {operationError ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-danger/40 p-3 text-xs text-danger"><p className="min-w-0 flex-1">{operationError}</p><button type="button" className="rounded border border-line px-3 py-1.5 text-fg" onClick={() => void load(gateway)}>重新读取状态</button></div> : null}
       {/* 两列瀑布：左设置右数据，列各自按内容堆叠、矮卡不被邻列拉平；
           Root 卡的密码/密钥区收起时左列自然变矮，不把数据表拉出卡内空白。 */}
-      <div className="flex flex-col gap-4">
+      <div className="@container flex flex-col gap-4">
         {/* SSH 动作只在容器内真实执行；宿主机本地开发是内存演示，与防火墙面板同一标识明示出来。 */}
         {!isDockerRuntime() ? (
           <div
@@ -123,13 +135,14 @@ export function SshPanel() {
             演示数据
           </div>
         ) : null}
-        <div className="grid items-start gap-4 md:grid-cols-2">
+        <div className="relative grid items-start gap-4 @min-[44rem]:grid-cols-2">
+          <BusyVeil busy={refreshing} />
           <div className="flex min-w-0 flex-col gap-4">
             <ServiceCard />
-            <RootCard />
+            {overview?.enabled ? <RootCard /> : null}
           </div>
           <div className="flex min-w-0 flex-col gap-4">
-            <SshKeyCard />
+            {overview?.enabled ? <SshKeyCard /> : null}
             <SshLoginRecordsCard />
           </div>
         </div>
@@ -156,6 +169,7 @@ export function SshPanel() {
 
 /** SSH 登录记录卡：按时间倒序列出登录事实，只读，界面不产生也不修改它。 */
 function SshLoginRecordsCard() {
+  const logInfo = useSshStore((s) => s.overview?.logInfo)
   const loginRecords = useSshStore((s) => s.loginRecords)
   const page = useSshStore((s) => s.recordPage)
   const setRecordPage = useSshStore((s) => s.setRecordPage)
@@ -205,7 +219,7 @@ function SshLoginRecordsCard() {
             {loginRecords.length === 0 ? (
               <tr>
                 <td colSpan={5} className="px-3 py-8 text-center text-sm text-fg-muted">
-                  还没有登录记录
+                  {logInfo?.status === 'unavailable' ? '登录日志不可用，请检查系统日志服务与读取权限' : '还没有登录记录'}
                 </td>
               </tr>
             ) : (
@@ -246,7 +260,7 @@ function SshLoginRecordsCard() {
 
       <TablePager
         label="登录记录分页"
-        summary={`共 ${loginRecords.length} 条登录记录`}
+        summary={`${loginRecords.length >= 2000 ? '最近' : '共'} ${loginRecords.length} 条登录记录`}
         page={safePage}
         pageCount={pageCount}
         pageSize={SSH_PAGE_SIZE}
@@ -271,12 +285,14 @@ function ServiceCard() {
   const setPortDraft = useSshStore((s) => s.setPortDraft)
   const requestPortSave = useSshStore((s) => s.requestPortSave)
   const portInputId = useId()
+  const load = useSshStore((s) => s.load)
+  const refreshing = useSshStore((s) => s.refreshing)
 
   if (!overview || !settings) return null
   const enabled = overview.enabled
 
   return (
-    <Section title="SSH 服务">
+    <Section title="SSH 服务" aside={<RefreshButton label="刷新 SSH 状态" busy={refreshing} onPress={() => void load(gateway)} />}>
       <Region
         title="服务状态"
         aside={
@@ -296,6 +312,7 @@ function ServiceCard() {
               onCheckedChange={(checked) => void setServiceEnabled(gateway, checked)}
             />
           </div>
+          {enabled ? <>
           <span aria-hidden data-separator="switch" className="w-px shrink-0 self-stretch bg-line" />
           <div className="flex flex-1 items-center justify-center px-1">
             <SwitchRow
@@ -318,12 +335,14 @@ function ServiceCard() {
               onCheckedChange={(checked) => void setAuthMethod(gateway, { keyAuthEnabled: checked })}
             />
           </div>
+          </> : null}
         </div>
       </Region>
 
-      <LoginStatsRegion stats={overview.stats} enabled={enabled} />
+      {!enabled ? <p className="text-xs text-fg-subtle">SSH 服务已停止；重新开启后可管理登录方式、端口与密钥。</p> : null}
+      <LoginStatsRegion stats={overview.stats} logInfo={overview.logInfo} />
 
-      <Region title="监听端口" labelFor={portInputId}>
+      {enabled ? <Region title="监听端口" labelFor={portInputId}>
         <div className="flex items-center gap-2">
           <input
             id={portInputId}
@@ -352,7 +371,7 @@ function ServiceCard() {
         <p className={`mt-3 text-xs ${portError ? 'text-danger' : 'text-fg-subtle'}`}>
           {portError ?? '当前 SSH 协议所使用的端口，默认为 22。'}
         </p>
-      </Region>
+      </Region> : null}
     </Section>
   )
 }
@@ -376,7 +395,7 @@ export function sshPortConfirmConsequences(
     },
     {
       tone: 'info',
-      text: '防火墙处于启用状态时会为新端口自动补一条 tcp 放行规则；旧端口的规则保留不动，需要时请到防火墙页自行清理。',
+      text: '防火墙启用时，先核对并添加新端口的 tcp 放行规则，再切换 SSH 监听；检查或放行失败则保留原端口。旧端口的规则保留不动，可到防火墙页清理。',
     },
   ]
   if (docker && port !== SSH_DEFAULT_PORT) {
@@ -395,6 +414,7 @@ export function sshPortConfirmConsequences(
  */
 function SshPortConfirmDialog() {
   const gateway = useGateway()
+  const docker = useSshStore((s) => s.overview?.runtimeMode === 'docker')
   const pendingPort = useSshStore((s) => s.pendingPort)
   const operationError = useSshStore((s) => s.operationError)
   const currentPort = useSshStore((s) => s.settings?.port)
@@ -403,7 +423,7 @@ function SshPortConfirmDialog() {
   const cancelPortSave = useSshStore((s) => s.cancelPortSave)
 
   if (pendingPort === undefined || currentPort === undefined) return null
-  const consequences = sshPortConfirmConsequences(pendingPort, isDockerRuntime())
+  const consequences = sshPortConfirmConsequences(pendingPort, docker)
 
   return (
     <Dialog.Root open onOpenChange={(next) => { if (!next) cancelPortSave() }}>
@@ -463,12 +483,12 @@ function SshPortConfirmDialog() {
 
 /**
  * 登录统计区域：今日、昨日与近 7 天三个窗口的成功与失败计数，窗口与结果的文案都取契约标签表。
- * 契约约定服务未启用时界面不给统计——没有服务就没有登录记录，空态说明代替零值统计。
+ * 停服保留历史统计；日志不可用时给出原因，不把读取失败当成零值。
  */
-function LoginStatsRegion({ stats, enabled }: { stats: SshLoginStats; enabled: boolean }) {
+function LoginStatsRegion({ stats, logInfo }: { stats: SshLoginStats; logInfo: SshOverview['logInfo'] }) {
   return (
     <Region title="登录统计">
-      {enabled ? (
+      {logInfo?.status !== 'unavailable' ? (
         <div className={TABLE_CONTAINER_CLASS}>
           <table className="w-full table-fixed border-separate border-spacing-0 text-center text-sm">
             {/* 定宽三列：窗口名、成功、失败；表头与单元格全部居中，计数用等宽数字，翻动时列宽不跳。 */}
@@ -512,8 +532,10 @@ function LoginStatsRegion({ stats, enabled }: { stats: SshLoginStats; enabled: b
           </table>
         </div>
       ) : (
-        <p className="text-xs text-fg-subtle">SSH 服务未启用，没有登录记录可统计。</p>
+        <p className="text-xs text-fg-subtle">登录日志不可用，暂时无法统计。</p>
       )}
+      {logInfo ? <p className="text-xs text-fg-subtle">来源：{{ journal: '系统 journal', 'auth-file': '系统认证日志', 'panel-file': '面板 SSH 日志' }[logInfo.source]} · 采样：{formatDateTime(logInfo.sampledAt)}</p> : null}
+      {logInfo?.warning ? <p className="text-xs text-warning">{logInfo.warning}</p> : null}
     </Region>
   )
 }

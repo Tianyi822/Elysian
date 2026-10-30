@@ -113,7 +113,7 @@ export function SwitchToggle({
 }
 
 /** 卡：标题加内容，卡内区域由这里统一排布间距。 */
-export function Section({ title, children }: { title: string; children: ReactNode }) {
+export function Section({ title, children, aside }: { title: string; children: ReactNode; aside?: ReactNode }) {
   const titleId = useId()
   return (
     <section
@@ -122,9 +122,10 @@ export function Section({ title, children }: { title: string; children: ReactNod
       // 卡里的宽表格会因此把整张卡顶出视口，横向滚动也就落不到容器里。
       className="flex min-w-0 flex-col panel-surface p-3 sm:p-4"
     >
-      <h2 id={titleId} className="text-sm font-medium text-fg">
-        {title}
-      </h2>
+      <div className="flex items-center justify-between gap-2">
+        <h2 id={titleId} className="text-sm font-medium text-fg">{title}</h2>
+        {aside}
+      </div>
       {/* 区域按内容取高度：瀑布列里矮卡不该被邻列撑开，区内也不平分剩余空白。 */}
       <div className="mt-4 flex min-w-0 flex-col gap-4">{children}</div>
     </section>

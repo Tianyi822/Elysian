@@ -141,7 +141,7 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 	}
 	portOpener := firewall.NewPortOpener(firewallDeps)
 
-	securityDeps := security.Deps{Available: cfg.HostOpsAvailable(), AgentAuthorize: agentAuthorize}
+	securityDeps := security.Deps{Available: cfg.HostOpsAvailable(), Mode: cfg.Mode(), SshPorts: firewall.NewSshPortOpener(firewallDeps), AgentAuthorize: agentAuthorize}
 	securityDeps.AgentFacade = security.NewAgentFacade(securityDeps)
 	platformDeps := platform.Deps{
 		AgentAuthorize: agentAuthorize,

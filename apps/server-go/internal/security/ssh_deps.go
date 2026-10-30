@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"elysian/server/internal/paths"
+	"elysian/server/internal/seam"
 )
 
 // sshPaths 面板落盘的全部路径（DEFAULT_SSH_PATHS 的等价物；测试可整体替换）。
@@ -53,27 +54,38 @@ const SSH_LOG_TAIL_BYTES = 512 * 1024
 
 // sshHostDeps 服务编排的全部宿主访问面（函数字段全部可注入，测试用内存实现驱动）。
 type sshHostDeps struct {
-	runSshKeygen  func(args []string) (string, error)
-	runSshd       func(args []string) (string, error)
-	startSshd     func() error
-	stopSshd      func() error
-	reloadSshd    func() error
-	runChpasswd   func(input string) (string, error)
-	runGetent     func(args []string) (string, error)
-	delay         func(ms int)
-	readText      func(path string) (string, error)
-	readTextTail  func(path string, maxBytes int64) (string, error)
-	readDir       func(path string) ([]string, error)
-	writeText     func(path, content string) error
-	exists        func(path string) bool
-	lstat         func(path string) (bool, error)
-	rename        func(from, to string) error
-	chmod         func(path string, mode uint32) error
-	chown         func(path string, uid, gid int) error
-	mkdir         func(path string) error
-	remove        func(path string) error
-	nowIso        func() string
-	pathsOverride *sshPaths
+	captureServiceState func() (func() error, error)
+	validateRuntime     func() error
+	runtimeMode         string
+	serviceState        func() (bool, error)
+	setEnabled          func(bool) error
+	applyConfig         func(bool) error
+	verifyConfig        func(int) error
+	effectiveConfig     func(string) (string, error)
+	loginHistory        func() sshHistory
+	copyMetadata        func(string, string) error
+	ports               seam.PortOpener
+	runSshKeygen        func(args []string) (string, error)
+	runSshd             func(args []string) (string, error)
+	startSshd           func() error
+	stopSshd            func() error
+	reloadSshd          func() error
+	runChpasswd         func(input string) (string, error)
+	runGetent           func(args []string) (string, error)
+	delay               func(ms int)
+	readText            func(path string) (string, error)
+	readTextTail        func(path string, maxBytes int64) (string, error)
+	readDir             func(path string) ([]string, error)
+	writeText           func(path, content string) error
+	exists              func(path string) bool
+	lstat               func(path string) (bool, error)
+	rename              func(from, to string) error
+	chmod               func(path string, mode uint32) error
+	chown               func(path string, uid, gid int) error
+	mkdir               func(path string) error
+	remove              func(path string) error
+	nowIso              func() string
+	pathsOverride       *sshPaths
 }
 
 // execDetail 子进程失败 → 中文错误详情：优先带 stderr（trim 后非空），没有时回退
@@ -92,6 +104,7 @@ func execDetail(err error) string {
 func execToStdout(name string, args []string) (string, error) {
 	cmd, ctx, cancel := shared.SystemCommand(context.Background(), name, args...)
 	defer cancel()
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -214,10 +227,12 @@ func resolveVerifiedSshdPid(probe sshdPidProbe) (int, bool) {
 
 // createPidProbe 容器内真实探针：pidfile 与 /proc/<pid>/comm 都按只读探测，
 // 读不到返回 false。
-func createPidProbe() sshdPidProbe {
+func createPidProbe() sshdPidProbe { return createPidProbeFor(defaultSshPaths()) }
+
+func createPidProbeFor(paths sshPaths) sshdPidProbe {
 	return sshdPidProbe{
 		readPidFile: func() (string, bool) {
-			data, err := os.ReadFile(defaultSshPaths().sshdPidFile)
+			data, err := os.ReadFile(paths.sshdPidFile)
 			if err != nil {
 				return "", false
 			}
@@ -287,7 +302,7 @@ func textTailOf(tail string, truncated bool) string {
 // writeTextNoFollow 写文件且不跟随最终组件的符号链接：链接占位即失败（ELOOP），
 // 绝不写穿到链接目标。
 func writeTextNoFollow(path, content string) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, 0o666)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return err
 	}
@@ -477,7 +492,7 @@ func newRealSshDeps(now func() time.Time, override *sshPaths) *sshHostDeps {
 			}
 			logBefore := fileSizeOf(p.sshdLog)
 			pidBefore := readPidFilePid(p.sshdPidFile)
-			_, err := execToStdout("/usr/sbin/sshd", []string{"-E", p.sshdLog})
+			_, err := execToStdout("/usr/sbin/sshd", []string{"-f", p.sshdConfig, "-E", p.sshdLog})
 			if err != nil {
 				// 父进程退出非 0：原因只在日志增量里（stderr 恒空），带上它才可诊断。
 				if detail := readLogDeltaLines(p.sshdLog, logBefore, 1024); detail != "" {
@@ -499,7 +514,7 @@ func newRealSshDeps(now func() time.Time, override *sshPaths) *sshHostDeps {
 		stopSshd: func() error {
 			// pid 复用防线：TERM 只发给核实过身份（/proc/<pid>/comm 为 sshd）的进程；
 			// pidfile 陈旧或 pid 被复用时按未在跑处理，幂等成功。
-			pid, ok := resolveVerifiedSshdPid(createPidProbe())
+			pid, ok := resolveVerifiedSshdPid(createPidProbeFor(sshDepsPaths(override)))
 			if !ok {
 				return nil
 			}
@@ -508,7 +523,7 @@ func newRealSshDeps(now func() time.Time, override *sshPaths) *sshHostDeps {
 		reloadSshd: func() error {
 			// SIGHUP 同样只发核实过身份的进程；pid 不在时静默返回（无需重载）。
 			// SIGHUP：sshd 重读配置并 re-exec 自身，-E 等启动参数原样保留；不走 restart。
-			pid, ok := resolveVerifiedSshdPid(createPidProbe())
+			pid, ok := resolveVerifiedSshdPid(createPidProbeFor(sshDepsPaths(override)))
 			if !ok {
 				return nil
 			}
@@ -570,7 +585,7 @@ func newRealSshDeps(now func() time.Time, override *sshPaths) *sshHostDeps {
 // 可失败的副作用；创建失败仅落 stderr 诊断，不阻断装配。
 func newRealSshDepsWithWorkspace(now func() time.Time, override *sshPaths) *sshHostDeps {
 	deps := newRealSshDeps(now, override)
-	if err := os.MkdirAll(sshDepsPaths(override).keygenWorkspace, 0o755); err != nil {
+	if err := os.MkdirAll(sshDepsPaths(override).keygenWorkspace, 0o700); err != nil {
 		fmt.Fprintf(os.Stderr, "[elysian] SSH 密钥工作目录创建失败：%v\n", err)
 	}
 	return deps

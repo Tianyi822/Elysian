@@ -1,7 +1,5 @@
 import { hasUncertainOutcome } from '../adapters/http/requestDeadline'
 import type {
-  FirewallRule,
-  FirewallToggles,
   SshAuthMethods,
   SshAuthSettings,
   SshKeyMaterial,
@@ -11,7 +9,7 @@ import type {
   SshRootAuth,
   SshRootLoginPolicy,
 } from '@elysian/contracts'
-import { FIREWALL_POLICY_LABELS, isValidSshPort } from '@elysian/contracts'
+import { isValidSshPort } from '@elysian/contracts'
 import { create } from 'zustand'
 import type { ElysianGateway, SshKeyAccount } from '../contracts/adapters'
 import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
@@ -32,6 +30,10 @@ const MOCK_SUFFIX = MOCK_NOTE ? `（${MOCK_NOTE}）` : ''
 
 type SshState = {
   status: SshStatus
+  refreshing: boolean
+  refreshError: string | undefined
+  refresh: (gateway: ElysianGateway) => Promise<void>
+  clearDisplay: () => void
   errorMessage: string | undefined
   operationError: string | undefined
   overview: SshOverview | undefined
@@ -119,78 +121,30 @@ function materialWithoutPrivateKey<T extends SshKeyMaterial>(material: T): T {
   return clone
 }
 
-/** 联动补出的规则在这里署名：防火墙页里一眼看出这条是谁加的，不是手敲的。 */
-const SSH_PORT_LINK_NOTE = 'SSH 端口联动放行'
+let sshGeneration = 0
+let sshRevision = 0
+let refreshingHistory = false
 
-/**
- * 改端口后的防火墙联动：防火墙启用时给新端口补一条 tcp 入站放行，否则 sshd 在新端口上照旧被挡在外面。
- * 旧端口的规则保留不动——面板不替用户删规则，需要时到防火墙页自行清理。
- * 复用防火墙 adapter（gateway.firewall），SSH 服务侧不感知防火墙，方向只从编排层指向它。
- * 结果只经通知如实报出：端口本身已经保存成功，联动失败不回滚它，而是给出手动放行的指引。
- * 读防火墙状态（toggles/list）与写放行规则一样属于联动的一部分，同样在这里收尾——
- * 任何一步失败都只报联动失败，绝不冒用「保存失败」把已经成功的端口说成没保存。
- */
-async function linkSshPortToFirewall(gateway: ElysianGateway, port: number): Promise<void> {
-  let toggles: FirewallToggles
-  let rules: readonly FirewallRule[]
-  try {
-    toggles = await gateway.firewall.toggles()
-    rules = toggles.firewallEnabled ? await gateway.firewall.list() : []
-  } catch (error) {
-    notify(
-      `端口已改为 ${port}，但防火墙联动检查失败：${
-        error instanceof Error ? error.message : '未知原因'
-      }。请到防火墙页确认 ${port}/tcp 已放行，否则 SSH 无法连接`,
-      'danger',
-    )
-    return
-  }
-  if (!toggles.firewallEnabled) {
-    notify('防火墙当前未启用：新端口未联动放行，启用防火墙前请自行确认放行', 'info')
-    return
-  }
-  // 只看与新端口同协议同地址族的入站规则：端口段（portTo）与出站规则管不到新端口。
-  const existing = rules.find(
-    (rule) => rule.protocol === 'tcp' && rule.port === port && rule.portTo === null && rule.family === 'ipv4',
-  )
-  if (existing) {
-    notify(
-      existing.policy === 'deny'
-        ? `端口已改为 ${port}，但防火墙上该端口已有拒绝规则，未添加放行：请先到防火墙页处理，否则 SSH 无法连接`
-        : `防火墙已有 ${port}/tcp 的${FIREWALL_POLICY_LABELS[existing.policy]}规则，无需重复添加`,
-      existing.policy === 'deny' ? 'danger' : 'success',
-    )
-    return
-  }
-  try {
-    await gateway.firewall.create({
-      protocol: 'tcp',
-      port,
-      family: 'ipv4',
-      policy: 'allow',
-      direction: 'inbound',
-      source: '所有IP',
-      note: SSH_PORT_LINK_NOTE,
-    })
-    notify(`已为新端口 ${port} 添加防火墙 tcp 放行规则${MOCK_SUFFIX}`)
-  } catch (error) {
-    notify(
-      `端口已改为 ${port}，但防火墙放行失败：${
-        error instanceof Error ? error.message : '未知原因'
-      }。请到防火墙页手动放行，否则 SSH 无法连接`,
-      'danger',
-    )
-  }
+function isBusy(state: SshState): boolean {
+  return state.togglingService || state.savingAuth || state.savingPort || state.savingPolicy || state.resettingPassword || state.generatingRootKey || state.creatingKey || state.removingKeyIds.length > 0
+}
+
+/** 停服收起设置；一次性私钥保留到用户自行关闭。 */
+function stoppedSettings(overview: SshOverview): Partial<SshState> {
+  return overview.enabled ? {} : { passwordDraft: '', pendingPort: undefined, createKeyOpen: false, removeKeyTarget: undefined, viewKey: undefined }
 }
 
 export const useSshStore = create<SshState>((set, get) => {
   const recordFailure = async (error: unknown, gateway: ElysianGateway) => {
+    const generation = sshGeneration
     const message = error instanceof Error ? error.message : '操作失败，请重试'
     if (hasUncertainOutcome(error)) await get().load(gateway)
-    set({ operationError: message })
+    if (generation === sshGeneration) set({ operationError: message })
   }
   return ({
   status: 'idle',
+  refreshing: false,
+  refreshError: undefined,
   errorMessage: undefined,
   operationError: undefined,
   overview: undefined,
@@ -220,49 +174,71 @@ export const useSshStore = create<SshState>((set, get) => {
   creatingKey: false,
   removingKeyIds: [],
 
-  async load(gateway) {
-    if (get().status === 'loading') return
-    set({ status: 'loading', errorMessage: undefined })
+  clearDisplay() {
+    sshGeneration += 1
+    sshRevision += 1
+    refreshingHistory = false
+    set(useSshStore.getInitialState())
+  },
+
+  async refresh(gateway) {
+    if (refreshingHistory || isBusy(get()) || get().status !== 'ready' || get().refreshing) return
+    const generation = sshGeneration
+    const revision = sshRevision
+    refreshingHistory = true
     try {
-      const [overview, settings, rootAuth, keys, loginRecords, keyAccounts] = await Promise.all([
-        gateway.ssh.overview(),
-        gateway.ssh.settings(),
-        gateway.ssh.rootAuth(),
-        gateway.ssh.listKeys(),
-        gateway.ssh.listLoginRecords(),
-        gateway.ssh.keyAccounts(),
-      ])
-      set({
-        status: 'ready',
-        operationError: undefined,
-        overview,
-        settings,
-        rootAuth,
-        keys,
-        loginRecords,
-        keyAccounts,
-        portDraft: `${settings.port}`,
-        // 重新拉数据即丢弃未确认的端口草稿：界面上摆着的确认对话不该跨过一次重新加载。
-        pendingPort: undefined,
-      })
+      const [overview, loginRecords] = await Promise.all([gateway.ssh.overview(), gateway.ssh.listLoginRecords()])
+      if (generation !== sshGeneration || revision !== sshRevision) return
+      set({ overview, loginRecords, refreshError: undefined, ...stoppedSettings(overview) })
     } catch (error) {
-      set({ status: 'error', errorMessage: error instanceof Error ? error.message : 'SSH 数据加载失败' })
+      if (generation === sshGeneration && revision === sshRevision) set({ refreshError: error instanceof Error ? error.message : 'SSH 状态刷新失败' })
+    } finally {
+      if (generation === sshGeneration) refreshingHistory = false
     }
   },
 
-  // 乐观更新：开关先翻再等 adapter 确认，失败回滚并报危险通知。
+  async load(gateway) {
+    if (get().status === 'loading' || get().refreshing || isBusy(get())) return
+    const generation = sshGeneration
+    const revision = sshRevision
+    const hadData = get().overview !== undefined
+    set({ ...(hadData ? { refreshing: true } : { status: 'loading' as const }), errorMessage: undefined, refreshError: undefined })
+    try {
+      const [overview, settings, rootAuth, keys, loginRecords, keyAccounts] = await Promise.all([
+        gateway.ssh.overview(), gateway.ssh.settings(), gateway.ssh.rootAuth(), gateway.ssh.listKeys(), gateway.ssh.listLoginRecords(), gateway.ssh.keyAccounts(),
+      ])
+      if (generation !== sshGeneration || revision !== sshRevision) return
+      const state = get()
+      const dirtyPort = state.settings && state.portDraft !== `${state.settings.port}`
+      set({ status: 'ready', refreshing: false, operationError: undefined, overview, settings, rootAuth, keys, loginRecords, keyAccounts,
+        portDraft: dirtyPort ? state.portDraft : `${settings.port}`, ...stoppedSettings(overview) })
+    } catch (error) {
+      if (generation !== sshGeneration) return
+      const message = error instanceof Error ? error.message : 'SSH 数据加载失败'
+      set(hadData ? { refreshing: false, refreshError: message } : { status: 'error', errorMessage: message })
+    } finally {
+      if (generation === sshGeneration) set({ refreshing: false })
+    }
+  },
+
+  // 服务开关等待后端确认，避免停服失败时先收起配置。
   async setServiceEnabled(gateway, enabled) {
+    if (isBusy(get()) || get().refreshing) return
+    const generation = sshGeneration
     const previous = get().overview
     if (!previous || get().togglingService) return
     set({
       togglingService: true,
-      overview: { ...previous, enabled, status: enabled ? 'running' : 'stopped' },
+      operationError: undefined,
     })
+    sshRevision += 1
     try {
       const confirmed = await gateway.ssh.setServiceEnabled(enabled)
-      set({ overview: confirmed, togglingService: false })
-      notify(`SSH 服务已${enabled ? '启用' : '停用'}${MOCK_SUFFIX}`)
+      if (generation !== sshGeneration) return
+      set({ overview: confirmed, togglingService: false, ...stoppedSettings(confirmed) })
+      notify(`SSH 服务已${confirmed.enabled ? '启用' : '停用'}${MOCK_SUFFIX}`)
     } catch (error) {
+      if (generation !== sshGeneration) return
       set({ overview: previous, togglingService: false })
       notify(error instanceof Error ? `切换失败：${error.message}` : '切换失败', 'danger')
       await recordFailure(error, gateway)
@@ -270,11 +246,15 @@ export const useSshStore = create<SshState>((set, get) => {
   },
 
   async setAuthMethod(gateway, patch) {
+    if (isBusy(get()) || get().refreshing) return
+    const generation = sshGeneration
     const previous = get().settings
     if (!previous || get().savingAuth) return
     set({ savingAuth: true, settings: { ...previous, ...patch } })
+    sshRevision += 1
     try {
       const confirmed = await gateway.ssh.setAuthMethods({ ...previous, ...patch })
+      if (generation !== sshGeneration) return
       set({ settings: confirmed, savingAuth: false })
       const label =
         patch.passwordAuthEnabled !== undefined
@@ -282,6 +262,7 @@ export const useSshStore = create<SshState>((set, get) => {
           : `SSH 密钥登录已${confirmed.keyAuthEnabled ? '开启' : '关闭'}`
       notify(`${label}${MOCK_SUFFIX}`)
     } catch (error) {
+      if (generation !== sshGeneration) return
       set({ settings: previous, savingAuth: false })
       notify(error instanceof Error ? `保存失败：${error.message}` : '保存失败', 'danger')
       await recordFailure(error, gateway)
@@ -307,15 +288,19 @@ export const useSshStore = create<SshState>((set, get) => {
     set({ pendingPort: undefined })
   },
 
-  // 确认后才落袋：先改 sshd，再按防火墙当前状态决定放不放行新端口。
+  // 确认后提交服务端事务；防火墙检查与监听切换由同一请求完成。
   async confirmPortSave(gateway) {
+    if (isBusy(get()) || get().refreshing) return
+    const generation = sshGeneration
     const next = get().pendingPort
     if (next === undefined || get().savingPort) return
     set({ savingPort: true, operationError: undefined })
-    let savedPort: number
+    let firewallPort: SshAuthSettings['firewallPort']
+    sshRevision += 1
     try {
       const confirmed = await gateway.ssh.setPort(next)
-      savedPort = confirmed.port
+      if (generation !== sshGeneration) return
+      firewallPort = confirmed.firewallPort
       set({
         settings: confirmed,
         portDraft: `${confirmed.port}`,
@@ -324,26 +309,34 @@ export const useSshStore = create<SshState>((set, get) => {
       })
       notify(`SSH 端口已改为 ${confirmed.port}${MOCK_SUFFIX}`)
     } catch (error) {
+      if (generation !== sshGeneration) return
       // 端口没改成：保留确认对话与行内原因，同时记录失败消息。
       set({ savingPort: false })
       notify(error instanceof Error ? `保存失败：${error.message}` : '保存失败', 'danger')
       await recordFailure(error, gateway)
       return
     }
-    // 联动放在端口保存的 try 之外：它自己的失败已在内部报成「联动失败」，
-    // 不会走到上面的 catch 把已经成功的端口报成「保存失败」。
-    await linkSshPortToFirewall(gateway, savedPort)
+    if (firewallPort) {
+      notify(firewallPort.state === 'opened' ? `已为新端口 ${firewallPort.port} 添加防火墙 tcp 放行规则${MOCK_SUFFIX}` : firewallPort.detail ?? '请核对防火墙规则', firewallPort.state === 'failed' ? 'danger' : firewallPort.state === 'skipped' ? 'info' : 'success')
+    } else {
+      notify('服务端未返回防火墙联动结果，请到防火墙页确认新端口已放行', 'info')
+    }
   },
 
   async setLoginPolicy(gateway, policy) {
+    if (isBusy(get()) || get().refreshing) return
+    const generation = sshGeneration
     const previous = get().rootAuth
     if (!previous || get().savingPolicy) return
     set({ savingPolicy: true, rootAuth: { ...previous, policy } })
+    sshRevision += 1
     try {
       const confirmed = await gateway.ssh.saveRootLoginPolicy(policy)
+      if (generation !== sshGeneration) return
       set({ rootAuth: confirmed, savingPolicy: false })
       notify(`Root 登录已${policy === 'no' ? '禁止' : '允许'}${MOCK_SUFFIX}`)
     } catch (error) {
+      if (generation !== sshGeneration) return
       set({ rootAuth: previous, savingPolicy: false })
       notify(error instanceof Error ? `保存失败：${error.message}` : '保存失败', 'danger')
       await recordFailure(error, gateway)
@@ -356,6 +349,8 @@ export const useSshStore = create<SshState>((set, get) => {
 
   // 空输入不发请求；判定为弱密码由服务侧拒绝（mock 与容器内 chpasswd 前的复验同一次判定），消息直接来自那一次判定。
   async resetPassword(gateway) {
+    if (isBusy(get()) || get().refreshing) return
+    const generation = sshGeneration
     const password = get().passwordDraft
     if (!password) {
       set({ operationError: '请输入新的 Root 密码' })
@@ -363,11 +358,14 @@ export const useSshStore = create<SshState>((set, get) => {
     }
     if (get().resettingPassword) return
     set({ resettingPassword: true, operationError: undefined })
+    sshRevision += 1
     try {
       const result = await gateway.ssh.resetRootPassword(password)
+      if (generation !== sshGeneration) return
       set({ rootAuth: result.auth, passwordDraft: '', resettingPassword: false, passwordResetNotice: true })
       notify(`Root 密码已重置${MOCK_SUFFIX}`)
     } catch (error) {
+      if (generation !== sshGeneration) return
       set({ resettingPassword: false })
       notify(error instanceof Error ? `重置失败：${error.message}` : '重置失败', 'danger')
       await recordFailure(error, gateway)
@@ -380,11 +378,15 @@ export const useSshStore = create<SshState>((set, get) => {
 
   // 生成（或重新生成）Root 密钥：私钥只进一次性弹窗，入档的 rootAuth 不带它。
   async createRootKey(gateway) {
+    if (isBusy(get()) || get().refreshing) return
+    const generation = sshGeneration
     const hadKey = get().rootAuth?.key != null
     if (get().generatingRootKey) return
     set({ generatingRootKey: true })
+    sshRevision += 1
     try {
       const result = await gateway.ssh.createRootKey()
+      if (generation !== sshGeneration) return
       set({
         rootAuth: {
           ...result,
@@ -397,6 +399,7 @@ export const useSshStore = create<SshState>((set, get) => {
       })
       notify(`Root 密钥已${hadKey ? '重新生成' : '生成'}${MOCK_SUFFIX}`)
     } catch (error) {
+      if (generation !== sshGeneration) return
       set({ generatingRootKey: false })
       notify(error instanceof Error ? `生成失败：${error.message}` : '生成失败', 'danger')
       await recordFailure(error, gateway)
@@ -440,10 +443,14 @@ export const useSshStore = create<SshState>((set, get) => {
 
   // 创建成功返回 true，弹窗据此关闭；失败保留弹窗与已填名称。
   async createKey(gateway, input) {
+    if (isBusy(get()) || get().refreshing) return false
+    const generation = sshGeneration
     if (get().creatingKey) return false
     set({ creatingKey: true, operationError: undefined })
+    sshRevision += 1
     try {
       const created = await gateway.ssh.createKey(input)
+      if (generation !== sshGeneration) return false
       set((state) => ({
         // 入列的条目不带私钥；那一份只进一次性弹窗，关闭即清空。
         keys: [...state.keys, materialWithoutPrivateKey(created)],
@@ -460,6 +467,7 @@ export const useSshStore = create<SshState>((set, get) => {
       notify(`SSH 密钥「${created.name}」已创建${MOCK_SUFFIX}`)
       return true
     } catch (error) {
+      if (generation !== sshGeneration) return false
       set({ creatingKey: false })
       notify(error instanceof Error ? `创建失败：${error.message}` : '创建失败', 'danger')
       await recordFailure(error, gateway)
@@ -476,17 +484,22 @@ export const useSshStore = create<SshState>((set, get) => {
   },
 
   async removeKey(gateway, keyId) {
+    if (isBusy(get()) || get().refreshing) return
+    const generation = sshGeneration
     const target = get().keys.find((key) => key.id === keyId)
     if (!target || get().removingKeyIds.includes(keyId)) return
     set((state) => ({ removingKeyIds: [...state.removingKeyIds, keyId] }))
+    sshRevision += 1
     try {
       await gateway.ssh.removeKey(keyId)
+      if (generation !== sshGeneration) return
       set((state) => ({
         keys: state.keys.filter((key) => key.id !== keyId),
         removingKeyIds: state.removingKeyIds.filter((id) => id !== keyId),
       }))
       notify(`SSH 密钥「${target.name}」已删除${MOCK_SUFFIX}`)
     } catch (error) {
+      if (generation !== sshGeneration) return
       set((state) => ({
         removingKeyIds: state.removingKeyIds.filter((id) => id !== keyId),
       }))

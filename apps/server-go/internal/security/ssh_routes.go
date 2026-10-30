@@ -11,6 +11,8 @@ package security
 
 import (
 	"context"
+	"elysian/server/internal/config"
+	"elysian/server/internal/seam"
 	"fmt"
 	"math"
 	"net/http"
@@ -28,6 +30,8 @@ type Deps struct {
 	AgentAuthorize func(context.Context) error
 	// Available 容器门禁事实（cfg.HostOpsAvailable()）：false 时两片整片 503。
 	Available bool
+	Mode      config.RuntimeMode
+	SshPorts  seam.PortOpener
 	// Now 时间源；nil 用 time.Now（服务层经 nowIso 落时间戳）。
 	Now func() time.Time
 
@@ -45,7 +49,7 @@ func NewSshRouter(deps Deps) chi.Router {
 	// 路径）都命中 NotFound 兜底；同源守卫不参与（跨源请求同样 503）。
 	if !deps.Available {
 		r.NotFound(func(w http.ResponseWriter, req *http.Request) {
-			shared.SendError(w, http.StatusServiceUnavailable, "真实 SSH 管理仅在 Docker 容器内可用")
+			shared.SendError(w, http.StatusServiceUnavailable, "真实 SSH 管理仅在 Docker 容器内或正式安装中可用")
 		})
 		return r
 	}
@@ -55,7 +59,7 @@ func NewSshRouter(deps Deps) chi.Router {
 		svc = deps.AgentFacade.ssh
 	}
 	if svc == nil {
-		svc = newSshService(newRealSshDepsWithWorkspace(deps.Now, nil))
+		svc = newSshService(newConfiguredSshDeps(deps))
 	}
 
 	// 同源守卫先于路由与读体：跨源写请求在解析任何请求体之前就被拒绝（GET/HEAD 放行）。

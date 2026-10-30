@@ -19,7 +19,7 @@ func NewAgentFacade(deps Deps) *AgentFacade {
 	}
 	f.ssh, f.users = deps.ssh, deps.users
 	if f.ssh == nil {
-		f.ssh = newSshService(newRealSshDepsWithWorkspace(deps.Now, nil))
+		f.ssh = newSshService(newConfiguredSshDeps(deps))
 	}
 	if f.users == nil {
 		f.users = newUsersService(newRealUsersDeps(deps.Now))

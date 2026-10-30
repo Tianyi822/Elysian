@@ -3,6 +3,7 @@ import type { ElysianGateway, SessionMode } from '../contracts/adapters'
 import { advanceAuthGeneration, setUnauthorizedListener } from '../adapters/http/unauthorized'
 import { useAgentChatStore } from './agentChatStore'
 import { usePanelStore } from './panelStore'
+import { useSshStore } from './sshStore'
 
 /**
  * 会话生命周期：unknown（探测中）→ authed / anonymous，探测请求本身失败落 error。
@@ -84,7 +85,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
         const status = await gateway.session.status(returnTo)
         if (generation !== sessionGeneration) return
         if (get().phase !== (status.authenticated ? 'authed' : 'anonymous')) advanceAuthGeneration()
-        if (!status.authenticated) { useAgentChatStore.getState().clearDisplay(); usePanelStore.getState().clearDisplay() }
+        if (!status.authenticated) { useAgentChatStore.getState().clearDisplay(); usePanelStore.getState().clearDisplay(); useSshStore.getState().clearDisplay() }
         set({ phase: status.authenticated ? 'authed' : 'anonymous', mode: status.mode,
           devAccount: status.devAccount, returnTo: status.returnTo, returnToFor: returnTo })
       } catch {
@@ -108,7 +109,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
         advanceAuthGeneration()
         invalidateChecks()
         useAgentChatStore.getState().clearDisplay()
-        usePanelStore.getState().clearDisplay()
+        usePanelStore.getState().clearDisplay(); useSshStore.getState().clearDisplay()
         set({ phase: 'anonymous', notice: get().notice ?? '登录状态已失效，请重新登录' })
       } catch {
         // 网络故障保留页面；真实 API 仍由服务端鉴权。
@@ -129,7 +130,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
     invalidateChecks()
     // 新登录恢复上次选中的会话，公开数据重新经过服务端鉴权读取。
     useAgentChatStore.getState().clearDisplay()
-    usePanelStore.getState().clearDisplay()
+    usePanelStore.getState().clearDisplay(); useSshStore.getState().clearDisplay()
     // 登录成功即消费一次性提示：它只在「密码刚改过、还没重新登录」的窗口内成立。
     set({ phase: 'authed', notice: null })
   },
@@ -139,7 +140,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
     invalidateChecks()
     const revision = ++authRevision
     useAgentChatStore.getState().clearDisplay()
-    usePanelStore.getState().clearDisplay()
+    usePanelStore.getState().clearDisplay(); useSshStore.getState().clearDisplay()
     // 先关闭页面闸门，使仍在挂载的聊天组件没有机会重新读取公开内容。
     set({ phase: 'anonymous' })
     try {
@@ -149,7 +150,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
         advanceAuthGeneration()
         invalidateChecks()
         useAgentChatStore.getState().clearDisplay()
-        usePanelStore.getState().clearDisplay()
+        usePanelStore.getState().clearDisplay(); useSshStore.getState().clearDisplay()
         set({ phase: 'anonymous' })
       }
     }
@@ -160,7 +161,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
     invalidateChecks()
     authRevision += 1
     useAgentChatStore.getState().clearDisplay()
-    usePanelStore.getState().clearDisplay()
+    usePanelStore.getState().clearDisplay(); useSshStore.getState().clearDisplay()
     set({ phase: 'anonymous' })
   },
 }))

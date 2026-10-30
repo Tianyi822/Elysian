@@ -75,7 +75,26 @@ export function parseSshOverviewResponse(body: unknown): SshOverview {
     status: status as SshServiceStatus,
     changedAt,
     stats: parseLoginStats(row.stats),
+    ...(row.runtimeMode === undefined ? {} : { runtimeMode: parseRuntimeMode(row.runtimeMode) }),
+    ...(row.logInfo === undefined ? {} : { logInfo: parseLogInfo(row.logInfo) }),
   }
+}
+
+function parseRuntimeMode(value: unknown): NonNullable<SshOverview['runtimeMode']> {
+  if (value !== 'bare-metal' && value !== 'docker' && value !== 'local-demo') throw new Error('SSH 运行模式响应无效')
+  return value
+}
+function parseLogInfo(value: unknown): NonNullable<SshOverview['logInfo']> {
+  const row = asObject(value)
+  if ((row.source !== 'journal' && row.source !== 'auth-file' && row.source !== 'panel-file') ||
+      (row.status !== 'ready' && row.status !== 'partial' && row.status !== 'unavailable') ||
+      typeof row.sampledAt !== 'string' || (row.warning !== null && typeof row.warning !== 'string')) throw new Error('SSH 日志来源响应无效')
+  return { source: row.source, status: row.status, sampledAt: row.sampledAt, warning: row.warning }
+}
+function parseFirewallPort(value: unknown): NonNullable<SshAuthSettings['firewallPort']> {
+  const row = asObject(value)
+  if ((row.state !== 'opened' && row.state !== 'skipped' && row.state !== 'failed') || typeof row.port !== 'number' || (row.detail !== null && typeof row.detail !== 'string')) throw new Error('SSH 防火墙联动响应无效')
+  return { state: row.state, port: row.port, detail: row.detail }
 }
 
 /** 校验 GET /settings、PUT /auth-methods 与 PUT /port 响应：登录方式开关与监听端口。 */
@@ -92,6 +111,7 @@ export function parseSshSettingsResponse(body: unknown): SshAuthSettings {
     passwordAuthEnabled: row.passwordAuthEnabled,
     keyAuthEnabled: row.keyAuthEnabled,
     port: row.port,
+    ...(row.firewallPort === undefined ? {} : { firewallPort: parseFirewallPort(row.firewallPort) }),
   }
 }
 

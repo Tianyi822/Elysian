@@ -203,7 +203,7 @@ func TestSshRouter不可用整片503(t *testing.T) {
 		if rec.Code != http.StatusServiceUnavailable {
 			t.Errorf("%s %s 应 503，得 %d", c.method, c.path, rec.Code)
 		}
-		if want := `{"error":"真实 SSH 管理仅在 Docker 容器内可用"}`; bodyOf(rec) != want {
+		if want := `{"error":"真实 SSH 管理仅在 Docker 容器内或正式安装中可用"}`; bodyOf(rec) != want {
 			t.Errorf("%s %s 文案不符：%s", c.method, c.path, bodyOf(rec))
 		}
 	}

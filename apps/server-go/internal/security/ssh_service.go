@@ -21,6 +21,8 @@ package security
 //   - 私钥只在创建/生成响应里一次性带出：生成后立即读出并删除临时密钥文件。
 
 import (
+	"context"
+	"elysian/server/internal/contract"
 	"fmt"
 	"regexp"
 	"sort"
@@ -160,6 +162,9 @@ func (s *sshService) writeStamp(path string, iso string) error {
 // /proc/<pid>/comm 核实身份后才算在跑；pidfile 读不出、pid 非法或 comm 读不到
 // （进程已退）都按未运行处理。
 func (s *sshService) serviceRunning() (bool, error) {
+	if s.deps.serviceState != nil {
+		return s.deps.serviceState()
+	}
 	pidText, err := s.deps.readText(s.paths.sshdPidFile)
 	if err != nil {
 		return false, nil
@@ -190,7 +195,8 @@ func (s *sshService) waitForServiceState(running bool) (bool, error) {
 		}
 		s.deps.delay(100)
 	}
-	return s.serviceRunning()
+	current, err := s.serviceRunning()
+	return current == running, err
 }
 
 // serviceAliveAfterReload SIGHUP 重载后确认 sshd 存活：重载触发 re-exec 重读配置，
@@ -246,6 +252,12 @@ func globToRegExp(pattern string) *regexp.Regexp {
 // 含通配符时列目录按字典序（sshd_config(5)：Include 按词法序处理）逐个读取；
 // 文件缺失或不可读按无内容处理。
 func (s *sshService) expandIncludePattern(rawPattern string, depth int) (string, error) {
+	if strings.ContainsAny(rawPattern, "\"'[]") {
+		return "", sharedInvalidRequest("Include 含引号或不支持的通配符，无法完整核对条件配置，请人工整理后修改")
+	}
+	if slash := strings.LastIndexByte(rawPattern, '/'); slash >= 0 && strings.ContainsAny(rawPattern[:slash], "*?") {
+		return "", sharedInvalidRequest("Include 目录含通配符，无法完整核对条件配置，请人工整理后修改")
+	}
 	configDir := s.paths.sshdConfig[:strings.LastIndexByte(s.paths.sshdConfig, '/')]
 	absolute := rawPattern
 	if !strings.HasPrefix(rawPattern, "/") {
@@ -290,7 +302,7 @@ func (s *sshService) expandIncludePattern(rawPattern string, depth int) (string,
 // 先行归一；递归深度设上限（16），防止 drop-in 互相 Include 成环时读挂面板。
 func (s *sshService) expandIncludes(text string, depth int) (string, error) {
 	if depth >= 16 {
-		return "", nil
+		return "", sharedInvalidRequest("Include 嵌套过深或存在循环，无法完整核对 SSH 配置")
 	}
 	out := []string{}
 	for _, rawLine := range strings.Split(text, "\n") {
@@ -327,6 +339,10 @@ func (s *sshService) readEffectiveConfigText() (string, error) {
 // writeAtomic 备份 + 临时文件 + rename 的原子写：任何时刻目标路径上要么是旧全文
 // 要么是新全文。original 为 nil 时不写备份（回滚路径：.bak 已是原文）。
 func (s *sshService) writeAtomic(target string, original *string, next string) error {
+	return s.writeAtomicOwned(target, original, next, nil)
+}
+
+func (s *sshService) writeAtomicOwned(target string, original *string, next string, owner *PasswdEntry) error {
 	tmp := target + ".elysian-tmp"
 	if err := s.refuseSymlink(tmp, "原子写的临时文件"); err != nil {
 		return err
@@ -341,6 +357,19 @@ func (s *sshService) writeAtomic(target string, original *string, next string) e
 	}
 	if err := s.deps.writeText(tmp, next); err != nil {
 		return err
+	}
+	if s.deps.copyMetadata != nil && s.deps.exists(target) {
+		if err := s.deps.copyMetadata(target, tmp); err != nil {
+			return err
+		}
+	}
+	if owner != nil {
+		if err := s.deps.chmod(tmp, 0o600); err != nil {
+			return err
+		}
+		if err := s.deps.chown(tmp, owner.UID, owner.GID); err != nil {
+			return err
+		}
 	}
 	return s.deps.rename(tmp, target)
 }
@@ -359,6 +388,9 @@ func (s *sshService) settingsOf(text string) SshAuthSettings {
 	}
 	if directives.passwordAuthentication != nil {
 		settings.PasswordAuthEnabled = *directives.passwordAuthentication
+	}
+	if directives.kbdInteractiveAuthentication != nil && *directives.kbdInteractiveAuthentication {
+		settings.PasswordAuthEnabled = true
 	}
 	if directives.pubkeyAuthentication != nil {
 		settings.KeyAuthEnabled = *directives.pubkeyAuthentication
@@ -381,65 +413,204 @@ func policyOf(text string) (string, error) {
 	return "", fmt.Errorf("sshd 配置里的 PermitRootLogin 取值无法识别：%s", raw)
 }
 
-// patchAndApply 白名单补丁的完整落盘流程：补丁 → 备份 → 原子写 → `sshd -t` 预检
-// →（在跑时）SIGHUP 重载。全程进串行队列：并发的补丁排队执行，后写者基于最新
-// 原文计算，不静默丢掉先写者的改动。预检失败立即用原文原子回滚并抛中文错误
-// （按请求被拒 400 返回，而不是服务端故障）；重载后复查服务存活，进程退出（如端口
-// 被占用）同样原子回滚并如实报错；未改动时直接返回，不产生任何写与重载。
+// patchAndApply 串行验证候选配置、原子发布并应用；任何应用失败恢复原配置及服务状态。
 func (s *sshService) patchAndApply(patch []sshdPatchEntry) error {
+	return s.patchAndApplyPrepared(patch, nil)
+}
+
+func (s *sshService) patchAndApplyPrepared(patch []sshdPatchEntry, prepare func() error) error {
 	return s.serializeConfigWrite(func() error {
+		if s.deps.validateRuntime != nil {
+			if err := s.deps.validateRuntime(); err != nil {
+				return err
+			}
+		}
 		original, err := s.readConfigText()
 		if err != nil {
 			return err
 		}
 		next := PatchSshdConfig(original, patch)
+		portChanged := false
+		expectedPort := 0
+		for _, p := range patch {
+			if p.Name == "Port" {
+				portChanged = true
+				expectedPort, _ = jsParseInt(p.Value)
+			}
+		}
+		if s.deps.effectiveConfig != nil {
+			expanded, e := s.expandIncludes(original, 0)
+			if e != nil {
+				return e
+			}
+			if err = validateSshPatchScope(expanded, patch); err != nil {
+				return err
+			}
+		}
 		if next == original {
+			if portChanged && s.deps.effectiveConfig != nil {
+				effective, e := s.deps.effectiveConfig("")
+				if e != nil {
+					return e
+				}
+				ports := sshListenPorts(effective)
+				if len(ports) != 1 || !ports[expectedPort] {
+					return sharedInvalidRequest("Include 中存在累积监听端口，请人工检查 sshd 配置")
+				}
+				running, e := s.serviceRunning()
+				if e != nil {
+					return e
+				}
+				if running && s.deps.verifyConfig != nil {
+					if e = s.deps.verifyConfig(expectedPort); e != nil {
+						return e
+					}
+				}
+			}
+			if prepare != nil {
+				return prepare()
+			}
 			return nil
 		}
-
-		if err := s.writeAtomic(s.paths.sshdConfig, &original, next); err != nil {
+		tmp := s.paths.sshdConfig + ".elysian-check"
+		if err = s.refuseSymlink(s.paths.sshdConfig, "sshd 配置"); err != nil {
 			return err
 		}
-		if _, err := s.deps.runSshd([]string{"-t", "-f", s.paths.sshdConfig}); err != nil {
-			wrapped := s.commandError("sshd", []string{"-t", "-f", s.paths.sshdConfig}, err)
-			// 回滚同样走原子写（.bak 已是原文，不再重复备份）：目标路径任何时刻都是完整文件。
-			if rbErr := s.writeAtomic(s.paths.sshdConfig, nil, original); rbErr != nil {
-				return rbErr
-			}
-			// 预检不通过说明请求写入的取值 sshd 不接受：按请求被拒（400）返回。
-			return sharedInvalidRequest(fmt.Sprintf("sshd 配置预检未通过，已回滚原配置：%v", wrapped))
+		if err = s.refuseSymlink(tmp, "配置预检临时文件"); err != nil {
+			return err
 		}
-
+		if err = s.deps.writeText(tmp, next); err != nil {
+			return err
+		}
+		defer s.deps.remove(tmp)
+		if _, err = s.deps.runSshd([]string{"-t", "-f", tmp}); err != nil {
+			return sharedInvalidRequest(fmt.Sprintf("sshd 配置预检未通过，原配置未改动：%v", err))
+		}
+		if s.deps.effectiveConfig != nil {
+			candidate, e := s.deps.runSshd([]string{"-T", "-f", tmp})
+			if e != nil {
+				return e
+			}
+			if portChanged && (len(sshListenPorts(candidate)) != 1 || !sshListenPorts(candidate)[expectedPort]) {
+				return sharedInvalidRequest("Include 或监听地址配置仍声明其他端口，无法安全切换为单端口，请人工检查 sshd 配置")
+			}
+			for _, p := range patch {
+				if p.Name == "Port" {
+					continue
+				}
+				if !effectiveDirectiveMatches(candidate, p) {
+					return sharedInvalidRequest("SSH 生效配置与请求不一致，请检查 " + p.Name + " 的外部覆盖")
+				}
+			}
+		}
 		running, err := s.serviceRunning()
 		if err != nil {
 			return err
 		}
-		if running {
-			if err := s.deps.reloadSshd(); err != nil {
-				return fmt.Errorf("配置已写入并通过预检，但重载 sshd 失败：%v", err)
-			}
-			alive, err := s.serviceAliveAfterReload()
+		var restoreState func() error
+		if running && s.deps.captureServiceState != nil {
+			restoreState, err = s.deps.captureServiceState()
 			if err != nil {
 				return err
 			}
+		}
+		if prepare != nil {
+			if err = prepare(); err != nil {
+				return err
+			}
+		}
+		if err = s.writeAtomic(s.paths.sshdConfig, &original, next); err != nil {
+			return err
+		}
+		rollback := func(cause error) error {
+			if rb := s.writeAtomic(s.paths.sshdConfig, nil, original); rb != nil {
+				return fmt.Errorf("%v；恢复 SSH 原配置失败：%w", cause, rb)
+			}
+			if running {
+				var rb error
+				if restoreState != nil {
+					rb = restoreState()
+				} else if s.deps.applyConfig != nil {
+					rb = s.deps.applyConfig(portChanged)
+				} else {
+					alive, _ := s.serviceRunning()
+					if alive {
+						rb = s.deps.reloadSshd()
+					} else {
+						rb = s.deps.startSshd()
+					}
+				}
+				if rb == nil {
+					ok, e := s.waitForServiceState(true)
+					rb = e
+					if !ok && rb == nil {
+						rb = fmt.Errorf("SSH 原服务未恢复")
+					}
+				}
+				if rb != nil {
+					return fmt.Errorf("%v；原配置已恢复，但恢复 SSH 服务失败：%w", cause, rb)
+				}
+			}
+			return fmt.Errorf("%v；已恢复 SSH 原配置和服务状态", cause)
+		}
+		if running {
+			if s.deps.applyConfig != nil {
+				err = s.deps.applyConfig(portChanged)
+			} else {
+				err = s.deps.reloadSshd()
+			}
+			if err != nil {
+				return rollback(fmt.Errorf("应用 SSH 配置失败：%w", err))
+			}
+			alive, e := s.serviceAliveAfterReload()
+			if e != nil {
+				return rollback(e)
+			}
 			if !alive {
-				// 新取值通过语法预检但进程没能活下来：用原文原子回滚并如实报错——
-				// 不能让面板报成功而服务已死。
-				if rbErr := s.writeAtomic(s.paths.sshdConfig, nil, original); rbErr != nil {
-					return rbErr
+				return rollback(fmt.Errorf("重载后 sshd 进程退出"))
+			}
+			if portChanged && s.deps.verifyConfig != nil {
+				if err = s.deps.verifyConfig(expectedPort); err != nil {
+					return rollback(err)
 				}
-				changed := make([]string, 0, len(patch))
-				for _, entry := range patch {
-					changed = append(changed, entry.Name+"="+entry.Value)
-				}
-				return fmt.Errorf(
-					"配置已写入并通过预检，但重载后 sshd 进程退出（本次修改：%s）。已回滚为原配置，服务现在处于停止状态需手动重新启用；新取值可能只在真实监听时暴露问题（如端口已被占用），请排查后重试",
-					strings.Join(changed, "、"),
-				)
 			}
 		}
 		return nil
 	})
+}
+
+func effectiveDirectiveMatches(text string, p sshdPatchEntry) bool {
+	for _, line := range strings.Split(text, "\n") {
+		f := strings.Fields(line)
+		if len(f) > 1 && strings.EqualFold(f[0], p.Name) {
+			return strings.EqualFold(f[1], p.Value)
+		}
+	}
+	return false
+}
+
+// 自定义 Match 或多因素策略不能用全局两档开关冒充已完成变更。
+func validateSshPatchScope(text string, patch []sshdPatchEntry) error {
+	inMatch := false
+	for _, raw := range strings.Split(text, "\n") {
+		f := strings.Fields(normalizeConfigLine(raw))
+		if len(f) == 0 {
+			continue
+		}
+		if strings.EqualFold(f[0], "Match") {
+			inMatch = true
+			continue
+		}
+		for _, p := range patch {
+			if inMatch && strings.EqualFold(f[0], p.Name) {
+				return sharedInvalidRequest("Match 条件覆盖了 " + p.Name + "，请先人工整理该条件配置")
+			}
+			if strings.EqualFold(f[0], "AuthenticationMethods") && len(f) > 1 && f[1] != "any" && (p.Name == "PasswordAuthentication" || p.Name == "PubkeyAuthentication" || p.Name == "KbdInteractiveAuthentication") {
+				return sharedInvalidRequest("存在自定义 AuthenticationMethods 认证组合，请先人工核对登录方式")
+			}
+		}
+	}
+	return nil
 }
 
 // loginLineAt 无时间戳的日志行（sshd -E 裸行）→ 本次会话首次观察到的时间。
@@ -558,7 +729,39 @@ func (s *sshService) verifyPublicKey(keyLine string) (KeygenFingerprint, error) 
 
 // writeAuthorizedKeys authorized_keys 的原子写、权限收紧与属主落位：目录 0700、
 // 文件 0600，均 chown 到账号名下，写前备份。符号链接防线先于一切权限与写盘动作。
+func (s *sshService) checkAuthorizedKeys(entry PasswdEntry) error {
+	if s.deps.effectiveConfig == nil {
+		return nil
+	}
+	expanded, e := s.readEffectiveConfigText()
+	if e != nil {
+		return e
+	}
+	if e = validateSshPatchScope(expanded, []sshdPatchEntry{{Name: "AuthorizedKeysFile", Value: ".ssh/authorized_keys"}}); e != nil {
+		return e
+	}
+	text, err := s.effectiveConfigFor(entry.Name)
+	if err != nil {
+		return err
+	}
+	for _, line := range strings.Split(text, "\n") {
+		f := strings.Fields(line)
+		if len(f) > 1 && f[0] == "authorizedkeysfile" {
+			for _, path := range f[1:] {
+				if path == ".ssh/authorized_keys" || path == "%h/.ssh/authorized_keys" || path == authorizedKeysPath(entry.Home) {
+					return nil
+				}
+			}
+			return sharedInvalidRequest("账号 " + entry.Name + " 使用自定义 AuthorizedKeysFile，面板未写入，请人工管理该授权文件")
+		}
+	}
+	return sharedInvalidRequest("无法确定账号 " + entry.Name + " 的 SSH 授权文件")
+}
+
 func (s *sshService) writeAuthorizedKeys(entry PasswdEntry, original *string, next string) error {
+	if err := s.checkAuthorizedKeys(entry); err != nil {
+		return err
+	}
 	dir := sshDirPath(entry.Home)
 	target := authorizedKeysPath(entry.Home)
 	if err := s.refuseSymlink(dir, "账号的 .ssh 目录"); err != nil {
@@ -576,13 +779,7 @@ func (s *sshService) writeAuthorizedKeys(entry PasswdEntry, original *string, ne
 	if err := s.deps.chown(dir, entry.UID, entry.GID); err != nil {
 		return err
 	}
-	if err := s.writeAtomic(target, original, next); err != nil {
-		return err
-	}
-	if err := s.deps.chmod(target, 0o600); err != nil {
-		return err
-	}
-	return s.deps.chown(target, entry.UID, entry.GID)
+	return s.writeAtomicOwned(target, original, next, &entry)
 }
 
 // firstSeenAt 行 id → 会话首次观察到的时间（authorized_keys 无时间戳）。
@@ -648,26 +845,42 @@ func (s *sshService) Overview() (SshOverview, error) {
 	if err != nil {
 		return SshOverview{}, err
 	}
-	records, err := s.loginRecords()
-	if err != nil {
-		return SshOverview{}, err
+	var stats SshLoginStats
+	var logInfo *SshLogInfo
+	if s.deps.loginHistory != nil {
+		snapshot := s.deps.loginHistory()
+		stats = snapshot.Stats
+		logInfo = snapshot.Info
+	} else {
+		records, e := s.loginRecords()
+		if e != nil {
+			return SshOverview{}, e
+		}
+		stats = SummarizeSshLog(records, s.deps.nowIso())
 	}
-	stats := SummarizeSshLog(records, s.deps.nowIso())
 	status := "stopped"
 	if running {
 		status = "running"
 	}
 	return SshOverview{
-		Enabled:   running,
-		Status:    status,
-		ChangedAt: s.readStamp(s.paths.changedAtStamp),
-		Stats:     stats,
+		Enabled:     running,
+		Status:      status,
+		ChangedAt:   s.readStamp(s.paths.changedAtStamp),
+		Stats:       stats,
+		RuntimeMode: s.deps.runtimeMode, LogInfo: logInfo,
 	}, nil
 }
 
 // Settings 登录方式与监听端口（读展开 Include 后的生效值）。
+func (s *sshService) effectiveConfigFor(user string) (string, error) {
+	if s.deps.effectiveConfig != nil {
+		return s.deps.effectiveConfig(user)
+	}
+	return s.readEffectiveConfigText()
+}
+
 func (s *sshService) Settings() (SshAuthSettings, error) {
-	text, err := s.readEffectiveConfigText()
+	text, err := s.effectiveConfigFor("")
 	if err != nil {
 		return SshAuthSettings{}, err
 	}
@@ -677,7 +890,7 @@ func (s *sshService) Settings() (SshAuthSettings, error) {
 // RootAuth Root 登录策略与 Root 凭据：策略读生效值；密钥材料取 root
 // authorized_keys 首个可验证行（无则 null）；密码重置时间读宿主时间戳文件。
 func (s *sshService) RootAuth() (SshRootAuth, error) {
-	text, err := s.readEffectiveConfigText()
+	text, err := s.effectiveConfigFor("root")
 	if err != nil {
 		return SshRootAuth{}, err
 	}
@@ -712,42 +925,52 @@ func (s *sshService) RootAuth() (SshRootAuth, error) {
 	return SshRootAuth{Policy: policy, Key: nil, PasswordResetAt: passwordResetAt}, nil
 }
 
-// SetServiceEnabled 启停自管：start 带 -E 保证日志源不丢，stop 对 pidfile 发 TERM；
-// 都不依赖 service 命令。预算内未收敛如实报错；成功后写 changedAt 时间戳。
-// 启动幂等：sshd 已在跑（系统服务或先前面板启动，pidfile＋comm 双核实）时不再
-// spawn 第二个实例——同端口必败且注定往 sshd.log 里写失败行，直接视为已达成。
+// SetServiceEnabled 通过注入的裸机 systemd 或容器 sshd 控制器启停，核实后才更新变更时间。
 func (s *sshService) SetServiceEnabled(enabled bool) (SshOverview, error) {
-	action := "停止"
-	if enabled {
-		action = "启动"
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+	if enabled && s.deps.validateRuntime != nil {
+		if err := s.deps.validateRuntime(); err != nil {
+			return SshOverview{}, err
+		}
+	}
+	if s.deps.setEnabled != nil {
+		if err := s.deps.setEnabled(enabled); err != nil {
+			return SshOverview{}, err
+		}
+	} else {
 		running, err := s.serviceRunning()
 		if err != nil {
 			return SshOverview{}, err
 		}
-		if running {
-			if err := s.writeStamp(s.paths.changedAtStamp, s.deps.nowIso()); err != nil {
-				return SshOverview{}, err
+		if enabled && !running {
+			if err = s.deps.startSshd(); err != nil {
+				return SshOverview{}, fmt.Errorf("启动 sshd 失败：%w", err)
 			}
-			return s.Overview()
 		}
-		if err := s.deps.startSshd(); err != nil {
-			return SshOverview{}, fmt.Errorf("启动 sshd 失败：%v", err)
-		}
-	} else {
-		if err := s.deps.stopSshd(); err != nil {
-			return SshOverview{}, fmt.Errorf("停止 sshd 失败：%v", err)
+		if !enabled {
+			if err = s.deps.stopSshd(); err != nil {
+				return SshOverview{}, fmt.Errorf("停止 sshd 失败：%w", err)
+			}
 		}
 	}
-	converged, err := s.waitForServiceState(enabled)
+	ok, err := s.waitForServiceState(enabled)
 	if err != nil {
 		return SshOverview{}, err
 	}
-	if !converged {
-		return SshOverview{}, fmt.Errorf(
-			"%s sshd 未生效：服务状态未在预期时间内收敛，请稍后刷新查看实际状态", action,
-		)
+	if !ok {
+		return SshOverview{}, fmt.Errorf("SSH 启停未生效：服务状态未在预期时间内收敛，请刷新核对实际状态")
 	}
-	if err := s.writeStamp(s.paths.changedAtStamp, s.deps.nowIso()); err != nil {
+	if enabled && s.deps.verifyConfig != nil {
+		settings, e := s.Settings()
+		if e != nil {
+			return SshOverview{}, e
+		}
+		if e = s.deps.verifyConfig(settings.Port); e != nil {
+			return SshOverview{}, e
+		}
+	}
+	if err = s.writeStamp(s.paths.changedAtStamp, s.deps.nowIso()); err != nil {
 		return SshOverview{}, err
 	}
 	return s.Overview()
@@ -762,10 +985,11 @@ func (s *sshService) SetAuthMethods(passwordAuthEnabled, keyAuthEnabled bool) (S
 	if keyAuthEnabled {
 		keyValue = "yes"
 	}
-	if err := s.patchAndApply([]sshdPatchEntry{
-		{Name: "PasswordAuthentication", Value: passwordValue},
-		{Name: "PubkeyAuthentication", Value: keyValue},
-	}); err != nil {
+	patch := []sshdPatchEntry{{Name: "PasswordAuthentication", Value: passwordValue}, {Name: "PubkeyAuthentication", Value: keyValue}}
+	if !passwordAuthEnabled {
+		patch = append(patch, sshdPatchEntry{Name: "KbdInteractiveAuthentication", Value: "no"})
+	}
+	if err := s.patchAndApply(patch); err != nil {
 		return SshAuthSettings{}, err
 	}
 	return s.Settings()
@@ -777,10 +1001,27 @@ func (s *sshService) SetPort(port float64) (SshAuthSettings, error) {
 	if !IsValidSshPort(port) {
 		return SshAuthSettings{}, sharedInvalidRequest("SSH 端口需为 1-65535 的整数")
 	}
-	if err := s.patchAndApply([]sshdPatchEntry{{Name: "Port", Value: jsNumberToString(port)}}); err != nil {
+	var syncResult *contract.FirewallPortSync
+	if err := s.patchAndApplyPrepared([]sshdPatchEntry{{Name: "Port", Value: jsNumberToString(port)}}, func() error {
+		if s.deps.ports == nil {
+			return nil
+		}
+		result := s.deps.ports.EnsurePortRule(context.Background(), int(port), "SSH 端口联动放行")
+		syncResult = &result
+		if result.State == contract.FirewallPortSyncFailed {
+			detail := "无法放行新端口"
+			if result.Detail != nil {
+				detail = *result.Detail
+			}
+			return sharedInvalidRequest("SSH 端口未修改：" + detail)
+		}
+		return nil
+	}); err != nil {
 		return SshAuthSettings{}, err
 	}
-	return s.Settings()
+	settings, err := s.Settings()
+	settings.FirewallPort = syncResult
+	return settings, err
 }
 
 // SaveRootLoginPolicy 保存 Root 登录策略：取值限契约枚举（服务端复验）。
@@ -814,15 +1055,18 @@ func (s *sshService) ResetRootPassword(password string) (SshPasswordResetResult,
 			"密码强度不足：判定为弱密码，请加长密码并混合大小写字母、数字与符号",
 		)
 	}
+	if _, err := s.RootAuth(); err != nil {
+		return SshPasswordResetResult{}, err
+	}
 	if _, err := s.deps.runChpasswd("root:" + password); err != nil {
 		return SshPasswordResetResult{}, fmt.Errorf("chpasswd 执行失败：%v", err)
 	}
 	if err := s.writeStamp(s.paths.passwordResetAtStamp, s.deps.nowIso()); err != nil {
-		return SshPasswordResetResult{}, err
+		return SshPasswordResetResult{}, fmt.Errorf("Root 密码已修改，但记录重置时间失败，请使用新密码登录：%w", err)
 	}
 	auth, err := s.RootAuth()
 	if err != nil {
-		return SshPasswordResetResult{}, err
+		return SshPasswordResetResult{}, fmt.Errorf("Root 密码已修改，但读取认证状态失败，请使用新密码登录：%w", err)
 	}
 	return SshPasswordResetResult{Auth: auth, Strength: strength}, nil
 }
@@ -835,6 +1079,7 @@ func (s *sshService) generateKeyPair(comment string, prefix string, recordError 
 	}
 	seq := s.tempSeq.Add(1)
 	keyPath := fmt.Sprintf("%s/%s-%d", s.paths.keygenWorkspace, prefix, seq)
+	defer func() { _ = s.deps.remove(keyPath); _ = s.deps.remove(keyPath + ".pub") }()
 	args := []string{"-t", "ed25519", "-C", comment, "-N", "", "-f", keyPath}
 	if _, err := s.deps.runSshKeygen(args); err != nil {
 		if recordError {
@@ -844,10 +1089,6 @@ func (s *sshService) generateKeyPair(comment string, prefix string, recordError 
 	}
 	privateKey, privateKeyErr := s.deps.readText(keyPath)
 	publicRaw, publicErr := s.deps.readText(keyPath + ".pub")
-	func() {
-		_ = s.deps.remove(keyPath)
-		_ = s.deps.remove(keyPath + ".pub")
-	}()
 	if privateKeyErr != nil {
 		return "", "", privateKeyErr
 	}
@@ -861,6 +1102,14 @@ func (s *sshService) generateKeyPair(comment string, prefix string, recordError 
 // 首个非空非注释行（外来行保留），旧私钥随之作废；私钥仅随本次响应一次性返回。
 func (s *sshService) CreateRootKey() (SshRootAuth, error) {
 	root, err := s.entryOf("root")
+	if err != nil {
+		return SshRootAuth{}, err
+	}
+	text, err := s.effectiveConfigFor("root")
+	if err != nil {
+		return SshRootAuth{}, err
+	}
+	policy, err := policyOf(text)
 	if err != nil {
 		return SshRootAuth{}, err
 	}
@@ -887,14 +1136,7 @@ func (s *sshService) CreateRootKey() (SshRootAuth, error) {
 	s.stateMu.Lock()
 	s.keyFirstSeenAt[KeyLineId(publicKey)] = createdAt
 	s.stateMu.Unlock()
-	text, err := s.readEffectiveConfigText()
-	if err != nil {
-		return SshRootAuth{}, err
-	}
-	policy, err := policyOf(text)
-	if err != nil {
-		return SshRootAuth{}, err
-	}
+
 	return SshRootAuth{
 		Policy: policy,
 		Key: &SshRootKey{
@@ -929,6 +1171,9 @@ func (s *sshService) ListKeysWithReport() (sshListKeysReport, error) {
 
 // ListLoginRecords 登录记录：日志按时间顺序解析，界面按时间倒序呈现。
 func (s *sshService) ListLoginRecords() ([]SshLoginRecord, error) {
+	if s.deps.loginHistory != nil {
+		return s.deps.loginHistory().Records, nil
+	}
 	records, err := s.loginRecords()
 	if err != nil {
 		return nil, err

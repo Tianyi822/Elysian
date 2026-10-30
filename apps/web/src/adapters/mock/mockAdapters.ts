@@ -1289,7 +1289,7 @@ export class MockFirewallAdapter implements FirewallAdapter {
 
 export class MockSshAdapter implements SshAdapter {
   async overview(): Promise<SshOverview> {
-    return getSshOverview()
+    return { ...getSshOverview(), runtimeMode: 'local-demo' }
   }
 
   async settings(): Promise<SshAuthSettings> {
@@ -1301,7 +1301,7 @@ export class MockSshAdapter implements SshAdapter {
   }
 
   async setServiceEnabled(enabled: boolean): Promise<SshOverview> {
-    return setSshServiceEnabled(enabled, new Date().toISOString())
+    return { ...setSshServiceEnabled(enabled, new Date().toISOString()), runtimeMode: 'local-demo' }
   }
 
   async setAuthMethods(methods: SshAuthMethods): Promise<SshAuthSettings> {
@@ -1311,7 +1311,13 @@ export class MockSshAdapter implements SshAdapter {
   async setPort(port: number): Promise<SshAuthSettings> {
     // 判据与表单共用同一函数：界面挡住一次，这里再挡一次，绕过界面也写不进演示数据集。
     if (!isValidSshPort(port)) throw new Error('SSH 端口需为 1-65535 的整数')
-    return saveSshAuthSettings({ ...getSshAuthSettings(), port })
+    const firewall = new MockFirewallAdapter()
+    const toggles = await firewall.toggles()
+    const rules = toggles.firewallEnabled ? await firewall.list() : []
+    const existing = rules.find((rule) => rule.protocol === 'tcp' && rule.direction === 'inbound' && rule.port === port && rule.portTo === null && rule.family === 'ipv4' && rule.source === '所有IP')
+    if (existing?.policy === 'deny') throw new Error('SSH 端口未修改：该端口已有拒绝规则')
+    if (toggles.firewallEnabled && !existing) await firewall.create({ protocol: 'tcp', port, family: 'ipv4', policy: 'allow', direction: 'inbound', source: '所有IP', note: 'SSH 端口联动放行' })
+    return { ...saveSshAuthSettings({ ...getSshAuthSettings(), port }), firewallPort: { state: toggles.firewallEnabled && !existing ? 'opened' : 'skipped', port, detail: !toggles.firewallEnabled ? '防火墙未启用，启用前请确认 SSH 端口已放行' : existing ? '防火墙已有该端口的入站放行规则' : null } }
   }
 
   async saveRootLoginPolicy(policy: SshRootLoginPolicy): Promise<SshRootAuth> {
