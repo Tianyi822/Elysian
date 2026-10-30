@@ -534,7 +534,6 @@ function LoginStatsRegion({ stats, logInfo }: { stats: SshLoginStats; logInfo: S
       ) : (
         <p className="text-xs text-fg-subtle">登录日志不可用，暂时无法统计。</p>
       )}
-      {logInfo ? <p className="text-xs text-fg-subtle">来源：{{ journal: '系统 journal', 'auth-file': '系统认证日志', 'panel-file': '面板 SSH 日志' }[logInfo.source]} · 采样：{formatDateTime(logInfo.sampledAt)}</p> : null}
       {logInfo?.warning ? <p className="text-xs text-warning">{logInfo.warning}</p> : null}
     </Region>
   )

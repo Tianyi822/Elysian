@@ -450,7 +450,7 @@ describe('SSH 管理页签', () => {
   it('日志不可用显示原因，不展示零值统计', async () => {
     const session = sshSessions()
     const overview = await session.ssh.overview()
-    await openSshTab({ ...session.gateway, ssh: { ...session.gateway.ssh, listLoginRecords: async () => [], overview: async () => ({ ...overview, runtimeMode: 'bare-metal', logInfo: { source: 'journal', status: 'unavailable', sampledAt: '2026-10-30T10:00:00Z', warning: '系统日志权限不足' } }) } })
+    await openSshTab({ ...session.gateway, ssh: { ...session.gateway.ssh, listLoginRecords: async () => [], overview: async () => ({ ...overview, runtimeMode: 'bare-metal', logInfo: { status: 'unavailable', warning: '系统日志权限不足' } }) } })
     const service = screen.getByRole('region', { name: 'SSH 服务' })
     expect(within(service).queryByRole('table')).not.toBeInTheDocument()
     expect(within(service).getByText('系统日志权限不足')).toBeInTheDocument()

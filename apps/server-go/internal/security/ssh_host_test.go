@@ -105,7 +105,7 @@ func TestSSHHistoryCountsBeyondListLimit(t *testing.T) {
 		at := formatIsoMillis(now.Add(-time.Hour))
 		b.add(ParsedLoginLine{IP: "::1", User: "root", Port: 51234, Result: "succeeded"}, fmt.Sprint(i), at)
 	}
-	result := b.finish("journal", nil)
+	result := b.finish(nil)
 	if len(result.Records) != 2000 || result.Stats.Last7Days.Succeeded != 2600 {
 		t.Fatalf("统计被列表截断：%d %+v", len(result.Records), result.Stats)
 	}
@@ -130,7 +130,7 @@ func TestSSHHistoryUnavailableAndDST(t *testing.T) {
 	if b.start.Hour() != 0 || b.start.Day() != 27 {
 		t.Fatal("自然日窗口错误", b.start)
 	}
-	result := b.finish("journal", errors.New("权限不足"))
+	result := b.finish(errors.New("权限不足"))
 	if result.Info.Status != "unavailable" || result.Info.Warning == nil {
 		t.Fatal(result.Info)
 	}
@@ -311,13 +311,13 @@ func TestSSHRotatedFileHistoryAndReadFailure(t *testing.T) {
 	if err = readSshLogFiles(context.Background(), b, []string{current, rotated}); err != nil {
 		t.Fatal(err)
 	}
-	result := b.finish("auth-file", nil)
+	result := b.finish(nil)
 	if len(result.Records) != 2 || result.Stats.Last7Days.Succeeded != 1 || result.Stats.Last7Days.Failed != 1 {
 		t.Fatalf("轮转统计：%+v", result)
 	}
 	b = newHistoryBuilder(now, map[string]string{})
 	err = readSshLogFiles(context.Background(), b, []string{current + ".missing"})
-	if b.finish("auth-file", err).Info.Status != "unavailable" {
+	if b.finish(err).Info.Status != "unavailable" {
 		t.Fatal("缺失日志不得当成真实零值")
 	}
 	ctx, cancel := context.WithCancel(context.Background())

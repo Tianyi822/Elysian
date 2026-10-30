@@ -201,9 +201,9 @@ describe('parseSshLoginRecordsResponse', () => {
   })
 })
 
-describe('SSH 实机元数据', () => {
+describe('SSH 实机状态', () => {
   it('保留真实运行模式和日志不可用原因', () => {
-    const overview = parseSshOverviewResponse({ enabled: true, status: 'running', changedAt: null, stats: { today: { succeeded: 0, failed: 0 }, yesterday: { succeeded: 0, failed: 0 }, last7Days: { succeeded: 0, failed: 0 } }, runtimeMode: 'bare-metal', logInfo: { source: 'journal', status: 'unavailable', sampledAt: '2026-10-30T10:00:00Z', warning: '权限不足' } })
+    const overview = parseSshOverviewResponse({ enabled: true, status: 'running', changedAt: null, stats: { today: { succeeded: 0, failed: 0 }, yesterday: { succeeded: 0, failed: 0 }, last7Days: { succeeded: 0, failed: 0 } }, runtimeMode: 'bare-metal', logInfo: { status: 'unavailable', warning: '权限不足' } })
     expect(overview.runtimeMode).toBe('bare-metal')
     expect(overview.logInfo?.status).toBe('unavailable')
     expect(overview.logInfo?.warning).toBe('权限不足')

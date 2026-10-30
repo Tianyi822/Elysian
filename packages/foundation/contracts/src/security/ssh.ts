@@ -88,9 +88,7 @@ export type SshOverview = {
   stats: SshLoginStats
   runtimeMode?: 'bare-metal' | 'docker' | 'local-demo'
   logInfo?: {
-    source: 'journal' | 'auth-file' | 'panel-file'
     status: 'ready' | 'partial' | 'unavailable'
-    sampledAt: string
     warning: string | null
   }
 }

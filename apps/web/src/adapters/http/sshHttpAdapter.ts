@@ -86,10 +86,9 @@ function parseRuntimeMode(value: unknown): NonNullable<SshOverview['runtimeMode'
 }
 function parseLogInfo(value: unknown): NonNullable<SshOverview['logInfo']> {
   const row = asObject(value)
-  if ((row.source !== 'journal' && row.source !== 'auth-file' && row.source !== 'panel-file') ||
-      (row.status !== 'ready' && row.status !== 'partial' && row.status !== 'unavailable') ||
-      typeof row.sampledAt !== 'string' || (row.warning !== null && typeof row.warning !== 'string')) throw new Error('SSH 日志来源响应无效')
-  return { source: row.source, status: row.status, sampledAt: row.sampledAt, warning: row.warning }
+  if ((row.status !== 'ready' && row.status !== 'partial' && row.status !== 'unavailable') ||
+      (row.warning !== null && typeof row.warning !== 'string')) throw new Error('SSH 日志状态响应无效')
+  return { status: row.status, warning: row.warning }
 }
 function parseFirewallPort(value: unknown): NonNullable<SshAuthSettings['firewallPort']> {
   const row = asObject(value)

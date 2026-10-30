@@ -46,8 +46,6 @@ type sshHistoryBuilder struct {
 	now, start  time.Time
 	rows        sshRecordHeap
 	stats       SshLoginStats
-	earliest    time.Time
-	untimed     bool
 	seenUntimed map[string]string
 }
 
@@ -61,7 +59,6 @@ func (b *sshHistoryBuilder) add(line ParsedLoginLine, id, at string) {
 		at = *line.At
 	}
 	if at == "" {
-		b.untimed = true
 		at = b.seenUntimed[id]
 		if at == "" {
 			at = formatIsoMillis(b.now)
@@ -71,9 +68,6 @@ func (b *sshHistoryBuilder) add(line ParsedLoginLine, id, at string) {
 	stamp, ok := parseIsoTimeOk(at)
 	if !ok {
 		return
-	}
-	if b.earliest.IsZero() || stamp.Before(b.earliest) {
-		b.earliest = stamp
 	}
 	if stamp.Before(b.start) || stamp.After(b.now) {
 		return
@@ -92,7 +86,7 @@ func (b *sshHistoryBuilder) add(line ParsedLoginLine, id, at string) {
 		heap.Pop(&b.rows)
 	}
 }
-func (b *sshHistoryBuilder) finish(source string, err error) sshHistory {
+func (b *sshHistoryBuilder) finish(err error) sshHistory {
 	rows := []SshLoginRecord(b.rows)
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].At == rows[j].At {
@@ -100,25 +94,14 @@ func (b *sshHistoryBuilder) finish(source string, err error) sshHistory {
 		}
 		return rows[i].At > rows[j].At
 	})
-	info := &SshLogInfo{Source: source, Status: "ready", SampledAt: formatIsoMillis(b.now)}
-	warning := ""
-	if b.earliest.IsZero() || b.earliest.After(b.start) {
-		warning = "统计仅包含系统当前保留的近七天日志，无法确认更早历史的完整性。"
-		info.Status = "partial"
-	}
-	if b.untimed {
-		warning += "部分日志没有时间戳，使用本进程首次观察时间。"
-		info.Status = "partial"
-	}
+	info := &SshLogInfo{Status: "ready"}
 	if err != nil {
-		warning += "日志读取未完成：" + err.Error()
+		warning := "日志读取未完成：" + err.Error()
+		info.Warning = &warning
 		info.Status = "partial"
 		if len(rows) == 0 {
 			info.Status = "unavailable"
 		}
-	}
-	if warning != "" {
-		info.Warning = &warning
 	}
 	return sshHistory{Records: rows, Stats: b.stats, Info: info}
 }
@@ -259,10 +242,8 @@ func newSshHistoryReader(bare bool, d *sshHostDeps) func() sshHistory {
 		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 		defer cancel()
 		b := newHistoryBuilder(now, seen)
-		source := "panel-file"
 		var err error
 		if bare {
-			source = "journal"
 			err = readSshJournal(ctx, b)
 			if len(b.rows) == 0 {
 				files, _ := filepath.Glob("/var/log/auth.log*")
@@ -272,14 +253,13 @@ func newSshHistoryReader(bare bool, d *sshHostDeps) func() sshHistory {
 				sort.Strings(files)
 				if len(files) > 0 {
 					b = newHistoryBuilder(now, seen)
-					source = "auth-file"
 					err = readSshLogFiles(ctx, b, files)
 				}
 			}
 		} else {
 			err = readSshLogFiles(ctx, b, []string{dPath(d).sshdLog})
 		}
-		cached = b.finish(source, err)
+		cached = b.finish(err)
 		cachedAt = parseIsoTime(d.nowIso())
 		// 防止无时间戳来源的首次观察映射随轮转无限增长。
 		if len(seen) > 10000 {

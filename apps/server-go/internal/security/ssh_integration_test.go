@@ -139,7 +139,7 @@ func TestSSHIsolatedRealExecution(t *testing.T) {
 	if err = readSshLogFiles(ctx, history, []string{paths.sshdLog}); err != nil {
 		t.Fatal(err)
 	}
-	stats := history.finish("panel-file", nil).Stats
+	stats := history.finish(nil).Stats
 	if stats.Today.Succeeded < 4 || stats.Today.Failed < 1 {
 		t.Fatalf("真实认证事实未统计：%+v", stats)
 	}

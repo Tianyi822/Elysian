@@ -32,12 +32,10 @@ type SshOverview struct {
 	LogInfo     *SshLogInfo   `json:"logInfo,omitempty"`
 }
 
-// SshLogInfo 统计来源及可用性；不可用时数字不应作为真实零值展示。
+// SshLogInfo 日志读取状态；不可用时数字不应作为真实零值展示。
 type SshLogInfo struct {
-	Source    string  `json:"source"`
-	Status    string  `json:"status"`
-	SampledAt string  `json:"sampledAt"`
-	Warning   *string `json:"warning"`
+	Status  string  `json:"status"`
+	Warning *string `json:"warning"`
 }
 
 // SshAuthSettings 登录方式开关与监听端口。
