@@ -301,6 +301,10 @@ func extractSource(reader io.Reader, destination string) error {
 		if count > 50000 || h.Size < 0 || total > 1024*1024*1024 {
 			return fmt.Errorf("源码归档超过文件或大小限制")
 		}
+		// GitHub tarball 的 PAX 全局头是归档元数据，不参与源码根目录判断或落盘。
+		if h.Typeflag == tar.TypeXGlobalHeader {
+			continue
+		}
 		if path.IsAbs(h.Name) || strings.Contains(h.Name, "\\") {
 			return fmt.Errorf("源码归档包含非法路径")
 		}
