@@ -161,42 +161,25 @@ func projectChatTimeline(run Run, records []ModelRequestRecord, operations []Ope
 				StartedAt: r.EndedAt, Tool: proposal.Name, ModelCallID: proposal.ID, CallIndex: i, ArgumentsJSON: string(proposal.Arguments), Status: "planned"}
 			operation, hasOperation := ops[r.ID+":"+proposal.ID]
 			call, hasCall := actual[r.ID+":"+proposal.ID]
+			var op *Operation
+			var receipt *Call
 			if hasOperation {
+				op = &operation
 				if operation.ArgumentsJSON != "" {
 					entry.ArgumentsJSON = operation.ArgumentsJSON
 				}
-				entry.Status, entry.Error = operation.Status, operation.Error
-				entry.StartedAt, entry.EndedAt = operation.CreatedAt, operation.EndedAt
-				switch operation.Status {
-				case "dispatched":
-					entry.Status = StateRunning
-				case "completed":
-					entry.Status = "unknown"
-				}
 			}
 			if hasCall {
+				receipt = &call
 				entry.CallID, entry.Truncated = call.ID, call.Truncated
-				entry.StartedAt, entry.EndedAt, entry.Error = call.StartedAt, call.EndedAt, call.Error
-				if !hasOperation || (operation.Status != StateWaitingTask && operation.Status != StateWaitingResource && operation.Status != "unknown") {
-					entry.Status = call.Status
-				}
-				if entry.Status == StateInterrupted || entry.Status == StateRecoveryRequired {
-					entry.Status = "unknown"
-				}
-			} else {
-				approval := decisions[operation.ApprovalID]
-				switch approval.Status {
-				case "denied", "expired", "revoked":
-					entry.Status, entry.EndedAt = approval.Status, approval.DecidedAt
-				default:
-					if out.Done && (!hasOperation || operation.Status == "planned" || operation.Status == StateWaitingApproval || operation.Status == StateWaitingResource) {
-						entry.Status = "not-executed"
-					}
-					if out.Done && hasOperation && operation.Status == "dispatched" {
-						entry.Status = "unknown"
-					}
-				}
 			}
+			approval := decisions[operation.ApprovalID]
+			fact := projectToolExecution(run, op, receipt, &approval)
+			entry.Status, entry.Error = fact.Status, fact.Error
+			if fact.StartedAt != "" {
+				entry.StartedAt = fact.StartedAt
+			}
+			entry.EndedAt = fact.EndedAt
 			out.Entries = append(out.Entries, entry)
 		}
 	}

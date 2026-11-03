@@ -36,7 +36,7 @@ type agentExecution struct {
 	inferenceWikiRefs  []WikiRef
 	workflowOutput     *workflowAgentOutput
 	userInputError     string
-	toolCorrection     bool // 从本 Run 已持久化的失败推理重建，只用于尾部状态提示。
+	toolCorrection     bool // 从本 Run 已持久化的失败推理重建，用于尾部状态与一次固定搜索请求。
 	// tokenizerFailures 记录本次运行内官方分词器的连续失败次数：连续失败后不再尝试，
 	// 避免每次推理都等满超时；成功一次即清零。只影响估算精度，不阻断推理。
 	tokenizerFailures int
@@ -382,7 +382,7 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 		m.mu.Unlock()
 		return empty, bad("model-unavailable", "运行模型版本不存在")
 	}
-	if purpose == "inference" && run.Selection != nil {
+	if purpose == "inference" && run.Selection != nil && !(a.toolCorrection && request.ToolChoice == toolSearchName) {
 		request.ReasoningLevel = run.Selection.ReasoningLevel
 	}
 	profile, err := m.deps.Profiles.Resolve(run.Model.ID, run.Model.Revision, true)

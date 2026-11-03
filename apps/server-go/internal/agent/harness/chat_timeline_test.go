@@ -339,9 +339,7 @@ func TestChatTimelineToolStatesAndIncompleteText(t *testing.T) {
 			op := Operation{ID: "o", ModelRequestID: "m", ModelCallID: "p", Status: status, ApprovalID: "a"}
 			timeline := projectChatTimeline(Run{ID: "r", Status: StateInterrupted}, []ModelRequestRecord{record}, []Operation{op}, nil, nil)
 			want := "not-executed"
-			if status == StateWaitingTask {
-				want = StateWaitingTask
-			} else if status == "dispatched" || status == "unknown" || status == "completed" {
+			if status == StateWaitingTask || status == "dispatched" || status == "unknown" || status == "completed" {
 				want = "unknown"
 			}
 			if got := timeline.Entries[0]; got.Status != want || got.ArgumentsJSON != `{"n":9007199254740993}` {
@@ -349,7 +347,11 @@ func TestChatTimelineToolStatesAndIncompleteText(t *testing.T) {
 			}
 			for _, decision := range []string{"denied", "expired", "revoked"} {
 				out := projectChatTimeline(Run{ID: "r", Status: StateFailed}, []ModelRequestRecord{record}, []Operation{op}, nil, []Approval{{ID: "a", Status: decision}})
-				if out.Entries[0].Status != decision {
+				expected := decision
+				if want == "unknown" {
+					expected = "unknown"
+				}
+				if out.Entries[0].Status != expected {
 					t.Fatal(out)
 				}
 			}

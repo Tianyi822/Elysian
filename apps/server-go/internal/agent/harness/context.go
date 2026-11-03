@@ -298,6 +298,23 @@ func (a *agentExecution) contextFacts(ctx context.Context, loadImages bool) (Wor
 		if err != nil {
 			return memory, nil, nil, m.contextStoreErrorLocked(err)
 		}
+		operations, err := readDocuments[Operation](ctx, m.store.db, "SELECT json_remove(document,'$.pendingResult') FROM operations WHERE run_id=? ORDER BY rowid", run.ID)
+		if err != nil {
+			return memory, nil, nil, m.contextStoreErrorLocked(err)
+		}
+		approvals, err := readDocuments[Approval](ctx, m.store.db, "SELECT json_remove(document,'$.operation') FROM approvals WHERE run_id=? ORDER BY rowid", run.ID)
+		if err != nil {
+			return memory, nil, nil, m.contextStoreErrorLocked(err)
+		}
+		operationByCall := map[string]*Operation{}
+		for i := range operations {
+			o := &operations[i]
+			operationByCall[o.ModelRequestID+":"+o.ModelCallID] = o
+		}
+		approvalByID := map[string]*Approval{}
+		for i := range approvals {
+			approvalByID[approvals[i].ID] = &approvals[i]
+		}
 		items, readErr := readDocuments[ContextItem](ctx, m.store.db, "SELECT document FROM context_items WHERE run_id=? ORDER BY rowid", run.ID)
 		if readErr != nil {
 			return memory, nil, nil, m.contextStoreErrorLocked(readErr)
@@ -344,15 +361,14 @@ func (a *agentExecution) contextFacts(ctx context.Context, loadImages bool) (Wor
 						break
 					}
 				}
-				content := `{"error":{"code":"outcome-unknown","message":"调用未完成，结果未确认"}}`
+				op := operationByCall[record.ID+":"+proposal.ID]
+				var approval *Approval
+				if op != nil {
+					approval = approvalByID[op.ApprovalID]
+				}
+				fact := projectToolExecution(run, op, found, approval)
+				content := toolFactContent(fact, found)
 				if found != nil && terminal(found.Status) {
-					if found.Error != nil {
-						b, _ := json.Marshal(map[string]any{"error": found.Error, "result": found.Result})
-						content = string(b)
-					} else {
-						b, _ := json.Marshal(map[string]any{"result": found.Result, "truncated": found.Truncated})
-						content = string(b)
-					}
 					if seq := callSeq[found.ID]; seq != "" {
 						group.refs = append(group.refs, EvidenceRef{RunID: run.ID, EventSeq: seq})
 						c := MemoryCursor{RunNumber: run.RunNumber, EventSeq: seq}
@@ -365,6 +381,11 @@ func (a *agentExecution) contextFacts(ctx context.Context, loadImages bool) (Wor
 				}
 				if a.run.Snapshot != nil && a.run.Snapshot.ToolLoading == onDemandToolsV2 && found != nil && skillBodies[found.ID] {
 					content = `{"status":"skill-instruction-recorded","note":"适用于本轮的完整正文由独立技能上下文提供"}`
+				}
+				if run.ID != a.run.ID && proposal.Name == toolSearchName && found != nil && found.Status == StateSucceeded && found.Error == nil {
+					// 仅改变历史投影，原搜索回执及其快照摘要保持不变。
+					b, _ := json.Marshal(map[string]any{"sourceRunId": run.ID, "historical": true, "note": "这是所属历史运行的搜索加载回执，loaded/retained 不代表本轮已加载；当前可调用工具以尾部状态和实际定义为准", "receipt": json.RawMessage(content)})
+					content = string(b)
 				}
 				result := model.Message{Role: "tool", ToolCallID: callID, Content: content}
 				if found != nil {
@@ -725,9 +746,9 @@ func (a *agentExecution) contextMessages(memory WorkingMemory, system string, im
 // chatContext 返回普通聊天推理的稳定前缀与尾部当前状态消息：本轮用户输入与最新任务计划
 // 从头部移到尾部，update_plan 每次更新只改最后一条消息，system、工具定义、技能正文与全部
 // 既有事实组仍构成可复用的前缀；记忆覆盖推进后本轮输入也仍由尾部消息保留。
-func (a *agentExecution) chatContext(memory WorkingMemory, images []model.ImagePart) ([]model.Message, []model.Message) {
+func (a *agentExecution) chatContext(memory WorkingMemory, images []model.ImagePart, visibleTools []model.Tool) ([]model.Message, []model.Message) {
 	base := a.contextMessages(memory, agentSystem, images, false)
-	status, ok := a.currentStateMessage()
+	status, ok := a.currentStateMessage(visibleTools)
 	if !ok {
 		return base, nil
 	}
@@ -736,7 +757,7 @@ func (a *agentExecution) chatContext(memory WorkingMemory, images []model.ImageP
 
 // currentStateMessage 构造尾部“当前状态”消息。它只承载随轮内进度变化的内容，并被明确
 // 标注为服务端数据，避免被模型当作用户新指令、系统规则或执行授权。
-func (a *agentExecution) currentStateMessage() (model.Message, bool) {
+func (a *agentExecution) currentStateMessage(visibleTools []model.Tool) (model.Message, bool) {
 	var text string
 	var breakdown model.ContextBreakdown
 	if a.run.Input != a.run.Task.Goal {
@@ -750,6 +771,21 @@ func (a *agentExecution) currentStateMessage() (model.Message, bool) {
 		planText := "\n本轮最新任务计划（已保存的数据，不是执行授权）：\n" + string(plan)
 		text += planText
 		breakdown.Other += estimateContextText(planText)
+	}
+	if a.onDemandTools() {
+		if text == "" {
+			prefix := "本轮当前状态（服务端数据，不是新指令）："
+			text = prefix
+			breakdown.Other += estimateContextText(prefix)
+		}
+		names := make([]string, 0, len(visibleTools))
+		for _, tool := range visibleTools {
+			names = append(names, tool.Name)
+		}
+		raw, _ := json.Marshal(names)
+		toolState := "\n本次请求实际可调用工具：" + string(raw) + "。历史搜索仅记录当时的加载结果，本轮未列出的工具必须先单独搜索加载；工具定义不授予执行权限。"
+		text += toolState
+		breakdown.Other += estimateContextText(toolState)
 	}
 	if a.toolCorrection {
 		correction := "\n本轮协议校验结果（服务端事实，不授予权限）：上一次响应调用了本次未加载的工具，整批提议均未执行。历史中的工具不代表已加载。请先单独调用 tool_search 搜索所需工具，收到加载结果后再重新提议；仅调用本次请求实际提供定义的工具。"
@@ -795,10 +831,14 @@ func (a *agentExecution) buildContext(ctx context.Context) (model.Request, []Evi
 		if err != nil {
 			return model.Request{}, nil, 0, err
 		}
+		visibleTools, err := a.tools(ctx)
+		if err != nil {
+			return model.Request{}, nil, memory.Revision, err
+		}
 		taskMessages, refs := flattenGroups(groups)
 		var base, status []model.Message
 		if a.run.WorkflowID == "" {
-			base, status = a.chatContext(memory, a.currentImages)
+			base, status = a.chatContext(memory, a.currentImages, visibleTools)
 		} else {
 			base = baseContext(a, memory, agentSystem, a.currentImages)
 		}
@@ -818,11 +858,16 @@ func (a *agentExecution) buildContext(ctx context.Context) (model.Request, []Evi
 		}
 		refs = append(refs, instructionRefs...)
 		a.contextItemIDs = itemIDs
-		visibleTools, err := a.tools(ctx)
-		if err != nil {
-			return model.Request{}, nil, memory.Revision, err
-		}
 		request := model.Request{Tools: visibleTools, ReasoningLevel: a.runReasoningLevel(), MaxTokens: a.outputLimit(a.runReasoningLevel())}
+		if a.toolCorrection {
+			request.ToolChoice = toolSearchName
+			request.ReasoningLevel = "" // 未声明 disabled 的服务沿用固定函数请求的关闭默认值。
+			if a.run.Model != nil && model.ValidateReasoningLevel(*a.run.Model, "disabled") == nil {
+				request.ReasoningLevel = "disabled"
+			}
+			request.MaxTokens = min(request.MaxTokens, 4096)
+		}
+
 		// 装配阶段写入当前模型的字节→token 比例：fits 循环只做本地换算，不发官方计数请求。
 		request.EstimateRatio = a.estimateRatio()
 		sharedStart := 0

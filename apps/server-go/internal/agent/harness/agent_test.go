@@ -763,7 +763,11 @@ func TestAgentChatCompletionsWireLoop(t *testing.T) {
 			message["tool_calls"] = []any{map[string]any{"id": "vendor:call/with.punctuation", "type": "function", "function": map[string]any{"name": "docker_images_list", "arguments": "{}"}}}
 			reason = "tool_calls"
 		case 2:
-			if len(input.Messages) == 0 || input.Messages[len(input.Messages)-1].Role != "tool" || input.Messages[len(input.Messages)-1].ToolCallID == "" {
+			messages := input.Messages
+			if len(messages) > 0 && isCurrentStateMessage(messages[len(messages)-1]) {
+				messages = messages[:len(messages)-1]
+			}
+			if len(messages) == 0 || messages[len(messages)-1].Role != "tool" || messages[len(messages)-1].ToolCallID == "" {
 				t.Error("工具提议与结果未完整重建")
 			}
 			message["content"] = "HTTP 模型闭环完成"
@@ -823,7 +827,7 @@ func TestAgentContinuationClosesInterruptedToolGroupWithoutReplay(t *testing.T) 
 		}
 		b, _ := json.Marshal(r.Messages)
 		recovered = string(b)
-		return finalReply("保留已确认结果，未执行结果未知"), nil
+		return finalReply("保留已确认结果，剩余提议未执行"), nil
 	}, func(d *Deps) {
 		d.Spawn = func(context.Context) (worker.Process, error) {
 			p := &agentTestProcess{}
@@ -853,7 +857,7 @@ func TestAgentContinuationClosesInterruptedToolGroupWithoutReplay(t *testing.T) 
 		t.Fatal(err)
 	}
 	got := runtimeFinished(t, m, second.ID)
-	if got.Status != StateSucceeded || invoker.count.Load() != 1 || !strings.Contains(recovered, "outcome-unknown") || !strings.Contains(recovered, "worker-lost") {
+	if got.Status != StateSucceeded || invoker.count.Load() != 1 || !strings.Contains(recovered, "tool-not-executed") || strings.Contains(recovered, "outcome-unknown") || !strings.Contains(recovered, "worker-lost") {
 		t.Fatalf("恢复未闭合工具组错误：%+v tools=%d context=%s", got, invoker.count.Load(), recovered)
 	}
 }

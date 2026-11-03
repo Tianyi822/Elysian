@@ -127,7 +127,7 @@ func capabilityMetadata(c Capability) tools.Metadata {
 	return metadata
 }
 
-func (m *Manager) registerRunCatalog(s CapabilitySnapshot) error {
+func (m *Manager) registerRunCatalog(ctx context.Context, s CapabilitySnapshot) error {
 	descriptors := []tools.Descriptor{}
 	_, native := m.deps.Tools.(registryProvider)
 	for _, capability := range append(append([]Capability{}, s.Tools...), s.Materials...) {
@@ -226,7 +226,7 @@ func (m *Manager) registerRunCatalog(s CapabilitySnapshot) error {
 			return m.deps.Catalog.Execute(ctx, s, o)
 		}})
 	}
-	return m.toolRuntime.RegisterCatalog(s.Digest, descriptors)
+	return m.toolRuntime.RegisterCatalogContext(ctx, s.Digest, descriptors)
 }
 
 func (m *Manager) executeRegistryOperation(ctx context.Context, s CapabilitySnapshot, o Operation, limit int) (finalResult CapabilityResult, finalErr error) {
@@ -243,7 +243,7 @@ func (m *Manager) executeRegistryOperation(ctx context.Context, s CapabilitySnap
 			return CapabilityResult{}, bad("tool-catalog-changed", "平台工具版本与本轮固定目录不符")
 		}
 	}
-	if err := m.registerRunCatalog(s); err != nil {
+	if err := m.registerRunCatalog(ctx, s); err != nil {
 		return CapabilityResult{}, err
 	}
 	defer func() { finalErr = errors.Join(finalErr, m.toolRuntime.ReleaseCatalog(s.Digest)) }()
