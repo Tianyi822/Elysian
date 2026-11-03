@@ -227,7 +227,7 @@ export function LoginPage() {
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 disabled={submitting}
-                className={`${FIELD_CLASS} pr-9`}
+                className={`${FIELD_CLASS} password-input-with-toggle pr-9`}
               />
               <PasswordVisibilityButton visible={passwordVisible} onToggle={setPasswordVisible} />
             </div>
