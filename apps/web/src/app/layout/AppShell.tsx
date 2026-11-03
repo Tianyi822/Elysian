@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { PanelLeftClose, PanelLeftOpen } from '../../components/icons'
+import { Bot, PanelLeftClose, PanelLeftOpen } from '../../components/icons'
 import { Outlet, useLocation, useMatches } from 'react-router'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { subscribeWhileVisible } from '../../adapters/subscribeWhileVisible'
@@ -109,8 +109,9 @@ export function AppShell() {
             {/* 品牌区与收展入口固定在导航顶部；导航与内容之间不再画分割线。
                 内部始终保持展开宽度，外层裁切；收展按钮以位移跟随边缘，字标只淡入淡出。 */}
             <div className="flex h-[var(--shell-header-height)] shrink-0 items-center justify-between pl-6 pr-3">
-              <span className="brand-wordmark desktop-navigation-brand">
-                Elysian
+              <span className="brand-wordmark desktop-navigation-brand inline-flex items-center gap-2">
+                <Bot aria-hidden size={24} className="shrink-0 text-accent-fg" />
+                <span>Elysian</span>
               </span>
               <IconButton
                 onPress={() => setSidebarCollapsed(!sidebarCollapsed)}
@@ -153,7 +154,11 @@ export function AppShell() {
               >
                 {/* 抽屉与桌面导航共用品牌区高度，标题左缘同样对齐下方图标。 */}
                 <div className="flex h-[var(--shell-header-height)] items-center justify-between pl-6 pr-3">
-                  <Dialog.Title className="text-base font-medium">主导航</Dialog.Title>
+                  <Dialog.Title className="sr-only">主导航</Dialog.Title>
+                  <span className="brand-wordmark inline-flex items-center gap-2">
+                    <Bot aria-hidden size={24} className="shrink-0 text-accent-fg" />
+                    <span>Elysian</span>
+                  </span>
                   <Dialog.Close asChild>
                     <span>
                       {/* 标题「主导航」已在旁边，悬停提示反而跟随焦点常驻，视觉提示关掉。 */}

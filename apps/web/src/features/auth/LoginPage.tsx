@@ -4,7 +4,7 @@ import { Navigate, useLocation, useNavigate } from 'react-router'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { PasswordVisibilityButton } from '../security/passwordFieldParts'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
-import { Info, TriangleAlert } from '../../components/icons'
+import { Bot, Info, TriangleAlert } from '../../components/icons'
 import { useSessionStore } from '../../stores/sessionStore'
 import { useMessageStore } from '../../stores/messageStore'
 
@@ -171,12 +171,12 @@ export function LoginPage() {
     <CenteredShell>
       <section className="w-full max-w-sm panel-surface p-6 sm:p-7">
         <div className="flex items-center gap-3">
-          {/* 品牌字标与标题同行：卡片开场一行认得出是谁。 */}
+          {/* 全站统一使用 Ely 图标作为品牌标识。 */}
           <span
             aria-hidden
             className="grid size-10 shrink-0 place-items-center rounded-xl border border-panel-line bg-nav-selected text-base font-semibold text-accent-fg shadow-[inset_0_1px_0_var(--t-panel-sheen)]"
           >
-            E
+            <Bot size={24} />
           </span>
           <h1 className="min-w-0 text-lg font-semibold tracking-tight">登录 Elysian</h1>
         </div>
