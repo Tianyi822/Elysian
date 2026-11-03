@@ -549,7 +549,7 @@ export interface ModelSettingsAdapter {
 }
 
 export interface PanelAdapter {
- info(): Promise<PanelInfo>
+ info(signal?: AbortSignal): Promise<PanelInfo>
  checkUpdate(channel: PanelUpdateChannel, source: PanelUpdateSource): Promise<PanelUpdate>
  /** 更新日志：列所选更新来源最近的提交，只读上游，不改动面板状态。 */
  commits(channel: PanelUpdateChannel, source: PanelUpdateSource): Promise<PanelCommit[]>
@@ -557,7 +557,7 @@ export interface PanelAdapter {
  restart(requestId: string): Promise<PanelTask>
  update(target: PanelUpdateTarget, requestId: string): Promise<PanelTask>
  retryCLIRegistration(id: string): Promise<PanelTask>
- task(id: string, offset?: number): Promise<PanelTaskReport>
+ task(id: string, offset?: number, signal?: AbortSignal): Promise<PanelTaskReport>
  taskByRequest(requestId: string, signal?: AbortSignal): Promise<PanelTask | null>
  ready(origin: string, id: string, signal?: AbortSignal): Promise<boolean>
 }

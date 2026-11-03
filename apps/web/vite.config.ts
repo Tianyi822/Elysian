@@ -52,6 +52,7 @@ export default defineConfig({
     elysianEventsVitePlugin(),
   ],
   define: {
+    'import.meta.env.ELYSIAN_BUILD_COMMIT': JSON.stringify(process.env.ELYSIAN_BUILD_COMMIT ?? ''),
     'import.meta.env.ELYSIAN_DOCKER': JSON.stringify(process.env.ELYSIAN_DOCKER ?? ''),
   },
   server: {

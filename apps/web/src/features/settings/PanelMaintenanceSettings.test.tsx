@@ -230,7 +230,7 @@ describe('端口与更新设置', () => {
     const read = vi.fn().mockResolvedValueOnce({ task: finished, logs: '检查部署环境\n', nextOffset: 20, hasMore: true }).mockResolvedValueOnce({ task: finished, logs: '已完成\n', nextOffset: 30, hasMore: false }); g.panel.task = read
     renderApp('/settings?tab=maintenance', { gateway: g })
     await waitFor(() => expect(screen.getByLabelText('维护任务日志')).toHaveTextContent('已完成'))
-    expect(read).toHaveBeenLastCalledWith(task.id, 20)
+    expect(read).toHaveBeenLastCalledWith(task.id, 20, expect.any(AbortSignal))
     expect(read).toHaveBeenCalledTimes(2)
     expect(screen.queryByRole('button', { name: '继续读取日志' })).not.toBeInTheDocument()
     expect(openPanelAddress).not.toHaveBeenCalled()
@@ -494,7 +494,7 @@ describe('端口与更新设置', () => {
     expect(screen.getByRole('button', { name: '重新加载面板' })).toBeInTheDocument()
     vi.unstubAllGlobals()
   })
-  it('运行版本与目标提交一致时隐藏维护进度并自动刷新页面', async () => {
+  it('运行版本与目标提交一致时隐藏维护进度并显示重载倒计时', async () => {
     const g = gateway(); const sha = commitUpdate.targetCommit
     const updateTask = { ...task, kind: 'update' as const, newPorts: ports, targetCommit: sha }
     g.panel.info = async () => ({ ...info, activeTask: updateTask })
@@ -506,7 +506,10 @@ describe('端口与更新设置', () => {
     renderApp('/settings?tab=maintenance', { gateway: g })
     await screen.findByText(/等待执行|正在执行/)
     finished = true
-    await waitFor(() => expect(vi.mocked(reloadPanelPage)).toHaveBeenCalled(), { timeout: 4000 })
+    expect(await screen.findByRole('dialog', { name: '更新完成' }, { timeout: 4000 })).toBeInTheDocument()
+    expect(reloadPanelPage).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByRole('button', { name: '立刻重启' }))
+    expect(reloadPanelPage).toHaveBeenCalledTimes(1)
     expect(screen.queryByRole('region', { name: '面板维护进度' })).not.toBeInTheDocument()
     vi.unstubAllGlobals()
   })
@@ -529,7 +532,10 @@ describe('端口与更新设置', () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(6000) })
       // 恢复触发的重渲染在上一段 act 结束时完成，重连轮询的定时器在这段推进里触发。
       await act(async () => { await vi.advanceTimersByTimeAsync(4000) })
-      expect(vi.mocked(reloadPanelPage)).toHaveBeenCalled()
+      expect(screen.getByRole('dialog', { name: '更新完成' })).toBeInTheDocument()
+      expect(reloadPanelPage).not.toHaveBeenCalled()
+      await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
+      expect(reloadPanelPage).toHaveBeenCalledTimes(1)
     } finally {
       vi.unstubAllGlobals()
       vi.useRealTimers()

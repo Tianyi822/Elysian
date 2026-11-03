@@ -69,7 +69,7 @@ async function request(path: string, method = 'GET', body?: unknown, signal?: Ab
 }
 export function createHttpPanelAdapter(base = '/api/panel'): PanelAdapter {
   return {
-    info: async () => parsePanelInfo(await request(base)),
+    info: async (signal) => parsePanelInfo(await request(base, 'GET', undefined, signal)),
     async checkUpdate(channel, source) {
       const row = object(await request(`${base}/update?channel=${channel}&source=${source}`))
       for (const key of ['repository', 'branch', 'currentCommit', 'targetCommit', 'message', 'releaseTag']) if (typeof row[key] !== 'string') throw new Error('更新信息响应无效')
@@ -84,8 +84,8 @@ export function createHttpPanelAdapter(base = '/api/panel'): PanelAdapter {
     ports: async (value, requestId) => parsePanelTask(await request(`${base}/ports`, 'PUT', { ...value, requestId })),
     restart: async (requestId) => parsePanelTask(await request(`${base}/restart`, 'POST', { requestId })),
     update: async ({ channel, source, targetCommit, releaseTag }, requestId) => parsePanelTask(await request(`${base}/update`, 'POST', { channel, source, targetCommit, releaseTag, requestId })),
-    async task(id, offset = 0) {
-      const row = object(await request(`${base}/tasks/${encodeURIComponent(id)}?offset=${offset}`))
+    async task(id, offset = 0, signal) {
+      const row = object(await request(`${base}/tasks/${encodeURIComponent(id)}?offset=${offset}`, 'GET', undefined, signal))
       if (typeof row.logs !== 'string' || !Number.isSafeInteger(row.nextOffset) || Number(row.nextOffset) < 0) throw new Error('维护日志响应无效')
       return { task: parsePanelTask(row.task), logs: row.logs, nextOffset: row.nextOffset, hasMore: row.hasMore === true } as PanelTaskReport
     },

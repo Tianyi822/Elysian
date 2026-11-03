@@ -40,7 +40,7 @@ describe('维护展示生命周期', () => {
     await reading
     expect(usePanelStore.getState().task).toEqual(task)
   })
-  it('重新进入设置页清除历史终态追踪，收尾刷新可保留当前追踪', async () => {
+  it('信息回读及重新进入设置页均保留全局任务追踪', async () => {
     const g = createMockGateway(); const finished = { ...task, state: 'succeeded' as const }
     g.panel.info = async () => ({ ports, commit: '', buildTime: '', available: true, reason: '', repository: '', activeTask: null, lastTask: finished })
     g.panel.task = async () => ({ task: finished, logs: '', nextOffset: 0 })
@@ -48,6 +48,6 @@ describe('维护展示生命周期', () => {
     await usePanelStore.getState().load(g, true)
     expect(usePanelStore.getState().trackedTaskId).toBe(task.id)
     await usePanelStore.getState().load(g)
-    expect(usePanelStore.getState().trackedTaskId).toBeNull()
+    expect(usePanelStore.getState().trackedTaskId).toBe(task.id)
   })
 })

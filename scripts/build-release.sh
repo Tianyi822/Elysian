@@ -13,7 +13,7 @@ BUILD_COMMIT="$3"
 mkdir -p "$OUTPUT_DIR"
 cd "$SOURCE_DIR"
 bun install --frozen-lockfile --registry="$BUN_CONFIG_REGISTRY"
-ELYSIAN_DOCKER=1 bun run build
+ELYSIAN_BUILD_COMMIT="$BUILD_COMMIT" ELYSIAN_DOCKER=1 bun run build
 [ -f apps/web/dist/index.html ] || { echo '前端产物缺少 index.html' >&2; exit 1; }
 rm -rf apps/server-go/web/dist
 mkdir -p apps/server-go/web/dist

@@ -6,6 +6,7 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { subscribeWhileVisible } from '../../adapters/subscribeWhileVisible'
 import { IconButton } from '../../components/IconButton'
 import { MessageCenter } from '../../components/MessageCenter'
+import { PanelUpdateMonitor } from '../../features/settings/PanelUpdateMonitor'
 import { useEventStreamStore } from '../../stores/eventStreamStore'
 import { NAV_ITEMS } from '../navigation'
 import type { RouteHandle } from '../router'
@@ -97,6 +98,7 @@ export function AppShell() {
 
   return (
     <ShellLayoutContext.Provider value={layout}>
+      <PanelUpdateMonitor />
       <div className="app-canvas flex h-dvh overflow-hidden text-fg">
         <aside
           aria-label="桌面主导航"

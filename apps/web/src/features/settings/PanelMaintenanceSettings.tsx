@@ -6,33 +6,26 @@ import type { FormEvent } from 'react'
 import { PANEL_TASK_PHASE_LABELS, PANEL_TASK_STATE_LABELS, PANEL_UPDATE_CHANNEL_LABELS, PANEL_UPDATE_SOURCE_LABELS, panelTaskIsActive, validatePanelPorts } from '@elysian/contracts'
 import type { PanelTask, PanelUpdate, PanelUpdateChannel, PanelUpdateSource } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { PanelHttpError, PanelNetworkError, probeSameOriginHealth } from '../../adapters/http/panelHttpAdapter'
+import { PanelHttpError } from '../../adapters/http/panelHttpAdapter'
 import { captureAuthGeneration } from '../../adapters/http/unauthorized'
 import { usePanelStore } from '../../stores/panelStore'
-import { openPanelAddress, reloadPanelPage } from './panelNavigation'
+import { reloadPanelPage } from './panelNavigation'
+import { panelAddress } from './panelAddress'
+export { panelAddress } from './panelAddress'
 import { PanelChangelogDialog } from './PanelChangelogDialog'
 import { ChipGroup } from '../../components/ChipGroup'
 import { useFeedbackMessage } from '../../components/useFeedbackMessage'
 import { useMessageStore } from '../../stores/messageStore'
-import { readPanelPending, savePanelPending, sendPanelPending } from './panelPending'
+import { sendPanelPending } from './panelPending'
 import type { PanelPending } from './panelPending'
 
 const BUTTON = 'h-9 rounded-lg border border-control-line bg-surface-raised px-4 text-sm font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
 const INPUT = 'h-9 w-full rounded-lg border border-control-line bg-surface-raised px-3 text-sm tabular-nums text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
-/** 网络断连计入「等待面板恢复」的预算；面板重启停机超过它就转入轻量健康探测。 */
-const DISCONNECT_BUDGET_MS = 120000
-
 function updateSummary(update: PanelUpdate): string {
   if (update.channel === 'release') {
     return !update.releaseTag ? '上游仓库暂无正式发版' : `${update.available ? '可切换至最新正式发版' : '当前已是最新正式发版'} · ${update.releaseTag}`
   }
   return `${update.available ? '发现可更新的提交' : '当前已是最新提交'} · ${update.branch}`
-}
-
-/** 只替换端口，保留浏览器实际使用的 IP（包括 IPv6），不接受服务端任意跳转地址。 */
-export function panelAddress(port: number, origin = window.location.origin): string {
-  const url = new URL(origin); url.port = String(port); url.pathname = '/settings'; url.search = ''; url.hash = ''
-  return url.toString()
 }
 
 export function PanelMaintenanceSettings() {
@@ -59,17 +52,18 @@ export function PanelMaintenanceSettings() {
   /** 提交与校验错误按区块落持久行：端口区（含重启）与更新区各自展示，不再只靠自动消失的提示。 */
   const [portsError, setPortsError] = useState<string | null>(null)
   const [updateError, setUpdateError] = useState<string | null>(null)
-  /** 进度区错误：轮询收到的服务端错误与日志读取失败。 */
-  const [progressError, setProgressError] = useState<string | null>(null)
-  const [connectionError, setConnectionError] = useState<string | null>(null)
-  /** 更新完成但版本核对未通过时，提供手动重新加载入口而不自动刷新。 */
-  const [needsManualReload, setNeedsManualReload] = useState(false)
-  const [retry, setRetry] = useState(0)
+  const progressError = usePanelStore(s => s.progressError)
+  const connectionError = usePanelStore(s => s.connectionError)
+  const verificationError = usePanelStore(s => s.verificationError)
+  const needsManualReload = usePanelStore(s => s.needsManualReload)
+  const verifiedUpdate = usePanelStore(s => s.verifiedUpdate)
+  const pending = usePanelStore(s => s.pending)
+  const setProgressError = (value: string | null) => usePanelStore.setState({ progressError: value })
+  const setConnectionError = (value: string | null) => usePanelStore.setState({ connectionError: value })
   const requestId = useRef<{ key: string; id: string } | null>(null)
-  const [pending, setPending] = useState(readPanelPending)
   const pendingRef = useRef(pending)
+  pendingRef.current = pending
   const lifecycle = useRef(0)
-  const [verifiedUpdate, setVerifiedUpdate] = useState<string | null>(null)
   const submissionVersion = useRef(0)
   const active = task !== null && (panelTaskIsActive(task) || task.state === 'recovery-failed')
   // 成功更新不常驻进度卡；当前跟踪的任务须先核对版本，并保留未完成的 CLI 注册入口。
@@ -97,7 +91,6 @@ export function PanelMaintenanceSettings() {
 
   useEffect(() => {
     lifecycle.current++
-    void usePanelStore.getState().load(gateway)
     return () => { lifecycle.current++; checkVersion.current++ }
   }, [gateway])
   useEffect(() => {
@@ -105,135 +98,20 @@ export function PanelMaintenanceSettings() {
   }, [info?.ports.frontendPort, info?.ports.backendPort])
 
   const rememberPending = (value: PanelPending | null) => {
-    pendingRef.current = value; savePanelPending(value); setPending(value)
+    pendingRef.current = value; usePanelStore.getState().setPending(value)
   }
   const acceptTask = (result: PanelTask, expected: PanelPending) => {
-    if (pendingRef.current?.requestId !== expected.requestId) return
-    rememberPending(null); requestId.current = null
+    if (!usePanelStore.getState().acceptPending(result, expected.requestId)) return
+    pendingRef.current = null; requestId.current = null
     setSubmitting(false)
     setProgressError(null); setConnectionError(null); setPortsError(null); setUpdateError(null)
-    usePanelStore.getState().put(result)
     if (!usePanelStore.getState().info) void usePanelStore.getState().load(gateway, true)
     useMessageStore.getState().notify({ tone: 'info', message: '面板维护任务已提交' })
   }
   useEffect(() => {
-    if (!pending) return
-    let stopped = false, timer: ReturnType<typeof setTimeout> | undefined
-    const auth = captureAuthGeneration(), abort = new AbortController()
-    const current = () => !stopped && auth === captureAuthGeneration() && pendingRef.current?.requestId === pending.requestId
-    const reconcile = async () => {
-      try {
-        const found = await gateway.panel.taskByRequest(pending.requestId, abort.signal)
-        if (!current()) return
-        if (found) { acceptTask(found, pending); return }
-        setProgressError(null)
-      } catch (cause) {
-        if (!current()) return
-        setProgressError(cause instanceof Error ? cause.message : '查询维护提交结果失败')
-      }
-      if (current()) timer = setTimeout(() => void reconcile(), 2000)
-    }
-    void reconcile()
-    return () => { stopped = true; abort.abort(); if (timer) clearTimeout(timer) }
-  }, [gateway, pending?.requestId])
-
-  useEffect(() => {
-    if (!task || panelTaskIsActive(task) || task.cliRegistration?.status === 'pending' || task.cliRegistration?.status === 'failed' || trackedTaskId !== task.id) return
-    let stopped = false
-    const auth = captureAuthGeneration(), abort = new AbortController()
-    const current = () => !stopped && auth === captureAuthGeneration() && usePanelStore.getState().task?.id === task.id && usePanelStore.getState().trackedTaskId === task.id
-    void (async () => {
-      if (!current()) return
-      setProgressError(null); setConnectionError(null)
-      if (task.state === 'succeeded' && task.kind === 'update') {
-        const probe = await probeSameOriginHealth(abort.signal)
-        if (!current()) return
-        if (probe && probe.commit !== '' && probe.commit === task.targetCommit) {
-          setVerifiedUpdate(task.id); setUpdateError(null); reloadPanelPage(); return
-        }
-        setNeedsManualReload(true)
-        setUpdateError(probe && probe.commit !== ''
-          ? `面板已恢复，但运行版本 ${probe.commit.slice(0, 7)} 与目标提交不一致，未自动刷新页面；请查看任务日志或在服务器核实。`
-          : '面板已恢复，但暂无法确认运行版本，未自动刷新页面；可手动重新加载后查看当前版本。')
-      }
-      if (current()) await usePanelStore.getState().load(gateway, true)
-    })()
-    return () => { stopped = true; abort.abort() }
-  }, [gateway, task?.id, task?.state, task?.cliRegistration?.status, trackedTaskId])
-
-  useEffect(() => {
-    if (!task || (!panelTaskIsActive(task) && task.cliRegistration?.status !== 'pending' && !hasMore)) return
-    let stopped = false, timer: ReturnType<typeof setTimeout> | undefined, disconnectedAt: number | undefined
-    const abort = new AbortController()
-    const auth = captureAuthGeneration()
-    const currentEffect = () => !stopped && auth === captureAuthGeneration() && usePanelStore.getState().task?.id === task.id
-    // 断连预算耗尽后不再放弃监控：转入同源健康轻探测，面板恢复即自动重连轮询，
-    // 由任务终态决定刷新或展示失败原因——重启断连期间既不误报失败也不提前宣布成功。
-    const probeRecovery = () => {
-      if (!currentEffect()) return
-      void probeSameOriginHealth(abort.signal).then((probe) => {
-        if (!currentEffect()) return
-        if (probe) {
-          setConnectionError(null)
-          setRetry((value) => value + 1)
-          return
-        }
-        timer = setTimeout(probeRecovery, 5000)
-      })
-    }
-    const tick = async () => {
-      if (!currentEffect()) return
-      const current = usePanelStore.getState().task
-      if (!current || current.id !== task.id) return
-      let nextDelay = 2000
-      try {
-        const nextUrl = new URL(panelAddress(current.newPorts.frontendPort))
-        if ((panelTaskIsActive(current) || current.cliRegistration?.status === 'pending') && nextUrl.origin !== window.location.origin) {
-          const probeAbort = new AbortController()
-          const cancelProbe = () => probeAbort.abort()
-          abort.signal.addEventListener('abort', cancelProbe, { once: true })
-          const probeTimer = setTimeout(cancelProbe, 3000)
-          let ready = false
-          try { ready = await gateway.panel.ready(nextUrl.origin, current.id, probeAbort.signal) } catch { /* 重启期间入口可能暂时不可达。 */ }
-          finally { clearTimeout(probeTimer); abort.signal.removeEventListener('abort', cancelProbe) }
-          if (!currentEffect()) return
-          if (ready) { nextUrl.searchParams.set('maintenanceTask', current.id); openPanelAddress(nextUrl.toString()); return }
-        }
-        const report = await usePanelStore.getState().poll(gateway)
-        if (report && !panelTaskIsActive(report.task) && report.task.cliRegistration?.status !== 'pending' && !report.hasMore) {
-          return
-        }
-        // 先按顺序读完积压分页，再恢复两秒轮询；终态任务也读到最后一页。
-        if (report?.hasMore) nextDelay = 0
-        if (!currentEffect()) return
-        setConnectionError(null); setProgressError(null); disconnectedAt = undefined
-      } catch (cause) {
-        if (!currentEffect()) return
-        if (cause instanceof PanelNetworkError) {
-          // 网络不可达才计入断连预算：服务重启停机期间不误报失败。
-          setProgressError(null)
-          disconnectedAt ??= Date.now()
-          if (Date.now() - disconnectedAt >= DISCONNECT_BUDGET_MS) {
-            if (!stopped) {
-              setConnectionError(current.kind === 'ports'
-                ? '等待面板恢复连接超时。请打开下方新地址；如果已回滚，请使用原地址，并在服务器查看维护日志。'
-                : '等待面板恢复连接超时。面板可能仍在重启或执行维护，恢复后会自动重连；也可手动重新加载面板；如长时间未恢复，请在服务器查看维护日志。')
-              probeRecovery()
-            }
-            return
-          }
-        } else {
-          // HTTP 错误响应：面板可达且给出了原因，立即显示服务端错误，不计断连预算。
-          disconnectedAt = undefined
-          setConnectionError(null)
-          setProgressError(cause instanceof Error ? cause.message : '读取维护任务失败')
-        }
-      }
-      if (!stopped) timer = setTimeout(() => void tick(), nextDelay)
-    }
-    timer = setTimeout(() => void tick(), hasMore ? 0 : 1000)
-    return () => { stopped = true; abort.abort(); if (timer) clearTimeout(timer) }
-  }, [gateway, task?.id, task?.state, task?.cliRegistration?.status, hasMore, retry])
+    if (!pending) setSubmitting(false)
+  }, [pending])
+  useEffect(() => { requestId.current = null }, [task?.id])
 
   const retryCLI = async () => {
     if (!task || retryingCLI) return
@@ -250,7 +128,7 @@ export function PanelMaintenanceSettings() {
     const scope = lifecycle.current, auth = captureAuthGeneration()
     const version = ++submissionVersion.current
     const current = () => scope === lifecycle.current && auth === captureAuthGeneration()
-    setSubmitting(true); setPortsError(null); setUpdateError(null); setProgressError(null); setConnectionError(null); setNeedsManualReload(false); setVerifiedUpdate(null)
+    setSubmitting(true); setPortsError(null); setUpdateError(null); setProgressError(null); setConnectionError(null); usePanelStore.setState({ needsManualReload: false, verificationError: null })
     let saved = retryPending
     const isPortsAction = input.kind !== 'update'
     try {
@@ -264,7 +142,7 @@ export function PanelMaintenanceSettings() {
       if (current()) acceptTask(result, saved)
     }
     catch (cause) {
-      if (!current() || (saved && pendingRef.current?.requestId !== saved.requestId)) return
+      if (!current() || (saved && usePanelStore.getState().pending?.requestId !== saved.requestId)) return
       const message = cause instanceof Error ? cause.message : '维护请求失败，请重试'
       if (!saved || (cause instanceof PanelHttpError && cause.status < 500)) {
         // 本地准备失败尚未发送请求，不进入「结果未确认」对账。
@@ -349,7 +227,7 @@ export function PanelMaintenanceSettings() {
         {update.message && update.targetCommit ? <p className="text-fg-muted">{update.message}</p> : null}
       </div> : null}
       <div className="mt-4 flex flex-wrap gap-2"><button className={BUTTON} disabled={unavailable || checking} onClick={() => void check()}>{checking ? '正在检查…' : '检查更新'}</button><button className={BUTTON} disabled={unavailable || checking || !update?.available || update.channel !== channel || update.source !== source} onClick={() => update && void submit(`update:${update.source}:${update.channel}:${update.releaseTag}:${update.targetCommit}`, { kind: 'update', input: { channel: update.channel, source: update.source, targetCommit: update.targetCommit, releaseTag: update.releaseTag } })}>{submitting ? '正在提交…' : '更新并重启'}</button><button className={BUTTON} disabled={!info?.available} title={info && !info.available ? info.reason : undefined} onClick={() => setChangelogOpen(true)}>更新日志</button></div>
-      {updateError ? <p role="alert" className="mt-3 break-all text-xs leading-5 text-danger">{updateError}</p> : null}
+      {updateError || verificationError ? <p role="alert" className="mt-3 break-all text-xs leading-5 text-danger">{updateError ?? verificationError}</p> : null}
     </section>
     {pending ? <section aria-label="维护提交结果" className="panel-surface p-5">
       <p role="status" className="text-xs leading-5 text-warning">{submitting ? '正在提交维护请求…' : '提交结果未确认，正在按请求编号核对。'}</p>
@@ -371,7 +249,7 @@ export function PanelMaintenanceSettings() {
       {connectionError ? <div className="mt-3 space-y-2">
         <p role="alert" className="break-all text-xs leading-5 text-warning">{connectionError}</p>
         <div className="flex flex-wrap gap-2">
-          <button className={BUTTON} onClick={() => { setConnectionError(null); setRetry((v) => v + 1) }}>重新等待连接</button>
+          <button className={BUTTON} onClick={() => { setConnectionError(null) }}>重新等待连接</button>
           {task.kind !== 'ports' ? <button className={BUTTON} onClick={() => reloadPanelPage()}>重新加载面板</button> : null}
         </div>
       </div> : null}

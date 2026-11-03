@@ -8,6 +8,14 @@ import { forwardRef, type SVGProps } from 'react'
  */
 export type IconComponent = LucideIcon
 
+/** 维护完成的剩余时间圆环。pathLength 让比例与像素尺寸无关。 */
+export function CountdownRing({ progress, ...props }: SVGProps<SVGSVGElement> & { progress: number }) {
+  return <svg viewBox="0 0 160 160" fill="none" {...props}>
+    <circle cx="80" cy="80" r="75" stroke="var(--t-line)" strokeWidth="3" />
+    <circle cx="80" cy="80" r="75" pathLength="1" stroke="var(--t-accent-fg)" strokeWidth="3" strokeLinecap="round" strokeDasharray="1" strokeDashoffset={1 - progress} transform="rotate(-90 80 80)" />
+  </svg>
+}
+
 export {
   ArrowLeftRight,
   ArrowUp,
