@@ -66,3 +66,64 @@ func TestDatabaseCatalogCompatibilityOnlyAddsVersionDescription(t *testing.T) {
 		})
 	}
 }
+
+func databaseCreateLegacyCatalogFixture(t *testing.T) (Operation, tools.PublicSchema) {
+	t.Helper()
+	bridge := databaseBusinessBridge(t)
+	for _, schema := range bridge.Schemas() {
+		if schema.Name != "database_create" {
+			continue
+		}
+		var parameters map[string]any
+		raw, _ := json.Marshal(schema.Parameters)
+		_ = json.Unmarshal(raw, &parameters)
+		for _, name := range []string{"id", "expected", "versionTag", "imageId", "containerName"} {
+			delete(parameters["properties"].(map[string]any)[name].(map[string]any), "description")
+		}
+		legacy := schema
+		legacy.Parameters = parameters
+		frozen, _ := json.Marshal(parameters)
+		return Operation{ArgumentsJSON: `{"id":"new:mysql","requestId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","engine":"MySQL","versionTag":"8.0","expected":"missing","name":"app","imageId":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","containerName":"mysql"}`, Capability: Capability{
+			Name: schema.Name, Description: schema.Description, Source: "builtin", ReadOnly: false, Metadata: schema.Metadata, Parameters: frozen, CatalogDigest: digestJSON(legacy),
+		}}, schema
+	}
+	t.Fatal("缺少数据库发现工具")
+	return Operation{}, tools.PublicSchema{}
+}
+
+func TestDatabaseCreateCatalogCompatibilityOnlyAddsDescriptions(t *testing.T) {
+	operation, schema := databaseCreateLegacyCatalogFixture(t)
+	beforeOperation, beforeSchema := digestJSON(operation), digestJSON(schema)
+	if !legacyDatabaseCreateCatalogCompatible(operation, schema) {
+		t.Fatal("只补充版本说明不应阻止旧运行恢复")
+	}
+	if digestJSON(operation) != beforeOperation || digestJSON(schema) != beforeSchema {
+		t.Fatal("兼容检查改写了固定快照或注册表")
+	}
+	for _, kind := range []string{"tool", "source", "read-only", "metadata", "description", "schema", "digest", "arguments"} {
+		t.Run(kind, func(t *testing.T) {
+			operation, current := databaseCreateLegacyCatalogFixture(t)
+			switch kind {
+			case "tool":
+				current.Name = "other_tool"
+			case "source":
+				operation.Capability.Source = "mcp-tool"
+			case "read-only":
+				operation.Capability.ReadOnly = true
+			case "metadata":
+				current.Metadata.ReadOnly = true
+			case "description":
+				current.Description += "变化"
+			case "schema":
+				current.Parameters["additionalProperties"] = true
+			case "digest":
+				operation.Capability.CatalogDigest = digestJSON(current)
+			case "arguments":
+				operation.ArgumentsJSON = `{"engine":"MySQL","versionTag":"8.0","unapproved":true}`
+			}
+			if legacyDatabaseCreateCatalogCompatible(operation, current) {
+				t.Fatal("兼容检查放宽了工具或原始参数约束")
+			}
+		})
+	}
+}

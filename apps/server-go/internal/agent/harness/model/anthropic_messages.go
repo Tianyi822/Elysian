@@ -152,7 +152,7 @@ func (anthropicMessagesProtocol) prepare(p Profile, input Request) (preparedRequ
 func parseAnthropicResponse(body []byte, names map[string]bool, choice string) (Response, error) {
 	canonical, err := jsonvalue.Canonical(body)
 	if err != nil {
-		return Response{}, invalidResponse()
+		return Response{}, responseProblem("model-response-json-invalid")
 	}
 	var wire struct {
 		Type       string           `json:"type"`
@@ -195,13 +195,13 @@ func parseAnthropicResponse(body []byte, names map[string]bool, choice string) (
 	case "refusal":
 		response.FinishReason = "content_filter"
 	default:
-		return Response{}, invalidResponse()
+		return Response{}, responseProblem("model-finish-reason-invalid")
 	}
 	if wire.Usage != nil {
 		u := wire.Usage
 		for _, n := range []*int{u.Input, u.Output, u.CacheRead, u.CacheCreation} {
 			if n != nil && *n < 0 {
-				return Response{}, invalidResponse()
+				return Response{}, responseProblem("model-usage-invalid")
 			}
 		}
 		response.Usage.CompletionTokens = u.Output
@@ -211,7 +211,7 @@ func parseAnthropicResponse(body []byte, names map[string]bool, choice string) (
 			for _, n := range []*int{u.CacheRead, u.CacheCreation} {
 				if n != nil {
 					if *n > math.MaxInt-total {
-						return Response{}, invalidResponse()
+						return Response{}, responseProblem("model-usage-invalid")
 					}
 					total += *n
 				}
@@ -219,7 +219,7 @@ func parseAnthropicResponse(body []byte, names map[string]bool, choice string) (
 			response.Usage.PromptTokens = &total
 			if u.Output != nil {
 				if *u.Output > math.MaxInt-total {
-					return Response{}, invalidResponse()
+					return Response{}, responseProblem("model-usage-invalid")
 				}
 				sum := total + *u.Output
 				response.Usage.TotalTokens = &sum

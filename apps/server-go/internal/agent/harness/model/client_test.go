@@ -189,7 +189,7 @@ func TestCompleteLimitsResponseAndSanitizesErrorsWithoutRetry(t *testing.T) {
 		{"鉴权", 401, `{"error":"Bearer response-secret"}`, "model-auth-failed"},
 		{"限流", 429, `response-secret`, "model-rate-limited"},
 		{"服务错误", 500, `response-secret`, "model-http-failed"},
-		{"非法响应", 200, `response-secret`, "invalid-model-response"},
+		{"非法响应", 200, `response-secret`, "model-response-json-invalid"},
 		{"过大响应", 200, strings.Repeat("x", responseLimit(testRequest().MaxTokens)+1), "model-response-too-large"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -245,21 +245,21 @@ func TestResponseValidatesToolProtocolAndPreservesUnknownUsage(t *testing.T) {
 		t.Fatalf("未报告用量必须保持未知：%+v %v", response, err)
 	}
 	call := `{"id":"c1","type":"function","function":{"name":"docker_containers_list","arguments":"{}"}}`
-	for _, test := range []struct{ name, calls, finish, choice string }{
-		{"截断调用", call, "length", ""},
-		{"停止但带调用", call, "stop", ""},
-		{"重复编号", call + "," + call, "tool_calls", ""},
-		{"未知函数", strings.ReplaceAll(call, "docker_containers_list", "unsafe_tool"), "tool_calls", ""},
-		{"错误参数类型", strings.ReplaceAll(call, `"{}"`, `"[]"`), "tool_calls", ""},
-		{"缺调用", "", "tool_calls", ""},
-		{"禁止调用", call, "tool_calls", "none"},
-		{"未知结束原因", "", "function_call", ""},
-		{"强制调用未执行", "", "stop", "required"},
+	for _, test := range []struct{ name, calls, finish, choice, code string }{
+		{"截断调用", call, "length", "", "model-tool-output-truncated"},
+		{"停止但带调用", call, "stop", "", "model-tool-choice-mismatch"},
+		{"重复编号", call + "," + call, "tool_calls", "", "model-tool-call-invalid"},
+		{"未知函数", strings.ReplaceAll(call, "docker_containers_list", "unsafe_tool"), "tool_calls", "", "model-tool-not-loaded"},
+		{"错误参数类型", strings.ReplaceAll(call, `"{}"`, `"[]"`), "tool_calls", "", "model-tool-arguments-invalid"},
+		{"缺调用", "", "tool_calls", "", "model-tool-choice-mismatch"},
+		{"禁止调用", call, "tool_calls", "none", "model-tool-choice-mismatch"},
+		{"未知结束原因", "", "function_call", "", "model-finish-reason-invalid"},
+		{"强制调用未执行", "", "stop", "required", "model-tool-choice-mismatch"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			body := fmt.Sprintf(`{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[%s]},"finish_reason":%q}]}`, test.calls, test.finish)
 			_, err := parseResponse([]byte(body), map[string]bool{"docker_containers_list": true}, test.choice)
-			requireCode(t, err, "invalid-model-response")
+			requireCode(t, err, test.code)
 		})
 	}
 }
@@ -284,7 +284,7 @@ func TestResponseReadsFlatPromptCacheTokens(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			response, err := parseResponse([]byte(fmt.Sprintf(base, test.usage)), nil, "")
 			if test.invalid {
-				requireCode(t, err, "invalid-model-response")
+				requireCode(t, err, "model-usage-invalid")
 				return
 			}
 			if err != nil {

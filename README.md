@@ -28,6 +28,8 @@ Agent 的本地 Docker 工具由宿主注入的 kardia 插件管理：提供容�
 
 Docker 工具继续经过 `tool_search` 按需加载，不把整个套件或实时 Docker 状态塞进提示词。中英文别名仅用于服务端检索；常驻定义和已加载定义保持稳定前缀，新增定义按持久回执顺序追加，恢复后保持原顺序。见本地 [ADR-0055](docs/adr/0055-agent-local-docker-toolkit.md)。
 
+Agent 将工具未加载、参数无效、输出截断和流缺终帧分别记录为明确错误。普通聊天中，完整响应调用了未加载工具时整批不执行，并在原预算内提供一次先搜索、再重新提议的纠正机会。数据库任务接受前的确定参数错误可返回模型纠正；已接受或结果未知的操作仍须核实。新实例需使用 `expected=missing`、本地官方镜像完整 ID 和明确版本标签，不能使用 `latest`。见本地 [ADR-0060](docs/adr/0060-agent-protocol-correction-and-task-rejection.md)。
+
 浏览器可选能力缺失时保留基础操作：分词回落到 Unicode 码点，回答流取消与超时不依赖 `AbortSignal.any/timeout`，跨标签共享受限时直接订阅，尺寸观察和系统显示偏好提供兼容路径。界面偏好无法写入时保存在当前页面并通知，聊天待确认请求仍按原持久化规则处理；终端复制和数据库连接失败明确通知。兼容边界与验证矩阵见本地 [ADR-0048](docs/adr/0048-browser-capability-fallbacks.md)。
 
 ## 技术栈

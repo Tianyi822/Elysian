@@ -188,7 +188,7 @@ func (m *Manager) registerRunCatalog(s CapabilitySnapshot) error {
 				result := CapabilityResult{}
 				if err == nil {
 					result.Value, _, err = projectResult(value, DefaultLimits().ResultBytes)
-				} else if business, ok := tools.AsBusinessError(err); ok && ctx.Err() == nil && c.ReadOnly && !c.Metadata.Async {
+				} else if business, ok := tools.AsBusinessError(err); ok && ctx.Err() == nil && recoverableBusinessError(c, business) {
 					result.BusinessError = &Failure{Code: business.Code, Message: business.Message}
 					err = nil
 				} else if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
@@ -234,7 +234,7 @@ func (m *Manager) executeRegistryOperation(ctx context.Context, s CapabilitySnap
 		matched := false
 		if m.deps.Tools != nil {
 			for _, schema := range m.deps.Tools.Schemas() {
-				if schema.Name == o.Capability.Name && (digestJSON(schema) == o.Capability.CatalogDigest || legacyFileCatalogCompatible(s, o, schema) || legacyDatabaseDiscoverCatalogCompatible(o, schema)) {
+				if schema.Name == o.Capability.Name && (digestJSON(schema) == o.Capability.CatalogDigest || legacyFileCatalogCompatible(s, o, schema) || legacyDatabaseDiscoverCatalogCompatible(o, schema) || legacyDatabaseCreateCatalogCompatible(o, schema)) {
 					matched = true
 				}
 			}
@@ -253,7 +253,7 @@ func (m *Manager) executeRegistryOperation(ctx context.Context, s CapabilitySnap
 	}
 	value, err := m.toolRuntime.Execute(ctx, o.Capability.Name, args)
 	if err != nil {
-		if business, ok := tools.AsBusinessError(err); ok && o.Capability.Source == "builtin" && o.Capability.ReadOnly && !o.Capability.Metadata.Async && ctx.Err() == nil {
+		if business, ok := tools.AsBusinessError(err); ok && ctx.Err() == nil && recoverableBusinessError(o.Capability, business) {
 			return CapabilityResult{BusinessError: &Failure{Code: business.Code, Message: business.Message}}, nil
 		}
 		// 仅内置网页工具定义的安全业务错误可继续交给模型，不透传底层错误。
@@ -290,4 +290,9 @@ func (m *Manager) executeRegistryOperation(ctx context.Context, s CapabilitySnap
 	}
 	raw, _, err := projectResult(value, limit)
 	return CapabilityResult{Value: raw}, err
+}
+
+func recoverableBusinessError(c Capability, failure *tools.BusinessError) bool {
+	return c.Source == "builtin" && ((c.ReadOnly && !c.Metadata.Async) ||
+		(c.Metadata.Async && c.Metadata.TaskRequestArgument != "" && failure.NotDispatched))
 }

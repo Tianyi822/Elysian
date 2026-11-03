@@ -78,7 +78,7 @@ func (c *httpClient) stream(ctx context.Context, req *http.Request, format strin
 		return Response{}, err
 	}
 	if !state.done {
-		return Response{}, invalidResponse()
+		return Response{}, responseProblem("model-stream-incomplete")
 	}
 	raw, err := state.body()
 	if err != nil {
@@ -118,18 +118,18 @@ func (s *streamResponse) content(delta string) {
 
 func (s *streamResponse) consume(data string) error {
 	if s.done {
-		return invalidResponse()
+		return responseProblem("model-stream-invalid")
 	}
 	if data == "[DONE]" {
 		if s.format != FormatChatCompletions || s.finish == "" {
-			return invalidResponse()
+			return responseProblem("model-stream-invalid")
 		}
 		s.done = true
 		return nil
 	}
 	raw, err := jsonvalue.Canonical([]byte(data))
 	if err != nil {
-		return invalidResponse()
+		return responseProblem("model-response-json-invalid")
 	}
 	switch s.format {
 	case FormatChatCompletions:
@@ -153,7 +153,7 @@ func (s *streamResponse) consume(data string) error {
 			Usage json.RawMessage `json:"usage"`
 		}
 		if json.Unmarshal(raw, &chunk) != nil || len(chunk.Choices) > 1 || (len(chunk.Error) != 0 && string(chunk.Error) != "null") {
-			return invalidResponse()
+			return responseProblem("model-stream-invalid")
 		}
 		if len(chunk.Usage) != 0 && string(chunk.Usage) != "null" {
 			s.usage = chunk.Usage
@@ -163,7 +163,7 @@ func (s *streamResponse) consume(data string) error {
 		}
 		choice := chunk.Choices[0]
 		if choice.Index != 0 || s.finish != "" || (choice.Delta.Role != "" && choice.Delta.Role != "assistant") {
-			return invalidResponse()
+			return responseProblem("model-stream-invalid")
 		}
 		s.message["content"] = s.message["content"].(string) + choice.Delta.Content
 		previous, _ := s.message["reasoning_content"].(string)
@@ -172,7 +172,7 @@ func (s *streamResponse) consume(data string) error {
 		s.content(choice.Delta.Content)
 		for _, delta := range choice.Delta.Calls {
 			if delta.Index < 0 || delta.Index > len(s.calls) || delta.Index >= maxToolCalls {
-				return invalidResponse()
+				return responseProblem("model-stream-invalid")
 			}
 			if delta.Index == len(s.calls) {
 				s.calls = append(s.calls, wireCall{})
@@ -180,13 +180,13 @@ func (s *streamResponse) consume(data string) error {
 			call := &s.calls[delta.Index]
 			if delta.ID != "" {
 				if call.ID != "" && call.ID != delta.ID {
-					return invalidResponse()
+					return responseProblem("model-stream-invalid")
 				}
 				call.ID = delta.ID
 			}
 			if delta.Type != "" {
 				if delta.Type != "function" {
-					return invalidResponse()
+					return responseProblem("model-stream-invalid")
 				}
 				call.Type = delta.Type
 			}
@@ -203,7 +203,7 @@ func (s *streamResponse) consume(data string) error {
 			Response json.RawMessage `json:"response"`
 		}
 		if json.Unmarshal(raw, &event) != nil {
-			return invalidResponse()
+			return responseProblem("model-stream-invalid")
 		}
 		switch event.Type {
 		case "response.output_text.delta":
@@ -214,11 +214,11 @@ func (s *streamResponse) consume(data string) error {
 			s.text("\n")
 		case "response.completed", "response.incomplete":
 			if len(event.Response) == 0 {
-				return invalidResponse()
+				return responseProblem("model-stream-invalid")
 			}
 			s.final, s.done = event.Response, true
 		case "error", "response.failed":
-			return invalidResponse()
+			return responseProblem("model-stream-invalid")
 		}
 	case FormatAnthropicMessages:
 		var event struct {
@@ -238,12 +238,12 @@ func (s *streamResponse) consume(data string) error {
 		decoder := json.NewDecoder(bytes.NewReader(raw))
 		decoder.UseNumber() // 初始 tool_use.input 中的大整数也不能经过 float64。
 		if decoder.Decode(&event) != nil {
-			return invalidResponse()
+			return responseProblem("model-stream-invalid")
 		}
 		switch event.Type {
 		case "message_start":
 			if s.anthropic != nil || event.Message == nil || event.Message["type"] != "message" || event.Message["role"] != "assistant" {
-				return invalidResponse()
+				return responseProblem("model-stream-invalid")
 			}
 			s.anthropic = event.Message
 			s.anthropicUsage, _ = event.Message["usage"].(map[string]any)
@@ -252,7 +252,7 @@ func (s *streamResponse) consume(data string) error {
 			}
 		case "content_block_start":
 			if s.anthropic == nil || s.finish != "" || s.openBlock != -1 || event.Index != len(s.blocks) || event.Block == nil {
-				return invalidResponse()
+				return responseProblem("model-stream-invalid")
 			}
 			s.blocks = append(s.blocks, event.Block)
 			s.openBlock, s.blockInput = event.Index, ""
@@ -268,51 +268,51 @@ func (s *streamResponse) consume(data string) error {
 			}
 		case "content_block_delta":
 			if s.openBlock == -1 || event.Index != s.openBlock {
-				return invalidResponse()
+				return responseProblem("model-stream-invalid")
 			}
 			block := s.blocks[event.Index]
 			switch event.Delta.Type {
 			case "text_delta":
 				if block["type"] != "text" {
-					return invalidResponse()
+					return responseProblem("model-stream-invalid")
 				}
 				previous, _ := block["text"].(string)
 				block["text"] = previous + event.Delta.Text
 				s.content(event.Delta.Text)
 			case "thinking_delta":
 				if block["type"] != "thinking" {
-					return invalidResponse()
+					return responseProblem("model-stream-invalid")
 				}
 				previous, _ := block["thinking"].(string)
 				block["thinking"] = previous + event.Delta.Thinking
 				s.text(event.Delta.Thinking)
 			case "input_json_delta":
 				if block["type"] != "tool_use" {
-					return invalidResponse()
+					return responseProblem("model-stream-invalid")
 				}
 				s.blockInput += event.Delta.JSON
 			case "signature_delta": // 签名不显示，也不保存。
 				if block["type"] != "thinking" {
-					return invalidResponse()
+					return responseProblem("model-stream-invalid")
 				}
 			default:
-				return invalidResponse()
+				return responseProblem("model-stream-invalid")
 			}
 		case "content_block_stop":
 			if s.openBlock == -1 || event.Index != s.openBlock {
-				return invalidResponse()
+				return responseProblem("model-stream-invalid")
 			}
 			if s.blockInput != "" {
 				canonical, err := jsonvalue.Canonical([]byte(s.blockInput))
 				if err != nil {
-					return invalidResponse()
+					return responseProblem("model-stream-invalid")
 				}
 				s.blocks[event.Index]["input"] = json.RawMessage(canonical)
 			}
 			s.openBlock, s.blockInput = -1, ""
 		case "message_delta":
 			if s.anthropic == nil || s.openBlock != -1 || s.finish != "" {
-				return invalidResponse()
+				return responseProblem("model-stream-invalid")
 			}
 			s.finish = event.Delta.Stop
 			for key, value := range event.Usage {
@@ -320,15 +320,15 @@ func (s *streamResponse) consume(data string) error {
 			}
 		case "message_stop":
 			if s.anthropic == nil || s.openBlock != -1 || s.finish == "" {
-				return invalidResponse()
+				return responseProblem("model-stream-invalid")
 			}
 			s.done = true
 		case "ping":
 		default:
-			return invalidResponse()
+			return responseProblem("model-stream-invalid")
 		}
 	default:
-		return invalidResponse()
+		return responseProblem("model-stream-invalid")
 	}
 	return nil
 }

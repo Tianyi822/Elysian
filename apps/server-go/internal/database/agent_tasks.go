@@ -24,6 +24,14 @@ type AgentTaskInput struct {
 	Expected string      `json:"expected"`
 }
 
+// AgentTaskRejectedError 仅用于尚未接受任务的本地输入校验；已接受任务、
+// 请求身份冲突、存储及授权错误不能使用此类型，也不能据此重放旧操作。
+type AgentTaskRejectedError struct {
+	Message string
+}
+
+func (e *AgentTaskRejectedError) Error() string { return e.Message }
+
 type AgentTaskResult struct {
 	ID          string `json:"id"`
 	Action      string `json:"action"`
@@ -207,8 +215,11 @@ func (f *AgentFacade) validateAgentTask(input AgentTaskInput, rows []databaseRec
 		target := map[string]any{"kind": "new", "imageId": in.ImageID, "containerName": in.ContainerName}
 		scope := scopeContainerNet
 		if in.ContainerName != "" {
-			if in.ID != "new:"+in.ContainerName || in.Expected != "missing" || !containerNamePattern.MatchString(in.ContainerName) || !containerIDPattern.MatchString(stripSha256Prefix(in.ImageID)) {
-				return record, shared.InvalidRequest("新实例名称、镜像或登记预期无效")
+			if in.Expected != "missing" {
+				return record, shared.InvalidRequest("新建专属实例的 expected 必须为 missing，表示尚无登记；请修正参数后重新提议")
+			}
+			if in.ID != "new:"+in.ContainerName || !containerNamePattern.MatchString(in.ContainerName) || !containerIDPattern.MatchString(stripSha256Prefix(in.ImageID)) {
+				return record, shared.InvalidRequest("新实例 id 必须为 new:容器名，imageId 必须为本地官方镜像的完整 ID")
 			}
 		} else {
 			if in.ImageID != "" {
@@ -225,12 +236,15 @@ func (f *AgentFacade) validateAgentTask(input AgentTaskInput, rows []databaseRec
 			scope = row.AccessScope
 			record.AnchorContainerID, record.AnchorDigest = row.ContainerID, agentTaskIdentity(row)
 		}
+		if !validDatabaseVersion(in.VersionTag) {
+			return record, shared.InvalidRequest("必须指定明确的数据库版本标签，不能使用 latest；请先查询本地 Docker 镜像的实际版本标签")
+		}
 		body := map[string]any{"engine": in.Engine, "versionTag": in.VersionTag, "name": in.Name, "accessScope": scope, "target": target, "user": map[string]any{"username": "ely_preflight", "password": "preflight-not-a-credential"}}
 		if in.Charset != "" {
 			body["charset"] = in.Charset
 		}
 		if _, err := validateCreateRequest(body); err != nil {
-			return record, shared.InvalidRequest("数据库创建参数无效")
+			return record, err // 纯本地校验，错误只含固定公开文案。
 		}
 		for _, row := range rows {
 			if record.AnchorContainerID != "" && row.ContainerID == record.AnchorContainerID && row.State != stateEmpty && (row.Name == in.Name || in.Engine == engineRedis) {
@@ -260,7 +274,7 @@ func (f *AgentFacade) SubmitTask(ctx context.Context, requestID string, input Ag
 		return AgentTask{}, err
 	}
 	if !containerIDPattern.MatchString(requestID) {
-		return AgentTask{}, shared.InvalidRequest("数据库请求标识必须是 64 位小写十六进制")
+		return AgentTask{}, &AgentTaskRejectedError{Message: "数据库请求标识必须是 64 位小写十六进制；任务未接受，请修正后重新提议"}
 	}
 	f.taskMu.Lock()
 	defer f.taskMu.Unlock()
@@ -288,6 +302,10 @@ func (f *AgentFacade) SubmitTask(ctx context.Context, requestID string, input Ag
 	}
 	record, err := f.validateAgentTask(input, rows)
 	if err != nil {
+		var invalid *shared.InvalidRequestError
+		if errors.As(err, &invalid) {
+			return AgentTask{}, &AgentTaskRejectedError{Message: "任务未接受、未执行：" + invalid.Message}
+		}
 		return AgentTask{}, err
 	}
 	record.AgentTask = AgentTask{ID: id, RequestID: requestID, Action: input.Action, State: "running", Message: "后台任务已接受；取消仅请求停止，已发生的数据库变更不会回滚"}

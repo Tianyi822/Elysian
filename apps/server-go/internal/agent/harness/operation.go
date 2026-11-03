@@ -722,9 +722,12 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 			call.Error = &Failure{Code: typed.Code, Message: typed.Message}
 		}
 	}
-	if result.r.BusinessError != nil {
+	if result.r.BusinessError != nil && !result.r.Unknown && result.e == nil {
 		call.Status = StateFailed
 		call.Error = result.r.BusinessError
+		if c.Metadata.Async && !result.r.Unknown && result.e == nil {
+			o.Task = nil // 明确未接受任务的预检拒绝，不保留虚假的异步任务指针。
+		}
 	}
 	if len(result.r.Value) > run.Limits.ResultBytes {
 		call.Status = StateFailed

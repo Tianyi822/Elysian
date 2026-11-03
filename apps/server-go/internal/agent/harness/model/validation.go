@@ -142,6 +142,31 @@ func invalidResponse() *Error {
 	return problem(502, "invalid-model-response", "模型响应不符合公开消息与函数调用协议")
 }
 
+// ToolNotLoadedCode 只在完整响应的结构、结束标记、参数及用量均有效时返回。
+// 调用方可据此请求一次纠正，但不得执行被拒绝响应中的任何工具。
+const ToolNotLoadedCode = "model-tool-not-loaded"
+
+// 仅使用本地固定原因，不回显上游字段、函数参数或原始响应。
+func responseProblem(code string) *Error {
+	message := map[string]string{
+		ToolNotLoadedCode:              "模型调用了本次尚未加载的工具，本批操作均未执行；需要先搜索加载工具后重新提议",
+		"model-tool-arguments-invalid": "模型返回的工具参数不是完整且无重复键的 JSON 对象，本批操作均未执行",
+		"model-tool-call-invalid":      "模型返回的工具调用标识、名称或类型无效，本批操作均未执行",
+		"model-tool-output-truncated":  "模型输出达到上限，工具调用未完整结束，本批操作均未执行",
+		"model-tool-choice-mismatch":   "模型返回的工具调用与本次调用要求或结束标记不一致，本批操作均未执行",
+		"model-finish-reason-invalid":  "模型响应的结束原因缺失或不受支持，未确认本次响应",
+		"model-stream-incomplete":      "模型响应流未收到完整结束标记，本批操作均未执行",
+		"model-stream-invalid":         "模型响应流的事件格式或顺序无效，本批操作均未执行",
+		"model-response-json-invalid":  "模型响应包含无效 JSON 或重复字段，未确认本次响应",
+		"model-usage-invalid":          "模型响应的用量字段无效，未确认本次响应",
+		"model-resource-unavailable":   "模型服务因资源不足中止生成，请稍后重试",
+	}[code]
+	if message == "" {
+		return invalidResponse()
+	}
+	return problem(502, code, message)
+}
+
 // 所有协议都经同一公开响应校验，保证精确 JSON 参数及强制函数语义。
 func validateResponse(response Response, names map[string]bool, choice string) (Response, error) {
 	if !utf8.ValidString(response.Content) || !utf8.ValidString(response.Reasoning) || len(response.ToolCalls) > maxToolCalls {
@@ -150,40 +175,51 @@ func validateResponse(response Response, names map[string]bool, choice string) (
 	switch response.FinishReason {
 	case "stop", "length", "content_filter":
 		if len(response.ToolCalls) > 0 {
-			return Response{}, invalidResponse()
+			if response.FinishReason == "length" {
+				return Response{}, responseProblem("model-tool-output-truncated")
+			}
+			return Response{}, responseProblem("model-tool-choice-mismatch")
 		}
 	case "tool_calls":
 		if len(response.ToolCalls) == 0 || choice == "none" {
-			return Response{}, invalidResponse()
+			return Response{}, responseProblem("model-tool-choice-mismatch")
 		}
 	default:
-		return Response{}, invalidResponse()
+		return Response{}, responseProblem("model-finish-reason-invalid")
 	}
 	if response.FinishReason == "stop" && choice != "" && choice != "auto" && choice != "none" {
-		return Response{}, invalidResponse()
+		return Response{}, responseProblem("model-tool-choice-mismatch")
 	}
 	seen := map[string]bool{}
+	unloaded := false
 	for i, call := range response.ToolCalls {
-		if !validCallID(call.ID) || seen[call.ID] || !names[call.Name] || !objectJSON(call.Arguments) {
-			return Response{}, invalidResponse()
+		if !validCallID(call.ID) || seen[call.ID] || !functionName.MatchString(call.Name) {
+			return Response{}, responseProblem("model-tool-call-invalid")
+		}
+		if !objectJSON(call.Arguments) {
+			return Response{}, responseProblem("model-tool-arguments-invalid")
 		}
 		if choice != "" && choice != "auto" && choice != "required" && choice != call.Name {
-			return Response{}, invalidResponse()
+			return Response{}, responseProblem("model-tool-choice-mismatch")
 		}
+		unloaded = unloaded || !names[call.Name]
 		seen[call.ID] = true
 		arguments, err := jsonvalue.Canonical(call.Arguments)
 		if err != nil {
-			return Response{}, invalidResponse()
+			return Response{}, responseProblem("model-tool-arguments-invalid")
 		}
 		response.ToolCalls[i].Arguments = arguments
 	}
 	for _, count := range []*int{response.Usage.PromptTokens, response.Usage.CompletionTokens, response.Usage.TotalTokens, response.Usage.CachedTokens} {
-		if count != nil && *count < 0 {
-			return Response{}, invalidResponse()
+		if count != nil && (*count < 0 || *count > 10000000) {
+			return Response{}, responseProblem("model-usage-invalid")
 		}
 	}
 	if response.Usage.PromptTokens != nil && response.Usage.CachedTokens != nil && *response.Usage.CachedTokens > *response.Usage.PromptTokens {
-		return Response{}, invalidResponse()
+		return Response{}, responseProblem("model-usage-invalid")
+	}
+	if unloaded {
+		return Response{}, responseProblem(ToolNotLoadedCode)
 	}
 	return response, nil
 }

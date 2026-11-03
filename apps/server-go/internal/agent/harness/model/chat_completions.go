@@ -112,7 +112,7 @@ func prepareRequest(p Profile, input Request) (wireRequest, map[string]bool, err
 func parseResponse(body []byte, names map[string]bool, choice string) (Response, error) {
 	canonical, err := jsonvalue.Canonical(body)
 	if err != nil {
-		return Response{}, invalidResponse()
+		return Response{}, responseProblem("model-response-json-invalid")
 	}
 	body = canonical
 	// 仅接收明确的文本思考字段，不接收 debug、签名或错误正文。
@@ -156,38 +156,18 @@ func parseResponse(body []byte, names map[string]bool, choice string) (Response,
 		}
 	}
 	switch answer.FinishReason {
-	case "stop", "length", "content_filter":
-		if len(answer.Message.ToolCalls) != 0 {
-			return Response{}, invalidResponse()
-		}
-	case "tool_calls":
-		if len(answer.Message.ToolCalls) == 0 || choice == "none" {
-			return Response{}, invalidResponse()
-		}
 	case "network_error":
 		return Response{}, problem(502, "model-inference-failed", "模型推理异常，请重试")
 	case "model_context_window_exceeded":
 		return Response{}, problem(502, "model-context-exceeded", "请求超出模型上下文窗口")
-	default:
-		return Response{}, invalidResponse()
+	case "insufficient_system_resource":
+		return Response{}, responseProblem("model-resource-unavailable")
 	}
-	if answer.FinishReason == "stop" && choice != "" && choice != "auto" && choice != "none" {
-		return Response{}, invalidResponse()
-	}
-	seen := make(map[string]bool)
 	for _, call := range answer.Message.ToolCalls {
-		if call.Type != "function" || !validCallID(call.ID) || seen[call.ID] || !names[call.Function.Name] || !objectJSON([]byte(call.Function.Arguments)) {
-			return Response{}, invalidResponse()
+		if call.Type != "function" {
+			return Response{}, responseProblem("model-tool-call-invalid")
 		}
-		if choice != "" && choice != "auto" && choice != "required" && choice != call.Function.Name {
-			return Response{}, invalidResponse()
-		}
-		seen[call.ID] = true
-		arguments, err := jsonvalue.Canonical(json.RawMessage(call.Function.Arguments))
-		if err != nil {
-			return Response{}, invalidResponse()
-		}
-		response.ToolCalls = append(response.ToolCalls, ToolCall{ID: call.ID, Name: call.Function.Name, Arguments: arguments})
+		response.ToolCalls = append(response.ToolCalls, ToolCall{ID: call.ID, Name: call.Function.Name, Arguments: json.RawMessage(call.Function.Arguments)})
 	}
 	if wire.Usage != nil {
 		u := wire.Usage
@@ -198,14 +178,6 @@ func parseResponse(body []byte, names map[string]bool, choice string) (Response,
 		if response.Usage.CachedTokens == nil {
 			response.Usage.CachedTokens = u.CacheHit
 		}
-		for _, count := range []*int{response.Usage.PromptTokens, response.Usage.CompletionTokens, response.Usage.TotalTokens, response.Usage.CachedTokens} {
-			if count != nil && *count < 0 {
-				return Response{}, invalidResponse()
-			}
-		}
-		if u.PromptTokens != nil && response.Usage.CachedTokens != nil && *response.Usage.CachedTokens > *u.PromptTokens {
-			return Response{}, invalidResponse()
-		}
 	}
-	return response, nil
+	return validateResponse(response, names, choice)
 }

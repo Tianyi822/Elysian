@@ -147,3 +147,30 @@ func TestNativeBusinessErrorsDoNotHideExecutionFailures(t *testing.T) {
 		})
 	}
 }
+
+func TestOnlyTrustedAsyncSubmissionCanAttestNotDispatched(t *testing.T) {
+	for _, tc := range []struct {
+		name, source                                string
+		async, readOnly, submission, attested, want bool
+	}{
+		{"可信预检", "builtin", true, false, true, true, true},
+		{"普通异步错误", "builtin", true, false, true, false, false},
+		{"轮询不是提交", "builtin", true, true, false, true, false},
+		{"同步写错误", "builtin", false, false, true, true, false},
+		{"外部工具声明", "mcp-tool", true, false, true, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			capability := Capability{Source: tc.source, ReadOnly: tc.readOnly, Metadata: tools.Metadata{Async: tc.async}}
+			if tc.submission {
+				capability.Metadata.TaskRequestArgument = "requestId"
+			}
+			business := &tools.BusinessError{Code: "test", Message: "拒绝", NotDispatched: tc.attested}
+			if recoverableBusinessError(capability, business) != tc.want {
+				t.Fatal("错误的预检恢复判断")
+			}
+			if _, ok := tools.AsBusinessError(errors.Join(business, errors.New("清理失败"))); ok {
+				t.Fatal("清理失败被预检声明掩盖")
+			}
+		})
+	}
+}

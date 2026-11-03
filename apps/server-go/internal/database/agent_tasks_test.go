@@ -93,6 +93,8 @@ func TestAgentDatabaseTaskPersistsBeforeDispatchAndIgnoresCallerCancellation(t *
 	changed.Create.Charset = "utf8"
 	if _, err := facade.SubmitTask(context.Background(), requestID, changed); err == nil {
 		t.Fatal("same request accepted different full parameters")
+	} else {
+		assertNotTaskRejection(t, err)
 	}
 	close(protocol.release)
 	completed := waitAgentTask(t, facade, task.ID, "succeeded")
@@ -133,6 +135,8 @@ func TestAgentDatabaseTaskRestartNeverResubmitsAndKeepsUnknownBarrier(t *testing
 	}
 	if _, err := facade.SubmitTask(context.Background(), strings.Repeat("c", 64), input); err == nil {
 		t.Fatal("unknown task released database dispatch barrier")
+	} else {
+		assertNotTaskRejection(t, err)
 	}
 	if len(fixture.docker.createCalls) != 0 || len(fixture.protocol.trace.items) != 0 {
 		t.Fatal("restart replayed database mutation")
@@ -266,6 +270,8 @@ func TestAgentDatabaseTaskPersistenceFailureDoesNotDispatch(t *testing.T) {
 	facade := &AgentFacade{service: fixture.service, taskRoot: root, authorize: func(context.Context) error { return nil }}
 	if _, err := facade.SubmitTask(context.Background(), strings.Repeat("a", 64), agentCreateTaskInput()); err == nil {
 		t.Fatal("unpersisted task accepted")
+	} else {
+		assertNotTaskRejection(t, err)
 	}
 	if len(fixture.docker.createCalls) != 0 {
 		t.Fatal("persistence failure dispatched create")

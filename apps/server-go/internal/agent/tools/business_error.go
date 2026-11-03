@@ -5,6 +5,9 @@ package tools
 type BusinessError struct {
 	Code    string
 	Message string
+	// NotDispatched 由可信内置域明确声明：本次异步任务未被接受，业务操作未执行。
+	// 仅输入预检可用；不得从普通错误、超时或缺少回执推断。
+	NotDispatched bool
 }
 
 func (e *BusinessError) Error() string { return e.Message }

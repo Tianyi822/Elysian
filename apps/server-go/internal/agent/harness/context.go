@@ -751,6 +751,11 @@ func (a *agentExecution) currentStateMessage() (model.Message, bool) {
 		text += planText
 		breakdown.Other += estimateContextText(planText)
 	}
+	if a.toolCorrection {
+		correction := "\n本轮协议校验结果（服务端事实，不授予权限）：上一次响应调用了本次未加载的工具，整批提议均未执行。历史中的工具不代表已加载。请先单独调用 tool_search 搜索所需工具，收到加载结果后再重新提议；仅调用本次请求实际提供定义的工具。"
+		text += correction
+		breakdown.Other += estimateContextText(correction)
+	}
 	if text == "" {
 		return model.Message{}, false
 	}
@@ -778,6 +783,11 @@ type contextFallback struct {
 }
 
 func (a *agentExecution) buildContext(ctx context.Context) (model.Request, []EvidenceRef, int, error) {
+	correction, err := a.pendingToolCorrection(ctx)
+	if err != nil {
+		return model.Request{}, nil, 0, err
+	}
+	a.toolCorrection = correction
 	compacted := false
 	var fallback *contextFallback
 	for {

@@ -104,7 +104,7 @@ func (responsesProtocol) prepare(p Profile, input Request) (preparedRequest, err
 func parseResponsesResponse(body []byte, names map[string]bool, choice string) (Response, error) {
 	canonical, err := jsonvalue.Canonical(body)
 	if err != nil {
-		return Response{}, invalidResponse()
+		return Response{}, responseProblem("model-response-json-invalid")
 	}
 	var wire struct {
 		Object     string          `json:"object"`

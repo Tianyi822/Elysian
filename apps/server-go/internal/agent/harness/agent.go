@@ -36,6 +36,7 @@ type agentExecution struct {
 	inferenceWikiRefs  []WikiRef
 	workflowOutput     *workflowAgentOutput
 	userInputError     string
+	toolCorrection     bool // 从本 Run 已持久化的失败推理重建，只用于尾部状态提示。
 	// tokenizerFailures 记录本次运行内官方分词器的连续失败次数：连续失败后不再尝试，
 	// 避免每次推理都等满超时；成功一次即清零。只影响估算精度，不阻断推理。
 	tokenizerFailures int
@@ -152,11 +153,7 @@ func (a *agentExecution) NextModel(ctx context.Context) (worker.ModelResponse, e
 	} else if selected != nil {
 		return *selected, nil
 	}
-	request, refs, revision, err := a.buildContext(ctx)
-	if err != nil {
-		return worker.ModelResponse{}, err
-	}
-	record, err := a.requestModel(ctx, "inference", request, refs, revision)
+	record, err := a.requestInference(ctx)
 	if err != nil {
 		return worker.ModelResponse{}, err
 	}
@@ -619,6 +616,12 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 		} else {
 			r.Usage.ActualTokens = nil
 			r.Usage.CachedTokens = nil
+			if record.Error != nil && record.Error.Code == model.ToolNotLoadedCode {
+				// 被整批拒绝的响应不保存为可执行事实；其输出用量未知，按请求输出
+				// 上限保守计入预算，不能因纠正而获得免费模型调用。
+				r.Usage.Tokens += request.MaxTokens
+				r.Usage.EstimatedTokens += request.MaxTokens
+			}
 		}
 		if r.WorkflowID != "" {
 			if err := m.workflowSettleModel(context.Background(), tx, r, estimate+request.MaxTokens, workflowCharge); err != nil {

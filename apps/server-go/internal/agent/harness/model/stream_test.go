@@ -131,21 +131,21 @@ func completeStream(t *testing.T, format, body string) (Response, error) {
 }
 
 func TestStreamRejectsIncompleteAndAmbiguousResponses(t *testing.T) {
-	for _, test := range []struct{ name, format, body string }{
-		{"Chat 无结束原因", FormatChatCompletions, eventFrames(`{"choices":[{"delta":{"content":"完成"}}]}`, `[DONE]`)},
-		{"Chat 无终帧", FormatChatCompletions, eventFrames(`{"choices":[{"delta":{"content":"完成"},"finish_reason":"stop"}]}`)},
-		{"Chat 重复键", FormatChatCompletions, eventFrames(`{"choices":[{"delta":{"content":"一","content":"二"},"finish_reason":"stop"}]}`, `[DONE]`)},
-		{"Chat 截断工具", FormatChatCompletions, eventFrames(`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"docker_containers_list","arguments":"{}"}}]},"finish_reason":"length"}]}`, `[DONE]`)},
-		{"Chat 重复参数键", FormatChatCompletions, eventFrames(`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"docker_containers_list","arguments":"{\"n\":1,"}}]}}]}`, `{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"n\":2}"}}]},"finish_reason":"tool_calls"}]}`, `[DONE]`)},
-		{"Messages 未结束工具块", FormatAnthropicMessages, eventFrames(anthropicStart, `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"c1","name":"docker_containers_list","input":{}}}`, `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"n\":"}}`, `{"type":"message_delta","delta":{"stop_reason":"tool_use"}}`, `{"type":"message_stop"}`)},
-		{"Messages 结束后继续块", FormatAnthropicMessages, eventFrames(anthropicStart, `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":"完成"}}`, `{"type":"content_block_stop","index":0}`, `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"失效"}}`)},
-		{"Responses 失败", FormatResponses, eventFrames(`{"type":"response.failed","response":{"error":"不可回显"}}`)},
-		{"Responses 缺终帧", FormatResponses, eventFrames(`{"type":"response.reasoning_summary_text.delta","delta":"检查"}`)},
-		{"Responses 截断工具", FormatResponses, eventFrames(`{"type":"response.incomplete","response":{"object":"response","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[{"type":"function_call","call_id":"c1","name":"docker_containers_list","arguments":"{}"}]}}`)},
+	for _, test := range []struct{ name, format, body, code string }{
+		{"Chat 无结束原因", FormatChatCompletions, eventFrames(`{"choices":[{"delta":{"content":"完成"}}]}`, `[DONE]`), "model-stream-invalid"},
+		{"Chat 无终帧", FormatChatCompletions, eventFrames(`{"choices":[{"delta":{"content":"完成"},"finish_reason":"stop"}]}`), "model-stream-incomplete"},
+		{"Chat 重复键", FormatChatCompletions, eventFrames(`{"choices":[{"delta":{"content":"一","content":"二"},"finish_reason":"stop"}]}`, `[DONE]`), "model-response-json-invalid"},
+		{"Chat 截断工具", FormatChatCompletions, eventFrames(`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"docker_containers_list","arguments":"{}"}}]},"finish_reason":"length"}]}`, `[DONE]`), "model-tool-output-truncated"},
+		{"Chat 重复参数键", FormatChatCompletions, eventFrames(`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"docker_containers_list","arguments":"{\"n\":1,"}}]}}]}`, `{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"n\":2}"}}]},"finish_reason":"tool_calls"}]}`, `[DONE]`), "model-tool-arguments-invalid"},
+		{"Messages 未结束工具块", FormatAnthropicMessages, eventFrames(anthropicStart, `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"c1","name":"docker_containers_list","input":{}}}`, `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"n\":"}}`, `{"type":"message_delta","delta":{"stop_reason":"tool_use"}}`, `{"type":"message_stop"}`), "model-stream-invalid"},
+		{"Messages 结束后继续块", FormatAnthropicMessages, eventFrames(anthropicStart, `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":"完成"}}`, `{"type":"content_block_stop","index":0}`, `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"失效"}}`), "model-stream-invalid"},
+		{"Responses 失败", FormatResponses, eventFrames(`{"type":"response.failed","response":{"error":"不可回显"}}`), "model-stream-invalid"},
+		{"Responses 缺终帧", FormatResponses, eventFrames(`{"type":"response.reasoning_summary_text.delta","delta":"检查"}`), "model-stream-incomplete"},
+		{"Responses 截断工具", FormatResponses, eventFrames(`{"type":"response.incomplete","response":{"object":"response","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[{"type":"function_call","call_id":"c1","name":"docker_containers_list","arguments":"{}"}]}}`), "model-tool-output-truncated"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			response, err := completeStream(t, test.format, test.body)
-			requireCode(t, err, "invalid-model-response")
+			requireCode(t, err, test.code)
 			if len(response.ToolCalls) > 0 || strings.Contains(err.Error(), "不可回显") {
 				t.Fatal("未确认调用或上游诊断被返回")
 			}

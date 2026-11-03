@@ -72,6 +72,13 @@ func New(c *kardia.Context, deps Deps, _ Config) (*Service, error) {
 			properties["expected"] = tools.Schema{Type: tools.SchemaString}
 			required = append(required, "expected")
 		}
+		if spec.action == "create" {
+			properties["id"] = tools.Schema{Type: tools.SchemaString, Description: "新建专属实例填 new:容器名；在已有实例创建逻辑库时使用 database_list 返回的精确登记 ID"}
+			properties["expected"] = tools.Schema{Type: tools.SchemaString, Description: "新建专属实例必须填 missing（不是 absent）；已有实例使用 database_list 返回的精确 version"}
+			properties["versionTag"] = tools.Schema{Type: tools.SchemaString, Description: "官方镜像的明确版本标签，禁止 latest；从本地镜像清单核实，不可猜测版本"}
+			properties["imageId"] = tools.Schema{Type: tools.SchemaString, Description: "新实例使用已核实的本地官方镜像完整 ID（64 位十六进制，可带 sha256: 前缀）；已有实例不传"}
+			properties["containerName"] = tools.Schema{Type: tools.SchemaString, Description: "新专属容器名称，必须与 id 中 new: 后的名称相同；已有实例不传"}
+		}
 		metadata := tools.Metadata{Domain: "database", Backend: "domain", Action: spec.action, Effect: effect, Exposure: "agent", ResourceType: "database", ResourceKeyArgument: "id", ReadOnly: !spec.write, Default: !spec.write, Version: "1"}
 		if spec.action == "create" || spec.action == "reconcile" {
 			properties["requestId"] = tools.Schema{Type: tools.SchemaString, Description: "稳定的 64 位小写十六进制请求标识；同请求重试必须复用原值与完整参数"}
@@ -111,7 +118,7 @@ func New(c *kardia.Context, deps Deps, _ Config) (*Service, error) {
 				requestID, _ := tools.StringArg(args, "requestId")
 				task, err := deps.Facade.SubmitTask(tools.Lifetime(c), requestID, domain.AgentTaskInput{Action: "create", Create: input})
 				if err != nil {
-					return nil, err
+					return nil, taskSubmissionError(err)
 				}
 				return tools.Submission{Value: task, Task: tools.TaskReference{Domain: "database", ID: task.ID, RequestID: task.RequestID}}, nil
 			}
@@ -120,7 +127,7 @@ func New(c *kardia.Context, deps Deps, _ Config) (*Service, error) {
 				requestID, _ := tools.StringArg(args, "requestId")
 				task, err := deps.Facade.SubmitTask(tools.Lifetime(c), requestID, domain.AgentTaskInput{Action: "reconcile", ID: id, Expected: expected})
 				if err != nil {
-					return nil, err
+					return nil, taskSubmissionError(err)
 				}
 				return tools.Submission{Value: task, Task: tools.TaskReference{Domain: "database", ID: task.ID, RequestID: task.RequestID}}, nil
 			}
@@ -167,6 +174,13 @@ func New(c *kardia.Context, deps Deps, _ Config) (*Service, error) {
 		return nil, errors.Join(err, s.Close(context.Background()))
 	}
 	return s, nil
+}
+
+func taskSubmissionError(err error) error {
+	if rejected, ok := err.(*domain.AgentTaskRejectedError); ok {
+		return &tools.BusinessError{Code: "database-task-rejected", Message: rejected.Message, NotDispatched: true}
+	}
+	return err
 }
 func Plugin(deps Deps, cfg Config) *kardia.Plugin {
 	return kardia.ServicePlugin(ServiceName, kardia.InjectMap{tools.ServiceName: nil}, func(c *kardia.Context, _ any) (any, error) { return New(c, deps, cfg) })
