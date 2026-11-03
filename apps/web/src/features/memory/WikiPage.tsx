@@ -6,7 +6,7 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { useAgentMemoryStore } from '../../stores/agentMemoryStore'
 import { useSessionStore } from '../../stores/sessionStore'
 import { IconButton } from '../../components/IconButton'
-import { BusyVeil, RefreshButton } from '../../components/RefreshState'
+import { RefreshButton } from '../../components/RefreshState'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { EmptyState, LoadingState } from '../../components/states/StateViews'
 import { CTL_PRIMARY, CTL_SECONDARY, CTL_DANGER, CTL_FIELD, CTL_TOOLBAR } from '../../components/formControl'
@@ -98,7 +98,6 @@ export function WikiPage() {
       </div>
       {state.error && openId === undefined && <div role="alert" className="memory-error">{state.error}<button type="button" className={CTL_SECONDARY} onClick={() => void runRefresh()}>重试</button></div>}
       <div className="panel-surface overflow-hidden">
-        <BusyVeil busy={refreshing} />
         {state.loading ? <p role="status" className="memory-empty">正在读取空间…</p>
           : !state.spaces.length ? <EmptyState title="尚无知识空间" />
           : !state.pages.length ? <EmptyState title="当前空间还没有页面" />

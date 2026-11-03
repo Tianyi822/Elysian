@@ -267,6 +267,7 @@ export function OperationLogPanel() {
 
   return (
     <div className="flex h-full flex-col">
+      {errorMessage ? <p role="alert" className="text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<button type="button" className="ml-2 underline" onClick={() => void load(gateway)}>重试</button></p> : null}
       {/*
         工具栏三块：筛选下拉 / 搜索 / 计数。窄屏（md 以下）一块一行，md 起回到一行三段、
         计数靠右。自由折行会把计数文字和控件混成一团，正是原来难以扫读的原因。

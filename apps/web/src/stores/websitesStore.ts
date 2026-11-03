@@ -1,3 +1,4 @@
+import { captureAuthGeneration } from '../adapters/http/unauthorized'
 import type {
   WebsiteCategory,
   WebsiteAccessInput,
@@ -47,9 +48,10 @@ type WebsitesState = {
   detailTarget: WebsiteProject | undefined
   detailLogs: readonly string[] | undefined
   detailLogsLoading: boolean
+  detailLogsError?: string
   busyProjectIds: readonly string[]
   load: (gateway: ElysianGateway) => Promise<void>
-  refresh: (gateway: ElysianGateway) => Promise<void>
+  refresh: (gateway: ElysianGateway, options?: { silent?: boolean }) => Promise<void>
   /** 域级对账：从登记全量重新下发反向代理配置，成功后刷新列表与通道状态。 */
   reconcileProxy: (gateway: ElysianGateway) => Promise<void>
   setSearch: (search: string) => void
@@ -90,20 +92,32 @@ function errorMessageOf(error: unknown, fallback: string): string {
 }
 
 export const useWebsitesStore = create<WebsitesState>((set, get) => {
+  let pendingLoad: { gateway: ElysianGateway; auth: number; snapshot: readonly WebsiteProject[]; proxy: WebsiteProxyStatus; promise: Promise<void> } | undefined
+  let detailSequence = 0
+  let pendingDetail: { projectId: string; auth: number; promise: Promise<void> } | undefined
   /**
    * 拉取一个项目的运行日志。响应回来时抽屉可能已关闭或换了项目：
    * 只有本项目仍是当前详情时才落状态，避免慢响应串台。
    */
-  async function pullDetailLogs(gateway: ElysianGateway, projectId: string): Promise<void> {
-    try {
-      const logs = await gateway.websites.logs(projectId)
-      if (get().detailTarget?.id !== projectId) return
-      set({ detailLogs: logs, detailLogsLoading: false })
-    } catch (error) {
-      if (get().detailTarget?.id !== projectId) return
-      set({ detailLogsLoading: false })
-      notify(errorMessageOf(error, '日志加载失败'), 'danger')
-    }
+  function pullDetailLogs(gateway: ElysianGateway, projectId: string): Promise<void> {
+    const auth = captureAuthGeneration()
+    if (pendingDetail?.projectId === projectId && pendingDetail.auth === auth) return pendingDetail.promise
+    const sequence = ++detailSequence
+    const operation = { projectId, auth, promise: Promise.resolve() }
+    pendingDetail = operation
+    const current = () => sequence === detailSequence && auth === captureAuthGeneration() && get().detailTarget?.id === projectId
+    operation.promise = (async () => {
+      try {
+        const logs = await gateway.websites.logs(projectId)
+        if (current()) set({ detailLogs: logs, detailLogsLoading: false, detailLogsError: undefined })
+      } catch (error) {
+        if (!current()) return
+        const message = errorMessageOf(error, '日志加载失败')
+        set({ detailLogsLoading: false, detailLogsError: message })
+        notify(message, 'danger')
+      } finally { if (pendingDetail === operation) pendingDetail = undefined }
+    })()
+    return operation.promise
   }
 
   return {
@@ -125,29 +139,36 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
     detailLogsLoading: false,
     busyProjectIds: [],
 
-    async load(gateway) {
-      if (get().status === 'loading') return
-      set({ status: 'loading', errorMessage: undefined })
-      try {
-        const { projects, proxy } = await gateway.websites.list()
-        set({ status: 'ready', projects, proxyStatus: proxy })
-      } catch (error) {
-        set({ status: 'error', errorMessage: errorMessageOf(error, '网站数据加载失败') })
-      }
-    },
+    load(gateway) { return get().refresh(gateway, { silent: true }) },
 
-    // 刷新是静默重载：列表已在屏上，只把拉取过程反映在刷新按钮的忙碌态上。
-    async refresh(gateway) {
-      if (get().refreshing) return
-      set({ refreshing: true })
-      try {
-        const { projects, proxy } = await gateway.websites.list()
-        set({ status: 'ready', projects, proxyStatus: proxy, errorMessage: undefined })
-      } catch (error) {
-        notify(errorMessageOf(error, '刷新失败'), 'danger')
-      } finally {
-        set({ refreshing: false })
+    refresh(gateway, options) {
+      const auth = captureAuthGeneration()
+      if (pendingLoad?.gateway === gateway && pendingLoad.auth === auth && pendingLoad.snapshot === get().projects && pendingLoad.proxy === get().proxyStatus) {
+        if (!options?.silent) set({ refreshing: true })
+        return pendingLoad.promise
       }
+      const hadData = get().status === 'ready'
+      const operation = { gateway, auth, snapshot: get().projects, proxy: get().proxyStatus, promise: Promise.resolve() }
+      pendingLoad = operation
+      const current = () => pendingLoad === operation && auth === captureAuthGeneration()
+      set({ status: hadData ? 'ready' : 'loading', refreshing: !options?.silent, errorMessage: undefined })
+      operation.promise = (async () => {
+        try {
+          const { projects, proxy } = await gateway.websites.list()
+          if (current() && operation.snapshot === get().projects && operation.proxy === get().proxyStatus) set({ status: 'ready', projects, proxyStatus: proxy })
+        } catch (error) {
+          if (!current()) return
+          const message = errorMessageOf(error, '网站数据读取失败')
+          set({ status: hadData ? 'ready' : 'error', errorMessage: message })
+          if (hadData) notify(message, 'danger')
+        } finally {
+          if (pendingLoad === operation) {
+            pendingLoad = undefined
+            if (auth === captureAuthGeneration()) set({ refreshing: false })
+          }
+        }
+      })()
+      return operation.promise
     },
 
     async reconcileProxy(gateway) {
@@ -158,7 +179,7 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
         set({ proxyStatus: proxy })
         notify('反向代理配置已重新下发')
         // 路由事实要等下一次列表读取：成功后静默刷新一次，横幅随之下线。
-        await get().refresh(gateway)
+        await get().refresh(gateway, { silent: true })
       } catch (error) {
         notify(errorMessageOf(error, '反向代理配置下发失败'), 'danger')
       } finally {
@@ -209,7 +230,7 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
         }))
         notify(`项目 ${updated.name} 的访问配置已保存${NOTICE_SUFFIX}`)
         notifyFirewallPortSync(firewallPort)
-        await get().refresh(gateway)
+        await get().refresh(gateway, { silent: true })
         return get().projects.find((project) => project.id === projectId) ?? updated
       } finally {
         set((state) => ({ busyProjectIds: state.busyProjectIds.filter((id) => id !== projectId) }))
@@ -299,19 +320,21 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
 
     async openDetail(gateway, project) {
       // 换详情换一批日志：旧日志与旧 loading 都是上一个抽屉的上下文，一并清空。
-      set({ detailTarget: project, detailLogs: undefined, detailLogsLoading: true })
+      detailSequence += 1; pendingDetail = undefined
+      set({ detailTarget: project, detailLogs: undefined, detailLogsLoading: true, detailLogsError: undefined })
       await pullDetailLogs(gateway, project.id)
     },
 
     closeDetail() {
-      set({ detailTarget: undefined, detailLogs: undefined, detailLogsLoading: false })
+      detailSequence += 1; pendingDetail = undefined
+      set({ detailTarget: undefined, detailLogs: undefined, detailLogsLoading: false, detailLogsError: undefined })
     },
 
     async reloadDetailLogs(gateway) {
       const target = get().detailTarget
       if (!target) return
       // 刷新不清旧日志：旧内容留在屏上，只有 loading 在转。
-      set({ detailLogsLoading: true })
+      set({ detailLogsLoading: true, detailLogsError: undefined })
       await pullDetailLogs(gateway, target.id)
     },
   }

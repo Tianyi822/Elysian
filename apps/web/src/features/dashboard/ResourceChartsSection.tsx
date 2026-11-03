@@ -6,7 +6,6 @@ import {
   type ResourceSamplePoint,
 } from '../../adapters/mock/resourceMetrics'
 import './chartComponents'
-import { BusyVeil } from '../../components/RefreshState'
 import { buildResourceTrendOption, readChartPalette } from './chartOptions'
 import { formatResourceMetricValue } from './formatMetricDisplay'
 import { useChart } from './useChart'
@@ -32,9 +31,9 @@ function ResourcePanel({
   return (
     <article
       aria-label={`${RESOURCE_METRIC_LABELS[metricKey]}趋势`}
+      aria-busy={refreshing}
       className="relative min-w-0 panel-surface p-4 md:p-5"
     >
-      <BusyVeil busy={refreshing} />
       <h2 className="text-sm font-semibold leading-5">{RESOURCE_METRIC_LABELS[metricKey]}趋势</h2>
       {isZoomed ? (
         <button
@@ -62,13 +61,12 @@ export function ResourceChartsSection({
   const metricKeys = Object.keys(RESOURCE_METRIC_LABELS) as ResourceMetricKey[]
 
   return (
-    <section aria-label="服务器状态" className="@container space-y-4">
+    <section aria-label="服务器状态" aria-busy={refreshing} className="@container space-y-4">
       <div aria-label="当前资源读数" className="grid grid-cols-1 gap-4 @xs:grid-cols-2 @4xl:grid-cols-4">
         {metricKeys.map((metricKey) => {
           const hot = (metricKey === 'cpu' || metricKey === 'memory') && (latest?.[metricKey] ?? 0) >= 80
           return (
             <article key={metricKey} aria-label={RESOURCE_METRIC_LABELS[metricKey]} className="min-w-0 panel-surface px-4 py-5">
-              <BusyVeil busy={refreshing} />
               <h2 className="text-sm font-medium text-fg-muted">{RESOURCE_METRIC_LABELS[metricKey]}</h2>
               <p className={`mt-2 text-2xl font-semibold tabular-nums leading-tight ${hot ? 'text-warning' : 'text-fg'}`}>
                 {latest ? formatResourceMetricValue(latest[metricKey], RESOURCE_METRIC_UNITS[metricKey]) : '—'}

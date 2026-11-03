@@ -1,3 +1,4 @@
+import { captureAuthGeneration } from '../adapters/http/unauthorized'
 import { hasUncertainOutcome } from '../adapters/http/requestDeadline'
 import type {
   SshAuthMethods,
@@ -28,10 +29,15 @@ export const SSH_PAGE_SIZE = 20
 const MOCK_NOTE = isDockerRuntime() ? '' : 'mock，待接入真实执行'
 const MOCK_SUFFIX = MOCK_NOTE ? `（${MOCK_NOTE}）` : ''
 
+export type SshRefreshSection = 'service' | 'root' | 'keys' | 'records'
+const SSH_SECTIONS: readonly SshRefreshSection[] = ['service', 'root', 'keys', 'records']
+const sectionIdle = () => ({ service: false, root: false, keys: false, records: false })
+
 type SshState = {
   status: SshStatus
-  refreshing: boolean
-  refreshError: string | undefined
+  sectionRefreshing: Record<SshRefreshSection, boolean>
+  sectionErrors: Partial<Record<SshRefreshSection, string>>
+  refreshSection(gateway: ElysianGateway, section: SshRefreshSection, options?: { silent?: boolean }): Promise<void>
   refresh: (gateway: ElysianGateway) => Promise<void>
   clearDisplay: () => void
   errorMessage: string | undefined
@@ -123,7 +129,6 @@ function materialWithoutPrivateKey<T extends SshKeyMaterial>(material: T): T {
 
 let sshGeneration = 0
 let sshRevision = 0
-let refreshingHistory = false
 
 function isBusy(state: SshState): boolean {
   return state.togglingService || state.savingAuth || state.savingPort || state.savingPolicy || state.resettingPassword || state.generatingRootKey || state.creatingKey || state.removingKeyIds.length > 0
@@ -135,6 +140,21 @@ function stoppedSettings(overview: SshOverview): Partial<SshState> {
 }
 
 export const useSshStore = create<SshState>((set, get) => {
+  let initialLoad: Promise<void> | undefined
+  let settingsRequest = 0
+  let appliedSettingsRequest = 0
+  const pending = new Map<SshRefreshSection, { gateway: ElysianGateway; generation: number; auth: number; revision: number; promise: Promise<void> }>()
+  const applySettings = (settings: SshAuthSettings): Partial<SshState> => {
+    const state = get()
+    const dirty = state.settings !== undefined && state.portDraft !== String(state.settings.port)
+    return { settings, portDraft: dirty ? state.portDraft : String(settings.port) }
+  }
+
+  const applyReadSettings = (request: number, settings: SshAuthSettings): Partial<SshState> => {
+    if (request < appliedSettingsRequest) return {}
+    appliedSettingsRequest = request
+    return applySettings(settings)
+  }
   const recordFailure = async (error: unknown, gateway: ElysianGateway) => {
     const generation = sshGeneration
     const message = error instanceof Error ? error.message : '操作失败，请重试'
@@ -143,8 +163,8 @@ export const useSshStore = create<SshState>((set, get) => {
   }
   return ({
   status: 'idle',
-  refreshing: false,
-  refreshError: undefined,
+  sectionRefreshing: sectionIdle(),
+  sectionErrors: {},
   errorMessage: undefined,
   operationError: undefined,
   overview: undefined,
@@ -177,53 +197,80 @@ export const useSshStore = create<SshState>((set, get) => {
   clearDisplay() {
     sshGeneration += 1
     sshRevision += 1
-    refreshingHistory = false
+    pending.clear()
+    initialLoad = undefined
+    settingsRequest += 1
+    appliedSettingsRequest = settingsRequest
     set(useSshStore.getInitialState())
   },
 
   async refresh(gateway) {
-    if (refreshingHistory || isBusy(get()) || get().status !== 'ready' || get().refreshing) return
-    const generation = sshGeneration
-    const revision = sshRevision
-    refreshingHistory = true
-    try {
-      const [overview, loginRecords] = await Promise.all([gateway.ssh.overview(), gateway.ssh.listLoginRecords()])
-      if (generation !== sshGeneration || revision !== sshRevision) return
-      set({ overview, loginRecords, refreshError: undefined, ...stoppedSettings(overview) })
-    } catch (error) {
-      if (generation === sshGeneration && revision === sshRevision) set({ refreshError: error instanceof Error ? error.message : 'SSH 状态刷新失败' })
-    } finally {
-      if (generation === sshGeneration) refreshingHistory = false
-    }
+    if (get().status !== 'ready') return
+    await Promise.all(['service', 'records'].map(section => get().refreshSection(gateway, section as SshRefreshSection, { silent: true })))
   },
 
-  async load(gateway) {
-    if (get().status === 'loading' || get().refreshing || isBusy(get())) return
-    const generation = sshGeneration
-    const revision = sshRevision
-    const hadData = get().overview !== undefined
-    set({ ...(hadData ? { refreshing: true } : { status: 'loading' as const }), errorMessage: undefined, refreshError: undefined })
-    try {
-      const [overview, settings, rootAuth, keys, loginRecords, keyAccounts] = await Promise.all([
-        gateway.ssh.overview(), gateway.ssh.settings(), gateway.ssh.rootAuth(), gateway.ssh.listKeys(), gateway.ssh.listLoginRecords(), gateway.ssh.keyAccounts(),
-      ])
-      if (generation !== sshGeneration || revision !== sshRevision) return
-      const state = get()
-      const dirtyPort = state.settings && state.portDraft !== `${state.settings.port}`
-      set({ status: 'ready', refreshing: false, operationError: undefined, overview, settings, rootAuth, keys, loginRecords, keyAccounts,
-        portDraft: dirtyPort ? state.portDraft : `${settings.port}`, ...stoppedSettings(overview) })
-    } catch (error) {
-      if (generation !== sshGeneration) return
-      const message = error instanceof Error ? error.message : 'SSH 数据加载失败'
-      set(hadData ? { refreshing: false, refreshError: message } : { status: 'error', errorMessage: message })
-    } finally {
-      if (generation === sshGeneration) set({ refreshing: false })
+  refreshSection(gateway, section, options) {
+    if (isBusy(get())) return Promise.resolve()
+    const generation = sshGeneration, revision = sshRevision, auth = captureAuthGeneration()
+    const previous = pending.get(section)
+    if (previous?.gateway === gateway && previous.generation === generation && previous.auth === auth && previous.revision === revision) {
+      if (!options?.silent) set(state => ({ sectionRefreshing: { ...state.sectionRefreshing, [section]: true } }))
+      return previous.promise
     }
+    const current = () => generation === sshGeneration && auth === captureAuthGeneration() && revision === sshRevision
+    const setting = section === 'service' || section === 'root' ? ++settingsRequest : 0
+    const operation = { gateway, generation, revision, auth, promise: Promise.resolve() }
+    pending.set(section, operation)
+    set(state => ({ sectionRefreshing: { ...state.sectionRefreshing, [section]: !options?.silent }, sectionErrors: { ...state.sectionErrors, [section]: undefined } }))
+    operation.promise = (async () => {
+      if (section === 'service') {
+        const [overview, settings] = await Promise.all([gateway.ssh.overview(), gateway.ssh.settings()])
+        if (current()) set({ overview, ...applyReadSettings(setting, settings), ...stoppedSettings(overview) })
+      } else if (section === 'root') {
+        const [rootAuth, settings] = await Promise.all([gateway.ssh.rootAuth(), gateway.ssh.settings()])
+        if (current()) set({ rootAuth, ...applyReadSettings(setting, settings) })
+      } else if (section === 'keys') {
+        const [keys, keyAccounts] = await Promise.all([gateway.ssh.listKeys(), gateway.ssh.keyAccounts()])
+        if (current()) set({ keys, keyAccounts })
+      } else {
+        const loginRecords = await gateway.ssh.listLoginRecords()
+        if (current()) set({ loginRecords })
+      }
+    })().catch(error => {
+      if (current()) set(state => ({ sectionErrors: { ...state.sectionErrors, [section]: error instanceof Error ? error.message : 'SSH 数据刷新失败' } }))
+    }).finally(() => {
+      if (pending.get(section) !== operation) return
+      pending.delete(section)
+      if (generation === sshGeneration && auth === captureAuthGeneration()) set(state => ({ sectionRefreshing: { ...state.sectionRefreshing, [section]: false } }))
+    })
+    return operation.promise
+  },
+
+  load(gateway) {
+    if (get().overview !== undefined) return Promise.all(SSH_SECTIONS.map(section => get().refreshSection(gateway, section, { silent: true }))).then(() => {})
+    if (initialLoad) return initialLoad
+    if (isBusy(get())) return Promise.resolve()
+    const generation = sshGeneration, revision = sshRevision, auth = captureAuthGeneration()
+    const current = () => generation === sshGeneration && revision === sshRevision && auth === captureAuthGeneration()
+    set({ status: 'loading', errorMessage: undefined })
+    let operation!: Promise<void>
+    operation = (async () => {
+      try {
+        const [overview, settings, rootAuth, keys, loginRecords, keyAccounts] = await Promise.all([
+          gateway.ssh.overview(), gateway.ssh.settings(), gateway.ssh.rootAuth(), gateway.ssh.listKeys(), gateway.ssh.listLoginRecords(), gateway.ssh.keyAccounts(),
+        ])
+        if (current()) set({ status: 'ready', operationError: undefined, overview, ...applySettings(settings), rootAuth, keys, loginRecords, keyAccounts, ...stoppedSettings(overview) })
+      } catch (error) {
+        if (current()) set({ status: 'error', errorMessage: error instanceof Error ? error.message : 'SSH 数据加载失败' })
+      } finally { if (initialLoad === operation) initialLoad = undefined }
+    })()
+    initialLoad = operation
+    return operation
   },
 
   // 服务开关等待后端确认，避免停服失败时先收起配置。
   async setServiceEnabled(gateway, enabled) {
-    if (isBusy(get()) || get().refreshing) return
+    if (isBusy(get())) return
     const generation = sshGeneration
     const previous = get().overview
     if (!previous || get().togglingService) return
@@ -246,7 +293,7 @@ export const useSshStore = create<SshState>((set, get) => {
   },
 
   async setAuthMethod(gateway, patch) {
-    if (isBusy(get()) || get().refreshing) return
+    if (isBusy(get())) return
     const generation = sshGeneration
     const previous = get().settings
     if (!previous || get().savingAuth) return
@@ -290,7 +337,7 @@ export const useSshStore = create<SshState>((set, get) => {
 
   // 确认后提交服务端事务；防火墙检查与监听切换由同一请求完成。
   async confirmPortSave(gateway) {
-    if (isBusy(get()) || get().refreshing) return
+    if (isBusy(get())) return
     const generation = sshGeneration
     const next = get().pendingPort
     if (next === undefined || get().savingPort) return
@@ -324,7 +371,7 @@ export const useSshStore = create<SshState>((set, get) => {
   },
 
   async setLoginPolicy(gateway, policy) {
-    if (isBusy(get()) || get().refreshing) return
+    if (isBusy(get())) return
     const generation = sshGeneration
     const previous = get().rootAuth
     if (!previous || get().savingPolicy) return
@@ -349,7 +396,7 @@ export const useSshStore = create<SshState>((set, get) => {
 
   // 空输入不发请求；判定为弱密码由服务侧拒绝（mock 与容器内 chpasswd 前的复验同一次判定），消息直接来自那一次判定。
   async resetPassword(gateway) {
-    if (isBusy(get()) || get().refreshing) return
+    if (isBusy(get())) return
     const generation = sshGeneration
     const password = get().passwordDraft
     if (!password) {
@@ -378,7 +425,7 @@ export const useSshStore = create<SshState>((set, get) => {
 
   // 生成（或重新生成）Root 密钥：私钥只进一次性弹窗，入档的 rootAuth 不带它。
   async createRootKey(gateway) {
-    if (isBusy(get()) || get().refreshing) return
+    if (isBusy(get())) return
     const generation = sshGeneration
     const hadKey = get().rootAuth?.key != null
     if (get().generatingRootKey) return
@@ -443,7 +490,7 @@ export const useSshStore = create<SshState>((set, get) => {
 
   // 创建成功返回 true，弹窗据此关闭；失败保留弹窗与已填名称。
   async createKey(gateway, input) {
-    if (isBusy(get()) || get().refreshing) return false
+    if (isBusy(get())) return false
     const generation = sshGeneration
     if (get().creatingKey) return false
     set({ creatingKey: true, operationError: undefined })
@@ -484,7 +531,7 @@ export const useSshStore = create<SshState>((set, get) => {
   },
 
   async removeKey(gateway, keyId) {
-    if (isBusy(get()) || get().refreshing) return
+    if (isBusy(get())) return
     const generation = sshGeneration
     const target = get().keys.find((key) => key.id === keyId)
     if (!target || get().removingKeyIds.includes(keyId)) return

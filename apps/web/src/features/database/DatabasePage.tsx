@@ -19,7 +19,7 @@ import {
 import { useClipboardCopy } from '../../components/CopyButton'
 import { CTL_PRIMARY, CTL_TOOLBAR } from '../../components/formControl'
 import { ErrorState, EmptyState, LoadingState } from '../../components/states/StateViews'
-import { BusyVeil, RefreshButton } from '../../components/RefreshState'
+import { RefreshButton } from '../../components/RefreshState'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 import { useGateway } from '../../adapters/GatewayProvider'
@@ -117,6 +117,7 @@ export function DatabasePage() {
   return (
     <>
       <section aria-label="数据库实例" className="mb-6">
+        {errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<button type="button" className="ml-2 underline" onClick={() => void refresh(gateway, true)}>重试</button></p> : null}
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-base font-semibold">{engine} 实例</h2>
           <div className={`${CTL_TOOLBAR} flex flex-wrap items-center gap-2`}>
@@ -126,7 +127,6 @@ export function DatabasePage() {
             </button>
           </div>
         </div>
-
         {filtered.length === 0 ? (
           <EmptyState
             title={`没有 ${engine} 数据库`}
@@ -177,7 +177,7 @@ function DatabaseCard({
   database: DatabaseInstance
   view: DatabaseCardView
   removing: boolean
-  /** 列表刷新在途：卡片内容不换，只由自身盖一层浅色遮罩示意进行中。 */
+  /** 列表刷新在途：保留卡片内容并标记可访问的忙碌状态。 */
   refreshing?: boolean
   onJump(): void
   onConnect(): void
@@ -217,9 +217,9 @@ function DatabaseCard({
   return (
     <article
       aria-label={`${database.engine} 数据库 ${database.name}`}
+      aria-busy={refreshing}
       className="@container flex h-full flex-col gap-3 panel-surface p-4 md:p-5"
     >
-      <BusyVeil busy={refreshing} />
       {/* 头部是两行网格：图标跨两行；第一行实例名对状态标签，第二行版本对更新时间——左右同行同基线，不再各自堆叠错位。 */}
       <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1">
         <div className="row-span-2 flex items-center">
@@ -234,7 +234,6 @@ function DatabaseCard({
           更新于 {formatDateTime(database.updatedAt)}
         </time>
       </div>
-
       {view.kind === 'file' ? (
         /* 文件型：来源是一个本地 .db 文件，没有容器详情可看；点击把路径复制走。 */
         <button
@@ -347,7 +346,6 @@ function DatabaseCard({
           </button> : null}
         </div>
       </div>
-
       {confirmRemove ? (
         <Dialog.Root
           open

@@ -1,3 +1,4 @@
+import { captureAuthGeneration } from '../adapters/http/unauthorized'
 import { hasUncertainOutcome } from '../adapters/http/requestDeadline'
 import type { HostUser, HostUserInput } from '@elysian/contracts'
 import { HOST_USER_LOGIN_METHOD_LABELS, HOST_USER_STATUS_LABELS } from '@elysian/contracts'
@@ -47,6 +48,7 @@ const MOCK_NOTE = isDockerRuntime() ? '' : 'mock，待接入真实执行'
 const MOCK_SUFFIX = MOCK_NOTE ? `（${MOCK_NOTE}）` : ''
 
 export const useUsersStore = create<UsersState>((set, get) => {
+  let pendingLoad: { gateway: ElysianGateway; auth: number; snapshot: readonly HostUser[]; promise: Promise<void> } | undefined
   const recordFailure = async (error: unknown, gateway: ElysianGateway) => {
     const message = error instanceof Error ? error.message : '操作失败，请重试'
     if (hasUncertainOutcome(error)) await get().load(gateway)
@@ -64,15 +66,23 @@ export const useUsersStore = create<UsersState>((set, get) => {
   saving: false,
   removingUserIds: [],
 
-  async load(gateway) {
-    if (get().status === 'loading') return
-    set({ status: 'loading', errorMessage: undefined })
-    try {
-      const users = await gateway.users.list()
-      set({ status: 'ready', users, operationError: undefined })
-    } catch (error) {
-      set({ status: 'error', errorMessage: error instanceof Error ? error.message : '账号数据加载失败' })
-    }
+  load(gateway) {
+    const auth = captureAuthGeneration()
+    if (pendingLoad?.gateway === gateway && pendingLoad.auth === auth && pendingLoad.snapshot === get().users) return pendingLoad.promise
+    const hadData = get().status === 'ready'
+    const operation = { gateway, auth, snapshot: get().users, promise: Promise.resolve() }
+    pendingLoad = operation
+    const current = () => pendingLoad === operation && auth === captureAuthGeneration()
+    set({ status: hadData ? 'ready' : 'loading', errorMessage: undefined })
+    operation.promise = (async () => {
+      try {
+        const users = await gateway.users.list()
+        if (current() && operation.snapshot === get().users) set({ status: 'ready', users, operationError: undefined, errorMessage: undefined })
+      } catch (error) {
+        if (current()) set({ status: hadData ? 'ready' : 'error', errorMessage: error instanceof Error ? error.message : '账号数据加载失败' })
+      } finally { if (pendingLoad === operation) pendingLoad = undefined }
+    })()
+    return operation.promise
   },
 
   setSearch(search) {

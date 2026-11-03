@@ -9,7 +9,6 @@ import { CTL_TOOLBAR } from '../../components/formControl'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
-import { BusyVeil } from '../../components/RefreshState'
 import { useLoginLogStore } from '../../stores/loginLogStore'
 import type { LoginLogStatusFilter } from '../../stores/loginLogStore'
 import { useLogReportNotifications } from './useLogReportNotifications'
@@ -87,6 +86,7 @@ export function LoginLogPanel() {
 
   return (
     <div>
+      {errorMessage ? <p role="alert" className="text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<button type="button" className="ml-2 underline" onClick={() => void load(gateway)}>重试</button></p> : null}
       <div className={`${CTL_TOOLBAR} rect-toolbar mb-4 flex flex-wrap items-center gap-2 panel-surface px-4 py-3`}>
         {isDockerRuntime() ? null : (
           <span role="status" className="text-sm text-fg-muted">
@@ -133,8 +133,7 @@ export function LoginLogPanel() {
         </p>
       ) : null}
 
-      <div className="busy-host">
-        <BusyVeil busy={querying} />
+      <div className="relative rounded-xl" aria-busy={querying}>
         <div role="region" aria-label="登录日志表" className="overflow-x-auto panel-surface">
           <table className="w-full min-w-[960px] table-fixed border-separate border-spacing-0 text-left text-sm">
             <colgroup>
@@ -186,7 +185,6 @@ export function LoginLogPanel() {
           </table>
         </div>
       </div>
-
       {truncated ? (
         <div className="mt-3 flex flex-col items-start gap-2">
           <p className="text-xs text-fg-muted">还有更早的记录</p>

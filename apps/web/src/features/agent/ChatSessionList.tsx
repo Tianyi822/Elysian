@@ -2,7 +2,7 @@ import { useState } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { Pencil, Plus, X } from '../../components/icons'
-import { BusyVeil, RefreshButton } from '../../components/RefreshState'
+import { RefreshButton } from '../../components/RefreshState'
 import { IconButton } from '../../components/IconButton'
 import { LoadingState } from '../../components/states/StateViews'
 import { agentChatSessionKey } from '../../contracts/agentChat'
@@ -109,7 +109,6 @@ export function ChatSessionList({ onSelect, onNew, onRefresh, onMore, onClose, r
         {chat.listHasMore && <button className="chat-session-more" type="button" disabled={chat.listLoading} onClick={onMore}>{chat.listLoading ? '正在读取…' : '加载更多'}</button>}
       </>}
     </div>
-    <BusyVeil busy={refreshing} />
     {renameTarget && <SessionRenameDialog target={renameTarget} onClose={() => setRenameTarget(null)} />}
     {deleteTarget && <SessionRemoveDialog target={deleteTarget} onClose={() => setDeleteTarget(null)} />}
   </div>

@@ -6,7 +6,6 @@ import { imageUsageCount } from '../../adapters/mock/containerViews'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useContainersStore } from '../../stores/containersStore'
-import { BusyVeil } from '../../components/RefreshState'
 import { ImageReferenceLabel } from './ImageReferenceLabel'
 import './imageTable.css'
 
@@ -34,7 +33,7 @@ export function ImageTable({
 }: {
   images: readonly ContainerImage[]
   containers: readonly Container[]
-  /** 刷新在途：旧镜像行留在表里，只由表格自身盖一层浅色遮罩。 */
+  /** 刷新在途：保留旧镜像行，仅标记可访问的忙碌状态。 */
   busy?: boolean
 }) {
   const gateway = useGateway()
@@ -49,8 +48,7 @@ export function ImageTable({
   const docker = isDockerRuntime()
 
   return (
-    <div className="busy-host min-w-0">
-      <BusyVeil busy={busy} />
+    <div className="relative rounded-xl min-w-0" aria-busy={busy}>
       <section aria-label="镜像列表" className="image-panel panel-surface">
         <div className="image-table-scroll table-scrollbar overflow-x-auto rounded-[inherit]">
           <table className="image-table w-full table-fixed text-sm" aria-label="镜像列表">

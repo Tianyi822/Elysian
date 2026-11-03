@@ -43,7 +43,7 @@ beforeEach(async () => {
 })
 
 describe('工作区文件状态', () => {
-  it('批量上传中途失败仍回读已成功落盘的文件，回读不驱动刷新遮罩', async () => {
+  it('批量上传中途失败仍回读已成功落盘的文件，回读不驱动刷新按钮', async () => {
     const gateway = createMockGateway({ eventStream: 'memory', eventIntervalMs: 60_000 })
     await gateway.containers.createApp({ slug: 'demo-app', displayName: '演示' })
     await useContainerAppsStore.getState().load(gateway)
@@ -81,7 +81,7 @@ describe('工作区文件状态', () => {
       containers: Object.assign(Object.create(gateway.containers), {
         listApps: async () => {
           expect(useContainerAppsStore.getState().status).toBe('ready')
-          expect(useContainerAppsStore.getState().refreshing).toBe(true)
+          expect(useContainerAppsStore.getState().refreshing).toBe(false)
           return []
         },
       }),
@@ -175,7 +175,7 @@ describe('工作区构建状态', () => {
     const builds = useContainerAppsStore.getState().buildsBySlug['demo-app']
     expect(builds).toHaveLength(1)
     expect(builds![0]!.state).toBe('cancelled')
-    // 静默回读不置刷新遮罩（false 不驱动 BusyVeil）。
+    // 静默回读不驱动手动刷新按钮。
     expect(useContainerAppsStore.getState().buildsRefreshing['demo-app']).toBeFalsy()
     expect(listAppBuilds).toHaveBeenCalledWith('demo-app')
     expect(useMessageStore.getState().messages[0]?.message).toBe('已提交取消构建请求')

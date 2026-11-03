@@ -1,3 +1,4 @@
+import { captureAuthGeneration } from '../adapters/http/unauthorized'
 import type { LoginLogEntry, LoginLogListQuery, LoginLogStatus } from '@elysian/contracts'
 import { logNumericSortKey } from '@elysian/contracts'
 import { create } from 'zustand'
@@ -9,6 +10,7 @@ type LoginLogLoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 export type LoginLogStatusFilter = 'all' | LoginLogStatus
 
 let loadRequestId = 0
+let pendingLoad: { gateway: ElysianGateway; key: string; auth: number; snapshot: readonly LoginLogEntry[]; promise: Promise<void> } | undefined
 
 function currentQuery(state: {
   statusFilter: LoginLogStatusFilter
@@ -36,7 +38,7 @@ type LoginLogState = {
   refreshing: boolean
   loadingOlder: boolean
   olderError: string | undefined
-  load: (gateway: ElysianGateway) => Promise<void>
+  load: (gateway: ElysianGateway, options?: { silent?: boolean }) => Promise<void>
   loadOlder: (gateway: ElysianGateway) => Promise<void>
   setStatusFilter: (statusFilter: LoginLogStatusFilter) => void
   setSearch: (search: string) => void
@@ -56,35 +58,33 @@ export const useLoginLogStore = create<LoginLogState>((set, get) => ({
   loadingOlder: false,
   olderError: undefined,
 
-  async load(gateway) {
+  load(gateway, _options) {
+    const auth = captureAuthGeneration(), key = JSON.stringify(currentQuery(get()))
+    if (pendingLoad?.gateway === gateway && pendingLoad.auth === auth && pendingLoad.key === key && pendingLoad.snapshot === get().entries) {
+
+      return pendingLoad.promise
+    }
     const requestId = ++loadRequestId
     const first = get().status !== 'ready'
-    set({
-      refreshing: true,
-      ...(first ? { status: 'loading' as const } : {}),
-      errorMessage: undefined,
-      olderError: undefined,
-    })
-    try {
-      const report = await gateway.logs.loginLogs(currentQuery(get()))
-      if (requestId !== loadRequestId) return
-      set({
-        status: 'ready',
-        entries: report.entries,
-        total: report.total,
-        truncated: report.truncated,
-        skippedLines: report.skippedLines,
-        skippedFiles: report.skippedFiles,
-        refreshing: false,
-      })
-    } catch (error) {
-      if (requestId !== loadRequestId) return
-      set({
-        status: 'error',
-        errorMessage: error instanceof Error ? error.message : '登录日志加载失败',
-        refreshing: false,
-      })
-    }
+    const operation = { gateway, key, auth, snapshot: get().entries, promise: Promise.resolve() }
+    pendingLoad = operation
+    const current = () => requestId === loadRequestId && auth === captureAuthGeneration()
+    set({ refreshing: true,  status: first ? 'loading' : 'ready', errorMessage: undefined, olderError: undefined })
+    operation.promise = (async () => {
+      try {
+        const report = await gateway.logs.loginLogs(currentQuery(get()))
+        if (!current() || operation.snapshot !== get().entries) return
+        set({ status: 'ready', entries: report.entries, total: report.total, truncated: report.truncated, skippedLines: report.skippedLines, skippedFiles: report.skippedFiles,  })
+      } catch (error) {
+        if (current()) set({ status: first ? 'error' : 'ready', errorMessage: error instanceof Error ? error.message : '日志读取失败' })
+      } finally {
+        if (pendingLoad === operation) {
+          pendingLoad = undefined
+          if (current()) set({ refreshing: false,  })
+        }
+      }
+    })()
+    return operation.promise
   },
 
   async loadOlder(gateway) {

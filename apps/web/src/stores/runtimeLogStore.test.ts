@@ -52,7 +52,7 @@ describe('运行日志 store', () => {
     expect(state.refreshing).toBe(false)
   })
 
-  it('并发 load 以最新请求为准：旧响应丢弃', async () => {
+  it('切换搜索后的并发 load 以最新请求为准：旧响应丢弃', async () => {
     const first = deferred<Awaited<ReturnType<ElysianGateway['logs']['runtimeLog']>>>()
     const second = deferred<Awaited<ReturnType<ElysianGateway['logs']['runtimeLog']>>>()
     let calls = 0
@@ -64,6 +64,7 @@ describe('运行日志 store', () => {
     const report = await gatewayWith().logs.runtimeLog()
 
     const older = useRuntimeLogStore.getState().load(gateway)
+    useRuntimeLogStore.getState().setSearch('新的查询')
     const newer = useRuntimeLogStore.getState().load(gateway)
     expect(runtimeLog).toHaveBeenCalledTimes(2)
 

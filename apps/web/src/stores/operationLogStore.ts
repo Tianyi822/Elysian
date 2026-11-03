@@ -1,3 +1,4 @@
+import { captureAuthGeneration } from '../adapters/http/unauthorized'
 import type {
   LogStorageStats,
   OperationLogCategory,
@@ -24,6 +25,7 @@ export type OperationLogResultFilter = 'all' | OperationLogOutcome
 const MOCK_SUFFIX = isDockerRuntime() ? '' : '（演示数据，只清空内存中的演示日志）'
 
 let loadRequestId = 0
+let pendingLoad: { gateway: ElysianGateway; key: string; auth: number; snapshot: readonly OperationLogEntry[]; promise: Promise<void> } | undefined
 
 function currentQuery(state: {
   categoryFilter: OperationLogCategoryFilter
@@ -66,7 +68,7 @@ type OperationLogState = {
   clearing: boolean
   /** 待清空的类别（清空二次确认的目标）；null 表示弹窗关闭。 */
   clearTarget: PlatformLogCategory | null
-  load: (gateway: ElysianGateway) => Promise<void>
+  load: (gateway: ElysianGateway, options?: { silent?: boolean }) => Promise<void>
   loadOlder: (gateway: ElysianGateway) => Promise<void>
   setCategoryFilter: (filter: OperationLogCategoryFilter) => void
   setResultFilter: (filter: OperationLogResultFilter) => void
@@ -94,36 +96,33 @@ export const useOperationLogStore = create<OperationLogState>((set, get) => ({
   clearing: false,
   clearTarget: null,
 
-  async load(gateway) {
+  load(gateway, _options) {
+    const auth = captureAuthGeneration(), key = JSON.stringify(currentQuery(get()))
+    if (pendingLoad?.gateway === gateway && pendingLoad.auth === auth && pendingLoad.key === key && pendingLoad.snapshot === get().entries) {
+
+      return pendingLoad.promise
+    }
     const requestId = ++loadRequestId
     const first = get().status !== 'ready'
-    set({
-      refreshing: true,
-      ...(first ? { status: 'loading' as const } : {}),
-      errorMessage: undefined,
-      olderError: undefined,
-    })
-    try {
-      const report = await gateway.logs.operationLogs(currentQuery(get()))
-      if (requestId !== loadRequestId) return
-      set({
-        status: 'ready',
-        entries: report.entries,
-        total: report.total,
-        truncated: report.truncated,
-        skippedLines: report.skippedLines,
-        skippedFiles: report.skippedFiles,
-        storage: report.storage,
-        refreshing: false,
-      })
-    } catch (error) {
-      if (requestId !== loadRequestId) return
-      set({
-        status: 'error',
-        errorMessage: error instanceof Error ? error.message : '操作日志加载失败',
-        refreshing: false,
-      })
-    }
+    const operation = { gateway, key, auth, snapshot: get().entries, promise: Promise.resolve() }
+    pendingLoad = operation
+    const current = () => requestId === loadRequestId && auth === captureAuthGeneration()
+    set({ refreshing: true,  status: first ? 'loading' : 'ready', errorMessage: undefined, olderError: undefined })
+    operation.promise = (async () => {
+      try {
+        const report = await gateway.logs.operationLogs(currentQuery(get()))
+        if (!current() || operation.snapshot !== get().entries) return
+        set({ status: 'ready', entries: report.entries, total: report.total, truncated: report.truncated, skippedLines: report.skippedLines, skippedFiles: report.skippedFiles, storage: report.storage, })
+      } catch (error) {
+        if (current()) set({ status: first ? 'error' : 'ready', errorMessage: error instanceof Error ? error.message : '日志读取失败' })
+      } finally {
+        if (pendingLoad === operation) {
+          pendingLoad = undefined
+          if (current()) set({ refreshing: false,  })
+        }
+      }
+    })()
+    return operation.promise
   },
 
   async loadOlder(gateway) {
@@ -173,6 +172,7 @@ export const useOperationLogStore = create<OperationLogState>((set, get) => ({
   async clear(gateway) {
     const category = get().clearTarget
     if (!category || get().clearing) return
+    loadRequestId += 1; pendingLoad = undefined
     set({ clearing: true })
     try {
       const report = await gateway.logs.clearLogs(category)
@@ -181,7 +181,7 @@ export const useOperationLogStore = create<OperationLogState>((set, get) => ({
         message: `${PLATFORM_LOG_CATEGORY_LABELS[report.category]}已清空：删除 ${report.rowCount} 条记录，释放 ${formatLogBytes(report.totalBytes)}${MOCK_SUFFIX}`,
       })
       set({ clearTarget: null, clearing: false })
-      await get().load(gateway)
+      await get().load(gateway, { silent: true })
     } catch (error) {
       useMessageStore.getState().notify({
         tone: 'danger',

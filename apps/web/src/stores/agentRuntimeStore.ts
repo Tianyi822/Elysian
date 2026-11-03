@@ -6,7 +6,7 @@ import type { ElysianGateway } from '../contracts/adapters'
  * 模型设置使用的 Agent 运行时能力报告：先判定内核可用性与
  * 12 个能力位。读取走 gateway.agentRuntime.runtime()（GET /api/agent/runtime，唯一在
  * 内核不可用时也可读的端点）；闭包 sequence 丢弃过期响应。静默重载不整块白屏，
- * 只刷新 info——是否盖遮罩由调用方决定。
+ * 只刷新 info，读取失败保留上次报告。
  */
 
 export type AgentRuntimeState = {
@@ -48,7 +48,7 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>((set, get) => {
       } catch (error) {
         if (sequence !== loadSequence || options?.signal?.aborted) return
         set({
-          status: 'error',
+          status: inPlace ? 'ready' : 'error',
           reloading: false,
           errorMessage: error instanceof Error ? error.message : '读取 Agent 运行时报告失败',
         })

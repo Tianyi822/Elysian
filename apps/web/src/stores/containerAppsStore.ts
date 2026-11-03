@@ -1,3 +1,4 @@
+import { captureAuthGeneration } from '../adapters/http/unauthorized'
 import { create } from 'zustand'
 import { randomId } from '../utils/randomId'
 import type {
@@ -52,7 +53,7 @@ export type ContainerAppsState = {
   status: 'idle' | 'loading' | 'ready' | 'error'
   apps: readonly ContainerApp[]
   errorMessage?: string
-  /** 列表刷新在途：旧清单留在屏上，只由卡片自身盖遮罩。 */
+  /** 列表手动刷新在途：旧清单保留，仅驱动刷新按钮。 */
   refreshing: boolean
   creating: boolean
   createError: string | null
@@ -61,9 +62,9 @@ export type ContainerAppsState = {
   check: ComposeCheckState | null
   /** 每个工作区一份构建任务清单，按创建时间倒序。 */
   buildsBySlug: Record<string, readonly ContainerBuildTask[]>
-  /** 任务区首次加载（还没有任何数据）才落加载态，之后的刷新走遮罩。 */
+  /** 任务区首次加载才显示加载态，已有清单始终保留。 */
   buildsLoading: Record<string, boolean>
-  /** 任务区手动刷新在途：只盖任务区自己，静默轮询不置位。 */
+  /** 任务区手动刷新在途：只驱动自己的刷新按钮，静默轮询不置位。 */
   buildsRefreshing: Record<string, boolean>
   buildsError: Record<string, string | null>
   buildPreview: ContainerBuildPreviewState | null
@@ -79,7 +80,7 @@ export type ContainerAppsState = {
   clearCheck(): void
   /** 任务区首次打开时加载；已有清单时等价于手动刷新。 */
   ensureBuilds(gateway: ElysianGateway, slug: string): Promise<void>
-  /** 刷新任务清单；silent 供 2s 轮询用，不驱动遮罩，读取失败仍进入统一反馈。 */
+  /** 刷新任务清单；silent 供 2s 轮询用，不驱动刷新按钮，读取失败仍进入统一反馈。 */
   refreshBuilds(gateway: ElysianGateway, slug: string, options?: { silent?: boolean }): Promise<void>
   previewBuild(gateway: ElysianGateway, slug: string, input: ContainerBuildPreviewInput): Promise<ContainerBuildPlan | null>
   /** 提交构建：成功通知「已提交构建任务」并入列；notifyOnError 供弹窗外的「重新构建」走通知。 */
@@ -107,9 +108,12 @@ function notifyBuildTransitions(previous: readonly ContainerBuildTask[], tasks: 
     useMessageStore.getState().notify({ tone, message: `${slug}：${result}${task.error ? `，${task.error}` : ''}` })
   }
 }
-/** 写动作在途的键；`*` 表示整工作区（批量上传），界面据此决定遮罩挂在哪。 */
+/** 写动作在途的键；`*` 表示整工作区（批量上传），界面据此禁用对应写操作。 */
 export const appWritingKey = (slug: string, path: string) => `${slug}/${path}`
 export const WORKSPACE_WRITING_PATH = '*'
+
+let pendingApps: { gateway: ElysianGateway; auth: number; snapshot: readonly ContainerApp[]; promise: Promise<void> } | undefined
+const pendingBuilds = new Map<string, { gateway: ElysianGateway; auth: number; snapshot: readonly ContainerBuildTask[] | undefined; promise: Promise<void> }>()
 
 export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
   status: 'idle',
@@ -126,30 +130,35 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
   buildPreview: null,
   buildLogs: {},
 
-  async load(gateway) {
-    // 首次加载才换整块加载态；已有清单时的再取走 refresh，不闪白屏。
-    if (get().status === 'ready' || get().apps.length > 0) {
-      await get().refresh(gateway)
-      return
-    }
-    set({ status: 'loading', errorMessage: undefined })
-    try {
-      set({ status: 'ready', apps: await gateway.containers.listApps() })
-    } catch (cause) {
-      set({ status: 'error', errorMessage: detail(cause) })
-    }
-  },
+  load(gateway) { return get().refresh(gateway, { silent: true }) },
 
-  async refresh(gateway, options) {
-    if (!options?.silent) set({ refreshing: true })
-    try {
-      set({ apps: await gateway.containers.listApps(), status: 'ready', errorMessage: undefined })
-    } catch (cause) {
-      set({ errorMessage: detail(cause) })
-      useMessageStore.getState().notify({ tone: 'danger', message: `读取工作区失败：${detail(cause)}` })
-    } finally {
-      if (!options?.silent) set({ refreshing: false })
+  refresh(gateway, options) {
+    const auth = captureAuthGeneration()
+    if (pendingApps?.gateway === gateway && pendingApps.auth === auth && pendingApps.snapshot === get().apps) {
+      if (!options?.silent) set({ refreshing: true })
+      return pendingApps.promise
     }
+    const hadData = get().status === 'ready'
+    const operation = { gateway, auth, snapshot: get().apps, promise: Promise.resolve() }
+    pendingApps = operation
+    const current = () => pendingApps === operation && auth === captureAuthGeneration()
+    set({ status: hadData ? 'ready' : 'loading', refreshing: !options?.silent, errorMessage: undefined })
+    operation.promise = (async () => {
+      try {
+        const apps = await gateway.containers.listApps()
+        if (current() && operation.snapshot === get().apps) set({ apps, status: 'ready', errorMessage: undefined })
+      } catch (cause) {
+        if (!current()) return
+        set({ status: hadData ? 'ready' : 'error', errorMessage: detail(cause) })
+        if (hadData) useMessageStore.getState().notify({ tone: 'danger', message: `读取工作区失败：${detail(cause)}` })
+      } finally {
+        if (pendingApps === operation) {
+          pendingApps = undefined
+          if (auth === captureAuthGeneration()) set({ refreshing: false })
+        }
+      }
+    })()
+    return operation.promise
   },
 
   async create(gateway, input) {
@@ -280,44 +289,36 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
     set({ check: null })
   },
 
-  async ensureBuilds(gateway, slug) {
-    // 首次（键还不存在）才换加载态；已有清单时的再取走刷新遮罩，不白屏。
-    if (get().buildsBySlug[slug] !== undefined) {
-      await get().refreshBuilds(gateway, slug)
-      return
-    }
-    set((state) => ({ buildsLoading: { ...state.buildsLoading, [slug]: true }, buildsError: { ...state.buildsError, [slug]: null } }))
-    try {
-      const builds = await gateway.containers.listAppBuilds(slug)
-      set((state) => ({
-        buildsBySlug: { ...state.buildsBySlug, [slug]: builds },
-        buildsLoading: { ...state.buildsLoading, [slug]: false },
-      }))
-    } catch (cause) {
-      set((state) => ({
-        buildsLoading: { ...state.buildsLoading, [slug]: false },
-        buildsError: { ...state.buildsError, [slug]: detail(cause) },
-      }))
-    }
-  },
+  ensureBuilds(gateway, slug) { return get().refreshBuilds(gateway, slug, { silent: true }) },
 
-  async refreshBuilds(gateway, slug, options) {
-    const silent = options?.silent === true
-    if (!silent) set((state) => ({ buildsRefreshing: { ...state.buildsRefreshing, [slug]: true } }))
-    try {
-      const builds = await gateway.containers.listAppBuilds(slug)
-      notifyBuildTransitions(get().buildsBySlug[slug] ?? [], builds, slug)
-      set((state) => ({
-        buildsBySlug: { ...state.buildsBySlug, [slug]: builds },
-        buildsRefreshing: { ...state.buildsRefreshing, [slug]: false },
-        buildsError: { ...state.buildsError, [slug]: null },
-      }))
-    } catch (cause) {
-      set((state) => ({
-        buildsRefreshing: { ...state.buildsRefreshing, [slug]: false },
-        buildsError: { ...state.buildsError, [slug]: detail(cause) },
-      }))
+  refreshBuilds(gateway, slug, options) {
+    const auth = captureAuthGeneration()
+    const previous = pendingBuilds.get(slug)
+    if (previous?.gateway === gateway && previous.auth === auth && previous.snapshot === get().buildsBySlug[slug]) {
+      if (!options?.silent) set(state => ({ buildsRefreshing: { ...state.buildsRefreshing, [slug]: true } }))
+      return previous.promise
     }
+    const snapshot = get().buildsBySlug[slug]
+    const operation = { gateway, auth, snapshot, promise: Promise.resolve() }
+    pendingBuilds.set(slug, operation)
+    const current = () => pendingBuilds.get(slug) === operation && auth === captureAuthGeneration()
+    set(state => ({ buildsLoading: { ...state.buildsLoading, [slug]: snapshot === undefined }, buildsRefreshing: { ...state.buildsRefreshing, [slug]: !options?.silent }, buildsError: { ...state.buildsError, [slug]: null } }))
+    operation.promise = (async () => {
+      try {
+        const builds = await gateway.containers.listAppBuilds(slug)
+        if (!current() || snapshot !== get().buildsBySlug[slug]) return
+        notifyBuildTransitions(snapshot ?? [], builds, slug)
+        set(state => ({ buildsBySlug: { ...state.buildsBySlug, [slug]: builds } }))
+      } catch (cause) {
+        if (current()) set(state => ({ buildsError: { ...state.buildsError, [slug]: detail(cause) } }))
+      } finally {
+        if (pendingBuilds.get(slug) === operation) {
+          pendingBuilds.delete(slug)
+          if (auth === captureAuthGeneration()) set(state => ({ buildsLoading: { ...state.buildsLoading, [slug]: false }, buildsRefreshing: { ...state.buildsRefreshing, [slug]: false } }))
+        }
+      }
+    })()
+    return operation.promise
   },
 
   async previewBuild(gateway, slug, input) {
@@ -381,15 +382,20 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
   },
 
   async openBuildLogs(gateway, slug, taskId) {
+    const auth = captureAuthGeneration()
+    const loading: ContainerBuildLogsState = { slug, taskId, lines: [], next: 0, total: 0, loading: true, error: null }
+    const current = () => auth === captureAuthGeneration() && get().buildLogs[taskId] === loading
     set((state) => ({
-      buildLogs: { ...state.buildLogs, [taskId]: { slug, taskId, lines: [], next: 0, total: 0, loading: true, error: null } },
+      buildLogs: { ...state.buildLogs, [taskId]: loading },
     }))
     try {
       const report = await gateway.containers.getAppBuildLogs(slug, taskId, 0)
+      if (!current()) return
       set((state) => ({
         buildLogs: { ...state.buildLogs, [taskId]: { slug, taskId, lines: report.lines, next: report.next, total: report.total, loading: false, error: null } },
       }))
     } catch (cause) {
+      if (!current()) return
       set((state) => ({
         buildLogs: { ...state.buildLogs, [taskId]: { slug, taskId, lines: [], next: 0, total: 0, loading: false, error: detail(cause) } },
       }))
@@ -399,9 +405,13 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
   async loadBuildLogs(gateway, slug, taskId) {
     const current = get().buildLogs[taskId]
     if (!current || current.loading) return
-    set((state) => ({ buildLogs: { ...state.buildLogs, [taskId]: { ...current, loading: true } } }))
+    const auth = captureAuthGeneration()
+    const loading = { ...current, loading: true }
+    const valid = () => auth === captureAuthGeneration() && get().buildLogs[taskId] === loading
+    set((state) => ({ buildLogs: { ...state.buildLogs, [taskId]: loading } }))
     try {
       const report = await gateway.containers.getAppBuildLogs(slug, taskId, current.next)
+      if (!valid()) return
       set((state) => ({
         buildLogs: {
           ...state.buildLogs,
@@ -411,6 +421,7 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
         },
       }))
     } catch (cause) {
+      if (!valid()) return
       set((state) => {
         const row = state.buildLogs[taskId]
         if (!row) return {}

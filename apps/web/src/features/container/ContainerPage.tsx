@@ -89,6 +89,7 @@ export function ContainerPage() {
 
   return (
     <div className="mb-6">
+      {errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<button type="button" className="ml-2 underline" onClick={() => void load(gateway)}>重试</button></p> : null}
       {liveStatus === 'connecting' ? (
         <p
           role="status"

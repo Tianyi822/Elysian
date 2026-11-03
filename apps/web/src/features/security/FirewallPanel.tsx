@@ -231,6 +231,7 @@ export function FirewallPanel() {
 
   return (
     <div>
+      {errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<button type="button" className="ml-2 underline" onClick={() => void load(gateway)}>重试</button></p> : null}
       {operationError ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-danger/40 p-3 text-xs text-danger"><p className="min-w-0 flex-1">{operationError}</p><button type="button" className="rounded border border-line px-3 py-1.5 text-fg" onClick={() => void load(gateway)}>重新读取状态</button></div> : null}
       <div className={`${CTL_TOOLBAR} firewall-toolbar mb-4 flex flex-wrap items-center gap-x-4 gap-y-2 panel-surface px-4 py-3`}>
         {/* 防火墙动作只在容器内真实执行 ufw；宿主机本地开发是内存演示，明示出来。 */}
@@ -258,7 +259,6 @@ export function FirewallPanel() {
         <StatChip label="IP 规则" count={ipRules.length} />
         <StatChip label="端口转发" count={forwards.length} />
       </div>
-
       {/* 工具区：不依赖 flex 折行的猜测——探针量出按钮行的自然宽度，外壳量出可用宽度，
           放得下（按钮行 + 间距 + 搜索框）就同行，放不下就按钮一行、搜索占满第二行。 */}
       <div
@@ -355,7 +355,6 @@ export function FirewallPanel() {
           />
         </div>
       </div>
-
       {/* 固有宽度探针：脱离布局、量出「左区整组」与搜索框各自需要多宽，供折行判断使用。
           左区必须与真实行同构（视图切换 + 按钮），漏掉任何一项都会让预算偏小、误判放得下。
           外壳收成 0×0 并裁切：这行自然宽度比窄屏更宽，若参与文档滚动宽度，
@@ -371,7 +370,6 @@ export function FirewallPanel() {
         {/* 与同行形态的搜索框同宽（w-56），量出它的实际宽度 */}
         <div ref={searchProbeRef} className="w-56" />
       </div>
-
       {view === 'port' ? (
         <>
           <div role="region" aria-label="端口规则表" className="hover-scrollbar overflow-x-auto panel-surface">
@@ -424,7 +422,6 @@ export function FirewallPanel() {
               </tbody>
             </table>
           </div>
-
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-fg-muted">
             <span>
               共 {filtered.rules.length} 条 · 每页 {FIREWALL_PAGE_SIZE} 条

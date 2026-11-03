@@ -11,7 +11,7 @@ import type { WebsiteProject } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { CopyButton } from '../../components/CopyButton'
 import { IconButton } from '../../components/IconButton'
-import { BusyVeil, RefreshButton } from '../../components/RefreshState'
+import { RefreshButton } from '../../components/RefreshState'
 import { X } from '../../components/icons'
 import { formatDate } from '../../components/format'
 import { StatusTag } from '../../components/StatusTag'
@@ -82,6 +82,7 @@ export function WebsiteDetailSheet() {
   const detailTarget = useWebsitesStore((s) => s.detailTarget)
   const detailLogs = useWebsitesStore((s) => s.detailLogs)
   const detailLogsLoading = useWebsitesStore((s) => s.detailLogsLoading)
+  const detailLogsError = useWebsitesStore(state => state.detailLogsError)
   const closeDetail = useWebsitesStore((s) => s.closeDetail)
   const reloadDetailLogs = useWebsitesStore((s) => s.reloadDetailLogs)
   // 关闭瞬间目标已被清空，冻结最后一份项目给退出动画当内容，
@@ -124,7 +125,6 @@ export function WebsiteDetailSheet() {
               </span>
             </Dialog.Close>
           </header>
-
           <div className="mt-5 space-y-4">
             <section aria-label="运行快览">
               <div
@@ -140,7 +140,6 @@ export function WebsiteDetailSheet() {
                 <Metric label="累计流量">{project.traffic.totalGb} GB</Metric>
               </div>
             </section>
-
             <Section title="基本信息">
               <dl className="divide-y divide-line">
                 <Row label="类型">{WEBSITE_PROJECT_KIND_LABELS[project.kind]}</Row>
@@ -203,7 +202,6 @@ export function WebsiteDetailSheet() {
                 </Row>
               </dl>
             </Section>
-
             <Section
               title="部署命令"
               action={
@@ -224,7 +222,6 @@ export function WebsiteDetailSheet() {
                 <p className="text-sm text-fg-muted">尚未配置启动命令</p>
               )}
             </Section>
-
             <Section
               title="运行日志"
               action={
@@ -237,11 +234,11 @@ export function WebsiteDetailSheet() {
               }
             >
               {/* 刷新不清旧日志：store 保留 detailLogs 只置 loading，这里同样让旧内容
-                  留屏，进行中状态由刷新按钮转圈加日志块自身的浅色遮罩表达；加载文案只在没有
+                  留屏，进行中状态只由刷新按钮转圈表达；加载文案只在没有
                   任何旧内容时占位。 */}
+              {detailLogsError ? <p role="alert" className="mb-2 text-xs text-danger">{detailLogsError}</p> : null}
               {detailLogs && detailLogs.length > 0 ? (
-                <div className="busy-host">
-                  <BusyVeil busy={detailLogsLoading} />
+                <div className="relative rounded-xl" aria-busy={detailLogsLoading}>
                   <pre className="max-h-80 overflow-y-auto whitespace-pre-wrap break-all panel-surface px-3 py-2.5 font-mono text-xs leading-5 text-fg">
                     {detailLogs.map((line, index) => (
                       <span key={`${index}-${line}`} className="block">
@@ -250,7 +247,7 @@ export function WebsiteDetailSheet() {
                     ))}
                   </pre>
                 </div>
-              ) : detailLogsLoading ? (
+              ) : detailLogsLoading && detailLogs === undefined ? (
                 <p role="status" className="text-sm text-fg-muted">
                   正在加载运行日志…
                 </p>

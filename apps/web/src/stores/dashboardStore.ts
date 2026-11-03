@@ -1,3 +1,4 @@
+import { captureAuthGeneration } from '../adapters/http/unauthorized'
 import type { Unsubscribe } from '@elysian/contracts'
 import { create } from 'zustand'
 import {
@@ -48,17 +49,35 @@ export async function loadDashboard(gateway: ElysianGateway, range: TimeRange) {
  */
 let detachLive: Unsubscribe | undefined
 let boundGateway: ElysianGateway | undefined
+let readSequence = 0
+let pendingRead: { gateway: ElysianGateway; range: TimeRange; auth: number; promise: Promise<void> } | undefined
 
-async function reloadResources(gateway: ElysianGateway, range: TimeRange): Promise<void> {
-  try {
-    const resources = await gateway.resources.list(range)
-    useDashboardStore.setState({ resources, errorMessage: undefined })
-  } catch (error) {
-    useDashboardStore.setState({
-      errorMessage:
-        error instanceof Error ? error.message : '切换时间范围后读取资源数据失败',
-    })
+function reloadResources(gateway: ElysianGateway, range: TimeRange, manual = false): Promise<void> {
+  const auth = captureAuthGeneration()
+  if (pendingRead?.gateway === gateway && pendingRead.range === range && pendingRead.auth === auth) {
+    if (manual) useDashboardStore.setState({ refreshing: true })
+    return pendingRead.promise
   }
+  const sequence = ++readSequence
+  const hadData = useDashboardStore.getState().resources !== undefined
+  const operation = { gateway, range, auth, promise: Promise.resolve() }
+  pendingRead = operation
+  const current = () => sequence === readSequence && auth === captureAuthGeneration() && useDashboardStore.getState().range === range
+  useDashboardStore.setState({ status: hadData ? 'ready' : 'loading', refreshing: manual, errorMessage: undefined })
+  operation.promise = (async () => {
+    try {
+      const { resources } = await loadDashboard(gateway, range)
+      if (current()) useDashboardStore.setState({ status: 'ready', resources, errorMessage: undefined })
+    } catch (error) {
+      if (current()) useDashboardStore.setState({ status: hadData ? 'ready' : 'error', errorMessage: error instanceof Error ? error.message : '读取仪表盘数据失败' })
+    } finally {
+      if (pendingRead === operation) {
+        pendingRead = undefined
+        if (auth === captureAuthGeneration()) useDashboardStore.setState({ refreshing: false })
+      }
+    }
+  })()
+  return operation.promise
 }
 
 function attachLiveEvents(): void {
@@ -94,34 +113,14 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   status: 'idle',
   refreshing: false,
   range: DEFAULT_TIME_RANGE,
-  async load(gateway) {
+  load(gateway) {
     attachLiveEvents()
     boundGateway = gateway
-    const range = get().range
-    set({ status: 'loading', errorMessage: undefined })
-    try {
-      const data = await loadDashboard(gateway, range)
-      set({ status: 'ready', ...data })
-    } catch (error) {
-      set({
-        status: 'error',
-        errorMessage: error instanceof Error ? error.message : '读取仪表盘数据失败',
-      })
-    }
+    return reloadResources(gateway, get().range)
   },
-  async refresh(gateway) {
+  refresh(gateway) {
     boundGateway = gateway
-    const range = get().range
-    set({ refreshing: true, errorMessage: undefined })
-    try {
-      const data = await loadDashboard(gateway, range)
-      set({ status: 'ready', ...data, refreshing: false })
-    } catch (error) {
-      set({
-        refreshing: false,
-        errorMessage: error instanceof Error ? error.message : '刷新仪表盘数据失败',
-      })
-    }
+    return reloadResources(gateway, get().range, true)
   },
   setRange(range) {
     set({ range })

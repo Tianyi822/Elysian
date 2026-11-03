@@ -10,7 +10,7 @@ import {
 import type { SshLoginStats, SshRootLoginPolicy, SshOverview } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
-import { BusyVeil, RefreshButton } from '../../components/RefreshState'
+import { SshRefreshButton, SshRefreshError } from './SshRefresh'
 import { IconButton } from '../../components/IconButton'
 import { StatusTag } from '../../components/StatusTag'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
@@ -92,8 +92,6 @@ export function SshPanel() {
   const load = useSshStore((s) => s.load)
   const refresh = useSshStore((s) => s.refresh)
   const overview = useSshStore((s) => s.overview)
-  const refreshing = useSshStore((s) => s.refreshing)
-  const refreshError = useSshStore((s) => s.refreshError)
 
   useEffect(() => {
     void load(gateway)
@@ -121,7 +119,6 @@ export function SshPanel() {
 
   return (
     <>
-      {refreshError ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{refreshError}。已保留上次读取结果，请重新刷新。</p> : null}
       {operationError ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-danger/40 p-3 text-xs text-danger"><p className="min-w-0 flex-1">{operationError}</p><button type="button" className="rounded border border-line px-3 py-1.5 text-fg" onClick={() => void load(gateway)}>重新读取状态</button></div> : null}
       {/* 两列瀑布：左设置右数据，列各自按内容堆叠、矮卡不被邻列拉平；
           Root 卡的密码/密钥区收起时左列自然变矮，不把数据表拉出卡内空白。 */}
@@ -136,7 +133,6 @@ export function SshPanel() {
           </div>
         ) : null}
         <div className="relative grid items-start gap-4 @min-[44rem]:grid-cols-2">
-          <BusyVeil busy={refreshing} />
           <div className="flex min-w-0 flex-col gap-4">
             <ServiceCard />
             {overview?.enabled ? <RootCard /> : null}
@@ -179,7 +175,8 @@ function SshLoginRecordsCard() {
   const pageRows = loginRecords.slice((safePage - 1) * SSH_PAGE_SIZE, safePage * SSH_PAGE_SIZE)
 
   return (
-    <Section title="SSH 登录记录">
+    <Section title="SSH 登录记录" aside={<SshRefreshButton section="records" />} >
+      <SshRefreshError section="records" />
       <div
         role="region"
         aria-label="SSH 登录记录表"
@@ -257,7 +254,6 @@ function SshLoginRecordsCard() {
           </tbody>
         </table>
       </div>
-
       <TablePager
         label="登录记录分页"
         summary={`${loginRecords.length >= 2000 ? '最近' : '共'} ${loginRecords.length} 条登录记录`}
@@ -285,14 +281,13 @@ function ServiceCard() {
   const setPortDraft = useSshStore((s) => s.setPortDraft)
   const requestPortSave = useSshStore((s) => s.requestPortSave)
   const portInputId = useId()
-  const load = useSshStore((s) => s.load)
-  const refreshing = useSshStore((s) => s.refreshing)
 
   if (!overview || !settings) return null
   const enabled = overview.enabled
 
   return (
-    <Section title="SSH 服务" aside={<RefreshButton label="刷新 SSH 状态" busy={refreshing} onPress={() => void load(gateway)} />}>
+    <Section title="SSH 服务" aside={<SshRefreshButton section="service" />}>
+      <SshRefreshError section="service" />
       <Region
         title="服务状态"
         aside={
@@ -338,10 +333,8 @@ function ServiceCard() {
           </> : null}
         </div>
       </Region>
-
       {!enabled ? <p className="text-xs text-fg-subtle">SSH 服务已停止；重新开启后可管理登录方式、端口与密钥。</p> : null}
       <LoginStatsRegion stats={overview.stats} logInfo={overview.logInfo} />
-
       {enabled ? <Region title="监听端口" labelFor={portInputId}>
         <div className="flex items-center gap-2">
           <input
@@ -598,7 +591,8 @@ function RootCard() {
   const hiddenHints = rootHiddenHints(rootAuth.policy, settings)
 
   return (
-    <Section title="Root 设置">
+    <Section title="Root 设置" aside={<SshRefreshButton section="root" />}>
+      <SshRefreshError section="root" />
       <Region title="Root 登录">
         <SwitchRow
           label="允许 Root 登录"
@@ -625,7 +619,6 @@ function RootCard() {
           </button>
         ) : null}
       </Region>
-
       {passwordUsable ? (
         <Region
           title="Root 密码"

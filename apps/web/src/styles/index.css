@@ -34,7 +34,6 @@
   --color-panel-glass-overlay: var(--t-panel-glass-overlay);
   --color-panel-line: var(--t-panel-line);
   --color-panel-sheen: var(--t-panel-sheen);
-  --color-veil: var(--t-veil);
 
   --color-sev1: var(--t-sev1);
   --color-sev1-fg: var(--t-sev1-fg);
@@ -108,8 +107,6 @@
   --t-grain: 0.05;
   --t-canvas-near: rgb(41 66 106 / 62%);
   --t-canvas-far: rgb(78 60 112 / 44%);
-  --t-veil: rgb(190 214 245 / 12%);
-  --t-veil-sheen: rgb(255 255 255 / 18%);
   --t-overlay: rgb(7 13 26 / 64%);
   --t-overlay-strong: rgb(7 13 26 / 76%);
   --t-chart-secondary: #b7a5e8;
@@ -186,8 +183,6 @@
   --t-grain: 0.035;
   --t-canvas-near: rgb(236 210 229 / 78%);
   --t-canvas-far: rgb(203 217 240 / 70%);
-  --t-veil: rgb(255 255 255 / 58%);
-  --t-veil-sheen: rgb(255 255 255 / 92%);
   --t-overlay: rgb(51 43 60 / 38%);
   --t-overlay-strong: rgb(51 43 60 / 52%);
   --t-chart-secondary: #526ea6;
@@ -657,39 +652,6 @@
   }
 
   /*
-   * 遮罩宿主只提供定位上下文与遮罩圆角，不裁切内容或控件的焦点环。
-   * 扫光由 busy-veil 自行裁切；表格等内容由自身的滚动容器管理溢出。
-   */
-  .busy-host {
-    position: relative;
-    border-radius: var(--radius-xl);
-  }
-
-  /*
-   * 刷新遮罩：只盖住正在刷新的那个组件，旧内容留在屏上透出，一道慢扫光表示
-   * 进行中。遮罩不吃指针，刷新期间界面照常可读可操作，不出现整块白屏。
-   */
-  .busy-veil {
-    position: absolute;
-    inset: 0;
-    z-index: 20;
-    overflow: hidden;
-    border-radius: inherit;
-    pointer-events: none;
-    background-color: var(--t-veil);
-  }
-
-  .busy-veil > span {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    width: 45%;
-    background-image: linear-gradient(100deg, transparent 34%, var(--t-veil-sheen) 50%, transparent 66%);
-    animation: var(--animate-veil-sweep);
-  }
-
-  /*
    * 开关：轨道内凹一道读出「槽」，滑块带自己的投影与顶光读出「钮」。
    * 关态是暗槽配灰钮，开态轨道转强调色、滑块转反色，几何仍由 h-5 w-9 与 size-3.5 给出。
    */
@@ -769,9 +731,6 @@
     transition: none;
   }
 
-  .busy-veil > span {
-    animation: none;
-  }
 }
 
 input,
@@ -809,7 +768,6 @@ body {
   --animate-sheet-panel-out: sheet-panel-out 160ms ease-in;
   --animate-pull-progress: pull-slide 1.2s ease-in-out infinite;
   --animate-caret-blink: caret-blink 1s step-end infinite;
-  --animate-veil-sweep: veil-sweep 1.7s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 
   @keyframes caret-blink {
     0%,
@@ -857,14 +815,6 @@ body {
     }
     to {
       transform: translateX(300%);
-    }
-  }
-  @keyframes veil-sweep {
-    from {
-      transform: translateX(-100%);
-    }
-    to {
-      transform: translateX(320%);
     }
   }
 }

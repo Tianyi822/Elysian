@@ -7,7 +7,6 @@ import {
 } from '@elysian/contracts'
 import { Pencil, Play, Square, Trash2 } from '../../components/icons'
 import { IconButton } from '../../components/IconButton'
-import { BusyVeil } from '../../components/RefreshState'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 
@@ -66,7 +65,7 @@ export function WebsitesCard({
 }: {
   project: WebsiteProject
   busy: boolean
-  /** 列表刷新在途：卡片内容不换，只由自身盖一层浅色遮罩示意进行中。 */
+  /** 列表刷新在途：保留卡片内容并标记可访问的忙碌状态。 */
   refreshing?: boolean
   onOpenDetail: () => void
   onToggleRunning: () => void
@@ -80,10 +79,10 @@ export function WebsitesCard({
   return (
     <article
       aria-label={project.name}
+      aria-busy={refreshing}
       onClick={onOpenDetail}
       className="flex cursor-pointer flex-col gap-2 panel-surface p-4"
     >
-      <BusyVeil busy={refreshing} />
       {/* 不用 header 元素：测试工具链将其一律算作 banner 角色，会与顶栏 banner 冲突。 */}
       <div className="flex min-w-0 items-center gap-2">
         <h3 className="min-w-0 flex-1 truncate text-sm font-semibold" title={project.name}>
@@ -91,7 +90,6 @@ export function WebsitesCard({
         </h3>
         <StatusTag label={WEBSITE_RUN_STATE_LABELS[project.runState]} tone={RUN_TONE[project.runState]} />
       </div>
-
       {/* 元信息：端口、环境、运行时（含类型短名）；PID 仅运行中且有进程号。 */}
       <div className="grid grid-cols-2 gap-2">
         <MetaCell label="端口" value={String(project.port)} numeric />
@@ -100,7 +98,6 @@ export function WebsitesCard({
         <MetaCell label="运行时版本" value={runtimeVersionLabel(project)} />
         {project.buildRuntimeVersion && <MetaCell label="构建版本" value={`${RUNTIME_SHORT[project.kind]} ${project.buildRuntimeVersion}`} />}
       </div>
-
       <p className="rounded-lg bg-surface-raised px-3 py-2">
         <span className="block text-xs text-fg-subtle">根目录</span>
         <Link
@@ -112,7 +109,6 @@ export function WebsitesCard({
           {project.rootDir}
         </Link>
       </p>
-
       <div className="mt-auto flex flex-wrap items-center gap-2">
         <button
           type="button"

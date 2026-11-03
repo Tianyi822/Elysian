@@ -6,7 +6,7 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { useAgentExtensionsStore } from '../../stores/agentExtensionsStore'
 import { CTL_FIELD, CTL_PRIMARY, CTL_SECONDARY } from '../../components/formControl'
 import { Pencil, Plus, Trash2, Eye, EyeOff } from '../../components/icons'
-import { BusyVeil, RefreshButton } from '../../components/RefreshState'
+import { RefreshButton } from '../../components/RefreshState'
 import { StatusTag } from '../../components/StatusTag'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
 import { SelectDropdown } from '../../components/SelectDropdown'
@@ -28,14 +28,15 @@ export function McpSection({ active }: { active: boolean }) {
   const [editing, setEditing] = useState<AgentMCPServer | 'new'>()
   const [detail, setDetail] = useState<AgentMCPServer>()
   const [probing, setProbing] = useState<AgentMCPServer>()
-  useEffect(() => { void state.loadMcpServers(gateway) }, [gateway, state.loadMcpServers])
+  useEffect(() => { void state.loadMcpServers(gateway, { silent: true }) }, [gateway, state.loadMcpServers])
   useFeedbackMessage(active && state.mcpStatus === 'ready' ? state.mcpErrorMessage : null)
   const rows = state.mcpServers.filter(server => [server.name, server.url, server.stdio?.image].some(value => value?.toLowerCase().includes(search.trim().toLowerCase())))
   return <div className="flex flex-col gap-3">
     <div className="flex flex-wrap items-center gap-2"><button type="button" className={CTL_PRIMARY} onClick={() => setEditing('new')}><Plus aria-hidden size={14} />新建 MCP 服务</button><ExtensionSearch label="搜索服务名称、地址或镜像" value={search} onChange={setSearch} /><RefreshButton label="刷新 MCP 服务" busy={state.mcpRefreshing} onPress={() => void state.loadMcpServers(gateway)} /></div>
-    <div className="busy-host relative"><BusyVeil busy={state.mcpRefreshing} />
+    <div className="relative rounded-xl" aria-busy={state.mcpRefreshing}>
+      {state.mcpStatus === 'ready' && state.mcpErrorMessage ? <p role="alert" className="mb-2 text-xs text-danger">刷新失败：{state.mcpErrorMessage}；当前保留的是上次读取结果。</p> : null}
       {state.mcpStatus === 'idle' || state.mcpStatus === 'loading' ? <LoadingState label="正在读取 MCP 服务…" /> : state.mcpStatus === 'error' ? <ErrorState title="MCP 配置读取失败" description={state.mcpErrorMessage} onRetry={() => void state.loadMcpServers(gateway)} /> : rows.length === 0 ? <EmptyState title={search ? '没有匹配的 MCP 服务' : '还没有 MCP 服务'} description={search ? '换个关键词，或清空搜索查看全部服务。' : '添加 HTTP 或容器 stdio 服务，保存后可探测工具、资源与提示词。'} /> :
-        <>{state.mcpErrorMessage && <p role="alert" className="mb-2 text-xs text-danger">刷新失败：{state.mcpErrorMessage}；当前保留的是上次读取结果。</p>}<ExtensionTable label="MCP 服务列表" columns={columns}>{rows.map(server => <tr key={server.id} className="hover:bg-surface-raised">
+        <><ExtensionTable label="MCP 服务列表" columns={columns}>{rows.map(server => <tr key={server.id} className="hover:bg-surface-raised">
           <td className={cell}><span className="block truncate text-xs font-medium" title={server.name}>{server.name}</span></td>
           <td className={`${cell} text-xs text-fg-muted`}>{server.transport === 'stdio' ? '容器 stdio' : 'Streamable HTTP'}</td>
           <td className={cell}><span className="block truncate font-mono text-xs" title={server.url ?? server.stdio?.image}>{server.url ?? server.stdio?.image}</span><span className="text-xs text-fg-subtle">{server.transport === 'stdio' ? server.stdio?.hasEnvironment ? '已配置环境变量' : '无环境变量' : server.hasCredential ? '已配置 Bearer Token' : '无身份验证'}</span></td>

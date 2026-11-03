@@ -1,3 +1,4 @@
+import { captureAuthGeneration } from '../adapters/http/unauthorized'
 import type { LogListQuery, LogStorageStats, PlatformLogCategory, RuntimeLogEntry } from '@elysian/contracts'
 import { PLATFORM_LOG_CATEGORY_LABELS, formatLogBytes, logNumericSortKey } from '@elysian/contracts'
 import { create } from 'zustand'
@@ -11,6 +12,7 @@ type RuntimeLogStatus = 'idle' | 'loading' | 'ready' | 'error'
 const MOCK_SUFFIX = isDockerRuntime() ? '' : '（演示数据，只清空内存中的演示日志）'
 
 let loadRequestId = 0
+let pendingLoad: { gateway: ElysianGateway; key: string; auth: number; snapshot: readonly RuntimeLogEntry[]; promise: Promise<void> } | undefined
 
 function currentQuery(search: string): LogListQuery {
   const query: LogListQuery = {}
@@ -35,13 +37,14 @@ type RuntimeLogState = {
   search: string
   /** 刷新忙碌态：刷新期间按钮置灰；首屏加载走 status。 */
   refreshing: boolean
+  manualRefreshing: boolean
   loadingOlder: boolean
   olderError: string | undefined
   /** 清空忙碌态：二次确认之后的删除请求进行中。 */
   clearing: boolean
   /** 待清空的类别（清空二次确认的目标）；null 表示弹窗关闭。 */
   clearTarget: PlatformLogCategory | null
-  load: (gateway: ElysianGateway) => Promise<void>
+  load: (gateway: ElysianGateway, options?: { silent?: boolean }) => Promise<void>
   loadOlder: (gateway: ElysianGateway) => Promise<void>
   setSearch: (search: string) => void
   openClear: (category: PlatformLogCategory) => void
@@ -60,41 +63,39 @@ export const useRuntimeLogStore = create<RuntimeLogState>((set, get) => ({
   storage: undefined,
   search: '',
   refreshing: false,
+  manualRefreshing: false,
   loadingOlder: false,
   olderError: undefined,
   clearing: false,
   clearTarget: null,
 
-  async load(gateway) {
+  load(gateway, options) {
+    const auth = captureAuthGeneration(), key = JSON.stringify(currentQuery(get().search))
+    if (pendingLoad?.gateway === gateway && pendingLoad.auth === auth && pendingLoad.key === key && pendingLoad.snapshot === get().entries) {
+      if (!options?.silent) set({ manualRefreshing: true })
+      return pendingLoad.promise
+    }
     const requestId = ++loadRequestId
     const first = get().status !== 'ready'
-    set({
-      refreshing: true,
-      ...(first ? { status: 'loading' as const } : {}),
-      errorMessage: undefined,
-      olderError: undefined,
-    })
-    try {
-      const report = await gateway.logs.runtimeLog(currentQuery(get().search))
-      if (requestId !== loadRequestId) return
-      set({
-        status: 'ready',
-        entries: report.entries,
-        total: report.total,
-        truncated: report.truncated,
-        skippedLines: report.skippedLines,
-        skippedFiles: report.skippedFiles,
-        storage: report.storage,
-        refreshing: false,
-      })
-    } catch (error) {
-      if (requestId !== loadRequestId) return
-      set({
-        status: 'error',
-        errorMessage: error instanceof Error ? error.message : '运行日志加载失败',
-        refreshing: false,
-      })
-    }
+    const operation = { gateway, key, auth, snapshot: get().entries, promise: Promise.resolve() }
+    pendingLoad = operation
+    const current = () => requestId === loadRequestId && auth === captureAuthGeneration()
+    set({ refreshing: true, manualRefreshing: !options?.silent, status: first ? 'loading' : 'ready', errorMessage: undefined, olderError: undefined })
+    operation.promise = (async () => {
+      try {
+        const report = await gateway.logs.runtimeLog(currentQuery(get().search))
+        if (!current() || operation.snapshot !== get().entries) return
+        set({ status: 'ready', entries: report.entries, total: report.total, truncated: report.truncated, skippedLines: report.skippedLines, skippedFiles: report.skippedFiles, storage: report.storage, })
+      } catch (error) {
+        if (current()) set({ status: first ? 'error' : 'ready', errorMessage: error instanceof Error ? error.message : '日志读取失败' })
+      } finally {
+        if (pendingLoad === operation) {
+          pendingLoad = undefined
+          if (current()) set({ refreshing: false, manualRefreshing: false, })
+        }
+      }
+    })()
+    return operation.promise
   },
 
   async loadOlder(gateway) {
@@ -136,6 +137,7 @@ export const useRuntimeLogStore = create<RuntimeLogState>((set, get) => ({
   async clear(gateway) {
     const category = get().clearTarget
     if (!category || get().clearing) return
+    loadRequestId += 1; pendingLoad = undefined
     set({ clearing: true })
     try {
       const report = await gateway.logs.clearLogs(category)
@@ -145,7 +147,7 @@ export const useRuntimeLogStore = create<RuntimeLogState>((set, get) => ({
       })
       set({ clearTarget: null, clearing: false })
       // 清空后重新读取：正常会读到一条「已清空」留痕（自指留痕），不是空表。
-      await get().load(gateway)
+      await get().load(gateway, { silent: true })
     } catch (error) {
       // 失败保留弹窗（用户可重试）：只解除忙碌态，不动 clearTarget。
       useMessageStore.getState().notify({

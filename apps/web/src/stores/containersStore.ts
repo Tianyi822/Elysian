@@ -1,3 +1,4 @@
+import { captureAuthGeneration } from '../adapters/http/unauthorized'
 import type { Container, ContainerAction, ContainerCreateInput, ContainerImage, ContainerSample, ContainerStatus, ImagePullProgress, Unsubscribe } from '@elysian/contracts'
 import { create } from 'zustand'
 import type {
@@ -83,8 +84,10 @@ function applySamples(samples: readonly ContainerSample[]): void {
  */
 let detachLive: Unsubscribe | undefined
 let activeGateway: ElysianGateway | undefined
+let pendingLoad: { gateway: ElysianGateway; auth: number; snapshot: readonly Container[]; promise: Promise<void> } | undefined
 let imageRevision = 0
 let imageRefreshSequence = 0
+let pendingImages: { gateway: ElysianGateway; auth: number; revision: number; notify: boolean; promise: Promise<void> } | undefined
 let imagePullSequence = 0
 let imagePullController: AbortController | undefined
 
@@ -243,53 +246,65 @@ export const useContainersStore = create<{
     })
   },
 
-  async load(gateway) {
+  load(gateway) {
     activeGateway = gateway
     attachLiveEvents()
-    imageRevision += 1
-    imageRefreshSequence += 1
+    const auth = captureAuthGeneration()
+    if (pendingLoad?.gateway === gateway && pendingLoad.auth === auth && pendingLoad.snapshot === get().containers) return pendingLoad.promise
     const revision = imageRevision
-    set({ status: 'loading', errorMessage: undefined, imageRefreshStatus: 'idle' })
-    try {
-      const [containers, images] = await Promise.all([
-        gateway.containers.list(),
-        gateway.containers.listImages(),
-      ])
-      const canCommitImages = revision === imageRevision
-      if (canCommitImages) imageRevision += 1
-      set({ status: 'ready', containers, ...(canCommitImages ? { images } : {}) })
-      replayLatestSample()
-    } catch (error) {
-      set({
-        status: 'error',
-        errorMessage: error instanceof Error ? error.message : '读取容器数据失败',
-      })
-    }
+    const operation = { gateway, auth, snapshot: get().containers, promise: Promise.resolve() }
+    const hadData = get().status === 'ready'
+    pendingLoad = operation
+    const current = () => pendingLoad === operation && auth === captureAuthGeneration()
+    set({ status: hadData ? 'ready' : 'loading', errorMessage: undefined })
+    operation.promise = (async () => {
+      try {
+        const [containers, images] = await Promise.all([gateway.containers.list(), gateway.containers.listImages()])
+        if (!current()) return
+        const canCommitImages = revision === imageRevision
+        if (canCommitImages) imageRevision += 1
+        set({ status: 'ready', ...(operation.snapshot === get().containers ? { containers } : {}), ...(canCommitImages ? { images } : {}) })
+        replayLatestSample()
+      } catch (error) {
+        if (current()) set({ status: hadData ? 'ready' : 'error', errorMessage: error instanceof Error ? error.message : '读取容器数据失败' })
+      } finally { if (pendingLoad === operation) pendingLoad = undefined }
+    })()
+    return operation.promise
   },
 
-  async refreshImages(gateway, options) {
-    // 缺省通知结果；页签自动刷新传 notify:false 静默成功（失败仍可见），避免每次切页签都弹提示。
-    const notifyOutcome = options?.notify !== false
-    const sequence = ++imageRefreshSequence
-    const revision = imageRevision
-    set({ imageRefreshStatus: 'loading' })
-    try {
-      const images = await gateway.containers.listImages()
-      if (sequence !== imageRefreshSequence) return
-      if (revision !== imageRevision) {
-        set({ imageRefreshStatus: 'idle' })
-        if (notifyOutcome) useMessageStore.getState().notify({ tone: 'success', message: '镜像列表已由其他操作更新' })
-        return
-      }
-      imageRevision += 1
-      set({ images, imageRefreshStatus: 'idle' })
-      if (notifyOutcome) useMessageStore.getState().notify({ tone: 'success', message: '镜像列表已刷新' })
-    } catch (error) {
-      if (sequence !== imageRefreshSequence) return
-      const detail = error instanceof Error ? error.message : '未知错误'
-      set({ imageRefreshStatus: 'idle' })
-      useMessageStore.getState().notify({ tone: 'danger', message: `刷新镜像失败：${detail}` })
+  refreshImages(gateway, options) {
+    const manual = options?.notify !== false
+    const auth = captureAuthGeneration(), revision = imageRevision
+    if (pendingImages?.gateway === gateway && pendingImages.auth === auth && pendingImages.revision === revision) {
+      if (manual) { pendingImages.notify = true; set({ imageRefreshStatus: 'loading' }) }
+      return pendingImages.promise
     }
+    const sequence = ++imageRefreshSequence
+    const operation = { gateway, auth, revision, notify: manual, promise: Promise.resolve() }
+    pendingImages = operation
+    const current = () => sequence === imageRefreshSequence && auth === captureAuthGeneration()
+    set({ imageRefreshStatus: manual ? 'loading' : 'idle' })
+    operation.promise = (async () => {
+      try {
+        const images = await gateway.containers.listImages()
+        if (!current()) return
+        if (revision !== imageRevision) {
+          if (operation.notify) useMessageStore.getState().notify({ tone: 'success', message: '镜像列表已由其他操作更新' })
+          return
+        }
+        imageRevision += 1
+        set({ images })
+        if (operation.notify) useMessageStore.getState().notify({ tone: 'success', message: '镜像列表已刷新' })
+      } catch (error) {
+        if (current()) useMessageStore.getState().notify({ tone: 'danger', message: `刷新镜像失败：${error instanceof Error ? error.message : '未知错误'}` })
+      } finally {
+        if (pendingImages === operation) {
+          pendingImages = undefined
+          if (current()) set({ imageRefreshStatus: 'idle' })
+        }
+      }
+    })()
+    return operation.promise
   },
 
   setView(view) {

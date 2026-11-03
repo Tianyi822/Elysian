@@ -6,7 +6,7 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { formatDateTime } from '../../components/format'
 import { ArrowUpFromLine, File, Folder, Loader2, Search } from '../../components/icons'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
-import { BusyVeil, RefreshButton } from '../../components/RefreshState'
+import { RefreshButton } from '../../components/RefreshState'
 import { useFilesStore } from '../../stores/filesStore'
 import { joinFilesPath, normalizeFilesPath, parentFilesPath } from './filesPath'
 import { formatEntrySize, orderFileEntries } from './filesListing'
@@ -68,7 +68,7 @@ export function FilesPage() {
   const onDownload = (entry: FileEntry, entryPath: string) => void downloadEntry(gateway, entryPath, entry)
 
   useEffect(() => {
-    void load(gateway, path)
+    void load(gateway, path, { silent: true })
   }, [gateway, load, path])
 
   // 根目录落在 /files 本身，避免 /files/ 的尾巴被拼进路径。
@@ -113,7 +113,6 @@ export function FilesPage() {
         </div>
         {status === 'ready' ? <FilesSearchBox onSearch={(keyword) => void search(gateway, keyword)} /> : null}
       </div>
-
       <input
         ref={uploadInput}
         type="file"
@@ -126,6 +125,7 @@ export function FilesPage() {
           if (files.length) void uploadFiles(gateway, uploadTarget.current, files)
         }}
       />
+      {status === 'ready' && errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<button type="button" className="ml-2 underline" onClick={() => void load(gateway, path)}>重试</button></p> : null}
       <FilesBackgroundMenu onUpload={() => chooseUpload(path)} disabled={status !== 'ready' || transferBusy}>
         {isSearching ? (
           searching ? (
@@ -165,8 +165,7 @@ export function FilesPage() {
               <EmptyState title="此目录为空" description="这个目录下没有任何文件或子目录。" />
             ) : (
               /* 换目录即换表：选中态随目录清空，不把上一个目录的选中行带进新目录。 */
-              <div className="busy-host">
-                <BusyVeil busy={reloading} />
+              <div className="relative rounded-xl" aria-busy={reloading}>
                 <FileTable
                   key={path}
                   entries={entries}
@@ -183,10 +182,8 @@ export function FilesPage() {
           </>
         )}
       </FilesBackgroundMenu>
-
       <FileDownloadDialog />
       <FileUploadDialog />
-
       {renaming ? (
         <RenameDialog
           entry={renaming.entry}

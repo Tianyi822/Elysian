@@ -1,3 +1,4 @@
+import { SshRefreshButton, SshRefreshError } from './SshRefresh'
 import { useId, useMemo } from 'react'
 import type { SshLoginKey } from '@elysian/contracts'
 import { IconButton } from '../../components/IconButton'
@@ -42,7 +43,8 @@ export function SshKeyCard() {
   const pageRows = filtered.slice((safePage - 1) * SSH_PAGE_SIZE, safePage * SSH_PAGE_SIZE)
 
   return (
-    <Section title="SSH 密钥">
+    <Section title="SSH 密钥" aside={<SshRefreshButton section="keys" />}>
+      <SshRefreshError section="keys" />
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-0 flex-1">
           <Search
@@ -64,7 +66,6 @@ export function SshKeyCard() {
           创建 SSH 密钥
         </button>
       </div>
-
       <div role="region" aria-label="SSH 密钥表" className={TABLE_CONTAINER_CLASS}>
         <table className="w-full min-w-[28rem] table-fixed border-separate border-spacing-0 text-left text-sm">
           {/* 归属账号是这张表的分组线索（谁手里有哪把钥匙），因此紧跟在名称之后。
@@ -107,7 +108,6 @@ export function SshKeyCard() {
           </tbody>
         </table>
       </div>
-
       <TablePager
         label="密钥分页"
         summary={

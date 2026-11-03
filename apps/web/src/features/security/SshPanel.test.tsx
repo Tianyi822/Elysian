@@ -23,6 +23,33 @@ beforeEach(async () => {
 })
 
 describe('SSH 管理页签', () => {
+  it('服务刷新只转自己的按钮，保留卡片节点和端口草稿且不显示遮罩', async () => {
+    const { gateway } = sshSessions()
+    const user = await openSshTab(gateway)
+    const service = screen.getByRole('region', { name: 'SSH 服务' })
+    const records = screen.getByRole('region', { name: 'SSH 登录记录' })
+    const port = within(service).getByLabelText('监听端口')
+    fireEvent.change(port, { target: { value: '23456' } })
+    const overview = useSshStore.getState().overview!
+    let release!: () => void
+    vi.spyOn(gateway.ssh, 'overview').mockImplementationOnce(() => new Promise(resolve => { release = () => resolve(overview) }))
+    const history = vi.spyOn(gateway.ssh, 'listLoginRecords')
+    const keys = vi.spyOn(gateway.ssh, 'listKeys')
+    await user.click(within(service).getByRole('button', { name: '刷新 SSH 状态' }))
+    expect(within(service).getByRole('button', { name: '刷新 SSH 状态' })).toHaveAttribute('aria-busy', 'true')
+    expect(within(records).getByRole('button', { name: '刷新 SSH 登录记录' })).toBeEnabled()
+    expect(document.querySelector('.busy-veil')).toBeNull()
+    expect(screen.getByRole('region', { name: 'SSH 服务' })).toBe(service)
+    expect(within(service).getByLabelText('监听端口')).toBe(port)
+    expect(port).toHaveValue('23456')
+    expect(history).not.toHaveBeenCalled()
+    expect(keys).not.toHaveBeenCalled()
+    await act(async () => release())
+    await waitFor(() => expect(within(service).getByRole('button', { name: '刷新 SSH 状态' })).toBeEnabled())
+    expect(screen.getByRole('region', { name: 'SSH 登录记录' })).toBe(records)
+    expect(port).toHaveValue('23456')
+  })
+
   it('切到页签后渲染四张分区卡：两列瀑布，卡片随内容取高度', async () => {
     await openSshTab()
 

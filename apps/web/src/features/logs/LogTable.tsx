@@ -1,6 +1,5 @@
 import { Fragment } from 'react'
 import type { ReactNode } from 'react'
-import { BusyVeil } from '../../components/RefreshState'
 
 /*
  * 日志表格的共用底座：固定列宽、横向滚动、sticky 表头。
@@ -48,8 +47,7 @@ export function fixedColumnDemand(): { timestamp: number; level: number } {
 
 /**
  * 外框承担卡片材质与定位上下文，内层滚动容器绝对铺满。
- * 遮罩挂在外框上：滚动条动它不动，刷新期间整张表始终被盖住——
- * 若把遮罩放进滚动容器，它会随内容一起卷出可视区。
+ * 刷新时保留外框与滚动容器，避免滚动位置和焦点丢失。
  */
 const DEFAULT_SHELL_CLASS = 'relative min-h-72 flex-1 overflow-hidden panel-surface'
 const SCROLL_CLASS = 'absolute inset-0 overflow-auto hover-scrollbar'
@@ -85,12 +83,11 @@ export function LogTable<T>({
   rowKey: (row: T) => string
   /** 表格内一行的空提示（数据为空或搜索无命中）。 */
   emptyMessage: ReactNode
-  /** 查询在途：旧行留在表里，只由表格自身盖一层浅色遮罩，不换成加载占位。 */
+  /** 查询在途：保留旧行和滚动位置，仅标记可访问的忙碌状态。 */
   busy?: boolean
 }) {
   return (
-    <div className={DEFAULT_SHELL_CLASS}>
-      <BusyVeil busy={busy} />
+    <div className={DEFAULT_SHELL_CLASS} aria-busy={busy}>
       <div role="region" aria-label={label} className={SCROLL_CLASS}>
         <table className={`w-full ${minWidthClass} table-fixed border-separate border-spacing-0 text-left text-sm`}>
           <colgroup>

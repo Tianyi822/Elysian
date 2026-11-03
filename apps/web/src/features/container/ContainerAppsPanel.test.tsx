@@ -237,7 +237,7 @@ describe('工作区面板', () => {
     await waitFor(() => expect(useMessageStore.getState().messages).toContainEqual(expect.objectContaining({ message: '已删除工作区 demo-app 及其目录' })))
   })
 
-  it('刷新时旧清单留在屏上并只盖一层组件遮罩', async () => {
+  it('刷新时旧清单留在屏上，仅刷新按钮旋转', async () => {
     let hang = false
     let release: (() => void) | undefined
     const gateway = appsGatewayWith((base) => ({
@@ -253,15 +253,16 @@ describe('工作区面板', () => {
 
     hang = true
     await user.click(screen.getByRole('button', { name: '刷新工作区' }))
-    await waitFor(() => expect(document.querySelector('.busy-veil')).toBeTruthy())
-    // 白屏检查：遮罩盖上时卡片还是同一块内容，而不是换成加载态。
+    await waitFor(() => expect(screen.getByRole('button', { name: '刷新工作区' })).toHaveAttribute('aria-busy', 'true'))
+    expect(document.querySelector('.busy-veil')).toBeNull()
+    // 刷新中卡片仍是同一个节点，内容不换成加载态。
     expect(screen.queryByRole('listitem', { name: '工作区 demo-app' })).toBe(card)
     expect(screen.queryByText('正在加载工作区…')).toBeNull()
 
     await act(async () => {
       release?.()
     })
-    await waitFor(() => expect(document.querySelector('.busy-veil')).toBeNull())
+    await waitFor(() => expect(screen.getByRole('button', { name: '刷新工作区' })).toBeEnabled())
   })
 
   it('二进制文件不给编辑入口，只给路径', async () => {
@@ -441,7 +442,7 @@ describe('工作区构建任务区', () => {
     expect(submitCalls[0]!.requestId).toMatch(/^[a-f0-9-]{36}$/)
   })
 
-  it('手动刷新只给任务区盖遮罩，旧任务行留在屏上不白屏', async () => {
+  it('手动刷新只转任务区按钮，旧任务行留在屏上', async () => {
     let hang = false
     let release: (() => void) | undefined
     const gateway = buildsGateway([succeededBuildTask], {
@@ -457,14 +458,15 @@ describe('工作区构建任务区', () => {
 
     hang = true
     await user.click(within(card).getByRole('button', { name: '刷新构建任务' }))
-    await waitFor(() => expect(document.querySelector('.busy-veil')).toBeTruthy())
+    await waitFor(() => expect(within(card).getByRole('button', { name: '刷新构建任务' })).toHaveAttribute('aria-busy', 'true'))
+    expect(document.querySelector('.busy-veil')).toBeNull()
     expect(within(card).getAllByText('构建成功').length).toBeGreaterThan(0)
     expect(within(card).getByText('elysian/demo-app/app:20261004-073000-1001')).toBeTruthy()
 
     await act(async () => {
       release?.()
     })
-    await waitFor(() => expect(document.querySelector('.busy-veil')).toBeNull())
+    await waitFor(() => expect(within(card).getByRole('button', { name: '刷新构建任务' })).toBeEnabled())
   })
 
   it('任务清单读取失败给出中文错误与重试', async () => {

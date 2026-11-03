@@ -25,7 +25,7 @@ import { containerAppFilePath, CONTAINER_BUILD_STATE_LABELS, isContainerBuildAct
 import type { ContainerApp, ContainerAppFile, ContainerBuildTask } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { useClipboardCopy } from '../../components/CopyButton'
-import { BusyVeil, RefreshButton } from '../../components/RefreshState'
+import { RefreshButton } from '../../components/RefreshState'
 import { IconButton } from '../../components/IconButton'
 import { CTL_CARD_ACTION, CTL_DANGER, CTL_SECONDARY } from '../../components/formControl'
 import { formatDateTime } from '../../components/format'
@@ -161,14 +161,14 @@ export function ContainerAppWorkspaceCard({
     directoryInputRef.current?.setAttribute('webkitdirectory', '')
   }, [])
 
-  // 任务区首次展开才加载；之后收起再展开走刷新遮罩，不闪加载态。
+  // 任务区首次展开才加载；之后收起再展开静默更新，不闪加载态。
   useEffect(() => {
     if (buildsOpen) void ensureBuilds(gateway, app.slug)
   }, [buildsOpen, gateway, app.slug, ensureBuilds])
 
   const hasActiveBuild = builds.some((task) => isContainerBuildActive(task.state))
   // 静默轮询（对齐 WebsitesPanel 先例）：任一活跃任务、任务区展开或日志抽屉打开时 2s 一拍；
-  // 轮询不驱动 BusyVeil 与 RefreshButton，手动刷新才转图标。
+  // 轮询不驱动 RefreshButton，手动刷新才转图标。
   useEffect(() => {
     if (!buildsOpen && !hasActiveBuild && logsTaskId === null) return
     const timer = window.setInterval(() => void refreshBuilds(gateway, app.slug, { silent: true }), 2000)
@@ -192,8 +192,7 @@ export function ContainerAppWorkspaceCard({
 
   return (
     <li aria-label={`工作区 ${app.displayName}`} className="h-full">
-      <div className="busy-host h-full">
-        <BusyVeil busy={batchBusy} />
+      <div className="relative rounded-xl h-full" aria-busy={batchBusy}>
         <article className="flex h-full flex-col gap-3 panel-surface px-4 py-3.5">
           <header className="flex flex-wrap items-start justify-between gap-2">
             <div className="min-w-0 max-w-full">
@@ -240,7 +239,6 @@ export function ContainerAppWorkspaceCard({
               </IconButton>
             </div>
           </header>
-
           {/* 真实路径是这一屏的主角：单独一块，永远完整可读，能整条复制。 */}
           <div className="rounded-lg border border-line bg-surface px-2.5 py-2">
             <p className="text-xs font-medium text-fg-muted">工作区真实路径</p>
@@ -252,7 +250,6 @@ export function ContainerAppWorkspaceCard({
               compose 里 <span className="font-mono">./</span> 开头的引用以 compose 文件所在目录为根；挂载时也可使用下方文件的绝对路径。
             </p>
           </div>
-
           {app.files.length === 0 ? (
             <p className="flex items-center gap-1.5 text-xs text-fg-subtle">
               <FileIcon aria-hidden size={13} />
@@ -328,7 +325,7 @@ export function ContainerAppWorkspaceCard({
             />
           ) : null}
 
-          {/* 构建任务区：折叠入口常驻；工具栏（折叠与刷新按钮）在遮罩外。 */}
+          {/* 构建任务区：折叠入口常驻，刷新只更新本区任务。 */}
           <section aria-label={`${app.displayName} 的构建任务`} className="rounded-lg border border-line bg-surface px-2.5 py-2">
             <div className="flex items-center justify-between gap-2">
               <button
@@ -349,10 +346,8 @@ export function ContainerAppWorkspaceCard({
                 />
               ) : null}
             </div>
-
             {buildsOpen ? (
-              <div className="busy-host relative mt-2 border-t border-line pt-2">
-                <BusyVeil busy={buildsRefreshing} />
+              <div className="relative rounded-xl mt-2 border-t border-line pt-2" aria-busy={buildsRefreshing}>
                 {buildsError ? (
                   <div role="alert" className="flex flex-wrap items-center gap-2 py-2 text-xs text-danger">
                     <TriangleAlert aria-hidden size={13} className="shrink-0" />
@@ -463,7 +458,6 @@ export function ContainerAppWorkspaceCard({
             ) : null}
           </section>
         </article>
-
         <Dialog.Root open={pending !== null} onOpenChange={(open) => { if (!open) setPending(null) }}>
           <Dialog.Portal>
             <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
@@ -504,7 +498,6 @@ export function ContainerAppWorkspaceCard({
             </Dialog.Content>
           </Dialog.Portal>
         </Dialog.Root>
-
         <Dialog.Root
           open={cancelTarget !== null}
           onOpenChange={(open) => { if (!open) setCancelTarget(null) }}
@@ -540,7 +533,6 @@ export function ContainerAppWorkspaceCard({
             </Dialog.Content>
           </Dialog.Portal>
         </Dialog.Root>
-
         {buildDialogOpen ? (
           <ContainerBuildDialog app={app} onClose={() => setBuildDialogOpen(false)} />
         ) : null}

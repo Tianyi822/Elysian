@@ -1,3 +1,4 @@
+import { captureAuthGeneration } from '../adapters/http/unauthorized'
 import { create } from 'zustand'
 import { DATABASE_ENGINES, type Container, type ContainerImage, type DatabaseEngine, type DatabaseInstance } from '@elysian/contracts'
 import type { ElysianGateway, DatabaseCreateInput } from '../contracts/adapters'
@@ -29,7 +30,7 @@ export type DatabaseState = {
   containers: readonly Container[]
   images: readonly ContainerImage[]
   errorMessage?: string
-  /** 列表刷新在途：旧卡片留在屏上，只由实例区自身盖一层浅色遮罩。 */
+  /** 列表手动刷新在途：仅驱动对应刷新按钮。 */
   refreshing: boolean
   /** SQL 会话；同一时刻最多一个，undefined 表示没有打开。 */
   session?: SqlSession
@@ -57,6 +58,8 @@ export type DatabaseState = {
   removeDatabase(gateway: ElysianGateway, databaseId: string): Promise<void>
 }
 
+let pendingLoad: { gateway: ElysianGateway; auth: number; snapshot: readonly DatabaseInstance[]; promise: Promise<void> } | undefined
+
 /** 数据库区的界面状态：类型筛选不进 URL、不写界面偏好——store 是模块单例，页面未关闭时记住上次类型，重新打开面板回到第一个。 */
 export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   engine: DATABASE_ENGINES[0],
@@ -74,40 +77,38 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   setEngine: (engine) => {
     set({ engine })
   },
-  async load(gateway) {
-    set({ status: 'loading', errorMessage: undefined })
-    try {
-      const [databases, containers, images] = await Promise.all([
-        gateway.databases.list(),
-        gateway.containers.list(),
-        gateway.containers.listImages(),
-      ])
-      set({ status: 'ready', databases, containers, images })
-    } catch (error) {
-      set({
-        status: 'error',
-        errorMessage: error instanceof Error ? error.message : '读取数据库数据失败',
-      })
+  load(gateway) { return get().refresh(gateway) },
+  /** 默认静默；手动刷新只驱动对应按钮，保留已读取的实例和会话。 */
+  refresh(gateway, showIndicator = false) {
+    const auth = captureAuthGeneration()
+    if (pendingLoad?.gateway === gateway && pendingLoad.auth === auth && pendingLoad.snapshot === get().databases) {
+      if (showIndicator) set({ refreshing: true })
+      return pendingLoad.promise
     }
-  },
-  /**
-   * 重新取回列表。默认静默——15 秒轮询与动作后的回读都走这条，不闪指示；
-   * 只有用户按下刷新才传 showIndicator，让按钮转起来、卡片盖遮罩。
-   */
-  async refresh(gateway, showIndicator = false) {
-    if (showIndicator) set({ refreshing: true })
-    try {
-      const [databases, containers, images] = await Promise.all([
-        gateway.databases.list(), gateway.containers.list(), gateway.containers.listImages(),
-      ])
-      set({ databases, containers, images, refreshing: false, errorMessage: undefined })
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '未知错误'
-      if (get().errorMessage !== message) {
-        useMessageStore.getState().notify({ tone: 'danger', message: `数据库状态刷新失败：${message}` })
+    const hadData = get().status === 'ready'
+    const operation = { gateway, auth, snapshot: get().databases, promise: Promise.resolve() }
+    pendingLoad = operation
+    const current = () => pendingLoad === operation && auth === captureAuthGeneration()
+    set({ status: hadData ? 'ready' : 'loading', refreshing: showIndicator, ...(!hadData ? { errorMessage: undefined } : {}) })
+    operation.promise = (async () => {
+      try {
+        const [databases, containers, images] = await Promise.all([
+          gateway.databases.list(), gateway.containers.list(), gateway.containers.listImages(),
+        ])
+        if (current() && operation.snapshot === get().databases) set({ status: 'ready', databases, containers, images, errorMessage: undefined })
+      } catch (error) {
+        if (!current()) return
+        const message = error instanceof Error ? error.message : '读取数据库数据失败'
+        if (hadData && get().errorMessage !== message) useMessageStore.getState().notify({ tone: 'danger', message: `数据库状态刷新失败：${message}` })
+        set({ status: hadData ? 'ready' : 'error', errorMessage: message })
+      } finally {
+        if (pendingLoad === operation) {
+          pendingLoad = undefined
+          if (auth === captureAuthGeneration()) set({ refreshing: false })
+        }
       }
-      set({ refreshing: false, errorMessage: message })
-    }
+    })()
+    return operation.promise
   },
 
   openSession(databaseId, gateway) {

@@ -1,3 +1,4 @@
+import { captureAuthGeneration } from '../adapters/http/unauthorized'
 import type {
   FirewallForwardInput,
   FirewallForwardRule,
@@ -103,6 +104,12 @@ async function readFirewall(gateway: ElysianGateway) {
   return { toggles, rules, ipRules, forwards }
 }
 
+let pendingLoad: { gateway: ElysianGateway; auth: number; snapshot: Pick<FirewallState, 'rules' | 'ipRules' | 'forwards' | 'toggles'>; promise: Promise<void> } | undefined
+
+function sameReadSnapshot(snapshot: Pick<FirewallState, 'rules' | 'ipRules' | 'forwards' | 'toggles'>, state: FirewallState): boolean {
+  return snapshot.rules === state.rules && snapshot.ipRules === state.ipRules && snapshot.forwards === state.forwards && snapshot.toggles === state.toggles
+}
+
 export const useFirewallStore = create<FirewallState>((set, get) => ({
   status: 'idle',
   errorMessage: undefined,
@@ -133,23 +140,23 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
   toggling: false,
   removingRuleIds: [],
 
-  async load(gateway) {
-    if (get().status === 'loading') return
-    set({ status: 'loading' })
-    try {
-      const [toggles, rules, ipRules, forwards] = await Promise.all([
-        gateway.firewall.toggles(),
-        gateway.firewall.list(),
-        gateway.firewall.listIpRules(),
-        gateway.firewall.listForwards(),
-      ])
-      set({ status: 'ready', toggles, rules, ipRules, forwards, errorMessage: undefined, operationError: undefined })
-    } catch (error) {
-      set({
-        status: 'error',
-        errorMessage: error instanceof Error ? error.message : String(error),
-      })
-    }
+  load(gateway) {
+    const auth = captureAuthGeneration()
+    if (pendingLoad?.gateway === gateway && pendingLoad.auth === auth && sameReadSnapshot(pendingLoad.snapshot, get())) return pendingLoad.promise
+    const hadData = get().status === 'ready'
+    const operation = { gateway, auth, snapshot: { rules: get().rules, ipRules: get().ipRules, forwards: get().forwards, toggles: get().toggles }, promise: Promise.resolve() }
+    pendingLoad = operation
+    const current = () => pendingLoad === operation && auth === captureAuthGeneration()
+    set({ status: hadData ? 'ready' : 'loading', errorMessage: undefined })
+    operation.promise = (async () => {
+      try {
+        const data = await readFirewall(gateway)
+        if (current() && sameReadSnapshot(operation.snapshot, get())) set({ status: 'ready', ...data, operationError: undefined, errorMessage: undefined })
+      } catch (error) {
+        if (current()) set({ status: hadData ? 'ready' : 'error', errorMessage: error instanceof Error ? error.message : '防火墙数据加载失败' })
+      } finally { if (pendingLoad === operation) pendingLoad = undefined }
+    })()
+    return operation.promise
   },
 
   setView(view) {

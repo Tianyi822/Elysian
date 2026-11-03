@@ -18,7 +18,7 @@ import { useMessageStore } from './messageStore'
 /*
  * 技能与 MCP 域界面状态。数据一律经 gateway.agentExtensions 的 adapter 取，
  * 组件不碰数据来源。三个切片各自承担六态：技能目录、导入任务分页、MCP 服务与
- * 探测/固定目录。静默轮询只刷数据不驱动遮罩；导入任务由非终态转终态时顺带静默
+ * 探测/固定目录。静默轮询只刷数据不驱动刷新按钮；导入任务由非终态转终态时顺带静默
  * 重读技能目录（导入成功的权威事实是服务端目录，不是任务回执）。启停、取消与
  * 记录删除按目标逐个记在途，连点单飞；探测结果未知（resource-busy）时保留服务
  * 端中文提示，不自动重试或跳转治理页面。
@@ -139,6 +139,7 @@ export type AgentExtensionsState = {
 
 export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) => {
   let epoch = 0
+  const pendingLists = new Map<string, { gateway: ElysianGateway; auth: number; generation: number; snapshot: unknown; promise: Promise<void> }>()
   let skillDetailRequest = 0
   let skillFileRequest = 0
   let probeRequest = 0
@@ -205,26 +206,32 @@ export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) =
     probe: null,
     catalog: null,
 
-    async loadSkills(gateway, options) {
-      const generation = epoch
-      const auth = captureAuthGeneration()
-      const isCurrent = () => generation === epoch && auth === captureAuthGeneration()
+    loadSkills(gateway, options) {
+      const generation = epoch, auth = captureAuthGeneration()
+      const previous = pendingLists.get('skills')
+      if (previous?.gateway === gateway && previous.generation === generation && previous.auth === auth && previous.snapshot === get().skills) {
+        if (!options?.silent) set({ skillsRefreshing: true })
+        return previous.promise
+      }
       const inPlace = get().skillsStatus === 'ready'
-      if (!options?.silent) {
-        set(inPlace ? { skillsRefreshing: true } : { skillsStatus: 'loading', skillsErrorMessage: undefined })
-      }
-      try {
-        const items = await gateway.agentExtensions.listSkills()
-        if (!isCurrent()) return
-        set({ skillsStatus: 'ready', skills: items, skillsRefreshing: false, skillsErrorMessage: undefined })
-      } catch (error) {
-        if (!isCurrent()) return
-        set({
-          skillsStatus: get().skills.length > 0 ? get().skillsStatus : 'error',
-          skillsRefreshing: false,
-          skillsErrorMessage: messageOf(error),
-        })
-      }
+      const operation = { gateway, generation, auth, snapshot: get().skills, promise: Promise.resolve() }
+      pendingLists.set('skills', operation)
+      const current = () => generation === epoch && auth === captureAuthGeneration() && pendingLists.get('skills') === operation
+      set({ skillsStatus: inPlace ? 'ready' : 'loading', skillsRefreshing: inPlace && !options?.silent, skillsErrorMessage: undefined })
+      operation.promise = (async () => {
+        try {
+          const items = await gateway.agentExtensions.listSkills()
+          if (current() && operation.snapshot === get().skills) set({ skillsStatus: 'ready', skills: items, skillsErrorMessage: undefined })
+        } catch (error) {
+          if (current()) set({ skillsStatus: inPlace ? 'ready' : 'error', skillsErrorMessage: messageOf(error) })
+        } finally {
+          if (pendingLists.get('skills') === operation) {
+            pendingLists.delete('skills')
+            if (generation === epoch && auth === captureAuthGeneration()) set({ skillsRefreshing: false })
+          }
+        }
+      })()
+      return operation.promise
     },
     async loadSkillDetail(gateway, skillId, revision) {
       const generation = epoch
@@ -324,26 +331,32 @@ export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) =
       }
     },
 
-    async loadImports(gateway, options) {
-      const generation = epoch
-      const auth = captureAuthGeneration()
-      const isCurrent = () => generation === epoch && auth === captureAuthGeneration()
+    loadImports(gateway, options) {
+      const generation = epoch, auth = captureAuthGeneration()
+      const previous = pendingLists.get('imports')
+      if (previous?.gateway === gateway && previous.generation === generation && previous.auth === auth && previous.snapshot === get().imports) {
+        if (!options?.silent) set({ importsRefreshing: true })
+        return previous.promise
+      }
       const inPlace = get().importsStatus === 'ready'
-      if (!options?.silent) {
-        set(inPlace ? { importsRefreshing: true } : { importsStatus: 'loading', importsErrorMessage: undefined })
-      }
-      try {
-        const page = await gateway.agentExtensions.listSkillImports()
-        if (!isCurrent()) return
-        applyImportPage(gateway, page)
-      } catch (error) {
-        if (!isCurrent()) return
-        set({
-          importsStatus: get().imports.length > 0 ? get().importsStatus : 'error',
-          importsRefreshing: false,
-          importsErrorMessage: messageOf(error),
-        })
-      }
+      const operation = { gateway, generation, auth, snapshot: get().imports, promise: Promise.resolve() }
+      pendingLists.set('imports', operation)
+      const current = () => generation === epoch && auth === captureAuthGeneration() && pendingLists.get('imports') === operation
+      set({ importsStatus: inPlace ? 'ready' : 'loading', importsRefreshing: inPlace && !options?.silent, importsErrorMessage: undefined })
+      operation.promise = (async () => {
+        try {
+          const page = await gateway.agentExtensions.listSkillImports()
+          if (current() && operation.snapshot === get().imports) applyImportPage(gateway, page)
+        } catch (error) {
+          if (current()) set({ importsStatus: inPlace ? 'ready' : 'error', importsErrorMessage: messageOf(error) })
+        } finally {
+          if (pendingLists.get('imports') === operation) {
+            pendingLists.delete('imports')
+            if (generation === epoch && auth === captureAuthGeneration()) set({ importsRefreshing: false })
+          }
+        }
+      })()
+      return operation.promise
     },
     async loadMoreImports(gateway) {
       const generation = epoch
@@ -371,9 +384,10 @@ export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) =
       }
     },
     async pollImports(gateway, signal) {
+      const snapshot = get().imports
       const generation = epoch
       const auth = captureAuthGeneration()
-      const isCurrent = () => generation === epoch && auth === captureAuthGeneration() && !signal?.aborted
+      const isCurrent = () => generation === epoch && auth === captureAuthGeneration() && !signal?.aborted && snapshot === get().imports
       const page = await gateway.agentExtensions.listSkillImports({ limit: 50 }, signal)
       if (!isCurrent()) return
       const onPage = new Set(page.items.map(task => task.id))
@@ -460,26 +474,32 @@ export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) =
       set({ importSubmitError: null })
     },
 
-    async loadMcpServers(gateway, options) {
-      const generation = epoch
-      const auth = captureAuthGeneration()
-      const isCurrent = () => generation === epoch && auth === captureAuthGeneration()
+    loadMcpServers(gateway, options) {
+      const generation = epoch, auth = captureAuthGeneration()
+      const previous = pendingLists.get('mcp')
+      if (previous?.gateway === gateway && previous.generation === generation && previous.auth === auth && previous.snapshot === get().mcpServers) {
+        if (!options?.silent) set({ mcpRefreshing: true })
+        return previous.promise
+      }
       const inPlace = get().mcpStatus === 'ready'
-      if (!options?.silent) {
-        set(inPlace ? { mcpRefreshing: true } : { mcpStatus: 'loading', mcpErrorMessage: undefined })
-      }
-      try {
-        const items = await gateway.agentExtensions.listMcpServers()
-        if (!isCurrent()) return
-        set({ mcpStatus: 'ready', mcpServers: items, mcpRefreshing: false, mcpErrorMessage: undefined })
-      } catch (error) {
-        if (!isCurrent()) return
-        set({
-          mcpStatus: get().mcpServers.length > 0 ? get().mcpStatus : 'error',
-          mcpRefreshing: false,
-          mcpErrorMessage: messageOf(error),
-        })
-      }
+      const operation = { gateway, generation, auth, snapshot: get().mcpServers, promise: Promise.resolve() }
+      pendingLists.set('mcp', operation)
+      const current = () => generation === epoch && auth === captureAuthGeneration() && pendingLists.get('mcp') === operation
+      set({ mcpStatus: inPlace ? 'ready' : 'loading', mcpRefreshing: inPlace && !options?.silent, mcpErrorMessage: undefined })
+      operation.promise = (async () => {
+        try {
+          const items = await gateway.agentExtensions.listMcpServers()
+          if (current() && operation.snapshot === get().mcpServers) set({ mcpStatus: 'ready', mcpServers: items, mcpErrorMessage: undefined })
+        } catch (error) {
+          if (current()) set({ mcpStatus: inPlace ? 'ready' : 'error', mcpErrorMessage: messageOf(error) })
+        } finally {
+          if (pendingLists.get('mcp') === operation) {
+            pendingLists.delete('mcp')
+            if (generation === epoch && auth === captureAuthGeneration()) set({ mcpRefreshing: false })
+          }
+        }
+      })()
+      return operation.promise
     },
     async createMcpServer(gateway, input) {
       const generation = epoch
@@ -577,6 +597,7 @@ export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) =
     },
 
     reset() {
+      pendingLists.clear()
       epoch += 1
       pendingProbes.clear()
       skillDetailRequest += 1

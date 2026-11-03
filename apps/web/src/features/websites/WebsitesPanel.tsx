@@ -96,6 +96,7 @@ export function WebsitesPanel() {
     const timer = window.setInterval(() => void useWebsiteDeploymentsStore.getState().refresh(gateway), 2000)
     return () => window.clearInterval(timer)
   }, [gateway, taskListOpen, hasActiveTask])
+  const refreshError = useWebsitesStore(s => s.errorMessage)
   const projects = useWebsitesStore((s) => s.projects)
   const proxyStatus = useWebsitesStore((s) => s.proxyStatus)
   const search = useWebsitesStore((s) => s.search)
@@ -122,6 +123,7 @@ export function WebsitesPanel() {
 
   return (
     <div>
+      {refreshError ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{refreshError}。已保留上次读取结果。<button type="button" className="ml-2 underline" onClick={() => void refresh(gateway)}>重试</button></p> : null}
       <div className={`${CTL_TOOLBAR} rect-toolbar shell-first-row mb-4 flex flex-wrap items-center gap-2 panel-surface px-4 py-3`}>
         <button type="button" onClick={openCreate} className={TOOL_BUTTON_CLASS}>
           添加项目
@@ -165,7 +167,6 @@ export function WebsitesPanel() {
           <RefreshButton onPress={() => { void Promise.all([refresh(gateway), recheck(gateway)]) }} busy={refreshing || rechecking} formControl />
         </div>
       </div>
-
       {taskListOpen && <div className="mb-4 space-y-2 panel-surface p-4" aria-label="部署任务列表">
         {taskError ? <p role="alert" className="text-xs text-danger">{taskError}</p> : tasks.length === 0 ? <p className="text-xs text-fg-muted">暂无部署任务</p> : tasks.map((task) => <button type="button" key={task.id} onClick={() => setSelectedTask(task)} className="flex w-full flex-wrap items-center justify-between gap-2 rounded-lg border border-line p-3 text-left text-xs hover:bg-surface-raised"><span className="min-w-0 break-all">{task.name}</span><span className="flex flex-col gap-1 text-right"><span>{deploymentTaskSummary(task)}</span>{!websiteDeploymentIsActive(task.state) && task.state !== 'awaiting-config' ? <time dateTime={task.updatedAt} className="text-fg-muted">完成于 {formatDateTime(task.updatedAt)}</time> : null}</span></button>)}
       </div>}
@@ -222,7 +223,6 @@ export function WebsitesPanel() {
       <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-fg-muted">
         <span className="ml-auto tabular-nums">共 {projects.length} 个项目</span>
       </div>
-
       {createDialogOpen ? <WebsitesCreateDialog /> : null}
       {redeployTarget ? <WebsitesCreateDialog project={redeployTarget} onClose={() => setRedeployTarget(undefined)} /> : null}
       {selectedTask ? <WebsitesCreateDialog existingTask={selectedTask} project={projects.find((project) => project.id === selectedTask.projectId)} onClose={() => setSelectedTask(undefined)} /> : null}

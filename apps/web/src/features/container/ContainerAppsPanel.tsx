@@ -5,7 +5,7 @@ import { validateContainerAppDisplayName, validateContainerAppSlug } from '@elys
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
-import { BusyVeil, RefreshButton } from '../../components/RefreshState'
+import { RefreshButton } from '../../components/RefreshState'
 import { CTL_FIELD, CTL_PRIMARY, CTL_SECONDARY, CTL_TOOLBAR } from '../../components/formControl'
 import { useContainerAppsStore } from '../../stores/containerAppsStore'
 import { ContainerAppEditorSheet } from './ContainerAppEditorSheet'
@@ -72,10 +72,9 @@ export function ContainerAppsPanel() {
           </button>
         </div>
       </div>
-
-      {/* 遮罩只盖清单本身：工具栏在遮罩外，刷新图标才不被自己引发的遮罩盖住。 */}
-      <div className="busy-host">
-        <BusyVeil busy={refreshing} />
+      {/* 清单原位更新，工具栏与已有卡片始终保留。 */}
+      {errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<button type="button" className="ml-2 underline" onClick={() => void refresh(gateway)}>重试</button></p> : null}
+      <div className="relative rounded-xl" aria-busy={refreshing}>
         {apps.length === 0 ? (
           <EmptyState
             title="还没有工作区"
@@ -105,7 +104,6 @@ export function ContainerAppsPanel() {
           </ul>
         )}
       </div>
-
       {createOpen ? <CreateAppDialog onClose={() => setCreateOpen(false)} /> : null}
       {editing ? (
         <ContainerAppEditorSheet
@@ -164,7 +162,6 @@ function CreateAppDialog({ onClose }: { onClose: () => void }) {
           <p id="create-app-description" className="mt-1.5 text-xs text-fg-muted">
             标识会直接作为目录名，只能用小写字母、数字、下划线和连字符；建好后不能改名。
           </p>
-
           <div className="mt-3 space-y-3">
             <div>
               <label htmlFor="create-app-slug" className="mb-1 flex items-center gap-1 text-xs font-medium text-fg-muted">
@@ -211,7 +208,6 @@ function CreateAppDialog({ onClose }: { onClose: () => void }) {
               </p>
             ) : null}
           </div>
-
           <div className="mt-4 flex justify-end gap-2">
             <button type="button" onClick={onClose} className={`${CTL_SECONDARY} px-3`}>
               取消

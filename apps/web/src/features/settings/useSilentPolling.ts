@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from 'react'
  * - document.hidden 暂停（不排定时器），恢复可见时立即补跑一轮；
  * - 连续失败退避 ×2 至上限（默认 60 秒），成功即复位回正常节奏；
  * - degraded 暴露给页面标「连接中断，正在重试」（role=status）；
- * - 静默轮询不驱动 RefreshButton/BusyVeil（口径同 WebsitesPanel 先例）；
+ * - 静默轮询不驱动 RefreshButton（口径同 WebsitesPanel 先例）；
  * - 卸载清定时器并 abort 当轮请求；task 抛错即记一次失败，不向上冒泡。
  * 节奏基准：非终态活动实体 3 秒；挂载中的审批/列表 10–15 秒。
  */

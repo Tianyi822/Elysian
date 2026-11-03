@@ -1,3 +1,4 @@
+import { captureAuthGeneration } from '../adapters/http/unauthorized'
 import { create } from 'zustand'
 import type { FileEntry, FileSearchResult } from '@elysian/contracts'
 import type { ElysianGateway, FilePermissionInput } from '../contracts/adapters'
@@ -59,9 +60,9 @@ export type FilesState = {
   searchKeyword: string
   searchResults: readonly FileSearchResult[]
   searching: boolean
-  /** 同一目录的重新列举在途：旧列表留在屏上，只由它驱动表格遮罩。 */
+  /** 同一目录的重新列举在途：旧列表留在屏上，只由它驱动刷新按钮。 */
   reloading: boolean
-  load(gateway: ElysianGateway, path: string): Promise<void>
+  load(gateway: ElysianGateway, path: string, options?: { silent?: boolean }): Promise<void>
   computeSize(gateway: ElysianGateway, path: string): Promise<void>
   copyToClipboard(path: string): void
   moveToClipboard(path: string): void
@@ -94,6 +95,7 @@ export type FilesState = {
  */
 export const useFilesStore = create<FilesState>((set, get) => {
   let loadSequence = 0
+  let pendingLoad: { gateway: ElysianGateway; path: string; auth: number; promise: Promise<void> } | undefined
   let searchSequence = 0
   let sizeGeneration = 0
   let downloadSequence = 0
@@ -102,7 +104,8 @@ export const useFilesStore = create<FilesState>((set, get) => {
   let resolveConflict: ((decision: 'upload' | 'skip' | 'cancel') => void) | undefined
 
   const reload = async (gateway: ElysianGateway) => {
-    await get().load(gateway, get().path)
+    pendingLoad = undefined
+    await get().load(gateway, get().path, { silent: true })
   }
 
   const notify = (message: string, tone: MessageTone = 'success') => {
@@ -122,25 +125,27 @@ export const useFilesStore = create<FilesState>((set, get) => {
     reloading: false,
     download: undefined,
     upload: undefined,
-    async load(gateway, path) {
-      const sequence = ++loadSequence
-      // 同一个目录再列一次是刷新：旧列表留在屏上，只置 reloading；
-      // 换目录才是新内容，走整块加载态。
-      const inPlace = get().status === 'ready' && get().path === path
-      set(inPlace ? { reloading: true, errorMessage: undefined } : { status: 'loading', path, reloading: false, errorMessage: undefined })
-      try {
-        const entries = await gateway.files.list(path)
-        if (sequence !== loadSequence) return
-        set({ status: 'ready', entries, reloading: false })
-      } catch (error) {
-        if (sequence !== loadSequence) return
-        set({
-          status: 'error',
-          entries: [],
-          reloading: false,
-          errorMessage: error instanceof Error ? error.message : '读取目录内容失败',
-        })
+    load(gateway, path, options) {
+      const auth = captureAuthGeneration()
+      if (pendingLoad?.gateway === gateway && pendingLoad.path === path && pendingLoad.auth === auth) {
+        if (!options?.silent) set({ reloading: true })
+        return pendingLoad.promise
       }
+      const sequence = ++loadSequence
+      const inPlace = get().status === 'ready' && get().path === path
+      const operation = { gateway, path, auth, promise: Promise.resolve() }
+      pendingLoad = operation
+      const current = () => sequence === loadSequence && auth === captureAuthGeneration()
+      set(inPlace ? { reloading: !options?.silent, errorMessage: undefined } : { status: 'loading', path, entries: [], reloading: false, errorMessage: undefined })
+      operation.promise = (async () => {
+        try {
+          const entries = await gateway.files.list(path)
+          if (current()) set({ status: 'ready', entries, reloading: false })
+        } catch (error) {
+          if (current()) set({ status: inPlace ? 'ready' : 'error', reloading: false, errorMessage: error instanceof Error ? error.message : '读取目录内容失败' })
+        } finally { if (pendingLoad === operation) pendingLoad = undefined }
+      })()
+      return operation.promise
     },
     async computeSize(gateway, path) {
       const generation = sizeGeneration

@@ -108,6 +108,7 @@ export function RuntimeLogPanel() {
   const skippedFiles = useRuntimeLogStore((s) => s.skippedFiles)
   const storage = useRuntimeLogStore((s) => s.storage)
   const search = useRuntimeLogStore((s) => s.search)
+  const manualRefreshing = useRuntimeLogStore(s => s.manualRefreshing)
   const refreshing = useRuntimeLogStore((s) => s.refreshing)
   const loadingOlder = useRuntimeLogStore((s) => s.loadingOlder)
   const olderError = useRuntimeLogStore((s) => s.olderError)
@@ -125,7 +126,7 @@ export function RuntimeLogPanel() {
     const delay = trimmedSearch === committedSearchRef.current ? 0 : 300
     const handle = setTimeout(() => {
       committedSearchRef.current = trimmedSearch
-      void load(gateway)
+      void load(gateway, { silent: true })
     }, delay)
     return () => clearTimeout(handle)
   }, [gateway, load, trimmedSearch])
@@ -171,6 +172,7 @@ export function RuntimeLogPanel() {
 
   return (
     <div className="flex h-full flex-col gap-3">
+      {errorMessage ? <p role="alert" className="text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<button type="button" className="ml-2 underline" onClick={() => void load(gateway)}>重试</button></p> : null}
       {/*
         工具栏三块：搜索 / 视图操作 / 日志大小与清空。窄屏（md 以下）一块一行，
         md 起回到一行三段、最后一块靠右——自由折行会把清空按钮孤零零甩到第二行。
@@ -195,7 +197,7 @@ export function RuntimeLogPanel() {
         <div role="group" aria-label="日志视图操作" className="flex flex-wrap items-center gap-2">
           <RefreshButton
             onPress={() => void load(gateway)}
-            busy={refreshing}
+            busy={manualRefreshing}
             label="刷新日志"
             formControl
           />

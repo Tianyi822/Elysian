@@ -6,7 +6,7 @@ import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { IconButton } from '../../components/IconButton'
 import { StatusTag } from '../../components/StatusTag'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
-import { BusyVeil, RefreshButton } from '../../components/RefreshState'
+import { RefreshButton } from '../../components/RefreshState'
 import { Pencil, Search, Trash2 } from '../../components/icons'
 import { useUsersStore } from '../../stores/usersStore'
 import { ACTION_CLASS } from './sshCardParts'
@@ -57,6 +57,7 @@ export function UsersPanel() {
 
   return (
     <div>
+      {errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<button type="button" className="ml-2 underline" onClick={() => void load(gateway)}>重试</button></p> : null}
       {operationError ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-danger/40 p-3 text-xs text-danger"><p className="min-w-0 flex-1">{operationError}</p><button type="button" className="rounded border border-line px-3 py-1.5 text-fg" onClick={() => void load(gateway)}>重新读取状态</button></div> : null}
       <div className="mb-4 flex flex-wrap items-center gap-2 panel-surface px-4 py-3">
         {/* 用户动作只在容器内真实执行 useradd/usermod/userdel；宿主机本地开发是内存演示，明示出来。 */}
@@ -91,10 +92,8 @@ export function UsersPanel() {
           formControl
         />
       </div>
-
       {/* 表格坐在面板里：行悬停向上步进一级表面；首列钉住，窄屏下其余列横向滚动。 */}
-      <div className="busy-host">
-        <BusyVeil busy={syncing} />
+      <div className="relative rounded-xl" aria-busy={syncing}>
         <div
           role="region"
           aria-label="主机账号表"
@@ -142,11 +141,9 @@ export function UsersPanel() {
           </table>
         </div>
       </div>
-
       <p className="mt-3 text-xs tabular-nums text-fg-muted">
         {search.trim() ? `匹配 ${filtered.length} 个 · 共 ${users.length} 个主机账号` : `共 ${users.length} 个主机账号`}
       </p>
-
       {dialogUser !== undefined ? <HostUserDialog /> : null}
       <HostUserRemoveDialog />
     </div>
