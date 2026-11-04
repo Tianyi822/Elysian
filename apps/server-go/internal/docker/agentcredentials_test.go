@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,4 +67,52 @@ func TestAgentCredentialStoreRejectsSymlinkPath(t *testing.T) {
 func symlinkFile(t *testing.T, target, link string) error {
 	t.Helper()
 	return os.Symlink(target, link)
+}
+
+func TestWriteFileAtomicDockerRejectsPreexistingTempFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent-service-containers.json")
+	store := newAgentCredentialStore(path)
+	if err := store.save(agentServiceCredentialRecord{Name: "x", Credentials: map[string]string{}}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	temporary := path + "." + fmt.Sprintf("%d", os.Getpid()) + ".tmp"
+	const preset = "预置内容"
+	if err := os.WriteFile(temporary, []byte(preset), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.save(agentServiceCredentialRecord{Name: "y", Credentials: map[string]string{}}); err == nil {
+		t.Fatal("临时文件已存在时 save 应失败")
+	}
+	if after, err := os.ReadFile(path); err != nil || string(after) != string(before) {
+		t.Fatalf("登记目标不应被覆盖：err=%v", err)
+	}
+	if got, err := os.ReadFile(temporary); err != nil || string(got) != preset {
+		t.Fatalf("预置临时文件内容不应被改动：err=%v content=%q", err, string(got))
+	}
+	// 同名临时位置换成符号链接（F1 的攻击形态）：打开必须同样失败，链接目标不被写入。
+	victim := filepath.Join(dir, "victim.txt")
+	const sentinel = "受害者原内容"
+	if err := os.WriteFile(victim, []byte(sentinel), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(temporary); err != nil {
+		t.Fatal(err)
+	}
+	if err := symlinkFile(t, victim, temporary); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.save(agentServiceCredentialRecord{Name: "z", Credentials: map[string]string{}}); err == nil {
+		t.Fatal("临时位置为符号链接时 save 应失败")
+	}
+	if got, err := os.ReadFile(victim); err != nil || string(got) != sentinel {
+		t.Fatalf("符号链接目标不应被写入：err=%v content=%q", err, string(got))
+	}
+	if after, err := os.ReadFile(path); err != nil || string(after) != string(before) {
+		t.Fatalf("登记目标在符号链接尝试后仍不应被覆盖：err=%v", err)
+	}
 }

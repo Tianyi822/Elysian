@@ -118,7 +118,8 @@ func writeFileAtomicDocker(path string, data []byte) error {
 		return err
 	}
 	temporary := path + "." + fmt.Sprintf("%d", os.Getpid()) + ".tmp"
-	file, err := os.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	// O_EXCL 拒绝已存在的临时名（含符号链接预置），杜绝 O_TRUNC 穿透链接改写任意文件。
+	file, err := os.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}
