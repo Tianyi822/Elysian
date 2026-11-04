@@ -220,7 +220,7 @@ func TestAgentRoutesRenameSessionTrimsTitleAndKeepsActivity(t *testing.T) {
 	}
 }
 
-func TestAgentRoutesDeleteSessionGuardsBusyResidueAndCascade(t *testing.T) {
+func TestAgentRoutesDeleteSessionForceAndCascade(t *testing.T) {
 	m, profile := sessionAPIManager(t)
 	handler := m.Router()
 	ctx := context.Background()
@@ -238,7 +238,7 @@ func TestAgentRoutesDeleteSessionGuardsBusyResidueAndCascade(t *testing.T) {
 		t.Fatalf("活动分页首批错误：%d %s", response.Code, response.Body.String())
 	}
 	target := ids[0]
-	run, _, err := m.CreateTask(ctx, target, AgentInput{RequestID: "delete-busy", Content: "排队中删除被拒"})
+	_, _, err := m.CreateTask(ctx, target, AgentInput{RequestID: "delete-busy", Content: "排队中强制删除"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,26 +246,6 @@ func TestAgentRoutesDeleteSessionGuardsBusyResidueAndCascade(t *testing.T) {
 		Error string `json:"error"`
 		Code  string `json:"code"`
 	}
-	response = runtimeRouteRequest(handler, "DELETE", "/sessions/"+target, "")
-	if response.Code != 409 || json.Unmarshal(response.Body.Bytes(), &failure) != nil || failure.Code != "session-busy" || failure.Error != "会话仍有任务排队或运行，请结束后再删除" {
-		t.Fatalf("忙碌删除未拒绝：%d %s", response.Code, response.Body.String())
-	}
-	// 面板重启窗口：ActiveRunID 已清空但 runs 仍非终态 → 未决执行拒删而非忙碌。
-	if err = m.store.write(ctx, "residue-fixture", func(tx *sql.Tx) error {
-		session, err := readSession(ctx, tx, target)
-		if err != nil {
-			return err
-		}
-		session.ActiveRunID = ""
-		return saveSession(ctx, tx, session)
-	}); err != nil {
-		t.Fatal(err)
-	}
-	response = runtimeRouteRequest(handler, "DELETE", "/sessions/"+target, "")
-	if response.Code != 409 || json.Unmarshal(response.Body.Bytes(), &failure) != nil || failure.Code != "session-unresolved" || failure.Error != "会话存在结果未确认的执行（如面板重启时的在途操作），暂不能删除；需经执行对账接口确认停止后解除" {
-		t.Fatalf("非终态残留删除未按未决执行拒绝：%d %s", response.Code, response.Body.String())
-	}
-	finishSessionTestRun(t, m.store, run.ID, "已完成", nil)
 	record, err := m.store.recordPath(recordOwner{kind: "session", id: target})
 	if err != nil {
 		t.Fatal(err)
@@ -341,14 +321,6 @@ func TestAgentRoutesDeleteSessionUnresolvedLeaseAndBarrier(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	var failure struct {
-		Error string `json:"error"`
-		Code  string `json:"code"`
-	}
-	response := runtimeRouteRequest(handler, "DELETE", "/sessions/"+leaseSession.ID, "")
-	if response.Code != 409 || json.Unmarshal(response.Body.Bytes(), &failure) != nil || failure.Code != "session-unresolved" || failure.Error != "会话存在结果未确认的执行（如面板重启时的在途操作），暂不能删除；需经执行对账接口确认停止后解除" {
-		t.Fatalf("unknown 租约拒删错误：%d %s", response.Code, response.Body.String())
-	}
 	if err := m.store.write(ctx, "age-session-fixture", func(tx *sql.Tx) error {
 		session, err := readSession(ctx, tx, leaseSession.ID)
 		if err != nil {
@@ -368,15 +340,14 @@ func TestAgentRoutesDeleteSessionUnresolvedLeaseAndBarrier(t *testing.T) {
 	if _, err = readSession(ctx, m.store.db, leaseSession.ID); err != nil {
 		t.Fatalf("保留期清理删掉了未决租约会话：%v", err)
 	}
-	if err = m.store.write(ctx, "release-lease-fixture", func(tx *sql.Tx) error {
-		return saveResourceLease(ctx, tx, ResourceLease{ID: "unknown-lease", RunID: leaseRun, State: "released", Evidence: "外部已确认停止", Decision: "confirmed-stopped"})
-	}); err != nil {
-		t.Fatal(err)
+	if response := runtimeRouteRequest(handler, "DELETE", "/sessions/"+leaseSession.ID, ""); response.Code != 204 {
+		t.Fatalf("未能强制删除未知租约会话：%d %s", response.Code, response.Body.String())
 	}
-	if response = runtimeRouteRequest(handler, "DELETE", "/sessions/"+leaseSession.ID, ""); response.Code != 204 || response.Body.Len() != 0 {
-		t.Fatalf("租约确认后未允许删除：%d %s", response.Code, response.Body.String())
+	var count int
+	if err = m.store.db.QueryRow("SELECT COUNT(*) FROM resource_leases WHERE run_id=?", leaseRun).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("租约残留：%d %v", count, err)
 	}
-	// unknown 执行屏障：屏障引用 runs 且无级联，强删会触发外键失败，必须先按未决执行拒绝。
+	// unknown 屏障必须显式清理，避免外键失败。
 	barrierSession, barrierRun := terminalSession("unresolved-barrier")
 	if err = m.store.write(ctx, "unknown-barrier-fixture", func(tx *sql.Tx) error {
 		if err := saveOperation(ctx, tx, Operation{ID: "op-barrier-fixture", RunID: barrierRun, Status: "succeeded", CreatedAt: stamp(m.deps.Now())}); err != nil {
@@ -386,13 +357,17 @@ func TestAgentRoutesDeleteSessionUnresolvedLeaseAndBarrier(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	response = runtimeRouteRequest(handler, "DELETE", "/sessions/"+barrierSession.ID, "")
-	if response.Code != 409 || json.Unmarshal(response.Body.Bytes(), &failure) != nil || failure.Code != "session-unresolved" {
-		t.Fatalf("unknown 屏障未按未决执行拒绝：%d %s", response.Code, response.Body.String())
+	response := runtimeRouteRequest(handler, "DELETE", "/sessions/"+barrierSession.ID, "")
+	if response.Code != 204 {
+		t.Fatalf("未知屏障删除失败：%d %s", response.Code, response.Body.String())
 	}
-	if _, err = readSession(ctx, m.store.db, barrierSession.ID); err != nil {
-		t.Fatalf("拒删路径误删了会话：%v", err)
+	if _, err = readSession(ctx, m.store.db, barrierSession.ID); !isNotFound(err) {
+		t.Fatalf("会话残留：%v", err)
 	}
+	if err = m.store.db.QueryRow("SELECT COUNT(*) FROM execution_barriers WHERE run_id=?", barrierRun).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("屏障残留：%d %v", count, err)
+	}
+
 }
 
 func TestAgentRoutesMemoryCheckpointDoesNotClaimActiveRunIsFullyCovered(t *testing.T) {

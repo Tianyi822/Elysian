@@ -76,9 +76,6 @@ func TestUserInputSuspendsRestoresAndResumesExactlyOnce(t *testing.T) {
 			run := submitAgentTest(t, m, session, "question-run", "需要确认范围")
 			q := waitUserInput(t, m, run.ID)
 			runtimeEventually(t, func() bool { m.mu.Lock(); defer m.mu.Unlock(); return len(m.executions) == 0 })
-			if err := m.DeleteSession(context.Background(), session.ID); err == nil {
-				t.Fatal("待答会话被删除")
-			}
 			if restart {
 				m = reopenOperationManager(t, m)
 				if got := waitUserInput(t, m, run.ID); got.ID != q.ID {

@@ -280,3 +280,25 @@ func (a *AgentFacade) LookupTask(ctx context.Context, requestID string) (string,
 	}
 	return id, nil
 }
+
+// CancelOwnedTask 仅供宿主删除会话后取消精确归属的任务。
+func (a *AgentFacade) CancelOwnedTask(ctx context.Context, id, requestID string) error {
+	status, err := a.InspectTask(ctx, id)
+	if err != nil {
+		return err
+	}
+	if requestID == "" || status.RequestID != requestID {
+		return errors.New("网站任务身份不匹配")
+	}
+	m := a.service.deployments
+	m.mu.Lock()
+	stop := m.cancel[id]
+	m.mu.Unlock()
+	if stop != nil {
+		stop()
+	}
+	if status.State == "awaiting-config" {
+		return m.mutate(id, func(t *deploymentTask) { t.State = "cancelled"; t.Stage = "已取消" })
+	}
+	return nil
+}

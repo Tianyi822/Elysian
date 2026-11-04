@@ -117,3 +117,24 @@ func agentTaskLookup(sites *websites.AgentFacade, apps *containerapps.AgentFacad
 		return ref, err
 	}
 }
+
+// 仅供管理员删除会话后的宿主收尾使用，要求完整匹配持久任务身份。
+func agentTaskCanceller(sites *websites.AgentFacade, apps *containerapps.AgentFacade, containers *docker.AgentFacade, databases *database.AgentFacade) func(context.Context, tools.TaskReference) error {
+	return func(ctx context.Context, ref tools.TaskReference) error {
+		if ref.ID == "" || ref.RequestID == "" {
+			return errors.New("后台任务身份缺失")
+		}
+		switch ref.Domain {
+		case "database":
+			return databases.CancelOwnedTask(ctx, ref.ID, ref.RequestID)
+		case "website":
+			return sites.CancelOwnedTask(ctx, ref.ID, ref.RequestID)
+		case "container-app-build":
+			return apps.CancelOwnedTask(ctx, ref.ID, ref.RequestID)
+		case "docker-image-pull":
+			return containers.CancelOwnedTask(ctx, ref.ID, ref.RequestID)
+		default:
+			return errors.New("后台任务领域无效")
+		}
+	}
+}

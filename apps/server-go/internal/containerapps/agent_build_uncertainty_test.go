@@ -69,7 +69,11 @@ func TestQueuedBuildCannotDispatchAfterAnotherBecomesUnconfirmed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = env.manager.Cancel("first", first.ID); err != nil {
+	facade := NewAgentFacade(env.handler, nil)
+	if err = facade.CancelOwnedTask(context.Background(), first.ID, "foreign-request"); err == nil {
+		t.Fatal("宿主取消接受了错误任务身份")
+	}
+	if err = facade.CancelOwnedTask(context.Background(), first.ID, first.RequestID); err != nil {
 		t.Fatal(err)
 	}
 	first = waitForBuildTerminal(t, env.manager, "first", first.ID)

@@ -3,6 +3,7 @@ package harness
 import (
 	"context"
 	"database/sql"
+	"elysian/server/internal/agent/tools"
 	"encoding/json"
 	"errors"
 	"strconv"
@@ -305,10 +306,7 @@ func (s *store) releaseSession(ctx context.Context, tx *sql.Tx, r *Run) error {
 	return saveSession(ctx, tx, session)
 }
 
-// sessionDeletableGuardSQL 是会话可删除的硬性守卫：无排队或运行中的 Run，也没有
-// 结果未确认的执行（非终态 Run、held/unknown 资源租约、dispatched/unknown 执行屏障）。
-// 保留期清理与手工删除共用同一谓词，防止两路判定漂移；屏障与租约只能经显式结果
-// 或执行对账解除，先拒删而不是留下外键失败或永久锁死派发的孤儿行。
+// sessionDeletableGuardSQL 仅用于自动保留期清理；人工删除由管理员显式强制终止。
 const sessionDeletableGuardSQL = `active_run_id='' AND active_workflow_id=''
  AND NOT EXISTS(SELECT 1 FROM runs WHERE runs.session_id=sessions.id AND state IN ('queued','running','waiting-input','waiting-approval','waiting-resource','waiting-task'))
  AND NOT EXISTS(SELECT 1 FROM resource_leases l JOIN runs r ON r.id=l.run_id WHERE r.session_id=sessions.id AND l.state IN ('held','unknown'))
@@ -328,28 +326,34 @@ func (s *store) renameSession(ctx context.Context, id, title string) (Session, e
 	return session, err
 }
 
-func (s *store) deleteSession(ctx context.Context, id string) error {
+func (s *store) deleteSession(ctx context.Context, id string, extraTasks ...tools.TaskReference) error {
 	return s.write(ctx, "delete-session", func(tx *sql.Tx) error {
-		session, err := readSession(ctx, tx, id)
+		if _, err := readSession(ctx, tx, id); err != nil {
+			return err
+		}
+		// 与删除同事务保存取消清单；进程退出或域暂不可用时继续收尾。
+		operations, err := readDocuments[Operation](ctx, tx, "SELECT document FROM operations WHERE run_id IN (SELECT id FROM runs WHERE session_id=?) AND state IN ('dispatched','unknown','waiting-task')", id)
 		if err != nil {
 			return err
 		}
-		if session.ActiveRunID != "" || session.ActiveWorkflowID != "" {
-			return &Error{Status: 409, Code: "session-busy", Message: "会话仍有任务排队或运行，请结束后再删除"}
+		for _, operation := range operations {
+			if operation.Task != nil {
+				if err := enqueueTaskCancellation(ctx, tx, *operation.Task); err != nil {
+					return err
+				}
+			}
 		}
-		var deletable int
-		if err = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM sessions WHERE id=? AND "+sessionDeletableGuardSQL, id).Scan(&deletable); err != nil {
-			return err
-		}
-		if deletable == 0 {
-			return &Error{Status: 409, Code: "session-unresolved", Message: "会话存在结果未确认的执行（如面板重启时的在途操作），暂不能删除；需经执行对账接口确认停止后解除"}
+		for _, ref := range extraTasks {
+			if err := enqueueTaskCancellation(ctx, tx, ref); err != nil {
+				return err
+			}
 		}
 		return s.deleteSessionRows(ctx, tx, id)
 	})
 }
 
 // deleteSessionRows 按固定次序级联删除一个会话的全部行：purgeRecordOwner 先登记
-// JSONL 清理账本，dispatched/unknown 屏障刻意不删（调用方守卫已拒删这类会话），
+// JSONL 清理账本，显式清除屏障与无外键的租约，
 // workflow_instances 必须先于 tasks（V2 scope 持有 Task 引用）。
 func (s *store) deleteSessionRows(ctx context.Context, tx *sql.Tx, id string) error {
 	if err := purgeRecordOwner(ctx, tx, recordOwner{kind: "session", id: id}); err != nil {
@@ -364,7 +368,10 @@ func (s *store) deleteSessionRows(ctx context.Context, tx *sql.Tx, id string) er
 	if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO workspace_cleanup(task_id) SELECT id FROM tasks WHERE session_id=?", id); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM execution_barriers WHERE run_id IN (SELECT id FROM runs WHERE session_id=?) AND state NOT IN ('dispatched','unknown')", id); err != nil {
+	if _, err := tx.ExecContext(ctx, "DELETE FROM execution_barriers WHERE run_id IN (SELECT id FROM runs WHERE session_id=?)", id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM resource_leases WHERE run_id IN (SELECT id FROM runs WHERE session_id=?)", id); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM runs WHERE session_id=?", id); err != nil {

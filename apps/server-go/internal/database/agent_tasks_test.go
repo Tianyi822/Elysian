@@ -303,6 +303,12 @@ func TestAgentDatabaseTaskCancelIsDurableScopedAndRetainsUnknownBarrier(t *testi
 	if _, err := facade.TaskLogs(context.Background(), "another-database", task.ID, 0, 20); err == nil {
 		t.Fatal("logs accepted another resource grant")
 	}
+	if err := facade.CancelOwnedTask(context.Background(), task.ID, "foreign-request"); err == nil {
+		t.Fatal("宿主取消接受了错误任务身份")
+	}
+	if err := facade.CancelOwnedTask(context.Background(), task.ID, task.RequestID); err != nil {
+		t.Fatal(err)
+	}
 	cancelled, err := facade.CancelTask(context.Background(), input.Create.ID, task.ID)
 	if err != nil || !cancelled.CancelRequested {
 		t.Fatalf("cancel request was not accepted: %#v %v", cancelled, err)

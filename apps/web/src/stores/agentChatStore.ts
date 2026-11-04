@@ -142,6 +142,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
       if (bytes > AGENT_ATTACHMENT_LIMITS.maxMessageBytes) throw new Error(attachmentTotalNotice)
     }
     const completedReasoning = new Set<string>()
+    const deletionVersions = new Map<string, number>()
     const blankSession = (): AgentChatSession => ({
       id: `draft:${id()}`, createdAt: now(), draft: '', messages: [], attachments: [],
       permissionMode: 'ask', permissionVersion: 1, modelId: null, reasoningLevel: null,
@@ -309,11 +310,14 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
     const dispatchPending = async (api: AgentConversationAdapter, localId: string, lifecycleAtStart: number, version: number): Promise<boolean> => {
       const session = current()
       const pending = session.pending!
+      const remoteId = session.remote!.sessionId
+      const deletionVersion = deletionVersions.get(remoteId)
       const valid = () => lifecycleAtStart === lifecycle && version === submissionVersion && stillCurrent(localId)
       try {
         const run = pending.taskId
           ? await api.continueTask(pending.taskId, pending.input)
           : await api.createTask(session.remote!.sessionId, pending.input)
+        if (deletionVersions.get(remoteId) !== deletionVersion) return false
         acceptRun(run, session, lifecycleAtStart === lifecycle && version === submissionVersion)
         if (!valid()) return false
         observeRun(run, true)
@@ -455,22 +459,25 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
         notify('会话已重命名。', 'success')
       },
       async deleteSession(api, id) {
-        if (get().sending) return
         const lifetime = lifecycle
         try {
           await api.deleteSession(id)
         } catch (error) {
-          if (lifetime !== lifecycle) return
-          // 404 视为已删（幂等清理）；409 busy/unresolved 与其他错误不做本地清理，交给弹窗透传。
+          // 404 视为已删；存储等真实失败保留本地记录并交给弹窗反馈。
           if (!(error instanceof AgentHttpError && error.status === 404)) throw error
         }
+        deletionVersions.set(id, (deletionVersions.get(id) ?? 0) + 1)
+        adapter.remove(id)
         if (lifetime !== lifecycle) return
         listVersion += 1
         const fallback = get().sessions.find(row => row.id !== id)
         set({ sessions: get().sessions.filter(row => row.id !== id), listLoading: false })
-        adapter.remove(id)
         set({ localSessions: adapter.list() })
         if (get().session && agentChatSessionKey(get().session!) === id) {
+          attachmentPreparation?.abort()
+          generation += 1; remoteVersion += 1; submissionVersion += 1; attachmentUploadVersion += 1
+          completedReasoning.clear()
+          set({ ...remoteBlank, loading: false })
           const navigation = navigationVersion + 1
           if (fallback) await get().selectSession(api, fallback.id)
           else await get().newSession()

@@ -20,19 +20,17 @@ const TOOLTIP_CONTENT_CLASS = 'z-[80] rounded border border-control-line bg-surf
  * 行右侧是完整名称弹窗的位置，编辑菜单因此向下弹出、右缘对齐图标；
  * 菜单浮层 Portal 到 body，抽屉内也能正常弹出并在关闭时归还焦点。
  */
-function SessionRowEditMenu({ row, pending, sending, onRename, onDelete }: {
+function SessionRowEditMenu({ row, sending, onRename, onDelete }: {
   row: SessionRow
-  pending: boolean
   sending: boolean
   onRename(row: SessionRow): void
   onDelete(row: SessionRow): void
 }) {
-  const locked = row.active || pending
   return <DropdownMenu.Root>
     <Tooltip.Root>
       <Tooltip.Trigger asChild>
         <DropdownMenu.Trigger asChild>
-          <button type="button" aria-label="编辑会话" disabled={sending}
+          <button type="button" aria-label="编辑会话"
             className="icon-button chat-session-edit text-fg-subtle hover:bg-surface-raised hover:text-fg">
             <Pencil size={14} aria-hidden />
           </button>
@@ -46,10 +44,9 @@ function SessionRowEditMenu({ row, pending, sending, onRename, onDelete }: {
     </Tooltip.Root>
     <DropdownMenu.Portal>
       <DropdownMenu.Content side="bottom" align="end" sideOffset={4} className="chat-session-menu">
-        <DropdownMenu.Item className="chat-session-menu-item" onSelect={() => onRename(row)}>重命名</DropdownMenu.Item>
-        <DropdownMenu.Item className="chat-session-menu-item chat-session-menu-remove" disabled={locked} onSelect={() => onDelete(row)}>
+        <DropdownMenu.Item className="chat-session-menu-item" disabled={sending} onSelect={() => onRename(row)}>重命名</DropdownMenu.Item>
+        <DropdownMenu.Item className="chat-session-menu-item chat-session-menu-remove" onSelect={() => onDelete(row)}>
           <span>删除会话</span>
-          {locked ? <span className="chat-session-menu-note">会话运行中或执行结果未确认时不能删除</span> : null}
         </DropdownMenu.Item>
       </DropdownMenu.Content>
     </DropdownMenu.Portal>
@@ -103,7 +100,7 @@ export function ChatSessionList({ onSelect, onNew, onRefresh, onMore, onClose, r
               </Tooltip.Content>
             </Tooltip.Portal>
           </Tooltip.Root>
-          {row.server && <SessionRowEditMenu row={row} pending={!!local.get(row.id)?.pending} sending={chat.sending}
+          {row.server && <SessionRowEditMenu row={row} sending={chat.sending}
             onRename={setRenameTarget} onDelete={setDeleteTarget} />}
         </div>)}
         {chat.listHasMore && <button className="chat-session-more" type="button" disabled={chat.listLoading} onClick={onMore}>{chat.listLoading ? '正在读取…' : '加载更多'}</button>}

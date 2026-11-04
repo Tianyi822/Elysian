@@ -561,9 +561,31 @@ func (f *AgentFacade) CancelTask(ctx context.Context, resource, id string) (Agen
 	if _, err := f.authorizedTask(ctx, resource, id); err != nil {
 		return AgentTask{}, err
 	}
+	return f.cancelTask(ctx, id, "")
+}
+
+// CancelOwnedTask 是宿主收尾入口，精确身份不能由模型自行构造授权。
+func (f *AgentFacade) CancelOwnedTask(ctx context.Context, id, requestID string) error {
+	if requestID == "" {
+		return errors.New("后台任务身份缺失")
+	}
+	_, err := f.cancelTask(ctx, id, requestID)
+	return err
+}
+
+func (f *AgentFacade) cancelTask(ctx context.Context, id, requestID string) (AgentTask, error) {
+	if err := ctx.Err(); err != nil {
+		return AgentTask{}, err
+	}
 	f.taskMu.Lock()
 	defer f.taskMu.Unlock()
-	record := f.tasks[id]
+	if err := f.loadAgentTasks(); err != nil {
+		return AgentTask{}, err
+	}
+	record, ok := f.tasks[id]
+	if !ok || requestID != "" && record.RequestID != requestID {
+		return AgentTask{}, errors.New("后台任务身份不匹配")
+	}
 	if record.State != "running" || f.taskCancels[id] == nil {
 		value := record.AgentTask
 		if record.State == "unknown" {

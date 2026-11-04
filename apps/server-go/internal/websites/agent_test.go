@@ -94,3 +94,28 @@ func TestAgentWebsitePendingRecoveryNeverReportsTerminal(t *testing.T) {
 		}
 	}
 }
+
+func TestCancelOwnedWebsiteTaskMatchesIdentityAndStops(t *testing.T) {
+	f := fixture(t, nil, nil, nil, nil)
+	m := newDeploymentManager(f.service, deploymentEngine{limits: defaultDeploymentLimits()}, t.TempDir(), t.TempDir(), t.TempDir())
+	f.service.deployments = m
+	task := deploymentTask{ID: newDeploymentID(), Name: "site", State: "awaiting-config", Input: deploymentInput{RequestID: newDeploymentID()}}
+	m.tasks[task.ID] = &task
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	m.cancel[task.ID] = stop
+	facade := &AgentFacade{service: f.service}
+	if err := facade.CancelOwnedTask(context.Background(), task.ID, "foreign-request"); err == nil || ctx.Err() != nil {
+		t.Fatal("错误身份取消了任务")
+	}
+	if err := facade.CancelOwnedTask(context.Background(), task.ID, task.Input.RequestID); err != nil {
+		t.Fatal(err)
+	}
+	if ctx.Err() == nil {
+		t.Fatal("未停止任务")
+	}
+	got, err := m.getTask(task.ID)
+	if err != nil || got.State != "cancelled" {
+		t.Fatalf("待配置任务未终止：%+v %v", got, err)
+	}
+}

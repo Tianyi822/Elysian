@@ -12,7 +12,8 @@ import (
 // JSONL record copy — only reference descriptors ride on Message/Run documents.
 // v8 保存可恢复的用户澄清请求。
 // v9 保存运行时授权，并为独立 MCP 探测补齐独立 JSONL 归属。
-const schemaVersion = 9
+// v10 保存强制删除后的域任务取消清单。
+const schemaVersion = 10
 
 const capabilitySchema = `
 CREATE TABLE workspace_cleanup (task_id TEXT PRIMARY KEY);
@@ -194,7 +195,12 @@ func migrateStore(db *sql.DB) error {
 			return err
 		}
 	}
-	if _, err = tx.Exec("PRAGMA user_version=9"); err != nil {
+	if version < 10 {
+		if _, err = tx.Exec(sessionTaskCleanupSchema); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.Exec("PRAGMA user_version=10"); err != nil {
 		return err
 	}
 	return tx.Commit()

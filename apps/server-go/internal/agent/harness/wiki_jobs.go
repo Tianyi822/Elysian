@@ -358,6 +358,7 @@ func (m *Manager) completeWikiExtraction(ctx context.Context, profile model.Prof
 	case <-timer.C:
 		m.mu.Lock()
 		m.unresponsive = true
+		m.blockedExecution = false
 		m.blocked = "长期记忆模型请求未确认停止，任务派发已暂停，请重启面板后检查"
 		m.mu.Unlock()
 		return model.Response{}, bad("model-unresponsive", "长期记忆模型请求未确认停止")

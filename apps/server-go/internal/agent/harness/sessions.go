@@ -2,6 +2,7 @@ package harness
 
 import (
 	"context"
+	"elysian/server/internal/agent/tools"
 	"encoding/json"
 	"reflect"
 	"strconv"
@@ -194,14 +195,56 @@ func (m *Manager) RenameSession(ctx context.Context, id string, input RenameSess
 	return session, storageFailure(err)
 }
 
-// DeleteSession 拒绝忙碌与存在结果未确认执行的会话；级联删除与保留期清理共用同一模板。
+// DeleteSession 在同一派发锁内删除持久事实并关闭执行入口，不等待模型或工具回执。
 func (m *Manager) DeleteSession(ctx context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
 		return closedError()
 	}
-	return storageFailure(m.store.deleteSession(ctx, id))
+	runs, err := readDocuments[Run](ctx, m.store.db, "SELECT document FROM runs WHERE session_id=?", id)
+	if err != nil {
+		return storageFailure(err)
+	}
+	var tasks []tools.TaskReference
+	for _, run := range runs {
+		if execution := m.executionLocked(run.ID); execution != nil {
+			tasks = append(tasks, execution.tasks...)
+		}
+	}
+	if err = m.store.deleteSession(ctx, id, tasks...); err != nil {
+		if commitUnconfirmed(err) {
+			m.storageFailedLocked()
+		}
+		return storageFailure(err)
+	}
+	for _, run := range runs {
+		if execution := m.executionLocked(run.ID); execution != nil {
+			execution.deleted = true
+			execution.finishing = true
+			if execution.deletedDone != nil {
+				close(execution.deletedDone)
+			}
+			execution.cancel()
+			delete(m.executions, run.ID)
+		}
+	}
+	if m.blockedExecution && !m.storageError {
+		blocked := false
+		for _, execution := range m.executions {
+			blocked = blocked || execution.unresponsive
+		}
+		if !blocked {
+			m.blocked, m.blockedExecution = "", false
+		}
+	}
+	m.refreshLegacyLocked()
+	m.signal()
+	select {
+	case m.taskCancelWake <- struct{}{}:
+	default:
+	}
+	return nil
 }
 
 func (m *Manager) GetSession(ctx context.Context, id string) (Session, error) {

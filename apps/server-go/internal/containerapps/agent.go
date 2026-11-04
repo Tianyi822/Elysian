@@ -284,3 +284,21 @@ func (a *AgentFacade) Cancel(ctx context.Context, slug, id string) (BuildTask, e
 	}
 	return task, nil
 }
+
+// CancelOwnedTask 仅供宿主删除会话后取消精确归属的任务。
+func (a *AgentFacade) CancelOwnedTask(ctx context.Context, id, requestID string) error {
+	status, err := a.InspectTask(ctx, id)
+	if err != nil {
+		return err
+	}
+	if requestID == "" || status.RequestID != requestID {
+		return errors.New("镜像构建任务身份不匹配")
+	}
+	m := a.handler.Builds
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if stop := m.cancel[id]; stop != nil {
+		stop()
+	}
+	return nil
+}

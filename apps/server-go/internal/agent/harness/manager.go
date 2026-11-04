@@ -26,6 +26,7 @@ type ToolInvoker interface {
 
 type Deps struct {
 	InspectTask           func(context.Context, tools.TaskReference) (tools.TaskStatus, error)
+	CancelTask            func(context.Context, tools.TaskReference) error
 	LookupTask            func(context.Context, tools.TaskReference) (tools.TaskReference, error)
 	WorkflowRecoveryFence string
 	DispatchGuard         func() error
@@ -47,31 +48,34 @@ type Deps struct {
 
 // Manager 是父进程的唯一状态写入者。Worker 的消息只能提出请求，不能指定终态。
 type Manager struct {
-	executions     map[string]*executionState
-	workers        []*workerSlot
-	probes         sync.WaitGroup
-	probeCancels   map[string]context.CancelFunc
-	mu             sync.Mutex
-	store          *store
-	deps           Deps
-	ctx            context.Context
-	cancel         context.CancelFunc
-	wake           chan struct{}
-	done           chan struct{}
-	closed         bool
-	workerState    string
-	activeID       string
-	finishing      bool
-	blocked        string
-	storageError   bool
-	unresponsive   bool
-	closeOnce      sync.Once
-	closeDone      chan struct{}
-	closeErr       error
-	toolRuntime    *tools.Runtime
-	toolAuthority  *tools.Authority
-	ownToolRuntime bool
-	taskDone       chan struct{}
+	blockedExecution bool
+	taskCancelWake   chan struct{}
+	taskCleanupDone  chan struct{}
+	executions       map[string]*executionState
+	workers          []*workerSlot
+	probes           sync.WaitGroup
+	probeCancels     map[string]context.CancelFunc
+	mu               sync.Mutex
+	store            *store
+	deps             Deps
+	ctx              context.Context
+	cancel           context.CancelFunc
+	wake             chan struct{}
+	done             chan struct{}
+	closed           bool
+	workerState      string
+	activeID         string
+	finishing        bool
+	blocked          string
+	storageError     bool
+	unresponsive     bool
+	closeOnce        sync.Once
+	closeDone        chan struct{}
+	closeErr         error
+	toolRuntime      *tools.Runtime
+	toolAuthority    *tools.Authority
+	ownToolRuntime   bool
+	taskDone         chan struct{}
 	// tokenEstimates 保存每模型 token 比例与官方分词器缓存；重启丢弃，只影响估算精度，不影响保守回退。
 	tokenEstimates tokenEstimateStore
 }
@@ -143,7 +147,10 @@ func New(deps Deps) (*Manager, error) {
 		_ = s.close()
 		return nil, fmt.Errorf("恢复执行授权撤销状态失败：%w", err)
 	}
+	m.taskCancelWake = make(chan struct{}, 1)
+	m.taskCleanupDone = make(chan struct{})
 	go m.loop()
+	go m.taskCleanupLoop()
 	go m.taskMonitorLoop()
 	return m, nil
 }
@@ -433,6 +440,7 @@ func closedError() error {
 }
 func (m *Manager) storageFailedLocked() {
 	m.storageError = true
+	m.blockedExecution = false
 	m.blocked = "运行状态写入失败，已停止派发任务"
 	for _, execution := range m.executions {
 		execution.cancel()
@@ -730,7 +738,7 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 		}
 		runCtx, cancel := context.WithTimeout(m.ctx, remaining)
 		activeStart := m.deps.Now()
-		execution := &executionState{runID: r.ID, rootID: executionRoot(r), cancel: cancel}
+		execution := &executionState{deletedDone: make(chan struct{}), runID: r.ID, rootID: executionRoot(r), cancel: cancel}
 		m.executions[r.ID] = execution
 		m.refreshLegacyLocked()
 		m.signal()
@@ -767,10 +775,11 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 			select {
 			case <-callDone:
 				timer.Stop()
+			case <-execution.deletedDone:
+				timer.Stop()
 			case <-timer.C:
 				m.mu.Lock()
-				execution.unresponsive = true
-				m.blocked = "工具未确认停止，任务派发已暂停，请重启面板后检查"
+				m.executionUnresponsiveLocked(execution, "工具未确认停止，任务派发已暂停，请重启面板后检查")
 				m.mu.Unlock()
 			}
 		}
@@ -790,7 +799,7 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 		}
 		m.mu.Lock()
 		var interrupted *worker.InterruptedError
-		if !m.storageError {
+		if !m.storageError && !execution.deleted {
 			_, e := m.store.change(context.Background(), r.ID, "active-time", func(tx *sql.Tx, current *Run) error {
 				elapsed := m.deps.Now().Sub(activeStart)
 				if err := m.workflowSettleTime(context.Background(), tx, current, elapsed); err != nil {
@@ -803,7 +812,7 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 				m.storageFailedLocked()
 			}
 		}
-		if !m.storageError {
+		if !m.storageError && !execution.deleted {
 			current, getErr := m.store.get(context.Background(), r.ID)
 			if getErr != nil {
 				m.storageFailedLocked()
@@ -840,7 +849,7 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 				m.finishLocked(r.ID, state, reason, message)
 			}
 		}
-		if !execution.unresponsive {
+		if !execution.unresponsive || execution.deleted {
 			delete(m.executions, r.ID)
 			m.refreshLegacyLocked()
 			m.signal()
@@ -944,6 +953,7 @@ func (m *Manager) Close(ctx context.Context) error {
 		go func() {
 			<-m.done
 			<-m.taskDone
+			<-m.taskCleanupDone
 			m.probes.Wait()
 			if m.ownToolRuntime {
 				m.closeErr = errors.Join(m.closeErr, m.toolRuntime.Close(context.Background()))

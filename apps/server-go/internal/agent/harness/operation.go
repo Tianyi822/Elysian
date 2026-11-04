@@ -169,6 +169,10 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 	m.mu.Lock()
 	execution := m.executionLocked(a.run.ID)
 	dbCtx := context.Background()
+	if execution == nil || execution.deleted || ctx.Err() != nil {
+		m.mu.Unlock()
+		return context.Canceled
+	}
 	run, err := m.store.get(dbCtx, a.run.ID)
 	if err != nil {
 		m.storageFailedLocked()
@@ -202,8 +206,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 	defer func() {
 		if closeErr := closeScope(); closeErr != nil {
 			m.mu.Lock()
-			execution.unresponsive = true
-			m.blocked = "MCP 容器停止未确认，任务派发已暂停"
+			m.executionUnresponsiveLocked(execution, "MCP 容器停止未确认，任务派发已暂停")
 			m.mu.Unlock()
 			operationErr = errors.Join(operationErr, closeErr)
 		}
@@ -615,6 +618,9 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 				result.e = bad("operation-failed", "操作内部错误")
 				result.r.Unknown = !c.ReadOnly || externalOperation(o)
 			}
+			if result.r.Task != nil {
+				m.rememberExecutionTask(execution, *result.r.Task)
+			}
 			results <- result
 		}()
 		if result.e = m.store.recordsFault(); result.e != nil {
@@ -642,17 +648,21 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 	var result outcome
 	select {
 	case result = <-results:
+	case <-execution.deletedDone:
+		return context.Canceled
 	case <-callCtx.Done():
 		timer := time.NewTimer(time.Duration(run.Limits.CancelGraceSeconds) * time.Second)
 		select {
 		case result = <-results:
 			timer.Stop()
+		case <-execution.deletedDone:
+			timer.Stop()
+			return context.Canceled
 		case <-timer.C:
 			result.e = bad("operation-unresponsive", "操作未确认停止")
 			result.r.Unknown = true
 			m.mu.Lock()
-			execution.unresponsive = true
-			m.blocked = "操作未确认停止，任务派发已暂停"
+			m.executionUnresponsiveLocked(execution, "操作未确认停止，任务派发已暂停")
 			m.mu.Unlock()
 		}
 	}
@@ -680,6 +690,9 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if execution.deleted {
+		return context.Canceled
+	}
 	if m.storageError {
 		return storageFailure(errors.New("存储失败"))
 	}

@@ -1153,7 +1153,7 @@ describe('会话列表编辑入口', () => {
     await user.click(screen.getAllByRole('button', { name: '编辑会话' })[0]!)
     await user.click(await screen.findByRole('menuitem', { name: '删除会话' }))
     const confirm = await screen.findByRole('dialog', { name: `删除会话「${longTitle}」？` })
-    expect(confirm).toHaveTextContent('删除后该会话的聊天记录与运行历史将一并清除，且不可恢复。')
+    expect(confirm).toHaveTextContent('删除将立即终止该会话的运行和待执行任务，清除聊天记录与运行历史，且不可恢复。')
     await user.click(within(confirm).getByRole('button', { name: '确认删除' }))
     await waitFor(() => expect(backend.api.deleteSession).toHaveBeenCalledExactlyOnceWith('server-session'))
     await waitFor(() => expect(useAgentChatStore.getState().remoteSession?.id).toBe('history-b'))
@@ -1195,7 +1195,7 @@ describe('会话列表编辑入口', () => {
     expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
   })
 
-  it('会话运行中时删除项禁用并说明原因', async () => {
+  it('会话运行中仍可强制删除并说明终止行为', async () => {
     const user = userEvent.setup()
     const backend = chatTestApi()
     const running = { ...backend.session, id: 'running-session', title: '运行中会话', activeRunId: 'run-x' }
@@ -1205,12 +1205,13 @@ describe('会话列表编辑入口', () => {
     await waitFor(() => expect(useAgentChatStore.getState().remoteSession?.id).toBe('running-session'))
     await user.click(screen.getAllByRole('button', { name: '编辑会话' })[0]!)
     const item = await screen.findByRole('menuitem', { name: /删除会话/ })
-    expect(item).toHaveAttribute('aria-disabled', 'true')
-    expect(item).toHaveTextContent('会话运行中或执行结果未确认时不能删除')
-    await user.click(screen.getByRole('menuitem', { name: '重命名' }))
-    // 运行中仍可改名：标题是纯展示字段。
-    expect(await screen.findByRole('dialog', { name: '重命名会话' })).toBeInTheDocument()
-    expect(backend.api.deleteSession).not.toHaveBeenCalled()
+    expect(item).not.toHaveAttribute('aria-disabled', 'true')
+    await user.click(item)
+    const dialog = await screen.findByRole('dialog', { name: '删除会话「运行中会话」？' })
+    expect(dialog).toHaveTextContent('立即终止该会话的运行和待执行任务')
+    await user.click(within(dialog).getByRole('button', { name: '确认删除' }))
+    await waitFor(() => expect(backend.api.deleteSession).toHaveBeenCalledWith('running-session'))
+
   })
 })
 

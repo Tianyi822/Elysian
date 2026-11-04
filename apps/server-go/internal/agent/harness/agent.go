@@ -489,15 +489,19 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 	var result modelOutcome
 	select {
 	case result = <-resultCh:
+	case <-execution.deletedDone:
+		return record, context.Canceled
 	case <-callCtx.Done():
 		timer := time.NewTimer(time.Duration(run.Limits.CancelGraceSeconds) * time.Second)
 		select {
 		case result = <-resultCh:
 			timer.Stop()
+		case <-execution.deletedDone:
+			timer.Stop()
+			return record, context.Canceled
 		case <-timer.C:
 			m.mu.Lock()
-			execution.unresponsive = true
-			m.blocked = "模型请求未确认停止，任务派发已暂停，请重启面板后检查"
+			m.executionUnresponsiveLocked(execution, "模型请求未确认停止，任务派发已暂停，请重启面板后检查")
 			m.mu.Unlock()
 			return record, &Error{Status: 503, Code: "model-unresponsive", Message: "模型请求未确认停止，运行结果未确认"}
 		}

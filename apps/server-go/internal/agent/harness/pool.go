@@ -7,12 +7,16 @@ import (
 	"time"
 
 	"elysian/server/internal/agent/harness/worker"
+	"elysian/server/internal/agent/tools"
 )
 
 // executionState contains only one run's in-memory protocol and cancellation
 // state. Durable facts remain in the parent store and Manager.mu guards this
 // projection independently for each active run.
 type executionState struct {
+	tasks        []tools.TaskReference
+	deleted      bool
+	deletedDone  chan struct{}
 	runID        string
 	rootID       string
 	cancel       context.CancelFunc
@@ -112,5 +116,16 @@ func (m *Manager) refreshLegacyLocked() {
 			m.activeID = id
 		}
 		m.finishing = m.finishing || execution.finishing
+	}
+}
+
+// 已删除运行的迟到错误不再冻结其他会话；其他故障来源仍保持原有屏障。
+func (m *Manager) executionUnresponsiveLocked(execution *executionState, message string) {
+	if execution.deleted {
+		return
+	}
+	execution.unresponsive = true
+	if !m.storageError && (m.blocked == "" || m.blockedExecution) {
+		m.blocked, m.blockedExecution = message, true
 	}
 }

@@ -246,3 +246,20 @@ func (a *AgentFacade) RemoveImage(ctx context.Context, id string) error {
 	}
 	return a.service.RemoveImage(ctx, id)
 }
+
+// CancelOwnedTask 仅供宿主删除会话后取消精确归属的任务。
+func (a *AgentFacade) CancelOwnedTask(ctx context.Context, id, requestID string) error {
+	task, err := a.InspectPull(ctx, id)
+	if err != nil {
+		return err
+	}
+	if requestID == "" || task.RequestID != requestID {
+		return errors.New("镜像任务身份不匹配")
+	}
+	a.taskMu.Lock()
+	defer a.taskMu.Unlock()
+	if stop := a.pullCancel[id]; stop != nil {
+		stop()
+	}
+	return nil
+}

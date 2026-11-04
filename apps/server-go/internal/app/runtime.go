@@ -74,6 +74,7 @@ type harnessAssemblyOptions struct {
 	NewManager  func(harness.Deps) (http.Handler, func(context.Context) error, error)
 	Recover     func(context.Context, *execution.Executor) error
 	Plugins     []*kardia.Plugin
+	CancelTask  func(context.Context, tools.TaskReference) error
 	InspectTask func(context.Context, tools.TaskReference) (tools.TaskStatus, error)
 	LookupTask  func(context.Context, tools.TaskReference) (tools.TaskReference, error)
 }
@@ -114,6 +115,7 @@ func assembleProductionHarness(cfg *config.Config, views seam.DockerViews, optio
 	register(bridge.Close)
 	profiles, profileErr := model.Open(options.Paths.AgentModels)
 	deps := harness.Deps{Path: options.Paths.HarnessSqlite, EmbeddingConfigPath: options.Paths.AgentEmbeddings, Tools: bridge, Profiles: profiles, WorkflowRecoveryFence: panel.WorkflowRecoveryFencePath(options.Home)}
+	deps.CancelTask = options.CancelTask
 	deps.InspectTask = options.InspectTask
 	deps.LookupTask = options.LookupTask
 	deps.Limits = harness.DefaultLimits()

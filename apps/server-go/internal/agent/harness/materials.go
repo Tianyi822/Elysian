@@ -241,6 +241,7 @@ func (m *Manager) Revoke(ctx context.Context, kind, id string, revision int, rea
 		}
 		if err != nil {
 			m.mu.Lock()
+			m.blockedExecution = false
 			m.blocked = "撤销已保存，但受管容器停止未确认，任务派发已暂停"
 			m.mu.Unlock()
 			return capabilityError(err)

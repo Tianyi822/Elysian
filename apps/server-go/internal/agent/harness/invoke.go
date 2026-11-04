@@ -134,15 +134,19 @@ func (m *Manager) invoke(ctx context.Context, run Run, index int, name string, a
 	var result toolResponse
 	select {
 	case result = <-response:
+	case <-execution.deletedDone:
+		return nil, context.Canceled
 	case <-callCtx.Done():
 		grace := time.NewTimer(time.Duration(run.Limits.CancelGraceSeconds) * time.Second)
 		select {
 		case result = <-response:
 			grace.Stop()
+		case <-execution.deletedDone:
+			grace.Stop()
+			return nil, context.Canceled
 		case <-grace.C:
 			m.mu.Lock()
-			execution.unresponsive = true
-			m.blocked = "工具未确认停止，任务派发已暂停，请重启面板后检查"
+			m.executionUnresponsiveLocked(execution, "工具未确认停止，任务派发已暂停，请重启面板后检查")
 			m.mu.Unlock()
 			return nil, &Error{Status: 503, Code: "tool-unresponsive", Message: "工具未确认停止，结果未确认"}
 		}

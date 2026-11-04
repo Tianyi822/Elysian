@@ -55,6 +55,12 @@ func TestAgentPullDurableIdentityKeepsUnknownDespiteInstalledTag(t *testing.T) {
 	if _, err = facade.PullStatus(context.Background(), "redis:7", task.ID, true); err == nil {
 		t.Fatal("foreign target accepted")
 	}
+	if err = facade.CancelOwnedTask(context.Background(), task.ID, "foreign-request"); err == nil {
+		t.Fatal("宿主取消接受了错误任务身份")
+	}
+	if err = facade.CancelOwnedTask(context.Background(), task.ID, requestID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = facade.PullStatus(context.Background(), task.ImageRef, task.ID, true); err != nil {
 		t.Fatal(err)
 	}

@@ -94,6 +94,10 @@ func (m *Manager) monitorTasks() {
 		}
 		m.mu.Lock()
 		if !m.closed && !m.storageError {
+			if _, err := m.store.get(context.Background(), operation.RunID); isNotFound(err) {
+				m.mu.Unlock()
+				continue
+			}
 			if err := m.settleDomainTask(operation, status); err != nil {
 				m.storageFailedLocked()
 			}

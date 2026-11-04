@@ -60,7 +60,7 @@ export function SessionRemoveDialog({ target, onClose }: {
           className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl"
         >
           <Dialog.Title className="text-sm font-semibold">删除会话「{target.title}」？</Dialog.Title>
-          <p className="mt-1.5 text-xs text-fg-muted">删除后该会话的聊天记录与运行历史将一并清除，且不可恢复。</p>
+          <p className="mt-1.5 text-xs text-fg-muted">删除将立即终止该会话的运行和待执行任务，清除聊天记录与运行历史，且不可恢复。已发生的外部变更不会回滚。</p>
           {error && <p role="alert" className="mt-2 text-xs text-danger">{error}</p>}
           <div className="mt-4 flex justify-end gap-2">
             <button

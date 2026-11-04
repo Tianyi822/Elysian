@@ -1949,7 +1949,7 @@ describe('会话重命名与删除', () => {
     expect(local.adapter.read('session-b')).toMatchObject({ draft: 'B 草稿' })
   })
 
-  it('发送在途时拒绝重命名与删除', async () => {
+  it('发送在途仍可删除会话，重命名保持锁定', async () => {
     const store = localMemory().makeStore()
     const backend = chatTestApi()
     await store.getState().ensureSession()
@@ -1960,6 +1960,55 @@ describe('会话重命名与删除', () => {
     await store.getState().renameSession(backend.api, backend.session.id, '新名')
     await store.getState().deleteSession(backend.api, backend.session.id)
     expect(backend.api.renameSession).not.toHaveBeenCalled()
-    expect(backend.api.deleteSession).not.toHaveBeenCalled()
+    expect(backend.api.deleteSession).toHaveBeenCalledWith(backend.session.id)
   })
+})
+
+
+it('强制删除发送中的会话后，迟到提交回执不能恢复记录或污染新会话', async () => {
+  const local = localMemory()
+  const store = local.makeStore()
+  const backend = chatTestApi()
+  const late = deferred<Awaited<ReturnType<typeof backend.api.createTask>>>()
+  backend.api.createTask.mockImplementationOnce(() => late.promise)
+  await store.getState().ensureSession()
+  store.getState().setDraft('删除这个请求')
+  const sending = store.getState().send(backend.api, chatTestModel)
+  await vi.waitFor(() => expect(backend.api.createTask).toHaveBeenCalled())
+  const requestId = local.adapter.read()?.pending?.input.requestId
+  await store.getState().deleteSession(backend.api, backend.session.id)
+  expect(store.getState().sending).toBe(false)
+  expect(store.getState().session?.remote).toBeUndefined()
+  const nextId = store.getState().session?.id
+  store.getState().setDraft('新会话草稿')
+  late.resolve({ id: 'late-deleted-run', taskId: 'deleted-task', sessionId: backend.session.id, requestId, status: 'running' })
+  await sending
+  expect(store.getState().session?.id).toBe(nextId)
+  expect(store.getState().session?.draft).toBe('新会话草稿')
+  expect(store.getState().run).toBeNull()
+  expect(local.adapter.read(backend.session.id)).toBeNull()
+})
+
+
+it('删除回执在登出后到达仍清理原记录，后到提交不能复活它', async () => {
+  const local = localMemory()
+  const store = local.makeStore()
+  const backend = chatTestApi()
+  const submit = deferred<Awaited<ReturnType<typeof backend.api.createTask>>>()
+  const remove = deferred<void>()
+  backend.api.createTask.mockImplementationOnce(() => submit.promise)
+  backend.api.deleteSession.mockImplementationOnce(() => remove.promise)
+  await store.getState().ensureSession()
+  store.getState().setDraft('即将删除')
+  const sending = store.getState().send(backend.api, chatTestModel)
+  await vi.waitFor(() => expect(backend.api.createTask).toHaveBeenCalled())
+  const deleting = store.getState().deleteSession(backend.api, backend.session.id)
+  store.getState().clearDisplay()
+  remove.resolve()
+  await deleting
+  submit.resolve({ id: 'late-run', taskId: 'late-task', sessionId: backend.session.id, status: 'running' })
+  await sending
+  expect(store.getState().session).toBeNull()
+  expect(store.getState().messages).toEqual([])
+  expect(local.adapter.read(backend.session.id)).toBeNull()
 })
