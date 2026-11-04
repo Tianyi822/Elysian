@@ -198,17 +198,18 @@ func (a *AgentFacade) CreateService(ctx context.Context, input AgentServiceCreat
 	if im, ok := asRecord(image); !ok || mustGet(im, "Config") == nil {
 		return nil, errors.New("镜像配置格式无效")
 	}
-	// 凭据：沿用同名既有登记（失败重试稳定），缺失才生成。
+	// 凭据：按变量名逐项沿用同名既有登记（失败重试与 adopt 稳定），缺失的逐名补生成。
 	record, err := a.credentials.find(input.Name)
 	if err != nil {
 		return nil, err
 	}
 	if record == nil {
-		generated := map[string]string{}
-		for _, name := range input.Credentials {
-			generated[name] = generateAgentSecret()
+		record = &agentServiceCredentialRecord{Name: input.Name, Credentials: map[string]string{}}
+	}
+	for _, name := range input.Credentials {
+		if _, exists := record.Credentials[name]; !exists {
+			record.Credentials[name] = generateAgentSecret()
 		}
-		record = &agentServiceCredentialRecord{Name: input.Name, Credentials: generated}
 	}
 	createdVolumes := []string{}
 	for range input.Volumes {

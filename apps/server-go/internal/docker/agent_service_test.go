@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -268,6 +269,74 @@ func TestCreateServiceStartFailureRemovesContainerAndVolumes(t *testing.T) {
 	}
 	if containerDeleteAt > volumeDeleteAt {
 		t.Fatal("回滚应先删容器再删卷")
+	}
+}
+
+var agentSecret48Pattern = regexp.MustCompile(`^[0-9a-f]{48}$`)
+
+// 既有登记只覆盖部分变量名时，缺失的逐名补生成；已有变量值保持不变。
+func TestCreateServiceFillsMissingCredentialsPerName(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent-service-containers.json")
+	store := newAgentCredentialStore(path)
+	oldSecret := strings.Repeat("o", 48)
+	if err := store.save(agentServiceCredentialRecord{Name: "mysql-main", Credentials: map[string]string{"OLD_VAR": oldSecret}}); err != nil {
+		t.Fatal(err)
+	}
+	engine := newFakeEngine(scriptServiceCreate)
+	service := newDockerService(serviceDeps{
+		transport:       engine,
+		mountRoot:       "/srv",
+		reservedPorts:   []int{22, 48100, 48101},
+		selfContainerID: strings.Repeat("f", 64),
+	})
+	facade := &AgentFacade{
+		service:     service,
+		authorize:   func(context.Context) error { return nil },
+		credentials: store,
+		portOpener:  &recordingPortOpener{},
+	}
+	if _, err := facade.CreateService(context.Background(), AgentServiceCreateInput{
+		Name: "mysql-main", Image: agentServiceImage, RequestID: "req-1",
+		ResourceTier: "medium", NetworkScope: "container-net", Port: 3306,
+		Credentials: []string{"OLD_VAR", "NEW_VAR"}, Volumes: []string{"/var/lib/mysql"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	record, err := facade.credentials.find("mysql-main")
+	if err != nil || record == nil {
+		t.Fatalf("凭据登记缺失：%v %v", record, err)
+	}
+	if record.Credentials["OLD_VAR"] != oldSecret {
+		t.Fatalf("既有变量值不应重新生成：%q", record.Credentials["OLD_VAR"])
+	}
+	if !agentSecret48Pattern.MatchString(record.Credentials["NEW_VAR"]) {
+		t.Fatalf("新增变量应逐名补生成 48 位十六进制：%q", record.Credentials["NEW_VAR"])
+	}
+	var createBody struct {
+		Env []string `json:"Env"`
+	}
+	found := false
+	for _, call := range engine.Requests() {
+		if call.Method == http.MethodPost && call.Path == "/containers/create" {
+			if err := json.Unmarshal([]byte(call.Body), &createBody); err != nil {
+				t.Fatalf("create 请求体解析失败：%v", err)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("未录到容器创建请求")
+	}
+	envValues := map[string]string{}
+	for _, entry := range createBody.Env {
+		key, value, _ := strings.Cut(entry, "=")
+		envValues[key] = value
+	}
+	if envValues["OLD_VAR"] != oldSecret {
+		t.Fatalf("Env 中既有变量值不符：%q", envValues["OLD_VAR"])
+	}
+	if !agentSecret48Pattern.MatchString(envValues["NEW_VAR"]) {
+		t.Fatalf("Env 中新增变量值必须非空 48 位：%q", envValues["NEW_VAR"])
 	}
 }
 
