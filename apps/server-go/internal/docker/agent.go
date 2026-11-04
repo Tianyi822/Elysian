@@ -13,19 +13,22 @@ import (
 	"sync"
 
 	"elysian/server/internal/contract"
+	"elysian/server/internal/seam"
 	"elysian/server/internal/shared"
 )
 
 // AgentFacade exposes a narrow, host-owned capability surface, never Engine.
 type AgentFacade struct {
-	service    *dockerService
-	authorize  func(context.Context) error
-	taskMu     sync.Mutex
-	pullTasks  map[string]*AgentPullTask
-	taskRoot   string
-	pullCancel map[string]context.CancelFunc
-	taskWG     sync.WaitGroup
-	closed     bool
+	service     *dockerService
+	authorize   func(context.Context) error
+	credentials *agentCredentialStore
+	portOpener  seam.PortOpener
+	taskMu      sync.Mutex
+	pullTasks   map[string]*AgentPullTask
+	taskRoot    string
+	pullCancel  map[string]context.CancelFunc
+	taskWG      sync.WaitGroup
+	closed      bool
 }
 
 func (a *AgentFacade) Authorize(ctx context.Context) error { return a.check(ctx) }
