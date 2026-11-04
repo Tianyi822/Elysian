@@ -150,3 +150,107 @@ func TestCreateServiceRejectsBadInputs(t *testing.T) {
 		}
 	}
 }
+
+// serviceTargetInspectBody 按模板标签构造容器 inspect 应答；顶层含 Image 与
+// Mounts，满足 safeTarget 核验与 mapContainer 回读。
+func serviceTargetInspectBody(template string, digest string, readonlyRoot bool, mounts []any) string {
+	body := map[string]any{
+		"Id": strings.Repeat("c", 64), "Name": "/mysql-main", "Created": "2026-11-04T00:00:00Z",
+		"Image": agentServiceImage,
+		"State": map[string]any{"Status": "running"},
+		"Config": map[string]any{"Image": agentServiceImage, "Labels": map[string]string{
+			labelManaged: labelTrueValue, "elysian.agent.template": template,
+			"elysian.agent.create-digest": digest,
+		}},
+		"HostConfig": map[string]any{"NetworkMode": "elysian-agent-net", "ReadonlyRootfs": readonlyRoot},
+		"Mounts":     mounts,
+	}
+	raw, _ := json.Marshal(body)
+	return string(raw)
+}
+
+func TestCreateServiceAdoptReusesCredentialsWithoutRegeneration(t *testing.T) {
+	opener := &recordingPortOpener{}
+	created := newServiceFacade(t, scriptServiceCreate, opener)
+	input := AgentServiceCreateInput{
+		Name: "mysql-main", Image: agentServiceImage, RequestID: "req-1",
+		ResourceTier: "medium", NetworkScope: "container-net", Port: 3306,
+		Credentials: []string{"MYSQL_ROOT_PASSWORD"}, Volumes: []string{"/var/lib/mysql"},
+	}
+	if _, err := created.CreateService(context.Background(), input); err != nil {
+		t.Fatal(err)
+	}
+	first, _ := created.credentials.find("mysql-main")
+	// 第二次同参数请求：容器已存在（inspect 200，标签 digest 匹配），应 adopt 且凭据不变。
+	digest := serviceCreateDigest(input)
+	script := func(call engineCall) (int, string, bool) {
+		if call.Method == http.MethodGet && strings.HasSuffix(call.Path, "/json") {
+			return http.StatusOK, serviceTargetInspectBody(agentServiceTemplate, digest, false, []any{
+				map[string]any{"Type": "volume", "Name": "elysian-agent-v1", "Destination": "/var/lib/mysql"},
+			}), true
+		}
+		return 0, "", false
+	}
+	retry := newServiceFacadeWithStore(t, script, created.credentials.path, &recordingPortOpener{})
+	result, err := retry.CreateService(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if names, _ := result["credentials"].([]string); len(names) != 1 {
+		t.Fatalf("adopt 回执应报凭据变量名：%v", result["credentials"])
+	}
+	second, _ := retry.credentials.find("mysql-main")
+	if second.Credentials["MYSQL_ROOT_PASSWORD"] != first.Credentials["MYSQL_ROOT_PASSWORD"] {
+		t.Fatal("adopt 不应重新生成凭据")
+	}
+}
+
+// service-v1 容器可被 start/stop/restart/remove 操作；restricted-v1 核验保持不变。
+func TestSafeTargetAcceptsServiceTemplateAndKeepsRestrictedChecks(t *testing.T) {
+	facade := newServiceFacade(t, func(call engineCall) (int, string, bool) {
+		if call.Method == http.MethodGet && strings.HasPrefix(call.Path, "/containers/") && strings.HasSuffix(call.Path, "/json") {
+			return http.StatusOK, serviceTargetInspectBody(agentServiceTemplate, "digest-1", false, []any{
+				map[string]any{"Type": "volume", "Name": agentVolumePrefix + "v1", "Destination": "/var/lib/mysql"},
+			}), true
+		}
+		if call.Method == http.MethodPost && strings.HasSuffix(call.Path, "/stop") {
+			return http.StatusNoContent, "", true
+		}
+		return 0, "", false
+	}, &recordingPortOpener{})
+	if _, err := facade.Action(context.Background(), strings.Repeat("c", 64), "stop"); err != nil {
+		t.Fatalf("service-v1 容器应可停止：%v", err)
+	}
+}
+
+// service-v1 挂载非 elysian-agent- 卷（宿主绑定）必须拒绝。
+func TestSafeTargetRejectsForeignMounts(t *testing.T) {
+	facade := newServiceFacade(t, func(call engineCall) (int, string, bool) {
+		if call.Method == http.MethodGet && strings.HasSuffix(call.Path, "/json") {
+			return http.StatusOK, serviceTargetInspectBody(agentServiceTemplate, "digest-1", false, []any{
+				map[string]any{"Type": "bind", "Source": "/srv/www", "Destination": "/var/www"},
+			}), true
+		}
+		return 0, "", false
+	}, &recordingPortOpener{})
+	if _, err := facade.Action(context.Background(), strings.Repeat("c", 64), "stop"); err == nil {
+		t.Fatal("宿主绑定挂载的容器不得被 Agent 操作")
+	}
+}
+
+// restricted-v1 容器（无网络、只读根）继续通过既有核验路径操作。
+func TestSafeTargetKeepsRestrictedPath(t *testing.T) {
+	script := func(call engineCall) (int, string, bool) {
+		if call.Method == http.MethodGet && strings.HasSuffix(call.Path, "/json") {
+			return http.StatusOK, `{"Id":"` + strings.Repeat("c", 64) + `","Name":"/task-box","Created":"2026-11-04T00:00:00Z","Image":"task-image@sha256:` + strings.Repeat("a", 64) + `","State":{"Status":"running"},"Config":{"User":"65532:65532","Labels":{"` + labelManaged + `":"true","elysian.agent.template":"restricted-v1"}},"HostConfig":{"NetworkMode":"none","ReadonlyRootfs":true,"CapDrop":["ALL"],"SecurityOpt":["no-new-privileges:true"]},"Mounts":[]}`, true
+		}
+		if call.Method == http.MethodPost && strings.HasSuffix(call.Path, "/stop") {
+			return http.StatusNoContent, "", true
+		}
+		return 0, "", false
+	}
+	facade := newServiceFacade(t, script, &recordingPortOpener{})
+	if _, err := facade.Action(context.Background(), strings.Repeat("c", 64), "stop"); err != nil {
+		t.Fatalf("restricted-v1 核验不应被破坏：%v", err)
+	}
+}

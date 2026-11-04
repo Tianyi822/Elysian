@@ -97,16 +97,8 @@ func (a *AgentFacade) safeTarget(ctx context.Context, id string) (string, error)
 	if labels == nil || host == nil {
 		return "", errors.New("容器权限身份无效")
 	}
-	user, _ := asString(mustGet(cfg, "User"))
-	managed, _ := asString(mustGet(labels, labelManaged))
-	if managed != labelTrueValue || user == "" || strings.Split(user, ":")[0] == "0" || strings.Split(user, ":")[0] == "root" || selfInspectCheck(value, a.service.deps.selfContainerID) {
-		return "", shared.InvalidRequest("Agent 只操作已纳管的非 root 安全容器")
-	}
-	if mustGet(labels, "elysian.agent.template") != "restricted-v1" || mustGet(host, "ReadonlyRootfs") != true || mustGet(host, "NetworkMode") != "none" {
-		return "", shared.InvalidRequest("Agent 仅操作固定安全模板容器")
-	}
-	if !hasAgentOption(mustGet(host, "CapDrop"), "ALL") || !hasAgentOption(mustGet(host, "SecurityOpt"), "no-new-privileges:true") {
-		return "", shared.InvalidRequest("Agent 容器缺少强制权限隔离")
+	if mustGet(labels, labelManaged) != labelTrueValue || selfInspectCheck(value, a.service.deps.selfContainerID) {
+		return "", shared.InvalidRequest("Agent 只操作已纳管的安全容器")
 	}
 	for _, key := range []string{"elysian.database", "elysian.website", "elysian.agent.execution"} {
 		if mustGet(labels, key) == "true" {
@@ -126,9 +118,49 @@ func (a *AgentFacade) safeTarget(ctx context.Context, id string) (string, error)
 			return "", shared.InvalidRequest("Agent 不操作额外设备或权限容器")
 		}
 	}
+	switch mustGet(labels, "elysian.agent.template") {
+	case "restricted-v1":
+		return a.guardRestrictedTarget(value, r, cfg, labels, host)
+	case agentServiceTemplate:
+		return a.guardServiceTarget(value, r, host)
+	}
+	return "", shared.InvalidRequest("Agent 仅操作固定安全模板容器")
+}
+
+// guardRestrictedTarget 是 restricted-v1（一次性任务容器）的既有核验，语义不变。
+func (a *AgentFacade) guardRestrictedTarget(value any, r, cfg, labels, host *jsonObject) (string, error) {
+	user, _ := asString(mustGet(cfg, "User"))
+	if user == "" || strings.Split(user, ":")[0] == "0" || strings.Split(user, ":")[0] == "root" {
+		return "", shared.InvalidRequest("Agent 只操作已纳管的非 root 安全容器")
+	}
+	if mustGet(host, "ReadonlyRootfs") != true || mustGet(host, "NetworkMode") != "none" {
+		return "", shared.InvalidRequest("Agent 仅操作固定安全模板容器")
+	}
+	if !hasAgentOption(mustGet(host, "CapDrop"), "ALL") || !hasAgentOption(mustGet(host, "SecurityOpt"), "no-new-privileges:true") {
+		return "", shared.InvalidRequest("Agent 容器缺少强制权限隔离")
+	}
+	if mounts, ok := mustGet(r, "Mounts").([]any); ok && len(mounts) != 0 {
+		return "", shared.InvalidRequest("通用容器工具不操作任何持久挂载")
+	}
+	return requireID(value, "容器")
+}
+
+// guardServiceTarget 是 service-v1（服务容器）的核验：只认面板托管的 elysian-agent- 卷。
+func (a *AgentFacade) guardServiceTarget(value any, r, host *jsonObject) (string, error) {
+	if mustGet(host, "ReadonlyRootfs") == true {
+		return "", shared.InvalidRequest("服务模板容器不得为只读根")
+	}
 	if mounts, ok := mustGet(r, "Mounts").([]any); ok {
-		if len(mounts) != 0 {
-			return "", shared.InvalidRequest("通用容器工具不操作任何持久挂载")
+		for _, mount := range mounts {
+			record, ok := asRecord(mount)
+			if !ok {
+				return "", shared.InvalidRequest("服务容器挂载身份无效")
+			}
+			kind, _ := asString(mustGet(record, "Type"))
+			source, _ := asString(mustGet(record, "Name"))
+			if kind != "volume" || !strings.HasPrefix(source, agentVolumePrefix) {
+				return "", shared.InvalidRequest("Agent 仅操作面板托管的专属卷容器")
+			}
 		}
 	}
 	return requireID(value, "容器")
