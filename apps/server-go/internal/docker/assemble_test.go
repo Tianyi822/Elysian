@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -174,6 +175,28 @@ func TestAssembleSelfIDEmptyWhenNoMatch(t *testing.T) {
 	}
 	if stack.SelfID != "" {
 		t.Fatalf("无命中恒空：%q", stack.SelfID)
+	}
+}
+
+func TestAssembleInjectsCredentialsAndPortOpener(t *testing.T) {
+	// arrange 与既有成功装配用例相同（BareMetal 跳过容器闸门 + fake Engine 探测就绪），
+	// 仅追加凭据登记与端口开放接缝两个注入断言。
+	engine := newFakeEngine(probeEngineScript("1.44", ""))
+	useEngine(t, engine)
+	stack, err := Assemble(Deps{
+		Mode:                 config.ModeBareMetal,
+		SocketPath:           "/nonexistent.sock",
+		PortOpener:           seam.NoopPortOpener(),
+		AgentCredentialsPath: filepath.Join(t.TempDir(), "agent-service-containers.json"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stack.Agent.credentials == nil || stack.Agent.credentials.path == "" {
+		t.Fatal("装配应注入凭据登记存储")
+	}
+	if stack.Agent.portOpener == nil {
+		t.Fatal("装配应注入端口开放接缝")
 	}
 }
 

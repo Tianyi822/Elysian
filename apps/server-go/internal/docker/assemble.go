@@ -24,6 +24,11 @@ type Deps struct {
 	Logs       seam.Logs
 	Kit        seam.TerminalKit
 	Now        func() time.Time
+
+	// PortOpener 幂等开口接缝；nil 时 any-host 档回执标 skipped（与 NoopPortOpener 同语义）。
+	PortOpener seam.PortOpener
+	// AgentCredentialsPath 是 service-v1 凭据登记文件；空串时服务容器创建报未装配。
+	AgentCredentialsPath string
 }
 
 // Stack 装配产出：路由器与向 database/websites 分发的事实。
@@ -116,8 +121,12 @@ func Assemble(deps Deps) (Stack, error) {
 		execSessions: sessions,
 		logs:         deps.Logs,
 	})
+	agent := &AgentFacade{service: service, authorize: deps.AgentAuthorize, portOpener: deps.PortOpener}
+	if deps.AgentCredentialsPath != "" {
+		agent.credentials = newAgentCredentialStore(deps.AgentCredentialsPath)
+	}
 	return Stack{
-		Agent:  &AgentFacade{service: service, authorize: deps.AgentAuthorize},
+		Agent:  agent,
 		Router: router,
 		Engine: transport,
 		Views:  service,

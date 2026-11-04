@@ -22,6 +22,7 @@ import (
 	"mime"
 	"net/http"
 	"path"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 
@@ -111,23 +112,12 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 		authDeps.Sessions = auth.NewFileSessionStore(paths.Default.PanelSessions, authDeps.Now)
 	}
 
-	// 容器管理片最先装配：database/websites 的可用性与引擎事实由它分发。
 	agentAuthorize := func(ctx context.Context) error { return tools.ConsumeBackend(ctx, tools.DispatchID(ctx)) }
-	stack, err := docker.Assemble(docker.Deps{
-		AgentAuthorize: agentAuthorize,
-		ReservedPorts:  []int{22, cfg.PanelPorts().FrontendPort, cfg.PanelPorts().BackendPort},
-		Mode:           cfg.Mode(),
-		SocketPath:     cfg.DockerSocket,
-		MountRoot:      cfg.MountRoot,
-		Logs:           appLogs,
-		Kit:            terminals.NewKit(),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("装配容器管理片失败：%w", err)
-	}
 
 	// 防火墙片：可用性统一取 cfg.HostOpsAvailable()；端口自动开放接缝与防火墙片
 	// 同源（防火墙不可用时恒 skipped，行为与装配层注入 NoopPortOpener 一致）。
+	// firewallDeps 只依赖 cfg 与 agentAuthorize，构造先于 docker.Assemble，
+	// 容器 Agent 的服务容器创建与 websites/database 共用同一端口开放接缝。
 	firewallDeps := firewall.Deps{
 		AgentAuthorize: agentAuthorize,
 		Available:      cfg.HostOpsAvailable(),
@@ -140,6 +130,22 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 		return nil, fmt.Errorf("防火墙入口恢复失败：%w", err)
 	}
 	portOpener := firewall.NewPortOpener(firewallDeps)
+
+	// 容器管理片在依赖它的域（database/websites）之前装配：可用性与引擎事实由它分发。
+	stack, err := docker.Assemble(docker.Deps{
+		AgentAuthorize:       agentAuthorize,
+		ReservedPorts:        []int{22, cfg.PanelPorts().FrontendPort, cfg.PanelPorts().BackendPort},
+		Mode:                 cfg.Mode(),
+		SocketPath:           cfg.DockerSocket,
+		MountRoot:            cfg.MountRoot,
+		Logs:                 appLogs,
+		Kit:                  terminals.NewKit(),
+		PortOpener:           portOpener,
+		AgentCredentialsPath: filepath.Join(paths.ConfigDir, "agent-service-containers.json"),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("装配容器管理片失败：%w", err)
+	}
 
 	securityDeps := security.Deps{Available: cfg.HostOpsAvailable(), Mode: cfg.Mode(), SshPorts: firewall.NewSshPortOpener(firewallDeps), AgentAuthorize: agentAuthorize}
 	securityDeps.AgentFacade = security.NewAgentFacade(securityDeps)
