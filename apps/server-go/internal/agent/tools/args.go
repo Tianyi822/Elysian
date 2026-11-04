@@ -14,6 +14,26 @@ func StringArg(args Arguments, key string) (string, bool) {
 	return value, ok
 }
 
+// StringArrayArg 取字符串数组参数，逐项收窄为 string；缺失或类型不符时返回
+// nil，由调用方失败闭合。非字符串元素跳过，不伪造部分成功。
+func StringArrayArg(args Arguments, key string) []string {
+	raw, ok := args[key]
+	if !ok {
+		return nil
+	}
+	rows, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	values := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if text, ok := row.(string); ok {
+			values = append(values, text)
+		}
+	}
+	return values
+}
+
 // BoolArg 取布尔参数。
 func BoolArg(args Arguments, key string) (bool, bool) {
 	value, ok := args[key].(bool)

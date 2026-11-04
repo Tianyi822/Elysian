@@ -238,6 +238,53 @@ func (s *Service) descriptors() []tools.Descriptor {
 		}
 		return containerSummary(container), nil
 	}})
+	descriptors = append(descriptors, tools.Descriptor{
+		Name:        "docker_container_create_service",
+		Description: "审批后用 service-v1 模板创建并启动服务容器：本机已存在摘要镜像、可写根、专属卷与声明式凭据（只传变量名，值由后端生成且不出现在参数与回执）。resourceTier(small/medium/large) 与 networkScope(container-net/localhost/any-host) 先经 request_user_input 由用户选定再提交；any-host 必填 hostPort 并联动防火墙，localhost/any-host 必填容器端口 port。相同参数重试复用原 requestId",
+		Parameters: tools.Schema{Type: tools.SchemaObject, Required: []string{"name", "image", "requestId", "resourceTier", "networkScope"}, Properties: map[string]tools.Schema{
+			"name":         {Type: tools.SchemaString, Description: "容器名称"},
+			"image":        {Type: tools.SchemaString, Description: "本机已存在的镜像完整引用，名称:标签@sha256:64 位摘要"},
+			"requestId":    {Type: tools.SchemaString, Description: "稳定的请求标识；同请求重试必须复用原值与完整参数"},
+			"resourceTier": {Type: tools.SchemaString, Enum: tools.EnumOf("small", "medium", "large"), Description: "资源档位：small=512MiB+0.5CPU、medium=1GiB+1CPU、large=2GiB+2CPU"},
+			"networkScope": {Type: tools.SchemaString, Enum: tools.EnumOf("container-net", "localhost", "any-host"), Description: "网络档位：仅容器网络/本机回环/任意主机"},
+			"port":         {Type: tools.SchemaInteger, Description: "容器侧 TCP 端口；localhost 与 any-host 必填"},
+			"hostPort":     {Type: tools.SchemaInteger, Description: "宿主端口；仅 any-host 必填且不得为面板保留端口"},
+			"credentials":  {Type: tools.SchemaArray, Items: &tools.Schema{Type: tools.SchemaString, Pattern: "^[A-Z][A-Z0-9_]{0,63}$"}, Description: "凭据环境变量名列表（如 MYSQL_ROOT_PASSWORD），最多 8 项；值由后端生成，不传入明文"},
+			"env":          {Type: tools.SchemaArray, Items: &tools.Schema{Type: tools.SchemaString}, Description: "非凭据环境变量 KEY=VALUE 列表，最多 16 项、每项不超过 512 字节，完整进入审批展示"},
+			"volumes":      {Type: tools.SchemaArray, Items: &tools.Schema{Type: tools.SchemaString, Pattern: "^/[A-Za-z0-9._/-]{0,127}$"}, Description: "容器内持久卷挂载点（如 /var/lib/mysql），最多 2 个；卷由面板托管"},
+		}},
+		Metadata:    tools.Metadata{Domain: "docker", Action: "create_service", Effect: "write", Exposure: "agent", ResourceType: "docker-container", ResourceKeyArgument: "name", Version: "1"},
+		SearchNames: []string{"部署服务", "新建服务容器", "启动 MySQL", "创建容器", "service container"},
+		Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
+			input := domaindocker.AgentServiceCreateInput{}
+			input.Name, _ = tools.StringArg(args, "name")
+			input.Image, _ = tools.StringArg(args, "image")
+			input.RequestID, _ = tools.StringArg(args, "requestId")
+			input.ResourceTier, _ = tools.StringArg(args, "resourceTier")
+			input.NetworkScope, _ = tools.StringArg(args, "networkScope")
+			input.Port, _ = tools.IntArg(args, "port")
+			input.HostPort, _ = tools.IntArg(args, "hostPort")
+			input.Credentials = tools.StringArrayArg(args, "credentials")
+			input.Env = tools.StringArrayArg(args, "env")
+			input.Volumes = tools.StringArrayArg(args, "volumes")
+			return s.deps.Agent.CreateService(tools.Lifetime(c), input)
+		},
+	})
+	descriptors = append(descriptors, tools.Descriptor{
+		Name:        "docker_container_logs",
+		Description: "只读读取面板纳管容器的最近日志（stdout 与 stderr 合并、带时间戳）；缺省 100 行最多 500 行、结果上限 64 KiB 保最新；需完整 64 位容器 ID，未纳管容器拒绝",
+		Parameters: tools.Schema{Type: tools.SchemaObject, Required: []string{"id"}, Properties: map[string]tools.Schema{
+			"id":   text,
+			"tail": {Type: tools.SchemaInteger, Description: "读取行数，1 至 500，缺省 100"},
+		}},
+		Metadata:    tools.Metadata{Domain: "docker", Action: "logs", Effect: "read", Exposure: "agent", ReadOnly: true, Default: true, ResourceType: "docker-container", ResourceKeyArgument: "id", Version: "1"},
+		SearchNames: []string{"容器日志", "查看日志", "排查容器", "container logs"},
+		Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
+			id, _ := tools.StringArg(args, "id")
+			tail, _ := tools.IntArg(args, "tail")
+			return s.deps.Agent.Logs(tools.Lifetime(c), id, tail)
+		},
+	})
 	descriptors = append(descriptors, s.inspectionDescriptors()...)
 	descriptors = append(descriptors, s.imageDescriptors()...)
 	return append(descriptors, s.registryDescriptors()...)

@@ -11,6 +11,7 @@ import (
 	"elysian/server/internal/agent/kardia"
 	"elysian/server/internal/agent/tools"
 	"elysian/server/internal/contract"
+	domaindocker "elysian/server/internal/docker"
 	"elysian/server/internal/seam"
 )
 
@@ -275,5 +276,31 @@ func TestNegativeListLimitFailsClosed(t *testing.T) {
 	_, err := tools.Install(context.Background(), root, tools.Plugin, Plugin(Deps{Views: &fakeViews{}}, Config{ListLimit: -1}))
 	if err == nil || !strings.Contains(err.Error(), "列举上限不得为负") {
 		t.Fatalf("负上限应被拒：%v", err)
+	}
+}
+
+func TestServiceCreateAndLogsDescriptorsRegisteredWithAgentExposure(t *testing.T) {
+	// 走既有注册表断言路径：构造 Service 后 descriptors() 应含两个新工具，
+	// create_service 为写效应绑定资源名，logs 为只读默认可见。
+	root, _ := install(t, Deps{Views: &fakeViews{}, Agent: &domaindocker.AgentFacade{}}, Config{})
+	service, err := From(root)
+	if err != nil {
+		t.Fatalf("取服务失败：%v", err)
+	}
+	names := map[string]tools.Descriptor{}
+	for _, descriptor := range service.descriptors() {
+		names[descriptor.Name] = descriptor
+	}
+	create, ok := names["docker_container_create_service"]
+	if !ok || create.Metadata.Effect != "write" || create.Metadata.ResourceKeyArgument != "name" || create.Metadata.Exposure != "agent" {
+		t.Fatalf("create_service 描述符不符：%+v", create)
+	}
+	logs, ok := names["docker_container_logs"]
+	if !ok || logs.Metadata.ReadOnly != true || logs.Metadata.Default != true || logs.Metadata.Effect != "read" {
+		t.Fatalf("logs 描述符不符：%+v", logs)
+	}
+	// 描述里的纪律提示必须包含交互与凭据要求，防止模型自造参数。
+	if !strings.Contains(create.Description, "request_user_input") || !strings.Contains(create.Description, "凭据") {
+		t.Fatalf("create_service 描述缺纪律：%s", create.Description)
 	}
 }

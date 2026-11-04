@@ -11,7 +11,7 @@ import (
 
 func TestDockerSuiteRegisteredInKardiaWithLocalDiscoveryMetadata(t *testing.T) {
 	root, registry := install(t, Deps{Views: &fakeViews{}, Agent: &domaindocker.AgentFacade{}}, Config{})
-	if registry.Size() != 21 {
+	if registry.Size() != 23 {
 		t.Fatalf("Docker suite=%d", registry.Size())
 	}
 	for _, name := range []string{"docker_images_list", "docker_containers_list", "docker_container_inspect", "docker_image_inspect"} {
