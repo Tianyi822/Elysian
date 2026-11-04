@@ -388,4 +388,8 @@ func TestDockerContainerLogsIsConfirmedPlatformRead(t *testing.T) {
 	if confirmedPlatformRead(exec) {
 		t.Fatal("unaudited docker read granted approval-free access")
 	}
+	createService := Capability{Name: "docker_container_create_service", Source: "builtin", ReadOnly: true, Metadata: tools.Metadata{Domain: "docker", Exposure: "agent", ReadOnly: true}}
+	if confirmedPlatformRead(createService) {
+		t.Fatal("write-effect docker tool granted approval-free access")
+	}
 }
