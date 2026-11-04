@@ -205,6 +205,72 @@ func TestCreateServiceAdoptReusesCredentialsWithoutRegeneration(t *testing.T) {
 	}
 }
 
+// 启动失败必须回滚：先删已建容器、再删本次创建的卷，避免残留容器引用已删卷。
+func TestCreateServiceStartFailureRemovesContainerAndVolumes(t *testing.T) {
+	containerID := strings.Repeat("c", 64)
+	engine := newFakeEngine(func(call engineCall) (int, string, bool) {
+		switch {
+		case call.Method == http.MethodGet && call.Path == "/containers/mysql-main/json":
+			return http.StatusNotFound, "", true
+		case call.Method == http.MethodGet && call.Path == "/containers/"+containerID+"/json":
+			return http.StatusOK, serviceContainerInspectBody(), true
+		case call.Method == http.MethodGet && call.Path == "/images/"+url.PathEscape(agentServiceImage)+"/json":
+			return http.StatusOK, fmt.Sprintf(`{"Id":"sha256:%s","Config":{}}`, agentServiceDigest), true
+		case call.Method == http.MethodGet && call.Path == "/networks/elysian-agent-net":
+			return http.StatusNotFound, "", true
+		case call.Method == http.MethodPost && call.Path == "/networks/create":
+			return http.StatusCreated, `{"Id":"net-1","Warning":""}`, true
+		case call.Method == http.MethodPost && call.Path == "/volumes/create":
+			return http.StatusCreated, `{"Name":"elysian-agent-v1"}`, true
+		case call.Method == http.MethodPost && call.Path == "/containers/create":
+			return http.StatusCreated, fmt.Sprintf(`{"Id":"%s","Warnings":[]}`, containerID), true
+		case call.Method == http.MethodPost && call.Path == "/containers/"+containerID+"/start":
+			return http.StatusInternalServerError, `{"message":"engine boom"}`, true
+		case call.Method == http.MethodDelete:
+			return http.StatusNoContent, "", true
+		default:
+			return 0, "", false
+		}
+	})
+	service := newDockerService(serviceDeps{
+		transport:       engine,
+		mountRoot:       "/srv",
+		reservedPorts:   []int{22, 48100, 48101},
+		selfContainerID: strings.Repeat("f", 64),
+	})
+	facade := &AgentFacade{
+		service:     service,
+		authorize:   func(context.Context) error { return nil },
+		credentials: newAgentCredentialStore(filepath.Join(t.TempDir(), "agent-service-containers.json")),
+		portOpener:  &recordingPortOpener{},
+	}
+	if _, err := facade.CreateService(context.Background(), AgentServiceCreateInput{
+		Name: "mysql-main", Image: agentServiceImage, RequestID: "req-1",
+		ResourceTier: "medium", NetworkScope: "container-net", Port: 3306,
+		Credentials: []string{"MYSQL_ROOT_PASSWORD"}, Volumes: []string{"/var/lib/mysql"},
+	}); err == nil {
+		t.Fatal("启动失败应返回错误")
+	}
+	containerDeleteAt, volumeDeleteAt := -1, -1
+	for i, call := range engine.Requests() {
+		if call.Method == http.MethodDelete && call.Path == "/containers/"+containerID {
+			containerDeleteAt = i
+		}
+		if call.Method == http.MethodDelete && call.Path == "/volumes/elysian-agent-0-req-1" {
+			volumeDeleteAt = i
+		}
+	}
+	if containerDeleteAt < 0 {
+		t.Fatal("启动失败应回滚删除已建容器")
+	}
+	if volumeDeleteAt < 0 {
+		t.Fatal("启动失败应回滚删除已建卷")
+	}
+	if containerDeleteAt > volumeDeleteAt {
+		t.Fatal("回滚应先删容器再删卷")
+	}
+}
+
 // service-v1 容器可被 start/stop/restart/remove 操作；restricted-v1 核验保持不变。
 func TestSafeTargetAcceptsServiceTemplateAndKeepsRestrictedChecks(t *testing.T) {
 	facade := newServiceFacade(t, func(call engineCall) (int, string, bool) {

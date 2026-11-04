@@ -282,6 +282,7 @@ func (a *AgentFacade) CreateService(ctx context.Context, input AgentServiceCreat
 		return nil, err
 	}
 	if _, err := s.Action(ctx, containerID, "start"); err != nil {
+		a.removeCreatedContainer(ctx, containerID)
 		a.removeCreatedVolumes(ctx, createdVolumes)
 		return nil, err
 	}
@@ -359,6 +360,13 @@ func (a *AgentFacade) serviceReceipt(ctx context.Context, input AgentServiceCrea
 		result["firewallPort"] = sync
 	}
 	return result, nil
+}
+
+// removeCreatedContainer 启动失败回滚：删除本次创建但未启动成功的容器（与
+// RemoveContainer 同款 Engine 调用形态、容忍 404）；回滚失败不掩盖原始错误，
+// 残留事实由重试路径的名占用检查与人工处理收敛。
+func (a *AgentFacade) removeCreatedContainer(ctx context.Context, containerID string) {
+	_, _, _ = a.service.engineJSON(ctx, http.MethodDelete, "/containers/"+encodeEngineID(containerID), nil, nil, actionTimeout)
 }
 
 // removeCreatedVolumes 失败回滚：仅删除本次创建的卷。
