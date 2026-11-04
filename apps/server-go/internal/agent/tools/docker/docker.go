@@ -239,7 +239,8 @@ func (s *Service) descriptors() []tools.Descriptor {
 		return containerSummary(container), nil
 	}})
 	descriptors = append(descriptors, s.inspectionDescriptors()...)
-	return append(descriptors, s.imageDescriptors()...)
+	descriptors = append(descriptors, s.imageDescriptors()...)
+	return append(descriptors, s.registryDescriptors()...)
 }
 
 func (s *Service) handleListContainers(access *kardia.Context, _ tools.Arguments) (any, error) {

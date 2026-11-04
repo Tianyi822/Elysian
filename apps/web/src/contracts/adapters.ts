@@ -145,7 +145,15 @@ export type RegistryProbeResult = {
   reason?: string
 }
 
+export type ImageRegistryPreset = {
+  id: string
+  label: string
+  url: string
+  note?: string
+}
+
 export interface ContainerAdapter {
+  listRegistryPresets(signal?: AbortSignal): Promise<readonly ImageRegistryPreset[]>
   list(): Promise<readonly Container[]>
   listImages(): Promise<readonly ContainerImage[]>
   /** 查询当前镜像源中的仓库名；目录不可用时 searchable=false，仍可手动输入。 */

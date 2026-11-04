@@ -106,6 +106,9 @@ func newRouter(deps routerDeps) chi.Router {
 		}
 		shared.SendJSON(w, http.StatusOK, result)
 	})
+	r.Get("/registry-presets", func(w http.ResponseWriter, _ *http.Request) {
+		shared.SendJSON(w, http.StatusOK, RegistryPresets())
+	})
 	r.Get("/registry-probe", func(w http.ResponseWriter, req *http.Request) {
 		result, err := service.ProbeRegistry(req.Context(), req.URL.Query().Get("registry"))
 		if err != nil {

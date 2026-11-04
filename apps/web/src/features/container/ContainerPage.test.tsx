@@ -24,6 +24,7 @@ function pageGateway(overrides: Partial<ElysianGateway['containers']> = {}): Ely
     {
       list: async () => [...CONTAINERS],
       // listImages 直通真实 mock 数据集：删除镜像要落实到数据集，读种子常量会绕过它。
+      listRegistryPresets: () => base.containers.listRegistryPresets(),
       listImages: () => base.containers.listImages(),
       searchImageNames: (term: string, registry?: string, signal?: AbortSignal) =>
         base.containers.searchImageNames(term, registry, signal),

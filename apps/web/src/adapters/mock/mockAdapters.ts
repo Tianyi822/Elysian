@@ -1,3 +1,4 @@
+import registryPresets from '../../../../server-go/internal/docker/registry-presets.json'
 import { createMockWebsiteDeployments } from './websiteDeploymentsMock'
 import { abortableDelay, throwIfAborted } from '../../utils/abortable'
 import type { FileDownload, FileUploadCheck, FileUploadOptions } from '../../contracts/adapters'
@@ -540,6 +541,10 @@ export class MockContainerAdapter implements ContainerAdapter {
 
   async listImages(): Promise<readonly ContainerImage[]> {
     return [...this.dataset().images]
+  }
+
+  async listRegistryPresets() {
+    return registryPresets.map((preset) => ({ ...preset }))
   }
 
   async searchImageNames(term: string, registry?: string): Promise<{ names: readonly string[]; searchable: boolean }> {

@@ -7,9 +7,9 @@ import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { useContainersStore } from '../../stores/containersStore'
-import type { RegistryProbeResult } from '../../contracts/adapters'
+import type { RegistryProbeResult, ImageRegistryPreset } from '../../contracts/adapters'
 import { readStoredImageRegistry, writeStoredImageRegistry } from './imagePullPreferences'
-import { CUSTOM_REGISTRY_ID, IMAGE_REGISTRY_PRESETS, matchRegistryPreset } from './imageRegistryPresets'
+import { CUSTOM_REGISTRY_ID, matchRegistryPreset } from './imageRegistryPresets'
 import {
   DEFAULT_IMAGE_REGISTRY,
   isOfficialImageRegistry,
@@ -43,7 +43,13 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
 
   const docker = isDockerRuntime()
 
-  const [presetId, setPresetId] = useState<string>(() => matchRegistryPreset(readStoredImageRegistry())?.id ?? CUSTOM_REGISTRY_ID)
+  const [presets, setPresets] = useState<readonly ImageRegistryPreset[]>([])
+  const [directoryError, setDirectoryError] = useState(false)
+  const [directoryLoading, setDirectoryLoading] = useState(true)
+  const [directoryVersion, setDirectoryVersion] = useState(0)
+  const [registryAddress, setRegistryAddress] = useState(() => readStoredImageRegistry() || DEFAULT_IMAGE_REGISTRY)
+  const [forceCustom, setForceCustom] = useState(false)
+  const presetId = forceCustom ? CUSTOM_REGISTRY_ID : matchRegistryPreset(presets, registryAddress)?.id ?? CUSTOM_REGISTRY_ID
   const [customAddress, setCustomAddress] = useState(readStoredImageRegistry)
   const [reference, setReference] = useState('')
   const [suggestions, setSuggestions] = useState<readonly string[]>([])
@@ -63,9 +69,6 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
   const listId = useId()
 
   const isCustomPreset = presetId === CUSTOM_REGISTRY_ID
-  const registryAddress = isCustomPreset
-    ? customAddress
-    : IMAGE_REGISTRY_PRESETS.find((preset) => preset.id === presetId)?.url ?? ''
 
   // 留空即默认官方地址；非空才校验格式。
   const registry = registryAddress.trim() || DEFAULT_IMAGE_REGISTRY
@@ -81,6 +84,17 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
     : null
 
   useEffect(() => { writeStoredImageRegistry(registryAddress) }, [registryAddress])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    setDirectoryError(false)
+    setDirectoryLoading(true)
+    void gateway.containers.listRegistryPresets(controller.signal)
+      .then((items) => { if (!controller.signal.aborted) setPresets(items) })
+      .catch(() => { if (!controller.signal.aborted) setDirectoryError(true) })
+      .finally(() => { if (!controller.signal.aborted) setDirectoryLoading(false) })
+    return () => controller.abort()
+  }, [gateway, directoryVersion])
 
   const stopProbe = (id: string) => {
     probeAbortRef.current.get(id)?.abort()
@@ -256,7 +270,7 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
   }
 
   const sourceItems = [
-    ...IMAGE_REGISTRY_PRESETS.map((preset) => ({
+    ...presets.map((preset) => ({
       value: preset.id,
       label: preset.label,
       description: preset.note,
@@ -266,7 +280,7 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
       value: CUSTOM_REGISTRY_ID,
       label: '自定义地址…',
       description: isCustomPreset && customAddress.trim() ? registryHost(customAddress) : undefined,
-      trailing: probeTrailing(CUSTOM_REGISTRY_ID, customAddress),
+      trailing: probeTrailing(CUSTOM_REGISTRY_ID, isCustomPreset ? registryAddress : customAddress),
     },
   ]
 
@@ -313,9 +327,13 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
                 invalidateSuggestions()
                 invalidateTags()
                 setProbeNotice(null)
-                setPresetId(next)
+                setForceCustom(next === CUSTOM_REGISTRY_ID)
+                setRegistryAddress(next === CUSTOM_REGISTRY_ID ? customAddress : presets.find((preset) => preset.id === next)?.url ?? registryAddress)
               }}
             />
+            {directoryLoading ? <p role="status" className="mt-1.5 text-xs text-fg-muted">正在读取镜像源…</p> : null}
+            {!directoryLoading && !directoryError && presets.length === 0 ? <p className="mt-1.5 text-xs text-fg-muted">暂无预设，可填写自定义地址。</p> : null}
+            {directoryError ? <p role="alert" className="mt-1.5 text-xs text-danger">镜像源目录读取失败，当前地址仍可使用。<button type="button" className="ml-2 underline" onClick={() => setDirectoryVersion((value) => value + 1)}>重试目录</button></p> : null}
             {probeNotice ? <p role="status" className="mt-1.5 text-xs text-fg-muted">{probeNotice}</p> : null}
             <p className="mt-1.5 text-xs text-fg-subtle">
               {docker
@@ -329,8 +347,8 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
                 </label>
                 <input
                   id="pull-registry-custom"
-                  value={customAddress}
-                  onChange={(event) => { invalidateSuggestions(); invalidateTags(); setCustomAddress(event.target.value) }}
+                  value={registryAddress}
+                  onChange={(event) => { invalidateSuggestions(); invalidateTags(); setForceCustom(true); setCustomAddress(event.target.value); setRegistryAddress(event.target.value) }}
                   placeholder="留空使用官方地址 registry-1.docker.io"
                   autoComplete="off"
                   spellCheck={false}

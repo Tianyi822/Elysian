@@ -220,8 +220,18 @@ func (s *dockerService) Create(ctx context.Context, body any) (contract.Containe
 // Pull 拉取镜像：单飞 → 已存在拒 → 镜像源校验（内嵌/显式互斥）→ Engine 拉取
 // （流式，客户端断开即取消）→ 自定义源打标签并删源标签 → 回查本地镜像。
 func (s *dockerService) Pull(ctx context.Context, body any, onProgress func(imagePullProgress)) (contract.ContainerImage, error) {
+	return s.pull(ctx, body, onProgress, false)
+}
+
+func (s *dockerService) pull(ctx context.Context, body any, onProgress func(imagePullProgress), confirmFailure bool) (contract.ContainerImage, error) {
+	reject := func(err error) error {
+		if confirmFailure {
+			return confirmedPullError(err)
+		}
+		return err
+	}
 	if !s.pullInFlight.CompareAndSwap(false, true) {
-		return contract.ContainerImage{}, &shared.InvalidRequestError{Status: http.StatusConflict, Message: pullBusyMessage}
+		return contract.ContainerImage{}, reject(&shared.InvalidRequestError{Status: http.StatusConflict, Message: pullBusyMessage})
 	}
 	defer s.pullInFlight.Store(false)
 	ctx, cancel := context.WithTimeout(ctx, pullTimeout)
@@ -234,20 +244,20 @@ func (s *dockerService) Pull(ctx context.Context, body any, onProgress func(imag
 
 	input, err := parsePullBody(body)
 	if err != nil {
-		return contract.ContainerImage{}, err
+		return contract.ContainerImage{}, reject(err)
 	}
 	embeddedHost, hasEmbedded := embeddedRegistryHost(input.name)
 	if hasEmbedded && input.hasRegistry {
-		return contract.ContainerImage{}, shared.InvalidRequest(registryReferenceConflictMsg)
+		return contract.ContainerImage{}, reject(shared.InvalidRequest(registryReferenceConflictMsg))
 	}
 
 	emit("preparing", "正在检查本地镜像")
 	exists, err := s.imageExistsByTag(ctx, input.name, input.tag)
 	if err != nil {
-		return contract.ContainerImage{}, err
+		return contract.ContainerImage{}, reject(err)
 	}
 	if exists {
-		return contract.ContainerImage{}, shared.InvalidRequest(fmt.Sprintf("镜像已存在：%s:%s", input.name, input.tag))
+		return contract.ContainerImage{}, reject(shared.InvalidRequest(fmt.Sprintf("镜像已存在：%s:%s", input.name, input.tag)))
 	}
 
 	fromImage := fmt.Sprintf("%s:%s", input.name, input.tag)
@@ -258,18 +268,18 @@ func (s *dockerService) Pull(ctx context.Context, body any, onProgress func(imag
 	if input.hasRegistry {
 		registryHost, err := s.assertRegistryAllowed(ctx, input.registry)
 		if err != nil {
-			return contract.ContainerImage{}, err
+			return contract.ContainerImage{}, reject(err)
 		}
 		fromImage = buildRegistryFromImage(registryHost, input.name, input.tag)
 		registryPullRef = fromImage
 	} else if hasEmbedded {
 		if _, err := s.assertRegistryAllowed(ctx, embeddedHost); err != nil {
-			return contract.ContainerImage{}, err
+			return contract.ContainerImage{}, reject(err)
 		}
 	}
 
 	emit("preparing", "正在等待 Docker 返回镜像拉取进度")
-	if err := s.pullStream(ctx, fromImage, onProgress); err != nil {
+	if err := s.pullStreamMode(ctx, fromImage, onProgress, confirmFailure); err != nil {
 		return contract.ContainerImage{}, err
 	}
 

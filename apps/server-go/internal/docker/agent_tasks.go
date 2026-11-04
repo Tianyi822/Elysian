@@ -18,13 +18,16 @@ import (
 )
 
 type AgentPullTask struct {
-	ID        string                   `json:"id"`
-	RequestID string                   `json:"requestId"`
-	ImageRef  string                   `json:"imageRef"`
-	State     string                   `json:"state"`
-	CreatedAt string                   `json:"createdAt"`
-	UpdatedAt string                   `json:"updatedAt"`
-	Image     *contract.ContainerImage `json:"image,omitempty"`
+	ID           string                   `json:"id"`
+	RequestID    string                   `json:"requestId"`
+	ImageRef     string                   `json:"imageRef"`
+	Registry     string                   `json:"registry,omitempty"`
+	ErrorCode    string                   `json:"errorCode,omitempty"`
+	ErrorMessage string                   `json:"errorMessage,omitempty"`
+	State        string                   `json:"state"`
+	CreatedAt    string                   `json:"createdAt"`
+	UpdatedAt    string                   `json:"updatedAt"`
+	Image        *contract.ContainerImage `json:"image,omitempty"`
 }
 
 func (a *AgentFacade) loadPullTasks() error {
@@ -58,7 +61,7 @@ func (a *AgentFacade) loadPullTasks() error {
 			if err = config.AtomicJSON(file, &task); err != nil {
 				return err
 			}
-		case "unknown", "succeeded":
+		case "unknown", "succeeded", "failed":
 		default:
 			return errors.New("镜像任务状态无效")
 		}
@@ -74,16 +77,38 @@ func pullTaskID(requestID string) string {
 }
 
 func (a *AgentFacade) Pull(ctx context.Context, imageRef, requestID string) (AgentPullTask, error) {
+	return a.PullFromRegistry(ctx, imageRef, requestID, "")
+}
+
+func (a *AgentFacade) PullFromRegistry(ctx context.Context, imageRef, requestID, registry string) (AgentPullTask, error) {
 	if err := a.check(ctx); err != nil {
 		return AgentPullTask{}, err
 	}
 	index := strings.LastIndex(imageRef, ":")
 	if index <= strings.LastIndex(imageRef, "/") || !containerIDPattern.MatchString(requestID) {
-		return AgentPullTask{}, shared.InvalidRequest("拉取镜像需要固定名称、标签和请求标识")
+		return AgentPullTask{}, &AgentError{Code: "docker-pull-invalid", Message: "拉取镜像需要固定名称、标签和请求标识", NotDispatched: true}
 	}
-	body := convertJSONValue(map[string]any{"name": imageRef[:index], "tag": imageRef[index+1:]})
+	registry = strings.TrimSpace(registry)
+	if _, embedded := embeddedRegistryHost(imageRef[:index]); embedded && registry != "" {
+		return AgentPullTask{}, &AgentError{Code: "docker-registry-conflict", Message: "内嵌镜像源与独立 registry 参数不能同时使用", NotDispatched: true}
+	}
+	if registry != "" {
+		host, err := parseRegistryInput(registry)
+		if err != nil {
+			return AgentPullTask{}, &AgentError{Code: "docker-registry-invalid", Message: "镜像源地址格式无效或不允许", NotDispatched: true}
+		}
+		registry = "https://" + strings.TrimSuffix(strings.ToLower(host), ":443")
+		if isOfficialImageRegistry(registry) {
+			registry = ""
+		}
+	}
+	values := map[string]any{"name": imageRef[:index], "tag": imageRef[index+1:]}
+	if registry != "" {
+		values["registry"] = registry
+	}
+	body := convertJSONValue(values)
 	if _, err := parsePullBody(body); err != nil {
-		return AgentPullTask{}, err
+		return AgentPullTask{}, &AgentError{Code: "docker-pull-invalid", Message: "镜像名称或标签格式无效", NotDispatched: true}
 	}
 	id := pullTaskID(requestID)
 	a.taskMu.Lock()
@@ -95,19 +120,19 @@ func (a *AgentFacade) Pull(ctx context.Context, imageRef, requestID string) (Age
 		return AgentPullTask{}, errors.New("镜像任务服务已停止")
 	}
 	if existing := a.pullTasks[id]; existing != nil {
-		if existing.ImageRef != imageRef || existing.RequestID != requestID {
+		if existing.ImageRef != imageRef || existing.RequestID != requestID || existing.Registry != registry {
 			return AgentPullTask{}, shared.InvalidRequest("请求标识已用于其他镜像")
 		}
 		return *existing, nil
 	}
 	for _, task := range a.pullTasks {
-		if task.State != "succeeded" {
+		if task.State != "succeeded" && task.State != "failed" {
 			return AgentPullTask{}, shared.InvalidRequest("已有进行中或结果未确认的镜像拉取任务")
 		}
 	}
 	// Persist before dispatch. A lost response must never trigger a second pull.
 	now := time.Now().UTC().Format(time.RFC3339)
-	task := AgentPullTask{ID: id, RequestID: requestID, ImageRef: imageRef, State: "running", CreatedAt: now, UpdatedAt: now}
+	task := AgentPullTask{ID: id, RequestID: requestID, ImageRef: imageRef, Registry: registry, State: "running", CreatedAt: now, UpdatedAt: now}
 	if err := config.AtomicJSON(filepath.Join(a.taskRoot, id+".json"), &task); err != nil {
 		return AgentPullTask{}, err
 	}
@@ -121,14 +146,20 @@ func (a *AgentFacade) Pull(ctx context.Context, imageRef, requestID string) (Age
 	go func() {
 		defer a.taskWG.Done()
 		defer cancel()
-		image, err := a.service.Pull(background, body, nil)
+		image, err := a.service.pull(background, body, nil, true)
 		a.taskMu.Lock()
 		defer a.taskMu.Unlock()
 		updated := task
 		delete(a.pullCancel, id)
 		updated.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 		updated.State = "unknown"
+		updated.ErrorCode, updated.ErrorMessage = "docker-pull-unknown", "镜像拉取结果未确认，禁止重新拉取或换源重投"
+		if _, confirmed := err.(*pullConfirmedFailure); confirmed && background.Err() == nil {
+			updated.State = "failed"
+			updated.ErrorCode, updated.ErrorMessage = "docker-pull-failed", "镜像拉取已确认失败且处理已结束，可选择其他镜像源并使用新的 requestId 重试"
+		}
 		if err == nil {
+			updated.ErrorCode, updated.ErrorMessage = "", ""
 			updated.State = "succeeded"
 			updated.Image = &image
 		}
@@ -229,13 +260,15 @@ func (a *AgentFacade) Search(ctx context.Context, term, registry string) (any, e
 	if err := a.check(ctx); err != nil {
 		return nil, err
 	}
-	return a.service.SearchImages(ctx, term, registry)
+	result, err := a.service.SearchImages(ctx, term, registry)
+	return result, agentQueryError(ctx, err)
 }
 func (a *AgentFacade) Tags(ctx context.Context, name, registry string) (any, error) {
 	if err := a.check(ctx); err != nil {
 		return nil, err
 	}
-	return a.service.ImageTags(ctx, name, registry)
+	result, err := a.service.ImageTags(ctx, name, registry)
+	return result, agentQueryError(ctx, err)
 }
 func (a *AgentFacade) RemoveImage(ctx context.Context, id string) error {
 	if err := a.check(ctx); err != nil {

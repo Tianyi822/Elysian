@@ -110,8 +110,12 @@ func hasPrefixStr(s, prefix string) bool {
 	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
 }
 
-// pullProgressDecoder 流式解码器：feed 逐块喂入，同 phase:layerId:整数百分比 的
-// 进度帧只推一次；finish 冲洗尾部残行。
+// pullEngineError 只标识完整 JSON 中的 Engine 错误字段，不将解析或限额错误视为执行失败。
+type pullEngineError struct{ message string }
+
+func (e *pullEngineError) Error() string { return e.message }
+
+// pullProgressDecoder 对相同 phase、layerId 和整数百分比去重，finish 冲洗尾部残行。
 type pullProgressDecoder struct {
 	onProgress func(imagePullProgress)
 	buffer     []byte
@@ -127,7 +131,7 @@ func (d *pullProgressDecoder) consume(line string) error {
 		line = line[:len(line)-1]
 	}
 	if message := pullErrorFromLine(line); message != "" {
-		return errors.New(message)
+		return &pullEngineError{message}
 	}
 	progress, ok := progressFromLine(line)
 	if !ok {

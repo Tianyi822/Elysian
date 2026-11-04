@@ -22,6 +22,8 @@ func TestPermissionMatrix(t *testing.T) {
 		{"docker-container-detail", Operation{Capability: Capability{Name: "docker_container_inspect", Source: "builtin", ReadOnly: true, Metadata: tools.Metadata{Exposure: "agent", ReadOnly: true}}}, true, true, true},
 		{"docker-image-detail", Operation{Capability: Capability{Name: "docker_image_inspect", Source: "builtin", ReadOnly: true, Metadata: tools.Metadata{Exposure: "agent", ReadOnly: true}}}, true, true, true},
 		{"docker-container-start", Operation{Capability: Capability{Name: "docker_container_start", Source: "builtin", Metadata: tools.Metadata{Exposure: "agent"}}}, false, false, true},
+		{"docker-registry-list", Operation{Capability: Capability{Name: "docker_registry_list", Source: "builtin", ReadOnly: true, Metadata: tools.Metadata{Exposure: "agent", ReadOnly: true}}}, true, true, true},
+		{"docker-registry-probe", Operation{Capability: Capability{Name: "docker_registry_probe", Source: "builtin", ReadOnly: true, Metadata: tools.Metadata{Exposure: "agent", ReadOnly: true}}}, true, true, true},
 		{"docker-image-pull", Operation{Capability: Capability{Name: "docker_image_pull", Source: "builtin", Metadata: tools.Metadata{Exposure: "agent"}}}, false, false, true},
 		{"platform-unconfirmed-read", Operation{Capability: Capability{Name: "unreviewed_read", Source: "builtin", ReadOnly: true, Metadata: tools.Metadata{Exposure: "agent", ReadOnly: true}}}, false, false, true},
 		{"platform-write", Operation{Capability: Capability{Name: "database_remove", Source: "builtin", Metadata: tools.Metadata{Exposure: "agent"}}}, false, false, true},

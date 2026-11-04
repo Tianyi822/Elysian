@@ -35,7 +35,7 @@ func agentTaskInspector(sites *websites.AgentFacade, apps *containerapps.AgentFa
 				return tools.TaskStatus{}, errors.New("镜像拉取请求身份不匹配")
 			}
 			terminal := task.State == "succeeded" || task.State == "failed"
-			return tools.TaskStatus{State: task.State, Terminal: terminal, Failed: terminal && task.State != "succeeded", Value: task}, nil
+			return tools.TaskStatus{State: task.State, Terminal: terminal, Failed: terminal && task.State != "succeeded", Value: task, Error: task.ErrorMessage}, nil
 		case "website":
 			status, err := sites.InspectTask(ctx, ref.ID)
 			if err != nil {

@@ -1,0 +1,6 @@
+[
+  {"id":"official","label":"官方 Docker Hub","url":"https://registry-1.docker.io","note":"部分网络不可达，测速会当场给出结果"},
+  {"id":"dockerproxy","label":"dockerproxy.net","url":"https://dockerproxy.net"},
+  {"id":"1panel","label":"docker.1panel.live","url":"https://docker.1panel.live","note":"仅大陆网络可达"},
+  {"id":"1ms","label":"docker.1ms.run","url":"https://docker.1ms.run"}
+]

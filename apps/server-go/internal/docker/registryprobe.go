@@ -141,7 +141,12 @@ func downloadProbeSample(ctx context.Context, target registryRequestTarget, path
 	read := int64(0)
 	buf := make([]byte, 32*1024)
 	for read < probeSampleBytes {
-		n, readErr := response.Body.Read(buf)
+		remaining := probeSampleBytes - read
+		chunk := buf
+		if remaining < int64(len(chunk)) {
+			chunk = chunk[:remaining]
+		}
+		n, readErr := response.Body.Read(chunk)
 		read += int64(n)
 		if readErr == io.EOF {
 			break
@@ -275,6 +280,8 @@ func probeChildIndexDigest(body []byte) string {
 
 // ProbeRegistry 镜像源测速：清单 →（401 走令牌流程重试）→ 首个层限量下载计时。
 func (s *dockerService) ProbeRegistry(ctx context.Context, registry string) (probeResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
 	resolve := func(hostname string) ([]string, error) {
 		return s.deps.resolveRegistry(ctx, hostname)
 	}

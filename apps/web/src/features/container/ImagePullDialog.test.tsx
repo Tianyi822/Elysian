@@ -24,6 +24,7 @@ function renderDialog(overrides: Partial<ElysianGateway['containers']> = {}) {
   const base = createMockGateway({ eventStream: 'memory' })
   const gateway = { ...base, containers: {
     ...base.containers,
+    listRegistryPresets: () => base.containers.listRegistryPresets(),
     searchImageNames: (term: string, registry?: string, signal?: AbortSignal) => base.containers.searchImageNames(term, registry, signal),
     imageTags: (name: string, registry?: string, signal?: AbortSignal) => base.containers.imageTags(name, registry, signal),
     ...overrides,
@@ -98,7 +99,7 @@ describe('ImagePullDialog', () => {
     fireEvent.change(screen.getByLabelText('自定义镜像源地址'), { target: { value: '' } })
     second.unmount()
     renderDialog()
-    expect(screen.queryByLabelText('自定义镜像源地址')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByLabelText('自定义镜像源地址')).not.toBeInTheDocument())
     expect(screen.getByRole('button', { name: '镜像源：官方 Docker Hub' })).toBeInTheDocument()
   })
 
@@ -379,4 +380,20 @@ describe('ImagePullDialog', () => {
     const option = screen.getByRole('menuitemradio', { name: '自定义地址…' })
     expect(within(option).getByRole('button', { name: '测速：先填写有效地址' })).toBeDisabled()
   })
+})
+
+
+it('目录失败保留当前源和输入，重试成功后保留编辑中的地址', async () => {
+  writeStoredImageRegistry('https://saved.example.com')
+  const base = createMockGateway({ eventStream: 'memory' })
+  const listRegistryPresets = vi.fn().mockRejectedValueOnce(new Error('network')).mockImplementation(() => base.containers.listRegistryPresets())
+  renderDialog({ listRegistryPresets })
+  await screen.findByText('镜像源目录读取失败，当前地址仍可使用。')
+  expect(screen.getByLabelText('自定义镜像源地址')).toHaveValue('https://saved.example.com')
+  fireEvent.change(screen.getByLabelText('自定义镜像源地址'), { target: { value: 'https://edited.example.com' } })
+  fireEvent.click(screen.getByRole('button', { name: '重试目录' }))
+  await waitFor(() => expect(listRegistryPresets).toHaveBeenCalledTimes(2))
+  await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+  expect(screen.getByLabelText('自定义镜像源地址')).toHaveValue('https://edited.example.com')
+  expect(readStoredImageRegistry()).toBe('https://edited.example.com')
 })

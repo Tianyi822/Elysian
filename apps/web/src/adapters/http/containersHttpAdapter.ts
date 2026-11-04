@@ -22,7 +22,7 @@ import type {
 } from '@elysian/contracts'
 import { CONTAINER_STATUSES, RESTART_POLICIES } from '@elysian/contracts'
 import type { Unsubscribe } from '@elysian/contracts'
-import type { ContainerAdapter, ContainerHostPolicy, RegistryProbeResult } from '../../contracts/adapters'
+import type { ContainerAdapter, ContainerHostPolicy, RegistryProbeResult, ImageRegistryPreset } from '../../contracts/adapters'
 import { createContainerTerminalWsAdapter } from './containerTerminalWsAdapter'
 import { fetchWithSession, reportUnauthorized } from './unauthorized'
 import type { EventSourceFactory, EventSourceLike } from '../sse/eventsAdapter'
@@ -775,6 +775,21 @@ export function createHttpContainersAdapter(
 
     async listImages() {
       return parseContainerImageListResponse(await requestJson(`${baseUrl}/images`))
+    },
+
+    async listRegistryPresets(signal) {
+      const result = await requestJson(`${baseUrl}/registry-presets`, { signal })
+      const ids = new Set<string>()
+      if (!Array.isArray(result) || !result.every((item: unknown) => {
+        if (!item || typeof item !== 'object') return false
+        const value = item as Record<string, unknown>
+        if (typeof value.id !== 'string' || !value.id || value.id === 'custom' || ids.has(value.id) ||
+          typeof value.label !== 'string' || !value.label || typeof value.url !== 'string' ||
+          !/^https:\/\/[^/?#@]+$/.test(value.url) || ('note' in value && typeof value.note !== 'string')) return false
+        ids.add(value.id)
+        return true
+      })) throw new Error('镜像源目录响应格式无效')
+      return result as ImageRegistryPreset[]
     },
 
     async searchImageNames(term, registry, signal) {

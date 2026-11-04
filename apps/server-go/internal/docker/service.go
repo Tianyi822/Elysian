@@ -739,7 +739,11 @@ func (s *dockerService) ImageTags(ctx context.Context, rawName, registry string)
 		if err != nil {
 			return tagsResult{}, shared.InvalidRequest(err.Error())
 		}
-		result := listRegistryTags(ctx, registryRequestTarget{host: target.host, addresses: target.addresses}, name, s.deps.fetchTags, "")
+		repository := name
+		if !strings.Contains(name, "/") && hubMirrorRegistry(registry) {
+			repository = "library/" + name
+		}
+		result := listRegistryTags(ctx, registryRequestTarget{host: target.host, addresses: target.addresses}, repository, s.deps.fetchTags, "")
 		return tagsResult{Tags: result.tags, Searchable: result.searchable}, nil
 	}
 	repository := name
