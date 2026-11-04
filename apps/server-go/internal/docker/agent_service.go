@@ -164,8 +164,84 @@ func (a *AgentFacade) ensureAgentNetwork(ctx context.Context) error {
 	return nil
 }
 
+// resolveAgentImage 按本机镜像清单解析固定摘要引用，返回可安全钉死的镜像 ID。
+// Engine 对「名称:标签@sha256:摘要」组合引用按 RepoDigests 名字解析：镜像源拉取
+// 后重打标签的镜像，RepoDigests 仍是源站命名，组合引用必然 404；因此核验与钉死
+// 都走面板自己的清单投影（与受管数据库同口径），不请求组合引用。
+func (a *AgentFacade) resolveAgentImage(ctx context.Context, ref string) (string, error) {
+	digestIndex := strings.LastIndex(ref, "@")
+	if digestIndex < 0 {
+		return "", shared.InvalidRequest("服务容器镜像引用必须带 sha256 摘要")
+	}
+	digest := strings.TrimSpace(ref[digestIndex+1:])
+	const digestPrefix = "sha256:"
+	hexPart := strings.TrimPrefix(digest, digestPrefix)
+	if !strings.HasPrefix(digest, digestPrefix) || len(hexPart) != 64 {
+		return "", shared.InvalidRequest("服务容器镜像摘要必须是 sha256: 加 64 位十六进制")
+	}
+	if _, err := hex.DecodeString(hexPart); err != nil {
+		return "", shared.InvalidRequest("服务容器镜像摘要必须是 sha256: 加 64 位十六进制")
+	}
+	name, tag := "", ""
+	if refPart := strings.TrimSpace(ref[:digestIndex]); refPart != "" {
+		parsed, err := parseImageReference(refPart)
+		if err != nil {
+			return "", shared.InvalidRequest("服务容器镜像引用无效：" + err.Error())
+		}
+		name, tag = parsed.name, parsed.tag
+	}
+	images, err := a.service.imagesFromList(ctx)
+	if err != nil {
+		return "", err
+	}
+	pinned := ""
+	for _, image := range images {
+		if !agentDigestMatches(image, hexPart) {
+			continue
+		}
+		if name != "" && !agentRefHasTag(image, name, tag) {
+			continue
+		}
+		if pinned != "" {
+			return "", shared.InvalidRequest("本机存在多个匹配该摘要的镜像，无法唯一钉死")
+		}
+		pinned = "sha256:" + image.ID
+	}
+	if pinned == "" {
+		return "", shared.InvalidRequest("服务容器只使用本机已存在的固定摘要镜像；请先用 docker_image_pull 拉取后重试")
+	}
+	return pinned, nil
+}
+
+// agentDigestMatches 摘要命中：清单投影的 Digest 是 RepoDigests 首项（可带源站
+// 命名前缀）或无摘要镜像的短 ID 兜底；镜像 ID 本身亦可作为钉死依据。
+func agentDigestMatches(image contract.ContainerImage, hexPart string) bool {
+	digest := "sha256:" + hexPart
+	return image.Digest == digest || strings.HasSuffix(image.Digest, "@"+digest) || image.ID == hexPart
+}
+
+// agentRefHasTag 名称:标签 是否命中镜像的任一 RepoTag（大小写不敏感）。
+func agentRefHasTag(image contract.ContainerImage, name, tag string) bool {
+	candidates := append([]string{image.Name + ":" + image.Tag}, image.OtherTags...)
+	for _, candidate := range candidates {
+		if strings.ToLower(candidate) == strings.ToLower(name+":"+tag) {
+			return true
+		}
+	}
+	return false
+}
+
 // CreateService 审批后用 service-v1 模板创建并启动服务容器；凭据后端生成、专属卷托管。
+// 输入预检拒绝转未派发业务错误交回模型纠正；执行中失败原样上抛。
 func (a *AgentFacade) CreateService(ctx context.Context, input AgentServiceCreateInput) (map[string]any, error) {
+	value, err := a.createService(ctx, input)
+	if err != nil {
+		return nil, agentRejected(err)
+	}
+	return value, nil
+}
+
+func (a *AgentFacade) createService(ctx context.Context, input AgentServiceCreateInput) (map[string]any, error) {
 	if err := a.check(ctx); err != nil {
 		return nil, err
 	}
@@ -191,12 +267,9 @@ func (a *AgentFacade) CreateService(ctx context.Context, input AgentServiceCreat
 	if status != http.StatusNotFound {
 		return nil, errors.New("查询容器名称占用失败")
 	}
-	imageStatus, image, err := s.engineJSON(ctx, http.MethodGet, "/images/"+url.PathEscape(input.Image)+"/json", nil, nil, actionTimeout)
-	if err != nil || imageStatus != http.StatusOK {
-		return nil, shared.InvalidRequest("服务容器只使用本机已存在的固定摘要镜像")
-	}
-	if im, ok := asRecord(image); !ok || mustGet(im, "Config") == nil {
-		return nil, errors.New("镜像配置格式无效")
+	imageID, err := a.resolveAgentImage(ctx, input.Image)
+	if err != nil {
+		return nil, err
 	}
 	// 凭据：按变量名逐项沿用同名既有登记（失败重试与 adopt 稳定），缺失的逐名补生成。
 	record, err := a.credentials.find(input.Name)
@@ -247,7 +320,7 @@ func (a *AgentFacade) CreateService(ctx context.Context, input AgentServiceCreat
 		hostConfig["Mounts"] = mounts
 	}
 	spec := map[string]any{
-		"Image": input.Image,
+		"Image": imageID,
 		"Env":   env,
 		"Labels": map[string]string{
 			labelManaged:                  labelTrueValue,
@@ -263,7 +336,7 @@ func (a *AgentFacade) CreateService(ctx context.Context, input AgentServiceCreat
 			hostIP = "0.0.0.0"
 			hostPort = strconv.Itoa(input.HostPort)
 		}
-		hostConfig["PortBindings"] = map[string]any{portKey: []map[string]any{{"HostIP": hostIP, "HostPort": hostPort}}}
+		hostConfig["PortBindings"] = map[string]any{portKey: []map[string]any{{"HostIp": hostIP, "HostPort": hostPort}}}
 		spec["ExposedPorts"] = map[string]any{portKey: map[string]any{}}
 	} else {
 		spec["NetworkingConfig"] = map[string]any{"EndpointsConfig": map[string]any{agentNetworkName: map[string]any{}}}

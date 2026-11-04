@@ -217,13 +217,13 @@ func (s *Service) descriptors() []tools.Descriptor {
 			id, _ := tools.StringArg(args, "id")
 			if action == "remove" {
 				if err := s.deps.Agent.Remove(tools.Lifetime(c), id); err != nil {
-					return nil, err
+					return nil, agentBusinessError(err)
 				}
 				return map[string]bool{"removed": true}, nil
 			}
 			container, err := s.deps.Agent.Action(tools.Lifetime(c), id, action)
 			if err != nil {
-				return nil, err
+				return nil, agentBusinessError(err)
 			}
 			return containerSummary(container), nil
 		}})
@@ -234,7 +234,7 @@ func (s *Service) descriptors() []tools.Descriptor {
 		requestID, _ := tools.StringArg(args, "requestId")
 		container, err := s.deps.Agent.CreateRestricted(tools.Lifetime(c), domaindocker.AgentCreateInput{Name: name, Image: image, RequestID: requestID})
 		if err != nil {
-			return nil, err
+			return nil, agentBusinessError(err)
 		}
 		return containerSummary(container), nil
 	}})
@@ -267,7 +267,8 @@ func (s *Service) descriptors() []tools.Descriptor {
 			input.Credentials = tools.StringArrayArg(args, "credentials")
 			input.Env = tools.StringArrayArg(args, "env")
 			input.Volumes = tools.StringArrayArg(args, "volumes")
-			return s.deps.Agent.CreateService(tools.Lifetime(c), input)
+			value, err := s.deps.Agent.CreateService(tools.Lifetime(c), input)
+			return value, agentBusinessError(err)
 		},
 	})
 	descriptors = append(descriptors, tools.Descriptor{
@@ -282,7 +283,8 @@ func (s *Service) descriptors() []tools.Descriptor {
 		Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
 			id, _ := tools.StringArg(args, "id")
 			tail, _ := tools.IntArg(args, "tail")
-			return s.deps.Agent.Logs(tools.Lifetime(c), id, tail)
+			value, err := s.deps.Agent.Logs(tools.Lifetime(c), id, tail)
+			return value, agentBusinessError(err)
 		},
 	})
 	descriptors = append(descriptors, s.inspectionDescriptors()...)

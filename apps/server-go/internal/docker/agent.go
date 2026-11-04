@@ -57,20 +57,24 @@ func (a *AgentFacade) Action(ctx context.Context, id, action string) (contract.C
 	}
 	target, err := a.safeTarget(ctx, id)
 	if err != nil {
-		return contract.Container{}, err
+		return contract.Container{}, agentRejected(err)
 	}
-	return a.service.Action(ctx, target, action)
+	container, err := a.service.Action(ctx, target, action)
+	if err != nil {
+		return contract.Container{}, agentRejected(err)
+	}
+	return container, nil
 }
 
 func (a *AgentFacade) Remove(ctx context.Context, id string) error {
 	if err := a.check(ctx); err != nil {
-		return err
+		return agentRejected(err)
 	}
 	target, err := a.safeTarget(ctx, id)
 	if err != nil {
-		return err
+		return agentRejected(err)
 	}
-	return a.service.RemoveContainer(ctx, target)
+	return agentRejected(a.service.RemoveContainer(ctx, target))
 }
 
 func (a *AgentFacade) safeTarget(ctx context.Context, id string) (string, error) {
@@ -167,7 +171,16 @@ func (a *AgentFacade) guardServiceTarget(value any, r, host *jsonObject) (string
 }
 
 // CreateRestricted starts an installed digest image with one fixed safe template.
+// 输入预检拒绝转未派发业务错误交回模型纠正；执行中失败原样上抛。
 func (a *AgentFacade) CreateRestricted(ctx context.Context, input AgentCreateInput) (contract.Container, error) {
+	container, err := a.createRestricted(ctx, input)
+	if err != nil {
+		return contract.Container{}, agentRejected(err)
+	}
+	return container, nil
+}
+
+func (a *AgentFacade) createRestricted(ctx context.Context, input AgentCreateInput) (contract.Container, error) {
 	if err := a.check(ctx); err != nil {
 		return contract.Container{}, err
 	}
@@ -213,9 +226,13 @@ func (a *AgentFacade) CreateRestricted(ctx context.Context, input AgentCreateInp
 	if status != http.StatusNotFound {
 		return contract.Container{}, errors.New("查询容器名称占用失败")
 	}
-	imageStatus, image, err := s.engineJSON(ctx, http.MethodGet, "/images/"+url.PathEscape(input.Image)+"/json", nil, nil, actionTimeout)
+	imageID, err := a.resolveAgentImage(ctx, input.Image)
+	if err != nil {
+		return contract.Container{}, err
+	}
+	imageStatus, image, err := s.engineJSON(ctx, http.MethodGet, "/images/"+encodeEngineID(imageID)+"/json", nil, nil, actionTimeout)
 	if err != nil || imageStatus != http.StatusOK {
-		return contract.Container{}, shared.InvalidRequest("安全模板只使用本机已存在的固定摘要镜像")
+		return contract.Container{}, errors.New("读取镜像配置失败")
 	}
 	im, _ := asRecord(image)
 	if im == nil {
@@ -229,7 +246,7 @@ func (a *AgentFacade) CreateRestricted(ctx context.Context, input AgentCreateInp
 	if volumes != nil && len(volumes.orderedKeys()) != 0 {
 		return contract.Container{}, shared.InvalidRequest("安全模板不允许镜像声明匿名卷")
 	}
-	body, _ := json.Marshal(map[string]any{"Image": input.Image, "User": "65532:65532", "Healthcheck": map[string]any{"Test": []string{"NONE"}}, "Labels": map[string]string{labelManaged: labelTrueValue, "elysian.agent.template": "restricted-v1", "elysian.agent.create-digest": want}, "HostConfig": map[string]any{"NetworkMode": "none", "ReadonlyRootfs": true, "CapDrop": []string{"ALL"}, "SecurityOpt": []string{"no-new-privileges:true"}, "PidsLimit": 128, "Memory": 512 << 20, "NanoCpus": 1000000000, "Tmpfs": map[string]string{"/tmp": "rw,nosuid,nodev,noexec,size=64m,mode=1777"}, "RestartPolicy": map[string]string{"Name": "no"}}})
+	body, _ := json.Marshal(map[string]any{"Image": imageID, "User": "65532:65532", "Healthcheck": map[string]any{"Test": []string{"NONE"}}, "Labels": map[string]string{labelManaged: labelTrueValue, "elysian.agent.template": "restricted-v1", "elysian.agent.create-digest": want}, "HostConfig": map[string]any{"NetworkMode": "none", "ReadonlyRootfs": true, "CapDrop": []string{"ALL"}, "SecurityOpt": []string{"no-new-privileges:true"}, "PidsLimit": 128, "Memory": 512 << 20, "NanoCpus": 1000000000, "Tmpfs": map[string]string{"/tmp": "rw,nosuid,nodev,noexec,size=64m,mode=1777"}, "RestartPolicy": map[string]string{"Name": "no"}}})
 	status, value, err := s.engineJSON(ctx, http.MethodPost, "/containers/create", url.Values{"name": {input.Name}}, body, actionTimeout)
 	if err != nil {
 		return contract.Container{}, err

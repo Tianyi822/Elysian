@@ -28,8 +28,23 @@ type agentLogFrame struct {
 }
 
 // Logs 只读纳管容器最近日志：stdout 与 stderr 合并、带时间戳，缺省 100 行、最多 500 行、
-// 结果上限 64 KiB（超出保最新）。非 follow 瞬时读取。
+// 结果上限 64 KiB（超出保最新）。非 follow 瞬时读取。拒绝与失败转固定业务错误透出。
 func (a *AgentFacade) Logs(ctx context.Context, id string, tail int) (map[string]any, error) {
+	value, err := a.containerLogs(ctx, id, tail)
+	if err == nil {
+		return value, nil
+	}
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return nil, err
+	}
+	var invalid *shared.InvalidRequestError
+	if errors.As(err, &invalid) {
+		return nil, &AgentError{Code: "docker-operation-rejected", Message: invalid.Message, NotDispatched: true}
+	}
+	return nil, &AgentError{Code: "docker-logs-failed", Message: "读取容器日志失败"}
+}
+
+func (a *AgentFacade) containerLogs(ctx context.Context, id string, tail int) (map[string]any, error) {
 	if err := a.check(ctx); err != nil {
 		return nil, err
 	}

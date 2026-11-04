@@ -3,6 +3,8 @@ package docker
 import (
 	"context"
 	"errors"
+
+	"elysian/server/internal/shared"
 )
 
 // AgentError 仅公开固定文案；不包含 Engine 输出或远程响应。
@@ -13,6 +15,16 @@ type AgentError struct {
 }
 
 func (e *AgentError) Error() string { return e.Message }
+
+// agentRejected 把输入预检拒绝（未派发任何变更）转成固定文案的未派发业务
+// 错误，经工具层交回模型纠正；执行中失败原样通过，不冒充预检。
+func agentRejected(err error) error {
+	var invalid *shared.InvalidRequestError
+	if errors.As(err, &invalid) {
+		return &AgentError{Code: "docker-operation-rejected", Message: invalid.Message, NotDispatched: true}
+	}
+	return err
+}
 
 func agentQueryError(ctx context.Context, err error) error {
 	if err == nil {

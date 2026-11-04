@@ -156,7 +156,8 @@ func TestOnlyTrustedAsyncSubmissionCanAttestNotDispatched(t *testing.T) {
 		{"可信预检", "builtin", true, false, true, true, true},
 		{"普通异步错误", "builtin", true, false, true, false, false},
 		{"轮询不是提交", "builtin", true, true, false, true, false},
-		{"同步写错误", "builtin", false, false, true, true, false},
+		{"同步写预检拒绝", "builtin", false, false, false, true, true},
+		{"同步写执行失败", "builtin", false, false, false, false, false},
 		{"外部工具声明", "mcp-tool", true, false, true, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

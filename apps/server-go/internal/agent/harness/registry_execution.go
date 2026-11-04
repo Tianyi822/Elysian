@@ -293,6 +293,16 @@ func (m *Manager) executeRegistryOperation(ctx context.Context, s CapabilitySnap
 }
 
 func recoverableBusinessError(c Capability, failure *tools.BusinessError) bool {
-	return c.Source == "builtin" && ((c.ReadOnly && !c.Metadata.Async) ||
-		(c.Metadata.Async && c.Metadata.TaskRequestArgument != "" && failure.NotDispatched))
+	if c.Source != "builtin" {
+		return false
+	}
+	if c.ReadOnly && !c.Metadata.Async {
+		return true
+	}
+	if c.Metadata.Async {
+		return c.Metadata.TaskRequestArgument != "" && failure.NotDispatched
+	}
+	// 同步写工具的输入预检拒绝：变更未派发，业务原因原样交回模型纠正；
+	// NotDispatched 只能由可信内置域在预检处声明，执行中失败不会置位。
+	return failure.NotDispatched
 }

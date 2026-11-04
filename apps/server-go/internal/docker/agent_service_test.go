@@ -3,21 +3,145 @@ package docker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 
 	"elysian/server/internal/contract"
+	"elysian/server/internal/shared"
 )
 
 var (
 	agentServiceImage  = "docker.io/library/mysql:8.4@sha256:" + strings.Repeat("a", 64)
 	agentServiceDigest = strings.Repeat("a", 64)
 )
+
+// mirrorImageScript 覆盖「本机清单解析」路径：镜像源拉取后重打标签的镜像，
+// RepoDigests 保留源站命名；实现必须经 /images/json 与按 ID inspect 核验，
+// 不得请求「名称:标签@sha256:摘要」组合引用（Engine 按名字解析必 404）。
+func mirrorImageScript(t *testing.T, createBody *string, imageID string, repoTags string) engineScript {
+	t.Helper()
+	return func(call engineCall) (int, string, bool) {
+		containerID := strings.Repeat("c", 64)
+		switch {
+		case call.Method == http.MethodGet && call.Path == "/containers/mysql-main/json":
+			return http.StatusNotFound, "", true
+		case call.Method == http.MethodGet && call.Path == "/containers/"+containerID+"/json":
+			return http.StatusOK, serviceContainerInspectBody(), true
+		case call.Method == http.MethodGet && call.Path == "/images/json":
+			return http.StatusOK, fmt.Sprintf(`[{"Id":"sha256:%s"}]`, imageID), true
+		case call.Method == http.MethodGet && call.Path == "/images/"+encodeEngineID("sha256:"+imageID)+"/json":
+			return http.StatusOK, fmt.Sprintf(`{"Id":"sha256:%s","Size":1103000000,"Created":"2026-11-04T00:00:00Z","RepoTags":[%s],"RepoDigests":["docker.1panel.live/library/mysql@sha256:%s"],"Config":{}}`, imageID, repoTags, strings.Repeat("a", 64)), true
+		case call.Method == http.MethodPost && call.Path == "/volumes/create":
+			return http.StatusCreated, `{"Name":"elysian-agent-0-req-1"}`, true
+		case call.Method == http.MethodPost && call.Path == "/containers/create":
+			*createBody = call.Body
+			return http.StatusCreated, fmt.Sprintf(`{"Id":"%s","Warnings":[]}`, containerID), true
+		case call.Method == http.MethodPost && call.Path == "/containers/"+containerID+"/start":
+			return http.StatusNoContent, "", true
+		}
+		return 0, "", false
+	}
+}
+
+func TestCreateServiceResolvesMirrorPulledImageByLocalList(t *testing.T) {
+	imageID := strings.Repeat("b", 64)
+	var createBody string
+	facade := newServiceFacade(t, mirrorImageScript(t, &createBody, imageID, `"mysql:8.4"`), &recordingPortOpener{})
+	result, err := facade.CreateService(context.Background(), AgentServiceCreateInput{
+		Name: "mysql-main", Image: "mysql:8.4@sha256:" + strings.Repeat("a", 64), RequestID: "req-1",
+		ResourceTier: "medium", NetworkScope: "any-host", Port: 3306, HostPort: 13306,
+		Credentials: []string{"MYSQL_ROOT_PASSWORD"}, Volumes: []string{"/var/lib/mysql"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result == nil {
+		t.Fatal("回执为空")
+	}
+	if !strings.Contains(createBody, `"Image":"sha256:`+imageID+`"`) {
+		t.Fatalf("创建体未用镜像 ID 钉死：%s", createBody)
+	}
+	if strings.Contains(createBody, `"HostIP"`) || !strings.Contains(createBody, `"HostIp":"0.0.0.0"`) {
+		t.Fatalf("端口绑定字段必须是 HostIp：%s", createBody)
+	}
+}
+
+func TestCreateServiceRejectsUnknownDigestViaLocalList(t *testing.T) {
+	imageID := strings.Repeat("b", 64)
+	var createBody string
+	facade := newServiceFacade(t, mirrorImageScript(t, &createBody, imageID, `"mysql:8.4"`), &recordingPortOpener{})
+	_, err := facade.CreateService(context.Background(), AgentServiceCreateInput{
+		Name: "mysql-main", Image: "mysql:8.4@sha256:" + strings.Repeat("e", 64), RequestID: "req-1",
+		ResourceTier: "medium", NetworkScope: "container-net", Port: 3306,
+		Credentials: []string{"MYSQL_ROOT_PASSWORD"}, Volumes: []string{"/var/lib/mysql"},
+	})
+	if err == nil {
+		t.Fatal("清单中不存在的摘要应被拒绝")
+	}
+	var rejected *AgentError
+	if !errors.As(err, &rejected) || !rejected.NotDispatched {
+		t.Fatalf("未知摘要应作为未派发预检拒绝：%+v", err)
+	}
+	if createBody != "" {
+		t.Fatal("拒绝时不得发出创建请求")
+	}
+}
+
+func TestCreateRestrictedResolvesMirrorPulledImageByLocalList(t *testing.T) {
+	imageID := strings.Repeat("b", 64)
+	var createBody string
+	containerID := strings.Repeat("d", 64)
+	facade := newServiceFacade(t, func(call engineCall) (int, string, bool) {
+		switch {
+		case call.Method == http.MethodGet && call.Path == "/containers/task-box/json":
+			return http.StatusNotFound, "", true
+		case call.Method == http.MethodGet && call.Path == "/images/json":
+			return http.StatusOK, fmt.Sprintf(`[{"Id":"sha256:%s"}]`, imageID), true
+		case call.Method == http.MethodGet && call.Path == "/images/"+encodeEngineID("sha256:"+imageID)+"/json":
+			return http.StatusOK, fmt.Sprintf(`{"Id":"sha256:%s","Size":1000,"Created":"2026-11-04T00:00:00Z","RepoTags":["task-tool:1"],"RepoDigests":["docker.1panel.live/library/task-tool@sha256:%s"],"Config":{}}`, imageID, strings.Repeat("a", 64)), true
+		case call.Method == http.MethodPost && call.Path == "/containers/create":
+			createBody = call.Body
+			return http.StatusCreated, fmt.Sprintf(`{"Id":"%s","Warnings":[]}`, containerID), true
+		case call.Method == http.MethodGet && call.Path == "/containers/"+containerID+"/json":
+			return http.StatusOK, `{"Id":"` + containerID + `","Name":"/task-box","Created":"2026-11-04T00:00:00Z","Image":"sha256:` + imageID + `","State":{"Status":"running"},"Config":{"User":"65532:65532","Labels":{"elysian.managed":"true","elysian.agent.template":"restricted-v1"}},"HostConfig":{"NetworkMode":"none","ReadonlyRootfs":true,"CapDrop":["ALL"],"SecurityOpt":["no-new-privileges:true"]},"Mounts":[]}`, true
+		case call.Method == http.MethodPost && call.Path == "/containers/"+containerID+"/start":
+			return http.StatusNoContent, "", true
+		}
+		return 0, "", false
+	}, &recordingPortOpener{})
+	container, err := facade.CreateRestricted(context.Background(), AgentCreateInput{
+		Name: "task-box", Image: "task-tool:1@sha256:" + strings.Repeat("a", 64), RequestID: strings.Repeat("r", 64),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if container.ID != containerID {
+		t.Fatalf("容器 ID 不符：%+v", container)
+	}
+	if !strings.Contains(createBody, `"Image":"sha256:`+imageID+`"`) {
+		t.Fatalf("创建体未用镜像 ID 钉死：%s", createBody)
+	}
+}
+
+func TestAgentRejectedConvertsInvalidRequestOnly(t *testing.T) {
+	err := agentRejected(shared.InvalidRequest("服务容器只使用本机已存在的固定摘要镜像"))
+	rejected, ok := err.(*AgentError)
+	if !ok || !rejected.NotDispatched || rejected.Code != "docker-operation-rejected" || rejected.Message != "服务容器只使用本机已存在的固定摘要镜像" {
+		t.Fatalf("预检拒绝应转未派发业务错误：%+v", err)
+	}
+	raw := errors.New("创建服务持久卷失败")
+	if agentRejected(raw) != raw {
+		t.Fatal("执行中失败不得被转成预检拒绝")
+	}
+	if agentRejected(nil) != nil {
+		t.Fatal("nil 应原样通过")
+	}
+}
 
 // newServiceFacade 构造带凭据登记与端口开放桩的 AgentFacade。
 func newServiceFacade(t *testing.T, script engineScript, opener *recordingPortOpener) *AgentFacade {
@@ -69,16 +193,20 @@ func serviceContainerInspectBody() string {
 }
 
 // scriptServiceCreate 覆盖一次 any-host 成功创建所需的全部 Engine 应答；
+// 镜像核验走本机清单（RepoTags 含完整引用形态、RepoDigests 保留源站命名），
 // 创建后的容器 inspect（start 回读与回执）统一走 serviceContainerInspectBody。
 func scriptServiceCreate(call engineCall) (int, string, bool) {
 	containerID := strings.Repeat("c", 64)
+	imageID := strings.Repeat("b", 64)
 	switch {
 	case call.Method == http.MethodGet && call.Path == "/containers/mysql-main/json":
 		return http.StatusNotFound, "", true
 	case call.Method == http.MethodGet && call.Path == "/containers/"+containerID+"/json":
 		return http.StatusOK, serviceContainerInspectBody(), true
-	case call.Method == http.MethodGet && call.Path == "/images/"+url.PathEscape(agentServiceImage)+"/json":
-		return http.StatusOK, fmt.Sprintf(`{"Id":"sha256:%s","Config":{}}`, agentServiceDigest), true
+	case call.Method == http.MethodGet && call.Path == "/images/json":
+		return http.StatusOK, fmt.Sprintf(`[{"Id":"sha256:%s"}]`, imageID), true
+	case call.Method == http.MethodGet && call.Path == "/images/"+encodeEngineID("sha256:"+imageID)+"/json":
+		return http.StatusOK, fmt.Sprintf(`{"Id":"sha256:%s","Size":1103000000,"Created":"2026-11-04T00:00:00Z","RepoTags":["docker.io/library/mysql:8.4"],"RepoDigests":["docker.1panel.live/library/mysql@sha256:%s"],"Config":{}}`, imageID, agentServiceDigest), true
 	case call.Method == http.MethodGet && call.Path == "/networks/elysian-agent-net":
 		return http.StatusNotFound, "", true
 	case call.Method == http.MethodPost && call.Path == "/networks/create":
@@ -210,13 +338,16 @@ func TestCreateServiceAdoptReusesCredentialsWithoutRegeneration(t *testing.T) {
 func TestCreateServiceStartFailureRemovesContainerAndVolumes(t *testing.T) {
 	containerID := strings.Repeat("c", 64)
 	engine := newFakeEngine(func(call engineCall) (int, string, bool) {
+		imageID := strings.Repeat("b", 64)
 		switch {
 		case call.Method == http.MethodGet && call.Path == "/containers/mysql-main/json":
 			return http.StatusNotFound, "", true
 		case call.Method == http.MethodGet && call.Path == "/containers/"+containerID+"/json":
 			return http.StatusOK, serviceContainerInspectBody(), true
-		case call.Method == http.MethodGet && call.Path == "/images/"+url.PathEscape(agentServiceImage)+"/json":
-			return http.StatusOK, fmt.Sprintf(`{"Id":"sha256:%s","Config":{}}`, agentServiceDigest), true
+		case call.Method == http.MethodGet && call.Path == "/images/json":
+			return http.StatusOK, fmt.Sprintf(`[{"Id":"sha256:%s"}]`, imageID), true
+		case call.Method == http.MethodGet && call.Path == "/images/"+encodeEngineID("sha256:"+imageID)+"/json":
+			return http.StatusOK, fmt.Sprintf(`{"Id":"sha256:%s","Size":1103000000,"Created":"2026-11-04T00:00:00Z","RepoTags":["docker.io/library/mysql:8.4"],"RepoDigests":["docker.1panel.live/library/mysql@sha256:%s"],"Config":{}}`, imageID, agentServiceDigest), true
 		case call.Method == http.MethodGet && call.Path == "/networks/elysian-agent-net":
 			return http.StatusNotFound, "", true
 		case call.Method == http.MethodPost && call.Path == "/networks/create":
