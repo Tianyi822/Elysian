@@ -31,6 +31,8 @@ const (
 	actionTimeout        = 30 * time.Second
 	pullTimeout          = 15 * 60 * time.Second
 	pullIdleTimeout      = 120 * time.Second
+	agentPullTimeout     = 2 * time.Hour
+	agentPullIdleTimeout = 5 * time.Minute
 	pullProgressMaxBytes = 64 * 1024 * 1024
 	registryResolveDelay = 3 * time.Second
 	searchTimeout        = 4 * time.Second
@@ -65,17 +67,25 @@ type serviceDeps struct {
 	mkdir           func(path string, mode os.FileMode) error
 	realpath        func(path string) (string, error)
 	// resolveRegistry 返回 hostname 的全部解析地址；真实实现带 3s 超时包裹。
-	resolveRegistry func(ctx context.Context, hostname string) ([]string, error)
-	fetchCatalog    catalogFetcher
-	fetchTags       tagsFetcher
-	fetchHubToken   func(ctx context.Context, repository string) (string, error)
-	fetchProbe      probeFetcher
-	probeSample     probeSampler
-	now             func() time.Time
-	pullIdleTimeout time.Duration // 测试可缩短等待；生产固定为两分钟无上游数据。
+	resolveRegistry      func(ctx context.Context, hostname string) ([]string, error)
+	fetchCatalog         catalogFetcher
+	fetchTags            tagsFetcher
+	fetchHubToken        func(ctx context.Context, repository string) (string, error)
+	fetchProbe           probeFetcher
+	probeSample          probeSampler
+	now                  func() time.Time
+	pullIdleTimeout      time.Duration // 测试可缩短等待；生产固定为两分钟无上游数据。
+	agentPullTimeout     time.Duration
+	agentPullIdleTimeout time.Duration
 }
 
 func (d *serviceDeps) fillDefaults() {
+	if d.agentPullTimeout <= 0 {
+		d.agentPullTimeout = agentPullTimeout
+	}
+	if d.agentPullIdleTimeout <= 0 {
+		d.agentPullIdleTimeout = agentPullIdleTimeout
+	}
 	if d.pullIdleTimeout <= 0 {
 		d.pullIdleTimeout = pullIdleTimeout
 	}

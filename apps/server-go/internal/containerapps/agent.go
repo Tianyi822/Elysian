@@ -18,6 +18,7 @@ type AgentFacade struct {
 
 type AgentTaskStatus struct {
 	State, RequestID string
+	Stage, UpdatedAt string
 	Terminal, Failed bool
 	Value            any
 	Error            string
@@ -39,7 +40,7 @@ func (a *AgentFacade) InspectTask(ctx context.Context, id string) (AgentTaskStat
 	if terminal && task.State != BuildStateSucceeded {
 		message = "镜像构建任务未成功完成，请在容器应用页查看详情"
 	}
-	return AgentTaskStatus{State: task.State, RequestID: task.RequestID, Terminal: terminal, Failed: terminal && task.State != BuildStateSucceeded, Value: AgentBuildSummary(task), Error: message}, nil
+	return AgentTaskStatus{State: task.State, RequestID: task.RequestID, Stage: task.Stage, UpdatedAt: task.UpdatedAt, Terminal: terminal, Failed: terminal && task.State != BuildStateSucceeded, Value: AgentBuildSummary(task), Error: message}, nil
 }
 
 func AgentBuildSummary(task BuildTask) any {

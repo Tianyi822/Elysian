@@ -54,6 +54,17 @@ func (m *Manager) monitorTasks() {
 	if err != nil {
 		return
 	}
+	m.mu.Lock()
+	active := make(map[string]bool, len(operations))
+	for _, operation := range operations {
+		active[operation.ID] = true
+	}
+	for id := range m.taskProgress {
+		if !active[id] {
+			delete(m.taskProgress, id)
+		}
+	}
+	m.mu.Unlock()
 	for _, operation := range operations {
 		if operation.Task == nil {
 			continue
@@ -89,7 +100,11 @@ func (m *Manager) monitorTasks() {
 		ctx, cancel := context.WithTimeout(m.ctx, 5*time.Second)
 		status, inspectErr := m.deps.InspectTask(ctx, *operation.Task)
 		cancel()
-		if inspectErr != nil || !status.Terminal {
+		if inspectErr != nil {
+			continue
+		}
+		if !status.Terminal {
+			m.observeTaskProgress(operation, status.Progress)
 			continue
 		}
 		m.mu.Lock()

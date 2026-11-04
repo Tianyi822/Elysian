@@ -76,6 +76,7 @@ type Manager struct {
 	toolAuthority    *tools.Authority
 	ownToolRuntime   bool
 	taskDone         chan struct{}
+	taskProgress     map[string]taskProgressObservation
 	// tokenEstimates 保存每模型 token 比例与官方分词器缓存；重启丢弃，只影响估算精度，不影响保守回退。
 	tokenEstimates tokenEstimateStore
 }

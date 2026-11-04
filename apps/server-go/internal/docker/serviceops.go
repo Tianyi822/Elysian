@@ -234,7 +234,11 @@ func (s *dockerService) pull(ctx context.Context, body any, onProgress func(imag
 		return contract.ContainerImage{}, reject(&shared.InvalidRequestError{Status: http.StatusConflict, Message: pullBusyMessage})
 	}
 	defer s.pullInFlight.Store(false)
-	ctx, cancel := context.WithTimeout(ctx, pullTimeout)
+	timeout := pullTimeout
+	if confirmFailure {
+		timeout = s.deps.agentPullTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	emit := func(phase, message string) {
 		if onProgress != nil {

@@ -298,6 +298,15 @@ export type AgentUserInputRequest = {
   answerRequestId?: string; createdAt: string; endedAt?: string
 }
 export type AgentChatToolStatus = 'planned' | 'waiting-input' | 'waiting-approval' | 'waiting-resource' | 'waiting-task' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'unknown' | 'denied' | 'expired' | 'revoked' | 'not-executed'
+/** 异步域任务的只读进度；字节比例仅表示当前镜像层，不构成任务完成回执。 */
+export type AgentTaskProgress = {
+  state: 'running' | 'unknown'
+  message: string
+  updatedAt?: string
+  layerId?: string
+  currentBytes?: number
+  totalBytes?: number
+}
 type AgentChatTimelineEntryBase = {
   id: string
   modelRequestId: string
@@ -307,7 +316,7 @@ type AgentChatTimelineEntryBase = {
 }
 export type AgentChatTimelineEntry = AgentChatTimelineEntryBase & (
   { kind: 'reasoning' | 'content'; text: string; status: RuntimeRunStatus; incomplete: boolean }
-  | { kind: 'tool'; tool: string; modelCallId: string; callIndex: number; argumentsJson: string; callId?: string; status: AgentChatToolStatus; error?: RuntimeFailure; truncated: boolean }
+  | { kind: 'tool'; tool: string; modelCallId: string; callIndex: number; argumentsJson: string; callId?: string; status: AgentChatToolStatus; error?: RuntimeFailure; truncated: boolean; progress?: AgentTaskProgress }
   | { kind: 'user-input'; userInput: AgentUserInputRequest }
 )
 /** 最近一次推理输入及输出组成的近似 token 数，不作为供应商计费或实测用量。 */

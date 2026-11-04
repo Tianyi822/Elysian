@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"math"
 
 	"elysian/server/internal/agent/tools"
 	"elysian/server/internal/containerapps"
@@ -25,7 +26,7 @@ func agentTaskInspector(sites *websites.AgentFacade, apps *containerapps.AgentFa
 			if task.RequestID != ref.RequestID {
 				return tools.TaskStatus{}, errors.New("数据库任务请求身份不匹配")
 			}
-			return tools.TaskStatus{State: task.State, Terminal: task.State == "succeeded", Value: task}, nil
+			return tools.TaskStatus{State: task.State, Terminal: task.State == "succeeded", Value: task, Progress: agentTaskProgress(task.State, task.State == "succeeded", task.Message, "", "正在执行数据库任务")}, nil
 		case "docker-image-pull":
 			task, err := containers.InspectPull(ctx, ref.ID)
 			if err != nil {
@@ -35,7 +36,7 @@ func agentTaskInspector(sites *websites.AgentFacade, apps *containerapps.AgentFa
 				return tools.TaskStatus{}, errors.New("镜像拉取请求身份不匹配")
 			}
 			terminal := task.State == "succeeded" || task.State == "failed"
-			return tools.TaskStatus{State: task.State, Terminal: terminal, Failed: terminal && task.State != "succeeded", Value: task, Error: task.ErrorMessage}, nil
+			return tools.TaskStatus{State: task.State, Terminal: terminal, Failed: terminal && task.State != "succeeded", Value: task, Error: task.ErrorMessage, Progress: agentPullProgress(task)}, nil
 		case "website":
 			status, err := sites.InspectTask(ctx, ref.ID)
 			if err != nil {
@@ -44,7 +45,7 @@ func agentTaskInspector(sites *websites.AgentFacade, apps *containerapps.AgentFa
 			if status.RequestID != ref.RequestID {
 				return tools.TaskStatus{}, errors.New("网站任务请求身份不匹配")
 			}
-			return tools.TaskStatus{State: status.State, Terminal: status.Terminal, Failed: status.Failed, Value: status.Value, Error: status.Error}, nil
+			return tools.TaskStatus{State: status.State, Terminal: status.Terminal, Failed: status.Failed, Value: status.Value, Error: status.Error, Progress: agentTaskProgress(status.State, status.Terminal, status.Stage, status.UpdatedAt, "正在执行网站任务")}, nil
 		case "container-app-build":
 			status, err := apps.InspectTask(ctx, ref.ID)
 			if err != nil {
@@ -53,11 +54,53 @@ func agentTaskInspector(sites *websites.AgentFacade, apps *containerapps.AgentFa
 			if status.RequestID != ref.RequestID {
 				return tools.TaskStatus{}, errors.New("镜像任务请求身份不匹配")
 			}
-			return tools.TaskStatus{State: status.State, Terminal: status.Terminal, Failed: status.Failed, Value: status.Value, Error: status.Error}, nil
+			return tools.TaskStatus{State: status.State, Terminal: status.Terminal, Failed: status.Failed, Value: status.Value, Error: status.Error, Progress: agentTaskProgress(status.State, status.Terminal, status.Stage, status.UpdatedAt, "正在构建容器镜像")}, nil
 		default:
 			return tools.TaskStatus{}, errors.New("异步任务领域无效")
 		}
 	}
+}
+
+// 仅投影各域已有的受控阶段文案，不读取自由日志或调用模型。
+func agentTaskProgress(state string, terminal bool, message, updatedAt, fallback string) *tools.TaskProgress {
+	if terminal {
+		return nil
+	}
+	progress := &tools.TaskProgress{State: "running", Message: message, UpdatedAt: updatedAt}
+	switch state {
+	case "unknown", "interrupted", "failed", "cancelled":
+		progress.State = "unknown"
+		if progress.Message == "" {
+			progress.Message = "任务结果未确认，须核实实际状态"
+		}
+	}
+	if progress.Message == "" {
+		progress.Message = fallback
+	}
+	return progress
+}
+
+func agentPullProgress(task docker.AgentPullTask) *tools.TaskProgress {
+	progress := agentTaskProgress(task.State, task.State == "succeeded" || task.State == "failed", task.ErrorMessage, task.UpdatedAt, "正在准备镜像拉取")
+	if progress == nil || progress.State == "unknown" || task.Progress == nil {
+		return progress
+	}
+	source := task.Progress
+	if source.Message != "" {
+		progress.Message = source.Message
+	} else if label := map[string]string{"preparing": "正在准备镜像层", "downloading": "正在下载镜像层", "extracting": "正在解压镜像层", "finalizing": "正在确认镜像拉取结果"}[source.Phase]; label != "" {
+		progress.Message = label
+	}
+	if source.Phase == "downloading" || source.Phase == "extracting" {
+		progress.LayerID = source.LayerID
+		if source.LayerID != "" && source.CurrentBytes != nil && source.TotalBytes != nil {
+			current, total := *source.CurrentBytes, *source.TotalBytes
+			if !math.IsNaN(current) && !math.IsNaN(total) && current >= 0 && total > 0 && current <= total && total <= 1<<53-1 {
+				progress.CurrentBytes, progress.TotalBytes = &current, &total
+			}
+		}
+	}
+	return progress
 }
 
 func agentTaskLookup(sites *websites.AgentFacade, apps *containerapps.AgentFacade, containers *docker.AgentFacade, databases *database.AgentFacade) func(context.Context, tools.TaskReference) (tools.TaskReference, error) {

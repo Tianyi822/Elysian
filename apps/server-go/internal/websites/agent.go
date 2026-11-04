@@ -232,6 +232,7 @@ func agentTaskTarget(task deploymentTask) string {
 
 type AgentTaskStatus struct {
 	State, RequestID string
+	Stage, UpdatedAt string
 	Terminal, Failed bool
 	Value            any
 	Error            string
@@ -253,7 +254,7 @@ func (a *AgentFacade) InspectTask(ctx context.Context, id string) (AgentTaskStat
 	if terminal && task.State != "succeeded" {
 		message = "网站任务未成功完成，请在网站页查看详情"
 	}
-	return AgentTaskStatus{State: task.State, RequestID: task.Input.RequestID, Terminal: terminal, Failed: terminal && task.State != "succeeded", Value: agentTask(task), Error: message}, nil
+	return AgentTaskStatus{State: task.State, RequestID: task.Input.RequestID, Stage: task.Stage, UpdatedAt: task.UpdatedAt, Terminal: terminal, Failed: terminal && task.State != "succeeded", Value: agentTask(task), Error: message}, nil
 }
 
 func (a *AgentFacade) LookupTask(ctx context.Context, requestID string) (string, error) {

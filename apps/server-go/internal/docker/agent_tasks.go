@@ -27,6 +27,7 @@ type AgentPullTask struct {
 	State        string                   `json:"state"`
 	CreatedAt    string                   `json:"createdAt"`
 	UpdatedAt    string                   `json:"updatedAt"`
+	Progress     *imagePullProgress       `json:"progress,omitempty"`
 	Image        *contract.ContainerImage `json:"image,omitempty"`
 }
 
@@ -58,6 +59,7 @@ func (a *AgentFacade) loadPullTasks() error {
 		switch task.State {
 		case "running":
 			task.State = "unknown"
+			task.ErrorCode, task.ErrorMessage = "docker-pull-interrupted", "面板重启中断了镜像拉取，结果未确认，禁止重新拉取或换源重投"
 			if err = config.AtomicJSON(file, &task); err != nil {
 				return err
 			}
@@ -123,7 +125,7 @@ func (a *AgentFacade) PullFromRegistry(ctx context.Context, imageRef, requestID,
 		if existing.ImageRef != imageRef || existing.RequestID != requestID || existing.Registry != registry {
 			return AgentPullTask{}, shared.InvalidRequest("请求标识已用于其他镜像")
 		}
-		return *existing, nil
+		return cloneAgentPullTask(*existing), nil
 	}
 	for _, task := range a.pullTasks {
 		if task.State != "succeeded" && task.State != "failed" {
@@ -131,13 +133,13 @@ func (a *AgentFacade) PullFromRegistry(ctx context.Context, imageRef, requestID,
 		}
 	}
 	// Persist before dispatch. A lost response must never trigger a second pull.
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := a.service.deps.now().UTC().Format(time.RFC3339Nano)
 	task := AgentPullTask{ID: id, RequestID: requestID, ImageRef: imageRef, Registry: registry, State: "running", CreatedAt: now, UpdatedAt: now}
 	if err := config.AtomicJSON(filepath.Join(a.taskRoot, id+".json"), &task); err != nil {
 		return AgentPullTask{}, err
 	}
 	a.pullTasks[id] = &task
-	background, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	background, cancel := context.WithTimeout(context.Background(), a.service.deps.agentPullTimeout)
 	if a.pullCancel == nil {
 		a.pullCancel = map[string]context.CancelFunc{}
 	}
@@ -146,14 +148,22 @@ func (a *AgentFacade) PullFromRegistry(ctx context.Context, imageRef, requestID,
 	go func() {
 		defer a.taskWG.Done()
 		defer cancel()
-		image, err := a.service.pull(background, body, nil, true)
+		var lastSaved time.Time
+		image, err := a.service.pull(background, body, func(progress imagePullProgress) {
+			a.recordPullProgress(id, progress, &lastSaved)
+		}, true)
 		a.taskMu.Lock()
 		defer a.taskMu.Unlock()
-		updated := task
+		updated := cloneAgentPullTask(*a.pullTasks[id])
 		delete(a.pullCancel, id)
-		updated.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		updated.UpdatedAt = a.service.deps.now().UTC().Format(time.RFC3339Nano)
 		updated.State = "unknown"
 		updated.ErrorCode, updated.ErrorMessage = "docker-pull-unknown", "镜像拉取结果未确认，禁止重新拉取或换源重投"
+		if errors.Is(err, agentPullIdleError) {
+			updated.ErrorCode, updated.ErrorMessage = "docker-pull-idle-timeout", "Docker 连续 5 分钟未返回拉取数据，结果未确认，禁止重新拉取或换源重投"
+		} else if errors.Is(background.Err(), context.DeadlineExceeded) {
+			updated.ErrorCode, updated.ErrorMessage = "docker-pull-timeout", "镜像拉取达到 2 小时安全上限，结果未确认，禁止重新拉取或换源重投"
+		}
 		if _, confirmed := err.(*pullConfirmedFailure); confirmed && background.Err() == nil {
 			updated.State = "failed"
 			updated.ErrorCode, updated.ErrorMessage = "docker-pull-failed", "镜像拉取已确认失败且处理已结束，可选择其他镜像源并使用新的 requestId 重试"
@@ -188,7 +198,43 @@ func (a *AgentFacade) InspectPull(ctx context.Context, id string) (AgentPullTask
 	}
 	// Image presence cannot confirm this request completed or stopped. Only the
 	// original Engine pull response may persist success; uncertainty stays held.
-	return *task, nil
+	return cloneAgentPullTask(*task), nil
+}
+
+func cloneAgentPullTask(task AgentPullTask) AgentPullTask {
+	if task.Progress != nil {
+		progress := *task.Progress
+		if progress.CurrentBytes != nil {
+			value := *progress.CurrentBytes
+			progress.CurrentBytes = &value
+		}
+		if progress.TotalBytes != nil {
+			value := *progress.TotalBytes
+			progress.TotalBytes = &value
+		}
+		task.Progress = &progress
+	}
+	return task
+}
+
+// 仅保存最后一拍；展示写入失败不取消已派发的 Engine 请求，终态仍须原子保存。
+func (a *AgentFacade) recordPullProgress(id string, progress imagePullProgress, lastSaved *time.Time) {
+	a.taskMu.Lock()
+	defer a.taskMu.Unlock()
+	task := a.pullTasks[id]
+	if task == nil || task.State != "running" {
+		return
+	}
+	now := a.service.deps.now()
+	updated := *task
+	updated.Progress, updated.UpdatedAt = &progress, now.UTC().Format(time.RFC3339Nano)
+	updated = cloneAgentPullTask(updated)
+	a.pullTasks[id] = &updated
+	if lastSaved.IsZero() || now.Sub(*lastSaved) >= time.Second {
+		// 失败也节流，避免磁盘故障使每个进度帧都同步重试。
+		*lastSaved = now
+		_ = config.AtomicJSON(filepath.Join(a.taskRoot, id+".json"), &updated)
+	}
 }
 
 func (a *AgentFacade) PullStatus(ctx context.Context, imageRef, id string, cancel bool) (AgentPullTask, error) {

@@ -11,6 +11,7 @@ import { useSmoothedText } from './useSmoothedText'
 import { ChatPlan } from './ChatPlan'
 import { ChatUserInputSummary } from './ChatUserInput'
 import { ChatRuntimeResult } from './ChatRuntimeResult'
+import { ChatToolProgress } from './ChatToolProgress'
 
 type ToolEntry = Extract<AgentChatTimelineEntry, { kind: 'tool' }>
 const toolLabels: Record<AgentChatToolStatus, string> = {
@@ -46,15 +47,18 @@ function ChatTool({ entry, runId, api, onProgress }: { entry: ToolEntry; runId: 
     }).finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
   }, [api, runId, expanded, entry.callId, entry.modelRequestId, entry.modelCallId, entry.status, entry.endedAt, retry, report])
-  useLayoutEffect(onProgress, [expanded, result, loading, error, onProgress])
-  const Icon = entry.status === 'succeeded' ? Check : failed(entry.status) ? X : pending(entry.status) ? Loader2 : Terminal
-  return <div className="chat-tool" data-status={entry.status}>
+  useLayoutEffect(onProgress, [expanded, result, loading, error, entry.progress, onProgress])
+  const showProgress = entry.status === 'waiting-task' || !!entry.progress && (entry.status === 'running' || entry.status === 'unknown')
+  const status = showProgress && entry.progress?.state === 'unknown' ? 'unknown' : entry.status
+  const Icon = status === 'succeeded' ? Check : failed(status) ? X : pending(status) ? Loader2 : Terminal
+  return <div className="chat-tool" data-status={status}>
     <button type="button" className="chat-tool-toggle" aria-expanded={expanded} aria-controls={regionId}
       aria-label={`${expanded ? '收起' : '展开'}工具 ${entry.tool} 详情`} onClick={() => setExpanded(value => !value)}>
       <ChevronRight size={14} aria-hidden className={expanded ? 'rotate-90' : undefined} />
-      <Icon size={14} aria-hidden className={`chat-tool-status-icon${entry.status === 'running' || entry.status === 'waiting-task' ? ' animate-spin motion-reduce:animate-none' : ''}`} />
-      <span className="chat-tool-name">{entry.tool}</span><span className="chat-tool-status">{toolLabels[entry.status]}</span>
+      <Icon size={14} aria-hidden className={`chat-tool-status-icon${status === 'running' || status === 'waiting-task' ? ' animate-spin motion-reduce:animate-none' : ''}`} />
+      <span className="chat-tool-name">{entry.tool}</span><span className="chat-tool-status">{toolLabels[status]}</span>
     </button>
+    {showProgress && <ChatToolProgress tool={entry.tool} progress={entry.progress} unknown={status === 'unknown'} />}
     {expanded && <div id={regionId} role="region" aria-label={`${entry.tool} 详情`} className="chat-tool-details">
       <p className="text-xs text-fg-muted">参数</p>
       <pre className="chat-tool-data hover-scrollbar" tabIndex={0}>{entry.argumentsJson}</pre>

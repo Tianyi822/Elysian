@@ -22,7 +22,7 @@ import (
 //
 // 超时与上限语义：Request 的 Timeout <=0 取 30s、MaxBytes <=0 取 4 MiB（seam 缺省）；
 // Stream 的 Timeout <=0 表示无超时、MaxBytes <=0 表示无总量上限（events 长流必需，
-// 拉取路径显式传 15 分钟 / 64 MiB）。错误文案为契约：超时「Docker 请求超时」、
+// Web 拉取显式传 15 分钟、Agent 拉取传 2 小时，均限 64 MiB）。错误文案为契约：超时「Docker 请求超时」、
 // Request 超限「Docker 响应过大」、Stream 超限「拉取进度过大」、取消「拉取已取消」。
 
 const (

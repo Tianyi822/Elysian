@@ -5,26 +5,28 @@ import (
 	"math"
 
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/tools"
 )
 
 type ChatTimelineEntry struct {
-	UserInput      *UserInputRequest `json:"userInput,omitempty"`
-	ID             string            `json:"id"`
-	Kind           string            `json:"kind"`
-	ModelRequestID string            `json:"modelRequestId"`
-	RequestIndex   int               `json:"requestIndex"`
-	StartedAt      string            `json:"startedAt"`
-	EndedAt        string            `json:"endedAt,omitempty"`
-	Status         string            `json:"status"`
-	Text           string            `json:"text,omitempty"`
-	Incomplete     bool              `json:"incomplete"`
-	Tool           string            `json:"tool,omitempty"`
-	ModelCallID    string            `json:"modelCallId,omitempty"`
-	CallIndex      int               `json:"callIndex"`
-	ArgumentsJSON  string            `json:"argumentsJson,omitempty"`
-	CallID         string            `json:"callId,omitempty"`
-	Error          *Failure          `json:"error,omitempty"`
-	Truncated      bool              `json:"truncated"`
+	UserInput      *UserInputRequest   `json:"userInput,omitempty"`
+	ID             string              `json:"id"`
+	Kind           string              `json:"kind"`
+	ModelRequestID string              `json:"modelRequestId"`
+	RequestIndex   int                 `json:"requestIndex"`
+	StartedAt      string              `json:"startedAt"`
+	EndedAt        string              `json:"endedAt,omitempty"`
+	Status         string              `json:"status"`
+	Text           string              `json:"text,omitempty"`
+	Incomplete     bool                `json:"incomplete"`
+	Tool           string              `json:"tool,omitempty"`
+	ModelCallID    string              `json:"modelCallId,omitempty"`
+	CallIndex      int                 `json:"callIndex"`
+	ArgumentsJSON  string              `json:"argumentsJson,omitempty"`
+	CallID         string              `json:"callId,omitempty"`
+	Error          *Failure            `json:"error,omitempty"`
+	Truncated      bool                `json:"truncated"`
+	Progress       *tools.TaskProgress `json:"progress,omitempty"`
 }
 
 type ChatContextUsage struct {
@@ -110,6 +112,15 @@ func (m *Manager) ChatSnapshot(ctx context.Context, id string) (ChatOutput, erro
 	}
 	for i := range timeline.Entries {
 		entry := &timeline.Entries[i]
+		if entry.Kind == "tool" && (entry.Status == StateWaitingTask || entry.Status == "unknown") {
+			for _, operation := range operations {
+				if operation.ModelRequestID == entry.ModelRequestID && operation.ModelCallID == entry.ModelCallID && operation.Task != nil {
+					if observation, ok := m.taskProgress[operation.ID]; ok && observation.Task == *operation.Task {
+						entry.Progress = cloneTaskProgress(observation.Progress)
+					}
+				}
+			}
+		}
 		for _, question := range questions {
 			if entry.Kind == "tool" && entry.ModelRequestID == question.ModelRequestID && entry.ModelCallID == question.ModelCallID {
 				copy := question

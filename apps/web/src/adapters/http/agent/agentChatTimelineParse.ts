@@ -1,4 +1,4 @@
-import { RUNTIME_RUN_STATUSES, type AgentChatCacheHitUsage, type AgentChatContextBreakdown, type AgentChatContextUsage, type AgentChatTimelineEntry, type AgentChatTimelineSnapshot, type AgentChatToolStatus, type RuntimeCall, type RuntimeFailure, type RuntimeJSONValue, type RuntimeRunStatus, type RuntimeUsage } from '@elysian/contracts'
+import { RUNTIME_RUN_STATUSES, type AgentTaskProgress, type AgentChatCacheHitUsage, type AgentChatContextBreakdown, type AgentChatContextUsage, type AgentChatTimelineEntry, type AgentChatTimelineSnapshot, type AgentChatToolStatus, type RuntimeCall, type RuntimeFailure, type RuntimeJSONValue, type RuntimeRunStatus, type RuntimeUsage } from '@elysian/contracts'
 import { parseRunPlan } from './agentPlanParse'
 import { parseBudgetFields } from './agentBudgetParse'
 import { parseUserInput } from './agentUserInputParse'
@@ -55,6 +55,23 @@ const contextUsage = (value: unknown): AgentChatContextUsage => {
 }
 const toolStatuses: readonly AgentChatToolStatus[] = ['planned', 'waiting-input', 'waiting-approval', 'waiting-resource', 'waiting-task', 'running', 'succeeded', 'failed', 'cancelled', 'unknown', 'denied', 'expired', 'revoked', 'not-executed']
 
+function taskProgress(value: unknown): AgentTaskProgress {
+  const row = object(value)
+  if (row.state !== 'running' && row.state !== 'unknown') throw invalid()
+  const progress: AgentTaskProgress = { state: row.state, message: string(row.message),
+    ...(row.updatedAt === undefined ? {} : { updatedAt: string(row.updatedAt) }),
+    ...(row.layerId === undefined ? {} : { layerId: string(row.layerId) }) }
+  if (row.currentBytes !== undefined || row.totalBytes !== undefined) {
+    const current = row.currentBytes, total = row.totalBytes
+    if (!progress.layerId || typeof current !== 'number' || typeof total !== 'number' ||
+      !Number.isFinite(current) || !Number.isFinite(total) || current < 0 || total <= 0 ||
+      current > total || total > Number.MAX_SAFE_INTEGER) throw invalid()
+    progress.currentBytes = current
+    progress.totalBytes = total
+  }
+  return progress
+}
+
 export function parseChatTimeline(value: unknown, runId: string): AgentChatTimelineSnapshot {
   const row = object(value)
   if (row.runId !== runId || !Array.isArray(row.entries)) throw invalid()
@@ -83,7 +100,8 @@ export function parseChatTimeline(value: unknown, runId: string): AgentChatTimel
     }
     if (entry.kind !== 'tool' || !(toolStatuses as readonly unknown[]).includes(entry.status)) throw invalid()
     return { ...base, kind: 'tool', tool: string(entry.tool), modelCallId: string(entry.modelCallId), callIndex: integer(entry.callIndex),
-      argumentsJson: string(entry.argumentsJson), callId: optional(entry.callId), status: entry.status as AgentChatToolStatus, error: failure(entry.error), truncated: boolean(entry.truncated) }
+      argumentsJson: string(entry.argumentsJson), callId: optional(entry.callId), status: entry.status as AgentChatToolStatus, error: failure(entry.error), truncated: boolean(entry.truncated),
+      ...(entry.progress === undefined ? {} : { progress: taskProgress(entry.progress) }) }
   })
   const finalResponseId = optional(row.finalResponseId)
   const terminalResult = row.terminalResult === undefined ? undefined : (() => {

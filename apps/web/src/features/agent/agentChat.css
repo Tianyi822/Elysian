@@ -123,6 +123,14 @@
 .chat-tool-name { min-width: 0; overflow-wrap: anywhere; font-family: var(--font-mono, monospace); }
 .chat-tool-status { flex-shrink: 0; }
 .chat-tool[data-status="succeeded"] :is(.chat-tool-status, .chat-tool-status-icon) { color: var(--t-success); }
+.chat-tool-progress { margin: 6px 0 10px 28px; max-width: 480px; min-width: 0; color: var(--t-fg-muted); font-size: 12px; }
+.chat-tool-progress-label { display: flex; flex-wrap: wrap; gap: 4px 12px; overflow-wrap: anywhere; }
+.chat-tool-progress-bytes { font-variant-numeric: tabular-nums; }
+.chat-tool-progress-track { position: relative; overflow: hidden; height: 4px; margin-top: 7px; border-radius: 4px; background: var(--t-panel-line); }
+.chat-tool-progress-track > span { display: block; height: 100%; border-radius: inherit; background: var(--t-accent); }
+.chat-tool-progress-indeterminate { width: 30%; animation: chat-tool-progress 1.6s ease-in-out infinite; }
+@keyframes chat-tool-progress { from { transform: translateX(-100%); } to { transform: translateX(334%); } }
+@media (prefers-reduced-motion: reduce) { .chat-tool-progress-indeterminate { animation: none; margin-left: 35%; } }
 .chat-tool:is([data-status="failed"], [data-status="denied"], [data-status="expired"], [data-status="revoked"]) :is(.chat-tool-status, .chat-tool-status-icon) { color: var(--t-danger); }
 .chat-tool-details { display: flex; flex-direction: column; align-items: stretch; gap: 6px; padding: 8px 0 8px 22px; }
 .chat-tool-data { max-height: 256px; min-width: 0; overflow: auto; overscroll-behavior: contain; white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 10px; border-left: 1px solid var(--t-panel-line); font-size: 12px; line-height: 1.6; }

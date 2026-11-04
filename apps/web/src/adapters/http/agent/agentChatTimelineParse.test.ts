@@ -15,6 +15,17 @@ it('保留运行时终态结果，并拒绝生成中、成功或畸形的结果'
 const reasoning = { id: 'm1:reasoning', modelRequestId: 'm1', requestIndex: 0, kind: 'reasoning', text: '思考', startedAt: '', status: 'succeeded', incomplete: false }
 const content = { ...reasoning, id: 'm1:content', kind: 'content', text: '正文' }
 const tool = { id: 'm1:tool:t', modelRequestId: 'm1', requestIndex: 0, kind: 'tool', tool: 'test', modelCallId: 't', callIndex: 0, argumentsJson: '{"n":9007199254740993}', startedAt: '', status: 'waiting-approval', truncated: false }
+
+it('异步进度可选，保留明确零并拒绝不完整或无效的字节比例', () => {
+  const parse = (progress: unknown) => parseChatTimeline({ runId: 'r', status: 'waiting-task', done: false, entries: [{ ...tool, status: 'waiting-task', progress }] }, 'r').entries[0]
+  const progress = { state: 'running', message: '正在下载镜像层', layerId: 'layer', currentBytes: 0, totalBytes: 100 }
+  expect(parse(progress)).toMatchObject({ progress })
+  expect(parse({ state: 'unknown', message: '结果未确认' })).toMatchObject({ progress: { state: 'unknown', message: '结果未确认' } })
+  expect(parse(undefined)).not.toHaveProperty('progress')
+  for (const invalid of [null, { ...progress, state: 'succeeded' }, { ...progress, totalBytes: 0 },
+    { ...progress, currentBytes: -1 }, { ...progress, currentBytes: 101 }, { ...progress, totalBytes: Infinity },
+    { ...progress, currentBytes: undefined }, { ...progress, layerId: undefined }]) expect(() => parse(invalid)).toThrow('格式无效')
+})
 const snapshot = { runId: 'r', status: 'waiting-approval', done: false, entries: [reasoning, content, tool] }
 
 describe('时间线响应校验', () => {

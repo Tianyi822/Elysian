@@ -14,6 +14,7 @@ import (
 )
 
 var pullIdleError = errors.New("Docker 连续 120 秒未返回镜像拉取数据，请检查 Docker 服务与所选镜像源后重试")
+var agentPullIdleError = errors.New("Docker 连续 5 分钟未返回镜像拉取数据，拉取结果未确认")
 
 // pullStream 在收到错误行时关闭 Engine 请求，不依赖上游主动结束响应。
 // 活动计时使用原始数据块，去重后的进度不能作为网络仍活跃的依据。
@@ -25,7 +26,11 @@ func (s *dockerService) pullStream(ctx context.Context, fromImage string, onProg
 func (s *dockerService) pullStreamMode(ctx context.Context, fromImage string, onProgress func(imagePullProgress), confirmFailure bool) error {
 	streamCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	watchdog := newPullIdleWatchdog(s.deps.pullIdleTimeout, cancel)
+	timeout, idleTimeout, idleError := pullTimeout, s.deps.pullIdleTimeout, pullIdleError
+	if confirmFailure {
+		timeout, idleTimeout, idleError = s.deps.agentPullTimeout, s.deps.agentPullIdleTimeout, agentPullIdleError
+	}
+	watchdog := newPullIdleWatchdog(idleTimeout, idleError, cancel)
 	defer watchdog.stop()
 	decoder := newPullProgressDecoder(onProgress)
 	received := false
@@ -38,7 +43,7 @@ func (s *dockerService) pullStreamMode(ctx context.Context, fromImage string, on
 	}()
 	response, err := s.deps.transport.Stream(streamCtx, seam.EngineRequest{
 		Method: http.MethodPost, Path: "/images/create",
-		Query: url.Values{"fromImage": {fromImage}}, Timeout: pullTimeout, MaxBytes: pullProgressMaxBytes,
+		Query: url.Values{"fromImage": {fromImage}}, Timeout: timeout, MaxBytes: pullProgressMaxBytes,
 	}, func(chunk []byte) {
 		if len(chunk) == 0 || streamCtx.Err() != nil {
 			return
@@ -110,10 +115,11 @@ type pullIdleWatchdog struct {
 	timeout  time.Duration
 	stopped  bool
 	cancel   context.CancelCauseFunc
+	cause    error
 }
 
-func newPullIdleWatchdog(timeout time.Duration, cancel context.CancelCauseFunc) *pullIdleWatchdog {
-	w := &pullIdleWatchdog{lastData: time.Now(), timeout: timeout, cancel: cancel}
+func newPullIdleWatchdog(timeout time.Duration, cause error, cancel context.CancelCauseFunc) *pullIdleWatchdog {
+	w := &pullIdleWatchdog{lastData: time.Now(), timeout: timeout, cause: cause, cancel: cancel}
 	w.mu.Lock()
 	w.timer = time.AfterFunc(timeout, w.expire)
 	w.mu.Unlock()
@@ -131,7 +137,7 @@ func (w *pullIdleWatchdog) expire() {
 		w.timer.Reset(remaining)
 		return
 	}
-	w.cancel(pullIdleError)
+	w.cancel(w.cause)
 }
 
 func (w *pullIdleWatchdog) touch() {
