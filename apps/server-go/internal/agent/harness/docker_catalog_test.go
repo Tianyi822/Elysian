@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -343,14 +344,48 @@ type dockerSelectionTools struct {
 func (t *dockerSelectionTools) Schemas() []tools.PublicSchema { return t.schemas }
 
 func TestDockerAutomaticCatalogNeverAddsUnreviewedOrHumanTools(t *testing.T) {
-	registered := []tools.PublicSchema{
-		{Name: "docker_images_list", Metadata: tools.Metadata{Domain: "docker", Exposure: "human"}},
-		{Name: "docker_engine_request", Metadata: tools.Metadata{Domain: "docker", Exposure: "agent"}},
-		{Name: "docker_container_inspect", Metadata: tools.Metadata{Domain: "other", Exposure: "agent"}},
+	audited := []string{
+		"docker_containers_list", "docker_images_list", "docker_policy_view", "docker_self_container", "registry_host_check", "docker_registry_list", "docker_registry_probe",
+		"docker_container_inspect", "docker_image_inspect", "docker_container_create_restricted", "docker_container_create_service",
+		"docker_container_start", "docker_container_stop", "docker_container_restart", "docker_container_remove",
+		"docker_image_search", "docker_image_tags", "docker_image_pull", "docker_image_pull_get", "docker_image_pull_logs", "docker_image_pull_cancel", "docker_container_logs", "docker_image_remove",
 	}
+	var registered []tools.PublicSchema
+	for _, name := range audited {
+		registered = append(registered, tools.PublicSchema{Name: name, Metadata: tools.Metadata{Domain: "docker", Exposure: "agent"}})
+	}
+	registered = append(registered,
+		tools.PublicSchema{Name: "docker_engine_request", Metadata: tools.Metadata{Domain: "docker", Exposure: "agent"}},
+		tools.PublicSchema{Name: "docker_container_exec", Metadata: tools.Metadata{Domain: "docker", Exposure: "agent"}},
+		tools.PublicSchema{Name: "docker_images_list", Metadata: tools.Metadata{Domain: "docker", Exposure: "human"}},
+		tools.PublicSchema{Name: "docker_container_inspect", Metadata: tools.Metadata{Domain: "other", Exposure: "agent"}},
+	)
 	m := &Manager{deps: Deps{Tools: &dockerSelectionTools{schemas: registered}}}
 	before := Environment{Tools: []string{"already_selected"}}
-	if got := m.withDockerTools(before); !reflect.DeepEqual(got, before) {
+	want := append([]string{"already_selected"}, audited...)
+	sort.Strings(want[1:])
+	if got := m.withDockerTools(before); !reflect.DeepEqual(got.Tools, want) {
+		t.Fatalf("audited docker tools not added exactly once: %v", got.Tools)
+	}
+	unaudited := &Manager{deps: Deps{Tools: &dockerSelectionTools{schemas: []tools.PublicSchema{
+		{Name: "docker_engine_request", Metadata: tools.Metadata{Domain: "docker", Exposure: "agent"}},
+		{Name: "docker_container_exec", Metadata: tools.Metadata{Domain: "docker", Exposure: "agent"}},
+		{Name: "docker_images_list", Metadata: tools.Metadata{Domain: "docker", Exposure: "human"}},
+		{Name: "docker_container_inspect", Metadata: tools.Metadata{Domain: "other", Exposure: "agent"}},
+	}}}}
+	unchanged := Environment{Tools: []string{"already_selected"}}
+	if got := unaudited.withDockerTools(unchanged); !reflect.DeepEqual(got, unchanged) {
 		t.Fatalf("unaudited tools added: %+v", got)
+	}
+}
+
+func TestDockerContainerLogsIsConfirmedPlatformRead(t *testing.T) {
+	logs := Capability{Name: "docker_container_logs", Source: "builtin", ReadOnly: true, Metadata: tools.Metadata{Domain: "docker", Exposure: "agent", ReadOnly: true}}
+	if !confirmedPlatformRead(logs) {
+		t.Fatal("docker_container_logs is not a confirmed platform read")
+	}
+	exec := Capability{Name: "docker_container_exec", Source: "builtin", ReadOnly: true, Metadata: tools.Metadata{Domain: "docker", Exposure: "agent", ReadOnly: true}}
+	if confirmedPlatformRead(exec) {
+		t.Fatal("unaudited docker read granted approval-free access")
 	}
 }
