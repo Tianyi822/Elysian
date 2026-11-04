@@ -136,9 +136,10 @@ type PlanStep struct {
 
 // RunPlan 模型确认的计划快照（不代表外部操作已获授权或执行成功）。
 type RunPlan struct {
-	Revision  int        `json:"revision"`
-	UpdatedAt string     `json:"updatedAt"`
-	Steps     []PlanStep `json:"steps"`
+	SourceRunID string     `json:"sourceRunId,omitempty"`
+	Revision    int        `json:"revision"`
+	UpdatedAt   string     `json:"updatedAt"`
+	Steps       []PlanStep `json:"steps"`
 }
 
 // UserInputOption 单选题选项（推荐项不预选）。

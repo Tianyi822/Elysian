@@ -186,6 +186,7 @@ func TestAgentSkipsProactiveCompactionWhenRequestsAreTight(t *testing.T) {
 	}, func(deps *Deps) {
 		deps.AgentLimits.MaxModelRequests = 3
 		deps.AgentLimits.TokenBudget = tokenBudgetCeiling
+		deps.Spawn = legacyBudgetWorker(deps.AgentLimits)
 	})
 	invoker.execute = func(context.Context, string) (any, error) {
 		// 与容量阈值用例一致：两次 260k 字节事实按 token 单位超过 300000 容量的 80%。

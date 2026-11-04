@@ -30,6 +30,9 @@ func (s *store) terminalResult(ctx context.Context, q rowReader, r Run) (*Termin
 	if stopped {
 		return nil, nil
 	}
+	if r.BudgetStop != nil {
+		return &TerminalResult{Origin: "runtime", Content: budgetTerminalText(r)}, nil
+	}
 	reason := "运行异常结束，未获得可用结果"
 	if r.Error != nil && strings.TrimSpace(r.Error.Message) != "" {
 		reason = strings.TrimSpace(r.Error.Message)

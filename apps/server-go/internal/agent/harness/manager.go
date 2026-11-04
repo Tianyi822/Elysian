@@ -406,6 +406,9 @@ func (m *Manager) Get(ctx context.Context, id string) (Run, error) {
 		return Run{}, closedError()
 	}
 	r, err := m.store.get(ctx, id)
+	if err == nil {
+		r.Continuation, err = continuation(ctx, m.store.db, r)
+	}
 	return r, storageFailure(err)
 }
 func (m *Manager) List(ctx context.Context, q ListQuery) (Page[Run], error) {
@@ -906,6 +909,13 @@ func (m *Manager) finishLocked(id, state, reason, message string) {
 				if count != len(t.Steps) {
 					state, reason, message = StateInterrupted, "incomplete-run", "Worker 未完成全部步骤，运行结果未确认"
 				}
+			}
+		}
+		if (state == StateFailed || state == StateInterrupted) && r.CancelRequestedAt == "" {
+			if stop := budgetStopFor(*r, reason); stop != nil {
+				r.BudgetStop = stop
+				state = StateInterrupted
+				message = "本轮额度已用完，进度已保存"
 			}
 		}
 		r.Status = state

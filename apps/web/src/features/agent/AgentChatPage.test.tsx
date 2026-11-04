@@ -1309,3 +1309,46 @@ it('轮次之间显示模型与思考等级切换', async () => {
   renderChat(backend, '/agent?session=server-session', undefined, [chatTestModel, chatVisionTestModel])
   expect(await screen.findByText('模型已切换 test-model（测试服务） → test-vision-model（测试服务） · 思考等级已切换 高 → 低')).toBeInTheDocument()
 })
+
+it.each([true, false])('预算停止按服务端状态展示继续任务（可用=%s）', async allowed => {
+  const backend = chatTestApi()
+  const run = await backend.api.createTask('server-session', { requestId: 'budget-page', content: '安装 MySQL' })
+  Object.assign(backend.runs.get(run.id)!, {
+    status: 'interrupted', budgetPolicy: 'resource-budget/v1', budgetStop: { resource: 'tokens', used: 196608, limit: 196608 },
+    continuation: { sourceRunId: run.id, allowed, ...(allowed ? {} : { blockedReason: '存在结果未知或尚未释放的操作，请先核实实际状态' }) },
+  })
+  renderChat(backend, '/agent?session=server-session')
+  const button = await screen.findByRole('button', { name: '继续任务' })
+  if (!allowed) {
+    expect(button).toBeDisabled()
+    expect(screen.getByText('存在结果未知或尚未释放的操作，请先核实实际状态')).toBeVisible()
+    return
+  }
+  await waitFor(() => expect(button).toBeEnabled())
+  const input = screen.getByRole('textbox', { name: '发送给 Ely 的消息' })
+  fireEvent.change(input, { target: { value: '保留底部草稿' } })
+  fireEvent.click(button)
+  await waitFor(() => expect(backend.api.continueTask).toHaveBeenCalledWith('task-1', expect.objectContaining({ continueFromRunId: run.id })))
+  await waitFor(() => expect(input).toHaveValue('保留底部草稿'))
+})
+
+it('续接超时后即使其他标签页已有新轮次仍保留精确重试入口', async () => {
+  const backend = chatTestApi()
+  const run = await backend.api.createTask('server-session', { requestId: 'budget-retry-page', content: '安装 MySQL' })
+  Object.assign(backend.runs.get(run.id)!, { status: 'interrupted', continuation: { sourceRunId: run.id, allowed: true } })
+  backend.api.continueTask.mockRejectedValueOnce(new Error('连接超时'))
+  renderChat(backend, '/agent?session=server-session')
+  const button = await screen.findByRole('button', { name: '继续任务' })
+  await waitFor(() => expect(button).toBeEnabled())
+  fireEvent.click(button)
+  const retry = await screen.findByRole('button', { name: '重试继续任务' })
+  await waitFor(() => expect(retry).toBeEnabled())
+  const original = backend.api.continueTask.mock.calls[0]!
+  await act(async () => {
+    await backend.api.continueTask('task-1', { requestId: 'another-tab-run', content: '其他标签页的新要求' })
+    await useAgentChatStore.getState().refresh(backend.api)
+  })
+  expect(screen.getByRole('button', { name: '重试继续任务' })).toBeEnabled()
+  fireEvent.click(screen.getByRole('button', { name: '重试继续任务' }))
+  await waitFor(() => expect(backend.api.continueTask.mock.lastCall).toEqual(original))
+})

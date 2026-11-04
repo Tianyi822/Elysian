@@ -147,6 +147,7 @@ func (m *Manager) settleDomainTask(expected Operation, status tools.TaskStatus) 
 		call.Status = StateSucceeded
 		call.EndedAt = ended
 		call.Result = result
+		call.ReservedResultBytes = 0
 		call.Error = nil
 		if status.Failed {
 			call.Status = StateFailed

@@ -108,7 +108,7 @@ export function ChatTimeline({ timeline, answer, active, stopped, stopping, api,
     {!result && timeline.done && (timeline.status === 'failed' || timeline.status === 'interrupted') && !!timeline.error?.message &&
       <p role="status" className={`text-xs ${timeline.status === 'failed' ? 'text-danger' : 'text-fg-muted'}`}>运行未完成：{timeline.error.message}</p>}
     {stopped && <p role="status" className="text-xs text-fg-muted">已停止</p>}
-    {showPlan && <ChatPlan plan={timeline.plan} status={timeline.status} stopping={stopping} onProgress={onProgress} />}
+    {showPlan && <ChatPlan budgetStopped={!!timeline.budgetStop} plan={timeline.plan} status={timeline.status} stopping={stopping} onProgress={onProgress} />}
     {result && <ChatRuntimeResult content={result} />}
   </div>
 }

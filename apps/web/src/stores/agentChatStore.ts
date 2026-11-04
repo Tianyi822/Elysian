@@ -57,7 +57,8 @@ type AgentChatState = {
   setReasoningLevel(reasoningLevel: string | null): void
   addAttachments(api: AgentConversationAdapter, files: readonly File[], supportsImage?: boolean): Promise<void>
   removeAttachment(id: string): void
-  send(api: AgentConversationAdapter, model?: AgentModelProfile): Promise<boolean>
+  send(api: AgentConversationAdapter, model?: AgentModelProfile, continueFromRunId?: string): Promise<boolean>
+  continueTask(api: AgentConversationAdapter, model?: AgentModelProfile): Promise<boolean>
   refresh(api: AgentConversationAdapter, signal?: AbortSignal): Promise<void>
   watchOutput(api: AgentConversationAdapter, runId: string, signal: AbortSignal): Promise<void>
 }
@@ -73,7 +74,7 @@ const outgoingMessageFor = (session: AgentChatSession, content: string, refs?: r
 })
 export const isChatRunActive = (run: AgentChatRun | null) => !!run && ['queued', 'running', 'waiting-input', 'waiting-approval', 'waiting-resource', 'waiting-task', 'recovery-required'].includes(run.status)
 export const isChatReplyActive = (run: AgentChatRun | null) => isChatRunActive(run) && run?.phase !== 'final-memory'
-export const chatRunFailure = (run: AgentChatRun | null) => run && !isChatRunActive(run) && run.status !== 'succeeded' && run.status !== 'cancelled'
+export const chatRunFailure = (run: AgentChatRun | null) => run && !isChatRunActive(run) && run.status !== 'succeeded' && run.status !== 'cancelled' && !run.budgetStop
   ? `${RUNTIME_RUN_STATUS_LABELS[run.status]}${run.error ? `：${run.error.message}` : ''}`
   : null
 const failureMessage = (error: unknown) => error instanceof Error ? error.message : '会话请求失败'
@@ -83,7 +84,7 @@ const confirmedRejections: Readonly<Record<string, number>> = {
   'invalid-task': 400, 'model-capability': 400, 'unsupported-reasoning-level': 400,
   'session-not-found': 404, 'task-not-found': 404, 'profile-not-found': 404, 'profile-revision-not-found': 404,
   'session-busy': 409, 'model-changed': 409, 'profile-inactive': 409, 'queue-full': 429,
-  'invalid-replacement': 400, 'message-changed': 409,
+  'invalid-replacement': 400, 'message-changed': 409, 'continuation-changed': 409, 'continuation-blocked': 409,
   'image-unsupported': 400, 'attachment-invalid': 400, 'attachment-too-many': 400, 'attachment-too-large': 400, 'attachment-message-too-large': 400,
 }
 const isConfirmedRejection = (error: unknown) => error instanceof AgentHttpError &&
@@ -129,7 +130,8 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
       if (observedActiveRuns.has(run.id) && notifiedRunStatuses.get(run.id) !== run.status) {
         notifiedRunStatuses.set(run.id, run.status)
         // 成功回复已在聊天正文中呈现，不再额外记录完成消息。
-        const feedback = run.status === 'cancelled' ? { message: '已停止回复。', tone: 'info' as const }
+        const feedback = run.budgetStop ? { message: '本轮额度已用完，进度已保存。', tone: 'info' as const }
+          : run.status === 'cancelled' ? { message: '已停止回复。', tone: 'info' as const }
           : run.status === 'waiting-approval' ? { message: '操作等待批准，请确认待审批操作。', tone: 'warning' as const }
           : run.status === 'waiting-input' ? { message: 'Ely 需要你回答问题后继续。', tone: 'info' as const }
           : run.status === 'recovery-required' ? { message: '运行结果尚未确认，需要处理后才能继续。', tone: 'warning' as const }
@@ -277,7 +279,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
       if (pending && pending.input.requestId === run.requestId && pending.input.replaceMessageId) discardPrepared(session)
       const next = { ...session, remote: { sessionId: run.sessionId ?? session.remote!.sessionId, taskId: run.taskId, runId: run.id },
         ...(pending && pending.input.requestId === run.requestId ? { pending: undefined,
-          ...(pending.input.replaceMessageId ? { editing: undefined } : { draft: session.draft.trim() === pending.input.content ? '' : session.draft }) } : {}) }
+          ...(pending.input.replaceMessageId ? { editing: undefined } : pending.input.continueFromRunId ? {} : { draft: session.draft.trim() === pending.input.content ? '' : session.draft }) } : {}) }
       // 确认接受后只清本次发送引用的草稿附件并释放其本地字节：pending 未确认窗口内
       // 新增的草稿附件（如跨标签写入）不属于本次发送集合，保留给用户后续处置。
       if (pending && pending.input.requestId === run.requestId && !pending.input.replaceMessageId && pending.input.attachments?.length && session.attachments.length) {
@@ -658,16 +660,30 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
         persist({ ...session, attachments: session.attachments.filter(attachment => attachment.id !== attachmentId) })
         void adapter.discard([attachmentId])
       },
-      async send(api, model) {
+      async continueTask(api, model) {
+        const session = current()
+        if (session.pending) {
+          if (!session.pending.input.continueFromRunId) return false
+          return get().send(api, model)
+        }
+        const source = get().run
+        if (!source?.continuation?.allowed || source.id !== session.remote?.runId || source.taskId !== session.remote.taskId || session.editing) {
+          reportInput(source?.continuation?.blockedReason ?? '原轮次不再支持继续，请刷新会话。')
+          return false
+        }
+        return get().send(api, model, source.id)
+      },
+      async send(api, model, continueFromRunId) {
         const session = current()
         const lifetime = lifecycle
-        const text = session.pending?.input.content ?? (session.editing?.text ?? session.draft).trim()
+        const continuing = session.pending?.input.continueFromRunId ?? continueFromRunId
+        const text = session.pending?.input.content ?? (continuing ? '继续完成上轮未完成的任务。' : (session.editing?.text ?? session.draft).trim())
         if (!api.available || !text || get().loading || get().sending || get().uploadingAttachments || get().stopping || isChatRunActive(get().run)) return false
         const version = ++submissionVersion
         const valid = () => lifetime === lifecycle && version === submissionVersion && stillCurrent(session.id)
         if (!session.pending) {
           // 新建发送：无 serverId 的旧版存量附件显式拦截并逐个点名，绝不静默丢弃或产出空引用。
-          const stale = session.editing ? [] : session.attachments.filter(attachment => !attachment.serverId)
+          const stale = session.editing || continuing ? [] : session.attachments.filter(attachment => !attachment.serverId)
           if (stale.length) {
             reportInput(`存在未上传的附件（旧版本添加），请移除后重新添加再发送：${stale.map(attachment => attachment.name).join('、')}。`)
             return false
@@ -677,7 +693,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
             reportInput('当前模型不支持图片输入，无法重发带图消息，请切换支持图片的模型。')
             return false
           }
-          if (!session.editing && session.attachments.length && !model?.capabilities.image) {
+          if (!continuing && !session.editing && session.attachments.length && !model?.capabilities.image) {
             reportInput('当前模型不支持图片输入，请移除附件或切换支持图片的模型。')
             return false
           }
@@ -690,7 +706,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
           reportInput('当前模型不支持已选思考等级，请重新选择。'); return false
         }
         set({ sending: true, inputError: null, outgoingMessage: session.editing || session.pending?.input.replaceMessageId ? null
-          : outgoingMessageFor(session, text, session.pending ? session.pending.input.attachments ?? [] : undefined) })
+          : outgoingMessageFor(session, text, session.pending ? session.pending.input.attachments ?? [] : continuing ? [] : undefined) })
         remoteVersion += 1
         const controller = new AbortController()
         attachmentPreparation = controller
@@ -698,7 +714,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
           if (session.pending) return await dispatchPending(api, session.id, lifetime, version)
           if (!model) return false
           const preparationValid = () => valid() && (!session.editing || (current().editing?.messageId === session.editing.messageId && current().editing?.taskId === session.editing.taskId))
-          await prepareExistingAttachments(api, session, preparationValid, controller.signal)
+          if (!continuing) await prepareExistingAttachments(api, session, preparationValid, controller.signal)
           if (!valid()) return false
           if (!preparationValid()) throw new Error('原消息已变化，请重新选择需要编辑的消息。')
           let remote: AgentSession
@@ -720,11 +736,12 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
           set({ remoteSession: remote })
           // 编辑仅替换超限旧图的引用，绝不携带底部草稿中的附件。
           const preparedSession = current()
-          const attachments = preparedSession.editing ? preparedSession.editing.attachments?.map(ref => ({
+          const attachments = continuing ? undefined : preparedSession.editing ? preparedSession.editing.attachments?.map(ref => ({
             id: preparedSession.editing!.preparedAttachments?.find(item => item.sourceId === ref.id)?.attachment.serverId ?? ref.id,
           })) : preparedSession.attachments.length ? preparedSession.attachments.map(attachment => ({ id: attachment.serverId! })) : undefined
           const saved = update({ remote: { ...current().remote, sessionId: remote.id }, pending: { input: { requestId: id(), content: text, permissionMode: session.permissionMode, extensionMode: 'enabled', authorizationMode: 'on-demand',
             ...(session.editing ? { replaceMessageId: session.editing.messageId } : {}),
+            ...(continuing ? { continueFromRunId: continuing } : {}),
             ...(session.reasoningLevel ? { reasoningLevel: session.reasoningLevel } : {}),
             ...(attachments?.length ? { attachments } : {}) }, taskId: session.editing?.taskId ?? current().remote?.taskId } })
           if (!saved) { update({ pending: undefined }); notify('无法保存发送标识，请恢复浏览器存储后再发送。'); return false }

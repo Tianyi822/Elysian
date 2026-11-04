@@ -134,7 +134,7 @@ func (a *agentExecution) selectedMaterials(ctx context.Context) (*worker.ModelRe
 			return nil, bad("prompt-not-found", "提示模板不在固定发现目录中")
 		}
 	}
-	if len(record.Response.ToolCalls) > a.run.Limits.MaxSteps {
+	if !(resourceBudgetRun(a.run) && a.run.Limits.MaxSteps == 0) && len(record.Response.ToolCalls) > a.run.Limits.MaxSteps {
 		return nil, bad("call-budget", "显式资料加载数量超过调用预算")
 	}
 	_, err := m.store.change(ctx, a.run.ID, "materials-intent", func(tx *sql.Tx, r *Run) error {

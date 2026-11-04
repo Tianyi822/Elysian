@@ -41,6 +41,7 @@ type RenameSessionInput struct {
 }
 
 type AgentInput struct {
+	ContinueFromRunID string          `json:"continueFromRunId,omitempty"`
 	AuthorizationMode string          `json:"authorizationMode,omitempty"`
 	ExtensionMode     string          `json:"extensionMode,omitempty"`
 	PermissionMode    PermissionMode  `json:"permissionMode,omitempty"`

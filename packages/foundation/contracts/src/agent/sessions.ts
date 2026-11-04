@@ -1,4 +1,4 @@
-import type { RuntimeFailure, RuntimeJSONValue, RuntimeMemoryStatus, RuntimeRunStatus, RuntimeUsage } from './runtime.ts'
+import type { AgentBudgetStop, AgentContinuation, RuntimeFailure, RuntimeJSONValue, RuntimeMemoryStatus, RuntimeRunStatus, RuntimeUsage } from './runtime.ts'
 import type { AgentPermissionMode, AgentPromptRef, AgentResourceRef, AgentRevisionRef } from './capabilities.ts'
 import type { AgentWikiRef } from './memory.ts'
 
@@ -146,6 +146,8 @@ export const AGENT_ATTACHMENT_LIMITS = {
 } as const
 
 export type AgentInput = {
+  /** 显式续接预算结束的最新轮次；与编辑重发互斥，参与请求幂等校验。 */
+  continueFromRunId?: string
   /** 普通聊天在运行时申请缺少的执行环境与资源权限。 */
   authorizationMode?: 'on-demand'
 	/** 普通聊天读取最新已启用扩展；省略时使用显式环境。 */
@@ -333,10 +335,13 @@ export type AgentChatContextUsage = {
 }
 /** 每轮独立的模型任务计划；步骤完成只来自确认后的计划工具回执。 */
 export type AgentPlanStep = { id: string; title: string; status: 'pending' | 'in_progress' | 'completed' }
-export type AgentRunPlan = { revision: number; updatedAt: string; steps: readonly AgentPlanStep[] }
+export type AgentRunPlan = { sourceRunId?: string; revision: number; updatedAt: string; steps: readonly AgentPlanStep[] }
 
 /** 只读展示投影，条目按推理请求及工具调用顺序排列；终答由公开消息确认。 */
 export type AgentChatTimelineSnapshot = {
+  budgetPolicy?: 'resource-budget/v1'
+  budgetStop?: AgentBudgetStop
+  continuation?: AgentContinuation
   /** 失败或系统中断的运行时结果，也承接缺少公开答复的历史轮次。 */
   terminalResult?: { origin: 'runtime'; content: string }
   plan?: AgentRunPlan

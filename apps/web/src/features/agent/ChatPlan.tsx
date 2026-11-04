@@ -6,8 +6,8 @@ import './chatPlan.css'
 const labels = { pending: '待执行', in_progress: '进行中', completed: '已完成' }
 
 /** 仅展示服务端确认的快照；展开偏好留在组件内，不写入本地会话事实。 */
-export function ChatPlan({ plan, status, stopping = false, onProgress }: {
-  plan?: AgentRunPlan; status: RuntimeRunStatus; stopping?: boolean; onProgress?(): void
+export function ChatPlan({ plan, status, budgetStopped = false, stopping = false, onProgress }: {
+  plan?: AgentRunPlan; status: RuntimeRunStatus; budgetStopped?: boolean; stopping?: boolean; onProgress?(): void
 }) {
   const [expanded, setExpanded] = useState(false)
   const id = useId()
@@ -20,7 +20,7 @@ export function ChatPlan({ plan, status, stopping = false, onProgress }: {
   const summary = stopping ? '正在停止' : status === 'cancelled' ? '已停止' : status === 'succeeded'
     ? remaining ? '本轮已结束，仍有未完成步骤' : '全部完成'
     : running ? current ? `正在${current.title}` : remaining ? '准备下一步' : '步骤已完成'
-    : RUNTIME_RUN_STATUS_LABELS[status]
+    : budgetStopped ? '本轮额度已用完，进度已保存' : RUNTIME_RUN_STATUS_LABELS[status]
   return <section className="chat-plan panel-surface" aria-label="任务进度" data-status={status}>
     <button type="button" className="chat-plan-toggle" aria-expanded={expanded} aria-controls={id}
       aria-label={`${expanded ? '收起' : '展开'}任务进度`} onClick={() => setExpanded(value => !value)}>

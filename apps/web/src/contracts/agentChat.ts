@@ -59,7 +59,7 @@ export type AgentChatSession = {
   pending?: { input: AgentInput; taskId?: string }
 }
 
-export type AgentChatRun = Pick<RuntimeRun, 'id' | 'requestId' | 'sessionId' | 'taskId' | 'status' | 'phase' | 'cancelRequestedAt' | 'error' | 'warning' | 'plan'>
+export type AgentChatRun = Pick<RuntimeRun, 'id' | 'requestId' | 'sessionId' | 'taskId' | 'status' | 'phase' | 'cancelRequestedAt' | 'error' | 'warning' | 'plan' | 'budgetPolicy' | 'budgetStop' | 'continuation'>
 export type AgentChatPageResult<T> = { items: readonly T[]; nextCursor: string; hasMore: boolean }
 export type AgentChatTask = { id: string; sessionId: string; kind: string; latestRun?: AgentChatRun }
 export const agentChatSessionKey = (session: AgentChatSession) => session.remote?.sessionId ?? session.id

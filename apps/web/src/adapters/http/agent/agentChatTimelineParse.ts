@@ -1,5 +1,6 @@
 import { RUNTIME_RUN_STATUSES, type AgentChatCacheHitUsage, type AgentChatContextBreakdown, type AgentChatContextUsage, type AgentChatTimelineEntry, type AgentChatTimelineSnapshot, type AgentChatToolStatus, type RuntimeCall, type RuntimeFailure, type RuntimeJSONValue, type RuntimeRunStatus, type RuntimeUsage } from '@elysian/contracts'
 import { parseRunPlan } from './agentPlanParse'
+import { parseBudgetFields } from './agentBudgetParse'
 import { parseUserInput } from './agentUserInputParse'
 
 const invalid = () => new Error('Agent 时间线响应格式无效')
@@ -92,6 +93,7 @@ export function parseChatTimeline(value: unknown, runId: string): AgentChatTimel
   })()
   if (finalResponseId && !entries.some(entry => entry.kind === 'content' && entry.modelRequestId === finalResponseId)) throw invalid()
   return { runId, status: status(row.status), done: boolean(row.done), finalResponseId, entries,
+    ...parseBudgetFields(row, runId),
     ...(terminalResult === undefined ? {} : { terminalResult }),
     ...(row.plan === undefined ? {} : { plan: parseRunPlan(row.plan) }),
     ...(row.error === undefined ? {} : { error: failure(row.error) }),

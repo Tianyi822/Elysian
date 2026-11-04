@@ -194,6 +194,7 @@ func TestToolCorrectionIsBoundedByPersistentFailuresAndRequestBudget(t *testing.
 				d.Catalog = &discoveryTestCatalog{}
 				if limited {
 					d.AgentLimits.MaxModelRequests = 2
+					d.Spawn = legacyBudgetWorker(d.AgentLimits)
 				}
 			})
 			approveEnvironment(t, m, session)

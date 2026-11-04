@@ -390,6 +390,9 @@ func (m *Manager) ContinueTask(ctx context.Context, taskID string, input AgentIn
 }
 
 func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentInput, newTask bool) (Run, bool, error) {
+	if input.ContinueFromRunID != "" && (newTask || input.ReplaceMessageID != "" || !requestPattern.MatchString(input.ContinueFromRunID) || len(input.Attachments) > 0) {
+		return Run{}, false, bad("invalid-continuation", "继续任务必须引用原任务轮次，不能同时编辑重发或附加图片")
+	}
 	if input.AuthorizationMode != "" && input.AuthorizationMode != AuthorizationOnDemand {
 		return Run{}, false, bad("invalid-authorization-mode", "授权模式只能为 on-demand 或省略")
 	}
@@ -403,6 +406,8 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 		return Run{}, false, bad("invalid-request-id", "请求标识必须为 1 到 128 位字母、数字或 ._:-")
 	}
 	limits := m.deps.AgentLimits
+	// 仅新接受的普通聊天取消累计次数上限；批次、工作流和已接受快照沿用原策略。
+	limits.MaxSteps, limits.MaxModelRequests = 0, 0
 	if strings.TrimSpace(input.Content) == "" || len(input.Content) > limits.UserBytes {
 		return Run{}, false, bad("invalid-content", "用户输入为空或超过长度限制")
 	}
@@ -425,7 +430,8 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 		ReasoningLevel    string          `json:"reasoningLevel,omitempty"`
 		ReplaceMessageID  string          `json:"replaceMessageId,omitempty"`
 		PermissionMode    PermissionMode  `json:"permissionMode,omitempty"`
-	}{input.AuthorizationMode, input.ExtensionMode, operation, targetID, input.Content, input.Skills, input.Resources, input.Prompts, input.Attachments, input.ReasoningLevel, input.ReplaceMessageID, canonicalPermissionMode(input.PermissionMode)})
+		ContinueFromRunID string          `json:"continueFromRunId,omitempty"`
+	}{input.AuthorizationMode, input.ExtensionMode, operation, targetID, input.Content, input.Skills, input.Resources, input.Prompts, input.Attachments, input.ReasoningLevel, input.ReplaceMessageID, canonicalPermissionMode(input.PermissionMode), input.ContinueFromRunID})
 	canonical := string(raw)
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -508,6 +514,7 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 	}
 	public := profile.Public()
 	run := Run{ID: m.deps.NewID(), TaskID: task.ID, SessionID: sessionID, RequestID: input.RequestID, Input: input.Content, Model: &public, Status: StateQueued, CreatedAt: now, Limits: limits, LastSeq: "0", Phase: "queued", MemoryStatus: "stale"}
+	run.BudgetPolicy = resourceBudgetPolicy
 	env, err := m.environment(ctx, sessionID)
 	if err != nil {
 		return Run{}, false, storageFailure(err)

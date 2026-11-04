@@ -4,6 +4,7 @@ export function parseRunPlan(value: unknown): AgentRunPlan {
   const invalid = () => new Error('Agent 任务计划响应格式无效')
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalid()
   const row = value as Record<string, unknown>
+  if (row.sourceRunId !== undefined && (typeof row.sourceRunId !== 'string' || !row.sourceRunId)) throw invalid()
   if (typeof row.revision !== 'number' || !Number.isSafeInteger(row.revision) || row.revision < 1 ||
       typeof row.updatedAt !== 'string' || !row.updatedAt || !Array.isArray(row.steps) || row.steps.length < 1 || row.steps.length > 20) throw invalid()
   const ids = new Set<string>()
@@ -19,5 +20,5 @@ export function parseRunPlan(value: unknown): AgentRunPlan {
     return { id: step.id, title: step.title, status: step.status }
   })
   if (active > 1) throw invalid()
-  return { revision: row.revision, updatedAt: row.updatedAt, steps }
+  return { revision: row.revision, updatedAt: row.updatedAt, steps, ...(row.sourceRunId === undefined ? {} : { sourceRunId: row.sourceRunId as string }) }
 }

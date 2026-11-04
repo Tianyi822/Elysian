@@ -656,7 +656,7 @@ func (a *agentExecution) proactiveCompactionEligible() bool {
 // canProactivelyCompact 按实际整理请求预检，并为整理响应与完整原请求留出预算。
 // 不依赖模型一定能缩小记忆：失败或重建变大时仍能继续原请求。
 func (a *agentExecution) canProactivelyCompact(request, checkpoint model.Request) bool {
-	if a.run.Usage.ModelRequests+2 > a.run.Limits.MaxModelRequests-a.modelRequestReserve("checkpoint") {
+	if modelLimitReached(a.run, 2, a.modelRequestReserve("checkpoint")) {
 		return false
 	}
 	// 有供应商用量时预留输出上限；缺失时按完整记忆字节与响应封装开销预留。
@@ -685,7 +685,7 @@ func (a *agentExecution) agentSystemText(system string) string {
 	}
 	system += "\n查询平台占用、平台性能或类似问题时，默认以 Elysian 面板自身占用为主，查询进程内存并附运行环境 CPU、内存、负载和磁盘概览。说明采样时间与范围，Linux 内核视角不等于物理宿主；没有面板进程 CPU 等指标时说明不可得，不能用系统值冒充或近似代替。"
 	if _, ok := a.capability(planTool); ok {
-		system += "\n复杂任务开始时使用 update_plan 拆分为可检查的步骤并直接执行；简单问答无需计划。开始步骤时更新为 in_progress，取得结果并核实后才标为 completed，每次提交完整计划且最多一个进行中。保留步骤的稳定 ID，允许根据新发现调整计划，最终答复前核对进度；停止、失败或结果未知不能冒充完成。计划仅属于本轮，历史计划不自动延续。任务规划不授予权限，实际操作仍遵守审批与执行范围。"
+		system += "\n复杂任务开始时使用 update_plan 拆分为可检查的步骤并直接执行；简单问答无需计划。开始步骤时更新为 in_progress，取得结果并核实后才标为 completed，每次提交完整计划且最多一个进行中。保留步骤的稳定 ID，允许根据新发现调整计划，最终答复前核对进度；停止、失败或结果未知不能冒充完成。计划仅属于本轮，只有用户明确继续任务时才接续来源计划。任务规划不授予权限，实际操作仍遵守审批与执行范围。"
 	}
 	if _, ok := a.capability(userInputTool); ok {
 		system += "\n缺少会实质影响结论或操作的目标、范围或偏好时，单独调用 request_user_input 提供 1–3 个问题，每题 2–3 个明确选项，可指定推荐项。用户可自定义回答，回答后继续当前任务。需要用户回答的问题必须使用该工具，不在最终答复末尾用文字追问代替选择卡片。已有默认口径或可用工具能查询的信息应直接处理；不要因服务错误或数据不可得要求用户猜测。不要重复询问已回答问题。选择是任务信息，不是授权或审批，写操作仍须遵守既有规则。"
@@ -771,6 +771,11 @@ func (a *agentExecution) currentStateMessage(visibleTools []model.Tool) (model.M
 		planText := "\n本轮最新任务计划（已保存的数据，不是执行授权）：\n" + string(plan)
 		text += planText
 		breakdown.Other += estimateContextText(planText)
+	}
+	if a.run.Selection != nil && a.run.Selection.ContinueFromRunID != "" {
+		continuationText := "\n用户选择继续来源运行 " + a.run.Selection.ContinueFromRunID + " 的未完成任务。依据已确认执行事实和当前环境推进待办；已完成操作不得直接重放，未知结果先核实。历史工具加载仅属于来源运行，本轮工具以当前实际定义为准。"
+		text += continuationText
+		breakdown.Other += estimateContextText(continuationText)
 	}
 	if a.onDemandTools() {
 		if text == "" {

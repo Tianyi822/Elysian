@@ -51,6 +51,7 @@ export type RuntimeUsage = {
 export type RuntimeLimits = {
   concurrency: number
   queueCapacity: number
+  /** resource-budget/v1 普通聊天中 0 表示不设累计调用次数上限；旧策略按原值。 */
   maxSteps: number
   inputBytes: number
   callTimeoutSeconds: number
@@ -61,6 +62,7 @@ export type RuntimeLimits = {
   frameBytes: number
   retentionDays: number
   cancelGraceSeconds: number
+  /** resource-budget/v1 中 0 表示不设累计请求次数上限。 */
   maxModelRequests?: number
   modelTimeoutSeconds?: number
   outputTokens?: number
@@ -76,7 +78,14 @@ export type RuntimeLimits = {
   imageBytesPerMessage?: number
 }
 
+export type AgentBudgetStop = { resource: 'tokens' | 'active-time' | 'results'; used: number; limit: number }
+export type AgentContinuation = { sourceRunId: string; allowed: boolean; blockedReason?: string }
+
 export type RuntimeRun = {
+  budgetPolicy?: 'resource-budget/v1'
+  budgetStop?: AgentBudgetStop
+  /** 服务端按最新轮次及执行屏障计算的只读投影，提交时再次核对。 */
+  continuation?: AgentContinuation
   plan?: AgentRunPlan
   scopeId?: string
   nodeId?: string

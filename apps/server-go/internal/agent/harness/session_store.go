@@ -183,6 +183,9 @@ func (s *store) acceptAgent(ctx context.Context, task Task, run Run, canonical, 
 				return bad("invalid-task", "该任务不支持会话续轮")
 			}
 		}
+		if err := prepareContinuation(ctx, tx, &run); err != nil {
+			return err
+		}
 		var attachmentDescs []MessageAttachment
 		if run.Selection != nil && len(run.Selection.Attachments) > 0 {
 			// 附件绑定与任务接受同事务：任一 id 不存在或已绑定其他会话即整体回滚；

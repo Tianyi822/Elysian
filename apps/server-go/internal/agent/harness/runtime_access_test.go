@@ -102,15 +102,15 @@ func TestRuntimeAccessDenialCannotBeReaskedInSameRun(t *testing.T) {
 	}}}
 	client := func(_ context.Context, _ model.Profile, r model.Request) (model.Response, error) {
 		if r.ToolChoice == "store_working_memory" {
-			return memoryReply(r), nil
+			return usageReply(memoryReply(r), 20, 20), nil
 		}
 		if missingOperationTools(r, "test_write") {
-			return searchReply("test"), nil
+			return usageReply(searchReply("test"), 100, 50), nil
 		}
-		if inferences.Add(1) <= 2 {
-			return toolReply("test_write"), nil
+		if inferences.Add(1) <= 20 {
+			return usageReply(toolReply("test_write"), 100, 50), nil
 		}
-		return finalReply("改为只解释方案"), nil
+		return usageReply(finalReply("改为只解释方案"), 100, 50), nil
 	}
 	m, s, _ := agentManager(t, client, func(d *Deps) { d.Catalog = cat })
 	run := submitDemand(t, m, s, "denied-repeat")
@@ -118,7 +118,7 @@ func TestRuntimeAccessDenialCannotBeReaskedInSameRun(t *testing.T) {
 	if _, err := m.DecideAccess(context.Background(), a.ID, accessInput(a, "denied", "refuse-one")); err != nil {
 		t.Fatal(err)
 	}
-	if got := runtimeFinished(t, m, run.ID); got.Status != StateSucceeded || calls.Load() != 0 {
+	if got := runtimeFinished(t, m, run.ID); got.Status != StateSucceeded || got.Usage.Calls != 21 || got.Usage.ModelRequests != 23 || calls.Load() != 0 {
 		t.Fatalf("拒绝后未继续/重派发: %+v calls=%d", got, calls.Load())
 	}
 	approvals, err := m.ApprovalsByRun(context.Background(), "", run.ID)

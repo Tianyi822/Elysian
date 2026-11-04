@@ -46,6 +46,7 @@ const isSession = (value: unknown): value is AgentChatSession => isRecord(value)
     && (value.pending.input.extensionMode === undefined || value.pending.input.extensionMode === 'enabled')
     && (value.pending.input.reasoningLevel === undefined || typeof value.pending.input.reasoningLevel === 'string')
     && (value.pending.input.replaceMessageId === undefined || typeof value.pending.input.replaceMessageId === 'string')
+    && (value.pending.input.continueFromRunId === undefined || (typeof value.pending.input.continueFromRunId === 'string' && !!value.pending.input.continueFromRunId && !value.pending.input.replaceMessageId))
     && (value.pending.input.attachments === undefined || (Array.isArray(value.pending.input.attachments) && value.pending.input.attachments.every(isAttachmentRef)))
     && (value.pending.taskId === undefined || typeof value.pending.taskId === 'string')))
 

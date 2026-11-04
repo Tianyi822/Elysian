@@ -164,5 +164,8 @@ func (s *store) latestRun(ctx context.Context, taskID string) (*Run, error) {
 	var run Run
 	err = json.Unmarshal([]byte(raw), &run)
 	run.Task = nil
+	if err == nil {
+		run.Continuation, err = continuation(ctx, s.db, run)
+	}
 	return &run, err
 }

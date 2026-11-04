@@ -120,6 +120,10 @@ func TestDurableDomainTaskSurvivesRestartWithoutResubmission(t *testing.T) {
 	if !held {
 		t.Fatal("accepted task released resource lease before completion")
 	}
+	receipts, err := m.Calls(ctx, run.ID, "", 100)
+	if err != nil || receipts.Items[len(receipts.Items)-1].ReservedResultBytes != run.Limits.ResultBytes {
+		t.Fatalf("异步任务未持久预留回执容量：%+v %v", receipts, err)
+	}
 	m = reopenOperationManager(t, m)
 	current, err := m.Get(ctx, run.ID)
 	if err != nil || current.Status != StateWaitingTask {
@@ -132,6 +136,20 @@ func TestDurableDomainTaskSurvivesRestartWithoutResubmission(t *testing.T) {
 	finished := runtimeFinished(t, m, run.ID)
 	if finished.Status != StateSucceeded || submissions.Load() != 1 {
 		t.Fatalf("domain task did not resume exactly once: %+v count=%d", finished, submissions.Load())
+	}
+	receipts, err = m.Calls(ctx, run.ID, "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bytes := 0
+	for _, receipt := range receipts.Items {
+		if receipt.ReservedResultBytes != 0 {
+			t.Fatal("终态回执未释放预留容量")
+		}
+		bytes += len(receipt.Result)
+	}
+	if bytes != finished.Usage.ResultBytes {
+		t.Fatalf("未按真实字节结算：%d/%d", bytes, finished.Usage.ResultBytes)
 	}
 	leases, err = m.ResourceLeases(ctx)
 	if err != nil {

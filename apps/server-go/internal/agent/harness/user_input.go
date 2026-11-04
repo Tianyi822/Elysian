@@ -125,8 +125,11 @@ func (a *agentExecution) executeUserInput(ctx context.Context, index int, propos
 		if r.Status != StateRunning || r.CancelRequestedAt != "" {
 			return context.Canceled
 		}
-		if r.Usage.Calls >= r.Limits.MaxSteps {
+		if callLimitReached(*r) {
 			return bad("call-limit", "工具调用次数已达上限")
+		}
+		if err := toolTokenBudget(*r); err != nil {
+			return err
 		}
 		call := Call{ID: m.deps.NewID(), RunID: r.ID, Tool: proposal.Name, ModelRequestID: a.pending.ID, ModelCallID: proposal.ID, ArgumentsJSON: string(proposal.Arguments), StepIndex: r.Usage.Calls, StartedAt: now, Status: StateWaitingInput}
 		r.Usage.Calls++
@@ -135,6 +138,12 @@ func (a *agentExecution) executeUserInput(ctx context.Context, index int, propos
 			call.Error = &Failure{Code: "invalid-user-input", Message: rejection}
 			r.Resume = &RecoveryCursor{ResponseID: a.pending.ID, CallIndex: index + 1}
 		} else {
+			if err := ensureResultBudget(ctx, tx, *r, r.Limits.ResultBytes); err != nil {
+				return err
+			}
+			if resourceBudgetRun(*r) {
+				call.ReservedResultBytes = r.Limits.ResultBytes
+			}
 			questions, e := parseUserInput(proposal.Arguments)
 			if e != nil {
 				return e
@@ -242,6 +251,7 @@ func (m *Manager) AnswerUserInput(ctx context.Context, runID, inputID string, in
 			return bad("result-limit", "回答超过本轮结果容量限制")
 		}
 		r.Usage.ResultBytes += len(call.Result)
+		call.ReservedResultBytes = 0
 		if e := saveCall(ctx, tx, call); e != nil {
 			return e
 		}

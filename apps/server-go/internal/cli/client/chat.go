@@ -105,6 +105,9 @@ type ChatCacheHitUsage struct {
 // 模型确认的计划快照（折叠条展示），ContextUsage／Usage／CacheHitUsage 驱动状态栏
 // 上下文用量文本与 Ctrl+O 执行详情的分节。
 type ChatTimeline struct {
+	BudgetPolicy   string        `json:"budgetPolicy,omitempty"`
+	BudgetStop     *BudgetStop   `json:"budgetStop,omitempty"`
+	Continuation   *Continuation `json:"continuation,omitempty"`
 	TerminalResult *struct {
 		Origin  string `json:"origin"`
 		Content string `json:"content"`
@@ -135,6 +138,7 @@ type ChatOutput struct {
 // 即服务端默认：permissionMode 缺省 ask、authorizationMode 缺省不申请、
 // extensionMode 缺省不自动接入）。
 type AgentInput struct {
+	ContinueFromRunID string          `json:"continueFromRunId,omitempty"`
 	ReplaceMessageID  string          `json:"replaceMessageId,omitempty"`
 	Attachments       []AttachmentRef `json:"attachments,omitempty"`
 	RequestID         string          `json:"requestId"`

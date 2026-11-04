@@ -558,7 +558,7 @@ func TestAgentRequestBudgetReservesFinalConsolidation(t *testing.T) {
 			return memoryReply(r), nil
 		}
 		return toolReply("docker_images_list"), nil
-	}, func(d *Deps) { d.AgentLimits.MaxModelRequests = 2 })
+	}, func(d *Deps) { d.AgentLimits.MaxModelRequests = 2; d.Spawn = legacyBudgetWorker(d.AgentLimits) })
 	run := submitAgentTest(t, m, s, "budget", "不得无限调用")
 	got := runtimeFinished(t, m, run.ID)
 	if got.Status != StateFailed || got.EndReason != "model-budget" || got.Usage.ModelRequests != 1 || got.Usage.Calls != 1 {
@@ -610,7 +610,7 @@ func TestAgentRequestBudgetRejectsPromptBeyondBudget(t *testing.T) {
 	}, func(d *Deps) { d.AgentLimits.TokenBudget = 1 })
 	run := submitAgentTest(t, m, s, "prompt-over-budget", "超预算提示词")
 	got := runtimeFinished(t, m, run.ID)
-	if got.Status != StateFailed || got.EndReason != "model-budget" || got.Usage.ModelRequests != 0 || calls.Load() != 0 {
+	if got.Status != StateInterrupted || got.BudgetStop == nil || got.BudgetStop.Resource != "tokens" || got.EndReason != "model-budget" || got.Usage.ModelRequests != 0 || calls.Load() != 0 {
 		t.Fatalf("提示词超出预算仍被发送：%+v", got)
 	}
 }
@@ -621,7 +621,7 @@ func TestAgentRequestBudgetStopsOvershootWithPendingTools(t *testing.T) {
 	}, func(d *Deps) { d.AgentLimits.TokenBudget = 130000 })
 	run := submitAgentTest(t, m, s, "overshoot-budget", "越过预算仍要工具")
 	got := runtimeFinished(t, m, run.ID)
-	if got.Status != StateFailed || got.EndReason != "model-budget" || got.Usage.Calls != 0 {
+	if got.Status != StateInterrupted || got.BudgetStop == nil || got.BudgetStop.Resource != "tokens" || got.EndReason != "model-budget" || got.Usage.Calls != 0 {
 		t.Fatalf("超预算仍继续调工具：%+v", got)
 	}
 }

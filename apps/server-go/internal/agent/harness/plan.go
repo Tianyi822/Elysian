@@ -23,9 +23,10 @@ type PlanStep struct {
 
 // RunPlan 是模型确认的步骤快照，不代表外部操作已获授权或执行成功。
 type RunPlan struct {
-	Revision  int        `json:"revision"`
-	UpdatedAt string     `json:"updatedAt"`
-	Steps     []PlanStep `json:"steps"`
+	SourceRunID string     `json:"sourceRunId,omitempty"`
+	Revision    int        `json:"revision"`
+	UpdatedAt   string     `json:"updatedAt"`
+	Steps       []PlanStep `json:"steps"`
 }
 
 func planCapability() Capability {
@@ -107,8 +108,11 @@ func (a *agentExecution) executePlan(ctx context.Context, index int, proposal mo
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		if r.Usage.Calls >= r.Limits.MaxSteps {
+		if callLimitReached(*r) {
 			return bad("call-limit", "工具调用次数已达上限")
+		}
+		if err := toolTokenBudget(*r); err != nil {
+			return err
 		}
 		now := stamp(m.deps.Now())
 		call := Call{ID: m.deps.NewID(), RunID: r.ID, Tool: planTool, ModelRequestID: a.pending.ID, ModelCallID: proposal.ID,
@@ -122,8 +126,15 @@ func (a *agentExecution) executePlan(ctx context.Context, index int, proposal mo
 			if r.Plan != nil {
 				revision = r.Plan.Revision + 1
 			}
-			r.Plan = &RunPlan{Revision: revision, UpdatedAt: now, Steps: steps}
+			source := ""
+			if r.Plan != nil {
+				source = r.Plan.SourceRunID
+			}
+			r.Plan = &RunPlan{SourceRunID: source, Revision: revision, UpdatedAt: now, Steps: steps}
 			call.Result, _ = json.Marshal(r.Plan)
+			if err := ensureResultBudget(ctx, tx, *r, len(call.Result)); err != nil {
+				return err
+			}
 			if len(call.Result) > r.Limits.ResultBytes || r.Usage.ResultBytes+len(call.Result) > r.Limits.RunResultBytes {
 				return bad("result-limit", "计划超过本轮结果容量限制")
 			}

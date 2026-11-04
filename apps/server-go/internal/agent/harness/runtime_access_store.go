@@ -247,7 +247,7 @@ func (m *Manager) finishAccessDenied(ctx context.Context, run Run, o Operation) 
 		if r.CancelRequestedAt != "" || r.Status != StateRunning {
 			return context.Canceled
 		}
-		if r.Usage.Calls >= r.Limits.MaxSteps {
+		if callLimitReached(*r) {
 			return bad("call-budget", "工具调用次数达到上限")
 		}
 		now := stamp(m.deps.Now())
@@ -255,6 +255,12 @@ func (m *Manager) finishAccessDenied(ctx context.Context, run Run, o Operation) 
 		o.EndedAt = now
 		o.Error = &Failure{Code: "access-denied", Message: "用户拒绝此权限；请使用更小范围或其他办法，不得重复申请相同权限"}
 		call := Call{ID: o.CallID, RunID: o.RunID, OperationID: o.ID, ModelRequestID: o.ModelRequestID, ModelCallID: o.ModelCallID, Tool: o.Capability.Name, ArgumentsJSON: o.ArgumentsJSON, Status: StateFailed, StartedAt: now, EndedAt: now, StepIndex: r.Usage.Calls, Error: o.Error, Result: json.RawMessage(`{"denied":true}`)}
+		if resourceBudgetRun(*r) {
+			if err := ensureResultBudget(ctx, tx, *r, len(call.Result)); err != nil {
+				return err
+			}
+			r.Usage.ResultBytes += len(call.Result)
+		}
 		if err := saveOperation(ctx, tx, o); err != nil {
 			return err
 		}

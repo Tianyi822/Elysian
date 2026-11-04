@@ -1,6 +1,7 @@
 import { RUNTIME_RUN_STATUSES, type AgentChatOutput, type AgentMessage, type AgentMessageAttachment, type AgentSession } from '@elysian/contracts'
 import type { AgentChatRun, AgentChatTask, AgentChatPageResult, AgentChatUploadedAttachment, AgentConversationAdapter } from '../../../contracts/agentChat'
 import { parseRunPlan } from './agentPlanParse'
+import { parseBudgetFields } from './agentBudgetParse'
 import { parseUserInput } from './agentUserInputParse'
 import { agentPathPart, readAgentResponse, requestAgentJson, requestAgentNoContent } from './agentShared'
 import { SseFrameParser } from '../../sse/parse'
@@ -19,7 +20,7 @@ const object = (value: unknown): Record<string, unknown> => {
 const string = (value: unknown): string => { if (typeof value !== 'string') throw invalid(); return value }
 const cursor = (value: unknown) => { const result = string(value); if (!/^(0|[1-9]\d*)$/.test(result)) throw invalid(); return result }
 const optional = (value: unknown) => value === undefined ? undefined : string(value)
-// 最多 16 次请求、每次 4 MiB；快照同时含时间线、兼容字段与参数字符串转义。
+// 传输帧独立限额；不以累计模型请求数推导，也不裁剪已确认历史。
 const maxOutputFrameBytes = 256 * 1024 * 1024
 
 function parseSession(value: unknown): AgentSession {
@@ -47,6 +48,7 @@ function parseRun(value: unknown): AgentChatRun {
   return {
     id: string(row.id), requestId: optional(row.requestId), taskId: string(row.taskId), sessionId: optional(row.sessionId), status: row.status as AgentChatRun['status'],
     phase: row.phase as AgentChatRun['phase'], cancelRequestedAt: optional(row.cancelRequestedAt),
+    ...parseBudgetFields(row, string(row.id)),
     ...(row.plan === undefined ? {} : { plan: parseRunPlan(row.plan) }),
     error: row.error === undefined ? undefined : failure(row.error), warning: row.warning === undefined ? undefined : failure(row.warning),
   }

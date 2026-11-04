@@ -2012,3 +2012,83 @@ it('删除回执在登出后到达仍清理原记录，后到提交不能复活�
   expect(store.getState().messages).toEqual([])
   expect(local.adapter.read(backend.session.id)).toBeNull()
 })
+
+describe('预算停止与继续任务', () => {
+  async function setup() {
+    const local = localMemory()
+    const store = local.makeStore()
+    const backend = chatTestApi()
+    await store.getState().ensureSession()
+    store.getState().setDraft('安装 MySQL 并核实结果')
+    await store.getState().send(backend.api, chatTestModel)
+    const run = backend.runs.get('run-1')!
+    Object.assign(run, { status: 'interrupted', budgetPolicy: 'resource-budget/v1', budgetStop: { resource: 'tokens', used: 196608, limit: 196608 }, continuation: { sourceRunId: run.id, allowed: true } })
+    await store.getState().refresh(backend.api)
+    return { local, store, backend, run }
+  }
+
+  it('同任务续接使用当前模式与思考等级，保留与续接文案相同的草稿及不可用附件', async () => {
+    const { local, store, backend } = await setup()
+    store.getState().setDraft('继续完成上轮未完成的任务。')
+    store.getState().setPermissionMode('full')
+    store.getState().setReasoningLevel('max')
+    const session = store.getState().session!
+    const attachment: AgentChatAttachment = { id: 'unavailable-image', name: '草稿图片.png', type: 'image/png', size: 100, lastModified: 0, available: false }
+    local.adapter.write({ ...session, attachments: [attachment] })
+    store.setState({ session: { ...session, attachments: [attachment] } })
+    expect(await store.getState().continueTask(backend.api, chatTestModel)).toBe(true)
+    expect(backend.api.continueTask).toHaveBeenCalledWith('task-1', expect.objectContaining({ continueFromRunId: 'run-1', content: '继续完成上轮未完成的任务。', permissionMode: 'full', reasoningLevel: 'max' }))
+    expect(backend.api.continueTask.mock.lastCall?.[1].attachments).toBeUndefined()
+    expect(backend.api.uploadAttachments).not.toHaveBeenCalled()
+    expect(store.getState().session?.draft).toBe('继续完成上轮未完成的任务。')
+    expect(store.getState().session?.attachments).toEqual([attachment])
+    expect(store.getState().session?.remote).toEqual({ sessionId: 'server-session', taskId: 'task-1', runId: 'run-2' })
+  })
+
+  it('网络超时与刷新后复用精确 pending，重复点击只接受一轮', async () => {
+    const { local, store, backend } = await setup()
+    store.getState().setDraft('尚未发送的新要求')
+    const gate = deferred<AgentChatRun>()
+    backend.api.continueTask.mockImplementationOnce(() => gate.promise)
+    const first = store.getState().continueTask(backend.api, chatTestModel)
+    await vi.waitFor(() => expect(backend.api.continueTask).toHaveBeenCalledTimes(1))
+    expect(await store.getState().continueTask(backend.api, chatTestModel)).toBe(false)
+    const exact = structuredClone(store.getState().session!.pending!)
+    gate.reject(new Error('连接超时'))
+    expect(await first).toBe(false)
+    const restored = local.makeStore()
+    await restored.getState().initialize(backend.api, 'server-session')
+    expect(restored.getState().session?.pending).toEqual(exact)
+    expect(await restored.getState().continueTask(backend.api, chatVisionTestModel)).toBe(true)
+    expect(backend.api.continueTask.mock.lastCall).toEqual([exact.taskId, exact.input])
+    expect(backend.runs.size).toBe(2)
+    expect(restored.getState().session?.draft).toBe('尚未发送的新要求')
+    expect(restored.getState().session?.pending).toBeUndefined()
+  })
+
+  it('未知结果阻止快捷续接；服务端过期拒绝清 pending 并保留草稿', async () => {
+    const { store, backend, run } = await setup()
+    store.getState().setDraft('补充要求')
+    run.continuation = { sourceRunId: run.id, allowed: false, blockedReason: '存在结果未知的操作，请先核实' }
+    await store.getState().refresh(backend.api)
+    expect(await store.getState().continueTask(backend.api, chatTestModel)).toBe(false)
+    expect(store.getState().inputError).toContain('请先核实')
+    expect(backend.api.continueTask).not.toHaveBeenCalled()
+    run.continuation.allowed = true
+    delete run.continuation.blockedReason
+    await store.getState().refresh(backend.api)
+    backend.api.continueTask.mockRejectedValueOnce(new AgentHttpError('原轮次已变化，请刷新会话', 'continuation-changed', 409))
+    expect(await store.getState().continueTask(backend.api, chatTestModel)).toBe(false)
+    expect(store.getState().session?.pending).toBeUndefined()
+    expect(store.getState().session?.draft).toBe('补充要求')
+  })
+
+  it('预算停止不播报为危险故障，用户仍可发送新要求', async () => {
+    const { store, backend } = await setup()
+    expect(useMessageStore.getState().messages.some(message => message.tone === 'danger' && message.message.includes('中断'))).toBe(false)
+    store.getState().setDraft('先帮我核实容器是否启动')
+    expect(await store.getState().send(backend.api, chatTestModel)).toBe(true)
+    expect(backend.api.continueTask.mock.lastCall?.[1].continueFromRunId).toBeUndefined()
+    expect(backend.api.continueTask.mock.lastCall?.[1].content).toBe('先帮我核实容器是否启动')
+  })
+})

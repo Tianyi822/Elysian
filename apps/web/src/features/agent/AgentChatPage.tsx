@@ -227,7 +227,7 @@ export function AgentChatPage() {
   }, [chat.messages.length, chat.outgoingMessage, chat.reasoning[chat.run?.id ?? ''], session?.id])
 
   const canSubmit = Boolean(api.available && (model || session?.pending) && !busy && !chat.uploadingAttachments && !chat.loading && !restoring && (status === 'ready' || session?.pending))
-  const canSend = Boolean(canSubmit && !session?.editing && !session?.pending?.input.replaceMessageId && session?.draft.trim())
+  const canSend = Boolean(canSubmit && !session?.editing && !session?.pending?.input.replaceMessageId && !session?.pending?.input.continueFromRunId && session?.draft.trim())
   const canResend = Boolean(canSubmit && (session?.pending?.input.replaceMessageId || session?.editing?.text.trim()))
   const resend = () => {
     if (!canResend) return
@@ -409,6 +409,13 @@ export function AgentChatPage() {
               active={active && !finalizing && !waitingInput} stopped={stopped} stopping={active && stopping} api={api} onProgress={followContent} />
               : answer?.origin === 'runtime' && !stopped ? <ChatRuntimeResult key={message.runId} content={answer.content} /> : <ChatResponse key={message.runId} content={(chat.timelines[message.runId] || chat.syncError ? answer?.content : undefined) ?? live?.content ?? ''} reasoning={chat.reasoning[message.runId] ?? ''}
                 active={active && !finalizing} stopped={stopped} stopping={active && stopping} copyable={!!answer} quarantined={answer?.quarantined} onProgress={followContent} />}
+            {message.runId === chat.run?.id && message.runId === session?.remote?.runId && chat.run.continuation && !session.pending?.input.continueFromRunId && <div className="flex flex-wrap items-center gap-3 text-xs text-fg-muted">
+              <button type="button" className="chat-new" disabled={!canSubmit || !!session.editing || (!session.pending?.input.continueFromRunId && !chat.run.continuation.allowed) || (!!session.pending && !session.pending.input.continueFromRunId)}
+                onClick={() => { following.current = true; void chat.continueTask(api, model?.profile) }}>
+                继续任务
+              </button>
+              {chat.run.continuation.blockedReason && <p role="status">{chat.run.continuation.blockedReason}</p>}
+            </div>}
             {!!answer?.wikiSources?.length && <ChatMemorySources sources={answer.wikiSources} api={agentMemory} />}
           </Fragment>
         })}
@@ -424,6 +431,10 @@ export function AgentChatPage() {
     </div>
 
     <div className="chat-compose-area">
+      {session?.pending?.input.continueFromRunId && <div className="mb-3 flex flex-wrap items-center gap-3 text-xs text-fg-muted">
+        <button type="button" className="chat-new" disabled={!canSubmit || !!session.editing} onClick={() => void chat.continueTask(api, model?.profile)}>重试继续任务</button>
+        <p role="status">继续请求尚未确认，可重试确认原请求。</p>
+      </div>}
       {chat.inputError && <p role="alert" className="mb-3 text-xs text-danger">{chat.inputError}</p>}
       {inputHints.length > 0 && <div role="status" className="mb-3 space-y-1 text-xs text-fg-muted">{[...new Set(inputHints)].map(hint => <p key={hint}>{hint}</p>)}</div>}
       {stopping && <p role="status" className="mb-3 text-xs text-fg-muted">正在停止…</p>}
@@ -435,7 +446,7 @@ export function AgentChatPage() {
       {modelUnavailable && <div className="mb-3 text-right text-xs text-fg-muted"><Link className="underline underline-offset-4 hover:text-fg" to="/settings?tab=models">前往设置添加模型</Link></div>}
 
       <ChatPlan key={`${session?.id}:${session?.remote?.runId}`} plan={usageTimeline?.plan ?? (run?.id === session?.remote?.runId ? run?.plan : undefined)}
-        status={usageTimeline?.status ?? run?.status ?? 'queued'} stopping={stopping} onProgress={followContent} />
+        budgetStopped={!!(usageTimeline?.budgetStop ?? run?.budgetStop)} status={usageTimeline?.status ?? run?.status ?? 'queued'} stopping={stopping} onProgress={followContent} />
       {run && (run.status === 'waiting-approval' || run.phase === 'preparing-runtime') ? <ChatApprovals key={run.id} api={api.governance} runId={run.id} onChanged={() => void chat.refresh(api)} onCancel={() => void chat.stop(api)} /> : inputRequest ? <ChatUserInput key={`${session?.id}:${inputRequest.id}`} request={inputRequest} answers={inputDraft?.answers ?? {}}
         submitting={chat.sending || stopping} pending={!!inputDraft?.pending}
         onAnswer={(questionId, answer) => chat.setUserInputAnswer(inputRequest, questionId, answer)}

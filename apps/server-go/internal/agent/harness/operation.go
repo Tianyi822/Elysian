@@ -216,6 +216,13 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		err = json.Unmarshal([]byte(raw), &o)
 	} else if errors.Is(err, sql.ErrNoRows) {
 		err = nil
+		if err = toolTokenBudget(run); err == nil {
+			err = ensureResultBudget(dbCtx, m.store.db, run, run.Limits.ResultBytes)
+		}
+		if err != nil {
+			m.mu.Unlock()
+			return storageFailure(err)
+		}
 		o = Operation{ID: m.deps.NewID(), RunID: run.ID, TaskID: run.TaskID, ModelRequestID: originID, CallIndex: index, ModelCallID: proposal.ID, ArgumentsJSON: string(args), Capability: c, SnapshotDigest: a.run.Snapshot.Digest, Status: "planned", CreatedAt: stamp(m.deps.Now()), CallID: m.deps.NewID()}
 		o.Source = "model"
 		if workflowDriver(run) == "operation" {
@@ -318,6 +325,13 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 	if o.Status == "dispatched" || o.Status == "unknown" {
 		m.mu.Unlock()
 		return bad("outcome-unknown", "已派发操作结果未确认，禁止重复执行")
+	}
+	if err = toolTokenBudget(run); err == nil {
+		err = ensureResultBudget(dbCtx, m.store.db, run, run.Limits.ResultBytes)
+	}
+	if err != nil {
+		m.mu.Unlock()
+		return storageFailure(err)
 	}
 	if err = m.checkRevocations(ctx, *a.run.Snapshot, o); err != nil {
 		m.mu.Unlock()
@@ -550,8 +564,17 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 			r.Resume = &RecoveryCursor{ResponseID: o.ModelRequestID, CallIndex: index}
 			return m.store.event(dbCtx, tx, r, "resource/waiting", o.CallID, &index, map[string]string{"operationId": o.ID})
 		}
-		if r.Usage.Calls >= r.Limits.MaxSteps {
+		if callLimitReached(*r) {
 			return bad("call-budget", "工具调用次数达到上限")
+		}
+		if err := toolTokenBudget(*r); err != nil {
+			return err
+		}
+		if err := ensureResultBudget(dbCtx, tx, *r, r.Limits.ResultBytes); err != nil {
+			return err
+		}
+		if resourceBudgetRun(*r) {
+			call.ReservedResultBytes = r.Limits.ResultBytes
 		}
 		if err := m.workflowReserveCall(dbCtx, tx, r); err != nil {
 			return err
@@ -750,6 +773,11 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 	}
 	o.Error = call.Error
 	call.Result = result.r.Value
+	call.ReservedResultBytes = 0
+	if resourceBudgetRun(run) && result.r.Unknown {
+		// 未知结果的接受凭据也计量；保留未来核实回执所需的剩余容量。
+		call.ReservedResultBytes = max(0, run.Limits.ResultBytes-len(call.Result))
+	}
 	_, err = m.store.change(dbCtx, run.ID, "operation-result", func(tx *sql.Tx, r *Run) error {
 		if r.Usage.ResultBytes+len(call.Result) > r.Limits.RunResultBytes {
 			call.Result = nil

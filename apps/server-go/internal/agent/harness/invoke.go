@@ -64,8 +64,17 @@ func (m *Manager) invoke(ctx context.Context, run Run, index int, name string, a
 		if r.Status != StateRunning || r.CancelRequestedAt != "" {
 			return context.Canceled
 		}
-		if r.Usage.Calls >= r.Limits.MaxSteps {
+		if callLimitReached(*r) {
 			return &Error{Status: 400, Code: "call-budget", Message: "工具调用次数达到上限"}
+		}
+		if err := toolTokenBudget(*r); err != nil {
+			return err
+		}
+		if err := ensureResultBudget(dbCtx, tx, *r, r.Limits.ResultBytes); err != nil {
+			return err
+		}
+		if resourceBudgetRun(*r) {
+			call.ReservedResultBytes = r.Limits.ResultBytes
 		}
 		if err := saveCall(dbCtx, tx, call); err != nil {
 			return err
@@ -202,6 +211,7 @@ func (m *Manager) invoke(ctx context.Context, run Run, index int, name string, a
 			value = nil
 			call.Error = &Failure{Code: "result-budget", Message: "运行结果总量达到上限"}
 		}
+		call.ReservedResultBytes = 0
 		r.Usage.ResultBytes += len(value)
 		if err := saveCall(dbCtx, tx, call); err != nil {
 			return err

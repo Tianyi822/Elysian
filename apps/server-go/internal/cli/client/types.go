@@ -81,19 +81,34 @@ type Failure struct {
 }
 
 // Run 运行公开形状的消费子集（状态、终态归因与失败详情）。
+type BudgetStop struct {
+	Resource string `json:"resource"`
+	Used     int64  `json:"used"`
+	Limit    int64  `json:"limit"`
+}
+
+type Continuation struct {
+	SourceRunID   string `json:"sourceRunId"`
+	Allowed       bool   `json:"allowed"`
+	BlockedReason string `json:"blockedReason,omitempty"`
+}
+
 type Run struct {
-	RequestID string   `json:"requestId,omitempty"`
-	ID        string   `json:"id"`
-	TaskID    string   `json:"taskId,omitempty"`
-	SessionID string   `json:"sessionId,omitempty"`
-	RunNumber int      `json:"runNumber,omitempty"`
-	Status    string   `json:"status"`
-	Phase     string   `json:"phase,omitempty"`
-	EndReason string   `json:"endReason,omitempty"`
-	Error     *Failure `json:"error,omitempty"`
-	CreatedAt string   `json:"createdAt"`
-	StartedAt string   `json:"startedAt,omitempty"`
-	EndedAt   string   `json:"endedAt,omitempty"`
+	BudgetPolicy string        `json:"budgetPolicy,omitempty"`
+	BudgetStop   *BudgetStop   `json:"budgetStop,omitempty"`
+	Continuation *Continuation `json:"continuation,omitempty"`
+	RequestID    string        `json:"requestId,omitempty"`
+	ID           string        `json:"id"`
+	TaskID       string        `json:"taskId,omitempty"`
+	SessionID    string        `json:"sessionId,omitempty"`
+	RunNumber    int           `json:"runNumber,omitempty"`
+	Status       string        `json:"status"`
+	Phase        string        `json:"phase,omitempty"`
+	EndReason    string        `json:"endReason,omitempty"`
+	Error        *Failure      `json:"error,omitempty"`
+	CreatedAt    string        `json:"createdAt"`
+	StartedAt    string        `json:"startedAt,omitempty"`
+	EndedAt      string        `json:"endedAt,omitempty"`
 }
 
 // Task 任务公开形状的消费子集；LatestRun 支撑会话详情的运行状态展示。

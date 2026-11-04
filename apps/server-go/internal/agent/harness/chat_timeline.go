@@ -41,6 +41,9 @@ type ChatCacheHitUsage struct {
 }
 
 type ChatTimelineSnapshot struct {
+	BudgetPolicy    string              `json:"budgetPolicy,omitempty"`
+	BudgetStop      *BudgetStop         `json:"budgetStop,omitempty"`
+	Continuation    *Continuation       `json:"continuation,omitempty"`
 	TerminalResult  *TerminalResult     `json:"terminalResult,omitempty"`
 	Plan            *RunPlan            `json:"plan,omitempty"`
 	RunID           string              `json:"runId"`
@@ -92,6 +95,11 @@ func (m *Manager) ChatSnapshot(ctx context.Context, id string) (ChatOutput, erro
 	}
 	out := chatOutput(run, records)
 	timeline := projectChatTimeline(run, records, operations, calls, approvals)
+	timeline.BudgetPolicy, timeline.BudgetStop = run.BudgetPolicy, run.BudgetStop
+	timeline.Continuation, err = continuation(ctx, m.store.db, run)
+	if err != nil {
+		return ChatOutput{}, storageFailure(err)
+	}
 	timeline.TerminalResult, err = m.store.terminalResult(ctx, m.store.db, run)
 	if err != nil {
 		return ChatOutput{}, storageFailure(err)
