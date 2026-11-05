@@ -22,13 +22,17 @@ import (
 
 var sqlNamePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,63}$`)
 
+// SqlNameRule 标识符格式规则的唯一公开文案出处：建库校验与 SQL 终端校验共用，
+// 只说「无效」不给规则的文案会让模型反复提交同一个名字。
+const SqlNameRule = "只能使用英文字母、数字和下划线，并须以字母开头"
+
 // sqlCharsets 建库字符集白名单。
 var sqlCharsets = map[string]bool{"utf8mb4": true, "utf8": true, "latin1": true}
 
 // sqlName 标识符白名单校验，返回反引号包裹形态。
 func sqlName(name string) (string, error) {
 	if !sqlNamePattern.MatchString(name) {
-		return "", shared.InvalidRequest("数据库名或用户名只能使用英文字母、数字和下划线，并须以字母开头")
+		return "", shared.InvalidRequest("数据库名或用户名" + SqlNameRule)
 	}
 	return "`" + name + "`", nil
 }

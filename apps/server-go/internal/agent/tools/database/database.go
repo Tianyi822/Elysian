@@ -74,6 +74,7 @@ func New(c *kardia.Context, deps Deps, _ Config) (*Service, error) {
 		}
 		if spec.action == "create" {
 			properties["id"] = tools.Schema{Type: tools.SchemaString, Description: "新建专属实例填 new:容器名；在已有实例创建逻辑库时使用 database_list 返回的精确登记 ID"}
+			properties["name"] = tools.Schema{Type: tools.SchemaString, Description: "逻辑库名：" + domain.SqlNameRule + "；容器名允许连字符但库名不允许，不要照抄容器名"}
 			properties["expected"] = tools.Schema{Type: tools.SchemaString, Description: "新建专属实例必须填 missing（不是 absent）；已有实例使用 database_list 返回的精确 version"}
 			properties["versionTag"] = tools.Schema{Type: tools.SchemaString, Description: "官方镜像的明确版本标签，禁止 latest；从本地镜像清单核实，不可猜测版本"}
 			properties["imageId"] = tools.Schema{Type: tools.SchemaString, Description: "新实例使用已核实的本地官方镜像完整 ID（64 位十六进制，可带 sha256: 前缀）；已有实例不传"}

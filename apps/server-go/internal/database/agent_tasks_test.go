@@ -369,3 +369,33 @@ func TestAgentDatabaseTaskLogsBoundedAndCursorValidated(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentDatabaseTaskUnknownMessageCarriesLocalReason(t *testing.T) {
+	fixture := newServiceFixture("8.4")
+	fixture.docker.createResult = createResult{
+		containerID:  strings.Repeat("c", 64),
+		volumeName:   "elysian-db-" + strings.Repeat("0", 36),
+		started:      false,
+		startFailure: "面板数据库网络 elysian-db-shared 不存在",
+	}
+	facade := &AgentFacade{service: fixture.service, taskRoot: t.TempDir(), authorize: func(context.Context) error { return nil }}
+	t.Cleanup(func() { _ = facade.Close(context.Background()) })
+	task, err := facade.SubmitTask(context.Background(), strings.Repeat("e", 64), agentCreateTaskInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished := waitAgentTask(t, facade, task.ID, "unknown")
+	if finished.CancelRequested {
+		t.Fatal("未取消的任务不应带取消标记")
+	}
+	if !strings.Contains(finished.Message, "面板数据库网络 elysian-db-shared 不存在") {
+		t.Fatalf("unknown 终态必须带出本地原因：%s", finished.Message)
+	}
+	if !strings.Contains(finished.Message, "禁止重投") {
+		t.Fatalf("屏障语义必须保留：%s", finished.Message)
+	}
+	raw, _ := os.ReadFile(filepath.Join(facade.taskRoot, task.ID+".json"))
+	if !strings.Contains(string(raw), "面板数据库网络 elysian-db-shared 不存在") {
+		t.Fatalf("原因需持久化到任务记录：%s", raw)
+	}
+}

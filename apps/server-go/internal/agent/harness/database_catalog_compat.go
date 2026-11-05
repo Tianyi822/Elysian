@@ -35,7 +35,7 @@ func legacyDatabaseDiscoverCatalogCompatible(operation Operation, current tools.
 	return digestJSON(frozen) == digestJSON(current)
 }
 
-// 仅剥除 database_create 的五个新增参数说明来核对旧摘要，绝不修改
+// 仅剥除 database_create 的六个新增参数说明来核对旧摘要，绝不修改
 // 类型、必填项、元数据、审批参数或已接受 Run 的固定目录。
 func legacyDatabaseCreateCatalogCompatible(operation Operation, current tools.PublicSchema) bool {
 	c := operation.Capability
@@ -55,7 +55,7 @@ func legacyDatabaseCreateCatalogCompatible(operation Operation, current tools.Pu
 	if !ok {
 		return false
 	}
-	for _, name := range []string{"id", "expected", "versionTag", "imageId", "containerName"} {
+	for _, name := range []string{"id", "expected", "versionTag", "imageId", "containerName", "name"} {
 		field, ok := properties[name].(map[string]any)
 		if !ok {
 			return false

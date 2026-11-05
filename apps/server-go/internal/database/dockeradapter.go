@@ -205,6 +205,32 @@ func (d *dockerAPI) assertEngine(ctx context.Context, id, engine, versionTag str
 	return info, nil
 }
 
+// ensureNetwork 幂等确保面板数据库网络存在。裸机 systemd 安装没有 compose 与
+// dev-check.sh 那两步建网，缺网时容器会停在 created，而 Engine 只在正文里说明原因。
+func (d *dockerAPI) ensureNetwork(ctx context.Context, network string) error {
+	if network != networkDBPrivateName && network != networkDBSharedName {
+		return shared.InvalidRequest("数据库网络无效")
+	}
+	response, err := d.request(ctx, "GET", "/networks/"+url.PathEscape(network), nil, nil)
+	if err != nil {
+		return err
+	}
+	if response.Status == 200 {
+		return nil
+	}
+	if response.Status != 404 {
+		return errors.New("读取面板数据库网络失败")
+	}
+	created, err := d.request(ctx, "POST", "/networks/create", nil, map[string]any{"Name": network, "Driver": "bridge"})
+	if err != nil {
+		return err
+	}
+	if created.Status != 201 && created.Status != 200 {
+		return errors.New("创建面板数据库网络失败")
+	}
+	return nil
+}
+
 // attach 把容器接入面板数据库网络（幂等）。
 func (d *dockerAPI) attach(ctx context.Context, id, network string) error {
 	if network != networkDBPrivateName && network != networkDBSharedName {
@@ -216,6 +242,9 @@ func (d *dockerAPI) attach(ctx context.Context, id, network string) error {
 	}
 	if attached := field(obj(field(obj(field(info, "NetworkSettings")), "Networks")), network); attached != nil {
 		return nil
+	}
+	if err := d.ensureNetwork(ctx, network); err != nil {
+		return err
 	}
 	response, err := d.request(ctx, "POST", "/networks/"+url.PathEscape(network)+"/connect", nil, map[string]any{"Container": id})
 	if err != nil {
@@ -292,9 +321,10 @@ type createInput struct {
 
 // createResult 容器与专属卷的创建产物。
 type createResult struct {
-	containerID string
-	volumeName  string
-	started     bool
+	containerID  string
+	volumeName   string
+	started      bool
+	startFailure string // 启动失败时的本地固定原因；未识别形态留空，由调用方回落原文案。
 }
 
 // mountSpec HostConfig.Mounts 行。
@@ -385,6 +415,9 @@ func (d *dockerAPI) create(ctx context.Context, input createInput) (createResult
 	if accessScope == scopeLocalhost {
 		network = networkDBPrivateName
 	}
+	if err := d.ensureNetwork(ctx, network); err != nil {
+		return createResult{}, err
+	}
 	volume, err := d.request(ctx, "POST", "/volumes/create", nil, map[string]any{
 		"Name": volumeName,
 		"Labels": map[string]string{
@@ -466,15 +499,31 @@ func (d *dockerAPI) create(ctx context.Context, input createInput) (createResult
 		_, _ = d.request(ctx, "DELETE", "/volumes/"+url.PathEscape(volumeName), nil, nil)
 		return createResult{}, errors.New("创建数据库容器失败")
 	}
-	started, err := d.request(ctx, "POST", "/containers/"+url.PathEscape(containerID)+"/start", nil, nil)
+	startResp, err := d.request(ctx, "POST", "/containers/"+url.PathEscape(containerID)+"/start", nil, nil)
 	if err != nil {
 		return createResult{}, err
 	}
+	started := startResp.Status == 204 || startResp.Status == 200
+	failure := ""
+	if !started {
+		failure = startFailureReason(startResp.Body, network)
+	}
 	return createResult{
-		containerID: containerID,
-		volumeName:  volumeName,
-		started:     started.Status == 204 || started.Status == 200,
+		containerID:  containerID,
+		volumeName:   volumeName,
+		started:      started,
+		startFailure: failure,
 	}, nil
+}
+
+// startFailureReason 启动失败按已知形态归因为本地固定文案：网络名取面板自己传入的值，
+// 不回显 Engine 正文。未命中已知形态返回空串，由上层回落通用文案。
+func startFailureReason(body []byte, network string) string {
+	text := string(body)
+	if strings.Contains(text, "network") && strings.Contains(text, "not found") {
+		return "面板数据库网络 " + network + " 不存在"
+	}
+	return ""
 }
 
 // redisACLCommand 生成 Redis 启动命令：ACL 文件先写进持久卷再启动服务。

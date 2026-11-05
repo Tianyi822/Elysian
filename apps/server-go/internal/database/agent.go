@@ -242,7 +242,9 @@ func (f *AgentFacade) createAgentRecording(ctx context.Context, input AgentCreat
 	}
 	result, err := executor.create(ctx, validated)
 	if err != nil {
-		return nil, errors.New("数据库创建结果未确认，请回读登记和实例状态，不能自动重试")
+		// 原样上抛域层的本地中文原因：终态消息已负责「禁止重投、需回读实际事实」，
+		// 这里再包一层只会把真正的原因埋进重复的限定语里。
+		return nil, err
 	}
 	result.Instance.MetricsError, result.Instance.CredentialUsername = "", ""
 	return map[string]any{"database": result.Instance}, nil

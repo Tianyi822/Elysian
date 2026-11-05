@@ -164,7 +164,11 @@ func validateCreateRequest(input any) (createRequest, error) {
 	}
 	name, ok := row["name"].(string)
 	if !ok || (engine == engineRedis && name != "0") || (engine != engineRedis && !sqlNamePattern.MatchString(name)) {
-		return createRequest{}, shared.InvalidRequest("数据库名无效")
+		if engine == engineRedis {
+			// Redis 的合法逻辑库只有 DB 0，套用 SQL 的字母规则会把模型指向更糟的猜测。
+			return createRequest{}, shared.InvalidRequest("Redis 逻辑库只能使用 DB 0")
+		}
+		return createRequest{}, shared.InvalidRequest("数据库名无效：" + SqlNameRule)
 	}
 	target := obj(row["target"])
 	kind, _ := target["kind"].(string)
@@ -549,6 +553,7 @@ func (s *databaseService) create(ctx context.Context, input createRequest) (crea
 	var containerID, volumeName string
 	var admin databaseSecret
 	started := true
+	startFailure := ""
 	actualScope := input.AccessScope
 	switch input.Target.Kind {
 	case "new":
@@ -565,7 +570,7 @@ func (s *databaseService) create(ctx context.Context, input createRequest) (crea
 		if err != nil {
 			return createResponse{}, err
 		}
-		containerID, volumeName, started = created.containerID, created.volumeName, created.started
+		containerID, volumeName, started, startFailure = created.containerID, created.volumeName, created.started, created.startFailure
 	case "managed":
 		var existing *databaseRecord
 		for i, row := range rows {
@@ -611,7 +616,7 @@ func (s *databaseService) create(ctx context.Context, input createRequest) (crea
 	if err := s.deps.registry.put(row); err != nil {
 		return createResponse{}, err
 	}
-	instance, firewallPort, err := s.finalizeCreate(ctx, input, row, rows, containerID, started)
+	instance, firewallPort, err := s.finalizeCreate(ctx, input, row, rows, containerID, started, startFailure)
 	if err != nil {
 		return createResponse{}, fmt.Errorf("数据库创建未完成；容器 %s 已登记为待处理：%s", containerIDPrefix(containerID), errorReasonMessage(err))
 	}
@@ -619,8 +624,11 @@ func (s *databaseService) create(ctx context.Context, input createRequest) (crea
 }
 
 // finalizeCreate 登记落盘后的建库、核对与收尾；任何失败上抛由调用方包装。
-func (s *databaseService) finalizeCreate(ctx context.Context, input createRequest, row databaseRecord, rows []databaseRecord, containerID string, started bool) (serviceInstance, *contract.FirewallPortSync, error) {
+func (s *databaseService) finalizeCreate(ctx context.Context, input createRequest, row databaseRecord, rows []databaseRecord, containerID string, started bool, startFailure string) (serviceInstance, *contract.FirewallPortSync, error) {
 	if !started {
+		if startFailure != "" {
+			return serviceInstance{}, nil, errors.New("容器启动失败（" + startFailure + "）；可在容器页修复后重新核对")
+		}
 		return serviceInstance{}, nil, errors.New("容器启动失败；可在容器页修复后重新核对")
 	}
 	var endpoint *databaseAddress

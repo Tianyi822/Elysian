@@ -37,6 +37,14 @@ func (t *scriptedTransport) Stream(context.Context, seam.EngineRequest, func([]b
 	return seam.EngineResponse{}, errors.New("本测试不使用流式请求")
 }
 
+// existingDatabaseNetwork 让不关心建网的测试把两张面板数据库网络应答为已存在。
+func existingDatabaseNetwork(req seam.EngineRequest) (seam.EngineResponse, bool) {
+	if req.Method == "GET" && (req.Path == "/networks/"+networkDBSharedName || req.Path == "/networks/"+networkDBPrivateName) {
+		return seam.EngineResponse{Status: 200, Body: []byte(`{"Name":"` + strings.TrimPrefix(req.Path, "/networks/") + `"}`)}, true
+	}
+	return seam.EngineResponse{}, false
+}
+
 // baseInspectInspect 构造运行中 MySQL 容器的 inspect 应答体。
 func baseInspectBody() map[string]any {
 	return map[string]any{
@@ -85,6 +93,9 @@ func TestValidDatabaseVersionAndImageMatches(t *testing.T) {
 
 func TestRedisCreateWritesACLFileWithoutPlaintextPasswords(t *testing.T) {
 	transport := &scriptedTransport{responder: func(req seam.EngineRequest) seam.EngineResponse {
+		if response, ok := existingDatabaseNetwork(req); ok {
+			return response
+		}
 		if strings.HasSuffix(req.Path, "/volumes/create") {
 			return seam.EngineResponse{Status: 201}
 		}
@@ -255,6 +266,9 @@ func TestCreateAccessScopeDockerConfig(t *testing.T) {
 	}
 	for _, testCase := range cases {
 		transport := &scriptedTransport{responder: func(req seam.EngineRequest) seam.EngineResponse {
+			if response, ok := existingDatabaseNetwork(req); ok {
+				return response
+			}
 			if strings.HasSuffix(req.Path, "/volumes/create") {
 				return seam.EngineResponse{Status: 201}
 			}
@@ -340,4 +354,174 @@ func TestDatabaseUsesActualPanelReservedPorts(t *testing.T) {
 			t.Fatalf("端口 %d 的保护错误：%v", port, err)
 		}
 	}
+}
+
+func TestCreateStartFailureMapsEngineReasonLocally(t *testing.T) {
+	cases := []struct {
+		name       string
+		startBody  string
+		wantReason string
+	}{
+		{"缺网映射为本地固定文案", `{"message":"failed to set up container networking: network elysian-db-shared not found"}`, "面板数据库网络 elysian-db-shared 不存在"},
+		{"未识别形态不编造原因", `{"message":"upstream text ENGINE_PRIVATE_TEXT"}`, ""},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			transport := &scriptedTransport{responder: func(req seam.EngineRequest) seam.EngineResponse {
+				if response, ok := existingDatabaseNetwork(req); ok {
+					return response
+				}
+				switch {
+				case strings.HasSuffix(req.Path, "/volumes/create"):
+					return seam.EngineResponse{Status: 201}
+				case strings.Contains(req.Path, "/containers/create"):
+					return seam.EngineResponse{Status: 201, Body: []byte(`{"Id":"` + testContainerID + `"}`)}
+				case strings.HasSuffix(req.Path, "/start"):
+					return seam.EngineResponse{Status: 500, Body: []byte(testCase.startBody)}
+				}
+				return seam.EngineResponse{Status: 204}
+			}}
+			docker := newDockerAPI(transport, func(context.Context) ([]contract.ContainerImage, error) {
+				return testImageList(), nil
+			})
+			result, err := docker.create(context.Background(), createInput{
+				engine: engineMySQL, versionTag: "8.4", imageID: testImageID, containerName: "mysql-db",
+				accessScope: scopeContainerNet, bootstrapPwd: "bootstrap-secret",
+				ordinaryUser: databaseSecret{Username: "reader", Password: "strong-password-123"},
+			})
+			if err != nil {
+				t.Fatalf("启动失败不应成为创建错误，容器与登记要留在原地：%v", err)
+			}
+			if result.started || result.containerID != testContainerID {
+				t.Fatalf("create 结果不符：%+v", result)
+			}
+			if result.startFailure != testCase.wantReason {
+				t.Fatalf("startFailure 应为 %q，实际 %q", testCase.wantReason, result.startFailure)
+			}
+			if strings.Contains(result.startFailure, "failed to set up") || strings.Contains(result.startFailure, "ENGINE_PRIVATE_TEXT") {
+				t.Fatalf("不得回显 Engine 正文：%q", result.startFailure)
+			}
+		})
+	}
+}
+
+func TestCreateEnsuresMissingDatabaseNetworkBeforeContainer(t *testing.T) {
+	transport := &scriptedTransport{responder: func(req seam.EngineRequest) seam.EngineResponse {
+		switch {
+		case req.Method == "GET" && req.Path == "/networks/"+networkDBSharedName:
+			return seam.EngineResponse{Status: 404}
+		case req.Method == "POST" && req.Path == "/networks/create":
+			return seam.EngineResponse{Status: 201, Body: []byte(`{"Id":"net-1","Warning":""}`)}
+		case strings.HasSuffix(req.Path, "/volumes/create"):
+			return seam.EngineResponse{Status: 201}
+		case strings.Contains(req.Path, "/containers/create"):
+			return seam.EngineResponse{Status: 201, Body: []byte(`{"Id":"` + testContainerID + `"}`)}
+		}
+		return seam.EngineResponse{Status: 204}
+	}}
+	docker := newDockerAPI(transport, func(context.Context) ([]contract.ContainerImage, error) {
+		return testImageList(), nil
+	})
+	result, err := docker.create(context.Background(), createInput{
+		engine: engineMySQL, versionTag: "8.4", imageID: testImageID, containerName: "mysql-db",
+		accessScope: scopeContainerNet, bootstrapPwd: "bootstrap-secret",
+		ordinaryUser: databaseSecret{Username: "reader", Password: "strong-password-123"},
+	})
+	if err != nil || !result.started || result.startFailure != "" {
+		t.Fatalf("缺网时应在建容器前补网吧，实际 err=%v result=%+v", err, result)
+	}
+	networkCreate, containerCreate := -1, -1
+	for index, call := range transport.calls {
+		if call.Method == "POST" && call.Path == "/networks/create" && networkCreate < 0 {
+			networkCreate = index
+		}
+		if strings.Contains(call.Path, "/containers/create") {
+			containerCreate = index
+		}
+	}
+	if networkCreate < 0 {
+		t.Fatalf("未发起网络创建，调用序列：%v", callPaths(transport.calls))
+	}
+	if networkCreate > containerCreate {
+		t.Fatalf("网络必须在容器创建前就绪：networkCreate=%d containerCreate=%d 序列=%v", networkCreate, containerCreate, callPaths(transport.calls))
+	}
+	var body map[string]any
+	if json.Unmarshal(transport.calls[networkCreate].Body, &body) != nil {
+		t.Fatal("网络创建体解析失败")
+	}
+	if body["Name"] != networkDBSharedName || body["Driver"] != "bridge" {
+		t.Fatalf("网络创建参数应与 compose 与 dev-check.sh 同形，实际 %v", body)
+	}
+}
+
+func TestCreateDoesNotRecreateExistingDatabaseNetwork(t *testing.T) {
+	transport := &scriptedTransport{responder: func(req seam.EngineRequest) seam.EngineResponse {
+		switch {
+		case req.Method == "GET" && req.Path == "/networks/"+networkDBPrivateName:
+			return seam.EngineResponse{Status: 200, Body: []byte(`{"Name":"` + networkDBPrivateName + `"}`)}
+		case strings.HasSuffix(req.Path, "/volumes/create"):
+			return seam.EngineResponse{Status: 201}
+		case strings.Contains(req.Path, "/containers/create"):
+			return seam.EngineResponse{Status: 201, Body: []byte(`{"Id":"` + testContainerID + `"}`)}
+		}
+		return seam.EngineResponse{Status: 204}
+	}}
+	docker := newDockerAPI(transport, func(context.Context) ([]contract.ContainerImage, error) {
+		return testImageList(), nil
+	})
+	result, err := docker.create(context.Background(), createInput{
+		engine: engineMySQL, versionTag: "8.4", imageID: testImageID, containerName: "mysql-db",
+		accessScope: scopeLocalhost, bootstrapPwd: "bootstrap-secret",
+		ordinaryUser: databaseSecret{Username: "reader", Password: "strong-password-123"},
+	})
+	if err != nil || !result.started {
+		t.Fatalf("localhost 创建失败：%v %+v", err, result)
+	}
+	for _, call := range transport.calls {
+		if call.Method == "POST" && call.Path == "/networks/create" {
+			t.Fatalf("网络已存在时不得重复创建，调用序列：%v", callPaths(transport.calls))
+		}
+	}
+}
+
+func TestAttachEnsuresMissingDatabaseNetwork(t *testing.T) {
+	transport := &scriptedTransport{responder: func(req seam.EngineRequest) seam.EngineResponse {
+		switch {
+		case strings.HasSuffix(req.Path, "/json"):
+			body, _ := json.Marshal(baseInspectBody())
+			return seam.EngineResponse{Status: 200, Body: body}
+		case req.Method == "GET" && req.Path == "/networks/"+networkDBSharedName:
+			return seam.EngineResponse{Status: 404}
+		case req.Method == "POST" && req.Path == "/networks/create":
+			return seam.EngineResponse{Status: 201, Body: []byte(`{"Id":"net-1","Warning":""}`)}
+		case req.Method == "POST" && req.Path == "/networks/"+networkDBSharedName+"/connect":
+			return seam.EngineResponse{Status: 200}
+		}
+		return seam.EngineResponse{Status: 204}
+	}}
+	docker := newDockerAPI(transport, func(context.Context) ([]contract.ContainerImage, error) { return nil, nil })
+	if err := docker.attach(context.Background(), testContainerID, networkDBSharedName); err != nil {
+		t.Fatalf("attach 失败：%v", err)
+	}
+	networkCreate, connect := -1, -1
+	for index, call := range transport.calls {
+		if call.Method == "POST" && call.Path == "/networks/create" {
+			networkCreate = index
+		}
+		if call.Method == "POST" && call.Path == "/networks/"+networkDBSharedName+"/connect" {
+			connect = index
+		}
+	}
+	if networkCreate < 0 || connect < 0 || networkCreate > connect {
+		t.Fatalf("接入前必须先建网吧，调用序列：%v", callPaths(transport.calls))
+	}
+}
+
+// callPaths 把调用序列压成一行，失败信息直接可判读。
+func callPaths(calls []seam.EngineRequest) []string {
+	paths := make([]string, 0, len(calls))
+	for _, call := range calls {
+		paths = append(paths, call.Method+" "+call.Path)
+	}
+	return paths
 }

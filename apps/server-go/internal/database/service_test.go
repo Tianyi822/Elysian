@@ -563,7 +563,7 @@ func TestValidateCreateRequestMessages(t *testing.T) {
 	}{
 		{map[string]any{"engine": "Oracle"}, "数据库引擎不受支持"},
 		{map[string]any{"engine": "MySQL", "versionTag": "latest", "name": "a", "user": map[string]any{"username": "reader", "password": "p"}, "accessScope": "localhost", "target": map[string]any{"kind": "new"}}, "必须指定明确的数据库版本标签"},
-		{map[string]any{"engine": "Redis", "versionTag": "7.4", "name": "x", "user": map[string]any{"username": "reader", "password": "p"}, "accessScope": "localhost", "target": map[string]any{"kind": "new"}}, "数据库名无效"},
+		{map[string]any{"engine": "Redis", "versionTag": "7.4", "name": "x", "user": map[string]any{"username": "reader", "password": "p"}, "accessScope": "localhost", "target": map[string]any{"kind": "new"}}, "Redis 逻辑库只能使用 DB 0"},
 		{map[string]any{"engine": "MySQL", "versionTag": "8.4", "name": "orders", "user": map[string]any{"username": "root", "password": "p"}, "accessScope": "localhost", "target": map[string]any{"kind": "adopt", "containerId": strings.Repeat("d", 64)}}, "普通账号不得使用管理员账号名"},
 		{map[string]any{"engine": "MySQL", "versionTag": "8.4", "name": "orders", "user": map[string]any{"username": "reader", "password": "p"}, "accessScope": "localhost", "target": map[string]any{"kind": "new"}}, "普通账号或密码无效"},
 		{map[string]any{"engine": "MySQL", "versionTag": "8.4", "name": "orders", "user": map[string]any{"username": "reader", "password": "long-enough-password"}, "accessScope": "bogus", "target": map[string]any{"kind": "new"}}, "访问范围无效"},
@@ -584,4 +584,54 @@ func TestValidateCreateRequestMessages(t *testing.T) {
 // jsonMarshal 共享编码出口（与 shared.MarshalJSON 一致）。
 func jsonMarshal(value any) ([]byte, error) {
 	return shared.MarshalJSON(value)
+}
+
+func TestValidateCreateRequestNameMessageStatesFormatRule(t *testing.T) {
+	body := map[string]any{
+		"engine": engineMySQL, "versionTag": "8.4", "name": "mysql-db",
+		"user":        map[string]any{"username": "reader", "password": "long-enough-password"},
+		"accessScope": scopeContainerNet,
+		"target":      map[string]any{"kind": "new", "imageId": testImageID, "containerName": "mysql-db"},
+	}
+	_, err := validateCreateRequest(body)
+	var invalid *shared.InvalidRequestError
+	if !errors.As(err, &invalid) || invalid.Status != 400 {
+		t.Fatalf("连字符库名应被挡下，实际 %v", err)
+	}
+	if !strings.Contains(invalid.Message, "只能使用英文字母、数字和下划线") {
+		t.Fatalf("拒绝必须带上格式规则，模型才知道怎么纠正，实际 %q", invalid.Message)
+	}
+	terminalErr := ""
+	if _, err := sqlName("mysql-db"); err != nil {
+		terminalErr = err.Error()
+	}
+	if !strings.Contains(terminalErr, "只能使用英文字母、数字和下划线") {
+		t.Fatalf("SQL 终端校验应给出同一条规则，实际 %q", terminalErr)
+	}
+}
+
+func TestCreateStartFailureReportsReasonAndKeepsPendingRegistration(t *testing.T) {
+	fixture := newServiceFixture("8.4")
+	fixture.docker.createResult = createResult{
+		containerID:  strings.Repeat("c", 64),
+		volumeName:   "elysian-db-" + strings.Repeat("0", 36),
+		started:      false,
+		startFailure: "面板数据库网络 elysian-db-shared 不存在",
+	}
+	_, err := fixture.service.Create(context.Background(), newCreateRequest(
+		createTarget{Kind: "new", ImageID: testImageID, ContainerName: "mysql-db"}, scopeContainerNet, nil))
+	if err == nil {
+		t.Fatal("启动失败必须报错")
+	}
+	message := err.Error()
+	if !strings.Contains(message, "容器启动失败") || !strings.Contains(message, "面板数据库网络 elysian-db-shared 不存在") {
+		t.Fatalf("错误应同时含启动失败与本地原因：%s", message)
+	}
+	if !strings.Contains(message, "已登记为待处理") {
+		t.Fatalf("错误应指向待处理登记：%s", message)
+	}
+	rows, listErr := fixture.registry.list()
+	if listErr != nil || len(rows) != 1 || rows[0].State != stateNeedsAttention {
+		t.Fatalf("容器已产生时必须留下待处理登记：%+v %v", rows, listErr)
+	}
 }

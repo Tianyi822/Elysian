@@ -380,6 +380,11 @@ func (f *AgentFacade) runAgentTask(ctx context.Context, cancel context.CancelFun
 	updated := f.tasks[record.ID]
 	updated.State, updated.Result = "unknown", nil
 	updated.Message = "执行已结束，数据库结果未确认；禁止重投，需回读实际事实"
+	if err != nil {
+		// 屏障语义不变（仍为 unknown、仍禁止重投），但原因必须留在消息里：
+		// 「需回读实际事实」在没有任何指向时是一条无法执行的指令。
+		updated.Message += "：" + errorReasonMessage(err)
+	}
 	stage := "unknown"
 	if result != nil {
 		updated.State, updated.Result, updated.Message = "succeeded", result, "数据库操作已完成并核验"
