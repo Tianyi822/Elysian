@@ -4,6 +4,7 @@ import (
 	"elysian/server/internal/agent/kardia"
 	"elysian/server/internal/agent/tools"
 	domaindocker "elysian/server/internal/docker"
+	"elysian/server/internal/shared"
 )
 
 func (s *Service) imageDescriptors() []tools.Descriptor {
@@ -112,6 +113,11 @@ func agentBusinessError(err error) error {
 	// 不掩盖清理组合错误或其他链路故障。
 	if failure, ok := err.(*domaindocker.AgentError); ok {
 		return &tools.BusinessError{Code: failure.Code, Message: failure.Message, NotDispatched: failure.NotDispatched}
+	}
+	// 只读查询的状态类拒绝（查无此对象、ID 形态不符）是模型可以改判的事实，
+	// 作为业务错误交回模型让运行继续；原始错误仍按原样上抛终止运行。
+	if invalid, ok := err.(*shared.InvalidRequestError); ok {
+		return &tools.BusinessError{Code: "docker-invalid-request", Message: invalid.Message}
 	}
 	return err
 }

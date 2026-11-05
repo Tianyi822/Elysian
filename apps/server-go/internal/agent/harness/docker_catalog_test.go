@@ -63,7 +63,10 @@ func dockerCatalogBridge(t *testing.T) (*toolbridge.Bridge, *dockerCatalogViews)
 		case "/images/" + strings.Repeat("a", 64) + "/json":
 			_ = json.NewEncoder(w).Encode(map[string]any{"Id": "sha256:" + strings.Repeat("a", 64), "Size": 192 * 1024 * 1024, "Created": "2026-10-29T00:00:00Z", "RepoTags": []string{"local-nginx:1.27"}, "RepoDigests": []string{"local-nginx@sha256:" + strings.Repeat("a", 64)}, "Config": map[string]any{"Env": []string{"TOKEN=secret-token"}}})
 		default:
-			http.NotFound(w, r)
+			// 真实 Engine 的错误响应也是 JSON 正文；纯文本 404 会让域层报
+			// 「响应不是有效 JSON」，而不是它自己的 404 业务错误。
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"message":"No such object"}`))
 		}
 	}))
 	_ = server.Listener.Close()
@@ -113,6 +116,38 @@ func dockerSnapshotTool(snapshot CapabilitySnapshot, name string) (Capability, b
 		}
 	}
 	return Capability{}, false
+}
+
+func TestDockerInspectMissingContainerContinuesRunWithReason(t *testing.T) {
+	bridge, _ := dockerCatalogBridge(t)
+	missing := strings.Repeat("d", 64)
+	var step atomic.Int32
+	var lastRequest atomic.Value
+	m, session, _ := agentManager(t, func(_ context.Context, _ model.Profile, r model.Request) (model.Response, error) {
+		if r.ToolChoice == "store_working_memory" {
+			return memoryReply(r), nil
+		}
+		switch step.Add(1) {
+		case 1:
+			return searchReply("docker_container_inspect"), nil
+		case 2:
+			reply := toolReply("docker_container_inspect")
+			reply.ToolCalls[0].Arguments = json.RawMessage(`{"id":"` + missing + `"}`)
+			return reply, nil
+		default:
+			lastRequest.Store(r)
+			return finalReply("done"), nil
+		}
+	}, func(d *Deps) { d.Tools = bridge })
+	run := submitAgentTest(t, m, session, "docker-inspect-missing", "查看这个容器")
+	finished := runtimeFinished(t, m, run.ID)
+	if finished.Status != StateSucceeded {
+		t.Fatalf("只读 inspect 查无此容器不应终止整轮运行：%+v", finished)
+	}
+	raw, _ := json.Marshal(lastRequest.Load())
+	if !strings.Contains(string(raw), "容器不存在") {
+		t.Fatalf("模型必须收到查无此容器的原因才能改判，实际下一轮请求：%s", raw)
+	}
 }
 
 func TestDockerNewRunsRefreshCatalogWithoutChangingSavedEnvironmentOrOldSnapshots(t *testing.T) {

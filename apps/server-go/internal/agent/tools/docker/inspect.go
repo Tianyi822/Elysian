@@ -24,7 +24,7 @@ func (s *Service) inspectionDescriptors() []tools.Descriptor {
 			id, _ := tools.StringArg(args, "id")
 			container, err := s.deps.Agent.InspectContainer(tools.Lifetime(c), id)
 			if err != nil {
-				return nil, err
+				return nil, agentBusinessError(err)
 			}
 			return containerSummary(container), nil
 		}},
@@ -32,7 +32,7 @@ func (s *Service) inspectionDescriptors() []tools.Descriptor {
 			id, _ := tools.StringArg(args, "id")
 			image, err := s.deps.Agent.InspectImage(tools.Lifetime(c), id)
 			if err != nil {
-				return nil, err
+				return nil, agentBusinessError(err)
 			}
 			return imageSummary(image), nil
 		}},
