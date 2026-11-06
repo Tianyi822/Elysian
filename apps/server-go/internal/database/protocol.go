@@ -43,9 +43,10 @@ func mysqlConnect(addr databaseAddress, credential databaseSecret, database stri
 }
 
 // mysqlDSN 按用户名/密码/地址拼装 DSN，特殊字符按驱动规则转义。
+// interpolateParams 必须开启：账号管理语句的占位符无法服务端预处理（见 protocol_test）。
 func mysqlDSN(credential databaseSecret, addr databaseAddress, database string) string {
 	replacer := strings.NewReplacer("'", "\\'", "\"", "\\\"", "\\", "\\\\", "\n", "\\n", "\r", "\\r")
-	return fmt.Sprintf("%s:%s@tcp(%s)/%s?timeout=5s",
+	return fmt.Sprintf("%s:%s@tcp(%s)/%s?timeout=5s&interpolateParams=true",
 		replacer.Replace(credential.Username), replacer.Replace(credential.Password),
 		net.JoinHostPort(addr.Host, strconv.Itoa(addr.Port)), database)
 }

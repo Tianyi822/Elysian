@@ -254,3 +254,13 @@ func TestActualVersionMatches(t *testing.T) {
 		t.Fatal("8.40 不应匹配 8.4")
 	}
 }
+
+func TestMysqlDSNInterpolatesAccountManagementParameters(t *testing.T) {
+	dsn := mysqlDSN(databaseSecret{Username: "ely_b81b31e0c140", Password: "Abc_-9"}, databaseAddress{Host: "172.28.0.9", Port: 3306}, "")
+	// CREATE USER ?@'%' IDENTIFIED BY ? 之类的账号管理语句无法走服务端预处理，
+	// MySQL 会把 ? 当成语法的一部分直接回 1064；必须像 mysql2 的 query() 那样
+	// 由驱动在客户端插值成带引号的字面量。
+	if !strings.Contains(dsn, "interpolateParams=true") {
+		t.Fatalf("DSN 必须开启客户端插值，否则建库账号语句必然 1064，实际 %s", dsn)
+	}
+}
