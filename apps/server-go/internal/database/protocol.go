@@ -411,8 +411,8 @@ func parseAclGetUserReply(reply any) map[string]any {
 
 var redisAclOverprivileged = regexp.MustCompile(`(?i)\+@(?:admin|dangerous|scripting)\b|\+(?:acl|config|module|eval|evalsha|eval_ro|evalsha_ro|fcall|fcall_ro|function|script|debug|shutdown|flushall|flushdb|select|migrate|restore|move|copy|swapdb|replicaof|slaveof|cluster|monitor|sync|psync)\b`)
 
-// verify 接管核验：Redis 核对 ACL 形态并用 DRYRUN 复核；SQL 用管理员确认库存在、
-// 普通账号自查六视图，任何查询异常即失败（fail-closed）。
+// verify 接管核验：Redis 核对 ACL 形态并用 DRYRUN 复核；SQL 用管理员确认库和
+// 实际账号的例程授权，普通账号自查其余授权与角色，任何查询异常即失败（fail-closed）。
 func (p *protocolAPI) verify(ctx context.Context, record databaseRecord, addr databaseAddress) error {
 	if record.Engine == engineRedis {
 		admin := redisConnect(addr, record.Admin)
@@ -498,13 +498,30 @@ func (p *protocolAPI) verify(ctx context.Context, record databaseRecord, addr da
 	if rows.ColumnPrivileges, err = queryGrantRows(ctx, user, "SELECT TABLE_SCHEMA, IS_GRANTABLE FROM INFORMATION_SCHEMA.COLUMN_PRIVILEGES"); err != nil {
 		return err
 	}
-	if rows.RoutinePrivileges, err = queryGrantRows(ctx, user, "SELECT TABLE_SCHEMA, IS_GRANTABLE FROM INFORMATION_SCHEMA.ROUTINE_PRIVILEGES"); err != nil {
+	if rows.RoutinePrivileges, err = queryRoutineGrantRows(ctx, admin, user, record.User.Username); err != nil {
 		return err
 	}
 	if rows.ApplicableRoles, err = queryGrantRows(ctx, user, "SELECT * FROM INFORMATION_SCHEMA.APPLICABLE_ROLES"); err != nil {
 		return err
 	}
 	return assertSqlGrantsWithinDatabase(record.Name, rows)
+}
+
+// queryRoutineGrantRows 用管理员读取普通连接实际命中的账号的例程授权。
+// MySQL/MariaDB 把这类授权保存在 mysql.procs_priv，MySQL 没有
+// INFORMATION_SCHEMA.ROUTINE_PRIVILEGES；不能因视图缺失跳过越库与转授权核验。
+func queryRoutineGrantRows(ctx context.Context, admin, user *sql.DB, username string) ([]sqlGrantRow, error) {
+	var account string
+	if err := user.QueryRowContext(ctx, "SELECT CURRENT_USER()").Scan(&account); err != nil {
+		return nil, err
+	}
+	separator := strings.LastIndexByte(account, '@')
+	if separator < 1 || separator == len(account)-1 || account[:separator] != username {
+		return nil, &shared.InvalidRequestError{Status: 403, Message: "普通账号实际身份与登记不一致"}
+	}
+	return queryGrantRows(ctx, admin, `SELECT Db AS TABLE_SCHEMA,
+CASE WHEN FIND_IN_SET('Grant', Proc_priv) > 0 THEN 'YES' ELSE 'NO' END AS IS_GRANTABLE
+FROM mysql.procs_priv WHERE User = ? AND Host = ? AND Proc_priv <> ''`, username, account[separator+1:])
 }
 
 // stringsToAny 把 []string 展开为 []any（go-redis Do 的变参形态）。
@@ -518,8 +535,8 @@ func stringsToAny(values []string) []any {
 
 // queryGrantRows 执行授权视图查询并归一为宽松行（SELECT * 的 APPLICABLE_ROLES
 // 只关心行数）。
-func queryGrantRows(ctx context.Context, db *sql.DB, query string) ([]sqlGrantRow, error) {
-	result, err := db.QueryContext(ctx, query)
+func queryGrantRows(ctx context.Context, db *sql.DB, query string, args ...any) ([]sqlGrantRow, error) {
+	result, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -530,7 +547,7 @@ func queryGrantRows(ctx context.Context, db *sql.DB, query string) ([]sqlGrantRo
 		if err != nil {
 			return nil, err
 		}
-		values := make([]any, len(columns))
+		values := make([]sql.NullString, len(columns))
 		pointers := make([]any, len(columns))
 		for i := range values {
 			pointers[i] = &values[i]
@@ -542,11 +559,20 @@ func queryGrantRows(ctx context.Context, db *sql.DB, query string) ([]sqlGrantRo
 		for i, column := range columns {
 			switch strings.ToUpper(column) {
 			case "PRIVILEGE_TYPE":
-				row.PrivilegeType = asString(values[i])
+				if !values[i].Valid {
+					return nil, errors.New("数据库授权信息缺失")
+				}
+				row.PrivilegeType = values[i].String
 			case "IS_GRANTABLE":
-				row.IsGrantable = asString(values[i])
+				if !values[i].Valid {
+					return nil, errors.New("数据库授权信息缺失")
+				}
+				row.IsGrantable = values[i].String
 			case "TABLE_SCHEMA":
-				row.TableSchema = asString(values[i])
+				if !values[i].Valid {
+					return nil, errors.New("数据库授权信息缺失")
+				}
+				row.TableSchema = values[i].String
 			}
 		}
 		rows = append(rows, row)
