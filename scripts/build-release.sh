@@ -9,6 +9,8 @@ export BUN_CONFIG_REGISTRY="${ELYSIAN_BUN_REGISTRY:-${BUN_CONFIG_REGISTRY:-https
 SOURCE_DIR="$1"
 OUTPUT_DIR="$2"
 BUILD_COMMIT="$3"
+BUILD_STARTED_SECONDS=$SECONDS
+trap 'printf "发布构建脚本用时：%s 秒\n" "$((SECONDS - BUILD_STARTED_SECONDS))"' EXIT
 [ -f "$SOURCE_DIR/package.json" ] && [ -f "$SOURCE_DIR/bun.lock" ] && [ -f "$SOURCE_DIR/apps/server-go/go.mod" ] || { echo '源码缺少构建文件或锁文件' >&2; exit 1; }
 mkdir -p "$OUTPUT_DIR"
 cd "$SOURCE_DIR"
@@ -20,4 +22,4 @@ mkdir -p apps/server-go/web/dist
 cp -a apps/web/dist/. apps/server-go/web/dist/
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 cd apps/server-go
-CGO_ENABLED=0 go build -mod=readonly -buildvcs=false -ldflags="-s -w -X elysian/server/internal/panel.Commit=${BUILD_COMMIT} -X elysian/server/internal/panel.BuildTime=${BUILD_TIME}" -o "$OUTPUT_DIR/elysian" ./cmd/elysian
+CGO_ENABLED=0 go build -trimpath -mod=readonly -buildvcs=false -ldflags="-s -w -X elysian/server/internal/panel.Commit=${BUILD_COMMIT} -X elysian/server/internal/panel.BuildTime=${BUILD_TIME}" -o "$OUTPUT_DIR/elysian" ./cmd/elysian

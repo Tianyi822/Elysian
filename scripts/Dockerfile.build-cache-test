@@ -1,0 +1,6 @@
+FROM oven/bun:1.4.2-debian AS bun
+FROM golang:1.23-bookworm
+COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
+WORKDIR /workspace
+ENTRYPOINT ["bun"]
+CMD ["scripts/build-cache.integration.test.mjs"]

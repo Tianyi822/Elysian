@@ -270,16 +270,31 @@ func (h SystemHost) containerPorts(ctx context.Context, p config.PanelNetwork) e
 }
 
 func (h SystemHost) Build(ctx context.Context, source, sha, id string) (string, error) {
+	started := time.Now()
+	defer func() {
+		h.Store.appendLog(id, fmt.Sprintf("源码构建用时：%.1f 秒\n", time.Since(started).Seconds()))
+	}()
+	uid, gid, err := buildAccountIDs()
+	if err != nil {
+		return "", err
+	}
+	cache, initialized, err := prepareBuildCache(buildHome, uid, gid)
+	if err != nil {
+		return "", err
+	}
+	if initialized {
+		h.Store.appendLog(id, "已初始化持久构建缓存目录；缺少的依赖将在构建时下载\n")
+	}
+	h.Store.appendLog(id, fmt.Sprintf("构建缓存：Bun=%s；Go 模块=%s；Go 编译=%s\n", cache.Bun, cache.Modules, cache.Go))
 	stage := filepath.Dir(source)
 	if _, err := h.command(ctx, "chown", "-R", "elysian-build:elysian-build", stage); err != nil {
 		return "", err
 	}
 	output := filepath.Join(stage, "artifact")
-	c := exec.CommandContext(ctx, "runuser", "-u", "elysian-build", "--", "env", "HOME="+stage, "PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin", "bash", filepath.Join(InstallRoot, "maintenance", "build-release.sh"), source, output, sha)
+	c := releaseBuildCommand(ctx, stage, source, output, sha, cache)
 	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	c.Cancel = func() error { return syscall.Kill(-c.Process.Pid, syscall.SIGKILL) }
 	c.WaitDelay = 2 * time.Second
-	c.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C.UTF-8"}
 	c.Stdout = logWriter{h.Store, id}
 	c.Stderr = c.Stdout
 	if err := c.Run(); err != nil {

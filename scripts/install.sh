@@ -55,6 +55,7 @@ STATE_DIR="/var/lib/elysian"
 PANEL_PORT="48101"
 FRONTEND_PORT="48100"
 INSTALL_ROOT="/opt/elysian"
+BUILD_HOME="/var/lib/elysian-build"
 HEALTH_URL="http://127.0.0.1:${PANEL_PORT}/api/health"
 ENV_FILE="/etc/default/elysian"
 PLATFORM_TXN="${STATE_DIR}/.Elysian/backups/platform-install-active"
@@ -1007,8 +1008,55 @@ EOF
 
 # ---------- 构建与版本安装 ----------
 
+build_cache_stat() {
+  stat -c '%u:%g:%a' "$1" 2>/dev/null || stat -f '%u:%g:%Lp' "$1"
+}
+
+ensure_build_cache_directory() { # <路径> <uid> <gid> <权限>：只设置新目录，不递归修正既有缓存
+  local path="$1" uid="$2" gid="$3" mode="$4" actual
+  if [ -L "$path" ]; then
+    printf '构建缓存路径不能是符号链接：%s\n' "$path" >&2
+    return 1
+  fi
+  if [ ! -e "$path" ]; then
+    mkdir -m "0$mode" "$path" || return 1
+    chown "$uid:$gid" "$path" || return 1
+    chmod "0$mode" "$path" || return 1
+    BUILD_CACHE_INITIALIZED=1
+  fi
+  if [ ! -d "$path" ]; then
+    printf '构建缓存路径不是目录：%s\n' "$path" >&2
+    return 1
+  fi
+  actual="$(build_cache_stat "$path")" || return 1
+  if [ "$actual" != "$uid:$gid:$mode" ]; then
+    printf '构建缓存目录归属或权限异常：%s\n' "$path" >&2
+    return 1
+  fi
+}
+
+prepare_build_cache() {
+  local uid gid owner_uid owner_gid
+  uid="$(id -u elysian-build)" && gid="$(id -g elysian-build)" || return 1
+  if ! [ "$uid" -gt 0 ] 2>/dev/null || ! [ "$gid" -ge 0 ] 2>/dev/null; then
+    printf '无特权构建账号身份无效\n' >&2
+    return 1
+  fi
+  owner_uid="$(id -u)" && owner_gid="$(id -g)" || return 1
+  BUILD_CACHE_INITIALIZED=0
+  ensure_build_cache_directory "$BUILD_HOME" "$owner_uid" "$owner_gid" 755 || return 1
+  ensure_build_cache_directory "$BUILD_HOME/cache" "$owner_uid" "$owner_gid" 755 || return 1
+  ensure_build_cache_directory "$BUILD_HOME/cache/bun" "$uid" "$gid" 700 || return 1
+  ensure_build_cache_directory "$BUILD_HOME/cache/go-mod" "$uid" "$gid" 700 || return 1
+  ensure_build_cache_directory "$BUILD_HOME/cache/go-build" "$uid" "$gid" 700 || return 1
+  if [ "$BUILD_CACHE_INITIALIZED" = 1 ]; then
+    printf '已初始化持久构建缓存目录；缺少的依赖将在构建时下载\n'
+  fi
+  printf '构建缓存：Bun=%s；Go 模块=%s；Go 编译=%s\n' "$BUILD_HOME/cache/bun" "$BUILD_HOME/cache/go-mod" "$BUILD_HOME/cache/go-build"
+}
+
 build_release() {
-  info "构建需要下载依赖并编译前后端，可能需要几分钟"
+  info "构建会复用已有依赖与 Go 编译缓存，缺少的依赖按需下载"
   BUILD_LOG="$(mktemp /tmp/elysian-build.XXXXXX)"
   BUILD_DIR="$(mktemp -d)"
   BUILD_COMMIT="unknown"
@@ -1025,12 +1073,17 @@ build_release() {
     fi
   else
     ensure_accounts
+    if ! prepare_build_cache >>"$BUILD_LOG" 2>&1; then
+      tail -n 40 "$BUILD_LOG" >&2
+      die "持久构建缓存准备失败，原面板未停服（完整日志：$BUILD_LOG）。"
+    fi
     BUILD_SOURCE="$(mktemp -d /var/tmp/elysian-install-source.XXXXXX)"
     tar -C "$REPO_ROOT" --exclude=.git --exclude=node_modules --exclude=dist --exclude=.env --exclude='.env.*' --exclude=.codex --exclude=.zcode --exclude=.agents --exclude=.Elysian -cf - . | tar -C "$BUILD_SOURCE" -xf -
     install -m 0644 "$REPO_ROOT/scripts/build-release.sh" "$BUILD_DIR/build-release.sh"
     chown -R elysian-build:elysian-build "$BUILD_SOURCE" "$BUILD_DIR"
     if ! run_stage_command "构建 Elysian" "$BUILD_LOG" runuser -u elysian-build -- env HOME="$BUILD_SOURCE" PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin \
       GOPROXY="$GOPROXY" BUN_CONFIG_REGISTRY="$BUN_CONFIG_REGISTRY" \
+      BUN_INSTALL_CACHE_DIR="$BUILD_HOME/cache/bun" GOMODCACHE="$BUILD_HOME/cache/go-mod" GOCACHE="$BUILD_HOME/cache/go-build" GOFLAGS=-trimpath \
       bash "$BUILD_DIR/build-release.sh" "$BUILD_SOURCE" "$BUILD_DIR" "$BUILD_COMMIT"; then
       tail -n 40 "$BUILD_LOG" >&2
       die "源码构建失败，$(stage_failure_reason)，原面板未停服（完整日志：$BUILD_LOG）。"
