@@ -87,7 +87,13 @@ Docker 与 Caddy 通道分别按安装环境变量 `ELYSIAN_DOCKER_SOCKET`／`EL
 
 ## 卸载与验证
 
-`sudo bash scripts/uninstall.sh` 是唯一卸载入口：先展示删除计划与四类数据大小，再逐项询问是否删除「数据（SQLite 与 Agent 记录）」「配置与凭据」「日志」「备份/状态/临时」，默认全部保留；`--purge-data` 删除全部数据（含未分类文件），`--keep-tools` 保留 Go/bun，`--yes` 免交互（默认保留数据与 Caddy 配置），`--dry-run` 只预览。确认后停止并注销服务、删除程序与版本目录、`/etc/default/elysian`（先备份到 `/var/backups/elysian-uninstall-<时间戳>`）、镜像 profile、构建残留与面板前端 UFW 精确规则；Caddy 管理通道配置默认保留，交互确认后只移除内容完全一致的 drop-in/tmpfiles 与 Caddyfile 全局段精确 admin 行（先备份、`caddy validate` 通过才替换，reload 失败恢复原文件）。只要保留任一数据类别就保留 `elysian` 账号，保留「数据」时同时保留 `elysian-sqlite`；全删时删除三个账号与组。结尾执行残留检查，列出已删除、已保留、未改动与残留项。源码仓库、系统 SSH、Docker/Caddy 系统包（含 Caddy apt 源与 keyring）与容器、UFW 服务状态、用户自加规则均不动。`install.sh --uninstall` 已移除，执行会提示改用 `uninstall.sh`。
+`sudo bash scripts/uninstall.sh` 是唯一卸载入口，默认彻底清理：先展示程序、四类数据、凭据、日志、缓存、账号及依赖清单，确认后执行；`--yes` 按该清单免交互执行，包含删除全部面板数据。需要保留时显式使用 `--keep-data`、`--keep-dependencies`、`--keep-tools`、`--keep-caddy-config`；`--purge-data` 是默认数据清理行为的兼容参数，`--dry-run` 只预览。安装和卸载通过固定生命周期锁串行，卸载同时取得 worker→operations 维护锁；无法确认面板服务停止时，在删除程序与数据前中止。保留数据时保留对应的 `elysian`／`elysian-sqlite` 账号，全部删除才清理三个账号与组。
+
+安装器把新增 Docker/Caddy 包名、安装前不存在的 apt 源与公钥摘要，以及新装 Go/Bun 的二进制摘要保存到 root 私有的 `/var/lib/elysian-installer`；复用组件、旧安装和安装前已有的包不自动认领。卸载只清理可核对的归属：Docker 须无容器（含停止状态）、镜像、卷和自定义网络，并核对可用的 containerd 命名空间；Caddy 须仍与首次软件包默认配置基线及真实运行 JSON 一致。停止或不可达的服务不能当成空服务；任何归属、配置、权限或业务使用异常都保留现场、列为未完成项并非零退出。包清理先用 apt 模拟检查，再用 dpkg 精确 purge 清单，拒绝自动移除其他依赖；apt 源与公钥只删除新增且内容未变的文件。业务数据目录 `/var/lib/docker`、`/var/lib/containerd`、`/var/lib/caddy` 不盲删，恢复备份单独列出由管理员核对后清理。
+
+保留 Caddy 时，默认只精确移除管理接入：配置先备份并 `caddy validate`，候选保留原文件权限和属主；运行配置须与磁盘一致，存在动态路由时拒绝 reload 并保留完整管理通道。热加载显式访问旧 Unix 管理端点，并核验新端点实际配置；失败恢复原配置，结果无法确认时保留辅助文件并明确报告。程序保留但启动文件缺失或服务 failed 也算未完成。已修改的管理文件、源码、SSH、用户 UFW 规则和非本安装器新增的软件不盲删；结尾区分已删除、主动保留、未完成及私有恢复备份，不以统一成功横幅掩盖异常。
+
+安装在源码构建前检查标准 Caddy 服务的启动文件与服务用户读取权限。程序存在但启动文件缺失时直接给出原因；管理员停止 Caddy 后，可使用 `sudo bash scripts/install.sh --restore-caddyfile /可信备份的绝对路径/Caddyfile` 校验并原子恢复缺失目标，然后继续安装。该选项不覆盖已有文件，不自动选择历史备份，不把配置缺失视为没有网站。
 
 前端验证为 `bun run typecheck`、`bun run test`、`bun run build`；Go 门禁为 `bash apps/server-go/dev-check.sh ./...`，全部 Go 检查在开发容器内运行。安装脚本测试通过专用 Docker 镜像运行，源码只读挂载，不挂 Docker socket、不发布宿主端口、运行期断网；工具安装、临时文件、Unix/TCP fixture 和真实 Caddy 进程全部在容器内，容器退出后自动删除。纯逻辑自测覆盖 TUI 与依赖辅助函数，事务故障测试覆盖动态路由保留、零重启复用、服务缺失、校验和 API 失败、显式隐藏规则变化、环境持久化失败、跨进程恢复与恢复失败保留记录；真实 Caddy 测试覆盖静态站点自动隐藏配置文件、嵌套路由、热迁移到 Unix 管理端点及原运行配置恢复。
 
@@ -96,11 +102,12 @@ docker build -f scripts/Dockerfile.install-test -t elysian-install-test:local sc
 docker run --rm --network none \
   --mount "type=bind,src=$PWD,dst=/workspace,readonly" \
   elysian-install-test:local -c 'set -e
-    bash -n scripts/tui.sh scripts/install.sh scripts/uninstall.sh scripts/build-release.sh scripts/install-platform.test.sh scripts/install-caddy-config.test.sh scripts/install-download.test.sh scripts/install-helpers.test.sh scripts/uninstall-helpers.test.sh
+    bash -n scripts/tui.sh scripts/install.sh scripts/uninstall.sh scripts/platform-lifecycle.sh scripts/platform-lifecycle.test.sh scripts/build-release.sh scripts/install-platform.test.sh scripts/install-caddy-config.test.sh scripts/install-download.test.sh scripts/install-helpers.test.sh scripts/uninstall-helpers.test.sh
     bash scripts/install-download.test.sh
     bash scripts/install-caddy-config.test.sh
     bash scripts/install-helpers.test.sh
     bash scripts/uninstall-helpers.test.sh
+    bash scripts/platform-lifecycle.test.sh
     bash scripts/install-platform.test.sh'
 ```
 

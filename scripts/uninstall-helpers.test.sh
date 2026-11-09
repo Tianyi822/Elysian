@@ -29,6 +29,13 @@ trap cleanup EXIT
 
 reset_flags() {
   PURGE_DATA=0
+  PURGE_DATA_REQUESTED=0
+  KEEP_DATA=0
+  KEEP_DEPENDENCIES=0
+  KEEP_CADDY_CONFIG=0
+  CADDY_PACKAGE_REMOVED=0
+  EXPECT_DELETE_GO=0
+  EXPECT_DELETE_BUN=0
   KEEP_TOOLS=0
   ASSUME_YES=0
   DRY_RUN=0
@@ -50,6 +57,7 @@ reset_flags() {
   DELETED_ITEMS=()
   KEPT_ITEMS=()
   RESIDUE=()
+  UNFINISHED_ITEMS=()
 }
 
 new_fixture() {
@@ -65,6 +73,7 @@ new_fixture() {
   INSTALL_ROOT="$FIXTURE/opt/elysian"
   MIRROR_PROFILE="$FIXTURE/profile.sh"
   BUILD_HOME="$FIXTURE/elysian-build"
+  PLATFORM_RECEIPTS="$FIXTURE/receipts"
   CLI_DATA_DIR="$FIXTURE/root-home/.elysian/cli"
   CADDYFILE_PATH="$FIXTURE/Caddyfile"
   CADDY_RUNTIME_DROPIN="$FIXTURE/dropin/elysian-runtime.conf"
@@ -135,7 +144,7 @@ assert_eq 0 "$DELETE_STATE" "选择保留 state"
 reset_flags
 ASSUME_YES=1
 select_data_categories >/dev/null 2>&1
-assert_eq 0 "$DELETE_DATA" "--yes 默认保留 data"
+assert_eq 0 "$DELETE_DATA" "保留模式下 --yes 不删除 data"
 reset_flags
 PURGE_DATA=1
 select_data_categories >/dev/null 2>&1
@@ -317,7 +326,7 @@ printf 'elysian\nelysian-build\nelysian-sqlite\n' >"$USERS"
 id() {
   if [ "$1" = "-u" ]; then grep -qx "$2" "$USERS"; else command id "$@"; fi
 }
-getent() { printf 'elysian:x:999:999::%s:/usr/sbin/nologin\n' "$STATE_DIR"; }
+getent() { [ "$1" = passwd ] || return 1; printf 'elysian:x:999:999::%s:/usr/sbin/nologin\n' "$STATE_DIR"; }
 userdel() { grep -vx "$1" "$USERS" >"$USERS.tmp" || true; mv "$USERS.tmp" "$USERS"; printf 'userdel %s\n' "$1" >>"$FIXTURE/users.log"; }
 groupdel() { printf 'groupdel %s\n' "$1" >>"$FIXTURE/users.log"; }
 DELETE_CONFIG=1; DELETE_LOGS=1; DELETE_STATE=1

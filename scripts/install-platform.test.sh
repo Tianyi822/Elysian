@@ -69,6 +69,7 @@ fixture_case() (
   caddy() {
     case "$1" in
       adapt)
+        if [ -f "$FIXTURE/adapt-fail" ]; then printf 'fixture Caddyfile invalid\n' >&2; return 1; fi
         if grep -q 'admin unix/' "$3"; then
           if [ -f "$FIXTURE/adapt-alter" ]; then
             printf '{"apps":{}}' >"$FIXTURE/altered.json"
@@ -134,6 +135,39 @@ test_manual_unready_refused() {
   : >"$FIXTURE/no-unit"
   if connect_caddy_safely; then return 1; fi
   [ ! -d "$PLATFORM_TXN" ] && cmp -s "$ENV_FILE" "$FIXTURE/environment.original" && cmp -s "$CADDYFILE_PATH" "$FIXTURE/Caddyfile.original"
+}
+
+test_missing_caddyfile_reports_actual_cause() {
+  rm "$CADDYFILE_PATH"
+  local output
+  if output="$(connect_caddy_safely 2>&1)"; then return 1; fi
+  printf '%s' "$output" | grep -Fq "Caddyfile 缺失：$CADDYFILE_PATH" || return 1
+  [ ! -e "$CADDYFILE_PATH" ] && [ ! -d "$PLATFORM_TXN" ] || return 1
+  ! grep -Eq '^(start|restart|enable|daemon-reload)' "$FIXTURE/systemctl.calls" || return 1
+  ! grep -q '^POST ' "$FIXTURE/requests"
+}
+
+test_invalid_caddyfile_retains_private_diagnostic() {
+  : >"$FIXTURE/adapt-fail"
+  local output diagnostic
+  if output="$(connect_caddy_safely 2>&1)"; then return 1; fi
+  diagnostic="$(printf '%s\n' "$output" | sed -n 's/.*私有诊断记录：\(.*\/adapt.log\).*/\1/p')"
+  [ -f "$diagnostic" ] || return 1
+  grep -q 'fixture Caddyfile invalid' "$diagnostic" || return 1
+  case "$(build_cache_stat "$(dirname "$diagnostic")")" in *:700) : ;; *) return 1 ;; esac
+  rm -rf "$(dirname "$diagnostic")"
+  cmp -s "$CADDYFILE_PATH" "$FIXTURE/Caddyfile.original" && [ ! -d "$PLATFORM_TXN" ]
+}
+
+test_disabled_admin_retains_private_diagnostic() {
+  printf '{"admin":{"disabled":true}}' >"$FIXTURE/disk.json"
+  local output diagnostic
+  if output="$(connect_caddy_safely 2>&1)"; then return 1; fi
+  diagnostic="$(printf '%s\n' "$output" | sed -n 's/.*私有诊断记录：\(.*\/endpoint.log\).*/\1/p')"
+  [ -f "$diagnostic" ] || return 1
+  grep -q '禁用了管理 API' "$diagnostic" || return 1
+  rm -rf "$(dirname "$diagnostic")"
+  cmp -s "$CADDYFILE_PATH" "$FIXTURE/Caddyfile.original" && [ ! -d "$PLATFORM_TXN" ]
 }
 
 test_failed_target_rolls_back() {
@@ -356,7 +390,7 @@ test_lock_order() {
   release_install_locks
 }
 
-for test in test_active_preserves_runtime test_ready_manual_reuse test_manual_unready_refused test_failed_target_rolls_back test_missing_socket_restores_runtime test_apply_failure_restores_runtime test_validation_keeps_original test_restart_failure_restores_stopped test_fresh_invocation_recovers test_restore_failure_retains_backup test_corrupt_json_rejected test_environment_parser_preserves_multiline test_environment_failure_restores_files test_disk_route_changes_refused test_hidden_path_changes_refused test_failed_marker_prevents_publish test_linked_unit_refused test_total_verification_deadline test_pending_maintenance_prevents_dependency_mutation test_both_socket_overrides_persist_and_restore test_failed_docker_leaves_caddy_and_environment test_local_caddy_ignores_proxy_environment test_all_configuration_snapshots test_ufw_rollback_keeps_existing_rule test_ufw_rollback_removes_only_new_rule test_lock_order; do
+for test in test_missing_caddyfile_reports_actual_cause test_invalid_caddyfile_retains_private_diagnostic test_disabled_admin_retains_private_diagnostic test_active_preserves_runtime test_ready_manual_reuse test_manual_unready_refused test_failed_target_rolls_back test_missing_socket_restores_runtime test_apply_failure_restores_runtime test_validation_keeps_original test_restart_failure_restores_stopped test_fresh_invocation_recovers test_restore_failure_retains_backup test_corrupt_json_rejected test_environment_parser_preserves_multiline test_environment_failure_restores_files test_disk_route_changes_refused test_hidden_path_changes_refused test_failed_marker_prevents_publish test_linked_unit_refused test_total_verification_deadline test_pending_maintenance_prevents_dependency_mutation test_both_socket_overrides_persist_and_restore test_failed_docker_leaves_caddy_and_environment test_local_caddy_ignores_proxy_environment test_all_configuration_snapshots test_ufw_rollback_keeps_existing_rule test_ufw_rollback_removes_only_new_rule test_lock_order; do
   if fixture_case "$test"; then
     PASS=$((PASS + 1)); printf 'PASS %s\n' "$test"
   else

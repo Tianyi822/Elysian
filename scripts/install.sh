@@ -8,8 +8,7 @@
 #                                       构建、起进程、curl /api/health、清理（供
 #                                       .zcode/go-migration/script-smoke.sh 在干净容器内调用）
 #
-# 卸载入口只有 scripts/uninstall.sh：默认保留面板数据，执行前会逐项询问 SQLite 数据、配置与凭据、
-# 日志、备份/状态/临时文件是否删除，并可选移除 Elysian 写入的 Caddy 管理通道配置。
+# 卸载入口只有 scripts/uninstall.sh：默认彻底清理面板及可确认归属且未使用的依赖，执行前展示清单确认。
 #
 # 平台依赖：正式安装在「构建 Elysian」之后、安装切换事务之前自动检测并安装 Docker 与 Caddy——
 # 已安装且可用则复用（不重装、不改动既有 daemon.json / Caddyfile），缺失则按经验证的官方命令
@@ -81,7 +80,10 @@ if [ ! -r "$SCRIPT_DIR/tui.sh" ]; then
 fi
 # shellcheck source=tui.sh
 . "$SCRIPT_DIR/tui.sh"
+# shellcheck source=platform-lifecycle.sh
+. "$SCRIPT_DIR/platform-lifecycle.sh"
 TUI_FAIL_LABEL="安装失败"
+RESTORE_CADDYFILE=""
 
 STEP=0
 STAGES=()
@@ -345,6 +347,7 @@ docker_install_or_reuse() {
     die "Docker 已安装但守护进程未响应（docker info 失败）。为不破坏既有安装，脚本不会在其上重装；请先排查：journalctl -u docker -n 50 --no-pager，修复后重跑本脚本。"
   fi
   command -v curl >/dev/null 2>&1 || die "缺少 curl，无法下载 Docker 官方安装脚本。"
+  platform_receipt_begin docker || die "Docker 安装归属记录异常，拒绝覆盖：$PLATFORM_RECEIPTS/docker"
   local log tmp
   tmp="$(mktemp /tmp/elysian-get-docker.XXXXXX)" || die "无法创建 Docker 安装脚本暂存文件。"
   log="$(mktemp /tmp/elysian-docker-install.XXXXXX)"
@@ -360,6 +363,7 @@ docker_install_or_reuse() {
     die "Docker 安装失败，请查看上方日志排查（完整日志：${log}）。常见原因：网络中断、apt 源异常或磁盘空间不足；修复后重跑本脚本，已完成的步骤会自动跳过。"
   fi
   rm -f "$tmp" "$log"
+  platform_receipt_finish docker || die "无法保存 Docker 安装归属记录：$PLATFORM_RECEIPTS/docker"
   DOCKER_INSTALLED_THIS_RUN=1
   ok "Docker 官方安装脚本执行完成"
 }
@@ -533,6 +537,7 @@ install_caddy() {
     return 0
   fi
   command -v apt-get >/dev/null 2>&1 || die "当前系统没有 apt-get，只能在 Debian 或 Ubuntu 上代为安装 Caddy。"
+  platform_receipt_begin caddy || die "Caddy 安装归属记录异常，拒绝覆盖：$PLATFORM_RECEIPTS/caddy"
   CADDY_DEPS_LOG="$(mktemp /tmp/elysian-caddy-install.XXXXXX)"
   CADDY_DEPS_GPG="$(mktemp /tmp/elysian-caddy-gpg.XXXXXX)" || die "无法创建 Caddy 公钥暂存文件。"
   info "经 Caddy 官方 cloudsmith apt 源安装（详细输出写入 ${CADDY_DEPS_LOG}）"
@@ -551,8 +556,82 @@ install_caddy() {
   command -v caddy >/dev/null 2>&1 \
     || { tail -n 40 "$CADDY_DEPS_LOG" >&2; die "Caddy 安装后仍未找到 caddy 命令，请查看日志排查（完整日志：${CADDY_DEPS_LOG}）。"; }
   rm -f "$CADDY_DEPS_LOG"
+  platform_receipt_finish caddy || die "无法保存 Caddy 安装归属记录：$PLATFORM_RECEIPTS/caddy"
+  # 只把未经改动的软件包默认站点登记为可自动清理的初始配置。
+  local packaged_hash actual_hash
+  packaged_hash="$(dpkg-query -W -f='${Conffiles}' caddy | awk -v path="$CADDYFILE_PATH" '$1 == path {print $2}')"
+  if [ -f "$CADDYFILE_PATH" ] && [ ! -L "$CADDYFILE_PATH" ] && platform_receipt_valid caddy; then
+    actual_hash="$(md5sum "$CADDYFILE_PATH" | cut -d ' ' -f 1)"
+    if [ -n "$packaged_hash" ] && [ "$actual_hash" = "$packaged_hash" ]; then
+      if [ ! -e "$PLATFORM_RECEIPTS/caddy/default-config" ]; then
+        (umask 077; cp "$CADDYFILE_PATH" "$PLATFORM_RECEIPTS/caddy/default.original" && chmod 0600 "$PLATFORM_RECEIPTS/caddy/default.original" && : >"$PLATFORM_RECEIPTS/caddy/default-config") || die "无法保存 Caddy 初始配置来源。"
+      fi
+    fi
+  fi
   CADDY_INSTALLED_THIS_RUN=1
   ok "Caddy 安装完成：$(caddy version 2>/dev/null || echo 版本未知)"
+}
+
+check_caddy_startup_config() {
+  command -v caddy >/dev/null 2>&1 || return 0
+  local command_line
+  command_line="$(systemctl show -p ExecStart --value caddy 2>/dev/null || true)"
+  case "$command_line" in *"$CADDYFILE_PATH"*) : ;; *) return 0 ;; esac
+  if [ ! -e "$CADDYFILE_PATH" ]; then
+    die "Caddy 程序已安装，但启动配置缺失：$CADDYFILE_PATH。请从可信备份恢复，或使用 bash scripts/install.sh --restore-caddyfile /绝对路径/Caddyfile；不要仅因程序存在就跳过修复。"
+  fi
+  [ -f "$CADDYFILE_PATH" ] && [ ! -L "$CADDYFILE_PATH" ] || die "Caddy 启动配置不是可安全读取的普通文件：$CADDYFILE_PATH"
+  if [ "$(systemctl show -p User --value caddy)" = caddy ] && ! runuser -u caddy -- test -r "$CADDYFILE_PATH"; then
+    die "Caddy 服务用户无法读取启动配置：$CADDYFILE_PATH；请核对目录访问权限及文件属主、权限后重跑。"
+  fi
+}
+
+restore_missing_caddyfile() {
+  [ -n "$RESTORE_CADDYFILE" ] || return 0
+  local parent temporary active
+  command -v caddy >/dev/null 2>&1 || die "恢复 Caddyfile 需要已有的 caddy 校验程序。"
+  platform_no_links "$RESTORE_CADDYFILE" && [ -f "$RESTORE_CADDYFILE" ] &&
+    [ "$(stat -c '%u' "$RESTORE_CADDYFILE")" = 0 ] &&
+    [ -z "$(find "$RESTORE_CADDYFILE" -maxdepth 0 -perm /022 -print)" ] || die "恢复源必须是 root 所有、不可被其他用户写入且不经过符号链接的普通文件。"
+  [ "$(wc -c <"$RESTORE_CADDYFILE")" -le "$CADDYFILE_MAX_BYTES" ] || die "恢复源超过 Caddyfile 大小上限。"
+  [ ! -e "$CADDYFILE_PATH" ] && [ ! -L "$CADDYFILE_PATH" ] || die "Caddyfile 已存在，拒绝覆盖：$CADDYFILE_PATH"
+  active="$(systemctl show -p ActiveState --value caddy)" || die "无法确认 Caddy 服务状态。"
+  case "$active" in inactive|failed) : ;; *) die "恢复前请先停止 Caddy，以免磁盘配置与正在运行的路由不一致。" ;; esac
+  parent="$(dirname "$CADDYFILE_PATH")"
+  platform_no_links "$parent" || die "Caddy 配置目录经过符号链接，拒绝恢复。"
+  if [ ! -e "$parent" ]; then install -d -m 0755 "$parent"; fi
+  [ -d "$parent" ] && [ "$(stat -c '%u' "$parent")" = 0 ] &&
+    [ -z "$(find "$parent" -maxdepth 0 -perm /022 -print)" ] || die "Caddy 配置目录归属或权限异常。"
+  temporary="$(mktemp "$parent/.elysian-restore.XXXXXX")" || return 1
+  if ! install -m 0644 "$RESTORE_CADDYFILE" "$temporary" ||
+     ! caddy validate --config "$temporary" --adapter caddyfile ||
+     ! ln -T "$temporary" "$CADDYFILE_PATH"; then
+    rm -f "$temporary"
+    die "Caddyfile 恢复校验或原子发布失败，未覆盖既有配置。"
+  fi
+  rm -f "$temporary"
+  ok "已从指定备份恢复缺失的 Caddyfile：$RESTORE_CADDYFILE"
+}
+
+record_caddy_cleanup_baseline() {
+  local dir="$PLATFORM_RECEIPTS/caddy"
+  platform_receipt_valid caddy && platform_private_file "$dir/default-config" && platform_private_file "$dir/default.original" || return 0
+  [ ! -e "$dir/baseline.complete" ] || return 0
+  # 运行配置必须与磁盘默认站点一致，不能把动态加入的路由登记成可删除的初始配置。
+  if (umask 077
+    caddy adapt --config "$dir/default.original" --adapter caddyfile >"$dir/original.json" 2>"$dir/baseline.log" &&
+    platform_helper connect "$dir/original.json" "$CADDY_ADMIN_SOCKET" "$dir/expected.json" >>"$dir/baseline.log" 2>&1 &&
+    caddy adapt --config "$CADDYFILE_PATH" --adapter caddyfile >"$dir/disk.json" 2>>"$dir/baseline.log" &&
+    platform_helper equal-caddyfile "$dir/expected.json" "$dir/disk.json" "$dir/default.original" "$CADDYFILE_PATH" >>"$dir/baseline.log" 2>&1 &&
+    platform_caddy_request "unix:$CADDY_ADMIN_SOCKET" GET "$dir/runtime.json" &&
+    platform_helper equal "$dir/disk.json" "$dir/runtime.json" >>"$dir/baseline.log" 2>&1 &&
+    sha256sum "$CADDYFILE_PATH" | cut -d ' ' -f 1 >"$dir/caddyfile.sha256" &&
+    printf '%s\n' "$CADDY_ADMIN_SOCKET" >"$dir/socket" && : >"$dir/baseline.complete"
+  ); then
+    ok "已记录 Caddy 默认配置基线，卸载时将核对是否仍未被业务使用"
+  else
+    warn "Caddy 存在非默认运行配置，卸载时将保留并报告，诊断记录：$dir/baseline.log"
+  fi
 }
 
 acquire_install_locks() {
@@ -778,12 +857,32 @@ connect_caddy_safely() {
     warn "无法保证既有 Caddy 的启动方式、运行身份与配置文件一致，未改动任何配置；请先手工准备管理 API"
     return 1
   fi
-  if [ -L "$CADDYFILE_PATH" ] || [ ! -f "$CADDYFILE_PATH" ] ||
-     [ "$(wc -c <"$CADDYFILE_PATH" | tr -d '[:space:]')" -gt "$CADDYFILE_MAX_BYTES" ] ||
-     ! caddy adapt --config "$CADDYFILE_PATH" --adapter caddyfile >"$work/disk.json" 2>"$work/adapt.log" ||
-     ! old_endpoint="$(platform_helper endpoint "$work/disk.json")"; then
+  if [ -L "$CADDYFILE_PATH" ]; then
     rm -rf "$work"
-    warn "无法安全识别磁盘 Caddyfile 的旧管理端点，拒绝自动接入"
+    warn "Caddyfile 是符号链接，拒绝自动接入：$CADDYFILE_PATH"
+    return 1
+  fi
+  if [ ! -e "$CADDYFILE_PATH" ]; then
+    rm -rf "$work"
+    warn "Caddyfile 缺失：$CADDYFILE_PATH；请先从可信备份恢复，不能据此推断原网站配置为空"
+    return 1
+  fi
+  if [ ! -f "$CADDYFILE_PATH" ]; then
+    rm -rf "$work"
+    warn "Caddyfile 不是普通文件，拒绝自动接入：$CADDYFILE_PATH"
+    return 1
+  fi
+  if [ "$(wc -c <"$CADDYFILE_PATH" | tr -d '[:space:]')" -gt "$CADDYFILE_MAX_BYTES" ]; then
+    rm -rf "$work"
+    warn "Caddyfile 超过 ${CADDYFILE_MAX_BYTES} 字节，拒绝自动接入：$CADDYFILE_PATH"
+    return 1
+  fi
+  if ! caddy adapt --config "$CADDYFILE_PATH" --adapter caddyfile >"$work/disk.json" 2>"$work/adapt.log"; then
+    warn "Caddyfile 解析失败，原配置未改动；私有诊断记录：$work/adapt.log"
+    return 1
+  fi
+  if ! old_endpoint="$(platform_helper endpoint "$work/disk.json" 2>"$work/endpoint.log")"; then
+    warn "Caddy 旧管理端点不受支持或已禁用，原配置未改动；私有诊断记录：$work/endpoint.log"
     return 1
   fi
   active="$(systemctl show -p ActiveState --value caddy)" || { rm -rf "$work"; return 1; }
@@ -876,7 +975,7 @@ install_platform_deps() {
   install_caddy
   if ! connect_caddy_safely; then
     restore_platform_transaction || die "Caddy 接入失败且恢复未完成，请先按上方备份指引修复。"
-    die "Caddy 接入或真实 API 验证失败，已恢复原配置；请检查上方私有恢复记录中的 validate.log 及 journalctl -u caddy -n 50 --no-pager 后重跑。"
+    die "Caddy 接入或真实 API 验证失败；请按上方具体原因及实际给出的私有诊断路径排查，或运行 journalctl -u caddy -n 50 --no-pager。预检阶段保持原配置，事务内改动已按记录恢复。"
   fi
   # 安装时默认声明口径：仅本次新装 Caddy 时放行域名 HTTPS 端口；复用已有 Caddy 不动任何 UFW 规则。
   if [ "${CADDY_INSTALLED_THIS_RUN:-0}" = 1 ]; then
@@ -895,6 +994,7 @@ install_platform_deps() {
     skip "复用已有 Caddy，未改动任何 UFW 规则（域名 HTTPS 需自行确认 80,443/tcp 可达）"
   fi
   commit_platform_transaction || die "提交平台依赖配置事务失败。"
+  record_caddy_cleanup_baseline
 }
 
 # ---------- 工具链（缺则官方渠道安装；已有且满足版本则复用） ----------
@@ -935,6 +1035,7 @@ install_go() {
   tar -C /usr/local -xzf "$work/$tgz" || die "解压 Go 到 /usr/local 失败。"
   rm -rf "$work"
   export PATH="/usr/local/go/bin:$PATH"
+  platform_record_tool go /usr/local/go/bin/go || die "无法记录 Go 安装归属。"
   ok "Go 就绪：$(go env GOVERSION)"
 }
 
@@ -981,6 +1082,7 @@ install_bun() {
     || die "安装 bun 到 /usr/local/bin 失败。"
   rm -rf "$work"
   ok "bun 就绪：$(bun --version)"
+  platform_record_tool bun /usr/local/bin/bun || die "无法记录 Bun 安装归属。"
 }
 
 # ---------- 全局镜像配置 ----------
@@ -1572,8 +1674,13 @@ main() {
     printf '%s✗ install.sh 不再提供卸载入口。%s\n  请执行：sudo bash scripts/uninstall.sh\n' "${C_RED:-}" "${C_RESET:-}" >&2
     exit 1
   fi
+  case "${1:-}" in
+    --restore-caddyfile) [ "$#" = 2 ] || die "用法：bash scripts/install.sh --restore-caddyfile /绝对路径/Caddyfile"; RESTORE_CADDYFILE="$2" ;;
+    --help|-h) printf '用法：bash scripts/install.sh [--restore-caddyfile /绝对路径/Caddyfile]\n仅恢复缺失配置，不覆盖现有文件；恢复源须由 root 所有且服务已停止。\n'; return 0 ;;
+    '') : ;;
+    *) die "未知参数：$1。用法：bash scripts/install.sh [--restore-caddyfile /绝对路径/Caddyfile]" ;;
+  esac
   register_stages
-  [ "${1:-}" = "" ] || die "未知参数：$1。用法：bash scripts/install.sh（环境变量 ELYSIAN_SMOKE=1 进入冒烟模式）。"
   trap install_exit EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
@@ -1581,6 +1688,7 @@ main() {
   INSTALL_STARTED_AT=$SECONDS
   section "检查运行环境"
   require_preflight
+  if [ -z "$SMOKE" ]; then platform_lifecycle_lock || die "另一项安装或卸载正在执行，或安装互斥文件异常。"; fi
   section "安装系统依赖"
   apt_install_deps
   if [ -z "$SMOKE" ]; then
@@ -1589,6 +1697,14 @@ main() {
       command -v bun >/dev/null 2>&1 || die "存在待恢复的平台依赖事务，但找不到 Bun；请先恢复原 Bun 后重跑（备份：$PLATFORM_TXN）。"
       restore_platform_transaction || die "平台依赖事务恢复未完成，请先按备份指引修复。"
     fi
+    local component
+    for component in docker caddy; do
+      if [ -e "$PLATFORM_RECEIPTS/$component/pending" ]; then
+        platform_receipt_finish "$component" || die "上次依赖安装记录未完成且无法安全恢复：$PLATFORM_RECEIPTS/$component"
+      fi
+    done
+    restore_missing_caddyfile
+    check_caddy_startup_config
     release_install_locks
   fi
   section "准备 Go 工具链"

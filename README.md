@@ -158,10 +158,13 @@ sudo ely resetpwd
 
 ```bash
 sudo bash scripts/uninstall.sh --dry-run   # 只预览，不修改
-sudo bash scripts/uninstall.sh             # 逐项询问数据处置
+sudo bash scripts/uninstall.sh             # 展示彻底清理清单，确认后执行
+sudo bash scripts/uninstall.sh --keep-data --keep-dependencies --keep-tools --keep-caddy-config  # 保留数据和运行环境
 ```
 
-默认保留面板数据；`--purge-data` 删除全部数据（含未分类文件），`--keep-tools` 保留 Go 与 Bun，`--yes` 免交互。Caddy 管理配置默认保留，交互确认后才精确移除。云安全组、域名解析与 HTTPS 证书由部署者管理。
+**卸载默认删除全部面板数据与凭据**，并清理程序、构建缓存、账号、管理配置，以及有可信安装记录且未使用的 Docker/Caddy 和工具链；`--yes` 直接执行该清单。需要保留时显式使用 `--keep-data`、`--keep-dependencies`、`--keep-tools` 或 `--keep-caddy-config`，`--purge-data` 为默认清理行为的兼容参数。安装归属记录位于 `/var/lib/elysian-installer`，已有组件和旧安装不自动认领；容器、镜像、卷、自定义网络、动态 Caddy 路由或异常权限会阻止相关依赖清理，列出未完成项并非零退出。软件包移除不会盲删 `/var/lib/docker`、`/var/lib/containerd`、`/var/lib/caddy` 内的业务数据；私有恢复备份单独列出，由管理员核对后清理。云安全组、域名解析与 HTTPS 证书由部署者管理。
+
+安装会在源码构建前检查标准 Caddy 服务的启动配置与读取权限。已安装程序但 `Caddyfile` 缺失时明确中止；先停止 Caddy，再使用 `sudo bash scripts/install.sh --restore-caddyfile /可信备份的绝对路径/Caddyfile` 恢复并继续安装。恢复只接受 root 所有、其他用户不可写且不经过符号链接的文件，校验通过后仅发布到缺失目标，绝不覆盖已有配置。
 
 完整安装、恢复与验证说明见 [部署指南](scripts/README-deploy.md)。
 

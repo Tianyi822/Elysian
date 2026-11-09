@@ -87,3 +87,70 @@ platform_caddy_request "unix:$CADDY_ADMIN_SOCKET" POST "$FIXTURE/restore-respons
 wait_caddy_api tcp:127.0.0.1:2019 "$FIXTURE/runtime.restored.json" "$FIXTURE/runtime.original.json"
 [ "$(curl -fsS --noproxy '*' --max-time 3 http://127.0.0.1:8080/)" = 'existing website' ]
 printf 'PASS 真实 Caddy 原管理端点与完整运行配置可恢复\n'
+
+# 卸载接入也使用真实管理 API；systemd 仅模拟进程状态，不操作容器系统。
+source "$SCRIPT_DIR/uninstall.sh"
+init_output 0 0
+PLATFORM_RECEIPTS="$FIXTURE/receipts"
+CADDYFILE_PATH="$FIXTURE/Caddyfile"
+CADDY_SOCKET="$FIXTURE/admin.sock"
+CADDY_ADMIN_SOCKET="$CADDY_SOCKET"
+CADDY_RUNTIME_DROPIN="$FIXTURE/dropins/runtime.conf"
+CADDY_TMPFILES="$FIXTURE/tmpfiles/caddy.conf"
+BACKUP_ROOT="$FIXTURE/backups"
+BACKUP_DIR=""
+mkdir -m 0700 "$PLATFORM_RECEIPTS" "$PLATFORM_RECEIPTS/caddy"
+(umask 077
+  printf 'caddy\n' >"$PLATFORM_RECEIPTS/caddy/packages"
+  printf 'elysian-platform/v1\n' >"$PLATFORM_RECEIPTS/caddy/complete"
+  : >"$PLATFORM_RECEIPTS/caddy/default-config"
+  cp "$CADDYFILE_PATH" "$PLATFORM_RECEIPTS/caddy/default.original"
+  chmod 0600 "$PLATFORM_RECEIPTS/caddy/default.original"
+)
+prepare_caddy_admin_file "$CADDY_SOCKET" "$CADDYFILE_PATH" "$FIXTURE/connected"
+cp "$FIXTURE/connected" "$CADDYFILE_PATH"
+chmod 0644 "$CADDYFILE_PATH"
+caddy reload --config "$CADDYFILE_PATH" --adapter caddyfile --address 127.0.0.1:2019 >"$FIXTURE/reload.log" 2>&1
+wait_caddy_api "unix:$CADDY_SOCKET" "$FIXTURE/connected.json"
+record_caddy_cleanup_baseline
+[ -f "$PLATFORM_RECEIPTS/caddy/baseline.complete" ]
+systemctl() {
+  case "$1" in
+    is-active) return 0 ;;
+    show)
+      case "$3" in
+        ActiveState) printf active ;;
+        ExecStart) printf '{ path=/usr/bin/caddy ; argv[]=/usr/bin/caddy run --config %s ; }' "$CADDYFILE_PATH" ;;
+      esac ;;
+    daemon-reload) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+platform_package_installed() { [ "$1" = caddy ]; }
+dependency_unused caddy
+printf 'PASS 真实 Caddy 默认配置基线可核验为未使用\n'
+
+bun -e '
+  const config = JSON.parse(await Bun.file(process.argv[1]).text())
+  Object.values(config.apps.http.servers)[0].routes.unshift({match:[{path:["/dynamic"]}],handle:[{handler:"static_response",body:"dynamic route"}]})
+  await Bun.write(process.argv[2], JSON.stringify(config))
+' "$FIXTURE/connected.json" "$FIXTURE/dynamic.json"
+platform_caddy_request "unix:$CADDY_SOCKET" POST "$FIXTURE/dynamic-response" "$FIXTURE/dynamic.json"
+if dependency_unused caddy >/dev/null 2>&1; then printf 'FAIL 动态路由必须阻止 Caddy 包清理\n'; exit 1; fi
+CADDYFILE_ADMIN_FOUND=1
+remove_caddy
+[ "$FAILED" = 1 ]
+grep -Fq "admin unix/$CADDY_SOCKET" "$CADDYFILE_PATH"
+[ "$(curl -fsS --noproxy '*' --max-time 3 http://127.0.0.1:8080/dynamic)" = 'dynamic route' ]
+printf 'PASS 真实动态路由阻止卸载 reload，运行路由和管理通道均保留\n'
+
+platform_caddy_request "unix:$CADDY_SOCKET" POST "$FIXTURE/reset-response" "$FIXTURE/connected.json"
+FAILED=0
+UNFINISHED_ITEMS=()
+remove_caddy
+[ "$FAILED" = 0 ]
+[ "$(stat -c '%a' "$CADDYFILE_PATH")" = 644 ]
+! grep -Fq "admin unix/$CADDY_SOCKET" "$CADDYFILE_PATH"
+[ "$(curl -fsS --noproxy '*' --max-time 3 http://127.0.0.1:8080/)" = 'existing website' ]
+[ "$(curl -fsS --noproxy '*' --max-time 3 http://127.0.0.1:8080/assets/check.txt)" = 'existing asset' ]
+printf 'PASS 真实 Caddy 从旧 Unix API 移除管理指令，权限、网站及嵌套路由保持完整\n'
