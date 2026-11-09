@@ -95,6 +95,8 @@ Docker 与 Caddy 通道分别按安装环境变量 `ELYSIAN_DOCKER_SOCKET`／`EL
 
 安装在源码构建前检查标准 Caddy 服务的启动文件与服务用户读取权限。程序存在但启动文件缺失时直接给出原因；管理员停止 Caddy 后，可使用 `sudo bash scripts/install.sh --restore-caddyfile /可信备份的绝对路径/Caddyfile` 校验并原子恢复缺失目标，然后继续安装。该选项不覆盖已有文件，不自动选择历史备份，不把配置缺失视为没有网站。
 
+旧安装没有可信收据时，使用 `sudo bash scripts/uninstall.sh --remove-legacy-components caddy,docker,go,bun` 明确选择旧组件清理；也可只列部分名称。该选择不写入或伪造安装收据，审计仅记录为显式旧组件清理。程序展示固定软件包、apt 源／公钥、Go/Bun 标准安装路径后统一确认，`--keep-*` 优先。Docker 业务资源检查及 apt 模拟／dpkg 精确清单继续生效；旧 Caddy 仅在标准启动方式、默认欢迎站点、真实运行 JSON 与磁盘一致时清理，动态路由或其他业务配置继续阻止移除。该参数不隐式删除容器、镜像、卷或业务数据，管理员须单独决定其处置。
+
 前端验证为 `bun run typecheck`、`bun run test`、`bun run build`；Go 门禁为 `bash apps/server-go/dev-check.sh ./...`，全部 Go 检查在开发容器内运行。安装脚本测试通过专用 Docker 镜像运行，源码只读挂载，不挂 Docker socket、不发布宿主端口、运行期断网；工具安装、临时文件、Unix/TCP fixture 和真实 Caddy 进程全部在容器内，容器退出后自动删除。纯逻辑自测覆盖 TUI 与依赖辅助函数，事务故障测试覆盖动态路由保留、零重启复用、服务缺失、校验和 API 失败、显式隐藏规则变化、环境持久化失败、跨进程恢复与恢复失败保留记录；真实 Caddy 测试覆盖静态站点自动隐藏配置文件、嵌套路由、热迁移到 Unix 管理端点及原运行配置恢复。
 
 ```bash

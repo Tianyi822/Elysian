@@ -45,6 +45,8 @@ BUILD_HOME="/var/lib/elysian-build"
 CLI_DATA_DIR="/root/.elysian/cli"
 DEFAULT_FRONTEND_PORT="48100"
 CADDYFILE_PATH="/etc/caddy/Caddyfile"
+CADDY_APT_LIST="/etc/apt/sources.list.d/caddy-stable.list"
+CADDY_KEYRING="/usr/share/keyrings/caddy-stable-archive-keyring.gpg"
 CADDY_RUNTIME_DROPIN="/etc/systemd/system/caddy.service.d/elysian-runtime.conf"
 CADDY_TMPFILES="/etc/tmpfiles.d/elysian-caddy.conf"
 BACKUP_ROOT="/var/backups"
@@ -65,6 +67,7 @@ PURGE_DATA_REQUESTED=0
 KEEP_DATA=0
 KEEP_DEPENDENCIES=0
 KEEP_CADDY_CONFIG=0
+UNINSTALL_LEGACY_COMPONENTS=""
 KEEP_TOOLS=0
 ASSUME_YES=0
 DRY_RUN=0
@@ -118,6 +121,8 @@ usage() {
   --keep-data    保留全部面板数据和凭据
   --keep-dependencies  保留 Docker/Caddy（仍核验服务完整性）
   --keep-caddy-config  保留 Caddy 管理通道配置
+  --remove-legacy-components caddy,docker,go,bun
+                 显式指定要清理的旧组件；无需旧收据，不自动认领，仍核验业务使用情况
   --purge-data   删除全部面板数据（兼容参数，也是默认行为）
   --keep-tools   保留 Go 与 bun 工具链
   --yes, -y      按展示的清单直接执行，包含默认删除全部面板数据
@@ -133,6 +138,17 @@ parse_args() {
       --keep-data) KEEP_DATA=1; PURGE_DATA=0 ;;
       --keep-dependencies) KEEP_DEPENDENCIES=1 ;;
       --keep-caddy-config) KEEP_CADDY_CONFIG=1; CADDY_REMOVE=0 ;;
+      --remove-legacy-components)
+        [ "$#" -ge 2 ] || die "--remove-legacy-components 需要逗号分隔的组件名称。"
+        local value="$2" component
+        case "$value" in ''|,*|*,|*,,*) die "旧组件清单不能为空或包含空项。" ;; esac
+        local -a legacy_components=()
+        IFS=, read -r -a legacy_components <<<"$value"
+        for component in "${legacy_components[@]}"; do
+          case "$component" in caddy|docker|go|bun) : ;; *) die "不支持清理的旧组件：$component" ;; esac
+        done
+        UNINSTALL_LEGACY_COMPONENTS="${UNINSTALL_LEGACY_COMPONENTS:+$UNINSTALL_LEGACY_COMPONENTS,}$value"
+        shift ;;
       --keep-tools) KEEP_TOOLS=1 ;;
       --yes|-y) ASSUME_YES=1 ;;
       --dry-run) DRY_RUN=1 ;;
@@ -272,9 +288,10 @@ uninstall_docker() {
 }
 
 dependency_unused() { # 原因不含业务配置原文；失败不能被解释成空实例。
-  local component="$1" kind inventory dir="$PLATFORM_RECEIPTS/$1" state socket work command_line package installed=0
-  platform_receipt_valid "$component" || { printf '没有可信的安装归属记录（旧安装不会自动追认）'; return 1; }
-  while IFS= read -r package; do if platform_package_installed "$package"; then installed=1; fi; done <"$dir/packages"
+  local component="$1" kind inventory dir="$PLATFORM_RECEIPTS/$1" state socket work command_line package installed=0 selected
+  selected="$(platform_removal_packages "$component")" || { printf '没有可信安装收据；如需清理该旧组件，请显式添加 --remove-legacy-components %s' "$component"; return 1; }
+  [ -n "$selected" ] || { printf '该组件没有可核对的 Debian 软件包，不能按包清理'; return 1; }
+  while IFS= read -r package; do if platform_package_installed "$package"; then installed=1; fi; done <<<"$selected"
   # 软件包已移除时仅处理残留配置、源和收据，不再依赖已不存在的服务 API。
   [ "$installed" = 1 ] || return 0
   if [ "$component" = docker ]; then
@@ -295,6 +312,10 @@ dependency_unused() { # 原因不含业务配置原文；失败不能被解释�
     fi
   else
     command -v bun >/dev/null 2>&1 || { printf '缺少 Bun，无法核验 Caddy 完整配置'; return 1; }
+    if platform_explicit_legacy caddy; then
+      legacy_caddy_unused
+      return "$?"
+    fi
     platform_private_file "$dir/baseline.complete" && platform_private_file "$dir/caddyfile.sha256" &&
       platform_private_file "$dir/runtime.json" && platform_private_file "$dir/socket" || { printf '没有可证明未使用的 Caddy 默认配置基线'; return 1; }
     platform_no_links "$CADDYFILE_PATH" && [ -f "$CADDYFILE_PATH" ] &&
@@ -311,6 +332,28 @@ dependency_unused() { # 原因不含业务配置原文；失败不能被解释�
   fi
 }
 
+legacy_caddy_unused() {
+  local command_line state work endpoint
+  platform_no_links "$CADDYFILE_PATH" && [ -f "$CADDYFILE_PATH" ] || { printf '旧 Caddy 启动配置缺失或路径异常'; return 1; }
+  command_line="$(systemctl show -p ExecStart --value caddy)" &&
+    uninstall_platform_helper service "$command_line" "$CADDYFILE_PATH" >/dev/null 2>&1 || { printf '旧 Caddy 启动方式无法安全识别'; return 1; }
+  state="$(systemctl show -p ActiveState --value caddy)" || return 1
+  [ "$state" = active ] || { printf '旧 Caddy 未运行，无法排除尚未落盘的动态路由'; return 1; }
+  ensure_backup_dir || return 1
+  work="$(mktemp -d "$BACKUP_DIR/caddy-legacy.XXXXXX")" || return 1
+  if ! (umask 077
+    printf ':80 {\n\troot * /usr/share/caddy\n\tfile_server\n}\n' >"$work/default.Caddyfile" &&
+    caddy adapt --config "$CADDYFILE_PATH" --adapter caddyfile >"$work/disk.json" 2>"$work/check.log" &&
+    caddy adapt --config "$work/default.Caddyfile" --adapter caddyfile >"$work/default.json" 2>>"$work/check.log" &&
+    uninstall_platform_helper legacy-caddy-default "$work/disk.json" "$work/default.json" "$CADDYFILE_PATH" "$work/default.Caddyfile" "$CADDY_SOCKET" >>"$work/check.log" 2>&1 &&
+    endpoint="$(uninstall_platform_helper endpoint "$work/disk.json")" &&
+    uninstall_platform_helper wait "$endpoint" "$work/runtime.json" "$work/disk.json" 1 0 5 >>"$work/check.log" 2>&1
+  ); then
+    printf '旧 Caddy 存在业务配置、动态路由或 API 不可核验，拒绝清理；私有诊断：%s' "$work/check.log"
+    return 1
+  fi
+}
+
 remove_dependencies() {
   local component reason log
   for component in caddy docker; do
@@ -324,9 +367,13 @@ remove_dependencies() {
       continue
     fi
     ensure_backup_dir || { unfinished "$component 卸载备份目录创建失败"; continue; }
-    if ! cp -a "$PLATFORM_RECEIPTS/$component" "$BACKUP_DIR/$component-receipt"; then
-      unfinished "$component 安装收据备份失败，未移除软件包"
-      continue
+    if platform_receipt_valid "$component"; then
+      if ! cp -a "$PLATFORM_RECEIPTS/$component" "$BACKUP_DIR/$component-receipt"; then
+        unfinished "$component 安装收据备份失败，未移除软件包"
+        continue
+      fi
+    else
+      (umask 077; printf '%s\n' "$component" >"$BACKUP_DIR/$component-explicit-legacy") || { unfinished "$component 显式旧组件清理记录保存失败"; continue; }
     fi
     if [ "$component" = caddy ] && ! backup_file "$CADDYFILE_PATH" Caddyfile; then
       unfinished "Caddyfile 备份失败，未移除 Caddy"
@@ -347,9 +394,8 @@ remove_dependencies() {
       unfinished "$component 已卸载，但部分源或公钥已被修改，已保留并记录：$PLATFORM_RECEIPTS/$component"
       continue
     fi
-    rm -rf "$PLATFORM_RECEIPTS/$component" || { unfinished "$component 收据未清理"; continue; }
-    rmdir "$PLATFORM_RECEIPTS" 2>/dev/null || true
-    DELETED_ITEMS+=("$component 软件包及本安装器新增且未变更的源与公钥")
+    platform_remove_receipt "$component" || { unfinished "$component 安装记录异常，未清理"; continue; }
+    DELETED_ITEMS+=("$component 软件包及清单内的源与公钥")
   done
 }
 
@@ -578,7 +624,11 @@ print_plan() {
   fi
   tui_kv "系统账号" "elysian-build 总是删除；elysian/elysian-sqlite 视数据保留情况"
   if [ "$KEEP_TOOLS" = 0 ]; then
-    tui_kv "工具链" "有可信收据且未被替换的 /usr/local/go、/usr/local/bin/bun；其他归属报告未清理"
+    if platform_explicit_legacy go || platform_explicit_legacy bun; then
+      tui_kv "工具链" "显式旧组件按标准路径清理（Go：/usr/local/go；Bun：/usr/local/bin/bun）；未指定组件仍核对收据"
+    else
+      tui_kv "工具链" "有可信收据且未被替换的 /usr/local/go、/usr/local/bin/bun；其他归属报告未清理"
+    fi
   else
     tui_kv "工具链" "按 --keep-tools 保留"
   fi
@@ -596,12 +646,16 @@ print_plan() {
   tui_section "系统依赖"
   local component
   for component in docker caddy; do
-    if [ "$KEEP_DEPENDENCIES" = 1 ]; then
+    if ! dependency_present "$component"; then
+      tui_kv "$component" "未安装，无需清理"
+    elif [ "$KEEP_DEPENDENCIES" = 1 ]; then
       tui_kv "$component" "按 --keep-dependencies 保留"
+    elif platform_explicit_legacy "$component"; then
+      tui_kv "$component" "按显式旧组件清单清理固定软件包、源与公钥；仍要求无业务资源"
     elif platform_receipt_valid "$component"; then
       tui_kv "$component" "由本安装器新增；核验未使用后清理软件包、未变更的新增 apt 源与公钥"
     else
-      tui_kv "$component" "没有可信安装归属，已存在时保留并列为未清理项"
+      tui_kv "$component" "没有可信安装归属；可用 --remove-legacy-components $component 显式清理"
     fi
   done
   tui_kv "业务资源" "容器、镜像、卷不自动删除；存在业务资源时拒绝移除 Docker"
@@ -695,6 +749,7 @@ print_final_plan() {
   fi
   tui_kv "系统账号" "$(accounts_summary)"
   if [ "$KEEP_DEPENDENCIES" = 1 ]; then tui_kv "依赖" "保留 Docker/Caddy"; else tui_kv "依赖" "清理有可信归属且未使用的 Docker/Caddy；其余明确报告"; fi
+  if [ -n "$UNINSTALL_LEGACY_COMPONENTS" ]; then tui_kv "显式清理旧组件" "$UNINSTALL_LEGACY_COMPONENTS（不会伪造安装收据，保留选项优先）"; fi
   if [ "$KEEP_TOOLS" = 1 ]; then
     tui_kv "工具链" "保留"
   else
@@ -997,25 +1052,25 @@ remove_tools() {
     return 0
   fi
   if [ -d /usr/local/go ]; then
-    if platform_tool_owned go /usr/local/go/bin/go; then
+    if platform_tool_owned go /usr/local/go/bin/go || platform_legacy_path_removable go /usr/local/go; then
       EXPECT_DELETE_GO=1
       /usr/local/go/bin/go env -u GOPROXY >/dev/null 2>&1 || true
       if rm -rf -- /usr/local/go; then
-        ok "已删除本安装器新增的 Go"
-        rm -rf "$PLATFORM_RECEIPTS/go" || unfinished "Go 安装收据未清理"
+        ok "已删除指定 Go 安装目录"
+        platform_remove_receipt go || unfinished "Go 安装收据未清理"
         DELETED_ITEMS+=("Go 工具链")
       else unfinished "删除 /usr/local/go 失败"; fi
-    else unfinished "Go 未清理：没有可信安装归属或工具已改变；可用 --keep-tools 明确保留"; fi
+    else unfinished "Go 未清理：没有可信安装归属或工具已改变；用 --remove-legacy-components go 显式清理，或 --keep-tools 保留"; fi
   fi
   if [ -e /usr/local/bin/bun ] || [ -L /usr/local/bin/bun ]; then
-    if platform_tool_owned bun /usr/local/bin/bun; then
+    if platform_tool_owned bun /usr/local/bin/bun || platform_legacy_path_removable bun /usr/local/bin/bun; then
       EXPECT_DELETE_BUN=1
       if rm -f -- /usr/local/bin/bun; then
-        ok "已删除本安装器新增的 Bun"
-        rm -rf "$PLATFORM_RECEIPTS/bun" || unfinished "Bun 安装收据未清理"
+        ok "已删除指定 Bun 安装文件"
+        platform_remove_receipt bun || unfinished "Bun 安装收据未清理"
         DELETED_ITEMS+=("Bun 工具链")
       else unfinished "删除 /usr/local/bin/bun 失败"; fi
-    else unfinished "Bun 未清理：没有可信安装归属或工具已改变；可用 --keep-tools 明确保留"; fi
+    else unfinished "Bun 未清理：没有可信安装归属或工具已改变；用 --remove-legacy-components bun 显式清理，或 --keep-tools 保留"; fi
   fi
   hash -r
   command -v go >/dev/null 2>&1 && warn "检测到其它位置的 Go（$(command -v go)），非本面板安装路径，已保留"

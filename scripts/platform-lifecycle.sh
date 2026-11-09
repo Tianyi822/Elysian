@@ -70,6 +70,35 @@ platform_package_present() {
   esac
 }
 
+platform_explicit_legacy() {
+  case ",${UNINSTALL_LEGACY_COMPONENTS:-}," in *",$1,"*) return 0 ;; *) return 1 ;; esac
+}
+
+platform_removal_packages() {
+  local package
+  if platform_explicit_legacy "$1"; then
+    while IFS= read -r package; do
+      if platform_package_present "$package"; then printf '%s\n' "$package"; fi
+    done < <(platform_packages "$1")
+  else
+    platform_receipt_valid "$1" || return 1
+    cat "$PLATFORM_RECEIPTS/$1/packages"
+  fi
+}
+
+platform_legacy_path_removable() {
+  platform_explicit_legacy "$1" && platform_no_links "$2" && [ -e "$2" ] &&
+    [ "$(stat -c '%u' "$2")" = 0 ] && [ -z "$(find "$2" -maxdepth 0 -perm /022 -print)" ]
+}
+
+platform_remove_receipt() {
+  local dir="$PLATFORM_RECEIPTS/$1"
+  [ -e "$dir" ] || [ -L "$dir" ] || return 0
+  platform_private_dir "$PLATFORM_RECEIPTS" && platform_private_dir "$dir" || return 1
+  rm -rf "$dir" || return 1
+  rmdir "$PLATFORM_RECEIPTS" 2>/dev/null || true
+}
+
 platform_receipt_valid() {
   platform_packages "$1" >/dev/null || return 1
   local dir="$PLATFORM_RECEIPTS/$1" package
@@ -152,12 +181,13 @@ platform_receipt_finish() {
 }
 
 platform_purge_packages() { # 先模拟；依赖求解若还会移除其它包则拒绝，不使用 autoremove。
-  local component="$1" log="$2" package removed simulation
+  local component="$1" log="$2" package removed simulation selected
   local -a packages=()
-  platform_receipt_valid "$component" || return 1
+  selected="$(platform_removal_packages "$component")" || return 1
   while IFS= read -r package; do
+    [ -n "$package" ] || continue
     if platform_package_present "$package"; then packages+=("$package"); fi
-  done <"$PLATFORM_RECEIPTS/$component/packages"
+  done <<<"$selected"
   [ "${#packages[@]}" -gt 0 ] || return 0
   simulation="$(LC_ALL=C apt-get --simulate purge "${packages[@]}" 2>"$log")" || return 1
   printf '%s\n' "$simulation" >>"$log"
@@ -172,12 +202,19 @@ platform_purge_packages() { # 先模拟；依赖求解若还会移除其它包�
 
 platform_remove_assets() {
   local component="$1" asset path digest result=0
-  platform_receipt_valid "$component" || return 1
+  platform_receipt_valid "$component" || platform_explicit_legacy "$component" || return 1
   while IFS= read -r asset; do
     path="$(platform_asset_path "$asset")"
     if [ ! -e "$path" ] && [ ! -L "$path" ]; then continue; fi
-    # 仅删安装前不存在且内容未被别人改动的源与公钥。
-    if platform_private_file "$PLATFORM_RECEIPTS/$component/$asset.sha256"; then
+    if platform_explicit_legacy "$component"; then
+      if platform_legacy_path_removable "$component" "$path" && [ -f "$path" ]; then
+        rm -f "$path" || result=1
+      else
+        warn "旧组件源或公钥路径、归属或权限异常，保留：$path"
+        result=1
+      fi
+    # 普通卸载仅删安装前不存在且内容未被别人改动的源与公钥。
+    elif platform_private_file "$PLATFORM_RECEIPTS/$component/$asset.sha256"; then
       digest="$(cat "$PLATFORM_RECEIPTS/$component/$asset.sha256")"
       if platform_no_links "$path" && [ -f "$path" ] && [ "$(sha256sum "$path" | cut -d ' ' -f 1)" = "$digest" ]; then
         rm -f "$path" || result=1

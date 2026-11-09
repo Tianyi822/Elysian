@@ -174,6 +174,24 @@ try {
       fs.writeFileSync(args[2], `${JSON.stringify(config)}\n`, { mode: 0o600 })
       break
     }
+    case 'legacy-caddy-default': {
+      const actual = readConfig(args[0])
+      const expected = readConfig(args[1])
+      if (!args[2]?.startsWith('/') || !args[3]?.startsWith('/')) throw new Error('旧 Caddy 核验需要明确配置文件路径')
+      if (actual?.admin) {
+        const listen = actual.admin.listen
+        const allowed = ['localhost:2019', '127.0.0.1:2019', '[::1]:2019', `unix/${socketPath(args[4])}`]
+        if ((listen !== undefined && !allowed.includes(listen)) || Object.keys(actual.admin).some(key => key !== 'listen')) {
+          throw new Error('旧 Caddy 存在自定义管理设置，不能按默认站点清理')
+        }
+        delete actual.admin
+      }
+      normalizeCaddyfileSource(actual?.apps?.http?.servers, args[2], args[3])
+      if (JSON.stringify(canonical(actual)) !== JSON.stringify(canonical(expected))) {
+        throw new Error('旧 Caddy 不等于默认欢迎站点，不能视为未使用')
+      }
+      break
+    }
     case 'equal-caddyfile':
     case 'equal': {
       const expected = readConfig(args[0])
