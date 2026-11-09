@@ -77,6 +77,8 @@ systemctl start elysian
 
 Docker 与 Caddy 通道分别按安装环境变量 `ELYSIAN_DOCKER_SOCKET`／`ELYSIAN_CADDY_SOCKET`、`/etc/default/elysian` 同名配置、默认 `/var/run/docker.sock`／`/run/caddy/admin.sock` 的顺序解析；显式安装环境覆盖会在同一事务中原子持久化到环境文件，只规范化对应键，保留另一通道、其余项及原权限、属主，保证安装与面板服务使用同一路径。Docker 验证失败时不改写环境文件或 Caddy。路径须为无空白、冒号、引号和控制字符的绝对路径；无法安全解析的配置、符号链接目标及文件冲突会明确拒绝自动改写。
 
+依赖准备前通过 `maintenance-install-check --before-platform-dependencies` 核对维护记录、SSH／宿主端口、网站登记和防火墙，暂缓 Docker 端口查询，允许 daemon 缺失、停止或遗留失效 socket 的机器进入依赖准备。Docker 启动并通过真实协议验证后立即执行不带阶段参数的完整安装预检，冲突或未知结果阻止 Caddy 接入与版本切换；切换前的完整核验仍保留。该阶段参数只对安装预检有效，普通维护、重启与改端口不放宽 Docker 端口核验。
+
 目标 Unix socket 的 `GET /config/` 已返回 HTTP 200 和有效 JSON 时直接复用，Caddyfile 不改写、服务不重启；手工管理的 Caddy 也可按此方式复用。目标未就绪时，安装器只自动接入能核对标准 systemd 启动命令、`caddy` 运行身份及真实 Caddyfile，且自启状态为 `enabled`、`disabled` 或 `enabled-runtime` 的服务；其他链接、别名或静态单元由管理员先准备管理通道。从磁盘配置识别旧的本机 Unix 或回环 TCP 管理端点，读取真实运行 JSON，保留动态路由、证书及其余设置，仅调整管理监听。磁盘候选配置须通过 `caddy validate` 和适配后 JSON 比对；活跃服务通过 `POST /load` 原子应用，不重启，原本停止的服务才启动。最终验证目标 API，并将实际运行 JSON 与候选逐项比对；单次请求限 5 秒、响应限 4 MiB、就绪验证总预算 30 秒，包含请求、重试等待、JSON 解析与配置比较。本机管理 API 请求强制绕过终端 HTTP/ALL_PROXY 代理，确保回环 TCP 和 Unix socket 始终直连。无法读取旧运行配置、识别服务或安全解析超过 256 KiB 等配置时在写入前中止，保留原服务，由管理员用既有管理方式准备通道后重跑。API 原文及证书不会输出到终端。
 
 候选 Caddyfile 的适配比对仅将 HTTP `file_server.hide` 中精确等于本次临时配置文件的路径替换为最终 Caddyfile 路径，以处理 Caddy 自动隐藏输入配置文件的行为；显式隐藏项、路由、证书与其他字段仍须逐项一致。真实运行配置比对不做此替换，保持完整 JSON 核对。
@@ -96,6 +98,8 @@ Docker 与 Caddy 通道分别按安装环境变量 `ELYSIAN_DOCKER_SOCKET`／`EL
 安装在源码构建前检查标准 Caddy 服务的启动文件与服务用户读取权限。程序存在但启动文件缺失时直接给出原因；管理员停止 Caddy 后，可使用 `sudo bash scripts/install.sh --restore-caddyfile /可信备份的绝对路径/Caddyfile` 校验并原子恢复缺失目标，然后继续安装。该选项不覆盖已有文件，不自动选择历史备份，不把配置缺失视为没有网站。
 
 旧安装没有可信收据时，使用 `sudo bash scripts/uninstall.sh --remove-legacy-components caddy,docker,go,bun` 明确选择旧组件清理；也可只列部分名称。该选择不写入或伪造安装收据，审计仅记录为显式旧组件清理。程序展示固定软件包、apt 源／公钥、Go/Bun 标准安装路径后统一确认，`--keep-*` 优先。Docker 业务资源检查及 apt 模拟／dpkg 精确清单继续生效；旧 Caddy 仅在标准启动方式、默认欢迎站点、真实运行 JSON 与磁盘一致时清理，动态路由或其他业务配置继续阻止移除。该参数不隐式删除容器、镜像、卷或业务数据，管理员须单独决定其处置。
+
+Docker 包与服务移除后核对 `/run/docker.sock`：拒绝符号链接、非 socket、非 root 所有、多硬链接和仍有监听的端点，仅在连接明确返回 `ECONNREFUSED` 且设备号／inode 未变时删除失效 socket，防止下次安装被遗留路径误判阻塞；无法确认时保留并非零退出。
 
 前端验证为 `bun run typecheck`、`bun run test`、`bun run build`；Go 门禁为 `bash apps/server-go/dev-check.sh ./...`，全部 Go 检查在开发容器内运行。安装脚本测试通过专用 Docker 镜像运行，源码只读挂载，不挂 Docker socket、不发布宿主端口、运行期断网；工具安装、临时文件、Unix/TCP fixture 和真实 Caddy 进程全部在容器内，容器退出后自动删除。纯逻辑自测覆盖 TUI 与依赖辅助函数，事务故障测试覆盖动态路由保留、零重启复用、服务缺失、校验和 API 失败、显式隐藏规则变化、环境持久化失败、跨进程恢复与恢复失败保留记录；真实 Caddy 测试覆盖静态站点自动隐藏配置文件、嵌套路由、热迁移到 Unix 管理端点及原运行配置恢复。
 

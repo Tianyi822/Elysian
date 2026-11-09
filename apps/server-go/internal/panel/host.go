@@ -22,6 +22,8 @@ type SystemHost struct {
 	Store            Store
 	DockerSocket     string
 	MissingServiceOK bool
+	// 仅安装器准备平台依赖之前使用；Docker 就绪后及版本切换前必须再次完整核验。
+	BeforePlatformDependencies bool
 }
 
 func (h SystemHost) Available() bool {
@@ -186,8 +188,10 @@ func (h SystemHost) Preflight(ctx context.Context, old, next config.PanelNetwork
 		}
 		l.Close()
 	}
-	if err := h.containerPorts(ctx, next); err != nil {
-		return err
+	if !h.BeforePlatformDependencies {
+		if err := h.containerPorts(ctx, next); err != nil {
+			return err
+		}
 	}
 	rules, err := h.Rules(ctx)
 	if err != nil {

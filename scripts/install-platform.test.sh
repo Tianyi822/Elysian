@@ -323,6 +323,44 @@ test_pending_maintenance_prevents_dependency_mutation() {
   [ ! -e "$FIXTURE/docker-mutated" ] && [ ! -e "$FIXTURE/caddy-mutated" ]
 }
 
+test_docker_preflight_runs_after_dependency_readiness() {
+  BUILD_DIR="$FIXTURE/build"
+  mkdir "$BUILD_DIR"
+  export PREFLIGHT_TRACE="$FIXTURE/preflight"
+  cat >"$BUILD_DIR/elysian" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >>"$PREFLIGHT_TRACE"
+if [ "${2:-}" = --before-platform-dependencies ]; then
+  test ! -e "$PREFLIGHT_TRACE.docker-ready"
+else
+  test -e "$PREFLIGHT_TRACE.docker-ready" && test ! -e "$PREFLIGHT_TRACE.reject-full"
+fi
+EOF
+  chmod +x "$BUILD_DIR/elysian"
+  docker_install_or_reuse() { DOCKER_INSTALLED_THIS_RUN=0; }
+  verify_docker() { : >"$PREFLIGHT_TRACE.docker-ready"; }
+  install_caddy() { CADDY_INSTALLED_THIS_RUN=0; : >"$FIXTURE/caddy-mutated"; }
+  connect_caddy_safely() { begin_platform_transaction 0; }
+  install_platform_deps || return 1
+  [ "$(cat "$PREFLIGHT_TRACE")" = "$(printf 'maintenance-install-check --before-platform-dependencies\nmaintenance-install-check')" ] && [ -e "$FIXTURE/caddy-mutated" ]
+}
+
+test_full_preflight_rejection_preserves_caddy() {
+  BUILD_DIR="$FIXTURE/build"
+  mkdir "$BUILD_DIR"
+  export PREFLIGHT_TRACE="$FIXTURE/preflight"
+  cat >"$BUILD_DIR/elysian" <<'EOF'
+#!/bin/sh
+test "${2:-}" = --before-platform-dependencies
+EOF
+  chmod +x "$BUILD_DIR/elysian"
+  docker_install_or_reuse() { DOCKER_INSTALLED_THIS_RUN=0; }
+  verify_docker() { : >"$PREFLIGHT_TRACE.docker-ready"; }
+  install_caddy() { : >"$FIXTURE/caddy-mutated"; }
+  if (install_platform_deps); then return 1; fi
+  [ -e "$PREFLIGHT_TRACE.docker-ready" ] && [ ! -e "$FIXTURE/caddy-mutated" ] && [ ! -d "$PLATFORM_TXN" ]
+}
+
 test_both_socket_overrides_persist_and_restore() {
   ELYSIAN_DOCKER_SOCKET="$FIXTURE/docker.sock"
   connect_caddy_safely || return 1
@@ -390,7 +428,7 @@ test_lock_order() {
   release_install_locks
 }
 
-for test in test_missing_caddyfile_reports_actual_cause test_invalid_caddyfile_retains_private_diagnostic test_disabled_admin_retains_private_diagnostic test_active_preserves_runtime test_ready_manual_reuse test_manual_unready_refused test_failed_target_rolls_back test_missing_socket_restores_runtime test_apply_failure_restores_runtime test_validation_keeps_original test_restart_failure_restores_stopped test_fresh_invocation_recovers test_restore_failure_retains_backup test_corrupt_json_rejected test_environment_parser_preserves_multiline test_environment_failure_restores_files test_disk_route_changes_refused test_hidden_path_changes_refused test_failed_marker_prevents_publish test_linked_unit_refused test_total_verification_deadline test_pending_maintenance_prevents_dependency_mutation test_both_socket_overrides_persist_and_restore test_failed_docker_leaves_caddy_and_environment test_local_caddy_ignores_proxy_environment test_all_configuration_snapshots test_ufw_rollback_keeps_existing_rule test_ufw_rollback_removes_only_new_rule test_lock_order; do
+for test in test_missing_caddyfile_reports_actual_cause test_invalid_caddyfile_retains_private_diagnostic test_disabled_admin_retains_private_diagnostic test_active_preserves_runtime test_ready_manual_reuse test_manual_unready_refused test_failed_target_rolls_back test_missing_socket_restores_runtime test_apply_failure_restores_runtime test_validation_keeps_original test_restart_failure_restores_stopped test_fresh_invocation_recovers test_restore_failure_retains_backup test_corrupt_json_rejected test_environment_parser_preserves_multiline test_environment_failure_restores_files test_disk_route_changes_refused test_hidden_path_changes_refused test_failed_marker_prevents_publish test_linked_unit_refused test_total_verification_deadline test_pending_maintenance_prevents_dependency_mutation test_docker_preflight_runs_after_dependency_readiness test_full_preflight_rejection_preserves_caddy test_both_socket_overrides_persist_and_restore test_failed_docker_leaves_caddy_and_environment test_local_caddy_ignores_proxy_environment test_all_configuration_snapshots test_ufw_rollback_keeps_existing_rule test_ufw_rollback_removes_only_new_rule test_lock_order; do
   if fixture_case "$test"; then
     PASS=$((PASS + 1)); printf 'PASS %s\n' "$test"
   else

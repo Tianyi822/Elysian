@@ -389,6 +389,13 @@ remove_dependencies() {
       unfinished "$component 软件包已移除，但服务仍在运行，请先核对 systemctl status $component；收据及辅助配置保留"
       continue
     fi
+    if [ "$component" = docker ] && [ -e /run/docker.sock ]; then
+      if systemctl is-active --quiet docker.socket 2>/dev/null ||
+         ! uninstall_platform_helper remove-stale-socket /run/docker.sock >>"$log" 2>&1; then
+        unfinished "Docker 软件包已移除，但 /run/docker.sock 的状态无法确认，未清理；私有日志：$log"
+        continue
+      fi
+    fi
     if [ "$component" = caddy ]; then CADDY_PACKAGE_REMOVED=1; fi
     if ! platform_remove_assets "$component"; then
       unfinished "$component 已卸载，但部分源或公钥已被修改，已保留并记录：$PLATFORM_RECEIPTS/$component"

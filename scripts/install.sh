@@ -960,7 +960,7 @@ connect_caddy_safely() {
 }
 
 install_platform_deps() {
-  HOME="$STATE_DIR" "$BUILD_DIR/elysian" maintenance-install-check || die "平台依赖安装预检失败，原服务与平台依赖未改动。"
+  HOME="$STATE_DIR" "$BUILD_DIR/elysian" maintenance-install-check --before-platform-dependencies || die "平台依赖安装预检失败，原服务与平台依赖未改动。"
   info "Docker：容器、数据库与网站功能的运行时依赖"
   DOCKER_ENGINE_SOCKET="$(docker_engine_socket)" || die "无法解析 Docker socket，请检查 ELYSIAN_DOCKER_SOCKET 与 $ENV_FILE。"
   docker_install_or_reuse
@@ -970,6 +970,7 @@ install_platform_deps() {
     info "既有 Docker 自启状态：$(systemctl is-enabled docker 2>/dev/null || true)（仅核对，未修改）"
   fi
   verify_docker
+  HOME="$STATE_DIR" "$BUILD_DIR/elysian" maintenance-install-check || die "Docker 已就绪，但完整安装预检失败；Caddy 与面板版本未改动，请先处理端口冲突或未完成任务。"
   info "Caddy：网站域名 HTTPS 的反代依赖"
   CADDY_ADMIN_SOCKET="$(caddy_admin_socket)" || die "无法解析 Caddy 管理 socket，请检查 ELYSIAN_CADDY_SOCKET 与 $ENV_FILE。"
   install_caddy

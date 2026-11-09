@@ -1,10 +1,55 @@
 import fs from 'node:fs'
+import net from 'node:net'
+import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 
 const [operation, ...args] = process.argv.slice(2)
 const maximumConfigBytes = 4 * 1024 * 1024
 const executeFile = promisify(execFile)
+
+async function removeStaleSocket(value) {
+  const target = socketPath(value)
+  for (let current = target; current !== '/'; current = path.dirname(current)) {
+    try {
+      if (fs.lstatSync(current).isSymbolicLink()) throw new Error('残留 socket 路径不能经过符号链接')
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error
+    }
+  }
+  let before
+  try { before = fs.lstatSync(target) } catch (error) {
+    if (error.code === 'ENOENT') return
+    throw error
+  }
+  if (!before.isSocket() || before.uid !== 0 || before.nlink !== 1) throw new Error('残留路径不是 root 所有的独立 Unix socket，拒绝清理')
+  await new Promise((resolve, reject) => {
+    const connection = net.createConnection({ path: target })
+    connection.setTimeout(1000)
+    connection.once('connect', () => {
+      connection.destroy()
+      reject(new Error('socket 仍有监听者，拒绝删除'))
+    })
+    connection.once('timeout', () => {
+      connection.destroy()
+      reject(new Error('socket 状态无法确认，拒绝删除'))
+    })
+    connection.once('error', error => {
+      connection.destroy()
+      if (error.code === 'ECONNREFUSED') resolve()
+      else reject(new Error('socket 未明确拒绝连接，保留现场'))
+    })
+  })
+  let after
+  try { after = fs.lstatSync(target) } catch (error) {
+    if (error.code === 'ENOENT') return
+    throw error
+  }
+  if (!after.isSocket() || after.uid !== 0 || before.ino !== after.ino || before.dev !== after.dev) {
+    throw new Error('socket 身份已改变，拒绝删除')
+  }
+  fs.unlinkSync(target)
+}
 
 function socketPath(value) {
   if (!/^\/[A-Za-z0-9_./-]+$/.test(value) || value.includes('/../') || value.endsWith('/..')) {
@@ -145,6 +190,9 @@ async function waitForCaddy([address, output, expected, attemptsText, intervalTe
 
 try {
   switch (operation) {
+    case 'remove-stale-socket':
+      await removeStaleSocket(args[0])
+      break
     case 'socket':
       process.stdout.write(socketPath(args[0]))
       break

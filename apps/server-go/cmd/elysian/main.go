@@ -113,6 +113,11 @@ func run() (runErr error) {
 			}
 			host := panel.SystemHost{Store: panel.Store{Root: paths.ElysianHome}, DockerSocket: cfg.DockerSocket, MissingServiceOK: os.Args[1] == "maintenance-install-check"}
 			if os.Args[1] == "maintenance-install-check" {
+				beforeDependencies, err := installCheckBeforeDependencies(os.Args[2:])
+				if err != nil {
+					return err
+				}
+				host.BeforePlatformDependencies = beforeDependencies
 				return panel.CheckInstall(context.Background(), panel.Store{Root: paths.ElysianHome}, host, ports)
 			}
 			if os.Args[1] == "maintenance-bootstrap-save" || os.Args[1] == "maintenance-bootstrap-restore" {

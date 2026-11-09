@@ -166,6 +166,8 @@ sudo bash scripts/uninstall.sh --keep-data --keep-dependencies --keep-tools --ke
 
 安装会在源码构建前检查标准 Caddy 服务的启动配置与读取权限。已安装程序但 `Caddyfile` 缺失时明确中止；先停止 Caddy，再使用 `sudo bash scripts/install.sh --restore-caddyfile /可信备份的绝对路径/Caddyfile` 恢复并继续安装。恢复只接受 root 所有、其他用户不可写且不经过符号链接的文件，校验通过后仅发布到缺失目标，绝不覆盖已有配置。
 
+平台依赖安装前仍核对未完成任务、宿主端口、登记与防火墙，只将 Docker 协议端口核验推迟到 Docker 启动并验证之后；版本切换前继续完整核验，包含停止容器的端口预留。卸载 Docker 后仅清理 root 所有、明确拒绝连接且 inode 未变的残留 socket，活动监听、异常路径与未知状态均保留并报告。
+
 旧安装没有收据时，可明确指定 `sudo bash scripts/uninstall.sh --remove-legacy-components caddy,docker,go,bun` 清理这些组件，无需伪造或补写安装归属。参数只接受这四个固定名称，保留选项优先；Docker 仍须没有业务资源，Caddy 仍须是默认欢迎站点且运行配置与磁盘完全一致，软件包移除仍不得影响其他软件。该参数不会自动删除容器或数据库卷。
 
 完整安装、恢复与验证说明见 [部署指南](scripts/README-deploy.md)。

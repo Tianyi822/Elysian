@@ -11,7 +11,8 @@ fixture_case() (
   init_output 0 0
   FIXTURE="$(mktemp -d /tmp/elysian-lifecycle-test.XXXXXX)"
   FIXTURE_CADDY_PID=""
-  trap 'if [ -n "$FIXTURE_CADDY_PID" ]; then kill "$FIXTURE_CADDY_PID" 2>/dev/null || true; wait "$FIXTURE_CADDY_PID" 2>/dev/null || true; fi; rm -rf "$FIXTURE"' EXIT
+  FIXTURE_SOCKET_PID=""
+  trap 'for child in "$FIXTURE_CADDY_PID" "$FIXTURE_SOCKET_PID"; do if [ -n "$child" ]; then kill "$child" 2>/dev/null || true; wait "$child" 2>/dev/null || true; fi; done; rm -rf "$FIXTURE"' EXIT
   PLATFORM_RECEIPTS="$FIXTURE/receipts"
   PLATFORM_LIFECYCLE_LOCK="$FIXTURE/lifecycle.lock"
   CADDYFILE_PATH="$FIXTURE/caddy/Caddyfile"
@@ -341,6 +342,28 @@ test_lifecycle_lock_rejects_links() {
   ! platform_lifecycle_lock
 }
 
+test_stale_socket_cleanup_preserves_live_and_foreign_paths() {
+  local path="$FIXTURE/stale.sock" attempt
+  bun -e 'import net from "node:net"; net.createServer().listen(process.argv[1])' "$path" >"$FIXTURE/socket.log" 2>&1 &
+  FIXTURE_SOCKET_PID=$!
+  for ((attempt=0;attempt<100;attempt++)); do [ -S "$path" ] && break; sleep 0.02; done
+  [ -S "$path" ] || return 1
+  if uninstall_platform_helper remove-stale-socket "$path"; then return 1; fi
+  [ -S "$path" ] || return 1
+  kill -9 "$FIXTURE_SOCKET_PID"
+  wait "$FIXTURE_SOCKET_PID" 2>/dev/null || true
+  FIXTURE_SOCKET_PID=""
+  [ -S "$path" ] || return 1
+  uninstall_platform_helper remove-stale-socket "$path" || return 1
+  [ ! -e "$path" ] || return 1
+  printf 'preserve' >"$path"
+  if uninstall_platform_helper remove-stale-socket "$path"; then return 1; fi
+  [ "$(cat "$path")" = preserve ] || return 1
+  ln -s "$path" "$FIXTURE/linked.sock"
+  if uninstall_platform_helper remove-stale-socket "$FIXTURE/linked.sock"; then return 1; fi
+  [ -L "$FIXTURE/linked.sock" ] && [ "$(cat "$path")" = preserve ]
+}
+
 test_service_stop_failure_preserves_data() {
   mkdir -p "$DATA_ROOT/data"
   printf 'database' >"$DATA_ROOT/data/harness.sqlite"
@@ -398,7 +421,7 @@ test_real_dpkg_exact_package_scope() {
     [ ! -e "$root/etc/caddy/config" ] && [ -f "$root/etc/elysian-unrelated-fixture/config" ]
 }
 
-for test in test_default_and_keep_options test_conflicting_flags_rejected_in_both_orders test_explicit_legacy_components_are_validated test_explicit_legacy_docker_cleanup_without_forging_receipt test_explicit_legacy_still_protects_business_resources test_explicit_legacy_still_refuses_other_package_removal test_explicit_legacy_assets_and_paths test_explicit_legacy_keep_option_wins test_real_legacy_caddy_default_and_dynamic_protection test_receipt_excludes_existing_packages test_receipt_symlink_and_permissions_rejected test_receipt_package_injection_rejected test_legacy_dependency_reports_incomplete test_explicit_keep_does_not_claim_failure test_pending_install_recovery test_apt_dependency_expansion_refused test_package_purge_and_owned_sources test_changed_or_existing_source_preserved test_docker_business_resources_prevent_removal test_unused_docker_cleanup test_purge_failure_preserves_receipt_and_reports test_caddy_metadata_preserved test_caddy_dynamic_routes_block_reload test_missing_config_reported_when_retained test_restore_missing_caddyfile_only test_restore_active_or_invalid_refused test_lifecycle_lock_rejects_links test_service_stop_failure_preserves_data test_full_cleanup_removes_panel_and_owned_dependency test_tool_identity_must_match_record test_real_dpkg_exact_package_scope; do
+for test in test_default_and_keep_options test_conflicting_flags_rejected_in_both_orders test_explicit_legacy_components_are_validated test_explicit_legacy_docker_cleanup_without_forging_receipt test_explicit_legacy_still_protects_business_resources test_explicit_legacy_still_refuses_other_package_removal test_explicit_legacy_assets_and_paths test_explicit_legacy_keep_option_wins test_real_legacy_caddy_default_and_dynamic_protection test_receipt_excludes_existing_packages test_receipt_symlink_and_permissions_rejected test_receipt_package_injection_rejected test_legacy_dependency_reports_incomplete test_explicit_keep_does_not_claim_failure test_pending_install_recovery test_apt_dependency_expansion_refused test_package_purge_and_owned_sources test_changed_or_existing_source_preserved test_docker_business_resources_prevent_removal test_unused_docker_cleanup test_purge_failure_preserves_receipt_and_reports test_caddy_metadata_preserved test_caddy_dynamic_routes_block_reload test_missing_config_reported_when_retained test_restore_missing_caddyfile_only test_restore_active_or_invalid_refused test_lifecycle_lock_rejects_links test_stale_socket_cleanup_preserves_live_and_foreign_paths test_service_stop_failure_preserves_data test_full_cleanup_removes_panel_and_owned_dependency test_tool_identity_must_match_record test_real_dpkg_exact_package_scope; do
   if fixture_case "$test" > /tmp/elysian-lifecycle-case-$$.log 2>&1; then
     PASS=$((PASS + 1)); printf 'PASS %s\n' "$test"
   else
