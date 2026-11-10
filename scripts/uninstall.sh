@@ -47,6 +47,9 @@ DEFAULT_FRONTEND_PORT="48100"
 CADDYFILE_PATH="/etc/caddy/Caddyfile"
 CADDY_APT_LIST="/etc/apt/sources.list.d/caddy-stable.list"
 CADDY_KEYRING="/usr/share/keyrings/caddy-stable-archive-keyring.gpg"
+DOCKER_APT_SOURCES="/etc/apt/sources.list.d/docker.sources"
+DOCKER_APT_LIST="/etc/apt/sources.list.d/docker.list"
+DOCKER_APT_KEY="/etc/apt/keyrings/docker.asc"
 CADDY_RUNTIME_DROPIN="/etc/systemd/system/caddy.service.d/elysian-runtime.conf"
 CADDY_TMPFILES="/etc/tmpfiles.d/elysian-caddy.conf"
 BACKUP_ROOT="/var/backups"
@@ -60,6 +63,7 @@ ARTIFACT_GLOBS=(
   "/tmp/elysian-apt.*"
   "/tmp/elysian-get-docker.*"
   "/tmp/elysian-docker-install.*"
+  "/tmp/elysian-docker-apt.*"
 )
 
 PURGE_DATA=1

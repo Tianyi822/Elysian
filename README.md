@@ -135,6 +135,8 @@ sudo bash scripts/install.sh
 
 安装和在线更新将 Bun 包、Go 模块及 Go 编译缓存保存在 `/var/lib/elysian-build/cache/`，跨任务复用；源码和前端仍逐次构建，锁文件校验与版本切换事务保持有效。首次启用缓存的构建需要预热，后续仅下载缺少的依赖，并复用未变化的 Go 包编译结果。Bun 输出的“已安装包数”包含从缓存生成新 `node_modules` 的包，不等于下载数。缓存不随更新失败或回滚删除，卸载按构建目录清理；升级到支持缓存的更新器后生效。
 
+Docker 缺失时直接使用 Docker CE 签名 apt 仓库安装，默认依次探测阿里云、清华 TUNA、官方源，不依赖 `get.docker.com`。镜像公钥须匹配固定的 Docker 官方主指纹，签名索引须通过校验并包含目标发行版、架构与 stable 频道。可用 `sudo env ELYSIAN_DOCKER_MIRROR=tuna bash scripts/install.sh` 指定 `aliyun`／`tuna`／`official`，指定后不自动换源；缺省 `auto` 仅在安装前探测阶段回退。已有 Docker 正常复用，未知的既有 apt 配置保持原样。Go 本体保留 golang.google.cn／阿里云下载回退、模块保留 goproxy.cn／阿里云代理，Bun 本体及包保留 npmmirror 回退与 registry 配置，工具包仍核验官方摘要。
+
 默认入口：
 
 | 入口 | 地址 |

@@ -12,7 +12,7 @@
 #
 # 平台依赖：正式安装在「构建 Elysian」之后、安装切换事务之前自动检测并安装 Docker 与 Caddy——
 # 已安装且可用则复用（不重装、不改动既有 daemon.json / Caddyfile），缺失则按经验证的官方命令
-# 序列（Docker 官方 get.docker.com、Caddy 官方 cloudsmith apt 源）安装并真实验证（docker info、
+# 序列（Docker 官方签名的 apt 仓库及国内镜像、Caddy 官方 cloudsmith apt 源）安装并真实验证（docker info、
 # Engine API ≥ 1.41、systemctl is-active），失败打印中文原因与排查建议后非零退出；该阶段先于
 # 切换事务，失败不回滚已部署面板。
 #
@@ -82,6 +82,8 @@ fi
 . "$SCRIPT_DIR/tui.sh"
 # shellcheck source=platform-lifecycle.sh
 . "$SCRIPT_DIR/platform-lifecycle.sh"
+# shellcheck source=docker-apt.sh
+. "$SCRIPT_DIR/docker-apt.sh"
 TUI_FAIL_LABEL="安装失败"
 RESTORE_CADDYFILE=""
 
@@ -269,6 +271,10 @@ apt_install_deps() {
   command -v unzip >/dev/null 2>&1 || need+=(unzip)
   # git 供面板更新经 Gitee 来源时按锁定提交走 git smart HTTP 拉取源码（Gitee 网页归档端点需浏览器验证码，程序化不可用）。
   command -v git >/dev/null 2>&1 || need+=(git)
+  if ! command -v docker >/dev/null 2>&1; then
+    command -v gpg >/dev/null 2>&1 || need+=(gnupg)
+    command -v gpgv >/dev/null 2>&1 || need+=(gpgv)
+  fi
   command -v ufw >/dev/null 2>&1 || need+=(ufw)
   [ -x /usr/sbin/sshd ] || need+=(openssh-server)
   command -v ss >/dev/null 2>&1 || need+=(iproute2)
@@ -292,12 +298,11 @@ apt_install_deps() {
   ok "系统依赖已就绪：${need[*]}"
 }
 
-# ---------- 平台依赖（Docker 与 Caddy；命令序列逐字移植自面板原依赖引导的宿主脚本） ----------
+# ---------- 平台依赖（Docker CE 签名 apt 仓库与 Caddy 官方 apt 源） ----------
 # 阶段位于切换事务（prepare_install_switch）之前：任一步失败直接 die 停止后续阶段，不会触发
 # install_exit 对已部署面板的回滚；全部步骤幂等——已装且可用则复用、已是目标配置则零写，重跑
 # 不破坏既有配置与数据。面板内的依赖探测仍在线，安装后缺口以探测结果为准。
 
-DOCKER_INSTALL_URL="https://get.docker.com"
 CADDY_GPG_KEY_URL="https://dl.cloudsmith.io/public/caddy/stable/gpg.key"
 CADDY_APT_LIST_URL="https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt"
 CADDY_KEYRING="/usr/share/keyrings/caddy-stable-archive-keyring.gpg"
@@ -346,26 +351,10 @@ docker_install_or_reuse() {
     fi
     die "Docker 已安装但守护进程未响应（docker info 失败）。为不破坏既有安装，脚本不会在其上重装；请先排查：journalctl -u docker -n 50 --no-pager，修复后重跑本脚本。"
   fi
-  command -v curl >/dev/null 2>&1 || die "缺少 curl，无法下载 Docker 官方安装脚本。"
-  platform_receipt_begin docker || die "Docker 安装归属记录异常，拒绝覆盖：$PLATFORM_RECEIPTS/docker"
-  local log tmp
-  tmp="$(mktemp /tmp/elysian-get-docker.XXXXXX)" || die "无法创建 Docker 安装脚本暂存文件。"
-  log="$(mktemp /tmp/elysian-docker-install.XXXXXX)"
-  info "经官方脚本安装 Docker（${DOCKER_INSTALL_URL}；详细输出写入 ${log}）"
-  if ! curl -fsSL "$DOCKER_INSTALL_URL" -o "$tmp" >>"$log" 2>&1; then
-    rm -f "$tmp"
-    tail -n 40 "$log" >&2
-    die "下载 Docker 官方安装脚本失败（${DOCKER_INSTALL_URL} 不可达），请检查出网后重跑（完整日志：${log}）。"
-  fi
-  if ! run_stage_command "安装 Docker（官方脚本）" "$log" env DEBIAN_FRONTEND=noninteractive sh "$tmp"; then
-    rm -f "$tmp"
-    tail -n 40 "$log" >&2
-    die "Docker 安装失败，请查看上方日志排查（完整日志：${log}）。常见原因：网络中断、apt 源异常或磁盘空间不足；修复后重跑本脚本，已完成的步骤会自动跳过。"
-  fi
-  rm -f "$tmp" "$log"
-  platform_receipt_finish docker || die "无法保存 Docker 安装归属记录：$PLATFORM_RECEIPTS/docker"
+  command -v curl >/dev/null 2>&1 || die "缺少 curl，无法读取 Docker 软件仓库。"
+  docker_install_from_repository
   DOCKER_INSTALLED_THIS_RUN=1
-  ok "Docker 官方安装脚本执行完成"
+  ok "Docker CE 软件包安装完成"
 }
 
 enable_docker() {

@@ -73,7 +73,14 @@ systemctl start elysian
 
 ## Docker 与网站
 
-面板进程自身不依赖 Docker，但容器、数据库与网站功能依赖宿主 Docker Engine；Caddy 用于网站域名 HTTPS。安装脚本在构建完成后、面板版本切换前检测并安装依赖，先按 worker→operations 顺序取得现有维护锁，并核对持久化维护任务，防止与维护任务和业务写冲突。Docker 已装且响应时只读复用，守护进程未响应时只尝试拉起服务，失败不会覆盖既有安装；缺失时使用官方 `get.docker.com` 脚本。真实验证包括同一本机 Unix socket 的 `docker info` 和 Engine API ≥ 1.41；CLI 显式指定该目标并清空 `DOCKER_HOST`、`DOCKER_CONTEXT` 和相关 TLS/API 覆盖，不以当前终端的远端引擎代替面板运行通道。仅新装 Docker 设置开机自启，既有安装只报告实测自启状态。Caddy 缺失时经官方 cloudsmith apt 源安装，包、keyring 和 apt 源作为系统组件保留。
+面板进程自身不依赖 Docker，但容器、数据库与网站功能依赖宿主 Docker Engine；Caddy 用于网站域名 HTTPS。安装脚本在构建完成后、面板版本切换前检测并安装依赖，先按 worker→operations 顺序取得现有维护锁，并核对持久化维护任务，防止与维护任务和业务写冲突。Docker 已装且响应时只读复用，守护进程未响应时只尝试拉起服务，失败不会覆盖既有安装；缺失时通过 [Docker 官方 apt 安装流程](https://docs.docker.com/engine/install/ubuntu/)，使用 [阿里云](https://developer.aliyun.com/mirror/docker-ce)／[清华 TUNA](https://mirrors.tuna.tsinghua.edu.cn/help/docker-ce/) 提供的 Docker CE 仓库，不下载或执行远端安装脚本。真实验证包括同一本机 Unix socket 的 `docker info` 和 Engine API ≥ 1.41；CLI 显式指定该目标并清空 `DOCKER_HOST`、`DOCKER_CONTEXT` 和相关 TLS/API 覆盖，不以当前终端的远端引擎代替面板运行通道。仅新装 Docker 设置开机自启，既有安装只报告实测自启状态。Caddy 缺失时经官方 cloudsmith apt 源安装，卸载范围按明确清单与归属、使用状态核验。
+
+`ELYSIAN_DOCKER_MIRROR=auto` 为默认值，按阿里云 → 清华 TUNA → 官方源探测；`aliyun`、`tuna`、`official` 固定单一来源，失败不自动换源。每个来源以短超时读取发布公钥与签名 `InRelease`，主公钥指纹固定为 `9DC858229FC7DD38854AE2D88D81803C0EBFCD88`，真实 GPG/GPGV 核验签名、发行版代号、架构和 stable 频道后才写入 `docker.sources` 与 `docker.asc`。仅支持 Ubuntu/Debian 的 amd64／arm64，发行版或架构不可识别时拒绝写入。既有源若不等于当前候选、存在旧 `docker.list` 或路径权限异常，保留原文件并明确报告；不删除已有 containerd、runc 或其他冲突运行时。apt 使用 `--no-remove` 防止自动移除其他软件，进入 apt 安装后失败不自动换源或重投，保留私有日志、已写配置和首次文件归属供重试核对。
+
+```bash
+sudo bash scripts/install.sh                                # 国内源自动回退
+sudo env ELYSIAN_DOCKER_MIRROR=tuna bash scripts/install.sh   # 固定清华源
+```
 
 Docker 与 Caddy 通道分别按安装环境变量 `ELYSIAN_DOCKER_SOCKET`／`ELYSIAN_CADDY_SOCKET`、`/etc/default/elysian` 同名配置、默认 `/var/run/docker.sock`／`/run/caddy/admin.sock` 的顺序解析；显式安装环境覆盖会在同一事务中原子持久化到环境文件，只规范化对应键，保留另一通道、其余项及原权限、属主，保证安装与面板服务使用同一路径。Docker 验证失败时不改写环境文件或 Caddy。路径须为无空白、冒号、引号和控制字符的绝对路径；无法安全解析的配置、符号链接目标及文件冲突会明确拒绝自动改写。
 
@@ -108,7 +115,8 @@ docker build -f scripts/Dockerfile.install-test -t elysian-install-test:local sc
 docker run --rm --network none \
   --mount "type=bind,src=$PWD,dst=/workspace,readonly" \
   elysian-install-test:local -c 'set -e
-    bash -n scripts/tui.sh scripts/install.sh scripts/uninstall.sh scripts/platform-lifecycle.sh scripts/platform-lifecycle.test.sh scripts/build-release.sh scripts/install-platform.test.sh scripts/install-caddy-config.test.sh scripts/install-download.test.sh scripts/install-helpers.test.sh scripts/uninstall-helpers.test.sh
+    bash -n scripts/tui.sh scripts/install.sh scripts/docker-apt.sh scripts/docker-apt.test.sh scripts/uninstall.sh scripts/platform-lifecycle.sh scripts/platform-lifecycle.test.sh scripts/build-release.sh scripts/install-platform.test.sh scripts/install-caddy-config.test.sh scripts/install-download.test.sh scripts/install-helpers.test.sh scripts/uninstall-helpers.test.sh
+    bash scripts/docker-apt.test.sh
     bash scripts/install-download.test.sh
     bash scripts/install-caddy-config.test.sh
     bash scripts/install-helpers.test.sh

@@ -25,9 +25,9 @@ platform_asset_path() {
   case "$1" in
     caddy-list) printf '%s' "${CADDY_APT_LIST:-/etc/apt/sources.list.d/caddy-stable.list}" ;;
     caddy-key) printf '%s' "${CADDY_KEYRING:-/usr/share/keyrings/caddy-stable-archive-keyring.gpg}" ;;
-    docker-list) printf '%s' /etc/apt/sources.list.d/docker.list ;;
-    docker-sources) printf '%s' /etc/apt/sources.list.d/docker.sources ;;
-    docker-key) printf '%s' /etc/apt/keyrings/docker.asc ;;
+    docker-list) printf '%s' "${DOCKER_APT_LIST:-/etc/apt/sources.list.d/docker.list}" ;;
+    docker-sources) printf '%s' "${DOCKER_APT_SOURCES:-/etc/apt/sources.list.d/docker.sources}" ;;
+    docker-key) printf '%s' "${DOCKER_APT_KEY:-/etc/apt/keyrings/docker.asc}" ;;
     docker-key-gpg) printf '%s' /etc/apt/keyrings/docker.gpg ;;
     *) return 1 ;;
   esac
@@ -119,8 +119,8 @@ platform_receipt_begin() {
   if [ ! -e "$PLATFORM_RECEIPTS" ]; then (umask 077; mkdir "$PLATFORM_RECEIPTS") || return 1; fi
   platform_private_dir "$PLATFORM_RECEIPTS" || return 1
   if [ -e "$dir" ] || [ -L "$dir" ]; then
-    # 旧收据绝不覆盖：避免重装把后加的业务配置收编为可删除的初始配置。
-    platform_receipt_valid "$component" || return 1
+    # 旧收据绝不覆盖；仅允许同一受保护安装清单的失败重试。
+    platform_receipt_valid "$component" || { platform_private_dir "$dir" && platform_private_file "$dir/before" && platform_private_file "$dir/pending"; } || return 1
     return 0
   fi
   (umask 077; mkdir "$dir" && : >"$dir/before" && : >"$dir/pending") || return 1
@@ -157,7 +157,7 @@ platform_receipt_finish() {
   if platform_receipt_valid "$component"; then return 0; fi
   platform_private_dir "$PLATFORM_RECEIPTS" && platform_private_dir "$dir" &&
     platform_private_file "$dir/before" && platform_private_file "$dir/pending" || return 1
-  local name
+  local name owned_assets=0
   for name in packages complete; do
     if [ -e "$dir/$name" ] || [ -L "$dir/$name" ]; then platform_private_file "$dir/$name" || return 1; fi
   done
@@ -170,10 +170,19 @@ platform_receipt_finish() {
   while IFS= read -r asset; do
     path="$(platform_asset_path "$asset")"
     if platform_private_file "$dir/$asset.absent" && platform_no_links "$path" && [ -f "$path" ]; then
-      if [ -e "$dir/$asset.sha256" ] || [ -L "$dir/$asset.sha256" ]; then platform_private_file "$dir/$asset.sha256" || return 1; fi
-      (umask 077; sha256sum "$path" | cut -d ' ' -f 1 >"$dir/$asset.sha256") || return 1
+      if [ -e "$dir/$asset.sha256" ] || [ -L "$dir/$asset.sha256" ]; then
+        platform_private_file "$dir/$asset.sha256" || return 1
+      else
+        (umask 077; sha256sum "$path" | cut -d ' ' -f 1 >"$dir/$asset.sha256") || return 1
+      fi
+      owned_assets=1
     fi
   done < <(platform_assets "$component")
+  if [ ! -s "$dir/packages" ] && [ "$owned_assets" = 1 ]; then
+    # apt 索引／安装失败后继续保留首次文件身份，重跑不能把自建源误认为外来配置。
+    rm -f "$dir/complete"
+    return 0
+  fi
   (umask 077; printf '%s\n' elysian-platform/v1 >"$dir/complete") || return 1
   rm -f "$dir/pending" || return 1
   # 无新增包表示这是修复系统原有包，不能取得卸载归属。
