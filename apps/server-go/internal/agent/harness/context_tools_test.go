@@ -23,7 +23,7 @@ func (c *expandingContextTools) Schemas() []tools.PublicSchema {
 			schema.Metadata.Domain = "platform"
 			schemas = append(schemas, schema)
 		}
-		schemas = append(schemas, tools.PublicSchema{Name: "database_list", Description: "读取数据库列表", Parameters: map[string]any{"type": "object"}, Metadata: tools.Metadata{Domain: "database", Exposure: "agent", ReadOnly: true}})
+		schemas = append(schemas, tools.PublicSchema{Name: "platform_dependencies", Description: "读取平台依赖", Parameters: map[string]any{"type": "object"}, Metadata: tools.Metadata{Domain: "platform", Exposure: "agent", ReadOnly: true}})
 	}
 	return schemas
 }
@@ -57,20 +57,20 @@ func TestContextUsesCurrentToolInventoryAndLatestInputAfterLegacyConversation(t 
 				t.Error("fixture did not preserve stale working memory")
 			}
 			system := request.Messages[0].Content
-			if !strings.Contains(system, `"total":25`) || !strings.Contains(system, `"database":1`) || !strings.Contains(system, "可能已经过期") {
+			if !strings.Contains(system, `"total":25`) || !strings.Contains(system, `"platform":21`) || !strings.Contains(system, "可能已经过期") {
 				t.Errorf("current inventory did not override historical limits: %s", system)
 			}
 			if names := toolNames(request); len(names) != 3 || !contains(names, toolSearchName) || !contains(names, userInputTool) || !contains(names, planTool) {
 				t.Errorf("inventory summary eagerly injected definitions: %v", names)
 			}
-			return searchReply("database_list"), nil
+			return searchReply("platform_dependencies"), nil
 		case 3:
-			if !contains(toolNames(request), "database_list") {
+			if !contains(toolNames(request), "platform_dependencies") {
 				t.Error("non-Docker tool was not loaded")
 			}
-			return toolReply("database_list"), nil
+			return toolReply("platform_dependencies"), nil
 		default:
-			return finalReply("本轮支持按需加载数据库与平台工具"), nil
+			return finalReply("本轮支持按需加载平台工具"), nil
 		}
 	}, func(d *Deps) { d.Tools = bridge })
 	first := submitAgentTest(t, m, session, "old-four-tools", "你好，你是什么模型")
@@ -86,7 +86,7 @@ func TestContextUsesCurrentToolInventoryAndLatestInputAfterLegacyConversation(t 
 		t.Fatalf("expanded tool conversation failed: %+v", got)
 	}
 	calls, err := m.store.calls(context.Background(), run.ID, "", 50)
-	if err != nil || len(calls.Items) != 2 || calls.Items[0].Tool != toolSearchName || calls.Items[1].Tool != "database_list" || calls.Items[1].Status != StateSucceeded {
+	if err != nil || len(calls.Items) != 2 || calls.Items[0].Tool != toolSearchName || calls.Items[1].Tool != "platform_dependencies" || calls.Items[1].Status != StateSucceeded {
 		t.Fatalf("non-Docker discovery/execution failed: %+v %v", calls, err)
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"elysian/server/internal/contract"
+	"elysian/server/internal/seam"
 	"elysian/server/internal/shared"
 )
 
@@ -24,18 +25,7 @@ const (
 )
 
 // AgentServiceCreateInput 是 service-v1 服务容器的创建输入；凭据只传变量名，值由后端生成。
-type AgentServiceCreateInput struct {
-	Name         string   `json:"name"`
-	Image        string   `json:"image"`
-	RequestID    string   `json:"requestId"`
-	ResourceTier string   `json:"resourceTier"` // small | medium | large
-	NetworkScope string   `json:"networkScope"` // container-net | localhost | any-host
-	Port         int      `json:"port"`
-	HostPort     int      `json:"hostPort"`
-	Credentials  []string `json:"credentials"`
-	Env          []string `json:"env"`
-	Volumes      []string `json:"volumes"`
-}
+type AgentServiceCreateInput = seam.AgentServiceContainerInput
 
 // ContainerSummary 是服务容器回执的显式容器投影：不含环境变量值、启动命令与挂载内容。
 type ContainerSummary struct {
@@ -245,6 +235,10 @@ func (a *AgentFacade) createService(ctx context.Context, input AgentServiceCreat
 	if err := a.check(ctx); err != nil {
 		return nil, err
 	}
+	return a.createServiceAuthorized(ctx, input)
+}
+
+func (a *AgentFacade) createServiceAuthorized(ctx context.Context, input AgentServiceCreateInput) (map[string]any, error) {
 	if a.credentials == nil {
 		return nil, errors.New("服务容器凭据登记未装配")
 	}

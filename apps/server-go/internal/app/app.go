@@ -183,6 +183,10 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 	}
 	databaseDeps := database.Deps{EngineAvailable: stack.Ready, SqliteAvailable: cfg.HostOpsAvailable(), Engine: stack.Engine, Views: stack.Views, SelfID: stack.SelfID, PortOpener: portOpener, Logs: appLogs, AgentAuthorize: agentAuthorize}
 	databaseDeps.AgentFacade = database.NewAgentFacade(databaseDeps)
+	if stack.Agent != nil {
+		stack.Agent.SetDatabaseContainers(databaseDeps.AgentFacade.ContainerBridge(tools.Revalidate))
+		databaseDeps.AgentFacade.SetContainerOperationGuard(stack.Agent.CheckContainerMutation)
+	}
 	if databaseDeps.AgentFacade.Available() {
 		plugins = append(plugins, tooldatabase.Plugin(tooldatabase.Deps{Facade: databaseDeps.AgentFacade}, tooldatabase.Config{}))
 	}

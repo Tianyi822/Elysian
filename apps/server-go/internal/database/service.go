@@ -21,14 +21,15 @@ import (
 
 // createRequest 校验后的创建请求。
 type createRequest struct {
-	Engine      string
-	VersionTag  string
-	Name        string
-	Charset     *string
-	User        databaseSecret
-	AccessScope string
-	HostPort    *int
-	Target      createTarget
+	ServiceOptions *seam.AgentServiceContainerInput
+	Engine         string
+	VersionTag     string
+	Name           string
+	Charset        *string
+	User           databaseSecret
+	AccessScope    string
+	HostPort       *int
+	Target         createTarget
 }
 
 // createTarget 三种目标形态。
@@ -96,10 +97,11 @@ type serviceDeps struct {
 
 // databaseService 服务实现。
 type databaseService struct {
-	mutationMu sync.Mutex
-	deps       serviceDeps
-	mu         sync.Mutex
-	inProgress map[string]bool
+	mutationMu     sync.Mutex
+	deps           serviceDeps
+	mu             sync.Mutex
+	inProgress     map[string]bool
+	operationGuard seam.ContainerOperationGuard
 }
 
 // newDatabaseService 构造服务。
@@ -528,6 +530,16 @@ func (s *databaseService) create(ctx context.Context, input createRequest) (crea
 	if err != nil {
 		return createResponse{}, err
 	}
+	guardName := input.Target.ContainerName
+	for _, row := range rows {
+		if row.ContainerID == input.Target.ContainerID && row.ContainerName != "" {
+			guardName = row.ContainerName
+			break
+		}
+	}
+	if err := s.checkContainerMutation(ctx, input.Target.ContainerID, guardName); err != nil {
+		return createResponse{}, err
+	}
 	targetContainerID := ""
 	if input.Target.Kind != "new" {
 		targetContainerID = input.Target.ContainerID
@@ -551,6 +563,7 @@ func (s *databaseService) create(ctx context.Context, input createRequest) (crea
 	}
 
 	var containerID, volumeName string
+	containerName := input.Target.ContainerName
 	var admin databaseSecret
 	started := true
 	startFailure := ""
@@ -565,7 +578,7 @@ func (s *databaseService) create(ctx context.Context, input createRequest) (crea
 		created, err := s.deps.docker.create(ctx, createInput{
 			engine: input.Engine, versionTag: input.VersionTag, imageID: input.Target.ImageID,
 			containerName: input.Target.ContainerName, accessScope: input.AccessScope,
-			hostPort: input.HostPort, bootstrapPwd: admin.Password, ordinaryUser: input.User,
+			hostPort: input.HostPort, bootstrapPwd: admin.Password, ordinaryUser: input.User, serviceOptions: input.ServiceOptions,
 		})
 		if err != nil {
 			return createResponse{}, err
@@ -583,6 +596,7 @@ func (s *databaseService) create(ctx context.Context, input createRequest) (crea
 			return createResponse{}, &shared.InvalidRequestError{Status: 409, Message: "容器不是同版本的面板受管数据库"}
 		}
 		containerID = existing.ContainerID
+		containerName = existing.ContainerName
 		volumeName = existing.VolumeName
 		admin = existing.Admin
 		info, err := s.deps.docker.assertEngine(ctx, containerID, input.Engine, input.VersionTag)
@@ -611,6 +625,7 @@ func (s *databaseService) create(ctx context.Context, input createRequest) (crea
 		ContainerID: containerID, VolumeName: volumeName, Source: source,
 		AccessScope: actualScope, Admin: admin, User: input.User,
 		CreatedAt: isoNow(s.deps.now), State: stateNeedsAttention,
+		ContainerName: containerName,
 	}
 	// 容器已产生后先登记待处理状态，后续任何失败都能在页面找到恢复入口。
 	if err := s.deps.registry.put(row); err != nil {
@@ -769,6 +784,9 @@ func (s *databaseService) remove(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
+	if err := s.checkContainerMutation(ctx, row.ContainerID, row.ContainerName); err != nil {
+		return err
+	}
 	if row.State == stateEmpty {
 		return &shared.InvalidRequestError{Status: 409, Message: "逻辑库已删除；请使用容器及数据删除操作"}
 	}
@@ -853,6 +871,9 @@ func (s *databaseService) removeContainer(ctx context.Context, id string) error 
 	if err != nil {
 		return err
 	}
+	if err := s.checkContainerMutation(ctx, row.ContainerID, row.ContainerName); err != nil {
+		return err
+	}
 	if row.Source != sourceManaged || row.VolumeName == "" {
 		return &shared.InvalidRequestError{Status: 403, Message: "只能删除面板创建的数据库容器和专属卷"}
 	}
@@ -926,6 +947,9 @@ func (s *databaseService) OpenSession(ctx context.Context, id string) (Session, 
 	if err != nil {
 		return nil, err
 	}
+	if err := s.checkContainerMutation(ctx, row.ContainerID, row.ContainerName); err != nil {
+		return nil, err
+	}
 	if row.State == stateEmpty {
 		return nil, &shared.InvalidRequestError{Status: 409, Message: "空容器没有可连接的逻辑库"}
 	}
@@ -947,6 +971,9 @@ func (s *databaseService) reconcile(ctx context.Context, id string) (serviceInst
 	if err != nil {
 		return serviceInstance{}, err
 	}
+	if err := s.checkContainerMutation(ctx, row.ContainerID, row.ContainerName); err != nil {
+		return serviceInstance{}, err
+	}
 	if row.State == stateEmpty {
 		return serviceInstance{}, &shared.InvalidRequestError{Status: 409, Message: "空容器没有可核对的逻辑库"}
 	}
@@ -966,6 +993,9 @@ func (s *databaseService) Forget(ctx context.Context, id string) error {
 	defer s.mutationMu.Unlock()
 	row, err := s.record(id)
 	if err != nil {
+		return err
+	}
+	if err := s.checkContainerMutation(ctx, row.ContainerID, row.ContainerName); err != nil {
 		return err
 	}
 	if row.Source != sourceAdopted || row.State != stateNeedsAttention {

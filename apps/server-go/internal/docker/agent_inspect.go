@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"elysian/server/internal/contract"
+	"elysian/server/internal/seam"
 	"elysian/server/internal/shared"
 )
 
@@ -62,4 +63,13 @@ func (a *AgentFacade) InspectImage(ctx context.Context, raw string) (contract.Co
 		return contract.ContainerImage{}, errors.New("镜像详情与请求 ID 不匹配")
 	}
 	return result, err
+}
+
+// DatabaseContainerDetails extends the already authorized inspection; no second
+// backend ticket is consumed. The bridge verifies the original dispatch.
+func (a *AgentFacade) DatabaseContainerDetails(ctx context.Context, id string, detail *seam.AgentDatabaseInspection) (any, error) {
+	if a.databaseContainers == nil {
+		return nil, nil
+	}
+	return a.databaseContainers.Inspect(ctx, id, detail)
 }

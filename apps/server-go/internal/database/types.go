@@ -55,18 +55,19 @@ const (
 // databaseRecord 服务型数据库登记行（~/.Elysian/config/databases.json）。
 // 字段声明序即写盘键序，与 TS 版构造序逐字兼容。
 type databaseRecord struct {
-	ID          string         `json:"id"`
-	Engine      string         `json:"engine"`
-	Name        string         `json:"name"`
-	VersionTag  string         `json:"versionTag"`
-	ContainerID string         `json:"containerId"`
-	VolumeName  string         `json:"volumeName,omitempty"`
-	Source      string         `json:"source"`
-	AccessScope string         `json:"accessScope"`
-	Admin       databaseSecret `json:"admin"`
-	User        databaseSecret `json:"user"`
-	CreatedAt   string         `json:"createdAt"`
-	State       string         `json:"state"`
+	ID            string         `json:"id"`
+	Engine        string         `json:"engine"`
+	Name          string         `json:"name"`
+	VersionTag    string         `json:"versionTag"`
+	ContainerID   string         `json:"containerId"`
+	VolumeName    string         `json:"volumeName,omitempty"`
+	Source        string         `json:"source"`
+	AccessScope   string         `json:"accessScope"`
+	Admin         databaseSecret `json:"admin"`
+	User          databaseSecret `json:"user"`
+	CreatedAt     string         `json:"createdAt"`
+	State         string         `json:"state"`
+	ContainerName string         `json:"containerName,omitempty"`
 }
 
 // storageView 存储用量投影。

@@ -26,7 +26,7 @@ type AutomaticExtensions struct {
 func (m *Manager) snapshotForAgent(ctx context.Context, env Environment, mode string, authorizationModes ...string) (CapabilitySnapshot, error) {
 	ctx = context.WithValue(ctx, wikiDisabledContextKey{}, true)
 	env = m.withDockerTools(env)
-	env = m.withDatabaseTools(env)
+	env = withoutRetiredDatabaseTools(env)
 	// 新接受的普通聊天统一获得公网读取能力；不回写旧环境或已接受 Run。
 	if m.deps.Tools != nil && !contains(env.Tools, "web_fetch") {
 		for _, schema := range m.deps.Tools.Schemas() {

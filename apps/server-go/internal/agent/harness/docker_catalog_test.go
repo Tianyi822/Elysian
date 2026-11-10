@@ -383,7 +383,7 @@ func TestDockerAutomaticCatalogNeverAddsUnreviewedOrHumanTools(t *testing.T) {
 		"docker_containers_list", "docker_images_list", "docker_policy_view", "docker_self_container", "registry_host_check", "docker_registry_list", "docker_registry_probe",
 		"docker_container_inspect", "docker_image_inspect", "docker_container_create_restricted", "docker_container_create_service",
 		"docker_container_start", "docker_container_stop", "docker_container_restart", "docker_container_remove",
-		"docker_image_search", "docker_image_tags", "docker_image_pull", "docker_image_pull_get", "docker_image_pull_logs", "docker_image_pull_cancel", "docker_container_logs", "docker_image_remove",
+		"docker_image_search", "docker_image_tags", "docker_image_pull", "docker_image_pull_get", "docker_image_pull_logs", "docker_image_pull_cancel", "docker_container_logs", "docker_image_remove", "docker_container_exec",
 	}
 	var registered []tools.PublicSchema
 	for _, name := range audited {
@@ -391,7 +391,7 @@ func TestDockerAutomaticCatalogNeverAddsUnreviewedOrHumanTools(t *testing.T) {
 	}
 	registered = append(registered,
 		tools.PublicSchema{Name: "docker_engine_request", Metadata: tools.Metadata{Domain: "docker", Exposure: "agent"}},
-		tools.PublicSchema{Name: "docker_container_exec", Metadata: tools.Metadata{Domain: "docker", Exposure: "agent"}},
+		tools.PublicSchema{Name: "docker_container_attach", Metadata: tools.Metadata{Domain: "docker", Exposure: "agent"}},
 		tools.PublicSchema{Name: "docker_images_list", Metadata: tools.Metadata{Domain: "docker", Exposure: "human"}},
 		tools.PublicSchema{Name: "docker_container_inspect", Metadata: tools.Metadata{Domain: "other", Exposure: "agent"}},
 	)
@@ -404,7 +404,7 @@ func TestDockerAutomaticCatalogNeverAddsUnreviewedOrHumanTools(t *testing.T) {
 	}
 	unaudited := &Manager{deps: Deps{Tools: &dockerSelectionTools{schemas: []tools.PublicSchema{
 		{Name: "docker_engine_request", Metadata: tools.Metadata{Domain: "docker", Exposure: "agent"}},
-		{Name: "docker_container_exec", Metadata: tools.Metadata{Domain: "docker", Exposure: "agent"}},
+		{Name: "docker_container_attach", Metadata: tools.Metadata{Domain: "docker", Exposure: "agent"}},
 		{Name: "docker_images_list", Metadata: tools.Metadata{Domain: "docker", Exposure: "human"}},
 		{Name: "docker_container_inspect", Metadata: tools.Metadata{Domain: "other", Exposure: "agent"}},
 	}}}}

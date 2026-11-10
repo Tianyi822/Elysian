@@ -16,7 +16,7 @@ func ordinaryDockerTool(s tools.PublicSchema) bool {
 	case "docker_containers_list", "docker_images_list", "docker_policy_view", "docker_self_container", "registry_host_check", "docker_registry_list", "docker_registry_probe",
 		"docker_container_inspect", "docker_image_inspect", "docker_container_create_restricted", "docker_container_create_service",
 		"docker_container_start", "docker_container_stop", "docker_container_restart", "docker_container_remove",
-		"docker_image_search", "docker_image_tags", "docker_image_pull", "docker_image_pull_get", "docker_image_pull_logs", "docker_image_pull_cancel", "docker_container_logs", "docker_image_remove":
+		"docker_image_search", "docker_image_tags", "docker_image_pull", "docker_image_pull_get", "docker_image_pull_logs", "docker_image_pull_cancel", "docker_container_logs", "docker_image_remove", "docker_container_exec":
 		return true
 	}
 	return false

@@ -19,16 +19,23 @@ import (
 
 // AgentFacade exposes a narrow, host-owned capability surface, never Engine.
 type AgentFacade struct {
-	service     *dockerService
-	authorize   func(context.Context) error
-	credentials *agentCredentialStore
-	portOpener  seam.PortOpener
-	taskMu      sync.Mutex
-	pullTasks   map[string]*AgentPullTask
-	taskRoot    string
-	pullCancel  map[string]context.CancelFunc
-	taskWG      sync.WaitGroup
-	closed      bool
+	service            *dockerService
+	authorize          func(context.Context) error
+	credentials        *agentCredentialStore
+	portOpener         seam.PortOpener
+	taskMu             sync.Mutex
+	pullTasks          map[string]*AgentPullTask
+	taskRoot           string
+	pullCancel         map[string]context.CancelFunc
+	taskWG             sync.WaitGroup
+	closed             bool
+	databaseContainers seam.AgentDatabaseContainers
+	operationMu        sync.Mutex
+	operations         map[string]ContainerOperationTask
+	operationRoot      string
+	operationCancel    map[string]context.CancelFunc
+	operationClosed    bool
+	operationWG        sync.WaitGroup
 }
 
 func (a *AgentFacade) Authorize(ctx context.Context) error { return a.check(ctx) }
@@ -49,11 +56,36 @@ func (a *AgentFacade) check(ctx context.Context) error {
 }
 
 func (a *AgentFacade) Action(ctx context.Context, id, action string) (contract.Container, error) {
+	return a.action(ctx, id, action, true)
+}
+
+// LegacyAction preserves the target restrictions of accepted version-1 tools.
+func (a *AgentFacade) LegacyAction(ctx context.Context, id, action string) (contract.Container, error) {
+	return a.action(ctx, id, action, false)
+}
+
+func (a *AgentFacade) action(ctx context.Context, id, action string, databases bool) (contract.Container, error) {
 	if err := a.check(ctx); err != nil {
 		return contract.Container{}, err
 	}
 	if action != "start" && action != "stop" && action != "restart" {
 		return contract.Container{}, shared.InvalidRequest("容器动作无效")
+	}
+	if err := a.CheckContainerMutation(ctx, id, "", ""); err != nil {
+		return contract.Container{}, agentRejected(err)
+	}
+	if databases && a.databaseContainers != nil {
+		handled, err := a.databaseContainers.Lifecycle(ctx, id, action)
+		if handled || err != nil {
+			if err != nil {
+				return contract.Container{}, err
+			}
+			value, readErr := a.service.inspectContainerByID(ctx, id, actionTimeout)
+			if readErr != nil {
+				return contract.Container{}, readErr
+			}
+			return mapContainer(value)
+		}
 	}
 	target, err := a.safeTarget(ctx, id)
 	if err != nil {
@@ -67,8 +99,25 @@ func (a *AgentFacade) Action(ctx context.Context, id, action string) (contract.C
 }
 
 func (a *AgentFacade) Remove(ctx context.Context, id string) error {
+	return a.remove(ctx, id, true)
+}
+
+func (a *AgentFacade) LegacyRemove(ctx context.Context, id string) error {
+	return a.remove(ctx, id, false)
+}
+
+func (a *AgentFacade) remove(ctx context.Context, id string, databases bool) error {
 	if err := a.check(ctx); err != nil {
 		return agentRejected(err)
+	}
+	if err := a.CheckContainerMutation(ctx, id, "", ""); err != nil {
+		return agentRejected(err)
+	}
+	if databases && a.databaseContainers != nil {
+		handled, err := a.databaseContainers.Lifecycle(ctx, id, "remove")
+		if handled || err != nil {
+			return err
+		}
 	}
 	target, err := a.safeTarget(ctx, id)
 	if err != nil {

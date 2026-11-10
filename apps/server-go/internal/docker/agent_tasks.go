@@ -263,6 +263,9 @@ func (a *AgentFacade) Close(ctx context.Context) error {
 	if a == nil {
 		return nil
 	}
+	if err := a.closeContainerOperations(ctx); err != nil {
+		return err
+	}
 	a.taskMu.Lock()
 	a.closed = true
 	for _, cancel := range a.pullCancel {

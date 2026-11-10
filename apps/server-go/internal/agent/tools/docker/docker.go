@@ -5,6 +5,7 @@ package docker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -38,6 +39,7 @@ type Config struct {
 // ContainerSummary 是可进入工具事件与运行记录的容器摘要。凭据、启动命令和
 // 挂载内容不属于这个投影；新增域字段也不会自动进入工具结果。
 type ContainerSummary struct {
+	Database      any                        `json:"database,omitempty"`
 	ID            string                     `json:"id"`
 	Name          string                     `json:"name"`
 	Status        string                     `json:"status"`
@@ -213,15 +215,25 @@ func (s *Service) descriptors() []tools.Descriptor {
 	text := tools.Schema{Type: tools.SchemaString}
 	for _, action := range []string{"start", "stop", "restart", "remove"} {
 		action := action
-		descriptors = append(descriptors, tools.Descriptor{Name: "docker_container_" + action, Description: "审批后对已授权的安全容器执行 " + action, Parameters: tools.Schema{Type: tools.SchemaObject, Required: []string{"id"}, Properties: map[string]tools.Schema{"id": text}}, Metadata: tools.Metadata{Domain: "docker", Action: action, Effect: "write", Exposure: "agent", ResourceType: "docker-container", ResourceKeyArgument: "id", Version: "1"}, Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
+		descriptors = append(descriptors, tools.Descriptor{Name: "docker_container_" + action, Description: "审批后对已授权的安全容器执行 " + action, Parameters: tools.Schema{Type: tools.SchemaObject, Required: []string{"id"}, Properties: map[string]tools.Schema{"id": text}}, Metadata: tools.Metadata{Domain: "docker", Action: action, Effect: "write", Exposure: "agent", ResourceType: "docker-container", ResourceKeyArgument: "id", Version: "2"}, Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
 			id, _ := tools.StringArg(args, "id")
+			lifetime := tools.Lifetime(c)
+			frozen := tools.FrozenMetadata(lifetime)
 			if action == "remove" {
-				if err := s.deps.Agent.Remove(tools.Lifetime(c), id); err != nil {
+				remove := s.deps.Agent.Remove
+				if frozen.Version == "1" {
+					remove = s.deps.Agent.LegacyRemove
+				}
+				if err := remove(lifetime, id); err != nil {
 					return nil, agentBusinessError(err)
 				}
 				return map[string]bool{"removed": true}, nil
 			}
-			container, err := s.deps.Agent.Action(tools.Lifetime(c), id, action)
+			perform := s.deps.Agent.Action
+			if frozen.Version == "1" {
+				perform = s.deps.Agent.LegacyAction
+			}
+			container, err := perform(lifetime, id, action)
 			if err != nil {
 				return nil, agentBusinessError(err)
 			}
@@ -253,8 +265,8 @@ func (s *Service) descriptors() []tools.Descriptor {
 			"env":          {Type: tools.SchemaArray, Items: &tools.Schema{Type: tools.SchemaString}, Description: "非凭据环境变量 KEY=VALUE 列表，最多 16 项、每项不超过 512 字节，完整进入审批展示"},
 			"volumes":      {Type: tools.SchemaArray, Items: &tools.Schema{Type: tools.SchemaString, Pattern: "^/[A-Za-z0-9._/-]{0,127}$"}, Description: "容器内持久卷挂载点（如 /var/lib/mysql），最多 2 个；卷由面板托管"},
 		}},
-		Metadata:    tools.Metadata{Domain: "docker", Action: "create_service", Effect: "write", Exposure: "agent", ResourceType: "docker-container", ResourceKeyArgument: "name", Version: "1"},
-		SearchNames: []string{"部署服务", "新建服务容器", "启动 MySQL", "创建容器", "service container"},
+		Metadata:    tools.Metadata{Domain: "docker", Action: "create_service", Effect: "write", Exposure: "agent", ResourceType: "docker-container", ResourceKeyArgument: "name", Version: "2", Async: true, TaskDomain: domaindocker.ContainerOperationDomain, TaskRequestArgument: "requestId"},
+		SearchNames: []string{"部署服务", "新建服务容器", "创建数据库", "创建逻辑库", "启动 MySQL", "部署 MariaDB", "部署 Redis", "创建容器", "service container"},
 		Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
 			input := domaindocker.AgentServiceCreateInput{}
 			input.Name, _ = tools.StringArg(args, "name")
@@ -267,8 +279,16 @@ func (s *Service) descriptors() []tools.Descriptor {
 			input.Credentials = tools.StringArrayArg(args, "credentials")
 			input.Env = tools.StringArrayArg(args, "env")
 			input.Volumes = tools.StringArrayArg(args, "volumes")
-			value, err := s.deps.Agent.CreateService(tools.Lifetime(c), input)
-			return value, agentBusinessError(err)
+			ctx := tools.Lifetime(c)
+			if tools.FrozenMetadata(ctx).Version == "1" {
+				value, err := s.deps.Agent.CreateService(ctx, input)
+				return value, agentBusinessError(err)
+			}
+			task, err := s.deps.Agent.SubmitService(ctx, input)
+			if err != nil {
+				return nil, agentBusinessError(err)
+			}
+			return tools.Submission{Value: task, Task: tools.TaskReference{Domain: domaindocker.ContainerOperationDomain, ID: task.ID, RequestID: task.RequestID}}, nil
 		},
 	})
 	descriptors = append(descriptors, tools.Descriptor{
@@ -288,6 +308,7 @@ func (s *Service) descriptors() []tools.Descriptor {
 		},
 	})
 	descriptors = append(descriptors, s.inspectionDescriptors()...)
+	descriptors = append(descriptors, s.execDescriptor())
 	descriptors = append(descriptors, s.imageDescriptors()...)
 	return append(descriptors, s.registryDescriptors()...)
 }
@@ -356,4 +377,23 @@ func limitList[T any](values []T, limit int) []T {
 		return values
 	}
 	return values[:limit]
+}
+
+func (s *Service) execDescriptor() tools.Descriptor {
+	text := tools.Schema{Type: tools.SchemaString}
+	return tools.Descriptor{Name: "docker_container_exec", Description: "在精确受管容器中执行argv命令，或通过databaseChange同步创建/删除受管逻辑库及登记；两者互斥。受管数据库禁止任意argv，先inspect取得revision。密码由后端处理，不传入参数。requestId精确重试复用。Redis remove仅清空DB0并保留登记。异步等待由系统监视器完成。", SearchNames: []string{"执行容器命令", "数据库", "逻辑库", "MySQL 建库", "MariaDB 建库", "Redis 清空", "建库", "删库", "容器exec"}, Parameters: tools.Schema{Type: tools.SchemaObject, Required: []string{"id", "requestId"}, Properties: map[string]tools.Schema{"id": text, "requestId": text, "argv": {Type: tools.SchemaArray, Items: &text}, "workdir": text, "databaseChange": {Type: tools.SchemaObject, Required: []string{"action", "name", "expectedRevision"}, Properties: map[string]tools.Schema{"action": {Type: tools.SchemaString, Enum: tools.EnumOf("create", "remove")}, "name": text, "expectedRevision": text, "charset": text}}}}, Metadata: tools.Metadata{Domain: "docker", Backend: "domain", Action: "exec", Effect: "execute", Exposure: "agent", ResourceType: "docker-container", ResourceKeyArgument: "id", Version: "1", Async: true, TaskDomain: domaindocker.ContainerOperationDomain, TaskRequestArgument: "requestId"}, Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
+		raw, err := json.Marshal(args)
+		if err != nil {
+			return nil, err
+		}
+		var input domaindocker.ContainerExecInput
+		if err := json.Unmarshal(raw, &input); err != nil {
+			return nil, err
+		}
+		task, err := s.deps.Agent.SubmitExec(tools.Lifetime(c), input)
+		if err != nil {
+			return nil, agentBusinessError(err)
+		}
+		return tools.Submission{Value: task, Task: tools.TaskReference{Domain: domaindocker.ContainerOperationDomain, ID: task.ID, RequestID: task.RequestID}}, nil
+	}}
 }

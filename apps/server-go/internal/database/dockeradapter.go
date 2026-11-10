@@ -309,14 +309,15 @@ func (d *dockerAPI) address(ctx context.Context, id string, network string) (dat
 
 // createInput 创建数据库容器的全部入参。
 type createInput struct {
-	engine        string
-	versionTag    string
-	imageID       string
-	containerName string
-	accessScope   string
-	hostPort      *int
-	bootstrapPwd  string
-	ordinaryUser  databaseSecret
+	serviceOptions *seam.AgentServiceContainerInput
+	engine         string
+	versionTag     string
+	imageID        string
+	containerName  string
+	accessScope    string
+	hostPort       *int
+	bootstrapPwd   string
+	ordinaryUser   databaseSecret
 }
 
 // createResult 容器与专属卷的创建产物。
@@ -347,6 +348,9 @@ type restartPolicySpec struct {
 
 // hostConfigSpec HostConfig。
 type hostConfigSpec struct {
+	Memory        int64                        `json:"Memory,omitempty"`
+	NanoCpus      int64                        `json:"NanoCpus,omitempty"`
+	PidsLimit     int                          `json:"PidsLimit,omitempty"`
 	Mounts        []mountSpec                  `json:"Mounts"`
 	RestartPolicy restartPolicySpec            `json:"RestartPolicy"`
 	NetworkMode   string                       `json:"NetworkMode"`
@@ -474,6 +478,28 @@ func (d *dockerAPI) create(ctx context.Context, input createInput) (createResult
 		NetworkingConfig: networkingConfigSpec{EndpointsConfig: map[string]networkEndpointSpec{network: {}}},
 		ExposedPorts:     map[string]map[string]any{portKey: {}},
 	}
+	if input.serviceOptions != nil {
+		spec.Image = "sha256:" + stripSha256Prefix(imageID)
+		switch input.serviceOptions.ResourceTier {
+		case "small":
+			spec.HostConfig.Memory = 512 << 20
+			spec.HostConfig.NanoCpus = 500000000
+		case "medium":
+			spec.HostConfig.Memory = 1 << 30
+			spec.HostConfig.NanoCpus = 1000000000
+		case "large":
+			spec.HostConfig.Memory = 2 << 30
+			spec.HostConfig.NanoCpus = 2000000000
+		}
+		spec.HostConfig.PidsLimit = 256
+		for _, entry := range input.serviceOptions.Env {
+			key := strings.SplitN(entry, "=", 2)[0]
+			if strings.HasPrefix(key, "MYSQL_") || strings.HasPrefix(key, "MARIADB_") || strings.Contains(key, "PASSWORD") {
+				continue
+			}
+			spec.Env = append(spec.Env, entry)
+		}
+	}
 	if engine == engineRedis {
 		spec.Cmd = redisACLCommand(input.bootstrapPwd, input.ordinaryUser)
 	} else {
@@ -481,7 +507,7 @@ func (d *dockerAPI) create(ctx context.Context, input createInput) (createResult
 		if engine == engineMySQL {
 			prefix = "MYSQL"
 		}
-		spec.Env = []string{prefix + "_ROOT_PASSWORD=" + input.bootstrapPwd}
+		spec.Env = append(spec.Env, prefix+"_ROOT_PASSWORD="+input.bootstrapPwd)
 	}
 	query := url.Values{}
 	query.Set("name", containerName)

@@ -18,6 +18,16 @@ func agentTaskInspector(sites *websites.AgentFacade, apps *containerapps.AgentFa
 			return tools.TaskStatus{}, errors.New("异步任务身份缺失")
 		}
 		switch ref.Domain {
+		case docker.ContainerOperationDomain:
+			task, err := containers.InspectContainerOperation(ctx, ref.ID)
+			if err != nil {
+				return tools.TaskStatus{}, err
+			}
+			if task.RequestID != ref.RequestID {
+				return tools.TaskStatus{}, errors.New("容器操作请求身份不匹配")
+			}
+			terminal := task.State == "succeeded" || task.State == "failed"
+			return tools.TaskStatus{State: task.State, Terminal: terminal, Failed: task.State == "failed", Value: task, Error: task.Message, Progress: agentTaskProgress(task.State, terminal, task.Message, task.UpdatedAt, "正在执行容器操作")}, nil
 		case "database":
 			task, err := databases.InspectTask(ctx, ref.ID)
 			if err != nil {
@@ -109,6 +119,10 @@ func agentTaskLookup(sites *websites.AgentFacade, apps *containerapps.AgentFacad
 			var requestID string
 			var err error
 			switch ref.Domain {
+			case docker.ContainerOperationDomain:
+				var task docker.ContainerOperationTask
+				task, err = containers.InspectContainerOperation(ctx, ref.ID)
+				requestID = task.RequestID
 			case "database":
 				var task database.AgentTask
 				task, err = databases.InspectTask(ctx, ref.ID)
@@ -142,6 +156,12 @@ func agentTaskLookup(sites *websites.AgentFacade, apps *containerapps.AgentFacad
 		}
 		var err error
 		switch ref.Domain {
+		case docker.ContainerOperationDomain:
+			task, err := containers.LookupContainerOperation(ctx, ref.RequestID)
+			if err != nil {
+				return ref, err
+			}
+			ref.ID = task.ID
 		case "database":
 			var task database.AgentTask
 			task, err = databases.LookupTask(ctx, ref.RequestID)
@@ -168,6 +188,8 @@ func agentTaskCanceller(sites *websites.AgentFacade, apps *containerapps.AgentFa
 			return errors.New("后台任务身份缺失")
 		}
 		switch ref.Domain {
+		case docker.ContainerOperationDomain:
+			return containers.CancelContainerOperation(ctx, ref.ID, ref.RequestID)
 		case "database":
 			return databases.CancelOwnedTask(ctx, ref.ID, ref.RequestID)
 		case "website":

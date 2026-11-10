@@ -32,7 +32,9 @@ func TestNativeDatabasePreflightRejectionContinuesAndReleasesBarrier(t *testing.
 		reply := toolReply("database_create")
 		reply.ToolCalls[0].Arguments = json.RawMessage(`{"charset":"utf8mb4","containerName":"mysql","engine":"MySQL","expected":"absent","id":"new:mysql","imageId":"7b16ec7caa94ca7e92f4c5ec287de69d2e8738db056ceb629022951af6d910b","name":"mysql","requestId":"` + strings.Repeat("a", 64) + `","versionTag":"latest"}`)
 		return reply, nil
-	}, func(d *Deps) { d.Tools, d.Catalog = bridge, &Extensions{MountRoot: t.TempDir()} })
+	}, func(d *Deps) {
+		d.Tools, d.Catalog, d.Spawn = bridge, &Extensions{MountRoot: t.TempDir()}, frozenDatabaseSpawn
+	})
 	run, _, err := m.CreateTask(context.Background(), session.ID, AgentInput{RequestID: "investigation-screenshot", Content: "创建 MySQL", ExtensionMode: "enabled", AuthorizationMode: AuthorizationOnDemand})
 	if err != nil {
 		t.Fatal(err)

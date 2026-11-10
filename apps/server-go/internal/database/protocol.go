@@ -832,3 +832,23 @@ func mysqlCellString(value any) string {
 		return fmt.Sprint(v)
 	}
 }
+
+// exists verifies absence before a structured create; it never adopts an
+// existing unregistered database based on its name.
+func (p *protocolAPI) exists(ctx context.Context, row databaseRecord, addr databaseAddress, name string) (bool, error) {
+	if row.Engine == engineRedis {
+		return true, nil
+	}
+	db, err := mysqlConnect(addr, row.Admin, "")
+	if err != nil {
+		return false, err
+	}
+	defer db.Close()
+	queryCtx, cancel := context.WithTimeout(ctx, mysqlQueryTimeout)
+	defer cancel()
+	var count int
+	if err := db.QueryRowContext(queryCtx, "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name = ?", name).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}

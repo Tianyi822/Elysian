@@ -4,6 +4,7 @@ import (
 	"elysian/server/internal/agent/kardia"
 	"elysian/server/internal/agent/tools"
 	domaindocker "elysian/server/internal/docker"
+	"elysian/server/internal/seam"
 	"elysian/server/internal/shared"
 )
 
@@ -110,6 +111,9 @@ func (s *Service) imageDescriptors() []tools.Descriptor {
 }
 
 func agentBusinessError(err error) error {
+	if failure, ok := err.(*seam.AgentContainerError); ok {
+		return &tools.BusinessError{Code: failure.Code, Message: failure.Message, NotDispatched: failure.NotDispatched}
+	}
 	// 不掩盖清理组合错误或其他链路故障。
 	if failure, ok := err.(*domaindocker.AgentError); ok {
 		return &tools.BusinessError{Code: failure.Code, Message: failure.Message, NotDispatched: failure.NotDispatched}

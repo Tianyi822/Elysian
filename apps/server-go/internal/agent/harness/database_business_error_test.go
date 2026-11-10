@@ -2,6 +2,7 @@ package harness
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -11,6 +12,7 @@ import (
 
 	"elysian/server/internal/agent/harness/model"
 	"elysian/server/internal/agent/harness/toolbridge"
+	"elysian/server/internal/agent/harness/worker"
 	"elysian/server/internal/agent/kardia"
 	"elysian/server/internal/agent/tools"
 	databasetools "elysian/server/internal/agent/tools/database"
@@ -40,6 +42,42 @@ func databaseBusinessBridge(t *testing.T) *toolbridge.Bridge {
 	return bridge
 }
 
+// frozenDatabaseSpawn 还原升级前已接受的数据库目录，再运行真实原处理器。
+// 新运行目录的退役由 database_catalog_test 单独核验，兼容测试不为生产增加逃生开关。
+func frozenDatabaseSpawn(context.Context) (worker.Process, error) {
+	return &agentTestProcess{runAgent: func(ctx context.Context, _ string, broker worker.AgentBroker) error {
+		a := broker.(*agentExecution)
+		m := a.manager
+		m.mu.Lock()
+		snapshot := *a.run.Snapshot
+		snapshot.Tools = append([]Capability(nil), snapshot.Tools...)
+		seen := map[string]bool{}
+		for _, capability := range snapshot.Tools {
+			seen[capability.Name] = true
+		}
+		for _, schema := range m.deps.Tools.Schemas() {
+			if !retiredDatabaseTool(schema.Name) || seen[schema.Name] {
+				continue
+			}
+			parameters, _ := json.Marshal(schema.Parameters)
+			snapshot.Tools = append(snapshot.Tools, Capability{Name: schema.Name, Description: schema.Description, Parameters: parameters, Source: "builtin", ReadOnly: schema.Metadata.ReadOnly, Metadata: schema.Metadata, CatalogDigest: digestJSON(schema)})
+		}
+		err := configureLoadingBudget(&snapshot, a.run, "")
+		if err == nil {
+			_, err = m.store.change(ctx, a.run.ID, "restore-legacy-fixture", func(tx *sql.Tx, r *Run) error {
+				r.Snapshot = &snapshot
+				a.run.Snapshot = &snapshot
+				return saveRun(ctx, tx, r)
+			})
+		}
+		m.mu.Unlock()
+		if err != nil {
+			return err
+		}
+		return (&agentTestProcess{}).RunAgent(ctx, a.run.ID, broker)
+	}}, nil
+}
+
 func TestNativeDatabaseBusinessErrorContinuesSameBatchAndPersists(t *testing.T) {
 	bridge := databaseBusinessBridge(t)
 	var step atomic.Int32
@@ -67,7 +105,7 @@ func TestNativeDatabaseBusinessErrorContinuesSameBatchAndPersists(t *testing.T) 
 			}
 			return finalReply("已检查本地镜像，请使用数据库镜像的明确版本"), nil
 		}
-	}, func(d *Deps) { d.Tools, d.Catalog = bridge, &Extensions{} })
+	}, func(d *Deps) { d.Tools, d.Catalog, d.Spawn = bridge, &Extensions{}, frozenDatabaseSpawn })
 	run, _, err := m.CreateTask(context.Background(), session.ID, AgentInput{RequestID: "native-database-business", Content: "检查数据库镜像", ExtensionMode: "enabled", AuthorizationMode: AuthorizationOnDemand})
 	if err != nil {
 		t.Fatal(err)
@@ -220,7 +258,9 @@ func TestSyncWritePrecheckRejectionContinuesRunWithPreciseReason(t *testing.T) {
 			}
 			return finalReply("已提示重新读取登记版本"), nil
 		}
-	}, func(d *Deps) { d.Tools, d.Catalog = bridge, &Extensions{MountRoot: "/srv"} })
+	}, func(d *Deps) {
+		d.Tools, d.Catalog, d.Spawn = bridge, &Extensions{MountRoot: "/srv"}, frozenDatabaseSpawn
+	})
 	run, _, err := m.CreateTask(context.Background(), session.ID, AgentInput{RequestID: "sync-precheck", Content: "删除数据库容器", AuthorizationMode: AuthorizationOnDemand, PermissionMode: PermissionFull})
 	if err != nil {
 		t.Fatal(err)
@@ -262,7 +302,9 @@ func TestSyncWriteExecutionFailureStopsRunWithPreciseReason(t *testing.T) {
 		reply := toolReply("database_container_remove")
 		reply.ToolCalls[0].Arguments = json.RawMessage(`{"id":"db-1","expected":"current"}`)
 		return reply, nil
-	}, func(d *Deps) { d.Tools, d.Catalog = bridge, &Extensions{MountRoot: "/srv"} })
+	}, func(d *Deps) {
+		d.Tools, d.Catalog, d.Spawn = bridge, &Extensions{MountRoot: "/srv"}, frozenDatabaseSpawn
+	})
 	run, _, err := m.CreateTask(context.Background(), session.ID, AgentInput{RequestID: "sync-execfail", Content: "删除数据库容器", AuthorizationMode: AuthorizationOnDemand, PermissionMode: PermissionFull})
 	if err != nil {
 		t.Fatal(err)

@@ -45,7 +45,7 @@ func (m *Manager) authorizeDispatch(ctx context.Context, s CapabilitySnapshot, o
 		return nil, err
 	}
 	binding := tools.AuthorizationBinding{OperationID: o.ID, DispatchID: o.DispatchID, Tool: o.Capability.Name, ArgumentsDigest: tools.ArgumentsDigest(args), SnapshotDigest: s.Digest, CatalogID: s.Digest}
-	return m.toolAuthority.Authorize(ctx, binding, o, func(checkCtx context.Context) error {
+	authorized, err := m.toolAuthority.Authorize(ctx, binding, o, func(checkCtx context.Context) error {
 		if err := m.store.recordsFault(); err != nil {
 			return err
 		}
@@ -86,6 +86,10 @@ func (m *Manager) authorizeDispatch(ctx context.Context, s CapabilitySnapshot, o
 		}
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return tools.WithFrozenMetadata(authorized, o.Capability.Metadata), nil
 }
 
 func capabilityMetadata(c Capability) tools.Metadata {
@@ -234,7 +238,7 @@ func (m *Manager) executeRegistryOperation(ctx context.Context, s CapabilitySnap
 		matched := false
 		if m.deps.Tools != nil {
 			for _, schema := range m.deps.Tools.Schemas() {
-				if schema.Name == o.Capability.Name && (digestJSON(schema) == o.Capability.CatalogDigest || legacyFileCatalogCompatible(s, o, schema) || legacyDatabaseDiscoverCatalogCompatible(o, schema) || legacyDatabaseCreateCatalogCompatible(o, schema)) {
+				if schema.Name == o.Capability.Name && (digestJSON(schema) == o.Capability.CatalogDigest || legacyFileCatalogCompatible(s, o, schema) || legacyDatabaseDiscoverCatalogCompatible(o, schema) || legacyDatabaseCreateCatalogCompatible(o, schema) || legacyDockerContainerCatalogCompatible(o, schema)) {
 					matched = true
 				}
 			}

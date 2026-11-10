@@ -81,6 +81,9 @@ func (f *AgentFacade) Metadata(ctx context.Context, id string) (any, error) {
 	if err := f.check(ctx); err != nil {
 		return nil, err
 	}
+	return f.metadata(ctx, id)
+}
+func (f *AgentFacade) metadata(ctx context.Context, id string) (any, error) {
 	row, err := f.service.record(id)
 	if err != nil {
 		return nil, errors.New("数据库不存在")
@@ -278,6 +281,9 @@ func (f *AgentFacade) lifecycleAgent(ctx context.Context, id, expected, action s
 	}
 	if expected == "" || agentRecordDigest(row) != expected {
 		return nil, &AgentLifecycleRejectedError{Message: "数据库登记版本已变化，请重新读取并审批"}
+	}
+	if err := s.checkContainerMutation(ctx, row.ContainerID, row.ContainerName); err != nil {
+		return nil, lifecycleFailure(err)
 	}
 	switch action {
 	case "reconcile":

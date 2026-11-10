@@ -113,3 +113,15 @@ func Payload(ctx context.Context) any {
 	}
 	return nil
 }
+
+// FrozenMetadata is set by the harness from the already validated immutable
+// operation. Model arguments cannot opt into legacy backend behavior.
+type frozenMetadataKey struct{}
+
+func WithFrozenMetadata(ctx context.Context, metadata Metadata) context.Context {
+	return context.WithValue(ctx, frozenMetadataKey{}, metadata)
+}
+func FrozenMetadata(ctx context.Context) Metadata {
+	metadata, _ := ctx.Value(frozenMetadataKey{}).(Metadata)
+	return metadata
+}
