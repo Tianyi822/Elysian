@@ -108,19 +108,21 @@ type OperationFileChange struct {
 	After  *OperationFileContent `json:"after,omitempty"`
 }
 type Operation struct {
-	Preparation     *RuntimePreparation     `json:"preparation,omitempty"`
-	Access          *AccessRequest          `json:"access,omitempty"`
-	Authorization   *OperationAuthorization `json:"authorization,omitempty"`
-	FileRoot        *FileRootIdentity       `json:"fileRoot,omitempty"`
-	FileChanges     []OperationFileChange   `json:"fileChanges,omitempty"`
-	Task            *tools.TaskReference    `json:"task,omitempty"`
-	PendingResult   json.RawMessage         `json:"pendingResult,omitempty"`
-	ScopeID         string                  `json:"scopeId,omitempty"`
-	NodeID          string                  `json:"nodeId,omitempty"`
-	Source          string                  `json:"source,omitempty"`
-	WorkflowID      string                  `json:"workflowId,omitempty"`
-	WorkflowStepID  string                  `json:"workflowStepId,omitempty"`
-	WorkflowAttempt int                     `json:"workflowAttempt,omitempty"`
+	Preparation             *RuntimePreparation     `json:"preparation,omitempty"`
+	Access                  *AccessRequest          `json:"access,omitempty"`
+	Authorization           *OperationAuthorization `json:"authorization,omitempty"`
+	FileRoot                *FileRootIdentity       `json:"fileRoot,omitempty"`
+	FileChanges             []OperationFileChange   `json:"fileChanges,omitempty"`
+	Task                    *tools.TaskReference    `json:"task,omitempty"`
+	PendingResult           json.RawMessage         `json:"pendingResult,omitempty"`
+	TaskObservationFailedAt string                  `json:"taskObservationFailedAt,omitempty"`
+	ResourceWait            *ResourceWait           `json:"resourceWait,omitempty"`
+	ScopeID                 string                  `json:"scopeId,omitempty"`
+	NodeID                  string                  `json:"nodeId,omitempty"`
+	Source                  string                  `json:"source,omitempty"`
+	WorkflowID              string                  `json:"workflowId,omitempty"`
+	WorkflowStepID          string                  `json:"workflowStepId,omitempty"`
+	WorkflowAttempt         int                     `json:"workflowAttempt,omitempty"`
 
 	ID                string          `json:"id"`
 	RunID             string          `json:"runId"`
@@ -173,17 +175,18 @@ type Approval struct {
 	Operation   Operation `json:"operation"`
 }
 type ExecutionBarrier struct {
-	ScopeID      string `json:"scopeId,omitempty"`
-	NodeID       string `json:"nodeId,omitempty"`
-	WorkflowID   string `json:"workflowId,omitempty"`
-	ID           string `json:"id"`
-	RunID        string `json:"runId"`
-	OperationID  string `json:"operationId"`
-	Status       string `json:"status"`
-	CreatedAt    string `json:"createdAt"`
-	Evidence     string `json:"evidence,omitempty"`
-	Decision     string `json:"decision,omitempty"`
-	ReconciledAt string `json:"reconciledAt,omitempty"`
+	ScopeID        string                    `json:"scopeId,omitempty"`
+	NodeID         string                    `json:"nodeId,omitempty"`
+	WorkflowID     string                    `json:"workflowId,omitempty"`
+	ID             string                    `json:"id"`
+	RunID          string                    `json:"runId"`
+	OperationID    string                    `json:"operationId"`
+	Status         string                    `json:"status"`
+	CreatedAt      string                    `json:"createdAt"`
+	Evidence       string                    `json:"evidence,omitempty"`
+	Decision       string                    `json:"decision,omitempty"`
+	ReconciledAt   string                    `json:"reconciledAt,omitempty"`
+	Reconciliation *tools.TaskReconciliation `json:"reconciliation,omitempty"`
 }
 type ContextItem struct {
 	ID        string      `json:"id"`

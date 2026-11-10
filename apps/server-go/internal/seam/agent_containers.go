@@ -49,6 +49,8 @@ type AgentContainerError struct {
 	Code          string
 	Message       string
 	NotDispatched bool
+	// NoBusinessEffect means an accepted task failed before its first mutation.
+	NoBusinessEffect bool
 }
 
 func (e *AgentContainerError) Error() string { return e.Message }

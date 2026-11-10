@@ -4,15 +4,21 @@ import "encoding/json"
 
 // toolExecutionFact 同时供时间线和模型上下文投影使用；缺少回执不等于已派发。
 type toolExecutionFact struct {
-	Status    string
-	StartedAt string
-	EndedAt   string
-	Error     *Failure
+	Status       string
+	StartedAt    string
+	EndedAt      string
+	Error        *Failure
+	ResourceWait *ResourceWait
 }
 
 func projectToolExecution(run Run, operation *Operation, call *Call, approval *Approval) toolExecutionFact {
 	fact := toolExecutionFact{Status: "planned"}
 	if operation != nil {
+		waitEndedAt := operation.EndedAt
+		if terminal(run.Status) {
+			waitEndedAt = run.EndedAt
+		}
+		fact.ResourceWait = resourceWaitSnapshot(operation.ResourceWait, waitEndedAt)
 		fact.Status, fact.Error = operation.Status, operation.Error
 		fact.StartedAt, fact.EndedAt = operation.CreatedAt, operation.EndedAt
 		switch operation.Status {
@@ -57,7 +63,9 @@ func toolFactContent(fact toolExecutionFact, call *Call) string {
 	var value any
 	switch fact.Status {
 	case "not-executed":
-		value = map[string]any{"error": Failure{Code: "tool-not-executed", Message: "运行已结束，该工具提议未派发、未执行"}}
+		value = map[string]any{"error": Failure{Code: "tool-not-executed", Message: "运行已结束，该工具提议未派发、未执行"}, "resourceWait": fact.ResourceWait}
+	case StateWaitingResource:
+		value = map[string]any{"error": Failure{Code: "resource-waiting", Message: "等待资源，该工具未派发、未执行"}, "resourceWait": fact.ResourceWait}
 	case "denied", "expired", "revoked":
 		value = map[string]any{"error": Failure{Code: "tool-" + fact.Status, Message: "该工具提议未获有效批准，未执行"}}
 	default:

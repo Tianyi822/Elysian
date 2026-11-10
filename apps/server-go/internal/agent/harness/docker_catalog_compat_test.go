@@ -9,6 +9,9 @@ import (
 )
 
 func dockerLegacyOperation(schema tools.PublicSchema) Operation {
+	if previous, ok := previousDockerReceiptSchema(schema); ok {
+		schema = previous
+	}
 	legacy := schema
 	legacy.Metadata.Version = "1"
 	if schema.Name == "docker_container_create_service" {
@@ -51,7 +54,7 @@ func TestDockerContainerCatalogCompatibilityOnlyAcceptsFrozenVersionChange(t *te
 			if digestJSON(operation) != beforeOperation || digestJSON(schema) != beforeSchema {
 				t.Fatal("兼容核验改写了冻结快照或当前目录")
 			}
-			for _, mutation := range []string{"source", "digest", "description", "metadata", "parameters", "arguments"} {
+			for _, mutation := range []string{"source", "digest", "description", "metadata", "parameters", "arguments", "readonly"} {
 				t.Run(mutation, func(t *testing.T) {
 					operation := dockerLegacyOperation(schema)
 					var current tools.PublicSchema
@@ -70,6 +73,8 @@ func TestDockerContainerCatalogCompatibilityOnlyAcceptsFrozenVersionChange(t *te
 						current.Parameters["additionalProperties"] = true
 					case "arguments":
 						operation.ArgumentsJSON = `{"unapproved":true}`
+					case "readonly":
+						operation.Capability.ReadOnly = !operation.Capability.ReadOnly
 					}
 					if legacyDockerContainerCatalogCompatible(operation, current) {
 						t.Fatal("兼容核验放宽了冻结工具约束")
@@ -82,4 +87,27 @@ func TestDockerContainerCatalogCompatibilityOnlyAcceptsFrozenVersionChange(t *te
 	if checked != 6 {
 		t.Fatalf("没有覆盖全部升级工具: %d", checked)
 	}
+}
+
+// This fixture is the published exec v1 definition, independent of current descriptors.
+func TestDockerExecFrozenV1SchemaSurvivesReceiptDocumentationUpdate(t *testing.T) {
+	text := tools.Schema{Type: tools.SchemaString}
+	old := tools.PublicSchema{Name: "docker_container_exec", Description: "在精确受管容器中执行argv命令，或通过databaseChange同步创建/删除受管逻辑库及登记；两者互斥。受管数据库禁止任意argv，先inspect取得revision。密码由后端处理，不传入参数。requestId精确重试复用。Redis remove仅清空DB0并保留登记。异步等待由系统监视器完成。", Parameters: tools.Schema{Type: tools.SchemaObject, Required: []string{"id", "requestId"}, Properties: map[string]tools.Schema{"id": text, "requestId": text, "argv": {Type: tools.SchemaArray, Items: &text}, "workdir": text, "databaseChange": {Type: tools.SchemaObject, Required: []string{"action", "name", "expectedRevision"}, Properties: map[string]tools.Schema{"action": {Type: tools.SchemaString, Enum: tools.EnumOf("create", "remove")}, "name": text, "expectedRevision": text, "charset": text}}}}.JSONSchema(), Metadata: tools.Metadata{Domain: "docker", Backend: "domain", Action: "exec", Effect: "execute", Exposure: "agent", ResourceType: "docker-container", ResourceKeyArgument: "id", Version: "1", Async: true, TaskDomain: "docker-container-operation", TaskRequestArgument: "requestId"}}
+	parameters, _ := json.Marshal(old.Parameters)
+	op := Operation{ArgumentsJSON: `{"id":"` + strings.Repeat("c", 64) + `","requestId":"` + strings.Repeat("a", 64) + `","argv":["true"]}`, Capability: Capability{Name: old.Name, Description: old.Description, Source: "builtin", Metadata: old.Metadata, Parameters: parameters, CatalogDigest: digestJSON(old)}}
+	bridge, _ := dockerCatalogBridge(t)
+	for _, schema := range bridge.Schemas() {
+		if schema.Name == old.Name {
+			if !legacyDockerContainerCatalogCompatible(op, schema) {
+				t.Fatal("fixed v1 snapshot rejected")
+			}
+			changed := op
+			changed.Capability.CatalogDigest = "altered"
+			if legacyDockerContainerCatalogCompatible(changed, schema) {
+				t.Fatal("digest check bypassed")
+			}
+			return
+		}
+	}
+	t.Fatal("exec missing")
 }

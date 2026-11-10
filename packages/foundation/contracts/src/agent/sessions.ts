@@ -307,6 +307,16 @@ export type AgentTaskProgress = {
   currentBytes?: number
   totalBytes?: number
 }
+/** 当前工具尚未派发时的资源阻塞事实，不包含凭据或原操作参数。 */
+export type AgentResourceWait = {
+  resource: string
+  runId?: string
+  operationId?: string
+  since: string
+  elapsedSeconds: number
+  message: string
+  unknown: boolean
+}
 type AgentChatTimelineEntryBase = {
   id: string
   modelRequestId: string
@@ -316,7 +326,7 @@ type AgentChatTimelineEntryBase = {
 }
 export type AgentChatTimelineEntry = AgentChatTimelineEntryBase & (
   { kind: 'reasoning' | 'content'; text: string; status: RuntimeRunStatus; incomplete: boolean }
-  | { kind: 'tool'; tool: string; modelCallId: string; callIndex: number; argumentsJson: string; callId?: string; status: AgentChatToolStatus; error?: RuntimeFailure; truncated: boolean; progress?: AgentTaskProgress }
+  | { kind: 'tool'; tool: string; modelCallId: string; callIndex: number; argumentsJson: string; callId?: string; status: AgentChatToolStatus; error?: RuntimeFailure; truncated: boolean; progress?: AgentTaskProgress; resourceWait?: AgentResourceWait }
   | { kind: 'user-input'; userInput: AgentUserInputRequest }
 )
 /** 最近一次推理输入及输出组成的近似 token 数，不作为供应商计费或实测用量。 */

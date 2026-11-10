@@ -6,6 +6,11 @@ package harness
 // from the immutable Run snapshot. Every original approval field still has to
 // match exactly; the persisted Approval.Operation is never rewritten.
 func approvedOperationMatches(approved, current Operation) bool {
+	// Waiting is an observation before dispatch, not a change to the approved operation.
+	if current.Status == StateWaitingResource && current.DispatchID == "" && current.DispatchedAt == "" && approved.Status == StateWaitingApproval {
+		current.Status = approved.Status
+		current.ResourceWait = approved.ResourceWait
+	}
 	if approved.Access != nil {
 		current.Authorization = approved.Authorization
 		current.Preparation = approved.Preparation

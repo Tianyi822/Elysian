@@ -163,9 +163,6 @@ func (m *Manager) promoteResourceWaiters(ctx context.Context) (int, error) {
 			if r.Status != StateWaitingResource {
 				continue
 			}
-			if queued >= r.Limits.QueueCapacity {
-				continue
-			}
 			o, err := readOperation(ctx, tx, lease.OperationID)
 			if err != nil {
 				return err
@@ -175,6 +172,24 @@ func (m *Manager) promoteResourceWaiters(ctx context.Context) (int, error) {
 				return err
 			}
 			if !available {
+				previous := digestJSON(o.ResourceWait)
+				o.Status = StateWaitingResource
+				o.ResourceWait, err = resourceWaitReason(ctx, tx, o, stamp(m.deps.Now()))
+				if err != nil {
+					return err
+				}
+				if o.ResourceWait.Unknown {
+					if err := interruptResourceWaiter(ctx, tx, m.store, &r, o, stamp(m.deps.Now())); err != nil {
+						return err
+					}
+				} else if previous != digestJSON(o.ResourceWait) {
+					if err := saveOperation(ctx, tx, o); err != nil {
+						return err
+					}
+				}
+				continue
+			}
+			if queued >= r.Limits.QueueCapacity {
 				continue
 			}
 			r.Status = StateQueued

@@ -40,3 +40,22 @@ func TestLegacyApprovalAllowsOnlyReconstructedSchedulingMetadata(t *testing.T) {
 		t.Fatal("v5 resource approval binding was ignored")
 	}
 }
+
+func TestApprovalResourceWaitingChangesOnlySchedulingObservation(t *testing.T) {
+	approved := Operation{Status: StateWaitingApproval, ArgumentsJSON: `{"id":"fixed"}`, ApprovalID: "approval", ClaimsDigest: "claims"}
+	waiting := approved
+	waiting.Status = StateWaitingResource
+	waiting.ResourceWait = &ResourceWait{OperationID: "holder", Message: "等待资源"}
+	if !approvedOperationMatches(approved, waiting) {
+		t.Fatal("waiting observation invalidated approval")
+	}
+	waiting.ArgumentsJSON = `{"id":"changed"}`
+	if approvedOperationMatches(approved, waiting) {
+		t.Fatal("waiting bypassed argument binding")
+	}
+	waiting.ArgumentsJSON = approved.ArgumentsJSON
+	waiting.DispatchID = "already-dispatched"
+	if approvedOperationMatches(approved, waiting) {
+		t.Fatal("accepted a dispatched operation as a waiter")
+	}
+}

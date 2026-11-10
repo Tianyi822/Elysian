@@ -33,18 +33,35 @@ type ContainerExecInput struct {
 }
 
 type ContainerOperationTask struct {
-	ID              string          `json:"id"`
-	RequestID       string          `json:"requestId"`
-	Target          string          `json:"target"`
-	Digest          string          `json:"digest"`
-	State           string          `json:"state"`
-	Stage           string          `json:"stage"`
-	UpdatedAt       string          `json:"updatedAt"`
-	CancelRequested bool            `json:"cancelRequested"`
-	Result          json.RawMessage `json:"result,omitempty"`
-	Message         string          `json:"message,omitempty"`
-	ErrorCode       string          `json:"errorCode,omitempty"`
-	ExecID          string          `json:"execId,omitempty"`
+	ID              string                        `json:"id"`
+	RequestID       string                        `json:"requestId"`
+	Target          string                        `json:"target"`
+	Digest          string                        `json:"digest"`
+	State           string                        `json:"state"`
+	Stage           string                        `json:"stage"`
+	UpdatedAt       string                        `json:"updatedAt"`
+	CancelRequested bool                          `json:"cancelRequested"`
+	Result          json.RawMessage               `json:"result,omitempty"`
+	Message         string                        `json:"message,omitempty"`
+	ErrorCode       string                        `json:"errorCode,omitempty"`
+	ExecID          string                        `json:"execId,omitempty"`
+	Resolution      *ContainerOperationResolution `json:"resolution,omitempty"`
+}
+
+type ContainerOperationResolution struct {
+	ID        string `json:"id"`
+	TaskID    string `json:"taskId"`
+	RequestID string `json:"requestId"`
+	Target    string `json:"target"`
+	Digest    string `json:"digest"`
+	Decision  string `json:"decision"`
+	Evidence  string `json:"evidence"`
+}
+
+// AgentOperationReceipt excludes private administrative reconciliation evidence.
+func AgentOperationReceipt(task ContainerOperationTask) ContainerOperationTask {
+	task.Resolution = nil
+	return task
 }
 
 func (a *AgentFacade) SetDatabaseContainers(bridge seam.AgentDatabaseContainers) {
@@ -89,6 +106,9 @@ func (a *AgentFacade) loadContainerOperations() error {
 		if json.Unmarshal(raw, &task) != nil || task.ID != operationID(task.RequestID) || !agentOperationIDPattern.MatchString(task.RequestID) || filepath.Base(file) != task.ID+".json" || task.ExecID != "" && !agentOperationIDPattern.MatchString(task.ExecID) {
 			return errors.New("容器操作任务记录损坏")
 		}
+		if task.Resolution != nil && (!validContainerResolution(*task.Resolution, task) || task.State != "unknown" && task.State != "succeeded" && task.State != "failed") {
+			return errors.New("容器操作核实记录身份无效")
+		}
 		switch task.State {
 		case "running":
 			task.State = "unknown"
@@ -116,6 +136,9 @@ func (a *AgentFacade) updateContainerOperation(id string, update func(*Container
 	if !ok {
 		return errors.New("容器操作任务不存在")
 	}
+	if task.Resolution != nil {
+		return nil
+	} // A late receipt cannot reopen an administratively resolved task.
 	update(&task)
 	task.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	if err := config.AtomicJSON(filepath.Join(a.operationRoot, id+".json"), &task); err != nil {
@@ -151,7 +174,7 @@ func (a *AgentFacade) submitContainerOperation(requestID, target string, input a
 		return task, nil
 	}
 	for _, task := range a.operations {
-		if task.Target == target && (task.State == "running" || task.State == "unknown") {
+		if task.Target == target && (task.State == "running" || task.State == "unknown") && task.Resolution == nil {
 			return ContainerOperationTask{}, shared.InvalidRequest("此容器已有进行中或结果未确认的操作")
 		}
 	}
@@ -187,7 +210,7 @@ func (a *AgentFacade) submitContainerOperation(requestID, target string, input a
 				if safe, ok := runErr.(*seam.AgentContainerError); ok {
 					t.Message = safe.Message
 					t.ErrorCode = safe.Code
-					if safe.NotDispatched {
+					if safe.NotDispatched || safe.NoBusinessEffect {
 						t.State = "failed"
 					}
 				}
@@ -304,7 +327,7 @@ func (a *AgentFacade) CheckContainerMutation(ctx context.Context, id, name, ownR
 	}
 	needsName := false
 	for _, task := range a.operations {
-		if task.RequestID == ownRequestID || task.State != "running" && task.State != "unknown" {
+		if task.RequestID == ownRequestID || task.Resolution != nil || task.State != "running" && task.State != "unknown" {
 			continue
 		}
 		if id != "" && task.Target == id || name != "" && task.Target == "name:"+name {
@@ -347,6 +370,10 @@ func (a *AgentFacade) InspectContainerOperation(ctx context.Context, id string) 
 		return ContainerOperationTask{}, shared.InvalidRequest("容器操作任务不存在")
 	}
 	task.Result = append(json.RawMessage(nil), task.Result...)
+	if task.Resolution != nil {
+		copy := *task.Resolution
+		task.Resolution = &copy
+	}
 	return task, nil
 }
 func (a *AgentFacade) LookupContainerOperation(ctx context.Context, requestID string) (ContainerOperationTask, error) {

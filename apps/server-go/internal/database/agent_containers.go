@@ -161,9 +161,10 @@ func (b *containerBridge) PrepareCreate(ctx context.Context, input seam.AgentSer
 	validated.ServiceOptions = &input
 	return func(ctx context.Context) (any, error) {
 		ctx = context.WithValue(ctx, containerOperationRequestKey{}, input.RequestID)
-		response, err := b.facade.service.Create(ctx, validated)
+		effects := false
+		response, err := b.facade.service.createWithReceipt(ctx, validated, &effects)
 		if err != nil {
-			return nil, bridgeFailure(err, false)
+			return nil, bridgeFailure(err, !effects)
 		}
 		response.Instance.CredentialUsername, response.Instance.MetricsError = "", ""
 		return map[string]any{"database": response.Instance, "firewallPort": response.FirewallPort}, nil
@@ -219,14 +220,15 @@ func (b *containerBridge) PrepareChange(ctx context.Context, id, requestID strin
 		defer s.mutationMu.Unlock()
 		current, err := b.rows(id)
 		if err != nil {
-			return nil, err
+			return nil, bridgeFailure(err, true)
 		}
 		if containerRevision(current) != change.ExpectedRevision {
-			return nil, bridgeFailure(shared.InvalidRequest("数据库登记已变化，操作未派发"), true)
+			return nil, bridgeFailure(shared.InvalidRequest("数据库登记已变化"), true)
 		}
 		if change.Action == "remove" {
-			if err := s.remove(ctx, target.ID); err != nil {
-				return nil, bridgeFailure(err, false)
+			effects := false
+			if err := s.removeTracked(ctx, target.ID, &effects); err != nil {
+				return nil, bridgeFailure(err, !effects)
 			}
 			return map[string]any{"containerId": id, "name": change.Name, "removed": true}, nil
 		}
@@ -253,9 +255,10 @@ func (b *containerBridge) PrepareChange(ctx context.Context, id, requestID strin
 				return nil, bridgeFailure(shared.InvalidRequest("目标逻辑库已存在但未登记，不能自动接管"), true)
 			}
 		}
-		response, err := s.create(ctx, validated)
+		effects := false
+		response, err := s.createTracked(ctx, validated, &effects)
 		if err != nil {
-			return nil, bridgeFailure(err, false)
+			return nil, bridgeFailure(err, !effects)
 		}
 		response.Instance.CredentialUsername, response.Instance.MetricsError = "", ""
 		return map[string]any{"database": response.Instance}, nil
@@ -369,7 +372,7 @@ func (b *containerBridge) Lifecycle(ctx context.Context, id, action string) (boo
 	}
 	return true, bridgeFailure(docker.agentControl(ctx, row, action, s.deps.selfContainerID), false)
 }
-func bridgeFailure(err error, notDispatched bool) error {
+func bridgeFailure(err error, noBusinessEffect bool) error {
 	if err == nil {
 		return nil
 	}
@@ -380,5 +383,8 @@ func bridgeFailure(err error, notDispatched bool) error {
 	if invalid, ok := err.(*shared.InvalidRequestError); ok {
 		message = invalid.Message
 	}
-	return &seam.AgentContainerError{Code: "database-container-operation-failed", Message: message, NotDispatched: notDispatched}
+	if noBusinessEffect {
+		message += "，数据库变更未执行"
+	}
+	return &seam.AgentContainerError{Code: "database-container-operation-failed", Message: message, NoBusinessEffect: noBusinessEffect}
 }

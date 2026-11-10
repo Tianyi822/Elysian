@@ -114,6 +114,9 @@ func budgetContinuationCandidate(r Run) bool {
 	if r.BudgetStop != nil {
 		return true
 	}
+	if r.Status == StateInterrupted && (r.EndReason == "outcome-unknown" || r.EndReason == "resource-outcome-unknown") {
+		return true
+	}
 	reason := r.EndReason
 	if r.Error != nil {
 		reason = r.Error.Code
@@ -150,6 +153,11 @@ func continuation(ctx context.Context, q rowReader, r Run) (*Continuation, error
  EXISTS(SELECT 1 FROM resource_leases l JOIN runs r ON r.id=l.run_id WHERE r.session_id=? AND l.state IN ('held','unknown')) OR
  EXISTS(SELECT 1 FROM calls c JOIN runs r ON r.id=c.run_id WHERE r.session_id=? AND c.state IN ('running','interrupted','recovery-required') AND NOT EXISTS(SELECT 1 FROM execution_barriers b WHERE b.operation_id=json_extract(c.document,'$.operationId') AND b.state='reconciled'))`, r.SessionID, r.SessionID, r.SessionID, r.SessionID).Scan(&unknown); err != nil {
 		return nil, err
+	}
+	if !unknown {
+		if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM operations o JOIN resource_leases l ON l.operation_id=json_extract(o.document,'$.resourceWait.operationId') WHERE o.run_id=? AND l.state IN ('held','unknown')) OR EXISTS(SELECT 1 FROM operations o JOIN execution_barriers b ON b.operation_id=json_extract(o.document,'$.resourceWait.operationId') WHERE o.run_id=? AND b.state IN ('dispatched','unknown'))`, r.ID, r.ID).Scan(&unknown); err != nil {
+			return nil, err
+		}
 	}
 	if unknown {
 		out.BlockedReason = "存在结果未知或尚未释放的操作，请先核实实际状态"

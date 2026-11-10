@@ -130,3 +130,61 @@ func TestDomainProgressSurvivesRefreshWithoutModelCallsOrActiveTime(t *testing.T
 }
 
 func floatPointer(value float64) *float64 { return &value }
+
+func TestDomainUnknownProgressUsesDurableReasonAfterRefresh(t *testing.T) {
+	var unknown atomic.Bool
+	ref := tools.TaskReference{Domain: "test-domain", ID: "unknown-progress-task", RequestID: "unknown-progress-request"}
+	reason := "任务状态无法确认，须核实实际状态，禁止自动重投"
+	m, session, _ := agentManager(t, operationClient(), func(d *Deps) {
+		d.Catalog = &operationCatalog{execute: func(context.Context, Operation) (CapabilityResult, error) {
+			return CapabilityResult{Task: &ref}, nil
+		}}
+		d.InspectTask = func(context.Context, tools.TaskReference) (tools.TaskStatus, error) {
+			if unknown.Load() {
+				return tools.TaskStatus{Outcome: tools.TaskUnknown, ErrorCode: "task-observation-unavailable", Error: reason}, nil
+			}
+			return tools.TaskStatus{Outcome: tools.TaskRunning, Progress: &tools.TaskProgress{State: "running", Message: "正在执行容器操作"}}, nil
+		}
+	})
+	run := submitAgentTest(t, m, session, "unknown-progress", "执行异步任务")
+	approval := waitingApproval(t, m, run.ID)
+	if _, err := m.Decide(m.ctx, approval.ID, "approved"); err != nil {
+		t.Fatal(err)
+	}
+	runtimeEventually(t, func() bool {
+		out, _ := m.ChatSnapshot(m.ctx, run.ID)
+		if out.Timeline != nil {
+			for _, entry := range out.Timeline.Entries {
+				if entry.Progress != nil && entry.Progress.Message == "正在执行容器操作" {
+					return true
+				}
+			}
+		}
+		return false
+	})
+	unknown.Store(true)
+	if got := runtimeFinished(t, m, run.ID); got.Status != StateInterrupted {
+		t.Fatalf("%+v", got)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		out, err := m.ChatSnapshot(m.ctx, run.ID)
+		if err != nil || out.Timeline == nil {
+			t.Fatalf("%+v %v", out, err)
+		}
+		found := false
+		for _, entry := range out.Timeline.Entries {
+			if entry.Status == "unknown" {
+				found = true
+				if entry.Progress == nil || entry.Progress.State != "unknown" || entry.Progress.Message != reason || entry.Progress.LayerID != "" {
+					t.Fatalf("stale progress: %+v", entry)
+				}
+			}
+		}
+		if !found {
+			t.Fatal("missing unknown tool")
+		}
+		if attempt == 0 {
+			m = reopenOperationManager(t, m)
+		}
+	}
+}

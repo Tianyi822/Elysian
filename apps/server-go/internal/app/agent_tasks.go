@@ -2,6 +2,9 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"math"
 
@@ -11,6 +14,80 @@ import (
 	"elysian/server/internal/docker"
 	"elysian/server/internal/websites"
 )
+
+func taskOutcome(state string, terminal, failed bool) tools.TaskOutcome {
+	if terminal {
+		if failed {
+			return tools.TaskFailed
+		}
+		return tools.TaskSucceeded
+	}
+	if state == "running" || state == "queued" || state == "pending" {
+		return tools.TaskRunning
+	}
+	return tools.TaskUnknown
+}
+
+func normalizedTaskStatus(state string, terminal, failed bool, value any, code, message string, progress *tools.TaskProgress) tools.TaskStatus {
+	outcome := taskOutcome(state, terminal, failed)
+	if outcome == tools.TaskUnknown && message == "" {
+		message = "任务结果未确认，须核实实际状态，禁止自动重投"
+	}
+	if outcome == tools.TaskUnknown && code == "" {
+		code = "domain-task-unknown"
+	}
+	return tools.TaskStatus{Outcome: outcome, State: state, Terminal: terminal, Failed: failed, Value: value, ErrorCode: code, Error: message, Progress: progress}
+}
+
+func agentTaskReconciler(sites *websites.AgentFacade, apps *containerapps.AgentFacade, containers *docker.AgentFacade, databases *database.AgentFacade) func(context.Context, tools.TaskReconciliation) error {
+	inspect := agentTaskInspector(sites, apps, containers, databases)
+	return func(ctx context.Context, intent tools.TaskReconciliation) error {
+		if intent.Task.Domain != docker.ContainerOperationDomain {
+			status, err := inspect(ctx, intent.Task)
+			if err != nil {
+				return err
+			}
+			if status.EffectiveOutcome() == tools.TaskSucceeded || status.EffectiveOutcome() == tools.TaskFailed {
+				return nil
+			}
+			return errors.New("域任务尚无可核实的结束回执")
+		}
+		var input any
+		var target string
+		switch intent.Tool {
+		case "docker_container_exec":
+			var value docker.ContainerExecInput
+			if err := json.Unmarshal([]byte(intent.ArgumentsJSON), &value); err != nil {
+				return err
+			}
+			if value.RequestID != intent.Task.RequestID {
+				return errors.New("容器操作原始请求身份不匹配")
+			}
+			input, target = value, value.ID
+		case "docker_container_create_service":
+			var value docker.AgentServiceCreateInput
+			if err := json.Unmarshal([]byte(intent.ArgumentsJSON), &value); err != nil {
+				return err
+			}
+			if value.RequestID != intent.Task.RequestID {
+				return errors.New("容器操作原始请求身份不匹配")
+			}
+			input, target = value, "name:"+value.Name
+		default:
+			return errors.New("无法核对容器操作的原始输入")
+		}
+		raw, err := json.Marshal(input)
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256(raw)
+		digest := hex.EncodeToString(sum[:])
+		if intent.Task.Target != "" && intent.Task.Target != target || intent.Task.Digest != "" && intent.Task.Digest != digest {
+			return errors.New("容器操作受理摘要不匹配")
+		}
+		return containers.ReconcileContainerOperation(ctx, docker.ContainerOperationResolution{ID: intent.ID, TaskID: intent.Task.ID, RequestID: intent.Task.RequestID, Target: target, Digest: digest, Decision: intent.Decision, Evidence: intent.Evidence})
+	}
+}
 
 func agentTaskInspector(sites *websites.AgentFacade, apps *containerapps.AgentFacade, containers *docker.AgentFacade, databases *database.AgentFacade) func(context.Context, tools.TaskReference) (tools.TaskStatus, error) {
 	return func(ctx context.Context, ref tools.TaskReference) (tools.TaskStatus, error) {
@@ -23,11 +100,11 @@ func agentTaskInspector(sites *websites.AgentFacade, apps *containerapps.AgentFa
 			if err != nil {
 				return tools.TaskStatus{}, err
 			}
-			if task.RequestID != ref.RequestID {
+			if task.RequestID != ref.RequestID || ref.Target != "" && ref.Target != task.Target || ref.Digest != "" && ref.Digest != task.Digest {
 				return tools.TaskStatus{}, errors.New("容器操作请求身份不匹配")
 			}
 			terminal := task.State == "succeeded" || task.State == "failed"
-			return tools.TaskStatus{State: task.State, Terminal: terminal, Failed: task.State == "failed", Value: task, Error: task.Message, Progress: agentTaskProgress(task.State, terminal, task.Message, task.UpdatedAt, "正在执行容器操作")}, nil
+			return normalizedTaskStatus(task.State, terminal, task.State == "failed", docker.AgentOperationReceipt(task), task.ErrorCode, task.Message, agentTaskProgress(task.State, terminal, task.Message, task.UpdatedAt, "正在执行容器操作")), nil
 		case "database":
 			task, err := databases.InspectTask(ctx, ref.ID)
 			if err != nil {
@@ -36,7 +113,7 @@ func agentTaskInspector(sites *websites.AgentFacade, apps *containerapps.AgentFa
 			if task.RequestID != ref.RequestID {
 				return tools.TaskStatus{}, errors.New("数据库任务请求身份不匹配")
 			}
-			return tools.TaskStatus{State: task.State, Terminal: task.State == "succeeded", Value: task, Progress: agentTaskProgress(task.State, task.State == "succeeded", task.Message, "", "正在执行数据库任务")}, nil
+			return normalizedTaskStatus(task.State, task.State == "succeeded", false, task, "database-task-unknown", task.Message, agentTaskProgress(task.State, task.State == "succeeded", task.Message, "", "正在执行数据库任务")), nil
 		case "docker-image-pull":
 			task, err := containers.InspectPull(ctx, ref.ID)
 			if err != nil {
@@ -46,7 +123,7 @@ func agentTaskInspector(sites *websites.AgentFacade, apps *containerapps.AgentFa
 				return tools.TaskStatus{}, errors.New("镜像拉取请求身份不匹配")
 			}
 			terminal := task.State == "succeeded" || task.State == "failed"
-			return tools.TaskStatus{State: task.State, Terminal: terminal, Failed: terminal && task.State != "succeeded", Value: task, Error: task.ErrorMessage, Progress: agentPullProgress(task)}, nil
+			return normalizedTaskStatus(task.State, terminal, terminal && task.State != "succeeded", task, "docker-image-pull-"+task.State, task.ErrorMessage, agentPullProgress(task)), nil
 		case "website":
 			status, err := sites.InspectTask(ctx, ref.ID)
 			if err != nil {
@@ -55,7 +132,7 @@ func agentTaskInspector(sites *websites.AgentFacade, apps *containerapps.AgentFa
 			if status.RequestID != ref.RequestID {
 				return tools.TaskStatus{}, errors.New("网站任务请求身份不匹配")
 			}
-			return tools.TaskStatus{State: status.State, Terminal: status.Terminal, Failed: status.Failed, Value: status.Value, Error: status.Error, Progress: agentTaskProgress(status.State, status.Terminal, status.Stage, status.UpdatedAt, "正在执行网站任务")}, nil
+			return normalizedTaskStatus(status.State, status.Terminal, status.Failed, status.Value, "website-task-"+string(taskOutcome(status.State, status.Terminal, status.Failed)), status.Error, agentTaskProgress(status.State, status.Terminal, status.Stage, status.UpdatedAt, "正在执行网站任务")), nil
 		case "container-app-build":
 			status, err := apps.InspectTask(ctx, ref.ID)
 			if err != nil {
@@ -64,7 +141,7 @@ func agentTaskInspector(sites *websites.AgentFacade, apps *containerapps.AgentFa
 			if status.RequestID != ref.RequestID {
 				return tools.TaskStatus{}, errors.New("镜像任务请求身份不匹配")
 			}
-			return tools.TaskStatus{State: status.State, Terminal: status.Terminal, Failed: status.Failed, Value: status.Value, Error: status.Error, Progress: agentTaskProgress(status.State, status.Terminal, status.Stage, status.UpdatedAt, "正在构建容器镜像")}, nil
+			return normalizedTaskStatus(status.State, status.Terminal, status.Failed, status.Value, "container-app-build-"+string(taskOutcome(status.State, status.Terminal, status.Failed)), status.Error, agentTaskProgress(status.State, status.Terminal, status.Stage, status.UpdatedAt, "正在构建容器镜像")), nil
 		default:
 			return tools.TaskStatus{}, errors.New("异步任务领域无效")
 		}

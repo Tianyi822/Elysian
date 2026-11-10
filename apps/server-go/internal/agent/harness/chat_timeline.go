@@ -27,6 +27,7 @@ type ChatTimelineEntry struct {
 	Error          *Failure            `json:"error,omitempty"`
 	Truncated      bool                `json:"truncated"`
 	Progress       *tools.TaskProgress `json:"progress,omitempty"`
+	ResourceWait   *ResourceWait       `json:"resourceWait,omitempty"`
 }
 
 type ChatContextUsage struct {
@@ -112,6 +113,14 @@ func (m *Manager) ChatSnapshot(ctx context.Context, id string) (ChatOutput, erro
 	}
 	for i := range timeline.Entries {
 		entry := &timeline.Entries[i]
+		if entry.Kind == "tool" && entry.Status == "unknown" {
+			message := "任务结果未确认，须核实实际状态"
+			if entry.Error != nil {
+				message = entry.Error.Message
+			}
+			entry.Progress = &tools.TaskProgress{State: "unknown", Message: message}
+			continue // Persisted uncertainty takes precedence over stale running progress.
+		}
 		if entry.Kind == "tool" && (entry.Status == StateWaitingTask || entry.Status == "unknown") {
 			for _, operation := range operations {
 				if operation.ModelRequestID == entry.ModelRequestID && operation.ModelCallID == entry.ModelCallID && operation.Task != nil {
@@ -195,6 +204,7 @@ func projectChatTimeline(run Run, records []ModelRequestRecord, operations []Ope
 			approval := decisions[operation.ApprovalID]
 			fact := projectToolExecution(run, op, receipt, &approval)
 			entry.Status, entry.Error = fact.Status, fact.Error
+			entry.ResourceWait = fact.ResourceWait
 			if fact.StartedAt != "" {
 				entry.StartedAt = fact.StartedAt
 			}

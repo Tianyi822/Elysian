@@ -28,6 +28,7 @@ type Deps struct {
 	InspectTask           func(context.Context, tools.TaskReference) (tools.TaskStatus, error)
 	CancelTask            func(context.Context, tools.TaskReference) error
 	LookupTask            func(context.Context, tools.TaskReference) (tools.TaskReference, error)
+	ReconcileTask         func(context.Context, tools.TaskReconciliation) error
 	WorkflowRecoveryFence string
 	DispatchGuard         func() error
 	Workspaces            *workspace.Store
@@ -48,36 +49,37 @@ type Deps struct {
 
 // Manager 是父进程的唯一状态写入者。Worker 的消息只能提出请求，不能指定终态。
 type Manager struct {
-	blockedExecution bool
-	taskCancelWake   chan struct{}
-	taskCleanupDone  chan struct{}
-	executions       map[string]*executionState
-	workers          []*workerSlot
-	probes           sync.WaitGroup
-	probeCancels     map[string]context.CancelFunc
-	mu               sync.Mutex
-	store            *store
-	deps             Deps
-	ctx              context.Context
-	cancel           context.CancelFunc
-	wake             chan struct{}
-	done             chan struct{}
-	closed           bool
-	workerState      string
-	activeID         string
-	finishing        bool
-	blocked          string
-	storageError     bool
-	unresponsive     bool
-	closeOnce        sync.Once
-	closeDone        chan struct{}
-	closeErr         error
-	toolRuntime      *tools.Runtime
-	toolAuthority    *tools.Authority
-	ownToolRuntime   bool
-	taskDone         chan struct{}
-	maintenanceDone  chan struct{}
-	taskProgress     map[string]taskProgressObservation
+	blockedExecution      bool
+	taskCancelWake        chan struct{}
+	taskCleanupDone       chan struct{}
+	executions            map[string]*executionState
+	workers               []*workerSlot
+	probes                sync.WaitGroup
+	probeCancels          map[string]context.CancelFunc
+	mu                    sync.Mutex
+	store                 *store
+	deps                  Deps
+	ctx                   context.Context
+	cancel                context.CancelFunc
+	wake                  chan struct{}
+	done                  chan struct{}
+	closed                bool
+	workerState           string
+	activeID              string
+	finishing             bool
+	blocked               string
+	storageError          bool
+	unresponsive          bool
+	closeOnce             sync.Once
+	closeDone             chan struct{}
+	closeErr              error
+	toolRuntime           *tools.Runtime
+	toolAuthority         *tools.Authority
+	ownToolRuntime        bool
+	taskDone              chan struct{}
+	maintenanceDone       chan struct{}
+	taskProgress          map[string]taskProgressObservation
+	reconciliationRetryAt time.Time
 	// tokenEstimates 保存每模型 token 比例与官方分词器缓存；重启丢弃，只影响估算精度，不影响保守回退。
 	tokenEstimates tokenEstimateStore
 }
@@ -853,6 +855,9 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 					var cause *Error
 					if errors.As(err, &cause) {
 						reason, message = cause.Code, cause.Message
+					}
+					if reason == "outcome-unknown" {
+						state = StateInterrupted
 					}
 				}
 				m.finishLocked(r.ID, state, reason, message)

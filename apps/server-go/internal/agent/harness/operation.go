@@ -554,10 +554,18 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		}
 		if !acquired {
 			resourceWaiting = true
+			o.Status = StateWaitingResource
+			o.ResourceWait, acquireErr = resourceWaitReason(dbCtx, tx, o, dispatchedAt)
+			if acquireErr != nil {
+				return acquireErr
+			}
 			// Keep approval-bound fields intact while waiting. Legacy resource
 			// metadata is derived locally; dispatch starts only after acquisition.
 			if err := saveOperation(dbCtx, tx, o); err != nil {
 				return err
+			}
+			if o.ResourceWait != nil && o.ResourceWait.Unknown {
+				return interruptResourceWaiter(dbCtx, tx, m.store, r, o, dispatchedAt)
 			}
 			r.Status = StateWaitingResource
 			r.Phase = StateWaitingResource
@@ -586,6 +594,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 			}
 		}
 		o.Status = "dispatched"
+		o.ResourceWait = nil
 		o.DispatchID = m.deps.NewID()
 		if c.Metadata.Async && c.Metadata.TaskDomain != "" {
 			arguments, _ := jsonvalue.Object([]byte(o.ArgumentsJSON))
@@ -634,15 +643,17 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		e error
 	}
 	results := make(chan outcome, 1)
+	dispatchedOperation := o
 	go func() {
 		var result outcome
 		defer func() {
 			if recover() != nil {
 				result.e = bad("operation-failed", "操作内部错误")
-				result.r.Unknown = !c.ReadOnly || externalOperation(o)
+				result.r.Unknown = !c.ReadOnly || externalOperation(dispatchedOperation)
 			}
 			if result.r.Task != nil {
 				m.rememberExecutionTask(execution, *result.r.Task)
+				m.rememberLateOperationTask(dispatchedOperation, *result.r.Task)
 			}
 			results <- result
 		}()
@@ -654,19 +665,19 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 			result.e = context.Canceled
 		} else if m.store.recordsFault() != nil {
 			result.e = m.store.recordsFault()
-		} else if result.e = m.checkRevocations(callCtx, *a.run.Snapshot, o); result.e == nil && m.deps.DispatchGuard != nil {
+		} else if result.e = m.checkRevocations(callCtx, *a.run.Snapshot, dispatchedOperation); result.e == nil && m.deps.DispatchGuard != nil {
 			result.e = m.deps.DispatchGuard()
 		}
 		m.mu.Unlock()
 		if result.e != nil {
 			return
 		}
-		authorized, authErr := m.authorizeDispatch(callCtx, *a.run.Snapshot, o)
+		authorized, authErr := m.authorizeDispatch(callCtx, *a.run.Snapshot, dispatchedOperation)
 		if authErr != nil {
 			result.e = authErr
 			return
 		}
-		result.r, result.e = m.executeRegistryOperation(authorized, *a.run.Snapshot, o, run.Limits.ResultBytes)
+		result.r, result.e = m.executeRegistryOperation(authorized, *a.run.Snapshot, dispatchedOperation, run.Limits.ResultBytes)
 	}()
 	var result outcome
 	select {
@@ -730,9 +741,11 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 			if err := saveCall(dbCtx, tx, call); err != nil {
 				return err
 			}
-			r.Status = StateWaitingTask
-			r.Phase = StateWaitingTask
-			r.Resume = &RecoveryCursor{ResponseID: o.ModelRequestID, CallIndex: index}
+			if !terminal(r.Status) && r.CancelRequestedAt == "" {
+				r.Status = StateWaitingTask
+				r.Phase = StateWaitingTask
+				r.Resume = &RecoveryCursor{ResponseID: o.ModelRequestID, CallIndex: index}
+			}
 			return m.store.event(dbCtx, tx, r, "operation/task-accepted", call.ID, &call.StepIndex, map[string]any{"operationId": o.ID, "task": o.Task})
 		})
 		if err != nil {
@@ -834,7 +847,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		// Every operation owns a resource lease, including trusted built-ins.
 		// Built-ins do not create an execution barrier, but their lease still
 		// must be released after the result or it would block later dispatches.
-		if err := settleResourceLease(dbCtx, tx, o.ID, o.EndedAt, result.r.Unknown, "", ""); err != nil {
+		if err := settleOperationProtection(dbCtx, tx, o.ID, o.EndedAt, result.r.Unknown); err != nil {
 			return err
 		}
 		if err := saveOperation(dbCtx, tx, o); err != nil {

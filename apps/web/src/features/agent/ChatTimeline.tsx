@@ -58,6 +58,10 @@ function ChatTool({ entry, runId, api, onProgress }: { entry: ToolEntry; runId: 
       <Icon size={14} aria-hidden className={`chat-tool-status-icon${status === 'running' || status === 'waiting-task' ? ' animate-spin motion-reduce:animate-none' : ''}`} />
       <span className="chat-tool-name">{entry.tool}</span><span className="chat-tool-status">{toolLabels[status]}</span>
     </button>
+    {entry.resourceWait && <div className="text-xs text-fg-muted" role="status">
+      <p>{entry.resourceWait.message} · 已等待 {entry.resourceWait.elapsedSeconds} 秒</p>
+      <p>{entry.resourceWait.resource}{entry.resourceWait.runId && ` · 运行 ${entry.resourceWait.runId}`}{entry.resourceWait.operationId && ` · 操作 ${entry.resourceWait.operationId}`}</p>
+    </div>}
     {showProgress && <ChatToolProgress tool={entry.tool} progress={entry.progress} unknown={status === 'unknown'} />}
     {expanded && <div id={regionId} role="region" aria-label={`${entry.tool} 详情`} className="chat-tool-details">
       <p className="text-xs text-fg-muted">参数</p>

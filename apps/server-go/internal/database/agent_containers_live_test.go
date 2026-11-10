@@ -117,6 +117,31 @@ func TestContainerBridgeLiveMySQL(t *testing.T) {
 	if len(rows) != 1 || rows[0].Name != "orders" {
 		t.Fatal("真实逻辑库删除影响了原登记")
 	}
+	stopped, err := transport.Request(ctx, seam.EngineRequest{Method: "POST", Path: "/containers/" + rows[0].ContainerID + "/stop"})
+	if err != nil || stopped.Status != http.StatusNoContent {
+		t.Fatalf("停止隔离测试容器失败：%v", err)
+	}
+	before := containerRevision(rows)
+	change, err := bridge.PrepareChange(ctx, rows[0].ContainerID, strings.Repeat("c", 64), seam.AgentDatabaseChange{Action: "remove", Name: "orders", ExpectedRevision: before})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = change(ctx)
+	var rejected *seam.AgentContainerError
+	if !errors.As(err, &rejected) || !rejected.NoBusinessEffect || rejected.NotDispatched || rejected.Message != "数据库容器未运行，数据库变更未执行" {
+		t.Fatalf("停止态删库没有明确的已受理、无业务变更回执：%v", err)
+	}
+	rows, err = service.deps.registry.list()
+	if err != nil || containerRevision(rows) != before {
+		t.Fatal("停止态删库失败改变了登记")
+	}
+	if _, err := bridge.Inspect(ctx, rows[0].ContainerID, nil); err != nil {
+		t.Fatalf("已确认失败后无法读取登记摘要：%v", err)
+	}
+	inspected, err := transport.Request(ctx, seam.EngineRequest{Method: "GET", Path: "/containers/" + rows[0].ContainerID + "/json"})
+	if err != nil || inspected.Status != http.StatusOK {
+		t.Fatalf("停止态失败后 Docker inspect 不可用：%v", err)
+	}
 	handled, err = bridge.Lifecycle(ctx, rows[0].ContainerID, "remove")
 	if err != nil || !handled {
 		t.Fatalf("真实受管容器删除失败：%v", err)
@@ -125,7 +150,7 @@ func TestContainerBridgeLiveMySQL(t *testing.T) {
 	if err != nil || len(rows) != 0 {
 		t.Fatal("删除容器后私有登记残留")
 	}
-	t.Log("真实 MySQL bridge 创建、凭据核验、逻辑库增删及容器/卷清理通过")
+	t.Log("真实 MySQL 创建、凭据、逻辑库增删、停止态删库无变更、后续 inspect 及容器/卷清理通过")
 }
 
 // The test transport fails closed around mutations and never reads panel state.

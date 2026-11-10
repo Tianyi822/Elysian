@@ -215,7 +215,13 @@ func (s *Service) descriptors() []tools.Descriptor {
 	text := tools.Schema{Type: tools.SchemaString}
 	for _, action := range []string{"start", "stop", "restart", "remove"} {
 		action := action
-		descriptors = append(descriptors, tools.Descriptor{Name: "docker_container_" + action, Description: "审批后对已授权的安全容器执行 " + action, Parameters: tools.Schema{Type: tools.SchemaObject, Required: []string{"id"}, Properties: map[string]tools.Schema{"id": text}}, Metadata: tools.Metadata{Domain: "docker", Action: action, Effect: "write", Exposure: "agent", ResourceType: "docker-container", ResourceKeyArgument: "id", Version: "2"}, Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
+		description := "审批后对已授权的安全容器执行 " + action
+		version := "2"
+		if action == "remove" {
+			description += "；支持停止态受管数据库容器及专属卷删除，无需先删除逻辑库；保留登记、兄弟库和容器卷身份核验"
+			version = "3"
+		}
+		descriptors = append(descriptors, tools.Descriptor{Name: "docker_container_" + action, Description: description, Parameters: tools.Schema{Type: tools.SchemaObject, Required: []string{"id"}, Properties: map[string]tools.Schema{"id": text}}, Metadata: tools.Metadata{Domain: "docker", Action: action, Effect: "write", Exposure: "agent", ResourceType: "docker-container", ResourceKeyArgument: "id", Version: version}, Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
 			id, _ := tools.StringArg(args, "id")
 			lifetime := tools.Lifetime(c)
 			frozen := tools.FrozenMetadata(lifetime)
@@ -256,7 +262,7 @@ func (s *Service) descriptors() []tools.Descriptor {
 		Parameters: tools.Schema{Type: tools.SchemaObject, Required: []string{"name", "image", "requestId", "resourceTier", "networkScope"}, Properties: map[string]tools.Schema{
 			"name":         {Type: tools.SchemaString, Description: "容器名称"},
 			"image":        {Type: tools.SchemaString, Description: "本机已存在的镜像完整引用，名称:标签@sha256:64 位摘要"},
-			"requestId":    {Type: tools.SchemaString, Description: "稳定的请求标识；同请求重试必须复用原值与完整参数"},
+			"requestId":    {Type: tools.SchemaString, Pattern: "^[a-f0-9]{64}$", Description: "64 位小写十六进制稳定请求标识；同请求重试必须复用原值与完整参数"},
 			"resourceTier": {Type: tools.SchemaString, Enum: tools.EnumOf("small", "medium", "large"), Description: "资源档位：small=512MiB+0.5CPU、medium=1GiB+1CPU、large=2GiB+2CPU"},
 			"networkScope": {Type: tools.SchemaString, Enum: tools.EnumOf("container-net", "localhost", "any-host"), Description: "网络档位：仅容器网络/本机回环/任意主机"},
 			"port":         {Type: tools.SchemaInteger, Description: "容器侧 TCP 端口；localhost 与 any-host 必填"},
@@ -265,7 +271,7 @@ func (s *Service) descriptors() []tools.Descriptor {
 			"env":          {Type: tools.SchemaArray, Items: &tools.Schema{Type: tools.SchemaString}, Description: "非凭据环境变量 KEY=VALUE 列表，最多 16 项、每项不超过 512 字节，完整进入审批展示"},
 			"volumes":      {Type: tools.SchemaArray, Items: &tools.Schema{Type: tools.SchemaString, Pattern: "^/[A-Za-z0-9._/-]{0,127}$"}, Description: "容器内持久卷挂载点（如 /var/lib/mysql），最多 2 个；卷由面板托管"},
 		}},
-		Metadata:    tools.Metadata{Domain: "docker", Action: "create_service", Effect: "write", Exposure: "agent", ResourceType: "docker-container", ResourceKeyArgument: "name", Version: "2", Async: true, TaskDomain: domaindocker.ContainerOperationDomain, TaskRequestArgument: "requestId"},
+		Metadata:    tools.Metadata{Domain: "docker", Action: "create_service", Effect: "write", Exposure: "agent", ResourceType: "docker-container", ResourceKeyArgument: "name", Version: "3", Async: true, TaskDomain: domaindocker.ContainerOperationDomain, TaskRequestArgument: "requestId"},
 		SearchNames: []string{"部署服务", "新建服务容器", "创建数据库", "创建逻辑库", "启动 MySQL", "部署 MariaDB", "部署 Redis", "创建容器", "service container"},
 		Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
 			input := domaindocker.AgentServiceCreateInput{}
@@ -288,7 +294,7 @@ func (s *Service) descriptors() []tools.Descriptor {
 			if err != nil {
 				return nil, agentBusinessError(err)
 			}
-			return tools.Submission{Value: task, Task: tools.TaskReference{Domain: domaindocker.ContainerOperationDomain, ID: task.ID, RequestID: task.RequestID}}, nil
+			return tools.Submission{Value: domaindocker.AgentOperationReceipt(task), Task: tools.TaskReference{Domain: domaindocker.ContainerOperationDomain, ID: task.ID, RequestID: task.RequestID, Target: task.Target, Digest: task.Digest}}, nil
 		},
 	})
 	descriptors = append(descriptors, tools.Descriptor{
@@ -381,7 +387,7 @@ func limitList[T any](values []T, limit int) []T {
 
 func (s *Service) execDescriptor() tools.Descriptor {
 	text := tools.Schema{Type: tools.SchemaString}
-	return tools.Descriptor{Name: "docker_container_exec", Description: "在精确受管容器中执行argv命令，或通过databaseChange同步创建/删除受管逻辑库及登记；两者互斥。受管数据库禁止任意argv，先inspect取得revision。密码由后端处理，不传入参数。requestId精确重试复用。Redis remove仅清空DB0并保留登记。异步等待由系统监视器完成。", SearchNames: []string{"执行容器命令", "数据库", "逻辑库", "MySQL 建库", "MariaDB 建库", "Redis 清空", "建库", "删库", "容器exec"}, Parameters: tools.Schema{Type: tools.SchemaObject, Required: []string{"id", "requestId"}, Properties: map[string]tools.Schema{"id": text, "requestId": text, "argv": {Type: tools.SchemaArray, Items: &text}, "workdir": text, "databaseChange": {Type: tools.SchemaObject, Required: []string{"action", "name", "expectedRevision"}, Properties: map[string]tools.Schema{"action": {Type: tools.SchemaString, Enum: tools.EnumOf("create", "remove")}, "name": text, "expectedRevision": text, "charset": text}}}}, Metadata: tools.Metadata{Domain: "docker", Backend: "domain", Action: "exec", Effect: "execute", Exposure: "agent", ResourceType: "docker-container", ResourceKeyArgument: "id", Version: "1", Async: true, TaskDomain: domaindocker.ContainerOperationDomain, TaskRequestArgument: "requestId"}, Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
+	return tools.Descriptor{Name: "docker_container_exec", Description: "在精确受管容器中执行argv命令，或通过databaseChange同步创建/删除受管逻辑库及登记；两者互斥。受管数据库禁止任意argv，先inspect取得revision。密码由后端处理，不传入参数。requestId精确重试复用。Redis remove仅清空DB0并保留登记。异步等待由系统监视器完成。", SearchNames: []string{"执行容器命令", "数据库", "逻辑库", "MySQL 建库", "MariaDB 建库", "Redis 清空", "建库", "删库", "容器exec"}, Parameters: tools.Schema{Type: tools.SchemaObject, Required: []string{"id", "requestId"}, Properties: map[string]tools.Schema{"id": text, "requestId": {Type: tools.SchemaString, Pattern: "^[a-f0-9]{64}$", Description: "64 位小写十六进制稳定请求标识；精确重试复用原值与完整参数"}, "argv": {Type: tools.SchemaArray, Items: &text}, "workdir": text, "databaseChange": {Type: tools.SchemaObject, Required: []string{"action", "name", "expectedRevision"}, Properties: map[string]tools.Schema{"action": {Type: tools.SchemaString, Enum: tools.EnumOf("create", "remove")}, "name": text, "expectedRevision": text, "charset": text}}}}, Metadata: tools.Metadata{Domain: "docker", Backend: "domain", Action: "exec", Effect: "execute", Exposure: "agent", ResourceType: "docker-container", ResourceKeyArgument: "id", Version: "2", Async: true, TaskDomain: domaindocker.ContainerOperationDomain, TaskRequestArgument: "requestId"}, Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
 		raw, err := json.Marshal(args)
 		if err != nil {
 			return nil, err
@@ -394,6 +400,6 @@ func (s *Service) execDescriptor() tools.Descriptor {
 		if err != nil {
 			return nil, agentBusinessError(err)
 		}
-		return tools.Submission{Value: task, Task: tools.TaskReference{Domain: domaindocker.ContainerOperationDomain, ID: task.ID, RequestID: task.RequestID}}, nil
+		return tools.Submission{Value: domaindocker.AgentOperationReceipt(task), Task: tools.TaskReference{Domain: domaindocker.ContainerOperationDomain, ID: task.ID, RequestID: task.RequestID, Target: task.Target, Digest: task.Digest}}, nil
 	}}
 }

@@ -502,6 +502,10 @@ func (s *databaseService) discoverCandidate(ctx context.Context, engine string, 
 
 // Create 创建或接管数据库（时序敏感：先落登记再做协议动作，失败保留待处理登记）。
 func (s *databaseService) Create(ctx context.Context, input createRequest) (createResponse, error) {
+	return s.createWithReceipt(ctx, input, nil)
+}
+
+func (s *databaseService) createWithReceipt(ctx context.Context, input createRequest, effects *bool) (createResponse, error) {
 	targetKey := input.Target.ContainerID
 	if input.Target.Kind == "new" {
 		targetKey = input.Target.ContainerName
@@ -522,10 +526,19 @@ func (s *databaseService) Create(ctx context.Context, input createRequest) (crea
 	s.mutationMu.Lock()
 	defer s.mutationMu.Unlock()
 
-	return s.create(ctx, input)
+	return s.createTracked(ctx, input, effects)
 }
 
 func (s *databaseService) create(ctx context.Context, input createRequest) (createResponse, error) {
+	return s.createTracked(ctx, input, nil)
+}
+
+func (s *databaseService) createTracked(ctx context.Context, input createRequest, effects *bool) (createResponse, error) {
+	markEffect := func() {
+		if effects != nil {
+			*effects = true
+		}
+	}
 	rows, err := s.deps.registry.list()
 	if err != nil {
 		return createResponse{}, err
@@ -575,6 +588,7 @@ func (s *databaseService) create(ctx context.Context, input createRequest) (crea
 			adminUsername = "default"
 		}
 		admin = databaseSecret{Username: adminUsername, Password: randomAdminPassword()}
+		markEffect()
 		created, err := s.deps.docker.create(ctx, createInput{
 			engine: input.Engine, versionTag: input.VersionTag, imageID: input.Target.ImageID,
 			containerName: input.Target.ContainerName, accessScope: input.AccessScope,
@@ -612,6 +626,7 @@ func (s *databaseService) create(ctx context.Context, input createRequest) (crea
 			return createResponse{}, err
 		}
 		actualScope = accessScopeFromInspect(info, input.Engine)
+		markEffect()
 		if err := s.deps.docker.attach(ctx, containerID, networkDBSharedName); err != nil {
 			return createResponse{}, err
 		}
@@ -628,6 +643,7 @@ func (s *databaseService) create(ctx context.Context, input createRequest) (crea
 		ContainerName: containerName,
 	}
 	// 容器已产生后先登记待处理状态，后续任何失败都能在页面找到恢复入口。
+	markEffect()
 	if err := s.deps.registry.put(row); err != nil {
 		return createResponse{}, err
 	}
@@ -780,6 +796,17 @@ func (s *databaseService) Remove(ctx context.Context, id string) error {
 	return s.remove(ctx, id)
 }
 func (s *databaseService) remove(ctx context.Context, id string) error {
+	return s.removeTracked(ctx, id, nil)
+}
+
+// The optional receipt tracks entry into any external or registration mutation.
+// An error before this boundary is safe to report as an accepted, unexecuted change.
+func (s *databaseService) removeTracked(ctx context.Context, id string, effects *bool) error {
+	markEffect := func() {
+		if effects != nil {
+			*effects = true
+		}
+	}
 	row, err := s.record(id)
 	if err != nil {
 		return err
@@ -811,11 +838,13 @@ func (s *databaseService) remove(ctx context.Context, id string) error {
 				}
 			}
 			if !hasSibling {
+				markEffect()
 				if err := s.deps.docker.detach(ctx, row.ContainerID, networkDBSharedName); err != nil {
 					return err
 				}
 			}
 		}
+		markEffect()
 		return s.deps.registry.remove(id)
 	}
 	version, err := s.deps.protocol.version(ctx, row.Engine, endpoint, row.Admin)
@@ -825,6 +854,7 @@ func (s *databaseService) remove(ctx context.Context, id string) error {
 	if !actualVersionMatches(row.VersionTag, version) {
 		return &shared.InvalidRequestError{Status: 409, Message: "数据库实际版本与登记版本不一致"}
 	}
+	markEffect()
 	if err := s.deps.protocol.drop(ctx, row, endpoint); err != nil {
 		return err
 	}

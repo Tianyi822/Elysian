@@ -157,6 +157,7 @@ type fakeProtocol struct {
 	verifyErr   error
 	createErr   error
 	versionErr  error
+	dropErr     error
 }
 
 func (p *fakeProtocol) version(_ context.Context, _ string, _ databaseAddress, _ databaseSecret) (string, error) {
@@ -179,7 +180,7 @@ func (p *fakeProtocol) verify(_ context.Context, _ databaseRecord, _ databaseAdd
 
 func (p *fakeProtocol) drop(_ context.Context, _ databaseRecord, _ databaseAddress) error {
 	p.trace.add("drop")
-	return nil
+	return p.dropErr
 }
 
 func (p *fakeProtocol) hasOtherDatabases(_ context.Context, _ databaseRecord, _ databaseAddress) (bool, error) {

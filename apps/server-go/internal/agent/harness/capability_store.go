@@ -477,50 +477,6 @@ func (m *Manager) BarriersFiltered(ctx context.Context, workflowID string) ([]Ex
 	o, e := readDocuments[ExecutionBarrier](ctx, m.store.db, "SELECT document FROM execution_barriers WHERE (?='' OR run_id IN (SELECT id FROM runs WHERE workflow_id=?)) ORDER BY rowid DESC LIMIT 200", workflowID, workflowID)
 	return o, storageFailure(e)
 }
-func (m *Manager) Reconcile(ctx context.Context, id, evidence, decision string) (ExecutionBarrier, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	var b ExecutionBarrier
-	if m.closed {
-		return b, closedError()
-	}
-	if len(evidence) < 1 || len(evidence) > 8192 || (decision != "confirmed-completed" && decision != "confirmed-stopped") {
-		return b, bad("invalid-reconciliation", "必须提供外部核实证据及 confirmed-completed 或 confirmed-stopped 决定")
-	}
-	err := m.store.write(ctx, "reconcile", func(tx *sql.Tx) error {
-		var raw string
-		if err := tx.QueryRowContext(ctx, "SELECT document FROM execution_barriers WHERE id=?", id).Scan(&raw); err != nil {
-			return err
-		}
-		if err := json.Unmarshal([]byte(raw), &b); err != nil {
-			return err
-		}
-		if b.Status == "reconciled" {
-			if b.Decision == decision && b.Evidence == evidence {
-				return nil
-			}
-			return &Error{409, "decision-conflict", "该屏障已有不同核实决定"}
-		}
-		if b.Status != "unknown" {
-			return &Error{409, "barrier-state-conflict", "只能核实已标记结果未知的操作；在途操作必须先结束确认流程"}
-		}
-		b.Status = "reconciled"
-		b.Decision = decision
-		b.Evidence = evidence
-		b.ReconciledAt = stamp(m.deps.Now())
-		if err := saveBarrier(ctx, tx, b); err != nil {
-			return err
-		}
-		// A reconciled unknown operation is the only authority allowed to
-		// release its resource claims. The evidence and decision are kept on
-		// the lease as well as on the execution barrier for audit correlation.
-		return settleResourceLease(ctx, tx, b.OperationID, b.ReconciledAt, false, evidence, decision)
-	})
-	if err == nil {
-		m.signal()
-	}
-	return b, storageFailure(err)
-}
 func (m *Manager) Decide(ctx context.Context, id, decision string) (Approval, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

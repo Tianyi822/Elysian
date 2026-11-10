@@ -16,6 +16,14 @@ const reasoning = { id: 'm1:reasoning', modelRequestId: 'm1', requestIndex: 0, k
 const content = { ...reasoning, id: 'm1:content', kind: 'content', text: '正文' }
 const tool = { id: 'm1:tool:t', modelRequestId: 'm1', requestIndex: 0, kind: 'tool', tool: 'test', modelCallId: 't', callIndex: 0, argumentsJson: '{"n":9007199254740993}', startedAt: '', status: 'waiting-approval', truncated: false }
 
+it('保留资源阻塞身份与等待时间，拒绝无界或畸形说明', () => {
+  const resourceWait = { resource: 'docker-container:local:container', runId: 'old-run', operationId: 'old-operation', since: '2026-11-10T08:44:26Z', elapsedSeconds: 46, message: '此前操作结果待核实', unknown: true }
+  const parse = (value: unknown) => parseChatTimeline({ runId: 'r', status: 'interrupted', done: true, entries: [{ ...tool, status: 'not-executed', resourceWait: value }] }, 'r').entries[0]
+  expect(parse(resourceWait)).toMatchObject({ status: 'not-executed', resourceWait })
+  expect(parse(undefined)).not.toHaveProperty('resourceWait')
+  for (const invalid of [null, { ...resourceWait, elapsedSeconds: -1 }, { ...resourceWait, since: 'invalid' }, { ...resourceWait, resource: 'x'.repeat(513) }, { ...resourceWait, unknown: 'true' }]) expect(() => parse(invalid)).toThrow('格式无效')
+})
+
 it('异步进度可选，保留明确零并拒绝不完整或无效的字节比例', () => {
   const parse = (progress: unknown) => parseChatTimeline({ runId: 'r', status: 'waiting-task', done: false, entries: [{ ...tool, status: 'waiting-task', progress }] }, 'r').entries[0]
   const progress = { state: 'running', message: '正在下载镜像层', layerId: 'layer', currentBytes: 0, totalBytes: 100 }

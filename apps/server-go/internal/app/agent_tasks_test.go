@@ -4,8 +4,27 @@ import (
 	"encoding/json"
 	"testing"
 
+	"elysian/server/internal/agent/tools"
 	"elysian/server/internal/docker"
 )
+
+func TestTaskOutcomeDoesNotConfuseUnsettledFailuresWithCompletion(t *testing.T) {
+	for _, tc := range []struct {
+		state            string
+		terminal, failed bool
+		want             tools.TaskOutcome
+	}{
+		{"running", false, false, tools.TaskRunning}, {"queued", false, false, tools.TaskRunning},
+		{"succeeded", true, false, tools.TaskSucceeded}, {"failed", true, true, tools.TaskFailed},
+		{"unknown", false, false, tools.TaskUnknown}, {"failed", false, false, tools.TaskUnknown},
+		{"interrupted", false, false, tools.TaskUnknown}, {"cancelled", false, false, tools.TaskUnknown},
+		{"interrupted", true, true, tools.TaskFailed}, {"future-state", false, false, tools.TaskUnknown},
+	} {
+		if got := taskOutcome(tc.state, tc.terminal, tc.failed); got != tc.want {
+			t.Fatalf("%+v: %s", tc, got)
+		}
+	}
+}
 
 func TestAgentPullProgressProjectsOnlyCurrentLayer(t *testing.T) {
 	for _, fixture := range []struct {

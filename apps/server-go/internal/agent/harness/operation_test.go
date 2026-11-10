@@ -364,7 +364,7 @@ func TestOperationUnknownBarrierPersistsAndReconciliationDoesNotRewriteResult(t 
 	if _, err := m.Decide(ctx, a.ID, "approved"); err != nil {
 		t.Fatal(err)
 	}
-	if got := runtimeFinished(t, m, run.ID); got.EndReason != "outcome-unknown" {
+	if got := runtimeFinished(t, m, run.ID); got.Status != StateInterrupted || got.EndReason != "outcome-unknown" {
 		t.Fatalf("丢失未知结果：%+v", got)
 	}
 	m = reopenOperationManager(t, m)
@@ -377,10 +377,9 @@ func TestOperationUnknownBarrierPersistsAndReconciliationDoesNotRewriteResult(t 
 	if _, err = m.Decide(ctx, a.ID, "approved"); err != nil {
 		t.Fatal(err)
 	}
-	runtimeEventually(t, func() bool {
-		got, err := m.Get(ctx, run2.ID)
-		return err == nil && got.Status == StateWaitingResource
-	})
+	if got := runtimeFinished(t, m, run2.ID); got.Status != StateInterrupted || got.EndReason != "resource-outcome-unknown" {
+		t.Fatalf("未知阻塞未结束前台等待：%+v", got)
+	}
 	if got, err := m.Get(ctx, run2.ID); err != nil || got.Usage.Calls != 1 || executions.Load() != 1 {
 		t.Fatalf("屏障未阻止派发或资源等待消耗工具预算：%+v %v", got, err)
 	}
@@ -388,8 +387,8 @@ func TestOperationUnknownBarrierPersistsAndReconciliationDoesNotRewriteResult(t 
 	if _, err = m.Reconcile(ctx, b.ID, "外部审计确认已停止", "confirmed-stopped"); err != nil {
 		t.Fatal(err)
 	}
-	if got := runtimeFinished(t, m, run2.ID); got.EndReason != "outcome-unknown" || executions.Load() != 2 {
-		t.Fatalf("核实后未从原审批位置恢复：%+v", got)
+	if got := runtimeFinished(t, m, run2.ID); got.EndReason != "resource-outcome-unknown" || executions.Load() != 1 {
+		t.Fatalf("核实意外恢复了中断运行：%+v", got)
 	}
 	if _, err = m.Reconcile(ctx, b.ID, "外部审计确认已停止", "confirmed-stopped"); err != nil {
 		t.Fatal(err)

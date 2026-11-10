@@ -1,4 +1,4 @@
-import { RUNTIME_RUN_STATUSES, type AgentTaskProgress, type AgentChatCacheHitUsage, type AgentChatContextBreakdown, type AgentChatContextUsage, type AgentChatTimelineEntry, type AgentChatTimelineSnapshot, type AgentChatToolStatus, type RuntimeCall, type RuntimeFailure, type RuntimeJSONValue, type RuntimeRunStatus, type RuntimeUsage } from '@elysian/contracts'
+import { RUNTIME_RUN_STATUSES, type AgentTaskProgress, type AgentResourceWait, type AgentChatCacheHitUsage, type AgentChatContextBreakdown, type AgentChatContextUsage, type AgentChatTimelineEntry, type AgentChatTimelineSnapshot, type AgentChatToolStatus, type RuntimeCall, type RuntimeFailure, type RuntimeJSONValue, type RuntimeRunStatus, type RuntimeUsage } from '@elysian/contracts'
 import { parseRunPlan } from './agentPlanParse'
 import { parseBudgetFields } from './agentBudgetParse'
 import { parseUserInput } from './agentUserInputParse'
@@ -72,6 +72,14 @@ function taskProgress(value: unknown): AgentTaskProgress {
   return progress
 }
 
+function resourceWait(value: unknown): AgentResourceWait {
+  const row = object(value)
+  const wait = { resource: string(row.resource), runId: optional(row.runId), operationId: optional(row.operationId),
+    since: string(row.since), elapsedSeconds: integer(row.elapsedSeconds), message: string(row.message), unknown: boolean(row.unknown) }
+  if (wait.elapsedSeconds < 0 || wait.resource.length > 512 || !Number.isFinite(Date.parse(wait.since))) throw invalid()
+  return wait
+}
+
 export function parseChatTimeline(value: unknown, runId: string): AgentChatTimelineSnapshot {
   const row = object(value)
   if (row.runId !== runId || !Array.isArray(row.entries)) throw invalid()
@@ -101,7 +109,8 @@ export function parseChatTimeline(value: unknown, runId: string): AgentChatTimel
     if (entry.kind !== 'tool' || !(toolStatuses as readonly unknown[]).includes(entry.status)) throw invalid()
     return { ...base, kind: 'tool', tool: string(entry.tool), modelCallId: string(entry.modelCallId), callIndex: integer(entry.callIndex),
       argumentsJson: string(entry.argumentsJson), callId: optional(entry.callId), status: entry.status as AgentChatToolStatus, error: failure(entry.error), truncated: boolean(entry.truncated),
-      ...(entry.progress === undefined ? {} : { progress: taskProgress(entry.progress) }) }
+      ...(entry.progress === undefined ? {} : { progress: taskProgress(entry.progress) }),
+      ...(entry.resourceWait === undefined ? {} : { resourceWait: resourceWait(entry.resourceWait) }) }
   })
   const finalResponseId = optional(row.finalResponseId)
   const terminalResult = row.terminalResult === undefined ? undefined : (() => {
