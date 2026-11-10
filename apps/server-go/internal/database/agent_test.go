@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"elysian/server/internal/contract"
+	"elysian/server/internal/shared"
 )
 
 func TestAgentDiscoverErrorsAreSafeAndCorrectable(t *testing.T) {
@@ -53,16 +54,17 @@ func TestAgentDatabaseRequiresManagedExactRegistrationAndAuthority(t *testing.T)
 	fixture.registry.rows = []databaseRecord{row}
 	calls := 0
 	facade := &AgentFacade{service: fixture.service, authorize: func(context.Context) error { calls++; return nil }}
-	if _, err := facade.Lifecycle(context.Background(), row.ID, agentRecordDigest(row), "remove"); err == nil {
-		t.Fatal("adopted database mutation accepted")
+	var rejected *AgentLifecycleRejectedError
+	if _, err := facade.Lifecycle(context.Background(), row.ID, agentRecordDigest(row), "remove"); !errors.As(err, &rejected) {
+		t.Fatalf("adopted database mutation accepted: %v", err)
 	}
 	row.Source = sourceManaged
 	fixture.registry.rows = []databaseRecord{row}
-	if _, err := facade.Lifecycle(context.Background(), row.ID, "old-version", "remove"); err == nil {
-		t.Fatal("stale registration mutation accepted")
+	if _, err := facade.Lifecycle(context.Background(), row.ID, "old-version", "remove"); !errors.As(err, &rejected) {
+		t.Fatalf("stale registration mutation accepted: %v", err)
 	}
-	if _, err := facade.Lifecycle(context.Background(), row.ID, agentRecordDigest(row), "raw-sql"); err == nil {
-		t.Fatal("arbitrary operation accepted")
+	if _, err := facade.Lifecycle(context.Background(), row.ID, agentRecordDigest(row), "raw-sql"); !errors.As(err, &rejected) {
+		t.Fatalf("arbitrary operation accepted: %v", err)
 	}
 	if calls != 3 {
 		t.Fatalf("authorization calls=%d", calls)
@@ -77,6 +79,102 @@ func TestAgentDatabaseRequiresManagedExactRegistrationAndAuthority(t *testing.T)
 	if strings.Contains(string(raw), row.User.Password) {
 		t.Fatal("version leaked password")
 	}
+}
+
+// failingListRegistry 注入登记读取故障，模拟存储不可用。
+type failingListRegistry struct {
+	*memoryDatabaseRegistry
+}
+
+func (r *failingListRegistry) list() ([]databaseRecord, error) {
+	return nil, errors.New("REGISTRY_STORAGE_BROKEN")
+}
+
+func TestAgentLifecyclePrecheckIsTyped(t *testing.T) {
+	fixture := newServiceFixture("8.4.2")
+	managed := databaseRecord{ID: "db", Engine: engineMySQL, Name: "orders", Source: sourceManaged, State: stateActive, ContainerID: strings.Repeat("c", 64), VolumeName: "elysian-db-" + strings.Repeat("0", 36)}
+	cases := []struct {
+		name     string
+		rows     []databaseRecord
+		id       string
+		expected string
+		action   string
+		message  string
+	}{
+		{"未知登记", nil, "missing", "any", "remove", "数据库不存在，请用 database_list 读取精确登记 ID"},
+		{"非面板受管", []databaseRecord{{ID: "db", Engine: engineMySQL, Name: "orders", Source: sourceAdopted, State: stateActive}}, "db", "any", "remove", "仅允许操作面板受管数据库"},
+		{"陈旧登记版本", []databaseRecord{managed}, "db", "old-version", "remove", "数据库登记版本已变化，请重新读取并审批"},
+		{"未开放操作", []databaseRecord{managed}, "db", agentRecordDigest(managed), "raw-sql", "数据库操作未开放"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture.registry.rows = testCase.rows
+			facade := &AgentFacade{service: fixture.service, authorize: func(context.Context) error { return nil }}
+			_, err := facade.Lifecycle(context.Background(), testCase.id, testCase.expected, testCase.action)
+			var rejected *AgentLifecycleRejectedError
+			if !errors.As(err, &rejected) || rejected.Message != testCase.message {
+				t.Fatalf("预检拒绝应保留类型与精确文案，实际 %v", err)
+			}
+			if len(fixture.docker.removeCalls) != 0 {
+				t.Fatal("预检拒绝不得派发删除")
+			}
+		})
+	}
+	t.Run("start 兄弟登记", func(t *testing.T) {
+		sibling := managed
+		sibling.ID, sibling.Name = "sibling", "orders2"
+		fixture.registry.rows = []databaseRecord{managed, sibling}
+		facade := &AgentFacade{service: fixture.service, authorize: func(context.Context) error { return nil }}
+		_, err := facade.Lifecycle(context.Background(), "db", agentRecordDigest(managed), "start")
+		var rejected *AgentLifecycleRejectedError
+		if !errors.As(err, &rejected) || rejected.Message != "实例中还有其他逻辑库，不能通过单库授权改变整个实例状态" {
+			t.Fatalf("兄弟登记应预检拒绝，实际 %v", err)
+		}
+	})
+	t.Run("登记不可读不是预检拒绝", func(t *testing.T) {
+		service := newDatabaseService(serviceDeps{registry: &failingListRegistry{fixture.registry}, docker: fixture.docker, protocol: fixture.protocol})
+		facade := &AgentFacade{service: service, authorize: func(context.Context) error { return nil }}
+		_, err := facade.Lifecycle(context.Background(), "db", agentRecordDigest(managed), "remove")
+		var rejected *AgentLifecycleRejectedError
+		if errors.As(err, &rejected) {
+			t.Fatalf("存储失败不得冒充预检拒绝：%v", err)
+		}
+		var failure *AgentLifecycleError
+		if !errors.As(err, &failure) || strings.Contains(err.Error(), "REGISTRY_STORAGE_BROKEN") {
+			t.Fatalf("存储失败应收敛为固定文案的执行失败：%v", err)
+		}
+	})
+}
+
+func TestAgentLifecycleExecutionFailureKeepsLocalReason(t *testing.T) {
+	fixture := newServiceFixture("8.4")
+	response, err := fixture.service.Create(context.Background(), newCreateRequest(createTarget{Kind: "new", ImageID: testImageID, ContainerName: "mysql-db"}, scopeLocalhost, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, _ := fixture.registry.list()
+	facade := &AgentFacade{service: fixture.service, authorize: func(context.Context) error { return nil }}
+	t.Run("引擎正文不透传", func(t *testing.T) {
+		fixture.docker.removeErr = errors.New("ENGINE_PRIVATE_RESPONSE")
+		defer func() { fixture.docker.removeErr = nil }()
+		_, err := facade.Lifecycle(context.Background(), response.Instance.ID, agentRecordDigest(rows[0]), "remove-container")
+		var failure *AgentLifecycleError
+		if !errors.As(err, &failure) || failure.Code != "database-lifecycle-failed" || failure.Message != "数据库操作失败，请回读实际状态，不能自动重试" {
+			t.Fatalf("执行失败应收敛为固定兜底文案：%v", err)
+		}
+		if errors.Unwrap(err) != nil || strings.Contains(err.Error(), "ENGINE_PRIVATE_RESPONSE") {
+			t.Fatalf("底层错误链不得保留：%v", err)
+		}
+	})
+	t.Run("域层固定中文保留", func(t *testing.T) {
+		fixture.docker.removeErr = &shared.InvalidRequestError{Status: 409, Message: "数据库持久卷身份核对失败"}
+		defer func() { fixture.docker.removeErr = nil }()
+		_, err := facade.Lifecycle(context.Background(), response.Instance.ID, agentRecordDigest(rows[0]), "remove-container")
+		var failure *AgentLifecycleError
+		if !errors.As(err, &failure) || failure.Code != "database-lifecycle-failed" || failure.Message != "数据库持久卷身份核对失败" {
+			t.Fatalf("InvalidRequestError 契约文案应原样保留：%v", err)
+		}
+	})
 }
 
 func TestAgentDatabaseCreateGeneratesCredentialsAndFixesNetwork(t *testing.T) {

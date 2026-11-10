@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"elysian/server/internal/paths"
+	"elysian/server/internal/shared"
 )
 
 // AgentFacade deliberately has neither Reveal nor OpenSession. SQL text and
@@ -264,11 +265,19 @@ func (f *AgentFacade) lifecycleAgent(ctx context.Context, id, expected, action s
 	s.mutationMu.Lock()
 	defer s.mutationMu.Unlock()
 	row, err := s.record(id)
-	if err != nil || row.Source != sourceManaged {
-		return nil, errors.New("仅允许操作面板受管数据库")
+	if err != nil {
+		var invalid *shared.InvalidRequestError
+		if errors.As(err, &invalid) && invalid.Status == 404 {
+			return nil, &AgentLifecycleRejectedError{Message: "数据库不存在，请用 database_list 读取精确登记 ID"}
+		}
+		// 登记读取故障按存储失败保守终止，不冒充可纠正的预检拒绝。
+		return nil, lifecycleFailure(err)
+	}
+	if row.Source != sourceManaged {
+		return nil, &AgentLifecycleRejectedError{Message: "仅允许操作面板受管数据库"}
 	}
 	if expected == "" || agentRecordDigest(row) != expected {
-		return nil, errors.New("数据库登记版本已变化，请重新读取并审批")
+		return nil, &AgentLifecycleRejectedError{Message: "数据库登记版本已变化，请重新读取并审批"}
 	}
 	switch action {
 	case "reconcile":
@@ -280,23 +289,23 @@ func (f *AgentFacade) lifecycleAgent(ctx context.Context, id, expected, action s
 	case "start", "stop":
 		rows, listErr := s.deps.registry.list()
 		if listErr != nil {
-			return nil, errors.New("数据库登记不可核验")
+			return nil, &AgentLifecycleError{Code: lifecycleFailureCode, Message: "数据库登记不可核验"}
 		}
 		for _, other := range rows {
 			if other.ContainerID == row.ContainerID && other.ID != row.ID {
-				return nil, errors.New("实例中还有其他逻辑库，不能通过单库授权改变整个实例状态")
+				return nil, &AgentLifecycleRejectedError{Message: "实例中还有其他逻辑库，不能通过单库授权改变整个实例状态"}
 			}
 		}
 		if d, ok := s.deps.docker.(*dockerAPI); ok {
 			err = d.agentControl(ctx, row, action, s.deps.selfContainerID)
 		} else {
-			err = errors.New("数据库容器控制未接入")
+			return nil, &AgentLifecycleError{Code: lifecycleFailureCode, Message: "数据库容器控制未接入"}
 		}
 	default:
-		return nil, errors.New("数据库操作未开放")
+		return nil, &AgentLifecycleRejectedError{Message: "数据库操作未开放"}
 	}
 	if err != nil {
-		return nil, errors.New("数据库操作失败，请回读实际状态，不能自动重试")
+		return nil, lifecycleFailure(err)
 	}
 	return map[string]any{"id": id, "action": action, "completed": true}, nil
 }

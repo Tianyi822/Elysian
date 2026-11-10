@@ -175,3 +175,111 @@ func TestOnlyTrustedAsyncSubmissionCanAttestNotDispatched(t *testing.T) {
 		})
 	}
 }
+
+// syncWriteBridge 注册固定返回 failure 的同步写工具，模拟 lifecycle 工具
+// 经 lifecycleBusinessError 包装后的两条通路。
+func syncWriteBridge(t *testing.T, failure error) *toolbridge.Bridge {
+	t.Helper()
+	plugin := &kardia.Plugin{Name: "sync-write-test", Inject: kardia.InjectMap{tools.ServiceName: nil}, Apply: func(c *kardia.Context, _ any) (kardia.Disposable, error) {
+		return nil, tools.RegisterAll(c, tools.Descriptor{Name: "database_container_remove", Description: "审批后删除指定受管数据库容器，要求精确登记版本", Parameters: tools.Schema{Type: tools.SchemaObject, Properties: map[string]tools.Schema{
+			"id":       {Type: tools.SchemaString},
+			"expected": {Type: tools.SchemaString},
+		}, Required: []string{"id", "expected"}},
+			Metadata: tools.Metadata{Domain: "database", Backend: "domain", Action: "remove-container", Exposure: "agent", Effect: "write", ReadOnly: false, Default: true, ResourceType: "database", ResourceKeyArgument: "id", Version: "1"},
+			Handler: func(c *kardia.Context, _ tools.Arguments) (any, error) {
+				if err := tools.ConsumeBackend(tools.Lifetime(c), tools.DispatchID(tools.Lifetime(c))); err != nil {
+					return nil, err
+				}
+				return nil, failure
+			}})
+	}}
+	bridge, err := toolbridge.NewWithPlugins(nil, plugin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = bridge.Close(context.Background()) })
+	return bridge
+}
+
+func TestSyncWritePrecheckRejectionContinuesRunWithPreciseReason(t *testing.T) {
+	bridge := syncWriteBridge(t, &tools.BusinessError{Code: "database-lifecycle-rejected", Message: "数据库登记版本已变化，请重新读取并审批", NotDispatched: true})
+	var step atomic.Int32
+	m, session, _ := agentManager(t, func(_ context.Context, _ model.Profile, request model.Request) (model.Response, error) {
+		if request.ToolChoice == "store_working_memory" {
+			return memoryReply(request), nil
+		}
+		switch step.Add(1) {
+		case 1:
+			reply := toolReply("database_container_remove")
+			reply.ToolCalls[0].Arguments = json.RawMessage(`{"id":"db-1","expected":"stale"}`)
+			return reply, nil
+		default:
+			text := allRequestText(request)
+			if !strings.Contains(text, "数据库登记版本已变化，请重新读取并审批") {
+				t.Errorf("预检拒绝的精确文案未返回模型：%s", text)
+			}
+			return finalReply("已提示重新读取登记版本"), nil
+		}
+	}, func(d *Deps) { d.Tools, d.Catalog = bridge, &Extensions{MountRoot: "/srv"} })
+	run, _, err := m.CreateTask(context.Background(), session.ID, AgentInput{RequestID: "sync-precheck", Content: "删除数据库容器", AuthorizationMode: AuthorizationOnDemand, PermissionMode: PermissionFull})
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished := runtimeFinished(t, m, run.ID)
+	if finished.Status != StateSucceeded {
+		t.Fatalf("预检拒绝应继续运行：%s %+v", finished.Status, finished.Error)
+	}
+	calls, err := m.Calls(context.Background(), run.ID, "", 50)
+	if err != nil || len(calls.Items) != 1 {
+		t.Fatalf("调用记录不完整：%+v %v", calls, err)
+	}
+	call := calls.Items[0]
+	if call.Tool != "database_container_remove" || call.Status != StateFailed || call.Error == nil ||
+		call.Error.Code != "database-lifecycle-rejected" || call.Error.Message != "数据库登记版本已变化，请重新读取并审批" {
+		t.Fatalf("预检拒绝应保留精确码与文案：%+v", call)
+	}
+	lines, _ := readRecordLines(t, m.store, recordOwner{"session", session.ID})
+	var copied *Call
+	for _, line := range lines {
+		if line.Type == "calls" && line.Key == call.ID {
+			var persisted Call
+			if json.Unmarshal(line.Document, &persisted) == nil {
+				copied = &persisted
+			}
+		}
+	}
+	if copied == nil || copied.Error == nil || copied.Error.Code != "database-lifecycle-rejected" {
+		t.Fatalf("JSONL 副本缺失精确业务原因：%+v", copied)
+	}
+}
+
+func TestSyncWriteExecutionFailureStopsRunWithPreciseReason(t *testing.T) {
+	bridge := syncWriteBridge(t, &tools.BusinessError{Code: "database-lifecycle-failed", Message: "数据库持久卷身份核对失败"})
+	m, session, _ := agentManager(t, func(_ context.Context, _ model.Profile, request model.Request) (model.Response, error) {
+		if request.ToolChoice == "store_working_memory" {
+			return memoryReply(request), nil
+		}
+		reply := toolReply("database_container_remove")
+		reply.ToolCalls[0].Arguments = json.RawMessage(`{"id":"db-1","expected":"current"}`)
+		return reply, nil
+	}, func(d *Deps) { d.Tools, d.Catalog = bridge, &Extensions{MountRoot: "/srv"} })
+	run, _, err := m.CreateTask(context.Background(), session.ID, AgentInput{RequestID: "sync-execfail", Content: "删除数据库容器", AuthorizationMode: AuthorizationOnDemand, PermissionMode: PermissionFull})
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished := runtimeFinished(t, m, run.ID)
+	if finished.Status != StateFailed {
+		t.Fatalf("执行中失败应终止运行：%s %+v", finished.Status, finished.Error)
+	}
+	if finished.EndReason != "database-lifecycle-failed" || finished.Error == nil || finished.Error.Message != "数据库持久卷身份核对失败" {
+		t.Fatalf("运行终态应保留精确原因：%s %+v", finished.EndReason, finished.Error)
+	}
+	calls, err := m.Calls(context.Background(), run.ID, "", 50)
+	if err != nil || len(calls.Items) != 1 {
+		t.Fatalf("调用记录不完整：%+v %v", calls, err)
+	}
+	call := calls.Items[0]
+	if call.Status != StateFailed || call.Error == nil || call.Error.Code != "database-lifecycle-failed" || call.Error.Message != "数据库持久卷身份核对失败" {
+		t.Fatalf("工具卡片应保留精确码与文案：%+v", call)
+	}
+}

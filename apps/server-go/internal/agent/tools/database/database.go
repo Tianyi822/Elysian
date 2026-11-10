@@ -132,7 +132,11 @@ func New(c *kardia.Context, deps Deps, _ Config) (*Service, error) {
 				}
 				return tools.Submission{Value: task, Task: tools.TaskReference{Domain: "database", ID: task.ID, RequestID: task.RequestID}}, nil
 			}
-			return deps.Facade.Lifecycle(tools.Lifetime(c), id, expected, spec.action)
+			value, err := deps.Facade.Lifecycle(tools.Lifetime(c), id, expected, spec.action)
+			if err != nil {
+				return nil, lifecycleBusinessError(err)
+			}
+			return value, nil
 		}})
 	}
 	for _, action := range []string{"status", "logs", "cancel"} {
@@ -180,6 +184,19 @@ func New(c *kardia.Context, deps Deps, _ Config) (*Service, error) {
 func taskSubmissionError(err error) error {
 	if rejected, ok := err.(*domain.AgentTaskRejectedError); ok {
 		return &tools.BusinessError{Code: "database-task-rejected", Message: rejected.Message, NotDispatched: true}
+	}
+	return err
+}
+
+// lifecycleBusinessError 用直接类型断言把生命周期错误映射为业务错误：
+// 预检拒绝声明未派发交回模型纠正；执行中失败保留固定中文原因但不声明未派发。
+// 组合错误原样上抛，与 AsBusinessError 的严格性一致，避免清理失败被洗白。
+func lifecycleBusinessError(err error) error {
+	if rejected, ok := err.(*domain.AgentLifecycleRejectedError); ok {
+		return &tools.BusinessError{Code: "database-lifecycle-rejected", Message: rejected.Message, NotDispatched: true}
+	}
+	if failure, ok := err.(*domain.AgentLifecycleError); ok {
+		return &tools.BusinessError{Code: failure.Code, Message: failure.Message}
 	}
 	return err
 }

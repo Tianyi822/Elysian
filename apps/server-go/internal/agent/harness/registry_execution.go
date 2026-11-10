@@ -261,6 +261,12 @@ func (m *Manager) executeRegistryOperation(ctx context.Context, s CapabilitySnap
 		if o.Capability.Source == "builtin" && o.Capability.Name == "web_fetch" && ctx.Err() == nil && errors.As(err, &webError) {
 			return CapabilityResult{BusinessError: &Failure{Code: webError.Code, Message: webError.Message}}, nil
 		}
+		// 同步内置工具已声明可公开的业务原因：保留精确文案，运行仍终止，不推断未派发。
+		if o.Capability.Source == "builtin" && ctx.Err() == nil {
+			if business, ok := tools.AsBusinessError(err); ok {
+				return CapabilityResult{}, bad(business.Code, business.Message)
+			}
+		}
 		if result, ok := value.(CapabilityResult); ok {
 			return result, err
 		}
