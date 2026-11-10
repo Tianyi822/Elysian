@@ -557,6 +557,7 @@ export interface ModelSettingsAdapter {
 }
 
 export interface PanelAdapter {
+ preflightUpdate(target: PanelUpdateTarget): Promise<import('@elysian/contracts').PanelUpdatePreflight>
  info(signal?: AbortSignal): Promise<PanelInfo>
  checkUpdate(channel: PanelUpdateChannel, source: PanelUpdateSource): Promise<PanelUpdate>
  /** 更新日志：列所选更新来源最近的提交，只读上游，不改动面板状态。 */

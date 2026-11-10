@@ -189,6 +189,10 @@ func runUpgrade(opts upgradeOptions, stdin *os.File, stdout, stderr io.Writer, d
 			return 1
 		}
 	} else {
+		if info.ResourcePreflightVersion == 0 && (opts.StopPanel || len(opts.StopContainers)+len(opts.StopServices) > 0) {
+			fmt.Fprintln(stderr, "当前面板不支持更新资源预检，未提交停机授权；请先手动释放负载。")
+			return 1
+		}
 		if opts.Source == "" {
 			choice, code := chooseUpgrade(stdin, stdout, "选择更新来源", "检查、说明与源码下载均固定使用所选来源。", []string{"GitHub · Tianyi822/Elysian", "Gitee · Chentyit/Elysian"}, nil)
 			if code != 0 {
@@ -232,6 +236,29 @@ func runUpgrade(opts upgradeOptions, stdin *os.File, stdout, stderr io.Writer, d
 			summary += "\n正式发版：" + termui.Safe(update.ReleaseTag)
 		}
 		summary += "\n\n" + termui.Safe(update.Message) + "\n\n更新会构建新版本并重启面板，失败按维护机制恢复原版本。"
+		var resourcePlan *client.PanelResourcePlan
+		if info.ResourcePreflightVersion > 0 {
+			report, preflightErr := api.PreflightPanelUpdate(ctx, client.PanelUpdateInput{Source: opts.Source, Channel: opts.Channel, TargetCommit: update.TargetCommit, ReleaseTag: update.ReleaseTag})
+			if preflightErr != nil {
+				fmt.Fprintln(stderr, termui.Safe(preflightErr.Error()))
+				return 1
+			}
+			plan, code, selectErr := selectUpgradeResources(report, opts, stdin, stdout, interactive)
+			if selectErr != nil {
+				fmt.Fprintln(stderr, termui.Safe(selectErr.Error()))
+				return 1
+			}
+			if code != 0 {
+				return code
+			}
+			if plan == nil {
+				return 0
+			}
+			resourcePlan = plan
+			summary += "\n\n" + upgradeResourcesSummary(report)
+		} else {
+			summary += "\n当前面板版本不支持资源预检；首次升级前请手动释放负载，不会自动停止其他业务。"
+		}
 		if !opts.Yes {
 			choice, code := chooseUpgrade(stdin, stdout, "确认更新", summary, []string{"取消更新", "更新并重启"}, func(ctx context.Context) (string, error) {
 				commits, err := api.PanelCommits(ctx, opts.Source, opts.Channel)
@@ -261,7 +288,7 @@ func runUpgrade(opts upgradeOptions, stdin *os.File, stdout, stderr io.Writer, d
 			fmt.Fprintln(stderr, "生成请求编号失败：", err)
 			return 1
 		}
-		state.Input = client.PanelUpdateInput{RequestID: hex.EncodeToString(idBytes), Source: opts.Source, Channel: opts.Channel, TargetCommit: update.TargetCommit, ReleaseTag: update.ReleaseTag}
+		state.Input = client.PanelUpdateInput{RequestID: hex.EncodeToString(idBytes), Source: opts.Source, Channel: opts.Channel, TargetCommit: update.TargetCommit, ReleaseTag: update.ReleaseTag, ResourcePlan: resourcePlan}
 		if err = persistence.save(state); err != nil {
 			fmt.Fprintln(stderr, "无法保存恢复记录，未提交更新：", err)
 			return 1
@@ -492,7 +519,7 @@ func taskStateLabel(state string) string {
 	return state
 }
 func taskPhaseLabel(phase string) string {
-	labels := map[string]string{"checking": "检查部署环境", "downloading": "下载源码", "building": "构建新版本", "firewall": "调整防火墙", "stopping": "停止面板", "activating": "切换配置与版本", "verifying": "检查服务健康", "finished": "已结束"}
+	labels := map[string]string{"checking": "检查部署环境", "downloading": "下载源码", "building": "构建新版本", "firewall": "调整防火墙", "stopping": "停止面板", "activating": "切换配置与版本", "verifying": "检查服务健康", "finished": "已结束", "preparing-resources": "准备更新资源", "restoring-resources": "恢复临时停止的业务"}
 	if label := labels[phase]; label != "" {
 		return label
 	}

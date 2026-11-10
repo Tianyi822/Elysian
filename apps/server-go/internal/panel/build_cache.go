@@ -93,7 +93,7 @@ func releaseBuildCommand(ctx context.Context, stage, source, output, sha string,
 	// 环境直接交给 Go/Bun，兼容既有安装中不认识持久缓存的 build-release.sh。
 	c := exec.CommandContext(ctx, "runuser", "-u", "elysian-build", "--", "env", "HOME="+stage,
 		"PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin",
-		"BUN_INSTALL_CACHE_DIR="+cache.Bun, "GOMODCACHE="+cache.Modules, "GOCACHE="+cache.Go, "GOFLAGS=-trimpath",
+		"BUN_INSTALL_CACHE_DIR="+cache.Bun, "GOMODCACHE="+cache.Modules, "GOCACHE="+cache.Go, "GOFLAGS=-trimpath -p=1", "GOMAXPROCS=2", "GOMEMLIMIT=768MiB",
 		"bash", filepath.Join(InstallRoot, "maintenance", "build-release.sh"), source, output, sha)
 	c.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C.UTF-8"}
 	return c

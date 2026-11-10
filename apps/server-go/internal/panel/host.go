@@ -55,7 +55,10 @@ func (h SystemHost) command(ctx context.Context, name string, args ...string) (s
 }
 
 func (h SystemHost) Dispatch(ctx context.Context, worker, id string) error {
-	_, err := h.command(ctx, "systemd-run", "--unit=elysian-maintenance-"+id, "--collect", "--property=Type=exec", "--setenv=HOME="+filepath.Dir(h.Store.Root), "--setenv=ELYSIAN_DOCKER_SOCKET="+h.DockerSocket, worker, "maintenance-worker", id)
+	// The task copy also owns recovery, so an OOM/killed main worker cannot leave
+	// an early-stopped panel offline waiting for an HTTP supervisor to rescue it.
+	finalizer := strconv.Quote(worker) + " maintenance-finalize " + id
+	_, err := h.command(ctx, "systemd-run", "--unit=elysian-maintenance-"+id, "--collect", "--property=Type=exec", "--property=KillMode=control-group", "--property=TimeoutStopSec=900", "--property=ExecStopPost="+finalizer, "--setenv=HOME="+filepath.Dir(h.Store.Root), "--setenv=ELYSIAN_DOCKER_SOCKET="+h.DockerSocket, worker, "maintenance-worker", id)
 	return err
 }
 func (h SystemHost) ProbeWorker(ctx context.Context, id string) WorkerStatus {

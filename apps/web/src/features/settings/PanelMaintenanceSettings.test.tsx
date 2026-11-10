@@ -6,7 +6,7 @@ import { createHttpPanelAdapter, PanelHttpError, PanelNetworkError } from '../..
 import { usePanelStore } from '../../stores/panelStore'
 import { useMessageStore } from '../../stores/messageStore'
 import { renderApp } from '../../test/renderApp'
-import type { PanelInfo, PanelTask, PanelUpdate } from '@elysian/contracts'
+import type { PanelInfo, PanelTask, PanelUpdate, PanelUpdatePreflight } from '@elysian/contracts'
 import { openPanelAddress, reloadPanelPage } from './panelNavigation'
 import { PANEL_PENDING_KEY, savePanelPending } from './panelPending'
 import { advanceAuthGeneration } from '../../adapters/http/unauthorized'
@@ -22,6 +22,28 @@ function gateway() {
   return result
 }
 describe('端口与更新设置', () => {
+  it('支持资源预检的服务器必须先确认清单，未知提交保留原资源授权', async () => {
+    const g = gateway()
+    g.panel.info = async () => ({ ...info, resourcePreflightVersion: 1 })
+    g.panel.checkUpdate = vi.fn(async () => releaseUpdate)
+    const resourcePlan = { preflightId: 'preflight-123', targets: ['service:caddy.service'], stopPanel: true }
+    g.panel.preflightUpdate = vi.fn(async (): Promise<PanelUpdatePreflight> => ({ id: resourcePlan.preflightId, expiresAt: new Date(Date.now() + 300000).toISOString(), memory: { totalBytes: 2 ** 31, availableBytes: 2 ** 30, requiredBytes: 1536 * 1024 ** 2, swapTotalBytes: 0, swapFreeBytes: 0 }, disk: { availableBytes: 2 ** 32 }, load: [0, 0, 0], activeAgentRuns: 1, candidates: [{ id: 'service:caddy.service', kind: 'service', name: 'Caddy', memoryBytes: null, recommended: true }], needsRelease: true, stopPanelRecommended: true }))
+    g.panel.update = vi.fn().mockRejectedValue(new PanelNetworkError('响应丢失'))
+    g.panel.taskByRequest = vi.fn(async () => null)
+    renderApp('/settings?tab=maintenance', { gateway: g })
+    const user = userEvent.setup()
+    await waitFor(() => expect(screen.getByRole('button', { name: '最新发版' })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: '最新发版' }))
+    await user.click(screen.getByRole('button', { name: '检查更新' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '更新并重启' })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: '更新并重启' }))
+    expect(await screen.findByRole('dialog', { name: '确认更新资源与停机清单' })).toBeInTheDocument()
+    expect(g.panel.update).not.toHaveBeenCalled()
+    await waitFor(() => expect(screen.getByRole('button', { name: '确认并更新' })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: '确认并更新' }))
+    await waitFor(() => expect(g.panel.update).toHaveBeenCalledWith({ channel: 'release', source: 'github', targetCommit: releaseUpdate.targetCommit, releaseTag: releaseUpdate.releaseTag, resourcePlan }, expect.any(String)))
+    expect(JSON.parse(sessionStorage.getItem(PANEL_PENDING_KEY)!)).toMatchObject({ kind: 'update', input: { resourcePlan } })
+  })
   it('点击标题旁问号显示直观说明，Escape 关闭', async () => {
     renderApp('/settings?tab=maintenance'); const user = userEvent.setup()
     const portsHelp = '前端端口用于打开面板，后端端口供面板内部使用。保存后会重启，页面会短暂断开。'

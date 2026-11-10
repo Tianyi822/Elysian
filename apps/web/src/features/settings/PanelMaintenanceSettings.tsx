@@ -4,7 +4,7 @@ import { Terminal } from '../../components/icons'
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { PANEL_TASK_PHASE_LABELS, PANEL_TASK_STATE_LABELS, PANEL_UPDATE_CHANNEL_LABELS, PANEL_UPDATE_SOURCE_LABELS, panelTaskIsActive, validatePanelPorts } from '@elysian/contracts'
-import type { PanelTask, PanelUpdate, PanelUpdateChannel, PanelUpdateSource } from '@elysian/contracts'
+import type { PanelTask, PanelUpdate, PanelUpdateChannel, PanelUpdateSource, PanelUpdateTarget } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { PanelHttpError } from '../../adapters/http/panelHttpAdapter'
 import { captureAuthGeneration } from '../../adapters/http/unauthorized'
@@ -13,6 +13,7 @@ import { reloadPanelPage } from './panelNavigation'
 import { panelAddress } from './panelAddress'
 export { panelAddress } from './panelAddress'
 import { PanelChangelogDialog } from './PanelChangelogDialog'
+import { PanelResourcePreflightDialog } from './PanelResourcePreflightDialog'
 import { ChipGroup } from '../../components/ChipGroup'
 import { useFeedbackMessage } from '../../components/useFeedbackMessage'
 import { useMessageStore } from '../../stores/messageStore'
@@ -49,6 +50,7 @@ export function PanelMaintenanceSettings() {
   const [update, setUpdate] = useState<PanelUpdate | null>(null)
   const checkVersion = useRef(0)
   const [changelogOpen, setChangelogOpen] = useState(false)
+  const [resourceTarget, setResourceTarget] = useState<PanelUpdateTarget | null>(null)
   /** 提交与校验错误按区块落持久行：端口区（含重启）与更新区各自展示，不再只靠自动消失的提示。 */
   const [portsError, setPortsError] = useState<string | null>(null)
   const [updateError, setUpdateError] = useState<string | null>(null)
@@ -176,12 +178,18 @@ export function PanelMaintenanceSettings() {
   const selectChannel = (next: PanelUpdateChannel) => {
     if (channel === next) return
     checkVersion.current += 1
-    setChannel(next); setUpdate(null); setChecking(false); setUpdateError(null)
+    setChannel(next); setUpdate(null); setResourceTarget(null); setChecking(false); setUpdateError(null)
   }
   const selectSource = (next: PanelUpdateSource) => {
     if (source === next) return
     checkVersion.current += 1
-    setSource(next); setUpdate(null); setChecking(false); setUpdateError(null)
+    setSource(next); setUpdate(null); setResourceTarget(null); setChecking(false); setUpdateError(null)
+  }
+  const beginUpdate = () => {
+    if (!update || unavailable) return
+    const target = { channel: update.channel, source: update.source, targetCommit: update.targetCommit, releaseTag: update.releaseTag }
+    if (info?.resourcePreflightVersion) setResourceTarget(target)
+    else void submit(`update:${target.source}:${target.channel}:${target.releaseTag}:${target.targetCommit}`, { kind: 'update', input: target })
   }
   return <>
     <section aria-label="面板端口" className="panel-surface p-5">
@@ -199,7 +207,7 @@ export function PanelMaintenanceSettings() {
       </form>
     </section>
     <section aria-label="面板更新" className="panel-surface p-5">
-      <div className="flex items-center gap-1.5"><h2 className="text-sm font-medium text-fg">面板更新</h2><SectionHelp label="面板更新说明">先下载并编译新版本，成功后重启。更新失败会恢复原版本，保留面板数据。</SectionHelp></div>
+      <div className="flex items-center gap-1.5"><h2 className="text-sm font-medium text-fg">面板更新</h2><SectionHelp label="面板更新说明">先下载并编译新版本，成功后重启。更新失败会恢复原版本，保留面板数据。资源不足时，先确认停机清单；提前停止面板后，构建期间页面暂时不可访问。</SectionHelp></div>
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <ChipGroup
           ariaLabel="更新策略"
@@ -226,7 +234,8 @@ export function PanelMaintenanceSettings() {
         {update.targetCommit ? <p>目标提交：{update.targetCommit}</p> : null}
         {update.message && update.targetCommit ? <p className="text-fg-muted">{update.message}</p> : null}
       </div> : null}
-      <div className="mt-4 flex flex-wrap gap-2"><button className={BUTTON} disabled={unavailable || checking} onClick={() => void check()}>{checking ? '正在检查…' : '检查更新'}</button><button className={BUTTON} disabled={unavailable || checking || !update?.available || update.channel !== channel || update.source !== source} onClick={() => update && void submit(`update:${update.source}:${update.channel}:${update.releaseTag}:${update.targetCommit}`, { kind: 'update', input: { channel: update.channel, source: update.source, targetCommit: update.targetCommit, releaseTag: update.releaseTag } })}>{submitting ? '正在提交…' : '更新并重启'}</button><button className={BUTTON} disabled={!info?.available} title={info && !info.available ? info.reason : undefined} onClick={() => setChangelogOpen(true)}>更新日志</button></div>
+      <div className="mt-4 flex flex-wrap gap-2"><button className={BUTTON} disabled={unavailable || checking} onClick={() => void check()}>{checking ? '正在检查…' : '检查更新'}</button><button className={BUTTON} disabled={unavailable || checking || !update?.available || update.channel !== channel || update.source !== source} onClick={beginUpdate}>{submitting ? '正在提交…' : '更新并重启'}</button><button className={BUTTON} disabled={!info?.available} title={info && !info.available ? info.reason : undefined} onClick={() => setChangelogOpen(true)}>更新日志</button></div>
+      {info?.available && !info.resourcePreflightVersion ? <p className="mt-2 text-xs leading-5 text-warning">当前服务器版本不支持更新资源预检。首次升级前请手动释放负载；不会自动停止其他业务。</p> : null}
       {updateError || verificationError ? <p role="alert" className="mt-3 break-all text-xs leading-5 text-danger">{updateError ?? verificationError}</p> : null}
     </section>
     {pending ? <section aria-label="维护提交结果" className="panel-surface p-5">
@@ -265,5 +274,10 @@ export function PanelMaintenanceSettings() {
       {hasMore ? <p role="status" className="mt-3 text-xs text-fg-muted">正在读取最新日志…</p> : null}
     </section> : null}
     <PanelChangelogDialog open={changelogOpen} channel={channel} source={source} currentCommit={info?.commit ?? ''} onClose={() => setChangelogOpen(false)} />
+    {resourceTarget ? <PanelResourcePreflightDialog target={resourceTarget} adapter={gateway.panel} onClose={() => setResourceTarget(null)} onConfirm={resourcePlan => {
+      const target = { ...resourceTarget, resourcePlan }
+      setResourceTarget(null)
+      void submit(`update:${target.source}:${target.channel}:${target.releaseTag}:${target.targetCommit}:${JSON.stringify(resourcePlan)}`, { kind: 'update', input: target })
+    }} /> : null}
   </>
 }

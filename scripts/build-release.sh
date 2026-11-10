@@ -5,6 +5,10 @@ set -euo pipefail
 export GOPROXY="${ELYSIAN_GOPROXY:-${GOPROXY:-https://goproxy.cn|https://mirrors.aliyun.com/goproxy/|direct}}"
 # Bun 依赖默认走 npmmirror；可用 ELYSIAN_BUN_REGISTRY 或已有 BUN_CONFIG_REGISTRY 覆盖。
 export BUN_CONFIG_REGISTRY="${ELYSIAN_BUN_REGISTRY:-${BUN_CONFIG_REGISTRY:-https://registry.npmmirror.com}}"
+# Serial package compilation limits concurrent compiler memory on supported 2 GiB hosts.
+export GOFLAGS="${GOFLAGS:--trimpath -p=1}"
+export GOMAXPROCS="${GOMAXPROCS:-2}"
+export GOMEMLIMIT="${GOMEMLIMIT:-768MiB}"
 [ "$#" -eq 3 ] || { echo '用法：build-release.sh <源码目录> <产物目录> <提交标识>' >&2; exit 1; }
 SOURCE_DIR="$1"
 OUTPUT_DIR="$2"

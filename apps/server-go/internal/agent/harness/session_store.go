@@ -429,7 +429,7 @@ func saveModelRequest(ctx context.Context, tx *sql.Tx, record ModelRequestRecord
 	return err
 }
 
-// 取消保留已接收的公开片段，既不提交成功终答，也不触发记忆整理。
+// 取消或维护中断保留已接收的公开片段，不提交成功终答或触发记忆整理。
 func (s *store) saveStoppedReply(ctx context.Context, tx *sql.Tx, run Run) error {
 	records, err := readDocuments[ModelRequestRecord](ctx, tx, "SELECT document FROM model_requests WHERE run_id=? ORDER BY request_index", run.ID)
 	if err != nil {
@@ -439,7 +439,7 @@ func (s *store) saveStoppedReply(ctx context.Context, tx *sql.Tx, run Run) error
 	if output.Content == "" {
 		return nil
 	}
-	message := Message{ID: randomID(), SessionID: run.SessionID, TaskID: run.TaskID, RunID: run.ID, Role: "assistant", Content: output.Content, RunStatus: StateCancelled}
+	message := Message{ID: randomID(), SessionID: run.SessionID, TaskID: run.TaskID, RunID: run.ID, Role: "assistant", Content: output.Content, RunStatus: run.Status}
 	if err = s.appendMessage(ctx, tx, &message); err != nil {
 		return err
 	}

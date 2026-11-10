@@ -104,7 +104,7 @@ func (m *Manager) rememberExecutionTask(execution *executionState, ref tools.Tas
 	if m.closed {
 		return
 	}
-	if !execution.deleted {
+	if !execution.deleted && !execution.maintenance {
 		execution.tasks = append(execution.tasks, ref)
 		return
 	}

@@ -5,11 +5,15 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"regexp"
+	"strings"
 )
 
 type upgradeOptions struct {
-	Source, Channel string
-	Yes             bool
+	Source, Channel              string
+	Yes                          bool
+	StopContainers, StopServices []string
+	StopPanel                    bool
 }
 
 func knownCommand(name string) bool {
@@ -61,6 +65,21 @@ func parseCommand(args []string) (command string, opts upgradeOptions, help bool
 		flags.StringVar(&opts.Channel, "channel", "", "")
 		flags.BoolVar(&opts.Yes, "yes", false, "")
 		flags.BoolVar(&opts.Yes, "y", false, "")
+		flags.BoolVar(&opts.StopPanel, "stop-panel", false, "")
+		flags.Func("stop-container", "", func(value string) error {
+			if !regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(value) {
+				return errors.New("--stop-container 必须为完整的 64 位容器 ID")
+			}
+			opts.StopContainers = append(opts.StopContainers, value)
+			return nil
+		})
+		flags.Func("stop-service", "", func(value string) error {
+			if !regexp.MustCompile(`^[A-Za-z0-9_.@:-]+\.service$`).MatchString(value) || strings.HasPrefix(value, "-") {
+				return errors.New("--stop-service 必须为精确的 .service 单元名")
+			}
+			opts.StopServices = append(opts.StopServices, value)
+			return nil
+		})
 	}
 	if parseErr := flags.Parse(args[1:]); parseErr != nil {
 		err = fmt.Errorf("参数无效：%s", parseErr)
@@ -93,6 +112,9 @@ func printCommandHelp(w io.Writer, command string) {
 		text = "用法：ely help [agent|resetpwd|upgrade|help]\n\n查看命令、参数、默认值和示例，无需面板运行或登录。\n也可使用 ely --help、ely upgrade --help。\n"
 	default:
 		text = "Elysian CLI（ely）— 服务器本地终端\n\n用法：\n  ely                    交互主菜单\n  ely agent              直接进入 Agent 终端\n  ely resetpwd           重置密码（生产目录：sudo ely resetpwd）\n  ely upgrade            更新面板，选择来源和版本策略\n  ely help [命令]        查看全部命令或指定命令的参数\n  ely --help, -h         显示本帮助\n  ely --version          显示 CLI 版本\n\n示例：\n  ely help upgrade\n  ely upgrade --source github --channel release --yes\n\nAgent 和更新复用 CLI 登录。兼容脚本入口：elysian resetpwd、elysian panel-ports。\n"
+	}
+	if command == "upgrade" {
+		text += "\n更新资源预检：\n  --stop-container <完整ID>  明确允许临时停止此容器，可重复\n  --stop-service <unit.service> 明确允许临时停止此服务，可重复\n  --stop-panel              允许构建前停止面板及 Agent，会暂时离线\n\n内存不足时先展示停机清单；--yes 不授权停止任何额外对象。更新结束恢复本次停止的业务，Agent 由用户手动继续。\n"
 	}
 	fmt.Fprint(w, text)
 }

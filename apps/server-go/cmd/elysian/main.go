@@ -137,7 +137,7 @@ func run() (runErr error) {
 			}
 			fmt.Printf("%d %d\n", ports.FrontendPort, ports.BackendPort)
 			return nil
-		case "maintenance-worker", "maintenance-recover":
+		case "maintenance-worker", "maintenance-recover", "maintenance-finalize", "maintenance-resource-version":
 			return panel.RunCLI(context.Background(), os.Args[1], os.Args[2:], paths.ElysianHome, cfg.DockerSocket)
 		case "resetpwd":
 			os.Exit(auth.RunResetPasswordCLI(os.Stdin, os.Stdout))

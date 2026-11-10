@@ -74,3 +74,17 @@ func TestUpgradeConfirmationDefaultsToCancel(t *testing.T) {
 		t.Fatal("确认应默认取消")
 	}
 }
+func TestUpgradeResourceListKeepsSelectedItemVisible(t *testing.T) {
+	items := make([]string, 80)
+	for i := range items {
+		items[i] = fmt.Sprintf("容器 %d · %s", i, strings.Repeat("a", 64))
+	}
+	for _, size := range [][2]int{{80, 24}, {60, 12}} {
+		m := upgradeChoice{title: "更新停机清单", body: "内存不足，请选择允许临时停止的业务。", items: items, cursor: 60, width: size[0], height: size[1], viewport: viewport.New(10, 1)}
+		m.resize()
+		view := m.View()
+		if !strings.Contains(view, "容器 60") || lipgloss.Height(strings.TrimRight(view, "\n")) > size[1] {
+			t.Fatalf("layout=%dx%d\n%s", size[0], size[1], view)
+		}
+	}
+}

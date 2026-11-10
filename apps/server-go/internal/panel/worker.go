@@ -3,6 +3,7 @@ package panel
 import (
 	"context"
 	"elysian/server/internal/config"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -60,7 +61,7 @@ func (w Worker) phase(r *taskRecord, phase string) error {
 	r.Phase = phase
 	r.UpdatedAt = time.Now().UTC()
 	r.WorkerStatus, r.WorkerDead = "", false
-	labels := map[string]string{"checking": "检查部署环境", "downloading": "下载源码", "building": "构建新版本", "firewall": "调整防火墙", "stopping": "停止面板", "activating": "切换配置与版本", "verifying": "检查服务健康", "finished": "任务已结束"}
+	labels := map[string]string{"checking": "检查部署环境", "downloading": "下载源码", "preparing-resources": "准备更新资源", "restoring-resources": "恢复本次停止的业务", "building": "构建新版本", "firewall": "调整防火墙", "stopping": "停止面板", "activating": "切换配置与版本", "verifying": "检查服务健康", "finished": "任务已结束"}
 	w.Store.appendLog(r.ID, r.UpdatedAt.Format(time.RFC3339)+" "+labels[phase]+"\n")
 	return w.Store.lock(func() error { return w.Store.save(*r) })
 }
@@ -80,7 +81,7 @@ func (w Worker) Run(ctx context.Context, id string) (retErr error) {
 		return err
 	}
 	defer func() {
-		if !Active(r.State) && r.State != "recovery-failed" && r.Worker != "" {
+		if !r.ResourceFinalizer && !Active(r.State) && r.State != "recovery-failed" && !r.resourcesPending() && r.Worker != "" {
 			_ = os.Remove(r.Worker)
 		}
 	}()
@@ -117,7 +118,7 @@ func (w Worker) Run(ctx context.Context, id string) (retErr error) {
 func (w Worker) finishFailure(r *taskRecord, cause error) error {
 	r.Error = cause.Error()
 	w.Store.appendLog(r.ID, "维护失败："+r.Error+"\n")
-	if !r.Activated && !r.FirewallCaptured {
+	if !r.Activated && !r.FirewallCaptured && !r.resourcesPending() {
 		r.State = "failed"
 		if e := w.phase(r, "finished"); e != nil {
 			return fmt.Errorf("%w；任务结果保存失败：%v", cause, e)
@@ -126,10 +127,20 @@ func (w Worker) finishFailure(r *taskRecord, cause error) error {
 	}
 	recoverCtx, cancel := context.WithTimeout(context.Background(), rollbackBudget)
 	defer cancel()
-	if e := w.rollback(recoverCtx, r, true); e != nil {
+	var recoveryError error
+	if !r.Committed && (r.Activated || r.FirewallCaptured) {
+		recoveryError = w.rollback(recoverCtx, r, true)
+	}
+	recoveryError = errors.Join(recoveryError, w.restoreResources(recoverCtx, r, true))
+	if e := recoveryError; e != nil {
 		r.State = "recovery-failed"
 		r.Error += "；恢复失败：" + e.Error() + recoveryHint(r.ID)
-		w.ensureStarted(r)
+		if !r.PanelRestored {
+			w.ensureStarted(r)
+		}
+	} else if r.Committed {
+		r.State = "succeeded"
+		r.Error = ""
 	} else if r.Activated || r.FirewallCaptured {
 		r.State = "rolled-back"
 	} else {
@@ -144,7 +155,7 @@ func (w Worker) finishFailure(r *taskRecord, cause error) error {
 // ensureStarted 在回滚失败后尽力把面板服务拉起：面板进程自身停着比配置未完全恢复
 // 更糟——用户会彻底失去面板入口。使用独立短预算，不占用回滚预算。
 func (w Worker) ensureStarted(r *taskRecord) {
-	if !r.Activated {
+	if !r.Activated && !r.PanelStopIntent {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), startFallbackBudget)
@@ -201,6 +212,9 @@ func (w Worker) execute(ctx context.Context, r *taskRecord) error {
 		return err
 	}
 	if r.Kind == "update" {
+		if err = w.checkBuildResources(ctx, r); err != nil {
+			return err
+		}
 		strategy := "最新提交"
 		if r.UpdateChannel == ChannelRelease {
 			strategy = "最新发版 " + r.ReleaseTag
@@ -232,6 +246,12 @@ func (w Worker) execute(ctx context.Context, r *taskRecord) error {
 		}
 		err = selectedSource.Download(downloadCtx, r.TargetCommit, source)
 		cancelDownload()
+		if err != nil {
+			return err
+		}
+		resourceCtx, cancelResources := context.WithTimeout(ctx, 3*time.Minute)
+		err = w.prepareBuildResources(resourceCtx, r)
+		cancelResources()
 		if err != nil {
 			return err
 		}
@@ -275,6 +295,18 @@ func (w Worker) execute(ctx context.Context, r *taskRecord) error {
 	if err = w.phase(r, "stopping"); err != nil {
 		return err
 	}
+	if r.ResourceFinalizer {
+		if host, ok := w.Host.(resourceHost); ok {
+			if err = host.PrepareResourceRecovery(ctx, r.ID, r.Worker); err != nil {
+				return err
+			}
+		}
+	}
+	r.PanelStopIntent = true
+	r.PanelRestored = false
+	if err = w.saveResources(r); err != nil {
+		return err
+	}
 	if err = w.Host.Stop(ctx); err != nil {
 		return err
 	}
@@ -315,6 +347,12 @@ func (w Worker) execute(ctx context.Context, r *taskRecord) error {
 	if err = w.Host.Healthy(ctx, r.NewPorts, expected); err != nil {
 		return err
 	}
+	if r.PanelStopIntent {
+		r.PanelRestored = true
+		if err = w.saveResources(r); err != nil {
+			return err
+		}
+	}
 	rules, err = w.Host.Rules(ctx)
 	if err != nil {
 		return err
@@ -330,9 +368,15 @@ func (w Worker) execute(ctx context.Context, r *taskRecord) error {
 		return err
 	}
 	r.Committed = true
+	if err = w.saveResources(r); err != nil {
+		r.Committed = false
+		return err
+	}
+	if err = w.restoreResources(ctx, r, true); err != nil {
+		return err
+	}
 	r.State = "succeeded"
 	if err = w.phase(r, "finished"); err != nil {
-		r.Committed = false
 		r.State = "running"
 		return err
 	}
@@ -349,6 +393,12 @@ func (w Worker) rollback(ctx context.Context, r *taskRecord, start bool) error {
 	}
 	if r.Activated {
 		if start {
+			if r.PanelStopIntent {
+				r.PanelRestored = false
+				if err := w.saveResources(r); err != nil {
+					return err
+				}
+			}
 			if err := w.Host.Stop(ctx); err != nil {
 				return err
 			}
@@ -391,7 +441,15 @@ func (w Worker) rollback(ctx context.Context, r *taskRecord, start bool) error {
 			return err
 		}
 		if r.Activated {
-			return w.Host.Healthy(ctx, r.OldPorts, "")
+			if err := w.Host.Healthy(ctx, r.OldPorts, ""); err != nil {
+				return err
+			}
+		}
+		if r.PanelStopIntent {
+			r.PanelRestored = true
+			if err := w.saveResources(r); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -417,6 +475,12 @@ func (w Worker) Recover(ctx context.Context) error {
 			continue
 		}
 		if r.Committed {
+			if err = w.restoreResources(ctx, &r, false); err != nil {
+				r.State = "recovery-failed"
+				r.Error = "版本已更新，业务恢复失败：" + err.Error()
+				_ = w.phase(&r, "finished")
+				return err
+			}
 			r.State = "succeeded"
 			r.Error = ""
 			if err = w.phase(&r, "finished"); err != nil {
@@ -433,6 +497,12 @@ func (w Worker) Recover(ctx context.Context) error {
 		}
 		if err = w.rollback(ctx, &r, false); err != nil {
 			return fmt.Errorf("中断任务 %s 恢复失败：%w", r.ID, err)
+		}
+		if err = w.restoreResources(ctx, &r, false); err != nil {
+			r.State = "recovery-failed"
+			r.Error = "中断任务业务恢复失败：" + err.Error()
+			_ = w.phase(&r, "finished")
+			return err
 		}
 		r.State = "rolled-back"
 		r.Error = "维护任务中断，已恢复原版本与配置"

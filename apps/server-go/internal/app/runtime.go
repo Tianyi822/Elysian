@@ -224,6 +224,9 @@ func assembleProductionHarness(cfg *config.Config, views seam.DockerViews, optio
 		if cfg.BareMetal {
 			store := panel.Store{Root: options.Home}
 			info, err := (panel.Manager{Store: store, Host: panel.SystemHost{Store: store, DockerSocket: cfg.DockerSocket}, Enabled: true}).Info()
+			if err == nil && info.ActiveTask != nil && info.ActiveTask.Kind == "update" {
+				return &harness.Error{Status: 409, Code: "panel-update-active", Message: "面板更新中断了任务，进度已保存，请在更新结束后手动继续"}
+			}
 			if err != nil || info.ActiveTask != nil {
 				return &harness.Error{Status: 409, Code: "maintenance-active", Message: "面板正在维护，任务派发和审批恢复已冻结"}
 			}

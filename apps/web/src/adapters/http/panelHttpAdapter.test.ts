@@ -1,8 +1,23 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createHttpPanelAdapter, PanelHttpError, PanelNetworkError, parsePanelInfo, parsePanelTask, probeSameOriginHealth } from './panelHttpAdapter'
+import { createHttpPanelAdapter, PanelHttpError, PanelNetworkError, parsePanelInfo, parsePanelTask, parsePanelPreflight, probeSameOriginHealth } from './panelHttpAdapter'
 const task = { id: 'a'.repeat(32), kind: 'ports', state: 'queued', phase: 'checking', createdAt: '2026-10-03T00:00:00Z', updatedAt: '2026-10-03T00:00:00Z', oldPorts: { frontendPort: 48100, backendPort: 48101 }, newPorts: { frontendPort: 49000, backendPort: 49001 }, targetCommit: '', error: '' }
 afterEach(() => vi.unstubAllGlobals())
 describe('面板维护 HTTP 契约', () => {
+  it('预检仅携带目标，更新提交完整携带确认的资源计划', async () => {
+    const target = { channel: 'commit' as const, source: 'github' as const, targetCommit: 'b'.repeat(40), releaseTag: '' }
+    const resourcePlan = { preflightId: 'preflight-123', targets: ['service:caddy.service'], stopPanel: true }
+    const preview = { id: resourcePlan.preflightId, expiresAt: '2027-01-01T00:00:00Z', memory: { totalBytes: 2 ** 31, availableBytes: 2 ** 30, requiredBytes: 1536 * 1024 ** 2, swapTotalBytes: 0, swapFreeBytes: 0 }, disk: { availableBytes: 2 ** 32 }, load: [0, 0, 0], activeAgentRuns: 1, candidates: [{ id: 'service:caddy.service', kind: 'service', name: 'Caddy', memoryBytes: null, recommended: true }], needsRelease: true, stopPanelRecommended: true }
+    const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(preview))).mockResolvedValueOnce(new Response(JSON.stringify(task), { status: 202 }))
+    vi.stubGlobal('fetch', fetch)
+    const adapter = createHttpPanelAdapter()
+    expect(await adapter.preflightUpdate(target)).toEqual(preview)
+    await adapter.update({ ...target, resourcePlan }, 'exact-request')
+    expect(fetch.mock.calls[0]?.[0]).toBe('/api/panel/update/preflight')
+    expect(JSON.parse(fetch.mock.calls[0]?.[1].body)).toEqual(target)
+    expect(JSON.parse(fetch.mock.calls[1]?.[1].body)).toEqual({ ...target, resourcePlan, requestId: 'exact-request' })
+    expect(() => parsePanelPreflight({ ...preview, candidates: [...preview.candidates, ...preview.candidates] })).toThrow('停机对象无效')
+    expect(() => parsePanelPreflight({ ...preview, memory: { ...preview.memory, availableBytes: -1 } })).toThrow('内存响应无效')
+  })
   it('拒绝错误端口和未知任务状态', () => {
     expect(() => parsePanelTask({ ...task, state: 'pretend-success' })).toThrow('状态无效')
     expect(() => parsePanelTask({ ...task, newPorts: { frontendPort: 0, backendPort: 1 } })).toThrow('端口响应无效')

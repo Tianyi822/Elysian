@@ -5,6 +5,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"io"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -40,7 +41,7 @@ func TestUpgradeArgumentValidationBeforeExecution(t *testing.T) {
 func TestNonInteractiveUpgradePassesExactFlagsAndExitCode(t *testing.T) {
 	d := fakeDeps()
 	d.runUpgrade = func(opts upgradeOptions, _ *os.File, _ io.Writer, _ io.Writer) int {
-		if opts != (upgradeOptions{Source: "gitee", Channel: "release", Yes: true}) {
+		if !reflect.DeepEqual(opts, upgradeOptions{Source: "gitee", Channel: "release", Yes: true}) {
 			t.Fatalf("opts=%+v", opts)
 		}
 		return 130

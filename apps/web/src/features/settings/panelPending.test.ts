@@ -3,6 +3,13 @@ import { PANEL_PENDING_KEY, readPanelPending, savePanelPending } from './panelPe
 
 beforeEach(() => sessionStorage.removeItem(PANEL_PENDING_KEY))
 describe('维护待确认请求快照', () => {
+  it('精确保留资源停机授权，拒绝损坏的目标列表', () => {
+    const pending = { version: 1 as const, requestId: 'request-123', kind: 'update' as const, input: { channel: 'commit' as const, source: 'github' as const, targetCommit: 'a'.repeat(40), releaseTag: '', resourcePlan: { preflightId: 'preflight-123', targets: [`container:${'b'.repeat(64)}`, 'service:caddy.service'], stopPanel: true } } }
+    savePanelPending(pending)
+    expect(readPanelPending()).toEqual(pending)
+    sessionStorage.setItem(PANEL_PENDING_KEY, JSON.stringify({ ...pending, input: { ...pending.input, resourcePlan: { ...pending.input.resourcePlan, targets: ['container:mysql'] } } }))
+    expect(readPanelPending()).toBeNull()
+  })
   it.each([undefined, 'github', 'gitee'] as const)('保存并恢复精确更新目标及来源 %s，清理仅移除本记录', (source) => {
     const pending = { version: 1 as const, requestId: 'request-123', kind: 'update' as const, input: { channel: 'release' as const, ...(source ? { source } : {}), targetCommit: 'a'.repeat(40), releaseTag: 'v1.2.3' } }
     savePanelPending(pending)

@@ -1,4 +1,4 @@
-import type { PanelCommit, PanelInfo, PanelPorts, PanelTask, PanelTaskReport, PanelUpdate } from '@elysian/contracts'
+import type { PanelCommit, PanelInfo, PanelPorts, PanelTask, PanelTaskReport, PanelUpdate, PanelUpdatePreflight } from '@elysian/contracts'
 import { validatePanelPorts } from '@elysian/contracts'
 import type { PanelAdapter } from '../../contracts/adapters'
 import { fetchWithSession, reportUnauthorized } from './unauthorized'
@@ -33,7 +33,28 @@ export function parsePanelInfo(value: unknown): PanelInfo {
   const row = object(value)
   for (const key of ['commit', 'buildTime', 'repository', 'reason']) if (typeof row[key] !== 'string') throw new Error('面板信息响应无效')
   if (typeof row.available !== 'boolean') throw new Error('面板维护能力响应无效')
+  if (row.resourcePreflightVersion !== undefined && (!Number.isSafeInteger(row.resourcePreflightVersion) || Number(row.resourcePreflightVersion) < 1)) throw new Error('面板资源预检能力响应无效')
   return { ...row, ports: ports(row.ports), activeTask: row.activeTask === null ? null : parsePanelTask(row.activeTask), lastTask: row.lastTask === null ? null : parsePanelTask(row.lastTask) } as PanelInfo
+}
+export function parsePanelPreflight(value: unknown): PanelUpdatePreflight {
+  const row = object(value), memory = object(row.memory), disk = object(row.disk)
+  if (typeof row.id !== 'string' || !row.id || typeof row.expiresAt !== 'string' || !Number.isFinite(Date.parse(row.expiresAt))) throw new Error('更新预检标识无效')
+  for (const key of ['totalBytes', 'availableBytes', 'requiredBytes', 'swapTotalBytes', 'swapFreeBytes']) {
+    if (!Number.isSafeInteger(memory[key]) || Number(memory[key]) < 0) throw new Error('更新预检内存响应无效')
+  }
+  if (Number(memory.totalBytes) <= 0 || Number(memory.requiredBytes) <= 0 || Number(memory.availableBytes) > Number(memory.totalBytes) || Number(memory.swapFreeBytes) > Number(memory.swapTotalBytes)) throw new Error('更新预检内存响应无效')
+  if (!Number.isSafeInteger(disk.availableBytes) || Number(disk.availableBytes) < 0 || !Number.isSafeInteger(row.activeAgentRuns) || Number(row.activeAgentRuns) < 0) throw new Error('更新预检资源响应无效')
+  if (!Array.isArray(row.load) || row.load.length !== 3 || row.load.some(v => typeof v !== 'number' || !Number.isFinite(v) || v < 0)) throw new Error('更新预检负载响应无效')
+  if (typeof row.needsRelease !== 'boolean' || typeof row.stopPanelRecommended !== 'boolean' || (row.blockedReason !== undefined && typeof row.blockedReason !== 'string') || !Array.isArray(row.candidates)) throw new Error('更新预检停机清单无效')
+  const seen = new Set<string>()
+  for (const item of row.candidates) {
+    const candidate = object(item)
+    if (typeof candidate.id !== 'string' || seen.has(candidate.id) || typeof candidate.name !== 'string' || !['container', 'service'].includes(String(candidate.kind)) || typeof candidate.recommended !== 'boolean' || candidate.memoryBytes !== null && (!Number.isSafeInteger(candidate.memoryBytes) || Number(candidate.memoryBytes) < 0)) throw new Error('更新预检停机对象无效')
+    if (candidate.kind === 'container' ? !/^container:[a-f0-9]{64}$/.test(candidate.id) : !/^service:[A-Za-z0-9_.@:-]+\.service$/.test(candidate.id)) throw new Error('更新预检停机对象标识无效')
+    if (candidate.disabledReason !== undefined && typeof candidate.disabledReason !== 'string') throw new Error('更新预检停机对象说明无效')
+    seen.add(candidate.id)
+  }
+  return row as PanelUpdatePreflight
 }
 /** 更新日志：后端直接回一个数组，因此不走 object() 的单对象校验。 */
 export function parsePanelCommits(value: unknown): PanelCommit[] {
@@ -69,6 +90,7 @@ async function request(path: string, method = 'GET', body?: unknown, signal?: Ab
 }
 export function createHttpPanelAdapter(base = '/api/panel'): PanelAdapter {
   return {
+    preflightUpdate: async ({ channel, source, targetCommit, releaseTag }) => parsePanelPreflight(await request(`${base}/update/preflight`, 'POST', { channel, source, targetCommit, releaseTag })),
     info: async (signal) => parsePanelInfo(await request(base, 'GET', undefined, signal)),
     async checkUpdate(channel, source) {
       const row = object(await request(`${base}/update?channel=${channel}&source=${source}`))
@@ -83,7 +105,7 @@ export function createHttpPanelAdapter(base = '/api/panel'): PanelAdapter {
     retryCLIRegistration: async (id) => parsePanelTask(await request(`${base}/tasks/${encodeURIComponent(id)}/cli-registration/retry`, 'POST', {})),
     ports: async (value, requestId) => parsePanelTask(await request(`${base}/ports`, 'PUT', { ...value, requestId })),
     restart: async (requestId) => parsePanelTask(await request(`${base}/restart`, 'POST', { requestId })),
-    update: async ({ channel, source, targetCommit, releaseTag }, requestId) => parsePanelTask(await request(`${base}/update`, 'POST', { channel, source, targetCommit, releaseTag, requestId })),
+    update: async ({ channel, source, targetCommit, releaseTag, resourcePlan }, requestId) => parsePanelTask(await request(`${base}/update`, 'POST', { channel, source, targetCommit, releaseTag, ...(resourcePlan ? { resourcePlan } : {}), requestId })),
     async task(id, offset = 0, signal) {
       const row = object(await request(`${base}/tasks/${encodeURIComponent(id)}?offset=${offset}`, 'GET', undefined, signal))
       if (typeof row.logs !== 'string' || !Number.isSafeInteger(row.nextOffset) || Number(row.nextOffset) < 0) throw new Error('维护日志响应无效')

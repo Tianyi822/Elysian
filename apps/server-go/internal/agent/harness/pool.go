@@ -15,6 +15,7 @@ import (
 // projection independently for each active run.
 type executionState struct {
 	tasks        []tools.TaskReference
+	maintenance  bool
 	deleted      bool
 	deletedDone  chan struct{}
 	runID        string

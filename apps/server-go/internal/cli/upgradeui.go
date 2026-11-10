@@ -53,10 +53,16 @@ func chooseUpgrade(stdin *os.File, stdout io.Writer, title, body string, items [
 	return result.chosen, result.code
 }
 func (m upgradeChoice) Init() tea.Cmd { return nil }
+func (m upgradeChoice) itemRange() (int, int) {
+	count := min(len(m.items), max(1, m.height-lipgloss.Height(termui.Header(m.title, "", m.width))-lipgloss.Height(m.hints())-5))
+	start := max(0, min(m.cursor-count/2, len(m.items)-count))
+	return start, start + count
+}
 func (m *upgradeChoice) resize() {
 	m.viewport.Width = max(1, m.width)
 	hints := m.hints()
-	m.viewport.Height = max(1, m.height-lipgloss.Height(termui.Header(m.title, "", m.width))-len(m.items)-lipgloss.Height(hints)-3)
+	start, end := m.itemRange()
+	m.viewport.Height = max(1, m.height-lipgloss.Height(termui.Header(m.title, "", m.width))-(end-start)-lipgloss.Height(hints)-3)
 	body := m.body
 	if m.detailOpen {
 		body = m.detailBody
@@ -137,7 +143,9 @@ func (m upgradeChoice) View() string {
 	b.WriteString(termui.Header(m.title, "", m.width))
 	b.WriteString(m.viewport.View() + "\n\n")
 	if !m.detailOpen {
-		for i, item := range m.items {
+		start, end := m.itemRange()
+		for i := start; i < end; i++ {
+			item := m.items[i]
 			if i == m.cursor {
 				b.WriteString(termui.Accent.Render("❯ " + item))
 			} else {

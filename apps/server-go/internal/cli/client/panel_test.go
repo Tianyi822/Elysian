@@ -5,9 +5,54 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestPanelResourcePreflightAndExactPlanHTTP(t *testing.T) {
+	target := PanelUpdateInput{Source: "github", Channel: "commit", TargetCommit: strings.Repeat("b", 40), ReleaseTag: ""}
+	plan := &PanelResourcePlan{PreflightID: strings.Repeat("c", 32), Targets: []string{"service:caddy.service"}, StopPanel: true}
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Method != "POST" {
+			t.Errorf("method=%s", r.Method)
+		}
+		if r.URL.Path == "/api/panel/update/preflight" {
+			var raw map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+				t.Error(err)
+			}
+			if len(raw) != 4 || raw["source"] != "github" || raw["targetCommit"] != target.TargetCommit {
+				t.Errorf("preflight=%+v", raw)
+			}
+			json.NewEncoder(w).Encode(PanelUpdatePreflight{ID: plan.PreflightID})
+		} else if r.URL.Path == "/api/panel/update" {
+			var got PanelUpdateInput
+			if err := json.NewDecoder(r.Body).Decode(&got); err != nil || !reflect.DeepEqual(got.ResourcePlan, plan) || got.RequestID != "request-1234" {
+				t.Errorf("update=%+v err=%v", got, err)
+			}
+			json.NewEncoder(w).Encode(PanelTask{ID: "task-1234"})
+		} else {
+			t.Errorf("path=%s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	c := New(server.URL)
+	if report, err := c.PreflightPanelUpdate(context.Background(), target); err != nil || report.ID != plan.PreflightID {
+		t.Fatalf("report=%+v err=%v", report, err)
+	}
+	target.ResourcePlan = plan
+	target.RequestID = "request-1234"
+	if _, err := c.SubmitPanelUpdate(context.Background(), target); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatal(calls)
+	}
+}
 
 func TestPanelHTTPContract(t *testing.T) {
 	sha := strings.Repeat("a", 40)

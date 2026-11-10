@@ -32,12 +32,13 @@ type PanelTask struct {
 func (t PanelTask) Active() bool { return t.State == "queued" || t.State == "running" }
 
 type PanelInfo struct {
-	Commit     string     `json:"commit"`
-	BuildTime  string     `json:"buildTime"`
-	Available  bool       `json:"available"`
-	Reason     string     `json:"reason"`
-	ActiveTask *PanelTask `json:"activeTask"`
-	LastTask   *PanelTask `json:"lastTask"`
+	ResourcePreflightVersion int        `json:"resourcePreflightVersion,omitempty"`
+	Commit                   string     `json:"commit"`
+	BuildTime                string     `json:"buildTime"`
+	Available                bool       `json:"available"`
+	Reason                   string     `json:"reason"`
+	ActiveTask               *PanelTask `json:"activeTask"`
+	LastTask                 *PanelTask `json:"lastTask"`
 }
 
 type PanelUpdate struct {
@@ -52,11 +53,45 @@ type PanelUpdate struct {
 }
 
 type PanelUpdateInput struct {
-	RequestID    string `json:"requestId"`
-	Source       string `json:"source"`
-	Channel      string `json:"channel"`
-	TargetCommit string `json:"targetCommit"`
-	ReleaseTag   string `json:"releaseTag"`
+	RequestID    string             `json:"requestId"`
+	Source       string             `json:"source"`
+	Channel      string             `json:"channel"`
+	TargetCommit string             `json:"targetCommit"`
+	ReleaseTag   string             `json:"releaseTag"`
+	ResourcePlan *PanelResourcePlan `json:"resourcePlan,omitempty"`
+}
+type PanelResourcePlan struct {
+	PreflightID string   `json:"preflightId"`
+	Targets     []string `json:"targets"`
+	StopPanel   bool     `json:"stopPanel"`
+}
+type PanelResourceCandidate struct {
+	ID             string  `json:"id"`
+	Kind           string  `json:"kind"`
+	Name           string  `json:"name"`
+	MemoryBytes    *uint64 `json:"memoryBytes"`
+	Recommended    bool    `json:"recommended"`
+	DisabledReason string  `json:"disabledReason,omitempty"`
+}
+type PanelUpdatePreflight struct {
+	ID        string `json:"id"`
+	ExpiresAt string `json:"expiresAt"`
+	Memory    struct {
+		TotalBytes     uint64 `json:"totalBytes"`
+		AvailableBytes uint64 `json:"availableBytes"`
+		RequiredBytes  uint64 `json:"requiredBytes"`
+		SwapTotalBytes uint64 `json:"swapTotalBytes"`
+		SwapFreeBytes  uint64 `json:"swapFreeBytes"`
+	} `json:"memory"`
+	Disk struct {
+		AvailableBytes uint64 `json:"availableBytes"`
+	} `json:"disk"`
+	Load                 [3]float64               `json:"load"`
+	ActiveAgentRuns      int                      `json:"activeAgentRuns"`
+	Candidates           []PanelResourceCandidate `json:"candidates"`
+	NeedsRelease         bool                     `json:"needsRelease"`
+	StopPanelRecommended bool                     `json:"stopPanelRecommended"`
+	BlockedReason        string                   `json:"blockedReason,omitempty"`
 }
 
 type PanelTaskReport struct {
@@ -86,6 +121,16 @@ func (c *Client) PanelCommits(ctx context.Context, source, channel string) (out 
 }
 func (c *Client) SubmitPanelUpdate(ctx context.Context, input PanelUpdateInput) (out PanelTask, err error) {
 	_, err = c.do(ctx, "POST", "/api/panel/update", nil, input, &out, "")
+	return
+}
+func (c *Client) PreflightPanelUpdate(ctx context.Context, input PanelUpdateInput) (out PanelUpdatePreflight, err error) {
+	target := struct {
+		Source       string `json:"source"`
+		Channel      string `json:"channel"`
+		TargetCommit string `json:"targetCommit"`
+		ReleaseTag   string `json:"releaseTag"`
+	}{input.Source, input.Channel, input.TargetCommit, input.ReleaseTag}
+	_, err = c.do(ctx, "POST", "/api/panel/update/preflight", nil, target, &out, "更新资源预检不可用，请核对 CLI 与面板版本")
 	return
 }
 func (c *Client) PanelTaskByRequest(ctx context.Context, id string) (out *PanelTask, err error) {

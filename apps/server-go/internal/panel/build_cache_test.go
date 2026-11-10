@@ -26,7 +26,7 @@ func TestBuildCachePersistsOutsideTaskDirectories(t *testing.T) {
 		}
 		command := releaseBuildCommand(context.Background(), stage, filepath.Join(stage, "source"), filepath.Join(stage, "artifact"), strings.Repeat("a", 40), cache)
 		joined := strings.Join(command.Args, "\n")
-		for _, variable := range []string{"HOME=" + stage, "BUN_INSTALL_CACHE_DIR=" + cache.Bun, "GOMODCACHE=" + cache.Modules, "GOCACHE=" + cache.Go, "GOFLAGS=-trimpath"} {
+		for _, variable := range []string{"HOME=" + stage, "BUN_INSTALL_CACHE_DIR=" + cache.Bun, "GOMODCACHE=" + cache.Modules, "GOCACHE=" + cache.Go, "GOFLAGS=-trimpath -p=1", "GOMAXPROCS=2", "GOMEMLIMIT=768MiB"} {
 			if !strings.Contains(joined, "\n"+variable+"\n") {
 				t.Fatalf("旧维护脚本缺少直接生效的缓存环境：%s", variable)
 			}

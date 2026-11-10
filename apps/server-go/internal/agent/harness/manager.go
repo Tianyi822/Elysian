@@ -76,6 +76,7 @@ type Manager struct {
 	toolAuthority    *tools.Authority
 	ownToolRuntime   bool
 	taskDone         chan struct{}
+	maintenanceDone  chan struct{}
 	taskProgress     map[string]taskProgressObservation
 	// tokenEstimates 保存每模型 token 比例与官方分词器缓存；重启丢弃，只影响估算精度，不影响保守回退。
 	tokenEstimates tokenEstimateStore
@@ -152,7 +153,9 @@ func New(deps Deps) (*Manager, error) {
 	m.taskCleanupDone = make(chan struct{})
 	go m.loop()
 	go m.taskCleanupLoop()
+	m.maintenanceDone = make(chan struct{})
 	go m.taskMonitorLoop()
+	go m.maintenanceLoop()
 	return m, nil
 }
 func validateLimits(l Limits) error {
@@ -822,7 +825,7 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 				m.storageFailedLocked()
 			} else {
 				state, reason, message := StateSucceeded, "completed", ""
-				if (current.Status == StateWaitingInput || current.Status == StateWaitingApproval || current.Status == StateWaitingResource || current.Status == StateWaitingTask || current.Status == StateQueued || current.Status == StateRecoveryRequired) && (errors.Is(err, worker.ErrSuspended) || stoppedDuringShutdown) && current.CancelRequestedAt == "" && !execution.unresponsive {
+				if (current.Status == StateWaitingInput || current.Status == StateWaitingApproval || current.Status == StateWaitingResource || current.Status == StateWaitingTask || current.Status == StateQueued || current.Status == StateRecoveryRequired) && (errors.Is(err, worker.ErrSuspended) || stoppedDuringShutdown) && current.CancelRequestedAt == "" && !execution.unresponsive && !execution.maintenance {
 					delete(m.executions, r.ID)
 					m.refreshLegacyLocked()
 					m.signal()
@@ -837,6 +840,8 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 					}
 				case current.CancelRequestedAt != "":
 					state, reason = StateCancelled, "cancelled"
+				case execution.maintenance || updateMaintenanceError(err):
+					state, reason, message = StateInterrupted, "panel-update", "面板更新中断了任务，进度已保存，请在更新结束后手动继续"
 				case m.ctx.Err() != nil:
 					state, reason, message = StateInterrupted, "panel-stopped", "面板停止中断了运行，未自动重跑"
 				case errors.Is(ctxErr, context.DeadlineExceeded):
@@ -920,7 +925,7 @@ func (m *Manager) finishLocked(id, state, reason, message string) {
 			}
 		}
 		r.Status = state
-		if state == StateCancelled && r.SessionID != "" && r.WorkflowID == "" {
+		if (state == StateCancelled || state == StateInterrupted && reason == "panel-update") && r.SessionID != "" && r.WorkflowID == "" {
 			if err := m.store.saveStoppedReply(ctx, tx, *r); err != nil {
 				return err
 			}
@@ -954,7 +959,11 @@ func (m *Manager) finishLocked(id, state, reason, message string) {
 // Close 可重复调用；调用者的 deadline 只限制等待，后台清理仍完整进行。
 func (m *Manager) Close(ctx context.Context) error {
 	m.closeOnce.Do(func() {
+		updating := m.deps.DispatchGuard != nil && updateMaintenanceError(m.deps.DispatchGuard())
 		m.mu.Lock()
+		if updating && !m.storageError {
+			m.interruptForMaintenanceLocked()
+		}
 		m.closed = true
 		m.cancel()
 		for _, execution := range m.executions {
@@ -965,6 +974,7 @@ func (m *Manager) Close(ctx context.Context) error {
 			<-m.done
 			<-m.taskDone
 			<-m.taskCleanupDone
+			<-m.maintenanceDone
 			m.probes.Wait()
 			if m.ownToolRuntime {
 				m.closeErr = errors.Join(m.closeErr, m.toolRuntime.Close(context.Background()))

@@ -1175,7 +1175,7 @@ build_release() {
     chown -R elysian-build:elysian-build "$BUILD_SOURCE" "$BUILD_DIR"
     if ! run_stage_command "构建 Elysian" "$BUILD_LOG" runuser -u elysian-build -- env HOME="$BUILD_SOURCE" PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin \
       GOPROXY="$GOPROXY" BUN_CONFIG_REGISTRY="$BUN_CONFIG_REGISTRY" \
-      BUN_INSTALL_CACHE_DIR="$BUILD_HOME/cache/bun" GOMODCACHE="$BUILD_HOME/cache/go-mod" GOCACHE="$BUILD_HOME/cache/go-build" GOFLAGS=-trimpath \
+      BUN_INSTALL_CACHE_DIR="$BUILD_HOME/cache/bun" GOMODCACHE="$BUILD_HOME/cache/go-mod" GOCACHE="$BUILD_HOME/cache/go-build" GOFLAGS='-trimpath -p=1' GOMAXPROCS=2 GOMEMLIMIT=768MiB \
       bash "$BUILD_DIR/build-release.sh" "$BUILD_SOURCE" "$BUILD_DIR" "$BUILD_COMMIT"; then
       tail -n 40 "$BUILD_LOG" >&2
       die "源码构建失败，$(stage_failure_reason)，原面板未停服（完整日志：$BUILD_LOG）。"

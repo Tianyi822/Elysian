@@ -100,8 +100,14 @@ type taskRecord struct {
 	FirewallCaptured bool     `json:"firewallCaptured"`
 	// CLI 链接事务事实：本次任务新建的 ely 链接（回滚时移除）与改指前的原目标（回滚时
 	// 恢复）；外部占用只告警、不产生记录。ensureCLILink 变更后先落账再做版本校验。
-	CLICreated      bool   `json:"cliCreated,omitempty"`
-	CLIRelinkedFrom string `json:"cliRelinkedFrom,omitempty"`
+	CLICreated        bool             `json:"cliCreated,omitempty"`
+	CLIRelinkedFrom   string           `json:"cliRelinkedFrom,omitempty"`
+	ResourcePlan      *ResourcePlan    `json:"resourcePlan,omitempty"`
+	ResourceTargets   []resourceTarget `json:"resourceTargets,omitempty"`
+	ResourceStops     []resourceStop   `json:"resourceStops,omitempty"`
+	PanelStopIntent   bool             `json:"panelStopIntent,omitempty"`
+	PanelRestored     bool             `json:"panelRestored,omitempty"`
+	ResourceFinalizer bool             `json:"resourceFinalizer,omitempty"`
 }
 
 func Active(state string) bool { return state == "queued" || state == "running" }

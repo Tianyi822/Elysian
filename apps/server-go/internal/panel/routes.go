@@ -32,14 +32,15 @@ type Manager struct {
 	Executable string
 }
 type Info struct {
-	Ports      config.PanelNetwork `json:"ports"`
-	Commit     string              `json:"commit"`
-	BuildTime  string              `json:"buildTime"`
-	Repository string              `json:"repository"`
-	Available  bool                `json:"available"`
-	Reason     string              `json:"reason"`
-	ActiveTask *Task               `json:"activeTask"`
-	LastTask   *Task               `json:"lastTask"`
+	ResourcePreflightVersion int                 `json:"resourcePreflightVersion,omitempty"`
+	Ports                    config.PanelNetwork `json:"ports"`
+	Commit                   string              `json:"commit"`
+	BuildTime                string              `json:"buildTime"`
+	Repository               string              `json:"repository"`
+	Available                bool                `json:"available"`
+	Reason                   string              `json:"reason"`
+	ActiveTask               *Task               `json:"activeTask"`
+	LastTask                 *Task               `json:"lastTask"`
 }
 type submitInput struct {
 	RequestID    string        `json:"requestId"`
@@ -49,6 +50,7 @@ type submitInput struct {
 	Channel      UpdateChannel `json:"channel"`
 	Source       UpdateSource  `json:"source"`
 	ReleaseTag   string        `json:"releaseTag"`
+	ResourcePlan *ResourcePlan `json:"resourcePlan,omitempty"`
 }
 
 // 新记录暂缓探测；只有明确退出且长期未推进的任务才允许转终态。
@@ -70,6 +72,9 @@ func probeWorker(ctx context.Context, host Host, id string) WorkerStatus {
 
 func (m Manager) Info() (Info, error) {
 	i := Info{Ports: m.Ports, Commit: Commit, BuildTime: BuildTime, Repository: Repository, Available: m.Enabled && m.Host.Available()}
+	if _, ok := m.Host.(resourceHost); ok {
+		i.ResourcePreflightVersion = 1
+	}
 	if !i.Available {
 		i.Reason = "仅支持 systemd 安装版，请先使用安装脚本完成维护能力引导"
 	}
@@ -146,7 +151,7 @@ func (m Manager) superviseActive(row taskRecord) taskRecord {
 		fresh.WorkerDead = true
 		fresh.Phase = "finished"
 		fresh.UpdatedAt = time.Now().UTC()
-		if !fresh.Activated && !fresh.FirewallCaptured {
+		if !fresh.Activated && !fresh.FirewallCaptured && !fresh.resourcesPending() {
 			fresh.State = "failed"
 			fresh.Error = "维护进程意外退出；未进入切换阶段，配置与数据未被改动。可在服务器执行 journalctl -u elysian-maintenance-" + fresh.ID + " 查看现场"
 		} else {
@@ -158,7 +163,7 @@ func (m Manager) superviseActive(row taskRecord) taskRecord {
 		}
 		row = fresh
 		m.Store.appendLog(fresh.ID, fresh.UpdatedAt.Format(time.RFC3339)+" "+fresh.Error+"\n")
-		if fresh.Worker != "" {
+		if fresh.Worker != "" && fresh.State != "recovery-failed" {
 			_ = os.Remove(fresh.Worker)
 		}
 		return nil
@@ -219,6 +224,12 @@ func (m Manager) Submit(ctx context.Context, kind string, input submitInput, ori
 	if !requestPattern.MatchString(input.RequestID) {
 		return result, shared.InvalidRequest("提交编号无效")
 	}
+	if err := validateResourcePlan(input.ResourcePlan); err != nil {
+		return result, err
+	}
+	if kind != "update" && input.ResourcePlan != nil {
+		return result, shared.InvalidRequest("仅更新任务接受资源停止清单")
+	}
 	if kind == "update" {
 		input.Channel = normalizeChannel(input.Channel)
 		input.Source = normalizeSource(input.Source)
@@ -247,7 +258,7 @@ func (m Manager) Submit(ctx context.Context, kind string, input submitInput, ori
 			}
 			for _, row := range rows {
 				if row.RequestID == input.RequestID {
-					if row.Kind != kind || (kind == "ports" && row.NewPorts != next) || row.TargetCommit != input.TargetCommit || (kind == "update" && (normalizeChannel(row.UpdateChannel) != input.Channel || normalizeSource(row.UpdateSource) != input.Source || row.ReleaseTag != input.ReleaseTag)) {
+					if row.Kind != kind || (kind == "ports" && row.NewPorts != next) || row.TargetCommit != input.TargetCommit || !sameResourcePlan(row.ResourcePlan, input.ResourcePlan) || (kind == "update" && (normalizeChannel(row.UpdateChannel) != input.Channel || normalizeSource(row.UpdateSource) != input.Source || row.ReleaseTag != input.ReleaseTag)) {
 						return shared.InvalidRequest("提交编号已用于不同操作")
 					}
 					result = row.Task
@@ -260,18 +271,23 @@ func (m Manager) Submit(ctx context.Context, kind string, input submitInput, ori
 				}
 			}
 			if kind == "update" {
-				var u Update
-				b, err := os.ReadFile(m.Store.updateCheckPath(input.Channel, input.Source))
-				if err != nil || json.Unmarshal(b, &u) != nil || u.Repository != Repository || normalizeChannel(u.Channel) != input.Channel || (input.Source != SourceAuto && normalizeSource(u.Source) != input.Source) || !u.Available || !commitPattern.MatchString(input.TargetCommit) || u.TargetCommit != input.TargetCommit || u.ReleaseTag != input.ReleaseTag || (input.Channel == ChannelRelease && u.ReleaseTag == "") {
-					return shared.InvalidRequest("请先检查更新，再提交已检查的目标版本")
+				if err := m.checkedUpdate(input); err != nil {
+					return err
 				}
+			}
+			targets, err := m.resourceTargets(input)
+			if err != nil {
+				return err
 			}
 			id, err := newID()
 			if err != nil {
 				return err
 			}
 			now := time.Now().UTC()
-			r := taskRecord{Task: Task{ID: id, Kind: kind, State: "queued", Phase: "checking", CreatedAt: now, UpdatedAt: now, OldPorts: m.Ports, NewPorts: next, TargetCommit: input.TargetCommit}, RequestID: input.RequestID, Origin: origin}
+			r := taskRecord{Task: Task{ID: id, Kind: kind, State: "queued", Phase: "checking", CreatedAt: now, UpdatedAt: now, OldPorts: m.Ports, NewPorts: next, TargetCommit: input.TargetCommit}, RequestID: input.RequestID, Origin: origin, ResourcePlan: input.ResourcePlan, ResourceTargets: targets}
+			if finalizer, ok := m.Host.(interface{ SupportsResourceFinalizer() bool }); ok {
+				r.ResourceFinalizer = finalizer.SupportsResourceFinalizer()
+			}
 			if kind == "update" {
 				r.UpdateChannel = input.Channel
 				if input.Source != SourceAuto {
@@ -362,6 +378,31 @@ func (m Manager) Router() chi.Router {
 			return
 		}
 		shared.SendJSON(w, 200, u)
+	})
+	r.Post("/update/preflight", func(w http.ResponseWriter, r *http.Request) {
+		body, err := middleware.ReadJSONBody(w, r, 8192)
+		if err != nil {
+			middleware.WriteError(w, err)
+			return
+		}
+		b, err := json.Marshal(body)
+		if err != nil {
+			middleware.WriteError(w, err)
+			return
+		}
+		var input submitInput
+		decoder := json.NewDecoder(bytes.NewReader(b))
+		decoder.DisallowUnknownFields()
+		if err = decoder.Decode(&input); err != nil {
+			shared.SendError(w, 400, "资源预检参数无效")
+			return
+		}
+		out, err := m.PreflightUpdate(r.Context(), input)
+		if err != nil {
+			middleware.WriteError(w, err)
+			return
+		}
+		shared.SendJSON(w, 200, out)
 	})
 	// 更新日志：列所选来源最近的提交。只读上游，不写状态，因此不经维护事务与互斥。
 	r.Get("/commits", func(w http.ResponseWriter, r *http.Request) {
@@ -563,6 +604,15 @@ func RunCLI(ctx context.Context, command string, args []string, root, socket str
 	s := Store{Root: root}
 	host := SystemHost{Store: s, DockerSocket: socket}
 	worker := Worker{Store: s, Host: host, Source: DefaultSource()}
+	if command == "maintenance-resource-version" && len(args) == 0 {
+		fmt.Println("1")
+		return nil
+	}
+	if command == "maintenance-finalize" && len(args) == 1 {
+		finalCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+		defer cancel()
+		return worker.Finalize(finalCtx, args[0])
+	}
 	if command == "maintenance-recover" && len(args) == 0 {
 		return worker.Recover(ctx)
 	}
