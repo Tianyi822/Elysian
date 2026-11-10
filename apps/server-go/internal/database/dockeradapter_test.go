@@ -525,3 +525,93 @@ func callPaths(calls []seam.EngineRequest) []string {
 	}
 	return paths
 }
+
+// stoppedManagedVolumeName 与 baseInspectBody 的挂载卷一致，满足受管卷名规则。
+const stoppedManagedVolumeName = "elysian-db-00000000-0000-0000-0000-000000000000"
+
+// stoppedRemoveTransport 构造停止态受管容器与卷的引擎应答；volumeLabels 决定卷身份是否匹配。
+func stoppedRemoveTransport(t *testing.T, volumeLabels map[string]any) *scriptedTransport {
+	t.Helper()
+	inspect := baseInspectBody()
+	inspect["State"] = map[string]any{"Running": false}
+	inspect["Config"] = map[string]any{
+		"Image": "mysql:8.4",
+		"Labels": map[string]any{
+			"elysian.managed":          "true",
+			"elysian.database":         "true",
+			"elysian.database.engine":  "MySQL",
+			"elysian.database.version": "8.4",
+			"elysian.database.volume":  stoppedManagedVolumeName,
+		},
+	}
+	inspectRaw, err := json.Marshal(inspect)
+	if err != nil {
+		t.Fatal(err)
+	}
+	volumeRaw, err := json.Marshal(map[string]any{"Name": stoppedManagedVolumeName, "Labels": volumeLabels})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &scriptedTransport{responder: func(req seam.EngineRequest) seam.EngineResponse {
+		switch {
+		case req.Method == "GET" && req.Path == "/containers/"+testContainerID+"/json":
+			return seam.EngineResponse{Status: 200, Body: inspectRaw}
+		case req.Method == "GET" && req.Path == "/volumes/"+stoppedManagedVolumeName:
+			return seam.EngineResponse{Status: 200, Body: volumeRaw}
+		case req.Method == "DELETE" && req.Path == "/containers/"+testContainerID:
+			return seam.EngineResponse{Status: 204}
+		case req.Method == "DELETE" && req.Path == "/volumes/"+stoppedManagedVolumeName:
+			return seam.EngineResponse{Status: 204}
+		}
+		return seam.EngineResponse{Status: 404}
+	}}
+}
+
+func TestRemoveManagedDeletesStoppedContainerWithoutStop(t *testing.T) {
+	transport := stoppedRemoveTransport(t, map[string]any{
+		"elysian.database":         "true",
+		"elysian.database.engine":  "MySQL",
+		"elysian.database.version": "8.4",
+	})
+	docker := newDockerAPI(transport, func(context.Context) ([]contract.ContainerImage, error) {
+		return testImageList(), nil
+	})
+	if err := docker.removeManaged(context.Background(), testContainerID, stoppedManagedVolumeName, engineMySQL, "8.4"); err != nil {
+		t.Fatalf("停止态受管容器应可删除：%v", err)
+	}
+	stops, containerDeletes, volumeDeletes := 0, 0, 0
+	for _, call := range transport.calls {
+		switch {
+		case call.Method == "POST" && strings.HasSuffix(call.Path, "/stop"):
+			stops++
+		case call.Method == "DELETE" && call.Path == "/containers/"+testContainerID:
+			containerDeletes++
+		case call.Method == "DELETE" && call.Path == "/volumes/"+stoppedManagedVolumeName:
+			volumeDeletes++
+		}
+	}
+	if stops != 0 || containerDeletes != 1 || volumeDeletes != 1 {
+		t.Fatalf("停止态删除应无 /stop 且容器与卷各删一次，实际 %v", callPaths(transport.calls))
+	}
+}
+
+func TestRemoveManagedRejectsForeignVolumeWhenStopped(t *testing.T) {
+	// 卷缺 elysian.database 标签：即使容器已停止，身份核对失败仍拒绝删除。
+	transport := stoppedRemoveTransport(t, map[string]any{
+		"elysian.database.engine":  "MySQL",
+		"elysian.database.version": "8.4",
+	})
+	docker := newDockerAPI(transport, func(context.Context) ([]contract.ContainerImage, error) {
+		return testImageList(), nil
+	})
+	err := docker.removeManaged(context.Background(), testContainerID, stoppedManagedVolumeName, engineMySQL, "8.4")
+	var invalid *shared.InvalidRequestError
+	if !errors.As(err, &invalid) || invalid.Status != 409 || invalid.Message != "数据库持久卷身份核对失败" {
+		t.Fatalf("卷身份不符仍应 409，实际 %v", err)
+	}
+	for _, call := range transport.calls {
+		if call.Method == "DELETE" {
+			t.Fatalf("身份核对失败不得派发删除：%v", callPaths(transport.calls))
+		}
+	}
+}

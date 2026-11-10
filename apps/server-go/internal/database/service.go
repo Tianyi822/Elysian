@@ -886,11 +886,18 @@ func (s *databaseService) removeContainer(ctx context.Context, id string) error 
 		}
 		return nil
 	}
-	if err := checkErr(); err != nil {
-		// 容器已 404 时跳过核对继续，允许清理孤儿卷。
-		var invalid *shared.InvalidRequestError
-		if !errors.As(err, &invalid) || invalid.Status != 404 {
-			return err
+	running, err := s.containerRunning(ctx, row.ContainerID)
+	if err != nil {
+		return err
+	}
+	// 停止态连不上协议，跳过版本与未登记库核对；容器与卷的身份仍由 removeManaged 硬核对。
+	if running {
+		if err := checkErr(); err != nil {
+			// 容器在核对期间消失时继续，允许清理孤儿卷。
+			var invalid *shared.InvalidRequestError
+			if !errors.As(err, &invalid) || invalid.Status != 404 {
+				return err
+			}
 		}
 	}
 	// 外部删除容器或删除卷阶段失败后，允许再次提交以清理登记的专属孤儿卷。
@@ -898,6 +905,19 @@ func (s *databaseService) removeContainer(ctx context.Context, id string) error 
 		return err
 	}
 	return s.deps.registry.remove(id)
+}
+
+// containerRunning 只判运行状态；容器已不存在按未运行处理，交由 removeManaged 清孤儿卷。
+func (s *databaseService) containerRunning(ctx context.Context, id string) (bool, error) {
+	info, err := s.deps.docker.inspect(ctx, id)
+	if err != nil {
+		var invalid *shared.InvalidRequestError
+		if errors.As(err, &invalid) && invalid.Status == 404 {
+			return false, nil
+		}
+		return false, err
+	}
+	return inspectRunning(info), nil
 }
 
 // OpenSession 打开数据库协议终端会话。

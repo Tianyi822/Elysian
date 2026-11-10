@@ -68,6 +68,9 @@ func (f *fakeDocker) assertEngine(_ context.Context, id, engine, versionTag stri
 		return nil, err
 	}
 	if info, ok := f.inspectInfos[id]; ok {
+		if !inspectRunning(info) {
+			return nil, &shared.InvalidRequestError{Status: 409, Message: "数据库容器未运行"}
+		}
 		return info, nil
 	}
 	return nil, &shared.InvalidRequestError{Status: 404, Message: "数据库容器已不存在"}
@@ -76,8 +79,12 @@ func (f *fakeDocker) assertEngine(_ context.Context, id, engine, versionTag stri
 func (f *fakeDocker) address(_ context.Context, id, _ string) (databaseAddress, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if _, ok := f.inspectInfos[id]; !ok {
+	info, ok := f.inspectInfos[id]
+	if !ok {
 		return databaseAddress{}, &shared.InvalidRequestError{Status: 404, Message: "数据库容器已不存在"}
+	}
+	if !inspectRunning(info) {
+		return databaseAddress{}, &shared.InvalidRequestError{Status: 409, Message: "数据库容器未运行"}
 	}
 	return databaseAddress{Host: "172.28.0.5", Port: 0}, nil
 }
@@ -426,6 +433,62 @@ func TestRemoveContainerSkipsCheckWhenContainerGone(t *testing.T) {
 	}
 	if len(fixture.docker.removeCalls) != 1 {
 		t.Fatal("仍应调用 removeManaged 清孤儿卷")
+	}
+}
+
+func TestRemoveContainerSkipsProtocolCheckWhenStopped(t *testing.T) {
+	fixture := newServiceFixture("8.4")
+	response, err := fixture.service.Create(context.Background(), newCreateRequest(createTarget{Kind: "new", ImageID: testImageID, ContainerName: "mysql-db"}, scopeLocalhost, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	containerID := strings.Repeat("c", 64)
+	fixture.docker.inspectInfos[containerID]["State"] = map[string]any{"Running": false}
+	before := len(fixture.protocol.trace.items)
+	if err := fixture.service.RemoveContainer(context.Background(), response.Instance.ID); err != nil {
+		t.Fatalf("停止态容器应可删除容器与专属卷：%v", err)
+	}
+	if len(fixture.protocol.trace.items) != before {
+		t.Fatalf("停止态不应连协议核对：%v", fixture.protocol.trace.items[before:])
+	}
+	if len(fixture.docker.removeCalls) != 1 || fixture.docker.removeCalls[0][0] != containerID {
+		t.Fatalf("应调用 removeManaged 删容器与卷：%v", fixture.docker.removeCalls)
+	}
+	rows, _ := fixture.registry.list()
+	if len(rows) != 0 {
+		t.Fatalf("登记应被删除：%+v", rows)
+	}
+}
+
+func TestRemoveContainerStillRejectsOtherConflicts(t *testing.T) {
+	fixture := newServiceFixture("8.4")
+	response, err := fixture.service.Create(context.Background(), newCreateRequest(createTarget{Kind: "new", ImageID: testImageID, ContainerName: "mysql-db"}, scopeLocalhost, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := response.Instance.ID
+	fixture.protocol.versionText = "8.0.1"
+	err = fixture.service.RemoveContainer(context.Background(), id)
+	var invalid *shared.InvalidRequestError
+	if !errors.As(err, &invalid) || invalid.Status != 409 || invalid.Message != "数据库实际版本与登记版本不一致" {
+		t.Fatalf("运行态版本漂移仍应 409，实际 %v", err)
+	}
+	if len(fixture.docker.removeCalls) != 0 {
+		t.Fatal("版本漂移不得派发删除")
+	}
+	fixture.protocol.versionText = "8.4.7"
+	rows, _ := fixture.registry.list()
+	sibling := rows[0]
+	sibling.ID, sibling.Name = "sibling", "orders2"
+	if err := fixture.registry.put(sibling); err != nil {
+		t.Fatal(err)
+	}
+	err = fixture.service.RemoveContainer(context.Background(), id)
+	if !errors.As(err, &invalid) || invalid.Status != 409 || invalid.Message != "容器中还有其他已登记数据库" {
+		t.Fatalf("兄弟登记仍应 409，实际 %v", err)
+	}
+	if len(fixture.docker.removeCalls) != 0 {
+		t.Fatal("兄弟登记不得派发删除")
 	}
 }
 
