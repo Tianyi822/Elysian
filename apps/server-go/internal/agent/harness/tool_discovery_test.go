@@ -104,7 +104,7 @@ func TestToolDiscoveryApprovalRestartRestoresVisibilityWithoutReplay(t *testing.
 		names := toolNames(request)
 		switch inference.Add(1) {
 		case 1, 4:
-			if len(names) != 7 || !contains(names, toolSearchName) || !contains(names, userInputTool) || !contains(names, planTool) {
+			if len(names) != 5 || !contains(names, toolSearchName) || !contains(names, userInputTool) || !contains(names, planTool) {
 				t.Errorf("initial request injected full catalog: %v", names)
 			}
 			if inference.Load() == 4 {
@@ -112,12 +112,12 @@ func TestToolDiscoveryApprovalRestartRestoresVisibilityWithoutReplay(t *testing.
 			}
 			return searchReply("test_write"), nil
 		case 2:
-			if len(names) != 8 || !contains(names, "test_write") {
+			if len(names) != 6 || !contains(names, "test_write") {
 				t.Errorf("search did not load exact tool: %v", names)
 			}
 			return toolReply("test_write"), nil
 		default:
-			if len(names) != 8 || !contains(names, "test_write") {
+			if len(names) != 6 || !contains(names, "test_write") {
 				t.Errorf("restart lost loaded tools: %v", names)
 			}
 			return finalReply("操作完成"), nil
@@ -304,7 +304,7 @@ func TestToolDiscoveryPreservesExplicitSelectedMaterials(t *testing.T) {
 			t.Errorf("inference started before explicit material loading: %d", reads.Load())
 		}
 		names := toolNames(request)
-		if len(names) != 7 || !contains(names, toolSearchName) || !contains(names, userInputTool) || !contains(names, planTool) {
+		if len(names) != 5 || !contains(names, toolSearchName) || !contains(names, userInputTool) || !contains(names, planTool) {
 			t.Errorf("selected materials implicitly loaded callable schemas: %v", names)
 		}
 		return finalReply("读取完毕"), nil

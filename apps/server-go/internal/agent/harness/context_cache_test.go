@@ -174,13 +174,13 @@ func TestAgentToolDiscoveryAppendsDefinitionsToStableToolPrefix(t *testing.T) {
 	if len(captured) != 3 {
 		t.Fatalf("推理请求数量=%d", len(captured))
 	}
-	if len(captured[0].Tools) != 7 || !contains(toolNames(captured[0]), toolSearchName) {
+	if len(captured[0].Tools) != 5 || !contains(toolNames(captured[0]), toolSearchName) {
 		t.Fatalf("首次推理工具定义=%v", toolNames(captured[0]))
 	}
-	if names := toolNames(captured[1]); len(names) != 8 || names[7] != "test_read" {
+	if names := toolNames(captured[1]); len(names) != 6 || names[5] != "test_read" {
 		t.Fatalf("首个动态定义未追加在尾部：%v", names)
 	}
-	if names := toolNames(captured[2]); len(names) != 9 || names[8] != "extra_00" {
+	if names := toolNames(captured[2]); len(names) != 7 || names[6] != "extra_00" {
 		t.Fatalf("后续动态定义未追加在尾部：%v", names)
 	}
 	for index := 1; index < len(captured); index++ {

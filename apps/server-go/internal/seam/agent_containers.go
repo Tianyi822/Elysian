@@ -40,6 +40,13 @@ type AgentDatabaseContainers interface {
 	Registered(context.Context, string) (bool, error)
 }
 
+// AgentWebsiteContainers is injected by app. The websites package owns registry
+// verification and in-progress mutual exclusion; Lifecycle reports whether the
+// container belongs to a registered website project and runs the action.
+type AgentWebsiteContainers interface {
+	Lifecycle(context.Context, string, string) (bool, error)
+}
+
 // ContainerOperationGuard checks pending and unknown operations before a domain
 // mutation. Only the accepted worker may exclude its own immutable request ID.
 type ContainerOperationGuard func(ctx context.Context, containerID, containerName, ownRequestID string) error

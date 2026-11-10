@@ -683,7 +683,7 @@ func (a *agentExecution) agentSystemText(system string) string {
 	if system != agentSystem {
 		return system
 	}
-	system += "\n查询平台占用、平台性能或类似问题时，默认以 Elysian 面板自身占用为主，查询进程内存并附运行环境 CPU、内存、负载和磁盘概览。说明采样时间与范围，Linux 内核视角不等于物理宿主；没有面板进程 CPU 等指标时说明不可得，不能用系统值冒充或近似代替。"
+	system += "\n查询平台占用、平台性能或类似问题时，默认以 Elysian 面板自身占用为主，用 platform_sample 以 scope=both 读取进程内存并附运行环境 CPU、内存、负载和磁盘概览。说明采样时间与范围，Linux 内核视角不等于物理宿主；没有面板进程 CPU 等指标时说明不可得，不能用系统值冒充或近似代替。"
 	if _, ok := a.capability(planTool); ok {
 		system += "\n复杂任务开始时使用 update_plan 拆分为可检查的步骤并直接执行；简单问答无需计划。开始步骤时更新为 in_progress，取得结果并核实后才标为 completed，每次提交完整计划且最多一个进行中。保留步骤的稳定 ID，允许根据新发现调整计划，最终答复前核对进度；停止、失败或结果未知不能冒充完成。计划仅属于本轮，只有用户明确继续任务时才接续来源计划。任务规划不授予权限，实际操作仍遵守审批与执行范围。"
 	}

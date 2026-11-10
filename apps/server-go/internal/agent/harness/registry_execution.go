@@ -238,7 +238,7 @@ func (m *Manager) executeRegistryOperation(ctx context.Context, s CapabilitySnap
 		matched := false
 		if m.deps.Tools != nil {
 			for _, schema := range m.deps.Tools.Schemas() {
-				if schema.Name == o.Capability.Name && (digestJSON(schema) == o.Capability.CatalogDigest || legacyFileCatalogCompatible(s, o, schema) || legacyDatabaseDiscoverCatalogCompatible(o, schema) || legacyDatabaseCreateCatalogCompatible(o, schema) || legacyDockerContainerCatalogCompatible(o, schema)) {
+				if schema.Name == o.Capability.Name && (digestJSON(schema) == o.Capability.CatalogDigest || legacyFileCatalogCompatible(s, o, schema) || legacyDatabaseDiscoverCatalogCompatible(o, schema) || legacyDatabaseCreateCatalogCompatible(o, schema) || legacyDockerContainerCatalogCompatible(o, schema) || legacyContainerAppsWriteCatalogCompatible(o, schema)) {
 					matched = true
 				}
 			}

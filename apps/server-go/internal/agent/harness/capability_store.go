@@ -27,7 +27,7 @@ func (m *Manager) environment(ctx context.Context, id string) (Environment, erro
 		names := []string{}
 		if m.deps.Tools != nil {
 			for _, schema := range m.deps.Tools.Schemas() {
-				if !retiredDatabaseTool(schema.Name) && (allowed(schema.Name) || schema.Metadata.Exposure == "agent") {
+				if !retiredFromNewChats(schema.Name) && (allowed(schema.Name) || schema.Metadata.Exposure == "agent") {
 					names = append(names, schema.Name)
 				}
 			}
@@ -347,7 +347,7 @@ func (m *Manager) ToolCatalog(ctx context.Context, sessionID, domain string, ava
 		if err != nil {
 			return result, storageFailure(err)
 		}
-		env = withoutRetiredDatabaseTools(env)
+		env = withoutRetiredTools(env)
 		snapshot, err := m.snapshot(ctx, env)
 		if err != nil {
 			var limit *Error
@@ -371,7 +371,7 @@ func (m *Manager) ToolCatalog(ctx context.Context, sessionID, domain string, ava
 	entries := map[string]ToolCatalogEntry{}
 	if m.deps.Tools != nil {
 		for _, schema := range m.deps.Tools.Schemas() {
-			if retiredDatabaseTool(schema.Name) || (schema.Metadata.Exposure != "agent" && !allowed(schema.Name)) {
+			if retiredFromNewChats(schema.Name) || (schema.Metadata.Exposure != "agent" && !allowed(schema.Name)) {
 				continue
 			}
 			_, chosen := selected[schema.Name]

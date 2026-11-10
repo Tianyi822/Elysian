@@ -756,7 +756,7 @@ func TestAgentChatCompletionsWireLoop(t *testing.T) {
 		reason := "stop"
 		switch index {
 		case 1:
-			if len(input.Tools) != 7 {
+			if len(input.Tools) != 5 {
 				t.Error("域工具白名单错误")
 			}
 			message["content"] = nil
@@ -823,7 +823,7 @@ func TestAgentContinuationClosesInterruptedToolGroupWithoutReplay(t *testing.T) 
 			return memoryReply(r), nil
 		}
 		if models.Add(1) == 1 {
-			return toolReply("docker_images_list", "docker_policy_view"), nil
+			return toolReply("docker_images_list", "docker_containers_list"), nil
 		}
 		b, _ := json.Marshal(r.Messages)
 		recovered = string(b)

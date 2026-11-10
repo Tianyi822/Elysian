@@ -85,7 +85,16 @@ func (s *Service) agentDescriptors() []tools.Descriptor {
 			metadata.ResourceType, metadata.ResourceKeyArgument = "", ""
 			metadata.Default = true
 		}
-		descriptors = append(descriptors, tools.Descriptor{Name: spec.name, Description: spec.description, Parameters: tools.Schema{Type: tools.SchemaObject, Required: spec.required, Properties: properties}, Metadata: metadata, Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
+		var searchNames []string
+		switch spec.name {
+		case "website_source_get":
+			// 承接已退役 website_source_analysis 的搜索意图；返回体本就内嵌完整分析报告。
+			searchNames = []string{"来源分析", "构建建议"}
+		case "website_deployment_get":
+			// 承接已退役 website_deployment_logs 的搜索意图；任务投影已含阶段、时间与测试结果。
+			searchNames = []string{"部署日志", "部署阶段"}
+		}
+		descriptors = append(descriptors, tools.Descriptor{Name: spec.name, Description: spec.description, SearchNames: searchNames, Parameters: tools.Schema{Type: tools.SchemaObject, Required: spec.required, Properties: properties}, Metadata: metadata, Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
 			raw, err := json.Marshal(args)
 			if err != nil {
 				return nil, err

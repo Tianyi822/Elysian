@@ -69,7 +69,6 @@ func TestRootPackageHasNoDomainOrAssemblyDependency(t *testing.T) {
 
 // capabilityDomains 是每个能力子包唯一允许依赖的域包，空串表示只依赖公共层。
 var capabilityDomains = map[string]string{
-	"./internal/agent/tools/accounts":      "elysian/server/internal/security",
 	"./internal/agent/tools/auth":          "elysian/server/internal/auth",
 	"./internal/agent/tools/containerapps": "elysian/server/internal/containerapps",
 	"./internal/agent/tools/docker":        "elysian/server/internal/docker",

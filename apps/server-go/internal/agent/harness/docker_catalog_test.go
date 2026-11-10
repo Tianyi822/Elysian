@@ -199,6 +199,12 @@ func TestDockerNewRunsRefreshCatalogWithoutChangingSavedEnvironmentOrOldSnapshot
 	for _, run := range []Run{first, continued, edited} {
 		for _, schema := range bridge.Schemas() {
 			c, ok := dockerSnapshotTool(*run.Snapshot, schema.Name)
+			if retiredFromNewChats(schema.Name) {
+				if ok {
+					t.Fatalf("run %s unexpectedly kept retired tool %s", run.ID, schema.Name)
+				}
+				continue
+			}
 			if !ok || c.Source != "builtin" || c.CatalogDigest == "" || !reflect.DeepEqual(c.SearchNames, schema.SearchNames) {
 				t.Fatalf("run %s lost registered tool %s: %+v", run.ID, schema.Name, c)
 			}
@@ -232,6 +238,8 @@ func TestDockerSearchFindsLocalListsBeforePullTaskObservers(t *testing.T) {
 		{"docker ps", "docker_containers_list"},
 		{"容器详情", "docker_container_inspect"},
 		{"docker image inspect", "docker_image_inspect"},
+		{"启动容器", "docker_container_power"},
+		{"重启容器", "docker_container_power"},
 		{"docker_image_pull", "docker_image_pull"},
 	} {
 		raw, _ := json.Marshal(map[string]any{"query": test.query})
@@ -321,7 +329,8 @@ func TestDockerKardiaExecutionAndDiscoveryKeepStablePromptCachePrefix(t *testing
 			}
 			return searchReply("docker_container_inspect"), nil
 		case 4:
-			return searchReply("docker_container_start"), nil
+			// 生命周期已收敛：docker_container_start 退役，搜索意图由 docker_container_power 承接。
+			return searchReply("docker_container_power"), nil
 		case 5:
 			return searchReply("docker_images_list"), nil
 		default:
@@ -354,7 +363,7 @@ func TestDockerKardiaExecutionAndDiscoveryKeepStablePromptCachePrefix(t *testing
 	}
 	last := captured[len(captured)-1]
 	names := toolNamesOf(last.Tools)
-	if len(names) != 6 || !reflect.DeepEqual(names[3:], []string{"docker_images_list", "docker_container_inspect", "docker_container_start"}) {
+	if len(names) != 6 || !reflect.DeepEqual(names[3:], []string{"docker_images_list", "docker_container_inspect", "docker_container_power"}) {
 		t.Fatalf("discovery reordered existing definitions: %v", names)
 	}
 	rawTools, _ := json.Marshal(last.Tools)
@@ -380,10 +389,10 @@ func (t *dockerSelectionTools) Schemas() []tools.PublicSchema { return t.schemas
 
 func TestDockerAutomaticCatalogNeverAddsUnreviewedOrHumanTools(t *testing.T) {
 	audited := []string{
-		"docker_containers_list", "docker_images_list", "docker_policy_view", "docker_self_container", "registry_host_check", "docker_registry_list", "docker_registry_probe",
+		"docker_containers_list", "docker_images_list", "docker_context_view", "docker_registry_list", "docker_registry_probe",
 		"docker_container_inspect", "docker_image_inspect", "docker_container_create_restricted", "docker_container_create_service",
-		"docker_container_start", "docker_container_stop", "docker_container_restart", "docker_container_remove",
-		"docker_image_search", "docker_image_tags", "docker_image_pull", "docker_image_pull_get", "docker_image_pull_logs", "docker_image_pull_cancel", "docker_container_logs", "docker_image_remove", "docker_container_exec",
+		"docker_container_power", "docker_container_remove",
+		"docker_image_search", "docker_image_tags", "docker_image_pull", "docker_image_pull_get", "docker_image_pull_cancel", "docker_container_logs", "docker_image_remove", "docker_container_exec",
 	}
 	var registered []tools.PublicSchema
 	for _, name := range audited {

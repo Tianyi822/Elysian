@@ -246,6 +246,14 @@ func (s *Service) descriptors() []tools.Descriptor {
 			}
 		}
 		descriptors[i].Metadata = metadata
+		switch descriptors[i].Name {
+		case "build_get":
+			// 承接已退役 app_build_logs 的搜索意图；任务摘要已含构建阶段与时间事实。
+			descriptors[i].SearchNames = []string{"构建日志", "build logs"}
+		case "app_lookup":
+			// 承接已退役 app_directory 的搜索意图；登记记录已含宿主目录字段。
+			descriptors[i].SearchNames = []string{"宿主目录", "工作区目录", "compose 挂载"}
+		}
 		if s.facade != nil {
 			if descriptors[i].Name == "build_cancel" {
 				descriptors[i].Handler = func(c *kardia.Context, args tools.Arguments) (any, error) {

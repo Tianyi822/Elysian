@@ -68,13 +68,13 @@ func install(t *testing.T, deps Deps, cfg Config) (*kardia.Context, *tools.Regis
 	return root, registry
 }
 
-func TestPluginRegistersFiveDescriptors(t *testing.T) {
+func TestPluginRegistersBaseDescriptors(t *testing.T) {
 	_, registry := install(t, Deps{Views: &fakeViews{}}, Config{})
 	names := make([]string, 0)
 	for _, schema := range registry.Schemas() {
 		names = append(names, schema.Name)
 	}
-	want := []string{"docker_containers_list", "docker_images_list", "docker_policy_view", "docker_self_container", "registry_host_check"}
+	want := []string{"docker_containers_list", "docker_context_view", "docker_images_list", "docker_policy_view", "docker_self_container", "registry_host_check"}
 	if strings.Join(names, ",") != strings.Join(want, ",") {
 		t.Fatalf("描述符不符：%v", names)
 	}

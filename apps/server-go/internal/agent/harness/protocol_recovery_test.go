@@ -62,11 +62,13 @@ func TestNativeDatabasePreflightRejectionContinuesAndReleasesBarrier(t *testing.
 		t.Fatalf("expected screenshot failure: status=%s reason=%s error=%+v", finished.Status, finished.EndReason, finished.Error)
 	}
 	calls, err := m.Calls(context.Background(), run.ID, "", 50)
-	if err != nil || len(calls.Items) != 2 || calls.Items[1].Error == nil {
+	// 工具精简后注入目录落在 eager 阈值内，database_create 首请求即定义可见，
+	// 不再经历 tool_search 往返；本测试关注预检拒绝是否继续运行并回传精确原因。
+	if err != nil || len(calls.Items) != 1 || calls.Items[0].Error == nil {
 		t.Fatalf("missing calls: %+v %v", calls, err)
 	}
-	if calls.Items[1].Error.Code != "database-task-rejected" {
-		t.Fatalf("预检错误被覆盖：%+v", calls.Items[1])
+	if calls.Items[0].Error.Code != "database-task-rejected" {
+		t.Fatalf("预检错误被覆盖：%+v", calls.Items[0])
 	}
 	operations, err := m.Operations(context.Background(), run.ID)
 	if err != nil {

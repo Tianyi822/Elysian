@@ -5,7 +5,30 @@ import (
 	"elysian/server/internal/agent/tools"
 	domainapps "elysian/server/internal/containerapps"
 	"encoding/json"
+	"errors"
 )
+
+const (
+	appWorkspaceWriteV2Description     = "审批后写入普通配置文本或删除工作区内普通文件：content 与 remove 必须且只能提供一项，内容摘要不符时拒绝；不写凭据文件"
+	appWorkspaceWriteRemoveDescription = "true 表示删除该普通文件；与 content 互斥，必须且只能提供一项"
+)
+
+// parseWorkspaceWriteArgs 解析 v2 互斥参数：content 与 remove 必须且只能提供一项。
+// v1 快照调用必带 content、无 remove，天然落入写入分支。
+func parseWorkspaceWriteArgs(args tools.Arguments) (content string, remove bool, err error) {
+	content, hasContent := tools.StringArg(args, "content")
+	remove, hasRemove := tools.BoolArg(args, "remove")
+	if hasContent == hasRemove {
+		return "", false, errors.New("content 与 remove 必须且只能提供一项")
+	}
+	if hasRemove {
+		if !remove {
+			return "", false, errors.New("remove 仅接受 true；写入内容请改提供 content")
+		}
+		return "", true, nil
+	}
+	return content, false, nil
+}
 
 func (s *Service) agentDescriptors() []tools.Descriptor {
 	if s.facade == nil {
@@ -21,8 +44,6 @@ func (s *Service) agentDescriptors() []tools.Descriptor {
 		{"app_workspace_snapshot", "读取容器应用工作区的内容摘要，供审批时固定变更范围", false, []string{"slug"}},
 		{"app_build_logs", "读取构建阶段与时间的有界结构化日志，自由构建输出不进入模型", false, []string{"slug", "taskId"}},
 		{"app_workspace_create", "审批后创建精确标识的容器应用工作区", true, []string{"slug", "name"}},
-		{"app_workspace_write", "审批后写入普通配置文本，内容摘要不符时拒绝；不写凭据文件", true, []string{"slug", "path", "content", "expectedDigest"}},
-		{"app_workspace_remove_file", "审批后删除工作区内普通文件，内容摘要不符时拒绝", true, []string{"slug", "path", "expectedDigest"}},
 		{"app_workspace_remove", "审批后删除工作区及全部内容，有进行中构建或摘要变化时拒绝", true, []string{"slug", "expectedDigest"}},
 	} {
 		spec := spec
@@ -45,7 +66,6 @@ func (s *Service) agentDescriptors() []tools.Descriptor {
 		descriptors = append(descriptors, tools.Descriptor{Name: spec.name, Description: spec.description, Parameters: tools.Schema{Type: tools.SchemaObject, Required: spec.keys, Properties: properties}, Metadata: metadata, Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
 			ctx := tools.Lifetime(c)
 			slug, _ := tools.StringArg(args, "slug")
-			path, _ := tools.StringArg(args, "path")
 			digest, _ := tools.StringArg(args, "expectedDigest")
 			switch spec.name {
 			case "app_build_logs":
@@ -58,11 +78,6 @@ func (s *Service) agentDescriptors() []tools.Descriptor {
 			case "app_workspace_create":
 				name, _ := tools.StringArg(args, "name")
 				return s.facade.Create(ctx, slug, name)
-			case "app_workspace_write":
-				content, _ := tools.StringArg(args, "content")
-				return s.facade.Write(ctx, slug, path, content, digest, false)
-			case "app_workspace_remove_file":
-				return s.facade.Write(ctx, slug, path, "", digest, true)
 			default:
 				if err := s.facade.Remove(ctx, slug, digest); err != nil {
 					return nil, err
@@ -71,6 +86,40 @@ func (s *Service) agentDescriptors() []tools.Descriptor {
 			}
 		}})
 	}
+	// 工作区写与删合并为单一入口（v2）：content 与 remove 服务端强制互斥，
+	// 必须且只能提供一项；v1 形状（必带 content）经 compat 白名单照旧派发。
+	descriptors = append(descriptors, tools.Descriptor{
+		Name:        "app_workspace_write",
+		Description: appWorkspaceWriteV2Description,
+		Parameters: tools.Schema{Type: tools.SchemaObject, Required: []string{"slug", "path", "expectedDigest"}, Properties: map[string]tools.Schema{
+			"slug": text, "path": text, "content": text, "expectedDigest": text,
+			"remove": {Type: tools.SchemaBoolean, Description: appWorkspaceWriteRemoveDescription},
+		}},
+		Metadata: tools.Metadata{Domain: "container-app", Backend: "domain", Action: "app_workspace_write", Effect: "write", Exposure: "agent", ResourceType: "container-app", ResourceKeyArgument: "slug", Version: "2"},
+		Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
+			slug, _ := tools.StringArg(args, "slug")
+			path, _ := tools.StringArg(args, "path")
+			digest, _ := tools.StringArg(args, "expectedDigest")
+			content, remove, err := parseWorkspaceWriteArgs(args)
+			if err != nil {
+				return nil, err
+			}
+			return s.facade.Write(tools.Lifetime(c), slug, path, content, digest, remove)
+		},
+	})
+	// 已退役的删除入口保留注册仅供旧快照恢复，形状与 v1 逐字一致。
+	descriptors = append(descriptors, tools.Descriptor{
+		Name:        "app_workspace_remove_file",
+		Description: "审批后删除工作区内普通文件，内容摘要不符时拒绝",
+		Parameters:  tools.Schema{Type: tools.SchemaObject, Required: []string{"slug", "path", "expectedDigest"}, Properties: map[string]tools.Schema{"slug": text, "path": text, "expectedDigest": text}},
+		Metadata:    tools.Metadata{Domain: "container-app", Backend: "domain", Action: "app_workspace_remove_file", Effect: "write", Exposure: "agent", ResourceType: "container-app", ResourceKeyArgument: "slug", Version: "1"},
+		Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
+			slug, _ := tools.StringArg(args, "slug")
+			path, _ := tools.StringArg(args, "path")
+			digest, _ := tools.StringArg(args, "expectedDigest")
+			return s.facade.Write(tools.Lifetime(c), slug, path, "", digest, true)
+		},
+	})
 	properties := map[string]tools.Schema{"slug": text, "mode": {Type: tools.SchemaString, Enum: tools.EnumOf("dockerfile", "compose")}, "requestId": text, "expectedDigest": text, "target": text, "dockerfile": text, "context": text, "compose": text, "services": {Type: tools.SchemaArray, Items: &text}}
 	descriptors = append(descriptors, tools.Descriptor{Name: "app_build_preview", Description: "预览Dockerfile或compose构建的目标、上下文限额和镜像命名空间占用，不启动构建", Parameters: tools.Schema{Type: tools.SchemaObject, Required: []string{"slug", "mode"}, Properties: properties}, Metadata: tools.Metadata{Domain: "container-app", Backend: "domain", Action: "preview", Effect: "read", Exposure: "agent", ReadOnly: true, ResourceType: "container-app", ResourceKeyArgument: "slug", Version: "1"}, Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
 		slug, _ := tools.StringArg(args, "slug")

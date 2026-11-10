@@ -40,6 +40,40 @@ func New(c *kardia.Context, deps Deps, _ Config) (*Service, error) {
 		spec := spec
 		descriptors = append(descriptors, tools.Descriptor{Name: spec.name, Description: spec.description, Parameters: tools.Schema{Type: tools.SchemaObject}, Metadata: tools.Metadata{Domain: "platform", Action: spec.action, Effect: "read", Exposure: "agent", ReadOnly: true, Default: true, Version: "1"}, Handler: func(c *kardia.Context, _ tools.Arguments) (any, error) { return spec.call(tools.Lifetime(c)) }})
 	}
+	// 收敛后的单一采样入口：进程内存为缺省轻量路径，宿主概览显式请求；
+	// platform_memory 与 platform_metrics 保留注册仅供旧快照恢复。
+	descriptors = append(descriptors, tools.Descriptor{
+		Name:        "platform_sample",
+		Description: "读取平台运行采样：scope=process 只读面板进程内存（RSS、Go 堆与 GC，无阻塞等待，缺省）；scope=host 读运行环境内存、CPU 使用率与负载、磁盘挂载占用（含约 200ms 采样等待）；scope=both 两者都返回，查询平台占用或平台性能时使用。读数为 Linux 内核视角，容器内不代表物理宿主；不提供面板进程 CPU 使用率，也不能用系统值冒充或近似代替",
+		Parameters: tools.Schema{Type: tools.SchemaObject, Properties: map[string]tools.Schema{
+			"scope": {Type: tools.SchemaString, Enum: tools.EnumOf("process", "host", "both"), Description: "采样范围，缺省 process"},
+		}},
+		Metadata:    tools.Metadata{Domain: "platform", Action: "sample", Effect: "read", Exposure: "agent", ReadOnly: true, Default: true, Version: "1"},
+		SearchNames: []string{"平台占用", "平台性能", "进程内存", "面板内存", "系统概览", "CPU 使用率", "系统负载", "磁盘占用"},
+		Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
+			scope, _ := tools.StringArg(args, "scope")
+			wantProcess, wantHost, err := sampleScope(scope)
+			if err != nil {
+				return nil, err
+			}
+			ctx := tools.Lifetime(c)
+			if wantProcess && wantHost {
+				memory, err := deps.Facade.Memory(ctx)
+				if err != nil {
+					return nil, err
+				}
+				host, err := deps.Facade.Metrics(ctx)
+				if err != nil {
+					return nil, err
+				}
+				return map[string]any{"process": memory, "host": host}, nil
+			}
+			if wantHost {
+				return deps.Facade.Metrics(ctx)
+			}
+			return deps.Facade.Memory(ctx)
+		},
+	})
 	if err := tools.RegisterAll(c, descriptors...); err != nil {
 		return nil, errors.Join(err, s.Close(context.Background()))
 	}
@@ -49,3 +83,17 @@ func Plugin(deps Deps, cfg Config) *kardia.Plugin {
 	return kardia.ServicePlugin(ServiceName, kardia.InjectMap{tools.ServiceName: nil}, func(c *kardia.Context, _ any) (any, error) { return New(c, deps, cfg) })
 }
 func From(c *kardia.Context) (*Service, error) { return tools.Use[*Service](c, ServiceName) }
+
+// sampleScope 服务端强校验 scope 枚举：缺省取进程采样的轻量路径。
+func sampleScope(scope string) (wantProcess, wantHost bool, err error) {
+	switch scope {
+	case "", "process":
+		return true, false, nil
+	case "host":
+		return false, true, nil
+	case "both":
+		return true, true, nil
+	default:
+		return false, false, errors.New("scope 必须是 process、host 或 both")
+	}
+}

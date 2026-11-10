@@ -30,6 +30,7 @@ type AgentFacade struct {
 	taskWG             sync.WaitGroup
 	closed             bool
 	databaseContainers seam.AgentDatabaseContainers
+	websiteContainers  seam.AgentWebsiteContainers
 	operationMu        sync.Mutex
 	operations         map[string]ContainerOperationTask
 	operationRoot      string
@@ -76,6 +77,21 @@ func (a *AgentFacade) action(ctx context.Context, id, action string, databases b
 	}
 	if databases && a.databaseContainers != nil {
 		handled, err := a.databaseContainers.Lifecycle(ctx, id, action)
+		if handled || err != nil {
+			if err != nil {
+				return contract.Container{}, err
+			}
+			value, readErr := a.service.inspectContainerByID(ctx, id, actionTimeout)
+			if readErr != nil {
+				return contract.Container{}, readErr
+			}
+			return mapContainer(value)
+		}
+	}
+	// 网站容器与数据库容器同法：v2 生命周期按所属领域登记核验后路由；
+	// v1 旧快照保持原有受限目标语义，不获得网站路由。
+	if databases && a.websiteContainers != nil {
+		handled, err := a.websiteContainers.Lifecycle(ctx, id, action)
 		if handled || err != nil {
 			if err != nil {
 				return contract.Container{}, err

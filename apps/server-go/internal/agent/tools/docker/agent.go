@@ -26,6 +26,7 @@ func (s *Service) imageDescriptors() []tools.Descriptor {
 		action := spec.action
 		properties := map[string]tools.Schema{}
 		required := []string{}
+		var searchNames []string
 		metadata := tools.Metadata{Domain: "docker", Action: action, Effect: "read", Exposure: "agent", ReadOnly: true, Default: true, Version: "1"}
 		switch action {
 		case "search":
@@ -48,6 +49,10 @@ func (s *Service) imageDescriptors() []tools.Descriptor {
 		case "pull_get", "pull_logs", "pull_cancel":
 			required = []string{"id", "taskId"}
 			properties["id"], properties["taskId"] = text, text
+			if action == "pull_get" {
+				// 承接已退役 docker_image_pull_logs 的搜索意图；任务回执本身已含日志页全部事实。
+				searchNames = []string{"拉取日志", "拉取任务日志"}
+			}
 			if action == "pull_logs" {
 				properties["cursor"] = text
 				properties["limit"] = tools.Schema{Type: tools.SchemaInteger}
@@ -64,7 +69,7 @@ func (s *Service) imageDescriptors() []tools.Descriptor {
 				metadata.Action, metadata.Effect, metadata.ReadOnly, metadata.Async, metadata.TaskDomain, metadata.TaskIDArgument = "cancel", "write", false, true, "docker-image-pull", "taskId"
 			}
 		}
-		descriptors = append(descriptors, tools.Descriptor{Name: "docker_image_" + action, Description: spec.description, Parameters: tools.Schema{Type: tools.SchemaObject, Required: required, Properties: properties}, Metadata: metadata, Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
+		descriptors = append(descriptors, tools.Descriptor{Name: "docker_image_" + action, Description: spec.description, SearchNames: searchNames, Parameters: tools.Schema{Type: tools.SchemaObject, Required: required, Properties: properties}, Metadata: metadata, Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
 			ctx := tools.Lifetime(c)
 			id, _ := tools.StringArg(args, "id")
 			registry, _ := tools.StringArg(args, "registry")
@@ -141,7 +146,12 @@ func (s *Service) registryDescriptors() []tools.Descriptor {
 			required = []string{"registry"}
 			description = "只读按需探测单个镜像源：10 秒内下载最多 1 MiB Alpine 样本；只代表当次样本，不保证 MySQL 可用，不启动镜像拉取；无需预先测试全部源"
 		}
-		descriptors = append(descriptors, tools.Descriptor{Name: "docker_registry_" + action, Description: description, SearchNames: []string{"镜像源", "镜像加速", "换源", "registry mirror"}, Parameters: tools.Schema{Type: tools.SchemaObject, Required: required, Properties: properties}, Metadata: tools.Metadata{Domain: "docker", Action: "registry_" + action, Effect: "read", Exposure: "agent", ReadOnly: true, Default: true, Version: "1"}, Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
+		searchNames := []string{"镜像源", "镜像加速", "换源", "registry mirror"}
+		if action == "probe" {
+			// 承接已退役 registry_host_check 的搜索意图；探测前先执行同一套镜像源校验。
+			searchNames = append(append([]string{}, searchNames...), "校验镜像源", "镜像源地址")
+		}
+		descriptors = append(descriptors, tools.Descriptor{Name: "docker_registry_" + action, Description: description, SearchNames: searchNames, Parameters: tools.Schema{Type: tools.SchemaObject, Required: required, Properties: properties}, Metadata: tools.Metadata{Domain: "docker", Action: "registry_" + action, Effect: "read", Exposure: "agent", ReadOnly: true, Default: true, Version: "1"}, Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
 			ctx := tools.Lifetime(c)
 			if action == "list" {
 				return s.deps.Agent.Registries(ctx)

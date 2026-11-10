@@ -186,6 +186,9 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 	if stack.Agent != nil {
 		stack.Agent.SetDatabaseContainers(databaseDeps.AgentFacade.ContainerBridge(tools.Revalidate))
 		databaseDeps.AgentFacade.SetContainerOperationGuard(stack.Agent.CheckContainerMutation)
+		if websiteDeps.AgentFacade != nil {
+			stack.Agent.SetWebsiteContainers(websiteDeps.AgentFacade.WebsiteContainerBridge(tools.Revalidate))
+		}
 	}
 	if databaseDeps.AgentFacade.Available() {
 		plugins = append(plugins, tooldatabase.Plugin(tooldatabase.Deps{Facade: databaseDeps.AgentFacade}, tooldatabase.Config{}))

@@ -199,6 +199,14 @@ func (s *Service) descriptors() []tools.Descriptor {
 			},
 			Handler: s.handleRegistryHostCheck,
 		},
+		{
+			// 收敛 docker_policy_view 与 docker_self_container 的两条常量事实；
+			// 两旧名保留注册与 legacy tool-batch 契约（allowed()／RUNTIME_TOOL_NAMES）。
+			Name:        "docker_context_view",
+			Description: "返回面板 Docker 运行上下文事实：挂载根、保留端口与面板自身所在容器 ID（未识别时 identified 为 false）",
+			Parameters:  empty,
+			Handler:     s.handleContextView,
+		},
 	}
 	for i := range descriptors {
 		descriptors[i].Metadata = tools.Metadata{Domain: "docker", Action: descriptors[i].Name, Effect: "read", Exposure: "agent", ReadOnly: true, Default: true, Version: "1"}
@@ -207,6 +215,8 @@ func (s *Service) descriptors() []tools.Descriptor {
 			descriptors[i].SearchNames = []string{"本地容器列表", "容器清单", "查看所有容器", "docker ps", "docker container ls", "containers list"}
 		case "docker_images_list":
 			descriptors[i].SearchNames = []string{"本地镜像列表", "镜像清单", "已安装镜像", "docker images", "docker image ls", "images list"}
+		case "docker_context_view":
+			descriptors[i].SearchNames = []string{"挂载根", "保留端口", "面板容器", "mount root", "reserved ports"}
 		}
 	}
 	if s.deps.Agent == nil {
@@ -316,7 +326,35 @@ func (s *Service) descriptors() []tools.Descriptor {
 	descriptors = append(descriptors, s.inspectionDescriptors()...)
 	descriptors = append(descriptors, s.execDescriptor())
 	descriptors = append(descriptors, s.imageDescriptors()...)
-	return append(descriptors, s.registryDescriptors()...)
+	descriptors = append(descriptors, s.registryDescriptors()...)
+	// 新增定义只追加到尾部（ADR-0055）：power 是生命周期收敛后的唯一新增入口。
+	return append(descriptors, s.powerDescriptor())
+}
+
+// powerDescriptor 把 start/stop/restart 三个生命周期动作收敛为单一入口；
+// action 参数进入审批与授权摘要，逐动作精确比对，remove 保持独立工具不并入。
+func (s *Service) powerDescriptor() tools.Descriptor {
+	text := tools.Schema{Type: tools.SchemaString}
+	return tools.Descriptor{
+		Name:        "docker_container_power",
+		Description: "审批后对已授权的安全容器执行 start、stop 或 restart；受管数据库与网站容器先按所属领域登记核验再路由",
+		Parameters: tools.Schema{Type: tools.SchemaObject, Required: []string{"id", "action"}, Properties: map[string]tools.Schema{
+			"id": text,
+			"action": {Type: tools.SchemaString, Enum: tools.EnumOf("start", "stop", "restart"),
+				Description: "生命周期动作，三选一；每次动作单独审批"},
+		}},
+		Metadata:    tools.Metadata{Domain: "docker", Action: "power", Effect: "write", Exposure: "agent", ResourceType: "docker-container", ResourceKeyArgument: "id", Version: "1"},
+		SearchNames: []string{"启动容器", "停止容器", "重启容器", "容器启停", "start container", "stop container", "restart container"},
+		Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
+			id, _ := tools.StringArg(args, "id")
+			action, _ := tools.StringArg(args, "action")
+			container, err := s.deps.Agent.Action(tools.Lifetime(c), id, action)
+			if err != nil {
+				return nil, agentBusinessError(err)
+			}
+			return containerSummary(container), nil
+		},
+	}
 }
 
 func (s *Service) handleListContainers(access *kardia.Context, _ tools.Arguments) (any, error) {
@@ -364,6 +402,22 @@ func (s *Service) handleSelfContainer(access *kardia.Context, _ tools.Arguments)
 	}
 	id := s.SelfContainerID(access)
 	return map[string]any{"id": id, "identified": id != ""}, nil
+}
+
+func (s *Service) handleContextView(access *kardia.Context, _ tools.Arguments) (any, error) {
+	if s.deps.Agent != nil {
+		if err := s.deps.Agent.Authorize(tools.Lifetime(access)); err != nil {
+			return nil, err
+		}
+	}
+	policy := s.Policy(access)
+	id := s.SelfContainerID(access)
+	return map[string]any{
+		"mount_root":        policy.MountRoot,
+		"reserved_ports":    append([]int{}, policy.ReservedPorts...),
+		"self_container_id": id,
+		"identified":        id != "",
+	}, nil
 }
 
 func (s *Service) handleRegistryHostCheck(access *kardia.Context, args tools.Arguments) (any, error) {

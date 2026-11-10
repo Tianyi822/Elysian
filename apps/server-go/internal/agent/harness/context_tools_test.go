@@ -57,7 +57,7 @@ func TestContextUsesCurrentToolInventoryAndLatestInputAfterLegacyConversation(t 
 				t.Error("fixture did not preserve stale working memory")
 			}
 			system := request.Messages[0].Content
-			if !strings.Contains(system, `"total":25`) || !strings.Contains(system, `"platform":21`) || !strings.Contains(system, "可能已经过期") {
+			if !strings.Contains(system, `"total":23`) || !strings.Contains(system, `"platform":21`) || !strings.Contains(system, "可能已经过期") {
 				t.Errorf("current inventory did not override historical limits: %s", system)
 			}
 			if names := toolNames(request); len(names) != 3 || !contains(names, toolSearchName) || !contains(names, userInputTool) || !contains(names, planTool) {

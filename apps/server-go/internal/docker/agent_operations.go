@@ -68,6 +68,10 @@ func (a *AgentFacade) SetDatabaseContainers(bridge seam.AgentDatabaseContainers)
 	a.databaseContainers = bridge
 }
 
+func (a *AgentFacade) SetWebsiteContainers(bridge seam.AgentWebsiteContainers) {
+	a.websiteContainers = bridge
+}
+
 func operationID(requestID string) string {
 	hash := sha256.Sum256([]byte(ContainerOperationDomain + ":" + requestID))
 	return hex.EncodeToString(hash[:])
