@@ -27,12 +27,12 @@ assert_rc() { # <期望 rc> <实际 rc> <说明>
 echo "== 阶段登记与计数 =="
 SMOKE=""
 register_stages
-assert_eq 11 "$TOTAL_STEPS" "正式安装阶段总数自动派生为 11"
-assert_eq "检测并安装平台依赖" "${STAGES[6]}" "正式安装第 7 阶段为平台依赖"
+assert_eq 8 "$TOTAL_STEPS" "正式安装阶段总数自动派生为 8"
+assert_eq "检测并安装平台依赖" "${STAGES[3]}" "正式安装第 4 阶段为平台依赖"
 SMOKE=1
 register_stages
-assert_eq 7 "$TOTAL_STEPS" "冒烟模式阶段总数保持 7"
-assert_eq "冒烟验证" "${STAGES[6]}" "冒烟模式第 7 阶段为冒烟验证"
+assert_eq 4 "$TOTAL_STEPS" "冒烟模式阶段总数为 4"
+assert_eq "冒烟验证" "${STAGES[3]}" "冒烟模式第 4 阶段为冒烟验证"
 SMOKE=""
 
 echo "== 终端能力降级 =="
@@ -83,7 +83,7 @@ if (
   register_stages
   STEP=0
   out="$(section "检查运行环境")"
-  [ "$out" = "$(printf '\n[ 1/11] 检查运行环境\n')" ]
+  [ "$out" = "$(printf '\n[ 1/8] 检查运行环境\n')" ]
 ); then pass "阶段行格式 [ n/N] 名称"; else fail "阶段行格式不符"; fi
 if (
   set -e
@@ -118,7 +118,7 @@ if (
   TERM=xterm-256color
   init_output 1 1
   out="$(section "检查运行环境")"
-  printf '%s' "$out" | grep -q '\[ 1/11\]' &&
+  printf '%s' "$out" | grep -q '\[ 1/8\]' &&
     printf '%s' "$out" | grep -q '█' &&
     printf '%s' "$out" | grep -q '░'
 ); then pass "TTY 底部状态行带进度条"; else fail "TTY 进度条缺失"; fi
@@ -140,7 +140,7 @@ if (
   STEP=0
   init_output 0 0
   out="$(section "检查运行环境")"
-  printf '%s' "$out" | grep -q '^\[ 1/11\] 检查运行环境$' &&
+  printf '%s' "$out" | grep -q '^\[ 1/8\] 检查运行环境$' &&
     ! printf '%s' "$out" | grep -q '█'
 ); then pass "非 TTY 阶段行无进度条"; else fail "非 TTY 阶段行异常"; fi
 

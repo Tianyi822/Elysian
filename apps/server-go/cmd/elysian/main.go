@@ -10,6 +10,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -17,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"sync/atomic"
 	"syscall"
@@ -75,6 +77,13 @@ func cliExit(code int) error {
 }
 
 func run() (runErr error) {
+	if len(os.Args) > 1 && os.Args[1] == "release-info" {
+		if len(os.Args) != 2 {
+			return errors.New("发布信息命令不接受参数")
+		}
+		return json.NewEncoder(os.Stdout).Encode(map[string]string{"commit": panel.Commit, "buildTime": panel.BuildTime, "os": runtime.GOOS, "arch": runtime.GOARCH})
+	}
+
 	if len(os.Args) > 1 && os.Args[1] == "agent-exec-supervisor" {
 		if len(os.Args) != 2 {
 			return errors.New("容器 supervisor 不接受额外参数")

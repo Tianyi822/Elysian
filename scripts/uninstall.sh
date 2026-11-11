@@ -256,7 +256,12 @@ unfinished() {
   FAILED=1
 }
 
-uninstall_platform_helper() { bun "$SCRIPT_DIR/install-platform.mjs" "$@"; }
+platform_helper_available() { [ -x "$SCRIPT_DIR/../platform-helper" ] || [ -x "$INSTALL_ROOT/current/platform-helper" ] || command -v bun >/dev/null 2>&1; }
+uninstall_platform_helper() {
+ if [ -x "$SCRIPT_DIR/../platform-helper" ]; then "$SCRIPT_DIR/../platform-helper" "$@"
+ elif [ -x "$INSTALL_ROOT/current/platform-helper" ]; then "$INSTALL_ROOT/current/platform-helper" "$@"
+ else bun "$SCRIPT_DIR/install-platform.mjs" "$@"; fi
+}
 
 caddy_api_snapshot() { # 仅本机 Unix socket；配置可能含凭据，调用方提供私有路径。
   local socket="$1" output="$2" status
@@ -267,7 +272,7 @@ caddy_api_snapshot() { # 仅本机 Unix socket；配置可能含凭据，调用�
 }
 
 caddy_runtime_matches_disk() {
-  command -v bun >/dev/null 2>&1 || return 1
+  platform_helper_available || return 1
   ensure_backup_dir || return 1
   local work
   work="$(mktemp -d "$BACKUP_DIR/caddy-check.XXXXXX")" || return 1
@@ -315,7 +320,7 @@ dependency_unused() { # 原因不含业务配置原文；失败不能被解释�
       [ -z "$inventory" ] || { printf 'containerd 存在 Docker 之外的命名空间'; return 1; }
     fi
   else
-    command -v bun >/dev/null 2>&1 || { printf '缺少 Bun，无法核验 Caddy 完整配置'; return 1; }
+    platform_helper_available || { printf '缺少平台配置辅助程序，无法核验 Caddy 完整配置'; return 1; }
     if platform_explicit_legacy caddy; then
       legacy_caddy_unused
       return "$?"

@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
-# scripts/install.sh —— Elysian 源码一键部署（目标环境：Ubuntu/Debian 虚拟机，root 执行）。
+# scripts/install.sh —— Elysian 预编译安装包部署（目标环境：Ubuntu/Debian 虚拟机，root 执行）。
 #
 # 用法：
 #   bash scripts/install.sh             完整安装/升级（幂等，可重复执行）
 #   ELYSIAN_SMOKE=1 bash scripts/install.sh
-#                                       冒烟模式：跳过 systemd 与系统用户，仅装工具链、
-#                                       构建、起进程、curl /api/health、清理（供
-#                                       .zcode/go-migration/script-smoke.sh 在干净容器内调用）
+#                                       冒烟模式：跳过 systemd 与系统用户，下载验证预编译包、
+#                                       起进程、curl /api/health、清理
 #
 # 卸载入口只有 scripts/uninstall.sh：默认彻底清理面板及可确认归属且未使用的依赖，执行前展示清单确认。
 #
-# 平台依赖：正式安装在「构建 Elysian」之后、安装切换事务之前自动检测并安装 Docker 与 Caddy——
+# 平台依赖：正式安装在「准备预编译安装包」之后、安装切换事务之前自动检测并安装 Docker 与 Caddy——
 # 已安装且可用则复用（不重装、不改动既有 daemon.json / Caddyfile），缺失则按经验证的官方命令
 # 序列（Docker 官方签名的 apt 仓库及国内镜像、Caddy 官方 cloudsmith apt 源）安装并真实验证（docker info、
 # Engine API ≥ 1.41、systemctl is-active），失败打印中文原因与排查建议后非零退出；该阶段先于
@@ -21,7 +20,7 @@
 # ! 警告 / − 跳过；NO_COLOR 非空时只关颜色；重定向、非 TTY 或 TERM=dumb 自动退化为纯文本。
 #
 # 设计依据：AGENTS.md（前端 IP 直连、后端回环、~/.Elysian 分类目录、首启初始密码打 stdout）、
-# apps/server-go/go-plan §8（发布构建：bun run build → 清空并拷贝 dist → CGO_ENABLED=0 单二进制）。
+# docs/adr/0075-github-precompiled-panel-releases.md（CI 构建，服务器只验证和安装）。
 set -euo pipefail
 
 # ---------- 版本锁定（下载一律带官方校验，版本不随行漂移） ----------
@@ -107,10 +106,7 @@ register_stages() {
   STAGES=(
     "检查运行环境"
     "安装系统依赖"
-    "准备 Go 工具链"
-    "准备 Bun 工具链"
-    "配置国内镜像"
-    "构建 Elysian"
+    "准备预编译安装包"
   )
   if [ -n "$SMOKE" ]; then
     STAGES+=("冒烟验证")
@@ -230,7 +226,7 @@ detect_arch() {
   if ! map_arch "$(uname -m)"; then
     die "不支持的 CPU 架构：$(uname -m)。本脚本仅支持 x86_64 与 aarch64（arm64）。"
   fi
-  info "架构：$(uname -m)（Go linux/${GO_ARCH}，bun linux/${BUN_ARCH}）"
+  info "架构：$(uname -m)（预编译包 linux/${GO_ARCH}）"
 }
 
 distro_family_supported() { # distro_family_supported <ID 与 ID_LIKE 拼接串>：Debian/Ubuntu 系返回 0
@@ -256,8 +252,7 @@ require_preflight() {
   detect_arch
   detect_distro
   [ "$(id -u)" -eq 0 ] || die "请以 root 执行本脚本（sudo bash scripts/install.sh）。"
-  [ -f "$REPO_ROOT/package.json" ] && [ -d "$REPO_ROOT/apps/web" ] && [ -f "$REPO_ROOT/apps/server-go/go.mod" ] \
-    || die "源码不完整：$REPO_ROOT 下缺少 package.json / apps/web / apps/server-go。请在克隆（或解包）的仓库根运行本脚本。"
+  [ -f "$SCRIPT_DIR/release-download.py" ] || die "安装程序不完整：缺少 scripts/release-download.py。"
   if [ -z "$SMOKE" ]; then
     command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ] \
       || die "未检测到 systemd。本脚本以 systemd 管理面板服务；容器等无 systemd 环境请改用 ELYSIAN_SMOKE=1 冒烟模式。"
@@ -268,9 +263,7 @@ apt_install_deps() {
   local need=()
   command -v curl >/dev/null 2>&1 || need+=(curl)
   [ -e /etc/ssl/certs/ca-certificates.crt ] || need+=(ca-certificates)
-  command -v unzip >/dev/null 2>&1 || need+=(unzip)
-  # git 用于从克隆仓库读取真实构建提交。在线更新从 GitHub 下载源码归档。
-  command -v git >/dev/null 2>&1 || need+=(git)
+  command -v python3 >/dev/null 2>&1 || need+=(python3)
   if ! command -v docker >/dev/null 2>&1; then
     command -v gpg >/dev/null 2>&1 || need+=(gnupg)
     command -v gpgv >/dev/null 2>&1 || need+=(gpgv)
@@ -280,7 +273,7 @@ apt_install_deps() {
   command -v ss >/dev/null 2>&1 || need+=(iproute2)
   if ! command -v runuser >/dev/null 2>&1 || ! command -v flock >/dev/null 2>&1; then need+=(util-linux); fi
   if [ "${#need[@]}" -eq 0 ]; then
-    ok "系统依赖（curl / ca-certificates / unzip / git / ufw / OpenSSH）已齐备"
+    ok "系统依赖（curl / ca-certificates / Python / ufw / OpenSSH）已齐备"
     return 0
   fi
   local log
@@ -385,7 +378,11 @@ caddy_admin_socket() { # 面板同款覆盖次序：环境变量 → /etc/defaul
   platform_helper socket "${sock:-/run/caddy/admin.sock}"
 }
 
-platform_helper() { bun "$REPO_ROOT/scripts/install-platform.mjs" "$@"; }
+platform_helper() {
+ if [ -x "${BUILD_DIR:-}/platform-helper" ]; then "$BUILD_DIR/platform-helper" "$@"
+ elif [ -x "$REPO_ROOT/platform-helper" ]; then "$REPO_ROOT/platform-helper" "$@"
+ else bun "$REPO_ROOT/scripts/install-platform.mjs" "$@"; fi
+}
 
 trim_line() { # 去除首尾空白（空格与制表符）
   local s="$1"
@@ -1098,7 +1095,7 @@ EOF
   ok "全局镜像配置已写入 ${profile}（新登录 shell 生效）"
 }
 
-# ---------- 构建与版本安装 ----------
+# ---------- 旧构建缓存兼容与预编译版本安装 ----------
 
 build_cache_stat() {
   stat -c '%u:%g:%a' "$1" 2>/dev/null || stat -f '%u:%g:%Lp' "$1"
@@ -1147,41 +1144,21 @@ prepare_build_cache() {
   printf '构建缓存：Bun=%s；Go 模块=%s；Go 编译=%s\n' "$BUILD_HOME/cache/bun" "$BUILD_HOME/cache/go-mod" "$BUILD_HOME/cache/go-build"
 }
 
-build_release() {
-  info "构建会复用已有依赖与 Go 编译缓存，缺少的依赖按需下载"
-  BUILD_LOG="$(mktemp /tmp/elysian-build.XXXXXX)"
-  BUILD_DIR="$(mktemp -d)"
-  BUILD_COMMIT="unknown"
-  if command -v git >/dev/null 2>&1; then
-    BUILD_COMMIT="$(git -c safe.directory="$REPO_ROOT" -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
-    if [ "$BUILD_COMMIT" != unknown ] && ! git -c safe.directory="$REPO_ROOT" -C "$REPO_ROOT" diff --quiet HEAD --; then
-      BUILD_COMMIT="${BUILD_COMMIT}-dirty"
-    fi
-  fi
-  if [ -n "$SMOKE" ]; then
-    if ! run_stage_command "构建 Elysian" "$BUILD_LOG" bash "$REPO_ROOT/scripts/build-release.sh" "$REPO_ROOT" "$BUILD_DIR" "$BUILD_COMMIT"; then
-      tail -n 40 "$BUILD_LOG" >&2
-      die "源码构建失败，$(stage_failure_reason)，原面板未停服（完整日志：$BUILD_LOG）。"
-    fi
+prepare_release() {
+  BUILD_DIR="$(mktemp -d /var/tmp/elysian-release.XXXXXX)"
+  if [ -f "$REPO_ROOT/release.json" ]; then
+    BUILD_COMMIT="$(python3 "$SCRIPT_DIR/release-download.py" verify "$REPO_ROOT" "$GO_ARCH" "${ELYSIAN_COMMIT:-}")" || die "安装包校验失败，原面板未停服。"
+    for file in elysian platform-helper release.json; do cp "$REPO_ROOT/$file" "$BUILD_DIR/$file"; done
+    cp -a "$SCRIPT_DIR" "$BUILD_DIR/scripts"
   else
-    ensure_accounts
-    if ! prepare_build_cache >>"$BUILD_LOG" 2>&1; then
-      tail -n 40 "$BUILD_LOG" >&2
-      die "持久构建缓存准备失败，原面板未停服（完整日志：$BUILD_LOG）。"
-    fi
-    BUILD_SOURCE="$(mktemp -d /var/tmp/elysian-install-source.XXXXXX)"
-    tar -C "$REPO_ROOT" --exclude=.git --exclude=node_modules --exclude=dist --exclude=.env --exclude='.env.*' --exclude=.codex --exclude=.zcode --exclude=.agents --exclude=.Elysian -cf - . | tar -C "$BUILD_SOURCE" -xf -
-    install -m 0644 "$REPO_ROOT/scripts/build-release.sh" "$BUILD_DIR/build-release.sh"
-    chown -R elysian-build:elysian-build "$BUILD_SOURCE" "$BUILD_DIR"
-    if ! run_stage_command "构建 Elysian" "$BUILD_LOG" runuser -u elysian-build -- env HOME="$BUILD_SOURCE" PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin \
-      GOPROXY="$GOPROXY" BUN_CONFIG_REGISTRY="$BUN_CONFIG_REGISTRY" \
-      BUN_INSTALL_CACHE_DIR="$BUILD_HOME/cache/bun" GOMODCACHE="$BUILD_HOME/cache/go-mod" GOCACHE="$BUILD_HOME/cache/go-build" GOFLAGS='-trimpath -p=1' GOMAXPROCS=2 GOMEMLIMIT=768MiB \
-      bash "$BUILD_DIR/build-release.sh" "$BUILD_SOURCE" "$BUILD_DIR" "$BUILD_COMMIT"; then
-      tail -n 40 "$BUILD_LOG" >&2
-      die "源码构建失败，$(stage_failure_reason)，原面板未停服（完整日志：$BUILD_LOG）。"
-    fi
+    info "从 GitHub 下载已完成 CI 构建的安装包，不在服务器编译"
+    BUILD_COMMIT="$(python3 "$SCRIPT_DIR/release-download.py" download "$BUILD_DIR" "$GO_ARCH" "${ELYSIAN_COMMIT:-}")" || die "预编译包尚未就绪或下载校验失败，原面板未停服；请等待 GitHub Actions 完成后重试。"
   fi
-  ok "构建完成（完整日志：$BUILD_LOG）"
+  chmod 0755 "$BUILD_DIR/elysian" "$BUILD_DIR/platform-helper"
+  local actual
+  actual="$("$BUILD_DIR/elysian" release-info)" || die "预编译面板无法在当前机器运行。"
+  [ "$(printf '%s' "$actual" | python3 -c 'import json,sys; print(json.load(sys.stdin)["commit"])')" = "$BUILD_COMMIT" ] || die "面板内嵌提交与发布清单不一致。"
+  ok "预编译安装包已验证：${BUILD_COMMIT}（linux/${GO_ARCH}）；不需要 Go 或 Bun"
 }
 
 cli_link_owned() { # cli_link_owned：CLI_BIN 为本面板注册的受管符号链接时返回 0
@@ -1295,7 +1272,11 @@ install_binary() {
   mkdir -p "$RELEASE_DIR"
   install -m 0755 "$BUILD_DIR/elysian" "$RELEASE_DIR/elysian"
   install -m 0755 "$BUILD_DIR/elysian" "$INSTALL_ROOT/maintenance/elysian"
-  install -m 0644 "$REPO_ROOT/scripts/build-release.sh" "$INSTALL_ROOT/maintenance/build-release.sh"
+  install -m 0755 "$BUILD_DIR/platform-helper" "$RELEASE_DIR/platform-helper"
+  install -m 0644 "$BUILD_DIR/release.json" "$RELEASE_DIR/release.json"
+  cp -a "$BUILD_DIR/scripts" "$RELEASE_DIR/scripts"
+  chmod 0755 "$RELEASE_DIR/scripts"
+  chmod 0644 "$RELEASE_DIR/scripts/"*
   ln -s "$RELEASE_DIR" "$INSTALL_ROOT/.current-$INSTALL_STAMP"
   mv -Tf "$INSTALL_ROOT/.current-$INSTALL_STAMP" "$INSTALL_ROOT/current"
   ln -sfn "$INSTALL_ROOT/current/elysian" "$PANEL_BIN"
@@ -1325,10 +1306,7 @@ ensure_accounts() {
     useradd --system --home-dir "$STATE_DIR" --no-create-home --shell /usr/sbin/nologin elysian \
       || die "创建 elysian 系统用户失败。"
   fi
-  if ! id -u elysian-build >/dev/null 2>&1; then
-    useradd --system --user-group --home-dir /var/lib/elysian-build --no-create-home --shell /usr/sbin/nologin elysian-build || die "创建无特权构建账号失败。"
-  fi
-  info "系统账号就绪：elysian、elysian-sqlite（2001）、elysian-build"
+  info "系统账号就绪：elysian、elysian-sqlite（2001）"
 }
 
 write_unit() {
@@ -1522,9 +1500,7 @@ print_summary() {
   tui_kv "数据目录" "${STATE_DIR}/.Elysian（data/logs/state/backups/tmp/config）"
   tui_kv "进程日志" "${STATE_DIR}/.Elysian/logs/panel.log"
   tui_section "网络与镜像源"
-  tui_kv "Go 代理" "$GOPROXY"
-  tui_kv "Bun 源" "$BUN_CONFIG_REGISTRY"
-  tui_kv "镜像配置" "/etc/profile.d/elysian-mirrors.sh（新登录 shell 生效）"
+  tui_kv "更新来源" "GitHub 预编译包；无服务器编译工具链"
   tui_kv "Caddy 通道" "unix socket ${CADDY_ADMIN_SOCKET:-未配置}"
   tui_section "安全状态"
   tui_kv "SSH" "${ssh_state:-未知}（端口 ${SSH_PORTS:-22}）；后续启停与规则在面板安全页管理"
@@ -1533,7 +1509,7 @@ print_summary() {
   tui_kv "443/tcp" "$(ufw_port_summary "$ufw_out" 443)"
 }
 
-# ---------- 冒烟模式（干净容器内：装工具链 → 构建 → 起进程 → 健康检查 → 清理） ----------
+# ---------- 冒烟模式（干净容器内：下载预编译包 → 起进程 → 健康检查 → 清理） ----------
 
 smoke_verify_cli() {
   # 与正式安装同法的 argv0 符号链接（指向临时目录内构建产物）：验证 --version 含构建标识、
@@ -1674,17 +1650,18 @@ main() {
   trap install_exit EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
-  tui_banner "Elysian 安装程序" "源码目录  $REPO_ROOT"
+  tui_banner "Elysian 安装程序" "GitHub 预编译安装包"
   INSTALL_STARTED_AT=$SECONDS
   section "检查运行环境"
   require_preflight
   if [ -z "$SMOKE" ]; then platform_lifecycle_lock || die "另一项安装或卸载正在执行，或安装互斥文件异常。"; fi
   section "安装系统依赖"
   apt_install_deps
+  section "准备预编译安装包"
+  prepare_release
   if [ -z "$SMOKE" ]; then
     acquire_install_locks || die "无法取得平台依赖恢复维护锁。"
     if [ -d "$PLATFORM_TXN" ]; then
-      command -v bun >/dev/null 2>&1 || die "存在待恢复的平台依赖事务，但找不到 Bun；请先恢复原 Bun 后重跑（备份：$PLATFORM_TXN）。"
       restore_platform_transaction || die "平台依赖事务恢复未完成，请先按备份指引修复。"
     fi
     local component
@@ -1697,14 +1674,6 @@ main() {
     check_caddy_startup_config
     release_install_locks
   fi
-  section "准备 Go 工具链"
-  install_go
-  section "准备 Bun 工具链"
-  install_bun
-  section "配置国内镜像"
-  configure_mirrors
-  section "构建 Elysian"
-  build_release
   if [ -n "$SMOKE" ]; then
     section "冒烟验证"
     smoke_run
