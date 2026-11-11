@@ -26,7 +26,9 @@ function updateSummary(update: PanelUpdate): string {
   if (update.channel === 'release') {
     return !update.releaseTag ? '上游仓库暂无正式发版' : `${update.available ? '可切换至最新正式发版' : '当前已是最新正式发版'} · ${update.releaseTag}`
   }
-  return `${update.available ? '发现可更新的提交' : '当前已是最新提交'} · ${update.branch}`
+  // 提交策略跟随最新已发布构建，不再解析分支名；无分支时显示目标提交短 SHA。
+  const ref = update.branch || update.targetCommit.slice(0, 7)
+  return `${update.available ? '发现可更新的提交' : '当前已是最新提交'} · ${ref}`
 }
 
 export function PanelMaintenanceSettings() {
@@ -212,8 +214,8 @@ export function PanelMaintenanceSettings() {
           disabled={active || submitting || pending !== null}
         />
       </div>
-      <p className="mt-2 text-xs leading-5 text-fg-muted">{channel === 'commit' ? '跟随默认分支，获取最新改动。' : '使用最新正式发版，不包含预发布版本。'}</p>
-      <div className="mt-3 space-y-2 text-xs leading-5 text-fg-muted"><p>更新来源：<a className="text-fg underline underline-offset-4" href="https://github.com/Tianyi822/Elysian" target="_blank" rel="noreferrer">GitHub · Tianyi822/Elysian</a> · {channel === 'commit' ? '默认分支' : '正式发版'}</p><p className="break-all">当前提交：{info?.commit ?? '正在读取…'}</p>{info?.buildTime && info.buildTime !== 'unknown' ? <p>构建时间：{info.buildTime}</p> : null}</div>
+      <p className="mt-2 text-xs leading-5 text-fg-muted">{channel === 'commit' ? '跟随最新已发布构建（最新 v* 标签对应的提交）。' : '使用最新正式发版，不包含预发布版本。'}</p>
+      <div className="mt-3 space-y-2 text-xs leading-5 text-fg-muted"><p>更新来源：<a className="text-fg underline underline-offset-4" href="https://github.com/Tianyi822/Elysian" target="_blank" rel="noreferrer">GitHub · Tianyi822/Elysian</a> · {channel === 'commit' ? '最新已发布构建' : '正式发版'}</p><p className="break-all">当前提交：{info?.commit ?? '正在读取…'}</p>{info?.buildTime && info.buildTime !== 'unknown' ? <p>构建时间：{info.buildTime}</p> : null}</div>
       {update ? <div role="status" className="mt-4 space-y-1 break-all text-xs leading-5 text-fg">
         <p>{updateSummary(update)}</p>
         <p>来源：{PANEL_UPDATE_SOURCE_LABELS[update.source]}</p>

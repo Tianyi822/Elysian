@@ -196,7 +196,7 @@ func runUpgrade(opts upgradeOptions, stdin *os.File, stdout, stderr io.Writer, d
 		}
 		opts.Source = "github"
 		if opts.Channel == "" {
-			choice, code := chooseUpgrade(stdin, stdout, "选择版本策略", "最新发版只包含正式 Release，不包含预发布版本。", []string{"最新提交 · 默认分支的最新改动", "最新发版 · 最新正式 Release"}, nil)
+			choice, code := chooseUpgrade(stdin, stdout, "选择版本策略", "仅 v* 标签触发构建；最新提交即最新已发布构建。最新发版只包含正式 Release，不包含预发布版本。", []string{"最新提交 · 最新已发布构建", "最新发版 · 最新正式 Release"}, nil)
 			if code != 0 {
 				return code
 			}

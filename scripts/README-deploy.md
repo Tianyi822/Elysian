@@ -9,7 +9,7 @@ curl --proto '=https' --proto-redir '=https' -fSL https://raw.githubusercontent.
 sudo bash install-release.sh
 ```
 
-入口下载到文件后再执行，缺少的 Python 3、curl 和 CA 证书由 apt 准备。安装器锁定 GitHub 默认分支的完整提交，从 `build-<SHA>` Release 下载当前架构安装包，按 GitHub API 的 asset SHA256 校验整包，核对发布清单、两个程序的摘要和 Linux ELF 架构，运行 `release-info` 验证内嵌提交后才进入安装切换。下载与解包有文件数量、大小和时间限制，拒绝链接、特殊文件与路径越界。目标产物未完成时等待 Actions 完成后重试，不回退服务器构建，不切换 Gitee。指定已发布提交可用 `sudo env ELYSIAN_COMMIT=<40位SHA> bash install-release.sh`。
+入口下载到文件后再执行，缺少的 Python 3、curl 和 CA 证书由 apt 准备。安装器默认锁定最新已发布构建——最新 v* 标签对应提交的 `build-<SHA>` Release（未打标签的提交不构建、不可安装），按 GitHub API 的 asset SHA256 校验整包，核对发布清单、两个程序的摘要和 Linux ELF 架构，运行 `release-info` 验证内嵌提交后才进入安装切换。下载与解包有文件数量、大小和时间限制，拒绝链接、特殊文件与路径越界。目标产物未完成时等待 Actions 完成后重试，不回退服务器构建，不切换 Gitee。指定已发布提交可用 `sudo env ELYSIAN_COMMIT=<40位SHA> bash install-release.sh`。
 
 服务器不安装 Go/Bun，也不创建构建账号。包内包含面板单二进制（Web、API 与 CLI）、无需额外运行时的 `platform-helper`、发布清单和安装卸载脚本。安装器检测并准备 Docker、Caddy、OpenSSH 和 UFW，平台依赖阶段及归属核验继续有效。已有 Go/Bun、缓存和旧构建账号不会在升级时自动删除，卸载仍兼容这些组件。
 
@@ -17,7 +17,7 @@ sudo bash install-release.sh
 
 ## GitHub 发布
 
-[release.yml](../.github/workflows/release.yml) 响应 main 推送、v* 标签、手工发布事件及 workflow_dispatch。CI 使用锁定的 Go/Bun 和依赖锁文件，在各自原生 Linux runner 构建 amd64／arm64 安装包；前后端注入同一完整 SHA。全部架构成功后，以草稿上传全部文件，再公开 `build-<SHA>` 预发布版本；已公开的提交产物不覆盖。v* 标签还创建正式 Release，供「最新正式发版」策略使用。每包附 SHA256 文件，下载器以 GitHub API 的 asset digest 为整包校验来源。
+[release.yml](../.github/workflows/release.yml) 仅响应 v* 标签推送：未打标签的提交不构建、不可安装，失败的 run 用 Re-run 重跑。CI 使用锁定的 Go/Bun 和依赖锁文件，在各自原生 Linux runner 构建 amd64／arm64 安装包；前后端注入同一完整 SHA。全部架构成功后，以草稿上传全部文件，再公开 `build-<SHA>` 预发布版本；已公开的提交产物不覆盖。v* 标签还创建正式 Release，供「最新正式发版」策略使用。每包附 SHA256 文件，下载器以 GitHub API 的 asset digest 为整包校验来源。
 
 仓库 Actions 需要可用的 Ubuntu amd64／arm64 runner，发布 job 使用 `contents:write` 权限；工作流未完成或构建失败时目标提交不可安装。`scripts/build-release.sh` 仅供 CI 或开发者构建，服务器安装和在线维护不调用。
 
@@ -55,7 +55,7 @@ systemctl restart elysian
 
 任务轮询网络断连累计两分钟后转入每五秒健康探测，每次请求及响应体读取限时三秒，并响应页面取消。活动更新结束后独立核对同源健康端点的实际提交，只有与目标 SHA 一致才提示成功并刷新；版本不一致保留错误和手动重载入口。历史成功任务不会自动刷新页面，迟到响应不能跨任务或登录代次更新展示。
 
-面板更新固定使用 [GitHub：Tianyi822/Elysian](https://github.com/Tianyi822/Elysian) 检查、读取更新日志和下载预编译包，不提供 Gitee 来源或自动回退。「最新提交」跟随默认分支，「最新发版」使用最新正式 Release 标签，排除草稿和预发布；标签解析到完整 SHA，暂无正式发版不回落默认分支。检查同时确认当前架构产物就绪；切换策略需重新检查，任务锁定来源、策略与 SHA。历史 Gitee 任务只按原编号和精确输入对账，未受理时拒绝，不改投。
+面板更新固定使用 [GitHub：Tianyi822/Elysian](https://github.com/Tianyi822/Elysian) 检查、读取更新日志和下载预编译包，不提供 Gitee 来源或自动回退。「最新提交」跟随最新已发布构建（最新 v* 标签对应的提交），「最新发版」使用最新正式 Release 标签，排除草稿和预发布；标签解析到完整 SHA。检查同时确认当前架构产物就绪；切换策略需重新检查，任务锁定来源、策略与 SHA。历史 Gitee 任务只按原编号和精确输入对账，未受理时拒绝，不改投。
 
 资源预检有效五分钟，展示实测内存、swap、磁盘、负载和 Agent 数量，要求至少 128 MiB 可用内存及 1 GiB 可用磁盘，swap 不计入；不足时保留业务并阻止更新。新任务固定 `precompiled/v1`，不接受旧构建停机清单，不提前停止业务。下载安装包上限五分钟，校验准备上限两分钟；全部通过后进入既有备份和版本切换事务，短暂停面板。切换后健康等待 60 秒，检查两个入口、静态资源和完整提交。失败恢复旧版本与数据，成功保留当前和上一成功版本；旧任务的资源恢复账本及独立收尾保持可恢复。
 

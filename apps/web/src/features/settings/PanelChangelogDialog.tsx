@@ -72,7 +72,7 @@ export function PanelChangelogDialog({
             </Dialog.Close>
           </div>
           <Dialog.Description className="shrink-0 px-5 pt-1 text-xs leading-5 text-fg-muted">
-            GitHub · {channel === 'commit' ? '上游仓库默认分支的提交记录，从新到旧。' : '最新正式发版对应的提交记录，从新到旧。'}
+            GitHub · {channel === 'commit' ? '最新已发布构建对应的提交记录，从新到旧。' : '最新正式发版对应的提交记录，从新到旧。'}
           </Dialog.Description>
 
           <ScrollArea label="更新日志内容">

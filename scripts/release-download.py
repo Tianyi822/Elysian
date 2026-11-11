@@ -40,8 +40,16 @@ def download(output, arch, requested):
     if requested:
         commit = requested
     else:
-        branch = metadata(f'https://api.github.com/repos/{REPO}')['default_branch']
-        commit = metadata(f'https://api.github.com/repos/{REPO}/commits/{urllib.parse.quote(branch, safe="")}')['sha']
+        # 仅 v* 标签触发构建：默认安装目标取最新已发布的 build-<SHA> 预发布（最新打标签
+        # 的提交），跳过草稿与非 build 标签；未打标签的提交没有可安装产物。
+        releases = metadata(f'https://api.github.com/repos/{REPO}/releases?per_page=30')
+        if not isinstance(releases, list):
+            raise ValueError('GitHub 发布列表无效')
+        commit = next((entry['tag_name'][6:] for entry in releases
+                       if isinstance(entry, dict) and not entry.get('draft')
+                       and re.fullmatch(r'build-[a-f0-9]{40}', entry.get('tag_name') or '')), '')
+        if not commit:
+            raise ValueError('暂无已发布的预编译安装包；请先推送 v* 标签触发构建')
     if not re.fullmatch(r'[a-f0-9]{40}', commit):
         raise ValueError('GitHub 返回的提交无效')
     tag = 'build-' + commit

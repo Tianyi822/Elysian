@@ -1,11 +1,8 @@
 name: 构建与发布 Linux 安装包
+# 仅 v* 标签触发：未打标签的提交不构建，也不可安装；失败的 run 用 Re-run 重跑。
 on:
   push:
-    branches: [main]
     tags: ['v*']
-  release:
-    types: [published]
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -19,16 +16,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - id: version
         env:
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
-          EVENT_NAME: ${{ github.event_name }}
         run: |
           echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          if [ "$EVENT_NAME" != release ] && [ "$REF_TYPE" = tag ] && [[ "$REF_NAME" == v* ]]; then
+          if [ "$REF_TYPE" = tag ] && [[ "$REF_NAME" == v* ]]; then
             echo "tag=$REF_NAME" >> "$GITHUB_OUTPUT"
           fi
   build:

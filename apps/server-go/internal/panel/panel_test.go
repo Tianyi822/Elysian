@@ -340,13 +340,19 @@ func TestGitHubDownloadRejectsHTMLBody(t *testing.T) {
 	}
 }
 
-func TestGitHubUsesRepositoryDefaultBranchAndPinnedSHA(t *testing.T) {
+func TestGitHubCommitChannelFollowsLatestPublishedBuild(t *testing.T) {
 	sha := strings.Repeat("b", 40)
+	previous := Commit
+	Commit = strings.Repeat("a", 40)
+	t.Cleanup(func() { Commit = previous })
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/repos/" + Repository:
-			_, _ = w.Write([]byte(`{"default_branch":"release-track"}`))
-		case "/repos/" + Repository + "/commits/release-track":
+		case "/repos/" + Repository + "/releases":
+			// 倒序列表：跳过草稿与非 build 标签，取最新已发布构建。
+			_, _ = w.Write([]byte(`[{"tag_name":"build-` + strings.Repeat("e", 40) + `","draft":true},
+			{"tag_name":"v0.0.1","draft":false},
+			{"tag_name":"build-` + sha + `","draft":false}]`))
+		case "/repos/" + Repository + "/commits/" + sha:
 			_, _ = w.Write([]byte(`{"sha":"` + sha + `","commit":{"message":"更新说明"}}`))
 		default:
 			t.Errorf("不应请求版本检查以外的地址：%s", r.URL.Path)
@@ -356,18 +362,29 @@ func TestGitHubUsesRepositoryDefaultBranchAndPinnedSHA(t *testing.T) {
 	defer srv.Close()
 	s := GitHubSource{Client: srv.Client(), API: srv.URL}
 	u, err := s.Check(context.Background(), ChannelCommit)
-	if err != nil || u.Branch != "release-track" || u.TargetCommit != sha {
-		t.Fatalf("默认分支解析失败：%+v %v", u, err)
+	if err != nil || u.Branch != "" || u.TargetCommit != sha || !u.Available || u.Message != "更新说明" {
+		t.Fatalf("最新已发布构建解析失败：%+v %v", u, err)
 	}
-
+}
+func TestGitHubCommitChannelRejectsWhenNoPublishedBuild(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[{"tag_name":"v0.0.1","draft":false}]`))
+	}))
+	defer srv.Close()
+	s := GitHubSource{Client: srv.Client(), API: srv.URL}
+	if _, err := s.Check(context.Background(), ChannelCommit); err == nil || !strings.Contains(err.Error(), "暂无已发布的预编译安装包") {
+		t.Fatalf("无已发布构建应明确报错：%v", err)
+	}
 }
 func TestGitHubHistoryListsDefaultBranchCommits(t *testing.T) {
 	sha := strings.Repeat("c", 40)
 	var gotSha, gotLimit string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/repos/" + Repository:
-			_, _ = w.Write([]byte(`{"default_branch":"release-track"}`))
+		case "/repos/" + Repository + "/releases":
+			_, _ = w.Write([]byte(`[{"tag_name":"build-` + sha + `","draft":false}]`))
+		case "/repos/" + Repository + "/commits/" + sha:
+			_, _ = w.Write([]byte(`{"sha":"` + sha + `","commit":{"message":"标题"}}`))
 		case "/repos/" + Repository + "/commits":
 			gotSha, gotLimit = r.URL.Query().Get("sha"), r.URL.Query().Get("per_page")
 			_, _ = w.Write([]byte(`[{"sha":"` + sha + `","commit":{"message":"标题\n正文不展示","author":{"date":"2026-10-04T08:00:00Z"}}}]`))
@@ -381,8 +398,8 @@ func TestGitHubHistoryListsDefaultBranchCommits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotSha != "release-track" || gotLimit != "50" {
-		t.Fatalf("提交列表未按默认分支与上限拉取：sha=%q per_page=%q", gotSha, gotLimit)
+	if gotSha != sha || gotLimit != "50" {
+		t.Fatalf("提交列表未按最新已发布构建与上限拉取：sha=%q per_page=%q", gotSha, gotLimit)
 	}
 	if len(commits) != 1 || commits[0].SHA != sha || commits[0].Message != "标题" {
 		t.Fatalf("提交列表解析失败：%+v", commits)

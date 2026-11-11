@@ -53,9 +53,13 @@ class DownloadTest(unittest.TestCase):
                 return io.BytesIO(content)
             if '/releases/tags/' in target:
                 return io.BytesIO(json.dumps(dict(tag_name='build-' + COMMIT, draft=False, assets=[asset])).encode())
-            if '/commits/' in target:
-                return io.BytesIO(json.dumps(dict(sha=COMMIT)).encode())
-            return io.BytesIO(json.dumps(dict(default_branch='main')).encode())
+            if '/releases?per_page=' in target:
+                return io.BytesIO(json.dumps([
+                    dict(tag_name='build-' + 'b' * 40, draft=True),
+                    dict(tag_name='v0.0.1', draft=False),
+                    dict(tag_name='build-' + COMMIT, draft=False),
+                ]).encode())
+            raise AssertionError('意外的请求：' + target)
 
         with tempfile.TemporaryDirectory() as temporary, patch.object(release, 'get', get):
             output = Path(temporary) / 'bundle'
@@ -68,10 +72,21 @@ class DownloadTest(unittest.TestCase):
             self.assertEqual(unrelated.read_bytes(), b'keep')
         return requests
 
-    def test_download_pins_default_branch_and_verifies(self):
+    def test_download_defaults_to_latest_published_build(self):
+        # 默认目标取最新已发布的 build-<SHA>：跳过草稿与非 build 标签（仅 v* 标签触发构建）。
         requests = self.download(archive(), requested='')
-        self.assertEqual(len(requests), 4)
-        self.assertIn('/releases/tags/build-' + COMMIT, requests[2])
+        self.assertEqual(len(requests), 3)
+        self.assertIn('/releases?per_page=', requests[0])
+        self.assertIn('/releases/tags/build-' + COMMIT, requests[1])
+
+    def test_download_rejects_when_no_published_build(self):
+        def get(target):
+            if '/releases?per_page=' in target:
+                return io.BytesIO(json.dumps([dict(tag_name='v0.0.1', draft=False)]).encode())
+            raise AssertionError('意外的请求：' + target)
+        with tempfile.TemporaryDirectory() as temporary, patch.object(release, 'get', get):
+            with self.assertRaises(ValueError):
+                release.download(Path(temporary) / 'bundle', 'amd64', '')
 
     def test_rejects_metadata_and_content_corruption(self):
         for key, value in [('digest', 'sha256:' + '0' * 64), ('size', 1),
