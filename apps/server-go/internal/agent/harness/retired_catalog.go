@@ -1,6 +1,6 @@
 package harness
 
-// retiredAgentTools 是已从新接受普通聊天退役的平台工具精确名单。
+// retiredAgentTools 是新普通聊天退役工具与承接工具的精确映射。
 //
 // 退役只影响新快照：描述符与处理器保留在宿主注册表，旧 Run 按固定快照恢复时仍可
 // 派发；名字保留在 confirmedPlatformRead 中，维持旧快照只读调用的免审批语义。
@@ -29,23 +29,23 @@ package harness
 //     服务端强制互斥），旧 v1 形状经 compat 白名单照旧派发。
 //   - platform_memory/platform_metrics：收敛为 platform_sample（scope 枚举
 //     process|host|both，缺省进程轻量路径）。
-var retiredAgentTools = map[string]struct{}{
-	"docker_container_start":    {},
-	"docker_container_stop":     {},
-	"docker_container_restart":  {},
-	"docker_policy_view":        {},
-	"docker_self_container":     {},
-	"website_start":             {},
-	"website_stop":              {},
-	"website_source_analysis":   {},
-	"website_deployment_logs":   {},
-	"docker_image_pull_logs":    {},
-	"registry_host_check":       {},
-	"app_build_logs":            {},
-	"app_directory":             {},
-	"app_workspace_remove_file": {},
-	"platform_memory":           {},
-	"platform_metrics":          {},
+var retiredAgentTools = map[string]string{
+	"docker_container_start":    "docker_container_power",
+	"docker_container_stop":     "docker_container_power",
+	"docker_container_restart":  "docker_container_power",
+	"docker_policy_view":        "docker_context_view",
+	"docker_self_container":     "docker_context_view",
+	"website_start":             "docker_container_power",
+	"website_stop":              "docker_container_power",
+	"website_source_analysis":   "website_source_get",
+	"website_deployment_logs":   "website_deployment_get",
+	"docker_image_pull_logs":    "docker_image_pull_get",
+	"registry_host_check":       "docker_registry_probe",
+	"app_build_logs":            "build_get",
+	"app_directory":             "app_lookup",
+	"app_workspace_remove_file": "app_workspace_write",
+	"platform_memory":           "platform_sample",
+	"platform_metrics":          "platform_sample",
 }
 
 // retiredFromNewChats 汇总新普通聊天不再注入的平台工具判定。
@@ -56,21 +56,46 @@ func retiredFromNewChats(name string) bool {
 	return retiredDatabaseTool(name)
 }
 
-// withoutRetiredTools 使用副本过滤，避免修改旧会话环境、审批或 Run 的固定目录。
-func withoutRetiredTools(env Environment) Environment {
-	filter := func(names []string) []string {
-		if names == nil {
-			return nil
-		}
-		kept := make([]string, 0, len(names))
-		for _, name := range names {
-			if !retiredFromNewChats(name) {
-				kept = append(kept, name)
+// withCurrentAgentTools 在环境副本中承接退役工具；新 Run 与目录共用派生，
+// 旧环境和已接受快照保持不变。旧只读信任不迁移到承接工具。
+func (m *Manager) withCurrentAgentTools(env Environment) Environment {
+	env = m.withDockerTools(env)
+	available := map[string]bool{}
+	if m.deps.Tools != nil {
+		for _, schema := range m.deps.Tools.Schemas() {
+			if schema.Metadata.Exposure == "agent" {
+				available[schema.Name] = true
 			}
 		}
-		return kept
 	}
-	env.Tools = filter(env.Tools)
-	env.TrustedReadOnly = filter(env.TrustedReadOnly)
+	selected := map[string]bool{}
+	for _, name := range env.Tools {
+		if !retiredFromNewChats(name) {
+			selected[name] = true
+		}
+	}
+	if env.Tools != nil {
+		current := make([]string, 0, len(env.Tools))
+		for _, name := range env.Tools {
+			if replacement, retired := retiredAgentTools[name]; retired {
+				if available[replacement] && !selected[replacement] {
+					current = append(current, replacement)
+					selected[replacement] = true
+				}
+			} else if !retiredDatabaseTool(name) {
+				current = append(current, name)
+			}
+		}
+		env.Tools = current
+	}
+	if env.TrustedReadOnly != nil {
+		trusted := make([]string, 0, len(env.TrustedReadOnly))
+		for _, name := range env.TrustedReadOnly {
+			if !retiredFromNewChats(name) {
+				trusted = append(trusted, name)
+			}
+		}
+		env.TrustedReadOnly = trusted
+	}
 	return env
 }

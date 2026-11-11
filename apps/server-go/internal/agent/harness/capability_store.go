@@ -347,7 +347,7 @@ func (m *Manager) ToolCatalog(ctx context.Context, sessionID, domain string, ava
 		if err != nil {
 			return result, storageFailure(err)
 		}
-		env = withoutRetiredTools(env)
+		env = m.withCurrentAgentTools(env)
 		snapshot, err := m.snapshot(ctx, env)
 		if err != nil {
 			var limit *Error
