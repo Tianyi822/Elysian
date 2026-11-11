@@ -348,14 +348,14 @@ func (b *containerBridge) Lifecycle(ctx context.Context, id, action string) (boo
 		return false, nil
 	}
 	if len(rows) != 1 {
-		return true, bridgeFailure(shared.InvalidRequest("容器中还有其他已登记数据库，不能执行容器级操作"), true)
+		return true, bridgePreflightFailure(shared.InvalidRequest("容器中还有其他已登记数据库，不能执行容器级操作"))
 	}
 	row := rows[0]
 	if err := s.checkContainerMutation(ctx, row.ContainerID, row.ContainerName); err != nil {
-		return true, bridgeFailure(err, true)
+		return true, bridgePreflightFailure(err)
 	}
 	if row.Source != sourceManaged {
-		return true, bridgeFailure(shared.InvalidRequest("仅允许操作面板受管数据库容器"), true)
+		return true, bridgePreflightFailure(shared.InvalidRequest("仅允许操作面板受管数据库容器"))
 	}
 	if action == "remove" {
 		return true, bridgeFailure(s.removeContainer(ctx, row.ID), false)
@@ -372,6 +372,14 @@ func (b *containerBridge) Lifecycle(ctx context.Context, id, action string) (boo
 	}
 	return true, bridgeFailure(docker.agentControl(ctx, row, action, s.deps.selfContainerID), false)
 }
+
+func bridgePreflightFailure(err error) error {
+	if invalid, ok := err.(*shared.InvalidRequestError); ok {
+		return &seam.AgentContainerError{Code: "database-container-operation-failed", Message: invalid.Message + "，数据库变更未执行", NotDispatched: true}
+	}
+	return bridgeFailure(err, false)
+}
+
 func bridgeFailure(err error, noBusinessEffect bool) error {
 	if err == nil {
 		return nil

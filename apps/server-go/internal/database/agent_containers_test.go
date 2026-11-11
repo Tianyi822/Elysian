@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"elysian/server/internal/seam"
+	"elysian/server/internal/shared"
 )
 
 type failedMutationRegistry struct{ databaseRegistry }
@@ -114,6 +115,54 @@ func TestContainerBridgeDistinguishesAcceptedNoEffectFromUnknownDrop(t *testing.
 				}
 			}
 		})
+	}
+}
+
+func TestContainerLifecyclePreflightRefusalsAreNotDispatched(t *testing.T) {
+	managed := databaseRecord{ID: "db", Engine: engineMySQL, Name: "orders", Source: sourceManaged, State: stateActive, ContainerID: strings.Repeat("c", 64)}
+	adopted, sibling := managed, managed
+	adopted.Source = sourceAdopted
+	sibling.ID, sibling.Name = "sibling", "archive"
+	for _, tc := range []struct {
+		name    string
+		rows    []databaseRecord
+		guard   error
+		message string
+	}{
+		{"adopted", []databaseRecord{adopted}, nil, "仅允许操作面板受管数据库容器"},
+		{"sibling", []databaseRecord{managed, sibling}, nil, "容器中还有其他已登记数据库，不能执行容器级操作"},
+		{"pending-operation", []databaseRecord{managed}, shared.InvalidRequest("此容器有进行中或结果未确认的操作，请先核实实际状态"), "此容器有进行中或结果未确认的操作，请先核实实际状态"},
+	} {
+		for _, action := range []string{"start", "stop", "restart", "remove"} {
+			t.Run(tc.name+"/"+action, func(t *testing.T) {
+				fixture := newServiceFixture("8.4")
+				fixture.registry.rows = tc.rows
+				before := containerRevision(tc.rows)
+				fixture.service.operationGuard = func(context.Context, string, string, string) error { return tc.guard }
+				bridge := (&AgentFacade{service: fixture.service}).ContainerBridge(func(context.Context) error { return nil })
+				handled, err := bridge.Lifecycle(context.Background(), managed.ContainerID, action)
+				var rejected *seam.AgentContainerError
+				if !handled || !errors.As(err, &rejected) || !rejected.NotDispatched || rejected.NoBusinessEffect || rejected.Code != "database-container-operation-failed" || rejected.Message != tc.message+"，数据库变更未执行" {
+					t.Fatalf("preflight refusal lost its execution fact: handled=%v receipt=%+v err=%v", handled, rejected, err)
+				}
+				after, err := fixture.registry.list()
+				if err != nil || containerRevision(after) != before || len(fixture.docker.removeCalls) > 0 || len(fixture.protocol.trace.items) > 0 {
+					t.Fatal("preflight refusal changed the database")
+				}
+			})
+		}
+	}
+}
+
+func TestContainerLifecycleGuardFailureDoesNotClaimPreflightRejection(t *testing.T) {
+	fixture := newServiceFixture("8.4")
+	fixture.registry.rows = []databaseRecord{{ID: "db", Engine: engineMySQL, Name: "orders", Source: sourceManaged, State: stateActive, ContainerID: strings.Repeat("c", 64)}}
+	fixture.service.operationGuard = func(context.Context, string, string, string) error { return errors.New("PRIVATE_TASK_STORAGE_FAILURE") }
+	bridge := (&AgentFacade{service: fixture.service}).ContainerBridge(func(context.Context) error { return nil })
+	handled, err := bridge.Lifecycle(context.Background(), fixture.registry.rows[0].ContainerID, "stop")
+	var failure *seam.AgentContainerError
+	if !handled || !errors.As(err, &failure) || failure.NotDispatched || failure.NoBusinessEffect || strings.Contains(failure.Message, "PRIVATE") {
+		t.Fatalf("storage failure was exposed as a recoverable refusal: handled=%v receipt=%+v err=%v", handled, failure, err)
 	}
 }
 
