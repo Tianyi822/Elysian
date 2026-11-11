@@ -1,0 +1,114 @@
+name: 构建与发布 Linux 安装包
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      commit: ${{ steps.version.outputs.commit }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.sha }}
+          persist-credentials: false
+      - id: version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT_NAME" != release ] && [ "$REF_TYPE" = tag ] && [[ "$REF_NAME" == v* ]]; then
+            echo "tag=$REF_NAME" >> "$GITHUB_OUTPUT"
+          fi
+  build:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            bunTarget: bun-linux-x64-baseline
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            bunTarget: bun-linux-arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.12'
+          cache-dependency-path: apps/server-go/go.sum
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
+      - name: 构建前端与单二进制
+        env:
+          COMMIT: ${{ needs.version.outputs.commit }}
+          ELYSIAN_GOPROXY: https://proxy.golang.org,direct
+          ELYSIAN_BUN_REGISTRY: https://registry.npmjs.org
+        run: bash scripts/build-release.sh "$GITHUB_WORKSPACE" "$RUNNER_TEMP/release" "$COMMIT"
+      - name: 构建无需 Bun 安装的配置辅助程序
+        env:
+          BUN_TARGET: ${{ matrix.bunTarget }}
+        run: bun build --compile --target="$BUN_TARGET" scripts/install-platform.mjs --outfile "$RUNNER_TEMP/release/platform-helper"
+      - name: 验证与打包
+        env:
+          COMMIT: ${{ needs.version.outputs.commit }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          python3 -B scripts/release-download.test.py
+          "$RUNNER_TEMP/release/platform-helper" socket /run/caddy/admin.sock
+          "$RUNNER_TEMP/release/elysian" release-info
+          bun scripts/package-release.mjs "$GITHUB_WORKSPACE" "$RUNNER_TEMP/release" "$COMMIT" "$ARCH"
+          bash scripts/test-release-package.sh "$RUNNER_TEMP/release/elysian-linux-$ARCH"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: |
+            ${{ runner.temp }}/release/*.tar.gz
+            ${{ runner.temp }}/release/*.sha256
+          if-no-files-found: error
+          retention-days: 7
+  publish:
+    needs: [version, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    concurrency:
+      group: release-${{ needs.version.outputs.commit }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: linux-*
+          path: release
+          merge-multiple: true
+      - name: 原子发布固定提交的安装包
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          COMMIT: ${{ needs.version.outputs.commit }}
+          VERSION_TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          bash scripts/publish-release.test.sh
+          bash scripts/publish-release.sh release "$COMMIT" "$VERSION_TAG"

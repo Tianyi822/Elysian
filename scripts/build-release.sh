@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 安装器和在线维护共用的构建入口，不安装服务，不修改系统配置。
+# GitHub Actions 与开发者使用的构建入口；服务器安装和在线更新不执行本脚本。
 set -euo pipefail
 # Go 模块默认走国内镜像；部署者可用 ELYSIAN_GOPROXY 或已有 GOPROXY 覆盖。
 export GOPROXY="${ELYSIAN_GOPROXY:-${GOPROXY:-https://goproxy.cn|https://mirrors.aliyun.com/goproxy/|direct}}"
