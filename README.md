@@ -125,25 +125,22 @@ bash scripts/dev.sh restart-go    # 让 Go 代码或环境变量变更生效
 
 ## 部署
 
-支持 Ubuntu/Debian + systemd，x86_64 与 arm64：
+支持 Ubuntu/Debian + systemd，Linux amd64 与 arm64；2 GiB 服务器无需本机编译。首次安装和旧版迁移使用同一入口：
 
 ```bash
-git clone https://github.com/Tianyi822/Elysian.git
-cd Elysian
-sudo bash scripts/install.sh
+curl --proto '=https' --proto-redir '=https' -fSL https://raw.githubusercontent.com/Tianyi822/Elysian/main/scripts/install-release.sh -o install-release.sh
+sudo bash install-release.sh
 ```
 
-安装脚本会校验并准备 Go 与 Bun，以无特权构建账号生成内嵌前端的单二进制，创建 systemd 服务，并检测或安装 Docker 与 Caddy；默认启用 OpenSSH 与 UFW，放行 SSH 实际端口和面板端口。已存在的 UFW 规则保持不动。
+[GitHub Actions](.github/workflows/release.yml) 在推送 main、v* 标签或手动触发时构建内嵌 Web 与 CLI 的 Linux 安装包。两个架构全部完成后，以 `build-<完整 SHA>` 预发布版本保存固定提交产物；v* 标签额外发布正式 Release。安装器从 GitHub API 读取官方 asset SHA256，校验整包、清单、提交与 ELF 架构，再安装；失败不回退源码构建，也不切换到 Gitee。需要指定提交时可运行 `sudo env ELYSIAN_COMMIT=<40位SHA> bash install-release.sh`，目标须已有完成的 Actions 产物。
 
-安装和在线更新将 Bun 包、Go 模块及 Go 编译缓存保存在 `/var/lib/elysian-build/cache/`，跨任务复用；源码和前端仍逐次构建，锁文件校验与版本切换事务保持有效。首次启用缓存的构建需要预热，后续仅下载缺少的依赖，并复用未变化的 Go 包编译结果。Bun 输出的“已安装包数”包含从缓存生成新 `node_modules` 的包，不等于下载数。缓存不随更新失败或回滚删除，卸载按构建目录清理；升级到支持缓存的更新器后生效。
+服务器不安装 Go 或 Bun。Docker、Caddy、OpenSSH 与 UFW 仍由安装器检测并按现行规则准备；平台配置辅助程序随包提供，无需额外 JavaScript 运行时。已有 Go/Bun、构建缓存及安装账号不在升级时自动删除，卸载继续按归属和保留选项清理。旧版面板的更新程序仍会源码构建，**首次迁移须运行上述入口，待安装成功后再使用设置页或 `ely upgrade`**。下载校验期间旧面板保持运行，版本切换沿用备份、回滚和双入口健康核验。
 
-在线更新固定从 [GitHub 的 Tianyi822/Elysian](https://github.com/Tianyi822/Elysian) 检查版本、读取日志和下载源码，不提供 Gitee 选项或自动回退。最新提交与最新正式 Release 两种策略均锁定完整 SHA；GitHub 不可达时保留错误，待网络恢复后重新检查。
+在线更新固定从 [GitHub 的 Tianyi822/Elysian](https://github.com/Tianyi822/Elysian) 检查版本、读取日志和下载安装包。最新提交与最新正式 Release 两种策略均锁定完整 SHA；目标产物尚未就绪或 GitHub 不可达时明确报错，等待后重新检查。
 
-在线更新先检查内存、swap、磁盘、负载和 Agent 运行，展示可调整的临时停机清单。预检有效五分钟；执行前重新采样，仅停止管理员选定且身份未变的对象，达到 1536 MiB 实测可用内存后停止释放；swap 不计入门槛，最低支持目标为 2 GiB 宿主。低内存可确认提前停止面板与 Agent，由独立 systemd 进程继续更新，期间页面暂时离线。成功或失败均恢复本次实际停止的业务；Agent 保存中断历史，由用户手动继续。停止恢复账本、独立收尾和启动恢复覆盖构建失败及维护进程退出，恢复失败保留维护保护。Go 构建采用串行包编译、最多两线程及 768 MiB 软内存目标，不保证固定峰值。首次从旧版升级仍应人工释放负载，新机制在新版更新器运行后生效。
+在线更新预检有效五分钟，实测要求至少 128 MiB 可用内存和 1 GiB 可用磁盘，swap 不计入；执行前复测，不足时保留业务并拒绝更新，不生成临时停机清单。下载、校验与准备完成后仅在版本切换时短暂停面板；既有 requestId 对账、config/data/state 备份、失败回滚、健康核验及当前和上一成功版本保留机制继续生效。历史任务的停止恢复账本、独立 finalizer 和启动恢复仍被保留，恢复失败继续锁定维护。
 
-新版更新器在首次停业务前校验并原子升级稳定恢复程序，版本回滚仍保留其恢复能力。服务只在同次开机、静态身份与已确认停止代次均未变时自动启动；主机重启后仍停止、运行历史被 systemd 清除或身份变化的服务保留恢复账本及失败状态，需管理员核实后手动恢复。重启后已自行运行且身份一致的服务仅确认现状，不重复启动。
-
-Docker 缺失时直接使用 Docker CE 签名 apt 仓库安装，默认依次探测阿里云、清华 TUNA、官方源，不依赖 `get.docker.com`。镜像公钥须匹配固定的 Docker 官方主指纹，签名索引须通过校验并包含目标发行版、架构与 stable 频道。可用 `sudo env ELYSIAN_DOCKER_MIRROR=tuna bash scripts/install.sh` 指定 `aliyun`／`tuna`／`official`，指定后不自动换源；缺省 `auto` 仅在安装前探测阶段回退。已有 Docker 正常复用，未知的既有 apt 配置保持原样。Go 本体保留 golang.google.cn／阿里云下载回退、模块保留 goproxy.cn／阿里云代理，Bun 本体及包保留 npmmirror 回退与 registry 配置，工具包仍核验官方摘要。
+Docker 缺失时使用官方签名的 Docker CE apt 仓库，默认探测阿里云、清华 TUNA、官方源，不依赖 `get.docker.com`。主公钥指纹、签名索引、发行版和架构均须通过校验；可用 `sudo env ELYSIAN_DOCKER_MIRROR=tuna bash install-release.sh` 固定来源。已有 Docker 正常复用，未知 apt 配置保持原样；已有 UFW 规则保留，安装器放行 SSH 实际端口与面板端口并启用 UFW。
 
 默认入口：
 
@@ -167,18 +164,18 @@ sudo ely resetpwd
 卸载：
 
 ```bash
-sudo bash scripts/uninstall.sh --dry-run   # 只预览，不修改
-sudo bash scripts/uninstall.sh             # 展示彻底清理清单，确认后执行
-sudo bash scripts/uninstall.sh --keep-data --keep-dependencies --keep-tools --keep-caddy-config  # 保留数据和运行环境
+sudo bash /opt/elysian/current/scripts/uninstall.sh --dry-run   # 只预览，不修改
+sudo bash /opt/elysian/current/scripts/uninstall.sh             # 展示彻底清理清单，确认后执行
+sudo bash /opt/elysian/current/scripts/uninstall.sh --keep-data --keep-dependencies --keep-tools --keep-caddy-config  # 保留数据和运行环境
 ```
 
 **卸载默认删除全部面板数据与凭据**，并清理程序、构建缓存、账号、管理配置，以及有可信安装记录且未使用的 Docker/Caddy 和工具链；`--yes` 直接执行该清单。需要保留时显式使用 `--keep-data`、`--keep-dependencies`、`--keep-tools` 或 `--keep-caddy-config`，`--purge-data` 为默认清理行为的兼容参数。安装归属记录位于 `/var/lib/elysian-installer`，已有组件和旧安装不自动认领；容器、镜像、卷、自定义网络、动态 Caddy 路由或异常权限会阻止相关依赖清理，列出未完成项并非零退出。软件包移除不会盲删 `/var/lib/docker`、`/var/lib/containerd`、`/var/lib/caddy` 内的业务数据；私有恢复备份单独列出，由管理员核对后清理。云安全组、域名解析与 HTTPS 证书由部署者管理。
 
-安装会在源码构建前检查标准 Caddy 服务的启动配置与读取权限。已安装程序但 `Caddyfile` 缺失时明确中止；先停止 Caddy，再使用 `sudo bash scripts/install.sh --restore-caddyfile /可信备份的绝对路径/Caddyfile` 恢复并继续安装。恢复只接受 root 所有、其他用户不可写且不经过符号链接的文件，校验通过后仅发布到缺失目标，绝不覆盖已有配置。
+安装会在平台依赖准备前检查标准 Caddy 服务的启动配置与读取权限。已安装程序但 `Caddyfile` 缺失时明确中止；先停止 Caddy，再使用 `sudo bash install-release.sh --restore-caddyfile /可信备份的绝对路径/Caddyfile` 恢复并继续安装。恢复只接受 root 所有、其他用户不可写且不经过符号链接的文件，校验通过后仅发布到缺失目标，绝不覆盖已有配置。
 
 平台依赖安装前仍核对未完成任务、宿主端口、登记与防火墙，只将 Docker 协议端口核验推迟到 Docker 启动并验证之后；版本切换前继续完整核验，包含停止容器的端口预留。卸载 Docker 后仅清理 root 所有、明确拒绝连接且 inode 未变的残留 socket，活动监听、异常路径与未知状态均保留并报告。
 
-旧安装没有收据时，可明确指定 `sudo bash scripts/uninstall.sh --remove-legacy-components caddy,docker,go,bun` 清理这些组件，无需伪造或补写安装归属。参数只接受这四个固定名称，保留选项优先；Docker 仍须没有业务资源，Caddy 仍须是默认欢迎站点且运行配置与磁盘完全一致，软件包移除仍不得影响其他软件。该参数不会自动删除容器或数据库卷。
+旧安装没有收据时，可明确指定 `sudo bash /opt/elysian/current/scripts/uninstall.sh --remove-legacy-components caddy,docker,go,bun` 清理这些组件，无需伪造或补写安装归属。参数只接受这四个固定名称，保留选项优先；Docker 仍须没有业务资源，Caddy 仍须是默认欢迎站点且运行配置与磁盘完全一致，软件包移除仍不得影响其他软件。该参数不会自动删除容器或数据库卷。
 
 完整安装、恢复与验证说明见 [部署指南](scripts/README-deploy.md)。
 
