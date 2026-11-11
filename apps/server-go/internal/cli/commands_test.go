@@ -25,7 +25,7 @@ func TestCommandHelpWithoutTerminalOrPanel(t *testing.T) {
 }
 
 func TestUpgradeArgumentValidationBeforeExecution(t *testing.T) {
-	for _, args := range [][]string{{"upgrade", "--source", "other"}, {"upgrade", "--channel", "stable"}, {"upgrade", "--password", "x"}, {"upgrade", "extra"}, {"agent", "extra"}, {"resetpwd", "--yes"}, {"help", "missing"}, {"help", "upgrade", "extra"}, {"upgrade"}, {"upgrade", "--source", "github", "--yes"}} {
+	for _, args := range [][]string{{"upgrade", "--source", "gitee"}, {"upgrade", "--source", "other"}, {"upgrade", "--channel", "stable"}, {"upgrade", "--password", "x"}, {"upgrade", "extra"}, {"agent", "extra"}, {"resetpwd", "--yes"}, {"help", "missing"}, {"help", "upgrade", "extra"}, {"upgrade"}, {"upgrade", "--source", "github", "--yes"}} {
 		var out, errOut bytes.Buffer
 		d := fakeDeps()
 		d.runUpgrade = func(upgradeOptions, *os.File, io.Writer, io.Writer) int {
@@ -41,14 +41,16 @@ func TestUpgradeArgumentValidationBeforeExecution(t *testing.T) {
 func TestNonInteractiveUpgradePassesExactFlagsAndExitCode(t *testing.T) {
 	d := fakeDeps()
 	d.runUpgrade = func(opts upgradeOptions, _ *os.File, _ io.Writer, _ io.Writer) int {
-		if !reflect.DeepEqual(opts, upgradeOptions{Source: "gitee", Channel: "release", Yes: true}) {
+		if !reflect.DeepEqual(opts, upgradeOptions{Source: "github", Channel: "release", Yes: true}) {
 			t.Fatalf("opts=%+v", opts)
 		}
 		return 130
 	}
-	var out bytes.Buffer
-	if code := runWithDeps(testInfo, []string{"upgrade", "--source=gitee", "--channel", "release", "-y"}, nil, &out, &out, d); code != 130 {
-		t.Fatalf("code=%d", code)
+	for _, args := range [][]string{{"upgrade", "--source=github", "--channel", "release", "-y"}, {"upgrade", "--channel", "release", "--yes"}} {
+		var out bytes.Buffer
+		if code := runWithDeps(testInfo, args, nil, &out, &out, d); code != 130 {
+			t.Fatalf("%v code=%d", args, code)
+		}
 	}
 }
 

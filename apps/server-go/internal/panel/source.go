@@ -26,7 +26,11 @@ type GitHubSource struct {
 
 var errGitHubNotFound = errors.New("更新仓库尚未公开或目标版本不存在")
 
-// errSourceNotArchive 表示 HTTP 状态正常但正文不是 gzip 归档；Gitee 未过开源审核的仓库会返回登录网页，代理拦截也会返回网页。
+const sourceDownloadAttemptTimeout = 5 * time.Minute
+
+func DefaultSource() Source { return GitHubSource{} }
+
+// errSourceNotArchive 表示 HTTP 状态正常但正文不是 gzip 归档，例如代理返回了网页。
 var errSourceNotArchive = errors.New("下载内容不是 gzip 归档")
 
 func (s GitHubSource) client() *http.Client {

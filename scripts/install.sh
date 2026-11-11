@@ -269,7 +269,7 @@ apt_install_deps() {
   command -v curl >/dev/null 2>&1 || need+=(curl)
   [ -e /etc/ssl/certs/ca-certificates.crt ] || need+=(ca-certificates)
   command -v unzip >/dev/null 2>&1 || need+=(unzip)
-  # git 供面板更新经 Gitee 来源时按锁定提交走 git smart HTTP 拉取源码（Gitee 网页归档端点需浏览器验证码，程序化不可用）。
+  # git 用于从克隆仓库读取真实构建提交。在线更新从 GitHub 下载源码归档。
   command -v git >/dev/null 2>&1 || need+=(git)
   if ! command -v docker >/dev/null 2>&1; then
     command -v gpg >/dev/null 2>&1 || need+=(gnupg)

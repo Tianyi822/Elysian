@@ -5,8 +5,10 @@ export type PanelUpdateChannel = 'commit' | 'release'
 export const PANEL_UPDATE_CHANNEL_LABELS: Record<PanelUpdateChannel, string> = {
   commit: '最新提交', release: '最新发版',
 }
-export type PanelUpdateSource = 'github' | 'gitee'
-export const PANEL_UPDATE_SOURCE_LABELS: Record<PanelUpdateSource, string> = {
+export type PanelUpdateSource = 'github'
+/** 历史记录保留原来源；新检查和日志查询仅支持 GitHub。 */
+export type PanelHistoricalUpdateSource = PanelUpdateSource | 'gitee'
+export const PANEL_UPDATE_SOURCE_LABELS: Record<PanelHistoricalUpdateSource, string> = {
   github: 'GitHub', gitee: 'Gitee',
 }
 export type PanelTaskState = 'queued' | 'running' | 'succeeded' | 'failed' | 'rolled-back' | 'recovery-failed'
@@ -15,8 +17,8 @@ export type PanelTask = {
   id: string; kind: 'ports' | 'restart' | 'update'; state: PanelTaskState; phase: string
   createdAt: string; updatedAt: string; oldPorts: PanelPorts; newPorts: PanelPorts
   targetCommit: string; error: string
-  /** 旧任务未记录更新来源或策略；缺省按历史自动回退行为解释。 */
-  updateChannel?: PanelUpdateChannel; updateSource?: PanelUpdateSource; releaseTag?: string
+  /** 旧任务可能未记录更新来源或策略；gitee 仅用于历史任务与原请求对账。 */
+  updateChannel?: PanelUpdateChannel; updateSource?: PanelHistoricalUpdateSource; releaseTag?: string
   /** 服务端核对的派生标志：任务仍在活动态但维护单元已退出（疑似中断），终态由服务端判定后回传。 */
   workerDead?: boolean
   workerStatus?: 'alive' | 'dead' | 'unknown'
@@ -30,7 +32,6 @@ export type PanelUpdate = {
   repository: string; branch: string; currentCommit: string; targetCommit: string
   channel: PanelUpdateChannel; source: PanelUpdateSource; releaseTag: string; message: string; available: boolean
 }
-/** source 在旧标签页保存的待确认请求中可以缺省；新请求始终携带明确来源。 */
 export type PanelResourcePlan = { preflightId: string; targets: string[]; stopPanel: boolean }
 export type PanelResourceCandidate = { id: string; kind: 'container' | 'service'; name: string; memoryBytes: number | null; recommended: boolean; disabledReason?: string }
 export type PanelUpdatePreflight = {
@@ -39,9 +40,10 @@ export type PanelUpdatePreflight = {
   disk: { availableBytes: number }; load: [number, number, number]; activeAgentRuns: number
   candidates: PanelResourceCandidate[]; needsRelease: boolean; stopPanelRecommended: boolean; blockedReason?: string
 }
-export type PanelUpdateTarget = Pick<PanelUpdate, 'channel' | 'targetCommit' | 'releaseTag'> & { source?: PanelUpdateSource; resourcePlan?: PanelResourcePlan }
+/** source 在旧标签页保存的待确认请求中可以缺省；新请求始终携带 github，gitee 仅用于历史原请求对账。 */
+export type PanelUpdateTarget = Pick<PanelUpdate, 'channel' | 'targetCommit' | 'releaseTag'> & { source?: PanelHistoricalUpdateSource; resourcePlan?: PanelResourcePlan }
 export type PanelTaskReport = { task: PanelTask; logs: string; nextOffset: number; hasMore?: boolean }
-/** 所选更新来源的一条提交，从新到旧排列，供面板的更新日志窗口呈现。 */
+/** GitHub 的一条提交，从新到旧排列，供面板的更新日志窗口呈现。 */
 export type PanelCommit = { sha: string; message: string; time: string }
 export function panelTaskIsActive(task: PanelTask): boolean { return task.state === 'queued' || task.state === 'running' }
 export function validatePanelPorts(ports: PanelPorts): string | null {

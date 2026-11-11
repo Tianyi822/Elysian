@@ -180,12 +180,10 @@ func (m Manager) Check(ctx context.Context, channel UpdateChannel) (Update, erro
 func selectSource(source Source, choice UpdateSource) (Source, error) {
 	choice = normalizeSource(choice)
 	if !validSource(choice) {
-		return nil, shared.InvalidRequest("更新来源无效")
+		return nil, shared.InvalidRequest("面板更新仅支持 GitHub，请重新检查更新")
 	}
-	if selector, ok := source.(interface {
-		SelectSource(UpdateSource) (Source, error)
-	}); ok {
-		return selector.SelectSource(choice)
+	if source == nil {
+		return DefaultSource(), nil
 	}
 	return source, nil
 }
@@ -197,7 +195,7 @@ func (m Manager) CheckFrom(ctx context.Context, channel UpdateChannel, source Up
 		return Update{}, shared.InvalidRequest("更新策略无效")
 	}
 	if !validSource(source) {
-		return Update{}, shared.InvalidRequest("更新来源无效")
+		return Update{}, shared.InvalidRequest("面板更新仅支持 GitHub，请重新检查更新")
 	}
 	selected, err := selectSource(m.Source, source)
 	if err != nil {
@@ -209,9 +207,10 @@ func (m Manager) CheckFrom(ctx context.Context, channel UpdateChannel, source Up
 	if err != nil {
 		return u, err
 	}
-	if u.Source == "" {
-		u.Source = source
+	if u.Source != "" && normalizeSource(u.Source) != SourceGitHub {
+		return Update{}, fmt.Errorf("更新检查结果来源不是 GitHub，请重新检查更新")
 	}
+	u.Source = SourceGitHub
 	err = config.AtomicJSON(m.Store.updateCheckPath(channel, source), u)
 	return u, err
 }
@@ -235,9 +234,6 @@ func (m Manager) Submit(ctx context.Context, kind string, input submitInput, ori
 		input.Source = normalizeSource(input.Source)
 		if !validChannel(input.Channel) {
 			return result, shared.InvalidRequest("更新策略无效")
-		}
-		if !validSource(input.Source) {
-			return result, shared.InvalidRequest("更新来源无效")
 		}
 		if input.Channel == ChannelCommit && input.ReleaseTag != "" {
 			return result, shared.InvalidRequest("最新提交策略不能指定发版标签")
@@ -265,6 +261,9 @@ func (m Manager) Submit(ctx context.Context, kind string, input submitInput, ori
 					return nil
 				}
 			}
+			if kind == "update" && !validSource(input.Source) {
+				return shared.InvalidRequest("面板更新仅支持 GitHub，请重新检查更新")
+			}
 			for _, row := range rows {
 				if Active(row.State) || row.State == "recovery-failed" {
 					return &shared.InvalidRequestError{Status: 409, Message: "面板维护任务尚未完成，请等待或处理恢复错误"}
@@ -290,9 +289,7 @@ func (m Manager) Submit(ctx context.Context, kind string, input submitInput, ori
 			}
 			if kind == "update" {
 				r.UpdateChannel = input.Channel
-				if input.Source != SourceAuto {
-					r.UpdateSource = input.Source
-				}
+				r.UpdateSource = SourceGitHub
 				r.ReleaseTag = input.ReleaseTag
 			}
 			r.Worker = filepath.Join(m.Store.tasksDir(), id+".worker")
@@ -365,7 +362,7 @@ func (m Manager) Router() chi.Router {
 			return
 		}
 		if !validSource(source) {
-			shared.SendError(w, 400, "更新来源无效")
+			shared.SendError(w, 400, "面板更新仅支持 GitHub，请重新检查更新")
 			return
 		}
 		if !m.Enabled || !m.Host.Available() {
@@ -413,7 +410,7 @@ func (m Manager) Router() chi.Router {
 			return
 		}
 		if !validSource(source) {
-			shared.SendError(w, 400, "更新来源无效")
+			shared.SendError(w, 400, "面板更新仅支持 GitHub，请重新检查更新")
 			return
 		}
 		if !m.Enabled || !m.Host.Available() {

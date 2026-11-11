@@ -212,6 +212,10 @@ func (w Worker) execute(ctx context.Context, r *taskRecord) error {
 		return err
 	}
 	if r.Kind == "update" {
+		selectedSource, selectErr := selectSource(w.Source, r.UpdateSource)
+		if selectErr != nil {
+			return selectErr
+		}
 		if err = w.checkBuildResources(ctx, r); err != nil {
 			return err
 		}
@@ -219,13 +223,7 @@ func (w Worker) execute(ctx context.Context, r *taskRecord) error {
 		if r.UpdateChannel == ChannelRelease {
 			strategy = "最新发版 " + r.ReleaseTag
 		}
-		sourceLabel := "自动选择（GitHub 优先，Gitee 回退）"
-		if normalizeSource(r.UpdateSource) == SourceGitHub {
-			sourceLabel = "GitHub"
-		} else if normalizeSource(r.UpdateSource) == SourceGitee {
-			sourceLabel = "Gitee"
-		}
-		w.Store.appendLog(r.ID, "更新来源："+sourceLabel+"；更新策略："+strategy+"；目标提交："+r.TargetCommit+"\n")
+		w.Store.appendLog(r.ID, "更新来源：GitHub；更新策略："+strategy+"；目标提交："+r.TargetCommit+"\n")
 		stage := filepath.Join("/var/tmp/elysian-build", r.ID)
 		defer os.RemoveAll(stage)
 		if err = os.MkdirAll(filepath.Dir(stage), 0711); err != nil {
@@ -235,15 +233,7 @@ func (w Worker) execute(ctx context.Context, r *taskRecord) error {
 		if err = w.phase(r, "downloading"); err != nil {
 			return err
 		}
-		selectedSource, selectErr := selectSource(w.Source, normalizeSource(r.UpdateSource))
-		if selectErr != nil {
-			return selectErr
-		}
-		downloadCtx := ctx
-		cancelDownload := func() {}
-		if normalizeSource(r.UpdateSource) != SourceAuto {
-			downloadCtx, cancelDownload = context.WithTimeout(ctx, sourceDownloadAttemptTimeout)
-		}
+		downloadCtx, cancelDownload := context.WithTimeout(ctx, sourceDownloadAttemptTimeout)
 		err = selectedSource.Download(downloadCtx, r.TargetCommit, source)
 		cancelDownload()
 		if err != nil {

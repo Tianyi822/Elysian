@@ -23,15 +23,7 @@ type Store struct{ Root string }
 
 func (s Store) updateCheckPath(channel UpdateChannel, source UpdateSource) string {
 	source = normalizeSource(source)
-	name := "panel-update-check.json"
-	if source != SourceAuto {
-		name = "panel-update-check-" + string(source) + "-commit.json"
-		if channel == ChannelRelease {
-			name = "panel-update-check-" + string(source) + "-release.json"
-		}
-	} else if channel == ChannelRelease {
-		name = "panel-update-check-release.json"
-	}
+	name := "panel-update-check-" + string(source) + "-" + string(normalizeChannel(channel)) + ".json"
 	return filepath.Join(s.Root, "state", name)
 }
 

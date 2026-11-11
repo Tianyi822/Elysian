@@ -95,7 +95,7 @@ describe('面板维护 HTTP 契约', () => {
     expect(await probeSameOriginHealth()).toBeNull()
   })
   it.each(['commit', 'release'] as const)('检查、日志和更新提交使用同一策略与来源：%s', async (channel) => {
-    const target = { channel, source: 'gitee' as const, targetCommit: 'b'.repeat(40), releaseTag: channel === 'release' ? 'v1.2.0' : '' }
+    const target = { channel, source: 'github' as const, targetCommit: 'b'.repeat(40), releaseTag: channel === 'release' ? 'v1.2.0' : '' }
     const update = { ...target, repository: 'Tianyi822/Elysian', branch: channel === 'commit' ? 'main' : '', currentCommit: 'a'.repeat(40), message: '更新说明', available: true }
     const fetch = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(update)))
@@ -103,11 +103,11 @@ describe('面板维护 HTTP 契约', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ ...task, kind: 'update', ...target, updateChannel: channel }), { status: 202 }))
     vi.stubGlobal('fetch', fetch)
     const adapter = createHttpPanelAdapter()
-    expect(await adapter.checkUpdate(channel, 'gitee')).toEqual(update)
-    await adapter.commits(channel, 'gitee')
+    expect(await adapter.checkUpdate(channel, 'github')).toEqual(update)
+    await adapter.commits(channel, 'github')
     await adapter.update(target, 'stable-request')
-    expect(fetch.mock.calls[0]?.[0]).toBe(`/api/panel/update?channel=${channel}&source=gitee`)
-    expect(fetch.mock.calls[1]?.[0]).toBe(`/api/panel/commits?channel=${channel}&source=gitee`)
+    expect(fetch.mock.calls[0]?.[0]).toBe(`/api/panel/update?channel=${channel}&source=github`)
+    expect(fetch.mock.calls[1]?.[0]).toBe(`/api/panel/commits?channel=${channel}&source=github`)
     expect(fetch.mock.calls[2]?.[1]).toMatchObject({ method: 'POST', body: JSON.stringify({ ...target, requestId: 'stable-request' }) })
   })
   it('拒绝其他策略的检查结果，避免发版选择执行默认分支', async () => {
@@ -115,8 +115,8 @@ describe('面板维护 HTTP 契约', () => {
     await expect(createHttpPanelAdapter().checkUpdate('release', 'github')).rejects.toThrow('更新信息与所选策略不一致')
   })
   it('拒绝与所选仓库来源不符的检查结果', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ channel: 'commit', source: 'github', releaseTag: '', repository: 'Tianyi822/Elysian', branch: 'main', currentCommit: 'a'.repeat(40), targetCommit: 'b'.repeat(40), message: '更新', available: true }))))
-    await expect(createHttpPanelAdapter().checkUpdate('commit', 'gitee')).rejects.toThrow('更新信息与所选来源不一致')
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ channel: 'commit', source: 'gitee', releaseTag: '', repository: 'Tianyi822/Elysian', branch: 'main', currentCommit: 'a'.repeat(40), targetCommit: 'b'.repeat(40), message: '更新', available: true }))))
+    await expect(createHttpPanelAdapter().checkUpdate('commit', 'github')).rejects.toThrow('更新信息与所选来源不一致')
   })
 })
 

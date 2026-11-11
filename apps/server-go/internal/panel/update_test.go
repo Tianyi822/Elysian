@@ -258,10 +258,9 @@ func TestUpdateRoutesSelectAndValidateChannel(t *testing.T) {
 func TestReleaseWorkerUsesPersistedCommit(t *testing.T) {
 	worker, record, host := setupWorker(t, "update")
 	source := &channelSource{}
-	github := &channelSource{}
-	worker.Source = FallbackSource{Primary: github, Fallback: source}
+	worker.Source = source
 	record.UpdateChannel = ChannelRelease
-	record.UpdateSource = SourceGitee
+	record.UpdateSource = SourceGitHub
 	record.ReleaseTag = "v1.2.0"
 	record.TargetCommit = strings.Repeat("d", 40)
 	host.candidate = filepath.Join(worker.install(), "releases", "new", "elysian")
@@ -274,11 +273,11 @@ func TestReleaseWorkerUsesPersistedCommit(t *testing.T) {
 	if err := worker.execute(context.Background(), &record); err != nil {
 		t.Fatal(err)
 	}
-	if source.downloaded != record.TargetCommit || len(source.checked) != 0 || record.State != "succeeded" || github.downloaded != "" {
+	if source.downloaded != record.TargetCommit || len(source.checked) != 0 || record.State != "succeeded" {
 		t.Fatalf("执行时重新解析版本或未使用固定提交：%+v %+v", source, record)
 	}
 	logs, err := os.ReadFile(worker.Store.logPath(record.ID))
-	if err != nil || !strings.Contains(string(logs), "最新发版 v1.2.0") || !strings.Contains(string(logs), "更新来源：Gitee") {
+	if err != nil || !strings.Contains(string(logs), "最新发版 v1.2.0") || !strings.Contains(string(logs), "更新来源：GitHub") {
 		t.Fatalf("日志未记录策略：%s %v", logs, err)
 	}
 }

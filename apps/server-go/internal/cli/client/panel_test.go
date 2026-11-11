@@ -57,7 +57,7 @@ func TestPanelResourcePreflightAndExactPlanHTTP(t *testing.T) {
 func TestPanelHTTPContract(t *testing.T) {
 	sha := strings.Repeat("a", 40)
 	seen := map[string]int{}
-	input := PanelUpdateInput{RequestID: "request-1234", Source: "gitee", Channel: "release", TargetCommit: sha, ReleaseTag: "v1"}
+	input := PanelUpdateInput{RequestID: "request-1234", Source: "github", Channel: "release", TargetCommit: sha, ReleaseTag: "v1"}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Origin") != "http://"+r.Host || r.Header.Get("Cookie") != "elysian_session=cli-cookie" {
 			t.Errorf("缺少同源或会话头：%v", r.Header)
@@ -68,13 +68,13 @@ func TestPanelHTTPContract(t *testing.T) {
 		case "GET /api/panel/":
 			json.NewEncoder(w).Encode(PanelInfo{Available: true, Commit: sha})
 		case "GET /api/panel/update", "GET /api/panel/commits":
-			if r.URL.Query().Get("source") != "gitee" || r.URL.Query().Get("channel") != "release" {
+			if r.URL.Query().Get("source") != "github" || r.URL.Query().Get("channel") != "release" {
 				t.Errorf("查询参数=%v", r.URL.Query())
 			}
 			if strings.HasSuffix(r.URL.Path, "commits") {
 				json.NewEncoder(w).Encode([]PanelCommit{{SHA: sha, Message: "说明"}})
 			} else {
-				json.NewEncoder(w).Encode(PanelUpdate{Source: "gitee", Channel: "release", TargetCommit: sha, ReleaseTag: "v1", Available: true})
+				json.NewEncoder(w).Encode(PanelUpdate{Source: "github", Channel: "release", TargetCommit: sha, ReleaseTag: "v1", Available: true})
 			}
 		case "POST /api/panel/update":
 			var got PanelUpdateInput
@@ -108,10 +108,10 @@ func TestPanelHTTPContract(t *testing.T) {
 	if out, err := c.PanelInfo(ctx); err != nil || !out.Available {
 		t.Fatalf("info=%+v err=%v", out, err)
 	}
-	if out, err := c.CheckPanelUpdate(ctx, "gitee", "release"); err != nil || out.TargetCommit != sha {
+	if out, err := c.CheckPanelUpdate(ctx, "github", "release"); err != nil || out.TargetCommit != sha {
 		t.Fatalf("check=%+v err=%v", out, err)
 	}
-	if out, err := c.PanelCommits(ctx, "gitee", "release"); err != nil || len(out) != 1 {
+	if out, err := c.PanelCommits(ctx, "github", "release"); err != nil || len(out) != 1 {
 		t.Fatalf("commits=%+v err=%v", out, err)
 	}
 	if out, err := c.SubmitPanelUpdate(ctx, input); err != nil || out.ID != "task-1234" {

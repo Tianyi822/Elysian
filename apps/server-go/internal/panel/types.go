@@ -38,18 +38,18 @@ type UpdateSource string
 const (
 	SourceAuto   UpdateSource = "auto"
 	SourceGitHub UpdateSource = "github"
-	SourceGitee  UpdateSource = "gitee"
+	SourceGitee  UpdateSource = "gitee" // 仅用于历史任务读取与精确请求对账。
 )
 
 func normalizeSource(source UpdateSource) UpdateSource {
-	if source == "" {
-		return SourceAuto
+	if source == "" || source == SourceAuto {
+		return SourceGitHub
 	}
 	return source
 }
 
 func validSource(source UpdateSource) bool {
-	return source == SourceAuto || source == SourceGitHub || source == SourceGitee
+	return normalizeSource(source) == SourceGitHub
 }
 
 type WorkerStatus string

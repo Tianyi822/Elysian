@@ -164,7 +164,7 @@ func (m menuModel) View() string {
 	b.WriteString(termui.Hints(m.panelView(), m.width))
 	b.WriteString("\n\n")
 	commands := []string{"ely agent", "ely resetpwd", "ely upgrade", "ely help", ""}
-	descriptions := []string{"继续会话、查看执行过程与处理审批", "重置本机管理员密码，全部会话失效", "选择 GitHub / Gitee，更新并验证运行版本", "查看命令、参数、默认值与示例", "返回系统终端"}
+	descriptions := []string{"继续会话、查看执行过程与处理审批", "重置本机管理员密码，全部会话失效", "通过 GitHub 更新并验证运行版本", "查看命令、参数、默认值与示例", "返回系统终端"}
 	for i, item := range m.items {
 		if i == m.cursor {
 			b.WriteString(menuSelStyle.Render("❯ "+item) + menuMetaStyle.Render("    "+commands[i]))

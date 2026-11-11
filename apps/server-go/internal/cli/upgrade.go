@@ -166,8 +166,9 @@ func runUpgrade(opts upgradeOptions, stdin *os.File, stdout, stderr io.Writer, d
 					return 1
 				}
 			} else {
-				if !interactive && (opts.Source != state.Input.Source || opts.Channel != state.Input.Channel) {
-					fmt.Fprintln(stderr, "存在未确认的更新，请使用原来源和策略重试。")
+				// 沿用旧请求的完整输入，由服务端精确对账或明确拒绝；不改写来源。
+				if !interactive && (opts.Channel != state.Input.Channel) {
+					fmt.Fprintln(stderr, "存在未确认的更新，请使用原策略重试。")
 					return 1
 				}
 				if interactive && !opts.Yes {
@@ -193,16 +194,7 @@ func runUpgrade(opts upgradeOptions, stdin *os.File, stdout, stderr io.Writer, d
 			fmt.Fprintln(stderr, "当前面板不支持更新资源预检，未提交停机授权；请先手动释放负载。")
 			return 1
 		}
-		if opts.Source == "" {
-			choice, code := chooseUpgrade(stdin, stdout, "选择更新来源", "检查、说明与源码下载均固定使用所选来源。", []string{"GitHub · Tianyi822/Elysian", "Gitee · Chentyit/Elysian"}, nil)
-			if code != 0 {
-				return code
-			}
-			if choice < 0 {
-				return 0
-			}
-			opts.Source = []string{"github", "gitee"}[choice]
-		}
+		opts.Source = "github"
 		if opts.Channel == "" {
 			choice, code := chooseUpgrade(stdin, stdout, "选择版本策略", "最新发版只包含正式 Release，不包含预发布版本。", []string{"最新提交 · 默认分支的最新改动", "最新发版 · 最新正式 Release"}, nil)
 			if code != 0 {

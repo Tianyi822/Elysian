@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,7 +70,7 @@ func completedUpgrade() client.PanelTask {
 func upgradeFixture(t *testing.T, f *fakeMaintenance) (upgradeRuntime, upgradeState) {
 	t.Helper()
 	store := upgradeStore{path: filepath.Join(t.TempDir(), "upgrade.json")}
-	state := upgradeState{Version: 1, BaseURL: "http://127.0.0.1:48101", PanelHome: "/panel", Input: client.PanelUpdateInput{RequestID: "request-0001", Source: "gitee", Channel: "release", ReleaseTag: "v1.2.0", TargetCommit: strings.Repeat("a", 40)}}
+	state := upgradeState{Version: 1, BaseURL: "http://127.0.0.1:48101", PanelHome: "/panel", Input: client.PanelUpdateInput{RequestID: "request-0001", Source: "github", Channel: "release", ReleaseTag: "v1.2.0", TargetCommit: strings.Repeat("a", 40)}}
 	if err := store.save(state); err != nil {
 		t.Fatal(err)
 	}
@@ -283,5 +284,35 @@ func TestUpgradeStoreIdentityPermissionsAndLock(t *testing.T) {
 	if second, err := lockUpgrade(dir); err == nil {
 		second.Close()
 		t.Fatal("同用户更新必须互斥")
+	}
+}
+
+func TestHistoricalGiteeUpgradeKeepsExactInputOnReconciliation(t *testing.T) {
+	for _, accepted := range []bool{false, true} {
+		t.Run(fmt.Sprint(accepted), func(t *testing.T) {
+			f := &fakeMaintenance{}
+			r, state := upgradeFixture(t, f)
+			state.Input.Source = "gitee"
+			if accepted {
+				state.TaskID = completedUpgrade().ID
+			}
+			f.submit = func(input client.PanelUpdateInput) (client.PanelTask, error) {
+				if input != state.Input {
+					t.Fatalf("不能改写旧请求：%+v", input)
+				}
+				return client.PanelTask{}, &client.Error{Status: 400, Message: "面板更新仅支持 GitHub，请重新检查更新"}
+			}
+			code, err := r.follow(context.Background(), state, discardUpgrade, nil)
+			if accepted {
+				if code != 0 || err != nil || f.submits != 0 {
+					t.Fatalf("旧任务被重复提交：%d %v", code, err)
+				}
+			} else if code != 1 || err == nil || f.submits != 1 {
+				t.Fatalf("旧请求未得到明确拒绝：%d %v", code, err)
+			}
+			if _, err := os.Stat(r.store.path); !os.IsNotExist(err) {
+				t.Fatal("明确结果后应释放恢复指针")
+			}
+		})
 	}
 }

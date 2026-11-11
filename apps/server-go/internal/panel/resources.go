@@ -114,7 +114,7 @@ func validateResourcePlan(plan *ResourcePlan) error {
 func (m Manager) checkedUpdate(input submitInput) error {
 	var u Update
 	b, err := os.ReadFile(m.Store.updateCheckPath(input.Channel, input.Source))
-	if err != nil || json.Unmarshal(b, &u) != nil || u.Repository != Repository || normalizeChannel(u.Channel) != input.Channel || (input.Source != SourceAuto && normalizeSource(u.Source) != input.Source) || !u.Available || !commitPattern.MatchString(input.TargetCommit) || u.TargetCommit != input.TargetCommit || u.ReleaseTag != input.ReleaseTag || (input.Channel == ChannelRelease && u.ReleaseTag == "") {
+	if err != nil || json.Unmarshal(b, &u) != nil || u.Repository != Repository || normalizeChannel(u.Channel) != input.Channel || normalizeSource(u.Source) != input.Source || !u.Available || !commitPattern.MatchString(input.TargetCommit) || u.TargetCommit != input.TargetCommit || u.ReleaseTag != input.ReleaseTag || (input.Channel == ChannelRelease && u.ReleaseTag == "") {
 		return shared.InvalidRequest("请先检查更新，再提交已检查的目标版本")
 	}
 	return nil
@@ -125,7 +125,10 @@ func (m Manager) PreflightUpdate(ctx context.Context, input submitInput) (Resour
 		return out, &shared.InvalidRequestError{Status: 503, Message: "仅支持 systemd 安装版"}
 	}
 	input.Source, input.Channel = normalizeSource(input.Source), normalizeChannel(input.Channel)
-	if !validSource(input.Source) || !validChannel(input.Channel) || input.ResourcePlan != nil || input.RequestID != "" {
+	if !validSource(input.Source) {
+		return out, shared.InvalidRequest("面板更新仅支持 GitHub，请重新检查更新")
+	}
+	if !validChannel(input.Channel) || input.ResourcePlan != nil || input.RequestID != "" {
 		return out, shared.InvalidRequest("资源预检参数无效")
 	}
 	if err := m.checkedUpdate(input); err != nil {
