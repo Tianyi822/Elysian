@@ -56,15 +56,6 @@ func (m *Manager) WorkflowDefinition(ctx context.Context, id string, revision in
 	d, e := readWorkflowDefinition(ctx, m.store.db, id, revision)
 	return d, storageFailure(e)
 }
-func (m *Manager) WorkflowDefinitions(ctx context.Context) ([]WorkflowDefinition, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.closed {
-		return nil, closedError()
-	}
-	d, e := readDocuments[WorkflowDefinition](ctx, m.store.db, "SELECT document FROM workflow_definitions d WHERE revision=(SELECT MAX(revision) FROM workflow_definitions WHERE id=d.id) ORDER BY rowid DESC")
-	return d, storageFailure(e)
-}
 func (m *Manager) CreateWorkflow(ctx context.Context, input CreateWorkflowInput) (WorkflowInstance, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
