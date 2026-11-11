@@ -606,35 +606,50 @@ func (s *websiteService) setAccessQueued(ctx context.Context, id string, access 
 // SetRunning 启停：start 已运行容器引擎回 304 视为成功；容器已被外部删除 →
 // 404「站点容器已不存在，请删除站点后重建」。
 func (s *websiteService) SetRunning(ctx context.Context, id string, running bool) (websiteProject, error) {
+	action := "stop"
+	if running {
+		action = "start"
+	}
+	project, _, err := s.containerLifecycle(ctx, id, "", action)
+	return project, err
+}
+
+// containerLifecycle 在同一次项目互斥内核对登记并完成启停或重启。
+// expectedContainerID 为空时按项目当前登记执行；dispatched 表示已调用引擎变更。
+func (s *websiteService) containerLifecycle(ctx context.Context, id, expectedContainerID, action string) (project websiteProject, dispatched bool, err error) {
 	if !s.inProgress.acquire(id) {
-		return websiteProject{}, &shared.InvalidRequestError{Status: 409, Message: "项目正在执行其他操作"}
+		return project, false, &shared.InvalidRequestError{Status: 409, Message: "项目正在执行其他操作"}
 	}
 	defer s.inProgress.remove(id)
 
 	row, err := s.record(ctx, id)
 	if err != nil {
-		return websiteProject{}, err
+		return project, false, err
 	}
 	if row.ContainerID == nil {
-		return websiteProject{}, &shared.InvalidRequestError{Status: 409, Message: "站点没有容器"}
+		return project, false, &shared.InvalidRequestError{Status: 409, Message: "站点没有容器"}
+	}
+	if expectedContainerID != "" && *row.ContainerID != expectedContainerID {
+		return project, false, &shared.InvalidRequestError{Status: 409, Message: "网站登记的容器已变化，请回读实际状态"}
 	}
 	if err := s.assertRecordContainer(ctx, row); err != nil {
-		return websiteProject{}, err
+		return project, false, err
 	}
-	var opErr error
-	if running {
-		opErr = s.deps.docker.Start(ctx, *row.ContainerID)
-	} else {
-		opErr = s.deps.docker.Stop(ctx, *row.ContainerID)
+	if action == "stop" || action == "restart" {
+		err = s.deps.docker.Stop(ctx, *row.ContainerID)
 	}
-	if opErr != nil {
+	if err == nil && action != "stop" {
+		err = s.deps.docker.Start(ctx, *row.ContainerID)
+	}
+	if err != nil {
 		var invalid *shared.InvalidRequestError
-		if errors.As(opErr, &invalid) && invalid.Status == 404 {
-			return websiteProject{}, &shared.InvalidRequestError{Status: 404, Message: "站点容器已不存在，请删除站点后重建"}
+		if errors.As(err, &invalid) && invalid.Status == 404 {
+			return project, true, &shared.InvalidRequestError{Status: 404, Message: "站点容器已不存在，请删除站点后重建"}
 		}
-		return websiteProject{}, opErr
+		return project, true, err
 	}
-	return s.projectRow(ctx, row, s.currentConfigOrNull(ctx))
+	project, err = s.projectRow(ctx, row, s.currentConfigOrNull(ctx))
+	return project, true, err
 }
 
 // Logs 容器日志行。

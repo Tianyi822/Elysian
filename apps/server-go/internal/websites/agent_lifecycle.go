@@ -3,7 +3,6 @@ package websites
 import (
 	"context"
 	"errors"
-	"sort"
 
 	"elysian/server/internal/seam"
 	"elysian/server/internal/shared"
@@ -28,7 +27,7 @@ func (b *websiteContainerBridge) check(ctx context.Context) error {
 	return b.verify(ctx)
 }
 
-// rows 按容器 ID 反查网站登记，结果按项目 ID 稳定排序。
+// rows 按容器 ID 反查网站登记。
 func (b *websiteContainerBridge) rows(ctx context.Context, id string) ([]WebsiteRecord, error) {
 	rows, err := b.facade.service.deps.registry.List(ctx)
 	if err != nil {
@@ -40,7 +39,6 @@ func (b *websiteContainerBridge) rows(ctx context.Context, id string) ([]Website
 			result = append(result, row)
 		}
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
 	return result, nil
 }
 
@@ -62,31 +60,27 @@ func (b *websiteContainerBridge) Lifecycle(ctx context.Context, id, action strin
 	if len(rows) != 1 {
 		return true, websiteBridgeFailure(shared.InvalidRequest("容器被多个网站登记引用，不能执行容器级操作"), true)
 	}
-	steps := []string{action}
-	if action == "restart" {
-		steps = []string{"stop", "start"}
-	}
-	for _, step := range steps {
-		if _, err := b.facade.service.SetRunning(ctx, rows[0].ID, step == "start"); err != nil {
-			return true, websiteBridgeFailure(err, false)
-		}
-	}
-	return true, nil
+	_, dispatched, err := b.facade.service.containerLifecycle(ctx, rows[0].ID, id, action)
+	return true, websiteBridgeFailure(err, !dispatched)
 }
 
-func websiteBridgeFailure(err error, noBusinessEffect bool) error {
+func websiteBridgeFailure(err error, notDispatched bool) error {
 	if err == nil {
 		return nil
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
+	invalid, knownRejection := err.(*shared.InvalidRequestError)
+	if notDispatched && !knownRejection {
+		return err
+	}
 	message := "网站容器操作失败，请回读实际状态，不能自动重试"
-	if invalid, ok := err.(*shared.InvalidRequestError); ok {
+	if knownRejection {
 		message = invalid.Message
 	}
-	if noBusinessEffect {
+	if notDispatched {
 		message += "，网站变更未执行"
 	}
-	return &seam.AgentContainerError{Code: "website-container-operation-failed", Message: message, NoBusinessEffect: noBusinessEffect}
+	return &seam.AgentContainerError{Code: "website-container-operation-failed", Message: message, NotDispatched: notDispatched}
 }
