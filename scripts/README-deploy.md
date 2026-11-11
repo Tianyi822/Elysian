@@ -28,7 +28,7 @@ sudo bash install-release.sh
 ## 登录与配置
 
 ```bash
-# 首次启动只打印一次初始密码；重复安装的历史记录仅显示最近一条
+# 安装收尾摘要直接展示本次生成的初始密码；事后回查最近一次生成记录：
 journalctl -u elysian -b --no-pager | grep '初始密码：' | tail -n 1
 # 忘记密码时重置（全部会话失效）
 HOME=/var/lib/elysian /usr/local/bin/elysian resetpwd
@@ -37,9 +37,9 @@ systemctl status elysian
 systemctl restart elysian
 ```
 
-systemd 日志会保留多次安装的初始密码记录，上述查询仅显示本次系统启动以来最近的一条生成记录；密码已修改或重置后，该记录不再代表当前密码。重新安装保留有效凭据时沿用原密码，不生成新初始密码；已有凭据文件不可用时拒绝自动覆盖，并提示检查权限或执行重置命令。
+安装收尾摘要的「管理员账户」区直接显示本次安装窗口内生成的初始密码（只显示这一次）；沿用既有凭据的重复安装不生成新密码，摘要如实标注并给出回查命令。systemd 日志会保留多次安装的初始密码记录，上述查询仅显示本次系统启动以来最近的一条生成记录；密码已修改或重置后，该记录不再代表当前密码。重新安装保留有效凭据时沿用原密码，不生成新初始密码；已有凭据文件不可用时拒绝自动覆盖，并提示检查权限或执行重置命令。
 
-`sudo ely resetpwd` 直接进入重置密码，`ely agent` 打开 Agent，`ely upgrade` 更新面板，`ely help upgrade` 查看来源、版本策略和确认参数。
+`sudo ely resetpwd` 直接进入重置密码，`ely agent` 打开 Agent，`ely upgrade` 更新面板，`sudo ely uninstall` 卸载面板，`ely help upgrade` 查看来源、版本策略和确认参数。
 
 `resetpwd` 在交互终端中分行显示账号、密码要求与会话失效提醒，两次输入均不回显；过短或不一致时就地重试，Ctrl+C 取消，成功与失败分开显示结果。输入结束或取消后恢复终端属性与行首位置。管道或文件输入按顺序消费两行，校验失败直接以非零状态退出，不自动重试，也不输出密码。
 
@@ -105,7 +105,7 @@ Docker 与 Caddy 通道分别按安装环境变量 `ELYSIAN_DOCKER_SOCKET`／`EL
 
 ## 卸载与验证
 
-`sudo bash /opt/elysian/current/scripts/uninstall.sh` 是唯一卸载入口，默认彻底清理：先展示程序、四类数据、凭据、日志、缓存、账号及依赖清单，确认后执行；`--yes` 按该清单免交互执行，包含删除全部面板数据。需要保留时显式使用 `--keep-data`、`--keep-dependencies`、`--keep-tools`、`--keep-caddy-config`；`--purge-data` 是默认数据清理行为的兼容参数，`--dry-run` 只预览。安装和卸载通过固定生命周期锁串行，卸载同时取得 worker→operations 维护锁；无法确认面板服务停止时，在删除程序与数据前中止。保留数据时保留对应的 `elysian`／`elysian-sqlite` 账号，全部删除才清理三个账号与组。
+`sudo ely uninstall` 是唯一卸载入口（等价于 `sudo bash /opt/elysian/current/scripts/uninstall.sh`，预编译安装随面板放置该脚本），默认彻底清理：先展示程序、四类数据、凭据、日志、缓存、账号及依赖清单，确认后执行；`--yes` 按该清单免交互执行，包含删除全部面板数据。需要保留时显式使用 `--keep-data`、`--keep-dependencies`、`--keep-tools`、`--keep-caddy-config`；`--purge-data` 是默认数据清理行为的兼容参数，`--dry-run` 只预览，全部选项见 `ely help uninstall`。命令需 root，先核对脚本随安装存在再转交执行；脚本接管终端与信号，中途删除 `/opt/elysian` 不影响执行。安装和卸载通过固定生命周期锁串行，卸载同时取得 worker→operations 维护锁；无法确认面板服务停止时，在删除程序与数据前中止。保留数据时保留对应的 `elysian`／`elysian-sqlite` 账号，全部删除才清理三个账号与组。
 
 安装器把新增 Docker/Caddy 包名、安装前不存在的 apt 源与公钥摘要，保存到 root 私有的 `/var/lib/elysian-installer`；复用组件、旧安装和安装前已有的包不自动认领；旧 Go/Bun 收据仍用于卸载核验。卸载只清理可核对的归属：Docker 须无容器（含停止状态）、镜像、卷和自定义网络，并核对可用的 containerd 命名空间；Caddy 须仍与首次软件包默认配置基线及真实运行 JSON 一致。停止或不可达的服务不能当成空服务；任何归属、配置、权限或业务使用异常都保留现场、列为未完成项并非零退出。包清理先用 apt 模拟检查，再用 dpkg 精确 purge 清单，拒绝自动移除其他依赖；apt 源与公钥只删除新增且内容未变的文件。业务数据目录 `/var/lib/docker`、`/var/lib/containerd`、`/var/lib/caddy` 不盲删，恢复备份单独列出由管理员核对后清理。
 
@@ -113,7 +113,7 @@ Docker 与 Caddy 通道分别按安装环境变量 `ELYSIAN_DOCKER_SOCKET`／`EL
 
 安装在平台依赖准备前检查标准 Caddy 服务的启动文件与服务用户读取权限。程序存在但启动文件缺失时直接给出原因；管理员停止 Caddy 后，可使用 `sudo bash install-release.sh --restore-caddyfile /可信备份的绝对路径/Caddyfile` 校验并原子恢复缺失目标，然后继续安装。该选项不覆盖已有文件，不自动选择历史备份，不把配置缺失视为没有网站。
 
-旧安装没有可信收据时，使用 `sudo bash /opt/elysian/current/scripts/uninstall.sh --remove-legacy-components caddy,docker,go,bun` 明确选择旧组件清理；也可只列部分名称。该选择不写入或伪造安装收据，审计仅记录为显式旧组件清理。程序展示固定软件包、apt 源／公钥、Go/Bun 标准安装路径后统一确认，`--keep-*` 优先。Docker 业务资源检查及 apt 模拟／dpkg 精确清单继续生效；旧 Caddy 仅在标准启动方式、默认欢迎站点、真实运行 JSON 与磁盘一致时清理，动态路由或其他业务配置继续阻止移除。该参数不隐式删除容器、镜像、卷或业务数据，管理员须单独决定其处置。
+旧安装没有可信收据时，使用 `sudo ely uninstall --remove-legacy-components caddy,docker,go,bun` 明确选择旧组件清理；也可只列部分名称。该选择不写入或伪造安装收据，审计仅记录为显式旧组件清理。程序展示固定软件包、apt 源／公钥、Go/Bun 标准安装路径后统一确认，`--keep-*` 优先。Docker 业务资源检查及 apt 模拟／dpkg 精确清单继续生效；旧 Caddy 仅在标准启动方式、默认欢迎站点、真实运行 JSON 与磁盘一致时清理，动态路由或其他业务配置继续阻止移除。该参数不隐式删除容器、镜像、卷或业务数据，管理员须单独决定其处置。
 
 Docker 包与服务移除后核对 `/run/docker.sock`：拒绝符号链接、非 socket、非 root 所有、多硬链接和仍有监听的端点，仅在连接明确返回 `ECONNREFUSED` 且设备号／inode 未变时删除失效 socket，防止下次安装被遗留路径误判阻塞；无法确认时保留并非零退出。
 

@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # scripts/uninstall.sh —— Elysian 彻底卸载；root 执行，先展示清单再确认。
+# 正式机器的直达命令是 sudo ely uninstall（等价于 sudo bash /opt/elysian/current/scripts/uninstall.sh）；
+# 源码克隆内仍可按相对路径执行本脚本。
 #
 # 用法：
-#   sudo bash scripts/uninstall.sh                展示彻底清理清单，再确认执行
-#   sudo bash scripts/uninstall.sh --keep-data    保留面板数据
-#   sudo bash scripts/uninstall.sh --keep-tools   保留 Go 与 bun 工具链
-#   sudo bash scripts/uninstall.sh --yes          免交互，默认删除全部面板数据
-#   sudo bash scripts/uninstall.sh --dry-run      只展示计划与大小，不做任何修改
+#   sudo ely uninstall                            展示彻底清理清单，再确认执行
+#   sudo ely uninstall --keep-data                保留面板数据
+#   sudo ely uninstall --keep-tools               保留 Go 与 bun 工具链
+#   sudo ely uninstall --yes                      免交互，默认删除全部面板数据
+#   sudo ely uninstall --dry-run                  只展示计划与大小，不做任何修改
 #
 # 默认删除：systemd 服务与自启、/usr/local/bin/elysian、/opt/elysian、/etc/default/elysian、
 # /etc/profile.d/elysian-mirrors.sh、构建残留、面板自己加的 UFW 前端端口规则，以及本脚本安装
@@ -119,7 +121,8 @@ TUI_FAIL_LABEL="卸载失败"
 
 usage() {
   cat <<'EOF'
-用法：sudo bash scripts/uninstall.sh [选项]
+用法：sudo ely uninstall [选项]
+（等价于 sudo bash /opt/elysian/current/scripts/uninstall.sh）
 默认彻底清理面板数据、缓存、账号、管理配置及本脚本新增且未使用的 Docker/Caddy。
 已有容器、镜像、卷或归属不明的组件不会盲删；无法清理时列出原因并非零退出。
   --keep-data    保留全部面板数据和凭据
@@ -165,7 +168,7 @@ parse_args() {
 }
 
 require_root() {
-  [ "$(id -u)" -eq 0 ] || die "请以 root 执行（sudo bash scripts/uninstall.sh）。"
+  [ "$(id -u)" -eq 0 ] || die "请以 root 执行（sudo ely uninstall，或 sudo bash /opt/elysian/current/scripts/uninstall.sh）。"
 }
 
 require_interactive() {

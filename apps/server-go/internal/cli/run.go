@@ -42,6 +42,8 @@ type deps struct {
 	agentDeps  func() tui.Deps
 	runAgent   func(*os.File, io.Writer) error
 	runUpgrade func(upgradeOptions, *os.File, io.Writer, io.Writer) int
+	// runUninstall 转交已安装的卸载脚本（生产为 execUninstallScript 的 syscall.Exec）。
+	runUninstall func(scriptArgs []string, stderr io.Writer) int
 }
 
 // productionDeps 装配真实出口。
@@ -65,6 +67,7 @@ func productionDeps() deps {
 	d.runUpgrade = func(opts upgradeOptions, in *os.File, out, errOut io.Writer) int {
 		return runUpgrade(opts, in, out, errOut, d)
 	}
+	d.runUninstall = execUninstallScript
 	return d
 }
 
@@ -75,7 +78,7 @@ func Run(info Info, args []string, stdin *os.File, stdout, stderr io.Writer) int
 }
 
 func runWithDeps(info Info, args []string, stdin *os.File, stdout, stderr io.Writer, d deps) int {
-	command, opts, help, err := parseCommand(args)
+	command, opts, help, rest, err := parseCommand(args)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		printCommandHelp(stderr, command)
@@ -120,6 +123,21 @@ func runWithDeps(info Info, args []string, stdin *os.File, stdout, stderr io.Wri
 			}
 		}
 		return d.runUpgrade(opts, stdin, stdout, stderr)
+	case "uninstall":
+		// 卸载需要 root 且脚本随面板安装；门禁先于转交，选项由脚本自身校验。
+		if d.geteuid() != 0 {
+			fmt.Fprintln(stderr, "ely uninstall 需要 root；请使用 sudo ely uninstall。选项说明：ely help uninstall")
+			return 1
+		}
+		if !d.fileExists(uninstallScriptPath) {
+			fmt.Fprintf(stderr, "未找到已安装的卸载脚本 %s。\n预编译安装会随面板放置该脚本；缺失时请重新安装，或从 GitHub 仓库获取 scripts/uninstall.sh 后执行。选项说明：ely help uninstall\n", uninstallScriptPath)
+			return 1
+		}
+		run := d.runUninstall
+		if run == nil {
+			run = execUninstallScript
+		}
+		return run(rest, stderr)
 	}
 	return 2
 }

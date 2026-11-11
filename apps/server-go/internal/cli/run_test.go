@@ -71,6 +71,9 @@ func TestRunHelp(t *testing.T) {
 	if !strings.Contains(got, "交互主菜单") || !strings.Contains(got, "elysian resetpwd") {
 		t.Errorf("--help 应说明菜单用法并引导脚本走 elysian 子命令：%q", got)
 	}
+	if !strings.Contains(got, "ely uninstall") {
+		t.Errorf("--help 应列出卸载直达命令：%q", got)
+	}
 }
 
 func TestRunUnknownArgsExitTwo(t *testing.T) {

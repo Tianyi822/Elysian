@@ -7,7 +7,8 @@
 #                                       冒烟模式：跳过 systemd 与系统用户，下载验证预编译包、
 #                                       起进程、curl /api/health、清理
 #
-# 卸载入口只有 scripts/uninstall.sh：默认彻底清理面板及可确认归属且未使用的依赖，执行前展示清单确认。
+# 卸载入口只有随面板安装的 scripts/uninstall.sh（直达命令 sudo ely uninstall）：默认彻底
+# 清理面板及可确认归属且未使用的依赖，执行前展示清单确认。
 #
 # 平台依赖：正式安装在「准备预编译安装包」之后、安装切换事务之前自动检测并安装 Docker 与 Caddy——
 # 已安装且可用则复用（不重装、不改动既有 daemon.json / Caddyfile），缺失则按经验证的官方命令
@@ -1388,6 +1389,9 @@ enable_ssh_and_firewall() {
 start_service() {
   info "启动并使能服务（systemctl enable + restart）"
   systemctl enable "$SERVICE_NAME" >/dev/null 2>&1 || die "systemctl enable $SERVICE_NAME 失败。"
+  # 圈定本次启动的日志窗口：收尾摘要只展示这一时刻之后生成的初始密码，避免把
+  # 安装前已修改或已失效的旧密码记录当成当前凭据。
+  SERVICE_LOG_SINCE="$(date '+%Y-%m-%d %H:%M:%S')"
   systemctl restart "$SERVICE_NAME" || die "systemctl restart $SERVICE_NAME 失败，请查看：journalctl -u $SERVICE_NAME -n 50 --no-pager"
   ok "服务进程已启动"
 }
@@ -1453,6 +1457,26 @@ ufw_port_summary() { # <ufw status 输出> <端口>
   printf '%s' "$state"
 }
 
+# extract_initial_password：从 journal 文本提取最后一条「初始密码：」行冒号后的密码；
+# 无生成记录（沿用既有凭据、已改密或日志不可读）输出空串，不猜测。
+extract_initial_password() {
+  sed -n 's/^.*初始密码：//p' | tail -n 1
+}
+
+# initial_password_display：收尾摘要的初始密码事实。仅展示本次安装启动窗口内新生成
+# 的记录；窗口缺失、journalctl 不可用或没有新记录时，退回 journalctl 回查指引。
+initial_password_display() {
+  local password=""
+  if [ -n "${SERVICE_LOG_SINCE:-}" ] && command -v journalctl >/dev/null 2>&1; then
+    password="$(journalctl -u "$SERVICE_NAME" --since "$SERVICE_LOG_SINCE" --no-pager 2>/dev/null | extract_initial_password)"
+  fi
+  if [ -n "$password" ]; then
+    printf '%s（本次安装生成，仅显示这一次）' "$password"
+  else
+    printf '本次安装未生成新初始密码（沿用既有凭据）；回查最近一次生成记录：journalctl -u %s -b --no-pager | grep '\''初始密码：'\'' | tail -n 1' "$SERVICE_NAME"
+  fi
+}
+
 print_summary() {
   # 事实全部现场实测；未验证或不可得的一律如实标注，绝不把占位写成「已启用」。
   local svc_state svc_enabled ssh_state ufw_out ufw_state elapsed=0
@@ -1491,11 +1515,12 @@ print_summary() {
   tui_kv "访问方式" "http://<服务器公网 IP 或域名>:${FRONTEND_PORT}"
   tui_kv "后端地址" "127.0.0.1:${PANEL_PORT}（仅本机回环，不对外开放）"
   tui_section "管理员账户"
-  tui_kv "初始密码" "最近一次生成记录：journalctl -u ${SERVICE_NAME} -b --no-pager | grep '初始密码：' | tail -n 1"
+  tui_kv "用户名" "admin"
+  tui_kv "初始密码" "$(initial_password_display)"
   tui_kv "重置密码" "sudo ${CLI_BIN} resetpwd；脚本通道：HOME=${STATE_DIR} ${PANEL_BIN} resetpwd"
   tui_section "运行与维护"
   tui_kv "服务管理" "systemctl status/restart/stop ${SERVICE_NAME}"
-  tui_kv "CLI 命令" "ely agent／ely resetpwd／ely upgrade；ely help 查看参数"
+  tui_kv "CLI 命令" "ely agent／ely resetpwd／ely upgrade／ely uninstall；ely help 查看参数"
   tui_kv "面板更新" "ely upgrade（或登录面板 → 系统设置）"
   tui_kv "数据目录" "${STATE_DIR}/.Elysian（data/logs/state/backups/tmp/config）"
   tui_kv "进程日志" "${STATE_DIR}/.Elysian/logs/panel.log"
@@ -1637,7 +1662,7 @@ main() {
   if [ -t 2 ]; then err_tty=1; fi
   init_output "$out_tty" "$err_tty"
   if [ "${1:-}" = "--uninstall" ]; then
-    printf '%s✗ install.sh 不再提供卸载入口。%s\n  请执行：sudo bash scripts/uninstall.sh\n' "${C_RED:-}" "${C_RESET:-}" >&2
+    printf '%s✗ install.sh 不再提供卸载入口。%s\n  请执行：sudo ely uninstall（等价于 sudo bash /opt/elysian/current/scripts/uninstall.sh）\n' "${C_RED:-}" "${C_RESET:-}" >&2
     exit 1
   fi
   case "${1:-}" in

@@ -154,10 +154,30 @@ if OUT="$( (source "$SCRIPT_DIR/install.sh"; init_output 0 0; main --uninstall) 
   fail "main --uninstall 应拒绝"
 else
   case "$OUT" in
-    *"scripts/uninstall.sh"*) pass "main --uninstall 提示新的唯一入口" ;;
+    *"ely uninstall"*) pass "main --uninstall 提示 ely uninstall 入口" ;;
     *) fail "拒绝文案异常：$OUT" ;;
   esac
 fi
+
+echo "== 初始密码摘要 =="
+if (
+  set -e
+  source "$SCRIPT_DIR/install.sh"
+  [ -z "$(printf '' | extract_initial_password)" ] &&
+    [ "$(printf '初始密码：first\n' | extract_initial_password)" = first ] &&
+    [ "$(printf '11月 11 15:04:39 host elysian[1]: 初始密码：second\n' | extract_initial_password)" = second ] &&
+    [ "$(printf '初始密码：first\n初始密码：second\n' | extract_initial_password)" = second ] &&
+    [ -z "$(printf '面板初始密码已生成（admin）\n' | extract_initial_password)" ]
+); then pass "extract_initial_password 取最后一条密码并忽略运行日志行"; else fail "extract_initial_password 提取不符"; fi
+if (
+  set -e
+  source "$SCRIPT_DIR/install.sh"
+  out="$(SERVICE_LOG_SINCE="" initial_password_display)"
+  case "$out" in
+    *"本次安装未生成新初始密码"*journalctl*) exit 0 ;;
+    *) exit 1 ;;
+  esac
+); then pass "无新密码记录时摘要给出 journalctl 回查指引"; else fail "兜底文案异常"; fi
 
 echo "== 架构与发行版判定 =="
 if (
@@ -456,7 +476,9 @@ if (
     printf '%s' "$out" | grep -Fq 'http://<服务器公网 IP 或域名>:48100' &&
     printf '%s' "$out" | grep -Fq 'sudo /usr/local/bin/ely resetpwd' &&
     printf '%s' "$out" | grep -Fq 'HOME=/var/lib/elysian /usr/local/bin/elysian resetpwd' &&
-    printf '%s' "$out" | grep -Fq 'ely agent／ely resetpwd／ely upgrade；ely help 查看参数' &&
+    printf '%s' "$out" | grep -Fq 'ely agent／ely resetpwd／ely upgrade／ely uninstall；ely help 查看参数' &&
+    printf '%s' "$out" | grep -Fq '用户名' &&
+    printf '%s' "$out" | grep -Fq '初始密码' &&
     ! printf '%s' "$out" | grep -Eq '(^|[^0-9])(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)'
 ); then pass "摘要只报端口且不含 RFC1918 地址"; else fail "摘要仍输出内网 IP 或缺少端口"; fi
 

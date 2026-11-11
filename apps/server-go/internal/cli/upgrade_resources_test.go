@@ -66,12 +66,12 @@ func TestUpgradeResourcesRejectProtectedUnknownAndExpired(t *testing.T) {
 }
 func TestUpgradeResourceFlagsAreExact(t *testing.T) {
 	id := strings.Repeat("a", 64)
-	_, opts, _, err := parseCommand([]string{"upgrade", "--stop-container", id, "--stop-service", "caddy.service", "--stop-panel"})
+	_, opts, _, _, err := parseCommand([]string{"upgrade", "--stop-container", id, "--stop-service", "caddy.service", "--stop-panel"})
 	if err != nil || !opts.StopPanel || !reflect.DeepEqual(opts.StopContainers, []string{id}) || !reflect.DeepEqual(opts.StopServices, []string{"caddy.service"}) {
 		t.Fatalf("opts=%+v err=%v", opts, err)
 	}
 	for _, args := range [][]string{{"upgrade", "--stop-container", "mysql"}, {"upgrade", "--stop-service", "--all"}, {"upgrade", "--stop-service", "docker"}} {
-		if _, _, _, err := parseCommand(args); err == nil {
+		if _, _, _, _, err := parseCommand(args); err == nil {
 			t.Fatalf("accepted %v", args)
 		}
 	}
