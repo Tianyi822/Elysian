@@ -203,7 +203,7 @@ func TestLoadingBudgetEvictedSetSurvivesApprovalRestart(t *testing.T) {
 	})
 	approval := waitingApproval(t, m, run.ID)
 	before, err := m.loadedToolsV2(ctx, run.ID, *run.Snapshot)
-	if err != nil || contains(before, "extra_00") || !contains(before, "extra_02") || len(before) >= 4 {
+	if err != nil || contains(before.Retained, "extra_00") || !contains(before.Retained, "extra_02") || len(before.Retained) >= 4 {
 		t.Fatalf("没有按大小淘汰: %v %v", before, err)
 	}
 	runtimeEventually(t, func() bool { m.mu.Lock(); defer m.mu.Unlock(); return m.activeID == "" })

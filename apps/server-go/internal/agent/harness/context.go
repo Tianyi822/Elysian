@@ -488,15 +488,22 @@ func (a *agentExecution) contextFacts(ctx context.Context, loadImages bool) (Wor
 func (a *agentExecution) tools(ctx context.Context) ([]model.Tool, error) {
 	if a.run.Snapshot != nil {
 		if a.onDemandTools() {
+			if a.run.Snapshot.ToolLoading == onDemandToolsV2 {
+				state, err := a.manager.loadedToolsV2(ctx, a.run.ID, *a.run.Snapshot)
+				if err != nil {
+					return nil, err
+				}
+				loaded := make(map[string]bool, len(state.Retained))
+				for _, name := range state.Retained {
+					loaded[name] = true
+				}
+				return a.run.Snapshot.visibleModelToolsInOrder(loaded, state.Order), nil
+			}
 			loaded, err := a.loadedToolNames(ctx)
 			if err != nil {
 				return nil, err
 			}
-			order, err := a.loadedToolOrder(ctx, *a.run.Snapshot)
-			if err != nil {
-				return nil, err
-			}
-			return a.run.Snapshot.visibleModelToolsInOrder(loaded, order), nil
+			return a.run.Snapshot.visibleModelTools(loaded), nil
 		}
 		return a.run.Snapshot.modelTools(), nil
 	}
@@ -511,56 +518,6 @@ func (a *agentExecution) tools(ctx context.Context) ([]model.Tool, error) {
 		}
 	}
 	return out, nil
-}
-
-// loadedToolOrder 从本 Run 已确认的搜索回执恢复动态定义的加载顺序：每条成功回执把新增定义
-// 追加到尾部、淘汰的定义移出，淘汰后重新加载按新加载处理。顺序来自持久事实，重启或恢复后
-// 与进程内一致；没有回执时返回空，由 visibleModelToolsInOrder 按快照目录顺序兜底。
-// 只影响定义排列，不改变可见集合、隐藏拦截或授权。
-func (a *agentExecution) loadedToolOrder(ctx context.Context, s CapabilitySnapshot) ([]string, error) {
-	if s.ToolLoading != onDemandToolsV2 {
-		return nil, nil
-	}
-	rows, err := a.manager.store.db.QueryContext(ctx, `SELECT c.document FROM calls c JOIN operations o ON o.id=json_extract(c.document,'$.operationId') WHERE c.run_id=? AND o.run_id=? AND c.state='succeeded' AND o.state='completed' AND json_extract(o.document,'$.capability.source')=? AND json_extract(o.document,'$.capability.name')=? AND json_extract(o.document,'$.snapshotDigest')=? ORDER BY c.rowid`, a.run.ID, a.run.ID, toolDiscoverySource, toolSearchName, s.Digest)
-	if err != nil {
-		return nil, storageFailure(err)
-	}
-	defer rows.Close()
-	var order []string
-	for rows.Next() {
-		var raw []byte
-		var call Call
-		var result toolSearchResult
-		if err = rows.Scan(&raw); err != nil {
-			return nil, storageFailure(err)
-		}
-		if err = json.Unmarshal(raw, &call); err != nil {
-			return nil, storageFailure(err)
-		}
-		if call.Tool != toolSearchName || call.Truncated || call.Error != nil || json.Unmarshal(call.Result, &result) != nil || result.Version != onDemandToolsV2 || result.SnapshotDigest != s.Digest || result.Retained == nil || len(result.Matches) > 5 || len(result.Retained) > maxLoadedTools {
-			continue
-		}
-		current := make(map[string]bool, len(result.Retained))
-		for _, name := range result.Retained {
-			current[name] = true
-		}
-		next := make([]string, 0, len(result.Retained))
-		seen := make(map[string]bool, len(result.Retained))
-		for _, name := range order {
-			if current[name] && !seen[name] {
-				next = append(next, name)
-				seen[name] = true
-			}
-		}
-		for _, name := range result.Retained {
-			if !seen[name] {
-				next = append(next, name)
-				seen[name] = true
-			}
-		}
-		order = next
-	}
-	return order, storageFailure(rows.Err())
 }
 
 // outputLimit 取思考模式对应的官方默认输出上限（非思考 8K、思考 64K、max 档 128K）；

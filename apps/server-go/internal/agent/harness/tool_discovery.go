@@ -252,13 +252,6 @@ func (a *agentExecution) onDemandTools() bool {
 // 从已确认的内核搜索回执恢复可见集，不依赖会被整理的消息窗口或模型工作记忆。
 func (a *agentExecution) loadedToolNames(ctx context.Context) (map[string]bool, error) {
 	loaded := map[string]bool{}
-	if a.run.Snapshot.ToolLoading == onDemandToolsV2 {
-		names, err := a.manager.loadedToolsV2(ctx, a.run.ID, *a.run.Snapshot)
-		for _, name := range names {
-			loaded[name] = true
-		}
-		return loaded, err
-	}
 	rows, err := a.manager.store.db.QueryContext(ctx, `SELECT c.document FROM calls c JOIN operations o ON o.id=json_extract(c.document,'$.operationId') WHERE c.run_id=? AND c.state='succeeded' AND o.state='completed' AND json_extract(o.document,'$.capability.source')=? AND json_extract(o.document,'$.snapshotDigest')=? ORDER BY c.rowid DESC`, a.run.ID, toolDiscoverySource, a.run.Snapshot.Digest)
 	if err != nil {
 		return nil, storageFailure(err)

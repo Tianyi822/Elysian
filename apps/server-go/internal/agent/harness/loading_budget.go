@@ -161,50 +161,78 @@ func (s CapabilitySnapshot) skillIndex(input string) json.RawMessage {
 	return raw
 }
 
-// 成功回执直接保存完整保留集合；不能从旧搜索重新拼出已被大小预算淘汰的定义。
-func (m *Manager) loadedToolsV2(ctx context.Context, runID string, s CapabilitySnapshot) ([]string, error) {
-	rows, err := m.store.db.QueryContext(ctx, `SELECT c.document FROM calls c JOIN operations o ON o.id=json_extract(c.document,'$.operationId') WHERE c.run_id=? AND o.run_id=? AND c.state='succeeded' AND o.state='completed' AND json_extract(o.document,'$.capability.source')=? AND json_extract(o.document,'$.capability.name')=? AND json_extract(o.document,'$.snapshotDigest')=? ORDER BY c.rowid DESC`, runID, runID, toolDiscoverySource, toolSearchName, s.Digest)
+type loadedToolState struct {
+	Retained []string // 搜索回执中的保留顺序，用于下一次搜索的预算淘汰。
+	Order    []string // 定义首次加载顺序；淘汰后重新加载追加到尾部。
+}
+
+// loadedToolsV2 从同一次读取恢复可见集合和定义顺序。
+func (m *Manager) loadedToolsV2(ctx context.Context, runID string, s CapabilitySnapshot) (loadedToolState, error) {
+	rows, err := m.store.db.QueryContext(ctx, `SELECT c.document FROM calls c JOIN operations o ON o.id=json_extract(c.document,'$.operationId') WHERE c.run_id=? AND o.run_id=? AND c.state='succeeded' AND o.state='completed' AND json_extract(o.document,'$.capability.source')=? AND json_extract(o.document,'$.capability.name')=? AND json_extract(o.document,'$.snapshotDigest')=? ORDER BY c.rowid`, runID, runID, toolDiscoverySource, toolSearchName, s.Digest)
 	if err != nil {
-		return nil, storageFailure(err)
+		return loadedToolState{}, storageFailure(err)
 	}
 	defer rows.Close()
+	var calls []Call
 	for rows.Next() {
 		var raw []byte
 		var call Call
-		var result toolSearchResult
 		if err = rows.Scan(&raw); err != nil {
-			return nil, storageFailure(err)
+			return loadedToolState{}, storageFailure(err)
 		}
 		if err = json.Unmarshal(raw, &call); err != nil {
-			return nil, storageFailure(err)
+			return loadedToolState{}, storageFailure(err)
 		}
-		if call.Tool != toolSearchName || call.Truncated || call.Error != nil || json.Unmarshal(call.Result, &result) != nil || result.Version != onDemandToolsV2 || result.SnapshotDigest != s.Digest || result.Retained == nil || len(result.Matches) > 5 || len(result.Retained) > 16 {
+		calls = append(calls, call)
+	}
+	if err := rows.Err(); err != nil {
+		return loadedToolState{}, storageFailure(err)
+	}
+	return projectLoadedTools(s, calls), nil
+}
+
+// projectLoadedTools 只折叠固定目录下的有效搜索回执，保留集合和顺序共同推进。
+func projectLoadedTools(s CapabilitySnapshot, calls []Call) loadedToolState {
+	state := loadedToolState{Retained: []string{}}
+	byName := make(map[string]Capability, len(s.Tools))
+	for _, c := range s.Tools {
+		byName[c.Name] = c
+	}
+	for _, call := range calls {
+		var result toolSearchResult
+		if call.Tool != toolSearchName || call.Truncated || call.Error != nil || json.Unmarshal(call.Result, &result) != nil || result.Version != onDemandToolsV2 || result.SnapshotDigest != s.Digest || result.Retained == nil || len(result.Matches) > 5 || len(result.Retained) > maxLoadedTools {
 			continue
 		}
-		byName := map[string]Capability{}
-		for _, c := range s.Tools {
-			byName[c.Name] = c
-		}
-		seen := map[string]bool{}
+		current := make(map[string]bool, len(result.Retained))
 		total := s.residentDefinitionTokens()
 		valid := true
 		for _, name := range result.Retained {
 			c, ok := byName[name]
-			if !ok || seen[name] || residentCapability(c) || contains(s.EagerTools, name) {
+			if !ok || current[name] || residentCapability(c) || contains(s.EagerTools, name) {
 				valid = false
 				break
 			}
-			seen[name] = true
+			current[name] = true
 			total += definitionTokens(c)
 		}
-		if s.LoadingBudget == nil || total > s.LoadingBudget.ToolDefinitionTokens {
-			valid = false
+		if !valid || s.LoadingBudget == nil || total > s.LoadingBudget.ToolDefinitionTokens {
+			continue
 		}
-		if valid {
-			return result.Retained, nil
+		order := make([]string, 0, len(result.Retained))
+		for _, name := range state.Order {
+			if current[name] {
+				order = append(order, name)
+				delete(current, name)
+			}
 		}
+		for _, name := range result.Retained {
+			if current[name] {
+				order = append(order, name)
+			}
+		}
+		state = loadedToolState{Retained: result.Retained, Order: order}
 	}
-	return []string{}, storageFailure(rows.Err())
+	return state
 }
 
 type toolSearchSkipped struct {
@@ -218,7 +246,7 @@ func (m *Manager) searchToolsV2(ctx context.Context, s CapabilitySnapshot, o Ope
 	if err != nil {
 		return CapabilityResult{}, err
 	}
-	return searchToolsWithBudget(s, json.RawMessage(o.ArgumentsJSON), previous)
+	return searchToolsWithBudget(s, json.RawMessage(o.ArgumentsJSON), previous.Retained)
 }
 func searchToolsWithBudget(s CapabilitySnapshot, args json.RawMessage, previous []string) (CapabilityResult, error) {
 	raw, err := searchTools(s, args)

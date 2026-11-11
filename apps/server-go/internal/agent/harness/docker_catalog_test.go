@@ -37,7 +37,7 @@ func (*dockerCatalogViews) ListContainers(context.Context) ([]contract.Container
 func (*dockerCatalogViews) Policy() seam.DockerPolicy { return seam.DockerPolicy{} }
 func (*dockerCatalogViews) SelfContainerID() string   { return "" }
 
-func dockerCatalogBridge(t *testing.T) (*toolbridge.Bridge, *dockerCatalogViews) {
+func dockerCatalogBridge(t *testing.T, configure ...func(*domaindocker.AgentFacade)) (*toolbridge.Bridge, *dockerCatalogViews) {
 	t.Helper()
 	views := &dockerCatalogViews{}
 	// Unix socket paths are limited to 108 bytes on Linux; subtest names exceed it.
@@ -82,6 +82,9 @@ func dockerCatalogBridge(t *testing.T) (*toolbridge.Bridge, *dockerCatalogViews)
 			t.Error(err)
 		}
 	})
+	for _, change := range configure {
+		change(stack.Agent)
+	}
 	bridge, err := toolbridge.NewWithPlugins(views, dockertools.Plugin(dockertools.Deps{Views: views, Agent: stack.Agent}, dockertools.Config{ListLimit: 201}))
 	if err != nil {
 		t.Fatal(err)
@@ -370,9 +373,9 @@ func TestDockerKardiaExecutionAndDiscoveryKeepStablePromptCachePrefix(t *testing
 	if strings.Contains(string(rawTools), "searchNames") || strings.Contains(string(rawTools), "已安装镜像") {
 		t.Fatalf("search-only aliases leaked to model definitions: %s", rawTools)
 	}
-	order, err := (&agentExecution{manager: m, run: finished}).loadedToolOrder(context.Background(), *finished.Snapshot)
-	if err != nil || !reflect.DeepEqual(order, names[3:]) {
-		t.Fatalf("persisted discovery order changed: %v %v", order, err)
+	loaded, err := m.loadedToolsV2(context.Background(), finished.ID, *finished.Snapshot)
+	if err != nil || !reflect.DeepEqual(loaded.Order, names[3:]) {
+		t.Fatalf("persisted discovery order changed: %v %v", loaded.Order, err)
 	}
 	approvals, err := m.ApprovalsByRun(context.Background(), "", run.ID)
 	if err != nil || len(approvals) != 0 {
