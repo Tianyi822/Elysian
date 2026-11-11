@@ -1,6 +1,6 @@
 // list.go 完整移植 packages/utils/src/index.ts 的 List<T>（方案第 1 节裁决：
-// packages/utils 不是转发包，本体落此处；packages/group 才是转发包，其本体
-// Group 插件在 kardia/loader/group.go，本文件无对应产出）。
+// packages/utils 不是转发包，本体落此处；packages/group 才是转发包，其 Group
+// 插件所在的 kardia/loader 未装配，已随未使用插件一并移除）。
 //
 // List 的 push 经 ctx.effect 登记（fiber 销毁自动移除），保持插入序，
 // 可过滤/映射迭代（TS 生成器方法在 Go 返回切片快照）。
