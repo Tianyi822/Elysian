@@ -257,9 +257,9 @@ func TestWorkflowV2WikiParallelForeachApprovalWithoutNewExtraction(t *testing.T)
 	if gate.Kind != "workflow-gate" || gate.InputJSON != orderedItems || writes.Load() != 0 {
 		t.Fatalf("wrong approval boundary or aggregation: %+v writes=%d", gate, writes.Load())
 	}
-	jobs, err := m.ListWikiJobs(ctx, "", 50)
-	if err != nil || len(jobs.Items) != 0 || rootExtractions.Load() != 0 {
-		t.Fatalf("child step auto-extracted before root completion: %+v %v", jobs, err)
+	var jobCount int
+	if err = m.store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM wiki_jobs").Scan(&jobCount); err != nil || jobCount != 0 || rootExtractions.Load() != 0 {
+		t.Fatalf("child step auto-extracted before root completion: count=%d err=%v calls=%d", jobCount, err, rootExtractions.Load())
 	}
 	// Updating the stored child cannot alter the accepted root's closure.
 	updatedChild := child
@@ -325,9 +325,8 @@ func TestWorkflowV2WikiParallelForeachApprovalWithoutNewExtraction(t *testing.T)
 		}
 	}
 	callsMu.Unlock()
-	jobs, err = m.ListWikiJobs(ctx, "", 50)
-	if err != nil || len(jobs.Items) != 0 || rootExtractions.Load() != 0 {
-		t.Fatalf("退役后工作流仍派生记忆整理: %+v %v", jobs, err)
+	if err = m.store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM wiki_jobs").Scan(&jobCount); err != nil || jobCount != 0 || rootExtractions.Load() != 0 {
+		t.Fatalf("退役后工作流仍派生记忆整理: count=%d err=%v calls=%d", jobCount, err, rootExtractions.Load())
 	}
 	if memoryRequests.Load() < 3 {
 		t.Fatal(fmt.Sprintf("missing working memory calls: %d", memoryRequests.Load()))

@@ -525,7 +525,7 @@ func (m *Manager) SearchWiki(ctx context.Context, spaceID, q string, limit int) 
 	if m.closed {
 		return WikiSearchResult{}, closedError()
 	}
-	if strings.TrimSpace(q) == "" || len(q) > wikiExtractionBytes {
+	if strings.TrimSpace(q) == "" || len(q) > wikiTextMaxBytes {
 		return WikiSearchResult{}, bad("invalid-wiki-query", "Wiki 搜索内容不能为空或超过容量限制")
 	}
 	return m.wikiSearchLocked(ctx, spaceID, q, limit)

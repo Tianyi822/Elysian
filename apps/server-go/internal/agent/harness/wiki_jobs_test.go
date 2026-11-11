@@ -36,9 +36,9 @@ func TestChatDoesNotEnqueueWikiExtraction(t *testing.T) {
 	if done := runtimeFinished(t, m, run.ID); done.Status != StateSucceeded {
 		t.Fatalf("主运行失败: %+v", done)
 	}
-	jobs, err := m.ListWikiJobs(context.Background(), "", 50)
-	if err != nil || len(jobs.Items) != 0 || extractionCalls.Load() != 0 {
-		t.Fatalf("停用后仍整理: %+v %v", jobs, err)
+	var count int
+	if err = m.store.db.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM wiki_jobs").Scan(&count); err != nil || count != 0 || extractionCalls.Load() != 0 {
+		t.Fatalf("停用后仍整理: count=%d err=%v calls=%d", count, err, extractionCalls.Load())
 	}
 }
 
@@ -68,25 +68,8 @@ func TestWikiBackgroundRecoveryRetainsResponseAndDoesNotReplay(t *testing.T) {
 	}
 }
 
-func TestWikiBackgroundYieldsToQueuedRun(t *testing.T) {
-	s, path := openRuntimeTestStore(t)
-	m := &Manager{store: s, ctx: context.Background(), deps: Deps{Path: path, Now: s.now, NewID: randomID}}
-	createRuntimeTestRun(t, s, "foreground", runtimeStoreTestTime)
-	m.mu.Lock()
-	ready := m.wikiBackgroundReadyLocked()
-	m.mu.Unlock()
-	if ready {
-		t.Fatal("有排队的前台 Run 时不应派发后台任务")
-	}
-}
-
-func TestEmbeddingIndexSearchRevisionAndCredentialBoundaries(t *testing.T) {
-	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		calls.Add(1)
-		if request.Header.Get("Authorization") != "Bearer fixture-embedding-secret" {
-			t.Error("未使用固定凭据")
-		}
+func TestEmbeddingProfileCredentialBoundary(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"data":[{"embedding":[1,0]}]}`))
 	}))
@@ -106,40 +89,6 @@ func TestEmbeddingIndexSearchRevisionAndCredentialBoundaries(t *testing.T) {
 	info, err := os.Stat(m.embeddingConfigPath())
 	if err != nil || info.Mode().Perm() != 0600 {
 		t.Fatalf("凭据文件权限错误：%v %v", info, err)
-	}
-	space, err := m.CreateWikiSpace(context.Background(), "搜索知识", "business")
-	if err != nil {
-		t.Fatal(err)
-	}
-	page, err := m.CreateWikiPage(context.Background(), space.ID, WikiPageInput{Slug: "restart", Title: "容器重启", Markdown: "先确认服务健康。"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	input := WikiIndexInput{RequestID: "rebuild-one", ProfileID: profile.ID, ProfileRevision: profile.Revision}
-	job, err := m.RebuildWikiIndex(context.Background(), space.ID, input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	duplicate, err := m.RebuildWikiIndex(context.Background(), space.ID, input)
-	if err != nil || duplicate.ID != job.ID {
-		t.Fatal("重复索引请求未回读原任务")
-	}
-	m.runNextWikiIndexJob()
-	runtimeEventually(t, func() bool {
-		got, e := m.GetWikiJob(context.Background(), job.ID)
-		return e == nil && terminal(got.Status)
-	})
-	result, err := m.SearchWiki(context.Background(), space.ID, "服务恢复", 8)
-	if err != nil || result.Degraded || len(result.Items) != 1 || result.Items[0].Method != "hybrid-rrf" {
-		t.Fatalf("向量与文本未合并：%+v %v", result, err)
-	}
-	if _, err = m.UpdateWikiPage(context.Background(), page.ID, WikiPageInput{ExpectedRevision: page.Revision, Slug: page.Slug, Title: "容器重启", Markdown: "更新后的内容"}); err != nil {
-		t.Fatal(err)
-	}
-	before := calls.Load()
-	result, err = m.SearchWiki(context.Background(), space.ID, "容器重启", 8)
-	if err != nil || !result.Degraded || len(result.Items) != 1 || calls.Load() != before {
-		t.Fatalf("旧索引不应参与新修订检索：%+v %v", result, err)
 	}
 }
 

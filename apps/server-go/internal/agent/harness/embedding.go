@@ -193,7 +193,7 @@ func embeddingCompleteHTTP(ctx context.Context, p EmbeddingProfile, input string
 	usage := model.Usage{}
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	if len(input) > wikiExtractionBytes {
+	if len(input) > wikiTextMaxBytes {
 		return nil, usage, errors.New("Embedding 输入超过容量限制")
 	}
 	b, _ := json.Marshal(map[string]any{"model": p.Model, "input": input})

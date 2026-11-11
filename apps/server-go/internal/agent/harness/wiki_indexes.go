@@ -2,14 +2,14 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"math"
 	"sort"
 	"time"
 )
 
+// WikiIndexInput 与 WikiIndexStatus 保留为共享契约类型：索引重建入口已随整理管线
+// 退役，但 packages/foundation/contracts 的固定 fixture 仍按这两个形状往返。
 type WikiIndexInput struct {
 	RequestID       string `json:"requestId"`
 	ProfileID       string `json:"profileId"`
@@ -21,194 +21,6 @@ type WikiIndexStatus struct {
 	Pages        int              `json:"pages"`
 	IndexedPages int              `json:"indexedPages"`
 	Status       string           `json:"status"`
-}
-
-func (m *Manager) ListWikiIndexes(ctx context.Context, spaceID string) ([]WikiIndexStatus, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, err := m.ensureWikiSpaceLocked(ctx, spaceID); err != nil {
-		return nil, err
-	}
-	profiles, err := m.listEmbeddingProfiles(ctx)
-	if err != nil {
-		return nil, err
-	}
-	result := []WikiIndexStatus{}
-	for _, profile := range profiles {
-		item := WikiIndexStatus{Profile: profile}
-		if err = m.store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM wiki_pages WHERE space_id=? AND status='active'", spaceID).Scan(&item.Pages); err != nil {
-			return nil, err
-		}
-		if err = m.store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM wiki_pages p JOIN wiki_embedding_indexes i ON i.page_id=p.id AND i.page_revision=p.current_revision WHERE p.space_id=? AND p.status='active' AND i.profile_id=? AND i.profile_revision=?`, spaceID, profile.ID, profile.Revision).Scan(&item.IndexedPages); err != nil {
-			return nil, err
-		}
-		item.Status = "ready"
-		if item.IndexedPages < item.Pages {
-			item.Status = "stale"
-		}
-		result = append(result, item)
-	}
-	return result, nil
-}
-
-func (m *Manager) RebuildWikiIndex(ctx context.Context, spaceID string, input WikiIndexInput) (WikiJob, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if err := m.agentWritable(); err != nil {
-		return WikiJob{}, err
-	}
-	if !requestPattern.MatchString(input.RequestID) {
-		return WikiJob{}, bad("invalid-request-id", "索引重建请求标识无效")
-	}
-	if _, err := m.ensureWikiSpaceLocked(ctx, spaceID); err != nil {
-		return WikiJob{}, err
-	}
-	var prior string
-	err := m.store.db.QueryRowContext(ctx, "SELECT id FROM wiki_jobs WHERE kind='embedding' AND origin_kind='space' AND origin_id=?", input.RequestID).Scan(&prior)
-	if err == nil {
-		job, e := readWikiJob(ctx, m.store.db, prior)
-		if e == nil && (job.SpaceID != spaceID || job.EmbeddingProfile == nil || job.EmbeddingProfile.ID != input.ProfileID || job.EmbeddingProfile.Revision != input.ProfileRevision) {
-			return WikiJob{}, &Error{409, "request-conflict", "索引重建请求标识已用于其他参数"}
-		}
-		return job, e
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return WikiJob{}, err
-	}
-	profiles, err := m.readEmbeddingProfiles()
-	if err != nil {
-		return WikiJob{}, err
-	}
-	var fixed, latest EmbeddingProfile
-	for _, p := range profiles {
-		if p.ID == input.ProfileID {
-			latest = p
-			if p.Revision == input.ProfileRevision {
-				fixed = p
-			}
-		}
-	}
-	if fixed.ID == "" || !fixed.Active || !latest.Active {
-		return WikiJob{}, bad("embedding-profile-unavailable", "Embedding 配置不存在、已停用或修订不可用")
-	}
-	pages, err := m.listWikiPagesLocked(ctx, spaceID, false)
-	if err != nil {
-		return WikiJob{}, err
-	}
-	refs := []WikiRef{}
-	for _, page := range pages {
-		refs = append(refs, WikiRef{PageID: page.ID, Revision: page.Revision, Digest: page.Digest})
-	}
-	raw, _ := json.Marshal(refs)
-	public := fixed.Public()
-	job := WikiJob{ID: m.deps.NewID(), Kind: "embedding", OriginKind: "space", OriginID: input.RequestID, SpaceID: spaceID, Status: StateQueued, CreatedAt: wikiNow(m), Input: string(raw), EmbeddingProfile: &public, CandidateIDs: []string{}, Sources: []WikiRef{}}
-	err = m.store.write(ctx, "wiki-index-enqueue", func(tx *sql.Tx) error { return saveWikiJob(ctx, tx, job) })
-	return job, err
-}
-
-func (m *Manager) runNextWikiIndexJob() bool {
-	m.mu.Lock()
-	if m.closed || m.blocked != "" || m.storageError || m.store.recordsFault() != nil || m.ctx.Err() != nil || m.deps.DispatchGuard != nil && m.deps.DispatchGuard() != nil {
-		m.mu.Unlock()
-		return false
-	}
-	if !m.wikiBackgroundReadyLocked() {
-		m.mu.Unlock()
-		return false
-	}
-	var id string
-	err := m.store.db.QueryRowContext(m.ctx, "SELECT id FROM wiki_jobs WHERE kind='embedding' AND state='queued' ORDER BY rowid LIMIT 1").Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		m.mu.Unlock()
-		return false
-	}
-	if err != nil {
-		m.storageFailedLocked()
-		m.mu.Unlock()
-		return false
-	}
-	job, err := readWikiJob(m.ctx, m.store.db, id)
-	if err != nil {
-		m.storageFailedLocked()
-		m.mu.Unlock()
-		return false
-	}
-	job.Status, job.StartedAt = StateRunning, wikiNow(m)
-	if err = m.store.write(m.ctx, "wiki-index-start", func(tx *sql.Tx) error { return saveWikiJob(m.ctx, tx, job) }); err != nil {
-		m.storageFailedLocked()
-		m.mu.Unlock()
-		return false
-	}
-	profiles, err := m.readEmbeddingProfiles()
-	var profile EmbeddingProfile
-	if err == nil && job.EmbeddingProfile != nil {
-		for _, p := range profiles {
-			if p.ID == job.EmbeddingProfile.ID && p.Revision == job.EmbeddingProfile.Revision {
-				profile = p
-				break
-			}
-		}
-	}
-	if err == nil && profile.ID == "" {
-		err = bad("embedding-profile-unavailable", "索引固定的 Embedding 修订不可用")
-	}
-	var refs []WikiRef
-	if err == nil {
-		err = json.Unmarshal([]byte(job.Input), &refs)
-	}
-	m.mu.Unlock()
-	ctx, cancel := context.WithTimeout(m.ctx, 60*time.Second)
-	defer cancel()
-	for _, ref := range refs {
-		if err != nil {
-			break
-		}
-		m.mu.Lock()
-		var raw string
-		err = validateWikiSources(ctx, m.store.db, []WikiRef{ref})
-		if err == nil {
-			err = m.store.db.QueryRowContext(ctx, "SELECT document FROM wiki_page_revisions WHERE page_id=? AND revision=?", ref.PageID, ref.Revision).Scan(&raw)
-		}
-		m.mu.Unlock()
-		if err != nil {
-			break
-		}
-		var page WikiPage
-		if err = decodeWiki(raw, &page); err != nil {
-			break
-		}
-		var vector []float64
-		vector, err = m.embeddingComplete(ctx, profile, page.Title+"\n"+page.Markdown, EmbeddingRequest{Purpose: "index", JobID: job.ID, Page: &ref})
-		if err != nil {
-			break
-		}
-		data, _ := json.Marshal(vector)
-		m.mu.Lock()
-		err = m.store.write(ctx, "wiki-index-page", func(tx *sql.Tx) error {
-			if e := validateWikiSources(ctx, tx, []WikiRef{ref}); e != nil {
-				return e
-			}
-			_, e := tx.ExecContext(ctx, `INSERT INTO wiki_embedding_indexes(page_id,page_revision,digest,profile_id,profile_revision,vector,created_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(page_id,page_revision,profile_id,profile_revision) DO UPDATE SET digest=excluded.digest,vector=excluded.vector,created_at=excluded.created_at`, ref.PageID, ref.Revision, ref.Digest, profile.ID, profile.Revision, string(data), wikiNow(m))
-			return e
-		})
-		m.mu.Unlock()
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	job.Status, job.EndedAt = StateSucceeded, wikiNow(m)
-	if err != nil {
-		job.Status = StateFailed
-		job.Error = &Failure{Code: "embedding-index-failed", Message: "Embedding 索引重建未完成，搜索继续使用文本回落"}
-	}
-	if m.ctx.Err() != nil {
-		job.Status = StateInterrupted
-		job.Error = &Failure{Code: "panel-stopped", Message: "面板停止中断了 Embedding 索引重建"}
-	}
-	if e := m.store.write(context.Background(), "wiki-index-finish", func(tx *sql.Tx) error { return saveWikiJob(context.Background(), tx, job) }); e != nil {
-		m.storageFailedLocked()
-		return false
-	}
-	return m.ctx.Err() == nil
 }
 
 func cosine(a, b []float64) float64 {
