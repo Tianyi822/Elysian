@@ -15,28 +15,39 @@ import (
 	"elysian/server/internal/websites"
 )
 
-func taskOutcome(state string, terminal, failed bool) tools.TaskOutcome {
+func taskOutcome(terminal, failed, running bool) tools.TaskOutcome {
 	if terminal {
 		if failed {
 			return tools.TaskFailed
 		}
 		return tools.TaskSucceeded
 	}
-	if state == "running" || state == "queued" || state == "pending" {
+	if running {
 		return tools.TaskRunning
 	}
 	return tools.TaskUnknown
 }
 
-func normalizedTaskStatus(state string, terminal, failed bool, value any, code, message string, progress *tools.TaskProgress) tools.TaskStatus {
-	outcome := taskOutcome(state, terminal, failed)
+func normalizedTaskStatus(outcome tools.TaskOutcome, state string, value any, code, message string, progress *tools.TaskProgress) tools.TaskStatus {
 	if outcome == tools.TaskUnknown && message == "" {
 		message = "任务结果未确认，须核实实际状态，禁止自动重投"
 	}
 	if outcome == tools.TaskUnknown && code == "" {
 		code = "domain-task-unknown"
 	}
-	return tools.TaskStatus{Outcome: outcome, State: state, Terminal: terminal, Failed: failed, Value: value, ErrorCode: code, Error: message, Progress: progress}
+	return tools.TaskStatus{Outcome: outcome, State: state, Terminal: outcome == tools.TaskSucceeded || outcome == tools.TaskFailed, Failed: outcome == tools.TaskFailed, Value: value, ErrorCode: code, Error: message, Progress: progress}
+}
+
+func websiteTaskStatus(status websites.AgentTaskStatus) tools.TaskStatus {
+	running := status.State == "queued" || status.State == "building" || status.State == "publishing" || status.State == "awaiting-config"
+	outcome := taskOutcome(status.Terminal, status.Failed, running)
+	return normalizedTaskStatus(outcome, status.State, status.Value, "website-task-"+string(outcome), status.Error, agentTaskProgress(status.State, status.Terminal, status.Stage, status.UpdatedAt, "正在执行网站任务"))
+}
+
+func containerBuildTaskStatus(status containerapps.AgentTaskStatus) tools.TaskStatus {
+	running := status.State == containerapps.BuildStateQueued || status.State == containerapps.BuildStateBuilding
+	outcome := taskOutcome(status.Terminal, status.Failed, running)
+	return normalizedTaskStatus(outcome, status.State, status.Value, "container-app-build-"+string(outcome), status.Error, agentTaskProgress(status.State, status.Terminal, status.Stage, status.UpdatedAt, "正在构建容器镜像"))
 }
 
 func agentTaskReconciler(sites *websites.AgentFacade, apps *containerapps.AgentFacade, containers *docker.AgentFacade, databases *database.AgentFacade) func(context.Context, tools.TaskReconciliation) error {
@@ -104,7 +115,8 @@ func agentTaskInspector(sites *websites.AgentFacade, apps *containerapps.AgentFa
 				return tools.TaskStatus{}, errors.New("容器操作请求身份不匹配")
 			}
 			terminal := task.State == "succeeded" || task.State == "failed"
-			return normalizedTaskStatus(task.State, terminal, task.State == "failed", docker.AgentOperationReceipt(task), task.ErrorCode, task.Message, agentTaskProgress(task.State, terminal, task.Message, task.UpdatedAt, "正在执行容器操作")), nil
+			outcome := taskOutcome(terminal, task.State == "failed", task.State == "running")
+			return normalizedTaskStatus(outcome, task.State, docker.AgentOperationReceipt(task), task.ErrorCode, task.Message, agentTaskProgress(task.State, terminal, task.Message, task.UpdatedAt, "正在执行容器操作")), nil
 		case "database":
 			task, err := databases.InspectTask(ctx, ref.ID)
 			if err != nil {
@@ -113,7 +125,8 @@ func agentTaskInspector(sites *websites.AgentFacade, apps *containerapps.AgentFa
 			if task.RequestID != ref.RequestID {
 				return tools.TaskStatus{}, errors.New("数据库任务请求身份不匹配")
 			}
-			return normalizedTaskStatus(task.State, task.State == "succeeded", false, task, "database-task-unknown", task.Message, agentTaskProgress(task.State, task.State == "succeeded", task.Message, "", "正在执行数据库任务")), nil
+			outcome := taskOutcome(task.State == "succeeded", false, task.State == "running" || task.State == "pending")
+			return normalizedTaskStatus(outcome, task.State, task, "database-task-unknown", task.Message, agentTaskProgress(task.State, task.State == "succeeded", task.Message, "", "正在执行数据库任务")), nil
 		case "docker-image-pull":
 			task, err := containers.InspectPull(ctx, ref.ID)
 			if err != nil {
@@ -123,7 +136,8 @@ func agentTaskInspector(sites *websites.AgentFacade, apps *containerapps.AgentFa
 				return tools.TaskStatus{}, errors.New("镜像拉取请求身份不匹配")
 			}
 			terminal := task.State == "succeeded" || task.State == "failed"
-			return normalizedTaskStatus(task.State, terminal, terminal && task.State != "succeeded", task, "docker-image-pull-"+task.State, task.ErrorMessage, agentPullProgress(task)), nil
+			outcome := taskOutcome(terminal, task.State == "failed", task.State == "running")
+			return normalizedTaskStatus(outcome, task.State, task, "docker-image-pull-"+task.State, task.ErrorMessage, agentPullProgress(task)), nil
 		case "website":
 			status, err := sites.InspectTask(ctx, ref.ID)
 			if err != nil {
@@ -132,7 +146,7 @@ func agentTaskInspector(sites *websites.AgentFacade, apps *containerapps.AgentFa
 			if status.RequestID != ref.RequestID {
 				return tools.TaskStatus{}, errors.New("网站任务请求身份不匹配")
 			}
-			return normalizedTaskStatus(status.State, status.Terminal, status.Failed, status.Value, "website-task-"+string(taskOutcome(status.State, status.Terminal, status.Failed)), status.Error, agentTaskProgress(status.State, status.Terminal, status.Stage, status.UpdatedAt, "正在执行网站任务")), nil
+			return websiteTaskStatus(status), nil
 		case "container-app-build":
 			status, err := apps.InspectTask(ctx, ref.ID)
 			if err != nil {
@@ -141,7 +155,7 @@ func agentTaskInspector(sites *websites.AgentFacade, apps *containerapps.AgentFa
 			if status.RequestID != ref.RequestID {
 				return tools.TaskStatus{}, errors.New("镜像任务请求身份不匹配")
 			}
-			return normalizedTaskStatus(status.State, status.Terminal, status.Failed, status.Value, "container-app-build-"+string(taskOutcome(status.State, status.Terminal, status.Failed)), status.Error, agentTaskProgress(status.State, status.Terminal, status.Stage, status.UpdatedAt, "正在构建容器镜像")), nil
+			return containerBuildTaskStatus(status), nil
 		default:
 			return tools.TaskStatus{}, errors.New("异步任务领域无效")
 		}

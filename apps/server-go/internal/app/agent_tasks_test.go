@@ -5,24 +5,77 @@ import (
 	"testing"
 
 	"elysian/server/internal/agent/tools"
+	"elysian/server/internal/containerapps"
 	"elysian/server/internal/docker"
+	"elysian/server/internal/websites"
 )
 
-func TestTaskOutcomeDoesNotConfuseUnsettledFailuresWithCompletion(t *testing.T) {
+func TestWebsiteTaskStatusPreservesActiveStagesAndEndEvidence(t *testing.T) {
 	for _, tc := range []struct {
 		state            string
 		terminal, failed bool
 		want             tools.TaskOutcome
 	}{
-		{"running", false, false, tools.TaskRunning}, {"queued", false, false, tools.TaskRunning},
+		{"queued", false, false, tools.TaskRunning}, {"building", false, false, tools.TaskRunning},
+		{"publishing", false, false, tools.TaskRunning}, {"awaiting-config", false, false, tools.TaskRunning},
 		{"succeeded", true, false, tools.TaskSucceeded}, {"failed", true, true, tools.TaskFailed},
 		{"unknown", false, false, tools.TaskUnknown}, {"failed", false, false, tools.TaskUnknown},
 		{"interrupted", false, false, tools.TaskUnknown}, {"cancelled", false, false, tools.TaskUnknown},
-		{"interrupted", true, true, tools.TaskFailed}, {"future-state", false, false, tools.TaskUnknown},
+		{"interrupted", true, true, tools.TaskFailed}, {"cancelled", true, true, tools.TaskFailed},
 	} {
-		if got := taskOutcome(tc.state, tc.terminal, tc.failed); got != tc.want {
-			t.Fatalf("%+v: %s", tc, got)
+		t.Run(tc.state+"/"+string(tc.want), func(t *testing.T) {
+			got := websiteTaskStatus(websites.AgentTaskStatus{State: tc.state, Terminal: tc.terminal, Failed: tc.failed, Value: "website-receipt", Stage: "网站受控阶段"})
+			if got.EffectiveOutcome() != tc.want || got.Terminal != tc.terminal || got.Failed != tc.failed || got.Value != "website-receipt" || got.ErrorCode != "website-task-"+string(tc.want) {
+				t.Fatalf("%+v: %+v", tc, got)
+			}
+			assertTaskStatusProgress(t, got)
+		})
+	}
+}
+
+func TestContainerBuildTaskStatusKeepsBuildingActiveAndUnsettledExitUnknown(t *testing.T) {
+	for _, tc := range []struct {
+		state            string
+		terminal, failed bool
+		want             tools.TaskOutcome
+	}{
+		{containerapps.BuildStateQueued, false, false, tools.TaskRunning},
+		{containerapps.BuildStateBuilding, false, false, tools.TaskRunning},
+		{containerapps.BuildStateSucceeded, true, false, tools.TaskSucceeded},
+		{containerapps.BuildStateFailed, true, true, tools.TaskFailed},
+		{containerapps.BuildStateCancelled, true, true, tools.TaskFailed},
+		{containerapps.BuildStateInterrupted, true, true, tools.TaskFailed},
+		{containerapps.BuildStateFailed, false, false, tools.TaskUnknown},
+		{containerapps.BuildStateCancelled, false, false, tools.TaskUnknown},
+		{containerapps.BuildStateInterrupted, false, false, tools.TaskUnknown},
+	} {
+		t.Run(tc.state+"/"+string(tc.want), func(t *testing.T) {
+			got := containerBuildTaskStatus(containerapps.AgentTaskStatus{State: tc.state, Terminal: tc.terminal, Failed: tc.failed, Value: "build-receipt", Stage: "打包构建上下文"})
+			if got.EffectiveOutcome() != tc.want || got.Terminal != tc.terminal || got.Failed != tc.failed || got.Value != "build-receipt" || got.ErrorCode != "container-app-build-"+string(tc.want) {
+				t.Fatalf("%+v: %+v", tc, got)
+			}
+			assertTaskStatusProgress(t, got)
+		})
+	}
+}
+
+func assertTaskStatusProgress(t *testing.T, status tools.TaskStatus) {
+	t.Helper()
+	if status.Terminal {
+		if status.Progress != nil {
+			t.Fatal("已确认终态仍返回运行进度")
 		}
+		return
+	}
+	want := "running"
+	if status.Outcome == tools.TaskUnknown {
+		want = "unknown"
+		if status.Error == "" {
+			t.Fatal("未确认结果缺少核实提示")
+		}
+	}
+	if status.Progress == nil || status.Progress.State != want {
+		t.Fatalf("progress=%+v want=%s", status.Progress, want)
 	}
 }
 
