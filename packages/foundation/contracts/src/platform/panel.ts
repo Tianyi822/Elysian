@@ -26,6 +26,7 @@ export type PanelTask = {
 export type PanelInfo = {
   ports: PanelPorts; commit: string; buildTime: string; repository: string
   available: boolean; reason: string; activeTask: PanelTask | null; lastTask: PanelTask | null
+  updateDelivery?: 'precompiled/v1'
   resourcePreflightVersion?: number
 }
 export type PanelUpdate = {
@@ -52,6 +53,7 @@ export function validatePanelPorts(ports: PanelPorts): string | null {
   return null
 }
 export const PANEL_TASK_PHASE_LABELS: Record<string, string> = {
+  'downloading-release': '下载安装包', 'preparing-release': '校验并准备新版本',
   checking: '检查部署环境', downloading: '下载源码', building: '构建新版本', firewall: '调整防火墙',
   stopping: '停止面板', activating: '切换配置与版本', verifying: '检查服务健康', finished: '已结束',
   'preparing-resources': '准备更新资源', 'restoring-resources': '恢复临时停止的业务',

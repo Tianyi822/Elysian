@@ -38,7 +38,7 @@ func (s GitHubSource) client() *http.Client {
 		return s.Client
 	}
 	return &http.Client{Timeout: 10 * time.Minute, CheckRedirect: func(r *http.Request, via []*http.Request) error {
-		if len(via) > 5 || r.URL.Scheme != "https" || (r.URL.Host != "api.github.com" && r.URL.Host != "codeload.github.com") {
+		if len(via) > 5 || r.URL.Scheme != "https" || (r.URL.Host != "api.github.com" && r.URL.Host != "github.com" && r.URL.Host != "release-assets.githubusercontent.com" && r.URL.Host != "objects.githubusercontent.com") {
 			return fmt.Errorf("源码下载重定向地址不允许")
 		}
 		return nil
@@ -254,24 +254,6 @@ func (s GitHubSource) tagCommit(ctx context.Context, tag string) (string, error)
 		}
 	}
 	return "", fmt.Errorf("发版标签嵌套过深")
-}
-
-func (s GitHubSource) Download(ctx context.Context, sha, destination string) error {
-	if !commitPattern.MatchString(sha) {
-		return fmt.Errorf("目标提交无效")
-	}
-	r, err := s.get(ctx, s.api()+"/repos/"+Repository+"/tarball/"+sha)
-	if err != nil {
-		return err
-	}
-	defer r.Body.Close()
-	if err = extractSource(io.LimitReader(r.Body, 128*1024*1024), destination); err != nil {
-		if errors.Is(err, errSourceNotArchive) {
-			return fmt.Errorf("源码解包失败：GitHub 返回了网页而非源码归档（请检查网络或代理是否拦截了下载）")
-		}
-		return fmt.Errorf("源码解包失败：%w", err)
-	}
-	return nil
 }
 
 func extractSource(reader io.Reader, destination string) error {

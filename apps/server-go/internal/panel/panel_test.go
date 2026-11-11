@@ -42,7 +42,7 @@ func (h *fakeHost) Preflight(ctx context.Context, old, next config.PanelNetwork)
 }
 func (h *fakeHost) Dispatch(context.Context, string, string) error   { h.dispatched++; return nil }
 func (h *fakeHost) ProbeWorker(context.Context, string) WorkerStatus { return WorkerDead }
-func (h *fakeHost) Build(context.Context, string, string, string) (string, error) {
+func (h *fakeHost) PrepareRelease(context.Context, string, string, string) (string, error) {
 	if h.failBuild {
 		return "", fmt.Errorf("构建失败")
 	}
@@ -335,14 +335,13 @@ func TestGitHubDownloadRejectsHTMLBody(t *testing.T) {
 	defer srv.Close()
 	s := GitHubSource{Client: srv.Client(), API: srv.URL}
 	err := s.Download(context.Background(), sha, t.TempDir())
-	if err == nil || !strings.Contains(err.Error(), "网页而非源码归档") {
+	if err == nil || !strings.Contains(err.Error(), "预编译版本信息无效") {
 		t.Fatalf("HTML 正文未被识别：%v", err)
 	}
 }
 
 func TestGitHubUsesRepositoryDefaultBranchAndPinnedSHA(t *testing.T) {
 	sha := strings.Repeat("b", 40)
-	archivePath := ""
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/repos/" + Repository:
@@ -350,8 +349,8 @@ func TestGitHubUsesRepositoryDefaultBranchAndPinnedSHA(t *testing.T) {
 		case "/repos/" + Repository + "/commits/release-track":
 			_, _ = w.Write([]byte(`{"sha":"` + sha + `","commit":{"message":"更新说明"}}`))
 		default:
-			archivePath = r.URL.Path
-			_, _ = w.Write(archive(t, "repo/package.json", tar.TypeReg))
+			t.Errorf("不应请求版本检查以外的地址：%s", r.URL.Path)
+			http.NotFound(w, r)
 		}
 	}))
 	defer srv.Close()
@@ -360,12 +359,7 @@ func TestGitHubUsesRepositoryDefaultBranchAndPinnedSHA(t *testing.T) {
 	if err != nil || u.Branch != "release-track" || u.TargetCommit != sha {
 		t.Fatalf("默认分支解析失败：%+v %v", u, err)
 	}
-	if err := s.Download(context.Background(), u.TargetCommit, t.TempDir()); err != nil {
-		t.Fatal(err)
-	}
-	if archivePath != "/repos/"+Repository+"/tarball/"+sha {
-		t.Fatal("下载未锁定提交")
-	}
+
 }
 func TestGitHubHistoryListsDefaultBranchCommits(t *testing.T) {
 	sha := strings.Repeat("c", 40)

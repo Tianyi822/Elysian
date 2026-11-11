@@ -4,9 +4,6 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
-	"context"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,7 +44,6 @@ func sourceArchiveWithPAX(t *testing.T, entries ...tar.Header) []byte {
 }
 
 func TestGitHubDownloadAcceptsPAXGlobalHeader(t *testing.T) {
-	sha := strings.Repeat("b", 40)
 	prefix := "Tianyi822-Elysian-bbbbbbb/"
 	body := sourceArchiveWithPAX(t,
 		tar.Header{Name: prefix, Typeflag: tar.TypeDir},
@@ -55,18 +51,9 @@ func TestGitHubDownloadAcceptsPAXGlobalHeader(t *testing.T) {
 		tar.Header{Name: prefix + "scripts/", Typeflag: tar.TypeDir},
 		tar.Header{Name: prefix + "scripts/build-release.sh", Typeflag: tar.TypeReg},
 	)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/repos/"+Repository+"/tarball/"+sha {
-			t.Errorf("下载未锁定提交：%s", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/gzip")
-		_, _ = w.Write(body)
-	}))
-	defer srv.Close()
 	root := t.TempDir()
-	source := GitHubSource{Client: srv.Client(), API: srv.URL}
-	if err := source.Download(context.Background(), sha, root); err != nil {
-		t.Fatalf("GitHub PAX 归档解包失败：%v", err)
+	if err := extractSource(bytes.NewReader(body), root); err != nil {
+		t.Fatal(err)
 	}
 	for _, name := range []string{"package.json", "scripts/build-release.sh"} {
 		content, err := os.ReadFile(filepath.Join(root, name))

@@ -50,7 +50,7 @@ func (h SystemHost) ObserveResources(ctx context.Context) (resourceObservation, 
 		out.Load[i] = v
 	}
 	diskObserved := false
-	for _, path := range []string{"/var/tmp", InstallRoot, buildHome, h.Store.Root} {
+	for _, path := range []string{"/var/tmp", InstallRoot, h.Store.Root} {
 		for {
 			if _, e := os.Stat(path); e == nil {
 				break

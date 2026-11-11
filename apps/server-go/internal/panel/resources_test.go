@@ -123,11 +123,11 @@ func TestResourcePreflightExpiresAndBindsTargetAndExactPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !preview.NeedsRelease || !preview.StopPanelRecommended || len(preview.Candidates) != 1 || !preview.Candidates[0].Recommended {
-		t.Fatalf("预检未返回实测建议：%+v", preview)
+	if preview.NeedsRelease || preview.StopPanelRecommended || len(preview.Candidates) != 0 || preview.Memory.RequiredBytes != requiredUpdateMemory || preview.BlockedReason != "" {
+		t.Fatalf("预编译更新不应沿用构建停机门槛：%+v", preview)
 	}
 	input.RequestID = "resource-request-one"
-	input.ResourcePlan = &ResourcePlan{PreflightID: preview.ID, Targets: []string{h.targets[0].ID}, StopPanel: true}
+	input.ResourcePlan = &ResourcePlan{PreflightID: preview.ID, Targets: []string{}, StopPanel: false}
 	one, err := m.Submit(context.Background(), "update", input, "")
 	if err != nil {
 		t.Fatal(err)
@@ -143,7 +143,7 @@ func TestResourcePreflightExpiresAndBindsTargetAndExactPlan(t *testing.T) {
 	if err != nil || two.ID != one.ID {
 		t.Fatalf("精确重试未绕过过期预检：%+v %v", two, err)
 	}
-	input.ResourcePlan.StopPanel = false
+	input.ResourcePlan.StopPanel = true
 	if _, err = m.Submit(context.Background(), "update", input, ""); err == nil {
 		t.Fatal("同编号换停止清单应拒绝")
 	}

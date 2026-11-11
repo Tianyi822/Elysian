@@ -20,7 +20,7 @@ func TestReleaseResolvesTagAndPinsDownloadAndHistory(t *testing.T) {
 	for _, annotated := range []bool{false, true} {
 		t.Run(map[bool]string{false: "轻量标签", true: "附注标签"}[annotated], func(t *testing.T) {
 			sha, tagSHA := strings.Repeat("d", 40), strings.Repeat("e", 40)
-			archived, historyRef := "", ""
+			historyRef := ""
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("User-Agent") != "Elysian-panel-updater" || r.Header.Get("Accept") != "application/vnd.github+json" {
 					t.Error("缺少 GitHub 请求头")
@@ -37,9 +37,6 @@ func TestReleaseResolvesTagAndPinsDownloadAndHistory(t *testing.T) {
 					_ = json.NewEncoder(w).Encode(map[string]any{"object": map[string]string{"type": kind, "sha": target}})
 				case "/repos/" + Repository + "/git/tags/" + tagSHA:
 					_ = json.NewEncoder(w).Encode(map[string]any{"object": map[string]string{"type": "commit", "sha": sha}})
-				case "/repos/" + Repository + "/tarball/" + sha:
-					archived = sha
-					_, _ = w.Write(archive(t, "repo/package.json", '0'))
 				case "/repos/" + Repository + "/commits":
 					historyRef = r.URL.Query().Get("sha")
 					_, _ = w.Write([]byte(`[]`))
@@ -54,14 +51,11 @@ func TestReleaseResolvesTagAndPinsDownloadAndHistory(t *testing.T) {
 			if err != nil || result.Channel != ChannelRelease || result.ReleaseTag != "stable/v1.2.0" || result.TargetCommit != sha || result.Branch != "" || !result.Available {
 				t.Fatalf("未锁定发版提交：%+v %v", result, err)
 			}
-			if err := source.Download(context.Background(), result.TargetCommit, t.TempDir()); err != nil {
-				t.Fatal(err)
-			}
 			if _, err := source.History(context.Background(), ChannelRelease, 50); err != nil {
 				t.Fatal(err)
 			}
-			if archived != sha || historyRef != sha {
-				t.Fatalf("下载或日志未锁定提交：%s %s", archived, historyRef)
+			if historyRef != sha {
+				t.Fatalf("日志未锁定提交：%s", historyRef)
 			}
 		})
 	}

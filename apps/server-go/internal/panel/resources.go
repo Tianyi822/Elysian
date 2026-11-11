@@ -7,14 +7,15 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"sort"
 	"time"
 
 	"elysian/server/internal/config"
 	"elysian/server/internal/shared"
 )
 
-const requiredBuildMemory = uint64(1536 << 20)
+const requiredBuildMemory = uint64(1536 << 20) // 仅用于旧构建任务与其恢复记录。
+const requiredUpdateMemory = uint64(128 << 20)
+const requiredUpdateDisk = uint64(1 << 30)
 const resourcePreflightTTL = 5 * time.Minute
 
 type ResourceMemory struct {
@@ -83,6 +84,7 @@ type resourceHost interface {
 }
 type resourcePreflightRecord struct {
 	ResourcePreflight
+	Delivery     string           `json:"delivery,omitempty"`
 	Source       UpdateSource     `json:"source"`
 	Channel      UpdateChannel    `json:"channel"`
 	TargetCommit string           `json:"targetCommit"`
@@ -144,43 +146,17 @@ func (m Manager) PreflightUpdate(ctx context.Context, input submitInput) (Resour
 	if err != nil {
 		return out, err
 	}
-	targets, err := host.ResourceCandidates(ctx)
-	if err != nil {
-		return out, err
-	}
 	id, err := newID()
 	if err != nil {
 		return out, err
 	}
-	out = ResourcePreflight{ID: id, ExpiresAt: time.Now().UTC().Add(resourcePreflightTTL), Memory: observed.Memory, Load: observed.Load, ActiveAgentRuns: observed.ActiveAgentRuns, Candidates: []ResourceCandidate{}, NeedsRelease: observed.Memory.AvailableBytes < requiredBuildMemory}
+	observed.Memory.RequiredBytes = requiredUpdateMemory
+	out = ResourcePreflight{ID: id, ExpiresAt: time.Now().UTC().Add(resourcePreflightTTL), Memory: observed.Memory, Load: observed.Load, ActiveAgentRuns: observed.ActiveAgentRuns, Candidates: []ResourceCandidate{}}
 	out.Disk.AvailableBytes = observed.DiskAvailable
-	out.StopPanelRecommended = out.NeedsRelease
-	sort.SliceStable(targets, func(i, j int) bool {
-		a, b := targets[i].MemoryBytes, targets[j].MemoryBytes
-		if a == nil {
-			return false
-		}
-		if b == nil {
-			return true
-		}
-		return *a > *b
-	})
-	shortfall := uint64(0)
-	if out.NeedsRelease {
-		shortfall = requiredBuildMemory - out.Memory.AvailableBytes
+	if observed.Memory.AvailableBytes < requiredUpdateMemory || observed.DiskAvailable < requiredUpdateDisk {
+		out.BlockedReason = "预编译更新需要至少 128 MiB 可用内存和 1 GiB 可用磁盘，请释放资源后重新检查；不会停止其他业务"
 	}
-	for i := range targets {
-		if shortfall > 0 && targets[i].DisabledReason == "" && targets[i].MemoryBytes != nil {
-			targets[i].Recommended = true
-			if *targets[i].MemoryBytes >= shortfall {
-				shortfall = 0
-			} else {
-				shortfall -= *targets[i].MemoryBytes
-			}
-		}
-		out.Candidates = append(out.Candidates, targets[i].ResourceCandidate)
-	}
-	record := resourcePreflightRecord{ResourcePreflight: out, Source: input.Source, Channel: input.Channel, TargetCommit: input.TargetCommit, ReleaseTag: input.ReleaseTag, Targets: targets}
+	record := resourcePreflightRecord{ResourcePreflight: out, Delivery: PrecompiledDelivery, Source: input.Source, Channel: input.Channel, TargetCommit: input.TargetCommit, ReleaseTag: input.ReleaseTag}
 	if err = os.MkdirAll(filepath.Dir(m.Store.resourcePreflightPath(id)), 0700); err != nil {
 		return out, err
 	}
@@ -205,7 +181,7 @@ func (m Manager) resourceTargets(input submitInput) ([]resourceTarget, error) {
 		return nil, shared.InvalidRequest("资源预检已失效，请重新检查并确认停止清单")
 	}
 	var p resourcePreflightRecord
-	if json.Unmarshal(b, &p) != nil || p.ID != input.ResourcePlan.PreflightID || !time.Now().Before(p.ExpiresAt) || p.Source != input.Source || p.Channel != input.Channel || p.TargetCommit != input.TargetCommit || p.ReleaseTag != input.ReleaseTag {
+	if json.Unmarshal(b, &p) != nil || p.ID != input.ResourcePlan.PreflightID || p.Delivery != PrecompiledDelivery || p.BlockedReason != "" || !time.Now().Before(p.ExpiresAt) || p.Source != input.Source || p.Channel != input.Channel || p.TargetCommit != input.TargetCommit || p.ReleaseTag != input.ReleaseTag {
 		return nil, shared.InvalidRequest("资源预检已失效或更新目标已变化，请重新检查")
 	}
 	if !p.NeedsRelease && (len(input.ResourcePlan.Targets) > 0 || input.ResourcePlan.StopPanel) {

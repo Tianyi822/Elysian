@@ -15,7 +15,13 @@ import (
 
 func upgradeResourcesSummary(r client.PanelUpdatePreflight) string {
 	mib := func(v uint64) uint64 { return v / 1024 / 1024 }
-	return fmt.Sprintf("可用内存：%d MiB / 构建门槛 %d MiB（总内存 %d MiB）\nswap：可用 %d / %d MiB（不计入门槛）\n磁盘可用：%d MiB\n负载：%.2f / %.2f / %.2f\n非终态 Agent 运行：%d\n更新后恢复本次临时停止的业务；Agent 保留中断记录，由用户手动继续。", mib(r.Memory.AvailableBytes), mib(r.Memory.RequiredBytes), mib(r.Memory.TotalBytes), mib(r.Memory.SwapFreeBytes), mib(r.Memory.SwapTotalBytes), mib(r.Disk.AvailableBytes), r.Load[0], r.Load[1], r.Load[2], r.ActiveAgentRuns)
+	summary := fmt.Sprintf("可用内存：%d MiB / 更新门槛 %d MiB（总内存 %d MiB）\nswap：可用 %d / %d MiB（不计入门槛）\n磁盘可用：%d MiB\n负载：%.2f / %.2f / %.2f\n非终态 Agent 运行：%d", mib(r.Memory.AvailableBytes), mib(r.Memory.RequiredBytes), mib(r.Memory.TotalBytes), mib(r.Memory.SwapFreeBytes), mib(r.Memory.SwapTotalBytes), mib(r.Disk.AvailableBytes), r.Load[0], r.Load[1], r.Load[2], r.ActiveAgentRuns)
+	if r.NeedsRelease {
+		summary += "\n更新后恢复本次临时停止的业务；Agent 保留中断记录，由用户手动继续。"
+	} else {
+		summary += "\n资源准备期间不提前停止业务，准备完成后短暂重启面板。"
+	}
+	return summary
 }
 
 func selectUpgradeResources(r client.PanelUpdatePreflight, opts upgradeOptions, stdin *os.File, stdout io.Writer, interactive bool) (*client.PanelResourcePlan, int, error) {

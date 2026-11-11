@@ -30,7 +30,7 @@ func (f *fakeHost) ProbeWorker(context.Context, string) domainpanel.WorkerStatus
 	return domainpanel.WorkerDead
 }
 
-func (f *fakeHost) Build(context.Context, string, string, string) (string, error) {
+func (f *fakeHost) PrepareRelease(context.Context, string, string, string) (string, error) {
 	return "", nil
 }
 

@@ -276,48 +276,6 @@ func (h SystemHost) containerPorts(ctx context.Context, p config.PanelNetwork) e
 	return nil
 }
 
-func (h SystemHost) Build(ctx context.Context, source, sha, id string) (string, error) {
-	started := time.Now()
-	defer func() {
-		h.Store.appendLog(id, fmt.Sprintf("源码构建用时：%.1f 秒\n", time.Since(started).Seconds()))
-	}()
-	uid, gid, err := buildAccountIDs()
-	if err != nil {
-		return "", err
-	}
-	cache, initialized, err := prepareBuildCache(buildHome, uid, gid)
-	if err != nil {
-		return "", err
-	}
-	if initialized {
-		h.Store.appendLog(id, "已初始化持久构建缓存目录；缺少的依赖将在构建时下载\n")
-	}
-	h.Store.appendLog(id, fmt.Sprintf("构建缓存：Bun=%s；Go 模块=%s；Go 编译=%s\n", cache.Bun, cache.Modules, cache.Go))
-	stage := filepath.Dir(source)
-	if _, err := h.command(ctx, "chown", "-R", "elysian-build:elysian-build", stage); err != nil {
-		return "", err
-	}
-	output := filepath.Join(stage, "artifact")
-	c := releaseBuildCommand(ctx, stage, source, output, sha, cache)
-	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	c.Cancel = func() error { return syscall.Kill(-c.Process.Pid, syscall.SIGKILL) }
-	c.WaitDelay = 2 * time.Second
-	c.Stdout = logWriter{h.Store, id}
-	c.Stderr = c.Stdout
-	if err := c.Run(); err != nil {
-		return "", fmt.Errorf("源码构建失败：%w（详见任务日志）", err)
-	}
-	release := filepath.Join(InstallRoot, "releases", sha+"-"+id)
-	if err := os.MkdirAll(release, 0755); err != nil {
-		return "", err
-	}
-	binary := filepath.Join(release, "elysian")
-	if err := copyRegular(filepath.Join(output, "elysian"), binary, 0755); err != nil {
-		return "", err
-	}
-	return binary, nil
-}
-
 func (h SystemHost) Healthy(ctx context.Context, ports config.PanelNetwork, commit string) error {
 	deadline := time.NewTimer(60 * time.Second)
 	defer deadline.Stop()

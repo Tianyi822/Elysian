@@ -32,6 +32,7 @@ type PanelTask struct {
 func (t PanelTask) Active() bool { return t.State == "queued" || t.State == "running" }
 
 type PanelInfo struct {
+	UpdateDelivery           string     `json:"updateDelivery,omitempty"`
 	ResourcePreflightVersion int        `json:"resourcePreflightVersion,omitempty"`
 	Commit                   string     `json:"commit"`
 	BuildTime                string     `json:"buildTime"`

@@ -32,6 +32,7 @@ type Manager struct {
 	Executable string
 }
 type Info struct {
+	UpdateDelivery           string              `json:"updateDelivery"`
 	ResourcePreflightVersion int                 `json:"resourcePreflightVersion,omitempty"`
 	Ports                    config.PanelNetwork `json:"ports"`
 	Commit                   string              `json:"commit"`
@@ -71,7 +72,7 @@ func probeWorker(ctx context.Context, host Host, id string) WorkerStatus {
 }
 
 func (m Manager) Info() (Info, error) {
-	i := Info{Ports: m.Ports, Commit: Commit, BuildTime: BuildTime, Repository: Repository, Available: m.Enabled && m.Host.Available()}
+	i := Info{UpdateDelivery: PrecompiledDelivery, Ports: m.Ports, Commit: Commit, BuildTime: BuildTime, Repository: Repository, Available: m.Enabled && m.Host.Available()}
 	if _, ok := m.Host.(resourceHost); ok {
 		i.ResourcePreflightVersion = 1
 	}
@@ -211,6 +212,15 @@ func (m Manager) CheckFrom(ctx context.Context, channel UpdateChannel, source Up
 		return Update{}, fmt.Errorf("更新检查结果来源不是 GitHub，请重新检查更新")
 	}
 	u.Source = SourceGitHub
+	if u.Available {
+		if verifier, ok := selected.(interface {
+			VerifyArtifact(context.Context, string) error
+		}); ok {
+			if err = verifier.VerifyArtifact(ctx, u.TargetCommit); err != nil {
+				return Update{}, err
+			}
+		}
+	}
 	err = config.AtomicJSON(m.Store.updateCheckPath(channel, source), u)
 	return u, err
 }
@@ -290,6 +300,7 @@ func (m Manager) Submit(ctx context.Context, kind string, input submitInput, ori
 			if kind == "update" {
 				r.UpdateChannel = input.Channel
 				r.UpdateSource = SourceGitHub
+				r.UpdateDelivery = PrecompiledDelivery
 				r.ReleaseTag = input.ReleaseTag
 			}
 			r.Worker = filepath.Join(m.Store.tasksDir(), id+".worker")

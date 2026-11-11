@@ -15,6 +15,15 @@ function report(): PanelUpdatePreflight { return {
   needsRelease: true, stopPanelRecommended: true,
 } }
 describe('更新资源确认', () => {
+  it('预编译更新隐藏停机选项，并提交无停机范围的资源计划', async () => {
+    const preflight = { ...report(), needsRelease: false, stopPanelRecommended: false, candidates: [], memory: { ...report().memory, availableBytes: 1202 * 1024 ** 2, requiredBytes: 128 * 1024 ** 2 } }, onConfirm = vi.fn()
+    render(<PanelResourcePreflightDialog precompiled target={target} adapter={{ ...mockPanelAdapter, preflightUpdate: async () => preflight }} onConfirm={onConfirm} onClose={() => {}} />)
+    expect(await screen.findByText('1202 MiB / 128 MiB')).toBeInTheDocument()
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '确认更新资源' })).toBeInTheDocument()
+    await userEvent.setup().click(screen.getByRole('button', { name: '确认并更新' }))
+    expect(onConfirm).toHaveBeenCalledExactlyOnceWith({ preflightId: preflight.id, targets: [], stopPanel: false })
+  })
   it('展示实测与停机影响，只提交管理员确认后的精确清单', async () => {
     const preflight = report(), onConfirm = vi.fn(), onClose = vi.fn()
     const read = vi.fn(async () => preflight)

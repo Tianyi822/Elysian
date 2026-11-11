@@ -229,8 +229,8 @@ func (w Worker) execute(ctx context.Context, r *taskRecord) error {
 		if err = os.MkdirAll(filepath.Dir(stage), 0711); err != nil {
 			return err
 		}
-		source := filepath.Join(stage, "source")
-		if err = w.phase(r, "downloading"); err != nil {
+		source := filepath.Join(stage, "release")
+		if err = w.phase(r, "downloading-release"); err != nil {
 			return err
 		}
 		downloadCtx, cancelDownload := context.WithTimeout(ctx, sourceDownloadAttemptTimeout)
@@ -245,12 +245,12 @@ func (w Worker) execute(ctx context.Context, r *taskRecord) error {
 		if err != nil {
 			return err
 		}
-		if err = w.phase(r, "building"); err != nil {
+		if err = w.phase(r, "preparing-release"); err != nil {
 			return err
 		}
-		buildCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+		buildCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 		defer cancel()
-		r.Candidate, err = w.Host.Build(buildCtx, source, r.TargetCommit, r.ID)
+		r.Candidate, err = w.Host.PrepareRelease(buildCtx, source, r.TargetCommit, r.ID)
 		if err != nil {
 			return err
 		}

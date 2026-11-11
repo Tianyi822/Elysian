@@ -114,7 +114,7 @@ func printCommandHelp(w io.Writer, command string) {
 		text = "Elysian CLI（ely）— 服务器本地终端\n\n用法：\n  ely                    交互主菜单\n  ely agent              直接进入 Agent 终端\n  ely resetpwd           重置密码（生产目录：sudo ely resetpwd）\n  ely upgrade            通过 GitHub 更新面板，选择版本策略\n  ely help [命令]        查看全部命令或指定命令的参数\n  ely --help, -h         显示本帮助\n  ely --version          显示 CLI 版本\n\n示例：\n  ely help upgrade\n  ely upgrade --source github --channel release --yes\n\nAgent 和更新复用 CLI 登录。兼容脚本入口：elysian resetpwd、elysian panel-ports。\n"
 	}
 	if command == "upgrade" {
-		text += "\n更新资源预检：\n  --stop-container <完整ID>  明确允许临时停止此容器，可重复\n  --stop-service <unit.service> 明确允许临时停止此服务，可重复\n  --stop-panel              允许构建前停止面板及 Agent，会暂时离线\n\n内存不足时先展示停机清单；--yes 不授权停止任何额外对象。更新结束恢复本次停止的业务，Agent 由用户手动继续。\n"
+		text += "\n预编译更新要求 128 MiB 可用内存和 1 GiB 可用磁盘；准备期间不提前停止业务，资源不足时释放资源后重试。\n旧更新器兼容参数（预编译更新不接受停机清单）：\n  --stop-container <完整ID>   明确允许旧更新器临时停止此容器，可重复\n  --stop-service <unit.service> 明确允许旧更新器临时停止此服务，可重复\n  --stop-panel               允许旧更新器构建前停止面板及 Agent\n\n--yes 不授权停止额外对象。旧版首次迁移请运行 GitHub 的 scripts/install-release.sh。\n"
 	}
 	fmt.Fprint(w, text)
 }

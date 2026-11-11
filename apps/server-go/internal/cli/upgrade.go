@@ -227,7 +227,13 @@ func runUpgrade(opts upgradeOptions, stdin *os.File, stdout, stderr io.Writer, d
 		if update.ReleaseTag != "" {
 			summary += "\n正式发版：" + termui.Safe(update.ReleaseTag)
 		}
-		summary += "\n\n" + termui.Safe(update.Message) + "\n\n更新会构建新版本并重启面板，失败按维护机制恢复原版本。"
+		summary += "\n\n" + termui.Safe(update.Message)
+		if info.UpdateDelivery == "precompiled/v1" {
+			summary += "\n\n更新从 GitHub 下载并校验预编译安装包，准备完成后短暂重启；服务器不编译、不提前停止其他业务。失败恢复原版本。"
+		} else {
+			summary += "\n\n当前更新器仍在服务器构建；首次迁移建议运行 GitHub 预编译安装脚本，失败按维护机制恢复原版本。"
+		}
+
 		var resourcePlan *client.PanelResourcePlan
 		if info.ResourcePreflightVersion > 0 {
 			report, preflightErr := api.PreflightPanelUpdate(ctx, client.PanelUpdateInput{Source: opts.Source, Channel: opts.Channel, TargetCommit: update.TargetCommit, ReleaseTag: update.ReleaseTag})
@@ -511,7 +517,7 @@ func taskStateLabel(state string) string {
 	return state
 }
 func taskPhaseLabel(phase string) string {
-	labels := map[string]string{"checking": "检查部署环境", "downloading": "下载源码", "building": "构建新版本", "firewall": "调整防火墙", "stopping": "停止面板", "activating": "切换配置与版本", "verifying": "检查服务健康", "finished": "已结束", "preparing-resources": "准备更新资源", "restoring-resources": "恢复临时停止的业务"}
+	labels := map[string]string{"downloading-release": "下载安装包", "preparing-release": "校验并准备新版本", "checking": "检查部署环境", "downloading": "下载源码", "building": "构建新版本", "firewall": "调整防火墙", "stopping": "停止面板", "activating": "切换配置与版本", "verifying": "检查服务健康", "finished": "已结束", "preparing-resources": "准备更新资源", "restoring-resources": "恢复临时停止的业务"}
 	if label := labels[phase]; label != "" {
 		return label
 	}

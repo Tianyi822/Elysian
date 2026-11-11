@@ -201,7 +201,7 @@ export function PanelMaintenanceSettings() {
       </form>
     </section>
     <section aria-label="面板更新" className="panel-surface p-5">
-      <div className="flex items-center gap-1.5"><h2 className="text-sm font-medium text-fg">面板更新</h2><SectionHelp label="面板更新说明">先下载并编译新版本，成功后重启。更新失败会恢复原版本，保留面板数据。资源不足时，先确认停机清单；提前停止面板后，构建期间页面暂时不可访问。</SectionHelp></div>
+      <div className="flex items-center gap-1.5"><h2 className="text-sm font-medium text-fg">面板更新</h2><SectionHelp label="面板更新说明">{info?.updateDelivery === 'precompiled/v1' ? '从 GitHub 下载并校验预编译安装包，准备完成后短暂重启。服务器无需 Go 或 Bun，不提前停止其他业务；更新失败会恢复原版本并保留数据。' : '先下载并编译新版本，成功后重启。更新失败会恢复原版本，保留面板数据。资源不足时，先确认停机清单；提前停止面板后，构建期间页面暂时不可访问。'}</SectionHelp></div>
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <ChipGroup
           ariaLabel="更新策略"
@@ -260,7 +260,7 @@ export function PanelMaintenanceSettings() {
       {hasMore ? <p role="status" className="mt-3 text-xs text-fg-muted">正在读取最新日志…</p> : null}
     </section> : null}
     <PanelChangelogDialog open={changelogOpen} channel={channel} currentCommit={info?.commit ?? ''} onClose={() => setChangelogOpen(false)} />
-    {resourceTarget ? <PanelResourcePreflightDialog target={resourceTarget} adapter={gateway.panel} onClose={() => setResourceTarget(null)} onConfirm={resourcePlan => {
+    {resourceTarget ? <PanelResourcePreflightDialog target={resourceTarget} adapter={gateway.panel} precompiled={info?.updateDelivery === 'precompiled/v1'} onClose={() => setResourceTarget(null)} onConfirm={resourcePlan => {
       const target = { ...resourceTarget, resourcePlan }
       setResourceTarget(null)
       void submit(`update:${target.source}:${target.channel}:${target.releaseTag}:${target.targetCommit}:${JSON.stringify(resourcePlan)}`, { kind: 'update', input: target })

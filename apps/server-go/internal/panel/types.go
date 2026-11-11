@@ -77,6 +77,7 @@ type Task struct {
 	NewPorts        config.PanelNetwork `json:"newPorts"`
 	TargetCommit    string              `json:"targetCommit"`
 	UpdateChannel   UpdateChannel       `json:"updateChannel,omitempty"`
+	UpdateDelivery  string              `json:"updateDelivery,omitempty"`
 	UpdateSource    UpdateSource        `json:"updateSource,omitempty"`
 	ReleaseTag      string              `json:"releaseTag,omitempty"`
 	Error           string              `json:"error"`
@@ -142,7 +143,7 @@ type Host interface {
 	Preflight(context.Context, config.PanelNetwork, config.PanelNetwork) error
 	Dispatch(context.Context, string, string) error
 	ProbeWorker(context.Context, string) WorkerStatus
-	Build(context.Context, string, string, string) (string, error)
+	PrepareRelease(context.Context, string, string, string) (string, error)
 	Stop(context.Context) error
 	Start(context.Context) error
 	Healthy(context.Context, config.PanelNetwork, string) error
