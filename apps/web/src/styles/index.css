@@ -746,6 +746,7 @@ textarea {
 /* 登录密码仍由文本框原生编辑；独立显示层与其字体、字距、内边距一致。 */
 .login-password-input,
 .login-password-mask {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-kerning: none;
   font-variant-ligatures: none;
   letter-spacing: 0;
