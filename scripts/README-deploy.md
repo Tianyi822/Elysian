@@ -33,7 +33,9 @@ sudo env ELYSIAN_RELEASE_SOURCE=gitee bash install-release.sh
 
 [.workflow/release.yml](../.workflow/release.yml) 使用 Gitee Go 的 `version: 1.0`、`triggers.push.tags.prefix: [v]` 与 `stages/steps`，与 GitHub 的 `.github/workflows` 相互独立。x64 Ubuntu GCC 云端任务使用经官方摘要校验的 Go 1.23.12、Bun 1.4.2，Go／npm 依赖走国内镜像，交叉编译 Linux amd64／arm64；ARM64 两个静态 Go 程序通过 QEMU 运行验证，GitHub 两架构继续原生安装准备冒烟。Bun 仅用于前端构建和打包，不编入辅助程序。
 
-首次设置：在 [Gitee 仓库](https://gitee.com/Chentyit/Elysian) 开通 Gitee Go（账号需已绑定手机号），从仓库现有 `.workflow/release.yml` 导入流水线，启用自动触发并设置串行执行，避免同一提交并发发布。将具有本仓库发布权限的 Gitee `projects` Token 安全注入为 `ELYSIAN_GITEE_TOKEN`，不得将值填入 YAML、Git URL、命令行或提交记录。若账号配置只支持会入库的普通明文参数，应先配置平台安全凭据注入，不能把 Token 当普通参数保存。手机号验证和凭据录入由账号持有人在 Gitee 完成。导入优先复用已有 YAML；若平台生成初始化提交，先将该提交合并回本地及 GitHub，避免推送冲突。
+首次设置：在 [Gitee 仓库](https://gitee.com/Chentyit/Elysian) 开通 Gitee Go（账号需已绑定手机号），从仓库现有 `.workflow/release.yml` 导入流水线，启用自动触发并设置串行执行，避免同一提交并发发布。将具有本仓库发布权限的 Gitee `projects` Token 保存为密文通用变量 `ELYSIAN_GITEE_TOKEN`，并保留 YAML 中 `ref_variable` 对该变量名的关联；不得将值填入 YAML、Git URL、命令行或提交记录。若账号配置只支持会入库的普通明文参数，应先配置平台安全凭据注入，不能把 Token 当普通参数保存。手机号验证和凭据录入由账号持有人在 Gitee 完成。导入优先复用已有 YAML；若平台生成初始化提交，先将该提交合并回本地及 GitHub，避免推送冲突。
+
+Gitee 脚本在首次 Go 测试前将国内镜像配置导出为 Go 实际读取的 `GOPROXY`，后续构建沿用相同配置，日志会打印生效的代理地址；`go.sum` 与 Go 校验数据库保持启用。修改发布脚本后须在新提交上创建新 `v*` 标签，重跑旧标签仍使用旧提交中的脚本。
 
 构建、程序校验和双架构打包全部成功后，流水线创建固定 `build-<完整SHA>` 预发布包，上传两个安装包与 SHA256 文件，最后上传 `release-index.json`。索引 schema 为 `elysian-release-index/v1`，包含统一项目身份 `Tianyi822/Elysian`、完整提交、`linux` 和两个架构包的名称、大小与 SHA256。没有有效索引或缺少任一架构的版本不可安装。`v*` 正式 Release 只列出固定包的直接下载链接，不重复上传附件。下载仅允许 HTTPS 的 `gitee.com` 与其官方附件域名 `foruda.gitee.com`。
 

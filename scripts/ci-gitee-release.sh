@@ -31,8 +31,11 @@ fetch_checked https://registry.npmmirror.com/-/binary/bun/bun-v1.4.2/bun-linux-x
 unzip -q "$tools_dir/bun.zip" -d "$tools_dir"
 export PATH="$tools_dir/go/bin:$tools_dir/bun-linux-x64:$PATH"
 export ELYSIAN_GOPROXY='https://goproxy.cn|https://mirrors.aliyun.com/goproxy/|direct'
+# The tests below invoke Go directly, before build-release.sh maps ELYSIAN_GOPROXY.
+export GOPROXY="$ELYSIAN_GOPROXY"
 export ELYSIAN_BUN_REGISTRY=https://registry.npmmirror.com
 export GOTOOLCHAIN=local
+printf 'Go 模块代理：%s\n' "$GOPROXY"
 output="$source_dir/out/gitee-release"
 mkdir -p "$output"
 (cd apps/server-go && go test ./internal/platformhelper ./internal/panel ./internal/cli/...)
