@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """显式合并旧 Gitee 双发行版；核验正式附件后才移除对应预览发行版。"""
+import base64
 import importlib.util
 import os
 import re
@@ -12,6 +13,16 @@ from pathlib import Path
 spec = importlib.util.spec_from_file_location('publish_gitee', Path(__file__).with_name('publish-gitee.py'))
 publish = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(publish)
+
+
+def verify_downloader():
+    address = f'https://gitee.com/api/v5/repos/{publish.REPO}/contents/scripts/release-download.py?ref=main'
+    metadata = publish.download.metadata(address)
+    if metadata.get('encoding') != 'base64':
+        raise ValueError('Gitee main 下载器内容编码无效，拒绝迁移')
+    remote = base64.b64decode(''.join(metadata.get('content', '').split()), validate=True)
+    if remote != Path(__file__).with_name('release-download.py').read_bytes():
+        raise ValueError('Gitee main 尚未部署同版本下载器，拒绝迁移')
 
 
 def migrate(tag, commit, publisher):
@@ -67,11 +78,7 @@ if __name__ == '__main__':
     try:
         tag, commit = sys.argv[1:]
         # Do not break the public bootstrap before its new downloader is deployed.
-        address = f'https://gitee.com/{publish.REPO}/raw/main/scripts/release-download.py'
-        with publish.download.get(address) as response:
-            remote = response.read((1 << 20) + 1)
-        if remote != Path(__file__).with_name('release-download.py').read_bytes():
-            raise ValueError('Gitee main 尚未部署同版本下载器，拒绝迁移')
+        verify_downloader()
         migrate(tag, commit, publish.Publisher(os.environ.get('ELYSIAN_GITEE_TOKEN', '')))
         print(f'Gitee 单正式发行版已核验：{tag} / {commit}')
     except Exception as error:

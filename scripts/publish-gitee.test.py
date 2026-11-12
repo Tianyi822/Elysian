@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Offline Gitee publish/retry/quota tests. No credentials or network."""
+import base64
 import importlib.util
 import io
 import json
@@ -190,6 +191,13 @@ class PublishTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.run_publish()
         self.assertEqual(self.publisher.uploads, 5)
+
+    def test_migration_requires_same_downloader_on_main(self):
+        encoded = base64.b64encode(Path(__file__).with_name('release-download.py').read_bytes()).decode()
+        with patch.object(migration.publish.download, 'metadata', return_value=dict(encoding='base64', content=encoded)):
+            migration.verify_downloader()
+        with patch.object(migration.publish.download, 'metadata', return_value=dict(encoding='base64', content='b2xk')), self.assertRaises(ValueError):
+            migration.verify_downloader()
 
     def legacy_release(self):
         self.run_publish()
