@@ -830,10 +830,11 @@ export function createHttpContainersAdapter(
       return parseContainerPolicyResponse(await requestJson(`${baseUrl}/policy`))
     },
 
+    terminalMode: terminal.terminalMode,
     connectTerminal: terminal.connectTerminal,
     sendTerminalInput: terminal.sendTerminalInput,
-    interruptTerminal: terminal.interruptTerminal,
-    completeTerminal: terminal.completeTerminal,
+    resizeTerminal: terminal.resizeTerminal,
+    acknowledgeTerminal: terminal.acknowledgeTerminal,
     disconnectTerminal: terminal.disconnectTerminal,
     cancelTerminalConnect: terminal.cancelTerminalConnect,
 

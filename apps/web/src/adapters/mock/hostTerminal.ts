@@ -1,8 +1,3 @@
-import {
-  completeWithPools,
-  formatTerminalColumns,
-  type TerminalCompletion,
-} from '../../components/terminal/terminalSession'
 import type { MockCommandResult } from '../../contracts/adapters'
 
 /**
@@ -52,24 +47,10 @@ const UPTIME_LINE = 'up 42 days,  4:18,  1 user,  load average: 0.12 0.18 0.21'
 
 const ID_LINE = `uid=1000(${HOST_USER}) gid=1000(${HOST_USER}) groups=1000(${HOST_USER}),27(sudo)`
 
-/**
- * 光标所在词的前缀补全；无可补内容时原样返回。
- * 收敛算法在 terminalSession 的 completeWithPools（与真实 WS 适配器共用），
- * 这里只决定词表：首词用命令集，行中词按前一命令查参数候选。
- */
-export function completeHostTerminalCommand(draft: string, cursor: number): TerminalCompletion {
-  const before = draft.slice(0, cursor)
-  const tokenStart = cursor - ((/(\S*)$/.exec(before)?.[0] ?? '').length)
-  const previousWord = before
-    .slice(0, tokenStart)
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .pop()
-  return completeWithPools(draft, cursor, {
-    commands: HOST_TERMINAL_COMMANDS,
-    words: previousWord ? (ARG_CANDIDATES[previousWord] ?? []) : [],
-  })
+/** 只返回候选词；编辑与共同前缀收敛交给第三方 REPL。 */
+export function hostTerminalCompletions(input: string): readonly string[] {
+  const words = input.trimStart().split(/\s+/)
+  return words.length <= 1 ? HOST_TERMINAL_COMMANDS : (ARG_CANDIDATES[words[0] ?? ''] ?? [])
 }
 
 export function execHostCommand(command: string): HostCommandResult {
@@ -83,7 +64,7 @@ export function execHostCommand(command: string): HostCommandResult {
     case 'pwd':
       return { lines: [`/home/${HOST_USER}`] }
     case 'ls':
-      return { lines: formatTerminalColumns(LS_ENTRIES) }
+      return { lines: [LS_ENTRIES.join('  ')] }
     case 'id':
       return { lines: [ID_LINE] }
     case 'uname -a':

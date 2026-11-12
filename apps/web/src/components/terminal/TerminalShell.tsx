@@ -1,48 +1,16 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { useEffect, useRef, useState } from 'react'
-import { TerminalViewport } from './TerminalViewport'
-import type { TerminalCompletion, TerminalLine } from './terminalSession'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 
-/**
- * 终端交互内核的弹窗壳：外部点击与 Esc 一律拦截，唯一关闭路径是
- * 关闭按钮 → 确认对话框 → 确认关闭。输出区用语义令牌配色。
- *
- * 交互内核在 TerminalViewport；领域差异全部经 props 注入。
- */
-
+/** 弹窗只管理布局和关闭确认；终端内容由第三方组件持有。 */
 export type TerminalShellProps = {
-  /** Dialog.Title（sr-only）：弹窗的无障碍名称。 */
   title: string
-  /** 顶栏的演示标注徽章文案。 */
   banner: string
-  /** 顶栏的主体名称（会话面向的对象，如服务名、连接名）。 */
   subject: string
-  /** 当前提示符：活动行用它；已提交的 input 行若自带快照则不被它覆盖。 */
-  prompt: string
-  /** 会话标识：变化时重置草稿与历史游标。 */
-  sessionKey: string
-  lines: readonly TerminalLine[]
-  history: readonly string[]
-  /** 提交裸命令（未 trim），引擎自行决定取舍。 */
-  onSubmit: (command: string) => void
-  complete: (draft: string, cursor: number) => TerminalCompletion
-  onAppendOutput: (lines: readonly string[]) => void
-  onClear: () => void
+  children: ReactNode
   onClose: () => void
-  /** Ctrl+C 的领域侧通道；不传时仅本地 ^C 外观（如 SQL 弹窗）。 */
-  onInterrupt?: () => void
   interactive?: boolean
-  /** 等待服务端确认命令结束时隐藏 Shell 提示符，保留前台输入与中断。 */
-  awaitingPrompt?: boolean
-  /** 日志区字号（px），由弹窗持有；缺省为终端基准字号。 */
-  fontSize?: number
-  /**
-   * Ctrl/Cmd + 滚轮的字号缩放通道（正值放大、负值缩小）。
-   * 可选：不传则滚轮保持原生滚动（如 SQL 弹窗）。
-   */
-  onFontZoom?: (deltaPx: number) => void
   labels: {
-    input: string
+    input?: string
     close: string
     confirmTitle: string
     confirmDescription: string
@@ -105,102 +73,43 @@ export function ConfirmCloseDialog({
   )
 }
 
-export function TerminalShell({
-  title,
-  banner,
-  subject,
-  prompt,
-  sessionKey,
-  lines,
-  history,
-  onSubmit,
-  complete,
-  onAppendOutput,
-  onClear,
-  onClose,
-  onInterrupt,
-  interactive = true,
-  awaitingPrompt = false,
-  fontSize,
-  onFontZoom,
-  labels,
-}: TerminalShellProps) {
+export function TerminalShell({ title, banner, subject, children, onClose, interactive = true, labels }: TerminalShellProps) {
   const [confirmOpen, setConfirmOpen] = useState(false)
-  const contentRef = useRef<HTMLDivElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
-
-  useEffect(() => {
-    if (!interactive) closeRef.current?.focus()
-  }, [interactive])
+  useEffect(() => { if (!interactive) closeRef.current?.focus() }, [interactive])
 
   return (
-    <Dialog.Root open onOpenChange={() => {/* 外部来源全部忽略，只能走关闭确认 */}}>
+    <Dialog.Root open onOpenChange={() => {}}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay-strong" />
         <Dialog.Content
-          ref={contentRef}
           aria-describedby={undefined}
           onEscapeKeyDown={(event) => event.preventDefault()}
           onPointerDownOutside={(event) => event.preventDefault()}
           onInteractOutside={(event) => event.preventDefault()}
           onOpenAutoFocus={(event) => {
-            if (!interactive) {
-              event.preventDefault()
-              closeRef.current?.focus()
-            }
+            // Third-party terminal inputs initialize asynchronously and claim focus themselves.
+            event.preventDefault()
+            if (!interactive) closeRef.current?.focus()
           }}
           className="fixed left-1/2 top-1/2 z-[55] flex h-[min(44rem,calc(100vh-3rem))] w-[min(72rem,calc(100vw-3rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden panel-surface shadow-2xl focus-visible:outline-none"
         >
           <Dialog.Title className="sr-only">{title}</Dialog.Title>
           <div className="shell-terminal-dialog-header flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
-            <div className="flex items-center gap-2 text-xs">
-              <span className="rounded bg-warning/15 px-1.5 py-0.5 font-medium text-warning">
-                {banner}
-              </span>
-              <span className="text-fg-muted">{subject}</span>
+            <div className="flex min-w-0 items-center gap-2 text-xs">
+              <span className="shrink-0 rounded bg-warning/15 px-1.5 py-0.5 font-medium text-warning">{banner}</span>
+              <span className="truncate text-fg-muted">{subject}</span>
             </div>
-            <button
-              ref={closeRef}
-              type="button"
-              onClick={() => setConfirmOpen(true)}
-              className="rounded-lg border border-line px-2 py-1 text-xs text-fg-muted transition-colors hover:text-fg"
-            >
+            <button ref={closeRef} type="button" onClick={() => setConfirmOpen(true)} className="rounded-lg border border-line px-2 py-1 text-xs text-fg-muted transition-colors hover:text-fg">
               {labels.close}
             </button>
           </div>
-
-          <TerminalViewport
-            prompt={prompt}
-            sessionKey={sessionKey}
-            lines={lines}
-            history={history}
-            onSubmit={onSubmit}
-            complete={complete}
-            onAppendOutput={onAppendOutput}
-            onClear={onClear}
-            onInterrupt={onInterrupt}
-            interactive={interactive}
-            awaitingPrompt={awaitingPrompt}
-            fontSize={fontSize}
-            onFontZoom={onFontZoom}
-            inputLabel={labels.input}
-            trapRootRef={contentRef}
-          />
+          {children}
         </Dialog.Content>
       </Dialog.Portal>
-
-      <ConfirmCloseDialog
-        open={confirmOpen}
-        title={labels.confirmTitle}
-        description={labels.confirmDescription}
-        cancelLabel={labels.confirmCancel}
-        acceptLabel={labels.confirmAccept}
-        onCancel={() => setConfirmOpen(false)}
-        onConfirm={() => {
-          setConfirmOpen(false)
-          onClose()
-        }}
-      />
+      <ConfirmCloseDialog open={confirmOpen} title={labels.confirmTitle} description={labels.confirmDescription}
+        cancelLabel={labels.confirmCancel} acceptLabel={labels.confirmAccept}
+        onCancel={() => setConfirmOpen(false)} onConfirm={() => { setConfirmOpen(false); onClose() }} />
     </Dialog.Root>
   )
 }

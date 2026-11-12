@@ -157,7 +157,7 @@ import {
   saveSshRootLoginPolicy,
   setSshServiceEnabled,
 } from './sshData'
-import { completeTerminalCommand, execContainerCommand } from './containerTerminal'
+import { containerTerminalCompletions, execContainerCommand } from './containerTerminal'
 import {
   chmodMockEntry,
   checkMockFileUpload,
@@ -509,6 +509,7 @@ function demoBuildImageId(repository: string, tag: string): string {
 }
 
 export class MockContainerAdapter implements ContainerAdapter {
+  readonly terminalMode = 'repl' as const
   private nextTerminalId = 1
   private readonly terminalSessions = new Map<string, MockContainerTerminalSession>()
   /**
@@ -602,26 +603,23 @@ export class MockContainerAdapter implements ContainerAdapter {
     return { id, user: 'demo', hostLabel: container.name, prompt: '$ ' }
   }
 
-  async sendTerminalInput(sessionId: string, line: string): Promise<void> {
+  async executeTerminalCommand(sessionId: string, command: string) {
     const session = this.requireTerminalSession(sessionId)
     const container = this.dataset().containers.find((c) => c.id === session.containerId)
     if (!container) throw new Error('容器不存在，无法执行演示终端命令')
     const image = this.dataset().images.find((i) => i.id === container.imageId)
     if (!image) throw new Error('容器所用镜像不存在，无法执行演示终端命令')
-    const { lines } = execContainerCommand(container, image, line)
-    if (lines.length > 0) {
-      session.handlers.onFrame(sessionId, { type: 'output', lines })
-    }
-    session.handlers.onFrame(sessionId, { type: 'prompt', prompt: '$ ' })
+    return execContainerCommand(container, image, command)
   }
-
-  async interruptTerminal(sessionId: string): Promise<void> {
+  async sendTerminalInput(sessionId: string, _data: Uint8Array): Promise<void> {
     this.requireTerminalSession(sessionId)
+    throw new Error('演示终端不提供真实 PTY')
   }
-
-  completeTerminal(sessionId: string, draft: string, cursor: number) {
-    if (!this.terminalSessions.has(sessionId)) return { draft, cursor }
-    return completeTerminalCommand(draft, cursor)
+  async resizeTerminal(sessionId: string, _cols: number, _rows: number): Promise<void> { this.requireTerminalSession(sessionId) }
+  acknowledgeTerminal(_sessionId: string, _bytes: number): void {}
+  terminalCompletions(sessionId: string, input: string): readonly string[] {
+    this.requireTerminalSession(sessionId)
+    return containerTerminalCompletions(input)
   }
 
   async disconnectTerminal(sessionId: string): Promise<void> {

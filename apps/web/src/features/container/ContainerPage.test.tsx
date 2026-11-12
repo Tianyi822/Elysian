@@ -34,10 +34,12 @@ function pageGateway(overrides: Partial<ElysianGateway['containers']> = {}): Ely
       createPolicy: () => base.containers.createPolicy(),
       connectTerminal: (id: string, handlers: Parameters<typeof base.containers.connectTerminal>[1]) =>
         base.containers.connectTerminal(id, handlers),
-      sendTerminalInput: (sessionId: string, line: string) => base.containers.sendTerminalInput(sessionId, line),
-      interruptTerminal: (sessionId: string) => base.containers.interruptTerminal(sessionId),
-      completeTerminal: (sessionId: string, draft: string, cursor: number) =>
-        base.containers.completeTerminal(sessionId, draft, cursor),
+      terminalMode: base.containers.terminalMode,
+      sendTerminalInput: (id: string, data: Uint8Array) => base.containers.sendTerminalInput(id, data),
+      resizeTerminal: (id: string, cols: number, rows: number) => base.containers.resizeTerminal(id, cols, rows),
+      acknowledgeTerminal: (id: string, bytes: number) => base.containers.acknowledgeTerminal(id, bytes),
+      executeTerminalCommand: (id: string, command: string) => base.containers.executeTerminalCommand!(id, command),
+      terminalCompletions: (id: string, input: string) => base.containers.terminalCompletions!(id, input),
       disconnectTerminal: (sessionId: string) => base.containers.disconnectTerminal(sessionId),
       create: (input: ContainerCreateInput) => base.containers.create(input),
       removeImage: (imageId: string) => base.containers.removeImage(imageId),
@@ -607,111 +609,17 @@ describe('容器详情面板', () => {
   })
 })
 
-describe('演示终端', () => {
-  // 只测页面接线：开窗、mock 标注、IME 与会话清理。
-  // 历史召回、Tab 补全、Esc/外部不关闭等内核行为在 TerminalShell.test，
-  // 命令输出与补全规则在 containerTerminal.test，不在这里重复。
-  async function openTerminalOf(name: string) {
+describe('第三方演示终端接线', () => {
+  it('打开演示终端，关闭确认后释放会话', async () => {
     const user = userEvent.setup()
     renderApp('/docker', { gateway: pageGateway() })
-    const card = await screen.findByRole('listitem', { name })
+    const card = await screen.findByRole('listitem', { name: 'nginx-proxy' })
     await user.click(within(card).getByRole('button', { name: '终端' }))
-    const dialog = await screen.findByRole('dialog', { name: `${name} 终端` })
-    return { user, dialog }
-  }
-
-  it('打开即见 mock 标注与横幅，输入 help 得到可用命令，未知命令给中文提示', async () => {
-    const { user, dialog } = await openTerminalOf('nginx-proxy')
-    expect(dialog.textContent).toContain('演示终端 · 待接入真实执行')
-
-    const input = within(dialog).getByLabelText('命令输入')
-    expect(document.activeElement).toBe(input)
-    await user.type(input, 'help{Enter}')
-    const log = within(dialog).getByRole('log')
-    await waitFor(() => expect(log).toHaveTextContent('可用命令'))
-
-    await user.type(input, 'rm -rf /{Enter}')
-    await waitFor(() => expect(log).toHaveTextContent('不在演示集内'))
-  })
-
-  it('Ctrl+C 留下中断行，Ctrl+L 清屏但历史保留', async () => {
-    const { user, dialog } = await openTerminalOf('nginx-proxy')
-    const input = within(dialog).getByLabelText('命令输入')
-    await user.type(input, 'env{Enter}')
-    expect(await within(dialog).findByText('TZ=Asia/Shanghai')).toBeInTheDocument()
-
-    await user.type(input, 'ps')
-    await user.keyboard('{Control>}c{/Control}')
-    expect(within(dialog).getByText('$ ps^C')).toBeInTheDocument()
-    expect(input).toHaveValue('')
-
-    await user.keyboard('{Control>}l{/Control}')
-    expect(within(dialog).queryByText('TZ=Asia/Shanghai')).not.toBeInTheDocument()
-
-    await user.keyboard('{ArrowUp}')
-    expect(input).toHaveValue('env')
-  })
-
-  it('点击日志区把焦点交回命令输入', async () => {
-    const { user, dialog } = await openTerminalOf('nginx-proxy')
-    const input = within(dialog).getByLabelText('命令输入')
-
-    await user.click(within(dialog).getByRole('button', { name: '关闭终端' }))
-    await user.click(await screen.findByRole('button', { name: '继续使用' }))
-    expect(document.activeElement).not.toBe(input)
-
-    await user.click(within(dialog).getByRole('log'))
-    expect(document.activeElement).toBe(input)
-  })
-
-  it('终端内的 Tab 只服务命令行：从关闭按钮按 Tab 回到输入框', async () => {
-    const { dialog } = await openTerminalOf('nginx-proxy')
-    const input = within(dialog).getByLabelText('命令输入')
-    const close = within(dialog).getByRole('button', { name: '关闭终端' })
-
-    close.focus()
-    fireEvent.keyDown(close, { key: 'Tab' })
-    expect(document.activeElement).toBe(input)
-  })
-
-  it('输入法组合中的回车与方向键只服务候选词，不发送也不召回历史', async () => {
-    const { user, dialog } = await openTerminalOf('nginx-proxy')
-    const input = within(dialog).getByLabelText('命令输入')
-
-    await user.type(input, 'env')
-    // 组合中的回车：确认候选/上屏原字符，绝不能当成发送。
-    fireEvent.compositionStart(input)
-    fireEvent.keyDown(input, { key: 'Enter' })
-    expect(within(dialog).queryByText('TZ=Asia/Shanghai')).not.toBeInTheDocument()
-
-    // Safari 顺序：确认回车的 keydown 派发于 compositionend 之后，isComposing 已为 false，
-    // 仍需被吞掉一次。
-    fireEvent.compositionEnd(input)
-    fireEvent.keyDown(input, { key: 'Enter' })
-    expect(within(dialog).queryByText('TZ=Asia/Shanghai')).not.toBeInTheDocument()
-    expect(input).toHaveValue('env')
-
-    // 用户随后真正按下回车才发送；发送后组合中的方向键用于选词，不召回历史。
-    await user.type(input, '{Enter}')
-    expect(await within(dialog).findByText('TZ=Asia/Shanghai')).toBeInTheDocument()
-    await user.type(input, 'ps')
-    fireEvent.compositionStart(input)
-    fireEvent.keyDown(input, { key: 'ArrowUp' })
-    expect(input).toHaveValue('ps')
-    fireEvent.compositionEnd(input)
-  })
-
-  it('关闭后会话清空，重开只剩横幅', async () => {
-    const { user, dialog } = await openTerminalOf('nginx-proxy')
-    const input = within(dialog).getByLabelText('命令输入')
-    await user.type(input, 'env{Enter}')
+    const dialog = await screen.findByRole('dialog', { name: 'nginx-proxy 终端' })
+    expect(dialog).toHaveTextContent('演示终端 · 待接入真实执行')
     await user.click(within(dialog).getByRole('button', { name: '关闭终端' }))
     await user.click(await screen.findByRole('button', { name: '确认关闭' }))
-
-    const card = screen.getByRole('listitem', { name: 'nginx-proxy' })
-    await user.click(within(card).getByRole('button', { name: '终端' }))
-    const reopened = await screen.findByRole('dialog', { name: 'nginx-proxy 终端' })
-    expect(reopened.textContent).not.toContain('TZ=Asia/Shanghai')
+    expect(useContainersStore.getState().terminal).toBeUndefined()
   })
 })
 

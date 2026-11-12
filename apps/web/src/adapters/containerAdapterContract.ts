@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { isValidContainerBuildTag } from '@elysian/contracts'
 import type { ContainerBuildTask } from '@elysian/contracts'
-import type { ContainerAdapter, HostTerminalFrame, HostTerminalHandlers } from '../contracts/adapters'
+import type { ContainerAdapter } from '../contracts/adapters'
 
 /**
  * 轮询等构建任务到终态：任务推进是异步的（真实侧靠 worker，mock 靠注入节奏），
@@ -52,22 +52,15 @@ export function runContainerAdapterContract(make: () => ContainerAdapter): void 
       }
     })
 
-    it('connectTerminal 后 sendTerminalInput help 收到含可用命令的 output 帧', async () => {
+    it('终端身份独立，演示命令经过受控求值，断开后不可再发送', async () => {
       const adapter = make()
       const containers = await adapter.list()
-      const frames: HostTerminalFrame[] = []
-      const handlers: HostTerminalHandlers = {
-        onFrame: (_sessionId, frame) => {
-          frames.push(frame)
-        },
-        onClose: () => {},
-      }
-      const info = await adapter.connectTerminal(containers[0]!.id, handlers)
-      await adapter.sendTerminalInput(info.id, 'help')
-      const output = frames.find((frame) => frame.type === 'output')
-      expect(output && output.type === 'output' ? output.lines.join(' ') : '').toContain('可用命令')
+      const info = await adapter.connectTerminal(containers[0]!.id, { onFrame: () => {}, onClose: () => {} })
+      expect(info.id).not.toBe('')
+      if (adapter.terminalMode === 'repl') expect((await adapter.executeTerminalCommand!(info.id, 'help')).lines.join(' ')).toContain('可用命令')
+      else await adapter.sendTerminalInput(info.id, Uint8Array.of(3))
       await adapter.disconnectTerminal(info.id)
-      await expect(adapter.sendTerminalInput(info.id, 'help')).rejects.toThrow('终端会话不存在')
+      await expect(adapter.sendTerminalInput(info.id, Uint8Array.of(3))).rejects.toThrow('终端会话不存在')
     })
 
     it('cancelTerminalConnect（可选）在无 pending 连接时可安全调用', async () => {

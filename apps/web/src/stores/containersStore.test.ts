@@ -1,7 +1,9 @@
+import { vi as terminalVi } from 'vitest'
+terminalVi.mock('../components/terminal/rawTerminalRuntime', () => ({ rawTerminalRuntime: () => ({ configure() {}, write() {}, setInteractive() {} }), disposeRawTerminal() {}, deactivateRawTerminal() {} }))
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ElysianEvent } from '@elysian/contracts'
 import type { Container, ContainerImage } from '@elysian/contracts'
-import type { ElysianGateway, EventsAdapter, HostTerminalHandlers } from '../contracts/adapters'
+import type { ElysianGateway, EventsAdapter } from '../contracts/adapters'
 import { useMessageStore } from './messageStore'
 import { useEventStreamStore } from './eventStreamStore'
 import {
@@ -13,25 +15,18 @@ import { useContainersStore } from './containersStore'
 import { CONTAINERS, CONTAINER_IMAGES } from '../adapters/mock/containersData'
 
 function gatewayWith(overrides: Partial<ElysianGateway['containers']> = {}): ElysianGateway {
-  let terminalHandlers: HostTerminalHandlers | undefined
   return {
     containers: {
       list: async () => [...CONTAINERS],
       listImages: async () => [...CONTAINER_IMAGES],
       createPolicy: async () => ({ mountRoot: '/srv/elysian', reservedPorts: [48100] }),
-      connectTerminal: async (
-        _containerId: string,
-        handlers: HostTerminalHandlers,
-      ) => {
-        terminalHandlers = handlers
-        return { id: 'sess-test', user: 'demo', hostLabel: 'ctr', prompt: '$ ' }
-      },
-      sendTerminalInput: async () => {
-        terminalHandlers?.onFrame('sess-test', { type: 'output', lines: ['ok'] })
-        terminalHandlers?.onFrame('sess-test', { type: 'prompt', prompt: '$ ' })
-      },
-      interruptTerminal: async () => {},
-      completeTerminal: (_sessionId: string, draft: string, cursor: number) => ({ draft, cursor }),
+      terminalMode: 'repl',
+      connectTerminal: async () => ({ id: 'sess-test', user: 'demo', hostLabel: 'ctr', prompt: '$ ' }),
+      sendTerminalInput: async () => {},
+      resizeTerminal: async () => {},
+      acknowledgeTerminal: () => {},
+      executeTerminalCommand: async () => ({ lines: ['ok'] }),
+      terminalCompletions: () => [],
       disconnectTerminal: async () => {},
       requestAction: async (id: string) => CONTAINERS.find((c) => c.id === id)!,
       create: async () => CONTAINERS[0]!,
@@ -136,10 +131,9 @@ describe('containersStore', () => {
         containerId: 'ctr-nginx-proxy',
         sessionId: 'sess-test',
         prompt: '$ ',
-        awaitingPrompt: false,
+
         status: 'connected',
-        lines: [],
-        history: [],
+
       },
     })
     emitToStore?.(event('container/removed', { containerId: 'ctr-nginx-proxy' }))
@@ -195,82 +189,6 @@ describe('containersStore', () => {
     const state = useContainersStore.getState()
     expect(state.containers.find((c) => c.id === 'ctr-nginx-proxy')?.status).toBe('stopped')
     expect(state.busyActions).toHaveLength(0)
-  })
-
-  it('submitCommand 回显、追加输出、记录历史并支持清屏', async () => {
-    let handlers: HostTerminalHandlers | undefined
-    const gateway = gatewayWith({
-      connectTerminal: async (_id, h) => {
-        handlers = h
-        return { id: 'sess-1', user: 'demo', hostLabel: 'ctr', prompt: '$ ' }
-      },
-      sendTerminalInput: async (_sessionId, command) => {
-        if (command !== 'clear') {
-          handlers?.onFrame('sess-1', { type: 'output', lines: ['line-1'] })
-        }
-        handlers?.onFrame('sess-1', { type: 'prompt', prompt: '$ ' })
-      },
-    })
-    await useContainersStore.getState().load(gateway)
-    await useContainersStore.getState().openTerminal(gateway, 'ctr-nginx-proxy')
-
-    await useContainersStore.getState().submitCommand(gateway, 'env')
-    let terminal = useContainersStore.getState().terminal!
-    // input 行只存裸命令：提示符由终端壳渲染时拼在行首。
-    expect(terminal.lines.map((l) => l.text)).toEqual(['演示终端 · 待接入真实执行', 'env', 'line-1'])
-    expect(terminal.history).toEqual(['env'])
-
-    await useContainersStore.getState().submitCommand(gateway, 'clear')
-    terminal = useContainersStore.getState().terminal!
-    expect(terminal.lines).toEqual([])
-    expect(terminal.history).toEqual(['env', 'clear'])
-  })
-
-  it('submitCommand 对空命令不动作，历史连续去重', async () => {
-    const gateway = gatewayWith()
-    await useContainersStore.getState().load(gateway)
-    await useContainersStore.getState().openTerminal(gateway, 'ctr-nginx-proxy')
-    await useContainersStore.getState().submitCommand(gateway, '   ')
-    expect(useContainersStore.getState().terminal?.lines).toHaveLength(1) // 仅横幅
-
-    await useContainersStore.getState().submitCommand(gateway, 'env')
-    await useContainersStore.getState().submitCommand(gateway, 'env')
-    expect(useContainersStore.getState().terminal?.history).toEqual(['env'])
-  })
-
-  it('容器命令等待 prompt 帧结束，前台输入与中断不产生新的 Shell 命令', async () => {
-    const sendTerminalInput = vi.fn(async () => {})
-    const interruptTerminal = vi.fn(async () => {})
-    const gateway = gatewayWith({ sendTerminalInput, interruptTerminal })
-    await useContainersStore.getState().openTerminal(gateway, 'ctr-nginx-proxy')
-    await useContainersStore.getState().submitCommand(gateway, 'top')
-    const id = useContainersStore.getState().terminal!.sessionId
-    expect(useContainersStore.getState().terminal!.awaitingPrompt).toBe(true)
-    useContainersStore.getState().applyTerminalFrame(id, { type: 'output', lines: ['Tasks: 8 total'] })
-    useContainersStore.getState().applyTerminalFrame(id, { type: 'truncated', droppedBytes: 1 })
-    for (const input of [' q ', '', 'clear']) await useContainersStore.getState().submitCommand(gateway, input)
-    expect(sendTerminalInput.mock.calls).toEqual([[id, 'top'], [id, ' q '], [id, ''], [id, 'clear']])
-    expect(useContainersStore.getState().terminal!.history).toEqual(['top'])
-    expect(useContainersStore.getState().terminal!.lines.slice(-3)).toEqual([' q ', '', 'clear'].map(text => ({ kind: 'input', text, prompt: '' })))
-    await useContainersStore.getState().interruptTerminal(gateway)
-    expect(interruptTerminal).toHaveBeenCalledWith(id)
-    expect(useContainersStore.getState().terminal!.awaitingPrompt).toBe(true)
-    useContainersStore.getState().applyTerminalFrame('unrelated-session', { type: 'prompt', prompt: '$ ' })
-    expect(useContainersStore.getState().terminal!.awaitingPrompt).toBe(true)
-    useContainersStore.getState().applyTerminalFrame(id, { type: 'prompt', prompt: '$ ' })
-    expect(useContainersStore.getState().terminal!.awaitingPrompt).toBe(false)
-  })
-
-  it('容器发送失败恢复原有就绪状态，不将仍运行的前台程序视为已结束', async () => {
-    const sendTerminalInput = vi.fn(async () => {}).mockRejectedValueOnce(new Error('发送失败'))
-    const gateway = gatewayWith({ sendTerminalInput })
-    await useContainersStore.getState().openTerminal(gateway, 'ctr-nginx-proxy')
-    await useContainersStore.getState().submitCommand(gateway, 'top')
-    expect(useContainersStore.getState().terminal!.awaitingPrompt).toBe(false)
-    await useContainersStore.getState().submitCommand(gateway, 'top')
-    sendTerminalInput.mockRejectedValueOnce(new Error('发送失败'))
-    await useContainersStore.getState().submitCommand(gateway, 'q')
-    expect(useContainersStore.getState().terminal!.awaitingPrompt).toBe(true)
   })
 
   it('runAction 成功发通知并清忙碌；失败发危险通知', async () => {
@@ -389,7 +307,7 @@ describe('终端会话 connecting 态', () => {
       const terminal = useContainersStore.getState().terminal
       expect(terminal?.status).toBe('connected')
       expect(terminal?.sessionId).toBe('sess-2')
-      expect(terminal?.lines.some((line) => line.text.includes('连接容器终端失败'))).toBe(false)
+      expect(terminal?.errorMessage).toBeUndefined()
     })
   })
 
@@ -422,19 +340,6 @@ describe('终端会话 connecting 态', () => {
     })
   })
 
-  it('旧会话的发送失败不把错误行写进新会话', async () => {
-    const gate = deferredSession()
-    const gateway = gatewayWith({ sendTerminalInput: () => gate.promise.then(() => {}) })
-    await useContainersStore.getState().load(gateway)
-    await useContainersStore.getState().openTerminal(gateway, 'ctr-nginx-proxy')
-    const sending = useContainersStore.getState().submitCommand(gateway, 'echo hi')
-    await useContainersStore.getState().closeTerminal(gateway)
-    await useContainersStore.getState().openTerminal(gateway, 'ctr-nginx-proxy')
-    gate.reject(new Error('旧会话发送失败'))
-    await sending
-    expect(useContainersStore.getState().terminal?.lines.some((line) => line.text.includes('旧会话发送失败'))).toBe(false)
-  })
-
   it('container/removed 在 connecting 态也取消未决连接', async () => {
     const gate = deferredSession()
     const cancel = vi.fn()
@@ -453,69 +358,18 @@ describe('终端会话 connecting 态', () => {
   })
 })
 
-describe('终端帧路径', () => {
-  it('interruptTerminal 经 adapter 的中断通道发出', async () => {
-    const interrupt = vi.fn()
-    const gateway = gatewayWith({ interruptTerminal: interrupt })
-    await useContainersStore.getState().load(gateway)
-    await useContainersStore.getState().openTerminal(gateway, 'ctr-nginx-proxy')
-
-    await useContainersStore.getState().interruptTerminal(gateway)
-    expect(interrupt).toHaveBeenCalledWith('sess-test')
-  })
-
-  it('truncated 帧写入截断文案；exit 帧置 error 态并写入退出行', async () => {
+describe('终端会话状态', () => {
+  it('退出保留元数据并显示退出原因；不在 store 保存终端屏幕', async () => {
     const gateway = gatewayWith()
-    await useContainersStore.getState().load(gateway)
     await useContainersStore.getState().openTerminal(gateway, 'ctr-nginx-proxy')
-
-    useContainersStore.getState().applyTerminalFrame('sess-test', {
-      type: 'truncated',
-      droppedBytes: 65536,
-    })
-    let terminal = useContainersStore.getState().terminal!
-    expect(terminal.status).toBe('connected')
-    expect(terminal.lines.at(-1)).toEqual({
-      kind: 'output',
-      text: '输出超出单轮上限，已丢弃 65536 字节',
-    })
-
-    useContainersStore.getState().applyTerminalFrame('sess-test', { type: 'exit', exitCode: 0 })
-    terminal = useContainersStore.getState().terminal!
-    expect(terminal.status).toBe('error')
-    expect(terminal.lines.at(-1)).toEqual({ kind: 'output', text: '会话已退出（退出码 0）' })
+    useContainersStore.getState().applyTerminalFrame('sess-test', { type: 'exit', exitCode: 7 })
+    expect(useContainersStore.getState().terminal).toMatchObject({ status: 'error', errorMessage: '会话已退出（退出码 7）' })
+    expect(useContainersStore.getState().terminal).not.toHaveProperty('lines')
   })
-
-  it('handleTerminalClose 按容器域文案映射关闭码', async () => {
-    const gateway = gatewayWith()
-    await useContainersStore.getState().load(gateway)
-    await useContainersStore.getState().openTerminal(gateway, 'ctr-nginx-proxy')
-
+  it('空闲超时使用容器终端中文原因', async () => {
+    await useContainersStore.getState().openTerminal(gatewayWith(), 'ctr-nginx-proxy')
     useContainersStore.getState().handleTerminalClose('sess-test', { code: 4000, reason: '' })
-    let terminal = useContainersStore.getState().terminal!
-    expect(terminal.lines.at(-1)).toEqual({ kind: 'output', text: '终端会话空闲超时，已断开' })
-
-    // 1008 的 reason 原样透传；置 error 后不再叠加。
-    useContainersStore.setState({
-      terminal: { ...terminal, sessionId: 'sess-2', status: 'connected' },
-    })
-    useContainersStore.getState().handleTerminalClose('sess-2', {
-      code: 1008,
-      reason: '并发容器终端会话已达上限（5）',
-    })
-    terminal = useContainersStore.getState().terminal!
-    expect(terminal.lines.at(-1)).toEqual({
-      kind: 'output',
-      text: '并发容器终端会话已达上限（5）',
-    })
-
-    // 其余关闭码（1006 等）用容器域兜底文案，不是本机终端的措辞。
-    useContainersStore.setState({
-      terminal: { ...terminal, sessionId: 'sess-3', status: 'connected' },
-    })
-    useContainersStore.getState().handleTerminalClose('sess-3', { code: 1006, reason: '' })
-    terminal = useContainersStore.getState().terminal!
-    expect(terminal.lines.at(-1)).toEqual({ kind: 'output', text: '容器终端连接中断' })
+    expect(useContainersStore.getState().terminal?.errorMessage).toBe('终端会话空闲超时，已断开')
   })
 })
 

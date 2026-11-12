@@ -70,7 +70,6 @@ import type {
   WebsiteProxyStatus,
   WebsiteRuntimeCatalogReport,
 } from '@elysian/contracts'
-import type { TerminalCompletion } from '../components/terminal/terminalSession'
 
 /*
  * Web 侧适配接口。界面只依赖这些接口，不关心数据来自 mock、内存降级还是真实网关。
@@ -81,51 +80,27 @@ export interface EventsAdapter {
   subscribe(handlers: EventStreamHandlers): Unsubscribe
 }
 
-/** 演示命令引擎的结果（容器终端 mock 在用）；clear 为 true 时界面清空输出区。 */
-export type MockCommandResult = { lines: readonly string[]; clear?: boolean }
-
-/**
- * 本机 Web 终端会话的身份。connect 之后界面用这些字段画标签与提示符；
- * 真实 PTY 接入后形状不变，只换 adapter 实现。
- */
-export type HostTerminalSessionInfo = {
-  id: string
-  user: string
-  hostLabel: string
-  prompt: string
-}
-
-/** 本机终端的下行帧：输出行、新提示符（命令结束信号）、截断标记与会话退出。 */
+/** 演示 REPL 的执行结果；编辑、历史与候选展示由第三方组件承担。 */
+export type MockCommandResult = { lines: readonly string[]; clear?: boolean; prompt?: string }
+export type HostTerminalSessionInfo = { id: string; user: string; hostLabel: string; prompt?: string }
 export type HostTerminalFrame =
-  | { type: 'output'; lines: readonly string[] }
-  | { type: 'prompt'; prompt: string }
-  | { type: 'truncated'; droppedBytes: number }
+  | { type: 'output'; data: Uint8Array }
   | { type: 'exit'; exitCode: number }
-
-/** 连接关闭信息：WebSocket 关闭码与 reason（协议口径见终端实现规格「关闭码」一节）。 */
 export type HostTerminalCloseInfo = { code: number; reason: string }
-
-/** 本机终端的流式回调：帧按会话路由，关闭事件带关闭码。 */
 export type HostTerminalHandlers = {
   onFrame: (sessionId: string, frame: HostTerminalFrame) => void
   onClose: (sessionId: string, info: HostTerminalCloseInfo) => void
 }
-
-/**
- * 本机终端适配接口（流式）：mock 在内存确定性求值，真实实现经 WebSocket 接
- * 容器内 PTY；两者对同一套契约断言跑（terminalAdapterContract）。
- */
 export interface TerminalAdapter {
-  /** 连上本机并注册流式回调；resolve 即 ready（mock 立即，真实在 ready 帧后）。 */
+  readonly mode: 'pty' | 'repl'
   connect(handlers: HostTerminalHandlers): Promise<HostTerminalSessionInfo>
-  /** 送一行命令（不带换行）；会话不存在或已断开抛中文错误。 */
-  sendInput(sessionId: string, line: string): Promise<void>
-  /** 发送 Ctrl+C（\x03）到 PTY；mock 无进程可打断，为本地 no-op。 */
-  interrupt(sessionId: string): Promise<void>
-  /** 同步补全：mock 用固定词表，真实用 ready/prompt 帧推送的补全上下文缓存。 */
-  complete(sessionId: string, draft: string, cursor: number): TerminalCompletion
-  /** 断开会话；之后再 sendInput/interrupt 必须失败。 */
+  sendInput(sessionId: string, data: Uint8Array): Promise<void>
+  resize(sessionId: string, cols: number, rows: number): Promise<void>
+  acknowledge(sessionId: string, bytes: number): void
+  executeCommand?(sessionId: string, command: string): Promise<MockCommandResult>
+  completions?(sessionId: string, input: string): readonly string[]
   disconnect(sessionId: string): Promise<void>
+  cancelConnect?(): void
 }
 
 /**
@@ -164,21 +139,14 @@ export interface ContainerAdapter {
   probeRegistry(registry: string, signal?: AbortSignal): Promise<RegistryProbeResult>
   /** Docker 运行时读取挂载根与保留端口；mock 返回演示策略。 */
   createPolicy(): Promise<ContainerHostPolicy>
-  /** 打开容器终端流式会话；mock 在内存求值，Docker 运行时经 WebSocket 接 exec PTY。 */
-  connectTerminal(
-    containerId: string,
-    handlers: HostTerminalHandlers,
-  ): Promise<HostTerminalSessionInfo>
-  sendTerminalInput(sessionId: string, line: string): Promise<void>
-  interruptTerminal(sessionId: string): Promise<void>
-  completeTerminal(sessionId: string, draft: string, cursor: number): TerminalCompletion
+  readonly terminalMode: 'pty' | 'repl'
+  connectTerminal(containerId: string, handlers: HostTerminalHandlers): Promise<HostTerminalSessionInfo>
+  sendTerminalInput(sessionId: string, data: Uint8Array): Promise<void>
+  resizeTerminal(sessionId: string, cols: number, rows: number): Promise<void>
+  acknowledgeTerminal(sessionId: string, bytes: number): void
+  executeTerminalCommand?(sessionId: string, command: string): Promise<MockCommandResult>
+  terminalCompletions?(sessionId: string, input: string): readonly string[]
   disconnectTerminal(sessionId: string): Promise<void>
-  /**
-   * 取消未决的终端连接（connecting 态关窗或容器被删时调用）。语义与结算次序：
-   * 对全部未 ready 的 pending 先 settle（以「连接容器终端失败」reject，被取消的
-   * connectTerminal promise 不得悬挂）再关 socket（1000）；只作用于未 ready 的
-   * 连接，已 ready 会话仍走 disconnectTerminal。可选：mock 没有 pending 概念，no-op。
-   */
   cancelTerminalConnect?(): void
   /** 请求容器动作（启动/停止/重启）：Docker 运行时落到真实容器，本地演示改写内存数据集。 */
   requestAction(containerId: string, action: ContainerAction): Promise<Container>

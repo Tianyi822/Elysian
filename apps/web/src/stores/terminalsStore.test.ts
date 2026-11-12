@@ -1,310 +1,95 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { HostTerminalHandlers, TerminalAdapter } from '../contracts/adapters'
 import { createMockGateway } from '../adapters/mock/gateway'
-import type { ElysianGateway } from '../contracts/adapters'
-import { useMessageStore } from './messageStore'
-import {
-  hostTerminalBanner,
-  hostTerminalEmptyDescription,
-  tabLabel,
-  useTerminalsStore,
-} from './terminalsStore'
-
-function gatewayWith(overrides: Partial<ElysianGateway['terminals']> = {}): ElysianGateway {
-  const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
-  const terminals: ElysianGateway['terminals'] = {
-    connect: (handlers) => base.terminals.connect(handlers),
-    sendInput: (id, line) => base.terminals.sendInput(id, line),
-    interrupt: (id) => base.terminals.interrupt(id),
-    complete: (id, draft, cursor) => base.terminals.complete(id, draft, cursor),
-    disconnect: (id) => base.terminals.disconnect(id),
-  }
-  return { ...base, terminals: Object.assign(terminals, overrides) }
-}
-
-beforeEach(async () => {
-  useTerminalsStore.getState().resetLocal()
-  await useMessageStore.getState().clear()
-})
-
-describe('terminalsStore', () => {
-  it('openSession 连上本机后成为活动会话，带演示横幅', async () => {
-    const gateway = gatewayWith()
+import { useTerminalsStore, tabLabel } from './terminalsStore'
+import { useSessionStore } from './sessionStore'
+const runtime = vi.hoisted(() => ({ configure: vi.fn(), write: vi.fn(), setInteractive: vi.fn() }))
+vi.mock('../components/terminal/rawTerminalRuntime', () => ({ rawTerminalRuntime: vi.fn(() => runtime), disposeRawTerminal: vi.fn(), deactivateRawTerminal: vi.fn() }))
+beforeEach(() => { useTerminalsStore.getState().resetLocal(); vi.clearAllMocks() })
+describe('终端会话元数据', () => {
+  it('打开、选择和确认关闭独立会话，最后关闭后保持空态', async () => {
+    const gateway = createMockGateway()
     await useTerminalsStore.getState().openSession(gateway)
-    const state = useTerminalsStore.getState()
-    expect(state.sessions).toHaveLength(1)
-    expect(state.activeId).toBe(state.sessions[0]!.id)
-    expect(state.sessions[0]!.status).toBe('connected')
-    expect(state.sessions[0]!.user).toBe('ops')
-    expect(state.sessions[0]!.lines).toEqual([])
-  })
-
-  it('第二次 openSession 保留两条且切到新会话', async () => {
-    const gateway = gatewayWith()
     await useTerminalsStore.getState().openSession(gateway)
-    const firstId = useTerminalsStore.getState().activeId
-    await useTerminalsStore.getState().openSession(gateway)
-    const state = useTerminalsStore.getState()
-    expect(state.sessions).toHaveLength(2)
-    expect(state.activeId).not.toBe(firstId)
-    expect(new Set(state.sessions.map((session) => session.id)).size).toBe(2)
-  })
-
-  it('submitCommand 回显 whoami、追加输出并记历史；空命令不动作', async () => {
-    const gateway = gatewayWith()
-    await useTerminalsStore.getState().openSession(gateway)
-    await useTerminalsStore.getState().submitCommand(gateway, '   ')
-    expect(useTerminalsStore.getState().sessions[0]!.lines).toHaveLength(0)
-
-    await useTerminalsStore.getState().submitCommand(gateway, 'whoami')
-    const session = useTerminalsStore.getState().sessions[0]!
-    expect(session.lines.map((line) => line.text)).toEqual(['whoami', 'ops'])
-    expect(session.history).toEqual(['whoami'])
-    expect(session.awaitingPrompt).toBe(false)
-  })
-
-  it('submitCommand 对 clear 清屏并记历史', async () => {
-    const gateway = gatewayWith()
-    await useTerminalsStore.getState().openSession(gateway)
-    await useTerminalsStore.getState().submitCommand(gateway, 'whoami')
-    await useTerminalsStore.getState().submitCommand(gateway, 'clear')
-    const session = useTerminalsStore.getState().sessions[0]!
-    expect(session.lines).toEqual([])
-    expect(session.history).toEqual(['whoami', 'clear'])
-  })
-
-  it('sendInput 抛错时错误消息落为输出行', async () => {
-    const gateway = gatewayWith({
-      sendInput: async () => {
-        throw new Error('终端会话不存在 term-x')
-      },
-    })
-    await useTerminalsStore.getState().openSession(gateway)
-    await useTerminalsStore.getState().submitCommand(gateway, 'whoami')
-    const session = useTerminalsStore.getState().sessions[0]!
-    expect(session.lines.map((line) => line.text)).toEqual(['whoami', '终端会话不存在 term-x'])
-    expect(session.awaitingPrompt).toBe(false)
-    expect(useMessageStore.getState().messages).toEqual([expect.objectContaining({ tone: 'danger', message: '终端输入发送失败：终端会话不存在 term-x' })])
-  })
-
-  it('关闭最后一条后 sessions 为空且 hasUserDismissed，resetLocal 后可再开', async () => {
-    const gateway = gatewayWith()
-    await useTerminalsStore.getState().openSession(gateway)
-    const id = useTerminalsStore.getState().activeId!
-    await useTerminalsStore.getState().closeSession(gateway, id)
-    expect(useTerminalsStore.getState().sessions).toEqual([])
+    const [first, second] = useTerminalsStore.getState().sessions
+    expect(first!.id).not.toBe(second!.id)
+    expect(tabLabel(first!, [first!, second!])).toContain('1')
+    useTerminalsStore.getState().selectSession(first!.id)
+    expect(useTerminalsStore.getState().activeId).toBe(first!.id)
+    await useTerminalsStore.getState().closeSession(gateway, first!.id)
+    await useTerminalsStore.getState().closeSession(gateway, second!.id)
     expect(useTerminalsStore.getState().hasUserDismissed).toBe(true)
-
-    useTerminalsStore.getState().resetLocal()
-    expect(useTerminalsStore.getState().hasUserDismissed).toBe(false)
-    await useTerminalsStore.getState().openSession(gateway)
-    expect(useTerminalsStore.getState().sessions).toHaveLength(1)
   })
-
-  it('connect 失败时会话进入 error，reconnect 能连上', async () => {
-    let fail = true
-    const gateway = gatewayWith({
-      connect: async () => {
-        if (fail) throw new Error('本机终端暂不可用')
-        return {
-          id: 'term-recovered',
-          user: 'ops',
-          hostLabel: 'elysian-demo',
-          prompt: 'ops@elysian-demo:~$ ',
-        }
-      },
-    })
-    await useTerminalsStore.getState().openSession(gateway)
-    const failed = useTerminalsStore.getState().sessions[0]!
-    expect(failed.status).toBe('error')
-    expect(failed.errorMessage).toBe('本机终端暂不可用')
-
-    fail = false
-    await useTerminalsStore.getState().reconnect(gateway, failed.id)
-    const recovered = useTerminalsStore.getState().sessions[0]!
-    expect(recovered.status).toBe('connected')
-    expect(recovered.id).toBe('term-recovered')
+  it('字节送入对应运行实例，不在 zustand 保存输出或历史', async () => {
+    const base = createMockGateway()
+    let handlers!: HostTerminalHandlers
+    const terminal: TerminalAdapter = { mode: 'pty', connect: async h => { handlers = h; return { id: 'raw', user: 'root', hostLabel: 'linux' } }, sendInput: vi.fn(async () => {}), resize: vi.fn(async () => {}), acknowledge: vi.fn(), disconnect: vi.fn(async () => {}) }
+    await useTerminalsStore.getState().openSession({ ...base, terminals: terminal })
+    const bytes = Uint8Array.of(27, 91, 72)
+    handlers.onFrame('raw', { type: 'output', data: bytes })
+    expect(runtime.write).toHaveBeenCalledWith(bytes)
+    expect(useTerminalsStore.getState().sessions[0]).not.toHaveProperty('lines')
+    expect(useTerminalsStore.getState().sessions[0]).not.toHaveProperty('history')
+    handlers.onFrame('raw', { type: 'exit', exitCode: 0 })
+    expect(useTerminalsStore.getState().sessions[0]).toMatchObject({ status: 'error', errorMessage: '会话已退出（退出码 0）' })
   })
-})
-
-describe('terminalsStore 流式帧与关闭映射', () => {
-  it('持续运行期间发送完成、输出、截断和中断均不恢复提示符，只有该会话的 prompt 帧恢复', async () => {
-    const sendInput = vi.fn(async () => {})
-    const interrupt = vi.fn(async () => {})
-    const gateway = gatewayWith({ sendInput, interrupt })
-    await useTerminalsStore.getState().openSession(gateway)
-    const firstId = useTerminalsStore.getState().activeId!
-    await useTerminalsStore.getState().submitCommand(gateway, 'top')
-    const firstSession = () => useTerminalsStore.getState().sessions.find(session => session.id === firstId)!
-    expect(firstSession().awaitingPrompt).toBe(true)
-    useTerminalsStore.getState().applyFrame(firstId, { type: 'output', lines: ['Tasks: 8 total'] })
-    useTerminalsStore.getState().applyFrame(firstId, { type: 'truncated', droppedBytes: 1 })
-    await useTerminalsStore.getState().interruptCommand(gateway)
-    expect(interrupt).toHaveBeenCalledWith(firstId)
-    expect(firstSession().awaitingPrompt).toBe(true)
-
-    await useTerminalsStore.getState().openSession(gateway)
-    expect(useTerminalsStore.getState().sessions.at(-1)!.awaitingPrompt).toBe(false)
-    expect(firstSession().awaitingPrompt).toBe(true)
-    useTerminalsStore.getState().applyFrame(firstId, { type: 'prompt', prompt: 'ops@elysian-demo:/tmp$ ' })
-    expect(firstSession().awaitingPrompt).toBe(false)
-    expect(firstSession().prompt).toBe('ops@elysian-demo:/tmp$ ')
+  it('取消 connecting 后迟到 ready 不会复活已关闭会话', async () => {
+    const base = createMockGateway()
+    let ready!: (info: { id: string; user: string; hostLabel: string }) => void
+    const disconnect = vi.fn(async () => {})
+    const gateway = { ...base, terminals: { ...base.terminals, mode: 'pty' as const, connect: () => new Promise<{ id: string; user: string; hostLabel: string }>(resolve => { ready = resolve }), disconnect, sendInput: vi.fn(async () => {}), resize: vi.fn(async () => {}), acknowledge: vi.fn() } }
+    const opening = useTerminalsStore.getState().openSession(gateway)
+    await useTerminalsStore.getState().closeSession(gateway, useTerminalsStore.getState().activeId!)
+    ready({ id: 'stale', user: 'root', hostLabel: 'linux' })
+    await opening
+    expect(useTerminalsStore.getState().sessions).toEqual([])
+    expect(disconnect).toHaveBeenCalledWith('stale')
   })
-
-  it('运行中的输入保留空白与空行，不带 Shell 提示符、不写命令历史或吞掉 clear', async () => {
-    const sendInput = vi.fn(async () => {})
-    const gateway = gatewayWith({ sendInput })
+  it('关闭旧标签不解除新连接的互斥，取消后的旧 rejection 不污染下一条连接', async () => {
+    const base = createMockGateway()
+    type Info = { id: string; user: string; hostLabel: string }
+    let rejectOld!: (error: Error) => void
+    let ready!: (info: Info) => void
+    const connect = vi.fn<(_: HostTerminalHandlers) => Promise<Info>>()
+      .mockResolvedValueOnce({ id: 'first', user: 'root', hostLabel: 'linux' })
+      .mockImplementationOnce(() => new Promise<Info>((_resolve, reject) => { rejectOld = reject }))
+      .mockImplementationOnce(() => new Promise<Info>(resolve => { ready = resolve }))
+    const gateway = { ...base, terminals: { ...base.terminals, connect, cancelConnect: vi.fn(), disconnect: vi.fn(async () => {}) } }
     await useTerminalsStore.getState().openSession(gateway)
-    const id = useTerminalsStore.getState().activeId!
-    for (const command of ['cat', '  data  ', '', 'clear']) await useTerminalsStore.getState().submitCommand(gateway, command)
-    const session = useTerminalsStore.getState().sessions[0]!
-    expect(sendInput.mock.calls).toEqual([[id, 'cat'], [id, '  data  '], [id, ''], [id, 'clear']])
-    expect(session.history).toEqual(['cat'])
-    expect(session.lines.slice(1)).toEqual(['  data  ', '', 'clear'].map(text => ({ kind: 'input', text, prompt: '' })))
-    sendInput.mockRejectedValueOnce(new Error('输入发送失败'))
-    await useTerminalsStore.getState().submitCommand(gateway, 'more')
-    expect(useTerminalsStore.getState().sessions[0]!.awaitingPrompt).toBe(true)
+    const old = useTerminalsStore.getState().openSession(gateway)
+    const oldPendingId = useTerminalsStore.getState().activeId!
+    await useTerminalsStore.getState().closeSession(gateway, 'first')
+    expect(useTerminalsStore.getState().opening).toBe(true)
+    await useTerminalsStore.getState().openSession(gateway)
+    expect(connect).toHaveBeenCalledTimes(2)
+    await useTerminalsStore.getState().closeSession(gateway, oldPendingId)
+    const next = useTerminalsStore.getState().openSession(gateway)
+    rejectOld(new Error('迟到的旧连接错误'))
+    await old
+    expect(useTerminalsStore.getState().opening).toBe(true)
+    expect(useTerminalsStore.getState().sessions[0]?.status).toBe('connecting')
+    ready({ id: 'fresh', user: 'root', hostLabel: 'linux' })
+    await next
+    expect(useTerminalsStore.getState().sessions).toMatchObject([{ id: 'fresh', status: 'connected' }])
   })
-
-  it('后台会话的 output 帧落到自己的标签，不动活动会话', async () => {
-    const gateway = gatewayWith()
-    await useTerminalsStore.getState().openSession(gateway)
-    const firstId = useTerminalsStore.getState().activeId!
-    await useTerminalsStore.getState().openSession(gateway)
-    const secondId = useTerminalsStore.getState().activeId!
-
-    useTerminalsStore.getState().applyFrame(firstId, { type: 'output', lines: ['后台输出'] })
-    const first = useTerminalsStore.getState().sessions.find((session) => session.id === firstId)!
-    const second = useTerminalsStore.getState().sessions.find((session) => session.id === secondId)!
-    expect(first.lines.map((line) => line.text)).toEqual(['后台输出'])
-    expect(second.lines).toEqual([])
+  it('ready Promise 结算前收到的输出和断开按同一会话顺序应用', async () => {
+    const base = createMockGateway()
+    const bytes = Uint8Array.of(27, 91, 72)
+    const terminal: TerminalAdapter = { mode: 'pty', connect: async handlers => {
+      handlers.onFrame('early', { type: 'output', data: bytes })
+      handlers.onClose('early', { code: 4000, reason: '' })
+      return { id: 'early', user: 'root', hostLabel: 'linux' }
+    }, sendInput: vi.fn(async () => {}), resize: vi.fn(async () => {}), acknowledge: vi.fn(), disconnect: vi.fn(async () => {}) }
+    await useTerminalsStore.getState().openSession({ ...base, terminals: terminal })
+    expect(runtime.configure).toHaveBeenCalledOnce()
+    expect(runtime.write).toHaveBeenCalledWith(bytes)
+    expect(useTerminalsStore.getState().sessions[0]).toMatchObject({ id: 'early', status: 'error', errorMessage: '终端会话空闲超时，已断开' })
   })
-
-  it('submitCommand 把提交时的提示符冻在输入行上，随后的 prompt 帧不改写它', async () => {
-    const gateway = gatewayWith({
-      sendInput: async () => {
-        const id = useTerminalsStore.getState().activeId!
-        useTerminalsStore.getState().applyFrame(id, { type: 'prompt', prompt: 'ops@elysian-demo:/$ ' })
-      },
-    })
+  it('登出清理客户端所有会话', async () => {
+    useSessionStore.setState({ phase: 'authed' })
+    const gateway = createMockGateway()
     await useTerminalsStore.getState().openSession(gateway)
-    await useTerminalsStore.getState().submitCommand(gateway, 'cd /')
-    const session = useTerminalsStore.getState().sessions[0]!
-    expect(session.prompt).toBe('ops@elysian-demo:/$ ')
-    expect(session.lines[0]).toEqual({ kind: 'input', text: 'cd /', prompt: 'ops@elysian-demo:~$ ' })
-  })
-
-  it('prompt 帧更新该会话提示符', async () => {
-    const gateway = gatewayWith()
-    await useTerminalsStore.getState().openSession(gateway)
-    const id = useTerminalsStore.getState().activeId!
-    useTerminalsStore.getState().applyFrame(id, { type: 'prompt', prompt: 'ops@elysian-demo:/tmp$ ' })
-    expect(useTerminalsStore.getState().sessions[0]!.prompt).toBe('ops@elysian-demo:/tmp$ ')
-  })
-
-  it('truncated 帧渲染成可见截断标记行', async () => {
-    const gateway = gatewayWith()
-    await useTerminalsStore.getState().openSession(gateway)
-    const id = useTerminalsStore.getState().activeId!
-    useTerminalsStore.getState().applyFrame(id, { type: 'truncated', droppedBytes: 262144 })
-    expect(useTerminalsStore.getState().sessions[0]!.lines).toEqual([
-      { kind: 'output', text: '输出超出单轮上限，已丢弃 262144 字节' },
-    ])
-  })
-
-  it('exit 帧把会话置为错误态并带退出码', async () => {
-    const gateway = gatewayWith()
-    await useTerminalsStore.getState().openSession(gateway)
-    const id = useTerminalsStore.getState().activeId!
-    useTerminalsStore.getState().applyFrame(id, { type: 'exit', exitCode: 0 })
-    const session = useTerminalsStore.getState().sessions[0]!
-    expect(session.status).toBe('error')
-    expect(session.errorMessage).toBe('会话已退出（退出码 0）')
-  })
-
-  it('handleClose 按 4000/1008/1006 映射中文消息', async () => {
-    const gateway = gatewayWith()
-    await useTerminalsStore.getState().openSession(gateway)
-
-    const currentId = () => useTerminalsStore.getState().sessions[0]!.id
-    const errorMessage = () => useTerminalsStore.getState().sessions[0]!.errorMessage
-
-    useTerminalsStore.getState().handleClose(currentId(), { code: 4000, reason: '终端会话空闲超时' })
-    expect(errorMessage()).toBe('终端会话空闲超时，已断开')
-
-    await useTerminalsStore.getState().reconnect(gateway, currentId())
-    useTerminalsStore.getState().handleClose(currentId(), { code: 1008, reason: '并发终端会话已达上限（5）' })
-    expect(errorMessage()).toBe('并发终端会话已达上限（5）')
-
-    await useTerminalsStore.getState().reconnect(gateway, currentId())
-    useTerminalsStore.getState().handleClose(currentId(), { code: 1006, reason: '' })
-    expect(errorMessage()).toBe('本机终端连接中断')
-  })
-
-  it('exit 置错误态后随后的 1000 关闭不覆盖错误消息', async () => {
-    const gateway = gatewayWith()
-    await useTerminalsStore.getState().openSession(gateway)
-    const id = useTerminalsStore.getState().activeId!
-    useTerminalsStore.getState().applyFrame(id, { type: 'exit', exitCode: 1 })
-    useTerminalsStore.getState().handleClose(id, { code: 1000, reason: '' })
-    expect(useTerminalsStore.getState().sessions[0]!.errorMessage).toBe('会话已退出（退出码 1）')
-    expect(useMessageStore.getState().messages).toEqual([expect.objectContaining({ tone: 'danger', message: '本机终端：会话已退出（退出码 1）' })])
-  })
-
-  it('后台终端截断与断开通知不依赖活动标签，重复关闭不重复通知', async () => {
-    const gateway = gatewayWith()
-    await useTerminalsStore.getState().openSession(gateway)
-    const firstId = useTerminalsStore.getState().activeId!
-    await useTerminalsStore.getState().openSession(gateway)
-    useTerminalsStore.getState().applyFrame(firstId, { type: 'truncated', droppedBytes: 10 })
-    useTerminalsStore.getState().handleClose(firstId, { code: 1006, reason: '' })
-    useTerminalsStore.getState().handleClose(firstId, { code: 1000, reason: '' })
-    expect(useMessageStore.getState().messages.map(({ tone, message }) => ({ tone, message }))).toEqual([
-      { tone: 'warning', message: '本机终端：输出超出单轮上限，已丢弃 10 字节' },
-      { tone: 'danger', message: '本机终端：本机终端连接中断' },
-    ])
-  })
-
-  it('interruptCommand 调适配层的 interrupt；会话已关闭时不动作', async () => {
-    const interrupt = vi.fn(async () => {})
-    const gateway = gatewayWith({ interrupt })
-    await useTerminalsStore.getState().openSession(gateway)
-    const id = useTerminalsStore.getState().activeId!
-    await useTerminalsStore.getState().interruptCommand(gateway)
-    expect(interrupt).toHaveBeenCalledWith(id)
-
-    await useTerminalsStore.getState().closeSession(gateway, id)
-    interrupt.mockClear()
-    await useTerminalsStore.getState().interruptCommand(gateway)
-    expect(interrupt).not.toHaveBeenCalled()
-  })
-})
-
-describe('按运行时口径的文案', () => {
-  it('mock 运行时保留演示标注与演示空态说明', () => {
-    // vitest 环境未注入 ELYSIAN_DOCKER，isDockerRuntime() 为 false。
-    expect(hostTerminalBanner()).toBe('演示终端 · 待接入真实执行')
-    expect(hostTerminalEmptyDescription()).toContain('待接入真实执行')
-  })
-})
-
-describe('tabLabel', () => {
-  const base = {
-    status: 'connected' as const,
-    user: 'ops',
-    hostLabel: 'elysian-demo',
-    prompt: 'ops@elysian-demo:~$ ',
-    lines: [],
-    history: [],
-  }
-
-  it('单会话不加序号，多会话按出现顺序编号', () => {
-    const one = [{ ...base, id: 'a' }]
-    expect(tabLabel(one[0]!, one)).toBe('ops@elysian-demo')
-    const two = [
-      { ...base, id: 'a' },
-      { ...base, id: 'b' },
-    ]
-    expect(tabLabel(two[0]!, two)).toBe('ops@elysian-demo 1')
-    expect(tabLabel(two[1]!, two)).toBe('ops@elysian-demo 2')
+    await useSessionStore.getState().logout(gateway)
+    expect(useTerminalsStore.getState().sessions).toEqual([])
   })
 })

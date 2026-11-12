@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  completeHostTerminalCommand,
+  hostTerminalCompletions,
   execHostCommand,
   HOST_LABEL,
   HOST_USER,
@@ -45,20 +45,10 @@ describe('本机演示终端命令引擎', () => {
   })
 })
 
-describe('本机终端 Tab 补全', () => {
-  it('唯一前缀补全为完整命令并补一个空格', () => {
-    expect(completeHostTerminalCommand('who', 3)).toEqual({ draft: 'whoami ', cursor: 7 })
-  })
 
-  it('df 补 -h 参数', () => {
-    expect(completeHostTerminalCommand('df ', 3)).toEqual({ draft: 'df -h ', cursor: 6 })
-  })
-
-  it('uname 补 -a 参数', () => {
-    expect(completeHostTerminalCommand('uname ', 6)).toEqual({ draft: 'uname -a ', cursor: 9 })
-  })
-
-  it('没有匹配时原样返回', () => {
-    expect(completeHostTerminalCommand('zz', 2)).toEqual({ draft: 'zz', cursor: 2 })
+describe('第三方 REPL 候选数据', () => {
+  it('只提供候选，不自行编辑输入', () => {
+    expect(hostTerminalCompletions('')).toContain('help')
+    expect(hostTerminalCompletions('df ')).toContain('-h')
   })
 })

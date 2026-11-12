@@ -1,0 +1,9 @@
+/* 覆盖 xterm 默认的黑色滚动视口，让透明画布沿用面板表面。 */
+.elysian-raw-terminal .xterm .xterm-viewport {
+  background-color: transparent;
+}
+
+.elysian-raw-terminal .xterm .composition-view {
+  background-color: var(--t-surface);
+  color: var(--t-fg);
+}

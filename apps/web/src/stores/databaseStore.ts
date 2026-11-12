@@ -2,25 +2,21 @@ import { captureAuthGeneration } from '../adapters/http/unauthorized'
 import { create } from 'zustand'
 import { DATABASE_ENGINES, type Container, type ContainerImage, type DatabaseEngine, type DatabaseInstance } from '@elysian/contracts'
 import type { ElysianGateway, DatabaseCreateInput } from '../contracts/adapters'
-import { pushHistory, type TerminalLine } from '../components/terminal/terminalSession'
 import { useMessageStore } from './messageStore'
 import { notifyFirewallPortSync } from './firewallPortNotice'
 
-/** SQL 会话的界面状态：输出行与历史只存内存，关闭即清空（不伪装成持久会话）。 */
+/** 命令编辑、历史与显示由第三方终端持有，store 只保存连接身份与状态。 */
 export type SqlSession = {
+  id: string
   databaseId: string
-  lines: readonly TerminalLine[]
-  history: readonly string[]
+  status: 'connecting' | 'connected' | 'error'
+  errorMessage?: string
 }
 
-/** 窗口顶栏徽章的常驻标注；日志区不再重复这一行。 */
 export const SESSION_BANNER = '数据库协议会话'
-
+let sessionSequence = 0
+let connectionGeneration = 0
 let liveSession: { execute(input: string): Promise<readonly string[]>; close(): void } | undefined
-
-function asOutput(lines: readonly string[]): readonly TerminalLine[] {
-  return lines.map((text): TerminalLine => ({ kind: 'output', text }))
-}
 
 export type DatabaseState = {
   engine: DatabaseEngine
@@ -46,12 +42,8 @@ export type DatabaseState = {
   refresh(gateway: ElysianGateway, showIndicator?: boolean): Promise<void>
   openSession(databaseId: string, gateway?: ElysianGateway): void
   closeSession(): void
-  interruptSession(gateway: ElysianGateway): void
-  submitStatement(gateway: ElysianGateway, line: string): Promise<void>
-  /** 终端内核的旁路输出：补全候选列表走这里追加。 */
-  appendSessionOutput(lines: readonly string[]): void
-  /** 终端内核的 Ctrl+L 清屏：清空日志区，标注由窗口顶栏徽章常驻。 */
-  clearSessionScreen(): void
+  interruptSession(gateway: ElysianGateway): Promise<void>
+  submitStatement(gateway: ElysianGateway, line: string): Promise<readonly string[]>
   openCreate(): void
   closeCreate(): void
   createDatabase(gateway: ElysianGateway, input: DatabaseCreateInput): Promise<void>
@@ -112,90 +104,70 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   },
 
   openSession(databaseId, gateway) {
+    connectionGeneration += 1
+    const generation = connectionGeneration
     liveSession?.close()
     liveSession = undefined
-    // 日志区从空开始：标注由窗口顶栏徽章常驻，不在日志里重复一行。
-    set({ session: { databaseId, lines: [], history: [] } })
-    if (gateway?.databases.openTerminal) {
-      void gateway.databases.openTerminal(databaseId).then((connection) => {
-        if (get().session?.databaseId !== databaseId) { connection.close(); return }
-        liveSession = connection
-        get().appendSessionOutput(['已连接数据库。'])
-        useMessageStore.getState().notify({ tone: 'success', message: '已连接数据库。' })
-      }).catch((error: unknown) => {
-        if (get().session?.databaseId !== databaseId) return
-        const message = `数据库连接失败：${error instanceof Error ? error.message : '未知错误'}`
-        get().appendSessionOutput([message])
-        useMessageStore.getState().notify({ tone: 'danger', message })
-      })
+    const id = `database-session-${++sessionSequence}`
+    set({ session: { id, databaseId, status: 'connecting' } })
+    if (!gateway?.databases.openTerminal) {
+      set({ session: { id, databaseId, status: 'error', errorMessage: '数据库协议终端不可用' } })
+      return
     }
+    void gateway.databases.openTerminal(databaseId).then((connection) => {
+      if (generation !== connectionGeneration || get().session?.id !== id) { connection.close(); return }
+      liveSession = connection
+      set({ session: { id, databaseId, status: 'connected' } })
+    }).catch((error: unknown) => {
+      if (generation !== connectionGeneration || get().session?.id !== id) return
+      const errorMessage = `数据库连接失败：${error instanceof Error ? error.message : '未知错误'}`
+      set({ session: { id, databaseId, status: 'error', errorMessage } })
+    })
   },
   closeSession() {
+    connectionGeneration += 1
     liveSession?.close()
     liveSession = undefined
     set({ session: undefined })
   },
-  interruptSession(gateway) {
-    const id = get().session?.databaseId
-    if (!id || !gateway.databases.openTerminal) return
+  async interruptSession(gateway) {
+    const session = get().session
+    if (!session || !gateway.databases.openTerminal) return
+    const generation = ++connectionGeneration
     liveSession?.close()
     liveSession = undefined
-    get().appendSessionOutput(['^C 执行已中断，正在重新连接…'])
-    void gateway.databases.openTerminal(id).then((connection) => {
-      if (get().session?.databaseId !== id) { connection.close(); return }
-      liveSession = connection
-      get().appendSessionOutput(['已重新连接数据库。'])
-      useMessageStore.getState().notify({ tone: 'success', message: '已重新连接数据库。' })
-    }).catch((error: unknown) => {
-      if (get().session?.databaseId !== id) return
-      const message = `数据库重新连接失败：${error instanceof Error ? error.message : '未知错误'}`
-      get().appendSessionOutput([message])
-      useMessageStore.getState().notify({ tone: 'danger', message })
-    })
-  },
-
-  async submitStatement(gateway, line) {
-    const session = get().session
-    const statement = line.trim()
-    if (!session || !statement) return
-
-    // input 行只存裸语句：提示符由终端壳渲染时拼在行首（提示符只有一个家）。
-    set({ session: { ...session, lines: [...session.lines, { kind: 'input', text: statement }] } })
+    set({ session: { ...session, status: 'connecting', errorMessage: undefined } })
     try {
-      // 语句只在协议终端上执行：连接未建立（或已断开）时如实报错，不再有演示引擎回退。
-      if (!liveSession) throw new Error('数据库连接尚未建立')
-      const output = await liveSession.execute(statement)
-      set((state) => {
-        // 等待结果期间会话可能被关闭或换过实例：结果只落回同一实例的会话。
-        const current = state.session
-        if (!current || current.databaseId !== session.databaseId) return state
-        return {
-          session: { ...current, lines: [...current.lines, ...asOutput(output)], history: pushHistory(current.history, statement) },
-        }
-      })
-      void get().refresh(gateway)
+      const connection = await gateway.databases.openTerminal(session.databaseId)
+      if (generation !== connectionGeneration || get().session?.id !== session.id) { connection.close(); return }
+      liveSession = connection
+      set({ session: { ...session, status: 'connected', errorMessage: undefined } })
     } catch (error) {
-      get().appendSessionOutput([`错误：${error instanceof Error ? error.message : '未知错误'}`])
-      useMessageStore.getState().notify({
-        tone: 'danger',
-        message: `数据库会话执行失败：${error instanceof Error ? error.message : '未知错误'}`,
-      })
+      if (generation !== connectionGeneration || get().session?.id !== session.id) return
+      const errorMessage = `数据库重新连接失败：${error instanceof Error ? error.message : '未知错误'}`
+      set({ session: { ...session, status: 'error', errorMessage } })
     }
   },
 
-  appendSessionOutput(lines) {
-    set((state) => ({
-      session: state.session && {
-        ...state.session,
-        lines: [...state.session.lines, ...asOutput(lines)],
-      },
-    }))
-  },
-
-  clearSessionScreen() {
-    set((state) => ({
-      session: state.session && { ...state.session, lines: [] },
-    }))
+  async submitStatement(gateway, statement) {
+    const session = get().session
+    const connection = liveSession
+    const generation = connectionGeneration
+    if (!session || session.status !== 'connected' || !connection) throw new Error('数据库连接尚未建立')
+    if (!statement.trim()) return []
+    try {
+      const output = await connection.execute(statement)
+      if (generation !== connectionGeneration || get().session?.id !== session.id || connection !== liveSession) {
+        throw new DOMException('数据库会话已变更', 'AbortError')
+      }
+      void get().refresh(gateway)
+      return output
+    } catch (error) {
+      if (generation !== connectionGeneration || get().session?.id !== session.id || connection !== liveSession) {
+        throw new DOMException('数据库会话已变更', 'AbortError')
+      }
+      throw error
+    }
   },
 
   openCreate() {

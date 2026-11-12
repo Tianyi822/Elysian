@@ -48,15 +48,8 @@ describe('MockContainerAdapter', () => {
       onCreate: vi.fn(),
     })
 
-    const frames: { lines: readonly string[] }[] = []
-    const info = await adapter.connectTerminal('ctr-nginx-proxy', {
-      onFrame: (_sessionId, frame) => {
-        if (frame.type === 'output') frames.push(frame)
-      },
-      onClose: () => {},
-    })
-    await adapter.sendTerminalInput(info.id, 'env')
-    expect(frames[0]?.lines).toEqual(['TZ=Asia/Shanghai'])
+    const info = await adapter.connectTerminal('ctr-nginx-proxy', { onFrame: () => {}, onClose: () => {} })
+    expect((await adapter.executeTerminalCommand(info.id, 'env')).lines).toEqual(['TZ=Asia/Shanghai'])
 
     await expect(adapter.connectTerminal('ctr-nope', { onFrame: () => {}, onClose: () => {} })).rejects.toThrow(
       '容器不存在',

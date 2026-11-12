@@ -2,7 +2,6 @@ import type { Container, ContainerImage } from '@elysian/contracts'
 import { DATASET_BASE_TIME } from './dataset'
 import { INITIAL_CONTAINER_USAGE } from './containersData'
 import { formatUptime } from '../../components/format'
-import { formatTerminalColumns, type TerminalCompletion } from '../../components/terminal/terminalSession'
 
 /**
  * 演示终端的命令引擎：纯函数、确定性输出、与容器 mock 数据联动。
@@ -32,49 +31,9 @@ const ARG_CANDIDATES: Record<string, readonly string[]> = {
   df: ['-h'],
 }
 
-/** 补全结果与终端内核共用同一形状；词表与提示符无关，任何提示符下通用。 */
-export type CompletionResult = TerminalCompletion
-
-/** 光标所在词的前缀补全；无可补内容时原样返回。 */
-export function completeTerminalCommand(draft: string, cursor: number): CompletionResult {
-  const before = draft.slice(0, cursor)
-  const token = /(\S*)$/.exec(before)?.[0] ?? ''
-  const tokenStart = cursor - token.length
-  const previousWord = before
-    .slice(0, tokenStart)
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .pop()
-  const pool: readonly string[] = previousWord
-    ? (ARG_CANDIDATES[previousWord] ?? [])
-    : TERMINAL_COMMANDS
-  const matches = pool.filter((candidate) => candidate.startsWith(token))
-
-  if (matches.length === 0) return { draft, cursor }
-
-  if (matches.length === 1) {
-    const completed = `${matches[0]} `
-    return {
-      draft: before.slice(0, tokenStart) + completed + draft.slice(cursor),
-      cursor: tokenStart + completed.length,
-    }
-  }
-
-  const common = matches.reduce((acc, candidate) => {
-    let i = 0
-    while (i < acc.length && i < candidate.length && acc[i] === candidate[i]) i += 1
-    return acc.slice(0, i)
-  }, matches[0] ?? '')
-
-  if (common.length > token.length) {
-    return {
-      draft: before.slice(0, tokenStart) + common + draft.slice(cursor),
-      cursor: tokenStart + common.length,
-    }
-  }
-
-  return { draft, cursor, candidates: matches }
+export function containerTerminalCompletions(input: string): readonly string[] {
+  const words = input.trimStart().split(/\s+/)
+  return words.length <= 1 ? TERMINAL_COMMANDS : (ARG_CANDIDATES[words[0] ?? ''] ?? [])
 }
 
 const DF_LINES = [
@@ -94,7 +53,7 @@ export function execContainerCommand(
     case 'ls':
       return {
         lines: container.volumes.length
-          ? formatTerminalColumns(container.volumes.map((v) => v.containerPath))
+          ? [container.volumes.map((v) => v.containerPath).join('  ')]
           : ['(空)'],
       }
     case 'env':

@@ -34,7 +34,6 @@ export * from './files/files.ts'
 export * from './logs/logs.ts'
 export * from './logs/logQuery.ts'
 export * from './logs/platformLogs.ts'
-export * from './terminal/grid.ts'
 export * from './websites/websites.ts'
 export * from './websites/deployments.ts'
 // 安全区

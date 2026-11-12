@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { CONTAINERS, CONTAINER_IMAGES } from './containersData'
-import { completeTerminalCommand, execContainerCommand } from './containerTerminal'
+import { containerTerminalCompletions, execContainerCommand } from './containerTerminal'
 
 const nginx = CONTAINERS.find((c) => c.id === 'ctr-nginx-proxy')!
 const nginxImage = CONTAINER_IMAGES.find((i) => i.id === 'img-nginx')!
@@ -54,31 +54,10 @@ describe('演示终端命令引擎', () => {
   })
 })
 
-describe('终端 Tab 补全', () => {
-  it('唯一前缀补全为完整命令并补一个空格', () => {
-    expect(completeTerminalCommand('hel', 3)).toEqual({ draft: 'help ', cursor: 5 })
-  })
 
-  it('cat 与 df 补各自的参数候选', () => {
-    expect(completeTerminalCommand('cat ', 4)).toEqual({
-      draft: 'cat /etc/os-release ',
-      cursor: 20,
-    })
-    expect(completeTerminalCommand('df -', 4)).toEqual({ draft: 'df -h ', cursor: 6 })
-  })
-
-  it('多候选且无公共前缀可收敛时回传候选列表，草稿不动', () => {
-    const result = completeTerminalCommand('c', 1)
-    expect(result.draft).toBe('c')
-    expect(result.cursor).toBe(1)
-    expect(result.candidates).toEqual(['cat', 'clear'])
-  })
-
-  it('光标不在词尾时只补光标前的词，词后原有空白保留', () => {
-    expect(completeTerminalCommand('hel x', 3)).toEqual({ draft: 'help  x', cursor: 5 })
-  })
-
-  it('没有匹配时原样返回', () => {
-    expect(completeTerminalCommand('zz', 2)).toEqual({ draft: 'zz', cursor: 2 })
+describe('第三方 REPL 候选数据', () => {
+  it('只提供候选，不自行编辑输入', () => {
+    expect(containerTerminalCompletions('')).toContain('help')
+    expect(containerTerminalCompletions('df ')).toContain('-h')
   })
 })

@@ -1,0 +1,15 @@
+.elysian-command-terminal.terminal {
+  --color: var(--t-fg);
+  --background: var(--t-bg);
+  --link-color: var(--t-fg);
+  --error-color: var(--t-danger);
+  --font: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  --padding: 12;
+  width: 100%;
+  height: 100%;
+  outline: none;
+}
+.elysian-command-terminal .cmd {
+  --color: var(--t-fg);
+  --background: var(--t-bg);
+}

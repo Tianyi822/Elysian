@@ -5,7 +5,8 @@ import {
   clampTerminalFontSize,
   TERMINAL_FONT_SIZE_DEFAULT,
 } from '../../components/terminal/terminalFontSize'
-import { TerminalViewport } from '../../components/terminal/TerminalViewport'
+import { RawTerminalViewport } from '../../components/terminal/RawTerminalViewport'
+import { CommandTerminal } from '../../components/terminal/CommandTerminal'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
 import {
   hostTerminalEmptyDescription,
@@ -29,10 +30,6 @@ export function TerminalPage() {
   const selectSession = useTerminalsStore((state) => state.selectSession)
   const closeSession = useTerminalsStore((state) => state.closeSession)
   const reconnect = useTerminalsStore((state) => state.reconnect)
-  const submitCommand = useTerminalsStore((state) => state.submitCommand)
-  const interruptCommand = useTerminalsStore((state) => state.interruptCommand)
-  const appendOutput = useTerminalsStore((state) => state.appendOutput)
-  const clearScreen = useTerminalsStore((state) => state.clearScreen)
   const [closingId, setClosingId] = useState<string | undefined>(undefined)
   const [fontSize, setFontSize] = useState(TERMINAL_FONT_SIZE_DEFAULT)
   const zoomFont = useCallback(
@@ -92,7 +89,7 @@ export function TerminalPage() {
       ) : null}
 
       {active?.status === 'error' ? (
-        <div className="flex flex-1 items-center justify-center p-4">
+        <div className="shrink-0 p-2">
           <ErrorState
             title="本机终端连接失败"
             description={active.errorMessage}
@@ -102,28 +99,23 @@ export function TerminalPage() {
         </div>
       ) : null}
 
-      {active?.status === 'connected' ? (
+      {active && active.status !== 'connecting' ? (
         <div
           id={`terminal-panel-${active.id}`}
           role="tabpanel"
           aria-labelledby={`terminal-tab-${active.id}`}
           className="flex min-h-0 flex-1 flex-col overflow-hidden panel-surface"
         >
-          <TerminalViewport
-            prompt={active.prompt}
-            awaitingPrompt={active.awaitingPrompt}
-            sessionKey={active.id}
-            lines={active.lines}
-            history={active.history}
-            onSubmit={(command) => void submitCommand(gateway, command)}
-            complete={(draft, cursor) => gateway.terminals.complete(active.id, draft, cursor)}
-            onAppendOutput={appendOutput}
-            onClear={clearScreen}
-            onInterrupt={() => void interruptCommand(gateway)}
+          {gateway.terminals.mode === 'pty' ? <RawTerminalViewport
+            sessionKey={`host:${active.id}`} interactive={active.status === 'connected'}
+            fontSize={fontSize} onFontZoom={zoomFont}
+          /> : <CommandTerminal
+            sessionKey={`host:${active.id}`} prompt={active.prompt ?? '$ '}
+            interactive={active.status === 'connected'} fontSize={fontSize} onFontZoom={zoomFont}
             inputLabel="命令输入"
-            fontSize={fontSize}
-            onFontZoom={zoomFont}
-          />
+            execute={command => gateway.terminals.executeCommand!(active.id, command)}
+            completions={input => gateway.terminals.completions?.(active.id, input) ?? []}
+          />}
         </div>
       ) : null}
 

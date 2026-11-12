@@ -5,13 +5,9 @@ import type {
   ElysianGateway,
   HostTerminalCloseInfo,
   HostTerminalFrame,
-  HostTerminalHandlers,
 } from '../contracts/adapters'
-import {
-  hostTerminalCloseMessage,
-  pushHistory,
-  type TerminalLine,
-} from '../components/terminal/terminalSession'
+import { hostTerminalCloseMessage } from '../components/terminal/terminalCloseMessage'
+import { deactivateRawTerminal, disposeRawTerminal, rawTerminalRuntime } from '../components/terminal/rawTerminalRuntime'
 import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
 import {
   containerActionSuccessMessage,
@@ -26,14 +22,10 @@ type ContainerTerminalStatus = 'connecting' | 'connected' | 'error'
 type TerminalSession = {
   containerId: string
   sessionId: string
-  /** 每次打开唯一；即使测试适配器重用 sessionId，旧回调也不能污染新窗口。 */
   openId?: string
-  prompt: string
-  /** 输入已发出，等待服务端 prompt 帧确认 Shell 重新就绪。 */
-  awaitingPrompt: boolean
+  prompt?: string
   status: ContainerTerminalStatus
-  lines: readonly TerminalLine[]
-  history: readonly string[]
+  errorMessage?: string
 }
 
 let pendingTerminalSeq = 1
@@ -44,12 +36,6 @@ function nextPendingTerminalId(): string {
   return id
 }
 
-function asOutputLines(lines: readonly string[]): readonly TerminalLine[] {
-  return lines.map((text): TerminalLine => ({ kind: 'output', text }))
-}
-
-const TERMINAL_BANNER = '演示终端 · 待接入真实执行'
-
 /**
  * 终端会话的统一释放入口：connected 断开真实会话，connecting 经 cancelTerminalConnect
  * 取消未决连接（先 settle 再关 socket，被取消的 openTerminal 不会悬挂）。
@@ -57,6 +43,7 @@ const TERMINAL_BANNER = '演示终端 · 待接入真实执行'
  * 占用服务端会话槽位直到空闲超时。
  */
 function releaseTerminalSession(gateway: ElysianGateway | undefined, session: TerminalSession): void {
+  disposeRawTerminal(`container:${session.sessionId}`)
   if (!gateway) return
   if (session.status === 'connected') {
     void gateway.containers.disconnectTerminal(session.sessionId).catch(() => {
@@ -219,12 +206,9 @@ export const useContainersStore = create<{
   closeDetail: () => void
   openTerminal: (gateway: ElysianGateway, containerId: string) => Promise<void>
   closeTerminal: (gateway: ElysianGateway) => Promise<void>
-  submitCommand: (gateway: ElysianGateway, command: string) => Promise<void>
-  interruptTerminal: (gateway: ElysianGateway) => Promise<void>
+  clearTerminalDisplay: () => void
   applyTerminalFrame: (sessionId: string, frame: HostTerminalFrame) => void
   handleTerminalClose: (sessionId: string, info: HostTerminalCloseInfo) => void
-  appendTerminalOutput: (lines: readonly string[]) => void
-  clearTerminalScreen: () => void
   runAction: (gateway: ElysianGateway, containerId: string, action: ContainerAction) => Promise<void>
 }>((set, get) => ({
   status: 'idle',
@@ -459,210 +443,72 @@ export const useContainersStore = create<{
 
   async openTerminal(gateway, containerId) {
     const current = get().terminal
-    // 打开串行化：connecting 态连点不叠加第二条 pending WS（对齐 terminalsStore 的 opening 模式）。
-    // 复位随 terminal 状态走：关窗/容器被删清掉 connecting 态后即可重开，不卡在标志位上。
     if (current?.status === 'connecting') return
-    if (current?.status === 'connected') {
-      try {
-        await gateway.containers.disconnectTerminal(current.sessionId)
-      } catch {
-        // 旧会话断开失败仍继续打开新容器终端，不吞掉用户点击。
-      }
-    }
-
+    if (current) releaseTerminalSession(gateway, current)
     const pendingId = nextPendingTerminalId()
-    set({
-      terminal: {
-        containerId,
-        sessionId: pendingId,
-        openId: pendingId,
-        prompt: '$ ',
-        awaitingPrompt: false,
-        status: 'connecting',
-        lines: [
-          ...(isDockerRuntime() ? [] : [{ kind: 'banner' as const, text: TERMINAL_BANNER }]),
-          { kind: 'output', text: '正在连接容器终端…' },
-        ],
-        history: [],
-      },
-    })
+    const generation = captureAuthGeneration()
+    set({ terminal: { containerId, sessionId: pendingId, openId: pendingId, prompt: '$ ', status: 'connecting' } })
+    const earlyFrames: Array<{ id: string; frame: HostTerminalFrame }> = []
+    let accepted = false
+    let earlyClose: { id: string; info: HostTerminalCloseInfo } | undefined
     try {
-      const info = await gateway.containers.connectTerminal(containerId, containerTerminalHandlers(pendingId))
-      let accepted = false
-      set((state) => {
-        // 迟到结算锚点：只认本次打开的 pendingId——connecting 中取消后重开同一容器时，
-        // 旧连接的迟到 resolve 不得改写新会话的 sessionId。
-        if (!state.terminal || state.terminal.sessionId !== pendingId) return {}
-        accepted = true
-        return {
-          terminal: {
-            ...state.terminal,
-            sessionId: info.id,
-            prompt: info.prompt,
-            awaitingPrompt: false,
-            status: 'connected',
-            lines: state.terminal.lines.filter((line) => line.text !== '正在连接容器终端…'),
-          },
-        }
+      const info = await gateway.containers.connectTerminal(containerId, {
+        onFrame(id, frame) {
+          if (get().terminal?.openId !== pendingId) return
+          if (accepted) get().applyTerminalFrame(id, frame)
+          else earlyFrames.push({ id, frame })
+        },
+        onClose(id, closeInfo) {
+          if (get().terminal?.openId !== pendingId) return
+          if (accepted) get().handleTerminalClose(id, closeInfo)
+          else earlyClose = { id, info: closeInfo }
+        },
       })
-      if (!accepted) {
-        void gateway.containers.disconnectTerminal(info.id).catch(() => {})
+      if (generation !== captureAuthGeneration() || get().terminal?.sessionId !== pendingId) {
+        await gateway.containers.disconnectTerminal(info.id).catch(() => {}); return
       }
+      if (gateway.containers.terminalMode === 'pty') rawTerminalRuntime(`container:${info.id}`).configure({
+        send: data => gateway.containers.sendTerminalInput(info.id, data),
+        resize: (cols, rows) => gateway.containers.resizeTerminal(info.id, cols, rows),
+        acknowledge: bytes => gateway.containers.acknowledgeTerminal(info.id, bytes),
+        onError: message => {
+          get().handleTerminalClose(info.id, { code: 1006, reason: message })
+          void gateway.containers.disconnectTerminal(info.id).catch(() => {})
+        },
+      })
+      set(state => ({ terminal: state.terminal?.sessionId === pendingId ? { ...state.terminal, sessionId: info.id, prompt: info.prompt, status: 'connected' } : state.terminal }))
+      accepted = true
+      for (const { id, frame } of earlyFrames) get().applyTerminalFrame(id, frame)
+      if (earlyClose) get().handleTerminalClose(earlyClose.id, earlyClose.info)
     } catch (error) {
-      const text = error instanceof Error ? error.message : '连接容器终端失败'
-      set((state) => ({
-        // 同一锚点：迟到 reject 不得给重开的新会话追加错误行或置 error 态。
-        terminal:
-          state.terminal && state.terminal.sessionId === pendingId
-            ? {
-                ...state.terminal,
-                status: 'error',
-                lines: [
-                  ...state.terminal.lines.filter((line) => line.text !== '正在连接容器终端…'),
-                  { kind: 'output', text },
-                ],
-              }
-            : state.terminal,
-      }))
+      if (generation !== captureAuthGeneration() || get().terminal?.sessionId !== pendingId) return
+      const errorMessage = error instanceof Error ? error.message : '连接容器终端失败'
+      set(state => ({ terminal: state.terminal && { ...state.terminal, status: 'error', errorMessage } }))
+      useMessageStore.getState().notify({ tone: 'danger', message: errorMessage })
     }
   },
-
   async closeTerminal(gateway) {
     const session = get().terminal
     if (session) releaseTerminalSession(gateway, session)
     set({ terminal: undefined })
   },
-
-  async submitCommand(gateway, command) {
+  clearTerminalDisplay() {
     const session = get().terminal
-    if (!session || session.status !== 'connected') return
-    const input = session.awaitingPrompt ? command : command.trim()
-    if (!session.awaitingPrompt && !input) return
-
-    if (!session.awaitingPrompt && input === 'clear') {
-      set({
-        terminal: {
-          ...session,
-          lines: [],
-          history: pushHistory(session.history, input),
-        },
-      })
-      return
-    }
-
-    const submittedPrompt = session.awaitingPrompt ? '' : session.prompt
-    set({
-      terminal: {
-        ...session,
-        awaitingPrompt: true,
-        lines: [...session.lines, { kind: 'input', text: input, prompt: submittedPrompt }],
-        history: session.awaitingPrompt ? session.history : pushHistory(session.history, input),
-      },
-    })
-    try {
-      await gateway.containers.sendTerminalInput(session.sessionId, input)
-    } catch (error) {
-      const text = error instanceof Error ? error.message : '命令执行失败'
-      set((state) => ({
-        terminal: state.terminal?.openId === session.openId && state.terminal?.sessionId === session.sessionId ? {
-          ...state.terminal,
-          awaitingPrompt: session.awaitingPrompt,
-          lines: [...state.terminal.lines, { kind: 'output', text }],
-        } : state.terminal,
-      }))
-    }
+    if (session) releaseTerminalSession(activeGateway, session)
+    set({ terminal: undefined })
   },
-
-  async interruptTerminal(gateway) {
-    const session = get().terminal
-    if (!session || session.status !== 'connected') return
-    try {
-      await gateway.containers.interruptTerminal(session.sessionId)
-    } catch {
-      // 会话已断开时错误态由关闭路径接管。
-    }
-  },
-
   applyTerminalFrame(sessionId, frame) {
-    set((state) => {
-      const session = state.terminal
-      if (!session || session.sessionId !== sessionId) return {}
-      switch (frame.type) {
-        case 'output':
-          return {
-            terminal: {
-              ...session,
-              lines: [...session.lines, ...asOutputLines(frame.lines)],
-            },
-          }
-        case 'prompt':
-          return { terminal: { ...session, prompt: frame.prompt, awaitingPrompt: false } }
-        case 'truncated':
-          return {
-            terminal: {
-              ...session,
-              lines: [
-                ...session.lines,
-                {
-                  kind: 'output',
-                  text: `输出超出单轮上限，已丢弃 ${frame.droppedBytes} 字节`,
-                },
-              ],
-            },
-          }
-        case 'exit':
-          return {
-            terminal: {
-              ...session,
-              status: 'error',
-              lines: [
-                ...session.lines,
-                { kind: 'output', text: `会话已退出（退出码 ${frame.exitCode}）` },
-              ],
-            },
-          }
-        default:
-          return {}
-      }
-    })
+    if (get().terminal?.sessionId !== sessionId) return
+    if (frame.type === 'output') { rawTerminalRuntime(`container:${sessionId}`).write(frame.data); return }
+    get().handleTerminalClose(sessionId, { code: 1008, reason: `会话已退出（退出码 ${frame.exitCode}）` })
   },
-
   handleTerminalClose(sessionId, info) {
-    set((state) => {
-      const session = state.terminal
-      if (!session || session.sessionId !== sessionId || session.status === 'error') return {}
-      return {
-        terminal: {
-          ...session,
-          status: 'error',
-          lines: [
-            ...session.lines,
-            {
-              kind: 'output',
-              text: hostTerminalCloseMessage(info.code, info.reason, CONTAINER_TERMINAL_CLOSE_FALLBACK),
-            },
-          ],
-        },
-      }
-    })
-  },
-
-  appendTerminalOutput(lines) {
-    set((state) => ({
-      terminal: state.terminal && {
-        ...state.terminal,
-        lines: [
-          ...state.terminal.lines,
-          ...lines.map((text): TerminalLine => ({ kind: 'output', text })),
-        ],
-      },
-    }))
-  },
-
-  clearTerminalScreen() {
-    set((state) => ({
-      terminal: state.terminal && { ...state.terminal, lines: [] },
-    }))
+    const session = get().terminal
+    if (!session || session.sessionId !== sessionId || session.status === 'error') return
+    deactivateRawTerminal(`container:${sessionId}`)
+    const errorMessage = info.reason || hostTerminalCloseMessage(info.code, info.reason, CONTAINER_TERMINAL_CLOSE_FALLBACK)
+    set({ terminal: { ...session, status: 'error', errorMessage } })
+    useMessageStore.getState().notify({ tone: 'danger', message: errorMessage })
   },
 
   async runAction(gateway, containerId, action) {
@@ -685,16 +531,3 @@ export const useContainersStore = create<{
     }
   },
 }))
-
-function containerTerminalHandlers(openId: string): HostTerminalHandlers {
-  return {
-    onFrame: (sessionId, frame) => {
-      if (useContainersStore.getState().terminal?.openId !== openId) return
-      useContainersStore.getState().applyTerminalFrame(sessionId, frame)
-    },
-    onClose: (sessionId, info) => {
-      if (useContainersStore.getState().terminal?.openId !== openId) return
-      useContainersStore.getState().handleTerminalClose(sessionId, info)
-    },
-  }
-}
