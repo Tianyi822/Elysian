@@ -16,9 +16,6 @@ import (
 // 已登记 gaps：集成阶段应把它们上收到 internal/contract，供 platform 等域共用。
 
 const (
-	// terminalCols / terminalRows 容器终端的固定规格（契约 TERMINAL_COLS/ROWS）。
-	terminalCols = 100
-	terminalRows = 30
 	// panelPort 面板端口（契约 PANEL_PORT）；serverPort 为后端 API 契约端口。
 	panelPort  = contract.PanelPort
 	serverPort = 48101

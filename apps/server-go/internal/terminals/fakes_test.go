@@ -1,12 +1,9 @@
 package terminals
 
 import (
-	"context"
-	"errors"
 	"io"
 	"sync"
 	"sync/atomic"
-	"testing"
 	"time"
 
 	"elysian/server/internal/seam"
@@ -100,6 +97,7 @@ type fakePty struct {
 	chunks    [][]byte
 	ended     bool
 	killCount int
+	sizes     [][2]int
 	exited    chan int
 	exitOnce  sync.Once
 }
@@ -118,6 +116,12 @@ func (p *fakePty) Write(b []byte) (int, error) {
 }
 
 func (p *fakePty) Stdout() io.Reader { return p }
+func (p *fakePty) Resize(cols, rows int) error {
+	p.mu.Lock()
+	p.sizes = append(p.sizes, [2]int{cols, rows})
+	p.mu.Unlock()
+	return nil
+}
 
 func (p *fakePty) Read(buf []byte) (int, error) {
 	p.mu.Lock()
@@ -183,202 +187,12 @@ func (p *fakePty) killCountValue() int {
 	return p.killCount
 }
 
-// ---------- 会话事件记录器 ----------
-
-type closeRecord struct {
-	code   int
-	reason string
-}
-
-type frameRecorder struct {
-	mu     sync.Mutex
-	frames []terminalFrame
-	closes []closeRecord
-}
-
-func (r *frameRecorder) sendFrame(frame terminalFrame) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.frames = append(r.frames, frame)
-}
-
-func (r *frameRecorder) close(code int, reason string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.closes = append(r.closes, closeRecord{code, reason})
-}
-
-func (r *frameRecorder) snapshot() ([]terminalFrame, []closeRecord) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	frames := make([]terminalFrame, len(r.frames))
-	copy(frames, r.frames)
-	closes := make([]closeRecord, len(r.closes))
-	copy(closes, r.closes)
-	return frames, closes
-}
-
-func frameTypes(frames []terminalFrame) []string {
-	types := make([]string, len(frames))
-	for i, f := range frames {
-		switch f.(type) {
-		case frameReady:
-			types[i] = "ready"
-		case frameOutput:
-			types[i] = "output"
-		case framePrompt:
-			types[i] = "prompt"
-		case frameTruncated:
-			types[i] = "truncated"
-		case frameExit:
-			types[i] = "exit"
-		case framePong:
-			types[i] = "pong"
-		}
-	}
-	return types
-}
-
-func outputLineCount(frames []terminalFrame) int {
-	total := 0
-	for _, f := range frames {
-		if out, ok := f.(frameOutput); ok {
-			total += len(out.Lines)
-		}
-	}
-	return total
-}
-
-// waitFor 条件轮转直至成立（3 秒上限），超时以 Fatal 终止。
-func waitFor(t *testing.T, cond func() bool, msg string) {
-	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatalf("waitFor 超时：%s", msg)
-		}
-		time.Sleep(time.Millisecond)
-	}
-}
-
-// ---------- 会话服务 fixture（fake PTY + 假钟 + 可编排宿主依赖） ----------
-
-type fixtureOpts struct {
-	spawnErr     error
-	spawnPtyFunc func() seam.PtyProcess
-	listDir      func(dir string) ([]string, error)
-	listDirGate  chan struct{}
-	listCommands func(ctx context.Context) ([]string, error)
-	commandsGate chan struct{}
-	disposeShell func(pid string)
-}
-
-type serviceFixture struct {
-	svc         *service
-	session     sessionHandle
-	pty         *fakePty
-	frames      *frameRecorder
-	clock       *fakeClock
-	listDirMu   sync.Mutex
-	listDirCall []string
-	listCmdN    atomic.Int64
-	spawnMu     sync.Mutex
-	spawnSpec   seam.ShellSessionSpec
-	spawnIdent  seam.TerminalIdentity
-	disposeMu   sync.Mutex
-	disposePids []string
-}
-
-func newServiceFixture(t *testing.T, opts fixtureOpts) *serviceFixture {
-	t.Helper()
-	pty := newFakePty()
-	rec := &frameRecorder{}
-	clk := newFakeClock()
-	f := &serviceFixture{pty: pty, frames: rec, clock: clk}
-
-	spawn := func() seam.PtyProcess {
-		if opts.spawnPtyFunc != nil {
-			return opts.spawnPtyFunc()
-		}
-		return pty
-	}
-	host := seam.TerminalHostDeps{
-		SpawnPty: func(_ context.Context, spec seam.ShellSessionSpec, identity seam.TerminalIdentity) (seam.PtyProcess, error) {
-			f.spawnMu.Lock()
-			f.spawnSpec = spec
-			f.spawnIdent = identity
-			f.spawnMu.Unlock()
-			if opts.spawnErr != nil {
-				return nil, opts.spawnErr
-			}
-			return spawn(), nil
-		},
-		ListCommands: func(ctx context.Context) ([]string, error) {
-			f.listCmdN.Add(1)
-			if opts.commandsGate != nil {
-				<-opts.commandsGate
-			}
-			if opts.listCommands != nil {
-				return opts.listCommands(ctx)
-			}
-			return []string{"bash", "ls", "whoami"}, nil
-		},
-		ListDir: func(dir string) ([]string, error) {
-			f.listDirMu.Lock()
-			f.listDirCall = append(f.listDirCall, dir)
-			f.listDirMu.Unlock()
-			if opts.listDirGate != nil {
-				<-opts.listDirGate
-			}
-			if opts.listDir != nil {
-				return opts.listDir(dir)
-			}
-			return []string{"apps", "docs"}, nil
-		},
-	}
-	if opts.disposeShell != nil {
-		hook := opts.disposeShell
-		host.DisposeShell = hook
-	}
-	identity := func() seam.TerminalIdentity {
-		return seam.TerminalIdentity{User: "root", HostLabel: "elysian-web-1", HomeDir: "/root"}
-	}
-	f.svc = newService(host, identity, HostShellSessionSpec, TERMINAL_MAX_SESSIONS, clk)
-	handle := f.svc.tryOpen(rec)
-	if handle == nil {
-		t.Fatal("fake 并发不应触顶")
-	}
-	f.session = handle
-	return f
-}
-
-func (f *serviceFixture) spawnEnv() seam.ShellSessionSpec {
-	f.spawnMu.Lock()
-	defer f.spawnMu.Unlock()
-	return f.spawnSpec
-}
-
-func (f *serviceFixture) spawnIdentity() seam.TerminalIdentity {
-	f.spawnMu.Lock()
-	defer f.spawnMu.Unlock()
-	return f.spawnIdent
-}
-
-func (f *serviceFixture) listDirCalls() []string {
-	f.listDirMu.Lock()
-	defer f.listDirMu.Unlock()
-	out := make([]string, len(f.listDirCall))
-	copy(out, f.listDirCall)
-	return out
-}
-
-const testReady = "\x01READY\x02"
-
 // ---------- fake 连接（seam.WsConn） ----------
 
 type fakeWsConn struct {
 	mu       sync.Mutex
 	sent     []string
+	binary   [][]byte
 	closes   []closeRecord
 	open     atomic.Bool
 	buffered atomic.Int64
@@ -396,6 +210,16 @@ func (c *fakeWsConn) SendText(text string) bool {
 	}
 	c.mu.Lock()
 	c.sent = append(c.sent, text)
+	c.mu.Unlock()
+	return true
+}
+
+func (c *fakeWsConn) SendBinary(data []byte) bool {
+	if !c.open.Load() {
+		return false
+	}
+	c.mu.Lock()
+	c.binary = append(c.binary, append([]byte(nil), data...))
 	c.mu.Unlock()
 	return true
 }
@@ -425,60 +249,6 @@ func (c *fakeWsConn) closesSnapshot() []closeRecord {
 	out := make([]closeRecord, len(c.closes))
 	copy(out, c.closes)
 	return out
-}
-
-// ---------- fake 会话机（连接胶水直驱） ----------
-
-type fakeConnService struct {
-	mu           sync.Mutex
-	opened       []sessionEvents
-	handled      []clientFrame
-	disposals    []disposeCause
-	rejectOpen   bool
-	throwOnOpen  bool
-	throwOnFrame bool
-}
-
-func (s *fakeConnService) tryOpen(events sessionEvents) sessionHandle {
-	if s.throwOnOpen {
-		panic(errors.New("tryOpen 炸了"))
-	}
-	if s.rejectOpen {
-		return nil
-	}
-	s.mu.Lock()
-	s.opened = append(s.opened, events)
-	s.mu.Unlock()
-	return &fakeConnSession{svc: s}
-}
-
-func (s *fakeConnService) activeCount() int { return 1 }
-
-type fakeConnSession struct {
-	svc *fakeConnService
-}
-
-func (f *fakeConnSession) ID() string { return "session-1" }
-
-func (f *fakeConnSession) handleClientFrame(frame clientFrame) {
-	if f.svc.throwOnFrame {
-		panic(errors.New("handleClientFrame 炸了"))
-	}
-	f.svc.mu.Lock()
-	f.svc.handled = append(f.svc.handled, frame)
-	f.svc.mu.Unlock()
-}
-
-func (f *fakeConnSession) dispose(cause disposeCause) {
-	f.svc.mu.Lock()
-	f.svc.disposals = append(f.svc.disposals, cause)
-	f.svc.mu.Unlock()
-}
-
-func (s *fakeConnService) snapshot() (opened int, handled []clientFrame, disposals []disposeCause) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.opened), append([]clientFrame(nil), s.handled...), append([]disposeCause(nil), s.disposals...)
 }
 
 // ---------- 测试用撤销表（auth 域 SessionConnections 的等价行为件） ----------
@@ -595,4 +365,5 @@ type nopSession struct{}
 
 func (nopSession) ID() string                    { return "t1" }
 func (nopSession) handleClientFrame(clientFrame) {}
+func (nopSession) handleInput([]byte)            {}
 func (nopSession) dispose(disposeCause)          {}

@@ -174,20 +174,12 @@ type CaddyAdminFactory interface {
 
 // ---------- 终端会话接缝（terminals 域实现；docker 域复用做容器 exec 终端） ----------
 
-const (
-	// TerminalCompletionCommandsMax 补全候选命令上限。
-	TerminalCompletionCommandsMax = 4096
-	// TerminalCompletionFilesMax 补全候选文件上限。
-	TerminalCompletionFilesMax = 512
-)
-
 // ShellSessionSpec 终端宿主的启动规格。
 type ShellSessionSpec struct {
-	Env         map[string]string
-	StartupLine string
+	Env map[string]string
 }
 
-// TerminalIdentity 终端身份标识（提示符与目录锚点用）。
+// TerminalIdentity 是终端会话身份与初始目录。
 type TerminalIdentity struct {
 	User      string
 	HostLabel string
@@ -196,24 +188,28 @@ type TerminalIdentity struct {
 
 // PtyProcess 一个已打开的终端宿主进程（本机 pty 或容器 exec 劫持流）。
 type PtyProcess interface {
-	io.Writer // 写 stdin；PTY 写失败由服务层泵吞掉
+	io.Writer // 原始 stdin 字节；写失败终止会话
 	// Stdout 输出泵读源（本机 pty master / 容器 exec 劫持流）。
 	Stdout() io.Reader
+	// Resize 将终端窗口设为指定列数与行数。
+	Resize(cols, rows int) error
 	// Kill 幂等；对已退出进程重复 kill 忽略。
 	Kill() error
 	// Exited 退出码；容器 exec 流结束后经 inspect 补查再发。
 	Exited() <-chan int
 }
 
+// TerminalReadyProcess is implemented by asynchronous process adapters. A raw
+// connection becomes ready only after the real process and startup handshake.
+type TerminalReadyProcess interface {
+	WaitReady(context.Context) error
+}
+
 // TerminalHostDeps 终端宿主依赖注入形状（本机与容器两种实现各自提供）。
 type TerminalHostDeps struct {
-	// SpawnPty 打开一个终端宿主（本机 script/pty 或容器 exec），READY 哨兵由服务层消费。
-	SpawnPty     func(ctx context.Context, spec ShellSessionSpec, identity TerminalIdentity) (PtyProcess, error)
-	ListCommands func(ctx context.Context) ([]string, error) // compgen；失败降级空表
-	ListDir      func(dir string) ([]string, error)          // readdir 排序
-	DisposeShell func(pid string)                            // 可为 nil（本机终端）
-	// Prompt 可为 nil → 缺省 `${user}@${hostLabel}:${tilde(cwd)}$ `；docker exec 注入固定 "$ "。
-	Prompt func(identity TerminalIdentity, cwd string) string
+	// SpawnPty opens a native host PTY or Docker exec stream. The implementation
+	// owns process setup and teardown; terminal emulation belongs to the client.
+	SpawnPty func(ctx context.Context, spec ShellSessionSpec, identity TerminalIdentity) (PtyProcess, error)
 }
 
 // TerminalsService 终端会话机：并发上限与活跃计数。
@@ -228,27 +224,34 @@ type TerminalSession interface {
 	ID() string
 }
 
-// TerminalConnEvents 一次 WS 升级连接的事件处理器（terminals 域实现全部帧校验、
-// ready 扣发、合帧节流、单轮预算、保序队列、空闲超时、撤销接线）。
+// TerminalConnEvents 负责终端控制帧、空闲超时与会话撤销。
 type TerminalConnEvents interface {
 	OnOpen(conn WsConn)
 	OnMessage(conn WsConn, text []byte)
 	OnClose()
 }
 
+// TerminalBinaryConnEvents 是原始终端连接的二进制输入能力。
+// 数据库等文本 WebSocket 协议不实现此接口。
+type TerminalBinaryConnEvents interface {
+	OnBinaryMessage(conn WsConn, data []byte)
+}
+
+// BinaryWsConn 是原始终端所需的可选二进制输出能力。
+type BinaryWsConn interface {
+	SendBinary(data []byte) bool
+}
+
 // TerminalKit 终端会话机工具箱（terminals 域实现；docker 域容器 exec 终端复用）。
 type TerminalKit interface {
-	// NewService 建一个会话机。shell 驯化规格与会话身份解析由消费方注入（集成期
-	// seam 修订：骨架形状缺这两项，容器 exec 终端无法表达「空启动行 + 容器身份」，
-	// 已按 gaps 协议由集成阶段收口）：本机终端传 terminals 域的本机规格与身份解析，
-	// 容器 exec 终端传空启动行规格与按容器解析的身份。
+	// NewService creates a byte transport with injected process and identity.
 	NewService(deps TerminalHostDeps, spec ShellSessionSpec, identity func() TerminalIdentity, maxSessions int) TerminalsService
 	// NewTotalLimitedService 合计上限包装器：getActive() 返回的跨服务活跃合计
 	// ≥ max 时 tryOpen 拒绝（连接层 1008 拒、不建 PTY）。docker 容器终端的
 	// 「全部容器合计 5 上限」由此承载——包装器必须由 terminals 域产出，连接胶水
 	// 只认本域会话机类型。
 	NewTotalLimitedService(inner TerminalsService, getActive func() int, max int) TerminalsService
-	// NewConnEvents 构造连接胶水；revocation 可为 nil（docker 容器终端不接线撤销表，现状语义）。
+	// NewConnEvents binds each process to the authenticated panel session.
 	NewConnEvents(svc TerminalsService, revocation SessionConnections, sessionID string) TerminalConnEvents
 }
 

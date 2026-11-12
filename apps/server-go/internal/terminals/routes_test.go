@@ -123,7 +123,7 @@ func Test未知路径404且文案剥挂载前缀(t *testing.T) {
 
 func Test同源写方法打已知路径落404剥前缀(t *testing.T) {
 	handler := mountedRouter(Deps{Available: true}, upgradableService{})
-	code, body := doRequest(t, handler, "POST", shared.TerminalMount+"/ws", nil)
+	code, body := doRequest(t, handler, "POST", shared.TerminalMount+"/ws?protocol=2", nil)
 	if code != http.StatusNotFound {
 		t.Fatalf("= %d，期望 404", code)
 	}
@@ -148,7 +148,7 @@ func TestWs升级记操作日志(t *testing.T) {
 	handler := mountedRouter(Deps{Available: true, Logs: logs}, upgradableService{})
 	// 无 Upgrade 头：gorilla 以 400 回绝，但操作日志发生在升级之前（盘点 §2.2：
 	// 记录必须在升级之前，升级之后没有 HTTP 响应可挂）。
-	code, _ := doRequest(t, handler, "GET", shared.TerminalMount+"/ws", nil)
+	code, _ := doRequest(t, handler, "GET", shared.TerminalMount+"/ws?protocol=2", nil)
 	if code != http.StatusBadRequest {
 		t.Fatalf("无 Upgrade 头 = %d，期望 400", code)
 	}
@@ -182,7 +182,7 @@ func dialTerminalWs(t *testing.T, handler http.Handler, cookie string) *websocke
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	url := "ws" + strings.TrimPrefix(srv.URL, "http") + shared.TerminalMount + "/ws"
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + shared.TerminalMount + "/ws?protocol=2"
 	header := http.Header{}
 	header.Set("Origin", srv.URL) // Origin 与 Host（URL 推得）一致，hostname 127.0.0.1 在回环名单
 	if cookie != "" {
@@ -233,4 +233,12 @@ func TestWs合法升级onClose注销closer(t *testing.T) {
 	_ = conn.Close() // 客户端断开 → 服务端读循环结束 → OnClose 注销
 	waitFor(t, func() bool { return connections.count("abc") == 0 }, "onClose 未注销 closer")
 	connections.Revoke("abc") // 已注销：不重复关闭
+}
+
+func TestOldTerminalProtocolRejectedBeforeSpawn(t *testing.T) {
+	handler := mountedRouter(Deps{Available: true}, upgradableService{})
+	code, body := doRequest(t, handler, "GET", shared.TerminalMount+"/ws", nil)
+	if code != 400 || !strings.Contains(body, "请刷新面板") {
+		t.Fatalf("old protocol: %d %s", code, body)
+	}
 }

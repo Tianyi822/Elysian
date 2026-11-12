@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -33,7 +34,23 @@ func Upgrade(w http.ResponseWriter, r *http.Request) (seam.WsConn, error) {
 		return nil, err
 	}
 	conn.SetReadLimit(wsReadLimit)
-	return newWsConn(conn), nil
+	upgraded := newWsConn(conn)
+	// The auth WebSocket guard owns the connection before a terminal starts.
+	// Walk transparent wrappers without coupling this shared layer to auth.
+	for writer := w; writer != nil; {
+		if binder, ok := writer.(interface{ BindSessionWebSocket(seam.WsConn) bool }); ok {
+			if !binder.BindSessionWebSocket(upgraded) {
+				return nil, context.Canceled
+			}
+			break
+		}
+		unwrapper, ok := writer.(interface{ Unwrap() http.ResponseWriter })
+		if !ok {
+			break
+		}
+		writer = unwrapper.Unwrap()
+	}
+	return upgraded, nil
 }
 
 // wsConn 是 seam.WsConn 的 gorilla 实现：串行化写出、自计数待写字节、幂等关闭。
@@ -51,19 +68,29 @@ func newWsConn(conn *websocket.Conn) *wsConn {
 // SendText 在连接 OPEN 时发送文本帧并返回 true；非 OPEN 或写出失败静默丢弃返回 false。
 // 写出期间自计数累加，供 BufferedAmount 水位判定。
 func (c *wsConn) SendText(text string) bool {
+	return c.send(websocket.TextMessage, []byte(text))
+}
+
+// SendBinary writes PTY bytes without UTF-8 decoding or JSON conversion.
+func (c *wsConn) SendBinary(data []byte) bool {
+	return c.send(websocket.BinaryMessage, data)
+}
+
+func (c *wsConn) send(messageType int, data []byte) bool {
 	if c.closed.Load() {
 		return false
 	}
+	c.buffered.Add(int64(len(data)))
+	defer c.buffered.Add(-int64(len(data)))
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 	if c.closed.Load() {
 		return false
 	}
-	c.buffered.Add(int64(len(text)))
-	err := c.conn.WriteMessage(websocket.TextMessage, []byte(text))
-	c.buffered.Add(-int64(len(text)))
-	if err != nil {
+	_ = c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	if err := c.conn.WriteMessage(messageType, data); err != nil {
 		c.closed.Store(true)
+		_ = c.conn.Close()
 		return false
 	}
 	return true
@@ -76,8 +103,6 @@ func (c *wsConn) BufferedAmount() int64 {
 
 // Close 幂等发送关闭帧并断开底层连接。
 func (c *wsConn) Close(code int, reason string) {
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
 	if c.closed.Swap(true) {
 		return
 	}

@@ -1,17 +1,17 @@
 package docker
 
 import (
+	"bytes"
 	"context"
+	"elysian/server/internal/seam"
+	"errors"
 	"io"
+	"os/exec"
 	"strings"
 	"sync"
 	"testing"
 	"time"
-
-	"elysian/server/internal/seam"
 )
-
-// exec 抽象层对等测试（dockerExec.test.ts 锚点）。
 
 // fakeExecRunner 可编程 runner：记录调用并按脚本产出会话。
 type fakeExecRunner struct {
@@ -35,77 +35,37 @@ func (f *fakeExecRunner) recorded() [][]string {
 }
 
 func TestProbeShellThreeBranches(t *testing.T) {
-	runner := &fakeExecRunner{run: func(cmd []string, tty bool, env []string) *execSession {
-		return newFakeSession("bash=yes\nstty=yes\n")
-	}}
-	if got := probeShell(runner); got != shellBash {
-		t.Fatalf("bash=yes → bash：%v", got)
-	}
-	// 探测命令 argv 固定。
-	calls := runner.recorded()
-	if len(calls) != 1 || calls[0][0] != "/bin/sh" || calls[0][1] != "-c" || calls[0][2] != dockerShellProbeScript {
-		t.Fatalf("探测 argv：%v", calls[0])
-	}
-	if len(calls[0]) != 3 {
-		t.Fatalf("探测 argv 长度：%v", calls[0])
-	}
-
-	runner = &fakeExecRunner{run: func(cmd []string, tty bool, env []string) *execSession {
-		return newFakeSession("bash=no\nstty=yes\n")
-	}}
-	if got := probeShell(runner); got != shellSh {
-		t.Fatalf("bash=no → sh：%v", got)
-	}
-
-	runner = &fakeExecRunner{run: func(cmd []string, tty bool, env []string) *execSession {
-		return newFakeSession("nothing\n")
-	}}
-	if got := probeShell(runner); got != shellNone {
-		t.Fatalf("无标记 → none：%v", got)
-	}
-}
-
-func TestShellSpecFor(t *testing.T) {
-	bash := shellSpecFor(shellBash, true)
-	if bash.startupLine != "stty cols 100 rows 30 -echo; set +H; printf '\\001READY:%s\\002\\n' $$\n" {
-		t.Fatalf("bash 启动行：%q", bash.startupLine)
-	}
-	found := false
-	for _, env := range bash.env {
-		if strings.HasPrefix(env, "PROMPT_COMMAND=printf ") && strings.Contains(env, `\x01PWD:%s\x02\n`) {
-			found = true
+	for _, test := range []struct {
+		output string
+		kind   shellKind
+	}{{"bash=yes\n", shellBash}, {"bash=no\n", shellSh}, {"", shellNone}} {
+		runner := &fakeExecRunner{run: func([]string, bool, []string) *execSession { return newFakeSession(test.output) }}
+		if got := probeShell(runner); got != test.kind {
+			t.Fatalf("shell=%s want %s", got, test.kind)
 		}
 	}
-	if !found {
-		t.Fatalf("bash PROMPT_COMMAND：%v", bash.env)
-	}
-
-	sh := shellSpecFor(shellSh, true)
-	if sh.startupLine != "stty cols 100 rows 30 -echo; printf '\\001READY:%s\\002\\n' $$\n" {
-		t.Fatalf("sh 启动行：%q", sh.startupLine)
-	}
-	if sh.env[0] != "PS1=\x01PWD:$PWD\x02\n" {
-		t.Fatalf("sh PS1 原始控制字节：%q", sh.env[0])
+}
+func TestNativeShellSpecification(t *testing.T) {
+	for _, kind := range []shellKind{shellBash, shellSh} {
+		spec := shellSpecFor(kind)
+		cmd := shellCommandFor(spec, "nonce")
+		if cmd[0] != "/bin/sh" || cmd[2] != dockerExecLauncher || cmd[4] != "nonce" {
+			t.Fatalf("固定 launcher 参数: %v", cmd)
+		}
+		if !strings.Contains(strings.Join(spec.env, "\n"), "TERM=xterm-256color") {
+			t.Fatal("缺终端类型")
+		}
+		if !strings.Contains(strings.Join(spec.env, "\n"), "HISTFILE=/dev/null") {
+			t.Fatal("容器终端不能将命令持久化到历史文件")
+		}
+		joined := strings.Join(append(cmd, spec.env...), "\n")
+		for _, forbidden := range []string{"--noediting", "-echo", "PROMPT_COMMAND", "PWD:"} {
+			if strings.Contains(joined, forbidden) {
+				t.Fatalf("遗留行编辑协议 %s", forbidden)
+			}
+		}
 	}
 }
-
-func TestShellCommandForAndEchoDrop(t *testing.T) {
-	bash := shellSpecFor(shellBash, true)
-	if got := shellCommandFor(bash); got[0] != "/bin/bash" || got[1] != "--noediting" {
-		t.Fatalf("bash 命令：%v", got)
-	}
-	if shouldDropEchoLines(bash) {
-		t.Fatal("bash 带 stty 不抑制回显")
-	}
-	sh := shellSpecFor(shellSh, false)
-	if got := shellCommandFor(sh); got[0] != "/bin/sh" {
-		t.Fatalf("sh 命令：%v", got)
-	}
-	if !shouldDropEchoLines(sh) {
-		t.Fatal("无 stty 规格抑制回显")
-	}
-}
-
 func TestCleanupScriptPid(t *testing.T) {
 	cmd, err := cleanupScriptPid("12345")
 	if err != nil {
@@ -136,179 +96,192 @@ func TestCleanupScriptSyntaxAndStructure(t *testing.T) {
 	}
 }
 
-func TestListDockerCommandsBashAndSh(t *testing.T) {
+func TestExecPtyPreservesRawOutputAndInput(t *testing.T) {
+	raw := []byte("\x1b[?1049h\x1b[31m中文🌍\r\n\x1b[0m\x1b[?1049l")
+	var input bytes.Buffer
 	runner := &fakeExecRunner{run: func(cmd []string, tty bool, env []string) *execSession {
-		return newFakeSession("echo\r\necho\r\nls\r\n")
-	}}
-	commands, err := listDockerCommands(runner, shellBash)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(commands) != 2 || commands[0] != "echo" || commands[1] != "ls" {
-		t.Fatalf("去重：%v", commands)
-	}
-	calls := runner.recorded()
-	if calls[0][0] != "/bin/bash" || calls[0][1] != "-c" || calls[0][2] != "compgen -A command" {
-		t.Fatalf("bash 补全命令：%v", calls[0])
-	}
-	if _, err := listDockerCommands(runner, shellSh); err != nil {
-		t.Fatal(err)
-	}
-	calls = runner.recorded()
-	shCall := calls[len(calls)-1]
-	if shCall[0] != "/bin/sh" || shCall[1] != "-c" || shCall[2] != shCommandsScript {
-		t.Fatalf("sh 补全脚本：%v", shCall)
-	}
-}
-
-func TestListDockerFiles(t *testing.T) {
-	runner := &fakeExecRunner{run: func(cmd []string, tty bool, env []string) *execSession {
-		return newFakeSession("a\nb\nc\n")
-	}}
-	files, err := listDockerFiles(runner, "/srv")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(files) != 3 || files[0] != "a" {
-		t.Fatalf("%v", files)
-	}
-	calls := runner.recorded()
-	if calls[0][0] != "/bin/ls" || calls[0][1] != "-1A" || calls[0][2] != "--color=never" || calls[0][3] != "--" || calls[0][4] != "/srv" {
-		t.Fatalf("ls argv（cwd 仅作 argv）：%v", calls[0])
-	}
-	// 第 513 项保留（TERMINAL_COMPLETION_FILES_MAX + 1）。
-	var lines []string
-	for i := 0; i < seam.TerminalCompletionFilesMax+1; i++ {
-		lines = append(lines, "f"+itoa(i))
-	}
-	runner = &fakeExecRunner{run: func(cmd []string, tty bool, env []string) *execSession {
-		return newFakeSession(strings.Join(lines, "\n") + "\n")
-	}}
-	files, err = listDockerFiles(runner, "/srv")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(files) != seam.TerminalCompletionFilesMax+1 {
-		t.Fatalf("第 513 项保留：%d", len(files))
-	}
-	// 非法 cwd。
-	for _, cwd := range []string{"srv", "/a\x00b", "/a\nb"} {
-		if _, err := listDockerFiles(runner, cwd); err == nil || err.Error() != "容器终端工作目录无效" {
-			t.Fatalf("非法 cwd %q：%v", cwd, err)
+		if !tty {
+			t.Fatal("交互 shell 必须 TTY")
 		}
-	}
-}
-
-func TestExecPtyNoSttyEchoSuppression(t *testing.T) {
-	spec := shellSpecFor(shellSh, false)
-	runner := &fakeExecRunner{run: func(cmd []string, tty bool, env []string) *execSession {
-		return newFakeSession("echo hi\nhi\nrest\n")
+		session := newFakeSession("\x01ELYSIAN:" + cmd[4] + ":42\x02" + string(raw))
+		session.writeTarget = &input
+		return session
 	}}
-	pty := createExecPty(runner, spec)
-	// 先武装回显标记再读输出。
-	if _, err := pty.Write([]byte("echo hi\n")); err != nil {
-		t.Fatal(err)
-	}
-	output, err := io.ReadAll(pty.Stdout())
+	p, err := createExecPty(runner, shellSpecFor(shellBash))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(output) != "hi\nrest\n" {
-		t.Fatalf("与输入全等的第一行被丢弃：%q", output)
+	sent := []byte("a\t\x03\x1b[A\r")
+	if n, err := p.Write(sent); err != nil || n != len(sent) {
+		t.Fatalf("write %d %v", n, err)
+	}
+	output, err := io.ReadAll(p.Stdout())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(output, raw) || !bytes.Equal(input.Bytes(), sent) {
+		t.Fatalf("字节被修改: output=%q input=%q", output, input.Bytes())
+	}
+	if code := <-p.Exited(); code != 0 {
+		t.Fatalf("exit=%d", code)
 	}
 }
-
-func TestExecPtyEnvForwarded(t *testing.T) {
-	spec := shellSpecFor(shellBash, true)
-	var gotEnv []string
-	var gotCmd []string
-	runner := &fakeExecRunner{run: func(cmd []string, tty bool, env []string) *execSession {
-		gotCmd = append([]string(nil), cmd...)
-		gotEnv = append([]string(nil), env...)
-		return newFakeSession("")
+func TestExecPtyRejectsWrongNonce(t *testing.T) {
+	runner := &fakeExecRunner{run: func([]string, bool, []string) *execSession { return newFakeSession("\x01ELYSIAN:wrong:42\x02") }}
+	p, err := createExecPty(runner, shellSpecFor(shellSh))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadAll(p.Stdout()); err == nil {
+		t.Fatal("错误 nonce 被接受")
+	}
+}
+func TestExecPtyKillCleansTrackedPIDOnce(t *testing.T) {
+	runner := &fakeExecRunner{run: func(cmd []string, tty bool, _ []string) *execSession {
+		if !tty {
+			return newFakeSession("")
+		}
+		s := &execSession{queue: newBoundedChunkQueue(execStdoutMaxBytes)}
+		_ = s.queue.push([]byte("\x01ELYSIAN:" + cmd[4] + ":123\x02waiting"))
+		return s
 	}}
-	_ = createExecPty(runner, spec)
-	if gotCmd[0] != "/bin/bash" || gotCmd[1] != "--noediting" {
-		t.Fatalf("cmd：%v", gotCmd)
+	p, err := createExecPty(runner, shellSpecFor(shellSh))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(gotEnv) != 2 {
-		t.Fatalf("env 数：%v", gotEnv)
+	if err = p.Kill(); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestExecSessionExitCodeFromInspect(t *testing.T) {
-	// ExitCode 依赖真实 Engine inspect：非 200/解析失败按 1。
-	session := &execSession{}
-	if got := session.ExitCode(); got != 1 {
-		t.Fatalf("无 execId 按 1：%d", got)
+	_ = p.Kill()
+	calls := runner.recorded()
+	if len(calls) != 2 || calls[1][2] != dockerExecCleanupScript || calls[1][4] != "123" {
+		t.Fatalf("未精确清理一次: %v", calls)
 	}
 }
-
 func TestLazyExecPtyCancelDuringOpen(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	opened := make(chan seam.PtyProcess, 1)
-	pty := createLazyExecPty(func(ctx context.Context) (seam.PtyProcess, error) {
+	started := make(chan struct{})
+	p := createLazyExecPty(func(ctx context.Context) (seam.PtyProcess, error) {
+		close(started)
 		<-ctx.Done()
 		return nil, errTerminalCancelled
 	})
-	_ = opened
-	_ = cancel
-	_ = ctx
-	// 直接触发打开（写 stdin）后立即取消：open 侧观察到取消返回错误。
-	go pty.Write([]byte("x"))
-	time.Sleep(20 * time.Millisecond)
-	if err := pty.Kill(); err != nil {
-		t.Fatal(err)
-	}
+	done := make(chan error, 1)
+	go func() { _, err := p.Write([]byte("x")); done <- err }()
+	<-started
+	_ = p.Kill()
 	select {
-	case code := <-pty.Exited():
-		if code != 0 {
-			t.Fatalf("取消按 0 结算：%d", code)
+	case err := <-done:
+		if err == nil {
+			t.Fatal("取消未传播")
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("取消未结算退出码")
+	case <-time.After(time.Second):
+		t.Fatal("输入未取消")
 	}
 }
-
-func TestLazyExecPtyLateKillKillsOpened(t *testing.T) {
-	inner := &fakePtyProcess{}
-	pty := createLazyExecPty(func(ctx context.Context) (seam.PtyProcess, error) {
-		if ctx.Err() != nil {
-			return nil, errTerminalCancelled
-		}
-		return inner, nil
-	})
-	_ = pty.Stdout() // 触发打开
-	time.Sleep(30 * time.Millisecond)
-	if err := pty.Kill(); err != nil {
-		t.Fatal(err)
+func TestLazyExecPtyKeepsLatestSizeAndKillsLateOpen(t *testing.T) {
+	opened := make(chan struct{})
+	release := make(chan struct{})
+	inner := newFakePtyProcess()
+	p := createLazyExecPty(func(context.Context) (seam.PtyProcess, error) { close(opened); <-release; return inner, nil })
+	_ = p.Resize(90, 30)
+	_ = p.Resize(132, 44)
+	_ = p.Stdout()
+	<-opened
+	close(release)
+	lazy := p.(*lazyExecPty)
+	<-lazy.done
+	inner.mu.Lock()
+	cols, rows := inner.cols, inner.rows
+	inner.mu.Unlock()
+	if cols != 132 || rows != 44 {
+		t.Fatalf("丢失最新尺寸 %dx%d", cols, rows)
 	}
-	if !inner.killed {
-		t.Fatal("迟到 PTY 应被杀")
+	_ = p.Kill()
+	inner.mu.Lock()
+	killed := inner.killed
+	inner.mu.Unlock()
+	if !killed {
+		t.Fatal("未杀内部 PTY")
 	}
-	select {
-	case code := <-pty.Exited():
-		_ = code
-	case <-time.After(2 * time.Second):
-		t.Fatal("退出码未继承")
+}
+func TestLazyExecPtyPreservesWriteFailure(t *testing.T) {
+	inner := newFakePtyProcess()
+	inner.writeErr = errors.New("write failed")
+	p := createLazyExecPty(func(context.Context) (seam.PtyProcess, error) { return inner, nil })
+	if _, err := p.Write([]byte("raw")); err == nil || err.Error() != "write failed" {
+		t.Fatalf("丢失错误: %v", err)
 	}
+	_ = p.Kill()
 }
 
 type fakePtyProcess struct {
-	killed bool
+	mu         sync.Mutex
+	killed     bool
+	cols, rows int
+	writeErr   error
+	exited     chan int
+	once       sync.Once
 }
 
-func (p *fakePtyProcess) Write(b []byte) (int, error) { return len(b), nil }
-
+func newFakePtyProcess() *fakePtyProcess { return &fakePtyProcess{exited: make(chan int, 1)} }
+func (p *fakePtyProcess) Write(b []byte) (int, error) {
+	if p.writeErr != nil {
+		return 0, p.writeErr
+	}
+	return len(b), nil
+}
 func (p *fakePtyProcess) Stdout() io.Reader { return strings.NewReader("") }
-
-func (p *fakePtyProcess) Kill() error {
-	p.killed = true
+func (p *fakePtyProcess) Resize(cols, rows int) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.cols, p.rows = cols, rows
 	return nil
 }
+func (p *fakePtyProcess) Kill() error {
+	p.mu.Lock()
+	p.killed = true
+	p.mu.Unlock()
+	p.once.Do(func() { p.exited <- 0 })
+	return nil
+}
+func (p *fakePtyProcess) Exited() <-chan int { return p.exited }
 
-func (p *fakePtyProcess) Exited() <-chan int {
-	ch := make(chan int, 1)
-	ch <- 7
-	return ch
+func TestExecLauncherPrintsActualControlBytes(t *testing.T) {
+	command := exec.Command("/bin/sh", "-c", dockerExecLauncher, "--", "nonce", "/bin/true")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix := []byte("\x01ELYSIAN:nonce:")
+	if !bytes.HasPrefix(output, prefix) || len(output) == 0 || output[len(output)-1] != '\x02' {
+		t.Fatalf("PID header must use actual control bytes: %q", output)
+	}
+	pid := string(output[len(prefix) : len(output)-1])
+	if !pidPattern.MatchString(pid) {
+		t.Fatalf("PID invalid: %q", pid)
+	}
+}
+
+func TestExecPtyStreamFailureStillCleansPID(t *testing.T) {
+	runner := &fakeExecRunner{run: func(cmd []string, tty bool, _ []string) *execSession {
+		if !tty {
+			return newFakeSession("")
+		}
+		s := &execSession{queue: newBoundedChunkQueue(execStdoutMaxBytes)}
+		_ = s.queue.push([]byte("\x01ELYSIAN:" + cmd[4] + ":456\x02"))
+		s.queue.fail(errors.New("hijack failed"))
+		return s
+	}}
+	p, err := createExecPty(runner, shellSpecFor(shellBash))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadAll(p.Stdout()); err == nil {
+		t.Fatal("流错误未传播")
+	}
+	_ = p.Kill()
+	calls := runner.recorded()
+	if len(calls) != 2 || calls[1][4] != "456" {
+		t.Fatalf("流断开被误认为进程已退出: %v", calls)
+	}
 }

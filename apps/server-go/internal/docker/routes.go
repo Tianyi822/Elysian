@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/gorilla/websocket"
 
 	"elysian/server/internal/applog"
 	"elysian/server/internal/contract"
@@ -469,6 +470,10 @@ func terminalHandler(deps routerDeps) http.HandlerFunc {
 			shared.SendError(w, http.StatusForbidden, "请求来源不允许")
 			return
 		}
+		if req.URL.Query().Get("protocol") != "2" {
+			shared.SendError(w, http.StatusBadRequest, "终端协议已更新，请刷新面板")
+			return
+		}
 		id := chi.URLParam(req, "id")
 		if !containerIDPattern.MatchString(id) {
 			middleware.WriteError(w, shared.InvalidRequest("容器 ID 格式无效"))
@@ -495,23 +500,31 @@ func terminalHandler(deps routerDeps) http.HandlerFunc {
 				HTTPStatus: &status,
 			})
 		}
-		events := deps.execSessions.CreateConnEvents(id)
+		sessionID, _ := seam.ParseSessionCookie(req.Header.Get("Cookie"))
+		events := deps.execSessions.CreateConnEvents(id, sessionID)
 		conn, err := middleware.Upgrade(w, req)
 		if err != nil {
 			// 升级失败：响应已写出，连接不可用。
 			return
 		}
 		events.OnOpen(conn)
-		go func() {
-			for {
-				_, data, err := conn.ReadMessage()
-				if err != nil {
-					events.OnClose()
+		defer events.OnClose()
+		for {
+			messageType, data, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			if messageType == websocket.BinaryMessage {
+				if raw, ok := events.(seam.TerminalBinaryConnEvents); ok {
+					raw.OnBinaryMessage(conn, data)
+				} else {
+					conn.Close(1008, "终端协议不受支持")
 					return
 				}
+			} else {
 				events.OnMessage(conn, data)
 			}
-		}()
+		}
 	}
 }
 

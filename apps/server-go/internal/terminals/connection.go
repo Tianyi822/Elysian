@@ -1,161 +1,146 @@
 package terminals
 
 import (
-	"errors"
-	"fmt"
-	"sync"
-	"sync/atomic"
-
 	"elysian/server/internal/seam"
 	"elysian/server/internal/shared"
+	"errors"
+	"sync"
 )
 
-// WS 连接胶水：把 WebSocket 事件（open/message/close）接到会话服务上。一条升级
-// 连接对应一个 connEvents（seam.TerminalConnEvents），一连接一会话。发送路径带水位
-// 背压：seam.WsConn 的 BufferedAmount 超限即 1008 断开。全部处理器 recover 包裹：
-// 畸形输入与服务层异常绝不外泄进事件回调。
-
-// connEvents 一次 WS 升级连接的事件处理器（含会话撤销接线）。
+// One connection owns one process, registered against the authenticated panel
+// session. Text messages are protocol controls; binary messages are raw input.
 type connEvents struct {
 	svc        serviceApi
-	revocation seam.SessionConnections // 可为 nil：不接线撤销表
+	revocation seam.SessionConnections
 	sessionID  string
-
-	conn        seam.WsConn
-	session     atomic.Pointer[sessBox] // OnOpen 建会话成功后填充；会话 goroutine 并发读
-	lifecycleMu sync.Mutex
-	unregister  func()
-	closed      bool
-	// violated 水位超限后的静默丢弃闸：连接已死（回落也救不回），后续帧静默丢弃、
-	// 不重复关闭。
-	violated atomic.Bool
+	mu         sync.Mutex
+	conn       seam.WsConn
+	session    sessionHandle
+	unregister func()
+	closed     bool
 }
 
-// sessBox atomic.Pointer 的装箱（接口值不能直接进 atomic.Pointer）。
-type sessBox struct{ h sessionHandle }
-
-var _ seam.TerminalConnEvents = (*connEvents)(nil)
-
-// newConnEvents 构造一次升级连接的事件处理器；revocation 可为 nil。
 func newConnEvents(svc serviceApi, revocation seam.SessionConnections, sessionID string) *connEvents {
 	return &connEvents{svc: svc, revocation: revocation, sessionID: sessionID}
 }
-
-// OnOpen 占用会话槽位；并发已达上限直接 1008 拒绝（不建 PTY、不登记撤销 closer）。
 func (e *connEvents) OnOpen(conn seam.WsConn) {
+	e.mu.Lock()
 	e.conn = conn
+	e.mu.Unlock()
 	defer func() {
-		if r := recover(); r != nil {
-			conn.Close(1011, "终端会话建立失败："+recoverText(r))
+		if recover() != nil {
+			e.close(1011, "终端会话建立失败")
 		}
 	}()
-	session := e.svc.tryOpen(connSessionEvents{glue: e, conn: conn})
-	if session == nil {
-		conn.Close(TERMINAL_VIOLATION_CLOSE_CODE, TERMINAL_LIMIT_REASON)
+	h := e.svc.tryOpen(connSessionEvents{e, conn})
+	if h == nil {
+		e.close(1008, TERMINAL_LIMIT_REASON)
 		return
 	}
-	e.lifecycleMu.Lock()
+	e.mu.Lock()
 	if e.closed {
-		e.lifecycleMu.Unlock()
-		session.dispose(disposeClientClose)
+		e.mu.Unlock()
+		h.dispose(disposeClientClose)
 		return
 	}
-	e.session.Store(&sessBox{h: session})
-	e.lifecycleMu.Unlock()
+	e.session = h
+	e.mu.Unlock()
 	if e.revocation != nil {
-		unregister := e.revocation.Register(e.sessionID, func() {
-			conn.Close(seam.SessionRevokedCloseCode, seam.SessionRevokedCloseReason)
-		})
-		// 连接可能在 Register 返回前已关闭；迟到的登记句柄也必须回收。
-		e.lifecycleMu.Lock()
+		unregister := e.revocation.Register(e.sessionID, func() { e.close(seam.SessionRevokedCloseCode, seam.SessionRevokedCloseReason) })
+		e.mu.Lock()
 		closed := e.closed
 		if !closed {
 			e.unregister = unregister
 		}
-		e.lifecycleMu.Unlock()
+		e.mu.Unlock()
 		if closed {
 			unregister()
 		}
 	}
 }
-
-// OnMessage 处理一条客户端消息。text 为 nil 表示二进制帧（按「终端消息过大」违规）；
-// 违规立即 1008 关闭并清理 PTY（不等 OnClose）。
+func (e *connEvents) current() sessionHandle {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.closed {
+		return nil
+	}
+	return e.session
+}
 func (e *connEvents) OnMessage(_ seam.WsConn, text []byte) {
-	box := e.session.Load()
-	if box == nil {
-		// 被拒/无会话连接上的后续消息是 no-op。
+	h := e.current()
+	if h == nil {
 		return
 	}
 	frame, ok, reason := parseClientFrame(text)
 	if !ok {
-		e.conn.Close(TERMINAL_VIOLATION_CLOSE_CODE, reason)
-		box.h.dispose(disposeClientClose)
+		e.close(1008, reason)
 		return
 	}
-	defer func() { _ = recover() }() // 客户端帧处理异常：吞掉，会话由关闭路径收尾。
-	box.h.handleClientFrame(frame)
+	defer func() {
+		if recover() != nil {
+			e.close(1011, "终端消息处理失败")
+		}
+	}()
+	h.handleClientFrame(frame)
 }
-
-// OnClose 客户端断开：撤销 closer 先于会话清理注销（连接已亡，后续 revoke 不再触碰）。
-func (e *connEvents) OnClose() {
-	e.lifecycleMu.Lock()
+func (e *connEvents) OnBinaryMessage(_ seam.WsConn, data []byte) {
+	defer func() {
+		if recover() != nil {
+			e.close(1011, "终端消息处理失败")
+		}
+	}()
+	h := e.current()
+	if h == nil {
+		return
+	}
+	if len(data) > TERMINAL_INPUT_MAX_BYTES {
+		e.close(1008, "终端输入过大")
+		return
+	}
+	h.handleInput(data)
+}
+func (e *connEvents) OnClose()                      { e.finish(false, 0, "") }
+func (e *connEvents) close(code int, reason string) { e.finish(true, code, reason) }
+func (e *connEvents) finish(sendClose bool, code int, reason string) {
+	e.mu.Lock()
+	if e.closed {
+		e.mu.Unlock()
+		return
+	}
 	e.closed = true
+	h := e.session
+	e.session = nil
 	unregister := e.unregister
 	e.unregister = nil
-	box := e.session.Swap(nil)
-	e.lifecycleMu.Unlock()
+	conn := e.conn
+	e.mu.Unlock()
+	if sendClose && conn != nil {
+		conn.Close(code, reason)
+	}
 	if unregister != nil {
 		unregister()
 	}
-	if box == nil {
-		return
+	if h != nil {
+		h.dispose(disposeClientClose)
 	}
-	box.h.dispose(disposeClientClose)
 }
 
-// recoverText 统一 panic 值转文本。
-func recoverText(r any) string {
-	if err, ok := r.(error); ok {
-		return err.Error()
-	}
-	return fmt.Sprint(r)
-}
-
-// connSessionEvents 会话事件出口绑到连接：帧序列化为 JSON 文本帧，发送前检查水位。
 type connSessionEvents struct {
 	glue *connEvents
 	conn seam.WsConn
 }
 
-var _ sessionEvents = connSessionEvents{}
-
-// sendFrame 序列化并发送；非 OPEN（SendText 返回 false）静默丢弃。发送前水位超限
-// 即 1008 断开并清理会话；恰好等于上限不触发。
 func (e connSessionEvents) sendFrame(frame terminalFrame) {
-	if e.glue.violated.Load() {
-		return
-	}
-	if e.conn.BufferedAmount() > TERMINAL_SEND_BUFFER_LIMIT_BYTES {
-		// 慢消费连接：发送水位超限即断开——服务端发送缓冲不再无界增长。
-		e.glue.violated.Store(true)
-		e.conn.Close(TERMINAL_VIOLATION_CLOSE_CODE, TERMINAL_BACKPRESSURE_REASON)
-		if box := e.glue.session.Load(); box != nil {
-			box.h.dispose(disposeInternal)
-		}
-		return
-	}
 	data, err := shared.MarshalJSON(frame)
-	if err != nil {
-		return
+	if err != nil || !e.conn.SendText(string(data)) {
+		e.glue.close(1011, "终端连接中断")
 	}
-	e.conn.SendText(string(data))
 }
-
-// close 关闭底层连接（幂等由 seam.WsConn 实现保证）。
-func (e connSessionEvents) close(code int, reason string) {
-	e.conn.Close(code, reason)
+func (e connSessionEvents) sendData(data []byte) bool {
+	conn, ok := e.conn.(seam.BinaryWsConn)
+	return ok && conn.SendBinary(data)
 }
+func (e connSessionEvents) close(code int, reason string) { e.glue.close(code, reason) }
 
 // kit 是 seam.TerminalKit 实现：docker 域容器 exec 终端复用同一套会话机与连接胶水。
 type kit struct{}
@@ -165,9 +150,7 @@ var _ seam.TerminalKit = kit{}
 // NewKit 产出终端会话机工具箱。
 func NewKit() seam.TerminalKit { return kit{} }
 
-// NewService 建一个会话机：shell 驯化规格与会话身份解析由消费方注入（集成期 seam
-// 修订）。本机终端由本包路由传入 HostShellSessionSpec 与 resolveHostIdentity；
-// docker 容器 exec 终端传空启动行规格与按容器解析的身份。
+// NewService shares the raw PTY transport with container exec terminals.
 func (kit) NewService(deps seam.TerminalHostDeps, spec seam.ShellSessionSpec,
 	identity func() seam.TerminalIdentity, maxSessions int) seam.TerminalsService {
 	if identity == nil {
@@ -195,7 +178,11 @@ type totalLimitedService struct {
 	max       int
 }
 
+var totalOpenMu sync.Mutex
+
 func (s *totalLimitedService) tryOpen(events sessionEvents) sessionHandle {
+	totalOpenMu.Lock()
+	defer totalOpenMu.Unlock()
 	if s.getActive() >= s.max {
 		return nil
 	}
@@ -233,7 +220,7 @@ func (s *totalLimitedCompat) TryOpen() (seam.TerminalSession, bool) {
 
 func (s *totalLimitedCompat) ActiveCount() int { return s.inner.ActiveCount() }
 
-// NewConnEvents 构造连接胶水；revocation 可为 nil（docker 容器终端不接线撤销表）。
+// NewConnEvents binds a raw terminal to its authenticated panel session.
 func (kit) NewConnEvents(svc seam.TerminalsService, revocation seam.SessionConnections, sessionID string) seam.TerminalConnEvents {
 	api, ok := svc.(serviceApi)
 	if !ok {

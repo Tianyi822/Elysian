@@ -21,6 +21,8 @@ type scriptedKit struct {
 	wrapGetActive   func() int
 	wrapMax         int
 	wrapInner       seam.TerminalsService
+	revocation      seam.SessionConnections
+	sessionID       string
 }
 
 func (k *scriptedKit) NewService(deps seam.TerminalHostDeps, spec seam.ShellSessionSpec,
@@ -41,6 +43,7 @@ func (k *scriptedKit) NewTotalLimitedService(inner seam.TerminalsService, getAct
 }
 
 func (k *scriptedKit) NewConnEvents(svc seam.TerminalsService, revocation seam.SessionConnections, sessionID string) seam.TerminalConnEvents {
+	k.revocation, k.sessionID = revocation, sessionID
 	return &fakeConnEvents{}
 }
 
@@ -62,27 +65,8 @@ func newTestExecSessions(now func() time.Time, kit seam.TerminalKit) *execSessio
 		identityForContainer: func(containerID string) seam.TerminalIdentity {
 			return seam.TerminalIdentity{User: "root", HostLabel: containerID[:13], HomeDir: "/"}
 		},
-		listDir:      func(string, string) ([]string, error) { return nil, nil },
-		listCommands: func(string, shellKind) ([]string, error) { return nil, nil },
-		now:          now,
+		now: now,
 	})
-}
-
-func TestExecSessionsIdentityAndPrompt(t *testing.T) {
-	kit := &scriptedKit{}
-	sessions := newTestExecSessions(time.Now, kit)
-	// 身份与提示符按容器驻留：hostLabel 取容器 id 前 13 位，提示符固定 "$ "。
-	id := strings.Repeat("c", 64)
-	sessions.mu.Lock()
-	deps := sessions.hostDepsForLocked(id)
-	sessions.mu.Unlock()
-	identity := seam.TerminalIdentity{User: "root", HostLabel: hostLabelForContainer(id), HomeDir: "/"}
-	if identity.HostLabel != strings.Repeat("c", 13) {
-		t.Fatalf("hostLabel：%q", identity.HostLabel)
-	}
-	if deps.Prompt == nil || deps.Prompt(identity, "/") != "$ " {
-		t.Fatalf("提示符固定 $ ")
-	}
 }
 
 func TestExecSessionsSweepAfterIdle(t *testing.T) {
@@ -90,7 +74,7 @@ func TestExecSessionsSweepAfterIdle(t *testing.T) {
 	base := time.UnixMilli(0)
 	current := base
 	sessions := newTestExecSessions(func() time.Time { return current }, kit)
-	_ = sessions.CreateConnEvents(strings.Repeat("a", 64))
+	_ = sessions.CreateConnEvents(strings.Repeat("a", 64), "cookie-session")
 	if sessions.ManagedCount() != 1 {
 		t.Fatalf("驻留 1：%d", sessions.ManagedCount())
 	}
@@ -111,7 +95,7 @@ func TestExecSessionsActiveNotSwept(t *testing.T) {
 	base := time.UnixMilli(0)
 	current := base
 	sessions := newTestExecSessions(func() time.Time { return current }, kit)
-	_ = sessions.CreateConnEvents(strings.Repeat("a", 64))
+	_ = sessions.CreateConnEvents(strings.Repeat("a", 64), "cookie-session")
 	// 容器有活跃会话：即便超过阈值也绝不清。
 	sessions.mu.Lock()
 	sessions.services[strings.Repeat("a", 64)].(*countingService).active = 1
@@ -127,9 +111,9 @@ func TestExecSessionsLastUsedRefresh(t *testing.T) {
 	base := time.UnixMilli(0)
 	current := base
 	sessions := newTestExecSessions(func() time.Time { return current }, kit)
-	_ = sessions.CreateConnEvents(strings.Repeat("a", 64))
+	_ = sessions.CreateConnEvents(strings.Repeat("a", 64), "cookie-session")
 	current = base.Add(20 * time.Minute)
-	_ = sessions.CreateConnEvents(strings.Repeat("a", 64))
+	_ = sessions.CreateConnEvents(strings.Repeat("a", 64), "cookie-session")
 	current = base.Add(45 * time.Minute)
 	if sessions.ManagedCount() != 1 {
 		t.Fatalf("最后使用时间刷新后重新计数：%d", sessions.ManagedCount())
@@ -140,34 +124,23 @@ func TestExecSessionsLastUsedRefresh(t *testing.T) {
 	}
 }
 
-func TestExecSessionsShellKindPerContainer(t *testing.T) {
-	kit := &scriptedKit{}
-	sessions := newTestExecSessions(time.Now, kit)
-	sessions.mu.Lock()
-	_ = sessions.hostDepsForLocked(strings.Repeat("b", 64))
-	state := sessions.stateForLocked(strings.Repeat("b", 64))
-	sessions.mu.Unlock()
-	if state.getShellKind() != "" {
-		t.Fatalf("探测前 shellKind 为空")
-	}
-	state.setShellKind(shellBash)
-	if state.getShellKind() != shellBash {
-		t.Fatal("探测后驻留 bash")
-	}
-}
-
 func TestCreateConnEvents经合计上限包装器且规格身份按容器注入(t *testing.T) {
 	kit := &scriptedKit{}
 	sessions := newTestExecSessions(time.Now, kit)
 	id := strings.Repeat("a", 64)
-	_ = sessions.CreateConnEvents(id)
+	revocation := &testTerminalRevocations{}
+	sessions.cfg.sessionConns = revocation
+	_ = sessions.CreateConnEvents(id, "cookie-session")
 
-	// 会话机注入：空启动行规格（驯化由 exec pty 自带）、按容器解析的身份、单容器上限 5。
+	// 会话机注入按容器解析的身份、撤销表与单容器上限。
 	if kit.servicesCreated != 1 {
 		t.Fatalf("应驻留 1 个按容器 service：%d", kit.servicesCreated)
 	}
-	if kit.serviceSpec.StartupLine != "" || len(kit.serviceSpec.Env) != 0 {
-		t.Fatalf("容器 exec 规格应为空启动行：%+v", kit.serviceSpec)
+	if kit.sessionID != "cookie-session" || kit.revocation != revocation {
+		t.Fatal("会话身份未传入撤销接缝")
+	}
+	if len(kit.serviceSpec.Env) != 0 {
+		t.Fatalf("容器 shell 环境由 exec 层准备：%+v", kit.serviceSpec)
 	}
 	if kit.serviceIdentity == nil {
 		t.Fatal("身份解析应注入")
@@ -188,3 +161,10 @@ func TestCreateConnEvents经合计上限包装器且规格身份按容器注入(
 		t.Fatal("getActive 应接全部容器活跃合计")
 	}
 }
+
+type testTerminalRevocations struct{}
+
+func (*testTerminalRevocations) Register(string, func()) func() { return func() {} }
+func (*testTerminalRevocations) Revoke(string)                  {}
+func (*testTerminalRevocations) RevokeOthers(string)            {}
+func (*testTerminalRevocations) RevokeAll()                     {}

@@ -14,11 +14,13 @@ import (
 )
 
 // exec 劫持连接实现（dockerExecRunner.ts 逐字移植）：create → start（Connection:
-// Upgrade / Upgrade: tcp）→ 101 劫持裸 socket 或非 101 的 2xx 响应体分支；有界
+// Upgrade / Upgrade: tcp）→ 101/200 TTY 双工裸流或非交互响应体；有界
 // 输出队列（8 MiB 上限、半水位停读、四分之一恢复）；流结束后 inspect 补查退出码。
 
 // execStdoutMaxBytes 劫持流未消费输出的驻留上限。
 const execStdoutMaxBytes = 8 * 1024 * 1024
+
+const execPendingInputMaxBytes = 128 * 1024
 
 // errSessionClosed 消费者读到队列终止但无失败原因时的干净结束（等价 TS 的
 // stdoutClosed 无 setupError 分支，由 Read 映射为 io.EOF）。
@@ -90,6 +92,7 @@ func (q *boundedChunkQueue) shift() (chunk []byte, ok bool, err error) {
 	}
 	if len(q.chunks) > 0 {
 		chunk = q.chunks[0]
+		q.chunks[0] = nil
 		q.chunks = q.chunks[1:]
 		q.buffered -= len(chunk)
 		q.cond.Broadcast()
@@ -125,11 +128,19 @@ type execSession struct {
 	containerID string
 
 	mu            sync.Mutex
+	writeMu       sync.Mutex
+	readMu        sync.Mutex
+	resizeMu      sync.Mutex
 	queue         *boundedChunkQueue
 	setupError    error
 	pendingWrites []string
+	pendingBytes  int
+	readRemainder []byte
 	writeTarget   io.Writer
 	execID        string
+	closed        bool
+	attached      bool
+	cols, rows    int
 	conns         []net.Conn
 	closeOnce     sync.Once
 
@@ -169,27 +180,63 @@ func newExecSession(socketPath, containerID string, cmd []string, tty bool, env 
 	return session
 }
 
-// Write 写 stdin；attach 前缓冲、attach 后直写（失败吞掉：连接已断开由输出路径收尾）。
-func (s *execSession) Write(text string) {
+// Write 按顺序写入原始 stdin；建链前缓存有界，写失败必须回传给会话。
+func (s *execSession) Write(text string) (int, error) {
+	if text == "" {
+		return 0, nil
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return 0, io.ErrClosedPipe
+	}
+	if s.setupError != nil {
+		err := s.setupError
+		s.mu.Unlock()
+		return 0, err
+	}
 	target := s.writeTarget
 	if target == nil {
+		if s.pendingBytes+len(text) > execPendingInputMaxBytes {
+			s.mu.Unlock()
+			return 0, errors.New("容器终端输入缓冲超限")
+		}
 		s.pendingWrites = append(s.pendingWrites, text)
+		s.pendingBytes += len(text)
 		s.mu.Unlock()
-		return
+		return len(text), nil
 	}
 	s.mu.Unlock()
-	_, _ = target.Write([]byte(text))
+	n, err := target.Write([]byte(text))
+	if err == nil && n != len(text) {
+		err = io.ErrShortWrite
+	}
+	if err != nil {
+		s.failSetup(err)
+	}
+	return n, err
 }
 
 // Read 消费 stdout（有界队列出口；fake 模式直出注入文本）。
 func (s *execSession) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	s.readMu.Lock()
+	defer s.readMu.Unlock()
 	if s.fake {
 		if len(s.fakeStdout) == 0 {
 			return 0, io.EOF
 		}
 		n := copy(p, s.fakeStdout)
 		s.fakeStdout = s.fakeStdout[n:]
+		return n, nil
+	}
+	if len(s.readRemainder) > 0 {
+		n := copy(p, s.readRemainder)
+		s.readRemainder = s.readRemainder[n:]
 		return n, nil
 	}
 	chunk, ok, err := s.queue.shift()
@@ -199,19 +246,31 @@ func (s *execSession) Read(p []byte) (int, error) {
 	if !ok {
 		return 0, io.EOF
 	}
-	return copy(p, chunk), nil
+	n := copy(p, chunk)
+	s.readRemainder = chunk[n:]
+	return n, nil
 }
 
 // Close 断开全部连接并干净结束队列（消费者随后读到 io.EOF）；fake 会话无队列。
 func (s *execSession) Close() {
 	if s.fake {
-		s.closeOnce.Do(func() { s.fakeStdout = "" })
+		s.closeOnce.Do(func() {
+			s.readMu.Lock()
+			s.fakeStdout = ""
+			s.readMu.Unlock()
+			s.mu.Lock()
+			s.closed = true
+			s.mu.Unlock()
+		})
 		return
 	}
 	s.closeOnce.Do(func() {
 		s.mu.Lock()
+		s.closed = true
 		s.pendingWrites = nil
+		s.pendingBytes = 0
 		conns := append([]net.Conn(nil), s.conns...)
+		s.conns = nil
 		s.mu.Unlock()
 		for _, conn := range conns {
 			_ = conn.Close()
@@ -221,44 +280,47 @@ func (s *execSession) Close() {
 }
 
 // ExitCode 流结束后 GET /exec/<id>/json 读 ExitCode；失败按 1。
-func (s *execSession) ExitCode() int {
+func (s *execSession) ExitCode() int { code, _ := s.exitStatus(); return code }
+
+func (s *execSession) exitStatus() (int, bool) {
 	if s.fake {
-		return 0
+		return 0, true
 	}
 	s.mu.Lock()
 	execID := s.execID
 	s.mu.Unlock()
 	if execID == "" {
-		return 1
+		return 1, false
 	}
 	conn, br, err := dialEngineConn(s.socketPath)
 	if err != nil {
-		return 1
+		return 1, false
 	}
 	defer conn.Close()
 	path := seam.EngineAPIPrefix + "/exec/" + encodeEngineID(execID) + "/json"
 	if err := writeEngineRequest(conn, http.MethodGet, path, nil, nil); err != nil {
-		return 1
+		return 1, false
 	}
 	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	response, err := readEngineResponseHead(br, http.MethodGet)
 	if err != nil {
-		return 1
+		return 1, false
 	}
-	body, err := io.ReadAll(response.Body)
+	body, err := io.ReadAll(io.LimitReader(response.Body, 64*1024))
 	if err != nil {
-		return 1
+		return 1, false
 	}
 	var inspect struct {
-		ExitCode *int `json:"ExitCode"`
+		ExitCode *int  `json:"ExitCode"`
+		Running  *bool `json:"Running"`
 	}
 	if json.Unmarshal(body, &inspect) != nil {
-		return 1
+		return 1, false
 	}
-	if response.StatusCode != http.StatusOK || inspect.ExitCode == nil {
-		return 1
+	if response.StatusCode != http.StatusOK || inspect.ExitCode == nil || inspect.Running == nil || *inspect.Running {
+		return 1, false
 	}
-	return *inspect.ExitCode
+	return *inspect.ExitCode, true
 }
 
 // setup create → start → attach 的完整建链流程。
@@ -299,6 +361,7 @@ func (s *execSession) createExec(payload []byte) (string, error) {
 		return "", err
 	}
 	s.trackConn(conn)
+	defer s.untrackConn(conn)
 	defer conn.Close()
 	path := seam.EngineAPIPrefix + "/containers/" + encodeEngineID(s.containerID) + "/exec"
 	headers := map[string]string{
@@ -312,7 +375,7 @@ func (s *execSession) createExec(payload []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	body, err := io.ReadAll(br)
+	body, err := io.ReadAll(io.LimitReader(response.Body, 64*1024))
 	if err != nil {
 		return "", err
 	}
@@ -352,21 +415,25 @@ func (s *execSession) startAndAttach(execID string, payload []byte, tty bool) er
 		return err
 	}
 	status := response.StatusCode
-	if status < 200 || status >= 300 {
+	if status != http.StatusSwitchingProtocols && (status < 200 || status >= 300) {
 		conn.Close()
 		return fmt.Errorf("启动容器 exec 失败（HTTP %d）", status)
 	}
 
 	var reader io.Reader
 	var writer io.Writer
-	if status == http.StatusSwitchingProtocols {
-		// 101 劫持：bufio 缓冲余量 + 裸 socket 双工。
+	if status == http.StatusSwitchingProtocols || tty && status == http.StatusOK {
+		// Engine 的 101 与旧版 200 TTY 劫持响应均为裸流，保持双工。
 		reader = br
 		writer = conn
 	} else {
-		// 非 101 的 2xx：帧式响应体分支；请求已 end，写入侧不可达（等价丢弃）。
+		// 非交互执行可使用普通响应体；交互终端不接受不可写的响应。
+		if tty {
+			conn.Close()
+			return errors.New("容器终端未建立双向连接")
+		}
 		reader = response.Body
-		writer = discardingWriter{}
+		writer = unavailableExecWriter{}
 	}
 	s.attach(reader, writer)
 	return nil
@@ -374,16 +441,92 @@ func (s *execSession) startAndAttach(execID string, payload []byte, tty bool) er
 
 // attach 建立读写通道（补写 attach 前缓冲）并启动输出泵。
 func (s *execSession) attach(reader io.Reader, writer io.Writer) {
+	s.writeMu.Lock()
 	s.mu.Lock()
-	s.writeTarget = writer
+	if s.closed {
+		s.mu.Unlock()
+		s.writeMu.Unlock()
+		return
+	}
 	pending := append([]string(nil), s.pendingWrites...)
 	s.pendingWrites = nil
+	s.pendingBytes = 0
 	s.mu.Unlock()
 
 	for _, text := range pending {
-		_, _ = writer.Write([]byte(text))
+		n, err := writer.Write([]byte(text))
+		if err == nil && n != len(text) {
+			err = io.ErrShortWrite
+		}
+		if err != nil {
+			s.writeMu.Unlock()
+			s.failSetup(err)
+			return
+		}
+	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		s.writeMu.Unlock()
+		return
+	}
+	s.writeTarget = writer
+	s.attached = true
+	s.mu.Unlock()
+	s.writeMu.Unlock()
+	if err := s.applyResize(); err != nil {
+		s.failSetup(err)
+		return
 	}
 	go s.pump(reader)
+}
+
+// Resize 在 exec 真正启动后提交最新尺寸；建链期间只保留最后一拍。
+func (s *execSession) Resize(cols, rows int) error {
+	if cols < 1 || cols > 1000 || rows < 1 || rows > 1000 {
+		return errors.New("终端窗口尺寸无效")
+	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return io.ErrClosedPipe
+	}
+	s.cols, s.rows = cols, rows
+	s.mu.Unlock()
+	return s.applyResize()
+}
+
+func (s *execSession) applyResize() error {
+	s.resizeMu.Lock()
+	defer s.resizeMu.Unlock()
+	s.mu.Lock()
+	cols, rows, id := s.cols, s.rows, s.execID
+	ready := s.attached && !s.closed && cols > 0 && rows > 0
+	s.mu.Unlock()
+	if !ready || s.fake {
+		return nil
+	}
+	conn, br, err := dialEngineConn(s.socketPath)
+	if err != nil {
+		return err
+	}
+	s.trackConn(conn)
+	defer s.untrackConn(conn)
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	path := seam.EngineAPIPrefix + "/exec/" + encodeEngineID(id) + "/resize?h=" + itoa(rows) + "&w=" + itoa(cols)
+	if err := writeEngineRequest(conn, http.MethodPost, path, nil, nil); err != nil {
+		return err
+	}
+	response, err := readEngineResponseHead(br, http.MethodPost)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("调整容器终端窗口失败（HTTP %d）", response.StatusCode)
+	}
+	return nil
 }
 
 // pump 输出泵：读上游 → 有界队列；半水位（4 MiB）停读，降至四分之一（2 MiB）恢复。
@@ -422,7 +565,9 @@ func (s *execSession) failSetup(err error) {
 		s.setupError = err
 	}
 	s.mu.Unlock()
-	s.queue.fail(err)
+	if s.queue != nil {
+		s.queue.fail(err)
+	}
 }
 
 // Err returns the setup/pump failure, if any（Read 路径之外的诊断出口）。
@@ -434,14 +579,30 @@ func (s *execSession) Err() error {
 
 func (s *execSession) trackConn(conn net.Conn) {
 	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		_ = conn.Close()
+		return
+	}
 	s.conns = append(s.conns, conn)
 	s.mu.Unlock()
 }
 
-// discardingWriter 非 101 分支的写入侧（TS 中写入已 end 的请求，等价丢弃）。
-type discardingWriter struct{}
+// 短生命周期的 create/resize 连接结束后移除，窗口连续缩放不累积关闭句柄。
+func (s *execSession) untrackConn(conn net.Conn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, tracked := range s.conns {
+		if tracked == conn {
+			s.conns = append(s.conns[:i], s.conns[i+1:]...)
+			return
+		}
+	}
+}
 
-func (discardingWriter) Write(p []byte) (int, error) { return len(p), nil }
+type unavailableExecWriter struct{}
+
+func (unavailableExecWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 
 // readStdoutText 把 exec stdout 读成完整字符串（探测与清理脚本共用）。
 func readStdoutText(r io.Reader) (string, error) {

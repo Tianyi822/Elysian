@@ -3,190 +3,175 @@ package terminals
 import (
 	"bytes"
 	"context"
-	"errors"
+	"elysian/server/internal/seam"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
-
-	"elysian/server/internal/seam"
 )
 
-// 宿主交互锚定：env 组装、提示符 HOME 归一、compgen 进程级缓存（成功缓存/失败重试）、
-// readdir 排序，以及容器内真实 PTY 冒烟（盘点 §8.7 的可单测子集：READY 哨兵产出、
-// 断开即杀无孤儿、kill 幂等）。可用性双闸门由 internal/config 判定（config_test 锚定），
-// 本包以 Deps.Available 注入，不自测 /.dockerenv。
-
-func TestEnvPairs键序稳定(t *testing.T) {
-	pairs := envPairs(map[string]string{"B": "2", "A": "1", "C": "3"})
-	want := []string{"A=1", "B=2", "C=3"}
-	if strings.Join(pairs, "|") != strings.Join(want, "|") {
-		t.Fatalf("envPairs = %v，期望 %v", pairs, want)
+func TestPtyEnvironmentUsesNativeTerminalAndNoPanelSecrets(t *testing.T) {
+	t.Setenv("ELYSIAN_AUTH_PASSWORD", "secret")
+	env := buildPtyEnv("/root", nil)
+	if env["TERM"] != "xterm-256color" || env["HOME"] != "/root" {
+		t.Fatalf("env: %v", env)
 	}
-}
-
-func TestBuildTerminalPrompt与TildePath(t *testing.T) {
-	ident := seam.TerminalIdentity{User: "root", HostLabel: "elysian-web-1", HomeDir: "/root"}
-	cases := []struct{ cwd, want string }{
-		{"/root", "~"},
-		{"/root/apps/web", "~/apps/web"},
-		{"/tmp", "/tmp"},
-		{"/rootkit", "/rootkit"}, // 前缀相似但非 HOME 子路径
+	if env["HISTFILE"] != "/dev/null" || buildPtyEnv("/root", map[string]string{"HISTFILE": "/tmp/history"})["HISTFILE"] != "/dev/null" {
+		t.Fatal("terminal commands must not be persisted to a history file")
 	}
-	for _, tc := range cases {
-		if got := tildePath(tc.cwd, ident.HomeDir); got != tc.want {
-			t.Fatalf("tildePath(%s) = %s，期望 %s", tc.cwd, got, tc.want)
+	for _, key := range []string{"PAGER", "GIT_PAGER", "PS1", "PROMPT_COMMAND", "ELYSIAN_AUTH_PASSWORD"} {
+		if _, ok := env[key]; ok {
+			t.Fatalf("forced or leaked %s", key)
 		}
 	}
-	if got := buildTerminalPrompt(ident, "/tmp"); got != "root@elysian-web-1:/tmp$ " {
-		t.Fatalf("提示符 = %q", got)
-	}
-	// homeDir 为 / 时不做前缀替换。
-	rootIdent := seam.TerminalIdentity{User: "root", HostLabel: "h", HomeDir: "/"}
-	if got := tildePath("/etc", rootIdent.HomeDir); got != "/etc" {
-		t.Fatalf("homeDir 为 / 时不应替换：%q", got)
+	if got := strings.Join(envPairs(map[string]string{"B": "2", "A": "1"}), "|"); got != "A=1|B=2" {
+		t.Fatal(got)
 	}
 }
-
-func TestCompgen命令表进程级缓存(t *testing.T) {
-	orig := runCompgen
-	t.Cleanup(func() {
-		runCompgen = orig
-		resetCompgenCache()
-	})
-	resetCompgenCache()
-
-	var calls atomic.Int64
-	runCompgen = func(context.Context) ([]string, error) {
-		calls.Add(1)
-		return []string{"bash", "ls"}, nil
-	}
-	first, err := listCommands(context.Background())
-	if err != nil || strings.Join(first, ",") != "bash,ls" {
-		t.Fatalf("首次调用 = %v（%v）", first, err)
-	}
-	second, err := listCommands(context.Background())
-	if err != nil || len(second) != 2 {
-		t.Fatalf("缓存调用 = %v（%v）", second, err)
-	}
-	if calls.Load() != 1 {
-		t.Fatalf("成功应进程级缓存，实际探测 %d 次", calls.Load())
+func TestIdentityPresent(t *testing.T) {
+	id := resolveHostIdentity()
+	if id.User == "" || id.HostLabel == "" || id.HomeDir == "" {
+		t.Fatalf("identity: %+v", id)
 	}
 }
-
-func TestCompgen失败不缓存允许重试(t *testing.T) {
-	orig := runCompgen
-	t.Cleanup(func() {
-		runCompgen = orig
-		resetCompgenCache()
-	})
-	resetCompgenCache()
-
-	var calls atomic.Int64
-	runCompgen = func(context.Context) ([]string, error) {
-		if calls.Add(1) == 1 {
-			return nil, errors.New("compgen 失败")
-		}
-		return []string{"ls"}, nil
-	}
-	if _, err := listCommands(context.Background()); err == nil {
-		t.Fatal("首次失败应带回错误（调用方降级空表）")
-	}
-	second, err := listCommands(context.Background())
-	if err != nil || strings.Join(second, ",") != "ls" {
-		t.Fatalf("失败后应允许重试：%v（%v）", second, err)
-	}
-	if calls.Load() != 2 {
-		t.Fatalf("探测 %d 次，期望 2", calls.Load())
-	}
+func realPty(t *testing.T) seam.PtyProcess {
+	t.Helper()
+	return realPtyAtHome(t, t.TempDir())
 }
-
-func TestListDir按文件名排序(t *testing.T) {
-	dir := t.TempDir()
-	for _, name := range []string{"b.txt", "a.txt", "c.txt"} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o600); err != nil {
-			t.Fatal(err)
-		}
+func realPtyAtHome(t *testing.T, home string) seam.PtyProcess {
+	t.Helper()
+	if _, err := os.Stat("/proc"); err != nil {
+		t.Skip("requires Linux procfs")
 	}
-	names, err := listDir(dir)
+	p, err := spawnPtyShell(context.Background(), seam.ShellSessionSpec{Env: buildPtyEnv(home, nil)}, seam.TerminalIdentity{HomeDir: home})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(names, ",") != "a.txt,b.txt,c.txt" {
-		t.Fatalf("listDir = %v，期望排序", names)
-	}
+	t.Cleanup(func() { _ = p.Kill() })
+	_, _ = p.Write([]byte("PS1='ELY_''TEST> '\r"))
+	readThrough(t, p, "ELY_TEST> ")
+	return p
 }
 
-func Test身份解析非空(t *testing.T) {
-	ident := resolveHostIdentity()
-	if ident.User == "" || ident.HomeDir == "" || ident.HostLabel == "" {
-		t.Fatalf("身份不应有空洞字段：%+v", ident)
-	}
-	if os.Getuid() == 0 && ident.User != "root" {
-		t.Fatalf("uid 0 应回退 root：%+v", ident)
-	}
-}
-
-// requireRealPty 真实 PTY 冒烟前置：/bin/bash 与 procfs 可用（go-dev 容器内成立；
-// 无 bash 或无 /proc 的环境跳过——冒烟族按盘点 §8.7 属容器内执行）。
-func requireRealPty(t *testing.T) {
-	t.Helper()
-	if _, err := os.Stat("/bin/bash"); err != nil {
-		t.Skip("环境无 /bin/bash，跳过真实 PTY 冒烟（容器内门禁才执行）")
-	}
-	if _, err := os.Stat("/proc"); err != nil {
-		t.Skip("环境无 procfs，跳过断开即杀断言")
-	}
-}
-
-// readUntilReady 阻塞读 PTY 输出直至出现 READY 哨兵（超时 8 秒）。
-func readUntilReady(t *testing.T, stdout io.Reader) {
-	t.Helper()
-	type readResult struct {
-		n   int
-		err error
-	}
-	buf := make([]byte, 4096)
-	var acc bytes.Buffer
-	for {
-		ch := make(chan readResult, 1)
-		go func() {
-			n, err := stdout.Read(buf)
-			ch <- readResult{n, err}
-		}()
-		select {
-		case r := <-ch:
-			if r.n > 0 {
-				acc.Write(buf[:r.n])
-				if strings.Contains(acc.String(), "\x01READY\x02") {
-					return
+func TestNativePtyKeepsMemoryHistoryWithoutDiskPersistence(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		name := "new-history-file"
+		if existing {
+			name = "existing-history-file"
+		}
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			historyPath := filepath.Join(home, ".bash_history")
+			original := []byte("pre-existing-history-must-stay-unchanged\n")
+			if existing {
+				if err := os.WriteFile(historyPath, original, 0600); err != nil {
+					t.Fatal(err)
 				}
 			}
-			if r.err != nil {
-				t.Fatalf("READY 前流结束：%v（已收 %q）", r.err, acc.String())
+			p := realPtyAtHome(t, home)
+			_, _ = p.Write([]byte("printf '__MEMORY_%s__\\n' HISTORY\r"))
+			readCommand(t, p, "__MEMORY_HISTORY__")
+			// Native readline's up-arrow replays the last command from memory.
+			_, _ = p.Write([]byte("\x1b[A\r"))
+			readCommand(t, p, "__MEMORY_HISTORY__")
+			_, _ = p.Write([]byte("exit\r"))
+			select {
+			case code := <-p.Exited():
+				if code != 0 {
+					t.Fatalf("exit=%d", code)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("exit timed out")
 			}
-		case <-time.After(8 * time.Second):
-			t.Fatalf("等待 READY 哨兵超时（已收 %q）", acc.String())
-		}
+			written, err := os.ReadFile(historyPath)
+			if existing {
+				if err != nil || !bytes.Equal(written, original) {
+					t.Fatalf("existing history changed: %q %v", written, err)
+				}
+			} else if !os.IsNotExist(err) {
+				t.Fatalf("terminal created a history file: %q %v", written, err)
+			}
+		})
 	}
 }
-
-func procHasSleep300() bool {
-	entries, err := os.ReadDir("/proc")
-	if err != nil {
-		return false
+func readThrough(t *testing.T, p seam.PtyProcess, needle string) string {
+	t.Helper()
+	return readOutput(t, p, func(text string) bool { return strings.Contains(text, needle) }, needle)
+}
+func readCommand(t *testing.T, p seam.PtyProcess, marker string) string {
+	t.Helper()
+	return readOutput(t, p, func(text string) bool {
+		i := strings.LastIndex(text, marker)
+		return i >= 0 && strings.Contains(text[i+len(marker):], "ELY_TEST> ")
+	}, marker+" then prompt")
+}
+func readOutput(t *testing.T, p seam.PtyProcess, match func(string) bool, description string) string {
+	t.Helper()
+	type result struct {
+		data string
+		err  error
 	}
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
+	done := make(chan result, 1)
+	go func() {
+		var b bytes.Buffer
+		buf := make([]byte, 4096)
+		for {
+			n, err := p.Stdout().Read(buf)
+			b.Write(buf[:n])
+			if match(b.String()) || err != nil {
+				done <- result{b.String(), err}
+				return
+			}
 		}
-		data, err := os.ReadFile("/proc/" + e.Name() + "/cmdline")
-		if err != nil {
-			continue
+	}()
+	select {
+	case got := <-done:
+		if !match(got.data) {
+			t.Fatalf("missing %s, output=%q err=%v", description, got.data, got.err)
 		}
+		return got.data
+	case <-time.After(5 * time.Second):
+		_ = p.Kill()
+		got := <-done
+		t.Fatalf("waiting for %s, output=%q", description, got.data)
+	}
+	return ""
+}
+func TestNativePtyResizeEditingAndExit(t *testing.T) {
+	p := realPty(t)
+	if err := p.Resize(123, 41); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = p.Write([]byte("printf '__TERM:%s__\\n' \"$TERM\"; stty size\r"))
+	output := readCommand(t, p, "__TERM:xterm-256color__")
+	if !strings.Contains(output, "41 123") {
+		t.Fatalf("size missing: %q", output)
+	}
+	if !strings.Contains(output, "__TERM:xterm-256color__") {
+		t.Fatalf("native TERM missing: %q", output)
+	}
+	// Left-arrow is interpreted by shell readline, not by the application.
+	_, _ = p.Write([]byte("printf '__EDIT:%s__\\n' ax\x1b[D\x7fo\r"))
+	edited := readCommand(t, p, "__EDIT:ox__")
+	if !strings.Contains(edited, "__EDIT:ox__") {
+		t.Fatalf("native edit: %q", edited)
+	}
+	_, _ = p.Write([]byte("exit 7\r"))
+	select {
+	case code := <-p.Exited():
+		if code != 7 {
+			t.Fatalf("exit=%d", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("exit timed out")
+	}
+}
+func procHasSleep300() bool {
+	entries, _ := os.ReadDir("/proc")
+	for _, entry := range entries {
+		data, _ := os.ReadFile("/proc/" + entry.Name() + "/cmdline")
 		fields := strings.Split(strings.TrimRight(string(data), "\x00"), "\x00")
 		if len(fields) >= 2 && fields[0] == "sleep" && fields[1] == "300" {
 			return true
@@ -194,97 +179,98 @@ func procHasSleep300() bool {
 	}
 	return false
 }
-
-func Test真实PTY启动行产出READY哨兵且断开即杀无孤儿(t *testing.T) {
-	requireRealPty(t)
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Skip("无 home 目录，跳过真实 PTY 冒烟")
+func TestDisconnectKillsForegroundJobAndIsIdempotent(t *testing.T) {
+	p := realPty(t)
+	// Drain output so shell shutdown cannot block on the master buffer.
+	go func() { _, _ = io.Copy(io.Discard, p.Stdout()) }()
+	_, _ = p.Write([]byte("sleep 300\r"))
+	waitFor(t, procHasSleep300, "foreground child not started")
+	if err := p.Kill(); err != nil {
+		t.Fatal(err)
 	}
-	proc, err := spawnPtyShell(context.Background(), seam.ShellSessionSpec{
-		Env:         buildPtyEnv(home, HostShellSessionSpec.Env),
-		StartupLine: HostShellSessionSpec.StartupLine,
-	}, seam.TerminalIdentity{User: "root", HostLabel: "test", HomeDir: home})
-	if err != nil {
-		t.Fatalf("pty 启动失败：%v", err)
+	waitFor(t, func() bool { return !procHasSleep300() }, "foreground child survived disconnect")
+	if err := p.Kill(); err != nil {
+		t.Fatal(err)
 	}
-	// 写启动行 → bash 产出真实 READY 哨兵控制字节。
-	if _, err := proc.Write([]byte(HostShellSessionSpec.StartupLine)); err != nil {
-		t.Fatalf("启动行写入失败：%v", err)
-	}
-	readUntilReady(t, proc.Stdout())
-
-	// 起一个长驻子进程（独立进程组，验证 SIGHUP 级联而非仅组内击杀）。
-	if _, err := proc.Write([]byte("sleep 300\n")); err != nil {
-		t.Fatalf("sleep 写入失败：%v", err)
-	}
-	waitFor(t, procHasSleep300, "sleep 300 未启动")
-
-	// 断开即杀：kill 后整棵进程树清理，无孤儿残留。
-	if err := proc.Kill(); err != nil {
-		t.Fatalf("kill 失败：%v", err)
-	}
-	deadline := time.Now().Add(3 * time.Second)
-	for procHasSleep300() {
-		if time.Now().After(deadline) {
-			t.Fatal("断开后 sleep 300 残留（孤儿）")
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	// kill 幂等：重复 kill 不报错。
-	if err := proc.Kill(); err != nil {
-		t.Fatalf("重复 kill 失败：%v", err)
-	}
-	<-proc.Exited()
 }
 
-func Test真实PTY自然退出码(t *testing.T) {
-	requireRealPty(t)
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Skip("无 home 目录，跳过真实 PTY 冒烟")
+func TestNativePtyUnicodePasswordInterruptAndJobControl(t *testing.T) {
+	p := realPty(t)
+	_, _ = p.Write([]byte("printf '__UNICODE:%s__\\n' '中文😀'\r"))
+	unicodeOutput := readCommand(t, p, "__UNICODE:中文😀__")
+	if !strings.Contains(unicodeOutput, "__UNICODE:中文😀__") {
+		t.Fatalf("unicode: %q", unicodeOutput)
 	}
-	proc, err := spawnPtyShell(context.Background(), seam.ShellSessionSpec{
-		Env:         buildPtyEnv(home, HostShellSessionSpec.Env),
-		StartupLine: HostShellSessionSpec.StartupLine,
-	}, seam.TerminalIdentity{User: "root", HostLabel: "test", HomeDir: home})
-	if err != nil {
-		t.Fatalf("pty 启动失败：%v", err)
+	_, _ = p.Write([]byte("IFS= read -r -s -p 'PASSWORD_''READY' secret; printf '__SECRET_LENGTH:%s__\\n' \"${#secret}\"\r"))
+	readThrough(t, p, "PASSWORD_READY")
+	_, _ = p.Write([]byte("SENSITIVE_INPUT\r"))
+	output := readCommand(t, p, "__SECRET_LENGTH:15__")
+	if !strings.Contains(output, "__SECRET_LENGTH:15__") {
+		t.Fatalf("password length: %q", output)
 	}
-	if _, err := proc.Write([]byte(HostShellSessionSpec.StartupLine)); err != nil {
-		t.Fatalf("启动行写入失败：%v", err)
+	if strings.Contains(output, "SENSITIVE_INPUT") {
+		t.Fatalf("password echoed: %q", output)
 	}
-	readUntilReady(t, proc.Stdout())
-	if _, err := proc.Write([]byte("exit 7\n")); err != nil {
-		t.Fatalf("exit 写入失败：%v", err)
+	_, _ = p.Write([]byte("sleep 300\r"))
+	waitFor(t, procHasSleep300, "sleep did not start")
+	_, _ = p.Write([]byte{3})
+	readThrough(t, p, "ELY_TEST> ")
+	_, _ = p.Write([]byte("printf '__INTERRUPT_%s__\\n' OK\r"))
+	readCommand(t, p, "__INTERRUPT_OK__")
+	waitFor(t, func() bool { return !procHasSleep300() }, "Ctrl+C did not stop sleep")
+	_, _ = p.Write([]byte("sleep 300\r"))
+	waitFor(t, procHasSleep300, "second sleep did not start")
+	_, _ = p.Write([]byte{26})
+	output = readThrough(t, p, "ELY_TEST> ")
+	if !strings.Contains(output, "Stopped") {
+		t.Fatalf("job not stopped: %q", output)
 	}
-	var code int
+	if !strings.Contains(output, "sleep 300") {
+		t.Fatalf("job control output: %q", output)
+	}
+	_, _ = p.Write([]byte("kill -KILL %1; printf '__JOB_%s__\\n' DONE\r"))
+	readCommand(t, p, "__JOB_DONE__")
+	waitFor(t, func() bool { return !procHasSleep300() }, "stopped job not cleaned")
+	_, _ = p.Write([]byte{4})
 	select {
-	case code = <-proc.Exited():
+	case code := <-p.Exited():
+		if code != 0 {
+			t.Fatalf("Ctrl+D exit %d", code)
+		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("等待退出码超时")
-	}
-	if code != 7 {
-		t.Fatalf("退出码 = %d，期望 7", code)
+		t.Fatal("Ctrl+D failed")
 	}
 }
 
-func TestNewRouter不可用分支构造(t *testing.T) {
-	// NewRouter 的不可用分支不触宿主依赖（不 spawn PTY、不探测文件系统）。
-	r := NewRouter(Deps{Available: false})
-	code, body := doRequest(t, r, "GET", "/status", nil)
-	if code != 503 || body != `{"error":"真实终端仅在 Docker 容器内可用"}` {
-		t.Fatalf("503 分支 = %d %s", code, body)
+func TestNativePtyCursesAlternateScreenAndResize(t *testing.T) {
+	p := realPty(t)
+	home := p.(*hostPty).cmd.Dir
+	script := `import curses
+
+def main(screen):
+    screen.addstr(0, 0, "CURSES_READY")
+    screen.refresh()
+    while screen.getch() != ord("q"):
+        pass
+
+curses.wrapper(main)
+`
+	if err := os.WriteFile(home+"/curses-smoke.py", []byte(script), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = p.Write([]byte("python3 \"$HOME/curses-smoke.py\"\r"))
+	output := readThrough(t, p, "CURSES_READY")
+	if !strings.Contains(output, "\x1b[?1049h") {
+		t.Fatalf("curses did not enter alternate screen: %q", output)
+	}
+	if err := p.Resize(80, 24); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = p.Write([]byte("q"))
+	alternateExit := readThrough(t, p, "ELY_TEST> ")
+	_, _ = p.Write([]byte("stty size; printf '__CURSES_%s__\\n' DONE\r"))
+	output = readCommand(t, p, "__CURSES_DONE__")
+	if !strings.Contains(alternateExit, "\x1b[?1049l") || !strings.Contains(output, "24 80") {
+		t.Fatalf("alternate screen/resize exit: %q", output)
 	}
 }
-
-// 并发上限与 kit 的编译期 seam 形状锚定。
-var (
-	_ seam.TerminalsService   = (*service)(nil)
-	_ seam.TerminalSession    = (*session)(nil)
-	_ seam.TerminalConnEvents = (*connEvents)(nil)
-	_ seam.TerminalKit        = kit{}
-	_ sessionEvents           = (*frameRecorder)(nil)
-	_ seam.SessionConnections = (*testSessionConnections)(nil)
-	_ seam.Logs               = (*fakeLogs)(nil)
-)

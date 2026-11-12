@@ -140,6 +140,7 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 		MountRoot:            cfg.MountRoot,
 		Logs:                 appLogs,
 		Kit:                  terminals.NewKit(),
+		SessionConns:         sessionConns,
 		PortOpener:           portOpener,
 		AgentCredentialsPath: filepath.Join(paths.ConfigDir, "agent-service-containers.json"),
 	})

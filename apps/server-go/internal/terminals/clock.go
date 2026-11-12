@@ -2,8 +2,7 @@ package terminals
 
 import "time"
 
-// clock 会话计时注入点：真实实现走 time 包；测试用可控假钟驱动 50ms 合帧节流与
-// 30 分钟空闲计时（对齐 TS 版 vitest fake timers 的确定性）。
+// clock makes the 30-minute session idle timeout deterministic in tests.
 type clock interface {
 	Now() time.Time
 	NewTimer(d time.Duration) termTimer

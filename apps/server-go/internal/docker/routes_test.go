@@ -331,13 +331,18 @@ func TestRoutesTerminalGuardChain(t *testing.T) {
 	if recorder.Code != 403 || recorder.Body.String() != `{"error":"请求来源不允许"}` {
 		t.Fatalf("无 Origin 403：%d %s", recorder.Code, recorder.Body.String())
 	}
+	// 未声明新协议时，升级前拒绝旧客户端。
+	recorder = doGet(router, "/containers/"+strings.Repeat("c", 64)+"/terminal", sameOriginHeaders())
+	if recorder.Code != 400 || !strings.Contains(recorder.Body.String(), "终端协议已更新") {
+		t.Fatalf("旧协议未拒绝: %d %s", recorder.Code, recorder.Body.String())
+	}
 	// 非法 id 400（带同源头）。
-	recorder = doGet(router, "/containers/%24bad/terminal", sameOriginHeaders())
+	recorder = doGet(router, "/containers/%24bad/terminal?protocol=2", sameOriginHeaders())
 	if recorder.Code != 400 || recorder.Body.String() != `{"error":"容器 ID 格式无效"}` {
 		t.Fatalf("非法 id 400：%d %s", recorder.Code, recorder.Body.String())
 	}
 	// 不存在 404。
-	recorder = doGet(router, "/containers/"+strings.Repeat("e", 64)+"/terminal", sameOriginHeaders())
+	recorder = doGet(router, "/containers/"+strings.Repeat("e", 64)+"/terminal?protocol=2", sameOriginHeaders())
 	if recorder.Code != 404 || recorder.Body.String() != `{"error":"容器不存在"}` {
 		t.Fatalf("404：%d %s", recorder.Code, recorder.Body.String())
 	}
@@ -360,7 +365,7 @@ func TestRoutesTerminalPaused409AndAudit(t *testing.T) {
 		execSessions: newExecSessionsWithFakeKit(engine),
 		logs:         logs,
 	})
-	recorder := doGet(router, "/containers/"+strings.Repeat("c", 64)+"/terminal", sameOriginHeaders())
+	recorder := doGet(router, "/containers/"+strings.Repeat("c", 64)+"/terminal?protocol=2", sameOriginHeaders())
 	if recorder.Code != 409 || recorder.Body.String() != `{"error":"只有运行中的容器可以打开终端"}` {
 		t.Fatalf("paused 409：%d %s", recorder.Code, recorder.Body.String())
 	}
@@ -482,7 +487,7 @@ func TestRoutesTerminalUpgradeAudit(t *testing.T) {
 	// 升级需要真实 WS 握手：httptest 不便驱动 gorilla 升级，改为断言升级前审计已按
 	// 200 登记（TS 版在 recordPanelOperation 之后才升级）。用伪装 Upgrade 请求驱动
 	// 到升级一步：gorilla 拒绝非 WS 握手，handler 返回且审计已落。
-	recorder := doGet(router, "/containers/"+strings.Repeat("c", 64)+"/terminal", sameOriginHeaders())
+	recorder := doGet(router, "/containers/"+strings.Repeat("c", 64)+"/terminal?protocol=2", sameOriginHeaders())
 	_ = recorder
 	if len(logs.operations) != 1 {
 		t.Fatalf("升级路径应记审计：%+v", logs.operations)
@@ -509,8 +514,6 @@ func newExecSessionsWithFakeKit(engine *fakeEngine) *execSessions {
 		identityForContainer: func(containerID string) seam.TerminalIdentity {
 			return seam.TerminalIdentity{User: "root", HostLabel: containerID[:13], HomeDir: "/"}
 		},
-		listDir:      func(string, string) ([]string, error) { return nil, nil },
-		listCommands: func(string, shellKind) ([]string, error) { return nil, nil },
 	})
 }
 

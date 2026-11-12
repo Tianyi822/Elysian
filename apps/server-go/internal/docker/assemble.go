@@ -18,12 +18,13 @@ type Deps struct {
 	AgentAuthorize func(context.Context) error
 	ReservedPorts  []int
 
-	Mode       config.RuntimeMode
-	SocketPath string // cfg.DockerSocket
-	MountRoot  string // cfg.MountRoot
-	Logs       seam.Logs
-	Kit        seam.TerminalKit
-	Now        func() time.Time
+	Mode         config.RuntimeMode
+	SocketPath   string // cfg.DockerSocket
+	MountRoot    string // cfg.MountRoot
+	Logs         seam.Logs
+	Kit          seam.TerminalKit
+	SessionConns seam.SessionConnections
+	Now          func() time.Time
 
 	// PortOpener 幂等开口接缝；nil 时 any-host 档回执标 skipped（与 NoopPortOpener 同语义）。
 	PortOpener seam.PortOpener
@@ -102,13 +103,8 @@ func Assemble(deps Deps) (Stack, error) {
 			identityForContainer: func(containerID string) seam.TerminalIdentity {
 				return seam.TerminalIdentity{User: "root", HostLabel: hostLabelForContainer(containerID), HomeDir: "/"}
 			},
-			listDir: func(containerID, path string) ([]string, error) {
-				return listDockerFiles(createContainerExecRunner(socketPath, containerID), path)
-			},
-			listCommands: func(containerID string, kind shellKind) ([]string, error) {
-				return listDockerCommands(createContainerExecRunner(socketPath, containerID), kind)
-			},
-			now: now,
+			sessionConns: deps.SessionConns,
+			now:          now,
 		})
 	}
 

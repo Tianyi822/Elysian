@@ -8,7 +8,7 @@ import (
 	"elysian/server/internal/seam"
 )
 
-// 按容器驻留的终端会话表（dockerExecSessions.ts 逐字移植）：全部容器合计上限 5
+// 按容器驻留的原始 PTY 会话表：全部容器合计上限 5
 //（tryOpen 包装器拒超额连接，连接层 1008）；每容器一个 terminals service；无活跃
 // 会话且 30 分钟未连接的容器 service 被惰性清扫。
 
@@ -18,31 +18,12 @@ const dockerExecMaxSessions = 5
 // dockerExecServiceIdleMs 按容器驻留 service 的回收阈值（30 分钟）。
 const dockerExecServiceIdleMs = 30 * 60 * 1000
 
-// containerExecState 每容器的共享状态（shellKind 在会话 spawn 后生效）。
-type containerExecState struct {
-	mu        sync.Mutex
-	shellKind shellKind
-}
-
-func (s *containerExecState) setShellKind(kind shellKind) {
-	s.mu.Lock()
-	s.shellKind = kind
-	s.mu.Unlock()
-}
-
-func (s *containerExecState) getShellKind() shellKind {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.shellKind
-}
-
 // execSessionsConfig exec 会话表注入。
 type execSessionsConfig struct {
 	kit                  seam.TerminalKit
 	createExecRunner     func(containerID string) execRunner
 	identityForContainer func(containerID string) seam.TerminalIdentity
-	listDir              func(containerID, path string) ([]string, error)
-	listCommands         func(containerID string, kind shellKind) ([]string, error)
+	sessionConns         seam.SessionConnections
 	now                  func() time.Time
 }
 
@@ -51,7 +32,6 @@ type execSessions struct {
 	cfg        execSessionsConfig
 	mu         sync.Mutex
 	services   map[string]seam.TerminalsService
-	states     map[string]*containerExecState
 	lastUsedAt map[string]time.Time
 }
 
@@ -62,7 +42,6 @@ func newExecSessions(cfg execSessionsConfig) *execSessions {
 	return &execSessions{
 		cfg:        cfg,
 		services:   make(map[string]seam.TerminalsService),
-		states:     make(map[string]*containerExecState),
 		lastUsedAt: make(map[string]time.Time),
 	}
 }
@@ -113,40 +92,29 @@ func (s *execSessions) sweepLocked(now time.Time) {
 			continue
 		}
 		delete(s.services, containerID)
-		delete(s.states, containerID)
 		delete(s.lastUsedAt, containerID)
 	}
 }
 
-// stateFor 取（或建）容器共享状态。
-func (s *execSessions) stateForLocked(containerID string) *containerExecState {
-	state, ok := s.states[containerID]
-	if !ok {
-		state = &containerExecState{}
-		s.states[containerID] = state
-	}
-	return state
-}
-
-// hostDepsForLocked 构造容器终端宿主依赖（身份 root@<容器 id 前 13 位>、homeDir /、
-// 提示符固定 "$ "；shell 启动行由探测后的 exec pty 发送，本层不写本机启动行）。
+// 容器原生 shell 与本机 PTY 共享字节流服务，PID 清理由 execPty 自己负责。
 func (s *execSessions) hostDepsForLocked(containerID string) seam.TerminalHostDeps {
-	state := s.stateForLocked(containerID)
 	return seam.TerminalHostDeps{
-		SpawnPty: func(ctx context.Context, spec seam.ShellSessionSpec, identity seam.TerminalIdentity) (seam.PtyProcess, error) {
+		SpawnPty: func(ctx context.Context, _ seam.ShellSessionSpec, _ seam.TerminalIdentity) (seam.PtyProcess, error) {
 			return createLazyExecPty(func(ctx context.Context) (seam.PtyProcess, error) {
-				exec := s.cfg.createExecRunner(containerID)
-				kind := probeShell(exec)
+				if ctx.Err() != nil {
+					return nil, errTerminalCancelled
+				}
+				kind := probeShell(s.cfg.createExecRunner(containerID))
 				if ctx.Err() != nil {
 					return nil, errTerminalCancelled
 				}
 				if kind == shellNone {
 					return nil, errNoShell
 				}
-				state.setShellKind(kind)
-				shellSpec := shellSpecFor(kind, true)
-				interactive := s.cfg.createExecRunner(containerID)
-				pty := createExecPty(interactive, shellSpec)
+				pty, err := createExecPty(s.cfg.createExecRunner(containerID), shellSpecFor(kind))
+				if err != nil {
+					return nil, err
+				}
 				if ctx.Err() != nil {
 					_ = pty.Kill()
 					return nil, errTerminalCancelled
@@ -154,40 +122,6 @@ func (s *execSessions) hostDepsForLocked(containerID string) seam.TerminalHostDe
 				return pty, nil
 			}), nil
 		},
-		ListCommands: func(ctx context.Context) ([]string, error) {
-			kind := state.getShellKind()
-			if kind == "" || kind == shellNone {
-				return nil, nil
-			}
-			return s.cfg.listCommands(containerID, kind)
-		},
-		ListDir: func(dir string) ([]string, error) {
-			return s.cfg.listDir(containerID, dir)
-		},
-		DisposeShell: func(pid string) {
-			if pid == "" {
-				return
-			}
-			cmd, err := cleanupScriptPid(pid)
-			if err != nil {
-				return
-			}
-			session := s.cfg.createExecRunner(containerID).Run(cmd, false, nil)
-			// 排空输出等脚本跑完；引擎挂起时到点放弃并断开 hijack。
-			done := make(chan struct{})
-			go func() {
-				_, _ = readStdoutText(session)
-				close(done)
-			}()
-			go func() {
-				select {
-				case <-done:
-				case <-time.After(dockerExecCleanupTimeout):
-				}
-				session.Close()
-			}()
-		},
-		Prompt: func(seam.TerminalIdentity, string) string { return "$ " },
 	}
 }
 
@@ -210,7 +144,7 @@ func (s *execSessions) totalActiveForLimit() int {
 }
 
 // CreateConnEvents 为容器生成一次 WS 升级的连接事件处理器。
-func (s *execSessions) CreateConnEvents(containerID string) seam.TerminalConnEvents {
+func (s *execSessions) CreateConnEvents(containerID, sessionID string) seam.TerminalConnEvents {
 	now := s.cfg.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -218,7 +152,7 @@ func (s *execSessions) CreateConnEvents(containerID string) seam.TerminalConnEve
 	s.lastUsedAt[containerID] = now
 	service, ok := s.services[containerID]
 	if !ok {
-		// 容器 exec 终端：空启动行规格（启动驯化由 exec pty 自带，不写本机启动行）
+		// 容器 exec 终端使用原生交互 shell，无逐提示符启动协议。
 		// 与按容器解析的身份（集成期 seam 修订注入项）。
 		identity := s.cfg.identityForContainer(containerID)
 		service = s.cfg.kit.NewService(s.hostDepsForLocked(containerID), seam.ShellSessionSpec{},
@@ -227,5 +161,5 @@ func (s *execSessions) CreateConnEvents(containerID string) seam.TerminalConnEve
 	}
 	// 全部容器合计 5 上限：包装器由 terminals 域产出，超额 tryOpen 拒绝（连接层 1008）。
 	wrapped := s.cfg.kit.NewTotalLimitedService(service, s.totalActiveForLimit, dockerExecMaxSessions)
-	return s.cfg.kit.NewConnEvents(wrapped, nil, "")
+	return s.cfg.kit.NewConnEvents(wrapped, s.cfg.sessionConns, sessionID)
 }

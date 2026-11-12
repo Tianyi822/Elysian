@@ -31,7 +31,7 @@ func NewRouter(deps Deps) chi.Router {
 	if !deps.Available {
 		return unavailableRouter()
 	}
-	svc := newService(newHostDeps(), resolveHostIdentity, HostShellSessionSpec, TERMINAL_MAX_SESSIONS, realClock{})
+	svc := newService(newHostDeps(), resolveHostIdentity, seam.ShellSessionSpec{}, TERMINAL_MAX_SESSIONS, realClock{})
 	return newRouterWithService(deps, svc)
 }
 
@@ -70,6 +70,10 @@ func newRouterWithService(deps Deps, svc serviceApi) chi.Router {
 	r.Get("/ws", func(w http.ResponseWriter, req *http.Request) {
 		if !middleware.SameOriginUpgrade(req) {
 			shared.SendError(w, http.StatusForbidden, "请求来源不允许")
+			return
+		}
+		if req.URL.Query().Get("protocol") != "2" {
+			shared.SendError(w, http.StatusBadRequest, "终端协议已更新，请刷新面板")
 			return
 		}
 		// 打开会话是系统级操作，但 WS 升级不经写端点、采集中间件包不到，因此在
@@ -111,8 +115,8 @@ func newRouterWithService(deps Deps, svc serviceApi) chi.Router {
 				break
 			}
 			if messageType == websocket.BinaryMessage {
-				// 二进制帧一律违规（终端消息过大）；text 传 nil 表达该信号。
-				events.OnMessage(conn, nil)
+				// PTY data is carried as bytes; JSON is reserved for controls.
+				events.OnBinaryMessage(conn, data)
 			} else {
 				events.OnMessage(conn, data)
 			}

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
 
 	"elysian/server/internal/auth"
 	"elysian/server/internal/config"
@@ -179,7 +180,7 @@ func TestSPAPlaceholder(t *testing.T) {
 	// 占位 dist 只有 .gitkeep、没有 index.html：非 /api 路径如实 404（纯文本），
 	// 待发布构建拷入真实 dist 后回落 index.html。
 	rec := httptest.NewRecorder()
-	newTestHandler(t).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dashboard", nil))
+	spaHandler(fstest.MapFS{})(rec, httptest.NewRequest(http.MethodGet, "/dashboard", nil))
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("状态码 = %d，期望 404", rec.Code)
 	}

@@ -18,6 +18,16 @@ type countedSessionStore struct {
 	checks, validates atomic.Int32
 }
 
+type countedSessionConnections struct {
+	seam.SessionConnections
+	registered atomic.Int32
+}
+
+func (c *countedSessionConnections) Register(id string, close func()) func() {
+	c.registered.Add(1)
+	return c.SessionConnections.Register(id, close)
+}
+
 func (s *countedSessionStore) Check(id, epoch string) (*auth.PanelSession, error) {
 	s.checks.Add(1)
 	return s.SessionStore.Check(id, epoch)
@@ -31,13 +41,21 @@ func TestOnlyAgentOutputUsesPassiveStreamGuard(t *testing.T) {
 	for _, tc := range []struct {
 		method, path string
 		passive      bool
+		socket       bool
 	}{
-		{http.MethodGet, "/api/agent/runs/run-1/output", true},
-		{http.MethodGet, "/api/agent/runs/run-1", false},
-		{http.MethodGet, "/api/agent/runs/run-1/model-requests", false},
-		{http.MethodPost, "/api/agent/runs/run-1/output", false},
-		{http.MethodGet, "/api/agent/runs/a/b/output", false},
-		{http.MethodGet, "/api/agent/runs//output", false},
+		{http.MethodGet, "/api/agent/runs/run-1/output", true, false},
+		{http.MethodGet, "/api/agent/runs/run-1", false, false},
+		{http.MethodGet, "/api/agent/runs/run-1/model-requests", false, false},
+		{http.MethodPost, "/api/agent/runs/run-1/output", false, false},
+		{http.MethodGet, "/api/agent/runs/a/b/output", false, false},
+		{http.MethodGet, "/api/agent/runs//output", false, false},
+		{http.MethodGet, "/api/terminals/ws", false, true},
+		{http.MethodGet, "/api/terminals/status", false, false},
+		{http.MethodPost, "/api/terminals/ws", false, false},
+		{http.MethodGet, "/api/docker/containers/abc123/terminal", false, true},
+		{http.MethodGet, "/api/docker/containers//terminal", false, false},
+		{http.MethodGet, "/api/docker/containers/a/b/terminal", false, false},
+		{http.MethodGet, "/api/database/sql-session/ws", false, false},
 	} {
 		t.Run(tc.method+tc.path, func(t *testing.T) {
 			store := &countedSessionStore{SessionStore: auth.NewMemorySessionStore(nil)}
@@ -45,13 +63,14 @@ func TestOnlyAgentOutputUsesPassiveStreamGuard(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			handler := panelSessionGuard(auth.Deps{Enabled: true, Sessions: store, Credentials: fakeCredentialsStore{}, SessionConns: auth.NewSessionConnections()})(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) { w.WriteHeader(204) }))
+			connections := &countedSessionConnections{SessionConnections: auth.NewSessionConnections()}
+			handler := panelSessionGuard(auth.Deps{Enabled: true, Sessions: store, Credentials: fakeCredentialsStore{}, SessionConns: connections})(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) { w.WriteHeader(204) }))
 			req := httptest.NewRequest(tc.method, tc.path, nil)
 			req.Header.Set("Cookie", "elysian_session="+session.ID)
 			rec := httptest.NewRecorder()
 			handler.ServeHTTP(rec, req)
-			if rec.Code != 204 || (store.checks.Load() == 1) != tc.passive || (store.validates.Load() == 0) != tc.passive {
-				t.Fatalf("鉴权接线不符：status=%d check=%d validate=%d", rec.Code, store.checks.Load(), store.validates.Load())
+			if rec.Code != 204 || (store.checks.Load() == 1) != tc.passive || (store.validates.Load() == 0) != tc.passive || (connections.registered.Load() == 1) != (tc.passive || tc.socket) {
+				t.Fatalf("鉴权接线不符：status=%d check=%d validate=%d registered=%d", rec.Code, store.checks.Load(), store.validates.Load(), connections.registered.Load())
 			}
 		})
 	}
