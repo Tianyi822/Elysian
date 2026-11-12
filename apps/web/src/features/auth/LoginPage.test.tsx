@@ -1,4 +1,4 @@
-import { act, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockGateway } from '../../adapters/mock/gateway'
@@ -132,13 +132,29 @@ beforeEach(() => {
 })
 
 describe('LoginPage', () => {
+  it('输入法候选词确认回车不登录，组合结束后可正常提交原始密码', async () => {
+    const login = vi.fn(async () => {})
+    renderApp('/login', { gateway: gatewayWithSession(anonymousSession(login)) })
+    const user = userEvent.setup()
+    await user.type(await screen.findByLabelText('用户名'), 'admin')
+    const field = screen.getByLabelText('密码')
+    fireEvent.compositionStart(field)
+    fireEvent.change(field, { target: { value: '中文password' } })
+    expect(fireEvent.keyDown(field, { key: 'Enter', isComposing: true, keyCode: 229 })).toBe(false)
+    fireEvent.submit(field.closest('form')!)
+    expect(login).not.toHaveBeenCalled()
+    fireEvent.compositionEnd(field)
+    await user.click(screen.getByRole('button', { name: '登录' }))
+    expect(login).toHaveBeenCalledWith('admin', '中文password')
+  })
   it('用户名与密码输入框有 label 关联，密码框不回显', async () => {
     renderApp('/login', { gateway: gatewayWithSession(anonymousSession()) })
     const username = await screen.findByLabelText('用户名')
     const password = screen.getByLabelText('密码')
     expect(username).toHaveAttribute('type', 'text')
     expect(username).toHaveAttribute('autocomplete', 'username')
-    expect(password).toHaveAttribute('type', 'password')
+    expect(password).toHaveAttribute('type', 'text')
+    expect(password).toHaveClass('login-password-masked')
     expect(password).toHaveAttribute('autocomplete', 'current-password')
   })
 

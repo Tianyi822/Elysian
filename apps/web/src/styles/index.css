@@ -743,6 +743,50 @@ textarea {
   display: none;
 }
 
+/* 登录密码仍由文本框原生编辑；独立显示层与其字体、字距、内边距一致。 */
+.login-password-input,
+.login-password-mask {
+  font-kerning: none;
+  font-variant-ligatures: none;
+  letter-spacing: 0;
+}
+.login-password-masked,
+.login-password-masked::selection,
+.login-password-masked:-webkit-autofill {
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+.login-password-mask {
+  position: absolute;
+  inset: 1px 36px 1px 11px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  pointer-events: none;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+.login-password-mask-content {
+  flex-shrink: 0;
+  white-space: pre;
+  color: transparent;
+}
+.login-password-mask-character {
+  position: relative;
+  display: inline-block;
+  min-width: 1px;
+}
+.login-password-mask-character::after {
+  content: '•';
+  position: absolute;
+  inset: 0;
+  color: var(--t-fg);
+  text-align: center;
+}
+.login-password-mask-character[data-selected] {
+  background: var(--t-nav-selected);
+}
+
 html {
   font-size: 16px;
 }

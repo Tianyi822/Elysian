@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { PasswordVisibilityButton } from '../security/passwordFieldParts'
+import { LoginPasswordInput } from './LoginPasswordInput'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { Bot, Info, TriangleAlert } from '../../components/icons'
 import { useSessionStore } from '../../stores/sessionStore'
@@ -79,7 +79,7 @@ export function LoginPage() {
   const login = useSessionStore((state) => state.login)
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [passwordVisible, setPasswordVisible] = useState(false)
+  const composing = useRef(false)
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
@@ -150,7 +150,7 @@ export function LoginPage() {
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (submitting) return
+    if (submitting || composing.current) return
     setSubmitting(true)
     setSubmitError(null)
     try {
@@ -195,7 +195,12 @@ export function LoginPage() {
 
         {notice && <Notice role="status" tone="muted">{notice}</Notice>}
         {submitError && <Notice role="alert" tone="warning">{submitError}</Notice>}
-        <form className="mt-5 flex flex-col gap-4" onSubmit={(event) => void onSubmit(event)}>
+        <form className="mt-5 flex flex-col gap-4" onSubmit={(event) => void onSubmit(event)}
+          onCompositionStartCapture={() => { composing.current = true }}
+          onCompositionEndCapture={() => { composing.current = false }}
+          onKeyDownCapture={(event) => {
+            if (event.key === 'Enter' && (composing.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229)) event.preventDefault()
+          }}>
           <div className="flex flex-col gap-1.5">
             <label htmlFor="login-username" className="text-xs font-medium text-fg-muted">
               用户名
@@ -217,11 +222,9 @@ export function LoginPage() {
             <label htmlFor="login-password" className="text-xs font-medium text-fg-muted">
               密码
             </label>
-            <div className="relative">
-              <input
+              <LoginPasswordInput
                 id="login-password"
                 name="password"
-                type={passwordVisible ? 'text' : 'password'}
                 autoComplete="current-password"
                 required
                 value={password}
@@ -229,8 +232,6 @@ export function LoginPage() {
                 disabled={submitting}
                 className={`${FIELD_CLASS} password-input-with-toggle pr-9`}
               />
-              <PasswordVisibilityButton visible={passwordVisible} onToggle={setPasswordVisible} />
-            </div>
           </div>
 
           {/* 主按钮中性描边，动作写进文字（红线：不靠图标表意、不做强调填充底）。 */}
