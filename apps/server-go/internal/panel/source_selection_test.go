@@ -14,7 +14,7 @@ import (
 
 func TestUpdateUsesGitHubForDefaultAndLegacyAutoRequests(t *testing.T) {
 	for _, choice := range []UpdateSource{"", SourceAuto, SourceGitHub} {
-		for _, channel := range []UpdateChannel{ChannelCommit, ChannelRelease} {
+		for _, channel := range []UpdateChannel{ChannelRelease} {
 			t.Run(string(choice)+"/"+string(channel), func(t *testing.T) {
 				worker, original, host := setupWorker(t, "update")
 				if err := os.Remove(worker.Store.taskPath(original.ID)); err != nil {

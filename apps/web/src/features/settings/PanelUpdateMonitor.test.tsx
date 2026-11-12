@@ -144,7 +144,7 @@ it('设置页提交后进入 Agent，再进入文件页，监控及截止时间�
   vi.useRealTimers()
   const g = gateway()
   g.panel.update = vi.fn(async () => task)
-  g.panel.checkUpdate = vi.fn(async () => ({ channel: 'commit' as const, source: 'github' as const, releaseTag: '', branch: 'main', repository: '', currentCommit: info.commit, targetCommit: task.targetCommit, available: true, message: '' }))
+  g.panel.checkUpdate = vi.fn(async () => ({ channel: 'release' as const, source: 'github' as const, releaseTag: 'v1.2.0', branch: '', repository: '', currentCommit: info.commit, targetCommit: task.targetCommit, available: true, message: '' }))
   const view = renderApp('/settings?tab=maintenance', { gateway: g })
   const { default: userEvent } = await import('@testing-library/user-event')
   const user = userEvent.setup()

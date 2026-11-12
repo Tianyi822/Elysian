@@ -26,8 +26,6 @@ type GitHubSource struct {
 
 var errGitHubNotFound = errors.New("更新仓库尚未公开或目标版本不存在")
 
-const sourceDownloadAttemptTimeout = 5 * time.Minute
-
 func DefaultSource() Source { return GitHubSource{} }
 
 // errSourceNotArchive 表示 HTTP 状态正常但正文不是 gzip 归档，例如代理返回了网页。
@@ -71,27 +69,6 @@ func (s GitHubSource) get(ctx context.Context, endpoint string) (*http.Response,
 	return response, nil
 }
 
-// latestBuildRelease 解析最新已发布的 build-<SHA> 预发布对应的提交。仅 v* 标签触发
-// 构建，因此它就是最新打标签的提交；列表按 GitHub 倒序取第一个非草稿的 build 标签。
-func (s GitHubSource) latestBuildRelease(ctx context.Context) (string, error) {
-	r, err := s.get(ctx, s.api()+"/repos/"+Repository+"/releases?per_page=30")
-	if err != nil {
-		return "", err
-	}
-	defer r.Body.Close()
-	var releases []githubRelease
-	if err = json.NewDecoder(io.LimitReader(r.Body, 4*1024*1024)).Decode(&releases); err != nil {
-		return "", fmt.Errorf("GitHub 预编译构建列表无效")
-	}
-	for _, release := range releases {
-		if release.Draft == nil || *release.Draft || !buildTagPattern.MatchString(release.Tag) {
-			continue
-		}
-		return strings.TrimPrefix(release.Tag, "build-"), nil
-	}
-	return "", fmt.Errorf("暂无已发布的预编译安装包；仅 v* 标签触发构建")
-}
-
 // defaultBranch 解析仓库的默认分支，不写死分支名；仅用于区分「仓库可访问但没有
 // 正式发版」与「仓库不可访问」的空状态判定。
 func (s GitHubSource) defaultBranch(ctx context.Context) (string, error) {
@@ -118,52 +95,27 @@ func (s GitHubSource) Check(ctx context.Context, channel UpdateChannel) (Update,
 	if !validChannel(channel) {
 		return u, fmt.Errorf("更新策略无效")
 	}
-	if channel == ChannelRelease {
-		release, err := s.latestRelease(ctx)
-		if err != nil {
-			return u, err
-		}
-		if release.Tag == "" {
-			u.Message = "上游仓库暂无正式发版"
-			return u, nil
-		}
-		u.ReleaseTag = release.Tag
-		u.Message = release.Name
-		u.TargetCommit, err = s.tagCommit(ctx, release.Tag)
-		if err != nil {
-			return u, err
-		}
-		u.Available = u.TargetCommit != Commit
+	release, err := s.latestRelease(ctx)
+	if err != nil {
+		return u, err
+	}
+	if release.Tag == "" {
+		u.Message = "上游仓库暂无正式发版"
 		return u, nil
 	}
-	// 提交策略跟随最新已发布构建（仅 v* 标签触发构建，即最新打标签的提交），
-	// 不再解析默认分支——未打标签的提交没有可安装产物。
-	sha, err := s.latestBuildRelease(ctx)
+	if channel == ChannelRelease {
+		u.ReleaseTag = release.Tag
+	}
+	u.Message = release.Name
+	u.TargetCommit, err = s.tagCommit(ctx, release.Tag)
 	if err != nil {
 		return u, err
 	}
-	u.TargetCommit = sha
-	r, err := s.get(ctx, s.api()+"/repos/"+Repository+"/commits/"+url.PathEscape(sha))
-	if err != nil {
-		return u, err
-	}
-	defer r.Body.Close()
-	var result struct {
-		SHA    string `json:"sha"`
-		Commit struct {
-			Message string `json:"message"`
-		} `json:"commit"`
-	}
-	if err = json.NewDecoder(io.LimitReader(r.Body, 1024*1024)).Decode(&result); err != nil || !commitPattern.MatchString(result.SHA) || result.SHA != sha {
-		return u, fmt.Errorf("GitHub 提交信息无效")
-	}
-	u.Message = firstLine(result.Commit.Message)
 	u.Available = u.TargetCommit != Commit
 	return u, nil
 }
 
-// History 列出所选来源最近的提交；两种策略都先经 Check 锁定目标提交（发版取正式
-// 发版标签、提交取最新已发布构建），以固定 SHA 为起点，不跟随可变引用。
+// History 以正式发版对应的固定 SHA 为起点，不跟随可变引用。
 // 上限固定由调用方给，越界一律回落到默认值，不接受任意大的拉取。
 func (s GitHubSource) History(ctx context.Context, channel UpdateChannel, limit int) ([]CommitLog, error) {
 	channel = normalizeChannel(channel)
@@ -231,7 +183,7 @@ func (s GitHubSource) latestRelease(ctx context.Context) (githubRelease, error) 
 		return release, err
 	}
 	defer r.Body.Close()
-	if err = json.NewDecoder(io.LimitReader(r.Body, 1024*1024)).Decode(&release); err != nil || release.Tag == "" || len(release.Tag) > 1024 || release.Draft == nil || release.Prerelease == nil || *release.Draft || *release.Prerelease {
+	if err = json.NewDecoder(io.LimitReader(r.Body, 1024*1024)).Decode(&release); err != nil || !strings.HasPrefix(release.Tag, "v") || len(release.Tag) > 1024 || release.Draft == nil || release.Prerelease == nil || *release.Draft || *release.Prerelease {
 		return githubRelease{}, fmt.Errorf("GitHub 正式发版信息无效")
 	}
 	if release.Name == "" {

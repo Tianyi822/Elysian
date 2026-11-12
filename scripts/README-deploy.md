@@ -22,7 +22,7 @@ sudo env ELYSIAN_RELEASE_SOURCE=github bash install-release.sh
 
 入口脚本、下载器和安装包均从所选平台获取，来源通过 `ELYSIAN_RELEASE_SOURCE` 传入整个安装过程，只接受 `github|gitee`，未指定时默认 `github`。指定完整已发布提交时，在上述对应的 `sudo env` 命令中追加 `ELYSIAN_COMMIT=<40位SHA>`，保留来源参数。
 
-入口下载到文件后再执行，缺少的 Python 3、curl 和 CA 证书由 apt 准备。安装器默认锁定所选来源最新就绪版本：GitHub 使用最新 v* 标签对应提交的 `build-<SHA>` Release，Gitee 使用直接携带附件的正式 `v*` Release（未打标签的提交不构建、不可安装）。GitHub 使用 API asset SHA256，Gitee 使用最后上传的固定提交双架构索引校验整包，核对发布清单、两个程序的摘要和 Linux ELF 架构，运行 `release-info` 验证内嵌提交后才进入安装切换。下载与解包有文件数量、大小和时间限制，拒绝链接、特殊文件与路径越界。目标产物未完成时等待所选平台流水线完成后重试，不回退服务器构建、不自动换源。
+入口下载到文件后再执行，缺少的 Python 3、curl 和 CA 证书由 apt 准备。安装器默认锁定所选来源最新就绪版本：GitHub 先选最新正式 `v*` Release，再使用其标签对应提交的 `build-<SHA>` 安装包，Gitee 使用直接携带附件的正式 `v*` Release（未打标签的提交不构建、不可安装）。GitHub 使用 API asset SHA256，Gitee 使用最后上传的固定提交双架构索引校验整包，核对发布清单、两个程序的摘要和 Linux ELF 架构，运行 `release-info` 验证内嵌提交后才进入安装切换。下载与解包有文件数量、大小和时间限制，拒绝链接、特殊文件与路径越界。目标产物未完成时等待所选平台流水线完成后重试，不回退服务器构建、不自动换源。
 
 服务器不安装 Go/Bun，也不创建构建账号。包内包含面板单二进制（Web、API 与 CLI）、无需额外运行时的 `platform-helper`、发布清单和安装卸载脚本。安装器检测并准备 Docker、Caddy、OpenSSH 和 UFW，平台依赖阶段及归属核验继续有效。已有 Go/Bun、缓存和旧构建账号不会在升级时自动删除，卸载仍兼容这些组件。
 
@@ -30,7 +30,7 @@ sudo env ELYSIAN_RELEASE_SOURCE=github bash install-release.sh
 
 ## GitHub 发布
 
-[release.yml](../.github/workflows/release.yml) 仅响应 v* 标签推送：未打标签的提交不构建、不可安装，失败的 run 用 Re-run 重跑。CI 使用锁定的 Go/Bun 和依赖锁文件，在各自原生 Linux runner 构建 amd64／arm64 安装包；前后端注入同一完整 SHA。全部架构成功后，以草稿上传全部文件，再公开 `build-<SHA>` 预发布版本；已公开的提交产物不覆盖。v* 标签还创建正式 Release，供「最新正式发版」策略使用。每包附 SHA256 文件，下载器以 GitHub API 的 asset digest 为整包校验来源。
+[release.yml](../.github/workflows/release.yml) 仅响应 v* 标签推送：未打标签的提交不构建、不可安装，失败的 run 用 Re-run 重跑。CI 使用锁定的 Go/Bun 和依赖锁文件，在各自原生 Linux runner 构建 amd64／arm64 安装包；前后端注入同一完整 SHA。全部架构成功后，以草稿上传全部文件，再公开 `build-<SHA>` 预发布版本；已公开的提交产物不覆盖。v* 标签还创建正式 Release，安装和更新以该正式版为目标。每包附 SHA256 文件，下载器以 GitHub API 的 asset digest 为整包校验来源。
 
 仓库 Actions 需要可用的 Ubuntu amd64／arm64 runner，发布 job 使用 `contents:write` 权限；工作流未完成或构建失败时目标提交不可安装。`scripts/build-release.sh` 仅供 CI 或开发者构建，服务器安装和在线维护不调用。
 
@@ -96,13 +96,15 @@ systemctl restart elysian
 
 设置页展示当前端口和提交。端口维护提交后显示新旧地址、阶段和日志；新入口完成事务后自动跳转，等待超时保留新旧地址供手动打开。刷新页面从服务端恢复活动／最后任务。端口或版本变化保留登录会话，修改密码使会话失效。
 
+维护任务以阶段图显示检查、下载、准备、切换与健康核验。安装包传输展示实测字节比例、已下载／总大小及平均速率，完整传输后仍需通过摘要、清单与架构核验；其他阶段不估算百分比。下载快照随任务持久化，传输中至多每秒更新一次，阶段转换与传输结束立即保存。进程状态未知或连接异常时保留最后进度并停止活动动画；旧任务没有字节数据时不估算下载比例。维护日志按本地时间与正文分列，长资源记录分行显示，复制日志保留原始文本。
+
 维护提交先保存 `queued/checking` 任务并派发独立 worker，宿主预检在 worker 内进行；下载前与切换前的全部宿主预检共用累计三分钟预算，下载耗时不占该预算。预检失败成为可查询的失败任务。新增已鉴权的 `GET /api/panel/tasks/by-request/{requestId}` 按精确请求编号返回任务，未找到返回 404。页面发出请求前将版本化编号、操作类型和精确输入保存在同标签页的 sessionStorage；网络失败、超时或 5xx 显示「提交结果未确认」，每两秒按编号继续查询，404 不代表提交失败。刷新与重新登录后继续对账，期间阻止新维护操作；不自动重发写请求，人工重试使用原编号和原输入。
 
 任务轮询网络断连累计两分钟后转入每五秒健康探测，每次请求及响应体读取限时三秒，并响应页面取消。活动更新结束后独立核对同源健康端点的实际提交，只有与目标 SHA 一致才提示成功并刷新；版本不一致保留错误和手动重载入口。历史成功任务不会自动刷新页面，迟到响应不能跨任务或登录代次更新展示。
 
-面板更新默认使用 [GitHub：Tianyi822/Elysian](https://github.com/Tianyi822/Elysian)，可在设置页显式选择 [Gitee：Chentyit/Elysian](https://gitee.com/Chentyit/Elysian)。CLI 对应 `ely upgrade --source gitee`，非交互可用 `ely upgrade --source gitee --channel release --yes`。检查、更新日志、预检、任务与下载固定同一来源，网络失败不自动回退。两站包内使用统一项目身份，实际下载仓库固定映射，不接受任意仓库地址。GitHub 的「最新提交」跟随最新就绪的固定提交包，「最新发版」筛选正式 v* Release；Gitee 两种策略均选择最新就绪的正式 v* Release，指定完整 SHA 时通过正式标签精确查找附件；Gitee 的“最后更新 Release”不直接视为正式最新版。切换来源或策略后重新检查，原 requestId 不能改投。新任务固定 `precompiled/v1`；历史 Gitee 源码任务只对账与恢复，不重新派发，旧版首次迁移继续使用安装入口。
+面板更新默认使用 [GitHub：Tianyi822/Elysian](https://github.com/Tianyi822/Elysian)，可在设置页显式选择 [Gitee：Chentyit/Elysian](https://gitee.com/Chentyit/Elysian)。CLI 对应 `ely upgrade --source gitee`，非交互可用 `ely upgrade --source gitee --yes`。检查、更新日志、预检、任务与下载固定同一来源，网络失败不自动回退。两站包内使用统一项目身份，实际下载仓库固定映射，不接受任意仓库地址。两站均选择正式 v* Release；指定完整 SHA 时须匹配正式标签。GitHub 保留固定提交包作为正式版的构建附件，Gitee 跳过尚未就绪的正式版。切换来源后重新检查，原 requestId 不能改投；旧提交策略任务仍可对账，新的更新请求须重新检查正式版。新任务固定 `precompiled/v1`；历史 Gitee 源码任务只对账与恢复，不重新派发，旧版首次迁移继续使用安装入口。
 
-资源预检有效五分钟，展示实测内存、swap、磁盘、负载和 Agent 数量，要求至少 128 MiB 可用内存及 1 GiB 可用磁盘，swap 不计入；不足时保留业务并阻止更新。新任务固定 `precompiled/v1`，不接受旧构建停机清单，不提前停止业务。下载安装包上限五分钟，校验准备上限两分钟；全部通过后进入既有备份和版本切换事务，短暂停面板。切换后健康等待 60 秒，检查两个入口、静态资源和完整提交。失败恢复旧版本与数据，成功保留当前和上一成功版本；旧任务的资源恢复账本及独立收尾保持可恢复。
+资源预检有效五分钟，展示实测内存、swap、磁盘、负载和 Agent 数量，要求至少 128 MiB 可用内存及 1 GiB 可用磁盘，swap 不计入；不足时保留业务并阻止更新。新任务固定 `precompiled/v1`，不接受旧构建停机清单，不提前停止业务。下载安装包总上限三十分钟，连续两分钟没有收到新数据则中止；下载超时、中断、大小不符与 SHA256 不符分别报告，并保留已接收字节。校验准备上限两分钟；全部通过后进入既有备份和版本切换事务，短暂停面板。切换后健康等待 60 秒，检查两个入口、静态资源和完整提交。失败恢复旧版本与数据，成功保留当前和上一成功版本；旧任务的资源恢复账本及独立收尾保持可恢复。
 
 任务及日志在 `state/panel-maintenance/<任务 ID>.json` 和 `.log`，日志最多 2 MiB、API 分页读取；事务备份在 `backups/panel-maintenance/<任务 ID>`，安装引导备份在 `backups/install-*`。备份含凭据，目录权限为 0700；确认不再需要恢复后由管理员清理备份。切换时复制 config/data/state 并保留权限和属主，不将版本更新误当成密码重置。
 

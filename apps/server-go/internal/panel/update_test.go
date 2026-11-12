@@ -28,8 +28,8 @@ func TestReleaseResolvesTagAndPinsDownloadAndHistory(t *testing.T) {
 				switch r.URL.Path {
 				case "/repos/" + Repository + "/releases/latest":
 					// target_commitish 可以是正在变化的分支，不能用于构建目标。
-					_ = json.NewEncoder(w).Encode(map[string]any{"tag_name": "stable/v1.2.0", "name": "正式版本", "draft": false, "prerelease": false, "target_commitish": "main"})
-				case "/repos/" + Repository + "/git/ref/tags/stable/v1.2.0":
+					_ = json.NewEncoder(w).Encode(map[string]any{"tag_name": "v1.2.0", "name": "正式版本", "draft": false, "prerelease": false, "target_commitish": "main"})
+				case "/repos/" + Repository + "/git/ref/tags/v1.2.0":
 					kind, target := "commit", sha
 					if annotated {
 						kind, target = "tag", tagSHA
@@ -48,7 +48,7 @@ func TestReleaseResolvesTagAndPinsDownloadAndHistory(t *testing.T) {
 			defer srv.Close()
 			source := GitHubSource{Client: srv.Client(), API: srv.URL}
 			result, err := source.Check(context.Background(), ChannelRelease)
-			if err != nil || result.Channel != ChannelRelease || result.ReleaseTag != "stable/v1.2.0" || result.TargetCommit != sha || result.Branch != "" || !result.Available {
+			if err != nil || result.Channel != ChannelRelease || result.ReleaseTag != "v1.2.0" || result.TargetCommit != sha || result.Branch != "" || !result.Available {
 				t.Fatalf("未锁定发版提交：%+v %v", result, err)
 			}
 			if _, err := source.History(context.Background(), ChannelRelease, 50); err != nil {
@@ -243,7 +243,7 @@ func TestUpdateRoutesSelectAndValidateChannel(t *testing.T) {
 		}
 	}
 	for _, channels := range [][]UpdateChannel{source.checked, source.history} {
-		if len(channels) != 3 || channels[0] != ChannelCommit || channels[1] != ChannelCommit || channels[2] != ChannelRelease {
+		if len(channels) != 3 || channels[0] != ChannelRelease || channels[1] != ChannelCommit || channels[2] != ChannelRelease {
 			t.Fatalf("路由策略传递错误：%v", channels)
 		}
 	}
@@ -271,7 +271,7 @@ func TestReleaseWorkerUsesPersistedCommit(t *testing.T) {
 		t.Fatalf("执行时重新解析版本或未使用固定提交：%+v %+v", source, record)
 	}
 	logs, err := os.ReadFile(worker.Store.logPath(record.ID))
-	if err != nil || !strings.Contains(string(logs), "最新发版 v1.2.0") || !strings.Contains(string(logs), "更新来源：GitHub") {
+	if err != nil || !strings.Contains(string(logs), "版本：v1.2.0") || !strings.Contains(string(logs), "更新来源：GitHub") {
 		t.Fatalf("日志未记录策略：%s %v", logs, err)
 	}
 }
@@ -319,5 +319,40 @@ func TestMutationGateWaitsAreBounded(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Fatalf("独占等待未按上限及时返回：%v", elapsed)
+	}
+}
+
+func TestLegacyCommitRequestReconcilesButCannotCreateNewTask(t *testing.T) {
+	worker, original, host := setupWorker(t, "update")
+	original.UpdateChannel = ChannelCommit
+	original.ReleaseTag = ""
+	if err := worker.Store.save(original); err != nil {
+		t.Fatal(err)
+	}
+	manager := Manager{Store: worker.Store, Host: host, Enabled: true, Ports: original.OldPorts}
+	input := submitInput{RequestID: original.RequestID, Channel: ChannelCommit, TargetCommit: original.TargetCommit}
+	got, err := manager.Submit(context.Background(), "update", input, "")
+	if err != nil || got.ID != original.ID || host.dispatched != 0 {
+		t.Fatalf("旧任务对账失败：%+v %v", got, err)
+	}
+	input.Channel = ""
+	got, err = manager.Submit(context.Background(), "update", input, "")
+	if err != nil || got.ID != original.ID {
+		t.Fatalf("旧请求省略策略时对账失败：%+v %v", got, err)
+	}
+	input.Channel = ChannelCommit
+	if err := os.Remove(worker.Store.taskPath(original.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.AtomicJSON(worker.Store.updateCheckPath(ChannelCommit, SourceGitHub), Update{Repository: Repository, Channel: ChannelCommit, Source: SourceGitHub, Available: true, TargetCommit: original.TargetCommit}); err != nil {
+		t.Fatal(err)
+	}
+	input.RequestID = "new-legacy-request"
+	if _, err := manager.Submit(context.Background(), "update", input, ""); err == nil {
+		t.Fatal("旧检查缓存不应授权新任务")
+	}
+	input.RequestID = ""
+	if _, err := manager.PreflightUpdate(context.Background(), input); err == nil {
+		t.Fatal("旧策略不应创建预检")
 	}
 }

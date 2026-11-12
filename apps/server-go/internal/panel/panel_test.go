@@ -340,40 +340,23 @@ func TestGitHubDownloadRejectsHTMLBody(t *testing.T) {
 	}
 }
 
-func TestGitHubCommitChannelFollowsLatestPublishedBuild(t *testing.T) {
+func TestGitHubLegacyCommitChannelFollowsFormalRelease(t *testing.T) {
 	sha := strings.Repeat("b", 40)
-	previous := Commit
-	Commit = strings.Repeat("a", 40)
-	t.Cleanup(func() { Commit = previous })
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/repos/" + Repository + "/releases":
-			// 倒序列表：跳过草稿与非 build 标签，取最新已发布构建。
-			_, _ = w.Write([]byte(`[{"tag_name":"build-` + strings.Repeat("e", 40) + `","draft":true},
-			{"tag_name":"v0.0.1","draft":false},
-			{"tag_name":"build-` + sha + `","draft":false}]`))
-		case "/repos/" + Repository + "/commits/" + sha:
-			_, _ = w.Write([]byte(`{"sha":"` + sha + `","commit":{"message":"更新说明"}}`))
+		case "/repos/" + Repository + "/releases/latest":
+			_, _ = w.Write([]byte(`{"tag_name":"v1.0.0","name":"正式版","draft":false,"prerelease":false}`))
+		case "/repos/" + Repository + "/git/ref/tags/v1.0.0":
+			_, _ = w.Write([]byte(`{"object":{"type":"commit","sha":"` + sha + `"}}`))
 		default:
-			t.Errorf("不应请求版本检查以外的地址：%s", r.URL.Path)
+			t.Errorf("不应查询预发布：%s", r.URL.Path)
 			http.NotFound(w, r)
 		}
 	}))
 	defer srv.Close()
-	s := GitHubSource{Client: srv.Client(), API: srv.URL}
-	u, err := s.Check(context.Background(), ChannelCommit)
-	if err != nil || u.Branch != "" || u.TargetCommit != sha || !u.Available || u.Message != "更新说明" {
-		t.Fatalf("最新已发布构建解析失败：%+v %v", u, err)
-	}
-}
-func TestGitHubCommitChannelRejectsWhenNoPublishedBuild(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`[{"tag_name":"v0.0.1","draft":false}]`))
-	}))
-	defer srv.Close()
-	s := GitHubSource{Client: srv.Client(), API: srv.URL}
-	if _, err := s.Check(context.Background(), ChannelCommit); err == nil || !strings.Contains(err.Error(), "暂无已发布的预编译安装包") {
-		t.Fatalf("无已发布构建应明确报错：%v", err)
+	u, err := (GitHubSource{Client: srv.Client(), API: srv.URL}).Check(context.Background(), ChannelCommit)
+	if err != nil || u.TargetCommit != sha || u.ReleaseTag != "" || u.Message != "正式版" {
+		t.Fatalf("旧检查未锁定正式发版：%+v %v", u, err)
 	}
 }
 func TestGitHubHistoryListsDefaultBranchCommits(t *testing.T) {
@@ -381,10 +364,10 @@ func TestGitHubHistoryListsDefaultBranchCommits(t *testing.T) {
 	var gotSha, gotLimit string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/repos/" + Repository + "/releases":
-			_, _ = w.Write([]byte(`[{"tag_name":"build-` + sha + `","draft":false}]`))
-		case "/repos/" + Repository + "/commits/" + sha:
-			_, _ = w.Write([]byte(`{"sha":"` + sha + `","commit":{"message":"标题"}}`))
+		case "/repos/" + Repository + "/releases/latest":
+			_, _ = w.Write([]byte(`{"tag_name":"v1","draft":false,"prerelease":false}`))
+		case "/repos/" + Repository + "/git/ref/tags/v1":
+			_, _ = w.Write([]byte(`{"object":{"type":"commit","sha":"` + sha + `"}}`))
 		case "/repos/" + Repository + "/commits":
 			gotSha, gotLimit = r.URL.Query().Get("sha"), r.URL.Query().Get("per_page")
 			_, _ = w.Write([]byte(`[{"sha":"` + sha + `","commit":{"message":"标题\n正文不展示","author":{"date":"2026-10-04T08:00:00Z"}}}]`))

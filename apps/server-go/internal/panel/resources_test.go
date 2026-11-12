@@ -114,8 +114,8 @@ func TestResourcePreflightExpiresAndBindsTargetAndExactPlan(t *testing.T) {
 	w, r, h := resourceFixture(t)
 	_ = os.Remove(w.Store.taskPath(r.ID))
 	m := Manager{Store: w.Store, Host: h, Enabled: true, Ports: r.OldPorts, Executable: filepath.Join(w.install(), "releases", "old", "elysian")}
-	input := submitInput{Source: SourceGitHub, Channel: ChannelCommit, TargetCommit: r.TargetCommit}
-	u := Update{Repository: Repository, Source: SourceGitHub, Channel: ChannelCommit, Available: true, TargetCommit: r.TargetCommit}
+	input := submitInput{Source: SourceGitHub, Channel: ChannelRelease, ReleaseTag: "v1.2.0", TargetCommit: r.TargetCommit}
+	u := Update{Repository: Repository, Source: SourceGitHub, Channel: ChannelRelease, ReleaseTag: "v1.2.0", Available: true, TargetCommit: r.TargetCommit}
 	if err := config.AtomicJSON(w.Store.updateCheckPath(input.Channel, input.Source), u); err != nil {
 		t.Fatal(err)
 	}
@@ -398,8 +398,8 @@ func TestResourcePreflightHTTPOnlyCreatesPreview(t *testing.T) {
 	w, r, h := resourceFixture(t)
 	_ = os.Remove(w.Store.taskPath(r.ID))
 	m := Manager{Store: w.Store, Host: h, Enabled: true, Ports: r.OldPorts}
-	input := submitInput{Source: SourceGitHub, Channel: ChannelCommit, TargetCommit: r.TargetCommit}
-	_ = config.AtomicJSON(w.Store.updateCheckPath(input.Channel, input.Source), Update{Repository: Repository, Source: input.Source, Channel: input.Channel, TargetCommit: input.TargetCommit, Available: true})
+	input := submitInput{Source: SourceGitHub, Channel: ChannelRelease, ReleaseTag: "v1.2.0", TargetCommit: r.TargetCommit}
+	_ = config.AtomicJSON(w.Store.updateCheckPath(input.Channel, input.Source), Update{Repository: Repository, Source: input.Source, Channel: input.Channel, ReleaseTag: input.ReleaseTag, TargetCommit: input.TargetCommit, Available: true})
 	body, _ := json.Marshal(input)
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest("POST", "http://127.0.0.1:48101/update/preflight", strings.NewReader(string(body)))

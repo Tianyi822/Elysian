@@ -1,10 +1,9 @@
 import { randomId } from '../../utils/randomId'
 import { SectionHelp } from '../../components/SectionHelp'
-import { Terminal } from '../../components/icons'
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
-import { PANEL_TASK_PHASE_LABELS, PANEL_TASK_STATE_LABELS, PANEL_UPDATE_CHANNEL_LABELS, PANEL_UPDATE_SOURCE_LABELS, panelTaskIsActive, validatePanelPorts } from '@elysian/contracts'
-import type { PanelTask, PanelUpdate, PanelUpdateChannel, PanelUpdateSource, PanelUpdateTarget } from '@elysian/contracts'
+import { PANEL_TASK_PHASE_LABELS, PANEL_TASK_STATE_LABELS, PANEL_UPDATE_SOURCE_LABELS, panelTaskIsActive, validatePanelPorts } from '@elysian/contracts'
+import type { PanelTask, PanelUpdate, PanelUpdateSource, PanelUpdateTarget } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { PanelHttpError } from '../../adapters/http/panelHttpAdapter'
 import { captureAuthGeneration } from '../../adapters/http/unauthorized'
@@ -14,8 +13,11 @@ import { panelAddress } from './panelAddress'
 export { panelAddress } from './panelAddress'
 import { PanelChangelogDialog } from './PanelChangelogDialog'
 import { PanelResourcePreflightDialog } from './PanelResourcePreflightDialog'
+import { PanelMaintenanceProgress } from './PanelMaintenanceProgress'
+import { PanelMaintenanceLog } from './PanelMaintenanceLog'
 import { ChipGroup } from '../../components/ChipGroup'
 import { useFeedbackMessage } from '../../components/useFeedbackMessage'
+import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import { useMessageStore } from '../../stores/messageStore'
 import { sendPanelPending } from './panelPending'
 import type { PanelPending } from './panelPending'
@@ -23,12 +25,7 @@ import type { PanelPending } from './panelPending'
 const BUTTON = 'h-9 rounded-lg border border-control-line bg-surface-raised px-4 text-sm font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
 const INPUT = 'h-9 w-full rounded-lg border border-control-line bg-surface-raised px-3 text-sm tabular-nums text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
 function updateSummary(update: PanelUpdate): string {
-  if (update.channel === 'release') {
-    return !update.releaseTag ? '上游仓库暂无正式发版' : `${update.available ? '可切换至最新正式发版' : '当前已是最新正式发版'} · ${update.releaseTag}`
-  }
-  // 提交策略跟随最新已发布构建，不再解析分支名；无分支时显示目标提交短 SHA。
-  const ref = update.branch || update.targetCommit.slice(0, 7)
-  return `${update.available ? '发现可更新的提交' : '当前已是最新提交'} · ${ref}`
+  return !update.releaseTag ? '上游仓库暂无正式发版' : `${update.available ? '可更新至正式发版' : '当前已是最新版本'} · ${update.releaseTag}`
 }
 
 export function PanelMaintenanceSettings() {
@@ -39,7 +36,7 @@ export function PanelMaintenanceSettings() {
   const logs = usePanelStore((s) => s.logs)
   const logOffset = usePanelStore((s) => s.offset)
   const hasMore = usePanelStore((s) => s.hasMore)
-  const logViewport = useRef<HTMLPreElement>(null)
+  const logViewport = useRef<HTMLDivElement>(null)
   const [retryingCLI, setRetryingCLI] = useState(false)
   const loadError = usePanelStore((s) => s.error)
   const frontendId = useId(), backendId = useId()
@@ -47,7 +44,7 @@ export function PanelMaintenanceSettings() {
   const [backend, setBackend] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [checking, setChecking] = useState(false)
-  const [channel, setChannel] = useState<PanelUpdateChannel>('commit')
+  const channel = 'release' as const
   const [source, setSource] = useState<PanelUpdateSource>('github')
   const [update, setUpdate] = useState<PanelUpdate | null>(null)
   const checkVersion = useRef(0)
@@ -158,8 +155,10 @@ export function PanelMaintenanceSettings() {
     }
     finally { if (current() && version === submissionVersion.current) setSubmitting(false) }
   }
+  const { guardProps: portsGuardProps, isImeKey: portsImeKey } = useImeEnterGuard()
   const onPorts = (event: FormEvent) => {
     event.preventDefault()
+    if (portsImeKey()) return
     const ports = { frontendPort: Number(frontend), backendPort: Number(backend) }
     const invalid = validatePanelPorts(ports)
     if (invalid || !/^[0-9]+$/.test(frontend) || !/^[0-9]+$/.test(backend)) { setPortsError(invalid ?? '端口必须是 1–65535 的整数'); return }
@@ -176,11 +175,6 @@ export function PanelMaintenanceSettings() {
     }
     catch (cause) { if (current()) setUpdateError(cause instanceof Error ? cause.message : '检查更新失败，请重试') }
     finally { if (current()) setChecking(false) }
-  }
-  const selectChannel = (next: PanelUpdateChannel) => {
-    if (channel === next) return
-    checkVersion.current += 1
-    setChannel(next); setUpdate(null); setResourceTarget(null); setChecking(false); setUpdateError(null)
   }
   const selectSource = (next: PanelUpdateSource) => {
     if (source === next) return
@@ -199,7 +193,7 @@ export function PanelMaintenanceSettings() {
       {!info && !loadError ? <p role="status" className="mt-3 text-xs text-fg-muted">正在读取面板配置…</p> : null}
       {loadError ? <div className="mt-3"><p role="alert" className="text-xs text-danger">{loadError}</p><button className={`${BUTTON} mt-3`} onClick={() => void usePanelStore.getState().load(gateway)}>重新读取配置</button></div> : null}
       {info && !info.available ? <p role="status" className="mt-3 text-xs leading-5 text-fg-muted">{info.reason}</p> : null}
-      <form onSubmit={onPorts} className="mt-5 space-y-4">
+      <form onSubmit={onPorts} {...portsGuardProps} className="mt-5 space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
           <div><label htmlFor={frontendId} className="mb-2 block text-xs font-medium text-fg">前端端口</label><input id={frontendId} inputMode="numeric" value={frontend} onChange={(e) => { setFrontend(e.target.value); setPortsError(null) }} disabled={unavailable} className={INPUT} /></div>
           <div><label htmlFor={backendId} className="mb-2 block text-xs font-medium text-fg">后端端口</label><input id={backendId} inputMode="numeric" value={backend} onChange={(e) => { setBackend(e.target.value); setPortsError(null) }} disabled={unavailable} className={INPUT} /></div>
@@ -218,17 +212,9 @@ export function PanelMaintenanceSettings() {
           onSelect={selectSource}
           disabled={active || submitting || pending !== null}
         />
-        <ChipGroup
-          ariaLabel="更新策略"
-          items={(['commit', 'release'] as const).map((value) => ({ value, label: PANEL_UPDATE_CHANNEL_LABELS[value] }))}
-          value={channel}
-          onSelect={selectChannel}
-          className="max-w-full"
-          disabled={active || submitting || pending !== null}
-        />
       </div>
-      <p className="mt-2 text-xs leading-5 text-fg-muted">{channel === 'commit' ? '跟随最新已发布构建（最新 v* 标签对应的提交）。' : '使用最新正式发版，不包含预发布版本。'}</p>
-      <div className="mt-3 space-y-2 text-xs leading-5 text-fg-muted"><p>更新来源：<a className="text-fg underline underline-offset-4" href={source === 'gitee' ? 'https://gitee.com/Chentyit/Elysian' : 'https://github.com/Tianyi822/Elysian'} target="_blank" rel="noreferrer">{source === 'gitee' ? 'Gitee · Chentyit/Elysian' : 'GitHub · Tianyi822/Elysian'}</a> · {channel === 'commit' ? '最新已发布构建' : '正式发版'}</p><p className="break-all">当前提交：{info?.commit ?? '正在读取…'}</p>{info?.buildTime && info.buildTime !== 'unknown' ? <p>构建时间：{info.buildTime}</p> : null}</div>
+      <p className="mt-2 text-xs leading-5 text-fg-muted">使用正式发版，不包含预发布版本。</p>
+      <div className="mt-3 space-y-2 text-xs leading-5 text-fg-muted"><p>更新来源：<a className="text-fg underline underline-offset-4" href={source === 'gitee' ? 'https://gitee.com/Chentyit/Elysian' : 'https://github.com/Tianyi822/Elysian'} target="_blank" rel="noreferrer">{source === 'gitee' ? 'Gitee · Chentyit/Elysian' : 'GitHub · Tianyi822/Elysian'}</a> · 正式发版</p><p className="break-all">当前提交：{info?.commit ?? '正在读取…'}</p>{info?.buildTime && info.buildTime !== 'unknown' ? <p>构建时间：{info.buildTime}</p> : null}</div>
       {update ? <div role="status" className="mt-4 space-y-1 break-all text-xs leading-5 text-fg">
         <p>{updateSummary(update)}</p>
         <p>来源：{PANEL_UPDATE_SOURCE_LABELS[update.source]}</p>
@@ -248,7 +234,7 @@ export function PanelMaintenanceSettings() {
     {task && !updateCompleted ? <section aria-label="面板维护进度" className="panel-surface p-5">
       <h2 className="text-sm font-medium text-fg">面板维护进度</h2>
       <p role="status" className="mt-3 text-xs leading-5 text-fg">{task.state === 'succeeded' && task.kind === 'update' && trackedTaskId === task.id && verifiedUpdate !== task.id ? '运行版本待确认' : PANEL_TASK_STATE_LABELS[task.state]} · {PANEL_TASK_PHASE_LABELS[task.phase] ?? task.phase}</p>
-      {task.kind === 'update' ? <p className="mt-2 break-all text-xs leading-5 text-fg-muted">更新来源：{task.updateSource ? PANEL_UPDATE_SOURCE_LABELS[task.updateSource] : '未记录（历史任务）'}<br />更新策略：{PANEL_UPDATE_CHANNEL_LABELS[task.updateChannel ?? 'commit']}{task.releaseTag ? ` · ${task.releaseTag}` : ''}<br />目标提交：{task.targetCommit}</p> : null}
+      <PanelMaintenanceProgress task={task} paused={Boolean(progressError || connectionError)} />
       {panelTaskIsActive(task) && task.workerDead ? <p role="status" className="mt-2 break-all text-xs leading-5 text-warning">维护进程已退出但任务尚未判定结果，等待服务器自动收敛；若长时间无变化，请在服务器执行 journalctl -u elysian-maintenance-{task.id} 查看现场。</p> : null}
       {panelTaskIsActive(task) && (task.workerStatus === 'unknown' || (task.workerStatus === undefined && !task.workerDead)) ? <p className="mt-2 text-xs leading-5 text-fg-muted">维护进程状态尚未确认，继续等待任务结果。</p> : null}
       {task.state === 'succeeded' && task.cliRegistration?.status === 'pending' ? <p role="status" className="mt-2 text-xs text-warning">面板升级成功，正在完成 CLI 注册…</p> : null}
@@ -265,13 +251,7 @@ export function PanelMaintenanceSettings() {
       </div> : null}
       {task.kind !== 'ports' && needsManualReload ? <button className={`${BUTTON} mt-3`} onClick={() => reloadPanelPage()}>重新加载面板</button> : null}
       {task.kind === 'ports' ? <div className="mt-3 flex flex-col gap-2 break-all text-xs"><a className="text-fg underline underline-offset-4" href={panelAddress(task.newPorts.frontendPort)}>打开新地址：{panelAddress(task.newPorts.frontendPort)}</a><a className="text-fg-muted underline underline-offset-4" href={panelAddress(task.oldPorts.frontendPort)}>打开原地址：{panelAddress(task.oldPorts.frontendPort)}</a></div> : null}
-      {logs ? <div className="mt-4 overflow-hidden rounded-lg border border-line bg-[var(--t-code-bg)]">
-        <div className="flex items-center gap-2 border-b border-line bg-surface-raised px-3 py-2 text-xs font-medium text-fg-muted">
-          <Terminal aria-hidden size={14} className="shrink-0" />
-          <span>维护进程日志</span>
-        </div>
-        <pre ref={logViewport} aria-label="维护任务日志" tabIndex={0} className="hover-scrollbar max-h-48 overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-xs leading-5 text-[var(--t-code-fg)] focus-visible:-outline-offset-2">{logs}</pre>
-      </div> : null}
+      {logs ? <PanelMaintenanceLog logs={logs} viewportRef={logViewport} /> : null}
       {hasMore ? <p role="status" className="mt-3 text-xs text-fg-muted">正在读取最新日志…</p> : null}
     </section> : null}
     <PanelChangelogDialog source={source} open={changelogOpen} channel={channel} currentCommit={info?.commit ?? ''} onClose={() => setChangelogOpen(false)} />

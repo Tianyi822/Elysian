@@ -62,8 +62,12 @@ func (w Worker) phase(r *taskRecord, phase string) error {
 	r.Phase = phase
 	r.UpdatedAt = time.Now().UTC()
 	r.WorkerStatus, r.WorkerDead = "", false
-	labels := map[string]string{"checking": "检查部署环境", "downloading": "下载源码", "preparing-resources": "准备更新资源", "restoring-resources": "恢复本次停止的业务", "building": "构建新版本", "firewall": "调整防火墙", "stopping": "停止面板", "activating": "切换配置与版本", "verifying": "检查服务健康", "finished": "任务已结束"}
-	w.Store.appendLog(r.ID, r.UpdatedAt.Format(time.RFC3339)+" "+labels[phase]+"\n")
+	labels := map[string]string{"checking": "检查部署环境", "downloading-release": "下载安装包", "preparing-release": "校验并准备新版本", "downloading": "下载源码", "preparing-resources": "准备更新资源", "restoring-resources": "恢复本次停止的业务", "building": "构建新版本", "firewall": "调整防火墙", "stopping": "停止面板并备份数据", "activating": "切换配置与版本", "verifying": "检查服务健康", "finished": "任务已结束"}
+	label := labels[phase]
+	if label == "" {
+		label = phase
+	}
+	w.Store.appendLog(r.ID, r.UpdatedAt.Format(time.RFC3339)+" "+label+"\n")
 	return w.Store.lock(func() error { return w.Store.save(*r) })
 }
 
@@ -117,6 +121,7 @@ func (w Worker) Run(ctx context.Context, id string) (retErr error) {
 // 服务拉起（杜绝恢复失败后面板停留在停止态）、落 recovery-failed 并附服务器侧恢复
 // 指引；未动过配置、数据或防火墙的失败不再回滚，直接判 failed。
 func (w Worker) finishFailure(r *taskRecord, cause error) error {
+	r.FailedPhase = r.Phase
 	r.Error = cause.Error()
 	w.Store.appendLog(r.ID, "维护失败："+r.Error+"\n")
 	if !r.Activated && !r.FirewallCaptured && !r.resourcesPending() {
@@ -209,9 +214,6 @@ func (w Worker) execute(ctx context.Context, r *taskRecord) error {
 	if err != nil {
 		return err
 	}
-	if err = w.phase(r, "checking"); err != nil {
-		return err
-	}
 	if r.Kind == "update" {
 		if r.UpdateSource == SourceGitee && r.UpdateDelivery != PrecompiledDelivery {
 			return fmt.Errorf("旧 Gitee 源码更新任务不可重新派发，请重新检查更新")
@@ -223,11 +225,11 @@ func (w Worker) execute(ctx context.Context, r *taskRecord) error {
 		if err = w.checkBuildResources(ctx, r); err != nil {
 			return err
 		}
-		strategy := "最新提交"
+		strategy := "历史更新"
 		if r.UpdateChannel == ChannelRelease {
-			strategy = "最新发版 " + r.ReleaseTag
+			strategy = r.ReleaseTag
 		}
-		w.Store.appendLog(r.ID, "更新来源："+sourceLabel(r.UpdateSource)+"；更新策略："+strategy+"；目标提交："+r.TargetCommit+"\n")
+		w.Store.appendLog(r.ID, "更新来源："+sourceLabel(r.UpdateSource)+"\n版本："+strategy+"\n目标提交："+r.TargetCommit+"\n")
 		stage := filepath.Join("/var/tmp/elysian-build", r.ID)
 		defer os.RemoveAll(stage)
 		if err = os.MkdirAll(filepath.Dir(stage), 0711); err != nil {
@@ -237,7 +239,12 @@ func (w Worker) execute(ctx context.Context, r *taskRecord) error {
 		if err = w.phase(r, "downloading-release"); err != nil {
 			return err
 		}
-		downloadCtx, cancelDownload := context.WithTimeout(ctx, sourceDownloadAttemptTimeout)
+		downloadCtx, cancelDownload := context.WithTimeout(ctx, releaseDownloadTimeout)
+		downloadCtx = withDownloadProgress(downloadCtx, func(value DownloadProgress) error {
+			r.Download = &value
+			r.UpdatedAt = value.UpdatedAt
+			return w.Store.lock(func() error { return w.Store.save(*r) })
+		})
 		err = selectedSource.Download(downloadCtx, r.TargetCommit, source)
 		cancelDownload()
 		if err != nil {

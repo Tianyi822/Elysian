@@ -3,6 +3,15 @@ import { createHttpPanelAdapter, PanelHttpError, PanelNetworkError, parsePanelIn
 const task = { id: 'a'.repeat(32), kind: 'ports', state: 'queued', phase: 'checking', createdAt: '2026-10-03T00:00:00Z', updatedAt: '2026-10-03T00:00:00Z', oldPorts: { frontendPort: 48100, backendPort: 48101 }, newPorts: { frontendPort: 49000, backendPort: 49001 }, targetCommit: '', error: '' }
 afterEach(() => vi.unstubAllGlobals())
 describe('面板维护 HTTP 契约', () => {
+  it('接受可恢复的下载快照，拒绝伪造比例及不完整的就绪状态', () => {
+    const download = { fileName: 'elysian-linux-amd64.tar.gz', status: 'downloading', completedBytes: 12, totalBytes: 100, bytesPerSecond: 4, updatedAt: '2026-11-12T08:00:00Z' }
+    expect(parsePanelTask({ ...task, download }).download).toEqual(download)
+    expect(parsePanelTask(task).download).toBeUndefined()
+    for (const change of [{ completedBytes: -1 }, { completedBytes: 101 }, { totalBytes: 0 }, { bytesPerSecond: NaN }, { status: 'ready' }, { status: 'verifying' }, { updatedAt: 'invalid' }]) {
+      expect(() => parsePanelTask({ ...task, download: { ...download, ...change } })).toThrow('下载进度无效')
+    }
+    expect(parsePanelTask({ ...task, download: { ...download, completedBytes: 100, status: 'ready' }, failedPhase: 'downloading-release' }).failedPhase).toBe('downloading-release')
+  })
   it('预检仅携带目标，更新提交完整携带确认的资源计划', async () => {
     const target = { channel: 'commit' as const, source: 'github' as const, targetCommit: 'b'.repeat(40), releaseTag: '' }
     const resourcePlan = { preflightId: 'preflight-123', targets: ['service:caddy.service'], stopPanel: true }

@@ -31,7 +31,7 @@ func (w Worker) checkBuildResources(ctx context.Context, r *taskRecord) error {
 	if err != nil {
 		return err
 	}
-	w.Store.appendLog(r.ID, fmt.Sprintf("更新资源：内存总量 %.0f MiB；可用 %.0f MiB；构建门槛 1536 MiB；可用磁盘 %.0f MiB；交换空间不计入可用内存\n", float64(observation.Memory.TotalBytes)/(1<<20), float64(observation.Memory.AvailableBytes)/(1<<20), float64(observation.DiskAvailable)/(1<<20)))
+	w.Store.appendLog(r.ID, fmt.Sprintf("更新资源检查\n  内存总量：%.0f MiB\n  可用内存：%.0f MiB（构建门槛 1536 MiB，交换空间不计入）\n  可用磁盘：%.0f MiB\n", float64(observation.Memory.TotalBytes)/(1<<20), float64(observation.Memory.AvailableBytes)/(1<<20), float64(observation.DiskAvailable)/(1<<20)))
 	if observation.Memory.AvailableBytes < requiredBuildMemory && (r.ResourcePlan == nil || !r.ResourcePlan.StopPanel && len(r.ResourceTargets) == 0) {
 		return resourceError(observation.Memory.AvailableBytes)
 	}
@@ -298,7 +298,7 @@ func (w Worker) checkPrecompiledResources(ctx context.Context, r *taskRecord, ho
 	if r.ResourcePlan != nil && (r.ResourcePlan.StopPanel || len(r.ResourcePlan.Targets) > 0) {
 		return fmt.Errorf("预编译更新不接受业务停机清单，请重新预检")
 	}
-	w.Store.appendLog(r.ID, fmt.Sprintf("预编译更新资源：可用内存 %.0f MiB；运行准备门槛 128 MiB；可用磁盘 %.0f MiB；服务器不编译，不提前停止业务\n", float64(observed.Memory.AvailableBytes)/(1<<20), float64(observed.DiskAvailable)/(1<<20)))
+	w.Store.appendLog(r.ID, fmt.Sprintf("预编译更新资源检查\n  可用内存：%.0f MiB（最低 128 MiB）\n  可用磁盘：%.0f MiB（最低 1024 MiB）\n  服务器无需编译，不提前停止业务\n", float64(observed.Memory.AvailableBytes)/(1<<20), float64(observed.DiskAvailable)/(1<<20)))
 	if observed.Memory.AvailableBytes < requiredUpdateMemory || observed.DiskAvailable < requiredUpdateDisk {
 		return fmt.Errorf("预编译更新至少需要 128 MiB 可用内存和 1 GiB 可用磁盘；请释放资源后重新检查")
 	}

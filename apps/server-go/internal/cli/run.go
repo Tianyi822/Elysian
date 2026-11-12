@@ -117,8 +117,8 @@ func runWithDeps(info Info, args []string, stdin *os.File, stdout, stderr io.Wri
 		return 0
 	case "upgrade":
 		if stdin == nil || !isatty.IsTerminal(stdin.Fd()) {
-			if opts.Channel == "" || !opts.Yes {
-				fmt.Fprintln(stderr, "非交互更新必须提供 --channel 和 --yes；用 ely help upgrade 查看示例。")
+			if !opts.Yes {
+				fmt.Fprintln(stderr, "非交互更新必须提供 --yes；用 ely help upgrade 查看示例。")
 				return 2
 			}
 		}

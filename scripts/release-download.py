@@ -44,24 +44,47 @@ def metadata(url):
         raise ValueError('发布元数据过大')
     return json.loads(data)
 
+def github_formal_release(row):
+    return (isinstance(row, dict) and row.get('draft') is False
+            and row.get('prerelease') is False and isinstance(row.get('tag_name'), str)
+            and row['tag_name'].startswith('v') and len(row['tag_name']) <= 1024)
+
+def github_tag_commit(tag):
+    endpoint = f'https://api.github.com/repos/{REPO}/git/ref/tags/' + urllib.parse.quote(tag, safe='')
+    for _ in range(8):
+        obj = metadata(endpoint).get('object', {})
+        sha = obj.get('sha', '')
+        if not re.fullmatch(r'[a-f0-9]{40}', sha):
+            raise ValueError('GitHub 发版标签提交无效')
+        if obj.get('type') == 'commit':
+            return sha
+        if obj.get('type') != 'tag':
+            raise ValueError('GitHub 发版标签未指向提交')
+        endpoint = f'https://api.github.com/repos/{REPO}/git/tags/{sha}'
+    raise ValueError('GitHub 发版标签嵌套过深')
+
 def github_asset(arch, requested):
     if requested and not re.fullmatch(r'[a-f0-9]{40}', requested):
         raise ValueError('ELYSIAN_COMMIT 必须是完整的 40 位提交 SHA')
     if requested:
-        commit = requested
-    else:
-        # 仅 v* 标签触发构建：默认安装目标取最新已发布的 build-<SHA> 预发布（最新打标签
-        # 的提交），跳过草稿与非 build 标签；未打标签的提交没有可安装产物。
-        releases = metadata(f'https://api.github.com/repos/{REPO}/releases?per_page=30')
-        if not isinstance(releases, list):
-            raise ValueError('GitHub 发布列表无效')
-        commit = next((entry['tag_name'][6:] for entry in releases
-                       if isinstance(entry, dict) and not entry.get('draft')
-                       and re.fullmatch(r'build-[a-f0-9]{40}', entry.get('tag_name') or '')), '')
+        commit = ''
+        for page in range(1, 101):
+            rows = metadata(f'https://api.github.com/repos/{REPO}/releases?per_page=100&page={page}')
+            if not isinstance(rows, list):
+                raise ValueError('GitHub 发布列表无效')
+            for row in rows:
+                if github_formal_release(row) and github_tag_commit(row['tag_name']) == requested:
+                    commit = requested
+                    break
+            if commit or len(rows) < 100:
+                break
         if not commit:
-            raise ValueError('暂无已发布的预编译安装包；请先推送 v* 标签触发构建')
-    if not re.fullmatch(r'[a-f0-9]{40}', commit):
-        raise ValueError('GitHub 返回的提交无效')
+            raise ValueError('指定提交没有对应的 GitHub 正式发版')
+    else:
+        release = metadata(f'https://api.github.com/repos/{REPO}/releases/latest')
+        if not github_formal_release(release):
+            raise ValueError('GitHub 正式发版信息无效')
+        commit = github_tag_commit(release['tag_name'])
     tag = 'build-' + commit
     release = metadata(f'https://api.github.com/repos/{REPO}/releases/tags/{tag}')
     if release.get('draft') or release.get('tag_name') != tag:

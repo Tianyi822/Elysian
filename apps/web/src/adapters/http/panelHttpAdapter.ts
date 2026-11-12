@@ -27,6 +27,13 @@ export function parsePanelTask(value: unknown): PanelTask {
   }
   if (row.workerDead !== undefined && typeof row.workerDead !== 'boolean') throw new Error('面板任务维护进程状态无效')
   if (row.workerStatus !== undefined && !['alive', 'dead', 'unknown'].includes(String(row.workerStatus))) throw new Error('面板任务维护进程状态无效')
+  if (row.failedPhase !== undefined && typeof row.failedPhase !== 'string') throw new Error('面板任务失败阶段无效')
+  if (row.download !== undefined) {
+    const download = object(row.download)
+    if (typeof download.fileName !== 'string' || !['downloading', 'verifying', 'ready'].includes(String(download.status)) || typeof download.updatedAt !== 'string' || !Number.isFinite(Date.parse(download.updatedAt))) throw new Error('安装包下载进度无效')
+    for (const key of ['completedBytes', 'totalBytes', 'bytesPerSecond']) if (!Number.isSafeInteger(download[key]) || Number(download[key]) < 0) throw new Error('安装包下载进度无效')
+    if (Number(download.totalBytes) <= 0 || Number(download.completedBytes) > Number(download.totalBytes) || (download.status !== 'downloading' && download.completedBytes !== download.totalBytes)) throw new Error('安装包下载进度无效')
+  }
   return { ...row, oldPorts: ports(row.oldPorts), newPorts: ports(row.newPorts) } as PanelTask
 }
 export function parsePanelInfo(value: unknown): PanelInfo {

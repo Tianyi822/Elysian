@@ -12,7 +12,14 @@ export const PANEL_UPDATE_SOURCE_LABELS: Record<PanelHistoricalUpdateSource, str
   github: 'GitHub', gitee: 'Gitee',
 }
 export type PanelTaskState = 'queued' | 'running' | 'succeeded' | 'failed' | 'rolled-back' | 'recovery-failed'
+/** 当前安装包的实测下载进度；百分比不代表整个维护任务的进度。 */
+export type PanelDownloadProgress = {
+  fileName: string; status: 'downloading' | 'verifying' | 'ready'
+  completedBytes: number; totalBytes: number; bytesPerSecond: number; updatedAt: string
+}
 export type PanelTask = {
+  download?: PanelDownloadProgress
+  failedPhase?: string
   cliRegistration?: { status: 'pending' | 'succeeded' | 'failed'; error?: string }
   id: string; kind: 'ports' | 'restart' | 'update'; state: PanelTaskState; phase: string
   createdAt: string; updatedAt: string; oldPorts: PanelPorts; newPorts: PanelPorts
@@ -55,7 +62,7 @@ export function validatePanelPorts(ports: PanelPorts): string | null {
 export const PANEL_TASK_PHASE_LABELS: Record<string, string> = {
   'downloading-release': '下载安装包', 'preparing-release': '校验并准备新版本',
   checking: '检查部署环境', downloading: '下载源码', building: '构建新版本', firewall: '调整防火墙',
-  stopping: '停止面板', activating: '切换配置与版本', verifying: '检查服务健康', finished: '已结束',
+  stopping: '停止面板并备份数据', activating: '切换配置与版本', verifying: '检查服务健康', finished: '已结束',
   'preparing-resources': '准备更新资源', 'restoring-resources': '恢复临时停止的业务',
 }
 export const PANEL_TASK_STATE_LABELS: Record<PanelTaskState, string> = {

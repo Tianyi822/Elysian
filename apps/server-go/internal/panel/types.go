@@ -24,6 +24,14 @@ const (
 
 func normalizeChannel(channel UpdateChannel) UpdateChannel {
 	if channel == "" {
+		return ChannelRelease
+	}
+	return channel
+}
+
+// 旧任务缺少 channel 时按当时的默认提交策略对账。
+func legacyTaskChannel(channel UpdateChannel) UpdateChannel {
+	if channel == "" {
 		return ChannelCommit
 	}
 	return channel
@@ -66,6 +74,8 @@ type CLIRegistration struct {
 }
 
 type Task struct {
+	Download        *DownloadProgress   `json:"download,omitempty"`
+	FailedPhase     string              `json:"failedPhase,omitempty"`
 	CLIRegistration *CLIRegistration    `json:"cliRegistration,omitempty"`
 	ID              string              `json:"id"`
 	Kind            string              `json:"kind"`
@@ -84,6 +94,16 @@ type Task struct {
 	// WorkerDead 保留旧客户端兼容，仅在明确探测到进程退出时为真。
 	WorkerDead   bool         `json:"workerDead,omitempty"`
 	WorkerStatus WorkerStatus `json:"workerStatus,omitempty"`
+}
+
+// DownloadProgress 仅表示当前安装包的真实传输量，不表示整个维护任务的完成比例。
+type DownloadProgress struct {
+	FileName       string    `json:"fileName"`
+	Status         string    `json:"status"` // downloading / verifying / ready
+	CompletedBytes int64     `json:"completedBytes"`
+	TotalBytes     int64     `json:"totalBytes"`
+	BytesPerSecond int64     `json:"bytesPerSecond"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
 type taskRecord struct {

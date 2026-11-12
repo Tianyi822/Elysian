@@ -234,6 +234,7 @@ func (m Manager) CheckFrom(ctx context.Context, channel UpdateChannel, source Up
 
 func (m Manager) Submit(ctx context.Context, kind string, input submitInput, origin string) (Task, error) {
 	var result Task
+	channelOmitted := input.Channel == ""
 	if !m.Enabled || !m.Host.Available() {
 		return result, &shared.InvalidRequestError{Status: 503, Message: "仅支持 systemd 安装版，请先使用安装脚本完成维护能力引导"}
 	}
@@ -271,12 +272,19 @@ func (m Manager) Submit(ctx context.Context, kind string, input submitInput, ori
 			}
 			for _, row := range rows {
 				if row.RequestID == input.RequestID {
-					if row.Kind != kind || (kind == "ports" && row.NewPorts != next) || row.TargetCommit != input.TargetCommit || !sameResourcePlan(row.ResourcePlan, input.ResourcePlan) || (kind == "update" && (normalizeChannel(row.UpdateChannel) != input.Channel || normalizeSource(row.UpdateSource) != input.Source || row.ReleaseTag != input.ReleaseTag)) {
+					retryChannel := input.Channel
+					if channelOmitted && legacyTaskChannel(row.UpdateChannel) == ChannelCommit {
+						retryChannel = ChannelCommit
+					}
+					if row.Kind != kind || (kind == "ports" && row.NewPorts != next) || row.TargetCommit != input.TargetCommit || !sameResourcePlan(row.ResourcePlan, input.ResourcePlan) || (kind == "update" && (legacyTaskChannel(row.UpdateChannel) != retryChannel || normalizeSource(row.UpdateSource) != input.Source || row.ReleaseTag != input.ReleaseTag)) {
 						return shared.InvalidRequest("提交编号已用于不同操作")
 					}
 					result = row.Task
 					return nil
 				}
+			}
+			if kind == "update" && input.Channel != ChannelRelease {
+				return shared.InvalidRequest("仅支持正式发版，请重新检查更新")
 			}
 			if kind == "update" && !validSource(input.Source) {
 				return shared.InvalidRequest("更新来源无效，请选择 GitHub 或 Gitee")

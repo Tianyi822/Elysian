@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"elysian/server/internal/config"
 )
@@ -99,8 +100,23 @@ func TestPrecompiledDownloadVerifiesAndStagesPinnedRelease(t *testing.T) {
 	sha := strings.Repeat("a", 40)
 	source, requests := releaseSourceFixture(t, sha, releaseArchive(t, sha, runtime.GOARCH, nil), nil)
 	directory := filepath.Join(t.TempDir(), "download")
-	if err := source.Download(context.Background(), sha, directory); err != nil {
+	var progress []DownloadProgress
+	ctx := withDownloadProgress(context.Background(), func(value DownloadProgress) error {
+		progress = append(progress, value)
+		return nil
+	})
+	if err := source.Download(ctx, sha, directory); err != nil {
 		t.Fatal(err)
+	}
+	if len(progress) < 4 || progress[0].Status != "downloading" || progress[0].CompletedBytes != 0 || progress[len(progress)-2].Status != "verifying" || progress[len(progress)-1].Status != "ready" {
+		t.Fatalf("下载、校验与就绪状态未依次上报：%+v", progress)
+	}
+	previous := int64(0)
+	for _, value := range progress {
+		if value.CompletedBytes < previous || value.CompletedBytes > value.TotalBytes || value.TotalBytes <= 0 || value.UpdatedAt.IsZero() {
+			t.Fatalf("下载字节不是实测单调进度：%+v", progress)
+		}
+		previous = value.CompletedBytes
 	}
 	binary, err := stageRelease(directory, t.TempDir(), sha, "task")
 	if err != nil {
@@ -111,6 +127,26 @@ func TestPrecompiledDownloadVerifiesAndStagesPinnedRelease(t *testing.T) {
 	}
 	if len(*requests) != 2 || !strings.Contains((*requests)[0], "/releases/tags/build-"+sha) || !strings.Contains((*requests)[1], "/releases/download/build-"+sha+"/") {
 		t.Fatalf("下载未锁定完整 SHA：%v", *requests)
+	}
+}
+
+func TestReleaseDownloadHasIndependentBudget(t *testing.T) {
+	sha := strings.Repeat("d", 40)
+	body := releaseArchive(t, sha, runtime.GOARCH, nil)
+	sum := sha256.Sum256(body)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(body) }))
+	defer server.Close()
+	asset := releaseAsset{Name: "elysian-linux-" + runtime.GOARCH + ".tar.gz", URL: server.URL, Size: int64(len(body)), Digest: "sha256:" + hex.EncodeToString(sum[:])}
+	// 元数据客户端的短超时不能截断安装包；安装包独立总预算为 30 分钟。
+	client := &http.Client{Timeout: time.Nanosecond}
+	if releaseDownloadTimeout != 30*time.Minute || releaseDownloadIdleTimeout != 2*time.Minute {
+		t.Fatal("安装包总预算或无数据保护不符")
+	}
+	if err := downloadRelease(context.Background(), client, "GitHub", asset, sha, filepath.Join(t.TempDir(), "download")); err != nil {
+		t.Fatal(err)
+	}
+	if client.Timeout != time.Nanosecond {
+		t.Fatal("下载修改了共享元数据客户端")
 	}
 }
 func TestPrecompiledDownloadRejectsDigestPlatformCommitAndFiles(t *testing.T) {
@@ -218,8 +254,8 @@ func TestPrecompiledWorkerPreservesTransactionWithoutResourceStops(t *testing.T)
 func TestPrecompiledPreflightRejectsLegacyStopAuthorizationAndLowMemory(t *testing.T) {
 	w, r, h := resourceFixture(t)
 	m := Manager{Store: w.Store, Host: h, Ports: r.OldPorts, Enabled: true}
-	input := submitInput{Source: SourceGitHub, Channel: ChannelCommit, TargetCommit: r.TargetCommit}
-	if err := config.AtomicJSON(w.Store.updateCheckPath(input.Channel, input.Source), Update{Repository: Repository, Source: input.Source, Channel: input.Channel, Available: true, TargetCommit: input.TargetCommit}); err != nil {
+	input := submitInput{Source: SourceGitHub, Channel: ChannelRelease, ReleaseTag: "v1.2.0", TargetCommit: r.TargetCommit}
+	if err := config.AtomicJSON(w.Store.updateCheckPath(input.Channel, input.Source), Update{Repository: Repository, Source: input.Source, Channel: input.Channel, ReleaseTag: input.ReleaseTag, Available: true, TargetCommit: input.TargetCommit}); err != nil {
 		t.Fatal(err)
 	}
 	h.available = 64 << 20

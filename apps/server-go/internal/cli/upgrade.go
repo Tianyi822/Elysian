@@ -167,7 +167,7 @@ func runUpgrade(opts upgradeOptions, stdin *os.File, stdout, stderr io.Writer, d
 				}
 			} else {
 				// 沿用旧请求的完整输入，由服务端精确对账或明确拒绝；不改写来源。
-				if !interactive && (opts.Channel != state.Input.Channel) {
+				if !interactive && opts.Channel != "" && (opts.Channel != state.Input.Channel) {
 					fmt.Fprintln(stderr, "存在未确认的更新，请使用原策略重试。")
 					return 1
 				}
@@ -197,16 +197,11 @@ func runUpgrade(opts upgradeOptions, stdin *os.File, stdout, stderr io.Writer, d
 		if opts.Source == "" {
 			opts.Source = "github"
 		}
-		if opts.Channel == "" {
-			choice, code := chooseUpgrade(stdin, stdout, "选择版本策略", "仅 v* 标签触发构建；最新提交即最新已发布构建。最新发版只包含正式 Release，不包含预发布版本。", []string{"最新提交 · 最新已发布构建", "最新发版 · 最新正式 Release"}, nil)
-			if code != 0 {
-				return code
-			}
-			if choice < 0 {
-				return 0
-			}
-			opts.Channel = []string{"commit", "release"}[choice]
+		if opts.Channel == "commit" {
+			fmt.Fprintln(stderr, "仅支持正式发版，请去掉 --channel commit 后重试。")
+			return 1
 		}
+		opts.Channel = "release"
 		fmt.Fprintln(stdout, "◉ 正在检查更新 ·", sourceLabel(opts.Source), "·", channelLabel(opts.Channel))
 		update, checkErr := api.CheckPanelUpdate(ctx, opts.Source, opts.Channel)
 		if checkErr != nil {
@@ -504,10 +499,10 @@ func sourceLabel(source string) string {
 }
 func channelLabel(channel string) string {
 	if channel == "release" {
-		return "最新发版"
+		return "正式发版"
 	}
 	if channel == "commit" {
-		return "最新提交"
+		return "历史更新"
 	}
 	return channel
 }

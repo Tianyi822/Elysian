@@ -25,7 +25,7 @@ func TestCommandHelpWithoutTerminalOrPanel(t *testing.T) {
 }
 
 func TestUpgradeArgumentValidationBeforeExecution(t *testing.T) {
-	for _, args := range [][]string{{"upgrade", "--source", "gitee"}, {"upgrade", "--source", "other"}, {"upgrade", "--channel", "stable"}, {"upgrade", "--password", "x"}, {"upgrade", "extra"}, {"agent", "extra"}, {"resetpwd", "--yes"}, {"help", "missing"}, {"help", "upgrade", "extra"}, {"upgrade"}, {"upgrade", "--source", "github", "--yes"}} {
+	for _, args := range [][]string{{"upgrade", "--source", "gitee"}, {"upgrade", "--source", "other"}, {"upgrade", "--channel", "stable"}, {"upgrade", "--password", "x"}, {"upgrade", "extra"}, {"agent", "extra"}, {"resetpwd", "--yes"}, {"help", "missing"}, {"help", "upgrade", "extra"}, {"upgrade"}} {
 		var out, errOut bytes.Buffer
 		d := fakeDeps()
 		d.runUpgrade = func(upgradeOptions, *os.File, io.Writer, io.Writer) int {
@@ -57,13 +57,13 @@ func TestNonInteractiveUpgradePassesExactFlagsAndExitCode(t *testing.T) {
 func TestNonInteractiveGiteeUpgradePassesSource(t *testing.T) {
 	d := fakeDeps()
 	d.runUpgrade = func(opts upgradeOptions, _ *os.File, _ io.Writer, _ io.Writer) int {
-		if opts.Source != "gitee" || opts.Channel != "commit" || !opts.Yes {
+		if opts.Source != "gitee" || opts.Channel != "" || !opts.Yes {
 			t.Fatalf("opts=%+v", opts)
 		}
 		return 0
 	}
 	var out, errOut bytes.Buffer
-	if code := runWithDeps(testInfo, []string{"upgrade", "--source", "gitee", "--channel", "commit", "--yes"}, nil, &out, &errOut, d); code != 0 {
+	if code := runWithDeps(testInfo, []string{"upgrade", "--source", "gitee", "--yes"}, nil, &out, &errOut, d); code != 0 {
 		t.Fatalf("%d %s", code, &errOut)
 	}
 }

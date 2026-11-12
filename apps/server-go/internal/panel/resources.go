@@ -130,7 +130,7 @@ func (m Manager) PreflightUpdate(ctx context.Context, input submitInput) (Resour
 	if !validSource(input.Source) {
 		return out, shared.InvalidRequest("更新来源无效，请选择 GitHub 或 Gitee")
 	}
-	if !validChannel(input.Channel) || input.ResourcePlan != nil || input.RequestID != "" {
+	if input.Channel != ChannelRelease || input.ResourcePlan != nil || input.RequestID != "" {
 		return out, shared.InvalidRequest("资源预检参数无效")
 	}
 	if err := m.checkedUpdate(input); err != nil {

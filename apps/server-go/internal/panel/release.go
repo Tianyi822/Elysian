@@ -6,6 +6,7 @@ import (
 	"debug/elf"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,10 +14,16 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 const PrecompiledDelivery = "precompiled/v1"
 const maxReleaseArchive = int64(256 << 20)
+
+const releaseDownloadTimeout = 30 * time.Minute
+const releaseDownloadIdleTimeout = 2 * time.Minute
+
+var errReleaseDownloadIdle = errors.New("安装包下载长时间未收到数据")
 
 // 固定清单同时用于摘要验证和版本目录安装，卸载工具随 current 一起更新。
 var releaseScripts = []string{"install.sh", "install-release.sh", "uninstall.sh", "tui.sh", "platform-lifecycle.sh", "docker-apt.sh", "install-platform.mjs", "release-download.py", "README-deploy.md"}
@@ -100,6 +107,15 @@ func (s GitHubSource) Download(ctx context.Context, sha, destination string) err
 }
 
 func downloadRelease(ctx context.Context, client *http.Client, source string, asset releaseAsset, sha, destination string) error {
+	ctx, cancelBudget := context.WithTimeout(ctx, releaseDownloadTimeout)
+	defer cancelBudget()
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	idle := time.AfterFunc(releaseDownloadIdleTimeout, func() { cancel(errReleaseDownloadIdle) })
+	defer idle.Stop()
+	// 元数据请求的客户端超时不应截断仍在接收数据的安装包；传输使用独立总预算及空闲保护。
+	downloadClient := *client
+	downloadClient.Timeout = 0
 	if err := os.MkdirAll(destination, 0700); err != nil {
 		return err
 	}
@@ -109,13 +125,21 @@ func downloadRelease(ctx context.Context, client *http.Client, source string, as
 	}
 	defer os.Remove(archive.Name())
 	defer archive.Close()
+	progress := &releaseProgressWriter{value: DownloadProgress{FileName: asset.Name, TotalBytes: asset.Size}, started: time.Now()}
+	progress.report, _ = ctx.Value(downloadProgressKey{}).(downloadReporter)
+	if err = progress.publish("downloading", true); err != nil {
+		return err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, asset.URL, nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("User-Agent", "Elysian-panel-updater")
-	response, err := client.Do(req)
+	response, err := downloadClient.Do(req)
 	if err != nil {
+		if cause := context.Cause(ctx); cause != nil {
+			return releaseDownloadError(source, cause, 0, asset.Size)
+		}
 		return fmt.Errorf("%s 安装包下载失败：%w", source, err)
 	}
 	defer response.Body.Close()
@@ -123,9 +147,27 @@ func downloadRelease(ctx context.Context, client *http.Client, source string, as
 		return fmt.Errorf("%s 安装包下载失败：HTTP %d", source, response.StatusCode)
 	}
 	digest := sha256.New()
-	size, err := io.Copy(io.MultiWriter(archive, digest), io.LimitReader(response.Body, asset.Size+1))
-	if err != nil || size != asset.Size || "sha256:"+hex.EncodeToString(digest.Sum(nil)) != asset.Digest {
-		return fmt.Errorf("%s 安装包大小或 SHA256 校验失败，未切换版本", source)
+	progress.writer = io.MultiWriter(archive, digest)
+	size, copyErr := io.Copy(progress, io.LimitReader(downloadActivityReader{response.Body, idle}, asset.Size+1))
+	idle.Stop()
+	if err = progress.publish("downloading", true); err != nil {
+		return err
+	}
+	if copyErr != nil {
+		cause := context.Cause(ctx)
+		if cause == nil {
+			cause = copyErr
+		}
+		return releaseDownloadError(source, cause, size, asset.Size)
+	}
+	if size != asset.Size {
+		return fmt.Errorf("%s 安装包大小不符（已接收 %d / %d 字节），未切换版本", source, size, asset.Size)
+	}
+	if err = progress.publish("verifying", true); err != nil {
+		return err
+	}
+	if "sha256:"+hex.EncodeToString(digest.Sum(nil)) != asset.Digest {
+		return fmt.Errorf("%s 安装包 SHA256 校验失败（实际 %s，预期 %s），未切换版本", source, hex.EncodeToString(digest.Sum(nil)), strings.TrimPrefix(asset.Digest, "sha256:"))
 	}
 	if _, err = archive.Seek(0, io.SeekStart); err != nil {
 		return err
@@ -133,7 +175,22 @@ func downloadRelease(ctx context.Context, client *http.Client, source string, as
 	if err = extractSource(archive, destination); err != nil {
 		return fmt.Errorf("预编译安装包解包失败：%w", err)
 	}
-	return validateRelease(destination, sha)
+	if err = validateRelease(destination, sha); err != nil {
+		return err
+	}
+	return progress.publish("ready", true)
+}
+
+func releaseDownloadError(source string, cause error, completed, total int64) error {
+	reason := "安装包下载中断或本地写入失败"
+	if errors.Is(cause, errReleaseDownloadIdle) {
+		reason = "安装包下载连续 2 分钟未收到数据"
+	} else if errors.Is(cause, context.DeadlineExceeded) {
+		reason = "安装包下载超时"
+	} else if errors.Is(cause, context.Canceled) {
+		reason = "安装包下载已中止"
+	}
+	return fmt.Errorf("%s %s（已接收 %d / %d 字节），未切换版本", source, reason, completed, total)
 }
 
 func validateRelease(directory, sha string) error {

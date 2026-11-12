@@ -157,11 +157,11 @@ func TestGiteeRoutesAndTasksKeepExactSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := Manager{Store: w.Store, Host: h, Source: gh, Sources: map[UpdateSource]Source{SourceGitee: gt}, Ports: original.OldPorts, Enabled: true, Executable: filepath.Join(w.install(), "releases", "old", "elysian")}
-	u, err := m.CheckFrom(context.Background(), ChannelCommit, SourceGitee)
+	u, err := m.CheckFrom(context.Background(), ChannelRelease, SourceGitee)
 	if err != nil || u.Source != SourceGitee || len(gh.checked) != 0 {
 		t.Fatalf("%+v %v", u, err)
 	}
-	input := submitInput{RequestID: "gitee-source", Source: SourceGitee, Channel: ChannelCommit, TargetCommit: u.TargetCommit}
+	input := submitInput{RequestID: "gitee-source", Source: SourceGitee, Channel: ChannelRelease, ReleaseTag: u.ReleaseTag, TargetCommit: u.TargetCommit}
 	task, err := m.Submit(context.Background(), "update", input, "")
 	if err != nil || task.UpdateSource != SourceGitee || task.UpdateDelivery != PrecompiledDelivery {
 		t.Fatalf("%+v %v", task, err)
