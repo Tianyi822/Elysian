@@ -19,6 +19,7 @@ describe('createMockGateway 会话片分流', () => {
       mode: 'demo',
       authenticated: true,
       devAccount: false,
+      username: 'admin',
     })
   })
 
