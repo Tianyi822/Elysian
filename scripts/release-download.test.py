@@ -7,6 +7,7 @@ import json
 import tarfile
 import tempfile
 import unittest
+import urllib.request
 from pathlib import Path
 from unittest.mock import patch
 
@@ -16,11 +17,11 @@ spec.loader.exec_module(release)
 COMMIT = 'a' * 40
 
 
-def archive(change=None):
-    binary = b'\x7fELF\x02\x01' + bytes(12) + (62).to_bytes(2, 'little')
+def archive(change=None, arch="amd64"):
+    binary = b'\x7fELF\x02\x01' + bytes(12) + ({'amd64': 62, 'arm64': 183}[arch]).to_bytes(2, 'little')
     digest = hashlib.sha256(binary).hexdigest()
     manifest = dict(schema='elysian-release/v1', repository=release.REPO,
-                    commit=COMMIT, os='linux', arch='amd64',
+                    commit=COMMIT, os='linux', arch=arch,
                     files={'elysian': digest, 'platform-helper': digest})
     files = {'elysian': binary, 'platform-helper': binary, 'release.json': json.dumps(manifest).encode()}
     for script in release.SCRIPTS:
@@ -32,7 +33,7 @@ def archive(change=None):
     output = io.BytesIO()
     with tarfile.open(fileobj=output, mode='w:gz') as bundle:
         for name, content in files.items():
-            entry = tarfile.TarInfo('elysian-linux-amd64/' + name)
+            entry = tarfile.TarInfo(f'elysian-linux-{arch}/' + name)
             entry.size = len(content)
             bundle.addfile(entry, io.BytesIO(content))
     return output.getvalue()
@@ -118,6 +119,67 @@ class DownloadTest(unittest.TestCase):
         with patch.object(release, 'get', lambda _: io.BytesIO(b' ' * ((2 << 20) + 1))):
             with self.assertRaises(ValueError):
                 release.metadata('https://api.github.com/')
+
+
+class GiteeDownloadTest(unittest.TestCase):
+    def fixture(self, change=None):
+        body = archive()
+        base = f'https://gitee.com/{release.GITEE_REPO}/releases/download/build-{COMMIT}/'
+        index = dict(schema=release.INDEX_SCHEMA, repository=release.REPO, commit=COMMIT, os='linux', artifacts={})
+        assets = []
+        for arch in ['amd64', 'arm64']:
+            name = f'elysian-linux-{arch}.tar.gz'
+            index['artifacts'][arch] = dict(name=name, size=len(body), sha256=hashlib.sha256(body).hexdigest())
+            assets.extend([dict(name=name, size=len(body), browser_download_url=base+name),
+                           dict(name=name+'.sha256', size=93, browser_download_url=base+name+'.sha256')])
+        if change:
+            change(index, assets)
+        marker = json.dumps(index).encode()
+        assets.append(dict(name='release-index.json', size=len(marker), browser_download_url=base+'release-index.json'))
+        requests = []
+        def get(url):
+            requests.append(url)
+            self.assertNotIn('github', url)
+            if url == base+'release-index.json':
+                return io.BytesIO(marker)
+            if url == base+'elysian-linux-amd64.tar.gz':
+                return io.BytesIO(body)
+            if '/releases/tags/' in url:
+                result = dict(id=1, tag_name='build-'+COMMIT, prerelease=True)
+            elif '/attach_files?' in url:
+                result = assets
+            elif '/releases?' in url:
+                result = [dict(tag_name='v1.0.0'), dict(tag_name='build-'+COMMIT)]
+            elif '/tags?' in url:
+                result = [dict(name='build-'+COMMIT, commit=dict(sha=COMMIT))]
+            else:
+                raise AssertionError(url)
+            return io.BytesIO(json.dumps(result).encode())
+        return get, requests
+
+    def test_gitee_default_and_explicit_commit_never_contact_github(self):
+        for requested in ['', COMMIT]:
+            get, requests = self.fixture()
+            with tempfile.TemporaryDirectory() as temp, patch.object(release, 'get', get):
+                output = Path(temp)/'bundle'
+                self.assertEqual(release.download(output, 'amd64', requested, 'gitee'), COMMIT)
+            self.assertTrue(requests[-1].endswith('.tar.gz'))
+
+    def test_gitee_rejects_index_identity_digest_and_incomplete_architectures(self):
+        for change in [lambda i, a: i.update(commit='b'*40),
+                       lambda i, a: i['artifacts']['amd64'].update(sha256='0'*64),
+                       lambda i, a: a.pop(2),
+                       lambda i, a: a[0].update(browser_download_url='https://example.com/package')]:
+            get, _ = self.fixture(change)
+            with tempfile.TemporaryDirectory() as temp, patch.object(release, 'get', get), self.assertRaises(ValueError):
+                release.download(Path(temp)/'bundle', 'amd64', COMMIT, 'gitee')
+
+    def test_gitee_rejects_foreign_and_insecure_redirects(self):
+        handler = release.GiteeRedirect()
+        request = urllib.request.Request('https://gitee.com/attachment')
+        for url in ['http://gitee.com/a', 'https://example.com/a', 'https://gitee.com.evil/a', 'https://gitee.com:444/a']:
+            with self.assertRaises(ValueError):
+                handler.redirect_request(request, None, 302, '', {}, url)
 
 
 if __name__ == '__main__':

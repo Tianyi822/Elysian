@@ -35,10 +35,8 @@ jobs:
         include:
           - arch: amd64
             runner: ubuntu-24.04
-            bunTarget: bun-linux-x64-baseline
           - arch: arm64
             runner: ubuntu-24.04-arm
-            bunTarget: bun-linux-arm64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
@@ -59,16 +57,14 @@ jobs:
           ELYSIAN_GOPROXY: https://proxy.golang.org,direct
           ELYSIAN_BUN_REGISTRY: https://registry.npmjs.org
         run: bash scripts/build-release.sh "$GITHUB_WORKSPACE" "$RUNNER_TEMP/release" "$COMMIT"
-      - name: 构建无需 Bun 安装的配置辅助程序
-        env:
-          BUN_TARGET: ${{ matrix.bunTarget }}
-        run: bun build --compile --target="$BUN_TARGET" scripts/install-platform.mjs --outfile "$RUNNER_TEMP/release/platform-helper"
       - name: 验证与打包
         env:
           COMMIT: ${{ needs.version.outputs.commit }}
           ARCH: ${{ matrix.arch }}
         run: |
+          (cd apps/server-go && go test ./internal/platformhelper ./internal/panel ./internal/cli/...)
           python3 -B scripts/release-download.test.py
+          python3 -B scripts/publish-gitee.test.py
           "$RUNNER_TEMP/release/platform-helper" socket /run/caddy/admin.sock
           "$RUNNER_TEMP/release/elysian" release-info
           bun scripts/package-release.mjs "$GITHUB_WORKSPACE" "$RUNNER_TEMP/release" "$COMMIT" "$ARCH"

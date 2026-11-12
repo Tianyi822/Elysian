@@ -1152,8 +1152,8 @@ prepare_release() {
     for file in elysian platform-helper release.json; do cp "$REPO_ROOT/$file" "$BUILD_DIR/$file"; done
     cp -a "$SCRIPT_DIR" "$BUILD_DIR/scripts"
   else
-    info "从 GitHub 下载已完成 CI 构建的安装包，不在服务器编译"
-    BUILD_COMMIT="$(python3 "$SCRIPT_DIR/release-download.py" download "$BUILD_DIR" "$GO_ARCH" "${ELYSIAN_COMMIT:-}")" || die "预编译包尚未就绪或下载校验失败，原面板未停服；请等待 GitHub Actions 完成后重试。"
+    info "从 ${ELYSIAN_RELEASE_SOURCE:-github} 下载已完成 CI 构建的安装包，不在服务器编译"
+    BUILD_COMMIT="$(python3 "$SCRIPT_DIR/release-download.py" download "$BUILD_DIR" "$GO_ARCH" "${ELYSIAN_COMMIT:-}")" || die "预编译包尚未就绪或下载校验失败，原面板未停服；请等待所选平台流水线完成后重试。"
   fi
   chmod 0755 "$BUILD_DIR/elysian" "$BUILD_DIR/platform-helper"
   local actual

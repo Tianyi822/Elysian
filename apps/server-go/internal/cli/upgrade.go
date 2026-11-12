@@ -194,7 +194,9 @@ func runUpgrade(opts upgradeOptions, stdin *os.File, stdout, stderr io.Writer, d
 			fmt.Fprintln(stderr, "当前面板不支持更新资源预检，未提交停机授权；请先手动释放负载。")
 			return 1
 		}
-		opts.Source = "github"
+		if opts.Source == "" {
+			opts.Source = "github"
+		}
 		if opts.Channel == "" {
 			choice, code := chooseUpgrade(stdin, stdout, "选择版本策略", "仅 v* 标签触发构建；最新提交即最新已发布构建。最新发版只包含正式 Release，不包含预发布版本。", []string{"最新提交 · 最新已发布构建", "最新发版 · 最新正式 Release"}, nil)
 			if code != 0 {
@@ -229,7 +231,7 @@ func runUpgrade(opts upgradeOptions, stdin *os.File, stdout, stderr io.Writer, d
 		}
 		summary += "\n\n" + termui.Safe(update.Message)
 		if info.UpdateDelivery == "precompiled/v1" {
-			summary += "\n\n更新从 GitHub 下载并校验预编译安装包，准备完成后短暂重启；服务器不编译、不提前停止其他业务。失败恢复原版本。"
+			summary += "\n\n更新从 " + sourceLabel(opts.Source) + " 下载并校验预编译安装包，准备完成后短暂重启；服务器不编译、不提前停止其他业务。失败恢复原版本。"
 		} else {
 			summary += "\n\n当前更新器仍在服务器构建；首次迁移建议运行 GitHub 预编译安装脚本，失败按维护机制恢复原版本。"
 		}

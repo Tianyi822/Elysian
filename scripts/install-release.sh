@@ -14,6 +14,13 @@ if [ "${#release_need[@]}" -gt 0 ]; then
 fi
 release_work="$(mktemp -d /var/tmp/elysian-release-bootstrap.XXXXXX)"
 trap 'rm -rf "$release_work"' EXIT
-curl --proto '=https' --proto-redir '=https' -fSL --connect-timeout 15 --max-time 60 https://raw.githubusercontent.com/Tianyi822/Elysian/main/scripts/release-download.py -o "$release_work/download.py"
+release_source="${ELYSIAN_RELEASE_SOURCE:-github}"
+case "$release_source" in
+  github) release_downloader=https://raw.githubusercontent.com/Tianyi822/Elysian/main/scripts/release-download.py ;;
+  gitee) release_downloader=https://gitee.com/Chentyit/Elysian/raw/main/scripts/release-download.py ;;
+  *) echo 'ELYSIAN_RELEASE_SOURCE 只能为 github 或 gitee' >&2; exit 1 ;;
+esac
+export ELYSIAN_RELEASE_SOURCE="$release_source"
+curl --proto '=https' --proto-redir '=https' -fSL --connect-timeout 15 --max-time 60 "$release_downloader" -o "$release_work/download.py"
 release_commit="$(python3 "$release_work/download.py" download "$release_work/bundle" "$release_arch" "${ELYSIAN_COMMIT:-}")"
 ELYSIAN_COMMIT="$release_commit" bash "$release_work/bundle/scripts/install.sh" "$@"

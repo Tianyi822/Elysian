@@ -44,16 +44,19 @@ func TestUpdateUsesGitHubForDefaultAndLegacyAutoRequests(t *testing.T) {
 	}
 }
 
-func TestUpdateRoutesOnlyAcceptGitHub(t *testing.T) {
+func TestUpdateRoutesAcceptBothExplicitSources(t *testing.T) {
 	worker, original, host := setupWorker(t, "update")
+	if err := os.Remove(worker.Store.taskPath(original.ID)); err != nil {
+		t.Fatal(err)
+	}
 	source := &channelSource{}
-	manager := Manager{Store: worker.Store, Host: host, Source: source, Ports: original.OldPorts, Enabled: true}
+	manager := Manager{Store: worker.Store, Host: host, Source: source, Sources: map[UpdateSource]Source{SourceGitee: source}, Ports: original.OldPorts, Enabled: true}
 	for _, endpoint := range []string{"/update", "/commits"} {
 		for _, choice := range []string{"", "auto", "github", "gitee", "invalid"} {
 			response := httptest.NewRecorder()
 			manager.Router().ServeHTTP(response, httptest.NewRequest("GET", endpoint+"?channel=commit&source="+choice, nil))
 			expected := 200
-			if choice == "gitee" || choice == "invalid" {
+			if choice == "invalid" {
 				expected = 400
 			}
 			if response.Code != expected {
@@ -67,11 +70,11 @@ func TestUpdateRoutesOnlyAcceptGitHub(t *testing.T) {
 		req.Header.Set("Origin", "http://127.0.0.1")
 		req.Header.Set("Content-Type", "application/json")
 		manager.Router().ServeHTTP(response, req)
-		if response.Code != 400 || !strings.Contains(response.Body.String(), "仅支持 GitHub") {
+		if response.Code != 400 {
 			t.Fatalf("%s: %d %s", endpoint, response.Code, response.Body.String())
 		}
 	}
-	if len(source.checked) != 3 || len(source.history) != 3 || host.dispatched != 0 {
+	if len(source.checked) != 4 || len(source.history) != 4 || host.dispatched != 0 {
 		t.Fatalf("禁用来源触发了上游调用或派发：%+v", source)
 	}
 }
@@ -93,7 +96,7 @@ func TestHistoricalGiteeRequestReconcilesWithoutDispatch(t *testing.T) {
 		t.Fatal("旧 Gitee 请求不能改投 GitHub")
 	}
 	input.RequestID, input.Source = "new-gitee-request", SourceGitee
-	if _, err = manager.Submit(context.Background(), "update", input, ""); err == nil || !strings.Contains(err.Error(), "仅支持 GitHub") {
+	if _, err = manager.Submit(context.Background(), "update", input, ""); err == nil {
 		t.Fatalf("新 Gitee 请求未拒绝：%v", err)
 	}
 }
@@ -115,7 +118,7 @@ func TestWorkerRejectsHistoricalGiteeBeforeDownload(t *testing.T) {
 	worker, record, _ := setupWorker(t, "update")
 	source := &channelSource{}
 	worker.Source, record.UpdateSource = source, SourceGitee
-	if err := worker.execute(context.Background(), &record); err == nil || !strings.Contains(err.Error(), "仅支持 GitHub") {
+	if err := worker.execute(context.Background(), &record); err == nil {
 		t.Fatalf("应明确拒绝旧来源：%v", err)
 	}
 	if source.downloaded != "" || record.Activated || record.PanelStopIntent {

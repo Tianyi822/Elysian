@@ -1,0 +1,28 @@
+version: '1.0'
+name: elysian-linux-release
+displayName: 构建与发布 Linux 安装包
+# Gitee Go schema; this is intentionally separate from GitHub Actions.
+triggers:
+  push:
+    tags:
+      prefix: [v]
+stages:
+  - stage:
+    name: release
+    displayName: 双架构构建与不可变发布
+    strategy: naturally
+    trigger: auto
+    steps:
+      - step: build@gcc
+        name: build_release
+        displayName: 构建、验证并发布到 Gitee
+        gccVersion: '9.4'
+        commands:
+          - bash scripts/ci-gitee-release.sh
+        artifacts:
+          - name: ELYSIAN_RELEASE_PACKAGES
+            path:
+              - ./out/gitee-release/*.tar.gz
+              - ./out/gitee-release/*.sha256
+        strategy:
+          retry: '0'

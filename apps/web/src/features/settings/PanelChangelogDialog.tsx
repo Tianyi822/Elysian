@@ -1,6 +1,6 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { useCallback, useEffect, useState } from 'react'
-import type { PanelCommit, PanelUpdateChannel } from '@elysian/contracts'
+import type { PanelCommit, PanelUpdateChannel, PanelUpdateSource } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { formatDateTime } from '../../components/format'
 import { X } from '../../components/icons'
@@ -9,7 +9,7 @@ import { EmptyState, ErrorState, LoadingState } from '../../components/states/St
 import { useMessageStore } from '../../stores/messageStore'
 
 /**
- * 更新日志窗口：列 GitHub 最近的提交标题，从新到旧。
+ * 更新日志窗口：列所选来源最近的提交标题，从新到旧。
  *
  * 数据只在窗口打开时读一次——它是只读的上游查询，不该常驻在面板 store 里，
  * 也不该在设置页每次挂载都替用户打一次 GitHub。当前运行的提交按 SHA 与
@@ -19,12 +19,14 @@ export function PanelChangelogDialog({
   open,
   currentCommit,
   channel,
+  source,
   onClose,
 }: {
   open: boolean
   /** 正在运行的构建提交；命中列表里的某条时标为当前版本。 */
   currentCommit: string
   channel: PanelUpdateChannel
+  source: PanelUpdateSource
   onClose: () => void
 }) {
   const gateway = useGateway()
@@ -38,7 +40,7 @@ export function PanelChangelogDialog({
     let cancelled = false
     setLoading(true)
     setError(null)
-    void gateway.panel.commits(channel, 'github').then(
+    void gateway.panel.commits(channel, source).then(
       (rows) => {
         if (cancelled) return
         setCommits(rows)
@@ -54,7 +56,7 @@ export function PanelChangelogDialog({
     return () => {
       cancelled = true
     }
-  }, [open, gateway, attempt, channel])
+  }, [open, gateway, attempt, channel, source])
 
   const read = useCallback(() => setAttempt((value) => value + 1), [])
 
@@ -72,7 +74,7 @@ export function PanelChangelogDialog({
             </Dialog.Close>
           </div>
           <Dialog.Description className="shrink-0 px-5 pt-1 text-xs leading-5 text-fg-muted">
-            GitHub · {channel === 'commit' ? '最新已发布构建对应的提交记录，从新到旧。' : '最新正式发版对应的提交记录，从新到旧。'}
+            {source === 'gitee' ? 'Gitee' : 'GitHub'} · {channel === 'commit' ? '最新已发布构建对应的提交记录，从新到旧。' : '最新正式发版对应的提交记录，从新到旧。'}
           </Dialog.Description>
 
           <ScrollArea label="更新日志内容">

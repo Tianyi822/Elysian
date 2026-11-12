@@ -24,6 +24,7 @@ type Manager struct {
 	Store      Store
 	Host       Host
 	Source     Source
+	Sources    map[UpdateSource]Source
 	Ports      config.PanelNetwork
 	Enabled    bool
 	Install    string
@@ -178,10 +179,16 @@ func (m Manager) Check(ctx context.Context, channel UpdateChannel) (Update, erro
 	return m.CheckFrom(ctx, channel, SourceAuto)
 }
 
-func selectSource(source Source, choice UpdateSource) (Source, error) {
+func selectSource(source Source, choice UpdateSource, sources map[UpdateSource]Source) (Source, error) {
 	choice = normalizeSource(choice)
 	if !validSource(choice) {
-		return nil, shared.InvalidRequest("面板更新仅支持 GitHub，请重新检查更新")
+		return nil, shared.InvalidRequest("更新来源无效，请选择 GitHub 或 Gitee")
+	}
+	if selected := sources[choice]; selected != nil {
+		return selected, nil
+	}
+	if choice == SourceGitee {
+		return GiteeSource{}, nil
 	}
 	if source == nil {
 		return DefaultSource(), nil
@@ -196,9 +203,9 @@ func (m Manager) CheckFrom(ctx context.Context, channel UpdateChannel, source Up
 		return Update{}, shared.InvalidRequest("更新策略无效")
 	}
 	if !validSource(source) {
-		return Update{}, shared.InvalidRequest("面板更新仅支持 GitHub，请重新检查更新")
+		return Update{}, shared.InvalidRequest("更新来源无效，请选择 GitHub 或 Gitee")
 	}
-	selected, err := selectSource(m.Source, source)
+	selected, err := selectSource(m.Source, source, m.Sources)
 	if err != nil {
 		return Update{}, err
 	}
@@ -208,10 +215,10 @@ func (m Manager) CheckFrom(ctx context.Context, channel UpdateChannel, source Up
 	if err != nil {
 		return u, err
 	}
-	if u.Source != "" && normalizeSource(u.Source) != SourceGitHub {
-		return Update{}, fmt.Errorf("更新检查结果来源不是 GitHub，请重新检查更新")
+	if u.Source != "" && normalizeSource(u.Source) != source {
+		return Update{}, fmt.Errorf("更新检查结果与所选来源不一致，请重新检查更新")
 	}
-	u.Source = SourceGitHub
+	u.Source = source
 	if u.Available {
 		if verifier, ok := selected.(interface {
 			VerifyArtifact(context.Context, string) error
@@ -272,7 +279,7 @@ func (m Manager) Submit(ctx context.Context, kind string, input submitInput, ori
 				}
 			}
 			if kind == "update" && !validSource(input.Source) {
-				return shared.InvalidRequest("面板更新仅支持 GitHub，请重新检查更新")
+				return shared.InvalidRequest("更新来源无效，请选择 GitHub 或 Gitee")
 			}
 			for _, row := range rows {
 				if Active(row.State) || row.State == "recovery-failed" {
@@ -299,7 +306,7 @@ func (m Manager) Submit(ctx context.Context, kind string, input submitInput, ori
 			}
 			if kind == "update" {
 				r.UpdateChannel = input.Channel
-				r.UpdateSource = SourceGitHub
+				r.UpdateSource = input.Source
 				r.UpdateDelivery = PrecompiledDelivery
 				r.ReleaseTag = input.ReleaseTag
 			}
@@ -373,7 +380,7 @@ func (m Manager) Router() chi.Router {
 			return
 		}
 		if !validSource(source) {
-			shared.SendError(w, 400, "面板更新仅支持 GitHub，请重新检查更新")
+			shared.SendError(w, 400, "更新来源无效，请选择 GitHub 或 Gitee")
 			return
 		}
 		if !m.Enabled || !m.Host.Available() {
@@ -421,7 +428,7 @@ func (m Manager) Router() chi.Router {
 			return
 		}
 		if !validSource(source) {
-			shared.SendError(w, 400, "面板更新仅支持 GitHub，请重新检查更新")
+			shared.SendError(w, 400, "更新来源无效，请选择 GitHub 或 Gitee")
 			return
 		}
 		if !m.Enabled || !m.Host.Available() {
@@ -430,7 +437,7 @@ func (m Manager) Router() chi.Router {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 		defer cancel()
-		selected, err := selectSource(m.Source, source)
+		selected, err := selectSource(m.Source, source, m.Sources)
 		if err != nil {
 			shared.SendError(w, 400, err.Error())
 			return

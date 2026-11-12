@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""安装器的 GitHub 预编译下载与严格解包；不执行包内代码。"""
+"""安装器的 GitHub／Gitee 预编译下载与严格解包；不执行包内代码。"""
 import argparse
 import hashlib
 import json
@@ -15,6 +15,8 @@ import urllib.parse
 from pathlib import Path
 
 REPO = 'Tianyi822/Elysian'
+GITEE_REPO = 'Chentyit/Elysian'
+INDEX_SCHEMA = 'elysian-release-index/v1'
 LIMIT = 256 * 1024 * 1024
 SCRIPTS = ['install.sh', 'install-release.sh', 'uninstall.sh', 'tui.sh', 'platform-lifecycle.sh',
            'docker-apt.sh', 'install-platform.mjs', 'release-download.py', 'README-deploy.md']
@@ -24,17 +26,25 @@ class GitHubRedirect(urllib.request.HTTPRedirectHandler):
         if parsed.scheme != 'https' or parsed.hostname not in {'github.com', 'api.github.com', 'release-assets.githubusercontent.com', 'objects.githubusercontent.com'}:
             raise ValueError('GitHub 安装包重定向地址不允许')
         return super().redirect_request(req, fp, code, msg, headers, url)
+class GiteeRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, url):
+        parsed = urllib.parse.urlsplit(url)
+        if parsed.scheme != 'https' or parsed.netloc not in {'gitee.com', 'foruda.gitee.com'} or parsed.username:
+            raise ValueError('Gitee 安装包重定向地址不允许')
+        return super().redirect_request(req, fp, code, msg, headers, url)
 OPENER = urllib.request.build_opener(GitHubRedirect())
+GITEE_OPENER = urllib.request.build_opener(GiteeRedirect())
 def get(url):
-    return OPENER.open(urllib.request.Request(url, headers={'User-Agent': 'Elysian-installer', 'Accept': 'application/vnd.github+json'}), timeout=60)
+    opener = GITEE_OPENER if urllib.parse.urlsplit(url).hostname == 'gitee.com' else OPENER
+    return opener.open(urllib.request.Request(url, headers={'User-Agent': 'Elysian-installer', 'Accept': 'application/json' if opener is GITEE_OPENER else 'application/vnd.github+json'}), timeout=60)
 def metadata(url):
     with get(url) as response:
         data = response.read((2 << 20) + 1)
     if len(data) > 2 << 20:
-        raise ValueError('GitHub 元数据过大')
+        raise ValueError('发布元数据过大')
     return json.loads(data)
 
-def download(output, arch, requested):
+def github_asset(arch, requested):
     if requested and not re.fullmatch(r'[a-f0-9]{40}', requested):
         raise ValueError('ELYSIAN_COMMIT 必须是完整的 40 位提交 SHA')
     if requested:
@@ -61,6 +71,93 @@ def download(output, arch, requested):
     url = f'https://github.com/{REPO}/releases/download/{tag}/{name}'
     if not asset or asset.get('browser_download_url') != url or asset.get('state') != 'uploaded' or not 0 < asset.get('size', 0) <= LIMIT or not re.fullmatch(r'sha256:[a-f0-9]{64}', asset.get('digest', '')):
         raise ValueError('预编译安装包尚未就绪，或 GitHub 文件摘要无效；请等待 Actions 完成后重试')
+    return commit, asset
+
+def gitee_releases():
+    for page in range(1, 101):
+        rows = metadata(f'https://gitee.com/api/v5/repos/{GITEE_REPO}/releases?direction=desc&per_page=100&page={page}')
+        if not isinstance(rows, list):
+            raise ValueError('Gitee 发布列表无效')
+        yield from rows
+        if len(rows) < 100:
+            return
+    raise ValueError('Gitee 发布列表超出查询范围')
+
+def gitee_tag_commit(tag):
+    for page in range(1, 101):
+        rows = metadata(f'https://gitee.com/api/v5/repos/{GITEE_REPO}/tags?per_page=100&page={page}')
+        if not isinstance(rows, list):
+            raise ValueError('Gitee 标签列表无效')
+        for row in rows:
+            if row.get('name') == tag:
+                sha = row.get('commit', {}).get('sha', '')
+                if not re.fullmatch(r'[a-f0-9]{40}', sha):
+                    raise ValueError('Gitee 标签提交无效')
+                return sha
+        if len(rows) < 100:
+            break
+    raise ValueError('Gitee 发版标签不存在或超出查询范围')
+
+class GiteeNotReady(ValueError):
+    pass
+
+def gitee_asset(arch, requested):
+    if not requested:
+        for row in gitee_releases():
+            tag = row.get('tag_name') or ''
+            if re.fullmatch(r'build-[a-f0-9]{40}', tag):
+                try:
+                    return gitee_asset(arch, tag[6:])
+                except GiteeNotReady:
+                    continue
+        raise ValueError('暂无已发布的 Gitee 预编译安装包；请先推送 v* 标签')
+    if not re.fullmatch(r'[a-f0-9]{40}', requested):
+        raise ValueError('ELYSIAN_COMMIT 必须是完整的 40 位提交 SHA')
+    tag = 'build-' + requested
+    base = f'https://gitee.com/{GITEE_REPO}/releases/download/{tag}/'
+    release = metadata(f'https://gitee.com/api/v5/repos/{GITEE_REPO}/releases/tags/{tag}')
+    if release.get('tag_name') != tag or type(release.get('id')) is not int or release['id'] <= 0:
+        raise ValueError('Gitee 发布信息无效')
+    rows = metadata(f"https://gitee.com/api/v5/repos/{GITEE_REPO}/releases/{release['id']}/attach_files?per_page=100")
+    if not isinstance(rows, list):
+        raise ValueError('Gitee 附件列表无效')
+    assets = {}
+    for row in rows:
+        name = row.get('name')
+        if name in assets:
+            raise ValueError('Gitee 附件重名')
+        assets[name] = row
+    if 'release-index.json' not in assets:
+        raise GiteeNotReady('Gitee 安装包尚未就绪，请等待流水线完成后重试')
+    marker = assets['release-index.json']
+    if marker.get('browser_download_url') != base + 'release-index.json' or type(marker.get('size')) is not int or not 0 < marker['size'] <= 64 << 10:
+        raise ValueError('Gitee 发布索引地址或大小无效')
+    with get(marker['browser_download_url']) as response:
+        body = response.read((64 << 10) + 1)
+    if len(body) != marker['size'] or len(body) > 64 << 10:
+        raise ValueError('Gitee 发布索引大小无效')
+    index = json.loads(body)
+    if index.get('schema') != INDEX_SCHEMA or index.get('repository') != REPO or index.get('commit') != requested or index.get('os') != 'linux' or set(index.get('artifacts', {})) != {'amd64', 'arm64'}:
+        raise ValueError('Gitee 发布索引身份无效')
+    for target in ['amd64', 'arm64']:
+        item = index['artifacts'][target]
+        name = f'elysian-linux-{target}.tar.gz'
+        asset, checksum = assets.get(name), assets.get(name + '.sha256')
+        if not asset or not checksum:
+            raise GiteeNotReady('Gitee 双架构附件不完整')
+        if item.get('name') != name or type(item.get('size')) is not int or not 0 < item['size'] <= 100000000 or not re.fullmatch(r'[a-f0-9]{64}', item.get('sha256', '')) or asset.get('size') != item['size'] or asset.get('browser_download_url') != base + name or checksum.get('browser_download_url') != base + name + '.sha256' or type(checksum.get('size')) is not int or not 0 < checksum['size'] <= 1024:
+            raise ValueError('Gitee 安装包地址、大小或摘要无效')
+    if gitee_tag_commit(tag) != requested:
+        raise ValueError('Gitee 固定构建标签与提交不一致')
+    item = index['artifacts'][arch]
+    return requested, dict(assets[item['name']], digest='sha256:' + item['sha256'])
+
+def download(output, arch, requested, source=None):
+    source = source or os.environ.get('ELYSIAN_RELEASE_SOURCE', 'github')
+    if source not in {'github', 'gitee'}:
+        raise ValueError('ELYSIAN_RELEASE_SOURCE 只能为 github 或 gitee')
+    commit, asset = (gitee_asset if source == 'gitee' else github_asset)(arch, requested)
+    url = asset['browser_download_url']
     descriptor, archive_name = tempfile.mkstemp(prefix='elysian-release-', suffix='.tar.gz', dir=output.parent)
     archive = Path(archive_name)
     try:
@@ -140,4 +237,4 @@ if __name__ == '__main__':
     try:
         main()
     except Exception as error:
-        raise SystemExit('GitHub 预编译安装包准备失败：' + str(error))
+        raise SystemExit('预编译安装包准备失败：' + str(error))

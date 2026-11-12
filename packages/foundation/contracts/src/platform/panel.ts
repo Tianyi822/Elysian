@@ -5,9 +5,9 @@ export type PanelUpdateChannel = 'commit' | 'release'
 export const PANEL_UPDATE_CHANNEL_LABELS: Record<PanelUpdateChannel, string> = {
   commit: '最新提交', release: '最新发版',
 }
-export type PanelUpdateSource = 'github'
-/** 历史记录保留原来源；新检查和日志查询仅支持 GitHub。 */
-export type PanelHistoricalUpdateSource = PanelUpdateSource | 'gitee'
+export type PanelUpdateSource = 'github' | 'gitee'
+/** 更新来源固定绑定到检查、预检、任务和原请求。 */
+export type PanelHistoricalUpdateSource = PanelUpdateSource
 export const PANEL_UPDATE_SOURCE_LABELS: Record<PanelHistoricalUpdateSource, string> = {
   github: 'GitHub', gitee: 'Gitee',
 }
@@ -17,7 +17,7 @@ export type PanelTask = {
   id: string; kind: 'ports' | 'restart' | 'update'; state: PanelTaskState; phase: string
   createdAt: string; updatedAt: string; oldPorts: PanelPorts; newPorts: PanelPorts
   targetCommit: string; error: string
-  /** 旧任务可能未记录更新来源或策略；gitee 仅用于历史任务与原请求对账。 */
+  /** 旧任务可能未记录更新来源或策略；保留原来源用于精确请求对账。 */
   updateChannel?: PanelUpdateChannel; updateSource?: PanelHistoricalUpdateSource; releaseTag?: string
   /** 服务端核对的派生标志：任务仍在活动态但维护单元已退出（疑似中断），终态由服务端判定后回传。 */
   workerDead?: boolean
@@ -41,10 +41,10 @@ export type PanelUpdatePreflight = {
   disk: { availableBytes: number }; load: [number, number, number]; activeAgentRuns: number
   candidates: PanelResourceCandidate[]; needsRelease: boolean; stopPanelRecommended: boolean; blockedReason?: string
 }
-/** source 在旧标签页保存的待确认请求中可以缺省；新请求始终携带 github，gitee 仅用于历史原请求对账。 */
+/** source 在旧标签页保存的待确认请求中可以缺省；新请求始终携带明确来源。 */
 export type PanelUpdateTarget = Pick<PanelUpdate, 'channel' | 'targetCommit' | 'releaseTag'> & { source?: PanelHistoricalUpdateSource; resourcePlan?: PanelResourcePlan }
 export type PanelTaskReport = { task: PanelTask; logs: string; nextOffset: number; hasMore?: boolean }
-/** GitHub 的一条提交，从新到旧排列，供面板的更新日志窗口呈现。 */
+/** 所选发布平台的一条提交，从新到旧排列，供面板的更新日志窗口呈现。 */
 export type PanelCommit = { sha: string; message: string; time: string }
 export function panelTaskIsActive(task: PanelTask): boolean { return task.state === 'queued' || task.state === 'running' }
 export function validatePanelPorts(ports: PanelPorts): string | null {

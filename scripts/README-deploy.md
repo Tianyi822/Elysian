@@ -1,6 +1,6 @@
 # Elysian systemd 预编译部署
 
-正式安装支持 Ubuntu/Debian、systemd、Linux amd64 或 arm64，需 root 与访问 apt、GitHub API 和 Release 资源的网络。2 GiB 服务器无需本机编译；在线更新要求至少 128 MiB 可用内存与 1 GiB 可用磁盘，备份数据还需额外磁盘空间。
+正式安装支持 Ubuntu/Debian、systemd、Linux amd64 或 arm64，需 root 与访问 apt、所选平台 API 和 Release 资源的网络。2 GiB 服务器无需本机编译；在线更新要求至少 128 MiB 可用内存与 1 GiB 可用磁盘，备份数据还需额外磁盘空间。
 
 ## 安装与引导
 
@@ -9,7 +9,15 @@ curl --proto '=https' --proto-redir '=https' -fSL https://raw.githubusercontent.
 sudo bash install-release.sh
 ```
 
-入口下载到文件后再执行，缺少的 Python 3、curl 和 CA 证书由 apt 准备。安装器默认锁定最新已发布构建——最新 v* 标签对应提交的 `build-<SHA>` Release（未打标签的提交不构建、不可安装），按 GitHub API 的 asset SHA256 校验整包，核对发布清单、两个程序的摘要和 Linux ELF 架构，运行 `release-info` 验证内嵌提交后才进入安装切换。下载与解包有文件数量、大小和时间限制，拒绝链接、特殊文件与路径越界。目标产物未完成时等待 Actions 完成后重试，不回退服务器构建，不切换 Gitee。指定已发布提交可用 `sudo env ELYSIAN_COMMIT=<40位SHA> bash install-release.sh`。
+入口下载到文件后再执行，缺少的 Python 3、curl 和 CA 证书由 apt 准备。安装器默认锁定所选来源最新已发布构建——最新 v* 标签对应提交的 `build-<SHA>` Release（未打标签的提交不构建、不可安装）。GitHub 使用 API asset SHA256，Gitee 使用最后上传的固定提交双架构索引校验整包，核对发布清单、两个程序的摘要和 Linux ELF 架构，运行 `release-info` 验证内嵌提交后才进入安装切换。下载与解包有文件数量、大小和时间限制，拒绝链接、特殊文件与路径越界。目标产物未完成时等待所选平台流水线完成后重试，不回退服务器构建、不自动换源。指定已发布提交可用 `sudo env ELYSIAN_COMMIT=<40位SHA> bash install-release.sh`。
+
+国内安装使用以下入口；来源通过环境变量传入整个安装过程，默认 `github`，只接受 `github|gitee`：
+
+```bash
+curl --proto '=https' --proto-redir '=https' -fSL https://gitee.com/Chentyit/Elysian/raw/main/scripts/install-release.sh -o install-release.sh
+sudo env ELYSIAN_RELEASE_SOURCE=gitee bash install-release.sh
+# 指定完整已发布提交：增加 ELYSIAN_COMMIT=<40位SHA>
+```
 
 服务器不安装 Go/Bun，也不创建构建账号。包内包含面板单二进制（Web、API 与 CLI）、无需额外运行时的 `platform-helper`、发布清单和安装卸载脚本。安装器检测并准备 Docker、Caddy、OpenSSH 和 UFW，平台依赖阶段及归属核验继续有效。已有 Go/Bun、缓存和旧构建账号不会在升级时自动删除，卸载仍兼容这些组件。
 
@@ -20,6 +28,34 @@ sudo bash install-release.sh
 [release.yml](../.github/workflows/release.yml) 仅响应 v* 标签推送：未打标签的提交不构建、不可安装，失败的 run 用 Re-run 重跑。CI 使用锁定的 Go/Bun 和依赖锁文件，在各自原生 Linux runner 构建 amd64／arm64 安装包；前后端注入同一完整 SHA。全部架构成功后，以草稿上传全部文件，再公开 `build-<SHA>` 预发布版本；已公开的提交产物不覆盖。v* 标签还创建正式 Release，供「最新正式发版」策略使用。每包附 SHA256 文件，下载器以 GitHub API 的 asset digest 为整包校验来源。
 
 仓库 Actions 需要可用的 Ubuntu amd64／arm64 runner，发布 job 使用 `contents:write` 权限；工作流未完成或构建失败时目标提交不可安装。`scripts/build-release.sh` 仅供 CI 或开发者构建，服务器安装和在线维护不调用。
+
+## Gitee 发布与双端推送
+
+[.workflow/release.yml](../.workflow/release.yml) 使用 Gitee Go 的 `version: 1.0`、`triggers.push.tags.prefix: [v]` 与 `stages/steps`，与 GitHub 的 `.github/workflows` 相互独立。x64 Ubuntu GCC 云端任务使用经官方摘要校验的 Go 1.23.12、Bun 1.4.2，Go／npm 依赖走国内镜像，交叉编译 Linux amd64／arm64；ARM64 两个静态 Go 程序通过 QEMU 运行验证，GitHub 两架构继续原生安装准备冒烟。Bun 仅用于前端构建和打包，不编入辅助程序。
+
+首次设置：在 [Gitee 仓库](https://gitee.com/Chentyit/Elysian) 开通 Gitee Go（账号需已绑定手机号），从仓库现有 `.workflow/release.yml` 导入流水线，启用自动触发并设置串行执行，避免同一提交并发发布。将具有本仓库发布权限的 Gitee `projects` Token 安全注入为 `ELYSIAN_GITEE_TOKEN`，不得将值填入 YAML、Git URL、命令行或提交记录。若账号配置只支持会入库的普通明文参数，应先配置平台安全凭据注入，不能把 Token 当普通参数保存。手机号验证和凭据录入由账号持有人在 Gitee 完成。导入优先复用已有 YAML；若平台生成初始化提交，先将该提交合并回本地及 GitHub，避免推送冲突。
+
+构建、程序校验和双架构打包全部成功后，流水线创建固定 `build-<完整SHA>` 预发布包，上传两个安装包与 SHA256 文件，最后上传 `release-index.json`。索引 schema 为 `elysian-release-index/v1`，包含统一项目身份 `Tianyi822/Elysian`、完整提交、`linux` 和两个架构包的名称、大小与 SHA256。没有有效索引或缺少任一架构的版本不可安装。`v*` 正式 Release 只列出固定包的直接下载链接，不重复上传附件。下载仅允许 HTTPS 的 `gitee.com` 与其官方附件域名 `foruda.gitee.com`。
+
+未完成发布的重跑核验并复用已有包，补齐缺失附件；已有文件异常时保留并报错，不删除或覆盖。完成后的固定包不变。普通 Gitee 仓库单附件上限 100 MB、总附件上限 1 GB；发布前检查已知 Release 附件占用，普通仓库附件也计入平台总额度，最终以平台实际限制为准。额度不足明确失败，历史不自动清理。平台 API／上传结果未知时重跑先回读原标签和附件。
+
+```bash
+bash scripts/configure-push-remotes.sh
+# origin 仍从 GitHub 拉取，两条 push URL 分别推向 GitHub、Gitee
+# Git 凭据仍由各平台自己的 credential helper／账号设置提供
+git push origin main
+# 版本标签打在包含工作流的待发布提交上；使用一个尚不存在的 v* 标签
+git push origin <v版本标签>
+# 某站失败后只补推该站，核对相同分支／标签与完整提交
+git push gitee main
+git push gitee <v版本标签>
+# GitHub 单站补推用完整 URL
+git push https://github.com/Tianyi822/Elysian.git main
+```
+
+双站推送不具备跨平台原子性；某站失败不会撤销另一站，不能用强推覆盖分歧。普通分支推送只同步源码，不触发发包。旧 `v0.0.1` 不移动，新工作流在后续新标签上生效。只有实际云端触发、双架构附件匿名下载、安装及在线更新验证均通过，才可宣称该来源分发链路已验收。
+
+安装包体积以工作区完整构建实测：amd64 压缩包约 14.6 MB、arm64 约 13.6 MB，独立 Go 辅助程序约 2.9 MB。已发布 `v0.0.1` 的对应包约 50.0／49.1 MB，Bun 辅助程序解压后约 81.3 MB；测试包不作为云端发布或真实 systemd 安装验收。最终发版体积随程序和内嵌 Web 内容变化。
 
 默认前端 `http://<服务器公网 IP 或域名>:48100`，后端 `127.0.0.1:48101`。前端提供页面、静态资源和同源 `/api` 代理，支持 Cookie、上传、SSE 和 WebSocket。正式入口接受 IP 或本机 Host，跨源业务写请求及未允许的域名被拒绝。安装脚本默认启用 OpenSSH（sshd 开机自启），按 `sshd -T` 的实际端口放行 SSH，并在放行面板前端 TCP 规则后启用 UFW；已存在的 UFW 规则保持不动。默认值只在安装时声明，重跑安装脚本会重新声明，之后以安全页的启停与规则为准。面板管理宿主 UFW 的面板 TCP 规则与安全页规则，并核验启用的 IPv6；部署者需自行配置云安全组。此部署方式不配置域名反代、HTTPS 或证书。
 
@@ -55,7 +91,7 @@ systemctl restart elysian
 
 任务轮询网络断连累计两分钟后转入每五秒健康探测，每次请求及响应体读取限时三秒，并响应页面取消。活动更新结束后独立核对同源健康端点的实际提交，只有与目标 SHA 一致才提示成功并刷新；版本不一致保留错误和手动重载入口。历史成功任务不会自动刷新页面，迟到响应不能跨任务或登录代次更新展示。
 
-面板更新固定使用 [GitHub：Tianyi822/Elysian](https://github.com/Tianyi822/Elysian) 检查、读取更新日志和下载预编译包，不提供 Gitee 来源或自动回退。「最新提交」跟随最新已发布构建（最新 v* 标签对应的提交），「最新发版」使用最新正式 Release 标签，排除草稿和预发布；标签解析到完整 SHA。检查同时确认当前架构产物就绪；切换策略需重新检查，任务锁定来源、策略与 SHA。历史 Gitee 任务只按原编号和精确输入对账，未受理时拒绝，不改投。
+面板更新默认使用 [GitHub：Tianyi822/Elysian](https://github.com/Tianyi822/Elysian)，可在设置页显式选择 [Gitee：Chentyit/Elysian](https://gitee.com/Chentyit/Elysian)。CLI 对应 `ely upgrade --source gitee`，非交互可用 `ely upgrade --source gitee --channel release --yes`。检查、更新日志、预检、任务与下载固定同一来源，网络失败不自动回退。两站包内使用统一项目身份，实际下载仓库固定映射，不接受任意仓库地址。「最新提交」跟随所选来源最新就绪的固定提交包，「最新发版」筛选该来源的正式 v* Release；Gitee 的“最后更新 Release”不直接视为正式最新版。切换来源或策略后重新检查，原 requestId 不能改投。新任务固定 `precompiled/v1`；历史 Gitee 源码任务只对账与恢复，不重新派发，旧版首次迁移继续使用安装入口。
 
 资源预检有效五分钟，展示实测内存、swap、磁盘、负载和 Agent 数量，要求至少 128 MiB 可用内存及 1 GiB 可用磁盘，swap 不计入；不足时保留业务并阻止更新。新任务固定 `precompiled/v1`，不接受旧构建停机清单，不提前停止业务。下载安装包上限五分钟，校验准备上限两分钟；全部通过后进入既有备份和版本切换事务，短暂停面板。切换后健康等待 60 秒，检查两个入口、静态资源和完整提交。失败恢复旧版本与数据，成功保留当前和上一成功版本；旧任务的资源恢复账本及独立收尾保持可恢复。
 

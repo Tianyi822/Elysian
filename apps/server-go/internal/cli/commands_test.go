@@ -54,6 +54,20 @@ func TestNonInteractiveUpgradePassesExactFlagsAndExitCode(t *testing.T) {
 	}
 }
 
+func TestNonInteractiveGiteeUpgradePassesSource(t *testing.T) {
+	d := fakeDeps()
+	d.runUpgrade = func(opts upgradeOptions, _ *os.File, _ io.Writer, _ io.Writer) int {
+		if opts.Source != "gitee" || opts.Channel != "commit" || !opts.Yes {
+			t.Fatalf("opts=%+v", opts)
+		}
+		return 0
+	}
+	var out, errOut bytes.Buffer
+	if code := runWithDeps(testInfo, []string{"upgrade", "--source", "gitee", "--channel", "commit", "--yes"}, nil, &out, &errOut, d); code != 0 {
+		t.Fatalf("%d %s", code, &errOut)
+	}
+}
+
 func TestUninstallPassesArgumentsThrough(t *testing.T) {
 	// root 且已安装卸载脚本时，选项原样转交脚本入口，退出码透传。
 	for _, args := range [][]string{

@@ -16,6 +16,7 @@ type Worker struct {
 	Store   Store
 	Host    Host
 	Source  Source
+	Sources map[UpdateSource]Source
 	Install string
 	// CLIBin／CLIVerify 是全局 ely 命令注册的可注入落点：生产缺省 /usr/local/bin/ely
 	// 与真实 --version 校验；测试注入临时路径与桩校验，避免触碰系统目录、执行假二进制。
@@ -212,7 +213,10 @@ func (w Worker) execute(ctx context.Context, r *taskRecord) error {
 		return err
 	}
 	if r.Kind == "update" {
-		selectedSource, selectErr := selectSource(w.Source, r.UpdateSource)
+		if r.UpdateSource == SourceGitee && r.UpdateDelivery != PrecompiledDelivery {
+			return fmt.Errorf("旧 Gitee 源码更新任务不可重新派发，请重新检查更新")
+		}
+		selectedSource, selectErr := selectSource(w.Source, r.UpdateSource, w.Sources)
 		if selectErr != nil {
 			return selectErr
 		}
@@ -223,7 +227,7 @@ func (w Worker) execute(ctx context.Context, r *taskRecord) error {
 		if r.UpdateChannel == ChannelRelease {
 			strategy = "最新发版 " + r.ReleaseTag
 		}
-		w.Store.appendLog(r.ID, "更新来源：GitHub；更新策略："+strategy+"；目标提交："+r.TargetCommit+"\n")
+		w.Store.appendLog(r.ID, "更新来源："+sourceLabel(r.UpdateSource)+"；更新策略："+strategy+"；目标提交："+r.TargetCommit+"\n")
 		stage := filepath.Join("/var/tmp/elysian-build", r.ID)
 		defer os.RemoveAll(stage)
 		if err = os.MkdirAll(filepath.Dir(stage), 0711); err != nil {

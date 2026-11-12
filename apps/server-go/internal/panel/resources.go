@@ -128,7 +128,7 @@ func (m Manager) PreflightUpdate(ctx context.Context, input submitInput) (Resour
 	}
 	input.Source, input.Channel = normalizeSource(input.Source), normalizeChannel(input.Channel)
 	if !validSource(input.Source) {
-		return out, shared.InvalidRequest("面板更新仅支持 GitHub，请重新检查更新")
+		return out, shared.InvalidRequest("更新来源无效，请选择 GitHub 或 Gitee")
 	}
 	if !validChannel(input.Channel) || input.ResourcePlan != nil || input.RequestID != "" {
 		return out, shared.InvalidRequest("资源预检参数无效")

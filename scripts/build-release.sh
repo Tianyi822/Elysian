@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# GitHub Actions 与开发者使用的构建入口；服务器安装和在线更新不执行本脚本。
+# GitHub Actions、Gitee Go 与开发者使用的构建入口；服务器安装和在线更新不执行本脚本。
 set -euo pipefail
 # Go 模块默认走国内镜像；部署者可用 ELYSIAN_GOPROXY 或已有 GOPROXY 覆盖。
 export GOPROXY="${ELYSIAN_GOPROXY:-${GOPROXY:-https://goproxy.cn|https://mirrors.aliyun.com/goproxy/|direct}}"
@@ -27,3 +27,5 @@ cp -a apps/web/dist/. apps/server-go/web/dist/
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 cd apps/server-go
 CGO_ENABLED=0 go build -trimpath -mod=readonly -buildvcs=false -ldflags="-s -w -X elysian/server/internal/panel.Commit=${BUILD_COMMIT} -X elysian/server/internal/panel.BuildTime=${BUILD_TIME}" -o "$OUTPUT_DIR/elysian" ./cmd/elysian
+
+CGO_ENABLED=0 go build -trimpath -mod=readonly -buildvcs=false -ldflags="-s -w" -o "$OUTPUT_DIR/platform-helper" ./cmd/platform-helper

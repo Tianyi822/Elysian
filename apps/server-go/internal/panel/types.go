@@ -38,7 +38,7 @@ type UpdateSource string
 const (
 	SourceAuto   UpdateSource = "auto"
 	SourceGitHub UpdateSource = "github"
-	SourceGitee  UpdateSource = "gitee" // 仅用于历史任务读取与精确请求对账。
+	SourceGitee  UpdateSource = "gitee"
 )
 
 func normalizeSource(source UpdateSource) UpdateSource {
@@ -49,7 +49,7 @@ func normalizeSource(source UpdateSource) UpdateSource {
 }
 
 func validSource(source UpdateSource) bool {
-	return normalizeSource(source) == SourceGitHub
+	return normalizeSource(source) == SourceGitHub || normalizeSource(source) == SourceGitee
 }
 
 type WorkerStatus string
@@ -151,4 +151,11 @@ type Host interface {
 	AddRule(context.Context, string) error
 	DeleteRule(context.Context, string) error
 	VerifyRules(context.Context, config.PanelNetwork) error
+}
+
+func sourceLabel(source UpdateSource) string {
+	if normalizeSource(source) == SourceGitee {
+		return "Gitee"
+	}
+	return "GitHub"
 }

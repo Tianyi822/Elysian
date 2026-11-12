@@ -96,7 +96,11 @@ func (s GitHubSource) Download(ctx context.Context, sha, destination string) err
 	if err != nil {
 		return err
 	}
-	if err = os.MkdirAll(destination, 0700); err != nil {
+	return downloadRelease(ctx, s.client(), "GitHub", asset, sha, destination)
+}
+
+func downloadRelease(ctx context.Context, client *http.Client, source string, asset releaseAsset, sha, destination string) error {
+	if err := os.MkdirAll(destination, 0700); err != nil {
 		return err
 	}
 	archive, err := os.CreateTemp(filepath.Dir(destination), "release-*.tar.gz")
@@ -110,18 +114,18 @@ func (s GitHubSource) Download(ctx context.Context, sha, destination string) err
 		return err
 	}
 	req.Header.Set("User-Agent", "Elysian-panel-updater")
-	response, err := s.client().Do(req)
+	response, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("GitHub 安装包下载失败：%w", err)
+		return fmt.Errorf("%s 安装包下载失败：%w", source, err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("GitHub 安装包下载失败：HTTP %d", response.StatusCode)
+		return fmt.Errorf("%s 安装包下载失败：HTTP %d", source, response.StatusCode)
 	}
 	digest := sha256.New()
 	size, err := io.Copy(io.MultiWriter(archive, digest), io.LimitReader(response.Body, asset.Size+1))
 	if err != nil || size != asset.Size || "sha256:"+hex.EncodeToString(digest.Sum(nil)) != asset.Digest {
-		return fmt.Errorf("GitHub 安装包大小或 SHA256 校验失败，未切换版本")
+		return fmt.Errorf("%s 安装包大小或 SHA256 校验失败，未切换版本", source)
 	}
 	if _, err = archive.Seek(0, io.SeekStart); err != nil {
 		return err
@@ -214,7 +218,7 @@ func (h SystemHost) PrepareRelease(ctx context.Context, directory, sha, id strin
 	}
 	candidate, err := stageRelease(directory, InstallRoot, sha, id)
 	if err == nil {
-		h.Store.appendLog(id, "GitHub 预编译安装包校验完成；服务器无需 Go／Bun 编译\n")
+		h.Store.appendLog(id, "预编译安装包校验完成；服务器无需 Go／Bun 编译\n")
 	}
 	return candidate, err
 }

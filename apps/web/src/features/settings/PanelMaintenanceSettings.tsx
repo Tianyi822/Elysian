@@ -4,7 +4,7 @@ import { Terminal } from '../../components/icons'
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { PANEL_TASK_PHASE_LABELS, PANEL_TASK_STATE_LABELS, PANEL_UPDATE_CHANNEL_LABELS, PANEL_UPDATE_SOURCE_LABELS, panelTaskIsActive, validatePanelPorts } from '@elysian/contracts'
-import type { PanelTask, PanelUpdate, PanelUpdateChannel, PanelUpdateTarget } from '@elysian/contracts'
+import type { PanelTask, PanelUpdate, PanelUpdateChannel, PanelUpdateSource, PanelUpdateTarget } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { PanelHttpError } from '../../adapters/http/panelHttpAdapter'
 import { captureAuthGeneration } from '../../adapters/http/unauthorized'
@@ -48,6 +48,7 @@ export function PanelMaintenanceSettings() {
   const [submitting, setSubmitting] = useState(false)
   const [checking, setChecking] = useState(false)
   const [channel, setChannel] = useState<PanelUpdateChannel>('commit')
+  const [source, setSource] = useState<PanelUpdateSource>('github')
   const [update, setUpdate] = useState<PanelUpdate | null>(null)
   const checkVersion = useRef(0)
   const [changelogOpen, setChangelogOpen] = useState(false)
@@ -170,7 +171,7 @@ export function PanelMaintenanceSettings() {
     const current = () => version === checkVersion.current && auth === captureAuthGeneration() && scope === lifecycle.current
     setChecking(true); setUpdateError(null); setUpdate(null)
     try {
-      const result = await gateway.panel.checkUpdate(channel, 'github')
+      const result = await gateway.panel.checkUpdate(channel, source)
       if (current()) setUpdate(result)
     }
     catch (cause) { if (current()) setUpdateError(cause instanceof Error ? cause.message : '检查更新失败，请重试') }
@@ -180,6 +181,11 @@ export function PanelMaintenanceSettings() {
     if (channel === next) return
     checkVersion.current += 1
     setChannel(next); setUpdate(null); setResourceTarget(null); setChecking(false); setUpdateError(null)
+  }
+  const selectSource = (next: PanelUpdateSource) => {
+    if (source === next) return
+    checkVersion.current += 1
+    setSource(next); setUpdate(null); setResourceTarget(null); setChecking(false); setUpdateError(null)
   }
   const beginUpdate = () => {
     if (!update || unavailable) return
@@ -203,8 +209,15 @@ export function PanelMaintenanceSettings() {
       </form>
     </section>
     <section aria-label="面板更新" className="panel-surface p-5">
-      <div className="flex items-center gap-1.5"><h2 className="text-sm font-medium text-fg">面板更新</h2><SectionHelp label="面板更新说明">{info?.updateDelivery === 'precompiled/v1' ? '从 GitHub 下载并校验预编译安装包，准备完成后短暂重启。服务器无需 Go 或 Bun，不提前停止其他业务；更新失败会恢复原版本并保留数据。' : '先下载并编译新版本，成功后重启。更新失败会恢复原版本，保留面板数据。资源不足时，先确认停机清单；提前停止面板后，构建期间页面暂时不可访问。'}</SectionHelp></div>
+      <div className="flex items-center gap-1.5"><h2 className="text-sm font-medium text-fg">面板更新</h2><SectionHelp label="面板更新说明">{info?.updateDelivery === 'precompiled/v1' ? '从所选平台下载并校验预编译安装包，准备完成后短暂重启。服务器无需 Go 或 Bun，不提前停止其他业务；更新失败会恢复原版本并保留数据。' : '先下载并编译新版本，成功后重启。更新失败会恢复原版本，保留面板数据。资源不足时，先确认停机清单；提前停止面板后，构建期间页面暂时不可访问。'}</SectionHelp></div>
       <div className="mt-4 flex flex-wrap items-center gap-3">
+        <ChipGroup
+          ariaLabel="更新来源"
+          items={(['github', 'gitee'] as const).map((value) => ({ value, label: PANEL_UPDATE_SOURCE_LABELS[value] }))}
+          value={source}
+          onSelect={selectSource}
+          disabled={active || submitting || pending !== null}
+        />
         <ChipGroup
           ariaLabel="更新策略"
           items={(['commit', 'release'] as const).map((value) => ({ value, label: PANEL_UPDATE_CHANNEL_LABELS[value] }))}
@@ -215,14 +228,14 @@ export function PanelMaintenanceSettings() {
         />
       </div>
       <p className="mt-2 text-xs leading-5 text-fg-muted">{channel === 'commit' ? '跟随最新已发布构建（最新 v* 标签对应的提交）。' : '使用最新正式发版，不包含预发布版本。'}</p>
-      <div className="mt-3 space-y-2 text-xs leading-5 text-fg-muted"><p>更新来源：<a className="text-fg underline underline-offset-4" href="https://github.com/Tianyi822/Elysian" target="_blank" rel="noreferrer">GitHub · Tianyi822/Elysian</a> · {channel === 'commit' ? '最新已发布构建' : '正式发版'}</p><p className="break-all">当前提交：{info?.commit ?? '正在读取…'}</p>{info?.buildTime && info.buildTime !== 'unknown' ? <p>构建时间：{info.buildTime}</p> : null}</div>
+      <div className="mt-3 space-y-2 text-xs leading-5 text-fg-muted"><p>更新来源：<a className="text-fg underline underline-offset-4" href={source === 'gitee' ? 'https://gitee.com/Chentyit/Elysian' : 'https://github.com/Tianyi822/Elysian'} target="_blank" rel="noreferrer">{source === 'gitee' ? 'Gitee · Chentyit/Elysian' : 'GitHub · Tianyi822/Elysian'}</a> · {channel === 'commit' ? '最新已发布构建' : '正式发版'}</p><p className="break-all">当前提交：{info?.commit ?? '正在读取…'}</p>{info?.buildTime && info.buildTime !== 'unknown' ? <p>构建时间：{info.buildTime}</p> : null}</div>
       {update ? <div role="status" className="mt-4 space-y-1 break-all text-xs leading-5 text-fg">
         <p>{updateSummary(update)}</p>
         <p>来源：{PANEL_UPDATE_SOURCE_LABELS[update.source]}</p>
         {update.targetCommit ? <p>目标提交：{update.targetCommit}</p> : null}
         {update.message && update.targetCommit ? <p className="text-fg-muted">{update.message}</p> : null}
       </div> : null}
-      <div className="mt-4 flex flex-wrap gap-2"><button className={BUTTON} disabled={unavailable || checking} onClick={() => void check()}>{checking ? '正在检查…' : '检查更新'}</button><button className={BUTTON} disabled={unavailable || checking || !update?.available || update.channel !== channel || update.source !== 'github'} onClick={beginUpdate}>{submitting ? '正在提交…' : '更新并重启'}</button><button className={BUTTON} disabled={!info?.available} title={info && !info.available ? info.reason : undefined} onClick={() => setChangelogOpen(true)}>更新日志</button></div>
+      <div className="mt-4 flex flex-wrap gap-2"><button className={BUTTON} disabled={unavailable || checking} onClick={() => void check()}>{checking ? '正在检查…' : '检查更新'}</button><button className={BUTTON} disabled={unavailable || checking || !update?.available || update.channel !== channel || update.source !== source} onClick={beginUpdate}>{submitting ? '正在提交…' : '更新并重启'}</button><button className={BUTTON} disabled={!info?.available} title={info && !info.available ? info.reason : undefined} onClick={() => setChangelogOpen(true)}>更新日志</button></div>
       {info?.available && !info.resourcePreflightVersion ? <p className="mt-2 text-xs leading-5 text-warning">当前服务器版本不支持更新资源预检。首次升级前请手动释放负载；不会自动停止其他业务。</p> : null}
       {updateError || verificationError ? <p role="alert" className="mt-3 break-all text-xs leading-5 text-danger">{updateError ?? verificationError}</p> : null}
     </section>
@@ -261,7 +274,7 @@ export function PanelMaintenanceSettings() {
       </div> : null}
       {hasMore ? <p role="status" className="mt-3 text-xs text-fg-muted">正在读取最新日志…</p> : null}
     </section> : null}
-    <PanelChangelogDialog open={changelogOpen} channel={channel} currentCommit={info?.commit ?? ''} onClose={() => setChangelogOpen(false)} />
+    <PanelChangelogDialog source={source} open={changelogOpen} channel={channel} currentCommit={info?.commit ?? ''} onClose={() => setChangelogOpen(false)} />
     {resourceTarget ? <PanelResourcePreflightDialog target={resourceTarget} adapter={gateway.panel} precompiled={info?.updateDelivery === 'precompiled/v1'} onClose={() => setResourceTarget(null)} onConfirm={resourcePlan => {
       const target = { ...resourceTarget, resourcePlan }
       setResourceTarget(null)

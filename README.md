@@ -8,7 +8,7 @@
 
 ## 安装
 
-要求 Ubuntu/Debian + systemd、Linux amd64/arm64、root 权限与可访问 apt 和 GitHub 的网络。服务器无需安装 Go、Bun 或任何编译工具链，2 GiB 内存即可。
+要求 Ubuntu/Debian + systemd、Linux amd64/arm64、root 权限与可访问 apt 和所选分发平台的网络。服务器无需安装 Go、Bun 或任何编译工具链，2 GiB 内存即可。
 
 ```bash
 curl --proto '=https' --proto-redir '=https' -fSL \
@@ -16,11 +16,19 @@ curl --proto '=https' --proto-redir '=https' -fSL \
 sudo bash install-release.sh
 ```
 
-- 安装包由 GitHub Actions 在推送 `v*` 标签时构建发布，安装器默认锁定最新已发布版本，全程校验整包 SHA256、发布清单与 ELF 架构，不回退源码构建；指定已发布提交可用 `sudo env ELYSIAN_COMMIT=<40位SHA> bash install-release.sh`。
+国内网络可改用 Gitee：
+
+```bash
+curl --proto '=https' --proto-redir '=https' -fSL \
+  https://gitee.com/Chentyit/Elysian/raw/main/scripts/install-release.sh -o install-release.sh
+sudo env ELYSIAN_RELEASE_SOURCE=gitee bash install-release.sh
+```
+
+- 安装包由 GitHub Actions 与 Gitee Go 在推送 `v*` 标签时各自构建发布，安装器默认锁定所选来源最新已发布版本，全程校验整包 SHA256、发布清单与 ELF 架构，不回退源码构建、不自动换源；指定已发布提交可用 `sudo env ELYSIAN_COMMIT=<40位SHA> bash install-release.sh`。
 - 安装收尾摘要会直接显示本次生成的 `admin` 初始密码；事后回查用 `journalctl -u elysian -b --no-pager | grep '初始密码'`。
 - 面板入口 `http://<服务器 IP 或域名>:48100`（后端固定回环 `127.0.0.1:48101`）；Docker、Caddy、OpenSSH 与 UFW 由安装器按需检测准备，已有配置不覆盖。
 
-常用命令：`ely upgrade` 在线更新面板，`sudo ely resetpwd` 重置管理员密码（全部会话失效），`ely help` 查看全部命令。
+常用命令：`ely upgrade` 在线更新面板（国内来源用 `ely upgrade --source gitee`），`sudo ely resetpwd` 重置管理员密码（全部会话失效），`ely help` 查看全部命令。
 
 ## 卸载
 
@@ -40,6 +48,8 @@ bash scripts/dev.sh up                  # Docker 开发栈（前端 + Go 后端�
 bun run test                            # Vitest 全量测试
 bash apps/server-go/dev-check.sh ./...  # Go 门禁（Docker 容器内运行）
 ```
+
+本地执行 `bash scripts/configure-push-remotes.sh` 后，一次 `git push origin main` 同时推送两站；仅显式推送 `v*` 标签触发发包。Gitee Go 首次开通和发布凭据设置见部署指南。
 
 完整安装、更新、恢复与验证说明见 [scripts/README-deploy.md](scripts/README-deploy.md)。
 

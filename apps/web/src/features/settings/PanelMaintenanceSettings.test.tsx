@@ -22,6 +22,43 @@ function gateway() {
   return result
 }
 describe('端口与更新设置', () => {
+  it('来源切换使旧检查失效，迟到回执不回灌，日志跟随 Gitee', async () => {
+    const g = gateway()
+    let finish!: (value: PanelUpdate) => void
+    g.panel.checkUpdate = vi.fn().mockImplementationOnce(() => new Promise<PanelUpdate>(resolve => { finish = resolve }))
+      .mockResolvedValueOnce({ ...releaseUpdate, channel: 'commit', releaseTag: '', source: 'gitee' })
+    g.panel.commits = vi.fn(async () => [])
+    renderApp('/settings?tab=maintenance', { gateway: g })
+    const user = userEvent.setup()
+    await waitFor(() => expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: '检查更新' }))
+    await user.click(screen.getByRole('button', { name: 'Gitee' }))
+    await act(async () => finish({ ...releaseUpdate, channel: 'commit', releaseTag: '' }))
+    expect(screen.getByRole('button', { name: '更新并重启' })).toBeDisabled()
+    expect(screen.getByRole('link', { name: 'Gitee · Chentyit/Elysian' })).toHaveAttribute('href', 'https://gitee.com/Chentyit/Elysian')
+    await user.click(screen.getByRole('button', { name: '检查更新' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '更新并重启' })).toBeEnabled())
+    expect(g.panel.checkUpdate).toHaveBeenLastCalledWith('commit', 'gitee')
+    await user.click(screen.getByRole('button', { name: '更新日志' }))
+    await waitFor(() => expect(g.panel.commits).toHaveBeenCalledWith('commit', 'gitee'))
+  })
+  it('Gitee 更新提交结果未知时固定来源并锁定选择', async () => {
+    const g = gateway()
+    g.panel.checkUpdate = vi.fn(async () => ({ ...releaseUpdate, channel: 'commit' as const, releaseTag: '', source: 'gitee' as const }))
+    g.panel.update = vi.fn().mockRejectedValue(new PanelNetworkError('响应丢失'))
+    g.panel.taskByRequest = vi.fn(async () => null)
+    renderApp('/settings?tab=maintenance', { gateway: g })
+    const user = userEvent.setup()
+    await waitFor(() => expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: 'Gitee' }))
+    await user.click(screen.getByRole('button', { name: '检查更新' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '更新并重启' })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: '更新并重启' }))
+    await waitFor(() => expect(g.panel.update).toHaveBeenCalledWith(expect.objectContaining({ source: 'gitee', channel: 'commit' }), expect.any(String)))
+    expect(JSON.parse(sessionStorage.getItem(PANEL_PENDING_KEY)!)).toMatchObject({ input: { source: 'gitee' } })
+    expect(screen.getByRole('button', { name: 'GitHub' })).toBeDisabled()
+  })
+
   it('支持资源预检的服务器必须先确认清单，未知提交保留原资源授权', async () => {
     const g = gateway()
     g.panel.info = async () => ({ ...info, resourcePreflightVersion: 1 })
@@ -152,8 +189,8 @@ describe('端口与更新设置', () => {
     renderApp('/settings?tab=maintenance', { gateway: g })
     const user = userEvent.setup()
     await waitFor(() => expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled())
-    expect(screen.queryByRole('button', { name: 'Gitee' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('group', { name: '更新来源' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Gitee' })).toBeInTheDocument()
+    expect(screen.getByRole('group', { name: '更新来源' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'GitHub · Tianyi822/Elysian' })).toHaveAttribute('href', 'https://github.com/Tianyi822/Elysian')
     expect(screen.getByRole('button', { name: '最新提交' })).toHaveAttribute('aria-pressed', 'true')
     await user.click(screen.getByRole('button', { name: '最新发版' }))
@@ -223,7 +260,7 @@ describe('端口与更新设置', () => {
     g.panel.info = async () => ({ ...info, lastTask: { ...task, kind: 'update', state: 'failed', newPorts: ports, updateSource: 'gitee', error: '历史任务失败' } })
     renderApp('/settings?tab=maintenance', { gateway: g })
     expect(await screen.findByText(/更新来源：Gitee/)).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Gitee' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Gitee' })).toBeInTheDocument()
   })
   it('未受理的旧 Gitee 请求被拒绝后释放待确认记录，允许重新检查 GitHub', async () => {
     const g = gateway()
