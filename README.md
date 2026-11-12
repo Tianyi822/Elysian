@@ -10,13 +10,7 @@
 
 要求 Ubuntu/Debian + systemd、Linux amd64/arm64、root 权限与可访问 apt 和所选分发平台的网络。服务器无需安装 Go、Bun 或任何编译工具链，2 GiB 内存即可。
 
-```bash
-curl --proto '=https' --proto-redir '=https' -fSL \
-  https://raw.githubusercontent.com/Tianyi822/Elysian/main/scripts/install-release.sh -o install-release.sh
-sudo bash install-release.sh
-```
-
-国内网络可改用 Gitee：
+### 国内服务器：Gitee
 
 ```bash
 curl --proto '=https' --proto-redir '=https' -fSL \
@@ -24,11 +18,21 @@ curl --proto '=https' --proto-redir '=https' -fSL \
 sudo env ELYSIAN_RELEASE_SOURCE=gitee bash install-release.sh
 ```
 
-- 安装包由 GitHub Actions 与 Gitee Go 在推送 `v*` 标签时各自构建发布，安装器默认锁定所选来源最新已发布版本，全程校验整包 SHA256、发布清单与 ELF 架构，不回退源码构建、不自动换源；指定已发布提交可用 `sudo env ELYSIAN_COMMIT=<40位SHA> bash install-release.sh`。
+### 国外服务器：GitHub
+
+```bash
+curl --proto '=https' --proto-redir '=https' -fSL \
+  https://raw.githubusercontent.com/Tianyi822/Elysian/main/scripts/install-release.sh -o install-release.sh
+sudo env ELYSIAN_RELEASE_SOURCE=github bash install-release.sh
+```
+
+入口脚本、下载器和安装包均从所选平台获取，一次安装固定来源，不自动切换。
+
+- 安装包由 GitHub Actions 与 Gitee Go 在推送 `v*` 标签时各自构建发布，安装器默认锁定所选来源最新已发布版本，全程校验整包 SHA256、发布清单与 ELF 架构，不回退源码构建；指定已发布提交时，在对应的 `sudo env` 命令中追加 `ELYSIAN_COMMIT=<40位SHA>`。
 - 安装收尾摘要会直接显示本次生成的 `admin` 初始密码；事后回查用 `journalctl -u elysian -b --no-pager | grep '初始密码'`。
 - 面板入口 `http://<服务器 IP 或域名>:48100`（后端固定回环 `127.0.0.1:48101`）；Docker、Caddy、OpenSSH 与 UFW 由安装器按需检测准备，已有配置不覆盖。
 
-常用命令：`ely upgrade` 在线更新面板（国内来源用 `ely upgrade --source gitee`），`sudo ely resetpwd` 重置管理员密码（全部会话失效），`ely help` 查看全部命令。
+在线更新同样按来源选择：国内用 `ely upgrade --source gitee`，国外用 `ely upgrade --source github`。`sudo ely resetpwd` 重置管理员密码（全部会话失效），`ely help` 查看全部命令。
 
 ## 卸载
 

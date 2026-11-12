@@ -4,20 +4,25 @@
 
 ## 安装与引导
 
-```bash
-curl --proto '=https' --proto-redir '=https' -fSL https://raw.githubusercontent.com/Tianyi822/Elysian/main/scripts/install-release.sh -o install-release.sh
-sudo bash install-release.sh
-```
-
-入口下载到文件后再执行，缺少的 Python 3、curl 和 CA 证书由 apt 准备。安装器默认锁定所选来源最新已发布构建——最新 v* 标签对应提交的 `build-<SHA>` Release（未打标签的提交不构建、不可安装）。GitHub 使用 API asset SHA256，Gitee 使用最后上传的固定提交双架构索引校验整包，核对发布清单、两个程序的摘要和 Linux ELF 架构，运行 `release-info` 验证内嵌提交后才进入安装切换。下载与解包有文件数量、大小和时间限制，拒绝链接、特殊文件与路径越界。目标产物未完成时等待所选平台流水线完成后重试，不回退服务器构建、不自动换源。指定已发布提交可用 `sudo env ELYSIAN_COMMIT=<40位SHA> bash install-release.sh`。
-
-国内安装使用以下入口；来源通过环境变量传入整个安装过程，默认 `github`，只接受 `github|gitee`：
+国内服务器使用 Gitee：
 
 ```bash
-curl --proto '=https' --proto-redir '=https' -fSL https://gitee.com/Chentyit/Elysian/raw/main/scripts/install-release.sh -o install-release.sh
+curl --proto '=https' --proto-redir '=https' -fSL \
+  https://gitee.com/Chentyit/Elysian/raw/main/scripts/install-release.sh -o install-release.sh
 sudo env ELYSIAN_RELEASE_SOURCE=gitee bash install-release.sh
-# 指定完整已发布提交：增加 ELYSIAN_COMMIT=<40位SHA>
 ```
+
+国外服务器使用 GitHub：
+
+```bash
+curl --proto '=https' --proto-redir '=https' -fSL \
+  https://raw.githubusercontent.com/Tianyi822/Elysian/main/scripts/install-release.sh -o install-release.sh
+sudo env ELYSIAN_RELEASE_SOURCE=github bash install-release.sh
+```
+
+入口脚本、下载器和安装包均从所选平台获取，来源通过 `ELYSIAN_RELEASE_SOURCE` 传入整个安装过程，只接受 `github|gitee`，未指定时默认 `github`。指定完整已发布提交时，在上述对应的 `sudo env` 命令中追加 `ELYSIAN_COMMIT=<40位SHA>`，保留来源参数。
+
+入口下载到文件后再执行，缺少的 Python 3、curl 和 CA 证书由 apt 准备。安装器默认锁定所选来源最新已发布构建——最新 v* 标签对应提交的 `build-<SHA>` Release（未打标签的提交不构建、不可安装）。GitHub 使用 API asset SHA256，Gitee 使用最后上传的固定提交双架构索引校验整包，核对发布清单、两个程序的摘要和 Linux ELF 架构，运行 `release-info` 验证内嵌提交后才进入安装切换。下载与解包有文件数量、大小和时间限制，拒绝链接、特殊文件与路径越界。目标产物未完成时等待所选平台流水线完成后重试，不回退服务器构建、不自动换源。
 
 服务器不安装 Go/Bun，也不创建构建账号。包内包含面板单二进制（Web、API 与 CLI）、无需额外运行时的 `platform-helper`、发布清单和安装卸载脚本。安装器检测并准备 Docker、Caddy、OpenSSH 和 UFW，平台依赖阶段及归属核验继续有效。已有 Go/Bun、缓存和旧构建账号不会在升级时自动删除，卸载仍兼容这些组件。
 
@@ -77,7 +82,7 @@ systemctl restart elysian
 
 安装收尾摘要的「管理员账户」区直接显示本次安装窗口内生成的初始密码（只显示这一次）；沿用既有凭据的重复安装不生成新密码，摘要如实标注并给出回查命令。systemd 日志会保留多次安装的初始密码记录，上述查询仅显示本次系统启动以来最近的一条生成记录；密码已修改或重置后，该记录不再代表当前密码。重新安装保留有效凭据时沿用原密码，不生成新初始密码；已有凭据文件不可用时拒绝自动覆盖，并提示检查权限或执行重置命令。
 
-`sudo ely resetpwd` 直接进入重置密码，`ely agent` 打开 Agent，`ely upgrade` 更新面板，`sudo ely uninstall` 卸载面板，`ely help upgrade` 查看来源、版本策略和确认参数。
+`sudo ely resetpwd` 直接进入重置密码，`ely agent` 打开 Agent；国内用 `ely upgrade --source gitee` 更新面板，国外用 `ely upgrade --source github`。`sudo ely uninstall` 卸载面板，`ely help upgrade` 查看来源、版本策略和确认参数。
 
 `resetpwd` 在交互终端中分行显示账号、密码要求与会话失效提醒，两次输入均不回显；过短或不一致时就地重试，Ctrl+C 取消，成功与失败分开显示结果。输入结束或取消后恢复终端属性与行首位置。管道或文件输入按顺序消费两行，校验失败直接以非零状态退出，不自动重试，也不输出密码。
 
