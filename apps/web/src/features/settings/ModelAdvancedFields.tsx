@@ -4,6 +4,7 @@ import { validAgentModelReasoningLevels } from '@elysian/contracts'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { Check, ChevronDown, Plus, X } from '../../components/icons'
 import { CTL_FIELD, CTL_SECONDARY } from '../../components/formControl'
+import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import type { DraftModel } from './modelDraft'
 
 const multimodalInputs = [['image', '图片'], ['video', '视频']] as const
@@ -21,6 +22,7 @@ export function ModelAdvancedFields({ row, onChange }: { row: DraftModel; onChan
   const [adding, setAdding] = useState(false)
   const [level, setLevel] = useState('')
   const [error, setError] = useState<string>()
+  const { guardProps, isImeKey } = useImeEnterGuard()
   const addLevel = () => {
     const next = level.trim()
     if (!validAgentModelReasoningLevels([...row.reasoningLevels, next])) {
@@ -47,7 +49,7 @@ export function ModelAdvancedFields({ row, onChange }: { row: DraftModel; onChan
           {!adding && <button type="button" aria-label="添加推理等级" disabled={row.reasoningLevels.length >= 16} onClick={() => setAdding(true)} className="flex size-8 items-center justify-center rounded-md border border-line text-fg-muted hover:border-control-line focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-40"><Plus aria-hidden size={14} /></button>}
         </div>
         {adding && <div className="mt-2 flex flex-wrap items-center gap-2">
-          <input aria-label="新的推理等级" value={level} maxLength={32} autoFocus onChange={event => { setLevel(event.target.value); setError(undefined) }} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); addLevel() } }} placeholder="例如 low、high、max" className={`${CTL_FIELD} h-8 min-w-0 flex-1 text-xs`} />
+          <input aria-label="新的推理等级" value={level} maxLength={32} autoFocus {...guardProps} onChange={event => { setLevel(event.target.value); setError(undefined) }} onKeyDown={event => { if (event.key === 'Enter' && !isImeKey(event)) { event.preventDefault(); event.stopPropagation(); addLevel() } }} placeholder="例如 low、high、max" className={`${CTL_FIELD} h-8 min-w-0 flex-1 text-xs`} />
           <button type="button" onClick={addLevel} className={CTL_SECONDARY}>添加等级</button>
           <button type="button" aria-label="取消添加推理等级" onClick={() => { setAdding(false); setLevel(''); setError(undefined) }} className="flex size-8 items-center justify-center rounded-md text-fg-muted hover:bg-surface-raised"><X aria-hidden size={12} /></button>
         </div>}

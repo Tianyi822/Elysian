@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { LoginPasswordInput } from './LoginPasswordInput'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { Bot, Info, TriangleAlert } from '../../components/icons'
+import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import { useSessionStore } from '../../stores/sessionStore'
 import { useMessageStore } from '../../stores/messageStore'
 
@@ -79,7 +80,7 @@ export function LoginPage() {
   const login = useSessionStore((state) => state.login)
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const composing = useRef(false)
+  const { guardProps, isImeKey } = useImeEnterGuard()
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
@@ -150,7 +151,7 @@ export function LoginPage() {
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (submitting || composing.current) return
+    if (submitting || isImeKey()) return
     setSubmitting(true)
     setSubmitError(null)
     try {
@@ -195,12 +196,7 @@ export function LoginPage() {
 
         {notice && <Notice role="status" tone="muted">{notice}</Notice>}
         {submitError && <Notice role="alert" tone="warning">{submitError}</Notice>}
-        <form className="mt-5 flex flex-col gap-4" onSubmit={(event) => void onSubmit(event)}
-          onCompositionStartCapture={() => { composing.current = true }}
-          onCompositionEndCapture={() => { composing.current = false }}
-          onKeyDownCapture={(event) => {
-            if (event.key === 'Enter' && (composing.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229)) event.preventDefault()
-          }}>
+        <form className="mt-5 flex flex-col gap-4" onSubmit={(event) => void onSubmit(event)} {...guardProps}>
           <div className="flex flex-col gap-1.5">
             <label htmlFor="login-username" className="text-xs font-medium text-fg-muted">
               用户名

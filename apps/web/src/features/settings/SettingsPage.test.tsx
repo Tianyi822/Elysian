@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockGateway } from '../../adapters/mock/gateway'
@@ -168,6 +168,29 @@ describe('修改面板密码', () => {
     expect(screen.getByRole('heading', { level: 1, name: '登录 Elysian' })).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent(PASSWORD_CHANGE_NOTICE)
   })
+
+  it('确认回车派发于组合结束之后时不改密，随后的人工提交才改密', async () => {
+    const changePassword = vi.fn(async () => {})
+    renderApp('/settings?tab=account', { gateway: baseGateway(realSession({ changePassword })) })
+    const user = userEvent.setup()
+    await user.type(await screen.findByLabelText('当前密码'), 'old-password')
+    await user.type(screen.getByLabelText('确认新密码'), 'brand-new-pw')
+    const field = screen.getByLabelText('新密码')
+    await user.click(field)
+    fireEvent.compositionStart(field)
+    fireEvent.change(field, { target: { value: 'brand-new-pw' } })
+    fireEvent.compositionEnd(field)
+    // 这枚确认回车的 keydown 在 compositionend 之后：isComposing 已为 false，只判组合态会漏掉它。
+    expect(fireEvent.keyDown(field, { key: 'Enter', keyCode: 13 })).toBe(false)
+    fireEvent.submit(field.closest('form')!)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(changePassword).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: '修改密码' }))
+    await user.click(await screen.findByRole('button', { name: '确认修改' }))
+    await waitFor(() => expect(changePassword).toHaveBeenCalledExactlyOnceWith({
+      currentPassword: 'old-password', newPassword: 'brand-new-pw', confirmNewPassword: 'brand-new-pw',
+    }))
+  })
 })
 
 describe('修改面板用户名', () => {
@@ -217,6 +240,27 @@ describe('修改面板用户名', () => {
     expect(screen.getByLabelText('新用户名')).toHaveValue('operator')
     expect(screen.getByLabelText('验证当前密码')).toHaveValue('wrong-password')
     expect(useSessionStore.getState().phase).toBe('authed')
+  })
+
+  it('确认回车派发于组合结束之后时不改名，随后的人工回车才改名', async () => {
+    const changeUsername = vi.fn(async () => {})
+    renderApp('/settings?tab=account', { gateway: baseGateway(realSession({ changeUsername })) })
+    const user = userEvent.setup()
+    const field = await screen.findByLabelText('新用户名')
+    await user.type(screen.getByLabelText('验证当前密码'), 'current-password')
+    await user.click(field)
+    fireEvent.compositionStart(field)
+    fireEvent.change(field, { target: { value: 'Ops_User-42' } })
+    fireEvent.compositionEnd(field)
+    // 组合刚结束的那一枚回车被吞掉，隐式提交不得打开确认弹窗。
+    expect(fireEvent.keyDown(field, { key: 'Enter', keyCode: 13 })).toBe(false)
+    fireEvent.submit(field.closest('form')!)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(changeUsername).not.toHaveBeenCalled()
+    // 守卫只吞那一枚：随后的人工回车照常提交。
+    await user.keyboard('{Enter}')
+    await user.click(await screen.findByRole('button', { name: '确认修改' }))
+    await waitFor(() => expect(changeUsername).toHaveBeenCalledExactlyOnceWith({ newUsername: 'Ops_User-42', currentPassword: 'current-password' }))
   })
 })
 

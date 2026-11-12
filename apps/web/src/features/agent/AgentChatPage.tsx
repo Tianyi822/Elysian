@@ -8,6 +8,7 @@ import { IconButton } from '../../components/IconButton'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { RefreshButton } from '../../components/RefreshState'
 import { useFeedbackMessage } from '../../components/useFeedbackMessage'
+import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { subscribeWhileVisible } from '../../adapters/subscribeWhileVisible'
 import { AGENT_COMPOSER_FILE_ACCEPT } from '../../adapters/local/agentTextFiles'
@@ -74,7 +75,7 @@ export function AgentChatPage() {
   const fileInput = useRef<HTMLInputElement>(null)
   const history = useRef<HTMLDivElement>(null)
   const following = useRef(true)
-  const composing = useRef(false)
+  const { guardProps, isImeKey } = useImeEnterGuard()
   const session = chat.session
   const usageTimeline = session?.remote?.runId ? chat.timelines[session.remote.runId] : undefined
   const waitingInput = chat.run?.status === 'waiting-input'
@@ -362,9 +363,9 @@ export function AgentChatPage() {
           return <Fragment key={message.id}>
             {switchText && <ChatSwitchNotice text={switchText} />}
             <article className="chat-message" aria-label="你的消息">
-              {editing ? <form className="chat-message-editor panel-surface" aria-label="编辑最后一条消息" onSubmit={event => { event.preventDefault(); resend() }} onDragOver={dragFiles} onDrop={event => dropFiles(event, true)}
+              {editing ? <form className="chat-message-editor panel-surface" aria-label="编辑最后一条消息" {...guardProps} onSubmit={event => { event.preventDefault(); if (!isImeKey()) resend() }} onDragOver={dragFiles} onDrop={event => dropFiles(event, true)}
                 onKeyDown={event => {
-                  if (event.key === 'Escape' && !event.nativeEvent.isComposing && !composing.current && event.keyCode !== 229) {
+                  if (event.key === 'Escape' && !isImeKey(event)) {
                     event.preventDefault()
                     event.stopPropagation()
                     chat.cancelEdit()
@@ -374,9 +375,8 @@ export function AgentChatPage() {
                 <textarea id="agent-edit-message" ref={editInput} value={session.editing!.text} rows={4} className="chat-textarea hover-scrollbar"
                   disabled={chat.sending || !!session.pending} onChange={event => chat.setEditText(event.target.value)}
                   onPaste={event => pasteFiles(event, true)}
-                  onCompositionStart={() => { composing.current = true }} onCompositionEnd={() => { composing.current = false }}
                   onKeyDown={event => {
-                    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && !composing.current && event.keyCode !== 229) { event.preventDefault(); resend() }
+                    if (event.key === 'Enter' && !event.shiftKey && !isImeKey(event)) { event.preventDefault(); resend() }
                   }} />
                 {!!session.editing!.attachments?.length && (() => {
                   const editing = session.editing!
@@ -451,7 +451,7 @@ export function AgentChatPage() {
         submitting={chat.sending || stopping} pending={!!inputDraft?.pending}
         onAnswer={(questionId, answer) => chat.setUserInputAnswer(inputRequest, questionId, answer)}
         onSubmit={() => void chat.answerUserInput(api, inputRequest)} onCancel={() => void chat.stop(api)} /> :
-      <form className="chat-composer panel-surface" onSubmit={event => { event.preventDefault(); send() }} aria-label="消息输入框" onDragOver={dragFiles} onDrop={event => dropFiles(event)}>
+      <form className="chat-composer panel-surface" {...guardProps} onSubmit={event => { event.preventDefault(); if (!isImeKey()) send() }} aria-label="消息输入框" onDragOver={dragFiles} onDrop={event => dropFiles(event)}>
         {!!session?.attachments.length && <ul aria-label="本地附件" className="hover-scrollbar flex max-h-52 flex-wrap gap-2 overflow-y-auto px-4 pt-4">{session.attachments.map(attachment => <ChatAttachment key={attachment.id} attachment={attachment} onRemove={() => chat.removeAttachment(attachment.id)} />)}</ul>}
         <label htmlFor="agent-message" className="sr-only">发送给 Ely 的消息</label>
         <textarea
@@ -460,8 +460,7 @@ export function AgentChatPage() {
           disabled={!session || chat.loading || chat.sending || !!session.pending}
           onChange={event => chat.setDraft(event.target.value)}
           onPaste={event => pasteFiles(event)}
-          onCompositionStart={() => { composing.current = true }} onCompositionEnd={() => { composing.current = false }}
-          onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && !composing.current && event.keyCode !== 229) { event.preventDefault(); send() } }}
+          onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !isImeKey(event)) { event.preventDefault(); send() } }}
         />
         <input ref={fileInput} type="file" multiple hidden aria-label="选择文件" accept={AGENT_COMPOSER_FILE_ACCEPT} disabled={attachmentsLocked} onChange={event => {
           const files = Array.from(event.target.files ?? [])

@@ -349,6 +349,33 @@ describe('文件管理页', () => {
     expect(within(reloaded).queryByRole('cell', { name: 'srv' })).not.toBeInTheDocument()
   })
 
+  it('重命名输入框：确认回车派发于组合结束之后时不重命名，随后的人工提交才重命名', async () => {
+    const user = userEvent.setup()
+    renderApp('/files')
+    const region = await screen.findByRole('region', { name: '文件列表' })
+
+    fireEvent.contextMenu(rowOf(region, '^srv '))
+    await user.click(await screen.findByRole('menuitem', { name: '重命名' }))
+    const input = await screen.findByRole('textbox', { name: '新名称' })
+
+    fireEvent.compositionStart(input)
+    fireEvent.change(input, { target: { value: 'storage' } })
+    fireEvent.compositionEnd(input)
+    expect(fireEvent.keyDown(input, { key: 'Enter', keyCode: 13 })).toBe(false)
+    // jsdom 的 keyDown 不触发隐式提交：手动补一次，验证 onSubmit 同样吞掉这枚回车。
+    fireEvent.submit(input.closest('form')!)
+    expect(messageHistoryText()).not.toContain('已重命名')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    // 弹窗与草稿都还在：改名没有发生。
+    expect(screen.getByRole('textbox', { name: '新名称' })).toHaveValue('storage')
+
+    await user.click(screen.getByRole('button', { name: '确认重命名' }))
+    const reloaded = await screen.findByRole('region', { name: '文件列表' })
+    expect(within(reloaded).getByRole('cell', { name: 'storage' })).toBeInTheDocument()
+    expect(within(reloaded).queryByRole('cell', { name: 'srv' })).not.toBeInTheDocument()
+    expect(messageHistoryText()).toContain('已重命名为 storage')
+  })
+
   it('压缩在同级生成 tar.gz 行，大小为内容总和', async () => {
     const user = userEvent.setup()
     renderApp('/files/var/log')

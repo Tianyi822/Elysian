@@ -60,3 +60,23 @@ describe.each([
     expect(onClose).not.toHaveBeenCalled()
   })
 })
+
+describe('会话重命名与输入法', () => {
+  it('确认回车派发于组合结束之后时不改名，随后的人工提交才改名', async () => {
+    const renameSession = vi.fn(async () => {})
+    useAgentChatStore.setState({ renameSession })
+    const gateway = createMockGateway({ eventStream: 'memory' })
+    render(<GatewayProvider gateway={gateway}><SessionRenameDialog target={{ id: 'a', title: '会话 A' }} onClose={vi.fn()} /></GatewayProvider>)
+    const field = screen.getByLabelText('会话名称')
+    fireEvent.compositionStart(field)
+    fireEvent.change(field, { target: { value: '部署排查' } })
+    fireEvent.compositionEnd(field)
+    expect(fireEvent.keyDown(field, { key: 'Enter', keyCode: 13 })).toBe(false)
+    fireEvent.submit(field.closest('form')!)
+    expect(renameSession).not.toHaveBeenCalled()
+    // 守卫的一次性窗口按 setTimeout(0) 复位；真实两枚回车之间必然隔着事件循环，这里先让它跑掉。
+    await new Promise(resolve => setTimeout(resolve, 0))
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: '确认重命名' })) })
+    expect(renameSession).toHaveBeenCalledOnce()
+  })
+})

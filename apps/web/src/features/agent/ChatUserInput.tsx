@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type { AgentUserInputAnswer, AgentUserInputRequest } from '@elysian/contracts'
 import { Check, ChevronDown } from '../../components/icons'
+import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import './chatUserInput.css'
 
 const answered = (answer?: AgentUserInputAnswer) => !!(answer?.optionId || answer?.text?.trim())
@@ -20,7 +21,7 @@ export function ChatUserInput({ request, answers, submitting, pending, onAnswer,
   const heading = useRef<HTMLParagraphElement>(null)
   const radios = useRef<(HTMLButtonElement | null)[]>([])
   const text = useRef<HTMLTextAreaElement>(null)
-  const composing = useRef(false)
+  const { guardProps, isImeKey } = useImeEnterGuard()
   const prefix = useId()
   const locked = submitting || pending
   const complete = request.questions.every(q => answered(answers[q.id]))
@@ -55,7 +56,7 @@ export function ChatUserInput({ request, answers, submitting, pending, onAnswer,
             choose(next); radios.current[next]?.focus()
           } else if (event.key === 'Enter') {
             event.preventDefault()
-            if (!event.repeat && !event.nativeEvent.isComposing && event.keyCode !== 229) choose(position, true)
+            if (!event.repeat && !isImeKey(event)) choose(position, true)
           }
         }}>
         <span className="chat-question-number">{selected === position ? <Check size={14} aria-hidden /> : position + 1}</span>
@@ -65,8 +66,8 @@ export function ChatUserInput({ request, answers, submitting, pending, onAnswer,
     {custom && <div className="chat-question-custom"><label htmlFor={`${prefix}-answer`} className="sr-only">自定义回答</label>
       <textarea id={`${prefix}-answer`} ref={text} rows={3} maxLength={4000} disabled={locked} value={answer.text} placeholder="输入你的回答…"
         onChange={event => onAnswer(question.id, { text: event.target.value })}
-        onCompositionStart={() => { composing.current = true }} onCompositionEnd={() => { composing.current = false }}
-        onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing && !composing.current && event.keyCode !== 229) { event.preventDefault(); advance() } }} />
+        {...guardProps}
+        onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !isImeKey(event)) { event.preventDefault(); advance() } }} />
       <span className="chat-question-description">Enter 换行，Ctrl / ⌘ + Enter 继续</span></div>}
     {pending && !submitting && <p role="status" className="chat-question-description">回答结果尚未确认。重试将沿用原回答。</p>}
     <div className="chat-question-actions">

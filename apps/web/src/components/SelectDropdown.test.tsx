@@ -83,6 +83,23 @@ describe('自绘单选下拉', () => {
     } finally { vi.useRealTimers() }
   })
 
+  it('确认回车派发于组合结束之后时不立即提交筛选', async () => {
+    const user = userEvent.setup()
+    renderDropdown({ search: { ariaLabel: '搜索分类', placeholder: '输入分类' } })
+    await user.click(screen.getByRole('button', { name: '操作分类筛选：全部' }))
+    const input = screen.getByRole('textbox', { name: '搜索分类' })
+    vi.useFakeTimers()
+    try {
+      fireEvent.compositionStart(input)
+      fireEvent.change(input, { target: { value: '安全' } })
+      fireEvent.compositionEnd(input)
+      expect(fireEvent.keyDown(input, { key: 'Enter', keyCode: 13 })).toBe(false)
+      expect(screen.getAllByRole('menuitemradio')).toHaveLength(3)
+      act(() => vi.advanceTimersByTime(300))
+      expect(screen.getAllByRole('menuitemradio')).toHaveLength(1)
+    } finally { vi.useRealTimers() }
+  })
+
   it('搜索输入支持空格与 Enter 立即过滤，方向键选值，Escape 返回触发器且重开清空', async () => {
     const user = userEvent.setup()
     const props = renderDropdown({ search: { ariaLabel: '搜索分类', placeholder: '输入分类' } })

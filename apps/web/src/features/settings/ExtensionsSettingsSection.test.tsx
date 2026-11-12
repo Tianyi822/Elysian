@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, screen, within, waitFor } from '@testing-library/react'
+import { act, fireEvent, screen, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { AgentHttpError } from '../../adapters/http/agent/agentShared'
@@ -46,6 +46,25 @@ describe('设置中的 MCP 配置', () => {
     expect(screen.getByText('演示检索', { exact: true })).toBeInTheDocument()
     expect(screen.getByText(/本次探测成功/)).toBeInTheDocument()
   })
+
+  it('服务名称输入框：确认回车派发于组合结束之后时不保存，随后的人工提交才保存', async () => {
+    const gateway = makeGateway()
+    const create = vi.spyOn(gateway.agentExtensions, 'createMcpServer')
+    renderApp('/settings?tab=mcp', { gateway })
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: '新建 MCP 服务' }))
+    await user.type(screen.getByLabelText('服务地址'), 'https://mcp.example.com/mcp')
+    const field = screen.getByLabelText('服务名称')
+    fireEvent.compositionStart(field)
+    fireEvent.change(field, { target: { value: '中文检索服务' } })
+    fireEvent.compositionEnd(field)
+    expect(fireEvent.keyDown(field, { key: 'Enter', keyCode: 13 })).toBe(false)
+    fireEvent.submit(field.closest('form')!)
+    expect(create).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: '保存配置' }))
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1))
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ name: '中文检索服务', transport: 'streamable-http', url: 'https://mcp.example.com/mcp' }))
+  })
 })
 
 describe('设置中的 Skill 配置', () => {
@@ -76,6 +95,25 @@ describe('设置中的 Skill 配置', () => {
     expect(screen.getByText(/https:\/\/github.com\/example\/operations-skill.git/)).toBeInTheDocument()
     expect(screen.getByText('排队中')).toBeInTheDocument()
     expect(screen.queryByText('Session 环境')).not.toBeInTheDocument()
+  })
+
+  it('服务器绝对目录输入框：确认回车派发于组合结束之后时不导入，随后的人工提交才导入', async () => {
+    const gateway = makeGateway()
+    const create = vi.spyOn(gateway.agentExtensions, 'createSkillImport')
+    renderApp('/settings?tab=skills', { gateway })
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: '导入 Skill' }))
+    await user.click(screen.getByRole('button', { name: '服务器目录' }))
+    const field = screen.getByLabelText('服务器绝对目录')
+    fireEvent.compositionStart(field)
+    fireEvent.change(field, { target: { value: '/opt/skills/运维手册' } })
+    fireEvent.compositionEnd(field)
+    expect(fireEvent.keyDown(field, { key: 'Enter', keyCode: 13 })).toBe(false)
+    fireEvent.submit(field.closest('form')!)
+    expect(create).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: '开始导入' }))
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1))
+    expect(create.mock.calls[0]![0]).toMatchObject({ source: { kind: 'directory', path: '/opt/skills/运维手册' } })
   })
 
   it('切换设置页签时隐藏弹窗并保留未保存的 MCP 草稿', async () => {

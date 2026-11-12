@@ -16,6 +16,7 @@ import { useFeedbackMessage } from '../../components/useFeedbackMessage'
 import { JsonView } from './JsonView'
 import { RevisionConflictNotice } from './RevisionConflictNotice'
 import { useInFlightSubmit } from './useInFlightSubmit'
+import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import { ExtensionDialog, ExtensionSearch, ExtensionTable, ExtensionToggle, Field, IconAction, extensionCell as cell } from './extensionUi'
 
 const transports = [{ value: 'streamable-http', label: 'Streamable HTTP' }, { value: 'stdio', label: '容器 stdio' }] as const
@@ -78,6 +79,7 @@ function McpServerDialog({ server, visible, onClose }: { server?: AgentMCPServer
   const [enabled, setEnabled] = useState(server?.active ?? true)
   const [error, setError] = useState<string>()
   useEffect(() => { state.clearMcpSaveError() }, [state.clearMcpSaveError])
+  const { guardProps, isImeKey } = useImeEnterGuard()
   const submit = async () => {
     setError(undefined)
     if (!name.trim()) { setError('请填写服务名称'); return }
@@ -104,7 +106,7 @@ function McpServerDialog({ server, visible, onClose }: { server?: AgentMCPServer
     if (ok && alive.current) onClose()
   }
   return <ExtensionDialog title={server ? '编辑 MCP 服务' : '新建 MCP 服务'} open={visible} onClose={onClose} footer={<><button type="button" className={CTL_SECONDARY} onClick={onClose}>取消</button><button type="submit" form="mcp-service-form" className={CTL_PRIMARY} disabled={submitting || latest?.revoked}>{submitting ? '正在保存…' : '保存配置'}</button></>}>
-    <form id="mcp-service-form" onSubmit={event => { event.preventDefault(); void submit() }}><fieldset disabled={submitting || latest?.revoked} className="flex min-w-0 flex-col gap-4">
+    <form id="mcp-service-form" {...guardProps} onSubmit={event => { event.preventDefault(); if (!isImeKey()) void submit() }}><fieldset disabled={submitting || latest?.revoked} className="flex min-w-0 flex-col gap-4">
       <p className="text-xs leading-5 text-fg-subtle">保存后可手动探测服务。启用配置不会自动加入聊天会话。</p>
       <Field label="服务名称" id="mcp-name"><input id="mcp-name" value={name} onChange={event => setName(event.target.value)} required maxLength={120} className={CTL_FIELD} /></Field>
       <Field label="连接方式" id="mcp-transport"><SelectDropdown id="mcp-transport" ariaLabel="连接方式" value={transport} onSelect={setTransport} items={transports} fullWidth /></Field>

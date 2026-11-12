@@ -17,6 +17,7 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { Check } from '../../components/icons'
 import { useFilesStore } from '../../stores/filesStore'
+import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 
 /*
  * 权限对话框：三类人（所有者、用户组、公共）各三项动作（读取、写入、执行），
@@ -119,6 +120,7 @@ export function PermissionDialog({
     setModeText(nextMode)
   }
 
+  const { guardProps, isImeKey } = useImeEnterGuard()
   const submit = async () => {
     if (!isValidFileMode(modeText)) {
       setErrorMessage('权限位要写三位八进制数字，例如 755')
@@ -156,8 +158,10 @@ export function PermissionDialog({
           </p>
 
           <form
+            {...guardProps}
             onSubmit={(event) => {
               event.preventDefault()
+              if (isImeKey()) return
               void submit()
             }}
           >

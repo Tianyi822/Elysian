@@ -72,6 +72,39 @@ describe('用户选择卡片', () => {
     await user.click(screen.getByRole('button', { name: '取消本轮' }))
     expect(cancel).toHaveBeenCalledOnce()
   })
+  it('自定义回答：组合中与组合刚结束的 Ctrl/⌘+Enter 都不推进也不提交，随后的人工确认才生效', async () => {
+    const user = userEvent.setup(); const submit = vi.fn()
+    render(<Interactive submit={submit} />)
+    await user.click(screen.getByRole('radio', { name: /自定义回答/ }))
+    const textbox = screen.getByRole('textbox', { name: '自定义回答' })
+    await user.type(textbox, '只查看面板')
+    // 组合中：这枚 Ctrl+Enter 属于输入法，不翻题。
+    fireEvent.compositionStart(textbox)
+    fireEvent.change(textbox, { target: { value: '只查看面板自身' } })
+    expect(fireEvent.keyDown(textbox, { key: 'Enter', ctrlKey: true, isComposing: true, keyCode: 229 })).toBe(false)
+    expect(screen.getByText('第 1/2 题')).toBeInTheDocument()
+    // 组合刚结束：确认回车派发在 compositionend 之后，Ctrl 与 ⌘ 两路都吞掉。
+    fireEvent.compositionEnd(textbox)
+    expect(fireEvent.keyDown(textbox, { key: 'Enter', ctrlKey: true, keyCode: 13 })).toBe(false)
+    expect(fireEvent.keyDown(textbox, { key: 'Enter', metaKey: true, keyCode: 13 })).toBe(false)
+    expect(screen.getByText('第 1/2 题')).toBeInTheDocument()
+    expect(submit).not.toHaveBeenCalled()
+    // 守卫只吞那一枚：复位后人工 Ctrl+Enter 前进到最后一题。
+    await user.keyboard('{Control>}{Enter}{/Control}')
+    expect(screen.getByText('第 2/2 题')).toBeInTheDocument()
+    expect(submit).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('radio', { name: /自定义回答/ }))
+    const last = screen.getByRole('textbox', { name: '自定义回答' })
+    await user.type(last, '最近一次采样')
+    fireEvent.compositionStart(last)
+    fireEvent.keyDown(last, { key: 'Enter', metaKey: true, isComposing: true, keyCode: 229 })
+    fireEvent.compositionEnd(last)
+    expect(fireEvent.keyDown(last, { key: 'Enter', metaKey: true, keyCode: 13 })).toBe(false)
+    expect(submit).not.toHaveBeenCalled()
+    await user.keyboard('{Meta>}{Enter}{/Meta}')
+    expect(submit).toHaveBeenCalledExactlyOnceWith({ scope: { text: '只查看面板自身' }, period: { text: '最近一次采样' } })
+  })
   it('结果未知时锁定原回答，重试不修改选择，历史只读展示', async () => {
     const submit = vi.fn(); const answer = vi.fn()
     const answers = { scope: { optionId: 'panel' }, period: { text: '现在' } }

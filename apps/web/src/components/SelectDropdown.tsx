@@ -5,6 +5,7 @@ import { IconButton } from './IconButton'
 import { Check, ChevronDown, Search, X } from './icons'
 import { DROPDOWN_OPTION_CLASS, DROPDOWN_SURFACE_CLASS } from './dropdownStyles'
 import { bindMenuScroll, revealMenuItem } from './dropdownScroll'
+import { useImeEnterGuard } from './useImeEnterGuard'
 
 /**
  * 自定义单选下拉：Radix 触发器 + 候选项，不使用原生 select，因此不会呼出操作系统的下拉控件。
@@ -96,6 +97,7 @@ export function SelectDropdown<T extends string>({
   const [searchText, setSearchText] = useState('')
   const [committedSearch, setCommittedSearch] = useState('')
   const [composing, setComposing] = useState(false)
+  const { guardProps, isImeKey } = useImeEnterGuard()
   const searchInput = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement | null>(null)
   const focusAfterFilter = useRef<'first' | 'last' | null>(null)
@@ -208,6 +210,7 @@ export function SelectDropdown<T extends string>({
               <Search aria-hidden size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-subtle" />
               <input
                 ref={searchInput}
+                {...guardProps}
                 aria-label={search.ariaLabel}
                 autoComplete="off"
                 placeholder={search.placeholder}
@@ -217,9 +220,9 @@ export function SelectDropdown<T extends string>({
                 onCompositionEnd={(event) => { setSearchText(event.currentTarget.value); setComposing(false) }}
                 onKeyDown={(event) => {
                   // 保留 Escape 交给 Radix；文字输入不能触发菜单 typeahead 或空格选项。
-                  if (event.key === 'Escape' && !composing && !event.nativeEvent.isComposing) return
+                  if (event.key === 'Escape' && !isImeKey(event)) return
                   event.stopPropagation()
-                  if (composing || event.nativeEvent.isComposing || event.keyCode === 229) return
+                  if (isImeKey(event)) return
                   if (event.key === 'Enter') { event.preventDefault(); setCommittedSearch(searchText.trim()) }
                   if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
                     event.preventDefault()

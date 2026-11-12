@@ -5,6 +5,7 @@ import { Check, ChevronDown } from './icons'
 import { IconButton } from './IconButton'
 import { DROPDOWN_OPTION_CLASS, DROPDOWN_SURFACE_CLASS } from './dropdownStyles'
 import { bindMenuScroll, revealMenuItem } from './dropdownScroll'
+import { useImeEnterGuard } from './useImeEnterGuard'
 
 /** 可自由输入的候选字段：自绘列表、键盘选择与 Portal，不调用系统 datalist。 */
 export function SuggestionInput({
@@ -28,6 +29,7 @@ export function SuggestionInput({
   const [active, setActive] = useState(-1)
   const [showAll, setShowAll] = useState(false)
   const [composing, setComposing] = useState(false)
+  const { guardProps, isImeKey } = useImeEnterGuard()
   const query = value.trim().toLowerCase()
   const visible = showAll || composing || items.some(item => item.value === value)
     ? items : items.filter(item => `${item.value} ${item.label}`.toLowerCase().includes(query))
@@ -48,6 +50,7 @@ export function SuggestionInput({
       <div ref={anchorRef} className="relative min-w-0">
         <input
           {...inputProps}
+          {...guardProps}
           ref={inputRef}
           value={value}
           role="combobox"
@@ -65,7 +68,7 @@ export function SuggestionInput({
           onCompositionEnd={() => { setComposing(false); setActive(-1) }}
           onKeyDown={event => {
             inputProps.onKeyDown?.(event)
-            if (event.defaultPrevented || composing || event.nativeEvent.isComposing || event.keyCode === 229) return
+            if (event.defaultPrevented || isImeKey(event)) return
             if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
               if (visible.length === 0) return
               event.preventDefault()

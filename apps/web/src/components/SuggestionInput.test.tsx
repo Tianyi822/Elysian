@@ -50,6 +50,25 @@ describe('SuggestionInput', () => {
     expect(input).toHaveValue('deepseek-v4-pro')
   })
 
+  it('确认回车派发于组合结束之后时不选中候选也不提交，随后的人工回车才提交', async () => {
+    const user = userEvent.setup()
+    const submit = vi.fn()
+    render(<Field onSubmit={submit} />)
+    const input = screen.getByRole('combobox', { name: '模型标识' })
+    await user.click(input)
+    await user.keyboard('{ArrowDown}')
+    fireEvent.compositionStart(input)
+    fireEvent.change(input, { target: { value: '自定义模型' } })
+    fireEvent.compositionEnd(input)
+    expect(fireEvent.keyDown(input, { key: 'Enter', keyCode: 13 })).toBe(false)
+    expect(input).toHaveValue('自定义模型')
+    expect(submit).not.toHaveBeenCalled()
+    // 守卫的一次性窗口按 setTimeout(0) 复位；真实两枚回车之间必然隔着事件循环，这里先让它跑掉。
+    await new Promise(resolve => setTimeout(resolve, 0))
+    await user.keyboard('{Enter}')
+    expect(submit).toHaveBeenCalledOnce()
+  })
+
   it('候选按钮展示完整集合，鼠标选择后回到输入框，点击外部关闭', async () => {
     const user = userEvent.setup()
     render(<Field />)

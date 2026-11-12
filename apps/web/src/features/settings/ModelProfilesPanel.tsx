@@ -14,6 +14,7 @@ import { SelectDropdown } from '../../components/SelectDropdown'
 import { SuggestionInput } from '../../components/SuggestionInput'
 import { ScrollArea } from '../../components/ScrollArea'
 import { RefreshButton } from '../../components/RefreshState'
+import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import { ModelAdvancedFields } from './ModelAdvancedFields'
 import { blankModel, discoveredModelDraft, modelPresetDraft, savedModelDraft, type DraftModel } from './modelDraft'
 
@@ -131,6 +132,7 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
     setAPIFormat(next)
     if (provider === 'deepseek' && ['https://api.deepseek.com', 'https://api.deepseek.com/anthropic'].includes(baseUrl.replace(/\/+$/, ''))) setBaseUrl(next === 'anthropic-messages' ? 'https://api.deepseek.com/anthropic' : 'https://api.deepseek.com')
   }
+  const { guardProps, isImeKey } = useImeEnterGuard()
   const submit = async () => {
     if (models.length === 0) { reportError('请先添加至少一个模型'); return }
     if (!name.trim()) { reportError('请填写服务名称'); return }
@@ -174,7 +176,7 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
     <Dialog.Portal><Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
       <Dialog.Content aria-describedby="model-service-description" className="fixed left-1/2 top-1/2 z-[61] flex max-h-[90dvh] w-[min(38rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col panel-surface shadow-xl">
         <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-3"><Dialog.Title className="text-sm font-semibold">{service ? '编辑模型配置' : '新建模型配置'}</Dialog.Title><Dialog.Close asChild><button type="button" aria-label="关闭模型配置表单" className={iconButton}><X aria-hidden size={16} /></button></Dialog.Close></div>
-        <form noValidate onSubmit={event => { event.preventDefault(); void submit() }} className="flex min-h-0 flex-col">
+        <form noValidate {...guardProps} onSubmit={event => { event.preventDefault(); if (!isImeKey()) void submit() }} className="flex min-h-0 flex-col">
           <ScrollArea label="模型配置表单"><fieldset disabled={submitting} className="flex min-w-0 flex-col gap-4 px-5 py-4">
             <Dialog.Description id="model-service-description" className="text-xs leading-relaxed text-fg-subtle">同一服务下的模型共用地址、API 格式与凭据，保存后统一生效。</Dialog.Description>
             {!service && <Field label="提供商" id="model-provider"><SelectDropdown id="model-provider" ariaLabel="提供商" value={provider} onSelect={next => { setProvider(next); setName(next === 'deepseek' ? 'DeepSeek' : next === 'zhipu' ? '智谱 BigModel' : ''); setError(undefined); if (next === 'deepseek') setBaseUrl(apiFormat === 'anthropic-messages' ? 'https://api.deepseek.com/anthropic' : 'https://api.deepseek.com'); if (next === 'zhipu') { setAPIFormat('chat-completions'); setBaseUrl('https://open.bigmodel.cn/api/coding/paas/v4'); if (models.length === 0) appendDraftModels(() => [discoveredModelDraft('zhipu', { model: 'glm-5.3', name: 'GLM-5.3' }), discoveredModelDraft('zhipu', { model: 'glm-5.3-flash', name: 'GLM-5.3-Flash' })]) } }} fullWidth disabled={submitting} items={[{ value: 'openai-compatible', label: '自定义（兼容 API）' }, { value: 'deepseek', label: 'DeepSeek' }, { value: 'zhipu', label: '智谱 BigModel Coding Plan（国内）' }]} /></Field>}

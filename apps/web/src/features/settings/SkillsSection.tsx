@@ -16,6 +16,7 @@ import { ChipGroup } from '../../components/ChipGroup'
 import { CopyButton } from '../../components/CopyButton'
 import { formatDateTime } from '../../components/format'
 import { useFeedbackMessage } from '../../components/useFeedbackMessage'
+import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import { ExtensionDialog, ExtensionSearch, ExtensionTable, ExtensionToggle, ExtensionMenu, Field, extensionCell as cell } from './extensionUi'
 import { RevisionConflictNotice } from './RevisionConflictNotice'
 import { useSilentPolling } from './useSilentPolling'
@@ -90,6 +91,7 @@ function SkillImportDialog({ target, open, onClose, onPending, onAccepted }: { t
   const alive = useRef(true)
   useEffect(() => { alive.current = true; return () => { alive.current = false; pending.current = null } }, [])
   const { submitting, inFlightOnly } = useInFlightSubmit()
+  const { guardProps, isImeKey } = useImeEnterGuard()
   const submit = () => inFlightOnly(async () => {
     const auth = captureAuthGeneration()
     const current = () => alive.current && auth === captureAuthGeneration()
@@ -138,7 +140,7 @@ function SkillImportDialog({ target, open, onClose, onPending, onAccepted }: { t
   return <ExtensionDialog title={target ? `更新 Skill · ${target.manifest.name}` : '导入 Skill'} open={open} onClose={onClose} footer={<><button type="button" className={CTL_SECONDARY} onClick={onClose}>关闭</button><button type="submit" form="skill-import-form" disabled={submitting} className={CTL_PRIMARY}>{submitting ? '正在提交…' : uncertain ? '核对并重试' : '开始导入'}</button></>}>
     <p className="text-xs leading-5 text-fg-subtle">包根目录须有包含名称和描述的 SKILL.md。导入只保存和校验内容，不运行技能脚本，也不会自动加入聊天会话。</p>
     {uncertain && <p role="status" className="text-xs leading-5 text-warning">上次提交结果尚未确认，原请求与输入已保留。点击「核对并重试」会先查询受理记录，未找到时沿用同一请求编号提交。</p>}
-    <form id="skill-import-form" onSubmit={event => { event.preventDefault(); void submit() }}><fieldset disabled={submitting || uncertain} className="space-y-4">
+    <form id="skill-import-form" {...guardProps} onSubmit={event => { event.preventDefault(); if (!isImeKey()) void submit() }}><fieldset disabled={submitting || uncertain} className="space-y-4">
       <ChipGroup ariaLabel="Skill 来源" value={kind} onSelect={next => { setKind(next); setError(undefined) }} disabled={submitting || uncertain} items={[{ value: 'zip', label: 'ZIP 上传' }, { value: 'git', label: 'HTTPS Git' }, { value: 'directory', label: '服务器目录' }]} />
       {kind === 'zip' ? <Field label="ZIP 文件（不超过 64 MiB）" id="skill-archive"><input id="skill-archive" type="file" accept=".zip,application/zip" onChange={event => setFile(event.target.files?.[0])} className={`${CTL_FIELD} file:mr-2 file:border-0 file:bg-transparent file:text-xs file:text-fg`} />{file && <p className="mt-2 break-words text-xs text-fg-muted">{file.name} · {formatLogBytes(file.size)}</p>}</Field> : <>
         {kind === 'directory' ? <Field label="服务器绝对目录" id="skill-path"><input id="skill-path" required value={path} onChange={event => setPath(event.target.value)} placeholder="/opt/skills/example" className={CTL_FIELD} /><p className="mt-2 text-xs leading-5 text-fg-subtle">须为面板进程可见的目录；Docker 部署时填写已挂载到面板容器中的路径。</p></Field> : <><Field label="HTTPS Git 地址" id="skill-git-url"><input id="skill-git-url" type="url" required value={url} onChange={event => setUrl(event.target.value)} placeholder="https://github.com/example/skills.git" className={CTL_FIELD} /></Field><Field label="分支、标签或提交" id="skill-git-ref"><input id="skill-git-ref" required value={ref} onChange={event => setRef(event.target.value)} placeholder="main 或 v1.0.0" className={CTL_FIELD} /></Field><Field label="Git 凭据（可选）" id="skill-git-token"><input id="skill-git-token" type="password" autoComplete="new-password" value={credential} onChange={event => setCredential(event.target.value)} className={CTL_FIELD} /><p className="mt-2 text-xs text-fg-subtle">仅用于本次获取，不保存到来源或导入记录。</p></Field></>}

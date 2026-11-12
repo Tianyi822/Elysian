@@ -15,6 +15,7 @@ import { ModelSettingsSection } from './ModelSettingsSection'
 import { SETTINGS_TABS, useSettingsTab, type SettingsTab } from './settingsTabs'
 import { panelUsernameError } from '../../contracts/panelAccount'
 import { captureAuthGeneration } from '../../adapters/http/unauthorized'
+import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 
 /*
  * 设置页按面板维护、账号安全、模型、MCP 与 Skill 配置分区。主题在侧边栏切换。
@@ -134,9 +135,10 @@ function AccountSecuritySettings() {
     setter(value)
   }
 
+  const { guardProps: passwordGuardProps, isImeKey: passwordImeKey } = useImeEnterGuard()
   const onSubmitPassword = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (submitting) return
+    if (submitting || passwordImeKey()) return
     setPasswordError(null)
     // 与服务端同一校验次序：先一致性，再长度。过了才发请求。
     if (newPassword !== confirmNewPassword) {
@@ -150,9 +152,10 @@ function AccountSecuritySettings() {
     setConfirmKind('password')
   }
 
+  const { guardProps: usernameGuardProps, isImeKey: usernameImeKey } = useImeEnterGuard()
   const onSubmitUsername = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (submitting) return
+    if (submitting || usernameImeKey()) return
     const error = panelUsernameError(newUsername, username)
     setUsernameError(error)
     if (!error) setConfirmKind('username')
@@ -203,7 +206,7 @@ function AccountSecuritySettings() {
     <section aria-labelledby={usernameTitleId} className="panel-surface p-5">
       <h2 id={usernameTitleId} className="text-sm font-medium text-fg">修改面板用户名</h2>
       <p className="mt-2 break-all text-xs text-fg-muted">当前用户名：{username}</p>
-      <form className="mt-5 flex flex-col gap-4" onSubmit={onSubmitUsername}>
+      <form className="mt-5 flex flex-col gap-4" onSubmit={onSubmitUsername} {...usernameGuardProps}>
         <div className="flex flex-col">
           <label htmlFor={usernameId} className="mb-3 text-xs font-medium text-fg">新用户名</label>
           <input id={usernameId} name="username" type="text" autoComplete="username" autoCapitalize="none" spellCheck={false}
@@ -228,7 +231,7 @@ function AccountSecuritySettings() {
       <h2 id={titleId} className="text-sm font-medium text-fg">
         修改面板密码
       </h2>
-      <form className="mt-5 flex flex-col gap-4" onSubmit={(event) => void onSubmitPassword(event)}>
+      <form className="mt-5 flex flex-col gap-4" onSubmit={(event) => void onSubmitPassword(event)} {...passwordGuardProps}>
         <PasswordField
           id={currentPasswordId}
           label="当前密码"

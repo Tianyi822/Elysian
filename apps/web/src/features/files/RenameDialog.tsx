@@ -5,6 +5,7 @@ import { isValidFileName } from '@elysian/contracts'
 import type { FileEntry } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { useFilesStore } from '../../stores/filesStore'
+import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 
 /**
  * 重命名对话框：预填现名，名称判据在前端先挡一道（非空、不含斜杠），
@@ -24,6 +25,7 @@ export function RenameDialog({
   const [name, setName] = useState(entry.name)
   const [submitting, setSubmitting] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string>()
+  const { guardProps, isImeKey } = useImeEnterGuard()
 
   useEffect(() => {
     // 换了待重命名的条目就重置表单：对话框复用同一份组件状态。
@@ -60,8 +62,10 @@ export function RenameDialog({
         >
           <Dialog.Title className="text-sm font-semibold">重命名「{entry.name}」</Dialog.Title>
           <form
+            {...guardProps}
             onSubmit={(event) => {
               event.preventDefault()
+              if (isImeKey()) return
               void submit()
             }}
           >

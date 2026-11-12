@@ -226,6 +226,8 @@ describe('基本聊天界面', () => {
     expect(backend.api.continueTask).not.toHaveBeenCalled()
     fireEvent.compositionEnd(nextEditor)
     backend.hold()
+    // 守卫吞掉组合刚结束的那一枚回车：等 setTimeout(0) 复位后才轮到人工提交。
+    await act(async () => {})
     fireEvent.click(screen.getByRole('button', { name: '发送' }))
     await screen.findByText('改后的消息')
     expect(screen.queryByText('原消息')).not.toBeInTheDocument()
@@ -787,6 +789,8 @@ describe('基本聊天界面', () => {
     fireEvent.compositionEnd(textbox)
     fireEvent.keyDown(textbox, { key: 'Enter', shiftKey: true })
     expect(api.createTask).not.toHaveBeenCalled()
+    // 组合刚结束的那一枚回车同样被吞掉，复位后的人工 Enter 才发送。
+    await act(async () => {})
     fireEvent.keyDown(textbox, { key: 'Enter' })
     expect(await screen.findByText('你好，我是 Ely。')).toBeInTheDocument()
     expect(screen.getByRole('article', { name: '你的消息' })).toHaveTextContent('你好')
@@ -795,6 +799,31 @@ describe('基本聊天界面', () => {
     fireEvent.click(screen.getByRole('button', { name: '发送消息' }))
     await waitFor(() => expect(api.continueTask).toHaveBeenCalledOnce())
     expect(api.createSession).toHaveBeenCalledOnce()
+  })
+
+  it('聊天输入框：确认回车派发于组合结束之后时不发送，随后的人工 Enter 才发送', async () => {
+    const user = userEvent.setup()
+    const { api } = renderChat()
+    const textbox = screen.getByRole('textbox', { name: '发送给 Ely 的消息' })
+    fireEvent.change(textbox, { target: { value: '检查容器' } })
+    await waitFor(() => expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled())
+    // 组合中的回车在选词，不发送。
+    fireEvent.compositionStart(textbox)
+    fireEvent.change(textbox, { target: { value: '检查容器状态' } })
+    fireEvent.keyDown(textbox, { key: 'Enter', isComposing: true, keyCode: 229 })
+    expect(api.createTask).not.toHaveBeenCalled()
+    // 确认回车派发在 compositionend 之后：keydown 与表单提交两路都吞掉。
+    fireEvent.compositionEnd(textbox)
+    expect(fireEvent.keyDown(textbox, { key: 'Enter', keyCode: 13 })).toBe(false)
+    fireEvent.submit(textbox.closest('form')!)
+    expect(api.createTask).not.toHaveBeenCalled()
+    expect(textbox).toHaveValue('检查容器状态')
+    // 守卫只吞那一枚：复位后人工 Enter 正常发送，草稿不被清掉也不重复发送。
+    await user.click(textbox)
+    await user.keyboard('{Enter}')
+    expect(await screen.findByText('你好，我是 Ely。')).toBeInTheDocument()
+    expect(api.createTask).toHaveBeenCalledOnce()
+    expect(screen.getByRole('article', { name: '你的消息' })).toHaveTextContent('检查容器状态')
   })
 
   it('等待模型回复时禁用重复发送，轮询完成后展示回复', async () => {

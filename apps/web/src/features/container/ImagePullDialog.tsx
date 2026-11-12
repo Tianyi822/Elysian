@@ -6,6 +6,7 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 import { SelectDropdown } from '../../components/SelectDropdown'
+import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import { useContainersStore } from '../../stores/containersStore'
 import type { RegistryProbeResult, ImageRegistryPreset } from '../../contracts/adapters'
 import { readStoredImageRegistry, writeStoredImageRegistry } from './imagePullPreferences'
@@ -52,6 +53,7 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
   const presetId = forceCustom ? CUSTOM_REGISTRY_ID : matchRegistryPreset(presets, registryAddress)?.id ?? CUSTOM_REGISTRY_ID
   const [customAddress, setCustomAddress] = useState(readStoredImageRegistry)
   const [reference, setReference] = useState('')
+  const { guardProps, isImeKey } = useImeEnterGuard()
   const [suggestions, setSuggestions] = useState<readonly string[]>([])
   const [suggestionStatus, setSuggestionStatus] = useState<'idle' | 'loading' | 'unavailable'>('idle')
   const [suggestionsOpen, setSuggestionsOpen] = useState(false)
@@ -370,6 +372,7 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
               <input
                 id="pull-reference"
                 value={reference}
+                {...guardProps}
                 onChange={(event) => {
                   invalidateSuggestions()
                   const next = parseImageReference(event.target.value)
@@ -377,6 +380,7 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
                   setReference(event.target.value)
                 }}
                 onKeyDown={(event) => {
+                  if (isImeKey(event)) return
                   if (event.key === 'Escape' && suggestionsOpen) {
                     event.preventDefault()
                     event.stopPropagation()

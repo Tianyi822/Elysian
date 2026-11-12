@@ -245,6 +245,30 @@ describe('ImagePullDialog', () => {
     }
   })
 
+  it('输入法组合中与组合刚结束的回车、方向键只服务候选词，不选镜像建议', async () => {
+    const searchImageNames = vi.fn(async () => ({ names: ['redis', 'redis-stack'], searchable: true }))
+    renderDialog({ searchImageNames })
+    vi.useFakeTimers()
+    try {
+      const input = screen.getByRole('combobox', { name: '镜像引用' })
+      fireEvent.change(input, { target: { value: 'red' } })
+      await act(async () => { await vi.advanceTimersByTimeAsync(300) })
+      fireEvent.compositionStart(input)
+      fireEvent.keyDown(input, { key: 'ArrowDown', isComposing: true, keyCode: 229 })
+      fireEvent.keyDown(input, { key: 'Enter', isComposing: true, keyCode: 229 })
+      expect(input).toHaveValue('red')
+      fireEvent.compositionEnd(input)
+      expect(fireEvent.keyDown(input, { key: 'Enter', keyCode: 13 })).toBe(false)
+      expect(input).toHaveValue('red')
+      await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+      fireEvent.keyDown(input, { key: 'ArrowDown' })
+      fireEvent.keyDown(input, { key: 'Enter' })
+      expect(input).toHaveValue('redis-stack:latest')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('切换镜像源取消旧查询；自定义源无目录时提示手动输入', async () => {
     let settle!: (value: { names: string[]; searchable: boolean }) => void
     const stale = new Promise<{ names: string[]; searchable: boolean }>((resolve) => { settle = resolve })

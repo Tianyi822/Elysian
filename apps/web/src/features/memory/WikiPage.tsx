@@ -8,6 +8,7 @@ import { useSessionStore } from '../../stores/sessionStore'
 import { IconButton } from '../../components/IconButton'
 import { RefreshButton } from '../../components/RefreshState'
 import { SelectDropdown } from '../../components/SelectDropdown'
+import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import { EmptyState, LoadingState } from '../../components/states/StateViews'
 import { CTL_PRIMARY, CTL_SECONDARY, CTL_DANGER, CTL_FIELD, CTL_TOOLBAR } from '../../components/formControl'
 import { ChatMarkdown } from '../agent/ChatMarkdown'
@@ -73,6 +74,7 @@ export function WikiPage() {
     setEditing(true); setDiscard(false); setFormError(undefined)
     useAgentMemoryStore.getState().clearError()
   }
+  const { guardProps, isImeKey } = useImeEnterGuard()
   const submit = async () => {
     const store = useAgentMemoryStore.getState(), current = store.current
     if (!current) return
@@ -123,7 +125,7 @@ export function WikiPage() {
         {discard && <div role="alert" className="flex flex-wrap items-center gap-2 border-b border-line bg-warning/10 p-3 text-xs"><span className="flex-1">有未保存的内容。</span><button type="button" className={CTL_SECONDARY} onClick={() => setDiscard(false)}>继续编辑</button><button type="button" className={CTL_DANGER} onClick={close}>放弃修改</button></div>}
         <div className="memory-dialog-body hover-scrollbar"><fieldset disabled={state.saving} className="min-w-0">
           {state.reading ? <p role="status" className="memory-empty">正在读取文档…</p>
-            : editing ? <form onSubmit={event => { event.preventDefault(); void submit() }}>
+            : editing ? <form {...guardProps} onSubmit={event => { event.preventDefault(); if (!isImeKey()) void submit() }}>
               {error && <div role="alert" className="mb-4 text-sm text-danger">{error}<button type="button" className={`${CTL_SECONDARY} mt-2`} onClick={reread}>读取最新修订并保留草稿</button></div>}
               <label className="memory-label">标题<input className={CTL_FIELD} value={draft.title} maxLength={200} onChange={event => setDraft({ ...draft, title: event.target.value })} autoFocus /></label>
               <label className="memory-label">页面类型<SelectDropdown ariaLabel="页面类型" items={KIND_OPTIONS} value={draft.kind} onSelect={kind => setDraft({ ...draft, kind })} fullWidth /></label>

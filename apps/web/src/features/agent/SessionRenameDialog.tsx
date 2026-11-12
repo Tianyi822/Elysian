@@ -3,6 +3,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { captureAuthGeneration } from '../../adapters/http/unauthorized'
 import { useAgentChatStore } from '../../stores/agentChatStore'
+import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 
 /**
  * 会话重命名弹窗：预填当前标题，空值与超长在前端先挡（均按 TrimSpace 后口径）；
@@ -21,6 +22,7 @@ export function SessionRenameDialog({ target, onClose }: {
   const input = useRef<HTMLInputElement>(null)
   const activeTarget = useRef<string | null>(target.id)
   const requestVersion = useRef(0)
+  const { guardProps, isImeKey } = useImeEnterGuard()
 
   useEffect(() => {
     // 换了目标会话就重置表单：弹窗复用同一份组件状态。
@@ -76,7 +78,7 @@ export function SessionRenameDialog({ target, onClose }: {
           className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl"
         >
           <Dialog.Title className="text-sm font-semibold">重命名会话</Dialog.Title>
-          <form onSubmit={event => { event.preventDefault(); void submit() }}>
+          <form {...guardProps} onSubmit={event => { event.preventDefault(); if (!isImeKey()) void submit() }}>
             <label htmlFor="agent-session-rename-input" className="mt-3 block text-xs text-fg-muted">
               会话名称
             </label>

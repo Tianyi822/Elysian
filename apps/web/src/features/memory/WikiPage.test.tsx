@@ -63,6 +63,26 @@ describe('知识 Wiki 独立浏览页', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 
+  it('标题输入框：确认回车派发于组合结束之后时不保存，随后的人工提交才保存', async () => {
+    const user = userEvent.setup(), gateway = createMockGateway({ eventStream: 'memory' })
+    const page = await seedPage(gateway, { slug: 'guide', title: '运维指南', markdown: '原文' })
+    const update = vi.spyOn(gateway.agentMemory, 'updatePage')
+    renderApp('/wiki', { gateway })
+    await user.click(await screen.findByRole('button', { name: /运维指南/ }))
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: '编辑' }))
+    const field = within(dialog).getByLabelText('标题')
+    fireEvent.compositionStart(field)
+    fireEvent.change(field, { target: { value: '运维指南（中文）' } })
+    fireEvent.compositionEnd(field)
+    expect(fireEvent.keyDown(field, { key: 'Enter', keyCode: 13 })).toBe(false)
+    fireEvent.submit(field.closest('form')!)
+    expect(update).not.toHaveBeenCalled()
+    await user.click(within(dialog).getByRole('button', { name: '保存页面' }))
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
+    expect(update).toHaveBeenCalledWith('wiki-global', page.id, expect.objectContaining({ title: '运维指南（中文）', expectedRevision: 1, maintenance: 'manual' }))
+  })
+
   it('编辑未保存时 X 与取消先出确认行，放弃修改才关闭', async () => {
     const user = userEvent.setup(), gateway = createMockGateway({ eventStream: 'memory' })
     await seedPage(gateway, { slug: 'guide', title: '运维指南', markdown: '原文' })
