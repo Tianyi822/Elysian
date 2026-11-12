@@ -13,6 +13,8 @@ import { useSessionStore } from '../../stores/sessionStore'
 import { RequireArea } from '../../app/RequireArea'
 import { ModelSettingsSection } from './ModelSettingsSection'
 import { SETTINGS_TABS, useSettingsTab, type SettingsTab } from './settingsTabs'
+import { panelUsernameError } from '../../contracts/panelAccount'
+import { captureAuthGeneration } from '../../adapters/http/unauthorized'
 
 /*
  * 设置页按面板维护、账号安全、模型、MCP 与 Skill 配置分区。主题在侧边栏切换。
@@ -77,6 +79,8 @@ function PasswordField({
           name={autoComplete}
           type={visible ? 'text' : 'password'}
           autoComplete={autoComplete}
+          required
+          maxLength={256}
           value={value}
           onChange={(event) => onChange(event.target.value)}
           disabled={disabled}
@@ -99,6 +103,14 @@ function AccountSecuritySettings() {
   const gateway = useGateway()
   const setNotice = useSessionStore((state) => state.setNotice)
   const expire = useSessionStore((state) => state.expire)
+  const username = useSessionStore((state) => state.username) ?? 'admin'
+  const usernameTitleId = useId()
+  const usernameId = useId()
+  const usernamePasswordId = useId()
+  const usernameHintId = useId()
+  const [newUsername, setNewUsername] = useState('')
+  const [usernamePassword, setUsernamePassword] = useState('')
+  const [usernameError, setUsernameError] = useState<string | null>(null)
 
   const titleId = useId()
   const currentPasswordId = useId()
@@ -111,7 +123,7 @@ function AccountSecuritySettings() {
   const [newPassword, setNewPassword] = useState('')
   const [confirmNewPassword, setConfirmNewPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [confirmKind, setConfirmKind] = useState<'username' | 'password' | null>(null)
   const [passwordError, setPasswordError] = useState<string | null>(null)
 
   const nextGuidance = newPasswordGuidance(newPassword)
@@ -135,20 +147,50 @@ function AccountSecuritySettings() {
       setPasswordError('密码至少需要 8 位')
       return
     }
-    setConfirmOpen(true)
+    setConfirmKind('password')
+  }
+
+  const onSubmitUsername = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (submitting) return
+    const error = panelUsernameError(newUsername, username)
+    setUsernameError(error)
+    if (!error) setConfirmKind('username')
+  }
+
+  const confirmUsernameChange = async () => {
+    if (submitting) return
+    const generation = captureAuthGeneration()
+    setConfirmKind(null)
+    setSubmitting(true)
+    try {
+      await gateway.session.changeUsername({ newUsername, currentPassword: usernamePassword })
+      if (generation !== captureAuthGeneration()) return
+      setNotice('用户名已修改，请使用新用户名重新登录')
+      expire()
+    } catch (cause) {
+      if (generation !== captureAuthGeneration()) return
+      const message = cause instanceof Error ? cause.message : '修改用户名失败'
+      setUsernameError(message)
+      useMessageStore.getState().notify({ tone: 'danger', message })
+      setSubmitting(false)
+    }
   }
 
   const confirmPasswordChange = async () => {
     if (submitting) return
-    setConfirmOpen(false)
+    const generation = captureAuthGeneration()
+    setConfirmKind(null)
     setSubmitting(true)
     try {
       await gateway.session.changePassword({ currentPassword, newPassword, confirmNewPassword })
+      if (generation !== captureAuthGeneration()) return
       // 页面自身不导航：先置一次性提示，再落 anonymous，由 RequireSession 的既有分支
       // 作为唯一导航者把路由带到 /login——双导航竞争会把提示从路由 state 里冲掉。
       setNotice(PASSWORD_CHANGE_NOTICE)
       expire()
     } catch (cause) {
+      if (generation !== captureAuthGeneration()) return
       const message = cause instanceof Error ? cause.message : '修改密码失败'
       setPasswordError(message)
       useMessageStore.getState().notify({ tone: 'danger', message })
@@ -158,6 +200,27 @@ function AccountSecuritySettings() {
 
   return (
     <div className="max-w-3xl space-y-5">
+    <section aria-labelledby={usernameTitleId} className="panel-surface p-5">
+      <h2 id={usernameTitleId} className="text-sm font-medium text-fg">修改面板用户名</h2>
+      <p className="mt-2 break-all text-xs text-fg-muted">当前用户名：{username}</p>
+      <form className="mt-5 flex flex-col gap-4" onSubmit={onSubmitUsername}>
+        <div className="flex flex-col">
+          <label htmlFor={usernameId} className="mb-3 text-xs font-medium text-fg">新用户名</label>
+          <input id={usernameId} name="username" type="text" autoComplete="username" autoCapitalize="none" spellCheck={false}
+            required maxLength={32} value={newUsername} disabled={submitting}
+            aria-describedby={usernameHintId} aria-invalid={usernameError ? true : undefined}
+            onChange={(event) => { setNewUsername(event.target.value); setUsernameError(null) }} className={CTL_FIELD} />
+          <p id={usernameHintId} className="mt-1.5 text-xs leading-5 text-fg-muted">3–32 位英文字母、数字、下划线或短横线，区分大小写</p>
+        </div>
+        <PasswordField id={usernamePasswordId} label="验证当前密码" autoComplete="current-password"
+          value={usernamePassword} onChange={(value) => { setUsernamePassword(value); setUsernameError(null) }} disabled={submitting} />
+        {usernameError && <p role="alert" className="text-xs text-danger">{usernameError}</p>}
+        <button type="submit" disabled={submitting}
+          className="h-9 rounded-lg border border-control-line bg-surface-raised px-4 text-sm font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50">
+          {submitting ? '正在修改…' : '修改用户名'}
+        </button>
+      </form>
+    </section>
     <section
       aria-labelledby={titleId}
       className="panel-surface p-5"
@@ -206,15 +269,15 @@ function AccountSecuritySettings() {
         </button>
       </form>
     </section>
-    <Dialog.Root open={confirmOpen} onOpenChange={setConfirmOpen}>
+    <Dialog.Root open={confirmKind !== null} onOpenChange={(open) => { if (!open) setConfirmKind(null) }}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
         <Dialog.Content className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl">
-          <Dialog.Title className="text-sm font-semibold text-fg">确认修改密码</Dialog.Title>
-          <Dialog.Description className="mt-2 text-xs leading-5 text-fg-muted">修改后，所有已登录设备都会退出，请用新密码重新登录。</Dialog.Description>
+          <Dialog.Title className="text-sm font-semibold text-fg">{confirmKind === 'username' ? '确认修改用户名' : '确认修改密码'}</Dialog.Title>
+          <Dialog.Description className="mt-2 text-xs leading-5 text-fg-muted">{confirmKind === 'username' ? '修改后，所有已登录设备都会退出，请用新用户名重新登录。' : '修改后，所有已登录设备都会退出，请用新密码重新登录。'}</Dialog.Description>
           <div className="mt-4 flex justify-end gap-2">
             <Dialog.Close asChild><button type="button" className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted">取消</button></Dialog.Close>
-            <button type="button" disabled={submitting} className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-fg" onClick={() => void confirmPasswordChange()}>确认修改</button>
+            <button type="button" disabled={submitting} className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-fg" onClick={() => void (confirmKind === 'username' ? confirmUsernameChange() : confirmPasswordChange())}>确认修改</button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>

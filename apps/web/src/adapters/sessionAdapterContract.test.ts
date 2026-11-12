@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { runSessionAdapterContract } from './sessionAdapterContract'
 import { createHttpSessionAdapter } from './http/sessionHttpAdapter'
 import { MockSessionAdapter } from './mock/mockAdapters'
+import { panelUsernameError } from '../contracts/panelAccount'
 
 /*
  * 契约断言集合的双实现复跑：mock（演示会话列表 + 真校验再如实失败）与 http（真实
@@ -31,6 +32,11 @@ async function stubAuthServer(input: RequestInfo | URL, init?: RequestInit): Pro
   }
   if (method === 'POST' && pathname === '/api/auth/login') return json({ ok: true })
   if (method === 'POST' && pathname === '/api/auth/logout') return json({ ok: true })
+  if (method === 'POST' && pathname === '/api/auth/username') {
+    const body = JSON.parse(String(init?.body ?? '{}')) as { newUsername: string }
+    const error = panelUsernameError(body.newUsername, 'admin')
+    return error ? json({ error }, 400) : json({ ok: true })
+  }
   if (method === 'POST' && pathname === '/api/auth/sessions/logout-others') return json({ ok: true })
   if (method === 'POST' && pathname === '/api/auth/password') {
     const body = JSON.parse(String(init?.body ?? '{}')) as { newPassword?: string; confirmNewPassword?: string }

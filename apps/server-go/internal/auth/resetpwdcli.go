@@ -43,7 +43,11 @@ func runResetPasswordCli(io_ resetPasswordIO, credentials CredentialsStore, hash
 	}
 	io_.print("Elysian | 重置密码")
 	io_.print("")
-	io_.print("管理员：" + PanelUsername)
+	current, err := credentials.Current()
+	if err != nil {
+		return err
+	}
+	io_.print("管理员：" + sessionUsername(nil, current, false))
 	if tty {
 		io_.print("密码至少 8 位，输入不回显。")
 		io_.print("保存后全部登录会话失效；Ctrl+C 取消。")

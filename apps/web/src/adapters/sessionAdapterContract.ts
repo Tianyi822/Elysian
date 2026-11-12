@@ -24,6 +24,11 @@ export function runSessionAdapterContract(make: () => SessionAdapter, expectedMo
       expect(typeof (await make().canView('dashboard'))).toBe('boolean')
     })
 
+    it('用户名格式与开发保留名校验保持一致', async () => {
+      await expect(make().changeUsername({ newUsername: 'ab', currentPassword: 'whatever' })).rejects.toThrow('用户名须为 3–32 位')
+      await expect(make().changeUsername({ newUsername: 'dev', currentPassword: 'whatever' })).rejects.toThrow('不能使用开发保留用户名 dev')
+    })
+
     it('login 成功路径不抛', async () => {
       await expect(make().login('admin', 'whatever')).resolves.toBeUndefined()
     })

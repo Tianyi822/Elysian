@@ -53,11 +53,11 @@ function OperatorMark() {
 }
 
 /** 与主题行同一套行高、图标槽与字号，放在切换主题下方。身份本身不是按钮，登出挂在行尾。 */
-function OperatorRow({ trailing }: { trailing?: ReactNode }) {
+function OperatorRow({ username, trailing }: { username: string; trailing?: ReactNode }) {
   return (
     <div className="flex min-h-10 w-full items-center gap-3 py-2 pl-3 pr-1.5 text-nav-muted">
       <OperatorMark />
-      <span className="min-w-0 flex-1 truncate text-sm font-medium">运维人员</span>
+      <span title={username} className="min-w-0 flex-1 truncate text-sm font-medium">{username}</span>
       {trailing}
     </div>
   )
@@ -147,6 +147,7 @@ export function QuickActions({ collapsed = false }: { collapsed?: boolean }) {
   const { theme, followsSystem, toggleTheme, followSystemTheme } = useTheme()
   const gateway = useGateway()
   const sessionMode = useSessionStore((state) => state.mode)
+  const username = useSessionStore((state) => state.username) ?? 'admin'
   const logout = useSessionStore((state) => state.logout)
   const [loggingOut, setLoggingOut] = useState(false)
   const toggleLabel = theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'
@@ -170,7 +171,7 @@ export function QuickActions({ collapsed = false }: { collapsed?: boolean }) {
             {theme === 'dark' ? <Sun aria-hidden size={17} /> : <Moon aria-hidden size={17} />}
           </CollapsedTrigger>
           <CollapsedTrigger
-            label="运维人员"
+            label={username}
             actions={sessionMode === 'real' ? [{ icon: LogOut, label: '退出登录', onSelect: doLogout }] : []}
           >
             <OperatorMark />
@@ -198,6 +199,7 @@ export function QuickActions({ collapsed = false }: { collapsed?: boolean }) {
             }
           />
           <OperatorRow
+            username={username}
             trailing={
               sessionMode === 'real' ? (
                 <IconButton

@@ -1,5 +1,5 @@
 import { withRequestDeadline } from './requestDeadline'
-import type { PanelPasswordChangeInput, SessionAdapter, SessionListRow, SessionStatus } from '../../contracts/adapters'
+import type { PanelPasswordChangeInput, PanelUsernameChangeInput, SessionAdapter, SessionListRow, SessionStatus } from '../../contracts/adapters'
 import { fetchWithSession, reportUnauthorized } from './unauthorized'
 
 /*
@@ -43,6 +43,10 @@ export function parseSessionStatus(body: unknown): SessionStatus {
     }
   }
   const status: SessionStatus = { mode: 'real', authenticated: row.authenticated, devAccount: row.devAccount }
+  if (row.username !== undefined) {
+    if (typeof row.username !== 'string' || row.username.length === 0 || !row.authenticated) throw new Error('登录状态响应无效')
+    status.username = row.username
+  }
   // 缺键时不写该字段：undefined 与「服务端回答被拦截」的 null 是两件事。
   if (returnTo !== undefined) status.returnTo = returnTo
   return status
@@ -165,6 +169,21 @@ export function createHttpSessionAdapter(baseUrl = '/api/auth'): SessionAdapter 
           throw new Error('会话列表响应不是有效 JSON')
         }
         return parseSessionList(body)
+      })
+    },
+
+    changeUsername(input: PanelUsernameChangeInput) {
+      return withRequestDeadline({ method: 'POST' }, async (bounded) => {
+        let response: Response
+        try {
+          response = await fetchWithSession(`${baseUrl}/username`, {
+            method: 'POST', signal: bounded.signal,
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ newUsername: input.newUsername, currentPassword: input.currentPassword }),
+          })
+        } catch { throw new Error('修改用户名失败：面板服务不可达') }
+        if (reportUnauthorized(response)) throw new Error('登录状态已失效，请重新登录')
+        if (!response.ok) throw new Error(await readErrorDetail(response) ?? `修改用户名失败：HTTP ${response.status}`)
       })
     },
 

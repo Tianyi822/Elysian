@@ -16,16 +16,30 @@ import (
 const PasswordMinLength = 8
 
 // ChangePanelPassword 改密纯流程：校验两次一致、长度达标后哈希落盘，返回完整新凭据。
-func ChangePanelPassword(credentials CredentialsStore, hasher PasswordHasher, first, second string) (*PanelCredentials, error) {
+func ChangePanelPassword(credentials CredentialsStore, hasher PasswordHasher, first, second string, verified ...*PanelCredentials) (*PanelCredentials, error) {
 	if first != second {
 		return nil, shared.InvalidRequest("两次输入的密码不一致")
 	}
 	if utf16Length(first) < PasswordMinLength {
 		return nil, shared.InvalidRequest("密码至少需要 8 位")
 	}
+	var current *PanelCredentials
+	if len(verified) > 0 {
+		current = verified[0]
+	} else {
+		var err error
+		current, err = credentials.Current()
+		if err != nil {
+			return nil, err
+		}
+	}
 	hash, err := hasher.Hash(first)
 	if err != nil {
 		return nil, err
 	}
-	return credentials.Write(hash)
+	username := PanelUsername
+	if current != nil {
+		username = current.Username
+	}
+	return credentials.Update(current, username, hash)
 }

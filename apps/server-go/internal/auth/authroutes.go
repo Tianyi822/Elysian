@@ -157,8 +157,9 @@ type okBody struct {
 
 // sessionPlainBody 不带 returnTo 的 /session 响应（键序即输出序，不扩张）。
 type sessionPlainBody struct {
-	Authenticated bool `json:"authenticated"`
-	DevAccount    bool `json:"devAccount"`
+	Authenticated bool   `json:"authenticated"`
+	DevAccount    bool   `json:"devAccount"`
+	Username      string `json:"username,omitempty"`
 }
 
 // sessionReturnBody 带 returnTo 的 /session 响应；裁决不过时 ReturnTo 为 nil（JSON null）。
@@ -166,6 +167,7 @@ type sessionReturnBody struct {
 	Authenticated bool    `json:"authenticated"`
 	DevAccount    bool    `json:"devAccount"`
 	ReturnTo      *string `json:"returnTo"`
+	Username      string  `json:"username,omitempty"`
 }
 
 // sessionRow GET /sessions 的三字段投影：id 是 bearer 凭据不下发，epoch 是内部失效
@@ -295,7 +297,7 @@ func NewRouter(deps Deps) chi.Router {
 			// dev 账号命中：补跑一次哑哈希校验，时序形状与 admin 路径一致。
 			_, _ = resolved.hasher.Verify(body.Password, DummyHash)
 			authenticated = true
-		case credentials != nil && constantTimeEquals(body.Username, PanelUsername):
+		case credentials != nil && constantTimeEquals(body.Username, credentials.Username):
 			authenticated, err = resolved.hasher.Verify(body.Password, credentials.PasswordHash)
 			if err != nil {
 				return err
@@ -313,7 +315,7 @@ func NewRouter(deps Deps) chi.Router {
 		if credentials != nil {
 			pwdEpoch = credentials.PasswordChangedAt
 		}
-		session, replaced, err := resolved.sessions.Create(pwdEpoch, body.Client)
+		session, replaced, err := resolved.sessions.Create(pwdEpoch, body.Client, body.Username)
 		if err != nil {
 			return err
 		}
@@ -352,10 +354,11 @@ func NewRouter(deps Deps) chi.Router {
 		w.Header().Set("Cache-Control", "no-store")
 		// 演示语义：恒已登录，且不回答回跳——面板本身没有鉴权时充当跳转器毫无意义。
 		if !resolved.enabled {
-			shared.SendJSON(w, http.StatusOK, sessionPlainBody{Authenticated: true, DevAccount: resolved.devAccount})
+			shared.SendJSON(w, http.StatusOK, sessionPlainBody{Authenticated: true, DevAccount: resolved.devAccount, Username: PanelUsername})
 			return nil
 		}
 		authenticated := false
+		username := ""
 		if sessionID, ok := seam.ParseSessionCookie(r.Header.Get("Cookie")); ok {
 			epoch, err := resolved.currentPwdEpoch()
 			if err != nil {
@@ -370,12 +373,28 @@ func NewRouter(deps Deps) chi.Router {
 				return err
 			}
 			authenticated = session != nil
+			if authenticated {
+				credentials, err := resolved.credentials.Current()
+				if err != nil {
+					return err
+				}
+				// 第二次读取时凭据若已变化，不把旧会话报告成新身份。
+				currentEpoch := "none"
+				if credentials != nil {
+					currentEpoch = credentials.PasswordChangedAt
+				}
+				if currentEpoch != epoch {
+					authenticated = false
+				} else {
+					username = sessionUsername(session, credentials, resolved.devAccount)
+				}
+			}
 		}
 		// 不带 returnTo 参数时响应形状与既往逐字相同：面板前端探测与外部消费方共用本
 		// 端点，形状不无谓扩张。参数存在（含空串）即进入裁决。
 		values, hasReturnTo := r.URL.Query()["returnTo"]
 		if !hasReturnTo {
-			shared.SendJSON(w, http.StatusOK, sessionPlainBody{Authenticated: authenticated, DevAccount: resolved.devAccount})
+			shared.SendJSON(w, http.StatusOK, sessionPlainBody{Authenticated: authenticated, DevAccount: resolved.devAccount, Username: username})
 			return nil
 		}
 		requested := ""
@@ -395,11 +414,57 @@ func NewRouter(deps Deps) chi.Router {
 			Authenticated: authenticated,
 			DevAccount:    resolved.devAccount,
 			ReturnTo:      AdjudicateReturnTo(requested, allowed),
+			Username:      username,
 		})
 		return nil
 	}))
 
 	// —— 设置页端点（RequireSession 覆盖之下，豁免清单不含任何一条）——
+	r.Post("/username", handle(func(w http.ResponseWriter, r *http.Request) error {
+		if !resolved.enabled {
+			shared.SendError(w, http.StatusServiceUnavailable, AuthDisabledMessage)
+			return nil
+		}
+		parsed, err := middleware.ReadJSONBody(w, r, 0)
+		if err != nil {
+			return err
+		}
+		record, ok := parsed.(map[string]any)
+		if !ok {
+			return shared.InvalidRequest("请求体不合法")
+		}
+		username, nameOK := record["newUsername"].(string)
+		password, passwordOK := record["currentPassword"].(string)
+		if !nameOK || !passwordOK || password == "" || utf16Length(password) > LoginFieldMaxLength {
+			return shared.InvalidRequest("请求体不合法")
+		}
+		credentials, err := resolved.credentials.Current()
+		if err != nil {
+			return err
+		}
+		if credentials == nil {
+			return shared.InvalidRequest("面板凭据不可用，无法修改用户名")
+		}
+		if err := ValidatePanelUsername(username, credentials.Username); err != nil {
+			return err
+		}
+		valid, err := resolved.hasher.Verify(password, credentials.PasswordHash)
+		if err != nil {
+			return err
+		}
+		if !valid {
+			return shared.InvalidRequest("当前密码不正确")
+		}
+		if _, err := resolved.credentials.Update(credentials, username, credentials.PasswordHash); err != nil {
+			return err
+		}
+		if resolved.sessionConns != nil {
+			resolved.sessionConns.RevokeAll()
+		}
+		w.Header().Set("Set-Cookie", sessionCookie("", 0, resolved.cookieSecure))
+		shared.SendJSON(w, http.StatusOK, okBody{OK: true})
+		return nil
+	}))
 
 	r.Post("/password", handle(func(w http.ResponseWriter, r *http.Request) error {
 		// 先于读体：演示语义下写凭据文件会凭空造出真凭据，也不读体（该分支不落改密
@@ -407,6 +472,10 @@ func NewRouter(deps Deps) chi.Router {
 		if !resolved.enabled {
 			shared.SendError(w, http.StatusServiceUnavailable, AuthDisabledMessage)
 			return nil
+		}
+		actor, err := resolved.requestUsername(r)
+		if err != nil {
+			return err
 		}
 		changeErr := func() error {
 			body, ok, err := readPasswordChangeBody(w, r)
@@ -438,7 +507,7 @@ func NewRouter(deps Deps) chi.Router {
 			// 落盘。校验失败回 InvalidRequestError(400) 原文；哈希与写盘的 IO 故障是普通
 			// 错误原样上抛——服务端故障不得伪装成客户端 400，也避免把 fs 错误原文按校验
 			// 文案回给浏览器。
-			if _, err := ChangePanelPassword(resolved.credentials, resolved.hasher, body.NewPassword, body.ConfirmNewPassword); err != nil {
+			if _, err := ChangePanelPassword(resolved.credentials, resolved.hasher, body.NewPassword, body.ConfirmNewPassword, credentials); err != nil {
 				return err
 			}
 			return nil
@@ -447,10 +516,10 @@ func NewRouter(deps Deps) chi.Router {
 		// 成功与失败各落一条（来源 panel-http）；失败原因经 errorReason 取域内固定中文
 		// 文案或 errno 归因，不含密码内容。审计写盘失败只诊断（sink 内部），响应语义不变。
 		if changeErr != nil {
-			resolved.recordPasswordChange(passwordAuditResultFailure, errorReason(changeErr))
+			resolved.recordPasswordChange(actor, passwordAuditResultFailure, errorReason(changeErr))
 			return changeErr
 		}
-		resolved.recordPasswordChange(passwordAuditResultSuccess, "")
+		resolved.recordPasswordChange(actor, passwordAuditResultSuccess, "")
 
 		// 会话失效不靠显式删除：新 passwordChangedAt 即新 epoch，全部既有会话在下一
 		// 次 validate 时被删除；这里只给当前浏览器清 Cookie 作 UX 收尾。连接层不等

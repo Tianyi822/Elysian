@@ -36,6 +36,7 @@ import (
 // 一致；读取时缺失或未知取值一律判 web。
 type PanelSession struct {
 	ID         string `json:"id"`
+	Username   string `json:"username,omitempty"`
 	Client     string `json:"client,omitempty"`
 	CreatedAt  int64  `json:"createdAt"`
 	LastUsedAt int64  `json:"lastUsedAt"`
@@ -47,7 +48,7 @@ type SessionStore interface {
 	// Create 原子替换同类客户端类别的全部会话并立即落盘（异类会话原样保留），返回
 	// 新会话与被替换的 id（仅同类）。dev 与 admin 共用唯一管理员会话；写盘失败保留
 	// 原会话。client 经 NormalizeSessionClient 归一，非法值回落 web。
-	Create(pwdEpoch string, client string) (*PanelSession, []string, error)
+	Create(pwdEpoch string, client string, username ...string) (*PanelSession, []string, error)
 	// Validate 校验并滑动续期；会话不存在、过期或 epoch 不匹配时删除并回 nil。
 	Validate(sessionID, pwdEpoch string) (*PanelSession, error)
 	// Check 校验但不滑动续期，供后台会话检查使用。
@@ -139,7 +140,7 @@ func (s *sessionStoreCore) commit(next []PanelSession, forceWrite bool) error {
 }
 
 // Create 实现 SessionStore。
-func (s *sessionStoreCore) Create(pwdEpoch string, client string) (*PanelSession, []string, error) {
+func (s *sessionStoreCore) Create(pwdEpoch string, client string, username ...string) (*PanelSession, []string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	loaded, err := s.load()
@@ -149,6 +150,9 @@ func (s *sessionStoreCore) Create(pwdEpoch string, client string) (*PanelSession
 	category, _ := NormalizeSessionClient(client)
 	at := s.now()
 	session := PanelSession{ID: newSessionID(), Client: category, CreatedAt: at.UnixMilli(), LastUsedAt: at.UnixMilli(), PwdEpoch: pwdEpoch}
+	if len(username) > 0 {
+		session.Username = username[0]
+	}
 	replaced := make([]string, 0, len(loaded))
 	next := make([]PanelSession, 0, len(loaded)+1)
 	for _, old := range loaded {

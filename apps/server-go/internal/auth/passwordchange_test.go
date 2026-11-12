@@ -76,6 +76,10 @@ type failingCredentialsStore struct{ written []string }
 
 func (s *failingCredentialsStore) Current() (*PanelCredentials, error) { return nil, nil }
 
+func (s *failingCredentialsStore) Update(_ *PanelCredentials, _ string, hash string) (*PanelCredentials, error) {
+	return s.Write(hash)
+}
+
 func (s *failingCredentialsStore) Write(passwordHash string) (*PanelCredentials, error) {
 	s.written = append(s.written, passwordHash)
 	return nil, errors.New("EACCES: permission denied, open")
@@ -140,6 +144,15 @@ type recordingCredentialsStore struct {
 }
 
 func (s *recordingCredentialsStore) Current() (*PanelCredentials, error) { return s.inner.Current() }
+
+func (s *recordingCredentialsStore) Update(expected *PanelCredentials, username, hash string) (*PanelCredentials, error) {
+	s.writes++
+	s.lastWrite = hash
+	if s.onWrite != nil {
+		s.onWrite(hash)
+	}
+	return s.inner.Update(expected, username, hash)
+}
 
 func (s *recordingCredentialsStore) Write(hash string) (*PanelCredentials, error) {
 	s.writes++

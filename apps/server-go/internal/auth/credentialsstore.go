@@ -9,18 +9,20 @@ import (
 	"path/filepath"
 	"sync"
 	"syscall"
+	"time"
 
 	"elysian/server/internal/config"
 	"elysian/server/internal/paths"
+	"elysian/server/internal/shared"
 )
 
-// 面板登录凭据（单用户 admin）：~/.Elysian/config/panel-credentials.json（credentialsStore.ts
+// 面板登录凭据（单管理员）：~/.Elysian/config/panel-credentials.json（credentialsStore.ts
 // 等价物）。Current 每次直读文件、不缓存（设计决定，放弃 mtime 缓存）：直读让 CLI 改密
 // 落盘后 server 下一次请求必然看到新 passwordChangedAt，既有会话随之全量失效，无任何
 // 时间窗口。解析失败（坏 JSON、缺字段、版本不符、权限被放宽）一律回 nil——fail closed：
 // 登录恒拒绝、既有会话恒失效。
 
-// PanelCredentials 面板凭据。PasswordChangedAt 是 ISO 时间串，会话失效的 epoch 基准。
+// PanelCredentials 面板凭据。PasswordChangedAt 保留原存储键，账号凭据变更均推进此会话失效基准。
 type PanelCredentials struct {
 	Username          string `json:"username"`
 	PasswordHash      string `json:"passwordHash"`
@@ -32,8 +34,10 @@ type CredentialsStore interface {
 	// Current 读当前凭据；文件缺失或不可信回 nil。每次调用直读文件并解析，不做任何缓存。
 	// 仅当打开失败且不属于 fail-closed 集合（ENOENT/ELOOP 之外，如 EACCES）才返回 error。
 	Current() (*PanelCredentials, error)
-	// Write 原子写入新哈希并返回含新 passwordChangedAt 的完整凭据。
+	// Write 保留当前用户名并原子写入新哈希；需要并发核验的业务入口使用 Update。
 	Write(passwordHash string) (*PanelCredentials, error)
+	// Update 只在当前凭据仍等于已核验的版本时更新；改名、改密共用跨进程写锁。
+	Update(expected *PanelCredentials, username, passwordHash string) (*PanelCredentials, error)
 }
 
 // credentialsFile 落盘形状：键序即 JSON 输出序（version 恒在首位，对齐 TS
@@ -59,16 +63,20 @@ type fileCredentialsStore struct {
 
 // lockFirstBoot serializes first-boot checks across separate panel processes.
 func (s *fileCredentialsStore) lockFirstBoot() (func(), error) {
+	return s.lockFile(".init.lock")
+}
+
+func (s *fileCredentialsStore) lockFile(suffix string) (func(), error) {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return nil, err
 	}
-	file, err := os.OpenFile(s.path+".init.lock", os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
+	file, err := os.OpenFile(s.path+suffix, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return nil, err
 	}
 	if !statTrustedFile(file, 0) {
 		_ = file.Close()
-		return nil, fmt.Errorf("首启凭据锁文件不可信")
+		return nil, fmt.Errorf("凭据锁文件不可信")
 	}
 	for {
 		err = syscall.Flock(int(file.Fd()), syscall.LOCK_EX)
@@ -148,10 +156,27 @@ func (s *fileCredentialsStore) Current() (*PanelCredentials, error) {
 
 // Write 实现 CredentialsStore：0600 临时文件 + fsync + rename 原子替换。
 func (s *fileCredentialsStore) Write(passwordHash string) (*PanelCredentials, error) {
-	credentials := PanelCredentials{
-		Username:          PanelUsername,
-		PasswordHash:      passwordHash,
-		PasswordChangedAt: isoNowMillis(),
+	return s.update(nil, "", passwordHash, false)
+}
+
+func (s *fileCredentialsStore) Update(expected *PanelCredentials, username, passwordHash string) (*PanelCredentials, error) {
+	return s.update(expected, username, passwordHash, true)
+}
+
+func (s *fileCredentialsStore) update(expected *PanelCredentials, username, passwordHash string, checkVersion bool) (*PanelCredentials, error) {
+	// 首启持有 init 锁时也会调用 Update，写锁独立且覆盖 Web 与 CLI 进程。
+	unlock, err := s.lockFile(".write.lock")
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	current, err := s.Current()
+	if err != nil {
+		return nil, err
+	}
+	credentials, err := nextCredentials(current, expected, username, passwordHash, checkVersion)
+	if err != nil {
+		return nil, err
 	}
 	data, err := json.MarshalIndent(credentialsFile{
 		Version:           1,
@@ -165,7 +190,7 @@ func (s *fileCredentialsStore) Write(passwordHash string) (*PanelCredentials, er
 	if err := writeFileAtomic(s.path, data); err != nil {
 		return nil, err
 	}
-	return &credentials, nil
+	return credentials, nil
 }
 
 // NewMemoryCredentialsStore 构造内存版凭据 store（测试用，不碰文件系统）。
@@ -197,16 +222,42 @@ func (s *memoryCredentialsStore) Current() (*PanelCredentials, error) {
 
 // Write 实现 CredentialsStore：推进 passwordChangedAt（真实时钟，与 TS 内存版一致）。
 func (s *memoryCredentialsStore) Write(passwordHash string) (*PanelCredentials, error) {
+	return s.update(nil, "", passwordHash, false)
+}
+
+func (s *memoryCredentialsStore) Update(expected *PanelCredentials, username, passwordHash string) (*PanelCredentials, error) {
+	return s.update(expected, username, passwordHash, true)
+}
+
+func (s *memoryCredentialsStore) update(expected *PanelCredentials, username, passwordHash string, checkVersion bool) (*PanelCredentials, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	written := PanelCredentials{
-		Username:          PanelUsername,
-		PasswordHash:      passwordHash,
-		PasswordChangedAt: isoNowMillis(),
+	written, err := nextCredentials(s.current, expected, username, passwordHash, checkVersion)
+	if err != nil {
+		return nil, err
 	}
-	s.current = &written
-	copied := written
+	s.current = written
+	copied := *written
 	return &copied, nil
+}
+
+func nextCredentials(current, expected *PanelCredentials, username, hash string, checkVersion bool) (*PanelCredentials, error) {
+	if checkVersion && ((current == nil) != (expected == nil) || (current != nil && expected != nil && *current != *expected)) {
+		return nil, shared.InvalidRequest("账号凭据已发生变化，请重新登录后再试")
+	}
+	if username == "" {
+		username = PanelUsername
+		if current != nil {
+			username = current.Username
+		}
+	}
+	epoch := isoNowMillis()
+	if current != nil && epoch <= current.PasswordChangedAt {
+		if previous, err := time.Parse(isoMillisLayout, current.PasswordChangedAt); err == nil {
+			epoch = previous.Add(time.Millisecond).UTC().Format(isoMillisLayout)
+		}
+	}
+	return &PanelCredentials{Username: username, PasswordHash: hash, PasswordChangedAt: epoch}, nil
 }
 
 // GenerateInitialPassword 拒绝采样生成初始密码：字节落在 charset 长度的整数倍区间外
@@ -301,7 +352,7 @@ func ensureFirstBootCredentials(store CredentialsStore, options firstBootOptions
 	if err != nil {
 		return FirstBootDevSkipped, err
 	}
-	if _, err := store.Write(hash); err != nil {
+	if _, err := store.Update(nil, PanelUsername, hash); err != nil {
 		return FirstBootDevSkipped, err
 	}
 	print("==================================================")

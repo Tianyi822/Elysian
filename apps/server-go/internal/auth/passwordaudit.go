@@ -132,13 +132,12 @@ func passwordAuditCLIActor() string {
 }
 
 // recordPasswordChange 落一条 HTTP 线（panel-http）的改密审计：at 取注入时钟，执行主体是
-// 单用户面板的固定管理员——本方法只被 RequireSession 之下的设置端点调用，生产语义即
-// 「已登录管理员」。
-func (r resolvedDeps) recordPasswordChange(result, reason string) {
+// 改密前已登录的真实用户名；本方法只被 RequireSession 之下的设置端点调用。
+func (r resolvedDeps) recordPasswordChange(actor, result, reason string) {
 	r.passwordAudit.RecordPasswordChange(buildPasswordAuditRecord(
 		r.now().UTC().Format(isoMillisLayout),
 		PasswordAuditSourcePanelHTTP,
-		PanelUsername,
+		actor,
 		result,
 		reason,
 	))

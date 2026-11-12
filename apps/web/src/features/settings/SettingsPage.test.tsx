@@ -26,6 +26,7 @@ function realSession(overrides: Partial<SessionAdapter> = {}): SessionAdapter {
     login: async () => {},
     logout: async () => {},
     listSessions: async () => [],
+    changeUsername: async () => {},
     changePassword: async () => {},
     logoutOtherSessions: async () => {},
     ...overrides,
@@ -107,6 +108,7 @@ describe('修改面板密码', () => {
   it('提交失败把中文错误放入通知区并保留密码草稿', async () => {
     const gateway = baseGateway(
       realSession({
+        changeUsername: async () => {},
         changePassword: async () => {
           throw new Error('当前密码不正确')
         },
@@ -165,6 +167,56 @@ describe('修改面板密码', () => {
     })
     expect(screen.getByRole('heading', { level: 1, name: '登录 Elysian' })).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent(PASSWORD_CHANGE_NOTICE)
+  })
+})
+
+describe('修改面板用户名', () => {
+  it('显示当前身份，确认取消保留输入，确认成功退出并提示重新登录', async () => {
+    const changeUsername = vi.fn(async () => {})
+    const { router } = renderApp('/settings?tab=account', { gateway: baseGateway(realSession({
+      status: async () => ({ mode: 'real', authenticated: true, devAccount: false, username: 'Operations' }), changeUsername,
+    })) })
+    const user = userEvent.setup()
+    expect(await screen.findByText('当前用户名：Operations')).toBeInTheDocument()
+    await user.type(screen.getByLabelText('新用户名'), 'Ops_User-42')
+    await user.type(screen.getByLabelText('验证当前密码'), 'current-password')
+    await user.click(screen.getByRole('button', { name: '修改用户名' }))
+    expect(screen.getByRole('dialog')).toHaveTextContent('请用新用户名重新登录')
+    await user.click(screen.getByRole('button', { name: '取消' }))
+    expect(changeUsername).not.toHaveBeenCalled()
+    expect(screen.getByLabelText('新用户名')).toHaveValue('Ops_User-42')
+    await user.click(screen.getByRole('button', { name: '修改用户名' }))
+    await user.click(screen.getByRole('button', { name: '确认修改' }))
+    await waitFor(() => expect(router.state.location.pathname).toBe('/login'))
+    expect(changeUsername).toHaveBeenCalledExactlyOnceWith({ newUsername: 'Ops_User-42', currentPassword: 'current-password' })
+    expect(useSessionStore.getState().username).toBeUndefined()
+    expect(screen.getByRole('status')).toHaveTextContent('用户名已修改，请使用新用户名重新登录')
+  })
+
+  it.each(['ab', '运维人员', 'ops user', 'dev', 'admin'])('拒绝无效或相同用户名 %s，保持登录', async (name) => {
+    const changeUsername = vi.fn(async () => {})
+    renderApp('/settings?tab=account', { gateway: baseGateway(realSession({ changeUsername })) })
+    const user = userEvent.setup()
+    await user.type(await screen.findByLabelText('新用户名'), name)
+    await user.type(screen.getByLabelText('验证当前密码'), 'current-password')
+    await user.click(screen.getByRole('button', { name: '修改用户名' }))
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(changeUsername).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().phase).toBe('authed')
+  })
+
+  it('服务端拒绝后保留输入和登录，显示表单错误', async () => {
+    renderApp('/settings?tab=account', { gateway: baseGateway(realSession({ changeUsername: async () => { throw new Error('当前密码不正确') } })) })
+    const user = userEvent.setup()
+    await user.type(await screen.findByLabelText('新用户名'), 'operator')
+    await user.type(screen.getByLabelText('验证当前密码'), 'wrong-password')
+    await user.click(screen.getByRole('button', { name: '修改用户名' }))
+    await user.click(screen.getByRole('button', { name: '确认修改' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('当前密码不正确')
+    expect(screen.getByLabelText('新用户名')).toHaveValue('operator')
+    expect(screen.getByLabelText('验证当前密码')).toHaveValue('wrong-password')
+    expect(useSessionStore.getState().phase).toBe('authed')
   })
 })
 

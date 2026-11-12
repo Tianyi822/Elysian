@@ -463,6 +463,8 @@ export type SessionStatus = {
   /** demo：本地无后端演示，恒放行不强制登录；real：真实会话。 */
   mode: SessionMode
   authenticated: boolean
+  /** 当前已登录身份；未登录不返回。旧服务缺失时兼容默认管理员。 */
+  username?: string
   /** 服务端开发固定账号当前可用（仅 real 模式可能为 true）。 */
   devAccount: boolean
   /** 服务端裁决过的回跳地址（仅请求带 returnTo 时回答）：null 表示被拦截，undefined 表示未回答。 */
@@ -486,6 +488,11 @@ export type PanelPasswordChangeInput = {
   confirmNewPassword: string
 }
 
+export type PanelUsernameChangeInput = {
+  newUsername: string
+  currentPassword: string
+}
+
 /**
  * 会话与权限接缝。`canView` 是页面级权限占位（未来策略接缝）；
  * 登录鉴权走 `status`/`login`/`logout`：Docker 运行时经 /api/auth 承载真实会话，
@@ -503,6 +510,8 @@ export interface SessionAdapter {
   listSessions(): Promise<readonly SessionListRow[]>
   /** 修改面板密码：成功后全部会话按 pwdEpoch 语义失效、当前会话 Cookie 一并清除；失败抛中文 Error。 */
   changePassword(input: PanelPasswordChangeInput): Promise<void>
+  /** 修改用户名；成功后全部旧会话失效，当前 Cookie 清除。 */
+  changeUsername(input: PanelUsernameChangeInput): Promise<void>
   /** 退出除当前会话外的全部活跃会话；成功后重列会话只剩当前会话。 */
   logoutOtherSessions(): Promise<void>
 }

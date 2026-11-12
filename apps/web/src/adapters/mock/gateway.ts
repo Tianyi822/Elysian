@@ -113,7 +113,7 @@ export function createGateway(
     options.dependencies === 'http' ? createHttpDependenciesAdapter() : new MockDependenciesAdapter()
   const session = options.session === 'http' ? createHttpSessionAdapter() : new MockSessionAdapter()
   if (options.session !== 'http') {
-    useSessionStore.setState({ phase: 'authed', mode: 'demo', devAccount: false })
+    useSessionStore.setState({ phase: 'authed', mode: 'demo', devAccount: false, username: 'admin' })
   }
   const modelSettings = options.modelSettings === 'http' ? createHttpModelSettingsAdapter() : new ModelSettingsMockAdapter()
   const agentRuntime = options.agentRuntime === 'http' ? createHttpAgentRuntimeAdapter() : { runtime: async () => demoAgentRuntimeInfo() }

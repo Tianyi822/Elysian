@@ -565,6 +565,7 @@ var operationDescriptors = map[string]*opDescriptor{
 	"POST /api/auth/login":                  {category: "auth", action: "登录面板"},
 	"POST /api/auth/logout":                 {category: "auth", action: "退出登录"},
 	"POST /api/auth/password":               {category: "auth", action: "修改面板密码"},
+	"POST /api/auth/username":               {category: "auth", action: "修改面板用户名"},
 	"POST /api/auth/sessions/logout-others": {category: "auth", action: "退出其他会话"},
 }
 

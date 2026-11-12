@@ -16,6 +16,7 @@ type SessionStoreState = {
   phase: SessionPhase
   mode: SessionMode | undefined
   devAccount: boolean
+  username: string | undefined
   /**
    * 服务端裁决过的回跳地址：字符串 = 可用、null = 被拦截、undefined = 服务端未回答（未带参数或演示模式）。
    * 只有登录页读它并据此离开 SPA。它回答的是「服务端最近裁决了什么」，
@@ -65,6 +66,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
   phase: 'unknown',
   mode: undefined,
   devAccount: false,
+  username: undefined,
   returnTo: undefined,
   returnToFor: undefined,
   notice: null,
@@ -87,7 +89,8 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
         if (get().phase !== (status.authenticated ? 'authed' : 'anonymous')) advanceAuthGeneration()
         if (!status.authenticated) { useAgentChatStore.getState().clearDisplay(); usePanelStore.getState().clearDisplay(); useSshStore.getState().clearDisplay() }
         set({ phase: status.authenticated ? 'authed' : 'anonymous', mode: status.mode,
-          devAccount: status.devAccount, returnTo: status.returnTo, returnToFor: returnTo })
+          devAccount: status.devAccount, username: status.authenticated ? (status.username ?? 'admin') : undefined,
+          returnTo: status.returnTo, returnToFor: returnTo })
       } catch {
         if (generation === sessionGeneration) set({ phase: 'error' })
       }
@@ -105,12 +108,16 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
     const promise = (async () => {
       try {
         const status = await gateway.session.status(undefined, { passive: true })
-        if (generation !== sessionGeneration || get().phase !== 'authed' || status.authenticated) return
+        if (generation !== sessionGeneration || get().phase !== 'authed') return
+        if (status.authenticated) {
+          set({ username: status.username ?? get().username ?? 'admin' })
+          return
+        }
         advanceAuthGeneration()
         invalidateChecks()
         useAgentChatStore.getState().clearDisplay()
         usePanelStore.getState().clearDisplay(); useSshStore.getState().clearDisplay()
-        set({ phase: 'anonymous', notice: get().notice ?? '登录状态已失效，请重新登录' })
+        set({ phase: 'anonymous', username: undefined, notice: get().notice ?? '登录状态已失效，请重新登录' })
       } catch {
         // 网络故障保留页面；真实 API 仍由服务端鉴权。
       }
@@ -132,7 +139,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
     useAgentChatStore.getState().clearDisplay()
     usePanelStore.getState().clearDisplay(); useSshStore.getState().clearDisplay()
     // 登录成功即消费一次性提示：它只在「密码刚改过、还没重新登录」的窗口内成立。
-    set({ phase: 'authed', notice: null })
+    set({ phase: 'authed', username, notice: null })
   },
 
   async logout(gateway) {
@@ -142,7 +149,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
     useAgentChatStore.getState().clearDisplay()
     usePanelStore.getState().clearDisplay(); useSshStore.getState().clearDisplay()
     // 先关闭页面闸门，使仍在挂载的聊天组件没有机会重新读取公开内容。
-    set({ phase: 'anonymous' })
+    set({ phase: 'anonymous', username: undefined })
     try {
       await mutateAuthentication(() => gateway.session.logout())
     } finally {
@@ -151,7 +158,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
         invalidateChecks()
         useAgentChatStore.getState().clearDisplay()
         usePanelStore.getState().clearDisplay(); useSshStore.getState().clearDisplay()
-        set({ phase: 'anonymous' })
+        set({ phase: 'anonymous', username: undefined })
       }
     }
   },
@@ -162,7 +169,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
     authRevision += 1
     useAgentChatStore.getState().clearDisplay()
     usePanelStore.getState().clearDisplay(); useSshStore.getState().clearDisplay()
-    set({ phase: 'anonymous' })
+    set({ phase: 'anonymous', username: undefined })
   },
 }))
 

@@ -87,6 +87,27 @@ describe('旧请求的 401 与重新登录', () => {
 })
 
 describe('sessionStore.probe', () => {
+  it('服务端身份在探测和被动回读中更新，失效后清除', async () => {
+    const status = vi.fn<SessionAdapter['status']>()
+      .mockResolvedValueOnce(statusOf({ authenticated: true, username: 'Ops_User-42' }))
+      .mockResolvedValueOnce(statusOf({ authenticated: true, username: 'Other_Operator' }))
+      .mockResolvedValueOnce(statusOf({ authenticated: false }))
+    const gateway = gatewayWithSession({ status })
+    await useSessionStore.getState().probe(gateway)
+    expect(useSessionStore.getState().username).toBe('Ops_User-42')
+    await useSessionStore.getState().revalidate(gateway)
+    expect(useSessionStore.getState().username).toBe('Other_Operator')
+    await useSessionStore.getState().revalidate(gateway)
+    expect(useSessionStore.getState().username).toBeUndefined()
+  })
+
+  it('成功登录采用已验证的登录名，退出时清除', async () => {
+    const gateway = gatewayWithSession({ login: async () => {}, logout: async () => {} })
+    await useSessionStore.getState().login(gateway, 'DevOps-42', 'password')
+    expect(useSessionStore.getState().username).toBe('DevOps-42')
+    await useSessionStore.getState().logout(gateway)
+    expect(useSessionStore.getState().username).toBeUndefined()
+  })
   it('同网关与回跳参数的在途探测共用一次请求，完成后允许重新读取', async () => {
     const response = deferred<SessionStatus>()
     const status = vi.fn<SessionAdapter['status']>().mockReturnValue(response.promise)

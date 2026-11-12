@@ -245,8 +245,8 @@ type delayedCreateStore struct {
 	first   bool
 }
 
-func (s *delayedCreateStore) Create(epoch, client string) (*PanelSession, []string, error) {
-	current, replaced, err := s.SessionStore.Create(epoch, client)
+func (s *delayedCreateStore) Create(epoch, client string, username ...string) (*PanelSession, []string, error) {
+	current, replaced, err := s.SessionStore.Create(epoch, client, username...)
 	s.mu.Lock()
 	first := !s.first
 	s.first = true

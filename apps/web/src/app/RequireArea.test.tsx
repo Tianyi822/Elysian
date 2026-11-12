@@ -21,6 +21,7 @@ function gatewayDenying(area: PageArea): ElysianGateway {
         { createdAt: '2026-01-01T00:00:00.000Z', lastUsedAt: '2026-01-01T00:00:00.000Z', current: true },
         { createdAt: '2025-12-30T00:00:00.000Z', lastUsedAt: '2025-12-31T00:00:00.000Z', current: false },
       ],
+      changeUsername: async () => {},
       changePassword: async () => {
         throw new Error('演示模式不支持修改面板密码')
       },
@@ -60,6 +61,7 @@ describe('页面级访问闸门', () => {
             { createdAt: '2026-01-01T00:00:00.000Z', lastUsedAt: '2026-01-01T00:00:00.000Z', current: true },
             { createdAt: '2025-12-30T00:00:00.000Z', lastUsedAt: '2025-12-31T00:00:00.000Z', current: false },
           ],
+          changeUsername: async () => {},
           changePassword: async () => {
             throw new Error('演示模式不支持修改面板密码')
           },

@@ -20,6 +20,11 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe('parseSessionStatus', () => {
+  it('已登录用户名原样返回，匿名或无效的用户名拒绝', () => {
+    expect(parseSessionStatus({ authenticated: true, devAccount: false, username: 'Ops_User-42' }).username).toBe('Ops_User-42')
+    for (const username of ['', 12, null]) expect(() => parseSessionStatus({ authenticated: true, devAccount: false, username })).toThrow('登录状态响应无效')
+    expect(() => parseSessionStatus({ authenticated: false, devAccount: false, username: 'admin' })).toThrow('登录状态响应无效')
+  })
   it('合法响应还原 authenticated 与 devAccount，mode 固定为 real', () => {
     expect(parseSessionStatus({ authenticated: true, devAccount: false })).toEqual({
       mode: 'real',
@@ -92,6 +97,27 @@ describe('parseSessionStatus', () => {
       returnTo: null,
     })
     expect(parseSessionStatus({ authenticated: true, devAccount: false })).not.toHaveProperty('returnTo')
+  })
+})
+
+describe('changeUsername', () => {
+  it('发送新用户名和当前密码到同源接口', async () => {
+    const fetch = vi.fn(async () => jsonResponse({ ok: true }))
+    vi.stubGlobal('fetch', fetch)
+    await createHttpSessionAdapter().changeUsername({ newUsername: 'Ops_User-42', currentPassword: 'current-password' })
+    expect(fetch).toHaveBeenCalledWith('/api/auth/username', expect.objectContaining({ method: 'POST', body: JSON.stringify({ newUsername: 'Ops_User-42', currentPassword: 'current-password' }) }))
+  })
+
+  it('拒绝透传中文错误，会话失效经统一 401 出口上报', async () => {
+    const expired = vi.fn()
+    setUnauthorizedListener(expired)
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ error: '当前密码不正确' }, 400)))
+    const adapter = createHttpSessionAdapter()
+    await expect(adapter.changeUsername({ newUsername: 'operator', currentPassword: 'wrong' })).rejects.toThrow('当前密码不正确')
+    expect(expired).not.toHaveBeenCalled()
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({}, 401)))
+    await expect(adapter.changeUsername({ newUsername: 'operator', currentPassword: 'wrong' })).rejects.toThrow('登录状态已失效')
+    expect(expired).toHaveBeenCalledOnce()
   })
 })
 

@@ -521,12 +521,12 @@ func (f *routesFixture) loginCookie(t *testing.T) string {
 	return cookiePair(loginRes.Header().Get("Set-Cookie"))
 }
 
-func TestSessionReturnToKeySetUnchangedWithoutParam(t *testing.T) {
+func TestSessionWithoutReturnToIncludesUsername(t *testing.T) {
 	f := newReturnToFixture(t, []string{returnTool})
 	cookie := f.loginCookie(t)
 	body := decodeJSON(t, f.request(http.MethodGet, "/session", "", map[string]string{"Cookie": cookie}))
-	if len(body) != 2 {
-		t.Errorf("不带 returnTo 时响应键不扩张：%v", body)
+	if len(body) != 3 {
+		t.Errorf("不带 returnTo 时只包含会话状态和用户名：%v", body)
 	}
 	if _, has := body["returnTo"]; has {
 		t.Error("不应含 returnTo 键")
@@ -764,6 +764,10 @@ func TestPasswordChangeCredentialsUnavailable(t *testing.T) {
 type ioErrorCredentials struct{ inner CredentialsStore }
 
 func (s *ioErrorCredentials) Current() (*PanelCredentials, error) { return s.inner.Current() }
+
+func (s *ioErrorCredentials) Update(_ *PanelCredentials, _ string, hash string) (*PanelCredentials, error) {
+	return s.Write(hash)
+}
 
 func (s *ioErrorCredentials) Write(string) (*PanelCredentials, error) {
 	return nil, fmt.Errorf("EACCES: permission denied, open '/root/.Elysian/config/panel-credentials.json.tmp'")

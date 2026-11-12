@@ -25,6 +25,9 @@ import (
 type fakeCredentialsStore struct{}
 
 func (fakeCredentialsStore) Current() (*auth.PanelCredentials, error) { return nil, nil }
+func (fakeCredentialsStore) Update(*auth.PanelCredentials, string, string) (*auth.PanelCredentials, error) {
+	return nil, nil
+}
 func (fakeCredentialsStore) Write(string) (*auth.PanelCredentials, error) {
 	return nil, nil
 }
@@ -403,7 +406,7 @@ func Test登录会话登出最小链路(t *testing.T) {
 	sessionReq := httptest.NewRequest(http.MethodGet, "/api/auth/session", nil)
 	sessionReq.Header.Set("Cookie", "elysian_session="+sessionID)
 	handler.ServeHTTP(rec, sessionReq)
-	if rec.Code != http.StatusOK || rec.Body.String() != `{"authenticated":true,"devAccount":true}` {
+	if rec.Code != http.StatusOK || rec.Body.String() != `{"authenticated":true,"devAccount":true,"username":"dev"}` {
 		t.Fatalf("会话探测 = %d %s", rec.Code, rec.Body.String())
 	}
 

@@ -92,9 +92,7 @@ func randomUUID() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
-// isoNowMillis 当前时刻的毫秒精度 ISO 串（与 JS new Date().toISOString() 同形，恒 UTC、
-// 恒三位毫秒）：passwordChangedAt 即会话失效 epoch 基准。同毫秒内两次改密产生相同
-// epoch、会话不失效——TS 现状即如此，不「修复」成单调序列。
+// isoNowMillis 返回当前 UTC 毫秒时间；凭据写入层负责将 epoch 严格推进，避免同毫秒变更复用旧会话。
 func isoNowMillis() string {
 	return time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
 }

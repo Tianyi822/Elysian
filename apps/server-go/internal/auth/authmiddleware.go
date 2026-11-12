@@ -115,6 +115,25 @@ func (r resolvedDeps) currentPwdEpoch() (string, error) {
 	return credentials.PasswordChangedAt, nil
 }
 
+func (r resolvedDeps) requestUsername(request *http.Request) (string, error) {
+	credentials, err := r.credentials.Current()
+	if err != nil {
+		return "", err
+	}
+	epoch := "none"
+	if credentials != nil {
+		epoch = credentials.PasswordChangedAt
+	}
+	var session *PanelSession
+	if id, ok := seam.ParseSessionCookie(request.Header.Get("Cookie")); ok {
+		session, err = r.sessions.Check(id, epoch)
+		if err != nil {
+			return "", err
+		}
+	}
+	return sessionUsername(session, credentials, r.devAccount), nil
+}
+
 // RequireSession app 级会话校验中间件（go-plan §3.8 冻结签名）：
 //   - Enabled=false（测试/无鉴权演示注入）直接放行；
 //   - 豁免路径（原始入站路径剥单尾斜杠后精确匹配四条）放行；

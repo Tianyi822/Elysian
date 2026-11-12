@@ -16,7 +16,7 @@ const (
 	DefaultLoginRateLimit  = 5
 	DefaultLoginRateWindow = 60 * time.Second
 
-	// PanelUsername 单用户面板的固定用户名：凭据文件与登录判定都用它。
+	// PanelUsername 单管理员首次创建凭据时的默认用户名。
 	PanelUsername = "admin"
 	// DevAccountUsername / DevAccountPassword 开发固定账号（ELYSIAN_AUTH_DEV=1 时可用）。
 	DevAccountUsername = "dev"

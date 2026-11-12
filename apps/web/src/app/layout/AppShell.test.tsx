@@ -18,6 +18,22 @@ beforeEach(() => {
 })
 
 describe('模板外壳', () => {
+  it('真实用户名同时用于展开侧栏、折叠按钮与窄屏抽屉', async () => {
+    const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+    const name = 'Operations_User-With-A-Long-Name'
+    useSessionStore.setState({ phase: 'unknown', mode: undefined, username: undefined })
+    renderApp('/settings?tab=account', { gateway: { ...base, session: { ...base.session,
+      canView: async () => true, login: async () => {}, logout: async () => {},
+      listSessions: async () => [], changePassword: async () => {}, changeUsername: async () => {}, logoutOtherSessions: async () => {},
+      status: async () => ({ mode: 'real', authenticated: true, devAccount: false, username: name }),
+    } } })
+    const user = userEvent.setup()
+    expect(await screen.findByTitle(name)).toHaveTextContent(name)
+    await user.click(screen.getByRole('button', { name: '收起侧边栏' }))
+    expect(within(screen.getByLabelText('快捷操作')).getByRole('button', { name })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '打开主导航' }))
+    expect(within(screen.getByRole('dialog', { name: '主导航' })).getByTitle(name)).toHaveTextContent(name)
+  })
   it('侧边栏包含仪表盘、安全、Docker、数据库、文件管理、平台日志、终端、网站、Ely 智能体、知识 Wiki 与设置十一项', () => {
     renderApp('/')
     const nav = screen.getByRole('navigation', { name: '主导航' })
@@ -87,14 +103,14 @@ describe('模板外壳', () => {
     expect(screen.getByText('Elysian')).toBeInTheDocument()
     expect(screen.getByRole('heading', { level: 1, name: '仪表盘' })).toHaveClass('sr-only')
     expect(within(navigation).getByRole('button', { name: '系统负载' })).toBeInTheDocument()
-    expect(within(navigation).getByText('运维人员')).toBeInTheDocument()
+    expect(within(navigation).getByText('admin')).toBeInTheDocument()
   })
 
-  it('侧边栏底部只保留切换主题，其下显示运维人员', () => {
+  it('侧边栏底部只保留切换主题，其下显示admin', () => {
     renderApp('/')
     const section = screen.getByLabelText('快捷操作')
     expect(within(section).getByRole('button', { name: /切换到浅色主题/ })).toBeInTheDocument()
-    expect(within(section).getByText('运维人员')).toBeInTheDocument()
+    expect(within(section).getByText('admin')).toBeInTheDocument()
     expect(within(section).queryByRole('button', { name: /重置演示数据/ })).not.toBeInTheDocument()
     expect(within(section).queryByRole('button', { name: /重新连接事件源/ })).not.toBeInTheDocument()
     expect(within(section).queryByRole('button', { name: /刷新仪表盘/ })).not.toBeInTheDocument()
@@ -163,7 +179,7 @@ describe('模板外壳', () => {
     const user = userEvent.setup()
     renderApp('/')
     await user.click(await screen.findByRole('button', { name: '收起侧边栏' }))
-    await user.click(within(screen.getByLabelText('快捷操作')).getByRole('button', { name: '运维人员' }))
+    await user.click(within(screen.getByLabelText('快捷操作')).getByRole('button', { name: 'admin' }))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
@@ -369,7 +385,7 @@ describe('侧边栏登出', () => {
     useSessionStore.setState({ phase: 'authed', mode: 'real', devAccount: false })
   })
 
-  it('真实会话模式在运维人员行渲染登出按钮，顶栏不再有，点击后回到登录页', async () => {
+  it('真实会话模式在admin行渲染登出按钮，顶栏不再有，点击后回到登录页', async () => {
     const user = userEvent.setup()
     const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
     // 底座装配会同步落位演示放行；注入的 fake session 是事实源，重置后交 probe。
@@ -386,6 +402,7 @@ describe('侧边栏登出', () => {
             { createdAt: '2026-01-01T00:00:00.000Z', lastUsedAt: '2026-01-01T00:00:00.000Z', current: true },
             { createdAt: '2025-12-30T00:00:00.000Z', lastUsedAt: '2025-12-31T00:00:00.000Z', current: false },
           ],
+          changeUsername: async () => {},
           changePassword: async () => {
             throw new Error('演示模式不支持修改面板密码')
           },
@@ -406,7 +423,7 @@ describe('侧边栏登出', () => {
   it('演示模式（本地无后端）不渲染登出按钮', async () => {
     renderApp('/')
     await screen.findByRole('navigation', { name: '主导航' })
-    expect(screen.getByText('运维人员')).toBeInTheDocument()
+    expect(screen.getByText('admin')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '退出登录' })).not.toBeInTheDocument()
   })
 })
