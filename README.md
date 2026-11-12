@@ -32,6 +32,8 @@ sudo env ELYSIAN_RELEASE_SOURCE=github bash install-release.sh
 - 安装收尾摘要会直接显示本次生成的 `admin` 初始密码；事后回查用 `journalctl -u elysian -b --no-pager | grep '初始密码'`。
 - 面板入口 `http://<服务器 IP 或域名>:48100`（后端固定回环 `127.0.0.1:48101`）；Docker、Caddy、OpenSSH 与 UFW 由安装器按需检测准备，已有配置不覆盖。
 
+Gitee 每个版本仅发布一个正式发行版，双架构安装包直接附在该版本下。
+
 在线更新同样按来源选择：国内用 `ely upgrade --source gitee`，国外用 `ely upgrade --source github`。`sudo ely resetpwd` 重置管理员密码（全部会话失效），`ely help` 查看全部命令。
 
 ## 卸载

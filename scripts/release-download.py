@@ -102,21 +102,28 @@ class GiteeNotReady(ValueError):
     pass
 
 def gitee_asset(arch, requested):
-    if not requested:
-        for row in gitee_releases():
-            tag = row.get('tag_name') or ''
-            if re.fullmatch(r'build-[a-f0-9]{40}', tag):
-                try:
-                    return gitee_asset(arch, tag[6:])
-                except GiteeNotReady:
-                    continue
-        raise ValueError('暂无已发布的 Gitee 预编译安装包；请先推送 v* 标签')
-    if not re.fullmatch(r'[a-f0-9]{40}', requested):
+    if requested and not re.fullmatch(r'[a-f0-9]{40}', requested):
         raise ValueError('ELYSIAN_COMMIT 必须是完整的 40 位提交 SHA')
-    tag = 'build-' + requested
-    base = f'https://gitee.com/{GITEE_REPO}/releases/download/{tag}/'
-    release = metadata(f'https://gitee.com/api/v5/repos/{GITEE_REPO}/releases/tags/{tag}')
-    if release.get('tag_name') != tag or type(release.get('id')) is not int or release['id'] <= 0:
+    for row in gitee_releases():
+        tag = row.get('tag_name') or ''
+        if not tag.startswith('v') or row.get('prerelease') is not False:
+            continue
+        commit = gitee_tag_commit(tag)
+        if requested and commit != requested:
+            continue
+        try:
+            return gitee_release_asset(arch, commit, tag)
+        except GiteeNotReady:
+            continue
+    raise GiteeNotReady('暂无匹配且已就绪的 Gitee 正式安装包；请等待 v* 标签流水线完成')
+
+
+def gitee_release_asset(arch, commit, tag, prerelease=False):
+    # Migration may explicitly verify the old preview, but installers only select v* releases.
+    encoded_tag = urllib.parse.quote(tag, safe='')
+    base = f'https://gitee.com/{GITEE_REPO}/releases/download/{encoded_tag}/'
+    release = metadata(f'https://gitee.com/api/v5/repos/{GITEE_REPO}/releases/tags/{encoded_tag}')
+    if release.get('tag_name') != tag or release.get('prerelease') is not prerelease or type(release.get('id')) is not int or release['id'] <= 0:
         raise ValueError('Gitee 发布信息无效')
     rows = metadata(f"https://gitee.com/api/v5/repos/{GITEE_REPO}/releases/{release['id']}/attach_files?per_page=100")
     if not isinstance(rows, list):
@@ -137,7 +144,7 @@ def gitee_asset(arch, requested):
     if len(body) != marker['size'] or len(body) > 64 << 10:
         raise ValueError('Gitee 发布索引大小无效')
     index = json.loads(body)
-    if index.get('schema') != INDEX_SCHEMA or index.get('repository') != REPO or index.get('commit') != requested or index.get('os') != 'linux' or set(index.get('artifacts', {})) != {'amd64', 'arm64'}:
+    if index.get('schema') != INDEX_SCHEMA or index.get('repository') != REPO or index.get('commit') != commit or index.get('os') != 'linux' or set(index.get('artifacts', {})) != {'amd64', 'arm64'}:
         raise ValueError('Gitee 发布索引身份无效')
     for target in ['amd64', 'arm64']:
         item = index['artifacts'][target]
@@ -147,10 +154,10 @@ def gitee_asset(arch, requested):
             raise GiteeNotReady('Gitee 双架构附件不完整')
         if item.get('name') != name or type(item.get('size')) is not int or not 0 < item['size'] <= 100000000 or not re.fullmatch(r'[a-f0-9]{64}', item.get('sha256', '')) or asset.get('size') != item['size'] or asset.get('browser_download_url') != base + name or checksum.get('browser_download_url') != base + name + '.sha256' or type(checksum.get('size')) is not int or not 0 < checksum['size'] <= 1024:
             raise ValueError('Gitee 安装包地址、大小或摘要无效')
-    if gitee_tag_commit(tag) != requested:
-        raise ValueError('Gitee 固定构建标签与提交不一致')
+    if gitee_tag_commit(tag) != commit:
+        raise ValueError('Gitee 发版标签与提交不一致')
     item = index['artifacts'][arch]
-    return requested, dict(assets[item['name']], digest='sha256:' + item['sha256'])
+    return commit, dict(assets[item['name']], digest='sha256:' + item['sha256'])
 
 def download(output, arch, requested, source=None):
     source = source or os.environ.get('ELYSIAN_RELEASE_SOURCE', 'github')

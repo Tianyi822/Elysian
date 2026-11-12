@@ -122,9 +122,9 @@ class DownloadTest(unittest.TestCase):
 
 
 class GiteeDownloadTest(unittest.TestCase):
-    def fixture(self, change=None):
+    def fixture(self, change=None, incomplete_newer=False, tag_commit=COMMIT):
         body = archive()
-        base = f'https://gitee.com/{release.GITEE_REPO}/releases/download/build-{COMMIT}/'
+        base = f'https://gitee.com/{release.GITEE_REPO}/releases/download/v1.0.0/'
         index = dict(schema=release.INDEX_SCHEMA, repository=release.REPO, commit=COMMIT, os='linux', artifacts={})
         assets = []
         for arch in ['amd64', 'arm64']:
@@ -145,13 +145,15 @@ class GiteeDownloadTest(unittest.TestCase):
             if url == base+'elysian-linux-amd64.tar.gz':
                 return io.BytesIO(body)
             if '/releases/tags/' in url:
-                result = dict(id=1, tag_name='build-'+COMMIT, prerelease=True)
+                result = dict(id=2 if url.endswith('v1.1.0') else 1, tag_name=url.rsplit('/', 1)[-1], prerelease=False)
             elif '/attach_files?' in url:
-                result = assets
+                result = [] if '/releases/2/' in url else assets
             elif '/releases?' in url:
-                result = [dict(tag_name='v1.0.0'), dict(tag_name='build-'+COMMIT)]
+                result = [dict(tag_name='build-'+COMMIT, prerelease=True), dict(tag_name='v9.0.0', prerelease=True), dict(tag_name='v1.0.0', prerelease=False)]
+                if incomplete_newer:
+                    result.insert(0, dict(tag_name='v1.1.0', prerelease=False))
             elif '/tags?' in url:
-                result = [dict(name='build-'+COMMIT, commit=dict(sha=COMMIT))]
+                result = [dict(name='v1.0.0', commit=dict(sha=tag_commit)), dict(name='v1.1.0', commit=dict(sha='b'*40))]
             else:
                 raise AssertionError(url)
             return io.BytesIO(json.dumps(result).encode())
@@ -164,6 +166,7 @@ class GiteeDownloadTest(unittest.TestCase):
                 output = Path(temp)/'bundle'
                 self.assertEqual(release.download(output, 'amd64', requested, 'gitee'), COMMIT)
             self.assertTrue(requests[-1].endswith('.tar.gz'))
+            self.assertFalse(any('/build-' in url for url in requests))
 
     def test_gitee_rejects_index_identity_digest_and_incomplete_architectures(self):
         for change in [lambda i, a: i.update(commit='b'*40),
@@ -173,6 +176,16 @@ class GiteeDownloadTest(unittest.TestCase):
             get, _ = self.fixture(change)
             with tempfile.TemporaryDirectory() as temp, patch.object(release, 'get', get), self.assertRaises(ValueError):
                 release.download(Path(temp)/'bundle', 'amd64', COMMIT, 'gitee')
+
+    def test_gitee_skips_incomplete_newer_formal_release(self):
+        get, _ = self.fixture(incomplete_newer=True)
+        with patch.object(release, 'get', get):
+            self.assertEqual(release.gitee_asset('amd64', '')[0], COMMIT)
+
+    def test_gitee_exact_sha_does_not_accept_retargeted_tag(self):
+        get, _ = self.fixture(tag_commit='b'*40)
+        with patch.object(release, 'get', get), self.assertRaises(ValueError):
+            release.gitee_asset('amd64', COMMIT)
 
     def test_gitee_rejects_foreign_and_insecure_redirects(self):
         handler = release.GiteeRedirect()

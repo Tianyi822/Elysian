@@ -33,7 +33,7 @@ func giteeFixture(t *testing.T, change func(*releaseIndex, map[string]releaseAss
 	sum := sha256.Sum256(body)
 	index := releaseIndex{Schema: releaseIndexSchema, Repository: Repository, Commit: sha, OS: "linux", Artifacts: map[string]indexedArtifact{}}
 	assets := map[string]releaseAsset{}
-	base := "https://gitee.com/" + GiteeRepository + "/releases/download/build-" + sha + "/"
+	base := "https://gitee.com/" + GiteeRepository + "/releases/download/v1.2.0/"
 	for _, arch := range []string{"amd64", "arm64"} {
 		name := "elysian-linux-" + arch + ".tar.gz"
 		index.Artifacts[arch] = indexedArtifact{Name: name, Size: int64(len(body)), SHA256: hex.EncodeToString(sum[:])}
@@ -58,20 +58,29 @@ func giteeFixture(t *testing.T, change func(*releaseIndex, map[string]releaseAss
 				w.Write(body)
 			}
 		case strings.HasSuffix(r.URL.Path, "/attach_files"):
+			if strings.Contains(r.URL.Path, "/releases/3/") {
+				w.Write([]byte(`[]`))
+				return
+			}
 			rows := []releaseAsset{}
 			for _, a := range assets {
 				rows = append(rows, a)
 			}
 			json.NewEncoder(w).Encode(rows)
 		case strings.HasSuffix(r.URL.Path, "/tags"):
-			json.NewEncoder(w).Encode([]any{map[string]any{"name": "v1.2.0", "commit": map[string]string{"sha": sha}}, map[string]any{"name": "build-" + sha, "commit": map[string]string{"sha": sha}}})
+			json.NewEncoder(w).Encode([]any{map[string]any{"name": "v1.2.0", "commit": map[string]string{"sha": sha}}, map[string]any{"name": "v1.3.0", "commit": map[string]string{"sha": strings.Repeat("b", 40)}}})
 		case strings.Contains(r.URL.Path, "/releases/tags/"):
-			json.NewEncoder(w).Encode(map[string]any{"id": 1, "tag_name": "build-" + sha, "prerelease": true})
+			tag := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+			id := 2
+			if tag == "v1.3.0" {
+				id = 3
+			}
+			json.NewEncoder(w).Encode(map[string]any{"id": id, "tag_name": tag, "prerelease": false})
 		case strings.HasSuffix(r.URL.Path, "/releases"):
 			if r.URL.Query().Get("direction") != "desc" {
 				t.Error("Gitee 默认升序，必须指定 desc")
 			}
-			json.NewEncoder(w).Encode([]any{map[string]any{"id": 1, "tag_name": "build-" + sha, "prerelease": true}, map[string]any{"id": 2, "tag_name": "v1.2.0", "name": "正式版", "prerelease": false}})
+			json.NewEncoder(w).Encode([]any{map[string]any{"id": 3, "tag_name": "v1.3.0", "prerelease": false}, map[string]any{"id": 1, "tag_name": "build-" + sha, "prerelease": true}, map[string]any{"id": 2, "tag_name": "v1.2.0", "name": "正式版", "prerelease": false}})
 		case strings.HasSuffix(r.URL.Path, "/commits"):
 			if r.URL.Query().Get("sha") != sha {
 				t.Error("history did not use pinned SHA")
@@ -160,5 +169,12 @@ func TestGiteeRoutesAndTasksKeepExactSource(t *testing.T) {
 	input.Source = SourceGitHub
 	if _, err := m.Submit(context.Background(), "update", input, ""); err == nil {
 		t.Fatal("request source changed")
+	}
+}
+
+func TestGiteeExplicitCommitDoesNotAcceptOtherPublishedCommit(t *testing.T) {
+	source, _ := giteeFixture(t, nil)
+	if _, err := source.findRelease(context.Background(), strings.Repeat("c", 40)); err == nil {
+		t.Fatal("an unpublished SHA was accepted")
 	}
 }

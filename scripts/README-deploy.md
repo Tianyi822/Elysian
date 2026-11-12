@@ -22,7 +22,7 @@ sudo env ELYSIAN_RELEASE_SOURCE=github bash install-release.sh
 
 入口脚本、下载器和安装包均从所选平台获取，来源通过 `ELYSIAN_RELEASE_SOURCE` 传入整个安装过程，只接受 `github|gitee`，未指定时默认 `github`。指定完整已发布提交时，在上述对应的 `sudo env` 命令中追加 `ELYSIAN_COMMIT=<40位SHA>`，保留来源参数。
 
-入口下载到文件后再执行，缺少的 Python 3、curl 和 CA 证书由 apt 准备。安装器默认锁定所选来源最新已发布构建——最新 v* 标签对应提交的 `build-<SHA>` Release（未打标签的提交不构建、不可安装）。GitHub 使用 API asset SHA256，Gitee 使用最后上传的固定提交双架构索引校验整包，核对发布清单、两个程序的摘要和 Linux ELF 架构，运行 `release-info` 验证内嵌提交后才进入安装切换。下载与解包有文件数量、大小和时间限制，拒绝链接、特殊文件与路径越界。目标产物未完成时等待所选平台流水线完成后重试，不回退服务器构建、不自动换源。
+入口下载到文件后再执行，缺少的 Python 3、curl 和 CA 证书由 apt 准备。安装器默认锁定所选来源最新就绪版本：GitHub 使用最新 v* 标签对应提交的 `build-<SHA>` Release，Gitee 使用直接携带附件的正式 `v*` Release（未打标签的提交不构建、不可安装）。GitHub 使用 API asset SHA256，Gitee 使用最后上传的固定提交双架构索引校验整包，核对发布清单、两个程序的摘要和 Linux ELF 架构，运行 `release-info` 验证内嵌提交后才进入安装切换。下载与解包有文件数量、大小和时间限制，拒绝链接、特殊文件与路径越界。目标产物未完成时等待所选平台流水线完成后重试，不回退服务器构建、不自动换源。
 
 服务器不安装 Go/Bun，也不创建构建账号。包内包含面板单二进制（Web、API 与 CLI）、无需额外运行时的 `platform-helper`、发布清单和安装卸载脚本。安装器检测并准备 Docker、Caddy、OpenSSH 和 UFW，平台依赖阶段及归属核验继续有效。已有 Go/Bun、缓存和旧构建账号不会在升级时自动删除，卸载仍兼容这些组件。
 
@@ -42,9 +42,11 @@ sudo env ELYSIAN_RELEASE_SOURCE=github bash install-release.sh
 
 Gitee 脚本在首次 Go 测试前将国内镜像配置导出为 Go 实际读取的 `GOPROXY`，后续构建沿用相同配置，日志会打印生效的代理地址；`go.sum` 与 Go 校验数据库保持启用。修改发布脚本后须在新提交上创建新 `v*` 标签，重跑旧标签仍使用旧提交中的脚本。
 
-构建、程序校验和双架构打包全部成功后，流水线创建固定 `build-<完整SHA>` 预发布包，上传两个安装包与 SHA256 文件，最后上传 `release-index.json`。索引 schema 为 `elysian-release-index/v1`，包含统一项目身份 `Tianyi822/Elysian`、完整提交、`linux` 和两个架构包的名称、大小与 SHA256。没有有效索引或缺少任一架构的版本不可安装。`v*` 正式 Release 只列出固定包的直接下载链接，不重复上传附件。下载仅允许 HTTPS 的 `gitee.com` 与其官方附件域名 `foruda.gitee.com`。
+构建、程序校验和双架构打包全部成功后，流水线只创建一个正式 `v*` Release，直接上传两个安装包与 SHA256 文件，最后上传 `release-index.json`；不创建 `build-<SHA>` 标签或预览发行版。索引 schema 为 `elysian-release-index/v1`，包含统一项目身份 `Tianyi822/Elysian`、完整提交、`linux` 和两个架构包的名称、大小与 SHA256。没有有效索引或缺少任一架构的版本不可安装。上传期间正式条目可能已可见，安装器和在线更新都只接受附件完整且索引有效的版本。下载仅允许 HTTPS 的 `gitee.com` 与其官方附件域名 `foruda.gitee.com`。
 
-未完成发布的重跑核验并复用已有包，补齐缺失附件；已有文件异常时保留并报错，不删除或覆盖。完成后的固定包不变。普通 Gitee 仓库单附件上限 100 MB、总附件上限 1 GB；发布前检查已知 Release 附件占用，普通仓库附件也计入平台总额度，最终以平台实际限制为准。额度不足明确失败，历史不自动清理。平台 API／上传结果未知时重跑先回读原标签和附件。
+未完成发布的重跑核验并复用已有包，补齐缺失附件；已有文件异常时保留并报错，不删除或覆盖。完成后的正式包不变，重跑会匿名回读全部五个附件并核验。普通 Gitee 仓库单附件上限 100 MB、总附件上限 1 GB；发布前检查已知 Release 附件占用，普通仓库附件也计入平台总额度，最终以平台实际限制为准。额度不足明确失败，历史不自动清理。平台 API／上传结果未知时重跑先回读原标签和附件。
+
+显式合并已有双发行版使用 `python3 -B scripts/migrate-gitee-release.py <v版本> <完整SHA>`，凭据仅经安全环境变量 `ELYSIAN_GITEE_TOKEN` 注入。脚本先核对 Gitee main 已部署同版本下载器，验证原包、同提交标签与双架构摘要，再按原字节复制五个附件，索引最后上传；匿名回读验证通过且正式版说明已更新后，才删除对应预览 Release，保留 Git 标签。失败可重跑，不覆盖冲突文件，不自动清理其他历史。旧版面板不识别单正式版布局，须通过最新安装入口原地迁移到包含新下载逻辑的版本，保留数据和配置。
 
 ```bash
 bash scripts/configure-push-remotes.sh
@@ -98,7 +100,7 @@ systemctl restart elysian
 
 任务轮询网络断连累计两分钟后转入每五秒健康探测，每次请求及响应体读取限时三秒，并响应页面取消。活动更新结束后独立核对同源健康端点的实际提交，只有与目标 SHA 一致才提示成功并刷新；版本不一致保留错误和手动重载入口。历史成功任务不会自动刷新页面，迟到响应不能跨任务或登录代次更新展示。
 
-面板更新默认使用 [GitHub：Tianyi822/Elysian](https://github.com/Tianyi822/Elysian)，可在设置页显式选择 [Gitee：Chentyit/Elysian](https://gitee.com/Chentyit/Elysian)。CLI 对应 `ely upgrade --source gitee`，非交互可用 `ely upgrade --source gitee --channel release --yes`。检查、更新日志、预检、任务与下载固定同一来源，网络失败不自动回退。两站包内使用统一项目身份，实际下载仓库固定映射，不接受任意仓库地址。「最新提交」跟随所选来源最新就绪的固定提交包，「最新发版」筛选该来源的正式 v* Release；Gitee 的“最后更新 Release”不直接视为正式最新版。切换来源或策略后重新检查，原 requestId 不能改投。新任务固定 `precompiled/v1`；历史 Gitee 源码任务只对账与恢复，不重新派发，旧版首次迁移继续使用安装入口。
+面板更新默认使用 [GitHub：Tianyi822/Elysian](https://github.com/Tianyi822/Elysian)，可在设置页显式选择 [Gitee：Chentyit/Elysian](https://gitee.com/Chentyit/Elysian)。CLI 对应 `ely upgrade --source gitee`，非交互可用 `ely upgrade --source gitee --channel release --yes`。检查、更新日志、预检、任务与下载固定同一来源，网络失败不自动回退。两站包内使用统一项目身份，实际下载仓库固定映射，不接受任意仓库地址。GitHub 的「最新提交」跟随最新就绪的固定提交包，「最新发版」筛选正式 v* Release；Gitee 两种策略均选择最新就绪的正式 v* Release，指定完整 SHA 时通过正式标签精确查找附件；Gitee 的“最后更新 Release”不直接视为正式最新版。切换来源或策略后重新检查，原 requestId 不能改投。新任务固定 `precompiled/v1`；历史 Gitee 源码任务只对账与恢复，不重新派发，旧版首次迁移继续使用安装入口。
 
 资源预检有效五分钟，展示实测内存、swap、磁盘、负载和 Agent 数量，要求至少 128 MiB 可用内存及 1 GiB 可用磁盘，swap 不计入；不足时保留业务并阻止更新。新任务固定 `precompiled/v1`，不接受旧构建停机清单，不提前停止业务。下载安装包上限五分钟，校验准备上限两分钟；全部通过后进入既有备份和版本切换事务，短暂停面板。切换后健康等待 60 秒，检查两个入口、静态资源和完整提交。失败恢复旧版本与数据，成功保留当前和上一成功版本；旧任务的资源恢复账本及独立收尾保持可恢复。
 

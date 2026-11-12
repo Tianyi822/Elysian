@@ -141,7 +141,11 @@ func (s GiteeSource) artifact(ctx context.Context, sha string) (releaseAsset, er
 	if !commitPattern.MatchString(sha) || runtime.GOOS != "linux" || runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
 		return releaseAsset{}, errors.New("预编译更新仅支持 Linux amd64／arm64 和完整提交")
 	}
-	assets, index, err := s.ready(ctx, sha)
+	release, err := s.findRelease(ctx, sha)
+	if err != nil {
+		return releaseAsset{}, err
+	}
+	assets, index, err := s.ready(ctx, release.Tag, sha)
 	if err != nil {
 		return releaseAsset{}, err
 	}
@@ -150,11 +154,46 @@ func (s GiteeSource) artifact(ctx context.Context, sha string) (releaseAsset, er
 	asset.Digest = "sha256:" + item.SHA256
 	return asset, nil
 }
-func (s GiteeSource) ready(ctx context.Context, sha string) (map[string]releaseAsset, releaseIndex, error) {
+
+// findRelease resolves the existing SHA-only download contract through formal tags.
+func (s GiteeSource) findRelease(ctx context.Context, sha string) (giteeRelease, error) {
+	for page := 1; page <= 100; page++ {
+		var releases []giteeRelease
+		if err := s.json(ctx, s.endpoint("/releases?direction=desc&per_page=100&page="+strconv.Itoa(page)), &releases, 4<<20); err != nil {
+			return giteeRelease{}, err
+		}
+		for _, release := range releases {
+			if release.Prerelease == nil || *release.Prerelease || !strings.HasPrefix(release.Tag, "v") {
+				continue
+			}
+			commit, err := s.tagCommit(ctx, release.Tag)
+			if err != nil {
+				return giteeRelease{}, err
+			}
+			if commit != sha {
+				continue
+			}
+			if _, _, err = s.ready(ctx, release.Tag, sha); errors.Is(err, errGiteeNotReady) {
+				continue
+			} else if err != nil {
+				return giteeRelease{}, err
+			}
+			return release, nil
+		}
+		if len(releases) < 100 {
+			break
+		}
+	}
+	return giteeRelease{}, errGiteeNotReady
+}
+func (s GiteeSource) ready(ctx context.Context, tag, sha string) (map[string]releaseAsset, releaseIndex, error) {
 	var index releaseIndex
-	release, err := s.release(ctx, "build-"+sha)
+	release, err := s.release(ctx, tag)
 	if err != nil {
 		return nil, index, err
+	}
+	if !strings.HasPrefix(tag, "v") || *release.Prerelease {
+		return nil, index, errors.New("Gitee 更新仅接受正式 v* 发行版")
 	}
 	var entries []releaseAsset
 	if err = s.json(ctx, s.endpoint(fmt.Sprintf("/releases/%d/attach_files?per_page=100", release.ID)), &entries, 2<<20); err != nil {
@@ -168,7 +207,7 @@ func (s GiteeSource) ready(ctx context.Context, sha string) (map[string]releaseA
 		assets[entry.Name] = entry
 	}
 	marker, ok := assets["release-index.json"]
-	base := "https://gitee.com/" + GiteeRepository + "/releases/download/build-" + sha + "/"
+	base := "https://gitee.com/" + GiteeRepository + "/releases/download/" + url.PathEscape(tag) + "/"
 	if !ok {
 		return nil, index, errGiteeNotReady
 	}
@@ -193,12 +232,12 @@ func (s GiteeSource) ready(ctx context.Context, sha string) (map[string]releaseA
 			return nil, index, errors.New("Gitee 安装包大小、地址或摘要无效")
 		}
 	}
-	resolved, err := s.tagCommit(ctx, "build-"+sha)
+	resolved, err := s.tagCommit(ctx, tag)
 	if err != nil {
 		return nil, index, err
 	}
 	if resolved != sha {
-		return nil, index, errors.New("Gitee 固定构建标签与提交不一致")
+		return nil, index, errors.New("Gitee 发版标签与提交不一致")
 	}
 	return assets, index, nil
 }
@@ -212,39 +251,29 @@ func (s GiteeSource) Check(ctx context.Context, channel UpdateChannel) (Update, 
 	if !validChannel(channel) {
 		return u, errors.New("更新策略无效")
 	}
-	// Gitee latest 是最后更新的 Release，可能是预发布；按显式倒序分页筛选。
+	// 两种策略都选择最新就绪的正式版本，不使用 Gitee 的最后更新 Release 接口。
 	for page := 1; page <= 100; page++ {
 		var releases []giteeRelease
 		if err := s.json(ctx, s.endpoint("/releases?direction=desc&per_page=100&page="+strconv.Itoa(page)), &releases, 4<<20); err != nil {
 			return u, err
 		}
 		for _, release := range releases {
+			if release.Prerelease == nil || *release.Prerelease || !strings.HasPrefix(release.Tag, "v") {
+				continue
+			}
+			sha, err := s.tagCommit(ctx, release.Tag)
+			if err != nil {
+				return u, err
+			}
+			if _, _, err = s.ready(ctx, release.Tag, sha); errors.Is(err, errGiteeNotReady) {
+				continue
+			} else if err != nil {
+				return u, err
+			}
+			u.TargetCommit = sha
+			u.Message = release.Name
 			if channel == ChannelRelease {
-				if release.Prerelease == nil || *release.Prerelease || !strings.HasPrefix(release.Tag, "v") {
-					continue
-				}
-				sha, err := s.tagCommit(ctx, release.Tag)
-				if err != nil {
-					return u, err
-				}
-				if _, _, err = s.ready(ctx, sha); err != nil {
-					return u, err
-				}
-				u.TargetCommit = sha
 				u.ReleaseTag = release.Tag
-				u.Message = release.Name
-			} else {
-				if !buildTagPattern.MatchString(release.Tag) {
-					continue
-				}
-				sha := strings.TrimPrefix(release.Tag, "build-")
-				if _, _, err := s.ready(ctx, sha); err != nil {
-					if errors.Is(err, errGiteeNotReady) {
-						continue
-					}
-					return u, err
-				}
-				u.TargetCommit = sha
 			}
 			u.Available = u.TargetCommit != Commit
 			return u, nil

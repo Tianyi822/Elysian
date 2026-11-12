@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gitee immutable releases. Never deletes or replaces an attachment or tag."""
+"""Gitee single formal releases; immutable attachments and explicit legacy migration."""
 import hashlib
 import importlib.util
 import json
@@ -27,7 +27,7 @@ class Publisher:
             raise ValueError('缺少安全环境变量 ELYSIAN_GITEE_TOKEN')
         self.token = token
 
-    def request(self, path, fields=None, file=None):
+    def request(self, path, fields=None, file=None, method=None):
         # GET metadata is public. Tokens occur only in request bodies, never URLs or logs.
         body, headers = None, {'User-Agent': 'Elysian-release-publisher', 'Accept': 'application/json'}
         if fields is not None or file is not None:
@@ -41,7 +41,7 @@ class Publisher:
             else:
                 body = urllib.parse.urlencode(fields).encode()
                 headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=utf-8'
-        req = urllib.request.Request(API + path, data=body, headers=headers)
+        req = urllib.request.Request(API + path, data=body, headers=headers, method=method)
         # Mutation redirects must not forward credentials to another host.
         class NoRedirect(urllib.request.HTTPRedirectHandler):
             def redirect_request(self, *args):
@@ -51,9 +51,9 @@ class Publisher:
                 result = response.read((4 << 20) + 1)
                 if len(result) > 4 << 20:
                     raise ValueError('Gitee 发布响应过大')
-                return json.loads(result)
+                return json.loads(result) if result.strip() else None
         except urllib.error.HTTPError as error:
-            if error.code == 404 and body is None:
+            if error.code == 404 and req.get_method() == 'GET':
                 return None
             raise ValueError(f'Gitee 发布请求失败：HTTP {error.code}；保留已上传内容，可重跑核实') from None
 
@@ -101,6 +101,24 @@ class Publisher:
         if not 0 < file.stat().st_size <= MAX_FILE:
             raise ValueError('附件超出 Gitee 单文件 100 MB 限额')
         self.request(f"/releases/{release['id']}/attach_files", file=file)
+
+    def update_notes(self, release, notes):
+        if release.get('body') != notes:
+            self.request(f"/releases/{release['id']}", dict(tag_name=release['tag_name'],
+                         name=release['tag_name'], body=notes, prerelease='false'), method='PATCH')
+        current = self.request('/releases/tags/' + urllib.parse.quote(release['tag_name'], safe=''))
+        if not current or current.get('id') != release['id'] or current.get('prerelease') is not False or current.get('body') != notes:
+            raise ValueError('Gitee 正式版说明更新结果未确认，保留预览发行版')
+
+    def remove_preview(self, release, commit):
+        # Explicit migration only; ordinary publishing never deletes releases or tags.
+        current = self.request('/releases/tags/' + release['tag_name'])
+        if current is None:
+            return
+        if current.get('id') != release['id'] or current.get('prerelease') is not True or current.get('tag_name') != 'build-' + commit:
+            raise ValueError('Gitee 预览发行版身份已变化，拒绝删除')
+        self.tag(current['tag_name'], commit)
+        self.request(f"/releases/{current['id']}", {}, method='DELETE')
 
     def quota(self, needed):
         used = 0
@@ -150,18 +168,44 @@ def validate_archive(file, arch, commit):
         download.verify(output, arch, commit)
 
 
+def release_notes(tag, commit):
+    base = f'https://gitee.com/{REPO}/releases/download/{urllib.parse.quote(tag, safe="")}/'
+    links = '\n'.join(f'- [{arch} 安装包]({base}elysian-linux-{arch}.tar.gz) · [SHA256]({base}elysian-linux-{arch}.tar.gz.sha256)' for arch in ['amd64', 'arm64'])
+    return f'Linux amd64 / arm64 预编译安装包。提交：{commit}\n\n{links}'
+
+
+def verify_release(release, commit, publisher, destination):
+    """Read back every public byte, including the original index, without credentials."""
+    tag = release['tag_name']
+    base = f'https://gitee.com/{REPO}/releases/download/{urllib.parse.quote(tag, safe="")}/'
+    assets = publisher.attachments(release)
+    for arch in ['amd64', 'arm64']:
+        _, asset = download.gitee_release_asset(arch, commit, tag, release['prerelease'])
+        file = destination / asset['name']
+        digest = fetch_attachment(asset, base + file.name, file)
+        if 'sha256:' + digest != asset['digest']:
+            raise ValueError('Gitee 已发布安装包 SHA256 校验失败')
+        validate_archive(file, arch, commit)
+        checksum = destination / (file.name + '.sha256')
+        fetch_attachment(assets[checksum.name], base + checksum.name, checksum)
+        if checksum.read_bytes() != f'{digest}  {file.name}\n'.encode():
+            raise ValueError('Gitee 已发布校验文件与安装包不一致')
+    marker = destination / 'release-index.json'
+    fetch_attachment(assets[marker.name], base + marker.name, marker)
+
+
 def publish(output, commit, tag, publisher):
     if not re.fullmatch(r'[a-f0-9]{40}', commit) or not tag.startswith('v'):
         raise ValueError('发布必须绑定完整 SHA 和 v* 标签')
     publisher.tag(tag, commit)
-    build_tag = 'build-' + commit
-    base = f'https://gitee.com/{REPO}/releases/download/{build_tag}/'
-    existing = publisher.request('/releases/tags/' + build_tag)
+    base = f'https://gitee.com/{REPO}/releases/download/{urllib.parse.quote(tag, safe="")}/'
+    existing = publisher.request('/releases/tags/' + urllib.parse.quote(tag, safe=''))
+    if existing and existing.get('prerelease') is not False:
+        raise ValueError('Gitee 现有 Release 身份不符，拒绝覆盖')
     existing_assets = publisher.attachments(existing) if existing else {}
     if 'release-index.json' in existing_assets:
         # A completed immutable release is authoritative, not the new build's BuildTime.
-        for arch in ['amd64', 'arm64']:
-            download.gitee_asset(arch, commit)
+        release = existing
     else:
         for arch in ['amd64', 'arm64']:
             file = output / f'elysian-linux-{arch}.tar.gz'
@@ -177,8 +221,7 @@ def publish(output, commit, tag, publisher):
             if name + '.sha256' not in existing_assets:
                 needed += 1024
         publisher.quota(needed)
-        publisher.tag(build_tag, commit, create=True)
-        release = publisher.release(build_tag, commit, True, f'Linux amd64 / arm64 预编译安装包。提交：{commit}。release-index.json 上传完成后才可安装。')
+        release = publisher.release(tag, commit, False, f'Linux amd64 / arm64 预编译安装包。提交：{commit}。release-index.json 上传完成后才可安装。')
         assets = publisher.attachments(release)
         index = dict(schema=download.INDEX_SCHEMA, repository=download.REPO, commit=commit, os='linux', artifacts={})
         with tempfile.TemporaryDirectory(prefix='elysian-gitee-publish-') as temporary:
@@ -205,10 +248,9 @@ def publish(output, commit, tag, publisher):
             marker = Path(temporary) / 'release-index.json'
             marker.write_text(json.dumps(index, ensure_ascii=False, sort_keys=True) + '\n')
             publisher.upload(release, marker)
-        for arch in ['amd64', 'arm64']:
-            download.gitee_asset(arch, commit)
-    links = '\n'.join(f'- [{arch} 安装包]({base}elysian-linux-{arch}.tar.gz) · [SHA256]({base}elysian-linux-{arch}.tar.gz.sha256)' for arch in ['amd64', 'arm64'])
-    publisher.release(tag, commit, False, f'Linux 预编译安装包。提交：{commit}\n\n{links}\n\n附件固定保存在 [{build_tag}](https://gitee.com/{REPO}/releases/tag/{build_tag})，不重复占用仓库额度。')
+    with tempfile.TemporaryDirectory(prefix='elysian-gitee-readback-') as temporary:
+        verify_release(release, commit, publisher, Path(temporary))
+    publisher.update_notes(release, release_notes(tag, commit))
     print(f'Gitee 发布已核验：{tag} / {commit}')
 
 
