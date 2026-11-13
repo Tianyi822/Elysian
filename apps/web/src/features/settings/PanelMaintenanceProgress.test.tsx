@@ -40,7 +40,19 @@ describe('维护图形进度与日志', () => {
     expect(screen.getByText('等待进度同步')).toBeInTheDocument()
     expect(screen.queryByText(/平均/)).not.toBeInTheDocument()
     expect(container.querySelector('.motion-safe\\:animate-spin')).toBeNull()
+    expect(container.querySelector('.motion-safe\\:animate-pull-progress')).toBeNull()
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '25')
+  })
+  it('阶段连接线只跨圆间空隙不穿圆，活动段有流动高光', () => {
+    const { container } = render(<PanelMaintenanceProgress task={task} />)
+    const connectors = container.querySelectorAll('ol[aria-label="维护阶段"] li > span.absolute')
+    expect(connectors).toHaveLength(4)
+    for (const connector of connectors) {
+      expect(connector.className).not.toContain('w-full')
+      expect(connector.className).toContain('left-[calc')
+      expect(connector.className).toContain('right-[calc')
+    }
+    expect(container.querySelector('.motion-safe\\:animate-pull-progress')).not.toBeNull()
   })
   it('旧任务无字节数据时显示等待信息，不估算下载百分比', () => {
     render(<PanelMaintenanceProgress task={{ ...task, download: undefined }} />)

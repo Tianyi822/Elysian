@@ -41,11 +41,13 @@ export function PanelMaintenanceProgress({ task, paused = false }: { task: Panel
         const selected = index === current
         const status = done ? '已完成' : selected ? failed ? '失败' : task.state === 'queued' ? '等待执行' : paused || task.workerStatus !== 'alive' || task.workerDead ? '等待确认' : '进行中' : '待执行'
         return <li key={step.label} aria-label={`${step.label}：${status}`} aria-current={selected && panelTaskIsActive(task) ? 'step' : undefined} className="relative flex min-w-0 flex-1 flex-col items-center gap-2 text-center">
-          {index > 0 ? <span aria-hidden className={`absolute top-3.5 right-1/2 h-px w-full ${done || selected ? 'bg-accent/40' : 'bg-line'}`} /> : null}
-          <span aria-hidden className={`relative flex size-7 items-center justify-center rounded-full border text-xs tabular-nums ${selected && failed ? 'border-danger/40 bg-surface text-danger' : done ? 'border-accent/30 bg-surface text-accent-fg' : selected ? 'border-accent bg-surface text-accent-fg' : 'border-line bg-surface text-fg-subtle'}`}>
+          {index > 0 ? <span aria-hidden className={`absolute top-[13px] left-[calc(-50%_+_22px)] right-[calc(50%_+_22px)] h-0.5 overflow-hidden rounded-full ${done || selected ? 'bg-accent/50' : 'bg-line'}`}>
+            {selected && moving ? <span className="block h-full w-1/3 rounded-full bg-accent motion-safe:animate-pull-progress" /> : null}
+          </span> : null}
+          <span aria-hidden className={`relative flex size-7 items-center justify-center rounded-full border text-xs tabular-nums ${selected && failed ? 'border-danger/50 bg-danger/10 text-danger' : done ? 'border-accent/40 bg-accent/10 text-accent-fg' : selected ? 'border-accent bg-accent/15 text-accent-fg' : 'border-line bg-surface text-fg-subtle'}`}>
             {done ? <Check size={14} /> : selected && failed ? <X size={14} /> : selected && moving ? <Loader2 size={14} className="motion-safe:animate-spin" /> : index + 1}
           </span>
-          <span className={`text-[0.6875rem] leading-4 sm:text-xs ${done || selected ? 'text-fg' : 'text-fg-subtle'}`}>{step.label}</span>
+          <span className={`text-[0.6875rem] leading-4 sm:text-xs ${done || selected ? 'text-fg' : 'text-fg-subtle'} ${selected ? 'font-medium' : ''}`}>{step.label}</span>
         </li>
       })}
     </ol>}
