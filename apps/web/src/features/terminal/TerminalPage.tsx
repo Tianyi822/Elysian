@@ -70,7 +70,7 @@ export function TerminalPage() {
   }
 
   return (
-    <section aria-label="终端" className="flex h-full min-h-0 flex-col gap-3 p-3 pt-2 md:p-4">
+    <section aria-label="终端" className="flex h-full min-h-0 flex-col gap-3 px-3 pb-3 pt-[calc((var(--shell-header-height)_-_var(--message-button-size))/2)] md:px-4 md:pb-4">
       <TerminalTabBar
         sessions={sessions}
         activeId={activeId}
