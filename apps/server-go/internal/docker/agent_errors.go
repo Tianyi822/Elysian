@@ -26,6 +26,24 @@ func agentRejected(err error) error {
 	return err
 }
 
+// agentSubmitRejected 标记异步提交在派发前的确定失败：未受理、无业务变更，供
+// harness 走干净失败而非「结果未知」。与 agentRejected 不同，它对任何预派发错误
+// 都给出 NotDispatched 类型化拒绝；仅保留契约文案，不透传 Engine 输出或远程响应。
+func agentSubmitRejected(err error) error {
+	if err == nil {
+		return nil
+	}
+	var invalid *shared.InvalidRequestError
+	if errors.As(err, &invalid) {
+		return &AgentError{Code: "docker-operation-rejected", Message: invalid.Message, NotDispatched: true}
+	}
+	var typed *AgentError
+	if errors.As(err, &typed) {
+		return &AgentError{Code: typed.Code, Message: typed.Message, NotDispatched: true}
+	}
+	return &AgentError{Code: "docker-operation-rejected", Message: "容器操作提交预检失败，未派发任何变更；请核实输入与面板状态后重试", NotDispatched: true}
+}
+
 func agentQueryError(ctx context.Context, err error) error {
 	if err == nil {
 		return nil

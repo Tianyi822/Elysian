@@ -237,24 +237,24 @@ func (a *AgentFacade) submitContainerOperation(requestID, target string, input a
 
 func (a *AgentFacade) SubmitService(ctx context.Context, input AgentServiceCreateInput) (ContainerOperationTask, error) {
 	if err := a.check(ctx); err != nil {
-		return ContainerOperationTask{}, err
+		return ContainerOperationTask{}, agentSubmitRejected(err)
 	}
 	if prior, found, err := a.existingContainerOperation(input.RequestID, "name:"+input.Name, input); found || err != nil {
-		return prior, err
+		return prior, agentSubmitRejected(err)
 	}
 	if _, err := a.validateServiceInput(input); err != nil {
-		return ContainerOperationTask{}, agentRejected(err)
+		return ContainerOperationTask{}, agentSubmitRejected(err)
 	}
 	imageID, err := a.resolveAgentImage(ctx, input.Image)
 	if err != nil {
-		return ContainerOperationTask{}, agentRejected(err)
+		return ContainerOperationTask{}, agentSubmitRejected(err)
 	}
 	var run func(context.Context) (any, error)
 	if a.databaseContainers != nil {
 		var handled bool
 		run, handled, err = a.databaseContainers.PrepareCreate(ctx, input, imageID)
 		if err != nil {
-			return ContainerOperationTask{}, agentRejected(err)
+			return ContainerOperationTask{}, agentSubmitRejected(err)
 		}
 		if !handled {
 			run = nil
@@ -268,52 +268,52 @@ func (a *AgentFacade) SubmitService(ctx context.Context, input AgentServiceCreat
 
 func (a *AgentFacade) SubmitExec(ctx context.Context, input ContainerExecInput) (ContainerOperationTask, error) {
 	if err := a.check(ctx); err != nil {
-		return ContainerOperationTask{}, err
+		return ContainerOperationTask{}, agentSubmitRejected(err)
 	}
 	if prior, found, err := a.existingContainerOperation(input.RequestID, input.ID, input); found || err != nil {
-		return prior, err
+		return prior, agentSubmitRejected(err)
 	}
 	if _, err := agentObjectID(input.ID, false); err != nil {
-		return ContainerOperationTask{}, agentRejected(err)
+		return ContainerOperationTask{}, agentSubmitRejected(err)
 	}
 	if err := a.CheckContainerMutation(ctx, input.ID, "", ""); err != nil {
-		return ContainerOperationTask{}, agentRejected(err)
+		return ContainerOperationTask{}, agentSubmitRejected(err)
 	}
 	if (len(input.Argv) > 0) == (input.DatabaseChange != nil) || input.DatabaseChange != nil && input.Workdir != "" || len(input.Argv) > 64 || len(input.Workdir) > 1024 || strings.ContainsRune(input.Workdir, 0) {
-		return ContainerOperationTask{}, agentRejected(shared.InvalidRequest("argv与databaseChange必须且只能提供一项，workdir仅用于argv"))
+		return ContainerOperationTask{}, agentSubmitRejected(shared.InvalidRequest("argv与databaseChange必须且只能提供一项，workdir仅用于argv"))
 	}
 	for _, arg := range input.Argv {
 		if len(arg) > 16384 || strings.ContainsRune(arg, 0) {
-			return ContainerOperationTask{}, agentRejected(shared.InvalidRequest("容器命令参数无效或超限"))
+			return ContainerOperationTask{}, agentSubmitRejected(shared.InvalidRequest("容器命令参数无效或超限"))
 		}
 	}
 	if input.Workdir != "" && !strings.HasPrefix(input.Workdir, "/") {
-		return ContainerOperationTask{}, agentRejected(shared.InvalidRequest("容器工作目录必须为绝对路径"))
+		return ContainerOperationTask{}, agentSubmitRejected(shared.InvalidRequest("容器工作目录必须为绝对路径"))
 	}
 	if input.DatabaseChange != nil {
 		if a.databaseContainers == nil {
-			return ContainerOperationTask{}, agentRejected(shared.InvalidRequest("数据库登记能力不可用"))
+			return ContainerOperationTask{}, agentSubmitRejected(shared.InvalidRequest("数据库登记能力不可用"))
 		}
 		run, err := a.databaseContainers.PrepareChange(ctx, input.ID, input.RequestID, *input.DatabaseChange)
 		if err != nil {
-			return ContainerOperationTask{}, agentRejected(err)
+			return ContainerOperationTask{}, agentSubmitRejected(err)
 		}
 		return a.submitContainerOperation(input.RequestID, input.ID, input, func(ctx context.Context, _ string) (any, error) { return run(ctx) })
 	}
 	if len(input.Argv) == 0 || input.Argv[0] == "" {
-		return ContainerOperationTask{}, agentRejected(shared.InvalidRequest("容器命令不能为空"))
+		return ContainerOperationTask{}, agentSubmitRejected(shared.InvalidRequest("容器命令不能为空"))
 	}
 	if a.databaseContainers != nil {
 		registered, err := a.databaseContainers.Registered(ctx, input.ID)
 		if err != nil {
-			return ContainerOperationTask{}, err
+			return ContainerOperationTask{}, agentSubmitRejected(err)
 		}
 		if registered {
-			return ContainerOperationTask{}, agentRejected(shared.InvalidRequest("受管数据库仅允许结构化databaseChange；诊断请使用inspect与logs"))
+			return ContainerOperationTask{}, agentSubmitRejected(shared.InvalidRequest("受管数据库仅允许结构化databaseChange；诊断请使用inspect与logs"))
 		}
 	}
 	if _, err := a.safeTarget(ctx, input.ID); err != nil {
-		return ContainerOperationTask{}, agentRejected(err)
+		return ContainerOperationTask{}, agentSubmitRejected(err)
 	}
 	return a.submitContainerOperation(input.RequestID, input.ID, input, func(ctx context.Context, id string) (any, error) { return a.executeContainerCommand(ctx, id, input) })
 }
