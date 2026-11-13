@@ -28,6 +28,53 @@ func TestSampleScopeEnum(t *testing.T) {
 	}
 }
 
+// 一次派发只有一张后端票据，因此每个 scope 都必须只消费一次；scope=both 需要
+// 进程与宿主两份读数，不能靠连续调用两个各自带 authorize 的 facade 方法取得。
+func TestSampleScopesConsumeBackendTicketOnce(t *testing.T) {
+	for _, scope := range []string{"", "process", "host", "both"} {
+		ctx := context.Background()
+		facade := domain.NewAgentFacade(domain.Deps{AgentAuthorize: func(ctx context.Context) error {
+			return tools.ConsumeBackend(ctx, tools.DispatchID(ctx))
+		}})
+		runtime, err := tools.NewManagedRuntime(ctx, Plugin(Deps{Facade: facade}, Config{}))
+		if err != nil {
+			t.Fatalf("scope=%q 装载失败：%v", scope, err)
+		}
+		authority := tools.NewAuthority()
+		if err := runtime.SetAuthority(authority); err != nil {
+			t.Fatalf("scope=%q 设置授权失败：%v", scope, err)
+		}
+		args := tools.Arguments{}
+		if scope != "" {
+			args["scope"] = scope
+		}
+		binding := tools.AuthorizationBinding{OperationID: "operation", DispatchID: "dispatch", Tool: "platform_sample", ArgumentsDigest: tools.ArgumentsDigest(args)}
+		authorized, err := authority.Authorize(ctx, binding, nil, func(context.Context) error { return nil })
+		if err != nil {
+			t.Fatalf("scope=%q 派发授权失败：%v", scope, err)
+		}
+		value, err := runtime.Execute(authorized, "platform_sample", args)
+		if err != nil {
+			t.Fatalf("scope=%q 采样失败：%v", scope, err)
+		}
+		if value == nil {
+			t.Fatalf("scope=%q 未返回采样", scope)
+		}
+		if scope == "both" {
+			combined, ok := value.(map[string]any)
+			if !ok || combined["process"] == nil || combined["host"] == nil {
+				t.Fatalf("scope=both 必须同时返回进程与宿主采样：%+v", value)
+			}
+		}
+		if _, err := runtime.Execute(authorized, "platform_sample", args); err == nil {
+			t.Fatalf("scope=%q 同一票据被重放", scope)
+		}
+		if err := runtime.Close(ctx); err != nil {
+			t.Fatalf("scope=%q 回收失败：%v", scope, err)
+		}
+	}
+}
+
 func TestSampleDescriptorRegisteredWithLegacyNames(t *testing.T) {
 	root := kardia.NewContext()
 	t.Cleanup(func() { _ = root.Fiber().Dispose(context.Background()) })

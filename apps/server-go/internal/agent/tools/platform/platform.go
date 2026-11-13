@@ -56,22 +56,17 @@ func New(c *kardia.Context, deps Deps, _ Config) (*Service, error) {
 			if err != nil {
 				return nil, err
 			}
-			ctx := tools.Lifetime(c)
+			process, host, err := deps.Facade.Sample(tools.Lifetime(c), wantProcess, wantHost)
+			if err != nil {
+				return nil, err
+			}
 			if wantProcess && wantHost {
-				memory, err := deps.Facade.Memory(ctx)
-				if err != nil {
-					return nil, err
-				}
-				host, err := deps.Facade.Metrics(ctx)
-				if err != nil {
-					return nil, err
-				}
-				return map[string]any{"process": memory, "host": host}, nil
+				return map[string]any{"process": process, "host": host}, nil
 			}
 			if wantHost {
-				return deps.Facade.Metrics(ctx)
+				return host, nil
 			}
-			return deps.Facade.Memory(ctx)
+			return process, nil
 		},
 	})
 	if err := tools.RegisterAll(c, descriptors...); err != nil {

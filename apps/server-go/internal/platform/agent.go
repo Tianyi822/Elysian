@@ -53,6 +53,27 @@ func (f *AgentFacade) Memory(ctx context.Context) (any, error) {
 	return sampleFromUsage(f.usage()), ctx.Err()
 }
 
+// Sample 在一次派发内取进程与宿主采样。后端票据每次派发只能消费一次，因此两份
+// 读数必须共用这一个授权入口，不能由调用方连续调 Memory 与 Metrics。
+func (f *AgentFacade) Sample(ctx context.Context, wantProcess, wantHost bool) (process any, host any, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	if f == nil || f.authorize == nil {
+		return nil, nil, errors.New("平台只读能力未授权")
+	}
+	if err := f.authorize(ctx); err != nil {
+		return nil, nil, err
+	}
+	if wantProcess {
+		process = sampleFromUsage(f.usage())
+	}
+	if wantHost {
+		host = f.metrics()
+	}
+	return process, host, ctx.Err()
+}
+
 func (f *AgentFacade) Dependencies(ctx context.Context) (any, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
