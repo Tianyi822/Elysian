@@ -1,10 +1,21 @@
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'vitest/config'
 
+const here = path.dirname(fileURLToPath(import.meta.url))
+
 /** Vitest 专用配置：不加载含 bun:sqlite 的 dev 中间件插件。 */
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: [
+      // 测试里用静态替身替换路由懒加载出口：既有同步断言不必逐条异步化；
+      // 生产构建不受影响，仍走真实 lazyRoutes 分割。
+      { find: /^\.\/lazyRoutes$/, replacement: path.resolve(here, 'src/test/lazyRoutesStatic.ts') },
+    ],
+  },
   define: {
     'import.meta.env.ELYSIAN_DOCKER': JSON.stringify(process.env.ELYSIAN_DOCKER ?? ''),
   },

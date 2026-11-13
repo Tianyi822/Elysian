@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Bot, PanelLeftClose, PanelLeftOpen } from '../../components/icons'
 import { Outlet, useLocation, useMatches } from 'react-router'
@@ -15,7 +15,8 @@ import {
   useHeaderAccessoryWidthMeasurement,
 } from './headerAccessoryWidth'
 import { Sidebar } from './Sidebar'
-import { ShellLayoutContext, type ShellLayout } from './ShellLayoutContext'
+import { ShellPageFallback, ShellLayoutContext, type ShellLayout } from './ShellLayoutContext'
+import { LoadingState } from '../../components/states/StateViews'
 import './headerControls.css'
 import './sidebar.css'
 
@@ -208,7 +209,9 @@ export function AppShell() {
                     </HeaderAccessoryWidthContext.Provider>
                   </div>
                 )}
-                <Outlet />
+                <Suspense fallback={<ShellPageFallback><LoadingState label="正在加载页面…" /></ShellPageFallback>}>
+                  <Outlet />
+                </Suspense>
               </main>
               <MessageCenter />
             </div>

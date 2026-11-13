@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"mime"
 	"net/http"
 	"path"
 	"path/filepath"
@@ -397,9 +396,10 @@ type healthBody struct {
 	OK bool `json:"ok"`
 }
 
-// spaHandler 服务嵌入的前端静态资源：命中文件直出（按扩展名定 Content-Type），
-// 未命中回落 index.html（占位 dist 无 index.html 时如实 404）；仅 GET/HEAD。
+// spaHandler 服务嵌入的前端静态资源：命中文件经压缩/缓存层直出，未命中回落
+// index.html（no-cache；占位 dist 无 index.html 时如实 404）；仅 GET/HEAD。
 func spaHandler(dist fs.FS) http.HandlerFunc {
+	store := newStaticStore(dist)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			http.Error(w, "404 Not Found", http.StatusNotFound)
@@ -409,23 +409,16 @@ func spaHandler(dist fs.FS) http.HandlerFunc {
 		if name == "" {
 			name = "index.html"
 		}
-		data, err := fs.ReadFile(dist, path.Join("dist", name))
-		if err != nil {
-			index, indexErr := fs.ReadFile(dist, "dist/index.html")
-			if indexErr != nil {
-				// 占位 dist 没有前端产物：如实 404，不影响 /api/* 路由与 404 语义。
-				http.Error(w, "404 Not Found", http.StatusNotFound)
-				return
-			}
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write(index)
+		if a, err := store.load(name); err == nil {
+			writeAsset(w, r, a, staticCacheControl(name))
 			return
 		}
-		if ct := mime.TypeByExtension(path.Ext(name)); ct != "" {
-			w.Header().Set("Content-Type", ct)
+		index, err := store.load("index.html")
+		if err != nil {
+			// 占位 dist 没有前端产物：如实 404，不影响 /api/* 路由与 404 语义。
+			http.Error(w, "404 Not Found", http.StatusNotFound)
+			return
 		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(data)
+		writeAsset(w, r, index, "no-cache")
 	}
 }

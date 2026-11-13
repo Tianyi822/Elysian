@@ -1,9 +1,10 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import type { ReactNode } from 'react'
 import { Navigate, useLocation } from 'react-router'
 import { useGateway } from '../adapters/GatewayProvider'
 import { ErrorState, LoadingState } from '../components/states/StateViews'
 import { useSessionStore } from '../stores/sessionStore'
+import { preloadDashboard } from './preloadRoutes'
 
 /**
  * 会话闸门：包住 AppShell 路由，未登录（真实会话模式）一律重定向 /login 并记住
@@ -42,6 +43,15 @@ export function RequireSession({ children }: { children: ReactNode }) {
       document.removeEventListener('visibilitychange', check)
     }
   }, [phase, mode, revalidate, gateway])
+
+  const prefetched = useRef(false)
+  useEffect(() => {
+    if (prefetched.current || phase !== 'authed') return
+    if (location.pathname === '/' || location.pathname === '') return
+    if (document.visibilityState !== 'visible') return
+    prefetched.current = true
+    preloadDashboard()
+  }, [phase, location.pathname])
 
   if (phase === 'unknown') {
     return <LoadingState label="正在检查登录状态…" />

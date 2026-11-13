@@ -1,25 +1,29 @@
+import { Suspense } from 'react'
 import { createBrowserRouter, createMemoryRouter, Navigate, useSearchParams } from 'react-router'
 import type { RouteObject } from 'react-router'
 import type { ComponentType } from 'react'
-import { ContainerPage } from '../features/container/ContainerPage'
 import { ContainerViewSwitch } from '../features/container/ContainerViewSwitch'
-import { DashboardPage } from '../features/dashboard/DashboardPage'
 import { DatabaseEngineSwitch } from '../features/database/DatabaseEngineSwitch'
-import { DatabasePage } from '../features/database/DatabasePage'
-import { FilesPage } from '../features/files/FilesPage'
 import { FilesPathTitle } from '../features/files/FilesPathTitle'
 import { LoginPage } from '../features/auth/LoginPage'
-import { WikiPage } from '../features/memory/WikiPage'
-import { AgentChatPage } from '../features/agent/AgentChatPage'
-import { LogsPage } from '../features/logs/LogsPage'
 import { LogsTabSwitch } from '../features/logs/LogsTabSwitch'
-import { SecurityPage } from '../features/security/SecurityPage'
 import { SecurityTabSwitch } from '../features/security/SecurityTabSwitch'
-import { SettingsPage } from '../features/settings/SettingsPage'
 import { SettingsTabSwitch } from '../features/settings/SettingsTabSwitch'
-import { TerminalPage } from '../features/terminal/TerminalPage'
-import { WebsitesPage } from '../features/websites/WebsitesPage'
-import { AppShell } from './layout/AppShell'
+import {
+  AgentChatPage,
+  AppShell,
+  ContainerPage,
+  DashboardPage,
+  DatabasePage,
+  FilesPage,
+  LogsPage,
+  SecurityPage,
+  SettingsPage,
+  TerminalPage,
+  WebsitesPage,
+  WikiPage,
+} from './lazyRoutes'
+import { ShellBootFallback } from './layout/ShellBootFallback'
 import { NotFoundPage } from './NotFoundPage'
 import { RequireArea } from './RequireArea'
 import { RequireSession } from './RequireSession'
@@ -65,7 +69,9 @@ export const routes: RouteObject[] = [
     path: '/',
     element: (
       <RequireSession>
-        <AppShell />
+        <Suspense fallback={<ShellBootFallback />}>
+          <AppShell />
+        </Suspense>
       </RequireSession>
     ),
     children: [

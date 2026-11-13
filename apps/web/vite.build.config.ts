@@ -6,10 +6,11 @@ import { defineConfig } from 'vite'
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   build: {
-    // 主入口承载全部业务路由（未做路由级懒加载，gzip 后约 489 kB）、echarts 独立块
-    // 647 kB 是按需引入后的固有体积（gzip 220 kB）；静态资源由 Go 单二进制内嵌并经
-    // 本机与内网伺服，rolldown 的 500 kB 默认线针对公网 CDN 场景，按实际构成放宽。
-    chunkSizeWarningLimit: 1700,
+    // 路由级懒加载后主入口约 273 kB（gzip 85 kB），登录关键路径含预载共享块约 278 kB gzip；
+    // echarts 独立块 647 kB（gzip 220 kB）是按需引入后的固有体积，仅仪表盘异步加载。
+    // 静态资源由 Go 单二进制内嵌、gzip + immutable 长缓存伺服；警告线按当前最大块
+    // （echarts 647 kB）留余量设 700 kB，单块回归会重新触发提示。
+    chunkSizeWarningLimit: 700,
     rolldownOptions: {
       // jquery.terminal 解析扩展命令参数的内部 eval（jquery.terminal.js:7022）：CommandTerminal
       // 已用 escape_brackets 转义全部方括号并关闭 invokeMethods/exec，该求值路径运行时不可达；
@@ -19,8 +20,8 @@ export default defineConfig({
         defaultHandler(level, log)
       },
       output: {
-        // 首屏仪表盘的 echarts 与聊天的 highlight.js 各自成块：与业务代码分开缓存、
-        // 首页与其余路由并行加载；两者均为按需引入后的固有体积，500 kB 提示线不再适用。
+        // 仪表盘的 echarts 与聊天/Wiki 的 highlight.js 各自成纯异步块：路由级分割后不再进
+        // 主入口与 modulepreload，登录页不下载；两者均为按需引入后的固有体积。
         advancedChunks: {
           groups: [
             { name: 'echarts', test: /node_modules[\\/](?:echarts|zrender)[\\/]/ },

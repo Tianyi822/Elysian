@@ -79,8 +79,8 @@ export function createGateway(
     agentMemory?: 'mock' | 'http'
   } = {},
 ): ElysianGateway {
-  const dataset = createMockDataset()
-  const read = () => dataset
+  let datasetCache: ReturnType<typeof createMockDataset> | undefined
+  const read = () => (datasetCache ??= createMockDataset())
   const eventIntervalMs = options.eventIntervalMs ?? 5000
   const containerEvents = createContainerEventsLayer(read, { intervalMs: eventIntervalMs })
   const terminals: TerminalAdapter & { reset(): void } =
