@@ -19,10 +19,13 @@ const STATUS_TEXT: Record<HostTerminalSession['status'], string | undefined> = {
   connected: undefined,
 }
 
+/** 组内图标成员比外壳收一档，留出呼吸；外壳高度跟随通知按钮尺寸令牌。 */
+const MEMBER_SIZE = 'size-[calc(var(--ctl-height)_-_8px)]'
+
 /**
- * 终端页的标签栏：一枚浮在画布上的胶囊工具条，标签靠填充色表达选中，不再贴边压一条底边框。
- * 窄屏左侧空出 48px 给浮动「打开主导航」触发器——让位由工具条整体外移完成，
- * 内衬只留给标签，胶囊外壳才不会从按钮底下垫过去。
+ * 终端页的标签栏：不再套外层胶囊壳，控件直接浮在画布上；所有成员高度统一跟随
+ * 通知按钮尺寸（--message-button-size，窄屏 28 / 桌面 36），以通知按钮为标准。
+ * 窄屏左侧空出 48px 给浮动「打开主导航」触发器——让位由工具条整体外移完成。
  *
  * 形态按标签栏留给平铺项的宽度决定：摆得下就摊开，摆不下就只显当前项、其余收进浮层菜单。
  * 不用视口断点——同一视口下会话数量、演示标识显隐都会改变可用宽度。摊开所需宽度由隐藏探针量出，
@@ -83,7 +86,7 @@ export function TerminalTabBar({
   return (
     <div
       ref={rowRef}
-      className="shell-terminal-header relative ml-12 flex h-12 shrink-0 items-center rounded-full panel-surface px-2 md:ml-0"
+      className="shell-terminal-header relative ml-12 flex shrink-0 items-center gap-2 md:ml-0 [--ctl-height:var(--message-button-size)]"
     >
       {/* 固有宽度探针：脱离布局，量出全部标签摊开需要多宽。 */}
       <div
@@ -130,10 +133,10 @@ export function TerminalTabBar({
           value={active ? activeId : undefined}
           onSelect={onSelect}
           valueClassName="truncate font-medium text-fg"
-          // 收起形态仍留在同一枚胶囊里：触发器做成当前会话那枚选中胶囊，尾部多一个箭头。
+          // 收起形态触发器做成当前会话那枚选中胶囊，尾部多一个箭头；高度同通知按钮。
           triggerClassName={`${
             expanded ? 'hidden' : 'inline-flex'
-          } min-w-0 max-w-full items-center gap-1.5 rounded-full py-1 pl-3 text-sm font-medium transition-colors ${
+          } h-[var(--message-button-size)] min-w-0 max-w-full items-center gap-1.5 rounded-full pl-3 text-sm font-medium transition-colors ${
             active ? 'bg-nav-selected text-fg' : 'text-fg-muted hover:bg-nav-hover hover:text-fg'
           }`}
           contentClassName="select-menu"
@@ -144,6 +147,7 @@ export function TerminalTabBar({
               label={`关闭 ${activeLabel}`}
               variant="ghost"
               tone="danger-hover"
+              className={MEMBER_SIZE}
               onPress={() => onClose(active.id)}
             >
               <X aria-hidden size={15} />
@@ -152,7 +156,7 @@ export function TerminalTabBar({
         ) : null}
       </div>
 
-      <div ref={trailingRef} className={`${CTL_TOOLBAR} flex shrink-0 items-center gap-2 pl-2`}>
+      <div ref={trailingRef} className={`${CTL_TOOLBAR} flex shrink-0 items-center gap-2 [--ctl-height:var(--message-button-size)]`}>
         {isDockerRuntime() ? null : (
           <span className="hidden rounded bg-warning/15 px-1.5 py-0.5 text-xs font-medium text-warning sm:inline">
             {hostTerminalBanner()}
@@ -163,7 +167,7 @@ export function TerminalTabBar({
           <IconButton
             label="缩小终端字体"
             variant="ghost"
-            className="size-7"
+            className={MEMBER_SIZE}
             disabled={fontSize <= TERMINAL_FONT_SIZE_MIN}
             onPress={() => onFontZoom(-TERMINAL_FONT_SIZE_STEP)}
           >
@@ -172,7 +176,7 @@ export function TerminalTabBar({
           <IconButton
             label="放大终端字体"
             variant="ghost"
-            className="size-7"
+            className={MEMBER_SIZE}
             disabled={fontSize >= TERMINAL_FONT_SIZE_MAX}
             onPress={() => onFontZoom(TERMINAL_FONT_SIZE_STEP)}
           >
@@ -208,7 +212,7 @@ function TabItems({
       <div
         key={session.id}
         className={[
-          'flex shrink-0 items-center rounded-full py-0.5 pr-1 transition-colors',
+          'flex h-[var(--message-button-size)] shrink-0 items-center rounded-full pr-1 transition-colors',
           selected ? 'bg-nav-selected' : 'hover:bg-nav-hover',
         ].join(' ')}
       >
@@ -239,6 +243,7 @@ function TabItems({
           label={`关闭 ${label}`}
           variant="ghost"
           tone="danger-hover"
+          className={MEMBER_SIZE}
           onPress={() => onClose(session.id)}
         >
           <X aria-hidden size={15} />
