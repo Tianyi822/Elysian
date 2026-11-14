@@ -1,8 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import * as Tooltip from '@radix-ui/react-tooltip'
 import { observeElementSize } from '../../utils/observeElementSize'
 import { ToggleSwitch } from '../../components/ToggleSwitch'
 import { SlidePagination } from '../../components/easyui/SlidePagination'
 import { Badge } from '../../components/easyui/Badge'
+import { Button } from '../../components/easyui/Button'
+import { PressButton } from '../../components/easyui/PressButton'
+import { IOSSearchBar } from '../../components/easyui/IOSSearchBar'
 import {
   FIREWALL_DIRECTION_LABELS,
   FIREWALL_POLICY_LABELS,
@@ -15,13 +19,12 @@ import { useMessageStore } from '../../stores/messageStore'
 import { useIntrinsicWidth } from '../../app/layout/headerAccessoryWidth'
 import { IconButton } from '../../components/IconButton'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
-import { RefreshButton } from '../../components/RefreshState'
-import { CTL_FIELD, CTL_PRIMARY, CTL_TOOLBAR } from '../../components/formControl'
+import { CTL_TOOLBAR } from '../../components/formControl'
 import { ChipGroup } from '../../components/ChipGroup'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 import { formatDateTime } from '../../components/format'
-import { Pencil, Search, Trash2 } from '../../components/icons'
+import { Pencil, RefreshCw, Trash2 } from '../../components/icons'
 import { FIREWALL_PAGE_SIZE, useFirewallStore, type FirewallView } from '../../stores/firewallStore'
 import { FirewallExportDialog } from './FirewallExportDialog'
 import { FirewallForwardDialog } from './FirewallForwardDialog'
@@ -84,26 +87,44 @@ function ToggleRow({
   )
 }
 
-/** 参照样式里的工具按钮：可用的实体动作（导入走本地文件、防扫描见弹窗）。 */
+/** EasyUI PressButton 保留官方尺寸和压缩回弹，主题只替换颜色。 */
 function ToolButton({
   label,
   onClick,
   disabled = false,
+  primary = false,
 }: {
   label: string
   onClick?: () => void
   disabled?: boolean
+  primary?: boolean
 }) {
   return (
-    <button
-      type="button"
+    <PressButton
+      variant={primary ? 'primary' : 'outline'}
       onClick={onClick}
       disabled={disabled}
-      className={CTL_PRIMARY}
+      className="shrink-0 whitespace-nowrap"
     >
       {label}
-    </button>
+    </PressButton>
   )
+}
+
+function SyncButton({ onClick, busy = false }: { onClick?: () => void; busy?: boolean }) {
+  const label = busy ? '同步中…' : '同步规则'
+  return <Tooltip.Root>
+    <Tooltip.Trigger asChild>
+      <Button size="icon" variant="outline" className="rounded-full"
+        aria-label={label} onClick={onClick} isLoading={busy}
+        leftIcon={<RefreshCw size={14} aria-hidden />} />
+    </Tooltip.Trigger>
+    <Tooltip.Portal>
+      <Tooltip.Content side="bottom" sideOffset={6} className="z-[80] rounded border border-control-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg">
+        {label}<Tooltip.Arrow className="fill-surface-raised" />
+      </Tooltip.Content>
+    </Tooltip.Portal>
+  </Tooltip.Root>
 }
 
 /** 三类规则的视图切换：分段按钮，切换时清空搜索。选中态是滑动的底色块。 */
@@ -187,8 +208,8 @@ export function FirewallPanel() {
     return observeElementSize([element], measure)
   }, [ready])
 
-  // 同行判据：可排布宽度放得下「按钮行 + 间距 + 搜索框」就同行；差一点（两者会接触）
-  // 就整块拆两行，搜索框此时拉满父容器宽度。jsdom 量不出宽度时按拆行处理，布局不会错乱。
+  // 按搜索框完全展开后的宽度预留空间，避免聚焦伸展挤压按钮或触发换行。
+  // 放不下时页签先独占一行，操作与搜索按各自自然宽度换行。
   const toolbarInline =
     toolbarMetrics.available >= groupWidth + toolbarMetrics.gap + searchWidth && searchWidth > 0
 
@@ -228,14 +249,14 @@ export function FirewallPanel() {
   const toolbar = VIEW_TOOLBAR[view]
   const toolbarButtons =
     view === 'port'
-      ? [toolbar.addLabel, '导入规则', '导出规则', '端口防扫描', '同步规则']
-      : [toolbar.addLabel, '端口防扫描', '同步规则']
+      ? [toolbar.addLabel, '导入规则', '导出规则', '端口防扫描']
+      : [toolbar.addLabel, '端口防扫描']
 
   return (
     <div>
       {errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<button type="button" className="ml-2 underline" onClick={() => void load(gateway)}>重试</button></p> : null}
       {operationError ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-danger/40 p-3 text-xs text-danger"><p className="min-w-0 flex-1">{operationError}</p><button type="button" className="rounded border border-line px-3 py-1.5 text-fg" onClick={() => void load(gateway)}>重新读取状态</button></div> : null}
-      <div className={`${CTL_TOOLBAR} firewall-toolbar mb-4 flex flex-wrap items-center gap-x-4 gap-y-2 panel-surface px-4 py-3`}>
+      <div className={`${CTL_TOOLBAR} firewall-toolbar mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 panel-surface px-4 py-1`}>
         {/* 防火墙动作只在容器内真实执行 ufw；宿主机本地开发是内存演示，明示出来。 */}
         {!isDockerRuntime() ? (
           <span role="status" className="text-sm text-fg-muted">
@@ -261,22 +282,18 @@ export function FirewallPanel() {
         <StatChip label="IP 规则" count={ipRules.length} />
         <StatChip label="端口转发" count={forwards.length} />
       </div>
-      {/* 工具区：不依赖 flex 折行的猜测——探针量出按钮行的自然宽度，外壳量出可用宽度，
-          放得下（按钮行 + 间距 + 搜索框）就同行，放不下就按钮一行、搜索占满第二行。 */}
+      {/* 工具区按官方控件的自然尺寸排布；窄屏重排容器，不压缩组件。 */}
       <div
         ref={toolbarRef}
-        className={`${CTL_TOOLBAR} firewall-toolbar mb-4 panel-surface px-4 py-3 ${
-          toolbarInline ? 'flex items-center gap-2' : ''
-        }`}
+        className={`${CTL_TOOLBAR} firewall-toolbar mb-4 flex flex-wrap items-center gap-3 panel-surface px-3 py-2`}
       >
-        <div
-          className={
-            toolbarInline ? 'flex items-center gap-2' : 'flex flex-wrap items-center gap-2'
-          }
-        >
+        <div className={toolbarInline ? 'shrink-0' : 'w-full'}>
           <ViewSwitch view={view} onChange={setView} />
+        </div>
+        <div className="flex max-w-full flex-wrap items-center gap-2">
           <ToolButton
             label={toolbar.addLabel}
+            primary
             onClick={() => {
               if (view === 'port') openCreate()
               else if (view === 'ip') openCreateIp()
@@ -331,29 +348,18 @@ export function FirewallPanel() {
             </>
           ) : null}
           <ToolButton label="端口防扫描" onClick={() => openScan(gateway)} />
-          <RefreshButton
-            onPress={() => void syncFromSystem(gateway)}
+          <SyncButton
+            onClick={() => void syncFromSystem(gateway)}
             busy={syncing}
-            label={syncing ? '同步中…' : '同步规则'}
-            formControl
           />
         </div>
-        <div
-          className={toolbarInline ? 'relative ml-auto w-56 shrink-0' : 'relative mt-2 w-full'}
-        >
-          <Search
-            aria-hidden
-            className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-fg-subtle"
-          />
-          <label htmlFor="firewall-search" className="sr-only">
-            {toolbar.searchLabel}
-          </label>
-          <input
+        <div className="ml-auto flex w-[340px] max-w-full justify-start sm:justify-end">
+          <IOSSearchBar
             id="firewall-search"
+            label={toolbar.searchLabel}
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="请输入端口/来源"
-            className={`${CTL_FIELD} pl-8 pr-3`}
+            onChange={setSearch}
+            placeholder={toolbar.searchLabel}
           />
         </div>
       </div>
@@ -363,14 +369,17 @@ export function FirewallPanel() {
           打开顶栏折叠菜单时滚动条补偿会按这份超出把整页挤窄。
           invisible（含 aria-hidden + pointer-events-none）使探针不参与无障碍树与交互。 */}
       <div aria-hidden className="pointer-events-none invisible absolute top-0 left-0 h-0 w-0 overflow-hidden">
-        <div ref={probeRef} className={`${CTL_TOOLBAR} firewall-toolbar flex w-max gap-2`}>
+        <div ref={probeRef} className={`${CTL_TOOLBAR} firewall-toolbar flex w-max items-center gap-3`}>
           <ViewSwitch view={view} onChange={() => {}} />
-          {toolbarButtons.map((label) => (
-            <ToolButton key={label} label={label} />
-          ))}
+          <div className="flex items-center gap-2">
+            {toolbarButtons.map((label) => (
+              <ToolButton key={label} label={label} primary={label === toolbar.addLabel} />
+            ))}
+            <SyncButton />
+          </div>
         </div>
-        {/* 与同行形态的搜索框同宽（w-56），量出它的实际宽度 */}
-        <div ref={searchProbeRef} className="w-56" />
+        {/* 预留 IOSSearchBar 官方展开宽度，聚焦期间布局不跳动。 */}
+        <div ref={searchProbeRef} className="w-[340px]" />
       </div>
       {view === 'port' ? (
         <>

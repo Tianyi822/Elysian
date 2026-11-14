@@ -15,7 +15,9 @@
     "NotificationBell.tsx": "src/components/ui/NotificationBell.tsx",
     "LiquidToggle.tsx": "src/components/ui/LiquidToggle.tsx",
     "SlidePagination.tsx": "src/components/ui/SlidePagination.tsx",
-    "original-controls.css": "src/styles/tokens.css"
+    "original-controls.css": "src/styles/tokens.css",
+    "IOSSearchBar.tsx": "src/components/ui/IOSSearchBar.tsx",
+    "PressButton.tsx": "src/components/ui/PressButton.tsx"
   },
   "adaptations": [
     "Map colors to existing semantic theme tokens and Chinese labels.",
@@ -31,6 +33,8 @@
     "Keep SlidePagination upstream classes, 32px square targets, 6px corners, page-range logic and scoped original palette; the firewall calls showControls=false. Retain Chinese accessibility labels and reduced-motion support.",
     "Keep the dashboard header mounted for loading, error and empty history; update existing cards and SVGs in place, morph compatible path geometry and persist live demo samples into its frontend history buffer.",
     "Unify primary page tabs, toolbar filters and form segments through PillNavigation adapters; preserve controlled state, disabled state, repeated-selection callbacks and responsive header dropdowns. Scope long-row scrolling within each pill bar; remove the obsolete AnimatedTabs copy and measured slider hook.",
-    "Use the existing EasyUI soft neutral Badge for firewall rule totals, replacing the divided custom stat chips while preserving live counts and immediate text updates."
+    "Use the existing EasyUI soft neutral Badge for firewall rule totals, replacing the divided custom stat chips while preserving live counts and immediate text updates.",
+    "Copy IOSSearchBar for the firewall controlled search. Keep its pill, focus state, quick-clear animation and Escape blur; add a stable accessible name, Chinese clear tooltip, composition-safe Enter, disabled clear and reduced-motion support. Only map colors to semantic theme tokens; preserve upstream 40px height, 14px horizontal padding, 16px input text and 220px-to-340px focus expansion. Clamp at the container width on narrow screens and omit the unbound shortcut hint.",
+    "Copy PressButton for firewall text actions, preserving upstream default size, variants, pressStrength, anisotropic compression and spring return. Only adapt theme colors and disabled/reduced-motion handling; keep synchronization on a 40px circular EasyUI Button with Tooltip and loading state. Remove obsolete toolbar control overrides, reserve the search expanded width in the intrinsic probe, and wrap tabs/actions/search groups without compressing EasyUI controls. The status strip retains 4px vertical padding."
   ]
 }

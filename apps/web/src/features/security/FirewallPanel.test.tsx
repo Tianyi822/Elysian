@@ -134,7 +134,10 @@ describe('防火墙面板', () => {
     const table = screen.getByRole('region', { name: '端口规则表' })
     expect(within(table).getAllByRole('row')).toHaveLength(3) // 表头 + v4/v6 两行
 
-    await user.clear(screen.getByLabelText('搜索端口、来源或备注'))
+    await user.click(screen.getByRole('button', { name: '清空搜索' }))
+    expect(screen.getByLabelText('搜索端口、来源或备注')).toHaveValue('')
+    expect(screen.getByLabelText('搜索端口、来源或备注')).toHaveFocus()
+    expect(within(table).getAllByRole('row')).toHaveLength(FIREWALL_PAGE_SIZE + 1)
     await user.type(screen.getByLabelText('搜索端口、来源或备注'), '不存在的规则')
     expect(await screen.findByText('没有匹配的端口规则，换个关键词或清空搜索')).toBeInTheDocument()
   })
@@ -266,9 +269,8 @@ describe('防火墙面板', () => {
     await openFirewallPage()
 
     const add = screen.getByRole('button', { name: '添加端口规则' })
-    // 不换行现在由控件层的 .ctl 统一给出，不再逐个按钮挂 utility；
-    // jsdom 不加载样式表，算不出 computed white-space，所以守住它确实走了控件层。
-    expect(add.className).toContain('ctl')
+    // EasyUI 工具按钮沿用原来的不收缩、不拆标签约束。
+    expect(add).toHaveClass('shrink-0', 'whitespace-nowrap')
     expect(screen.getByRole('group', { name: '规则类型' }).className).toContain('shrink-0')
   })
 

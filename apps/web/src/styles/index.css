@@ -502,26 +502,10 @@
     --icon-button-radius: var(--radius-lg);
   }
 
-  /* 防火墙分组外框高 32px，内部页签扣除上下描边与内距后高 26px。 */
+  /* 防火墙外壳只管理面板与页签令牌；EasyUI 操作、搜索保留各自原始尺寸。 */
   .firewall-toolbar {
     --panel-radius: var(--radius-xl);
     --ctl-height: 2rem;
-    /* 图标按钮与同行按钮同一色阶：静止走分组的轻量轮廓，悬停才抬到控件档。 */
-    --icon-button-line: var(--t-panel-line);
-    --icon-button-bg: var(--t-surface);
-    --icon-button-line-hover: var(--t-control-line);
-    --icon-button-bg-hover: var(--t-surface-raised);
-  }
-  /* 独立动作与页签外框同为一档（都读 --ctl-height），不再按内部色块收矮：
-     同一行里按钮比它旁边的胶囊组矮一截，读起来像两个体系。底色和描边沿用分组的轻量轮廓。 */
-  .firewall-toolbar .ctl-default {
-    border-color: var(--t-control-line);
-    background-color: var(--t-surface);
-    color: var(--t-fg);
-  }
-  .firewall-toolbar .ctl-default:hover:not(:disabled) {
-    border-color: var(--t-control-line);
-    background-color: var(--t-surface-raised);
   }
 
   /* 卡片内的信息格：标签加读数，或一行事实说明。 */

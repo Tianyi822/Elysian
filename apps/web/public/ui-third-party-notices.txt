@@ -5,6 +5,8 @@ Reference revision: f7193ce6f96d38fb39734c0ed8be43567a7eee4a
 Source components copied and adapted under src/components/easyui/:
 - StatCard.tsx (including pointer/keyboard scrubber, spring cursor and SVG chart)
 - Button.tsx (variants, loading state and spring press feedback)
+- PressButton.tsx (layered press compression, spring return and theme variants)
+- IOSSearchBar.tsx (controlled search pill, focus state and animated quick clear)
 - Badge.tsx (variants, status dot and optional animated content)
 - PillNavigation.tsx (global page tabs, toolbar/form segments and shared-layout selection)
 - NotificationBell.tsx (extracted bell trigger, arrival shake and unread dot)
