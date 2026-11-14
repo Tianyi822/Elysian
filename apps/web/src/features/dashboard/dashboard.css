@@ -1,4 +1,14 @@
-/* 窄屏只收紧控件高度，时间选择器与刷新仍沿用工具栏的胶囊／圆形。 */
+.demo-data-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 7px;
+  border: 1px solid var(--t-panel-line);
+  border-radius: 6px;
+}
+.demo-data-label::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+
+/* 窄屏收紧控件高度，读数卡仍保持足够的文字和趋势空间。 */
 @media (max-width: 767.98px) {
   .dashboard-filters {
     --ctl-height: 1.75rem;

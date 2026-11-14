@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router'
 import { useGateway } from '../../adapters/GatewayProvider'
+import { Button } from '../../components/easyui/Button'
 import { LoginPasswordInput } from './LoginPasswordInput'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { Bot, Info, TriangleAlert } from '../../components/icons'
@@ -25,7 +26,7 @@ import { useMessageStore } from '../../stores/messageStore'
 
 /** 登录表单的两个文本控件同款：内凹一档表达「可写入」，与主按钮的凸起描边成对。 */
 const FIELD_CLASS =
-  'h-9 w-full rounded-lg border border-control-line bg-surface-raised px-2.5 text-sm text-fg shadow-[inset_0_1px_2px_var(--t-panel-shadow)] transition-colors placeholder:text-fg-subtle hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
+  'h-9 w-full rounded-lg border border-control-line bg-surface-raised px-2.5 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
 
 /** 回跳目标校验：须为以单个 / 开头的站内路径；`//` 与 `/\` 是协议相对跳转，一律回落首页。 */function safeRedirectTarget(from: unknown): string {
   if (typeof from !== 'string') return '/'
@@ -36,7 +37,7 @@ const FIELD_CLASS =
 /**
  * 登录页各态共用的居中外壳：错误态、两个过渡态、表单四处都用它。
  * 一处样式改动只需改这里，不会只落在某一份拷贝上（此前四处手抄同一串 className）。
- * app-canvas 提供色雾与细颗粒背景，卡片与侧栏的毛玻璃才有东西可糊。
+ * app-canvas 与共享面板提供双主题中性表面。
  */
 function CenteredShell({ children }: { children: ReactNode }) {
   return <main className="app-canvas flex min-h-dvh items-center justify-center p-4 text-fg">{children}</main>
@@ -175,7 +176,7 @@ export function LoginPage() {
           {/* 全站统一使用 Ely 图标作为品牌标识。 */}
           <span
             aria-hidden
-            className="grid size-10 shrink-0 place-items-center rounded-xl border border-panel-line bg-nav-selected text-base font-semibold text-accent-fg shadow-[inset_0_1px_0_var(--t-panel-sheen)]"
+            className="grid size-10 shrink-0 place-items-center rounded-xl border border-panel-line bg-surface-raised text-base font-semibold text-fg"
           >
             <Bot size={24} />
           </span>
@@ -230,14 +231,17 @@ export function LoginPage() {
               />
           </div>
 
-          {/* 主按钮中性描边，动作写进文字（红线：不靠图标表意、不做强调填充底）。 */}
-          <button
+          {/* 主按钮沿用共享中性色控件，保留提交与忙碌状态。 */}
+          <Button
             type="submit"
             disabled={submitting}
-            className="h-9 w-full rounded-lg border border-control-line bg-surface-raised px-4 text-sm font-medium text-fg shadow-[0_1px_2px_var(--t-panel-shadow),inset_0_1px_0_var(--t-panel-sheen)] transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50"
+            isLoading={submitting}
+            loadingText="正在登录…"
+            fullWidth
+            className="h-9 text-sm"
           >
             {submitting ? '正在登录…' : '登录'}
-          </button>
+          </Button>
         </form>
       </section>
     </CenteredShell>

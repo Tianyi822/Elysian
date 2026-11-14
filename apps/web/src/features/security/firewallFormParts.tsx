@@ -1,4 +1,5 @@
 import { CTL_FIELD } from '../../components/formControl'
+import { ChipGroup } from '../../components/ChipGroup'
 
 /*
  * 防火墙三个规则弹窗共用的表单部件与常量。
@@ -18,31 +19,7 @@ export function SegmentedControl<T extends string>({
   value: T
   onChange: (value: T) => void
 }) {
-  return (
-    <div
-      role="group"
-      aria-label={groupLabel}
-      className="inline-flex overflow-hidden rounded-lg border border-line"
-    >
-      {options.map((option, index) => (
-        <button
-          key={option.value}
-          type="button"
-          aria-pressed={option.value === value}
-          onClick={() => onChange(option.value)}
-          className={`whitespace-nowrap px-3 py-1.5 text-xs transition-colors ${
-            index > 0 ? 'border-l border-line' : ''
-          } ${
-            option.value === value
-              ? 'bg-surface-raised font-medium text-fg'
-              : 'text-fg-muted hover:bg-surface-raised hover:text-fg'
-          }`}
-        >
-          {option.label}
-        </button>
-      ))}
-    </div>
-  )
+  return <ChipGroup ariaLabel={groupLabel} items={options} value={value} onSelect={onChange} />
 }
 
 /** 端口输入的合法形态：单端口或冒号端口段（8080 / 1000:2000）。 */

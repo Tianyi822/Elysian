@@ -32,7 +32,7 @@ describe('设置中的 MCP 配置', () => {
     await user.click(screen.getByRole('button', { name: '新建 MCP 服务' }))
     expect(await screen.findByRole('dialog', { name: '新建 MCP 服务' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '连接方式：Streamable HTTP' })).toHaveTextContent('Streamable HTTP')
-    expect(screen.getByRole('switch', { name: '启用服务' })).toHaveAttribute('data-state', 'checked')
+    expect(screen.getByRole('switch', { name: '启用服务' })).toHaveAttribute('aria-checked', 'true')
     expect(screen.getByText(/已有凭据不回显/)).toBeInTheDocument()
   })
 
@@ -247,7 +247,7 @@ describe('配置边界与请求恢复', () => {
     await user.click(await screen.findByRole('button', { name: '更多操作 backup-verify' }))
     await user.click(screen.getByRole('menuitem', { name: '更新 Skill' }))
     expect(screen.getByRole('switch', { name: '导入后启用' })).toBeDisabled()
-    expect(screen.getByRole('switch', { name: '导入后启用' })).toHaveAttribute('data-state', 'unchecked')
+    expect(screen.getByRole('switch', { name: '导入后启用' })).toHaveAttribute('aria-checked', 'false')
     await user.click(screen.getByRole('button', { name: '服务器目录' }))
     await user.type(screen.getByLabelText('服务器绝对目录'), '/opt/skills/updated')
     await gateway.agentExtensions.setSkillEnabled('skill-demo-backup', 1, true)

@@ -185,7 +185,7 @@ export function FirewallForwardDialog() {
             {!isDockerRuntime() ? (
               <p className="text-xs text-fg-subtle">只改演示内存，不触碰真实防火墙。</p>
             ) : null}
-            <div className="ml-auto flex gap-2">
+            <div className="ml-auto flex shrink-0 gap-2 whitespace-nowrap">
               <button
                 type="button"
                 onClick={() => closeDialog()}

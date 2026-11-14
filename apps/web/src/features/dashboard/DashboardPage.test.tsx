@@ -88,6 +88,33 @@ describe('仪表盘布局', () => {
 })
 
 describe('仪表盘筛选栏', () => {
+  it('切换时间窗只更新原位图表，不卸载顶部、统计卡或 SVG', async () => {
+    const user = userEvent.setup()
+    const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+    const initial = await base.resources.list('5m')
+    let release!: () => void
+    const pending = new Promise<void>(resolve => { release = resolve })
+    const gateway: ElysianGateway = { ...base, resources: { list: async range => {
+      if (range === '5m') return initial
+      await pending
+      return initial.map(point => ({ ...point, cpu: 13 }))
+    } } }
+    renderApp('/', { gateway })
+    await screen.findByLabelText('服务器状态')
+    const header = screen.getByLabelText('筛选栏')
+    const card = screen.getByRole('article', { name: 'CPU 使用率' })
+    const chart = within(card).getByRole('img')
+    await user.click(screen.getByRole('button', { name: '近 7 天' }))
+    expect(screen.getByLabelText('筛选栏')).toBe(header)
+    expect(within(card).getByRole('img')).toBe(chart)
+    expect(screen.queryByText('正在加载仪表盘…')).not.toBeInTheDocument()
+    release()
+    await waitFor(() => expect(within(card).getByText('13%')).toBeInTheDocument())
+    expect(screen.getByLabelText('筛选栏')).toBe(header)
+    expect(screen.getByRole('article', { name: 'CPU 使用率' })).toBe(card)
+    expect(within(card).getByRole('img')).toBe(chart)
+  })
+
   it('时间范围可切换，默认近 5 分钟', async () => {
     const user = userEvent.setup()
     await renderReady()
@@ -127,16 +154,39 @@ describe('仪表盘筛选栏', () => {
     expect(group).not.toHaveClass('@min-[39rem]:flex')
   })
 
+  it('时间胶囊支持方向键与首尾键，并跟随外部状态回填', async () => {
+    const user = userEvent.setup()
+    await renderReady()
+    const group = screen.getByRole('group', { name: '时间范围' })
+    const first = within(group).getByRole('button', { name: '近 5 分钟' })
+    first.focus()
+    await user.keyboard('{ArrowRight}')
+    expect(useDashboardStore.getState().range).toBe('30m')
+    expect(within(group).getByRole('button', { name: '近 30 分钟' })).toHaveFocus()
+    await user.keyboard('{End}')
+    expect(useDashboardStore.getState().range).toBe('7d')
+    await user.keyboard('{Home}')
+    expect(first).toHaveFocus()
+    expect(useDashboardStore.getState().range).toBe('5m')
+    act(() => useDashboardStore.setState({ range: '1h' }))
+    expect(within(group).getByRole('button', { name: '近 1 小时' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
   it('刷新期间保留内容；刷新失败保留内容并进入通知', async () => {
     const user = userEvent.setup()
     const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
     let calls = 0
+    let release!: () => void
+    const barrier = new Promise<void>(resolve => { release = resolve })
     const gateway: ElysianGateway = {
       ...base,
       resources: {
         list: async (range) => {
           calls += 1
-          if (calls > 1) throw new Error('演示用的刷新失败')
+          if (calls > 1) {
+            await barrier
+            throw new Error('演示用的刷新失败')
+          }
           return base.resources.list(range)
         },
       },
@@ -146,6 +196,12 @@ describe('仪表盘筛选栏', () => {
     await screen.findByLabelText('服务器状态')
 
     await user.click(screen.getByRole('button', { name: '刷新' }))
+    expect(screen.getByRole('button', { name: '刷新' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '刷新' })).toHaveAttribute('aria-busy', 'true')
+    expect(screen.getByLabelText('服务器状态')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '刷新' }))
+    expect(calls).toBe(2)
+    release()
 
     await waitFor(() => expect(useMessageStore.getState().messages).toEqual([expect.objectContaining({ tone: 'danger', message: '演示用的刷新失败' })]))
     expect(screen.getByLabelText('服务器状态')).toBeInTheDocument()
@@ -170,7 +226,7 @@ describe('仪表盘快捷操作', () => {
 describe('仪表盘资源监控', () => {
   const latest = createResourceMetrics()[createResourceMetrics().length - 1]!
 
-  it('四张读数卡取最后一个采样并带单位，下方四张趋势卡沿用同序数据', async () => {
+  it('四张统计卡取最后一个采样并带单位，不再渲染独立趋势区', async () => {
     await renderReady()
 
     const section = screen.getByLabelText('服务器状态')
@@ -179,14 +235,13 @@ describe('仪表盘资源监控', () => {
     for (const key of METRIC_KEYS) {
       const card = within(section).getByRole('article', { name: RESOURCE_METRIC_LABELS[key] })
       expect(screen.getByLabelText('当前资源读数')).toContainElement(card)
-      expect(screen.getByLabelText('资源趋势')).toContainElement(
-        within(section).getByRole('article', { name: `${RESOURCE_METRIC_LABELS[key]}趋势` }),
-      )
       const unit = RESOURCE_METRIC_UNITS[key]
       expect(
         within(card).getByText(formatResourceMetricValue(latest[key], unit)),
       ).toBeInTheDocument()
     }
+    expect(screen.queryByLabelText('资源趋势')).not.toBeInTheDocument()
+    expect(within(section).getAllByRole('article')).toHaveLength(4)
 
     await waitFor(() => {
       expect(section.querySelectorAll('svg').length).toBeGreaterThanOrEqual(4)
@@ -213,13 +268,13 @@ describe('仪表盘资源监控', () => {
     }
   })
 
-  it('服务器状态有四张读数卡与四张趋势卡，不增加新的资源指标', async () => {
+  it('只保留四张资源统计卡', async () => {
     await renderReady()
     const section = screen.getByLabelText('服务器状态')
     expect(within(section).queryByRole('article', { name: '运行负载' })).not.toBeInTheDocument()
     expect(within(section).queryByRole('article', { name: '磁盘占用' })).not.toBeInTheDocument()
     expect(within(screen.getByLabelText('当前资源读数')).getAllByRole('article')).toHaveLength(4)
-    expect(within(screen.getByLabelText('资源趋势')).getAllByRole('article')).toHaveLength(4)
+    for (const key of METRIC_KEYS) expect(within(section).queryByRole('article', { name: `${RESOURCE_METRIC_LABELS[key]}趋势` })).not.toBeInTheDocument()
   })
 
   it('新增采样后当前读数立即更新，不保留拆分前的旧值', async () => {
@@ -248,5 +303,8 @@ describe('仪表盘空态', () => {
 
     expect(await screen.findByText('暂无资源数据')).toBeInTheDocument()
     expect(screen.queryByLabelText('服务器状态')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('筛选栏')).toBeInTheDocument()
+    expect(screen.getByRole('group', { name: '时间范围' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '刷新' })).toBeEnabled()
   })
 })

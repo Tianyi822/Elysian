@@ -1,4 +1,4 @@
-import * as Switch from '@radix-ui/react-switch'
+export { ToggleSwitch as SwitchToggle } from '../../components/ToggleSwitch'
 import { useId } from 'react'
 import type { ReactNode } from 'react'
 import { CTL_FIELD, CTL_PRIMARY, CTL_SECONDARY, FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
@@ -84,31 +84,6 @@ export function TablePager({
         </button>
       </nav>
     </div>
-  )
-}
-
-/** 开关本体：只画控件，标签与排布由调用方决定；界面上的布尔设置都从这里出。 */
-export function SwitchToggle({
-  label,
-  checked,
-  disabled = false,
-  onCheckedChange,
-}: {
-  label: string
-  checked: boolean
-  disabled?: boolean
-  onCheckedChange: (checked: boolean) => void
-}) {
-  return (
-    <Switch.Root
-      checked={checked}
-      disabled={disabled}
-      onCheckedChange={onCheckedChange}
-      aria-label={label}
-      className="ui-switch relative inline-flex h-5 w-9 shrink-0 items-center"
-    >
-      <Switch.Thumb className="ui-switch-thumb ml-0.5 block size-3.5 data-[state=checked]:translate-x-4" />
-    </Switch.Root>
   )
 }
 

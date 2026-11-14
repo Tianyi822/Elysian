@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { observeElementSize } from '../../utils/observeElementSize'
-import { SwitchToggle } from './sshCardParts'
+import { ToggleSwitch } from '../../components/ToggleSwitch'
+import { SlidePagination } from '../../components/easyui/SlidePagination'
 import {
   FIREWALL_DIRECTION_LABELS,
   FIREWALL_POLICY_LABELS,
@@ -77,7 +78,7 @@ function ToggleRow({
       className={`inline-flex h-8 items-center gap-2 text-sm text-fg ${disabled ? 'opacity-50' : 'cursor-pointer'}`}
     >
       {label}
-      <SwitchToggle label={label} checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} />
+      <ToggleSwitch label={label} checked={checked} disabled={disabled} busy={disabled} onCheckedChange={onCheckedChange} />
     </label>
   )
 }
@@ -426,39 +427,7 @@ export function FirewallPanel() {
             <span>
               共 {filtered.rules.length} 条 · 每页 {FIREWALL_PAGE_SIZE} 条
             </span>
-            <nav aria-label="分页" className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => setPage(safePage - 1)}
-                disabled={safePage <= 1}
-                className="rounded-lg border border-line px-2 py-1 transition-colors enabled:hover:bg-surface-raised enabled:hover:text-fg disabled:opacity-50"
-              >
-                上一页
-              </button>
-              {Array.from({ length: pageCount }, (_, index) => index + 1).map((pageNumber) => (
-                <button
-                  key={pageNumber}
-                  type="button"
-                  aria-current={pageNumber === safePage ? 'page' : undefined}
-                  onClick={() => setPage(pageNumber)}
-                  className={`min-w-7 rounded-lg border px-2 py-1 tabular-nums transition-colors ${
-                    pageNumber === safePage
-                      ? 'border-accent/50 bg-accent/10 font-medium text-accent-fg'
-                      : 'border-line hover:bg-surface-raised hover:text-fg'
-                  }`}
-                >
-                  {pageNumber}
-                </button>
-              ))}
-              <button
-                type="button"
-                onClick={() => setPage(safePage + 1)}
-                disabled={safePage >= pageCount}
-                className="rounded-lg border border-line px-2 py-1 transition-colors enabled:hover:bg-surface-raised enabled:hover:text-fg disabled:opacity-50"
-              >
-                下一页
-              </button>
-            </nav>
+            <SlidePagination pageCount={pageCount} page={safePage} onChange={setPage} showControls={false} />
           </div>
         </>
       ) : view === 'ip' ? (

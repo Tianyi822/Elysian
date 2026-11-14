@@ -1,4 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog'
+import { ChipGroup } from '../../components/ChipGroup'
 import { useState } from 'react'
 import {
   HOST_USER_LOGIN_METHODS,
@@ -192,23 +193,8 @@ export function HostUserDialog() {
 
             <div>
               <p className="mb-1 text-xs font-medium text-fg-muted">登录方式</p>
-              <div role="group" aria-label="登录方式" className="grid grid-cols-2 gap-2">
-                {HOST_USER_LOGIN_METHODS.map((method) => (
-                  <button
-                    key={method}
-                    type="button"
-                    aria-pressed={loginMethod === method}
-                    onClick={() => setLoginMethod(method)}
-                    className={`rounded-lg border px-2.5 py-2 text-left text-xs transition-colors ${
-                      loginMethod === method
-                        ? 'border-accent/50 bg-accent/10 font-medium text-accent-fg'
-                        : 'border-line text-fg-muted hover:border-fg-subtle hover:text-fg'
-                    }`}
-                  >
-                    {HOST_USER_LOGIN_METHOD_LABELS[method]}
-                  </button>
-                ))}
-              </div>
+              <ChipGroup ariaLabel="登录方式" items={HOST_USER_LOGIN_METHODS.map(value => ({ value, label: HOST_USER_LOGIN_METHOD_LABELS[value] }))}
+                value={loginMethod} onSelect={setLoginMethod} />
             </div>
 
             {passwordUsable ? (
@@ -255,23 +241,8 @@ export function HostUserDialog() {
 
             <div>
               <p className="mb-1 text-xs font-medium text-fg-muted">账号状态</p>
-              <div role="group" aria-label="账号状态" className="grid grid-cols-2 gap-2">
-                {HOST_USER_STATUSES.map((value) => (
-                  <button
-                    key={value}
-                    type="button"
-                    aria-pressed={status === value}
-                    onClick={() => setStatus(value)}
-                    className={`rounded-lg border px-2.5 py-2 text-left text-xs transition-colors ${
-                      status === value
-                        ? 'border-accent/50 bg-accent/10 font-medium text-accent-fg'
-                        : 'border-line text-fg-muted hover:border-fg-subtle hover:text-fg'
-                    }`}
-                  >
-                    {HOST_USER_STATUS_LABELS[value]}
-                  </button>
-                ))}
-              </div>
+              <ChipGroup ariaLabel="账号状态" items={HOST_USER_STATUSES.map(value => ({ value, label: HOST_USER_STATUS_LABELS[value] }))}
+                value={status} onSelect={setStatus} />
               <p className="mt-2 text-xs text-fg-subtle">
                 停用后无论登录方式如何都登不上；只跑脚本的账号用「禁止登录」更合适。
               </p>

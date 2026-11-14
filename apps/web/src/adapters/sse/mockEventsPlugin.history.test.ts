@@ -1,7 +1,9 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { describe, expect, it } from 'vitest'
+import { EventEmitter } from 'node:events'
+import { describe, expect, it, vi } from 'vitest'
 import type { ResourceSamplePoint } from '../../contracts/adapters'
-import { createResourceHistoryHandler, parseHistoryRangeParam } from './mockEventsPlugin'
+import { createEventsHandler, createResourceHistoryHandler, parseHistoryRangeParam } from './mockEventsPlugin'
+import { listMockHistory, resetMockHistory, seedMockHistoryIfEmpty } from '../mock/resourceMetrics'
 
 function createHistoryStub(url: string) {
   const req = {
@@ -49,6 +51,28 @@ describe('parseHistoryRangeParam', () => {
 })
 
 describe('GET /api/resources/history 处理器', () => {
+  it('演示运行超过种子窗口后，实时采样仍进入历史而不会切窗清空', () => {
+    vi.useFakeTimers()
+    const req = Object.assign(new EventEmitter(), { method: 'GET', headers: {}, url: '/api/events' })
+    const res = Object.assign(new EventEmitter(), { writeHead: vi.fn(), write: vi.fn(), end: vi.fn() })
+    try {
+      resetMockHistory()
+      const start = 1_700_000_000_000
+      seedMockHistoryIfEmpty(start)
+      const now = start + 2 * 60 * 60_000
+      vi.setSystemTime(now)
+      expect(listMockHistory('5m', now)).toEqual([])
+      createEventsHandler({ docker: false })(req as unknown as IncomingMessage, res as unknown as ServerResponse)
+      expect(listMockHistory('5m', now).at(-1)?.ts).toBe(now)
+      vi.advanceTimersByTime(5000)
+      expect(listMockHistory('5m', now + 5000).at(-1)?.ts).toBe(now + 5000)
+    } finally {
+      req.emit('close')
+      vi.useRealTimers()
+      resetMockHistory()
+    }
+  })
+
   it('非 GET 返回 405', () => {
     const handler = createResourceHistoryHandler({ docker: false, nowMs: () => 1_700_000_000_000 })
     const { req, res, getBody } = createHistoryStub('/api/resources/history?range=5m')

@@ -13,16 +13,10 @@
   z-index: 73;
   width: var(--message-button-size);
   height: var(--message-button-size);
-  --icon-button-radius: 9999px;
-  --icon-button-line: var(--t-panel-line);
-  --icon-button-bg: var(--t-panel-glass-overlay);
   pointer-events: auto;
-  backdrop-filter: blur(12px);
 }
 .message-trigger:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 3px; }
-.message-unread { position: absolute; top: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--t-accent-fg); }
 .message-panel {
-  --message-feather: clamp(12px, 3.5vw, 24px);
   position: fixed;
   inset-block: 0;
   right: 0;
@@ -35,24 +29,11 @@
   padding: 0 var(--message-edge);
   border: 0;
   border-radius: 0;
-  background: transparent;
+  background: var(--t-surface);
   color: var(--t-fg);
-  box-shadow: none;
+  border-left: 1px solid var(--t-panel-line);
+  box-shadow: -12px 0 40px -20px var(--t-panel-shadow);
   outline: none;
-}
-/* 场底只做很淡的一层模糊，靠左侧窄幅渐入与页面衔接；材质由每条消息自己的玻璃承担。
-   模糊半径必须写字面量：值里出现 var() 时构建压缩会丢掉标准 backdrop-filter 声明，只剩 -webkit- 前缀那条；
-   mask-image 里的 var() 不受影响，渐入宽度仍可随视口收放。 */
-.message-panel::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  -webkit-backdrop-filter: blur(10px);
-  backdrop-filter: blur(10px);
-  -webkit-mask-image: linear-gradient(to right, transparent, #000 var(--message-feather));
-  mask-image: linear-gradient(to right, transparent, #000 var(--message-feather));
 }
 .message-panel[data-state="open"] { animation: message-panel-in 220ms cubic-bezier(0.22, 1, 0.36, 1); }
 .message-panel[data-state="closed"] { animation: message-panel-out 160ms ease-in both; }
@@ -72,8 +53,7 @@
 .message-item[data-clearing] { animation: message-item-out 180ms ease-in var(--message-delay) both; }
 .message-more { flex-shrink: 0; margin: 0 12px 8px; }
 .message-empty { display: grid; flex: 1; place-items: center; padding-bottom: var(--shell-header-height); }
-/* 只做位移：祖先带 opacity 动画会被提升为独立合成层，场底模糊与条目玻璃只能采到这个空层，
-   表现为整段动画全透明、动画结束才突然出现模糊。 */
+/* 浮层只做短位移过渡；减少动态效果时直接落位。 */
 @keyframes message-panel-in { from { transform: translateX(calc(100% + var(--message-edge))); } }
 @keyframes message-panel-out { to { transform: translateX(calc(100% + var(--message-edge))); } }
 @keyframes message-item-out { to { transform: translateX(24px); opacity: 0; } }

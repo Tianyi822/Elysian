@@ -1,4 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog'
+import { ChipGroup } from '../../components/ChipGroup'
 import { useState } from 'react'
 import { X } from '../../components/icons'
 import { useFirewallStore } from '../../stores/firewallStore'
@@ -56,29 +57,7 @@ export function FirewallExportDialog() {
 
           <div className="px-4 py-4">
             <p className="mb-1 text-xs font-medium text-fg-muted">导出方向</p>
-            <div
-              role="group"
-              aria-label="导出方向"
-              className="inline-flex overflow-hidden rounded-lg border border-line"
-            >
-              {FIREWALL_EXPORT_DIRECTIONS.map(({ value, label }, index) => (
-                <button
-                  key={value}
-                  type="button"
-                  aria-pressed={direction === value}
-                  onClick={() => setDirection(value)}
-                  className={`whitespace-nowrap px-3 py-1.5 text-xs transition-colors ${
-                    index > 0 ? 'border-l border-line' : ''
-                  } ${
-                    direction === value
-                      ? 'bg-surface-raised font-medium text-fg'
-                      : 'text-fg-muted hover:bg-surface-raised hover:text-fg'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            <ChipGroup ariaLabel="导出方向" items={FIREWALL_EXPORT_DIRECTIONS} value={direction} onSelect={setDirection} />
             <p className="mt-3 text-xs text-fg-subtle">
               将导出{FIREWALL_EXPORT_DIRECTIONS.find((item) => item.value === direction)?.label}
               的 <span className="font-medium tabular-nums text-fg">{count}</span> 条规则为 JSON 文件；文件在本机生成。

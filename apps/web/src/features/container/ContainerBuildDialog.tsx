@@ -1,10 +1,11 @@
 import * as Dialog from '@radix-ui/react-dialog'
+import { ChipGroup } from '../../components/ChipGroup'
 import { useState } from 'react'
 import { Hammer, Loader2, TriangleAlert, X } from '../../components/icons'
 import type { ContainerApp, ContainerBuildSubmitInput } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
-import { CTL_CHIP, CTL_FIELD, CTL_PRIMARY, CTL_SECONDARY } from '../../components/formControl'
+import { CTL_FIELD, CTL_PRIMARY, CTL_SECONDARY } from '../../components/formControl'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { SuggestionInput } from '../../components/SuggestionInput'
 import { newBuildRequestId, useContainerAppsStore } from '../../stores/containerAppsStore'
@@ -163,14 +164,8 @@ export function ContainerBuildDialog({ app, onClose }: { app: ContainerApp; onCl
           ) : null}
 
           <div className="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto pr-0.5">
-            <div role="group" aria-label="构建模式" className="flex flex-wrap gap-1.5">
-              <button type="button" aria-pressed={mode === 'dockerfile'} onClick={() => switchMode('dockerfile')} className={CTL_CHIP}>
-                Dockerfile 构建
-              </button>
-              <button type="button" aria-pressed={mode === 'compose'} onClick={() => switchMode('compose')} className={CTL_CHIP}>
-                compose 服务构建
-              </button>
-            </div>
+            <ChipGroup ariaLabel="构建模式" value={mode} onSelect={switchMode}
+              items={[{ value: 'dockerfile', label: 'Dockerfile 构建' }, { value: 'compose', label: 'compose 服务构建' }]} />
 
             {mode === 'dockerfile' ? (
               <div className="space-y-3">

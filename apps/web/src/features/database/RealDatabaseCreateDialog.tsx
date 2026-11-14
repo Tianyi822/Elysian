@@ -1,4 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog'
+import { ChipGroup } from '../../components/ChipGroup'
 import { useEffect, useState } from 'react'
 import type { ContainerImage, DatabaseEngine, ImagePullProgress } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
@@ -201,12 +202,8 @@ export function RealDatabaseCreateDialog({ engine }: { engine: Engine }) {
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5">
           <section aria-labelledby="db-target-title">
             <h3 id="db-target-title" className="mb-3 text-sm font-semibold text-fg">承载容器</h3>
-            <div role="group" aria-label="容器来源" className="grid grid-cols-2 gap-2">
-              <button type="button" disabled={busy} aria-pressed={targetKind === 'existing'} onClick={() => setTargetKind('existing')}
-                className={BUTTON + (targetKind === 'existing' ? ' border-accent/50 bg-accent/10 text-accent-fg' : '')}>使用已有容器</button>
-              <button type="button" disabled={busy} aria-pressed={targetKind === 'new'} onClick={() => setTargetKind('new')}
-                className={BUTTON + (targetKind === 'new' ? ' border-accent/50 bg-accent/10 text-accent-fg' : '')}>创建新容器</button>
-            </div>
+            <ChipGroup ariaLabel="容器来源" value={targetKind} onSelect={setTargetKind} disabled={busy}
+              items={[{ value: 'existing', label: '使用已有容器' }, { value: 'new', label: '创建新容器' }]} />
 
             {targetKind === 'existing' ? <div className="mt-4">
               <label htmlFor="real-db-existing" className={LABEL}>运行中的 {engine} 容器</label>

@@ -1,0 +1,39 @@
+EasyUI
+https://github.com/Surajmaurya1/easyui
+Reference revision: f7193ce6f96d38fb39734c0ed8be43567a7eee4a
+
+Source components copied and adapted under src/components/easyui/:
+- StatCard.tsx (including pointer/keyboard scrubber, spring cursor and SVG chart)
+- Button.tsx (variants, loading state and spring press feedback)
+- Badge.tsx (variants, status dot and optional animated content)
+- PillNavigation.tsx (global page tabs, toolbar/form segments and shared-layout selection)
+- NotificationBell.tsx (extracted bell trigger, arrival shake and unread dot)
+- LiquidToggle.tsx (controlled SVG blob switch and spring deformation)
+- SlidePagination.tsx (page range and shared-layout sliding indicator)
+- Supporting chart primitives, monotone path utility, motion tokens and cn utility
+
+Upstream paths, revision and adaptation boundaries are recorded in
+src/components/easyui/upstream.json. Elysian adapters retain existing API data,
+Chinese labels, theme tokens, accessibility and reduced-motion preferences.
+
+MIT License
+
+Copyright (c) 2026 Suraj Maurya
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

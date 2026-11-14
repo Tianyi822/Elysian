@@ -3,10 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { ChipGroup } from './ChipGroup'
 
-/*
- * 滑块的落位与过渡时机在 components/slidingThumb.ts，由 HeaderTabs.test 覆盖同一套机制；
- * 这里守芯片单选组自己的部分：分组语义、选中底色只由滑块承担、点击把值交回去、禁用整组。
- */
+/* 单选分段复用全局胶囊导航，覆盖受控回调、禁用和分组语义。 */
 
 const ITEMS = [
   { value: 'a', label: '甲' },
@@ -21,10 +18,10 @@ describe('ChipGroup', () => {
   it('分组带无障碍名，选中底色是一块 aria-hidden 的滑块，成员只报选中态', () => {
     render(<ChipGroup ariaLabel="测试单选" items={ITEMS} value="a" onSelect={() => {}} />)
 
-    // 位置与底色由控件层的 .ctl-chip-thumb 承担（jsdom 不加载样式表，这里只认类名与位置数据）。
-    const slider = group().querySelector('span[aria-hidden="true"]') as HTMLElement
-    expect(slider).toHaveClass('ctl-chip-thumb')
-    expect(slider.style.left).toBe('0px')
+    expect(group()).toHaveAttribute('data-easyui', 'pill-navigation')
+    const slider = group().querySelector('[data-easyui-indicator]') as HTMLElement
+    expect(slider).toHaveAttribute('aria-hidden', 'true')
+    expect(slider).toHaveClass('absolute', 'rounded-full', 'bg-fg')
 
     const items = within(group()).getAllByRole('button')
     expect(items.map((item) => item.textContent)).toEqual(['甲', '乙'])
@@ -60,9 +57,9 @@ describe('ChipGroup', () => {
       />,
     )
 
-    expect(group()).toHaveClass('ctl-group', 'mt-4', 'max-w-full')
+    expect(group()).toHaveClass('mt-4', 'max-w-full')
     for (const item of within(group()).getAllByRole('button')) {
-      expect(item).toHaveClass('ctl', 'ctl-chip', 'sm:text-sm')
+      expect(item).toHaveClass('rounded-full', 'sm:text-sm')
     }
   })
 })

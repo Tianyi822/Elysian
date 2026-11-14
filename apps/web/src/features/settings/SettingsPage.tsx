@@ -9,6 +9,7 @@ import type { FormEvent } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { PasswordVisibilityButton } from '../security/passwordFieldParts'
 import { CTL_FIELD } from '../../components/formControl'
+import { Button } from '../../components/easyui/Button'
 import { useSessionStore } from '../../stores/sessionStore'
 import { RequireArea } from '../../app/RequireArea'
 import { ModelSettingsSection } from './ModelSettingsSection'
@@ -218,10 +219,9 @@ function AccountSecuritySettings() {
         <PasswordField id={usernamePasswordId} label="验证当前密码" autoComplete="current-password"
           value={usernamePassword} onChange={(value) => { setUsernamePassword(value); setUsernameError(null) }} disabled={submitting} />
         {usernameError && <p role="alert" className="text-xs text-danger">{usernameError}</p>}
-        <button type="submit" disabled={submitting}
-          className="h-9 rounded-lg border border-control-line bg-surface-raised px-4 text-sm font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50">
+        <Button type="submit" disabled={submitting} isLoading={submitting} loadingText="正在修改…" className="h-9">
           {submitting ? '正在修改…' : '修改用户名'}
-        </button>
+        </Button>
       </form>
     </section>
     <section
@@ -263,13 +263,15 @@ function AccountSecuritySettings() {
           warning={againGuidance.warning}
         />
         {passwordError && <p role="alert" className="text-xs text-danger">{passwordError}</p>}
-        <button
+        <Button
           type="submit"
           disabled={submitting}
-          className="h-9 rounded-lg border border-control-line bg-surface-raised px-4 text-sm font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50"
+          isLoading={submitting}
+          loadingText="正在修改…"
+          className="h-9"
         >
           {submitting ? '正在修改…' : '修改密码'}
-        </button>
+        </Button>
       </form>
     </section>
     <Dialog.Root open={confirmKind !== null} onOpenChange={(open) => { if (!open) setConfirmKind(null) }}>

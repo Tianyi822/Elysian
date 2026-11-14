@@ -8,7 +8,6 @@ import { importers } from './lazyRoutes'
 export function preloadDashboard() {
   const run = () => {
     void importers.dashboard()
-    void import('echarts/core')
   }
   if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 3000 })
   else setTimeout(run, 1200)

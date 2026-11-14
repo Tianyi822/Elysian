@@ -33,15 +33,15 @@ describe('安全页签切换', () => {
     renderApp('/security')
 
     const group = segmentGroup()
-    expect(group).toHaveClass('border', 'border-line')
+    expect(group).toHaveAttribute('data-easyui', 'pill-navigation')
     const items = within(group).getAllByRole('button')
     for (const item of items) {
       expect(item).not.toHaveClass('border-l')
       expect(item).not.toHaveClass('border')
     }
     // 滑块不占布局，位置在真实浏览器里量出：这里只验证它存在、带选中底色，且选中按钮不是自己上底色。
-    expect(group.querySelector('span[aria-hidden="true"]')).toHaveClass('bg-nav-selected', 'absolute')
-    expect(items[0]).toHaveClass('text-accent-fg')
+    expect(group.querySelector('[data-easyui-indicator]')).toHaveClass('bg-fg', 'absolute', 'rounded-full')
+    expect(items[0]).toHaveClass('text-surface')
     expect(items[0]).not.toHaveClass('bg-nav-selected')
   })
 

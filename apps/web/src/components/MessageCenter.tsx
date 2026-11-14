@@ -6,8 +6,9 @@ import type { CSSProperties } from 'react'
 import { useMessageStore } from '../stores/messageStore'
 import type { FeedbackMessage, MessageTone } from '../contracts/messages'
 import { formatLoginTime } from './format'
-import { Bell, CircleCheck, Info, TriangleAlert } from './icons'
+import { CircleCheck, Info, TriangleAlert } from './icons'
 import type { IconComponent } from './icons'
+import { NotificationBell } from './easyui/NotificationBell'
 import './messageCenter.css'
 
 const UNEXPECTED_ERROR = '页面操作发生异常，请重试；若仍失败，请刷新页面。'
@@ -134,19 +135,16 @@ export function MessageCenter() {
   return createPortal(<section aria-live="off" className="message-center" data-message-center>
     <Tooltip.Root>
       <Tooltip.Trigger asChild>
-        <button ref={trigger} type="button" aria-label="消息" aria-keyshortcuts="F8" aria-haspopup="dialog"
+        <NotificationBell ref={trigger} aria-label="消息" aria-keyshortcuts="F8" aria-haspopup="dialog"
           style={{ pointerEvents: 'auto' }}
-          aria-expanded={open} aria-controls={open ? contentId : undefined}
-          className="message-trigger icon-button icon-button-solid inline-flex items-center justify-center text-fg-muted transition-colors hover:text-fg"
+          isOpen={open} onOpenChange={changeOpen} unread={state.unread} arrivalKey={state.announcement?.id}
+          aria-controls={open ? contentId : undefined}
+          className="message-trigger"
           onPointerDown={event => {
             // 此入口在底层业务 Dialog 之外；保留其草稿，避免 outside 事件关闭底层弹窗。
             event.stopPropagation()
             returnFocus.current = document.activeElement instanceof HTMLElement && document.activeElement !== trigger.current && document.activeElement !== document.body ? document.activeElement : null
-          }}
-          onClick={() => changeOpen(!open)}>
-          <Bell aria-hidden size={18} />
-          {state.unread && <span className="message-unread" aria-label="有未读消息" />}
-        </button>
+          }} />
       </Tooltip.Trigger>
       <Tooltip.Portal><Tooltip.Content side="bottom" sideOffset={6} className="z-[80] rounded border border-control-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg">消息（F8）<Tooltip.Arrow className="fill-surface-raised" /></Tooltip.Content></Tooltip.Portal>
     </Tooltip.Root>

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import * as Switch from '@radix-ui/react-switch'
+import { ToggleSwitch } from '../../components/ToggleSwitch'
 import { AGENT_MODEL_API_FORMATS, getAgentModelPreset, type AgentDiscoveredModel, type AgentModelAPIFormat, type AgentModelProvider, type AgentModelService, type AgentModelServiceInput } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { useInFlightSubmit } from './useInFlightSubmit'
@@ -60,7 +60,7 @@ export function ModelProfilesPanel({ active = true, refreshing = false, onRefres
 }
 
 function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange(value: boolean): void }) {
-  return <Switch.Root aria-label={label} checked={checked} onCheckedChange={onChange} className="ui-switch relative inline-flex h-5 w-9 shrink-0 items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"><Switch.Thumb className="ui-switch-thumb ml-0.5 block size-3.5 data-[state=checked]:translate-x-4" /></Switch.Root>
+  return <ToggleSwitch label={label} checked={checked} onCheckedChange={onChange} />
 }
 
 function ModelServiceDialog({ service, visible, onClose }: { service?: AgentModelService; visible: boolean; onClose(): void }) {

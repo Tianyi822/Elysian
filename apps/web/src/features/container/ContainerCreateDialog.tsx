@@ -3,7 +3,8 @@ import { useEffect, useState } from 'react'
 import { RESTART_POLICIES, RESTART_POLICY_LABELS } from '@elysian/contracts'
 import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 import { SelectDropdown } from '../../components/SelectDropdown'
-import { ChevronDown, Loader2, Plus, Trash2, X } from '../../components/icons'
+import { ChevronDown, Plus, Trash2, X } from '../../components/icons'
+import { Button } from '../../components/easyui/Button'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useContainersStore } from '../../stores/containersStore'
@@ -459,22 +460,26 @@ export function ContainerCreateDialog() {
               {docker ? '创建后立即启动。' : '创建后立即运行；所有数据仅存在于演示内存。'}
             </p>
             <div className="flex shrink-0 justify-end gap-2 whitespace-nowrap">
-              <button
+              <Button
                 type="button"
                 onClick={closeCreate}
-                className="action-button border border-control-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
+                variant="outline"
+                size="sm"
+                className="h-9"
               >
                 取消
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
                 onClick={submit}
                 disabled={disabled}
-                className="action-button gap-1.5 border border-control-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50"
+                isLoading={creating}
+                loadingText="创建中…"
+                size="sm"
+                className="h-9"
               >
-                {creating ? <Loader2 aria-hidden size={13} className="animate-spin" /> : null}
-                {creating ? '创建中…' : '创建并运行'}
-              </button>
+                创建并运行
+              </Button>
             </div>
           </div>
         </Dialog.Content>

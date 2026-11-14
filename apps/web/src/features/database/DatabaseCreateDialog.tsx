@@ -1,4 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog'
+import { ChipGroup } from '../../components/ChipGroup'
 import { useEffect, useRef, useState } from 'react'
 import type { DragEvent } from 'react'
 import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
@@ -42,17 +43,9 @@ function SqliteFileField({
 
   return <section aria-labelledby="db-create-source-label" className="mt-5 border-t border-line pt-5">
     <h3 id="db-create-source-label" className="mb-3 text-sm font-semibold text-fg">文件来源 <span className="text-danger">*</span></h3>
-    <div role="group" aria-labelledby="db-create-source-label" className="grid w-full grid-cols-2 overflow-hidden rounded-lg border border-line">
-      {(['upload', 'create'] as const).map((source: SqliteFileSource, index) => (
-        <button key={source} type="button" disabled={creating} aria-pressed={draft.fileSource === source}
-          onClick={() => onPatch({ fileSource: source })}
-          className={'min-h-10 px-2 text-center text-xs transition-colors disabled:opacity-50 ' +
-            (index > 0 ? 'border-l border-line ' : '') +
-            (draft.fileSource === source ? 'bg-surface-raised font-medium text-fg' : 'text-fg-muted hover:bg-surface-raised hover:text-fg')}>
-          {source === 'upload' ? '上传 SQLite 文件' : '新建空数据库'}
-        </button>
-      ))}
-    </div>
+    <ChipGroup ariaLabel="文件来源" value={draft.fileSource} disabled={creating}
+      items={[{ value: 'upload', label: '上传 SQLite 文件' }, { value: 'create', label: '新建空数据库' }]}
+      onSelect={(fileSource: SqliteFileSource) => onPatch({ fileSource })} />
 
     {draft.fileSource === 'upload' ? <>
       <div onDragOver={(event) => { event.preventDefault(); if (!creating) setDragging(true) }}

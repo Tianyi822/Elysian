@@ -66,24 +66,24 @@
 [data-theme="dark"] {
   color-scheme: dark;
 
-  --t-bg: #111827;
-  --t-surface: #1b2539;
-  --t-surface-raised: #26334a;
-  --t-line: #39485f;
-  --t-control-line: #697ea2;
-  --t-fg: #eaecf5;
-  --t-fg-muted: #bbc3d8;
-  --t-fg-subtle: #a0adc9;
-  --t-accent: #95c6f8;
-  --t-accent-fg: #95c6f8;
-  --t-on-accent: #111827;
+  --t-bg: #111113;
+  --t-surface: #1c1c1f;
+  --t-surface-raised: #242427;
+  --t-line: #343438;
+  --t-control-line: #777780;
+  --t-fg: #f2f2f3;
+  --t-fg-muted: #b1b1ba;
+  --t-fg-subtle: #a1a1aa;
+  --t-accent: #9bb5ff;
+  --t-accent-fg: #9bb5ff;
+  --t-on-accent: #111113;
   --t-success: #7dd6a5;
   --t-warning: #e4b66a;
   --t-danger: #f3a0b2;
   --t-info: #95bdeb;
-  --t-focus: #95c6f8;
+  --t-focus: #9bb5ff;
 
-  --t-code-bg: #172032;
+  --t-code-bg: #18181a;
   --t-code-fg: #e6edf3;
   --t-code-comment: #a4b1c2;
   --t-code-keyword: #ffabb7;
@@ -93,24 +93,23 @@
   --t-code-attribute: #9ed8f2;
   --t-code-deletion: #ffa4a4;
 
-  --t-nav-bg: rgb(46 71 115 / 68%);
-  --t-nav-opaque: #243853;
-  --t-nav-fg: #eaecf5;
-  --t-nav-muted: #bbc7e0;
-  --t-nav-hover: rgb(149 198 248 / 10%);
-  --t-nav-selected: rgb(149 198 248 / 16%);
-  --t-panel-glass: rgb(27 37 57 / 58%);
-  --t-panel-glass-overlay: rgb(27 37 57 / 76%);
-  --t-panel-line: rgb(151 176 212 / 15%);
-  --t-panel-sheen: rgb(255 255 255 / 5%);
-  --t-panel-shadow: rgb(5 10 22 / 46%);
-  --t-grain: 0.05;
-  --t-canvas-near: rgb(41 66 106 / 62%);
-  --t-canvas-far: rgb(78 60 112 / 44%);
-  --t-overlay: rgb(7 13 26 / 64%);
-  --t-overlay-strong: rgb(7 13 26 / 76%);
-  --t-chart-secondary: #b7a5e8;
-  --t-chart-brush: rgb(149 198 248 / 16%);
+  --t-nav-bg: rgb(24 24 26 / 100%);
+  --t-nav-opaque: #18181a;
+  --t-nav-fg: #f2f2f3;
+  --t-nav-muted: #b1b1ba;
+  --t-nav-hover: rgb(242 242 243 / 5%);
+  --t-nav-selected: rgb(242 242 243 / 9%);
+  --t-panel-glass: rgb(28 28 31 / 100%);
+  --t-panel-glass-overlay: rgb(28 28 31 / 100%);
+  --t-panel-line: rgb(242 242 243 / 11%);
+  --t-panel-sheen: rgb(255 255 255 / 0%);
+  --t-panel-shadow: rgb(0 0 0 / 24%);
+  --t-overlay: rgb(0 0 0 / 60%);
+  --t-overlay-strong: rgb(0 0 0 / 76%);
+  --t-chart-secondary: #76cfc1;
+  --t-chart-tertiary: #e6b36c;
+  --t-chart-quaternary: #d99dbd;
+  --t-chart-brush: rgb(155 181 255 / 14%);
 
   --t-sev1: #402333;
   --t-sev1-fg: #ffadc0;
@@ -142,22 +141,22 @@
 [data-theme="light"] {
   color-scheme: light;
 
-  --t-bg: #f9f1f8;
-  --t-surface: #fffcff;
-  --t-surface-raised: #f3eaf4;
-  --t-line: #dfd2e3;
-  --t-control-line: #927c9f;
-  --t-fg: #332b3c;
-  --t-fg-muted: #6b5f75;
-  --t-fg-subtle: #6e5d78;
-  --t-accent: #795a9c;
-  --t-accent-fg: #68488c;
-  --t-on-accent: #fffcff;
+  --t-bg: #fafafa;
+  --t-surface: #ffffff;
+  --t-surface-raised: #f1f1f2;
+  --t-line: #dedee3;
+  --t-control-line: #81818b;
+  --t-fg: #18181b;
+  --t-fg-muted: #52525b;
+  --t-fg-subtle: #686872;
+  --t-accent: #2f55bf;
+  --t-accent-fg: #2f55bf;
+  --t-on-accent: #ffffff;
   --t-success: #23673b;
   --t-warning: #855512;
   --t-danger: #a7344e;
   --t-info: #405d8b;
-  --t-focus: #795a9c;
+  --t-focus: #2f55bf;
 
   --t-code-bg: #f7f8fa;
   --t-code-fg: #263342;
@@ -169,24 +168,23 @@
   --t-code-attribute: #075f80;
   --t-code-deletion: #a32424;
 
-  --t-nav-bg: rgb(232 205 225 / 72%);
-  --t-nav-opaque: #edd7e7;
-  --t-nav-fg: #332b3c;
-  --t-nav-muted: #625369;
-  --t-nav-hover: rgb(121 90 156 / 8%);
-  --t-nav-selected: rgb(121 90 156 / 13%);
-  --t-panel-glass: rgb(255 252 255 / 56%);
-  --t-panel-glass-overlay: rgb(255 252 255 / 82%);
-  --t-panel-line: rgb(103 76 135 / 15%);
-  --t-panel-sheen: rgb(255 255 255 / 72%);
-  --t-panel-shadow: rgb(103 76 135 / 18%);
-  --t-grain: 0.035;
-  --t-canvas-near: rgb(236 210 229 / 78%);
-  --t-canvas-far: rgb(203 217 240 / 70%);
-  --t-overlay: rgb(51 43 60 / 38%);
-  --t-overlay-strong: rgb(51 43 60 / 52%);
-  --t-chart-secondary: #526ea6;
-  --t-chart-brush: rgb(121 90 156 / 14%);
+  --t-nav-bg: rgb(244 244 245 / 100%);
+  --t-nav-opaque: #f4f4f5;
+  --t-nav-fg: #18181b;
+  --t-nav-muted: #52525b;
+  --t-nav-hover: rgb(10 10 10 / 4%);
+  --t-nav-selected: rgb(10 10 10 / 7%);
+  --t-panel-glass: rgb(255 255 255 / 100%);
+  --t-panel-glass-overlay: rgb(255 255 255 / 100%);
+  --t-panel-line: rgb(24 24 27 / 12%);
+  --t-panel-sheen: rgb(255 255 255 / 0%);
+  --t-panel-shadow: rgb(15 15 20 / 10%);
+  --t-overlay: rgb(24 24 27 / 40%);
+  --t-overlay-strong: rgb(24 24 27 / 55%);
+  --t-chart-secondary: #0f766e;
+  --t-chart-tertiary: #8a5a12;
+  --t-chart-quaternary: #97436d;
+  --t-chart-brush: rgb(53 95 206 / 12%);
 
   --t-sev1: #fbe7ed;
   --t-sev1-fg: #ae3450;
@@ -217,47 +215,27 @@
 
 /* 全站共用形状与外壳尺寸，业务页面不另设主题变体。 */
 @theme {
-  --radius-xl: 1rem;
+  --radius-xl: 0.875rem;
   --radius-lg: 0.5rem;
 }
 
 :root {
   --shell-header-height: 4rem;
-
-  /* 细颗粒源图：灰度分形噪声，两处材质层共用，强度由 --t-grain 按主题调节。 */
-  --t-noise: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='128' height='128' filter='url(%23g)'/%3E%3C/svg%3E");
 }
 
 @layer components {
-  /*
-   * 卡片材质：自上而下的受光渐变 + 细颗粒 + 1px 中性描边 + 柔和环境投影。
-   * 表面边界只由描边与投影表达，不再有白色光学亮边；渐变走 background，
-   * 不会被元素上另加的 shadow-* 工具类整体抹掉。
-   */
+  /* 中性实底面板：层级由表面色与细描边表达，不叠加背景材质。 */
   .panel-surface {
     position: relative;
     isolation: isolate;
     border: 1px solid var(--t-panel-line);
     border-radius: var(--panel-radius, var(--radius-xl));
     background-color: var(--t-surface);
-    background-image: linear-gradient(180deg, var(--t-panel-sheen), transparent 46%);
-    box-shadow:
-      0 1px 2px var(--t-panel-shadow),
-      0 18px 38px -26px var(--t-panel-shadow);
   }
 
-  /* 颗粒层落在面板底色之上、内容之下：isolate 把 -1 关在本层堆叠上下文里。 */
-  .panel-surface::after,
-  .glass-navigation::after,
-  .app-canvas::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    z-index: -1;
-    border-radius: inherit;
-    pointer-events: none;
-    background-image: var(--t-noise);
-    opacity: var(--t-grain);
+  .panel-surface[role="dialog"],
+  .panel-surface[role="alertdialog"] {
+    box-shadow: 0 20px 64px -16px var(--t-panel-shadow);
   }
 
   .panel-surface thead th {
@@ -274,7 +252,7 @@
     align-items: center;
     justify-content: center;
     border-radius: var(--radius-lg);
-    transition: background-color 160ms ease-out, border-color 160ms ease-out, color 160ms ease-out;
+    transition: background-color 160ms ease-out, border-color 160ms ease-out, color 160ms ease-out, transform 160ms ease-out;
   }
 
   /*
@@ -293,11 +271,11 @@
     padding: 0 0.75rem;
     border: 1px solid transparent;
     border-radius: var(--ctl-radius, var(--radius-lg));
-    font-size: 0.75rem;
+    font-size: 0.8125rem;
     line-height: 1;
     white-space: nowrap;
     cursor: pointer;
-    transition: background-color 160ms ease-out, border-color 160ms ease-out, color 160ms ease-out;
+    transition: background-color 160ms ease-out, border-color 160ms ease-out, color 160ms ease-out, transform 160ms ease-out;
   }
 
   /* 卡内行动作：同一形状，只矮一档，保持卡片密度。 */
@@ -313,14 +291,16 @@
   }
 
   .ctl-default {
-    border-color: var(--t-control-line);
-    background-color: var(--t-surface-raised);
-    color: var(--t-fg);
+    border-color: var(--t-fg);
+    background-color: var(--t-fg);
+    color: var(--t-surface);
     font-weight: 500;
   }
   .ctl-default:hover:not(:disabled) {
-    border-color: var(--t-fg-subtle);
+    border-color: var(--t-fg-muted);
+    background-color: var(--t-fg-muted);
   }
+  .ctl:active:not(:disabled) { transform: translateY(1px); }
 
   .ctl-quiet {
     border-color: var(--t-line);
@@ -393,7 +373,7 @@
     padding: 0 0.625rem;
     border: 1px solid var(--t-control-line);
     border-radius: var(--ctl-radius, var(--radius-lg));
-    background-color: var(--t-surface-raised);
+    background-color: var(--t-surface);
     color: var(--t-fg);
     font-size: 0.875rem;
     line-height: 1.5;
@@ -450,17 +430,14 @@
     width: var(--ctl-height, 2.25rem);
   }
 
-  /* 浮在画布上的导航触发器：静止走面板档轻描边与玻璃底，悬停才抬到控件档。
+  /* 浮在画布上的导航触发器：静止走面板档轻描边，悬停才抬到控件档。
      与聊天页头里的会话列表开关同一档位，两颗并排才读得出是一组开关。 */
   .nav-float-trigger .icon-button-solid {
     --icon-button-line: var(--t-panel-line);
     --icon-button-bg: var(--t-panel-glass-overlay);
-    backdrop-filter: blur(20px);
   }
 
-  /* 胶囊组：把一组相关控件包成一个胶囊对象，边框归胶囊、成员不再各自描边。
-     高度与 .ctl 同为一档，包在旁边的按钮同一基线，不会矮出一截。
-     relative 给单选组的选中滑块（.ctl-chip-thumb）当定位基准。 */
+  /* 相关图标动作共用外框（终端缩放）；单选分段统一由 PillNavigation 承载。 */
   .ctl-group {
     --icon-button-radius: 9999px;
     position: relative;
@@ -471,40 +448,8 @@
     height: var(--ctl-height, 2.25rem);
     padding: 0 3px;
     border: 1px solid var(--t-panel-line);
-    border-radius: 9999px;
-    background-color: var(--t-surface);
-  }
-  /* 组内成员不再各自描边：边框归胶囊；高度收一档，在胶囊里留出呼吸。 */
-  .ctl-group .ctl {
-    --ctl-height: 1.75rem;
-    border-color: transparent;
-    border-radius: 9999px;
-    background-color: transparent;
-    color: var(--t-fg-muted);
-  }
-  .ctl-group .ctl:hover:not(:disabled) {
+    border-radius: var(--radius-lg);
     background-color: var(--t-surface-raised);
-    color: var(--t-fg);
-  }
-  /* 选中态：底色归滑块（.ctl-chip-thumb），成员只提亮文字，不再自己铺底。
-     单选组一律经 components/ChipGroup.tsx 生成，滑块与这条规则成对出现。 */
-  .ctl-group .ctl-chip[aria-pressed="true"] {
-    color: var(--t-accent-fg);
-  }
-
-  /* 悬停反馈只给未选中成员：选中成员悬停时保持透明，否则会把滑块整个盖住，像选中态丢了。
-     与上面那条铺底悬停同权重，靠写在它后面赢。 */
-  .ctl-group .ctl-chip[aria-pressed="true"]:hover:not(:disabled) {
-    background-color: transparent;
-    color: var(--t-accent-fg);
-  }
-
-  /* 单选组的选中滑块：跟着选中项走的一块底色，形状与原先的选中芯片一致，
-     位置与尺寸由 components/slidingThumb.ts 量出后走内联样式。 */
-  .ctl-chip-thumb {
-    position: absolute;
-    border-radius: 9999px;
-    background-color: color-mix(in srgb, var(--t-accent) 12%, transparent);
   }
 
   /* 下拉触发器：与输入框同高同描边同圆角，只是内部两端排布。
@@ -519,7 +464,7 @@
     padding: 0 0.625rem;
     border: 1px solid var(--t-control-line);
     border-radius: var(--ctl-radius, var(--radius-lg));
-    background-color: var(--t-surface-raised);
+    background-color: var(--t-surface);
     color: var(--t-fg);
     font-size: 0.875rem;
     white-space: nowrap;
@@ -541,12 +486,10 @@
    * 嵌在胶囊组里的成员自己收一档，不会被这一档拉平。
    */
   .toolbar {
-    --ctl-radius: 9999px;
+    --ctl-radius: var(--radius-lg);
     --ctl-height: 2.25rem;
-    --icon-button-radius: 9999px;
-    /* 工具栏条自己也是胶囊：外壳圆角走 panel-surface 读的同一个变量。
-       条的高度由成员撑出来，圆角给到 9999px 才是胶囊而不是圆角矩形。 */
-    --panel-radius: 9999px;
+    --icon-button-radius: var(--radius-lg);
+    --panel-radius: var(--radius-xl);
   }
 
   /*
@@ -569,17 +512,12 @@
     --icon-button-line-hover: var(--t-control-line);
     --icon-button-bg-hover: var(--t-surface-raised);
   }
-  .firewall-toolbar .ctl-group {
-    padding-block: 2px;
-  }
-  .firewall-toolbar .ctl-group .ctl {
-    height: 100%;
-  }
   /* 独立动作与页签外框同为一档（都读 --ctl-height），不再按内部色块收矮：
      同一行里按钮比它旁边的胶囊组矮一截，读起来像两个体系。底色和描边沿用分组的轻量轮廓。 */
   .firewall-toolbar .ctl-default {
-    border-color: var(--t-panel-line);
+    border-color: var(--t-control-line);
     background-color: var(--t-surface);
+    color: var(--t-fg);
   }
   .firewall-toolbar .ctl-default:hover:not(:disabled) {
     border-color: var(--t-control-line);
@@ -589,8 +527,7 @@
   /* 卡片内的信息格：标签加读数，或一行事实说明。 */
   .tile {
     border-radius: var(--radius-lg);
-    border: 1px solid var(--t-panel-line);
-    background-color: var(--t-surface);
+    background-color: var(--t-surface-raised);
     padding: 0.5rem 0.75rem;
     font-size: 0.75rem;
     color: var(--t-fg-muted);
@@ -612,110 +549,33 @@
     border-left: 1px solid var(--t-line);
   }
 
-  /* 导航与内容区之间不再画分割线：整块靠染色毛玻璃与一道外投影自立边界。 */
+  /* 保留类名以兼容现有外壳；导航与画布均为不透明中性表面。 */
   .glass-navigation {
     position: relative;
     isolation: isolate;
     color: var(--t-nav-fg);
     background-color: var(--t-nav-opaque);
-    background-image: linear-gradient(180deg, var(--t-panel-sheen), transparent 34%);
-    box-shadow: 12px 0 40px -30px var(--t-panel-shadow);
+    border-right: 1px solid var(--t-panel-line);
   }
-
-  .nav-link[aria-current="page"]::before {
-    content: "";
-    position: absolute;
-    left: 4px;
-    top: 50%;
-    width: 2px;
-    height: 16px;
-    border-radius: 2px;
-    background-color: var(--t-accent);
-    transform: translateY(-50%);
+  .nav-link[aria-current="page"] {
+    box-shadow: inset 0 0 0 1px var(--t-panel-line);
   }
-
-  .glass-navigation :focus-visible {
-    outline-offset: 2px;
-  }
-
-  /*
-   * 画布层：两团大半径色雾垫在毛玻璃之下。底色原本是纯色平面，20px 模糊
-   * 什么也解析不出来，面板因此读成一块平色矩形；有了可模糊的背景才成材质。
-   */
+  .nav-link[aria-current="page"] svg { color: var(--t-nav-fg); }
+  .glass-navigation :focus-visible { outline-offset: 2px; }
   .app-canvas {
     position: relative;
     isolation: isolate;
     background-color: var(--t-bg);
-    background-image:
-      radial-gradient(64rem 40rem at 6% -10%, var(--t-canvas-near), transparent 70%),
-      radial-gradient(58rem 38rem at 104% 108%, var(--t-canvas-far), transparent 68%);
   }
 
-  /*
-   * 开关：轨道内凹一道读出「槽」，滑块带自己的投影与顶光读出「钮」。
-   * 关态是暗槽配灰钮，开态轨道转强调色、滑块转反色，几何仍由 h-5 w-9 与 size-3.5 给出。
-   */
-  .ui-switch {
-    border: 1px solid var(--t-control-line);
-    border-radius: 9999px;
-    background-color: var(--t-surface);
-    box-shadow: inset 0 1px 2px var(--t-panel-shadow);
-    transition: background-color 160ms ease-out, border-color 160ms ease-out, box-shadow 160ms ease-out;
-  }
-
-  .ui-switch:disabled {
-    opacity: 0.5;
-  }
-
-  .ui-switch[data-state="checked"] {
-    border-color: var(--t-accent);
-    background-color: var(--t-accent);
-    background-image: linear-gradient(180deg, var(--t-panel-sheen), transparent 58%);
-    box-shadow: inset 0 1px 1px rgb(255 255 255 / 18%);
-  }
-
-  .ui-switch-thumb {
-    border-radius: 9999px;
-    background-color: var(--t-fg-muted);
-    box-shadow: 0 1px 2px var(--t-panel-shadow), inset 0 1px 0 rgb(255 255 255 / 22%);
-    transition: transform 160ms cubic-bezier(0.4, 0, 0.2, 1), background-color 160ms ease-out;
-  }
-
-  .ui-switch[data-state="checked"] .ui-switch-thumb {
-    background-color: var(--t-on-accent);
-  }
-
-  /*
-   * 品牌字标：比正文大两档、字距收紧，颜色直接取主题的强调前景色 --t-accent-fg
-   * （浅色是紫、深色是冰蓝）——这就是全站链接与选中页签用的同一个品牌色。
-   * 不再从正文字色渐变到强调色：跨色相的渐变让字标在浅色下发灰、在深色下发白，
-   * 两边都不像本主题的颜色。
-   */
   .brand-wordmark {
-    color: var(--t-accent-fg);
-    font-size: 1.375rem;
-    font-weight: 600;
+    color: var(--t-nav-fg);
+    font-size: 1.25rem;
+    font-weight: 650;
     letter-spacing: -0.035em;
     line-height: 1.2;
   }
 
-  @supports ((backdrop-filter: blur(20px)) or (-webkit-backdrop-filter: blur(20px))) {
-    .panel-surface {
-      background-color: var(--t-panel-glass);
-      -webkit-backdrop-filter: blur(20px);
-      backdrop-filter: blur(20px);
-    }
-    /* 遮罩之上的玻璃保留更高底色覆盖，保护辅助文字与控件边界的对比度。 */
-    .panel-surface[role="dialog"],
-    .panel-surface[role="alertdialog"] {
-      background-color: var(--t-panel-glass-overlay);
-    }
-    .glass-navigation {
-      background-color: var(--t-nav-bg);
-      -webkit-backdrop-filter: blur(20px);
-      backdrop-filter: blur(20px);
-    }
-  }
 }
 
 ::selection {
@@ -725,6 +585,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .action-button,
+  .ctl,
   .panel-surface tbody tr,
   .file-menu-item,
   .file-menu-icon {
@@ -923,7 +784,7 @@ select:not(:disabled) {
 .select-menu [role="menuitemradio"] {
   min-height: 32px;
   padding: 6px 10px;
-  border-radius: 9999px;
+  border-radius: var(--radius-lg);
 }
 
 .select-menu [role="menuitemradio"] + [role="menuitemradio"] { margin-top: 4px; }
@@ -935,8 +796,8 @@ select:not(:disabled) {
 }
 
 .select-menu [role="menuitemradio"][data-state="checked"] {
-  background-color: color-mix(in srgb, var(--t-accent) 12%, transparent);
-  color: var(--t-accent-fg);
+  background-color: var(--t-nav-selected);
+  color: var(--t-fg);
 }
 
 /* 自绘滚动条：原生视口保留惯性滚动，14px 命中区中的圆角滑块随主题着色。 */

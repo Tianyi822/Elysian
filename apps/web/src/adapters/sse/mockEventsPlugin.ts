@@ -3,6 +3,7 @@ import type { EventName } from '@elysian/contracts'
 import { createMockDataset } from '../mock/dataset.ts'
 import {
   INITIAL_LOAD,
+  appendMockSample,
   listMockHistory,
   nextLoadWalk,
   seedMockHistoryIfEmpty,
@@ -308,6 +309,10 @@ export function createEventsHandler(deps: EventsHandlerDeps = {}) {
         })
         store.rollupMinuteIfNeeded(tsMs)
         store.prune(tsMs)
+      } else if (!docker) {
+        // 演示历史与实时卡片使用同一采样，长时间运行后切窗仍能读到最近数据。
+        seedMockHistoryIfEmpty(tsMs);
+        appendMockSample({ ts: tsMs, ...sample }, tsMs);
       }
       emit('resource/sample', sample)
       emitPlannedAndLive()

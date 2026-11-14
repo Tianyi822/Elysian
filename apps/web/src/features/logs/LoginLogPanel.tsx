@@ -6,6 +6,7 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { formatLoginTime } from '../../components/format'
 import { Search } from '../../components/icons'
 import { CTL_TOOLBAR } from '../../components/formControl'
+import { ChipGroup } from '../../components/ChipGroup'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
@@ -93,23 +94,7 @@ export function LoginLogPanel() {
             演示数据
           </span>
         )}
-        <div role="group" aria-label="登录状态筛选" className="flex items-center gap-2">
-          {STATUS_FILTERS.map(({ value, label }) => (
-            <button
-              key={value}
-              type="button"
-              aria-pressed={statusFilter === value}
-              onClick={() => setStatusFilter(value)}
-              className={`action-button border px-3 py-1.5 text-xs font-medium transition-colors ${
-                statusFilter === value
-                  ? 'border-success/50 bg-success/10 text-success'
-                  : 'border-control-line bg-surface-raised text-fg hover:border-fg-subtle'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <ChipGroup ariaLabel="登录状态筛选" items={STATUS_FILTERS} value={statusFilter} onSelect={setStatusFilter} />
         <div className="relative ml-auto w-64 max-w-full">
           <label htmlFor="login-log-search" className="sr-only">
             搜索登录日志

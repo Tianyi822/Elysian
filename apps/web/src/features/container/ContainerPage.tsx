@@ -6,7 +6,9 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
 import { RefreshButton } from '../../components/RefreshState'
-import { CTL_CHIP, CTL_FIELD, CTL_PRIMARY, CTL_TOOLBAR } from '../../components/formControl'
+import { CTL_FIELD, CTL_TOOLBAR } from '../../components/formControl'
+import { Button } from '../../components/easyui/Button'
+import { ChipGroup } from '../../components/ChipGroup'
 import { DockerDependencyEntry } from './DockerDependencyEntry'
 import { CONTAINER_LIVE_RECONNECT_MESSAGE } from './containerCopy'
 import { useContainersStore } from '../../stores/containersStore'
@@ -100,19 +102,8 @@ export function ContainerPage() {
       ) : null}
       {view === 'grid' ? (
         <div className={`${CTL_TOOLBAR} rect-toolbar mb-4 flex flex-wrap items-center gap-4 panel-surface px-4 py-3`}>
-          <div role="group" aria-label="状态筛选" className="flex flex-wrap basis-full gap-2 lg:basis-auto">
-            {STATUS_FILTERS.map((filter) => (
-              <button
-                key={filter.value}
-                type="button"
-                aria-pressed={statusFilter === filter.value}
-                onClick={() => setStatusFilter(filter.value)}
-                className={CTL_CHIP}
-              >
-                {filter.label}
-              </button>
-            ))}
-          </div>
+          <ChipGroup ariaLabel="状态筛选" items={STATUS_FILTERS} value={statusFilter} onSelect={setStatusFilter}
+            className="basis-full items-start lg:basis-auto" />
           {/* 窄屏两行：筛选 chip 一行，搜索框与创建容器一行（搜索撑开）；lg 起回到一行三段。 */}
           <div className="relative min-w-32 flex-1 lg:w-56 lg:flex-none">
             <Search
@@ -130,13 +121,13 @@ export function ContainerPage() {
               className={`${CTL_FIELD} rounded-full pl-8`}
             />
           </div>
-          <button
+          <Button
             type="button"
             onClick={() => openCreate()}
-            className={`${CTL_PRIMARY} ml-auto`}
+            className="ml-auto h-9 text-xs"
           >
             创建容器
-          </button>
+          </Button>
           <DockerDependencyEntry onReady={() => load(gateway)} />
         </div>
       ) : null}
@@ -152,9 +143,9 @@ export function ContainerPage() {
                 label="刷新镜像"
                 formControl
               />
-              <button type="button" onClick={() => setPullOpen(true)} className={CTL_PRIMARY}>
-                <Download aria-hidden size={14} />拉取镜像
-              </button>
+              <Button type="button" onClick={() => setPullOpen(true)} className="h-9 text-xs" leftIcon={<Download aria-hidden size={14} />}>
+                拉取镜像
+              </Button>
               <DockerDependencyEntry onReady={() => load(gateway)} />
             </div>
           </div>

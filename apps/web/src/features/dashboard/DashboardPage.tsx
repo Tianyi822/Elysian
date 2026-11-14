@@ -1,12 +1,10 @@
 import { useEffect } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { ShellPageFallback } from '../../app/layout/ShellLayoutContext'
 import { ErrorState, EmptyState, LoadingState } from '../../components/states/StateViews'
-import { RefreshButton } from '../../components/RefreshState'
 import { useFeedbackMessage } from '../../components/useFeedbackMessage'
 import { useDashboardStore } from '../../stores/dashboardStore'
 import { FilterBar } from './FilterBar'
-import { ResourceChartsSection } from './ResourceChartsSection'
+import { ResourceStatsSection } from './ResourceStatsSection'
 
 export function DashboardPage() {
   const gateway = useGateway()
@@ -25,29 +23,6 @@ export function DashboardPage() {
     void load(gateway)
   }, [gateway, load])
 
-  if (!resources) {
-    if (status === 'error') {
-      return (
-        <ShellPageFallback><ErrorState
-          title="仪表盘加载失败"
-          description={errorMessage}
-          onRetry={() => void load(gateway)}
-        /></ShellPageFallback>
-      )
-    }
-    return <ShellPageFallback><LoadingState label="正在加载仪表盘…" /></ShellPageFallback>
-  }
-
-  if (resources.length === 0) {
-    return (
-      <ShellPageFallback><EmptyState
-        title="暂无资源数据"
-        description="没有可展示的资源采样。可以刷新重试。"
-        action={<RefreshButton onPress={() => void load(gateway)} />}
-      /></ShellPageFallback>
-    )
-  }
-
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <FilterBar
@@ -57,7 +32,13 @@ export function DashboardPage() {
         refreshing={refreshing}
       />
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 md:px-6 md:pb-6">
-        <ResourceChartsSection resources={resources} refreshing={refreshing} />
+        {resources ? resources.length > 0 ? (
+          <ResourceStatsSection resources={resources} refreshing={refreshing} />
+        ) : (
+          <EmptyState title="暂无资源数据" description="当前时间范围没有可展示的采样。可以切换时间范围或刷新重试。" />
+        ) : status === 'error' ? (
+          <ErrorState title="仪表盘加载失败" description={errorMessage} onRetry={() => void load(gateway)} />
+        ) : <LoadingState label="正在加载仪表盘…" />}
       </div>
     </div>
   )

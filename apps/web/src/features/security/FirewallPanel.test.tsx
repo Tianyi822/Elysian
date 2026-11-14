@@ -105,21 +105,24 @@ describe('防火墙面板', () => {
     ]))
   })
 
-  it('种子规则跨两页：首页 20 行，下一页看剩余，共 N 条随搜索变化', async () => {
+  it('官方数字分页切换两页，不显示前后页按钮', async () => {
     const user = userEvent.setup()
     await openFirewallPage()
 
     expect(screen.getByText(new RegExp(`共 ${SEED_RULE_COUNT} 条`))).toBeInTheDocument()
     const table = screen.getByRole('region', { name: '端口规则表' })
     expect(within(table).getAllByRole('row')).toHaveLength(FIREWALL_PAGE_SIZE + 1) // 表头 + 20 行
-    expect(screen.getByRole('button', { name: '下一页' })).toBeEnabled()
+    const pagination = screen.getByRole('navigation', { name: '分页' })
+    expect(within(pagination).queryByRole('button', { name: '下一页' })).not.toBeInTheDocument()
+    expect(within(pagination).queryByRole('button', { name: '上一页' })).not.toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: '下一页' }))
+    await user.click(within(pagination).getByRole('button', { name: '2' }))
     // 表头 + 剩余行数
     expect(within(table).getAllByRole('row')).toHaveLength(SEED_RULE_COUNT - FIREWALL_PAGE_SIZE + 1)
-    expect(screen.getByRole('button', { name: '上一页' })).toBeEnabled()
     // 页码与当前位置：第二页标记 aria-current。
     expect(screen.getByRole('button', { name: '2' })).toHaveAttribute('aria-current', 'page')
+    await user.click(within(pagination).getByRole('button', { name: '1' }))
+    expect(within(table).getAllByRole('row')).toHaveLength(FIREWALL_PAGE_SIZE + 1)
   })
 
   it('搜索按端口与备注过滤，无结果给空行提示', async () => {
@@ -167,12 +170,14 @@ describe('防火墙面板', () => {
     )
 
     const ping = screen.getByRole('switch', { name: '禁ping' })
+    expect(ping).toHaveAttribute('data-easyui', 'liquid-toggle')
     // 数据集在同文件用例间共享，开关的初值按当场读到的算，通知文案才不会抄成一个方向。
     const wasChecked = ping.getAttribute('aria-checked') === 'true'
     await user.click(ping)
 
     // 请求在飞：两个开关都随 store 的 toggling 禁用，点击落不到被忽略的分支上。
     expect(ping).toBeDisabled()
+    expect(ping).toHaveAttribute('aria-busy', 'true')
     expect(screen.getByRole('switch', { name: '防火墙开关' })).toBeDisabled()
 
     release?.()
@@ -453,7 +458,7 @@ describe('防火墙面板', () => {
       // 同步后重拉三类列表，通知里的总数取界面统计条的三个计数之和。
       // 统计芯片内部分标签段与读数段两格（中间一道竖线），数字在兄弟段上，所以读整枚芯片。
       const chipCount = (label: string) =>
-        Number(screen.getByText(label, { selector: 'span' }).parentElement?.textContent?.match(/(\d+)/)?.[1] ?? '0')
+        Number(screen.getByText(label, { selector: '.stat-chip > span' }).parentElement?.textContent?.match(/(\d+)/)?.[1] ?? '0')
       const expected = chipCount('端口规则') + chipCount('IP 规则') + chipCount('端口转发')
       expect(messageHistoryText('status')).toContain(
         `已从操作系统同步防火墙规则，当前共 ${expected} 条（mock，待接入真实执行）`,
@@ -536,7 +541,7 @@ describe('防火墙面板', () => {
     await openFirewallPage()
 
     // 统计条按视图呈现三类计数
-    expect(screen.getByText('IP 规则', { selector: 'span' }).parentElement).toHaveTextContent(`${SEED_IP_RULES.length}`)
+    expect(screen.getByText('IP 规则', { selector: '.stat-chip > span' }).parentElement).toHaveTextContent(`${SEED_IP_RULES.length}`)
 
     await user.click(screen.getByRole('button', { name: 'IP 规则' }))
     const region = await screen.findByRole('region', { name: 'IP 规则表' })

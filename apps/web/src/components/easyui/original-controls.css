@@ -1,0 +1,47 @@
+/* EasyUI 黑白材质：保留液态几何，开态反色，并为两套主题提供清晰的状态对比。 */
+[data-easyui="liquid-toggle"] {
+  --easyui-toggle-track: #141414;
+  --easyui-toggle-line: #71717a;
+  --easyui-toggle-blob: #fafafa;
+  --easyui-toggle-label: #a1a1a6;
+  background-color: var(--easyui-toggle-track);
+  border: 1px solid var(--easyui-toggle-line);
+}
+[data-easyui="liquid-toggle"][aria-checked="true"] {
+  --easyui-toggle-track: #fafafa;
+  --easyui-toggle-line: #fafafa;
+  --easyui-toggle-blob: #0a0a0a;
+  --easyui-toggle-label: #0a0a0a;
+}
+[data-theme="light"] [data-easyui="liquid-toggle"] {
+  --easyui-toggle-track: #ffffff;
+  --easyui-toggle-line: #71717a;
+  --easyui-toggle-blob: #0a0a0a;
+  --easyui-toggle-label: #52525b;
+}
+[data-theme="light"] [data-easyui="liquid-toggle"][aria-checked="true"] {
+  --easyui-toggle-track: #0a0a0a;
+  --easyui-toggle-line: #0a0a0a;
+  --easyui-toggle-blob: #fafafa;
+  --easyui-toggle-label: #fafafa;
+}
+
+/* 与 EasyUI tokens.css 一致；局部定义保留上游分页组件的原始类名与形状。 */
+[data-easyui="slide-pagination"] {
+  --bg: #111113;
+  --border: #29292c;
+  --border-hover: #343438;
+  --surface-raised: #18181a;
+  --text-primary: #f2f2f3;
+  --text-secondary: #a1a1a6;
+  --text-muted: #6f6f75;
+}
+[data-theme="light"] [data-easyui="slide-pagination"] {
+  --bg: #fafafa;
+  --border: #e4e4e7;
+  --border-hover: #d4d4d8;
+  --surface-raised: #f1f1f2;
+  --text-primary: #0a0a0a;
+  --text-secondary: #52525b;
+  --text-muted: #71717a;
+}

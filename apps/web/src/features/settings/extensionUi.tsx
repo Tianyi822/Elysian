@@ -1,7 +1,7 @@
 import { useId, type ReactNode } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Tooltip from '@radix-ui/react-tooltip'
-import * as Switch from '@radix-ui/react-switch'
+import { ToggleSwitch } from '../../components/ToggleSwitch'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { MoreHorizontal, Search, X } from '../../components/icons'
 import { ScrollArea } from '../../components/ScrollArea'
@@ -31,7 +31,7 @@ export function ExtensionSearch({ label, value, onChange }: { label: string; val
 }
 
 export function ExtensionToggle({ label, checked, onChange, disabled = false }: { label: string; checked: boolean; onChange(value: boolean): void; disabled?: boolean }) {
-  return <label className="flex items-center justify-between gap-3 text-xs font-medium">{label}<Switch.Root aria-label={label} checked={checked} onCheckedChange={onChange} disabled={disabled} className="ui-switch relative inline-flex h-5 w-9 shrink-0 items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-40"><Switch.Thumb className="ui-switch-thumb ml-0.5 block size-3.5 data-[state=checked]:translate-x-4" /></Switch.Root></label>
+  return <label className="flex items-center justify-between gap-3 text-xs font-medium">{label}<ToggleSwitch label={label} checked={checked} onCheckedChange={onChange} disabled={disabled} /></label>
 }
 
 export function ExtensionMenu({ label, items }: { label: string; items: { label: string; action(): void; danger?: boolean; disabled?: boolean }[] }) {
