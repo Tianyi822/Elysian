@@ -111,6 +111,9 @@ func budgetContinuationCandidate(r Run) bool {
 	if r.SessionID == "" || r.WorkflowID != "" || r.CancelRequestedAt != "" || r.SupersededByRunID != "" || (r.Status != StateFailed && r.Status != StateInterrupted) {
 		return false
 	}
+	if evidenceRecoveryRun(r) {
+		return true
+	}
 	if r.BudgetStop != nil {
 		return true
 	}
@@ -122,7 +125,7 @@ func budgetContinuationCandidate(r Run) bool {
 		reason = r.Error.Code
 	}
 	switch reason {
-	case "call-budget", "call-limit", "model-budget", "token-budget", "run-timeout", "result-budget", "panel-update":
+	case "no-progress", "recovery-exhausted", "call-budget", "call-limit", "model-budget", "token-budget", "run-timeout", "result-budget", "panel-update":
 		return true
 	}
 	return false

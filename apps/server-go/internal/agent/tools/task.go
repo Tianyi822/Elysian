@@ -15,6 +15,7 @@ type Submission struct {
 }
 
 type TaskStatus struct {
+	Evidence  *ExecutionEvidence
 	Outcome   TaskOutcome
 	ErrorCode string
 	State     string

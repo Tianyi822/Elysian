@@ -252,7 +252,13 @@ func (r *Registry) Execute(c *kardia.Context, name string, args Arguments) (any,
 	}
 	args = kardia.CloneConfig(args).(Arguments)
 	if err := descriptor.validateArguments(args); err != nil {
-		return nil, fmt.Errorf("工具 %q 的参数不合法：%w", name, err)
+		message := "工具参数不符合已加载定义的字段约束"
+		// 原生 Schema 的错误只含已声明字段、约束和类型；自定义验证器
+		// 可能携带上游正文，不能直接作为公开诊断。
+		if descriptor.ValidateArguments == nil {
+			message = err.Error()
+		}
+		return nil, &BusinessError{Code: "tool-arguments-rejected", Message: message + "；本次业务操作未执行，请修正参数后重新提议", NotDispatched: true}
 	}
 	call := Call{ID: r.nextCallID(), Name: name, Args: args}
 	site := r.Ctx

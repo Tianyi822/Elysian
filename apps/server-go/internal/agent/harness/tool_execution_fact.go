@@ -74,14 +74,23 @@ func toolFactContent(fact toolExecutionFact, call *Call) string {
 				value = map[string]any{"error": call.Error, "result": call.Result}
 			} else {
 				value = map[string]any{"result": call.Result, "truncated": call.Truncated}
+				if call.Evidence != nil {
+					value.(map[string]any)["evidence"] = call.Evidence
+				}
 			}
 		} else {
 			unknown := map[string]any{"error": Failure{Code: "outcome-unknown", Message: "调用结果未确认，须核实实际状态，不得直接重放"}}
 			if call != nil && call.Result != nil {
 				unknown["result"] = call.Result // 保留已确认的接受凭据，不能将其当成最终成功。
 			}
+			if fact.Error != nil {
+				unknown["cause"] = fact.Error
+			}
 			value = unknown
 		}
+	}
+	if call != nil && len(call.Attempts) > 0 {
+		value.(map[string]any)["attempts"] = call.Attempts
 	}
 	raw, _ := json.Marshal(value)
 	return string(raw)

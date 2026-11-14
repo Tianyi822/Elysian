@@ -338,11 +338,8 @@ func TestOperationDenyCancelExpireAndRevoke(t *testing.T) {
 			}
 			messages, err := m.Messages(ctx, s.ID, "", 20)
 			want := 2
-			if action == "cancel" {
-				want = 1
-			}
 			if err != nil || len(messages.Items) != want {
-				t.Fatalf("失败应生成运行结果，手动取消保留原行为：%+v %v", messages, err)
+				t.Fatalf("没有回复片段时应保存确定性事实结果：%+v %v", messages, err)
 			}
 			if action != "cancel" && (messages.Items[1].Origin != "runtime" || got.Error == nil || !strings.Contains(messages.Items[1].Content, got.Error.Message)) {
 				t.Fatalf("失败原因未公开：%+v", messages)
@@ -362,6 +359,29 @@ func TestOperationUnknownBarrierPersistsAndReconciliationDoesNotRewriteResult(t 
 	run := submitAgentTest(t, m, s, "unknown", "执行操作")
 	a := waitingApproval(t, m, run.ID)
 	if _, err := m.Decide(ctx, a.ID, "approved"); err != nil {
+		t.Fatal(err)
+	}
+	runtimeEventually(t, func() bool { r, _ := m.Get(ctx, run.ID); return r.Status == StateWaitingRecovery })
+	// 核实通道缺失也必须有界中断；模拟持久截止到期，避免真实等待两分钟。
+	m.mu.Lock()
+	err := m.store.write(ctx, "expire-recovery-test", func(tx *sql.Tx) error {
+		ops, err := readDocuments[Operation](ctx, tx, "SELECT document FROM operations WHERE run_id=?", run.ID)
+		if err != nil {
+			return err
+		}
+		for _, o := range ops {
+			if o.Recovery != nil {
+				o.Recovery.Deadline = stamp(m.deps.Now().Add(-time.Second))
+				o.Recovery.NextCheckAt = ""
+				if err := saveOperation(ctx, tx, o); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+	m.mu.Unlock()
+	if err != nil {
 		t.Fatal(err)
 	}
 	if got := runtimeFinished(t, m, run.ID); got.Status != StateInterrupted || got.EndReason != "outcome-unknown" {

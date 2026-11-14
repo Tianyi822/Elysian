@@ -193,7 +193,7 @@ func (m *Manager) registerRunCatalog(ctx context.Context, s CapabilitySnapshot) 
 				if err == nil {
 					result.Value, _, err = projectResult(value, DefaultLimits().ResultBytes)
 				} else if business, ok := tools.AsBusinessError(err); ok && ctx.Err() == nil && recoverableBusinessError(c, business) {
-					result.BusinessError = &Failure{Code: business.Code, Message: business.Message}
+					result.BusinessError = businessFailure(business)
 					err = nil
 				} else if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 					var business *tools.BusinessError
@@ -255,10 +255,10 @@ func (m *Manager) executeRegistryOperation(ctx context.Context, s CapabilitySnap
 	if err != nil {
 		return CapabilityResult{}, err
 	}
-	value, err := m.toolRuntime.Execute(ctx, o.Capability.Name, args)
+	value, err := m.executeRegistryWithRetry(ctx, s, o, args)
 	if err != nil {
-		if business, ok := tools.AsBusinessError(err); ok && ctx.Err() == nil && recoverableBusinessError(o.Capability, business) {
-			return CapabilityResult{BusinessError: &Failure{Code: business.Code, Message: business.Message}}, nil
+		if business, ok := tools.AsBusinessError(err); ok && ctx.Err() == nil && (recoverableBusinessError(o.Capability, business) || s.RecoveryPolicy == evidenceRecoveryPolicy && (business.NotDispatched || o.Capability.Source == "builtin" && business.NoBusinessEffect)) {
+			return CapabilityResult{BusinessError: businessFailure(business)}, nil
 		}
 		// 仅内置网页工具定义的安全业务错误可继续交给模型，不透传底层错误。
 		var webError *webfetch.Error
@@ -272,7 +272,7 @@ func (m *Manager) executeRegistryOperation(ctx context.Context, s CapabilitySnap
 			}
 		}
 		if result, ok := value.(CapabilityResult); ok {
-			return result, err
+			return classifyRecoveryResult(s, o, result), err
 		}
 		if o.Capability.Metadata.Async {
 			return CapabilityResult{Unknown: true}, err
@@ -289,11 +289,11 @@ func (m *Manager) executeRegistryOperation(ctx context.Context, s CapabilitySnap
 		raw, _, err := projectResult(submitted.Value, limit)
 		return CapabilityResult{Value: raw, Task: &submitted.Task}, err
 	}
+	if result, ok := value.(CapabilityResult); ok {
+		return classifyRecoveryResult(s, o, result), nil
+	}
 	if o.Capability.Metadata.Async {
 		return CapabilityResult{Unknown: true}, bad("invalid-task-reference", "异步工具未返回可恢复的接受回执")
-	}
-	if result, ok := value.(CapabilityResult); ok {
-		return result, nil
 	}
 	if o.Capability.Source != "builtin" {
 		return CapabilityResult{}, errors.New("工具结果类型无效")

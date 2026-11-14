@@ -1,8 +1,11 @@
 package kardia
 
 import (
+	"encoding/json"
 	"math/big"
 	"reflect"
+	"strconv"
+	"strings"
 )
 
 // ConfigCloner 为包含私有字段的配置提供快照复制；服务实例不属于配置。
@@ -90,6 +93,25 @@ func NumbersEqual(a, b any) bool {
 	return x != nil && y != nil && x.Cmp(y) == 0
 }
 func numericRat(v reflect.Value) *big.Rat {
+	if n, ok := v.Interface().(json.Number); ok {
+		if len(n) > 1024 {
+			return nil
+		}
+		if i := strings.IndexAny(string(n), "eE"); i >= 0 {
+			exp, err := strconv.Atoi(string(n)[i+1:])
+			if err != nil || exp > 1024 || exp < -1024 {
+				return nil
+			}
+		}
+		if !json.Valid([]byte(n)) {
+			return nil
+		}
+		r, ok := new(big.Rat).SetString(string(n))
+		if ok {
+			return r
+		}
+		return nil
+	}
 	switch v.Kind() {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		return new(big.Rat).SetInt64(v.Int())

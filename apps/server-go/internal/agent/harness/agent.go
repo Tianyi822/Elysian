@@ -13,6 +13,7 @@ import (
 	"elysian/server/internal/agent/harness/model"
 	"elysian/server/internal/agent/harness/worker"
 	"elysian/server/internal/agent/jsonvalue"
+	"elysian/server/internal/agent/mcp"
 )
 
 // agentExecution 只保存本次运行的控制状态；事实均先写入父进程数据库。
@@ -37,6 +38,7 @@ type agentExecution struct {
 	workflowOutput     *workflowAgentOutput
 	userInputError     string
 	toolCorrection     bool // 从本 Run 已持久化的失败推理重建，用于尾部状态与一次固定搜索请求。
+	protocolCorrection string
 	// tokenizerFailures 记录本次运行内官方分词器的连续失败次数：连续失败后不再尝试，
 	// 避免每次推理都等满超时；成功一次即清零。只影响估算精度，不阻断推理。
 	tokenizerFailures int
@@ -152,6 +154,9 @@ func (a *agentExecution) NextModel(ctx context.Context) (worker.ModelResponse, e
 		return worker.ModelResponse{}, err
 	} else if selected != nil {
 		return *selected, nil
+	}
+	if err := a.checkRecoveryProgress(ctx); err != nil {
+		return worker.ModelResponse{}, err
 	}
 	record, err := a.requestInference(ctx)
 	if err != nil {
@@ -400,7 +405,7 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 		m.mu.Unlock()
 		return empty, bad("result-budget", "本轮工具结果容量已用完")
 	}
-	if modelLimitReached(run, 1, a.modelRequestReserve(purpose)) || run.Usage.Tokens+estimate > run.Limits.TokenBudget {
+	if modelLimitReached(run, 1, a.modelRequestReserve(purpose)) || run.Usage.Tokens+estimate > run.Limits.TokenBudget || purpose == "failure-summary" && run.Usage.Tokens+estimate+request.MaxTokens > run.Limits.TokenBudget {
 		m.mu.Unlock()
 		return empty, bad("model-budget", "模型请求次数或 token 预算已耗尽")
 	}
@@ -551,6 +556,16 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 		// 已确认响应的 prompt_tokens 是官方实测：反推本地字节估算比例，供后续请求与压缩边界使用。
 		a.manager.notePromptUsage(a.run.Model, localPayloadBytes, *result.response.Usage.PromptTokens)
 	}
+	if result.err == nil && purpose == "inference" && evidenceRecoveryRun(run) && result.response.FinishReason == "tool_calls" {
+		for _, call := range result.response.ToolCalls {
+			for _, tool := range request.Tools {
+				if call.Name != planTool && call.Name != userInputTool && tool.Name == call.Name && mcp.Validate(tool.Parameters, call.Arguments) != nil {
+					result.err = bad("model-tool-schema-invalid", mcp.ValidationHint(tool.Parameters, call.Arguments)+"；本批操作均未执行，请根据工具定义修正完整参数后重新提议")
+					record.CorrectionKey = model.ToolCorrectionFingerprint([]model.ToolCall{call})
+				}
+			}
+		}
+	}
 	if result.err == nil {
 		normalized, marshalErr := json.Marshal(result.response)
 		if marshalErr != nil || len(normalized) > run.Limits.ModelResponseBytes {
@@ -564,7 +579,8 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 		record.Error = &Failure{Code: "model-failed", Message: "模型请求失败，请检查模型服务与凭据"}
 		var typed *model.Error
 		if errors.As(result.err, &typed) {
-			record.Error = &Failure{Code: typed.Code, Message: typed.Message}
+			record.Error = &Failure{Code: typed.Code, Message: typed.Message, Retryable: typed.Retryable, RetryAfterSeconds: typed.RetryAfterSeconds}
+			record.CorrectionKey = typed.CorrectionKey
 		}
 		var own *Error
 		if errors.As(result.err, &own) {
@@ -575,7 +591,7 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 			record.Error = &Failure{Code: "cancelled", Message: "模型请求已取消"}
 		}
 		if errors.Is(result.err, context.DeadlineExceeded) {
-			record.Error = &Failure{Code: "model-timeout", Message: "模型请求超过时间限制"}
+			record.Error = &Failure{Code: "model-timeout", Message: "模型请求超过时间限制", Retryable: ctx.Err() == nil}
 		}
 	}
 	m.mu.Lock()

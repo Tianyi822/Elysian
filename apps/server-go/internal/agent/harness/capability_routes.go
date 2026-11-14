@@ -37,6 +37,10 @@ func registerCapabilityRoutes(r chi.Router, service runtimeService) {
 		v, e := m.DecideAccess(req.Context(), chi.URLParam(req, "id"), in)
 		respond(w, v, e)
 	}))
+	r.Post("/runs/{id}/verify", wrap(func(m *Manager, w http.ResponseWriter, req *http.Request) {
+		v, e := m.VerifyRecovery(req.Context(), chi.URLParam(req, "id"))
+		respond(w, v, e)
+	}))
 	r.Get("/sessions/{id}/authorizations", http.NotFound)
 	r.Delete("/sessions/{id}/authorizations/{authorizationId}", http.NotFound)
 	r.Get("/sessions/{id}/environment", wrap(func(m *Manager, w http.ResponseWriter, req *http.Request) {

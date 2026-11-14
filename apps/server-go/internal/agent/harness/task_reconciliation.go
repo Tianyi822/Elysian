@@ -60,6 +60,18 @@ func (m *Manager) Reconcile(ctx context.Context, id, evidence, decision string) 
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
+		if active := m.executionLocked(o.RunID); active != nil {
+			if active.unresponsive {
+				return bad("verification-running", "原执行尚未确认停止，保护保留")
+			}
+			if active.callDone != nil {
+				select {
+				case <-active.callDone:
+				default:
+					return bad("verification-running", "原执行仍在进行，保护保留")
+				}
+			}
+		}
 		if o.Task != nil {
 			if o.Task.ID == "" || o.Task.RequestID == "" {
 				return &Error{409, "task-identity-unresolved", "须先核实异步任务的完整受理身份"}
@@ -202,6 +214,16 @@ func (m *Manager) settleReconciledProtection(ctx context.Context, tx *sql.Tx, b 
 		}
 		call.ReservedResultBytes = 0
 		if err := saveCall(ctx, tx, call); err != nil {
+			return err
+		}
+	}
+	if o.RunID != "" {
+		r, err := readRun(ctx, tx, o.RunID)
+		if err != nil {
+			return err
+		}
+		r.Recovery = &RunRecovery{OperationID: o.ID, Tool: o.Capability.Name, StartedAt: b.CreatedAt, Deadline: b.ReconciledAt, Status: "recovered", Message: "对应操作已按核实证据解除阻塞，原运行终态与原始回执保持不变"}
+		if err := saveRun(ctx, tx, &r); err != nil {
 			return err
 		}
 	}

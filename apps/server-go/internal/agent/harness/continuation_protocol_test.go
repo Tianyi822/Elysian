@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -86,6 +87,15 @@ func TestDeepSeekAnthropicContinuationForcesSearchAfterCancellation(t *testing.T
 					return
 				}
 				index := requests.Add(1)
+				if body.ToolChoice["type"] == "none" {
+					if len(body.Tools) != 0 {
+						t.Error("失败总结不能携带工具")
+					}
+					requests.Add(-1) // 单独的无工具总结不属于续聊协议纠正请求。
+					w.Header().Set("Content-Type", "application/json")
+					io.WriteString(w, `{"type":"message","role":"assistant","content":[{"type":"text","text":"本批未执行，工具选择不符合要求。"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`)
+					return
+				}
 				if index == 3 {
 					text := string(body.Messages)
 					if !strings.Contains(text, "tool-not-executed") || strings.Contains(text, "outcome-unknown") || !strings.Contains(text, `\"historical\":true`) || !strings.Contains(text, "sourceRunId") {

@@ -3,9 +3,12 @@
 package tools
 
 import (
+	"encoding/json"
 	"math"
+	"math/big"
 	"reflect"
 	"strconv"
+	"strings"
 )
 
 // StringArg 取字符串参数。
@@ -48,6 +51,29 @@ func IntArg(args Arguments, key string) (int, bool) {
 func integerValue(value any) (int, bool) {
 	if value == nil {
 		return 0, false
+	}
+	if number, ok := value.(json.Number); ok {
+		if !json.Valid([]byte(number)) {
+			return 0, false
+		}
+		if n, err := number.Int64(); err == nil {
+			return int(n), int64(int(n)) == n
+		}
+		if len(number) > 1024 {
+			return 0, false
+		}
+		if i := strings.IndexAny(string(number), "eE"); i >= 0 {
+			exponent, err := strconv.Atoi(string(number)[i+1:])
+			if err != nil || exponent > 1024 || exponent < -1024 {
+				return 0, false
+			}
+		}
+		rational, ok := new(big.Rat).SetString(string(number))
+		if !ok || !rational.IsInt() || !rational.Num().IsInt64() {
+			return 0, false
+		}
+		n := rational.Num().Int64()
+		return int(n), int64(int(n)) == n
 	}
 	v := reflect.ValueOf(value)
 	switch v.Kind() {

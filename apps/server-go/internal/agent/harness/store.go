@@ -240,7 +240,7 @@ func (s *store) event(ctx context.Context, tx *sql.Tx, r *Run, kind, callID stri
 	if err := saveRun(ctx, tx, r); err != nil {
 		return err
 	}
-	if err := s.saveTerminalResult(ctx, tx, *r); err != nil {
+	if err := s.saveTerminalResult(ctx, tx, r); err != nil {
 		return err
 	}
 	return s.syncWorkflowRun(ctx, tx, r)

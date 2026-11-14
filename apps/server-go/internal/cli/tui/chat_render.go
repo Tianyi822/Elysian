@@ -329,6 +329,8 @@ func runStatusLabel(status string, stopping bool) string {
 		return "等待审批"
 	case "waiting-resource":
 		return "等待资源"
+	case "waiting-recovery":
+		return "正在核实"
 	case "waiting-task":
 		return "等待任务"
 	case "succeeded":

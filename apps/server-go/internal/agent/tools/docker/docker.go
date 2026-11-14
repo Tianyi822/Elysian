@@ -278,7 +278,7 @@ func (s *Service) descriptors() []tools.Descriptor {
 			"port":         {Type: tools.SchemaInteger, Description: "容器侧 TCP 端口；localhost 与 any-host 必填"},
 			"hostPort":     {Type: tools.SchemaInteger, Description: "宿主端口；仅 any-host 必填且不得为面板保留端口"},
 			"credentials":  {Type: tools.SchemaArray, Items: &tools.Schema{Type: tools.SchemaString, Pattern: "^[A-Z][A-Z0-9_]{0,63}$"}, Description: "凭据环境变量名列表（如 MYSQL_ROOT_PASSWORD），最多 8 项；值由后端生成，不传入明文"},
-			"env":          {Type: tools.SchemaArray, Items: &tools.Schema{Type: tools.SchemaString}, Description: "非凭据环境变量 KEY=VALUE 列表，最多 16 项、每项不超过 512 字节，完整进入审批展示"},
+			"env":          {Type: tools.SchemaArray, Items: &tools.Schema{Type: tools.SchemaString}, Description: "非凭据环境变量 KEY=VALUE 列表，最多 16 项、每项不超过 512 字节，完整进入审批展示。MySQL 必须提供 MYSQL_DATABASE=初始逻辑库名，MariaDB 必须提供 MARIADB_DATABASE=初始逻辑库名；库名未知先用 request_user_input 询问，不得编造；密码只用 credentials 声明由后端生成"},
 			"volumes":      {Type: tools.SchemaArray, Items: &tools.Schema{Type: tools.SchemaString, Pattern: "^/[A-Za-z0-9._/-]{0,127}$"}, Description: "容器内持久卷挂载点（如 /var/lib/mysql），最多 2 个；卷由面板托管"},
 		}},
 		Metadata:    tools.Metadata{Domain: "docker", Action: "create_service", Effect: "write", Exposure: "agent", ResourceType: "docker-container", ResourceKeyArgument: "name", Version: "3", Async: true, TaskDomain: domaindocker.ContainerOperationDomain, TaskRequestArgument: "requestId"},

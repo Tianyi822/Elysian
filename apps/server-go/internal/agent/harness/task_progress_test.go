@@ -163,9 +163,7 @@ func TestDomainUnknownProgressUsesDurableReasonAfterRefresh(t *testing.T) {
 		return false
 	})
 	unknown.Store(true)
-	if got := runtimeFinished(t, m, run.ID); got.Status != StateInterrupted {
-		t.Fatalf("%+v", got)
-	}
+	runtimeEventually(t, func() bool { r, _ := m.Get(m.ctx, run.ID); return r.Status == StateWaitingRecovery })
 	for attempt := 0; attempt < 2; attempt++ {
 		out, err := m.ChatSnapshot(m.ctx, run.ID)
 		if err != nil || out.Timeline == nil {

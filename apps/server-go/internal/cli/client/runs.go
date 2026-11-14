@@ -25,6 +25,8 @@ func RunOutcome(run Run) Outcome {
 		return Outcome{Label: "等待审批"}
 	case "waiting-resource":
 		return Outcome{Label: "等待资源"}
+	case "waiting-recovery":
+		return Outcome{Label: "正在核实"}
 	case "waiting-task":
 		return Outcome{Label: "等待任务"}
 	case "recovery-required":

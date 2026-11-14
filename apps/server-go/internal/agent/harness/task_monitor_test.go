@@ -57,10 +57,7 @@ func TestUnknownSubmissionReconcilesByStableRequestWithoutReplay(t *testing.T) {
 	if _, err := m.Decide(ctx, approval.ID, "approved"); err != nil {
 		t.Fatal(err)
 	}
-	finished := runtimeFinished(t, m, run.ID)
-	if finished.Status == StateSucceeded {
-		t.Fatal("lost receipt was presented as confirmed success")
-	}
+	runtimeEventually(t, func() bool { r, _ := m.Get(ctx, run.ID); return r.Status == StateWaitingRecovery })
 	runtimeEventually(t, func() bool {
 		operations, err := m.Operations(ctx, run.ID)
 		return err == nil && len(operations) == 2 && operations[1].Task != nil && *operations[1].Task == reference
@@ -74,9 +71,9 @@ func TestUnknownSubmissionReconcilesByStableRequestWithoutReplay(t *testing.T) {
 	if submissions.Load() != 1 {
 		t.Fatalf("unknown submission replayed %d times", submissions.Load())
 	}
-	current, err := m.Get(ctx, run.ID)
-	if err != nil || current.Status != finished.Status {
-		t.Fatalf("reconciliation resumed a stopped run: %+v %v", current, err)
+	current := runtimeFinished(t, m, run.ID)
+	if current.Status != StateSucceeded {
+		t.Fatalf("verified recovery failed to finish: %+v", current)
 	}
 }
 

@@ -223,7 +223,7 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 		plugins = append(plugins, toolwebsites.Plugin(toolwebsites.Deps{Facade: websiteDeps.AgentFacade}, toolwebsites.Config{}))
 	}
 	factory := harnessFactory(func(config *config.Config, views seam.DockerViews) (http.Handler, func(context.Context) error, error) {
-		return assembleProductionHarness(config, views, harnessAssemblyOptions{Paths: paths.Default, Home: paths.ElysianHome, Plugins: plugins, CancelTask: agentTaskCanceller(websiteDeps.AgentFacade, appAgent, stack.Agent, databaseDeps.AgentFacade), InspectTask: agentTaskInspector(websiteDeps.AgentFacade, appAgent, stack.Agent, databaseDeps.AgentFacade), LookupTask: agentTaskLookup(websiteDeps.AgentFacade, appAgent, stack.Agent, databaseDeps.AgentFacade), ReconcileTask: agentTaskReconciler(websiteDeps.AgentFacade, appAgent, stack.Agent, databaseDeps.AgentFacade)})
+		return assembleProductionHarness(config, views, harnessAssemblyOptions{Paths: paths.Default, Home: paths.ElysianHome, Plugins: plugins, CancelTask: agentTaskCanceller(websiteDeps.AgentFacade, appAgent, stack.Agent, databaseDeps.AgentFacade), InspectTask: agentTaskInspector(websiteDeps.AgentFacade, appAgent, stack.Agent, databaseDeps.AgentFacade), VerifyTask: agentTaskVerifier(stack.Agent), LookupTask: agentTaskLookup(websiteDeps.AgentFacade, appAgent, stack.Agent, databaseDeps.AgentFacade), ReconcileTask: agentTaskReconciler(websiteDeps.AgentFacade, appAgent, stack.Agent, databaseDeps.AgentFacade)})
 	})
 	if len(factories) > 0 && factories[0] != nil {
 		factory = factories[0]

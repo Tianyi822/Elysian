@@ -756,12 +756,31 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 	}
 	o.EndedAt = stamp(m.deps.Now())
 	call.EndedAt = o.EndedAt
+	// Retry records are persisted while this invocation is outside the manager lock.
+	var retryRaw string
+	if e := m.store.db.QueryRowContext(dbCtx, "SELECT document FROM calls WHERE id=?", call.ID).Scan(&retryRaw); e == nil {
+		var persisted Call
+		if json.Unmarshal([]byte(retryRaw), &persisted) == nil {
+			call.Attempts = persisted.Attempts
+		}
+	}
 	o.Status = "completed"
 	call.Status = StateSucceeded
 	if result.r.Unknown {
 		o.Status = "unknown"
 		call.Status = StateInterrupted
 		call.Error = &Failure{Code: "outcome-unknown", Message: "操作已派发，结果未确认"}
+		if result.r.BusinessError != nil {
+			copy := *result.r.BusinessError
+			call.Error = &copy
+		}
+		var cause *Error
+		if errors.As(capabilityError(result.e), &cause) {
+			call.Error = &Failure{Code: cause.Code, Message: cause.Message}
+		}
+		if evidenceRecoveryRun(run) && call.Error.Evidence == nil {
+			call.Error.Evidence = &tools.ExecutionEvidence{Execution: "unknown", Changes: "unknown", Recovery: "verify", Stage: "dispatch", Suggestion: "等待系统核实任务身份和真实回执，禁止重复提交"}
+		}
 	}
 	if result.e != nil && call.Error == nil {
 		call.Status = StateFailed
@@ -778,11 +797,17 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 			o.Task = nil // 明确未接受任务的预检拒绝，不保留虚假的异步任务指针。
 		}
 	}
+	if call.Error != nil {
+		call.Evidence = call.Error.Evidence
+	}
 	if len(result.r.Value) > run.Limits.ResultBytes {
 		call.Status = StateFailed
 		call.Error = &Failure{Code: "result-too-large", Message: "操作结果超过单次容量限制"}
 		result.r.Value = nil
 		result.e = bad("result-too-large", call.Error.Message)
+	}
+	if len(call.Attempts) > 0 && call.Attempts[len(call.Attempts)-1].Number < 3 {
+		call.Attempts = append(call.Attempts, ToolAttempt{Number: call.Attempts[len(call.Attempts)-1].Number + 1, Error: call.Error})
 	}
 	o.Error = call.Error
 	call.Result = result.r.Value
@@ -792,6 +817,12 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		call.ReservedResultBytes = max(0, run.Limits.ResultBytes-len(call.Result))
 	}
 	_, err = m.store.change(dbCtx, run.ID, "operation-result", func(tx *sql.Tx, r *Run) error {
+		if r.Recovery != nil && r.Recovery.OperationID == o.ID && r.Recovery.Status == "correcting" {
+			r.Recovery.Status, r.Recovery.Message = "recovered", "只读查询重试成功，继续任务"
+			if call.Error != nil {
+				r.Recovery.Status, r.Recovery.Message = "exhausted", "只读查询重试结束，已将具体原因交回模型"
+			}
+		}
 		if r.Usage.ResultBytes+len(call.Result) > r.Limits.RunResultBytes {
 			call.Result = nil
 			call.Status = StateFailed
@@ -803,7 +834,8 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 			return err
 		}
 		r.Usage.ResultBytes += len(call.Result)
-		if result.r.Workspace != nil && !result.r.Unknown {
+		verifiedWorkspace := evidenceRecoveryRun(*r) && result.r.BusinessError != nil && result.r.BusinessError.Evidence != nil && result.r.BusinessError.Evidence.Stage == "workspace-verified" && result.r.BusinessError.Evidence.Execution == "finished"
+		if result.r.Workspace != nil && (!result.r.Unknown || verifiedWorkspace) {
 			if err := commitWorkspaceVersion(dbCtx, tx, *result.r.Workspace); err != nil {
 				return err
 			}
@@ -850,6 +882,9 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		if err := settleOperationProtection(dbCtx, tx, o.ID, o.EndedAt, result.r.Unknown); err != nil {
 			return err
 		}
+		if result.r.Unknown && evidenceRecoveryRun(*r) && !terminal(r.Status) && r.CancelRequestedAt == "" {
+			beginRecovery(r, &o, m.deps.Now())
+		}
 		if err := saveOperation(dbCtx, tx, o); err != nil {
 			return err
 		}
@@ -893,6 +928,9 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 	}
 	execution.nextStep++
 	if result.r.Unknown {
+		if o.Recovery != nil {
+			return worker.ErrSuspended
+		}
 		return bad("outcome-unknown", "操作结果未知，必须人工核实")
 	}
 	if result.e != nil {

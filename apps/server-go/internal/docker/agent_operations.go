@@ -33,19 +33,21 @@ type ContainerExecInput struct {
 }
 
 type ContainerOperationTask struct {
-	ID              string                        `json:"id"`
-	RequestID       string                        `json:"requestId"`
-	Target          string                        `json:"target"`
-	Digest          string                        `json:"digest"`
-	State           string                        `json:"state"`
-	Stage           string                        `json:"stage"`
-	UpdatedAt       string                        `json:"updatedAt"`
-	CancelRequested bool                          `json:"cancelRequested"`
-	Result          json.RawMessage               `json:"result,omitempty"`
-	Message         string                        `json:"message,omitempty"`
-	ErrorCode       string                        `json:"errorCode,omitempty"`
-	ExecID          string                        `json:"execId,omitempty"`
-	Resolution      *ContainerOperationResolution `json:"resolution,omitempty"`
+	ExecObservedRunning bool                           `json:"execObservedRunning,omitempty"`
+	Observation         *ContainerOperationObservation `json:"observation,omitempty"`
+	ID                  string                         `json:"id"`
+	RequestID           string                         `json:"requestId"`
+	Target              string                         `json:"target"`
+	Digest              string                         `json:"digest"`
+	State               string                         `json:"state"`
+	Stage               string                         `json:"stage"`
+	UpdatedAt           string                         `json:"updatedAt"`
+	CancelRequested     bool                           `json:"cancelRequested"`
+	Result              json.RawMessage                `json:"result,omitempty"`
+	Message             string                         `json:"message,omitempty"`
+	ErrorCode           string                         `json:"errorCode,omitempty"`
+	ExecID              string                         `json:"execId,omitempty"`
+	Resolution          *ContainerOperationResolution  `json:"resolution,omitempty"`
 }
 
 type ContainerOperationResolution struct {
@@ -113,6 +115,9 @@ func (a *AgentFacade) loadContainerOperations() error {
 		if task.Resolution != nil && (!validContainerResolution(*task.Resolution, task) || task.State != "unknown" && task.State != "succeeded" && task.State != "failed") {
 			return errors.New("容器操作核实记录身份无效")
 		}
+		if task.Observation != nil && !validContainerObservation(task) {
+			return errors.New("容器操作观察证据身份无效")
+		}
 		switch task.State {
 		case "running":
 			task.State = "unknown"
@@ -140,7 +145,7 @@ func (a *AgentFacade) updateContainerOperation(id string, update func(*Container
 	if !ok {
 		return errors.New("容器操作任务不存在")
 	}
-	if task.Resolution != nil {
+	if task.Resolution != nil || task.Observation != nil {
 		return nil
 	} // A late receipt cannot reopen an administratively resolved task.
 	update(&task)
@@ -178,7 +183,7 @@ func (a *AgentFacade) submitContainerOperation(requestID, target string, input a
 		return task, nil
 	}
 	for _, task := range a.operations {
-		if task.Target == target && (task.State == "running" || task.State == "unknown") && task.Resolution == nil {
+		if task.Target == target && containerOperationBlocks(task) {
 			return ContainerOperationTask{}, shared.InvalidRequest("此容器已有进行中或结果未确认的操作")
 		}
 	}
@@ -331,7 +336,7 @@ func (a *AgentFacade) CheckContainerMutation(ctx context.Context, id, name, ownR
 	}
 	needsName := false
 	for _, task := range a.operations {
-		if task.RequestID == ownRequestID || task.Resolution != nil || task.State != "running" && task.State != "unknown" {
+		if task.RequestID == ownRequestID || !containerOperationBlocks(task) {
 			continue
 		}
 		if id != "" && task.Target == id || name != "" && task.Target == "name:"+name {
@@ -374,6 +379,10 @@ func (a *AgentFacade) InspectContainerOperation(ctx context.Context, id string) 
 		return ContainerOperationTask{}, shared.InvalidRequest("容器操作任务不存在")
 	}
 	task.Result = append(json.RawMessage(nil), task.Result...)
+	if task.Observation != nil {
+		copy := *task.Observation
+		task.Observation = &copy
+	}
 	if task.Resolution != nil {
 		copy := *task.Resolution
 		task.Resolution = &copy

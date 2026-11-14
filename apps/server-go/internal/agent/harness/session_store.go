@@ -311,7 +311,7 @@ func (s *store) releaseSession(ctx context.Context, tx *sql.Tx, r *Run) error {
 
 // sessionDeletableGuardSQL 仅用于自动保留期清理；人工删除由管理员显式强制终止。
 const sessionDeletableGuardSQL = `active_run_id='' AND active_workflow_id=''
- AND NOT EXISTS(SELECT 1 FROM runs WHERE runs.session_id=sessions.id AND state IN ('queued','running','waiting-input','waiting-approval','waiting-resource','waiting-task'))
+ AND NOT EXISTS(SELECT 1 FROM runs WHERE runs.session_id=sessions.id AND state IN ('queued','running','waiting-input','waiting-approval','waiting-resource','waiting-task','waiting-recovery'))
  AND NOT EXISTS(SELECT 1 FROM resource_leases l JOIN runs r ON r.id=l.run_id WHERE r.session_id=sessions.id AND l.state IN ('held','unknown'))
  AND NOT EXISTS(SELECT 1 FROM execution_barriers b JOIN runs r ON r.id=b.run_id WHERE r.session_id=sessions.id AND b.state IN ('dispatched','unknown'))`
 

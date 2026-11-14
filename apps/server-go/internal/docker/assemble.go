@@ -30,6 +30,7 @@ type Deps struct {
 	PortOpener seam.PortOpener
 	// AgentCredentialsPath 是 service-v1 凭据登记文件；空串时服务容器创建报未装配。
 	AgentCredentialsPath string
+	AgentOperationRoot   string
 }
 
 // Stack 装配产出：路由器与向 database/websites 分发的事实。
@@ -117,7 +118,7 @@ func Assemble(deps Deps) (Stack, error) {
 		execSessions: sessions,
 		logs:         deps.Logs,
 	})
-	agent := &AgentFacade{service: service, authorize: deps.AgentAuthorize, portOpener: deps.PortOpener}
+	agent := &AgentFacade{service: service, authorize: deps.AgentAuthorize, portOpener: deps.PortOpener, operationRoot: deps.AgentOperationRoot}
 	if deps.AgentCredentialsPath != "" {
 		agent.credentials = newAgentCredentialStore(deps.AgentCredentialsPath)
 	}

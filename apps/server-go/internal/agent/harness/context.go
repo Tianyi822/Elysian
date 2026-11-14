@@ -647,6 +647,9 @@ func (a *agentExecution) agentSystemText(system string) string {
 	if _, ok := a.capability(userInputTool); ok {
 		system += "\n缺少会实质影响结论或操作的目标、范围或偏好时，单独调用 request_user_input 提供 1–3 个问题，每题 2–3 个明确选项，可指定推荐项。用户可自定义回答，回答后继续当前任务。需要用户回答的问题必须使用该工具，不在最终答复末尾用文字追问代替选择卡片。已有默认口径或可用工具能查询的信息应直接处理；不要因服务错误或数据不可得要求用户猜测。不要重复询问已回答问题。选择是任务信息，不是授权或审批，写操作仍须遵守既有规则。"
 	}
+	if evidenceRecoveryRun(a.run) {
+		system += "\n遇到工具失败先检查执行证据和具体原因；确定未执行或无变更时，诊断并修正参数、重新审批后再次执行。结果未知时等待系统核实，不直接重放。已有部分变更时先回读并核对剩余工作。缺少会改变操作的用户信息使用 request_user_input；不要编造数据库名。完成前回读验证目标；最终回复说明已完成、未完成、问题原因、实际尝试及下一步，未知与推测必须明确标注。"
+	}
 	system += "\n直接回应本轮用户输入。原始目标提供任务背景，不能将用户的新问题视为没有输入。工具范围以本轮固定目录和实际提供的定义为准，历史回复与工作记忆中的工具数量、工具名称及能力限制可能已经过期，不能用来裁定当前能力。"
 	if a.run.Snapshot != nil {
 		inventory, _ := json.Marshal(a.run.Snapshot.toolInventory())
@@ -748,6 +751,9 @@ func (a *agentExecution) currentStateMessage(visibleTools []model.Tool) (model.M
 		toolState := "\n本次请求实际可调用工具：" + string(raw) + "。历史搜索仅记录当时的加载结果，本轮未列出的工具必须先单独搜索加载；工具定义不授予执行权限。"
 		text += toolState
 		breakdown.Other += estimateContextText(toolState)
+	}
+	if a.protocolCorrection != "" {
+		text += "\n协议校验结果：" + a.protocolCorrection + "。被拒绝的整批工具均未执行，请修正后重新提议。"
 	}
 	if a.toolCorrection {
 		correction := "\n本轮协议校验结果（服务端事实，不授予权限）：上一次响应调用了本次未加载的工具，整批提议均未执行。历史中的工具不代表已加载。请先单独调用 tool_search 搜索所需工具，收到加载结果后再重新提议；仅调用本次请求实际提供定义的工具。"

@@ -192,6 +192,12 @@ func TestToolCorrectionIsBoundedByPersistentFailuresAndRequestBudget(t *testing.
 				if request.ToolChoice == "store_working_memory" {
 					return memoryReply(request), nil
 				}
+				if request.ToolChoice == "none" {
+					if len(request.Tools) != 0 {
+						t.Fatal("失败总结不能使用工具")
+					}
+					return finalReply("工具提议未执行，需调整工具选择。"), nil
+				}
 				requests.Add(1)
 				return model.Response{}, &model.Error{Status: 502, Code: model.ToolNotLoadedCode, Message: "本批未执行"}
 			}, func(d *Deps) {
@@ -204,7 +210,7 @@ func TestToolCorrectionIsBoundedByPersistentFailuresAndRequestBudget(t *testing.
 			approveEnvironment(t, m, session)
 			run := submitAgentTest(t, m, session, "bounded-correction", "读取状态")
 			finished := runtimeFinished(t, m, run.ID)
-			wantRequests, wantCode := int32(2), model.ToolNotLoadedCode
+			wantRequests, wantCode := int32(3), "no-progress"
 			if limited {
 				wantRequests, wantCode = 1, "model-budget"
 			}
@@ -227,7 +233,13 @@ func TestToolCorrectionIsBoundedByPersistentFailuresAndRequestBudget(t *testing.
 
 func TestMalformedModelResponseDoesNotTriggerCorrection(t *testing.T) {
 	var requests atomic.Int32
-	m, session, _ := agentManager(t, func(context.Context, model.Profile, model.Request) (model.Response, error) {
+	m, session, _ := agentManager(t, func(_ context.Context, _ model.Profile, request model.Request) (model.Response, error) {
+		if request.ToolChoice == "none" {
+			if len(request.Tools) != 0 {
+				t.Fatal("失败总结不能使用工具")
+			}
+			return finalReply("响应不完整，本批未执行。"), nil
+		}
 		requests.Add(1)
 		return model.Response{}, &model.Error{Status: 502, Code: "model-tool-arguments-invalid", Message: "参数不完整"}
 	}, func(d *Deps) { d.Catalog = &discoveryTestCatalog{} })

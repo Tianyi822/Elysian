@@ -4,11 +4,13 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 
 	"elysian/server/internal/agent/jsonvalue"
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	"github.com/santhosh-tekuri/jsonschema/v6/kind"
 )
 
 var schemaCache = struct {
@@ -21,6 +23,85 @@ type denyLoader struct{}
 
 func (denyLoader) Load(string) (any, error) {
 	return nil, errors.New("禁止加载外部 JSON Schema 引用")
+}
+
+// ValidationHint projects only frozen schema field names and constraint kinds.
+// ValidationError.Error() may contain instance values and must not be exposed.
+func ValidationHint(schema, instance json.RawMessage) string {
+	fallback := "参数不符合已加载工具定义的字段约束"
+	compiled, err := compileSchema(schema)
+	if err != nil {
+		return fallback
+	}
+	value, err := jsonvalue.Decode(instance)
+	if err != nil {
+		return fallback
+	}
+	var invalid *jsonschema.ValidationError
+	if !errors.As(compiled.Validate(value), &invalid) {
+		return fallback
+	}
+	doc, _ := jsonvalue.Decode(schema)
+	fields := map[string]bool{}
+	var collect func(any)
+	collect = func(v any) {
+		switch v := v.(type) {
+		case map[string]any:
+			if properties, ok := v["properties"].(map[string]any); ok {
+				for name, child := range properties {
+					fields[name] = true
+					collect(child)
+				}
+			}
+			for key, child := range v {
+				if mapKeywords[key] || schemaKeywords[key] || arrayKeywords[key] {
+					collect(child)
+				}
+			}
+		case []any:
+			for _, child := range v {
+				collect(child)
+			}
+		}
+	}
+	collect(doc)
+	for len(invalid.Causes) > 0 {
+		invalid = invalid.Causes[0]
+	}
+	if missing, ok := invalid.ErrorKind.(*kind.Required); ok {
+		names := []string{}
+		for _, name := range missing.Missing {
+			if fields[name] && len(name) <= 64 {
+				names = append(names, name)
+				if len(names) == 3 {
+					break
+				}
+			}
+		}
+		if len(names) > 0 {
+			return "缺少必填字段：" + strings.Join(names, "、")
+		}
+	}
+	path := "参数"
+	for _, component := range invalid.InstanceLocation {
+		if fields[component] && len(component) <= 64 {
+			path += "." + component
+		} else if index, err := strconv.Atoi(component); err == nil && index >= 0 {
+			path += "[" + strconv.Itoa(index) + "]"
+		} else {
+			path += ".未声明字段"
+			break
+		}
+	}
+	keyword := invalid.ErrorKind.KeywordPath()
+	constraint := "字段"
+	if len(keyword) > 0 {
+		switch keyword[0] {
+		case "type", "enum", "const", "required", "additionalProperties", "minimum", "maximum", "minLength", "maxLength", "pattern", "minItems", "maxItems", "oneOf", "anyOf", "format":
+			constraint = keyword[0]
+		}
+	}
+	return path + " 不符合 " + constraint + " 约束"
 }
 
 // Validate 固定使用 2020-12；数值校验直接使用 json.Number，不经过 float64。

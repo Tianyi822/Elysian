@@ -12,6 +12,7 @@ import (
 const StateWaitingApproval = "waiting-approval"
 const StateWaitingResource = "waiting-resource"
 const StateWaitingTask = "waiting-task"
+const StateWaitingRecovery = "waiting-recovery"
 
 type RevisionRef struct {
 	ID       string `json:"id"`
@@ -67,6 +68,7 @@ func (c Capability) MarshalJSON() ([]byte, error) {
 }
 
 type CapabilitySnapshot struct {
+	RecoveryPolicy    string               `json:"recoveryPolicy,omitempty"`
 	AuthorizationMode string               `json:"authorizationMode,omitempty"`
 	Automatic         *AutomaticExtensions `json:"automatic,omitempty"`
 	LoadingBudget     *LoadingBudget       `json:"loadingBudget,omitempty"`
@@ -108,6 +110,7 @@ type OperationFileChange struct {
 	After  *OperationFileContent `json:"after,omitempty"`
 }
 type Operation struct {
+	Recovery                *RunRecovery            `json:"recovery,omitempty"`
 	Preparation             *RuntimePreparation     `json:"preparation,omitempty"`
 	Access                  *AccessRequest          `json:"access,omitempty"`
 	Authorization           *OperationAuthorization `json:"authorization,omitempty"`

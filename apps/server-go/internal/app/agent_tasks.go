@@ -68,7 +68,7 @@ func agentTaskReconciler(sites *websites.AgentFacade, apps *containerapps.AgentF
 		switch intent.Tool {
 		case "docker_container_exec":
 			var value docker.ContainerExecInput
-			if err := json.Unmarshal([]byte(intent.ArgumentsJSON), &value); err != nil {
+			if err := decodeContainerArguments(intent.ArgumentsJSON, &value); err != nil {
 				return err
 			}
 			if value.RequestID != intent.Task.RequestID {
@@ -77,7 +77,7 @@ func agentTaskReconciler(sites *websites.AgentFacade, apps *containerapps.AgentF
 			input, target = value, value.ID
 		case "docker_container_create_service":
 			var value docker.AgentServiceCreateInput
-			if err := json.Unmarshal([]byte(intent.ArgumentsJSON), &value); err != nil {
+			if err := decodeContainerArguments(intent.ArgumentsJSON, &value); err != nil {
 				return err
 			}
 			if value.RequestID != intent.Task.RequestID {
@@ -107,7 +107,7 @@ func agentTaskInspector(sites *websites.AgentFacade, apps *containerapps.AgentFa
 		}
 		switch ref.Domain {
 		case docker.ContainerOperationDomain:
-			task, err := containers.InspectContainerOperation(ctx, ref.ID)
+			task, err := containers.ObserveContainerOperation(ctx, ref.ID)
 			if err != nil {
 				return tools.TaskStatus{}, err
 			}
@@ -116,7 +116,30 @@ func agentTaskInspector(sites *websites.AgentFacade, apps *containerapps.AgentFa
 			}
 			terminal := task.State == "succeeded" || task.State == "failed"
 			outcome := taskOutcome(terminal, task.State == "failed", task.State == "running")
-			return normalizedTaskStatus(outcome, task.State, docker.AgentOperationReceipt(task), task.ErrorCode, task.Message, agentTaskProgress(task.State, terminal, task.Message, task.UpdatedAt, "正在执行容器操作")), nil
+			status := normalizedTaskStatus(outcome, task.State, docker.AgentOperationReceipt(task), task.ErrorCode, task.Message, agentTaskProgress(task.State, terminal, task.Message, task.UpdatedAt, "正在执行容器操作"))
+			if task.State == "failed" {
+				status.Evidence = &tools.ExecutionEvidence{Execution: "finished", Changes: "none", Recovery: "correct", Stage: task.Stage}
+			}
+			if task.Stage == "not-accepted" {
+				status.Evidence = &tools.ExecutionEvidence{Execution: "not-started", Changes: "none", Recovery: "correct", Stage: "preflight", Suggestion: "修正参数并重新审批后使用新的请求编号提交"}
+			}
+			if task.Observation != nil {
+				status.Outcome = tools.TaskSucceeded
+				status.Terminal = true
+				status.Failed = false
+				status.Progress = nil
+				status.Evidence = &tools.ExecutionEvidence{Execution: "finished", Changes: "unknown", Recovery: "verify", Stage: "exec-observed", Suggestion: "已核实命令退出状态；原输出无法恢复，请回读目标状态核对业务结果"}
+				status.ErrorCode, status.Error = "", ""
+				if task.Observation.ExitCode != 0 {
+					// A nonzero exit can leave partial changes. Termination alone
+					// does not authorize another mutation or release protection.
+					status.Outcome = tools.TaskUnknown
+					status.Terminal = false
+					status.ErrorCode = "docker-exec-observed-failed"
+					status.Error = "已核实容器命令以非零状态退出；已有变更须回读，原输出无法恢复"
+				}
+			}
+			return status, nil
 		case "database":
 			task, err := databases.InspectTask(ctx, ref.ID)
 			if err != nil {

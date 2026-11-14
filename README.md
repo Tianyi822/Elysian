@@ -48,6 +48,8 @@ sudo ely uninstall --keep-data  # 保留面板数据与凭据
 
 ## 本地开发
 
+Ely 智能体的新任务支持按执行证据纠错、只读暂时故障重试和两分钟自动核实。相同参数与错误在没有新进展时重复三次会停止并保存报告；未知操作保留保护，聊天中的「核实实际状态」用于读取回执或封存确定未受理的请求，通过后可「继续任务」。人工核实需要服务器上的真实证据；不要直接修改运行库或删除任务文件。执行边界与兼容规则见 [ADR-0078](docs/adr/0078-agent-evidence-recovery-and-run-reports.md)。
+
 ```bash
 bun install && bun run dev              # 前端与 mock 数据
 bash scripts/dev.sh up                  # Docker 开发栈（前端 + Go 后端）

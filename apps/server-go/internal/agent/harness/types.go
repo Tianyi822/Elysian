@@ -44,17 +44,24 @@ type Task struct {
 }
 
 type Failure struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	RetryAfterSeconds int                      `json:"retryAfterSeconds,omitempty"`
+	Retryable         bool                     `json:"retryable,omitempty"`
+	Code              string                   `json:"code"`
+	Message           string                   `json:"message"`
+	Evidence          *tools.ExecutionEvidence `json:"evidence,omitempty"`
 }
 
 // Run 的取消请求与终态分开：提出取消不表示执行已停止。
 type Run struct {
-	BudgetPolicy string        `json:"budgetPolicy,omitempty"`
-	BudgetStop   *BudgetStop   `json:"budgetStop,omitempty"`
-	Continuation *Continuation `json:"continuation,omitempty"` // 只读投影，不作为持久授权。
-	WikiStrategy string        `json:"wikiStrategy,omitempty"`
-	Plan         *RunPlan      `json:"plan,omitempty"`
+	Report          *RunReport    `json:"report,omitempty"`
+	FailureAnalysis string        `json:"failureAnalysis,omitempty"`
+	RecoveryPolicy  string        `json:"recoveryPolicy,omitempty"`
+	Recovery        *RunRecovery  `json:"recovery,omitempty"`
+	BudgetPolicy    string        `json:"budgetPolicy,omitempty"`
+	BudgetStop      *BudgetStop   `json:"budgetStop,omitempty"`
+	Continuation    *Continuation `json:"continuation,omitempty"` // 只读投影，不作为持久授权。
+	WikiStrategy    string        `json:"wikiStrategy,omitempty"`
+	Plan            *RunPlan      `json:"plan,omitempty"`
 
 	SupersededByRunID        string `json:"supersededByRunId,omitempty"`
 	ScopeID                  string `json:"scopeId,omitempty"`
@@ -103,22 +110,24 @@ type Run struct {
 
 // Call 的 ID 由运行内核持久分配，不使用工具注册表的进程内计数器。
 type Call struct {
-	ReservedResultBytes int             `json:"reservedResultBytes,omitempty"`
-	ArgumentsJSON       string          `json:"argumentsJson,omitempty"`
-	OperationID         string          `json:"operationId,omitempty"`
-	ModelRequestID      string          `json:"modelRequestId,omitempty"`
-	ModelCallID         string          `json:"modelCallId,omitempty"`
-	ID                  string          `json:"id"`
-	RunID               string          `json:"runId"`
-	Tool                string          `json:"tool"`
-	Status              string          `json:"status"`
-	StartedAt           string          `json:"startedAt,omitempty"`
-	EndedAt             string          `json:"endedAt,omitempty"`
-	StepIndex           int             `json:"stepIndex"`
-	Args                map[string]any  `json:"args"`
-	Result              json.RawMessage `json:"result,omitempty"`
-	Error               *Failure        `json:"error,omitempty"`
-	Truncated           bool            `json:"truncated"`
+	Evidence            *tools.ExecutionEvidence `json:"evidence,omitempty"`
+	Attempts            []ToolAttempt            `json:"attempts,omitempty"`
+	ReservedResultBytes int                      `json:"reservedResultBytes,omitempty"`
+	ArgumentsJSON       string                   `json:"argumentsJson,omitempty"`
+	OperationID         string                   `json:"operationId,omitempty"`
+	ModelRequestID      string                   `json:"modelRequestId,omitempty"`
+	ModelCallID         string                   `json:"modelCallId,omitempty"`
+	ID                  string                   `json:"id"`
+	RunID               string                   `json:"runId"`
+	Tool                string                   `json:"tool"`
+	Status              string                   `json:"status"`
+	StartedAt           string                   `json:"startedAt,omitempty"`
+	EndedAt             string                   `json:"endedAt,omitempty"`
+	StepIndex           int                      `json:"stepIndex"`
+	Args                map[string]any           `json:"args"`
+	Result              json.RawMessage          `json:"result,omitempty"`
+	Error               *Failure                 `json:"error,omitempty"`
+	Truncated           bool                     `json:"truncated"`
 }
 
 // Event 只保存状态与摘要，完整工具结果通过 calls 分页读取。Seq 为十进制字符串。

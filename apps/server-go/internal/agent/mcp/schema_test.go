@@ -2,8 +2,24 @@ package mcp
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
+
+func TestValidationHintNamesOnlyFrozenFieldsAndConstraints(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object","properties":{"port":{"type":"integer"},"password":{"type":"string","enum":["accepted"]}},"required":["port"],"additionalProperties":false}`)
+	for _, tc := range []struct{ input, want string }{
+		{`{}`, "port"},
+		{`{"port":"SECRET_VALUE"}`, "type"},
+		{`{"port":3306,"password":"SECRET_VALUE"}`, "enum"},
+		{`{"port":3306,"SECRET_KEY":"SECRET_VALUE"}`, "additionalProperties"},
+	} {
+		hint := ValidationHint(schema, json.RawMessage(tc.input))
+		if !strings.Contains(hint, tc.want) || strings.Contains(hint, "SECRET") {
+			t.Fatalf("unsafe or missing hint: %s", hint)
+		}
+	}
+}
 
 func TestSchemaPrecisionAnd2020Constraints(t *testing.T) {
 	schema := json.RawMessage(`{"type":"object","properties":{"n":{"type":"integer","const":9007199254740993},"list":{"type":"array","prefixItems":[{"const":"head"}],"items":{"type":"integer"},"contains":{"const":7},"minContains":1}},"required":["n","list"],"unevaluatedProperties":false}`)

@@ -52,6 +52,12 @@ func TestDockerLifecycleDomainPrecheckContinuesAndExecutionFailureStops(t *testi
 					if request.ToolChoice == "store_working_memory" {
 						return memoryReply(request), nil
 					}
+					if request.ToolChoice == "none" {
+						if len(request.Tools) != 0 || !strings.Contains(allRequestText(request), failure.Message) {
+							t.Fatal("总结缺少安全失败事实或带有工具")
+						}
+						return finalReply("执行失败，已停止此路径并保留失败原因。"), nil
+					}
 					switch requests.Add(1) {
 					case 1:
 						return searchReply(tool.name), nil

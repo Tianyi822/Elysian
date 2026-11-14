@@ -10,6 +10,26 @@ import (
 // 只接受 Docker 数据库接缝启用前后约定的精确元数据差异。
 // 冻结元数据使旧处理器仍执行原路径，不把新语义施加给旧审批。
 func legacyDockerContainerCatalogCompatible(operation Operation, current tools.PublicSchema) bool {
+	if legacyDockerContainerCatalogCore(operation, current) {
+		return true
+	}
+	if current.Name != "docker_container_create_service" {
+		return false
+	}
+	raw, _ := json.Marshal(current)
+	var copy tools.PublicSchema
+	if json.Unmarshal(raw, &copy) != nil {
+		return false
+	}
+	props, _ := copy.Parameters["properties"].(map[string]any)
+	item, _ := props["env"].(map[string]any)
+	if item == nil || item["description"] != "非凭据环境变量 KEY=VALUE 列表，最多 16 项、每项不超过 512 字节，完整进入审批展示。MySQL 必须提供 MYSQL_DATABASE=初始逻辑库名，MariaDB 必须提供 MARIADB_DATABASE=初始逻辑库名；库名未知先用 request_user_input 询问，不得编造；密码只用 credentials 声明由后端生成" {
+		return false
+	}
+	item["description"] = "非凭据环境变量 KEY=VALUE 列表，最多 16 项、每项不超过 512 字节，完整进入审批展示"
+	return legacyDockerContainerCatalogCore(operation, copy)
+}
+func legacyDockerContainerCatalogCore(operation Operation, current tools.PublicSchema) bool {
 	c := operation.Capability
 	if c.ReadOnly != c.Metadata.ReadOnly || c.ReadOnly != current.Metadata.ReadOnly {
 		return false

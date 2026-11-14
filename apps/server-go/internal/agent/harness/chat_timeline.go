@@ -9,6 +9,7 @@ import (
 )
 
 type ChatTimelineEntry struct {
+	Attempts       []ToolAttempt       `json:"attempts,omitempty"`
 	UserInput      *UserInputRequest   `json:"userInput,omitempty"`
 	ID             string              `json:"id"`
 	Kind           string              `json:"kind"`
@@ -44,6 +45,8 @@ type ChatCacheHitUsage struct {
 }
 
 type ChatTimelineSnapshot struct {
+	Recovery        *RunRecovery        `json:"recovery,omitempty"`
+	RecoveryPolicy  string              `json:"recoveryPolicy,omitempty"`
 	BudgetPolicy    string              `json:"budgetPolicy,omitempty"`
 	BudgetStop      *BudgetStop         `json:"budgetStop,omitempty"`
 	Continuation    *Continuation       `json:"continuation,omitempty"`
@@ -142,7 +145,7 @@ func (m *Manager) ChatSnapshot(ctx context.Context, id string) (ChatOutput, erro
 }
 
 func projectChatTimeline(run Run, records []ModelRequestRecord, operations []Operation, calls []Call, approvals []Approval) ChatTimelineSnapshot {
-	out := ChatTimelineSnapshot{Plan: run.Plan, RunID: run.ID, Status: run.Status, Done: terminal(run.Status), Error: run.Error, Usage: run.Usage, ContextUsage: projectChatContextUsage(run, records), CacheHitUsage: projectChatCacheHitUsage(records), Entries: []ChatTimelineEntry{}}
+	out := ChatTimelineSnapshot{Recovery: run.Recovery, RecoveryPolicy: run.RecoveryPolicy, Plan: run.Plan, RunID: run.ID, Status: run.Status, Done: terminal(run.Status), Error: run.Error, Usage: run.Usage, ContextUsage: projectChatContextUsage(run, records), CacheHitUsage: projectChatCacheHitUsage(records), Entries: []ChatTimelineEntry{}}
 	ops := map[string]Operation{}
 	for _, o := range operations {
 		ops[o.ModelRequestID+":"+o.ModelCallID] = o
@@ -200,6 +203,7 @@ func projectChatTimeline(run Run, records []ModelRequestRecord, operations []Ope
 			if hasCall {
 				receipt = &call
 				entry.CallID, entry.Truncated = call.ID, call.Truncated
+				entry.Attempts = call.Attempts
 			}
 			approval := decisions[operation.ApprovalID]
 			fact := projectToolExecution(run, op, receipt, &approval)

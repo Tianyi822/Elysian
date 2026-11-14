@@ -42,15 +42,12 @@ func (m *Manager) taskMonitorLoop() {
 }
 
 func (m *Manager) monitorTasks() {
-	if m.deps.InspectTask == nil {
-		return
-	}
 	m.mu.Lock()
 	if m.closed || m.storageError {
 		m.mu.Unlock()
 		return
 	}
-	operations, err := readDocuments[Operation](m.ctx, m.store.db, "SELECT o.document FROM operations o WHERE (o.state='waiting-task' OR (o.state='unknown' AND json_extract(o.document,'$.task') IS NOT NULL)) AND NOT EXISTS (SELECT 1 FROM execution_barriers b WHERE b.operation_id=o.id AND (b.state='reconciled' OR json_extract(b.document,'$.reconciliation') IS NOT NULL)) ORDER BY o.rowid")
+	operations, err := readDocuments[Operation](m.ctx, m.store.db, "SELECT o.document FROM operations o WHERE (o.state='waiting-task' OR (o.state='unknown' AND (json_extract(o.document,'$.task') IS NOT NULL OR json_extract(o.document,'$.recovery') IS NOT NULL))) AND NOT EXISTS (SELECT 1 FROM execution_barriers b WHERE b.operation_id=o.id AND (b.state='reconciled' OR json_extract(b.document,'$.reconciliation') IS NOT NULL)) ORDER BY o.rowid")
 	m.mu.Unlock()
 	if err != nil {
 		return
@@ -67,10 +64,23 @@ func (m *Manager) monitorTasks() {
 	}
 	m.mu.Unlock()
 	for _, operation := range operations {
-		if operation.Task == nil {
+		if allowed, err := m.recoveryObservation(operation); err != nil || !allowed {
+			if err != nil {
+				m.mu.Lock()
+				m.storageFailedLocked()
+				m.mu.Unlock()
+			}
+			continue
+		}
+		if operation.Task == nil || m.deps.InspectTask == nil {
 			continue
 		}
 		if operation.Task.ID == "" || operation.Task.RequestID == "" {
+			if operation.Recovery != nil && m.deps.VerifyTask != nil {
+				if ref, err := m.verifyMissingTask(m.ctx, operation); err == nil {
+					operation.Task = &ref
+				}
+			}
 			if m.deps.LookupTask == nil {
 				m.taskObservationFailed(operation)
 				continue
@@ -126,6 +136,10 @@ func (m *Manager) monitorTasks() {
 	}
 }
 
+func sameUnknownObservation(o Operation, status tools.TaskStatus) bool {
+	return (status.ErrorCode == "" || o.Error != nil && o.Error.Code == status.ErrorCode && o.Error.Message == status.Error) && (status.Evidence == nil || o.Error != nil && digestJSON(o.Error.Evidence) == digestJSON(status.Evidence))
+}
+
 func (m *Manager) settleDomainTask(expected Operation, status tools.TaskStatus) error {
 	ctx := context.Background()
 	if expected.Status == "unknown" && status.EffectiveOutcome() == tools.TaskUnknown {
@@ -133,7 +147,7 @@ func (m *Manager) settleDomainTask(expected Operation, status tools.TaskStatus) 
 		if err != nil {
 			return err
 		}
-		if settled {
+		if settled && sameUnknownObservation(expected, status) {
 			return nil // Repeated unknown observations must not churn the durable ledger.
 		}
 	}
@@ -171,7 +185,7 @@ func (m *Manager) settleDomainTask(expected Operation, status tools.TaskStatus) 
 			return err
 		}
 		wasUnknown := o.Status == "unknown" && settled
-		if unknown && wasUnknown {
+		if unknown && wasUnknown && sameUnknownObservation(o, status) {
 			return nil
 		}
 		previousBytes := 0
@@ -202,12 +216,14 @@ func (m *Manager) settleDomainTask(expected Operation, status tools.TaskStatus) 
 		call.Result = result
 		call.ReservedResultBytes = 0
 		call.Error = nil
+		call.Evidence = status.Evidence
 		if status.Failed {
 			call.Status = StateFailed
 			call.Error = &Failure{Code: "domain-task-failed", Message: "域任务执行失败，请检查任务日志"}
 			if status.ErrorCode != "" && status.Error != "" {
 				call.Error = &Failure{Code: status.ErrorCode, Message: status.Error}
 			}
+			call.Error.Evidence = status.Evidence
 			o.Error = call.Error
 		}
 		if unknown {
@@ -217,9 +233,19 @@ func (m *Manager) settleDomainTask(expected Operation, status tools.TaskStatus) 
 			if status.ErrorCode != "" && status.Error != "" {
 				call.Error = &Failure{Code: status.ErrorCode, Message: status.Error}
 			}
+			call.Error.Evidence = status.Evidence
 			o.Error = call.Error
 			if resourceBudgetRun(*r) {
 				call.ReservedResultBytes = max(0, r.Limits.ResultBytes-len(result))
+			}
+		}
+		if !unknown && o.Recovery != nil {
+			o.Recovery.Status, o.Recovery.Message = "recovered", "已取得可信结束回执，恢复任务判断"
+			if terminal(r.Status) || r.CancelRequestedAt != "" {
+				o.Recovery.Message = "已补齐可信结束回执，原运行终态保持不变"
+			}
+			if evidenceRecoveryRun(*r) {
+				r.Recovery = o.Recovery
 			}
 		}
 		if wasUnknown && r.WorkflowID != "" {
@@ -249,6 +275,16 @@ func (m *Manager) settleDomainTask(expected Operation, status tools.TaskStatus) 
 		r.Resume = &RecoveryCursor{ResponseID: o.ModelRequestID, CallIndex: o.CallIndex + 1}
 		if !terminal(r.Status) && r.CancelRequestedAt == "" {
 			if unknown {
+				if evidenceRecoveryRun(*r) {
+					beginRecovery(r, &o, m.deps.Now())
+					if err := saveOperation(ctx, tx, o); err != nil {
+						return err
+					}
+					if err := m.store.event(ctx, tx, r, "call/finished", call.ID, &call.StepIndex, map[string]any{"operationId": o.ID, "status": call.Status, "domainTaskState": status.State}); err != nil {
+						return err
+					}
+					return m.store.event(ctx, tx, r, "recovery/waiting", call.ID, nil, r.Recovery)
+				}
 				r.Status, r.EndReason, r.Error, r.EndedAt = StateInterrupted, "outcome-unknown", call.Error, ended
 				r.MemoryStatus = "stale"
 				if err := m.store.event(ctx, tx, r, "call/finished", call.ID, &call.StepIndex, map[string]any{"operationId": o.ID, "status": call.Status, "domainTaskState": status.State}); err != nil {
@@ -282,6 +318,9 @@ func (m *Manager) settleDomainTask(expected Operation, status tools.TaskStatus) 
 		}
 		if err := m.store.event(ctx, tx, r, "call/finished", call.ID, &call.StepIndex, map[string]any{"operationId": o.ID, "status": call.Status, "domainTaskState": status.State}); err != nil {
 			return err
+		}
+		if !unknown && o.Recovery != nil {
+			return m.store.event(ctx, tx, r, "recovery/recovered", call.ID, nil, o.Recovery)
 		}
 		return nil
 	})

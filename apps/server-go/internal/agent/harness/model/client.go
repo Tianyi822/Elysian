@@ -110,7 +110,9 @@ func responseStatusError(status int) error {
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return problem(502, "model-auth-failed", "模型服务鉴权失败，请检查配置凭据")
 	case http.StatusTooManyRequests:
-		return problem(502, "model-rate-limited", "模型服务请求受到限流，请稍后重试")
+		err := problem(502, "model-rate-limited", "模型服务请求受到限流，请稍后重试")
+		err.Retryable = true
+		return err
 	}
 	guidance := "请检查模型服务和请求配置"
 	switch {
@@ -125,7 +127,9 @@ func responseStatusError(status int) error {
 	case status >= 500:
 		guidance = "模型服务或其网关暂时异常，请稍后重试"
 	}
-	return problem(502, "model-http-failed", fmt.Sprintf("模型服务返回异常状态（HTTP %d）：%s", status, guidance))
+	err := problem(502, "model-http-failed", fmt.Sprintf("模型服务返回异常状态（HTTP %d）：%s", status, guidance))
+	err.Retryable = status >= 500 || status == http.StatusRequestTimeout
+	return err
 }
 
 func requestError(ctx context.Context, err error) error {
@@ -135,5 +139,7 @@ func requestError(ctx context.Context, err error) error {
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
 		return &Error{Status: 504, Code: "model-timeout", Message: "模型请求超过时间限制", cause: context.DeadlineExceeded}
 	}
-	return problem(502, "model-unavailable", "模型请求失败，结果未确认，请检查模型服务")
+	failure := problem(502, "model-unavailable", "模型请求失败，结果未确认，请检查模型服务")
+	failure.Retryable = true
+	return failure
 }

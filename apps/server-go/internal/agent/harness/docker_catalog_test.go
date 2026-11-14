@@ -58,10 +58,12 @@ func dockerCatalogBridge(t *testing.T, configure ...func(*domaindocker.AgentFaca
 			_, _ = w.Write([]byte(`{"ApiVersion":"1.44"}`))
 		case "/containers/json":
 			_, _ = w.Write([]byte(`[]`))
+		case "/images/json":
+			_ = json.NewEncoder(w).Encode([]any{map[string]any{"Id": "sha256:" + strings.Repeat("a", 64), "Size": 1024, "Created": 1, "RepoTags": []string{"mysql:8.4", "local-nginx:1.27"}, "RepoDigests": []string{"mysql@sha256:" + strings.Repeat("a", 64)}}})
 		case "/containers/" + strings.Repeat("c", 64) + "/json":
 			_ = json.NewEncoder(w).Encode(map[string]any{"Id": strings.Repeat("c", 64), "Name": "/local-web", "Image": "sha256:" + strings.Repeat("a", 64), "Created": "2026-10-29T00:00:00Z", "State": map[string]any{"Status": "running"}, "Config": map[string]any{"Image": "local-nginx:1.27", "Cmd": []string{"secret-command"}, "Env": []string{"TOKEN=secret-token"}}, "HostConfig": map[string]any{}, "Mounts": []any{}})
-		case "/images/" + strings.Repeat("a", 64) + "/json":
-			_ = json.NewEncoder(w).Encode(map[string]any{"Id": "sha256:" + strings.Repeat("a", 64), "Size": 192 * 1024 * 1024, "Created": "2026-10-29T00:00:00Z", "RepoTags": []string{"local-nginx:1.27"}, "RepoDigests": []string{"local-nginx@sha256:" + strings.Repeat("a", 64)}, "Config": map[string]any{"Env": []string{"TOKEN=secret-token"}}})
+		case "/images/" + strings.Repeat("a", 64) + "/json", "/images/sha256:" + strings.Repeat("a", 64) + "/json":
+			_ = json.NewEncoder(w).Encode(map[string]any{"Id": "sha256:" + strings.Repeat("a", 64), "Size": 192 * 1024 * 1024, "Created": "2026-10-29T00:00:00Z", "RepoTags": []string{"local-nginx:1.27", "mysql:8.4"}, "RepoDigests": []string{"local-nginx@sha256:" + strings.Repeat("a", 64)}, "Config": map[string]any{"Env": []string{"TOKEN=secret-token"}}})
 		default:
 			// 真实 Engine 的错误响应也是 JSON 正文；纯文本 404 会让域层报
 			// 「响应不是有效 JSON」，而不是它自己的 404 业务错误。
@@ -73,7 +75,7 @@ func dockerCatalogBridge(t *testing.T, configure ...func(*domaindocker.AgentFaca
 	server.Listener = listener
 	server.Start()
 	t.Cleanup(server.Close)
-	stack, err := domaindocker.Assemble(domaindocker.Deps{Mode: config.ModeBareMetal, SocketPath: socket, AgentAuthorize: func(ctx context.Context) error { return tools.ConsumeBackend(ctx, tools.DispatchID(ctx)) }})
+	stack, err := domaindocker.Assemble(domaindocker.Deps{Mode: config.ModeBareMetal, SocketPath: socket, AgentOperationRoot: filepath.Join(root, "operations"), AgentAuthorize: func(ctx context.Context) error { return tools.ConsumeBackend(ctx, tools.DispatchID(ctx)) }})
 	if err != nil || !stack.Ready {
 		t.Fatalf("fake Engine unavailable: %v", err)
 	}

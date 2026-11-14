@@ -406,7 +406,7 @@ func TestChatTimelineRetainsConfirmedTimeoutAndCancellation(t *testing.T) {
 				t.Fatal(err)
 			}
 			entries := output.Timeline.Entries
-			if len(entries) != 2 || entries[0].Text != "保留的思考" || entries[1].Text != "保留的正文" || !entries[1].Incomplete || entries[1].Status != wantStatus || !output.Timeline.Done {
+			if len(entries) < 2 || len(entries)%2 != 0 || entries[0].Text != "保留的思考" || entries[1].Text != "保留的正文" || !entries[1].Incomplete || entries[1].Status != wantStatus || !output.Timeline.Done {
 				t.Fatalf("未恢复完整片段：%+v", output.Timeline)
 			}
 		})

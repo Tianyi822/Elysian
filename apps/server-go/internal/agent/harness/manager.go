@@ -25,6 +25,7 @@ type ToolInvoker interface {
 }
 
 type Deps struct {
+	VerifyTask            func(context.Context, tools.TaskVerification) (tools.TaskReference, error)
 	InspectTask           func(context.Context, tools.TaskReference) (tools.TaskStatus, error)
 	CancelTask            func(context.Context, tools.TaskReference) error
 	LookupTask            func(context.Context, tools.TaskReference) (tools.TaskReference, error)
@@ -468,7 +469,7 @@ func (m *Manager) Cancel(ctx context.Context, id string) (Run, error) {
 			return nil
 		}
 		r.CancelRequestedAt = stamp(m.deps.Now())
-		if r.Status == StateQueued || r.Status == StateWaitingInput || r.Status == StateWaitingApproval || r.Status == StateWaitingResource || r.Status == StateWaitingTask || r.Status == StateRecoveryRequired {
+		if r.Status == StateQueued || r.Status == StateWaitingInput || r.Status == StateWaitingApproval || r.Status == StateWaitingResource || r.Status == StateWaitingTask || r.Status == StateWaitingRecovery || r.Status == StateRecoveryRequired {
 			r.Status = StateCancelled
 			r.EndReason = "cancelled"
 			r.EndedAt = r.CancelRequestedAt
@@ -770,6 +771,9 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 				return m.invoke(ctx, r, index, name, args)
 			})
 		}
+		if err != nil && !errors.Is(err, worker.ErrSuspended) && execution.agent != nil {
+			execution.agent.summarizeFailure(runCtx, err)
+		}
 		ctxErr := runCtx.Err()
 		cancel()
 		// 子进程退出不能证明父工具已退出。先关闭本次运行的新调用入口，再等待
@@ -827,7 +831,7 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 				m.storageFailedLocked()
 			} else {
 				state, reason, message := StateSucceeded, "completed", ""
-				if (current.Status == StateWaitingInput || current.Status == StateWaitingApproval || current.Status == StateWaitingResource || current.Status == StateWaitingTask || current.Status == StateQueued || current.Status == StateRecoveryRequired) && (errors.Is(err, worker.ErrSuspended) || stoppedDuringShutdown) && current.CancelRequestedAt == "" && !execution.unresponsive && !execution.maintenance {
+				if (current.Status == StateWaitingInput || current.Status == StateWaitingApproval || current.Status == StateWaitingResource || current.Status == StateWaitingTask || current.Status == StateWaitingRecovery || current.Status == StateQueued || current.Status == StateRecoveryRequired) && (errors.Is(err, worker.ErrSuspended) || stoppedDuringShutdown) && current.CancelRequestedAt == "" && !execution.unresponsive && !execution.maintenance {
 					delete(m.executions, r.ID)
 					m.refreshLegacyLocked()
 					m.signal()
@@ -856,7 +860,7 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 					if errors.As(err, &cause) {
 						reason, message = cause.Code, cause.Message
 					}
-					if reason == "outcome-unknown" {
+					if reason == "outcome-unknown" || reason == "no-progress" {
 						state = StateInterrupted
 					}
 				}
@@ -923,6 +927,9 @@ func (m *Manager) finishLocked(id, state, reason, message string) {
 			}
 		}
 		if (state == StateFailed || state == StateInterrupted) && r.CancelRequestedAt == "" {
+			if r.Recovery != nil && r.Recovery.Status == "correcting" {
+				r.Recovery.Status, r.Recovery.Message = "exhausted", "本轮纠正或重试已结束，请查看具体原因和下一步"
+			}
 			if stop := budgetStopFor(*r, reason); stop != nil {
 				r.BudgetStop = stop
 				state = StateInterrupted
@@ -930,6 +937,13 @@ func (m *Manager) finishLocked(id, state, reason, message string) {
 			}
 		}
 		r.Status = state
+		if evidenceRecoveryRun(*r) && state == StateCancelled {
+			if r.Recovery != nil && r.Recovery.Status == "correcting" {
+				r.Recovery.Status, r.Recovery.Message = "exhausted", "用户已停止本轮纠正，已取得的事实保留"
+			}
+			r.Report = nil
+			r.FailureAnalysis = ""
+		}
 		if (state == StateCancelled || state == StateInterrupted && reason == "panel-update") && r.SessionID != "" && r.WorkflowID == "" {
 			if err := m.store.saveStoppedReply(ctx, tx, *r); err != nil {
 				return err

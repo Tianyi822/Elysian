@@ -43,7 +43,7 @@ func TestInstallRejectsUnreadyAndCancelled(t *testing.T) {
 }
 
 func TestSchemaAndIntegerExtractionAgree(t *testing.T) {
-	for _, value := range []any{int8(42), int16(42), int32(42), int64(42), uint(42), uint8(42), uint16(42), uint32(42), uint64(42), float32(42), float64(42)} {
+	for _, value := range []any{json.Number("42"), json.Number("42.0"), json.Number("4.2e1"), int8(42), int16(42), int32(42), int64(42), uint(42), uint8(42), uint16(42), uint32(42), uint64(42), float32(42), float64(42)} {
 		if err := (Schema{Type: SchemaInteger}).Validate(value); err != nil {
 			t.Fatal(err)
 		}
@@ -51,7 +51,7 @@ func TestSchemaAndIntegerExtractionAgree(t *testing.T) {
 			t.Errorf("通过校验的 %T 必须无损取值：%d %v", value, got, ok)
 		}
 	}
-	for _, value := range []any{math.Exp2(63), uint64(math.MaxUint64), math.Inf(1), math.NaN(), 1.5} {
+	for _, value := range []any{json.Number("9223372036854775808"), json.Number("1.00000000000000000001"), json.Number("01"), json.Number("NaN"), math.Exp2(63), uint64(math.MaxUint64), math.Inf(1), math.NaN(), 1.5} {
 		if err := (Schema{Type: SchemaInteger}).Validate(value); err == nil {
 			t.Errorf("不可表示为 int 的值必须被拒绝：%v", value)
 		}

@@ -5,7 +5,9 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 )
 
 var upstreamRequestID = regexp.MustCompile(`\(request_id: ([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)`)
@@ -13,6 +15,18 @@ var upstreamRequestID = regexp.MustCompile(`\(request_id: ([0-9a-fA-F]{8}-[0-9a-
 // 只将固定错误模式翻译为本地提示，原始正文不保存、不回显。
 func responseError(response *http.Response) error {
 	err := responseStatusError(response.StatusCode)
+	if typed, ok := err.(*Error); ok && typed.Retryable {
+		value := response.Header.Get("Retry-After")
+		seconds, parseErr := strconv.Atoi(value)
+		if parseErr != nil {
+			if at, e := http.ParseTime(value); e == nil {
+				seconds = int(time.Until(at).Seconds())
+			}
+		}
+		if seconds > 0 {
+			typed.RetryAfterSeconds = min(seconds, 30)
+		}
+	}
 	if err == nil || (response.StatusCode != 400 && response.StatusCode != 422) {
 		return err
 	}

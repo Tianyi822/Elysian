@@ -1,7 +1,9 @@
 package model
 
 import (
+	"crypto/sha256"
 	"elysian/server/internal/agent/jsonvalue"
+	"encoding/hex"
 	"encoding/json"
 	"regexp"
 	"slices"
@@ -219,7 +221,30 @@ func validateResponse(response Response, names map[string]bool, choice string) (
 		return Response{}, responseProblem("model-usage-invalid")
 	}
 	if unloaded {
-		return Response{}, responseProblem(ToolNotLoadedCode)
+		failure := responseProblem(ToolNotLoadedCode)
+		missing := []ToolCall{}
+		for _, call := range response.ToolCalls {
+			if !names[call.Name] {
+				missing = append(missing, call)
+			}
+		}
+		failure.CorrectionKey = ToolCorrectionFingerprint(missing)
+		return Response{}, failure
 	}
 	return response, nil
+}
+
+// ToolCorrectionFingerprint contains no raw arguments or provider identifiers.
+func ToolCorrectionFingerprint(calls []ToolCall) string {
+	parts := make([]string, 0, len(calls))
+	for _, call := range calls {
+		key, err := jsonvalue.RecoveryFingerprint(call.Arguments)
+		if err != nil {
+			return ""
+		}
+		parts = append(parts, call.Name+":"+key)
+	}
+	slices.Sort(parts)
+	sum := sha256.Sum256([]byte(strings.Join(parts, "|")))
+	return hex.EncodeToString(sum[:])
 }

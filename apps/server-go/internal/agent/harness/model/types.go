@@ -202,10 +202,13 @@ type Client interface {
 
 // Error 不包含服务端正文、请求参数、URL 或凭据。
 type Error struct {
-	Status  int    `json:"-"`
-	Code    string `json:"code"`
-	Message string `json:"message"`
-	cause   error
+	CorrectionKey     string `json:"-"`
+	RetryAfterSeconds int    `json:"-"`
+	Retryable         bool   `json:"-"`
+	Status            int    `json:"-"`
+	Code              string `json:"code"`
+	Message           string `json:"message"`
+	cause             error
 }
 
 func (e *Error) Error() string { return e.Message }

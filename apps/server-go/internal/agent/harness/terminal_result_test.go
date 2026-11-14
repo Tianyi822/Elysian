@@ -20,7 +20,7 @@ func finishFailedTestRun(s *store, runID, status string, failure *Failure) error
 }
 
 func TestTerminalResultSavedWithFailureAndJSONLExactlyOnce(t *testing.T) {
-	for _, reason := range []Failure{{"execution-unavailable", "执行容器通道不可用"}, {"model-failed", "模型请求失败，请检查模型服务与凭据"}, {"model-budget", "模型请求次数或 token 预算已耗尽"}, {"run-timeout", "运行超过总时间限制"}, {"worker-lost", "Worker 中断，未自动重跑"}, {"unknown", ""}} {
+	for _, reason := range []Failure{{Code: "execution-unavailable", Message: "执行容器通道不可用"}, {Code: "model-failed", Message: "模型请求失败，请检查模型服务与凭据"}, {Code: "model-budget", Message: "模型请求次数或 token 预算已耗尽"}, {Code: "run-timeout", Message: "运行超过总时间限制"}, {Code: "worker-lost", Message: "Worker 中断，未自动重跑"}, {Code: "unknown", Message: ""}} {
 		t.Run(reason.Code, func(t *testing.T) {
 			s, _ := openRuntimeTestStore(t)
 			session, task, run := sessionStoreFixture(t, s, reason.Code, runtimeStoreTestTime)
@@ -69,7 +69,7 @@ func TestTerminalResultRollbackKeepsRunSessionAndLedgerTogether(t *testing.T) {
 	if _, err := s.db.Exec(`CREATE TRIGGER reject_runtime_result BEFORE INSERT ON messages WHEN json_extract(NEW.document,'$.origin')='runtime' BEGIN SELECT RAISE(ABORT,'reject-runtime-result'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if err := finishFailedTestRun(s, run.ID, StateFailed, &Failure{"failed", "失败原因"}); err == nil {
+	if err := finishFailedTestRun(s, run.ID, StateFailed, &Failure{Code: "failed", Message: "失败原因"}); err == nil {
 		t.Fatal("消息写入失败应回滚整个终态事务")
 	}
 	got, err := s.get(context.Background(), run.ID)
@@ -103,7 +103,7 @@ func TestTerminalResultManualStopAndAutomaticInvalidation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := finishFailedTestRun(s, run.ID, StateInterrupted, &Failure{"operation-unresponsive", "模型或工具未确认停止，运行结果未确认"}); err != nil {
+			if err := finishFailedTestRun(s, run.ID, StateInterrupted, &Failure{Code: "operation-unresponsive", Message: "模型或工具未确认停止，运行结果未确认"}); err != nil {
 				t.Fatal(err)
 			}
 			page, err := s.messages(context.Background(), session.ID, "", 100)
@@ -144,7 +144,7 @@ func TestTerminalResultRestartRecoveryAndLegacyProjection(t *testing.T) {
 	if err != nil || len(page.Items) != 2 || !strings.Contains(page.Items[1].Content, "面板重启中断了运行") {
 		t.Fatalf("恢复结果=%+v err=%v", page, err)
 	}
-	legacy := Run{ID: "old", SessionID: session.ID, Status: StateFailed, Error: &Failure{"old", "历史错误"}}
+	legacy := Run{ID: "old", SessionID: session.ID, Status: StateFailed, Error: &Failure{Code: "old", Message: "历史错误"}}
 	before := runtimeStoreCount(t, s, "messages")
 	result, err := s.terminalResult(context.Background(), s.db, legacy)
 	if err != nil || result == nil || !strings.Contains(result.Content, "历史错误") || runtimeStoreCount(t, s, "messages") != before {
@@ -163,7 +163,7 @@ func TestTerminalResultAutomaticCancellationStillHasResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = finishFailedTestRun(s, run.ID, StateCancelled, &Failure{"wiki-context-invalidated", "引用的 Wiki 页面已撤回，运行停止并等待重新构建上下文"}); err != nil {
+	if err = finishFailedTestRun(s, run.ID, StateCancelled, &Failure{Code: "wiki-context-invalidated", Message: "引用的 Wiki 页面已撤回，运行停止并等待重新构建上下文"}); err != nil {
 		t.Fatal(err)
 	}
 	page, err := s.messages(context.Background(), session.ID, "", 100)
@@ -172,7 +172,7 @@ func TestTerminalResultAutomaticCancellationStillHasResult(t *testing.T) {
 	}
 }
 
-func TestAgentFailurePublishesResultWithoutExtraModelRequest(t *testing.T) {
+func TestAgentFailurePublishesFactsWhenOptionalSummaryAlsoFails(t *testing.T) {
 	requests := 0
 	m, session, _ := agentManager(t, func(context.Context, model.Profile, model.Request) (model.Response, error) {
 		requests++
@@ -184,7 +184,7 @@ func TestAgentFailurePublishesResultWithoutExtraModelRequest(t *testing.T) {
 		t.Fatalf("status=%+v", finished)
 	}
 	page, err := m.Messages(context.Background(), session.ID, "", 100)
-	if err != nil || len(page.Items) != 2 || page.Items[1].Origin != "runtime" || requests != 1 {
+	if err != nil || len(page.Items) != 2 || page.Items[1].Origin != "runtime" || requests != 2 || finished.Report == nil || finished.Report.Analysis != "" {
 		t.Fatalf("page=%+v err=%v requests=%d", page, err, requests)
 	}
 	output, err := m.ChatSnapshot(context.Background(), run.ID)
@@ -219,7 +219,7 @@ func TestAgentFailureRetainsPartialOutputBesideRuntimeResult(t *testing.T) {
 			content += entry.Text
 		}
 	}
-	if reasoning != "正在检查已收到的资料" || content != "已经读取到部分内容" {
+	if !strings.Contains(reasoning, "正在检查已收到的资料") || !strings.Contains(content, "已经读取到部分内容") {
 		t.Fatalf("过程丢失：%+v", output.Timeline)
 	}
 	page, err := m.Messages(context.Background(), session.ID, "", 100)

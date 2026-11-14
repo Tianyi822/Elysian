@@ -77,6 +77,7 @@ type harnessAssemblyOptions struct {
 	CancelTask    func(context.Context, tools.TaskReference) error
 	InspectTask   func(context.Context, tools.TaskReference) (tools.TaskStatus, error)
 	LookupTask    func(context.Context, tools.TaskReference) (tools.TaskReference, error)
+	VerifyTask    func(context.Context, tools.TaskVerification) (tools.TaskReference, error)
 	ReconcileTask func(context.Context, tools.TaskReconciliation) error
 }
 
@@ -119,6 +120,7 @@ func assembleProductionHarness(cfg *config.Config, views seam.DockerViews, optio
 	deps.CancelTask = options.CancelTask
 	deps.InspectTask = options.InspectTask
 	deps.LookupTask = options.LookupTask
+	deps.VerifyTask = options.VerifyTask
 	deps.ReconcileTask = options.ReconcileTask
 	deps.Limits = harness.DefaultLimits()
 	deps.AgentLimits = harness.DefaultAgentLimits()

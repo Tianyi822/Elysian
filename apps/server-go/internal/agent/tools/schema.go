@@ -5,6 +5,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"reflect"
@@ -205,7 +206,7 @@ func (s Schema) validateObject(path string, value any) error {
 	sort.Strings(keys)
 	for _, key := range keys {
 		if _, declared := s.Properties[key]; !declared {
-			return fmt.Errorf("%s未在参数模式中声明，拒绝执行", label(childPath(path, key)))
+			return fmt.Errorf("%s含未在参数模式中声明的字段，拒绝执行", label(path))
 		}
 	}
 	for _, name := range s.Required {
@@ -269,6 +270,12 @@ func typeMatches(schemaType string, value any) bool {
 
 func numberValue(value any) (float64, bool) {
 	switch v := value.(type) {
+	case json.Number:
+		if !json.Valid([]byte(v)) {
+			return 0, false
+		}
+		n, err := v.Float64()
+		return n, err == nil
 	case float64:
 		return v, true
 	case float32:

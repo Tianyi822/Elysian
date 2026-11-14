@@ -515,6 +515,7 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 	public := profile.Public()
 	run := Run{ID: m.deps.NewID(), TaskID: task.ID, SessionID: sessionID, RequestID: input.RequestID, Input: input.Content, Model: &public, Status: StateQueued, CreatedAt: now, Limits: limits, LastSeq: "0", Phase: "queued", MemoryStatus: "stale"}
 	run.BudgetPolicy = resourceBudgetPolicy
+	run.RecoveryPolicy = evidenceRecoveryPolicy
 	env, err := m.environment(ctx, sessionID)
 	if err != nil {
 		return Run{}, false, storageFailure(err)
@@ -538,6 +539,7 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 		return Run{}, false, err
 	}
 	snapshot.Digest = ""
+	snapshot.RecoveryPolicy = evidenceRecoveryPolicy
 	snapshot.Digest = digestJSON(snapshot)
 	run.DriverVersion = "v2"
 	run.WikiStrategy = wikiDisabledStrategy
@@ -555,7 +557,7 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 }
 
 func publicMemoryStatus(run *Run) string {
-	if run.Status == StateQueued || run.Status == StateRunning || run.Status == StateWaitingInput || run.Status == StateWaitingApproval || run.Status == StateWaitingResource || run.Status == StateWaitingTask {
+	if run.Status == StateQueued || run.Status == StateRunning || run.Status == StateWaitingInput || run.Status == StateWaitingApproval || run.Status == StateWaitingResource || run.Status == StateWaitingTask || run.Status == StateWaitingRecovery {
 		run.MemoryStatus = "stale"
 	}
 	return run.MemoryStatus

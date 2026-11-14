@@ -505,7 +505,7 @@ func terminalRun(status string) bool {
 // activeRun 会话当前可继续消费的 run（活跃或等待态）。
 func activeRun(status string) bool {
 	switch status {
-	case "queued", "running", "waiting-input", "waiting-approval", "waiting-resource", "waiting-task", "preparing-runtime":
+	case "queued", "running", "waiting-input", "waiting-approval", "waiting-resource", "waiting-task", "waiting-recovery", "preparing-runtime":
 		return true
 	}
 	return false
