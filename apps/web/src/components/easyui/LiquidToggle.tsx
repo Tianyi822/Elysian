@@ -42,11 +42,11 @@ export interface LiquidToggleProps {
   accentColor?: string;
   /** Optional className */
   className?: string;
-  /** Show off/on text inside the toggle. Default true. */
+  /** Show off/on text inside the toggle. Default false. */
   showLabels?: boolean;
-  /** Width in px. Default 56. */
+  /** Track width in px. Default 56. */
   width?: number;
-  /** Height in px. Default 32. */
+  /** Track height in px. Default 32. */
   height?: number;
 }
 
@@ -69,6 +69,7 @@ function buildBlobPath(
   stretch: number
 ): string {
   // The blob's base centerX is interpolated between left and right.
+  // 保留官方固定 4px 内边距，滑块尺寸随轨道高度一起变化。
   const padding = 4;
   const leftX = padding + (height - padding * 2) / 2;
   const rightX = width - padding - (height - padding * 2) / 2;
@@ -133,7 +134,7 @@ export const LiquidToggle: React.FC<LiquidToggleProps> = ({
   onLabel = '开启',
   accentColor,
   className,
-  showLabels = true,
+  showLabels = false,
   width = 56,
   height = 32,
 }) => {
@@ -141,7 +142,7 @@ export const LiquidToggle: React.FC<LiquidToggleProps> = ({
   const uniqueId = useId();
   const labelId = `liquid-toggle-label-${uniqueId}`;
 
-  // 保留官网黑白滑块色，主题仅切换组件局部令牌。
+  // 控件使用局部中性令牌，深浅主题及开关状态分别提供柔和的明暗层级。
   const blobColor = accentColor ?? 'var(--easyui-toggle-blob)';
 
   const [internalValue, setInternalValue] = React.useState(defaultValue);
@@ -248,51 +249,58 @@ export const LiquidToggle: React.FC<LiquidToggleProps> = ({
       )}
       style={{ width, height }}
     >
-      <span id={labelId} className="sr-only">
+      {!label && <span id={labelId} className="sr-only">
         {stateLabel}
-      </span>
+      </span>}
 
-      {/* Off/On labels inside the track */}
-      {showLabels && (
-        <div aria-hidden="true" className="absolute inset-0 flex items-center justify-between px-2.5 text-[10px] font-medium pointer-events-none">
-          <motion.span
-            initial={false}
-            animate={{ opacity: isOn ? 1 : 0 }}
-            transition={{ duration: reducedMotion ? 0 : 0.3, ease: [0.22, 1, 0.36, 1] }}
-            className="text-[var(--easyui-toggle-label)]"
-          >
-            开
-          </motion.span>
-          <motion.span
-            initial={false}
-            animate={{ opacity: isOn ? 0 : 1 }}
-            transition={{ duration: reducedMotion ? 0 : 0.3, ease: [0.22, 1, 0.36, 1] }}
-            className="text-[var(--easyui-toggle-label)] ml-auto"
-          >
-            关
-          </motion.span>
-        </div>
-      )}
-
-      {/* The blob — single morphing path. */}
-      <svg
-        className="absolute inset-0 pointer-events-none"
-        width={width}
-        height={height}
-        viewBox={`0 0 ${width} ${height}`}
+      <span
+        data-slot="track"
         aria-hidden="true"
+        className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full transition-colors"
+        style={{ width, height }}
       >
-        <defs>
-          <radialGradient id={`liquid-blob-grad-${uniqueId}`} cx="0.35" cy="0.35" r="0.85">
-            <stop offset="0%" stopColor={blobColor} stopOpacity="1" />
-            <stop offset="100%" stopColor={blobColor} stopOpacity="0.75" />
-          </radialGradient>
-        </defs>
-        <motion.path
-          d={reducedMotion ? buildBlobPath(width, height, isOn ? 1 : 0, 0) : path}
-          fill={`url(#liquid-blob-grad-${uniqueId})`}
-        />
-      </svg>
+        {/* Off/On labels inside the track */}
+        {showLabels && (
+          <span className="absolute inset-0 flex items-center justify-between px-2.5 text-[10px] font-medium">
+            <motion.span
+              initial={false}
+              animate={{ opacity: isOn ? 1 : 0 }}
+              transition={{ duration: reducedMotion ? 0 : 0.3, ease: [0.22, 1, 0.36, 1] }}
+              className="text-[var(--easyui-toggle-label)]"
+            >
+              开
+            </motion.span>
+            <motion.span
+              initial={false}
+              animate={{ opacity: isOn ? 0 : 1 }}
+              transition={{ duration: reducedMotion ? 0 : 0.3, ease: [0.22, 1, 0.36, 1] }}
+              className="text-[var(--easyui-toggle-label)] ml-auto"
+            >
+              关
+            </motion.span>
+          </span>
+        )}
+
+        {/* The blob — single morphing path. */}
+        <svg
+          className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
+          width={width}
+          height={height}
+          viewBox={`0 0 ${width} ${height}`}
+          aria-hidden="true"
+        >
+          <defs>
+            <radialGradient id={`liquid-blob-grad-${uniqueId}`} cx="0.35" cy="0.35" r="0.85">
+              <stop offset="0%" stopColor={blobColor} stopOpacity="1" />
+              <stop offset="100%" stopColor={blobColor} stopOpacity="0.92" />
+            </radialGradient>
+          </defs>
+          <motion.path
+            d={reducedMotion ? buildBlobPath(width, height, isOn ? 1 : 0, 0) : path}
+            fill={`url(#liquid-blob-grad-${uniqueId})`}
+          />
+        </svg>
+      </span>
     </button>
   );
 };

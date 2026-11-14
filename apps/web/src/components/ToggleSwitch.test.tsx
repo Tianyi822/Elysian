@@ -9,6 +9,7 @@ describe('全局液态开关', () => {
     const change = vi.fn()
     const { rerender } = render(<ToggleSwitch label="启用功能" checked={false} onCheckedChange={change} />)
     const control = screen.getByRole('switch', { name: '启用功能' })
+    expect(control.textContent).toBe('')
     await user.click(control)
     expect(change).toHaveBeenLastCalledWith(true)
     expect(control).toHaveAttribute('aria-checked', 'false')

@@ -1,29 +1,34 @@
-/* EasyUI 黑白材质：保留液态几何，开态反色，并为两套主题提供清晰的状态对比。 */
+/* 克制的中性开关：用位置、轨道明暗与滑块对比区分状态，避免大面积纯黑纯白反差。 */
 [data-easyui="liquid-toggle"] {
-  --easyui-toggle-track: #141414;
-  --easyui-toggle-line: #71717a;
-  --easyui-toggle-blob: #fafafa;
+  --easyui-toggle-track: #27272d;
+  --easyui-toggle-line: #50505c;
+  --easyui-toggle-blob: #9292a0;
   --easyui-toggle-label: #a1a1a6;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+[data-easyui="liquid-toggle"] > [data-slot="track"] {
   background-color: var(--easyui-toggle-track);
   border: 1px solid var(--easyui-toggle-line);
 }
 [data-easyui="liquid-toggle"][aria-checked="true"] {
-  --easyui-toggle-track: #fafafa;
-  --easyui-toggle-line: #fafafa;
-  --easyui-toggle-blob: #0a0a0a;
-  --easyui-toggle-label: #0a0a0a;
+  --easyui-toggle-track: #565660;
+  --easyui-toggle-line: #777782;
+  --easyui-toggle-blob: #d0d0d8;
+  --easyui-toggle-label: #e4e4e9;
 }
 [data-theme="light"] [data-easyui="liquid-toggle"] {
-  --easyui-toggle-track: #ffffff;
-  --easyui-toggle-line: #71717a;
-  --easyui-toggle-blob: #0a0a0a;
+  --easyui-toggle-track: #e4e4e9;
+  --easyui-toggle-line: #b6b6c0;
+  --easyui-toggle-blob: #777784;
   --easyui-toggle-label: #52525b;
 }
 [data-theme="light"] [data-easyui="liquid-toggle"][aria-checked="true"] {
-  --easyui-toggle-track: #0a0a0a;
-  --easyui-toggle-line: #0a0a0a;
-  --easyui-toggle-blob: #fafafa;
-  --easyui-toggle-label: #fafafa;
+  --easyui-toggle-track: #b8b8c2;
+  --easyui-toggle-line: #9595a3;
+  --easyui-toggle-blob: #51515e;
+  --easyui-toggle-label: #30303b;
 }
 
 /* 与 EasyUI tokens.css 一致；局部定义保留上游分页组件的原始类名与形状。 */
