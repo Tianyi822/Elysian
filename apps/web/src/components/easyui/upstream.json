@@ -30,6 +30,7 @@
     "Reuse LiquidToggle SVG blob and spring motion through a shared ToggleSwitch adapter for every boolean settings switch. Keep the upstream fixed 4px blob inset and width/height track API. Use a compact 48x26 track inside the shared 56x32 hit target with a resting blob of about 18px, center the SVG against the track border box, use muted neutral on/off palettes per theme, remove visible state labels, and retain controlled/disabled/busy semantics and spring-driven settling without idle intervals.",
     "Keep SlidePagination upstream classes, 32px square targets, 6px corners, page-range logic and scoped original palette; the firewall calls showControls=false. Retain Chinese accessibility labels and reduced-motion support.",
     "Keep the dashboard header mounted for loading, error and empty history; update existing cards and SVGs in place, morph compatible path geometry and persist live demo samples into its frontend history buffer.",
-    "Unify primary page tabs, toolbar filters and form segments through PillNavigation adapters; preserve controlled state, disabled state, repeated-selection callbacks and responsive header dropdowns. Scope long-row scrolling within each pill bar; remove the obsolete AnimatedTabs copy and measured slider hook."
+    "Unify primary page tabs, toolbar filters and form segments through PillNavigation adapters; preserve controlled state, disabled state, repeated-selection callbacks and responsive header dropdowns. Scope long-row scrolling within each pill bar; remove the obsolete AnimatedTabs copy and measured slider hook.",
+    "Use the existing EasyUI soft neutral Badge for firewall rule totals, replacing the divided custom stat chips while preserving live counts and immediate text updates."
   ]
 }

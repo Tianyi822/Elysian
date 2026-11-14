@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { observeElementSize } from '../../utils/observeElementSize'
 import { ToggleSwitch } from '../../components/ToggleSwitch'
 import { SlidePagination } from '../../components/easyui/SlidePagination'
+import { Badge } from '../../components/easyui/Badge'
 import {
   FIREWALL_DIRECTION_LABELS,
   FIREWALL_POLICY_LABELS,
@@ -15,7 +16,7 @@ import { useIntrinsicWidth } from '../../app/layout/headerAccessoryWidth'
 import { IconButton } from '../../components/IconButton'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { RefreshButton } from '../../components/RefreshState'
-import { CTL_FIELD, CTL_PRIMARY, CTL_STAT, CTL_TOOLBAR } from '../../components/formControl'
+import { CTL_FIELD, CTL_PRIMARY, CTL_TOOLBAR } from '../../components/formControl'
 import { ChipGroup } from '../../components/ChipGroup'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
@@ -51,13 +52,13 @@ function PolicyText({ policy }: { policy: FirewallRule['policy'] }) {
   return <span className={tone}>{FIREWALL_POLICY_LABELS[policy]}</span>
 }
 
-/** 统计短条：端口/IP/转发取真实计数。没有真实来源的档位不占位，避免一排常零的读数被当成待接入能力。 */
+/** EasyUI 中性 Badge：端口/IP/转发沿用真实计数，标签与数字紧凑呈现。 */
 function StatChip({ label, count }: { label: string; count: number }) {
   return (
-    <span className={CTL_STAT}>
-      <span className="inline-flex items-center px-2.5 text-fg-muted">{label}</span>
-      <span className="inline-flex items-center px-2.5 font-medium tabular-nums text-accent-fg">{count}</span>
-    </span>
+    <Badge variant="soft" tone="neutral" animateChanges={false}>
+      <span>{label}</span>
+      <span className="tabular-nums text-fg">{count}</span>
+    </Badge>
   )
 }
 

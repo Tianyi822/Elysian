@@ -456,9 +456,9 @@ describe('防火墙面板', () => {
 
       await vi.advanceTimersByTimeAsync(800)
       // 同步后重拉三类列表，通知里的总数取界面统计条的三个计数之和。
-      // 统计芯片内部分标签段与读数段两格（中间一道竖线），数字在兄弟段上，所以读整枚芯片。
+      // 标签与读数同属一枚 EasyUI Badge，数字在兄弟节点上，所以读整枚标签。
       const chipCount = (label: string) =>
-        Number(screen.getByText(label, { selector: '.stat-chip > span' }).parentElement?.textContent?.match(/(\d+)/)?.[1] ?? '0')
+        Number(screen.getByText(label, { selector: '[data-easyui="badge"] > span' }).parentElement?.textContent?.match(/(\d+)/)?.[1] ?? '0')
       const expected = chipCount('端口规则') + chipCount('IP 规则') + chipCount('端口转发')
       expect(messageHistoryText('status')).toContain(
         `已从操作系统同步防火墙规则，当前共 ${expected} 条（mock，待接入真实执行）`,
@@ -541,7 +541,7 @@ describe('防火墙面板', () => {
     await openFirewallPage()
 
     // 统计条按视图呈现三类计数
-    expect(screen.getByText('IP 规则', { selector: '.stat-chip > span' }).parentElement).toHaveTextContent(`${SEED_IP_RULES.length}`)
+    expect(screen.getByText('IP 规则', { selector: '[data-easyui="badge"] > span' }).parentElement).toHaveTextContent(`${SEED_IP_RULES.length}`)
 
     await user.click(screen.getByRole('button', { name: 'IP 规则' }))
     const region = await screen.findByRole('region', { name: 'IP 规则表' })
