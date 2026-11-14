@@ -59,7 +59,7 @@ export function AgentChatPage() {
   const [navigationReady, setNavigationReady] = useState<string | null>(null)
   const [navigationFailure, setNavigationFailure] = useState<string | null>(null)
   const [navigationAttempt, setNavigationAttempt] = useState(0)
-  const [listCollapsed, setListCollapsed] = useState(false)
+  const [listCollapsed, setListCollapsed] = useState(true)
   const [wide, setWide] = useState(() => mediaQuery('(min-width: 1100px)')?.matches ?? false)
   const [listRefreshing, setListRefreshing] = useState(false)
   const requestedId = params.get('session') || undefined
@@ -309,7 +309,7 @@ export function AgentChatPage() {
   const list = <ChatSessionList onSelect={selectConversation} onNew={newConversation}
     onRefresh={refreshList} onMore={() => { void chat.loadSessions(api, true, false, true) }} refreshing={listRefreshing}
     onClose={closeList} />
-  // 会话栏与主导航互不联动：宽屏默认展开、两栏可同开，开关不写主导航收展，主导航收展也不影响本栏。
+  // 会话栏默认收起，与主导航互不联动；手动展开后两栏可同开。
   const showSidebar = wide && !listCollapsed
   const expanded = showSidebar || shell.conversationDrawerOpen
   const toggle = <SessionToggle expanded={expanded} buttonRef={listTrigger}

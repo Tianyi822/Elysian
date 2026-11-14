@@ -465,6 +465,7 @@ describe('基本聊天界面', () => {
     backend.api.listSessions.mockResolvedValue({ items: [b, a], nextCursor: '', hasMore: false })
     backend.api.getSession.mockImplementation(async id => id === a.id ? a : b)
     const { router } = renderChat(backend, '/agent?session=history-a')
+    fireEvent.click(screen.getByRole('button', { name: '打开会话列表' }))
     await waitFor(() => expect(useAgentChatStore.getState().remoteSession?.id).toBe(a.id))
     fireEvent.click(within(screen.getByRole('region', { name: 'Ely 会话' })).getByRole('button', { name: '新会话' }))
     await waitFor(() => expect(router.state.location.state?.agentDraftId).toBe(useAgentChatStore.getState().session?.id))
@@ -509,10 +510,14 @@ describe('基本聊天界面', () => {
     expect(option).toHaveTextContent('测试服务')
   })
 
-  it('桌面边缘把手可反复开关会话栏，保留键盘焦点与展开状态', async () => {
+  it('桌面会话栏默认收起，页头按钮可反复开关并保留键盘焦点', async () => {
     renderChat()
-    const toggle = screen.getByRole('button', { name: '收起会话列表' })
+    const toggle = screen.getByRole('button', { name: '打开会话列表' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('complementary', { name: '会话列表' })).not.toBeInTheDocument()
+    fireEvent.click(toggle)
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('complementary', { name: '会话列表' })).toBeInTheDocument()
     fireEvent.click(toggle)
     expect(toggle).toHaveAccessibleName('打开会话列表')
     expect(toggle).toHaveFocus()
@@ -529,11 +534,13 @@ describe('基本聊天界面', () => {
     renderChat()
     const nav = document.querySelector('[data-sidebar-collapsed]')!
     const navToggle = document.querySelector<HTMLButtonElement>('[data-testid="test-nav-toggle"]')!
-    // 进入聊天页：主导航与会话列表同时展开，互不挤占。
+    // 进入聊天页：主导航维持展开，会话列表默认收起。
     expect(nav).toHaveAttribute('data-sidebar-collapsed', 'false')
+    expect(screen.queryByRole('complementary', { name: '会话列表' })).not.toBeInTheDocument()
+    const toggle = screen.getByRole('button', { name: '打开会话列表' })
+    fireEvent.click(toggle)
     expect(screen.getByRole('complementary', { name: '会话列表' })).toBeInTheDocument()
     // 收起再打开会话列表：主导航保持展开，不被联动折叠。
-    const toggle = screen.getByRole('button', { name: '收起会话列表' })
     fireEvent.click(toggle)
     expect(screen.queryByRole('complementary', { name: '会话列表' })).not.toBeInTheDocument()
     expect(nav).toHaveAttribute('data-sidebar-collapsed', 'false')
@@ -679,6 +686,7 @@ describe('基本聊天界面', () => {
       : { items: [{ id: 'task-1', sessionId: 'server-session', kind: 'agent' }], nextCursor: '', hasMore: false })
     backend.timelines.set('run-1', { runId: 'run-1', status: 'running', done: false, entries: [], usage: chatTestUsage, contextUsage: chatTestContextUsage, cacheHitUsage: chatTestCacheHitUsage })
     renderChat(backend)
+    fireEvent.click(screen.getByRole('button', { name: '打开会话列表' }))
     fireEvent.change(screen.getByRole('textbox'), { target: { value: '检查服务' } })
     await waitFor(() => expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: '发送消息' }))
@@ -1070,6 +1078,7 @@ describe('会话列表编辑入口', () => {
     backend.api.deleteSession.mockImplementation(async (id: string) => { deleted.add(id) })
     backend.api.getSession.mockImplementation(async (id: string) => id === 'history-b' ? other : current)
     const view = renderChat(backend, '/agent?session=server-session')
+    fireEvent.click(screen.getByRole('button', { name: '打开会话列表' }))
     return { ...view, backend, current, other }
   }
 
@@ -1231,6 +1240,7 @@ describe('会话列表编辑入口', () => {
     backend.api.listSessions.mockResolvedValue({ items: [running], nextCursor: '', hasMore: false })
     backend.api.getSession.mockResolvedValue({ ...running })
     renderChat(backend, '/agent?session=running-session')
+    await user.click(screen.getByRole('button', { name: '打开会话列表' }))
     await waitFor(() => expect(useAgentChatStore.getState().remoteSession?.id).toBe('running-session'))
     await user.click(screen.getAllByRole('button', { name: '编辑会话' })[0]!)
     const item = await screen.findByRole('menuitem', { name: /删除会话/ })
