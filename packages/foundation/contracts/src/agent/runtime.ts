@@ -6,11 +6,11 @@ export * from './sessions.ts'
 
 /** 真实任务的运行协议，与仪表盘 AgentRun 演示模型分别维护。 */
 export const RUNTIME_RUN_STATUSES = [
-  'queued', 'running', 'waiting-input', 'waiting-approval', 'waiting-resource', 'waiting-task', 'recovery-required', 'succeeded', 'failed', 'cancelled', 'interrupted',
+  'queued', 'running', 'waiting-input', 'waiting-approval', 'waiting-resource', 'waiting-task', 'waiting-recovery', 'recovery-required', 'succeeded', 'failed', 'cancelled', 'interrupted',
 ] as const
 export type RuntimeRunStatus = (typeof RUNTIME_RUN_STATUSES)[number]
 export const RUNTIME_RUN_STATUS_LABELS: Record<RuntimeRunStatus, string> = {
-  queued: '排队中', running: '执行中', 'waiting-input': '等待回答', 'waiting-approval': '等待审批', 'waiting-resource': '等待资源', 'waiting-task': '等待平台任务', 'recovery-required': '等待人工恢复', succeeded: '已成功', failed: '已失败',
+  queued: '排队中', running: '执行中', 'waiting-input': '等待回答', 'waiting-approval': '等待审批', 'waiting-resource': '等待资源', 'waiting-task': '等待平台任务', 'waiting-recovery': '正在核实', 'recovery-required': '等待人工恢复', succeeded: '已成功', failed: '已失败',
   cancelled: '已取消', interrupted: '运行中断',
 }
 
@@ -37,7 +37,11 @@ export type RuntimeAgentTask = RuntimeTaskSummary & {
 }
 export type RuntimeWorkflowTask = Omit<RuntimeAgentTask, 'kind'> & { kind: 'workflow' }
 export type RuntimeTask = RuntimeBatchTask | RuntimeAgentTask | RuntimeWorkflowTask
-export type RuntimeFailure = { code: string; message: string }
+export type AgentExecutionEvidence = { execution?: 'not-started' | 'finished' | 'unknown'; changes?: 'none' | 'confirmed' | 'unknown'; recovery?: 'correct' | 'retry' | 'verify' | 'stop'; stage?: string; suggestion?: string }
+export type RuntimeFailure = { code: string; message: string; evidence?: AgentExecutionEvidence }
+export type AgentRecovery = { operationId: string; tool: string; startedAt: string; deadline: string; nextCheckAt?: string; checks: number; status: 'verifying' | 'recovered' | 'unresolved' | 'correcting' | 'exhausted'; message: string }
+export type AgentToolAttempt = { number: number; error?: RuntimeFailure }
+export type AgentRunReport = { outcome: string; reason: string; completed: number; failed: number; unconfirmed: number; steps: readonly { callId: string; tool: string; status: string; attempts: number; error?: RuntimeFailure }[]; remaining: readonly string[]; next: string; analysis?: string }
 export type RuntimeUsage = {
   calls: number
   resultBytes: number
@@ -82,6 +86,9 @@ export type AgentBudgetStop = { resource: 'tokens' | 'active-time' | 'results'; 
 export type AgentContinuation = { sourceRunId: string; allowed: boolean; blockedReason?: string }
 
 export type RuntimeRun = {
+  recoveryPolicy?: 'evidence-recovery/v1'
+  recovery?: AgentRecovery
+  report?: AgentRunReport
   budgetPolicy?: 'resource-budget/v1'
   budgetStop?: AgentBudgetStop
   /** 服务端按最新轮次及执行屏障计算的只读投影，提交时再次核对。 */
@@ -129,13 +136,15 @@ export type RuntimeRun = {
   model?: AgentModelProfile
   historySeq?: string
   initialMemoryRevision?: number
-  phase?: 'running' | 'preparing-runtime' | 'queued' | 'inference' | 'checkpoint' | 'final-memory' | 'workflow-output' | 'waiting-input' | 'waiting-approval' | 'waiting-resource' | 'waiting-task' | 'completed'
+  phase?: 'running' | 'preparing-runtime' | 'queued' | 'inference' | 'checkpoint' | 'final-memory' | 'workflow-output' | 'waiting-input' | 'waiting-approval' | 'waiting-resource' | 'waiting-task' | 'waiting-recovery' | 'failure-summary' | 'completed'
   memoryStatus?: RuntimeMemoryStatus
   warning?: RuntimeFailure
 }
 
 export type RuntimeJSONValue = null | boolean | number | string | readonly RuntimeJSONValue[] | { readonly [key: string]: RuntimeJSONValue }
 export type RuntimeCall = {
+  evidence?: AgentExecutionEvidence
+  attempts?: readonly AgentToolAttempt[]
   id: string
   runId: string
   tool: string
@@ -230,5 +239,5 @@ export type RuntimeListQuery = {
 export type RuntimeAPIError = { error: string; code: string }
 
 export function runtimeRunIsActive(status: RuntimeRunStatus): boolean {
-  return status === 'queued' || status === 'running' || status === 'waiting-input' || status === 'waiting-approval' || status === 'waiting-resource' || status === 'waiting-task' || status === 'recovery-required'
+  return status === 'queued' || status === 'running' || status === 'waiting-input' || status === 'waiting-approval' || status === 'waiting-resource' || status === 'waiting-task' || status === 'waiting-recovery' || status === 'recovery-required'
 }

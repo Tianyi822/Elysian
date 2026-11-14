@@ -72,7 +72,7 @@ const outgoingMessageFor = (session: AgentChatSession, content: string, refs?: r
   attachments: session.attachments.filter(attachment => attachment.serverId && (!refs || refs.some(ref => ref.id === attachment.serverId)))
     .map((attachment): AgentMessageAttachment => ({ id: attachment.serverId!, name: attachment.name, mimeType: attachment.type as 'image/jpeg' | 'image/png', bytes: attachment.size, width: attachment.width!, height: attachment.height! })),
 })
-export const isChatRunActive = (run: AgentChatRun | null) => !!run && ['queued', 'running', 'waiting-input', 'waiting-approval', 'waiting-resource', 'waiting-task', 'recovery-required'].includes(run.status)
+export const isChatRunActive = (run: AgentChatRun | null) => !!run && ['queued', 'running', 'waiting-input', 'waiting-approval', 'waiting-resource', 'waiting-task', 'waiting-recovery', 'recovery-required'].includes(run.status)
 export const isChatReplyActive = (run: AgentChatRun | null) => isChatRunActive(run) && run?.phase !== 'final-memory'
 export const chatRunFailure = (run: AgentChatRun | null) => run && !isChatRunActive(run) && run.status !== 'succeeded' && run.status !== 'cancelled' && !run.budgetStop
   ? `${RUNTIME_RUN_STATUS_LABELS[run.status]}${run.error ? `：${run.error.message}` : ''}`

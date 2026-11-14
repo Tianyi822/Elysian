@@ -1,4 +1,4 @@
-import type { AgentBudgetStop, AgentContinuation, RuntimeFailure, RuntimeJSONValue, RuntimeMemoryStatus, RuntimeRunStatus, RuntimeUsage } from './runtime.ts'
+import type { AgentRecovery, AgentRunReport, AgentToolAttempt, AgentBudgetStop, AgentContinuation, RuntimeFailure, RuntimeJSONValue, RuntimeMemoryStatus, RuntimeRunStatus, RuntimeUsage } from './runtime.ts'
 import type { AgentPermissionMode, AgentPromptRef, AgentResourceRef, AgentRevisionRef } from './capabilities.ts'
 import type { AgentWikiRef } from './memory.ts'
 
@@ -326,7 +326,7 @@ type AgentChatTimelineEntryBase = {
 }
 export type AgentChatTimelineEntry = AgentChatTimelineEntryBase & (
   { kind: 'reasoning' | 'content'; text: string; status: RuntimeRunStatus; incomplete: boolean }
-  | { kind: 'tool'; tool: string; modelCallId: string; callIndex: number; argumentsJson: string; callId?: string; status: AgentChatToolStatus; error?: RuntimeFailure; truncated: boolean; progress?: AgentTaskProgress; resourceWait?: AgentResourceWait }
+  | { kind: 'tool'; attempts?: readonly AgentToolAttempt[]; tool: string; modelCallId: string; callIndex: number; argumentsJson: string; callId?: string; status: AgentChatToolStatus; error?: RuntimeFailure; truncated: boolean; progress?: AgentTaskProgress; resourceWait?: AgentResourceWait }
   | { kind: 'user-input'; userInput: AgentUserInputRequest }
 )
 /** 最近一次推理输入及输出组成的近似 token 数，不作为供应商计费或实测用量。 */
@@ -358,11 +358,13 @@ export type AgentRunPlan = { sourceRunId?: string; revision: number; updatedAt: 
 
 /** 只读展示投影，条目按推理请求及工具调用顺序排列；终答由公开消息确认。 */
 export type AgentChatTimelineSnapshot = {
+ recoveryPolicy?: 'evidence-recovery/v1'
+ recovery?: AgentRecovery
   budgetPolicy?: 'resource-budget/v1'
   budgetStop?: AgentBudgetStop
   continuation?: AgentContinuation
   /** 失败或系统中断的运行时结果，也承接缺少公开答复的历史轮次。 */
-  terminalResult?: { origin: 'runtime'; content: string }
+  terminalResult?: { origin: 'runtime'; content: string; report?: AgentRunReport }
   plan?: AgentRunPlan
   runId: string
   status: RuntimeRunStatus

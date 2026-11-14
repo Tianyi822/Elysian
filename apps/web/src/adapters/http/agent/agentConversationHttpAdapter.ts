@@ -9,6 +9,7 @@ import { fetchWithSession } from '../unauthorized'
 import { withRequestDeadline } from '../requestDeadline'
 import { createAgentChatGovernance } from './agentChatGovernance'
 import { parseChatCall, parseChatTimeline } from './agentChatTimelineParse'
+import { parseRecovery, parseRecoveryFailure, parseRunReport } from './agentRecoveryParse'
 import type { RuntimeCall } from '@elysian/contracts'
 
 const invalid = () => new Error('Agent 会话响应格式无效')
@@ -42,14 +43,16 @@ export function createUnavailableAgentConversationAdapter(): AgentConversationAd
 function parseRun(value: unknown): AgentChatRun {
   const row = object(value)
   if (!(RUNTIME_RUN_STATUSES as readonly unknown[]).includes(row.status)) throw invalid()
-  const failure = (value: unknown) => { const entry = object(value); return { code: string(entry.code), message: string(entry.message) } }
-  const phases = ['queued', 'inference', 'checkpoint', 'final-memory', 'workflow-output', 'waiting-input', 'waiting-approval', 'waiting-resource', 'waiting-task', 'completed']
+  const failure = parseRecoveryFailure
+  const phases = ['queued', 'inference', 'checkpoint', 'final-memory', 'workflow-output', 'waiting-input', 'waiting-approval', 'waiting-resource', 'waiting-task', 'waiting-recovery', 'failure-summary', 'completed']
   if (row.phase !== undefined && !phases.includes(string(row.phase))) throw invalid()
   return {
     id: string(row.id), requestId: optional(row.requestId), taskId: string(row.taskId), sessionId: optional(row.sessionId), status: row.status as AgentChatRun['status'],
     phase: row.phase as AgentChatRun['phase'], cancelRequestedAt: optional(row.cancelRequestedAt),
     ...parseBudgetFields(row, string(row.id)),
     ...(row.plan === undefined ? {} : { plan: parseRunPlan(row.plan) }),
+    ...(row.recovery === undefined ? {} : { recovery: parseRecovery(row.recovery) }),
+    ...(row.report === undefined ? {} : { report: parseRunReport(row.report) }),
     error: row.error === undefined ? undefined : failure(row.error), warning: row.warning === undefined ? undefined : failure(row.warning),
   }
 }
@@ -191,6 +194,14 @@ export function createHttpAgentConversationAdapter(): AgentConversationAdapter {
     createTask: async (id, input) => parseRun(await write(`/sessions/${path(id)}/tasks`, input)),
     continueTask: async (id, input) => parseRun(await write(`/tasks/${path(id)}/runs`, input)),
     getRun: async (id, signal) => parseRun(await requestAgentJson(`/api/agent/runs/${path(id)}`, { signal })),
+    verifyRecovery: async id => { await requestAgentJson(`/api/agent/runs/${path(id)}/verify`, { method: 'POST' }) },
+    reconcileRecovery: async (id, evidence, decision) => {
+      const rows = await requestAgentJson('/api/agent/execution-barriers')
+      if (!Array.isArray(rows)) throw invalid()
+      const barriers = rows.map(object).filter(row => row.runId === id && row.status === 'unknown')
+      if (!barriers.length) throw new Error('没有待核实的操作，请刷新会话。')
+      for (const row of barriers) await write(`/execution-barriers/${path(string(row.id))}/reconcile`, { evidence, decision })
+    },
     cancelRun: async id => parseRun(await requestAgentJson(`/api/agent/runs/${path(id)}/cancel`, { method: 'POST' })),
     timeline: async (id, signal) => parseChatTimeline(await requestAgentJson(`/api/agent/runs/${path(id)}/timeline`, { signal }), id),
     async calls(id, signal) {

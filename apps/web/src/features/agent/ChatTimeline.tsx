@@ -12,6 +12,7 @@ import { ChatPlan } from './ChatPlan'
 import { ChatUserInputSummary } from './ChatUserInput'
 import { ChatRuntimeResult } from './ChatRuntimeResult'
 import { ChatToolProgress } from './ChatToolProgress'
+import { ChatRecovery } from './ChatRecovery'
 
 type ToolEntry = Extract<AgentChatTimelineEntry, { kind: 'tool' }>
 const toolLabels: Record<AgentChatToolStatus, string> = {
@@ -50,6 +51,7 @@ function ChatTool({ entry, runId, api, onProgress }: { entry: ToolEntry; runId: 
   useLayoutEffect(onProgress, [expanded, result, loading, error, entry.progress, onProgress])
   const showProgress = entry.status === 'waiting-task' || !!entry.progress && (entry.status === 'running' || entry.status === 'unknown')
   const status = showProgress && entry.progress?.state === 'unknown' ? 'unknown' : entry.status
+  const evidence = result?.evidence ?? (result?.error ?? entry.error)?.evidence
   const Icon = status === 'succeeded' ? Check : failed(status) ? X : pending(status) ? Loader2 : Terminal
   return <div className="chat-tool" data-status={status}>
     <button type="button" className="chat-tool-toggle" aria-expanded={expanded} aria-controls={regionId}
@@ -71,6 +73,9 @@ function ChatTool({ entry, runId, api, onProgress }: { entry: ToolEntry; runId: 
       {result?.result !== undefined && <><p className="text-xs text-fg-muted">结果</p><pre className="chat-tool-data hover-scrollbar" tabIndex={0}>{typeof result.result === 'string' ? result.result : JSON.stringify(result.result, null, 2)}</pre></>}
       {(entry.truncated || result?.truncated) && <p className="text-xs text-fg-muted">结果已截断</p>}
       {(result?.error ?? entry.error) && <p className="text-xs text-danger">{(result?.error ?? entry.error)?.message}</p>}
+      {evidence?.execution === 'not-started' && <p className="text-xs text-fg-muted">业务变更未执行</p>}
+      {evidence?.suggestion && <p className="text-xs text-fg-muted">{evidence?.suggestion}</p>}
+      {!!entry.attempts?.length && <><p className="text-xs text-fg-muted">尝试记录</p><ol className="text-xs text-fg-muted">{entry.attempts.map(attempt => <li key={attempt.number}>第 {attempt.number} 次：{attempt.error?.message ?? '已结束'}</li>)}</ol></>}
     </div>}
   </div>
 }
@@ -95,7 +100,7 @@ export function ChatTimeline({ timeline, answer, active, stopped, stopping, api,
   timeline: AgentChatTimelineSnapshot; showPlan?: boolean; answer?: AgentMessage; active: boolean; stopped: boolean; stopping?: boolean; api: AgentConversationAdapter; onProgress(): void
 }) {
   const hasFinal = timeline.entries.some(entry => entry.kind === 'content' && entry.modelRequestId === timeline.finalResponseId)
-  const result = stopped ? undefined : answer?.origin === 'runtime' ? answer.content : timeline.done ? timeline.terminalResult?.content : undefined
+  const result = timeline.done && timeline.terminalResult && (!stopped || timeline.terminalResult.report) ? timeline.terminalResult.content : !stopped && answer?.origin === 'runtime' ? answer.content : undefined
   const modelAnswer = answer?.origin === 'runtime' || result ? undefined : answer
   useLayoutEffect(onProgress, [timeline.done, result, onProgress])
   return <div className="chat-timeline" aria-label="回复过程">
@@ -118,5 +123,6 @@ export function ChatTimeline({ timeline, answer, active, stopped, stopping, api,
     {stopped && <p role="status" className="text-xs text-fg-muted">已停止</p>}
     {showPlan && <ChatPlan budgetStopped={!!timeline.budgetStop} plan={timeline.plan} status={timeline.status} stopping={stopping} onProgress={onProgress} />}
     {result && <ChatRuntimeResult content={result} />}
+    <ChatRecovery timeline={timeline} api={api} />
   </div>
 }

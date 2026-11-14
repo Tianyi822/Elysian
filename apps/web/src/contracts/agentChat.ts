@@ -59,7 +59,7 @@ export type AgentChatSession = {
   pending?: { input: AgentInput; taskId?: string }
 }
 
-export type AgentChatRun = Pick<RuntimeRun, 'id' | 'requestId' | 'sessionId' | 'taskId' | 'status' | 'phase' | 'cancelRequestedAt' | 'error' | 'warning' | 'plan' | 'budgetPolicy' | 'budgetStop' | 'continuation'>
+export type AgentChatRun = Pick<RuntimeRun, 'id' | 'requestId' | 'sessionId' | 'taskId' | 'status' | 'phase' | 'cancelRequestedAt' | 'error' | 'warning' | 'plan' | 'budgetPolicy' | 'budgetStop' | 'continuation' | 'recoveryPolicy' | 'recovery' | 'report'>
 export type AgentChatPageResult<T> = { items: readonly T[]; nextCursor: string; hasMore: boolean }
 export type AgentChatTask = { id: string; sessionId: string; kind: string; latestRun?: AgentChatRun }
 export const agentChatSessionKey = (session: AgentChatSession) => session.remote?.sessionId ?? session.id
@@ -93,6 +93,8 @@ export interface AgentConversationAdapter {
   createTask(sessionId: string, input: AgentInput): Promise<AgentChatRun>
   continueTask(taskId: string, input: AgentInput): Promise<AgentChatRun>
   getRun(id: string, signal?: AbortSignal): Promise<AgentChatRun>
+  verifyRecovery?(id: string): Promise<void>
+  reconcileRecovery?(id: string, evidence: string, decision: 'confirmed-completed' | 'confirmed-stopped'): Promise<void>
   cancelRun(id: string): Promise<AgentChatRun>
   /** 仅返回本轮推理请求明确提供的思考文本或公开摘要。 */
   reasoning(id: string, signal?: AbortSignal): Promise<string>

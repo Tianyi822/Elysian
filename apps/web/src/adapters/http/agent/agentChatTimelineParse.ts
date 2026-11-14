@@ -1,4 +1,5 @@
-import { RUNTIME_RUN_STATUSES, type AgentTaskProgress, type AgentResourceWait, type AgentChatCacheHitUsage, type AgentChatContextBreakdown, type AgentChatContextUsage, type AgentChatTimelineEntry, type AgentChatTimelineSnapshot, type AgentChatToolStatus, type RuntimeCall, type RuntimeFailure, type RuntimeJSONValue, type RuntimeRunStatus, type RuntimeUsage } from '@elysian/contracts'
+import { parseExecutionEvidence, parseRecovery, parseRecoveryFailure, parseRunReport, parseAttempts } from './agentRecoveryParse'
+import { RUNTIME_RUN_STATUSES, type AgentTaskProgress, type AgentResourceWait, type AgentChatCacheHitUsage, type AgentChatContextBreakdown, type AgentChatContextUsage, type AgentChatTimelineEntry, type AgentChatTimelineSnapshot, type AgentChatToolStatus, type RuntimeCall, type RuntimeJSONValue, type RuntimeRunStatus, type RuntimeUsage } from '@elysian/contracts'
 import { parseRunPlan } from './agentPlanParse'
 import { parseBudgetFields } from './agentBudgetParse'
 import { parseUserInput } from './agentUserInputParse'
@@ -16,11 +17,7 @@ const status = (value: unknown): RuntimeRunStatus => {
   if (!(RUNTIME_RUN_STATUSES as readonly unknown[]).includes(value)) throw invalid()
   return value as RuntimeRunStatus
 }
-const failure = (value: unknown): RuntimeFailure | undefined => {
-  if (value === undefined) return undefined
-  const row = object(value)
-  return { code: string(row.code), message: string(row.message) }
-}
+const failure = parseRecoveryFailure
 const usage = (value: unknown): RuntimeUsage => {
   const row = object(value)
   const out: RuntimeUsage = { calls: integer(row.calls), resultBytes: integer(row.resultBytes) }
@@ -108,7 +105,7 @@ export function parseChatTimeline(value: unknown, runId: string): AgentChatTimel
     }
     if (entry.kind !== 'tool' || !(toolStatuses as readonly unknown[]).includes(entry.status)) throw invalid()
     return { ...base, kind: 'tool', tool: string(entry.tool), modelCallId: string(entry.modelCallId), callIndex: integer(entry.callIndex),
-      argumentsJson: string(entry.argumentsJson), callId: optional(entry.callId), status: entry.status as AgentChatToolStatus, error: failure(entry.error), truncated: boolean(entry.truncated),
+      ...(entry.attempts === undefined ? {} : { attempts: parseAttempts(entry.attempts) }), argumentsJson: string(entry.argumentsJson), callId: optional(entry.callId), status: entry.status as AgentChatToolStatus, error: failure(entry.error), truncated: boolean(entry.truncated),
       ...(entry.progress === undefined ? {} : { progress: taskProgress(entry.progress) }),
       ...(entry.resourceWait === undefined ? {} : { resourceWait: resourceWait(entry.resourceWait) }) }
   })
@@ -116,10 +113,10 @@ export function parseChatTimeline(value: unknown, runId: string): AgentChatTimel
   const terminalResult = row.terminalResult === undefined ? undefined : (() => {
     const result = object(row.terminalResult)
     if (result.origin !== 'runtime' || !string(result.content).trim() || !row.done || !['failed', 'interrupted', 'cancelled'].includes(String(row.status))) throw invalid()
-    return { origin: 'runtime' as const, content: string(result.content) }
+    return { origin: 'runtime' as const, content: string(result.content), ...(result.report === undefined ? {} : { report: parseRunReport(result.report) }) }
   })()
   if (finalResponseId && !entries.some(entry => entry.kind === 'content' && entry.modelRequestId === finalResponseId)) throw invalid()
-  return { runId, status: status(row.status), done: boolean(row.done), finalResponseId, entries,
+  return { ...(row.recovery === undefined ? {} : { recovery: parseRecovery(row.recovery) }), runId, status: status(row.status), done: boolean(row.done), finalResponseId, entries,
     ...parseBudgetFields(row, runId),
     ...(terminalResult === undefined ? {} : { terminalResult }),
     ...(row.plan === undefined ? {} : { plan: parseRunPlan(row.plan) }),
@@ -132,7 +129,7 @@ export function parseChatTimeline(value: unknown, runId: string): AgentChatTimel
 export function parseChatCall(value: unknown, runId: string): RuntimeCall {
   const row = object(value)
   if (row.runId !== runId) throw invalid()
-  return { id: string(row.id), runId, tool: string(row.tool), status: status(row.status), stepIndex: integer(row.stepIndex),
+  return { ...(row.evidence === undefined ? {} : { evidence: parseExecutionEvidence(row.evidence) }), ...(row.attempts === undefined ? {} : { attempts: parseAttempts(row.attempts) }), id: string(row.id), runId, tool: string(row.tool), status: status(row.status), stepIndex: integer(row.stepIndex),
     startedAt: optional(row.startedAt), endedAt: optional(row.endedAt), argumentsJson: optional(row.argumentsJson),
     args: row.args == null ? {} : object(row.args) as Readonly<Record<string, RuntimeJSONValue>>,
     result: row.result as RuntimeJSONValue | undefined, error: failure(row.error), truncated: boolean(row.truncated),
